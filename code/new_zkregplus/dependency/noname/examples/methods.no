@@ -1,0 +1,17 @@
+struct Thing {
+    xx: Field,
+    yy: Field,
+}
+
+fn Thing.check(self) -> Field {
+    assert_eq(self.xx, 1);
+    assert_eq(self.yy, 2);
+
+    return self.xx + self.yy;
+}
+
+fn main(pub xx: Field) {
+    let thing = Thing { xx: xx, yy: xx + 1 };
+    let res = thing.check();
+    assert_eq(res, 3);
+}

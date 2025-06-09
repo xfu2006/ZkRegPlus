@@ -1,0 +1,90 @@
+\section{zkSnark Design {\bf (NEW EXTENDED VERSION)}}
+In this section, we discuss how to efficiently encode the
+5-stage regex discharging algorithms in zkSNARK. Given that
+there are many small files (e.g., emails), it is not economical
+to provide a proof with size almost comparable to the original
+file size. We opt for pairing based constant size proof system
+such as Groth16 (instead of log-size proof system such as sumcheck
+based systems). Our choice of proving schemes is also limited
+by the choice of open-source folding scheme implementations available
+at the time the project is implemented.
+In this case, we choose to adopt Sonobe (an implementation of
+Nova + Cyclefold folding schemes that work for BN254-Grumpkin curve
+that allows producing final decider proof in Groth16). 
+It is possible to encode our 5-stage discharging algorithms using
+many other schemes, such as Plonk based for universal prover keys,
+or Mangrove for PCD foldings schemes with constant memory footprints,
+and we leave them for future work.
+
+We have several design challenges to overcome.
+First of all, we would like to take advantage of
+the folding schemes so that the prover cost can be
+minimized. Second, in addition to mass processing regex signatures,
+we can also mass-discharge files, e.g., providing
+a commitment to a large collection of files (e.g., all binary executables
+or all Enron emails), provide an $O(1)$ proof for free of
+malware for all of them, and then provide a membership 
+of an individual file commitment belong to the combined commitment.
+Third, to achieve the aforementioned scheme, we have to
+handle vast difference in file sizes from $2^{9}$ to $2^{27}$.
+This concerns handling non-uniform circuits (with different size).
+Fourthly, we need to handle lookup arguments effectively.
+Although CQ lookup is handled in ProtoStar, we present
+a simpler stand-alone zk-CQ protocol which shows similar
+concrete prover effiicency.
+
+\subsection{Consideration of Folding Cost}
+For the vast majority of folding schemes that follow the Nova folding,
+it is shown that prover concrete efficiency is $4\times$ of Groth16.
+However, there is a final decider scheme (in Sonobe) that is expensive
+to compute, its cost is shown in the following, given $n$ the step-wise
+circuit size, $k$ the number of steps applied in folding: 
+\[
+	2^{23.5} + 3n
+\]
+Mainly, the $2^{23.5}$ is a fixed non-native field arithmetic component in the decider and $3n$ is the linear cost on proving the step-wise R1CS relation.
+Now given that folding itself takes $2n$ group operations per step, the fraction of the decider proof genreation among the total cost is, when $k$ is large enough:
+\[
+\frac{2^{23.5} + 3n}{2nk} \approx \frac{1.5}{k}
+\]
+
+In our later presentation, we will need to customize the Sonobe final decider
+proof, which will add several more ``expensive" constant size computation. 
+However, given that $k$ is large enough, they will be amortized soon, which
+does not cause concern. 
+
+Also another interesting point is the step-wise circuit size.
+In the celebrative work of Mangrove, it is shown how any arbitrary Plonk
+relation can be chunked into any arbitrary thread of smaller computation,
+which allows arbitrary folds of scalability via parallelism, i.e.,
+it allows chunking a large R1CS into many very small steps.
+In our case, server RAM is not a concern, so that we allow large
+step-wise circuit size, as long as it does not make $k$ too small.
+
+\subsection{Road Map}
+In this section, we will first discuss how to encode the $5$-stage 
+regex discharging algorithm efficiently in R1CS. We then discuss a 
+customized folding scheme to support batch process a large collection
+files. 
+
+\subsection{Encoding $5$-Stage Regex Discharging Algorithm}
+\subsubsection{Encode DFA (TODO)}
+In practice, an ACDFA can be transformed into a DFA. As DFA acceptance is
+needed in various parts of the entire algorithm, we discuss them first.
+
+The key idea is that: there is an external and precomputed lookup table
+of all DFAs needed (notice that there are multiple tables). But we integrate
+them into one table of two columns $\texttt{TableID}, \texttt{Entry}$.
+
+TODOS in details: rough idea
+
+(1) discuss how to encode DFA transition
+
+(2) discuss what kind of information will be stored in external table, e.g., transitions (for different DFAs), the critical patterns needed by each signature).
+
+(3) present an algorithm in R1CS or circuit, which takes in witnesses: (source state, char, dest state) sequence, produces (still secret) output: the set of signatures that should be triggered (those who have their critical patterns appear along the acceptance path)
+
+(4) present a variety of gadgets that proves permutation of vectors, equivalence of vectors and its sorted form, packing a vector to a set etc. In particular, notice that we can use the in-circuit form of the Habock scheme \cite{Hab22} for proving lookup relation between two vectors (when they are small) {\em in circuit}, this is useful for proving a ``set" is reduced from a vector with duplicate items.
+
+(5) Given the gadgets, this motivates the definition of R1CS relation with $2$ stages (to allow to generate the random needed by the gadget), and 
+the need to tag some some elements for the use of external lookup argument.

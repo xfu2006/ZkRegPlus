@@ -1,0 +1,111 @@
+\section{Introduction}
+Proving a committed string belonging (or not) to a regular expression
+specification has wide applications. For example, it is shown
+in Zombie \cite{Zombie23} and ZkMiddleBox \cite{ZkMiddleBox}
+how to prove in zero knowledge an encrypted network packet
+does not contain addresses in a blocked list. In \cite{Zkreg}, 
+all Linux executables are proved to be
+malware free regarding the ClamAV hex-signatures.  
+In \cite{Reef}, committed DNA sequences are shown to contain
+chromosomes. In \cite{zkemail}, zero knowledge proof is
+applied to redacted emails, twitters, and credit records.
+
+
+Various techniques have different aims, e.g., striving for
+expressiveness (providing negation in Zombie \cite{Zombie23}), 
+efficiency for large collections of fixed patterns  \cite{Zkreg},
+skipping widecard matches for handling very long input strings \cite{Reef},
+and general NFA \cite{Luo23}. 
+
+This paper considers two research problems: (1) can we
+scale variety of zkreg proof techniques for handling a large
+{\em collection} of regex-patterns? Note that this is a difficult problem,
+except for the case of fixed patterns using AC-DFA \cite{Zkreg}, 
+to intersect or negate regex can easily lead to exponential cost; 
+(2) does there exist more efficient weaker regex subset
+which leads to more efficient techniques?
+We tackle the above research problems by providing the
+following contributions.
+
+{\bf Empirical analysis of regex in practice:} 
+The analysis forms the basis for efficient ZKP techniques we 
+introduce in this paper. 
+We perform an empirical analysis of the clamav regex 
+and a comprehensive data that that comprises of
+all executables in a Linux CentOS, malware samples,
+both benign and malicious emails and SQL database logs (TODO).
+We observe that for all benign binary executables in Linux, 
+in average they have no more than $4$ ``near-misses", i.e., containing
+any of the fixed string patterns extracted from ClamAV regex signatures.
+Similar observations apply to benign email and SQL database logs,
+which implies the effectiveness for a disjunctive ZKP scheme
+which only needs the prover to pay for cost of discharging
+those ``near-miss" regex signatures.
+We also notice that only a very small portion of signatures have class operators
+and limited use of Kleene stars. This leads to a 
+``bounded matching Regex" fragment (PM-Reg) we introduce later.
+{\em To verify:
+Using PM-Reg to approximate the general regex patterns
+has no false positives/negatives on all the data set that we 
+have experimented with.}
+
+{\bf Efficient Application of Lookup argument:}
+In \cite{Zkreg} it is observed that the generation of transition set
+and check if they are valid can be separated, i.e.,
+a valid encoding of a transition can be looked up in a pre-processed
+transition table. We further
+extend this approach and replace the zk-set component in \cite{Zkreg}
+with a pre-processed lookup argument \cite{cq}, which leads to
+prover complexity completely {\em independent of} 
+the specification size, i.e., depending on the input string
+length only. Compared with related work such as
+\cite{Zombie23,ZkMiddleBox,Luo23} this approach largely improves
+the practicality of $\zkregex$ in the context of non-membership proofs
+with large automaton specification.
+
+{\bf Scale-up to Multiple Patterns:} Given the observation that
+a benign string has only a few ``near misses" to large collection
+of regex patterns. We design a 2-stage zk-proof scheme for
+disjunctive proof. For each regex signature, we collect 
+a set of fixed patterns as its ``critical fixed patterns",
+missing any of these patterns means that the input string
+will not match the given pattern. We then compile an AC-DFA
+over all such fixed patterns, and feed the input string
+through the automaton. We collect a much small list of
+final states that appear along the acceptance path, and
+use these final states to retrieve the list of signatures
+that should be proved (and the others be ignored).
+For signatures of different types (e.g., PM-Reg and
+general regular expressions), they are compiled into separate
+circuits and folded as an IVC scheme by leveraging
+ProtoGalaxy \cite{ProtoGalaxy}. The verifier has no knowledge
+that whic patterns are actually being discharged, and via
+which approach.
+
+{\bf Bounded Matching Regex:} Based on data analysis
+we present a {\em strictly weaker} fragment of regex,
+however, which is capable of capturing $97\%$ of
+ClamAV patterns. We develop efficient constraint
+encoding techniques which encode the distance between
+regex component and leave the fixed components to be 
+handled by more efficient AC-DFA. All PM-Reg are compiled
+into one general purpose circuit, while its
+distance encoding constraints are loaded at run-time,
+again leveraging lookup arguments.
+
+{\bf Cryptographic Constructions:} Of independent interest,
+we present a bounded zero knowledge version of the
+$\cq$ lookup argument, which does not rely on the
+Aurora lemma \cite{aurora19} and results in faster concrete
+prover performance.  We present a modified
+ProtoGalaxy folding scheme, enhanced with
+folding techniques for zk-$\cq$ lookup argument.
+We implement the schemes mentioned above fully, by
+instrumenting a PSE-fork of the Halo2 system \cite{Halo2}.
+We evaluate our scheme
+over the full ClamAV signature set (which consists of
+$38k$ regex signatures), and the data sets of emails and SQL 
+database logs. 
+The Halo2 system enhanced with $\cq$-lookups and ProtoGalaxy schemes
+is general purpose, and can be applied to other problems.
+

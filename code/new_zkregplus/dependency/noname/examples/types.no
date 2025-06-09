@@ -1,0 +1,14 @@
+struct Thing {
+    xx: Field,
+    yy: Field,
+}
+
+fn main(pub xx: Field, pub yy: Field) {
+    let thing = Thing {
+        xx: 1,
+        yy: 2,
+    };
+    
+    assert_eq(thing.xx, xx);
+    assert_eq(thing.yy, yy);
+}

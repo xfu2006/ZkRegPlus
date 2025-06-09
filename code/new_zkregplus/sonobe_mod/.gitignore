@@ -1,0 +1,13 @@
+/target
+Cargo.lock
+
+# Circom generated files
+folding-schemes/src/frontend/circom/test_folder/*_js/
+*.r1cs
+*.sym
+
+# generated contracts at test time
+solidity-verifiers/generated
+examples/*.sol
+examples/*.calldata
+examples/*.inputs

@@ -1,0 +1,288 @@
+/// Generate paper data related for clamav signature related
+/*
+	Created: 07/26/2024. Ported from driver.rs in old zkregplus project
+*/
+extern crate rayon;
+
+use rayon::prelude::*;
+use std::collections::{HashSet};
+use ark_ff::PrimeField;
+use utils::{
+	data::{ceil_log2},
+	logger::{flog,LOG1},
+	os::{proj_root,read_lines,write_lines},
+};
+use data_processor::{
+	discharge_proof::{FailDischargeRecord},
+	discharge_prover::{quick_discharge_file, discharge_file},
+	clamav::{default_clamav_cfg},
+	clam_db::{ClamavDB},
+};
+
+/// Display the stats related to signatures that goes to 
+/// SED and ISED.
+pub fn print_sed_stats<F:PrimeField>(
+vdata: &Vec<FailDischargeRecord>, db: ClamavDB<F>, vlog: &mut Vec<String>){
+	//1. collect the sigs that needs SED and ISED and DFA separately
+	let mut set_sed = HashSet::<String>::new();
+	let mut set_ised = HashSet::<String>::new();
+	let mut set_dfa = HashSet::<String>::new();
+	for rec in vdata{
+		//1. collect the set to be discharged by sed, ised, dfa
+		assert!(rec.bag.is_subset(&rec.crit));
+		assert!(rec.pm.is_subset(&rec.bag));
+		assert!(rec.ind_pm_reg.is_subset(&rec.pm));
+		let s_sed:HashSet<String>=rec.bag.difference(&rec.pm)
+			.cloned().collect();
+		let s_ised:HashSet<String>=rec.pm.difference(&rec.ind_pm_reg)
+			.cloned().collect();
+		let s_dfa = rec.ind_pm_reg.clone();
+		set_sed.extend(s_sed);
+		set_ised.extend(s_ised);
+		set_dfa.extend(s_dfa);
+	}
+
+	//2. analyze set_sed and set_ised
+	let mut f_analyze = |set: &HashSet::<String>, set_name|{
+		let mut total_subsigs = 0usize;
+		let mut total_steps= 0usize;
+		for sname in set{
+			let id = db.sig_to_id.get(sname)
+				.expect(&format!("cannot find sig: {}", sname));
+			let sig = &db.vec_sigs[*id-1];
+			assert!(sig.name==*sname);
+			total_subsigs += sig.vec_subsig_obj.len();
+			for (_id,subsig_pm) in sig.vec_subsig_pm_bounds.iter().enumerate(){
+				total_steps += subsig_pm.len();
+			}
+		}
+		flog(LOG1, &format!("=== {} Stats =====", set_name), vlog);
+		flog(LOG1, &format!("   sigs: {}, subsigs: {}, total_steps: {}, avg_steps: {}", set.len(), total_subsigs, total_steps, total_steps/set.len()), vlog);
+	};
+
+	f_analyze(&set_sed, "SED");
+	f_analyze(&set_ised, "ISED");
+	println!("-- set_sed: {}, set_ised: {}", set_sed.len(), set_ised.len());
+}
+
+/// Display the discharge stats and write the results into vlog
+pub fn print_discharge_stats(vdata: &Vec<FailDischargeRecord>,
+	vlog: &mut Vec<String>){
+	//1. first sort out all by len
+	let mut vec_stats: Vec<Vec<FailDischargeRecord>> = vec![vec![]; 32];
+	for rec in vdata{ vec_stats[rec.flen].push(rec.clone()); }
+	let b_more_details = false;
+	let b_include_bs = false;
+
+	//2. print details
+	if b_more_details{
+		flog(LOG1, &format!("==== STATS DETAILS ====="), vlog);
+		for i in 0..vec_stats.len(){
+			println!("-------- log2(file): {} ----------", i);
+			for rec in &vec_stats[i]{
+				flog(LOG1, &format!("{}: \ncrit: {:?}, bag: {:?}, pm: {:?}, after_dfa: {:?}", rec.fname, rec.crit, rec.bag, rec.pm, rec.all_dfa), vlog);
+			}
+		}
+	}
+
+	//7. print summary
+	let avg = |v: &Vec<usize>|->usize {
+		let sum:usize = v.iter().sum();
+		if sum==0 {0} else {sum/v.len()}
+	};
+	let max= |v: &Vec<usize>|->usize {
+		let imax:usize = *v.into_iter().max().unwrap_or(&0);
+		imax
+	};
+	let ct= |v: &Vec<usize>|->usize {
+		let mut res = 0;
+		for x in v{ if *x>0 {res +=1;} }
+		res	
+	};
+	flog(LOG1, &format!("==== WARNING: UNABLE TO DISCHARGE by crit_gab_pm which needs DFA discharge ====="), vlog);
+	let mut all_cbp = HashSet::<String>::new();
+	for rec in vdata{
+		let crit_bag:HashSet<String> = rec.crit.clone().intersection(
+			&rec.bag).cloned().collect();
+		let crit_bag_pm:HashSet<String> = crit_bag.clone().intersection(
+			&rec.pm).cloned().collect();
+		if crit_bag_pm.len()>0{
+			flog(LOG1, &format!("fname: {}, sigs: {:?}", rec.fname, &crit_bag_pm), vlog);
+			for x in crit_bag_pm {all_cbp.insert( x.clone() );}
+		}
+	}
+	flog(LOG1, &format!("==== Needs to build DFA for the following ===========\n{:?}=========================\n", all_cbp), vlog);
+	flog(LOG1, &format!("==== WARNING: DFA could also not discharge the following ====="), vlog);
+	for rec in vdata{
+		if rec.all_dfa.len()>0{
+			flog(LOG1, &format!("fname: {}, sigs: {:?}", rec.fname, &rec.all_dfa), vlog);
+		}
+	}
+	flog(LOG1, &format!("==== WARNING: ISED could not discharge the following ====="), vlog);
+	for rec in vdata{
+		if rec.ind_pm_reg.len()>0{
+			flog(LOG1, &format!("fname: {}, filesize: {}, sigs: {:?}", rec.fname, ceil_log2(rec.flen), &rec.ind_pm_reg), vlog);
+		}
+	}
+
+	flog(LOG1, &format!("==== STATS SUMMARY (avg, max, count_non_zero) ========="), vlog);
+	flog(LOG1, &format!("Note: set b_optimize_pm to false in \ngen_report_all_discharge_approach_stats\n for accurate PM-REG data, otherwise it's filtered by prevoius step \n"), vlog);
+	flog(LOG1, &format!("-b_include_bs: {}------------------------------------------------------", b_include_bs), vlog);
+	if b_include_bs{
+		flog(LOG1, &format!("log(f)\tfiles\tcrit\tbag\tpm\tc_bag\tc_pm\tc_b_p\tdfa\tind_pm"), vlog);
+	}else{
+		flog(LOG1, &format!("log(f)\tfiles\tcrit\tpm\tc_pm\tdfa\tind_pm"), vlog);
+	}
+	for i in 0..vec_stats.len(){
+		let mut vec_crit:Vec<usize> = vec![];
+		let mut vec_bag:Vec<usize> = vec![];
+		let mut vec_pm:Vec<usize> = vec![];
+		let mut vec_crit_bag:Vec<usize> = vec![];
+		let mut vec_crit_pm:Vec<usize> = vec![];
+		let mut vec_crit_bag_pm:Vec<usize> = vec![];
+		let mut vec_dfa:Vec<usize> = vec![]; //NOTE dfa data is ALREADY after applied first 3
+		let mut vec_ind_pm: Vec<usize> = vec![];
+		for rec in &vec_stats[i]{
+			vec_crit.push( rec.crit.len() );
+			vec_bag.push( rec.bag.len() );
+			vec_pm.push( rec.pm.len() );
+			let crit_bag:HashSet<String> = rec.crit.clone().intersection(
+				&rec.bag).cloned().collect();
+			let crit_pm:HashSet<String> = rec.crit.clone().intersection(
+				&rec.pm).cloned().collect();
+			let crit_bag_pm:HashSet<String> = crit_bag.clone().intersection(
+				&rec.pm).cloned().collect();
+			vec_crit_bag.push( crit_bag.len() );
+			vec_crit_pm.push( crit_pm.len() );
+			vec_crit_bag_pm.push( crit_bag_pm.len() );
+			vec_dfa.push( rec.all_dfa.len() );
+			vec_ind_pm.push( rec.ind_pm_reg.len() );
+		}
+		if b_include_bs{
+			flog(LOG1, &format!("{} \t {} \t({},{},{})\t({},{},{})\t({},{},{})\t({},{},{})\t({},{},{})\t({},{},{})\t({},{},{}\t({},{},{}))", 
+				i, 
+				vec_stats[i].len(),
+				avg(&vec_crit),  max(&vec_crit), ct(&vec_crit), 
+				avg(&vec_bag), max(&vec_bag), ct(&vec_bag), 
+				avg(&vec_pm), max(&vec_pm), ct(&vec_pm), 
+				avg(&vec_crit_bag), max(&vec_crit_bag), ct(&vec_crit_bag), 
+				avg(&vec_crit_pm), max(&vec_crit_pm), ct(&vec_crit_pm),
+				avg(&vec_crit_bag_pm) , max(&vec_crit_bag_pm), ct(&vec_crit_bag_pm) , 
+				avg(&vec_dfa) , max(&vec_dfa), ct(&vec_dfa) , 
+				avg(&vec_ind_pm) , max(&vec_ind_pm), ct(&vec_ind_pm) ), 
+				vlog);
+		}else{
+			flog(LOG1, &format!("{} \t {} \t({},{},{})\t({},{},{})\t({},{},{})\t({},{},{})\t({},{},{})))", 
+				i, 
+				vec_stats[i].len(),
+				avg(&vec_crit),  max(&vec_crit), ct(&vec_crit), 
+				avg(&vec_pm), max(&vec_pm), ct(&vec_pm), 
+				avg(&vec_crit_pm), max(&vec_crit_pm), ct(&vec_crit_pm),
+				avg(&vec_dfa) , max(&vec_dfa), ct(&vec_dfa) , 
+				avg(&vec_ind_pm) , max(&vec_ind_pm), ct(&vec_ind_pm) ), 
+				vlog);
+		}
+	}
+
+/* rework later.
+	flog(LOG1, &format!("====  Simpler Summary (avg, max, count_non_zero) ====="), vlog);
+	if b_include_bs{
+		flog(LOG1, &format!("log(f)\tfiles\tcrit\tc_bag\tc_b_p\tdfa\tind_pm"), vlog);
+	}else{
+		flog(LOG1, &format!("log(f)\tfiles\tcrit\ttc_p\tdfa\tind_pm"), vlog);
+	}
+	for i in 0..vec_stats.len(){
+		let mut vec_crit:Vec<usize> = vec![];
+		let mut vec_bag:Vec<usize> = vec![];
+		let mut vec_pm:Vec<usize> = vec![];
+		let mut vec_crit_bag:Vec<usize> = vec![];
+		let mut vec_crit_pm:Vec<usize> = vec![];
+		let mut vec_crit_bag_pm:Vec<usize> = vec![];
+		let mut vec_dfa:Vec<usize> = vec![]; //NOTE dfa data is ALREADY after applied first 3
+		let mut vec_ind_pm:Vec<usize> = vec![]; //
+		for rec in &vec_stats[i]{
+			vec_crit.push( rec.crit.len() );
+			vec_bag.push( rec.bag.len() );
+			vec_pm.push( rec.pm.len() );
+			let crit_bag:HashSet<String> = rec.crit.clone().intersection(
+				&rec.bag).cloned().collect();
+			let crit_pm:HashSet<String> = rec.crit.clone().intersection(
+				&rec.pm).cloned().collect();
+			let crit_bag_pm:HashSet<String> = crit_bag.clone().intersection(
+				&rec.pm).cloned().collect();
+			vec_crit_bag.push( crit_bag.len() );
+			vec_crit_pm.push( crit_pm.len() );
+			vec_crit_bag_pm.push( crit_bag_pm.len() );
+			vec_dfa.push( rec.all_dfa.len() );
+			vec_ind_pm.push( rec.ind_pm_reg.len() );
+		}
+		flog(LOG1, &format!("{} \t {} \t({},{},{})\t({},{},{})\t({},{},{})\t({},{},{})\t({},{},{})", 
+			i, 
+			vec_stats[i].len(),
+			avg(&vec_crit),  max(&vec_crit), ct(&vec_crit), 
+			avg(&vec_crit_bag), max(&vec_crit_bag), ct(&vec_crit_bag), 
+			avg(&vec_crit_bag_pm) , max(&vec_crit_bag_pm), ct(&vec_crit_bag_pm) , 
+			avg(&vec_dfa) , max(&vec_dfa), ct(&vec_dfa) , 
+			avg(&vec_ind_pm) , max(&vec_ind_pm), ct(&vec_ind_pm) ), 
+			vlog);
+	}
+*/
+
+	flog(LOG1, &format!("====  Accepthance Path Stats ======="), vlog);
+	let accpath_len:usize=vdata.iter().map(|v| v.total_acc_path_len).sum();
+	let hs_len:usize=vdata.iter().map(|v| v.total_hs_size).sum();
+	let acc_states:usize=vdata.iter().map(|v| v.total_accepted).sum();
+	flog(LOG1, &format!("hs_len/acc_path: {}%, hs_len: {}, accpath_len: {}", (hs_len as f64)*100.0/(accpath_len as f64), hs_len, accpath_len), vlog);
+	flog(LOG1, &format!("accepted states/acc_path: {}%, accepted_states: {}, accpath_len: {}", (acc_states as f64)*100.0/(accpath_len as f64), acc_states, accpath_len), vlog);
+	let pm_proj_ratios = vdata.iter().map(|v|
+		if v.total_accepted>0 {
+		(v.total_pm_witness_len as f64)/(v.total_accepted as f64)} else {0.0f64})
+		.collect::<Vec<f64>>();
+	let r_max: f64 = pm_proj_ratios.clone().into_iter().max_by(|a,b| a.total_cmp(b)).unwrap();
+	let r_sum: f64 = pm_proj_ratios.iter().sum::<f64>();
+	let r_avg = r_sum/(pm_proj_ratios.len() as f64);
+	flog(LOG1, &format!("pm_reg (sde) total projected table size/layer1 table: (avg: max): ({},{}). This indicates the cost of layer2 projectio", r_avg, r_max), vlog);
+	let pm_witness_ratio = vdata.iter().map(|v|
+		(v.total_pm_witness_len as f64)/(v.total_acc_path_len as f64)).collect::<Vec<f64>>();
+	let w_max: f64 = pm_witness_ratio.clone().into_iter().max_by(|a,b| a.total_cmp(b)).unwrap();
+	let w_avg: f64 = pm_witness_ratio.iter().sum::<f64>()/(pm_proj_ratios.len() as f64);
+	flog(LOG1, &format!("pm_reg (sde) total witness_len/file_size: (avg: max): ({},{}). This indicates total cost of discharging one file against ALL bag left sigs", w_avg, w_max), vlog);
+
+
+}
+
+
+
+
+/// report all report approaches stats (all file path should be relative
+/// path to project root!). sig_file: the list of signatures, needs_dfa_file:
+/// those singatures that need DFA built, exec_list_file: the list of files
+/// to discharge, report_file: the file path to write the report,
+/// b_read_cache: if to reach cache, cache_dir: name of the cache dir;
+/// if b_quick mode use quick_discharge function.
+pub fn report_all_discharge_approach_stats<F:PrimeField>(sig_file: &str, needs_dfa_file: &str, needs_ised_file: &str, needs_ised_igc_file: &str,
+	discharge_list_file: &str, report_file: &str,
+	b_read_cache: bool, cache_dir: &str, b_quick: bool){
+	//1. generate the clamav db
+	let mut vlog = vec![];
+	let cfg = default_clamav_cfg();
+	let proot = proj_root();
+	let b_write_cache = true;
+	let db = ClamavDB::<F>::build_or_load(&cfg, sig_file, needs_dfa_file, needs_ised_file, needs_ised_igc_file, &mut vlog, cache_dir, b_read_cache, b_write_cache);
+	db.print_summary(&mut vlog);
+
+	//2. generate the discharging files
+	let file_names = &read_lines(&format!("{}/{}", proot, discharge_list_file));
+	let final_data = file_names.into_par_iter().map(|fpath|
+	{
+		if b_quick{ quick_discharge_file(fpath, &db, &cfg) }
+		else {discharge_file(fpath, &db, &cfg)}
+	}).collect::<Vec<FailDischargeRecord>>();// for each file
+
+	//3. write the report
+	print_discharge_stats(&final_data, &mut vlog);
+
+	//4. print specifically the SED and ISED stats
+	print_sed_stats::<F>(&final_data, db, &mut vlog);
+	write_lines(report_file, &vlog, true);
+}

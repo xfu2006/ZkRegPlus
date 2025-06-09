@@ -1,0 +1,73 @@
+[workspace]
+
+members = [
+    "curve-constraint-tests",
+
+    "bls12_377",
+    "ed_on_bls12_377",
+
+    "bw6_761",
+    "ed_on_bw6_761",
+
+    "cp6_782",
+    "ed_on_cp6_782",
+
+    "bls12_381",
+    "ed_on_bls12_381",
+    "ed_on_bls12_381_bandersnatch",
+
+    "bn254",
+    "ed_on_bn254",
+    "grumpkin",
+
+    "mnt4_298",
+    "mnt6_298",
+    "ed_on_mnt4_298",
+
+    "mnt4_753",
+    "mnt6_753",
+    "ed_on_mnt4_753",
+
+    "pallas",
+    "vesta",
+
+    "secp256k1",
+    "secq256k1",
+    
+    "curve25519",
+    "ed25519",
+]
+resolver = "2"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+incremental = true
+panic = 'abort'
+
+[profile.bench]
+opt-level = 3
+debug = false
+rpath = false
+lto = "thin"
+incremental = true
+debug-assertions = false
+
+[profile.dev]
+opt-level = 0
+panic = 'abort'
+
+[profile.test]
+opt-level = 3
+lto = "thin"
+incremental = true
+debug-assertions = true
+debug = true
+
+# The following patch is to use a version of ark-r1cs-std compatible with
+# v0.4.0 but that includes a cherry-picked commit from after v0.4.0 which fixes
+# the in-circuit scalar multiplication of the zero point. The commit is from
+# https://github.com/arkworks-rs/r1cs-std/pull/124, without including other
+# changes done between v0.4.0 and this fix which would break compatibility.
+#[patch.crates-io]
+#ark-r1cs-std = { git = "https://github.com/arnaucube/ark-r1cs-std-cherry-picked/" }

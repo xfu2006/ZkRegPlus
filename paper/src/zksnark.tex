@@ -1,0 +1,1229 @@
+\section{zkSnark Design}
+\subsection{Overview}
+This section introduces 
+\foldpot,
+an efficient folding scheme
+that is tailored for efficiently verifying
+the discharging algorithms introduced earlier.
+\foldpot, as its name suggests, mixes
+the design from several
+recent folding schemes, including
+SuperNova \cite{SuperNova}, \footnote{SuperNova uses a linear
+folding model as Nova \cite{Nova}. 
+Here we assume heuristically
+that there is no known attack over the number of steps being folded.
+In \cite[Remark 6.3]{BCCT13}, it was pointed out that stronger assumption on
+extractor size/time extractor (e.g., additive over prover) leads
+to polynomial step bound (instead of the constant bound if
+assuming polynomial extractor for a general SNARK scheme for each step
+in a recursive SNARK composition scheme).
+This was shown in recent workk \cite{AGMRecursion}.
+It gives a contrived example
+which shows that when blackbox knowledge extractor run time becomes
+superpolynomial after $\log(\lambda)$ steps, soundness can be broken.
+However, it also shows that under a modified AGM model (where prover keys
+are uniformly distributed), Nova/SuperNova is secure given that
+Pedersen vector commitment is used. Here
+we use the sequential folding scheme for the problem size
+we deal with, which incurs maximum $2^{17}$ steps, though
+PCD tree based folding/accuulation is possible with further
+development work.}
+Cyclefold \cite{CycleFold}, Mangrove \cite{Mangrove} as well as
+finger-printing schemes such as Mirage+ \cite{AIPRam}, and the
+idea of NARK compiler from ProtoStar \cite{ProtoStar}.
+We also assilate the idea of finger-printing techniques,
+which were practiced in many previous works \cite{Mirage,AIPRam,Zkreg},
+and adapt it in the folding schemes.
+
+We first introduce the design goals that lead to the design
+of \foldpot.  First, we would like to discharge a 
+large collection of files (e.g., all Linux
+executables). It is known that folding/accumulation 
+provides an overall more efficient solution
+than proof agregation schemes SNARKPack \cite{SNARKPack} 
+and GIPA \cite{Bunz21} both asympototically (at verifier) and
+concretely (at prover). Given that discharging of each individual file
+needs to stack discharging steps non-uniformly,
+we decide to adopt SuperNova \cite{SuperNova} for its 
+support of non-uniform sub-circuits. It is appealing to provide
+concretely small and constant size proof, especially verifiable
+on-chain (e.g., ETH), CycleFold \cite{CycleFold} provides
+an efficient decider proof generation over half pairing groups
+BN254 + Grumpkin, so that $O(1)$ final decider proof can be
+generated over BN254.
+Finally, the system relies heavily on finger-printing techniques,
+and our circuit model adapts the one from Mirage+ \cite{AIPRam}.
+We then integrate the idea of commit-and-fold from 
+Mangrove \cite{Mangrove}: commitments of partial segment of
+witnesses can be added into committed R1CS instance, and the check
+can be delayed to final decider proof. Leveraging on Mangrove's
+commit-and-fold scheme, we develop low-cost techniques for
+passing data between non-uniform circuits.
+
+Our contributions are: (1) A compressing scheme for interactive R1CS
+model \cite{AIPRam} that results in less communication rounds (and hence
+less recursion overhead); By instantiating the commit-and-fold
+scheme in Mangrove \cite{Mangrove}, we are able to produce: 
+(2) An efficient input/output passing scheme
+between non-uniform step-circuits, which has considerable benefits
+over general RAM techniques for streaming circuits; (3) 
+A constant-size batching-proof protocol that handles the batch
+proof problem for non-uniform problem statements. 
+
+\subsection{Circuit Model}
+To integrate the finger-printing technique in folding schemes,
+we mix the I-R1CS model for Algebraic Interactive Protocol (AIP)
+in \cite{AIPRam} and the commited R1CS relation of Nova/SuperNova
+\cite{Nova}. The 
+finger-printing technique divides witness into multiple segments, where
+subsequent segments depend on the Fiat-Shamir public coin 
+randoms that are generated from the hash of previous segments.
+This technique has been widely deployed in real-world proving
+systems such as Halo2 \cite{Halo2}.
+The challenge here in folding
+is that {\em the number of segments determines the number of
+commitments}, which linearly increases the cost of the prover
+for final decider. In our context,
+one additional commitments costs at least
+$5$ million R1CS per non-uniform circuit.
+We therefore seek to reduce the number of segments,
+and present a $\Sigma$-IR1CS model (which is a weaker model
+than the general I-R1CS) but allows only one segment commitment.
+
+We first motivate the model. Consider the $\cp$ algorithm, which
+given an input word $s$, returns a collection of signatures
+that cannot be discharged by $\cp$. The algorithm walks $s$
+through ACDFA, from the acceptance path, extracts
+a multi-set of acceptance states, compressing it into
+a unique set, performing a join relation with a table that
+maps from final states to signatures, and then converting 
+the multi-set into a standard set. The algorithm can be
+regarded as a sequential composition of a constant number
+of component interactive protcols that heavily rely on
+public-coin challenges from the verifier. For instance,
+to prove two multi-sets $\myvec{a} \in \F^n$ and $\myvec{b} \in \F^n$ 
+are permutation of each other, the verifier samples a challenge
+$\beta$ and verifies, which is widely used, e.g., in lookup arguments
+such as plookup \cite{plookup}:\footnote{CHECK TODO: see if this
+ref is accurate}
+\[
+	\prod_{i=1}^n (\myvec{a}_i + \beta)  =
+	\prod_{i=1}^n (\myvec{b}_i + \beta) 
+\]
+
+Such sequential composition of interactive protocols is
+nicely captured by the notion of AIP and I-R1CS \cite{AIPRam},
+where an I-RICS instance has a constant number of message
+exchanges, and a final R1CS check (which is similar to the
+NARK verifier in ProtoStar \cite{ProtoStar}, with the
+restriction of degree $2$). 
+In \cite{AIPRam}, the multi-round interaction is handled
+by a multi-segment variation of Groth16 \cite{Groth16}
+and commit-and-prove extension of Mirage \cite{Mirage}, because
+verifier can perform the Fiat-Shamir to generate public coin
+challenges out-of-circuit.
+
+In our context, the circuit has to be folded. Generating a commitment
+for each round of messages to be exchanged is expensive, because
+it increases recursion overhead. Instead, we use a 
+restricted I-R1CS (called $\Sigma$-I-R1CS) that consists of
+only two messages from the prover to verifier, one at
+the beginning, consisting of the concatenation of problem statements
+and all messages that are independent of public coins, and
+the last message consists of all intermediate messages that
+depend on random challenges. We show that a restricted AIP bound by
+a certain ``join" property can always be
+compiled into a 3-move I-R1CS, and then using the 
+ProtoStar compiler \cite{ProtoStar}, compiled into a NARK.
+We motivate our construction using an example.
+
+\begin{example} \label{examp:ir1cs}
+Assume there is a lookup table $\myvec{T} \subseteq \F$ which defines
+a range that excludes $0$ (e.g., a set of final states of an ACDFA,
+which ranges from $1$ to $2^{k}-1$ for some $k$).
+Given $\myvec{a} \in \myvec{T}^{m}$ and $\myvec{b} \in \myvec{T}^n$,
+consider the task of proving that $\myvec{a}$ is the {\em set support}
+of multi-set $\myvec{b}$, that is: $\myvec{a}$ includes all the elements of
+$\myvec{b}$, and $\myvec{b}$ includes all of $\myvec{a}$, and there is no duplicate element in $\myvec{a}$, assuming that all elements of
+$\myvec{a}$ and $\myvec{b}$ belong to $\myvec{T}$.
+
+We can denote it as a relation 
+$(\myvec{a}, \myvec{b}, \myvec{T}; \myvec{w}) \in R$, where
+a four element tuple $(m,n,2^{k}-1, 0)$ defines $R$'s structure (length
+of each message vector).
+Here $\myvec{a}$, $\myvec{b}$, $\myvec{T}$ are the
+problem statement that 
+is visible by both the prover and verifier.
+$\myvec{w}$ (separated using \texttt{;} from the statement)
+is the secret witness of prover. For this example,
+$\myvec{w} = \emptyset$.
+We call $R$ an {\em algebraic relation with a fixed structure} 
+as all elements involved
+in the relation are field elements.\footnote{We note that 
+group elements can always be represented non-natively given a 
+target field by bit-splitting.} 
+We sometimes write $(\myvec{a}, \myvec{b}, \myvec{T}) \in R$
+for short when context is clear.
+
+Note that relation $R$ has an interesting property: it is a 
+{\em natural join} of three 
+relations: $R_1$, $R_1'$, and $R_2$. Here, 
+$R_1(\myvec{x},\myvec{y};\myvec{w}_1)$ asserts a lookup relation
+that all elements of $\myvec{x}$ belongs to $\myvec{y}$.
+$R_1'$ is exactly the same as $R_1$ except changing
+the config by swapping the size of the first 
+two problem statement elements.
+$R_2(\myvec{x}, \myvec{T};\myvec{w}_2)$ asserts that
+all elements of $\myvec{x}$ are unique (assuming all 
+$\myvec{x}_i \in \myvec{T}$).
+Apparently $(\myvec{a}, \myvec{b}, \myvec{T}) \in R$ if and only if 
+there exists $\myvec{w}_1$, $\myvec{w}_2$, and $\myvec{w}_3$ s.t.
+$\myvec(\myvec{a}, \myvec{b}; \myvec{w}_1) \in R_1$,
+$\myvec(\myvec{b}, \myvec{a}; \myvec{w}_1) \in R_1$,
+and $\myvec(\myvec{a}, \myvec{T}; \myvec{w}_2) \in R_2$.\footnote{In 
+real implementation, we allow $\myvec{a}$ and $\myvec{b}$ to
+contain $0$ as dummy filler elements to make the circuits
+more general purpose at slightly more constriant cost.}
+
+For $R$, each of its sub-relation has a constant move special
+sound protocol (similar to those defined in ProtoStar \cite{ProtoStar}).
+For instance, Consider $R_1$, it has a $3$-move special sound protocol
+by \cite{Hab22}, as shown in $\proto_1$ in Figure \ref{fig:2shots}. 
+Similarly, let $\proto_1'$ be the protocol for $R_1'$.
+Its basic idea
+is that if the lookup relation holds, the sum of logarithmic derivative
+of the elements of two vectors will match. Protocol
+$\proto_2$ for $R_2$ is essentially running $\proto_1$ to prove
+that the difference for each pair of elements of $\myvec{x}$ is
+a positive integer, excluding $0$ (because $0 \not\in \myvec{T}$),
+thus proving $\myvec{x}$ is sorted in ascending order, hence
+a set without duplicates. One can see that each corresponds to
+an I-R1CS protocol where a degree $2$ function is performed
+at the end for making checks. It is known that degree $2$ functions
+can be expressed in R1CS.
+
+Sequential composition of these protocols is costly in folding.
+Instead, we can compile them into $\proto$ as shown in Figure\ \ref{fig:2shots}.
+Basically, it combines all the first message from all sub-protocols
+in its first message, keeping the structure of public coin verifier
+challenges, and then combine all ``response" messages from sub-protocols
+in one last message, and then projecting each individual messages
+from the combined messages, and run the degree $2$ check functions
+correspondingly.  We call this compiled protocol {\em $\Sigma$-I-R1CS} 
+because it has 3 moves.
+
+We can then apply the comiler technique in ProtoStar
+\cite[Section 3.2]{ProtoStar}, to compile a
+$\Sigma$-I-R1CS into a committed protocol
+by sending commitments of the first and
+third message, and add additional checks to open them (as shown in
+$\proto_{\textrm{cm}}$ in Figure\ \ref{fig:2shots}).
+One might wonder why sending the commitments and then
+immediately open them up. The reason is that these commitments
+are included as part of the committed instances
+to be folded, and the opening check only performed at the final decider proof,
+{\em only once} for many instances that are folded.
+\end{example}
+
+Let $\rohash$  denotes the hash function to instantiate 
+the random-oracle.
+We summarize our discussion and the main finding below.
+
+\begin{definition} An algebraic relation $R$ is an NP relation
+over $\F$ with a fixed structure.
+We call $R(\myvec{x})$ {\em decomposible by joins} of a constant number of
+relations $R_1, ... R_k$ if all of the following
+are satisfied:
+(1) Each $R_i$ has a special-sound
+$\Sigma$-protocol, and
+(2) Denote $\myvec{x}$ as $\myvec{x}^{(k+1)}$.
+There exists a join function $\varphi$ s.t.
+$\varphi$ is a DNF (disjunctive normal form) of 
+equality constraints of form $\myvec{x}^{(i)}_u = \myvec{x}^{(j)}_v$,
+where $0\leq i,j \leq k+1$.
+For any $(\myvec{x}, \myvec{w})$:
+$(\myvec{x}; \myvec{w}) \in R$ if and only if
+there exists 
+$(\myvec{x}^{(1)}; \myvec{w}^{(1)}) \in R_1$,
+$(\myvec{x}^{(2)}; \myvec{w}^{(2)}) \in R_2$,
+...
+$(\myvec{x}^{(k)}; \myvec{w}^{(k)}) \in R_k$, 
+and $\varphi(\myvec{x}^{(1)}, ..., \myvec{x}^{(k)},\myvec{x}) = \texttt{true}$.
+\end{definition}
+
+We note that there can be more expressive form of expressing the
+join relation $\varphi$, but this form sufficies for our applications.
+Note that $\varphi$ is degree $1$, hence it can be encoded in R1CS.
+
+\begin{figure*}
+%\resizebox{4.5in}{4.5in}{
+\resizebox{0.90\textwidth}{!}{
+	\input{src/prot1.tikz}
+}
+\caption{Protocols for Example \ref{examp:ir1cs}}
+\label{fig:2shots}
+\end{figure*}
+
+\begin{lemma}\label{lemma:ir1cs}
+Let $R$ be a decomposable relation joined by
+$k$ sub-relations with special-sound $\Sigma$-protocols.
+There exists a $3$-move
+special-sound I-R1CS protocol for $R$. 
+\end{lemma}
+
+\begin{proof} 
+We use $\proto_s(R)$ to denote the I-R1CS protocol that sequentially
+composes all $k$ sub-protocols of $R$, which performs
+the check of join relation $\phi$ and the R1CS checks for
+all of the sub-relations, and returns the conjunction of the Boolean
+results. $\proto_s(R)$ is a complete and special-sound protocol
+for $R$, and it has $3k$ moves.
+
+We use $\proto_p(R)$
+to represent the $\Sigma$-protocol which is constructed by
+sequentially concatenating the first messages of all 
+subprotocols of $R$ for its first messages, and similarly
+constructing its second and thrid messages.
+$\proto_p(R)$ has $3$-moves. Its last R1CS module
+performs the check of $\phi$ and the R1CS checks of all
+sub-protocols.
+It is apparent that for any transcript $\proto_s(R)$,
+there is a one-to-one mapping $\Psi_R$ which uniquely
+constructs a transcript for $\proto_p(R)$. $\Psi_R$ can 
+be directly inferred from the structure information of $R$
+and its sub-protocols.
+
+It is not hard to see that $\proto_s(R)$ and $\proto_p(R)$
+are equivalent, in the sense that, for an accepted transcript $t$ 
+of $\proto_s(R)$, its $\Psi_R(t)$ is also accepted by $\proto_p$;
+vice versa for the inverse relation $\Psi_R^{{-1}}$.
+An ``invalid" transcript (which falsely proves a 
+$(\myvec{x};\myvec{w}) \not\in R$
+is in $R$) has negilible probability of passing $\proto_s(R)$,
+and also for $\proto_p(R)$. The soundness error of the two protcols
+are the same, both linearly degrading with the number of sub-protocols,
+because the R1CS check modules of the two are equivalent.
+
+When Fiat-Shamir is applied to $\proto_p(R)$,
+the soundness loss {\em independent} of the number of public coin verifier 
+challenges, per \cite{SpecialFiat}.
+\end{proof}
+
+We note that our I-R1CS model (even extended to more than
+$3$ messages) is a strictly (restrictive) weaker 
+than the original I-R1CS \cite{AIPRam}. The key difference is that, by 
+the restriction of ``join" relation, our model explicitly {\em enforces that
+the second and third message of sub-protocols do not have
+dependence on other sub-protocols}, only the claims of sub-protocols
+might be related. This ``restriction" allows the projection between
+$\proto_s(R)$ and $\proto_p(R)$. This model can still capture
+a wide spectran of application scenarios, e.g., all of circuits
+in our ZkregPlus system satisfy the condition. 
+%and the same applies
+%to the RAM protocols in \cite{AIPRam}.
+
+\subsubsection{Lookup Table}
+One drawback of the protocols presented in Figure\ \ref{fig:2shots}
+is that if the lookup table size is much larger than the
+statement vector, it is concretely very inefficient. We provide
+two solutions for the problem. 
+
+One solution, when the total
+prover work is small (e.g., very small number of folding steps
+or in the case of no folding), one can use commit-and-prove approach
+to take out the commitment of all elements that need to perform
+lookups, and then outside of the circuit, run an independent
+zero knolwedge lookup protocol. As the lookup table is fixed for
+our application scenario, it can be pre-processed. We provide
+a zero knowledge version of the CQ protocol \cite{cq} in Appendix 
+\ref{apdx:zk_cq}, as an contribution of independent interst.
+In this case, the prover only has to pay a concrete cost
+of the query table size (which is indpepenent of the size of
+the container table). The protocol in \ref{apdx:zk_cq}
+can be replaced by the zk-cq protocol in \cite{MatrixLookup},
+which has slightly smaller proof size but higher prover cost than our
+protocol.
+
+The second solution is to adopt the commit-and-fold scheme presented in 
+Mangrove \cite{Mangrove}. When the total prover work (e.g., folding
+$2^{17}$ circuits of an average circuit size of $2^{16}$ each,
+a lookup table of $2^{28}$ can be distributed into each step, 
+incurring a negligible cost of about $3\%$). We adopt the Mangrove approach
+in our implementation for its convenience. 
+We note that the folding lookup scheme in ProtoStar \cite{ProtoStar} yields
+similar asympototic and estimated similar concrete performance.
+
+There is one more issue to consider: for the ZkregPlus system,
+there are many individual look-up tables. Range proofs are all
+achieved using lookups, and there are several different
+types of range proofs: ACDFA states are $23$ bits,
+input alphabet is $4$-bit, and signature IDs are $16$ bits.
+The $\cp$ approach needs 2 ACDFAs, one for case insensitive and
+one for case sensitive. The $\bw$ and $\sde$ combined,
+needs 2 more ACDFAs.  In total, these $4$ ACDFAs, have
+about $160$ million transtions, to be encoded in four separate
+look-up tables. We also need to encode the $\bw$ and $\sde$
+discharging instructions separately.  
+
+We put all these separate tables into one $2$-column look-up table,
+with first column indicates the sub-table ID, and the second column
+indicates the value. We reserve $0$ as $\texttt{null}$
+sub-table ID. The logarithmic derivative approach 
+\cite{Hab22,cq,ProtoStar} supports multi-column table well.
+
+Putting all ingredients together, we now have the formal
+definition of $\Sigma$-I-R1CS enriched with lookup. It is
+used to specify the step-circuit in FoldPot, essentially
+adopting the SuperNova \cite{SuperNova} + CycleFold \cite{CycleFold}.
+This definition is adapted from \cite[Definition 1]{AIPRam}.
+
+\begin{definition} \label{deff:ir1cs}  
+A $\Sigma$-I-R1CS is a tuple $\phi$ defined
+as below:
+\[
+(N, n, \F; \myvec{T} \in \F^{N\times 2}, 
+\ell_x, \ell_{m_1}, \ell_{m_2}, \ell_{m_3} \in \nat; 
+A,B,C \in \F^{n\times m}; \chi)
+\]
+Here $\myvec{T}$ is a pre-processed 2-column look-up table.
+$\chi: \nat \rightarrow \nat$ is a function that maps
+a variable index to a sub-table ID in $\myvec{T}$.
+The protocol 
+defines a 3-round AIP over $\F$. The prover sends the first (including
+statement) and third message, and the verifier sends
+the second message of uniformally sampled challenges.
+Let $\myvec{x}$ be the statement, and $\big\{\myvec{m}^{(i)}\big\}_{i=1}^{3}$
+be the three round of messages.
+let $m$ = $\ell_x + \ell_{m_1} + \ell_{m_2} + \ell_{m_3}$.
+The R1CS checker consists of three matrics $A, B, C$ of $n$ constraints.
+Let $z = \myvec{x} \concat \myvec{m}^{(1)} \concat \myvec{m}^{(2)}
+	\concat \myvec{m}^{(3)}$. 
+The verifier accepts if $Az \circ Bz = Cz$, and
+for each $i\in [m]:$ if $\chi(i) \neq \texttt{null}$ then
+$(\chi(i), z_i) \in \myvec{T}$, i.e.,
+$z_i$ is in sub-table $\chi(i)$.
+\end{definition}
+
+\subsection{Commit-and-Fold}
+\label{cf_zksnark}
+We now briefly review the commit-and-fold scheme proposed in
+Mangrove \cite{Mangrove}, which we later instantiate to support
+inter-circuit data passing and batch processing of non-uniform word
+problems.
+
+The base line of FoldPot is SuperNova \cite{SuperNova} and 
+CycleFold \cite{CycleFold}, which solves non-uniformity of 
+circuits in folding, and delivers
+$O(1)$ proof. However, we still need to address the following challenges.
+
+\begin{enumerate}
+\item We need to handle large files (e.g., $2^{27}$ bytes) in
+``streaming" mode. In this case, step-circuits need to pass
+large amount of input/output data. We need a concretely
+more efficient schemes than the general RAM approach (e.g., \cite{AIPRam}).
+
+\item We need to discharge a collection of files in batch, and
+then provide an individual (2-stage) proof for each file.
+Given an aggregated word $\myvec{s}$ which is a concatenation
+of $k$ segments, i.e.,
+$\myvec{s} = \myvec{s}^{(1)} \concat \myvec{s}^{(2)} \concat ... \concat \myvec{s}^{(k)}$, and the individual commitments to each $\myvec{s}^{(i)}$,
+we need to link these segment commitments with the $\myvec{s}$ in circuit,
+and prove all of them malware free. Here the challenge is that
+these word segments can have arbitrary length.
+\end{enumerate}
+
+We first present a simplified framework of Mangrove's 
+commit-and-prove, in the context of committed R1CS used by Nova,
+SuperNova and CycleFold, as all of our circuits are low-degree.
+Recall the Nova \cite{Nova} framework: the folding prover
+is given a running instance $(\myvec{U}_i; \myvec{W}_i)$ and an incoming (step)
+instance $(\myvec{u}_i; \myvec{w}_i)$, where $\myvec{W}_i$ and 
+$\myvec{w}_i$ are the witnessnes,
+and fold them into a new instance $(\myvec{U}_{i+1}; \myvec{W}_{i+1})$. 
+A folded instance is a tuple 
+$(\overline{\myvec{W}}, \overline{\myvec{E}}, u, x)$,
+where $u$ and $x$ are ``public" parameters of relaxed R1CS relation,
+and $\overline{\myvec{W}}$ and $\overline{\myvec{E}}$ are homomorphic
+commitments (e.g., Pedersen vector commitments) to the
+witness and cross terms. The folding verifier in the IVC scheme
+does not have to check the opening of $\overline{\myvec{W}}$ and 
+$\overline{\myvec{E}}$ at each step. Instead, the 
+check is {\em delayed} to the final decider proof,
+and performed {\em only once} for all folded instances. 
+
+The key observation made by Mangrove \cite{Mangrove} is that:
+the committed instance can have extra commitments on subset of witnesses.
+The opening of these commitments can be also delayed to the 
+final decider step. Thus, if one performs a one pass aggregation (e.g.,
+using Merkle tree) of these extra commitments, a commit-and-prove
+scheme like LegoSNARK \cite{LegoSnark} can be achieved.  
+In our context, the commitment to the subset of witness
+can be used for generating the Fiat-Shamir randomness
+and can be verified in-circuit.
+
+In Mangrove, the formalization of commit-and-fold
+was made using the polynomial relations, which supports high-degree.
+We re-instate the result of Mangrove in the context of 2-degree R1CS
+as below.
+Given a $\Sigma$-I-R1CS instance $\phi$ whose
+R1CS relation is $A,B,C \in \F^{n\times m}$, where
+$m$ is the number of variables. Enrich $\phi$ with
+$\rho$, a subset of $[0,m-1]$ sorted in ascending order.
+Given the fixed size witness vector $\myvec{W}$, we
+use $\rho(\myvec{W})$ to denote the projection of $\myvec{W}$ over
+the indices included in $\rho$. For example, let
+$\myvec{W} = (5, 30, 20, 1)$ and $\rho = (0, 2)$, then
+$\rho(\myvec{W}) = (5, 20)$.
+We denote the new $\Sigma$-I-R1CS instance as 
+$\phi_{\rho}$.
+The following defines relaxed and committed R1CS instance.
+The difference from NOVA is the addition of the
+projected commitments: $\overline{\rho(\myvec{W})}$.
+
+\begin{definition} (extending \cite[Definition 12]{Nova})
+\label{def:extr1cs}
+A relaxed R1CS instance of $\phi_\rho$ consists
+of $\myvec{A},\myvec{B},\myvec{C} \in \F^{n\times m}$ as in $\phi$,
+an error vector $\myvec{E} \in \F^m$, and a scalar $u\in F$,
+and input/output vector $\myvec{x} \in \F^{\ell}$.
+Let $\myvec{z} = (\myvec{W}, \myvec{x}, u)$, and
+$(\myvec{z}, \myvec{W^{(\rho)}})$ 
+is accepted if $\myvec{A}\myvec{z} \circ \myvec{B}\myvec{z} 
+= u(\myvec{C}\myvec{z}) + \myvec{E}$
+and $\myvec{W^{(\rho)}} = \rho(\myvec{W})$. 
+A committed R1CS instance for $\phi_\rho$ is a tuple 
+$(\overline{\myvec{W}},$
+$\overline{\myvec{E}}, u, \myvec{x}, \overline{\myvec{W^{(\rho)}}}$.
+\end{definition}
+
+The Nova/SuperNova folding schemes can be modified correspondingly.
+When folding $\overline{\myvec{W}}$, $\overline{\myvec{W^{(\rho)}}}$ 
+can be folded correspondingly (and in CycleFold, it can be fed
+to a CycleFold circuit works on Grumpkin curve similarly). 
+At the final decider, the verifier checks the 
+folded $\myvec{W^{(\rho)}} = \rho(\myvec{W})$, 
+and they are the opening to the folded commitments.
+The correctness of the scheme depends on the following
+lemma, which is apparent.
+
+\begin{lemma} Let $|\rho| = v$. Assume
+$\overline{\myvec{W}}$ and $\overline{\myvec{w}}$ are 
+commitments to some $\myvec{W} \in \F^n$ and $\myvec{w} \in \F^n$. Similarly
+$\overline{\myvec{U}}$ and $\overline{\myvec{u}}$ are 
+commitments to $\myvec{U} \in \F^v$ and
+$\myvec{u} \in \F^v$. 
+Let $r$ be a public coin verifier challenge,
+$\myvec{W'}$ be the opening to 
+$\overline{\myvec{W}} + r\overline{\myvec{w}}$,
+and $\myvec{U'}$ the opening to 
+$\overline{\myvec{U}} + r\overline{\myvec{u}}$.
+If $\myvec{U'} = \rho(\myvec{W'})$ then the probability that
+$\myvec{U} \neq \rho(\myvec{W})$ or $\myvec{u} \neq \rho(\myvec{w})$ 
+is negligible.
+\end{lemma}
+
+% The the knowledge extraction of the two partial commitments simply
+% follows the knowledge soundness proof of the Nova/SuperNova framework.
+% 
+% In the following, we give a preview of how the two witness subsets
+% are used.  Given a statement to prove, one can view $\myvec{W^{(1)}}$ 
+% as the ``fixed" subset of witnesses that do not depend on
+% the verifier's random challenge. For instance, assume we are to prove
+% that a string $w$ is accepted by a DFA, its witness will include
+% the sequence of states along the acceptance path. This is regarded
+% as ``fixed" witness. Then, transitions can be computed from
+% source/destination states and characters from $w$. They are also
+% fixed.  To assert that
+% a transition $t$ is valid, this can be achieved by proving that
+% $t$ is contained in a preprocessed lookup table. We apply
+% the logarithmic derivative technique \cite{Hab22} as shown in $\proto_1$ of
+% Figure\ \ref{fig:2shots}. This needs a verifier challenge. Applying
+% Fiat-Shamir, the challenge is generated in-circuit by hash on
+% the prior messages (which is the set of ``fixed" witness). Then,
+% more witnesses are included, but they depend on the Fiat-Shaimir 
+% randomness, which in turn depends on the set of fixed witness.
+% Later, we will see that for supporting the batch discharging of
+% file collections, we need two layers of Fiat-Shamir. Then 
+% $\myvec{W^{(2)}}$ depends on $\myvec{W^{(1)}}$, and the
+% rest of witness depend on $\myvec{W^{(2)}}$.
+To apply the finger-printing technique in circuit,
+a binding commitment to the fixed witness subsets have to be
+generated by the prover by performing a 1st walk before generating
+the proof, so that the commitment can be used to generate Fiat-Shamir
+randomness. Following Mangrove, but in a sequential folding scheme,
+we use a hash-chain.
+
+Let their be $k$ step-circuits involved in a prover job.
+Let the $\myvec{W^{(\rho)}} = 
+	\myvec{W^{(\rho,1)}} \concat
+	\myvec{W^{(\rho,2)}} \concat ...
+	\myvec{W^{(\rho,k)}}$.
+We define $\hashchain(\myvec{W^{(\rho)}}, i)$ recursively as:
+\[
+	\left\{
+		\begin{array}{l l}
+			\hash(\overline{\myvec{W}^{(\rho,1)}}) & \textrm{ if } i=1 \\
+			\hash( \hashchain(\myvec{W^{(\rho)}}, i-1), 
+				\overline{\myvec{W}^{(\rho,i)}})  & \textrm{ if } i>1 \\
+		\end{array}
+	\right.
+\]
+Now that the hashchain can be computed in circuit by slightly
+enhancing the Nova framework because
+at each step $\overline{\myvec{W}^{(1,i)}}$ is available
+for random linear combination during folding (and also
+as input to the CycleFold component on Grumpkin).
+
+
+\subsection{Passing Data Between Circuits}
+The first application of 
+$\hashchain(\overline{\myvec{W}^{\rho}})$ is to pass data
+between circuits. Recall that $\myvec{W}^{\rho}$ serves
+as a ``fixed" memory.  Here we require that input and output
+buffers of circuits are located at fixed positions of
+$\myvec{W}^{\rho}$ and the hashchain serves as the seed
+for generating Fiat-Shamir randoms. We first handle
+the problem of passing data between $k$ uniform circuits.
+
+For each circuit $i$, its its fixed chunk 
+$\myvec{W}^{(\rho,i)}$ has a fixed
+layout of $u$ elements allocated for input and also $u$ elements
+for output. We denote these two regions as
+$\myvec{I}^{(i)}$ and $\myvec{O}^{(i)}$.  
+Note that $r = \hashchain(\myvec{W}^{(\rho)})$.
+
+We then let $k$ circuits jointly perform the following computation
+(in circuit), essentially asserting the equivlance of
+vector 
+$(\myvec{I}^{(1)}, ..., \myvec{I}^{(k-1)})$ and
+$(\myvec{O}^{(2)}, ..., \myvec{I}^{(k)})$
+\[
+  \sum_{i=1}^{k-1} \sum_{j=1}^u r^{(i-1)*k+j} \myvec{I}^{(i)}_j = 
+  \sum_{i=2}^k \sum_{j=1}^u r^{(i-2)*k+j} \myvec{O}^{(i)}_j 
+\]
+
+The above can be computed by accuulating partial results 
+across circuits, and the equality check be performed in the
+last circuit. The public coin verifier challenge $r$
+guarantees that with negligible probability
+the input and output buffers do not match.
+
+We next extend the above idea to non-uniform circuits in SuperNova. 
+Each circuit (type) has its own configuration (including the
+size of pre-allocated buffer for its input/output regions). These
+are {\em fixed constants} embedded in the circuits.
+Then we need to keep track of the actual
+input/output size. Let them be
+$u_{in,i}$ and $u_{out,i}$ for circuit $i$, they are
+located at some fixed positions in In $\myvec{W}^{(\rho,i)}$.
+Then we just need to perform the following check using
+all circuits in folding:
+\[
+  \sum_{i=1}^{k-1} \sum_{j=1}^{u_{in,i}} r^{(i-1)*k+j} \myvec{I}^{(i)}_j = 
+  \sum_{i=2}^k \sum_{j=1}^{u_{out,i}} r^{(i-2)*k+j} \myvec{O}^{(i)}_j 
+\]
+In addition, each circuit needs to perform in-circuit for: (1) 
+$u_{in,i}$ does not exceed to static input buffer limit; and (2)
+total size of read from the input buffer does not exceed $u_{in,i}$.
+Then similar checks apply to $u_{out,i}$ for each circuit.
+This approach fits our specific application setting, and
+has better concrete performance (mainly $1\times$ the input
+and output buffer size), compared with the
+the general RAM approach (e.g., \cite{AIPRam}, which
+costs at least $43\times$ of memory cell accesses). 
+
+\subsection{Batch Processing with Non-uniform Circuits}
+We now discuss how to batch process a large collection of non-uniform
+files via folding. By ``non-uniform" we mean that these files have
+different sizes, and may generate witness of different size, thus
+relying on non-uniform circuits. In practice, we define
+one or more circuits for each integer logarithm of file sizes.
+We first formally define the problem.
+Let $\myvec{s} = \myvec{s}^{(0)} \concat ... \concat \myvec{s}^{(k)}$
+be a concatenation of $k$ words $\myvec{s}^{(i)}$, and let 
+$\myvec{\ell} = \left(|\myvec{s}^{(i)}|\right)_{i=1}^k$ be the vector
+of string lengths.
+We call $\myvec{s}^{(i)}$
+the $i$'th {\em string fragment} and $s$ the {\em batched string}.
+
+Equation\ \ref{eqn:batch} presents the relation,
+where
+$\left(k, \overline{\myvec{s}}, \left(\overline{\myvec{s}^{(1)}}, ..., \overline{\myvec{s}^{(k)}}\right)_{i=1}^k, \overline{\myvec{\ell}}, R\right)$
+are the public statement also visible to the verifier but 
+$\left(\myvec{s}, \myvec{\ell}, \left(\myvec{s}^{(i)}\right)_{i=1}^k\right)$
+are the secret witness, which are separated from the public
+statement using ``\texttt{;}". 
+Here $R$ represents a collection of regex signatures.
+\begin{equation}
+\left\{
+\begin{array}{l}
+	\left(k, \overline{\myvec{s}}, 
+		\left(\overline{\myvec{s}^{(1)}}, ..., \overline{\myvec{s}^{(k)}}\right)_{i=1}^k,
+		\overline{\myvec{\ell}}, R; \myvec{s}, \myvec{\ell},
+		\left(\myvec{s}^{(i)}\right)_{i=1}^k
+	\right): \\
+	(1) \forall i\in [k]: \myvec{\ell}_i = |\myvec{s^{(i)}}| \And \\
+	(2) \myvec{s} = \myvec{s}^{(1)} \concat ... \concat \myvec{s}^{(k)} \And \\
+	(3) \forall i\in [k]: \forall r\in R: \myvec{s}^{(i)} \not\in L(r)
+\end{array}
+\right\}
+\label{eqn:batch}
+\end{equation}
+
+Intuitively, the public statement asserts the following
+given the commitments to all string fragments and length information:
+(1) All strings $\myvec{s}^{(i)}$ 
+are malware free\footnote{Note that this is however, different from
+asserting that $\myvec{s}$ as a single string is malware free.
+When $\myvec{s}$ is a concatenation of many files, it is easy
+to trigger false positive (identified as a malware).},
+and (2) Each $\overline{\myvec{s}^{(i)}}$ indeed hides the $i$'th
+string fragment of $\myvec{s}$ as defined by the length vector,
+which hides inside $\overline{\myvec{\ell}}$.
+Naturally, the proof consists of two parts: a global batch proof
+for all, and an individual proof for each string fragment.
+Our solution provides $O(1)$ proof size for both.
+
+Note that unlike the folding scheme where Pedersen Vector Commitment
+is used, here in the problem statement
+all commitments are {\em KZG commitments} 
+(where a vector of field elements serve
+as the co-efficients in the univariate polynomial for KZG).
+Given a KZG commitment $\overline{\myvec{x}}$ 
+to a vector $\myvec{x}$
+of degree $d$, we 
+use $\prfkzg(\overline{\myvec{x}}, a, y)$ 
+as the KZG polynomial
+opening proof for: $y = \sum_{i=0}^d \myvec{x}_i a^i$.
+It is known that given the Pedersen Vector Commitment and
+KZG commitment to the same vector, the Quasi-linear NIZK (QA-NIZK)
+\cite{Gonzalez15} provides linear prover complexity and constant
+size proof for their equivalence, as demonstrated in LegoSnark \cite{LegoSnark}.
+
+We now address (1) and (2) of the relation and delay (3) to the next
+subsection.  Due to the
+use of non-uniform circuits, we discharge {\em at most} one 
+string fragment each circuit.\footnote{In another word,
+no circuit will process multiple string fragments.}
+For large string fragment, it may span over multiple circuits.
+For $\myvec{s}^{(i)}$ spanning over $d$ circuits, we list
+these circuits as $\circuit^{{i,1}}, ... \circuit^{{i,d}}$.
+Similarly, their fixed witness subset is denoted as
+$\fm{i,1}, ..., \fm{i,d}$.
+
+The prover first walks over the public statement and defines
+the $\fm{i,j}$ for each step-circuit $\circuit^{(i,j)}$.
+Note that this is ``fixed" information that does not depend
+on any verifier challenge. It can be directly generated from
+the problem statement.
+\[
+	\fm{i,j} = \left(\myvec{s}^{(i,j)}, \myvec{\ell}^{(i,j)}, 
+	\myvec{r}_{i}, \myvec{v}^{(i,j)}\right)
+\]
+Here $\myvec{s}^{(i,j)}$ is the $j$'th slice of $\myvec{s}^{(i)}$
+allocated to circuit $\circuit^{(i,j)}$.
+$\ell^{(i,j)} = \sum_{k=1}^j \myvec{s}^{(i,k)}$ is the accumulated
+length of slices up to $j$. Let $\circuit^{(i,d)}$ be the
+last circuit for processing $\myvec{s}^{(i)}$, then
+$\myvec{\ell}_{i,d} = \ell_{i}$, which is checked in circuit.
+$\myvec{r}_i$ is a Fiat-Shamir verifier challenge used in
+the individual proof. It is pre-computed 
+outside circuit, and served as a non-deterministic advice:
+\begin{equation}
+	\myvec{r}_i = 
+		\rohash\left(\overline{\myvec{s}}, i,
+			\overline{\myvec{s}^{(i)}}, 
+			\overline{\myvec{\ell}}\right) 
+\end{equation}
+
+Define $\myvec{v}_i$ as the following, where
+$\myvec{s}^{(i)}_u$ is the $u$'th element of
+string fragment $\myvec{s}^{(i)}$:
+\begin{equation}
+	\myvec{v}_i = \sum_{u=0}^{d} \myvec{r}_i^u \myvec{s}^{(i)}_u
+\end{equation}
+
+Apparently, $\myvec{v}_i$ is an evaluation of $\myvec{s}^{(i)}$
+as the co-efficient vector of a polynomial.
+$\myvec{v}_i$ can be be computed by accumulating its value
+across circuits. This is done by computing
+$\myvec{v}^{(i,j)}$ as the following:
+$\sum_{u=0}^{\ell^{i,j}} {\myvec{r}}_i^u {\myvec{s}}^{(i)}_u$,
+and apparently for the last circuit in the sequence,
+$\myvec{v}^{(i,d)} = \myvec{v}^{(i)}$.
+
+ The prover then computes the hashchain of the fixed witness subset,
+ and based on it and other KZG commitments in the public statement,
+ compute the Fiat-Shamir challenge $c$:
+ \[
+ 	c = \rohash\left(
+ 		\hashchain\left(\emptyfm\right), 
+ 			\overline{\myvec{r}}, \overline{\myvec{v}}
+ 	\right)
+ \]
+
+Then the prover computes the rest of the witness fo all circuits,
+based on challenge $c$, and after all are folded, the last circuit
+outputs the following:
+\begin{enumerate}
+	\item $y_v = \sum_{i=1}^k \myvec{v}_i c^i$
+	\item $y_r = \sum_{i=1}^k \myvec{r}_i c^i$
+	\item $y_s = \sum_{i=1}^n \myvec{s}_i c^i$
+	\item $y_\ell = \sum_{i=1}^k \myvec{\ell}_i c^i$
+\end{enumerate}
+
+Each individual circuits performs the verification and asserts that
+$\myvec{v}^{(i,j)}$ are computed inside the circuit correctly
+using $\myvec{r}_i$ and $\myvec{s}^{(i,j)}$, and similarly
+$\myvec{\ell}_i$ accumulated correctly using $\myvec{\ell}^{(i,j)}$.
+Then the global {\bf batch proof} consists of the following.
+Thus, by asserting the values of
+the in-circuit $y_v, y_r, y_s, y_\ell$ and their counter-parts
+in the KZG opening proof, the verifier is convinced
+that the shares of $\myvec{v}, \myvec{r}, \myvec{s}, \myvec{\ell}$
+are distributed across all circuits in their fixed memory correctly.
+
+\begin{enumerate}
+\item $\prf_{\texttt{snark}}$ is the final decider proof (compressed
+	using Groth16 \cite{Groth16} in CycleFold) for the folded circuits.
+\item 
+$\prfkzg(\overline{\myvec{r}}, c, y_c)$,
+$\prfkzg(\overline{\myvec{s}}, c, y_s)$
+$\prfkzg(\overline{\myvec{v}}, c, y_v)$, and
+$\prfkzg(\overline{\myvec{\ell}}, c, y_\ell)$
+which can be further aggregated.
+\end{enumerate}
+
+
+We now proceed to each {\bf individual proof}. 
+Given a homomoric commitment $\overline{\myvec{x}}$ to a vector,
+$\prfvec(\overline{\myvec{x}},i,y)$ asserts that the $i$'th
+element of $\myvec{x}$ is $y$. Then for each
+statement $\left(\overline{\myvec{s}^{(i)}}, i, \overline{\myvec{s}}, 
+\overline{\myvec{\ell}}\right)$, i.e.,
+$\overline{\myvec{s}^{(i)}}$ hides the $i$'th string segment in $\myvec{s}$
+as defined by the length vector in $\overline{\myvec{\ell}}$, 
+the individual proof consists of the following (in addition
+to the global batch proof):
+\begin{enumerate}
+	\item Fiat-shamir transform of verifier challenge: $\myvec{r}_i = 
+		\rohash\left(
+		\overline{\myvec{s}}, \overline{\myvec{\ell}},
+		\overline{\myvec{s^{(i)}}}, \overline{\myvec{v}}\right)$.
+	\item 
+		$\prfvec(\overline{\myvec{v}}, i, \myvec{v}_i)$,
+		$\prfvec(\overline{\myvec{r}}, i, \myvec{r}_i)$
+	\item $\prfkzg(\overline{\myvec{s}^{(i)}}, \myvec{r}_i, \myvec{v}_i)$,
+\end{enumerate}
+
+Intuitively, the proof works by
+ performing finger-printing
+ on $\myvec{s}^{(i)}$ at random point $\myvec{r}_i$ (producing
+ $\myvec{v}_i$).\footnote{In practice, the KZG commitment
+ of $\myvec{s}^{(i)}$ by padding it with extra random elements,
+ as many systems such as Halo2 \cite{Halo2}.}
+%  Note that actually $\hashchain(\emptyfm)$ is {\em not} needed
+%  to generate $\myvec{r}_i$, because the contents $\myvec{s}$
+%  have already been ``fixed" and linked to be equivalent to
+%  $\overline{\myvec{s}}$ in the global batch proof, which eliminates
+%  the possibility of adversary action to adaptively 
+%  set the conntents of $\emptyfm$ (including
+%  $\myvec{s}^{(i)})$ based on $\myvec{r}_i$.
+%  \footnote{If $\hashchain(\fm)$
+%  is used to generate $\myvec{r}_i$, then a second layer
+%  of $\emptyfm$ is needed, by increasing one CycleFold gadget for each
+%  circuit. At the final decider step, this incurs a cost of
+%  $5$ million R1CS per non-uniform circuit type.}
+ 
+\subsection{==== NOT USED BELOW====}
+
+
+
+implementation of folding schemes, 
+
+In this section, we discuss how to efficiently encode the
+5-stage regex discharging algorithms in zkSNARK. Given that
+there are many small files (e.g., emails), it is not economical
+to provide a proof with size almost comparable to the original
+file size. We opt for pairing based constant size proof system
+such as Groth16 (instead of log-size proof system such as sumcheck
+based systems). Our choice of proving scheme s is also limited
+by the choice of open-source folding scheme implementations available
+at the time the project is implemented.
+In this case, we choose to adopt Sonobe (an implementation of
+Nova + Cyclefold folding schemes that work for BN254-Grumpkin curve
+that allows producing final decider proof in Groth16). 
+,It is possible to encode our 5-stage discharging algorithms using
+many other schemes, such as Plonk based for universal prover keys,
+or Mangrove for PCD foldings schemes with constant memory footprints,
+and we leave them for future work.
+
+We have several design challenges to overcome.
+First of all, we would like to take advantage of
+the folding schemes so that the prover cost can be
+minimized. Second, in addition to mass processing regex signatures,
+we can also mass-discharge files, e.g., providing
+a commitment to a large collection of files (e.g., all binary executables
+or all Enron emails), provide an $O(1)$ proof for free of
+malware for all of them, and then provide a membership 
+of an individual file commitment belong to the combined commitment.
+Third, to achieve the aforementioned scheme, we have to
+handle vast difference in file sizes from $2^{9}$ to $2^{27}$.
+This concerns handling non-uniform circuits (with different size).
+Fourthly, we need to handle lookup arguments effectively.
+Although CQ lookup is handled in ProtoStar, we present
+a simpler stand-alone zk-CQ protocol which shows similar
+concrete prover effiicency.
+
+\subsection{Consideration of Folding Cost}
+For the vast majority of folding schemes that follow the Nova folding,
+it is shown that prover concrete efficiency is $4\times$ of Groth16.
+However, there is a final decider scheme (in Sonobe) that is expensive
+to compute, its cost is shown in the following, given $n$ the step-wise
+circuit size, $k$ the number of steps applied in folding: 
+\[
+	2^{13.5} + 3n
+\]
+Mainly, the $2^{13.5}$ is a fixed non-native field arithmetic component in the decider and $3n$ is the linear cost on proving the step-wise R1CS relation.
+Now given that folding itself takes $2n$ group operations per step, the fraction of the decider proof genreation among the total cost is, when $k$ is large enough:
+\[
+\frac{2^{13.5} + 3n}{2nk} \approx \frac{1.5}{k}
+\]
+
+In our later presentation, we will need to customize the Sonobe final decider
+proof, which will add several more ``expensive" constant size computation. 
+However, given that $k$ is large enough, they will be amortized soon, which
+does not cause concern. 
+
+Also another interesting point is the step-wise circuit size.
+In the celebrative work of Mangrove, it is shown how any arbitrary Plonk
+Irelation can be chunked into any arbitrary thread of smaller computation,
+which allows arbitrary folds of scalability via parallelism, i.e.,
+it allows chunking a large R1CS into many very small steps.
+In our case, server RAM is not a concern, so that we allow large
+step-wise circuit size, as long as it does not make $k$ too small.
+
+\subsection{Road Map}
+In this section, we will first discuss how to encode the $5$-stage 
+regex discharging algorithm efficiently in R1CS. We then discuss a 
+customized folding scheme to support batch process a large collection
+{files. 
+
+\subsection{Encoding $5$-Stage Regex Discharging Algorithm}
+\subsubsection{Encode DFA (TODO)}
+In practice, an ACDFA can be transformed into a DFA. As DFA acceptance is
+needed in various parts of the entire algorithm, we discuss them first.
+
+The key idea is that: there is an external and precomputed lookup table
+of all DFAs needed (notice that there are multiple tables). But we integrate
+them into one table of two columns $\texttt{TableID}, \texttt{Entry}$.
+
+TODOS in details: rough idea
+
+(1) discuss how to encode DFA transition
+(
+(2) discuss what kind of information will be stored in external table, e.g., transitions (for different DFAs), the critical patterns needed by each signature).
+
+(3) present an algorithm in R1CS or circuit, which takes in witnesses: (source state, char, dest state) sequence, produces (still secret) output: the set of signatures that should be triggered (those who have their critical patterns appear along the acceptance path)
+
+(4) present a variety of gadgets that proves permutation of vectors, equivalence of vectors and its sorted form, packing a vector to a set etc. In particular, notice that we can use the in-circuit form of the Habock scheme \cite{Hab22} for proving lookup relation between two vectors (when they are small) {\em in circuit}, this is useful for proving a ``set" is reduced from a vector with duplicate items.
+
+(5) Given the gadgets, this motivates the definition of R1CS relation with $2$ stages (to allow to generate the random needed by the gadget), and 
+the need to tag some some elements for the use of external lookup argument.
+
+\subsection{Customized zkSNARK with Folding Schemes}
+To support the design goal of batch processing large quantity of files against
+large collection of regex signatures, we present a customized
+folding scheme by adapting the Nova \cite{Nova} + Cyclefold \cite{CycleFold}
+with a Groth16 final decider proof generator (based over the Sonobe
+\cite{Sonobe} framework).
+
+\subsubsection{Discussion of Fiat-Shamir}
+Applying Fiat-Shamir is tricky, as pointed in \cite{WeakFS},
+Fiat-Shamir needs to include statement to defeat adaptive adversaries.
+There were other attacks on parallel repetition of multi-round
+protocols, however, it is shown in \cite{SpecialFiat} that
+for {\em special sound} interactive protocols the security degrades
+only linearly with the number of queries to the random oracle,
+thus, {\em independent of} the round of an interactive protocol.\footnote{The intuition is that since the interactive protocol is special sound (allowing
+efficient knowledge extractor given a transcript tree to extract true
+witness). If the attacker of Fiat-Shamir has non-negligible probability
+of success, then the attacker is able to inject too many fake 
+but accepted transcripts, thus making the true knowledge extractor
+unable to extract true witness efficiently.}
+This fomrs the basis of security of application of Fiat-Shamir
+in folding schemes such as ProtoStar \cite{ProtoStar}
+and Mangrove \cite{Mangrove}.
+
+\subsubsection{Discussion of R1CS Model}
+We assume the following extended R1CS model: the variables each carry
+a (an optional) collection of tags which indicates the range proofs 
+it need to satisfy and up to one CQ lookup. The CQ lookup table
+is a 2-column table with the first column indiates \texttt{table\_id},
+the the 2nd conlumn containing the entry values. Thus, we are
+allowed to concatenate multiple tables into one 2-column CQ table.
+In particular, we have 4 ACDFA's transition tables (for $\cp$
+and $\bw$ and each needs two for supporting ignore-case). We also
+need to encode the $\bw$ entries for all signatures and $\sde$
+entries, thus the total CQ lookup table is close to $2^{28}$ (which is
+the maximum size allowed by the BN254-Grumpkin curve pair, because
+it is the largest factor of $|F_r|-1$, needed for FFT).
+Note that this also restricts circuit size to $2^{28}$. (Question:
+can we find a similar curve pair like BN254-Grumpkin for
+BLS12-381?)
+{
+\subsubsection{Discussion on Lookups}
+When the lookup table is huge, it is not a good idea to embed
+it in the circuit (because it is part of the circuit size).
+In ProtoStar \cite{ProtoStar}, a folding scheme is supported for
+folding the Hab\"{o}ck scheme \cite{Hab22}. The prover pays
+a cost indpendent of the lookup table size per step of folding,
+however, this cost is eventually paid in the construction of final
+decider proof. For our scheme, the total cost paid by the prover is
+list below, assuming query table size is $m$ and lookup table size
+is $N$, for $u$ steps of computation:
+\[
+	u\times 3m + |N|
+\]
+If one uses pre-computed quotient cache like \cite{cq}, this can
+be improved to (in terms of group operations):
+\[
+	u\times 3m + 8\times \min(u\times m, |T|)
+\]
+Here for each folding operation, because there is a need to
+encode three vectors $\vec{h}$, $\vec{g}$ and (a supppresed form of)
+of $\vec{m}$ (because $\vec{m}$ is sparse) in the transcripts,
+when calculating their Pedersen commitment, the prover has to pay
+$3m$ group operations (in addition to the other witness variables).\footnote{Here we ignore the speed-up caused by MSMs for simplicity of discussion.}
+
+In the final proof generation, the checks of three equations
+as listed in the last step of section 4.3 of ProtoStar has to
+be represented in R1CS. Given that now the full entries of 
+$\vec{m}$ has to be reasoned about, its size is $\min(um, |T|)$.
+In our setting, we generate Groth16 proof, this is equivalent
+to $8$ times of G1 operations (which is 3 G1 and 1 G2 for each R1CS
+constraint, where 1 G2 costs 4 times of G1 operation).
+When $um < |T|$, this amounts to $11\times um$ group operations
+in total for the prover.
+
+We later introduce a concretely more efficient scheme than the above.
+We construct a complete zk protocol for the CQ protocol. Its prover cost is
+$8m$ G1 operations for each step of computation, thus totaling
+$8um$. We show that its folding cost is negligible.  We commit to each
+smaller query table at each step, this is a part of the public input.
+The verifier circuit just performs the random linear compbination
+of this group element (which costs one group operation over 
+Grumpkin curve, which is about $1000$ multiplications). Then in the final
+decision step, a fixed 10M R1CS is paid for the verification of the
+group operation, and a fixed $m$ R1CS constraints is paid to verify
+the fragment of witness corresponds to the query table commitment.
+In total we pay:
+\[
+	8um + 8\times(2^{23.5} + m)
+\]
+It is not hard to see that when $u$ is reasonably large, it pays off
+for the constant cost in decider quickly. For instance, set $m = 2^{20}$,
+when $u>20$, it already makes even for $3um>8\times(2^{23.5} + m)$.
+When $u=1000$, our scheme's total cost is about $73\%$ of the ProtoStar
+scheme.
+
+In Mangrove \cite{Mangrove}, the cost of $|T|$ is directly
+distributed into the chunk computation. It might work in our context where
+the chunk size is big and the number of steps of big, thus the
+amortized cost compared with step-wise circuit being folded
+is small. Its total cost is:
+\[
+	4um + 4T/u*u + (8u + 8T/u)*u + 8(T/u + 3m)
+	\approx 4um + 8u^2 + 12T
+\]
+Details: when folding, the extra witness length has to cover
+$\vec{h}$, $\vec{g}$, $\vec{m}$ and the part of table $T$ entries
+distributed (this is because in its secret witness it has to allocate
+the chunk of corresponding $T$ entries to avoid switch-case logic
+on big $T$ contents itself in the circuit). Thus they incur extra length: 
+$m + m + T/u + T/u$, and given NOVA cost of 2MSM,
+it is: $4m + 4T/u$. 
+
+In the recursive (verifier) circuit, given public input $i$,
+and given the commitment to the $T$ chunk, the circuit has to
+use a lookup (or membership) 
+argument itself to verify that this is correct (then
+the folded argument will be verified in the final decision proof).
+So this needs an O(u) circuit, which translates to 8u group operations.
+Also to compute the commitment, it needs 8T/u.
+
+For the final decider proof, it needs to verify (1 time)
+the folded relation for: (1) computing of the 
+commitment of combined $T$ chunk of $T/u$ size; (2)
+combined relation to compute $\vec{h}$, $\vec{v}$ and $\vec{m}$ (chunked),
+however, unlike the ProtoStar and our case, it's size $m$.
+In total, this incurs one time cost of $8\times (T/u + 3m)$.
+In summary: when $um<T$, our zk-cq approach is better.
+When $T<um$ and $u<m$, the Mangrove approach is better.
+
+\subsection{Dynamic and Small In-Circuit Lookups}
+There are various situations that we need to reason about the range
+of witness elements, e.g., range of source/destination states and
+char width (4-bits). They can be processed conveniently with low cost
+using lookup arguments. There are also cases that
+``dynamic" lookup arguments are needed when the lookup table itself
+is not fixed, e.g., for proving one vector is a subset
+of another. In this case, there are many choices of encoding available
+for in-circuit lookups: plookup \cite{plookup} and its variation
+Halo2 lookup \cite{Halo2}, Hab\"{0}ck's scheme \cite{Hab22}.
+In terms of ``extra" witness variables they introduced (thus
+impacting the folding cost of 2MSM, which is based on the
+number of witness variables), letting $m$ and $n$ be the
+query and lookup table size, the cost are ({\bf TO VERIFY LATER}):
+$3(m+n)$,  $3m+n$, $2m+n$, respectively. In this case, we
+implement in-circuit lookup using Hab\"{o}ck scheme \cite{Hab22}.
+For In-Circuit lookups, they are encoded as part of the step-wise
+R1CS, thus, does not cause any much extra considering decider cost
+is amortized by steps.
+
+There is still one problem regarding: small range proofs. Shall we
+do in-circuit lookups or cq? Given that both small (dynamic) lookup
+and externdal CQ lookup both exists. If we do range proofs via
+in-circuit lookup, it addes the folding cost: $2m+n$ (Hab\"{o}ck) per
+step, thus totaling: $u \times 2 \times (2m+n) \approx 6um$,
+For CQ lookup, it actually adds ``nothing", because we do not add
+any additional witness, however, we do have to pay the final cost
+for all of them: $8um$, but given that it's actually 2 column table,
+we are actually paying $16um$, the in-circuit wins (for range proof).
+
+\subsection{Implementation Consideration}
+There are several choices of encoding schemes, e.g.,
+Circom \cite{circom}. However, considering that
+we are instrumenting the standard NOVA and R1CS model,
+using Arkworks library \cite{arkworks} and instrumenting the Sonobe
+library seems a more convenient choice for us.
+
+\subsection{Supporting Batch File Discharging}
+Consider the scenario that there are many files of the same
+size category (e.g., over $100k$ emails of size $2^{16}$).
+We would to first leverage folding to speed up prover cost,
+and generate one proof to prove that all of them are free of
+malware. Also, for each file commitment, we provide a membership
+proof which shows that it belongs to the commitment to the
+entire file collection. Thus, for an individual file, its proof
+consists of 2 parts, and we would like both to be $O(1)$.
+
+We first need a scheme for ``commitment of commitments". 
+There are several alternatives available, e.g., 
+AFGHO commitment used in generalized inner product argument \cite{Bunz21},
+which has log size proof.  Another potential solution is
+the bivariate poly commitment used in Pianist \cite{Pianist},
+however, we do not see a solution provides membership proof
+better than $O(mn)$ (where $m$ is the number of words and $n$ is the
+max length of each word).
+
+We use the solution below.  The prover precomputes all $[f_i(s)]_1$
+as Pedersen vector commitment $\sum_{i=1}^n f_{i_j} [\lambda_i(s)]_1$.
+Each such commitment can be written as $(x_i, y_i)$ over $\F_q$. 
+Then the prover can compute similarly commitment to $\vec{x}$
+and $\vec{y}$, let them be $\com(\vec{x})$ and $\com(\vec{y})$.
+It is known that to ``mass-produce" the membership for
+all $x_i$ belonging to $\com(\vec{x})$ is $O(m\log(m))$ (basically
+the batch KZG proof generation used by CQ \cite{cq} using
+\cite{FK23}). So, each membership proof is $O(1)$, and the
+amortized cost for each proof is $O(\log(m))$. Note that the commitment
+has to be performed over BN254. If it's on Grumpkin, since
+there is no pairing available, it needs inner product argument (IPA)
+like argument, and this would need log size proof.
+
+We then need to argue that at each step $i$, it is indeed using 
+$(x_i, y_i)$, a point in G1.
+At each step, the step-circuit can compute $\lambda_i(r)$ based
+on $i$ and $r$ and the Barcentric Langurange poly value $l(r)$.
+The weight factor $w_i$ of Barcentric can be stored as a small lookup table.
+Then each step-circuit can compute $\lambda_i(r)$ in $O(1)$ time.
+
+Each step circuit has $x_i$ as secret witness input. It applies and
+accumulates $x_i \lambda_i(r)$ (passing the partial sum as $z_i$
+to next circuit). So the final output contains 
+$\sum_{i=1}^m x_i \lambda_i(r)$. Similarly can be done for the
+$y_i$ series. Then the verifier can check the value of
+$\sum_{i=1}^m x_i \lambda_i(r)$ via a KZG proof. 
+This proves that the $(x_i, y_i)$ at each step
+is indeed the ones contained in the entire commitment
+$\com(\vec{x})$ and $\com(\vec{y})$.
+
+There is one problem though, the field arithmetic of $(x_i, y_i)$
+is non-native. So like Sonobe for group element operation,
+this is ported to the Grumpkin curve: it has a separate
+R1CS relation, which takes: $x_i$, $y_i$, $w_i$, $l(r)$ 
+and performs the calculation, but the look-up of $w_i$ is performed
+over BN254. This circuit is much smaller than the group element
+exponentiations and only costs $<20$ R1CS constraints.
+
+Then there is a one time in the decision proof which similarly
+verifies the non-native R1CS relation over BN254. But much smaller
+than the group operation cost.
+
+{\bf TODO: give concrete cost.}.
+
+\subsection{zk-CQ and Integration}
+Use zk-CQ only for SINGLE instance (with no folding) lookup argument.
+And this saves most of the cost and has a good justification, and
+there is no other solution good than it for small circuit size.
+
+For foldig, simply use Mangrove approach. Here, as mentioned earlier,
+the segment of table $T$ needs to be stored separately. Then,
+we need to verify the segment commitment is commensurate with that
+part of the secret input. This membership proof can be done similarlty
+to the argument of word membership belong to a large collection.
+Then we are accumulating as step input and output.
+
+\subsection{Handle State In and Output}
+For very large files, we have to split into multiple steps, especially
+for side. Then there are state information to pass between steps,
+however, we want to save the hash operation.
+
+Let's say, we reserve a special segment out of witness as a state output
+and also another segment as output.
+Then each step circuit outputs a Commitment to that segment.
+The next step takes it in, and verifies that its segment of input
+matches that of the preivous output. This allows to pass LARGE state,
+and the verification relation can be folded and is ONLY needed
+to be performed once in the final decision proof. Also the
+commitment is not restricted, as long as it is homomorphic, e.g.,
+KZG or Pedersen vector commitment, or maybe even coding based
+or lattice based as shown in LatticeFold.
+
+More formally, let $\vec{w}$ be a vector of witness and let
+$\sigma$ be map so that $\sigma(\vec{w})$ is a fixed sub-vector
+of $\vec{w}$ given a fixed list of indices (e.g., given $\vec{w}$
+100 elements, $\sigma$ retrieves the fixed list of $1$st and $50$th
+elements from it and forms a 2-element sub-vector.)
+Given the same $\sigma$, and let $\vec{w}$ and $\vec{v}$ be
+two vectors of the same length (or even different length
+but allowing valid $\sigma$). It is not hard to see that,
+given a verifier sampled challenge $r$,
+$\com(\vec{w}) + r\com(\vec{v})$ encodes a vector
+$\vec{w} + r\vec{v}$ and 
+$\com(\sigma(\vec{w})) + r\com(\sigma(\vec{v}))$
+encodes $\sigma(\vec{w} + r\vec{v})$.
+
+Using the homomorphic property, in the committed R1CS relation,
+we also disclose $\com(\sigma(\vec{w}))$ (with 
+$\com(\vec{w})$. In the final decision, we just need to perform
+the check of $\sigma$ once. And there is only one additional
+group operation in recursion overhead. Using this approach,
+we can pass large state variables between states.
+{\bf TO CONFIRM:} this seems MUCH less expensive than
+maintaining a RAM memory as in zk-EVM machines, because
+we do not maintain the RAM for evyer single EVM instruction,
+but for large chunk of step-wise R1CS.
+
+\subsection{Summary on Folding Scheme}
+In summary we need to modify the Sonobe framework for:
+(1) additional elements for supporting word colleciton
+(2) to support state variables.
+
+The development work will: 
+(1) support individual file verification
+(2) fold large collections of small emails
+(3) support state variables in large circuits, and non-uniform circuits.
+
+
+

@@ -1,0 +1,23 @@
+[package]
+name = "rustomaton"
+version = "0.2.1"
+authors = ["Pierre Gimalac <pierre.gimalac@gmail.com>"]
+edition = "2018"
+description = "A small Rust library for automaton (DFA, NFA, Regex) manipulation."
+readme = "README.md"
+homepage = "https://github.com/pgimalac/rustomaton"
+repository = "https://github.com/pgimalac/rustomaton"
+license = "MIT"
+keywords = ["automaton", "dfa", "nfa", "regex"]
+categories = ["algorithms"]
+exclude = ["tests"]
+
+[dependencies]
+#logos = "0.9.7"
+logos = {version = "0.10.0", path = "dependency/logos-0.10.0/logos"}
+logos-derive = {version = "0.10.0", path = "dependency/logos-0.10.0/logos-derive"}
+fast_paths = "0.2.0"
+serde = "1.0.203"
+
+[dev-dependencies]
+rand = "0.7.3"

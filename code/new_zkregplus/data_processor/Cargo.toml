@@ -1,0 +1,21 @@
+[package]
+name = "data_processor"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+utils = {path = "../utils"}
+folding-schemes= {path = "../sonobe_mod/folding-schemes"}
+ark-ff = "^0.4.0"
+ark-bn254= "0.4.0"
+regex-syntax = "0.8.4"
+rustomaton = {version="0.2.1", path = "dependency/rustomaton"}
+aho-corasick={version="1.1.2", path="dependency/aho-corasick"}
+serde = "1.0.204"
+regex = "1.10.5"
+common_substrings = "1.0.0"
+rayon = "1.10.0"
+ark-serialize = "0.4.1"
+serde_json = "1.0.120"

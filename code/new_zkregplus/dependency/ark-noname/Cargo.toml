@@ -1,0 +1,19 @@
+[package]
+name = "ark-noname"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+#ark-r1cs-std = { git = "https://github.com/winderica/r1cs-std", branch="cherry-pick" }
+ark-r1cs-std = { path = "../r1cs-std"}
+#noname = { git = "https://github.com/dmpierre/noname" }
+noname = {path="../noname"}
+ark-relations = "0.4.0"
+ark-ff = "0.4"
+num-bigint = "0.4.3"
+#ark-bn254 = "0.4.0"
+ark-bn254 = {version="0.4.0", path="../ark-curves-cherry-picked/bn254"}
+
+

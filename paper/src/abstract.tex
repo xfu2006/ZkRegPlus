@@ -1,0 +1,28 @@
+The $\zkregex$ problem is about providing a a zero knowledge proof for
+a committed string being or not being a member of 
+a regular expression.
+We consider how to scale existing techniques for handling 
+the non-membership problem for a
+large collections of regex specifications (e.g., $38k$ extended logical regex
+patterns of ClamAV). Naive intersection or negation of regex patterns
+can easily lead to exponential state space explosion.
+Instead, we present a disjunctive proof scheme based on the
+following observation: a ``benign" string may only be a ``near miss" for
+very few regex patterns, only for which, the prover pays the computing
+cost.  A second contribution
+of this paper is the identification of a regex fragment called
+``Bounded Pattern Regex" which captures $95\%$ of patterns
+in ClamAV. It yields a more efficient proof scheme both
+asymptotically and concretely. 
+The prover complexity
+is $O(n\log(n) + m\log(m) x)$ where
+$n$ is the input string length, $m$ is the total number of
+accepting states along the acceptance of the string
+over an Aho-Corasick automaton,
+and $x$ is the number of regex operators of those regex patterns
+that required to be discharged.
+The verifier complexity is $O(1)$. In practice,
+$m$ and $x$ are small, e.g., $m=1024$ and $x=20$ for all Linux Ubuntu
+executables with regard to $95\%$ of ClamAV patterns,
+which incurs only a constant factor of cost of
+committing to the string being proved.

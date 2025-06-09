@@ -1,0 +1,386 @@
+\section{Related Work}
+\subsection{Alternative Approaches for Encoding PM-Reg}
+We consider several alternative approaches for encoding
+PM-Reg. The first choice is to use a general proof system
+with the support of lookup-arguments.
+
+HyperPlonk \cite{HyperPlonk} improves Plonk by replacing
+the univariate polynomial quotient check with multi-variate
+polynomial commitment and evaluation proof using sumchecks.
+This increases the proof size to $\log(n)$, however,
+removes dependence on FFT (thus improving parallelism)
+and allows it to support high degree customized gates.
+However, like PlonkUp \cite{PlonkUp}, it implements the
+Plookup protocl \cite{plookup} which has prover
+complexity depending on the lookup table size.
+Another restriction of \cite{plookup} and \cite{PlonkUp}
+is that the lookup table size cannot exceed
+the circuit size, which in our case is a much larger value.
+
+\subsection{Folding and Proof Recursion}
+
+Detailed comments: {\bf Accumulation:}
+Halo \cite{Halo} uses cyclic curves (but without pairing)
+to achieve low cost proof recursion (however it's recursive
+overhead is $\log(n)$).
+PCD \cite{PCD20}: It presentes the accumulator scheme to realize
+IVC (incremental verification). The basic idea is that an accumulator
+is an object of aggregated statement and proof, whose size
+does not increase with the number of (statement, proof) that
+are aggregated. A new accumulator can be generated from 
+an old accumulator, and it recursively proves that all prior
+instances are correct. A final decider (which has the same
+verifier cost of verifying a single circuit) decides the
+validity of all $n$ copies of the circuit.  Compared with Nova (Folding)
+\cite{Nova}, it does not use an extended R1CS system, but does
+use a similar error term to cancel out the cross terms when
+accumulation is applied. It commits to $A \cdot z$, $B \cdot z$,
+$C \dot z$ and has a slightly higher concrete cost than Nova.
+ProtoStar \cite{ProtoStar} further extends the accmulation scheme,
+it accumulates/folds a running accumulator with a NARK (not necessarily)
+proof. It accomplishes the non-uniform circuit as SuperNova,
+and it provides better verifier circuit complexity using
+Hab22 \cite{Hab22} technique ($O(1)$ verifier complexity other than
+$O(|t| \log(|T|)$ of HyperNova.  Note that its verifier circuit
+has only one more hash operation for the lookup (and others 
+error terms computation have the same complexity of others, and
+embedded with other constraints). {\bf However, notice that
+the cost of $|T|$ has to be paid in the last decider!} (It looks like
+if it sacrifices the no trusted-up, it can still be independent
+of table size). Note that due to extra long vectors of
+$\vec{m}$, these constraints cannot be incorporated into the standard
+columns of plonk system. For an extra of $6|t|$ group operations
+is needed on the prover side for each step of recursion of
+lookup tables, in addition to the standard cost of encoding columns.
+Origami \cite{Origami} concurrently proposes a similar folding
+skeme as ProtoStar using error terms for AIR, and it applies to
+plookup (actually Halo2 lookup) by error terms of polynomial maps.
+Note that plookup table has to be the same as number of constraints (cannot
+handle large table). Its passing of randoms input is subsumed
+by commit-and-prove feature of halo2 (multi-stages) anyway.
+DeepThought \cite{DeepThought} further instantiate GKR protocol
+over the ProtoStar framework. It makes two contributions: (1) GKR
+allows to commit to input and ouput wires only (thus not committing
+to all wires); The paper modifies GKR to bivariate to lower
+its cost in the ProtoStar framework (reducing rounds)
+(2) adapting the Hab22 technique, it can prove
+a {\em dynamic} memory table read/write operations (by permuting
+read/write records and also add addr/index into Hab22 formula), thus
+achieving constant recursion cost per mem op, just like
+lookup table in ProtoStar. {\em Altnertive solution: maybe
+permutation of memory transcript is good enough. Then for
+initial memory read and final memory write in a sorted list they
+all can be performed using CQ protocol anyway.}
+ProtoGalaxy \cite{ProtoGalaxy} further cuts the recursion cost
+of extra $3$ group operations from ProtoStar by the following trick:
+it folds multiple instances, and it uses a Lagrange polynomial to encode
+the error terms. So instead of folding instances using a random
+factor, it allows verifier to use a new random for the Lag based poly
+encoding all instances. This cuts the group operations (replacing
+with a log number of field operations) in the ``marginal cost" (but
+note that linear combination of group elements of claims still
+have to be performed in the verifier circuit).
+In a very recent work \cite{AccCode}, the accumulation scheme
+is achieved by symmetric crypto pritmitices. The basic idea is
+to replace the Pedersen commitment of witness vectors by a Merkle
+tree of an RS-code of witness. Then the homomorphic group operation
+is replaced by a protocol of verify code validity. This moves away
+from pub-key assumptions. For decider, its complexity is $n/\log(n)$,
+also we can avoid non-native field arithmetics and cycle curve,
+if we encode it in BN254?
+\cite{ARC} furtuer improves \cite{AccCode} by preserving distance
+of RS-code.
+Recently Mira \cite{Mira} extends ProtoStar by allowing
+group elements in the Special-Sound Protocol and
+simulate the running of pairing in SSP, and shows
+better performance than Groth16 proof packing ({\em However,
+not sure how the discrete logarithm of Groth16 proofs were
+obtained? Authors never responded}).
+
+
+{\bf Folding}
+Nova \cite{Nova}: it presents the {\em folding} technique which folds
+two relaxed R1CS instance into one. The folding prover at each step
+pays two MSMs, the folding verifier pays two group scalar multiplications.
+When applied to IVC, the verifier circuit is embedded in the IVC
+proof recursively. The proof size is linear, but using a cyclic curve
+with sumcheck, the proof size can be compressed to log of circuit size
+using a variation of Spartan. 
+Sangria \cite{Sangria} implements the same idea of NOVA by
+folding PLONK relations. Note that it is subsumed by
+ProtoStar.
+In \cite{NovaCycle}: a rigorous proof is given
+for the correctness of Nova when implemented over
+a cycle of curves and correcting one vulnerability in its
+implementation.
+SuperNova  \cite{SuperNova} further
+improves Nova to handle non-uniform R1CS instances, which allows the prover
+to pay cost only on instructions that is being executed.
+Given $\ell$ circuits, the idea is to maintain maintain
+$\ell$ instances of R1CS instances, but when applying
+folding, only fold the actual circuit being executed.
+Note that the IVC proof size is still linear to the total
+of the $\ell$ circuit size, also when proving the circuit
+the prover has to maintain the memory for all $\ell$ circuits.
+HyperNova \cite{HyperNova} further extends the folding idea
+to CCS (a combination of R1CS, Plonky, and AIR specification)
+which supports high digree gates. The idea is to model the system
+using multi-linear polynomials whose evaluation can be
+specified using sumcheck techniques, which results in verifier circuit
+of log size of field ops plus one scalar multiplication. The interesting
+part of this is that the more expressive the spec system, the easier
+the folding? The IVC proof size is still linear, and needs a cyclic
+curve for succinct proof. 
+CycleFold \cite{CycleFold} further
+improves the Nova scheme by not running a dual R1CS system 
+over a cycle of curves, but simply outsourcing a few
+non-native field and group operations to a second cycle
+(e.g, BN254/Grumpkin). That second curve is folded back in the
+first curve. {\bf Decider cost:} \texttt{sonobe} implements
+the NOVA + cyclefold. The final decider has to handle
+non-native field operations over BN254 (it first uses KZG commitment
+to pass values between two curves, but needs to evaluate non-native
+field operations of the poly over BN254, and then it eneds to
+encode the R1CS group multiplication circuit (on Grumpin) over
+BN254 as well. The two operations result in over 11 million
+constraints for $0.5 million$ single-step circuit (hence
+the overhead of non-native is big, about 10 million constraints).
+In Goblin Plonk\footnote{\url{https://hackmd.io/@aztec-network/B19AA8812}}
+non-native field operations are encoded as
+high-degree (over 30 columns) custom-gates (zk-VM machine),
+so the prover's number of constraints is cut down (but 
+it does not cut down decider cost). Also it looks like
+it is not on one-curve (two proofs? but need to verify).
+Reverie \cite{Reverie} further improves CycleFold approach
+by mixing it with the ProtoGalaxy folding scheme (multiple instances)
+and gives detailed estimate of the cost. Its goal is to reduce
+the inter-prover communication, and it is estimated to cut
+the cost to around 4000 field elements (around 128kb), which
+is used for peer-2-peer network application scenarios (Etherum Consensus).
+In Mangrove \cite{Mangrove}, the folding and accumulation scheme
+is further extended to tree structure PCD. It divides a plonkish
+system into chunks (and using product of grand product to merge
+the proof for copy constraints). Thus it achieves very small
+memory print for provers. It includes an extension of
+Hab22 protocol in its chunking mechanism. However, it requires
+the lookup table size not exceeding the entire circuit size so that 
+the lookup table (fragments) can fit in the memory of prover.
+Note that its Merkle tree structure of all commitments allows to
+provide Commit-and-Prove (since original Nova and other schemes
+fold witness commitments, hence not easy to take them out).
+Recently there are directions in further reducing the
+recursive overhead by removing the non-native arithmetics caused
+by the homomorphic commitment.
+One related needs to mention for Mangrove is Gemini \cite{Gemini},
+which also accomplishes space-saving snark via streaming
+polynomial commitment and inner product argument prover algorithms
+(thus achieving space efficiency). Since Gemini is still
+a general purpose working for a large circuit, Mangrove exhibits
+better conrete performance via folding compared with Gemini (about
+one magnitude).
+In SCRIBE \cite{scribe}, streaming is also applied
+to sumcheck based prover, where it is shown a magnitude improvement
+of speed improvement, and log size RAM access needed (mainly
+for a RAM memory for pre-computing evlauation of multi-variate
+Lagrange basis polynomials). It looks like
+an interesting direction to cut the RAM usage for our decider stage.
+In LatticeFold \cite{LatticeFold}, the homomorphic commitment
+of witness is replaced by Ajtai's commitment. It 
+enjoys the benefits of small field and post-quantum 
+security.  The main efforts aims at reducing the increasing norm 
+of such commitments, and the depth of folding is limited
+to constant round, thus the general PCD tree structure should be used.
+NeutronNova \cite{NeutronNova} further applies folding to
+the sumcheck protocol via Lagrange interpolation.
+In Neo \cite{Neo}, an alternative scheme based on Ajtai's commitment.
+It uses sum-check protocol in verifier circuit to prove
+that elements are within norm bound and enjoys a claimed
+10x speed over HyperNova.
+
+{\bf Comments:} The currently known best folding cost for
+Hab22 based lookup argument is ProtoStar and its derivatives
+such as ProtoGalaxy and Mangrove. The folding cost seems minimal,
+but in the final decider the cost is {\em linear} to the lookup table.
+Even if the lookup table size is the same of total queries,
+using a SNARK e.g. Plonk will incur more prover cost than
+the commit-and-prove approach (e.g., 22MSM for Plonk). It is
+possible to mix ProtoStar decider SNARK with the right half of the
+CQ protocol, but essentially it still resolves to the 
+commit-and-prove approach.
+
+{\bf Comments:} We extended Sonobe \cite{Sonobe}, which instantiates
+CycleFold + Nova, exploiting half-pairing Bn254/Grumpkin curves.
+Our extension extends it to SuperNova and similarly added
+a $24$k constraints for pairing operation at Grumpkin.
+MicroNova \cite{MicroNova} similarly uses half-pairing approach
+in the context of sum-check based provers (Spartan \cite{Spartan},
+which results in slightly higher proof size (using HyperKZG 
+to reduce multi-linear polynomial commitments to batched KZG).
+MicroNova adopts a variety of techniques to reduce decider size,
+e..g, reducing one MLE evaluation over E2 by spliting it into
+multiple sub-matrix evaluation. We could adopt the same technique
+by spliting the pairing operation into multiple identical cycles,
+thus reducing decider size, which remain as a future direction.
+
+
+\subsection{Lookups}
+Many past lookups .... including CQ.
+
+
+Latest one: {\bf Lasso} \cite{Lasso} which uses sumcheck protocol
+and fast multilinear poly commitment to large matrixes with sparse
+non-zero entries. It allows to represent (not materialize) a huge
+table (e.g., $[0, 2^{128}]$) by projecting a large table to
+multiple small tables (decomposable), essentially it's actually
+modeling a multi-linear polynomial functions (where smaller functions
+are modeled using small look-up tables). This fits very well with
+modeling truth table of all CPU instructions, and is applied in
+\cite{Jolt}. Note that the prover cost is still dependent
+on the container table: for Sona: $O(N)$ field operation snad
+$O(\sqrt(N))$ group operations. But verifier has logarithm complexity.
+It is shown to be at least 3 times faster than
+plookups.  Recently in $\mu$-seek \cite{useek}, the $\cq$ protocol
+is modified with multi-linear polynomial commitment to natively
+support super-efficient lookups with zk-SNARKs that use 
+multilinear commitments; a commit-and-prove construction is
+also proved by connection univariate and multi-variate polynomial
+commitments. The verifier complexity is logarithmic.
+
+
+\subsection{Regex Result}
+It is well known \cite{AlgBook}[Chapter 5.4] that a regex
+can be translated to a graph of $|3m|$ where $m$ is the
+regex length. Then to decide if a string of size $n$
+belongs to the NFA can be implemented by a BFS search,
+thus resulting in $O(mn)$ complexity.
+
+\subsection{Other Regex Efforts}
+1. TO READ: ZK-email \url{https://github.com/zkemail/zk-regex}:
+According to Reef it converts to DFA and the constraint size
+is proportional to DFA size.
+
+2. TO READ: halo2-regex: \url{https://github.com/zkemail/halo2-regex}.
+It is using look-ups, but table is inside circuit (cannot exceed
+circuit size). Also do not handle large collections of regex.
+
+\subsection{zk-EVM}
+Compared with general purpose zero knowledge virtual machines 
+such as zk-EVM \cite{polygonevm}, our approach is lighter weight.
+
+In Polygon zk-EVM \cite{polygonevm}, 
+a general purpose microprocessor is supported.
+Lookups (plookup) is used link state machine traces (lookup up
+result produced in another state machine trace).
+A RAM machine state is maintained as a Merkle tree.
+In some sense, retrieving bag and ternary logic computation
+resembles executing micro-instructions on a zk-EVM, however,
+as our approach is customized, and it certainly is more
+expensive executing it on a general purpose zk-EVM microprocessor.
+In Cairo \cite{Cairo}, a general purpose algebraic RISC architecture
+is supported. It simulates read-and-write memory using
+a memory trace expressed as a read-only dictionary structure
+(essentially involving range proofs for proving ascending order
+of memory traces and permutation arguments for relating logs
+and memory traces). Apparently such a RAM model is more expensive
+than our simple mode of passing data between ``big" step-circuits.
+Also decoding general machine instructions is more expensive
+than a customized model tailored for the specific application domain.
+We do want to point out that, using zk-EVM can nicely solve
+the problem of decoding an executable file and finding its
+entry point, which is approximated by our work. In this case,
+how to integrate zk-EVM and customized zk-SNARK circuits would
+be an interesting follow-up work.
+Recently Nexus \cite{Nexus} further exploits
+parallelizable Hypernova \cite{HyperNova} 
+and distributed computing to maximize the computing power
+of provers. However, customized protocol still shows performance
+advantage for specific problems. For instance, its whitepaper
+reports that
+Nexus VM costs about $30k$ constraints per step, and 
+implementing SHA256 usin the general purpose VM is still
+about $10^3$ slower than a specialized circuit.
+
+\subsection{RAM}
+	We use a global commitment and leverage cyclefold to pass
+states between steps in folding schemes. An alternative way
+is to use a global RAM as in many variaations of zk-EVM.
+General RAM is very expensive, e.g., using
+routing network, RSA accumulator, Merkle trees and lookups.
+See \cite{AIPRam} for a summary of related work.
+Our model is similar to the ``permanent memory" category
+in \cite{AIPRam} where there are two commitments to a region of
+memory and the prover needs to prove that a program, given the initial
+memory setting, leads to the final memory state as committed in the
+second commitment. In the latest work, which much improved
+the earlier work on memory transcript validation using B\'{e}zout's identity,
+ordered permutation leveraging \cite{Hab22}, its complexity 
+is $3N + 41A$ (where $N$ is the capacity of RAM and $A$ is the
+number of read/write accesses). In our case $A \approx N$,
+the general RAM approach is much more expensive, because there
+is a large co-efficient over $A$.\footnote{Interestingly, the 
+use of B\'{e}zout's identity and the use of CP-Snark in \cite{AIPRam}
+is very similar to our earlier work \cite{Zkreg}}.
+In StackProofs \cite{StackProofs}, a similar approach to
+the Mangrove commit-and-fold is presented, for reasoning about
+global memory, which is based on \cite{Hab22}, and it has similar
+asymptotic compleixty and we estimate it has similar concrete performance.
+In Nebula \cite{Nebula}, commit-and-fold is also used to support
+offline RAM verification, improving the state of art of Mangrove by
+allowing RAM check in IVC proofs (avoiding generating public verifier
+challenge over commitments of all witness at all steps), it also
+provides an alternative switchboard approach to SuperNova's approach
+in supporting non-uniform circuits, although enjoying the same
+asymptotic complexity.
+
+	In HEKATON \cite{HEKATON}, a parallel proof scheme is proposed (note:
+not folding). It shares a similar observation with Mangrove that
+a long product for finger-printing can be split among multiple circuits.
+The key idea is to split a circuit into multiple sub-circuits.
+The {\em shared wires} between sub-circuits are modeled as a global
+ROM. The memory trace of ROM access is modeled using finger-printing (and
+commit and prove snark systems). It improves the concrete
+performance of ROM (compared with Mirage+) to $13\times$ the size
+of ROM. Notice that however, our approach (in our context) for sharing
+incurs only $1\times$ of constraints for I/O memory buffer, because
+we do not have to reason about timestamp and trace consistency.
+{\em SIDENOTE to remove later: compared with Mangrove the HEKATON
+approach pays the extra cost for inter-circuit I/O, if the I/O buffer
+is large, it affects concrete performance. }
+
+	In Twist and Shout \cite{TwistShout}, the memory checking for
+read/write memory is further improved to only 4$T$ and 6$T$ 
+commitments for small and large memory (where $T$ is the trace size),
+by leveraging one-hot encoding of addresses and incremental updates
+for taking advantage of localicty. The technique does not have a
+direct application into our framework given its sumcheck technique
+results in log-size proof.
+
+	In the very recent work \cite{RAMLookup} memory checking is
+accomplished based on CQ lookup. The idea is that a base table
+is prepreprocessed using CQ, and $m$ operations over a deviated
+table with hamming distance $\delta$ can be achieved in
+complexity $O((m+\delta)\log(m+\delta))$. Then preprocessed CQ keys
+are generated periodically, achieving amortized memory access
+complexity of $O(m\log(m) + \sqrt{mN})$ per batch. Concretely,
+for $2^{20}$ RAM, $10^3$ access costs about $10^2$ seconds (thus
+$10$ access per second).  This cannot satisfy our demand of efficiency.
+
+   One recent work zkPi \cite{zkPi} depends on random circuit 
+   approach Mirage\cite{Mirage}, which also shows the power of
+   the random circuit. (Some of the interesting point, the theoretical
+   complexity for non-random circuit to prove permutation is nlog(n),
+   but rand circ is O(n), and the analysis of collision for soundness, e.g.,
+   $n^3/|F|$).
+
+\subsection{Related in Field}
+Compare with zk-MiddleBox, Zombie \cite{Zombie23} and Zk-regex \cite{Luo23}
+and Reef \cite{Reef}.
+
+A related line is the TLS Oracle problem where given an TLS session (encrypted), one proves the property of the data (e.g., correct generation of
+ authentication key etc.). Traditionally this was done via MPC
+ e.g., \cite{Deco,Xie24,Janus} and recently done using zkSNARK in
+  Origo \cite{Origo}. Our work can be used to prove TLS data
+  with rich set of properties, such as redacted emails, or compliance with
+  security policies without revealing encrypted data, efficiently.
+
+\section{Conclusion}

@@ -1,0 +1,4 @@
+# There must always be one line in the file
+Win.Debug.Case00-1;Engine:51-255,Target:0;0|1;123456789abcdef0;2345678901abcdef::i
+Win.Debug.Case00-2;Engine:51-255,Target:0;0&1;abc??123;123??abc
+Win.Debug.Case00-3;Engine:51-255,Target:0;1;abc??123;0/aaa.*bbb/

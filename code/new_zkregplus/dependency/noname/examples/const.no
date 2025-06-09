@@ -1,0 +1,9 @@
+const player_one = 1;
+const player_two = 2;
+
+fn main(pub player: Field) -> Field {
+    assert_eq(player_one, player);
+    let next_player = player + 1;
+    assert_eq(player_two, next_player);
+    return next_player;
+}

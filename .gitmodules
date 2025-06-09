@@ -1,0 +1,3 @@
+[submodule "code/new_zkregplus/foldpot"]
+	path = code/new_zkregplus/sonobe_mod
+	url = https://bitbucket.org/xfu2009/sonobe/src/foldpot/

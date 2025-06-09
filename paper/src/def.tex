@@ -1,0 +1,628 @@
+\def\ttt#1{{\tt #1}}
+\def\fmax{|F|}
+\def\max{\texttt{max}}
+\def\min{\texttt{min}}
+\def\occ{\texttt{occ}}
+\def\intersect{\cap}
+\def\myvec#1{{{\mathbf {#1}}}}
+\def\mylvec#1{{\overrightarrow{#1}}}
+\def\zkregex{{\tt zkreg }}
+\def\adv{\mathcal A}
+\def\hash{\mathsf{hash}}
+\def\critical{\mathcal{CP}}
+\def\advb{\mathcal B}
+\def\extractor{\mathcal X}
+\def\simulator{\mathcal S}
+\def\gipa{{\mathtt{GIPA}}}
+\def\tipp{{\mathtt{TIPP}}}
+\def\mipp{{\mathtt{MIPP}}}
+\def\zktipp{{\mathtt{ZK\_TIPP}}}
+\def\zktippprove{{\mathtt{ProveZkTIPP}}}
+\def\zktippverify{{\mathtt{VerifyZkTIPP}}}
+\def\zkmipp{{\mathtt{ZK\_MIPP}}}
+\def\zkmippprove{{\mathtt{ProveZkMIPP}}}
+\def\zkmippverify{{\mathtt{VerifyZkMIPP}}}
+\def\mippk{{\mathtt{MIPP}_k}}
+\def\mippu{{\mathtt{MIPP}_u}}
+\def\caA{\mathcal A}
+\def\caB{\mathcal B}
+\def\caG{\mathcal G}
+\def\caS{\mathcal S}
+\def\ga{\mathbf A}
+\def\gb{\mathbf B}
+\def\h{\mathbf h}
+\def\real{\texttt{Real}}
+\def\ideal{\texttt{Ideal}}
+\def\myspace{\hspace{0.05in}}
+\def\mytab{\hspace{0.1in}}
+\def\ShortcutProve{\texttt{PrvSubset}}
+\def\stmt{{\mathbb X}}
+\def\aggprove{\texttt{AggPrv}}
+\def\aggverify{\texttt{AggVer}}
+\def\CheckFactor{\texttt{VerSubset}}
+\def\CheckDLP{\texttt{CheckDLOG}}
+\def\CheckSAME{\texttt{CheckSAME}}
+\def\Setup{\texttt{Setup}}
+\def\SetupQANIZK{\texttt{SetupQANIZK}}
+\def\CommitPoly{\texttt{CommitPoly}}
+\def\DegBound{\texttt{DegBound}_n}
+\def\CheckDegBound{\texttt{CheckDegBound}_n}
+\def\vz{\mylvec{\mathbb Z}}
+\def\cvz{\mylvec{\Commit_{\vz}}}
+\def\zm{\mylvec{Z_M}}
+\def\cvgonem{\mylvec{\Commit_{\vgonem}}}
+\def\vprfm{\mylvec{\prf_M}}
+\def\vprft{\mylvec{\prf_T}}
+\def\cvgonet{\mylvec{\Commit_{\vgonet}}}
+\def\zt{\mylvec{Z_T}}
+\def\cvgtwo{\mylvec{\Commit_{\vgtwo}}}
+\def\vgonem{\mylvec{\mathbb G_{1M}}}
+\def\vgonet{\mylvec{\mathbb G_{1T}}}
+\def\vgtwo{\mylvec{\mathbb G_2}}
+\def\vc{\mylvec{\mathbb C}}
+\def\vr{\mylvec{\mathbb R}}
+\def\vz{\mylvec{\mathbb Z}}
+\def\vp{\mylvec{\mathbb P}}
+\def\FullCommitPoly{\texttt{FullCommitPoly}}
+\def\CommitPed{\texttt{CommitPed}}
+\def\CommitValue{\texttt{ZkVPDOpen}}
+\def\CheckCommit{\texttt{Check}}
+\def\CheckValue{\texttt{ZkVPDVerOpen}}
+\def\ProveQANIZK{\texttt{ProveQANIZK}}
+\def\VerifyQANIZK{\texttt{VerifyQANIZK}}
+\def\Verify{\texttt{Verify}}
+\def\ProveKnowledge{\texttt{PrfKnow}}
+\def\powparam{1^\lambda}
+\def\dy{\Delta y}
+\def\ST{{\mathbf{S}}}
+\def\st{{\mathbf{T}}}
+\def\pst{{\hat{\mathbf{T}}}}
+\def\R{{\mathbf{R}}}
+\def\ccgro{{\textrm{k-ccGro16}}}
+\def\W{\mathsf{W}}
+\def\GF{\mathbf{GF}}
+%\def\circ{\mathbb{CIRC}}
+\def\circac{\mathbb{CIRC}_{\ttt{ACDFA}}}
+\def\circacfull{\mathbb{CIRC}_{n,\simpacv}}
+\def\rac{{R}_{\ttt{ACDFA}}}
+\def\circpoly{\mathbb{CIRC}_{\ttt{POLY}}}
+\def\vecg{{\mathbf{g}}}
+\def\vecm{{\mathbf{m}}}
+\def\veca{{\mathbf{a}}}
+\def\rpoly{R_{\ttt{poly}}}
+\def\qpoly{Q_{\ttt{poly}}}
+\def\acu{\mathbf{A}}
+\def\u{\mathit{u}}
+\def\v{\mathit{v}}
+\def\w{\mathit{w}}
+\def\a{\mathit{a}}
+\def\t{\mathit{t}}
+\def\h{\mathit{h}}
+\def\caT{\mathbb T}
+\def\caX{\mathcal X}
+\def\caC{\mathcal C}
+\def\Bal{\mathbb B}
+\def\foldprove{{\texttt{FoldProve}}}
+\def\cqfoldprove{{\texttt{FoldProveCQ}}}
+\def\cqprove{{\texttt{ProveCQ}}}
+\def\cqverify{{\texttt{VerCQ}}}
+\def\cqoneprove{{\texttt{ProveOneTime}}}
+\def\cqoneverify{{\texttt{VerOneTime}}}
+\def\cqsetup{{\texttt{SetupCQ}}}
+\def\cqpreproc{{\texttt{PreprocessCQ}}}
+\def\glsetup{{\texttt{SetupGL}}}
+\def\glprove{{\texttt{ProveGL}}}
+\def\glverify{{\texttt{VerGL}}}
+\def\vpdsetup{{\texttt{SetupZkVPD}}}
+\def\vpdlprove{{\texttt{ProveZkVPD}}}
+\def\vpdverify{{\texttt{VerZkVPD}}}
+\def\comeqsetup{{\texttt{SetupComEq}}}
+\def\comeqprove{{\texttt{ProveComEq}}}
+\def\comeqverify{{\texttt{VerComEq}}}
+\def\verifier{{\mathcal V}}
+\def\acv#1{{\mathbf A}_{\bar{#1}}}
+\def\simpacv{{\mathbf A}}
+\def\acdfa{{\mathbf A}}
+\def\union{\cup}
+\def\substring{\preceq}
+\def\accumulator{\mathbf{acc}}
+\def\zkset{\mathbf{zkset}}
+\def\prfconn{\prf_{\texttt{conn}}}
+\def\prfqa{\prf_{\texttt{qa}}}
+\def\xqa{{\myvec{x}_{\texttt{qa}}}}
+\def\vkqa{\vk_{\texttt{qa}}}
+\def\prfbound{\prf_{\texttt{bound}}}
+\def\prfasset{\prf_{\texttt{IZPR}}}
+\def\prfassettwo{\prf_{\texttt{ASSET2}}}
+\def\prfknow#1{\pi_{\texttt{know}_{{#1}}}}
+\def\prfsupport{\prf_{\texttt{SUPPORT}}}
+\def\prfsubset{\prf_{\texttt{SUBSET}}}
+\def\prfunion{\prf_{\texttt{UNION}}}
+\def\prfderivative{\prf_{\texttt{DER}}}
+\def\prfdisjoint{\prf_{\texttt{DISJOINT}}}
+\def\prfpoly{{\pi_{{\textsf{POLY}}}}}
+\def\prfprod{{\pi_{{\textsf{PROD}}}}}
+\def\prfdlp{{\pi_{{\textsf{DLOG}}}}}
+\def\prfrng{{\pi_{{\textsf{RANGE}}}}}
+\def\prfblindeval{{\pi_{{\textsf{BLINDEVAL}}}}}
+\def\protokzg{{\Sigma_{{\textsf{zk-kzg}}}}}
+\def\Cru{{\mathbf{C}}_{\gamma}}
+\def\Cpu{{\mathbf{C}}_{q}}
+\def\rubeta{{\gamma_3}}
+\def\ru{{\gamma}}
+\def\g{{{\bf{\mathbf g}}}}
+\def\h{{{\bf{\mathbf h}}}}
+\def\rutwo{{\gamma_2}}
+\def\ruthree{{\gamma_3}}
+\def\rone{\gamma_1}
+\def\rtwo{\gamma_2}
+\def\rthree{\gamma_3}
+\def\rfour{\gamma_4}
+\def\ralpha{{\gamma_{\alpha}}}
+\def\prfeval{{\pi_{{\textsf{EVAL}}}}}
+\def\Cpa{{\mathbf{C}}_\alpha}
+\def\Cpv{{\mathbf{C}}_V}
+\def\Cpw{{\mathbf{C}}_W}
+\def\Cpsw{{\mathbf{C}}_W'}
+\def\uvw{{\mathrm{uvw}}}
+\def\key{{\mathrm{key}}}
+  %scaled version of the ocmmitment
+\def\Cpsa{{\mathbf{C}}_{\alpha'}}
+	%comitment to p(\mu)
+\def\pkey{\mathcal {P}}
+\def\Cpy{{\mathbf{C}}_{y}}
+\def\Cpt{{\mathbf{C}}_{t}}
+\def\rytwo{{\gamma_{y_2}}}
+\def\ry{{\gamma_{y}}}
+	%commitment to p(ru)
+\def\Cpsy{\mathbf{C}_{y'}}
+\def\Cry{{\mathbf{C}}_{\gamma_y}}
+\def\skey{\mathcal {S}}
+\def\wkey{\mathcal {W}}
+\def\prp{p}
+\def\prq{q}
+\def\prr{r}
+\def\prt{t}
+\def\Fr{\mathbb{F}_r}
+\def\Gq{{\mathbb{G}_{\prq,\prp}}}
+\def\Gp{{\mathbb{G}_{\prp}}}
+\def\Gt{{\mathbb{G}_{\prt}}}
+\def\Z{{\mathbb{Z}}}
+\def\B{{\mathbb{B}}}
+\def\Zp{{\mathbb{Z}_\prp}}
+\def\ZpMul{{\mathbb{Z}^*_\prp}}
+\def\Zq{{\mathbb{Z}_\prq}}
+\def\ZqMul{{\mathbb{Z}*_\prq}}
+\def\polypu{p(u)}
+\def\polyqx{q(x)}
+\def\srs{\mathsf{srs}}
+\def\aux{\mathsf{aux}}
+\def\Zp{{\mathbb{Z}^*_\prp}}
+\def\Zq{{\mathbb{Z}^*_\prq}}
+\def\polyqu{q(u)}
+\def\polypusq{p(u^2)}
+\def\polypxsq{p(x^2)}
+\def\pick{\xleftarrow{\$}}
+\def\iseq{\stackrel{?}{=}}
+\def\Cpsu{\mathbf{C}_{q'}}
+\def\Cpzero{{\mathbf{C}}_1}
+  %scaled version of the ocmmitment
+\def\Crzero{\mathbf{C}_{1'}}
+
+%-----------------------------
+%- Definitions
+%-----------------------------
+
+%- primes p, q, r
+\def\prp{p}
+\def\prptwo{p'}
+\def\prq{q}
+\def\prr{r}
+\def\prt{t}
+\def\n{{\lceil{n}\rceil}}
+\def\N{{\lceil{N}\rceil}}
+\def\Nat{\mathbb{N}}
+
+%- groups
+\def\G{{\mathbb{G}}}
+\def\Gq{{\mathbb{G}_{\prq,\prp}}}
+\def\Gp{{\mathbb{G}_{\prp}}}
+\def\Gt{{\mathbb{G}_{\prt}}}
+\def\Z{{\mathbb{Z}}}
+\def\Zp{{\mathbb{Z}_\prp}}
+\def\ZpMul{{\mathbb{Z}^*_\prp}}
+\def\Zq{{\mathbb{Z}_\prq}}
+\def\ZqMul{{\mathbb{Z}*_\prq}}
+\def\Zqtwo{{\mathbb{Z}_\prq}}
+\def\Zr{{\mathbb{Z}^*_\prr}}
+\def\Zn{{\mathbb{Z}^*_\n}}
+\def\poly{{\textrm{poly}}}
+\def\secparam{\lambda}
+\def\Fp{{\mathbb{F}_p}}
+
+\def\gcm{{\mathtt{CM}}}
+\def\cm{\mathbb{C}} 
+\def\Cphold{\mathbf{C}_{p(h)}}
+\def\Cpone{\mathbf{C}_{p(1)}} 
+\def\Cph{\mathbf{C}_{p(h)}}
+\def\prob{\textrm{Pr}}
+\def\caA{{\mathcal A}}
+\def\caI{{\mathcal I}}
+%\def\extractorA{{{\extractor}_{\mathcal A}}
+\def\crs{\mathsf{CRS}}
+\def\sample{\leftarrow^{R}}
+\def\pkey{\mathcal {P}}
+\def\skey{\mathcal {S}}
+\def\wkey{\mathcal {W}}
+\def\pk{\mathsf{pk}}
+\def\pkkzg{\mathsf{pk_{kzg}}}
+\def\vk{\mathsf{vk}}
+\def\vkcf{\mathsf{vk}^{(\texttt{fold})}}
+
+\def\vkmain{\mathsf{vk}^{\texttt{(main)}}}
+\def\vkcycle{\mathsf{vk}^{\texttt{(cycle)}}}
+\def\vkkzg{\mathsf{vk_{kzg}}}
+
+\def\Commit{{\mathsf{C}}}
+\def\GCommit{{\mathscr{C}}}
+\def\KCommit{{\mathbb{C}}}
+\def\Z{{\mathscr{Z}}}
+\def\B{{\mathscr{B}}}
+\def\And{\wedge}
+\def\Imply{\Rightarrow}
+
+\def\prover{\mathbf{P}}
+\def\verifier{\mathbf{V}}
+\def\simfunc{\texttt{Sim}}
+\def\setup{{\mathcal G}}
+\def\set{{\mathtt{Supp}}}
+\def\support#1{{\hat{#1}}}
+\def\coefs{{\mathtt{coef}}}
+\def\evi{{\mathtt{Evi}}}
+\def\bezout{\mathtt{BZ}}
+\def\tsetup{{~\mathrm{Setup}~}}
+\def\lsetup{{~\mathsf{Setup}~}}
+\def\acc{{\textrm{accept}}}
+\def\e{{\epsilon}}
+\def\coeft{{\mathfrak{t}}}
+\def\coefqb{{\mathfrak{q}}}
+\def\coefp{{\mathfrak{p}}}
+\def\bg{B_\gamma}
+\def\veck{\vec{k}}
+
+% -- protocols ---
+\def\prfcommit{\pi_{\textsf{COMMIT}}}
+\def\prfdlog{{\pi_{\textsf{DLOG}}}}
+\def\sigdlog{\pi_{\textsf{DLOG}}}
+\def\prfpddlog{\pi_{\textsf{PDDLOG}}}
+\def\prfpddlogplus{\pi_{\textsf{PDDLOG+}}}
+\def\prfsame{{\pi_{\textsf{SAME}}}}
+\def\sigsame{{\Sigma_{\textsf{EQ}}}}
+\def\prfprodnew{{\pi_{{\textsf{PROD}}}}}
+\def\prfseceval{{\pi_{{\textsf{SECEVAL}}}}}
+\def\prfpddlog{{\pi_{{\textsf{PDDLOG}}}}}
+\def\prfpoly{{\pi_{{\textsf{POLY}}}}}
+\def\prfeval{{\pi_{{\textsf{EVAL}}}}}
+\def\prfmono{{\pi_{{\textsf{MONOMIAL}}}}}
+\def\prfpddlog{{\pi_{{\textsf{PDDLOG}}}}}
+  %comitment of polynomial using key alpha
+\def\Cpa{{\mathbf{C}}_\alpha}
+  %scaled version of the ocmmitment
+\def\Cpsa{{\mathbf{C}}_{\alpha'}}
+	%comitment to p(\mu)
+\def\Cpu{{\mathbf{C}}_{\mu}}
+	%commitment to p(ru)
+\def\Cpsu{\mathbf{C}_{\mu'}}
+\def\Cpzero{{\mathbf{C}}_1}
+  %scaled version of the ocmmitment
+\def\Crzero{\mathbf{C}_{1'}}
+\def\Cph{{\mathbf{C}}_h}
+  %scaled version of the ocmmitment
+\def\Crh{\mathbf{C}_{h'}}
+\def\rzero{\gamma_1}
+\def\rzerotwo{\gamma_1'}
+\def\rh{\gamma_h}
+\def\rhtwo{\gamma_h'}
+\def\Cps0{{\mathbf{C}}_{0'}}
+	%comitment to p(\mu)
+\def\Cpy{{\mathbf{C}}_{y}}
+	%commitment to p(ru)
+\def\Cpsy{\mathbf{C}_{y'}}
+\def\Cry{{\mathbf{C}}_{\gamma_y}}
+\def\rytwo{{\gamma_{y_2}}}
+\def\ry{{\gamma_{y}}}
+\def\Cpubeta{\mathbf{C}_{\mu'}}
+\def\Cru{{\mathbf{C}}_{\gamma_\mu}}
+\def\rubeta{\gamma_{3}}
+\def\ru{{\gamma_{\mu}}}
+\def\rutwo{{\gamma_{\mu_2}}}
+\def\ralpha{{\gamma_{\alpha}}}
+\def\ralphatwo{{\gamma_{\alpha_2}}}
+
+\def\ruprime{\gamma_{\mu}'}
+\def\rusq{\gamma_{\nu}}
+\def\rusqprime{\gamma_{\nu}'}
+\def\rb{\gamma_\b}
+\def\Cmutwo{{\mathbf{C}}_{\mu^2}}
+\def\Cmusq{{\mathbf{C}}_{\gamma_{\nu}}}
+
+%- constants for sec_eval protocol
+\def\rw{\gamma_{w}}
+\def\Wtwo{\mathbf{W}_2}
+\def\polypu{p(\mu)}
+\def\polyqu{q(\mu)}
+\def\polypalp{p(\alph)}
+\def\polyqalp{q(\alph)}
+\def\isgen{{\in_{\textrm{gen}}}}
+\def\negli{{\epsilon(\secparam)}}
+
+\def\coef{{\b}}
+\def\prf{\pi}
+\def\sigproto{\Sigma_\texttt{zk\_kzg}}
+\def\sigsubset{\Sigma_\texttt{subset}}
+\def\prfsubset{\pi_\texttt{subset}}
+\def\prfposlook{\pi_\texttt{POSLOOK}}
+\def\prflookres{\pi_\texttt{LOOKUPRES}}
+\def\prfvecprod{\pi_\texttt{VECPROD}}
+\def\prfpedvan{\pi_\texttt{SAMEVEC}}
+\def\prfrange{\pi_\texttt{RANGE}}
+\def\prfsnark{\pi_\texttt{SNARK}}
+\def\zkauxlookup{\pi_\texttt{ZK\_CQ}}
+\def\zklookup{\pi_\texttt{LOOKUP}}
+\def\zkpnlookup{\pi_\texttt{PN\_LOOKUP}}
+\def\zkglook{\pi_\texttt{GRP\_LOOKUP}}
+% -- commitment --
+
+\def\cq{{\mathfrak{cq}}}
+\def\mtbl{{\mathfrak{t}}}
+\def\F{\mathbb{F}}
+\def\nat{\mathbb{N}}
+\def\L{\mathcal{L}}
+\def\X{\mathbb{X}}
+\def\I{{\mathbb{I}}}
+\def\V{{\mathbb{H}_{n}}}
+\def\Vtwo{{\mathbb{H}_{\n}}}
+\def\H{{\mathbb{H}_{N}}}
+\def\Htwo{{\mathbb{H}_{\N}}}
+\def\K{{\mathbb{H}_{k}}}
+\def\setupcq{\texttt{SetupCQ}}
+\def\prvcq{\texttt{ProveCQ}}
+\def\vercq{\texttt{VerifyCQ}}
+\def\setupcpl{\texttt{SetupCPL}}
+\def\prvcpl{\texttt{ProveCPL}}
+\def\vercpl{\texttt{VerifyCPL}}
+\def\prvls{\texttt{ProveLS}}
+\def\verls{\texttt{VerifyLS}}
+\def\setls{\texttt{SetupLS}}
+\def\setupaq{\texttt{SetupAQ}}
+\def\preprocess{\texttt{Preprocess}}
+\def\prove{\texttt{Prove}}
+\def\commit{\texttt{Commit}}
+\def\pow{\texttt{Pow}}
+\def\verify{\texttt{Verify}}
+\def\aq{\ttt{AQ}}
+\def\prvaq{\texttt{ProveAQ}}
+\def\veraq{\texttt{VerifyAQ}}
+\def\setupall{\texttt{Setup}}
+\def\prvall{\texttt{Prove}}
+\def\verall{\texttt{Verify}}
+\def\fft{\texttt{FFT}}
+\def\invfft{\texttt{FFT}}
+\def\lookup{~\hat{\subset}~}
+
+\def\bm{{\Commit_{\hat{m}}}}
+\def\ba{{\Commit_{\hat{A}}}}
+\def\bqa{\Commit_{{Q_{\hat{A}}}}}
+\def\bbzero{{\Commit_{\hat{B}_0}}}
+\def\bb{{\Commit_{\hat{B}}}}
+\def\bp{{\Commit_{P}}}
+\def\bt{{\Commit_{\myvec{t}}}}
+\def\bT{{\Commit_{\myvec{T}}}}
+\def\bqb{{\Commit_{Q_{\hat{B}}}}}
+\def\bh{{\Commit_{h}}}
+\def\bbgammazero{{\mathsf b_{0,\gamma}}}
+\def\bfgamma{{\mathsf f_{0,\gamma}}}
+\def\bbone{{\mathsf B_1}}
+\def\bbtwo{{\mathsf B_2}}
+\def\bazero{{\Commit_{a_0}}}
+\def\prfazero{{\prf_{a_0}}}
+\def\bbzero{{\Commit_{b_0}}}
+\def\prfbzero{{\prf_{b_0}}}
+\def\bbgamma{{\mathsf b_{\gamma}}}
+\def\bqbgamma{{\mathsf Q_{b,\gamma}}}
+\def\bv{{\mathsf v}}
+\def\prfgamma{{\prf_{\gamma}}}
+\def\bc{{\mathsf c}}
+\def\bbthree{{\mathsf B_3}}
+\def\bbfour{{\mathsf B_4}}
+\def\bd{{\mathsf d}}
+\def\prfbazero{{\prf_{\bazero}}}
+\def\tree{{\mathsf t}}
+\def\init{{\mathcal I}}
+
+\def\prfsum{\prf_{\texttt{sum}}}
+\def\prfprod{\prf_{\texttt{prod}}}
+\def\prfpack{\prf_{\texttt{pack}}}
+\def\prfacc{\prf_{\texttt{accpath}}}
+\def\prfset{\prf_{\texttt{set}}}
+\def\prfperf{\prf_{\texttt{perm}}}
+\def\concat{||}
+
+\def\intlag{\lambda}
+\def\intvanish{\zeta}
+
+%\newtheorem{thm}{Theorem}
+%\newtheorem{lemma}{Theorem}
+
+\def\cp{\texttt{CP}}
+\def\bw{\texttt{BS}}
+\def\sde{\texttt{SDE}}
+\def\dfa{\texttt{DFA}}
+\def\isde{\texttt{ISDE}}
+\def\true{\texttt{T}}
+\def\false{\texttt{F}}
+\def\unknown{\texttt{U}}
+\def\switch{\textbf{Case}}
+\def\case{\textbf{}~}
+\def\htab{\hspace*{0.1in}}
+\def\return{\textbf{\texttt{return}}~}
+\def\op{\texttt{op}}
+\def\com{\texttt{COM}}
+
+\def\foldpot{\texttt{FoldPot}}
+\def\proto{{\large{\Pi}}}
+\def\rohash{\texttt{ro}}
+\def\hashchain{\texttt{hashchain}}
+\def\hc{\texttt{hc}}
+\def\prfkzg{\prf_{\texttt{kzg}}}
+\def\prfvec{\prf_{\texttt{vec}}}
+\def\fm#1{\myvec{W}^{(\rho,#1)}}
+\def\emptyfm{\myvec{W}^{(\rho)}}
+
+\def\cyclefold{\mathbf{R}_\texttt{fold}}
+\def\cyclepair{\mathbf{R}_\texttt{pair}}
+\def\fqproj#1{{#1}_{\mapsto \F_q}}
+\def\frproj#1{{#1}_{\mapsto \F_r}}
+\def\circqa{\mathbf{R}_\texttt{qanizk\_ver}}
+\def\prfnizk{\prf_\texttt{nizk}}
+\def\U{\mathsf{U}}
+\def\CpInput{\texttt{CyclePairInput}}
+\def\O{\mathsf{O}}
+\def\u{\mathsf{u}}
+\def\w{\mathsf{w}}
+\def\ubot#1{\mathsf{u_{\bot,{#1}}}}
+\def\ucbot{\mathsf{u^{\texttt{(fold)}}_{\bot}}}
+\def\upbot{\mathsf{u^{\texttt{(pair)}}_{\bot}}}
+\def\wbot#1{\mathsf{w_{\bot,{#1}}}}
+\def\z{\mathsf{z}}
+\def\xmain{\mathsf{x}^\texttt{(main)}}
+\def\xcyclefold{\mathsf{x}^\texttt{(fold)}}
+\def\xcyclepair{\mathsf{x}^\texttt{(pair)}}
+\def\augf#1{\mathsf{F}_{#1}'}
+\def\augfmain#1{{\mathsf{F'}}^{\texttt{(main)}}_{#1}}
+\def\augffold{{\mathsf{F'}}^{\texttt{(fold)}}}
+\def\augfapir{{\mathsf{F'}}^{\texttt{(pair)}}}
+\def\func#1{\mathsf{F}_{#1}}
+\def\realfunc#1{\mathsf{F}^{(\texttt{Raw})}_{#1}}
+\def\nifsv{\mathsf{NIFS.V}}
+\def\nifsp{\mathsf{NIFS.P}}
+\def\nifspwrapper{\mathsf{NIFS.P}'}
+\def\genCycleFoldX{\mathsf{gen\_cf\_x}}
+\def\htab{\hspace*{0.1in}}
+\def\uc#1{\mathsf{u^{\texttt{(fold)}}_{#1}}}
+\def\uce#1{\mathsf{u^{\texttt{(fold,#1)}}}}
+\def\Uc#1{\mathsf{U^{\texttt{(fold)}}_{#1}}}
+\def\Uce#1{\mathsf{U^{\texttt{(fold,#1)}}}}
+\def\Wc#1{\mathsf{W^{\texttt{(fold)}}_{#1}}}
+\def\Wce#1{\mathsf{W^{\texttt{(fold,#1)}}}}
+\def\upair#1{\mathsf{u^{\texttt{(pair)}}_{#1}}}
+\def\Upair#1{\mathsf{U^{\texttt{(pair)}}_{#1}}}
+\def\Wpair#1{\mathsf{W^{\texttt{(pair)}}_{#1}}}
+\def\ucnop{\mathsf{u^{\texttt{(fold)}}}}
+\def\upnop{\mathsf{u^{\texttt{(pair)}}}}
+\def\ucnopone{\mathsf{u^{\texttt{(fold,1)}}}}
+\def\ucnoptwo{\mathsf{u^{\texttt{(fold,2)}}}}
+\def\ucnopthree{\mathsf{u^{\texttt{(fold,3)}}}}
+\def\Ucnop{\mathsf{U^{\texttt{(fold)}}}}
+\def\wc#1{\mathsf{w}^{\texttt{(fold)}}_{#1}}
+\def\wpair#1{\mathsf{w}^{\texttt{(pair)}}_{#1}}
+\def\fold{\mathsf{fold}}
+\def\vecx#1{\myvec{x}^{\texttt{(#1)}}}
+\def\vecxnop{\myvec{x}}
+\def\vecwnop{\myvec{w}}
+\def\xin#1#2{\myvec{x}^{\texttt{(#1,#2})}}
+\def\xinfold{\myvec{x}^{\texttt{(fold)}}}
+\def\xinpair{\myvec{x}^{\texttt{(pair)}}}
+\def\comW{\overline{\myvec{W}}}
+\def\comT{\overline{{T}}}
+\def\comCT#1{\overline{{T}^{\texttt{(fold,#1)}}}}
+\def\comPT{\overline{{T}^{\texttt{(pair)}}}}
+\def\comcw{\overline{\mathsf{W}^{\texttt{fold}, {(1)}}}}
+\def\comce{\overline{\mathsf{W}^{\texttt{fold}, {(2)}}}}
+\def\comcf{\overline{\mathsf{W}^{\texttt{fold}, {(3)}}}}
+\def\comtw{\overline{T^{(1)}}}
+\def\comte{\overline{T^{(2)}}}
+\def\comtf{\overline{T^{(3)}}}
+\def\comcwp{\overline{\mathsf{W}^{\texttt{pair}, {(1)}}}}
+\def\comtwp{\overline{T^{\texttt{pair},(1)}}}
+\def\advice{V}
+\def\advicemain{V^{\texttt{(main)}}}
+\def\advicefold{V^{\texttt{(fold)}}}
+\def\advicepair{V^{\texttt{(pair)}}}
+\def\ivcprf{{\Pi}}
+\def\ProveIVC{\mathsf{ProveIVC}}
+\def\SetupIVC{\mathsf{SetupIVC}}
+\def\VerifyIVC{\mathsf{VerIVC}}
+\def\VerifyFunc{\mathsf{VerifyIVC}}
+\def\trace{\mathsf{trace}}
+\def\pp{\mathsf{pp}}
+\def\nifsg{\mathcal G}
+\def\nifsk{\mathsf{NIF.K}}
+
+
+\def\crs{\mathtt{CRS}}
+\def\com{\mathtt{com}}
+\def\comsetup{\mathtt{com.setup}}
+\def\comcommit{\mathtt{com.commit}}
+\def\comprove{\mathtt{com.prove}}
+\def\comverify{\mathtt{com.verify}}
+
+\def\pedcom{\mathtt{pedcom}}
+\def\pedcomsetup{\mathtt{pedcom.setup}}
+\def\pedcomcommit{\mathtt{pedcom.commit}}
+\def\pedcomprove{\mathtt{pedcom.prove}}
+\def\pedcomverify{\mathtt{pedcom.verify}}
+
+\def\kzgcom{\mathtt{kzgcom}}
+\def\kzgcomsetup{\mathtt{kzgcom.setup}}
+\def\kzgcomcommit{\mathtt{kzgcom.commit}}
+\def\kzgcomprove{\mathtt{kzgcom.prove}}
+\def\kzgcomverify{\mathtt{kzgcom.verify}}
+
+\def\veccom{\mathtt{veccom}}
+\def\veccomsetup{\mathtt{veccom.setup}}
+\def\veccomcommit{\mathtt{veccom.commit}}
+\def\veccomprove{\mathtt{veccom.prove}}
+\def\veccomverify{\mathtt{veccom.verify}}
+
+\def\barkzg#1{\overline{#1}^{(\mathsf{KZG})}}
+\def\barped#1{\overline{#1}^{(\mathsf{PED})}}
+\def\barvec#1{\overline{#1}^{(\mathsf{VEC})}}
+\def\bargen#1{\overline{#1}}
+\def\pred#1{\Phi_{#1}}
+\def\pc{\mathsf{pc}}
+\def\circuit{{\texttt{C}}}
+\def\circf#1{\circuit_{#1}}
+
+\def\xw{\myvec{x}^{(w)}}
+\def\xi{\myvec{x}^{(i)}}
+\def\xo{\myvec{x}^{(o)}}
+\def\xd{\myvec{x}^{(d)}}
+\def\ds#1{[\![#1]\!]}
+\def\lk#1{\myvec{lk}_{(#1)}}
+\def\lkup{\myvec{k}}
+\def\qry#1{\myvec{q}^{(#1)}}
+\def\fullqry{\myvec{q}}
+\def\word#1{\myvec{w}^{(#1)}}
+\def\fullword{\myvec{w}}
+\def\veclen{\myvec{\ell}}
+\def\pubstat{\mathbb{X}}
+\def\pubstatind#1{\mathbb{X}^{\mathsf{(ind)}}_{#1}}
+\def\pcafull{\mathsf{PC}}
+\def\pca#1{\mathsf{PC}^{(#1)}}
+\def\prfbatch{\prf^{\mathsf{(batch)}}}
+\def\prfind#1{\prf^{\mathsf{(ind)}}_{#1}}
+\def\rhalf{\mathbf{R}_{\mathsf{half}}}
+\def\statsnark{\pubstat_{\mathsf{snark}}}
+\def\prfsnark{\prf_{\mathsf{snark}}}
+\def\prfqarv{\prf_{\texttt{qa}\_\myvec{r}\_\myvec{v}}}
+\def\prfkzgagg{\prf_{\texttt{kzg\_agg}}}
+\def\prfkzgwe{\prf_{\texttt{kzg\_WE}}}
+\def\prfkzgwetwo{\prf_{\texttt{kzg\_WE'}}}
+\def\prfqawetwo{\prf_{\texttt{qa\_WE'}}}
+\def\hcf{\hc}
+\def\qaverify{\mathtt{qa\_nizk.verify}}
+\def\snarkverify{\mathtt{groth16.verify}}
+\def\prfveccom{{\prf_{\texttt{veccom}}}}
+\def\prfkzgwi{{\prf_{\texttt{kzg}}^{(\myvec{w}_i)}}}
+

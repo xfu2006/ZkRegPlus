@@ -1,0 +1,41 @@
+name: Deploy Book & Docs to GitHub Pages
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  release:
+    name: GitHub Pages
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v2
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Build Rust Documentation
+        run: RUSTDOCFLAGS="--enable-index-page -Zunstable-options" cargo doc --no-deps
+
+      - name: Build the mdbook
+        run: |
+          cd book
+          cargo install mdbook
+          cargo install mdbook-admonish
+          mdbook build
+
+      - name: Arrange website folder hierarchy
+        run: |
+          mv ./target/doc ./book/book/rustdoc
+
+      - name: Deploy
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./book/book

@@ -1,0 +1,1267 @@
+\section{FoldPot SNARK}
+The starting point of our framework 
+is a combination of SuperNova \cite{SuperNova} and CycleFold \cite{CycleFold},
+and our implementation is based on deriving Sonobe \cite{Sonobe}, which
+implements Nova \cite{Nova} plus CycleFold \cite{CycleFold}.
+SuperNova supports non-uniform circuits, and
+cyclefold allows us to take advantage of half pairing groups
+like BN254/Grumpkin.
+
+Our contribution in the framework is the introduction of a 
+cycle pairing component in producing compressed decider proof.
+We observe that non-native arithmetics such as Pairing operations for
+BN254 can also be folded, by generalizing CycleFold.
+This allows us to use Quazi-linear NIZK (QA-NIZK) \cite{Gonzalez15,LegoSnark}
+to encode the decider proof for many non-uniform circuits as pairing
+operations in circuit.
+
+\subsection{Folding Scheme: SuperNOVA + CycleFold}
+Let $\G_1$ and $\G_3$ be two curve groups (e.g., that of
+BN254 \cite{BN254} and Grumpkin \cite{Grumpkin}) s.t. the scalar field
+of $\G_1$ is the base field of $\G_3$ and 
+the base field of $\G_1$ is the scalar field of $\G_3$.
+We also assume bilinear pairing is supported on the curve 
+for $\G_1$ (e.g., BN254), i.e.  there exists 
+$(\G_1, \G_2, \G_T, e)$ and 
+$e: \G_1 \times \G_2 \rightarrow \G_T$
+is a non-degenerating bilinear pairing function.
+We use additive group notations
+from Groth16 \cite{Groth16}. 
+We let $\F_r$ and $\F_q$ be the scalar and base prime
+field of $\G_1$ (i.e., base and scalar field of $\G_3$).
+For example, let $a,b \in \F_r$, then
+$[ab]_T = e([a]_1, [b]_2)$ denotes that the pairing
+of $[a]_1 \in \G_1$ and $[b]_2 \in \G_2$ results in
+$[ab]_T \in \G_T$.
+
+\subsubsection{CyclePair Gadget} We first briefly review
+CycleFold, based on which we develop CyclePair.
+The key observation of CycleFold is that: 
+curve operations in $\G_1$ can be represented {\em natively}
+over $\G_3$, because $\G_1$'s point in the affine form,
+can be represented as two scalar field elements of $\G_3$.
+Let $k = 2\lambda$ where $\lambda$ is the security parameter.
+Formally, the CycleFold relation is denoted as
+$\cyclefold$ over $\F_q$, i.e., $\myvec{x}$ (i/o) and $\myvec{w}$ (witness)
+are vectors of $\F_q$ elements:
+\[
+	(\myvec{x}; \myvec{w}) \in \cyclefold ~\textrm{iff.}~
+	\left\{
+	\begin{array} {l l}
+		& \myvec{x} = ([a]_1, [b]_1, [c]_1, r)  \\
+		& [c]_1 = [a]_1 + r [b]_1 \\
+		& r \in \{0,1\}^k \\
+	\end{array}
+	\right.
+\]
+
+In folding schemes like Nova \cite{Nova},
+the committed instance of $\cyclefold$ can be represented
+as an R1CS over $\F_r$. Thus in CycleFold, the system
+can fold the committed instances for both the main circuit and
+the cyclefold circuit {\em natively} over $\G_3$ and $\G_1$ respectively
+at reduced cost.  In the following, we write
+$([a]_1, [b]_1, [c]_1, r) \in \cyclefold$ for short (saving the
+notation of witness). Similarly, we can use $\cyclepair$
+to denote the {\em cycle pair} relation over $\F_q$:
+\[
+	(\myvec{x};\myvec{w}) \in \cyclepair~\textrm{iff.}~
+	\left\{
+	\begin{array} {l l}
+		& \myvec{x} = ([c]_T, [a]_1, [b]_2, [d]_T)  \\
+		& [d]_T = [c]_T + e([a]_1, [b]_2) \\
+	\end{array}
+	\right.
+\]
+
+Here we have one point in $\G_1$ and $\G_2$ respectively and
+two points in $\G_T$, all can be represented as elements in 
+$\F_q$ and the relation encodes one pairing and one $\G_T$
+operation (natively). In practice it costs $12k$ R1CS constraints
+over $\F_q$.
+
+\subsubsection{Mixed R1CS} The use of cyclepair gadget allows
+encoding a mixed R1CS relation over two fields. We first
+give a motivating example for the use of such mixed R1CS. 
+
+In the decider proof for SuperNova, each non-uniform circuit has
+a commitment $\overline{\myvec{W}^{(i)}}$ to its witness 
+$\myvec{W}^{(i)}$. The prover needs to demonstrate the knowledge
+of them, and each circuit has a separate Pedersen vector commitment 
+key.\footnote{We note
+that the authors of SuperNova mentions in a private communication that
+when circuits have the same size, they do can share the same Pedersen
+vector commitment keys. Here, when the circuit size are different, 
+using separate Pedersen commitment keys for individual circuits
+avoids the extra proof to justify the degree bound of
+commitments.} It is possible to batch-prove all $\myvec{W}^{(i)}$
+using QA-NIZK. However, we would like to perform the QA-NIZK verification
+in-circuit to further compress proof size, given that there is a large
+number of circuits.  This would require
+{\em encoding bilinear pairing operations in circuit}, if performed
+non-natively over $\G_1$, will be very costly.  We show how to
+accomplish it with mixed R1CS relation and $\cyclepair$.
+
+We know that any field element $x \in \F_q$ can be represented as 
+a vectof of field elements in $\F_r$.\footnote{In practice, to support
+the R1CS representation non-natively, we set the limb size to $55$,
+inheriting the setting in Sonobe \cite{Sonobe}, so that the lazy evaluation
+of non-native representation can be applied \cite{JSnark}.}
+We denote it as $\frproj{x}$, and naturally apply it to a vector
+of $\F_r$ elements, and similarly to $\G_1$, $\G_2$, and $\G_T$
+elements (as they are can be represented as vectors of $\F_q$ elements).
+
+\begin{definition} A {\em mixed R1CS relation} over $\F_r$ and $\F_q$
+is a tuple $(\myvec{x}^{(1)} \in \F_r^{m_1}, \myvec{x}^{(2)} \in \F_r^{m_2}, 
+\myvec{w}^{(1)} \in \F_r^{n_1}, \myvec{w}^{(2)} \in \F_q^{n_2}, R_1, R_2)$
+for some $m_1, m_2, n_1, n_2 \in \Nat$ where
+$R_1$ and $R_2$ are two R1CS relations over $\F_r$ and $\F_q$
+respectively, and $(\myvec{x}^{(1)} \concat \frproj{\myvec{x}^{(2)}}; \myvec{w}^{(1)}) \in R_1$ and $(\myvec{x}^{(2)}; \myvec{w}^{(2)}) \in R_2$.
+\end{definition}
+
+In this paper, we restrict $R_2$ to be $\cyclepair$, but it can be generalized
+to any R1CS relation over $\F_q$.  In the following, we show 
+$\circqa$, an instance of mixed R1CS relation for capturing
+the verification of QA-NIZK proofs.
+
+\begin{definition} $\circqa$ is a mixed R1CS relation:
+\[
+\left( 
+  \begin{array}{l}
+  	\left(h^{(a)}, h^{(b)}, h^{(a')}, h^{(b')}\right), \\ 
+    \left([c]_T, [a]_1, [b]_2], [d]_T\right), \\
+	R_1, \cyclepair
+  \end{array}
+\right)
+\]
+such that: $([c]_T, [a]_1, [b]_2, [d]_T) \in \cyclepair$ and
+$R_1$ defines the following relation over $\F_r$:
+\[
+	h^{(a')} = \hash(h^{(a)}, \frproj{[a]_1})  \And
+	h^{(b')} = \hash(h^{(b)}, \frproj{[b]_1}) 
+\]
+\end{definition}
+
+One can chain many instances $\circqa$ as step
+circuits to verify QA-NIZK relation below: 
+\begin{eqnarray}
+	& &\sum_{i=1}^n e([\myvec{x}_i]_1, [\myvec{C}_i]_2) = e(\prfnizk, [a]_2) \\
+	&\And& h^{(x)} =\hashchain(\myvec{x}) \\
+	&\And& h^{(C)} =\hashchain(\myvec{C})
+\end{eqnarray}
+
+Here:
+QA-NIZK proof $\prfnizk$ is a $\G_1$ element,
+its verification key $\left([\myvec{C}_i]_2, [a]_2\right)$ is a vector of $\G_2$
+elements. The I/O of the folded relation are the two hashchains
+($h^{(x)}$ and $h^{(C)}$), and they can be further hided in circuit.
+When applying to the decider proof of SuperNova, the
+$\myvec{x}$ are the $\G_1$ points contained in each committed R1CS instance.
+
+\subsubsection{SuperNova \cite{SuperNova} + CycleFold \cite{CycleFold} with CyclePair}
+We now present a slightly refactored SuperNova \cite{SuperNova} + 
+CycleFold \cite{CycleFold}
+framework to support cyclepair, which also incorporates
+the support for finger-printing technique of fixed memory segement
+introduced in Section \ref{cf_zksnark}. We use the
+$\nifsp$ and $\nifsv$ functions from Nova \cite{Nova} directly,
+which folds the concrete and committed R1CS instances.
+We first introduce a slightly
+modified definition of committed and relaxed R1CS instance.
+
+% As Nova \cite{Nova}, SuperNova \cite{SuperNova}, we define R1CS, extended
+% R1CS, and the committed instance below, by slightly adjusting
+% instnce I/O and witness order in the original deifnition.
+% 
+% \begin{definition} \cite[Definitions 8 and 9] {SuperNova} Given finite field 
+% $\F$, let $R = (n, m, \myvec{A}, \myvec{B}, \myvec{C})$ 
+% denote the structure of an R1CS relation, where
+% $\myvec{A}, \myvec{B}, \myvec{C} \in \F^{n\times n}$, each with $\Omega(n)$ non-zero entries,
+% and $m$ is the public input length. 
+% We say $(\myvec{x};\myvec{w}) \in R$ if and only if
+% $(\myvec{A} \cdot \myvec{Z}) \circ (\myvec{B} \cdot \myvec{Z}) = 
+% \myvec{C} \cdot \myvec{Z}$ where
+% $\myvec{x}\in \F^m$ and $\myvec{W} \in \F^{n-m-1}$ and $\myvec{Z} = 
+% (\myvec{W},\myvec{x},1)$.
+% 
+% Let $\pk_E$ and $\pk_W$ be Pedersen vector keys of vector length
+% $n$ and $n-m-1$ respectively. A {\em commited instance} of
+% $R$ is a tuple $(\overline{\myvec{E}}, u, \overline{\myvec{W}}, \myvec{x})$
+% where $\overline{\myvec{E}} = \com(\myvec{E}; r_E)$ and
+% $\overline{\myvec{W}} = \com(\myvec{W}; r_W)$ for
+% $(\myvec{E}, r_E, \myvec{W}, r_W) \in (\F^{n}, \F, \F^{n-m-1}, \F)$
+% s.t. $(\myvec{A}\cdot \myvec{Z})\circ (\myvec{B} \cdot \myvec{Z}) = u(\myvec{C}\cdot \myvec{Z}) + \myvec{E}$ where $\myvec{E} = (\myvec{W}, \myvec{x}, u)$.
+% \end{definition}
+
+% The cyclefold and cyclepair use the standard definition of
+% R1CS over $\F_q$ and its committed instance. For the main relation
+% over $\F_r$, to apply finger printing techniques, in Definition 
+% \ref{def:extr1cs}, an additional fixed witness section is introduced.
+% We repeat it here. The difference is a fixed mapping funciton $\rho$
+% that defines a fixed region $\myvec{W^{\rho}}$ in $\myvec{W}$.
+
+\begin{definition} (extending \cite[Definition 12]{Nova})
+Given finite field $\F$, the structure of a 
+{\em Fixed-memory R1CS} (F-R1CS) relation $R$ is denoted by 
+$R = (n, m, t, \myvec{A}, \myvec{B}, \myvec{C}, \rho)$ 
+where $\myvec{A}, \myvec{B}, \myvec{C} \in \F^{n\times n}$, 
+each with $\Omega(n)$ non-zero entries,
+and $m$ is the public input length.  $\rho$ is 1-to-1 map (projection) of 
+size $t$ s.t. $\forall i\in [t]: \rho(i) \in [0,n-1]$.
+Given $\myvec{W} \in \F^n$, 
+the projected word $\rho(\myvec{W})$, also 
+denoted as $\myvec{W^{(\rho)}}$ has length $t$ and
+satisfies: $\forall i \in [t]: \myvec{W^{(\rho)}}_i = \myvec{W}_{\rho(i)}$.
+
+We say $(\myvec{x};\myvec{w}) \in R$ if and only if
+$(\myvec{A} \cdot \myvec{Z}) \circ (\myvec{B} \cdot \myvec{Z}) = 
+\myvec{C} \cdot \myvec{Z}$ where
+$\myvec{x}\in \F^m$ and $\myvec{W} \in \F^{n-m-1}$ and $\myvec{Z} = 
+(\myvec{W},\myvec{x},1)$. 
+A committed R1CS instance for $R_\rho$ is a tuple 
+$(\overline{\myvec{E}}, u,
+\overline{\myvec{W}}, \myvec{x}, \overline{\myvec{\myvec{W}^{(\rho)}}})$
+where $\overline{\myvec{W}^{(\rho)}}$,
+$\overline{\myvec{W}}$, $\overline{\myvec{E}}$ are Pedersen vector
+commitment of $\myvec{W^{(\rho)}}$, $\myvec{W}$ and $\myvec{E}$,
+s.t. $(\myvec{A}\cdot \myvec{Z})\circ (\myvec{B} \cdot \myvec{Z}) = u(\myvec{C}\cdot \myvec{Z}) + \myvec{E}$ where 
+$\myvec{Z} = (\myvec{W}, \myvec{x}, u)$.
+\end{definition}
+
+To support the finger-printing techniques, the main circuit (over $\F_r$)
+is in F-R1CS, and the cyclefold and cyclepair circuits are the
+standard R1CS as in SuperNova. Their committed instsances are
+the ones given in SuperNova, i.e., without the $\overline{\myvec{W}^{(\rho)}}$
+component.
+
+We present the augmented circuit $\augf{j}$ in  Figure\ \ref{fig_supernova},
+with slight refactoring of the algorithm in \cite[Construction 1]{SuperNova}.
+Let $\ell$ be the number of circuits.
+Each $\augf{j}$ takes a collection of non-deterministic
+hints from the prover, and mainly performs two operations: (1) computes
+$\z_{i+1} \leftarrow \func{j}(\z_i, \omega_i)$, and (2)
+generates $\U_{i+1}$ by folding
+$\U_{i}$ (current folded instance) and $\u_{i}$ (incoming instance).
+Compared with the standard SuperNova,  
+there are three relations that are being folded: the 
+main circuit $\func{j}$ over $\F_r$, and the cyclefold and cyclepair
+relations over $\F_q$. To support IVC, the circuit 
+outputs three $\F_r$ elements ($\xmain$, $\xcyclefold$, $\xcyclepair$), 
+which are the hash of the committed instances of these three folded relations. 
+Function $\genCycleFoldX()$ generates the input for the cycle fold
+instance (the random combination of the $\overline{\myvec{W}}$,
+$\overline{\myvec{E}}$, $\overline{\myvec{W}^{(\rho)}}$
+for folding). Notice that all outputs are converted to limbs of $\Fr$.
+
+% The workflow of the $\augf{j}$ function simulates that of the SuperNova
+% framework \cite[Section 4.2]{SuperNova}, with some minor adjustifications:
+% (1) the $\phi(\pc_i, \pc_{i+1})$ simply asserts the validity of
+% the choice of $\pc_{i+1}$ (as in our context $\pc_{i+1}$ can be any value
+% in $[\ell]$, the prover just selects the least expensive one).
+% (2) Folding operations are added for cyclefold and cyclepair relations.
+% We re-use most of the notations in \cite{SuperNova}, e.g.,
+% $(\ubot{i}, \wbot{i})$ are the trivial satisfying
+% instances for circuit $\func{i}$.
+% 
+% In Figure\ \ref{fig_supernova}, function
+% $\nifsv$ performs the folding of committed instances
+% for cyclefold and cyclepair. Notice that the commitments
+% are in $\G_3$ (where the affine representation are encoded using
+% $\F_r$ elements). Function $\rohash()$ represents the
+% random oracle function and it maintains an implicit
+% transcripts of all past prover/verifier communication.
+% 
+% Augmented function $\augf{j}$ takes non-deterministic hints
+% from the prover (as part of the witness): $\advicemain$, 
+% $\advicefold$, and $\advicepair$ for the main relation, and
+% the cyclefold and cyclepair relations, respectively.
+% We briefly define their semantics below:
+% 
+% \begin{enumerate}
+% 	\item $\advicemain:$ $\pc_i$ is the circuit ID for the $i$'th step.
+% 		$\z_i$ is the output of $i$'th step. $\omega_i$ is the
+% 		hint (witness) for $\func{j}$.  $\U_i$ is
+% 		the folded instances up to step $i$.
+% 		$\u_i$ is the incoming instance.
+% 		$\overline{T}$ is the computed commitment to error terms 
+% 		used in folding committed instances.
+% 	\item $\advicefold:$  $\Uc{i}$ is the
+% 		folded instance for cyclefold fold,
+% 		and $\uc{i}$ the incoming instance,
+% 		for step $i$. As for each step, there
+% 		are three cyclefold relations (for $\overline{\myvec{E}}$, 
+% 			$\overline{\myvec{W}}$, $\overline{\myvec{W}^{(\rho)}}$).
+% 		The corresponding commitments to the witness of
+% 		these three instances of cyclefold instances are provided,
+% 		namely: $\comcw$, $\comce$, and $\comcf$. Similarly
+% 		the corresponding committed error terms are
+% 		$\comtw$, $\comte$, and $\comtf$.
+% 		Notice that folding operation of
+% 		$\Uc{i}$ and $\uc{i}$ can be directly computed
+% 		over $\F_r$.
+% 	\item $\advicepair:$ all hints are similar to that
+% 	of $\advicefold$.  The cyclepair input
+% 	$([t_1]_T, [a]_1, [b]_2, [t_2]_T)$ is retrieved from
+% 	the problem statement of the cyclepair instance, i.e.,
+% 	formally each circuit $\func{j}$ is a mixed R1CS relation
+% 	and the cyclepair input is retrieved from the input statement
+% 	$\myvec{x}^{(2)}$ from its relation $R_2$. 
+% 	Note that
+% 	it can be serialized to a vector of $\F_r$ elements (using the limb 
+% 	approach).
+% \end{enumerate}
+
+% The workflow of the $\augf{j}$ in Figure\ \ref{fig_supernova}
+% mainly follows that of \cite[Construction 1]{SuperNova},
+% by adding the CycleFold \cite{CycleFold}, where the curve point
+% operation is out-sourced to three foldings of cyclefold relation.
+% Following the same strategy, we adds a folding of CyclePair relation,
+% as highlighted. Note that these foldings are performed at $\F_r$,
+% and all inputs of relations are projected to $\F_r$ when necessary.
+% Finally, it returns the hash of the three relations to support IVC.
+
+
+
+\def\hp{\hspace*{0.1in}}
+\begin{small}
+\begin{algorithm}[bt]
+\SetKwData{Left}{left}\SetKwData{This}{this}\SetKwData{Up}{up}
+%\SetKwFunction{Union}{Union}\SetKwFunction{FindCompress}{FindCompress}
+%$ \U' \leftarrow \nifsv(\vk, \U, \u, \overline{T})$ $\#$ over $\F_r$
+%\newline
+%(1) Assert $\u.u = 1$ and $\u.\overline{E} = [0]_3$.\newline
+%(2) $r \leftarrow \rohash(\vk, \U, \u, \overline{T})$.\newline
+%(3) Return $\U' = (
+%			\U.\overline{E} + r \overline{T},
+%			\U.\overline{\myvec{W}} + r \overline{\myvec{w}},
+%			\U.u + r,
+%			\U.\myvec{x} + r \myvec{x})$.
+%	\\
+\SetKwFunction{Union}{Union}\SetKwFunction{FindCompress}{FindCompress}
+$ \left(\vecx{1},\vecx{2},\vecx{3}\right) 
+	\leftarrow \genCycleFoldX(\vk, \U, \u, \U', \overline{T})$ 
+\newline
+(1) $r \leftarrow \rohash(\vk, \U, \u, \U', \overline{T})$ \newline
+(2) Return $\left(
+	\begin{array}{l}
+		\frproj{\left(
+		\U.\overline{\myvec{W}},
+		\u.\overline{\myvec{W}},
+		\U'.\overline{\myvec{W}},
+		r\right)} \\
+		\frproj{\left(
+			\U.\overline{\myvec{E}},
+			\u.\overline{\myvec{E}},
+			\U'.\overline{\myvec{E}},
+			r\right)} \\
+		\frproj{\left(
+		\U.\overline{\myvec{W^{(\rho)}}},
+		\u.\overline{\myvec{W^{(\rho)}}},
+		\U'.\overline{\myvec{W^{(\rho)}}},
+		r\right)}
+	\end{array}
+	\right)$.
+
+
+\SetKwFunction{Union}{Union}\SetKwFunction{FindCompress}{FindCompress}
+$ \left(\xmain,\xcyclefold,\xcyclepair\right) 
+	\leftarrow \augf{j} \left(\vk, \left(
+		\advicemain, \advicefold, \advicepair\right) \right)$
+\newline
+(1) Parse  \newline
+	$\advicemain$ $  =
+		\left(\U_i, \u_i, \U_{i+1}, \pc_i, \pc_{i+1}, (i, \z_0, \z_i),  
+			\omega_i, \O_i, \overline{T}\right)$.  \newline
+		$\advicefold$   $= \left(
+				\begin{array}{l}
+					\Uc{i}, \Uc{i+1}, \uce{1}, \uce{2}, \uce{3}, \\
+					\comCT{1}, \comCT{2}, \comCT{3}
+				\end{array}
+		  \right).
+		$   \newline
+	$\advicepair$  	
+		$= \left(
+		   \Upair{i}, \Upair{i+1}, \upair{i}, \comPT, \xinpair
+		  \right)$  \newline
+(2) Run $\phi(\pc_i, \pc_{i+1})$ to assert validty of $\pc_{i+1}$.\newline
+(3) $\z_{i+1} \leftarrow \func{j}(\z_i, \omega_i)$.\newline 
+(4) Assert $\z_i = \hash(\O_i)$. \newline
+(5) Assert $\O_i.\CpInput = \xinpair$. \newline
+(6) If $i=0$: 
+	assert $\z_i = \z_0$, and \newline
+	$\htab \left(
+			\U_{i+1}, 
+			\Uc{i+1}, 
+			\Upair{i+1}
+			\right) \leftarrow 
+		\left(\left(\ubot{i}\right)_{i=1}^\ell, \ucbot, \upbot \right)$ 
+	\newline
+(7) If $i>0$:   \newline
+$\htab$ (7.1) Check $\u_i$ is the commitment to a standard R1CS, i.e.,
+		  $\u_i.x$ $=$ $\hash(\vk,$ $i, \pc_i,$ $\z_0, \z_i, \U_i)$,
+		  and $\u_i.\overline{E} = \ubot{i}.\overline{E}$,
+		  and $\u_i.u = 1$. \newline
+$\htab$(7.2) Check for $k\neq \pc_i$: $\U_{i+1}[k] = \U_i[k]$ and \newline
+$\htab$(7.3) Perform folding of $\cyclefold$ and $\cyclepair$ natively
+	over $\F_r$: \newline
+	\newline
+	$\htab\htab$ $\Ucnop \leftarrow \nifsv\left(\vk, \Uc{i}, \ucnopone, \comtw\right)$ \newline
+	$\htab\htab$ $\Ucnop \leftarrow \nifsv\left(\vk, \Ucnop, \ucnoptwo, \comte\right)$ \newline
+	$\htab\htab$ $\Uc{i+1} \leftarrow \nifsv\left(\vk, \Ucnop, \ucnopthree,  \comtf\right)$ \newline
+	\colorbox{yellow}{$\htab\htab \Upair{i+1} \leftarrow \nifsv\left(\vk, \Upair{i}, \upair{i}, \comtwp\right)$} \newline
+$\htab$(7.4) Assert Inputs: \newline
+	$\htab\htab \left( \uce{i}.\myvec{x} \right)_{i=1}^3 = 
+		\genCycleFoldX\left(
+			\begin{array}{l}
+				\vk, \U_i[\pc_i], \u_i,  \\
+				\U_{i+1}[\pc_i], \overline{T}
+			\end{array}
+		\right)$ \newline
+	\colorbox{yellow}{
+		$\htab\htab$ $\upair{i}.\myvec{x} = \xinpair$
+	} \newline 
+(8) Return 
+$\left(
+\begin{array}{l}
+    \hash\left(\vk, (i, \z_0, \z_{i+1}), \U_{i+1}\right),  \\
+	\hash\left(\Uc{i+1}\right),  \\
+	\hash\left(\Upair{i+1}\right)
+\end{array}
+\right)$.
+
+\caption{Modified Augmented Function from SuperNova \cite{SuperNova} 
+	and CycleFold \cite{CycleFold}}
+\label{fig_supernova}
+\end{algorithm}
+\end{small}
+
+In Figure\ \ref{fig_folding},
+we then provide a refactored IVC framework 
+presented \cite[Construction 1]{SuperNova}, by adding cyclepair.
+The $\ProveIVC()$ function prepares the
+input for $\augf{j}$, and generates the next IVC proof
+which consists of the pairs of folded and incoming
+R1CS instances.  Here $\nifspwrapper$ is a wrapper of $\nifsp$, 
+which given a committed instance pair
+$(\U_i, \W_i)$ for a relation $R$, an input $\myvec{x}$ for $R$,
+finds the corresponding witness for $\myvec{x}$ and generates
+an incoming instance $(\u_i, \w_i)$ and fold it with $(\U_i, \W_i)$.
+We know that for $\cyclepair$ and $\cyclefold$ relations,
+it takes linear time to compute the witness for a given input.
+To minimize the public I/O size, each $\z_i$ is 
+generated from a fixed structure $\O_i$ by
+$\hash(\O_i)$. In $\O_i$ there is a field of $\CpInput$
+of form $\left([t_1]_T, [a]_1, [b]_2, [t_2]_T\right)$ which serves as
+the input for $\cyclepair$. For arithmetic function $\func{j}$
+we use $\realfunc{j}\left(\pk, \myvec{x}, \omega_i\right)$ to 
+output the $\O_{i+1}$ instance, thus
+$\func{j}$ can be written as $\hash\left(\realfunc{j}\left(\pk, \O_i, \omega_i\right)\right)$. 
+
+
+\def\hp{\hspace*{0.1in}}
+\begin{small}
+\begin{algorithm}[bt]
+\SetKwData{Left}{left}\SetKwData{This}{this}\SetKwData{Up}{up}
+\SetKwFunction{Union}{Union}\SetKwFunction{FindCompress}{FindCompress}
+$ (\U_{i+1}, \W_{i+1}, \u_{i}, \w_{i}, \comT) \leftarrow \nifspwrapper(\pk, \U_i, \W_i, \vecxnop, R)$ \newline
+	(1) Given $\vecxnop$ and $R$, compute $(\vecxnop; \vecwnop) \in R$. \newline
+	(2) Let $\u_{i}$ be committed R1CS instance of $(\vecxnop; \vecwnop)$
+		for $R$. \newline
+	(3) $(\U_{i+1}, \W_{i+1}, \comT)  \leftarrow \nifsp\left(\pk, (\U_i, \W_i),
+		(\u_i, \w_i)\right)$. \newline
+	(4) Return $(\U_{i+1}, \W_{i+1}, \u_i, \w_i, \comT)$.
+\newline
+
+\SetKwFunction{Union}{Union}\SetKwFunction{FindCompress}{FindCompress}
+$ \left( (\pk_i, \vk_i) \right)_{i=1}^{\ell} \leftarrow \SetupIVC\left(\lambda, \{F_i\}_{i=1}^\ell \right)$. \cite[pp. 17]{SuperNova}\newline
+(1) $\pp_i \leftarrow \nifsg(1^\lambda)$ for each $i \in [\ell]$. \newline
+(2) Let $(\pk_i, \vk_i)  \leftarrow \nifsk(\pp_i, S(\augf{i}))$ for
+	each $i \in [\ell]$. \newline
+(3) Output $( (\pk_i, F_i) )_{i=1}^{\ell}$ as $\pk$ and
+	$ ( (\vk_i, F_i) )_{i=1}^{\ell}$ as $\vk$.
+
+\SetKwFunction{Union}{Union}\SetKwFunction{FindCompress}{FindCompress}
+$ \ivcprf_{i+1} \leftarrow \ProveIVC(\pk, \vk, (i, z_0, z_i), \omega_i, \pc_{i+1}, 
+	\ivcprf_i)$. \newline
+(1) Parse $\ivcprf_i$ as $\left(
+%	\begin{array}{l}
+		\left(\U_i, \W_i, \u_i, \w_i\right), 
+		\left(\Uc{i}, \Wc{i}\right), 
+		\left(\Upair{i}, \Wpair{i}\right),
+		\pc_i, \O_i
+%	\end{array}
+	\right)$. \newline
+(2) $\left(\xin{fold}{1},\xin{fold}{2},\xin{fold}{3}\right) 
+		\leftarrow \genCycleFoldX(\vk, \U_i, \u_i) $ \newline
+(3) $\xinpair \leftarrow \O_i.\CpInput$. \newline
+	\newline
+(5) $\O_{i+1} \leftarrow \realfunc{\pc_{i+1}}\left(\O_i, \omega_i\right)$ and
+	$\z_{i+1} \leftarrow \hash(O_{i+1})$. \newline
+(6) Compute:  \newline
+	$\left(\big(\Uce{j},\Wce{j}, \uce{j}, \comCT{j}\big)\right)_{j=1}^3 \leftarrow$ 
+	\newline
+	$\htab \left(\nifspwrapper(\pk, \Uc{i}, \Wc{i}, \xin{fold}{j}, \cyclefold)\right)_{j=1}^3$.
+	\newline
+	$\left(\Upair{i+1},\Wpair{i+1}, \upair{i}, \comPT\right) \leftarrow$ 
+	\newline
+	$\htab \nifspwrapper(\pk, \Upair{i}, \Wc{i}, \xinpair, \cyclepair)$.
+	\newline
+(7) Let  $\advice = \left(\advicemain, \advicefold, \advicepair\right)$ 
+	where
+	\newline $\advicemain$ $  =
+		\left(\U_i, \u_i, \U_{i+1}, \pc_i, \pc_{i+1}, (i, \z_0, \z_i),  
+			\omega_i, \O_i, \overline{T}\right)$.  \newline
+		$\advicefold$   $= \left(
+				\begin{array}{l}
+					\Uc{i}, \Uc{i+1}, \uce{1}, \uce{2}, \uce{3}, \\
+					\comCT{1}, \comCT{2}, \comCT{3}
+				\end{array}
+		  \right).
+		$   \newline
+	$\advicepair$  	
+		$= \left(
+		   \Upair{i}, \Upair{i+1}, \upair{i}, \comPT, \xinpair
+		  \right)$  \newline
+(8) $(\u_{i+1}, \w_{i+1}) \leftarrow \trace\left(\augf{\pc_{i+1}}\left(\vk, \advice\right)\right)$ \newline
+(9) Output $\ivcprf_{i+1}$ as $\left(
+	\begin{array}{l}
+		\left(\U_{i+1}, \W_{i+1}, \u_{i+1}, \w_{i+1}\right), \\
+		\left(\Uc{i+1}, \Wc{i+1} \right), 
+		\left(\Upair{i+1}, \Wpair{i+1}\right),
+		\pc_{i+1}
+	\end{array}
+	\right)$. \newline
+
+\SetKwFunction{Union}{Union}\SetKwFunction{FindCompress}{FindCompress}
+$ (0,1) \leftarrow \VerifyIVC\left(\vk, (i, z_0, z_i), \ivcprf_i\right)$. \newline
+If $i=0$ check $z_i = z_0$ Otherwise Parse
+$\ivcprf_{i}$ as $\left(
+	\begin{array}{l}
+		\left(\U_{i}, \W_{i}, \u_{i}, \w_{i}\right), 
+		\left(\Uc{i}, \Wc{i}\right), 
+		\left(\Upair{i}, \Wpair{i}\right),
+		\pc_{i} 
+	\end{array}
+	\right)$. \newline
+check the following: \newline
+(1) $1 \leq \pc_i \leq \ell$. \newline
+(2)  Assert $\u_i.\myvec{x} = 
+		\left(
+		\begin{array}{l}
+			\hash\left(\vk, (i, \z_0, \z_{i}), \U_{i}\right),  \\
+			\hash\left(\Uc{i}\right),  \\
+			\hash\left(\Upair{i}\right)
+		\end{array}
+	\right)$. \newline
+(3) $\forall i\in [\ell]$:  $\u_{i}$, $\uc{i}$, $\upair{i}$ are standard, i.e.,
+\newline
+	their $\overline{\myvec{E}}$ is $\ubot.\overline{\myvec{E}}$
+	and $u = 1$. \newline
+(4) Assert:
+$\left\{\begin{array}{l}
+	(\u_i, \w_i) \in \augf{\pc_i} \\ 
+	(\Uc{i}, \Wc{i}) \in \cyclefold \\
+	(\Upair{i}, \Wpair{i}) \in \cyclepair  \\
+ \end{array}
+\right.$ \newline
+(5) Assert: $\forall j\in [\ell]$, $(\U_{i}[j], \W_{i}[j]) \in \augf{j}$.  
+\newline
+
+\caption{Main IVC Framework}
+\label{fig_folding}
+\end{algorithm}
+\end{small}
+
+\begin{theorem} The construction in Figure\ \ref{fig_folding} is a complete and 
+knowledge sound IVC scheme.
+\end{theorem}
+
+The completeness of the construction is apparent. As the foldpot scheme
+is an integration of SuperNova (extension of Nova) and Cyclefold,
+its soundness proof originates from Lemma 10 of Nova \cite{Nova}, 
+Lemma 3 of SuperNova \cite{SuperNova}, and Lemma 
+2 of CycleFold \cite{CycleFold}, with adaptation from CCS to standard
+R1CS. For the soundness proof, the key observation is that given IVC proof  
+$\ivcprf_{i} = \left(
+	\begin{array}{l}
+		\left(\U_{i}, \W_{i}, \u_{i}, \w_{i}\right), 
+		\left(\Uc{i}, \Wc{i}\right), 
+		\left(\Upair{i}, \Wpair{i}\right),
+		\pc_{i} 
+	\end{array}
+\right)$, one can extract $\U_{i-1}$ and $\u_{i-1}$ which
+fold into $\U_{i}$. Then based on the extractor properties for
+folding relations, one can extract the $\W_{i-1}$ and 
+$\w_{i-1}$ for $\U_{i-1}$ and $\u_{i-1}$. The same observation
+applies to the cyclefold and cycle-pair relations. Thus,
+it allows the knowledge extraction to proceed recursively.
+The cyclefold instance, according to Lemma 2 of CycleFold \cite{CycleFold}
+guarantees the entire scheme's knowledge extraction, by asserting
+the correctness of the out-sourced linear combination of curve points.
+The correctness of cyclepair is done through the check of
+$\z_i = \hash(\O_i)$ in the $\augf{j}$ circuit.
+
+\subsection{Circuit}
+In this section we provide further details about the circuits.
+Given a set of words $\myvec{s} = \myvec{s}^{(1)} \concat ... \concat \myvec{s}^{(n)}$, our goal is to prove that a certain predicate $\pred{\myvec{s}}$ 
+are satisfied by these words.  As an example, the predicate may assert that
+each word does not match any of the regex in a malware signature set.
+As another example, the predicate asserts that
+the words correctly encode the verifier function of a QA-NIZK relation.
+We accomplish the ``proof" of $\pred{\myvec{s}}$ via
+a sequential execution of a collection of circuits
+$\{\circuit_1, ... \circuit_k\}$ via $N$ steps s.t.
+$\forall i\in [N]: z_i = \circuit^i_{\pc_i}(z_{i-1})$,
+and in the last output $z_N$ there is a boolean flag
+indicating if $\pred{\myvec{s}}$ is true. We use IVC here for
+the folding speed is faster than general purpose SNARK provers.
+However, the computing model is closer to the Repeated Computation
+with Global State (RCG) \cite{RCG} in the way that 
+the prover witnesses of all the steps are already known before folding 
+is started, and so is zk-rollup \cite{Rollup}.
+
+\subsection{Circuit and Function View of $\Sigma$-IR1CS}
+It is convenient to view a $\Sigma$-IR1CS in the point of view of
+functions and also as an arimetic circuit. 
+We mainly consider functions (circuits, i.e., $\Sigma$-IR1CS)
+that can compute values given input words. To simplify 
+the presentation, we assume that these functions process
+fixed size words, e.g., a circuit that discharge a word of
+size $2^{10}$ of a given set of malware signatures.\footnote{In 
+implementation, we allow circuit to process a word with a prior-set
+max length, so that we can reduce the number of circuits needed
+to handle words of arbitrary length, i.e., we do not have to
+provide circuits which handles word length $2^0$, $2^1$, etc
+which are not ``economical" given the IVC overhead.} 
+Note that however, the word problem itself, is not fixed size.
+We thus distinguish these two cases in the following definition.
+
+\begin{definition} A {\em word processing function} 
+has the form
+$z \leftarrow f(\myvec{w}, \myvec{p})$, with linear time and
+space copmlexity.  Here $z\in \F$, $\myvec{w} \in \F^n$ and
+$\myvec{p} \in \F^m$ represent the output, the input word,
+and any additional information. If the function 
+needs to return multiple elements, we let a fixed structure
+$\ds{z}$ encode them s.t.  $z = \hash(\ds{z})$. We call
+$\ds{z}$ its {\em output structure}.
+$f$ is called of {\em fixed size ($n$)} if $n$ is a fixed constant. 
+\end{definition}
+
+Since our goal is RCG (IVC), we would like to split an expensive
+function into many steps.  We say that a word function 
+$f(\myvec{w}, \myvec{p})$ is {\em streaming}, if it can
+process the word ``character by character". A streaming
+function is a stronger notion than recompusively computable by IVC,
+in fact, it implies that the function
+can be computed chunk by chunk (more efficient than character by character).
+Streaming functions enjoy a nice property: 
+combination of any two streaming functions is still
+streaming.\footnote{Note that this property does not apply to
+any recursively computing functions. If two functions each has
+special requirement on the chunk size, then they cannot be safely composed.}
+
+\begin{definition} A word function $f$
+is called {\em streaming}, if there exists 
+a function $g$ of fixed-size $1$,
+whose output structure contains an element $v$
+s.t. for any $\myvec{w}, \myvec{p}$, letting $n = |\myvec{w}|$,
+there exists a sequence of $z_0, ..., \z_{n}$ satisfying:
+\begin{enumerate}
+	\item$\forall i in [1,n]: z_i = g(\myvec{w}_i, \myvec{p})$.
+	\item $\ds{z_{n}}.v = f(\myvec{w}, \myvec{p})$.
+\end{enumerate}
+We call $g$ the atomic function of $f$.
+\end{definition}
+
+\begin{lemma} Given any two streaming functions $f(\myvec{w}, \myvec{p})$
+and $g(\myvec{w}, \myvec{p})$, their {\em composition} 
+(denoted as $f \circ g$) is defined
+as a function $z\leftarrow h(\myvec{w}, \myvec{p})$ s.t. $\ds{z}$
+is a vector $\big(f(\myvec{w}, \myvec{p}), g(\myvec{w}, \myvec{p})\big)$.
+$h$ is streaming.
+\end{lemma}
+
+All the approximated regex discharging algorithms are streaming functions.
+Streaming implies recursive computation using IVC.
+When processing a word problem, there is a need to pass
+information between circuits, e.g., the remaining signatures
+that are not handled by $\cp$ will be passed to $\bw$, and then 
+$\sde$ circuits. 
+\footnote{Notice that, these input/output information belong to the
+{\em fixed meomry} part of the non-deterministic advice
+to the circuit, i.e., they do not depend on verifier challenges.}
+We thus further (synatically) restrict $\Sigma$-IR1CS relations
+as special arithmetic circuit with defined structures.
+
+\begin{definition}  Given a fixed-size streaming function $f$,
+we say a $\Sigma-$ I-R1CS instance 
+$(N, n, \F; \myvec{T} \in \F^{N\times 2}, $
+$\ell_x, \ell_{m_1}, \ell_{m_2}, \ell_{m_3} \in \nat; 
+A,B,C \in \F^{n\times m}; \chi)$
+ is the arithmetic circuit for $f$, denoted as $\circuit_{f}$,
+if $\ell_x = \ell_w + \ell_i + \ell_o + \ell_d + 2$, i.e.,
+its statement $\myvec{x}$ is structured as the concatenation
+of $4$ (fixed size) segements $\xw$ (the word),
+$\xi$ (the input), $\xo$ (the output), $\xd$ (the data),
+and two additional field elements $z_{i-1}$ and $z_{i}$,
+and for any satisfying instance for $\circuit_{f}$, its
+$z_i = f(z_{i-1}, \xw \concat \xi \concat \xo \concat \xd)$. 
+\end{definition}
+
+Intuitively, given a streaming function $f$, and its atomic
+function $g$. Let $g^{(i)}$ be a function by chaining $g$ for $i$ times.
+We have a collection of circuits 
+$\left\{\circuit_{g^{(2^i)}}\right\}_{i=1}^k$
+that can compute $f$ for any input word. A larger $k$ permits
+less overhead caused by IVC in practice.
+
+
+\subsection{Batch and Individual Proof}
+We recall the idea of batch and individual proof and formally define the
+proof framework in this section. There is a public regex set
+$R$, whose approximated discharging algorithms can be encoded
+as a streaming function which utilizes
+a lookup table with two columns $\lkup = (\lk{1}, \lk{2})$, 
+denoted as $f_\lkup$. The prover holds
+a {\em secret} set of words 
+$\left\{\word{i} \right\}_{i=1}^n$, and alternatively
+we write it as $(\fullword, \veclen)$ where 
+$\fullword = \word{1} \concat ... \concat \word{n}$ and
+$\forall i\in[n]: \veclen_i = |\word{i}|$. 
+The proof proceeds in two phases: (1) {\em batch proof:} where
+the prover produces one single proof for $\fullword$ that each of its
+$\word{i} \not\in R$. (2) {\em individual proof:}
+where given $\bargen{\word{i}}$, the prover convinces the verifier that
+it indeed encodes is the i'th word in $\bargen{\fullword}$.
+This scheme is accomplished using a $O(1)$ size SNARK proof (decider
+proof for an IVC scheme) and several KZG proofs.
+
+Now consider the individual proof for $i$. The verifier sees:
+$\bargen{\word{i}}$, $\bargen{\fullword}$, $\bargen{\veclen}$.
+The prover can produce a non-interactive proof as below:
+let $r_i = \rohash\left(i, \bargen{\word{i}}, \bargen{\fullword}, 
+\bargen{\veclen}\right)$.
+let $v_i = \sum_{j=0}^{|\word{i}|-1} r^i \word{i}_{j}$.
+The prover can provide a kzg proof to show that
+$\bargen{\word{i}}$ evaluates to $v_i$ at $r_i$.
+Now it remains to show that according to 
+$\veclen$, the corresponding $i$'th segment
+of $\fullword$ is indeed $\word{i}$.
+This is accomplished combined with the SNARK of the 
+batch proof. In the batch proof, there is an IVC sequence
+of circuits (whose concatenation of $\xw$ is $\fullword$).
+We perform in circuit evaluation of $r_i$ for each $\word{i}$.
+Thus, the verification of individual proof relies on the batch proof,
+which we elaborate the details below.
+
+We first formally define the statement of a batch proof.
+We say a streaming predicate is a streaming function which 
+returns a booleaning value.
+Fix a streaming predicate $\pred{\lkup}$, 
+given any word problem $(\fullword, \veclen)$,
+we define the public batch proof claim 
+$\pubstat_{(\fullword, \veclen, f_\lkup)}$
+(shortened by $\pubstat$ when the context is clear) 
+as a tuple:
+$
+	(\bargen{\fullword}, \bargen{\veclen}, \bargen{\lkup},
+		\bargen{\myvec{r}}, \bargen{\myvec{v}})
+$, where $\myvec{r}$ and $\myvec{v}$  encodes the
+$r_i$ and $v_i$ for the individual proof of each word.
+$\pubstat$ is visible to verifier and all commitments are completely
+hiding KZG commitments. The relation $R_\pubstat$ is defined
+as below:
+	%(\bargen{\fullword}, \bargen{\veclen}, \bargen{\lkup},
+	%	\bargen{\myvec{r}}, \bargen{\myvec{v}})
+\begin{equation}
+	R_{\pubstat_{\fullword, \veclen, \pred{\lkup}}} = 
+	\left\{ 
+		(\bargen{\fullword}
+		\bargen{\veclen}, 
+		\bargen{\lkup},
+		\bargen{\myvec{r}}
+		\bargen{\myvec{v}}) \middle\vert
+			\begin{array}{l}
+				\fullword = \word{1} \concat ... \concat 
+					\word{(|\veclen|)} \\
+				\bargen{\fullword} = \kzgcom(\pk, \fullword) \\
+				\bargen{\veclen} = \kzgcom(\pk, \veclen) \\
+				\bargen{\myvec{r}} = \kzgcom(\pk, \myvec{r}) \\
+				\bargen{\myvec{v}} = \kzgcom(\pk, \myvec{v}) \\
+				\forall i\in [|\veclen|]: \veclen_i = |\word{i}| \\
+				\forall i\in [|\veclen|]: \myvec{v_i} = \sum_{j=0}^{|\veclen_i|}
+					(\myvec{r}_i)^j \cdot \word{i}_j \\
+				\forall i\in [|\veclen|]: \exists \myvec{p}:
+					\pred{\lkup}(\word{i}, \myvec{p}) = 1
+			\end{array}
+	\right\}
+\end{equation}
+
+Intuitively, $R_\pubstat$ states that each word satisfies
+the predicate, the vector lengths match the words,
+and given a non-deterministic vector $\myvec{r}$, the
+weighted sum of each $\word{i}$ using $\myvec{r}_i$
+generates $\myvec{v}_i$.\footnote{We do not have to
+specify that $r_i$ is the result of hashing individual claim.
+This can be checked in the individual proof using vector commitments.}
+It is not hard to see that enforcing the $(\myvec{r}, \myvec{v})$ semantics
+itself is a streaming function (essentially computing weighted sum).
+Combining all required checks (including $\pred{\pubstat}$) results
+in a streaming function, which can be recursively computed through IVC.
+This immediately applies to the approxmiated Regex discharging problem.
+
+\begin{theorem} \label{thm:main}
+Given any streaming predicate $\pred{\lkup}$, there exists 
+a set of circuits $\myvec{\circuit}$ and an IVC scheme, 
+such that for any word problem
+$(\fullword, \veclen)$, the IVC scheme using $\myvec{\circuit}$
+can produce a zk-SNARK proof 
+for $R_{\pubstat_{\fullword, \veclen, \pred{\lkup}}}$.
+The the prover work is $O(|\fullword|)$ group operations, 
+the proof size and verifier time are $O(1)$. 
+\end{theorem}
+
+We now introduce the an IVC scheme that realizes Theorem\ \ref{thm:main},
+and present the scheme in Figure\ \ref{fig:main}. It is a concrete
+scheme that realizes Theorem\ \ref{thm:main}. It has four stages.
+
+In Stage 1: given a collection of streaming circuits $\{\circuit_i\}_{i=1}^k$
+which computes $f_{R_\pubstat}$, we run the standard RCG scheme. 
+At step 4, we first run a heurstics, depending on the $\cp$, $\sde$, $\dfa$
+proofs for each word and the capacity of circuits, determine the 
+$\pc_i$ for each step to minimize resource consumption. These discharging
+proofs are encoded as fixed witness $\myvec{w}^{(\rho,i)}$, and at Step 6
+we compute $\hcf$ as the hashchain of the fixed segments first for
+Fiat-Shamir randoms.  Note that we also embed into the fixed segments:
+(1) each word $\word{i}$, (2) its length $\veclen_i$, and (3)
+the randoms and evals of $\myvec{r}_i$ and $\myvec{v}_i$ used for
+individual proof. Then the random challenge $r$ and a combination 
+factor $c$ is generated over $\hcf$. We run the IVC scheme, and after
+$N$ steps, at step (8), the ivc proof
+$\ivcprf_N$ asserts the validity of a variety of attributes
+about the words such as $\veclen{i} = |\word{i}|$, and
+$\myvec{v}_i = \sum_{j=0}^{|word{i}|-1} \myvec{r_i}^{j-1} \cdot \word{i}[j]$.
+Note $\ds{z_N}$ also includes attribute $e$ as the
+evaluation of a combination of vectors (polynomials), which 
+we later correlate with KZG proof.
+
+Now at the end of Stage 1, we have a SuperNova IVC proof, which has
+$n$ instances of committed R1CS, where each has a
+$\overline{\myvec{W}^{(i)}}$,
+$\overline{\myvec{E}^{(i)}}$,
+$\overline{\myvec{W}^{(\rho, i)}}$. We need to demonstrate the knowledge
+of the correpsonding witness for these commitments. In
+Sonobe \cite{Sonobe}, this is handled by providing one KZG commitment
+for each witness, and do a matching evaluation in circuit. This works
+when $k$ is small, but will result in a large proof size (e.g., $60$ KZG
+proofs for $20$ circuits!)
+
+Stage 2: We take an alternative approach 
+using QA-NIZK proof. The basic idea is that
+we collect the concentation of all witnesses and call it
+$\myvec{W} \concat \myvec{E}$ (see Step 11). We then provide
+a matrix based QA-NIZK proof which shows that the corresponding
+subsegments of $\myvec{W} \concat \myvec{E}$ generates 
+all the $3k$ commitments. The verification equation takes
+$3k+1$ pairing operations (see Step 12). 
+
+We would like to further compress the proof and verification cost 
+of Step 12. This is done through Stage 2 (steps 11 to 12) where
+we run another $3k+1$ steps of IVC, using one single chip
+for $\cyclepair$, to prove the QA-NIZK equations. Essentially it is
+to out-source one pairing operation to Grumpkin curve in each step to
+minimize folding cost. Apparently, when $k$ is large, the overall
+prover cost is much smaller compared with encoding all $3k+1$
+non-natively over EC1 (e.g., BN254).
+
+Stage 3: We now have two IVC proofs: $\ivcprf_N$ for stage 1 (main circuits),
+and $\ivcprf_k$ for the cyclepair circuit. We then generate a SNARK
+proof $\prfsnark$ (Lines 15-18), which proves the knowledge
+of these two pairs of IVC proofs, that satisfy a certain properties:
+(1) $\ds{z_N}.e$ matches the given $e$, which is the combined
+evaluation of polynomials behind $\pubstat$, and (2)
+$\ds{z_N}.{\pred{\pubstat}}$ is true.
+
+Recall that the decider of IVC mainly performs two tasks: (1) to prove
+that the witness satisfy the circuit relations, and (2) to prove that
+the witness does generate the commitments in the committed SuperNova instances.
+Here we let $\rhalf$ to represent the logic of (1), and use the
+Sonobe technique to outsource (2) to KZG commitment. The idea is:
+let $\overline{\myvec{W} || \myvec{E}}$ be the KZG commitment to
+all witness and error terms of all circuits. We provide a KZG proof
+for showing that it evaluates to a certain value $e_2$ at a point $r_2$.
+Then in circuit, we evaluate the polynomials and prove that all witness/error
+terms do evaluate to $e_2$ at $r_2$. We include such KZG proof
+in $\prfsnark$ at line (14), and similarly do this for the 
+cyclepair circuit using $(r', e')$.
+
+Stage 4: we build the batch proof as planned, which centeres around
+the $\prfsnark$, and provide the corresponding KZG proof.
+As the 2nd stage SuperNova has only one circuit, we disclose its
+hiding commitments, and use an extra QA-NIZK proof to prove
+the knowledge of witness behind these commitments with
+$\overline{\myvec{W'} \concat \myvec{E'}}$.
+For individual proof, we mainly re-generating the public randoms,
+$\myvec{r}_i$. Show that the committed word $\overline{\word{i}}$
+does generate $\myvec{v}_i$, and show that they are the
+$i'$th pair in the vaues embedded in the circuit, which links
+$\word{i}$ with the $i$'th word in the circuit.
+
+The batch proof size is: 13 $\G_1$, 1 $\G_2$ and 5 $\F$ elements.
+Verifier cost is mainly 10 pairings.
+Individual proof size is 2 $\G_1$, and 1 $\F$. Verifier cost
+is: 4 pairings.
+
+
+\def\hp{\hspace*{0.1in}}
+\begin{scriptsize}
+\begin{algorithm*}[bt]
+\SetKwData{Left}{left}\SetKwData{This}{this}\SetKwData{Up}{up}
+\SetKwFunction{Union}{Union}\SetKwFunction{FindCompress}{FindCompress}
+$ \left(\big(\pubstat, \prfbatch\big), \left(\pubstatind{i},\prfind{i}\right)_{i=1}^{n}\right) 
+	{\leftarrow} \mathsf{prove\_all}\left(\pk, 
+		\big\{\word{i}\big\}_{i=1}^n, \lkup, \left(\circuit_i\right)_{i=1}^k 
+		\right)$ 
+\newline
+(1) Compute $\veclen \leftarrow \left(|\word{i}|\right)_{i=1}^n$, and
+	$\fullword \leftarrow \word{1} \concat ... \concat \word{n}$. \newline
+(2) Generate KZG commitments: 
+	$\left(\bargen{\word{i}}\right)_{i=1}^n$, 
+	$\bargen{\veclen}$, 
+	$\bargen{\fullword}$, $\bargen{\lkup}$.
+	Compute $\myvec{r} \leftarrow \left(\rohash\big(i, \bargen{\word{i}}, \bargen{\fullword}, \bargen{\veclen}\big)\right)_{i=1}^n$, 
+	and 
+	$\myvec{v} \leftarrow \left(\sum_{j=0}^{\veclen_{i}-1} \myvec{r}_i^j \word{i}_j\right)_{i=1}^n$. \newline
+(3) Compute KZG for $\myvec{r}$ and $\myvec{v}$.
+	Define $\pubstat = (\bargen{\fullword}, \bargen{\veclen}, \bargen{\lkup},
+		\bargen{\myvec{r}}, \bargen{\myvec{v}})$,
+	and for $i\in [n]:$ $\pubstat_i = \left(\bargen{\fullword}, \bargen{\veclen}, \bargen{\word{i}}\right)$. \newline
+\# {\bf    Stage 1: main proof} \newline
+(4) Based on capacity of $\left(\circuit_i\right)_{i=1}^k$,
+	run heurstics to determine $N$, the steps needed for
+	computing $f_{R_{\pubstat}}$, and 
+	$\left(\pc_i\right)_{i=1}^N$, the circuit IDs of all steps 
+	\newline
+(5) For $i\in [n]$: Run $\cp$, $\sde$, $\dfa$, $\isde$ for each $\word{i}$,
+	and generate non-deterministic advice $\omega^{(i)}$ for
+	each $f_{\circuit_{\pc_i}}$, and based on it,
+	generate the partial witness $\myvec{W}^{(\rho,i)}$,
+	includes $\word{i}$, $\myvec{r}_i$, and $\myvec{v}_i$,
+	and $\lkup^{(i)}$ (the $i$'th piece of lookup table distributed
+	into $\circuit_{\pc_i}$), $\qry{i}$ (the query table 
+	in circuit $\circuit_{\pc_i}$). We write
+	$\fullqry = \qry{1} \concat ... \concat \qry{N}$,
+	and note $\fullqry \lookup \lkup$.
+	\newline
+(6) Compute $\hc \leftarrow \hashchain(\{\myvec{W^{(\rho,i)}}\}_{i=1^N})$.
+Then $(r,c,\beta) \leftarrow \rohash(\hc)$. \newline
+(7) Compute $z_0 \leftarrow \hash(\ds{\z_0})$, where
+$\ds{\z_0}$ contains constants $(\hc, r, c, \beta)$ that
+are passed to each $\ds{z_i}$ and variables for computing
+accumulated sum such as $\sum_{i=1}^N \fullword_i r^{i-1}$. 
+Let $\ivcprf_0$ be trivially satisfying IVC proof for initialization.
+\newline
+(8) For $i\in [N]:$ compute the full non-deterministic advice 
+$\omega^{(i)}$ with $(\hc, r,c,\beta)$, and $z_{i+1} \leftarrow f_{R_\pubstat}\left(z_i, \omega^{(i)}\right)$. Run $\ivcprf_{i+1} \leftarrow \ProveIVC\left(\pk, (i, z_0, z_i), \omega^{(i)}, \pc_{i+1}, \ivcprf_i\right)$. 
+A valid $\ivcprf_N$ proves that via $N$ steps if IVC, 
+$z_N \leftarrow f_{R_\pubstat}(\fullword, \veclen)$, 
+where $b_{\pubstat}$ in $\ds{z_N}$ asserts
+$
+ \left(
+ \begin{array}{l}
+ 	\forall i\in[n]: \veclen_i = |\word{i}| \\
+ 	\forall i\in[n]: \myvec{v}_i = \sum_{j=1}^{|\word{i}|} 
+		\word{i}_j (\myvec{r}_i)^{j-1} \\
+	\sum_{i=1}^{|\fullqry|} \frac{1}{\beta + \fullqry^{(1)}_i + \alpha \cdot \fullqry^{(2)}_i} = 
+	\sum_{i=1}^{|\lkup|} \frac{\myvec{m}_i}{\beta + \lkup^{(1)}_i + \alpha\cdot \lkup^{(2)}_i} \\
+	\forall i\in[n]: \cp(\word{i}) \subseteq \sde(\word{i}) \union \dfa(\word{i}) \union \isde(\word{i}) 
+ \end{array}
+ \right)
+$
+and $v$ in $\ds{z_N}$ has value 
+$\left(\begin{array}{l}
+c^0 \cdot \sum_{i=1}^{|\lkup|} \lkup^{(1)}_i \cdot r^{i-1} \\ 
++ c^1 \cdot \sum_{i=1}^{|\lkup|} \lkup^{(2)}_i \cdot r^{i-1} \\ 
++ c^2 \cdot \sum_{i=1}^{|\fullword|} \fullword_i \cdot r^{i-1} \\ 
++ c^3 \cdot \sum_{i=1}^{|\veclen|} \veclen_i \cdot r^{i-1}\\
++ c^4 \cdot \sum_{i=1}^{|\veclen|} \myvec{r}_i \cdot r^{i-1}\\
++ c^5 \cdot \sum_{i=1}^{|\veclen|} \myvec{v}_i \cdot r^{i-1}
+\end{array}
+\right)
+$
+\newline
+\# {\bf    Stage 2: CyclePair Proof For Saving Verifier Cost} \newline
+(10) Parse $\ivcprf_N$ as $\left(
+		\left(\U_N, \W_N, \u_N, \w_N\right), 
+		\left(\Uc{i}, \Wc{i}\right), 
+		\left(\Upair{i}, \Wpair{i}\right),
+		\pc_N, \O_N
+	\right)$. 
+	Compute $(\U_{N+1}, \W_{N+1})$ by folding
+	$(\U_N, \W_N)$ and $(\u_N, \w_N)$. 
+	For $j\in [k]$: extract the comitments: 
+		$\left(\overline{\myvec{W}^{(j)}},
+		\overline{\myvec{E}^{(j)}},
+		\overline{\myvec{W}^{(\rho,j)}}\right)$ from $\U_{N+1}[j]$
+		and witness and error terms 
+		$\left(\myvec{W}^{(j)}, \myvec{E}^{(j)}\right)$
+		from $\W_{N+1}[j]$.
+	Let $\myvec{W} = \myvec{W}^{(1)} \concat ... \concat \myvec{W}^{(k)}$, i.e.,
+	concatenated witness. Note that
+	$\myvec{W}^{(\rho,i)}$ is a subsegment of $\myvec{W}^{(i)}$ located
+	at fixed position.
+	Similarly let 
+	$\myvec{E} = \myvec{E}^{(1)} \concat ... \concat \myvec{E}^{(k)}$. 
+	Compute $\overline{\myvec{W} \concat \myvec{E}}$ as a hiding KZG
+	commitment of $\myvec{W} \concat \myvec{E}$.
+	\newline
+(11)  Construct QA-NIZK Proof $\prfqa$ for the following relation that
+	asserts the KZG commitment $\overline{\myvec{W} \concat \myvec{E}}$
+	with all commitments in supernova commmitted instance $\U_{N+1}$:
+	$\left\{    
+		\left((\myvec{W}^{(j)}, \myvec{E}^{(j)})_{j=1}^k\right):
+		\forall j\in [k]:
+			\left(
+			\begin{array}{l}
+			\overline{\myvec{W}^{(j)}} = \kzgcom(\myvec{W}^{(j)}). \\
+			\overline{\myvec{W}^{(\rho,j)}} = \kzgcom(\myvec{W}^{(\rho,j)}). \\
+			\overline{\myvec{E}^{(j)}} = \kzgcom(\myvec{E}^{(j)}),
+			\end{array}
+			\right), \textrm{ and }
+			\overline{\myvec{W}\concat\myvec{E}} = \kzgcom(
+				\myvec{W}^{(1)} \concat ... \concat \myvec{W}^{(k)} \concat
+				\myvec{E}^{(1)} \concat ... \concat \myvec{E}^{(k)}
+			).
+	\right\}
+	$, where
+	its public input $\xqa$ is: 
+		$\left(\overline{\myvec{w} \concat \myvec{E}},
+		\left(\overline{\myvec{W}^{(j)}},
+		\overline{\myvec{E}^{(j)}},
+		\overline{\myvec{W}^{(\rho,j)}}\right)_{j=1}^k
+		\right)$.
+	Note that its verifier key $\vkqa = (\myvec{C}, a)$ 
+	is a $3k+2$ vector of $\G_2$ elements, with $|\myvec{C}| = 3k+1$.
+	We now construct another IVC to prove the QA-NIZK equation
+	$\sum_{j=1}^{3k+1} e(\xqa_j, \myvec{C}_j) = e(\prfqa, a)$. 
+\newline
+(12) Repeat step (4) to (8) for a single circuit system
+	where the circuit encodes $\cyclepair$. Running $k$ steps
+	of IVC, results in the assertion for public
+	statement: $(\hc_1, \hc_2)$, where there exists
+	$\xqa\in \G_1^{3k+1}$ and $\myvec{C} \in \G_2^{3k+1}$ s.t.
+	$\sum_{j=1}^{3k+1} e(\xqa_j, \myvec{C}_j) = e(\prfqa, a)$, i.e.,
+	the QA-NIZK verification equation. \newline
+{\bf \# Stage 3. Generate SNARK Proof} \newline
+(13) Given a supernova IVC proof $\ivcprf$ for a scheme with $k$
+instances, let predicate $\rhalf(\ivcprf_i)$ defines the ``half" 
+of the SuperNova decider check on $\ivcprf_i$ by skipping
+the check on witness commitments. 
+Concretely it is define as as below:
+Parse $\ivcprf_i = \left(
+		\left(\U_i, \W_i, \u_i, \w_i\right), 
+		\left(\Uc{i}, \Wc{i}\right), 
+		\left(\Upair{i}, \Wpair{i}\right),
+		\pc_i, \O_i
+	\right)$. 
+Compute (non-natively for group operations in circuit)
+$(\U_{i+1}, \W_{i+1}, \u_{i+1}, \w_{i+1})$ by folding
+$(\U_i, \W_i, \u_i, \w_i)$. 
+Use non-deterministic advice $\ds{z_i}$ to show
+to show:  (1) $(\u_i.\overline{E}, \u_i.u) = (\u_\bot.\overline{E}, 1)$.
+(2) $\u_{i+1}.x = \left(\hash(\vk, i, z_0, z_i, U_{i+1}), 
+\hash(\vk, \Uc{i}), \hash(\vk, \Upair{i}) \right)$.
+(3) $\hash(\ds{z_i}) = z_i$.
+(4) $\forall j\in [k]:$ $\U_{i+1}[j]$ and $\W_{i+1}[j]$ is
+	a relaxed R1CS instance for circuit $\circuit_{j}$.
+(4) $\Uc{i}$ and $\Wc{i}$ is a relaxed cyclefold instance.
+(5) $\Upair{i}$ and $\Wpair{i}$ is a relaxed cyclepair instance. \newline
+ \hspace*{0.1in} Now given $\ivcprf_N$ (the IVC proof of stage 1),
+ 	and given $\myvec{W} \concat \myvec{E}$ in Step 10.  Let
+	$\ds{z_N}$ be the non-deterministic advice for $z_N = \hash(\ds{z_N})$.
+	Compute $r_2 \leftarrow 
+		\rohash(\ds{z_N}.\overline{\myvec{W}^{(\rho)}}, 
+		\overline{\myvec{W} \concat \myvec{E}})$.
+	Compute $e_2 \leftarrow \sum_{i=1}^{|\myvec{W} \concat \myvec{E}|}
+		(\myvec{W} \concat \myvec{E})_i \cdot r_2^{i-1}$. 
+	Compute the correpsonding KZG proof $\prfkzgwe$ for $e_2$.
+	Similarly for $\ivcprf_k'$ (the IVC proof for stage 2),
+	given $\ds{z_k'}$, $\myvec{W'} \concat \myvec{E'}$ extracted
+	from $\ivcprf_k'$,
+	compute $r' \leftarrow \rohash(\ds{z_k}'.\overline{\myvec{W'}^{(\rho)}}
+		, \overline{\myvec{W'} \concat \myvec{E'}})$, and
+		$e' \leftarrow \sum_{i=1}^(\myvec{W'} \concat \myvec{E'})_i \cdot
+			{r'}^{i-1}$.
+		Similarly compute the $\prfkzgwetwo$ for
+		$e'$.
+	Let $(\U_{i+1}', \W_{i+1}')$ be the folded instance for $\ivcprf_{k}'$
+	as shown in computing $\rhalf$.
+	Since stage (2) has one circuit, collect
+		$(\overline{\myvec{W'}}, \overline{\myvec{E'}}, 
+			\overline{\myvec{W'}^{(\rho)}})$ from its own
+			$\W_{i+1}'[0]$. 
+	Similarly to step (11), construct $\prfqawetwo$
+	for showing the relation between 
+	$\overline{\myvec{W'} \concat \myvec{E'}}$,
+	and $\overline{\myvec{W'}}$,
+	$\overline{\myvec{E'}}$,
+	$\overline{\myvec{W'}^{(\rho)}}$.
+	Now construct the public
+		statement for the SNARK proof as below:
+	$
+		\statsnark = \left( 
+			\left(
+				(r,c,\ds{z_N}.v), (r_2,e_2), \ds_{z_N}. \overline{\myvec{W}^{(\rho)}}
+			\right),
+			\left(
+				(r',e'), (\overline{\myvec{W'}}, \overline{\myvec{E'}},
+					\overline{\myvec{W'}^{(\rho)}}
+			\right)
+		\right)
+	$ \newline
+(14) Produce $\prfsnark$ for $\statsnark = 
+		\statsnark = \left( 
+			\left(
+				(r,c,e), (r_2,e_2), \overline{\myvec{W}^{(\rho)}}
+			\right),
+			\left(
+				(r',e'), (\overline{\myvec{W'}}, \overline{\myvec{E'}},
+					\overline{\myvec{W'}^{(\rho)}}
+			\right)
+		\right)$,
+i.e., there exists
+$\ivcprf_N$ and $\ivcprf_k'$ which satisfies the following:
+(1) $\rhalf(\ivcprf_N)$ for stage 1, (2) $\rhalf(\ivcprf_k')$ for 
+stage 2, (3) $(r,c,e, \overline{\myvec{W}^{(\rho)}}) \in \ds{z_N}$, 
+(4) Given $r_2$, and $\myvec{W} \concat \myvec{E}$ collected from $u_N$, verify
+$e_2$ is equal to the value computed in Step (13).
+(5) Similarly verify $e'$ using formula given in Step (13).
+(6) Assert $\overline{\myvec{W}'}, \overline{\myvec{E'}},
+	\overline{\myvec{W'}^{(\rho)}} = \u_k'[0]$  \newline
+\# {\bf Stage 4: Build Batch and Individual Proof} \newline
+(15) Compute 
+	$\barvec{\myvec{r}} \leftarrow \veccom(\myvec{r})$,
+	$\barvec{\myvec{v}} \leftarrow \veccom(\myvec{v})$.
+	Compute QA-NIZK proof $\prfqarv \in \G_1$ for
+	showing their equivalence to KZG, i.e., there exist $\myvec{r}$
+	which generates both $\barvec{\myvec{r}}$ and $\bargen{\myvec{r}}$ (KZG),
+	and also $\myvec{v}$
+	which generates both 
+	for $\barvec{\myvec{v}}$ and $\bargen{\myvec{v}}$. \newline
+(16) Comute batched KZG proof $\prfkzgagg$, which asserts
+that given $\pubstat = \left(\overline{\lkup^{(1)}}, 
+	\overline{\lkup^{(2)}}, \overline{\fullword}, 
+	\overline{\veclen}, \overline{\myvec{r}},
+	\overline{\myvec{v}} \right)$, combining the evaluation
+	at $r$ using combinning factor $c$, results in
+	$e$, Formally, let $\myvec{p}$ be the corresponding
+	polynoaims for $\pubstat$, $e = \sum_{i=1} c^{i-1} \cdot
+	\myvec{p}_i(r)$,i.e., it matches the $\ds{z_N}.v$
+	in Step (9). \newline
+(17) Output $\prfbatch = \left(
+     \hc(\{\overline{\myvec{W}^{(\rho,i)}}\}_{i=1}^N),
+	 \left(\barvec{\myvec{r}}, \barvec{\myvec{v}}, \prfqarv\right),
+	 \left(r,c,e,\prfkzgagg\right),
+	 \left(\overline{\myvec{W} \concat \myvec{E}}, r_2, e_2,
+	 	\prfkzgwe \right),
+	 \left(\overline{\myvec{W'} \concat \myvec{E'}}, r', e',
+	 	\prfkzgwetwo \right),
+	 \left(\overline{\myvec{W'}}, \overline{\myvec{E'}}, 
+	 	\overline{\myvec{W'}^{(\rho)}},
+		\prfqawetwo
+	 \right),
+	 \prfsnark
+	\right)$. \newline
+(18) For each $i\in [n]:$ 
+	Compute $c_i \leftarrow \rohash(\myvec{r}_i, \myvec{v}_i)$, 
+	$\prfveccom^{(i)} \leftarrow \veccomprove(\pk, 
+		\myvec{r} + c_i \cdot \myvec{v}, 
+		i, 
+		\myvec{r}_i + c_i\cdot \myvec{v}_i)$.
+	$\prfkzgwi \leftarrow \kzgcomprove(\pk, \myvec{w}^{(i)}, \myvec{r}_i,
+		\myvec{v}_i)$.
+	Output $\prfind{i} = \left(\prfveccom^{(i)}, \myvec{v}_i, \prfkzgwi
+	\right)$.	
+
+$ 1/0 {\leftarrow} \mathsf{verify\_batch}\left(\vk, 
+		\pubstat,
+		\prfbatch	
+		\right)$ 
+\newline
+(1) Parse $\pubstat = \left(\overline{\lkup^{(1)}}, 
+	\overline{\lkup^{(2)}}, \overline{\fullword}, 
+	\overline{\veclen}, \overline{\myvec{r}},
+	\overline{\myvec{v}} \right)$, 
+	and 
+	$\prfbatch = \left(
+     \hcf,
+	 \left(\barvec{\myvec{r}}, \barvec{\myvec{v}}, \prfqarv\right),
+	 \left(e,\prfkzgagg\right),
+	 \left(\overline{\myvec{W} \concat \myvec{E}}, e_2,
+	 	\prfkzgwe \right),
+	 \left(\overline{\myvec{W'} \concat \myvec{E'}}, e',
+	 	\prfkzgwetwo \right),
+	 \left(\overline{\myvec{W'}}, \overline{\myvec{E'}}, 
+	 	\overline{\myvec{W'}^{(\rho)}},
+		\prfqawetwo
+	 \right),
+	 \prfsnark
+	\right)$. \newline
+(2) Compute $(r,c) \leftarrow \rohash\left(\pubstat, \hcf\right)$,
+	and $r_2 \leftarrow 
+		\rohash\left(\hcf, 
+		\overline{\myvec{W} \concat \myvec{E}}\right)$, and
+	$r' \leftarrow \rohash\left(\overline{\myvec{W'}^{(\rho)}}
+		, \overline{\myvec{W'} \concat \myvec{E'}}\right)$.  \newline
+(3) Assert $\qaverify\left(\vk, 
+		\left(\barvec{\myvec{r}}, \barvec{\myvec{v}},
+	\bargen{\myvec{r}}, \bargen{\myvec{v}}\right), \prfqarv\right)$.
+ 		and $\qaverify\left(\vk, 
+	 		\left(\overline{\myvec{W} \concat \myvec{E}}, 
+	 			\overline{\myvec{W'}}, \overline{\myvec{E'}}, 
+	 			\overline{\myvec{W'}^{(\rho)}}
+			\right), \prfqawetwo\right)$. \newline
+(4) Assert $\kzgcomverify(\vk, \sum_{i=1}^6 \pubstat_i \cdot c^{i-1}, r, e, \prfkzgagg)$, and 
+	$\kzgcomverify(\vk, \overline{\myvec{W} \concat \myvec{E}}, r_2, e_2, 
+		\prfkzgwe)$, and
+	$\kzgcomverify(\vk, \overline{\myvec{W'} \concat \myvec{E'}}, r', e', 
+		\prfkzgwetwo)$. \newline 
+(5) Construct $
+		\statsnark = \left( 
+			\left(
+				(r,c,e), (r_2,e_2), \overline{\myvec{W}^{(\rho)}}
+			\right),
+			\left(
+				(r',e'), (\overline{\myvec{W'}}, \overline{\myvec{E'}},
+					\overline{\myvec{W'}^{(\rho)}}
+			\right)
+		\right)$, Assert $\snarkverify(\vk, \statsnark, \prfsnark)$.
+
+$ 1/0 {\leftarrow} \mathsf{verify\_individual}\left(\vk, 
+		\pubstat,
+		\pubstatind{i},
+		\prfind{i},
+		\right)$ 
+\newline
+(1) Parse $\pubstatind{i} = \left(i, \overline{\word{i}}, \overline{\fullword},
+	\overline{\veclen}\right)$, 
+	and 
+	$\prfind{i} = \left(\prfveccom^{(i)}, \myvec{v}_i, \prfkzgwi
+	\right)$.	 \newline
+(2) Compute $\myvec{r}_i \leftarrow \rohash(\pubstatind{i})$.
+Assert $\kzgcomverify(\vk, \overline{\word{i}}, \myvec{r}_i, \myvec{v}_i, \prfkzgwi)$. \newline
+(3) Compute $c_i \leftarrow \rohash(\myvec{r}_i, \myvec{v}_i)$.
+Retrieve $\barvec{r}$ and $\barvec{v}$ from $\pubstat$.
+Assert $\veccomverify(\vk, \barvec{\myvec{r}} + c_i \cdot
+	\barvec{\myvec{v}}, i, \myvec{r}_i + c_i \cdot \myvec{v}_i)$.
+
+
+
+	
+
+
+\caption{Main Framework for Generating Batch and Individual Proof}
+\label{fig:main}
+\end{algorithm*}
+\end{scriptsize}

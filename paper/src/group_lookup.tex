@@ -1,0 +1,1070 @@
+\section{Zero Knowledge TIPA Scheme}
+\label{sec:zkgipa}
+We derive from the GIPA (General Inner Pairing Argument) \cite{Bunz21}
+and design the scheme for a lookup argument for group elements.
+The original GIPA scheme is not zero knowledge. This section provides
+an zero knowledge extension of it, inspired by \cite[Appendix E]{Bunz21}.
+The basic idea is to pad the commitment with random nonces and
+cancel them in pairing equations.
+
+The GIPA scheme relies on an adaption of
+AFGHO16 commitment \cite{Abe16} to commit to a vector of group elements.
+Given a bilinear pairing group $(\F,\G_1, \G_2, \G_T, e)$, and an integer
+$n$. The prover key of AFGHO commitment is a sequence
+$\left(\alpha^{i}]_1, [\beta^{i}]_2\right)_{i=0}^{2n-2}$ for trapdoor
+$\alpha$ and $\beta$. Then given a vector of group elements
+$\myvec{u} \in \G_1^n$, its AFGHO commitment
+$\gcm_1(\myvec{u}) = \prod_{i=1}^n e(\myvec{u}_i, [\beta^{2(i-1)}]_2)$.
+Similaly for $\myvec{v} \in \G_2^n$, 
+$\gcm_2(\myvec{v}) = \prod_{i=1}^n e([\alpha^{2(i-1)}]_1, \myvec{v}_i)$.
+Notice that the above commitments are not hiding, but
+it can be fixed by adding random nonce.
+As AFGHO commitment generates elements in $\G_T$, we sometimes write
+it as $\GCommit_{\myvec{v}}$ using \ttt{mathscr} font, to distinguish
+from commitments in $\G_1$ or $\G_2$ (e.g., $\Commit_{\myvec{u}}$ the
+Pedersen vector commitment to vector $\myvec{u}$).
+Another annotation difference is that $\G_T$ is written as a multiplicative
+group but $\G_1$ is written as additive group. For instance,
+$e([a+b]_1, [c]_2) = e([a]_1, [c]_2) e([b]_1 [c]_2)$
+and $e(a[v]_1, [1]_2) = e([v]_1, [1]_2)^a$.
+
+We now formally define the GIPA scheme below and we'll call them
+as blackbox functions in our own protocol. It is proved in \cite{Bunz21}
+that the GIPA scheme is knowledge sound (i.e., the prover can prove
+its knowledge of the vector of source vector of group and field elements).
+
+
+\begin{definition} \cite{Bunz21}
+    Let $B=(\F,\G_1,\G_2,\G_T,e)$ be a bilinear group for a given security
+parameter $\lambda$. The generalized inner pairing product argument (GIPA)
+provides the following algorithms: 
+\begin{enumerate}
+\item
+$(\pk_G, \vk_G) = \Setup(\powparam,B,n)$, where: \newline
+$\pk_G = \left(\left([\alpha^{2(i-1)}]_1, 
+[\beta^{2(i-1)}]_2\right)_{i=1}^{2n}, [\mu]_1, [\mu]_2, [\nu]_1,
+\right)$ for some trapdoor $\alpha$, $\beta$, 
+$\mu$ and $\nu$.
+Let $\vk_G$ $=$ $([\alpha]_2,$ $[\beta]_1$, $[\mu]_2, [\nu]_1)$.
+\item 
+$\h_1 \leftarrow \gcm_1(\myvec{a}, \pk_G)$: \newline
+It generates the commitment
+for a group element vector $\myvec{a} \in \G_1^{n}$.
+\footnote{Note that it is required that $|\myvec{a}|=n+1$, and
+this is verified by the well-formed check step in GIPA.}
+Similarly are $\gcm_2$ and $\gcm_{\F}$ defined for input vectors
+of $\G_2^n$ and $\F^n$.
+When the context is clear we omit the commitment key
+$\pk_G$ in notations, e.g., $\gcm_1(\myvec{a})$.
+
+\item $(Z, \prf) \leftarrow \prove(\myvec{a}, \myvec{b}, r, \pk_G)$: \newline
+It generates the inner product argument $Z$ and the proof $\prf$.
+GIPA has three instantiations: $\tipp$,
+$\mippu$, and $\mippk$: 
+    $\tipp$: $\myvec{a} \in \G_1^{n}$, $\myvec{b} \in \G_2^{n}$,
+        $\Commit_{\myvec{a}} = \gcm_1(\myvec{a})$,
+        $\Commit_{\myvec{b}} = \gcm_2(\myvec{b})$,
+        $Z = \sum_{i=1}^{n}
+            \left(r^{2(i-1)} (e(\myvec{a}_i,\myvec{b}_i))\right)$.
+    $\mippu$: $\myvec{a} \in \G_1^{n}$, $\myvec{b} \in \F^{n}$,
+        $\Commit_{\myvec{a}} = \gcm_1(\myvec{a})$,
+        $\Commit_{\myvec{b}} = \gcm_{\F}(\myvec{b})$,
+        $Z = \sum_{i=1}^{n} \left(r^{2(i-1)} \myvec{b}_i \myvec{a}_i \right)$.
+        $\mippk$ differs from $\mippu$ in that
+        $\Commit_{\myvec{b}} = \myvec{b}$.
+
+\item $1/0 \leftarrow \verify(\Commit_{\myvec{a}}, \Commit_{\myvec{b}},$ $r, Z, \prf, \vk_G)$: verifies the proof.
+
+\end{enumerate}
+\end{definition}
+
+We now construct a zero knowledge version of the GIPA scheme,
+and focus on TIPP only.
+
+\begin{definition}\label{zk_tipp}
+ Given $\myvec{a} \in \G_1^n$ and $\myvec{b} \in \G_2^n$, the
+ $\zktipp$ argument provides the following operation:
+
+\begin{enumerate}
+\item
+ $(\GCommit_\myvec{a}, \GCommit_\myvec{b}, \Z, \Commit_{r_z}, \prf)$
+   $\leftarrow$ $\zktippprove(\myvec{a}, \myvec{b}, r):$ \newline
+   It samples two random nonces $r_1, r_2 \in \F$, and use them to
+   provide hiding AFGHO commitments of the two vectors,
+   and a proof for $\Z = \prod_{i=1}^n e(r^{2(i-1)}\myvec{a}_i, \myvec{b}_i)
+   ~ e([r_z]_1, [1]_2)$, which is $r_z$ away from the real
+   inner pairing product and $r_z$ hides in Pedersen commitment
+   $\Commit_{r_z} = [r_z]_1 + r_z'[\nu]_2$.  Since $r_z$ is random,
+   the scheme does not leak information of $\myvec{a}$ and $\myvec{b}$
+   and their inner pairing product.
+
+\item
+ $1/0 \leftarrow \zktippverify(\GCommit_{\myvec{a}}, \GCommit_{\myvec{b}}, r, \Z, \Commit_{r_z}, \prf)$: \newline
+ Given two hiding AFGHO commitments, verify their well-formedness (i.e.,
+ commitment to $n$ elements), and the validity of the proof.
+\end{enumerate}
+\end{definition}
+
+
+
+
+We now present the details of the $\zktipp$ protocol in
+Figure\ \ref{fig_zktipp}.
+
+\def\hp{\hspace*{0.1in}}
+\begin{small}
+\begin{algorithm}[bt]
+\SetKwData{Left}{left}\SetKwData{This}{this}\SetKwData{Up}{up}
+\SetKwFunction{Union}{Union}\SetKwFunction{FindCompress}{FindCompress}
+$ (\GCommit_\myvec{a}, \GCommit_\myvec{b}, \Z, \Commit_{r_z}, \prf) 
+	\leftarrow \newline
+	\zktippprove(\myvec{a} \in \G_1^n, r_a \in \F, \myvec{b} \in \G_2^n, 
+		r_b \in \F, r \in \F, z \in \F, r_z \in \F, \pk, \vk)$
+\newline
+(1) Parse $\pk = \left(\left([\alpha^i]_1, [\beta^i]_2\right)_{i=0}^{2n-2},
+	[\mu]_1, [\mu]_2, [\nu]_1\right)$. 
+Sample $r_4, r_5, r_6, r_7, r_8$ from $\F$, 
+and sample $\myvec{r_a}, \myvec{r_b}$ from $\F^n$. Then compute:
+\[
+\begin{array} {l}
+\GCommit_\myvec{a} \leftarrow \gcm_1(\myvec{a})~ e([[r_a]_1, [\mu]_2) \\
+\GCommit_\myvec{b} \leftarrow \gcm_2(\myvec{b})~ e([r_b]_1, [\mu]_2) \\
+\Z \leftarrow \prod_{i=1}^n e(r^{2(i-1)} \myvec{a}_i, \myvec{b}_i)
+~ e(z [1]_1, [1]_2) \\
+\Commit_{z} \leftarrow [z]_1 + r_z[\nu]_1 \\
+\GCommit_\myvec{r_a} \leftarrow \gcm_1(\myvec{r_a})~ e([r_4]_1, [\mu]_2) \\
+\GCommit_\myvec{r_b} \leftarrow \gcm_2(\myvec{r_b})~ e([r_5]_1, [\mu]_2)\\
+\newline
+\Commit_\myvec{r_a\times b} \leftarrow 
+\sum_{i=1}^n (r^{2(i-1)} [\myvec{r_a}_i) \myvec{b}_i]_1 + 
+  r_6[\mu]_1 \\
+\Commit_\myvec{r_b\times a} \leftarrow 
+\sum_{i=1}^n (r^{2(i-1)} \myvec{r_b}_i) \myvec{a}_i + 
+  r_7 [\mu]_1 \\
+\Commit_\myvec{r_b\times r_a} \leftarrow 
+\sum_{i=1}^n r^{2(i-1)}[\myvec{r_a}_i \myvec{r_b}_i]_1
+ + r_8 [\mu]_1
+\end{array}
+\]
+ (2) Fiat-Shamir: $c_1, c_2 \leftarrow$
+ 	$\hash\big(\vk,\GCommit_\myvec{a}, \GCommit_\myvec{b}, r, \Z,$
+		$\Commit_{r_z}, $
+		$\GCommit_\myvec{r_a}, \GCommit_\myvec{r_b},$
+		$\Commit_\myvec{r_a\times b},$
+		$\Commit_\myvec{r_b\times a},$
+		$\Commit_\myvec{r_a\times r_b}\big)$. \newline
+ (3) Compute: \newline
+	\[
+		\begin{array}{l}
+ \myvec{A} \leftarrow c_1 \myvec{a} + [\myvec{r_a}]_1  \\
+ \myvec{B} \leftarrow c_2 \myvec{b} + [\myvec{r_b}]_2  \\
+ \GCommit_{\myvec{A}} \leftarrow \gcm_1(\myvec{A})  \\
+ \GCommit_{\myvec{B}} \leftarrow \gcm_2(\myvec{B})  \\
+ \Z_2 \leftarrow \prod_{i=1}^n e(r^{2(i-1)} [\myvec{A}_i]_1,
+		[\myvec{B}_i]_2)	  \\
+ \prf_t \leftarrow \tipp.\prove(\myvec{A}, \myvec{B}, r, \Z_2) \\
+ 	   \rho_1 \leftarrow -(c_1 r_a + r_4)  \\
+	   \rho_2 = -(c_2 r_b + r_5) \\
+ 	\B \leftarrow 
+ 	e(-r_z [c_1 c_2 \nu]_1 + r_6 [c_2 \mu]_1
+ 	+ r_7 [c_1 \mu]_1]  + r_8 [\mu]_1, [1]_2)  \\
+	\prfdlog_{\B\_r_z} \leftarrow \prfdlog(\B,\Commit_{r_z}) 
+	  \big\{(r_z, r_z', r_k): \\
+	  \hspace*{0.1in}\B =  
+	  	 e([-c_1c_2\nu]_1, [1]_2)^{r_z'} ~e([\mu]_1,  [1]_2) ^{r_k} \\
+	  \hspace*{0.1in}\Commit_{r_z} = r_z[1]_1 + r_z'[\nu]_2 \\
+	  \big\}
+   \end{array} 
+	\]
+ (4) Let $\prf = (\GCommit_\myvec{r_a}, $
+ 			$\GCommit_\myvec{r_b}, $
+ 			$\Commit_\myvec{r_a \times b}, $
+ 			$\Commit_\myvec{r_b \times a}, $
+ 			$\Commit_\myvec{r_a \times r_b}, $
+ 			$\Commit_\myvec{r_a \times r_b}, $
+ 			$\rho_1, \rho_2, $
+			$\GCommit_\myvec{A}$, $\GCommit_\myvec{B}$,
+			$\Z_2$,
+			$\prf_t$, $\B$,
+			$\prfdlog_{\B\_r_z}$.
+		Return $(\GCommit_{\myvec{a}}, \GCommit_{\myvec{b}}, \Z, \Commit_{r_z},
+				\prf)$
+
+$1/0 \leftarrow \zktippverify(\vk, 
+	\Commit_{\myvec{a}}, 
+	\Commit_{\myvec{b}}, r, \Z, \Commit_{r_z}, \prf):$  \newline
+	Parse $\prf$ as shown in $\prove$ and returns $1$
+	if and only if the following pass (given $c_1, c_2$ computed
+	using $\prf$ as shown in $\zktippprove$).  \newline
+	(1) $\verify(\prfdlog_{\B\_{r_z}})$.  \newline
+	(2) $\GCommit_\myvec{A} =  \GCommit_\myvec{a}^{c_1}  ~\GCommit_\myvec{r_a}
+		 e([\rho_1], [\mu]_2)$. \newline
+	(3) $\GCommit_\myvec{B} =  \GCommit_\myvec{b}^{c_2}  ~\GCommit_\myvec{r_b}
+		 e([\rho_2], [\mu]_2)$. \newline
+	(4) $\Z_2\B = 
+			(\Z / e(\Commit_{r_z}, [1]_2))^{c_1 c_2} ~
+			e(, \Commit_{r_b \times a}, [1]_2)^{c_1} \newline
+			\hspace*{0.1in} e([1]_2, \Commit_{r_a \times b})^{c_2}~
+			e(\Commit_{r_a \times r_b}, [1]_2)$.\newline
+	(5) $\tipp.\verify(\GCommit_\myvec{A}, \GCommit_\myvec{B}, r, \Z_2)$.
+\caption{Zero Knowledge TIPP Protocol}
+\label{fig_zktipp}
+\end{algorithm}
+\end{small}
+
+\begin{lemma}\label{lemma_zktipp} Under the $q$-ASDBP and $q$-SDH assumptions
+\cite{Bunz21} in AGM and ROM, the construction provided in 
+Figure\ \ref{fig_zktipp} is perfectly complete, computational knowledge
+sound and perfectly zero knowledge.
+\end{lemma}
+\begin{proof} The $q$-ASDBP and $q$-SDH assumptions are needed by the
+GIPA scheme \cite{Bunz21}. The completeness is apparent. We first
+prove the knowledge soundness.  In the following we assume
+all notations of $\prf$ in the $\zktippverify()$ operation.
+
+Compared with the standard TIPP scheme \cite{Bunz21}, 
+our prover key has extra keys: $([\nu]_1, [\mu]_2, [\mu]_1)$. 
+Thus, a group element provided by the prover
+in $\G_1$ (and other groups similarly)
+can be written as a polynomial $[f(\alpha, \beta, \mu, \nu)]_1$
+in the AGM model. We call $f$ the {\em representing polynomial}
+(over variables $\alpha$, $\beta$, $\mu$, $\nu$)
+of the group element. When a polynomial is defined over
+$\alpha$ and $\beta$ only, we call it {\em standard} (i.e.,
+corresponding to those in the standard TIPP scheme, because
+$\mu$ and $\nu$ are the extra variables we have introduced).
+We also call the group element {\em standard} if its reprenting
+polynomial is standard.
+
+From Check (5), based on the knowledge soundness of GIPA scheme,
+the prover has the knowledge of $\myvec{A} \in \G_1^n$ 
+and $\myvec{B} \in \G_2^n$ s.t.
+$\GCommit_a = \gcm_1(\myvec{A})$.
+$\GCommit_b = \gcm_2(\myvec{B})$.
+Note that $\myvec{A}$ and $\myvec{B}$ are
+standard (i.e., its representing polynomial
+is defined over variables $\alpha$ and $\beta$ only).
+Then from Check (2) and (3) we can tell that
+there exist 
+$\myvec{a}, \myvec{r_a} \in \G_1^n$ and
+$\myvec{b}, \myvec{r_b} \in \G_2^n$
+s.t. $\myvec{A} = c_1 \myvec{a}  + \myvec{r_a}$
+and $\myvec{B} = c_2 \myvec{b} + \myvec{r_b}$,
+and all of them are standard, because they are all committed
+before verifier challenge $c_1$ and $c_2$ are raised and the
+random challege force them to be standard because $\myvec{A}$
+and $\myvec{B}$ are standard.
+It then follows from (5) that:
+\begin{small}
+\begin{equation} \label{eq_z2}
+  \Z_2 = \prod_{i=1}^n \left( 
+  	e(\myvec{a}_i, \myvec{b}_i)^{c_1c_2}
+  	e(\myvec{a}_i, [\myvec{r_b}_i]_2)^{c_1}
+  	e(\myvec{[r_a}_i]_1, \myvec{b}_i)^{c_2}
+  	e(\myvec{[r_a}_i]_1, [\myvec{r_b}_i]_2)
+		\right)^{r^{2(i-1)}}
+\end{equation}
+\end{small}
+
+From Check (1), the DLOG proof provides the knowledge
+of two commitments, so that we know that there exist
+$r_z, r_z', r_{u}, r_{v}, r_{w}$
+s.t. the following is true. Note that 
+$r_z'$ appears in both $\B$ and $\Commit_{r_z}$,
+which is used later in Equation\ \ref{eq_c1c2}
+to cancel terms. $r_{u}$, $r_v$ and $r_w$, with
+the information of $c_1$ and $c_2$ can be extracted from
+the value of $r_2$. As $\mu$ and $\nu$ are generated randomly (independent
+of each other), $\B$ can be regarded as a Pedersen commitment
+which has perfect hiding and computational binding (i.e.,
+it is hard for an adversary to fake value of $r_z'$).
+\begin{small}
+\begin{eqnarray}
+ \B &=& 
+ 	e([c_1c_2\nu]_1, [1]_2)^{r_z'} ~
+ 	e([c_1\mu]_1, [1]_2)^{r_u} \nonumber \\
+	& &
+ 	e([c_2\mu]_1, [1]_2)^{r_v}~
+ 	e([\mu]_1, [1]_2)^{r_w} \label{eq_B} \\
+ \Commit_{r_z} &=& [r_z]_1 + r_z'[\mu] \label{eq_rz}
+\end{eqnarray}
+\end{small}
+
+Consider $\Commit_{r_a \times b}$, it is not guaranteed
+to be standard. Write it as
+$\Commit_{r_a \times b} = \Commit_{r_a \times b, 1}
+ + \Commit_{r_a \times b, \mu}$, where
+ $\Commit_{r_a \times b, 1}$ corresponds to part
+ defined over $\alpha$ and $\beta$ (including $[1]_1$
+ and $[1]_2$), and
+ $\Commit_{r_a \times b, \mu}$ for the rest.
+Apply similar notation to
+$\Commit_{r_b \times a}$ and $\Commit_{r_a \times r_a}$.
+Integrating Check (4) with
+Equations \ref{eq_z2}, \ref{eq_B}, \ref{eq_rz}, we have:
+
+\begin{small}
+\begin{eqnarray} 
+ e([0]_1,[0]_1]) &=& \left(\frac{\prod_{i=1}^n r^{2(i-1)}
+ 		e(\myvec{a}_i, \myvec{b}_i)}
+			{Z - e([1]_1, [1]_1)^{r_z} }\right)^{c_1 c_2} 
+				\label{eq_c1c2} \\
+	& & e\left(\Commit_{\myvec{r_b} \times \myvec{a},1}, [1]_2\right)^{c1} \label{eq_c1} \\
+	& & e\left([1]_1, \Commit_{\myvec{r_a} \times b,1}\right)^{c2} \label{eq_c2} \\
+	& & e\left([1]_1, \Commit_{\myvec{r_a} \times \myvec{r_b},1}\right) \label{eq_c3} \\
+	& &
+		\left(e(\Commit_{\myvec{r_a} \times \myvec{b},\mu}, [1]_2) / e([\mu]_1, [1])^{r_u}\right)^{c1} \label{eq_c1mu} \\
+	& &
+		\left(e([1]_1, \Commit_{\myvec{r_b} \times \myvec{a},\mu}) / e([\mu]_1, [1])^{r_v}\right)^{c2} \label{eq_c2mu} \\
+	& &
+		\left(e(\Commit_{\myvec{r_a} \times \myvec{r_b},\mu}, [1]_2) / e([\mu]_1, [1])^{r_w}\right) \label{eq_c3mu}
+\end{eqnarray}
+\end{small}
+
+% Consider the sum of Lines \ref{eq_c1c2} to \ref{eq_c3}, 
+% its AGM representation can be regarded as one multivariate
+% polynomial over $\alpha, \beta, c_1, c_2$ (not including $\mu$),
+% where the co-efficients are already fixed (i.e., $r$, $\myvec{a}_i$,
+% $\myvec{b}_i$, $r_z$ and the AGM representation of $\Z$).
+% 
+% For Lines \ref{eq_c1mu} to \ref{eq_c3mu}, its representative
+% polynomial (let it be $P(\alpha, \beta, \mu, c_1, c_2)$
+% are further parameterized by $r_u$, $r_v$, and $r_w$
+% controlled by a potentially malicious prover. We first argue that
+% $P(.)$ must be a zero polynomial, otherwise,
+% based on how $\Commit_{\myvec{r_a} \times \myvec{b}}$ and etc.
+% are split, once can infer that each non-zero monomial
+% of $P(.)$ must contains $\mu$ (which is unknown to the prover)
+% it yields a non-zero value with high probability
+Consider the AGM representation polynomial for the
+RHS of Lines \ref{eq_c1c2} to \ref{eq_c3mu}.
+It must be a zero polynomial.  Given each line represents
+a sub-polynomial that are grouped by distinct set of
+variables that it contain (e.g., $c_1 c_2$ for 
+Line \ref{eq_c1c2}), each sub-polynomial should be
+a zero polynomial as well. This leads to
+the main result:
+$\Z = \sum_{i=1}^n e(\myvec{a}_i, \myvec{b_i}) + e([r_z]_1, [1])_2)$
+where $r_z$ hides in $\Commit_{r_z}$.
+
+{\bf Zero Knowledge:} the proof is straightforward. The simulator
+samples $\myvec{A}$, $\myvec{B}$, which uniquely determines
+$\GCommit_\myvec{A}$, $\GCommit_\myvec{B}$, and $\Z_2$, and
+$\prf_t$.
+Then the simulator samples $\rho_1$, $\rho_2$, 
+$c_1$, $c_2$, $\GCommit_\myvec{a}$,
+$\GCommit_\myvec{b}$, 
+$\Commit_{\myvec{r_a} \times \myvec{b}}$,
+$\Commit_{\myvec{r_b} \times \myvec{a}}$,
+$\Commit_{\myvec{r_a} \times \myvec{r_b}}$. Note that they
+are independent of each other (following the same distribution of
+a real conversation).
+Then the above uniquely determines: 
+
+\begin{footnotesize}
+\begin{eqnarray*}
+& & \Commit_{\myvec{r_a}} \leftarrow 
+\frac{\GCommit_{\myvec{A}} }
+{ \GCommit_{\myvec{a}}^{c_1} e([\rho_1]_1, [\mu]_2) } \\
+& & \Commit_{\myvec{r_b}} \leftarrow 
+\frac{\GCommit_{\myvec{B}} }
+{ \GCommit_{\myvec{B}}^{c_1} e([\rho_2]_1, [\mu]_2) } \\
+& &\B \leftarrow  \\
+& &\frac{
+			(\Z / e(\Commit_{r_z}, [1]_2))^{c_1 c_2}
+			e(\Commit_{r_b \times a}, [1]_2)^{c_1}~
+			e([1]_2, \Commit_{r_a \times b})^{c_2}~
+			e(\Commit_{r_a \times r_b}, [1]_2)}
+			{ \Z_2 }
+\end{eqnarray*}
+\end{footnotesize}
+
+Finally, run the simulator for DLOG of
+$\Commit_{r_z}$ and $\Commit_{\B}$ for 
+$\prfdlog_{\B\_r_z}$.
+\end{proof}
+
+We have a similar zero knowledge construction for 
+MIPP, as shown in Figure\ \ref{fig_zkmipp}.
+In this case $\myvec{a} \in \G_1^n$
+and $\myvec{b} \in \F^n$.
+In this case $Z = \sum_{i=1}^n r^{2(i-1)} \myvec{a_i}^{b_i} + r_z [1]_1$,
+and $\Commit_{r_z} = r_z[1]_1 + r_3[\mu]_1$, and both of them
+are in $\G_1$. The details are presented in Figure\ \ref{fig_zkmipp}.
+
+
+\begin{lemma}\label{lemma_zkmipp} Under the $q$-ASDBP and $q$-SDH assumptions
+\cite{Bunz21} in AGM and ROM, the construction provided in 
+Figure\ \ref{fig_zkmipp} is perfectly complete, computational knowledge
+sound and perfectly zero knowledge.
+\end{lemma}
+
+\def\hp{\hspace*{0.1in}}
+\begin{small}
+\begin{algorithm}[bt]
+\SetKwData{Left}{left}\SetKwData{This}{this}\SetKwData{Up}{up}
+\SetKwFunction{Union}{Union}\SetKwFunction{FindCompress}{FindCompress}
+$ (\GCommit_\myvec{a}, \Commit_\myvec{b}, Z, \Commit_{r_z}, \prf) 
+	\leftarrow \newline
+	\zkmippprove(\myvec{a} \in \G_1^n, \myvec{b} \in \F^n, r \in \F, \pk, \vk)$
+\newline
+(1) Parse $\pk = \left(\left([\alpha^i]_1, [\beta^i]_2\right)_{i=0}^{2n-2},
+	[\mu]_1, [\mu]_2, [\nu]_1\right)$. 
+Sample $r_1, r_2, r_z, r_3, r_4, r_5, r_6, r_7, r_8$ from $\F$, 
+and sample $\myvec{r_a}, \myvec{r_b}$ from $\F^n$. Then compute:
+\[
+\begin{array} {l}
+\GCommit_\myvec{a} \leftarrow \gcm_1(\myvec{a})~ e([r_1]_1, [\mu]_2) \\
+\Commit_\myvec{b} \leftarrow \gcm_\F(\myvec{b})~ r_2 [\mu]_2 \\
+\Z \leftarrow \prod_{i=1}^n r^{2(i-1)} \myvec{b}_i \myvec{a}_i
++ r_z [1]_1 \\
+\Commit_{r_z} \leftarrow [r_z]_1 + r_3[\nu]_1 \\
+\GCommit_\myvec{r_a} \leftarrow \gcm_1(\myvec{r_a})~ e([r_4]_1, [\mu]_2) \\
+\Commit_\myvec{r_b} \leftarrow \gcm_\F(\myvec{r_b}) + r_5 [\mu]_1\\
+\newline
+\Commit_\myvec{r_a\times b} \leftarrow 
+\sum_{i=1}^n (r^{2(i-1)} \myvec{r_a}_i) \myvec{b}_i + 
+  r_6[\mu]_2 \\
+\Commit_\myvec{r_b\times a} \leftarrow 
+\sum_{i=1}^n (r^{2(i-1)} \myvec{r_b}_i) \myvec{a}_i + 
+  r_7 [\mu]_1 \\
+\Commit_\myvec{r_b\times r_a} \leftarrow 
+\sum_{i=1}^n r^{2(i-1)}[\myvec{r_a}_i \myvec{r_b}_i]_1
+ + r_8 [\mu]_1
+\end{array}
+\]
+ (2) Fiat-Shamir: $c_1, c_2 \leftarrow$
+ 	$\hash\big(\vk,\GCommit_\myvec{a}, \Commit_\myvec{b}, r, \Z,$
+		$\Commit_{r_z}, $
+		$\GCommit_\myvec{r_a}, \Commit_\myvec{r_b},$
+		$\Commit_\myvec{r_a\times b},$
+		$\Commit_\myvec{r_b\times a},$
+		$\Commit_\myvec{r_a\times r_b}\big)$. \newline
+ (3) Compute: \newline
+	\[
+		\begin{array}{l}
+ \myvec{A} \leftarrow c_1 \myvec{a} + [\myvec{r_a}]_1  \\
+ \myvec{B} \leftarrow c_2 \myvec{b} + [\myvec{r_b}]_2  \\
+ \GCommit_{\myvec{A}} \leftarrow \gcm_1(\myvec{A})  \\
+ \Commit_{\myvec{B}} \leftarrow \gcm_\F(\myvec{B})  \\
+ Z_2 \leftarrow \sum_{i=1}^n r^{2(i-1)} \myvec{B}_i [\myvec{A}_i]_1, \\
+ \prf_t \leftarrow \mipp.\prove(\myvec{A}, \myvec{B}, r, Z_2) \\
+ 	   \rho_1 \leftarrow -(c_1 r_1 + r_4)  \\
+	   \rho_2 \leftarrow -(c_2 r_2 + r_5) \\
+ 	\B \leftarrow 
+ 	e(-r_3 [c_1 c_2 \nu]_1 + r_6 [c_2 \mu]_1
+ 	+ r_7 [c_1 \mu]_1]  + r_8 [\mu]_1, [1]_2)  \\
+	\prfdlog_{\B\_r_z} \leftarrow \prfdlog(\B,\Commit_{r_z}) 
+	  \big\{(r_z, r_z', r_k): \\
+	  \hspace*{0.1in}\B =  
+	  	 e([-c_1c_2\nu]_1, [1]_2)^{r_z'} ~e([\mu]_1,  [1]_2) ^{r_k} \\
+	  \hspace*{0.1in}\Commit_{r_z} = r_z[1]_1 + r_z'[\nu]_2 \\
+	  \big\}
+   \end{array} 
+	\]
+ (4) Let $\prf = (\GCommit_\myvec{r_a}, $
+ 			$\Commit_\myvec{r_b}, $
+ 			$\Commit_\myvec{r_a \times b}, $
+ 			$\Commit_\myvec{r_b \times a}, $
+ 			$\Commit_\myvec{r_a \times r_b}, $
+ 			$\Commit_\myvec{r_a \times r_b}, $
+ 			$\rho_1, \rho_2, $
+			$\GCommit_\myvec{A}$, $\Commit_\myvec{B}$,
+			$Z_2$,
+			$\prf_t$, $\B$,
+			$\prfdlog_{\B\_r_z}$.
+		Return $(\GCommit_{\myvec{a}}, \Commit_{\myvec{b}}, \Z, \Commit_{r_z},
+				\prf)$
+
+$1/0 \leftarrow \zkmippverify(\vk, 
+	\GCommit_{\myvec{a}}, 
+	\Commit_{\myvec{b}}, r, Z, \Commit_{r_z}, \prf):$  \newline
+	Parse $\prf$ as shown in $\prove$ and returns $1$
+	if and only if the following pass (given $c_1, c_2$ computed
+	using $\prf$ as shown in $\zktippprove$).  \newline
+	(1) $\verify(\prfdlog_{\B\_{r_z}})$.  \newline
+	(2) $\GCommit_\myvec{A} =  \GCommit_\myvec{a}^{c_1}  ~\GCommit_\myvec{r_a}
+		 e([\rho_1], [\mu]_2)$. \newline
+	(3) $\Commit_\myvec{B} =  {c_2} \Commit_\myvec{b} + \Commit_\myvec{r_b} +
+		 \rho_2 [\mu]_1$. \newline
+	(4) $e(Z_2, [1]_2) \B =$ \newline 
+			\hspace*{0.1in} $e(c_1c_2(Z - \Commit_{r_z}) +
+			c_1\Commit_{r_b \times a} +
+			c_2\Commit_{r_a \times b} + 
+			\Commit_{r_a \times r_b}, 
+			[1]_2)$ \newline
+			\newline
+	(5) $\mipp.\verify(\GCommit_\myvec{A}, \Commit_\myvec{B}, r, Z_2)$.
+\caption{Zero Knowledge MIPP Protocol}
+\label{fig_zkmipp}
+\end{algorithm}
+\end{small}
+
+\section{ZK-VPD Scheme}
+\label{sec:zkvpd}
+Our scheme depends on the univariate zk-VPD scheme
+\cite{Zkreg}, which is an instantiation of zero knowledge 
+polynomial delegation scheme for univariate polynomials \cite{zkvsql}.
+It provides a zero knowledge enhancement
+of the KZG polynomial commitment scheme. For completeness of the paper,
+we present a slighly modified scheme from what is presented in
+\cite{Zkreg,zkvsql}, by allowing its set-up to take
+randoms sampled by the caller procedure. The details
+of the protocol 
+are presented in Fig\ \ref{alg:kzg}. We refer readers to
+\cite{Zkreg,zkvsql} for the details of the proof of the soundness and
+zero knowledge properties.
+
+Intuitively, as shown in Figure\ \ref{alg:kzg}, the $\CommitPoly()$
+function generates a hiding KZG commitment to a polynomial, and
+its knowledge proof (which simulates the KZG knowledge proof
+that leverages the knowledge of exponent assumption). 
+The $\CommitValue()$ function generates a proof that
+a hiding polynomial evaluates to a hidden value $y$
+at a public point $t$, but $y$ hides in a Pedersen
+commitment $\Commit_y$. Thus, it does not no leak information
+of the committed polynomial.
+
+\def\hp{\hspace*{0.1in}}
+\begin{scriptsize}
+\begin{algorithm}[bt]
+\SetKwData{Left}{left}\SetKwData{This}{this}\SetKwData{Up}{up}
+\SetKwFunction{Union}{Union}\SetKwFunction{FindCompress}{FindCompress}
+$(\pk, \vk) \leftarrow \vpdsetup(\alpha, \nu, n)$
+\newline
+Sample $\beta$ from $\F$.
+Compute $\gamma \leftarrow \left(
+\Bigl((\alpha)^i\Bigr)^{n}_{i=0},
+\Bigl(\beta(\alpha)^i\Bigr)^{n}_{i=0},
+\nu,
+\beta \nu,
+%\Bigl((s_2)^i\Bigr)^{q}_{i=0},
+%\Bigl(\alpha(s_2)^i\Bigr)^{q}_{i=0},
+\alpha \nu
+%, \alpha s_1s_2
+\right)$.
+\newline
+Return $(\pk = [\gamma]_1, \vk=([\alpha]_2, [\beta]_2, [\alpha \beta]_2, [\alpha \nu]_2))$.
+\newline
+\\
+($\Commit_{p},\prf_p) \leftarrow
+	 \CommitPoly(p(X), r_p, \pk)$:  \hp \newline
+Return $\left([p(\alpha) + r_p \nu]_1, [\beta(p(\alpha)  + r_p \nu)]_1\right)$.
+\newline
+\\
+$1/0 \leftarrow \CheckCommit(\Commit_p,\prf_{p},\vk)$:
+ \hp Return 1 if and only if $e(\Commit_p, [\beta]_2) = e(\prf_{p},
+	[1]_2)$.
+\newline
+\\
+$(\Commit_y,\prf) \leftarrow
+	\CommitValue(p(X), r_p, r_y, t, \pk)$:  \newline
+Compute: $y \leftarrow p(t)$.
+$q_1(X) \leftarrow (p(X) - y)/(X-t)$.  \newline
+Sample $r_q$ from $\F$.
+Compute: \newline
+$\Commit_y \leftarrow [y]_1 + r_y[\nu]_1$. \newline
+$\Commit_1 \leftarrow [q_1(\alpha)]_1 + r_q [\nu]_1$. \newline 
+$\Commit_2 \leftarrow r_q[\nu(\alpha-t)]_1 + (r_y-r_p)[\nu]_1$. \newline
+Compute Schnorr proofs: \newline
+$\prfdlp_{y} \leftarrow \prfdlp(\Commit_y, ([1]_1, [\nu]_1))
+		\{(y,r_y): \Commit_y = y[1]_1 + r_y [\nu]_1\}$, and
+$\prfdlp_{2} \leftarrow \prfdlp(\Commit_2, ([\nu(\alpha-t)]_1, [\nu]_1))\{(r_1, r_2): \Commit_2 = r_1[\nu(\alpha-t)]_1 + r_2[\nu]_1\}$.
+\newline
+Let $\prf = (\Commit_1, \Commit_2, \prfdlp_{y}, \prfdlp_{2})$.
+Return $(\Commit_y, \prf)$.
+\newline
+
+$1/0 \leftarrow \CheckValue(\Commit_p,\Commit_y,t,\prf,\vk)$:  \newline
+{\bf Assumption:}  $\exists \prf_p$ for $\Commit_p$
+s.t. $\CheckCommit(\Commit_p, \prf_p, \vk)=1$.
+\newline
+Parse $\prf$ as $(\Commit_1, \Commit_2, \prfdlp_{y}, \prfdlp_{2})$.
+Return 1 if and only if: \newline
+$
+\CheckDLP(\Commit_y,\prfdlp_{y}, ([1]_1, [\nu]_1))=1 \And \CheckDLP(\Commit_2,\prfdlp_{2}, ([\nu(\alpha-t)]_1, [\nu]_1))=1
+\And e\left(\Commit_p - \Commit_y + \Commit_2\right), [1]_2)
+= e(\Commit_1, [\alpha- t]_2).
+$
+
+
+\caption{Univariate zk-VPD Scheme}
+\label{alg:kzg}
+\end{algorithm}
+\end{scriptsize}
+
+Porting the proof in \cite{Zkreg} to AGM, we have the following.
+
+\begin{lemma} Under the QDLOG assuption in AGM, the scheme presented
+in Figure\ \ref{alg:kzg} is perfectly complete, computational
+knowledge sound and binding, and perfectly zero knowledge.
+\end{lemma}
+
+\section{Argument for Equivalence Between AFGHO commitment and Pedersen
+Vector Commitment}
+\label{sec:eqcom}
+This section provides a construction that asserts  
+the equivalence of various forms of commitment
+to a vector $\myvec{x} \in \F^n$:
+\begin{enumerate}
+	\item AFGHO16 commitment: $\GCommit_{\myvec{x}} = \gcm_1([\myvec{x}]_1) + e(r_1[\mu]_1, [1]_2)$. When the context is clear (i.e., it is known that
+	$[\mu]_1$ is used as the extra key for blinding factor),
+	we write it as $\GCommit_{\myvec{x}} = \gcm_1([\myvec{x}]_1; r_1)$.
+	\item Pedersen vector commitment over Lagrange basis:
+	$\Commit_{\myvec{x}} = \sum_{i=1}^n \myvec{x}_i 
+		[L_{n,i}(s)]_1 + r_2[\mu]_1$. 
+	\item KZG commitment to $\myvec{x}$ as co-efficients:
+		$\KCommit_{\myvec{x}} = \sum_{i=1}^n \myvec{x}_i [\alpha^{i-1}]_1 + r_3[\mu]_1$.
+\end{enumerate}
+
+The construction is formally defined below:
+
+\begin{enumerate}
+	\item $(\pk,\vk) \leftarrow \comeqsetup(n, s):$ 
+	Generate the prover and verifker keys for vector of size $n$.
+	$s$ is the trapdoor information given by the caller (as a part
+	of a larger setup process).
+
+	\item $(\GCommit_{\myvec{x}}, \Commit_{\myvec{x}}, \KCommit_{\myvec{x}}, \prf) \leftarrow \comeqprove(\myvec{x}, r_1, r_2, r_3, \pk)$: 
+	Generate commitments to $\myvec{x}$ in different forms using
+	the randoms $r_1$ to $r_3$. Provide a proof which asserts
+	their equivalence.
+
+	\item $1/0 \leftarrow \comeqverify(\GCommit_{\myvec{x}}, 
+		\Commit_{\myvec{x}}, \KCommit_{\myvec{x}}, \prf, \vk)$.
+\end{enumerate}
+\def\hp{\hspace*{0.1in}}
+
+Although it might be possible to split the construction into
+several pair-wise equivalence proof, we pack them into one
+for the convenience of the presentation. We given an intuitive
+explaination of the idea below.
+We first leverage the QA-NIZK (used in 
+LegoSnark \cite{LegoSnarkFull}) to prove the equivalence
+of a Pedersen Vector Commitment (over Lagrange basis) and
+a KZG commitment. Then we use the zk-MIPP argument to prove
+the equivalence of the AFGHO and the KZG, which leverages
+the zk-VPD scheme as shown in Section\ \ref{sec:zkvpd}. 
+The construction is shown in Figure\ \ref{fig_eqv}.
+
+
+\begin{footnotesize}
+\begin{algorithm}[bt]
+\SetKwData{Left}{left}\SetKwData{This}{this}\SetKwData{Up}{up}
+\SetKwFunction{Union}{Union}\SetKwFunction{FindCompress}{FindCompress}
+$ (\pk,\vk) \leftarrow \comeqsetup(n, s)$
+\newline
+(1) Compute $(\pk_{\ttt{G}}, \vk_{\ttt{G}}) 
+	\leftarrow {\texttt{ZkGIPA.\texttt setup}}(n)$,
+	Parse and retrive $([\alpha]_1)_{i=1}^n$ and $[\mu]_1$
+	from $\pk_{\ttt{G}}$ and $\vk_{\ttt{G}}$ of zk-GIPA.
+	Define $\Commit_{\ttt{1}} = \gcm_\F\left(\left([1]_1)_{i=1}^n\right)\right)$.\newline
+	Compute QA-NIZK keys for KZG and Pedersen vector commitments:
+	\newline
+    $\myvec{M} \leftarrow \left(\begin{array}{l l}
+		{[}L_{n,1}(s)]_1, ..., [L_{n,n}(s)]_1, & [\mu]_1, [0]_1 \\
+		{[}\alpha^0]_1, ..., [\alpha^{n-1}]_1, & [0]_1, [\mu]_1 
+		\end{array}
+	\right)$. \newline
+	Sample $\myvec{k} \in \F^2$, $a\in \F$. Compute
+	$\myvec{P} = \myvec{M}^\intercal \myvec{k} \in \G_1^{n+1}$,
+	$\myvec{C} = a \cdot [\myvec{k}]_2 \in \G_2^2$. \newline
+(2) $(\pk_{\ttt{V}}, \vk_{\ttt{V}}) \leftarrow
+		\vpdsetup(\alpha, \mu, n)$. \newline
+(3) Return $(\pk=(\pk_{\ttt{G}}, \pk_{\ttt{V}}, \myvec{M}, \myvec{P}), 
+	\vk=(\vk_{\ttt{G}}, \vk_{\ttt{V}}, \myvec{C}, [a]_2, \Commit_{\ttt{1}})$. \newline
+
+$(\GCommit_{\myvec{x}}, \Commit_{\myvec{x}}, \KCommit_{\myvec{x}}, \prf)
+	\leftarrow \comeqprove(\pk, \myvec{x}, r_1, r_2, r_3)$:  \newline
+(1) Compute 
+	$\GCommit_{\myvec{x}} \leftarrow \gcm_1(\myvec{x}; r_1)$.  ~~
+	$\myvec{w} \leftarrow \myvec{x} \concat r_2 \concat r_3$.  ~~
+	$(\Commit_{\myvec{x}}, \KCommit_{\myvec{x}}) 
+		\leftarrow \myvec{M} \myvec{w}$. \newline
+(2) Fiat-Shamir: $r \leftarrow \hash(\vk, \GCommit_{\myvec{x}}, \Commit_{\myvec{x}}, \KCommit_{\myvec{x}})$. \newline
+(3) Define $p(X) = \sum_{i=1}^n \myvec{x}_i X^{i-1}$.
+	Define $y = \sum_{i=1}^{n} r^{2(i-1)} \myvec{x}_i$.
+	Sample $r_y$ from $\F$ and compute: 
+	$(\Commit_y, \prf_y) = \CommitValue(p(X), r_3, r_y, r^2, \pk_{\ttt{V}})$.
+	\newline
+(4) Compute using $r_1$ for $\GCommit_{x}$ in:
+	$(\GCommit_{x}, \Commit_{\ttt{one}}, Z, \Commit_{r_z}, \prf_{\ttt{m}})
+	\leftarrow \zkmippprove(\myvec{x}, ([1]_1)_{i=1}^n, r, \pk_{\ttt{G}},
+	\vk_{\ttt{G}})$. \newline
+	Let $Z = [y+z]_1$ and $\Commit_{r_z} = [z]_1 + r_z[\mu]_1$ in the
+	above. \newline
+(5) Let $D = \Commit_{r_z} + \Commit_{y} - Z$. 
+	Compute: \newline $\prf_{\ttt{D1}} 
+		\leftarrow \prfdlog(D,\Commit_{\ttt{one}};$ 
+	$[\mu]_1)$$\{(u,v,w):$ $D = u[\mu]_1 + v[\nu]_1,$ $\Commit_{\ttt{one}}-\Commit_{\ttt{1}}=w[\mu]_1\}$.
+	Note that for honest prover: $u = r_y$ and $v=r_z$. \newline
+(6)  $\prf_{\ttt{qa}} \leftarrow \myvec{w}^\intercal \myvec{P}$. \newline
+(7) Return $(\GCommit_{\myvec{x}}, \Commit_{\myvec{x}}, \KCommit_{\myvec{x}},
+	\prf=(\prf_{\ttt{D1}}, \Commit_y, \prf_y, \Commit_{\ttt{one}}, 
+		Z, \Commit_{r_z},
+		\prf_{\ttt{qa}},\prf_{\ttt{m}}))$. \newline
+
+$1/0 \leftarrow \comeqverify(\vk, 
+	\GCommit_{\myvec{x}}, \Commit_{\myvec{x}}, \KCommit_{\myvec{x}},
+	\prf):$  \newline
+Parse $\prf$ as in $\comeqprove$, compute $r$ using Fiat-Shamir,
+and return $1$ if and only if all of the following checks pass. \newline
+(1) $e(\prf_{\ttt{qa}}, [a]_2) = e(\Commit_{\myvec{x}}, \myvec{C}_1) 
+	~e(\KCommit_{\myvec{x}}, \myvec{C}_2)$. \newline
+(2) $\zkmippverify(\GCommit_{x}, r, Z, \Commit_{r_z}, \prf_{\ttt{m}})$. \newline
+(3) $\CheckValue(\KCommit_{\myvec{x}}, \Commit_y, r^2, \prf_{y}, \vk_{\ttt{G}})$. \newline
+(4) Let $D = \Commit_{r_z} + \Commit_y - Z$.
+   $\verify(\prf_{\ttt{D1}})$.
+
+\caption{Equivalence Between Hiding AFGHO Commitment and Pedersen Vector Commitment}
+\label{fig_eqv}
+\end{algorithm}
+\end{footnotesize}
+
+\begin{lemma}\label{lemma_comeq} Under the $q$-ASDBP and 
+$q$-SDH assumptions \cite{Bunz21} in AGM and ROM, the construction provided in 
+Figure\ \ref{fig_gl} is perfectly complete, computational knowledge
+sound and perfectly zero knowledge.
+\end{lemma}
+\begin{proof} We focus on knowledge soundness and zero knowledge.
+The prover's knowledge of $[\myvec{x}]_1$, and $\myvec{x}$ behind 
+$\GCommit_\myvec{x}$, $\Commit_{\myvec{x}}$, and $\KCommit_{\myvec{x}}$
+are established using the zk-MIPP proof, and the QA-NIZK proof.
+Check (1) in $\comeqverify()$
+establishes the equivalence between $\Commit_{\myvec{x}}$
+and $\KCommit_{\myvec{x}}$. Since Check (4) estalibhses that
+$\Commit_{\ttt{one}}$ is a hiding commitment to $([1]_1)_{i=1}^n$,
+from Check (2), one can infer that the prover knows
+$z, r_5, r_6$ s.t.
+\begin{eqnarray}
+ & & Z = [z]_1 + [r_5] \label{eqZ} \\
+ & & \Commit_{r_z} = [r_5]_1 + r_6 [\mu]_1 \label{eq_rz}
+\end{eqnarray}
+
+Then from Check (3) we have: the prover has knowledge of
+$y$ and $r_7$ s.t.
+\begin{equation} \label{eq_y}
+\Commit_y = [y]_1 + r_y[\mu]_1
+\end{equation}
+
+Combining Equations (\ref{eqZ},\ref{eq_rz},\ref{eq_y}), $D$ can be written as
+\begin{equation} \label{eq_d1}
+D = (y-z)[1]_1 + (r_y + r_6) [\mu]_1
+\end{equation}
+
+From Check (4): the prover knows $r_8$ s.t.
+\begin{equation} \label{eq_d2}
+D = r_8 [\mu]_1
+\end{equation}
+
+Combining Equations \ref{eq_d1} and \ref{eq_d2}, we have:
+\[
+	(y-z)[1]_1 = (r_8-r_y-r_6) [\mu]_1
+\]
+If $y\neq z$ and $r_8\neq r_y + r_6$, the prover can compute
+the dislogarithm and retrieve trapdoor $\mu$. Then we have
+$y=z$, combining with check (2) and (3) again, and based 
+on that $r$ is the verifier challenge after $\KCommit_{\myvec{x}}$
+and $\GCommit_{\myvec{x}}$ are sent, we reach
+the equivalene between
+$\GCommit_{\myvec{x}}$ and $\KCommit_{\myvec{x}}$.
+
+{\bf Zero Knowledge:} $\Commit_y$,
+$\Commit_{\ttt{one}}$, $Z$, $\Commit_{r_z}$ in the proof are
+randomly sampled by the simulator, thus 
+independent of each other (and the claim), and the rest:
+$\prf_{\ttt{D1}}$, $\prf_{\ttt{qa}}$, $\prf_{\ttt{m}}$
+follow the same distribution (as provided) by the corresponding
+simulator of the component proof.
+
+
+\end{proof}
+
+\section{Position Hiding Lookup Arguments for Group Elements}
+Baloo \cite{Baloo} provides a position hiding look-up argument
+for vector of field elements. We consider its variation for 
+group elements: Given a public look up table
+$\myvec{T} \in \G_1^N$, and a hiding AFGHO commitment 
+$\gcm_1(\myvec{t})$ to 
+a query table $\myvec{t} \in \G_1^n$, and a Pedersen vector commitment
+$\Commit_{\myvec{x}}$ to a vector $\myvec{x} \in \F^n$, show that
+$\myvec{t} \lookup \myvec{T}$, in addition:
+for each $i\in [n]: \myvec{t}_{i} = \myvec{T}_{\myvec{x}_i}$.
+The prover cost is $O(n)$ pairings and verifier cost is
+$O(\log(n))$ $\G_T$ operations. Our solution is 
+{\em trapdoor} in that the trusted set-up is ``per circuit" and it knows
+the discrete logarithm of each $\myvec{T}_i$ (i.e.,
+it knows the $u \in \F$ s.t. $\myvec{T}_i = [u]_1$, and the
+prover does not have to know it). 
+
+The construction is suitable for performing the ``selection"
+of verifier keys of a collection of Groth'16 zkSNARK circuits,
+thus the trusted setup of Groth'16 scheme can be used to
+set up the presented lookup argument for the public lookup table
+of group elements .  We name the scheme $\zkglook$. 
+The design is based on zero knowledge GIPA scheme introduced
+in Section \ref{sec:zkgipa}, which extends the GIPA scheme
+in \cite{Bunz21}. The formal definition of the construction
+is provided below:
+
+\begin{enumerate}
+	\item $([\myvec{T}]_1,\pk,\vk) \leftarrow \glsetup(\myvec{T}\in \F^N):$ 
+	Assume the security parameter and bilinear groups are already
+	given.  A trusted set-up, given a vector of field elements 
+	$\myvec{T} \in \F^N$, generates the lookup table $[\myvec{T}]_1
+	\in \G_1^N$, and the corresponding prover and verifier keys.
+
+
+	\item $(\GCommit_{\myvec{t}}, \Commit_{\myvec{x}}, \prf)
+	\leftarrow \glprove(\myvec{t} \in \G_1^n, r_t \in \F, \myvec{x}\in \F^n, 
+		r_x \in \F, \pk)$: 
+	It produces a zero knowledge proof $\prf$ for
+	$\myvec{t} \lookup [\myvec{T}]_1$, and for
+	each $i\in [n]$:
+	$\myvec{t}_i = \myvec{T}_{\myvec{x}_i}$.
+	Hiding Perdesen vector commitment
+	to $\myvec{t}$ and $\myvec{x}$ are generated with the proof.
+
+	\item $1/0 \leftarrow \glverify(\GCommit_{\myvec{t}}, 
+		\Commit_{\myvec{x}}, \prf, \vk):$ 
+	It checks that $\prf$ is valid.
+\end{enumerate}
+\def\hp{\hspace*{0.1in}}
+
+
+\begin{footnotesize}
+\begin{algorithm}[bt]
+\SetKwData{Left}{left}\SetKwData{This}{this}\SetKwData{Up}{up}
+\SetKwFunction{Union}{Union}\SetKwFunction{FindCompress}{FindCompress}
+$ ([\myvec{T}]_1, \pk,\vk) \leftarrow \glsetup(\myvec{T} \in \F^N, n)$
+\newline
+(1) 
+Define ${T}(X) = \sum_{i=1}^N \myvec{T}_i \cdot L_{N,i}(X)$,
+Sample $s\in \F$. \newline
+Compute: $[T(s)]_1$ and 
+ 	for $i\in [N]:$ $\prf_i \leftarrow
+	\left[\frac{T(s) - \myvec{T}_i}{s-\omega_{N}^i}\right]_2$. \newline
+(2) Let $\myvec{1}_n = (1)_{i=1}^n$.
+Compute:
+ \begin{eqnarray*}
+  & & (\pk_{\ttt{eq}}, \vk_{\ttt{eq}}) \leftarrow
+	\comeqsetup(n). \\
+  & &
+	(\pk_{\ttt{cq}}, \vk_{\ttt{cq}}) \leftarrow
+	\cqsetup(s, N, n). \\
+  & &
+	\GCommit_{\ttt{1}} \leftarrow \gcm_2\left([\myvec{1_n}]_2 \right)
+ \end{eqnarray*}
+(3) Return 
+$\big(\pk = \left(\pk_{\ttt{eq}}, \pk_{\ttt{cq}}, (\prf_i)_{i=1}^N,  \right)$, 
+$\vk = \left(\vk_{\ttt{eq}}, \vk_{\ttt{cq}}, \GCommit_{T}, \GCommit_{s}, \GCommit_{1} \right) \big)$. \newline
+
+
+$(\GCommit_{\myvec{t}}, \Commit_{\myvec{x}}, \prf)
+	\leftarrow \glprove(\myvec{t}, r_t, \myvec{x}, r_x, \pk, \vk)$: \newline
+(1) Parse $\pk$ and $\vk$ as shown in $\texttt{setup}$.  \newline
+(2) Sample $r_{x_1}, r_{x_3}, z_u, r_{z_u}, z_v, r_{z_v}, r_u, r_v, r_1, 
+r_{\pi}$ 
+from $\F$ and compute: \newline
+\begin{eqnarray*}
+& &
+	(\GCommit_{\myvec{x}}, \Commit_{\myvec{x}}, \KCommit_{\myvec{x}},
+	\prf_{\ttt{eq}})
+	\leftarrow \comeqprove(\myvec{x}, r_{x_1}, r_{x}, r_{x_2}, r_{x_3}, 
+		\pk_{\ttt{eq}}) \\
+& & \GCommit_{\myvec{t}} = \gcm_1(\myvec{t}) ~e(r_t[\mu]_1, [1]_2) \\
+& & (\Commit_{\myvec{x}'}, \prf_{\ttt{eq}}) \leftarrow \cqprove(\myvec{x}, r_{x_2},\pk_{\ttt{cq}}) 
+\end{eqnarray*}
+(3) Fiat-Shamir: $r \leftarrow \hash(\vk, \GCommit_{\myvec{t}}, \Commit_{\myvec{x}})$. \newline
+(4) Define $\myvec{u} \in \G_1^n$ s.t.
+	$\myvec{u} = \left([T(s)]_1\right)_{i=1}^n - \myvec{t}$.
+ 	$\myvec{v} = ([s]_1)_{i=1}^n - [\myvec{x}]_1$.  
+	Retrieve zk-GIPA keys $\pk_{\ttt{G}}$, 
+	$\vk_{\ttt{G}}$ from $\pk_{\ttt{eq}}$.
+Compute the following using $\pk_{\ttt{G}}$, $\vk_{\ttt{G}}$:
+\begin{eqnarray*}
+& &
+(\GCommit_{\myvec{u}}, \GCommit_{\ttt{one}}, \Z_u, \Commit_{\Z_u},
+	\prf_u) \leftarrow
+	\zktippprove(\myvec{u}, r_u, [\myvec{1}_n]_2, r_1, r, z_u, r_{z_u})\\
+& &
+( \GCommit_{\myvec{v}}, \GCommit_{\myvec{\prf}}, \Z_v, \Commit_{\Z_v}, \prf_\myvec{v}) \leftarrow
+	\zktippprove(\myvec{v}, r_v, (\prf_i)_{i=1}^n, r_{\pi}, r, z_v, r_{z_v})
+	\\
+& &
+\prf_{\ttt{DL}} = \prfdlog(\Commit_{\Z_u}, \Commit_{\Z_v}, 
+	\GCommit_{\tt{one}}, \GCommit_{u}, \GCommit_{T}, \GCommit{t},
+	\GCommit{v}, \GCommit{s}, \GCommit{x}, \Commit_{\myvec{x}}, \Commit_{\myvec{x}'}) \\
+& &\{(h,j,u,v,w,x,y): \\ 
+& & \hspace*{0.1in}
+	\Commit_{{\Z_u}} - \Commit_{{\Z_v}} =
+		x[1]_1 + y[\nu]_1 \\
+& & \hspace*{0.1in}
+	\Commit_{\myvec{x}'} - \Commit_{\myvec{x}} =  h [z_\V(s)]_1 + j [\mu]_1 \\
+& & \hspace*{0.1in}
+	\Z_u/\Z_v = e([1], [1])^x \And  \\
+& & \hspace*{0.1in}
+	\GCommit_{\myvec{u}} \GCommit_{\myvec{t}} / \GCommit_{T}  
+		=  e([\mu]_1, [1]_2)^u \And  \\
+& & \hspace*{0.1in}
+	\GCommit_{\myvec{v}} \GCommit_{\myvec{x}} / \GCommit_{s}  
+		=  e([\mu]_1, [1]_2)^v \And  \\
+& & \hspace*{0.1in}
+	\GCommit_{\tt{one}} / \GCommit_{1} =  e([\mu]_1, [1]_2)^w \And  \\
+& &\}
+\end{eqnarray*}
+where $h=r_{x_2}$, $j=-r_x$, $x = z_u - z_v$, $y = r_{z_u} - r_{z_v}$, $u = r_u + r_t$,
+$v = r_v + r_{x_1}$, $w = r_1$. \newline
+(4) Let $\prf = ($
+	$\GCommit_{\myvec{x}}, \KCommit_{\myvec{x}},$
+	$\prf_{\ttt{eq}}, $
+	$\prf_{\ttt{cq}}, $
+	$\GCommit_{\myvec{u}}, $
+	$\GCommit_{\ttt{one}},$ 
+	$\Z_u,$ $\Commit_{\Z_u},$ $\prf_u,$
+	$\GCommit_{\myvec{v}}, $
+	$\GCommit_{\myvec{\prf}},$
+	$\Z_v, $
+	$\Commit_{\Z_v},$ 
+	$\prf_v,$ 
+	$\prf_{\ttt{DL}})$.
+	Return $(\GCommit_{\myvec{t}}, \Commit_{\myvec{x}}, \prf)$. \newline
+
+$1/0 \leftarrow \glverify(\vk, 
+	\GCommit_{\myvec{t}}, \Commit_{\myvec{x}}, \prf):$  \newline
+Parse $\prf$ as shown in $\prove$ and returns $1$
+	and compute $r$ using Fiat-Shamir. \newline
+(1) $\zktippverify(\GCommit_{\myvec{u}}, \GCommit_{\ttt{one}}, r, \Z_u, 
+	\Commit_{\Z_u}, \prf_u)$. \newline
+(2) $\zktippverify(\GCommit_{\myvec{v}}, \GCommit_{\myvec{\prf}}, 
+	r, \Z_v, \Commit_{\Z_v}, \prf_v)$. \newline
+(3)  $\verify(\prf_{\ttt{DL}}; \Commit_{\Z_u}, \Commit_{\Z_v}, 
+	\GCommit_{\tt{one}}, \GCommit_{u}, \GCommit_{T}, \GCommit{t},
+	\GCommit{v}, \GCommit{s}, \GCommit{x}, \Commit_{\myvec{x}}, \Commit_{\myvec{x}'})$  \newline
+(4) $\cqverify(\Commit_{\myvec{x}}, \vk_{\ttt{cq}})$ and
+$\comeqverify(\GCommit_{\myvec{x}}, \Commit_{\myvec{x}}, \KCommit_{\myvec{x}},
+\vk_{\ttt{eq}})$.
+
+\caption{Position Hiding Group Elements Lookup Protocol} 
+\label{fig_gl}
+\end{algorithm}
+\end{footnotesize}
+
+We provide the intuition of the algorithm in Figure\ \ref{fig_gl} below.
+Essentially, we are proving the following equation for
+all $i\in [n]:$
+\[
+	e([T(s)]_1 - \myvec{t}_i) = e([s-\myvec{x}_i], \prf_i)
+\]
+This can be essentially achieved using the zero knowledge GIPA scheme,
+following the stragegy of aggregating Groth16 proofs introduced in
+\cite{Bunz21}. We then need to justify that each $\myvec{x}_i$ is a
+valid index in range $[0,n]$. This is accomplished using
+zk-$\cq$. To connect the $\GCommit_{\myvec{x}}$ used in zk-GIPA scheme
+and the $\Commit_{\myvec{x}}$ used in zk-$\cq$, the
+equivalence of commitments proofs introduced in \ref{sec:eqcom}
+is used.
+
+\begin{lemma}\label{lemma_gl} Under the $q$-ASDBP and 
+$q$-SDH assumptions \cite{Bunz21} in AGM and ROM, the construction provided in 
+Figure\ \ref{fig_gl} is perfectly complete, computational knowledge
+sound and perfectly zero knowledge.
+\end{lemma}
+
+\begin{proof} (Sketch) The proof techniques are similar to previous
+constructions in the appendix and we provide a sketch here. 
+
+For knowledge soundness: Check (4) establishes that all elements in
+$\myvec{x}$ are valid indices. $\prf_{\ttt{DL}}$ in Check (3) shows 
+$\GCommit_{\ttt{one}}$ is a hiding commitment to $([1]_1)_{i=1}^n$. 
+Then, the zk-GIPA verify functions
+in (1) and (2) estalishes the knowledge of 
+$\GCommit_{\myvec{u}} = \gcm_1(\myvec{u}) + r_u e([1]_1, [1]_2)$,
+and similarly $\GCommit_{\myvec{v}}$. Then, in Check (3),
+the DLOG proof on 
+$\GCommit_{\myvec{u}}\GCommit_{\myvec{t}}/\GCommit_{\myvec{T}}$
+and
+$\GCommit_{\myvec{v}}\GCommit_{\myvec{x}}/\GCommit_{x}$
+show the prover's knowledge of $\myvec{t}$ and $\myvec{x}$
+behind $\GCommit_{\myvec{t}}$ and $\GCommit_{\myvec{x}}$. 
+They also prove the following:
+\begin{eqnarray}
+& & \myvec{u} = \left([T(s)]_1\right)_{i=1}^n - \myvec{t} \label{eq_uTt}\\
+& & \myvec{v} = \left([s]_1\right)_{i=1}^n - \myvec{x} \label{eq_vsx}
+\end{eqnarray}
+
+Then from checks (1) and (2) in
+$\glverify()$, one can infer the following, with
+the prover's knowledge of
+all randoms $r_u$, $r_u'$, $r_v$, $r_v'$:
+
+\begin{small}
+\begin{eqnarray}
+\Z_u &=& \prod_{i=1}^n r^{2(i-1)} e(\myvec{u}_i, [1]_2)  ~e(r_u [1]_1, [1]_2) \label{zu} \\
+\Commit_{\Z_u} &=& r_u [1] + r_u' [\nu]_1 \label{equ} \\
+\Z_v &=& \prod_{i=1}^n r^{2(i-1)} e(\myvec{v}_i, \prf_i) 
+	~e(r_v [1]_1, [1]_2) \label{rv} \\
+\Commit_{\Z_v} &=& r_v [1] + r_v' [\nu]_1 \label{eqv}
+\end{eqnarray}
+\end{small}
+
+They lead to:
+\begin{small}
+\begin{eqnarray}
+\Z_u/\Z_v &=& \frac{
+\prod_{i=1}^n r^{2(i-1)} e(\myvec{u}_i, [1]_2) }
+{\prod_{i=1}^n r^{2(i-1)} e(\myvec{v}_i, \prf_i) }
+~
+\frac{e(r_u [1]_1, [1]_2) } {~e(r_v [1]_1, [1]_2) } \label{eq_dv1} \\
+\Commit_{\Z_u} - \Commit_{\Z_v} & = &
+	(r_u - r_v) [1] + (r_u'-r_v')[\nu]_1 \label{eq_dv2}
+\end{eqnarray}
+\end{small}
+
+Then obvserve the $\prf_{\ttt{DL}}$'s check on
+$\Z_u/\Z_v$ and $\Commit_{\Z_u} - \Commit_{\Z_v}$.
+Note that the same $x$ is used in $\prf_{\ttt{DL}}$.
+Note that $\Commit_{\Z_u}$ and $\Commit_{\Z_v}$ are
+Pedersen commitment and they are computational binding.
+The $\prf_{\ttt{DL}}$ establishes that
+for an efficient prover there is one and only one
+knowledge representation
+of $\Commit_{\Z_u} - \Commit_{\Z_v} = x[1]_1 + y[\mu]_1$
+where $x = r_u - r_v$ and $y = r_u' - r_v'$.
+Since the $\prf_{\ttt{DL}}$ also proves that:
+$\Z_u/\Z_v = e([1]_1, [1]_2)^{r_u-r_v}$, combining
+with Equation\ \ref{eq_dv1},we have:
+\begin{equation}
+\prod_{i=1}^n r^{2(i-1)} e(\myvec{u}_i, [1]_2) 
+= \prod_{i=1}^n r^{2(i-1)} e(\myvec{v}_i, \prf_i) 
+\end{equation}
+
+Given $r$ is the verifier challenge using
+Fiat-Shamir transform, we immediately have:
+\begin{equation}
+\forall i\in [n]: 
+	e(\myvec{u}_i, [1]_2) = e(\myvec{v}_i, \prf_i) \label{equv}
+\end{equation}
+
+Combinig Equations \ref{eq_uTt}, \ref{eq_vsx} and \ref{equv}, we then
+have:
+\begin{equation}
+\forall \in in [n]:	
+	e([T(s)]_1 - \myvec{t}_i, [1]_2) = e([s]_1 - [\myvec{x}_i]_1, 
+		\prf_i) \label{eq_final}
+\end{equation}
+
+Given that each $\myvec{x}_i \in [n]$ (shown by the zk-CQ proof),
+this completes the proof for knowledge soundness. For zero knowledge,
+the proof is very similar to that of Section\ \ref{sec:eqcom}, i.e.,
+all group elements in the proof are independent of each other (identical
+to the distribution of real conversations between honest
+prover and verifier). Then run simulators for each component
+proof.
+\end{proof}
+
+It is possible to slightly improve the concrete preformance
+of the protocol by replacing the first $\zktippprove$
+by a $\zkmippprove$. We use the current implementation for its
+convenience of supporting vector of $\G_2$ elements with
+few changes in engineering efforts.

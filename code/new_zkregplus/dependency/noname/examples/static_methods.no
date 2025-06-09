@@ -1,0 +1,30 @@
+struct Thing {
+    xx: Field,
+    yy: Field,
+}
+
+fn Thing.new(xx: Field, yy: Field) -> Thing {
+    return Thing {
+        xx: xx,
+        yy: yy,
+    };
+}
+
+fn Thing.verify(self, vv: Field) {
+    assert_eq(self.xx, vv);
+    assert_eq(self.yy, vv + 1);
+}
+
+fn Thing.update_and_verify(self) {
+    let new_thing = Thing {
+        xx: self.xx + 1,
+        yy: self.yy + 1,
+    };
+
+    new_thing.verify(2);
+}
+
+fn main(pub xx: Field) {
+    let thing = Thing.new(xx, xx + xx);
+    thing.update_and_verify();
+}

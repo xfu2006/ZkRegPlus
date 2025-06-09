@@ -1,0 +1,1254 @@
+\section{Background}
+\subsection{Research Problem}
+We\footnote{
+{\bf NOTE:} this section contains the complete formal definition of
+all approximation approaches. Later, needs to split into two sections:
+one for background/walk-around the general idea, and then another section
+of algorithms after the preliminary section.}
+consider the problem of {\em discharging} a {\em benign} input
+string from a large collection of regex malware signatures (i.e.,
+the string does not match any of the signatures).
+
+\begin{definition} Let $R = \{r_1, ..., r_n\}$ be a collection
+of regex signatures. 
+We {\em discharge} a string $s$ for $R$ if 
+we show that $\forall i\in [n]: s \not\in L(r_i)$.
+\end{definition}
+
+Constructing an efficient zk-prover, even when $|R|=1$ is 
+challenging. It is known \cite{AlgBook}[Chapter 5.4] that
+a regex $r$ can be translated to NFA size of $3|r|$.
+To prove a string $s \not\in L(r)$, one can discharge it
+by performing a BFS search over the NFA graph, which results
+in complexity $O(|r| |s|)$, and this zk-prover complexity is achieved 
+in Zombie \cite{Zombie23}. The concern in practice is that
+the concrete prover cost is high. 
+The ClamAV logical signatures have an average length of $300$,
+% main.ldb size: 11649598/38888
+thus to discharge an $1MB$ file against one regex signature needs
+over $2^{30}$ R1CS constraints. 
+
+The straw-man approach of discharging regex signatures one by one
+will not work, as usually the collection of signatures is large.
+For instance, the ClamAV logical regex signatures has
+$38k$ patterns. Another approach is to build an automaton
+from $\bigwedge_{i=1}^n \bar{r_i}$. This is not practical as
+NFA conversion to DFA is needed for regular expression
+negation, and DFA intersection causes exponential state explosion.
+
+It may seem completely impractical to produce concretely
+efficient zk-proofs for discharging benign files for
+malware signature sets used by the industry. 
+However, in this paper, we present technical solutions
+which allow us to discharge an entire image of binary executables
+of a Linux operating system, or the entire Enron email dataset
+for all ClamAV signatures and SNORT signatures.
+We develop {\em conservative} over-approximations of
+regex signatures for discharging a benign input string,
+and we design efficient encoding of these approximations
+by leveraging folding and IVC schemes in zk-provers.
+
+Both ClamAV and SNORT ruleset support full fledged
+PCRE regex patterns. However, not all advanced features of
+PCRE regex are used ``equally", which influence the zk-prover design.
+Thus, we delve into the technical details of these virus
+signatures first, and explore the language features (mainly PCRE)
+that we need to support.
+
+
+\subsection{ClamAV Logical Signatures}
+As ClamAV signatures subsume the syntax of SNORT, for introducing
+the regex syntax, we focus on
+ClamAV only. There are three types of ClamAV signatures: (1) hash 
+signatures, where a SHA256 or MD5 is generated directly from a malicious
+file; (2) fixed word signatures where Aho-Corasick can be directly
+applied to discharge them (and the zk-prover in \cite{Zkreg}
+can discharge an entire Linux image efficiently); and (3)
+logical regex signatures which empowers the full PCRE regex
+syntax. In ClamAV signature set\footnote{ClamAV 0.103.11.27152, retrieved
+January 12, 2024}, there are $38839$ signatures. To discharge hash
+signatures, one can simply encode the hash operation of an input string
+and produce the hash as the secret output witness of the circuit,
+and then use a lookup argument (e.g., \cite{Caulk22,CaulkPlus,Baloo,cq})
+or zero knowledge non-membership proof to discharge it. The cost is
+linear on the input string length and can be independent of the
+hash signature set size. In summary, the $38k$ 
+logical regex signatures are the ones to discharge in this paper.
+We illustrate its syntax using a factious example to integrate
+all language features, and for convenience of presentation the 
+patterns in the example are much shorter than the real 
+signatures.
+
+
+\begin{example} \label{examp:fake012}
+The vast majority of ClamAV signatures are encoded using
+4-bit nibbles, because in many cases, binary (executable) contents
+are the target. However, ClamAV can be also used to handle HTTP and
+email contents. In this case, the text information is represented by
+their encoding (e.g., ASCII). For instance an ASCII string
+``\texttt{ab}" is encoded as ``\texttt{6162}" for \texttt{0x61} is
+the ASCII value for `\texttt{a}'.
+The following is a sample ClamAV logical signature.
+
+\begin{small}
+\begin{Verbatim}[breaklines=true, breakanywhere=true]
+FakeVirus-012;Engine:51-255,Target:0;0|(1=0&2>2);300:616161??3131*31;626262{2-}323232::i;/^([^a]+bc){1,3}/
+\end{Verbatim}
+\end{small}
+\end{example}
+
+A logical signature consists of three parts: (1) the meta information
+(e.g., the virus name, the ClamAV engine version needed,
+and the \texttt{Target} which specifies the file types such as
+executables and emails that should
+be checked, and a $0$ indicates all files. \footnote{In this work,
+we apply all signatures to all file types as to check file content
+type needs expressiveness greater than regex.}. (2) the logical 
+relation between sub-signatures. For instance: in Example \ref{examp:fake012},
+a file is regarded as containing virus \texttt{FakeVirus-012} if
+there is at least one match of sub-signature $0$, or sub-signature $2$
+has more than $2$ matches, \footnote{We interpret the semantics as
+each match is not nested in another. For instance, for regex
+\texttt{a+b}, string \text{aabb} contains $1$ match.}
+and sub-signature 1 has no match. Notice that here by specifying
+counter constraints \texttt{1=0}, it is essentially specifying the
+negation of a regex constraint. (3) sub-signatures. They are
+separated by semicolons. There are two types of
+sub-signatures: {\em hex} and {\em PCRE} sub-signatures.
+
+A {\em hex} sub-signature is pattern oriented, and is {\em weaker}
+then regex, in the way that repetitions (such as Kleene starts)
+can be applied to wildcard match only. 
+Here a $\verb|?|$ stands for a wild card of one hex nibbles, and
+$\verb|{4}|$ stands for $4$ bytes (8 nibbles). 
+Note that as a {\em hex} sub-signature
+can have wildcard matches, and can express distances between
+sub-patterns, it is more expressive than the fixed-word
+signatures in ClamAV that directly encoded using Aho-Corasick automata.
+
+A {\em PCRE}
+regex allows full PCRE regex syntax such as character classes
+such as \texttt{[a-z0-9]}, negated char classes such as \texttt{[\^{}a]},
+macros like \texttt{\textbackslash w},
+zero-length assertions such as \texttt{\${}},
+and also named back-references and look-arounds such as
+\texttt{(?P=tagname)}.  
+% check code/zkregplus/data/clamav/categories/pcre.dat
+Out of the $37955$ logical signatures, there are $559$ ($1.4\%$)
+patterns that carry PCRE regex signatures. 
+% check data/zkregplus/data/clamav/new_src/README
+Note that look-arounds exceed the capability of regex,
+and they are approximated. But such cases are rare,
+only $6$ out of $559$ PCRE sub-signatures have such features,
+and they can be approximated without raising false-positives
+of virus on the data set of all Linux binary executables and
+Enron emails.
+\footnote{
+For instance given pattern 
+\texttt{<(?P<tag>([a-z]+)).*?>.*?</(?P=tag)>},
+we approximate it to: \texttt{<(([a-z]+)).*?>.*?</([a-z]+)>}
+in the sense that any concrete string that match the original
+regex also matches the over-approximated regex.
+There are $6$ patterns (1 positive look-ahead and 5 negative look-ahead)
+that use look-around, and we manually convert them to equivalent ones (for 
+positive look-ahead) and approximated ones (for negative look-ahead)
+for engineering convenience. 
+we re-ran ClamAV over data samples
+so that no false-positives of virus report are generated.
+}
+
+We use a uniform alphabet of hex digits to encode all finite state machines
+used in this paper. Thus, the PCRE regex sub-signatures are converted to
+this alphabet. One benefit is that the complete DFA resulted from such signatures
+needs less space for encoding transitions, because each state has at most
+$16$ out-going transitions.  Given the discussion above, we can translate
+all sub-signatures of \texttt{FakeVirus-012} into the following over
+hex alphabet:
+
+\begin{small}
+$r_0$ := \texttt{.\{600\}616161..3131.*31.*}
+\end{small}
+
+\begin{small}
+$r_1 := \texttt{.*(62|42)(62|42)(62|42).....*323232.*}$
+\end{small}
+
+\begin{small}
+$r_2 := \texttt{.*((00|...|60|62|...|ff)+6263)\{1,3\}.*}$
+\end{small}
+
+Observe $r_0$ for sub-signature $0$: 
+it first encodes the position requirement
+\texttt{300:}, which requires that the match starts
+at exactly the $300$'th byte from the beginning of the
+document, into a wildcard of $600$ nibbles. Then each
+wildcard match \texttt{?} is translated into a \texttt{.},
+and lastly a wildcard string \texttt{.*} is appended at the
+end because we need to express the concept the the
+pattern is {\em contained} in the target file.
+
+For $r_1$, the ignore case \texttt{::i} requirement is
+handled by syntax re-writing. It is apparent that a requirement
+of ``sub-signature 1 has no matches" in target string $s$
+can be expressed by: $s \in \overline{r_1}$, because the wildcard
+strings at the beginning and end of $r_1$.
+Similarly, negated char class in $r_2$ is handled by
+re-writing. Finally, the logical signature can be
+denoted by the following extended regex pattern (in the sense
+that intersection and negation are allowed in regex specification):
+\[
+	r_0 \vee (\overline{r_1} \wedge r_2r_2r_2)
+\]
+
+If one wishes to discharge a string $s$ of virus \texttt{FakeVirus-012},
+then it is to prove:
+\[
+	s \in \overline{r_0} \wedge (\overline{r_1} \vee \overline{r_2r_2r_2})
+\]
+Intuitively, it implies that one has to discharge $s$ 
+of $r_1$ first, and then discharge either of $r_1$ or
+$r_2r_2r_2$.
+
+One straw-man approach would be: construct DFA out of
+the above regular expression, and then the zk-proof for discharging
+$s$ would be simply linear with $|s|$, given that
+encoding finite state machine is ``free" using pre-processed
+lookup arguments such as $\cq$ \cite{cq}. Unfortunately,
+it is known that the worst complexity of constructing DFA
+out of regex is exponential, and so is negation.
+% check paper_data/dfa_size/main_dfa.dat
+% gen_regex: 155 out of 3479, pcre: 77 out of 550(to be updated),
+% pm_reg: 16067 out of 34279
+% total: 16.3k out of 38k 
+% ==== SUMMARY DFA Stats =====
+%Failed: 16296 Success: 22001
+%Subsis (Success): 109274 AVG DFA size: 81.52542233285136
+We performed an empirical (best-effort) attempt to convert
+all sub-signatures of ClamAV set to DFA, using a server with 128GB
+ram (running with 32-threads). A failure is reported when the
+conversion times out at 100 seconds, or exhausts the 128GB RAM.
+Out of the 38k logical signatures, there are 16.3k failed to
+generate DFA. 
+
+As an example, observe sub-signature $1$ in the following
+virus signature.
+Setting the repetitions 
+(replacing the \texttt{\{28\}}) to $2$ results in a minimized
+DFA of $1622$ states, but at $16$ it already has $56910$ states.
+The NFA to minimized DFA conversion crashes at repetition $17$
+by exhausting all $128GB$ RAM resources.
+\vspace*{-0.01in}
+\begin{small}
+\begin{Verbatim}[breaklines=true, breakanywhere=true]
+Win.Trojan.Zeroaccess-6932503-0;Engine:81-255,Target:1;0&1&2;4d535642564d{2}2e444c4c::i;56423521f01f{28}0a00{16}00f0300000ffffff08000000010000000000;61d5893c82478645bf6059f9d3408757
+\end{Verbatim}
+\end{small}
+
+Combining all, In Figure\ \ref{fig:lcreg}
+we present the formal syntax of the regex (covering
+the special logical structure and counter constraints) of ClamAV.
+This also subsumes the syntax for the PCRE regex used in both
+ClamAV and Snort. We call it {\em LC-Regex}. We use $\Sigma$ to
+denote an alphabet of 16 hex digits in this paper. 
+
+
+Here a sub-signature is a full-fledged PCRE excepts
+look-around and back-references, as noted earlier the rare
+instances are re-written to equivalent standard regex or approximated.  
+We skip all ``syntax sugars" such as character classes and repetition operators
+as they all can be re-written with the basic LC-Regex.
+For example, PCRE regex $\text{/[a-d]/}$ is re-written as
+$(61|62|63|64)$.
+
+The intersection and negation is allowed only at the logical
+layer, where sub-signatures are composed via logical connectors,
+and counter constraints are defined also at this layer.
+Counter constraints could be re-written, however, we 
+specifically represent them so that approximation techniques
+introduced later can leverage the structural information directly.
+It is apparent that LC-Regex captures the complete regular language.
+
+\begin{figure}
+\begin{small}
+\begin{bnf}
+$s$  ::=  : \textsf{sub-signature}
+| $a$: \textsf{character} $a \in \Sigma$
+| $.$: \textsf{any}
+| $s*$ | $s+$: \textsf{repetition}
+| $s_1 s_2$:  \textsf{concatenation}
+| $s_1 \vert s_2$:  \textsf{alternation}
+| $(s)$:  \textsf{grouping}
+;;
+;;
+$n$ ::= $[0-9]+$ : \textsf{number}
+;;
+;;
+$r$ ::=  : \textsf{LC-Regex}
+| $s$: \textsf{sub-signature}
+| $r_1 \vert r_2$: \textsf{alternation}
+| $r_1 \& r_2$: \textsf{intersection}
+| $\overline{r}$: \textsf{negation}
+| $s~ (>\vert=\vert<)~ n$: \textsf{counter constraint}
+;;
+;;
+\end{bnf}
+\end{small}
+\caption{Regular Expression with Logical Structures and Counter 
+Constraints (LC-Regex)} 
+\label{fig:lcreg}
+\end{figure}
+
+\subsection{Approximations}
+Our goal is to design an efficient zk-proof scheme that can batch discharge
+an input string against a large collection of regex patterns. We would like
+to avoid NFA encoding of regex patterns (to avoid the complexity of
+$O(|s||r|)$). Due to the difficulty of constructing DFA, we would not
+construct DFA whenever possible (in fact, we show that for the entire
+ClamAV rule set, it sufficies to generate DFA for only 6 rules). 
+In this section, we present four approximation approaches that allow
+us to avoid expensive single NFA discharging approach completely. 
+In terms of the cost for batch discharging, their cost increases
+in ascending order. Thus, the strategy is to filter all patterns
+through these approximations one by one. They are: (1) critical pattern
+(denoted as \texttt{CP}), (2) bag of critical pattern sets(\texttt{BW}),
+(3) single thread distance encoding (\texttt{STD}), and
+DFA (\texttt{DFA}). We describe the idea of each approximation
+briefly and present data to support our argument.
+
+\subsubsection{Critical Pattern (\texttt{CP})}
+Consider discharging $\texttt{51525354}$ for 
+a subsignature $s_1 := \texttt{3132\{2-\}(61626364|41424344)}$.
+A human reader can immediately
+verify the case without even running the DFA of the pattern,
+because none of the long pattern words such as $\texttt{61626364}$
+or $\texttt{41424344}$ appears in the target string.
+These long pattern words are required for any string to
+match the subsignature. We call them ``critical patterns".
+Formally it is defined as follows:
+
+\begin{definition} \label{deff:cp}
+Given a regular expression $r$, a set of strings
+$\cp(r)$ is called a {\em critical pattern set} for $r$
+if for any string $t\in r$ there exists a string $s \in \cp(r)$
+s.t. $s$ is a substring in $t$.
+\end{definition}
+
+Intuitively, if none of the words in $\cp(r)$ appears in a string
+$s$, then $s$ can be discharged for $r$.  One should note that a 
+regular expression may have many
+critical pattern sets.  For instance for $s_1$
+mentioned above, both $\{\texttt{61626364,41424344}\}$
+and $\{3132\}$ are valid \cp, however, $\{\texttt{61626364}\}$
+is not, because $\text{313241424344}$ is a valid match for
+$s_1$ and it does not have to contain $\texttt{61626364}$.  
+In practice, we use a heuristic to collect
+those that are the longest and those appear less frequently 
+in other subsignatures (thus $\{3132\}$ is not preferred for $s_1$). 
+Later, we show that \cp can be constructed from \bw.
+
+Consider a simple scenario that all regular patterns has only
+one hex subsignature and no counter constraints.
+Given a large collection of regular patterns $R = \{r_1, ..., r_n\}$,
+we collect one critical pattern for each $r_i$, and construct
+an Acho-Corasick autaton (AC-DFA) on all these fixed word patterns.
+Notice that AC-DFA is deterministic, and its
+construction complexity is superior compared with constructing DFA
+from regex: it is {\em linear} in the total length of fixed words.
+Then given an input string $s$, we can simply collect the output
+words of AC-DFA along its acceptance path. Those regular patterns
+that do not appear (to be associated) with the collected output words
+do not have to be considered. 
+% support data: paper_data/raw_data/main_exec.dat
+% max patterns 198 needed after critical pattern
+% (38297-198)/38297
+In this case, we can discharge over $99.48\%$ ClamAV rules 
+for the vast majority of binary executables and email files 
+in Enron data set (in the worst case there are $198$ out of 38297 
+ClamAV rules left to discharge for the next approximation, 
+for one large executable file. For other executables and
+emails in Enron data set, the number of left-over is much smaller, as
+their size is smaller and are less likely to contain a lot of
+critical patterns).
+
+In practice, we need to address more delicacies. For instance,
+we need to construct two ACDFAs, one for case sensitive
+and one for case-insensitive. We also need to consider
+the logical structure of a ClamAV rule which involves multiple
+subsignatures (and their negation cases). For instance,
+subsignatures that are negated and counter constraints such as
+$0<2$ do not have critical pattern set (that is, they cannot be discharged
+via critical patterns). Also, we need to consider the logical structures.
+For instance, for a logical signature $(r_1 \vert r_2) \wedge (r_3 \vert r_4)$
+we only need to pick one out of $\cp(r_1) \cup \cp(r_2)$ and
+$\cp(r_3) \cup \cp(r_4)$.
+
+
+\subsubsection{Bag of Critical Pattern Set (\bw)}
+Bag set can be regarded as a straightforward extension of
+the critical pattern set model. It is a {\em conjunction} of
+a set of critial pattern sets.  To discharge via
+$\bw$ in zk-prover, however, is rather different 
+from the previous approach. We rely on ACDFA to count word occurences
+and a ternary logic system \cite{ternarylogic},
+which allows reasoning about ``maybe".
+
+A ternary-value logic system has three values in the system:
+\true ~(True), \false ~(False), and \unknown ~(Unknown). 
+We need three operators: $\neg$ (negation), $\wedge$ (and),
+and $\vee$ (or), and their truth tables are defined in Figure
+\ \ref{fig:ternary}.
+
+\begin{figure}
+\begin{small}
+\begin{displaymath}
+\begin{array}{c|c|c|c}
+	\wedge & \true & \false & \unknown \\
+	\hline
+	\true & \true & \false & \unknown \\
+	\unknown & \unknown & \false & \unknown \\
+	\false & \false & \false & \false 
+\end{array}
+\qquad
+\begin{array}{c|c|c|c}
+	\vee & \true & \false & \unknown \\
+	\hline
+	\true & \true & \true & \true \\
+	\unknown & \true & \unknown & \unknown \\
+	\false & \true & \false & \unknown
+\end{array}
+\qquad
+\begin{array}{c|c|c|c}
+	\neg & \true & \false & \unknown \\
+	\hline
+		 & \false& \true & \unknown \\
+\end{array}
+\end{displaymath}
+\end{small}
+\caption{Truth Table of Ternary-Logic}
+\label{fig:ternary}
+\end{figure}
+
+
+\begin{definition} \label{deff:bw} Given a regular expression
+subsignature $r$, a bag of critical pattern set for $r$,denoted as
+$\bw(r)$, is a set s.t.  each of its element is a distinct $\cp(r)$.  
+\end{definition}
+
+
+Intuitively, a word $s \in r$ must
+satisfy each critical pattern set in $\bw(r)$.
+In another word,
+if there exists $\vec{u} \in \bw(r)$ s.t. 
+for all $t\in \vec{u}$: $t$ is not a substring
+of $s$, then $s \not\in r$.
+
+\begin{example} \label{examp:bw} 
+Given a regex $r := \texttt{6162(4142|4344)5152}$,
+both $\texttt{\{\{6162\}$, $\{4142,4344\}$, $\{5152\}}\}$ and
+$\texttt{\{\{6162\}, \{5152\}\}}$ are $\bw(r)$.
+\end{example}
+
+
+In Figure\ \ref{fig:bw} we present algorithms for generating $\bw$,
+and for discharging a string by $\bw$. 
+$\texttt{gen\_bag\_sets()}$
+is defined based on the recursive definition of a subsignature.
+One interesting point is that dropping a critical pattern set 
+from a $\bw(r)$ yields a valid but coarser $\bw(r)$,
+as shown in Example\ \ref{examp:bw}. 
+When handling the wildcard \texttt{.} case, the true $\bw$ 
+is $\{\Sigma\}$, but we return $\emptyset$ to avoid state explosion.
+Another interesting point is how alternation is handled. For instance,
+for regex subsignature \texttt{ab((12.*34)|(56.*78))cd} the corresponding 
+bag of sets generated are $\{\{\texttt{ab}\},$ $\{\texttt{12}, \texttt{56}\},$ 
+$\{\texttt{12}, \texttt{78}\},$ $\{\texttt{34}, \texttt{56}\},$ 
+$\{\texttt{34}, \texttt{78}\}, \{\texttt{cd}\}\}$,
+resulting from a cross product operation of 
+$\bw(\texttt{12.*34})$ and
+$\bw(\texttt{56.*78})$. 
+In practice, cross-product may result in explosion of terms.
+We use heuristics to drop terms above a certain pre-set limit (e.g., $2048$). 
+Such an approximation is conservative.
+
+Before we discuss how to discharge in batches using $\bw$, 
+consider how ACDFA can be leveraged first. 
+Given a large collection of subsignatures $\{r_1, ..., r_n\}$,
+an ACDFA can be constructed from $\bigcup_{i\in[n]} \bw(r_i)$.
+Then running a string $s$ through the ACDFA, we obtain
+an acceptance path, from which, one can obtain a hashmap $\rho$ which
+maps from each accepted word to the {\em count} of the word in the string.
+Notice that as all patterns are long (the vast majority has length
+greater than 10), the ratio of final states 
+in the acceptance path is low, and the size of $\rho$
+is much smaller than $|s|$ itself. {\bf In our data set (full
+ClamAV signatures over 700MB Linux binary executables),
+% see paper_data/raw_data/discharge/main_exec.txt (last line)
+$|\rho|$ is only $0.06\%$ of $|s|$,
+It implies a speed up factor of over $1600\times$ compared with
+discharging using DFA directly.}
+
+With such information, we can evaluate counter constraints efficiently,
+and evaluate a regex subsignature is a special case of it.
+Observe function $\texttt{eval\_cs\_bs}(\rho, r, op, n)$
+in Figure\ \ref{fig:bw}.  The function takes the following input:
+word frequency map $\rho$, a counter constraint $r ~op~ n$, and 
+it tries to decide if the string represented by $\rho$ can be evaluated 
+by $\bw$. It returns a ternary logic value, and when
+it returns $\true$ ($\false$), it implies that the string generating $\rho$
+really meets (does not meet) the counter constraint. A $\unknown$
+indicates an unsure value. Thus the approach is conservative.
+Then, the ternary value allows composing the evaluation of
+subsignatures from an LC-regex, as shown in function
+$\texttt{eval\_lc\_bs}()$.
+
+\def\gbw{\texttt{gbs}}
+\def\hp{\hspace*{0.1in}}
+\begin{small}
+\begin{algorithm}[bt]
+\SetKwData{Left}{left}\SetKwData{This}{this}\SetKwData{Up}{up}
+\SetKwFunction{Union}{Union}\SetKwFunction{FindCompress}{FindCompress}
+$\bw \leftarrow {\texttt{\textbf{gen\_bag\_sets}}}(s)$: 
+\newline
+\# Generate $\bw$ for subsignature $s$ \newline
+(1) Denote \texttt{gen\_bag\_sets} as \gbw. \newline
+(2) Return \bw(s) based on its structure:
+\[
+\left\{ 
+\begin{array}{l l l}
+	a \in \Sigma^+ &\Rightarrow & \{\{a\}\} \\
+	. 	& \Rightarrow & \emptyset \texttt{~\# to avoid state explosion} \\
+	s_1s_2 & \Rightarrow& \gbw(s_1) \cup \gbw(s_2) \\
+	s_1 *& \Rightarrow& \emptyset \\
+	s_1+ & \Rightarrow& \gbw(s_1) \\
+	s_1~|~s_2 & \Rightarrow& \{\vec{u} \cup \vec{v}~|~ \vec{u} \in \gbw(s_1) \wedge \vec{v}\in \gbw(s_2) \}
+\end{array}
+\right.
+\]
+
+$\true/\unknown/\false \leftarrow \texttt{\textbf{eval\_counter\_cs\_bs}}(\rho, r, \op, n)$:  \newline
+\# Evaluate counter constraint by bag of critical pattern sets \newline
+(1) Compute $\occ = \min\left(\left\{ \sum_{w \in \vec{v}} \rho(w) ~|~ \vec{v} \in \bw\right\}\right)$. \newline
+(2) \return ternary value according to the following chart:
+\[
+\begin{array}{c|c|c|c}
+	\op & \true & \false & \unknown \\
+	\hline
+      $>$  & - 		& $\occ <=n$ & $\occ > n$ \\
+	\hline
+      $<$  & $occ<n$ & - 		 & $\occ > n-1$ \\
+	\hline
+      $= (\texttt{where} n>0) $  & - & $\occ <n$ & $\occ > n-1$ \\
+	\hline
+      $= (\texttt{where} n=0) $  & \occ=0 &  -  & $\occ > 0$ \\
+\end{array}
+\]
+
+$\true/\unknown/\false \leftarrow \texttt{\textbf{eval\_subsig\_bs}}(\rho, r)$:  \newline
+\# Evaluate subsignature by $\bw$ \newline
+\return $\texttt{eval\_counter\_cs\_bs}(\rho, r, >, 0)$
+
+\def\dlb{\texttt{dlb}}
+$\true/\unknown/\false \leftarrow \texttt{\textbf{eval\_lc\_bs}}(\rho, r)$:  \newline
+\# Evaluate LG-regex by $\bw$ \newline
+\# Here $r_i$: LC-regex, $s_i$: subsignature \newline
+(1) Denote \texttt{eval\_lc\_bs} by texttt{dlb}.\newline
+(2) \return one of the following based on the structure of $r$:
+\begin{footnotesize}
+\[
+\left\{
+\begin{array}{l l l}
+	s & \Rightarrow & \texttt{eval\_subsig\_bs}(\rho, s) \\
+	s ~\op~ n & \Rightarrow & \texttt{eval\_counter\_cs\_bs}(\rho, s, \op, n) \\
+	\overline{r_1} &\Rightarrow & \neg \texttt{eval\_lc\_bs}(\rho,r_1) \\
+	r_1 | r_2  &\Rightarrow &
+			\texttt{eval\_lc\_bs}(\rho,r_1) \vee 
+			\texttt{eval\_lc\_bs}(\rho,r_2)  \\
+	r_1 \& r_2 & \Rightarrow &
+			\texttt{eval\_lc\_bs}(\rho,r_1) \wedge 
+			\texttt{eval\_lc\_bs}(\rho,r_2) 
+\end{array}
+\right.
+\]
+\end{footnotesize}
+\caption{Bag of Critical Pattern Set Algorithms}
+\label{fig:bw}
+\end{algorithm}
+\end{small}
+
+We now delve into the details of $\texttt{eval\_counter\_cs\_bs}()$
+by an example. Given counter constraint $r ~\op~ n$, it first
+computes $\bw(r)$. For each critical pattern set in $\bw(r)$,
+it uses $\rho$ to compute the sum of occurences of all the words
+in the critical set pattern, and denote that as the occurrence for
+that pattern set. Then it iterates through all the pattern sets
+and get the minimum occurrence (denoted as $\occ$ in the function).
+It then use $\occ$ to decide if the string behind $\rho$ satisfies
+the constraint.
+
+\begin{example} 
+Let $r := \texttt{aa(11|22)bb}$, and let the
+counter constriant be $r < 2$. 
+One valid $\bw(r)$ is 
+$\{\{\texttt{aa}\},$ $\{\texttt{11,22}\},$ $\{\texttt{bb}\}\}$.
+Given string $s := \texttt{aa112211bbaa}$, its word frequency
+map $\rho$ is: 
+$\{\texttt{aa} \rightarrow 2$,
+$\texttt{11} \rightarrow 2$,
+$\texttt{22} \rightarrow 1$,
+$\texttt{bb} \rightarrow 1\}$. Given $\rho$, the algorithm
+can compute the total of occurrence for each of the three
+critical pattern sets. They are $2$, $3$, and $1$, respectively
+for $\{\texttt{aa}\},$ $\{\texttt{11,22}\},$ $\{\texttt{bb}\}$.
+Then $\occ$ is set to minimum of them, i.e., 1.
+Following the chart, it decides $s$ satisfies the counter constraint
+$r < 2$. The intuition is clear: the required pattern
+$\texttt{bb}$ only appeared once, there is no way for the entire string
+to have more than $2$ matches of $r$.
+
+Fix $r := \texttt{aa(11|22)bb}$. The following tables lists more examples.
+A string $s$ is discharged of a regular subsignature $r$ when
+the output is $\false$ (a sure false value in ternary logic).
+
+\begin{small}
+\begin{center}
+\begin{tabular}{c | c | c | c}
+\hline
+$s$ & \texttt{counter constraint} & $\occ$ & output \\
+\hline
+\hline
+\texttt{1122bbaabb} & $r>0$ & 1 & $\unknown$ \\
+\texttt{11aa} & $r>0$ & 0 & $\false$ \\
+\texttt{aa11bbaa22bb} & $r=2$ & 2 & $\unknown$ \\
+\texttt{aa22bbbbbbbb} & $r<2$ & 1 & $\true$ \\
+\hline
+\end{tabular}
+\end{center}
+\end{small}
+
+\end{example}
+
+\subsubsection{Single-Thread Distance Encoding ($\sde$)}
+We now introduce Single-Thread Distance Encoding ($\sde$) for 
+capturing the distance between pattern words, which $\bw$ cannot. 
+
+Consider $r := \texttt{ab(12|34)cd}$, one valid $\sde(r)$ is
+$\texttt{ab.\{2,2\}cd}$. It captures the fact that the distance between
+$\texttt{ab}$ and $\texttt{cd}$ should be $2$. The motivation
+for abstracting away alternation and nested structures in regex 
+is based on producing an efficient zk-prover algorithm using ACDFA.
+We provide a formal definition of $\sde$ below.
+
+\begin{definition} \label{deff:std} Given a regex subsignature $s$,
+we call another regex $r$ a valid Single Thread Distance Encoding
+of $s$, written as $\sde(s)$, if $L(s) \subseteq L(r)$ and $r$
+satisfies the following BNF syntax: 
+\[
+r := a \in \Sigma^+ ~|~ .\{n_1, n_2\} ~|~ r_1 r_2,
+\]
+where $r_1$ and $r_2$ are $\sde$ of some regex subsignatures.
+Here $n_1 \leq n_2$ and we abuse the notation of $n_2$
+to allow $\infty$, so $.+$ can be represented as
+$.\{1,\infty\}$.
+\end{definition}
+
+Each $\sde$ regex has a unique simplified
+$\sde$ which consists of alternating wildcard strings and
+fixed patterns. For instance $\texttt{.\{2,5\}ab.\{3,3\}.\{4,5\}cd}$
+can be simplified to $\texttt{.\{2,5\}ab.\{7,8\}cd}$.
+The function $\texttt{simplify}(s)$ is given in Fig\ \ref{fig:sde}.
+It applies a reduction of merging consecutive fixed words and
+wildcards and produces an equivalent $\sde$. Note that 
+$\concat$ stands for fixed word concatenation in its function body.
+
+Similarly to $\bw$, we can define $\sde$ recursively
+based on the subsignature structure. 
+This is implemented in function $\texttt{gen\_subsig\_sde}(s)$ in
+Figure\ \ref{fig:sde}. It relies on the $\texttt{wildcard}(s)$
+function which approximates a 
+a fixed word to wildcards, e.g.,
+from $\texttt{abc}$ to $\texttt{.\{3,3\}}$.
+Then using it, alternations are abstracted away
+by keeping track of the length bounds of all components,
+e.g.,
+$\texttt{(ab|cdef)}$ is approximated to
+$\texttt{.\{2,5\}}$. It is clear that the
+approximation is conservative in the sense that
+any fixed word $w \in L(s)$ also belongs to $L(\sde(s))$.
+
+In function $\texttt{eval\_counter\_cs\_sde}(w, s, \op, n)$
+we evaluate whether fixed word $w$ satisfies counter
+constraint $s~\op~n$, and evaluation of a general subsignature
+is a special case of it. Then using the ternary logic
+one can extend to LC-regex.
+
+We present an example to illustrate how the algorithm works.
+Again, like the $\bw$ method, the approach relies on
+ACDFA to generate a map $\rho$ which maps each accepted
+word to a set of indices where it appears in the target string.
+When the function is called, $\rho$ instead of
+the target string is passed for mass processing. 
+
+In practice, $\rho$ needs to go through two levels
+of table projections to optimize zk-prover performance.
+For the first projection, after the $\bw$ completes,
+the zk-prover collects all signatures that need to go to
+$\sde$, and project $\rho$ to contain entry words that
+are related to signatures failed by \bw only.  
+This is a one time projection and the cost is
+$O(|s|)$. 
+Let there be $u$ signatures to handle in the
+$\sde$ stage, usually $u>100$ for file size $2^{20}$.
+Given the cost is spread to all signatures, the first
+projection cost is negligible in average for discharging a signature
+via $\sde$.
+The first projection results in a hashmap
+$\rho^{(1)}$,
+% check end of paper_data/raw_data/discharge_data/main_exec.dat
+%entry: 
+which is about $5\%$ of $|s|$.\footnote{The result is obtained 
+at bounding the $\sde$ fixed patterns with length at least $4$.
+It is possible to achieve better compression ratio by increasing
+minimum length, however, reducing effectiveness of $\sde$ thus
+leaving more signatures to the DFA stage.}
+
+To further cut the cost, for each signature involved (let it be written $r_i$),
+$\rho^{(1)}$ is further projected into a $\rho^{(2)}_i$,
+an individual table for $r_i$.  
+Layer 2 projection can be processed in batch, as a
+variation of permutation argument for an inflated table from $\rho^{(1)}$.
+The maximum inflation rate according to our data,
+% check end of paper_data/raw_data/discharge_data/main_exec.dat
+% entry: 
+is only $2.17$. This implies the total combined cost for
+layer 2 table projection is  $O(|\rho^{(1)}|)$ in total for all signatures. 
+
+Then $\rho^{(2)}_i$ is used for the
+$\sde$ process for each signature $r_i$, note that
+$\sum_{i=1}^u |\rho^{(2)}| \approx |\rho^{(1)}|$. 
+The combined $\sde$ cost for all subsignatures is thus $O(\rho^{(1)}$.
+The concrete data shows that the combined $\sde$ witness length
+% pm_reg (sde) total witness_len/file_size: (avg: max)
+in average is only $2.5\%$ (and max $60.8\%$)
+of the file size.
+Thus, in total for $u$ signatures, the zk-prover pays
+combined cost only a constant factor (of $<2$) of file size.
+Compared with DFA discharging, the speed-up of $\sde$
+depends on the value of $u$, which is typically $>100$ for file size $2^{20}$.
+
+\begin{example} Let $r = \texttt{ab(12|32)cd}$ and
+$w = \texttt{ab11cd00ab22cd}$. The goal is to
+evaluate $w$ against counter constraint $r>2$. 
+
+The algorithm first collects bag of words from all related
+signatures (which includes $\texttt{ab}$ and $\texttt{cd}$).
+Then it computes 
+$\rho$ for $w$ with ACDFA, where $\rho = \{
+	\texttt{ab} \rightarrow \{0, 8\},
+	\texttt{cd} \rightarrow \{4, 12\},
+\}$, e.g., $\texttt{ab}$ appeared at indices $0$ and $8$
+in $w$.
+
+When processing
+$\texttt{eval\_counter\_cs\_sde}(\rho, r, >, 2)$,
+the algorithm first computes repeated $r$ as the following,
+to require $3$ non-overlapping match of $r$:
+\[
+\texttt{.*ab(12|32)cd.*ab(12|32)cd.*ab(12|32)cd}.*
+\]
+Its simplified $\sde$ is:
+
+\[
+\{0,\infty\}
+\texttt{ab}.\{2,2\}
+\texttt{cd}.\{0,\infty\}
+\texttt{ab}.\{2,2\}
+\texttt{cd}.\{0,\infty\}
+\texttt{ab}.\{2,2\}
+\texttt{cd}.\{0,\infty\}
+\]
+Note that we have $6$ fixed pattern words in the above $\sde$.
+Using $\rho$, the allowed position set are computed, as shown
+below:
+\begin{center}
+\begin{tabular}{c | c | c | c }
+\hline
+ $\varphi_0 = \{0\}$  &
+ $\varphi_1 = \{0, 8\}$  &
+ $\varphi_2 = \{4, 12\}$  &
+ $\varphi_3 = \{8\}$  
+ \\
+\hline
+ $\varphi_4 = \{12\}$  &
+ $\varphi_5 = \emptyset$  &
+ $\varphi_6 = \emptyset$  &
+ - \\
+\hline
+\end{tabular}
+\end{center}
+
+Intuitively, $\varphi_1$ reflects the permitted positions
+of the 1st occurrence of \texttt{ab}, $\varphi_2$ the positions
+for the 1st occurrence of \texttt{cd}, etc. Each round, the algorithm
+proceeds from the the last position set, advances with the length
+of the last word and the wildcard length bound in between, and
+then intersect with with the set of occurrence indices of the
+next word. 
+
+As shown in the computation, there is no valid position
+for the third pair of $\text{ab}$ and $\text{cd}$.
+Following the chart, ternary value $\false$ is returned,
+which discharges $w$ for counter constraint $r>2$.
+\end{example}
+
+
+\begin{small}
+\begin{algorithm}[bt]
+\SetKwData{Left}{left}\SetKwData{This}{this}\SetKwData{Up}{up}
+\SetKwFunction{Union}{Union}\SetKwFunction{FindCompress}{FindCompress}
+$\sde \leftarrow {\texttt{\textbf{simplify}}}(s)$: 
+\newline
+\# produce a simplified version of $s$ where $s$ is a $\sde$ for some $r$ 
+\newline
+Apply reduction below to $s$ until no more can be applied. \newline
+\[
+ \left\{
+ 	\begin{array}{l l l}
+		a_1 a_2$ \textrm{ where } $a_i \in \Sigma^+ & \Rightarrow & a_1 \concat a_2 \\
+		.\{m_1, m_2\} .\{n_1, n_2\} & \Rightarrow & .\{m_1+n1, m_2+n2\}
+
+	\end{array}
+ \right.
+\]
+
+$\sde \leftarrow {\texttt{\textbf{wildcard}}}(s)$: 
+\newline
+\# Assuming $s$ is already a $\sde$, produce its wildcard approximation 
+\newline
+(1) Let $s'$ be the result of approximating each fixed word $a$ 
+in $s$ to $.\{|a|,|a|\}$. \newline
+(2) \return $\texttt{simplify}(s')$.
+
+\def\gsde{\texttt{gss}}
+$\sde \leftarrow {\texttt{\textbf{gen\_subsig\_sde}}}(s)$: 
+\newline
+\# Generate $\sde$ for subsignature $s$ \newline
+(1) Denote \texttt{gen\_subsig\_sde} as \gsde. \newline
+(2) Compute $s_2$ based on the structure of $s$:
+\[
+\left\{ 
+\begin{array}{l l l}
+	a \in \Sigma^+ &\Rightarrow & a \\
+	. 	& \Rightarrow & . \\
+	s_1s_2 & \Rightarrow& \gsde(s_1) \concat \gsde(s_2) \\
+	s_1 *& \Rightarrow& \texttt{.\{0,}\infty\texttt{\}} \\
+	s_1+ & \Rightarrow& \gsde(s_1) || \texttt{.\{}0,\infty\texttt{\}} \\
+	s_1~|~s_2 & \Rightarrow& \texttt{.\{}a,b\texttt{\}} \textrm{ where } \\
+	& & \texttt{.\{}u,v\texttt{\}} = \texttt{wildcard}(\gsde(s_1)) 
+		\textrm{ and } \\
+	& & \texttt{.\{}x,y\texttt{\}} = \texttt{wildcard}(\gsde(s_2))  \\
+	& & a = \min(u,x) \textrm{ and } b = \max(v,y)
+\end{array}
+\right.
+\]
+
+$\true/\unknown/\false \leftarrow \texttt{\textbf{eval\_counter\_cs\_std}}(\rho, r, \op, n)$:  \newline
+\# Evaluate counter constraint by SDE \newline
+\# $\rho[u]$ is the set of $u$'s occurrence indices in target string to eval.
+\newline
+(1) Let $n' = \left\{
+	\begin{array}{l l l}
+		r > n & \Rightarrow & n+1 \\
+		r = 0 & \Rightarrow & 1 \\
+		r = n (n>0) & \Rightarrow & n \\
+		r < n & \Rightarrow & n
+	\end{array}
+	\right.
+$. \newline
+(2) Define $r'$ as $r$ repeated $n'$ times intermixed
+with $\texttt{.*}$. \newline
+(3) Compute $e' = \texttt{simplify}(\sde(r'))$.
+Write $e'$ as the following:
+\[
+\texttt{.\{}a_1, b_1\texttt{\}} 
+w_1 
+\texttt{.\{}a_2, b_2\texttt{\}} 
+w_2 
+\ldots 
+\texttt{.\{}a_k, b_k\texttt{\}} 
+w_k
+\texttt{.\{}a_{k+1}, b_{k+1}\texttt{\}} 
+\]
+(4) Define $\varphi_0 = \{0\}$ and $w_0 = \epsilon$.
+For $i \in [k]$, iteratively compute:
+\[
+\varphi_i = \{[u + a_i + |w_{i-1}|, u + b_i + |w_{i-1}]
+	\intersect \rho(w_i)
+	~|~ u\in \varphi_{i-1}\}
+\]
+(5) \return ternary value according to the following chart:
+\[
+\begin{array}{c|c|c|c}
+	\op & \true & \false & \unknown \\
+	\hline
+      >  & - & \varphi_k = \emptyset & \varphi_k \neq \emptyset \\
+	\hline
+      <  & \varphi_k = \emptyset & - & \varphi_k \neq \emptyset \\
+	\hline
+      = (\textrm{where}~n>0)  & - & \varphi_k = \emptyset & \varphi_k \neq \emptyset \\
+	\hline
+      = (\textrm{where}~n=0)  &  \varphi_k = \emptyset & - & \varphi_k \neq \emptyset \\
+	\hline
+\end{array}
+\]
+
+
+\caption{Single Thread Distance Encoding Algorithms}
+\label{fig:sde}
+\end{algorithm}
+\end{small}
+
+\subsubsection{DFA and Individual $\sde$}
+When a signature cannot be discharged by $\sde$, it goes to the $\dfa$ stage
+where each subsignature is translated to a deterministic finite state machine,
+then the target string is fed to each DFA and then the results are combined
+using the logical expression as defined in the signature. Note that 
+this is not an approximation, as long as the DFAs can be constructed
+for each subsignature within the constraint of time and RAM resources available,
+which is unfortunately not the case.
+
+In theory, we can discharge a string using NFA (by enumerating all possible
+state set reached by the input string), as done in Zombie \cite{Zombie23}).
+However, we would like to avoid the cost of $O(|\texttt{NFA}| \times |s|)$.
+In this case, we will run another round of $\sde$.
+
+Recall that in $\sde$ there is a minimum requirement of pattern word length (e.g., $4$
+nibbles). The reason is that if the pattern word is too short, it blows up the
+size of the final states along the ACDFA acceptance path. There are very few
+ClamAV signatures which have short pattern words, meanwhile, its DFA is
+too costly to construct, e.g., as shown below, where
+the pattern words are single characters intermixed with variable length
+wildcards, which fails all aforementioned discharging methods.
+In addition, its use of named back-references exceeds capability
+of regex.
+
+\begin{small}
+\begin{Verbatim}[breaklines=true, breakanywhere=true]
+Js.File.MaliciousHeuristic-6260249-0;Engine:81-255,Target:7;0>1&1>7&2&3;6576616c28;76617220;0&1/w(?P<junk>[a-z\d]{3,6})s(?P=junk)c(?P=junk)r(?P=junk)i(?P=junk)p(?P=junk)t(?P=junk).(?P=junk)s(?P=junk)h(?P=junk)e(?P=junk)l(?P=junk)l/; ... 
+\end{Verbatim}
+\end{small}
+
+In this case, we resolve to {\em Individual ACDFA \sde} (shortened $\isde$).
+We extract the bag of words from the signature again, without the minimum word length.
+Construct an ACDFA for that subsignature only, and run the $\sde$ approach again.
+In this case, the ACDFA does not ``mass process" a lot of signatures, but just one.
+This approach tends to be more expensive than DFA, and we place it in the last round.
+
+\subsection{Preliminary Evaluation}
+Before we encode all methods in zkSNARK, we evaluate their effectiveness
+using real data set. We use the entire ClamAV logical signature set,
+which comprises of $38876$ signatures.\footnote{Thirteen signatures are dropped
+from the original $38889$ signatures because they report false positives on
+some Linux executables or Enron emails which are benign. 
+By ``benign" we mean: when running clamav using the specific rule set,
+ClamAV does not report positive on matching virus signatures.
+We do not handle the \texttt{Target} meta-data, i.e.,
+signatures are applied to all files. In this case, 
+\texttt{Win.Trojan.FakeSkype}, which was targeted at Win32 PE,
+raises false positive \texttt{vmlinuz} (Linux kernel image). 
+The rest have dependency on program entry 
+point position,
+e.g., 
+\texttt{Win.Trojan.Generic-43;...;EP+0:5250{-8}5133c0;...}.
+As the position constraint needs to locate executable file entry point,
+which exceeds regex ability, we replace \texttt{EP+0:} with wildcard string
+\texttt{.*} before the patterns. However, such patterns are too short and
+cause false positives. In this case, 8 signatures are removed from the set.
+We use multiline mode for all signatures, i.e., new line character is
+matched by wildcard dot. In this case, one signature (which works in
+single line mode) is removed
+for causing false positive due to multi-line approximation.}
+Among them, the vast majority have hex subsignatures and $559$ of them have
+PCRE subsignatures. Very few ($6$) of these PCRE signatures use features such
+as named back-references and look-arounds, and they are approximated.
+
+We use two sets of target data set (to discharge free of malware). The first 
+is a set of all binary executable files in a Linux CentOS ($2702$ files
+total $752$ MB) and Enron Email Data Set ($517401$ files totally $2.74$ GB).
+Running a single thread clamav to discharge all binary executables takes about
+$10$ seconds, but much longer ($4$ hours) on Enron Data 
+set (mainly due to file reading cost).
+
+\begin{figure}
+\begin{footnotesize}
+\begin{center}
+\begin{tabular}{c c c c c c c}
+\hline
+\multicolumn{7}{c}{\bf ClamAV Logical Signatures (38886)} \\
+\hline
+\multicolumn{7}{c}{Centos Binary Executables (2702 samples)} \\
+\hline
+log(file) & files & After $\cp \Rightarrow$ & $\bw \Rightarrow$ & $\sde \Rightarrow$ & 
+	$\dfa \Rightarrow$ & $\isde \Rightarrow$ \\
+\hline
+\hline
+7 &   72     & (87,90,72)  & (87,87,72)  & (0,0,0) & (0,0,0) & (0,0,0)\\
+8 &   0  & (0,0,0) & (0,0,0) & (0,0,0) & (0,0,0) & (0,0,0)\\
+9 &   0  & (0,0,0) & (0,0,0) & (0,0,0) & (0,0,0) & (0,0,0)\\
+10&   2  & (96,101,2)  & (90,93,2)   & (0,0,0) & (0,0,0) & (0,0,0)\\
+11&   13     & (96,103,13) & (89,93,13)  & (0,0,0) & (0,0,0) & (0,0,0)\\
+12&   16     & (98,105,16) & (90,93,16)  & (0,0,0) & (0,0,0) & (0,0,0)\\
+13&   105    & (98,105,105)    & (90,94,105) & (0,0,0) & (0,0,0) & (0,0,0)\\
+14&   727    & (105,119,727)   & (92,97,727) & (0,1,2) & (0,0,0) & (0,0,0)\\
+15&   478    & (104,162,478)   & (92,138,478)    & (0,2,1) & (0,0,0) & (0,0,0)\\
+16&   442    & (107,163,442)   & (92,139,442)    & (0,2,70)    & (0,0,0) & (0,0,0)\\
+17&   273    & (116,164,273)   & (94,137,273)    & (0,2,6) & (0,0,0) & (0,0,0)\\
+18&   163    & (122,183,163)   & (95,144,163)    & (0,2,7) & (0,0,0) & (0,0,0)\\
+19&   158    & (131,191,158)   & (96,142,158)    & (0,2,60)    & (0,0,0) & (0,0,0)\\
+20&   67     & (145,201,67)    & (99,147,67) & (1,3,55)    & (0,0,0) & (0,0,0)\\
+21&   153    & (185,202,153)   & (132,149,153)   & (1,3,146)   & (0,0,0) & (0,0,0)\\
+22&   14     & (150,173,14)    & (99,103,14) & (1,3,11)    & (0,0,0) & (0,0,0)\\
+23&   6  & (175,235,6) & (114,148,6) & (3,4,6) & (0,0,0) & (0,0,0)\\
+24&   9  & (224,277,9) & (139,174,9) & (2,4,9) & (0,1,1) & (0,0,0)\\
+25 &  3  & (226,270,3) & (146,168,3) & (3,4,3) & (0,1,2) & (0,0,0)\\
+26 &  0  & (0,0,0) & (0,0,0) & (0,0,0) & (0,0,0) & (0,0,0)\\
+27 &  1  & (285,285,1) & (184,184,1) & (4,4,1) & (0,0,0) & (0,0,0)\\
+\multicolumn{7}{c}{Enron Email Data (517401 samples)} \\
+\hline
+9 &   14025  & (87,147,14025)  & (83,139,14025)  & (0,0,0) & (0,0,0) & (0,0,0)\\
+10 &   141762     & (88,148,141762) & (84,140,141762) & (0,0,0) & (0,0,0) & (0,0,0)\\
+11 &  175664     & (90,156,175664) & (85,144,175664) & (0,0,0) & (0,0,0) & (0,0,0)\\
+12 &  113795     & (91,160,113795) & (86,146,113795) & (0,0,0) & (0,0,0) & (0,0,0)\\
+13 &  47882  & (93,166,47882)  & (87,147,47882)  & (0,0,0) & (0,0,0) & (0,0,0)\\
+14 &  17421  & (96,172,17421)  & (87,148,17421)  & (0,0,0) & (0,0,0) & (0,0,0)\\
+15 &  4681   & (98,162,4681)   & (88,148,4681)   & (0,0,0) & (0,0,0) & (0,0,0)\\
+16 &  1331   & (101,154,1331)  & (89,136,1331)   & (0,0,0) & (0,0,0) & (0,0,0)\\
+17 &  644    & (104,164,644)   & (88,139,644)    & (0,0,0) & (0,0,0) & (0,0,0)\\
+18 &  175    & (110,177,175)   & (90,142,175)    & (0,0,0) & (0,0,0) & (0,0,0)\\
+19 &  12     & (113,119,12)    & (89,91,12)  & (0,0,0) & (0,0,0) & (0,0,0)\\
+20 &  3  & (107,108,3) & (91,92,3)   & (0,0,0) & (0,0,0) & (0,0,0)\\
+21 &  6  & (105,110,6) & (91,92,6)   & (0,0,0) & (0,0,0) & (0,0,0)\\
+\end{tabular}
+\end{center}
+\end{footnotesize}
+\caption{Preliminary Data}
+\footnotesize{Column 1: the log of file size. Column 2: the number of file samples.
+For the rest of columns, each tuple (avg, max, count) represents the average and max
+number of signatures that can not be discharged by the approach. The count represents
+the number of files that need to go to next discharging stage.}
+\label{fig:predata}
+\end{figure}
+
+Given the cost of the proposed schemes, we discharge an input file following
+the order of $\cp$, $\bw$, $\sde$, $\dfa$, and $\isde$. Once a signature
+is discharged, it does not go to the next stage. At the last stage
+a count $0$ means that a file is completely discharged of all virus signatures
+(thus malware free).  We summarize the asymptotic complexity of
+these methods.  Let $u$ be the number of signatures to discharge
+at a stage, their prover complexity are:
+$O(|s|)$, $O(|s|)$,  $O(|s|)$, $O(u \times |s|)$, $O(u \times |s|)$, respectively.
+Note that for the first $3$ stages, the prover complexity is
+{\em independent} of the number of signatures to discharge.
+In our real data set, the $u$ for the last two stages is less than $2$.
+
+
+In Figure\ \ref{fig:predata} we display the effectiveness of the proposed
+$5$-stage discharging scheme, over the binary executable data set and
+Enron data set. The Enron set performs similarly, while it relies more
+on $\sde$ because Enron dataset are mostly alpha-numerical and there are 
+many more ``false positives" on patterns if no checks on structures are
+performed.
+
+Take the $2^{20}$ file size category in CentOS dataset as an example:
+\[
+\begin{footnotesize}
+\begin{tabular}{c c c c c c c}
+log(file) & files & After $\cp \Rightarrow$ & $\bw \Rightarrow$ & $\sde \Rightarrow$ & 
+	$\dfa \Rightarrow$ & $\isde \Rightarrow$ \\
+\hline
+20  &   67       &  (143,198,67)      &  (104,150,67)      &  (1,2,54)      &  (0,0,0)   &  (0,0,0)\\
+\end{tabular}
+\end{footnotesize}
+\]
+
+There are $67$ files in the category of $1MB$ size. The first $\cp$ stages
+screens the vast majority ($99.5\%$) of signatures and in average there are
+$143$ (max $198$) out of $38k$ signatures left. The next $\bw$ stages
+discharged in average $39$ signatures, and the $\sde$ discharged all of
+the rest except $1$ (in average) and $2$ (max) for $54$ files. 
+None of the signatures for $1MB$ files would have to go through to the
+last $\isde$ stage. For the entire CentOS dataset,
+in the worst case, we only have
+to discharge $7$ signatures via $\dfa$ for one file, however, this happens
+very rarely. For both the CentOS and Enron dataset,
+there are only two signatures\footnote{$\texttt{Js.File.MaliciousHeurstic-6260249-0}$ and $\texttt{Html.Exploit.CVE\_2017\_0069}$ $\texttt{-6013012-3}$}
+that have to to through $\isde$ for $5$ (out of $2702$) binary executable files
+and $6$ (out of $517401$) Enron email files.
+In summary, given that for the last two stages the number of signatures is less than
+$2$, the total prover cost is just a constant factor ($\leq 5$) of the
+input string size, i.e.,
+\[
+	5 \times |s|.
+\]
+This is a speed-up of $7.7\times 10^{6}$
+compared with the state of the art (\cite{Zombie23,Luo23})\footnote{In the case of Reef \cite{Reef} it works very well for the non-membership proof case 
+where the patterns start
+at fixed positions. However, if there is a \texttt{.*} preceding regex patterns,
+our technique works better. It is not known if Reef's alternating automata 
+can be extended easily to mass process large collection of signatures.}, which
+use NFA discharging each
+signature separately, where the average $|\texttt{NFA}|>1000$
+(given average length of ClamAV signature is $300$):
+\[
+38878 \times |s| \times |\texttt{NFA}|.
+\]
+
+The speed-up comes from two sources. First, we ``mass-process" large collections
+of signatures using ACDFA in the first three stages. Second, we rely on
+pre-processed lookup arguments (whose prover complexity is independent
+of the lookup/container table size) in proving DFA acceptance, thus eliminating
+the size of automata in the prover cost. Several different types of
+look-up arguments in used in our zk-prover scheme, which is demonstrated
+in details in Section 4.
+
+
+% \subsection{PM-Reg (TO REMOVE)}
+% One interesting observation of the above signature is that
+% ClamAV signature set is oriented by long fixed 
+% patterns, and this applies to most other malware scanner and
+% intrusion detection signature set. From a logical signature,
+% one can derive a ``critical fixed pattern" set of the signature,
+% so that if all of them do not appear in a word $s$, then
+% it is guaranteed that $s$ is not an instance of such a signature.
+% For instance, one ``critical fixed pattern" set for
+% the \ttt{Fallchill} signature would be:
+% \begin{small}
+% \begin{Verbatim}[breaklines=true, breakanywhere=true]
+% {B8DBFFFFFF412A0341880349FFC341803B0075} 
+% \end{Verbatim}
+% \end{small}
+% That is: missing all elements of the critical fixed pattern set
+% meaning sub-signatures could be matched. One could see that
+% there can be multiple criticial fixed pattern set for the same signature,
+% Here one may take the longest fixed pattern from each related sub-signature.
+% We then can design a 2-stage proof system to filter out
+% those non-related signatures.
+% 
+% 
+% An initial data anlysis shows that for the full 38k ClamAV signatures,
+% and for all 2702 binary executables in CentOS 7, the average
+% number of near miss of an executable is only $4$ per executable (that is
+% only $4$ out of $38k$ signatures should be checked). The number of 
+% near misses grows apparently with file size. It remains an interesting
+% problem on if our technique can be developped for chunking a big file
+% into smaller sizes and results be aggregated. The following table
+% displays the break-down of near miss information.
+% For all other $363$ regex patterns, the near-miss approach work,
+% but not as well as the PM-reg patterns. The average near
+% %see data/paper_data/crit_general.dat
+% miss for all 2704 executables is $14$, and the max is $48$.
+% 
+% \begin{table}
+% \begin{tabular}{|c|c|c|c|}
+% \hline
+% log2(SIZE) &    Count &  Avg & Max \\
+% \hline
+% 1 &  0 & - & - \\
+% 2 &  0 & - &  - \\
+% 3 &  0 & - &- \\
+% 4 &  0 & - &- \\
+% 5 &  0 & - &- \\
+% 6 &  0 & - &- \\
+% 7 &  72&  0 &  0 \\
+% 8 &  0 &  - & - \\
+% 9 &  0 &  - & - \\
+% 10&   2 &  0 &  1 \\
+% 11 & 13 & 0  & 2 \\
+% 12 & 16 & 0  & 2 \\
+% 13 & 105 & 0 &  2 \\
+% 14 & 727 & 1 &  9 \\
+% 15 & 478 & 1 &  7 \\
+% 16 & 442 & 3 &  10 \\
+% 17 & 273 & 5 &  15 \\
+% 18 & 163 & 7 &  24 \\
+% 19 & 158 & 11&  20 \\
+% 20 & 67  & 16&  25 \\
+% 21 & 153 & 21&  29 \\
+% 22 & 14  & 19&  30 \\
+% 23 & 6   & 20&  32 \\
+% 24 & 9   & 40&  54 \\
+% 25 & 3   & 37 & 54 \\
+% 26 &  0   & - & - \\
+% 27 & 1   & 49 & 49 \\
+% \hline
+% \end{tabular}
+% \caption{Total: 2702 files, Avg: 4 Near Miss}
+% \end{table}
+% 
+% Another interesting observation of the ClamAV signature set is that
+% not all regex features are frequently used. Logical operators such as
+% \ttt{and}, \ttt{or}, and \ttt{not} (of entire regex) are frequently 
+% used, but repetition and Kleen stars are mostly applied
+% to wilecard match ``\ttt{.}" only. This naturally leads to a
+% fragment called BM-Refex as defined in the following.
+% 
+% \begin{bnf}
+% $t$  ::=  : \textsf{basic term}
+% | $s$: $s \in \Sigma$
+% | $.*$: \textsf{wildcard Kleen star }
+% | $.\{a,b\}$: \textsf{repetition from a to b times}
+% ;;
+% $s$  ::=  : \textsf{sub-signature}
+% | $t$: \textsf{basic term}
+% | $s t$: \textsf{concatenation}
+% ;;
+% $r$ ::=  : \textsf{Pattern Matching Regex (PM-Regex)}
+% | $s$: \textsf{subsignature}
+% | $r \& s$: \textsf{intersection}
+% | $r \mid s$: \textsf{alternation}
+% | $\overline{r}$: \textsf{complement}
+% \end{bnf}
+% 
+% Our initial analysis shows that out of $38330$ ClamAV logical
+% signatures, $37.9k$ ($98.5\%$) are BM-Regex.
+% \footnote{$416$ signatures
+% are excluded from the 
+% full set are: 559 PCRE regex patterns for engineering convenience
+% (will be fixed later), $216$ signatures relying on content
+% position (e.g., the 3rd section offset 120), $18$ signatures
+% for complex modes (full-word mode), $108$ for basic terms
+% containing class characters and alternation, $72$ for
+% pattern counters (e.g., certain pattern appearning than $100$ times
+% which is costly for us to model). Given average file size $232kb$,
+% the average packed acceptance path is $440k$ (i.e., projecting
+% acceptance path to final states only), due to some very 
+% small patterns. After removing $173$ BM-Regex signatures containing
+% small patterns, we end up with $37741$ signatures, but
+% resulting in only $6.6k$ packed acceptance path length, which
+% is crucial for the performance of arithmetic circuit.
+% % see preprocess.dat 
+% } 
+% 
+% The benefit of BM-Regex is that we can again leverage
+% the AC-DFA. We collect all fixed word patterns from all BM-Regex
+% patterns and this results in a AC-DFA of $6$ million states
+% and $96$ million transitions. The size of AC-DFA does not matter
+% as the prover cost will be independent of its size once pre-processing
+% is done. From an acceptance path of a string, we collect
+% a {\em packed}  path consisting accepting states and their positions
+% only. Usually this packed path is much smaller than the
+% original string size. Our data analysis shows that for all
+% CentOS 7 executable files, the pack ratio is $437$. For instance
+% for all files of about $1Mb$, the packed trace is average is
+% only $3k$ elements. 
+% 
+% We then have an arithmetic circuit for each signature, which
+% encodes the arithmetic constraints that are caused by
+% the wildcard match patterns. This can be done very efficiently,
+% and checking only on the packed path. For instance, given
+% a $1MB$ file, in average, there  $16$ signatures involved,
+% in average, the signature pattern involves no more than $5$ components
+% (5 sub-signatures). Each arithmetic circuit costs
+% $25 \times 3000$ constraints, and $16$ of them only
+% costs $700k$ R1CS constraints. The concrete cost is only
+% a constant factor of generating the commitment itself.
+

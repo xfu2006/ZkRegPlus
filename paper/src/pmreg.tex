@@ -1,0 +1,100 @@
+\section{PM-Reg Modeling}
+We now discuss how to prove for a pattern $r_i$ in PM-Reg,
+how does one argue that a committed string $s$
+does not contain the patter $r_i$.
+
+Our starting point will be again an AC-DFA. We collect
+all patterns from a PM-Reg pattern.
+Our first gadget would be to provide to Perdersen vector
+commitments $\Commit_{\myvec{s}}$, $\Commit_{\myvec{i}}$,
+which encodes the final state and their index along the acceptance path.
+
+We then need to encode the patten constraints over length. One can see
+that a PM-Reg is a one level boolean combination of sub-signatures, and
+each sub-signautre is a sequence of fixed words and
+patterns like $\ttt{.*}$ and $\ttt{.\{5,6\}}$. Given
+a $(state, pos)$ sequence, one can assert that if it
+matches a sub-signature by checking arithmetic constraints.
+We illustrate the concept using an example.
+
+\begin{example} Let $\ttt{abc}$ and $\ttt{def}$ and $\ttt{gh}$
+be three patterns and their corresponding states be 
+$s_1, s_2$, and $s_3$. Let a subsignature
+$r := \ttt{abc.\{3,5\}def.\{4,6\}gh}$. Then given
+a string $s := \ttt{ccabc1234def123gh}$. Running
+through the ACDFA which got state pairs
+$(s_1, 4), (s_2, 9), (s_3, 14)$,  one can see that
+$s$ does not satisfy the regular sub-signature, because
+it does not satisfy the constraints that in between
+$s_2$ and $s_3$ there are $7$ to $9$ characters.
+
+Formally, the algorithm works as the follows. Given a subsignature
+it extracts the corresponding state sequence, and after
+each state, there is a range, e.g., $[3,5]$ which determines the
+position of the next matching state. At each step, the algorithm
+receives a set of positions for the corresponding state (e.g.,
+initially $\{5\}$ for state $s_1$), then it leads to allows
+ranges $[6,8]$ for the appearance of second state $s_2$ in the sequence.
+The algorithm then looks through the state position pairs and finds
+the allowed ones. Thus, for the 2nd step, it is $(s_9, 9)$.
+Then for the third state $s_3$, the allowed range is
+$[15, 17]$. Then, the $(s_3, 14)$ does not fall into the range,
+thus proving that $s \in L(r)$.
+\end{example}
+
+So now the problem boils down to: given a sequence of 
+indices, e.g., $[1, 3, 5]$, we want to generate its subset
+will falls into a set of ranges e.g., $[2,4], [5,7]$
+(which generates $[3,5]$). One could actually mark up
+the sorted array of these two lists appropriately:
+
+\begin{eqnarray*}
+  &r_1 & 1 2 3 4 5 5 7 \\
+  &r_b & 0 1 0 0 1 0 0 \\
+  &r_e & 0 0 0 1 0 0 1 \\
+  &r_m & 0 1 1 1 1 1 1 \\
+  &r_s & 1 0 1 0 0 1 0 \\
+  &r_o & 0 0 1 0 0 1 0 
+\end{eqnarray*}
+Here $r_1$ represents the sorted merged list of numbers,
+$r_b$ (boolean) indicates the the beginning dices,
+and $r_e$ stands for the ending indices of ranges.
+Note that $r_b$ and $r_e$ can be checked by 
+finger printing techniques (if it's consistent with
+a subsignature pattern).
+Then $r_m$ marks all elements that are in some ranges,
+this can be accomplished by checking formula that
+$r_m[i] = 1$ if $r_e[i] \neq 1$ and its previous element is $1$
+or $r_b[i-1] = 1$. 
+
+$r_s$ represents the index of elements in input sequence.
+$r_o$ represents the output , which is a bit-wise
+conjunction between $r_s$ and $r_s$.
+
+Altogether the prover complexity is linear over the sum of
+the number of states and patterns. Given that the average of
+final states is $6.6k$, the concrete cost is $10\times$, i.e.,
+$66k$. Given max 50 patterns, this is $3$ million constraints max
+and for average 4 patterns, this is only $240k$.
+
+\subsection{Boolean Combination of Subsignatures}
+A regex pattern is a boolean combination of sub-signatures, in the
+CNF form. Then each conjunction can be represented by a bit pattern,
+e.g., assuming 5 subsignatures in max, it consists of 10 bits.
+These bit-patterns (converted to field elements) are stored in a lookup
+table.
+At prover time, the prover feeds these bit-patterns for a PM-REG pattern
+in a separate advice column, and they are verified using lookup argument.
+One field element can store 10 20-bit patterns and this is sufficient
+for our application.
+
+Now given a CNF pattern $\myvec{a}$ and the corresponding
+subsignature evaluation $\myvec{b}$, the evaluation could be
+defined as the result $c = \prod_{i\in [10]} (\myvec{a}_i=0 \wedge 1) \vee
+	(\myvec{a}_i=1 \wedge \myvec{b}_i)$.
+
+\subsection{Question:}
+{\bf Do a global optimizer or using gadgets in halo2?}
+
+
+
