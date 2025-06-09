@@ -1,0 +1,768 @@
+/* Created 03/07/2025 */
+// common utility functions
+
+use rayon::iter::{ParallelIterator,IntoParallelIterator,
+	IntoParallelRefIterator,IndexedParallelIterator};
+use std::collections::{HashMap,HashSet};
+use ark_ff::{PrimeField,BigInteger};
+use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef};
+use ark_r1cs_std::{
+	boolean::{Boolean},
+	fields::{
+		//FieldVar,
+		fp::FpVar
+	},
+	alloc::AllocVar,
+	eq::EqGadget,
+	R1CSVar,
+};
+use data_processor::clam_db::{RANGE2_BIT,RANGE2};
+
+pub fn is_sorted<F:PrimeField>(vec: &Vec<F>)->bool{
+	if vec.len()==0 {return true;}
+	for i in 0..vec.len()-1{ if vec[i]>vec[i+1] {return false;} }
+	true
+}
+
+pub fn is_incrementing_by_one<F:PrimeField>(vec: &Vec<F>)->bool{
+	if vec.len()<1 {return true;}
+	for i in 0..vec.len()-1{ if vec[i+1] != vec[i] + F::one() {return false;} }
+	true
+}
+
+/// create a vec of var
+pub fn vec_to_var<F:PrimeField>(cs: &ConstraintSystemRef<F>, v: &Vec<F>)
+->Vec<FpVar<F>>{
+	v.iter().map(|x| FpVar::new_witness(cs.clone(), 
+		|| Ok(x.clone())).unwrap() ).collect()
+}
+
+/// create  a new var
+pub fn new_var<F:PrimeField>(cs: &ConstraintSystemRef<F>, v: F)->FpVar<F>{
+	FpVar::new_witness(cs.clone(), || Ok(v)).expect("err new var")
+}
+
+/// create  a new constant var
+pub fn new_const_var<F:PrimeField>(cs: &ConstraintSystemRef<F>, v: F)
+->FpVar<F>{
+	FpVar::new_constant(cs.clone(), v).expect("err new var")
+}
+
+/// assuming each val is within RANGE2. basically concat as bits.
+pub fn encode_2col_var<F:PrimeField>(c1: &[FpVar<F>], c2: &[FpVar<F>]
+)->Vec<FpVar<F>>{
+	let cs = c1[0].cs();
+	let factor = new_const_var(&cs, F::from(1u32<<RANGE2_BIT));	
+	assert!(c1.len()==c2.len());
+	let res = c1.iter().zip(c2.iter()).map(|(x,y)|
+		x + (y*&factor)).collect::<Vec<FpVar<F>>>();
+
+	res
+}
+
+/// use random r to combine.
+pub fn encode_2col_var_adv<F:PrimeField>(c1: &[FpVar<F>], c2: &[FpVar<F>], r: &FpVar<F>)->Vec<FpVar<F>>{
+	let factor = r.clone();
+	assert!(c1.len()==c2.len());
+	let res = c1.iter().zip(c2.iter()).map(|(x,y)|
+		x + (y*&factor)).collect::<Vec<FpVar<F>>>();
+
+	res
+}
+
+/// encode 2 column into one encoded column
+pub fn encode_2col<F:PrimeField>(c1: &[F], c2: &[F]
+)->Vec<F>{
+	let factor = F::from(1u32<<RANGE2_BIT);	
+	assert!(c1.len()==c2.len());
+	let res = c1.par_iter().zip(c2.par_iter()).map(|(x,y)|
+		*x + (*y*factor)).collect::<Vec<F>>();
+
+	res
+}
+
+/// encode multiple columns, this can be regarded as an
+/// extension of encode_2col. Assume each column field is within RANGE2
+pub fn encode_cols<F:PrimeField>(cols: &Vec<Vec<F>>, col_ids: &Vec<usize>)
+	->Vec<F>{
+	//1. prepare data
+	let (num_cols, n) = (col_ids.len(), cols[col_ids[0]].len());
+	let factor = F::from(1u32<<RANGE2_BIT);	
+	let mut coefs = vec![F::one(); num_cols];
+	for i in 1..coefs.len() {coefs[i] = coefs[i-1] * factor;}
+	coefs.reverse();
+
+	//2. generate the data
+	#[cfg(test)] { for i in 0..num_cols {assert!(cols[col_ids[i]].len()==n);} }
+	let zero = F::zero();
+	let res = (0..n).into_par_iter().map(|i|{
+		let mut res = zero;
+		for col in 0..num_cols{
+			res += cols[col_ids[col]][i] * coefs[col];
+		}
+		res
+	}).collect::<Vec<F>>();
+	assert!(res.len()==n);
+
+	res
+}
+
+/// reverse of encode_cols
+pub fn decode_cols<F:PrimeField>(vec: &Vec<F>, n: usize)->Vec<Vec<F>>{
+	let tuples = vec.par_iter().map(|v| {
+		let bits:Vec<bool> = v.into_bigint().to_bits_le();
+		let chunks = bits.chunks(RANGE2_BIT).map(|v|{
+			let bi: F::BigInt= BigInteger::from_bits_le(v);
+			F::from(bi)
+		}).collect::<Vec<F>>();
+		let res = chunks[0..n].to_vec();
+		res
+	}).collect::<Vec<Vec<F>>>();
+
+	let res = (0..n).collect::<Vec<_>>().into_par_iter().map(|i|{
+		tuples.par_iter().map(|t| t[n-1-i]).collect::<Vec<F>>()
+	}).collect::<Vec<Vec<F>>>();
+
+	#[cfg(test)]{
+		let ids = (0..n).collect::<Vec<usize>>();
+		let encoded = encode_cols(&res, &ids);
+		assert!(encoded == *vec);
+	}
+
+	res
+}
+
+/// encode multiple columns, this can be regarded as an
+/// extension of encode_2col. Assume each column field is within RANGE2
+pub fn encode_cols_var<F:PrimeField>(cols: &Vec<Vec<FpVar<F>>>, 
+	col_ids: &Vec<usize>) ->Vec<FpVar<F>>{
+	let cs = cols[0][0].cs();
+	let factor =new_const_var(&cs,F::from(1u32<<RANGE2_BIT));	
+	encode_cols_var_adv(cols, col_ids, &factor)
+}
+
+/// advanced vesion using the given r as combining factor
+pub fn encode_cols_var_adv<F:PrimeField>(cols: &Vec<Vec<FpVar<F>>>, 
+	col_ids: &Vec<usize>, r: &FpVar<F>) ->Vec<FpVar<F>>{
+	//1. prepare data
+	let cs = cols[0][0].cs();
+	let (num_cols, n) = (col_ids.len(), cols[col_ids[0]].len());
+	let factor = r.clone();
+	let one = new_const_var(&cs, F::one());
+	let mut coefs = vec![one; num_cols];
+	for i in 1..coefs.len() {coefs[i] = &coefs[i-1] * &factor;}
+	coefs.reverse();
+
+	//2. generate the data
+	#[cfg(test)] { for i in 0..num_cols {assert!(cols[col_ids[i]].len()==n);} }
+	let zero = new_var(&cs, F::zero());
+	let res = (0..n).into_iter().map(|i|{
+		let mut res = zero.clone();
+		for col in 0..num_cols{
+			let item = if col<num_cols-1 {&cols[col_ids[col]][i] * &coefs[col]}
+				else {cols[col_ids[col]][i].clone()};
+			res = &res + &item;
+		}
+		res
+	}).collect::<Vec<FpVar<F>>>();
+	assert!(res.len()==n);
+
+	res
+}
+
+/// given n length F generating the difference col (length n-1)
+/// and its SID
+pub fn gen_diff_col<F:PrimeField>(col: &Vec<F>)->(Vec<F>,Vec<F>){
+	let zero = F::zero();
+	let max_val:usize = (1<<RANGE2_BIT) - 1;
+	let max = F::from(max_val as u32);
+	let f_rg= F::from(RANGE2);
+	let tuples = (1..col.len()).collect::<Vec<usize>>().into_par_iter().map(|i|{
+		let diff = col[i] - col[i-1];
+		let sid = if diff<=max {f_rg} else {zero};
+
+		(diff, sid)
+	}).collect::<Vec<(F,F)>>();
+
+	let col_diff = tuples.par_iter().map(|t| t.0).collect::<Vec<F>>();
+	let col_sid = tuples.par_iter().map(|t| t.1).collect::<Vec<F>>();
+	assert!(col_diff.len()==col.len()-1 && col_diff.len()==col_sid.len());
+
+	(col_diff, col_sid)
+}
+
+/// Convert two col table to first compress all entries (no duplicates),
+/// and then to well formed and sorted on both keys and vals
+/// of tbl structure (key, id, val). Note that 0/max entries 
+/// (any cell value zero)
+/// are removed.
+/// Return the key, id, val column.
+pub fn two_col_tbl_to_sorted<F: PrimeField>(col1: &Vec<F>, col2: &Vec<F>, target_size: usize)-> (Vec<F>,Vec<F>,Vec<F>){
+	//1. collect a hash map which maps from key to a vector of vals sorted.
+	let max_val:usize = (1<<RANGE2_BIT) - 1;
+	let max = F::from(max_val as u32);
+	assert!(col1.len()==col2.len());
+	let hs:HashMap<F, Vec<F>> = col1.par_iter().zip(col2.par_iter())
+	.filter(|(a,b)| !a.is_zero() && !b.is_zero() && **a!=max && **b!=max)
+	.fold( || HashMap::<F, Vec<F>>::new(),
+		|mut acc, (k,v)|{
+			acc.entry(*k).or_insert(vec![]).append(&mut vec![*v]);
+			acc
+	}).reduce(|| HashMap::<F,Vec<F>>::new(),
+		|mut acc1, acc2| {
+			for (k, mut vec) in acc2{
+				let mut vec1 = if acc1.contains_key(&k) 
+					{acc1.get(&k).unwrap().clone()} else {vec![]};
+				vec1.append(&mut vec);
+				let hs1=vec1.into_iter().map(|x| x).collect::<HashSet<_>>();
+				let mut v2= hs1.into_iter().map(|x| x).collect::<Vec<_>>(); 
+				v2.sort();
+				acc1.insert(k, v2);
+			}
+			acc1
+		}
+	);
+
+
+	//2. call hashmap_to_sorted_2col_table 
+	hashmap_to_sorted_2col_tbl(&hs, target_size)
+}
+
+/// assuming tbl1 and tbl2 are both well formed two column table with
+/// structure (key, id, val). Produce the table needed of structure
+/// (k1, id1, k2, id2, val) where val of tbl1 serves as the forieng key.
+pub fn two_col_tbl_left_join<F:PrimeField>(
+	tbl1: &Vec<Vec<F>>, 
+	tbl2: &Vec<Vec<F>>, 
+	target_size: usize
+) -> Vec<Vec<F>>{
+	//1. data check
+	#[cfg(test)]{
+		assert_wellformed_sorted_two_col_tbl(tbl1);
+		assert_wellformed_sorted_two_col_tbl(tbl2);
+	}
+	let max_val:usize = (1<<RANGE2_BIT) - 1;
+	let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
+
+	//2. build a hashmap of tbl2. map from real key to (begin,end) included
+	// on both ends. keys are never zero.
+	let n = tbl2[0].len();
+	let mut hs = HashMap::<F, (usize,usize)>::new();
+	let mut key = F::zero();
+	let mut start = 0usize;
+	let mut found_one = false;
+	for i in 0..n{
+		if (i>0 && tbl2[0][i]!=tbl2[0][i-1]) ||  //new key starts
+			(tbl2[0][i]!=zero && i==0) ||  //real key starts from row 0
+			i==n-1 //last row
+		{
+			//found new entry or need to update last
+			//2.1 insert for the last entry
+			if found_one{
+				assert!(!hs.contains_key(&key));
+				//the assumption is that at the very last idx,
+				//there couldn't be two MAX entries.
+				let end = if i==n-1 {i} else {i-1}; 
+				assert!(key!=zero);
+				hs.insert(key, (start, end));
+			}
+			found_one = true;
+			key = tbl2[0][i];
+			start = i;
+		}
+	}
+
+	//3. expand each entry of tbl1.
+	let n1 = tbl1[0].len();
+	let tuples = (0..n1).collect::<Vec<usize>>().into_par_iter()
+	.filter(|i| tbl1[0][*i]!=zero && tbl1[0][*i]!=max)
+	.map(|i|{
+		//3.1 get the result
+		let (key, id, key2) = (tbl1[0][i], tbl1[1][i], tbl1[2][i]);
+		let t1 = hs.get(&key2);
+		let to_rep = if t1.is_some() {
+			let t1 = *t1.unwrap();
+			(t1.0..(t1.1+1)).collect::<Vec<usize>>()
+				.into_iter().map(|j| tbl2[2][j])
+				.collect::<Vec<F>>()
+		}else{vec![]};
+
+		//3.2 build table
+		let mut res = vec![];
+		let tn = to_rep.len();
+		let b_empty = to_rep.len()==0;
+		if b_empty{
+			res.push( vec![key, id, key2, zero, zero]);
+			res.push( vec![key,id,key2, one, max]); 
+		}else{
+			for id2 in 0..tn{
+				res.push(vec![key,id,key2,F::from(id2 as u32), to_rep[id2]]);
+			}
+		}
+
+		res
+	}).flatten().collect::<Vec<Vec<F>>>();
+
+	//4. pad at the beginning
+	let tn = tuples.len();
+	assert!(tn<=target_size, "tn: {}, target_size: {}. Consider adjust related capacity parameter", tn, target_size);
+	let to_pad = vec![zero; target_size - tuples.len()];
+	let res = (0..5).collect::<Vec<usize>>().into_iter().map(|i|{
+		let col = (0..tn).into_par_iter().map(|j| 
+			tuples[j][i]
+		).collect::<Vec<F>>();
+		vec![to_pad.clone(), col].concat()
+	}).collect::<Vec<Vec<F>>>();
+	assert!(res.len()==5);
+
+	res
+}
+
+/// assert that the table is sorted in keys and values (per key)
+pub fn assert_wellformed_sorted_two_col_tbl<F:PrimeField>(tbl: &Vec<Vec<F>>){
+	assert_wellformed_sorted_two_col_tbl_adv(tbl, false);
+}
+/// assert that the table is sorted in keys and values (per key)
+/// (key, id, col) padded with zero and max entries. Relaxed mean that
+/// id not required to be strictly increasing
+pub fn assert_wellformed_sorted_two_col_tbl_adv<F:PrimeField>(tbl: &Vec<Vec<F>>,
+	b_relax: bool){
+	//1. quick check
+	let n = tbl[0].len();
+	let max_val:usize = (1<<RANGE2_BIT) - 1;
+	let (zero, max, one) = (F::zero(), F::from(max_val as u32), F::one());
+	assert!(tbl[1].len()==n && tbl[2].len()==n);
+
+	//2. check key is sorted
+	for i in 1..n{ assert!(tbl[0][i-1] <= tbl[0][i]); }
+
+	//3. assert id is well formed
+	for i in 1..n{
+		if tbl[0][i] != tbl[0][i-1]{//new key 
+			assert!(tbl[2][i]==zero);
+			assert!(tbl[2][i-1]==max || (tbl[0][i-1]==zero && tbl[2][i-1]==zero));
+		}else{//same key
+			assert!(tbl[0][i]==zero || tbl[1][i] == tbl[1][i-1] + one || (b_relax && tbl[1][i]==tbl[1][i-1]));
+			assert!(tbl[0][i]==zero || tbl[2][i] > tbl[2][i-1]);
+		}
+		if i==n-1{ assert!(tbl[2][i]==max || tbl[0][i]==zero); }
+	}
+}
+
+/// given the hashmap generate padded 2 column table where
+/// entries are padded with pure 0 entries, and it's well formed
+/// and sorted. Form: (key, id, val). It's actually 3 columns
+/// with an additonal id col.
+/// e.g.
+/// key id val
+/// 0   0  0    # pad
+/// 0   0  0    # pad
+/// 100 0  0    
+/// 100 1  2   
+/// 100 2  50  
+/// 100 1  max # max = 2^RANGE2_BIT - 1
+pub fn hashmap_to_sorted_2col_tbl<F:PrimeField>(map: &HashMap<F, Vec<F>>,n: usize) -> (Vec<F>, Vec<F>, Vec<F>){
+	//1. collect the sorted keys first
+	let mut sorted_keys = map.keys().map(|x| x.clone())
+		.collect::<Vec<F>>();
+	sorted_keys.sort();
+
+	//2. construct tuples
+	let zero = F::zero();
+	let max_val:usize = (1<<RANGE2_BIT) - 1;
+	let max = F::from(max_val as u32);
+	let tuples = sorted_keys.par_iter().map(|k|{
+		let v = map.get(k).unwrap();
+		let mut res = vec![];
+		let mut id = 1;
+		res.push(vec![*k, zero, zero]);
+		for val in v{
+			res.push(vec![*k, F::from(id as u32), *val]);
+			id += 1;
+		}
+		res.push(vec![*k, F::from(id as u32), max]);
+
+		res
+	}).flatten().collect::<Vec<Vec<F>>>(); 
+
+
+	assert!(n>tuples.len(),"n:{} lower than tuples.len(): {}",n,tuples.len());
+	let part1 = vec![vec![zero, zero, zero]; n - tuples.len()];
+	let all_tuples = vec![part1, tuples].concat();
+	let key:Vec<F>= all_tuples.par_iter().map(|t| t[0]).collect::<Vec<_>>();
+
+	let id= all_tuples.par_iter().map(|t| t[1]).collect::<Vec<_>>();
+	let val= all_tuples.par_iter().map(|t| t[2]).collect::<Vec<_>>();
+	assert!(key.len()==n);
+
+	(key, id, val)
+}
+
+
+/// verify v2 is an inverse of v1. elen is the expected length of both
+/// array. Beta is the random challenge
+pub fn verify_inverse<F:PrimeField>(cs: ConstraintSystemRef<F>,
+	v1: &[FpVar<F>], v2: &[FpVar<F>], 
+	beta: &FpVar<F>, elen: usize)->Result<(), SynthesisError>{
+	assert!(v1.len()==v2.len());
+	assert!(v1.len()==elen);
+	let one_var= FpVar::<F>::new_constant(cs.clone(), F::one())?;
+	for i in 0..elen{
+		let prod = &v2[i] * &(&v1[i] + beta);
+		prod.enforce_equal(&one_var)?;
+		#[cfg(test)]{
+			if prod.value().is_ok(){ assert!(prod.value()?==F::one()); }
+		}
+	}
+	Ok( () )
+}
+
+/// verify the log-up relation. check if all elements of (inverse of) v1 belong
+/// to v2. Here v1 and v2 should be the
+/// INVERSE of the query table and lkup table.  Call verify_inverse()
+/// first on the inversed table and the original table before calling this
+/// function.
+pub fn verify_logup_inverse<F:PrimeField>(cs: ConstraintSystemRef<F>,
+	v1: &[FpVar<F>], v2: &[FpVar<F>], m_tbl: &[FpVar<F>])
+	->Result<(), SynthesisError>{
+	assert!(v2.len()==m_tbl.len());
+	let mut sum_left = FpVar::<F>::new_constant(cs.clone(), F::zero())?;
+	for i in 0..v1.len(){ sum_left += &v1[i]; }
+
+	let mut sum_right = FpVar::<F>::new_constant(cs.clone(), F::zero())?;
+	for i in 0..v2.len(){ 
+		sum_right+= &(&v2[i] * &m_tbl[i]);
+		if i%128==0{//this is to prevent the cfg(test) code calling value
+			//for chain too long, which overflows stack when it's doing 
+			//recursion.
+			let value= sum_right.value();
+			assert!(value.is_ok());
+		}
+	}
+
+	sum_left.enforce_equal(&sum_right)?;
+	#[cfg(test)]{
+		if sum_left.value().is_ok(){ 
+			assert!(sum_left.value().unwrap()==sum_right.value().unwrap()); 
+		}
+	}
+	Ok( () )
+}
+
+/// verify v1 is the encoded form of v2 regarding states and sig counts
+/// (the state corresponds to how many signatures)
+/// see clam_db for how it's encoded
+/// We assume v2 is structured as states concat with counts.
+pub fn verify_encoded_states_sig_count<F:PrimeField>(cs: ConstraintSystemRef<F>,
+	v1: &[FpVar<F>], v2: &[FpVar<F>])
+	->Result<(), SynthesisError>{
+	let n = v1.len();
+	assert!(v2.len()==2*n);
+	let sigbit_factor = FpVar::<F>::new_constant(cs.clone(),
+		F::from(1u32 << RANGE2_BIT))?;
+	for i in 0..n{
+		let (s, v) = (&v2[i], &v2[n+i]); //assume s is already +1
+		let encoded = s*&sigbit_factor + v; 
+		encoded.enforce_equal(&v1[i])?;
+		#[cfg(test)]{
+			if encoded.value().is_ok(){ 
+				assert!(encoded.value()?==v1[i].value()?); 
+			}
+		}
+	}
+
+	Ok( () )
+}
+/// verify v1 is the encoded form of v2 regarding states and sigs.
+/// (the state corresponds to one signature)
+/// see clam_db for how it's encoded
+/// We assume v2 is structured as states || ids || counts
+/// NOTE: all states and ids start from 1
+pub fn verify_encoded_states_sig<F:PrimeField>(cs: ConstraintSystemRef<F>,
+	v1: &[FpVar<F>], v2: &[FpVar<F>])
+	->Result<(), SynthesisError>{
+	let n = v1.len();
+	assert!(v2.len()==3*n);
+	let sigbit_factor = FpVar::<F>::new_constant(cs.clone(),
+		F::from(1u32 << RANGE2_BIT))?;
+	let sigbit_fac2 = &sigbit_factor * &sigbit_factor;
+	for i in 0..n{
+		let (s, id, v) = (&v2[i], &v2[n+i], &v2[2*n+i]); 
+		let encoded = s*&sigbit_fac2 + id*&sigbit_factor + v; 
+		encoded.enforce_equal(&v1[i])?;
+		#[cfg(test)]{
+			if encoded.value().is_ok(){ 
+				assert!(encoded.value()?==v1[i].value()?); 
+			}
+		}
+	}
+
+	Ok( () )
+}
+
+/// check if array is increasing
+pub fn check_increase<F:PrimeField>(vec: &Vec<FpVar<F>>)
+->Result<(),SynthesisError>{
+	let cs = vec[0].cs();
+	let one_var = FpVar::<F>::new_constant(cs.clone(), F::one())?; 
+	for i in 1..vec.len(){
+		let diff = &vec[i] - &vec[i-1];
+		check_eq(&diff, &one_var, "check location")?;
+	}
+	Ok( () )
+}
+
+/// Check two fp_var equal. Cost 1 gate.
+pub fn check_eq<F:PrimeField>(v1: &FpVar<F>, v2: &FpVar<F>, _msg: &str)
+->Result<(),SynthesisError>{
+	v1.enforce_equal(&v2)?;
+
+	#[cfg(test)]{
+		if v1.value().is_ok(){ 
+			assert!(v1.value()?==v2.value()?, "ERROR on {}. v1: {}, v2: {}", _msg, v1.value()?, v2.value()?);
+		}
+	}
+	Ok( () )
+}
+
+/// Check two fp_var equal or v1[i] is zero
+pub fn check_eq_nz<F:PrimeField>(v1: &FpVar<F>, v2: &FpVar<F>, z_const: &FpVar<F>,_msg: &str)
+->Result<(),SynthesisError>{
+	let diff = v1 - v2;
+	let res = &diff * v1;
+	res.enforce_equal(z_const)?;
+
+	#[cfg(test)]{
+		if v1.value().is_ok(){ 
+			assert!(v1.value()?==v2.value()? || v1.value()?.is_zero(), "ERROR on check eq_nz: {}.", _msg);
+		}
+	}
+	Ok( () )
+}
+
+/// Check array eq value. Cost: n gates
+pub fn check_arr_eq<F:PrimeField>(vec: &[FpVar<F>], z: &FpVar<F>, _msg: &str)
+->Result<(),SynthesisError>{
+	for i in 0..vec.len(){
+		check_eq(&vec[i], &z, &format!("check eq {} fails: {}", i, _msg))?;
+	}
+	Ok( () )
+}
+
+/// Check array eq value. Cost: n gates
+pub fn check_arr_eq_arr<F:PrimeField>(vec: &[FpVar<F>], vec2: &[FpVar<F>], _msg: &str)
+->Result<(),SynthesisError>{
+	assert!(vec.len()==vec2.len());
+	for i in 0..vec.len(){
+		check_eq(&vec[i], &vec2[i], &format!("check eq {} fails: {}", i, _msg))?;
+	}
+	Ok( () )
+}
+
+
+/// Check array eq value (takes advantage of random r so we actually
+/// do a random combination). This function should ONLY be called
+/// on vec when it is part of fixed witness (in stmt or msg1)
+/// It actually costs the same number of gates of check_arr_eq (n+1)
+#[allow(dead_code)]
+pub fn check_arr_eq_fast<F:PrimeField>(vec: &[FpVar<F>], 
+	z: &FpVar<F>, r: &FpVar<F>, _msg: &str)
+->Result<(),SynthesisError>{
+	let cs = r.cs();
+	let zero = FpVar::new_constant(cs.clone(), F::zero())?;
+	let mut res = FpVar::new_constant(cs.clone(), F::zero())?;
+	for i in 0..vec.len(){
+		res = &res + r * &(&vec[i] - z);
+	}
+	res.enforce_equal(&zero)?;
+	Ok( () )
+}
+
+/// Check array eq given value or the entro is zero
+pub fn check_arr_eq_nz<F:PrimeField>(vec: &[FpVar<F>], z: &FpVar<F>, _msg: &str)
+->Result<(),SynthesisError>{
+	let fp_zero = FpVar::<F>::new_constant(z.cs().clone(), F::zero())?;
+	for i in 0..vec.len(){
+		check_eq_nz(&vec[i], &z, &fp_zero, &format!("check eq {} fails: {}", i, _msg))?;
+	}
+	Ok( () )
+}
+
+
+/// check two boolean var equal
+pub fn check_beq<F:PrimeField>(v1: &Boolean<F>, v2: &Boolean<F>, _msg: &str)
+->Result<(),SynthesisError>{
+	v1.enforce_equal(&v2)?;
+	#[cfg(test)]{
+		if v1.value().is_ok(){ 
+			assert!(v1.value()?==v2.value()?, "ERROR on {}.", _msg);
+		}
+	}
+	Ok( () )
+}
+
+/// check b1 implies b2, i.e., not b1 or b2 is true
+pub fn check_imply<F:PrimeField>(b1: &Boolean<F>, b2: &Boolean<F>, _msg: &str)
+-> Result<(), SynthesisError>{
+	let res = b1.not().or(b2)?;
+	check_beq(&res, &Boolean::TRUE, &format!("ERR on imply: {}", _msg))?;
+	Ok( () )
+}
+
+/// expand a vec to a given size (if the vec is greater
+/// than the vec size, panic)
+pub fn expand_vec<F:PrimeField>(vec: &mut Vec<F>, size: usize){
+	assert!(vec.len()<=size);
+	let mut rem = vec![F::zero(); size-vec.len()];
+	vec.append(&mut rem);
+}
+
+/// generate the correpsonding m_table for cols with selectors.
+/// Count the WEIGHTED number of appearance of lkup (using selector)
+/// We ALLOW lkup has duplicate non-zero elements (that is:
+/// the first entry will have non-zero m-table value and the other
+/// duplicates will have m-tbl value 0).
+pub fn gen_m_table<F:PrimeField>(qry: &Vec<F>, lkup: &Vec<F>)->Vec<F>{
+	#[cfg(test)]{ for x in qry{ assert!(lkup.contains(x)); } }
+	//1. establish a hashmap and go over the query table
+	let map:HashMap<F,usize> = qry.into_par_iter()
+	.fold(|| HashMap::new(),
+		|mut acc, state| {
+			*acc.entry(*state).or_insert(0) += 1;
+			acc
+		})
+	.reduce(//merge accumulator of threads
+		|| HashMap::new(),
+		|mut acc1, acc2| {
+			for (key, val) in acc2{ *acc1.entry(key).or_insert(0) += val; }
+			acc1
+		}
+	);
+
+	//2. raw dump
+	let mut m_tbl = lkup.par_iter().map(|x|{
+			let occ = map.get(x).unwrap_or(&0usize);
+			F::from(*occ as u32)
+	}).collect::<Vec<F>>();
+
+	//3. mark up in the m_tbl duplicate entries to 0
+	let mut set2 = HashSet::<F>::new();
+	let zero = F::zero();
+	for i in 0..m_tbl.len(){
+		m_tbl[i] = if set2.contains(&lkup[i]){zero} else { 
+			set2.insert(lkup[i]);
+			m_tbl[i]
+		};
+	}
+
+	m_tbl
+}
+
+/// generate the correpsonding m_table, its size will be
+/// equal to lkup for CONDITIONAL LOOKUP where
+/// only when selector value is NON-ZERO, the entry will be
+/// considered. Also note that when selected, any non-zero
+/// value serves as `1`. 0 indicates not-selected. We thus,
+/// compute values different.
+pub fn gen_m_table_cond<F:PrimeField>(qry: &Vec<F>, sel_qry: &Vec<F>,
+	lkup: &Vec<F>, sel_lkup: &Vec<F>)->Vec<F>{
+	#[cfg(test)]{ 
+		for i in 0..qry.len(){ 
+			if !sel_qry[i].is_zero() { 
+				assert!(lkup.contains(&qry[i]), 
+					"cannot find qry[{}]: {}", i, qry[i]); 
+			}; 
+		} 
+	}
+	assert!(qry.len()==sel_qry.len());
+	assert!(lkup.len()==sel_lkup.len());
+
+	//1. establish a hashmap and go over the query table
+	let zero = F::zero();
+	let map:HashMap<F,F> = qry.into_par_iter().zip(sel_qry.into_par_iter())
+	.fold(|| HashMap::new(),
+		|mut acc, (a,b)| {
+			*acc.entry(*a).or_insert(zero) += b; 
+			acc
+		})
+	.reduce(//merge accumulator of threads
+		|| HashMap::new(),
+		|mut acc1, acc2| {
+			for (key, val) in acc2{ *acc1.entry(key).or_insert(zero) += val; }
+			acc1
+		}
+	);
+
+	//2. raw dump
+	let mut m_tbl = lkup.par_iter().zip(sel_lkup.par_iter()).map(|(x,y)|{
+			let occ = map.get(x).unwrap_or(&zero);
+			let res = if occ.is_zero() || y.is_zero() {zero} 
+				else {*occ * (y.inverse().unwrap())};
+			res
+	}).collect::<Vec<F>>();
+
+	//3. mark up in the m_tbl duplicate entries to 0
+	let mut set2 = HashSet::<F>::new();
+	let zero = F::zero();
+	for i in 0..m_tbl.len(){
+		m_tbl[i] = if set2.contains(&lkup[i]){zero} else { 
+			set2.insert(lkup[i]);
+			m_tbl[i]
+		};
+	}
+
+	m_tbl
+}
+
+#[cfg(test)]
+pub mod tests_commons{
+	use ark_bn254::{Fr};
+	use crate::gadgets::commons::{gen_m_table,encode_cols, decode_cols};
+
+	#[test]
+	fn test_gen_m_tbl(){
+		let qry = vec![0, 3, 2, 5, 3].iter().map(|x| Fr::from(*x as u32))
+			.collect::<Vec<Fr>>();
+		let lkup = vec![0, 0, 3, 5, 2, 2].iter().map(|x| Fr::from(*x as u32))
+			.collect::<Vec<Fr>>();
+		let m = gen_m_table(&qry, &lkup);
+		let exp_m = vec![1, 0, 2, 1, 1, 0].iter().map(|x| Fr::from(*x as u32))
+			.collect::<Vec<Fr>>();
+		assert!(m==exp_m);
+	}
+
+	fn mysum(slice: &[Fr])->Fr{
+		let mut res = Fr::from(0u32);
+		for i in 0..slice.len(){
+			res = res + slice[i];
+		}
+		res
+	}
+
+	#[test]
+	fn test_temp(){//this is a simple test which checks if
+		//conerting a vector to slice will blow up the stack
+		let n = 1024 * 1024 * 16;
+		let vec = vec![Fr::from(321); n];
+		let _vec2 = vec[1..n].to_vec();
+		let res = mysum(&vec);
+		println!("ok: res: {}", res);
+	}
+
+	#[test]
+	fn test_encode(){
+		let vec1 = vec![Fr::from(15), Fr::from(16), Fr::from(17), Fr::from(18)];
+		let vec2 = vec![Fr::from(25), Fr::from(26), Fr::from(27), Fr::from(27)];
+		let vec3 = vec![Fr::from(35), Fr::from(36), Fr::from(37), Fr::from(38)];
+		let vec = vec![vec1,vec2,vec3];
+		let encoded = encode_cols(&vec, &vec![0,1,2]);
+		let decoded = decode_cols(&encoded,3);
+		assert!(decoded==vec);
+
+		let vecs2 = vec![vec![Fr::from(9)], vec![Fr::from(0)], vec![Fr::from(0)], vec![Fr::from(0)], vec![Fr::from(0)]]; 
+		let enc2 = encode_cols(&vecs2, &vec![0,1,2,3,4]);
+		let dec2= decode_cols(&enc2, 5);
+		assert!(dec2==vecs2);
+
+	}
+}
