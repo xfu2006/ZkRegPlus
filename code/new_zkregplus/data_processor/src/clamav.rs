@@ -2028,8 +2028,6 @@ pub fn quick_discharge_file_by_crit_bag_pm(fname: &str,
 	};
 	let set_sigs_bag: HashSet::<String> = if b_include_bs{set_sigs_bag}
 		else {set_sigs_crit.clone()}; 
-	println!("DEBUG USE 1001: set_sigs_bag: {:?}, set_sigs_crit: {:?}",
-		set_sigs_bag, set_sigs_crit);
 	
 	//3 process by pm bounds
 	let pats_failed_bag = (&v_sigs_failed_bag).into_iter().map(|s| 
@@ -2092,7 +2090,6 @@ pub fn quick_discharge_file_by_crit_bag_pm(fname: &str,
         map(|s| s.clone()).collect::<Vec<Arc<ClamavSig>>>();
 	if set_dfa.len()>0{
 		for s in &dfa_sigs_left{
-			println!("\n===========*********=============\nDEBUG USE 601. try pm-reg indivudally for sig: {} on file: {}", s.to_str(), fname);
 			let mut sig: ClamavSig =s.as_ref().clone(); //will not change Arc
 			let mut new_cfg = cfg.clone();
 			new_cfg.min_bag_len = 0;
@@ -2109,7 +2106,6 @@ pub fn quick_discharge_file_by_crit_bag_pm(fname: &str,
 			let dfa_acc_path_igc = dfa_pm_igc.acc_path(&nibbles);
 			let hs_occ= dfa_pm.get_pattern_pos(&dfa_acc_path);
 			let hs_occ_igc= dfa_pm_igc.get_pattern_pos(&dfa_acc_path_igc);
-			println!("DEBUG USE 602: sum_vec_size(hs_occ.len): {}, hs_occ_igc.len: {}, filesize: {}", sum_vec_size(&hs_occ), sum_vec_size(&hs_occ_igc), nibbles.len());
 			let (res,_) = sig.accepts_approx_pm_bounds(&hs_occ, &hs_occ_igc);
 			//println!("DEBUG USE 603: res: {:?}", res);
 			if res==TriVal::Maybe || res==TriVal::True{

@@ -1,6 +1,9 @@
 import gdown
 import os
 
+#0. create cache folder
+os.system("mkdir -p cache/main");
+
 #1. download files (if not working - use the following to download manually)
 # (1) https://drive.google.com/file/d/1OM_W54JxPEiV3S26XwY7f1qhEAVyFtv_/view?usp=drive_link (samples.7z)
 # (2) https://drive.google.com/file/d/1zLN_7kGXH-1PWkrxUqwWhvmuDMRL3-Yl/view?usp=drive_link (src_sig.7z)

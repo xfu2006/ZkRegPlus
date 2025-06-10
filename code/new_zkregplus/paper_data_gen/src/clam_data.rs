@@ -9,7 +9,7 @@ use std::collections::{HashSet};
 use ark_ff::PrimeField;
 use utils::{
 	data::{ceil_log2},
-	logger::{flog,LOG1},
+	logger::{flog,LOG1,LOG3},
 	os::{proj_root,read_lines,write_lines},
 };
 use data_processor::{
@@ -76,11 +76,10 @@ pub fn print_discharge_stats(vdata: &Vec<FailDischargeRecord>,
 
 	//2. print details
 	if b_more_details{
-		flog(LOG1, &format!("==== STATS DETAILS ====="), vlog);
+		flog(LOG3, &format!("==== STATS DETAILS ====="), vlog);
 		for i in 0..vec_stats.len(){
-			println!("-------- log2(file): {} ----------", i);
 			for rec in &vec_stats[i]{
-				flog(LOG1, &format!("{}: \ncrit: {:?}, bag: {:?}, pm: {:?}, after_dfa: {:?}", rec.fname, rec.crit, rec.bag, rec.pm, rec.all_dfa), vlog);
+				flog(LOG3, &format!("{}: \ncrit: {:?}, bag: {:?}, pm: {:?}, after_dfa: {:?}", rec.fname, rec.crit, rec.bag, rec.pm, rec.all_dfa), vlog);
 			}
 		}
 	}
@@ -264,6 +263,8 @@ pub fn report_all_discharge_approach_stats<F:PrimeField>(sig_file: &str, needs_d
 	discharge_list_file: &str, report_file: &str,
 	b_read_cache: bool, cache_dir: &str, b_quick: bool){
 	//1. generate the clamav db
+	println!("REPORT all discharge approach ...");
+	println!("Step 1. generating clam db ...");
 	let mut vlog = vec![];
 	let cfg = default_clamav_cfg();
 	let proot = proj_root();
@@ -271,6 +272,7 @@ pub fn report_all_discharge_approach_stats<F:PrimeField>(sig_file: &str, needs_d
 	let db = ClamavDB::<F>::build_or_load(&cfg, sig_file, needs_dfa_file, needs_ised_file, needs_ised_igc_file, &mut vlog, cache_dir, b_read_cache, b_write_cache);
 	db.print_summary(&mut vlog);
 
+	println!("Step 2. discharging all files ...");
 	//2. generate the discharging files
 	let file_names = &read_lines(&format!("{}/{}", proot, discharge_list_file));
 	let final_data = file_names.into_par_iter().map(|fpath|
@@ -280,6 +282,7 @@ pub fn report_all_discharge_approach_stats<F:PrimeField>(sig_file: &str, needs_d
 	}).collect::<Vec<FailDischargeRecord>>();// for each file
 
 	//3. write the report
+	println!("Step 3. print discharge stats ...");
 	print_discharge_stats(&final_data, &mut vlog);
 
 	//4. print specifically the SED and ISED stats

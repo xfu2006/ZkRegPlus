@@ -16117,6 +16117,80 @@ Goal 5. had to rebuild carefully
 	[e] make sure the paper_data large files are not included yet
 		and * disable the output
 	[f] test run discharge 
+
+Goal 6. make a new github
+	[a] clean files
+	[b] create a git check stage script
+	[c] regression testing
+	[d] test clone
+		-> prlblem of zkregplus not there
+		-> caused by the .gitignore there
+	[e] clone and test again.
+	[f] fix DOWNLpy to add cache main folder
+
+Monday 06/09/2025
+LOC: 9387
+Goal 1. find out the failed sigs
+	-> lower the log level of details
+	-> remove 7011.1 and 7011.2
+	-> remove DEBUG USE 1001
+	-> DATA only two sigs to remove
+	----------------------------
+	==== WARNING: ISED could not discharge the following =====
+fname: data/samples/binexec_merged128k/anthoscli__01, filesize: 5, sigs: {"Win.Trojan.Emotet-6397178-0"}
+fname: data/samples/binexec_merged128k/doxygen, filesize: 5, sigs: {"Js.File.MaliciousHeuristic-6260249-0"}
+fname: data/samples/binexec_merged128k/google_metadata_script_runner, filesize: 5, sigs: {"Win.Trojan.Emotet-6397178-0"}
+fname: data/samples/binexec_merged128k/google_osconfig_agent, filesize: 5, sigs: {"Win.Trojan.Emotet-6397178-0"}
+fname: data/samples/binexec_merged128k/libpython3.9.so, filesize: 5, sigs: {"Js.File.MaliciousHeuristic-6260249-0"}
+fname: data/samples/binexec_merged128k/libpython3.9.so.1.0, filesize: 5, sigs: {"Js.File.MaliciousHeuristic-6260249-0"}
+==== STATS SUMMARY (avg, max, count_non_zero) =========
+	------------------------------
+
+Goal 2. add the framework bwd prf validity
+	-> add gen_bwdprf_valid_prf
+	-> add valid_bwdprf_valid_prf
+	-> set up the framework of gen_bwdprf_valid
+
+Goal 3. implement step 0: retrieve data
+	-> gen_prf
+	-> validate_prf
+	-> dbg: cannot find locs_to_del.
+	-> cost 8n
+
+Goal 4. reason about src_encoded, step, rg_end
+	-> gen_prf
+	-> validate_prf
+	-> debug: 
+	-> cost 8n
+
+Goal 5. reason about dst_encoded and step
+	-> gen_prf
+	-> validate_prf
+	-> debug: ignore 0 entries
+		-> use boolean flag as selector
+		-> still not matching value
+	-> cost: 10n
+	-> regression testing
+
+Goal 6. reason about sorted
+	[a] print out values 
+	[b] think about define diff. define as conditional prf so that
+		sid is easy to reason about
+	[c] define diff_loc and its selector
+
+Tuesday 06/10/2025
+LOC: 9610
+Goal 1. refine data set
+	-- TODO --
+	[a] compare the main.ldb with the one in src_sig
+	[b] put the sigs in DFA list
+
+
+Goal 2. continue to check the source list
+	[a] size problem -> fixed
+	[b] debug validate function
+	[e] cost
+	[f] regression testing
 			
 
 

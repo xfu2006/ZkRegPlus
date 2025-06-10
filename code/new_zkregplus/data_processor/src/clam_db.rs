@@ -43,8 +43,8 @@ pub const STATE_BIT:usize =  24;
 
 /// The bit-width of RANGE2 table 
 /// IN PRODUCTION NEEDS TO CHANGE THE SAME SIZE OF STATE_BIT
-//pub const RANGE2_BIT: usize = 8;
-pub const RANGE2_BIT: usize = 26; //(allowing 64M nibbles = 32MB)
+pub const RANGE2_BIT: usize = 8;
+//pub const RANGE2_BIT: usize = 26; //(allowing 64M nibbles = 32MB)
 
 
 // the following are sub-table ids
@@ -728,10 +728,8 @@ impl <F:PrimeField> ClamavDB<F>{
 				else {*sig_to_id.get(&bundle.vec_sig_names[i]).expect(
 					&format!("can't find sig: {}",bundle.vec_sig_names[i]))};
 			let dfa_id = Self::pm_acdfa_id(sig_id, b_igc); 
-			println!("DEBUG USE 7011.1: handling bundle i: {}, sig_name: {}, b_igc: {}", i, bundle.vec_sig_names[i], b_igc);
 			Self::add_acdfa_to_lkup(lkup,&bundle.vec_acdfa[i],
 				dfa_id, &bundle.vec_map_pattern_sig[i], sig_to_id);
-			println!("DEBUG USE 7011.2: FINISHED add_acdfa_to_lkup handling bundle i: {}, sig_name: {}, b_igc: {}", i, bundle.vec_sig_names[i], b_igc);
 			bundle.vec_subsig_stores[i]
 				.add_store_to_lkup(lkup, dfa_id, state_bits);
 			bundle.vec_subsig_step_stores[i]
