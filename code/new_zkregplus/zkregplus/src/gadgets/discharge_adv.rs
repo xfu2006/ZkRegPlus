@@ -2049,6 +2049,11 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			"sid_diff_loc", IDX_SI_DATA));
 		
 		//4. prove the min_loc is the first loc in sq_res
+		// it's basically a lkup.
+		// src_combined: encoded-step-min_loc
+		// dst_combined: encoded-step-loc and selected by if it
+		//    is the very first entry (relying on the fact that the table
+		//    is sorted.
 
 		//5. prove prev_loc + rg_2 > min_loc  
 		res
@@ -3173,7 +3178,7 @@ pub mod tests_discharge_adv_gadget{
 	fn test_discharge_adv(){
 		//1. define the sigs
 		let sigs = vec![
-			/*
+			/* RECOVER LATER
 			"sig1;Engine:51-255,Target:0;0&1;/abc..123/;/123....abc/",
 			"sig2;Engine:51-255,Target:0;0&1;/def.*234.*567/;/234....def/",
 			*/
@@ -3189,7 +3194,7 @@ pub mod tests_discharge_adv_gadget{
 
 		//2. define the test cases
 		let testcases = vec![
-			/*
+			/* RECOVER LATER
 			//1. fails sig1 coz gap len incorrect
 			Tcase::new("abcddd123", "sig1", false, false), //b_ised=F, igc=F
 			//2. fails sig2 coz 3rd pattern missing
