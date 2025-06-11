@@ -20,3 +20,5 @@ pub mod fsm_adv;
 pub mod db;
 /// discharge subsigs
 pub mod discharge_adv;
+/// from subsigs to discharged sigs
+pub mod compute_sig_adv;

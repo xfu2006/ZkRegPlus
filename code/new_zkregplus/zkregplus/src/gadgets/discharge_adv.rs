@@ -17,9 +17,7 @@ use crate::gadgets::{
 	traits::{Container,
 		Col,
 		IDX_WORD, IDX_INP,IDX_DATA, 
-		IDX_SI_INP, 
-		IDX_OUP, 
-	//	IDX_SI_OUP, 
+		IDX_SI_INP,  IDX_OUP, IDX_SI_OUP,
 		IDX_SI_DATA,ComponentAdvice},
 };
 use ark_r1cs_std::{
@@ -331,7 +329,7 @@ pub struct DischargeAdvGadget<F:PrimeField>{
 // ---------------------------------------------
 impl <F:PrimeField> StepQueue<F>{
 	pub fn to_vec(&self)->Vec<F>{
-		let ct = self.to_container("temp", false, false);
+		let ct = self.to_container("temp", false, false, false);
 		let encoded = ct.borrow().get_container("encoded").unwrap()
 			.borrow().to_vec();
 		let locs = ct.borrow().get_container("locs").unwrap()
@@ -659,12 +657,15 @@ impl <F:PrimeField> StepQueue<F>{
 	/// generate two cols of equal length (encoded, loc)
 	/// when loc is 0 (it is dummy entry means no available locs)
 	/// b_inp indicates whether to add to inp_buf or DATA
-	/// b_id indicates whether to add an step column
-	pub fn to_container(&self, name: &str, b_inp: bool, b_step:bool)->Rc<RefCell<Container<F>>>{
+	/// b_oup indicates whether  to add to oup_buf (b_inp and b_oup cannot
+	///   be true)
+	/// b_step indicates whether to add an step column
+	pub fn to_container(&self, name: &str, b_inp: bool, b_step:bool, b_oup: bool)->Rc<RefCell<Container<F>>>{
 		#[cfg(test)] {
 			use crate::gadgets::commons::{is_sorted};
 			assert!(is_sorted(&self.subsigs));
 		}
+		assert!(!b_inp || !b_oup); //b_inp and b_oup cannot be on the same time
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, _one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
 		let vec_tuples = self.subsigs.par_iter().map(|subsig|{
@@ -699,8 +700,8 @@ impl <F:PrimeField> StepQueue<F>{
 		let vec_step= vec![vec![zero; n2], vec_step].concat();
 		#[cfg(test)]{ for i in 0..vec_locs.len(){assert!(vec_locs[i]<_max);} }
 		let res = Container::new(name); 
-		let seg = if b_inp {IDX_INP} else {IDX_DATA};
-		let si_seg = if b_inp {IDX_SI_INP} else {IDX_SI_DATA};
+		let seg = if b_inp {IDX_INP} else if b_oup {IDX_OUP} else {IDX_DATA};
+		let si_seg = if b_inp {IDX_SI_INP} else if b_oup {IDX_SI_OUP} else {IDX_SI_DATA};
 		res.borrow_mut().add_col(Col::new(vec_encoded,"encoded",seg));
 		res.borrow_mut().add_col(Col::new(vec_locs, "locs", seg));
 		res.borrow_mut().add_col(Col::new(vec![F::zero();n],
@@ -1205,6 +1206,17 @@ impl <F:PrimeField> StepBwdPrf<F>{
 		res
 	}
 }
+impl DischargeAdvCapacity{
+	/// this determines the pat_loc 2-col table len, it's also
+	/// the length of step_queue.  (although techniqlly step_queue len
+	/// should be the max of num_sub_sig_steps and perc_loc * max_nibble,
+	/// but we simplify the calculation here).
+	pub fn get_pat_loc_len(&self)->usize{
+		let pats_len = self.perc_pats_in_trace 
+			* self.max_nibble_len/100;
+		pats_len
+	}
+}
 
 impl Capacity for DischargeAdvCapacity{
 	fn can_satisfy(&self, r_other: &Rc<dyn Capacity>) -> bool{
@@ -1246,7 +1258,8 @@ impl <F: PrimeField> ComponentAdvice<F> for DischargeAdvAdvice<F>{
 impl <F: PrimeField> DischargeAdvAdvice<F>{
 	/// Given the <pats,locs> from the fsm_adv gadget (note it is padded
 	/// to perc_pat_per_trace * max_nibblelen/100), generate
-	/// the list of sigs that are discharged.
+	/// the StepQueue of all related subsigs (NOTE: subsigs are provided
+	/// as non-deterministic advice)
 	pub fn new(
 		pat_loc: &Rc<RefCell<Container<F>>>,
 		inp_subsigs: &Vec<F>,
@@ -1434,7 +1447,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		//todo!() replace sq_res with the real final result after
 		//the reduction of backward proof
 		let res = self.stmt_container.borrow().search_container(
-			"discharge_adv_stmt fwd_steps_queue sq_res").unwrap();
+			"discharge_adv_stmt bwd_steps_queue sq_res2").unwrap();
 		let encoded = res.borrow().get_container("encoded").unwrap().
 			borrow().to_vec();
 		let locs = res.borrow().get_container("locs").unwrap().
@@ -1779,9 +1792,9 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			fwd_prf.dump();
 		}
 
-		let ct_sq_inp = inp_step_queue.to_container("sq_inp", true, false);
-		let ct_sq_to_add = sq_to_add.to_container("sq_to_add", false, true);
-		let ct_sq_res = sq_res.to_container("sq_res", false, true);
+		let ct_sq_inp = inp_step_queue.to_container("sq_inp",true,false,false);
+		let ct_sq_to_add = sq_to_add.to_container("sq_to_add",false,true,false);
+		let ct_sq_res = sq_res.to_container("sq_res", false, true, false);
 		res.borrow_mut().add_container(ct_sq_inp.clone()); //low cost, rc clone
 		res.borrow_mut().add_container(ct_sq_to_add.clone());
 		res.borrow_mut().add_container(ct_sq_res.clone());
@@ -1857,8 +1870,8 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			bwd_prf.dump();
 		}
 
-		let ct_sq_to_del= sq_to_del.to_container("sq_to_del", false, true);
-		let ct_sq_res2 = sq_res.to_container("sq_res2", false, true);
+		let ct_sq_to_del= sq_to_del.to_container("sq_to_del",false,true,false);
+		let ct_sq_res2 = sq_res.to_container("sq_res2",false,true,true);
 		res.borrow_mut().add_container(ct_sq_to_del.clone());
 		res.borrow_mut().add_container(ct_sq_res2.clone());
 		res.borrow_mut().add_container(bwd_prf.to_container("prf_bwd"));
@@ -2927,17 +2940,11 @@ impl <F:PrimeField> SigmaGadget<F> for DischargeAdvGadget<F>{
 	}
 
 	fn est_cost(&self)->usize{
-		/*
-		// key is the low perc_pat_in_trace 
-		let est = 
-			118 * 
-			self.capacity.max_nibble_len 
-			* self.capacity.perc_pats_in_trace/100 			
-		+ 107 * self.capacity.avg_pats_per_subsig * self.capacity.subsigs;
-
-		est
-		*/
-		20
+		//TODO: refine formula in real data later
+		let est1 = self.capacity.subsigs * 
+			self.capacity.avg_pats_per_subsig * 1000;
+		let est2 = self.capacity.get_pat_loc_len() * 1000;
+		if est1>est2 {est1} else {est2}
 	}
 
 	fn get_msg_size(&self) -> (usize, usize, usize, usize){
@@ -3255,10 +3262,10 @@ pub mod tests_discharge_adv_gadget{
 	fn test_discharge_adv(){
 		//1. define the sigs
 		let sigs = vec![
-			 /* RECOVER LATER
+			/* RECOVER LATER
 			"sig1;Engine:51-255,Target:0;0&1;/abc..123/;/123....abc/",
 			"sig2;Engine:51-255,Target:0;0&1;/def.*234.*567/;/234....def/",
-			 */
+			*/
 			"sig3;Engine:51-255,Target:0;0&1;/fgh.*1234......56...78/;/56......fgh/",
 		].iter().map(|x| x.to_string()).collect::<Vec<String>>();
 		let needs_dfa = vec![];
@@ -3340,7 +3347,7 @@ pub mod tests_discharge_adv_gadget{
 			perc_pats_in_trace: 48,
 		};
 		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone()};
-		let ct = sq.to_container("ct", true, false);
+		let ct = sq.to_container("ct", true, false, false);
 		let pat = ct.borrow().get_container("encoded")
 			.unwrap().borrow().to_vec();
 		let loc = ct.borrow().get_container("locs").unwrap().borrow().to_vec();
