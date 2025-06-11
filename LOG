@@ -16180,18 +16180,44 @@ Goal 6. reason about sorted
 
 Tuesday 06/10/2025
 LOC: 9610
-Goal 1. refine data set
-	-- TODO --
+Goal 2. continue to check the source list
+	[a] size problem -> fixed
+	[b] debug validate function
+		-> saved diff loc does not match diff loc
+		-> check sel -> fixed
+	[e] cost: 6n
+	[f] regression testing
+		-> other cases -> DONE
+		-> sed  -> DONE 100 sec
+
+Goal 3. to prove that min_loc is valid
+	[a] it's a lkup that each min_loc belong to those locations	
+		that are the first loc of each step
+	[b] src_combined: encoded-step-min_loc
+		dst_combined: encoded-step-loc selected by if it is the
+			1st 
+	[c] check dst combined output
+	[d] gen_mtable
+	[e] what if there is no min_loc at all? use another test
+	[f] debug: 
+	[f] cost: 13n! (encoe 3 cols: 2x2 + lkup 5 + sel: 3)
+
+Goal 4. the min cost
+	[a] compute diff_min
+	[b] print output 
+	[c] add sid
+	[d] validate
+	[e] cost: 6n (two checks 2n, sel: 2n: mul: 2n)
+	[f] regression test (1), (2) 
+	
+
+Wed 06/11/2025
+Goal 1. Writing -> DONE
+Goal 2. refine data set
 	[a] compare the main.ldb with the one in src_sig
 	[b] put the sigs in DFA list
 
 
-Goal 2. continue to check the source list
-	[a] size problem -> fixed
-	[b] debug validate function
-	[e] cost
-	[f] regression testing
-			
 
 
 	

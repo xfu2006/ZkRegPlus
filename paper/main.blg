@@ -86,6 +86,7 @@ Warning--empty publisher in HyperNova
 Warning--empty address in HyperNova
 Warning--empty publisher in Nova
 Warning--empty address in Nova
+Warning--empty address in zkPi
 Warning--empty address in Zkreg
 Warning--empty address in AlgBook
 Warning--empty publisher in Spartan
@@ -99,45 +100,45 @@ Warning--empty publisher in Caulk22
 Warning--empty address in Caulk22
 Warning--empty publisher in Deco
 Warning--empty address in Deco
-You've used 87 entries,
+You've used 88 entries,
             5981 wiz_defined-function locations,
-            1998 strings with 33650 characters,
-and the built_in function-call counts, 83266 in all, are:
-= -- 9059
-> -- 3056
+            2006 strings with 33822 characters,
+and the built_in function-call counts, 84539 in all, are:
+= -- 9202
+> -- 3087
 < -- 0
-+ -- 1030
-- -- 1051
-* -- 5903
-:= -- 8774
-add.period$ -- 430
-call.type$ -- 87
-change.case$ -- 636
-chr.to.int$ -- 82
-cite$ -- 172
-duplicate$ -- 7520
-empty$ -- 5282
-format.name$ -- 1346
-if$ -- 18936
++ -- 1040
+- -- 1060
+* -- 5988
+:= -- 8885
+add.period$ -- 435
+call.type$ -- 88
+change.case$ -- 643
+chr.to.int$ -- 83
+cite$ -- 174
+duplicate$ -- 7650
+empty$ -- 5371
+format.name$ -- 1359
+if$ -- 19244
 int.to.chr$ -- 7
 int.to.str$ -- 1
-missing$ -- 143
-newline$ -- 758
-num.names$ -- 590
-pop$ -- 3029
+missing$ -- 148
+newline$ -- 768
+num.names$ -- 597
+pop$ -- 3080
 preamble$ -- 2
-purify$ -- 1311
+purify$ -- 1326
 quote$ -- 0
-skip$ -- 3009
+skip$ -- 3060
 stack$ -- 0
-substring$ -- 5696
-swap$ -- 598
+substring$ -- 5810
+swap$ -- 614
 text.length$ -- 0
 text.prefix$ -- 0
 top$ -- 0
-type$ -- 2536
-warning$ -- 77
-while$ -- 440
+type$ -- 2566
+warning$ -- 78
+while$ -- 446
 width$ -- 0
-write$ -- 1705
+write$ -- 1727
 (There were 2 error messages)

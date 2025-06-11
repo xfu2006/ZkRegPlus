@@ -1884,7 +1884,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 
 		//4. prove the validity of the bwd_prf
 		let prf_bwdprf_valid = Self::gen_bwdprf_valid_prf("prf_bwdprf_valid",
-			&prf_bwd, &ct_fwd_res, store_steps);
+			&prf_bwd, &ct_sq_res2, store_steps);
 		prf.borrow_mut().add_container(prf_bwdprf_valid);
 
 		// --- now return 
@@ -1970,7 +1970,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 	fn gen_bwdprf_valid_prf(
 		prf_name: &str,
 		prf_bwd: &Rc<RefCell<Container<F>>>,
-		fwd_sq_res: &Rc<RefCell<Container<F>>>,
+		sq_res: &Rc<RefCell<Container<F>>>,
 		store_steps: &Rc<RefCell<Container<F>>>,
 	)->Rc<RefCell<Container<F>>>{
 		//0. data retrieval
@@ -1978,21 +1978,21 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		let (zero, one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
 		let res = Container::new(prf_name);
 		let names = vec![
-			"src_encoded", "src_subsig",  "src_step", 
-			"src_pat", "src_min_loc", "src_rg_start", "src_rg_end",
+			"src_encoded", "src_step", 
+			"src_pat", "src_min_loc", "src_rg_end",
 			"prev_encoded", "loc_to_del"
 		];
 		let v2d= names.iter().map(|n|{
 			prf_bwd.borrow().get_container(n).unwrap().borrow().to_vec() 
 		}).collect::<Vec<Vec<F>>>();
 		let (
-			src_encoded, _src_subsig, src_step,
-			src_pat, _src_min_loc, _src_rg_start, src_rg_end,
-			prev_encoded, _loc_to_del)
+			src_encoded, src_step,
+			src_pat, src_min_loc, src_rg_end,
+			prev_encoded, loc_to_del)
 		= (
-			&v2d[0], &v2d[1], &v2d[2],
-			&v2d[3], &v2d[4], &v2d[5], &v2d[6],
-			&v2d[7], &v2d[8]
+			&v2d[0], &v2d[1], 
+			&v2d[2], &v2d[3], &v2d[4],
+			&v2d[5], &v2d[6]
 		);
 
 		//1. correctness of src_encoded-step-rg_end (we are not interested
@@ -2026,21 +2026,21 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		res.borrow_mut().add_col(Col::new(vec![frg;len1], 
 			"sid_mtb_dst", IDX_SI_DATA));
 
-		//3. prove sq_res has its loc sorted and
+		//3. prove (final) sq_res has its loc sorted and
 		//as the fq_req has been proved to be sorted (step_id increasing
 		//for the same encoded key), we only rely on step to define
 		//conditional sectors.
-		let fwcols = vec!["encoded", "step", "locs"].iter().map(|n|
-			fwd_sq_res.borrow().get_container(n).unwrap().borrow().to_vec()
+		let rescols = vec!["encoded", "step", "locs"].iter().map(|n|
+			sq_res.borrow().get_container(n).unwrap().borrow().to_vec()
 		).collect::<Vec<Vec<F>>>();
-		let sel = (0..fwcols[0].len()).into_par_iter().map(|i|{
+		let sel = (0..rescols[0].len()).into_par_iter().map(|i|{
 			if i==0 {zero} else{
-				if fwcols[1][i]!=fwcols[1][i-1] {zero} else {one}
+				if rescols[1][i]!=rescols[1][i-1] {zero} else {one}
 			}
 		}).collect::<Vec<F>>();
-		let diff_loc = (0..fwcols[0].len()).into_par_iter().map(|i|{
+		let diff_loc = (0..rescols[0].len()).into_par_iter().map(|i|{
 			if i==0 {zero} else {
-				(fwcols[2][i] - fwcols[2][i-1]) * sel[i]
+				(rescols[2][i] - rescols[2][i-1]) * sel[i]
 			}
 		}).collect::<Vec<F>>();
 		let len1 = diff_loc.len();
@@ -2052,10 +2052,42 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		// it's basically a lkup.
 		// src_combined: encoded-step-min_loc
 		// dst_combined: encoded-step-loc and selected by if it
-		//    is the very first entry (relying on the fact that the table
-		//    is sorted.
+		//    is the very first effective entry of each encoded-step
+		//    (relying on the fact that the table
+		//    is sorted). -> note that we are actually taking the 2nd
+		//      step of each encoded-step because the first has dummy loc 0
+		let src_combined= encode_cols(&v2d, &vec![0,1,3]);
+		let dst_combined = encode_cols(&rescols, &vec![0,1,2]);
+		let dst_sel = (0..dst_combined.len()).into_par_iter().map(|i|{
+			if i==0 {
+				zero
+			}else{//previous loc is 0 (based on the fact that table is
+				  //sorted (for each encoded-step key), and 1st entry is
+				  //dummy 0. So we are taking the one whose previous loc
+				  //is 0. note rescols[2] is locs
+				if rescols[2][i-1].is_zero() {one} else {zero}
+			}
+		}).collect::<Vec<F>>();
+		let dst_adj = dst_combined.par_iter().zip(dst_sel.par_iter())
+			.map(|(&x,&y)| x*y).collect::<Vec<F>>();
+		let mtb_src = gen_m_table(&src_combined, &dst_adj);
+		let len1 = mtb_src.len();
+		res.borrow_mut().add_col(Col::new(mtb_src, "mtb_min_loc", IDX_DATA));
+		res.borrow_mut().add_col(Col::new(vec![frg;len1], 
+			"sid_mtb_min_loc", IDX_SI_DATA));
 
-		//5. prove prev_loc + rg_2 > min_loc  
+		//5. prove min_loc - (loc_to_remove + rg_2) - 1
+		let sel = (0..src_rg_end.len()).into_par_iter().map(|i|
+			if src_min_loc[i].is_zero() {zero} else {one}
+		).collect::<Vec<F>>();
+		let diff_min = (0..src_rg_end.len()).into_par_iter().map(|i|
+			sel[i]*(src_min_loc[i] - (loc_to_del[i] + src_rg_end[i] + one))
+		).collect::<Vec<F>>();
+		let len1 = sel.len();
+		res.borrow_mut().add_col(Col::new(diff_min, "diff_min", IDX_DATA));
+		res.borrow_mut().add_col(Col::new(vec![frg;len1], 
+			"sid_diff_min", IDX_SI_DATA));
+
 		res
 	}
 
@@ -2644,7 +2676,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		//4. validate the prf_bwd is valid
 		let prf_bwdprf_valid = prf.borrow().get_container("prf_bwdprf_valid")?;
 		self.validate_bwdprf_valid_prf(&ct_prf_bwd, 
-			&ct_sq_res1, &r1, &r2, &prf_bwdprf_valid, store_steps)?;
+			&ct_sq_res2, &r1, &r2, &prf_bwdprf_valid, store_steps)?;
 		//REMOVE LATER -----------
 		println!("DEBUG USE 8888: num_cons: check valid bwd_prf: {}", cs.num_constraints()-n2);
 		//REMOVE LATER ----------- ABOVE
@@ -2704,9 +2736,9 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 	#[allow(dead_code)]
 	fn validate_bwdprf_valid_prf(&self,
 		prf_bwd: &Rc<RefCell<Container<FpVar<F>>>>,
-		fwd_sq_res: &Rc<RefCell<Container<FpVar<F>>>>, //the sq_res of fwd
+		sq_res: &Rc<RefCell<Container<FpVar<F>>>>, //the final sq_res
 		r1: &FpVar<F>,
-		_r2: &FpVar<F>,
+		r2: &FpVar<F>,
 		prf_bwdprf_valid: &Rc<RefCell<Container<FpVar<F>>>>,
 		store_steps: &Container<FpVar<F>>,
 	)->Result<(), SynthesisError>{
@@ -2718,21 +2750,21 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			new_const_var(&cs, one), new_const_var(&cs, max));
 		let frg = new_const_var(&cs, F::from(RANGE2));
 		let names = vec![
-			"src_encoded", "src_subsig",  "src_step", 
-			"src_pat", "src_min_loc", "src_rg_start", "src_rg_end",
+			"src_encoded",  "src_step", 
+			"src_pat", "src_min_loc", "src_rg_end",
 			"prev_encoded", "loc_to_del"
 		];
 		let v2d= names.iter().map(|n|{
 			prf_bwd.borrow().get_container(n).unwrap().borrow().to_vec() 
 		}).collect::<Vec<Vec<FpVar<F>>>>();
 		let (
-			src_encoded, _src_subsig, src_step,
-			src_pat, _src_min_loc, _src_rg_start, src_rg_end,
-			prev_encoded, _loc_to_del)
+			src_encoded, src_step,
+			src_pat,  src_min_loc, src_rg_end,
+			prev_encoded, loc_to_del)
 		= (
-			&v2d[0], &v2d[1], &v2d[2],
-			&v2d[3], &v2d[4], &v2d[5], &v2d[6],
-			&v2d[7], &v2d[8]
+			&v2d[0], &v2d[1], 
+			&v2d[2], &v2d[3], &v2d[4], 
+			&v2d[5], &v2d[6]
 		);
 
 
@@ -2740,7 +2772,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		//REMOVE LATER -------------
 		let n2 = cs.num_constraints();
 		//REMOVE LATER ------------- ABOVE
-		let sidcols = vec![1,2,3,4,5,6,8].iter().map(|n|
+		let sidcols = vec![1,2,3,4,6].iter().map(|n|
 			prf_bwd.borrow().get_container(&format!("sid_{}",names[*n]))
 				.unwrap().borrow().to_vec()
 			).collect::<Vec<Vec<FpVar<F>>>>();
@@ -2792,17 +2824,17 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		//as the fq_req has been proved to be sorted (step_id increasing
 		//for the same encoded key), we only rely on step to define
 		//conditional sectors.
-		let fwcols = vec!["encoded", "step", "locs"].iter().map(|n|
-			fwd_sq_res.borrow().get_container(n).unwrap().borrow().to_vec()
+		let rescols = vec!["encoded", "step", "locs"].iter().map(|n|
+			sq_res.borrow().get_container(n).unwrap().borrow().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
-		let sel = (0..fwcols[0].len()).into_iter().map(|i|{
+		let sel = (0..rescols[0].len()).into_iter().map(|i|{
 			if i==0 {zero.clone()} else{
-				fwcols[1][i].is_eq(&fwcols[1][i-1]).unwrap().into()
+				rescols[1][i].is_eq(&rescols[1][i-1]).unwrap().into()
 			}
 		}).collect::<Vec<FpVar<F>>>();
-		let diff_loc = (0..fwcols[0].len()).into_iter().map(|i|{
+		let diff_loc = (0..rescols[0].len()).into_iter().map(|i|{
 			if i==0 {zero.clone()} else {
-				&(&fwcols[2][i] - &fwcols[2][i-1]) * &sel[i]
+				&(&rescols[2][i] - &rescols[2][i-1]) * &sel[i]
 			}
 		}).collect::<Vec<FpVar<F>>>();
 		let saved_diff_loc = prf_bwdprf_valid.borrow().get_container("diff_loc")
@@ -2813,8 +2845,53 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		check_arr_eq_arr(&diff_loc, &saved_diff_loc, "err checking diff_loc")?; 
 
 		//REMOVE LATER -----------
-		println!("DEBUG USE 7777.4: step locs are sorted in fwd_sq_res: num_cons: {}, vec_len: {}", cs.num_constraints()-n2, sidcols[0].len());
-		//let n2 = cs.num_constraints();
+		println!("DEBUG USE 7777.4: step locs are sorted in sq_res: num_cons: {}, vec_len: {}", cs.num_constraints()-n2, sidcols[0].len());
+		let n2 = cs.num_constraints();
+		//REMOVE LATER ----------- ABOVE
+
+		//4. prove the min_loc is the first loc in sq_res
+		//REMOVE LATER -----------
+		let src_combined= encode_cols_var_adv(&v2d, &vec![0,1,3], r1);
+		let dst_combined = encode_cols_var_adv(&rescols, &vec![0,1,2], r1);
+		let dst_sel = (0..dst_combined.len()).into_iter().map(|i|{
+			if i==0 { zero.clone()
+			}else{//previous loc is 0 (based on the fact that table is
+				  //sorted (for each encoded-step key), and 1st entry is
+				  //dummy 0. So we are taking the one whose previous loc
+				  //is 0. note rescols[2] is locs
+				rescols[2][i-1].is_zero().unwrap().into()
+			}
+		}).collect::<Vec<FpVar<F>>>();
+		let dst_adj = dst_combined.iter().zip(dst_sel.iter())
+			.map(|(x,y)| x*y).collect::<Vec<FpVar<F>>>();
+		let mtb_min_loc= prf_bwdprf_valid.borrow().get_container("mtb_min_loc")
+			.unwrap().borrow().to_vec();
+		let sid_mtb_min_loc= prf_bwdprf_valid.borrow()
+			.get_container("sid_mtb_min_loc").unwrap().borrow().to_vec();
+		check_arr_eq(&sid_mtb_min_loc, &frg, "err checking sid_mtb_min_loc")?; 
+		assert_logup(cs.clone(), &src_combined, &dst_adj, &mtb_min_loc, r2)?;
+
+		//REMOVE LATER ----------------
+		println!("DEBUG USE 7777.5: check_min_loc: num_cons: {}, vec_len: {}", cs.num_constraints()-n2, sidcols[0].len());
+		let n2 = cs.num_constraints();
+		//REMOVE LATER ----------- ABOVE
+
+		//5. prove min_loc - (loc_to_remove + rg_2) - 1
+		let sel = (0..src_rg_end.len()).into_iter().map(|i|
+			&one - & src_min_loc[i].is_zero().unwrap().into()
+		).collect::<Vec<FpVar<F>>>();
+		let saved_diff_loc = prf_bwdprf_valid.borrow().get_container("diff_min")
+			.unwrap().borrow().to_vec();
+		let sid_saved_diff_loc = prf_bwdprf_valid.borrow()
+			.get_container("sid_diff_min").unwrap().borrow().to_vec();
+		let sum= (0..src_rg_end.len()).into_iter().map(|i|
+			&sel[i]*(&saved_diff_loc[i] + 
+				(&loc_to_del[i] + &src_rg_end[i] + &one) - &src_min_loc[i])
+		).collect::<Vec<FpVar<F>>>();
+		check_arr_eq(&sid_saved_diff_loc, &frg, "err checking sid_diff_loc")?; 
+		check_arr_eq(&sum, &zero, "err checking expected sum for diff")?; 
+		//REMOVE LATER ----------------
+		println!("DEBUG USE 7777.6: check loc_to_del + rg2 < min_loc: num_cons: {}, vec_len: {}", cs.num_constraints()-n2, sidcols[0].len());
 		//REMOVE LATER ----------- ABOVE
 
 		Ok( () )
@@ -3178,10 +3255,10 @@ pub mod tests_discharge_adv_gadget{
 	fn test_discharge_adv(){
 		//1. define the sigs
 		let sigs = vec![
-			/* RECOVER LATER
+			 /* RECOVER LATER
 			"sig1;Engine:51-255,Target:0;0&1;/abc..123/;/123....abc/",
 			"sig2;Engine:51-255,Target:0;0&1;/def.*234.*567/;/234....def/",
-			*/
+			 */
 			"sig3;Engine:51-255,Target:0;0&1;/fgh.*1234......56...78/;/56......fgh/",
 		].iter().map(|x| x.to_string()).collect::<Vec<String>>();
 		let needs_dfa = vec![];
