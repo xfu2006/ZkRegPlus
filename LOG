@@ -16257,7 +16257,8 @@ Goal 5. Implementations
 		-> get_step_queue_len()
 
 Thursday 06/12/2025
-LOC: 
+LOC (gadget): 10004 
+LOC (data_processor): 7962
 Goal 1. paper writing (draw diagram)
 	[a] regex
 	[b] sig
@@ -16267,7 +16268,58 @@ Goal 1. paper writing (draw diagram)
 	[f] backward prf
 
 Goal 2. continue the unit testing framework
-	[a]
+	[a] review the code
+	[b] test_compute_sig_adv
+		-> can later add the compute_sig component and verify if 
+			the sigs are discharged
+	[c] test_forward_queue
+	[d] test_fwd_prf can be adaped to test varoius signatures
+		with counting constraints and component subsigs
+		and their evaluation result (on their advice
+
+Goal 3. check the other DFA
+	[a] Emotet: Win.Trojan.Emotet-6397178-0;Engine:81-255,Target:2;0&1;706f7765727368656c6c::i;0/powershell\s+?-e\s+?[A-Za-z0-9+\/=]{20}/i
+	[b] Js.File.MaliciousHeuristic-6260249-0;Engine:81-255,Target:7;0>1&1>7&2&3;6576616c28;76617220;0&1/w(?P<junk>[a-z\d]{3,6})s(?P=junk)c(?P=junk)r(?P=junk)i(?P=junk)p(?P=junk)t(?P=junk).(?P=junk)s(?P=junk)h(?P=junk)e(?P=junk)l(?P=junk)l/;0&1/p(?P<junk>[a-z\d]{3,6})o(?P=junk)w(?P=junk)e(?P=junk)r(?P=junk)s(?P=junk)h(?P=junk)e(?P=junk)l(?P=junk)l(?P=junk).(?P=junk)e(?P=junk)x(?P=junk)e/
+	[c] last time: Js.Files...6260249-0 too slow. This time try Emotet
+		-> first try the version without both
+		-> TODO: try the version with Emotet
+
+Goal 4. read the source code to understand the discharge algorithm on
+	subsig
+	[a] goal: find out the eval result for subsig:
+	[b] function: approx_eval_pm_bounds_subsig() in clamav.rs
+		[a] It simply return Maybe when arr_pos.len>0, False for empty
+	[c] function: based on subsig type
+		-> GeneralRegex => res
+		-> CounterConstraint: need the info of id, num, sop
+			this can be preprocessed, the computation can
+			be encoded as a 3-column table
+			op, num, res -> final_res
+		-> SubsigCountConstraint.
+			needs to retrieve the list of related subsig
+			-> retrieve res_i for each
+			-> update count for each
+			-> again simple calculation comparing with min_required.
+	[d] computation needed
+		-> unfortunately will produce all three calculations for each
+		-> counter constraint default value id, num, sop -> produce
+			a fake value
+		-> subsig count constraint default value related subsig
+			fill with 0
+			assuming no more than 10 subsigs
+			-> we need 10 lookups, 30 updates counter
+			-> maybe 50 * subsigs  = 50 * 2k = 100k which is
+			acceptable for last step.
+
+Goal 5. Design of Next Step
+	[a] first step is to build info_sigs which contains information
+		of type (1,2,3), [op, num] (diffault value) filled,
+			sig_group: up to 10
+		So, maybe encoding the information into two code words
+			depending on if subsig_group is too large
+
+Goal 6. Implementation Plan
+	[a] 
 
 
 

@@ -301,5 +301,376 @@ impl ComputeSigAdvCapacity{
 	}
 }
 
+// --------------------------------------------------------
+//	Unit Test
+// --------------------------------------------------------
+
+#[cfg(test)]
+pub mod tests_compute_sig_adv{
+	use ark_ff::{Zero};
+	use std::{rc::Rc};
+	use ark_bn254::{Fr};
+	use utils::{data::{pack_nibbles}, os::{read_nibbles,proj_root,write_to_file}};
+	use crate::gadgets::{
+		word_extract::{
+			LEGS,
+			tests_word_extract_gadget::{test_gadget_adv},
+		},
+		fsm_adv::{FsmAdvAdvice,FsmAdvCapacity},
+		word_extract_adv::{WordExtractAdvAdvice},
+		discharge_adv::{DischargeAdvAdvice,DischargeAdvGadget,
+			DischargeAdvCapacity,StepQueueItem,StepQueue},
+		traits::{Container,Col,IDX_DATA},
+	};
+	use data_processor::{clam_db::{ClamavDB,RANGE2_BIT}, 
+		type_def::{ClamavApproxConfig},
+		clamav::{default_clamav_cfg, quick_discharge_file_adv}};
+	use folding_schemes::folding::foldpot::sigma_ir1cs::{SigmaGadget,
+		WordInfo, DischargeSigInfo};
+	use folding_schemes::folding::foldpot::container_config::ContainerConfig;
+	use std::collections::{HashMap};
+
+	/// a test case for discharge_test_case	
+	struct Tcase{//test case
+		pub file_content: String,
+		pub sig_to_discharge: String, //the signatures to be discharged
+			//NOTE: the sig should be INCLUDED in the discharge list
+			//of the quick_discharge result's WordInfo. The motivation
+			//is to restrict the testing to the original test case,
+			//had other cases been added which causes expansion of the
+			//list of sigs to discharge.
+		pub b_ised: bool, //whether this runs in ISED mode.
+						  //if in ISED model, the length of discharged_sig
+						  //should be 1.
+		pub b_igc: bool, //whether to run in b_igc mode
+	}
+
+	impl Tcase{
+		pub fn new(file_content: &str, sig_to_disc: &str, b_ised: bool, b_igc: bool)->Self{
+			Self{file_content: file_content.to_string(),
+				sig_to_discharge: sig_to_disc.to_string(),
+				b_ised, b_igc}
+		}
+	}
+
+
+	/// MAINLY for testing the discharge (sed) component.
+	///
+	/// discharge each test case (mainly running through 
+	/// all components from fsm_adv to discharge_adv
+	/// we expect circuit is satisfiable and all SPECIFIED
+	/// sigs in the test case are discharged.
+	fn discharge_test_case(
+		word_dir: &str,
+		db: &ClamavDB<Fr>,
+		tcase: &Tcase,
+		cfg: &ClamavApproxConfig,
+	){
+		//1 data preparation
+		//1.1. write the tcase file contents to the file
+		//then do a quick discharge to retrieve the discharge info.
+		let zero = Fr::zero();
+		let path = format!("{}/data/{}/word.txt", proj_root(), word_dir);
+		write_to_file(&path, &tcase.file_content);
+		let nibbles_raw = read_nibbles(&path);
+		let f_nibbles = nibbles_raw.iter().map(|x| Fr::from(*x as u32))
+			.collect::<Vec<Fr>>();
+		let sig_to_discharge = tcase.sig_to_discharge.clone();
+		let wi: WordInfo = quick_discharge_file_adv(
+			"word.txt", 
+			&nibbles_raw,
+			&db.vec_sigs,
+			&db.map_crit_pat, 
+			&db.map_crit_pat_igc, 
+			&db.dfa_crit, 
+			&db.bundle_subsig.vec_acdfa[0], //dfa_patterns, 
+			&db.dfa_crit_igc,
+			&db.bundle_subsig_igc.vec_acdfa[0], //dfa_patterns_igc,
+			cfg, 
+			&db.sig_to_id
+		); //use optimize mode
+
+		//1.2 verify the sig_to_discharge is in the word info.
+		// NOTE that here we essentially require that sig_to_discharge
+		// be IN the required discharge_list (sed/ised). This helps
+		// to handle hte case more signatures are added which complicates
+		// the original test case.
+		let sigs_info = if tcase.b_ised{&wi.vec_ised_sigs_info}
+			else {&wi.vec_sed_sigs_info};
+		let infos = sigs_info.iter().filter(|i| i.sig_name==sig_to_discharge)
+			.map(|i| i.clone()).collect::<Vec<DischargeSigInfo>>();
+		assert!(infos.len()==1, "ERR in idnetifying: {}, infos.len: {}",
+			sig_to_discharge, infos.len());
+
+		//1.3 set data of acdfa, input_sigs, and bundle info related to the sig.
+		let info = infos[0].clone();
+		let b_igc = tcase.b_igc;
+		let bundle = if !b_igc {&db.bundle_subsig} else {&db.bundle_subsig_igc};
+		assert!(bundle.b_igc == b_igc);
+		let acdfa = if tcase.b_ised{
+			let ids = bundle.vec_sig_names.iter().enumerate()
+				.filter(|(_i,s)| s.to_string()==sig_to_discharge)
+				.map(|(i,_s)| i).collect::<Vec<usize>>();
+			assert!(ids.len()==1, "ERROR cannot find id or duplicate for {}, details of ids: {:?}", sig_to_discharge, ids);
+			let id = ids[0];
+			&bundle.vec_acdfa[id]
+		}else {
+			&bundle.vec_acdfa[0]
+		};
+		let sig_id = *(db.sig_to_id.get(&sig_to_discharge).unwrap());
+		let input_subsigs = info.subsig_ids.iter().map(|i|
+			Fr::from(acdfa.gen_subsig_id(sig_id, *i+1) as u32)
+		).collect::<Vec<Fr>>();
+		let store_id = if tcase.b_ised{sig_id} else {0};//0 for all
+		let fsm_id = ClamavDB::<Fr>::pm_acdfa_id(store_id, b_igc);
+		let steps_store = &bundle.vec_subsig_step_stores[store_id]; 
+
+		//1.4 capacilities of fsm and discharge components
+		let wlen = 2usize;
+		let (nibble_len, state_bits) = (wlen*LEGS, acdfa.state_part_bits);
+		let cap = FsmAdvCapacity{max_nibble_len: nibble_len, 
+			acdfa_state_part_bits: state_bits, 
+			subsigs: 4,
+			avg_pats_per_subsig: 4,
+			perc_pats_in_trace: 27 
+		};
+		let cap_disc = DischargeAdvCapacity{//capaciity of discharge comopnent
+			max_nibble_len: nibble_len, 
+			subsigs: cap.subsigs,
+			avg_pats_per_subsig: cap.avg_pats_per_subsig,
+			perc_pats_in_trace: cap.perc_pats_in_trace, 
+		};
+
+		//2. create advice for word_extract_adv, fsm_adv, and discharge_adv
+		// both advices are needed for producing related container_config
+		// with external col referece.
+		let all_word = pack_nibbles(&f_nibbles);
+		let alen = all_word.len();
+		let n_cycles = if alen%wlen==0 {alen/wlen} else {alen/wlen+1};
+
+		//2.0 input that needs to be fed to advice. update it at end of loop
+		let mut inp_state = Fr::from((acdfa.init_state + 1) as u32);
+		let mut inp_loc = Fr::from(1u32);
+		let mut inp_steps_queue = DischargeAdvAdvice::gen_empty_steps_queue_serialized(&input_subsigs, &steps_store, fsm_id, &cap_disc);  
+
+		for i in 0..n_cycles{
+			//2.1 the word_extract_adv
+			let end = if wlen*(i+1)>alen {alen} else {wlen*(i+1)};
+			let word = all_word[wlen*i..end].to_vec();
+			let word = if word.len()==wlen {word} else
+				{vec![word.clone(), vec![zero; wlen-word.len()]].concat()};	
+			let act_size = word.len();
+			let adv_wea = WordExtractAdvAdvice::new(&word, act_size);
+			let stmt_wea = adv_wea.stmt_container;
+			let cfg_wea = stmt_wea.borrow().get_cfg(); 
+
+			//2.2 the fsm_adv (SED approach)
+			let nibbles = stmt_wea.borrow().get_container("nibbles").unwrap()
+				.borrow().to_vec();
+			assert!(nibbles.len()==nibble_len);
+
+			let adv_faa = FsmAdvAdvice::new(&nibbles, &acdfa, inp_state, 
+				inp_loc, &input_subsigs, &cap, fsm_id, 
+				&bundle.vec_subsig_stores[store_id]); 
+			let stmt_faa = adv_faa.stmt_container;
+			let cfg_faa = stmt_faa.borrow().get_cfg(); 
+
+			//2.3 the discharge_adv
+			let pat_loc = stmt_faa.borrow().search_container("fsm_adv_stmt packed_trace pat_loc sorted_tbl").unwrap();
+			let adv_disc= DischargeAdvAdvice::new(&pat_loc, &input_subsigs,
+				fsm_id, steps_store, &cap_disc, &inp_steps_queue);
+			let oup_queue = adv_disc.get_output_steps_queue();
+			let stmt_disc= adv_disc.stmt_container;
+			let cfg_disc= stmt_disc.borrow().get_cfg(); 
+
+			//2.4 given cfgs, set up the positions
+			let mut vec_cfg = vec![cfg_wea.clone(), cfg_faa.clone(), cfg_disc];
+			ContainerConfig::adjust_locations(&mut vec_cfg); //resolve
+
+			//2.6. generate the 7 segments of output for building statment
+			//from inp to si_data
+			let cps1 = stmt_wea.borrow().gen_stmt_components(); 
+			let cps2 = stmt_faa.borrow().gen_stmt_components(); 
+			let cps3 = stmt_disc.borrow().gen_stmt_components(); 
+			let cps = cps1.into_iter().zip(cps2.into_iter()).map(|(a,b)|
+				vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
+			let cps = cps.into_iter().zip(cps3.into_iter()).map(|(a,b)|
+				vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
+
+			//2.7 create the gadget
+			let lkup_share_size = 4usize;
+			let mut dcg = DischargeAdvGadget::<Fr>::new(&cap_disc, fsm_id,
+				&vec![cfg_wea.clone(), cfg_faa.clone()],
+				&bundle.vec_subsig_step_stores[0], //for sed
+			);
+			dcg.set_container_cfg(vec_cfg.clone().into(),2);  //2 for
+															// it's the 3rd cfg
+			let rg = Rc::new(dcg);
+
+			//3. test it
+			test_gadget_adv::<Fr>(rg, &word, &cps[0], &cps[1], &cps[2],
+				&vec![//subtbl_id (concats of si_inp, si_oup, si_data)
+					cps[3].clone(), 
+					cps[4].clone(), 
+					cps[5].clone(),
+				].concat(), lkup_share_size,
+				false, //not legacy mode
+				Some(vec_cfg),
+			);
+
+			//4. reset the inputs for the next cycle
+			let states = stmt_faa.borrow()
+				.search_container("fsm_adv_stmt fsm_acc states")
+				.expect("no states")
+				.borrow().to_vec();
+			inp_state = states[states.len()-1];
+			let locs = stmt_faa.borrow()
+				.search_container("fsm_adv_stmt fsm_acc locs")
+				.expect("no locs")
+				.borrow().to_vec();
+			inp_loc = locs[locs.len()-1];
+			inp_steps_queue = StepQueue::parse_from(&oup_queue, &cap_disc);
+			println!("---- DEBUG USE 300: new inp_steps_queue is ---");
+			inp_steps_queue.dump();
+		}
+
+		//4. verify the sigs_to_discharge have been discharged
+		//todo!()
+	}
+
+	#[test]
+	fn test_compute_sig_adv(){
+		//1. define the sigs
+		let sigs = vec![
+			/* RECOVER LATER
+			"sig1;Engine:51-255,Target:0;0&1;/abc..123/;/123....abc/",
+			"sig2;Engine:51-255,Target:0;0&1;/def.*234.*567/;/234....def/",
+			*/
+			"sig3;Engine:51-255,Target:0;0&1;/fgh.*1234......56...78/;/56......fgh/",
+		].iter().map(|x| x.to_string()).collect::<Vec<String>>();
+		let needs_dfa = vec![];
+		let needs_ised= vec![];
+		let needs_ised_igc = vec![];
+		let sigs_dir = "debug_samples/sed/workdir";
+		let cfg = default_clamav_cfg();
+		let db = ClamavDB::<Fr>::build_test_db(&cfg, &sigs_dir, &sigs, 
+			&needs_dfa, &needs_ised, &needs_ised_igc);
+
+		//2. define the test cases
+		let testcases = vec![
+			/* RECOVER LATER
+			//1. fails sig1 coz gap len incorrect
+			Tcase::new("abcddd123", "sig1", false, false), //b_ised=F, igc=F
+			//2. fails sig2 coz 3rd pattern missing
+			Tcase::new("defxx234xx56", "sig2", false, false),
+			//3. similar to test2 for longer string (2 cycles)
+			// debug to verify that location 193 (corresponding to
+			// 234 is added to "to_add" and in "res". "56" is not identified
+			Tcase::new(
+				&format!("def{}234xx56","x".repeat(90)), 
+				"sig2", false, false),
+			//4. a case where only one patterns occur at all, and across 3 cyles
+			Tcase::new(
+				&format!("ddd{}234xx{}56","x".repeat(90), "u".repeat(90)), 
+				"sig2", false, false),
+			*/
+			//5. a case which has both fwd and backward elimination.
+			//manually check debug messages of backward and forward proofs
+			//baseically: the last 78 is not added, but the
+			//first 78 kills the 1st 56, which then kills the first three
+			//1234
+			Tcase::new("fghxx1234xx1234xx1234x1234x56xxx56xxx78xx78xx", "sig3", false, false), 
+		];
+
+		for tc in testcases{
+			discharge_test_case(&sigs_dir, &db, &tc, &cfg);
+		}
+	}
+
+	fn to_vf(vec: Vec<u32>)->Vec<Fr>{
+		vec.iter().map(|x| Fr::from(*x)).collect()
+	}
+
+	#[test]
+	fn test_compute_sig_advice(){
+		//1. test the serialization
+		let max :u32= (1<<RANGE2_BIT) - 1;
+		let subsig100_steps = vec![
+			StepQueueItem::new2( 
+				// subsig, id, pat, rg_start, rg_end
+				to_vf(vec![100u32, 0, 0, 0, 0]), to_vf(vec![1u32])),
+			StepQueueItem::new2( 
+				to_vf(vec![100u32, 1, 2, 10, 100]), to_vf(vec![11u32, 12])),
+			StepQueueItem::new2( 
+				to_vf(vec![100u32, 2, 3, 20, 30]), to_vf(vec![16u32, 22])),
+			StepQueueItem::new2( 
+				to_vf(vec![100u32, 3, max, 0, 0]), to_vf(vec![])),
+		];
+		let subsig200_steps = vec![
+			StepQueueItem::new2( 
+				to_vf(vec![200u32, 0, 0, 0, 0]), to_vf(vec![1u32])),
+			StepQueueItem::new2( 
+				to_vf(vec![200u32, 1, 20, 20, 120]), to_vf(vec![22u32, 30])),
+			StepQueueItem::new2( 
+				to_vf(vec![200u32, 2, 30, 10, 20]), to_vf(vec![31u32, 32])),
+			StepQueueItem::new2( 
+				to_vf(vec![200u32, 3, max, 0, 0]), to_vf(vec![])),
+		];
+		let subsigs = to_vf(vec![100,200]);
+		let mut store_items = HashMap::new();
+		store_items.insert(Fr::from(100u32), subsig100_steps);
+		store_items.insert(Fr::from(200u32), subsig200_steps);
+		let capacity= DischargeAdvCapacity{
+			max_nibble_len: 62, 
+			subsigs: 4,
+			avg_pats_per_subsig: 4,
+			perc_pats_in_trace: 48,
+		};
+		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone()};
+		let ct = sq.to_container("ct", true, false, false);
+		let pat = ct.borrow().get_container("encoded")
+			.unwrap().borrow().to_vec();
+		let loc = ct.borrow().get_container("locs").unwrap().borrow().to_vec();
+		let vec = vec![pat, loc].concat();
+		let sq2 = StepQueue::parse_from(&vec, &capacity);
+		assert!(sq == sq2);
+
+		//2. test the forward proof
+		let pat_loc = Container::new("pat_loc"); 
+		pat_loc.borrow_mut().add_col(Col::new(
+			to_vf(vec![2, 2, 2, 2,   3,3,3,3,3,   20,20,20,   30,30,30,30,30]), 
+				"sorted_key", IDX_DATA)); 
+		pat_loc.borrow_mut().add_col(Col::new(
+		  to_vf(vec![0, 1, 2, 3,   0,1,2,3,4,    0,1,2,     0,1,2,3,4]), 
+				"sorted_id", IDX_DATA)); 
+		pat_loc.borrow_mut().add_col(Col::new(
+	   	   to_vf(vec![0, 63,102,max,  0,65,93,94,max,  0,51,max, 0,60,61,72,max ]), "sorted_val", IDX_DATA)); 
+		let (to_add, res, prf) = sq.gen_forward_prf(&pat_loc);
+
+		let b_details = false;
+		if b_details{
+			println!("DEBUG USE 50001: to_add");
+			to_add.dump();
+			println!("DEBUG USE 50002: res");
+			res.dump();
+			println!("DEBUG USE 50003: proof");
+			prf.dump();
+		}
+
+		let vec100 = res.store_items.get(&Fr::from(100)).unwrap(); 
+		let vec200 = res.store_items.get(&Fr::from(200)).unwrap();
+		assert!(vec100[1].pat==Fr::from(2u32));
+		assert!(vec100[1].locs==to_vf(vec![11,12,63]));
+		assert!(vec100[2].pat==Fr::from(3u32) && 
+			vec100[2].locs==to_vf(vec![16,22,93]));
+		assert!(vec200[1].pat==Fr::from(20u32) && 
+			vec200[1].locs==to_vf(vec![22,30,51]));
+		assert!(vec200[2].pat==Fr::from(30u32));
+		assert!(vec200[2].locs==to_vf(vec![31,32,61]));
+	}
+
+
+}
+
 
 
