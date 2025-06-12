@@ -16256,7 +16256,18 @@ Goal 5. Implementations
 	[g] add function to DischargeAdvCapacity
 		-> get_step_queue_len()
 
+Thursday 06/12/2025
+LOC: 
+Goal 1. paper writing (draw diagram)
+	[a] regex
+	[b] sig
+	[c] store
+	[d] PatLoc
+	[e] Forward Result Queue
+	[f] backward prf
 
+Goal 2. continue the unit testing framework
+	[a]
 
 
 

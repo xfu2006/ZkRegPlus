@@ -1,0 +1,5 @@
+new_src contains the ORIGINAL data set from clamav.
+	where removed.lda contains the info of 15 sigs removed (and reason)
+scripts/gen_data.py generates the main.dat used in the data set (it
+	does some re-writing of some sigs for various reason such as
+	unrolling).
