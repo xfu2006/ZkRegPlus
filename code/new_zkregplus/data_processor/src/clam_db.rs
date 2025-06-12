@@ -19,7 +19,7 @@ use std::sync::{Arc};
 use std::fmt;
 use crate::{
 	hex_acdfa::{HexACDFA},
-	type_def::{ClamavSig,ClamavApproxConfig,ClamSigType,SubsigPatternStore, SubsigPatternStoreItem,SubsigStepStore, SubsigStepStoreItem, BundleSubsigStore},
+	type_def::{ClamavSig,ClamavApproxConfig,ClamSigType,SubsigPatternStore, SubsigPatternStoreItem,SubsigStepStore, SubsigStepStoreItem, BundleSubsigStore, SubSigType},
 	clamav::{gen_clamav_sig,default_clamav_cfg},
 };
 use utils::{

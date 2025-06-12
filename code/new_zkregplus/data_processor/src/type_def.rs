@@ -76,13 +76,13 @@ pub struct PcreInfo{
 #[derive(Debug,PartialEq,Clone,Serialize,Deserialize)]
 pub enum SubSigType{
 	/// general regex for General
-	GeneralRegex,
+	GeneralRegex = 0,
 	/// counter constraint (like 0=1, 1=0), require the subsignature
 	/// involved needs to be ONE single pattern word
-	CounterConstraint,
+	CounterConstraint = 1,
 	/// SubsigCountConstraint expecting the MINIMUM number of
 	/// subsignatures that are met
-	SubsigCountConstraint,
+	SubsigCountConstraint = 2,
 }
 
 /// Object for encapsulating subsignature of a ClamavSig
@@ -113,7 +113,11 @@ pub struct SubSigObj{
 pub enum TriVal{False, True, Maybe}
 
 #[derive(Debug,Copy,Clone,PartialEq)]
-pub enum CompOp{GT, LT, EQ}
+pub enum CompOp{
+	GT = 1, 
+	LT = 2, 
+	EQ = 3,
+}
 
 
 #[derive(Debug,Clone)]
@@ -188,6 +192,27 @@ pub struct SubsigPatternStore{
 	/// map from subsig_id to the record. We assume that
 	/// item is small, so returning by clone is ok.
 	pub subsig_to_rec: HashMap<usize, SubsigPatternStoreItem>,
+}
+
+/// One record in SubsigInfoStore
+/// It contains the information of the type of subsig, 
+///   if counter constraints the operator, and the group-subsig
+///   if the component-subsig if it's SubsigCountConstraint
+#[derive(Serialize, Deserialize,Clone,Debug)]
+pub struct SubsigInfoStoreItem{
+	/// the subsig ID
+	pub subsig_id: usize,
+	/// the subsig type converted from SubSigType (0-GeneralRegex, ...)
+	pub subsig_type: u8, //converted from SubSigType
+	/// the operator CompOp (default 0 - no op)
+	pub comp_op: u8, 
+	/// the num related to comp_op (default 0, will yield tautology)
+	pub comp_num: usize,
+	/// the min_required (if SubsigConounterConstraint, default 0)
+	pub min_required: usize,
+	/// the related subsigs (if SubsigCounterConstraint), padded by 0
+	// TODO! figure out what is the size range.
+	pub component_subsigs: [usize; 8]
 }
 
 /// One record in SubsigStepStore
