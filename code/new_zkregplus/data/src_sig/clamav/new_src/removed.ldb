@@ -1,5 +1,5 @@
 #------------------------------------
-#REMOVED signatures:13
+#REMOVED signatures:14
 # with silgiht modification e.g., change Target to 0 and
 #drop EP+0 which is file parser dependent, and IconGroup and Target File size.
 #
@@ -19,3 +19,4 @@
 #Win.Trojan.Generic-47;Engine:51-255,Target:0;(0|1|2);83ec44;8bff558bec5150523eff153c10;558bec81ecfc000000e8210000005064
 #Win.Trojan.Ag-4254306-1;Engine:51-255,Target:0;(0|1);EP+0:5064ff35000000006489250000000033c0890850454332;*:426f6d65*426f6d65
 #Html.Exploit.CVE_2017_0069-6013012-3;Engine:81-255,Target:3;0&1&2&3;77696e646f772e6f70656e28;6c6f636174696f6e2e7265706c61636528;766172;2/var.{0,50}?=.{0,100}?[\x22\x27].*?#([^\x22\x27\x23])\1{100,}?/
+#14. (due to no DFA, unable to discharge via ISED) #Js.File.MaliciousHeuristic-6260249-0;Engine:81-255,Target:7;0>1&1>7&2&3;6576616c28;76617220;0&1/w(?P<junk>[a-z\d]{3,6})s(?P=junk)c(?P=junk)r(?P=junk)i(?P=junk)p(?P=junk)t(?P=junk).(?P=junk)s(?P=junk)h(?P=junk)e(?P=junk)l(?P=junk)l/;0&1/p(?P<junk>[a-z\d]{3,6})o(?P=junk)w(?P=junk)e(?P=junk)r(?P=junk)s(?P=junk)h(?P=junk)e(?P=junk)l(?P=junk)l(?P=junk).(?P=junk)e(?P=junk)x(?P=junk)e/

@@ -16344,6 +16344,13 @@ Goal 6. Implementation Plan
 			we then do 3 lkups + 3*3 updates = 12 ops
 			then 12 ops * 2k = 24k constraints which is minimal.
 
+Friday 06/13/2025
+LOC (data):  7987
+LOC (gadget): 10375
+
+Goal 1. update data
+
+Goal 2. implement SubsigInfo
 -- TODO --
 	[b] include it BundleSubsigStore
 	[c] define functions that are related in BundleSubsigStore
