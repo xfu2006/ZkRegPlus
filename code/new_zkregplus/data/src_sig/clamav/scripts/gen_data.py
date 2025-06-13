@@ -4,6 +4,8 @@
 # Revised: 06/08/2024: fix the MIN_PATTERN_LOGIC
 # Revised: 07/11/2024: final version for the data set
 #
+# It generates all categories of data and place the generated .dat (sig)
+# files into ../categories
 # --------------------------------------------------------
 # Classifying signatures based on processing algorithm.
 # The signatures are classified and saved to seprate files:
@@ -30,7 +32,7 @@ import sys;
 import re;
 from ahocorasick import *;
 
-SRC = "data/clamav/new_src/main.ldb"
+SRC = "../new_src/main.ldb"
 LOG1 = 1;
 LOG2 = 2;
 LOG3 = 3;
@@ -334,7 +336,7 @@ def filter_by_expr(arr_rec):
 
 # return all bin file path
 def get_all_binfile():
-	arrlines = open("src/experimental/list_exec.txt").readlines();
+	arrlines = open("./list_exec.txt").readlines();
 	# REMOVE LATER -----------
 	#arrlines = arrlines[0:10];
 	# REMOVE LATER ----------- ABOVE
@@ -429,6 +431,7 @@ def run_all_files(set_words, bar, set_critical, d_critical, db_sig):
 	arr_dict = [];
 	freq_pats = set([]);
 	for fpath in files:
+		print("processing: " + fpath);
 		s = read_binfile(fpath);
 		(s1, dict1) = run_file(fsa, s, fpath, bar, set_critical, d_critical, db_sig);
 		arr_dict.append(dict1);
@@ -683,7 +686,7 @@ arr_small_pm_reg = diff(arr_new5, arr_new6);
 
 
 # WRITE the file
-path = "data/clamav/categories/";
+path = "../categories/";
 write_file(path + "pcre.dat", "# Those containing PCRE exprs", arr_pcre);
 write_file(path + "pos.dat", "# Those not regular due to pos constraints", arr_pos);
 write_file(path + "mods.dat", "# Those have complex modifiers such as fullwords and combinations more than 2 modifiers", arr_mods);

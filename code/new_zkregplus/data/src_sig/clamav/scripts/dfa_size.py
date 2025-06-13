@@ -82,7 +82,7 @@ class Worker(threading.Thread):
 # -----------------------------
 # Main 
 # -----------------------------
-SIG_FILE = "data/clamav/categories/pcre.dat";
+SIG_FILE = "../categories/pcre.dat";
 TIMEOUT = 20; #timeout in SECONDS
 N_WORKERS = 5;
 
