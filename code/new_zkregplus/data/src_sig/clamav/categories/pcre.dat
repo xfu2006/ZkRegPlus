@@ -150,7 +150,6 @@ Email.Phishing.VOF1-6231768-1;Engine:81-255,Container:CL_TYPE_MAIL,Target:0;2;0:
 Email.Phishing.VOF1-6231770-1;Engine:81-255,Container:CL_TYPE_MAIL,FileSize:261120-50000000,Target:0;1;0:504b;0/HUD\.jar/
 Email.Phishing.VOF1-6231771-1;Engine:81-255,Container:CL_TYPE_MAIL,Target:0;1;0:504b;0/0\.72077800\s1489544882\.jar/
 Doc.Macro.CmdC-6249572-0;Engine:81-255,Target:2;0&(1|2);0:4174747269627574652056425f4e616d65203d2022;0/c(?P<junk>[a-zA-Z\d]{4,7})m(?P=junk)d(?P=junk) (?P=junk)\x2f(?P=junk)c/;0/W(?P<junk>[a-zA-Z\di]{4,7})S(?P=junk)c(?P=junk)r(?P=junk)i(?P=junk)p(?P=junk)t/
-Js.File.MaliciousHeuristic-6260249-0;Engine:81-255,Target:7;0>1&1>7&2&3;6576616c28;76617220;0&1/w(?P<junk>[a-z\d]{3,6})s(?P=junk)c(?P=junk)r(?P=junk)i(?P=junk)p(?P=junk)t(?P=junk).(?P=junk)s(?P=junk)h(?P=junk)e(?P=junk)l(?P=junk)l/;0&1/p(?P<junk>[a-z\d]{3,6})o(?P=junk)w(?P=junk)e(?P=junk)r(?P=junk)s(?P=junk)h(?P=junk)e(?P=junk)l(?P=junk)l(?P=junk).(?P=junk)e(?P=junk)x(?P=junk)e/
 Email.Phishing.VOF2-6261595-0;Engine:81-255,Target:4;1;436f6e74656e742d547970653a;0/vw[\d]{4,8}\.7z/
 Email.Phishing.VOF1-6261676-1;Engine:81-255,Container:CL_TYPE_MAIL,Target:0;1;0:504b;0/Tax\sRefund\sForm\.jar/
 Swf.Exploit.CVE_2017_2934-6261685-0;Engine:81-255,Target:0;0&1;0:415446;0/ATF.{3}\xFF.{1}[\x80-\xFF].{4}[\x00-\x12][\x00-\x12][\x00-\x13]/

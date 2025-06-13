@@ -16353,8 +16353,13 @@ Goal 1. update data
 	[b] try to regenerate data using scripts/gen_data.py but
 		-> pip install pyahocorasick --break-system-packages
 
+Goal 2. Writing
+	[a] regex pattern
+	[b] pat_loc
+	[c] step queue -> DONE
+
 Goal 2. implement SubsigInfo
--- TODO --
+	[a] refine the type definition
 	[b] include it BundleSubsigStore
 	[c] define functions that are related in BundleSubsigStore
 	[d] unit test in new 

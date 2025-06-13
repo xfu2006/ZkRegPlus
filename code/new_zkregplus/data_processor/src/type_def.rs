@@ -211,8 +211,12 @@ pub struct SubsigInfoStoreItem{
 	/// the min_required (if SubsigConounterConstraint, default 0)
 	pub min_required: usize,
 	/// the related subsigs (if SubsigCounterConstraint), padded by 0
-	// TODO! figure out what is the size range.
-	pub component_subsigs: [usize; 8]
+	/// Note its size range from 0 to 62. So we would have to end
+	/// up with a flexible size data table design.
+	/// There are 383 subsigs among 2k subsigs that has SubsigCountConstraint
+	/// type. The avg number of component subsigs is about 3 (including all 
+	/// 2k other general subsigs)
+	pub component_subsigs: Vec<usize>,
 }
 
 /// One record in SubsigStepStore
