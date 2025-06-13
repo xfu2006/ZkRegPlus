@@ -5,7 +5,7 @@
 #RUST_BACKTRACE=1 
 #cargo test -- test_bwd_prf --show-output --nocapture
 RUST_BACKTRACE=1 
-cargo test -- test_discharge_adv --show-output --nocapture
+cargo test -- test_compute_sig_adv --show-output --nocapture
 
 #cargo test -- test_encode --show-output --nocapture
 #RUST_BACKTRACE=1 cargo test -- test_tbl_left_join --show-output --nocapture

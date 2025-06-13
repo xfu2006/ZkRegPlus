@@ -18,8 +18,9 @@ use std::{collections::{HashMap,HashSet}};
 use std::sync::{Arc};
 use std::fmt;
 use crate::{
+	strings::{is_match,extract_nums,find_only},
 	hex_acdfa::{HexACDFA},
-	type_def::{ClamavSig,ClamavApproxConfig,ClamSigType,SubsigPatternStore, SubsigPatternStoreItem,SubsigStepStore, SubsigStepStoreItem, BundleSubsigStore, SubSigType},
+	type_def::{ClamavSig,ClamavApproxConfig,ClamSigType,SubsigPatternStore, SubsigPatternStoreItem,SubsigStepStore, SubsigStepStoreItem, BundleSubsigStore, SubSigType,SubsigInfoStore, SubsigInfoStoreItem,CompOp},
 	clamav::{gen_clamav_sig,default_clamav_cfg},
 };
 use utils::{
@@ -43,8 +44,8 @@ pub const STATE_BIT:usize =  24;
 
 /// The bit-width of RANGE2 table 
 /// IN PRODUCTION NEEDS TO CHANGE THE SAME SIZE OF STATE_BIT
-//pub const RANGE2_BIT: usize = 8;
-pub const RANGE2_BIT: usize = 26; //(allowing 64M nibbles = 32MB)
+pub const RANGE2_BIT: usize = 8;
+//pub const RANGE2_BIT: usize = 26; //(allowing 64M nibbles = 32MB)
 
 
 // the following are sub-table ids
@@ -589,6 +590,42 @@ impl SubsigStepStore{
 	}
 }
 
+impl SubsigInfoStoreItem{
+	pub fn dump(&self){
+		println!("==== SubsigInfoStoreItem subsig_id: {}====", self.subsig_id);
+		println!("  subsig_type: {} -> {:#?}, op: {} -> {:#?}, comp_num: {}, min_req: {}, component_subsig.len: {}", 
+			self.subsig_type, 
+			SubSigType::from(self.subsig_type),
+			self.comp_op,
+			CompOp::from(self.comp_op),
+			self.comp_num,
+			self.min_required,
+			self.component_subsigs.len()
+		);
+		for i in 0..self.component_subsigs.len(){
+			println!(" -- i: {}, comp_subsig: {}",i,self.component_subsigs[i]);
+		}
+	}
+}
+
+
+impl SubsigInfoStore{
+	pub fn new()->Self{
+		Self{subsig_ids: vec![], subsig_to_rec: HashMap::new()}
+	}
+	pub fn add(&mut self, item: &SubsigInfoStoreItem){
+		let subsig_id = item.subsig_id;
+		assert!(!self.subsig_ids.contains(&subsig_id), 
+			"subsig_id already exists: {}", subsig_id);
+		self.subsig_ids.push(subsig_id);	 //note: not sorted yet!
+		self.subsig_to_rec.insert(subsig_id, item.clone());
+	}
+	pub fn finalize(&mut self){
+		self.subsig_ids.sort();
+	}
+}
+
+
 impl <F:PrimeField> ClamavDB<F>{
 	/// add the init, non-final states, final states, and transitions
 	/// into its lookup table. Note that they are 4 separate
@@ -752,7 +789,8 @@ impl <F:PrimeField> ClamavDB<F>{
 		selected_sigs: &Vec<Arc<ClamavSig>>,
 		acdfa: &HexACDFA,
 		b_igc: bool
-	)-> ((SubsigPatternStore,SubsigStepStore), HashMap<String, Vec<String>>)
+	)-> ((SubsigPatternStore,SubsigStepStore,SubsigInfoStore), 
+		HashMap<String, Vec<String>>)
 	{
 		//1. generate tuples to insert for each sig, and subsig object
 		let store_items = selected_sigs.par_iter().map(|s|{
@@ -760,6 +798,7 @@ impl <F:PrimeField> ClamavDB<F>{
 				.expect(&format!("can't find sig: {}", s.name));
 			let mut store_items = vec![]; //for store_pat
 			let mut store_step_items = vec![]; //for store_steps
+			let mut store_info_items = vec![]; //for SubsigInfoStore
 			for i in 0..s.vec_subsig_obj.len(){
 				//1. generate the subsig id
 				let subsig_id = acdfa.gen_subsig_id(*sig_id, i+1);
@@ -803,7 +842,7 @@ impl <F:PrimeField> ClamavDB<F>{
 				let item = SubsigPatternStoreItem::new(subsig_id, tuples); 
 				store_items.push(item);
 
-				//4. build the store_items for step info
+				//4. build the store_items for step item 
 				let max:usize = (1<<RANGE2_BIT) - 1;
 				let vec_bounds = if b_igc!=s.vec_subsig_obj[i].b_ignore_case{
 					vec![]
@@ -827,13 +866,64 @@ impl <F:PrimeField> ClamavDB<F>{
 				let item = SubsigStepStoreItem{subsig_id: subsig_id,
 					vec_pm_bounds: vec_bounds};
 				store_step_items.push(item);
+
+				//5. build the subsig_step_info_store_item 
+				let subsig_obj = &s.vec_subsig_obj[i];
+				if subsig_obj.b_ignore_case==b_igc{
+					//only add it when the same igc mode
+					let subsig_type = subsig_obj.subsig_type.clone() as u8;
+					let (comp_op, comp_num, min_required, 
+						component_subsigs) = match subsig_obj.subsig_type{
+						SubSigType::GeneralRegex=>{
+							//dummy values 0 for all
+							//comp_op, comp_num, min_required, vec_component_subsig
+							(0u8, 0u32, 0usize, vec![])
+						},
+						SubSigType::CounterConstraint=>{
+							let sig = &subsig_obj.value;
+							if !is_match(r"^\d+( *)(=|<|>|==)( *)\d+$", sig){
+								panic!("INVALID counter sig: {}", sig);
+							}
+							let num = extract_nums(&sig)[1]; 
+							let sop = find_only(r">|<|=", &sig);
+							let (op, num) = ClamavSig::strop_to_comp_op(&sop, num);
+							let op = op as u8;
+							let num = num as u32;
+							(op, num, 0usize, vec![])
+						},
+						SubSigType::SubsigCountConstraint=>{
+							let min_req = subsig_obj.min_required;
+							let mut vec_component_subsig_ids = subsig_obj
+								.set_subsigs.iter().map(|cid|
+									acdfa.gen_subsig_id(*sig_id, cid+1)
+								).collect::<Vec<usize>>();
+							vec_component_subsig_ids.sort();
+							(0, 0, min_req, vec_component_subsig_ids)
+						},
+					};
+					let item = SubsigInfoStoreItem{subsig_id,
+						subsig_type,
+						comp_op,
+						comp_num,
+						min_required,
+						component_subsigs
+					};
+					//REMOVE LATER ---------------
+					println!("DEBUG USE 6601 dump of new info item");
+					item.dump();
+					//REMOVE LATER --------------- ABOVE
+					store_info_items.push(item);
+				}//end of check IGC
 			}
-			(store_items,store_step_items)
-		}).collect::<Vec<(Vec<SubsigPatternStoreItem>,Vec<SubsigStepStoreItem>)>>();
+			(store_items,store_step_items, store_info_items)
+		}).collect::<Vec<(Vec<SubsigPatternStoreItem>,
+			Vec<SubsigStepStoreItem>,Vec<SubsigInfoStoreItem>)>>();
 		let store_items_pat = store_items.par_iter().map(|t|
 			t.0.clone()).flatten().collect::<Vec<SubsigPatternStoreItem>>();
 		let store_items_step = store_items.par_iter().map(|t|
 			t.1.clone()).flatten().collect::<Vec<SubsigStepStoreItem>>();
+		let store_items_info= store_items.par_iter().map(|t|
+			t.2.clone()).flatten().collect::<Vec<SubsigInfoStoreItem>>();
 
 		//2. build the store
 		let mut store_pat = SubsigPatternStore::new();
@@ -848,6 +938,13 @@ impl <F:PrimeField> ClamavDB<F>{
 			store_step.add(&item);
 		}
 		store_step.finalize();
+
+		//4. build the store3: SubsigInfoStore
+		let mut store_info = SubsigInfoStore::new();
+		for item in store_items_info{
+			store_info.add(&item);
+		}
+		store_info.finalize();
 
 		//3. build the map from words to sigs
 		let mut map = HashMap::<String,Vec<String>>::new();
@@ -866,7 +963,7 @@ impl <F:PrimeField> ClamavDB<F>{
 			map.insert(dfa_alpha_str, vec![]);
 		}
 
-		((store_pat, store_step), map)
+		((store_pat, store_step, store_info), map)
 	}
 
 
@@ -949,6 +1046,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		let stores = vec![vec![store_0], vec_store].concat();
 		let stores_pat = stores.par_iter().map(|x| x.0.clone()).collect();
 		let stores_step = stores.par_iter().map(|x| x.1.clone()).collect();
+		let stores_info = stores.par_iter().map(|x| x.2.clone()).collect();
 		let map_pats = vec![vec![map_pat_0], vec_map_pat].concat();
 		let mut vec_2d_sigs = vec![sigs.clone()]; 
 		vec_2d_sigs.append(&mut sigs_needed_2d);
@@ -963,6 +1061,7 @@ impl <F:PrimeField> ClamavDB<F>{
 			vec_acdfa: dfas,
 			vec_subsig_stores: stores_pat,
 			vec_subsig_step_stores: stores_step,
+			vec_subsig_info_stores: stores_info,
 		}
 
 	}

@@ -545,8 +545,12 @@ pub mod tests_compute_sig_adv{
 			/* RECOVER LATER
 			"sig1;Engine:51-255,Target:0;0&1;/abc..123/;/123....abc/",
 			"sig2;Engine:51-255,Target:0;0&1;/def.*234.*567/;/234....def/",
-			*/
 			"sig3;Engine:51-255,Target:0;0&1;/fgh.*1234......56...78/;/56......fgh/",
+			//sig4: counter constraint
+			"sig4;Engine:51-255,Target:0;0>2;/abc..123/",
+			*/
+			//sig5: subsig counter constraint (here min req is 2)
+			"sig5;Engine:51-255,Target:1;(0|1)>1,2;/abc..123/;/56...fgh/",
 		].iter().map(|x| x.to_string()).collect::<Vec<String>>();
 		let needs_dfa = vec![];
 		let needs_ised= vec![];
@@ -573,13 +577,17 @@ pub mod tests_compute_sig_adv{
 			Tcase::new(
 				&format!("ddd{}234xx{}56","x".repeat(90), "u".repeat(90)), 
 				"sig2", false, false),
-			*/
 			//5. a case which has both fwd and backward elimination.
 			//manually check debug messages of backward and forward proofs
 			//baseically: the last 78 is not added, but the
 			//first 78 kills the 1st 56, which then kills the first three
 			//1234
 			Tcase::new("fghxx1234xx1234xx1234x1234x56xxx56xxx78xx78xx", "sig3", false, false), 
+			//5. fails sig4 coz gap because missing one appearance
+			Tcase::new("abcdd123xabcxx123xxabcxx333", "sig4", false, false), //b_ised=F, igc=F
+			*/
+			//6. fails sig5 coz combined pattern 1 and 2 missing 1 time.
+			Tcase::new("abcdd123xabx56xxxfghxxabcdd122", "sig5", false, false), //b_ised=F, igc=F
 		];
 
 		for tc in testcases{

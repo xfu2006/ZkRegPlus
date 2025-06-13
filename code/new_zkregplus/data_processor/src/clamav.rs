@@ -62,6 +62,30 @@ pub const RANGE_MAX:usize = 1<<31;
 pub const B_SINGLE_JOB_MODE:bool = false; //set to true for debug
 pub const TEST_MODE:bool = false; //set for debugging/test
 
+impl SubSigType{
+	pub fn from(v: u8)->Self{
+		match v{
+			0 => SubSigType::GeneralRegex,
+			1 => SubSigType::CounterConstraint,
+			2 => SubSigType::SubsigCountConstraint,
+			_ => panic!("invalid value for SubsigType")
+		}
+	}
+}
+
+impl CompOp{
+	pub fn from(v: u8)->Self{
+		match v{
+			0 => CompOp::NONE,
+			1 => CompOp::GT,
+			2 => CompOp::LT,
+			3 => CompOp::EQ,
+			_ => panic!("invalid value for CompOp")
+		}
+	}
+}
+
+
 /// boolean value to ternary value
 pub fn bool_to_tri(b: bool)->TriVal{
 	match b{
@@ -624,6 +648,7 @@ impl ClamavSig{
 				let (op, num) = Self::strop_to_comp_op(&sop, num);
 				let ps = self.vec_subsig_automaton[id].run(&s2);
 				match op{
+					CompOp::NONE => {panic!("comp op is None!")}
 					CompOp::LT => { 
 						//note repeats have been encoded
 						//e.g., 0<2 is encoded as pat_0{2}
@@ -835,6 +860,7 @@ impl ClamavSig{
 						let sop = find_only(r">|<|=", &sig);
 						let (op, num) = Self::strop_to_comp_op(&sop, num);
 						match op{
+							CompOp::NONE=> panic!("op is NONE"),
 							CompOp::LT => !res,
 							CompOp::EQ => if num>0 {res} else {!res},
 							CompOp::GT => res,
@@ -1265,6 +1291,7 @@ impl ClamavSig{
 		// for example, if the minocc < target_value it means that
 		// one required item appears less than the required value, it's a false.
 		match op{
+			CompOp::NONE => {panic!("eval_pattern_occ ERR: op is none")},
 			CompOp::GT => if minocc<=val {TriVal::False} else {TriVal::Maybe}, 
 			CompOp::LT => if minocc<val {TriVal::True} else {TriVal::Maybe}, 
 			CompOp::EQ => if minocc<val {TriVal::False} else {TriVal::Maybe}  
@@ -1291,7 +1318,7 @@ impl ClamavSig{
 	}
 
 	/// convert string operator to CompOp
-	fn strop_to_comp_op(s: &str, target: usize) -> (CompOp, usize){
+	pub fn strop_to_comp_op(s: &str, target: usize) -> (CompOp, usize){
 		match s{
 			"=" => (CompOp::EQ, target),
 			">" => (CompOp::GT, target),

@@ -16352,17 +16352,63 @@ Goal 1. update data
 	[a] removed one sig *Js.File.MaliciousHeuristic-6260249-0*
 	[b] try to regenerate data using scripts/gen_data.py but
 		-> pip install pyahocorasick --break-system-packages
+	[c] verified the new main.dat generated just have the sig removed
+		no additional change.
+	[d] copy the main.dat to debug_config folder
+	[e] re-run the data for binexecs.
+new data
+==================================================
+	log(f)	files	crit	pm	c_pm	dfa	ind_pm
+17 	 633 	(117,186,633)	(0,2,8)	(0,2,8)	(0,0,0)	(0,0,0)))
+18 	 163 	(122,195,163)	(0,2,10)	(0,2,10)	(0,0,0)	(0,0,0)))
+19 	 158 	(132,205,158)	(0,3,31)	(0,3,31)	(0,0,0)	(0,0,0)))
+20 	 67 	(146,213,67)	(1,3,39)	(1,3,39)	(0,0,0)	(0,0,0)))
+21 	 153 	(196,217,153)	(1,2,149)	(1,2,149)	(0,0,0)	(0,0,0)))
+22 	 14 	(151,173,14)	(1,3,11)	(1,3,11)	(0,0,0)	(0,0,0)))
+23 	 7 	(185,250,7)	(2,3,6)	(2,3,6)	(0,0,0)	(0,0,0)))
+24 	 9 	(231,280,9)	(2,5,9)	(2,5,9)	(0,0,0)	(0,0,0)))
+25 	 5 	(226,292,5)	(3,5,5)	(3,5,5)	(0,0,0)	(0,0,0)))
+=================================================
+	Summary: now all cleared!
+	* SED is needed for 117 to 292 sigs
+	* after SED max 5 sigs have to be discharged by DFA.
+	This looks good so we only needd
+	CP, SED and DFA.
+
 
 Goal 2. Writing
 	[a] regex pattern
 	[b] pat_loc
 	[c] step queue -> DONE
 
-Goal 2. implement SubsigInfo
-	[a] refine the type definition
-	[b] include it BundleSubsigStore
-	[c] define functions that are related in BundleSubsigStore
-	[d] unit test in new 
+Goal 3. implement SubsigInfo
+	[a] refine the type definition -> DONE
+	[b] include it BundleSubsigStore -> DONE
+
+Goal 4. add the information to BundleSubsigStore
+	[a] observe the existing code
+	[b] change build_store
+	[c] function new()
+	[d] build hte three types in build_store
+
+Goal 5. unit testing
+	[a] add a dump function
+	[b] add convert function for SubSigType
+	[c] for CompOp
+	[d] set up the unit test framework
+	[e] add a counter constraint
+		-> verify if it exists
+		-> corret comp_num
+		-> check how igc is handled? -> do not add item if igc not match
+	[f] add a subsig counter constraint
+		-> find out how it's added
+		-> debug why the type is not detected
+			-> b_subsig_count has ","?
+			-> find a real example by insert temp stop 
+
+
+-- TODO --
+[d] unit test in new 
 
 
 
