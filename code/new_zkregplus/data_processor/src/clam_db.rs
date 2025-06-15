@@ -78,6 +78,13 @@ pub const STATE_SIG_COUNT:u32=6;
 pub const STATES:u32=7;
 pub const STORE_SUBSIG:u32=8; //for subsig-state-pat info
 pub const STORE_SUBSIG_STEP:u32=9; //for subsig-step info
+pub const STORE_SUBSIG_INFO:u32=10; //for subsig-step component subsig and other
+// the following are piece ids for StepInfoStore
+pub const ID_SUBSIG_TYPE:u32=0x70130001;
+pub const ID_COMP_OP:u32=0x70130002;
+pub const ID_COMP_NUM:u32=0x70130003;
+pub const ID_MIN_REQUIRED:u32=0x70130004;
+pub const ID_COMP_SUBSIG:u32=0x70130005;
 
 /* COMMENT: each bag acdfa has the following entries see above.
 	INIT (offset: 0), NON_FINAL, FINAL, 
@@ -613,6 +620,7 @@ impl SubsigInfoStore{
 	pub fn new()->Self{
 		Self{subsig_ids: vec![], subsig_to_rec: HashMap::new()}
 	}
+
 	pub fn add(&mut self, item: &SubsigInfoStoreItem){
 		let subsig_id = item.subsig_id;
 		assert!(!self.subsig_ids.contains(&subsig_id), 
@@ -620,9 +628,102 @@ impl SubsigInfoStore{
 		self.subsig_ids.push(subsig_id);	 //note: not sorted yet!
 		self.subsig_to_rec.insert(subsig_id, item.clone());
 	}
+
 	pub fn finalize(&mut self){
 		self.subsig_ids.sort();
 	}
+
+	/// NOTE that this is a static function. It generates the table id
+	/// given the acdfa_id and piece id (such as subsig_type, comp_op, ...).
+	/// It generates a 128-bit table_id which is unique for each subsig.
+	/// Note that subsig_id is actually RANGE2_BIT (26), which can
+	/// fit in u32.
+	#[inline(always)]
+	pub fn gen_info_tbl_id<F:PrimeField>(
+		acdfa_id: u32, //the acdfa_id of the bundle 
+		subsig_id: usize,  //actually 26 bit
+		piece_id: u32,  //like SUBSIG_TYPE_ID, COMP_OP_ID ...
+	)->F{
+		//we set f1 to f4 order so that the entries when added
+		//are easily sorted.
+		let info_id:u32 = 0x13752405; //just random tag to avoid collision
+		let f1 = F::from(info_id);
+		let f2 = F::from(acdfa_id);
+		let f3 = F::from(subsig_id as u32);
+		let f4 = F::from(piece_id);
+		let factor = F::from(0x100000000 as u64); //32-bit 
+
+		let res = f1*factor*factor*factor + f2*factor*factor + f3*factor + f4;
+
+		//toal 128-bit
+		res
+	}
+
+	/// Encode the following colums each as a separate table for eacy 
+	/// query: the table id is generated based on <subsig_id, acdfa_id>
+	///   subsig_type, comp_op, comp_num, min_required
+	/// Then for each subsig its compnent subsigs are encoded using 
+	/// a separate table of the following structure (note: one table for
+	/// each subsig>
+	///    <id, comp_subsig>
+	/// if a subsig has k componnet subsigs, the table has k+2 entry.
+	/// there are two dummy entries: <0,0>, <k+1, max>. In between
+	/// are real entries.
+	pub fn add_store_to_lkup<F:PrimeField>(&self, 
+		lkup: &mut LookupTableTwoCol_Inst<F>, 
+		acdfa_id: u32,
+		_state_part_bits: usize, //deprecated. use RANGE2_BIT directly
+	) {
+		let factor = F::from(1u32 << RANGE2_BIT);
+		let max_val:usize = (1<<RANGE2_BIT) - 1;
+		let max = F::from(max_val as u64);
+
+		let mut tuples = self.subsig_ids.par_iter().map(|subsig_id|{
+			let rec = self.subsig_to_rec.get(subsig_id).expect(
+				&format!("cannot find subsig_id: {}", subsig_id));
+			//1. the subsig_type
+			let tbl_id = Self::gen_info_tbl_id::<F>(acdfa_id, *subsig_id, 
+				ID_SUBSIG_TYPE); 
+			let t_subsig_type = (tbl_id, F::from(rec.subsig_type));
+
+			//2. the comp_op 
+			let tbl_id = Self::gen_info_tbl_id::<F>(acdfa_id, *subsig_id, 
+				ID_COMP_OP); 
+			let t_comp_op= (tbl_id, F::from(rec.comp_op));
+
+			//3. the comp_num 
+			let tbl_id = Self::gen_info_tbl_id::<F>(acdfa_id, *subsig_id, 
+				ID_COMP_NUM); 
+			let t_comp_num= (tbl_id, F::from(rec.comp_num));
+
+			//4. the min_required 
+			let tbl_id = Self::gen_info_tbl_id::<F>(acdfa_id, *subsig_id, 
+				ID_MIN_REQUIRED); 
+			let t_min_required= (tbl_id, F::from(rec.min_required as u64));
+
+			//5. related subsigs 
+			let tbl_id = Self::gen_info_tbl_id::<F>(acdfa_id, *subsig_id, 
+				ID_COMP_SUBSIG); 
+			let mut vec_comp_subsigs = vec![(tbl_id, F::zero())];
+			let k = rec.component_subsigs.len(); //already sorted
+			for i in 0..k{
+				let f1 = F::from((i+1) as u32); //starts from 1
+				let f2 = F::from(rec.component_subsigs[i] as u32);
+				let encoded = f1 + f2*factor;
+				vec_comp_subsigs.push( (tbl_id, encoded) )
+			}
+			let encoded_last = F::from((k+1) as u32) + max*factor;
+			vec_comp_subsigs.push( (tbl_id, encoded_last) );
+
+			vec![
+				vec![t_subsig_type, t_comp_op, t_comp_num, t_min_required],
+				vec_comp_subsigs
+			].concat()
+		}).flatten().collect::<Vec<(F,F)>>();
+
+		lkup.vals.append(&mut tuples);
+	}
+
 }
 
 
@@ -770,6 +871,8 @@ impl <F:PrimeField> ClamavDB<F>{
 			bundle.vec_subsig_stores[i]
 				.add_store_to_lkup(lkup, dfa_id, state_bits);
 			bundle.vec_subsig_step_stores[i]
+				.add_store_to_lkup(lkup, dfa_id, state_bits);
+			bundle.vec_subsig_info_stores[i]
 				.add_store_to_lkup(lkup, dfa_id, state_bits);
 		}
 	}

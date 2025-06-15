@@ -98,6 +98,7 @@ not sure how the discrete logarithm of Groth16 proofs were
 obtained? Authors never responded}).
 
 
+
 {\bf Folding}
 Nova \cite{Nova}: it presents the {\em folding} technique which folds
 two relaxed R1CS instance into one. The folding prover at each step
@@ -196,6 +197,10 @@ In Neo \cite{Neo}, an alternative scheme based on Ajtai's commitment.
 It uses sum-check protocol in verifier circuit to prove
 that elements are within norm bound and enjoys a claimed
 10x speed over HyperNova.
+
+Applications of Folding: Kaizen showed customized sum-check based
+protocol, when combined with folding can prove large scale
+DNN training efficiently \cite{Kaizen}.
 
 {\bf Comments:} The currently known best folding cost for
 Hab22 based lookup argument is ProtoStar and its derivatives

@@ -16406,6 +16406,43 @@ Goal 5. unit testing
 			-> b_subsig_count has ","?
 			-> find a real example by insert temp stop 
 
+Sunday 06/15/2025
+LOC (data): 8132
+LOC (gadget): 10383
+Goal 1. continue the implementation of StepInfo store
+	[a] read existing code
+	[b] read add_store_to_lkup
+
+Goal 2. add_store_to_lkup
+	[a] two tables or one table? 
+		-> one table, replicate the info of the same info
+		-> two talbes -> no need to encode the same info again
+		-> what about retrieve info? to retrieve from one 
+			component_subs only just need to dynamic generate m_table
+			in fact to retrieve any info just need to dynamic encode m_table
+		-> decision: just one table
+	[b] implement add_store_to_lookup
+	[c] need to think about how many tables again?
+		-> multiple table each info is one separate table
+		-> subsig_id - one_comp_subsig
+		-> susig_id - subsit_type
+		...
+		then in code, we only need to tag the subsig_type with 
+		the info
+		-> when dealing with component_sub, we just need to
+		-> list all entries and tag the table_id correpsondingly.
+		-> decision: this could save at least 4k*10 = 40 table and
+			projection = 200k at least constraints.
+Goal 3. design gen_info_tbl_id
+	[a] declare a public funciton
+	[b] study the addr space for table_id
+		-> acdfa_id is 32_bits, pied id is 32-bits
+		-> make it merged 64-bit
+	[c] redo the doc of add_store_to_lkup
+		-> 1st part
+		-> component_subsigs
+	[d] gen_info_tbl_id
+	[e] dump and check the result
 
 -- TODO --
 [d] unit test in new 
