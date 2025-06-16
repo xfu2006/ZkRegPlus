@@ -16444,6 +16444,49 @@ Goal 3. design gen_info_tbl_id
 	[d] gen_info_tbl_id
 	[e] dump and check the result
 
+Goal 4. add TriVal table
+	[a] find out where is try val
+	[b] find out where to add tri-val and tri-op
+	[c] design algorithm for tri-val and tri-op
+		-> add table add_trival_to_lkup which adds both tri_val
+		-> to prove a tri_op simply encodes 
+			op, operand1, operand2, operand3 should
+			tag op usuing the correspond table
+			encoded work as transition.
+
+Goal 5. Implementatio of add TriVal table
+	[a] add TriValOp and their values
+	[b] add table_ids: TriVal, TriOp, TriOpRules
+	[c] add TriVal -> DONE
+	[d] add TriOp -> DONE 
+	[e] add TriOpRules -> DONE 
+
+Monday 06/16/2025
+LOC (data): 8331
+LOC (gadget): 10383
+Goal 1. Assess and collect data before redo discharge proof
+	[a] collect the data of each components
+============================== DATA ====================
+DEBUG USE 9999.1: num_cons: for store steps: 310
+-- DEBUG USE 9999.2.1: num_cons: for step_que_union: 761
+-- DEBUG USE 9999.2.2: num_cons: for sq_inp valid: 138
+-- DEBUG USE 9999.2.3: sq_to_add: for sq_inp valid: 1234
+-- DEBUG USE 9999.2.4: sq_to_add: for prf_fwdprf valid: 3121
+DEBUG USE 9999.2: num_cons: for validate_forward_step_queue 5254
+-- DEBUG USE 9999.3.1: num_cons: for checking union sq_res1 and sq_res2: 761
+-- DEBUG USE 9999.3.2: num_cons: for checking to_del covers prf_bwd: 463
+--- DEBUG USE 9999.3.3: num_cons: check valid bwd_prf: 1561
+DEBUG USE 9999.3: num_cons: for validate_forward_step_queue 2785
+DEBUG USE 9999.ALL: TOTAL num_cons: 8349
+========================================================
+
+
+	[b] git and add tag: BeforeRefineDischargeGadget
+
+Goal 2. study the code and think about the benefits that would bring
+	[a] validate_store_teps_combo -> can cut 310
+	[b] 
+
 -- TODO --
 [d] unit test in new 
 

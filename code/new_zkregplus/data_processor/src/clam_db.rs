@@ -20,7 +20,7 @@ use std::fmt;
 use crate::{
 	strings::{is_match,extract_nums,find_only},
 	hex_acdfa::{HexACDFA},
-	type_def::{ClamavSig,ClamavApproxConfig,ClamSigType,SubsigPatternStore, SubsigPatternStoreItem,SubsigStepStore, SubsigStepStoreItem, BundleSubsigStore, SubSigType,SubsigInfoStore, SubsigInfoStoreItem,CompOp},
+	type_def::{ClamavSig,ClamavApproxConfig,ClamSigType,SubsigPatternStore, SubsigPatternStoreItem,SubsigStepStore, SubsigStepStoreItem, BundleSubsigStore, SubSigType,SubsigInfoStore, SubsigInfoStoreItem,CompOp,TriVal,TriOp},
 	clamav::{gen_clamav_sig,default_clamav_cfg},
 };
 use utils::{
@@ -47,6 +47,11 @@ pub const STATE_BIT:usize =  24;
 pub const RANGE2_BIT: usize = 8;
 //pub const RANGE2_BIT: usize = 26; //(allowing 64M nibbles = 32MB)
 
+// the following are trival related sub-table ids
+// they are located at the very beginning of the entire lkup
+pub const TRI_VAL:u32 = 0x20000001;
+pub const TRI_OP:u32 = 0x20000002;
+pub const TRI_TRUTH_TBL:u32 = 0x20000003;
 
 // the following are sub-table ids
 pub const CHAR:u32 = 0x70000001;
@@ -728,6 +733,85 @@ impl SubsigInfoStore{
 
 
 impl <F:PrimeField> ClamavDB<F>{
+	/// This adds 3 small sections to lkup table:
+	/// (1) 3 TriVal (False, True, Maybe),
+	/// (2) 3 TriOp (Not, And, Or)
+	/// (3) Encoded rows of truth table for Not, And, Or
+	fn add_trival_rules(lk: &mut LookupTableTwoCol_Inst<F>){
+		//1. add the 3 TriVal
+		let tbl_id = F::from(TRI_VAL);
+		let vals = [TriVal::False, TriVal::True, TriVal::Maybe];
+		let mut tuples = vals.into_iter().map(|x| 
+			(tbl_id, F::from(x as u8))
+		).collect::<Vec<(F,F)>>();
+		lk.vals.append(&mut tuples);
+
+		//2. add the three TriOp
+		let tbl_id = F::from(TRI_OP);
+		let vals = [TriOp::Not, TriOp::BitAnd, TriOp::BitOr];
+		let mut tuples = vals.into_iter().map(|x| 
+			(tbl_id, F::from(x as u8))
+		).collect::<Vec<(F,F)>>();
+		lk.vals.append(&mut tuples);
+
+		//3. add the BitNot
+		let factor = F::from(1u32 << RANGE2_BIT);
+		let tbl_id = F::from(TRI_TRUTH_TBL);
+		let vals = [
+			(TriOp::Not, TriVal::False, TriVal::True),
+			(TriOp::Not, TriVal::True, TriVal::False),
+			(TriOp::Not, TriVal::Maybe, TriVal::Maybe),
+		];
+		let mut tuples = vals.iter().map(|t|{
+			let f_op = F::from(t.0 as u8);
+			let f_v1 = F::from(t.1 as u8);
+			let f_v2 = F::from(t.2 as u8);
+			let encoded = f_op + f_v1*factor + f_v2*factor*factor;
+
+			(tbl_id, encoded)
+		}).collect::<Vec<(F,F)>>();
+		lk.vals.append(&mut tuples);
+
+		//4. add the BitAnd and BitOr
+		let vals = [
+			(TriOp::BitAnd, TriVal::True, TriVal::True, TriVal::True),
+			(TriOp::BitAnd, TriVal::True, TriVal::False, TriVal::False),
+			(TriOp::BitAnd, TriVal::True, TriVal::Maybe, TriVal::Maybe),
+
+			(TriOp::BitAnd, TriVal::False, TriVal::True, TriVal::False),
+			(TriOp::BitAnd, TriVal::False, TriVal::False, TriVal::False),
+			(TriOp::BitAnd, TriVal::False, TriVal::Maybe, TriVal::False),
+
+			(TriOp::BitAnd, TriVal::Maybe, TriVal::True, TriVal::Maybe),
+			(TriOp::BitAnd, TriVal::Maybe, TriVal::False, TriVal::False),
+			(TriOp::BitAnd, TriVal::Maybe, TriVal::Maybe, TriVal::Maybe),
+
+			(TriOp::BitOr, TriVal::True, TriVal::True, TriVal::True),
+			(TriOp::BitOr, TriVal::True, TriVal::False, TriVal::True),
+			(TriOp::BitOr, TriVal::True, TriVal::Maybe, TriVal::True),
+
+			(TriOp::BitOr, TriVal::False, TriVal::True, TriVal::True),
+			(TriOp::BitOr, TriVal::False, TriVal::False, TriVal::False),
+			(TriOp::BitOr, TriVal::False, TriVal::Maybe, TriVal::Maybe),
+
+			(TriOp::BitOr, TriVal::Maybe, TriVal::True, TriVal::True),
+			(TriOp::BitOr, TriVal::Maybe, TriVal::False, TriVal::Maybe),
+			(TriOp::BitOr, TriVal::Maybe, TriVal::Maybe, TriVal::Maybe),
+		];
+		let mut tuples = vals.iter().map(|t|{
+			let f_op = F::from(t.0 as u8);
+			let f_v1 = F::from(t.1 as u8);
+			let f_v2 = F::from(t.2 as u8);
+			let f_v3 = F::from(t.3 as u8);
+			let encoded = f_op + f_v1*factor + f_v2*factor*factor + 
+				f_v3*factor*factor*factor;
+
+			(tbl_id, encoded)
+		}).collect::<Vec<(F,F)>>();
+		lk.vals.append(&mut tuples);
+
+	}
+
 	/// add the init, non-final states, final states, and transitions
 	/// into its lookup table. Note that they are 4 separate
 	/// sub-tables and the init is a table with one entry.
@@ -1345,6 +1429,7 @@ impl <F:PrimeField> ClamavDB<F>{
 
 		//8. build lkup
 		let mut lkup = LookupTableTwoCol_Inst::<F>::dummy();
+		Self::add_trival_rules(&mut lkup);
 		Self::add_acdfa_to_lkup(&mut lkup, &dfa_crit, CRIT_INIT, &map_crit_pat, &sig_to_id);
 		Self::add_acdfa_to_lkup(&mut lkup, &dfa_crit_igc, CRIT_IGC_INIT, &map_crit_pat_igc, &sig_to_id);
 		Self::add_range_to_lkup(&mut lkup, F::from(CHAR), (0,16));

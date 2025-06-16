@@ -110,7 +110,18 @@ pub struct SubSigObj{
 
 /// tri-value ''boolean logic''
 #[derive(Debug,PartialEq,Copy,Clone)]
-pub enum TriVal{False, True, Maybe}
+pub enum TriVal{
+	False = 1, 
+	True = 2, 
+	Maybe = 3,
+}
+
+#[derive(Debug,PartialEq,Copy,Clone)]
+pub enum TriOp{
+	Not = 11, 
+	BitAnd = 12, 
+	BitOr = 13,
+}
 
 #[derive(Debug,Copy,Clone,PartialEq)]
 pub enum CompOp{

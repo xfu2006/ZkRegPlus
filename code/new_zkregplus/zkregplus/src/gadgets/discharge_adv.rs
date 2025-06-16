@@ -2238,25 +2238,44 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		let ct_pat_loc = forward_step_q.get_container("pat_loc")?;//external
 		
 
+		//REMOVE LATER ----------------
+		let cs = r1.cs();
+		let n2 = cs.num_constraints(); 
+		//REMOVE LATER ---------------- ABOVE
 		//1. verify sq_inp + sq_to_add = sq_res
 		let prf_union = prf.borrow().get_container("prf_union")?;
 		self.validate_step_queue_union_prf(&ct_sq_inp, &ct_sq_to_add,
 			&ct_sq_res, &r1, &r2, &prf_union)?;
+		//REMOVE LATER -----------
+		println!("-- DEBUG USE 9999.2.1: num_cons: for step_que_union: {}", cs.num_constraints()-n2);
+		let n2 = cs.num_constraints(); 
+		//REMOVE LATER ----------- ABOVE
 
 		//2. validate sq_inp covers the structure required by step_store
 		let prf_inp =  prf.borrow().get_container("prf_inp")?;
 		self.validate_sq_inp_valid_prf(&ct_sq_inp, store_steps, &r1, &prf_inp)?;
+		//REMOVE LATER -----------
+		println!("-- DEBUG USE 9999.2.2: num_cons: for sq_inp valid: {}", cs.num_constraints()-n2);
+		let n2 = cs.num_constraints(); 
+		//REMOVE LATER ----------- ABOVE
 
 		//3. validate the sq_to_add covers the entries in prf_fwd
 		let prf_to_add = prf.borrow().get_container("prf_to_add")?;
 		self.validate_to_add(&ct_sq_to_add, &ct_prf_fwd, 
 			&r1, &prf_to_add)?;
+		//REMOVE LATER -----------
+		println!("-- DEBUG USE 9999.2.3: sq_to_add: for sq_inp valid: {}", cs.num_constraints()-n2);
+		let n2 = cs.num_constraints(); 
+		//REMOVE LATER ----------- ABOVE
 
 		//4. validate the prf_fwd
 		let prf_fwdprf_valid = prf.borrow().get_container("prf_fwdprf_valid")?;
 		self.validate_fwdprf_valid_prf(&ct_prf_fwd, 
 			&ct_sq_res, &ct_pat_loc,
 			&r1, &r2, &prf_fwdprf_valid, store_steps)?;
+		//REMOVE LATER -----------
+		println!("-- DEBUG USE 9999.2.4: sq_to_add: for prf_fwdprf valid: {}", cs.num_constraints()-n2);
+		//REMOVE LATER ----------- ABOVE
 
 		
 		Ok( () )
@@ -2670,7 +2689,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		self.validate_step_queue_union_prf(&ct_sq_res2, &ct_sq_to_del,
 			&ct_sq_res1, &r1, &r2, &prf_union)?;
 		//REMOVE LATER -----------
-		println!("DEBUG USE 8888: num_cons: for checking union sq_res1 and sq_res2: {}", cs.num_constraints()-n2);
+		println!("-- DEBUG USE 9999.3.1: num_cons: for checking union sq_res1 and sq_res2: {}", cs.num_constraints()-n2);
 		let n2 = cs.num_constraints(); 
 		//REMOVE LATER ----------- ABOVE
 
@@ -2682,7 +2701,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		self.validate_to_del(&ct_sq_to_del, &ct_prf_bwd, 
 			&r1, &prf_to_del)?;
 		//REMOVE LATER -----------
-		println!("DEBUG USE 8888: num_cons: for checking to_del covers prf_bwd: {}", cs.num_constraints()-n2);
+		println!("-- DEBUG USE 9999.3.2: num_cons: for checking to_del covers prf_bwd: {}", cs.num_constraints()-n2);
 		let n2 = cs.num_constraints(); 
 		//REMOVE LATER ----------- ABOVE
 
@@ -2691,7 +2710,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		self.validate_bwdprf_valid_prf(&ct_prf_bwd, 
 			&ct_sq_res2, &r1, &r2, &prf_bwdprf_valid, store_steps)?;
 		//REMOVE LATER -----------
-		println!("DEBUG USE 8888: num_cons: check valid bwd_prf: {}", cs.num_constraints()-n2);
+		println!("--- DEBUG USE 9999.3.3: num_cons: check valid bwd_prf: {}", cs.num_constraints()-n2);
 		//REMOVE LATER ----------- ABOVE
 
 		Ok( () )
@@ -2974,6 +2993,7 @@ impl <F:PrimeField> SigmaGadget<F> for DischargeAdvGadget<F>{
 		-> Result<(), SynthesisError>{
 		//REMOVE LATER -----------
 		let n1 = cs.num_constraints(); 
+		let n2 = cs.num_constraints(); 
 		//REMOVE LATER ----------- ABOVE
 		//1. retrive the statement instance and get all parts
 		let cfg = self.get_container_cfg().expect("container cfg not set!");
@@ -2985,38 +3005,34 @@ impl <F:PrimeField> SigmaGadget<F> for DischargeAdvGadget<F>{
 		let store_steps = stmt.get_container("store_steps")?;
 		self.validate_store_steps_combo(&store_steps.borrow(), r1.clone(), 
 			cs.clone())?;
-
 		//REMOVE LATER -----------
+		println!("DEBUG USE 9999.1: num_cons: for store steps: {}", cs.num_constraints()-n2);
 		let n2 = cs.num_constraints(); 
 		//REMOVE LATER ----------- ABOVE
+
 		//3. validate the forward step queue
 		let forward_step_queue= stmt.get_container("fwd_steps_queue")?;
 		self.validate_forward_step_queue(&forward_step_queue.borrow(), 
 			&store_steps.borrow(), 
 			r1.clone(), r2.clone(), cs.clone())?;
 		//REMOVE LATER -----------
-		println!("DEBUG USE 9999: num_cons: for validate_forward_step_queue {}", cs.num_constraints()-n2);
+		println!("DEBUG USE 9999.2: num_cons: for validate_forward_step_queue {}", cs.num_constraints()-n2);
+		let n2 = cs.num_constraints(); 
 		//REMOVE LATER ----------- ABOVE
 
 		//4. validate the backward step queue
-		//REMOVE LATER -----------
-		let n2 = cs.num_constraints(); 
-		//REMOVE LATER ----------- ABOVE
 		let backward_step_queue= stmt.get_container("bwd_steps_queue")?;
 		self.validate_backward_step_queue(&forward_step_queue.borrow(), 
 			&backward_step_queue.borrow(),
 			&store_steps.borrow(), 
 			r1.clone(), r2.clone(), cs.clone())?;
-
 		//REMOVE LATER -----------
-		println!("DEBUG USE 111111111: num_cons: for validate_BACKWARD PRF {}", cs.num_constraints()-n2);
+		println!("DEBUG USE 9999.3: num_cons: for validate_forward_step_queue {}", cs.num_constraints()-n2);
 		//REMOVE LATER ----------- ABOVE
-
-
 
 		
 		//REMOVE LATER -----------
-		println!("DEBUG USE 9999: num_cons: {}", cs.num_constraints()-n1);
+		println!("DEBUG USE 9999.ALL: TOTAL num_cons: {}", cs.num_constraints()-n1);
 		//REMOVE LATER ----------- ABOVE
 
 		Ok(())
