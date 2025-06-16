@@ -115,3 +115,59 @@ the new ``min-loc" for step 3 now becomes 69, and this eliminates
 19, 31, 43 from step 2. The list to delete is shown in ``ToDel Queue"
 in Figure \ref{fig_stream}, which results in the final Output Queue.
 \end{example}
+
+The prover has to provide proofs for the validity of the 
+forward and backward passes. The main (but incomplete) data of
+the two proofs are provided in Figure\ \ref{fig_stream}.
+
+The {\em forwrd validity proof} mainly consists of the following items:
+\begin{enumerate} 
+	\item three step queues: input, to add, and the result.
+	\item an additional forward proof (as shown in the middle of
+	Figure\ \ref{fig_stream}: a structure that encodes the information
+		about from each location of each step how one derives the
+		location for the next step. 
+		It can be regarded as a big table, whose primary key
+		is an encoded column of the information of a src step (such as
+		its pattern, its location, and the ranges to reach next step). 
+		Then the rest three columns encoded the destination pat,
+		and (possibly multiple) locations resulted.
+\end{enumerate}
+
+At the verifier circuit, the set of information is verified in the
+following way:
+\begin{enumerate}
+	\item the resulting step queue is the union of the input and
+		to add.
+	\item projecting the forward proof at each step (destination) 
+		results in the result queue.
+	\item projecting the src location of forward proof results in
+		the input step queue.
+	\item {\bf $\*$ most importantly:} the list of destination locations
+		corresponds to a {\em range query} from the source location.
+		By range query, we mean that given a location $s$ of pattern $p$,
+		and a range query $[a,b]$, the the PatLoc list, we need to
+		retrieve all entries in PatLoc that are $p$ entries that
+		falls into range $[a+s,a+b]$.
+
+		{\em need to update figure}
+		As an example, consider the source location $43$ of source step $2$
+		in Figure\ \ref{fig_stream}, the list of  matching locations
+		displayed for the next step is
+		$(3,0,0), (3,1,59), (3,1,69)$ where only the middle entry is the
+		valid result but the $(3,0,0)$ and $(3,1,69)$ are the
+		wrapping entries for validity. Here, $0<43+16$ and $69>43+16$,
+		and the PatLoc earlier is proved to be sorted. This
+		guarantees that $(3,1,59)$ is the correct and ALL of the 
+		range query.  Later we show that such range queries can be
+		done very efficiencly using lookup arguments.
+\end{enumerate}
+
+One can see the bacward proof (and its validity) works in a similar way.
+We present the formal definition of forward and backward pruning algorithm,
+and their proof formally in Appendix B.
+
+In essence, the data structures involved can be represented as
+relational database tables, and the proof can be decomposed into
+a number of relational operations such as table union, table projection,
+table join, and query range.

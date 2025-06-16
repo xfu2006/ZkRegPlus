@@ -43,6 +43,8 @@ Warning--empty booktitle in RAMLookup
 Warning--empty publisher in RAMLookup
 Warning--empty address in RAMLookup
 Warning--page numbers missing in both pages and numpages fields in RAMLookup
+Warning--empty publisher in Kaizen
+Warning--empty address in Kaizen
 Warning--empty publisher in Jolt
 Warning--empty address in Jolt
 Warning--empty publisher in SpecialFiat
@@ -100,45 +102,45 @@ Warning--empty publisher in Caulk22
 Warning--empty address in Caulk22
 Warning--empty publisher in Deco
 Warning--empty address in Deco
-You've used 88 entries,
+You've used 89 entries,
             5981 wiz_defined-function locations,
-            2006 strings with 33822 characters,
-and the built_in function-call counts, 84539 in all, are:
-= -- 9202
-> -- 3087
+            2014 strings with 34056 characters,
+and the built_in function-call counts, 85855 in all, are:
+= -- 9346
+> -- 3126
 < -- 0
-+ -- 1040
-- -- 1060
-* -- 5988
-:= -- 8885
-add.period$ -- 435
-call.type$ -- 88
-change.case$ -- 643
-chr.to.int$ -- 83
-cite$ -- 174
-duplicate$ -- 7650
-empty$ -- 5371
-format.name$ -- 1359
-if$ -- 19244
++ -- 1053
+- -- 1072
+* -- 6079
+:= -- 9004
+add.period$ -- 440
+call.type$ -- 89
+change.case$ -- 651
+chr.to.int$ -- 84
+cite$ -- 177
+duplicate$ -- 7780
+empty$ -- 5460
+format.name$ -- 1375
+if$ -- 19559
 int.to.chr$ -- 7
 int.to.str$ -- 1
-missing$ -- 148
-newline$ -- 768
-num.names$ -- 597
-pop$ -- 3080
+missing$ -- 153
+newline$ -- 778
+num.names$ -- 604
+pop$ -- 3134
 preamble$ -- 2
-purify$ -- 1326
+purify$ -- 1342
 quote$ -- 0
-skip$ -- 3060
+skip$ -- 3111
 stack$ -- 0
-substring$ -- 5810
-swap$ -- 614
+substring$ -- 5923
+swap$ -- 629
 text.length$ -- 0
 text.prefix$ -- 0
 top$ -- 0
-type$ -- 2566
-warning$ -- 78
-while$ -- 446
+type$ -- 2596
+warning$ -- 80
+while$ -- 452
 width$ -- 0
-write$ -- 1727
+write$ -- 1748
 (There were 2 error messages)
