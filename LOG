@@ -16484,11 +16484,39 @@ DEBUG USE 9999.ALL: TOTAL num_cons: 8349
 	[b] git and add tag: BeforeRefineDischargeGadget
 
 Goal 2. study the code and think about the benefits that would bring
-	[a] validate_store_teps_combo -> can cut 310
-	[b] 
+============================== DATA ====================
+step_que_len: 33
+DEBUG USE 9999.1: num_cons: for store steps: 310 -> can cut
+-- DEBUG USE 9999.2.1: num_cons: for step_que_union: 761 
+	-> if drop encoded but add subsig-step
+	-> will increase 2n sid check, 2n encoded +4n = 140
+-- DEBUG USE 9999.2.2: num_cons: for sq_inp valid: 138
+	-> if add subsig-step
+	-> will increase 2n for encoding -> +2n
+-- DEBUG USE 9999.2.3: sq_to_add: for to_add valid: 1234
+	-> if replace encoded with srcsig-step, increase 2n encoding
+	-> +2n
+-- DEBUG USE 9999.2.4: sq_to_add: for prf_fwdprf valid: 3121
+	-> check valid step can be skiped -> -10n
+	-> check dst valid -> 6n
+	-> can save about 480
+	-> conclusion: keep the encoded will save cost most of time.
 
--- TODO --
-[d] unit test in new 
+DEBUG USE 9999.2: num_cons: for validate_forward_step_queue 5254
+-- DEBUG USE 9999.3.1: num_cons: for checking union sq_res1 and sq_res2: 761
+-- DEBUG USE 9999.3.2: num_cons: for checking to_del covers prf_bwd: 463
+--- DEBUG USE 9999.3.3: num_cons: check valid bwd_prf: 1561
+	-> use new store can save about:12n = 400
+	Total estimate: 400 + 500 + 400 = 1300 
+	further cost cut down from the shrink of space for empty step queues.
+
+DEBUG USE 9999.3: num_cons: for validate_forward_step_queue 2785
+DEBUG USE 9999.ALL: TOTAL num_cons: 8349
+========================================================
+
+	[d] implementaion plan. Follow the original plan and do it step by step
+
+Goal 2. 
 
 
 
