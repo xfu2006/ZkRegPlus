@@ -16577,6 +16577,19 @@ Goal 3. sq_inp valid
 
 Goal 4. the to_add valid proof
 	[a] gen_to_add_valid_prf
+		-> print out the src_adj and dest_adj
+		-> read dump
+		-> it looks like dummy 0 entry can be skipped and then
+			cancel the check on zero
+		-> check how to 0 entries added?
+		-> dst_sel can be just encoded is zero
+		-> remove dummy entries in to_vec() as well
+		-> improve the cost of dest_sel
+		-> debug the src sel not right
+	[b] validate_to_add_prf
+		-> just drop check_imply
+	cost: 850 (1235-850 = 400) about 13n
+		mainly beause check_imply is very expensive
 	[b] validate_to_add_prf
 	[c] debug
 	

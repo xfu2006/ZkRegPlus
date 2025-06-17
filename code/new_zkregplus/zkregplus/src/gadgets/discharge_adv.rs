@@ -10,8 +10,8 @@ use ark_ff::{PrimeField};
 use std::{marker::{PhantomData},collections::{HashSet}};
 use crate::gadgets::{
 	commons::{gen_m_table,check_arr_eq,encode_cols,decode_cols
-		,new_const_var, check_imply, encode_2col_var, encode_2col_var_adv,
-		encode_2col, encode_cols_var, check_arr_eq_arr, encode_cols_var_adv, 
+		,new_const_var, encode_2col_var, encode_2col_var_adv,
+		encode_cols_var, check_arr_eq_arr, encode_cols_var_adv, 
 		check_eq},
 	db::{assert_logup, verify_encoded_table, assert_well_formed_sorted},
 	traits::{Container,
@@ -705,7 +705,6 @@ impl <F:PrimeField> StepQueue<F>{
 					.map(|loc| (item.encoded,item.step,*loc))
 					.collect::<Vec<(F,F,F)>>();
 				let tuples = vec![
-					vec![(item.encoded, item.step, zero)],
 					tuples
 				].concat();
 				tuples
@@ -753,14 +752,10 @@ impl <F:PrimeField> StepQueueItem<F>{
 	/// return 2 vectors: encoded, loc
 	/// padded with 0 and max entry
 	pub fn to_vec(&self)->Vec<Vec<F>>{
-		let max_val:usize = (1<<RANGE2_BIT) - 1;
-		let (zero, _one, max) = (F::zero(), F::one(), F::from(max_val as u32));
 		let n = self.locs.len();
 		let vec_encoded= vec![self.encoded; n+2];
 		let vec_locs = vec![
-			vec![zero],
 			self.locs.clone(),
-			vec![max]
 		].concat();
 		assert!(vec_encoded.len()==n+2 && vec_locs.len()==n+2);
 		vec![vec_encoded, vec_locs]
@@ -804,20 +799,14 @@ impl <F:PrimeField> StepQueueItem<F>{
 	/// The result will REMOVE the two dummy entries.
 	pub fn parse_from(encoded: F, loc_tuples: &Vec<F>)->Self{
 		//1. sort out the locations
-		let max_val:usize = (1<<RANGE2_BIT) - 1;
-		let (_zero, _one, _max) = (F::zero(),F::one(),F::from(max_val as u32));
-		let n = loc_tuples.len();
 		let locs = loc_tuples.clone();
 		#[cfg(test)] {
 			use crate::gadgets::commons::is_sorted;
 			assert!(is_sorted(&locs));
+			let max_val:usize = (1<<RANGE2_BIT) - 1;
+			let (zero,_one,max) = (F::zero(),F::one(),F::from(max_val as u32));
+			for i in 0..loc_tuples.len(){assert!(locs[i]!=zero&&locs[i]!=max);}
 		}
-		#[cfg(test)]{
-			assert!(locs[0]==_zero); //1st entry is always there
-			//NOTE: no max entry at the end
-			for i in 1..n{assert!(locs[i]!=_zero && locs[i]!=_max);}
-		}
-		let locs = locs[1..n].to_vec(); //remove the two dummy enries
 
 		//2. decode the encoded
 		let dvec = decode_cols(&vec![encoded], 5);
@@ -1600,32 +1589,14 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		assert!(e2.len()==c2.len() && s2.len()==c2.len());
 		let dst = encode_cols(&vec![e2.clone(),c2.clone()], 
 			&vec![0,1]);
-		let dst_sel = c2.par_iter().zip(s2.par_iter()).map(|(loc,step)|
-			if loc.is_zero() || step.is_zero() {zero} else {one}
+		let dst_sel = e2.iter().map(|encoded|
+			if encoded.is_zero() {zero} else {one}
 		).collect::<Vec<F>>();
 		let dst_adj = dst.par_iter().zip(dst_sel.par_iter()).map(|(x,y)|
 			*x**y).collect::<Vec<F>>();
 
-		//REMOVE LATER -------------
-		println!("DEBUG USE 6101: dump of dest info ---");
-		for i in 0..e2.len(){
-			println!("-- i: {}, e2: {}, c2: {}, s2: {}, dst_sel: {}, adj: {}", i, e2[i], c2[i], s2[i], dst_sel[i], dst_adj[i]);
-		}
-		//REMOVE LATER ------------- ABOVE
 
-		//2. verify that for encoded!=0 and step=0 and second entry
-		//the to add value is 1 (i.e., for step 0 the default loc to add is 1)
-		//here: we don't have to generate any data but in the validate()
-		//function this has to be checked in circuit
-		for i in 1..e2.len(){
-			if !e2[i-1].is_zero() && s2[i-1].is_zero() && c2[i-1].is_zero()
-			  && e2[i]==e2[i-1] && s2[i]==s2[i-1] {
-				assert!(c2[i].is_one());
-			}
-		}
-
-
-		//2. retrieve info from to_add:
+		//2. retrieve info from prf_forward:
 		// encoded, loc (note that encoded has the info of step and pat)
 		// ignore the dummy entries at the beginning for each
 		let e1=prf_fwd.borrow().get_container("dst_encoded")
@@ -1641,24 +1612,17 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			//ignore boundary entries.
 			//on boundary if (dst_encoded[i],src_loc[i]) is DIFFERENT
 			//from preivous or next entry
-			else if 
-				encode_2col(&vec![e1[i]],&vec![c3[i]])
-					!=encode_2col(&vec![e1[i-1]],&vec![c3[i-1]])
-				|| encode_2col(&vec![e1[i]],&vec![c3[i]])
-					!=encode_2col(&vec![e1[i+1]],&vec![c3[i+1]])
-				{zero} 
-			else {one}
+			else {
+				let res = if ((e1[i]!=e1[i-1]) || (c3[i]!=c3[i-1])) ||
+					((e1[i+1]!=e1[i]) || (c3[i+1]!=c3[i])) {zero} 
+				else {one};
+
+				res
+			}
 		}).collect::<Vec<F>>();
 		let src_adj = src.par_iter().zip(src_sel.par_iter()).map(|(x,y)|
 			*x**y).collect::<Vec<F>>();
 
-		//REMOVE LATER -------------
-		println!("DEBUG USE 6102: dump of SRC info ---");
-		for i in 0..e1.len(){
-			println!("-- i: {}, e1: {}, dst_oc: {}, src_loc: {}, src_sel: {}, adj: {}", i, e1[i], c1[i], c3[i], src_sel[i], src_adj[i]);
-		}
-		//REMOVE LATER ------------- ABOVE
-		if 1>0 {panic!("STOP HERE 203");}
 
 		//3. build hte m_tbl needed for 2-direction lookup
 		let prf = Container::new(prf_name);		
@@ -2468,17 +2432,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		let dst_adj = dst.iter().zip(dst_sel.iter()).map(|(a,b)|
 			a * b ).collect::<Vec<FpVar<F>>>();
 
-		//2. validate to_add's: for each step 0, there should be a loc 1
-		let n = encoded.len();
-		assert!(step.len()==n && locs.len()==n);
-		for i in 1..n{
-			//if this is the first entry of step 1, then we expect
-			//last entry (of step 0) has loc 1
-			let b1 = step[i].is_one()?.and(&step[i-1].is_zero()?)?; 
-			check_imply(&b1, &locs[i-1].is_one()?, "check step 0 loc1 failed")?;
-		}
-
-		//3. retrieve info from prf_fwd
+		//2. retrieve info from prf_fwd
 		let e1 = prf_fwd.borrow().get_container("dst_encoded")
 			.unwrap().borrow().to_vec(); 
 		let c1= prf_fwd.borrow().get_container("dst_loc")
@@ -2490,6 +2444,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		let zero = new_const_var(&cs, F::zero());
 		let e1_c3 = e1.iter().zip(c3.iter()).map(|(e,c)|
 			e + &(c*r1)).collect::<Vec<FpVar<F>>>();
+		let n = e1.len();
 		let src_sel = (0..n).collect::<Vec<_>>().into_iter().map(|i|{
 			if i==0 || i==n-1 {zero.clone()}
 			else{//the entries in the middle are real values to add
