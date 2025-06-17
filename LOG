@@ -16568,6 +16568,17 @@ Goal 2. ispect gen_step_queue_union_prf
 		-> add one to default loc in gen_empty queue
 	[d] -> return -> fixed
 	[e] check cost:  596 (cut from 761->596 = 160 about 5n)
+
+Goal 3. sq_inp valid
+	[a]  can cut as first init is always valid
+		then just need to validate the structure in the returned prf
+		so there is no need.
+	[b] cost: (cut 138 = 4n) 
+
+Goal 4. the to_add valid proof
+	[a] gen_to_add_valid_prf
+	[b] validate_to_add_prf
+	[c] debug
 	
 
 

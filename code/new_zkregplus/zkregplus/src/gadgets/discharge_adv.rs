@@ -1544,6 +1544,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		prf
 	}
 
+	/* REMOVE LATER - real
 	/// prove that the input queue has the required structure of
 	/// step stores
 	#[allow(dead_code)]
@@ -1577,6 +1578,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 
 		prf
 	}
+	*/
 
 	/// prove that the queue_step to_add covers the entries 
 	/// listed by the fwd_prf
@@ -1603,6 +1605,13 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		).collect::<Vec<F>>();
 		let dst_adj = dst.par_iter().zip(dst_sel.par_iter()).map(|(x,y)|
 			*x**y).collect::<Vec<F>>();
+
+		//REMOVE LATER -------------
+		println!("DEBUG USE 6101: dump of dest info ---");
+		for i in 0..e2.len(){
+			println!("-- i: {}, e2: {}, c2: {}, s2: {}, dst_sel: {}, adj: {}", i, e2[i], c2[i], s2[i], dst_sel[i], dst_adj[i]);
+		}
+		//REMOVE LATER ------------- ABOVE
 
 		//2. verify that for encoded!=0 and step=0 and second entry
 		//the to add value is 1 (i.e., for step 0 the default loc to add is 1)
@@ -1642,6 +1651,14 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		}).collect::<Vec<F>>();
 		let src_adj = src.par_iter().zip(src_sel.par_iter()).map(|(x,y)|
 			*x**y).collect::<Vec<F>>();
+
+		//REMOVE LATER -------------
+		println!("DEBUG USE 6102: dump of SRC info ---");
+		for i in 0..e1.len(){
+			println!("-- i: {}, e1: {}, dst_oc: {}, src_loc: {}, src_sel: {}, adj: {}", i, e1[i], c1[i], c3[i], src_sel[i], src_adj[i]);
+		}
+		//REMOVE LATER ------------- ABOVE
+		if 1>0 {panic!("STOP HERE 203");}
 
 		//3. build hte m_tbl needed for 2-direction lookup
 		let prf = Container::new(prf_name);		
@@ -1867,13 +1884,15 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			&ct_sq_inp, &ct_sq_to_add, &ct_sq_res);
 		prf.borrow_mut().add_container(prf_union);
 
-		/*RECOVOER LATER TO CONTINUE1
-		//2. prove that sq_inp has the same structure of the store_steps
-		// that is all steps required by store_steps are covered by
-		// the sq_inp
-		let prf_inp_valid = Self::gen_sq_inp_valid_prf("prf_inp",
-			&ct_sq_inp, store_steps);
-		prf.borrow_mut().add_container(prf_inp_valid);
+		//2. prove that sq_inp has the same structure of the store_steps.
+		// This part is SKIPPED, as we have the new DB to bind
+		// (subsig_id, encoded_word). This can be easily shown by tag
+		// it will be done "recursively" for each sq_oup (which
+		//  is performed in compute_sig_adv gadget when it's evaluating
+		//  each subsig with its step_queue result).
+		// initial sq_init is hard set in circ (which is already valid).
+		// thus, this step can be skipped.
+		// depcrated: Self::gen_sq_inp_valid_prf(..., store_steps)
 
 		//3. prove that sq_to_add is valid (covering all new entries
 		// that are produced in fwd proof
@@ -1882,6 +1901,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			&ct_sq_to_add, &prf_fwd);
 		prf.borrow_mut().add_container(prf_to_add_valid);
 
+		/*RECOVOER LATER TO CONTINUE1
 		//4. prove the validity of the fwd_prf
 		let prf_fwdprf_valid = Self::gen_fwdprf_valid_prf("prf_fwdprf_valid",
 			&prf_fwd, &ct_pat_loc, &ct_sq_res, &store_steps);
@@ -2295,7 +2315,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		let ct_sq_inp = forward_step_q.get_container("sq_inp")?;
 		let ct_sq_to_add = forward_step_q.get_container("sq_to_add")?;
 		let ct_sq_res = forward_step_q.get_container("sq_res")?;
-		let _ct_prf_fwd = forward_step_q.get_container("prf_fwd")?;
+		let ct_prf_fwd = forward_step_q.get_container("prf_fwd")?;
 		let _ct_pat_loc = forward_step_q.get_container("pat_loc")?;//external
 		
 
@@ -2308,17 +2328,19 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			&ct_sq_res, &r1, &r2, &prf_union)?;
 		//REMOVE LATER ----------- 
 		println!("-- DEBUG USE 9999.2.1: num_cons: for step_que_union: {}", cs.num_constraints()-n2);
-		//let n2 = cs.num_constraints(); 
-		//REMOVE LATER ----------- ABOVE
-
-		/* RECOVER LATER TO CONTINUE1
-		//2. validate sq_inp covers the structure required by step_store
-		let prf_inp =  prf.borrow().get_container("prf_inp")?;
-		self.validate_sq_inp_valid_prf(&ct_sq_inp, store_steps, &r1, &prf_inp)?;
-		//REMOVE LATER -----------
-		println!("-- DEBUG USE 9999.2.2: num_cons: for sq_inp valid: {}", cs.num_constraints()-n2);
 		let n2 = cs.num_constraints(); 
 		//REMOVE LATER ----------- ABOVE
+
+		//2. validate sq_inp covers the structure required by step_store.
+		// This part is SKIPPED, as we have the new DB to bind
+		// (subsig_id, encoded_word). This can be easily shown by tag
+		// it will be done "recursively" for each sq_oup (which
+		//  is performed in compute_sig_adv gadget when it's evaluating
+		//  each subsig with its step_queue result).
+		// initial sq_init is hard set in circ (which is already valid).
+		// thus, this step can be skipped.
+		// Deprecated: 
+		//   self.validate_sq_inp_valid_prf(&ct_sq_inp,store_steps,&r1,&prf_inp)
 
 		//3. validate the sq_to_add covers the entries in prf_fwd
 		let prf_to_add = prf.borrow().get_container("prf_to_add")?;
@@ -2326,9 +2348,10 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			&r1, &prf_to_add)?;
 		//REMOVE LATER -----------
 		println!("-- DEBUG USE 9999.2.3: sq_to_add: for sq_inp valid: {}", cs.num_constraints()-n2);
-		let n2 = cs.num_constraints(); 
+		//let n2 = cs.num_constraints(); 
 		//REMOVE LATER ----------- ABOVE
 
+		/* RECOVER LATER TO CONTINUE1
 		//4. validate the prf_fwd
 		let prf_fwdprf_valid = prf.borrow().get_container("prf_fwdprf_valid")?;
 		self.validate_fwdprf_valid_prf(&ct_prf_fwd, 
@@ -2389,7 +2412,8 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		Ok( () )
 	}
 
-	/// validate the proof for q1 + q2 = q3
+	/*REMOVE LATER: real
+	/// validate the sq_inp has hte same structure as store input
 	#[allow(dead_code)]
 	fn validate_sq_inp_valid_prf(&self,
 		sq_inp: &Rc<RefCell<Container<FpVar<F>>>>,
@@ -2419,6 +2443,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 
 		Ok( () )
 	}
+	*/
 
 	/// validate the to_add covers what are produced in the forward prf
 	#[allow(dead_code)]
