@@ -16516,7 +16516,59 @@ DEBUG USE 9999.ALL: TOTAL num_cons: 8349
 
 	[d] implementaion plan. Follow the original plan and do it step by step
 
-Goal 2. 
+Goal 2. Paper
+	[a] explain fowrard and backward proof -> DONE
+
+Goal 3. remiplementation
+	[a] coment out and start fro beginning
+	[b] study store steps and see if there is any use
+		-> review hwat is store steps: it is the projected
+			subsig< id, pat_id, rg_start, rg_end
+		-> store-steps: SubsigStepStore has the information
+		-> but combo is not needed
+
+Goal 4. redo gen_empty_steps_queue_serialized
+	[a] read existing code.
+	[b] update doc
+	[c] finish implementation
+	[d] regressiontesting
+
+Goal 5. gen_forward steps
+	[a] step nunion proof
+	[b] fix overflow
+	[c] read code -> decide if need to pad items
+		or not -> or add a dummy step_zero item
+	[d] refine StepQueue clear if no padding
+	[e] add gen_forward_prf with store steps info
+	[f] improve gen_forward_prf
+	[g] fix test_fwd_prf create subset store step
+
+Tuesday 06/17/2025
+LOC (gadget): 10476
+LOC (data): 8331
+
+Goal 1. clear gen_forward_prf
+	[a] inspect code
+	[b] modify the code
+	[c] unit testing
+		-> print max_steps
+		-> improe the tuple in test case
+		-> test case 1
+		-> array len problem
+	[d] debug more problem with gen_forward_prf
+		-> line 884 -> fixed
+		-> check not working -> fixed
+		-> examine dump -> fixed
+		-> regression test
+
+Goal 2. ispect gen_step_queue_union_prf
+	[a] gen_step_queue_union_prf
+	[b] the validate function
+	[c] init item issue
+		-> add one to default loc in gen_empty queue
+	[d] -> return -> fixed
+	[e] check cost:  596 (cut from 761->596 = 160 about 5n)
+	
 
 
 

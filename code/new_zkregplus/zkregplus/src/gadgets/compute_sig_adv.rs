@@ -323,7 +323,7 @@ pub mod tests_compute_sig_adv{
 		traits::{Container,Col,IDX_DATA},
 	};
 	use data_processor::{clam_db::{ClamavDB,RANGE2_BIT}, 
-		type_def::{ClamavApproxConfig},
+		type_def::{ClamavApproxConfig,SubsigStepStore,SubsigStepStoreItem},
 		clamav::{default_clamav_cfg, quick_discharge_file_adv}};
 	use folding_schemes::folding::foldpot::sigma_ir1cs::{SigmaGadget,
 		WordInfo, DischargeSigInfo};
@@ -601,6 +601,22 @@ pub mod tests_compute_sig_adv{
 
 	#[test]
 	fn test_compute_sig_advice(){
+		//0. create a subsig step store
+		let item1 = SubsigStepStoreItem::new(100,
+			vec![	
+				(2, (10, 100)),
+				(3, (20,30)),
+			]);
+		let item2 = SubsigStepStoreItem::new(200,
+			vec![	
+				(20, (10,120)),
+				(30, (10,20)),
+			]);
+		let mut steps_info = SubsigStepStore::new();
+		steps_info.add(&item1);
+		steps_info.add(&item2);
+		steps_info.finalize();
+
 		//1. test the serialization
 		let max :u32= (1<<RANGE2_BIT) - 1;
 		let subsig100_steps = vec![
@@ -653,7 +669,7 @@ pub mod tests_compute_sig_adv{
 				"sorted_id", IDX_DATA)); 
 		pat_loc.borrow_mut().add_col(Col::new(
 	   	   to_vf(vec![0, 63,102,max,  0,65,93,94,max,  0,51,max, 0,60,61,72,max ]), "sorted_val", IDX_DATA)); 
-		let (to_add, res, prf) = sq.gen_forward_prf(&pat_loc);
+		let (to_add, res, prf) = sq.gen_forward_prf(&pat_loc, &steps_info);
 
 		let b_details = false;
 		if b_details{

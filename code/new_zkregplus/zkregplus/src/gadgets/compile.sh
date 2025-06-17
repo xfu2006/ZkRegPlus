@@ -2,10 +2,10 @@
 #cargo check --tests 2>&1 | less
 
 # test
+ RUST_BACKTRACE=1 
+ cargo test -- test_discharge_adv --show-output --nocapture
 #RUST_BACKTRACE=1 
-#cargo test -- test_bwd_prf --show-output --nocapture
-RUST_BACKTRACE=1 
-cargo test -- test_discharge_adv --show-output --nocapture
+#cargo test -- test_fwd_prf --show-output --nocapture
 
 #cargo test -- test_encode --show-output --nocapture
 #RUST_BACKTRACE=1 cargo test -- test_tbl_left_join --show-output --nocapture
