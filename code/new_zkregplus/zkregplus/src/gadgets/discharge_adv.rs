@@ -1745,7 +1745,6 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		//2. correctness of dst_encoded (no proof needed)
 		//DEPRECATED - longer needed as new SID table check done the job.
 
-		/* RECOVER LATER TO CONTINUE1
 		//3. lookup pat-loc in pat_loc
 		pat_loc.borrow().dump_structure(1);
 		let pat= pat_loc.borrow().get_container("sorted_key")
@@ -1773,6 +1772,8 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		res.borrow_mut().add_col(Col::new(mtb_pat, "mtb_pat", IDX_DATA));
 		res.borrow_mut().add_col(Col::new(vec![frg;len1], 
 			"sid_mtb_pat", IDX_SI_DATA));
+
+		/* RECOVER LATER TO CONTINUE1
 
 		//4. prove encoded-loc corresponds to result_queue (note:
 		// where result is inp + to_add. the prf works on the "dynamic"
@@ -2650,21 +2651,40 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		check_arr_eq_arr(&dst_encoded2, dst_encoded, "err dst_encode")?;
 		*/
 		//REMOVE LATER -------
-		println!("DEBUG USE 6106:  steps1-2: cs: {}", cs.num_constraints()-n0);
+		println!("DEBUG USE 6106: steps1-2: cs: {}", cs.num_constraints()-n0);
+		let n0 = cs.num_constraints();
 		//REMOVE LATER ------- ABOVE
 
-		/* RECOVER LATER TO CONTINUE1
+		//REMOVE LATER ------------------
+		println!("DEBUG USE 6107 --- dump of pat_loc");
+		for i in 0..dst_loc.len(){
+			println!("  i: {}, subsig: {}, dest_loc: {}", i, dst_subsig[i].value()?, dst_loc[i].value()?); 
+		}
+		//REMOVE LATER ------------------ ABOVE
+
 		//3. lookup pat-loc in pat_loc
 		let src_sel = dst_loc.iter().map(|l| {
 			let item = l * (l-&max);
 			item.is_zero().unwrap().not().into()
 			//item.is_neq(&zero).unwrap().into() //same cost
 		}).collect::<Vec<FpVar<F>>>();
+		//REMOVE LATER -------
+		println!("DEBUG USE 6106.1: src_sel: cs: {}", cs.num_constraints()-n0);
+		let n0 = cs.num_constraints();
+		//REMOVE LATER ------- ABOVE
 		let src_combined = encode_cols_var_adv(
 			&vec![dst_pat.to_vec(), dst_pat_id.to_vec(), dst_loc.to_vec()], 
 			&vec![0,1,2], &r1);	
+		//REMOVE LATER -------
+		println!("DEBUG USE 6106.2: src_combined: cs: {}", cs.num_constraints()-n0);
+		let n0 = cs.num_constraints();
+		//REMOVE LATER ------- ABOVE
 		let src_adj = src_combined.iter().zip(src_sel.iter()).map(|(a,b)|
 			a*b).collect::<Vec<FpVar<F>>>();
+		//REMOVE LATER -------
+		println!("DEBUG USE 6106.3: src_adj: cs: {}", cs.num_constraints()-n0);
+		let n0 = cs.num_constraints();
+		//REMOVE LATER ------- ABOVE
 		let pat = pat_loc.borrow().get_container("sorted_key")
 			.unwrap().borrow().to_vec(); 
 		let pat_id = pat_loc.borrow().get_container("sorted_id")
@@ -2673,13 +2693,31 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			.unwrap().borrow().to_vec(); 
 		let dst_combined = encode_cols_var_adv(
 			&vec![pat, pat_id, loc], &vec![0,1,2], &r1);	
+		//REMOVE LATER -------
+		println!("DEBUG USE 6106.4: dst_combined: cs: {}", cs.num_constraints()-n0);
+		let n0 = cs.num_constraints();
+		//REMOVE LATER ------- ABOVE
 		let mtb_pat = prf_fwdprf_valid.borrow().get_container("mtb_pat")
 			.unwrap().borrow().to_vec();
 		let sid_mtb_pat = prf_fwdprf_valid.borrow().get_container("sid_mtb_pat")
 			.unwrap().borrow().to_vec();
 		check_arr_eq(&sid_mtb_pat, &frg, "err checking sid_mtb_pat")?; 
+		//REMOVE LATER -------
+		println!("DEBUG USE 6106.5: check sid: cs: {}", cs.num_constraints()-n0);
+		let n0 = cs.num_constraints();
+		//REMOVE LATER ------- ABOVE
 		assert_logup(cs.clone(), &src_adj, &dst_combined, &mtb_pat, r2)?;
+		//REMOVE LATER -------
+		println!("DEBUG USE 6106.6: check_logup : cs: {}", cs.num_constraints()-n0);
+		let n0 = cs.num_constraints();
+		//REMOVE LATER ------- ABOVE
 
+		//REMOVE LATER -------
+		println!("DEBUG USE 6106: steps3: cs: {}", cs.num_constraints()-n0);
+		let n0 = cs.num_constraints();
+		//REMOVE LATER ------- ABOVE
+
+		/* RECOVER LATER TO CONTINUE1
 		//4. prove encoded-loc corresponds to res_queue
 		let res_encoded= sq_res.borrow().get_container("encoded")
 			.unwrap().borrow().to_vec();
