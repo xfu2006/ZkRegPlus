@@ -90,6 +90,12 @@ pub const ID_COMP_OP:u32=0x70130002;
 pub const ID_COMP_NUM:u32=0x70130003;
 pub const ID_MIN_REQUIRED:u32=0x70130004;
 pub const ID_COMP_SUBSIG:u32=0x70130005;
+// the following are pice ids for SubsigStepStore's encoded_to_attribute table
+pub const ID_ENCODED_SUBSIG:u32=0x71090001;
+pub const ID_ENCODED_STEP:u32=0x71090002;
+pub const ID_ENCODED_PAT:u32=0x71090003;
+pub const ID_ENCODED_RG_START:u32=0x71090004;
+pub const ID_ENCODED_RG_END:u32=0x71090005;
 
 /* COMMENT: each bag acdfa has the following entries see above.
 	INIT (offset: 0), NON_FINAL, FINAL, 
@@ -459,13 +465,81 @@ impl SubsigStepStore{
 		let cols = self.gen_cols(state_part_bits, None);
 		let tbl_id = F::from(acdfa_id + STORE_SUBSIG_STEP);
 
+		// DEPRECATED, REMOVE LATER --------------
 		//cols[5] is encoded
 		let mut tuples = cols[5].par_iter().map(|v|{
 			(tbl_id, *v)
 		}).collect::<Vec<(F,F)>>();
 
 		lkup.vals.append(&mut tuples);
+		// DEPRECATED, REMOVE LATER -------------- ABOVE
+	
+		#[cfg(test)]{//encoded part be sorted to speed up insertion
+			//becaues when encoded col is sorted, the gen_step_tbl_id()
+			//will generated sorted sub-table ID given piece id is sorted
+			let encoded = &cols[5];
+			for i in 0..encoded.len()-1{ assert!(encoded[i]<=encoded[i+1]); }
+		}
+		//1. use a loop add sub-table for encoded-subsig, encoded_step, 
+		// encoded_pat_id, encoded_rg_start, encoded_rg_end
+		let subcats = [ID_ENCODED_SUBSIG, ID_ENCODED_STEP, ID_ENCODED_PAT,
+			ID_ENCODED_RG_START, ID_ENCODED_RG_END];
+		let mut all_tuples = subcats.par_iter().enumerate().map(|(i,pid)|{
+			let info_col = &cols[i]; //e.g., 0 is for subsig, 1 for step etc.
+			let encoded = &cols[5];
+			let tuples = encoded.iter().zip(info_col.iter()).map(|(e,s)|{
+				let tbl_id = Self::gen_step_tbl_id(*e, *pid);
+				//REMOVE LATER --------------------
+				println!("DEBUG USE 6109: INSERT: tbl_id: {}, s: value: {}, categorty: {}, encoded: {}", tbl_id, s, pid, e);
+				//REMOVE LATER -------------------- ABOVE
+				(tbl_id, *s) 
+			}).collect::<Vec<(F,F)>>();
+
+			tuples
+		}).collect::<Vec<Vec<(F,F)>>>().concat();
+
+		#[cfg(test)]{//key of all_tuples should be sorted
+			for i in 0..all_tuples.len(){
+				assert!(all_tuples[i].0<=all_tuples[i].1);
+			}
+		}
+		lkup.vals.append(&mut all_tuples);
 	}
+
+	/// NOTE that this is a static function. It generates the table id
+	/// given the acdfa_id, encoded (of subsig-id-pat-rg_start-rg_end)
+	/// It generates a 194-bit table_id (which mainly encodes
+	/// the encoded work and the subcategory). This is used to
+	/// verify the validity of (subsig, step, rg_start ...) and 
+	/// and see if they are included in the encoded word.
+	///
+	/// For example, given encoded=500 is 
+	/// an encoding of (subsig=100, step=2, ..)
+	/// if one needs to verify that step 2 is really included in the
+	/// encoded 500, one just needs to enreate the table_id using
+	/// subtbl_id = gen_step_tbl_id(500, ID_ENCODED_SUBSIG), 
+	/// and verify (subtbl_id, 2)
+	/// in the lookup
+	#[inline(always)]
+	pub fn gen_step_tbl_id<F:PrimeField>(
+		encoded: F,  //actually 26*5 = 180 bit
+		piece_id: u32,  //like ENCODED_SUBSIG, ENCODED_STEP ...
+	)->F{
+		//we set f1 to f4 order so that the entries when added
+		//are easily sorted.
+		let info_id= F::from(0x23001101u32); //tag to avoid collision
+		let f1 = F::from(1u64<<RANGE2_BIT);
+		let factor1 = f1*f1*f1*f1*f1; //models encoded
+		let factor2 = F::from(1u64<<32); //32-bit 
+
+		let res = info_id*factor1*factor2 + F::from(piece_id)*factor1+
+				encoded; //encoded in this way avoid validate() function
+						 //to perform multiplication on encoded
+
+		//toal 26*5 + 2*32 = 194 bit
+		res
+	}
+
 
 	/// Generate a new store by projecting to subsigs_id
 	/// the subsigs_id are the results of acdfa.gen_subsig_id(sig_id, subsig_id)

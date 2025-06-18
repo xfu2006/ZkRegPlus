@@ -12,7 +12,7 @@ use crate::gadgets::{
 	commons::{gen_m_table,check_arr_eq,encode_cols,decode_cols
 		,new_const_var, encode_2col_var, encode_2col_var_adv,
 		encode_cols_var, check_arr_eq_arr, encode_cols_var_adv, 
-		check_eq},
+		check_eq, new_var},
 	db::{assert_logup, verify_encoded_table, assert_well_formed_sorted},
 	traits::{Container,
 		Col,
@@ -32,7 +32,8 @@ use data_processor::{
 		RANGE2,
 		//CHAR, 
 		STORE_SUBSIG_STEP,
-		RANGE2_BIT
+		RANGE2_BIT, ID_ENCODED_STEP, ID_ENCODED_PAT,
+			ID_ENCODED_RG_START, ID_ENCODED_RG_END, ID_ENCODED_SUBSIG,
 	},
 	type_def::{SubsigStepStore},
 };
@@ -977,19 +978,60 @@ impl <F:PrimeField> StepFwdPrf<F>{
 		}
 
 		//3. consruct container
+		//3.1 the columns
 		let res = Container::new(name); 
 		let frg = F::from(RANGE2);
-		let v_rg = vec![zero, zero, //any
-			frg, frg,
-			frg, frg, frg,
-			frg, frg, frg, frg, frg];
+		let se = vec![pad.clone(), v2d[0].clone()].concat();//src_encoded
+		let de = vec![pad.clone(), v2d[1].clone()].concat();//dst_encoded
 		v2d.into_iter().enumerate().for_each(|(i,vec)|{
 			let name = names[i];
 			res.borrow_mut().add_col(Col::new(vec![pad.clone(),vec].concat(), 
 				name, IDX_DATA));
-			res.borrow_mut().add_col(Col::new(vec![v_rg[i]; n],
-				&format!("sid_{}",name), IDX_SI_DATA));
 		});
+
+		//3.2 sids (note should be added by the right order.
+		res.borrow_mut().add_col(Col::new(vec![zero; n], 
+			&format!("sid_{}",names[0]), IDX_SI_DATA)); //src_encoded
+		res.borrow_mut().add_col(Col::new(vec![zero; n], 
+			&format!("sid_{}",names[1]), IDX_SI_DATA)); //dst_encoded
+		res.borrow_mut().add_col(Col::new(vec![frg; n], 
+			&format!("sid_{}",names[2]), IDX_SI_DATA)); //src_loc
+
+		//src_step
+		let sids = se.iter().map(|s| SubsigStepStore::gen_step_tbl_id(
+				*s,ID_ENCODED_STEP)).collect::<Vec<_>>();
+		res.borrow_mut().add_col(Col::new(sids,
+			&format!("sid_{}",names[3]), IDX_SI_DATA)
+		); 
+
+		//columns 4,5,6
+		// dst_pat, dst_rg_start, dst_rg_end
+		let ids = [4,5,6];
+		let cats = [ID_ENCODED_PAT, ID_ENCODED_RG_START, ID_ENCODED_RG_END];
+		for x in 0..ids.len(){
+			let sids = de.iter().map(|s| SubsigStepStore::gen_step_tbl_id(
+				*s,cats[x])).collect::<Vec<_>>();
+			res.borrow_mut().add_col(Col::new(sids,
+				&format!("sid_{}",names[ids[x]]), IDX_SI_DATA)
+			); 
+		}
+
+		res.borrow_mut().add_col(Col::new(vec![frg; n], 
+			&format!("sid_{}",names[7]), IDX_SI_DATA)); //dst_loc
+		res.borrow_mut().add_col(Col::new(vec![frg; n], 
+			&format!("sid_{}",names[8]), IDX_SI_DATA)); //dst_loc
+		res.borrow_mut().add_col(Col::new(vec![frg; n], 
+			&format!("sid_{}",names[9]), IDX_SI_DATA)); //diff1
+		res.borrow_mut().add_col(Col::new(vec![frg; n], 
+			&format!("sid_{}",names[10]), IDX_SI_DATA)); //diff2
+
+		//col11: dst_subsig
+		let sids = de.iter().map(|s| SubsigStepStore::gen_step_tbl_id(
+			*s,ID_ENCODED_SUBSIG)).collect::<Vec<_>>();
+		res.borrow_mut().add_col(Col::new(sids,
+			&format!("sid_{}",names[11]), IDX_SI_DATA)
+		); 
+
 
 		res
 	}
@@ -1676,12 +1718,16 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 				&v2d[4], &v2d[5], &v2d[6],
 				&v2d[7], &v2d[8], &v2d[9], &v2d[10], 
 				&v2d[11]);
+		let frg = F::from(RANGE2);
 
-		/* RECOVER LATER TO CONTINUE1
 
 		//1. correctness of src_encoded (here we generate
 		// the m-table to bind the src_encoded with src_step
-		let frg = F::from(RANGE2);
+		// DEPRECATED - this step is no longer needed as we add
+		// additional tables in StepStore so that each step can now
+		// just be tagged with the corresponding table_id for the encoded.
+		// check is done now in SID check.
+		/* REMOVE LATER -- real
 		let src_combined= encode_cols(&vec![src_encoded.clone()
 			,src_step.clone()], &vec![0,1]);
 		let encoded = store_steps.borrow().get_container("encoded")
@@ -1694,8 +1740,12 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		res.borrow_mut().add_col(Col::new(mtb_src, "mtb_src", IDX_DATA));
 		res.borrow_mut().add_col(Col::new(vec![frg;len1], 
 			"sid_mtb_src", IDX_SI_DATA));
+		*/
 
 		//2. correctness of dst_encoded (no proof needed)
+		//DEPRECATED - longer needed as new SID table check done the job.
+
+		/* RECOVER LATER TO CONTINUE1
 		//3. lookup pat-loc in pat_loc
 		pat_loc.borrow().dump_structure(1);
 		let pat= pat_loc.borrow().get_container("sorted_key")
@@ -2520,24 +2570,59 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 				&v2d[2], &v2d[3], 
 				&v2d[4], &v2d[5], &v2d[6],
 				&v2d[7], &v2d[8], &v2d[9], &v2d[10], &v2d[11]);
-		let frg = new_const_var(&cs, F::from(RANGE2));
-
-		//0.5. check sid ranges
-		let sidcols = names[2..].iter().map(|n|
+		let sid_cols = names.iter().map(|n|{
 			prf_fwd.borrow().get_container(&format!("sid_{}",n)).unwrap()
 				.borrow().to_vec()
-			).collect::<Vec<Vec<FpVar<F>>>>();
-		for i in 0..sidcols.len(){
-			let n1 = cs.num_constraints();
-			check_arr_eq(&sidcols[i],&frg,&format!("err checking sid_{}",i))?; 
-			println!("DEBUG USE 6105: after check arr_eq: arr len: {}, cs: {}", sidcols[i].len(), cs.num_constraints()-n1);
+		}).collect::<Vec<Vec<FpVar<F>>>>();
+		let frg = new_const_var(&cs, F::from(RANGE2));
+
+		//1. check sid ranges. This basically chencks the binding
+		//between each col with their corresponding encoded column.
+		//Note that: since encoded will be converted to sub_table_id,
+		//this implicityly imply them in range as well.
+		//1.1. check the validity of diff1, diff2 in range
+		check_arr_eq(&sid_cols[9],&frg,&format!("err checking sid_diff1"))?; 
+		check_arr_eq(&sid_cols[10],&frg,&format!("err checking sid_diff2"))?; 
+		check_arr_eq(&sid_cols[2],&frg,&format!("err checking sid_src_loc"))?; 
+		check_arr_eq(&sid_cols[7],&frg,&format!("err checking sid_dst_loc"))?; 
+
+		//1.2 check src_step
+		let info_id= F::from(0x23001101u32); //tag to avoid collision
+		let f1 = F::from(1u64<<RANGE2_BIT);
+        let factor1 = f1*f1*f1*f1*f1; //models encoded
+        let factor2 = F::from(1u64<<32); //32-bit
+		let part1 = info_id*factor1*factor2 + F::from(ID_ENCODED_STEP)*factor1;
+		let part1 = new_const_var(&cs, part1);
+		let n = sid_cols[3].len();
+		for i in 0..n{
+			//check the tag is the sub-table-id derived from src_encoded
+			//simulating the SubsigStepStore::gen_step_tbl_id
+			//i.e., part1 + subsig_id = sid
+			let subtbl_id = &part1 + &v2d[0][i]; 
+			check_eq(&sid_cols[3][i], &subtbl_id, "fail src_step check")?;
 		}
+
+		//1.3 check dst_step
+		let ids = [4,5,6,11];
+		let cats = [ID_ENCODED_PAT, ID_ENCODED_RG_START, 
+			ID_ENCODED_RG_END, ID_ENCODED_SUBSIG];
+		for x in 0..ids.len(){
+			let part1 = info_id*factor1*factor2 + F::from(cats[x])*factor1;
+			let part1 = new_const_var(&cs, part1);
+			for i in 0..n{
+				let subtbl_id = &part1 + &v2d[1][i]; 
+				check_eq(&sid_cols[ids[x]][i], &subtbl_id, "fail dst check")?;
+			}
+		}
+
 		//REMOVE LATER -------
 		println!("DEBUG USE 6106:  cs: {}", cs.num_constraints()-n0);
+		let n0 = cs.num_constraints();
 		//REMOVE LATER ------- ABOVE
 
-		/* RECOVER LATER TO CONTINUE1
-		//1. correctness of src_encoded (no proof needed)
+		//1. correctness of src_encoded (no proof needed). DEPRECATED
+		// no longer needed as it's done already by sid-range
+		/* REMOVE LATER - real
 		let src_combined = encode_2col_var_adv(&src_encoded, &src_step, r1);
 		let encoded = store_steps.get_container("encoded")
 			.unwrap().borrow().to_vec(); 
@@ -2550,8 +2635,12 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			.unwrap().borrow().to_vec();
 		check_arr_eq(&sid_mtb_src, &frg, "err checking sid_mtb_src")?; 
 		assert_logup(cs.clone(), &src_combined, &step_combined, &mtb_src, r1)?;
+		*/
 
 		//2. correctness of dst_encoded (no proof needed) - just decode it
+		// DEPRECATED. no longer needed as it's checked by the
+		// step 0.5 SID check
+		/* REMOVE LATER ---- real
 		let dst_step = src_step.iter().enumerate().map(|(i,x)| 
 			dst_subsig[i].is_zero().unwrap().select(x, &(x + &one)).unwrap()
 		).collect::<Vec<FpVar<F>>>(); //expensive, can be improved by using dst_subsig as a selector and multiplied with src_combine dand dst_combined, improve it later.
@@ -2559,7 +2648,12 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			dst_step.clone(), dst_pat.clone(), dst_rg_start.clone(),
 			dst_rg_end.clone()], &vec![0,1,2,3,4]);
 		check_arr_eq_arr(&dst_encoded2, dst_encoded, "err dst_encode")?;
+		*/
+		//REMOVE LATER -------
+		println!("DEBUG USE 6106:  steps1-2: cs: {}", cs.num_constraints()-n0);
+		//REMOVE LATER ------- ABOVE
 
+		/* RECOVER LATER TO CONTINUE1
 		//3. lookup pat-loc in pat_loc
 		let src_sel = dst_loc.iter().map(|l| {
 			let item = l * (l-&max);

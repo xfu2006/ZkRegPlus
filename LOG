@@ -16605,9 +16605,60 @@ Goal 1. part 1 of fwd prf improvement
 		-> step 1 cost: check_arr_eq, arr len: 33
 			cs: 33 but the cost should be around 400 why it's 1700? -> mislabled
 			-> cost: 330 which is ok.
+	[c] in StepStore should add
+		encoded_loc, encoded_step, ... encoded_end
+		then just update the sid check
+
+Goal 2. implement add tables
+	[a] add funtion gen_table_id -> DONE
+	[b] add the categories -> DONE
+	[c] add the implenent gen_step_tbl_id
+	[d] add to ldb
+
+Goal 3. go back to fwdprf generation step 0 and step 1
+	[a] step 1: bind src_encoded with src_step
+		saves 7n (210)
+	[b] step 2: estimated to save:
+		10n (330)
+	[c] check diffs first
+	[d] check the src_step (before cs is 132) -> 165. only increasing 1 which
+		is good!
+	[e] fix to_container
+	[f] check the 1st check
+	[g] fix length inequality
+	[h] check if need to do encode 0 entries.
+		-> complains about cannot find (encoded, 255) but there
+			are also entries like (238, 237)
+
+Goal 4. Regression testing
+	[a] failed testing for lkup entries
+		-> (10832055650569071758644812828, 209)
+			(10832055650569071754332999935, 238)
+				-> cateogry: 0x71090004,
+				-> encoded: 0x11010210ff
+			(10832055650569071745743065343, 37)
+				--> ...343 encoded: 73031356671, category: 1896415234, (step)
+			(10832055650569071745743065343, 255)
+		-> dump 6109 and search them
+	[b] fix factor error and recollect. failed
+		-> (42312717862284029350514943, 255)
+			-> cat 0x90
+		-> 42312717862284029350514943, 37)
+		-> (42312717862284029904231452, 210)
+	[c] fix again with 130-bit factor 1
+		-> (2773006246545682351585763660031, 254)
+			-> cat(0x71090005) - RG_end, encoded: 0x11010210ff -> rg_end
+		->  (2773006246545682351585763660031, 237)
 	
+		-> 254 and 237 belonss to diff2 (but using RG_END sid)
 
-
+		-> (2773006246545682350486268877852, 210)
+		- > category (0x71090004) -> RG_START
+			-> 210: belongs to diff1 but has sid for RG_START 
+		-> (2773006246545682348287211864064, 17)
+		    -> category (0x71090002) - STEP
+			-> 17 
+	[d] found it: the order it's added!
 
 	
 
