@@ -1,5 +1,5 @@
 # quick check
-#cargo check --tests 2>&1 | less
+# cargo check --tests 2>&1 | less
 
 # test
  RUST_BACKTRACE=1 

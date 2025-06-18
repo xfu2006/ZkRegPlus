@@ -16592,6 +16592,19 @@ Goal 4. the to_add valid proof
 		mainly beause check_imply is very expensive
 	[b] validate_to_add_prf
 	[c] debug
+
+Thursday 06/18/2025
+LOC (gadget): 10503
+LOC (data): 8331
+
+Goal 1. part 1 of fwd prf improvement 
+	[a] set up framework
+		-> find out where frg is added -> it's in FwdPrf.to_container
+	[b] design
+		-> in StoreSteps add col 
+		-> step 1 cost: check_arr_eq, arr len: 33
+			cs: 33 but the cost should be around 400 why it's 1700? -> mislabled
+			-> cost: 330 which is ok.
 	
 
 

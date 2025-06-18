@@ -1655,7 +1655,6 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		prf_fwd: &Rc<RefCell<Container<F>>>,
 		pat_loc: &Rc<RefCell<Container<F>>>,
 		sq_res: &Rc<RefCell<Container<F>>>,
-		store_steps: &Rc<RefCell<Container<F>>>,
 	)->Rc<RefCell<Container<F>>>{
 		//0. data retrieval
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
@@ -1677,6 +1676,8 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 				&v2d[4], &v2d[5], &v2d[6],
 				&v2d[7], &v2d[8], &v2d[9], &v2d[10], 
 				&v2d[11]);
+
+		/* RECOVER LATER TO CONTINUE1
 
 		//1. correctness of src_encoded (here we generate
 		// the m-table to bind the src_encoded with src_step
@@ -1783,6 +1784,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		res.borrow_mut().add_col(Col::new(vec![frg;len1],
 			"sid_abs_rg2_max", IDX_SI_DATA));
 
+		*/
 		res
 	}
 
@@ -1865,12 +1867,10 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			&ct_sq_to_add, &prf_fwd);
 		prf.borrow_mut().add_container(prf_to_add_valid);
 
-		/*RECOVOER LATER TO CONTINUE1
 		//4. prove the validity of the fwd_prf
 		let prf_fwdprf_valid = Self::gen_fwdprf_valid_prf("prf_fwdprf_valid",
-			&prf_fwd, &ct_pat_loc, &ct_sq_res, &store_steps);
+			&prf_fwd, &ct_pat_loc, &ct_sq_res);
 		prf.borrow_mut().add_container(prf_fwdprf_valid);
-		*/
 
 		// --- now return 
 		res.borrow_mut().add_container(prf);
@@ -2280,7 +2280,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		let ct_sq_to_add = forward_step_q.get_container("sq_to_add")?;
 		let ct_sq_res = forward_step_q.get_container("sq_res")?;
 		let ct_prf_fwd = forward_step_q.get_container("prf_fwd")?;
-		let _ct_pat_loc = forward_step_q.get_container("pat_loc")?;//external
+		let ct_pat_loc = forward_step_q.get_container("pat_loc")?;//external
 		
 
 		//REMOVE LATER ---------------- 
@@ -2312,20 +2312,18 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			&r1, &prf_to_add)?;
 		//REMOVE LATER -----------
 		println!("-- DEBUG USE 9999.2.3: sq_to_add: for sq_inp valid: {}", cs.num_constraints()-n2);
-		//let n2 = cs.num_constraints(); 
+		let n2 = cs.num_constraints(); 
 		//REMOVE LATER ----------- ABOVE
 
-		/* RECOVER LATER TO CONTINUE1
 		//4. validate the prf_fwd
 		let prf_fwdprf_valid = prf.borrow().get_container("prf_fwdprf_valid")?;
 		self.validate_fwdprf_valid_prf(&ct_prf_fwd, 
 			&ct_sq_res, &ct_pat_loc,
-			&r1, &r2, &prf_fwdprf_valid, store_steps)?;
+			&r1, &r2, &prf_fwdprf_valid)?;
 		//REMOVE LATER -----------
 		println!("-- DEBUG USE 9999.2.4: sq_to_add: for prf_fwdprf valid: {}", cs.num_constraints()-n2);
 		//REMOVE LATER ----------- ABOVE
 
-		*/	
 		Ok( () )
 	}
 
@@ -2496,10 +2494,13 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		r1: &FpVar<F>,
 		r2: &FpVar<F>,
 		prf_fwdprf_valid: &Rc<RefCell<Container<FpVar<F>>>>,
-		store_steps: &Container<FpVar<F>>,
 	)->Result<(), SynthesisError>{
 		//0. retrieve data
 		let cs = r1.cs(); 
+		//REMOVE LATER -------
+		let n0 = cs.num_constraints();
+		//REMOVE LATER ------- ABOVE
+
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
 		let (zero, one, max) = (new_const_var(&cs, zero), 
@@ -2527,9 +2528,15 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 				.borrow().to_vec()
 			).collect::<Vec<Vec<FpVar<F>>>>();
 		for i in 0..sidcols.len(){
+			let n1 = cs.num_constraints();
 			check_arr_eq(&sidcols[i],&frg,&format!("err checking sid_{}",i))?; 
+			println!("DEBUG USE 6105: after check arr_eq: arr len: {}, cs: {}", sidcols[i].len(), cs.num_constraints()-n1);
 		}
+		//REMOVE LATER -------
+		println!("DEBUG USE 6106:  cs: {}", cs.num_constraints()-n0);
+		//REMOVE LATER ------- ABOVE
 
+		/* RECOVER LATER TO CONTINUE1
 		//1. correctness of src_encoded (no proof needed)
 		let src_combined = encode_2col_var_adv(&src_encoded, &src_step, r1);
 		let encoded = store_steps.get_container("encoded")
@@ -2696,6 +2703,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 
 		}
 
+		*/
 		Ok( () )
 	}
 
