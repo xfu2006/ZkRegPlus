@@ -16661,8 +16661,80 @@ Goal 4. Regression testing
 	[d] found it: the order it's added!
 
 Goal 5. proceed to part3 of fwdprf_valid_prf
-	[a] before improvement: cs: 498 
+	[a] before improvement: cs: 498
+		-> breakdown:
+			src_sel: 132 (4n)
+			src_comined: 67 (2n)
+			srrc_adj: 33 (n)
+			dst_combined 67 (2n)
+			check sid 33 (n)
+			logup 166 (5n)
+	[b] can we remove the src_sel? 
+		would thre be cases a pattern does not appear at all?
+		-> e.g., step 1, loc 10 asks for range loc [20,30]
+		-> dest loc does not have any location. it returns a pair of
+			dummy entries.
+	[c] alternative design.
+		for the pats provide a column of boolean of in trace or not,
+		then we need to sort the pat trace (1 column of additional id).
+		one col of diff.
+			-> cost: 2n
+		then for each pat, we need to provide two neighboring pat in
+			trace, and show their diff in range. 2n.
+		   -> then we need to do a boolean flag on weather 0
+		   -> then it's at 3n
+		   -> 7n at least.
+		  (more expensive)
+	[d] is [b] valid?
+		[b1] case 1: locatoin not exist at all. matches anyway.
+		[b2] case 1, there is a valid query range. Suppose 
+			the prover submits two dummy entries as "fake" in proof.
+			if there is any valid results in between, it will not
+			pass the sequential id check.
+				-> BUT, if the prover submits NOTHING but just
+				the pair of dummy entries with 0, 1 as ID.
+				-> then since these dummy entries are NOT checked,
 
+Thursday 06/19/2025
+LOC: (gadget):  10643
+LOC: (data): 8405
+Goal 1. Refine step 3
+	[a] doc
+Goal 2. double check the genreation of pat-loc
+	[a] it is already sorted and it is already proved
+Goal 3. step 3.1
+
+Friday 06/20/2025
+LOC: (gadget): 10698
+LOC: (data): 8405
+
+Goal 1. Step 3.1
+	[a] identify a test case
+	[b] set up the framework to get four columns
+	[c] binary search handling -> DONE
+	[d] insert 3 columns
+	[e] check min-max pattern -> no need
+	[f] check sids -> DONE
+	[g] regression test
+			
+Goal 2. Step 3.2
+	[a] compute p1_p2
+	[b] compute all pairs
+	[c] log up
+	[d] verify logup
+	[e] check cost = 147 = 33 * 4 + 4*3
+	[f] regression testing
+
+Goal 3. Step 3
+	[a] gen tables
+	[b] gen m_tbl
+	[c] verify
+	[d] debug
+	[f] check cost -> 336, total step: 491 (this is roughly the same cost
+		as the original step.
+	[g] regression testing -> DONE.
+
+Goal 4. Step 4.
 	
 
 

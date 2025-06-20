@@ -12,7 +12,7 @@ use crate::gadgets::{
 	commons::{gen_m_table,check_arr_eq,encode_cols,decode_cols
 		,new_const_var, encode_2col_var, encode_2col_var_adv,
 		encode_cols_var, check_arr_eq_arr, encode_cols_var_adv, 
-		check_eq, new_var},
+		check_eq, new_var, is_sorted, encode_2col},
 	db::{assert_logup, verify_encoded_table, assert_well_formed_sorted},
 	traits::{Container,
 		Col,
@@ -692,10 +692,7 @@ impl <F:PrimeField> StepQueue<F>{
 	///   be true)
 	/// b_step indicates whether to add an step column
 	pub fn to_container(&self, name: &str, b_inp: bool, b_step:bool, b_oup: bool)->Rc<RefCell<Container<F>>>{
-		#[cfg(test)] {
-			use crate::gadgets::commons::{is_sorted};
-			assert!(is_sorted(&self.subsigs));
-		}
+		#[cfg(test)] { assert!(is_sorted(&self.subsigs)); }
 		assert!(!b_inp || !b_oup); //b_inp and b_oup cannot be on the same time
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, _one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
@@ -802,7 +799,6 @@ impl <F:PrimeField> StepQueueItem<F>{
 		//1. sort out the locations
 		let locs = loc_tuples.clone();
 		#[cfg(test)] {
-			use crate::gadgets::commons::is_sorted;
 			assert!(is_sorted(&locs));
 			let max_val:usize = (1<<RANGE2_BIT) - 1;
 			let (zero,_one,max) = (F::zero(),F::one(),F::from(max_val as u32));
@@ -837,7 +833,7 @@ impl <F:PrimeField> StepQueueItem<F>{
 			.par_iter().map(|x| x.1).collect::<Vec<F>>();
 		assert!(vec_locs.len()>=2); //it should at least have two dummy entries
 		#[cfg(test)]{
-		 use super::commons::{is_sorted,is_incrementing_by_one};
+		 use super::commons::{is_incrementing_by_one};
 	 	 assert!(is_sorted(&vec_locs) && is_incrementing_by_one(&vec_pat_id));
 		}
 
@@ -897,10 +893,7 @@ impl <F:PrimeField> StepFwdPrf<F>{
 	///    dst_rg_start, dst_rg_end, dst_loc, pat_id, diff1, diff2)
 	pub fn to_container(&self, name: &str)->Rc<RefCell<Container<F>>>{
 		//0. check data
-		#[cfg(test)] {
-			use crate::gadgets::commons::{is_sorted};
-			assert!(is_sorted(&self.subsigs));
-		}
+		#[cfg(test)] { assert!(is_sorted(&self.subsigs)); }
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, _one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
 
@@ -1179,10 +1172,7 @@ impl <F:PrimeField> StepBwdPrf<F>{
 	///    dst_rg_start, dst_rg_end, dst_loc, pat_id, diff1, diff2)
 	pub fn to_container(&self, name: &str)->Rc<RefCell<Container<F>>>{
 		//0. check data
-		#[cfg(test)] {
-			use crate::gadgets::commons::{is_sorted};
-			assert!(is_sorted(&self.subsigs));
-		}
+		#[cfg(test)] { assert!(is_sorted(&self.subsigs)); }
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, _one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
 		//1. build the columns
@@ -1697,6 +1687,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		prf_fwd: &Rc<RefCell<Container<F>>>,
 		pat_loc: &Rc<RefCell<Container<F>>>,
 		sq_res: &Rc<RefCell<Container<F>>>,
+		capacity: &DischargeAdvCapacity,
 	)->Rc<RefCell<Container<F>>>{
 		//0. data retrieval
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
@@ -1745,33 +1736,173 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		//2. correctness of dst_encoded (no proof needed)
 		//DEPRECATED - longer needed as new SID table check done the job.
 
-		//3. lookup pat-loc in pat_loc
+		//3. lookup pat-loc in pat_loc. Note that the raw algorithm
+		// can easily suffer from an attack. See example below:
+		//   in the original discharging proof, we ignore "dummy"
+		//   entries of location of 0 and max the reason is that
+		//   there might be locations not appearing in pat-loc table
+		//   at all. In this case, two dummy entries are provided
+		//   for the forwardprf reasoning. However, an adversary
+		//   can also provide two dummy entries (for locations which
+		//    have real entries in query range) - this allows adversary
+		//    to skip locations that are "required" to appear for the
+		//    next step.
+		//
+		//    In this case, we prove the correct before. The "lookup table"
+		//    should actually consists of two parts: (1) the pat-loc table
+		//    and (2) a dummy lookup table for those pats that do NOT appear
+		//    in the trace. 
+		//        First, note that the 2nd dummy no-show lkup table has
+		//    size UP TO the number of subsigs. The reason is that for each
+		//    subsig, the "no show" pattern can ONLY APPEAR in the very
+		//    last step of the on-going step queue. Thus, for each subsig,
+		//    there can be UP TO one such "no show" pattern. Given that
+		//    for each pattern we need to provide 2 dummy entries (simulating
+		//    the pat-loc table), the size of this second dummy lkup table
+		//    is 2*num_of_subsigs to discharge.
+		//        In average, there are 5 steps per subsig. Thus, the
+		//    needed 2nd fake talbe is only 1/5 of the size of pat-loc table
+		//    or even smaller.
+		//         Then we need to provide the following proof.
+		//    Note that pat-loc is already proved to be sorted over its key 
+		//		(pat) in fsm_adv.rs.
+		//    (1) for each no-show pat show two neigboring elements in
+		//        the pat-loc table (id, p1, p2) such that
+		//          e1 < no-showpat <= p2
+		//        this is essentially to show the difference are in range.
+		//    (2) show the (p1,p2) are NEIGHBORING pairs are in pat-loc table.
+		//    (3) perform the "query-range" of the dst_loc in the the
+		//       combined lookup talbe (pat-loc || dummy-pat-loc)
+		//    Cost analysis:  let n be the pat-loc size, s be the # of subsigs
+		//		   (1) reason about 2 diff in range: 2s
+		//         (2) compute pair columns and lkup: s + n + 
+		//				2*s + 3*n =3s + 4n
+		//         (3) query-range: 2s + 2(s+n) + 2n + 3(2s+n)
+		//				 -> 10s + 10n
+		//         Total: 12n + 7s (usually n>>s, so it's like 13n) for step 3
+		
+		//REMOVE LATER
+		println!("DEBUG USE 6301 -- dump of pat-loc");
 		pat_loc.borrow().dump_structure(1);
+		//REMOVE LATER ABOVE
+
+		//3.1 build up the a table of size 2*num_subsigs of the following 
+		//structure: note that every nsp has 2 entries (min_loc, max_loc)
+		//  (nsp, nsp_p1, p2_nsp)
+		//  nsp: no_show_pat
+		//  no_show patterns are collected from the fwd prf.
+		// p1 and p2 are two neighboring patterns in pat-loc such that
+		//   p1 < nsp < p2 (which proves that nsp didn't show in pat loc)
+		// NOTE: in the corner cases p1 = 0, and p2 = max.
+		// To save space: we do not store p1 and p2 as two separate columns,
+		// but save the two differences (and later use SID to prove that 
+		//    they are valid positive numbers).
+		// the relation is defined as:
+		//   nsp_p1 = nsp - 1 -p1 (>=0), implies nsp>p1
+		//   p2_nsp = p2 -1 - nsp (>=0), implies p2>nsp
+		// then we can compute p1 and p2 as follows
+		// compute p1 = nsp - 1 - nsp_p1
+		// compute p2 = nsp + 1 + p2_nsp 
+		// we can do dynamic logup to prove that (p1,p2) are neighboring
+		// entries of pat-loc table.
 		let pat= pat_loc.borrow().get_container("sorted_key")
 			.unwrap().borrow().to_vec();
+		#[cfg(test)]{ 
+			assert!(is_sorted(&pat)); 
+			assert!(pat[0].is_zero(), "pat has no padding zero at beginning!");
+		}
 		let pat_id= pat_loc.borrow().get_container("sorted_id")
 			.unwrap().borrow().to_vec();
 		let loc = pat_loc.borrow().get_container("sorted_val")
 			.unwrap().borrow().to_vec();
+		let set_pat_in_trace = pat.iter().filter(|p| !p.is_zero())
+			.map(|&p| p).collect::<HashSet<F>>();
+		let set_dst_pat = dst_pat.iter().filter(|p| !p.is_zero())
+			.map(|&p| p).collect::<HashSet<F>>();
+		let mut vec_nsp = set_dst_pat.difference(&set_pat_in_trace)
+			.map(|&p| p).collect::<Vec<F>>();
+		vec_nsp.sort();
+		let n_s = capacity.subsigs;
+		vec_nsp = [vec![zero; n_s - vec_nsp.len()], vec_nsp].concat(); 
+		let vec_tuples = vec_nsp.par_iter().map(|&nsp|{
+			if nsp.is_zero(){
+				(zero, zero, zero)
+			}else{
+				let res = pat.binary_search(&nsp);
+				let idx_err = match res{
+					Ok(_) => panic!("nsp: {} still in pat-loc!", nsp),
+					Err(idx) => idx
+				};
+				let p1 = if idx_err==0 {zero} else {pat[idx_err-1]};
+				let p2 = if idx_err==pat.len() {max} else {pat[idx_err]};
+				assert!(p1<nsp && nsp<p2);
+				let nsp_p1 = nsp - p1 - one;
+				let p2_nsp = p2 - one - nsp;
+				assert!(nsp_p1<=max && p2_nsp<=max);
+				(nsp, nsp_p1, p2_nsp)
+			}
+		}).collect::<Vec<(F,F,F)>>();
+		assert!(vec_tuples.len() == n_s);
+		let nsp = vec_tuples.iter().map(|t| t.0).collect::<Vec<F>>();
+		let nsp_p1 = vec_tuples.iter().map(|t| t.1).collect::<Vec<F>>();
+		let p2_nsp = vec_tuples.iter().map(|t| t.2).collect::<Vec<F>>();
 
-		//the reason for src_sel is that sometimes a pattern does NOT
-		//appear at all in pat_loc, we need to select the "real" entries
-		//from dest_loc.
-		let src_sel = dst_loc.par_iter().map(|l| {
-			let item = *l * (*l-max);
-			if item.is_zero() {zero} else {one}
+		//3.2 prove that p1 and p2 are valid pairs in pat_loc
+		let p1_p2= nsp.iter().zip(nsp_p1.iter().zip(p2_nsp.iter()))
+			.map(|(&nsp,(&nsp_p1,&p2_nsp))|{
+			let p1 = nsp - one - nsp_p1;
+			let p2 = nsp + one + p2_nsp;
+			encode_2col(&[p1], &[p2])[0]
 		}).collect::<Vec<F>>();
+		let all_pairs = (0..pat.len()-1).into_iter().map(|i|
+			encode_2col(&[pat[i]], &[pat[i+1]])[0] ).collect::<Vec<F>>();
+		let all_pairs = [//add two dummy cols for 0 and max
+			encode_2col(&[zero-one, pat[pat.len()-1]], &[one, max]),
+			all_pairs
+		].concat();
+		let m_tbl_pairs = gen_m_table(&p1_p2, &all_pairs);
+		let sid_m_tbl_pairs = vec![frg; m_tbl_pairs.len()];
+			
+
+		//3.3. now prove that (dst_loc, dst_pat_id, dst_loc)
+		//are valid (they can be found in the concat of
+		//    pat-loc table  || now_show_loc table
+
 		let src_combined = encode_cols(
 			&vec![dst_pat.clone(), dst_pat_id.clone(), dst_loc.clone()], 
 			&vec![0,1,2]);	
-		let src_adj = src_combined.par_iter().zip(src_sel.par_iter())
-			.map(|(a,b)| *a * *b).collect::<Vec<F>>();
-		let dst_combined = encode_cols(&vec![pat, pat_id, loc], &vec![0,1,2]);
-		let mtb_pat = gen_m_table(&src_adj, &dst_combined);
+
+		let dst_combined_1 = encode_cols(&vec![pat, pat_id, loc], &vec![0,1,2]);
+		let dst_combined_2 = nsp.iter().map(|nsp|{
+			//each no show location has two entries
+			encode_cols(
+				&vec![ 
+					vec![*nsp, *nsp], //pat
+			   		vec![zero, one], //ids
+					vec![zero, max], //dummy locs
+				], 
+				&vec![0,1,2]
+			)
+		}).flatten().collect::<Vec<F>>();
+		let dst_combined = [ dst_combined_1, dst_combined_2 ].concat();
+
+		let mtb_pat = gen_m_table(&src_combined, &dst_combined);
 		let len1 = mtb_pat.len();
 		res.borrow_mut().add_col(Col::new(mtb_pat, "mtb_pat", IDX_DATA));
 		res.borrow_mut().add_col(Col::new(vec![frg;len1], 
 			"sid_mtb_pat", IDX_SI_DATA));
+
+		let nsp_names = ["nsp", "nsp_p1", "p2_nsp"];
+		let nsp_cols = [nsp, nsp_p1, p2_nsp];
+		nsp_cols.into_iter().zip(nsp_names.iter()).for_each(|(c,n)|{
+			res.borrow_mut().add_col(Col::new(c, n, IDX_DATA));
+			res.borrow_mut().add_col(Col::new(vec![frg; n_s], 
+				&format!("sid_{}",n),IDX_SI_DATA));
+		});
+		res.borrow_mut().add_col(Col::new(m_tbl_pairs,"m_tbl_pairs",IDX_DATA));
+		res.borrow_mut().add_col(Col::new(sid_m_tbl_pairs,
+				"sid_m_tbl_pairs", IDX_SI_DATA));
+
 
 		/* RECOVER LATER TO CONTINUE1
 
@@ -1855,7 +1986,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		pat_loc: &Rc<RefCell<Container<F>>>,
 		inp_step_queue: &StepQueue<F>, 
 		_fsm_id: u32,
-		_capacity: &DischargeAdvCapacity,
+		capacity: &DischargeAdvCapacity,
 		subsig_store_info: &SubsigStepStore,
 	)->Rc<RefCell<Container<F>>>{
 		let b_debug = true;
@@ -1920,7 +2051,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 
 		//4. prove the validity of the fwd_prf
 		let prf_fwdprf_valid = Self::gen_fwdprf_valid_prf("prf_fwdprf_valid",
-			&prf_fwd, &ct_pat_loc, &ct_sq_res);
+			&prf_fwd, &ct_pat_loc, &ct_sq_res, capacity);
 		prf.borrow_mut().add_container(prf_fwdprf_valid);
 
 		// --- now return 
@@ -2663,54 +2794,75 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		//REMOVE LATER ------------------ ABOVE
 
 		//3. lookup pat-loc in pat_loc
-		let src_sel = dst_loc.iter().map(|l| {
-			let item = l * (l-&max);
-			item.is_zero().unwrap().not().into()
-			//item.is_neq(&zero).unwrap().into() //same cost
+		//3.1 verify the validity of nsp, nsp_p1 and p2_nsp
+		//we just need to validate nsp_p1 and p2_nsp in range
+		//nsp itself is not needed as later it's verified the lookup
+		let pat_cols = ["sorted_key", "sorted_id", "sorted_val"].iter()
+			.map(|n| pat_loc.borrow().get_container(n)
+				.unwrap().borrow().to_vec()
+			).collect::<Vec<Vec<FpVar<F>>>>();
+		let (pat, pat_id, loc) = (&pat_cols[0], &pat_cols[1], &pat_cols[2]); 
+		let nsp_names = ["nsp", "nsp_p1", "p2_nsp"];
+		let sid_nsp_p1 = prf_fwdprf_valid.borrow().get_container("sid_nsp_p1")
+			.unwrap().borrow().to_vec();
+		let sid_p2_nsp= prf_fwdprf_valid.borrow().get_container("sid_p2_nsp")
+			.unwrap().borrow().to_vec();
+		check_arr_eq(&sid_nsp_p1, &frg, "err checking sid_nsp_p1")?; 
+		check_arr_eq(&sid_p2_nsp, &frg, "err checking sid_p2_nsp")?; 
+
+		//3.2 prove that p1 and p2 are valid pairs in pat_loc
+		let nsp_names = ["nsp", "nsp_p1", "p2_nsp"];
+		let nsp_cols = nsp_names.iter().map(|n|
+				prf_fwdprf_valid.borrow().get_container(n)
+					.unwrap().borrow().to_vec())
+				.collect::<Vec<Vec<FpVar<F>>>>();
+		let (nsp, nsp_p1, p2_nsp) = (&nsp_cols[0], &nsp_cols[1], &nsp_cols[2]);
+		let p1_p2= nsp.iter().zip(nsp_p1.iter().zip(p2_nsp.iter()))
+			.map(|(nsp,(nsp_p1,p2_nsp))|{
+			let p1 = nsp - &one - nsp_p1;
+			let p2 = nsp + &one + p2_nsp;
+			p1 + p2*r1
 		}).collect::<Vec<FpVar<F>>>();
-		//REMOVE LATER -------
-		println!("DEBUG USE 6106.1: src_sel: cs: {}", cs.num_constraints()-n0);
-		let n0 = cs.num_constraints();
-		//REMOVE LATER ------- ABOVE
+		let all_pairs = (0..pat.len()-1).into_iter().map(|i|
+			&pat[i] + &pat[i+1]*r1).collect::<Vec<FpVar<F>>>();
+		let all_pairs = [//add two dummy cols for 0 and max
+			vec![
+				&zero-&one + &one * r1,
+				&pat[pat.len()-1] + &max * r1
+			],
+			all_pairs
+		].concat();
+		let m_tbl_pair = prf_fwdprf_valid.borrow().get_container("m_tbl_pairs")
+			.unwrap().borrow().to_vec();//no need to check its sid
+		assert_logup(cs.clone(), &p1_p2, &all_pairs, &m_tbl_pair, r1)?;
+
+		//3.3. now prove that (dst_loc, dst_pat_id, dst_loc)
+		//are valid (they can be found in the concat of
+		//    pat-loc table  || now_show_loc table
 		let src_combined = encode_cols_var_adv(
 			&vec![dst_pat.to_vec(), dst_pat_id.to_vec(), dst_loc.to_vec()], 
 			&vec![0,1,2], &r1);	
-		//REMOVE LATER -------
-		println!("DEBUG USE 6106.2: src_combined: cs: {}", cs.num_constraints()-n0);
-		let n0 = cs.num_constraints();
-		//REMOVE LATER ------- ABOVE
-		let src_adj = src_combined.iter().zip(src_sel.iter()).map(|(a,b)|
-			a*b).collect::<Vec<FpVar<F>>>();
-		//REMOVE LATER -------
-		println!("DEBUG USE 6106.3: src_adj: cs: {}", cs.num_constraints()-n0);
-		let n0 = cs.num_constraints();
-		//REMOVE LATER ------- ABOVE
-		let pat = pat_loc.borrow().get_container("sorted_key")
-			.unwrap().borrow().to_vec(); 
-		let pat_id = pat_loc.borrow().get_container("sorted_id")
-			.unwrap().borrow().to_vec(); 
-		let loc = pat_loc.borrow().get_container("sorted_val")
-			.unwrap().borrow().to_vec(); 
-		let dst_combined = encode_cols_var_adv(
-			&vec![pat, pat_id, loc], &vec![0,1,2], &r1);	
-		//REMOVE LATER -------
-		println!("DEBUG USE 6106.4: dst_combined: cs: {}", cs.num_constraints()-n0);
-		let n0 = cs.num_constraints();
-		//REMOVE LATER ------- ABOVE
+		let dst_combined_1 = encode_cols_var_adv(
+			&vec![pat.to_vec(), pat_id.to_vec(), loc.to_vec()], 
+			&vec![0,1,2], &r1);	
+		let dst_combined_2 = nsp.iter().map(|item|{
+			//each no show location has two entries
+			encode_cols_var_adv(
+				&vec![ //note var clone is low cost (still same var id)
+					vec![item.clone(), item.clone()], //pat
+			   		vec![zero.clone(), one.clone()], //ids
+					vec![zero.clone(), max.clone()], //dummy locs
+				], 
+				&vec![0,1,2],
+				&r1
+
+			)
+		}).flatten().collect::<Vec<FpVar<F>>>();
+		let dst_combined = [ dst_combined_1, dst_combined_2 ].concat();
 		let mtb_pat = prf_fwdprf_valid.borrow().get_container("mtb_pat")
 			.unwrap().borrow().to_vec();
-		let sid_mtb_pat = prf_fwdprf_valid.borrow().get_container("sid_mtb_pat")
-			.unwrap().borrow().to_vec();
-		check_arr_eq(&sid_mtb_pat, &frg, "err checking sid_mtb_pat")?; 
-		//REMOVE LATER -------
-		println!("DEBUG USE 6106.5: check sid: cs: {}", cs.num_constraints()-n0);
-		let n0 = cs.num_constraints();
-		//REMOVE LATER ------- ABOVE
-		assert_logup(cs.clone(), &src_adj, &dst_combined, &mtb_pat, r2)?;
-		//REMOVE LATER -------
-		println!("DEBUG USE 6106.6: check_logup : cs: {}", cs.num_constraints()-n0);
-		let n0 = cs.num_constraints();
-		//REMOVE LATER ------- ABOVE
+		//no need to check sid, just check logup
+		assert_logup(cs.clone(), &src_combined, &dst_combined, &mtb_pat, r1)?;
 
 		//REMOVE LATER -------
 		println!("DEBUG USE 6106: steps3: cs: {}", cs.num_constraints()-n0);
@@ -3457,9 +3609,11 @@ pub mod tests_discharge_adv_gadget{
 		let sigs = vec![
 			/* RECOVER LATER
 			"sig1;Engine:51-255,Target:0;0&1;/abc..123/;/123....abc/",
-			"sig2;Engine:51-255,Target:0;0&1;/def.*234.*567/;/234....def/",
 			*/
+			"sig2;Engine:51-255,Target:0;0&1;/def.*234.*567/;/234....def/",
+			/* RECOVER LATER
 			"sig3;Engine:51-255,Target:0;0&1;/fgh.*1234......56...78/;/56......fgh/",
+			*/
 		].iter().map(|x| x.to_string()).collect::<Vec<String>>();
 		let needs_dfa = vec![];
 		let needs_ised= vec![];
@@ -3474,8 +3628,10 @@ pub mod tests_discharge_adv_gadget{
 			/* RECOVER LATER
 			//1. fails sig1 coz gap len incorrect
 			Tcase::new("abcddd123", "sig1", false, false), //b_ised=F, igc=F
+			*/
 			//2. fails sig2 coz 3rd pattern missing
 			Tcase::new("defxx234xx56", "sig2", false, false),
+			/* RECOVER LATER
 			//3. similar to test2 for longer string (2 cycles)
 			// debug to verify that location 193 (corresponding to
 			// 234 is added to "to_add" and in "res". "56" is not identified
@@ -3486,13 +3642,13 @@ pub mod tests_discharge_adv_gadget{
 			Tcase::new(
 				&format!("ddd{}234xx{}56","x".repeat(90), "u".repeat(90)), 
 				"sig2", false, false),
-			*/
 			//5. a case which has both fwd and backward elimination.
 			//manually check debug messages of backward and forward proofs
 			//baseically: the last 78 is not added, but the
 			//first 78 kills the 1st 56, which then kills the first three
 			//1234
 			Tcase::new("fghxx1234xx1234xx1234x1234x56xxx56xxx78xx78xx", "sig3", false, false), 
+			*/
 		];
 
 		for tc in testcases{
