@@ -1914,38 +1914,13 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			.unwrap().borrow().to_vec();
 		let res_loc = sq_res.borrow().get_container("locs")
 			.unwrap().borrow().to_vec();
-		let res_sel = res_step.par_iter().enumerate().map(|(i,_step)|{
-			/*
-			if i>=res_loc.len()-2{ zero } //last 2 entries should be 0
-			// n (max) and n-1 (last real) entries are ignored for each subsig
-			// because forward prf handsl step [0,n-2]
-			// note positive selector may be a positive value but not 1
-			// any of the next step or 2nd next step is 0 or loc itself
-			// is zero should be granted 0.
-			else{ if (res_step[i+1]*res_step[i+2]*res_loc[i]).is_zero() {zero} else {one}}
-			*/
-			one
-		}).collect::<Vec<F>>();
-
-		//REMOVE LATER --------------
-		println!("DEBUG USE 601: result encoded and src_loc:");
-		for i in 0..src_combined.len(){
-			println!(" -- i: {}, encoded: {}, loc: {}", i, res_encoded[i], res_loc[i]);
-		}
-		println!("DEBUG USE 602: src encoded and src_loc:");
-		for i in 0..src_encoded.len(){
-			println!(" -- i: {}, encoded: {}, loc: {}", i, src_encoded[i], src_loc[i]);
-		}
-		//REMOVE LATER -------------- ABOVE
 
 		let src_combined = encode_cols(&vec![res_encoded, res_loc], &vec![0,1]);
-		let src_adj = src_combined.par_iter().zip(res_sel.par_iter())
-			.map(|(x,y)| *x**y).collect::<Vec<F>>();
 		let dst_adj= encode_cols(&vec![src_encoded.to_vec(), src_loc.to_vec()], 
 			&vec![0,1]);
 
-		let mtb_res1= gen_m_table(&src_adj, &dst_adj);
-		let mtb_res2= gen_m_table(&dst_adj, &src_adj);
+		let mtb_res1= gen_m_table(&src_combined, &dst_adj);
+		let mtb_res2= gen_m_table(&dst_adj, &src_combined);
 		let len1 = mtb_res1.len();
 		let len2 = mtb_res2.len();
 		res.borrow_mut().add_col(Col::new(mtb_res1, "mtb_res1", IDX_DATA));
@@ -2891,47 +2866,16 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			.unwrap().borrow().to_vec();
 		let res_loc = sq_res.borrow().get_container("locs")
 			.unwrap().borrow().to_vec();
-		let res_sel = res_step.iter().enumerate().map(|(i,_step)|{
-			if i>=res_loc.len()-2{ one.clone() } //last 2 entries should be 0
-			// n (max) and n-1 (last real) entries are ignored for each subsig
-			// because forward prf handsl step [0,n-2]
-			// note positive selector may be a positive value but not 1
-			// any of the next step or 2nd next step is 0 or loc itself
-			// is zero should be granted 0.
-			else{ 
-				let partial = &(&res_step[i+1] * &res_step[i+2]) * &res_loc[i];
-				let res = partial.is_zero().unwrap().not();
-				let old_res: FpVar<F> =  res.into();
-				one.clone()
-			}
-		}).collect::<Vec<FpVar<F>>>();
 		let src_combined = encode_cols_var_adv(&vec![res_encoded.clone(), res_loc.clone()], &vec![0,1], &r1);
-		let src_adj = src_combined.iter().zip(res_sel.iter())
-			.map(|(x,y)| x*y).collect::<Vec<FpVar<F>>>();
 		let dst_adj= encode_cols_var_adv(&vec![src_encoded.to_vec(), 
 			src_loc.to_vec()], &vec![0,1], &r1);
 		let mtb_res1 = prf_fwdprf_valid.borrow()
 			.get_container("mtb_res1").unwrap().borrow().to_vec();
-		let sid_mtb_res1 = prf_fwdprf_valid.borrow()
-			.get_container("sid_mtb_res1").unwrap().borrow().to_vec();
 		let mtb_res2 = prf_fwdprf_valid.borrow()
 			.get_container("mtb_res2").unwrap().borrow().to_vec();
-		let sid_mtb_res2 = prf_fwdprf_valid.borrow()
-			.get_container("sid_mtb_res2").unwrap().borrow().to_vec();
-		//REMOVE LATER -----------------
-		println!("DEBUG USE 6011 src combined");
-		for i in 0..src_adj.len(){
-			println!(" --i: {}, src: {}", i, src_adj[i].value()?);
-		}
-		println!("DEBUG USE 6012 dst combined");
-		for i in 0..dst_adj.len(){
-			println!(" --i: {}, dst: {}", i, dst_adj[i].value()?);
-		}
-		//REMOVE LATER ----------------- ABOVE
-		check_arr_eq(&sid_mtb_res1, &frg, "err checking sid_mtb_res")?; 
-		check_arr_eq(&sid_mtb_res2, &frg, "err checking sid_mtb_res")?; 
-		assert_logup(cs.clone(), &src_adj, &dst_adj, &mtb_res1, r1)?;
-		assert_logup(cs.clone(), &dst_adj, &src_adj, &mtb_res2, r1)?;
+		//no need to check sid of mtbs.
+		assert_logup(cs.clone(), &src_combined, &dst_adj, &mtb_res1, r1)?;
+		assert_logup(cs.clone(), &dst_adj, &src_combined, &mtb_res2, r1)?;
 
 		//REMOVE LATER -------
 		println!("DEBUG USE 6106: steps4: cs: {}", cs.num_constraints()-n0);
