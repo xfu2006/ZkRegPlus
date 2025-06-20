@@ -16735,6 +16735,10 @@ Goal 3. Step 3
 	[g] regression testing -> DONE.
 
 Goal 4. Step 4.
+	[a] set up the framework
+	[b] bug to fix (1945) -> fixed
+	[b] original COST: 619 (about 18.5 n)
+		estimate of saving: 5n -> saving 160
 	
 
 

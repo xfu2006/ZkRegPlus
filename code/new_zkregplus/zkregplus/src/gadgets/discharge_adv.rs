@@ -1904,7 +1904,6 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 				"sid_m_tbl_pairs", IDX_SI_DATA));
 
 
-		/* RECOVER LATER TO CONTINUE1
 
 		//4. prove encoded-loc corresponds to result_queue (note:
 		// where result is inp + to_add. the prf works on the "dynamic"
@@ -1916,6 +1915,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		let res_loc = sq_res.borrow().get_container("locs")
 			.unwrap().borrow().to_vec();
 		let res_sel = res_step.par_iter().enumerate().map(|(i,_step)|{
+			/*
 			if i>=res_loc.len()-2{ zero } //last 2 entries should be 0
 			// n (max) and n-1 (last real) entries are ignored for each subsig
 			// because forward prf handsl step [0,n-2]
@@ -1923,13 +1923,27 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			// any of the next step or 2nd next step is 0 or loc itself
 			// is zero should be granted 0.
 			else{ if (res_step[i+1]*res_step[i+2]*res_loc[i]).is_zero() {zero} else {one}}
+			*/
+			one
 		}).collect::<Vec<F>>();
+
+		//REMOVE LATER --------------
+		println!("DEBUG USE 601: result encoded and src_loc:");
+		for i in 0..src_combined.len(){
+			println!(" -- i: {}, encoded: {}, loc: {}", i, res_encoded[i], res_loc[i]);
+		}
+		println!("DEBUG USE 602: src encoded and src_loc:");
+		for i in 0..src_encoded.len(){
+			println!(" -- i: {}, encoded: {}, loc: {}", i, src_encoded[i], src_loc[i]);
+		}
+		//REMOVE LATER -------------- ABOVE
 
 		let src_combined = encode_cols(&vec![res_encoded, res_loc], &vec![0,1]);
 		let src_adj = src_combined.par_iter().zip(res_sel.par_iter())
 			.map(|(x,y)| *x**y).collect::<Vec<F>>();
 		let dst_adj= encode_cols(&vec![src_encoded.to_vec(), src_loc.to_vec()], 
 			&vec![0,1]);
+
 		let mtb_res1= gen_m_table(&src_adj, &dst_adj);
 		let mtb_res2= gen_m_table(&dst_adj, &src_adj);
 		let len1 = mtb_res1.len();
@@ -1941,6 +1955,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		res.borrow_mut().add_col(Col::new(vec![frg;len2], 
 			"sid_mtb_res2", IDX_SI_DATA));
 
+		/* RECOVER LATER TO CONTINUE1
 		//5. prove the ascending order of pat_id column (no need
 		// for generating additional data, we are proving pat_id
 		// increasing by 1. This is needed for range-query validity
@@ -2869,7 +2884,6 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		let n0 = cs.num_constraints();
 		//REMOVE LATER ------- ABOVE
 
-		/* RECOVER LATER TO CONTINUE1
 		//4. prove encoded-loc corresponds to res_queue
 		let res_encoded= sq_res.borrow().get_container("encoded")
 			.unwrap().borrow().to_vec();
@@ -2878,7 +2892,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		let res_loc = sq_res.borrow().get_container("locs")
 			.unwrap().borrow().to_vec();
 		let res_sel = res_step.iter().enumerate().map(|(i,_step)|{
-			if i>=res_loc.len()-2{ zero.clone() } //last 2 entries should be 0
+			if i>=res_loc.len()-2{ one.clone() } //last 2 entries should be 0
 			// n (max) and n-1 (last real) entries are ignored for each subsig
 			// because forward prf handsl step [0,n-2]
 			// note positive selector may be a positive value but not 1
@@ -2887,7 +2901,8 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			else{ 
 				let partial = &(&res_step[i+1] * &res_step[i+2]) * &res_loc[i];
 				let res = partial.is_zero().unwrap().not();
-				res.into()
+				let old_res: FpVar<F> =  res.into();
+				one.clone()
 			}
 		}).collect::<Vec<FpVar<F>>>();
 		let src_combined = encode_cols_var_adv(&vec![res_encoded.clone(), res_loc.clone()], &vec![0,1], &r1);
@@ -2903,10 +2918,26 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			.get_container("mtb_res2").unwrap().borrow().to_vec();
 		let sid_mtb_res2 = prf_fwdprf_valid.borrow()
 			.get_container("sid_mtb_res2").unwrap().borrow().to_vec();
+		//REMOVE LATER -----------------
+		println!("DEBUG USE 6011 src combined");
+		for i in 0..src_adj.len(){
+			println!(" --i: {}, src: {}", i, src_adj[i].value()?);
+		}
+		println!("DEBUG USE 6012 dst combined");
+		for i in 0..dst_adj.len(){
+			println!(" --i: {}, dst: {}", i, dst_adj[i].value()?);
+		}
+		//REMOVE LATER ----------------- ABOVE
 		check_arr_eq(&sid_mtb_res1, &frg, "err checking sid_mtb_res")?; 
 		check_arr_eq(&sid_mtb_res2, &frg, "err checking sid_mtb_res")?; 
-		assert_logup(cs.clone(), &src_adj, &dst_adj, &mtb_res1, r2)?;
-		assert_logup(cs.clone(), &dst_adj, &src_adj, &mtb_res2, r2)?;
+		assert_logup(cs.clone(), &src_adj, &dst_adj, &mtb_res1, r1)?;
+		assert_logup(cs.clone(), &dst_adj, &src_adj, &mtb_res2, r1)?;
+
+		//REMOVE LATER -------
+		println!("DEBUG USE 6106: steps4: cs: {}", cs.num_constraints()-n0);
+		//let n0 = cs.num_constraints();
+		//REMOVE LATER ------- ABOVE
+		/* RECOVER LATER TO CONTINUE1
 
 		//5. prove the ascending order of pat_id column.
 		// Check: when (dst_encoded, src_loc) 
