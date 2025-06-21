@@ -497,7 +497,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 				&subsig_step_store,
 				pm_fsm_id,
 				&self.capacity.da_capacity()
-			).to_vec();
+			).to_vec(&subsig_step_store);
 
 
 		let (inp_state, inp_loc, inp_steps_queue) = prev_adv.as_ref().map_or(

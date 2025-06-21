@@ -92,10 +92,11 @@ pub const ID_MIN_REQUIRED:u32=0x70130004;
 pub const ID_COMP_SUBSIG:u32=0x70130005;
 // the following are pice ids for SubsigStepStore's encoded_to_attribute table
 pub const ID_ENCODED_SUBSIG:u32=0x71090001;
-pub const ID_ENCODED_STEP:u32=0x71090002;
+pub const ID_ENCODED_NORMAL_STEP:u32=0x71090002;
 pub const ID_ENCODED_PAT:u32=0x71090003;
 pub const ID_ENCODED_RG_START:u32=0x71090004;
 pub const ID_ENCODED_RG_END:u32=0x71090005;
+pub const ID_ENCODED_LAST_STEP:u32=0x71090006;
 
 /* COMMENT: each bag acdfa has the following entries see above.
 	INIT (offset: 0), NON_FINAL, FINAL, 
@@ -462,6 +463,8 @@ impl SubsigStepStore{
 		acdfa_id: u32,
 		state_part_bits: usize,
 	) {
+		let max_val:usize = (1<<RANGE2_BIT) - 1;
+		let max = F::from(max_val as u32);
 		let cols = self.gen_cols(state_part_bits, None);
 		let tbl_id = F::from(acdfa_id + STORE_SUBSIG_STEP);
 
@@ -482,13 +485,21 @@ impl SubsigStepStore{
 		}
 		//1. use a loop add sub-table for encoded-subsig, encoded_step, 
 		// encoded_pat_id, encoded_rg_start, encoded_rg_end
-		let subcats = [ID_ENCODED_SUBSIG, ID_ENCODED_STEP, ID_ENCODED_PAT,
+		let subcats = [ID_ENCODED_SUBSIG, ID_ENCODED_NORMAL_STEP,
+			ID_ENCODED_PAT,
 			ID_ENCODED_RG_START, ID_ENCODED_RG_END];
 		let mut all_tuples = subcats.par_iter().enumerate().map(|(i,pid)|{
 			let info_col = &cols[i]; //e.g., 0 is for subsig, 1 for step etc.
 			let encoded = &cols[5];
+			let pats = &cols[2];
 			let tuples = encoded.iter().zip(info_col.iter()).map(|(e,s)|{
-				let tbl_id = Self::gen_step_tbl_id(*e, *pid);
+				let tbl_id = if i!=1 {Self::gen_step_tbl_id(*e, *pid)} else{
+					if i==pats.len()-1 || pats[i+1]!=max{
+						Self::gen_step_tbl_id(*e,ID_ENCODED_NORMAL_STEP)
+					}else{
+						Self::gen_step_tbl_id(*e,ID_ENCODED_LAST_STEP) 
+					}
+				};
 				//REMOVE LATER --------------------
 				println!("DEBUG USE 6109: INSERT: tbl_id: {}, s: value: {}, categorty: {}, encoded: {}", tbl_id, s, pid, e);
 				//REMOVE LATER -------------------- ABOVE

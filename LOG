@@ -16773,8 +16773,27 @@ Goal 1. regression testing
 		[c1] when genearting step, if last step: STEP_TAB_LASTTAG
 		[c2] when checking steps, verify (sid_tag-op1)*(sid_tag-opt2) = 0
 			increase n
+				-> add subsig_step_store to to_containre
+				-> fix ripple change
 		[c3] in step 4, use (sid_step - TAG_LAST_STEP) as selector
-			increase 2n
+			-> dump the sid for loc 79
+			->fix n2 problem
+			-> idx out of bound issue
+			-> encoded not match problem
+		[c4] do the same logic in step 4 of validate_fwd_prf
+			-> implement
+			-> fail src_step_check
+		[c5] logup fails
+	[d] cost:
+		NEW COST: 530 (saving 80 compered with very first correct one).
+	[e] regression testing
+		[e1] all test cases
+		[e2 larger test
+
+Goal 2. Step 5.
+	[a] collect cost: ORIGINAL COST:  256 (7n)
+	[b] analyze:
+	[c] 
 			
 Goal 2. collect step 5 data
 

@@ -651,7 +651,7 @@ pub mod tests_compute_sig_adv{
 			perc_pats_in_trace: 48,
 		};
 		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone()};
-		let ct = sq.to_container("ct", true, false, false);
+		let ct = sq.to_container("ct", true, false, false, &steps_info);
 		let pat = ct.borrow().get_container("encoded")
 			.unwrap().borrow().to_vec();
 		let loc = ct.borrow().get_container("locs").unwrap().borrow().to_vec();
