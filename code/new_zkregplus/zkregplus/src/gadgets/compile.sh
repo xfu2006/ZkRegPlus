@@ -2,8 +2,7 @@
 # cargo check --tests 2>&1 | less
 
 # test
- RUST_BACKTRACE=1 
- cargo test -- test_discharge_adv --show-output --nocapture
+ RUST_BACKTRACE=1 cargo test -- test_discharge_adv --show-output --nocapture
 #RUST_BACKTRACE=1 
 #cargo test -- test_fwd_prf --show-output --nocapture
 

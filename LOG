@@ -16739,7 +16739,43 @@ Goal 4. Step 4.
 	[b] bug to fix (1945) -> fixed
 	[b] original COST: 619 (about 18.5 n)
 		estimate of saving: 5n -> saving 160
-	
+	[c] regression testing -> DONE
 
+Goal 5. planning
+	[a] do we need to ensure the last step of forward prf is valid?
+		the existing validate_to_add() asserts the
+		1-to-1 mapping between
+			sq_to_add.[encoded-loc] (note that encoded already embeds step)
+		<--> prf_fwd.[dst_encoded-dst-loc]
+	
+		If this is NOT the last step, there are SOME locs for next step
+			-> sq_to_add --> sq_res
+		-> then fwd_prf is required to cover sq_res, so it cannot
+		-> skip entries in sq_res.
+	[b] so actually NOTHING have to be done!
+
+Saturday 06/21/2025
+LOC (gadget): 10774
+LOC (data): 8405
+Goal 1. regression testing
+	[a] unit testing
+	[b] debug -> testcase 5
+		-> step 4
+		-> src loc 79 did not appear in prf, pat 7: 
+		-> problem: pat 7 is the LAST STEP of the subsig, it should
+			be ignored because there is no next step.
+		-> in the original design, tail border pats are ignored, the
+			this no longer works because tail border pats are not
+			necessarily the LAST STEP, given the prf length is now
+			flexible
+		-> the logic should be if this is the LAST STEP
+	[c] design: 
+		[c1] when genearting step, if last step: STEP_TAB_LASTTAG
+		[c2] when checking steps, verify (sid_tag-op1)*(sid_tag-opt2) = 0
+			increase n
+		[c3] in step 4, use (sid_step - TAG_LAST_STEP) as selector
+			increase 2n
+			
+Goal 2. collect step 5 data
 
 

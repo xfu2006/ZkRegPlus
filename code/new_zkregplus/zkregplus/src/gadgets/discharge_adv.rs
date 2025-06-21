@@ -1915,9 +1915,19 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		let res_loc = sq_res.borrow().get_container("locs")
 			.unwrap().borrow().to_vec();
 
-		let src_combined = encode_cols(&vec![res_encoded, res_loc], &vec![0,1]);
+		let src_combined = encode_cols(&vec![res_encoded.clone(), res_loc.clone()], &vec![0,1]);
 		let dst_adj= encode_cols(&vec![src_encoded.to_vec(), src_loc.to_vec()], 
 			&vec![0,1]);
+		//REMOVE LATER -------------- remove clone above
+		println!("DEBUG USE 6101: src_combined ====");
+		for i in 0..src_combined.len(){
+			println!("  i: {}, res_encoded: {}, res_loc: {}", i, res_encoded[i], res_loc[i]);
+		}
+		println!("DEBUG USE 6102: dst combined ===");
+		for i in 0..dst_adj.len(){
+			println!("  i: {}, src_encoded: {}, src_loc: {}", i, src_encoded[i], src_loc[i]);
+		}
+		//REMOVE LATER -------------- ABOVE
 
 		let mtb_res1= gen_m_table(&src_combined, &dst_adj);
 		let mtb_res2= gen_m_table(&dst_adj, &src_combined);
@@ -3582,13 +3592,11 @@ pub mod tests_discharge_adv_gadget{
 	fn test_discharge_adv(){
 		//1. define the sigs
 		let sigs = vec![
-			/* RECOVER LATER
-			"sig1;Engine:51-255,Target:0;0&1;/abc..123/;/123....abc/",
-			*/
 			"sig2;Engine:51-255,Target:0;0&1;/def.*234.*567/;/234....def/",
-			/* RECOVER LATER
+			// /* RECOVER LATER
+			"sig1;Engine:51-255,Target:0;0&1;/abc..123/;/123....abc/",
 			"sig3;Engine:51-255,Target:0;0&1;/fgh.*1234......56...78/;/56......fgh/",
-			*/
+			// */
 		].iter().map(|x| x.to_string()).collect::<Vec<String>>();
 		let needs_dfa = vec![];
 		let needs_ised= vec![];
@@ -3600,13 +3608,11 @@ pub mod tests_discharge_adv_gadget{
 
 		//2. define the test cases
 		let testcases = vec![
-			/* RECOVER LATER
-			//1. fails sig1 coz gap len incorrect
-			Tcase::new("abcddd123", "sig1", false, false), //b_ised=F, igc=F
-			*/
+			 /* RECOVER LATER
 			//2. fails sig2 coz 3rd pattern missing
 			Tcase::new("defxx234xx56", "sig2", false, false),
-			/* RECOVER LATER
+			//1. fails sig1 coz gap len incorrect
+			Tcase::new("abcddd123", "sig1", false, false), //b_ised=F, igc=F
 			//3. similar to test2 for longer string (2 cycles)
 			// debug to verify that location 193 (corresponding to
 			// 234 is added to "to_add" and in "res". "56" is not identified
@@ -3617,13 +3623,13 @@ pub mod tests_discharge_adv_gadget{
 			Tcase::new(
 				&format!("ddd{}234xx{}56","x".repeat(90), "u".repeat(90)), 
 				"sig2", false, false),
+			 */
 			//5. a case which has both fwd and backward elimination.
 			//manually check debug messages of backward and forward proofs
 			//baseically: the last 78 is not added, but the
 			//first 78 kills the 1st 56, which then kills the first three
 			//1234
 			Tcase::new("fghxx1234xx1234xx1234x1234x56xxx56xxx78xx78xx", "sig3", false, false), 
-			*/
 		];
 
 		for tc in testcases{
