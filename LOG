@@ -16792,8 +16792,12 @@ Goal 1. regression testing
 
 Goal 2. Step 5.
 	[a] collect cost: ORIGINAL COST:  256 (7n)
-	[b] analyze:
-	[c] 
+	[b] analyze: cannot save anything
+	[c] regression testing (1) and (2)
+
+Goal 3. Step 6.
+	[a] collect cost: ORIGINAL COST: 1042 (30n)
+	[b] analyze and design improvement
 			
 Goal 2. collect step 5 data
 

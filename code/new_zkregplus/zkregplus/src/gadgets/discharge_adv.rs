@@ -1988,7 +1988,6 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		// to show that the returned query result has the right result
 		// in the middle.
 
-		/* RECOVER LATER TO CONTINUE1
 		//6. prove the validity of diff1/diff2.
 		let rg1 = dst_rg_start.par_iter().zip(src_loc.par_iter()).map(|(a,b)|
 			*a + *b).collect::<Vec<F>>();
@@ -2008,7 +2007,6 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		res.borrow_mut().add_col(Col::new(vec![frg;len1],
 			"sid_abs_rg2_max", IDX_SI_DATA));
 
-		*/
 		res
 	}
 
@@ -3056,8 +3054,10 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			check_eq(&item2, &zero, "err_diff2")?;
 
 		}
+		//REMOVE LATER -------
+		println!("DEBUG USE 6106: steps6: cs: {}", cs.num_constraints()-n0);
+		//REMOVE LATER ------- ABOVE
 
-		*/
 		Ok( () )
 	}
 
@@ -3693,7 +3693,7 @@ pub mod tests_discharge_adv_gadget{
 
 		//2. define the test cases
 		let testcases = vec![
-			// /* RECOVER LATER
+			 /* RECOVER LATER
 			//2. fails sig2 coz 3rd pattern missing
 			Tcase::new("defxx234xx56", "sig2", false, false),
 			//1. fails sig1 coz gap len incorrect
@@ -3708,7 +3708,7 @@ pub mod tests_discharge_adv_gadget{
 			Tcase::new(
 				&format!("ddd{}234xx{}56","x".repeat(90), "u".repeat(90)), 
 				"sig2", false, false),
-			// */
+			 */
 			//5. a case which has both fwd and backward elimination.
 			//manually check debug messages of backward and forward proofs
 			//baseically: the last 78 is not added, but the
