@@ -133,8 +133,7 @@ pub struct StepFwdPrfItem<F:PrimeField>{
 	// diff1 and diff2 are used
 	// to verify the correctness of the query result. They have to
 	// be included in output into the Statement instance for range check.
-	// diff1 = |new_loc - (rg_start + loc1) - 1|
-	// diff2 = |new_loc - (rg_end + loc1) - 1|
+	// note that diff1 and diff2 are always in range [0,max] (non-negative).
 	//
 	// Example: loc1: 10,   (rg_start,rg_end) = (10,20) -> qry: (20,30)
 	// The available locations (contained in a pat-id-loc table),
@@ -164,7 +163,6 @@ pub struct StepFwdPrfItem<F:PrimeField>{
 	// diff2 = if b_begin {0}
 	//         else if end {new_loc - (rg_end+loc1)-1} //for >
 	//         else {rg_end+loc1-new_loc}
-
 
 	/// the ID of the loc in pat-loc table.
 	pub vec_pat_id: Vec<F>,
@@ -861,7 +859,10 @@ impl <F:PrimeField> StepQueueItem<F>{
 		let src_loc = self.locs[my_loc_idx];
 		let rg1= nxt_rg_start + src_loc;
 		let rg2 = nxt_rg_end + src_loc;
-		let rg1 = if rg1>=max {max-one} else {rg1};
+		//no need for rg1 as later it will never underflow
+		//rg2 reset is needed as later for case i==last
+		//  we do dst_loc - rg2 - one (it needs to be a possible number)
+		//  to satisfy the range-query semantics.
 		let rg2 = if rg2>=max {max-one} else {rg2};
 
 		//2. perform binary search for the query
@@ -1095,7 +1096,7 @@ impl <F:PrimeField> StepFwdPrfItem<F>{
 	pub fn new(src_encoded: F, src_loc: F,
 		dst_encoded:F, pat_loc_qry: Vec<(F,F)>)->Self{
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
-		let (_zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
+		let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
 		let dec = &decode_cols(&vec![src_encoded], 5);
 		let (src_subsig, src_step, _pat, _rg_s, _rg_e) 
 			= (dec[0][0], dec[1][0], dec[2][0], dec[3][0], dec[4][0]);
@@ -1120,17 +1121,19 @@ impl <F:PrimeField> StepFwdPrfItem<F>{
 			assert!(n_locs>=2); //at least two wrapping entries
 
 			let rg1= dst_rg_start + src_loc;
-			let rg2 = dst_rg_end + src_loc;
-			let rg1 = if rg1>=max {max-one} else {rg1};
+			let rg2 = dst_rg_end + src_loc; 
+			//no need for similar massage for rg1 as underflow never happens
 			let rg2 = if rg2>=max {max-one} else {rg2};
 			let vec_diff1 = (0..n_locs).into_par_iter().map(|i|{
 				let diff = if i==0 {rg1-vec_dst_loc[i]-one}
-					else {vec_dst_loc[i]-rg1};
+					else if i==n_locs-1 {zero} //don't care
+					else {vec_dst_loc[i]-rg1}; //normal case
 				assert!(diff<=max);
 				diff
 			}).collect::<Vec<F>>();
 			let vec_diff2 = (0..n_locs).into_par_iter().map(|i|{
 				let diff = if i==n_locs-1 {vec_dst_loc[i]-rg2-one}
+					else if i==0 {zero} //don't care case
 					else {rg2-vec_dst_loc[i]};
 				assert!(diff<=max);
 				diff
@@ -1989,19 +1992,11 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		// in the middle.
 
 		//6. prove the validity of diff1/diff2.
-		let rg1 = dst_rg_start.par_iter().zip(src_loc.par_iter()).map(|(a,b)|
-			*a + *b).collect::<Vec<F>>();
 		let rg2 = dst_rg_end.par_iter().zip(src_loc.par_iter()).map(|(a,b)|
 			*a + *b).collect::<Vec<F>>();
-		let abs_rg1_max = rg1.par_iter().map(|rg1|
-			if *rg1>=max {*rg1-max} else {max-*rg1}).collect::<Vec<F>>();
 		let abs_rg2_max = rg2.par_iter().map(|rg2|
 			if *rg2>=max {*rg2-max} else {max-*rg2}).collect::<Vec<F>>();
-		let len1 = abs_rg1_max.len();
-		res.borrow_mut().add_col(Col::new(abs_rg1_max, 
-			"abs_rg1_max", IDX_DATA));
-		res.borrow_mut().add_col(Col::new(vec![frg;len1],
-			"sid_abs_rg1_max", IDX_SI_DATA));
+		let len1 = abs_rg2_max.len();
 		res.borrow_mut().add_col(Col::new(abs_rg2_max, 
 			"abs_rg2_max", IDX_DATA));
 		res.borrow_mut().add_col(Col::new(vec![frg;len1],
@@ -2993,63 +2988,69 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		//REMOVE LATER ------- ABOVE
 
 		//6. prove the validity of diff1/diff2
-		//6.1 retrieve the data
-		let names = vec!["abs_rg1_max", "abs_rg2_max"];
-		let sidcols= names.iter().map(|n|{
-			prf_fwdprf_valid.borrow().get_container(&format!("sid_{}",n))
-				.unwrap().borrow().to_vec() 
-		}).collect::<Vec<Vec<FpVar<F>>>>();
-		for i in 0..sidcols.len(){
-			check_arr_eq(&sidcols[i],&frg,&format!("err abs_sid_{}",i))?; 
-		}
-		let v2d= names.iter().map(|n|{
-			prf_fwdprf_valid.borrow().get_container(n)
-				.unwrap().borrow().to_vec() 
-		}).collect::<Vec<Vec<FpVar<F>>>>();
-		let (abs_rg1_max, abs_rg2_max) = (&v2d[0], &v2d[1]);
+		//6.1 retrieve the data (cost: n)
+		let sid_abs_rg2_max = prf_fwdprf_valid.borrow()
+			.get_container("sid_abs_rg2_max").unwrap().borrow().to_vec();
+		check_arr_eq(&sid_abs_rg2_max,&frg,&format!("err abs_sid_rg2_max"))?; 
+		let abs_rg2_max = prf_fwdprf_valid.borrow().get_container("abs_rg2_max")
+				.unwrap().borrow().to_vec();
 
+		//6.2 compute the border cases
+		//cost: 4n
+		let max_one = &max - &one;
+		let vec_b_begin = (0..diff1.len()).into_iter().map(|i|{
+			let b_begin = if i==0 {one.clone()} else {
+				(&dst_subsig[i]*r1+&src_loc[i]).is_neq(
+					&(&dst_subsig[i-1]*r1 + &src_loc[i-1])
+				).unwrap().into()
+			};
+			b_begin
+		}).collect::<Vec<FpVar<F>>>();
+		//note that b_begin[i] implies b_end[i-1]
+		let vec_b_end= (0..diff1.len()).into_iter().map(|i|{
+			if i==diff1.len()-1{one.clone()} else{vec_b_begin[i+1].clone()}
+			//will not cost anything
+		}).collect::<Vec<FpVar<F>>>();
 
 		for i in 0..diff1.len(){
 			let rg1 = &dst_rg_start[i] + &src_loc[i];
 			let rg2 = &dst_rg_end[i] + &src_loc[i];
-			//step 1. verify the validity of abs_rg1_max and abs_rg2_max
+			//step 1. verify the validity of abs_rg2_max
 			//note: one of item11 and item12 is 0
-			let item11 = &rg1 - &max + &abs_rg1_max[i];
-			let item12 = &max- &rg1 + &abs_rg1_max[i];
+			//note2: no need for abs_rg1_max as it's not possible to underflow
+			//unlike rg2 case in the end border sometimes src_loc + rg_end > max
+			//cost:3n
 			let item21 = &rg2 - &max + &abs_rg2_max[i];
 			let item22 = &max- &rg2 + &abs_rg2_max[i];
-			let item1 = &item11 * &item12;
 			let item2 = &item21 * &item22;
-			check_eq(&item1, &zero, "err abs1")?;
 			check_eq(&item2, &zero, "err abs2")?;
 
-			//step 2. use abs_rg_max and abs_rg2_max to update rg1, rg2
+			//step 2. use abs_rg2_max to update rg2
 			//when they are greater than max
-			let rg1 = item12.is_zero()?.select(&(&max-&one), &rg1)?;
+			//cost:4n
 			let rg2 = item22.is_zero()?.select(&(&max-&one), &rg2)?;
 
 			//step 3. validate diff1 and diff2.
-			//diff1 is rg1-dst_loc[i]-one when it's beginning of
-			//a new subsig-loc, otherwise it's dst_loc[i]-rg1
-			let b_begin = if i==0 {one.clone()} else {
-				(&dst_subsig[i]*r1+&src_loc[i]).is_neq(
-					&(&dst_subsig[i-1]*r1 + &src_loc[i-1])
-				)?.into()
-			};
+			//diff1 is: (1) rg1-dst_loc[i]-one when it's beginning of
+			//a new subsig-loc, (2) don't care if it's end,
+			// (3) otherwise it's dst_loc[i]-rg1 (in th middle)
+			//cost: 7n
+			let b_begin = &vec_b_begin[i];
+			let b_end= &vec_b_end[i];
+			let b_middle = &(&one-b_begin) * &(&one-b_end);
 			let item1 = &dst_subsig[i]* &(
-				&b_begin * &(&diff1[i] + &one + &dst_loc[i]-&rg1)
-				+ (&one-&b_begin) * &(&diff1[i] + &rg1 - &dst_loc[i])
+				b_begin * &(&diff1[i] + &one + &dst_loc[i]-&rg1)
+				  + &b_middle *&(&diff1[i] + &rg1 - &dst_loc[i])
+				 //b_end is don't care so no need to list
 			);
 			check_eq(&item1, &zero, "err_diff1")?;
 
-			let b_end = if i==diff1.len()-1{one.clone()} else{
-				(&dst_subsig[i+1]*r1+&src_loc[i+1]).is_neq(
-					&(&dst_subsig[i]*r1 + &src_loc[i])
-				)?.into()
-			};
+			//diff2 is (1) dst_loc[i]-one-rg2 if at end,
+			// (2) don't care if it's begin
+			// (3) rg2-dst_loc[i] if in the middle
 			let item2 = &dst_subsig[i]* &(
-				&b_end * &(&diff2[i] + &one + &rg2 - &dst_loc[i])
-				+ (&one-&b_end) * &(&diff2[i] - &rg2 + &dst_loc[i])
+				b_end * &(&diff2[i] + &one + &rg2 - &dst_loc[i])
+				+ &b_middle * &(&diff2[i] - &rg2 + &dst_loc[i])
 			);
 			check_eq(&item2, &zero, "err_diff2")?;
 
@@ -3693,7 +3694,7 @@ pub mod tests_discharge_adv_gadget{
 
 		//2. define the test cases
 		let testcases = vec![
-			 /* RECOVER LATER
+			// /* RECOVER LATER
 			//2. fails sig2 coz 3rd pattern missing
 			Tcase::new("defxx234xx56", "sig2", false, false),
 			//1. fails sig1 coz gap len incorrect
@@ -3708,7 +3709,7 @@ pub mod tests_discharge_adv_gadget{
 			Tcase::new(
 				&format!("ddd{}234xx{}56","x".repeat(90), "u".repeat(90)), 
 				"sig2", false, false),
-			 */
+			// */
 			//5. a case which has both fwd and backward elimination.
 			//manually check debug messages of backward and forward proofs
 			//baseically: the last 78 is not added, but the

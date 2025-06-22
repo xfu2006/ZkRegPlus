@@ -16798,7 +16798,21 @@ Goal 2. Step 5.
 Goal 3. Step 6.
 	[a] collect cost: ORIGINAL COST: 1042 (30n)
 	[b] analyze and design improvement
-			
-Goal 2. collect step 5 data
+		-> can save the cost for doing absolute value of rg1 and rg2
+		-> only need to do one check at the boundary
+		-> only need to detect boundary once
+	[c] update doc -> DONE
+	[d] update generation of diff1 and diff2
+		-> check how rg1, and rg2 are used in query
+	[e] update prove
+	[f] update verif
+		-> save sid check (1n)
+		-> save check rg1 eq (2n)
+		-> one zero, select (4n)
+		-> but it added one check each
+	[g] new cost: 684 (21n) -> saved 9n
+	SUMMARY: to to now saving from 5254 -3737 = saving about 1.5k
+	saving about 30%. the savinginb might be bigger as now it's
+	using avg step queue length instead of max.
 
 
