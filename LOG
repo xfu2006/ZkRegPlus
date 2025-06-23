@@ -16851,7 +16851,20 @@ Goal 3. unit testing backwad proof
 	[d] inspect example 1: empty to remove -> fix example
 	[e] 3952 -> fixed
 	[f] 3974 -> fixed
+	[g] regression test
 	[b] update the document
 	[c] update the implementation
+
+Goal 4. Writing
+	[a] set up the algorithm framework
+	[b] test
+	[c] original COST: 596 (18n)
+		-> more exactly 12n1 + 6n2 where
+		-> n1 is the full length and n2 is
+		-> the to_add length
+
+-- TODO -- for capacity implement a function to estlimate
+	the size needed for fwd_prf, bwd_prf, step_queue, to_add and to_del queue
+	[c] regression testin
 
 

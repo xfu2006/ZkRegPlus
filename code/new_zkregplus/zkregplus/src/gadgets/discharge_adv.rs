@@ -1377,17 +1377,17 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		*/
 
 		//2. construct 1st (forward) step-queue
-		let forward_step_queue = Self::gen_forward_steps_queue_combo(
+		let (forward_step_queue, sq_fwd) = Self::gen_forward_steps_queue_combo(
 			&inp_subsigs, pat_loc, inp_step_queue, fsm_id, &capacity,
 			subsig_store_info);
-		let ct_fwd_res = forward_step_queue.borrow().get_container("sq_res")
-			.unwrap();
+		let ct_fwd_sq = forward_step_queue.borrow().get_container("sq_res")
+			.expect("cannot find sq_res");
 		stmt_container.borrow_mut().add_container(forward_step_queue);
 
 
 		//3. construct 2nd (backward) step-queue
 		let backward_step_queue = Self::gen_backward_steps_queue_combo(
-			&ct_fwd_res, capacity, subsig_store_info);
+			&sq_fwd, &ct_fwd_sq, capacity, subsig_store_info);
 		stmt_container.borrow_mut().add_container(backward_step_queue);
 
 		Self{capacity: Clone::clone(capacity), fsm_id,
@@ -2020,6 +2020,8 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 	/// given an <encoded, step, loc> entry, and given the correpsonding
 	/// range for the next layer, we query the pat-loc table for all the
 	/// in-range locations for the next layer (id+1). 
+	///
+	/// Return: (1) the container of combo, and (2) forward result step queue
 	#[allow(dead_code)]
 	fn gen_forward_steps_queue_combo(
 		_inp_subsigs: &Vec<F>,
@@ -2028,7 +2030,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		_fsm_id: u32,
 		capacity: &DischargeAdvCapacity,
 		subsig_store_info: &SubsigStepStore,
-	)->Rc<RefCell<Container<F>>>{
+	)->(Rc<RefCell<Container<F>>>, StepQueue<F>){
 		let b_debug = true;
 		let res = Container::<F>::new("fwd_steps_queue");
 		//0. Generate the logical data:
@@ -2100,7 +2102,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 
 		// --- now return 
 		res.borrow_mut().add_container(prf);
-		res
+		(res, sq_res)
 	}
 
 	/// The second of the 2-step streaming algorithm for producing
@@ -2113,7 +2115,8 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 	/// necessarily have to cover the total number of steps for a subsignature
 	#[allow(dead_code)]
 	fn gen_backward_steps_queue_combo(
-		ct_fwd_res: &Rc<RefCell<Container<F>>>,  //the result of fwd_prf
+		input_step_queue: &StepQueue<F>,
+		ct_fwd_res: &Rc<RefCell<Container<F>>>,
 		capacity: &DischargeAdvCapacity,
 		subsig_store_info: &SubsigStepStore,
 	)->Rc<RefCell<Container<F>>>{
@@ -2122,18 +2125,11 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		// Add them to container
 		let res = Container::<F>::new("bwd_steps_queue");
 		let b_debug = true;
-		let pat = ct_fwd_res.borrow().get_container("encoded")
-			.unwrap().borrow().to_vec();
-		let loc = ct_fwd_res.borrow().get_container("locs")
-			.unwrap().borrow().to_vec();
-		let vec2 = vec![pat, loc].concat();
-		let inp_step_queue = StepQueue::parse_from(&vec2, capacity);
-		let (sq_to_del, sq_res, bwd_prf) = inp_step_queue.gen_backward_prf();
+		let (sq_to_del, sq_res, bwd_prf) = input_step_queue.gen_backward_prf();
 
-		/* RECOVER LATER. TO CONTINUE 1 
 		if b_debug{
 			println!("========== DEBUG USE 301: inp_step_queue (fwd_res): ");
-			inp_step_queue.dump();
+			input_step_queue.dump();
 			println!("========== DEBUG USE 302: to_del: ");
 			sq_to_del.dump();
 			println!("========== DEBUG USE 303: res: ");
@@ -2160,6 +2156,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			&ct_sq_res2, &ct_sq_to_del, &ct_fwd_res);
 		prf.borrow_mut().add_container(prf_union);
 
+		/* RECOVER LATER. TO CONTINUE 1 
 		//2. no need to argume for the sq_inp conforms to store_steps
 		//as we are working on existing fwd prfs
 
@@ -2174,10 +2171,10 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		let prf_bwdprf_valid = Self::gen_bwdprf_valid_prf("prf_bwdprf_valid",
 			&prf_bwd, &ct_sq_res2, store_steps);
 		prf.borrow_mut().add_container(prf_bwdprf_valid);
+		*/
 
 		// --- now return 
 		res.borrow_mut().add_container(prf);
-		*/
 		res
 	}
 
@@ -2561,6 +2558,10 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 	}
 
 	/// validate the proof for q1 + q2 = q3
+	/// let n1 = |q1| = |q3|,
+	/// let n2 = |q2|
+	/// cost: (n1+n2) + n1 + (2(n1+n2) + 3n1) + (3(n1+n2) + 2n1)
+	/// = 12n1 + 6n2
 	#[allow(dead_code)]
 	fn validate_step_queue_union_prf(&self,
 		q1: &Rc<RefCell<Container<FpVar<F>>>>, //step_queue 1
@@ -3082,7 +3083,6 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
 		//0. retrive the data
-		/* RECOVER LATER TO CONTINUE
 		let ct_sq_res1 = forward_step_q.get_container("sq_res")?;
 		let ct_sq_to_del= backward_step_q.get_container("sq_to_del")?;
 		let ct_sq_res2 = backward_step_q.get_container("sq_res2")?;
@@ -3097,10 +3097,11 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		self.validate_step_queue_union_prf(&ct_sq_res2, &ct_sq_to_del,
 			&ct_sq_res1, &r1, &r2, &prf_union)?;
 		//REMOVE LATER -----------
-		println!("-- DEBUG USE 9999.3.1: num_cons: for checking union sq_res1 and sq_res2: {}", cs.num_constraints()-n2);
+		println!("-- DEBUG USE 6605.3.1: num_cons: for checking union sq_res1 and sq_res2: {}", cs.num_constraints()-n2);
 		let n2 = cs.num_constraints(); 
 		//REMOVE LATER ----------- ABOVE
 
+		/* RECOVER LATER TO CONTINUE
 		//2. no need to validate sq_inp and step_store as it's based
 		//on fwd_prf which is already validated
 
