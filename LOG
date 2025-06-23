@@ -16816,7 +16816,42 @@ Goal 3. Step 6.
 	using avg step queue length instead of max.
 
 Monday 06/23/2025
-LOC (gadget): 10866
-LOC (data): 8416
+LOC (gadget): 10866 (+200)
+LOC (data): 8416 (+10)
+Goal 1: go over existing framework
+	[a] fix syntax errors
+	[b] read doc
+	[c] update doc of the overall function
+	[d] read the gen backwas prf
+
+Goal 2. imporve gen_backward_prf
+	[a] read the existing 
+		-> would it be possible that to_del starts in the middle?
+			-> not possible as the min loc does not get updated
+			-> it should be started at the very last step of 
+				the sq_fwd_res
+	[b] read the testing code
+	[c] modify the testing code
+		[a] example 1: full
+		[b] example 2: empty
+		[c] example 3: partial
+	[d] improve gen_backward_prf
+		[d1] doc -> done
+		[d2] step 1
+		[d3] 2.1
+		[d4] 2.2
+	[e] continue to implement
+		[e1] 2.2.1 -> DONE
+		[e2] 2.2.2
+		[e3] 2.2.3
+Goal 3. unit testing backwad proof
+	[a] fix length problem
+	[b] 300 issue - out of bound
+	[c] subsig not exist -> fixed
+	[d] inspect example 1: empty to remove -> fix example
+	[e] 3952 -> fixed
+	[f] 3974 -> fixed
+	[b] update the document
+	[c] update the implementation
 
 

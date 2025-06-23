@@ -167,6 +167,20 @@ One can see the bacward proof (and its validity) works in a similar way.
 We present the formal definition of forward and backward pruning algorithm,
 and their proof formally in Appendix B.
 
+The algorithm has several interesting properties and challenges:
+\begin{enumerate}
+	\item At "run time", we hope to have dynamic (flexible) step-queue
+	length, i.e., when a step queue item does not have any applicable 
+	locations, we do not present them int proof
+	\item Also notice that for different subsigs, they have different
+	step queue length
+	\item We need to reason about union, difference, projection, 
+	and join between these relation tables.
+	\item To handle the flexible length problem, we use a technique
+	similar to RAM modeling (using a transcript) to accomodate data
+	structures of different length.
+\end{enumerate}
+
 In essence, the data structures involved can be represented as
 relational database tables, and the proof can be decomposed into
 a number of relational operations such as table union, table projection,
