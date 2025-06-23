@@ -181,6 +181,40 @@ The algorithm has several interesting properties and challenges:
 	structures of different length.
 \end{enumerate}
 
+\begin{small}
+\begin{algorithm}[bt]
+\SetKwData{Left}{left}\SetKwData{This}{this}\SetKwData{Up}{up}
+\SetKwFunction{Union}{Union}\SetKwFunction{FindCompress}{FindCompress}
+$\left((\Q{a},\Q{r}\Trans{f}), (\Q{d},\Trans{b}, \Q{o}) \right) \leftarrow {\texttt{\textbf{two\_pass\_sed}}}(\Q{i}, \myvec{S}, \myvec{R}, \db)$: 
+\newline
+{\bf Input:} $\myvec{S}$ is the set of subsigs IDs, 
+	$\myvec{R} = (\myvec{P},\myvec{L})$ is a table consisting
+	of two columns: $\myvec{P}$ pattern ID and $\myvec{L}$ locations,
+	$\Q{i}$ the input step queue.
+	which is extracted from finite state acceptance path.
+	$\db$ is a collection of hashmaps which contains
+	information about subsigs.
+	\newline 
+{\bf Output:} $(\Q{a}, \Q{r}, \Trans{f}):$ the forward
+	propgation information: the step queue of to add,
+	the resulting step queue (of forward pass), and
+	the inference transcript. Similarly
+	$(\Q{d}, \Q{o}, \Trans{b})$ are the
+	step queue to delete, the output step-queue, and
+	the backward transcript.
+\# Generate $\bw$ for subsignature $s$ \newline
+(1) For each subsignature and for each step propgate
+	step by step and generating $(\Q{a}, \Q{r}, \Trans{f})$
+	which satisfies the following:
+	\begin{enumerate}
+		\item $\Q{r} = \Q{a} \union \Q{a}$.
+	\end{enumerate}
+(2) Return \bw(s) based on its structure:
+
+\caption{Two Pass Chunking SED Algorithm}
+\end{algorithm}
+\end{small}
+
 In essence, the data structures involved can be represented as
 relational database tables, and the proof can be decomposed into
 a number of relational operations such as table union, table projection,

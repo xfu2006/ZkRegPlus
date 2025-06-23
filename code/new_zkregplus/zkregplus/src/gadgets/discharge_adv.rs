@@ -3082,12 +3082,12 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
 		//0. retrive the data
+		/* RECOVER LATER TO CONTINUE
 		let ct_sq_res1 = forward_step_q.get_container("sq_res")?;
 		let ct_sq_to_del= backward_step_q.get_container("sq_to_del")?;
 		let ct_sq_res2 = backward_step_q.get_container("sq_res2")?;
 		let ct_prf_bwd = backward_step_q.get_container("prf_bwd")?;
 
-		/* RECOVER LATER TO CONTINUE
 		//1. verify sq_del + sq_res2 = sq_res1
 		//REMOVE LATER -------------
 		let n2 = cs.num_constraints(); 
