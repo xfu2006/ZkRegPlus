@@ -303,6 +303,7 @@ pub fn two_col_tbl_left_join<F:PrimeField>(
 		res
 	}).flatten().collect::<Vec<Vec<F>>>();
 
+
 	//4. pad at the beginning
 	let tn = tuples.len();
 	assert!(tn<=target_size, "tn: {}, target_size: {}. Consider adjust related capacity parameter", tn, target_size);

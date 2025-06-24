@@ -134,12 +134,13 @@ impl SedCapacity{
 		acdfa_state_part_bits: usize, 
 		subsigs: usize,
 		avg_pats_per_subsig: usize,
+		avg_active_pats_per_subsig: usize,
 		perc_pats_in_trace: usize,
 	)->Self{
 		let wea_capacity = WordExtractAdvCapacity{max_word_len};
 		let max_nibble_len = max_word_len * LEGS;
 		let faa_capacity = FsmAdvCapacity{max_nibble_len, acdfa_state_part_bits,			subsigs, avg_pats_per_subsig, perc_pats_in_trace};
-		let da_capacity = DischargeAdvCapacity{max_nibble_len, subsigs, avg_pats_per_subsig, perc_pats_in_trace};
+		let da_capacity = DischargeAdvCapacity{max_nibble_len, subsigs, avg_active_pats_per_subsig, perc_pats_in_trace};
 		let comp_capacities: Vec<Rc<dyn Capacity>> = vec![
 			Rc::new(wea_capacity),
 			Rc::new(faa_capacity),

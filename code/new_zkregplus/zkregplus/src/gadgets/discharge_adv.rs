@@ -53,7 +53,16 @@ use std::any::Any;
 // -----------------------------------------------
 //		Structs
 // -----------------------------------------------
-
+/// type of stepqueue decides its to_container() size
+#[derive(Clone,Debug,PartialEq)]
+pub enum StepQueueType{
+	/// representing the items to add for each step
+	ToAdd,
+	/// represent the itmes to delete
+	ToDel,
+	/// represent the result of forward propagation or backward pruning
+	Res,
+}
 
 /// A step queue represents the state of the SED processing algorithm.
 /// For each (subsig-id-pat) it includes the list of current "valid"
@@ -76,6 +85,8 @@ pub struct StepQueue<F:PrimeField>{
 	pub store_items: HashMap<F, Vec<StepQueueItem<F>>>,
 
 	pub capacity: DischargeAdvCapacity,
+
+	pub q_type: StepQueueType,
 }
 
 /// A step queue item represents the info of step que
@@ -279,9 +290,11 @@ pub struct DischargeAdvCapacity{
 	/// how many subsigs in input
 	pub subsigs: usize,
 
-	/// average number of patterns over subsigs
-	/// This should be the estimated (pat-state) pairs over subsigs
-	pub avg_pats_per_subsig: usize,
+	/// average number of ACTIVE patterns over subsigs during
+	/// forward propgation (note that this is a smaller number
+	/// than the avg_pats_per_subsig in fsm_adv component, that reflects
+	/// the STATIC number of steps of a subsig in average).
+	pub avg_active_pats_per_subsig: usize,
 
 	/// NOTE:  percentage number, e.g. 50 means 50 percent.
 	/// avg_pats*per_trace_perc/100 * max_nibble_len -> SIZE of packed tracke
@@ -332,14 +345,38 @@ pub struct DischargeAdvGadget<F:PrimeField>{
 //            Implementations
 // ---------------------------------------------
 impl <F:PrimeField> StepQueue<F>{
+	/// this function determine the size of the to_vec() and 
+	/// to_container() size. Note that to_vec() and to_container()
+	/// generates multiple column tables essentially, the size is
+	/// the length of the column in the table. The size is
+	/// determined by the capacity.
+	pub fn vec_size(
+		q_type: &StepQueueType, 
+		capacity: &DischargeAdvCapacity
+	)->usize{
+		// basic idea is to take the max of the size needed by
+		// subsig patterns and the locations appeared in traces.
+		// adjust by the type of the StepQueue.
+		let size_pat = capacity.subsigs*capacity.avg_active_pats_per_subsig;
+		let perc_compress_ratio = match q_type{
+			StepQueueType::Res => 100, //100%
+			StepQueueType::ToAdd => 50, //50% (in practice maybe smaller)
+			StepQueueType::ToDel => 20, //10% 
+		};
+		let size_trace =  capacity.max_nibble_len 
+			* capacity.perc_pats_in_trace/100
+			* perc_compress_ratio/100;
+		if size_pat > size_trace {size_pat} else {size_trace}
+	}
+
+	/// converts the step queue to a vec combination of two columns
 	pub fn to_vec(&self, subsig_store_info: &SubsigStepStore)->Vec<F>{
 		let ct = self.to_container("temp", false, false, false, subsig_store_info);
 		let encoded = ct.borrow().get_container("encoded").unwrap()
 			.borrow().to_vec();
 		let locs = ct.borrow().get_container("locs").unwrap()
 			.borrow().to_vec();
-		let n = self.capacity.perc_pats_in_trace * 
-			self.capacity.max_nibble_len / 100;
+		let n = Self::vec_size(&self.q_type, &self.capacity);
 		assert!(encoded.len()==n && locs.len()==n);
 
 		vec![encoded,locs].concat()
@@ -353,9 +390,11 @@ impl <F:PrimeField> StepQueue<F>{
 		}
 	}
 
+	/// as parse_from is called by the sed_component in reconstruct object
+	/// as the result queue. its type is set to Res
 	pub fn parse_from(vec: &Vec<F>, capacity: &DischargeAdvCapacity)->Self{
 		//1. split vec 2 cols: <encoded, loc>
-		let tn = capacity.perc_pats_in_trace * capacity.max_nibble_len / 100;
+		let tn = Self::vec_size(&StepQueueType::Res, capacity);
 		assert!(vec.len()%2==0);
 		assert!(vec.len()<=tn*2);
 		let n = vec.len()/2;
@@ -416,7 +455,8 @@ impl <F:PrimeField> StepQueue<F>{
 		subsigs.sort();
 
 		//4. construct StepQueue
-		Self{subsigs, store_items, capacity: Clone::clone(capacity)}
+		let q_type = StepQueueType::Res;
+		Self{subsigs, store_items, capacity: Clone::clone(capacity), q_type}
 	}
 
 	/// given the <pat,loc> table generate the 
@@ -510,9 +550,9 @@ impl <F:PrimeField> StepQueue<F>{
 
 		//3. construct the return
 		let sq_to_add = StepQueue::new(self.subsigs.clone(),
-			stores_to_add, &self.capacity);
+			stores_to_add, &self.capacity, StepQueueType::ToAdd);
 		let sq_res = StepQueue::new(self.subsigs.clone(),
-			stores_res, &self.capacity);
+			stores_res, &self.capacity, StepQueueType::Res);
 		let sfp = StepFwdPrf::new(self.subsigs.clone(),
 			stores_prf, &self.capacity);
 
@@ -565,7 +605,8 @@ impl <F:PrimeField> StepQueue<F>{
 			// we break from the loop when there is no more proof to produce.
 			// (which implies no update of min_loc for layers, thus no more
 			//   need to explore further).
-			for j in 0..steps-2{
+			if steps>=2{
+			  for j in 0..steps-2{
 				//2.2.1 retrive min loc
 				let i = steps - 1 -j; //i from steps-1 to 2 (included)
 				let (_rg_start,rg_end) = (vec_res[j].rg_start, 
@@ -608,7 +649,8 @@ impl <F:PrimeField> StepQueue<F>{
 				vec_res.push(item_res);
 				vec_to_del.push(item_to_del);
 				vec_bwd_prf.push(bwd_prf);
-			}
+			  }//end for
+			}//end if
 
 			//2.3 update the stores
 			let mut vec_res:Vec<_> = vec_res.into_iter().rev().collect();
@@ -627,9 +669,9 @@ impl <F:PrimeField> StepQueue<F>{
 
 		//3. construct the return
 		let sq_to_del= StepQueue::new(self.subsigs.clone(),
-			stores_to_del, &self.capacity);
+			stores_to_del, &self.capacity, StepQueueType::ToDel);
 		let sq_res = StepQueue::new(self.subsigs.clone(),
-			stores_res, &self.capacity);
+			stores_res, &self.capacity, StepQueueType::Res);
 		let sfp = StepBwdPrf::new(self.subsigs.clone(),
 			stores_prf, &self.capacity);
 
@@ -681,10 +723,10 @@ impl <F:PrimeField> StepQueue<F>{
 		hs_sorted
 	}
 
-	pub fn new(subsigs: Vec<F>, store_items: HashMap<F,Vec<StepQueueItem<F>>>, capacity: &DischargeAdvCapacity)->Self{
+	pub fn new(subsigs: Vec<F>, store_items: HashMap<F,Vec<StepQueueItem<F>>>, capacity: &DischargeAdvCapacity, q_type: StepQueueType)->Self{
 		assert!(!subsigs.contains(&F::zero()));
 		assert!(!store_items.contains_key(&F::zero()));
-		Self{subsigs, store_items, capacity: Clone::clone(capacity)}
+		Self{subsigs, store_items, capacity: Clone::clone(capacity),q_type}
 	}
 
 	/// generate the container (including the si cols)
@@ -728,9 +770,8 @@ impl <F:PrimeField> StepQueue<F>{
 			.collect::<Vec<F>>();
 
 		//3. consruct container
-		let n = self.capacity.perc_pats_in_trace * 
-			self.capacity.max_nibble_len / 100;
-		assert!(n>vec_encoded.len());
+		let n = Self::vec_size(&self.q_type, &self.capacity);
+		assert!(n>vec_encoded.len(), "StepQueue type: {:?} buf too small, either adjust the compression ratio in vec_size() first, then check the perc_pats_in_trace in DischargeAdvCapacity, n: {}, vec_encoded.len: {}", self.q_type, n, vec_encoded.len());
 		let n2 = n-vec_encoded.len();
 		let vec_encoded = vec![vec![zero; n2], vec_encoded].concat();
 		let vec_locs= vec![vec![zero; n2], vec_locs].concat();
@@ -757,6 +798,7 @@ impl <F:PrimeField> StepQueue<F>{
 		let res = Container::new(name); 
 		let seg = if b_inp {IDX_INP} else if b_oup {IDX_OUP} else {IDX_DATA};
 		let si_seg = if b_inp {IDX_SI_INP} else if b_oup {IDX_SI_OUP} else {IDX_SI_DATA};
+		assert!(vec_encoded.len()==n && vec_locs.len()==n);
 		res.borrow_mut().add_col(Col::new(vec_encoded,"encoded",seg));
 		res.borrow_mut().add_col(Col::new(vec_locs, "locs", seg));
 		res.borrow_mut().add_col(Col::new(vec![F::zero();n],
@@ -765,6 +807,7 @@ impl <F:PrimeField> StepQueue<F>{
 			"si_locs",si_seg));
 
 		if b_step{
+			assert!(vec_step.len()==n && vec_sid_step.len()==n);
 			res.borrow_mut().add_col(Col::new(vec_step,"step",seg));
 			res.borrow_mut().add_col(Col::new(vec_sid_step, "si_step",si_seg));
 		}
@@ -918,6 +961,11 @@ impl <F:PrimeField> StepQueueItem<F>{
 }
 
 impl <F:PrimeField> StepFwdPrf<F>{
+	/// return the estimated needed size of buf for to_container
+	pub fn vec_size(&self)->usize{
+		self.capacity.perc_pats_in_trace * self.capacity.max_nibble_len/100
+	}
+
 	/// generate the container (including the si cols)
 	/// Will output (src_encoded, src_step, src_loc, dst_encoded, dst_pat,
 	///    dst_rg_start, dst_rg_end, dst_loc, pat_id, diff1, diff2)
@@ -992,9 +1040,8 @@ impl <F:PrimeField> StepFwdPrf<F>{
 			v_dst_pat, v_dst_rg_start, v_dst_rg_end,
 			v_dst_loc, v_dst_pat_id, v_dst_pat_diff1, v_dst_pat_diff2,
 			v_dst_subsig];
-		let n = self.capacity.perc_pats_in_trace * 
-			self.capacity.max_nibble_len / 100;
-		assert!(n>v2d[0].len());
+		let n = self.vec_size();
+		assert!(n>v2d[0].len(), "buf too small, adjust perc_pats_in_trace");
 		let n2 = n-v2d[0].len();
 		let pad = vec![zero; n2];
 		#[cfg(test)]{
@@ -1200,6 +1247,16 @@ impl <F:PrimeField> StepBwdPrfItem<F>{
 }
 
 impl <F:PrimeField> StepBwdPrf<F>{
+	pub fn vec_size(&self)->usize{
+		let raw_size = self.capacity.perc_pats_in_trace 
+			* self.capacity.max_nibble_len / 100;
+		//given that StepBwdPrf is usually much smaller 
+		//we give it some fraction of the size of StepFwdPrf
+		//adjust in practice
+		let compress_ratio = 50;
+		let size = raw_size * compress_ratio/100;
+		size
+	}
 	pub fn dump(&self){
 		println!("------------- Backward Proof -----------");
 		for subsig in &self.subsigs{
@@ -1267,13 +1324,13 @@ impl <F:PrimeField> StepBwdPrf<F>{
 			v_src_pat, v_src_rg_start, v_src_rg_end,
 			v_src_min_loc,
 			v_prev_encoded, v_loc_to_del];
-		let n = self.capacity.perc_pats_in_trace * 
-			self.capacity.max_nibble_len / 100;
-		assert!(n>v2d[0].len());
+		let n = self.vec_size();
+		assert!(n>v2d[0].len(), "buf too small for StepBwdPrf, adjust compress_ratio in vec_size() first, and then the perc_pats_in_trace in capacity");
 		let n2 = n-v2d[0].len();
 		let pad = vec![zero; n2];
 		#[cfg(test)]{
 			for i in 0..v2d.len(){
+				assert!(v2d[i].len()==v2d[0].len());
 				for j in 0..v2d[i].len(){ 
 					if i!=0 && i!=7{//not src_encoded, prev_encoded
 						assert!(v2d[i][j] <= _max); 
@@ -1321,7 +1378,7 @@ impl Capacity for DischargeAdvCapacity{
 
 		self.max_nibble_len >= other.max_nibble_len &&
 		self.subsigs >= other.subsigs &&
-		self.avg_pats_per_subsig >= other.avg_pats_per_subsig &&
+		self.avg_active_pats_per_subsig >= other.avg_active_pats_per_subsig &&
 		self.perc_pats_in_trace >= other.perc_pats_in_trace
 
 	}
@@ -1332,7 +1389,7 @@ impl Capacity for DischargeAdvCapacity{
 		Rc::new(DischargeAdvCapacity{
 			max_nibble_len: self.max_nibble_len,
 			subsigs: self.subsigs,
-			avg_pats_per_subsig: self.avg_pats_per_subsig,
+			avg_active_pats_per_subsig: self.avg_active_pats_per_subsig,
 			perc_pats_in_trace: self.perc_pats_in_trace,
 		})
 	}
@@ -1417,7 +1474,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		assert!(subsig_ids.len()<=capacity.subsigs);
 		let to_padd = capacity.subsigs - subsig_ids.len();
 		let subsig_ids = vec![ vec![0usize; to_padd], subsig_ids].concat();
-		let n = capacity.subsigs * capacity.avg_pats_per_subsig;
+		let n = capacity.subsigs * capacity.avg_active_pats_per_subsig;
 		let proj_steps= store_steps.project_by(&subsig_ids);
 		let mut cols = proj_steps.gen_cols::<F>(RANGE2_BIT, Some(n));
 		cols.push(inp_subsigs.clone());
@@ -1554,7 +1611,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			(subsig, vec![item]) //empty StepQueueItems for each
 		}).collect::<HashMap<F,Vec<StepQueueItem<F>>>>();
 
-		StepQueue::new(subsigs, store_items, &capacity)
+		StepQueue::new(subsigs, store_items, &capacity, StepQueueType::Res)
 	}
 
 	/// retrieve the steps_queue from input
@@ -1590,8 +1647,6 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		let c12 = vec![c1,c2].concat();
 		let e3=q3.borrow().get_container("encoded").unwrap().borrow().to_vec(); 
 		let c3=q3.borrow().get_container("locs").unwrap().borrow().to_vec(); 
-		assert!(e12.len()==e3.len()*2);
-		assert!(c12.len()==c3.len()*2);
 
 		let src = encode_cols(&vec![e12,c12], &vec![0,1]);
 		let dst = encode_cols(&vec![e3,c3], &vec![0,1]);
@@ -1672,7 +1727,6 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		let dst_adj = dst.par_iter().zip(dst_sel.par_iter()).map(|(x,y)|
 			*x**y).collect::<Vec<F>>();
 
-
 		//2. retrieve info from prf_forward:
 		// encoded, loc (note that encoded has the info of step and pat)
 		// ignore the dummy entries at the beginning for each
@@ -1704,15 +1758,15 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		//3. build hte m_tbl needed for 2-direction lookup
 		let prf = Container::new(prf_name);		
 		let frg = F::from(RANGE2);
-		assert!(src_adj.len()==dst_adj.len());
 		let mtb1 = gen_m_table(&src_adj, &dst_adj);
 		let mtb2 = gen_m_table(&dst_adj, &src_adj);
 		let len1 = mtb1.len();
+		let len2 = mtb2.len();
 		prf.borrow_mut().add_col(Col::new(mtb1, "mtb1", IDX_DATA));
 		prf.borrow_mut().add_col(Col::new(vec![frg;len1], "sid_mtb1", 
 			IDX_SI_DATA));
 		prf.borrow_mut().add_col(Col::new(mtb2, "mtb2", IDX_DATA));
-		prf.borrow_mut().add_col(Col::new(vec![frg;len1], "sid_mtb2", 
+		prf.borrow_mut().add_col(Col::new(vec![frg;len2], "sid_mtb2", 
 			IDX_SI_DATA));
 
 		prf
@@ -2156,7 +2210,6 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			&ct_sq_res2, &ct_sq_to_del, &ct_fwd_res);
 		prf.borrow_mut().add_container(prf_union);
 
-		/* RECOVER LATER. TO CONTINUE 1 
 		//2. no need to argume for the sq_inp conforms to store_steps
 		//as we are working on existing fwd prfs
 
@@ -2167,11 +2220,12 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			&ct_sq_to_del, &prf_bwd);
 		prf.borrow_mut().add_container(prf_to_del_valid);
 
+	/* RECOVER LATER. TO CONTINUE1
 		//4. prove the validity of the bwd_prf
 		let prf_bwdprf_valid = Self::gen_bwdprf_valid_prf("prf_bwdprf_valid",
 			&prf_bwd, &ct_sq_res2, store_steps);
 		prf.borrow_mut().add_container(prf_bwdprf_valid);
-		*/
+	*/
 
 		// --- now return 
 		res.borrow_mut().add_container(prf);
@@ -2390,8 +2444,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		)
 	-> Self{
 		//1. create the dummy input and dummy container config.
-		let pats_len = capacity. perc_pats_in_trace 
-			* capacity.max_nibble_len/100;
+		let pats_len = capacity.get_pat_loc_len();
 		let zero = F::zero();	
 		let pats = vec![zero; pats_len];
 		let ids = vec![zero; pats_len];
@@ -2404,8 +2457,9 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		pat_loc.borrow_mut()
 			.add_col(Col::<F>::new(locs, "sorted_val", IDX_DATA));
 		let sigs = vec![zero; capacity.subsigs];
-		let inp_steps_queue = vec![zero; capacity.max_nibble_len *
-			capacity.perc_pats_in_trace/100 * 2];
+		let step_q_size = StepQueue::<F>::vec_size(&StepQueueType::Res,
+			capacity);
+		let inp_steps_queue = vec![zero; step_q_size*2];
 		let inp_steps_queue_obj = StepQueue::parse_from(&inp_steps_queue,
 			capacity);
 		let dummy_adv = DischargeAdvAdvice::new(
@@ -2505,7 +2559,6 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
 		//0. retrieve the data
-		let prf = forward_step_q.get_container("prf")?;
 		let ct_sq_inp = forward_step_q.get_container("sq_inp")?;
 		let ct_sq_to_add = forward_step_q.get_container("sq_to_add")?;
 		let ct_sq_res = forward_step_q.get_container("sq_res")?;
@@ -2517,6 +2570,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		let n2 = cs.num_constraints(); 
 		//REMOVE LATER ---------------- ABOVE
 		//1. verify sq_inp + sq_to_add = sq_res
+		let prf = forward_step_q.get_container("prf")?;
 		let prf_union = prf.borrow().get_container("prf_union")?;
 		self.validate_step_queue_union_prf(&ct_sq_inp, &ct_sq_to_add,
 			&ct_sq_res, &r1, &r2, &prf_union)?;
@@ -2581,8 +2635,6 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		let c12 = vec![c1,c2].concat();
 		let e3=q3.borrow().get_container("encoded").unwrap().borrow().to_vec(); 
 		let c3=q3.borrow().get_container("locs").unwrap().borrow().to_vec(); 
-		assert!(e12.len()==e3.len()*2);
-		assert!(c12.len()==c3.len()*2);
 
 		//2. retrieve sid_cols and verify that they are in range.
 		//check of sid_c2 can be skipped as to_add will be proved valid
@@ -2592,7 +2644,6 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		//correctness. So none has to be performed here
 
 		//3. do 2-direction logup check
-		assert!(e12.len()==c12.len());
 		let src = e12.iter().zip(c12.iter()).map(|(a,b)|
 			a + (b*r1)).collect::<Vec<FpVar<F>>>();
 		let dst = e3.iter().zip(c3.iter()).map(|(a,b)|
@@ -2652,6 +2703,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		//1. retrieve info from to_add
 		let encoded = sq_to_add.borrow().get_container("encoded")
 			.unwrap().borrow().to_vec(); 
+
 		let step = sq_to_add.borrow().get_container("step")
 			.unwrap().borrow().to_vec(); 
 		let locs = sq_to_add.borrow().get_container("locs")
@@ -2704,15 +2756,8 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			.get_container("mtb2").unwrap().borrow().to_vec(); 
 		assert_logup(cs.clone(), &src_adj, &dst_adj, &mtb1, r1)?;
 		assert_logup(cs.clone(), &dst_adj, &src_adj, &mtb2, r1)?;
+		//no need to check mtb the log up ensures values ok.
 
-
-		let sid_mtb1=prf_to_add_valid.borrow().get_container("sid_mtb1")
-			.unwrap().borrow().to_vec(); 
-		let sid_mtb2=prf_to_add_valid.borrow().get_container("sid_mtb2")
-			.unwrap().borrow().to_vec(); 
-
-		check_arr_eq(&sid_mtb1, &frg, "err checking sid_mtb1")?; 
-		check_arr_eq(&sid_mtb2, &frg, "err checking sid_mtb2")?; 
 
 		Ok( () )
 	}
@@ -3101,7 +3146,6 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		let n2 = cs.num_constraints(); 
 		//REMOVE LATER ----------- ABOVE
 
-		/* RECOVER LATER TO CONTINUE
 		//2. no need to validate sq_inp and step_store as it's based
 		//on fwd_prf which is already validated
 
@@ -3110,10 +3154,11 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		self.validate_to_del(&ct_sq_to_del, &ct_prf_bwd, 
 			&r1, &prf_to_del)?;
 		//REMOVE LATER -----------
-		println!("-- DEBUG USE 9999.3.2: num_cons: for checking to_del covers prf_bwd: {}", cs.num_constraints()-n2);
+		println!("-- DEBUG USE 6605.3.2: num_cons: for checking to_del covers prf_bwd: {}", cs.num_constraints()-n2);
 		let n2 = cs.num_constraints(); 
 		//REMOVE LATER ----------- ABOVE
 
+	/* RECOVER LATER. TO CONTINUE1
 		//4. validate the prf_bwd is valid
 		let prf_bwdprf_valid = prf.borrow().get_container("prf_bwdprf_valid")?;
 		self.validate_bwdprf_valid_prf(&ct_prf_bwd, 
@@ -3371,7 +3416,7 @@ impl <F:PrimeField> SigmaGadget<F> for DischargeAdvGadget<F>{
 	fn est_cost(&self)->usize{
 		//TODO: refine formula in real data later
 		let est1 = self.capacity.subsigs * 
-			self.capacity.avg_pats_per_subsig * 1000;
+			self.capacity.avg_active_pats_per_subsig * 1000;
 		let est2 = self.capacity.get_pat_loc_len() * 1000;
 		if est1>est2 {est1} else {est2}
 	}
@@ -3460,7 +3505,7 @@ pub mod tests_discharge_adv_gadget{
 		fsm_adv::{FsmAdvAdvice,FsmAdvCapacity},
 		word_extract_adv::{WordExtractAdvAdvice},
 		discharge_adv::{DischargeAdvAdvice,DischargeAdvGadget,
-			DischargeAdvCapacity,StepQueueItem,StepQueue},
+			DischargeAdvCapacity,StepQueueItem,StepQueue,StepQueueType},
 		traits::{Container,Col,IDX_DATA},
 	};
 	use data_processor::{clam_db::{ClamavDB,RANGE2_BIT}, 
@@ -3578,7 +3623,7 @@ pub mod tests_discharge_adv_gadget{
 		let cap_disc = DischargeAdvCapacity{//capaciity of discharge comopnent
 			max_nibble_len: nibble_len, 
 			subsigs: cap.subsigs,
-			avg_pats_per_subsig: cap.avg_pats_per_subsig,
+			avg_active_pats_per_subsig: 1,
 			perc_pats_in_trace: cap.perc_pats_in_trace, 
 		};
 
@@ -3701,7 +3746,7 @@ pub mod tests_discharge_adv_gadget{
 
 		//2. define the test cases
 		let testcases = vec![
-			 /* RECOVER LATER
+			// /* RECOVER LATER
 			//2. fails sig2 coz 3rd pattern missing
 			Tcase::new("defxx234xx56", "sig2", false, false),
 			//1. fails sig1 coz gap len incorrect
@@ -3716,7 +3761,7 @@ pub mod tests_discharge_adv_gadget{
 			Tcase::new(
 				&format!("ddd{}234xx{}56","x".repeat(90), "u".repeat(90)), 
 				"sig2", false, false),
-			 */
+			// */
 			//5. a case which has both fwd and backward elimination.
 			//manually check debug messages of backward and forward proofs
 			//baseically: the last 78 is not added, but the
@@ -3778,10 +3823,11 @@ pub mod tests_discharge_adv_gadget{
 		let capacity= DischargeAdvCapacity{
 			max_nibble_len: 62, 
 			subsigs: 4,
-			avg_pats_per_subsig: 4,
+			avg_active_pats_per_subsig: 4,
 			perc_pats_in_trace: 48,
 		};
-		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone()};
+		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),
+			q_type: StepQueueType::Res};
 		let ct = sq.to_container("ct", true, false, false, &steps_info);
 		let pat = ct.borrow().get_container("encoded")
 			.unwrap().borrow().to_vec();
@@ -3922,10 +3968,11 @@ pub mod tests_discharge_adv_gadget{
 		let capacity= DischargeAdvCapacity{
 			max_nibble_len: 62, 
 			subsigs: 4,
-			avg_pats_per_subsig: 4,
+			avg_active_pats_per_subsig: 4,
 			perc_pats_in_trace: 48,
 		};
-		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone()};
+		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),
+			q_type: StepQueueType::Res};
 
 		//2. test the backward proof
 		let (to_remove, res, prf) = sq.gen_backward_prf();

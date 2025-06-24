@@ -500,9 +500,6 @@ impl SubsigStepStore{
 						Self::gen_step_tbl_id(*e,ID_ENCODED_LAST_STEP) 
 					}
 				};
-				//REMOVE LATER --------------------
-				println!("DEBUG USE 6109: INSERT: tbl_id: {}, s: value: {}, categorty: {}, encoded: {}", tbl_id, s, pid, e);
-				//REMOVE LATER -------------------- ABOVE
 				(tbl_id, *s) 
 			}).collect::<Vec<(F,F)>>();
 

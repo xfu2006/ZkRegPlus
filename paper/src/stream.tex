@@ -201,13 +201,18 @@ $\left((\Q{a},\Q{r}\Trans{f}), (\Q{d},\Trans{b}, \Q{o}) \right) \leftarrow {\tex
 	the inference transcript. Similarly
 	$(\Q{d}, \Q{o}, \Trans{b})$ are the
 	step queue to delete, the output step-queue, and
-	the backward transcript.
-\# Generate $\bw$ for subsignature $s$ \newline
+	the backward transcript.  \newline
+		Where each tuple $\Trans{f}$ is
+	$(\key, \srcloc, \dstloc)$, and $\key = \encode(\subsig,
+		\step, \rgone, \rgtwo)$. Similarly each
+	tuple of all step queues have structure $(\key, \step, \loc)$.
+	\newline
 (1) For each subsignature and for each step propgate
 	step by step and generating $(\Q{a}, \Q{r}, \Trans{f})$
 	which satisfies the following:
 	\begin{enumerate}
-		\item $\Q{r} = \Q{a} \union \Q{a}$.
+		\item $\Q{r} = \Q{i} \union \Q{a}$.
+		\item $\Q{a} = \proj_{1,3}(\Trans{f})$ (i.e. casting column 1 and 3)
 	\end{enumerate}
 (2) Return \bw(s) based on its structure:
 

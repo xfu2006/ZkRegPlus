@@ -16863,8 +16863,79 @@ Goal 4. Writing
 		-> n1 is the full length and n2 is
 		-> the to_add length
 
--- TODO -- for capacity implement a function to estlimate
-	the size needed for fwd_prf, bwd_prf, step_queue, to_add and to_del queue
-	[c] regression testin
+Tuesday 06/24/2025
+LOC (data): 8416 (+0)
+LOC (gadget): 10914 (+60)
+Goal 1. Improving capacity estimate
+	[a] do we add perc_compress_rate in capacity? -> yes, make it
+		adjustable? or just make it internal details of
+		queue?
+	[b] add step queue type and resolve syntax errs
+		-> 409
+		-> 701
+		-> 527
+		-> 644
+	[c] add determine size in StepQueue
+	[d] change active_pats_per_subsig -> fix syntax
+	[e] StepFwdPrf size estimate
+	[f] replace all per_pats_in_trace
+	[g] check all avg_active_pat_per_subsig
+	[h] improve err msg
+		-> 772
+
+Goal 2. Improve performance of step 1 (sq_del + fwd_res = sq_res)
+	[a] original COST: 596
+	[b] fix errors
+		-> remove some assertions
+		-> adjust vec_size
+		-> sid mismatch
+
+Goal 3. debug sid mistch size problem
+	[a]  binary search method
+	[b] gradually bring in step by step
+	[c] problem is gen_to_add_valid_prf
+	[d] just add the proof can it repeat err? -> yes
+		-> found it
+	[e] recover code
+	[f] check stack overflow msg
+	[g] binary search again in assert msg3
+		-> it's in validate_to_add
+		-> fails on the first assert_logup src_adj len is 3348
+		-> but even if it's 3348 it shouldn't crash?
+		-> fixed error but don't understand why length would impact 
+			stack? 
+	[h] substract overflow problem
+	[i] regression testing
+	[j] regression testing 2-> OK
+	[k] gen sig
+	[j] before adjust 596 -> 434
+	[k] after adjust perc_pats_in_trace from 27 -> 20: why would 
+		fsm_adv needs so much space?
+		-> display tables before join
+			pat-state   and state-loc
+		-> pat_state:
+			actual pats (4,6,9), actual states: with padded: 10 entries
+			this corresponds to pats per subsig: 4
+			state-loc: 33 entries but actually
+				6 entries (excluding padiding 3 enries)
+				out of 62 positions: this is actually 3/62 = 5% percentange
+			=> join result: (left join result: 22 entries
+				this is because 1 appears all of subsig 4,6,9
+				2 appears in both 4 and 6
+			=> the reason is that the same word is counted as pattern
+				multiple times. (it is used in subsigs multiple times)
+				this should not happen a lot in real signatures.
+			=> also the num patterns is relative much BIGGER than
+				real data and its dummy data accounts a lot
+				it will improved with real data
+			-> have to use origl data 27.
+
+Goal 4. Writing
+	[a] explain step queue ((subsig-step-pat-loc)
+
+Goal 5. step 3
+	[a] original COST: 463 (about 15n) 
+
+
 
 

@@ -48,7 +48,8 @@ pub struct FsmAdvCapacity{
 	pub subsigs: usize,
 
 	/// average number of patterns over subsigs
-	/// This should be the estimated (pat-state) pairs over subsigs
+	/// this is the average of the number of steps for a subsig.
+	/// This determines the estimated (pat-state) pairs over subsigs
 	pub avg_pats_per_subsig: usize,
 
 	/// size of the final product (subsig-state-pat-loc) table
@@ -492,6 +493,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 			&pat_state_tbl2, &state_loc_tbl2, 
 			&sorted_states2, packed_trace_size, "pat_state_loc_tbl")
 			.expect("err join");
+
 		let pat_col = pat_state_loc_tbl.borrow()
 			.get_container("join_tbl").expect("err get join_tbl").borrow()
 			.get_container_by_idx(0).borrow().duplicate_as_external(0,None);

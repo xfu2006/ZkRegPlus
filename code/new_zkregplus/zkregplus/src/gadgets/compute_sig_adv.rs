@@ -181,7 +181,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		let dis_cap = DischargeAdvCapacity{
 			max_nibble_len: capacity.max_nibble_len,
 			subsigs: capacity.subsigs,
-			avg_pats_per_subsig: 4, //it's ok to put a sample value here
+			avg_active_pats_per_subsig: 2, //it's ok to put a sample value here
 			perc_pats_in_trace: capacity.perc_pats_in_trace
 		};
 		let inp_steps_queue_obj = StepQueue::parse_from(&inp_steps_queue,
@@ -319,7 +319,7 @@ pub mod tests_compute_sig_adv{
 		fsm_adv::{FsmAdvAdvice,FsmAdvCapacity},
 		word_extract_adv::{WordExtractAdvAdvice},
 		discharge_adv::{DischargeAdvAdvice,DischargeAdvGadget,
-			DischargeAdvCapacity,StepQueueItem,StepQueue},
+			DischargeAdvCapacity,StepQueueItem,StepQueue, StepQueueType},
 		traits::{Container,Col,IDX_DATA},
 	};
 	use data_processor::{clam_db::{ClamavDB,RANGE2_BIT}, 
@@ -437,7 +437,7 @@ pub mod tests_compute_sig_adv{
 		let cap_disc = DischargeAdvCapacity{//capaciity of discharge comopnent
 			max_nibble_len: nibble_len, 
 			subsigs: cap.subsigs,
-			avg_pats_per_subsig: cap.avg_pats_per_subsig,
+			avg_active_pats_per_subsig: 2,
 			perc_pats_in_trace: cap.perc_pats_in_trace, 
 		};
 
@@ -647,10 +647,11 @@ pub mod tests_compute_sig_adv{
 		let capacity= DischargeAdvCapacity{
 			max_nibble_len: 62, 
 			subsigs: 4,
-			avg_pats_per_subsig: 4,
+			avg_active_pats_per_subsig: 2,
 			perc_pats_in_trace: 48,
 		};
-		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone()};
+		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),
+			q_type: StepQueueType::Res};
 		let ct = sq.to_container("ct", true, false, false, &steps_info);
 		let pat = ct.borrow().get_container("encoded")
 			.unwrap().borrow().to_vec();

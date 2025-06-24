@@ -151,10 +151,11 @@ where C: CurveGroup<ScalarField=F>,
 	let max_word = 1;
 	let subsigs = 4;
 	let avg_pat_per_sig = 4;
+	let avg_active_pat_per_sig = 2;
 	let store_id = 0; //implies 'all' for sig_id, for SED
 	let perc_pats_in_trace = 40;
 	let scap1= SedCapacity::new(max_word, db.dfa_crit.state_part_bits, subsigs, 
-		avg_pat_per_sig, perc_pats_in_trace);
+		avg_pat_per_sig, avg_active_pat_per_sig, perc_pats_in_trace);
 	let scomp1 = SedComponentMapper::<F,LK<F>>::new(scap1, db.clone(), b_igc, store_id);
 	let scg1 = CompositeGadgetMapper::<F,LK<F>>::new("w1",vec![Rc::new(RefCell::new(scomp1))]); 
 
