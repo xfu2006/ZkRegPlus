@@ -16946,8 +16946,36 @@ Goal 1. continue with step 3
 		also both n1 and n2 are reduced to 6 and 16 because
 		del queue is much smaller
 		real cost: 83 (down from 463)
-	[c] 
+	[c] regression test
+	[d] regression test 2 -> DONE
 
+Goal 2. continue to step bwdprf_valid_prf
+	[a] step 0 retrieval
+	[b] analysis of step1 and step2
+		[b1] we need to add sid checks for src_step,
+			src_pat, src_rg_end, loc_to_del same cost
+		[b2] but we save on step 1 and step 2:
+			13n + 9n = 22n
+
+Goal 3. create correct tag for steps
+	[a] simulate stefwdprf
+	[b] unit testing
+	[c] inspect code again
+
+Goal 4. implement check of sids
+	[a] pass reg check
+	[b] update to skip one col in gen
+	[c] check first col
+	[d] check 2nd col
+	[e] check next 3 columns
+	[f] debug
+		-> 1336 
+		-> 1357 subsig 3 not exist:
+		-> subtbl id not exist
+	[g] cost: 64 (4n) checked 3 columns. n is 16 because bwd prf smaller.
+	[g] 
+-- TODO -- validate the sid code
+			
 
 
 

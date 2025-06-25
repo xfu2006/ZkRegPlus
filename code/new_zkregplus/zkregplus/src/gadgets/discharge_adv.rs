@@ -1275,7 +1275,7 @@ impl <F:PrimeField> StepBwdPrf<F>{
 	/// generate the container (including the si cols)
 	/// Will output (src_encoded, src_step, src_loc, dst_encoded, dst_pat,
 	///    dst_rg_start, dst_rg_end, dst_loc, pat_id, diff1, diff2)
-	pub fn to_container(&self, name: &str)->Rc<RefCell<Container<F>>>{
+	pub fn to_container(&self, name: &str, subsig_store_info: &SubsigStepStore)->Rc<RefCell<Container<F>>>{
 		//0. check data
 		#[cfg(test)] { assert!(is_sorted(&self.subsigs)); }
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
@@ -1304,35 +1304,36 @@ impl <F:PrimeField> StepBwdPrf<F>{
 		}).flatten().collect::<Vec<(F,F,F,F,F,F,F,  F,F)>>();
 
 		let v_src_encoded = vt.par_iter().map(|t| t.0).collect::<Vec<F>>();
-		let v_src_subsig= vt.par_iter().map(|t| t.1).collect::<Vec<F>>();
+		//we skipped subsig.
+		let v_src_subsigs= vt.par_iter().map(|t| t.1).collect::<Vec<F>>();
 		let v_src_step= vt.par_iter().map(|t| t.2).collect::<Vec<F>>();
 		let v_src_pat= vt.par_iter().map(|t| t.3).collect::<Vec<F>>();
-		let v_src_rg_start= vt.par_iter().map(|t| t.4).collect::<Vec<F>>();
 		let v_src_rg_end= vt.par_iter().map(|t| t.5).collect::<Vec<F>>();
 		let v_src_min_loc= vt.par_iter().map(|t| t.6).collect::<Vec<F>>();
 
 		let v_prev_encoded = vt.par_iter().map(|t| t.7).collect::<Vec<F>>();
 		let v_loc_to_del = vt.par_iter().map(|t| t.8).collect::<Vec<F>>();
 		let names = vec![
-			"src_encoded", "src_subsig", "src_step", 
-			"src_pat", "src_rg_start", "src_rg_end", 
+			"src_encoded", "src_step",  //note we don't need subsig
+			"src_pat", "src_rg_end", 
 			"src_min_loc",
 			"prev_encoded", "loc_to_del",
 		];
 		let v2d = vec![
-			v_src_encoded, v_src_subsig, v_src_step,
-			v_src_pat, v_src_rg_start, v_src_rg_end,
+			v_src_encoded, v_src_step,
+			v_src_pat, v_src_rg_end,
 			v_src_min_loc,
 			v_prev_encoded, v_loc_to_del];
 		let n = self.vec_size();
 		assert!(n>v2d[0].len(), "buf too small for StepBwdPrf, adjust compress_ratio in vec_size() first, and then the perc_pats_in_trace in capacity");
 		let n2 = n-v2d[0].len();
 		let pad = vec![zero; n2];
+		let se = vec![pad.clone(), v2d[0].clone()].concat();//src_encoded
 		#[cfg(test)]{
 			for i in 0..v2d.len(){
 				assert!(v2d[i].len()==v2d[0].len());
 				for j in 0..v2d[i].len(){ 
-					if i!=0 && i!=7{//not src_encoded, prev_encoded
+					if i!=0 && i!=5{//not src_encoded, prev_encoded
 						assert!(v2d[i][j] <= _max); 
 					}
 				}
@@ -1342,18 +1343,62 @@ impl <F:PrimeField> StepBwdPrf<F>{
 		//3. consruct container
 		let res = Container::new(name); 
 		let frg = F::from(RANGE2);
-		let v_rg = vec![
-			//structure corresponds to names
-			zero, frg, frg, 
-			frg, frg, frg,
-			frg, 
-			zero, frg];
+
+		//3.0 src_encoded (col 0)
+		res.borrow_mut().add_col(Col::new(vec![zero; n], 
+			&format!("sid_{}",names[0]), IDX_SI_DATA)); //src_encoded
+
+		//3.1 src_step (col 1)
+		let sids = se.iter().enumerate().map(|(i,s)| {
+			if i<n2{
+				SubsigStepStore::gen_step_tbl_id(*s,ID_ENCODED_NORMAL_STEP)
+			}else{
+				let subsig = field_to_usize(&v_src_subsigs[i-n2]);
+				let info = subsig_store_info.subsig_to_steps.get(&subsig)
+					.expect(&format!("cannot find subsig: {}",subsig));
+				let num_steps = info.vec_pm_bounds.len();
+				let src_step = v2d[1][i-n2];
+				let b_last_step = F::from(num_steps as u32) == src_step;
+				let tag = if b_last_step {ID_ENCODED_LAST_STEP} else
+					{ID_ENCODED_NORMAL_STEP};
+				SubsigStepStore::gen_step_tbl_id( *s,tag)
+			}
+		}).collect::<Vec<_>>();
+		res.borrow_mut().add_col(Col::new(sids, &format!("sid_{}",
+			names[1]), IDX_SI_DATA)
+		); 
+
+		//3. src_pat,  srgrg_end (col 2,3) 
+		let ids = [2,3];
+		let cats = [ID_ENCODED_PAT, ID_ENCODED_RG_END];
+		for x in 0..ids.len(){
+			let sids = se.iter().map(|s| SubsigStepStore::gen_step_tbl_id(
+				*s,cats[x])).collect::<Vec<_>>();
+			res.borrow_mut().add_col(Col::new(sids,
+				&format!("sid_{}",names[ids[x]]), IDX_SI_DATA)
+			); 
+		}
+
+		//3.4. src_min_loc (col 4)
+		// it will be proved to be the min of the loc
+		//of locs in sq_res, which is already proved in range.
+		//so no need to prove here (can even assign 0)
+		res.borrow_mut().add_col(Col::new(vec![frg; n], 
+			&format!("sid_{}",names[4]), IDX_SI_DATA)); //dst_loc
+
+		//3.5 prev_encoded (col 5) - encoded no need to prove range
+		res.borrow_mut().add_col(Col::new(vec![zero; n], 
+			&format!("sid_{}",names[5]), IDX_SI_DATA)); //dst_loc
+
+		//3.6 loc_to_del (col 6) - just in RANGE2
+		res.borrow_mut().add_col(Col::new(vec![frg; n], 
+			&format!("sid_{}",names[6]), IDX_SI_DATA)); //dst_loc
+
+		//3.7 add real data cols
 		v2d.into_iter().enumerate().for_each(|(i,vec)|{
 			let name = names[i];
 			res.borrow_mut().add_col(Col::new(vec![pad.clone(),vec].concat(), 
 				name, IDX_DATA));
-			res.borrow_mut().add_col(Col::new(vec![v_rg[i]; n],
-				&format!("sid_{}",name), IDX_SI_DATA));
 		});
 
 		res
@@ -2198,7 +2243,8 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			&subsig_store_info);
 		res.borrow_mut().add_container(ct_sq_to_del.clone());
 		res.borrow_mut().add_container(ct_sq_res2.clone());
-		res.borrow_mut().add_container(bwd_prf.to_container("prf_bwd"));
+		res.borrow_mut().add_container(bwd_prf.to_container("prf_bwd", 
+			subsig_store_info));
 
 
 		//------------------------------------------------------------------
@@ -2220,12 +2266,10 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			&ct_sq_to_del, &prf_bwd);
 		prf.borrow_mut().add_container(prf_to_del_valid);
 
-	/* RECOVER LATER. TO CONTINUE1
 		//4. prove the validity of the bwd_prf
 		let prf_bwdprf_valid = Self::gen_bwdprf_valid_prf("prf_bwdprf_valid",
-			&prf_bwd, &ct_sq_res2, store_steps);
+			&prf_bwd, &ct_sq_res2);
 		prf.borrow_mut().add_container(prf_bwdprf_valid);
-	*/
 
 		// --- now return 
 		res.borrow_mut().add_container(prf);
@@ -2289,13 +2333,14 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 	/// prove the validity of prf_bwd. Mainly it shows that
 	/// (1) validity of min_loc (take the 1st 
 	///    loc from the sq_res and show that sq_res loc is sorted
-	/// (2) prev_loc + rg2 > min_loc (which invlidates the prev_loc)
+	/// (2) prev_loc + rg2 < min_loc (which invlidates the prev_loc),
+	///    so that there in the future ll be no subsequent loc for
+	///    prev_loc
 	#[allow(dead_code)]
 	fn gen_bwdprf_valid_prf(
 		prf_name: &str,
 		prf_bwd: &Rc<RefCell<Container<F>>>,
 		sq_res: &Rc<RefCell<Container<F>>>,
-		store_steps: &Rc<RefCell<Container<F>>>,
 	)->Rc<RefCell<Container<F>>>{
 		//0. data retrieval
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
@@ -2319,6 +2364,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			&v2d[5], &v2d[6]
 		);
 
+		/* RECOVER LATER TO CONTINUE1	
 		//1. correctness of src_encoded-step-rg_end (we are not interested
 		// in other attributes). Prove that they belong to store_steps.
 		let frg = F::from(RANGE2);
@@ -2412,6 +2458,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		res.borrow_mut().add_col(Col::new(vec![frg;len1], 
 			"sid_diff_min", IDX_SI_DATA));
 
+		*/
 		res
 	}
 
@@ -3141,15 +3188,13 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		let n2 = cs.num_constraints(); 
 		//REMOVE LATER ----------- ABOVE
 
-	/* RECOVER LATER. TO CONTINUE1
 		//4. validate the prf_bwd is valid
 		let prf_bwdprf_valid = prf.borrow().get_container("prf_bwdprf_valid")?;
 		self.validate_bwdprf_valid_prf(&ct_prf_bwd, 
-			&ct_sq_res2, &r1, &r2, &prf_bwdprf_valid, store_steps)?;
+			&ct_sq_res2, &r1, &r2, &prf_bwdprf_valid)?;
 		//REMOVE LATER -----------
-		println!("--- DEBUG USE 9999.3.3: num_cons: check valid bwd_prf: {}", cs.num_constraints()-n2);
+		println!("--- DEBUG USE 6605.3.3: num_cons: check valid bwd_prf: {}", cs.num_constraints()-n2);
 		//REMOVE LATER ----------- ABOVE
-		*/
 
 		Ok( () )
 	}
@@ -3197,10 +3242,12 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		r1: &FpVar<F>,
 		r2: &FpVar<F>,
 		prf_bwdprf_valid: &Rc<RefCell<Container<FpVar<F>>>>,
-		store_steps: &Container<FpVar<F>>,
 	)->Result<(), SynthesisError>{
 		//0. retrieve data
 		let cs = r1.cs(); 
+		//REMOVE LATER -------
+		let n0 = cs.num_constraints();
+		//REMOVE LATER ------- ABOVE
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
 		let (zero, one, _max) = (new_const_var(&cs, zero), 
@@ -3223,7 +3270,58 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			&v2d[2], &v2d[3], &v2d[4], 
 			&v2d[5], &v2d[6]
 		);
+		let sid_cols = names.iter().map(|n|{
+			prf_bwd.borrow().get_container(&format!("sid_{}",n)).unwrap()
+				.borrow().to_vec()
+		}).collect::<Vec<Vec<FpVar<F>>>>();
 
+		//1.1. check the validity of diff1, diff2 in range
+		// no need to check src_encoded and prev_encoded as later
+		// also no need to check src_min_loc and loc_to_del they will
+		// be looked up in sq_res and sq_to_del as well.
+		// thus no need to check cols: 0, 3, 5, 6
+
+		//1.2 check src_step
+		let info_id= F::from(0x23001101u32); //tag to avoid collision
+		let f1 = F::from(1u64<<RANGE2_BIT);
+        let factor1 = f1*f1*f1*f1*f1; //models encoded
+        let factor2 = F::from(1u64<<32); //32-bit
+		let part1 = info_id*factor1*factor2 + 
+			F::from(ID_ENCODED_NORMAL_STEP)*factor1;
+		let part1_alt = info_id*factor1*factor2 + 
+			F::from(ID_ENCODED_LAST_STEP)*factor1;
+		let part1 = new_const_var(&cs, part1);
+		let part1_alt = new_const_var(&cs, part1_alt);
+		let n = sid_cols[1].len();
+		for i in 0..n{
+			//check the tag is the sub-table-id derived from src_encoded
+			//simulating the SubsigStepStore::gen_step_tbl_id
+			//i.e., part1 + subsig_id = sid
+			let subtbl_id = &part1 + &v2d[0][i]; 
+			let subtbl_id_alt = &part1_alt + &v2d[0][i]; 
+			let res = (&sid_cols[1][i]-&subtbl_id)*
+					(&sid_cols[1][i]-&subtbl_id_alt);	 //either case is ok
+			check_eq(&res, &zero, "fail src_step check")?;
+		}
+
+		//1.3 check other columns
+		let ids = [2,4];
+		let cats = [ID_ENCODED_PAT, ID_ENCODED_RG_END];
+		for x in 0..ids.len(){
+			let part1 = info_id*factor1*factor2 + F::from(cats[x])*factor1;
+			let part1 = new_const_var(&cs, part1);
+			for i in 0..n{
+				let subtbl_id = &part1 + &v2d[0][i]; 
+				check_eq(&sid_cols[ids[x]][i], &subtbl_id, "fail dst check")?;
+			}
+		}
+
+		//REMOVE LATER ------------
+		println!(" --  --  DEBUG USE 6601:  step 0.1: check src_step cost: {}", cs.num_constraints()-n0);
+		let n0 = cs.num_constraints();
+		//REMOVE LATER ------------ ABOVE
+
+		/* RECOVER LATER TO CONTINUE
 
 		//0.5. check sid ranges
 		//REMOVE LATER -------------
@@ -3350,6 +3448,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		//REMOVE LATER ----------------
 		println!("DEBUG USE 7777.6: check loc_to_del + rg2 < min_loc: num_cons: {}, vec_len: {}", cs.num_constraints()-n2, sidcols[0].len());
 		//REMOVE LATER ----------- ABOVE
+		*/
 
 		Ok( () )
 	}
