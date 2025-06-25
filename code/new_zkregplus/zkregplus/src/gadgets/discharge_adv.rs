@@ -2264,6 +2264,8 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		let c1=prf_bwd.borrow().get_container("loc_to_del").unwrap()
 			.borrow().to_vec(); 
 		assert!(e1.len()==c1.len());
+		assert!(e1[0]==zero, "increase length to ensure at least one pad 0");
+
 		let src = encode_cols(&vec![e1.clone(),c1.clone()], &vec![0,1]);
 
 
@@ -3158,45 +3160,32 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 	/// but not affecting soundness).
 	fn validate_to_del(&self,
 		sq_to_del: &Rc<RefCell<Container<FpVar<F>>>>,
-		prf_fwd: &Rc<RefCell<Container<FpVar<F>>>>,
+		prf_bwd: &Rc<RefCell<Container<FpVar<F>>>>,
 		r1: &FpVar<F>,
 		prf_to_del_valid: &Rc<RefCell<Container<FpVar<F>>>>
 	)->Result<(), SynthesisError>{
 		//1. retrieve info from to_del
 		let encoded = sq_to_del.borrow().get_container("encoded")
 			.unwrap().borrow().to_vec(); 
-		let step = sq_to_del.borrow().get_container("step")
-			.unwrap().borrow().to_vec(); 
 		let locs = sq_to_del.borrow().get_container("locs")
 			.unwrap().borrow().to_vec(); 
-		let dst = encode_2col_var(&encoded, &locs);
-		let dst_sel = step.iter().zip(locs.iter()).map(|(loc,step)|
-			loc.is_zero().unwrap().not()
-				.and(&step.is_zero().unwrap().not()).unwrap().into()
-		).collect::<Vec<FpVar<F>>>();
-		let dst_adj = dst.iter().zip(dst_sel.iter()).map(|(a,b)|
-			a * b ).collect::<Vec<FpVar<F>>>();
+		let dst = encode_2col_var_adv(&encoded, &locs, r1);
 
 		//2. no need to check default loc1 for step 0 (unlike prf_to_add)
 
-		//3. retrieve info from prf_fwd
-		let e1 = prf_fwd.borrow().get_container("prev_encoded")
+		//3. retrieve info from prf_bwd
+		let e1 = prf_bwd.borrow().get_container("prev_encoded")
 			.unwrap().borrow().to_vec(); 
-		let c1= prf_fwd.borrow().get_container("loc_to_del")
+		let c1= prf_bwd.borrow().get_container("loc_to_del")
 			.unwrap().borrow().to_vec(); 
 		let cs = locs[0].cs();
-		let src_adj= encode_2col_var(&e1, &c1);
+		let src = encode_2col_var_adv(&e1, &c1, r1);
 
-		//4. verify the two lookups
+		//4. verify the one-direction lookup
 		let frg = new_const_var(&cs, F::from(RANGE2));
 		let mtb2=prf_to_del_valid.borrow()
 			.get_container("mtb2").unwrap().borrow().to_vec(); 
-		assert_logup(cs.clone(), &dst_adj, &src_adj, &mtb2, r1)?;
-
-		let sid_mtb2=prf_to_del_valid.borrow().get_container("sid_mtb2")
-			.unwrap().borrow().to_vec(); 
-		check_arr_eq(&sid_mtb2, &frg, "err checking sid_mtb2")?; 
-
+		assert_logup(cs.clone(), &dst, &src, &mtb2, r1)?;
 		Ok( () )
 	}
 
@@ -3727,7 +3716,7 @@ pub mod tests_discharge_adv_gadget{
 
 		//2. define the test cases
 		let testcases = vec![
-			 /* RECOVER LATER
+			// /* RECOVER LATER
 			//2. fails sig2 coz 3rd pattern missing
 			Tcase::new("defxx234xx56", "sig2", false, false),
 			//1. fails sig1 coz gap len incorrect
@@ -3742,7 +3731,7 @@ pub mod tests_discharge_adv_gadget{
 			Tcase::new(
 				&format!("ddd{}234xx{}56","x".repeat(90), "u".repeat(90)), 
 				"sig2", false, false),
-			 */
+			// */
 			//5. a case which has both fwd and backward elimination.
 			//manually check debug messages of backward and forward proofs
 			//baseically: the last 78 is not added, but the

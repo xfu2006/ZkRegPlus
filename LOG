@@ -16940,6 +16940,14 @@ Wed 06/25/2025
 LOC (data): 8413
 LOC (gadget): 10947 (+30)
 Goal 1. continue with step 3
+	[a] go over code
+	[b] analyze complexity: n1 + n2 + 2n1 + 3n2 
+		as n1 is much smaller than n2 we have
+		also both n1 and n2 are reduced to 6 and 16 because
+		del queue is much smaller
+		real cost: 83 (down from 463)
+	[c] 
+
 
 
 
