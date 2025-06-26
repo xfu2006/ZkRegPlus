@@ -213,6 +213,9 @@ $\left((\Q{a},\Q{r}\Trans{f}), (\Q{d},\Trans{b}, \Q{o}) \right) \leftarrow {\tex
 	\begin{enumerate}
 		\item $\Q{r} = \Q{i} \union \Q{a}$.
 		\item $\Q{a} = \proj_{1,3}(\Trans{f})$ (i.e. casting column 1 and 3)
+		\item $\Trans{f} \join \db_{\ttt{key,src}}$ = 
+			$\select_{\ttt{step<max\_step}}
+				(\Q{s} \join \db_{\ttt{key,max\_step}})$
 	\end{enumerate}
 (2) Return \bw(s) based on its structure:
 

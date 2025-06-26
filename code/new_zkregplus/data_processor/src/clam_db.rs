@@ -97,6 +97,7 @@ pub const ID_ENCODED_PAT:u32=0x71090003;
 pub const ID_ENCODED_RG_START:u32=0x71090004;
 pub const ID_ENCODED_RG_END:u32=0x71090005;
 pub const ID_ENCODED_LAST_STEP:u32=0x71090006;
+pub const ID_ENCODED_PREV_ENCODED:u32=0x71090007;
 
 /* COMMENT: each bag acdfa has the following entries see above.
 	INIT (offset: 0), NON_FINAL, FINAL, 
@@ -487,12 +488,14 @@ impl SubsigStepStore{
 		// encoded_pat_id, encoded_rg_start, encoded_rg_end
 		let subcats = [ID_ENCODED_SUBSIG, ID_ENCODED_NORMAL_STEP,
 			ID_ENCODED_PAT,
-			ID_ENCODED_RG_START, ID_ENCODED_RG_END];
+			ID_ENCODED_RG_START, ID_ENCODED_RG_END, ID_ENCODED_PREV_ENCODED];
 		let mut all_tuples = subcats.par_iter().enumerate().map(|(i,pid)|{
-			let info_col = &cols[i]; //e.g., 0 is for subsig, 1 for step etc.
+			let info_col = &cols[i];
 			let encoded = &cols[5];
 			let pats = &cols[2];
-			let tuples = encoded.iter().zip(info_col.iter()).map(|(e,s)|{
+			let steps = &cols[1];
+			let tuples = if i<5 {//except ID_ENCODED_PREV_ENCODED
+			  encoded.iter().zip(info_col.iter()).map(|(e,s)|{
 				let tbl_id = if i!=1 {Self::gen_step_tbl_id(*e, *pid)} else{
 					if i==pats.len()-1 || pats[i+1]!=max{
 						Self::gen_step_tbl_id(*e,ID_ENCODED_NORMAL_STEP)
@@ -501,7 +504,17 @@ impl SubsigStepStore{
 					}
 				};
 				(tbl_id, *s) 
-			}).collect::<Vec<(F,F)>>();
+			  }).collect::<Vec<(F,F)>>()
+			}else{
+			  let res = encoded.iter().zip(steps.iter()).enumerate()
+			  	.map(|(j,(e,s))|{
+					let tbl_id = Self::gen_step_tbl_id(*e,*pid);
+					if !s.is_zero() { (tbl_id, encoded[j-1]) }
+						else { (tbl_id, F::zero()) }
+				}).collect::<Vec<(F,F)>>();
+
+			  res
+			};
 
 			tuples
 		}).collect::<Vec<Vec<(F,F)>>>().concat();
@@ -1519,6 +1532,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		Self::add_bundle_subsig_to_lkup(&mut lkup, &sig_to_id, &bundle_subsig, false);
 		Self::add_bundle_subsig_to_lkup(&mut lkup, &sig_to_id, &bundle_subsig_igc, true);
 		lkup.vals.sort();
+		println!("PERFORMANCE 100: lkup size: {}", lkup.vals.len());
 
 
 		//9. build the object

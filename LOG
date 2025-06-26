@@ -16973,10 +16973,66 @@ Goal 4. implement check of sids
 		-> 1357 subsig 3 not exist:
 		-> subtbl id not exist
 	[g] cost: 64 (4n) checked 3 columns. n is 16 because bwd prf smaller.
-	[g] 
--- TODO -- validate the sid code
-			
+	[h] regression testing -> DONE
 
+Goal 5. handling old step 1 and 2 -> DONE
+Goal 6. handle step 3 sorted
+	[a] estimate cost: 2n + n + n + n = 5n why it's 6n?
+	[b] what about conditional range?
+
+Thursday 06/26/2025
+LOC (gadget): 11054 (+60)
+LOC (data): 8413
+Goal 1. fix step 2
+	[a] check structure of data source -> it has step 0
+	[b] add encoded-prevencoded
+	[c] dump it -ok
+	[d] check lkup size
+	=== DATA==
+	full lkup size now: 556,834,073 
+	This is 556M! It cannot fit into lokup table size!
+	-> itemized size:
+	DEBG USE 101: after crit_init: 355019816 (+355M)
+		--> why? ACDFA has only 3.2 million states
+		-> ==========Adv Stats of ACDFA dfa_crit ==========================
+		HEX-AC-DFA id: 0, num_states: 3226204, patterns: 64555, accept_states: 3226202, init_state: 3226200
+		  MAX output sig: 155, avg sigs/acc state: 86
+		==================================
+		-> 16 transitions should be 48 million?
+==========Adv Stats of ACDFA dfa_crit_igc ==========================
+HEX-AC-DFA id: 0, num_states: 10493, patterns: 661, accept_states: 667, init_state: 669
+  MAX output sig: 2, avg sigs/acc state: 1
+==================================
+
+	DEBG USE 102: after crit_igc: 355210029
+	DEBG USE 102: after range2: 422318911 (+64M)
+	DEBG USE 102: after bundle_subsig: 566353061 (+140M)
+	DEBG USE 102: after bundle_subsig_igc: 569498941
+	==========
+	-> this may have to be solved by using either
+		bw curve with bls12-381
+	-> or need to shrnk size.
+	-> or cut the signature set to half.
+	-> regression DONE.
+
+Goal 2. update with the info of prev_encoded
+	[a] in to_container of bwd_prf add the s_id for prev_encoded -> DONE
+	[b] in validate_bwdprf_valid_prf add the check of prev_encoded -> DONE
+	[c] update the documents -> DONE
+	[d] unit testing
+		-> passing
+		-> regression testing 1 -> failed (not finding some entries)
+		-> regression testing 1 -> DONE
+
+Goal 3. step 3. inspect code
+	[a] cost analysis: 
+		(1) is_eq: 2n, diff_loc: n, check_arr: n, check_arr_eq: n
+		5n
+	[b] can be avoid is_bool? -> can't
+		but why is 6n?
+			-> eq costs 3n
+
+Goal 4. step 4. analysis
 
 
 
