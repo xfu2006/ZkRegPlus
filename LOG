@@ -16476,7 +16476,7 @@ DEBUG USE 9999.2: num_cons: for validate_forward_step_queue 5254
 -- DEBUG USE 9999.3.1: num_cons: for checking union sq_res1 and sq_res2: 761
 -- DEBUG USE 9999.3.2: num_cons: for checking to_del covers prf_bwd: 463
 --- DEBUG USE 9999.3.3: num_cons: check valid bwd_prf: 1561
-DEBUG USE 9999.3: num_cons: for validate_forward_step_queue 2785
+DEBUG USE 9999.3: num_cons: for validate_backward_step_queue 2785
 DEBUG USE 9999.ALL: TOTAL num_cons: 8349
 ========================================================
 
@@ -17033,6 +17033,51 @@ Goal 3. step 3. inspect code
 			-> eq costs 3n
 
 Goal 4. step 4. analysis
+	[a] print out data sq_res
+	[b] print out data step bwd proof
+	[c] analysis: cost: (n2 is the same as n1)
+		2n1 + 2n2 + 2n2 + n2 + 2n1 + 3n2 + n2 
+		=> 4n1 + 9n2 (estimate: 390)
+	[d] new: almost the the same is_neq increases one n1
+		-> new: 360
+	[e] regression test1
+	[f] regression test2 -> DONE
+
+Goal 5. step 5. 
+	[a] analyssi of old alg
+	[b] analysis cost: 
+		3n + n + 2n
+	[c] regression testing1
+	[d] regression testing2
+	[e] cost analysis (entir backward queue: 2785 -> 1151 => cut 1.6k
+					forward: 5254 -> 3348: => cut 2k
+					altogether: 8349 -> 4499 => cut 3.6k (almost 40%)
+					given the same config.
+					Later when steps are not full populated there should be more
+	[e] avg cost: per step cost: around 1k
+		total sigs: 400, subsigs: 2k, total steps: 8k
+		max: 8M
+		but avg should be around 2M given not all steps are populated
+		at run time.
+Goal 6. clean code.
+	11064 (+120) -> 10673
+
+Goal 7. Writing
+	[a] fwdprf
+	[b] bwdprf
+
+Friday 06/27/2025
+LOC (data): 8427
+LOC (gadget): 10673
+
+Goal 1. check if sq_res final is sorted
+	[a] no
+	[b] where to place it? -> validate step_queue_union_prf
+	[c] implement it (before it COST: 4499)
+		-> gen_bwdprf_valid
+		-> validate 
+	[d] cost: 4499 -> 4563 (+2n as expected)
+	
 
 
 

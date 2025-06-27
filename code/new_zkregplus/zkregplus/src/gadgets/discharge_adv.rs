@@ -11,8 +11,8 @@ use std::{marker::{PhantomData},collections::{HashSet}};
 use crate::gadgets::{
 	commons::{gen_m_table,check_arr_eq,encode_cols,decode_cols
 		,new_const_var, encode_2col_var, encode_2col_var_adv,
-		encode_cols_var, check_arr_eq_arr, encode_cols_var_adv, 
-		check_eq, new_var, is_sorted, encode_2col},
+		check_arr_eq_arr, encode_cols_var_adv, is_sorted,
+		check_eq,  encode_2col},
 	db::{assert_logup, verify_encoded_table, assert_well_formed_sorted},
 	traits::{Container,
 		Col,
@@ -473,14 +473,6 @@ impl <F:PrimeField> StepQueue<F>{
 		let mut stores_to_add = HashMap::new();
 		let mut stores_res = HashMap::new();
 		let mut stores_prf = HashMap::new();
-		//REMOVE LATER ----------------
-		println!("DEBUG USE 2101.0 --- pat_loc");
-		let pats = pat_loc.borrow().get_container("sorted_key").unwrap().borrow().to_vec();
-		let locs = pat_loc.borrow().get_container("sorted_val").unwrap().borrow().to_vec();
-		for i in 0..pats.len(){
-			println!(" -- i: {}, pat: {}, loc: {}", i, pats[i], locs[i]);
-		}
-		//REMOVE LATER ----------------
 
 		//2. process each subsig, propagating step by step
 		for subsig in &self.subsigs{
@@ -577,7 +569,7 @@ impl <F:PrimeField> StepQueue<F>{
 	pub fn gen_backward_prf(&self) ->(Self, Self, StepBwdPrf<F>){
 		//1. init data
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
-		let (zero, _one, max) = (F::zero(), F::one(), F::from(max_val as u32));
+		let (zero, _one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
 		let mut stores_to_del= HashMap::new();
 		let mut stores_res = HashMap::new();
 		let mut stores_prf = HashMap::new();
@@ -653,8 +645,8 @@ impl <F:PrimeField> StepQueue<F>{
 			}//end if
 
 			//2.3 update the stores
-			let mut vec_res:Vec<_> = vec_res.into_iter().rev().collect();
-			let mut vec_to_del:Vec<_> = vec_to_del.into_iter().rev().collect();
+			let vec_res:Vec<_> = vec_res.into_iter().rev().collect();
+			let vec_to_del:Vec<_> = vec_to_del.into_iter().rev().collect();
 			let vec_bwd_prf:Vec<_> = vec_bwd_prf.into_iter().rev().collect();
 			assert!(vec_to_del.len()==vec_bwd_prf.len());
 			let (n,n2) = (items.len(), vec_to_del.len());
@@ -1389,7 +1381,7 @@ impl <F:PrimeField> StepBwdPrf<F>{
 
 		//3.5 prev_encoded (col 5) - using table ID_ENCODED_PREV_ENCODED
 		// so later we do not have to check their relation
-		let sids = se.iter().zip(de.iter()).map(|(s,d)|{
+		let sids = se.iter().zip(de.iter()).map(|(s,_d)|{
 			//for "d" - prev_encoded its tag id is generated using
 			//the source_encoded under category ID_ENCODED_PREV_ENCODED
 			//so later in validate_bwrf_validate we simply check the
@@ -1476,16 +1468,8 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		inp_step_queue: &StepQueue<F>, // the steps_queue from input
 	) ->Self{
 		let stmt_container = Container::<F>::new("discharge_adv_stmt");
-		/* REMOVE LATER
-		//1. construct the projected <subsig-step> store
-		assert!(inp_subsigs.len()<=capacity.subsigs);
-		let inp_subsigs = vec![vec![F::zero(); 
-			capacity.subsigs-inp_subsigs.len()], inp_subsigs.clone()].concat();
-		let store_steps = Self::gen_store_steps_combo(
-			&inp_subsigs, store_subsig_steps,fsm_id, capacity);
-		let store_steps2 = store_steps.clone(); //low cost, need to add
-		stmt_container.borrow_mut().add_container(store_steps);
-		*/
+		//1. constructure step_store. DEPRECATED. no need anymore
+		//as we have info encoded in lkup table StoreSteps.
 
 		//2. construct 1st (forward) step-queue
 		let (forward_step_queue, sq_fwd) = Self::gen_forward_steps_queue_combo(
@@ -1505,76 +1489,6 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			stmt_container}
 	}
 
-	/* REMOVE LATER 
-	/// given the global subsig-step store, filter it by
-	/// the input subsigs and generate a subtable.
-	/// It contains 5 cols: <subsig, id, pat_id, rg_start, rg_end>
-	/// NOTE id:0 and max are the dummy entries.
-	fn gen_store_steps_combo(
-		inp_subsigs: &Vec<F>,
-		store_steps: &SubsigStepStore,
-		fsm_id: u32,
-		capacity: &DischargeAdvCapacity
-	)->Rc<RefCell<Container<F>>>{
-		let res = Container::<F>::new("store_steps");
-		//REMOVE LATER -----------------
-		println!("===========DEBUG USE 201: store_steps: ");
-		store_steps.dump();
-		//REMOVE LATER ----------------- ABOVE
-
-		//1. generate the projected store
-		let subsig_ids = inp_subsigs.iter().map(|f| field_to_usize(f))
-			.collect::<Vec<usize>>();
-		assert!(subsig_ids.len()<=capacity.subsigs);
-		let to_padd = capacity.subsigs - subsig_ids.len();
-		let subsig_ids = vec![ vec![0usize; to_padd], subsig_ids].concat();
-		let n = capacity.subsigs * capacity.avg_active_pats_per_subsig;
-		let proj_steps= store_steps.project_by(&subsig_ids);
-		let mut cols = proj_steps.gen_cols::<F>(RANGE2_BIT, Some(n));
-		cols.push(inp_subsigs.clone());
-
-		let f_substore_id = F::from((fsm_id + STORE_SUBSIG_STEP) as u32);
-		let f_range2 = F::from(RANGE2 as u32);
-		let n = cols[0].len(); //same for all
-		for i in 0..cols.len()-1 {assert!(cols[i].len()==n);}
-		//just need to check all subfields in RANGE2 and then encoded
-		//ensure that e.g., states in the right range.
-		//the enocded column does need to be checked in f_substore_id
-		let mut sid_cols = vec![
-			vec![f_range2; n],  //subfield: subsig
-			vec![f_range2; n],  //id1 
-			vec![f_range2; n],  //patid
-			vec![f_range2; n],  //rg_start
-			vec![f_range2; n],  //rg_end
-			vec![f_substore_id; n], //encoded
-			vec![f_range2; inp_subsigs.len()], //inp_subsigs
-		];
-		assert!(sid_cols.len()==cols.len());
-
-		//2. for proving that all inpu_subsigs are covered in 
-		// the projected store (the logup related m_table)
-		let m_tbl = gen_m_table(&inp_subsigs, &cols[0]);
-		let sid_m_tbl = vec![f_range2; n];
-		assert!(m_tbl.len()==sid_m_tbl.len());
-		cols.push(m_tbl);
-		sid_cols.push(sid_m_tbl);
-
-		//3. convert them to columns.
-		let col_names = vec!["subsig", "id", "pat", "rg_start", "rg_end", 
-			"encoded", "inp_subsigs", "m_tbl"];
-		let cols:Vec<_> = cols.iter().zip(col_names.iter()).map(|(d,n)|
-			Col::<F>::new(d.to_vec(), n, IDX_DATA)).collect();
-		let sid_cols:Vec<_> = sid_cols.iter().zip(col_names.iter()).map(|(d,n)|
-			Col::<F>::new(d.to_vec(),&format!("sid_{}", n),IDX_SI_DATA))
-			.collect();
-
-		//note not much cost as it's rc
-		for i in 0..cols.len(){ res.borrow_mut().add_col(cols[i].clone()); }
-		for i in 0..sid_cols.len(){res.borrow_mut().add_col(sid_cols[i].clone());}
-
-		res
-	}
-	*/
 
 	/// mainly used for initializing input. 
 	/// Generate an steps_queue (serialized) based on the inp_subsig.
@@ -1719,42 +1633,6 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		prf
 	}
 
-	/* REMOVE LATER - real
-	/// prove that the input queue has the required structure of
-	/// step stores
-	#[allow(dead_code)]
-	fn gen_sq_inp_valid_prf(
-		prf_name: &str,
-		sq_inp: &Rc<RefCell<Container<F>>>,
-		step_store: &Rc<RefCell<Container<F>>>,
-	)->Rc<RefCell<Container<F>>>{
-		//1. retrieve data: encoded from step_store
-		// also encoded from sq_inp
-		let prf = Container::new(prf_name);		
-		let src=step_store.borrow().get_container("encoded").unwrap()
-			.borrow().to_vec(); 
-		let dest=sq_inp.borrow().get_container("encoded").unwrap()
-			.borrow().to_vec(); 
-
-		//2. need to add the dummy 0 entry to dest according to step_store
-		//legacy code.
-		let max_val:usize = (1<<RANGE2_BIT) - 1;
-		let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
-		let max_entry = encode_cols(&vec![vec![zero], vec![one], vec![max], vec![max], vec![max]], &vec![0,1,2,3,4])[0];
-		let dst = vec![dest, vec![zero, max_entry]].concat();
-
-		//2. prove the lkup relation from src to dest
-		let frg = F::from(RANGE2);
-		let mtb = gen_m_table(&src, &dst);
-		let len1 = mtb.len();
-		prf.borrow_mut().add_col(Col::new(mtb, "mtb", IDX_DATA));
-		prf.borrow_mut().add_col(Col::new(vec![frg;len1], "sid_mtb", 
-			IDX_SI_DATA));
-
-		prf
-	}
-	*/
-
 	/// prove that the queue_step to_add covers the entries 
 	/// listed by the fwd_prf
 	#[allow(dead_code)]
@@ -1854,8 +1732,8 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			prf_fwd.borrow().get_container(n).unwrap().borrow().to_vec() 
 		}).collect::<Vec<Vec<F>>>();
 		let (src_encoded, _dst_encoded,
-			src_loc, src_step, 
-			dst_pat, dst_rg_start, dst_rg_end,
+			src_loc, _src_step, 
+			dst_pat, _dst_rg_start, dst_rg_end,
 			dst_loc, dst_pat_id, _diff1, _diff2, 
 			_dst_subsig) = (&v2d[0], &v2d[1],
 				&v2d[2], &v2d[3], 
@@ -1871,20 +1749,6 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		// additional tables in StepStore so that each step can now
 		// just be tagged with the corresponding table_id for the encoded.
 		// check is done now in SID check.
-		/* REMOVE LATER -- real
-		let src_combined= encode_cols(&vec![src_encoded.clone()
-			,src_step.clone()], &vec![0,1]);
-		let encoded = store_steps.borrow().get_container("encoded")
-			.unwrap().borrow().to_vec();
-		let step= store_steps.borrow().get_container("id")
-			.unwrap().borrow().to_vec();
-		let dst_combined = encode_cols(&vec![encoded.clone(), step.clone()], &vec![0,1]);
-		let mtb_src = gen_m_table(&src_combined, &dst_combined);
-		let len1 = mtb_src.len();
-		res.borrow_mut().add_col(Col::new(mtb_src, "mtb_src", IDX_DATA));
-		res.borrow_mut().add_col(Col::new(vec![frg;len1], 
-			"sid_mtb_src", IDX_SI_DATA));
-		*/
 
 		//2. correctness of dst_encoded (no proof needed)
 		//DEPRECATED - longer needed as new SID table check done the job.
@@ -1934,10 +1798,6 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		//				 -> 10s + 10n
 		//         Total: 12n + 7s (usually n>>s, so it's like 13n) for step 3
 		
-		//REMOVE LATER
-		println!("DEBUG USE 6301 -- dump of pat-loc");
-		pat_loc.borrow().dump_structure(1);
-		//REMOVE LATER ABOVE
 
 		//3.1 build up the a table of size 2*num_subsigs of the following 
 		//structure: note that every nsp has 2 entries (min_loc, max_loc)
@@ -2063,7 +1923,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		// result from last step which includes new entries from to_add).
 		let res_encoded= sq_res.borrow().get_container("encoded")
 			.unwrap().borrow().to_vec();
-		let res_step= sq_res.borrow().get_container("step")
+		let _res_step= sq_res.borrow().get_container("step")
 			.unwrap().borrow().to_vec();
 		let res_loc = sq_res.borrow().get_container("locs")
 			.unwrap().borrow().to_vec();
@@ -2139,7 +1999,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		capacity: &DischargeAdvCapacity,
 		subsig_store_info: &SubsigStepStore,
 	)->(Rc<RefCell<Container<F>>>, StepQueue<F>){
-		let b_debug = true;
+		let b_debug = false;
 		let res = Container::<F>::new("fwd_steps_queue");
 		//0. Generate the logical data:
 		// from inp_step_queue generate the to_add, merged_result, 
@@ -2225,14 +2085,14 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 	fn gen_backward_steps_queue_combo(
 		input_step_queue: &StepQueue<F>,
 		ct_fwd_res: &Rc<RefCell<Container<F>>>,
-		capacity: &DischargeAdvCapacity,
+		_capacity: &DischargeAdvCapacity,
 		subsig_store_info: &SubsigStepStore,
 	)->Rc<RefCell<Container<F>>>{
 		//0. Generate the logical data:
 		// from inp_step_queue generate the to_del, res, bwd_prf, 
 		// Add them to container
 		let res = Container::<F>::new("bwd_steps_queue");
-		let b_debug = true;
+		let b_debug = false;
 		let (sq_to_del, sq_res, bwd_prf) = input_step_queue.gen_backward_prf();
 
 		if b_debug{
@@ -2296,7 +2156,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 	)->Rc<RefCell<Container<F>>>{
 		//1. retrieve info from to_add
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
-		let (zero, one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
+		let (zero, _one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
 		let e2=sq_to_del.borrow().get_container("encoded")
 			.unwrap().borrow().to_vec(); 
 		let c2=sq_to_del.borrow().get_container("locs").unwrap()
@@ -2342,6 +2202,9 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 	/// prove the validity of prf_bwd. Mainly it shows that
 	/// (1) validity of min_loc (take the 1st 
 	///    loc from the sq_res and show that sq_res loc is sorted
+	///    This needs that we prove that sq_res is sorted in ascending
+	///     order in its encoded key. As encoded is the encoding of
+	///     (subsig, step, ....). It implies it's also sorted by subsig.
 	/// (2) prev_loc + rg2 < min_loc (which invlidates the prev_loc),
 	///    so that there in the future ll be no subsequent loc for
 	///    prev_loc
@@ -2364,9 +2227,9 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			prf_bwd.borrow().get_container(n).unwrap().borrow().to_vec() 
 		}).collect::<Vec<Vec<F>>>();
 		let (
-			src_encoded, src_step,
-			src_pat, src_min_loc, src_rg_end,
-			prev_encoded, loc_to_del)
+			_src_encoded, _src_step,
+			_src_pat, src_min_loc, src_rg_end,
+			_prev_encoded, loc_to_del)
 		= (
 			&v2d[0], &v2d[1], 
 			&v2d[2], &v2d[3], &v2d[4],
@@ -2379,40 +2242,11 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		// in other attributes). Prove that they belong to store_steps.
 		// -- this is no longer needed as the tab of sub-tbl ID proves
 		// what is needed (see StepBwdPrf::to_container() and validate_bwdprf_valid_prf step 1).
-		/* REMOVE LATER - real
-		let src_combined= encode_cols(&vec![src_encoded.clone()
-			,src_step.clone(), src_rg_end.clone()], &vec![0,1,2]);
-		let dst_cols = vec!["encoded", "id", "rg_end"].iter().map(|n|
-			store_steps.borrow().get_container(n)
-				.unwrap().borrow().to_vec()
-		).collect::<Vec<Vec<F>>>();
-		let dst_combined = encode_cols(&dst_cols, &vec![0,1,2]);
-		let mtb_src = gen_m_table(&src_combined, &dst_combined);
-		let len1 = mtb_src.len();
-		res.borrow_mut().add_col(Col::new(mtb_src, "mtb_src", IDX_DATA));
-		res.borrow_mut().add_col(Col::new(vec![frg;len1], 
-			"sid_mtb_src", IDX_SI_DATA));
-		*/
 
 		//2. DEPCRECATED - 
 		// correctness of prev_encoded (i.e., previous step of src_encoded)
 		// this is no longer as needed as subtbl_id of
 		// ID_ENCODED_PREV_ENCODED does the trick.
-		/* REMOVE LATER - real
-		let prev_step = src_step.par_iter().map(|x| *x-one).collect::<Vec<F>>();
-		let src_combined= encode_cols(&vec![prev_encoded.clone()
-			,prev_step.clone()], &vec![0,1]);
-		let src_adj = src_pat.par_iter().zip(src_combined.par_iter())
-			.map(|(x,y)|{
-				let sel = if x.is_zero() {zero} else {one};
-				sel * *y
-			}).collect::<Vec<F>>(); //if src_encoded=0 set it off.
-		let dst_combined = encode_cols(&dst_cols, &vec![0,1]);
-		let mtb_dst= gen_m_table(&src_adj, &dst_combined);
-		res.borrow_mut().add_col(Col::new(mtb_dst, "mtb_dst", IDX_DATA));
-		res.borrow_mut().add_col(Col::new(vec![frg;len1], 
-			"sid_mtb_dst", IDX_SI_DATA));
-		*/
 
 		//3. prove (final) sq_res has its loc sorted (for each subsig-step)
 		// This is NEEDED because we need to argue about the 
@@ -2432,21 +2266,19 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 				(rescols[2][i] - rescols[2][i-1]) * sel[i]
 			}
 		}).collect::<Vec<F>>();
+		#[cfg(test)]{ assert!(is_sorted(&rescols[0])); }
+		let diff_encode = (0..rescols[0].len()-1).into_par_iter().map(|i|{
+			rescols[0][i+1] - rescols[0][i] 
+		}).collect::<Vec<F>>();
 		let len1 = diff_loc.len();
+		let len2 = diff_encode.len();
 		res.borrow_mut().add_col(Col::new(diff_loc, "diff_loc", IDX_DATA));
 		res.borrow_mut().add_col(Col::new(vec![frg;len1], 
 			"sid_diff_loc", IDX_SI_DATA));
+		res.borrow_mut().add_col(Col::new(diff_encode,"diff_encode", IDX_DATA));
+		res.borrow_mut().add_col(Col::new(vec![frg;len2], 
+			"sid_diff_encode", IDX_SI_DATA));
 
-		//REMOVE LATER -------------------
-		println!("DEBUG USE 6603: sq_res");
-		for i in 0..rescols[0].len(){
-			println!(" -- i: {}, encoded: {}, step: {}, loc: {}", i, rescols[0][i], rescols[1][i], rescols[2][i]);
-		}
-		println!("DEBUG USE 6604: stpbwd prf ====");
-		for i in 0..v2d[0].len(){
-			println!(" --i: {}, src_encoded: {}, src_step: {}, src_pat: {}, min_loc: {}, rg_end: {}, prev_enc: {}, loc_to_del: {}", i, v2d[0][i], v2d[1][i], v2d[2][i], v2d[3][i], v2d[4][i], v2d[5][i], v2d[6][i]);
-		}
-		//REMOVE LATER -------------------ABOVE
 		
 		//4. prove the min_loc is the first loc in sq_res
 		// it's basically a lkup.
@@ -2458,13 +2290,12 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		let src_combined= encode_cols(&v2d, &vec![0,1,3]);
 		let dst_combined = encode_cols(&rescols, &vec![0,1,2]);
 		let dst_sel = (0..dst_combined.len()).into_par_iter().map(|i|{
-			if i==0 {
+			if i==0 {//we assume there is at least one dummy entry at begin
+				assert!(rescols[0][0].is_zero(), "needs at least 1 dummy");
 				zero
-			}else{//previous loc is 0 (based on the fact that table is
-				  //sorted (for each encoded-step key), and 1st entry is
-				  //dummy 0. So we are taking the one whose previous loc
-				  //is 0. note rescols[2] is locs
-				if rescols[2][i-1].is_zero() {one} else {zero}
+			}else{	//encoded not equal to previous 
+					//(assumption tbl already sorted) which is proved earlier
+				if rescols[0][i-1] != rescols[0][i] {one} else {zero}
 			}
 		}).collect::<Vec<F>>();
 		let dst_adj = dst_combined.par_iter().zip(dst_sel.par_iter())
@@ -2475,8 +2306,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		res.borrow_mut().add_col(Col::new(vec![frg;len1], 
 			"sid_mtb_min_loc", IDX_SI_DATA));
 
-		/* RECOVER LATER TO CONTINUE1	
-		//5. prove min_loc - (loc_to_remove + rg_2) - 1
+		//5. prove min_loc > (loc_to_remove + rg_2) 
 		let sel = (0..src_rg_end.len()).into_par_iter().map(|i|
 			if src_min_loc[i].is_zero() {zero} else {one}
 		).collect::<Vec<F>>();
@@ -2488,7 +2318,6 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		res.borrow_mut().add_col(Col::new(vec![frg;len1], 
 			"sid_diff_min", IDX_SI_DATA));
 
-		*/
 		res
 	}
 
@@ -2616,7 +2445,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		forward_step_q: &Container<FpVar<F>>, 
 		r1: FpVar<F>,
 		r2: FpVar<F>,
-		cs: ConstraintSystemRef<F>
+		_cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
 		//0. retrieve the data
 		let ct_sq_inp = forward_step_q.get_container("sq_inp")?;
@@ -2626,18 +2455,11 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		let ct_pat_loc = forward_step_q.get_container("pat_loc")?;//external
 		
 
-		//REMOVE LATER ---------------- 
-		let n2 = cs.num_constraints(); 
-		//REMOVE LATER ---------------- ABOVE
 		//1. verify sq_inp + sq_to_add = sq_res
 		let prf = forward_step_q.get_container("prf")?;
 		let prf_union = prf.borrow().get_container("prf_union")?;
 		self.validate_step_queue_union_prf(&ct_sq_inp, &ct_sq_to_add,
 			&ct_sq_res, &r1, &r2, &prf_union)?;
-		//REMOVE LATER ----------- 
-		println!("-- DEBUG USE 9999.2.1: num_cons: for step_que_union: {}", cs.num_constraints()-n2);
-		let n2 = cs.num_constraints(); 
-		//REMOVE LATER ----------- ABOVE
 
 		//2. validate sq_inp covers the structure required by step_store.
 		// This part is SKIPPED, as we have the new DB to bind
@@ -2654,19 +2476,12 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		let prf_to_add = prf.borrow().get_container("prf_to_add")?;
 		self.validate_to_add(&ct_sq_to_add, &ct_prf_fwd, 
 			&r1, &prf_to_add)?;
-		//REMOVE LATER -----------
-		println!("-- DEBUG USE 9999.2.3: sq_to_add: for sq_inp valid: {}", cs.num_constraints()-n2);
-		let n2 = cs.num_constraints(); 
-		//REMOVE LATER ----------- ABOVE
 
 		//4. validate the prf_fwd
 		let prf_fwdprf_valid = prf.borrow().get_container("prf_fwdprf_valid")?;
 		self.validate_fwdprf_valid_prf(&ct_prf_fwd, 
 			&ct_sq_res, &ct_pat_loc,
 			&r1, &r2, &prf_fwdprf_valid)?;
-		//REMOVE LATER -----------
-		println!("-- DEBUG USE 9999.2.4: for prf_fwdprf valid: {}", cs.num_constraints()-n2);
-		//REMOVE LATER ----------- ABOVE
 
 		Ok( () )
 	}
@@ -2718,39 +2533,6 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 
 		Ok( () )
 	}
-
-	/*REMOVE LATER: real
-	/// validate the sq_inp has hte same structure as store input
-	#[allow(dead_code)]
-	fn validate_sq_inp_valid_prf(&self,
-		sq_inp: &Rc<RefCell<Container<FpVar<F>>>>,
-		step_store: &Container<FpVar<F>>,
-		r1: &FpVar<F>,
-		prf_inp_valid: &Rc<RefCell<Container<FpVar<F>>>>
-	)->Result<(), SynthesisError>{
-		//1. retrieve the encoded columns from sq_inp and step_store
-		let src = step_store.get_container("encoded")
-			.unwrap().borrow().to_vec(); 
-		let dest = sq_inp.borrow().get_container("encoded")
-			.unwrap().borrow().to_vec(); 
-
-		//2. need to add the dummy 0 entry to dest according to step_store
-		//legacy code.
-		let max_val:usize = (1<<RANGE2_BIT) - 1;
-		let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
-		let max_entry = encode_cols(&vec![vec![zero], vec![one], vec![max], vec![max], vec![max]], &vec![0,1,2,3,4])[0];
-		let cs = src[0].cs();
-		let max_entry_var = new_const_var(&cs, max_entry);
-		let zero_var = new_const_var(&cs, zero);
-		let dst = vec![dest, vec![zero_var, max_entry_var]].concat();
-
-		let mtb1=prf_inp_valid.borrow().get_container("mtb").unwrap().borrow()
-			.to_vec(); 
-		assert_logup(cs.clone(), &src, &dst, &mtb1, r1)?;
-
-		Ok( () )
-	}
-	*/
 
 	/// validate the to_add covers what are produced in the forward prf
 	#[allow(dead_code)]
@@ -2809,7 +2591,6 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			a * b ).collect::<Vec<FpVar<F>>>();
 
 		//4. verify the two lookups
-		let frg = new_const_var(&cs, F::from(RANGE2));
 		let mtb1=prf_to_add_valid.borrow()
 			.get_container("mtb1").unwrap().borrow().to_vec(); 
 		let mtb2=prf_to_add_valid.borrow()
@@ -2831,14 +2612,11 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		sq_res: &Rc<RefCell<Container<FpVar<F>>>>,
 		pat_loc: &Rc<RefCell<Container<FpVar<F>>>>,
 		r1: &FpVar<F>,
-		r2: &FpVar<F>,
+		_r2: &FpVar<F>,
 		prf_fwdprf_valid: &Rc<RefCell<Container<FpVar<F>>>>,
 	)->Result<(), SynthesisError>{
 		//0. retrieve data
 		let cs = r1.cs(); 
-		//REMOVE LATER -------
-		let n0 = cs.num_constraints();
-		//REMOVE LATER ------- ABOVE
 
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
@@ -2852,7 +2630,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			prf_fwd.borrow().get_container(n).unwrap().borrow().to_vec() 
 		}).collect::<Vec<Vec<FpVar<F>>>>();
 		let (src_encoded, dst_encoded,
-			src_loc, src_step, 
+			src_loc, _src_step, 
 			dst_pat, dst_rg_start, dst_rg_end,
 			dst_loc, dst_pat_id, diff1, diff2, dst_subsig) 
 			= (&v2d[0], &v2d[1],
@@ -2911,51 +2689,13 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			}
 		}
 
-		//REMOVE LATER -------
-		println!("DEBUG USE 6106:  cs: {}", cs.num_constraints()-n0);
-		let n0 = cs.num_constraints();
-		//REMOVE LATER ------- ABOVE
 
 		//1. correctness of src_encoded (no proof needed). DEPRECATED
 		// no longer needed as it's done already by sid-range
-		/* REMOVE LATER - real
-		let src_combined = encode_2col_var_adv(&src_encoded, &src_step, r1);
-		let encoded = store_steps.get_container("encoded")
-			.unwrap().borrow().to_vec(); 
-		let step= store_steps.get_container("id")
-			.unwrap().borrow().to_vec(); 
-		let step_combined = encode_2col_var_adv(&encoded, &step, r1);
-		let mtb_src = prf_fwdprf_valid.borrow().get_container("mtb_src")
-			.unwrap().borrow().to_vec();
-		let sid_mtb_src = prf_fwdprf_valid.borrow().get_container("sid_mtb_src")
-			.unwrap().borrow().to_vec();
-		check_arr_eq(&sid_mtb_src, &frg, "err checking sid_mtb_src")?; 
-		assert_logup(cs.clone(), &src_combined, &step_combined, &mtb_src, r1)?;
-		*/
 
 		//2. correctness of dst_encoded (no proof needed) - just decode it
 		// DEPRECATED. no longer needed as it's checked by the
 		// step 0.5 SID check
-		/* REMOVE LATER ---- real
-		let dst_step = src_step.iter().enumerate().map(|(i,x)| 
-			dst_subsig[i].is_zero().unwrap().select(x, &(x + &one)).unwrap()
-		).collect::<Vec<FpVar<F>>>(); //expensive, can be improved by using dst_subsig as a selector and multiplied with src_combine dand dst_combined, improve it later.
-		let dst_encoded2 = encode_cols_var(&vec![dst_subsig.clone(), 
-			dst_step.clone(), dst_pat.clone(), dst_rg_start.clone(),
-			dst_rg_end.clone()], &vec![0,1,2,3,4]);
-		check_arr_eq_arr(&dst_encoded2, dst_encoded, "err dst_encode")?;
-		*/
-		//REMOVE LATER -------
-		println!("DEBUG USE 6106: steps1-2: cs: {}", cs.num_constraints()-n0);
-		let n0 = cs.num_constraints();
-		//REMOVE LATER ------- ABOVE
-
-		//REMOVE LATER ------------------
-		println!("DEBUG USE 6107 --- dump of pat_loc");
-		for i in 0..dst_loc.len(){
-			println!("  i: {}, subsig: {}, dest_loc: {}", i, dst_subsig[i].value()?, dst_loc[i].value()?); 
-		}
-		//REMOVE LATER ------------------ ABOVE
 
 		//3. lookup pat-loc in pat_loc
 		//3.1 verify the validity of nsp, nsp_p1 and p2_nsp
@@ -2966,7 +2706,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 				.unwrap().borrow().to_vec()
 			).collect::<Vec<Vec<FpVar<F>>>>();
 		let (pat, pat_id, loc) = (&pat_cols[0], &pat_cols[1], &pat_cols[2]); 
-		let nsp_names = ["nsp", "nsp_p1", "p2_nsp"];
+		let _nsp_names = ["nsp", "nsp_p1", "p2_nsp"];
 		let sid_nsp_p1 = prf_fwdprf_valid.borrow().get_container("sid_nsp_p1")
 			.unwrap().borrow().to_vec();
 		let sid_p2_nsp= prf_fwdprf_valid.borrow().get_container("sid_p2_nsp")
@@ -3028,15 +2768,10 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		//no need to check sid, just check logup
 		assert_logup(cs.clone(), &src_combined, &dst_combined, &mtb_pat, r1)?;
 
-		//REMOVE LATER -------
-		println!("DEBUG USE 6106: steps3: cs: {}", cs.num_constraints()-n0);
-		let n0 = cs.num_constraints();
-		//REMOVE LATER ------- ABOVE
-
 		//4. prove encoded-loc corresponds to res_queue
 		let res_encoded= sq_res.borrow().get_container("encoded")
 			.unwrap().borrow().to_vec();
-		let res_step= sq_res.borrow().get_container("step")
+		let _res_step= sq_res.borrow().get_container("step")
 			.unwrap().borrow().to_vec();
 		let res_loc = sq_res.borrow().get_container("locs")
 			.unwrap().borrow().to_vec();
@@ -3069,11 +2804,6 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		assert_logup(cs.clone(), &src_adj, &dst_adj, &mtb_res1, r1)?;
 		assert_logup(cs.clone(), &dst_adj, &src_adj, &mtb_res2, r1)?;
 
-		//REMOVE LATER -------
-		println!("DEBUG USE 6106: steps4: cs: {}", cs.num_constraints()-n0);
-		let n0 = cs.num_constraints();
-		//REMOVE LATER ------- ABOVE
-
 		//5. prove the ascending order of pat_id column.
 		// Check: when (dst_encoded, src_loc) 
 		// is the same, the pat_id increase by 1
@@ -3086,7 +2816,6 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		// when they are not the same, there is NO restriction (as the
 		//  starting pat_id does NOT necesarily starts from 0 - so that's
 		//  no check for boundaries).
-		let mut weighted_sum = zero.clone();
 		for i in 1..dst_pat_id.len(){
 			//b_same either 1 or 0
 			let item1= &dst_encoded[i] + &(&src_loc[i]*r1);
@@ -3096,11 +2825,6 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			let item = &dst_encoded[i]* &item1;
 			check_eq(&item, &zero, "failed increase check")?;
 		}
-
-		//REMOVE LATER -------
-		println!("DEBUG USE 6106: steps5: cs: {}", cs.num_constraints()-n0);
-		let n0 = cs.num_constraints();
-		//REMOVE LATER ------- ABOVE
 
 		//6. prove the validity of diff1/diff2
 		//6.1 retrieve the data (cost: n)
@@ -3112,7 +2836,6 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 
 		//6.2 compute the border cases
 		//cost: 4n
-		let max_one = &max - &one;
 		let vec_b_begin = (0..diff1.len()).into_iter().map(|i|{
 			let b_begin = if i==0 {one.clone()} else {
 				(&dst_subsig[i]*r1+&src_loc[i]).is_neq(
@@ -3170,9 +2893,6 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			check_eq(&item2, &zero, "err_diff2")?;
 
 		}
-		//REMOVE LATER -------
-		println!("DEBUG USE 6106: steps6: cs: {}", cs.num_constraints()-n0);
-		//REMOVE LATER ------- ABOVE
 
 		Ok( () )
 	}
@@ -3185,7 +2905,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		backward_step_q: &Container<FpVar<F>>, //backward combo 
 		r1: FpVar<F>,
 		r2: FpVar<F>,
-		cs: ConstraintSystemRef<F>
+		_cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
 		//0. retrive the data
 		let ct_sq_res1 = forward_step_q.get_container("sq_res")?;
@@ -3194,17 +2914,10 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		let ct_prf_bwd = backward_step_q.get_container("prf_bwd")?;
 
 		//1. verify sq_del + sq_res2 = sq_res1
-		//REMOVE LATER -------------
-		let n2 = cs.num_constraints(); 
-		//REMOVE LATER ------------- ABOVE
 		let prf = backward_step_q.get_container("prf")?;
 		let prf_union = prf.borrow().get_container("prf_union")?;
 		self.validate_step_queue_union_prf(&ct_sq_res2, &ct_sq_to_del,
 			&ct_sq_res1, &r1, &r2, &prf_union)?;
-		//REMOVE LATER -----------
-		println!("-- DEBUG USE 6605.3.1: num_cons: for checking union sq_res1 and sq_res2: {}", cs.num_constraints()-n2);
-		let n2 = cs.num_constraints(); 
-		//REMOVE LATER ----------- ABOVE
 
 		//2. no need to validate sq_inp and step_store as it's based
 		//on fwd_prf which is already validated
@@ -3213,18 +2926,11 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		let prf_to_del= prf.borrow().get_container("prf_to_del")?;
 		self.validate_to_del(&ct_sq_to_del, &ct_prf_bwd, 
 			&r1, &prf_to_del)?;
-		//REMOVE LATER -----------
-		println!("-- DEBUG USE 6605.3.2: num_cons: for checking to_del covers prf_bwd: {}", cs.num_constraints()-n2);
-		let n2 = cs.num_constraints(); 
-		//REMOVE LATER ----------- ABOVE
 
 		//4. validate the prf_bwd is valid
 		let prf_bwdprf_valid = prf.borrow().get_container("prf_bwdprf_valid")?;
 		self.validate_bwdprf_valid_prf(&ct_prf_bwd, 
 			&ct_sq_res2, &r1, &r2, &prf_bwdprf_valid)?;
-		//REMOVE LATER -----------
-		println!("--- DEBUG USE 6605.3.3: num_cons: check valid bwd_prf: {}", cs.num_constraints()-n2);
-		//REMOVE LATER ----------- ABOVE
 
 		Ok( () )
 	}
@@ -3257,7 +2963,6 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		let src = encode_2col_var_adv(&e1, &c1, r1);
 
 		//4. verify the one-direction lookup
-		let frg = new_const_var(&cs, F::from(RANGE2));
 		let mtb2=prf_to_del_valid.borrow()
 			.get_container("mtb2").unwrap().borrow().to_vec(); 
 		assert_logup(cs.clone(), &dst, &src, &mtb2, r1)?;
@@ -3275,9 +2980,6 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 	)->Result<(), SynthesisError>{
 		//0. retrieve data
 		let cs = r1.cs(); 
-		//REMOVE LATER -------
-		let n0 = cs.num_constraints();
-		//REMOVE LATER ------- ABOVE
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
 		let (zero, one, _max) = (new_const_var(&cs, zero), 
@@ -3292,9 +2994,9 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			prf_bwd.borrow().get_container(n).unwrap().borrow().to_vec() 
 		}).collect::<Vec<Vec<FpVar<F>>>>();
 		let (
-			src_encoded, src_step,
-			src_pat,  src_min_loc, src_rg_end,
-			prev_encoded, loc_to_del)
+			_src_encoded, _src_step,
+			_src_pat,  src_min_loc, src_rg_end,
+			_prev_encoded, loc_to_del)
 		= (
 			&v2d[0], &v2d[1], 
 			&v2d[2], &v2d[3], &v2d[4], 
@@ -3346,77 +3048,15 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			}
 		}
 
-		//REMOVE LATER ------------
-		println!("-- -- DEBUG USE 6601:  step 0.1: check src_step cost: {}", cs.num_constraints()-n0);
-		let n2 = cs.num_constraints();
-		//REMOVE LATER ------------ ABOVE
-
-
-		/* REMOVE LATER - real
-		//0.5. check sid ranges
-		//REMOVE LATER -------------
-		let n2 = cs.num_constraints();
-		//REMOVE LATER ------------- ABOVE
-		let sidcols = vec![1,2,3,4,6].iter().map(|n|
-			prf_bwd.borrow().get_container(&format!("sid_{}",names[*n]))
-				.unwrap().borrow().to_vec()
-			).collect::<Vec<Vec<FpVar<F>>>>();
-		for i in 0..sidcols.len(){
-			check_arr_eq(&sidcols[i],&frg,&format!("err checking sid_{}",i))?; 
-		}
-		//REMOVE LATER -----------
-		println!("DEBUG USE 7777.1: step 0.5 check sid: num_cons: {}, vec_len: {}", cs.num_constraints()-n2, sidcols[0].len());
-		let n2 = cs.num_constraints();
-		//REMOVE LATER ----------- ABOVE
-		*/
 
 		//1 and 2. DEPRECATED - correctness of src_encoded-step-rg_end 
 		// and other related bindings.
 		// already provided in sid check. no need
-		/* REMOVE LATER --
-		let src_combined = encode_cols_var_adv(&vec![src_encoded.clone(), src_step.clone(), src_rg_end.clone()], &vec![0,1,2], r1);
-		let dst_cols = vec!["encoded", "id", "rg_end"].iter().map(|n|
-			store_steps.get_container(n) .unwrap().borrow().to_vec()
-		).collect::<Vec<Vec<FpVar<F>>>>(); 
-		let dst_combined = encode_cols_var_adv(&dst_cols, &vec![0,1,2],r1);
-		let mtb_src = prf_bwdprf_valid.borrow().get_container("mtb_src")
-			.unwrap().borrow().to_vec();
-		let sid_mtb_src = prf_bwdprf_valid.borrow().get_container("sid_mtb_src")
-			.unwrap().borrow().to_vec();
-		check_arr_eq(&sid_mtb_src, &frg, "err checking sid_mtb_src")?; 
-		assert_logup(cs.clone(), &src_combined, &dst_combined, &mtb_src, r1)?;
-		//REMOVE LATER -----------
-		println!("DEBUG USE 7777.2: step check encoded-step-rg_end: num_cons: {}, vec_len: {}", cs.num_constraints()-n2, sidcols[0].len());
-		let n2 = cs.num_constraints();
-		//REMOVE LATER ----------- ABOVE
-
-		let prev_step = src_step.iter().map(|x| x-&one)
-			.collect::<Vec<FpVar<F>>>();
-		let src_combined = encode_2col_var_adv(&prev_encoded, &prev_step, r1);
-		let src_adj = src_pat.iter().zip(src_combined.iter()).map(|(x,y)|{
-			let sel:FpVar<F> = x.is_zero().unwrap().not().into();
-			sel * y
-		}).collect::<Vec<FpVar<F>>>(); //if src_encoded=0 set it off.
-		let dst_combined = encode_2col_var_adv(&dst_cols[0], &dst_cols[1], r1);
-		let mtb_dst = prf_bwdprf_valid.borrow().get_container("mtb_dst")
-			.unwrap().borrow().to_vec();
-		let sid_mtb_dst= prf_bwdprf_valid.borrow().get_container("sid_mtb_dst")
-			.unwrap().borrow().to_vec();
-		check_arr_eq(&sid_mtb_dst, &frg, "err checking sid_mtb_dst")?; 
-		assert_logup(cs.clone(), &src_adj, &dst_combined, &mtb_dst, r1)?;
-		//REMOVE LATER -----------
-		println!("DEBUG USE 7777.3: step check prev_encoded-prev_step: num_cons: {}, vec_len: {}", cs.num_constraints()-n2, sidcols[0].len());
-		let n2 = cs.num_constraints();
-		//REMOVE LATER ----------- ABOVE
-		*/
 
 		//3. prove sq_res has its loc sorted and
 		//as the fwd_res has been proved to be sorted (step_id increasing
 		//for the same encoded key), we only rely on step to define
 		//conditional sectors.
-		//REMOVE LATER ---------
-		let n2 = cs.num_constraints();
-		//REMOVE LATER --------- ABOVE
 		let rescols = vec!["encoded", "step", "locs"].iter().map(|n|
 			sq_res.borrow().get_container(n).unwrap().borrow().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
@@ -3436,40 +3076,37 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			.get_container("sid_diff_loc").unwrap().borrow().to_vec();
 		check_arr_eq(&sid_diff_loc, &frg, "err checking sid_diff_loc")?; 
 		check_arr_eq_arr(&diff_loc, &saved_diff_loc, "err checking diff_loc")?; 
-		//REMOVE LATER -----------
-		println!("-- -- DEBUG USE 6601.4: step locs are sorted in sq_res: num_cons: {}, vec_len: {}", cs.num_constraints()-n2, sel.len());
-		let n2 = cs.num_constraints();
-		//REMOVE LATER ----------- ABOVE
+
+		let diff_encode= (0..rescols[0].len()-1).into_iter().map(|i|{
+			&rescols[0][i+1] - &rescols[0][i] 
+		}).collect::<Vec<FpVar<F>>>();
+		let saved_diff_encode= prf_bwdprf_valid.borrow()
+			.get_container("diff_encode")
+			.unwrap().borrow().to_vec();
+		let sid_diff_encode= prf_bwdprf_valid.borrow()
+			.get_container("sid_diff_encode").unwrap().borrow().to_vec();
+		check_arr_eq(&sid_diff_encode, &frg, "err checking sid_diff_encode")?; 
+		check_arr_eq_arr(&diff_encode, &saved_diff_encode, "err checking diff_encode")?; 
 
 
 		//4. prove the min_loc is the first loc in sq_res
-		/* RECOVER LATER TO CONTINUE
 		let src_combined= encode_cols_var_adv(&v2d, &vec![0,1,3], r1);
 		let dst_combined = encode_cols_var_adv(&rescols, &vec![0,1,2], r1);
 		let dst_sel = (0..dst_combined.len()).into_iter().map(|i|{
-			if i==0 { zero.clone()
-			}else{//previous loc is 0 (based on the fact that table is
-				  //sorted (for each encoded-step key), and 1st entry is
-				  //dummy 0. So we are taking the one whose previous loc
-				  //is 0. note rescols[2] is locs
-				rescols[2][i-1].is_zero().unwrap().into()
+			if i==0 { zero.clone() //assuming 1st one is dummy
+			}else{//only pick the very first entry
+				//let b_first = rescols[0][i].is_neq(&rescols[0][i-1]).unwrap();
+				//b_first.into()
+				&one - &sel[i]
 			}
 		}).collect::<Vec<FpVar<F>>>();
 		let dst_adj = dst_combined.iter().zip(dst_sel.iter())
 			.map(|(x,y)| x*y).collect::<Vec<FpVar<F>>>();
 		let mtb_min_loc= prf_bwdprf_valid.borrow().get_container("mtb_min_loc")
 			.unwrap().borrow().to_vec();
-		let sid_mtb_min_loc= prf_bwdprf_valid.borrow()
-			.get_container("sid_mtb_min_loc").unwrap().borrow().to_vec();
-		check_arr_eq(&sid_mtb_min_loc, &frg, "err checking sid_mtb_min_loc")?; 
 		assert_logup(cs.clone(), &src_combined, &dst_adj, &mtb_min_loc, r2)?;
 
-		//REMOVE LATER ----------------
-		println!("DEBUG USE 7777.5: check_min_loc: num_cons: {}, vec_len: {}", cs.num_constraints()-n2, sidcols[0].len());
-		let n2 = cs.num_constraints();
-		//REMOVE LATER ----------- ABOVE
-
-		//5. prove min_loc - (loc_to_remove + rg_2) - 1
+		//5. prove min_loc > (loc_to_remove + rg_2) 
 		let sel = (0..src_rg_end.len()).into_iter().map(|i|
 			&one - & src_min_loc[i].is_zero().unwrap().into()
 		).collect::<Vec<FpVar<F>>>();
@@ -3483,10 +3120,6 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		).collect::<Vec<FpVar<F>>>();
 		check_arr_eq(&sid_saved_diff_loc, &frg, "err checking sid_diff_loc")?; 
 		check_arr_eq(&sum, &zero, "err checking expected sum for diff")?; 
-		//REMOVE LATER ----------------
-		println!("DEBUG USE 7777.6: check loc_to_del + rg2 < min_loc: num_cons: {}, vec_len: {}", cs.num_constraints()-n2, sidcols[0].len());
-		//REMOVE LATER ----------- ABOVE
-		*/
 
 		Ok( () )
 	}
@@ -3553,10 +3186,7 @@ impl <F:PrimeField> SigmaGadget<F> for DischargeAdvGadget<F>{
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{
-		//REMOVE LATER -----------
 		let n1 = cs.num_constraints(); 
-		let n2 = cs.num_constraints(); 
-		//REMOVE LATER ----------- ABOVE
 
 		//1. retrive the statement instance and get all parts
 		let cfg = self.get_container_cfg().expect("container cfg not set!");
@@ -3564,38 +3194,31 @@ impl <F:PrimeField> SigmaGadget<F> for DischargeAdvGadget<F>{
 		let r1 = wtns.msg2[0].clone();
 		let r2 = wtns.msg2[1].clone();
 
-		/* REMOVE LATER REAL
-
-		//2. validate the store_steps combo
-		let store_steps = stmt.get_container("store_steps")?;
-		self.validate_store_steps_combo(&store_steps.borrow(), r1.clone(), 
-			cs.clone())?;
-		*/
-
 		//3. validate the forward step queue
 		let forward_step_queue= stmt.get_container("fwd_steps_queue")?;
 		self.validate_forward_step_queue(&forward_step_queue.borrow(), 
 			r1.clone(), r2.clone(), cs.clone())?;
-		//REMOVE LATER -----------
-		println!("DEBUG USE 9999.2: num_cons: for validate_forward_step_queue {}", cs.num_constraints()-n2);
-		//let n2 = cs.num_constraints(); 
-		//REMOVE LATER ----------- ABOVE
 
 		//4. validate the backward step queue
 		let backward_step_queue= stmt.get_container("bwd_steps_queue")?;
 		self.validate_backward_step_queue(&forward_step_queue.borrow(), 
 			&backward_step_queue.borrow(),
 			r1.clone(), r2.clone(), cs.clone())?;
-		//REMOVE LATER -----------
-		println!("DEBUG USE 9999.3: num_cons: for validate_forward_step_queue {}", cs.num_constraints()-n2);
-		//REMOVE LATER ----------- ABOVE
-		
-		//REMOVE LATER -----------
-		println!("DEBUG USE 9999.ALL: TOTAL num_cons: {}", cs.num_constraints()-n1);
-		//REMOVE LATER ----------- ABOVE
+
+		let b_perf = true;
+		if b_perf{
+			println!("PERF 102: discharge_adv: TOTAL num_cons: {}", 
+				cs.num_constraints()-n1);	
+		}
 
 		Ok(())
 	}
+}
+
+#[allow(dead_code)]
+fn dummy_test<F:PrimeField>(){
+	//just call it here for saving import lines 
+	let _= is_sorted(&vec![F::zero()]); 
 }
 
 #[cfg(test)]
@@ -3853,7 +3476,7 @@ pub mod tests_discharge_adv_gadget{
 
 		//2. define the test cases
 		let testcases = vec![
-			 /* RECOVER LATER
+			// /* RECOVER LATER
 			//2. fails sig2 coz 3rd pattern missing
 			Tcase::new("defxx234xx56", "sig2", false, false),
 			//1. fails sig1 coz gap len incorrect
@@ -3868,7 +3491,7 @@ pub mod tests_discharge_adv_gadget{
 			Tcase::new(
 				&format!("ddd{}234xx{}56","x".repeat(90), "u".repeat(90)), 
 				"sig2", false, false),
-			 */
+			// */
 			//5. a case which has both fwd and backward elimination.
 			//manually check debug messages of backward and forward proofs
 			//baseically: the last 78 is not added, but the
@@ -4024,7 +3647,6 @@ pub mod tests_discharge_adv_gadget{
 		// note: 60 elims 37, 47 will elims 16, 
 		//      22 will eliminate 9 (layer 0 will not be affected)
 		// keep it always (we need to prove the subsig free of match later)
-		let max :u32= (1<<RANGE2_BIT) - 1;
 		let subsig100_steps = vec![
 			StepQueueItem::new2( 
 				// subsig, id, pat, rg_start, rg_end

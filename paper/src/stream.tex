@@ -206,6 +206,7 @@ $\left((\Q{a},\Q{r}\Trans{f}), (\Q{d},\Trans{b}, \Q{o}) \right) \leftarrow {\tex
 	$(\key, \srcloc, \dstloc)$, and $\key = \encode(\subsig,
 		\step, \rgone, \rgtwo)$. Similarly each
 	tuple of all step queues have structure $(\key, \step, \loc)$.
+		$\Trans{b}$ has structure $(\key, \delloc)$.
 	\newline
 (1) For each subsignature and for each step propgate
 	step by step and generating $(\Q{a}, \Q{r}, \Trans{f})$
@@ -213,11 +214,33 @@ $\left((\Q{a},\Q{r}\Trans{f}), (\Q{d},\Trans{b}, \Q{o}) \right) \leftarrow {\tex
 	\begin{enumerate}
 		\item $\Q{r} = \Q{i} \union \Q{a}$.
 		\item $\Q{a} = \proj_{1,3}(\Trans{f})$ (i.e. casting column 1 and 3)
-		\item $\Trans{f} \join \db_{\ttt{key,src}}$ = 
-			$\select_{\ttt{step<max\_step}}
-				(\Q{s} \join \db_{\ttt{key,max\_step}})$
+		\item $\Trans{f}$ =  
+			$\left(\Q{s} \join \db_{\ttt{key},\ttt{nxt\_pat}}
+				\join \db_{\ttt{key}, \ttt{nxt\_rg1}, \ttt{nxt\_rg2}} \right)
+				\join_{c} \myvec{P}$
+			where the range query condition is:
+			$\myvec{P}.\ttt{loc} - \ttt{loc} \in [\ttt{nxt\_rg1},\ttt{nxt\_rg2}]$.
 	\end{enumerate}
-(2) Return \bw(s) based on its structure:
+(2) Given $\Q{s}$, retrieve minimum location of each step and
+	propgate backward to eliminate. Generate the supporting
+	data structures $\Q{d}, \Q{o}, \Trans{b}$ as the following:
+	\begin{enumerate}
+		\item $\Q{r} = \Q{d} \union \Q{o}$.
+		\item $\Q{d} = \proj_{1,3}(\Trans{b})$.
+		\item
+			First assert that $\Q{o}$ is sorted by $\ttt{key}$ (which
+			implies that it's sorted on $(\ttt{subsig},\ttt{step})$.
+			Define $\myvec{min}$ as a column same height of $\Q{o}$.
+			Each element of $\myvec{min}$ is to take the first
+			$\ttt{loc}$ for each fresh $\ttt{key}$.
+			Let $\Q{o}' = \Q{o} \concat \myvec{min}$.
+		\item $\Trans{b}$ =  
+			$\left(\Q{o}' \join \db_{\ttt{key},\ttt{prev\_pat}}
+				\join \db_{\ttt{key}, \ttt{rg2}} \right)
+				\join_{c_2} \Q{r}$
+			where the range query condition is:
+				$\Q{r}.\ttt{loc} + \ttt{rg2} < \ttt{min}$.
+	\end{enumerate}
 
 \caption{Two Pass Chunking SED Algorithm}
 \end{algorithm}
