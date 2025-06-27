@@ -17077,6 +17077,17 @@ Goal 1. check if sq_res final is sorted
 		-> gen_bwdprf_valid
 		-> validate 
 	[d] cost: 4499 -> 4563 (+2n as expected)
+
+Goal 2. design of computer_sig gadget
+	[a] review code first
+	[b] add function gen_subsig_eval_by_sq_combo() and 
+		vlidate_subsig_eval_by_sq_combo()
+	[c] set up unit test framework
+	[d] constructor
+	[e] define the framework two functions
+
+Goal 4. set up unit testing framework
+	[a] read existing code
 	
 
 

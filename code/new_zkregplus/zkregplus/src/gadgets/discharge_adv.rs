@@ -2286,7 +2286,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		// dst_combined: encoded-step-loc and selected by if it
 		//    is the very first effective entry of each encoded-step
 		//    (relying on the fact that the table
-		//    is sorted). 
+		//    is sorted in encoded, thus (subsig-step)). 
 		let src_combined= encode_cols(&v2d, &vec![0,1,3]);
 		let dst_combined = encode_cols(&rescols, &vec![0,1,2]);
 		let dst_sel = (0..dst_combined.len()).into_par_iter().map(|i|{

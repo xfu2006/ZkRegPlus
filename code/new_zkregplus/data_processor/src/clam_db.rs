@@ -334,6 +334,10 @@ impl SubsigPatternStore{
 			assert!(n<=8*estimated_len, "ERROR: {}", &msg);
 		}
 		*/
+		if n.is_some(){
+			let n = n.unwrap();
+			assert!(n>estimated_len, "ProjStore buffer len too small. n: {}, estimated: {}, Consider increasing the properties such as  avg_pats_per_subsig or subsigs in FsmAdvCapacity config.", n, estimated_len);
+		}
 		let inner_zero_entries = if n.is_some() {n.unwrap()- estimated_len}
 			else {0};
 		
