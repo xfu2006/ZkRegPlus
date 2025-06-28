@@ -154,7 +154,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 	pub fn new(
 		_inp_sigs: &Vec<F>,
 		inp_subsigs: &Vec<F>,
-		sq_res: &StepQueue<F>, // the steps_queue from the DischargeAdv
+		sq_res: &Rc<RefCell<Container<F>>>, // the steps_queue from the DischargeAdv
 		capacity: &ComputeSigAdvCapacity,
 		subsig_store_info: &SubsigStepStore,
 	) ->Self{
@@ -174,12 +174,33 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 
 	#[allow(dead_code)]
 	fn gen_eval_subsig_by_sq_combo(
-		_inp_subsigs: &Vec<F>,
-		_res_step_queue: &StepQueue<F>, 
+		inp_subsigs: &Vec<F>,
+		sq_res: &Rc<RefCell<Container<F>>>,
 		_capacity: &ComputeSigAdvCapacity,
 		_subsig_store_info: &SubsigStepStore,
 	)->Rc<RefCell<Container<F>>>{
-		todo!()
+		//REMOVE LATER --------------
+		println!("DEBUG USE 6011: inp_subsigs: ----");
+		for i in 0..inp_subsigs.len(){
+			println!(" -- i: {}, subsig: {}", i, inp_subsigs[i]);
+		}
+		//REMOVE LATER -------------- ABOVE
+
+		/*
+		//1. generate the column sq_res_subsig and use the sid
+		// to prove the binding
+		sq_res.to_container("sq_res", false, true, false,
+			&subsig_store_info);
+		let sq_subsig = sq_res.subsigs.iter().map(|subsig|{
+			let item_num = sq_res.store_items.get(subsig)
+				.expect(&format!("cannot find record for subsig: {}", subsig))
+				.len();
+			vec![*subisg; item_num]
+		}).flatten().collect::<Vec<F>>();
+		*/
+
+		let res = Container::<F>::new("eval_res_combo");
+		res
 	}
 
 }
@@ -207,7 +228,9 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		let step_q_size = StepQueue::<F>::vec_size(&StepQueueType::Res,
 			&dis_cap);
 		let sq_res_vec = vec![zero; step_q_size*2];
-		let sq_res= StepQueue::parse_from(&sq_res_vec, &dis_cap);
+		let sq_res_obj= StepQueue::parse_from(&sq_res_vec, &dis_cap);
+		let sq_res = sq_res_obj.to_container("sq_res2", false, true, true,
+			&store_steps);
 
 		//3. create advice
 		let dummy_adv = ComputeSigAdvAdvice::new(
@@ -360,8 +383,10 @@ pub mod tests_compute_sig_adv{
 		},
 		fsm_adv::{FsmAdvAdvice,FsmAdvCapacity},
 		word_extract_adv::{WordExtractAdvAdvice},
-		discharge_adv::{DischargeAdvAdvice,DischargeAdvGadget,
+		discharge_adv::{DischargeAdvAdvice,
 			DischargeAdvCapacity,StepQueueItem,StepQueue, StepQueueType},
+		compute_sig_adv::{ComputeSigAdvAdvice,ComputeSigAdvGadget,
+			ComputeSigAdvCapacity},
 		traits::{Container,Col,IDX_DATA},
 	};
 	use data_processor::{clam_db::{ClamavDB,RANGE2_BIT}, 
@@ -482,6 +507,12 @@ pub mod tests_compute_sig_adv{
 			avg_active_pats_per_subsig: 2,
 			perc_pats_in_trace: cap.perc_pats_in_trace, 
 		};
+		let cap_sig= ComputeSigAdvCapacity{//capaciity of compute sig adv comp 
+			max_nibble_len: nibble_len, 
+			sigs: 1, 
+			subsigs: cap.subsigs,
+			perc_pats_in_trace: cap.perc_pats_in_trace, 
+		};
 
 		//2. create advice for word_extract_adv, fsm_adv, and discharge_adv
 		// both advices are needed for producing related container_config
@@ -511,7 +542,7 @@ pub mod tests_compute_sig_adv{
 				.borrow().to_vec();
 			assert!(nibbles.len()==nibble_len);
 
-			let adv_faa = FsmAdvAdvice::new(&nibbles, &acdfa, inp_state, 
+			 let adv_faa = FsmAdvAdvice::new(&nibbles, &acdfa, inp_state, 
 				inp_loc, &input_subsigs, &cap, fsm_id, 
 				&bundle.vec_subsig_stores[store_id]); 
 			let stmt_faa = adv_faa.stmt_container;
@@ -526,8 +557,21 @@ pub mod tests_compute_sig_adv{
 			let cfg_disc= stmt_disc.borrow().get_cfg(); 
 
 			if i==n_cycles-1{//last cycle for subsig
+				//2.3.5 generate the info for the compute_sig_adv gadget
+				let inp_sigs: Vec<Fr> = vec![Fr::from(sig_id as u64)];
+				//REMOVE LATER -------------
+				println!("DEBUG USE 6011: stmt_desc");
+				stmt_disc.borrow().dump_structure(2);
+				//REMOVE LATER ------------- ABOVE
+				let sq_res = stmt_disc.borrow().search_container("discharge_adv_stmt bwd_steps_queue sq_res2").expect("sq_res err");
+				let adv_sig= ComputeSigAdvAdvice::new(&inp_sigs, &input_subsigs,
+					&sq_res, &cap_sig, steps_store);
+				let stmt_sig = adv_sig.stmt_container;
+				let cfg_sig = stmt_sig.borrow().get_cfg();
+
 				//2.4 given cfgs, set up the positions
-				let mut vec_cfg = vec![cfg_wea.clone(), cfg_faa.clone(), cfg_disc];
+				let mut vec_cfg = vec![cfg_wea.clone(), cfg_faa.clone(), 
+					cfg_disc.clone(), cfg_sig.clone()];
 				ContainerConfig::adjust_locations(&mut vec_cfg); //resolve
 
 				//2.6. generate the 7 segments of output for building statment
@@ -535,19 +579,21 @@ pub mod tests_compute_sig_adv{
 				let cps1 = stmt_wea.borrow().gen_stmt_components(); 
 				let cps2 = stmt_faa.borrow().gen_stmt_components(); 
 				let cps3 = stmt_disc.borrow().gen_stmt_components(); 
+				let cps4 = stmt_sig.borrow().gen_stmt_components(); 
 				let cps = cps1.into_iter().zip(cps2.into_iter()).map(|(a,b)|
 					vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
 				let cps = cps.into_iter().zip(cps3.into_iter()).map(|(a,b)|
 					vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
+				let cps = cps.into_iter().zip(cps4.into_iter()).map(|(a,b)|
+					vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
 
 				//2.7 create the discharge gadget
 				let lkup_share_size = 4usize;
-				let mut dcg = DischargeAdvGadget::<Fr>::new(&cap_disc, fsm_id,
-					&vec![cfg_wea.clone(), cfg_faa.clone()],
-					&bundle.vec_subsig_step_stores[0], //for sed
+				let mut dcg = ComputeSigAdvGadget::<Fr>::new(&cap_sig, 
+					&vec![cfg_wea.clone(), cfg_faa.clone(), cfg_disc.clone()],
+					&bundle.vec_subsig_step_stores[0], //store_steps for sed
 				);
-				dcg.set_container_cfg(vec_cfg.clone().into(),2);  //2 for
-																// it's the 3rd cfg
+				dcg.set_container_cfg(vec_cfg.clone().into(),3); //4'th comp
 				let rg = Rc::new(dcg);
 
 				//3. test it

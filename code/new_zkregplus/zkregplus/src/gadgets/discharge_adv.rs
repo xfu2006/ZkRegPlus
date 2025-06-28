@@ -529,7 +529,11 @@ impl <F:PrimeField> StepQueue<F>{
 					vec_fwd_prf.push(fwd_prf_item);
 				}
 				//we will stop if results in 0 items added
-				if total_added==0 {break};
+				//when it has explored ALL existing items in the
+				//current sq_res. Note that when total_added is 0
+				//there might be other pac_loc that fits further steps
+				//not processed in items yet.
+				if total_added==0 && i>=items.len() {break};
 				//otherwise push the most recent queue_item
 				vec_res.push(cur_q_item);
 			}
@@ -1584,17 +1588,12 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 
 	/// retrieve the steps_queue from input
 	pub fn get_output_steps_queue(&self)->Vec<F>{
-		/* RECOVER LATER
 		let res = self.stmt_container.borrow().search_container(
 			"discharge_adv_stmt bwd_steps_queue sq_res2").unwrap();
 		let encoded = res.borrow().get_container("encoded").unwrap().
 			borrow().to_vec();
 		let locs = res.borrow().get_container("locs").unwrap().
 			borrow().to_vec();
-		*/
-		//fake one
-		let encoded = vec![F::zero(); 10];
-		let locs = vec![F::zero(); 10];
 		vec![encoded, locs].concat()
 	}
 
@@ -3447,8 +3446,6 @@ pub mod tests_discharge_adv_gadget{
 				.borrow().to_vec();
 			inp_loc = locs[locs.len()-1];
 			inp_steps_queue = StepQueue::parse_from(&oup_queue, &cap_disc);
-			println!("---- DEBUG USE 300: new inp_steps_queue is ---");
-			inp_steps_queue.dump();
 		}
 
 
@@ -3461,10 +3458,8 @@ pub mod tests_discharge_adv_gadget{
 		//1. define the sigs
 		let sigs = vec![
 			"sig2;Engine:51-255,Target:0;0&1;/def.*234.*567/;/234....def/",
-			// /* RECOVER LATER
 			"sig1;Engine:51-255,Target:0;0&1;/abc..123/;/123....abc/",
 			"sig3;Engine:51-255,Target:0;0&1;/fgh.*1234......56...78/;/56......fgh/",
-			// */
 		].iter().map(|x| x.to_string()).collect::<Vec<String>>();
 		let needs_dfa = vec![];
 		let needs_ised= vec![];
@@ -3476,7 +3471,6 @@ pub mod tests_discharge_adv_gadget{
 
 		//2. define the test cases
 		let testcases = vec![
-			// /* RECOVER LATER
 			//2. fails sig2 coz 3rd pattern missing
 			Tcase::new("defxx234xx56", "sig2", false, false),
 			//1. fails sig1 coz gap len incorrect
@@ -3491,7 +3485,6 @@ pub mod tests_discharge_adv_gadget{
 			Tcase::new(
 				&format!("ddd{}234xx{}56","x".repeat(90), "u".repeat(90)), 
 				"sig2", false, false),
-			// */
 			//5. a case which has both fwd and backward elimination.
 			//manually check debug messages of backward and forward proofs
 			//baseically: the last 78 is not added, but the

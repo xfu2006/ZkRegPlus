@@ -59,6 +59,54 @@ the assertion of $s$ free of regex signature set.
 \label{fig_stream}
 \end{figure*}
 
+\subsection{Modeling Relational Operators using Lookup Arguments}
+We we show later, streaming algoriths can be nicely modeled using
+classical relational algebra operators: $\proj$, $\select$,
+$\times$, and $\join$. In earlier work \cite{vsql}, sum-checked
+based customized protocols are used to support relational databases.
+In this work, we base the implementation of lookup arguments (where 
+preprocessed external lookup can be leveraged). In addition, we show
+some special type of range-query join is supported.
+
+A relation (table) in a relational database can be viewed as a two-dimensional
+table, where each row is a fixed-arity tuple, or it can be
+viewed as a collection of columns. We often write a table
+$\myvec{t} = (\myvec{c}^{(1)}, \myvec{c}^{(2)}, ..., \myvec{c}^{(k)})$, 
+where $\myvec{c}^{(i)}$ is the $i$'th column.
+In Figure\ \ref{fig:db} we show how to use lookup argument to support
+relational operators.
+
+\begin{small}
+\begin{algorithm}[bt]
+\SetKwData{Left}{left}\SetKwData{This}{this}\SetKwData{Up}{up}
+\SetKwFunction{Union}{Union}\SetKwFunction{FindCompress}{FindCompress}
+$\underline{\myvec{a} = \proj_{i}(\myvec{t})}$ \newline
+ Let $\myvec{t} = (\myvec{c}^{(1)}, ..., \myvec{c}^{(k)}$, just
+ assert $\myvec{a} = \myvec{c}^{(i)}$. \newline
+
+$\underline{\myvec{t}' = \select_{c}(\myvec{t})}$ \newline
+ (1) Let $\myvec{t} = (\myvec{u}^{(1)}, ..., \myvec{u}^{(k)})$, 
+ 	 Let $\myvec{t}' = (\myvec{v}^{(1)}, ..., \myvec{v}^{(k)})$, 
+ \newline
+ (2) Prover and verifier jointly
+ 	computes $\myvec{c}$ s.t. for any $i\in [|\myvec{t}|]$:
+ 	$\myvec{c}_i = c(\myvec{u}^{(1)}_i, ..., \myvec{u}^{(k)}_i)$. \newline
+ (3) Verifier sends challenge $r$. \newline
+ (4) Prover and verifier jointly computes
+ 	$\myvec{a} = \sum_{i=1}^k r^i \cdot \myvec{u}^{(i)}$, and
+ 	$\myvec{b} = (\sum_{i=1}^k r^i \cdot \myvec{u}^{(i)}) \cdot \myvec{c}$
+	(where $\myvec{c}$ serves as a selector). \newline
+ (5) Prover and verifier runs lookup argument (ignoring $0$ entries)
+ 	$\myvec{a} \lookup \myvec{b}$ and
+	$\myvec{b} \lookup \myvec{a}$. (note that it's linear compleixty).
+
+
+
+\caption{Relational Operators Based on Lookup Argument}
+\label{fig:db}
+\end{algorithm}
+\end{small}
+
 \subsection{Streaming Algorithm for SED}
 We now present the streaming algorithm for SED. We show how to use
 internal lookups to support relational database operations needed.

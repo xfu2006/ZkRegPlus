@@ -17088,6 +17088,46 @@ Goal 2. design of computer_sig gadget
 
 Goal 4. set up unit testing framework
 	[a] read existing code
+	[b] set up the calling framework
+
+Goal 5. Writing
+	[a] intro of relational database -> DONE
+
+Goal 5. implement the gen_eval_subsig
+	[a] check if needs to include subsig -> yes
+	[b] dump the inp data
+
+Saturday 06/28/2025
+LOC (gadget): 10779 (+103)
+LOC (data): 8431 (+4)
+Goal 1. handle input of gadget 
+	[a] should generate ct_sq_res just like pat_loc
+	[b] change func declarations
+	[c] debug cannot find search
+
+Goal 2. collect the acdfa data again and see how it adds to lkup table.
+	[a] there is one acdfa which has 3.2M states but produced 352M
+		lkup entries.
+		==== Status of ACDFA --- =====
+ HEX-AC-DFA id: 0, num_states: 3227710, patterns: 64812, accept_states: 3227708, init_state: 3227706
+MAX output words for a final state: 338, avg: 4
+DEBUG USE 6702: after add: INCREASED 352409845
+		=============================
+		==== Status of ACDFA --- =====
+ HEX-AC-DFA id: 0, num_states: 3222673, patterns: 63529, accept_states: 3222671, init_state: 3222669
+MAX output words for a final state: 338, avg: 4
+ -- vec_init: 1, vec_non_final: 2, vec_final: 3222671
+ -- vec_trans: 51562768
+ -- vec_final_2_sig: 274532614, vec_final2sig_count: 3222671
+ -- vec_all_states: 3222673
+DEBUG USE 6702: after add: INCREASED 335763400
+ 	===============
+	Note that vec_to_2_sig: 274M for 3.2M states!.
+
+Goal 3. fix the failed discharge_adv test
+	[a] narrow down the test case
+	[b] analyize 1st pass: loc 1,y is correct
+	[c] check logic of line 484 gen_forward_prf.
 	
 
 

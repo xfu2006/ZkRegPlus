@@ -336,7 +336,7 @@ impl SubsigPatternStore{
 		*/
 		if n.is_some(){
 			let n = n.unwrap();
-			assert!(n>estimated_len, "ProjStore buffer len too small. n: {}, estimated: {}, Consider increasing the properties such as  avg_pats_per_subsig or subsigs in FsmAdvCapacity config.", n, estimated_len);
+			assert!(n>=estimated_len, "ProjStore buffer len too small. n: {}, estimated: {}, Consider increasing the properties such as  avg_pats_per_subsig or subsigs in FsmAdvCapacity config.", n, estimated_len);
 		}
 		let inner_zero_entries = if n.is_some() {n.unwrap()- estimated_len}
 			else {0};
@@ -926,6 +926,12 @@ impl <F:PrimeField> ClamavDB<F>{
 		let state_sig_count_id = tbl_id_init+5;
 		let all_states_id = tbl_id_init+6;
 
+		//REMOVE LATER -----------
+		println!("DEBUG USE 6701: add_acdfa_to_lkup acdfa stats");
+		let mut vlog = vec![];
+		acdfa.log_stats("---", &mut vlog);
+
+		//REMOVE LATER ----------- ABOVE
 		//2. build the single entry sub-table for init
 		let init_st = acdfa.init_state as u32;
 		let vec_init = vec![(F::from(init_tbl_id), F::from(init_st))]; 
@@ -1021,10 +1027,21 @@ impl <F:PrimeField> ClamavDB<F>{
 
 
 		//5. assemble
-		let mut res = vec![ vec_init, vec_non_final, vec_final, vec_trans,
-			vec_final_2_sig, vec_final2sig_count, vec_all_states]
-			.concat();
+		let v2d = vec![ vec_init, vec_non_final, vec_final, vec_trans,
+			vec_final_2_sig, vec_final2sig_count, vec_all_states];
+		//REMOVE LATER --------------
+		println!(" -- vec_init: {}, vec_non_final: {}, vec_final: {}\n -- vec_trans: {}\n -- vec_final_2_sig: {}, vec_final2sig_count: {}\n -- vec_all_states: {}", 
+			v2d[0].len(), v2d[1].len(), v2d[2].len(), v2d[3].len(),
+			v2d[4].len(), v2d[5].len(), v2d[6].len());
+		//REMOVE LATER -------------- ABOVE
+		let mut res = v2d.concat();
+		//REMOVE LATER -------------
+		let n1 = lk.vals.len();
+		//REMOVE LATER ------------- ABOVE
 		lk.vals.append(&mut res);
+		//REMOVE LATER ----------------
+		println!("DEBUG USE 6702: after add: INCREASED {} \n\n", lk.vals.len()-n1);
+		//REMOVE LATER ---------------- ABOVE
 	}
 
 	/// add a range table to lookup (the range are INCLUDED, i.e.,

@@ -6,12 +6,12 @@ Reallocated singl_function (elt_size=4) to 100 items from 50.
 Reallocated singl_function (elt_size=4) to 100 items from 50.
 Reallocated wiz_functions (elt_size=4) to 6000 items from 3000.
 Database file #1: fu2.bib
-I was expecting a `,' or a `}'---line 22284 of file fu2.bib
+I was expecting a `,' or a `}'---line 22294 of file fu2.bib
  :       
  :       author = {Srinath Setty and Justin Thaler},
 (Error may have been on previous line)
 I'm skipping whatever remains of this entry
-I was expecting a `,' or a `}'---line 22311 of file fu2.bib
+I was expecting a `,' or a `}'---line 22321 of file fu2.bib
  : 
  : author = {Dutta, Moumita and Ganesh, Chaya and Patranabis, Sikhar and Prakash, Shubh and Singh, Nitin},
 (Error may have been on previous line)
@@ -102,45 +102,47 @@ Warning--empty publisher in Caulk22
 Warning--empty address in Caulk22
 Warning--empty publisher in Deco
 Warning--empty address in Deco
-You've used 89 entries,
+Warning--empty publisher in vsql
+Warning--empty address in vsql
+You've used 90 entries,
             5981 wiz_defined-function locations,
-            2014 strings with 34056 characters,
-and the built_in function-call counts, 85855 in all, are:
-= -- 9346
-> -- 3126
+            2020 strings with 34299 characters,
+and the built_in function-call counts, 87101 in all, are:
+= -- 9474
+> -- 3172
 < -- 0
-+ -- 1053
-- -- 1072
-* -- 6079
-:= -- 9004
-add.period$ -- 440
-call.type$ -- 89
-change.case$ -- 651
++ -- 1070
+- -- 1087
+* -- 6172
+:= -- 9127
+add.period$ -- 445
+call.type$ -- 90
+change.case$ -- 660
 chr.to.int$ -- 84
-cite$ -- 177
-duplicate$ -- 7780
-empty$ -- 5460
-format.name$ -- 1375
-if$ -- 19559
-int.to.chr$ -- 7
+cite$ -- 180
+duplicate$ -- 7899
+empty$ -- 5543
+format.name$ -- 1393
+if$ -- 19856
+int.to.chr$ -- 8
 int.to.str$ -- 1
-missing$ -- 153
-newline$ -- 778
-num.names$ -- 604
-pop$ -- 3134
+missing$ -- 158
+newline$ -- 785
+num.names$ -- 610
+pop$ -- 3190
 preamble$ -- 2
-purify$ -- 1342
+purify$ -- 1357
 quote$ -- 0
-skip$ -- 3111
+skip$ -- 3153
 stack$ -- 0
-substring$ -- 5923
-swap$ -- 629
+substring$ -- 6016
+swap$ -- 642
 text.length$ -- 0
 text.prefix$ -- 0
 top$ -- 0
-type$ -- 2596
-warning$ -- 80
-while$ -- 452
+type$ -- 2620
+warning$ -- 82
+while$ -- 458
 width$ -- 0
-write$ -- 1748
+write$ -- 1767
 (There were 2 error messages)
