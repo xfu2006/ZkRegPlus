@@ -60,13 +60,21 @@ the assertion of $s$ free of regex signature set.
 \end{figure*}
 
 \subsection{Modeling Relational Operators using Lookup Arguments}
-We we show later, streaming algoriths can be nicely modeled using
-classical relational algebra operators: $\proj$, $\select$,
-$\times$, and $\join$. In earlier work \cite{vsql}, sum-checked
-based customized protocols are used to support relational databases.
-In this work, we base the implementation of lookup arguments (where 
-preprocessed external lookup can be leveraged). In addition, we show
-some special type of range-query join is supported.
+Proving database out-sourcing using zk-SNARK systems has been
+explored in IntegriDB \cite{IntegriDB} (using pairing based dynamic accumuator
+and interval trees) and
+vSQL \cite{vSQL} (using sum-checked based CMT protocols).
+Compared with these earlier work, in the context of our work, 
+the ``databaes" is dynamic and they are generated
+in circuit (instead of a ``fixed" updatable database that exist
+prior to proof starts). our approach is much simpler by out-sourcing operations
+to lookup argument, and the number comparison operations can be simply done
+using lookup (instead of bit-decomposition).
+Our approach works for read-only query only. It is used as an intermediate
+layer to support streaming algorithms, which can be built upon
+classical relational algebra operators: $\proj$ (projection), $\select$ (select),
+$\times$ (cross product), and $\join$ (join), we refer interested
+readers to \cite{AHV95}. 
 
 A relation (table) in a relational database can be viewed as a two-dimensional
 table, where each row is a fixed-arity tuple, or it can be

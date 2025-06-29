@@ -37,6 +37,18 @@ pub fn vec_to_var<F:PrimeField>(cs: &ConstraintSystemRef<F>, v: &Vec<F>)
 		|| Ok(x.clone())).unwrap() ).collect()
 }
 
+/// if sid[i] is rg2 check data[i] is in range2
+#[allow(dead_code)]
+pub fn check_rg2<F:PrimeField>(data: &Vec<F>,sid: &Vec<F>){
+	let frg = F::from(RANGE2);
+	let max_val:usize = (1<<RANGE2_BIT) - 1;
+	let max = F::from(max_val as u64);
+	assert!(data.len()==sid.len());
+	for i in 0..data.len(){
+		if sid[i]==frg {assert!(data[i]<max);}
+	}
+}
+
 /// create  a new var
 pub fn new_var<F:PrimeField>(cs: &ConstraintSystemRef<F>, v: F)->FpVar<F>{
 	FpVar::new_witness(cs.clone(), || Ok(v)).expect("err new var")

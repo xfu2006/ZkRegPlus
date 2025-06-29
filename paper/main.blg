@@ -45,6 +45,7 @@ Warning--empty address in RAMLookup
 Warning--page numbers missing in both pages and numpages fields in RAMLookup
 Warning--empty publisher in Kaizen
 Warning--empty address in Kaizen
+Warning--empty address in AHV95
 Warning--empty publisher in Jolt
 Warning--empty address in Jolt
 Warning--empty publisher in SpecialFiat
@@ -102,47 +103,49 @@ Warning--empty publisher in Caulk22
 Warning--empty address in Caulk22
 Warning--empty publisher in Deco
 Warning--empty address in Deco
-Warning--empty publisher in vsql
-Warning--empty address in vsql
-You've used 90 entries,
+Warning--empty publisher in vSQL
+Warning--empty address in vSQL
+Warning--empty publisher in IntegriDB
+Warning--empty address in IntegriDB
+You've used 92 entries,
             5981 wiz_defined-function locations,
-            2020 strings with 34299 characters,
-and the built_in function-call counts, 87101 in all, are:
-= -- 9474
-> -- 3172
+            2033 strings with 34616 characters,
+and the built_in function-call counts, 89157 in all, are:
+= -- 9688
+> -- 3234
 < -- 0
-+ -- 1070
-- -- 1087
-* -- 6172
-:= -- 9127
-add.period$ -- 445
-call.type$ -- 90
-change.case$ -- 660
-chr.to.int$ -- 84
-cite$ -- 180
-duplicate$ -- 7899
-empty$ -- 5543
-format.name$ -- 1393
-if$ -- 19856
++ -- 1090
+- -- 1105
+* -- 6318
+:= -- 9328
+add.period$ -- 456
+call.type$ -- 92
+change.case$ -- 674
+chr.to.int$ -- 86
+cite$ -- 185
+duplicate$ -- 8104
+empty$ -- 5685
+format.name$ -- 1419
+if$ -- 20339
 int.to.chr$ -- 8
 int.to.str$ -- 1
-missing$ -- 158
-newline$ -- 785
-num.names$ -- 610
-pop$ -- 3190
+missing$ -- 165
+newline$ -- 800
+num.names$ -- 624
+pop$ -- 3278
 preamble$ -- 2
-purify$ -- 1357
+purify$ -- 1387
 quote$ -- 0
-skip$ -- 3153
+skip$ -- 3230
 stack$ -- 0
-substring$ -- 6016
-swap$ -- 642
+substring$ -- 6175
+swap$ -- 663
 text.length$ -- 0
 text.prefix$ -- 0
 top$ -- 0
-type$ -- 2620
-warning$ -- 82
-while$ -- 458
+type$ -- 2665
+warning$ -- 85
+while$ -- 467
 width$ -- 0
-write$ -- 1767
+write$ -- 1804
 (There were 2 error messages)

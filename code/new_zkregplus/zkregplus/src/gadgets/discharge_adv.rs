@@ -12,7 +12,7 @@ use crate::gadgets::{
 	commons::{gen_m_table,check_arr_eq,encode_cols,decode_cols
 		,new_const_var, encode_2col_var, encode_2col_var_adv,
 		check_arr_eq_arr, encode_cols_var_adv, is_sorted,
-		check_eq,  encode_2col},
+		check_eq, encode_2col, check_rg2},
 	db::{assert_logup, verify_encoded_table, assert_well_formed_sorted},
 	traits::{Container,
 		Col,
@@ -2271,12 +2271,10 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		}).collect::<Vec<F>>();
 		let len1 = diff_loc.len();
 		let len2 = diff_encode.len();
+		#[cfg(test)]{ check_rg2(&diff_loc, &vec![frg;diff_loc.len()]); }
 		res.borrow_mut().add_col(Col::new(diff_loc, "diff_loc", IDX_DATA));
 		res.borrow_mut().add_col(Col::new(vec![frg;len1], 
 			"sid_diff_loc", IDX_SI_DATA));
-		res.borrow_mut().add_col(Col::new(diff_encode,"diff_encode", IDX_DATA));
-		res.borrow_mut().add_col(Col::new(vec![frg;len2], 
-			"sid_diff_encode", IDX_SI_DATA));
 
 		
 		//4. prove the min_loc is the first loc in sq_res
@@ -3053,9 +3051,8 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		// already provided in sid check. no need
 
 		//3. prove sq_res has its loc sorted and
-		//as the fwd_res has been proved to be sorted (step_id increasing
-		//for the same encoded key), we only rely on step to define
-		//conditional sectors.
+		// we prove that first the subsig is sorted and then
+		// the step is sorted per subsig.
 		let rescols = vec!["encoded", "step", "locs"].iter().map(|n|
 			sq_res.borrow().get_container(n).unwrap().borrow().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
@@ -3075,18 +3072,6 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			.get_container("sid_diff_loc").unwrap().borrow().to_vec();
 		check_arr_eq(&sid_diff_loc, &frg, "err checking sid_diff_loc")?; 
 		check_arr_eq_arr(&diff_loc, &saved_diff_loc, "err checking diff_loc")?; 
-
-		let diff_encode= (0..rescols[0].len()-1).into_iter().map(|i|{
-			&rescols[0][i+1] - &rescols[0][i] 
-		}).collect::<Vec<FpVar<F>>>();
-		let saved_diff_encode= prf_bwdprf_valid.borrow()
-			.get_container("diff_encode")
-			.unwrap().borrow().to_vec();
-		let sid_diff_encode= prf_bwdprf_valid.borrow()
-			.get_container("sid_diff_encode").unwrap().borrow().to_vec();
-		check_arr_eq(&sid_diff_encode, &frg, "err checking sid_diff_encode")?; 
-		check_arr_eq_arr(&diff_encode, &saved_diff_encode, "err checking diff_encode")?; 
-
 
 		//4. prove the min_loc is the first loc in sq_res
 		let src_combined= encode_cols_var_adv(&v2d, &vec![0,1,3], r1);

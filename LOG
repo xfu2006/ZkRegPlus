@@ -17128,7 +17128,34 @@ Goal 3. fix the failed discharge_adv test
 	[a] narrow down the test case
 	[b] analyize 1st pass: loc 1,y is correct
 	[c] check logic of line 484 gen_forward_prf.
-	
+	[d] fix the early termination logic
+	[e] regression test 1
+	[f] regression test 2 -> failed. check tomorrow
+
+Sunday 06/29/2025
+Goal 1. Debug
+	[a] it breaks at sigma_ir1cs:204 fill_mvec
+		-> 
+		Cannot find entry for tbl_id[2474]: (1879048194, 73014444032): 10294
+			-> 0x70000002 (tbl_id) -> RANGE2
+			-> 0x1100000000 (val)
+	[b] check who's calling fill_mvec and causes problem
+		-> error id: 2474 
+		-> in data id: 2339 (out of 2387)
+			this is about 50 away
+		-> very likely somewhere in bwd prf
+	[c] is there anyway to check the problem not in range2?
+	[d] add function check_rg2(arr1, sid) array if the
+		sid[i] is rg2 then check if arr1 is in range.
+	[e] call it on bwdprf
+	[f] i detects it!
+
+	-- TODO --
+	[d] recover par_iter()
+
+Goal 2. Writing
+	[a] quickly read IntegriDB
+	[b] cite work
 
 
 
