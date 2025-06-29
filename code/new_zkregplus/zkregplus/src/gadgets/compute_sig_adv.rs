@@ -175,7 +175,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 	#[allow(dead_code)]
 	fn gen_eval_subsig_by_sq_combo(
 		inp_subsigs: &Vec<F>,
-		sq_res: &Rc<RefCell<Container<F>>>,
+		_sq_res: &Rc<RefCell<Container<F>>>,
 		_capacity: &ComputeSigAdvCapacity,
 		_subsig_store_info: &SubsigStepStore,
 	)->Rc<RefCell<Container<F>>>{
@@ -229,7 +229,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 			&dis_cap);
 		let sq_res_vec = vec![zero; step_q_size*2];
 		let sq_res_obj= StepQueue::parse_from(&sq_res_vec, &dis_cap);
-		let sq_res = sq_res_obj.to_container("sq_res2", false, true, true,
+		let sq_res = sq_res_obj.to_container("sq_res2", false, true, true, true,
 			&store_steps);
 
 		//3. create advice
@@ -744,7 +744,7 @@ pub mod tests_compute_sig_adv{
 		};
 		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),
 			q_type: StepQueueType::Res};
-		let ct = sq.to_container("ct", true, false, false, &steps_info);
+		let ct = sq.to_container("ct", true, false, false, false, &steps_info);
 		let pat = ct.borrow().get_container("encoded")
 			.unwrap().borrow().to_vec();
 		let loc = ct.borrow().get_container("locs").unwrap().borrow().to_vec();

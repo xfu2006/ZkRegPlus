@@ -371,7 +371,7 @@ impl <F:PrimeField> StepQueue<F>{
 
 	/// converts the step queue to a vec combination of two columns
 	pub fn to_vec(&self, subsig_store_info: &SubsigStepStore)->Vec<F>{
-		let ct = self.to_container("temp", false, false, false, subsig_store_info);
+		let ct = self.to_container("temp", false, false, false, false, subsig_store_info);
 		let encoded = ct.borrow().get_container("encoded").unwrap()
 			.borrow().to_vec();
 		let locs = ct.borrow().get_container("locs").unwrap()
@@ -732,11 +732,13 @@ impl <F:PrimeField> StepQueue<F>{
 	/// b_oup indicates whether  to add to oup_buf (b_inp and b_oup cannot
 	///   be true)
 	/// b_step indicates whether to add an step column
+	/// b_subsig: indiates whether to add_subsig column column
 	pub fn to_container(&self, 
 		name: &str, 
 		b_inp: bool, 
 		b_step:bool, 
 		b_oup: bool,
+		b_subsig: bool, 
 		subsig_store_info: &SubsigStepStore,
 	)->Rc<RefCell<Container<F>>>{
 		#[cfg(test)] { assert!(is_sorted(&self.subsigs)); }
@@ -807,6 +809,14 @@ impl <F:PrimeField> StepQueue<F>{
 			res.borrow_mut().add_col(Col::new(vec_step,"step",seg));
 			res.borrow_mut().add_col(Col::new(vec_sid_step, "si_step",si_seg));
 		}
+
+		if b_subsig{
+			let vec_sid_subsig = vec![F::from(RANGE2); n];
+			assert!(vec_subsigs.len()==n && vec_sid_subsig.len()==n);
+			res.borrow_mut().add_col(Col::new(vec_subsigs,"subsig",seg));
+			res.borrow_mut().add_col(Col::new(vec_sid_subsig, "si_subsig",si_seg));
+		}
+
 
 		res
 	}
@@ -2023,10 +2033,10 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		}
 
 		let ct_sq_inp = inp_step_queue.to_container("sq_inp",true,false,
-			false, &subsig_store_info);
+			false, false, &subsig_store_info);
 		let ct_sq_to_add = sq_to_add.to_container("sq_to_add",false,true,
-			false, &subsig_store_info);
-		let ct_sq_res = sq_res.to_container("sq_res", false, true, false,
+			false, false, &subsig_store_info);
+		let ct_sq_res = sq_res.to_container("sq_res", false, true, false, false,
 			&subsig_store_info);
 		res.borrow_mut().add_container(ct_sq_inp.clone()); //low cost, rc clone
 		res.borrow_mut().add_container(ct_sq_to_add.clone());
@@ -2105,9 +2115,9 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			bwd_prf.dump();
 		}
 
-		let ct_sq_to_del= sq_to_del.to_container("sq_to_del",false,true,false,
+		let ct_sq_to_del= sq_to_del.to_container("sq_to_del",false,true,false,false,
 			&subsig_store_info);
-		let ct_sq_res2 = sq_res.to_container("sq_res2",false,true,true,
+		let ct_sq_res2 = sq_res.to_container("sq_res2",false,true,true,true,
 			&subsig_store_info);
 		res.borrow_mut().add_container(ct_sq_to_del.clone());
 		res.borrow_mut().add_container(ct_sq_res2.clone());
@@ -2250,11 +2260,40 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		//3. prove (final) sq_res has its loc sorted (for each subsig-step)
 		// This is NEEDED because we need to argue about the 
 		// minimum loc for a step.
-		// this assumes that encoded is SORTED (thus all related
-		// step/locs are already grouped together).
-		let rescols = vec!["encoded", "step", "locs"].iter().map(|n|
+		// We need to prove that subsig-step itself is sorted first.
+		let rescols = vec!["encoded", "step", "locs", "subsig"].iter().map(|n|
 			sq_res.borrow().get_container(n).unwrap().borrow().to_vec()
 		).collect::<Vec<Vec<F>>>();
+		#[cfg(test)]{ assert!(is_sorted(&rescols[0])); }
+
+		//3.1 prove that subsig is sorted
+		let diff_subsig = (0..rescols[3].len()-1).into_par_iter().map(|i|{
+			rescols[3][i+1] - rescols[3][i] 
+		}).collect::<Vec<F>>();
+		let len2 = diff_subsig.len();
+		#[cfg(test)]{ check_rg2(&diff_subsig, &vec![frg;diff_subsig.len()]); }
+		res.borrow_mut().add_col(Col::new(diff_subsig, "diff_subsig", IDX_DATA));
+		res.borrow_mut().add_col(Col::new(vec![frg;len2], 
+			"sid_diff_subsig", IDX_SI_DATA));
+
+		//3.2 prove that step is sorted per subsig
+		let sel = (0..rescols[3].len()).into_par_iter().map(|i|{
+			if i==0 {zero} else{
+				if rescols[3][i]!=rescols[3][i-1] {zero} else {one}
+			}
+		}).collect::<Vec<F>>();
+		let diff_step = (0..rescols[1].len()).into_par_iter().map(|i|{
+			if i==0 {zero} else {
+				(rescols[1][i] - rescols[1][i-1]) * sel[i]
+			}
+		}).collect::<Vec<F>>();
+		let len1 = diff_step.len();
+		#[cfg(test)]{ check_rg2(&diff_step, &vec![frg;diff_step.len()]); }
+		res.borrow_mut().add_col(Col::new(diff_step, "diff_step", IDX_DATA));
+		res.borrow_mut().add_col(Col::new(vec![frg;len1], 
+			"sid_diff_step", IDX_SI_DATA));
+
+		//3.3 prove that loc is sorted per subsig-step (encoded)
 		let sel = (0..rescols[0].len()).into_par_iter().map(|i|{
 			if i==0 {zero} else{
 				if rescols[0][i]!=rescols[0][i-1] {zero} else {one}
@@ -2265,16 +2304,12 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 				(rescols[2][i] - rescols[2][i-1]) * sel[i]
 			}
 		}).collect::<Vec<F>>();
-		#[cfg(test)]{ assert!(is_sorted(&rescols[0])); }
-		let diff_encode = (0..rescols[0].len()-1).into_par_iter().map(|i|{
-			rescols[0][i+1] - rescols[0][i] 
-		}).collect::<Vec<F>>();
 		let len1 = diff_loc.len();
-		let len2 = diff_encode.len();
 		#[cfg(test)]{ check_rg2(&diff_loc, &vec![frg;diff_loc.len()]); }
 		res.borrow_mut().add_col(Col::new(diff_loc, "diff_loc", IDX_DATA));
 		res.borrow_mut().add_col(Col::new(vec![frg;len1], 
 			"sid_diff_loc", IDX_SI_DATA));
+
 
 		
 		//4. prove the min_loc is the first loc in sq_res
@@ -3053,9 +3088,39 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		//3. prove sq_res has its loc sorted and
 		// we prove that first the subsig is sorted and then
 		// the step is sorted per subsig.
-		let rescols = vec!["encoded", "step", "locs"].iter().map(|n|
+		let rescols = vec!["encoded", "step", "locs", "subsig"].iter().map(|n|
 			sq_res.borrow().get_container(n).unwrap().borrow().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
+		//3.1 prove subsig
+		let diffsubsig = (0..rescols[3].len()-1).into_iter().map(|i|{
+			&rescols[3][i+1] - &rescols[3][i] 
+		}).collect::<Vec<FpVar<F>>>();
+		let saved_diffsubsig = prf_bwdprf_valid.borrow()
+			.get_container("diff_subsig").unwrap().borrow().to_vec();
+		let sid_diffsubsig= prf_bwdprf_valid.borrow()
+			.get_container("sid_diff_subsig").unwrap().borrow().to_vec();
+		check_arr_eq(&sid_diffsubsig, &frg, "err checking sid_diffsubsig")?; 
+		check_arr_eq_arr(&diffsubsig, &saved_diffsubsig, "err checking diffsubsig")?; 
+
+		//3.2 prove step is sored per subsig
+		let sel = (0..rescols[3].len()).into_iter().map(|i|{
+			if i==0 {zero.clone()} else{
+				rescols[3][i].is_eq(&rescols[3][i-1]).unwrap().into()
+			}
+		}).collect::<Vec<FpVar<F>>>();
+		let diff_step = (0..rescols[1].len()).into_iter().map(|i|{
+			if i==0 {zero.clone()} else {
+				&(&rescols[1][i] - &rescols[1][i-1]) * &sel[i]
+			}
+		}).collect::<Vec<FpVar<F>>>();
+		let saved_diff_step = prf_bwdprf_valid.borrow().get_container("diff_step")
+			.unwrap().borrow().to_vec();
+		let sid_diff_step= prf_bwdprf_valid.borrow()
+			.get_container("sid_diff_step").unwrap().borrow().to_vec();
+		check_arr_eq(&sid_diff_step, &frg, "err checking sid_diff_step")?; 
+		check_arr_eq_arr(&diff_step, &saved_diff_step, "err checking diff_step")?; 
+
+		//3.3 prove loc is sorted per subsig-step
 		let sel = (0..rescols[0].len()).into_iter().map(|i|{
 			if i==0 {zero.clone()} else{
 				rescols[0][i].is_eq(&rescols[0][i-1]).unwrap().into()
@@ -3203,6 +3268,7 @@ impl <F:PrimeField> SigmaGadget<F> for DischargeAdvGadget<F>{
 fn dummy_test<F:PrimeField>(){
 	//just call it here for saving import lines 
 	let _= is_sorted(&vec![F::zero()]); 
+	check_rg2(&vec![F::zero()], &vec![F::zero()]);
 }
 
 #[cfg(test)]
@@ -3536,7 +3602,7 @@ pub mod tests_discharge_adv_gadget{
 		};
 		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),
 			q_type: StepQueueType::Res};
-		let ct = sq.to_container("ct", true, false, false, &steps_info);
+		let ct = sq.to_container("ct", true, false, false, true, &steps_info);
 		let pat = ct.borrow().get_container("encoded")
 			.unwrap().borrow().to_vec();
 		let loc = ct.borrow().get_container("locs").unwrap().borrow().to_vec();

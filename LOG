@@ -17133,6 +17133,8 @@ Goal 3. fix the failed discharge_adv test
 	[f] regression test 2 -> failed. check tomorrow
 
 Sunday 06/29/2025
+LOC: (gadget): 10777 (+80)
+LOC: (data): 8448 (+48)
 Goal 1. Debug
 	[a] it breaks at sigma_ir1cs:204 fill_mvec
 		-> 
@@ -17149,6 +17151,15 @@ Goal 1. Debug
 		sid[i] is rg2 then check if arr1 is in range.
 	[e] call it on bwdprf
 	[f] i detects it!
+
+Goal 2. Design
+	[a] in to_container, add flag (b_subsig)
+	[b] add diff_subsig 
+	[c] add rg2 check
+	[d] regression testing -> now cost 4757 (+300) -> 10n
+		unofrtunately unavoidable.  
+			6n is unavoidable, but 3n is used anyway in other gadget.
+
 
 	-- TODO --
 	[d] recover par_iter()
