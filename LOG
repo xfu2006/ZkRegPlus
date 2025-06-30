@@ -17159,14 +17159,47 @@ Goal 2. Design
 	[d] regression testing -> now cost 4757 (+300) -> 10n
 		unofrtunately unavoidable.  
 			6n is unavoidable, but 3n is used anyway in other gadget.
-
-
-	-- TODO --
-	[d] recover par_iter()
+	[e] regression 1 and 2
+	[f] regression 2-> DONE working
 
 Goal 2. Writing
 	[a] quickly read IntegriDB
 	[b] cite work
+
+Monday 06/30/2025
+LOC: (gadget): 10843 (+70)
+LOC: (data): 8448 (+0)
+Goal 1. implement the first step
+	[a] read existing code
+	[b] retrieve subsig 
+	[c] retrieve last step
+
+Goal 2. experiment with config of critical section word limit
+	to cut map to sig size
+	[a] check why gen_eval_subsig_by_sqcombo needs inp_subsigs 
+		it's passed from the unit tester
+		-> it's the last dummy round -> ok
+	[b] design: the proof should have
+		subsig, laststep, max_step, eval_res
+	[c] extract subsig and step pair -> DONE
+
+Goal 3. continue implementation
+	[a] extract max_step for subsig
+	[b] compare and genreate result
+	[c] print res
+	[d] check why last step res is 2 -> fixed
+
+Goal 4. create sid_last_step
+	[a] copy code fro discharge
+	[b] add res
+	[c] check output
+
+Goal 5. verify the combo
+	[a] extract data
+	[b] extract the last step
+	[c] check validity of sid_last_step
+	[d] check the result
+
 
 
 

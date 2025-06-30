@@ -1,4 +1,6 @@
 /* Created 05/06/2025
+   Implementation initially completed 06/11/2025
+   Further improvement to cut cost and completed: 06/26/2025
 */
 //! This gadget is used for discharging subsigs using the streaming alg.
 //! It produces the sigs that discharged.

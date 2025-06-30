@@ -30,7 +30,7 @@ use crate::gadgets::{
 //	db::{assert_logup, verify_encoded_table, assert_well_formed_sorted},
 	traits::{
 		Container, ComponentAdvice,
-	//	Col,
+		Col,
 		IDX_WORD, IDX_INP,IDX_DATA,
 		IDX_OUP, 
 		//IDX_SI_INP, IDX_SI_OUP,
@@ -38,7 +38,10 @@ use crate::gadgets::{
 	},
 	discharge_adv::{StepQueue,DischargeAdvCapacity,StepQueueType},
 };
-use data_processor::type_def::SubsigStepStore;
+use data_processor::{
+	type_def::{SubsigStepStore,TriVal},
+	clam_db::{RANGE2,ID_ENCODED_NORMAL_STEP, ID_ENCODED_LAST_STEP},
+};
 use folding_schemes::folding::foldpot::{
 	sigma_ir1cs::{
 		SigmaGadget,
@@ -47,7 +50,7 @@ use folding_schemes::folding::foldpot::{
 		Capacity
 	},
 	container_config::{ContainerConfig},
-	//circuits_super::field_to_usize,
+	circuits_super::field_to_usize,
 };
 use ark_r1cs_std::{
 	fields::{ 
@@ -56,7 +59,7 @@ use ark_r1cs_std::{
 	},
 	//alloc::AllocVar,
 	//eq::EqGadget,
-	//R1CSVar,
+	R1CSVar,
 };
 use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef};
 // -----------------------------------------------
@@ -88,7 +91,6 @@ pub struct ComputeSigAdvAdvice<F:PrimeField>{
 
 	/// capacity
 	pub capacity: ComputeSigAdvCapacity,
-
 }
 
 #[allow(dead_code)]
@@ -172,34 +174,99 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		Self{capacity: Clone::clone(capacity), stmt_container}
 	}
 
-	#[allow(dead_code)]
+	/// generate the evaluation results for atomic subsigs using
+	/// step queue. The basic idea is to examin the last step reached
+	/// for a subsig. If it is the max step as defined (and there are
+	/// valid locations), the result is Maybe, otherwise the result is
+	/// False.
+	/// -- see the paper definition or approx_eval_pm_ bounds_subsig in clamav.rs.
 	fn gen_eval_subsig_by_sq_combo(
 		inp_subsigs: &Vec<F>,
-		_sq_res: &Rc<RefCell<Container<F>>>,
-		_capacity: &ComputeSigAdvCapacity,
-		_subsig_store_info: &SubsigStepStore,
+		sq_res: &Rc<RefCell<Container<F>>>, //already sorted on subsig_step
+		capacity: &ComputeSigAdvCapacity,
+		subsig_store_info: &SubsigStepStore,
 	)->Rc<RefCell<Container<F>>>{
-		//REMOVE LATER --------------
-		println!("DEBUG USE 6011: inp_subsigs: ----");
-		for i in 0..inp_subsigs.len(){
-			println!(" -- i: {}, subsig: {}", i, inp_subsigs[i]);
-		}
-		//REMOVE LATER -------------- ABOVE
-
-		/*
-		//1. generate the column sq_res_subsig and use the sid
-		// to prove the binding
-		sq_res.to_container("sq_res", false, true, false,
-			&subsig_store_info);
-		let sq_subsig = sq_res.subsigs.iter().map(|subsig|{
-			let item_num = sq_res.store_items.get(subsig)
-				.expect(&format!("cannot find record for subsig: {}", subsig))
-				.len();
-			vec![*subisg; item_num]
-		}).flatten().collect::<Vec<F>>();
-		*/
-
+		//0. init data
 		let res = Container::<F>::new("eval_res_combo");
+		assert!(inp_subsigs.len()<=capacity.subsigs);
+		let pad = vec![F::zero(); capacity.subsigs-inp_subsigs.len()];
+		let inp_subsigs = [&pad[..], &inp_subsigs[..]].concat();
+		let sq_res = sq_res.borrow().duplicate_as_external_adv(-1,
+			Some("discharge_adv_stmt bwd_steps_queue sq_res2".to_string()),
+			Some("sq_res".to_string())); //so later we do not have to create copy
+										 //in validate.
+
+		//1. extract subsig, and its last step from sq_res
+		let vec_subsig = sq_res.get_container("subsig").unwrap().borrow().to_vec();
+		let vec_step = sq_res.get_container("step").unwrap().borrow().to_vec();
+		let vec_encoded= sq_res.get_container("encoded").unwrap().borrow().to_vec();
+		assert!(vec_subsig.len()==vec_step.len());
+		assert!(inp_subsigs.len()==capacity.subsigs);
+	
+		//the following loop are based on the assumption that
+		//sq_res is already sorted on (subsig-step), and
+		//its subsig is exactly the inp_subsigs
+		let (n,n2) = (inp_subsigs.len(), vec_subsig.len());
+		let zero = F::zero();
+		let mut vec_last_step= vec![zero;n];
+		let mut inp_subsig_encoded = vec![zero;n]; //corresponds to inp_subsig 
+		vec_last_step[n-1] = vec_step[n2-1];
+		assert!(inp_subsigs[n-1]==vec_subsig[n2-1]);
+		inp_subsig_encoded[n-1]=vec_encoded[n2-1];
+		let mut cur_idx = n-2;
+		for j in 1..n2{//from last to first
+			let i = n2-j;
+			if vec_subsig[i]!=vec_subsig[i-1]{
+				assert!(inp_subsigs[cur_idx]==vec_subsig[i-1]);
+				vec_last_step[cur_idx]=vec_step[i-1];
+				inp_subsig_encoded[cur_idx]=vec_encoded[i-1];
+				cur_idx -=1;
+			}
+		}
+		//now set the zero entries
+		while cur_idx>0{
+			assert!(inp_subsigs[cur_idx]==zero);
+			inp_subsig_encoded[cur_idx]=vec_encoded[0];
+			cur_idx-=1;
+		}
+
+		//2. extract the max_step for subsig
+		let v_false = F::from(TriVal::False as u8);
+		let v_maybe = F::from(TriVal::Maybe as u8);
+		let mut vec_res = vec![v_false; n];
+		let mut sid_last_step= vec![zero; n];
+		for i in 0..n{
+			if inp_subsigs[i]!=zero{//zero entries already set
+				let info = subsig_store_info.subsig_to_steps
+					.get(&field_to_usize(&inp_subsigs[i])).expect(
+					&format!("cannot find info for subsig: {}", inp_subsigs[i]));
+				let max_step = F::from(info.vec_pm_bounds.len() as u64);
+				assert!(max_step>=vec_last_step[i]);
+				let b_last_step = max_step==vec_last_step[i];
+				vec_res[i] = if b_last_step {v_maybe} else {v_false};
+				let tag = if b_last_step {ID_ENCODED_LAST_STEP} else
+					{ID_ENCODED_NORMAL_STEP};
+				let sid = SubsigStepStore::gen_step_tbl_id(
+					inp_subsig_encoded[i], tag);
+	
+				println!("DEBUG USE 6102: i: {}, last_step: {}, res: {}, tag: {}, sid: {}", i, vec_last_step[i], vec_res[i], tag, sid);
+				sid_last_step[i] = sid;
+			}
+		}
+
+		//3. add the columns (last_step, res)
+		assert!(vec_res.len()==n);
+		let frg = F::from(RANGE2);
+		res.borrow_mut().add_container(Rc::new(RefCell::new(sq_res)));
+		res.borrow_mut().add_col(Col::new(inp_subsigs, "inp_subsig", IDX_DATA));
+		res.borrow_mut().add_col(Col::new(vec![frg;n], "sid_inp_subsig", 
+			IDX_SI_DATA));
+		res.borrow_mut().add_col(Col::new(vec_last_step, "last_step", IDX_DATA));
+		res.borrow_mut().add_col(Col::new(sid_last_step, "sid_last_step", 
+			IDX_SI_DATA));
+		res.borrow_mut().add_col(Col::new(vec_res, "subsig_raw_eval", IDX_DATA));
+		res.borrow_mut().add_col(Col::new(vec![frg;n], "sid_subsig_raw_eval", IDX_SI_DATA));
+
 		res
 	}
 
@@ -264,12 +331,54 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 	/// validate forward_step_queue combo (info and prf) are valid
 	/// This corresponds to the gen_forward_steps_queue_combo
 	fn validate_eval_subsig_by_sq_combo(&self, 
-		_eval_res_combo: &Container<FpVar<F>>, 
+		eval_res_combo: &Container<FpVar<F>>, 
 		_r1: FpVar<F>,
 		_r2: FpVar<F>,
 		_cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
-		// TO CONTINUE 1
+		//0. retrieve data from combo
+		let names = ["inp_subsig", "last_step", "subsig_raw_eval"];
+		let cols = names.iter().map(|n|
+			eval_res_combo.get_container(n).unwrap().borrow().to_vec()
+		).collect::<Vec<Vec<FpVar<F>>>>();
+		let (inp_subsig, last_step, subsig_raw_eval) = (&cols[0],&cols[1],&cols[2]);
+		let sid_cols = names.iter().map(|n|
+			eval_res_combo.get_container(&format!("sid_{}",n))
+				.unwrap().borrow().to_vec()
+		).collect::<Vec<Vec<FpVar<F>>>>();
+		let sid_last_step = &sid_cols[1]; //only need to check this
+		let n = inp_subsig.len();
+		//REMOVE LATER ----------
+		println!("DEBUG USE 6201: === dump of eval_res combo ==");
+		for i in 0..n{
+			println!(" -- i: {}, subsig: {}, last-step: {}, res: {}, sid_last_step: {}", 
+				i, inp_subsig[i].value()?, last_step[i].value()?, 
+				subsig_raw_eval[i].value()?, sid_last_step[i].value()?);
+		}
+		//REMOVE LATER ---------- ABOVE
+			
+		//1. extract subsig, last_step from sq_res 
+		let sq_res=eval_res_combo.get_container("sq_res")
+			.expect("err get sq_res"); //it's actually 
+						//externally refered copy (do not take space)
+		let names = ["subsig", "step", "encoded"];
+		let cols = names.iter().map(|n| 
+			sq_res.borrow().get_container(n).unwrap().borrow().to_vec()
+		).collect::<Vec<Vec<FpVar<F>>>>();
+		let (sq_subsig, sq_step, sq_encoded) = (&cols[0], &cols[1], &cols[2]);
+		let n2 = cols[0].len();
+		//REMOVE LATER ---------------
+		println!("DEBUG USE 6201: === dump of eval_res combo ==");
+		for i in 0..n2{
+			println!(" -- i: {}, subsig: {}, step: {}, encoded: {}", 
+				i, sq_subsig[i].value()?, sq_step[i].value()?, 
+				sq_encoded[i].value()?);
+		}
+		//REMOVE LATER --------------- ABOVE
+
+		//2. verify the correctness of last_step
+
+		//3. verify the correctness of eval_res
 		Ok( () )
 	}
 
@@ -559,10 +668,6 @@ pub mod tests_compute_sig_adv{
 			if i==n_cycles-1{//last cycle for subsig
 				//2.3.5 generate the info for the compute_sig_adv gadget
 				let inp_sigs: Vec<Fr> = vec![Fr::from(sig_id as u64)];
-				//REMOVE LATER -------------
-				println!("DEBUG USE 6011: stmt_desc");
-				stmt_disc.borrow().dump_structure(2);
-				//REMOVE LATER ------------- ABOVE
 				let sq_res = stmt_disc.borrow().search_container("discharge_adv_stmt bwd_steps_queue sq_res2").expect("sq_res err");
 				let adv_sig= ComputeSigAdvAdvice::new(&inp_sigs, &input_subsigs,
 					&sq_res, &cap_sig, steps_store);
@@ -620,8 +725,6 @@ pub mod tests_compute_sig_adv{
 				.borrow().to_vec();
 			inp_loc = locs[locs.len()-1];
 			inp_steps_queue = StepQueue::parse_from(&oup_queue, &cap_disc);
-			println!("---- DEBUG USE 300: new inp_steps_queue is ---");
-			inp_steps_queue.dump();
 		}
 
 		//4. verify the sigs_to_discharge have been discharged
