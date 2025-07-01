@@ -2322,7 +2322,7 @@ pub fn default_clamav_cfg()->ClamavApproxConfig{
 		//max_pm_sections: 32, // OLD
 		max_pm_sections: 10, // OLD
 		//max_pm_sections: 4, //does not help much
-		combination_limit: 127,
+		combination_limit: 127, 
 		//repeat_limit: 1024*6, //OLD -> avg step: 46
 		//repeat_limit: 1024, //-> avg step: 20
 		repeat_limit: 256,  //-> avg step: 19 

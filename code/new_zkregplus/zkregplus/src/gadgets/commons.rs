@@ -92,6 +92,32 @@ pub fn encode_2col<F:PrimeField>(c1: &[F], c2: &[F]
 
 	res
 }
+/// encode multiple columns, this can be regarded as an
+/// extension of encode_2col. Assume each column field is within RANGE2
+/// better version take slces
+pub fn encode_cols_better<F:PrimeField>(cols: Vec<&[F]>, col_ids: Vec<usize>)
+	->Vec<F>{
+	//1. prepare data
+	let (num_cols, n) = (col_ids.len(), cols[col_ids[0]].len());
+	let factor = F::from(1u32<<RANGE2_BIT);	
+	let mut coefs = vec![F::one(); num_cols];
+	for i in 1..coefs.len() {coefs[i] = coefs[i-1] * factor;}
+	coefs.reverse();
+
+	//2. generate the data
+	#[cfg(test)] { for i in 0..num_cols {assert!(cols[col_ids[i]].len()==n);} }
+	let zero = F::zero();
+	let res = (0..n).into_par_iter().map(|i|{
+		let mut res = zero;
+		for col in 0..num_cols{
+			res += cols[col_ids[col]][i] * coefs[col];
+		}
+		res
+	}).collect::<Vec<F>>();
+	assert!(res.len()==n);
+
+	res
+}
 
 /// encode multiple columns, this can be regarded as an
 /// extension of encode_2col. Assume each column field is within RANGE2
@@ -151,6 +177,35 @@ pub fn encode_cols_var<F:PrimeField>(cols: &Vec<Vec<FpVar<F>>>,
 	let cs = cols[0][0].cs();
 	let factor =new_const_var(&cs,F::from(1u32<<RANGE2_BIT));	
 	encode_cols_var_adv(cols, col_ids, &factor)
+}
+/// advanced vesion using the given r as combining factor, better
+///version that allows slice
+pub fn encode_cols_var_adv_better<F:PrimeField>(cols: &Vec<&[FpVar<F>]>, 
+	col_ids: &Vec<usize>, r: &FpVar<F>) ->Vec<FpVar<F>>{
+	//1. prepare data
+	let cs = cols[0][0].cs();
+	let (num_cols, n) = (col_ids.len(), cols[col_ids[0]].len());
+	let factor = r.clone();
+	let one = new_const_var(&cs, F::one());
+	let mut coefs = vec![one; num_cols];
+	for i in 1..coefs.len() {coefs[i] = &coefs[i-1] * &factor;}
+	coefs.reverse();
+
+	//2. generate the data
+	#[cfg(test)] { for i in 0..num_cols {assert!(cols[col_ids[i]].len()==n);} }
+	let zero = new_var(&cs, F::zero());
+	let res = (0..n).into_iter().map(|i|{
+		let mut res = zero.clone();
+		for col in 0..num_cols{
+			let item = if col<num_cols-1 {&cols[col_ids[col]][i] * &coefs[col]}
+				else {cols[col_ids[col]][i].clone()};
+			res = &res + &item;
+		}
+		res
+	}).collect::<Vec<FpVar<F>>>();
+	assert!(res.len()==n);
+
+	res
 }
 
 /// advanced vesion using the given r as combining factor

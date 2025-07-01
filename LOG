@@ -17196,10 +17196,54 @@ Goal 4. create sid_last_step
 
 Goal 5. verify the combo
 	[a] extract data
+		-> eval_res_combo -> OK
+		-> sq_res from previous component
+		-> check data validity
 	[b] extract the last step
 	[c] check validity of sid_last_step
 	[d] check the result
 
+Goal 6. play with config
+	[a] it is useing cons MIN_LEN_BAR = 10 in clamav.rs
+		-> temporarily change to 20
+		when changing to above acdfa to 3.2 million states
+			but 283M final_2_sig records. 
+	[b] recover the MIN_LEN_BAR
+		how about the comination limit?
+	[c] does not change much and recover the original setting
 
+Goal 7. setting
+	[a] well formedness
+	[b] ifnot working, recover the above
+	-- TODO -- need to analyze why does a state have SO MANY sigs
+		associated with it.
 
+Tuesday 07/01/2025
+LOC (gadget): 10948 (+100)
+LOC (data): 8448
+Goal 1. implement the validate function
+	[a] observe discharge code already has last_step encoded
+	[b] design: prve input/last_step pair in sq_res and use a 
+		selector to select the last pair
+	[c] implement gen_m_table
+	[d] validate m_tbl
+	[e] debug why m_tbl not working -> fixed
+	[f] cost: estimate 5n1 + 8n2 
 
+Goal 2. prove subsig-last_step-sid_step is valid from
+	sq_res then can use sid_step to reason about, 
+	when compute encoded needed encoded
+	[a] build column inp_encoded
+	[b] modify encode_cols
+	[c] modify step-2
+
+Goal 3. check validity 
+	[a] check bools
+	[b] low cost conversion to bool 2x
+	[c] now compute the sid_tag
+	[d] should set raw eval to 0 for encode d0a
+	[e] handle data conversion 1,2 to boolA
+	[f] regression test.
+
+Goal 4. Planning
+	[a] write the comments.

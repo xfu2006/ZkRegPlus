@@ -104,11 +104,42 @@ $\underline{\myvec{t}' = \select_{c}(\myvec{t})}$ \newline
  	$\myvec{a} = \sum_{i=1}^k r^i \cdot \myvec{u}^{(i)}$, and
  	$\myvec{b} = (\sum_{i=1}^k r^i \cdot \myvec{u}^{(i)}) \cdot \myvec{c}$
 	(where $\myvec{c}$ serves as a selector). \newline
- (5) Prover and verifier runs lookup argument (ignoring $0$ entries)
+ (5) Prover and verifier runs lookup argument (ignoring $0$ entries
  	$\myvec{a} \lookup \myvec{b}$ and
 	$\myvec{b} \lookup \myvec{a}$. (note that it's linear compleixty).
 
+$\underline{\ttt{wellformed}(\myvec{t})}$ where $\myvec{t}= (\myvec{key}, \myvec{id}, \myvec{val})$
+	\newline
+  {\bf Assumption: } all effective values in range $(0,\ttt{max})$.
+  	Define $n = |\myvec{key}|$. \newline
+  (1) $\myvec{key}$ is sorted, i.e.,
+  	$\forall i\in[n-1]$: $\myvec{key}_i \leq \myvec{key}_{i+1}$. \newline
+  (2) $\myvec{val}[i]=0$ if $i=1$ or $\myvec{key}[i]\neq \myvec{key}[i-1]$. \newline
+  (3) $\myvec{val}[i]=\ttt{max}$ if $i=n$ or $\myvec{key}[i+1]\neq \myvec{key}[i]$. \newline
+  (4) $\myvec{val}[i] \leq \myvec{val}[i+1]$ if $\myvec{key}[i]=\myvec{key}[i+1]$.\newline
+  {\bf Comment:} it can be expanded to table with two-column keys.
 
+$\underline{\myvec{t}^{(3)} = \myvec{t}^{(1)} \join \myvec{t}^{(2)}}$ where $\myvec{t}^{(i)}= (\myvec{key}^{(i)}, \myvec{id}^{(i)}, \myvec{val}^{(i)})$ for
+	$i\in[2]$ and $\myvec{t}^{(3)} = (\myvec{key}^{(3)}, \myvec{id}^{(3)},
+		\myvec{val}^{(3)}, \myvec{id}^{(4)}, \myvec{val}^{(5)})$.
+	\newline
+	(1) Assert $\ttt{wellformed}(\myvec{t}^{(i)})$ for $i\in [2]$. \newline
+	(2) $(\myvec{key}^{(3)}, \myvec{id}^{(3)}, \myvec{val}^{(3)})$
+		is $\ttt{wellformed}$. \newline
+	(3) $((\myvec{key}^{(3)},
+		\myvec{val}^{(3)}), \myvec{id}^{(4)}, 
+		\myvec{val}^{(5)})$
+		is $\ttt{wellformed}$. \newline
+	(4) $(\myvec{key}^{(3)}, \myvec{val}^{(3)})$ 
+		$\lookup$
+		$(\myvec{key}^{(1)}, \myvec{val}^{(1)})$ \newline
+	(5)
+		$(\myvec{key}^{(1)}, \myvec{val}^{(1)})$
+		$\lookup$
+		$(\myvec{key}^{(3)}, \myvec{val}^{(3)})$. \newline
+	(6) $(\myvec{key}^{(3)}, \myvec{id}^{(4)}, \myvec{val}^{(5)})$ 
+		$\lookup$
+		$(\myvec{key}^{(2)}, \myvec{id}^{(2)}, \myvec{val}^{(2)})$ \newline
 
 \caption{Relational Operators Based on Lookup Argument}
 \label{fig:db}

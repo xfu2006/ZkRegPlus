@@ -15,6 +15,11 @@
 //!     Only those with a definite "no" are labled as discharged.
 //!     -> output is the list of discharged sigs.
 
+use rayon::iter::{
+//	IntoParallelRefIterator,
+	ParallelIterator,IntoParallelIterator
+//	, IndexedParallelIterator
+};
 use std::{rc::{Rc}, cell::{RefCell},
 //	collections::{HashMap,HashSet}
 	marker::{PhantomData},
@@ -23,11 +28,11 @@ use std::{rc::{Rc}, cell::{RefCell},
 use ark_ff::{PrimeField};
 
 use crate::gadgets::{
-//	commons::{gen_m_table,check_arr_eq,encode_cols,decode_cols
-//		,new_const_var, check_imply, encode_2col_var, encode_2col_var_adv,
-//		encode_2col, encode_cols_var, check_arr_eq_arr, encode_cols_var_adv, 
-//		check_eq},
-//	db::{assert_logup, verify_encoded_table, assert_well_formed_sorted},
+	commons::{encode_cols_better, gen_m_table, encode_cols_var_adv_better,
+		new_const_var, check_eq},
+	db::{assert_logup, 
+		//verify_encoded_table, assert_well_formed_sorted
+	},
 	traits::{
 		Container, ComponentAdvice,
 		Col,
@@ -40,7 +45,7 @@ use crate::gadgets::{
 };
 use data_processor::{
 	type_def::{SubsigStepStore,TriVal},
-	clam_db::{RANGE2,ID_ENCODED_NORMAL_STEP, ID_ENCODED_LAST_STEP},
+	clam_db::{RANGE2,ID_ENCODED_NORMAL_STEP, ID_ENCODED_LAST_STEP,RANGE2_BIT},
 };
 use folding_schemes::folding::foldpot::{
 	sigma_ir1cs::{
@@ -58,8 +63,9 @@ use ark_r1cs_std::{
 		//FieldVar
 	},
 	//alloc::AllocVar,
-	//eq::EqGadget,
+	eq::EqGadget,
 	R1CSVar,
+	//boolean::Boolean,
 };
 use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef};
 // -----------------------------------------------
@@ -187,6 +193,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		subsig_store_info: &SubsigStepStore,
 	)->Rc<RefCell<Container<F>>>{
 		//0. init data
+		let (zero,one) = (F::zero(), F::one());
 		let res = Container::<F>::new("eval_res_combo");
 		assert!(inp_subsigs.len()<=capacity.subsigs);
 		let pad = vec![F::zero(); capacity.subsigs-inp_subsigs.len()];
@@ -200,6 +207,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		let vec_subsig = sq_res.get_container("subsig").unwrap().borrow().to_vec();
 		let vec_step = sq_res.get_container("step").unwrap().borrow().to_vec();
 		let vec_encoded= sq_res.get_container("encoded").unwrap().borrow().to_vec();
+		let vec_sid_step= sq_res.get_container("si_step").unwrap().borrow().to_vec();
 		assert!(vec_subsig.len()==vec_step.len());
 		assert!(inp_subsigs.len()==capacity.subsigs);
 	
@@ -207,7 +215,6 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		//sq_res is already sorted on (subsig-step), and
 		//its subsig is exactly the inp_subsigs
 		let (n,n2) = (inp_subsigs.len(), vec_subsig.len());
-		let zero = F::zero();
 		let mut vec_last_step= vec![zero;n];
 		let mut inp_subsig_encoded = vec![zero;n]; //corresponds to inp_subsig 
 		vec_last_step[n-1] = vec_step[n2-1];
@@ -236,7 +243,9 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		let mut vec_res = vec![v_false; n];
 		let mut sid_last_step= vec![zero; n];
 		for i in 0..n{
-			if inp_subsigs[i]!=zero{//zero entries already set
+			if inp_subsigs[i]==zero{
+				vec_res[i] = F::from(TriVal::False as u8);
+			}else{
 				let info = subsig_store_info.subsig_to_steps
 					.get(&field_to_usize(&inp_subsigs[i])).expect(
 					&format!("cannot find info for subsig: {}", inp_subsigs[i]));
@@ -254,18 +263,57 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 			}
 		}
 
-		//3. add the columns (last_step, res)
+		//3. proof step1: assert that (encoded,subsig, last_step,sid_last_step) 
+		// is the valid
+		//from sq_res. only need one-direction lookup, since if there
+		//are subsigs missed from sq_res, they won't show up in the
+		//final evaluation result anyway (and cannot be discharged).
+		//it's the loss of prover,and cannot affect soundness (but likley
+		//raise false alarm). So it's ok to do 1-direction lookup.
+		//We actually do tuple (inp_subsig_encoded, inp_subsig, last_step)
+		//to futher bind inp_subsig with inp_subsig_encoded.
+		assert!(vec_subsig[0]==zero, "need to have at least one dummy");
+		let src= encode_cols_better( vec![&inp_subsig_encoded[..],
+			&inp_subsigs[..], &vec_last_step[..], &sid_last_step[..]],
+			vec![0,1,2,3]);
+		let dst_sel = (0..n2).into_par_iter().map(|i|{
+			if i==n2-1{one} else{
+				if vec_subsig[i]==vec_subsig[i+1] {zero} else {one}
+			}
+		}).collect::<Vec<F>>();
+		let dst_combined = encode_cols_better(vec![&vec_encoded[..],
+			&vec_subsig[..], &vec_step[..], &vec_sid_step[..]], vec![0,1,2,3]);
+		let dst = dst_combined.iter().zip(dst_sel.iter()).map(|(a,b)|
+			*a * *b).collect::<Vec<F>>();
+		let mtbl_last_step = gen_m_table(&src, &dst);
+		let sid_m_tbl_last_step = vec![zero; mtbl_last_step.len()];
+
+		//4. proof step2: assert that res is correct regarding that
+		//sid_last_step == sid_max_step. This does not need any proof
+		//generated. on the validator side, use encoded info to do the
+		//verification.
+
+		//5. add the columns (last_step, res)
 		assert!(vec_res.len()==n);
 		let frg = F::from(RANGE2);
 		res.borrow_mut().add_container(Rc::new(RefCell::new(sq_res)));
 		res.borrow_mut().add_col(Col::new(inp_subsigs, "inp_subsig", IDX_DATA));
 		res.borrow_mut().add_col(Col::new(vec![frg;n], "sid_inp_subsig", 
 			IDX_SI_DATA));
+		res.borrow_mut().add_col(Col::new(inp_subsig_encoded, 
+			"inp_subsig_encoded", IDX_DATA));
+		res.borrow_mut().add_col(Col::new(vec![frg;n], "sid_inp_subsig_encoded", 
+			IDX_SI_DATA));
 		res.borrow_mut().add_col(Col::new(vec_last_step, "last_step", IDX_DATA));
 		res.borrow_mut().add_col(Col::new(sid_last_step, "sid_last_step", 
 			IDX_SI_DATA));
 		res.borrow_mut().add_col(Col::new(vec_res, "subsig_raw_eval", IDX_DATA));
 		res.borrow_mut().add_col(Col::new(vec![frg;n], "sid_subsig_raw_eval", IDX_SI_DATA));
+		res.borrow_mut().add_col(Col::new(mtbl_last_step, "mtbl_last_step", 
+			IDX_DATA));
+		res.borrow_mut().add_col(Col::new(sid_m_tbl_last_step, 
+			"sid_mtbl_last_step", IDX_SI_DATA));
+
 
 		res
 	}
@@ -330,18 +378,23 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 
 	/// validate forward_step_queue combo (info and prf) are valid
 	/// This corresponds to the gen_forward_steps_queue_combo
+	/// COST: 10n1 + 8n2 (n1: num of subsigs, n2: sq_res len which
+	///    is determined by discharge_adv::StepQueue::vec_size (perc_pat_in_trace)
 	fn validate_eval_subsig_by_sq_combo(&self, 
 		eval_res_combo: &Container<FpVar<F>>, 
-		_r1: FpVar<F>,
+		r1: FpVar<F>,
 		_r2: FpVar<F>,
-		_cs: ConstraintSystemRef<F>
+		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
 		//0. retrieve data from combo
-		let names = ["inp_subsig", "last_step", "subsig_raw_eval"];
+		let (zero,one)=(new_const_var(&cs,F::zero()),new_const_var(&cs,F::one()));
+		let names = ["inp_subsig", "last_step", "subsig_raw_eval", 
+			"inp_subsig_encoded"];
 		let cols = names.iter().map(|n|
 			eval_res_combo.get_container(n).unwrap().borrow().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
-		let (inp_subsig, last_step, subsig_raw_eval) = (&cols[0],&cols[1],&cols[2]);
+		let (inp_subsig, last_step, subsig_raw_eval, inp_subsig_encoded) = 
+			(&cols[0],&cols[1],&cols[2], &cols[3]);
 		let sid_cols = names.iter().map(|n|
 			eval_res_combo.get_container(&format!("sid_{}",n))
 				.unwrap().borrow().to_vec()
@@ -366,6 +419,8 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 			sq_res.borrow().get_container(n).unwrap().borrow().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
 		let (sq_subsig, sq_step, sq_encoded) = (&cols[0], &cols[1], &cols[2]);
+		let sq_sid_step = sq_res.borrow().get_container("si_step")
+			.unwrap().borrow().to_vec();
 		let n2 = cols[0].len();
 		//REMOVE LATER ---------------
 		println!("DEBUG USE 6201: === dump of eval_res combo ==");
@@ -376,9 +431,69 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		}
 		//REMOVE LATER --------------- ABOVE
 
-		//2. verify the correctness of last_step
+		//2. proof step1: assert that (encoded, subsig, last_step, sid_last_step) 
+		// is the valid
+		//from sq_res. only need one-direction lookup, since if there
+		//are subsigs missed from sq_res, they won't show up in the
+		//final evaluation result anyway (and cannot be discharged).
+		//it's the loss of prover,and cannot affect soundness (but likley
+		//raise false alarm). So it's ok to do 1-direction lookup
+		// COST: 5n1 + 8n2 (where n1 is subsigs, n2 is sq_res length)
+		let src= encode_cols_var_adv_better(&vec![&inp_subsig_encoded[..],
+			&inp_subsig[..], &last_step[..], &sid_last_step], &vec![0,1,2,3], &r1);
+		let dst_sel = (0..n2).into_iter().map(|i|{
+			if i==n2-1{one.clone()} else{ 
+				sq_subsig[i].is_neq(&sq_subsig[i+1]).unwrap().into() 
+			}
+		}).collect::<Vec<FpVar<F>>>();
+		let dst_combined = encode_cols_var_adv_better(
+			&vec![&sq_encoded[..], &sq_subsig[..], &sq_step[..], &sq_sid_step[..]], 
+			&vec![0,1,2,3], &r1);
+		let dst = dst_combined.iter().zip(dst_sel.iter()).map(|(a,b)|
+			a * b).collect::<Vec<FpVar<F>>>();
+		let mtbl_last_step = eval_res_combo.get_container("mtbl_last_step")
+			.unwrap().borrow().to_vec();
+		assert_logup(cs.clone(), &src, &dst, &mtbl_last_step, &r1)?;
 
-		//3. verify the correctness of eval_res
+		//3. proof step2: verify that eval_res is correct.
+		//to save cost: assert eval_res is boolean (either 1 or 0)
+		//and then use it to enforce sid_last_step == sid for MAX_STEP
+		//COST: 5n1  where n1 is the number of subsigs
+
+		let info_id= F::from(0x23001101u32); //tag to avoid collision
+		let f1 = F::from(1u64<<RANGE2_BIT);
+        let factor1 = f1*f1*f1*f1*f1; //models encoded
+        let factor2 = F::from(1u64<<32); //32-bit
+		let part1 = info_id*factor1*factor2 + 
+			F::from(ID_ENCODED_NORMAL_STEP)*factor1;
+		let part1_alt = info_id*factor1*factor2 + 
+			F::from(ID_ENCODED_LAST_STEP)*factor1;
+		let part1_normal_var = new_const_var(&cs, part1);
+		let part1_last_var = new_const_var(&cs, part1_alt);
+		#[cfg(test)]{ assert!(TriVal::False as u8==1u8 && TriVal::Maybe as u8==3);}
+
+		for i in 0..subsig_raw_eval.len(){
+			//3.1 NOTE eval has two possible values:
+			// subsig_raw_val is ALREADY PROVED to be either ONE of
+			// TriVal::False (1), or Trival::Maybe (3)
+			// b_last_step should be true when v is 3 (Maybe) and false if v=1.
+			let b_last_step = subsig_raw_eval[i].is_neq(&one)?;
+
+			//3.3 retrieve existing tag (note that we've already proved
+			//that it is projected from sq_res, and also sq_res has already
+			//proved the validity of sid_step - thus it's the VALID step ID
+			//already proved).
+			let valid_sid = &sid_last_step[i];
+
+			//3.2 build the ACTUAL sid_tag  from subsig_raw_eval
+			//as a nondeterministic advice. We'll verify its correctness
+			let part1 = b_last_step.select(&part1_last_var, &part1_normal_var)?;
+			let sid_act = &part1 + &inp_subsig_encoded[i];
+			let diff = &inp_subsig[i]*&(&sid_act - valid_sid);
+			check_eq(&diff, &zero, "sid check failed")?; //only required for 
+													//non-zero "real" entries
+		}
+
 		Ok( () )
 	}
 
@@ -459,6 +574,16 @@ impl <F:PrimeField> SigmaGadget<F> for ComputeSigAdvGadget<F>{
 		//REMOVE LATER -----------
 		println!("DEBUG USE 9999: num_cons: {}", cs.num_constraints()-n1);
 		//REMOVE LATER ----------- ABOVE
+
+		//TODO: 
+		//3. follow the logic of accepts_approx_pm_bounds in clamav.rs
+		// compute (1) res for gen_regex, (2) res for counter_constraint
+		// (3) result for subsig_count_constraint. Note that
+		// SubsigInfoStore has the related info such as subsig_type, comp_op
+		// comp_num and component_subsigs they are already in
+		// lkup e.g., using (ID_MIN_REQUIRED, ID_COMP_NUM) we can
+		// retrieve the related info. We handle the results in three 
+		// separate tables. (as the last one has dynamic size).
 
 		Ok(())
 	}
