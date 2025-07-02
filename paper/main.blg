@@ -6,43 +6,12 @@ Reallocated singl_function (elt_size=4) to 100 items from 50.
 Reallocated singl_function (elt_size=4) to 100 items from 50.
 Reallocated wiz_functions (elt_size=4) to 6000 items from 3000.
 Database file #1: fu2.bib
-I was expecting a `,' or a `}'---line 22294 of file fu2.bib
- :       
- :       author = {Srinath Setty and Justin Thaler},
-(Error may have been on previous line)
-I'm skipping whatever remains of this entry
-I was expecting a `,' or a `}'---line 22321 of file fu2.bib
- : 
- : author = {Dutta, Moumita and Ganesh, Chaya and Patranabis, Sikhar and Prakash, Shubh and Singh, Nitin},
-(Error may have been on previous line)
-I'm skipping whatever remains of this entry
 Warning--I didn't find a database entry for "Sangria"
 Reallocated singl_function (elt_size=4) to 100 items from 50.
-Warning--no key, author in TwistShout
-Warning--no author, editor, organization, or key in TwistShout
-Warning--to sort, need author or key in TwistShout
-Warning--no key, author in RAMLookup
-Warning--no author, editor, organization, or key in RAMLookup
-Warning--to sort, need author or key in RAMLookup
 Reallocated glb_str_ptr (elt_size=4) to 20 items from 10.
 Reallocated global_strs (elt_size=200001) to 20 items from 10.
 Reallocated glb_str_end (elt_size=4) to 20 items from 10.
-Warning--no key, author in RAMLookup
-Warning--no key, author in RAMLookup
-Warning--no key, author in TwistShout
-Warning--no key, author in TwistShout
 Reallocated singl_function (elt_size=4) to 100 items from 50.
-Warning--no key, author in TwistShout
-Warning--empty author in TwistShout
-Warning--empty year in TwistShout
-Warning--no key, author in RAMLookup
-Warning--empty author in RAMLookup
-Warning--empty year in RAMLookup
-Warning--empty title in RAMLookup
-Warning--empty booktitle in RAMLookup
-Warning--empty publisher in RAMLookup
-Warning--empty address in RAMLookup
-Warning--page numbers missing in both pages and numpages fields in RAMLookup
 Warning--empty publisher in Kaizen
 Warning--empty address in Kaizen
 Warning--empty address in AHV95
@@ -71,6 +40,8 @@ Warning--empty publisher in HyperPlonk
 Warning--empty address in HyperPlonk
 Warning--empty publisher in Marlin
 Warning--empty address in Marlin
+Warning--empty publisher in RAMLookup
+Warning--empty address in RAMLookup
 Warning--empty publisher in SNARKPack
 Warning--empty address in SNARKPack
 Warning--empty publisher in Gonzalez15
@@ -109,43 +80,43 @@ Warning--empty publisher in IntegriDB
 Warning--empty address in IntegriDB
 You've used 92 entries,
             5981 wiz_defined-function locations,
-            2033 strings with 34616 characters,
-and the built_in function-call counts, 89157 in all, are:
-= -- 9688
-> -- 3234
+            2042 strings with 35027 characters,
+and the built_in function-call counts, 90054 in all, are:
+= -- 9851
+> -- 3312
 < -- 0
-+ -- 1090
-- -- 1105
-* -- 6318
-:= -- 9328
-add.period$ -- 456
++ -- 1115
+- -- 1134
+* -- 6390
+:= -- 9479
+add.period$ -- 461
 call.type$ -- 92
-change.case$ -- 674
+change.case$ -- 681
 chr.to.int$ -- 86
-cite$ -- 185
-duplicate$ -- 8104
-empty$ -- 5685
-format.name$ -- 1419
-if$ -- 20339
+cite$ -- 158
+duplicate$ -- 8138
+empty$ -- 5699
+format.name$ -- 1456
+if$ -- 20500
 int.to.chr$ -- 8
 int.to.str$ -- 1
 missing$ -- 165
-newline$ -- 800
-num.names$ -- 624
-pop$ -- 3278
+newline$ -- 809
+num.names$ -- 638
+pop$ -- 3197
 preamble$ -- 2
-purify$ -- 1387
+purify$ -- 1404
 quote$ -- 0
-skip$ -- 3230
+skip$ -- 3270
 stack$ -- 0
-substring$ -- 6175
-swap$ -- 663
+substring$ -- 6302
+swap$ -- 675
 text.length$ -- 0
 text.prefix$ -- 0
 top$ -- 0
 type$ -- 2665
-warning$ -- 85
-while$ -- 467
+warning$ -- 66
+while$ -- 480
 width$ -- 0
-write$ -- 1804
-(There were 2 error messages)
+write$ -- 1820
+(There were 67 warnings)

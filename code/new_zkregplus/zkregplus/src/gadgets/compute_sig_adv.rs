@@ -44,8 +44,9 @@ use crate::gadgets::{
 	discharge_adv::{StepQueue,DischargeAdvCapacity,StepQueueType},
 };
 use data_processor::{
-	type_def::{SubsigStepStore,TriVal},
-	clam_db::{RANGE2,ID_ENCODED_NORMAL_STEP, ID_ENCODED_LAST_STEP,RANGE2_BIT},
+	type_def::{SubsigStepStore,TriVal,SubsigInfoStore,CompOp},
+	clam_db::{RANGE2,ID_ENCODED_NORMAL_STEP, ID_ENCODED_LAST_STEP,RANGE2_BIT,
+		ID_COMP_OP, ID_COMP_NUM},
 };
 use folding_schemes::folding::foldpot::{
 	sigma_ir1cs::{
@@ -64,7 +65,7 @@ use ark_r1cs_std::{
 	},
 	//alloc::AllocVar,
 	eq::EqGadget,
-	R1CSVar,
+	//R1CSVar,
 	//boolean::Boolean,
 };
 use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef};
@@ -160,21 +161,31 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 	/// Given the StepQueue (result of bwd_prf) from the DischargeAdvGadget
 	/// Generate the list of signatures that are discharged.
 	pub fn new(
-		_inp_sigs: &Vec<F>,
+		acdfa_id: u32,
+		inp_sigs: &Vec<F>,
 		inp_subsigs: &Vec<F>,
 		sq_res: &Rc<RefCell<Container<F>>>, // the steps_queue from the DischargeAdv
 		capacity: &ComputeSigAdvCapacity,
 		subsig_store_info: &SubsigStepStore,
+		subsig_extra_info: &SubsigInfoStore,
 	) ->Self{
 		let stmt_container = Container::<F>::new("compute_sig_adv_stmt");
 
 		//1. evaluate "atomic" subsigs based on sq_res
-		let eval_res_combo = Self::gen_eval_subsig_by_sq_combo(
-			inp_subsigs, sq_res, &capacity, subsig_store_info);
+		let pad = vec![F::zero(); capacity.subsigs-inp_subsigs.len()];
+		let inp_subsigs = [&pad[..], &inp_subsigs[..]].concat();
+		let pad2 = vec![F::zero(); capacity.sigs-inp_sigs.len()];
+		let _inp_sigs = [&pad2[..], &inp_sigs[..]].concat();
+
+		let (eval_res_combo, raw_res) = Self::gen_eval_subsig_by_sq_combo(
+			&inp_subsigs, sq_res, &capacity, subsig_store_info);
 		stmt_container.borrow_mut().add_container(eval_res_combo);
 
 		//2. based on non-deterministic advice of eval order
 		// compute sig_res
+		let synthesis_res_combo = Self::gen_synthesis_subsig_combo(acdfa_id,
+			&inp_subsigs, &raw_res, &capacity, subsig_store_info, subsig_extra_info);
+		stmt_container.borrow_mut().add_container(synthesis_res_combo);
 
 		//3. allocates the discharged_sigs buffer
 		Self{capacity: Clone::clone(capacity), stmt_container}
@@ -185,19 +196,18 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 	/// for a subsig. If it is the max step as defined (and there are
 	/// valid locations), the result is Maybe, otherwise the result is
 	/// False.
+	/// Return (res_combo, raw_eval_result)
 	/// -- see the paper definition or approx_eval_pm_ bounds_subsig in clamav.rs.
 	fn gen_eval_subsig_by_sq_combo(
 		inp_subsigs: &Vec<F>,
 		sq_res: &Rc<RefCell<Container<F>>>, //already sorted on subsig_step
 		capacity: &ComputeSigAdvCapacity,
 		subsig_store_info: &SubsigStepStore,
-	)->Rc<RefCell<Container<F>>>{
+	)->(Rc<RefCell<Container<F>>>,Vec<F>){
 		//0. init data
 		let (zero,one) = (F::zero(), F::one());
 		let res = Container::<F>::new("eval_res_combo");
-		assert!(inp_subsigs.len()<=capacity.subsigs);
-		let pad = vec![F::zero(); capacity.subsigs-inp_subsigs.len()];
-		let inp_subsigs = [&pad[..], &inp_subsigs[..]].concat();
+		assert!(inp_subsigs.len()==capacity.subsigs);
 		let sq_res = sq_res.borrow().duplicate_as_external_adv(-1,
 			Some("discharge_adv_stmt bwd_steps_queue sq_res2".to_string()),
 			Some("sq_res".to_string())); //so later we do not have to create copy
@@ -297,34 +307,127 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		assert!(vec_res.len()==n);
 		let frg = F::from(RANGE2);
 		res.borrow_mut().add_container(Rc::new(RefCell::new(sq_res)));
-		res.borrow_mut().add_col(Col::new(inp_subsigs, "inp_subsig", IDX_DATA));
+		res.borrow_mut().add_col(Col::new(inp_subsigs.clone(), 
+			"inp_subsig", IDX_DATA));
 		res.borrow_mut().add_col(Col::new(vec![frg;n], "sid_inp_subsig", 
 			IDX_SI_DATA));
 		res.borrow_mut().add_col(Col::new(inp_subsig_encoded, 
 			"inp_subsig_encoded", IDX_DATA));
-		res.borrow_mut().add_col(Col::new(vec![frg;n], "sid_inp_subsig_encoded", 
+		res.borrow_mut().add_col(Col::new(vec![zero;n], "sid_inp_subsig_encoded", 
 			IDX_SI_DATA));
 		res.borrow_mut().add_col(Col::new(vec_last_step, "last_step", IDX_DATA));
 		res.borrow_mut().add_col(Col::new(sid_last_step, "sid_last_step", 
 			IDX_SI_DATA));
-		res.borrow_mut().add_col(Col::new(vec_res, "subsig_raw_eval", IDX_DATA));
+		res.borrow_mut().add_col(Col::new(vec_res.clone(), 
+			"subsig_raw_eval", IDX_DATA));
 		res.borrow_mut().add_col(Col::new(vec![frg;n], "sid_subsig_raw_eval", IDX_SI_DATA));
 		res.borrow_mut().add_col(Col::new(mtbl_last_step, "mtbl_last_step", 
 			IDX_DATA));
 		res.borrow_mut().add_col(Col::new(sid_m_tbl_last_step, 
 			"sid_mtbl_last_step", IDX_SI_DATA));
+		(res, vec_res)
+	}
 
+	/// Given the raw evaluation result for each subsig,
+	/// return the synthesis result, based on subsig type.
+	/// It evaluates all 3 possible outcomes: (1) regular subsig -
+	///    which is the raw result, (2) counter constraint
+	///    (3) result for component subsigs.
+	/// then pick the final result from the three.
+	/// the column "subsig_final_result" is the real evaluation result
+	/// for a subsig.
+	/// see accpets_approx_pm_bounds() in clamav.rs for the processing logic
+	fn gen_synthesis_subsig_combo(
+		acdfa_id: u32, //the acdfa_id for the combo that includes info_stores
+		inp_subsigs: &Vec<F>,
+		raw_result: &Vec<F>, //one to one corresponding to inp_subsig, TriVal
+		capacity: &ComputeSigAdvCapacity,
+		_subsig_store_info: &SubsigStepStore,
+		subsig_store_extra_info: &SubsigInfoStore,
+	)->Rc<RefCell<Container<F>>>{
+		//0. retrieve data 
+		let n1 = inp_subsigs.len(); //capacity num_subsigs
+		assert!(n1==capacity.subsigs);
+		let (zero,_one) = (F::zero(), F::one());
+		let res = Container::<F>::new("synthesis_res_combo");
+
+		//1. prepare the result of general_regex
+		let gen_regex_res = raw_result;
+		println!("DEBUG USE gen_regex_res.len: {}, inp_subsigs: {}", 
+			gen_regex_res.len(), inp_subsigs.len());
+		assert!(gen_regex_res.len()==inp_subsigs.len());
+
+		//2. prepare the result for counter_constraint 
+		// the structure for each subsig is
+		// (num, op, counter_res) where counter_res is defined using
+		// logic: case op
+		// NONE => Maybe
+		// LT => !raw_res
+		// EQ => if num!=0 {res} else {!res}
+		// GT => res
+		// We need to tab num and op appropriate usingly ID_COMP_OP
+		//  and ID_COMP_NUM so that we can check them in lookup table
+		let mut vec_op = vec![zero; n1];
+		let mut vec_num = vec![zero; n1];
+		let mut vec_counter_res = vec![zero; n1]; //result for counter constraint 
+		let mut vec_sid_op = vec![zero; n1];
+		let mut vec_sid_num = vec![zero; n1];
+		let vec_sid_counter_res = vec![zero; n1]; //no need to check 
+												  //as res is generated in circ
+		//we use simple for loop here as subsig num is small
+		for i in 0..n1{
+			if !inp_subsigs[i].is_zero(){//for zero dummy entries all vals are 0
+				let subsig = inp_subsigs[i];
+				let f_subsig = field_to_usize(&subsig);
+				let extra_info = subsig_store_extra_info
+					.subsig_to_rec.get(&field_to_usize(&subsig))
+					.expect(&format!("Can't find info for subsig: {}", subsig));
+				let (op, num) = (extra_info.comp_op, extra_info.comp_num);
+				let c_op = CompOp::from(op);
+				let raw_res = TriVal::from(field_to_usize(&gen_regex_res[i]) as u8);
+				let count_res = match c_op{
+					CompOp::NONE => TriVal::Maybe,
+					CompOp::LT => !raw_res,
+					CompOp::EQ => if num!=0 {raw_res} else {!raw_res},
+					CompOp::GT => raw_res,
+				};
+				let sid_op: F = SubsigInfoStore::gen_info_tbl_id(acdfa_id, 
+					f_subsig, ID_COMP_OP);  
+				let sid_num: F = SubsigInfoStore::gen_info_tbl_id(acdfa_id, 
+					f_subsig, ID_COMP_NUM);  
+				vec_op[i] = F::from(c_op as u8);
+				vec_num[i] = F::from(num as u32);
+				vec_counter_res[i] = F::from(count_res as u8);
+				vec_sid_op[i] = sid_op;
+				vec_sid_num[i] = sid_num;
+				println!("DEBUG USE 6101: i: {}, op: {}, num: {}, res: {:?}, counter_res: {}, sid_op: {}, sid_num: {}", i, vec_op[i], vec_num[i], raw_res, vec_counter_res[i], vec_sid_op[i], vec_sid_num[i]);
+
+			}
+		}
+
+		//3. prepare the result for the subsig_count_constraint
+		res.borrow_mut().add_col(Col::new(vec_op, "vec_op", IDX_DATA));
+		res.borrow_mut().add_col(Col::new(vec_sid_op, "sid_op", IDX_SI_DATA));
+		res.borrow_mut().add_col(Col::new(vec_num, "vec_num", IDX_DATA));
+		res.borrow_mut().add_col(Col::new(vec_sid_num, "sid_num", IDX_SI_DATA));
+		res.borrow_mut().add_col(Col::new(vec_counter_res, 
+			"vec_counter_res", IDX_DATA));
+		res.borrow_mut().add_col(Col::new(vec_sid_counter_res, 
+			"sid_counter_res", IDX_SI_DATA));
 
 		res
 	}
+
 
 }
 
 impl <F:PrimeField> ComputeSigAdvGadget<F>{
 	pub fn new(
+		fsm_id: u32, //determines which combo to retrieve info
 		capacity: &ComputeSigAdvCapacity,
 		prev_cfgs: &Vec<ContainerConfig>,
 		store_steps: &SubsigStepStore,
+		store_extra_info: &SubsigInfoStore,
 	)
 	-> Self{
 		//1. create the dummy input and dummy container config.
@@ -348,8 +451,8 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 			&store_steps);
 
 		//3. create advice
-		let dummy_adv = ComputeSigAdvAdvice::new(
-			&sigs, &subsigs, &sq_res, Clone::clone(&capacity), store_steps
+		let dummy_adv = ComputeSigAdvAdvice::new(fsm_id, &sigs, &subsigs, &sq_res, 
+			Clone::clone(&capacity), store_steps, store_extra_info
 		);
 		let mut vec_cfg = prev_cfgs.clone();
 		vec_cfg.push(dummy_adv.stmt_container.borrow().get_cfg());
@@ -376,8 +479,8 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		}
 	}
 
-	/// validate forward_step_queue combo (info and prf) are valid
-	/// This corresponds to the gen_forward_steps_queue_combo
+	/// validate raw_eval result based on step queue is correct for
+	/// each subsig.
 	/// COST: 10n1 + 8n2 (n1: num of subsigs, n2: sq_res len which
 	///    is determined by discharge_adv::StepQueue::vec_size (perc_pat_in_trace)
 	fn validate_eval_subsig_by_sq_combo(&self, 
@@ -400,15 +503,6 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 				.unwrap().borrow().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
 		let sid_last_step = &sid_cols[1]; //only need to check this
-		let n = inp_subsig.len();
-		//REMOVE LATER ----------
-		println!("DEBUG USE 6201: === dump of eval_res combo ==");
-		for i in 0..n{
-			println!(" -- i: {}, subsig: {}, last-step: {}, res: {}, sid_last_step: {}", 
-				i, inp_subsig[i].value()?, last_step[i].value()?, 
-				subsig_raw_eval[i].value()?, sid_last_step[i].value()?);
-		}
-		//REMOVE LATER ---------- ABOVE
 			
 		//1. extract subsig, last_step from sq_res 
 		let sq_res=eval_res_combo.get_container("sq_res")
@@ -422,14 +516,6 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		let sq_sid_step = sq_res.borrow().get_container("si_step")
 			.unwrap().borrow().to_vec();
 		let n2 = cols[0].len();
-		//REMOVE LATER ---------------
-		println!("DEBUG USE 6201: === dump of eval_res combo ==");
-		for i in 0..n2{
-			println!(" -- i: {}, subsig: {}, step: {}, encoded: {}", 
-				i, sq_subsig[i].value()?, sq_step[i].value()?, 
-				sq_encoded[i].value()?);
-		}
-		//REMOVE LATER --------------- ABOVE
 
 		//2. proof step1: assert that (encoded, subsig, last_step, sid_last_step) 
 		// is the valid
@@ -497,6 +583,16 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		Ok( () )
 	}
 
+	/// validate syntesis of subsig is correct.
+	fn validate_synthesis_subsig_combo(&self, 
+		_eval_res_combo: &Container<FpVar<F>>, 
+		_synthesis_res_combo: &Container<FpVar<F>>, 
+		_r1: FpVar<F>,
+		_r2: FpVar<F>,
+		_cs: ConstraintSystemRef<F>
+	) ->Result<(), SynthesisError>{
+		Ok( () )
+	}
 }
 
 impl <F:PrimeField> SigmaGadget<F> for ComputeSigAdvGadget<F>{
@@ -560,6 +656,7 @@ impl <F:PrimeField> SigmaGadget<F> for ComputeSigAdvGadget<F>{
 		//REMOVE LATER -----------
 		let n1 = cs.num_constraints(); 
 		//REMOVE LATER ----------- ABOVE
+
 		//1. retrive the statement instance and get all parts
 		let cfg = self.get_container_cfg().expect("container cfg not set!");
 		let stmt = Container::<FpVar<F>>::load_from(i, wtns_cfg, wtns, &cfg)?;
@@ -584,6 +681,9 @@ impl <F:PrimeField> SigmaGadget<F> for ComputeSigAdvGadget<F>{
 		// lkup e.g., using (ID_MIN_REQUIRED, ID_COMP_NUM) we can
 		// retrieve the related info. We handle the results in three 
 		// separate tables. (as the last one has dynamic size).
+		let synthesis_res_combo = stmt.get_container("synthesis_res_combo")?;
+		self.validate_synthesis_subsig_combo(&eval_res_combo.borrow(),
+			&synthesis_res_combo.borrow(), r1.clone(), r2.clone(), cs.clone())?;
 
 		Ok(())
 	}
@@ -725,6 +825,7 @@ pub mod tests_compute_sig_adv{
 		let store_id = if tcase.b_ised{sig_id} else {0};//0 for all
 		let fsm_id = ClamavDB::<Fr>::pm_acdfa_id(store_id, b_igc);
 		let steps_store = &bundle.vec_subsig_step_stores[store_id]; 
+		let steps_extra_store = &bundle.vec_subsig_info_stores[store_id]; 
 
 		//1.4 capacilities of fsm and discharge components
 		let wlen = 2usize;
@@ -794,8 +895,8 @@ pub mod tests_compute_sig_adv{
 				//2.3.5 generate the info for the compute_sig_adv gadget
 				let inp_sigs: Vec<Fr> = vec![Fr::from(sig_id as u64)];
 				let sq_res = stmt_disc.borrow().search_container("discharge_adv_stmt bwd_steps_queue sq_res2").expect("sq_res err");
-				let adv_sig= ComputeSigAdvAdvice::new(&inp_sigs, &input_subsigs,
-					&sq_res, &cap_sig, steps_store);
+				let adv_sig= ComputeSigAdvAdvice::new(fsm_id, &inp_sigs, &input_subsigs,
+					&sq_res, &cap_sig, steps_store, steps_extra_store);
 				let stmt_sig = adv_sig.stmt_container;
 				let cfg_sig = stmt_sig.borrow().get_cfg();
 
@@ -819,9 +920,12 @@ pub mod tests_compute_sig_adv{
 
 				//2.7 create the discharge gadget
 				let lkup_share_size = 4usize;
-				let mut dcg = ComputeSigAdvGadget::<Fr>::new(&cap_sig, 
+				let mut dcg = ComputeSigAdvGadget::<Fr>::new(
+					fsm_id,
+					&cap_sig, 
 					&vec![cfg_wea.clone(), cfg_faa.clone(), cfg_disc.clone()],
 					&bundle.vec_subsig_step_stores[0], //store_steps for sed
+					&bundle.vec_subsig_info_stores[0], //extra info
 				);
 				dcg.set_container_cfg(vec_cfg.clone().into(),3); //4'th comp
 				let rg = Rc::new(dcg);
@@ -864,11 +968,13 @@ pub mod tests_compute_sig_adv{
 			"sig1;Engine:51-255,Target:0;0&1;/abc..123/;/123....abc/",
 			"sig2;Engine:51-255,Target:0;0&1;/def.*234.*567/;/234....def/",
 			"sig3;Engine:51-255,Target:0;0&1;/fgh.*1234......56...78/;/56......fgh/",
+			*/
 			//sig4: counter constraint
 			"sig4;Engine:51-255,Target:0;0>2;/abc..123/",
-			*/
+			/* RECOVER LATER
 			//sig5: subsig counter constraint (here min req is 2)
 			"sig5;Engine:51-255,Target:1;(0|1)>1,2;/abc..123/;/56...fgh/",
+			*/
 		].iter().map(|x| x.to_string()).collect::<Vec<String>>();
 		let needs_dfa = vec![];
 		let needs_ised= vec![];
@@ -901,11 +1007,13 @@ pub mod tests_compute_sig_adv{
 			//first 78 kills the 1st 56, which then kills the first three
 			//1234
 			Tcase::new("fghxx1234xx1234xx1234x1234x56xxx56xxx78xx78xx", "sig3", false, false), 
+			*/ 
 			//5. fails sig4 coz gap because missing one appearance
 			Tcase::new("abcdd123xabcxx123xxabcxx333", "sig4", false, false), //b_ised=F, igc=F
-			*/
+			/* RECOVER LATER
 			//6. fails sig5 coz combined pattern 1 and 2 missing 1 time.
 			Tcase::new("abcdd123xabx56xxxfghxxabcdd122", "sig5", false, false), //b_ised=F, igc=F
+			*/
 		];
 
 		for tc in testcases{

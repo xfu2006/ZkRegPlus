@@ -337,3 +337,17 @@ In essence, the data structures involved can be represented as
 relational database tables, and the proof can be decomposed into
 a number of relational operations such as table union, table projection,
 table join, and query range.
+
+TODO: need to define the $k$ applications of the streaming function.
+
+\begin{theorem} Given a regular expression $r$, and a word $\myvec{w} = 
+\myvec{w}^{(1)} \concat ... \myvec{w}^{(k)}$ be concatenation
+of $k$ chunks. Let $\rho$ be the
+ocurrence of all related patterns of $r$ in $\myvec{w}$. 
+Let $\myvec{S}$ and $\db$ be the subsigs and database extracted
+from $r$. Let $\myvec{R}^{(i)}$ be the two column occurence of patterns
+fo running through $\myvec{w}^{(i)}$ the ACDFA of patterns. We always have:
+\[
+\ttt{two\_pass\_sed}(.)^{(k)} = \ttt{eval\_counter\_cs\_std}(\rho,r,\ttt{GT},0)
+\].
+\end{theorem}

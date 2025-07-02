@@ -85,6 +85,18 @@ impl CompOp{
 	}
 }
 
+impl TriVal{
+	pub fn from(v: u8)->Self{
+		match v{
+			1 => TriVal::False,
+			2 => TriVal::True,
+			3 => TriVal::Maybe,
+			_ => panic!("invalid value for TriVal")
+		}
+	}
+}
+
+
 
 /// boolean value to ternary value
 pub fn bool_to_tri(b: bool)->TriVal{

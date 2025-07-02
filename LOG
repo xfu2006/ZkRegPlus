@@ -17247,3 +17247,53 @@ Goal 3. check validity
 
 Goal 4. Planning
 	[a] write the comments.
+
+Wed 07/02/2025
+LOC (gadget): 11128 (+140, ->11240: +120)
+LOC (data): 8448 (-> 8460: +12)
+LOC (circ): 1648 (-> 1681: +33) 
+Total: +160
+Goal 1. implement synthesis
+	[a] determine prototype
+	[b] documentation
+	[c] fix the caller
+
+Goal 2. implement the verification function
+	[a] determine the prototype
+	[b] doc
+	[c] fix caller
+
+Goal 3. design and implement 1st step
+	[a] read the logic of accepts_approx_pm_bounds
+	[b] retrieve data
+	[c] prepare the general_regex
+	[d] add a test case for counter constraint -> DONE
+
+Goal 3. step counter constraint
+	[a] set up the framework
+	[b] retrieve op and num from store
+	[c] check data OK
+
+Goal 4. modify the circ framework to add component
+	[a] do we make it optional? given that subsigs is about
+		1/5 of the steps, the cost would be about 1/5 seems
+		not worth the hassle of optional, just make it mandatory.
+		If necessary, we can later add a boolean flag to make it optional
+	[b] add capacity
+	[c] add advice
+	[d] compnent mapper - line 365
+	[e] regression testing
+	[f] regression testing2 on gen sibs -> somehow it fails due to
+		out of RAM.-> needs to check it later
+
+Goal 4. paper writing
+	[a] add theorem
+
+Goal 6. binary search to find bug
+	[a] looks like first one or two entries causing trouble.
+		likely subsig itself should be in range.
+	[b] fixed. encoded should not be range 2 it has to be detected
+		via code
+	[f] fails entry (1879048194, 73031356671): 10294
+
+-- TODO -- check why it's creating so many states->sig entries?

@@ -58,6 +58,8 @@ use crate::{
 	gadgets::word_extract::{LEGS},
 	gadgets::fsm_adv::{FsmAdvGadget,FsmAdvAdvice,FsmAdvCapacity},
 	gadgets::discharge_adv::{DischargeAdvGadget,DischargeAdvAdvice,DischargeAdvCapacity,StepQueue},
+	gadgets::compute_sig_adv::{ComputeSigAdvCapacity,ComputeSigAdvAdvice,
+		ComputeSigAdvGadget},
 	//gadgets::pack::{PackFinalGadget,PackFinalAdvice},
 	//gadgets::sigs::{GetSigAdvice,SigGadgetCapacity,SigGadgetData,GetSigGadget},
 	gadgets::traits::{
@@ -74,7 +76,7 @@ use data_processor::{
 	//	RANGE2
 	},
 	hex_acdfa::HexACDFA,
-	type_def::{SubsigPatternStore, ClamavSig, SubsigStepStore}
+	type_def::{SubsigPatternStore, ClamavSig, SubsigStepStore,SubsigInfoStore}
 };
 use std::any::Any;
 
@@ -136,16 +138,22 @@ impl SedCapacity{
 		avg_pats_per_subsig: usize,
 		avg_active_pats_per_subsig: usize,
 		perc_pats_in_trace: usize,
+		sigs_sed: usize, //for sed approach to discharge
 	)->Self{
 		let wea_capacity = WordExtractAdvCapacity{max_word_len};
 		let max_nibble_len = max_word_len * LEGS;
 		let faa_capacity = FsmAdvCapacity{max_nibble_len, acdfa_state_part_bits,			subsigs, avg_pats_per_subsig, perc_pats_in_trace};
 		let da_capacity = DischargeAdvCapacity{max_nibble_len, subsigs, avg_active_pats_per_subsig, perc_pats_in_trace};
+		let csa_capacity = ComputeSigAdvCapacity{subsigs, sigs: sigs_sed, max_nibble_len,
+			perc_pats_in_trace};
+			
 		let comp_capacities: Vec<Rc<dyn Capacity>> = vec![
 			Rc::new(wea_capacity),
 			Rc::new(faa_capacity),
 			Rc::new(da_capacity),
+			Rc::new(csa_capacity),
 		];
+
 		Self{comp_capacities}
 	}
 
@@ -163,6 +171,11 @@ impl SedCapacity{
 	pub fn da_capacity(&self)->&DischargeAdvCapacity{
 		self.comp_capacities[2].as_any()
 			.downcast_ref::<DischargeAdvCapacity>().unwrap()
+	}
+
+	pub fn csa_capacity(&self)->&ComputeSigAdvCapacity{
+		self.comp_capacities[3].as_any()
+			.downcast_ref::<ComputeSigAdvCapacity>().unwrap()
 	}
 }
 
@@ -201,6 +214,7 @@ pub struct SedAdvice<F:PrimeField>{
 	pub wd_extract_advice: WordExtractAdvAdvice<F>,
 	pub fsm_adv_advice: FsmAdvAdvice<F>,
 	pub discharge_adv_advice: DischargeAdvAdvice<F>,
+	pub compute_sig_adv_advice: ComputeSigAdvAdvice<F>,
 
 	pub vec_advices: Vec<Rc<dyn ComponentAdvice<F>>>,
 
@@ -267,6 +281,7 @@ impl <F:PrimeField> SedAdvice<F>{
 				//ISED case, there is ONLY 1. (when store_id>1)
 			subsig_pat_store: &SubsigPatternStore,//subsubsig store
 			subsig_step_store: &SubsigStepStore,//steps store
+			subsig_info_store: &SubsigInfoStore,//steps extra_info store
 			sig_to_id: &HashMap<String,usize>, //map from sig to id
 			discharge_info: &Vec<DischargeSigInfo>, //info: subsigs to process
 		)->Self{
@@ -285,6 +300,11 @@ impl <F:PrimeField> SedAdvice<F>{
 		//if 1>0 {panic!("DEBUG USE 101: subsigs to process: {:?}", subsigs_inp);}
 		let subsigs_inp = Self::collect_subsig_ids(vec_sigs_to_discharge,
 			discharge_info, sig_to_id, b_igc, dfa);
+		let inp_sigs = vec_sigs_to_discharge.iter().map(|sig|{
+			let sig_id = sig_to_id.get(&sig.name)
+				.expect(&format!("can't find sig: {}", sig.name));
+			F::from(*sig_id as u64)
+		}).collect::<Vec<F>>();
 
 		let fsm_cap = &capacity.faa_capacity();
 		let fsm_adv_advice = FsmAdvAdvice::<F>
@@ -302,15 +322,25 @@ impl <F:PrimeField> SedAdvice<F>{
 			::new(&pat_loc, &subsigs_inp, fsm_id as u32, 
 				subsig_step_store, &da_cap, &inp_steps_queue_obj);
 
+		let csa_cap = &capacity.csa_capacity();
+		let stmt_disc = &discharge_adv_advice.stmt_container;
+		let sq_res = stmt_disc.borrow().search_container("discharge_adv_stmt bwd_steps_queue sq_res2").expect("sq_res err");
+		let compute_sig_adv_advice = ComputeSigAdvAdvice::<F>::new(
+			fsm_id as u32, &inp_sigs, &subsigs_inp, &sq_res,
+			Clone::clone(&csa_cap), subsig_step_store, subsig_info_store);
+
 		//3. assemble all advices
 		let vec_advices:Vec<Rc<dyn ComponentAdvice<F>>> = vec![
 			Rc::new(wd_extract_advice.clone()),
 			Rc::new(fsm_adv_advice.clone()),
 			Rc::new(discharge_adv_advice.clone()),
+			Rc::new(compute_sig_adv_advice.clone()),
 		];
 
 		Self{wd_extract_advice, fsm_adv_advice, discharge_adv_advice, 
-			vec_advices}
+			compute_sig_adv_advice,
+			vec_advices
+		}
 	}
 }
 
@@ -337,6 +367,7 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 		let acdfa = &bundle.vec_acdfa[store_id];
 		let subsig_pat_store = &bundle.vec_subsig_stores[store_id];
 		let subsig_step_store = &bundle.vec_subsig_step_stores[store_id];
+		let subsig_info_store = &bundle.vec_subsig_info_stores[store_id];
 		let sig_id = if store_id==0{ 0 } else{//ised case
 			let sig_name = &bundle.vec_sig_names[store_id];
 			*clamdb.sig_to_id.get(sig_name).expect(
@@ -355,10 +386,17 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 			&cfgs, subsig_step_store);
 		cfgs.push( g_da.dummy_cfg.clone() );
 
+		let csa_cap = &sed_capacity.csa_capacity();
+		let g_csa = ComputeSigAdvGadget::<F>::new(
+			fsm_id, &csa_cap, &cfgs,
+			subsig_step_store, subsig_info_store);
+		cfgs.push( g_csa.dummy_cfg.clone() );
+
 		let gadgets: Vec<Rc<RefCell<dyn SigmaGadget<F>>>> = vec![ 
 			Rc::new(RefCell::new(g_wea)), //word_extract_adv gadget
 			Rc::new(RefCell::new(g_faa)), //fsm_adv gadget
 			Rc::new(RefCell::new(g_da)), //discharge subsigs via SED
+			Rc::new(RefCell::new(g_csa)), //compute_sig_gadget 
 		];
 
 		Self{
@@ -465,6 +503,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 		
 		let subsig_pat_store = &bundle.vec_subsig_stores[self.store_id];
 		let subsig_step_store = &bundle.vec_subsig_step_stores[self.store_id];
+		let subsig_info_store = &bundle.vec_subsig_info_stores[self.store_id];
 		let discharge_info = if self.store_id ==0{//sed case
 			word_info.vec_sed_sigs_info.clone()
 		}else {
@@ -532,6 +571,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 			&vec_sigs_to_discharge,
 			subsig_pat_store,
 			subsig_step_store,
+			subsig_info_store,
 			&self.clamdb.sig_to_id,
 			&discharge_info
 		);
