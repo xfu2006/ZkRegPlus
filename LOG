@@ -17315,6 +17315,19 @@ Goal 2. verify table data
 		-> in loop retrieve subsig and compute sid
 	[b] vec_num -> DONE
 	[c] what about setting zero entries to remove conditional?
+	[d] check why zero case still not equal?
+	[e] regression test and see if tag for subsig 0 is ok.
+	[f] need to add subsig 0 info -> OK!
+
+Goal 3. verify table data part 2
+	[a] how to model negation?
+		encode op_val = 2 muls
+		check sid = 1
+		-> 3 constraints
+	[b] alternative design: 
+		False -> True (1->2)
+		Myabe -> Maybe (3->3)
+
 
 
 -- TODO -- check why it's creating so many states->sig entries?

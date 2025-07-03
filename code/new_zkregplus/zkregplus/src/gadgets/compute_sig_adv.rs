@@ -29,7 +29,7 @@ use ark_ff::{PrimeField};
 
 use crate::gadgets::{
 	commons::{encode_cols_better, gen_m_table, encode_cols_var_adv_better,
-		new_const_var, check_eq},
+		new_const_var, check_eq, new_var},
 	db::{assert_logup, 
 		//verify_encoded_table, assert_well_formed_sorted
 	},
@@ -61,11 +61,11 @@ use folding_schemes::folding::foldpot::{
 use ark_r1cs_std::{
 	fields::{ 
 		fp::FpVar, 
-		//FieldVar
+		FieldVar
 	},
 	//alloc::AllocVar,
 	eq::EqGadget,
-	//R1CSVar,
+	R1CSVar,
 	//boolean::Boolean,
 };
 use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef};
@@ -353,8 +353,6 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 
 		//1. prepare the result of general_regex
 		let gen_regex_res = raw_result;
-		println!("DEBUG USE gen_regex_res.len: {}, inp_subsigs: {}", 
-			gen_regex_res.len(), inp_subsigs.len());
 		assert!(gen_regex_res.len()==inp_subsigs.len());
 
 		//2. prepare the result for counter_constraint 
@@ -376,33 +374,33 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 												  //as res is generated in circ
 		//we use simple for loop here as subsig num is small
 		for i in 0..n1{
-			if !inp_subsigs[i].is_zero(){//for zero dummy entries all vals are 0
-				let subsig = inp_subsigs[i];
-				let f_subsig = field_to_usize(&subsig);
+			let subsig = inp_subsigs[i];
+			let f_subsig = field_to_usize(&subsig);
+			let (op, num) = if subsig.is_zero(){
+				(CompOp::NONE as u8, 0)
+			}else{
 				let extra_info = subsig_store_extra_info
 					.subsig_to_rec.get(&field_to_usize(&subsig))
 					.expect(&format!("Can't find info for subsig: {}", subsig));
-				let (op, num) = (extra_info.comp_op, extra_info.comp_num);
-				let c_op = CompOp::from(op);
-				let raw_res = TriVal::from(field_to_usize(&gen_regex_res[i]) as u8);
-				let count_res = match c_op{
-					CompOp::NONE => raw_res,
-					CompOp::LT => !raw_res,
-					CompOp::EQ => if num!=0 {raw_res} else {!raw_res},
-					CompOp::GT => raw_res,
-				};
-				let sid_op: F = SubsigInfoStore::gen_info_tbl_id(acdfa_id, 
-					f_subsig, ID_COMP_OP);  
-				let sid_num: F = SubsigInfoStore::gen_info_tbl_id(acdfa_id, 
-					f_subsig, ID_COMP_NUM);  
-				vec_op[i] = F::from(c_op as u8);
-				vec_num[i] = F::from(num as u32);
-				vec_counter_res[i] = F::from(count_res as u8);
-				vec_sid_op[i] = sid_op;
-				vec_sid_num[i] = sid_num;
-				println!("DEBUG USE 6101: i: {}, op: {}, num: {}, res: {:?}, counter_res: {}, sid_op: {}, sid_num: {}", i, vec_op[i], vec_num[i], raw_res, vec_counter_res[i], vec_sid_op[i], vec_sid_num[i]);
-
-			}
+				(extra_info.comp_op, extra_info.comp_num)
+			};
+			let c_op = CompOp::from(op);
+			let raw_res = TriVal::from(field_to_usize(&gen_regex_res[i]) as u8);
+			let count_res = match c_op{
+				CompOp::NONE => raw_res,
+				CompOp::LT => !raw_res,
+				CompOp::EQ => if num!=0 {raw_res} else {!raw_res},
+				CompOp::GT => raw_res,
+			};
+			let sid_op: F = SubsigInfoStore::gen_info_tbl_id(acdfa_id, 
+				f_subsig, ID_COMP_OP);  
+			let sid_num: F = SubsigInfoStore::gen_info_tbl_id(acdfa_id, 
+				f_subsig, ID_COMP_NUM);  
+			vec_op[i] = F::from(c_op as u8);
+			vec_num[i] = F::from(num as u32);
+			vec_counter_res[i] = F::from(count_res as u8);
+			vec_sid_op[i] = sid_op;
+			vec_sid_num[i] = sid_num;
 		}
 
 		//3. prepare the result for the subsig_count_constraint
@@ -587,7 +585,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 	fn validate_synthesis_subsig_combo(&self, 
 		eval_res_combo: &Container<FpVar<F>>, 
 		synthesis_res_combo: &Container<FpVar<F>>, 
-		_r1: FpVar<F>,
+		r1: FpVar<F>,
 		_r2: FpVar<F>,
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
@@ -617,10 +615,6 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 			.unwrap().borrow().to_vec();
 			
 		assert!(gen_regex_res.len()==n);
-		//REMOVE LATER -----------
-		println!(" -- DEBUG USE 6620.1: step 1: get res of gen_regex: num_cons: {}", cs.num_constraints()-n1);
-		let n1 = cs.num_constraints();
-		//REMOVE LATER ----------- ABOVE
 
 		//2. verify the result of counter constraint 
 		// the structure for each subsig is
@@ -647,39 +641,69 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		// the database for the subsig. Mainly we are recomputing
 		// their SID using the algorithm of 
 		// SubsigInfoStore::gen_info_tbl_id() in clam_db.rs
+		// COST: 3n (where n is the number of subsigs)
 		let info_id:u32 = 0x13752405; //just random tag to avoid collision
 		let f1 = F::from(info_id);
 		let factor = F::from(0x100000000 as u64); //32-bit 
 		let f1_var = new_const_var(&cs, f1);
 		let factor_var = new_const_var(&cs, factor);
 		let part1 = &(&f1_var * &factor_var) * &factor_var;
+		let piece_op = new_const_var(&cs, F::from(ID_COMP_OP as u32)); 
+		let piece_num = new_const_var(&cs, F::from(ID_COMP_NUM as u32)); 
 		for i in 0..n{
 			let f3 = &inp_subsigs[i];
 			let f3_fac = f3 * &factor_var; 
 			let prefix = &part1 + &f3_fac;
-			let exp_sid_op = &prefix + &vec_op[i];
-			let exp_sid_num = &prefix + &vec_num[i];
+			let exp_sid_op = &prefix + &piece_op;
+			let exp_sid_num = &prefix + &piece_num;
 			check_eq(&exp_sid_op, &vec_sid_op[i], "sid_op check fails")?;
 			check_eq(&exp_sid_num, &vec_sid_num[i], "sid_op check fails")?;
-			//let f3 = F::from(subsig_id as u32);
-			//let f4 = F::from(piece_id);
 		}
 		//REMOVE LATER -----------
-		println!(" -- DEBUG USE 6620.1: step 2.1: get verify vec_sid_op: num_cons: {}", cs.num_constraints()-n1);
+		println!(" -- DEBUG USE 6620.1: step 2.1: get verify vec_sid_op and vec_sid_num: num_cons: {}", cs.num_constraints()-n1);
 		let n1 = cs.num_constraints();
 		//REMOVE LATER ----------- ABOVE
 
-		//2.2 verify the validity of vec_num (the num is retrieved from databaes)
+		//2.2 verify the calculation of counter_res is correct.
+		// cost: 9n
+		let eq_var = new_const_var(&cs, F::from(CompOp::EQ as u8));
+		let lt_var = new_const_var(&cs, F::from(CompOp::LT as u8));
+		let three_var = new_const_var(&cs, F::from(3u8));
+		let six_var = new_const_var(&cs, F::from(6u8));
+		for i in 0..n{
+			//2.2.1 compute the condition
+			// cost: 5n
+			let cond = &(&vec_op[i] - &lt_var) * 
+				&(&(&vec_op[i]-&eq_var) + &(&r1 * &vec_num[i]));
+			let b_cond = cond.is_zero()?;
+			let i_cond: FpVar<F> = b_cond.clone().into();
 
-		//REMOVE LATER -----------
-		println!(" -- DEBUG USE 6620.1: step 2.2: get verify vec_sid_op: num_cons: {}", cs.num_constraints()-n1);
-		let n1 = cs.num_constraints();
-		//REMOVE LATER ----------- ABOVE
+			//2.2.2 compute the neg_res
+			//we create the using as non-deterministic advice
+			//then verify that it's correct. This saves 1 constraint.
+			//idea: raw_res is already proved (so we are ensured that
+			//  it is either False (1) or Maybe (3).
+			// Consider all combinations of two value added up.
+			//  False + True = 3, True + False = 3
+			//  Maybe + Maybe = 6.
+			// These are the ONLY VALID combinations.
+			// cost: 2n
+			let res_val = gen_regex_res[i].value()?;
+			let tri_res_val = TriVal::from(field_to_usize(&res_val) as u8);
+			let neg_res_val = (!tri_res_val) as u8;
+			let raw_res = &gen_regex_res[i];
+			let neg_raw_res = new_var(&cs, F::from(neg_res_val));
+			check_eq(&(&(raw_res+&neg_raw_res-&three_var)*
+				&(raw_res+&neg_raw_res-&six_var)), &zero, "error checking neg")?;
 
-		//2.3 verify the calculation of counter_res is correct.
-
-		//REMOVE LATER -----------
-		println!(" -- DEBUG USE 6620.1: step 2.3: get verify counter_res: num_cons: {}", cs.num_constraints()-n1);
+			//2.2.3 enforce the conditional assignment
+			// counter_res = if i_condition {!raw_res} else {raw_res}
+			// cost: 2n
+			let exp_res = b_cond.select(&neg_raw_res, raw_res)?;
+			check_eq(&exp_res, &vec_counter_res[i], "err counter_res")?;
+		}
+		//REMOVE LATER ------------
+		println!(" -- DEBUG USE 6620.1: step 2.2: get verify counter_res: num_cons: {}", cs.num_constraints()-n1);
 		let n1 = cs.num_constraints();
 		//REMOVE LATER ----------- ABOVE
 

@@ -783,9 +783,25 @@ impl SubsigInfoStore{
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let max = F::from(max_val as u64);
 
-		let mut tuples = self.subsig_ids.par_iter().map(|subsig_id|{
-			let rec = self.subsig_to_rec.get(subsig_id).expect(
-				&format!("cannot find subsig_id: {}", subsig_id));
+		#[cfg(test)]{
+			assert!(!self.subsig_ids.contains(F::zero()), 
+				"StoreInfoStore.subsig_id should not contain subsig 0");
+		}
+		let subsig_ids = [&[0usize][..], &self.subsig_ids[..]].concat();
+		let mut tuples = subsig_ids.par_iter().map(|subsig_id|{
+			let rec = if *subsig_id==0{
+				SubsigInfoStoreItem{
+					subsig_id: 0,
+					subsig_type: SubSigType::GeneralRegex as u8,
+					comp_op: CompOp::NONE as u8,
+					comp_num: 0u32,
+					min_required: 0usize,
+					component_subsigs: vec![]
+				}
+			}else{
+				self.subsig_to_rec.get(subsig_id).expect(
+					&format!("cannot find subsig_id: {}", subsig_id)).clone()
+			};
 			//1. the subsig_type
 			let tbl_id = Self::gen_info_tbl_id::<F>(acdfa_id, *subsig_id, 
 				ID_SUBSIG_TYPE); 
