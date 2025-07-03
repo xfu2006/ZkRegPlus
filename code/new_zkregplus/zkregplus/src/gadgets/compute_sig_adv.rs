@@ -361,7 +361,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		// the structure for each subsig is
 		// (num, op, counter_res) where counter_res is defined using
 		// logic: case op
-		// NONE => Maybe
+		// NONE => Maybe (this is actually don't care value)
 		// LT => !raw_res
 		// EQ => if num!=0 {res} else {!res}
 		// GT => res
@@ -386,7 +386,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 				let c_op = CompOp::from(op);
 				let raw_res = TriVal::from(field_to_usize(&gen_regex_res[i]) as u8);
 				let count_res = match c_op{
-					CompOp::NONE => TriVal::Maybe,
+					CompOp::NONE => raw_res,
 					CompOp::LT => !raw_res,
 					CompOp::EQ => if num!=0 {raw_res} else {!raw_res},
 					CompOp::GT => raw_res,
@@ -585,12 +585,104 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 
 	/// validate syntesis of subsig is correct.
 	fn validate_synthesis_subsig_combo(&self, 
-		_eval_res_combo: &Container<FpVar<F>>, 
-		_synthesis_res_combo: &Container<FpVar<F>>, 
+		eval_res_combo: &Container<FpVar<F>>, 
+		synthesis_res_combo: &Container<FpVar<F>>, 
 		_r1: FpVar<F>,
 		_r2: FpVar<F>,
-		_cs: ConstraintSystemRef<F>
+		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
+		//REMOVE LATER -----------
+		let n1 = cs.num_constraints();
+		//REMOVE LATER ----------- ABOVE
+		//0. retrieve data from combo
+		let (zero,one)=(new_const_var(&cs,F::zero()),new_const_var(&cs,F::one()));
+		let names = ["vec_op", "vec_num", "vec_counter_res"];
+		let cols = names.iter().map(|n|
+			synthesis_res_combo.get_container(n).unwrap().borrow().to_vec()
+		).collect::<Vec<Vec<FpVar<F>>>>();
+		let (vec_op, vec_num, vec_counter_res) = (&cols[0], &cols[1], &cols[2]);
+		let names = ["sid_op", "sid_num"];
+		let sid_cols = names.iter().map(|n|
+			synthesis_res_combo.get_container(n).unwrap().borrow().to_vec()
+		).collect::<Vec<Vec<FpVar<F>>>>();
+		let (vec_sid_op, vec_sid_num) = (&sid_cols[0], &sid_cols[1]); // no need
+						//to check sid_counter_res as it's computed in circ
+		let  n = vec_op.len();
+		assert!(vec_num.len()==n && vec_counter_res.len()==n);
+
+		//1. retrieve the result of general regex
+		let gen_regex_res = eval_res_combo.get_container("subsig_raw_eval")
+			.unwrap().borrow().to_vec();
+		let inp_subsigs = eval_res_combo.get_container("inp_subsig")
+			.unwrap().borrow().to_vec();
+			
+		assert!(gen_regex_res.len()==n);
+		//REMOVE LATER -----------
+		println!(" -- DEBUG USE 6620.1: step 1: get res of gen_regex: num_cons: {}", cs.num_constraints()-n1);
+		let n1 = cs.num_constraints();
+		//REMOVE LATER ----------- ABOVE
+
+		//2. verify the result of counter constraint 
+		// the structure for each subsig is
+		// (num, op, counter_res) where counter_res is defined using
+		// logic: case op
+		// NONE => raw_res (note: this is like don't care value anyway) 
+		// LT => !raw_res
+		// EQ => if num!=0 {raw_res} else {!raw_res}
+		// GT => raw_res
+		// ------ simplifying the above, we have
+		// ct_res = if op==LT || (op=EQ && num==0) {!raw_res}
+		//			else {raw_res}
+		// consider how to express the if condition:
+		// op==EQ && num==0 can be checked using random factor r1 like
+		//   (op-EQ) + r1*num == 0 [only when both op==EQ and num==0
+		//   it has large probability of equal to zero.
+		// So the if condition is:
+		//  (op-LT) * ( (op-EQ) + r1 * num ) == 0
+		// this costs: 2 + is_eq: 3 = 5 constraints. This looks like
+		// the least costly solution. Otherwise raw encoding using Boolean
+		// directly costs: 3 is_eq: 6 + one and: 1 + one or: 3 = 10 constraints
+
+		//2.1 verify the validity of vec_op and vec_num (the op is retrieved from
+		// the database for the subsig. Mainly we are recomputing
+		// their SID using the algorithm of 
+		// SubsigInfoStore::gen_info_tbl_id() in clam_db.rs
+		let info_id:u32 = 0x13752405; //just random tag to avoid collision
+		let f1 = F::from(info_id);
+		let factor = F::from(0x100000000 as u64); //32-bit 
+		let f1_var = new_const_var(&cs, f1);
+		let factor_var = new_const_var(&cs, factor);
+		let part1 = &(&f1_var * &factor_var) * &factor_var;
+		for i in 0..n{
+			let f3 = &inp_subsigs[i];
+			let f3_fac = f3 * &factor_var; 
+			let prefix = &part1 + &f3_fac;
+			let exp_sid_op = &prefix + &vec_op[i];
+			let exp_sid_num = &prefix + &vec_num[i];
+			check_eq(&exp_sid_op, &vec_sid_op[i], "sid_op check fails")?;
+			check_eq(&exp_sid_num, &vec_sid_num[i], "sid_op check fails")?;
+			//let f3 = F::from(subsig_id as u32);
+			//let f4 = F::from(piece_id);
+		}
+		//REMOVE LATER -----------
+		println!(" -- DEBUG USE 6620.1: step 2.1: get verify vec_sid_op: num_cons: {}", cs.num_constraints()-n1);
+		let n1 = cs.num_constraints();
+		//REMOVE LATER ----------- ABOVE
+
+		//2.2 verify the validity of vec_num (the num is retrieved from databaes)
+
+		//REMOVE LATER -----------
+		println!(" -- DEBUG USE 6620.1: step 2.2: get verify vec_sid_op: num_cons: {}", cs.num_constraints()-n1);
+		let n1 = cs.num_constraints();
+		//REMOVE LATER ----------- ABOVE
+
+		//2.3 verify the calculation of counter_res is correct.
+
+		//REMOVE LATER -----------
+		println!(" -- DEBUG USE 6620.1: step 2.3: get verify counter_res: num_cons: {}", cs.num_constraints()-n1);
+		let n1 = cs.num_constraints();
+		//REMOVE LATER ----------- ABOVE
+
 		Ok( () )
 	}
 }

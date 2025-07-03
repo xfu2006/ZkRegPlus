@@ -744,7 +744,7 @@ impl SubsigInfoStore{
 	/// fit in u32.
 	#[inline(always)]
 	pub fn gen_info_tbl_id<F:PrimeField>(
-		acdfa_id: u32, //the acdfa_id of the bundle 
+		_acdfa_id: u32, //the acdfa_id of the bundle 
 		subsig_id: usize,  //actually 26 bit
 		piece_id: u32,  //like SUBSIG_TYPE_ID, COMP_OP_ID ...
 	)->F{
@@ -752,12 +752,13 @@ impl SubsigInfoStore{
 		//are easily sorted.
 		let info_id:u32 = 0x13752405; //just random tag to avoid collision
 		let f1 = F::from(info_id);
-		let f2 = F::from(acdfa_id);
+		//let f2 = F::from(acdfa_id);
 		let f3 = F::from(subsig_id as u32);
 		let f4 = F::from(piece_id);
 		let factor = F::from(0x100000000 as u64); //32-bit 
 
-		let res = f1*factor*factor*factor + f2*factor*factor + f3*factor + f4;
+		//let res = f1*factor*factor*factor + f2*factor*factor + f3*factor + f4;
+		let res = f1*factor*factor + f3*factor + f4;
 
 		//toal 128-bit
 		res

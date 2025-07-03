@@ -17296,4 +17296,25 @@ Goal 6. binary search to find bug
 		via code
 	[f] fails entry (1879048194, 73031356671): 10294
 
+Thursday 07/03/2025
+LOC (data): 8460
+LOC (gadget): 11236
+Goal 1. implement the verification part
+	[a] init code and regressiontest -> DONE
+	[b] alg doc -> DONE
+	[c] init retrieve data -> DONE
+	[d] get regex_res -> DONE
+
+Goal 2. verify table data
+	[a] vec_op
+		-> how to get acdfa_id? maybe it's not needed as this applies
+			to all subsigs
+		-> change acdfa_id in computing info_id
+		-> regression test
+		-> do part1
+		-> in loop retrieve subsig and compute sid
+	[b] vec_num -> DONE
+	[c] what about setting zero entries to remove conditional?
+
+
 -- TODO -- check why it's creating so many states->sig entries?
