@@ -26,6 +26,7 @@ pub fn quick_discharge_file<F:PrimeField>(fname: &str, db: &ClamavDB<F>,
 		quick_discharge_file_by_crit_bag_pm(
 			fname, &nibbles,
 			&db.vec_sigs,
+			&db.vec_sigs_no_critical_pat,
 			&db.map_crit_pat, &db.map_crit_pat_igc, 
 			&db.dfa_crit, 
 			&db.bundle_subsig.vec_acdfa[0], // dfa_patterns, 

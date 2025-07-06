@@ -57,7 +57,11 @@ vdata: &Vec<FailDischargeRecord>, db: ClamavDB<F>, vlog: &mut Vec<String>){
 			}
 		}
 		flog(LOG1, &format!("=== {} Stats =====", set_name), vlog);
-		flog(LOG1, &format!("   sigs: {}, subsigs: {}, total_steps: {}, avg_steps: {}", set.len(), total_subsigs, total_steps, total_steps/set.len()), vlog);
+		if set.len()==0{
+			flog(LOG1, &format!("   sigs: {}, subsigs: {}, total_steps: {}, avg_steps: {}", set.len(), total_subsigs, total_steps, total_steps/set.len()), vlog);
+		}else{
+			flog(LOG1, &format!("   sigs: {}, subsigs: {}, total_steps: {}, avg_steps: {}", set.len(), total_subsigs, total_steps, "N/A"), vlog);
+		}
 	};
 
 	f_analyze(&set_sed, "SED");

@@ -44,8 +44,8 @@ pub const STATE_BIT:usize =  24;
 
 /// The bit-width of RANGE2 table 
 /// IN PRODUCTION NEEDS TO CHANGE THE SAME SIZE OF STATE_BIT
-pub const RANGE2_BIT: usize = 8;
-//pub const RANGE2_BIT: usize = 26; //(allowing 64M nibbles = 32MB)
+//pub const RANGE2_BIT: usize = 8;
+pub const RANGE2_BIT: usize = 26; //(allowing 64M nibbles = 32MB)
 
 // the following are trival related sub-table ids
 // they are located at the very beginning of the entire lkup
@@ -131,6 +131,9 @@ pub fn check_pad_ratio<F:PrimeField>(col: &Vec<F>, param: &str){
 pub struct ClamavDB<F: PrimeField>{
 	/// vector of signatures
 	pub vec_sigs: Vec<Arc<ClamavSig>>,
+	/// vector of those signatures who do NOT have critical patterns
+	/// which have to be passed to bag of words or SED.
+	pub vec_sigs_no_critical_pat: Vec<Arc<ClamavSig>>,
 	/// critical pattersn
 	vec_crit_pat: Vec<String>,
 	/// critical patterns (for ignore case),
@@ -783,10 +786,8 @@ impl SubsigInfoStore{
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let max = F::from(max_val as u64);
 
-		#[cfg(test)]{
-			assert!(!self.subsig_ids.contains(F::zero()), 
+		assert!(!self.subsig_ids.contains(&0), 
 				"StoreInfoStore.subsig_id should not contain subsig 0");
-		}
 		let subsig_ids = [&[0usize][..], &self.subsig_ids[..]].concat();
 		let mut tuples = subsig_ids.par_iter().map(|subsig_id|{
 			let rec = if *subsig_id==0{
@@ -1011,6 +1012,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		let sigbit_fac2 = sigbit_factor * sigbit_factor;
 
 		let vec_temp =  (0..acdfa.num_acc_states).into_par_iter().map(|i|
+		//let vec_temp =  (0..acdfa.num_acc_states).into_iter().map(|i|
 		{
 			let pats = acdfa.final_to_patterns(i);
 			let vec_sigs = pats.iter().map(|pat|{
@@ -1116,6 +1118,12 @@ impl <F:PrimeField> ClamavDB<F>{
 		let store_items = selected_sigs.par_iter().map(|s|{
 			let sig_id = sig_to_id.get(&s.name)
 				.expect(&format!("can't find sig: {}", s.name));
+			/*
+			//REMOVE LATER ----------------
+			println!("DEBUG USE 6601: dump of sig {:#?}", s);
+			if 1>0{panic!("STOP HERE 6666");}
+			*/
+			//REMOVE LATER ---------------- ABOVE
 			let mut store_items = vec![]; //for store_pat
 			let mut store_step_items = vec![]; //for store_steps
 			let mut store_info_items = vec![]; //for SubsigInfoStore
@@ -1190,6 +1198,12 @@ impl <F:PrimeField> ClamavDB<F>{
 				//5. build the subsig_step_info_store_item 
 				let subsig_obj = &s.vec_subsig_obj[i];
 				if subsig_obj.b_ignore_case==b_igc{
+				/*
+					//REMOVE LATER ------------------
+					println!("=== DEBUG USE 6710: subsig dump ===");
+					println!(" -- {:#?}", subsig_obj);
+					//REMOVE LATER ------------------ ABOVE
+					*/
 					//only add it when the same igc mode
 					let subsig_type = subsig_obj.subsig_type.clone() as u8;
 					let (comp_op, comp_num, min_required, 
@@ -1218,7 +1232,13 @@ impl <F:PrimeField> ClamavDB<F>{
 									acdfa.gen_subsig_id(*sig_id, cid+1)
 								).collect::<Vec<usize>>();
 							vec_component_subsig_ids.sort();
-							(0, 0, min_req, vec_component_subsig_ids)
+							/*
+						//REMOVE LATER -------------
+						println!("\n##### DEBUG USE 7101: dump SubsigCountConstraint: ---");
+						println!(" -- COMPONENT subsigs: {:#?}", vec_component_subsig_ids);
+						//REMOVE LATER ------------- ABOVE
+						*/
+								(0, 0, min_req, vec_component_subsig_ids)
 						},
 					};
 					let item = SubsigInfoStoreItem{subsig_id,
@@ -1228,10 +1248,12 @@ impl <F:PrimeField> ClamavDB<F>{
 						min_required,
 						component_subsigs
 					};
-					//REMOVE LATER ---------------
-					println!("DEBUG USE 6601 dump of new info item");
+					/*
+					//REMOVE LATER -------------
+					println!("\n##### DEBUG USE 101: dump items: ---");
 					item.dump();
-					//REMOVE LATER --------------- ABOVE
+					//REMOVE LATER ------------- ABOVE
+					*/
 					store_info_items.push(item);
 				}//end of check IGC
 			}
@@ -1471,15 +1493,15 @@ impl <F:PrimeField> ClamavDB<F>{
 		let v_sigs:Vec<Arc<ClamavSig>> = subset_lines.iter().map(
 			|s| Arc::new(gen_clamav_sig(s, ClamSigType::General,cfg)) )
 			.collect();
-		let v_sigs = v_sigs.par_iter().map(|s1| {
+		let mut v_sigs = v_sigs.par_iter().map(|s1| {
 			let mut s = s1.as_ref().clone();
 			s.gen_approx_bagwords(cfg);
 			s.gen_approx_pm_bounds(cfg);
 			if set_need_dfa.contains(&s.name){
 				s.set_vec_automaton(cfg);
 			}
-			Arc::new(s)
-		}).collect::<Vec<Arc<ClamavSig>>>();
+			s
+		}).collect::<Vec<ClamavSig>>();
 		if b_perf {flog_perf(LOG1, &format!("Generate signatures"), &mut timer,
 			vlog);}
 		if b_perf {flog_perf(LOG1, &format!("Writing signatures"), &mut timer,
@@ -1488,9 +1510,17 @@ impl <F:PrimeField> ClamavDB<F>{
 		//2. collect critical pattern
 		let mut map_crit_pat = HashMap::<String,Vec<String>>::new();
 		let mut map_crit_pat_igc = HashMap::<String,Vec<String>>::new();
-		for sig in &v_sigs{ 
-			sig.add_critical_pattern(&mut map_crit_pat,&mut map_crit_pat_igc); 
+		for i in 0..v_sigs.len(){ 
+			let b_res = v_sigs[i]
+				.add_critical_pattern(&mut map_crit_pat,&mut map_crit_pat_igc); 
+			v_sigs[i].b_no_crit_pat = !b_res;
 		}
+		let v_sigs = v_sigs.iter().map(|s|
+			Arc::new(s.clone())
+		).collect::<Vec<Arc<ClamavSig>>>();
+		let v_sigs_no_critical_pat = v_sigs.iter().filter(|s| s.b_no_crit_pat)
+			.map(|s| s.clone()).collect::<Vec<Arc<ClamavSig>>>();
+
 		if b_perf {flog_perf(LOG1, &format!("Extract Critial Patterns."), 
 				&mut timer, vlog);}
 		if b_debug{
@@ -1510,11 +1540,12 @@ impl <F:PrimeField> ClamavDB<F>{
 				.collect::<HashSet<String>>();
 			let set_diff = set_sigs2.difference(&set_sigs).cloned()
 				.collect::<HashSet<String>>();
-			if set_diff.len()>0{
-				println!("ERROR: set_diff of computed: {:?}", set_diff);
-				assert!(set_sigs==set_sigs2, 
-					"set_sigs.len(): {} != set_sigs2: {}",
-					set_sigs.len(), set_sigs2.len() );
+			if set_diff.len()>0{//if different it's because v_sigs_no_crit_pat
+				assert!(v_sigs_no_critical_pat.len() == set_diff.len());	
+				//println!("ERROR: set_diff of computed: {:?}", set_diff);
+				//assert!(set_sigs==set_sigs2, 
+				//	"set_sigs.len(): {} != set_sigs2: {}",
+				//	set_sigs.len(), set_sigs2.len() );
 			}
 		}
 
@@ -1576,6 +1607,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		//9. build the object
 		let res = Self{
 			vec_sigs: v_sigs,
+			vec_sigs_no_critical_pat: v_sigs_no_critical_pat,
 			map_crit_pat: map_crit_pat,
 			map_crit_pat_igc: map_crit_pat_igc,
 			vec_crit_pat: vec_crit_pat,
@@ -1704,8 +1736,12 @@ impl <F:PrimeField> ClamavDB<F>{
 			serde_json::from_str(&s_bundle_subsig_igc)
 				.expect("Convert bundle_subsig_igc fails");
 
+		let vec_sigs_no_critical_pat = vec_sigs.iter().filter(|s| s.b_no_crit_pat)
+			.map(|s| s.clone()).collect::<Vec<Arc<ClamavSig>>>();
+
 		let res = ClamavDB{
 			vec_sigs: vec_sigs,
+			vec_sigs_no_critical_pat: vec_sigs_no_critical_pat,
 			vec_crit_pat: vec_crit_pat,
 			vec_crit_pat_igc: vec_crit_pat_igc,
 			vec_bag_words: vec_bag_words,

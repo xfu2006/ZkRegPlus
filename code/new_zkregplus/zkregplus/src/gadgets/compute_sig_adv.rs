@@ -268,7 +268,6 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 				let sid = SubsigStepStore::gen_step_tbl_id(
 					inp_subsig_encoded[i], tag);
 	
-				println!("DEBUG USE 6102: i: {}, last_step: {}, res: {}, tag: {}, sid: {}", i, vec_last_step[i], vec_res[i], tag, sid);
 				sid_last_step[i] = sid;
 			}
 		}
@@ -404,6 +403,34 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		}
 
 		//3. prepare the result for the subsig_count_constraint
+		// see accepts_approx_pm_bounds() handling of SubsigCountConstraint
+		// collect the res of true, maybe, false on subcomponents
+		// res = Ture if cnt_tru>min_required, False if cnt_false>min_required
+		// elase maybe
+		//
+		// Idea: since the vec_components is not fixed, construct the
+		// following table (excluding subsig column which already exists)
+		// (-subsig-, raw_res, cnt_true, cnt_false, cnt_maybe, subsig_cnt_res) 
+		for i in 0..n1{
+			let subsig = inp_subsigs[i];
+			let f_subsig = field_to_usize(&subsig);
+			let (comp_subsigs, min_req) = if subsig.is_zero(){
+				(vec![], 0)
+			}else{
+				let extra_info = subsig_store_extra_info
+					.subsig_to_rec.get(&field_to_usize(&subsig))
+					.expect(&format!("Can't find info for subsig: {}", subsig));
+				println!("DEBUG USE 6101: subsig_id: {}, subsig_type: {}, comp_subsigs: {:#?}, min_req: {}", extra_info.subsig_id, extra_info.subsig_type,
+					extra_info.component_subsigs, extra_info.min_required);
+				(extra_info.component_subsigs.clone(), extra_info.min_required)
+			};
+		}
+		if 1>0 {panic!("STOP HERE 101");}
+
+
+
+
+		//4. construct container
 		res.borrow_mut().add_col(Col::new(vec_op, "vec_op", IDX_DATA));
 		res.borrow_mut().add_col(Col::new(vec_sid_op, "sid_op", IDX_SI_DATA));
 		res.borrow_mut().add_col(Col::new(vec_num, "vec_num", IDX_DATA));
@@ -897,6 +924,7 @@ pub mod tests_compute_sig_adv{
 			"word.txt", 
 			&nibbles_raw,
 			&db.vec_sigs,
+			&db.vec_sigs_no_critical_pat,
 			&db.map_crit_pat, 
 			&db.map_crit_pat_igc, 
 			&db.dfa_crit, 
@@ -1084,13 +1112,14 @@ pub mod tests_compute_sig_adv{
 			"sig1;Engine:51-255,Target:0;0&1;/abc..123/;/123....abc/",
 			"sig2;Engine:51-255,Target:0;0&1;/def.*234.*567/;/234....def/",
 			"sig3;Engine:51-255,Target:0;0&1;/fgh.*1234......56...78/;/56......fgh/",
-			*/
 			//sig4: counter constraint
 			"sig4;Engine:51-255,Target:0;0>2;/abc..123/",
-			/* RECOVER LATER
+			*/
+			///* RECOVER LATER
 			//sig5: subsig counter constraint (here min req is 2)
 			"sig5;Engine:51-255,Target:1;(0|1)>1,2;/abc..123/;/56...fgh/",
-			*/
+			//*/
+
 		].iter().map(|x| x.to_string()).collect::<Vec<String>>();
 		let needs_dfa = vec![];
 		let needs_ised= vec![];
@@ -1123,13 +1152,14 @@ pub mod tests_compute_sig_adv{
 			//first 78 kills the 1st 56, which then kills the first three
 			//1234
 			Tcase::new("fghxx1234xx1234xx1234x1234x56xxx56xxx78xx78xx", "sig3", false, false), 
-			*/ 
 			//5. fails sig4 coz gap because missing one appearance
 			Tcase::new("abcdd123xabcxx123xxabcxx333", "sig4", false, false), //b_ised=F, igc=F
-			/* RECOVER LATER
+			*/ 
+			// /* RECOVER LATER
 			//6. fails sig5 coz combined pattern 1 and 2 missing 1 time.
+			// this is for subsig_count_signature
 			Tcase::new("abcdd123xabx56xxxfghxxabcdd122", "sig5", false, false), //b_ised=F, igc=F
-			*/
+			// */
 		];
 
 		for tc in testcases{

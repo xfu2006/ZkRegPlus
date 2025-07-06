@@ -172,7 +172,9 @@ pub struct ClamavSig{
 	pub vec_subsig_bagwords: Vec<HashSet<Vec<String>>>, 
 	///(optioal) vector of pm_bounds (works for both pm and general if 
 	/// they are approximated).
-	pub vec_subsig_pm_bounds: Vec<Vec<(String, (usize, usize) )>>
+	pub vec_subsig_pm_bounds: Vec<Vec<(String, (usize, usize) )>>,
+	/// will fail crit_pat coz no crit_pat can be extracted
+	pub b_no_crit_pat: bool,
 }
 
 #[derive(Clone,Serialize,Deserialize)]

@@ -17297,8 +17297,9 @@ Goal 6. binary search to find bug
 	[f] fails entry (1879048194, 73031356671): 10294
 
 Thursday 07/03/2025
-LOC (data): 8460
-LOC (gadget): 11236
+LOC (data): 8460 (-> 8492: 30)
+LOC (gadget): 11236 (-> 11352: 120)
+Total: 150
 Goal 1. implement the verification part
 	[a] init code and regressiontest -> DONE
 	[b] alg doc -> DONE
@@ -17319,15 +17320,157 @@ Goal 2. verify table data
 	[e] regression test and see if tag for subsig 0 is ok.
 	[f] need to add subsig 0 info -> OK!
 
-Goal 3. verify table data part 2
+Goal 3. verify table data part 2 design
 	[a] how to model negation?
 		encode op_val = 2 muls
 		check sid = 1
 		-> 3 constraints
 	[b] alternative design: 
-		False -> True (1->2)
-		Myabe -> Maybe (3->3)
+		False -> True (1->2): sum = 3
+		Myabe -> Maybe (3->3): sum = 6
+		Other combinations
+			False, False => 2
+			False, Maybe => 4
+			True, True => 4
+			True, Maybe => 5
+			We just test sum: is 3 or 6
+		2 muls and saves cost
+
+Goal 4. counter constraint verification
+	[a] compute condition
+	[b] compute the neg of res
+	[c] check condition enforced ->DONE
+	[d] regression test
 
 
+Goal 5. Writing
+	[a] add the repeat application -> DONE
 
--- TODO -- check why it's creating so many states->sig entries?
+Goal 6. Debug the state problem
+	[a] find out where it constructs the state to sig
+		-> 1030 of clam_db.rs
+		-> dump the general states of pats and sigs
+	[b] stop at 1st that has large data set
+			Many has 1 pat, 87 sigs!
+			No one has more than 500 sigs
+			3M states * 87 = is already 240M rules!
+	[c] analyze data
+		-> some have 5 pats and 153 sigs
+		-> dump all pats that causing huge collection of sigs
+		-> empty string pattern triggers 87 
+			-> also there are pattern 23657865 which triggers 55
+			other are pretty small
+		-> the problem is that EMPTY string will trigger
+		these 87 anyway, maybe they can be added LATER, instead
+		of use empty string to trigger
+
+Friday 07/04/2025
+LOC (gadget): 11352-> 11384: +30 
+LOC (data): 8490 (->8654: +160) 
+Total: +200
+
+Goal 1. implement the synthesis for counter constraint
+	[a] set up unit test
+	[b] doc
+	[c] set up the loop framework
+	[d] check why component_subsigs is empty?
+		-> SubsigCountConstraint
+		-> a SubsigCountCounstraint is created in
+			preprocess_expr_new in clamav.rs:1878
+			-> t's created for (subsig|sussig)>x or (subsig|subsig)<x type
+	[e] why isn't the subsig included?
+		-> preprocess does have it
+		-> gen_sig() -> also have it and dnf eval is correct
+		-> in quick_discharge_file_adv -> it has the right info
+	[f] stop here as it might affect the processing logic. handle
+	Goal 2 first.
+
+Goal 2. improve state_2_sig numbers.
+	[a] find out who's generating empty string as critical pattern
+		-> in add_critical_pattern()
+		-> put assert to disallow empty strings
+		-> read code get_critical_pattern
+			-> get_critical_pattern
+				-> basically get the collect of "bag_of_words"
+				-> do an initial eval and pick the best bag
+				-> return {""} if cannot be discharged
+				as critical pattern.
+		-> but what happened that one sig does not have IGC case at all?
+		-> dump one entry
+			-> if no igc subsigs at all, then the critical section is
+				empty
+			-> check in what cases it adds empty words as critical
+				-> one case is counter constraint
+				-> from vec_subsig_bagwords
+					-> which is generated from gen_approx_patterns_for_sib
+	[b] analyze one example
+		max_set_cs is bad_set
+	[c] but there are cases crit_pat includes an empty string and 
+		multiple valid word
+		-> add the failing pattern and observe
+		Win.Trojan.Agent-1388728
+	[d] analyze how it extracts empty pattern
+		-> shorter pattern in subsig does result in ""
+		-> its vec_subsig_bagwords is empty word
+		-> the reason is that min_bag_words limit it!
+
+Goal 3. now add_ciritical_section returns false
+	[a] in build_db, annotation each sig which fails crit_pat -> DONE
+	[b] add vec of failed_cp
+	[b] quick_discharge -> add all signatures to next round.
+		[a] old discharge -> DONE
+		[b] quick_discharge -> DONE
+		[c] unit test -> fix one failed unit test
+
+Goal 4. inspect clamav code
+	[a] make a clone and create new code
+
+	[b] collect those sigs that has critical pattern of empty string
+	[c] before feeding to pm approach, add those sets in quick_discharge_file_adv
+	[d] test with real data
+	-> but why does it generate no SED fail data?
+
+Saturday 07/05/2025
+Goal 1. DEBUG pick set_sigs_pm problem
+	[a] print who's getting set_sigs_pm
+	data/samples/binexec_merged128k/libstackwalk.so.9.3.1 (352kb)
+	--- data 1---
+	set_sigs_bag: 123
+pats_failed_bag: 3189, pats_failed_bag_igc: 0
+set_sigs_pm.len: 2
+total_acc_path: 1408834, total_hs_size: 112, total_accepted: 247512
+	--- data 2 ---
+	DEBUG USE 6100.NEW ==== DEBUG STATS =============
+DEBUG USE 6100.NEW ==== DEBUG STATS =============
+pat_crit: 56, pat_crit_igc: 0
+vec_sig_no_crit: 90 (88?)
+set_sigs_crit.len(): 125 
+DEBUG USE 6102 ==== DEBUG STATS =============
+ set_sigs_bag: 125
+set_sigs_pm.len: 0
+total_acc_path: 1408834, total_hs_size: 27, total_accepted: 50087
+
+Goal 2. compare what is the difference in code?
+[a] looks like b_optimize is the difference.
+	hs_occ should not be screened by crit_pat
+	because NOW the new crit_pat EXCLUDED about 90 failing ones.
+[b] verify if the new chang eis working.
+	-> fixed
+
+Sunday 07/06/2025
+Goal 1. Debug why the SubsigCountConstraint has vec_components to
+	be empty
+	[a] check how comp_subsigs is built
+	[b] it's in build_store
+	[c] dump the involved subsig_obj
+	[d] they ARE included in generated 
+
+Goal 2. It looks like translation is not right, items are expanded
+	twice but min_required still keeps 2, why?
+	[a] read the spec of SigCountConstraints what's the meaning?
+		-> example (2|3|4)>3,2 means there are
+			at least 4 instances of matches and
+			at least two distinct subsignatures.
+		-> counting approach is right, but why is
+			substring extended twice?
+	[b] find out who does that transation

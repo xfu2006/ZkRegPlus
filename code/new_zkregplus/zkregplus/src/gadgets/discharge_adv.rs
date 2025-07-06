@@ -3348,6 +3348,7 @@ pub mod tests_discharge_adv_gadget{
 			"word.txt", 
 			&nibbles_raw,
 			&db.vec_sigs,
+			&db.vec_sigs_no_critical_pat,
 			&db.map_crit_pat, 
 			&db.map_crit_pat_igc, 
 			&db.dfa_crit, 

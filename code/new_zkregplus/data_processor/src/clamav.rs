@@ -38,7 +38,7 @@ use self::rustomaton::{
 };
 //use utils::consts::{WARN,LOG1,LOG2,LOG3, B_SINGLE_JOB_MODE,COMBINATION_LIMIT,RANGE_MAX,MAX_PM_SECTIONS, REPEAT_LEN_LIMIT, MIN_BAG_WORD_LEN, TEST_MODE};
 use utils::{
-	logger::{log, log_perf,LOG1,LOG2,LOG3,WARN},
+	logger::{log, log_perf,LOG1,LOG2,LOG3},
 	os::{read_lines},
 	timer::{Timer},
 	data::{u8_to_hex}
@@ -461,6 +461,7 @@ pub fn gen_clamav_sig(s: &str, sigtype: ClamSigType, cfg: &ClamavApproxConfig)
 		vec_subsig_bagwords: vec![],
 		vec_subsig_pm_bounds: vec![],
 		vec_pcre_info: vec![],
+		b_no_crit_pat: false,
 	};
 	sig.preprocess(cfg);
 
@@ -633,11 +634,11 @@ impl ClamavSig{
 	}
 
 	pub fn set_vec_automaton(&mut self, cfg: &ClamavApproxConfig){
-		println!("DEBUG USE 300: set_automaton ... {}", self.to_str());
+		//println!("DEBUG USE 300: set_automaton ... {}", self.to_str());
 		self.vec_subsig_automaton = self.gen_vec_automaton(cfg);
-		let vlen = self.vec_subsig_automaton.iter().map(|v| v.transitions.len()).collect::<Vec<usize>>();
-		println!("DEBUG USE 301: {} set vec automaton: {}, SIZES: {:?}", 
-			self.to_str(), self.vec_subsig_automaton.len(), &vlen);
+		let _vlen = self.vec_subsig_automaton.iter().map(|v| v.transitions.len()).collect::<Vec<usize>>();
+		//println!("DEBUG USE 301: {} set vec automaton: {}, SIZES: {:?}", 
+		//	self.to_str(), self.vec_subsig_automaton.len(), &vlen);
 	}
 
 
@@ -1407,7 +1408,85 @@ impl ClamavSig{
 
 		bres 
 	}
+	/// internal function: eval pattern and generate score
+	fn score(&self, set_pat: &HashSet<String>, 
+		map: &HashMap::<String,Vec<String>>) -> usize{
+		//1.0 early check
+		if set_pat.len()==0 {return 0;}
 
+		//1.1 constants
+		let len_limit = 10000000;
+		let num_limit = 1000;
+
+		//1.2 compute the min_len and avg_len of the hs_item
+		let mut cnt = 0;
+		let mut tlen = 0;
+		let mut min_len = 100000000;
+		for x in set_pat{ 
+			if map.contains_key(x) {cnt+=1;} 
+			tlen+=x.len(); 
+			if x.len()<min_len {min_len = x.len();}
+		}
+
+		//1.3 use a heurstics to DISCOURAGE multiple patterns included
+		let mut pat_len_heu = set_pat.len() * set_pat.len() /2;
+		pat_len_heu = if pat_len_heu>0 {pat_len_heu} else {1};
+		let avg_len = if set_pat.len()>0 {tlen/pat_len_heu} else {0};
+		let diff_cnt = if num_limit>cnt {num_limit-cnt} else {0};
+		let mut score = diff_cnt * len_limit + avg_len;
+		const MIN_LEN_BAR:usize = 10; 
+		if min_len < MIN_LEN_BAR {
+			score = min_len; //NOTE: this only lowers the possibility of
+						// short words (because we need to handle 
+						// GeneralRegex
+		}
+
+		score
+	}
+	/// internal function: update map function which given max_set and map
+	/// updates the map
+	fn update_map(&self, max_set: &HashSet<String>, 
+		map: &mut HashMap<String,Vec<String>>)  {
+		const MIN_LEN_BAR:usize = 10; 
+		for x in max_set{
+			if x.len()<MIN_LEN_BAR{
+				log(LOG1, &format!("WARNING: critial pattern: {} in {} is short!", &x, &self.name));
+			}
+		}
+		for pat in max_set{
+			assert!(pat.len()>0, "sig: {} has empty str as critical pattern, max_set: {:#?}", self.name, max_set);
+			match map.entry(pat.clone()){
+				Entry::Vacant(e) => {e.insert(vec![self.name.clone()]);},
+				Entry::Occupied(mut e) => {
+					e.get_mut().push(self.name.clone());
+				}
+			}
+		}//end for
+	}
+
+	/// If the set of critical patterns contains ""
+	/// it implies that one of the required subsigs has NO appropriate
+	/// critical pattern (either because of too short <min_bag_len, as
+	///   critical_pat extraction extractoin reuses bag_words extraction),
+	/// or other situations like special counter constraints which blindly
+	/// fails critical pat test.
+	///
+	/// An example below:
+	/// the last (#4): no fixed string long enough
+	/// it generates "" as critical pattern for subsig while
+	/// 0,1,2 have valud ones. But given the subsigs 3 and 4 are
+	/// connected using disjunction: their critical pattern is
+	/// INDEED NEEDed to discharge. In this case, the signature
+	/// CANNOT be discharged via critical section.
+	/// --  "Trojan.Agent-1388728;Engine:51-255,Target:1;(0&1&2)|3|4;726563646973636d33322e657865;5c5c25735c736861726564245c737973776f773634;5c5c25735c736861726564245c73797374656d3332;8D??????5?687E6604805?E8????????8D??????6A105?5?E8????????8B????????????8D??????5?8D??????6A005?6A006A0089??????89??????89??????C7??????????????E8????????33??5?85C00F9F??8B??E8;E8????????8B??E8????????0FAF??E8????????0FAF??9933??2B??33??F7??8B??5?E8"
+	/// -----
+	/// There are other cases that counter constraint is set to =0
+	/// which blindly fails crit pat approach as well.
+	/// in this case the max_set will have "" inside it as well.
+	#[inline(always)]
+	fn is_bad_critical_pat(pat: &HashSet<String>)->bool{
+		pat.contains(&("".to_string()))
+	}
 
 	/// collect the criticical patterns from the subsignatures
 	/// try avoid duplicate patterns as much as possible
@@ -1427,68 +1506,15 @@ impl ClamavSig{
 	/// This function modifies a map which maps from the words (such as "123")
 	/// to the SIGNATURE (not subsignature) it triggers. It does consider the
 	/// DNF structure of subsignatures.
+	///
+	/// RETURN: true means ok, false means no critical pattern can be
+	/// found thus the signature HAS TO  enter next round of check (e.g., bag
+	/// of words or SED/PM)
 	pub fn add_critical_pattern(&self, map: &mut HashMap::<String,Vec<String>>,
-		map_igc: &mut HashMap<String,Vec<String>>){
-		println!("DEBUG USE 111: add_critical_pat for sig: {}", self.name);
-		//1. evaluation function
-		let score = |set_pat: &HashSet<String>, 
-			map: &HashMap::<String,Vec<String>>| -> usize{
-			//1.0 early check
-			if set_pat.len()==0 {return 0;}
+		map_igc: &mut HashMap<String,Vec<String>>)->bool{
 
-			//1.1 constants
-			let len_limit = 10000000;
-			let num_limit = 1000;
-
-			//1.2 compute the min_len and avg_len of the hs_item
-			let mut cnt = 0;
-			let mut tlen = 0;
-			let mut min_len = 100000000;
-			for x in set_pat{ 
-				if map.contains_key(x) {cnt+=1;} 
-				tlen+=x.len(); 
-				if x.len()<min_len {min_len = x.len();}
-			}
-
-			//1.3 use a heurstics to DISCOURAGE multiple patterns included
-			let mut pat_len_heu = set_pat.len() * set_pat.len() /2;
-			pat_len_heu = if pat_len_heu>0 {pat_len_heu} else {1};
-			let avg_len = if set_pat.len()>0 {tlen/pat_len_heu} else {0};
-			let diff_cnt = if num_limit>cnt {num_limit-cnt} else {0};
-			let mut score = diff_cnt * len_limit + avg_len;
-			const MIN_LEN_BAR:usize = 10; 
-			if min_len < MIN_LEN_BAR {
-				score = min_len; //NOTE: this only lowers the possibility of
-							// short words (because we need to handle 
-							// GeneralRegex
-			}
-
-			score
-		};
-		let update_map = |max_set: &HashSet<String>, map: &mut HashMap<String,Vec<String>>|  {
-			const MIN_LEN_BAR:usize = 10; 
-			for x in max_set{
-				if x.len()<MIN_LEN_BAR{
-					log(LOG1, &format!("WARNING: critial pattern: {} in {} is short!", &x, &self.name));
-				}
-			}
-			for pat in max_set{
-				if TEST_MODE{
-					assert!(pat.len()>0, "INSERT empty string as critical pattern for sig: {}", self.to_str());
-				}
-				match map.entry(pat.clone()){
-					Entry::Vacant(e) => {e.insert(vec![self.name.clone()]);},
-					Entry::Occupied(mut e) => {
-						if pat.len()==0{
-							log(WARN,&format!("WARN: critical pattern EMPTY STRING is ued for: {}", self.name));
-						}
-						e.get_mut().push(self.name.clone());
-					}
-				}
-			}//end for
-		};
-
-		//2. process each disjunctive item (just need to pick ONE result LATER)
+		//3. MAIN LOGIC:
+		// process each disjunctive item (just need to pick ONE result LATER)
 		let mut vec_all = vec![];
 		for item in &self.eval_dnf.vec_disjunc{
 			let mut hs_item_cs = HashSet::<String>::new(); //case sensitive
@@ -1543,8 +1569,8 @@ impl ClamavSig{
 		let mut id = 0;
 		for set_pat in &vec_all{
 			let (hs_item_cs, hs_item_igc) = (&set_pat.0, &set_pat.1);
-			let score1 = score(hs_item_cs, map);
-			let score2 = score(hs_item_igc, map_igc);
+			let score1 = self.score(hs_item_cs, map);
+			let score2 = self.score(hs_item_igc, map_igc);
 			let total_score = score1+ score2;
 			if total_score>=max_score{
 				max_score = total_score;
@@ -1554,8 +1580,14 @@ impl ClamavSig{
 		}
 		let max_set_cs = &vec_all[max_id].0;
 		let max_set_igc = &vec_all[max_id].1;
-		update_map(&max_set_cs, map);
-		update_map(&max_set_igc, map_igc);
+		if !Self::is_bad_critical_pat(&max_set_cs) && 
+			!Self::is_bad_critical_pat(&max_set_igc){
+			self.update_map(&max_set_cs, map);
+			self.update_map(&max_set_igc, map_igc);
+			return true;
+		}else{//note just set it to false
+			return false;
+		}
 	}
 
 
@@ -2017,8 +2049,13 @@ pub fn	filter_by(hs: &HashMap<String,Vec<usize>>, set: &HashSet<String>)
 /// a HashSet of signatures that NEED to generate DFA.
 /// The function will crash if the DFA does not exist, then modify
 /// the hashset to load_discharge_data correspondingly.
-pub fn quick_discharge_file_by_crit_bag_pm(fname: &str,
-	nibbles: &Vec<u8>, v_sigs: &Vec<Arc<ClamavSig>>,
+///
+/// WE NOW disable the bag_of_words and independent SED approach.
+#[allow(dead_code)]
+pub fn quick_discharge_file_by_crit_bag_pm_old(fname: &str,
+	nibbles: &Vec<u8>, 
+	v_sigs: &Vec<Arc<ClamavSig>>,
+	vec_sigs_no_crit_pat: &Vec<Arc<ClamavSig>>,
 	map_crit_pat: &HashMap<String, Vec<String>>,
 	map_crit_pat_igc: &HashMap<String, Vec<String>>,
 	dfa_crit: &HexACDFA, dfa_bag: &HexACDFA,
@@ -2027,6 +2064,7 @@ pub fn quick_discharge_file_by_crit_bag_pm(fname: &str,
 	)->FailDischargeRecord{
 
 	let b_include_bs = false;
+
 	//1. process by critical pattern
 	let pats_crit = dfa_crit.get_patterns(&dfa_crit.acc_path(&nibbles));
 	let pats_crit_igc = dfa_crit_igc.get_patterns( 
@@ -2039,6 +2077,9 @@ pub fn quick_discharge_file_by_crit_bag_pm(fname: &str,
 	for pat in pats_crit_igc{
 		let vec1 = map_crit_pat_igc.get(&pat).unwrap();	
 		for x in vec1{ set_sigs_crit.insert(String::from(x)); }
+	}
+	for s in vec_sigs_no_crit_pat{ //add those for sure will FAIL crit_sec
+		set_sigs_crit.insert(s.as_ref().name.clone());
 	}
 	
 	//2. process by bag of words
@@ -2072,11 +2113,9 @@ pub fn quick_discharge_file_by_crit_bag_pm(fname: &str,
 	let pats_failed_bag = (&v_sigs_failed_bag).into_iter().map(|s| 
 			s.collect_all_bagwords(false)).flat_map(|s| s).
 			collect::<HashSet<String>>();
-
 	let pats_failed_bag_igc = (&v_sigs_failed_bag).into_iter().map(|s| 
 			s.collect_all_bagwords(true)).flat_map(|s| s).
 			collect::<HashSet<String>>();
-
 	let hs_occ_old = dfa_bag.get_pattern_pos(&dfa_acc_path);
 	let hs_occ_igc_old = dfa_bag_igc.get_pattern_pos(&dfa_acc_path_igc);
 	let hs_occ = if b_optimize_pm {filter_by(&hs_occ_old, &pats_failed_bag)} else {hs_occ_old.clone()};
@@ -2172,12 +2211,146 @@ pub fn quick_discharge_file_by_crit_bag_pm(fname: &str,
 	data
 }
 
+///new version (if not working use the old version)
+///mainly for paper_data report
+///Now to be more consistent with quick_discharge_file_adv
+#[allow(dead_code)]
+pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
+	nibbles: &Vec<u8>, 
+	v_sigs: &Vec<Arc<ClamavSig>>,
+	vec_sigs_no_crit_pat: &Vec<Arc<ClamavSig>>,
+	map_crit_pat: &HashMap<String, Vec<String>>,
+	map_crit_pat_igc: &HashMap<String, Vec<String>>,
+	dfa_crit: &HexACDFA, dfa_bag: &HexACDFA,
+	dfa_crit_igc: &HexACDFA, dfa_bag_igc: &HexACDFA,
+	_b_optimize_pm: bool, _cfg: &ClamavApproxConfig)
+->FailDischargeRecord{
+	//0. internal function closure
+	let sum_vec_size = |hs: &HashMap<String,Vec<usize>>| -> usize{
+		hs.into_iter().map(|(_,v)| v.len()).sum::<usize>()
+	};
+
+	//1. process by critical pattern
+	let pats_crit = dfa_crit.get_patterns(&dfa_crit.acc_path(&nibbles));
+	let pats_crit_igc = dfa_crit_igc.get_patterns( 
+		&dfa_crit_igc.acc_path(&nibbles));
+	let mut set_sigs_crit = HashSet::<String>::new();
+
+	for pat in &pats_crit{
+		let vec1 = map_crit_pat.get(pat).unwrap();	
+		for x in vec1{ set_sigs_crit.insert(String::from(x)); }
+	}
+	for pat in &pats_crit_igc{
+		let vec1 = map_crit_pat_igc.get(pat).unwrap();	
+		for x in vec1{ set_sigs_crit.insert(String::from(x)); }
+	}
+	for s in vec_sigs_no_crit_pat{ 
+		set_sigs_crit.insert(s.as_ref().name.clone());
+	}
+	let set_sigs_bag = set_sigs_crit.clone(); //skipping bag so take all from cirt
+			//directly and pass it to pm (SED approach).
+	
+	//2. process by pm bounds
+	let dfa_acc_path = dfa_bag.acc_path(&nibbles);
+	let dfa_acc_path_igc = dfa_bag_igc.acc_path(&nibbles);
+	let hs_occ_old = dfa_bag.get_pattern_pos(&dfa_acc_path);
+	let hs_occ_igc_old = dfa_bag_igc.get_pattern_pos(&dfa_acc_path_igc);
+	//let hs_occ = filter_by(&hs_occ_old, &pats_crit);
+	//let hs_occ_igc = filter_by(&hs_occ_igc_old, &pats_crit_igc);
+	let hs_occ = hs_occ_old;
+	let hs_occ_igc = hs_occ_igc_old;
+
+
+	let mut set_sigs_pm = HashSet::<String>::new(); //failed by pm
+	let v_sigs_pm = v_sigs.into_iter()
+		.filter(|x| set_sigs_crit.contains(&x.name))
+		.map(|v| v.clone() )
+		.collect::<Vec<Arc<ClamavSig>>>();
+	let pm_res = v_sigs_pm.par_iter().map(|sig|{//parallel processing
+		//1. collect the pag of words and their appearance location
+		let bag_pm = sig.collect_bagwords_from_pmreg(false); 
+		let bag_pm_igc = sig.collect_bagwords_from_pmreg(true);
+		let hs_occ_new = filter_by(&hs_occ, &bag_pm);
+		let hs_occ_igc_new = filter_by(&hs_occ_igc, &bag_pm_igc); 
+
+		//3. process each one and return the result
+		let (res, info) = 
+			sig.accepts_approx_pm_bounds(&hs_occ_new, &hs_occ_igc_new);
+		let pm_witness_len = sum_vec_size(&hs_occ_new) + sum_vec_size(&hs_occ_igc_new);
+		(res, sig.name.clone(), info, pm_witness_len)
+	}).collect::<Vec<(TriVal,String, Option<DischargeSigInfo>,usize)>>();
+	let mut vec_sed_sigs_info = vec![]; 
+	let mut total_pm_witness_len = 0; 
+	for pres in pm_res{
+		let (res, name, info, wit_len) = pres;
+		total_pm_witness_len += wit_len;
+		if res==TriVal::Maybe || res==TriVal::True{
+			set_sigs_pm.insert( name.clone() );
+		}else{//for discharged ones, push info
+			vec_sed_sigs_info.push(info.unwrap());
+		}
+	}
+	let total_acc_path_len = dfa_acc_path.len() + dfa_acc_path_igc.len();
+	let total_hs_size = hs_occ.len() + hs_occ_igc.len();
+	let total_accepted = sum_vec_size(&hs_occ) + sum_vec_size(&hs_occ_igc);
+
+	//4. process by dfa
+	let dfa_sigs = v_sigs.iter().filter(|s| set_sigs_pm.contains(&s.name)).
+		map(|s| s.clone()).collect::<Vec<Arc<ClamavSig>>>();
+	let set_sigs_dfa = dfa_sigs.iter().filter(|s| {
+		let res = s.accepts_by_automaton(nibbles);
+		res
+	}).map(|s| s.name.clone()).collect::<HashSet<String>>();
+	let set_ind_pm_reg = set_sigs_dfa.clone(); //no ind_pm setp, just clone dfa result
+
+
+	//6. compute stats 
+	let file_len = ((nibbles.len()/2).ilog2() + 1) as usize;
+	FailDischargeRecord{
+		fname: fname.to_string(),
+		flen: file_len,
+		bag: set_sigs_bag,
+		crit: set_sigs_crit,
+		pm: set_sigs_pm,
+		all_dfa: set_sigs_dfa,
+		total_acc_path_len: total_acc_path_len,
+		total_hs_size: total_hs_size,
+		total_accepted: total_accepted,
+		total_pm_witness_len: total_pm_witness_len,
+		ind_pm_reg: set_ind_pm_reg,
+	}
+}
+
+pub fn quick_discharge_file_by_crit_bag_pm(
+	fname: &str,
+	nibbles: &Vec<u8>, 
+	v_sigs: &Vec<Arc<ClamavSig>>,
+	vec_sigs_no_crit_pat: &Vec<Arc<ClamavSig>>,
+	map_crit_pat: &HashMap<String, Vec<String>>,
+	map_crit_pat_igc: &HashMap<String, Vec<String>>,
+	dfa_crit: &HexACDFA, 
+	dfa_bag: &HexACDFA,
+	dfa_crit_igc: &HexACDFA, 
+	dfa_bag_igc: &HexACDFA,
+	b_optimize_pm: bool, 
+	cfg: &ClamavApproxConfig)
+->FailDischargeRecord{
+	quick_discharge_file_by_crit_bag_pm_new(
+		fname,
+		nibbles, v_sigs, vec_sigs_no_crit_pat,
+		map_crit_pat, map_crit_pat_igc,
+		dfa_crit, dfa_bag, dfa_crit_igc, dfa_bag_igc,
+		b_optimize_pm, cfg)
+}
+
 /// This one works by cp -> sed -> dfa and return the WordInfo
 /// NOTE: we didn't do the bag of words as in quick_discharge old version,
 /// just for saving implementation cost.
 pub fn quick_discharge_file_adv(
 	_fname: &str,
-	nibbles: &Vec<u8>, v_sigs: &Vec<Arc<ClamavSig>>,
+	nibbles: &Vec<u8>, 
+	v_sigs: &Vec<Arc<ClamavSig>>,
+	vec_sigs_no_crit_pat: &Vec<Arc<ClamavSig>>,
 	map_crit_pat: &HashMap<String, Vec<String>>,
 	map_crit_pat_igc: &HashMap<String, Vec<String>>,
 	dfa_crit: &HexACDFA, dfa_bag: &HexACDFA,
@@ -2199,15 +2372,22 @@ pub fn quick_discharge_file_adv(
 		let vec1 = map_crit_pat_igc.get(pat).unwrap();	
 		for x in vec1{ set_sigs_crit.insert(String::from(x)); }
 	}
-
+	for s in vec_sigs_no_crit_pat{ 
+		set_sigs_crit.insert(s.as_ref().name.clone());
+	}
 	
 	//2. process by pm bounds
 	let dfa_acc_path = dfa_bag.acc_path(&nibbles);
 	let dfa_acc_path_igc = dfa_bag_igc.acc_path(&nibbles);
 	let hs_occ_old = dfa_bag.get_pattern_pos(&dfa_acc_path);
 	let hs_occ_igc_old = dfa_bag_igc.get_pattern_pos(&dfa_acc_path_igc);
-	let hs_occ = filter_by(&hs_occ_old, &pats_crit);
-	let hs_occ_igc = filter_by(&hs_occ_igc_old, &pats_crit_igc);
+	//let hs_occ = filter_by(&hs_occ_old, &pats_crit);
+	//let hs_occ_igc = filter_by(&hs_occ_igc_old, &pats_crit_igc);
+	let hs_occ = hs_occ_old; //now there are 90 failing sigs separated
+							 //so, no good to use pats_crit to filter anymore
+							 //because they miss hte patterns fro mthese 90 
+							 //failing sigs.
+	let hs_occ_igc = hs_occ_igc_old;
 
 
 	let mut set_sigs_pm = HashSet::<String>::new(); //failed by pm
@@ -2940,7 +3120,7 @@ mod tests{
 			Arc::new(gen_clamav_sig(s, sig_type,&cfg))
 		}).collect();
 		
-		let v_sigs = v_sigs.iter().map(|s1| {
+		let mut v_sigs = v_sigs.iter().map(|s1| {
 			let mut s = s1.as_ref().clone();
 			s.gen_approx_bagwords(&cfg);
 			s.gen_approx_pm_bounds(&cfg);
@@ -2950,8 +3130,19 @@ mod tests{
 		}).collect::<Vec<Arc<ClamavSig>>>();
 		let mut map_crit_pat = HashMap::<String,Vec<String>>::new();
 		let mut map_crit_pat_igc = HashMap::<String,Vec<String>>::new();
-		for sig in &v_sigs{ sig.add_critical_pattern(&mut map_crit_pat, 
-			&mut map_crit_pat_igc); }
+		let mut v_sigs_no_crit_pat = vec![];
+		let mut new_v_sigs = vec![];
+		for i in 0..v_sigs.len(){ 
+			let mut sig = v_sigs[i].as_ref().clone();
+			let b_res = sig.add_critical_pattern(&mut map_crit_pat, 
+				&mut map_crit_pat_igc); 
+			if !b_res{ sig.b_no_crit_pat= true; }
+			let arc_sig = Arc::new(sig);
+			if !b_res{ v_sigs_no_crit_pat.push(arc_sig.clone());}
+			new_v_sigs.push(arc_sig);
+		}
+		v_sigs = new_v_sigs;
+
 		let vec_crit_pat = map_crit_pat.keys().cloned()
 			.collect::<Vec<String>>();
 		let vec_crit_pat_igc = map_crit_pat_igc.keys().cloned()
@@ -3058,7 +3249,8 @@ mod tests{
 				.collect::<HashSet<String>>();
 			let nibbles = hex_to_u8(s);
 			let act = quick_discharge_file_by_crit_bag_pm("tc", &nibbles,
-				&v_sigs, &map_crit_pat, &map_crit_pat_igc,
+				&v_sigs, &v_sigs_no_crit_pat,
+				&map_crit_pat, &map_crit_pat_igc,
 					&dfa_crit, &dfa_bag, &dfa_crit_igc,
 					&dfa_bag_igc, false, &cfg);
 			assert!(act.crit==set_crit, "ERROR: s: {}. act.crit: {:?} != set_crit: {:?}", s, act.crit, set_crit);

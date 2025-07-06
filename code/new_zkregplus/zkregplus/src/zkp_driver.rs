@@ -90,6 +90,7 @@ fn load_files<F:PrimeField>(list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavA
 				fpath, 
 				&nibbles,
 				&db.vec_sigs,
+				&db.vec_sigs_no_critical_pat,
 				&db.map_crit_pat, 
 				&db.map_crit_pat_igc, 
 				&db.dfa_crit, 

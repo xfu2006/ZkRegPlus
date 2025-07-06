@@ -338,15 +338,25 @@ relational database tables, and the proof can be decomposed into
 a number of relational operations such as table union, table projection,
 table join, and query range.
 
-TODO: need to define the $k$ applications of the streaming function.
+$\ttt{two\_pass\_sed(.)}$ can be applied sequentially in a streaming
+fasion.  
+We write $n$ applications simply as: $\ttt{two\_pass\_sed}^{(n)}$,
+where the $i$'th call is $\ttt{two\_pass\_sed}(\Q{o}^{(i-1)}, \myvec{S},
+	\myvec{R}^{(i)}, \db)$, here 
+given a regular expression $r$, and a word $\myvec{w}$ we chunk
+$\myvec{w}$ into $k$ chunks:= 
+$\myvec{w}^{(1)} \concat ... \myvec{w}^{(k)}$.
+Let $\myvec{S}$ and $\db$ be the subsigs and database extracted
+from $r$.
+Let $\rho = (\F \times F)^u$ be the
+ocurrence of all related patterns of $r$ in $\myvec{w}$. 
+Let $\myvec{R}^{(i)}$  be the two column occurence of patterns
+fo running through $\myvec{w}^{(i)}$ the ACDFA of patterns. 
 
 \begin{theorem} Given a regular expression $r$, and a word $\myvec{w} = 
 \myvec{w}^{(1)} \concat ... \myvec{w}^{(k)}$ be concatenation
-of $k$ chunks. Let $\rho$ be the
-ocurrence of all related patterns of $r$ in $\myvec{w}$. 
-Let $\myvec{S}$ and $\db$ be the subsigs and database extracted
-from $r$. Let $\myvec{R}^{(i)}$ be the two column occurence of patterns
-fo running through $\myvec{w}^{(i)}$ the ACDFA of patterns. We always have:
+of $k$ chunks. Let $\rho$, $\myvec{S}$, $\db$ derived from $r$.
+We have:
 \[
 \ttt{two\_pass\_sed}(.)^{(k)} = \ttt{eval\_counter\_cs\_std}(\rho,r,\ttt{GT},0)
 \].
