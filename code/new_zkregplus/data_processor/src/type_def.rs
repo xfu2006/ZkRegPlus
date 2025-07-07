@@ -105,6 +105,8 @@ pub struct SubSigObj{
 	/// constraint such as `(2|3|4)>3,2` which means that out of
 	/// subsigs 2,3,4, there are is at least 4 matches, that match
 	/// at least 2 distinct subsignatures.
+	/// See doc: https://docs.clamav.net/manual/Signatures/LogicalSignatures.html (4.7.1)
+	/// ``=X,Y: If the SUB-EXPRESSION A refers to a single signature then this signature must be matched exactly X times; if it refers to a (logical) block of signatures then this block must generate X matches and at least Y different signatures must get matched. ''
 	pub min_required: usize,
 }
 

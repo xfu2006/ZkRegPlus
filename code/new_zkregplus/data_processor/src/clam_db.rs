@@ -44,8 +44,8 @@ pub const STATE_BIT:usize =  24;
 
 /// The bit-width of RANGE2 table 
 /// IN PRODUCTION NEEDS TO CHANGE THE SAME SIZE OF STATE_BIT
-//pub const RANGE2_BIT: usize = 8;
-pub const RANGE2_BIT: usize = 26; //(allowing 64M nibbles = 32MB)
+pub const RANGE2_BIT: usize = 8;
+//pub const RANGE2_BIT: usize = 26; //(allowing 64M nibbles = 32MB)
 
 // the following are trival related sub-table ids
 // they are located at the very beginning of the entire lkup
@@ -948,8 +948,8 @@ impl <F:PrimeField> ClamavDB<F>{
 		println!("DEBUG USE 6701: add_acdfa_to_lkup acdfa stats");
 		let mut vlog = vec![];
 		acdfa.log_stats("---", &mut vlog);
-
 		//REMOVE LATER ----------- ABOVE
+
 		//2. build the single entry sub-table for init
 		let init_st = acdfa.init_state as u32;
 		let vec_init = vec![(F::from(init_tbl_id), F::from(init_st))]; 
@@ -1118,11 +1118,8 @@ impl <F:PrimeField> ClamavDB<F>{
 		let store_items = selected_sigs.par_iter().map(|s|{
 			let sig_id = sig_to_id.get(&s.name)
 				.expect(&format!("can't find sig: {}", s.name));
-			/*
 			//REMOVE LATER ----------------
 			println!("DEBUG USE 6601: dump of sig {:#?}", s);
-			if 1>0{panic!("STOP HERE 6666");}
-			*/
 			//REMOVE LATER ---------------- ABOVE
 			let mut store_items = vec![]; //for store_pat
 			let mut store_step_items = vec![]; //for store_steps
@@ -1198,12 +1195,10 @@ impl <F:PrimeField> ClamavDB<F>{
 				//5. build the subsig_step_info_store_item 
 				let subsig_obj = &s.vec_subsig_obj[i];
 				if subsig_obj.b_ignore_case==b_igc{
-				/*
 					//REMOVE LATER ------------------
 					println!("=== DEBUG USE 6710: subsig dump ===");
 					println!(" -- {:#?}", subsig_obj);
 					//REMOVE LATER ------------------ ABOVE
-					*/
 					//only add it when the same igc mode
 					let subsig_type = subsig_obj.subsig_type.clone() as u8;
 					let (comp_op, comp_num, min_required, 
@@ -1232,13 +1227,7 @@ impl <F:PrimeField> ClamavDB<F>{
 									acdfa.gen_subsig_id(*sig_id, cid+1)
 								).collect::<Vec<usize>>();
 							vec_component_subsig_ids.sort();
-							/*
-						//REMOVE LATER -------------
-						println!("\n##### DEBUG USE 7101: dump SubsigCountConstraint: ---");
-						println!(" -- COMPONENT subsigs: {:#?}", vec_component_subsig_ids);
-						//REMOVE LATER ------------- ABOVE
-						*/
-								(0, 0, min_req, vec_component_subsig_ids)
+							(0, 0, min_req, vec_component_subsig_ids)
 						},
 					};
 					let item = SubsigInfoStoreItem{subsig_id,
@@ -1248,12 +1237,10 @@ impl <F:PrimeField> ClamavDB<F>{
 						min_required,
 						component_subsigs
 					};
-					/*
 					//REMOVE LATER -------------
 					println!("\n##### DEBUG USE 101: dump items: ---");
 					item.dump();
 					//REMOVE LATER ------------- ABOVE
-					*/
 					store_info_items.push(item);
 				}//end of check IGC
 			}

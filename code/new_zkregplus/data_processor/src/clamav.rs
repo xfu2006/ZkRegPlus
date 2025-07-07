@@ -1866,8 +1866,26 @@ impl ClamavSig{
 				&format!("{}",newid));
 		}
 
-		//3. process "(id1|id2|id3...|idn)>x" case or < or = cases
+		//3. process "(id1|id2|id3...|idn)>x,y" case or < or = cases
+		// handle the SubexprCounter constraint. 
+		// semantics (check type_def.rs regarding min_quired)
+		// NOTE this also has a BRANCH to handle the 
+		//    (id1|...|idn)>x case, which is easier
+		// 
+		// Consider the SubsigCountConstraint example
+		// e.g. (2|3|4)>4,2 requires at least 5 matches and
+		// 2 distinct subsignatures. 
+		// Here we have to actually generate 2 new subsigs
+		// 1st new subsig: SubsigCountConstraint with vec_components 2,3,4
+		//   with min_required 2 Let it the new ID be 9
+		// 2nd new subsig: rewrite (2|3|4)>4 as one
+		// subsig (content of 2|content of 3|content of 4)>4
+		// Then this subexp is replaced y the conjunection of the above
+		// two subsig.
 		for subexp in find_all(r"\(\d+(\|\d+)+\)( *)(>|=|<)( *)(\d+)(,\d+)?", &self.expr){
+			//4.1. initial set up extract 
+			// e.g. (2|3|4)>4,2
+			// "4 "is stored in num, ">" in sop and 2 in min_required
 			let old_subexp = subexp.clone();
 			let arr = split(&subexp, ",");
 			let subexp= &arr[0];
@@ -1878,44 +1896,91 @@ impl ClamavSig{
 			let mut newexpr = String::from("(");
 			let mut b_first = true;
 			let b_subsig_count = old_subexp.contains(",");
-			let min_required:usize = if b_subsig_count {
-				assert!(arr.len()>1, 
-					"susig_count constraint expect longer arr: {:?}", arr);
-				arr[1].parse::<usize>().unwrap()
-			}else {0usize};
 			let mut set_subsigs = HashSet::<usize>::new();
-			for id in ids{
-				if b_pm { self.validate_subsig_single_pattern(*id);}
-				let newstr = format!("{}{}{}", id, sop, num);
-				let newid = vec_sig_obj.len();
-				let pat = drop_last_dotstar(&self.vec_subsigs[*id]);
-				let (b_neg, r_val) = Self::extract_rel_pat(&sop, 
-					num, &pat, &newstr);
-				let b_igc = !self.vec_bcase_sensitive[*id];
-				let newobj = SubSigObj{value: newstr.clone(), subsig_type: SubSigType::CounterConstraint, real_value: r_val, b_ignore_case: b_igc,
-					set_subsigs: HashSet::<usize>::new(),
-					min_required: 0,
-				}; 
-				vec_sig_obj.push(newobj);
-				set_subsigs.insert(vec_sig_obj.len()-1);
-				self.vec_bneg.push(b_neg);
-				let newitem = if b_first {format!("{}", newid)} else {format!("|{}",newid)};
-				newexpr = newexpr + &newitem;
-				b_first = false;
-			}
-			newexpr = newexpr + ")";
-			if !b_subsig_count{
+
+			if !b_subsig_count{//NO SubsigCountConstraint
+				// pure (id1|...|idn)>x case
+				let old_subexp = subexp.clone();
+				let nums = extract_nums(&subexp);
+				let ids = &nums[0..nums.len()-1];
+				let num = nums[nums.len()-1]; 
+				let sop = find_only(r">|<|=", &subexp);
+				let mut newexpr = String::from("(");
+				let mut b_first = true;
+				let mut set_subsigs = HashSet::<usize>::new();
+				for id in ids{
+					if b_pm { self.validate_subsig_single_pattern(*id);}
+					let newstr = format!("{}{}{}", id, sop, num);
+					let newid = vec_sig_obj.len();
+					let pat = drop_last_dotstar(&self.vec_subsigs[*id]);
+					let (b_neg, r_val) = Self::extract_rel_pat(&sop, 
+						num, &pat, &newstr);
+					let b_igc = !self.vec_bcase_sensitive[*id];
+					let newobj = SubSigObj{value: newstr.clone(), subsig_type: SubSigType::CounterConstraint, real_value: r_val, b_ignore_case: b_igc,
+						set_subsigs: HashSet::<usize>::new(),
+						min_required: 0,
+					}; 
+					vec_sig_obj.push(newobj);
+					set_subsigs.insert(vec_sig_obj.len()-1);
+					self.vec_bneg.push(b_neg);
+					let newitem = if b_first {format!("{}", newid)} else {format!("|{}",newid)};
+					newexpr = newexpr + &newitem;
+					b_first = false;
+				}
+				newexpr = newexpr + ")";
 				sexpr2 = sexpr2.replace(&old_subexp, &newexpr);
-			}else{
+			}else{//THE SubsigCountConstraint case.
+				assert!(b_subsig_count, "ERROR: expecting SubsigCountConstraint!");
+				assert!(arr.len()>1);
+				//4.2 build the SubsigCounterObj
+				let min_required:usize = arr[1].parse::<usize>().unwrap();
+				for id in ids{
+					if b_pm { self.validate_subsig_single_pattern(*id);}
+					set_subsigs.insert(*id);
+				}
 				let newobj = SubSigObj{value: old_subexp.clone(), subsig_type: SubSigType::SubsigCountConstraint, real_value: old_subexp.clone(), b_ignore_case: false, set_subsigs: set_subsigs, min_required: min_required};
 				vec_sig_obj.push(newobj.clone());
 				let newid = vec_sig_obj.len()-1;
+				println!("DEBUG USE 6601: before replace: sexpr2: {}", sexpr2);
 				sexpr2 = sexpr2.replace(&old_subexp, &format!("{}", newid));
-			}
+				println!("DEBUG USE 6601: old_subexp: {}, new_id: {}, sexpr2: {}", old_subexp, newid, sexpr2);
+
+				//4.3  build the repeate subsig by pasting contents of subsigs
+				/*
+				for id in ids{
+					if b_pm { self.validate_subsig_single_pattern(*id);}
+					let newstr = format!("{}{}{}", id, sop, num);
+					let newid = vec_sig_obj.len();
+					let pat = drop_last_dotstar(&self.vec_subsigs[*id]);
+					let (b_neg, r_val) = Self::extract_rel_pat(&sop, 
+						num, &pat, &newstr);
+					let b_igc = !self.vec_bcase_sensitive[*id];
+					let newobj = SubSigObj{value: newstr.clone(), subsig_type: SubSigType::CounterConstraint, real_value: r_val, b_ignore_case: b_igc,
+						set_subsigs: HashSet::<usize>::new(),
+						min_required: 0,
+					}; 
+					vec_sig_obj.push(newobj);
+					set_subsigs.insert(vec_sig_obj.len()-1);
+					self.vec_bneg.push(b_neg);
+					let newitem = if b_first {format!("{}", newid)} else {format!("|{}",newid)};
+					newexpr = newexpr + &newitem;
+					b_first = false;
+				}
+				newexpr = newexpr + ")";
+				if !b_subsig_count{
+					sexpr2 = sexpr2.replace(&old_subexp, &newexpr);
+				}else{
+					let newobj = SubSigObj{value: old_subexp.clone(), subsig_type: SubSigType::SubsigCountConstraint, real_value: old_subexp.clone(), b_ignore_case: false, set_subsigs: set_subsigs, min_required: min_required};
+					vec_sig_obj.push(newobj.clone());
+					let newid = vec_sig_obj.len()-1;
+					sexpr2 = sexpr2.replace(&old_subexp, &format!("{}", newid));
+				}
+				*/
+			}//end the handling of SubsigCountConstraint Case
 
 		}
 
-		//4. process "(id1&id2&id3...&idn)>x" case or < or = cases
+		//5. process "(id1&id2&id3...&idn)>x" case or < or = cases
 		for subexp in find_all(r"\(\d+(\&\d+)+\)( *)(>|=|<)( *)(\d+)(,\d+)?", &self.expr){
 //			if find_all(",", &subexp).len()>0{
 //				println!("WARNING : expressions such as (0&2&4)>1,3 makes no sense. Details: {}", &subexp);
@@ -1952,7 +2017,7 @@ impl ClamavSig{
 			sexpr2 = sexpr2.replace(&old_subexp, &newexpr);
 		}
 
-		//4. validate the rest of expression are ok
+		//6. validate the rest of expression are ok
 		validate_expr(&sexpr2, &self.name);
 		self.expr = sexpr2;
 		self.vec_subsig_obj = vec_sig_obj;

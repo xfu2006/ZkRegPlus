@@ -17458,6 +17458,7 @@ Goal 2. compare what is the difference in code?
 	-> fixed
 
 Sunday 07/06/2025
+LOC (data): 8654 -> (8762 +110)
 Goal 1. Debug why the SubsigCountConstraint has vec_components to
 	be empty
 	[a] check how comp_subsigs is built
@@ -17473,4 +17474,17 @@ Goal 2. It looks like translation is not right, items are expanded
 			at least two distinct subsignatures.
 		-> counting approach is right, but why is
 			substring extended twice?
+			-> probably reason: (0,1)>1,2 is regarded
+				as counter constraint (because it has comma)
 	[b] find out who does that transation
+
+Goal 3. improve it
+	[a] fork out the no SubsigCountConstraint case
+	[b] check extracted data.
+	[c] step 4.1 extract contents and re-write
+	[d] have to merge the case back as it falls for the same
+	[e] what about the current approximation without enforcing
+		the other half?
+		-> it breaks on handling of a (...)>x appearance
+		-> line 1899
+	[b] the SubsigCountConstraint case
