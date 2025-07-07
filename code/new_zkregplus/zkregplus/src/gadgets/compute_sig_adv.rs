@@ -405,12 +405,43 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		//3. prepare the result for the subsig_count_constraint
 		// see accepts_approx_pm_bounds() handling of SubsigCountConstraint
 		// collect the res of true, maybe, false on subcomponents
-		// res = Ture if cnt_tru>min_required, False if cnt_false>min_required
-		// elase maybe
+		// res = Ture if cnt_tru>min_required, 
+		// False if cnt_true+cnt_maybe<min_required
 		//
 		// Idea: since the vec_components is not fixed, construct the
-		// following table (excluding subsig column which already exists)
-		// (-subsig-, raw_res, cnt_true, cnt_false, cnt_maybe, subsig_cnt_res) 
+		// following tables:
+		// (1) ssc_prf_tbl of the following structure. It COVERS ONLY
+		//   those subsigs which has the SubsigCounterConstraint tag
+		//   (subsig, comp_subsig_encoded, comp_subsig,
+		//			raw_res, cnt_true, cnt_false, ssc_res)
+		//   Here each subsig has at least 1 entry of comp_subsig_encoded
+		//   the last is the MAX entry which ensures the "full retrieval"
+		//   of its comp_subsig from database
+		// We could have another table for last row for each subsig
+		// to compute ssc_res, but given that the table is already
+		// very small, we'll skip that second table and wasite a bit constraints
+		// here, because  REAL DATA shows that: 
+		// max_ratio is the ratio of those components being a part of another 
+		// SubsigCountConstraint.
+		// max_subsigs (for discharging a file):  1026, max_ratio 16.666668
+		// avg_subsigs:  401.2398676592225 avg_ratio 7.11235321401159
+		//
+		// (2) ssc_res table which has the following structure, skip the
+		// subsig column (as it's already there in combo)
+		//  (subsig, ssc_type, ssc_res)
+		//  the res is set to don't care if it's type is not SubsigCountConstraint
+		// otherwise, we lookup the ssc_es in the ssc_prf_tbl
+
+		// TODO -----------------------------------
+		// 3.1 construct the ssc_prf_tbl 
+		let mut scc_subsig = vec![]; //scc stands for subsig_count_constraint
+		let mut scc_comp_subsig = vec![]; //when no comp_subsig, have
+										  //only two entries: 0 and max entry
+		let mut scc_min_req = vec![];
+		let mut scc_raw = vec![]; //raw eval result for comp_subsig
+		let mut scc_cnt_true = vec![]; //current count for subsig
+		let mut scc_cnt_maybe = vec![]; //current count for subsig
+		let mut scc_res = vec![]; //current res (should take the one at max)
 		for i in 0..n1{
 			let subsig = inp_subsigs[i];
 			let f_subsig = field_to_usize(&subsig);
@@ -867,12 +898,13 @@ pub mod tests_compute_sig_adv{
 		traits::{Container,Col,IDX_DATA},
 	};
 	use data_processor::{clam_db::{ClamavDB,RANGE2_BIT}, 
-		type_def::{ClamavApproxConfig,SubsigStepStore,SubsigStepStoreItem},
+		type_def::{ClamavApproxConfig,SubsigStepStore,SubsigStepStoreItem,
+			ClamavSig},
 		clamav::{default_clamav_cfg, quick_discharge_file_adv}};
 	use folding_schemes::folding::foldpot::sigma_ir1cs::{SigmaGadget,
 		WordInfo, DischargeSigInfo};
 	use folding_schemes::folding::foldpot::container_config::ContainerConfig;
-	use std::collections::{HashMap};
+	use std::{collections::{HashMap}, sync::Arc};
 
 	/// a test case for discharge_test_case	
 	struct Tcase{//test case
@@ -920,6 +952,9 @@ pub mod tests_compute_sig_adv{
 		let f_nibbles = nibbles_raw.iter().map(|x| Fr::from(*x as u32))
 			.collect::<Vec<Fr>>();
 		let sig_to_discharge = tcase.sig_to_discharge.clone();
+		let sig = &db.vec_sigs.iter().filter(|s| s.name==sig_to_discharge)
+			.map(|s| s.clone())
+			.collect::<Vec<Arc<ClamavSig>>>()[0];
 		let wi: WordInfo = quick_discharge_file_adv(
 			"word.txt", 
 			&nibbles_raw,
@@ -1115,10 +1150,10 @@ pub mod tests_compute_sig_adv{
 			//sig4: counter constraint
 			"sig4;Engine:51-255,Target:0;0>2;/abc..123/",
 			*/
-			///* RECOVER LATER
+			// /* RECOVER LATER
 			//sig5: subsig counter constraint (here min req is 2)
 			"sig5;Engine:51-255,Target:1;(0|1)>1,2;/abc..123/;/56...fgh/",
-			//*/
+			// */
 
 		].iter().map(|x| x.to_string()).collect::<Vec<String>>();
 		let needs_dfa = vec![];
@@ -1156,9 +1191,10 @@ pub mod tests_compute_sig_adv{
 			Tcase::new("abcdd123xabcxx123xxabcxx333", "sig4", false, false), //b_ised=F, igc=F
 			*/ 
 			// /* RECOVER LATER
-			//6. fails sig5 coz combined pattern 1 and 2 missing 1 time.
-			// this is for subsig_count_signature
-			Tcase::new("abcdd123xabx56xxxfghxxabcdd122", "sig5", false, false), //b_ised=F, igc=F
+			//6. fails sig5 coz because it needs to have two distinnct
+			// matches but only matches abc...123 (missing the "h" for
+			// 56...fgh
+			Tcase::new("abcdd123xabx56xxxfgxxabcdd122", "sig5", false, false), //b_ised=F, igc=F
 			// */
 		];
 

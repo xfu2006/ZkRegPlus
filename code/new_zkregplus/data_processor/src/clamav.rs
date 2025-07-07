@@ -881,23 +881,26 @@ impl ClamavSig{
 					},
 					SubSigType::SubsigCountConstraint => {
 						let mut cnt_true = 0;
-						let mut _cnt_maybe= 0;
-						let mut cnt_false= 0;
+						let mut cnt_maybe= 0;
+						let mut _cnt_false= 0;
 						for cid in &self.vec_subsig_obj[*id].set_subsigs{
 							let (res, _cost)=self.approx_eval_pm_bounds_subsig(
 								*cid, hs, hs_igc);
 							match res{
 								TriVal::True => cnt_true +=1,
-								TriVal::Maybe => _cnt_maybe+=1,
-								TriVal::False => cnt_false +=1,
+								TriVal::Maybe => cnt_maybe+=1,
+								TriVal::False => _cnt_false +=1,
 							}
 						}
 						let min_required = self.vec_subsig_obj[*id]
 							.min_required;
-						let res = if cnt_true>=min_required{ TriVal::True}
-						else if cnt_false>=min_required{ TriVal::False}
-						else {TriVal::Maybe};
-						
+						let res = if cnt_true>=min_required {
+							TriVal::True //for sure
+						} else if cnt_true + cnt_maybe < min_required{
+							TriVal::False //for sure
+						} else {
+							TriVal::Maybe //not for sure
+						};
 
 						res
 					}
@@ -933,6 +936,7 @@ impl ClamavSig{
 						vec_res.append(&mut 
 							self.vec_subsig_obj[id].set_subsigs.iter().
 								map(|x| *x).collect::<Vec<usize>>() );
+						vec_res.push(id);
 					},
 				}
 			}
@@ -1247,21 +1251,25 @@ impl ClamavSig{
 				approx_eval_bagwords_subsig_counter_constraint(id, &text, hs, b_fast),
 			SubSigType::SubsigCountConstraint => {
 				let mut cnt_true = 0;
-				let mut _cnt_maybe= 0;
-				let mut cnt_false= 0;
+				let mut cnt_maybe= 0;
+				let mut _cnt_false= 0;
 				for cid in &self.vec_subsig_obj[id].set_subsigs{
 					let res = self.approx_eval_bagwords_subsig(*cid, 
 						s_src, hs, b_fast);
 					match res{
 						TriVal::True => cnt_true +=1,
-						TriVal::Maybe => _cnt_maybe+=1,
-						TriVal::False => cnt_false +=1,
+						TriVal::Maybe => cnt_maybe+=1,
+						TriVal::False => _cnt_false +=1,
 					}
 				}
 				let min_required = self.vec_subsig_obj[id].min_required;
-				let res = if cnt_true>=min_required{ TriVal::True}
-				else if cnt_false>=min_required{ TriVal::False}
-				else {TriVal::Maybe};
+				let res = if cnt_true>=min_required{ 
+					TriVal::True //for sure
+				} else if cnt_true + cnt_maybe < min_required{ 
+					TriVal::False //for sure
+				} else {
+					TriVal::Maybe //could be either true or false
+				};
 
 				res
 
@@ -1891,10 +1899,9 @@ impl ClamavSig{
 			let subexp= &arr[0];
 			let nums = extract_nums(&subexp);
 			let ids = &nums[0..nums.len()-1];
-			let num = nums[nums.len()-1]; 
-			let sop = find_only(r">|<|=", &subexp);
-			let mut newexpr = String::from("(");
-			let mut b_first = true;
+			let _num = nums[nums.len()-1]; 
+			let _sop = find_only(r">|<|=", &subexp);
+			let mut _newexpr = String::from("(");
 			let b_subsig_count = old_subexp.contains(",");
 			let mut set_subsigs = HashSet::<usize>::new();
 
@@ -1941,10 +1948,20 @@ impl ClamavSig{
 				let newobj = SubSigObj{value: old_subexp.clone(), subsig_type: SubSigType::SubsigCountConstraint, real_value: old_subexp.clone(), b_ignore_case: false, set_subsigs: set_subsigs, min_required: min_required};
 				vec_sig_obj.push(newobj.clone());
 				let newid = vec_sig_obj.len()-1;
-				println!("DEBUG USE 6601: before replace: sexpr2: {}", sexpr2);
 				sexpr2 = sexpr2.replace(&old_subexp, &format!("{}", newid));
-				println!("DEBUG USE 6601: old_subexp: {}, new_id: {}, sexpr2: {}", old_subexp, newid, sexpr2);
 
+				// HERE WE SKIP the subsig contents processing here.
+				// Mainly for saving development cost as the pasted
+				// component subsig contents have to go through pre-processing
+				// again, which is hard to re-factor here.
+				// Thus the result here is CONSERVATIVE APPROXIMATED
+				// That is: it may report FALSE-POSITIVE.
+				//e.g., consider (1|2)>100, 2
+				// if there is a match of both subsig 1 and 2, it
+				// will be reported as a match (ignoring the counting of 100).
+				// We run the real data and linux binexec samples all
+				// pass without FALSE-POSITIVES caused by this check.
+				// leave it for future work.
 				//4.3  build the repeate subsig by pasting contents of subsigs
 				/*
 				for id in ids{
@@ -2331,6 +2348,21 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		.filter(|x| set_sigs_crit.contains(&x.name))
 		.map(|v| v.clone() )
 		.collect::<Vec<Arc<ClamavSig>>>();
+	//REMOVE LATER ------------------
+	let mut total_ssc= 0;
+	let mut total_subsigs = 0;
+	let mut total_comp = 0;
+	for sig in &v_sigs_pm{
+		total_subsigs += sig.vec_subsig_obj.len();
+		for sso in &sig.vec_subsig_obj{
+			if sso.set_subsigs.len()>0{
+				total_comp += sso.set_subsigs.len();
+				total_ssc += 1;
+			}
+		}
+	}
+	println!("DEBUG USE 8888.1: total_subsigs: {}, total_comp: {}, total_ssc: {} => ratio: {:.2}%", total_subsigs, total_comp, total_ssc, (total_comp as f32)/(total_subsigs as f32)*100.0);
+	//REMOVE LATER ABOVE ------------
 	let pm_res = v_sigs_pm.par_iter().map(|sig|{//parallel processing
 		//1. collect the pag of words and their appearance location
 		let bag_pm = sig.collect_bagwords_from_pmreg(false); 

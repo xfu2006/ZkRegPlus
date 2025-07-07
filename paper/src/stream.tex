@@ -1,56 +1,70 @@
-\section{Streaming Discharging Algorithm}
-In this section we introduce stream discharging algorithm for CP, SED, DFA,
-and informally motivate the features we need from the underlying
-proof system. We discuss how lookup arguments (both internal and external)
-are used to construct proofs for relational database operations.
+\section{Chunking Discharging Algorithm}
+In practice, there are large files that have to be split into multiple
+chunks. In this sense, we have to develop ``chunking'' version\footnote{In
+the extreme case that each chunk is only one character, it is the 
+streaming algorithm.} for the regular expression discharging
+algorithms.
+We present an intermediate layer of 
+supporting relational database operations, based on which,
+the chunking algorithms are developed. The relational database
+operators are bulit upon internal and external lookup arguments.
+We use the technical details in this section to
+informally motivate the features that we need in the underlying
+proof system. 
 
-We first given an informal overview below.
-Consider a sample $s$ to be discharged of a collection of regex 
-$\{r_i\}_{i=1}^n$. In many cases, due to circuit size restriction,
-we have to chunk $s$ into many chunks 
-$s = s^{(1)} \concat ... \concat s^{(k)}$, and run
-``streaming" version of CP, SED, DFA over the chunks and combine
-the results.
+Consider a word $s$ which is chunked into: 
+$s = s^{(1)} \concat ... \concat s^{(k)}$. 
+The following outlines the general workflow of discharging
+$s$ against a collection of regex patterns.
 
-The design for streaming DFA or CP is straigh-forward. Essentially
-we walk $s$ through the (AC)-DFA compiled from the regex set.
-At each step of folding, we run a chunk $s^{(j)}$ over the DFA.
+
+\begin{enumerate} 
+\item The prover first compiles the (AC)-DFA for CP, SED and DFA,
+respectively. It then runs a planning algorithm to determine 
+the set of signatures to be discharged by each of CP, SED, and DFA. 
+So that later it can show the union of the signatures discharged 
+by SED and DFA is equal to the ones failed by CP.
+Each algorithm is modeled as a separate gadget circuit,
+and {\em conditionally} include them only when they are needed. For instance,
+for most binary samples, only CP and SED are included, and very rarely
+DFA would be needed.  Also sub-circuits may have verisons with
+different capacities (e.g., SED circuits with different size of step-queues).
+This needs the underlying folding/IVC framework to support
+non-uniform circuits.
+\item At each step of folding, the circuit drives CP, SED, and DFA 
+concurrently.
+The design for chunking DFA or CP is straigh-forward. Essentially
+we run a chunk $s^{(j)}$ over the (AC-)DFA.
 Then we need to pass the last state of the acceptance path as the
 initial state for the next folding step. 
-For SED algorithm, streaming is much more complex. We need to 
+For SED algorithm, streaming is much more complex. We 
 maintain the state of the ``step queue" for each subsignature, 
 i.e., the list of occurene locations for each step of each step queue.
 We need to perform forward and backward pruning at each folding stage
 to minimize the size of the step queue, and between steps,
 we need to pass the output ``step queue" to the next stage.
 This step queue is huge, and it can only used for one time.
-We need a concretely efficient way to pass large data structures
-in between the neighboring steps of folding.
-
-In summary, at each step of folding we run a ``streaming" (chunked)
-version of CP, SED, DFA as follows:
-\begin{enumerate} 
-\item The prover first run a planning algorithm to determine 
-the set of signatures to be discharged by each of CP, SED, DFA, and
-ISED. Each algorithm is modeled as a separate gadget circuit,
-and conditionallyl include them only when then are needed. For instance,
-for most binary samples, only CP and SED are included, and very rarely
-DFA or ISED would be needed.
-\item At each step of folding, the circuit drives CP, SED, DFA, and ISED
-(if included) concurrently. Mainly walking through the (AC)-DFA of each
-method, passing needed data in between the neighboring steps.
-\item At the last chunk for the word sample to discharge, the circuit
-includes an additional component to compute the signatures that
-cannot be discharged by CP (i.e., the signatures mapped from the
-accepting state of the corresponding AC-DFA). Similarly, the signature
-discharged by DFA is produced. For SED and ISED, it examines the
-step queue of each subsignature, decide their tri-logic value and
-run the boolean formula of subisngatures to determine the tri-logic
-value of signatures and produce the discharge list of signatures.
-Then it asserts that the union of SED, DFA, ISED discharged signatures
-is equal to the set that cannot be discharged by CP. This completes
-the assertion of $s$ free of regex signature set.
+{\em We need techniques more efficient than the general purpose
+RAM used in zk-VMs for concrete peroformance.}
+The discharging algorithm needs to check validity of
+an encoding of DFA transitions. This is accomplished by
+pre-processed lookup arguments (as DFA's are fixed before proof).
+It also performs run-time database operations (e.g., table join and
+queries) for step-queues, this is accomplished by
+internal lookups in circuits. {\em This requires
+the underlying IVC framework to support both internal and
+external lookup arguments.}
+\item At the last chunk, there is a tabulating circuit which
+computes the tri-logic evaluation of each subsignature. This is
+complicated by various cases that subsignatures have
+counting constraints, and their logical structure.
+The circuit performs tri-logic operators to compose all results,
+and produce the dishcarged list for SED and DFA, and compare with
+the ``failed-discharged" list by CP. 
+When they are equal, this discharges  $s$ of the
+given regex set.
 \end{enumerate}
+
 
 \begin{figure*}[t!]
 	\centering

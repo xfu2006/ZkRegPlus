@@ -17488,3 +17488,63 @@ Goal 3. improve it
 		-> it breaks on handling of a (...)>x appearance
 		-> line 1899
 	[b] the SubsigCountConstraint case
+
+Monday 07/07/2025
+LOC (data): 8762 (-> 8783: +20)
+LOC (gadget): 11383 (-> 11419: +50)
+Goal 1. first debug the approximated case 
+	[a] now the sig5 is not showing up
+	[b] check quick_discharge -> no infos at all!
+	[c] display the result -> result is maybe
+		it has cnt_false: 1, cnt_maybe: 1
+	[d] think about the logic: needs to be fixed -> DONE
+	[e] regression testing and see what's the impact -> should
+		actually improve results
+
+Goal 2. continue the subsig proof case
+	[a] check why discharge still only focus on subsig_id 9 and 10
+	[b] check how the subsigs are collected -> fix in
+		clamav:: collect_subsig_id
+	[c] display all subsigs now -> OK
+
+Goal 3. continue to construct proof
+	[a] remove current dbg msg 6107, 6109
+	[b] add data structure and docs
+	[c] check how vec_component is encoded
+		-> it's currenly stored as (id, subsig)
+		-> we have to argue for full coverage
+		-> idea1: 
+			add col id starting from 1, and assert
+				(1) starting from 1
+				(2) summary table: count matches prf table
+				(3) count increasing by 1
+			-- in summary table, sid checks the count
+		-> idea 2:
+			dummy max (
+			(1) assert starting from 1
+			(2) asserting ending at max (real entries in the middle)
+		-> idea 2 is better. 
+
+Goal 4. implementation
+	[a] prep the columns
+	[b] prep the sid_cols
+	[c] prep for the scc_final_res table
+	[d] prf for vec_component list
+
+Goal 5. new idea: what if just folcus on those subsigs which 
+	are b_subsig
+	[a] measure the percentage
+	[b] only create table for those with subset_sigs it's a much
+		smaller table
+		[b1] prf_table with details
+		[b2] summary_table subsig -> ssc_res
+		[b3] overall table all subsigs -> either ssc_res
+				only with marker check it. otherwise can set to don't care.
+	[c] update doc
+	[d] instrument the capacity: add perc_component_subsig
+		the ratio of subsigs hat are components of another subsig.
+		This determines the buffer of ssc_prf size
+
+-- TODO--
+Goal 1. add capacity ratio_component_subsig, add function ssc_prf_size
+Goal 2. build the ssc_prf
