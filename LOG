@@ -17545,6 +17545,82 @@ Goal 5. new idea: what if just folcus on those subsigs which
 		the ratio of subsigs hat are components of another subsig.
 		This determines the buffer of ssc_prf size
 
--- TODO--
+Tuesday 07/08/2025
+LOC (gadet): 11419 -> 11672 (+250)
+LOC (data): 8783
 Goal 1. add capacity ratio_component_subsig, add function ssc_prf_size
+	[a] add attribute
+	[b] unit testing
+	[c] regression testing
+	[d] add function get_ssc_prf_size()
+
 Goal 2. build the ssc_prf
+	[a] min_req
+	[b] tri_val
+	[c] check dumped result
+	[d] fix comp_encoded
+	[e] create sids
+	[f] check all columns length
+	[g] check why sid_scc_subsig is special
+
+Goal 3. add the columns 
+	[a] add cols and sid cols
+	[b] regression test and check the table ids are generated ok
+
+Goal 4. validate function 
+	[a] retrieve the data cols
+	[b] retrieve sid cols
+	[c] check sid cols
+	[d] debug mismatch sid
+		-> fixed.
+	[d] measure cost
+	[e] regression test
+
+Goal 5. verify count
+	[a] eq1
+	[b] eq2
+	[c] improve it
+	[d] cost
+	[e] regression
+
+Tuesday 07/09/2025
+LOC (gadget): 11672 ->  (11858: +180)
+Goal 1.  check why it fails regression test? -> FIXED.
+Goal 2. prove the validity of raw_result
+	[a] build m_table
+	[b] debug
+		-> cascading changes on init value
+		-> regression test
+	[c] test and regression test
+	[d] validate.
+	[e] debug
+
+Goal 3. now start reasoning about raw_res and count
+	[a] add abs_diff1 and abs_diff2
+	[b] verify cnt_true and cnt_false starting from 0 
+		-> check sid coluns
+		-> add watch for when it's 0, cnt_true should
+			be equal to raw_res is true.
+		-> original cost: (29) - n2:4  -> 60 (doubled cost on n2 which is
+			ok because it's very small (in practice: up to 200*15 = 3k)
+			otherwise it should be previous value + the result
+
+Goal 4. reason about abs_diff
+	[a] loop to check abs_diff is ok
+	[b] debug diff1.
+	[c] regression testing
+	[d] do diff2
+	[e] cost
+
+Goal 5. check the row result
+	[a] impl
+	[b] debug
+	[c] test1, 2
+	[d] cost
+
+--- TODO ---
+Goal 1. construct the final_srs result and conditional logup
+	between the final result and the srs_prf column
+
+Goal 2. select the result for each subsig, each concludes
+	the current validate() function

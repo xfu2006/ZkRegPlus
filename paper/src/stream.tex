@@ -66,113 +66,25 @@ given regex set.
 \end{enumerate}
 
 
-\begin{figure*}[t!]
+\begin{figure*}[h!]
 	\centering
 	\includegraphics[width=\textwidth]{figs/FwdBwd.pdf}
 \caption{Streaming Workflow for Foward and Backward Pruning}
 \label{fig_stream}
 \end{figure*}
 
-\subsection{Modeling Relational Operators using Lookup Arguments}
-Proving database out-sourcing using zk-SNARK systems has been
-explored in IntegriDB \cite{IntegriDB} (using pairing based dynamic accumuator
-and interval trees) and
-vSQL \cite{vSQL} (using sum-checked based CMT protocols).
-Compared with these earlier work, in the context of our work, 
-the ``databaes" is dynamic and they are generated
-in circuit (instead of a ``fixed" updatable database that exist
-prior to proof starts). our approach is much simpler by out-sourcing operations
-to lookup argument, and the number comparison operations can be simply done
-using lookup (instead of bit-decomposition).
-Our approach works for read-only query only. It is used as an intermediate
-layer to support streaming algorithms, which can be built upon
-classical relational algebra operators: $\proj$ (projection), $\select$ (select),
-$\times$ (cross product), and $\join$ (join), we refer interested
-readers to \cite{AHV95}. 
-
-A relation (table) in a relational database can be viewed as a two-dimensional
-table, where each row is a fixed-arity tuple, or it can be
-viewed as a collection of columns. We often write a table
-$\myvec{t} = (\myvec{c}^{(1)}, \myvec{c}^{(2)}, ..., \myvec{c}^{(k)})$, 
-where $\myvec{c}^{(i)}$ is the $i$'th column.
-In Figure\ \ref{fig:db} we show how to use lookup argument to support
-relational operators.
-
-\begin{small}
-\begin{algorithm}[bt]
-\SetKwData{Left}{left}\SetKwData{This}{this}\SetKwData{Up}{up}
-\SetKwFunction{Union}{Union}\SetKwFunction{FindCompress}{FindCompress}
-$\underline{\myvec{a} = \proj_{i}(\myvec{t})}$ \newline
- Let $\myvec{t} = (\myvec{c}^{(1)}, ..., \myvec{c}^{(k)}$, just
- assert $\myvec{a} = \myvec{c}^{(i)}$. \newline
-
-$\underline{\myvec{t}' = \select_{c}(\myvec{t})}$ \newline
- (1) Let $\myvec{t} = (\myvec{u}^{(1)}, ..., \myvec{u}^{(k)})$, 
- 	 Let $\myvec{t}' = (\myvec{v}^{(1)}, ..., \myvec{v}^{(k)})$, 
- \newline
- (2) Prover and verifier jointly
- 	computes $\myvec{c}$ s.t. for any $i\in [|\myvec{t}|]$:
- 	$\myvec{c}_i = c(\myvec{u}^{(1)}_i, ..., \myvec{u}^{(k)}_i)$. \newline
- (3) Verifier sends challenge $r$. \newline
- (4) Prover and verifier jointly computes
- 	$\myvec{a} = \sum_{i=1}^k r^i \cdot \myvec{u}^{(i)}$, and
- 	$\myvec{b} = (\sum_{i=1}^k r^i \cdot \myvec{u}^{(i)}) \cdot \myvec{c}$
-	(where $\myvec{c}$ serves as a selector). \newline
- (5) Prover and verifier runs lookup argument (ignoring $0$ entries
- 	$\myvec{a} \lookup \myvec{b}$ and
-	$\myvec{b} \lookup \myvec{a}$. (note that it's linear compleixty).
-
-$\underline{\ttt{wellformed}(\myvec{t})}$ where $\myvec{t}= (\myvec{key}, \myvec{id}, \myvec{val})$
-	\newline
-  {\bf Assumption: } all effective values in range $(0,\ttt{max})$.
-  	Define $n = |\myvec{key}|$. \newline
-  (1) $\myvec{key}$ is sorted, i.e.,
-  	$\forall i\in[n-1]$: $\myvec{key}_i \leq \myvec{key}_{i+1}$. \newline
-  (2) $\myvec{val}[i]=0$ if $i=1$ or $\myvec{key}[i]\neq \myvec{key}[i-1]$. \newline
-  (3) $\myvec{val}[i]=\ttt{max}$ if $i=n$ or $\myvec{key}[i+1]\neq \myvec{key}[i]$. \newline
-  (4) $\myvec{val}[i] \leq \myvec{val}[i+1]$ if $\myvec{key}[i]=\myvec{key}[i+1]$.\newline
-  {\bf Comment:} it can be expanded to table with two-column keys.
-
-$\underline{\myvec{t}^{(3)} = \myvec{t}^{(1)} \join \myvec{t}^{(2)}}$ where $\myvec{t}^{(i)}= (\myvec{key}^{(i)}, \myvec{id}^{(i)}, \myvec{val}^{(i)})$ for
-	$i\in[2]$ and $\myvec{t}^{(3)} = (\myvec{key}^{(3)}, \myvec{id}^{(3)},
-		\myvec{val}^{(3)}, \myvec{id}^{(4)}, \myvec{val}^{(5)})$.
-	\newline
-	(1) Assert $\ttt{wellformed}(\myvec{t}^{(i)})$ for $i\in [2]$. \newline
-	(2) $(\myvec{key}^{(3)}, \myvec{id}^{(3)}, \myvec{val}^{(3)})$
-		is $\ttt{wellformed}$. \newline
-	(3) $((\myvec{key}^{(3)},
-		\myvec{val}^{(3)}), \myvec{id}^{(4)}, 
-		\myvec{val}^{(5)})$
-		is $\ttt{wellformed}$. \newline
-	(4) $(\myvec{key}^{(3)}, \myvec{val}^{(3)})$ 
-		$\lookup$
-		$(\myvec{key}^{(1)}, \myvec{val}^{(1)})$ \newline
-	(5)
-		$(\myvec{key}^{(1)}, \myvec{val}^{(1)})$
-		$\lookup$
-		$(\myvec{key}^{(3)}, \myvec{val}^{(3)})$. \newline
-	(6) $(\myvec{key}^{(3)}, \myvec{id}^{(4)}, \myvec{val}^{(5)})$ 
-		$\lookup$
-		$(\myvec{key}^{(2)}, \myvec{id}^{(2)}, \myvec{val}^{(2)})$ \newline
-
-\caption{Relational Operators Based on Lookup Argument}
-\label{fig:db}
-\end{algorithm}
-\end{small}
-
-\subsection{Streaming Algorithm for SED}
-We now present the streaming algorithm for SED. We show how to use
-internal lookups to support relational database operations needed.
-
-We start with an informal introduction and a motivating example.
+\subsection{Motivating Example of SED Discharging}
+We start with a motivating example to introduce the
+chunked SED algorithm.
 Recall that SED tries to discharge a string $s$ against 
 a regex subsignature $r$ by checking the distance between patterns
 of $r$. In Figure \ref{fig_stream}, we show an example
-of regex which consists of four patterns (``fgh", ``1234", ``56", and ``78"). 
+of regex which consists of four patterns (``fgh", ``1234", ``56", and ``78"),
+and the corresponding pattern information. 
 Each pattern has an expected range of distance from the match of
-a previous pattern. For instance, the distance between ``1234" and ``56"
-should be 16 nibbles (i.e., 8 characters, because the length of ``56"
-is also counted).
+a previous pattern. For instance, the distance between {\em the end of} ``1234" and 
+{\em the end of} ``56" should be 16 hex-nibbles (i.e., 8 characters, 
+because the length of ``56" is also counted).
 
 SED has a pre-compiled AC-DFA that corresponds to all these patterns.
 Before running the forward-backward pruning algorithm, SED feeds
@@ -281,6 +193,94 @@ The algorithm has several interesting properties and challenges:
 	similar to RAM modeling (using a transcript) to accomodate data
 	structures of different length.
 \end{enumerate}
+
+\subsection{Modeling Relational Operators using Lookup Arguments}
+Proving database out-sourcing using zk-SNARK systems has been
+explored in IntegriDB \cite{IntegriDB} (using pairing based dynamic accumuator
+and interval trees) and
+vSQL \cite{vSQL} (using sum-checked based CMT protocols).
+Compared with these earlier work, in the context of our work, 
+the ``databaes" is dynamic and they are generated
+in circuit (instead of a ``fixed" updatable database that exist
+prior to proof starts). our approach is much simpler by out-sourcing operations
+to lookup argument, and the number comparison operations can be simply done
+using lookup (instead of bit-decomposition).
+Our approach works for read-only query only. It is used as an intermediate
+layer to support streaming algorithms, which can be built upon
+classical relational algebra operators: $\proj$ (projection), $\select$ (select),
+$\times$ (cross product), and $\join$ (join), we refer interested
+readers to \cite{AHV95}. 
+
+A relation (table) in a relational database can be viewed as a two-dimensional
+table, where each row is a fixed-arity tuple, or it can be
+viewed as a collection of columns. We often write a table
+$\myvec{t} = (\myvec{c}^{(1)}, \myvec{c}^{(2)}, ..., \myvec{c}^{(k)})$, 
+where $\myvec{c}^{(i)}$ is the $i$'th column.
+In Figure\ \ref{fig:db} we show how to use lookup argument to support
+relational operators.
+
+\begin{small}
+\begin{algorithm}[bt]
+\SetKwData{Left}{left}\SetKwData{This}{this}\SetKwData{Up}{up}
+\SetKwFunction{Union}{Union}\SetKwFunction{FindCompress}{FindCompress}
+$\underline{\myvec{a} = \proj_{i}(\myvec{t})}$ \newline
+ Let $\myvec{t} = (\myvec{c}^{(1)}, ..., \myvec{c}^{(k)}$, just
+ assert $\myvec{a} = \myvec{c}^{(i)}$. \newline
+
+$\underline{\myvec{t}' = \select_{c}(\myvec{t})}$ \newline
+ (1) Let $\myvec{t} = (\myvec{u}^{(1)}, ..., \myvec{u}^{(k)})$, 
+ 	 Let $\myvec{t}' = (\myvec{v}^{(1)}, ..., \myvec{v}^{(k)})$, 
+ \newline
+ (2) Prover and verifier jointly
+ 	computes $\myvec{c}$ s.t. for any $i\in [|\myvec{t}|]$:
+ 	$\myvec{c}_i = c(\myvec{u}^{(1)}_i, ..., \myvec{u}^{(k)}_i)$. \newline
+ (3) Verifier sends challenge $r$. \newline
+ (4) Prover and verifier jointly computes
+ 	$\myvec{a} = \sum_{i=1}^k r^i \cdot \myvec{u}^{(i)}$, and
+ 	$\myvec{b} = (\sum_{i=1}^k r^i \cdot \myvec{u}^{(i)}) \cdot \myvec{c}$
+	(where $\myvec{c}$ serves as a selector). \newline
+ (5) Prover and verifier runs lookup argument (ignoring $0$ entries
+ 	$\myvec{a} \lookup \myvec{b}$ and
+	$\myvec{b} \lookup \myvec{a}$. (note that it's linear compleixty).
+
+$\underline{\ttt{wellformed}(\myvec{t})}$ where $\myvec{t}= (\myvec{key}, \myvec{id}, \myvec{val})$
+	\newline
+  {\bf Assumption: } all effective values in range $(0,\ttt{max})$.
+  	Define $n = |\myvec{key}|$. \newline
+  (1) $\myvec{key}$ is sorted, i.e.,
+  	$\forall i\in[n-1]$: $\myvec{key}_i \leq \myvec{key}_{i+1}$. \newline
+  (2) $\myvec{val}[i]=0$ if $i=1$ or $\myvec{key}[i]\neq \myvec{key}[i-1]$. \newline
+  (3) $\myvec{val}[i]=\ttt{max}$ if $i=n$ or $\myvec{key}[i+1]\neq \myvec{key}[i]$. \newline
+  (4) $\myvec{val}[i] \leq \myvec{val}[i+1]$ if $\myvec{key}[i]=\myvec{key}[i+1]$.\newline
+  {\bf Comment:} it can be expanded to table with two-column keys.
+
+$\underline{\myvec{t}^{(3)} = \myvec{t}^{(1)} \join \myvec{t}^{(2)}}$ where $\myvec{t}^{(i)}= (\myvec{key}^{(i)}, \myvec{id}^{(i)}, \myvec{val}^{(i)})$ for
+	$i\in[2]$ and $\myvec{t}^{(3)} = (\myvec{key}^{(3)}, \myvec{id}^{(3)},
+		\myvec{val}^{(3)}, \myvec{id}^{(4)}, \myvec{val}^{(5)})$.
+	\newline
+	(1) Assert $\ttt{wellformed}(\myvec{t}^{(i)})$ for $i\in [2]$. \newline
+	(2) $(\myvec{key}^{(3)}, \myvec{id}^{(3)}, \myvec{val}^{(3)})$
+		is $\ttt{wellformed}$. \newline
+	(3) $((\myvec{key}^{(3)},
+		\myvec{val}^{(3)}), \myvec{id}^{(4)}, 
+		\myvec{val}^{(5)})$
+		is $\ttt{wellformed}$. \newline
+	(4) $(\myvec{key}^{(3)}, \myvec{val}^{(3)})$ 
+		$\lookup$
+		$(\myvec{key}^{(1)}, \myvec{val}^{(1)})$ \newline
+	(5)
+		$(\myvec{key}^{(1)}, \myvec{val}^{(1)})$
+		$\lookup$
+		$(\myvec{key}^{(3)}, \myvec{val}^{(3)})$. \newline
+	(6) $(\myvec{key}^{(3)}, \myvec{id}^{(4)}, \myvec{val}^{(5)})$ 
+		$\lookup$
+		$(\myvec{key}^{(2)}, \myvec{id}^{(2)}, \myvec{val}^{(2)})$ \newline
+
+\caption{Relational Operators Based on Lookup Argument}
+\label{fig:db}
+\end{algorithm}
+\end{small}
+
 
 \begin{small}
 \begin{algorithm}[bt]
