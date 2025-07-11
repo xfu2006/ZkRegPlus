@@ -791,6 +791,24 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		(res, vec_subsig_final_res)
 	}
 
+	/// this is basically the inverse function of
+	/// HexACDFA::gen_subsig_id() in hex_acdfa.rs
+	/// it extracts the sig_id and the real subsig_id that
+	/// generates the subsig_id
+	#[inline(always)]
+	fn extract_sigid(subsig_id: F)->(F,F){
+		let u_subsig_id = field_to_usize(&subsig_id);
+		let bits = RANGE2_BIT; //26 bit
+		let bit_part1 = bits*2/3; //16 for accomodating 64k sigs for bits 24
+		let bit_part2 = bits - bit_part1;
+		let sig_id = u_subsig_id >> bit_part2;
+		let real_subsig_id = u_subsig_id - (sig_id<<bit_part2);
+		assert!(sig_id < (1<<bit_part1));
+		assert!(real_subsig_id < (1<<bit_part2));
+
+		(F::from(sig_id as u64), F::from(real_subsig_id as u64))
+	}
+
 	/// Given the final result of subsig,
 	/// use the EvalDNF information to discharge sig.
 	/// Basic idea: each sig has a collection of EvalDNF (see type_def.rs)
@@ -809,12 +827,28 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 	fn gen_discharge_sig_combo(
 		_acdfa_id: u32, //the acdfa_id for the combo that includes info_stores
 		_inp_sigs: &Vec<F>,
-		_inp_subsigs: &Vec<F>,
+		inp_subsigs: &Vec<F>,
 		_subsig_result: &Vec<F>,
-		_capacity: &ComputeSigAdvCapacity,
+		capacity: &ComputeSigAdvCapacity,
 		_v_sigs: &Vec<Arc<ClamavSig>>, //required to COVER inp_sigs
 	)->Rc<RefCell<Container<F>>>{
+		//0. data retrieval
 		let stmt_container = Container::<F>::new("sig_res_combo");
+		let n = capacity.subsigs;
+		assert!(inp_subsigs.len()==n);
+		let tuples = inp_subsigs.iter().map(|s| Self::extract_sigid(*s))
+			.collect::<Vec<(F,F)>>();
+		let sigs = tuples.iter().map(|t| t.0).collect::<Vec<F>>();
+		let real_subsigs = tuples.iter().map(|t| t.0).collect::<Vec<F>>();
+
+		//REMOVE LATER -------------
+		println!(" === DEBUG USE 6101: dump of sig info ==");
+		for i in 0..n{
+			println!("  --i: {}, sig: {}, real_subsig: {}, subsig: {}",
+				i, sigs[i], real_subsigs[i], inp_subsigs[i]
+			);
+		}
+		//REMOVE LATER ------------- ABOVE
 
 		stmt_container
 	}

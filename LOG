@@ -17650,7 +17650,9 @@ Goal 3. collect the result on three types.
 	[f] collect cost
 
 Friday 07/11/2025
-LOC: (gadget) 12027 -> (
+LOC: (gadget) 12027 -> (12102: +80)
+LOC: (data) 8783 -> (8873: +90)
+Total: +170
 Goal 1. planning sig to subsig
 	[a] ClamavSig has the eval_dnv
 	[b] EvalDNF is a Vec<Vec<usize>>
@@ -17675,5 +17677,25 @@ Goal 3. define prototype
 	[c] refine the gen_sig_summary_combo to take a vector of sigs.
 		-> change declaration
 		-> fix syntax 
+Goal 4. add function add_siginfo_to_lkup
+	[a] prototype
+	[b] gen_info_id
+	[c] check out how it gets the subsig_id
+	[d] check how many rules are added: 
+		(1) added 319k (for 38k constraints)
+		(2) now lkdb size 273524192 -> it's about 5M extra.
+		need to somehow eliminate some
+	[e] after removing the extra to remove. didn't cut much 
+		about 1M
+	[f] but pm_acdfa actually does not need final_2_sig so can save about 5M,
+		only needs the transition.
+
+Goal 5. align the sig and subsig
+	[a] data retrieval and add framework
+	[b] explore ways to align sigs and inp_subsigs -> it should be
+		generated the same time that inp_subsigs is generated
+	[c] data dump
+
+	[a] regression test
 	[b] define validate_sig_summary_combo
 

@@ -36,6 +36,7 @@ use self::rustomaton::{
 	nfa::{NFA},
 	dfa::{DFA},
 };
+
 //use utils::consts::{WARN,LOG1,LOG2,LOG3, B_SINGLE_JOB_MODE,COMBINATION_LIMIT,RANGE_MAX,MAX_PM_SECTIONS, REPEAT_LEN_LIMIT, MIN_BAG_WORD_LEN, TEST_MODE};
 use utils::{
 	logger::{log, log_perf,LOG1,LOG2,LOG3},
@@ -510,6 +511,7 @@ pub fn preprocess_regex(s:&str, name: &str, sigtype: ClamSigType, cfg: &ClamavAp
 }
 
 impl ClamavSig{
+
 	pub fn to_str(&self)->String{
 		format!("{}: {}", self.name, self.line)
 	}

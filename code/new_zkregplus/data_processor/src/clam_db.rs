@@ -44,8 +44,8 @@ pub const STATE_BIT:usize =  24;
 
 /// The bit-width of RANGE2 table 
 /// IN PRODUCTION NEEDS TO CHANGE THE SAME SIZE OF STATE_BIT
-//pub const RANGE2_BIT: usize = 8;
-pub const RANGE2_BIT: usize = 26; //(allowing 64M nibbles = 32MB)
+pub const RANGE2_BIT: usize = 8;
+//pub const RANGE2_BIT: usize = 26; //(allowing 64M nibbles = 32MB)
 
 // the following are trival related sub-table ids
 // they are located at the very beginning of the entire lkup
@@ -474,8 +474,9 @@ impl SubsigStepStore{
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let max = F::from(max_val as u32);
 		let cols = self.gen_cols(state_part_bits, None);
-		let tbl_id = F::from(acdfa_id + STORE_SUBSIG_STEP);
+		let _tbl_id = F::from(acdfa_id + STORE_SUBSIG_STEP);
 
+		/*
 		// DEPRECATED, REMOVE LATER --------------
 		//cols[5] is encoded
 		let mut tuples = cols[5].par_iter().map(|v|{
@@ -491,6 +492,8 @@ impl SubsigStepStore{
 			let encoded = &cols[5];
 			for i in 0..encoded.len()-1{ assert!(encoded[i]<=encoded[i+1]); }
 		}
+		*/
+
 		//1. use a loop add sub-table for encoded-subsig, encoded_step, 
 		// encoded_pat_id, encoded_rg_start, encoded_rg_end
 		let subcats = [ID_ENCODED_SUBSIG, ID_ENCODED_NORMAL_STEP,
@@ -1073,6 +1076,89 @@ impl <F:PrimeField> ClamavDB<F>{
 		lk.vals.append(&mut col2);
 	}
 
+	/// mainly add the information of EvalDNF
+	/// builds two tables:
+	/// (sig, eval_dnf_id) -> count
+	/// (sig, eval_dnf_id, step) -> subsig_id
+	/// NOTE that the subsig_id is the "REAL" subsig_id without
+	/// the part of acdfa_id embedded, as it applies to ALL (instead of
+	///    acdfa).
+	pub fn add_sig_evaldnf_to_lkup(
+		lk: &mut LookupTableTwoCol_Inst<F>, 
+		vec_sig_obj: &Vec<Arc<ClamavSig>>,
+		sig_to_id: &HashMap<String,usize>
+	) {
+		//1. generate (sig, eval_dnf_id) -> count
+		let info_id:u32 = 0x98882405; 
+		let f1 = F::from(info_id);
+		let factor = F::from(0x100000000 as u64); //32-bit 
+		let mut tuples = vec_sig_obj.par_iter().map(|sig|{
+			let sig_name = &sig.name;
+			let sig_id = sig_to_id.get(sig_name).expect(
+				&format!("cannot find sig: {}", sig_name));
+			let f_sig_id = F::from(*sig_id as u64);
+
+			let sig_tuples = sig.eval_dnf.vec_disjunc
+				.iter().enumerate().map(|(i,v)|{
+				let dnf_id = F::from(i as u64);
+				let tbl_id = f1*factor*factor*factor + 
+					f_sig_id*factor*factor + dnf_id*factor;
+				let count = F::from(v.len() as u64);
+				(tbl_id, count)	
+			}).collect::<Vec<(F,F)>>();
+
+			sig_tuples
+		}).flatten().collect::<Vec<(F,F)>>();
+		lk.vals.append(&mut tuples);
+
+		//2. generate (sig, eval_dnf_id, id) -> subsig_id
+		let info_id:u32 = 0x99992405; 
+		let f1 = F::from(info_id);
+		let mut tuples = vec_sig_obj.par_iter().map(|sig|{
+			let sig_name = &sig.name;
+			let sig_id = sig_to_id.get(sig_name).expect(
+				&format!("cannot find sig: {}", sig_name));
+			let f_sig_id = F::from(*sig_id as u64);
+
+			let sig_tuples = sig.eval_dnf.vec_disjunc
+				.iter().enumerate().map(|(i,v)|{
+				let dnf_id = F::from(i as u64);
+				let tbl_id = f1*factor*factor*factor + 
+					f_sig_id*factor*factor + dnf_id*factor;
+
+				let step_tuples = v.iter().enumerate().map(|(step,subsig)|{
+					let subtbl_id = tbl_id + F::from(step as u64);
+					let real_subsig_id = F::from(*subsig as u64);
+					(subtbl_id, real_subsig_id)
+
+				}).collect::<Vec<(F,F)>>();
+
+				step_tuples
+			}).flatten().collect::<Vec<(F,F)>>();
+
+			sig_tuples
+		}).flatten().collect::<Vec<(F,F)>>();
+		lk.vals.append(&mut tuples);
+	}
+
+	#[inline(always)]
+	pub fn gen_sig_info_id(
+		sig_id: usize,
+		piece_id: u32, //like ID_SIG_DNVEVAL_COUNT
+	)->F{
+		//we set f1 to f4 order so that the entries when added
+		//are easily sorted.
+		let info_id:u32 = 0x99992405; //compared with other entries, the largest
+		let f1 = F::from(info_id);
+		let f3 = F::from(sig_id as u32);
+		let f4 = F::from(piece_id);
+		let factor = F::from(0x100000000 as u64); //32-bit 
+
+		let res:F = f1*factor*factor + f3*factor + f4; //96-bit
+		res
+	}
+
+
 	/// add the corresponding ACDFA and subsig_store to the lkup
 	fn add_bundle_subsig_to_lkup(lkup: &mut LookupTableTwoCol_Inst<F>, 
 		sig_to_id: &HashMap<String,usize>, 
@@ -1576,6 +1662,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		Self::add_range_to_lkup(&mut lkup, F::from(RANGE2), (0,1<<RANGE2_BIT));
 		Self::add_bundle_subsig_to_lkup(&mut lkup, &sig_to_id, &bundle_subsig, false);
 		Self::add_bundle_subsig_to_lkup(&mut lkup, &sig_to_id, &bundle_subsig_igc, true);
+		Self::add_sig_evaldnf_to_lkup(&mut lkup, &v_sigs, &sig_to_id); 
 		lkup.vals.sort();
 		println!("PERFORMANCE 100: lkup size: {}", lkup.vals.len());
 
