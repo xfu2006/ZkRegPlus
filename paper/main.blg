@@ -6,6 +6,11 @@ Reallocated singl_function (elt_size=4) to 100 items from 50.
 Reallocated singl_function (elt_size=4) to 100 items from 50.
 Reallocated wiz_functions (elt_size=4) to 6000 items from 3000.
 Database file #1: fu2.bib
+I was expecting a `,' or a `}'---line 22443 of file fu2.bib
+ :   
+ :   booktitle={USENIX Sec 2025},
+(Error may have been on previous line)
+I'm skipping whatever remains of this entry
 Warning--I didn't find a database entry for "Sangria"
 Reallocated singl_function (elt_size=4) to 100 items from 50.
 Reallocated glb_str_ptr (elt_size=4) to 20 items from 10.
@@ -119,4 +124,4 @@ warning$ -- 66
 while$ -- 480
 width$ -- 0
 write$ -- 1820
-(There were 67 warnings)
+(There was 1 error message)

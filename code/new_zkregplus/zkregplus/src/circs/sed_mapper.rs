@@ -328,7 +328,8 @@ impl <F:PrimeField> SedAdvice<F>{
 		let sq_res = stmt_disc.borrow().search_container("discharge_adv_stmt bwd_steps_queue sq_res2").expect("sq_res err");
 		let compute_sig_adv_advice = ComputeSigAdvAdvice::<F>::new(
 			fsm_id as u32, &inp_sigs, &subsigs_inp, &sq_res,
-			Clone::clone(&csa_cap), subsig_step_store, subsig_info_store);
+			Clone::clone(&csa_cap), subsig_step_store, subsig_info_store,
+			vec_sigs_to_discharge);
 
 		//3. assemble all advices
 		let vec_advices:Vec<Rc<dyn ComponentAdvice<F>>> = vec![

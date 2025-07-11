@@ -86,7 +86,7 @@ a previous pattern. For instance, the distance between {\em the end of} ``1234" 
 {\em the end of} ``56" should be 16 hex-nibbles (i.e., 8 characters, 
 because the length of ``56" is also counted).
 
-SED has a pre-compiled AC-DFA that corresponds to all these patterns.
+Chunked SED has a pre-compiled AC-DFA that corresponds to all these patterns.
 Before running the forward-backward pruning algorithm, SED feeds
 the given string to the ACDFA, gets the list of final states,
 and then map these final states back to the corresponding pattern words.
@@ -96,31 +96,30 @@ that pattern 2 occurs at locations (9, 13, 43, 53). Note that
 the first location starts from 1, and each location accounts for one 
 4-bit nibble.
 
-Then SED maintains a StepQueue that records the list of locations
+Then Chunked SED maintains a {\em step queue} that records the list of locations
 that correspond to each pattern (step) in the regex subsignature.
 For instance, given the regex signature and input word in Figure \ref{fig_stream}, starting with an initial input queue (where location 1 for step 0
-is included by default), it results in the Output Queue as shown 
+is included by default), it results in the output step queue as shown 
 in the figure.
 
-The challenge of making the prover more eficient is that: we need
-to eliminate those ``dead" locations from the step queue at run time.
-We thus develop a forward-backward pruning algorithm. Consider the
-following example.
+To make the prover more eficient, we run an additional backward elimination
+process that removes ``dead" locations from the step queue at run time.
+Consider the following example.
 
 \begin{example}
-	Given the example in Figure\ \ref{fig_stream}. The forward process
-first iteratively starts from each location of each step, identify
+	In Figure\ \ref{fig_stream}, The forward-propgation process
+first iteratively starts from each location of each step, identifies
 the applicable locations for the next step. For instance, given location 7
 for step 1 (pattern 7), four locations of the next pattern (2) falls
 into the range (within min-max distance (16,16): 19, 31, 43, 53.
-Notice that the algorithm has to roll based on the ``on-going" result.
+Notice that the algorithm has to propagate based on the ``on-going" result.
 For step 3, it has to start from the newly generated locations (19, 31, 43, 53),
 and identify the workable locations 59 and 69 for step 3 and so on.
 
    Once the forward process is done, we then run a backward pruning process
 that removes ``dead" locations. Consider step 4, its current minimum
 location is 79. Given that the distance between step 3 and 4 is 10,
-this eliminates $59$ in step 3, because for new locations for step 4
+this eliminates $59$ in step 3, because for new locations of step 4
 added in the future, they can only be greater than 79 and for sure
 there will be no new locations that can be derived from 59. Thus
 59 should be removed from the location list of step 3. Similalry,
@@ -129,70 +128,53 @@ the new ``min-loc" for step 3 now becomes 69, and this eliminates
 in Figure \ref{fig_stream}, which results in the final Output Queue.
 \end{example}
 
-The prover has to provide proofs for the validity of the 
-forward and backward passes. The main (but incomplete) data of
-the two proofs are provided in Figure\ \ref{fig_stream}.
+For forward propgation, the prover provides its ``transcript" of reasoning,
+i.e., how it derives the locations for the next step,
+by running a range-query join operation on tables.
 
-The {\em forwrd validity proof} mainly consists of the following items:
-\begin{enumerate} 
-	\item three step queues: input, to add, and the result.
-	\item an additional forward proof (as shown in the middle of
-	Figure\ \ref{fig_stream}: a structure that encodes the information
-		about from each location of each step how one derives the
-		location for the next step. 
-		It can be regarded as a big table, whose primary key
-		is an encoded column of the information of a src step (such as
-		its pattern, its location, and the ranges to reach next step). 
-		Then the rest three columns encoded the destination pat,
-		and (possibly multiple) locations resulted.
-\end{enumerate}
+\begin{example}
+Consider the source location $43$ of source step $2$
+in Figure\ \ref{fig_stream}, in the {\em Forward Proof}. 
+We need to retrieve the locations for pattern $3$
+from Pat-Loc table which satisfies range-query
+$[43+16,43+16]$.
 
-At the verifier circuit, the set of information is verified in the
-following way:
-\begin{enumerate}
-	\item the resulting step queue is the union of the input and
-		to add.
-	\item projecting the forward proof at each step (destination) 
-		results in the result queue.
-	\item projecting the src location of forward proof results in
-		the input step queue.
-	\item {\bf $\*$ most importantly:} the list of destination locations
-		corresponds to a {\em range query} from the source location.
-		By range query, we mean that given a location $s$ of pattern $p$,
-		and a range query $[a,b]$, the the PatLoc list, we need to
-		retrieve all entries in PatLoc that are $p$ entries that
-		falls into range $[a+s,a+b]$.
+The result are:
+$(3,0,0), (3,1,59), (3,1,69)$. Here,
+only the middle entry is the valid result,
+and $(3,0,0)$ and $(3,1,69)$ are the
+wrapping entries for validity. 
 
-		{\em need to update figure}
-		As an example, consider the source location $43$ of source step $2$
-		in Figure\ \ref{fig_stream}, the list of  matching locations
-		displayed for the next step is
-		$(3,0,0), (3,1,59), (3,1,69)$ where only the middle entry is the
-		valid result but the $(3,0,0)$ and $(3,1,69)$ are the
-		wrapping entries for validity. Here, $0<43+16$ and $69>43+16$,
-		and the PatLoc earlier is proved to be sorted. This
-		guarantees that $(3,1,59)$ is the correct and ALL of the 
-		range query.  Later we show that such range queries can be
-		done very efficiencly using lookup arguments.
-\end{enumerate}
+Why would verifiers be convinced that this is exactly
+the correct result of range query? 
+This is based on the following reasoning.
+First, $0<43+16$ and $69>43+16$.
+Second, the pat-loc table earlier is proved to be sorted. 
+Third, id columns are consecutive, and it prevents
+a malicious prover to skip valid result.
+Later, we show that such range queries can be
+done very efficiencly using lookup arguments.
+\end{example}
 
-One can see the bacward proof (and its validity) works in a similar way.
-We present the formal definition of forward and backward pruning algorithm,
-and their proof formally in Appendix B.
+The verifier verifies the validity of forward reason transcript,
+in addition, it performs the following checks: (1)
+the resulting step queue is the union of the input and
+to add; (2) projecting the forward proof at 
+each step (destination) results in the result queue;
+and (3).  projecting the src location of forward proof results in
+the input step queue.  One can see the backward proof (and its validity) 
+works in a similar way.
 
-The algorithm has several interesting properties and challenges:
-\begin{enumerate}
-	\item At "run time", we hope to have dynamic (flexible) step-queue
-	length, i.e., when a step queue item does not have any applicable 
-	locations, we do not present them int proof
-	\item Also notice that for different subsigs, they have different
-	step queue length
-	\item We need to reason about union, difference, projection, 
-	and join between these relation tables.
-	\item To handle the flexible length problem, we use a technique
-	similar to RAM modeling (using a transcript) to accomodate data
-	structures of different length.
-\end{enumerate}
+The algorithm has several interesting properties and challenges.
+We need to reason about typical relational database operations
+for structures generated at ``run time". They have
+rather diverse sizes, even for the same type. For instance,
+a subsig can have very different step-queue size, given different files.
+A pre-set length could waste many constraints and resources.
+To handle the flexible length problem, we use a technique
+similar to RAM modeling (like using a transcript to memory read/write
+operations), to accomodate data structures of diffrenet length.
+We now present the details in the next subsection.
 
 \subsection{Modeling Relational Operators using Lookup Arguments}
 Proving database out-sourcing using zk-SNARK systems has been

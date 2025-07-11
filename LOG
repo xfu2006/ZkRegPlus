@@ -17618,9 +17618,62 @@ Goal 5. check the row result
 	[c] test1, 2
 	[d] cost
 
---- TODO ---
+Thursday 07/10/2025
+LOC: (gadget): 11858 -> (12027: +170)
 Goal 1. construct the final_srs result and conditional logup
 	between the final result and the srs_prf column
+	[a] read existing code
+	[b] add type colmn and its column
+	[c] regression test to check sid set up right
+	[d] now retrieve in validate function
+	[e] validate the sid_type, 
+		original cost: 10
+		new_cost: 15
+Goal 2. now build up the vec_scc_res check
+	[a] create vec_scc_res and its sid (don't care)
+	[b] create logup mtbl
+		-> test
+		-> regression test
+	[c] validate it.
+		-> display data
+		-> fix scc_res.len neq sid
+		-> validate logup
+	[d] regression testing
+	[e] measure cost -> DONE
 
-Goal 2. select the result for each subsig, each concludes
-	the current validate() function
+Goal 3. collect the result on three types.
+	[a] build the data
+	[b] test
+	[c] regression test
+	[d] check the data
+	[e] test, regression test
+	[f] collect cost
+
+Friday 07/11/2025
+LOC: (gadget) 12027 -> (
+Goal 1. planning sig to subsig
+	[a] ClamavSig has the eval_dnv
+	[b] EvalDNF is a Vec<Vec<usize>>
+	[c] we need to encode EvalDNF in db for 38k regex
+	[d] discharge table for a sig is a table of
+		sig - eval_df_id - id - subsig - res - 
+		      eval_df_id - id - subsig - res
+			  ...
+		We need to (sig, [subsig]) belong to the claimed discharge EvalDNF
+		fully covered, and 
+		where the subsig - res is retrieved from the previous db
+Goal 2. design how to encode this in lkup table
+Goal 3. define prototype
+	[a] define gen_sig_summary_combo
+		-> determine the parameters
+		-> modify to pass the result
+		-> figure out how to pass the sig info -> do we need an extra
+			SigStore?
+	[b] check clamav_db how to add to dk
+		-> could add a function to ClamavSig::add_sig_to_lkup
+		-> could pass the sigs to it.
+	[c] refine the gen_sig_summary_combo to take a vector of sigs.
+		-> change declaration
+		-> fix syntax 
+	[b] define validate_sig_summary_combo
+

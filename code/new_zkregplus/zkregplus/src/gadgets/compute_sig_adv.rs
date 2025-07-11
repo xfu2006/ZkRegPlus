@@ -20,7 +20,7 @@ use rayon::iter::{
 	ParallelIterator,IntoParallelIterator
 //	, IndexedParallelIterator
 };
-use std::{rc::{Rc}, cell::{RefCell},
+use std::{rc::{Rc}, cell::{RefCell}, sync::{Arc},
 	collections::{HashMap},
 	marker::{PhantomData},
 	any::Any,
@@ -44,9 +44,11 @@ use crate::gadgets::{
 	discharge_adv::{StepQueue,DischargeAdvCapacity,StepQueueType},
 };
 use data_processor::{
-	type_def::{SubsigStepStore,TriVal,SubsigInfoStore,CompOp,SubSigType},
+	type_def::{SubsigStepStore,TriVal,SubsigInfoStore,CompOp,SubSigType,
+		ClamavSig},
 	clam_db::{RANGE2,ID_ENCODED_NORMAL_STEP, ID_ENCODED_LAST_STEP,RANGE2_BIT,
-		ID_COMP_OP, ID_COMP_NUM, ID_COMP_SUBSIG,ID_MIN_REQUIRED},
+		ID_COMP_OP, ID_COMP_NUM, ID_COMP_SUBSIG,ID_MIN_REQUIRED,
+		ID_SUBSIG_TYPE},
 };
 use folding_schemes::folding::foldpot::{
 	sigma_ir1cs::{
@@ -66,7 +68,7 @@ use ark_r1cs_std::{
 	//alloc::AllocVar,
 	eq::EqGadget,
 	R1CSVar,
-	//boolean::Boolean,
+	boolean::Boolean,
 };
 use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef};
 // -----------------------------------------------
@@ -180,6 +182,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		capacity: &ComputeSigAdvCapacity,
 		subsig_store_info: &SubsigStepStore,
 		subsig_extra_info: &SubsigInfoStore,
+		v_sig_obj: &Vec<Arc<ClamavSig>>, //needs to cover all inp_sigs
 	) ->Self{
 		let stmt_container = Container::<F>::new("compute_sig_adv_stmt");
 
@@ -187,17 +190,23 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		let pad = vec![F::zero(); capacity.subsigs-inp_subsigs.len()];
 		let inp_subsigs = [&pad[..], &inp_subsigs[..]].concat();
 		let pad2 = vec![F::zero(); capacity.sigs-inp_sigs.len()];
-		let _inp_sigs = [&pad2[..], &inp_sigs[..]].concat();
+		let inp_sigs = [&pad2[..], &inp_sigs[..]].concat();
 
 		let (eval_res_combo, raw_res) = Self::gen_eval_subsig_by_sq_combo(
 			&inp_subsigs, sq_res, &capacity, subsig_store_info);
 		stmt_container.borrow_mut().add_container(eval_res_combo);
 
 		//2. based on non-deterministic advice of eval order
-		// compute sig_res
-		let synthesis_res_combo = Self::gen_synthesis_subsig_combo(acdfa_id,
+		// compute results of subsigs
+		let (synthesis_res_combo,subsig_res) = 
+			Self::gen_synthesis_subsig_combo(acdfa_id,
 			&inp_subsigs, &raw_res, &capacity, subsig_store_info, subsig_extra_info);
 		stmt_container.borrow_mut().add_container(synthesis_res_combo);
+
+		//3. based on the sysntehsis resout of subsigs
+		let sig_res_combo = Self::gen_discharge_sig_combo(acdfa_id,
+			&inp_sigs, &inp_subsigs, &subsig_res, &capacity, v_sig_obj);
+		stmt_container.borrow_mut().add_container(sig_res_combo);
 
 		//3. allocates the discharged_sigs buffer
 		Self{capacity: Clone::clone(capacity), stmt_container}
@@ -349,6 +358,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 	/// the column "subsig_final_result" is the real evaluation result
 	/// for a subsig.
 	/// see accpets_approx_pm_bounds() in clamav.rs for the processing logic
+	/// return (ProofCombo, FinalEvalResult for the inp_subsigs padded)
 	fn gen_synthesis_subsig_combo(
 		acdfa_id: u32, //the acdfa_id for the combo that includes info_stores
 		inp_subsigs: &Vec<F>,
@@ -356,7 +366,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		capacity: &ComputeSigAdvCapacity,
 		_subsig_store_info: &SubsigStepStore,
 		subsig_store_extra_info: &SubsigInfoStore,
-	)->Rc<RefCell<Container<F>>>{
+	)->(Rc<RefCell<Container<F>>>,Vec<F>){
 		//0. retrieve data 
 		let n1 = inp_subsigs.len(); //capacity num_subsigs
 		assert!(n1==capacity.subsigs);
@@ -384,6 +394,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		// GT => res
 		// We need to tab num and op appropriate usingly ID_COMP_OP
 		//  and ID_COMP_NUM so that we can check them in lookup table
+		let mut vec_type = vec![zero; n1]; 
 		let mut vec_op = vec![zero; n1];
 		let mut vec_num = vec![zero; n1];
 		let mut vec_counter_res = vec![zero; n1]; //result for counter constraint 
@@ -391,17 +402,18 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		let mut vec_sid_num = vec![zero; n1];
 		let vec_sid_counter_res = vec![zero; n1]; //no need to check 
 												  //as res is generated in circ
+		let mut vec_sid_type = vec![zero; n1];
 		//we use simple for loop here as subsig num is small
 		for i in 0..n1{
 			let subsig = inp_subsigs[i];
 			let f_subsig = field_to_usize(&subsig);
-			let (op, num) = if subsig.is_zero(){
-				(CompOp::NONE as u8, 0)
+			let (op, num, subsig_type) = if subsig.is_zero(){
+				(CompOp::NONE as u8, 0, 0)
 			}else{
 				let extra_info = subsig_store_extra_info
 					.subsig_to_rec.get(&field_to_usize(&subsig))
 					.expect(&format!("Can't find info for subsig: {}", subsig));
-				(extra_info.comp_op, extra_info.comp_num)
+				(extra_info.comp_op, extra_info.comp_num, extra_info.subsig_type)
 			};
 			let c_op = CompOp::from(op);
 			//for input_subsig 0, dummy value for raw_res is 0
@@ -423,6 +435,9 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 			vec_counter_res[i] = F::from(count_res as u8);
 			vec_sid_op[i] = sid_op;
 			vec_sid_num[i] = sid_num;
+			vec_type[i] = F::from(subsig_type as u8);
+			vec_sid_type[i] = SubsigInfoStore::gen_info_tbl_id(acdfa_id,
+				f_subsig, ID_SUBSIG_TYPE);
 		}
 
 		//3. prepare the result for the subsig_count_constraint
@@ -485,10 +500,17 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		let mut sid_scc_prf_abs_diff1 = vec![];
 		let mut sid_scc_prf_abs_diff2 = vec![];
 
+		let mut vec_scc_res = vec![zero;n1]; //will be updated 
+		let vec_sid_scc_res = vec![zero; n1]; //don't care because
+									//vec_scc_res is computed.
+
 		for i in 0..n1{
 			//3.1.1 retrieve extra info
 			let subsig = inp_subsigs[i];
-			if subsig.is_zero() {continue;}
+			if subsig.is_zero() {
+				vec_scc_res[i] = F::from(TriVal::Maybe as u8);
+				continue;
+			}
 			let extra_info = subsig_store_extra_info
 					.subsig_to_rec.get(&field_to_usize(&subsig))
 					.expect(&format!("Can't find info for subsig: {}", subsig));
@@ -574,8 +596,10 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 				scc_prf_abs_diff2.push(F::from(abs_diff2 as u64));
 				sid_scc_prf_abs_diff2.push(frg);
 				
+				vec_scc_res[i] = res; //only the last row is valid
 			}
 		}
+
 		let n2 = capacity.get_scc_prf_size();
 		assert!(scc_prf_subsig.len()<=n2, "Adjust perc_comp_subsig in Config! Needed scc_prf len: {} < current_tuples: {}", n2, scc_prf_subsig.len());
 		let pad = vec![F::zero(); n2-scc_prf_subsig.len()];
@@ -602,6 +626,8 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		sid_scc_prf_row_res = [&pad[..], &sid_scc_prf_row_res[..]].concat();
 		sid_scc_prf_abs_diff1= [&pad2[..], &sid_scc_prf_abs_diff1[..]].concat();
 		sid_scc_prf_abs_diff2= [&pad2[..], &sid_scc_prf_abs_diff2[..]].concat();
+		assert!(vec_scc_res.len()==n1);
+		assert!(vec_sid_scc_res.len()==n1);
 
 		let col2d = [
 			&scc_prf_subsig, &scc_prf_comp_subsig_encode, &scc_prf_comp_subsig,
@@ -649,12 +675,65 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 			vec![&inp_subsigs[..], &gen_regex_res[..]],
 			vec![0,1]
 		);
-
 		let mtbl_comp_score = gen_m_table(&src_s_r, &dest_s_r);
 
+		//3.3 and 3.4 which builds the log up and verify abs_diff
+		//no need to build any additional (their SID cols already build
+		//earlier
 
-		//4. construct container
-		//4.1 the counter constraint part
+		//3.5 build vec_scc_res and perform logup
+		//vec_scc_res has the same length of inp_subsigs
+		//if its type is the SubsigCounterConstraint, then its value
+		//is available in scc_prf_row_res (last row with comp_subsig=max).
+		//otherwise we set its value to be don't care (Maybe), because
+		//it will not be retrieved anyway.
+		//and generate the corresponding logsups (based on vec_type)
+		let var_scc = F::from(SubSigType::SubsigCountConstraint as u8); // 2
+		let src_sel = vec_type.iter().map(|t|
+			if *t==var_scc {one} else {zero}
+		).collect::<Vec<F>>();
+
+		assert!(vec_scc_res.len()==n1 && src_sel.len()==n1);
+		let src = encode_cols_better(
+			vec![&inp_subsigs[..], &vec_scc_res[..]],
+			vec![0,1]
+		);
+		let src = src.iter().zip(src_sel.iter()).map(|(a,b)|
+			*a * *b).collect::<Vec<F>>();
+
+		let dst = encode_cols_better(
+			vec![&scc_prf_subsig[..], &scc_prf_row_res[..]],
+			vec![0,1]
+		);
+		let dst_sel = scc_prf_comp_subsig.iter().map(|c| 
+			if *c==max {one} else {zero}
+		).collect::<Vec<F>>();
+		let dst = dst.iter().zip(dst_sel.iter()).map(|(a,b)|
+			*a * *b).collect::<Vec<F>>();
+		let mtbl_find_scc_res = gen_m_table(&src, &dst);
+
+		//4. build the final table. idea is simple: we
+		// use conditional selection to determine based on type
+		let var_regular = F::from(SubSigType::GeneralRegex as u8); // 0
+		let is_scc= src_sel; //saving cost
+		let is_reg = vec_type.iter().map(|t|
+			if *t==var_regular {one} else {zero}
+		).collect::<Vec<F>>();
+		let mut vec_subsig_final_res = vec![zero; n1];
+		assert!(vec_scc_res.len()==n1);
+		assert!(gen_regex_res.len()==n1);
+		assert!(vec_counter_res.len()==n1);
+		for i in 0..n1{//since it's small about 1k entries, just single thread
+			vec_subsig_final_res[i] = if is_scc[i].is_one() {vec_scc_res[i]}
+			else{
+				if is_reg[i].is_one() {gen_regex_res[i]} 
+				else {vec_counter_res[i]}
+			}
+		}
+		let vec_sid_subsig_final_res = vec![zero; n1];//no need to check
+
+		//5. construct container
+		//5.1 the counter constraint part
 		res.borrow_mut().add_col(Col::new(vec_op, "vec_op", IDX_DATA));
 		res.borrow_mut().add_col(Col::new(vec_sid_op, "sid_op", IDX_SI_DATA));
 		res.borrow_mut().add_col(Col::new(vec_num, "vec_num", IDX_DATA));
@@ -663,8 +742,11 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 			"vec_counter_res", IDX_DATA));
 		res.borrow_mut().add_col(Col::new(vec_sid_counter_res, 
 			"sid_counter_res", IDX_SI_DATA));
+		res.borrow_mut().add_col(Col::new(vec_type, "vec_type", IDX_DATA));
+		res.borrow_mut().add_col(Col::new(vec_sid_type, "vec_sid_type", 
+			IDX_SI_DATA));
 
-		//4.2 the subsig counter constraint part
+		//5.2 the subsig counter constraint part
 		let names = vec![
 				"scc_prf_subsig",
 				"scc_prf_comp_subsig_encode",
@@ -688,8 +770,53 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		res.borrow_mut().add_col(Col::new(vec![frg; n1], 
 			"sid_mtbl_comp_score", IDX_SI_DATA));
 
+		assert!(mtbl_find_scc_res.len()==n2);
+		res.borrow_mut().add_col(Col::new(mtbl_find_scc_res, 
+			"mtbl_find_scc_res", IDX_DATA));
+		res.borrow_mut().add_col(Col::new(vec![frg; n2], 
+			"sid_mtbl_find_scc_res", IDX_SI_DATA));
 
-		res
+		assert!(vec_scc_res.len()==vec_sid_scc_res.len());
+		res.borrow_mut().add_col(Col::new(vec_scc_res, 
+			"vec_scc_res", IDX_DATA));
+		res.borrow_mut().add_col(Col::new(vec_sid_scc_res, 
+			"vec_sid_scc_res", IDX_SI_DATA));
+
+		//5.3 add the final result
+		res.borrow_mut().add_col(Col::new(vec_subsig_final_res.clone(), 
+			"vec_subsig_final_res", IDX_DATA));
+		res.borrow_mut().add_col(Col::new(vec_sid_subsig_final_res, 
+			"vec_sid_subsig_final_res", IDX_SI_DATA));
+
+		(res, vec_subsig_final_res)
+	}
+
+	/// Given the final result of subsig,
+	/// use the EvalDNF information to discharge sig.
+	/// Basic idea: each sig has a collection of EvalDNF (see type_def.rs)
+	/// E.g., (1|2) & (3|4)
+	/// It has two DNFs: (1|2) and (3|4)
+	/// the Word Discharge Info has already pointed which one has
+	/// lower cst to discharge, e.g., let it be (1|2).
+	/// the combo needs to show that both subsigs 1 and 2 are 
+	/// discharged (as False).
+	/// 
+	/// Proof Structure (table)
+	/// sig - eval_dnf_id - id - subsig - res
+	/// where the (subsig,res) is from the gen_synsis_subsig_combo.
+	/// HERE: all sigs need to be discharged (they will be
+	///   the list of sigs to be reported as "discharged").
+	fn gen_discharge_sig_combo(
+		_acdfa_id: u32, //the acdfa_id for the combo that includes info_stores
+		_inp_sigs: &Vec<F>,
+		_inp_subsigs: &Vec<F>,
+		_subsig_result: &Vec<F>,
+		_capacity: &ComputeSigAdvCapacity,
+		_v_sigs: &Vec<Arc<ClamavSig>>, //required to COVER inp_sigs
+	)->Rc<RefCell<Container<F>>>{
+		let stmt_container = Container::<F>::new("sig_res_combo");
+
+		stmt_container
 	}
 
 
@@ -708,6 +835,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		let zero = F::zero();	
 		let subsigs = vec![zero; capacity.subsigs];
 		let sigs = vec![zero; capacity.sigs];
+		let v_sig_obj: Vec<Arc<ClamavSig>> = vec![]; //empty one
 
 		//2. create the dummy sq_res
 		let dis_cap = DischargeAdvCapacity{
@@ -725,8 +853,9 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 			&store_steps);
 
 		//3. create advice
-		let dummy_adv = ComputeSigAdvAdvice::new(fsm_id, &sigs, &subsigs, &sq_res, 
-			Clone::clone(&capacity), store_steps, store_extra_info
+		let dummy_adv = ComputeSigAdvAdvice::new(fsm_id, &sigs, 
+			&subsigs, &sq_res, Clone::clone(&capacity), store_steps, 
+			store_extra_info, &v_sig_obj 
 		);
 		let mut vec_cfg = prev_cfgs.clone();
 		vec_cfg.push(dummy_adv.stmt_container.borrow().get_cfg());
@@ -858,6 +987,10 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 	}
 
 	/// validate syntesis of subsig is correct.
+	/// COST:  let n = number of subsigs, n2 = scc table size (20% of n at most
+	///				in practice)
+	/// 29*n + 69*n2 (given n2<20%*n) ==> 43n (number of subsits)
+	/// in practice: this is 1000 *43 = 43k R1CS
 	fn validate_synthesis_subsig_combo(&self, 
 		eval_res_combo: &Container<FpVar<F>>, 
 		synthesis_res_combo: &Container<FpVar<F>>, 
@@ -867,24 +1000,27 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 	) ->Result<(), SynthesisError>{
 		//REMOVE LATER -----------
 		let n1 = cs.num_constraints();
+		let n0 = cs.num_constraints();
 		//REMOVE LATER ----------- ABOVE
 		//0. retrieve data from combo
 		let (zero,one)=(new_const_var(&cs,F::zero()),new_const_var(&cs,F::one()));
         let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let max=new_const_var(&cs,F::from(max_val as u64));
 		let frg = new_const_var(&cs, F::from(RANGE2));
-		let names = ["vec_op", "vec_num", "vec_counter_res"];
+		let names = ["vec_op", "vec_num", "vec_counter_res", "vec_type"];
 		let cols = names.iter().map(|n|
 			synthesis_res_combo.get_container(n).unwrap().borrow().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
-		let (vec_op, vec_num, vec_counter_res) = (&cols[0], &cols[1], &cols[2]);
-		let names = ["sid_op", "sid_num"];
+		let (vec_op, vec_num, vec_counter_res, vec_type) = (&cols[0], 
+			&cols[1], &cols[2], &cols[3]);
+		let names = ["sid_op", "sid_num", "vec_sid_type"];
 		let sid_cols = names.iter().map(|n|
 			synthesis_res_combo.get_container(n).unwrap().borrow().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
-		let (vec_sid_op, vec_sid_num) = (&sid_cols[0], &sid_cols[1]); // no need
+		let (vec_sid_op, vec_sid_num, vec_sid_type) = 
+			(&sid_cols[0], &sid_cols[1], &sid_cols[2]); // no need
 						//to check sid_counter_res as it's computed in circ
-		let  n = vec_op.len();
+		let n = vec_op.len();
 		assert!(vec_num.len()==n && vec_counter_res.len()==n);
 
 		//1. retrieve the result of general regex
@@ -929,14 +1065,17 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		let part1 = &(&f1_var * &factor_var) * &factor_var;
 		let piece_op = new_const_var(&cs, F::from(ID_COMP_OP as u32)); 
 		let piece_num = new_const_var(&cs, F::from(ID_COMP_NUM as u32)); 
+		let piece_type= new_const_var(&cs, F::from(ID_SUBSIG_TYPE as u32)); 
 		for i in 0..n{
 			let f3 = &inp_subsigs[i];
 			let f3_fac = f3 * &factor_var; 
 			let prefix = &part1 + &f3_fac;
 			let exp_sid_op = &prefix + &piece_op;
 			let exp_sid_num = &prefix + &piece_num;
+			let exp_sid_type= &prefix + &piece_type;
 			check_eq(&exp_sid_op, &vec_sid_op[i], "sid_op check fails")?;
-			check_eq(&exp_sid_num, &vec_sid_num[i], "sid_op check fails")?;
+			check_eq(&exp_sid_num, &vec_sid_num[i], "sid_num check fails")?;
+			check_eq(&exp_sid_type, &vec_sid_type[i], "sid_type check fails")?;
 		}
 		//REMOVE LATER -----------
 		println!(" -- DEBUG USE 6620.1: step 2.1: get verify vec_sid_op and vec_sid_num: num_cons: {}, n: {}", cs.num_constraints()-n1, n);
@@ -995,8 +1134,8 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		//of sid columns, so that we are checking the validity of comp_subsigs
 		//and their min_req by leveraging the database saved in external lkup
 		//
-		//COST: 13*n2 
 		//-- 3.1.0 retrieve data
+		//COST: 13*n2 
 		let n2 = self.capacity.get_scc_prf_size();
 		let names = vec![
 			"scc_prf_subsig", "scc_prf_comp_subsig_encode", 
@@ -1118,7 +1257,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		// ignore the max entries
 		//
 		// COST: n2 +  3*n2 + n2 + n + 2n2 + 3n
-		// = 7*n2 + 4*n1 (where n2 is scc_prf_size and n is subsigs) 
+		// = 7*n2 + 4*n (where n2 is scc_prf_size and n is subsigs) 
 		// in practice n2 is at most 20% of n1.
 		let src_s_r = encode_cols_var_adv_better(
 			&vec![&col2d[2][..],&col2d[4][..]], //comp_subsig and raw
@@ -1194,10 +1333,79 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 
 		//REMOVE LATER ------------
 		println!(" -- --  DEBUG USE 6620.1: step 3.4: check row_res, num_cons: {}, n2: {}, n: {}", cs.num_constraints()-n1, n2, n);
-		let _n1 = cs.num_constraints();
+		let n1 = cs.num_constraints();
 		//REMOVE LATER ----------- ABOVE
 
-		
+		//3.5 check the validity of vec_scc_res, leveraging vec_type	
+		//COST: n: subsigs, n2: scc_table (which is usually up to 20% of n)
+		//  6n + 9*n2
+		let vec_scc_res= synthesis_res_combo.get_container("vec_scc_res")
+			.unwrap().borrow().to_vec();
+		let mtbl_find_scc_res= synthesis_res_combo
+			.get_container("mtbl_find_scc_res").unwrap().borrow().to_vec();
+		let var_scc = new_const_var(&cs, 
+			F::from(SubSigType::SubsigCountConstraint as u8)); //it's 2
+		let is_scc= vec_type.iter().map(|t|
+			t.is_eq(&var_scc).unwrap()
+		).collect::<Vec<Boolean<F>>>();
+		let src_sel = is_scc.iter().map(|t| 
+			t.clone().into()).collect::<Vec<FpVar<F>>>();
+		assert!(vec_scc_res.len()==n && src_sel.len()==n);
+		let src = encode_cols_var_adv_better(
+			&vec![&inp_subsigs[..], &vec_scc_res[..]],
+			&vec![0,1],
+			&r1
+		);
+		let src = src.iter().zip(src_sel.iter()).map(|(a,b)|
+			a * b).collect::<Vec<FpVar<F>>>();
+
+		let dst= encode_cols_var_adv_better(//scc_prf_subisg and scc_prf_row_res
+			&vec![&col2d[0][..], &col2d[7][..]],
+			&vec![0,1],
+			&r1
+		);
+		let dst_sel = col2d[2].iter().map(|c|   
+			c.is_eq(&max).unwrap().into() //if comp_subsig eq to max
+		).collect::<Vec<FpVar<F>>>();
+		let dst = dst.iter().zip(dst_sel.iter()).map(|(a,b)|
+			a * b).collect::<Vec<FpVar<F>>>();
+
+		assert_logup(cs.clone(), &src, &dst, &mtbl_find_scc_res, &r1)?;
+
+		//REMOVE LATER ------------
+		println!(" -- --  DEBUG USE 6620.1: step 3.5: retrieve scc_res, num_cons: {}, n2: {}, n: {}", cs.num_constraints()-n1, n2, n);
+		let n1 = cs.num_constraints();
+		//REMOVE LATER ----------- ABOVE
+
+		//4. VERIFY the final table. idea is simple: we
+		// use conditional selection to determine based on type
+		//
+		// COST: 7n 
+		let var_regular = new_const_var(&cs,
+			F::from(SubSigType::GeneralRegex as u8)); // 0
+		let is_reg = vec_type.iter().map(|t|
+			t.is_eq(&var_regular).unwrap()
+		).collect::<Vec<Boolean<F>>>();
+		assert!(vec_scc_res.len()==n);
+		assert!(gen_regex_res.len()==n);
+		assert!(vec_counter_res.len()==n);
+		let vec_subsig_final_res = synthesis_res_combo
+			.get_container("vec_subsig_final_res").unwrap().borrow().to_vec();
+		for i in 0..n{//since it's small about 1k entries, just single thread
+			let subsig = &inp_subsigs[i];
+			let res = is_scc[i].select(&vec_scc_res[i],
+				&is_reg[i].select(&gen_regex_res[i],
+					&vec_counter_res[i]).unwrap()
+			).unwrap();
+			check_eq(&(subsig*&(&res-&vec_subsig_final_res[i])),
+				&zero, "fail final subsig")?;
+		}
+
+		//REMOVE LATER ------------
+		println!(" -- --  DEBUG USE 6620.1: step 4: assemble FINAL RESULT, num_cons: {}, n2: {}, n: {}", cs.num_constraints()-n1, n2, n);
+		println!(" # DEBUG USE 6620.9: ALL: num_cons: {}, n2: {}, n: {}", cs.num_constraints()-n0, n2, n);
+		//REMOVE LATER ----------- ABOVE
+
 
 		Ok( () )
 	}
@@ -1391,9 +1599,10 @@ pub mod tests_compute_sig_adv{
 		let f_nibbles = nibbles_raw.iter().map(|x| Fr::from(*x as u32))
 			.collect::<Vec<Fr>>();
 		let sig_to_discharge = tcase.sig_to_discharge.clone();
-		let _sig = &db.vec_sigs.iter().filter(|s| s.name==sig_to_discharge)
+		let sig = &db.vec_sigs.iter().filter(|s| s.name==sig_to_discharge)
 			.map(|s| s.clone())
 			.collect::<Vec<Arc<ClamavSig>>>()[0];
+		let v_sig_obj = vec![sig.clone()];
 		let wi: WordInfo = quick_discharge_file_adv(
 			"word.txt", 
 			&nibbles_raw,
@@ -1514,8 +1723,9 @@ pub mod tests_compute_sig_adv{
 				//2.3.5 generate the info for the compute_sig_adv gadget
 				let inp_sigs: Vec<Fr> = vec![Fr::from(sig_id as u64)];
 				let sq_res = stmt_disc.borrow().search_container("discharge_adv_stmt bwd_steps_queue sq_res2").expect("sq_res err");
-				let adv_sig= ComputeSigAdvAdvice::new(fsm_id, &inp_sigs, &input_subsigs,
-					&sq_res, &cap_sig, steps_store, steps_extra_store);
+				let adv_sig= ComputeSigAdvAdvice::new(fsm_id, &inp_sigs, 
+					&input_subsigs, &sq_res, &cap_sig, steps_store, 
+					steps_extra_store, &v_sig_obj);
 				let stmt_sig = adv_sig.stmt_container;
 				let cfg_sig = stmt_sig.borrow().get_cfg();
 
