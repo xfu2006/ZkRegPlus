@@ -140,9 +140,9 @@ from Pat-Loc table which satisfies range-query
 $[43+16,43+16]$.
 
 The result are:
-$(3,0,0), (3,1,59), (3,1,69)$. Here,
+$(3,0,0), (3,1,59), (3,2,69)$. Here,
 only the middle entry is the valid result,
-and $(3,0,0)$ and $(3,1,69)$ are the
+and $(3,0,0)$ and $(3,2,69)$ are the
 wrapping entries for validity. 
 
 Why would verifiers be convinced that this is exactly
@@ -201,6 +201,20 @@ where $\myvec{c}^{(i)}$ is the $i$'th column.
 In Figure\ \ref{fig:db} we show how to use lookup argument to support
 relational operators.
 
+The support of $\proj$ and $\select$ is straight-forward. 
+The trickier one is the support of join operators, it heavily
+relies on structuring a relation table in a {\em well-formed}
+format. Given a table $\myvec{t} = \myvec{key}, \myvec{id}, \myvec{val}$,
+First we assume that all ``effective'' values in $\myvec{val}$
+are in range $(0,\max)$, which can be proved by lookup into
+a fixed range table.
+we say $\myvec{t}$ is well formed if its $\myvec{key}$ is sorted, and
+all of its $\myvec{val}$ for the same key are grouped together,
+and wrapped around with a $0$ and $\max$ dummy entries.
+We use $\myvec{id}$ to label the position of the values for a same
+key.
+
+
 \begin{small}
 \begin{algorithm}[bt]
 \SetKwData{Left}{left}\SetKwData{This}{this}\SetKwData{Up}{up}
@@ -211,7 +225,7 @@ $\underline{\myvec{a} = \proj_{i}(\myvec{t})}$ \newline
 
 $\underline{\myvec{t}' = \select_{c}(\myvec{t})}$ \newline
  (1) Let $\myvec{t} = (\myvec{u}^{(1)}, ..., \myvec{u}^{(k)})$, 
- 	 Let $\myvec{t}' = (\myvec{v}^{(1)}, ..., \myvec{v}^{(k)})$, 
+ 	 and $\myvec{t}' = (\myvec{v}^{(1)}, ..., \myvec{v}^{(k)})$, 
  \newline
  (2) Prover and verifier jointly
  	computes $\myvec{c}$ s.t. for any $i\in [|\myvec{t}|]$:
@@ -223,7 +237,7 @@ $\underline{\myvec{t}' = \select_{c}(\myvec{t})}$ \newline
 	(where $\myvec{c}$ serves as a selector). \newline
  (5) Prover and verifier runs lookup argument (ignoring $0$ entries
  	$\myvec{a} \lookup \myvec{b}$ and
-	$\myvec{b} \lookup \myvec{a}$. (note that it's linear compleixty).
+	$\myvec{b} \lookup \myvec{a}$. 
 
 $\underline{\ttt{wellformed}(\myvec{t})}$ where $\myvec{t}= (\myvec{key}, \myvec{id}, \myvec{val})$
 	\newline
@@ -234,7 +248,7 @@ $\underline{\ttt{wellformed}(\myvec{t})}$ where $\myvec{t}= (\myvec{key}, \myvec
   (2) $\myvec{val}[i]=0$ if $i=1$ or $\myvec{key}[i]\neq \myvec{key}[i-1]$. \newline
   (3) $\myvec{val}[i]=\ttt{max}$ if $i=n$ or $\myvec{key}[i+1]\neq \myvec{key}[i]$. \newline
   (4) $\myvec{val}[i] \leq \myvec{val}[i+1]$ if $\myvec{key}[i]=\myvec{key}[i+1]$.\newline
-  {\bf Comment:} it can be expanded to table with two-column keys.
+  {\bf Comment:} it can be expanded to table with multi-column keys.
 
 $\underline{\myvec{t}^{(3)} = \myvec{t}^{(1)} \join \myvec{t}^{(2)}}$ where $\myvec{t}^{(i)}= (\myvec{key}^{(i)}, \myvec{id}^{(i)}, \myvec{val}^{(i)})$ for
 	$i\in[2]$ and $\myvec{t}^{(3)} = (\myvec{key}^{(3)}, \myvec{id}^{(3)},

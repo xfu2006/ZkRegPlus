@@ -56,9 +56,16 @@ impl HexACDFA{
 
 	/// We generate subsig_id combined within state_part_bits
 	/// NOTE: subsig_id should be ADJUSTED value (+1).
+	/// Keep it for legacy, call gen_subsig_id_worker
 	pub fn gen_subsig_id(&self, sig_id: usize, subsig_id: usize)->usize{
 		assert!(sig_id!=0 && subsig_id!=0);
-		let bits = self.state_part_bits;
+		Self::gen_subsig_id_worker(sig_id, subsig_id)
+	}
+
+	/// We generate subsig_id combined within state_part_bits
+	/// NOTE: subsig_id should be ADJUSTED value (+1).
+	pub fn gen_subsig_id_worker(sig_id: usize, subsig_id: usize)->usize{
+		let bits = RANGE2_BIT;
 		let bit_part1 = bits*2/3; //16 for accomodating 64k sigs for bits 24
 		let bit_part2 = bits - bit_part1;
 		assert!(sig_id < (1<<bit_part1));

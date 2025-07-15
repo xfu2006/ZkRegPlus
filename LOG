@@ -17696,6 +17696,80 @@ Goal 5. align the sig and subsig
 		generated the same time that inp_subsigs is generated
 	[c] data dump
 
-	[a] regression test
-	[b] define validate_sig_summary_combo
+Sunday 07/13/2025
+LOC (gadget): 12102 -> (12153: +50)
+Goal 1. retrieve sig and subsig using duplicate_as_external-adv
+	[a] read code and get where the eval_dnf id, it's in discharge_info
+	[b] advice constructor needs discharge_invo which corresponds
+		to inp_sigs, and use it to extract inp_subsigs and
+		eval_id
+	[c] needs discharge info in constructor
+		-> fix sed mapper
+		-> add sigs_to_id
 
+Monday 07/14/2025
+LOC (gadget): 12153  ->  (12272: +120)
+
+Goal 1.  check why extracted real subsigs no good.
+	[a] extraction err.
+	[b] extract dnf_id and eval_dnf_step
+	[c] dump all data
+	[d] check all data
+	[e] still it fails the real_subsigs2 check
+	[f] check why there are 3 subsigs involved?
+
+Goal 2. need to restructure
+	[a] note that sig.dnf is DIFFERENT from the subsigs!
+	[b] documen tagain
+	[c] do a function HexACDFA a static function to
+		do the gen_subsig_id
+		-- and call it in its function -> for refactor
+	[d] call the function to recover the subsig
+	[e] in unit test code do a hash map to check the result
+
+Goal 3. add columns
+	[a] v_sid_sigs
+	[b] v_sid_real_dnf_id
+	[b] v_sid_eval_count
+	[c] v_sid_eval_step
+	[d] v_sid_real_subsig
+	[e] add columns and data columns one by one
+	[f] regression testing
+
+Goal 4. Debug
+	[a] issue 207. because it's padded
+	[b] issue 878
+	[c] lookup error, identify which one
+		-> count and real_subsig
+		-> add a new entry for subsig
+
+Tuesday 07/15/2025
+LOC (gadget): 12272 -> ( 
+Goal 1. fix bug
+	[a]fix the v_sid_real_subsig
+		-> try add an entry for 0
+
+Goal 2. validation function
+	[a] set up framework
+	[a] retrieve data 
+	[b] retrieve sid columns
+	[c] verify sid columns one by one
+		-> frg ones
+		-> sid_count
+	[d] sid_real_subsigs
+	[e] analyze cost:
+	[f] regression test
+
+Goal 3. look for results
+	[a] check well formeness of step i and counter -> regression test
+	[b] construct subsig from sig and subsig and combine false
+		and look it up in subsig res
+	[c] generate lkup and regression test
+	[d] validate the logup
+	[e] cost: 8n
+	[f] regression test
+
+Goal 4. lkup for sigs
+	[a] inp sig and generated sigs
+	[b] mtbl_sigs
+	[c] logup

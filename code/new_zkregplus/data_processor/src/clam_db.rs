@@ -1109,6 +1109,8 @@ impl <F:PrimeField> ClamavDB<F>{
 
 			sig_tuples
 		}).flatten().collect::<Vec<(F,F)>>();
+		//add dummy entry for sig 0
+		tuples.push((f1*factor*factor*factor, F::zero()));
 		lk.vals.append(&mut tuples);
 
 		//2. generate (sig, eval_dnf_id, id) -> subsig_id
@@ -1128,7 +1130,7 @@ impl <F:PrimeField> ClamavDB<F>{
 
 				let step_tuples = v.iter().enumerate().map(|(step,subsig)|{
 					let subtbl_id = tbl_id + F::from(step as u64);
-					let real_subsig_id = F::from(*subsig as u64);
+					let real_subsig_id = F::from((*subsig+1) as u64);
 					(subtbl_id, real_subsig_id)
 
 				}).collect::<Vec<(F,F)>>();
@@ -1138,6 +1140,8 @@ impl <F:PrimeField> ClamavDB<F>{
 
 			sig_tuples
 		}).flatten().collect::<Vec<(F,F)>>();
+		//add dummy entry for sig 0
+		tuples.push((f1*factor*factor*factor, F::zero()));
 		lk.vals.append(&mut tuples);
 	}
 

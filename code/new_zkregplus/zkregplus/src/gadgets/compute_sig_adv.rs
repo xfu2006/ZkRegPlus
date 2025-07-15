@@ -16,7 +16,7 @@
 //!     -> output is the list of discharged sigs.
 
 use rayon::iter::{
-//	IntoParallelRefIterator,
+	IntoParallelRefIterator,
 	ParallelIterator,IntoParallelIterator
 //	, IndexedParallelIterator
 };
@@ -49,13 +49,15 @@ use data_processor::{
 	clam_db::{RANGE2,ID_ENCODED_NORMAL_STEP, ID_ENCODED_LAST_STEP,RANGE2_BIT,
 		ID_COMP_OP, ID_COMP_NUM, ID_COMP_SUBSIG,ID_MIN_REQUIRED,
 		ID_SUBSIG_TYPE},
+	hex_acdfa::HexACDFA,
 };
 use folding_schemes::folding::foldpot::{
 	sigma_ir1cs::{
 		SigmaGadget,
 		WitnessSigmaIR1CSVar,WitnessSigmaIR1CSConfig, 
 		NdAdvice,
-		Capacity
+		Capacity,
+		DischargeSigInfo,
 	},
 	container_config::{ContainerConfig},
 	circuits_super::field_to_usize,
@@ -178,19 +180,32 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		acdfa_id: u32,
 		inp_sigs: &Vec<F>,
 		inp_subsigs: &Vec<F>,
+		discharge_infos: &Vec<DischargeSigInfo>, //must match inp_sigs
+					//extracting the dnf to the concat of inp_subsigs
 		sq_res: &Rc<RefCell<Container<F>>>, // the steps_queue from the DischargeAdv
 		capacity: &ComputeSigAdvCapacity,
 		subsig_store_info: &SubsigStepStore,
 		subsig_extra_info: &SubsigInfoStore,
 		v_sig_obj: &Vec<Arc<ClamavSig>>, //needs to cover all inp_sigs
+		sig_to_id: &HashMap<String,usize>,
 	) ->Self{
 		let stmt_container = Container::<F>::new("compute_sig_adv_stmt");
-
 		//1. evaluate "atomic" subsigs based on sq_res
 		let pad = vec![F::zero(); capacity.subsigs-inp_subsigs.len()];
 		let inp_subsigs = [&pad[..], &inp_subsigs[..]].concat();
 		let pad2 = vec![F::zero(); capacity.sigs-inp_sigs.len()];
 		let inp_sigs = [&pad2[..], &inp_sigs[..]].concat();
+		let dummy_di = DischargeSigInfo{
+				sig_name: "none".to_string(),
+				b_success: false,
+				min_cost: 0,
+				min_dnf_id: 0,
+				subsig_ids: vec![0],
+				subsig_igc: vec![false]
+			}; 
+		let discharge_info = [ &vec![dummy_di ;pad2.len()][..], 
+			&discharge_infos[..]].concat();
+		assert!(discharge_info.len()==inp_sigs.len());
 
 		let (eval_res_combo, raw_res) = Self::gen_eval_subsig_by_sq_combo(
 			&inp_subsigs, sq_res, &capacity, subsig_store_info);
@@ -205,7 +220,8 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 
 		//3. based on the sysntehsis resout of subsigs
 		let sig_res_combo = Self::gen_discharge_sig_combo(acdfa_id,
-			&inp_sigs, &inp_subsigs, &subsig_res, &capacity, v_sig_obj);
+			&inp_sigs, &inp_subsigs, &subsig_res, &capacity, v_sig_obj,
+			&discharge_info, sig_to_id);
 		stmt_container.borrow_mut().add_container(sig_res_combo);
 
 		//3. allocates the discharged_sigs buffer
@@ -796,6 +812,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 	/// it extracts the sig_id and the real subsig_id that
 	/// generates the subsig_id
 	#[inline(always)]
+	#[allow(dead_code)]
 	fn extract_sigid(subsig_id: F)->(F,F){
 		let u_subsig_id = field_to_usize(&subsig_id);
 		let bits = RANGE2_BIT; //26 bit
@@ -805,6 +822,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		let real_subsig_id = u_subsig_id - (sig_id<<bit_part2);
 		assert!(sig_id < (1<<bit_part1));
 		assert!(real_subsig_id < (1<<bit_part2));
+		println!("DEBUG USE 6107: subsig_id: {} => sig_id: {}, real_subsig: {}", subsig_id, sig_id, real_subsig_id);
 
 		(F::from(sig_id as u64), F::from(real_subsig_id as u64))
 	}
@@ -820,37 +838,214 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 	/// discharged (as False).
 	/// 
 	/// Proof Structure (table)
-	/// sig - eval_dnf_id - id - subsig - res
+	/// sig - eval_dnf_id - step - count - subsig - res
 	/// where the (subsig,res) is from the gen_synsis_subsig_combo.
 	/// HERE: all sigs need to be discharged (they will be
 	///   the list of sigs to be reported as "discharged").
 	fn gen_discharge_sig_combo(
 		_acdfa_id: u32, //the acdfa_id for the combo that includes info_stores
-		_inp_sigs: &Vec<F>,
+		inp_sigs: &Vec<F>,
 		inp_subsigs: &Vec<F>,
-		_subsig_result: &Vec<F>,
+		subsig_result: &Vec<F>,
 		capacity: &ComputeSigAdvCapacity,
-		_v_sigs: &Vec<Arc<ClamavSig>>, //required to COVER inp_sigs
+		v_sigs: &Vec<Arc<ClamavSig>>, //required to COVER inp_sigs
+		discharge_infos: &Vec<DischargeSigInfo>, //must match inp_sigs
+					//extracting the dnf to the concat of inp_subsigs
+		sig_to_id: &HashMap<String,usize>,
 	)->Rc<RefCell<Container<F>>>{
-		//0. data retrieval
-		let stmt_container = Container::<F>::new("sig_res_combo");
+		let zero = F::zero();
+		let frg = F::from(RANGE2);
+		let res = Container::<F>::new("sig_res_combo");
 		let n = capacity.subsigs;
 		assert!(inp_subsigs.len()==n);
-		let tuples = inp_subsigs.iter().map(|s| Self::extract_sigid(*s))
-			.collect::<Vec<(F,F)>>();
-		let sigs = tuples.iter().map(|t| t.0).collect::<Vec<F>>();
-		let real_subsigs = tuples.iter().map(|t| t.0).collect::<Vec<F>>();
+		assert!(subsig_result.len()==n); 
+
+		//1. from the discharge info, build the proof table
+		// sig - eval_dnf_id - step - count - subsig (expect res to be
+		// TriVal::False)
+		// Special note: the subsig/res in this talbe is DIFFERENT
+		// from the subsig/res in the gen_synthesis_subsig_res (because
+		// here, we do NOT include the sub-components of a subsig (thus
+		// resulting a shorter list of subsigs and with different structure)
+		// we have to run a LOOKUP to retrieve the result values from
+		// the previous combo in step 2.
+		// NOTE: we pad the size to #subsigs because in real data
+		// vast majority are regular_regex 
+		// (not Counterh of SubsigCounterConstraint)
+		assert!(discharge_infos.len()==inp_sigs.len());
+		for i in 0..discharge_infos.len() {
+			let name = &discharge_infos[i].sig_name;
+			let sig_id = if name =="none" {zero} else {
+				F::from(*sig_to_id.get(name)
+					.expect(&format!("cannot find sig: {}", name)) as u64)
+			};
+			assert!(sig_id == inp_sigs[i]);
+		}
+		let info_ts = discharge_infos.par_iter().map(|info|{
+			let (sig_id, vec_ssid) = if info.sig_name=="none" {//dummy case 
+				//don't genreate [1] instead generate 0
+				(zero, vec![])
+			}else{
+				let sig_objs = v_sigs.iter().filter(|s| s.name==info.sig_name)
+					.map(|s| s.clone())//low cost of Arc clone
+					.collect::<Vec<Arc<ClamavSig>>>();
+				assert!(sig_objs.len()==1, "cannot find or duplicate entries for {}", info.sig_name);
+				let sig_obj = &sig_objs[0];
+				let sig_id = sig_to_id.get(&info.sig_name)
+					.expect(&format!("cannot find sig: {}", info.sig_name));
+				let sig_id = F::from(*sig_id as u64);
+				let dnf_id = info.min_dnf_id;
+				let vssid = sig_obj.eval_dnf.vec_disjunc[dnf_id].iter().map(
+					|x| F::from((*x+1) as u64)).collect::<Vec<F>>();
+				(sig_id, vssid)
+			};
+			let eval_dnf_id = F::from(info.min_dnf_id as u64);
+			let eval_count = F::from(vec_ssid.len() as u64);
+			vec_ssid.iter().enumerate().map(|(i,ssid)|
+				(eval_dnf_id, F::from(i as u64), eval_count, *ssid, sig_id)
+			).collect::<Vec<(F,F,F,F,F)>>()
+		}).flatten().collect::<Vec<(F,F,F,F,F)>>();
+		let pad = vec![(zero,zero,zero,zero,zero); n-info_ts.len()];
+		let info_ts = [&pad[..], &info_ts[..]].concat();
+		assert!(info_ts.len()==n);
+		let v_dnf_id = info_ts.iter().map(|t| t.0).collect::<Vec<F>>();
+		let v_dnf_step = info_ts.iter().map(|t| t.1).collect::<Vec<F>>();
+		let v_dnf_count = info_ts.iter().map(|t| t.2).collect::<Vec<F>>();
+		let v_real_subsigs = info_ts.iter().map(|t| t.3).collect::<Vec<F>>();
+		let v_sigs = info_ts.iter().map(|t| t.4).collect::<Vec<F>>();
+
+		let info_id:u32 = 0x98882405; 
+		let f1 = F::from(info_id);
+		let factor = F::from(0x100000000 as u64); //32-bit 
+		let v_sid_dnf_id = vec![frg; n];
+		let v_sid_dnf_step = vec![frg; n];
+		let v_sid_dnf_count= (0..n).collect::<Vec<usize>>().into_iter().map(|i|{
+			let dnf_id = v_dnf_id[i];
+			let sig_id = v_sigs[i];
+			let tbl_id = f1*factor*factor*factor + sig_id * factor * factor
+				+ dnf_id * factor;
+
+			tbl_id
+		}).collect::<Vec<F>>();
+
+		let info_id:u32 = 0x99992405; 
+		let f1 = F::from(info_id);
+		let v_sid_real_subsigs= (0..n).collect::<Vec<usize>>()
+			.into_iter().map(|i|{
+			let dnf_id = v_dnf_id[i];
+			let sig_id = v_sigs[i];
+			let tbl_id = f1*factor*factor*factor + sig_id * factor * factor
+				+ dnf_id * factor + v_dnf_step[i];
+
+			tbl_id
+		}).collect::<Vec<F>>();
+		let v_sid_sigs = vec![frg; n];
 
 		//REMOVE LATER -------------
 		println!(" === DEBUG USE 6101: dump of sig info ==");
 		for i in 0..n{
-			println!("  --i: {}, sig: {}, real_subsig: {}, subsig: {}",
-				i, sigs[i], real_subsigs[i], inp_subsigs[i]
+			println!("  --i: {}, sig: {}, eval_dnf_id: {}, eval_dnf_step: {}, eval_dnf_count: {}, real_subsig: {}",
+				i, v_sigs[i], v_dnf_id[i], v_dnf_step[i],
+				v_dnf_count[i], v_real_subsigs[i],
 			);
 		}
 		//REMOVE LATER ------------- ABOVE
 
-		stmt_container
+		//2. Now prove that each sig in v_sigs is discharged as false
+		//2.1 check that all subsig of a sig is well covered, i.e.,
+		// the dnf_step is increasing, it starts from 0 and its
+		// last step is equal to dnf_count
+		// we do not have to generate the proof for it.
+		// note that there is NO need to prove v_sigs is sorted,
+		// the well formedness already proves the full coverage
+		// of the related dnf_subsig for one sig. If there is one sig
+		// shows up multiple times, it's costing more on prover but
+		// does not affect soundness of proof.
+
+		//2.2 build subsigs from (sig_id, real_subsig) and lookup
+		// (subsig, False) in the (vec_subsig, vec_result) from the
+		// previous gen_sytneshsis_subsig_result(). This is needed
+		// as the structure of subsigs are different between the 
+		// two components.
+		let mut map = inp_subsigs.into_iter().zip(subsig_result.into_iter()).
+			map(|(x,y)| (*x,*y)).collect::<HashMap<F,F>>();
+		let f_false = F::from(TriVal::False as u8);
+		map.insert(zero, f_false); //for dummy entry
+		let mut v_computed_subsig = vec![zero; n];
+		for i in 0..n{
+			let subsig_id = F::from(HexACDFA::gen_subsig_id_worker(
+						field_to_usize(&v_sigs[i]), 
+						field_to_usize(&v_real_subsigs[i])
+					) as u64);
+			let res = map.get(&subsig_id)
+				.expect(&format!("cannot find subsig_id: {}", &subsig_id));
+			assert!(*res == f_false);
+			v_computed_subsig[i] = subsig_id;
+		}
+		let src = encode_cols_better(
+			vec![&v_computed_subsig[..], &vec![f_false; n][..]],
+			vec![0,1]
+		);
+		//pad (0,1) for dummy entry
+		let pad_subsigs = [&inp_subsigs[..], &vec![zero][..]].concat();
+		let pad_res = [&subsig_result[..], &vec![f_false][..]].concat();
+		let dst = encode_cols_better(
+			vec![&pad_subsigs[..], &pad_res[..]],
+			vec![0,1]
+		);
+		let mtbl_lk_res = gen_m_table(&src, &dst);
+
+		//3. show that inp_sigs is a subset of v_sigs (covered)
+		// where we have proved all v_sigs are discharged
+		//note: v_sigs is required to have at least one dummy entry at beginning
+		let mtbl_sigs= gen_m_table(&inp_sigs, &v_sigs);
+
+
+		//4. add data columns into containers
+		let names = vec![
+				"v_sigs", 
+				"v_dnf_id", 
+				"v_dnf_step", 
+				"v_dnf_count", 
+				"v_real_subsigs"
+				];
+		let col2d = vec![
+			v_sigs, 
+			v_dnf_id, 
+			v_dnf_step, 
+			v_dnf_count, 
+			v_real_subsigs
+		];
+		col2d.into_iter().zip(names.iter()).for_each(|(c, n)|{
+			res.borrow_mut().add_col(Col::new(c, n, IDX_DATA));
+		});
+		let col2d_sid = vec![
+			v_sid_sigs, 
+			v_sid_dnf_id, 
+			v_sid_dnf_step, 
+			v_sid_dnf_count, 
+			v_sid_real_subsigs
+		];
+		col2d_sid.into_iter().zip(names.iter()).for_each(|(c, n)|{
+			res.borrow_mut().add_col(Col::new(c, &format!("sid_{}",n),
+				IDX_SI_DATA));
+		});
+		assert!(mtbl_lk_res.len()==n+1);
+		res.borrow_mut().add_col(Col::new(mtbl_lk_res,"mtbl_lk_res",IDX_DATA));
+		res.borrow_mut().add_col(Col::new(vec![frg;n+1],"sid_mtbl_lk_res",
+			IDX_SI_DATA));
+		
+		assert!(mtbl_sigs.len()==n);
+		res.borrow_mut().add_col(Col::new(mtbl_sigs,"mtbl_sigs",IDX_DATA));
+		res.borrow_mut().add_col(Col::new(vec![frg;n],"sid_mtbl_sigs",
+			IDX_SI_DATA));
+		assert!(inp_sigs.len()==capacity.sigs);
+		res.borrow_mut().add_col(Col::new(inp_sigs.clone(),
+			"discharged_sigs",IDX_DATA));
+		res.borrow_mut().add_col(Col::new(vec![frg;capacity.sigs],
+			"sid_discharged_sigs", IDX_SI_DATA));
+
+		res
 	}
 
 
@@ -870,6 +1065,16 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		let subsigs = vec![zero; capacity.subsigs];
 		let sigs = vec![zero; capacity.sigs];
 		let v_sig_obj: Vec<Arc<ClamavSig>> = vec![]; //empty one
+		//make a make one
+		let discharge_infos = vec![
+			DischargeSigInfo{
+				sig_name: "none".to_string(),
+				b_success: false,
+				min_cost: 0,
+				min_dnf_id: 0,
+				subsig_ids: vec![0],
+				subsig_igc: vec![false]
+			}; capacity.sigs];
 
 		//2. create the dummy sq_res
 		let dis_cap = DischargeAdvCapacity{
@@ -885,11 +1090,15 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		let sq_res_obj= StepQueue::parse_from(&sq_res_vec, &dis_cap);
 		let sq_res = sq_res_obj.to_container("sq_res2", false, true, true, true,
 			&store_steps);
+		let mut sigs_to_id = HashMap::<String,usize>::new();
+		sigs_to_id.insert("none".to_string(), 0);
+
 
 		//3. create advice
 		let dummy_adv = ComputeSigAdvAdvice::new(fsm_id, &sigs, 
-			&subsigs, &sq_res, Clone::clone(&capacity), store_steps, 
-			store_extra_info, &v_sig_obj 
+			&subsigs, &discharge_infos,
+			&sq_res, Clone::clone(&capacity), store_steps, 
+			store_extra_info, &v_sig_obj, &sigs_to_id 
 		);
 		let mut vec_cfg = prev_cfgs.clone();
 		vec_cfg.push(dummy_adv.stmt_container.borrow().get_cfg());
@@ -1016,6 +1225,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 			check_eq(&diff, &zero, "sid check failed")?; //only required for 
 													//non-zero "real" entries
 		}
+
 
 		Ok( () )
 	}
@@ -1443,6 +1653,189 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 
 		Ok( () )
 	}
+
+	/// validate syntesis of subsig is correct.
+	///
+	/// COST: 2*n1 +  22*n
+	/// where (n1 = num of sigs, n = num of subsigs)
+	/// in real data: worst case n1 = 300, n = 1000 (=> worst case: 23k)
+	fn validate_discharge_sig_combo(&self, 
+		eval_res_combo: &Rc<RefCell<Container<FpVar<F>>>>, 
+		synthesis_res_combo: &Rc<RefCell<Container<FpVar<F>>>>, 
+		discharge_sig_combo: &Rc<RefCell<Container<FpVar<F>>>>, 
+		r1: FpVar<F>,
+		r2: FpVar<F>,
+		cs: ConstraintSystemRef<F>
+	) ->Result<(), SynthesisError>{
+		//REMOVE LATER -----------
+		let n1 = cs.num_constraints();
+		let n0 = cs.num_constraints();
+		//REMOVE LATER ----------- ABOVE
+
+		//0. retrieve data from combo
+		let (zero,one)=(new_const_var(&cs,F::zero()),
+			new_const_var(&cs,F::one()));
+        let max_val:usize = (1<<RANGE2_BIT) - 1;
+		let max=new_const_var(&cs,F::from(max_val as u64));
+		let frg = new_const_var(&cs, F::from(RANGE2));
+		let names = vec![ "v_sigs", "v_dnf_id", "v_dnf_step", 
+			"v_dnf_count", "v_real_subsigs"];
+		let cols = names.iter().map(|n|
+			discharge_sig_combo.borrow()
+				.get_container(n).unwrap().borrow().to_vec()
+		).collect::<Vec<Vec<FpVar<F>>>>();
+		let (v_sigs, v_dnf_id, v_dnf_step, v_dnf_count, v_real_subsigs) = (
+			&cols[0], &cols[1], &cols[2], &cols[3], &cols[4]);
+		let sid_cols = names.iter().map(|n|
+			discharge_sig_combo.borrow()
+				.get_container(&format!("sid_{}",n)).unwrap().borrow().to_vec()
+		).collect::<Vec<Vec<FpVar<F>>>>();
+		let (v_sid_sigs, v_sid_dnf_id, v_sid_dnf_step, v_sid_dnf_count, 
+			v_sid_real_subsigs) = (&sid_cols[0], &sid_cols[1], &sid_cols[2], 
+				&sid_cols[3], &sid_cols[4]);
+		let n = v_sigs.len();
+		for i in 0..cols.len(){assert!(cols[i].len()==n);}
+		for i in 0..cols.len(){assert!(sid_cols[i].len()==n);}
+
+		//1. check the validity of sid cols (sequential as circ does not
+		//allow parallelism)
+		//
+		// Cost: 5n
+		let info_id:u32 = 0x98882405; 
+		let f1_val = F::from(info_id);
+		let factor_val = F::from(0x100000000 as u64); //32-bit 
+		let factor = new_const_var(&cs, factor_val);
+		let factor2 = &factor * &factor;
+		let factor3 = &factor * &factor2;
+		let f1 = new_const_var(&cs, f1_val);
+		let part1 = &f1 * &factor3;
+
+		let info_id:u32 = 0x99992405; 
+		let f1_2 = new_const_var(&cs, F::from(info_id));
+		let part1_2 = &f1_2 * &factor3;
+
+		for i in 0..n{
+			check_eq(&v_sid_dnf_id[i], &frg, "err sid dnf_id")?;
+			check_eq(&v_sid_dnf_step[i], &frg, "erro sid_dnf_step")?;
+			check_eq(&v_sid_sigs[i], &frg, "err id_sig")?;
+
+			let sig_prod = &v_sigs[i] * &factor2;
+			let dnf_id_prod = &v_dnf_id[i] * &factor;
+			let exp_sid_dnf_count = &part1 + &sig_prod + &dnf_id_prod;
+			check_eq(&exp_sid_dnf_count, &v_sid_dnf_count[i], 
+				"err sid_dnf_cnt")?;
+
+			let exp_sid_real_subsig = &part1_2 + &sig_prod + &dnf_id_prod
+				+ &v_dnf_step[i];
+			check_eq(&exp_sid_real_subsig, &v_sid_real_subsigs[i],
+				"err sid_real_subsig")?;
+		}
+		//REMOVE LATER -----------
+		println!(" -- DEBUG USE 6630.1: VALIDATE SIG: step 1: check sid: num_cons: {}, n: {}", cs.num_constraints()-n1, n);
+		let n1 = cs.num_constraints();
+		//REMOVE LATER ----------- ABOVE
+
+		//2. Now prove that each sig in v_sigs is discharged as false
+		//2.1 check that all subsig of a sig is well covered, i.e.,
+		// the dnf_step is increasing, it starts from 0 and its
+		// last step is equal to dnf_count.
+		// NOTE that the validity of v_dnf_step, ... columns are proved
+		// already via v_sid columns in step 1.
+		//
+		// COST: 6n + 3
+		check_eq(&v_sigs[0], &zero, "we require one dummy entry at begin")?;
+		for i in 1..n{
+			let b_new_row = v_sigs[i].is_neq(&v_sigs[i-1])?;
+			let i_new_row: FpVar<F> = b_new_row.into();
+			let res = &i_new_row * &(
+				//(a) id_increase by one
+				&v_dnf_step[i] - &v_dnf_step[i-1]
+			) + (&i_new_row - &one) * &(
+				//(b) starts from 0
+				&(&r1 * &v_dnf_step[i]) + 
+				//(c) previous row equals to count
+				&(&v_dnf_step[i-1] + &one - &v_dnf_count[i-1])
+			);
+			let res = &res * &v_sigs[i]; //ignore zero entries
+			check_eq(&res, &zero, "fails well-formed check")?;
+		}
+
+		//REMOVE LATER -----------
+		println!(" -- DEBUG USE 6630.1: VALIDATE SIG: step 2.1: check sid: num_cons: {}, n: {}", cs.num_constraints()-n1, n);
+		let n1 = cs.num_constraints();
+		//REMOVE LATER ----------- ABOVE
+
+
+		//2.2 build subsigs from (sig_id, real_subsig) and lookup
+		// (subsig, False) in the (vec_subsig, vec_result) from the
+		// previous gen_sytneshsis_subsig_result(). This is needed
+		// as the structure of subsigs are different between the 
+		// two components.
+		//
+		// COST: 8n 
+		let bits = RANGE2_BIT;
+		let bit_part1 = bits*2/3; //16 for accomodating 64k sigs for bits 24
+		let bit_part2 = bits - bit_part1;
+		let fac2 = new_const_var(&cs, F::from(1u64<<bit_part2) );
+		let f_false = new_const_var(&cs, F::from(TriVal::False as u8));
+
+		let mut v_computed_subsig = v_sigs.iter().zip(v_real_subsigs.iter())
+			.map(|(sig_id, real_subsig_id)| {
+				sig_id*&fac2 + real_subsig_id
+		}).collect::<Vec<FpVar<F>>>();
+
+		let src = encode_cols_var_adv_better(
+			&vec![&v_computed_subsig[..], &vec![f_false.clone(); n][..]],
+			&vec![0,1], &r1
+		);
+		//pad (0,1) for dummy entry
+		let inp_subsigs = eval_res_combo.borrow()
+			.get_container("inp_subsig").unwrap().borrow().to_vec();
+		let subsig_result = synthesis_res_combo.borrow()
+			.get_container("vec_subsig_final_res").unwrap()
+			.borrow().to_vec();
+		let pad_subsigs = [&inp_subsigs[..], &vec![zero][..]].concat();
+		let pad_res = [&subsig_result[..], &vec![f_false][..]].concat();
+		let dst = encode_cols_var_adv_better(
+			&vec![&pad_subsigs[..], &pad_res[..]],
+			&vec![0,1], &r1
+		);
+		let mtbl_lkup_res = discharge_sig_combo.borrow()
+			.get_container("mtbl_lk_res").unwrap().borrow().to_vec();
+		assert_logup(cs.clone(), &src, &dst, &mtbl_lkup_res, &r1)?;
+
+		//REMOVE LATER -----------
+		println!(" -- DEBUG USE 6630.1: VALIDATE SIG: step 2.2: check sid: num_cons: {}, n: {}", cs.num_constraints()-n1, n);
+		let n1 = cs.num_constraints();
+		//REMOVE LATER ----------- ABOVE
+
+		//3. show that inp_sigs is a subset of v_sigs (covered)
+		// where we have proved all v_sigs are discharged
+		//note: v_sigs is shown earlier
+		// to have at least one dummy entry at beginning so that just in
+		// case inp_sigs has 0 entry.
+		//
+		//COST: let n1 = num of sigs, n = num of subsigs
+		// 2n1 + 3n
+		let discharged_sigs = discharge_sig_combo.borrow()
+			.get_container("discharged_sigs").unwrap().borrow().to_vec();
+		let mtbl_sigs= discharge_sig_combo.borrow()
+			.get_container("mtbl_sigs").unwrap().borrow().to_vec();
+		assert_logup(cs.clone(), &discharged_sigs, &v_sigs, &mtbl_sigs, &r1)?;
+
+		//REMOVE LATER ----------- ABOVE
+		println!(" -- DEBUG USE 6630.1: VALIDATE SIG: step 3: check sid: num_cons: {}, n: {}", cs.num_constraints()-n1, n);
+		let n1 = cs.num_constraints();
+		//REMOVE LATER ----------- ABOVE ABOVE
+
+		//REMOVE LATER -----------
+		println!(" DEBUG USE 7777: VALIDATE SIG TOTALnum_cons: {}, n: {}", cs.num_constraints()-n0, n);
+		//REMOVE LATER ----------- ABOVE
+
+		Ok( () )
+
+	}
+
 }
 
 impl <F:PrimeField> SigmaGadget<F> for ComputeSigAdvGadget<F>{
@@ -1534,6 +1927,14 @@ impl <F:PrimeField> SigmaGadget<F> for ComputeSigAdvGadget<F>{
 		let synthesis_res_combo = stmt.get_container("synthesis_res_combo")?;
 		self.validate_synthesis_subsig_combo(&eval_res_combo.borrow(),
 			&synthesis_res_combo.borrow(), r1.clone(), r2.clone(), cs.clone())?;
+
+		//4. now evaluate all sigs and generate the list of sigs
+		//which are DISCHARGED.
+		let sig_res_combo= stmt.get_container("sig_res_combo")?;
+		self.validate_discharge_sig_combo(
+			&eval_res_combo, &synthesis_res_combo, &sig_res_combo, 
+			r1.clone(), r2.clone(), cs.clone())?;
+			
 
 		Ok(())
 	}
@@ -1666,6 +2067,7 @@ pub mod tests_compute_sig_adv{
 
 		//1.3 set data of acdfa, input_sigs, and bundle info related to the sig.
 		let info = infos[0].clone();
+		let discharge_infos = vec![info.clone()]; //only one sig to discharge
 		let b_igc = tcase.b_igc;
 		let bundle = if !b_igc {&db.bundle_subsig} else {&db.bundle_subsig_igc};
 		assert!(bundle.b_igc == b_igc);
@@ -1758,8 +2160,9 @@ pub mod tests_compute_sig_adv{
 				let inp_sigs: Vec<Fr> = vec![Fr::from(sig_id as u64)];
 				let sq_res = stmt_disc.borrow().search_container("discharge_adv_stmt bwd_steps_queue sq_res2").expect("sq_res err");
 				let adv_sig= ComputeSigAdvAdvice::new(fsm_id, &inp_sigs, 
-					&input_subsigs, &sq_res, &cap_sig, steps_store, 
-					steps_extra_store, &v_sig_obj);
+					&input_subsigs, &discharge_infos, 
+					&sq_res, &cap_sig, steps_store, 
+					steps_extra_store, &v_sig_obj, &db.sig_to_id);
 				let stmt_sig = adv_sig.stmt_container;
 				let cfg_sig = stmt_sig.borrow().get_cfg();
 
