@@ -17744,7 +17744,7 @@ Goal 4. Debug
 		-> add a new entry for subsig
 
 Tuesday 07/15/2025
-LOC (gadget): 12272 -> ( 
+LOC (gadget): 12272 -> (12505: +220) 
 Goal 1. fix bug
 	[a]fix the v_sid_real_subsig
 		-> try add an entry for 0
@@ -17773,3 +17773,5 @@ Goal 4. lkup for sigs
 	[a] inp sig and generated sigs
 	[b] mtbl_sigs
 	[c] logup
+	[d] cost
+	[e] regression test -> DONE
