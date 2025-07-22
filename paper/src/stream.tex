@@ -204,15 +204,34 @@ relational operators.
 The support of $\proj$ and $\select$ is straight-forward. 
 The trickier one is the support of join operators, it heavily
 relies on structuring a relation table in a {\em well-formed}
-format. Given a table $\myvec{t} = \myvec{key}, \myvec{id}, \myvec{val}$,
-First we assume that all ``effective'' values in $\myvec{val}$
-are in range $(0,\max)$, which can be proved by lookup into
-a fixed range table.
+format. 
+Given a table $\myvec{t} = (\myvec{key}, \myvec{id}, \myvec{val})$,
+where all ``effective'' values in $\myvec{val}$ are proved earlier
+to be in range $(0,\max)$ (via lookup argument).
 we say $\myvec{t}$ is well formed if its $\myvec{key}$ is sorted, and
 all of its $\myvec{val}$ for the same key are grouped together,
 and wrapped around with a $0$ and $\max$ dummy entries.
-We use $\myvec{id}$ to label the position of the values for a same
-key.
+We use $\myvec{id}$, which sequentially increaese by $1$,
+to label the values for a same key. 
+
+Well-formedness allows us to
+reason about join operations, e.g., $\myvec{t}^{(1)} \join_{3=1}
+\myvec{t}^{(2)}$, where
+the $\myvec{val}^{(1)}$ in $\myvec{t}^{(1)}$ serves as the
+foreign key. Natural join is essentially
+a cross-product followed by a selection. The beautify of zk-proof
+is that we can directly present the result and prove its validity
+without having to generate a (usually much larger cross-product) first.
+Here the key is to show that for each entry in $\myvec{t}^{(1)}$,
+we retrieve the corresponding set of entries for the foreign key
+from $\myvec{t}^{(2)}$, i.e., one entry is expanded correctly
+into a set of entries. The proof needs to show that
+this expansion does not miss real entries or add fake entries,
+which is captured by look-up argument (see lines (5) and (6))
+and the wellformedness (see line (3)). The case of handling
+where a foreign key value in $\myvec{t}^{(1)}$ does not exist
+in $\myvec{t}^{(2)}$ is handled similarly using multi-set difference,
+also via lookup-argument (which we omit the details here).
 
 
 \begin{small}
@@ -247,30 +266,41 @@ $\underline{\ttt{wellformed}(\myvec{t})}$ where $\myvec{t}= (\myvec{key}, \myvec
   	$\forall i\in[n-1]$: $\myvec{key}_i \leq \myvec{key}_{i+1}$. \newline
   (2) $\myvec{val}[i]=0$ if $i=1$ or $\myvec{key}[i]\neq \myvec{key}[i-1]$. \newline
   (3) $\myvec{val}[i]=\ttt{max}$ if $i=n$ or $\myvec{key}[i+1]\neq \myvec{key}[i]$. \newline
-  (4) $\myvec{val}[i] \leq \myvec{val}[i+1]$ if $\myvec{key}[i]=\myvec{key}[i+1]$.\newline
+  (4) $\myvec{id}[i+1] = \myvec{id}[i] + 1$ 
+  	if $\myvec{key}[i+1]=\myvec{key}[i]$.
+		\newline
   {\bf Comment:} it can be expanded to table with multi-column keys.
+	%We call it {\em loosely well-formed} if in (4):
+	%	$\myvec{id}[i+1]$ is allowed to be $\myvec{id}[i]$
+	%	when $\myvec{val}[i+1]=\myvec{val}[i]$	
 
-$\underline{\myvec{t}^{(3)} = \myvec{t}^{(1)} \join \myvec{t}^{(2)}}$ where $\myvec{t}^{(i)}= (\myvec{key}^{(i)}, \myvec{id}^{(i)}, \myvec{val}^{(i)})$ for
+$\underline{\myvec{t}^{(3)} = \myvec{t}^{(1)} \join_{3=1} \myvec{t}^{(2)}}$ where $\myvec{t}^{(i)}= (\myvec{key}^{(i)}, \myvec{id}^{(i)}, \myvec{val}^{(i)})$ for
 	$i\in[2]$ and $\myvec{t}^{(3)} = (\myvec{key}^{(3)}, \myvec{id}^{(3)},
 		\myvec{val}^{(3)}, \myvec{id}^{(4)}, \myvec{val}^{(5)})$.
 	\newline
 	(1) Assert $\ttt{wellformed}(\myvec{t}^{(i)})$ for $i\in [2]$. \newline
-	(2) $(\myvec{key}^{(3)}, \myvec{id}^{(3)}, \myvec{val}^{(3)})$
-		is $\ttt{wellformed}$. \newline
-	(3) $((\myvec{key}^{(3)},
-		\myvec{val}^{(3)}), \myvec{id}^{(4)}, 
+	%(2) $(\myvec{key}^{(3)}, \myvec{id}^{(3)}, \myvec{val}^{(3)})$
+	%	is $\ttt{wellformed}$. \newline
+	(2) Compute $\Delta = \myvec{t}^{(1)} - \myvec{t}^{(3)}$ as 
+		difference of multi-set. Define
+		$(\myvec{key}^{(6)}, \myvec{id}^{(6)}, \myvec{val}^{(6)})
+			= \left( (x,0,0), (x,1,\max) \right)_{x\in \Delta}$. \newline
+	(3) Assert $( \myvec{val}^{(3)}, \myvec{id}^{(4)}, 
 		\myvec{val}^{(5)})$
 		is $\ttt{wellformed}$. \newline
-	(4) $(\myvec{key}^{(3)}, \myvec{val}^{(3)})$ 
+	(4) Assert $(\myvec{key}^{(3)}, \myvec{val}^{(3)})$ 
 		$\lookup$
 		$(\myvec{key}^{(1)}, \myvec{val}^{(1)})$ \newline
-	(5)
+	(5) Assert
 		$(\myvec{key}^{(1)}, \myvec{val}^{(1)})$
 		$\lookup$
 		$(\myvec{key}^{(3)}, \myvec{val}^{(3)})$. \newline
-	(6) $(\myvec{key}^{(3)}, \myvec{id}^{(4)}, \myvec{val}^{(5)})$ 
+	(6) Assert 
+		$(\myvec{val}^{(3)}, \myvec{id}^{(4)}, \myvec{val}^{(5)})$ 
 		$\lookup$
-		$(\myvec{key}^{(2)}, \myvec{id}^{(2)}, \myvec{val}^{(2)})$ \newline
+		$(\myvec{key}^{(2)} || \myvec{key}^{(6)}, 
+			\myvec{id}^{(2)} || \myvec{id}^{(6)}, 
+			\myvec{val}^{(2)} || \myvec{val}^{(6)})$ \newline
 
 \caption{Relational Operators Based on Lookup Argument}
 \label{fig:db}
@@ -282,29 +312,8 @@ $\underline{\myvec{t}^{(3)} = \myvec{t}^{(1)} \join \myvec{t}^{(2)}}$ where $\my
 \begin{algorithm}[bt]
 \SetKwData{Left}{left}\SetKwData{This}{this}\SetKwData{Up}{up}
 \SetKwFunction{Union}{Union}\SetKwFunction{FindCompress}{FindCompress}
-$\left((\Q{a},\Q{r}\Trans{f}), (\Q{d},\Trans{b}, \Q{o}) \right) \leftarrow {\texttt{\textbf{two\_pass\_sed}}}(\Q{i}, \myvec{S}, \myvec{R}, \db)$: 
+$\left((\Q{a},\Q{f}\Trans{f}), (\Q{d},\Q{o},\Trans{b}) \right) \leftarrow {\texttt{\textbf{two\_pass\_sed}}}(\Q{i}, \myvec{S}, \myvec{R}, \db)$: 
 \newline
-{\bf Input:} $\myvec{S}$ is the set of subsigs IDs, 
-	$\myvec{R} = (\myvec{P},\myvec{L})$ is a table consisting
-	of two columns: $\myvec{P}$ pattern ID and $\myvec{L}$ locations,
-	$\Q{i}$ the input step queue.
-	which is extracted from finite state acceptance path.
-	$\db$ is a collection of hashmaps which contains
-	information about subsigs.
-	\newline 
-{\bf Output:} $(\Q{a}, \Q{r}, \Trans{f}):$ the forward
-	propgation information: the step queue of to add,
-	the resulting step queue (of forward pass), and
-	the inference transcript. Similarly
-	$(\Q{d}, \Q{o}, \Trans{b})$ are the
-	step queue to delete, the output step-queue, and
-	the backward transcript.  \newline
-		Where each tuple $\Trans{f}$ is
-	$(\key, \srcloc, \dstloc)$, and $\key = \encode(\subsig,
-		\step, \rgone, \rgtwo)$. Similarly each
-	tuple of all step queues have structure $(\key, \step, \loc)$.
-		$\Trans{b}$ has structure $(\key, \delloc)$.
-	\newline
 (1) For each subsignature and for each step propgate
 	step by step and generating $(\Q{a}, \Q{r}, \Trans{f})$
 	which satisfies the following:
@@ -315,7 +324,7 @@ $\left((\Q{a},\Q{r}\Trans{f}), (\Q{d},\Trans{b}, \Q{o}) \right) \leftarrow {\tex
 			$\left(\Q{s} \join \db_{\ttt{key},\ttt{nxt\_pat}}
 				\join \db_{\ttt{key}, \ttt{nxt\_rg1}, \ttt{nxt\_rg2}} \right)
 				\join_{c} \myvec{P}$
-			where the range query condition is:
+			where the range query condition $c$ is:
 			$\myvec{P}.\ttt{loc} - \ttt{loc} \in [\ttt{nxt\_rg1},\ttt{nxt\_rg2}]$.
 	\end{enumerate}
 (2) Given $\Q{s}$, retrieve minimum location of each step and
@@ -335,33 +344,96 @@ $\left((\Q{a},\Q{r}\Trans{f}), (\Q{d},\Trans{b}, \Q{o}) \right) \leftarrow {\tex
 			$\left(\Q{o}' \join \db_{\ttt{key},\ttt{prev\_pat}}
 				\join \db_{\ttt{key}, \ttt{rg2}} \right)
 				\join_{c_2} \Q{r}$
-			where the range query condition is:
+			where the range query condition $c_2$ is:
 				$\Q{r}.\ttt{loc} + \ttt{rg2} < \ttt{min}$.
 	\end{enumerate}
 
 \caption{Two Pass Chunking SED Algorithm}
+\label{fig:sed}
 \end{algorithm}
 \end{small}
 
-In essence, the data structures involved can be represented as
+In Figure\ \ref{fig:sed} we present the forward-propgation and backward
+pruning algorithm for SED. In essence, the 
+data structures involved can be represented as
 relational database tables, and the proof can be decomposed into
-a number of relational operations such as table union, table projection,
-table join, and query range.
+relational operations. As shown in Figure\ \ref{fig:sed},
+the inputs of the algorithm consists of the following data
+structures:
+\begin{enumerate}
+\item $\myvec{S}$ is the set of subsigs IDs. 
+\item $\myvec{R}$ is the pat-loc table, which consits of two columns of
+pattern IDs and their locations in ACDFA acceptance path.
+\item $\Q{i}$ is the input step queue which shows
+	a locations for a pattern at a particular step
+	for a subsig. It stores compactly as a two column
+	table: $(\key,\loc)$, where $\key$ encodes related
+	information, i.e., $\key = \encode(\subsig, \step, \rgone, \rgtwo)$. 
+	We assume all subsequent step queue structures follow the
+	same data scheme.
+\item $\db$ is a collection of relations, e.g.,
+	$\db_{\ttt{key,prev\_pat}}$ maps from $\ttt{key}$
+	to its previous pattern id, and we similarly
+	use subscripts to indicate relation columns.
+	By default $\join$ applies to the $\key$ columns of relations.
+\end{enumerate}
 
-$\ttt{two\_pass\_sed(.)}$ can be applied sequentially in a streaming
-fasion.  
-We write $n$ applications simply as: $\ttt{two\_pass\_sed}^{(n)}$,
-where the $i$'th call is $\ttt{two\_pass\_sed}(\Q{o}^{(i-1)}, \myvec{S},
-	\myvec{R}^{(i)}, \db)$, here 
-given a regular expression $r$, and a word $\myvec{w}$ we chunk
+The output of 2-phase SED algorithm Figure\ \ref{fig:sed}
+consists of the following:
+\begin{enumerate}
+ \item Forward-propgation phase: 
+	$(\Q{a}, \Q{f}, \Trans{f})$,  $\Q{a}$
+	is the step-queue to add as the result of
+	propagation. $\Q{f}$ is the resulting of merging
+	$\Q{a}$ with $\Q{i}$. $\Trans{f}$ represents
+	the forward transcript which documents the step by
+	step reasoning from each pattern location to idenitfy
+	the next available location to add.
+	Each tuple $\Trans{f}$ is $(\key, \srcloc, \dstloc)$,
+	where $\key$ encodes all needed information such
+	as pattern ID and range bounds.
+\item Bacward-pruning phase
+	$(\Q{d}, \Q{o}, \Trans{b})$:
+	Similarly $\Q{d}$ represents the step-queue items to
+	delete, and $\Q{o}$ is the final output step queue,
+	which results from deleting $\Q{d}$ from 
+	$\Q{f}$. Transcript $\Trans{b}$ denotes
+	all inferrence steps that leads to the pruning actions.
+\end{enumerate}
+
+We specify the $\ttt{two\_pass\_sed(.)}$ function in declarative
+semantics. One can see that they can be very conveniently modeled
+using relational operators. For instance, in the
+forward propagation stage, the critical step is (3) which
+models $\Trans{f}$ as a sequence of join operations.
+It first queries $\db$ from the encoded $\key$ column to
+retrieve related information such as the next step and the
+required range. Then it performs a range-query over the
+pattern-loc table to generate the result. Similarly,
+the backward transcripts relies on range-query to prune
+those locations that cannot reach the $\min$ of the next step
+via range query.
+
+We now show that consecutive application of $\ttt{two\_pass\_sed(.)}$
+is equivalent to monolithic SED algorithm.
+Given a regular expression $r$, and a word $\myvec{w}$ we chunk
 $\myvec{w}$ into $k$ chunks:= 
 $\myvec{w}^{(1)} \concat ... \myvec{w}^{(k)}$.
 Let $\myvec{S}$ and $\db$ be the subsigs and database extracted
 from $r$.
 Let $\rho = (\F \times F)^u$ be the
 ocurrence of all related patterns of $r$ in $\myvec{w}$. 
+$\ttt{two\_pass\_sed(.)}$ can be applied sequentially in a streaming
+fasion.  
+We write $n$ applications simply as: $\ttt{two\_pass\_sed}^{(n)}$,
+where the $i$'th call is $\ttt{two\_pass\_sed}(\Q{o}^{(i-1)}, \myvec{S},
+	\myvec{R}^{(i)}, \db)$. 
 Let $\myvec{R}^{(i)}$  be the two column occurence of patterns
 fo running through $\myvec{w}^{(i)}$ the ACDFA of patterns. 
+We have the following result, and the proof is straight-forward,
+because the step queue of $\ttt{two\_pass\_sed(.)}$
+is a always 
+super set of the step queue of $\ttt{eval\_counter\_cs\_std}(.)$.
 
 \begin{theorem} Given a regular expression $r$, and a word $\myvec{w} = 
 \myvec{w}^{(1)} \concat ... \myvec{w}^{(k)}$ be concatenation
@@ -371,3 +443,5 @@ We have:
 \ttt{two\_pass\_sed}(.)^{(k)} = \ttt{eval\_counter\_cs\_std}(\rho,r,\ttt{GT},0)
 \].
 \end{theorem}
+
+

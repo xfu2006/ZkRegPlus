@@ -17775,3 +17775,204 @@ Goal 4. lkup for sigs
 	[c] logup
 	[d] cost
 	[e] regression test -> DONE
+
+Wed 07/16/2025
+LOC: (gadget): 12505 -> (after clean: 12416 -> 13056: +640)
+Goal 1. clear code
+	[a] clean debug
+	[b] summary of costw
+	[c] regression test
+
+Goal 2. design dfa.rs to discharge dfa
+	[a] read fsm.rs and fsm_adv.rs to pick one
+		-> need to use fsm_adv as template as it needs to be
+		 called by composite_gadget.
+	[b] design
+	[c] copy over and set up
+
+Goal 3. set up the framework
+	[a] copy over and replace names
+	[b] comment out all functions and remove some functions
+	[c] clear warning
+
+Goal 4. check the unit test case -> DONE
+
+Goal 5. Writing -> DONE
+
+Goal 6. implement framework
+	[a] nibbles construction
+	[b] check dfa is constructed correspondingly
+	[c] it has similar structure as SED!
+	[d] so we would need another circuit like sed circ
+
+Goal 7. new design
+	[a] will have a dfa_component just like cp and sed_components
+	[b] dfa_component compose dfa_discharge with compute_sig
+	[c] so this should be like running a lot of automata for subsigs
+
+Goal 8. continue to uese test case to drive implementation
+	[a] collect inp_subsigs
+	[b] collect raw_subsigs and raw_automaton
+	[c] make automaton the Arc
+	[d] regression test -> no significant memory increase
+	[e] prep vec of sigs, vec2d of subsigs, vec2d of automata
+
+Goal 9. continue with dfa
+	[a] collect initial_states as 2d array
+
+Thursday 07/17/2025
+LOC: (gadget): 13056  -> (13080: +24)
+LOC: (circ): 1800 -> (2348: 650)
+Goal 1. deal with advice parameters and padding.
+	[a] define advice interface
+	[b] build the input
+
+Goal 2. determine gadget interface
+	[a] read code
+	[b] determine the code
+	[c] build input
+
+Goal 3. implement the DfaAdvice new
+	[a] declare the data members
+	[b] constructor framework
+
+Goal 4. gen_combo
+	[a] read code
+	[b] set up the framework
+	[c] add the validate function
+	[d] complete the constructor
+
+Goal 5. Gadget constructor
+	[a] read existing code
+	[b] implementation
+	[c] layer1 call is ok now
+
+Goal 6. Writing
+	[a] move input and output description to text mode
+Goal 6. set up dfa_mapper framework
+	[a] copy over file.
+	[b] doc
+	[c] change input
+
+Friday 07/18/2025
+LOC (circ): 2308 -> (2207: dropped 100)
+Goal 1. Continue to work on dfa circuit
+	[a] advice of cp_component
+	[b] function collect_subsig_ids
+	[c] re-implement collect_subsig_ids
+
+Goal 2. Writing
+	[a] output -> DONE
+
+Goal 3. constructor of dfa_mapper advice constructor
+	[a] dfa_advice
+		-> v_subsig_ids ... etc
+		-> v_inp_state 
+
+Goal 4. build the compute_sig_adv_advice
+	[a] check why it needs fsm_id
+	[b] so it actually does not need the compute_sig_gadget
+		as that evaluates counter constraint etc.
+	[c] gadget constructor
+	[d] set_container_config
+	[e] gen_nd_advice_no_limit
+
+Goal 5. build the vec_dfa_sigs_info
+	[a] read accepts_by_automaton
+	[b] add DischageInfo to it
+
+Saturday 07/19/2025
+LOC (circ): 2207 -> (2197: dropped 20)
+Goal 1. set up DischargeInfo to accepts_by_automataon.
+	[a] add support of info
+	[b] fix syntax errors
+	[c] regression testing on clamav
+Goal 2. continue to implement the dfa_component_mapper
+	[a] generate a fake advice first and retrieve the v_dfa
+	[b] construct inp_state
+	[c] get_gadgets
+Goal 3. zk_driver
+	[a] read existing code
+	[b] add one dfa_sig_ir1cs
+	[c] enforce the word_info to be enforcing min_dfa
+	[d] create a data set 
+	[e] adjust code
+Goal 4. debug
+	[a] driver errror 539
+		-> dfa::gen_nd_advice is called -> it's never called?
+		-> ran the wrong case
+	[b] check why its quick_discharge returns no dfa requirement.
+
+Monday 07/21/2025
+LOC (circ): 2197 -> 2202 (+5) 
+LOC (gadget): 13079 ->  13085 (:+6)
+Goal 1. debug check why quick_discharge returns no discharge info
+	on dfa
+	[a] check the setting -> it does violate dfa because
+		the distance between 9 and 7 is not as required
+		-> it has a match of the pattern in pattern 1, so sig1
+		should be discharged by cp.
+	[b] debug: print out step 1: critical patterns and see 
+		what are discharged.
+			-> it does not match any of sig1 (as expected as need
+				hex code
+			-> DFA-1 does show up in CP failed list
+			-> SED failed list: DFA-1 does show up
+			-> accepts_by_automataton: res is true (accepted), and
+				info is None.
+				-> found hte reason it is INDEED accepted
+			-> check why dis_info still not showing up
+				-> it is generated
+				-> it is in word_info
+				-> check the word_info passed to gen_nd_ad
+				-> looks like it's a dummy call
+	[c] there are cases that input is entirely none, what to do with
+		DFA?
+		-> create dummy ones and let it go
+		-> make all dummy ones the dummy id and dummy dfa
+		-> replicate it in testing code of gadget
+	[d] driver issue -> fixed
+	[e] now all set up
+
+Tuesday 07/22/2025
+LOC (circ): 2202
+LOC (gadget): 13085->13134 (+50)
+LOC (data): 8873 -> 9044 (+174)
+Goal 1. add to DB
+	[a] regression testing -> normal
+	[b] read rustomaton set
+	[c] it looks like the dfa reads the real char
+	[d] what about acdfa? its charset size is 17
+		-> acc_path: takes vec u8
+		-> the ACDFA internal Aho-corasic DFA takes byte-classes
+		so if we provide 16 hex digits, the rest byte-class forms
+		another byte-class. So its alphabet has 17 chars.
+		-> conclusion: input string is not shifted. Padding zero
+		means padding real zero chars.
+
+Goal 2. implementation of add to DB.
+	[a] add function add_sig_dfa_to_lkup (simulating add_sig_evaldnf_to_lkup)
+	[b] add function add_dfa_to_lkup
+	[c] implement add_dfa_to_lkup first
+		-> subtbl_ids
+		-> states and final states and all states
+		- review code
+	[d] implement add_sig_dfa_to_lkup
+		-> impl
+		-> review code
+	[e] debug
+		-> ok1.
+		-> check trans
+	[d] collect data and see what's the new size
+		-> BEFORE: 272613895 -> 259M 
+		-> ADDED 1.9M
+		-> AFTER: -> 274661507-> 261M  -> needs to cut 5M
+
+Goal 3. implement gadget
+	[a] read existing code -> DONE
+	[b] function repeat_vec -> DONE
+	[c] build init data -> DONE
+	[d] construct the list of transitions -> DONE
+	[e] inspect code
+	[f] add sid_states
+	[g] add sid_trans

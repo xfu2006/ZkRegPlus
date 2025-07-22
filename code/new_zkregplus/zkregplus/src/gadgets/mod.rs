@@ -22,3 +22,5 @@ pub mod db;
 pub mod discharge_adv;
 /// from subsigs to discharged sigs
 pub mod compute_sig_adv;
+/// discharge a sig via dfa approach
+pub mod dfa_adv;

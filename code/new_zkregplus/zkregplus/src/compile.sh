@@ -7,7 +7,7 @@
 #RUST_BACKTRACE=1 
 
 # foldpot example
-#RUST_BACKTRACE=1 cargo run --example foldpot --release
+#RUST_BACKTRACE=1 cargo run --release --example foldpot 
 
 # test zkpsmall example
 RUST_BACKTRACE=1 cargo test --release -- test_zkreg_main --show-output --nocapture

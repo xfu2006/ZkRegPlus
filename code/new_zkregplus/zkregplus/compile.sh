@@ -1,5 +1,5 @@
 # COMPILE DEBUG
-RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" cargo check --example foldpot 2>&1 | more 
+#RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" cargo check --example foldpot 2>&1 | more 
 
 # COMPILE FULL
 #RUSTFLAGS="-Awarnings" cargo build 
@@ -18,7 +18,7 @@ RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" cargo check --example foldpot 2
 #cargo doc --no-deps --open -p folding-schemes
 
 # run zkreg example small
-#RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" RUST_TEST_TIME_INTEGRATION=3600000,36000000 RUST_BACKTRACE=1 RUSTFLAGS="-Awarnings" time cargo run --release --example zkreg small 
+RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" RUST_TEST_TIME_INTEGRATION=3600000,36000000 RUST_BACKTRACE=1 RUSTFLAGS="-Awarnings" time cargo run --release --example zkreg small 
 #2>&1 | less
 
 # run fold pot

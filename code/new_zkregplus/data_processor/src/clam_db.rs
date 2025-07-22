@@ -22,7 +22,9 @@ use crate::{
 	hex_acdfa::{HexACDFA},
 	type_def::{ClamavSig,ClamavApproxConfig,ClamSigType,SubsigPatternStore, SubsigPatternStoreItem,SubsigStepStore, SubsigStepStoreItem, BundleSubsigStore, SubSigType,SubsigInfoStore, SubsigInfoStoreItem,CompOp,TriVal,TriOp},
 	clamav::{gen_clamav_sig,default_clamav_cfg},
+	fsa_utils::{build_dfa},
 };
+use rustomaton::dfa::DFA;
 use utils::{
 	os::{read_lines,create_new_cache_dir,write_to_file,proj_root,read,write_sigs_to_dir},
 	timer::{Timer},
@@ -1145,6 +1147,113 @@ impl <F:PrimeField> ClamavDB<F>{
 		lk.vals.append(&mut tuples);
 	}
 
+	/// add the init, non-final states, final states, and transitions
+	/// of a standard (note not ACDFA) into lookup table.
+	/// This is similar to add_acdfa_to_lkup
+	fn gen_dfa_lkup(
+		dfa: &DFA<char>, 
+		tbl_id_init: u32,  //the starting ID of four sub-tables
+	)->Vec<(F,F)>
+	{
+		//1. set up the table IDs
+		let init_tbl_id = tbl_id_init;
+		let nonfinal_tbl_id = tbl_id_init+1;
+		let final_tbl_id = tbl_id_init+2;
+		let trans_tbl_id = tbl_id_init+3;
+		let all_states_id = tbl_id_init+6;
+
+		//2. build the single entry sub-table for init
+		let init_st = dfa.initial as u32;
+		let vec_init = vec![(F::from(init_tbl_id+1), F::from(init_st))]; 
+		let num_states = dfa.transitions.len();
+		let set_states = (0..num_states).collect::<HashSet<usize>>();
+		let set_finals = &dfa.finals;
+		let set_non_finals = set_states.difference(set_finals)
+			.copied()
+			.collect::<HashSet<usize>>();
+
+		//3. build the non-final states (index)
+		// final states: [0,num_acc_states-1]
+		// non-finals: [num_acc_states, 1]
+		// here: we just store "state indexes" no need to store their
+		// encoded form as sub-table ID distinguish states from different DFAs
+		// NOTE: all states starting from 1 (0 used as dummy value)
+		let f_nonfinal_tbl_id = F::from(nonfinal_tbl_id);
+		let vec_non_final = set_non_finals
+			.par_iter().map(|i| (f_nonfinal_tbl_id, F::from((*i+1) as u64))
+		).collect::<Vec<(F,F)>>();
+
+		//3. final states
+		let f_final_tbl_id = F::from(final_tbl_id);
+		let vec_final = set_finals
+			.par_iter().map(|&i| (f_final_tbl_id, F::from((i+1) as u32))
+		).collect::<Vec<(F,F)>>();
+
+		//4. all states
+		let f_allstates_id = F::from(all_states_id as u32);
+		let vec_all_states = (0..num_states).
+			into_par_iter().map(|i| (f_allstates_id, F::from((i+1) as u32))
+		).collect::<Vec<(F,F)>>();
+
+		//4. transitions
+		let f_trans_id = F::from(trans_tbl_id);
+		let unit = RANGE2_BIT;
+		#[cfg(test)]{
+			assert!(unit*2 + 4 < 64);
+			assert!( (1<<unit) > num_states );
+		}
+		let vec_trans = dfa.transitions.par_iter().enumerate()
+			.map(|(src,hm)|{
+				let vec = hm.iter().map(|(ch, dst)|{
+					let trans = (*ch as usize) 
+						+ ((src+1)<<4) + ((dst+1)<<(4+unit));
+					(f_trans_id, F::from(trans as u64))
+				}).collect::<Vec<(F,F)>>();
+				vec	
+			}).flatten().collect::<Vec<(F,F)>>();
+
+		//5. assemble
+		let v2d = vec![vec_init,vec_non_final,vec_final,vec_trans, 
+			vec_all_states];
+
+		v2d.concat()
+	}
+
+	/// For those sigs which has DFA for its subsigs,
+	/// add the encoding of transition and states for each DFA
+	pub fn add_sig_dfa_to_lkup(
+		lk: &mut LookupTableTwoCol_Inst<F>, 
+		vec_sig_obj: &Vec<Arc<ClamavSig>>,
+		sig_to_id: &HashMap<String,usize>
+	) {
+	
+		//1. generate (sig, eval_dnf_id) -> count
+		let tuples_all = vec_sig_obj.par_iter()
+			.filter(|sig| sig.vec_subsig_automaton.len()>0)
+			.map(|sig|{
+				let sig_name = &sig.name;
+				let sig_id = sig_to_id.get(sig_name).expect(
+					&format!("cannot find sig: {}", sig_name));
+				assert!(sig.vec_subsig_obj.len()==
+					sig.vec_subsig_automaton.len());
+				
+				let tuples = sig.vec_subsig_automaton.iter().enumerate()
+				.map(|(subsig_id,dfa)|{
+					let tbl_id = Self::dfa_id(*sig_id as u32, subsig_id as u32);
+					Self::gen_dfa_lkup(&dfa, tbl_id)
+				}).flatten().collect::<Vec<(F,F)>>();
+
+				tuples
+			}).flatten().collect::<Vec<(F,F)>>();
+
+		//2. generate for dummy (sig=0, subsig=0, dfa=dummy)
+		let dummy_dfa = build_dfa("", false);
+		let tbl_id = Self::dfa_id(0, 0);
+		let tuples_dummy = Self::gen_dfa_lkup(&dummy_dfa, tbl_id);
+		let mut tuples = [&tuples_dummy[..], &tuples_all[..]].concat();
+		lk.vals.append(&mut tuples);
+	}
+
 	#[inline(always)]
 	pub fn gen_sig_info_id(
 		sig_id: usize,
@@ -1489,6 +1598,17 @@ impl <F:PrimeField> ClamavDB<F>{
 		mixed
 	}
 
+	/// Here we assume sig_id is at most 13-bit,
+	/// subsig_id is at most 6-bit
+	/// there will be no-conflicts with pm_acdfa_id
+	pub fn dfa_id(sig_id: u32, subsig_id: u32)-> u32{
+		//allows about 256 subtbls
+		let start:u32 = 0x40000000;
+		let mixed = start + ((sig_id as u32)<<8) + subsig_id; 
+
+		mixed
+	}
+
 	/// Given a collection of signatures, write them to disk
 	/// and  build the DB
 	pub fn build_test_db(
@@ -1667,6 +1787,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		Self::add_bundle_subsig_to_lkup(&mut lkup, &sig_to_id, &bundle_subsig, false);
 		Self::add_bundle_subsig_to_lkup(&mut lkup, &sig_to_id, &bundle_subsig_igc, true);
 		Self::add_sig_evaldnf_to_lkup(&mut lkup, &v_sigs, &sig_to_id); 
+		Self::add_sig_dfa_to_lkup(&mut lkup, &v_sigs, &sig_to_id);
 		lkup.vals.sort();
 		println!("PERFORMANCE 100: lkup size: {}", lkup.vals.len());
 

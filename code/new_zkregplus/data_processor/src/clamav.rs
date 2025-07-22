@@ -516,7 +516,7 @@ impl ClamavSig{
 		format!("{}: {}", self.name, self.line)
 	}
 
-	pub fn get_automaton(&self,id: usize) -> DFA<char>{
+	pub fn get_automaton(&self,id: usize) -> Arc<DFA<char>>{
 		self.vec_subsig_automaton[id].clone()
 	}
 
@@ -569,7 +569,7 @@ impl ClamavSig{
 	}
 
 	/// can be expensive when we have a lot of patterns, make it optional
-	pub fn gen_vec_automaton(&self, cfg: &ClamavApproxConfig) -> Vec<DFA<char>>{
+	pub fn gen_vec_automaton(&self, cfg: &ClamavApproxConfig) -> Vec<Arc<DFA<char>>>{
 		let mut vec_subsig_automaton = vec![];
 		for (id, subsig) in self.vec_subsig_obj.iter().enumerate(){
 			let mut timer = Timer::new();
@@ -630,7 +630,7 @@ impl ClamavSig{
 			};
 			log(LOG1, &format!(" dfa size: {:?}", size_dfa(&dfa)));
 			log_perf(LOG1, " build dfa: ", &mut timer);
-			vec_subsig_automaton.push( dfa );
+			vec_subsig_automaton.push( Arc::new(dfa) );
 		}
 		vec_subsig_automaton
 	}
@@ -693,20 +693,27 @@ impl ClamavSig{
 	}
 
 	/// returns true if the string is accepted by the signature (match)
-	/// i.e., it is a virus
-	pub fn accepts_by_automaton(&self, str_src: &Vec<u8>) -> bool{
+	/// i.e., it is a virus. Returh the discharge info with the minimum
+	/// cost that returns false.
+	pub fn accepts_by_automaton(&self, str_src: &Vec<u8>) 
+	-> (bool,Option<DischargeSigInfo>){
 		if self.vec_subsig_obj.len() != self.vec_subsig_automaton.len(){
 			//println!("NEEDS to build automaton for {}", self.to_str());
-			return true; //default conservative value
+			return (true,None); //default conservative value
 		}
 		assert!(self.vec_subsig_obj.len() == self.vec_subsig_automaton.len(),
 			"sig: {}, vec_subsig.len(): {} != vec_subsig_automaton.len(): {}, call set_vec_automaton",
 			self.to_str(), self.vec_subsig_obj.len(), self.vec_subsig_automaton.len());
 		let mut bres = true;
+		let mut min_dnf_id = 0usize;
+		let mut min_cost = 1usize<<30;
+		let mut found_discharge = false;
+		let mut dnf_id = 0usize;
 		let s2 = u8_to_hex(str_src).as_bytes().to_vec().iter()
 			.map(|s| *s as char).collect::<Vec<char>>();
 		for item in &self.eval_dnf.vec_disjunc{
 			let mut item_res = false;
+			let total_cost = item.len();
 			for id in item{
 				let res = match self.vec_subsig_obj[*id].subsig_type{
 					SubSigType::GeneralRegex => {
@@ -740,8 +747,33 @@ impl ClamavSig{
 				item_res = item_res || res;
 			}
 			bres = bres && item_res;
+			if item_res==false{//this is a good discharging proof!
+				found_discharge = true;
+				if min_cost > total_cost{
+					min_cost = total_cost;
+					min_dnf_id = dnf_id; 
+				}
+			}
+			dnf_id += 1;
 		}
-		bres 
+
+		let info = if !found_discharge {None} else {
+			let subsig_ids = self.collect_subsig_ids(min_dnf_id);
+			let subsig_igc = subsig_ids.iter().map(|id|
+				self.vec_subsig_obj[*id].b_ignore_case
+			).collect::<Vec<bool>>();
+
+			Some(DischargeSigInfo{
+				sig_name: self.name.clone(),
+				b_success: true,
+				min_cost, 
+				min_dnf_id,
+				subsig_ids,
+				subsig_igc,
+			})
+		};
+
+		(bres, info)
 	}
 
 	/// collect all patterns appeared in each subsignature
@@ -840,6 +872,34 @@ impl ClamavSig{
 		}).collect::<Vec<Vec<(String, (usize, usize) )>>>();
 	}
 
+	// based on dnf_id, collect the raw_subsig_ids
+	// if there are subcomponents, collect them as well
+	fn collect_subsig_ids(&self, dnf_id: usize) -> Vec<usize>{
+		let raw_subsig_ids = self.eval_dnf.vec_disjunc[dnf_id].clone();
+		let mut vec_res:Vec<usize> = vec![];
+		for id in raw_subsig_ids{
+			let stype = &self.vec_subsig_obj[id].subsig_type;
+			match stype{
+				SubSigType::GeneralRegex => vec_res.push(id),
+				SubSigType::CounterConstraint=> vec_res.push(id),
+				SubSigType::SubsigCountConstraint => {
+					vec_res.append(&mut 
+						self.vec_subsig_obj[id].set_subsigs.iter().
+							map(|x| *x).collect::<Vec<usize>>() );
+					vec_res.push(id);
+				},
+			}
+		}
+		let set_vec = vec_res.iter().map(|x| *x)
+			.collect::<HashSet<usize>>();
+		let mut res = set_vec.into_iter().map(|x| x)
+			.collect::<Vec<usize>>(); 
+		res.sort();
+
+		res
+	}
+
+
 	/// accept using the pm-bounds
 	/// the result is conservative. When unsure, return Maybe.
 	/// the 2nd option in return is set to Some  when TriVal is False 
@@ -926,33 +986,8 @@ impl ClamavSig{
 			bres = bres & item_res;
 		}
 
-		let collect_subsig_ids = |dnf_id: usize| -> Vec<usize>{
-			let raw_subsig_ids = self.eval_dnf.vec_disjunc[dnf_id].clone();
-			let mut vec_res:Vec<usize> = vec![];
-			for id in raw_subsig_ids{
-				let stype = &self.vec_subsig_obj[id].subsig_type;
-				match stype{
-					SubSigType::GeneralRegex => vec_res.push(id),
-					SubSigType::CounterConstraint=> vec_res.push(id),
-					SubSigType::SubsigCountConstraint => {
-						vec_res.append(&mut 
-							self.vec_subsig_obj[id].set_subsigs.iter().
-								map(|x| *x).collect::<Vec<usize>>() );
-						vec_res.push(id);
-					},
-				}
-			}
-			let set_vec = vec_res.iter().map(|x| *x)
-				.collect::<HashSet<usize>>();
-			let mut res = set_vec.into_iter().map(|x| x)
-				.collect::<Vec<usize>>(); 
-			res.sort();
-
-			res
-		};
-
 		let info = if !found_discharge {None} else {
-			let subsig_ids = collect_subsig_ids(min_dnf_id);
+			let subsig_ids = self.collect_subsig_ids(min_dnf_id);
 			let subsig_igc = subsig_ids.iter().map(|id|
 				self.vec_subsig_obj[*id].b_ignore_case
 			).collect::<Vec<bool>>();
@@ -2242,7 +2277,7 @@ pub fn quick_discharge_file_by_crit_bag_pm_old(fname: &str,
 	let dfa_sigs = v_sigs.iter().filter(|s| set_sigs.contains(&s.name)).
 		map(|s| s.clone()).collect::<Vec<Arc<ClamavSig>>>();
 	let set_dfa = dfa_sigs.iter().filter(|s| {
-		let res = s.accepts_by_automaton(nibbles);
+		let (res, _discharge_info) = s.accepts_by_automaton(nibbles);
 		res
 	}).map(|s| s.name.clone()).collect::<HashSet<String>>();
 
@@ -2397,7 +2432,7 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 	let dfa_sigs = v_sigs.iter().filter(|s| set_sigs_pm.contains(&s.name)).
 		map(|s| s.clone()).collect::<Vec<Arc<ClamavSig>>>();
 	let set_sigs_dfa = dfa_sigs.iter().filter(|s| {
-		let res = s.accepts_by_automaton(nibbles);
+		let (res,_discharge_info) = s.accepts_by_automaton(nibbles);
 		res
 	}).map(|s| s.name.clone()).collect::<HashSet<String>>();
 	let set_ind_pm_reg = set_sigs_dfa.clone(); //no ind_pm setp, just clone dfa result
@@ -2516,14 +2551,19 @@ pub fn quick_discharge_file_adv(
 		}
 	}
 
-
 	//4. process by dfa
 	let dfa_sigs = v_sigs.iter().filter(|s| set_sigs_pm.contains(&s.name)).
 		map(|s| s.clone()).collect::<Vec<Arc<ClamavSig>>>();
-	let set_sigs_dfa = dfa_sigs.iter().filter(|s| {
-		let res = s.accepts_by_automaton(nibbles);
-		res
-	}).map(|s| s.name.clone()).collect::<HashSet<String>>();
+	let mut set_sigs_dfa = HashSet::<String>::new();
+	let mut vec_dfa_sigs_info = vec![];
+	for s in dfa_sigs{
+		let (res, info) = s.accepts_by_automaton(nibbles);
+		if res==true{
+			set_sigs_dfa.insert(s.name.clone()); //failed to discharge via dfa
+		}else{
+			vec_dfa_sigs_info.push(info.unwrap()); //add info about best route
+		}
+	}
 
 /*
 	//5. try individual pm-reg
@@ -2583,11 +2623,11 @@ pub fn quick_discharge_file_adv(
 		*sig_to_id.get(s).unwrap()).collect::<Vec<usize>>();
 	let vec_ised_sigs = vec![]; //later decide if need to handle
 
-	//6. todo!()
+	//6.-- no need, we will direclty jump to dfa approach
 	let vec_ised_sigs_info = vec![];
 
 	WordInfo{ vec_sed_sigs, vec_dfa_sigs, vec_ised_sigs, vec_sed_sigs_info,
-		vec_ised_sigs_info}
+		vec_ised_sigs_info, vec_dfa_sigs_info}
 }
 
 
@@ -2672,7 +2712,7 @@ mod tests{
 		for (desc, s_test, b_exp) in &c.arr_cases{
 			let res = if use_eval{
 				// !sig.accepts_by_automaton(&s_test.as_bytes().to_vec())
-				!sig.accepts_by_automaton(&hex_to_u8(&s_test))
+				!sig.accepts_by_automaton(&hex_to_u8(&s_test)).0
 			}else{
 				let (_, _, v_nfa, _name) = sig.to_neg_automaton(100);
 				let nfa = &v_nfa[0][0];

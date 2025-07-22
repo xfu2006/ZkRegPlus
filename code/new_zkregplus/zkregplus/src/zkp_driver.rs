@@ -47,6 +47,7 @@ use crate::circs::{
 	composable_gadget_mapper::{CompositeGadgetMapper},
 	cp_mapper::{CpComponentMapper,CpCapacity},
 	sed_mapper::{SedComponentMapper,SedCapacity},
+	dfa_mapper::{DfaComponentMapper,DfaCapacity},
 };
 use rayon::prelude::*;
 
@@ -100,7 +101,7 @@ fn load_files<F:PrimeField>(list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavA
 				cfg, 
 				&db.sig_to_id); //use optimize mode
 
-			println!("DEBUG USE 1001: quic_res: {:?}", rec);
+			println!("DEBUG USE 1001: quick_res: {:?}", rec);
 			rec
 		}).collect::<Vec<WordInfo>>();
 
@@ -187,16 +188,31 @@ where C: CurveGroup<ScalarField=F>,
 			Rc::new(RefCell::new(_cg4)), false, lk_share2).expect("c4");
 
 	//4. create sed instances
-	let sc1 = SigmaIR1CS_Inst::<F,C,CS,LK<F>,
+	let _sc1 = SigmaIR1CS_Inst::<F,C,CS,LK<F>,
 		CompositeGadgetMapper<F,LK<F>>
 		,false>
 		::new_adv(format!("sc1"), poseidon_config.clone(), 
 			Rc::new(RefCell::new(scg1)), false, lk_share1).expect("sc1");
 
+	//5. create dfa components and instances
+	let sigs=1;
+	let subsigs=2;
+	let d_cap1 = DfaCapacity::new(max_word, sigs, subsigs);
+	let dcomp1 = DfaComponentMapper::<F,LK<F>>::new(d_cap1, db.clone());
+	let dcg1 = CompositeGadgetMapper::<F,LK<F>>::new("d1",
+		vec![Rc::new(RefCell::new(dcomp1))]);
+	let dc1 = SigmaIR1CS_Inst::<F,C,CS,LK<F>,
+		CompositeGadgetMapper<F,LK<F>>
+		,false>
+		::new_adv(format!("dc1"), poseidon_config.clone(), 
+			Rc::new(RefCell::new(dcg1)), false, lk_share1).expect("dc1");
+	println!("DEBUG USE 6000: dc1.mapper: {}", dc1.get_mapper().borrow().get_name());
+
 	//vec![ vec![c4,c3], vec![c2,c1] ]
 	//vec![ vec![_c2,_c1] ] //for saving cost
 	//vec![ vec![_c1] ] //for saving cost
-	vec![ vec![sc1] ] //for saving cost
+	//vec![ vec![sc1] ] //for saving cost
+	vec![ vec![dc1] ] //for saving cost
 }
 
 
@@ -285,7 +301,7 @@ where
 	let vec_circs = build_circs::<CF1<C1>,C1,CS1>(&poseidon_config, total_word_len, lkup_len, rc_db);
 
 	//4. run the foldpot_main
-	let sample_individual_prf = 0; //generate individual proof 1
+	let sample_individual_prf = 0; //generate individual proof 1 (idx is 0)
 	let lkup = Rc::new(RefCell::new(db.lkup));
 	foldpot_main::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,FC<CF1<C1>,C1,CS1>,
 		S,LK<CF1<C1>>,GM<CF1<C1>>>(
@@ -318,16 +334,18 @@ pub mod tests_zkp_driver{
 	fn small_data<F:PrimeField>(){
 		let b_read_cache = false;
 		let b_write_cache = true;
+		//let set1 = "data/debug/small_data_set/config"; 
+		let set1 = "data/debug/small_data_set/config_dfa"; //enforces dfa 
 		zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
-			"data/small_data_set/config/sigs.dat", //src sig
-			"data/small_data_set/config/binexec.dat", //list of files to discharge
+			&format!("{}/sigs.dat",set1), //src sig
+			&format!("{}/binexec.dat",set1), //list of files to discharge
 			"data/small_data_set/reports/report.dat", //report
 			b_read_cache,
 			b_write_cache,
 			"small_20", //cache name
-			"data/small_data_set/config/dfa.dat", //signs that need dfa
-			"data/small_data_set/config/ised.dat", //signs that need ised 
-			"data/small_data_set/config/ised_igc.dat", //signs that need ised igc
+			&format!("{}/dfa.dat", set1), //signs that need dfa
+			&format!("{}/ised.dat", set1), //signs that need ised 
+			&format!("{}/ised_igc.dat",set1), //sigs that need ised igc
 		);
 	}
 

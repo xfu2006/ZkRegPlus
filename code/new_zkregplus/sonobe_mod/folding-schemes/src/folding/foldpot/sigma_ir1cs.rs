@@ -88,6 +88,9 @@ pub struct WordInfo{
 	pub vec_sed_sigs_info: Vec<DischargeSigInfo>,
 	/// one to one corresponds to vec_ised_sigs
 	pub vec_ised_sigs_info: Vec<DischargeSigInfo>,
+
+	/// one to one corresponds to vec_dfa_sigs
+	pub vec_dfa_sigs_info: Vec<DischargeSigInfo>,
 }
 
 impl WordInfo{
@@ -98,6 +101,7 @@ impl WordInfo{
 			vec_ised_sigs: vec![], 
 			vec_sed_sigs_info: vec![],
 			vec_ised_sigs_info: vec![],
+			vec_dfa_sigs_info: vec![],
 		} 
 	}
 }

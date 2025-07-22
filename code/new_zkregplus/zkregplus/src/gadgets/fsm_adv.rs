@@ -1,5 +1,7 @@
 /* Recreated 04/03/2025, Completed: 05/04/2025 */
 
+//! This module generates the (pat-loc) for a nibble sequence.
+
 use std::{rc::{Rc},cell::{RefCell}};
 use ark_ff::{PrimeField};
 use std::marker::{PhantomData};

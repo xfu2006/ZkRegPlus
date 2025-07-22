@@ -394,6 +394,7 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 	fn gen_nd_advice_no_limit(&self, word: &Vec<F>, word_info: &WordInfo,
 		r_prev_adv: Option<Rc<dyn NdAdvice>>)
 		->Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>{
+		println!("DEBUG USE 6105: step 0");
 
 		let vec_prev_adv = if r_prev_adv.is_some(){
 			r_prev_adv.unwrap().as_any().downcast_ref
@@ -401,9 +402,10 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 				.vec_adv.iter().map(|x| Some(x.clone()))
 				.collect::<Vec<Option<Rc<dyn NdAdvice>>>>()
 		}else{vec![None; self.vec_components.len()]};
-
+		println!("DEBUG USE 6105: step 1");
 		let res= self.vec_components.iter().zip(vec_prev_adv.into_iter()).
 			map(|(c,a)|{
+				println!("DEBUG USE 6105: step 2");
 				let res = c.borrow()
 					.gen_nd_advice_no_limit(&word, &word_info, a);
 				if res.is_some(){
@@ -411,6 +413,8 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 				}else{ (None,None)}
 			}
 		).collect::<Vec<(Option<Rc<dyn Capacity>>,Option<Rc<dyn NdAdvice>>)>>();
+
+		println!("DEBUG USE 6105: step 3");
 		let vec_cap = res.iter().map(|(a,_b)| a.clone().expect("cap null"))
 			.collect();
 		let vec_adv = res.iter().map(|(_a,b)| b.clone().expect("adv null"))

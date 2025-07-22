@@ -5685,6 +5685,7 @@ dependencies = [
  "num-integer",
  "rand 0.8.5",
  "rayon",
+ "rustomaton",
  "serde",
  "serde_json",
  "sha3",

@@ -531,8 +531,10 @@ where
 					let word = remaining[0..word_len].to_vec();
 					let prev_adv = if vec_adv.len()==0 {None}
 						else {Some(vec_adv[vec_adv.len()-1].clone())};
+					println!("DEBUG USE 6011: word_len: {}, last_word_len: {}", word_len, last_word_len);
 					if last_word_len!=word_len {
 						last_word_len = word_len;
+						println!(" ==> DEBUG USE 6012: gen_nd_advice by circ:.mapper: {}", circ.get_mapper().borrow().get_name());
 						last_res = circ.get_mapper().borrow()
 						  .gen_nd_advice_no_limit(&word, &word_info, prev_adv);
 					}

@@ -168,7 +168,7 @@ pub struct ClamavSig{
 	pub sigtype: ClamSigType,
 //	#[serde(skip_serializing)]
 	/// list of automaton (only needs to build for a FEW)
-	pub vec_subsig_automaton: Vec<DFA<char>>, //each to a subsig_obj (optional)
+	pub vec_subsig_automaton: Vec<Arc<DFA<char>>>, //each to a subsig_obj (optional)
 
 	///(optional) for each subisg, it has a HashSet of `Vec<String>` (called Bag of Words). We require that all Bag of Words should have one of its element appear at least once (for regular constraint). Semantics is similar for counter constraint. 
 	pub vec_subsig_bagwords: Vec<HashSet<Vec<String>>>, 

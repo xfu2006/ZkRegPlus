@@ -8,4 +8,6 @@ pub mod composable_gadget_mapper;
 pub mod cp_mapper;
 /// gadget mapper for sed approach
 pub mod sed_mapper;
+/// gadget mapper for DFA approach
+pub mod dfa_mapper;
 

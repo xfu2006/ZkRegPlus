@@ -1,8 +1,11 @@
 /* Created 03/07/2025 */
 // common utility functions
 
-use rayon::iter::{ParallelIterator,IntoParallelIterator,
-	IntoParallelRefIterator,IndexedParallelIterator};
+use rayon::{
+	iter::{ParallelIterator,IntoParallelIterator, 
+		IntoParallelRefIterator,IndexedParallelIterator, IntoParallelRefMutIterator},
+	prelude::{ParallelSliceMut}
+};
 use std::collections::{HashMap,HashSet};
 use ark_ff::{PrimeField,BigInteger};
 use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef};
@@ -17,6 +20,34 @@ use ark_r1cs_std::{
 	R1CSVar,
 };
 use data_processor::clam_db::{RANGE2_BIT,RANGE2};
+
+/// quickly generate repeating of vec for n times.
+pub fn repeat_vec<F:PrimeField>(v: &[F], n: usize)->Vec<F>{
+	let (vlen,total) = (v.len(), v.len()*n);
+	let zero = F::zero();
+    let mut result = vec![zero; total];
+	result.par_chunks_mut(vlen).enumerate().for_each(|(_i, chunk)| {
+			chunk.copy_from_slice(v);
+	});
+
+    result
+}
+
+/// takeing a vector of slices of the same size and interleaving
+/// these into one vec, e.g., [[1,2], [3,4]] ==> [1,3,2,4]
+pub fn mix_vec<F:PrimeField>(v2d: &Vec<&[F]>)->Vec<F>{
+	let m = v2d.len();
+	let n = v2d[0].len();
+	for v in v2d {assert!(v.len()==n);}
+	let zero = F::zero();
+	let mut result = vec![zero; m*n];
+	result.par_iter_mut().enumerate().for_each(|(i,ele)|{
+		let (col_id, loc) = (i%n, i/n);
+		*ele = v2d[col_id][loc]
+	});
+
+	result
+}
 
 pub fn is_sorted<F:PrimeField>(vec: &Vec<F>)->bool{
 	if vec.len()==0 {return true;}
