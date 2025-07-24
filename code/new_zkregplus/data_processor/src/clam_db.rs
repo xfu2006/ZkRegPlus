@@ -58,6 +58,8 @@ pub const TRI_TRUTH_TBL:u32 = 0x20000003;
 // the following are sub-table ids
 pub const CHAR:u32 = 0x70000001;
 pub const RANGE2:u32 = 0x70000002;
+pub const CHAR_MAP:u32 = 0x7000A001; //used for 16-element translation table
+									 //from [0,...F] -> ['0', ..., 'F']
 
 pub const CRIT_INIT:u32 = 0x10000001;
 pub const CRIT_NON_FINAL:u32 = 0x10000002;
@@ -855,6 +857,23 @@ impl SubsigInfoStore{
 
 
 impl <F:PrimeField> ClamavDB<F>{
+	/// this adds a map from [0,...,F] -> ['0', ..., 'F']
+	fn add_char_map(lk:&mut LookupTableTwoCol_Inst<F>){
+		let charset:Vec<char> = vec!['0','1','2','3','4','5','6','7','8',
+			'9','a','b','c','d','e','f'];
+		assert!(charset.len()==16);
+		let f_char_map = F::from(CHAR_MAP);
+		let mut tuples = (0..16).collect::<Vec<usize>>().into_iter().map(|i|{
+			let val = F::from(i as u32);
+			let ch = charset[i];
+			let id = f_char_map + F::from(ch as u8);	
+
+			(id,val)
+		}).collect::<Vec<(F,F)>>();
+		lk.vals.append(&mut tuples);
+	}
+
+
 	/// This adds 3 small sections to lkup table:
 	/// (1) 3 TriVal (False, True, Maybe),
 	/// (2) 3 TriOp (Not, And, Or)
@@ -1779,6 +1798,7 @@ impl <F:PrimeField> ClamavDB<F>{
 
 		//8. build lkup
 		let mut lkup = LookupTableTwoCol_Inst::<F>::dummy();
+		Self::add_char_map(&mut lkup);
 		Self::add_trival_rules(&mut lkup);
 		Self::add_acdfa_to_lkup(&mut lkup, &dfa_crit, CRIT_INIT, &map_crit_pat, &sig_to_id);
 		Self::add_acdfa_to_lkup(&mut lkup, &dfa_crit_igc, CRIT_IGC_INIT, &map_crit_pat_igc, &sig_to_id);

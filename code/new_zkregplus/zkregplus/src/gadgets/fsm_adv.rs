@@ -837,7 +837,7 @@ pub mod tests_fsm_adv_gadget{
 		// too small, but will be ok for SED (because min word len is 0).
 		// the word to discharge "abc1111111cba" (will be discharged via
 		// SED but not CP.).
-		let path = "debug_samples/sed/simple";
+		let path = "debug/sed/simple";
 		let db = ClamavDB::<Fr>::build_db_from_dir(path);
 
 		//2. create advice for word_extract_adv and fsm_adv
@@ -850,7 +850,7 @@ pub mod tests_fsm_adv_gadget{
 		let f_nibbles = nibbles_raw.iter().map(|x| Fr::from(*x as u32))
 			.collect::<Vec<Fr>>();
 		let word = vec![pack_nibbles(&f_nibbles), vec![Fr::zero()]].concat();
-		let adv_wea = WordExtractAdvAdvice::new(&word, act_size);
+		let adv_wea = WordExtractAdvAdvice::new(&word, act_size, false);
 		let stmt_wea = adv_wea.stmt_container;
 		let cfg_wea = stmt_wea.borrow().get_cfg(); 
 

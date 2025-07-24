@@ -177,6 +177,7 @@ impl <F:PrimeField> SigmaGadget<F> for WordExtractGadget<F>{
 }
 
 /// Advice for the WordExtract Gadget.
+#[derive(Debug)]
 pub struct WordExtractAdvice<F:PrimeField>{
 	/// consists of act_word_len and then the extracted legs
 	pub data: Vec<F>,

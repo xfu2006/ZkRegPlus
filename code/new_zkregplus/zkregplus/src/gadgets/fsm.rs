@@ -209,6 +209,7 @@ impl <F:PrimeField> SigmaGadget<F> for FsmGadget<F>{
 }
 
 /// Advice for the WordExtract Gadget.
+#[derive(Debug)]
 pub struct FsmAdvice<F:PrimeField>{
 	/// states: length is max_nibbles + 1
 	pub states: Vec<F>,

@@ -354,6 +354,7 @@ impl <F:Clone> SigGadgetMsg3<F>{
 }
 
 /// Advice for the WordExtract Gadget.
+#[derive(Debug)]
 pub struct GetSigAdvice<F:PrimeField>{
 	pub capacity: SigGadgetCapacity,
 

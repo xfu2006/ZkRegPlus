@@ -85,6 +85,7 @@ pub trait ComponentMapper<F:PrimeField, LK: LookupTableTwoCol<F>>: Debug{
 
 
 /// Composite list of advices (the internal ND_ADVICE for CompositeGadgetMapper)
+#[derive(Debug)]
 pub struct CompositeAdvice{
 	pub vec_adv: Vec<Rc<dyn NdAdvice>>,
 }
@@ -394,15 +395,17 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 	fn gen_nd_advice_no_limit(&self, word: &Vec<F>, word_info: &WordInfo,
 		r_prev_adv: Option<Rc<dyn NdAdvice>>)
 		->Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>{
-		println!("DEBUG USE 6105: step 0");
 
 		let vec_prev_adv = if r_prev_adv.is_some(){
 			r_prev_adv.unwrap().as_any().downcast_ref
-				::<Rc<CompositeAdvice>>().unwrap()
-				.vec_adv.iter().map(|x| Some(x.clone()))
-				.collect::<Vec<Option<Rc<dyn NdAdvice>>>>()
+				::<CompositeAdvice>().expect("downcast err")
+				.vec_adv.iter().map(|x| 
+					Some(x.clone())
+				).collect::<Vec<Option<Rc<dyn NdAdvice>>>>()
+
 		}else{vec![None; self.vec_components.len()]};
 		println!("DEBUG USE 6105: step 1");
+
 		let res= self.vec_components.iter().zip(vec_prev_adv.into_iter()).
 			map(|(c,a)|{
 				println!("DEBUG USE 6105: step 2");
@@ -420,6 +423,7 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 		let vec_adv = res.iter().map(|(_a,b)| b.clone().expect("adv null"))
 			.collect();
 
+		println!("DEBUG USE 6105: step 4 => Generate CompositeAdvice");
 		Some( ( 
 			Rc::new(CompositeCapacity{vec_cap}),
 			Rc::new(CompositeAdvice{vec_adv})

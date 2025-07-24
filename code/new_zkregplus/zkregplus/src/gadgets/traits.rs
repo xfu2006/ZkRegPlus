@@ -17,7 +17,7 @@
 // ---------------------------------------------
 use ark_ff::{PrimeField};
 use ark_relations::r1cs::SynthesisError;
-use std::{rc::Rc,cell::RefCell};
+use std::{rc::Rc,cell::RefCell,fmt::Debug};
 use std::collections::{HashMap};
 use folding_schemes::{
 	folding::foldpot::{
@@ -66,7 +66,7 @@ pub enum Container<F: Clone>{
 
 /// Represents a component's Advice (used for SED components, the other
 /// gadgets/components stay with legacy code)
-pub trait ComponentAdvice<F:PrimeField>{
+pub trait ComponentAdvice<F:PrimeField>: Debug{
 	/// generate the <inp,oup,data,subtbl_id_inp,subtbl_id_oup,subtbl_id_data>
 	fn gen_stmt_components(&self)-> Vec<Vec<F>>{
 		self.get_container().borrow().gen_stmt_components()

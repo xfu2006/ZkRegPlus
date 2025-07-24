@@ -106,6 +106,7 @@ impl Capacity for CpCapacity{
 }
 
 /// The non-deterministic advice for the CP component
+#[derive(Debug)]
 pub struct CpAdvice<F:PrimeField>{
 	/// the advice needed for the word_extract gadget
 	pub wd_extract_advice: WordExtractAdvice<F>,

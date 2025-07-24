@@ -211,6 +211,7 @@ impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
 }
 
 /// Advice for the WordExtract Gadget.
+#[derive(Debug)]
 pub struct PackFinalAdvice<F:PrimeField>{
 	/// oup_states (first final states and then padding 0)
 	pub oup_states: Vec<F>,

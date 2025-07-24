@@ -17976,3 +17976,119 @@ Goal 3. implement gadget
 	[e] inspect code
 	[f] add sid_states
 	[g] add sid_trans
+
+Wednesday 07/23/2025
+LOC (gadget): 13134 -> 13144 (+10)
+LOC (circ): 2202 -> 2215 (+10)
+Total: +20. Mainly on debugging 
+Goal 1. build up the data columns
+	[a] create a new function build_trap_dfa()
+	[b] the other also crashes
+	[c] the default should add for charset instead of 0 to 17 -> DONE
+	[d] check how to convert usize to char
+		-> check how accepts_by_automaton works
+		-> should call u8_to_hex
+Goal 2. fix the inp_states problem -> FIXED
+Goal 3. inspect the acceptance data and make sure that it's working
+	[a] inspect the data file annotate in documentation ->DONE
+	[b] print out 6501 and check -
+		-> add 6500 dfa dump
+	[c] run a false run of fsa accepting and see what it is -> GOOD
+Goal 4. testing
+	[a] unit testing
+	[b] regression testing
+Goal 5. fix index err
+	[a] why it crashes on dfa again?
+	[b] inp_states are 0's again -> check circ init
+		-> 6801 -> it's not even show up? maybe
+			it's in some init gadget stage. -> need to show trace
+		-> fixed: init states.
+Goal 6. fix another error:
+	[a] composite advice downcast err it is called 4 times, and
+		the last time is true!
+	[b] check the call stack 
+		pass_one 
+			-> GadgeMapper::gen_nd_advice_no_limit
+				-> CompositeMapper::400 crashes on unwrap
+			-> check 6105 step 4. Does it generate advice?
+	[c] into drive: 6200.1, 2 series
+		vec_adv size? 0
+		-> remaining len: 2? -> it's correct, word has 2 hex words
+	[d] check ==> 6012 message how many times it is invoked
+	[e] add Debug interface to all device
+		-> check msg 6013: what's the dump of last_advice?
+			-> it prints fine
+		-> check msg 6015: why downcast err?
+			-> check 6016 and 6017 inside the gen_nd_advice function
+	[f] cast error is solved by removing Rc<CompositionAdvicie>,
+		the Rc. It looks like multiple words is not tried before?
+		-> regression test on sed component
+Goal 7. fix another error
+	[a] cannot find "mul_fsm_combo" -> "states"
+	[b] now add states
+	[c] mix_vec error
+	[d] add the inp/medium/oup states and their SID
+	[d] still states error
+	[e] lkup share err -> FIXED.
+
+
+Friday 07/24/2025
+LOC (gadget): 13144 -> 13234 (+90) -> 13207 -> 13286 (+79)
+LOC (data): 9059 -> 9079 (+20)
+Total: +189
+Goal 1. complete handling of states
+	[a] find out how to pass v_fsm_id to Gagdget
+		-> check how does ComputeSigGadget knows about sig and subsig?
+		-> here sigs and subsigs are provided as non-deterministic
+			advice as they will show up in the result anyway
+		-> can subsigs, fsm_id be provided as non-deterministic advice?
+			-> subsigs yes
+			-> fsm_id is generated from sig and subsig ID and should be.
+	[b] sig_id can be extracted from subsig_id
+		dfa_id can be built from sig_id and subsig_id
+	[c] we need to enter columns 
+		v_dfa_id
+		v_subsig_id
+		v_sig_id
+		v_raw_sig_id
+		and then validate their relations
+
+Goal 2. add v_subsig_id, v_sig_id, v_raw_subsig_id, v_dfa_id
+	[a] build the subsig id
+	[b] add columns
+	[c] regression testing
+	[d] veirfy validity of v_subsig_id, v_sig_id, and dfa_id
+		-> retrieve columns
+		-> check sid
+		-> check dfa_id
+		-> check why it fails missing a 9
+		-> cost summary
+
+Goal 3. validate states and transitions
+	[a] add transitions
+	[b] in clam_db add CHAR_MAP
+	[c] construct sid_col
+	[d] add all nibble and trans columns and their sid -> DONE
+
+Goal 4. do translation of states in data_processor
+	[a] add map in add_sig_to_dfa
+		-> add CONST
+		-> add Translation -> DONE
+	[b] regression test -> DONE
+	[c] tag each char in fsm_adv add a flag to decide which
+		tag to do
+		-> modify constructor
+		-> propgate syntax change
+		-> unit testing 
+			-> wea, discharge, compute_sig
+			-> correct path debug_samples
+		-> regression testing
+	[d] regression test fails
+		-> check si_nibbles -> fixed bool condition
+	[e] new bug: now cs check fails
+		-> why?
+		-> but disabling the conitional code fails the lkup check.
+		
+
+	[d] 
+

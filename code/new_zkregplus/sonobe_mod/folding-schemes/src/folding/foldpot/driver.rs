@@ -385,7 +385,7 @@ where
 	/// so build_statement will be most likely copying over info.
 	pub fn plan_nd_advice(&self, word: &Vec<CF1<C1>>, word_info: &WordInfo)
 		-> Result<(usize, Vec<usize>, Vec<usize>, Vec<Rc<dyn Capacity>>, Vec<Rc<dyn NdAdvice>>),Error>{
-			println!("### DEBUG USE 7001: entering plan_nd_advice, layers: {}", self.layered_circs.len());
+			println!("### DEBUG USE 7001: entering plan_nd_advice, layers: {}, word.len(): {}", self.layered_circs.len(), word.len());
 			let mut remaining = word.clone();
 			let mut timer = Timer::new("timer", 2);
 			#[cfg(test)]{//check if all circs have the same inp/oup
@@ -439,6 +439,7 @@ where
 			for layer_id in 0..self.layered_circs.len(){
 				//2.1.1 try generate advice by the first circ
 				// without any resource limits
+				println!("DEBUG USE 6200.1 entering loop: layerid: {} of layered: {}", layer_id, self.layered_circs.len());
 				let layer = &self.layered_circs[layer_id];
 				let circ1 = &layer[layer.len()-1];
 				//we assume all circs have the same max_word_len
@@ -451,6 +452,7 @@ where
 						max_word_len()==max_word_len);
 					}
 				}
+				println!("DEBUG USE 6200.2 vec_adv.len(): {}, max_word_len: {}, word.len(): {}, remaining.len(): {}", vec_adv.len(), max_word_len, word.len(), remaining.len());
 				let prev_adv = if vec_adv.len()==0 {None}
 					else {Some(vec_adv[vec_adv.len()-1].clone())};
 				let res = circ1.get_mapper().borrow()
@@ -498,6 +500,7 @@ where
 
 			let layer = &self.layered_circs[selected_layer];
 			while remaining.len()>0{
+				println!("DEBUG USE 6200.3: remaining.len(): {}, selected_layer: {}", remaining.len(), selected_layer);
 				//2.2.1. identify the circ with the smallest cost given
 				// the remaining.len
 				let mut min_id = 0;
@@ -534,7 +537,7 @@ where
 					println!("DEBUG USE 6011: word_len: {}, last_word_len: {}", word_len, last_word_len);
 					if last_word_len!=word_len {
 						last_word_len = word_len;
-						println!(" ==> DEBUG USE 6012: gen_nd_advice by circ:.mapper: {}", circ.get_mapper().borrow().get_name());
+						println!(" ==> DEBUG USE 6012: gen_nd_advice by circ:.mapper: {}, prev_adv.is_some: {}", circ.get_mapper().borrow().get_name(), prev_adv.is_some());
 						last_res = circ.get_mapper().borrow()
 						  .gen_nd_advice_no_limit(&word, &word_info, prev_adv);
 					}
@@ -709,7 +712,7 @@ where
 		}
 		t2.prt("step 5: dispatch w");
 
-		assert!(total_lkup_covered >= lkup_len);
+		assert!(total_lkup_covered >= lkup_len, "total: {}, lkup_len: {}", total_lkup_covered, lkup_len);
 		(vec_res, m_map, vec_advice, batch_pack)
 	}
 

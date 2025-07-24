@@ -4,7 +4,7 @@
 use rayon::{
 	iter::{ParallelIterator,IntoParallelIterator, 
 		IntoParallelRefIterator,IndexedParallelIterator, IntoParallelRefMutIterator},
-	prelude::{ParallelSliceMut}
+	//prelude::{ParallelSliceMut}
 };
 use std::collections::{HashMap,HashSet};
 use ark_ff::{PrimeField,BigInteger};
@@ -12,7 +12,7 @@ use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef};
 use ark_r1cs_std::{
 	boolean::{Boolean},
 	fields::{
-		//FieldVar,
+		FieldVar,
 		fp::FpVar
 	},
 	alloc::AllocVar,
@@ -22,13 +22,17 @@ use ark_r1cs_std::{
 use data_processor::clam_db::{RANGE2_BIT,RANGE2};
 
 /// quickly generate repeating of vec for n times.
-pub fn repeat_vec<F:PrimeField>(v: &[F], n: usize)->Vec<F>{
-	let (vlen,total) = (v.len(), v.len()*n);
-	let zero = F::zero();
+pub fn repeat_vec<F:PrimeField>(v: &[FpVar<F>], n: usize)->Vec<FpVar<F>>{
+	let (_vlen,total) = (v.len(), v.len()*n);
+	let zero = FpVar::<F>::zero();
     let mut result = vec![zero; total];
-	result.par_chunks_mut(vlen).enumerate().for_each(|(_i, chunk)| {
-			chunk.copy_from_slice(v);
-	});
+	let v_len = v.len();
+	for i in 0..n{//unfortunately FpVar does not support send,
+		//so cannot do parallel assignmen here.
+		for j in 0..v_len{
+			result[i*v_len+j] = v[j].clone();
+		}
+	}
 
     result
 }
@@ -42,7 +46,7 @@ pub fn mix_vec<F:PrimeField>(v2d: &Vec<&[F]>)->Vec<F>{
 	let zero = F::zero();
 	let mut result = vec![zero; m*n];
 	result.par_iter_mut().enumerate().for_each(|(i,ele)|{
-		let (col_id, loc) = (i%n, i/n);
+		let (col_id, loc) = (i%m, i/m);
 		*ele = v2d[col_id][loc]
 	});
 

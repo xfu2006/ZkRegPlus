@@ -60,6 +60,21 @@ pub fn build_dfa(s_reg: &str, b_neg: bool) -> DFA<char>{
 	//dfa2
 }
 
+/// build a DFA that accepts nothing, it's essentially a two state
+/// machine that on any chars (0-16), would lead back to state 0,
+/// and state 1 is not reachable from 0.
+/// This one allows us to make path (although non-accepting) for
+/// any string. This is useful for building dummy DFA
+pub fn build_trap_dfa()->DFA<char>{
+	let mut dfa = Regex2::<char>::parse_with_alphabet( clamav_alphabet(), "").unwrap().to_dfa();
+	let mut hm = HashMap::<char,usize>::new(); 
+	for i in clamav_alphabet() { hm.insert(i, 0); }
+	dfa.transitions = vec![hm];
+	dfa.finals=HashSet::<usize>::new();
+	dfa.finals.insert(1);
+	dfa
+}
+
 /// build NFA that accepts  (the original rustomaton is too slow)
 pub fn nfa_at_most(n: usize) -> NFA<char>{
 	let alpha = clamav_alphabet();

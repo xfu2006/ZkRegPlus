@@ -133,6 +133,7 @@ impl <F:PrimeField> SigmaGadget<F> for SumWordGadget<F>{
 /// Advice for SumGadget.
 /// Subtable ID: 1.
 /// For whoever the value is "3", set subtable ID to CHAR, otherwise "0"
+#[derive(Debug)]
 pub struct SumWordAdvice<F: PrimeField>{
 	pub subtbl_id: Vec<F>,
 	pub sum: F,

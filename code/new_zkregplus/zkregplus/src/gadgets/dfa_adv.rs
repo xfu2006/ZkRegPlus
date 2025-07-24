@@ -28,22 +28,23 @@ use ark_r1cs_std::{
 };
 use std::{any::Any, sync::{Arc}};
 use data_processor::{
-	clam_db::{ClamavDB, RANGE2_BIT
-		//RANGE2,CHAR, STORE_SUBSIG,
+	clam_db::{ClamavDB, RANGE2_BIT, RANGE2,CHAR_MAP,
+		//STORE_SUBSIG,
 	},
 	//type_def::{SubsigPatternStore},
-	fsa_utils::{build_dfa},
+	fsa_utils::{build_trap_dfa},
 };
+use utils::{data::{u8_to_hex}};
 use crate::gadgets::{
-	commons::{mix_vec,repeat_vec,
-		//check_arr_eq,check_eq,check_increase,gen_m_table
+	commons::{mix_vec,new_const_var, check_eq
+		//,gen_m_table
 	},
 	traits::{Container,
-		//Col,
+		Col,
 		IDX_WORD, IDX_INP,IDX_DATA, 
-		//IDX_SI_INP, 
+		IDX_SI_INP, 
 		IDX_OUP, 
-		//IDX_SI_OUP, 
+		IDX_SI_OUP, 
 		IDX_SI_DATA, ComponentAdvice
 	},
 	//db::{
@@ -173,7 +174,7 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		let stmt_container = Container::<F>::new("dfa_adv_stmt");
 		//1. padding the input when necessary
 		let dummy_fsm_id = F::from(ClamavDB::<F>::dfa_id(0, 0));
-		let dummy_dfa = Arc::new(build_dfa("",false));
+		let dummy_dfa = Arc::new(build_trap_dfa());
 		
 		let n = capacity.subsigs;
 		let n1 = inp_subsigs.len();
@@ -247,94 +248,101 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 			let f_id_state = fsm_id + F::from(6u32);
 			let f_id_trans= fsm_id + F::from(3u32);
 			//sequentially walk nibbles through DFA
+			let s_nibbles = nibbles.iter().map(|n| field_to_usize(n) as u8)
+				.collect::<Vec<u8>>();
+			let s2 = u8_to_hex(&s_nibbles).as_bytes().to_vec().iter()
+				.map(|s| *s as char).collect::<Vec<char>>();
+			let mut sid_nibbles = vec![zero;nibbles.len()];
+			let f_map = F::from(CHAR_MAP as u32);
 			for i in 0..nibbles.len(){
-				let ch: u8 = field_to_usize(&nibbles[i]).try_into().unwrap();
-				let dst = dfa.transitions[src].get(&(ch as char)).unwrap();
-				println!("DEBUG USE 6501: DFA {}: src: {}, ch: {} -> dst: {}", 
-					j, src, ch, dst);
+				let ch = s2[i];
+				let dst = dfa.transitions[src].get(&ch);
+				assert!(dst.is_some());
+				let dst = dst.unwrap();
 				let trans = (ch as usize) 
 					+ ((src+1)<<4) + ((dst+1)<<(4+RANGE2_BIT));
 				v_states[i+1] = F::from((dst+1) as u32);
 				v_trans[i] = F::from(trans as u64);
 				src = *dst;
+				sid_nibbles[i] = F::from(ch as u8) + f_map;
 			}
 			let v_sid_states = vec![f_id_state; nlen+1];
 			let v_sid_trans = vec![f_id_trans; nlen];
-			(v_states, v_trans, v_sid_states, v_sid_trans)
-		}).collect::<Vec<(Vec<F>,Vec<F>,Vec<F>,Vec<F>)>>();
+			(v_states, v_trans, v_sid_states, v_sid_trans,sid_nibbles)
+		}).collect::<Vec<(Vec<F>,Vec<F>,Vec<F>,Vec<F>,Vec<F>)>>();
 
 		//1.2 assembl slice references for later mixing.
-
 		let v2d_states = v2d.iter().map(|v| &v.0[..]).collect::<Vec<&[F]>>();
 		let v2d_trans= v2d.iter().map(|v| &v.1[..]).collect::<Vec<&[F]>>();
 		let v2d_sid_states= v2d.iter().map(|v| &v.2[..]).collect::<Vec<&[F]>>();
 		let v2d_sid_trans= v2d.iter().map(|v| &v.3[..]).collect::<Vec<&[F]>>();
+		let v2d_sid_nibbles= v2d.iter().map(|v| &v.4[..]).collect::<Vec<&[F]>>();
 
-		/*
-		assert!(raw_states.len()==nlen+1 && raw_locs.len()==nlen+1);
+		let states = mix_vec(&v2d_states);
+		let trans = mix_vec(&v2d_trans);
+		let sid_states = mix_vec(&v2d_sid_states);
+		let sid_trans = mix_vec(&v2d_sid_trans);
+		let sid_nibbles = v2d_sid_nibbles[0].clone(); //just one col
+		assert!(states.len()==m*(nlen+1));
+		assert!(sid_states.len()==m*(nlen+1));
+		assert!(trans.len()==m*nlen);
+		assert!(sid_trans.len()==m*nlen);
 
-		let f_id_state = F::from(fsm_id+6);
-		let f_id_trans= F::from(fsm_id+3);
-		let f_id_loc= F::from(RANGE2);
-		let f_char= F::from(CHAR);
+		//1.3 build v_sig_id and v_raw_subsig_id, v_dfa_id
+		//and add them into combo
+		let n = capacity.subsigs;
+		assert!(inp_subsigs.len()==n);
+		assert!(v_dfa_id.len()==n);
+		let frg = F::from(RANGE2);
+		let v_sig = inp_subsigs.iter().map(|&ssid| 
+			extract_sigid(ssid).0
+		).collect::<Vec<F>>();
+		let v_raw_subsig = inp_subsigs.iter().map(|&ssid| 
+			extract_sigid(ssid).1
+		).collect::<Vec<F>>();
+		res.borrow_mut().add_col(Col::<F>::new(inp_subsigs.to_vec(),
+			"v_subsig",IDX_DATA)); 
+		res.borrow_mut().add_col(Col::<F>::new(v_sig, "v_sig",IDX_DATA)); 
+		res.borrow_mut().add_col(Col::<F>::new(v_raw_subsig, "v_raw_subsig",
+			IDX_DATA)); 
+		res.borrow_mut().add_col(Col::<F>::new(v_dfa_id.to_vec(), "v_dfa_id",
+			IDX_DATA)); 
+		res.borrow_mut().add_col(Col::<F>::new(vec![frg;n], "sid_v_sig",
+			IDX_SI_DATA)); 
+		res.borrow_mut().add_col(Col::<F>::new(vec![frg;n], "sid_v_subsig",
+			IDX_SI_DATA)); 
+		res.borrow_mut().add_col(Col::<F>::new(vec![frg;n], "sid_v_raw_subsig",
+			IDX_SI_DATA)); 
+		res.borrow_mut().add_col(Col::<F>::new(vec![zero;n], "sid_v_dfa_id",
+			IDX_SI_DATA)); 
 
-		//1.1 the inp/mid/oup states
-		let col_inp_state = Col::<F>::new(vec![raw_states[0]],
+		//1.4 add columns related to inp/mid/oup states
+		let col_inp_state = Col::<F>::new(states[0..m].to_vec(),
 			"inp_state",IDX_INP);
-		let col_si_inp_state = Col::<F>::new(vec![f_id_state],
+		let col_si_inp_state = Col::<F>::new(sid_states[0..m].to_vec(),
 			"si_inp_state",IDX_SI_INP);
 
-		let col_mid_states = Col::<F>::new(raw_states[1..nlen].to_vec(),
+		let col_mid_states = Col::<F>::new(states[m..m*nlen].to_vec(),
 			"mid_states", IDX_DATA);
-		let col_si_mid_states = Col::<F>::new(vec![f_id_state; nlen-1], 
-			"si_mid_states", IDX_SI_DATA);
+		let col_si_mid_states = Col::<F>::new(sid_states[m..m*nlen]
+			.to_vec(), "si_mid_states", IDX_SI_DATA);
 
-		let col_oup_state = Col::<F>::new(vec![raw_states[nlen]],
+		let col_oup_state = Col::<F>::new(states[m*nlen..m*(nlen+1)].to_vec(),
 			"oup_state",IDX_OUP);
-		let col_si_oup_state = Col::<F>::new(vec![f_id_state],
-			"si_oup_state",IDX_SI_OUP);
+		let col_si_oup_state = Col::<F>::new(sid_states[m*nlen..m*(nlen+1)]
+			.to_vec(), "si_oup_state",IDX_SI_OUP);
 
 		let states = Container::concat_cols(
 			vec![col_inp_state, col_mid_states, col_oup_state], "states");
 		let si_states = Container::concat_cols(vec![col_si_inp_state, 
 			col_si_mid_states, col_si_oup_state], "si_states");
-		#[cfg(test)]{assert!(states.borrow().to_vec().len()==nlen+1);}
-		#[cfg(test)]{assert!(si_states.borrow().to_vec().len()==nlen+1);}
-		res.borrow_mut().add_container(states.clone()); //remove clone later
+		res.borrow_mut().add_container(states); //remove clone later
 		res.borrow_mut().add_container(si_states);
 
-		//1.2 the inp/mid/oup locations
-		let col_inp_loc = Col::<F>::new(vec![raw_locs[0]],
-			"inp_loc",IDX_INP);
-		let col_si_inp_loc = Col::<F>::new(vec![f_id_loc],
-			"si_inp_loc",IDX_SI_INP);
-
-		let col_mid_locs = Col::<F>::new(raw_locs[1..nlen].to_vec(),
-			"mid_locs", IDX_DATA);
-		let col_si_mid_locs = Col::<F>::new(vec![f_id_loc; nlen-1], 
-			"si_mid_locs", IDX_SI_DATA);
-
-		let col_oup_loc = Col::<F>::new(vec![raw_locs[nlen]],
-			"oup_loc",IDX_OUP);
-		let col_si_oup_loc = Col::<F>::new(vec![f_id_loc],
-			"si_oup_loc",IDX_SI_OUP);
-
-		let locs = Container::concat_cols(
-			vec![col_inp_loc, col_mid_locs, col_oup_loc], "locs");
-		let si_locs = Container::concat_cols(vec![col_si_inp_loc, 
-			col_si_mid_locs, col_si_oup_loc], "si_locs");
-		#[cfg(test)]{assert!(locs.borrow().to_vec().len()==nlen+1);}
-		#[cfg(test)]{assert!(si_locs.borrow().to_vec().len()==nlen+1);}
-		res.borrow_mut().add_container(locs);
-		res.borrow_mut().add_container(si_locs);
 
 		//1.3. the transitions
-		let col_trans = Col::<F>::new(trans, 
-			"trans", IDX_DATA);
-		let col_si_trans = Col::<F>::new(vec![f_id_trans; nlen],
-			"si_trans", IDX_SI_DATA);
-		#[cfg(test)]{assert!(col_trans.borrow().data.len()==nlen);}
-		#[cfg(test)]{assert!(col_si_trans.borrow().data.len()==nlen);}
+		let col_trans = Col::<F>::new(trans, "trans", IDX_DATA);
+		let col_si_trans = Col::<F>::new(sid_trans, "si_trans", IDX_SI_DATA);
 		res.borrow_mut().add_col(col_trans);
 		res.borrow_mut().add_col(col_si_trans);
 
@@ -342,7 +350,7 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		// retrieved from previous word_extract_adv gadget
 		let col_nibbles = Col::<F>::new_external(nibbles.to_vec(), 
 			"nibbles", IDX_DATA, -1, "word_extract_stmt nibbles");
-		let col_si_nibbles = Col::<F>::new_external(vec![f_char; nlen], 
+		let col_si_nibbles = Col::<F>::new_external(sid_nibbles.to_vec(),
 			"si_nibbles", IDX_SI_DATA, -1, 
 			"word_extract_stmt si_nibbles");
 		#[cfg(test)]{assert!(col_nibbles.borrow().data.len()==nlen);}
@@ -351,7 +359,6 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 
 		res.borrow_mut().add_col(col_nibbles);
 		res.borrow_mut().add_col(col_si_nibbles);
-		*/
 		res	
 	}
 }
@@ -364,10 +371,10 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		//1. create the dummy input and dummy container config.
 		let n = capacity.subsigs;
 		let nibbles = vec![F::zero(); capacity.max_nibble_len];
-		let dummy_inp_states = vec![F::zero();n]; 
+		let dummy_inp_states = vec![F::one();n];  //adjust for 1
 		let dummy_inp_subsigs = vec![F::zero(); n];
 		let dummy_v_dfa_id = vec![F::zero();n];
-		let dfa = Arc::new(build_dfa("", false));
+		let dfa = Arc::new(build_trap_dfa());
 		let dummy_v_dfa = vec![dfa; n];
 
 		//2. create the dummy advice and cfg
@@ -398,24 +405,98 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 
 	/// validate the correctness of fsm_acc container
 	#[allow(dead_code)]
-	fn validate_mul_fsm_acc_container(&self, _fsm_acc: &Container<FpVar<F>>, _cs: ConstraintSystemRef<F>)
+	fn validate_mul_fsm_acc_container(&self, fsm_acc: &Container<FpVar<F>>, cs: ConstraintSystemRef<F>)
 	->Result<(), SynthesisError>{
-		/*
-		//1. asserts all states and transitions must be in range
+		//REMOVE LATER ------------
+		let n0 = 0;
+		//REMOVE LATER ------------
+		//1. check the relations between v_sig, v_subsig,
+		//v_raw_subsig and v_dfa_id
+		//COST: 6n (where n = subsigs, in practice this is small: <10)
+		let n = self.capacity.subsigs;
+		let (zero,one) = (new_const_var(&cs, F::zero()), 
+			new_const_var(&cs, F::one()));
+		let fr = new_const_var(&cs, F::from(RANGE2));
+		let bits = RANGE2_BIT; //26 bit
+		let bit_part1 = bits*2/3; //16 for accomodating 64k sigs for bits 24
+		let bit_part2 = bits - bit_part1;
+		let _f_part1 = new_const_var(&cs, F::from(1u32<<bit_part1));
+		let f_part2 = new_const_var(&cs, F::from(1u32<<bit_part2));
+		let start = new_const_var(&cs, F::from(0x40000000u32));
+		let f_part3 = new_const_var(&cs, F::from(1u32<<8));
+
+		let names = vec!["v_sig", "v_subsig", "v_raw_subsig", "v_dfa_id"];
+		let cols = names.iter().map(|n| fsm_acc.get_container(n)
+			.unwrap().borrow().to_vec()).collect::<Vec<Vec<FpVar<F>>>>();
+		let (v_sig, v_subsig, v_raw_subsig, v_dfa_id) = (&cols[0],
+			&cols[1], &cols[2], &cols[3]);
+		for col in &cols {assert!(col.len()==n);}
+		let sids = names.iter().map(|n| fsm_acc.get_container(
+			&format!("sid_{}",n)).unwrap().borrow().to_vec())
+			.collect::<Vec<Vec<FpVar<F>>>>();
+		for i in 0..n{
+			//1. ensure v_sig, subsig, raw_subsig in range
+			//so that we can reason about dfa_id
+			check_eq(&sids[0][i], &fr, "sid v_sig failed")?;	
+			check_eq(&sids[1][i], &fr, "sid v_subsig_sig failed")?;	
+			check_eq(&sids[2][i], &fr, "sid v_raw_subsig failed")?;	
+
+			//2. check the relation between subsig <-- sig and raw_subsig 
+			let exp_subsig = &v_raw_subsig[i] + &(&v_sig[i] * &f_part2);
+			check_eq(&exp_subsig, &v_subsig[i], "fail subsig, sig check")?;
+
+			//3. reason about DFA_ID this basically simulates
+			// dfa_id() in data_processor/src/clam_db.rs
+			// ignore dummy (0) entry, in computing dfa_id for it
+			// there is a missing +1 shift. 
+			let exp_dfa_id = &start + &(&f_part3 * &v_sig[i]) + 
+				&v_raw_subsig[i] - &one;
+			let diff = &exp_dfa_id - &v_dfa_id[i];
+			check_eq(&(&v_sig[i]*&diff), &zero, "fail dfa_id")?;
+		}
+		//REMOVE LATER -------------------
+		println!("DEBUG USE 7701: step 1 cost: {}, susigs: {}",
+			cs.num_constraints()-n0, n);
+		//REMOVE LATER ------------------- ABOVE
+
+		//2. asserts all states and transitions must be in range
 		// NOTE: we do not have to assert in range for nibbles they
 		// are done already in word_extract_adv gadget
-		let nlen = self.capacity.max_nibble_len;
-		let tblid_state = FpVar::new_constant(cs.clone(),
-			F::from(self.fsm_id+6))?;
-		let tblid_trans= FpVar::<F>::new_constant(cs.clone(), 
-			F::from(self.fsm_id + 3))?;
-		let si_states = fsm_acc.get_container("si_states")?.borrow().to_vec();
-		let si_trans= fsm_acc.get_container("si_trans")?.borrow().to_vec();
-		assert!(si_states.len()==nlen+1 && si_trans.len()==nlen);
+		let names = vec!["states", "trans"];
+		let cols = names.iter().map(|n| fsm_acc.get_container(n)
+			.unwrap().borrow().to_vec()).collect::<Vec<Vec<FpVar<F>>>>();
+		let sids = names.iter().map(|n| fsm_acc.get_container(
+			&format!("si_{}",n)).unwrap().borrow().to_vec())
+			.collect::<Vec<Vec<FpVar<F>>>>();
+		let (states,trans)=(&cols[0], &cols[1]);
+		let (si_states,si_trans)=(&sids[0],&sids[1]);
 
-		check_arr_eq(&si_states,&tblid_state,"checking states in range")?;
-		check_arr_eq(&si_trans,&tblid_trans,"checking trans in range")?;
+		let (m,nlen) = (self.capacity.subsigs,self.capacity.max_nibble_len);
+		let f_6 = new_const_var(&cs, F::from(6u32));
+		let f_3 = new_const_var(&cs, F::from(3u32));
+		let tblid_states = v_dfa_id.iter().map(|s| s + &f_6)
+			.collect::<Vec<FpVar<F>>>();
+		let tblid_trans = v_dfa_id.iter().map(|s| s + &f_3)
+			.collect::<Vec<FpVar<F>>>();
+		assert!(si_states.len()==m*(nlen+1) && si_trans.len()==m*nlen);
+		for i in 0..nlen+1{
+			for j in 0..m{
+		  		check_eq(&si_states[i*m+j],&tblid_states[j],"err si_state")?;
+			}
+		}
+		for i in 0..nlen{
+			for j in 0..m{
+		  		check_eq(&si_trans[i*m+j],&tblid_trans[j],"err si_trans")?;
+			}
+		}
+		//REMOVE LATER -------------------
+		println!("DEBUG USE 7701: step 2 cost: {}, nlen: {}, subsigs: {}",
+			cs.num_constraints()-n0, nlen, m);
+		//REMOVE LATER ------------------- ABOVE
 
+		//check_arr_eq(&si_trans,&tblid_trans,"checking trans in range")?;
+
+		/*
 		//2. assert correctness of building transition as weighted sum
 		// of src, char, dst states
 		let unit_var = FpVar::<F>::new_constant(cs.clone(),
@@ -490,7 +571,7 @@ impl <F:PrimeField> SigmaGadget<F> for DfaAdvGadget<F>{
 
 		est
 		*/
-		todo!()
+		1024
 	}
 
 	fn get_msg_size(&self) -> (usize, usize, usize, usize){
@@ -534,6 +615,24 @@ impl <F:PrimeField> SigmaGadget<F> for DfaAdvGadget<F>{
 // Utility Functions
 // ---------------------------------------------------
 
+/// this is basically the inverse function of
+/// HexACDFA::gen_subsig_id() in hex_acdfa.rs
+/// it extracts the sig_id and the real subsig_id that
+/// generates the subsig_id
+#[inline(always)]
+#[allow(dead_code)]
+pub fn extract_sigid<F:PrimeField>(subsig_id: F)->(F,F){
+	let u_subsig_id = field_to_usize(&subsig_id);
+	let bits = RANGE2_BIT; //26 bit
+	let bit_part1 = bits*2/3; //16 for accomodating 64k sigs for bits 24
+	let bit_part2 = bits - bit_part1;
+	let sig_id = u_subsig_id >> bit_part2;
+	let real_subsig_id = u_subsig_id - (sig_id<<bit_part2);
+	assert!(sig_id < (1<<bit_part1));
+	assert!(real_subsig_id < (1<<bit_part2));
+
+	(F::from(sig_id as u64), F::from(real_subsig_id as u64))
+}
 
 #[cfg(test)]
 pub mod tests_dfa_adv_gadget{
@@ -563,10 +662,9 @@ pub mod tests_dfa_adv_gadget{
 	#[test]
 	fn test_dfa_adv(){
 		//1. load the clamdb instance. It has the following sigs
-		// sig1 - "abc....cba" 
-		// sig2 - "1234567890abcdef" - for full alphabet
-		// we will try to discharge word "abc1111111cb" (missing the last a)
-		// via DFA approach.
+		//sig1: abc....123|123...abc
+		//word: abc9999122cc (the 122 missing "3")
+		//DFA discharges it
 		let path= "debug/dfa/simple";
 		let db = ClamavDB::<Fr>::build_db_from_dir(path);
 
@@ -581,7 +679,8 @@ pub mod tests_dfa_adv_gadget{
 			.collect::<Vec<Fr>>();
 		let word = vec![pack_nibbles(&f_nibbles), vec![Fr::zero()]].concat();
 
-		let adv_wea = WordExtractAdvAdvice::new(&word, act_size);
+		//note: set true to use char map for nibbles.
+		let adv_wea = WordExtractAdvAdvice::new(&word, act_size, true);
 		let stmt_wea = adv_wea.stmt_container;
 		let cfg_wea = stmt_wea.borrow().get_cfg(); 
 
@@ -662,7 +761,7 @@ pub mod tests_dfa_adv_gadget{
 		let lkup_share_size = 4usize;
 		let mut fag = DfaAdvGadget::<Fr>::new(
 			&cap, 
-			&vec![cfg_wea.clone()]
+			&vec![cfg_wea.clone()],
 		);
 		fag.set_container_cfg(vec_cfg.clone().into(), 1);  //it's the 2nd cfg
 		let _sizes = fag.get_to_add_size(); //test if sizes are ok

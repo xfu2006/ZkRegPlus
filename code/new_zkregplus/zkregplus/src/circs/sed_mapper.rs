@@ -211,6 +211,7 @@ impl Capacity for SedCapacity{
 }
 
 /// The non-deterministic advice for the CP component
+#[derive(Debug)]
 pub struct SedAdvice<F:PrimeField>{
 	pub wd_extract_advice: WordExtractAdvAdvice<F>,
 	pub fsm_adv_advice: FsmAdvAdvice<F>,
@@ -288,7 +289,7 @@ impl <F:PrimeField> SedAdvice<F>{
 		)->Self{
 		//1. build the word extraction gadget's advice
 		let wd_extract_advice = WordExtractAdvAdvice::<F>
-			::new(word_seg, actual_size);
+			::new(word_seg, actual_size, false); //default mode for char sid
 
 		//2. build the fsm_adv advice
 		let nibbles = wd_extract_advice.stmt_container.borrow().
@@ -360,7 +361,7 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 		let mut cfgs = vec![];
 		//1. build the gadgets
 		//1.1 the word extract gadget
-		let g_wea = WordExtractAdvGadget::<F>::new(sed_capacity.wea_capacity().max_word_len);
+		let g_wea = WordExtractAdvGadget::<F>::new(sed_capacity.wea_capacity().max_word_len, false); //default mode
 		cfgs.push( g_wea.dummy_cfg.clone() );
 
 		//1.2 the fsm adv gadget

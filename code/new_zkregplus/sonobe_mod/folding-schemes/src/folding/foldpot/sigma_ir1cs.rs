@@ -408,10 +408,11 @@ pub trait SigmaGadget<F:PrimeField>: Debug{
 /// all circuits in the same driver should have the same NdAdvice.
 /// NOTE: needs to support dynamic cast when later used in composite
 /// gadget mapper.
-pub trait NdAdvice{
+pub trait NdAdvice: Debug{
 	fn as_any(&self) -> &dyn Any;
 }
 
+#[derive(Debug)]
 pub struct DummyNdAdvice{}
 impl NdAdvice for DummyNdAdvice {
 	fn as_any(&self) -> &dyn Any{ self }

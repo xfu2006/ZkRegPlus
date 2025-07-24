@@ -3429,7 +3429,7 @@ pub mod tests_discharge_adv_gadget{
 			let word = if word.len()==wlen {word} else
 				{vec![word.clone(), vec![zero; wlen-word.len()]].concat()};	
 			let act_size = word.len();
-			let adv_wea = WordExtractAdvAdvice::new(&word, act_size);
+			let adv_wea = WordExtractAdvAdvice::new(&word, act_size,false);
 			let stmt_wea = adv_wea.stmt_container;
 			let cfg_wea = stmt_wea.borrow().get_cfg(); 
 
@@ -3518,7 +3518,7 @@ pub mod tests_discharge_adv_gadget{
 		let needs_dfa = vec![];
 		let needs_ised= vec![];
 		let needs_ised_igc = vec![];
-		let sigs_dir = "debug_samples/sed/workdir";
+		let sigs_dir = "debug/sed/workdir";
 		let cfg = default_clamav_cfg();
 		let db = ClamavDB::<Fr>::build_test_db(&cfg, &sigs_dir, &sigs, 
 			&needs_dfa, &needs_ised, &needs_ised_igc);

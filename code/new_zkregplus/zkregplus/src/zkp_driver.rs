@@ -132,7 +132,7 @@ where C: CurveGroup<ScalarField=F>,
 	// one handling length 4.
 
 	//1. create cp_components
-	let avg_lk_wd = lkup_len/total_word_n;
+	let avg_lk_wd = lkup_len/total_word_n + 1;
 	let avg_lk_wd = if avg_lk_wd<1 {1} else {avg_lk_wd};
 	let cap1 = CpCapacity{max_word_len: 1, final_states_len: 8, join_buf_capacity: 4, sig_buf_capacity: 2};
 	let cap2 = CpCapacity{max_word_len: 2, final_states_len: 16, join_buf_capacity: 8, sig_buf_capacity: 2};
@@ -211,7 +211,7 @@ where C: CurveGroup<ScalarField=F>,
 	//vec![ vec![c4,c3], vec![c2,c1] ]
 	//vec![ vec![_c2,_c1] ] //for saving cost
 	//vec![ vec![_c1] ] //for saving cost
-	//vec![ vec![sc1] ] //for saving cost
+	//vec![ vec![_sc1] ] //for saving cost
 	vec![ vec![dc1] ] //for saving cost
 }
 
@@ -334,8 +334,8 @@ pub mod tests_zkp_driver{
 	fn small_data<F:PrimeField>(){
 		let b_read_cache = false;
 		let b_write_cache = true;
-		//let set1 = "data/debug/small_data_set/config"; 
-		let set1 = "data/debug/small_data_set/config_dfa"; //enforces dfa 
+		//let set1 = "data/debug/small_data_set/config";  //for sed
+		let set1 = "data/debug/small_data_set/config_dfa"; //for dfa 
 		zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
 			&format!("{}/sigs.dat",set1), //src sig
 			&format!("{}/binexec.dat",set1), //list of files to discharge

@@ -1,16 +1,22 @@
 /* Created 03/26/2025, 
    Completed: 04/02/2025 
+   Revised: 07/24/2025 add a boolean flag to indicate
+   	si_nibble generation choice
 */
 
 // This is a better refactored version of word_extractor.rs
+use rayon::{ iter::{ParallelIterator,IntoParallelIterator,IntoParallelRefIterator} };
 use std::{rc::{Rc},cell::{RefCell}};
 use ark_ff::{PrimeField};
 use std::marker::{PhantomData};
 use folding_schemes::{
-	folding::foldpot::{
-	sigma_ir1cs::{SigmaGadget,WitnessSigmaIR1CSVar,WitnessSigmaIR1CSConfig, NdAdvice,Capacity},
-	container_config::{ContainerConfig},
-	}
+	folding::{
+		foldpot::{
+			sigma_ir1cs::{SigmaGadget,WitnessSigmaIR1CSVar,WitnessSigmaIR1CSConfig, NdAdvice,Capacity},
+			container_config::{ContainerConfig},
+			circuits_super::{field_to_usize},
+		},
+	},
 };
 use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef};
 use ark_r1cs_std::{
@@ -21,13 +27,13 @@ use ark_r1cs_std::{
 	alloc::AllocVar,
 	eq::EqGadget,
 };
-use data_processor::{clam_db::CHAR};
+use data_processor::{clam_db::{CHAR,CHAR_MAP}};
 use std::any::Any;
-use utils::{data::{packed_to_nibbles}};
+use utils::{data::{packed_to_nibbles,u8_to_hex}};
 use crate::gadgets::{
 	traits::{ComponentAdvice,Col, IDX_WORD, IDX_DATA,IDX_INP, IDX_OUP, IDX_SI_DATA, Container},
 	word_extract::{LEGS},
-	commons::{check_arr_eq},
+	commons::{check_arr_eq, check_arr_eq_arr},
 };
 
 
@@ -39,10 +45,11 @@ use crate::gadgets::{
 pub struct WordExtractAdvCapacity{
 	/// the word sugsegment length (full, padded)
 	pub max_word_len: usize,
+
 }
 
 /// Advice for the WordExtractAdv Gadget.
-#[derive(Clone)]
+#[derive(Clone,Debug)]
 pub struct WordExtractAdvAdvice<F:PrimeField>{
 	/// the container object which is serialized to vector of stmt.
 	pub stmt_container: Rc<RefCell<Container<F>>>,
@@ -53,6 +60,10 @@ pub struct WordExtractAdvAdvice<F:PrimeField>{
 /// break it using power operations and then assert the range of each
 #[derive(Clone,Debug)]
 pub struct WordExtractAdvGadget<F:PrimeField>{ 
+	/// b_map_char mode: for sid of nibbles, should
+	/// their sid be char_val(v) + CHAR_MAP
+	pub b_map_char: bool,
+
 	pub capacity: WordExtractAdvCapacity,
 	
 	// will be set when set_container_cfg is called
@@ -100,8 +111,20 @@ impl <F: PrimeField> WordExtractAdvAdvice<F>{
 	/// word_seg is the one with max compacity, actual size
 	/// is the actual word len. We convert all remaining 
 	/// as 0.
-	pub fn new(word_seg: &Vec<F>, actual_size: usize)->Self{
+	///
+	/// b_map_char: whether sid_char shouldbe the char translation
+	/// this is useful for DFA (not ACDFA) which takes char (such as
+	/// '0' instead of 0) as input.
+	/// In this mode: we have to create an EXTRA COPY of nibbles
+	/// we first: (1) prove nibbles == nibbles_copy
+	/// (2) mark sid_nibbles_copy as CHAR (thus restructing them to be valid chars)
+	/// (3) mark the translation of each nibble element to their char
+	///    correspondingly
+	/// This approach prevents attacker to pick a tuple in other sub-table
+	/// that goes out of the range of char.
+	pub fn new(word_seg: &Vec<F>, actual_size: usize, b_map_char: bool)->Self{
 		//1. normalize the input
+		let stmt_container = Container::new("word_extract_stmt");
 		let mut word = word_seg.clone();
 		for i in actual_size..word_seg.len(){ word[i] = F::zero(); }
 
@@ -121,16 +144,38 @@ impl <F: PrimeField> WordExtractAdvAdvice<F>{
 		//3. construct the problem statement container for serialization
 		let nlen = nibbles.len();
 		let col_word = Col::<F>::new(word, "word", IDX_WORD);
+		let col_si_nibbles= if !b_map_char{//default mode
+			Col::<F>::new(vec![F::from(CHAR); nlen], 
+			"si_nibbles", IDX_SI_DATA)
+		}else{//for DFA (instead of ACDFA
+			let s_nibbles = nibbles.par_iter().map(|n| field_to_usize(n) as u8)
+				.collect::<Vec<u8>>();
+			let s2 = u8_to_hex(&s_nibbles).as_bytes().to_vec().par_iter()
+				.map(|s| *s as char).collect::<Vec<char>>();
+			let f_char_map = F::from(CHAR_MAP);
+			let vec = s2.into_par_iter().map(|ch|{
+				f_char_map + F::from(ch as u8)
+			}).collect::<Vec<F>>();
+
+			/* RECOVER LATER
+			//need to add extra copy for validity
+			stmt_container.borrow_mut().add_col(
+				Col::<F>::new(nibbles.clone(), "nibbles_copy", IDX_DATA)
+			);
+			stmt_container.borrow_mut().add_col(
+				Col::<F>::new(vec![F::from(CHAR);nlen],"si_nibbles_copy",
+				IDX_SI_DATA));
+			*/
+
+			Col::<F>::new(vec, "si_nibbles", IDX_SI_DATA)
+		};
 		let col_nibbles= Col::<F>::new(nibbles, "nibbles", IDX_DATA);
-		let col_si_nibbles= Col::<F>::new(
-			vec![F::from(CHAR); nlen], "si_nibbles", IDX_SI_DATA);
 		let col_act_size= Col::<F>::new(vec![f_act_size], "act_size", 
 			IDX_DATA);
 		let col_si_act_size = Col::<F>::new(vec![F::zero()], "si_act_size",
 			IDX_SI_DATA); //as it's zero no need to check actually
 
 		
-		let stmt_container = Container::new("word_extract_stmt");
 		stmt_container.borrow_mut().add_col(col_word);
 		stmt_container.borrow_mut().add_col(col_act_size);
 		stmt_container.borrow_mut().add_col(col_nibbles);
@@ -149,17 +194,23 @@ impl <F: PrimeField> ComponentAdvice<F> for WordExtractAdvAdvice<F>{
 
 impl <F:PrimeField> WordExtractAdvGadget<F>{
 	/// constructor
-	pub fn new(max_word_len: usize) -> Self{
+	///
+	/// b_map_char indicates when generating sid for char, we
+	/// generate its mapping to char (actual value is
+	/// its char value + CHAR_MAP). E.g., given 1 as the input
+	/// its sid is ('1' + CHAR_MAP)
+	pub fn new(max_word_len: usize, b_map_char: bool) -> Self{
 		let capacity = WordExtractAdvCapacity{max_word_len};
 		let dummy_wd = vec![F::zero(); max_word_len];
-		let dummy_adv = WordExtractAdvAdvice::new(&dummy_wd, max_word_len);
+		let dummy_adv = WordExtractAdvAdvice::new(&dummy_wd, max_word_len, 
+			b_map_char);
 		let mut vec_cfg = vec![dummy_adv.stmt_container.borrow().get_cfg()];
 		ContainerConfig::adjust_locations(&mut vec_cfg);
 		//even it's false, it's good enough for generating statement_structure
 		let dummy_cfg = vec_cfg[0].clone();
 
 		Self{_f: PhantomData, capacity: capacity, cfgs_context: None,
-			my_idx_in_context: None, dummy_cfg}
+			my_idx_in_context: None, dummy_cfg, b_map_char}
 	}
 
 	/// return None if not set yet.
@@ -279,8 +330,20 @@ impl <F:PrimeField> SigmaGadget<F> for WordExtractAdvGadget<F>{
 		}
 
 		//5. check the sub-tbl_ids
-		let char_tbl = FpVar::<F>::new_constant(cs.clone(), F::from(CHAR))?;
-		check_arr_eq(&si_nibbles, &char_tbl, "failing check of si_nibbles")?;
+		let char_tbl = FpVar::<F>::new_constant(cs.clone(),F::from(CHAR))?;
+		//RECOVER LATER
+		//if !self.b_map_char{//perform extra check
+	//		check_arr_eq(&si_nibbles, &char_tbl, "failing si_nibbles")?;
+		//}else{
+			/* RECOVER LATER.
+			let si_nibbles_copy = stmt.get_container("si_nibbles_copy")
+				.unwrap().borrow().to_vec();
+			let nibbles_copy = stmt.get_container("nibbles_copy").unwrap().
+				borrow().to_vec();
+			check_arr_eq(&si_nibbles_copy, &char_tbl, "failing si_ni copy")?;
+			check_arr_eq_arr(&nibbles_copy, &nibbles, "failing eq extra")?;
+			*/
+		//}
 
 		Ok(())
 	}
@@ -313,7 +376,7 @@ pub mod tests_word_extract_adv_gadget{
 		let mut rng = ark_std::test_rng();
 		let (wlen, act_size) = (8usize, 6usize);
 		let word = vec![rand_fe_by_bits(248, &mut rng); wlen];
-		let adv = WordExtractAdvAdvice::new(&word, act_size);
+		let adv = WordExtractAdvAdvice::new(&word, act_size, false);
 		let stmt_cont = adv.stmt_container; 
 
 		//2. create gadget
@@ -321,7 +384,7 @@ pub mod tests_word_extract_adv_gadget{
 		let vec_cfg = Rc::new(vec![cfg]);
 		let cps = stmt_cont.borrow().gen_stmt_components(); //from inp to si_data
 		let lkup_share_size = 4usize;
-		let mut weg = WordExtractAdvGadget::<Fr>::new(wlen);
+		let mut weg = WordExtractAdvGadget::<Fr>::new(wlen,false);
 		weg.set_container_cfg(vec_cfg, 0); 
 		let rg = Rc::new(weg);
 

@@ -792,25 +792,6 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		(res, vec_subsig_final_res)
 	}
 
-	/// this is basically the inverse function of
-	/// HexACDFA::gen_subsig_id() in hex_acdfa.rs
-	/// it extracts the sig_id and the real subsig_id that
-	/// generates the subsig_id
-	#[inline(always)]
-	#[allow(dead_code)]
-	fn extract_sigid(subsig_id: F)->(F,F){
-		let u_subsig_id = field_to_usize(&subsig_id);
-		let bits = RANGE2_BIT; //26 bit
-		let bit_part1 = bits*2/3; //16 for accomodating 64k sigs for bits 24
-		let bit_part2 = bits - bit_part1;
-		let sig_id = u_subsig_id >> bit_part2;
-		let real_subsig_id = u_subsig_id - (sig_id<<bit_part2);
-		assert!(sig_id < (1<<bit_part1));
-		assert!(real_subsig_id < (1<<bit_part2));
-		println!("DEBUG USE 6107: subsig_id: {} => sig_id: {}, real_subsig: {}", subsig_id, sig_id, real_subsig_id);
-
-		(F::from(sig_id as u64), F::from(real_subsig_id as u64))
-	}
 
 	/// Given the final result of subsig,
 	/// use the EvalDNF information to discharge sig.
@@ -2042,7 +2023,7 @@ pub mod tests_compute_sig_adv{
 			let word = if word.len()==wlen {word} else
 				{vec![word.clone(), vec![zero; wlen-word.len()]].concat()};	
 			let act_size = word.len();
-			let adv_wea = WordExtractAdvAdvice::new(&word, act_size);
+			let adv_wea = WordExtractAdvAdvice::new(&word, act_size,false);
 			let stmt_wea = adv_wea.stmt_container;
 			let cfg_wea = stmt_wea.borrow().get_cfg(); 
 
@@ -2156,7 +2137,7 @@ pub mod tests_compute_sig_adv{
 		let needs_dfa = vec![];
 		let needs_ised= vec![];
 		let needs_ised_igc = vec![];
-		let sigs_dir = "debug_samples/sed/workdir";
+		let sigs_dir = "debug/sed/workdir";
 		let cfg = default_clamav_cfg();
 		let db = ClamavDB::<Fr>::build_test_db(&cfg, &sigs_dir, &sigs, 
 			&needs_dfa, &needs_ised, &needs_ised_igc);
