@@ -18032,7 +18032,7 @@ Goal 7. fix another error
 	[e] lkup share err -> FIXED.
 
 
-Friday 07/24/2025
+Thursday 07/24/2025
 LOC (gadget): 13144 -> 13234 (+90) -> 13207 -> 13286 (+79)
 LOC (data): 9059 -> 9079 (+20)
 Total: +189
@@ -18089,6 +18089,31 @@ Goal 4. do translation of states in data_processor
 		-> why?
 		-> but disabling the conitional code fails the lkup check.
 		
-
-	[d] 
-
+Friday 07/25/2025
+LOC (data): 9079
+LOC (gadget): 13286
+Goal 1. debug the trick cs check fails problem
+	[a] check dfa_gadget and see how it starts the wsa_gadget
+	[b] unit test map char
+	[c] finds the error!
+		6601 and 6602 to check nibles value
+		-> fixed becaues hte gadget expects at a certain locaiton
+	[d] still not working -> read code again.
+	[e] still don't get it!
+Goal 2. debug again.	
+	[a] is it the problem of get_container? no
+	[b] use test_gadget_adv instead to pass the cfg
+	[c] looks like the erro rwas caused by not using
+		the test_gadget_adv. do regression testing.
+	[d] looks like solved?
+		-> regression test
+	[e] but then it's back to constraint err problem!
+	[f] comment out all the assert_msg3() of word_extract_adv()
+		does not change
+	[g] comment out dfa_adv's asert_msg3()
+	[h] comment out dfa_adv() gen_combo
+	[i] comment out word_extract_adv() gen_combo
+	[h] comment out the addining nibbles in the dfa gen combo.
+	-> now if commenting out the gen_combo LATER PART of dfa_adv()
+		it works. why?
+	--> COMMIT to the current state first.

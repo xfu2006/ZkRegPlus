@@ -1,22 +1,19 @@
 /* Created 03/26/2025, 
    Completed: 04/02/2025 
-   Revised: 07/24/2025 add a boolean flag to indicate
-   	si_nibble generation choice
 */
 
 // This is a better refactored version of word_extractor.rs
+
 use rayon::{ iter::{ParallelIterator,IntoParallelIterator,IntoParallelRefIterator} };
 use std::{rc::{Rc},cell::{RefCell}};
 use ark_ff::{PrimeField};
 use std::marker::{PhantomData};
 use folding_schemes::{
-	folding::{
-		foldpot::{
-			sigma_ir1cs::{SigmaGadget,WitnessSigmaIR1CSVar,WitnessSigmaIR1CSConfig, NdAdvice,Capacity},
-			container_config::{ContainerConfig},
-			circuits_super::{field_to_usize},
-		},
-	},
+	folding::foldpot::{
+	sigma_ir1cs::{SigmaGadget,WitnessSigmaIR1CSVar,WitnessSigmaIR1CSConfig, NdAdvice,Capacity},
+	container_config::{ContainerConfig},
+	circuits_super::{field_to_usize},
+	}
 };
 use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef};
 use ark_r1cs_std::{
@@ -33,7 +30,7 @@ use utils::{data::{packed_to_nibbles,u8_to_hex}};
 use crate::gadgets::{
 	traits::{ComponentAdvice,Col, IDX_WORD, IDX_DATA,IDX_INP, IDX_OUP, IDX_SI_DATA, Container},
 	word_extract::{LEGS},
-	commons::{check_arr_eq, check_arr_eq_arr},
+	commons::{check_arr_eq,check_eq},
 };
 
 
@@ -45,7 +42,6 @@ use crate::gadgets::{
 pub struct WordExtractAdvCapacity{
 	/// the word sugsegment length (full, padded)
 	pub max_word_len: usize,
-
 }
 
 /// Advice for the WordExtractAdv Gadget.
@@ -122,11 +118,20 @@ impl <F: PrimeField> WordExtractAdvAdvice<F>{
 	///    correspondingly
 	/// This approach prevents attacker to pick a tuple in other sub-table
 	/// that goes out of the range of char.
-	pub fn new(word_seg: &Vec<F>, actual_size: usize, b_map_char: bool)->Self{
+	pub fn new(word_seg: &Vec<F>, actual_size: usize, b_map_char:bool)->Self{
 		//1. normalize the input
 		let stmt_container = Container::new("word_extract_stmt");
 		let mut word = word_seg.clone();
 		for i in actual_size..word_seg.len(){ word[i] = F::zero(); }
+		let f_act_size = F::from(actual_size as u32);
+		let col_word = Col::<F>::new(word.clone(), "word", IDX_WORD);
+		let col_act_size= Col::<F>::new(vec![f_act_size], "act_size", 
+			IDX_DATA);
+		let col_si_act_size = Col::<F>::new(vec![F::zero()], "si_act_size",
+			IDX_SI_DATA); //as it's zero no need to check actually
+		stmt_container.borrow_mut().add_col(col_word);
+		stmt_container.borrow_mut().add_col(col_act_size);
+		stmt_container.borrow_mut().add_col(col_si_act_size);
 
 		//2. do the conversion
 		let nibbles = packed_to_nibbles(&word);
@@ -139,11 +144,9 @@ impl <F: PrimeField> WordExtractAdvAdvice<F>{
 				assert!(word[i]==packed[i]);
 			}
 		}
-		let f_act_size = F::from(actual_size as u32);
 
 		//3. construct the problem statement container for serialization
 		let nlen = nibbles.len();
-		let col_word = Col::<F>::new(word, "word", IDX_WORD);
 		let col_si_nibbles= if !b_map_char{//default mode
 			Col::<F>::new(vec![F::from(CHAR); nlen], 
 			"si_nibbles", IDX_SI_DATA)
@@ -157,30 +160,26 @@ impl <F: PrimeField> WordExtractAdvAdvice<F>{
 				f_char_map + F::from(ch as u8)
 			}).collect::<Vec<F>>();
 
-			/* RECOVER LATER
-			//need to add extra copy for validity
+			Col::<F>::new(vec, "si_nibbles", IDX_SI_DATA)
+		};
+		//conditional add two extra columns only when in b_map_char
+		/* RECOVER LATER
+		if b_map_char{
 			stmt_container.borrow_mut().add_col(
 				Col::<F>::new(nibbles.clone(), "nibbles_copy", IDX_DATA)
 			);
 			stmt_container.borrow_mut().add_col(
 				Col::<F>::new(vec![F::from(CHAR);nlen],"si_nibbles_copy",
 				IDX_SI_DATA));
-			*/
+		}
+		*/
 
-			Col::<F>::new(vec, "si_nibbles", IDX_SI_DATA)
-		};
 		let col_nibbles= Col::<F>::new(nibbles, "nibbles", IDX_DATA);
-		let col_act_size= Col::<F>::new(vec![f_act_size], "act_size", 
-			IDX_DATA);
-		let col_si_act_size = Col::<F>::new(vec![F::zero()], "si_act_size",
-			IDX_SI_DATA); //as it's zero no need to check actually
 
-		
-		stmt_container.borrow_mut().add_col(col_word);
-		stmt_container.borrow_mut().add_col(col_act_size);
+		//the following are regular columns	
 		stmt_container.borrow_mut().add_col(col_nibbles);
-		stmt_container.borrow_mut().add_col(col_si_act_size);
 		stmt_container.borrow_mut().add_col(col_si_nibbles);
+
 		Self{stmt_container}
 	}
 }
@@ -199,10 +198,10 @@ impl <F:PrimeField> WordExtractAdvGadget<F>{
 	/// generate its mapping to char (actual value is
 	/// its char value + CHAR_MAP). E.g., given 1 as the input
 	/// its sid is ('1' + CHAR_MAP)
-	pub fn new(max_word_len: usize, b_map_char: bool) -> Self{
+	pub fn new(max_word_len: usize, b_map_char:bool) -> Self{
 		let capacity = WordExtractAdvCapacity{max_word_len};
 		let dummy_wd = vec![F::zero(); max_word_len];
-		let dummy_adv = WordExtractAdvAdvice::new(&dummy_wd, max_word_len, 
+		let dummy_adv = WordExtractAdvAdvice::new(&dummy_wd, max_word_len,
 			b_map_char);
 		let mut vec_cfg = vec![dummy_adv.stmt_container.borrow().get_cfg()];
 		ContainerConfig::adjust_locations(&mut vec_cfg);
@@ -283,6 +282,7 @@ impl <F:PrimeField> SigmaGadget<F> for WordExtractAdvGadget<F>{
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(),SynthesisError>{
+		/* RECOVER LATER
 		//1. retrive the statement instance and get all parts
 		let cfg = self.get_container_cfg().expect("container cfg not set!");
 		let stmt = Container::<FpVar<F>>::load_from(i, wtns_cfg, wtns, &cfg)?;
@@ -330,21 +330,21 @@ impl <F:PrimeField> SigmaGadget<F> for WordExtractAdvGadget<F>{
 		}
 
 		//5. check the sub-tbl_ids
-		let char_tbl = FpVar::<F>::new_constant(cs.clone(),F::from(CHAR))?;
-		//RECOVER LATER
-		//if !self.b_map_char{//perform extra check
-	//		check_arr_eq(&si_nibbles, &char_tbl, "failing si_nibbles")?;
-		//}else{
-			/* RECOVER LATER.
+		let char_tbl = FpVar::<F>::new_constant(cs.clone(), F::from(CHAR))?;
+		if !self.b_map_char{
+			check_arr_eq(&si_nibbles,&char_tbl,"failing check of si_nibbles")?;
+		}else{
 			let si_nibbles_copy = stmt.get_container("si_nibbles_copy")
 				.unwrap().borrow().to_vec();
 			let nibbles_copy = stmt.get_container("nibbles_copy").unwrap().
 				borrow().to_vec();
 			check_arr_eq(&si_nibbles_copy, &char_tbl, "failing si_ni copy")?;
-			check_arr_eq_arr(&nibbles_copy, &nibbles, "failing eq extra")?;
-			*/
-		//}
-
+			for i in 0..nibbles.len(){
+				check_eq(&nibbles_copy[i], &nibbles[i], 
+					"failing eq extra")?;
+			}
+		}
+		*/
 		Ok(())
 	}
 }
@@ -362,38 +362,44 @@ pub mod tests_word_extract_adv_gadget{
 	//WitnessSigmaIR1CS,
 	//		WitnessSigmaIR1CSConfig, WitnessSigmaIR1CSVar,
 	//		ZiPartTwoInst,
-		}
+		},
+		folding::foldpot::container_config::ContainerConfig,
 	};
 	use crate::gadgets::word_extract_adv::{WordExtractAdvGadget,WordExtractAdvAdvice};
 	use utils::data::{rand_fe_by_bits};
-	use crate::gadgets::word_extract::tests_word_extract_gadget::test_gadget;
+	use crate::gadgets::word_extract::tests_word_extract_gadget::test_gadget_adv;
 
 
 
 	#[test]
 	fn test_word_extract_adv(){
 		//1. create adivce and input container
+		let b_map_char = true;
 		let mut rng = ark_std::test_rng();
 		let (wlen, act_size) = (8usize, 6usize);
 		let word = vec![rand_fe_by_bits(248, &mut rng); wlen];
-		let adv = WordExtractAdvAdvice::new(&word, act_size, false);
+		let adv = WordExtractAdvAdvice::new(&word, act_size, b_map_char);
 		let stmt_cont = adv.stmt_container; 
 
 		//2. create gadget
 		let cfg = stmt_cont.borrow().get_cfg();
-		let vec_cfg = Rc::new(vec![cfg]);
+		let mut vec_cfg =vec![cfg];
+		ContainerConfig::adjust_locations(&mut vec_cfg); //resolve
 		let cps = stmt_cont.borrow().gen_stmt_components(); //from inp to si_data
 		let lkup_share_size = 4usize;
-		let mut weg = WordExtractAdvGadget::<Fr>::new(wlen,false);
-		weg.set_container_cfg(vec_cfg, 0); 
+		let mut weg = WordExtractAdvGadget::<Fr>::new(wlen, b_map_char);
+		weg.set_container_cfg(vec_cfg.clone().into(), 0); 
 		let rg = Rc::new(weg);
 
 		//3. test it
-		test_gadget::<Fr>(rg, &word, &cps[0], &cps[1], &cps[2],
+		test_gadget_adv::<Fr>(rg, &word, &cps[0], &cps[1], &cps[2],
 			&vec![//subtbl_id (concats of si_inp, si_oup, si_data)
 				cps[3].clone(), 
 				cps[4].clone(), 
 				cps[5].clone()
-			].concat(), lkup_share_size);
+			].concat(), lkup_share_size,
+			false, //not legacy mode
+			Some(vec_cfg),
+		);
 	}
 }

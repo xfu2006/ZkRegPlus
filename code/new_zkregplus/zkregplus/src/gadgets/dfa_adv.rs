@@ -340,12 +340,12 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		res.borrow_mut().add_container(si_states);
 
 
+		/* RECOVER LATER
 		//1.3. the transitions
 		let col_trans = Col::<F>::new(trans, "trans", IDX_DATA);
 		let col_si_trans = Col::<F>::new(sid_trans, "si_trans", IDX_SI_DATA);
 		res.borrow_mut().add_col(col_trans);
 		res.borrow_mut().add_col(col_si_trans);
-
 		//1.4 the nibbles (LATER when reconstructed, it is 
 		// retrieved from previous word_extract_adv gadget
 		let col_nibbles = Col::<F>::new_external(nibbles.to_vec(), 
@@ -359,6 +359,7 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 
 		res.borrow_mut().add_col(col_nibbles);
 		res.borrow_mut().add_col(col_si_nibbles);
+		*/
 		res	
 	}
 }
@@ -599,13 +600,14 @@ impl <F:PrimeField> SigmaGadget<F> for DfaAdvGadget<F>{
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{
+/* RECOVER LATER
 		//1. retrive the statement instance and get all parts
 		let cfg = self.get_container_cfg().expect("container cfg not set!");
 		let stmt = Container::<FpVar<F>>::load_from(i, wtns_cfg, wtns, &cfg)?;
-
 		//2. validate the fsm_acc combo 
 		let mul_fsm_acc = stmt.get_container("mul_fsm_acc")?;
 		self.validate_mul_fsm_acc_container(&mul_fsm_acc.borrow(), cs.clone())?;
+		*/
 
 		Ok(())
 	}
