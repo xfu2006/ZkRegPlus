@@ -340,12 +340,12 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		res.borrow_mut().add_container(si_states);
 
 
-		/* RECOVER LATER
 		//1.3. the transitions
 		let col_trans = Col::<F>::new(trans, "trans", IDX_DATA);
 		let col_si_trans = Col::<F>::new(sid_trans, "si_trans", IDX_SI_DATA);
 		res.borrow_mut().add_col(col_trans);
 		res.borrow_mut().add_col(col_si_trans);
+
 		//1.4 the nibbles (LATER when reconstructed, it is 
 		// retrieved from previous word_extract_adv gadget
 		let col_nibbles = Col::<F>::new_external(nibbles.to_vec(), 
@@ -359,7 +359,7 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 
 		res.borrow_mut().add_col(col_nibbles);
 		res.borrow_mut().add_col(col_si_nibbles);
-		*/
+
 		res	
 	}
 }
@@ -462,7 +462,14 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 
 		//2. asserts all states and transitions must be in range
 		// NOTE: we do not have to assert in range for nibbles they
-		// are done already in word_extract_adv gadget
+		// are done already in word_extract_adv gadget.
+		// in WordExtractAdv gadget: it has an nibbles_copy column
+		// and it is PROVED that nibbles are already in "CHAR" range.
+		// Here for the nibbles, they are lableled to their corresponding
+		// translation, and this is gauranteed correct translation
+		// given the nibbles_copy proof.
+		//
+		// COST: 2*m*n 
 		let names = vec!["states", "trans"];
 		let cols = names.iter().map(|n| fsm_acc.get_container(n)
 			.unwrap().borrow().to_vec()).collect::<Vec<Vec<FpVar<F>>>>();
@@ -494,8 +501,6 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		println!("DEBUG USE 7701: step 2 cost: {}, nlen: {}, subsigs: {}",
 			cs.num_constraints()-n0, nlen, m);
 		//REMOVE LATER ------------------- ABOVE
-
-		//check_arr_eq(&si_trans,&tblid_trans,"checking trans in range")?;
 
 		/*
 		//2. assert correctness of building transition as weighted sum
@@ -600,14 +605,13 @@ impl <F:PrimeField> SigmaGadget<F> for DfaAdvGadget<F>{
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{
-/* RECOVER LATER
 		//1. retrive the statement instance and get all parts
 		let cfg = self.get_container_cfg().expect("container cfg not set!");
 		let stmt = Container::<FpVar<F>>::load_from(i, wtns_cfg, wtns, &cfg)?;
+
 		//2. validate the fsm_acc combo 
 		let mul_fsm_acc = stmt.get_container("mul_fsm_acc")?;
 		self.validate_mul_fsm_acc_container(&mul_fsm_acc.borrow(), cs.clone())?;
-		*/
 
 		Ok(())
 	}

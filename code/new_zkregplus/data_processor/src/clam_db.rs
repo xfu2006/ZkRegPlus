@@ -22,7 +22,7 @@ use crate::{
 	hex_acdfa::{HexACDFA},
 	type_def::{ClamavSig,ClamavApproxConfig,ClamSigType,SubsigPatternStore, SubsigPatternStoreItem,SubsigStepStore, SubsigStepStoreItem, BundleSubsigStore, SubSigType,SubsigInfoStore, SubsigInfoStoreItem,CompOp,TriVal,TriOp},
 	clamav::{gen_clamav_sig,default_clamav_cfg},
-	fsa_utils::{build_dfa},
+	fsa_utils::{build_trap_dfa},
 };
 use rustomaton::dfa::DFA;
 use utils::{
@@ -1266,7 +1266,7 @@ impl <F:PrimeField> ClamavDB<F>{
 			}).flatten().collect::<Vec<(F,F)>>();
 
 		//2. generate for dummy (sig=0, subsig=0, dfa=dummy)
-		let dummy_dfa = build_dfa("", false);
+		let dummy_dfa = build_trap_dfa();
 		let tbl_id = Self::dfa_id(0, 0);
 		let tuples_dummy = Self::gen_dfa_lkup(&dummy_dfa, tbl_id);
 		let mut tuples = [&tuples_dummy[..], &tuples_all[..]].concat();

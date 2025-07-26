@@ -163,7 +163,6 @@ impl <F: PrimeField> WordExtractAdvAdvice<F>{
 			Col::<F>::new(vec, "si_nibbles", IDX_SI_DATA)
 		};
 		//conditional add two extra columns only when in b_map_char
-		/* RECOVER LATER
 		if b_map_char{
 			stmt_container.borrow_mut().add_col(
 				Col::<F>::new(nibbles.clone(), "nibbles_copy", IDX_DATA)
@@ -172,7 +171,6 @@ impl <F: PrimeField> WordExtractAdvAdvice<F>{
 				Col::<F>::new(vec![F::from(CHAR);nlen],"si_nibbles_copy",
 				IDX_SI_DATA));
 		}
-		*/
 
 		let col_nibbles= Col::<F>::new(nibbles, "nibbles", IDX_DATA);
 
@@ -282,7 +280,6 @@ impl <F:PrimeField> SigmaGadget<F> for WordExtractAdvGadget<F>{
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(),SynthesisError>{
-		/* RECOVER LATER
 		//1. retrive the statement instance and get all parts
 		let cfg = self.get_container_cfg().expect("container cfg not set!");
 		let stmt = Container::<FpVar<F>>::load_from(i, wtns_cfg, wtns, &cfg)?;
@@ -344,7 +341,7 @@ impl <F:PrimeField> SigmaGadget<F> for WordExtractAdvGadget<F>{
 					"failing eq extra")?;
 			}
 		}
-		*/
+
 		Ok(())
 	}
 }

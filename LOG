@@ -18117,3 +18117,17 @@ Goal 2. debug again.
 	-> now if commenting out the gen_combo LATER PART of dfa_adv()
 		it works. why?
 	--> COMMIT to the current state first.
+Goal 3. step by step recover
+	[a] word_extract_adv -> 
+		-> add back the nibbles copy and its si -> OK
+		-> recover its validate function
+	[b] dfa_adv
+		-> recover trans and si_trans -> it breaks on lkup that
+			cannot find transition (0x40000003, 4143)
+		-> print out the two dfa_id first: 
+			-> print out tupldes dummy: 6100
+			-> added 6101: 
+		-> TODO: remove these messages latter -> DONE
+		-> fixed the dummy DFA issue
+	[c] regression testing -> DONE
+	[d] recover the external ref of nibble columns -> 
