@@ -7,12 +7,12 @@
 //! Then it assembles subsig result and report the discharge (via DFA)
 //! result for sigs.
 
-use rayon::iter::{ParallelIterator,IntoParallelIterator};
-use std::{rc::{Rc},cell::{RefCell}};
+use rayon::iter::{ParallelIterator,IntoParallelIterator,IntoParallelRefIterator};
+use std::{rc::{Rc},cell::{RefCell},collections::{HashMap}};
 use ark_ff::{PrimeField};
 use std::marker::{PhantomData};
 use folding_schemes::folding::foldpot::{
-	sigma_ir1cs::{SigmaGadget,WitnessSigmaIR1CSVar,WitnessSigmaIR1CSConfig, NdAdvice,Capacity},
+	sigma_ir1cs::{SigmaGadget,WitnessSigmaIR1CSVar,WitnessSigmaIR1CSConfig, NdAdvice,Capacity,DischargeSigInfo},
 	container_config::{ContainerConfig},
 	circuits_super::field_to_usize,
 };
@@ -23,7 +23,7 @@ use ark_r1cs_std::{
 		fp::FpVar
 	},
 	alloc::AllocVar,
-	//eq::EqGadget,
+	eq::EqGadget,
 	//R1CSVar,
 };
 use std::{any::Any, sync::{Arc}};
@@ -31,14 +31,13 @@ use data_processor::{
 	clam_db::{ClamavDB, RANGE2_BIT, RANGE2,CHAR_MAP,
 		//STORE_SUBSIG,
 	},
-	//type_def::{SubsigPatternStore},
+	type_def::{TriVal,ClamavSig},
 	fsa_utils::{build_trap_dfa},
+	hex_acdfa::{HexACDFA},
 };
 use utils::{data::{u8_to_hex}};
 use crate::gadgets::{
-	commons::{mix_vec,new_const_var, check_eq
-		//,gen_m_table
-	},
+	commons::{mix_vec,new_const_var, check_eq,encode_cols_better,gen_m_table},
 	traits::{Container,
 		Col,
 		IDX_WORD, IDX_INP,IDX_DATA, 
@@ -76,6 +75,9 @@ pub struct DfaAdvCapacity{
 	/// the number of subsigs determines the number of 
 	/// DFAs to run
 	pub subsigs: usize,
+
+	/// number of sigs
+	pub sigs: usize,
 }
 
 /// Advice for the WordExtract Gadget.
@@ -133,7 +135,8 @@ impl Capacity for DfaAdvCapacity{
 		let other = r_other.as_any().downcast_ref::<DfaAdvCapacity>()
 			.expect("downcast err"); 
 		self.max_nibble_len >= other.max_nibble_len &&
-		self.subsigs>= other.subsigs
+		self.subsigs>= other.subsigs &&
+		self.sigs>= other.sigs
 	}
 
 	/// to get around the requirement on Clone trait which require Sized
@@ -142,6 +145,7 @@ impl Capacity for DfaAdvCapacity{
 		Rc::new(DfaAdvCapacity{
 			max_nibble_len: self.max_nibble_len,
 			subsigs: self.subsigs,
+			sigs: self.sigs,
 		})
 	}
 
@@ -170,11 +174,24 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		v_dfa: &Vec<Arc<DFA<char>>>, //1-1 corresponding to inp_subsigs
 		inp_states: &Vec<F>,  //it's already adjusted (starting from 1)
 		capacity: &DfaAdvCapacity, 
+		inp_sigs: &Vec<F>, //sigs to discharge 
+		discharge_infos: &Vec<DischargeSigInfo>, //must match inp_sigs
+					//extracting the dnf to the concat of inp_subsigs
+		v_sig_obj: &Vec<Arc<ClamavSig>>, //needs to cover all inp_sigs
+		sig_to_id: &HashMap<String,usize>,
 	) ->Self{
 		let stmt_container = Container::<F>::new("dfa_adv_stmt");
 		//1. padding the input when necessary
 		let dummy_fsm_id = F::from(ClamavDB::<F>::dfa_id(0, 0));
 		let dummy_dfa = Arc::new(build_trap_dfa());
+		let dummy_info = DischargeSigInfo{
+				sig_name: "none".to_string(),
+				b_success: false,
+				min_cost: 0,
+				min_dnf_id: 0,
+				subsig_ids: vec![0],
+				subsig_igc: vec![false]
+			}; 
 		
 		let n = capacity.subsigs;
 		let n1 = inp_subsigs.len();
@@ -184,6 +201,13 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		assert!(v_dfa_id.len()==n1 && v_dfa.len()==n1);
 		let inp_subsigs = [&inp_subsigs[..], &vec![zero;n2][..]]
 			.concat();
+		let inp_sigs = [&inp_sigs[..], 
+			&vec![zero;capacity.sigs-inp_sigs.len()][..]].concat();
+		let discharge_infos= [&discharge_infos[..], 
+			&vec![dummy_info;capacity.sigs-discharge_infos.len()][..]].concat();
+		assert!(inp_sigs.len()==capacity.sigs);
+		assert!(discharge_infos.len()==capacity.sigs);
+
 		let v_dfa_id = [&v_dfa_id[..], &vec![dummy_fsm_id;n2][..]].concat();
 		//note for dfa, clone is low cost
 		let v_dfa = [&v_dfa[..], &vec![dummy_dfa.clone();n2][..]].concat();
@@ -195,10 +219,22 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		// stored in (subsig, res) columns. This is basically
 		// depending on the state reached by the nibbles in
 		// each DFA.
-		let mul_fsm_acc = Self::gen_mul_fsm_acc_combo(
+		let (mul_fsm_acc, subsig_res) = Self::gen_mul_fsm_acc_combo(
 			nibbles, &inp_subsigs, &v_dfa_id, &v_dfa, &inp_states, capacity
 		);
 		stmt_container.borrow_mut().add_container(mul_fsm_acc);
+
+		//3. construct the sig_res_combo
+		let sig_res_combo = Self::gen_discharge_sig_combo(
+			&inp_sigs, 
+			&inp_subsigs, 
+			&subsig_res, 
+			&capacity,
+			&v_sig_obj,
+			&discharge_infos,
+			&sig_to_id
+		);
+		stmt_container.borrow_mut().add_container(sig_res_combo);
 
 		Self{
 			capacity: Clone::clone(capacity), 
@@ -216,6 +252,9 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 	/// (subsigs, res) where res is the TriVal result based
 	/// on the last state in the trace. Notice that it
 	/// runs multiple DFAs for the same nibble pices concurrently
+	/// Return:
+	/// (1) the proof combo, 
+	/// (2) the subsig_res which corresponds to inp_subsigs)
 	#[allow(dead_code)]
 	fn gen_mul_fsm_acc_combo(
 		nibbles: &Vec<F>, 
@@ -224,7 +263,7 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		v_dfa: &Vec<Arc<DFA<char>>>, //1-1 corresponding to inp_subsigs
 		inp_states: &Vec<F>,
 		capacity: &DfaAdvCapacity) 
-	-> Rc<RefCell<Container<F>>>{
+	-> (Rc<RefCell<Container<F>>>,Vec<F>){
 		//0. set up data
 		let res = Container::<F>::new("mul_fsm_acc");
 		let (m, nlen) = (capacity.subsigs, capacity.max_nibble_len);
@@ -332,6 +371,7 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 			"oup_state",IDX_OUP);
 		let col_si_oup_state = Col::<F>::new(sid_states[m*nlen..m*(nlen+1)]
 			.to_vec(), "si_oup_state",IDX_SI_OUP);
+		let raw_states = &states;
 
 		let states = Container::concat_cols(
 			vec![col_inp_state, col_mid_states, col_oup_state], "states");
@@ -361,8 +401,256 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		res.borrow_mut().add_col(col_nibbles);
 		res.borrow_mut().add_col(col_si_nibbles);
 
-		res	
+		//1.4 add the 3 columns: subsig_res, oup_states_copy, si_opu_states_copy
+		// here subsig_res is TriVal::False if oup_state is non-final state
+		// otherwise it's set to true. We use si_oup_states_copy to
+		// mark whether it's a final state (and it's earlier preprocessed
+		// in lkup db). Thus, the mapping from a state to whether final
+		// or not is handled by lkup.
+		let f_true = F::from(TriVal::True as u8); //val 1
+		let f_false= F::from(TriVal::False as u8); //val 2
+		let subsig_res = raw_states[m*nlen..m*(nlen+1)].iter().enumerate()
+			.map(|(i,s)|{
+				let u_state = field_to_usize(s) - 1; //real state value
+				let res = if v_dfa[i].finals.contains(&u_state) {f_true} 
+					else {f_false};
+				res
+			}).collect::<Vec<F>>();
+		assert!(subsig_res.len()==m);
+		let sid_oup_state_copy = subsig_res.iter().enumerate()
+			.map(|(i,res)|{
+			let tbl_id = v_dfa_id[i];
+			let nonfinal_tbl_id = tbl_id+F::one();
+			let final_tbl_id = tbl_id+F::from(2u32);
+
+			if *res==f_true {final_tbl_id} else {nonfinal_tbl_id} 
+		}).collect::<Vec<F>>();
+
+		res.borrow_mut().add_col(Col::<F>::new(raw_states[m*nlen..m*(nlen+1)]
+			.to_vec(), "oup_state_copy",IDX_DATA));
+		res.borrow_mut().add_col(Col::<F>::new(sid_oup_state_copy,
+			"si_oup_state_copy",IDX_SI_DATA));
+		res.borrow_mut().add_col(Col::<F>::new(subsig_res.clone(),
+			"subsig_res",IDX_DATA));
+		res.borrow_mut().add_col(Col::<F>::new(vec![zero;m],
+			"si_subsig_res",IDX_SI_DATA)); //don't care as they'll be TriVal
+
+
+		(res, subsig_res)
 	}
+
+	/// This module is adapted from the one in compute_sig_adv.rs
+	/// Given the final result of subsig,
+	/// use the EvalDNF information to discharge sig.
+	/// Basic idea: each sig has a collection of EvalDNF (see type_def.rs)
+	/// E.g., (1|2) & (3|4)
+	/// It has two DNFs: (1|2) and (3|4)
+	/// the Word Discharge Info has already pointed which one has
+	/// lower cst to discharge, e.g., let it be (1|2).
+	/// the combo needs to show that both subsigs 1 and 2 are 
+	/// discharged (as False).
+	/// 
+	/// Proof Structure (table)
+	/// sig - eval_dnf_id - step - count - subsig - res
+	/// where the (subsig,res) is from the gen_synsis_subsig_combo.
+	/// HERE: all sigs need to be discharged (they will be
+	///   the list of sigs to be reported as "discharged").
+	#[allow(dead_code)]
+	fn gen_discharge_sig_combo(
+		inp_sigs: &Vec<F>,
+		inp_subsigs: &Vec<F>,
+		subsig_result: &Vec<F>,
+		capacity: &DfaAdvCapacity,
+		v_sigs: &Vec<Arc<ClamavSig>>, //required to COVER inp_sigs
+		discharge_infos: &Vec<DischargeSigInfo>, //must match inp_sigs
+					//extracting the dnf to the concat of inp_subsigs
+		sig_to_id: &HashMap<String,usize>,
+	)->Rc<RefCell<Container<F>>>{
+		let zero = F::zero();
+		let frg = F::from(RANGE2);
+		let res = Container::<F>::new("sig_res_combo");
+		let n = capacity.subsigs;
+		assert!(inp_subsigs.len()==n);
+		assert!(subsig_result.len()==n); 
+		assert!(inp_sigs.len()==capacity.sigs);
+
+		//1. from the discharge info, build the proof table
+		// sig - eval_dnf_id - step - count - subsig (expect res to be
+		// TriVal::False)
+		// Special note: the subsig/res in this talbe is DIFFERENT
+		// from the subsig/res in the gen_synthesis_subsig_res (because
+		// here, we do NOT include the sub-components of a subsig (thus
+		// resulting a shorter list of subsigs and with different structure)
+		// we have to run a LOOKUP to retrieve the result values from
+		// the previous combo in step 2.
+		// NOTE: we pad the size to #subsigs because in real data
+		// vast majority are regular_regex 
+		// (not Counterh of SubsigCounterConstraint)
+		assert!(discharge_infos.len()==inp_sigs.len());
+		for i in 0..discharge_infos.len() {
+			let name = &discharge_infos[i].sig_name;
+			let sig_id = if name =="none" {zero} else {
+				F::from(*sig_to_id.get(name)
+					.expect(&format!("cannot find sig: {}", name)) as u64)
+			};
+			assert!(sig_id == inp_sigs[i]);
+		}
+		let info_ts = discharge_infos.par_iter().map(|info|{
+			let (sig_id, vec_ssid) = if info.sig_name=="none" {//dummy case 
+				//don't genreate [1] instead generate 0
+				(zero, vec![])
+			}else{
+				let sig_objs = v_sigs.iter().filter(|s| s.name==info.sig_name)
+					.map(|s| s.clone())//low cost of Arc clone
+					.collect::<Vec<Arc<ClamavSig>>>();
+				assert!(sig_objs.len()==1, "cannot find or duplicate entries for {}", info.sig_name);
+				let sig_obj = &sig_objs[0];
+				let sig_id = sig_to_id.get(&info.sig_name)
+					.expect(&format!("cannot find sig: {}", info.sig_name));
+				let sig_id = F::from(*sig_id as u64);
+				let dnf_id = info.min_dnf_id;
+				let vssid = sig_obj.eval_dnf.vec_disjunc[dnf_id].iter().map(
+					|x| F::from((*x+1) as u64)).collect::<Vec<F>>();
+				(sig_id, vssid)
+			};
+			let eval_dnf_id = F::from(info.min_dnf_id as u64);
+			let eval_count = F::from(vec_ssid.len() as u64);
+			vec_ssid.iter().enumerate().map(|(i,ssid)|
+				(eval_dnf_id, F::from(i as u64), eval_count, *ssid, sig_id)
+			).collect::<Vec<(F,F,F,F,F)>>()
+		}).flatten().collect::<Vec<(F,F,F,F,F)>>();
+		let pad = vec![(zero,zero,zero,zero,zero); n-info_ts.len()];
+		let info_ts = [&pad[..], &info_ts[..]].concat();
+		assert!(info_ts.len()==n);
+		let v_dnf_id = info_ts.iter().map(|t| t.0).collect::<Vec<F>>();
+		let v_dnf_step = info_ts.iter().map(|t| t.1).collect::<Vec<F>>();
+		let v_dnf_count = info_ts.iter().map(|t| t.2).collect::<Vec<F>>();
+		let v_real_subsigs = info_ts.iter().map(|t| t.3).collect::<Vec<F>>();
+		let v_sigs = info_ts.iter().map(|t| t.4).collect::<Vec<F>>();
+
+		let info_id:u32 = 0x98882405; 
+		let f1 = F::from(info_id);
+		let factor = F::from(0x100000000 as u64); //32-bit 
+		let v_sid_dnf_id = vec![frg; n];
+		let v_sid_dnf_step = vec![frg; n];
+		let v_sid_dnf_count= (0..n).collect::<Vec<usize>>().into_iter().map(|i|{
+			let dnf_id = v_dnf_id[i];
+			let sig_id = v_sigs[i];
+			let tbl_id = f1*factor*factor*factor + sig_id * factor * factor
+				+ dnf_id * factor;
+
+			tbl_id
+		}).collect::<Vec<F>>();
+
+		let info_id:u32 = 0x99992405; 
+		let f1 = F::from(info_id);
+		let v_sid_real_subsigs= (0..n).collect::<Vec<usize>>()
+			.into_iter().map(|i|{
+			let dnf_id = v_dnf_id[i];
+			let sig_id = v_sigs[i];
+			let tbl_id = f1*factor*factor*factor + sig_id * factor * factor
+				+ dnf_id * factor + v_dnf_step[i];
+
+			tbl_id
+		}).collect::<Vec<F>>();
+		let v_sid_sigs = vec![frg; n];
+
+		//2. Now prove that each sig in v_sigs is discharged as false
+		//2.1 check that all subsig of a sig is well covered, i.e.,
+		// the dnf_step is increasing, it starts from 0 and its
+		// last step is equal to dnf_count
+		// we do not have to generate the proof for it.
+		// note that there is NO need to prove v_sigs is sorted,
+		// the well formedness already proves the full coverage
+		// of the related dnf_subsig for one sig. If there is one sig
+		// shows up multiple times, it's costing more on prover but
+		// does not affect soundness of proof.
+
+		//2.2 build subsigs from (sig_id, real_subsig) and lookup
+		// (subsig, False) in the (vec_subsig, vec_result) from the
+		// previous gen_sytneshsis_subsig_result(). This is needed
+		// as the structure of subsigs are different between the 
+		// two components.
+		let mut map = inp_subsigs.into_iter().zip(subsig_result.into_iter()).
+			map(|(x,y)| (*x,*y)).collect::<HashMap<F,F>>();
+		let f_false = F::from(TriVal::False as u8);
+		map.insert(zero, f_false); //for dummy entry
+		let mut v_computed_subsig = vec![zero; n];
+		for i in 0..n{
+			let subsig_id = F::from(HexACDFA::gen_subsig_id_worker(
+						field_to_usize(&v_sigs[i]), 
+						field_to_usize(&v_real_subsigs[i])
+					) as u64);
+			let res = map.get(&subsig_id)
+				.expect(&format!("cannot find subsig_id: {}", &subsig_id));
+			assert!(*res == f_false);
+			v_computed_subsig[i] = subsig_id;
+		}
+		let src = encode_cols_better(
+			vec![&v_computed_subsig[..], &vec![f_false; n][..]],
+			vec![0,1]
+		);
+		//pad (0,1) for dummy entry
+		let pad_subsigs = [&inp_subsigs[..], &vec![zero][..]].concat();
+		let pad_res = [&subsig_result[..], &vec![f_false][..]].concat();
+		let dst = encode_cols_better(
+			vec![&pad_subsigs[..], &pad_res[..]],
+			vec![0,1]
+		);
+		let mtbl_lk_res = gen_m_table(&src, &dst);
+
+		//3. show that inp_sigs is a subset of v_sigs (covered)
+		// where we have proved all v_sigs are discharged
+		//note: v_sigs is required to have at least one dummy entry at beginning
+		let mtbl_sigs= gen_m_table(&inp_sigs, &v_sigs);
+
+
+		//4. add data columns into containers
+		let names = vec![
+				"v_sigs", 
+				"v_dnf_id", 
+				"v_dnf_step", 
+				"v_dnf_count", 
+				"v_real_subsigs"
+				];
+		let col2d = vec![
+			v_sigs, 
+			v_dnf_id, 
+			v_dnf_step, 
+			v_dnf_count, 
+			v_real_subsigs
+		];
+		col2d.into_iter().zip(names.iter()).for_each(|(c, n)|{
+			res.borrow_mut().add_col(Col::new(c, n, IDX_DATA));
+		});
+		let col2d_sid = vec![
+			v_sid_sigs, 
+			v_sid_dnf_id, 
+			v_sid_dnf_step, 
+			v_sid_dnf_count, 
+			v_sid_real_subsigs
+		];
+		col2d_sid.into_iter().zip(names.iter()).for_each(|(c, n)|{
+			res.borrow_mut().add_col(Col::new(c, &format!("sid_{}",n),
+				IDX_SI_DATA));
+		});
+		assert!(mtbl_lk_res.len()==n+1);
+		res.borrow_mut().add_col(Col::new(mtbl_lk_res,"mtbl_lk_res",IDX_DATA));
+		res.borrow_mut().add_col(Col::new(vec![frg;n+1],"sid_mtbl_lk_res",
+			IDX_SI_DATA));
+		
+		assert!(mtbl_sigs.len()==n);
+		res.borrow_mut().add_col(Col::new(mtbl_sigs,"mtbl_sigs",IDX_DATA));
+		res.borrow_mut().add_col(Col::new(vec![frg;n],"sid_mtbl_sigs",
+			IDX_SI_DATA));
+		res.borrow_mut().add_col(Col::new(inp_sigs.clone(),
+			"discharged_sigs",IDX_DATA));
+		res.borrow_mut().add_col(Col::new(vec![frg;capacity.sigs],
+			"sid_discharged_sigs", IDX_SI_DATA));
+
+		res
+	}
+
 }
 
 impl <F:PrimeField> DfaAdvGadget<F>{
@@ -378,10 +666,26 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		let dummy_v_dfa_id = vec![F::zero();n];
 		let dfa = Arc::new(build_trap_dfa());
 		let dummy_v_dfa = vec![dfa; n];
+		let v_sig_obj: Vec<Arc<ClamavSig>> = vec![]; //empty one
+		//make a make one
+		let discharge_infos = vec![
+			DischargeSigInfo{
+				sig_name: "none".to_string(),
+				b_success: false,
+				min_cost: 0,
+				min_dnf_id: 0,
+				subsig_ids: vec![0],
+				subsig_igc: vec![false]
+			}; capacity.sigs];
+		let mut sigs_to_id = HashMap::<String,usize>::new();
+		sigs_to_id.insert("none".to_string(), 0);
+		let inp_sigs = vec![F::zero(); capacity.sigs];
 
 		//2. create the dummy advice and cfg
 		let dummy_adv = DfaAdvAdvice::new(&nibbles, &dummy_inp_subsigs,
-			&dummy_v_dfa_id, &dummy_v_dfa, &dummy_inp_states, capacity);
+			&dummy_v_dfa_id, &dummy_v_dfa, &dummy_inp_states, capacity,
+				&inp_sigs, &discharge_infos, &v_sig_obj, &sigs_to_id
+			);
 		let mut vec_cfg = prev_cfgs.clone();
 		vec_cfg.push(dummy_adv.stmt_container.borrow().get_cfg());
 		ContainerConfig::adjust_locations(&mut vec_cfg);
@@ -407,10 +711,15 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 
 	/// validate the correctness of fsm_acc container
 	#[allow(dead_code)]
+	// validate the correctness of (subsig, res). where res:false meaning
+	// not accepted by the dfas.
+	//
+	//COST: 14m + 3mn (m: subsigs, n: nibble length) -> subsigs
+	//are usually very small (<10). meainly 3mn.
 	fn validate_mul_fsm_acc_container(&self, fsm_acc: &Container<FpVar<F>>, cs: ConstraintSystemRef<F>)
 	->Result<(), SynthesisError>{
 		//REMOVE LATER ------------
-		let n0 = 0;
+		let n0 = cs.num_constraints();
 		//REMOVE LATER ------------
 		//1. check the relations between v_sig, v_subsig,
 		//v_raw_subsig and v_dfa_id
@@ -459,6 +768,7 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		//REMOVE LATER -------------------
 		println!("DEBUG USE 7701: step 1 cost: {}, susigs: {}",
 			cs.num_constraints()-n0, n);
+		let n0 = cs.num_constraints();
 		//REMOVE LATER ------------------- ABOVE
 
 		//2. asserts all states and transitions must be in range
@@ -470,7 +780,7 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		// translation, and this is gauranteed correct translation
 		// given the nibbles_copy proof.
 		//
-		// COST: 2*m*n 
+		// COST: 2*m*nlen
 		let names = vec!["states", "trans"];
 		let cols = names.iter().map(|n| fsm_acc.get_container(n)
 			.unwrap().borrow().to_vec()).collect::<Vec<Vec<FpVar<F>>>>();
@@ -501,12 +811,13 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		//REMOVE LATER -------------------
 		println!("DEBUG USE 7701: step 2 cost: {}, nlen: {}, subsigs: {}",
 			cs.num_constraints()-n0, nlen, m);
+		let n0 = cs.num_constraints();
 		//REMOVE LATER ------------------- ABOVE
 
 		//3. assert correctness of building transition as weighted sum
 		// of src, char, dst states
 		//
-		//COST: 3*m*nlen
+		//COST: m*nlen
 		let unit_var = FpVar::<F>::new_constant(cs.clone(),
 			F::from((1<<(RANGE2_BIT+4)) as u32))?;
 		let hex_var = FpVar::<F>::new_constant(cs.clone(),
@@ -536,15 +847,33 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		//REMOVE LATER -------------------
 		println!("DEBUG USE 7701: step 3 cost: {}, dfas: {}, nlen: {}",
 			cs.num_constraints()-n0, m, nlen);
+		let n0 = cs.num_constraints();
 		//REMOVE LATER ------------------- ABOVE
 
-		/*
-		//3. assert the locations (increasing by 1)
-		let locs = fsm_acc.get_container("locs")?.borrow().to_vec();
-		assert!(locs.len()==nlen+1);
-		check_increase(&locs)?;
+		//4. check the validity of subsig_res
+		//
+		//COST: 4m
+		let names = vec!["subsig_res", "si_oup_state_copy"]; 
+		let cols = names.iter().map(|n| fsm_acc.get_container(n)
+			.unwrap().borrow().to_vec()).collect::<Vec<Vec<FpVar<F>>>>();
+		let (subsig_res,si_oup_state_copy) = (&cols[0], &cols[1]);
+		let two = new_const_var(&cs, F::from(2u32));
+		let f_true = new_const_var(&cs, F::from(TriVal::True as u8)); //2
+		let f_false = new_const_var(&cs, F::from(TriVal::False as u8)); //1
 
-		*/
+		for i in 0..m{
+			let tbl_id = &v_dfa_id[i];
+			let final_tbl_id = tbl_id+&two;
+			let b_final = final_tbl_id.is_eq(&si_oup_state_copy[i])?;
+			let exp_res = b_final.select(&f_true, &f_false)?;
+			let res = &subsig_res[i];
+			check_eq(&exp_res, &res, "failing res check")?;
+		}
+		//REMOVE LATER -------------------
+		println!("DEBUG USE 7701: step 4 cost: {}, subsigs: {}", 
+			cs.num_constraints()-n0, m);
+		//REMOVE LATER ------------------- ABOVE
+
 		Ok( () )
 	}
 
@@ -667,10 +996,12 @@ pub mod tests_dfa_adv_gadget{
 		word_extract_adv::{WordExtractAdvAdvice},
 	};
 	use data_processor::{clam_db::{ClamavDB}, 
-		hex_acdfa::HexACDFA, type_def::{ClamavSig}
+		hex_acdfa::HexACDFA, type_def::{ClamavSig},
+		clamav::{quick_discharge_file_adv,default_clamav_cfg},
+
 	};
 	use folding_schemes::folding::foldpot::{
-		sigma_ir1cs::SigmaGadget,
+		sigma_ir1cs::{SigmaGadget,WordInfo},
 		container_config::ContainerConfig,
 		circuits_super::field_to_usize,
 	};
@@ -679,9 +1010,11 @@ pub mod tests_dfa_adv_gadget{
 	#[test]
 	fn test_dfa_adv(){
 		//1. load the clamdb instance. It has the following sigs
-		//sig1: abc....123|123...abc
-		//word: abc9999122cc (the 122 missing "3")
-		//DFA discharges it
+		//sig1: a....c|c....a
+		//word: 22a9999d111111 (it's expect c with a gap of 4 from a, but
+		// got a d)
+		//DFA discharges it. The Critical pattern and SED fail because
+		// pattern "a" and "c" too short.
 		let path= "debug/dfa/simple";
 		let db = ClamavDB::<Fr>::build_db_from_dir(path);
 
@@ -695,17 +1028,37 @@ pub mod tests_dfa_adv_gadget{
 		let f_nibbles = nibbles_raw.iter().map(|x| Fr::from(*x as u32))
 			.collect::<Vec<Fr>>();
 		let word = vec![pack_nibbles(&f_nibbles), vec![Fr::zero()]].concat();
+		let cfg = default_clamav_cfg();
+		let wi: WordInfo = quick_discharge_file_adv(
+			"word2.txt", 
+			&nibbles_raw,
+			&db.vec_sigs,
+			&db.vec_sigs_no_critical_pat,
+			&db.map_crit_pat, 
+			&db.map_crit_pat_igc, 
+			&db.dfa_crit, 
+			&db.bundle_subsig.vec_acdfa[0], //dfa_patterns, 
+			&db.dfa_crit_igc,
+			&db.bundle_subsig_igc.vec_acdfa[0], //dfa_patterns_igc,
+			&cfg, 
+			&db.sig_to_id
+		); //use optimize mode
 
 		//note: set true to use char map for nibbles.
 		let adv_wea = WordExtractAdvAdvice::new(&word, act_size, true);
 		let stmt_wea = adv_wea.stmt_container;
 		let cfg_wea = stmt_wea.borrow().get_cfg(); 
 
-		//2.2 the dfa_adv (regular case, and SED approach)
+		//2.2 the dfa_adv 
 		let sig = &db.vec_sigs.iter().filter(|sig| sig.name=="sig1")
 			.map(|sig| sig.clone()).collect::<Vec<Arc<ClamavSig>>>()[0];
 		let v_sigs = vec![sig.clone()];
 		let sig_id = db.sig_to_id.get(&sig.name).unwrap();
+		let info = &wi.vec_dfa_sigs_info[0];
+		assert!(info.sig_name=="sig1"); 
+
+		let discharge_infos = vec![info.clone()]; //only one sig to discharge
+		let inp_sigs: Vec<Fr> = vec![Fr::from(*sig_id as u64)];
 		// here we just take the first dnf, in practice it
 		// will be decided by the DischargeInfo advice which dnf to discharge
 		let inp_subsigs = v_sigs.iter().map(|sig| sig.
@@ -725,7 +1078,8 @@ pub mod tests_dfa_adv_gadget{
 
 		assert!(&v_sigs[0].name=="sig1");
 		let nibble_len = wlen*LEGS;
-		let cap = DfaAdvCapacity{max_nibble_len: nibble_len, subsigs: 2};
+		let cap = DfaAdvCapacity{max_nibble_len: nibble_len, subsigs: 2,
+			sigs: 1};
 
 		let nibbles = stmt_wea.borrow().get_container("nibbles").unwrap()
 			.borrow().to_vec();
@@ -759,7 +1113,8 @@ pub mod tests_dfa_adv_gadget{
 			.collect::<Vec<Arc<DFA<char>>>>();
 		let adv_faa = DfaAdvAdvice::new(
 			&nibbles, &v_subsig_ids, &v_fsm_id, 
-			&v_dfa, &v_inp_state, &cap
+			&v_dfa, &v_inp_state, &cap,
+			&inp_sigs, &discharge_infos, &v_sigs, &db.sig_to_id
 		);
 		let stmt_faa = adv_faa.stmt_container;
 		let cfg_faa = stmt_faa.borrow().get_cfg(); 

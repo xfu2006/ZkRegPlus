@@ -106,7 +106,7 @@ impl DfaCapacity{
 	)->Self{
 		let wea_capacity = WordExtractAdvCapacity{max_word_len};
 		let max_nibble_len = max_word_len * LEGS;
-		let dfa_capacity = DfaAdvCapacity{max_nibble_len, subsigs};
+		let dfa_capacity = DfaAdvCapacity{max_nibble_len, subsigs, sigs};
 			
 		let comp_capacities: Vec<Rc<dyn Capacity>> = vec![
 			Rc::new(wea_capacity),
@@ -209,6 +209,11 @@ impl <F:PrimeField> DfaAdvice<F>{
 			get_container("nibbles").expect("no nibbles").borrow().to_vec();
 		let v_sigs = vec_sigs_to_discharge;
 		assert!(v_sigs.len()==discharge_info.len());
+		let inp_sigs = vec_sigs_to_discharge.iter().map(|sig|{
+			let sig_id = sig_to_id.get(&sig.name)
+				.expect(&format!("can't find sig: {}", sig.name));
+			F::from(*sig_id as u64)
+		}).collect::<Vec<F>>();
 		let inp_subsigs = discharge_info.iter().map(|info| {
 			let sig_id = sig_to_id.get(&info.sig_name).unwrap();
 			info.subsig_ids.iter().map(|i|
@@ -263,7 +268,8 @@ impl <F:PrimeField> DfaAdvice<F>{
 		let dfa_adv_advice = DfaAdvAdvice::<F>
 			::new( 
 				&nibbles, &v_subsig_ids, &v_fsm_id,
-				&v_dfa, &v_inp_state, &dfa_cap
+				&v_dfa, &v_inp_state, &dfa_cap,
+				&inp_sigs, &discharge_info, &v_sigs, &sig_to_id,
 			);
 
 		//3. assemble all advices

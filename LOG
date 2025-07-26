@@ -18141,7 +18141,7 @@ Goal 4. new implementation
 
 Saturday 07/26/2025
 LOC (data): 9079
-LOC (gadget): 13286
+LOC (gadget): 13286 -> 13661 (+377)
 Goal 1. check transition validity
 	[a] implement
 	[b] inspect
@@ -18160,4 +18160,38 @@ Goal 1. check transition validity
 
 Goal 2. add the 3 column table
 	[a] subsig_res, output_states_copy, sid_output_states_copy
-	[b] in validation just need to verify the subsig_res and sid_output_states_copy
+		-> iniital impl
+		-> check data: 
+		-> print data constructed
+	[b[ add cols for extra copy
+		-> regression est -> good
+	[c] add cols for res
+		-> regression test
+	[d] validation: 
+		only need to check subsig_res and realtion of si_oup_states_copy
+		comp exp si_opu_states == exp_final decides exp_subsig_res
+
+Goal 3. implement the validation
+	[a] from si_oup_states_copy 
+	[b] print out all data
+	[c] test
+	[d] regress test
+	[e] cost analysis
+	[f] annotating cost analysis for the entire gadget
+
+Goal 4. incorporating the functions from compute sig from
+	subsig to sig
+	[a] copy the function
+	[b] implement the function step by step
+		-> step 0
+		-> step 1
+	[c] work out how to feed the info needed by gen_discharge_sig_combo
+		-> add params that are needed
+		-> make gen.*subsig.*combo return the subsig_res
+		-> create word_info
+	[d] need to modify the pattern so that it is discharged by dfa
+	[e] regression test
+		=> inp_sigs.len() issue, needs padding
+		=> check the regression testing discharged sigs -> DOES work.
+
+-- TODO -- put the validation funciton in.
