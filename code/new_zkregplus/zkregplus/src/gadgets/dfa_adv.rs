@@ -22,7 +22,7 @@ use ark_r1cs_std::{
 		//FieldVar,
 		fp::FpVar
 	},
-	//alloc::AllocVar,
+	alloc::AllocVar,
 	//eq::EqGadget,
 	//R1CSVar,
 };
@@ -259,8 +259,9 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 				let dst = dfa.transitions[src].get(&ch);
 				assert!(dst.is_some());
 				let dst = dst.unwrap();
-				let trans = (ch as usize) 
-					+ ((src+1)<<4) + ((dst+1)<<(4+RANGE2_BIT));
+				let ch_usize = ch as usize;
+				let trans = ch_usize +
+					 ((src+1)<<4) + ((dst+1)<<(4+RANGE2_BIT));
 				v_states[i+1] = F::from((dst+1) as u32);
 				v_trans[i] = F::from(trans as u64);
 				src = *dst;
@@ -282,7 +283,7 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		let trans = mix_vec(&v2d_trans);
 		let sid_states = mix_vec(&v2d_sid_states);
 		let sid_trans = mix_vec(&v2d_sid_trans);
-		let sid_nibbles = v2d_sid_nibbles[0].clone(); //just one col
+		let sid_nibbles = &v2d_sid_nibbles[0];
 		assert!(states.len()==m*(nlen+1));
 		assert!(sid_states.len()==m*(nlen+1));
 		assert!(trans.len()==m*nlen);
@@ -502,32 +503,42 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 			cs.num_constraints()-n0, nlen, m);
 		//REMOVE LATER ------------------- ABOVE
 
-		/*
-		//2. assert correctness of building transition as weighted sum
+		//3. assert correctness of building transition as weighted sum
 		// of src, char, dst states
+		//
+		//COST: 3*m*nlen
 		let unit_var = FpVar::<F>::new_constant(cs.clone(),
-			F::from((1<<(self.capacity.acdfa_state_part_bits+4)) as u32))?;
+			F::from((1<<(RANGE2_BIT+4)) as u32))?;
 		let hex_var = FpVar::<F>::new_constant(cs.clone(),
 			F::from(16 as u32))?;
-		let chars = fsm_acc.get_container("nibbles")?.borrow().to_vec();
+			//note here: si_nibble = CHAR_MAP + ch
+		let f_map = new_const_var(&cs, F::from(CHAR_MAP as u32));
+		let chars = fsm_acc.get_container("si_nibbles")?.borrow().to_vec();
+		let chars = chars.iter().map(|ch| ch-&f_map)
+			.collect::<Vec<FpVar<F>>>(); 
 
-
-		let states = fsm_acc.get_container("states")?.borrow().to_vec();
-		let trans = fsm_acc.get_container("trans")?.borrow().to_vec();
-		assert!(chars.len()==nlen && states.len()==nlen+1 && trans.len()==nlen);
+		assert!(chars.len()==nlen && states.len()==(nlen+1)*m 
+			&& trans.len()==nlen*m);
 		for i in 0..nlen{
 			let ch = &chars[i];
-			let st1 = &states[i]; //already plus one
-			let st2 = &states[i+1];
-			// simulate clam_db.rs: add_acdfa_to_lkup
-			let exp_trans = ch + 
-				&(st1 * &hex_var) +
-				&(st2 * &unit_var); //no need to plus one, already did
-			let trans = &trans[i];
-			check_eq(&trans, &exp_trans, 
-				&format!("checking transition {} ", i))?;
+			for j in 0..m{//for each DFA
+				let st1 = &states[i*m+j]; //already plus one
+				let st2 = &states[(i+1)*m+j];
+				// simulate clam_db.rs: add_acdfa_to_lkup
+				let exp_trans = ch + 
+					&(st1 * &hex_var) +
+					&(st2 * &unit_var); //no need to plus one, already did
+				let trans = &trans[i*m+j];
+				check_eq(&trans, &exp_trans, 
+					&format!("ERR: checking transition i:{}, j:{} ", i,j))?;
+			}
 		}
+		//REMOVE LATER -------------------
+		println!("DEBUG USE 7701: step 3 cost: {}, dfas: {}, nlen: {}",
+			cs.num_constraints()-n0, m, nlen);
+		//REMOVE LATER ------------------- ABOVE
 
+		/*
 		//3. assert the locations (increasing by 1)
 		let locs = fsm_acc.get_container("locs")?.borrow().to_vec();
 		assert!(locs.len()==nlen+1);

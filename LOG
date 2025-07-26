@@ -18131,3 +18131,33 @@ Goal 3. step by step recover
 		-> fixed the dummy DFA issue
 	[c] regression testing -> DONE
 	[d] recover the external ref of nibble columns -> 
+		-> looks ok
+		-> regression test again:  -> OK
+	[e] recover the validation code part 1 -
+		-> finally somehow fixed, don't even now how it triggers
+		the CS failure message
+Goal 4. new implementation
+	[a] commit existing code
+
+Saturday 07/26/2025
+LOC (data): 9079
+LOC (gadget): 13286
+Goal 1. check transition validity
+	[a] implement
+	[b] inspect
+	[c] unit testing
+		-> computed trans not matching
+		-> it looks like in 6201: retrieved value is 54 ascii value for 6
+			but in 6101: it's encoding 6 directly
+		-> check in DB encoding which is encoding?
+			-> src:1, dst:1, ch: 5: 4165 here '5' -> 53
+			-> src:1, dst: 1, ch: f: 4214 
+		-> remove 6301 from db_processor -> DONE
+		-> isuse 2: 0,0. sts, 1,1 but in 6101: 
+			-> fixed it's validate index problem
+	[d] regression test
+	[e] cost analysis
+
+Goal 2. add the 3 column table
+	[a] subsig_res, output_states_copy, sid_output_states_copy
+	[b] in validation just need to verify the subsig_res and sid_output_states_copy
