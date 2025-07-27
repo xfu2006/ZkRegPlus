@@ -18212,6 +18212,6 @@ Goal 1. add the validate sig function
 		-> part 3
 	[d] regression testing discharged: 6501
 	[e] commit
-Goal 2. 
-	[c] unit test
-	[d] regression test
+
+Goal 2. Plan Next Step
+	[a] need to have a status which indicates if all are accepted.
