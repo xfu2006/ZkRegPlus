@@ -18194,4 +18194,24 @@ Goal 4. incorporating the functions from compute sig from
 		=> inp_sigs.len() issue, needs padding
 		=> check the regression testing discharged sigs -> DOES work.
 
--- TODO -- put the validation funciton in.
+Goal 5. generate new_vec_e
+	[a] find exiting function for extracting witness
+		-> check Descriptor
+		-> check AccWitness
+
+Sunday 07/27/2025
+LOC (gadget): 13661->13806 (+145)
+Goal 1. add the validate sig function
+	[a] add -> DONE
+	[b] inspect code -> DONE
+	[c] implementation
+		-> part 0
+		-> part 1: check validity of SID
+		-> part 2.1 validate dnf step increasing
+		-> part 2.2 verify retrieve subsig result
+		-> part 3
+	[d] regression testing discharged: 6501
+	[e] commit
+Goal 2. 
+	[c] unit test
+	[d] regression test

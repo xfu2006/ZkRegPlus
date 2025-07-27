@@ -37,7 +37,8 @@ use data_processor::{
 };
 use utils::{data::{u8_to_hex}};
 use crate::gadgets::{
-	commons::{mix_vec,new_const_var, check_eq,encode_cols_better,gen_m_table},
+	commons::{mix_vec,new_const_var, check_eq,encode_cols_better,gen_m_table,
+		encode_cols_var_adv_better},
 	traits::{Container,
 		Col,
 		IDX_WORD, IDX_INP,IDX_DATA, 
@@ -46,8 +47,8 @@ use crate::gadgets::{
 		IDX_SI_OUP, 
 		IDX_SI_DATA, ComponentAdvice
 	},
-	//db::{
-		//assert_logup,
+	db::{
+		assert_logup,
 		//verify_encoded_table,
 		//assert_well_formed_sorted,
 		//col_to_sorted_set, 
@@ -58,7 +59,7 @@ use crate::gadgets::{
 		//verify_tbl_to_sorted_tbl, 
 		//tbl_left_join, 
 		//verify_tbl_left_join
-	//},
+	},
 };
 use rustomaton::dfa::DFA;
 
@@ -715,12 +716,9 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 	// not accepted by the dfas.
 	//
 	//COST: 14m + 3mn (m: subsigs, n: nibble length) -> subsigs
-	//are usually very small (<10). meainly 3mn.
+	//are usually very small (<10). meanly 3mn.
 	fn validate_mul_fsm_acc_container(&self, fsm_acc: &Container<FpVar<F>>, cs: ConstraintSystemRef<F>)
 	->Result<(), SynthesisError>{
-		//REMOVE LATER ------------
-		let n0 = cs.num_constraints();
-		//REMOVE LATER ------------
 		//1. check the relations between v_sig, v_subsig,
 		//v_raw_subsig and v_dfa_id
 		//COST: 6n (where n = subsigs, in practice this is small: <10)
@@ -765,11 +763,6 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 			let diff = &exp_dfa_id - &v_dfa_id[i];
 			check_eq(&(&v_sig[i]*&diff), &zero, "fail dfa_id")?;
 		}
-		//REMOVE LATER -------------------
-		println!("DEBUG USE 7701: step 1 cost: {}, susigs: {}",
-			cs.num_constraints()-n0, n);
-		let n0 = cs.num_constraints();
-		//REMOVE LATER ------------------- ABOVE
 
 		//2. asserts all states and transitions must be in range
 		// NOTE: we do not have to assert in range for nibbles they
@@ -808,11 +801,6 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		  		check_eq(&si_trans[i*m+j],&tblid_trans[j],"err si_trans")?;
 			}
 		}
-		//REMOVE LATER -------------------
-		println!("DEBUG USE 7701: step 2 cost: {}, nlen: {}, subsigs: {}",
-			cs.num_constraints()-n0, nlen, m);
-		let n0 = cs.num_constraints();
-		//REMOVE LATER ------------------- ABOVE
 
 		//3. assert correctness of building transition as weighted sum
 		// of src, char, dst states
@@ -844,11 +832,6 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 					&format!("ERR: checking transition i:{}, j:{} ", i,j))?;
 			}
 		}
-		//REMOVE LATER -------------------
-		println!("DEBUG USE 7701: step 3 cost: {}, dfas: {}, nlen: {}",
-			cs.num_constraints()-n0, m, nlen);
-		let n0 = cs.num_constraints();
-		//REMOVE LATER ------------------- ABOVE
 
 		//4. check the validity of subsig_res
 		//
@@ -869,12 +852,167 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 			let res = &subsig_res[i];
 			check_eq(&exp_res, &res, "failing res check")?;
 		}
-		//REMOVE LATER -------------------
-		println!("DEBUG USE 7701: step 4 cost: {}, subsigs: {}", 
-			cs.num_constraints()-n0, m);
-		//REMOVE LATER ------------------- ABOVE
 
 		Ok( () )
+	}
+
+	/// validate all given ipu_sigs are DISCHARGED correctly.
+	///
+	/// COST: 2*n1 +  22*n
+	/// where (n1 = num of sigs, n = num of subsigs)
+	/// typically this is very small, n1 <4, n<10 => cost<300.
+	/// this is adapted from the same function from compute_adv_sig.rs
+	/// Here we made some simplification that there is no additional
+	/// layer to turn extra layer of counter constraints. We 
+	/// discharge sig from the eval_res_combo directly
+	fn validate_discharge_sig_combo(&self, 
+		eval_res_combo: &Rc<RefCell<Container<FpVar<F>>>>, 
+		discharge_sig_combo: &Rc<RefCell<Container<FpVar<F>>>>, 
+		r1: FpVar<F>,
+		_r2: FpVar<F>,
+		cs: ConstraintSystemRef<F>
+	) ->Result<(), SynthesisError>{
+		//0. retrieve data from combo
+		let (zero,one)=(new_const_var(&cs,F::zero()),
+			new_const_var(&cs,F::one()));
+        let max_val:usize = (1<<RANGE2_BIT) - 1;
+		let _max=new_const_var(&cs,F::from(max_val as u64));
+		let frg = new_const_var(&cs, F::from(RANGE2));
+		let names = vec![ "v_sigs", "v_dnf_id", "v_dnf_step", 
+			"v_dnf_count", "v_real_subsigs"];
+		let cols = names.iter().map(|n|
+			discharge_sig_combo.borrow()
+				.get_container(n).unwrap().borrow().to_vec()
+		).collect::<Vec<Vec<FpVar<F>>>>();
+		let (v_sigs, v_dnf_id, v_dnf_step, v_dnf_count, v_real_subsigs) = (
+			&cols[0], &cols[1], &cols[2], &cols[3], &cols[4]);
+		let sid_cols = names.iter().map(|n|
+			discharge_sig_combo.borrow()
+				.get_container(&format!("sid_{}",n)).unwrap().borrow().to_vec()
+		).collect::<Vec<Vec<FpVar<F>>>>();
+		let (v_sid_sigs, v_sid_dnf_id, v_sid_dnf_step, v_sid_dnf_count, 
+			v_sid_real_subsigs) = (&sid_cols[0], &sid_cols[1], &sid_cols[2], 
+				&sid_cols[3], &sid_cols[4]);
+		let n = v_sigs.len();
+		for i in 0..cols.len(){assert!(cols[i].len()==n);}
+		for i in 0..cols.len(){assert!(sid_cols[i].len()==n);}
+
+		//1. check the validity of sid cols (sequential as circ does not
+		//allow parallelism)
+		//
+		// Cost: 5n
+		let info_id:u32 = 0x98882405; 
+		let f1_val = F::from(info_id);
+		let factor_val = F::from(0x100000000 as u64); //32-bit 
+		let factor = new_const_var(&cs, factor_val);
+		let factor2 = &factor * &factor;
+		let factor3 = &factor * &factor2;
+		let f1 = new_const_var(&cs, f1_val);
+		let part1 = &f1 * &factor3;
+
+		let info_id:u32 = 0x99992405; 
+		let f1_2 = new_const_var(&cs, F::from(info_id));
+		let part1_2 = &f1_2 * &factor3;
+
+		for i in 0..n{
+			check_eq(&v_sid_dnf_id[i], &frg, "err sid dnf_id")?;
+			check_eq(&v_sid_dnf_step[i], &frg, "erro sid_dnf_step")?;
+			check_eq(&v_sid_sigs[i], &frg, "err id_sig")?;
+
+			let sig_prod = &v_sigs[i] * &factor2;
+			let dnf_id_prod = &v_dnf_id[i] * &factor;
+			let exp_sid_dnf_count = &part1 + &sig_prod + &dnf_id_prod;
+			check_eq(&exp_sid_dnf_count, &v_sid_dnf_count[i], 
+				"err sid_dnf_cnt")?;
+
+			let exp_sid_real_subsig = &part1_2 + &sig_prod + &dnf_id_prod
+				+ &v_dnf_step[i];
+			check_eq(&exp_sid_real_subsig, &v_sid_real_subsigs[i],
+				"err sid_real_subsig")?;
+		}
+
+		//2. Now prove that each sig in v_sigs is discharged as false
+		//2.1 check that all subsig of a sig is well covered, i.e.,
+		// the dnf_step is increasing, it starts from 0 and its
+		// last step is equal to dnf_count.
+		// NOTE that the validity of v_dnf_step, ... columns are proved
+		// already via v_sid columns in step 1.
+		//
+		// COST: 6n + 3
+		check_eq(&v_sigs[0], &zero, "we require one dummy entry at begin")?;
+		for i in 1..n{
+			let b_new_row = v_sigs[i].is_neq(&v_sigs[i-1])?;
+			let i_new_row: FpVar<F> = b_new_row.into();
+			let res = &i_new_row * &(
+				//(a) id_increase by one
+				&v_dnf_step[i] - &v_dnf_step[i-1]
+			) + (&i_new_row - &one) * &(
+				//(b) starts from 0
+				&(&r1 * &v_dnf_step[i]) + 
+				//(c) previous row equals to count
+				&(&v_dnf_step[i-1] + &one - &v_dnf_count[i-1])
+			);
+			let res = &res * &v_sigs[i]; //ignore zero entries
+			check_eq(&res, &zero, "fails well-formed check")?;
+		}
+
+
+		//2.2 build subsigs from (sig_id, real_subsig) and lookup
+		// (subsig, False) in the (vec_subsig, vec_result) from the
+		// previous eval_res(). This is needed
+		// as the structure of subsigs are different between the 
+		// two components.
+		//
+		// COST: 8n 
+		let bits = RANGE2_BIT;
+		let bit_part1 = bits*2/3; //16 for accomodating 64k sigs for bits 24
+		let bit_part2 = bits - bit_part1;
+		let fac2 = new_const_var(&cs, F::from(1u64<<bit_part2) );
+		let f_false = new_const_var(&cs, F::from(TriVal::False as u8));
+
+		let v_computed_subsig = v_sigs.iter().zip(v_real_subsigs.iter())
+			.map(|(sig_id, real_subsig_id)| {
+				sig_id*&fac2 + real_subsig_id
+		}).collect::<Vec<FpVar<F>>>();
+
+		let src = encode_cols_var_adv_better(
+			&vec![&v_computed_subsig[..], &vec![f_false.clone(); n][..]],
+			&vec![0,1], &r1
+		);
+		//pad (0,1) for dummy entry
+		//NOTE that here we assume that there are no SubsigCounterConstriant
+		//they have two layers of synthesis.
+		let inp_subsigs = eval_res_combo.borrow()
+			.get_container("v_subsig").unwrap().borrow().to_vec();
+		let subsig_result = eval_res_combo.borrow()
+			.get_container("subsig_res").unwrap()
+			.borrow().to_vec();
+		let pad_subsigs = [&inp_subsigs[..], &vec![zero][..]].concat();
+		let pad_res = [&subsig_result[..], &vec![f_false][..]].concat();
+		let dst = encode_cols_var_adv_better(
+			&vec![&pad_subsigs[..], &pad_res[..]],
+			&vec![0,1], &r1
+		);
+		let mtbl_lkup_res = discharge_sig_combo.borrow()
+			.get_container("mtbl_lk_res").unwrap().borrow().to_vec();
+		assert_logup(cs.clone(), &src, &dst, &mtbl_lkup_res, &r1)?;
+
+		//3. show that inp_sigs is a subset of v_sigs (covered)
+		// where we have proved all v_sigs are discharged
+		//note: v_sigs is shown earlier
+		// to have at least one dummy entry at beginning so that just in
+		// case inp_sigs has 0 entry.
+		//
+		//COST: let n1 = num of sigs, n = num of subsigs
+		// 2n1 + 3n
+		let discharged_sigs = discharge_sig_combo.borrow()
+			.get_container("discharged_sigs").unwrap().borrow().to_vec();
+		let mtbl_sigs= discharge_sig_combo.borrow()
+			.get_container("mtbl_sigs").unwrap().borrow().to_vec();
+		assert_logup(cs.clone(), &discharged_sigs, &v_sigs, &mtbl_sigs, &r1)?;
+
+		Ok( () )
+
 	}
 
 }
@@ -948,10 +1086,17 @@ impl <F:PrimeField> SigmaGadget<F> for DfaAdvGadget<F>{
 		//1. retrive the statement instance and get all parts
 		let cfg = self.get_container_cfg().expect("container cfg not set!");
 		let stmt = Container::<FpVar<F>>::load_from(i, wtns_cfg, wtns, &cfg)?;
+		let r1 = wtns.msg2[0].clone();
+		let r2 = wtns.msg2[1].clone();
 
 		//2. validate the fsm_acc combo 
 		let mul_fsm_acc = stmt.get_container("mul_fsm_acc")?;
 		self.validate_mul_fsm_acc_container(&mul_fsm_acc.borrow(), cs.clone())?;
+
+		//2. validate the discharging of sig.
+		let sig_res_combo= stmt.get_container("sig_res_combo")?;
+		self.validate_discharge_sig_combo(&mul_fsm_acc,
+			&sig_res_combo, r1.clone(), r2.clone(), cs.clone())?;
 
 		Ok(())
 	}
