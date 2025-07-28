@@ -81,6 +81,7 @@ pub trait ComponentMapper<F:PrimeField, LK: LookupTableTwoCol<F>>: Debug{
 	/// This is not required for those non-SED gadgets, they are handled
 	/// by legacy gode.
 	fn set_container_config(&mut self, _advice: &Rc<dyn NdAdvice>); 
+
 }
 
 

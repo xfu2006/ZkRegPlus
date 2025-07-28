@@ -39,6 +39,8 @@ pub const IDX_DATA:usize = 3;
 pub const IDX_SI_INP:usize = 4;
 pub const IDX_SI_OUP:usize = 5;
 pub const IDX_SI_DATA:usize = 6;
+pub const IDX_FAILED_SIGS:usize = 7;
+pub const IDX_DISCHARGED_SIGS:usize = 8;
 
 /// An allocated column.
 #[derive(Clone,Debug)]
