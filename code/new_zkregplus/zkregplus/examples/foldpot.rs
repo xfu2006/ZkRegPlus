@@ -83,9 +83,9 @@ impl <F:PrimeField> SigmaGadget<F> for SumGadget<F>{
 		unimplemented!("no need to implement. legacy of caller handles it");
 	}
 
-	/// return the sizes of inp/oup/data to append to the
+	/// return the sizes of inp/oup/data/failed/discharged_sigs to append to the
 	/// buffer of GadgetMapper.
-	fn get_to_add_size(&self)->(usize, usize, usize){
+	fn get_to_add_size(&self)->(usize, usize, usize, usize, usize){
 		unimplemented!("no need to implement. legacy of caller handles it");
 	}
 	fn est_cost(&self)->usize{ 3*self.n }
@@ -311,6 +311,8 @@ GadgetMapper<F,LK> for SumMapper<F, LK>{
 			col1_share: vec![zero; 4], //to be updated, capcity 4
 			col2_share: vec![zero; 4], //to be updated
 			m_share: vec![zero; 4],//to be updated
+			failed_sigs: vec![zero; 0],
+			discharged_sigs: vec![zero;0],
 
 			_lk: PhantomData,
 		};
@@ -327,10 +329,13 @@ GadgetMapper<F,LK> for SumMapper<F, LK>{
 		let output_size = 1;
 		let word_subseg_size = 2;
 		let data_size = 2;
+		let failed_sigs_size = 0;
+		let discharged_sigs_size = 0;
 		let lookup_share_size = 4; //ignore the input use legacy logic
 		let cfg = StatementConfig::new(
 			input_size, output_size, word_subseg_size,
-			data_size, lookup_share_size
+			data_size, lookup_share_size,
+			failed_sigs_size, discharged_sigs_size,
 		);
 
 		//2. generate the result to return

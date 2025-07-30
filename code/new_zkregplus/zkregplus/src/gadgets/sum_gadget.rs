@@ -50,7 +50,7 @@ impl <F:PrimeField> SigmaGadget<F> for SumWordGadget<F>{
 
 	/// return the sizes of inp/oup/data to append to the
 	/// buffer of GadgetMapper.
-	fn get_to_add_size(&self)->(usize, usize, usize){
+	fn get_to_add_size(&self)->(usize, usize, usize, usize, usize){
 		unimplemented!("no need to implement. legacy of caller handles it");
 	}
 

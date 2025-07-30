@@ -113,7 +113,7 @@ impl <F:PrimeField + Absorb> SigmaGadget<F> for FoldPairGadget<F>{
 
 	/// return the sizes of inp/oup/data to append to the
 	/// buffer of GadgetMapper.
-	fn get_to_add_size(&self)->(usize, usize, usize){
+	fn get_to_add_size(&self)->(usize, usize, usize, usize, usize){
 		unimplemented!("no need to implement. legacy of caller handles it");
 	}
 
@@ -287,6 +287,8 @@ GadgetMapper<F,LK> for FoldPairMapper<F, LK>{
 			col1_share: vec![zero; lkup_share_size],  
 			col2_share: vec![zero; lkup_share_size], 
 			m_share: vec![zero; lkup_share_size],
+			failed_sigs: vec![],
+			discharged_sigs: vec![],
 
 			_lk: PhantomData,
 		};
@@ -302,9 +304,12 @@ GadgetMapper<F,LK> for FoldPairMapper<F, LK>{
 		let word_subseg_size = 40;
 		let data_size = 0;
 		let lkup_share_size = 0;
+		let failed_sigs_size= 0;
+		let discharged_sigs_size= 0;
 		let cfg = StatementConfig::new(
 			input_size, output_size, word_subseg_size,
-			data_size,lkup_share_size 
+			data_size,lkup_share_size ,
+			failed_sigs_size, discharged_sigs_size,
 		);
 
 		//2. generate the result to return

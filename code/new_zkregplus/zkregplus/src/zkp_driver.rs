@@ -146,7 +146,7 @@ where C: CurveGroup<ScalarField=F>,
 	let _cg4 = CompositeGadgetMapper::<F,LK<F>>::new("w4",vec![Rc::new(RefCell::new(comp4))]); 
 	let _cg3 = CompositeGadgetMapper::<F,LK<F>>::new("w3",vec![Rc::new(RefCell::new(comp3))]); 
 	let _cg2 = CompositeGadgetMapper::<F,LK<F>>::new("w2",vec![Rc::new(RefCell::new(comp2))]); 
-	let cg1 = CompositeGadgetMapper::<F,LK<F>>::new("w1",vec![Rc::new(RefCell::new(comp1))]); 
+	let cg1 = CompositeGadgetMapper::<F,LK<F>>::new("cp1",vec![Rc::new(RefCell::new(comp1))]); 
 	println!("DEBUG USE 1001: lkup_len: {}, avg_lk_wd: {}, comp1 share size: {}", lkup_len, avg_lk_wd, cg1.max_word_len()*avg_lk_wd);
 
 	//2. create sed components
@@ -161,12 +161,12 @@ where C: CurveGroup<ScalarField=F>,
 	let scap1= SedCapacity::new(max_word, db.dfa_crit.state_part_bits, subsigs, 
 		avg_pat_per_sig, avg_active_pat_per_sig, perc_pats_in_trace, sigs, perc_comp_subsigs);
 	let scomp1 = SedComponentMapper::<F,LK<F>>::new(scap1, db.clone(), b_igc, store_id);
-	let scg1 = CompositeGadgetMapper::<F,LK<F>>::new("w1",vec![Rc::new(RefCell::new(scomp1))]); 
+	let scg1 = CompositeGadgetMapper::<F,LK<F>>::new("sed1",vec![Rc::new(RefCell::new(scomp1))]); 
 
 
 	let lk_share1 = cg1.max_word_len()*avg_lk_wd;
 	let lk_share2 = _cg2.max_word_len()*avg_lk_wd;
-	let _c1 = SigmaIR1CS_Inst::<F,C,CS,LK<F>,
+	let c1 = SigmaIR1CS_Inst::<F,C,CS,LK<F>,
 		CompositeGadgetMapper<F,LK<F>>
 		,false>
 		::new_adv(format!("c1"), poseidon_config.clone(), 
@@ -188,7 +188,7 @@ where C: CurveGroup<ScalarField=F>,
 			Rc::new(RefCell::new(_cg4)), false, lk_share2).expect("c4");
 
 	//4. create sed instances
-	let _sc1 = SigmaIR1CS_Inst::<F,C,CS,LK<F>,
+	let sc1 = SigmaIR1CS_Inst::<F,C,CS,LK<F>,
 		CompositeGadgetMapper<F,LK<F>>
 		,false>
 		::new_adv(format!("sc1"), poseidon_config.clone(), 
@@ -204,7 +204,7 @@ where C: CurveGroup<ScalarField=F>,
 	let dc1 = SigmaIR1CS_Inst::<F,C,CS,LK<F>,
 		CompositeGadgetMapper<F,LK<F>>
 		,false>
-		::new_adv(format!("dc1"), poseidon_config.clone(), 
+		::new_adv(format!("dfa1"), poseidon_config.clone(), 
 			Rc::new(RefCell::new(dcg1)), false, lk_share1).expect("dc1");
 	println!("DEBUG USE 6000: dc1.mapper: {}", dc1.get_mapper().borrow().get_name());
 
@@ -212,7 +212,8 @@ where C: CurveGroup<ScalarField=F>,
 	//vec![ vec![_c2,_c1] ] //for saving cost
 	//vec![ vec![_c1] ] //for saving cost
 	//vec![ vec![_sc1] ] //for saving cost
-	vec![ vec![dc1] ] //for saving cost
+	//vec![ vec![dc1] ] //for saving cost
+	vec![ vec![c1,sc1,dc1] ] //for saving cost
 }
 
 

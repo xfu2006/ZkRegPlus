@@ -45,12 +45,14 @@ pub trait ComponentMapper<F:PrimeField, LK: LookupTableTwoCol<F>>: Debug{
 	/// return the max len of the word that can be processed.
 	fn max_word_len(&self) -> usize;
 
-	/// return the sizes of input/output/data sections
+	/// return the sizes of input/output/data/failed_sigs/discharged_sigs
+	/// expecting 5 elements.
 	fn get_sizes(&self)->Vec<usize>;
 
-	/// Given its own gadget stmt_map: 6 range entries for
-	///   inp,oup,data,subtbl_inp, subtbl_oup, subtbl_data 
-	/// return the 6 range entry for each of its compoments.
+	/// Given its own gadget stmt_map: 8 range entries for
+	///   [inp,oup,data, subtbl_inp, subtbl_oup, subtbl_data,
+	///        failed_sigs, discharged_sigs]
+	/// return the 8 range entry for each of its compoments.
 	fn get_gadgets_stmt_map(&self, vec_alloc: &Vec<(usize,usize)>)
 	->Vec<Vec<(usize,usize)>>;
 
@@ -71,7 +73,8 @@ pub trait ComponentMapper<F:PrimeField, LK: LookupTableTwoCol<F>>: Debug{
 		prev_adv: Option<Rc<dyn NdAdvice>>)
 		->Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>;
 
-	/// return the inp, oup, data and 3 subtable segments. (6 vecs)
+	/// return the inp, oup, data and 3 subtable segments,
+	/// and then failed_sigs, discharged_sigs. (8 vecs)
 	/// the id, cfg, and comp_mapping helps it to locate the information
 	/// it needs in prev_stmt which has the same structure as specified
 	/// in StatementConfig. Note we pass the max len word, padded.
@@ -193,25 +196,28 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 		//1. collect and prep the starting positions
 		let vec_sizes = self.vec_components.iter().map(|c|
 			c.borrow().get_sizes()).collect::<Vec<Vec<usize>>>();
-		let mut vec_starts:Vec<Vec<usize>> = vec![vec![0,0,0]];
+		let mut vec_starts:Vec<Vec<usize>> = vec![vec![0,0,0,0,0]];
 		for i in 0..vec_sizes.len(){
 			let cur_size = &vec_sizes[i];
+			assert!(cur_size.len()==5, "expecting 5 elements");
 			let cur_start = &vec_starts[vec_starts.len()-1];
 			let new_start = cur_size.iter().zip(cur_start.iter()).map(|(x,y)|
 				x+y).collect::<Vec<usize>>();
 			assert!(new_start.len()==cur_size.len());
 			vec_starts.push(new_start);
 		}
-		let mut sum_sizes = vec![0,0,0];
+		let mut sum_sizes = vec![0,0,0,0,0];
 		for vs in &vec_sizes{ for j in 0..vs.len(){sum_sizes[j] += vs[j] } }
 
 		//2. generate the config of statement. Note we assume
 		// all components process the same max word len
-		let (input_size, output_size, data_size) = (sum_sizes[0], sum_sizes[1], sum_sizes[2]);
+		let (input_size, output_size, data_size, failed_sigs_size,
+			discharged_sigs_size) = (sum_sizes[0], sum_sizes[1], 
+				sum_sizes[2], sum_sizes[3], sum_sizes[4]);
 		let word_subseg_size = self.max_word_len(); 
 		let cfg = StatementConfig::new(
 			input_size, output_size, word_subseg_size,
-			data_size, lkup_share_size
+			data_size, lkup_share_size, failed_sigs_size, discharged_sigs_size
 		);
 
 		//3. generate the map for each component. Each component's statement
@@ -235,6 +241,10 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 				cfg.idx_oup + vec_starts[i][1] + vec_sizes[i][1]-1);
 			let rg_data = (cfg.idx_data + vec_starts[i][2],
 				cfg.idx_data + vec_starts[i][2] + vec_sizes[i][2]-1);
+			let rg_failed_sigs= (cfg.idx_failed_sigs+ vec_starts[i][3],
+				cfg.idx_failed_sigs + vec_starts[i][3] + vec_sizes[i][3]-1);
+			let rg_discharged_sigs= (cfg.idx_discharged_sigs+ vec_starts[i][4],
+				cfg.idx_discharged_sigs+ vec_starts[i][4] + vec_sizes[i][4]-1);
 
 			let rg_subtbl_id_inp = (idx_inp_in_subtbl_id +  vec_starts[i][0],
 				idx_inp_in_subtbl_id + vec_sizes[i][0]-1);
@@ -244,8 +254,11 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 				idx_data_in_subtbl_id + vec_sizes[i][2]-1);
 
 
-			let cur_alloc= vec![rg_word,rg_inp,rg_oup,rg_data, 
-				rg_subtbl_id_inp, rg_subtbl_id_oup, rg_subtbl_id_data];
+			let cur_alloc= vec![
+				rg_word, rg_inp, rg_oup, rg_data,
+				rg_subtbl_id_inp, rg_subtbl_id_oup, rg_subtbl_id_data,
+				rg_failed_sigs, rg_discharged_sigs,
+			];
 			let mut comp_maps = self.vec_components[i].borrow()
 				.get_gadgets_stmt_map(&cur_alloc);
 			assert!(comp_maps.len()==self.vec_components[i].borrow().num_gadgets());
@@ -276,13 +289,18 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 		word_seg.append(&mut rem_word); //always guarnatee max len
 		let actual_word_len = word.len();
 
-		//2. collect inp/oup/data/subtbl_id from components
+		//2. collect inp/oup/data/subtbl_id/failed_sig/discharged_sig
+		// from components
 		let mut vec_inp = vec![];
 		let mut vec_oup = vec![];
 		let mut vec_data = vec![];
+		let mut vec_failed_sigs = vec![]; //no sid
+		let mut vec_discharged_sigs = vec![]; //no sid
+
 		let mut vec_st_inp = vec![]; //subtable_id inp part
 		let mut vec_st_oup = vec![]; //subtable_id oup part
 		let mut vec_st_data = vec![];
+
 		let advices = r_advice.as_any().downcast_ref::<CompositeAdvice>()
 			.expect("downcast err!");
 		let (_, cfg, stmt_map, _, _) = 
@@ -303,14 +321,21 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 			vec_inp.push(vecs[0].clone());
 			vec_oup.push(vecs[1].clone());
 			vec_data.push(vecs[2].clone());
+
 			vec_st_inp.push(vecs[3].clone());
 			vec_st_oup.push(vecs[4].clone());
 			vec_st_data.push(vecs[5].clone());
+
+			vec_failed_sigs.push(vecs[6].clone()); //no sid
+			vec_discharged_sigs.push(vecs[7].clone()); //no sid
 		}
 
 		let inp = vec_inp.concat();
 		let oup = vec_oup.concat();
 		let data = vec_data.concat();
+		let failed_sigs = vec_failed_sigs.concat();
+		let discharged_sigs = vec_discharged_sigs.concat();
+
 		let subtbl_word = vec![F::zero(); self.max_word_len()];
 		let subtbl_inp = vec_st_inp.concat();
 		let subtbl_oup = vec_st_oup.concat();
@@ -325,6 +350,9 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 			assert!(word_seg.len()==cfg.word_subseg_size);
 			assert!(data.len()==cfg.data_size);
 			assert!(lkup_share_size==cfg.lookup_share_size);
+			assert!(failed_sigs.len()==cfg.failed_sigs_size);
+			println!("DEBUG USE 6301: composite_mapper: {}, failed_size: {}, cfg.failed_size: {}, discharged_sigs.len: {}, cfg: dis_len: {}", self.name, failed_sigs.len(), cfg.failed_sigs_size, discharged_sigs.len(), cfg.discharged_sigs_size);
+			assert!(discharged_sigs.len()==cfg.discharged_sigs_size);
 		}
 
 		//3. assemble the statement instance by setting its inp/oup/data/subtbl
@@ -366,6 +394,9 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 			col1_share: vec![zero; lkup_share_size], //will be filled 
 			col2_share: vec![zero; lkup_share_size], //to be updated
 			m_share: vec![zero; lkup_share_size],//will be filled
+
+			failed_sigs: failed_sigs,
+			discharged_sigs: discharged_sigs,
 
 			_lk: PhantomData,
 		};

@@ -38,13 +38,13 @@ use folding_schemes::{folding::foldpot::circuits_super::{field_to_usize}};
 /// This gadget is responsible for retrieving the signatures
 /// from final states (like a sql select).
 /// 
-/// Basic idea: given a join trace (transcript)  which is structured
+/// Basic idea: given a transcript which is structured
 /// as following:
 /// encoded(state_1, num_of_records)
 /// encoded(state_1, sig1)
 /// ...
 /// encoded(state_1, sig_k)
-/// The point here is that k is a different value for each state,
+/// The challenge here is that k is a different value for each state,
 /// So the transcript like input maximizes memory efficiency.
 /// We then apply log-up to reason about subset (lookup) relation
 #[derive(Clone,Debug)]
@@ -626,9 +626,10 @@ impl <F:PrimeField> SigmaGadget<F> for GetSigGadget<F>{
 		unimplemented!("no need to implement. legacy of caller handles it");
 	}
 
-	/// return the sizes of inp/oup/data to append to the
+	/// return the sizes of inp/oup/data/failed_sigs/discharge_sigs
+	/// to append to the
 	/// buffer of GadgetMapper.
-	fn get_to_add_size(&self)->(usize, usize, usize){
+	fn get_to_add_size(&self)->(usize, usize, usize, usize, usize){
 		unimplemented!("no need to implement. legacy of caller handles it");
 	}
 

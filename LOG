@@ -18219,6 +18219,85 @@ Goal 2. Plan Next Step
 Monday 07/28/2025
 LOC (circ): 2222 -> 
 LOC (gadget): 13806 -> 
+LOC (sonobe): 18100 -> 
 Goal 1. the discharge sig framework
-	[a] add IDX_FAILED_SIG, IDX_DISCHARGED_SIG
-	[b] change the build statement
+	[a] add IDX_FAILED_SIG, IDX_DISCHARGED_SIG -> DONE
+	[b] change the build statement correspondingly
+		-> build_statement -> DONE
+		-> add cfg -> DONE
+	[c] change StatementInstVar correspondingly
+	[d] continue to change
+		-> add falied_sigs and discharged_sigs to sigma_ir1cs
+			=> fix syntax errors
+		-> gen_statement_structure -> DONE
+		-> get_gadgets_stmt_map 
+			-> sed -> DONE
+			-> dfa  -> DONE
+			-> cp -> check later
+			-> change all get_to_add_size
+				=> all gadgets
+		-> get_sizes -> DONE
+			=> sed
+			=> cp -> check later
+			=> dfa
+		-> build_statement_comp
+	[c] modify compute_sig, dfa, and cp to add discharged sig correspondingly
+		-> done
+
+Goal 2: what happens with CP?
+	[a] read code
+	[b] needs to manually instrument several of its functions
+	[c] read the code of sigs gadget -> need to read details
+		-> it has input_buf of sigs, sigs_to_merge
+		-> output is the union of sigs and sigs_to_merge
+		-> msg3 has a bunch of inv_tables for logup check
+		-> result is in oup buffer.
+		-> GetSigAdvice.oup is the list of signatures failed.
+		-> its output is located at my_stmt[slen..2*slen]A
+		-> SigGadgetMsg3 inv2_left proves output buffer
+			contains the union of inp + sigs_to_merge
+	[d] need to read cp component how does it handle 
+		the map of the output buffer of the sig.rs?
+
+Wed 07/30/2025
+LOC(circ): 2222
+LOC(gadget): 13817
+Goal 1. modify the CP component
+	[a] fix legacy code foldpot.rs
+	[b] regresion testing of gadget
+
+Goal 2. continue to modify cp component
+	[a] update doc
+	[b] func new
+	[c] CoComponentMapper::new
+
+Goal 3. modify get_sizes
+	[a] get_sizes
+	[b] get_joins
+	[c] get_nd_advice_no_limit
+	[d] get_gadgets_stmt_map
+
+Goal 4. set up the unit testing case in zkp_driver put three
+	components in and see where it stops
+
+Goal 5. Debug
+	[a] cp_mapper:398
+	[b] get_stmt_map
+	[c] sigma_ir1cs:1088 out of range
+	[d] fix cfg -> stmt_len
+	[e] gen_stmt_components by col
+	[f] size 6 -> 8 in traits
+	[g] discharged_sigs.len: 
+		discharged sig is 0, but cfg.dis_len is 2?
+		Note that failed_size in cfg is also not right -> maynot be
+		which one is it?
+		-> it's the sed mapper.
+		-> the cfg is correct but the discharged_sigs gives 0.
+
+Goal 6. Debug why SED does not have discharged_sig section.
+	[a] in its last compoment need to add DATA_DISCHARGED_SIGS.
+	[b] in the verifier needs to check equivalence of 2 arrays.
+
+--- TODO ---
+Goal 3.  in sigma_ir1cs add the check
+

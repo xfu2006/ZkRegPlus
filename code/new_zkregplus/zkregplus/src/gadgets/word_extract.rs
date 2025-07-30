@@ -62,10 +62,11 @@ impl <F:PrimeField> SigmaGadget<F> for WordExtractGadget<F>{
 		]
 	}
 
-	/// return the sizes of inp/oup/data to append to the
+	/// return the sizes of inp/oup/data/failed_sigs/discharged_sigs
+	/// to append to the
 	/// buffer of GadgetMapper.
-	fn get_to_add_size(&self)->(usize, usize, usize){
-		(0, 0, 1 + self.max_word_len * LEGS)
+	fn get_to_add_size(&self)->(usize, usize, usize, usize, usize){
+		(0, 0, 1 + self.max_word_len * LEGS, 0, 0)
 	}
 
 	fn est_cost(&self)->usize{

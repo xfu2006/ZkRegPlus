@@ -447,13 +447,13 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 	/// return the max word capacity of the component
 	fn max_word_len(&self)->usize{ self.capacity.wea_capacity().max_word_len }
 
-	/// return the sizes of inp, oup, data buffer
+	/// return the sizes of inp, oup, data buffer, failed_sigs, discharged_sigs
 	fn get_sizes(&self)->Vec<usize>{
 		let sizes = self.gadgets.iter().map(|g| g.borrow().get_to_add_size())
-			.collect::<Vec<(usize, usize, usize)>>();
-		let total = sizes.into_iter().fold((0,0,0), |x,y|
-			(x.0+y.0, x.1+y.1, x.2+y.2));
-		vec![total.0, total.1, total.2]
+			.collect::<Vec<(usize, usize, usize, usize, usize)>>();
+		let total = sizes.into_iter().fold((0,0,0,0,0), |x,y|
+			(x.0+y.0, x.1+y.1, x.2+y.2, x.3+y.3, x.4+y.4));
+		vec![total.0, total.1, total.2, total.3, total.4]
 	}
 
 	/// return the ``global" join constraints, so that
@@ -584,8 +584,10 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 		Some((Rc::new(cap2), Rc::new(advice)) )
 	}
 
-	/// Given its own gadget stmt_map: 7 range entries for
-	///   word, inp,oup,data,subtbl_inp, subtbl_oup, subtbl_data 
+	/// Given its own gadget stmt_map: 9 range entries for:
+	///   word, inp,oup,data,
+	///   subtbl_inp, subtbl_oup, subtbl_data 
+	///   failed_sigs, discharged_sigs
 	/// return the map entries for each of its gadgets for reconstructing
 	/// their problem statement(note:
 	///    entries solely depending on the gadget's own structure, need
@@ -593,7 +595,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 	fn get_gadgets_stmt_map(&self, vec_alloc: &Vec<(usize,usize)>)
 	->Vec<Vec<(usize,usize)>>{
 		//1. get the allocation and make sure not exceeding boundaries
-		assert!(vec_alloc.len()==7); 
+		assert!(vec_alloc.len()==9); 
 		let (s_wd, e_wd) = vec_alloc[0];
 		let (s_inp, _e_inp) = vec_alloc[1];
 		let (s_oup, _e_oup) = vec_alloc[2];
@@ -601,14 +603,16 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 		let (s_subtbl_inp, _e_subtbl_inp) = vec_alloc[4];
 		let (s_subtbl_oup, _e_subtbl_oup) = vec_alloc[5];
 		let (s_subtbl_data, _e_subtbl_data) = vec_alloc[6];
+		let (s_failed_sigs, _e_failed_sigs) = vec_alloc[7];
+		let (s_discharged_sigs, _e_discharged_sigs) = vec_alloc[8];
 		let wlen = self.max_word_len();
 		assert!(e_wd - s_wd + 1 == wlen);
 		let mut vec_res= vec![];
 		//start positions for:
-		// word, inp, oup, data, subtbl_id_inp, subtbl_id_oup, subtbl_id_data
+		// word, inp, oup, data, failed_sigs, discharged_sigs,
+		// subtbl_id_inp, subtbl_id_oup, subtbl_id_data
 		// where subtbl_xyz matches syz size
-		let mut seg_starts = vec![vec![s_wd, s_inp, s_oup, s_data, s_subtbl_inp,
-			s_subtbl_oup, s_subtbl_data]];
+		let mut seg_starts = vec![vec![s_wd, s_inp, s_oup, s_data, s_failed_sigs, s_discharged_sigs, s_subtbl_inp, s_subtbl_oup, s_subtbl_data]];
 
 		//2. based on seg_starts construct map instruction
 		for i in 0..self.gadgets.len(){
@@ -626,9 +630,13 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 				res
 			}).collect::<Vec<(usize,usize)>>();
 			let ns = self.gadgets[i].borrow().get_to_add_size();
-			let ns = vec![0, ns.0, ns.1, ns.2, ns.0, ns.1, ns.2]; 
+			// ns corresponds to 9 elements in sequence below:
+			// word, inp, oup, data
+			// failed_sigs, discharged_sigs
+			// sid_inp, sid_opu, sid_data
+			let ns = vec![0, ns.0, ns.1, ns.2, ns.3, ns.4, ns.0, ns.1, ns.2]; 
 			let mut nxt_starts = seg_starts[seg_starts.len()-1].clone();
-			for j in 0..7 {nxt_starts[j] += ns[j];}
+			for j in 0..9 {nxt_starts[j] += ns[j];}
 			seg_starts.push(nxt_starts);
 			vec_res.push(my_maps);
 		}
@@ -648,10 +656,10 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 			.expect("downcast err!");
 
 		let res = advice.vec_advices.iter().fold(
-			vec![vec![]; 6],
+			vec![vec![]; 8],
 			|sum, adv|{
 				let cps = adv.gen_stmt_components();
-				assert!(cps.len()==6);
+				assert!(cps.len()==8);
 				sum.into_iter().zip(cps.into_iter()).map(|(a,b)|{
 					let res:Vec<F> = vec![a, b].concat();
 					res
@@ -659,7 +667,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 			}
 		);
 
-		assert!(res.len()==6);
+		assert!(res.len()==8);
 		Ok( res )
 	}
 }

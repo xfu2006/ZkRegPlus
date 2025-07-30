@@ -1,4 +1,6 @@
 /* Created 02/16/2025
+   Modified: 07/30/2025 to incororate the failed_sig and discharged_sig 
+   sections.
 */
 
 // A CP component mapper handles the critical pattern
@@ -8,10 +10,13 @@
 //       entire trace (fsm_gadget)
 // (3) pack the trace into set of states
 // (4) map from the states to signatures by retrieving from lkup.
+//   --> the FAILED SIGANTURES are stored in the oup_buf ofer the 
+//   the sig.rs. We make a copy of it and STORE then in the
+//   failed_sigs.
 
 // *** STRUCTURE of its statement (except wd which is already passed)
 // inp: inp_state
-// oup: oup_state,
+// oup: oup_state, ... oup_sigs
 // data: 
 //       -- introduced by gadget extract_word
 //		 act_w_len [1], 
@@ -24,6 +29,8 @@
 //       m_table [final_states_len]
 //       -- introduced by gadget sigs
 //       many items (call its advice to generate data item
+// failed_sigs: the COPY of the  oup_sigs (last #sigs elements of oup)
+// discharged_sigs: size 0
 
 // subtbl: follow inp/oup/data
 
@@ -255,7 +262,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 	/// return the max word capacity of the component
 	fn max_word_len(&self)->usize{ self.capacity.max_word_len }
 
-	/// return the sizes of inp, oup, data buffer
+	/// return the sizes of inp, oup, data, failed_sigs, discharged_sigs
 	fn get_sizes(&self)->Vec<usize>{
 		//1. gadget of word extension
 		let wlen = self.capacity.max_word_len;
@@ -294,7 +301,9 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		let inp_size:usize = vec_inp_len.iter().map(|x| x).sum();
 		let oup_size:usize = vec_oup_len.iter().map(|x| x).sum();
 		let data_size:usize = vec_data_len.iter().map(|x| x).sum();
-		vec![inp_size, oup_size, data_size]
+		let failed_sig_size = self.capacity.sig_buf_capacity;
+		let discharged_sig_size = 0;
+		vec![inp_size, oup_size, data_size,failed_sig_size,discharged_sig_size]
 	}
 
 	/// return the ``global" join constraints, so that
@@ -376,21 +385,27 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		Some((Rc::new(cap2), Rc::new(advice)) )
 	}
 
-	/// Given its own gadget stmt_map: 7 range entries for
-	///   inp,oup,data,subtbl_inp, subtbl_oup, subtbl_data 
+	/// Given its own gadget stmt_map: 9 range entries for
+	///  ** 
+	///   inp,oup,data,
+	///   subtbl_inp, subtbl_oup, subtbl_data,
+	///   failed_sigs, discharged_sigs,
+	///  **
 	/// return the map entries for each of its gadgets (note:
 	///    entries solely depending on the gadget's own structure)
 	fn get_gadgets_stmt_map(&self, vec_alloc: &Vec<(usize,usize)>)
 	->Vec<Vec<(usize,usize)>>{
 		//1. get the allocation and make sure not exceeding boundaries
-		assert!(vec_alloc.len()==7); 
+		assert!(vec_alloc.len()==9); 
 		let (s_wd, e_wd) = vec_alloc[0];
 		let (s_inp, _e_inp) = vec_alloc[1];
 		let (s_oup, _e_oup) = vec_alloc[2];
 		let (s_data, _e_data) = vec_alloc[3];
-		let (s_subtbl_inp, _e_subtbl_inp) = vec_alloc[4];
-		let (s_subtbl_oup, _e_subtbl_oup) = vec_alloc[5];
-		let (s_subtbl_data, _e_subtbl_data) = vec_alloc[6];
+		let (s_subtbl_data, _e_subtbl_data) = vec_alloc[4];
+		let (s_failed_sigs, _e_failed_sigs) = vec_alloc[5];
+		let (_s_discharged_sigs, _e_discharged_sigs) = vec_alloc[6];
+		let (s_subtbl_inp, _e_subtbl_inp) = vec_alloc[7];
+		let (s_subtbl_oup, _e_subtbl_oup) = vec_alloc[8];
 		let wlen = self.max_word_len();
 		assert!(e_wd - s_wd + 1 == wlen);
 		let mut vec_res= vec![];
@@ -425,7 +440,8 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 				dfa_subtbl_states_start+dfa_subtbl_states_len-1),
 			(dfa_subtbl_oup_start, dfa_subtbl_oup_start),
 			(dfa_subtbl_trans_start, dfa_subtbl_trans_start
-				+dfa_subtbl_trans_len-1)];
+				+dfa_subtbl_trans_len-1),
+			];
 		vec_res.push(dfa_crit);
 
 		//3. pack_crit gadget problem statement structure
@@ -469,6 +485,8 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 			(s_oup+1, s_oup+1 + slen-1),  //oup
 			(s_data+3*nlen, s_data+3*nlen + olen-1), //the final states
 			(sig_data_start, sig_data_start +  sig_data_len-1), //data without final states input
+			(s_failed_sigs, s_failed_sigs + self.capacity.sig_buf_capacity-1),
+				//the failed sigs
 			(sig_st_start, sig_st_start + sig_st_len-1), //subtbl_ids (data part)
 			(sig_st_oup_start, sig_st_oup_start+ sig_st_oup_len-1),//st_oup
 		];
@@ -479,7 +497,8 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		vec_res
 	}
 
-	/// return the inp, oup, data and 3 subtable segments. (6 vecs)
+	/// return the inp, oup, data, failed, discharged_sigs
+	/// and 3 subtable segments. (8 vecs)
 	/// the id, cfg, and comp_mapping helps it to locate the information
 	/// it needs in prev_stmt which has the same structure as specified
 	/// in StatementConfig. Note we pass the max len word, padded.
@@ -580,6 +599,12 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		assert!(subtbl_inp.len()==inp.len());
 		assert!(subtbl_oup.len()==oup.len());
 
-		Ok(	vec![inp, oup, data, subtbl_inp, subtbl_oup, subtbl_data] )
+		//4. the failed sigs and discharged sigs
+		let failed_sigs = advice.sigs_advice.oup.clone(); 
+		assert!(failed_sigs.len()==self.capacity.sig_buf_capacity);
+		let discharged_sigs = vec![];
+
+		Ok(	vec![inp, oup, data, subtbl_inp, subtbl_oup, subtbl_data, 
+			failed_sigs, discharged_sigs] )
 	}
 }

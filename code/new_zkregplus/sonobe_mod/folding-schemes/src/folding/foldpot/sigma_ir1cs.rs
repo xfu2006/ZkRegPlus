@@ -348,9 +348,13 @@ pub trait SigmaGadget<F:PrimeField>: Debug{
 	/// return the number of field elements for statement, msg1, 2, and 3.
 	fn get_msg_size(&self) -> (usize, usize, usize, usize);
 
-	/// return the size to add to the inp/oup/data (similarly
+	/// return the size to add to the inp/oup/data/failed_sigs/discharged_sigs
+	/// (similarly
 	/// for subtbl_id_inp, subtbl_id_oup, subtbl_id_data) segments,
-	/// which is later collected by the upper layer GadgetMapper.
+	/// NOTE: it does not apyly ti failed_sigs and discharged_sig
+	/// as these two do not have sid.
+	/// 
+	/// The info is later collected by the upper layer GadgetMapper.
 	/// Note that the sum of these segments do not correspond
 	/// to the ProblemStatement length as some part of the FULL
 	/// data segements can be mapped from other gadgets.
@@ -359,7 +363,7 @@ pub trait SigmaGadget<F:PrimeField>: Debug{
 	///
 	/// NOTE: This function is ONLY needed for those in SedGadgetMapper,
 	/// others are handled by legacy mode of data checking.
-	fn get_to_add_size(&self)->(usize, usize, usize);
+	fn get_to_add_size(&self)->(usize, usize, usize, usize, usize);
 
 	/// Get the instructions for build its statement.
 	/// NOTE: this is only needed for those used in SedGadgetMapper.
@@ -699,6 +703,15 @@ pub struct StatementInst<F:PrimeField, LK: LookupTableTwoCol<F>>{
 	/// the vec m value share, later it computes m_i/(col1 * beta + col2 * beta^2 + gamma) using the Hab'22 logup approach. 
 	pub m_share: Vec<F>,
 
+	/// the failed sigs, required to be padded by 0,
+	/// all elements should be distinct!
+	pub failed_sigs: Vec<F>,
+	/// the discharged sigs. except 0 padding,
+	/// it should be EXACTLY failed_sigs.
+	/// Avoid generating duplicatings when generating WordInfo
+	/// and DischargeSigInfo, when constructing the proof.
+	pub discharged_sigs: Vec<F>,
+
 	pub _lk: PhantomData<LK>
 }
 
@@ -789,6 +802,11 @@ pub struct StatementInstVar<F:PrimeField>{
 	pub col2_share: Vec<FpVar<F>>,
 	/// the vec m value share, later it computes m_i/(col1 * beta + col2 * beta^2 + gamma) using the Hab'22 logup approach. 
 	pub m_share: Vec<FpVar<F>>,
+
+	/// the failed sigs
+	pub failed_sigs: Vec<FpVar<F>>,
+	/// the discharged sigs
+	pub discharged_sigs: Vec<FpVar<F>>,
 }
 
 /// The configure structure of StatementInstance.
@@ -823,12 +841,22 @@ pub struct StatementConfig{
 	pub idx_col2_share: usize,
 	/// start index of m_share
 	pub idx_m_share: usize,
+
+	/// the buffer size of failed_sig
+	pub failed_sigs_size: usize,
+	/// the buffer size of discharged_sigs buffer
+	pub discharged_sigs_size: usize,
+	/// the starting idx of failed_sigs
+	pub idx_failed_sigs: usize,
+	/// the starting idx of the discharged_sigs
+	pub idx_discharged_sigs: usize,
 }
 
 impl StatementConfig{
 	pub fn new(input_size: usize, output_size: usize,
 		word_subseg_size: usize, data_size: usize, 
-		lookup_share_size: usize)
+		lookup_share_size: usize, 
+		failed_sigs_size: usize, discharged_sigs_size: usize)
 	->Self{
 		let idx_inp = 23;
 		let idx_oup = idx_inp + input_size;
@@ -839,12 +867,16 @@ impl StatementConfig{
 		let idx_col1_share = idx_subtable_id + subtable_size;
 		let idx_col2_share = idx_col1_share + lookup_share_size;
 		let idx_m_share = idx_col2_share + lookup_share_size;
+		let idx_failed_sigs = idx_m_share + lookup_share_size;
+		let idx_discharged_sigs = idx_failed_sigs + failed_sigs_size;
 
 		Self{ input_size, output_size, data_size, word_subseg_size, 
 			lookup_share_size, 
 			idx_inp, idx_oup, idx_word_subseg, 
 			idx_data, idx_subtable_id, idx_col1_share,
 			idx_col2_share, idx_m_share, 
+			failed_sigs_size, discharged_sigs_size,
+			idx_failed_sigs, idx_discharged_sigs
 		}
 	}
 
@@ -854,7 +886,8 @@ impl StatementConfig{
 
 		self.input_size + self.output_size + self.data_size + 
 			self.word_subseg_size + self.lookup_share_size * 3
-			+ sub_table_size +  self.idx_inp
+			+ sub_table_size +  self.idx_inp 
+			+ self.failed_sigs_size + self.discharged_sigs_size
 	}
 }
 
@@ -917,7 +950,9 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 			self.oup_buf.len(),
 			self.word_subseg.len(),
 			self.data.len(),
-			self.col1_share.len()
+			self.col1_share.len(),
+			self.failed_sigs.len(),
+			self.discharged_sigs.len()
 		)
 	}
 
@@ -950,6 +985,8 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 		println!("total_word_segs: {}", self.total_word_segs);
 		println!("total_words: {}", self.total_words);
 		println!("r_F: {}", self.r_F);
+		println!("failed_sigs len: {}", self.failed_sigs.len());
+		println!("discharged_sigs len: {}", self.discharged_sigs.len());
 		Self::print_vec(&self.inp_buf, "inp_buf");
 		Self::print_vec(&self.oup_buf, "oup_buf");
 		Self::print_vec(&self.word_subseg, "word_subseg");
@@ -958,6 +995,8 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 		Self::print_vec(&self.col1_share, "col1_share");
 		Self::print_vec(&self.col2_share, "col2_share");
 		Self::print_vec(&self.m_share, "m_share");
+		Self::print_vec(&self.failed_sigs, "failed_sigs");
+		Self::print_vec(&self.discharged_sigs, "discharged_sigs");
 		println!("---- DUMP COMPLETED ---------\n");
 	}
 
@@ -1003,6 +1042,8 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 			self.col1_share.clone(), 
 			self.col2_share.clone(), 
 			self.m_share.clone(),
+			self.failed_sigs.clone(),
+			self.discharged_sigs.clone(),
 		].concat();
 
 		res
@@ -1045,6 +1086,8 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 		let col1_share = (&vec[cfg.idx_col1_share..cfg.idx_col1_share+cfg.lookup_share_size]).to_vec(); 
 		let col2_share = (&vec[cfg.idx_col2_share..cfg.idx_col2_share+cfg.lookup_share_size]).to_vec(); 
 		let m_share = (&vec[cfg.idx_m_share..cfg.idx_m_share+cfg.lookup_share_size]).to_vec(); 
+		let failed_sigs= (&vec[cfg.idx_failed_sigs..cfg.idx_failed_sigs+cfg.failed_sigs_size]).to_vec(); 
+		let discharged_sigs= (&vec[cfg.idx_discharged_sigs..cfg.idx_discharged_sigs+cfg.discharged_sigs_size]).to_vec(); 
 		Self{
 			pc_i, pc_i1, n_circ, n_circ_minus_pc,
 			act_input_size, act_output_size, act_lookup_share_size,
@@ -1056,6 +1099,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 				f_result,
 			inp_buf, oup_buf, word_subseg, data, subtable_id,
 			col1_share, col2_share, m_share, 
+			failed_sigs, discharged_sigs,
 			_lk: PhantomData,
 
 		}
@@ -1167,6 +1211,8 @@ impl <F:PrimeField> StatementInstVar<F>{
 		let col1_share = (&vec[cfg.idx_col1_share..cfg.idx_col1_share+cfg.lookup_share_size]).to_vec(); 
 		let col2_share = (&vec[cfg.idx_col2_share..cfg.idx_col2_share+cfg.lookup_share_size]).to_vec(); 
 		let m_share = (&vec[cfg.idx_m_share..cfg.idx_m_share+cfg.lookup_share_size]).to_vec(); 
+		let failed_sigs= (&vec[cfg.idx_failed_sigs..cfg.idx_failed_sigs+cfg.failed_sigs_size]).to_vec(); 
+		let discharged_sigs= (&vec[cfg.idx_discharged_sigs..cfg.idx_discharged_sigs+cfg.discharged_sigs_size]).to_vec(); 
 		Self{
 			pc_i, pc_i1, n_circ, n_circ_minus_pc,
 			act_input_size, act_output_size, act_lookup_share_size,
@@ -1175,7 +1221,8 @@ impl <F:PrimeField> StatementInstVar<F>{
 			inp_buf, oup_buf, word_subseg, data, subtable_id,
 			col1_share, col2_share, m_share, total_words, r_F,
 			batch_r, batch_v, r_all_words, r_kzg_len, r_vec_r, r_vec_v, 
-				r_word_i, accumulated_word_len, f_result
+				r_word_i, accumulated_word_len, f_result,
+			failed_sigs, discharged_sigs
 		}
 	}
 }

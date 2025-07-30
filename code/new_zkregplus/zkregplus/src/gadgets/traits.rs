@@ -121,7 +121,8 @@ impl <F: Clone> Col<F>{
 		Rc::new(RefCell::new(Self{data, cfg}))
 	}
 
-	/// generate the <inp,oup,data,subtbl_id_inp,subtbl_id_oup,subtbl_id_data>
+	/// generate the <inp,oup,data,subtbl_id_inp,subtbl_id_oup,subtbl_id_data,
+	///   failed_sigs, discharged_sigs>
 	pub fn gen_stmt_components(&self)->Vec<Vec<F>>{
 		//1. retrieve the save_to_location
 		let loc = match &self.cfg{
@@ -130,9 +131,9 @@ impl <F: Clone> Col<F>{
 				panic!("expect ContainerConfig of column to be Location")
 		};
 		let dest = loc.dest;
-		let res:Vec<Vec<F>> = dest.map_or(vec![vec![]; 6], 
+		let res:Vec<Vec<F>> = dest.map_or(vec![vec![]; 8], 
 			|(seg_id, _start, len)|{
-				let mut res = vec![vec![]; 6];
+				let mut res = vec![vec![]; 8];
 				if seg_id>0 {//not word, ignore word.
 					let real_id = seg_id - 1;
 					assert!(self.data.len()==len);
@@ -416,10 +417,10 @@ impl <F: Clone> Container<F>{
 			},
 			Container::Complex(vec_container,_,_,_) =>  {
 				vec_container.iter().fold(
-					vec![vec![]; 6],
+					vec![vec![]; 8],
 					|sum, adv|{
 						let cps = adv.borrow().gen_stmt_components();
-						assert!(cps.len()==6);
+						assert!(cps.len()==8);
 						sum.into_iter().zip(cps.into_iter()).map(|(a,b)|{
 							let res:Vec<F> = vec![a, b].concat();
 							res
