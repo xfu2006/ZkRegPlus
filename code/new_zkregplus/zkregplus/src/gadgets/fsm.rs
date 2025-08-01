@@ -228,12 +228,14 @@ impl <F: PrimeField> FsmAdvice<F>{
 	/// word_seg is the one with max compacity, actual size
 	/// is the actual word len. We convert all remaining 
 	/// as 0.
+	/// NOTE: inp_state is the ADJUSTED satate (+1 of the raw_state on
+	/// ACDFA)
 	pub fn new(nibbles: &Vec<F>, acdfa: &HexACDFA, inp_state: F)->Self{
 		//1. normalize the input
 		let acdfa_state_part_bits = acdfa.state_part_bits;
 		let mut states = vec![];
 		let mut trans = vec![];
-		let mut cur_state = field_to_usize(&inp_state);
+		let mut cur_state = field_to_usize(&inp_state) - 1;
 		// NOTE: state needs to be added 1 to be pushed
 		// 0 is considered padding value.
 		states.push(F::from( (cur_state+1) as u32));
@@ -259,20 +261,19 @@ impl <F: PrimeField> FsmAdvice<F>{
 
 #[cfg(test)]
 pub mod tests_fsm_gadget{
-	use ark_ff::{Zero};
 	use std::{rc::Rc};
 	use ark_bn254::{Fr};
 	use crate::gadgets::fsm::{FsmGadget,FsmAdvice};
 	use utils::data::{rand_fe_by_bits};
 	use crate::gadgets::word_extract::tests_word_extract_gadget::test_gadget;
-	use data_processor::hex_acdfa::HexACDFA;
+	use data_processor::{hex_acdfa::HexACDFA, clam_db::RANGE2_BIT};
 
 
 
 	#[test]
 	fn test_fsm(){
 		let mut rng = ark_std::test_rng();
-		let (nibble_len, state_bits) = (124, 24usize);
+		let (nibble_len, state_bits) = (124, RANGE2_BIT);
 		let mut nibbles:Vec<Fr> = vec![];
 		for _i in 0..nibble_len{ nibbles.push(rand_fe_by_bits(4, &mut rng));}
 
@@ -282,10 +283,11 @@ pub mod tests_fsm_gadget{
 		let gadget= FsmGadget::<Fr>::new(nibble_len, msf_id, state_bits);
 		let rg = Rc::new(gadget);
 
-		let inp_state = Fr::zero();
 		let patterns = vec!["abc", "cba", "1234567890abcdef"].
 			iter().map(|s| {String::from(*s)}).collect();
 		let acdfa = HexACDFA::new(1, &patterns);
+		let init_state = acdfa.init_state;
+		let inp_state = Fr::from( (init_state + 1) as u32);
 		let adv = FsmAdvice::new(&nibbles, &acdfa, inp_state);
 		assert!(adv.acdfa_state_part_bits == rg.as_ref().acdfa_state_part_bits);
 		assert!(adv.states.len()==nibble_len+1);	

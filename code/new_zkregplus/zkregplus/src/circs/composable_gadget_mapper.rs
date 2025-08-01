@@ -222,7 +222,8 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 
 		//3. generate the map for each component. Each component's statement
 		// is structured as
-		// [word, inp, output, data, subtable_id] which are mapped 
+		// [word, inp, output, data, subtable_id,failed_sigs,discharged_sigs] 
+		// which are mapped 
 		// correspondingly, note that subtble_id itself has 3 chunks
 		// for inp/oup/data
 		let mut vec_maps = vec![];
@@ -351,7 +352,7 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 			assert!(data.len()==cfg.data_size);
 			assert!(lkup_share_size==cfg.lookup_share_size);
 			assert!(failed_sigs.len()==cfg.failed_sigs_size);
-			println!("DEBUG USE 6301: composite_mapper: {}, failed_size: {}, cfg.failed_size: {}, discharged_sigs.len: {}, cfg: dis_len: {}", self.name, failed_sigs.len(), cfg.failed_sigs_size, discharged_sigs.len(), cfg.discharged_sigs_size);
+			println!("DEBUG USE 6301: composite_mapper: {}, failed_size: {}, cfg.failed_size: {}, discharged_sigs.len: {}, cfg: dis_len: {}, failed_sigs: {:#?}, discharged_sigs: {:#?}", self.name, failed_sigs.len(), cfg.failed_sigs_size, discharged_sigs.len(), cfg.discharged_sigs_size, failed_sigs, discharged_sigs);
 			assert!(discharged_sigs.len()==cfg.discharged_sigs_size);
 		}
 
@@ -403,12 +404,11 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 
 		#[cfg(test)]{
 			let stmt_vec = stmt.to_vec();
-			assert!(stmt_vec.len()==cfg.total_size())
+			assert!(stmt_vec.len()==cfg.total_size());
 		}
 			
 		Ok(stmt)
 	}
-
 	/// return the max word length that can be processed, we require
 	/// that all component gadget mapper handle the same length of word.
 	fn max_word_len(&self) -> usize{

@@ -206,14 +206,13 @@ where C: CurveGroup<ScalarField=F>,
 		,false>
 		::new_adv(format!("dfa1"), poseidon_config.clone(), 
 			Rc::new(RefCell::new(dcg1)), false, lk_share1).expect("dc1");
-	println!("DEBUG USE 6000: dc1.mapper: {}", dc1.get_mapper().borrow().get_name());
 
 	//vec![ vec![c4,c3], vec![c2,c1] ]
 	//vec![ vec![_c2,_c1] ] //for saving cost
-	//vec![ vec![_c1] ] //for saving cost
-	//vec![ vec![_sc1] ] //for saving cost
+	vec![ vec![c1] ] //for saving cost
+	//vec![ vec![sc1] ] //for saving cost
 	//vec![ vec![dc1] ] //for saving cost
-	vec![ vec![c1,sc1,dc1] ] //for saving cost
+	//vec![ vec![c1,sc1,dc1] ] //for saving cost
 }
 
 

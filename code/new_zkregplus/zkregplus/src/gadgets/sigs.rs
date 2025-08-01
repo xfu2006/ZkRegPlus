@@ -664,6 +664,7 @@ impl <F:PrimeField> SigmaGadget<F> for GetSigGadget<F>{
 		//		subtbl_id_for_data and for_oup
 		//      check SigGadgetAdvice:gen_subtbl_id_for_data() and for_oup()
 		//		Note: it excludes the final_states part for data.
+		//  (6) failed_sigs [sig_buf_size]
 		// ]
 		// NO msg1, but msg2: 4 elements (4 lookups), 
 		//          msg3: three invtable for the last 3 Logup type lkups: see
@@ -678,10 +679,12 @@ impl <F:PrimeField> SigmaGadget<F> for GetSigGadget<F>{
 		let oup_len = slen;
 		let data_len = SigGadgetData::<F>::get_len(&self.capacity);
 		let msg3_len = SigGadgetMsg3::<F>::get_len(&self.capacity);
+		let failed_len = slen;
 		//subtbl_id excludes subtbl_ids FOR the first final_states of data,
 		//but includes the subtbl_ids for oup
 		let subtbl_id_len = data_len -olen + slen; 
-		let stat_len = word_len + inp_len + oup_len + data_len + subtbl_id_len;
+		let stat_len = word_len + inp_len + oup_len + data_len + subtbl_id_len
+			+ failed_len;
 
 		(stat_len, 0, 4, msg3_len)
 	}
@@ -963,7 +966,7 @@ pub mod tests_sigs_gadget{
 	use ark_bn254::{Fr};
 	use ark_std::{Zero,One};
 	use crate::gadgets::sigs::{GetSigGadget,GetSigAdvice,SigGadgetCapacity};
-	use crate::gadgets::word_extract::tests_word_extract_gadget::test_gadget;
+	use crate::gadgets::word_extract::tests_word_extract_gadget::test_gadget_adv;
 	use data_processor::hex_acdfa::HexACDFA;
 
 	#[test]
@@ -1009,7 +1012,11 @@ pub mod tests_sigs_gadget{
 			adv.gen_subtbl_id_for_oup()
 		].concat();
 		let lkup_share_size = 4usize;
-		test_gadget::<Fr>(rg, &vec![], &inp, &oup, &data, &subtbl_id, 
-			lkup_share_size);
+		let failed_sigs = oup.clone();
+		test_gadget_adv::<Fr>(rg, &vec![], &inp, &oup, &data, 
+			&failed_sigs, &vec![],
+			&subtbl_id, 
+			lkup_share_size, 
+			true, None);
 	}
 }

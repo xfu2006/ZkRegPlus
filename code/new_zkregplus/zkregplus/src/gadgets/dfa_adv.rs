@@ -41,7 +41,7 @@ use crate::gadgets::{
 		encode_cols_var_adv_better},
 	traits::{Container,
 		Col,
-		IDX_WORD, IDX_INP,IDX_DATA, 
+		IDX_WORD, IDX_INP,IDX_DATA, IDX_DISCHARGED_SIGS,
 		IDX_SI_INP, 
 		IDX_OUP, 
 		IDX_SI_OUP, 
@@ -615,7 +615,7 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 				"v_real_subsigs"
 				];
 		let col2d = vec![
-			v_sigs, 
+			v_sigs.clone(), 
 			v_dnf_id, 
 			v_dnf_step, 
 			v_dnf_count, 
@@ -645,9 +645,10 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		res.borrow_mut().add_col(Col::new(vec![frg;n],"sid_mtbl_sigs",
 			IDX_SI_DATA));
 		res.borrow_mut().add_col(Col::new(inp_sigs.clone(),
-			"discharged_sigs",IDX_DATA));
-		res.borrow_mut().add_col(Col::new(vec![frg;capacity.sigs],
-			"sid_discharged_sigs", IDX_SI_DATA));
+			"discharged_sigs",IDX_DISCHARGED_SIGS));
+		//res.borrow_mut().add_col(Col::new(vec![frg;capacity.sigs],
+		//	"sid_discharged_sigs", IDX_SI_DATA));
+
 
 		res
 	}
@@ -1011,6 +1012,7 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 			.get_container("mtbl_sigs").unwrap().borrow().to_vec();
 		assert_logup(cs.clone(), &discharged_sigs, &v_sigs, &mtbl_sigs, &r1)?;
 
+
 		Ok( () )
 
 	}
@@ -1288,6 +1290,7 @@ pub mod tests_dfa_adv_gadget{
 
 		//5. test it
 		test_gadget_adv::<Fr>(rg, &word, &cps[0], &cps[1], &cps[2],
+			&cps[6], &cps[7],
 			&vec![//subtbl_id (concats of si_inp, si_oup, si_data)
 				cps[3].clone(), 
 				cps[4].clone(), 

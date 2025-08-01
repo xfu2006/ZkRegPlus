@@ -498,7 +498,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaCompo
 			// word, inp, oup, data
 			// failed_sigs, discharged_sigs
 			// sid_inp, sid_opu, sid_data
-			let ns = vec![0, ns.0, ns.1, ns.2, ns.3, ns.4, ns.0, ns.1, ns.2]; 
+			let ns = vec![0, ns.0, ns.1, ns.2, ns.0, ns.1, ns.2, ns.3, ns.4]; 
 			let mut nxt_starts = seg_starts[seg_starts.len()-1].clone();
 			for j in 0..9 {nxt_starts[j] += ns[j];}
 			seg_starts.push(nxt_starts);
@@ -524,7 +524,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaCompo
 			vec![vec![]; 8],
 			|sum, adv|{
 				let cps = adv.gen_stmt_components();
-				assert!(cps.len()==6);
+				assert!(cps.len()==8);
 				sum.into_iter().zip(cps.into_iter()).map(|(a,b)|{
 					let res:Vec<F> = vec![a, b].concat();
 					res

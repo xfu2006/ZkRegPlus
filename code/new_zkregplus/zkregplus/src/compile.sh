@@ -12,6 +12,7 @@
 # test zkpsmall example
 RUST_BACKTRACE=1 cargo test --release -- test_zkreg_main --show-output --nocapture
 #RUST_BACKTRACE=1 cargo test -- test_zkreg_main --show-output --nocapture
+#RUST_BACKTRACE=1 cargo test -- test_zkreg_main --show-output --nocapture
 
 # test zkpsmall example SLOW
 # RUST_BACKTRACE=1 cargo test -- test_word_extract_adv --show-output --nocapture

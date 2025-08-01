@@ -36,7 +36,7 @@ use crate::gadgets::{
 	traits::{
 		Container, ComponentAdvice,
 		Col,
-		IDX_WORD, IDX_INP,IDX_DATA,
+		IDX_WORD, IDX_INP,IDX_DATA, IDX_DISCHARGED_SIGS,
 		IDX_OUP, 
 		//IDX_SI_INP, IDX_SI_OUP,
 		IDX_SI_DATA,
@@ -997,9 +997,8 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 			IDX_SI_DATA));
 		assert!(inp_sigs.len()==capacity.sigs);
 		res.borrow_mut().add_col(Col::new(inp_sigs.clone(),
-			"discharged_sigs",IDX_DATA));
-		res.borrow_mut().add_col(Col::new(vec![frg;capacity.sigs],
-			"sid_discharged_sigs", IDX_SI_DATA));
+	 		"discharged_sigs",IDX_DISCHARGED_SIGS)); //no si needed
+
 
 		res
 	}
@@ -2063,7 +2062,7 @@ pub mod tests_compute_sig_adv{
 					cfg_disc.clone(), cfg_sig.clone()];
 				ContainerConfig::adjust_locations(&mut vec_cfg); //resolve
 
-				//2.6. generate the 7 segments of output for building statment
+				//2.6. generate the 9 segments of output for building statment
 				//from inp to si_data
 				let cps1 = stmt_wea.borrow().gen_stmt_components(); 
 				let cps2 = stmt_faa.borrow().gen_stmt_components(); 
@@ -2090,11 +2089,14 @@ pub mod tests_compute_sig_adv{
 
 				//3. test it
 				test_gadget_adv::<Fr>(rg, &word, &cps[0], &cps[1], &cps[2],
+					&cps[6],
+					&cps[7],
 					&vec![//subtbl_id (concats of si_inp, si_oup, si_data)
 						cps[3].clone(), 
 						cps[4].clone(), 
 						cps[5].clone(),
-					].concat(), lkup_share_size,
+					].concat(),
+					lkup_share_size,
 					false, //not legacy mode
 					Some(vec_cfg),
 				);

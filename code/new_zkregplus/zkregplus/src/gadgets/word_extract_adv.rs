@@ -391,6 +391,7 @@ pub mod tests_word_extract_adv_gadget{
 
 		//3. test it
 		test_gadget_adv::<Fr>(rg, &word, &cps[0], &cps[1], &cps[2],
+			&cps[6], &cps[7], //failed and discharged_sigs
 			&vec![//subtbl_id (concats of si_inp, si_oup, si_data)
 				cps[3].clone(), 
 				cps[4].clone(), 

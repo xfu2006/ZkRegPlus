@@ -245,7 +245,8 @@ pub mod tests_word_extract_gadget{
 		data: &Vec<F>,
 		subtbl_id: &Vec<F>, //should not include word (covering inp/oup/data)
 		lkup_share_size: usize){
-		test_gadget_adv(g, word, inp, oup, data, subtbl_id, lkup_share_size, 
+		//use empty vec for failed_sigs and discharged_sigs
+		test_gadget_adv(g, word, inp, oup, data, &vec![], &vec![], subtbl_id, lkup_share_size, 
 			true, None);
 	}
 
@@ -258,6 +259,8 @@ pub mod tests_word_extract_gadget{
 		inp: &Vec<F>,
 		oup: &Vec<F>,
 		data: &Vec<F>,
+		failed_sigs: &Vec<F>,
+		discharged_sigs: &Vec<F>,
 		subtbl_id: &Vec<F>, //should not include word (covering inp/oup/data)
 		lkup_share_size: usize,
 		b_legacy: bool, //when true, the stmt_map is generated using simple way
@@ -269,7 +272,8 @@ pub mod tests_word_extract_gadget{
 		//assert!(subtbl_id.len()== inp.len() + oup.len() + data.len());
 		let mut rng = ark_std::test_rng();
 		let stmt_vec = vec![word.clone(), inp.clone(), oup.clone(),
-			data.clone(), subtbl_id.clone()].concat();
+			data.clone(), subtbl_id.clone(), failed_sigs.clone(),
+			discharged_sigs.clone()].concat();
 
 		let g = g.as_ref();
 		let vec_msg_size = g.get_msg_size();
@@ -286,7 +290,7 @@ pub mod tests_word_extract_gadget{
 			// sed_mapper.rs get_gadgets_stmt_map
 			//1.1 first compute the sizes of all segments
 			let vec_cfgs = vec_cfgs.expect("vec_cfg null!");
-			let mut total_sizes = vec![0usize; 7]; 
+			let mut total_sizes = vec![0usize; 9]; 
 			for i in 0..vec_cfgs.len(){
 				let sizes = vec_cfgs[i].get_to_add_size();
 				// other than 1st gadget, no one adds for word
@@ -295,8 +299,8 @@ pub mod tests_word_extract_gadget{
 					sizes.into_iter()).map(|(x,y)| x+y)
 					.collect::<Vec<usize>>();
 			}
-			let mut seg_starts = vec![0usize; 7];
-			for i in 1..7{ seg_starts[i] = seg_starts[i-1] + total_sizes[i-1];}
+			let mut seg_starts = vec![0usize; 9];
+			for i in 1..9{ seg_starts[i] = seg_starts[i-1] + total_sizes[i-1];}
 
 			//1.2 based on start handle each 
 			let instructions = g.get_stmt_map_instructions();

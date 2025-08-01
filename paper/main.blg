@@ -51,6 +51,9 @@ Warning--empty publisher in SNARKPack
 Warning--empty address in SNARKPack
 Warning--empty publisher in Gonzalez15
 Warning--empty address in Gonzalez15
+Warning--empty publisher in Poseidon
+Warning--empty address in Poseidon
+Warning--page numbers missing in both pages and numpages fields in Poseidon
 Warning--empty publisher in Groth16
 Warning--empty address in Groth16
 Warning--empty publisher in ZkMiddleBox
@@ -83,45 +86,45 @@ Warning--empty publisher in vSQL
 Warning--empty address in vSQL
 Warning--empty publisher in IntegriDB
 Warning--empty address in IntegriDB
-You've used 92 entries,
+You've used 93 entries,
             5981 wiz_defined-function locations,
-            2042 strings with 35027 characters,
-and the built_in function-call counts, 90054 in all, are:
-= -- 9851
-> -- 3312
+            2046 strings with 35195 characters,
+and the built_in function-call counts, 91178 in all, are:
+= -- 9950
+> -- 3367
 < -- 0
-+ -- 1115
-- -- 1134
-* -- 6390
-:= -- 9479
-add.period$ -- 461
-call.type$ -- 92
-change.case$ -- 681
-chr.to.int$ -- 86
-cite$ -- 158
-duplicate$ -- 8138
-empty$ -- 5699
-format.name$ -- 1456
-if$ -- 20500
++ -- 1134
+- -- 1152
+* -- 6483
+:= -- 9596
+add.period$ -- 465
+call.type$ -- 93
+change.case$ -- 691
+chr.to.int$ -- 87
+cite$ -- 162
+duplicate$ -- 8243
+empty$ -- 5773
+format.name$ -- 1478
+if$ -- 20758
 int.to.chr$ -- 8
 int.to.str$ -- 1
-missing$ -- 165
-newline$ -- 809
-num.names$ -- 638
-pop$ -- 3197
+missing$ -- 170
+newline$ -- 816
+num.names$ -- 645
+pop$ -- 3257
 preamble$ -- 2
-purify$ -- 1404
+purify$ -- 1422
 quote$ -- 0
-skip$ -- 3270
+skip$ -- 3306
 stack$ -- 0
-substring$ -- 6302
-swap$ -- 675
+substring$ -- 6355
+swap$ -- 680
 text.length$ -- 0
 text.prefix$ -- 0
 top$ -- 0
-type$ -- 2665
-warning$ -- 66
-while$ -- 480
+type$ -- 2695
+warning$ -- 69
+while$ -- 483
 width$ -- 0
-write$ -- 1820
+write$ -- 1837
 (There was 1 error message)

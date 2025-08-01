@@ -608,6 +608,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 		let wlen = self.max_word_len();
 		assert!(e_wd - s_wd + 1 == wlen);
 		let mut vec_res= vec![];
+
 		//start positions for:
 		// word, inp, oup, data, failed_sigs, discharged_sigs,
 		// subtbl_id_inp, subtbl_id_oup, subtbl_id_data
@@ -632,9 +633,9 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 			let ns = self.gadgets[i].borrow().get_to_add_size();
 			// ns corresponds to 9 elements in sequence below:
 			// word, inp, oup, data
-			// failed_sigs, discharged_sigs
 			// sid_inp, sid_opu, sid_data
-			let ns = vec![0, ns.0, ns.1, ns.2, ns.3, ns.4, ns.0, ns.1, ns.2]; 
+			// failed_sigs, discharged_sigs
+			let ns = vec![0, ns.0, ns.1, ns.2, ns.0, ns.1, ns.2, ns.3, ns.4]; 
 			let mut nxt_starts = seg_starts[seg_starts.len()-1].clone();
 			for j in 0..9 {nxt_starts[j] += ns[j];}
 			seg_starts.push(nxt_starts);

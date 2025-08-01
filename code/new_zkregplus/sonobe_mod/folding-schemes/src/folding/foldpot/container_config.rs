@@ -61,11 +61,11 @@ impl Location{
 		vec![tuple]
 	}
 
-	/// return the 7 segment sizes for 
-	/// [word,inp,oup,data,si_inp, si_oup, si_data]
+	/// return the 9 segment sizes for 
+	/// [word,inp,oup,data,si_inp, si_oup, si_data,failed_sigs,discharged_sigs ]
 	/// This applies to the dest only
 	pub fn get_to_add_size(&self)->Vec<usize>{
-		let mut res = vec![0usize; 7];
+		let mut res = vec![0usize; 9];
 		let (idx,to_add) = if self.dest.is_some(){
 			let (seg_id, _start, len) = self.dest.unwrap();
 			(seg_id, len)
@@ -201,17 +201,17 @@ impl ContainerConfig{
 		}
 	}
 
-	/// return the 7 segment sizes for 
-	/// [word,inp,oup,data,si_inp, si_oup, si_data]
+	/// return the 9 segment sizes for 
+	/// [word,inp,oup,data,si_inp, si_oup, si_data,failed_sigs, discharged_sigs]
 	/// this is for building up statement (consider dest only).
 	pub fn get_to_add_size(&self)->Vec<usize>{
 		match self{
 			ContainerConfig::Column(loc,_,_) => loc.get_to_add_size(),
 			ContainerConfig::Complex(vec,_,_) => {
-				vec.iter().fold(vec![0usize;7], 
+				vec.iter().fold(vec![0usize;9], 
 				|sum: Vec<usize>, container|{
 					let res: Vec<usize> = container.get_to_add_size();
-					assert!(res.len()==7);
+					assert!(res.len()==9);
 					sum.into_iter().zip(res.into_iter()).map(|(x,y)|
 						x+y).collect::<Vec<usize>>()
 				})
@@ -227,7 +227,7 @@ impl ContainerConfig{
 	/// whill have position shifted in the mapper when it invokes
 	/// gen_stmt_map_instructions().
 	pub fn adjust_locations(vec_cfgs: &mut Vec<ContainerConfig>){
-		let mut dst_locs = vec![0usize; 7];
+		let mut dst_locs = vec![0usize; 9];
 		for i in 0..vec_cfgs.len(){
 			let path_i = vec_cfgs[i].get_path();
 			Self::recursive_adjust_location(&path_i, vec_cfgs, &mut dst_locs);
@@ -247,6 +247,7 @@ impl ContainerConfig{
 		dst_locs: &mut Vec<usize>, //the info to update
 	){
 		//1. locate the cfg and its root container index
+		assert!(dst_locs.len()==9);
 		let path = format!("{}", path);
 		let mut idx = 0;
 		let mut cfg = None;

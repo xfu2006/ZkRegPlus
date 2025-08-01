@@ -18260,7 +18260,7 @@ Goal 2: what happens with CP?
 		the map of the output buffer of the sig.rs?
 
 Wed 07/30/2025
-LOC(circ): 2222
+LOC(circ): 2222 -> 2298 (+76)
 LOC(gadget): 13817
 Goal 1. modify the CP component
 	[a] fix legacy code foldpot.rs
@@ -18296,7 +18296,104 @@ Goal 5. Debug
 
 Goal 6. Debug why SED does not have discharged_sig section.
 	[a] in its last compoment need to add DATA_DISCHARGED_SIGS.
-	[b] in the verifier needs to check equivalence of 2 arrays.
+	[b] in the verifier needs to check equivalence of 2 arrays. -> no need
+	[c] unit testing -> DONE
+		-> fix length is 7 but idx is 8 container_cfg:309
+		-> set_locations adjust vec to 9
+		-> get_to_add_size 
+		-> another 7 const issue -> 9.
+		-> word_extract.rs:308
+		-> traits.rs:460
+		-> fix test_gadget_adv
+	[d] regression test
+
+Goal 7. fix dfa_mapper
+	[a] add IDX_DISCHARGED_SIGS
+	[b] no need to update validate function
+	[c] unit testing
+	[d] regression test
+		-> dfa_mapper len 6
+		-> sigs.rs:699 range 6375 out of range for slice of length 6372
+		 -> sigma_ir1cs::gen_witness
+		 	-> gen_msg3
+		-> it looks like the stmt is missing 3 elements but
+			the idx is built right
+			-> in StatementInst dump the total len
+
+Goal 8. debug cp component first
+	[a] check if it reports corretly the sigs oup
+		-> it did not even hits sigs.
+			driver.rs:1134 
+				=> composable_gadget_mapper:405
+					=> sigma_ir1cs:1050
+		-> 6101 print out components of cp composite component
+			=> -> gen_statemnt_component -> returns vec of 2 zeros for
+			failed_sigs
+		-> check how cp build_statement_comp()
+	[b] it lookd likr cp does not report sig_dfa1
+		So there should be some other systematic ways of reporting
+		sigs will will fail sigs for sure.
+
+Thursday 07/31/2025
+LOC(circ): 2298 
+LOC(gadget): 13817
+Goal 1. fix stmt_len too short.
+	[a] observe the code: sed1: failed_size0, dischared_len: 2;
+		cp: failed_size2, dischared: sgs 0, failed: failed size 0: discharged:1
+		=> they are correct.
+	[b] but when it tries to sigs::gen_msg3 it fails out of range
+		sigs:699, there could be two reasons: (1) stmt too short
+		(2) idx not right.
+	[c] just do the cp component and see -> could repeat err
+		what about [dc] only? -> breaks on si-no copy, failing check
+			si_nibbles
+	[d] this more likely shows an issue of sigma_ir1cs assembly
+		statement -> debug the cp1 first
+
+Goal 2. Debug the cp1 (sigs:699) allocation problem
+	[a] inspect build_statment_comp and its call in composite_gadget_mapper
+		it does report that cfg and stmt_vec len are the same: 6372.
+		-> check how cfg is generated -> looks like it generates ok.
+	[b] check how sigs get idx 9675 which is 3 larger than len
+		gen_msg3(... stmt_idx)
+		<= gen_gadget_stmt_map
+			(1) check validity of vec_allocs
+			(2) check how it's assigned -> fix sed and dfa gen_gadget_stmt_map
+
+Goal 3. now fix sigs.rs: 701
+	[a] looks like get_msg.0 is not right-> fixed
+	[b] cp_mapper:479 -> FIXED
+
+Goal 4. now fix word_extract.rs:171
+	[a] regressoin testing
+	-> fix the call of test_gadget_adv
+	[b] dbg 6671: it looks like the subtbl_id table
+		is shifted 7 places back (i.e., idx should plus +)
+		some misplaced values: 
+			1879048194, -> RANGE2 
+			268435463, (CRIT_STATES)
+			0, => don't care
+		but notice that the earlier checks pass (dbg 671): it's pure 0
+			so it might be working on a zero vector
+	[c] so sid is not retrieved right, check if it's generated right?
+		-> get_gadgets_stmt_map fix mapping
+
+Goal 5. new bug: fsm.rs:192
+	[a] observation: only the 1st entry different!
+	[b] print out 6101 and 6201 compare (only 1st entry different)
+		-> DEBUG USE 6201: ch: 6, st1: 4, st2: 2, exp_trans: 8262, trans: 8278
+		-> DEBUG USE 6101: ch: 6, st1: 4, st2: 1, => trans: 8278
+-> looks like state 1 is not preprocessed right?
+
+Friday 08/01/2025
+LOC (circ): 2304
+LOC (gadget): 13842
+Goal 1. debug fsm.rs
+	[a] check dump again and analyze 6201 vs 6101
+Goal 1. 
+
+
+
 
 --- TODO ---
 Goal 3.  in sigma_ir1cs add the check

@@ -337,7 +337,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		prev_adv: Option<Rc<dyn NdAdvice>>)
 		->Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>{
 		//1. expand to full length
-		let zero = F::zero();
+		let (zero,one) = (F::zero(),F::one());
 		let mut rem_word = vec![F::zero(); self.max_word_len() - word.len()];
 		let mut word_seg = word.clone();
 		word_seg.append(&mut rem_word);
@@ -345,7 +345,9 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		//2. build the capaicty and advice
 		let capacity = &self.capacity;
 		let init_state = F::from(self.clamdb.dfa_crit.init_state as u32);
-		let inp_state = prev_adv.as_ref().map_or(init_state, |adv|{
+		//note inp_state if init, is adjusted by one
+		//for subsequent cases, output are already adjusted by 1.
+		let inp_state = prev_adv.as_ref().map_or(init_state+one, |adv|{
 			let adv= adv.as_any().downcast_ref::<CpAdvice<F>>(); 
 			let dfa_crit_advice = &adv.unwrap().dfa_crit_advice;
 			let last_oup_state = dfa_crit_advice.states[
@@ -401,11 +403,11 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		let (s_inp, _e_inp) = vec_alloc[1];
 		let (s_oup, _e_oup) = vec_alloc[2];
 		let (s_data, _e_data) = vec_alloc[3];
-		let (s_subtbl_data, _e_subtbl_data) = vec_alloc[4];
-		let (s_failed_sigs, _e_failed_sigs) = vec_alloc[5];
-		let (_s_discharged_sigs, _e_discharged_sigs) = vec_alloc[6];
-		let (s_subtbl_inp, _e_subtbl_inp) = vec_alloc[7];
-		let (s_subtbl_oup, _e_subtbl_oup) = vec_alloc[8];
+		let (s_subtbl_inp, _e_subtbl_inp) = vec_alloc[4];
+		let (s_subtbl_oup, _e_subtbl_oup) = vec_alloc[5];
+		let (s_subtbl_data, _e_subtbl_data) = vec_alloc[6];
+		let (s_failed_sigs, e_failed_sigs) = vec_alloc[7];
+		let (_s_discharged_sigs, _e_discharged_sigs) = vec_alloc[8];
 		let wlen = self.max_word_len();
 		assert!(e_wd - s_wd + 1 == wlen);
 		let mut vec_res= vec![];
@@ -459,7 +461,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		vec_res.push(pack_crit);
 
 		//4. statement for sigs
-		// [inp; oup; data; sub_tbl]
+		// [inp; oup; data; sub_tbl; failed_sigs]
 		let sig_cap = SigGadgetCapacity{
 			final_states_buf_capacity: self.capacity.final_states_len,
 			join_buf_capacity: self.capacity.join_buf_capacity,
@@ -476,7 +478,13 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		#[cfg(test)]{
 			let sig_gadget = &self.gadgets[3];
 			let (stmt_len,_,_,_) = sig_gadget.borrow().get_msg_size();
-			assert!(stmt_len == slen + slen + sig_data_len+olen + sig_st_len + sig_st_oup_len);
+			assert!( stmt_len == 
+				slen + slen + 
+				sig_data_len+olen + 
+				sig_st_len + 
+				sig_st_oup_len + 
+				slen //the last failed_sig part
+				);
 		}
 
 
@@ -485,10 +493,9 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 			(s_oup+1, s_oup+1 + slen-1),  //oup
 			(s_data+3*nlen, s_data+3*nlen + olen-1), //the final states
 			(sig_data_start, sig_data_start +  sig_data_len-1), //data without final states input
-			(s_failed_sigs, s_failed_sigs + self.capacity.sig_buf_capacity-1),
-				//the failed sigs
 			(sig_st_start, sig_st_start + sig_st_len-1), //subtbl_ids (data part)
 			(sig_st_oup_start, sig_st_oup_start+ sig_st_oup_len-1),//st_oup
+			(s_failed_sigs, e_failed_sigs), //failed sigs
 		];
 		vec_res.push(sigs_range);
 
