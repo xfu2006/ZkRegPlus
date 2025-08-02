@@ -735,6 +735,8 @@ impl <F:PrimeField> StepQueue<F>{
 	///   be true)
 	/// b_step indicates whether to add an step column
 	/// b_subsig: indiates whether to add_subsig column column
+	/// NOTE: for step and subsig (and their IDs), regardless if
+	/// b_inp or b_oup is set, they are stored in DATA(SI_DATA).
 	pub fn to_container(&self, 
 		name: &str, 
 		b_inp: bool, 
@@ -798,6 +800,7 @@ impl <F:PrimeField> StepQueue<F>{
 		let res = Container::new(name); 
 		let seg = if b_inp {IDX_INP} else if b_oup {IDX_OUP} else {IDX_DATA};
 		let si_seg = if b_inp {IDX_SI_INP} else if b_oup {IDX_SI_OUP} else {IDX_SI_DATA};
+		
 		assert!(vec_encoded.len()==n && vec_locs.len()==n);
 		res.borrow_mut().add_col(Col::new(vec_encoded,"encoded",seg));
 		res.borrow_mut().add_col(Col::new(vec_locs, "locs", seg));
@@ -806,17 +809,19 @@ impl <F:PrimeField> StepQueue<F>{
 		res.borrow_mut().add_col(Col::new(vec![F::from(RANGE2);n],
 			"si_locs",si_seg));
 
-		if b_step{
+		if b_step{//regardless of inp/oup, they are always in DATA
 			assert!(vec_step.len()==n && vec_sid_step.len()==n);
-			res.borrow_mut().add_col(Col::new(vec_step,"step",seg));
-			res.borrow_mut().add_col(Col::new(vec_sid_step, "si_step",si_seg));
+			res.borrow_mut().add_col(Col::new(vec_step,"step",IDX_DATA));
+			res.borrow_mut().add_col(Col::new(vec_sid_step, "si_step",IDX_SI_DATA));
 		}
 
 		if b_subsig{
 			let vec_sid_subsig = vec![F::from(RANGE2); n];
 			assert!(vec_subsigs.len()==n && vec_sid_subsig.len()==n);
-			res.borrow_mut().add_col(Col::new(vec_subsigs,"subsig",seg));
-			res.borrow_mut().add_col(Col::new(vec_sid_subsig, "si_subsig",si_seg));
+			res.borrow_mut().add_col(Col::new(vec_subsigs,"subsig",
+				IDX_DATA));
+			res.borrow_mut().add_col(Col::new(vec_sid_subsig, "si_subsig",
+				IDX_SI_DATA));
 		}
 
 
@@ -2034,12 +2039,15 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			fwd_prf.dump();
 		}
 
-		let ct_sq_inp = inp_step_queue.to_container("sq_inp",true,false,
-			false, false, &subsig_store_info);
-		let ct_sq_to_add = sq_to_add.to_container("sq_to_add",false,true,
-			false, false, &subsig_store_info);
-		let ct_sq_res = sq_res.to_container("sq_res", false, true, false, false,
+		let ct_sq_inp = inp_step_queue.to_container("sq_inp",true,//inp
+			false,  //b_step
+			false,  //b_oup
+			false,  //b_subsig
 			&subsig_store_info);
+		let ct_sq_to_add = sq_to_add.to_container("sq_to_add",false,
+			true, false, false, &subsig_store_info);
+		let ct_sq_res = sq_res.to_container("sq_res", false, 
+			true, false, false, &subsig_store_info);
 		res.borrow_mut().add_container(ct_sq_inp.clone()); //low cost, rc clone
 		res.borrow_mut().add_container(ct_sq_to_add.clone());
 		res.borrow_mut().add_container(ct_sq_res.clone());
@@ -2119,7 +2127,11 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 
 		let ct_sq_to_del= sq_to_del.to_container("sq_to_del",false,true,false,false,
 			&subsig_store_info);
-		let ct_sq_res2 = sq_res.to_container("sq_res2",false,true,true,true,
+		let ct_sq_res2 = sq_res.to_container("sq_res2",
+			false,//inp
+			true, //b_step (but it's saved in DATA)
+			true, //oup
+			true, //b_subsigs (saved in DATA)
 			&subsig_store_info);
 		res.borrow_mut().add_container(ct_sq_to_del.clone());
 		res.borrow_mut().add_container(ct_sq_res2.clone());
@@ -3201,7 +3213,8 @@ impl <F:PrimeField> SigmaGadget<F> for DischargeAdvGadget<F>{
 		let cfg = self.get_container_cfg().expect("container cfg not set!");
 		let to_add = cfg.get_to_add_size();
 		for i in 0..3 {assert!(to_add[i+1] == to_add[4+i]);}
-
+		
+		assert!(to_add[IDX_INP]==to_add[IDX_OUP]);
 		(to_add[IDX_INP], to_add[IDX_OUP], to_add[IDX_DATA],0,0)
 	}
 

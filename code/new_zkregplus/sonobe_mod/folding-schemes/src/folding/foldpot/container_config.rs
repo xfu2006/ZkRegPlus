@@ -317,8 +317,8 @@ impl ContainerConfig{
 	pub fn dump(&self, step: usize){
 		let indent_str = std::iter::repeat(" ").take(step).collect::<String>();
 		match self{
-			ContainerConfig::Column(_,s,_) 
-				=> println!("{}{}", indent_str, s),
+			ContainerConfig::Column(loc,s,_) 
+				=> println!("{}{}(seg: {})", indent_str, s, loc.src.1),
 			ContainerConfig::Complex(vec, name, _)=>{
 				println!("{}{}", indent_str, name);
 				for x in vec{ x.dump(step+1); }

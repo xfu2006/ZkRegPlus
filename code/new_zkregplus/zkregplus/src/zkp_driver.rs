@@ -209,8 +209,8 @@ where C: CurveGroup<ScalarField=F>,
 
 	//vec![ vec![c4,c3], vec![c2,c1] ]
 	//vec![ vec![_c2,_c1] ] //for saving cost
-	vec![ vec![c1] ] //for saving cost
-	//vec![ vec![sc1] ] //for saving cost
+	//vec![ vec![c1] ] //for saving cost
+	vec![ vec![sc1] ] //for saving cost
 	//vec![ vec![dc1] ] //for saving cost
 	//vec![ vec![c1,sc1,dc1] ] //for saving cost
 }

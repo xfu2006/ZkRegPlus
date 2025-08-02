@@ -194,11 +194,15 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 		Vec<usize> //optional map of CyclePairInput
 	){
 		//1. collect and prep the starting positions
+		//vec_size is 5 elements for size of
+		//[inp, oup, data, failed_sigs, discharged_sigs]
 		let vec_sizes = self.vec_components.iter().map(|c|
 			c.borrow().get_sizes()).collect::<Vec<Vec<usize>>>();
 		let mut vec_starts:Vec<Vec<usize>> = vec![vec![0,0,0,0,0]];
 		for i in 0..vec_sizes.len(){
 			let cur_size = &vec_sizes[i];
+			assert!(cur_size[0]==cur_size[1], 
+				"inp!=oup size for component: {}", i);
 			assert!(cur_size.len()==5, "expecting 5 elements");
 			let cur_start = &vec_starts[vec_starts.len()-1];
 			let new_start = cur_size.iter().zip(cur_start.iter()).map(|(x,y)|
@@ -333,6 +337,7 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 
 		let inp = vec_inp.concat();
 		let oup = vec_oup.concat();
+		assert!(inp.len()==oup.len());
 		let data = vec_data.concat();
 		let failed_sigs = vec_failed_sigs.concat();
 		let discharged_sigs = vec_discharged_sigs.concat();
@@ -352,7 +357,6 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 			assert!(data.len()==cfg.data_size);
 			assert!(lkup_share_size==cfg.lookup_share_size);
 			assert!(failed_sigs.len()==cfg.failed_sigs_size);
-			println!("DEBUG USE 6301: composite_mapper: {}, failed_size: {}, cfg.failed_size: {}, discharged_sigs.len: {}, cfg: dis_len: {}, failed_sigs: {:#?}, discharged_sigs: {:#?}", self.name, failed_sigs.len(), cfg.failed_sigs_size, discharged_sigs.len(), cfg.discharged_sigs_size, failed_sigs, discharged_sigs);
 			assert!(discharged_sigs.len()==cfg.discharged_sigs_size);
 		}
 
@@ -436,11 +440,9 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 				).collect::<Vec<Option<Rc<dyn NdAdvice>>>>()
 
 		}else{vec![None; self.vec_components.len()]};
-		println!("DEBUG USE 6105: step 1");
 
 		let res= self.vec_components.iter().zip(vec_prev_adv.into_iter()).
 			map(|(c,a)|{
-				println!("DEBUG USE 6105: step 2");
 				let res = c.borrow()
 					.gen_nd_advice_no_limit(&word, &word_info, a);
 				if res.is_some(){
@@ -449,13 +451,11 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 			}
 		).collect::<Vec<(Option<Rc<dyn Capacity>>,Option<Rc<dyn NdAdvice>>)>>();
 
-		println!("DEBUG USE 6105: step 3");
 		let vec_cap = res.iter().map(|(a,_b)| a.clone().expect("cap null"))
 			.collect();
 		let vec_adv = res.iter().map(|(_a,b)| b.clone().expect("adv null"))
 			.collect();
 
-		println!("DEBUG USE 6105: step 4 => Generate CompositeAdvice");
 		Some( ( 
 			Rc::new(CompositeCapacity{vec_cap}),
 			Rc::new(CompositeAdvice{vec_adv})

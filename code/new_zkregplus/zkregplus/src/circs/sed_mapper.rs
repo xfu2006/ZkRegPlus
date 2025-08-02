@@ -524,8 +524,6 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 				&format!("Cant find sig {}", sig_name))
 		}; //sig_id of the sig being discarged. store_id==0 is `all`
 		let pm_fsm_id = ClamavDB::<F>::pm_acdfa_id(sig_id, self.b_igc); 
-		println!("DEBUG USE 301: store_id: {}, word_info: {:?}", self.store_id, word_info);
-		println!("DEBUG USE 302: bundle.vec_sig_names: {:?}", bundle.vec_sig_names);
 
 		
 		//3. generate the inputs (or its default
@@ -548,11 +546,11 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 				let adv= adv.as_any().downcast_ref::<SedAdvice<F>>(); 
 				let fsm_adv_advice= &adv.unwrap().fsm_adv_advice;
 				let states = fsm_adv_advice.stmt_container.borrow()
-					.get_container("states").expect("no states")
+					.search_container("fsm_adv_stmt fsm_acc states").unwrap()
 					.borrow().to_vec();
 				let last_oup_state = states[states.len()-1]; //adjusted
 				let locs = fsm_adv_advice.stmt_container.borrow()
-					.get_container("locs").expect("no locs")
+					.search_container("fsm_adv_stmt fsm_acc locs").unwrap()
 					.borrow().to_vec();
 				let last_loc = locs[locs.len()-1];
 				let da_adv = &adv.unwrap().discharge_adv_advice;
@@ -610,10 +608,17 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 		let mut vec_res= vec![];
 
 		//start positions for:
-		// word, inp, oup, data, failed_sigs, discharged_sigs,
+		// word, inp, oup, data, 
 		// subtbl_id_inp, subtbl_id_oup, subtbl_id_data
+		// failed_sigs, discharged_sigs,
 		// where subtbl_xyz matches syz size
-		let mut seg_starts = vec![vec![s_wd, s_inp, s_oup, s_data, s_failed_sigs, s_discharged_sigs, s_subtbl_inp, s_subtbl_oup, s_subtbl_data]];
+		let mut seg_starts = vec![
+			vec![
+				s_wd, s_inp, s_oup, s_data, 
+				s_subtbl_inp, s_subtbl_oup, s_subtbl_data,
+				s_failed_sigs, s_discharged_sigs, 
+			]
+		];
 
 		//2. based on seg_starts construct map instruction
 		for i in 0..self.gadgets.len(){
@@ -637,6 +642,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 			// failed_sigs, discharged_sigs
 			let ns = vec![0, ns.0, ns.1, ns.2, ns.0, ns.1, ns.2, ns.3, ns.4]; 
 			let mut nxt_starts = seg_starts[seg_starts.len()-1].clone();
+			assert!(ns.len()==nxt_starts.len() && ns.len()==9);
 			for j in 0..9 {nxt_starts[j] += ns[j];}
 			seg_starts.push(nxt_starts);
 			vec_res.push(my_maps);
@@ -646,7 +652,8 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 		vec_res
 	}
 
-	/// return the inp, oup, data and 3 subtable segments. (6 vecs)
+	/// return the inp, oup, data and 3 subtable segments, and
+	/// then failed_sigs and discharge_sigs. (8 vecs)
 	/// the id, cfg, and comp_mapping helps it to locate the information
 	/// it needs in prev_stmt which has the same structure as specified
 	/// in StatementConfig. Note we pass the max len word, padded.

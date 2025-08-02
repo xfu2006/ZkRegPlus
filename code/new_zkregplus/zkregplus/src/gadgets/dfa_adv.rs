@@ -1043,7 +1043,7 @@ impl <F:PrimeField> SigmaGadget<F> for DfaAdvGadget<F>{
 		let cfg = self.get_container_cfg().expect("container cfg not set!");
 		let to_add = cfg.get_to_add_size();
 		for i in 0..3 {assert!(to_add[i+1] == to_add[4+i]);}
-
+		assert!(to_add[IDX_INP]==to_add[IDX_OUP]);
 		(to_add[IDX_INP], to_add[IDX_OUP], to_add[IDX_DATA],
 			0, self.capacity.sigs)
 	}

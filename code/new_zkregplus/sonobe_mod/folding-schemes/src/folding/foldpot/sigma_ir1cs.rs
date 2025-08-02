@@ -2757,6 +2757,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			F::from(self.stmt_config.input_size as u32))?;
 		let diff1 = cfg_input_size - &si.act_input_size;
  		diff1.enforce_equal(&wtns_var.unused_input_size)?;
+
 		let cfg_output_size = FpVar::<F>::new_constant(cs.clone(),
 			F::from(self.stmt_config.output_size as u32))?;
 		let diff2 = cfg_output_size - &si.act_output_size;
@@ -2767,6 +2768,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			assert!(diff2.value().unwrap()
 				==wtns_var.unused_output_size.value().unwrap());
 		}
+
 		let fq_bits = <<C as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as usize;
 		let zi_part2 = ZiPartTwoInstVar::from_vec(&wtns_var.zi_part2, fq_bits); 
 		let ch = zi_part2.ch.clone();
@@ -2800,8 +2802,8 @@ where 	C: CurveGroup<ScalarField=F>,
 		let eq_inp_oup = sum_inp.is_eq(&sum_oup)?;
 		let final_step = b_last.and(&si.word_id.is_eq(&zero_var)?.not())?;
 		let not_final_step = final_step.not();
-		//println!("DEBUG USE 201: b_last: {}, not_final_step: {}, word_id: {}, total_words: {}", b_last.value()?, not_final_step.value()?, si.word_id.value()?, si.total_words.value()?);
 		let io_res = not_final_step.or(&eq_inp_oup)?;
+		//println!("DEBUG USE 201: b_last: {}, not_final_step: {}, word_id: {}, total_words: {}, eq_inp_oup: {}, sum_inp: {}, sum_oup: {}", b_last.value()?, not_final_step.value()?, si.word_id.value()?, si.total_words.value()?, eq_inp_oup.value()?, sum_inp.value()?, sum_oup.value()?);
 		#[cfg(test)]{
 			assert!(io_res.value()?, "io not match at final step!");
 		}

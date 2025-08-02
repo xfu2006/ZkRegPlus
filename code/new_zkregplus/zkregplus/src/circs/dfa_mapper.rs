@@ -195,7 +195,6 @@ impl <F:PrimeField> DfaAdvice<F>{
 			sig_to_id: &HashMap<String,usize>, //map from sig to id
 			discharge_info: &Vec<DischargeSigInfo>, //info: subsigs to process
 		)->Self{
-		println!("DEBUG USE 6701.1: INTO of dfa_advice::new()");
 		//1. build the word extraction gadget's advice
 		let wd_extract_advice = WordExtractAdvAdvice::<F>
 			::new(word_seg, actual_size, true); //use char map mode for sid
@@ -278,7 +277,6 @@ impl <F:PrimeField> DfaAdvice<F>{
 			Rc::new(dfa_adv_advice.clone()),
 		];
 
-		println!("DEBUG USE 6701.2: out of dfa_advice::new()");
 		Self{wd_extract_advice, dfa_adv_advice, vec_advices}
 	}
 }
@@ -389,10 +387,6 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaCompo
 		prev_adv: Option<Rc<dyn NdAdvice>>
 	) ->Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>{
 		//1. expand word to full length
-		println!("DEBUG USE 6016: in DfaMapper: generate_nd_advice");
-		//REMOVE LATER -----------------
-		println!("DEBUG USE 6017: prev_adv: {:#?}", prev_adv);
-		//REMOVE LATER ----------------- ABOVE
 		let mut rem_word = vec![F::zero(); self.max_word_len() - word.len()];
 		let mut word_seg = word.clone();
 		word_seg.append(&mut rem_word);
@@ -405,7 +399,6 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaCompo
 			vec_sigs_name.contains(sid)
 		}).map(|sig| sig.clone()).collect::<Vec<Arc<ClamavSig>>>();
 		let discharge_info = word_info.vec_dfa_sigs_info.clone();
-		println!("DEBUG USE 6111: discharge_info for dfa: {:#?}", discharge_info);
 
 		//3. build a dummy advice first to get the vec_dfa
 		let n = self.capacity.subsigs;
@@ -474,9 +467,13 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaCompo
 		// word, inp, oup, data, failed_sigs, discharged_sigs,
 		// subtbl_id_inp, subtbl_id_oup, subtbl_id_data
 		// where subtbl_xyz matches syz size
-		let mut seg_starts = vec![vec![s_wd, s_inp, s_oup, s_data, 
-			s_failed_sigs, s_discharged_sigs, 
-			s_subtbl_inp, s_subtbl_oup, s_subtbl_data]];
+		let mut seg_starts = vec![
+			vec![
+				s_wd, s_inp, s_oup, s_data, 
+				s_subtbl_inp, s_subtbl_oup, s_subtbl_data,
+				s_failed_sigs, s_discharged_sigs, 
+			]
+		];
 
 		//2. based on seg_starts construct map instruction
 		for i in 0..self.gadgets.len(){
@@ -500,6 +497,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaCompo
 			// sid_inp, sid_opu, sid_data
 			let ns = vec![0, ns.0, ns.1, ns.2, ns.0, ns.1, ns.2, ns.3, ns.4]; 
 			let mut nxt_starts = seg_starts[seg_starts.len()-1].clone();
+			assert!(ns.len()==nxt_starts.len() && ns.len()==9);
 			for j in 0..9 {nxt_starts[j] += ns[j];}
 			seg_starts.push(nxt_starts);
 			vec_res.push(my_maps);
