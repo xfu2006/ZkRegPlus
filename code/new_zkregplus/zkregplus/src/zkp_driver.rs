@@ -1,5 +1,5 @@
 /* ZkregPlus Main Driver
-	Created: 01/31/205
+	Created: 01/31/2025
 */
 
 //use std::collections::{HashSet};
@@ -36,7 +36,7 @@ use folding_schemes::{
 	folding::{
 		circuits::{CF1, CF2, CF3},
 		foldpot::{
-			sigma_ir1cs::{LookupTableTwoCol_Inst,SigmaIR1CS_Inst,WordInfo,SigmaIR1CS,LookupTableTwoCol,GadgetMapper},
+			sigma_ir1cs::{LookupTableTwoCol_Inst,SigmaIR1CS_Inst,WordInfo,SigmaIR1CS,LookupTableTwoCol},
 			from_field::{AffineFromField},
 			driver::{foldpot_main},
 		}
@@ -146,8 +146,8 @@ where C: CurveGroup<ScalarField=F>,
 	let _cg4 = CompositeGadgetMapper::<F,LK<F>>::new("w4",vec![Rc::new(RefCell::new(comp4))]); 
 	let _cg3 = CompositeGadgetMapper::<F,LK<F>>::new("w3",vec![Rc::new(RefCell::new(comp3))]); 
 	let _cg2 = CompositeGadgetMapper::<F,LK<F>>::new("w2",vec![Rc::new(RefCell::new(comp2))]); 
-	let cg1 = CompositeGadgetMapper::<F,LK<F>>::new("cp1",vec![Rc::new(RefCell::new(comp1))]); 
-	println!("DEBUG USE 1001: lkup_len: {}, avg_lk_wd: {}, comp1 share size: {}", lkup_len, avg_lk_wd, cg1.max_word_len()*avg_lk_wd);
+	//let cg1 = CompositeGadgetMapper::<F,LK<F>>::new("cp1",vec![Rc::new(RefCell::new(comp1))]); 
+	//println!("DEBUG USE 1001: lkup_len: {}, avg_lk_wd: {}, comp1 share size: {}", lkup_len, avg_lk_wd, cg1.max_word_len()*avg_lk_wd);
 
 	//2. create sed components
 	let max_word = 1;
@@ -161,16 +161,16 @@ where C: CurveGroup<ScalarField=F>,
 	let scap1= SedCapacity::new(max_word, db.dfa_crit.state_part_bits, subsigs, 
 		avg_pat_per_sig, avg_active_pat_per_sig, perc_pats_in_trace, sigs, perc_comp_subsigs);
 	let scomp1 = SedComponentMapper::<F,LK<F>>::new(scap1, db.clone(), b_igc, store_id);
-	let scg1 = CompositeGadgetMapper::<F,LK<F>>::new("sed1",vec![Rc::new(RefCell::new(scomp1))]); 
+	//let scg1 = CompositeGadgetMapper::<F,LK<F>>::new("sed1",vec![Rc::new(RefCell::new(scomp1))]); 
 
 
-	let lk_share1 = cg1.max_word_len()*avg_lk_wd;
-	let lk_share2 = _cg2.max_word_len()*avg_lk_wd;
-	let c1 = SigmaIR1CS_Inst::<F,C,CS,LK<F>,
-		CompositeGadgetMapper<F,LK<F>>
-		,false>
-		::new_adv(format!("c1"), poseidon_config.clone(), 
-			Rc::new(RefCell::new(cg1)), false, lk_share1).expect("c1");
+	let lk_share1 = max_word*avg_lk_wd;
+	let lk_share2 = max_word*2*avg_lk_wd;
+	//let c1 = SigmaIR1CS_Inst::<F,C,CS,LK<F>,
+	//	CompositeGadgetMapper<F,LK<F>>
+	//	,false>
+	//	::new_adv(format!("c1"), poseidon_config.clone(), 
+	//		Rc::new(RefCell::new(cg1)), false, lk_share1).expect("c1");
 	let _c2 = SigmaIR1CS_Inst::<F,C,CS,LK<F>,
 		CompositeGadgetMapper<F,LK<F>>
 		,false>
@@ -188,31 +188,43 @@ where C: CurveGroup<ScalarField=F>,
 			Rc::new(RefCell::new(_cg4)), false, lk_share2).expect("c4");
 
 	//4. create sed instances
-	let sc1 = SigmaIR1CS_Inst::<F,C,CS,LK<F>,
-		CompositeGadgetMapper<F,LK<F>>
-		,false>
-		::new_adv(format!("sc1"), poseidon_config.clone(), 
-			Rc::new(RefCell::new(scg1)), false, lk_share1).expect("sc1");
+	//let sc1 = SigmaIR1CS_Inst::<F,C,CS,LK<F>,
+	//	CompositeGadgetMapper<F,LK<F>>
+	//	,false>
+	//	::new_adv(format!("sc1"), poseidon_config.clone(), 
+	//		Rc::new(RefCell::new(scg1)), false, lk_share1).expect("sc1");
 
 	//5. create dfa components and instances
 	let sigs=1;
 	let subsigs=2;
 	let d_cap1 = DfaCapacity::new(max_word, sigs, subsigs);
 	let dcomp1 = DfaComponentMapper::<F,LK<F>>::new(d_cap1, db.clone());
-	let dcg1 = CompositeGadgetMapper::<F,LK<F>>::new("d1",
-		vec![Rc::new(RefCell::new(dcomp1))]);
-	let dc1 = SigmaIR1CS_Inst::<F,C,CS,LK<F>,
+	//let dcg1 = CompositeGadgetMapper::<F,LK<F>>::new("d1",
+	//	vec![Rc::new(RefCell::new(dcomp1))]);
+	//let dc1 = SigmaIR1CS_Inst::<F,C,CS,LK<F>,
+	//	CompositeGadgetMapper<F,LK<F>>
+	//	,false>
+	//	::new_adv(format!("dfa1"), poseidon_config.clone(), 
+	//		Rc::new(RefCell::new(dcg1)), false, lk_share1).expect("dc1");
+
+	let hybrid_cgm1 = CompositeGadgetMapper::<F,LK<F>>::new("hybrid_cgm1",
+		vec![
+			Rc::new(RefCell::new(comp1)),
+			Rc::new(RefCell::new(scomp1)),
+			Rc::new(RefCell::new(dcomp1)),
+		]);
+	let hc1= SigmaIR1CS_Inst::<F,C,CS,LK<F>,
 		CompositeGadgetMapper<F,LK<F>>
 		,false>
-		::new_adv(format!("dfa1"), poseidon_config.clone(), 
-			Rc::new(RefCell::new(dcg1)), false, lk_share1).expect("dc1");
+		::new_adv(format!("hc1"), poseidon_config.clone(), 
+			Rc::new(RefCell::new(hybrid_cgm1)), false, lk_share1).expect("hc1");
 
 	//vec![ vec![c4,c3], vec![c2,c1] ]
 	//vec![ vec![_c2,_c1] ] //for saving cost
 	//vec![ vec![c1] ] //for saving cost
-	vec![ vec![sc1] ] //for saving cost
+	//vec![ vec![sc1] ] //for saving cost
 	//vec![ vec![dc1] ] //for saving cost
-	//vec![ vec![c1,sc1,dc1] ] //for saving cost
+	vec![ vec![hc1] ] //compsite of cg, sed, and dfa
 }
 
 

@@ -18453,9 +18453,9 @@ Goal 4. Fix bug cannot find column states.
 	[c] try the sc component again
 
 Saturday 08/02/2025
-LOC (sonobe): 18147
-LOC (circ): 2317
-LOC (gadget): 13839
+LOC (sonobe): 18147 
+LOC (circ): 2317 -> 2311 (-3)
+LOC (gadget): 13839 -> 13854 (+15)
 Goal 1. check why sigma_ir1cs fails at the last step.
 	[a] add more checks
 	[b] remove additional checks 4.x and 201
@@ -18483,9 +18483,35 @@ Goal 1. check why sigma_ir1cs fails at the last step.
 	-> note: recover sq_res2
 Goal 2. fix the sq_res bug
 	-> [a] just need to output the result as output?
+	-> solved re-run
+	-> remove all messages
 
+Sunday 08/03/2025
+Goal 1. put all components together
+	[a] error when put c1, sc1, and dc1 together downcast err
+	[b] read about SgimaIR1CS construction
+		-> Sigma_IR1CS has one gadget mapper which manages 
+			the gadgets
+		-> foldpot_main takes 2d vec, it tries it layer by layer
+			in each layer find the first satisfying circ.
 
-	TODO: remove 6501.1 and 6501.2, 6501.3, 6501.4 
+Goal 2. check how words are distributed to devices
+	-> each component is passed with the word
+	-> word is only copied once into statement instance 
+		all other sections are concatenated
+	-> rg_word is always the same for cp, sed and dfa components
+	-> so that looks fine
 
+Goal 3. gen_nd_advice
+	[a] look at what sed is doing
+	[b] looks like passing is fine
 
+Goal 4. check why cp matter compalins
+	[a] analyze inp_len of cp_mapper
+	[b] inp_len: 3 first time but second time 55?
+	[c] takes the inp_len out of oup buffer seems fine
+	[d] todo: remove dbg msg 6001
+	[e] regression test
+	=> good working now.
 
+-- TODO -- add the merge check of failed and discharged sigs

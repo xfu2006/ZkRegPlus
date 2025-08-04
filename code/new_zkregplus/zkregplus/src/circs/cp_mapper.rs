@@ -528,8 +528,10 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		let olen = self.capacity.final_states_len;
 		let sizes = self.get_sizes();
 		let (inp_len, oup_len, data_len) =  (sizes[0], sizes[1], sizes[2]);
+		assert!(inp_len==oup_len);
 		let inp = if prev_stmt.is_some(){
-			prev_stmt.as_ref().unwrap().oup_buf.clone()
+			//we are assuming that CP is ALWAYS the first component included!
+			prev_stmt.as_ref().unwrap().oup_buf[0..oup_len].to_vec()
 		}else {//construct the first buf
 			vec![
 				vec![advice.dfa_crit_advice.states[0]], //dfa_crit
