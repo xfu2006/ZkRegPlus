@@ -141,6 +141,8 @@ impl <F:PrimeField> CpAdvice<F>{
 			map_crit_pat: &HashMap<String,Vec<String>>,
 			sig_to_id: &HashMap<String,usize>,
 			fsm_id: usize, //e.g., CRIT_INIT or CRIT_IGC_INIT
+			vec_sig_id_no_crit_pat: &Vec<usize>, //the pats to include 
+					//in failed_sigs by default
 		)->Self{
 		//1. build the word extraction gadget's advice
 		let inp_state = inp_buf[0].clone();
@@ -169,12 +171,14 @@ impl <F:PrimeField> CpAdvice<F>{
 		let sig_cap = SigGadgetCapacity{
 			final_states_buf_capacity: capacity.final_states_len,
 			join_buf_capacity: capacity.join_buf_capacity,
-			sig_buf_capacity: capacity.sig_buf_capacity
+			sig_buf_capacity: capacity.sig_buf_capacity,
+			count_sig_no_crit_pat: vec_sig_id_no_crit_pat.len(),
 		};
 		let inp_sigs = inp_buf[1..capacity.sig_buf_capacity+1].to_vec();
+		
 		let sigs_advice = GetSigAdvice::<F>::new(
 			&packfinal_crit_advice.oup_states, &inp_sigs, sig_cap, 
-			dfa_crit, map_crit_pat, sig_to_id, fsm_id);
+			dfa_crit, map_crit_pat, sig_to_id, fsm_id, vec_sig_id_no_crit_pat);
 		Self{
 			wd_extract_advice,
 			dfa_crit_advice,
@@ -223,6 +227,7 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> CpComponentMapper<F,LK>{
 			final_states_buf_capacity: cp_capacity.final_states_len,
 			join_buf_capacity: cp_capacity.join_buf_capacity,
 			sig_buf_capacity: cp_capacity.sig_buf_capacity,
+			count_sig_no_crit_pat: clamdb.vec_sigs_no_critical_pat.len(),  
 		};
 		let sig_gadget= GetSigGadget::<F>::new(&sig_cap, fsm_id);
 		let gadgets: Vec<Rc<RefCell<dyn SigmaGadget<F>>>> = vec![ 
@@ -231,6 +236,11 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> CpComponentMapper<F,LK>{
 			Rc::new(RefCell::new(pack_crit)), //pack trace to final states
 			Rc::new(RefCell::new(sig_gadget)), //generate signatures
 		];
+		assert!(clamdb.as_ref().vec_sigs_no_critical_pat.len()
+			<cp_capacity.sig_buf_capacity,
+			"vec_sigs_no_crit_pat.len(): {} > sig_buf_capacity: {}",
+			clamdb.as_ref().vec_sigs_no_critical_pat.len(), 
+			cp_capacity.sig_buf_capacity);
 
 		Self{
 			_f: PhantomData, 
@@ -288,6 +298,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 			final_states_buf_capacity: self.capacity.final_states_len,
 			join_buf_capacity: self.capacity.join_buf_capacity,
 			sig_buf_capacity: self.capacity.sig_buf_capacity,
+			count_sig_no_crit_pat: self.clamdb.vec_sigs_no_critical_pat.len(), 
 		};
 		assert!(data_sigs == SigGadgetData::<F>::get_len(&sig_cap) 
 			- self.capacity.final_states_len);
@@ -371,6 +382,18 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		};
 		let fsm_id = if self.b_igc {CRIT_IGC_INIT} else {CRIT_INIT};
 		let sigs_to_id = &self.clamdb.as_ref().sig_to_id;
+
+		// those for sure will FAIL crit_pat (their short patterns
+		// are not included in acdfa for CP). So they are included
+		// automatically in cp failed signatures.
+		let mut vec_sig_id_no_crit_pat= self.clamdb
+			.as_ref().vec_sigs_no_critical_pat
+			.iter().map(|sig|
+			*sigs_to_id.get(&sig.name)
+				.expect(&format!("cannot find sig: {}", sig.name))
+		).collect::<Vec<usize>>();
+		vec_sig_id_no_crit_pat.sort();
+
 		let advice = CpAdvice::<F>::new(
 			&word_seg, 
 			word.len(), 
@@ -380,6 +403,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 			map_crit,
 			sigs_to_id,
 			fsm_id as usize,
+			&vec_sig_id_no_crit_pat,
 		);
 
 		//3. build the advice
@@ -466,6 +490,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 			final_states_buf_capacity: self.capacity.final_states_len,
 			join_buf_capacity: self.capacity.join_buf_capacity,
 			sig_buf_capacity: self.capacity.sig_buf_capacity,
+			count_sig_no_crit_pat: self.clamdb.vec_sigs_no_critical_pat.len(), 
 		};
 		//data_len excluding the input of final_states
 		let sig_data_len = SigGadgetData::<F>::get_len(&sig_cap) - olen; 
@@ -519,7 +544,8 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		let sig_cap = SigGadgetCapacity{
 			final_states_buf_capacity: olen,
 			join_buf_capacity: jlen,
-			sig_buf_capacity: slen
+			sig_buf_capacity: slen,
+			count_sig_no_crit_pat: self.clamdb.vec_sigs_no_critical_pat.len(), 
 		};
 
 		//2. build inp/oup/data and 3 segments of subtbl_ids

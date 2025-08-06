@@ -726,7 +726,9 @@ pub fn expand_vec<F:PrimeField>(vec: &mut Vec<F>, size: usize){
 /// the first entry will have non-zero m-table value and the other
 /// duplicates will have m-tbl value 0).
 pub fn gen_m_table<F:PrimeField>(qry: &Vec<F>, lkup: &Vec<F>)->Vec<F>{
-	#[cfg(test)]{ for x in qry{ assert!(lkup.contains(x)); } }
+	#[cfg(test)]{ for x in qry{ 
+		assert!(lkup.contains(x), "cannot find {}", x); } 
+	}
 	//1. establish a hashmap and go over the query table
 	let map:HashMap<F,usize> = qry.into_par_iter()
 	.fold(|| HashMap::new(),

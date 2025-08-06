@@ -103,6 +103,9 @@ pub const ID_ENCODED_RG_END:u32=0x71090005;
 pub const ID_ENCODED_LAST_STEP:u32=0x71090006;
 pub const ID_ENCODED_PREV_ENCODED:u32=0x71090007;
 
+pub const ID_SIG_NO_CRIT:u32 = 0x73010001;
+pub const ID_SIG_NO_CRIT_COUNT:u32 = 0x73020001;
+
 /* COMMENT: each bag acdfa has the following entries see above.
 	INIT (offset: 0), NON_FINAL, FINAL, 
 	TRANSITIONS, STATE_2_SIG, STATE_SIG_COUNT, 
@@ -1273,6 +1276,30 @@ impl <F:PrimeField> ClamavDB<F>{
 		lk.vals.append(&mut tuples);
 	}
 
+	/// Save the sig IDs of those that for sure cannot pass
+	/// critical pattern approach (usually because of too short patterns)
+	pub fn add_sig_no_crit_pat(
+		lk: &mut LookupTableTwoCol_Inst<F>, 
+		vec_sig_obj: &Vec<Arc<ClamavSig>>,
+		sig_to_id: &HashMap<String,usize>
+	) {
+		let mut vec_sig_ids = vec_sig_obj.iter().map(|sig|
+			*sig_to_id.get(&sig.name)
+				.expect(&format!("cannot find sig: {}", sig.name))
+		).collect::<Vec<usize>>();
+		vec_sig_ids.sort();
+		let count = vec_sig_ids.len();
+		let tuples = vec_sig_ids.iter().enumerate().map(|(i, id)|{
+			(
+				F::from((ID_SIG_NO_CRIT + i as u32 +1u32) as u32), 
+				F::from(*id as u64)
+			)
+		}).collect::<Vec<(F,F)>>();
+		let count_tuple = (F::from(ID_SIG_NO_CRIT_COUNT),F::from(count as u64));
+		let mut tuples = [&tuples[..], &[count_tuple]].concat();
+		lk.vals.append(&mut tuples);
+	}
+
 	#[inline(always)]
 	pub fn gen_sig_info_id(
 		sig_id: usize,
@@ -1808,6 +1835,8 @@ impl <F:PrimeField> ClamavDB<F>{
 		Self::add_bundle_subsig_to_lkup(&mut lkup, &sig_to_id, &bundle_subsig_igc, true);
 		Self::add_sig_evaldnf_to_lkup(&mut lkup, &v_sigs, &sig_to_id); 
 		Self::add_sig_dfa_to_lkup(&mut lkup, &v_sigs, &sig_to_id);
+		Self::add_sig_no_crit_pat(&mut lkup, &v_sigs_no_critical_pat, 
+			&sig_to_id);
 		lkup.vals.sort();
 		println!("PERFORMANCE 100: lkup size: {}", lkup.vals.len());
 

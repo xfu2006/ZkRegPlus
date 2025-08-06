@@ -28,8 +28,11 @@ use ark_r1cs_std::{
 	eq::EqGadget,
 };
 use std::any::Any;
-use crate::gadgets::commons::{verify_logup_inverse, verify_inverse, verify_encoded_states_sig_count, verify_encoded_states_sig, check_imply, check_eq, check_arr_eq, check_arr_eq_nz, expand_vec,gen_m_table};
-use data_processor::{clam_db::{RANGE2,RANGE2_BIT}, hex_acdfa::HexACDFA};
+use crate::gadgets::commons::{verify_logup_inverse, verify_inverse, verify_encoded_states_sig_count, verify_encoded_states_sig, check_imply, check_eq, check_arr_eq, check_arr_eq_nz, expand_vec,gen_m_table,new_const_var,check_arr_eq_arr};
+use data_processor::{
+	clam_db::{RANGE2,RANGE2_BIT,ID_SIG_NO_CRIT_COUNT,ID_SIG_NO_CRIT}, 
+	hex_acdfa::HexACDFA
+};
 use folding_schemes::{folding::foldpot::circuits_super::{field_to_usize}};
 
 #[allow(dead_code)]
@@ -65,6 +68,8 @@ pub struct SigGadgetCapacity{
 	pub join_buf_capacity: usize, 
 	/// buffer to hold signatures
 	pub sig_buf_capacity: usize,
+	/// the number of sigs that HAVE NO CRIT PAT included in ACDFA
+	pub count_sig_no_crit_pat: usize,
 }
 
 /// Models the data part the stat instance for SigGadget.
@@ -108,6 +113,12 @@ pub struct SigGadgetData<F: Clone>{
 	/// that they are covered [size: jlen]
 	pub m_tbl_decoded_final_states: Vec<F>,
 
+	/// it's the public list of sigs of no critical pat
+	pub sigs_no_crit_pat: Vec<F>,
+	/// one single element vector which has the length of sigs_no_crit_pat
+	/// it is a FIXED constant defined in clam_db::ID_SIG_NO_CRIT_COUNT
+	pub sigs_no_crit_pat_count: Vec<F>,
+
 	/// capacity: will not be serialized
 	pub capacity: SigGadgetCapacity,
 }
@@ -121,10 +132,11 @@ impl <F: Clone> SigGadgetData<F>{
 
 	/// return the size restriction of all fields
 	pub fn gen_desc(capacity: &SigGadgetCapacity)->Vec<(&str, usize)>{
-		let (olen, jlen, slen) = (
+		let (olen, jlen, slen, clen) = (
 			capacity.final_states_buf_capacity,
 			capacity.join_buf_capacity, 
-			capacity.sig_buf_capacity
+			capacity.sig_buf_capacity,
+			capacity.count_sig_no_crit_pat,
 		);
 		
 		vec![
@@ -145,6 +157,9 @@ impl <F: Clone> SigGadgetData<F>{
 			("m_tbl_joins_to_sigs", slen),
 			("m_tbl_inp_sigs_oup", slen),
 			("m_tbl_decoded_final_states", jlen),
+
+			("sigs_no_crit_pat", clen),
+			("sigs_no_crit_pat_count", 1),
 		]
 	}
 
@@ -166,6 +181,9 @@ impl <F: Clone> SigGadgetData<F>{
 			&self.m_tbl_joins_to_sigs,
 			&self.m_tbl_inp_sigs_oup,
 			&self.m_tbl_decoded_final_states,
+
+			&self.sigs_no_crit_pat,
+			&self.sigs_no_crit_pat_count,
 		];
 		let desc = Self::gen_desc(&self.capacity);
 		for i in 0..desc.len(){
@@ -196,6 +214,9 @@ impl <F: Clone> SigGadgetData<F>{
 			self.m_tbl_joins_to_sigs,
 			self.m_tbl_inp_sigs_oup,
 			self.m_tbl_decoded_final_states,
+
+			self.sigs_no_crit_pat,
+			self.sigs_no_crit_pat_count,
 		].concat()
 	}
 	
@@ -236,6 +257,9 @@ impl <F: Clone> SigGadgetData<F>{
 			m_tbl_inp_sigs_oup: vec2d[10].to_vec(),
 			m_tbl_decoded_final_states: vec2d[11].to_vec(),
 
+			sigs_no_crit_pat: vec2d[12].to_vec(),
+			sigs_no_crit_pat_count: vec2d[13].to_vec(),
+
 			capacity: capacity.clone()
 		};
 
@@ -273,16 +297,17 @@ impl <F:Clone> SigGadgetMsg3<F>{
 	}
 
 	pub fn gen_desc(capacity: &SigGadgetCapacity)->Vec<(&str, usize)>{
-		let (olen, jlen, slen) = (
+		let (olen, jlen, slen, clen) = (
 			capacity.final_states_buf_capacity,
 			capacity.join_buf_capacity, 
-			capacity.sig_buf_capacity
+			capacity.sig_buf_capacity,
+			capacity.count_sig_no_crit_pat,
 		);
 		
 		vec![
 			("inv1_left", jlen),
 			("inv1_right", slen),
-			("inv2_left", 2*slen),
+			("inv2_left", 2*slen + clen),
 			("inv2_right", slen),
 			("inv3_left", olen),
 			("inv3_right", jlen),
@@ -368,6 +393,8 @@ pub struct GetSigAdvice<F:PrimeField>{
 	/// the fsm_id of the ACDFA to handle (e.g., CRIT_INIT)
 	pub fsm_id: usize,
 
+	/// the list of sig_ids that will ALWAYS fail the crit pat method
+	pub vec_sig_id_no_crit_pat: Vec<usize>,
 }
 
 impl <F: PrimeField> NdAdvice for GetSigAdvice<F>{
@@ -385,8 +412,10 @@ impl <F: PrimeField> GetSigAdvice<F>{
 		map_crit_pat: &HashMap<String,Vec<String>>,
 		sig_to_id: &HashMap<String,usize>,
 		fsm_id: usize,
+		vec_sig_id_no_crit_pat: &Vec<usize>,
 	)->Self{
 		//1. sets up the data
+		assert!(vec_sig_id_no_crit_pat.len()==capacity.count_sig_no_crit_pat);
 		let (olen, jlen, slen) = (
 			capacity.final_states_buf_capacity,
 			capacity.join_buf_capacity, 
@@ -446,15 +475,25 @@ impl <F: PrimeField> GetSigAdvice<F>{
 		}
 		let mut sigs_to_merge = hashset_sigs_to_merge.iter().map(|x| x.clone())
 			.collect::<Vec<F>>();
+		let sigs_to_include = vec_sig_id_no_crit_pat.iter().map(|x| 
+			F::from(*x as u64)).collect::<HashSet<F>>();
+		assert!(sigs_to_include.is_disjoint(&hashset_sigs_to_merge));
 
-		let output_vec = vec![inp_sigs.clone(), sigs_to_merge.clone()]
-			.concat();
+		let vec_sigs_to_include = vec_sig_id_no_crit_pat.iter().map(|x|
+			F::from(*x as u64)).collect::<Vec<F>>(); 
+		#[cfg(test)]{ 
+			use crate::gadgets::commons::is_sorted;
+			assert!(is_sorted(&vec_sigs_to_include));
+		}
+		assert!(vec_sigs_to_include.len()==capacity.count_sig_no_crit_pat);
+
+		let output_vec = [&inp_sigs[..], &sigs_to_merge[..],
+			&vec_sigs_to_include[..]].concat();
 		let set_ouput_vec = output_vec.iter().filter(|x| !x.is_zero())
 			.map(|x| x.clone())
 			.collect::<HashSet<F>>();
 		let mut oup = set_ouput_vec.iter().map(|x| x.clone()).
 			collect::<Vec<F>>();
-			
 
 		//3. set up their sizes and genreate data
 		expand_vec(&mut final_states_sigs_count, olen);
@@ -469,12 +508,17 @@ impl <F: PrimeField> GetSigAdvice<F>{
 		expand_vec(&mut sigs_to_merge, slen); 
 
 		expand_vec(&mut oup, slen);
+		oup.sort();
+		assert!(oup[0].is_zero(), 
+			"output buf too small, needs 1st element to be dummy zero");
 
 		//3. generate the m_tables
 		let m_tbl_joins_to_sigs = gen_m_table(
 			&decoded_final_states_sigs_sigs, &sigs_to_merge);
-		let m_tbl_inp_sigs_oup = gen_m_table(
-			&vec![inp_sigs.clone(), sigs_to_merge.clone()].concat(), &oup);
+
+		let src_sigs = [ &inp_sigs[..], &sigs_to_merge[..], 
+				&vec_sigs_to_include[..] ].concat(); 
+		let m_tbl_inp_sigs_oup = gen_m_table(&src_sigs, &oup);
 		let m_tbl_decoded_final_states = gen_m_table(
 			&final_states, &decoded_final_states_sigs_states);
 
@@ -492,6 +536,12 @@ impl <F: PrimeField> GetSigAdvice<F>{
 			m_tbl_joins_to_sigs,
 			m_tbl_inp_sigs_oup,
 			m_tbl_decoded_final_states,
+
+			sigs_no_crit_pat: vec_sigs_to_include.clone(), 
+			sigs_no_crit_pat_count: vec![ //1 element
+					F::from(capacity.count_sig_no_crit_pat as u64)
+				],
+
 			capacity
 		};
 
@@ -506,7 +556,8 @@ impl <F: PrimeField> GetSigAdvice<F>{
 			assert!(data3.to_vec()==vec2);
 		}
 		
-		Self{data, capacity, oup, fsm_id}
+		Self{data, capacity, oup, fsm_id, vec_sig_id_no_crit_pat:
+			vec_sig_id_no_crit_pat.clone()}
 	}
 
 	/// generate the subtbl_ids for its oup
@@ -539,6 +590,12 @@ impl <F: PrimeField> GetSigAdvice<F>{
 		let f_range2 = F::from(RANGE2 as u32);
 
 		let zero = F::zero();
+		let sig_id_no_crit_pat_count = self.vec_sig_id_no_crit_pat.len();
+		let ids_no_pat = (0..sig_id_no_crit_pat_count).collect::<Vec<usize>>().
+			into_iter().map(|i|
+				F::from((ID_SIG_NO_CRIT + i as u32 +1u32) as u32)
+			).collect::<Vec<F>>();
+
 		let vec_subtbl_ids = vec![
 			// subtbl_ids for final_states [ignore it ] as it's already
 			// checked by previous gadgets.
@@ -580,6 +637,12 @@ impl <F: PrimeField> GetSigAdvice<F>{
 			vec![zero; slen], 
 			// pub m_tbl_decoded_final_states: Vec<F>,
 			vec![zero; jlen], 
+
+			//subtbl_id for each of the sigs_no_crit_pat
+			ids_no_pat,
+			//count of vec_sig_id_no_crit_pat
+			vec![F::from(ID_SIG_NO_CRIT_COUNT)],
+
 		];
 		#[cfg(test)]{
 			let desc1 = SigGadgetData::<F>::gen_desc(&self.capacity)
@@ -723,9 +786,10 @@ impl <F:PrimeField> SigmaGadget<F> for GetSigGadget<F>{
 			(beta + *x).inverse().expect("inv failed")).collect::<Vec<F>>();
 
 		let inp = &my_stmt[0..slen];
-		let vec_inp = vec![
-			inp.to_vec(), //inp buf
-			data.sigs_to_merge.clone()
+		let vec_inp = [
+			&inp[..],
+			&data.sigs_to_merge[..],
+			&data.sigs_no_crit_pat[..]
 		].concat();
 		let vec_oup = &my_stmt[slen..2*slen];
 		let inv2_left = vec_inp.into_par_iter().map(|x|
@@ -760,8 +824,9 @@ impl <F:PrimeField> SigmaGadget<F> for GetSigGadget<F>{
 		-> Result<(), SynthesisError>{
 
 		//0. retrive the statement instance 
-		let (olen, jlen, slen) = (self.capacity.final_states_buf_capacity,
-			self.capacity.join_buf_capacity, self.capacity.sig_buf_capacity);
+		let (olen, jlen, slen, clen) = (self.capacity.final_states_buf_capacity,
+			self.capacity.join_buf_capacity, self.capacity.sig_buf_capacity,
+			self.capacity.count_sig_no_crit_pat);
 		let (stmt_idx, _, msg2_idx, msg3_idx) = cfg.get_gadget_indices(i);
 		let my_stmt = stmt_idx.iter().map(|(a,b)|
 			wtns.statement[*a..*b+1].to_vec()).flatten()
@@ -793,12 +858,13 @@ impl <F:PrimeField> SigmaGadget<F> for GetSigGadget<F>{
 			&msg3.inv1_right, &beta,slen)?;
 		verify_logup_inverse(cs.clone(), &msg3.inv1_left, &msg3.inv1_right, &data.m_tbl_joins_to_sigs)?;
 
-		let to_merge = vec![
-			inp.to_vec(),
-			data.sigs_to_merge.to_vec(),
+		let to_merge = [
+			&inp[..],
+			&data.sigs_to_merge[..],
+			&data.sigs_no_crit_pat[..]
 		].concat();
 		verify_inverse(cs.clone(), &to_merge, &msg3.inv2_left, 
-			&gamma,slen+slen)?;
+			&gamma,slen+slen+clen)?;
 		verify_inverse(cs.clone(), oup, &msg3.inv2_right, &gamma,slen)?;
 		verify_logup_inverse(cs.clone(), &msg3.inv2_left, &msg3.inv2_right, &data.m_tbl_inp_sigs_oup)?;
 
@@ -837,10 +903,18 @@ impl <F:PrimeField> SigmaGadget<F> for GetSigGadget<F>{
 			F::from((self.fsm_id+2) as u32))?;
 		let f_range2 = FpVar::<F>::new_constant(cs.clone(),
 			F::from(RANGE2 as u32))?;
+		let ids_no_pat = (0..clen).collect::<Vec<usize>>().
+			into_iter().map(|i|
+				new_const_var(&cs, 
+					F::from((ID_SIG_NO_CRIT + i as u32 +1u32) as u32))
+			).collect::<Vec<FpVar<F>>>();
+		let f_count = new_const_var(&cs, F::from(ID_SIG_NO_CRIT_COUNT));
 		let zero = FpVar::new_constant(cs.clone(), F::zero())?;
 		let mut desc = SigGadgetData::<F>::gen_desc(&self.capacity);
-		desc= desc[1..desc.len()].to_vec();
+		desc = desc[1..desc.len()].to_vec(); //chop off final states (external)
 		desc.push( ("oup", slen) ); //the output buf
+
+
 		let vals = vec![//match desc
 			//excluding f_final_states.clone(),	 (this is the input from
 			//previous gadget
@@ -852,6 +926,10 @@ impl <F:PrimeField> SigmaGadget<F> for GetSigGadget<F>{
 			f_range2.clone(), 
 			//3m_tbles 
 			zero.clone(), zero.clone(), zero.clone(), 
+			//dmmy value: for id_no_crit_pat, we'll check it separately
+			zero.clone(),
+			//count_no_crit_pat,
+			f_count,
 			//oup signatures
 			f_range2.clone(), 
 		];
@@ -867,16 +945,50 @@ impl <F:PrimeField> SigmaGadget<F> for GetSigGadget<F>{
 			false,
 			//3m_tbles 
 			false, false, false,
+			//id_no_crit_pat (this value does not matter as we'll
+			//check it in a separate branch
+			true,
+			//count_crit_pat,
+			false,
 			//oup signatures
 			false
 		];
 		assert!(vals.len()==desc.len());
 		let mut start = 0;
+		let one_var= FpVar::<F>::new_constant(cs.clone(), F::one())?;
 
 
 		for i in 0..vals.len(){
 			let cur_len = desc[i].1;
-			if b_check_nz[i]{//cost 2
+
+			if i==vals.len()-3{//the id_no_pat. //cost 1 each unit.
+				//this branch ensures that the listed
+				//sigs are INDEED those listed in clam_db subtbl
+				//of ID_SIG_NO_CRIT_PAT
+				//next ID_SIG_NO_CRIT_PAT COUNT ensures that all are
+				//covered.
+				//The argument has 3 sections:
+				//(1) all sid are valid ID_NO_CRIT_PAT id
+				//(2) these sids are increased by 1, and start from (1)
+				//(3) the last ID matches the count
+
+				//(1) sids for (SIG_ID_NO_CRIT_PAT) are valid
+				// and (2) the  are increasing (increasing
+				// is asserted when generating ids_no_pat as constants)
+				assert!(desc[i].0=="sigs_no_crit_pat");
+				check_arr_eq_arr(&subtbl_id[start..start+cur_len], 
+					&ids_no_pat, "check subtbl id for sig_no_crit_pat err")?;
+
+				//(2) the extracted count matches that of sigs_no_crit_pat_count
+				// which is asserted to be the one stored in clam_db in 
+				// next i (as ids starts from 0, so the count extracted
+				// from the ids is actually count - 1).
+				let extracted_count = &subtbl_id[start+cur_len-1]
+					-&subtbl_id[start];
+				let proved_count = &data.sigs_no_crit_pat_count[0];
+				check_eq(&(proved_count-extracted_count),&one_var,
+					"err count prf")?;
+			}else if b_check_nz[i]{//cost 2
 				check_arr_eq_nz(&subtbl_id[start..start+cur_len],&vals[i], 
 					desc[i].0)?;
 			}else{//cost 1
@@ -885,6 +997,7 @@ impl <F:PrimeField> SigmaGadget<F> for GetSigGadget<F>{
 			}
 			start += cur_len;
 		}
+
 
 
 		//4.  main goal: to verify the signatures (as the join operation) is
@@ -962,7 +1075,7 @@ impl <F:PrimeField> SigmaGadget<F> for GetSigGadget<F>{
 #[cfg(test)]
 pub mod tests_sigs_gadget{
 	use std::{rc::Rc};
-	use std::collections::{HashMap};
+	use std::collections::{HashMap,HashSet};
 	use ark_bn254::{Fr};
 	use ark_std::{Zero,One};
 	use crate::gadgets::sigs::{GetSigGadget,GetSigAdvice,SigGadgetCapacity};
@@ -986,13 +1099,14 @@ pub mod tests_sigs_gadget{
 
 		let (_fs, fs2) = (num_acc_states - 1, num_acc_states-2);
 		let final_states = vec![
-			vec![Fr::from(fs2 as u32)],
+			vec![Fr::from(fs2 as u32)], //trigers sig4
 			vec![Fr::zero(); 13], //pad to 16
 		].concat(); //NOTE that they encode REAL state + 1
 		let capacity = SigGadgetCapacity{
 			final_states_buf_capacity: 16,
 			join_buf_capacity: 8,
-			sig_buf_capacity: 4
+			sig_buf_capacity: 5,
+			count_sig_no_crit_pat: 2,
 		};
 			
 		let gadget= GetSigGadget::<Fr>::new(&capacity, fsm_id);
@@ -1001,10 +1115,13 @@ pub mod tests_sigs_gadget{
 		//2. build the advice
 		let inp= vec![ //sigs
 			vec![Fr::one()],
-			vec![Fr::zero(); 3]
+			vec![Fr::zero(); 4]
 		].concat(); //as required, padded as zero.
+		let vec_sig_id_no_crit_pat = vec![2usize, 5usize]; //sig2,5 which
+			//have no mapping of any critical patterns, so we list
 		let adv = GetSigAdvice::new(&final_states, &inp, capacity, &acdfa, 
-			&map_crit_pat, &sig_to_id, fsm_id as usize);
+			&map_crit_pat, &sig_to_id, fsm_id as usize, 
+			&vec_sig_id_no_crit_pat);
 		let oup = adv.oup.clone();
 		let data = adv.data.clone().to_vec();
 		let subtbl_id = vec![
@@ -1013,6 +1130,13 @@ pub mod tests_sigs_gadget{
 		].concat();
 		let lkup_share_size = 4usize;
 		let failed_sigs = oup.clone();
+		//expected 1,2,4,5 coz 1 is passed from inp, 2 and 5 are for
+		//the vec_sig_id_no_crit_pat, and 4 is triggred by fs2 final state
+		let expected_failed = vec![1,2,4,5].into_iter().map(|x|
+			Fr::from(x)).collect::<HashSet<Fr>>();
+		let failed = failed_sigs.iter().filter(|x| !x.is_zero())
+			.map(|x| x.clone()).collect::<HashSet<Fr>>();
+		assert!(expected_failed == failed);
 		test_gadget_adv::<Fr>(rg, &vec![], &inp, &oup, &data, 
 			&failed_sigs, &vec![],
 			&subtbl_id, 
