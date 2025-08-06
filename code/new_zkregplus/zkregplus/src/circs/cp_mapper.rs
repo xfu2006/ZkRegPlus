@@ -278,6 +278,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		let wlen = self.capacity.max_word_len;
 		let nlen = LEGS * wlen; //nibble len
 		let flen = self.capacity.final_states_len;
+		let clen = self.clamdb.vec_sigs_no_critical_pat.len();
 		let inp_g_ext = 0;
 		let oup_g_ext = 0;
 		let data_g_ext = 1 + nlen;
@@ -292,7 +293,8 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		let oup_sigs= self.capacity.sig_buf_capacity;
 		let data_sigs = self.capacity.final_states_len * 3 
 			+ self.capacity.join_buf_capacity * 5
-			+ self.capacity.sig_buf_capacity * 3;
+			+ self.capacity.sig_buf_capacity * 3
+			+ clen + 1; //for the sigs_no_crit_pat and its count
 
 		let sig_cap = SigGadgetCapacity{
 			final_states_buf_capacity: self.capacity.final_states_len,

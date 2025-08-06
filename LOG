@@ -18667,7 +18667,15 @@ Goal 3. take care of the lkup
 	[e] fix line 511
 	[f] fix 937 
 		-> check ranges
+	[g] check completion
+		[a] make sure subtbl id is tagged appropriately -> DONE
+		[b] logup verified -> DONE
+		[c] still has to argue that count is right
 
+Goal 4. fix the circ so that it can work
+	[a] line 303 -> fixed
+
+Goal 5. 
 
 ---- TODO --
 	[d] update inv2_left
