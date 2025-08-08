@@ -150,7 +150,7 @@ impl <F:PrimeField> CpAdvice<F>{
 			::new(word_seg, actual_size);
 		let nibbles = wd_extract_advice.data[1..].to_vec();
 		let dfa_crit_advice = FsmAdvice::<F>
-			::new(&nibbles, dfa_crit, inp_state);
+			::new(&nibbles, dfa_crit, inp_state, fsm_id as u32);
 
 
 		//2. build the packing final states gadget's advice
@@ -367,6 +367,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 				dfa_crit_advice.states.len()-1];
 			last_oup_state
 		});
+		println!("DEBUG USE 6601 cp igc: {}, inp_state: {}, has_prev_adv: {}", self.b_igc, inp_state, prev_adv.is_some());
 		let inp_sigs = prev_adv.map_or(vec![zero; capacity.sig_buf_capacity], 
 		|adv|{
 			let adv= adv.as_any().downcast_ref::<CpAdvice<F>>(); 
@@ -537,6 +538,10 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 	/// it needs in prev_stmt which has the same structure as specified
 	/// in StatementConfig. Note we pass the max len word, padded.
 	/// the actual_word_len indicates the actual word seg in the word_seg.
+	///
+	/// NOTE id: refers to the component, we cannot use
+	///  but stmt_mapping is for ALL gadgets. So one ID of the component
+	///  can correspond to MULTIPLE gadgets in stmt_mapping.
 	fn build_statement_comp(&self, _id: usize, word_seg: &Vec<F>, actual_word_len: usize, prev_stmt: &Option<StatementInst<F,LK>>, _lkup: &Rc<RefCell<LK>>, _extra_info: &StatementExtraInfo<F>, advice: &Rc<dyn NdAdvice>, _cfg: &StatementConfig, _stmt_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>{
 		//1. take the advice
 		let advice = advice.as_any().downcast_ref::<CpAdvice<F>>()
@@ -572,6 +577,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		  advice.sigs_advice.oup.clone(), //the oup_sigs
 		].concat(); 
 		assert!(oup.len()==oup_len);
+		println!("DEBUG USE 6602: build_stmt: self.b_igc: {}, oup_state: {}, has_prev: {}", self.b_igc, oup[0], prev_stmt.is_some()); 
 
 		//3. build the data
 		let nlen = wlen * LEGS;

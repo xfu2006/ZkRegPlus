@@ -22,7 +22,7 @@ use std::{
 	rc::{Rc},cell::{RefCell},
 	fmt::{Debug},
 };
-use crate::gadgets::commons::{gen_m_table};
+use crate::gadgets::commons::{gen_m_table,print_vec};
 
 /// Compononent of a CompositeGadgetMapper.
 /// In general, a component mapper should be regarded as a self-contained
@@ -80,6 +80,10 @@ pub trait ComponentMapper<F:PrimeField, LK: LookupTableTwoCol<F>>: Debug{
 	/// it needs in prev_stmt which has the same structure as specified
 	/// in StatementConfig. Note we pass the max len word, padded.
 	/// the actual_word_len indicates the actual word seg in the word_seg.
+	///
+	/// NOTE: id refers to the component, we cannot use
+	///  but stmt_mapping is for ALL gadgets. So one ID of the component
+	///  can correspond to MULTIPLE gadgets in stmt_mapping.
 	fn build_statement_comp(&self, id: usize, word_seg: &Vec<F>, actual_word_len: usize, prev_stmt: &Option<StatementInst<F,LK>>, lkup: &Rc<RefCell<LK>>, extra_info: &StatementExtraInfo<F>, _advice: &Rc<dyn NdAdvice>, cfg: &StatementConfig, comp_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>;
 
 	/// This is not required for those non-SED gadgets, they are handled
@@ -339,6 +343,16 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 
 		let inp = vec_inp.concat();
 		let oup = vec_oup.concat();
+		//REMOVE LATER -----------------
+		println!("DEBUG USE 6721 ==== dump of vec_inp");
+		for i in 0..vec_inp.len(){
+			print_vec(&format!("comp_{}:", i), &vec_inp[i]);
+		}
+		println!("DEBUG USE 6722 ==== dump of vec_oup");
+		for i in 0..vec_oup.len(){
+			print_vec(&format!("comp_{}:", i), &vec_oup[i]);
+		}
+		//REMOVE LATER ----------------- ABOVE
 		assert!(inp.len()==oup.len());
 		let data = vec_data.concat();
 		let failed_sigs = vec_failed_sigs.concat();
@@ -412,8 +426,10 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 			_lk: PhantomData,
 		};
 
+
 		#[cfg(test)]{
 			let stmt_vec = stmt.to_vec();
+			println!("DEBUG USE 6711: mapper: {}, outp: stmt[81]: {}, [84]: {}, inp: stmt[23]: {}, [26]: {}", self.name, stmt_vec[81], stmt_vec[84], stmt_vec[23], stmt_vec[26]);
 			assert!(stmt_vec.len()==cfg.total_size());
 		}
 		

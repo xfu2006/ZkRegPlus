@@ -131,6 +131,10 @@ impl <F:PrimeField> SigmaGadget<F> for FsmGadget<F>{
 		-> Result<(), SynthesisError>{
 		//1. retrive the statement instance and get all parts
 		let (stmt_idx, _, _, _) = cfg.get_gadget_indices(i);
+		//REMOVE LATER -------------------
+		println!("DEBUG USE 6701: location i: {}, my fsm_id: {}, stmt_idx: {:#?}",
+			i, self.fsm_id, stmt_idx);
+		//REMOVE LATER ----------- ABOVE
 		let my_stmt = stmt_idx.iter().map(|(a,b)|
 			wtns.statement[*a..*b+1].to_vec()).flatten()
 			.collect::<Vec<FpVar<F>>>();
@@ -186,6 +190,14 @@ impl <F:PrimeField> SigmaGadget<F> for FsmGadget<F>{
 				&(st2 * &unit_var); //no need to plus one, already did
 			let trans = &data_seg[2*nlen-1 + i];
 			exp_trans.enforce_equal(trans)?;
+
+			//REMOVE LATER --------------
+			use ark_r1cs_std::R1CSVar;
+			if self.fsm_id==268435713 && (i==0 || i==nlen-1){
+				println!("DEBUG USE 6502: i: {}, st1: {}, ch: {}, st2: {} => exp_trans: {}, stored_trans: {}, fsm_id: {}", i,  st1.value()?, ch.value()?, st2.value()?, exp_trans.value()?, trans.value()?, self.fsm_id);
+			}
+			//REMOVE LATER --------------  ABOVE
+
 			#[cfg(test)]{
 				use ark_r1cs_std::{R1CSVar};
 				if exp_trans.value().is_ok(){
@@ -218,6 +230,8 @@ pub struct FsmAdvice<F:PrimeField>{
 	pub trans: Vec<F>,
 	/// keep track of it for verification purpose
 	pub acdfa_state_part_bits: usize,
+	/// the fsm id corresponds to the acdfa
+	_fsm_id: u32, 
 }
 
 impl <F: PrimeField> NdAdvice for FsmAdvice<F>{
@@ -230,7 +244,7 @@ impl <F: PrimeField> FsmAdvice<F>{
 	/// as 0.
 	/// NOTE: inp_state is the ADJUSTED satate (+1 of the raw_state on
 	/// ACDFA)
-	pub fn new(nibbles: &Vec<F>, acdfa: &HexACDFA, inp_state: F)->Self{
+	pub fn new(nibbles: &Vec<F>, acdfa: &HexACDFA, inp_state: F, fsm_id: u32)->Self{
 		//1. normalize the input
 		let acdfa_state_part_bits = acdfa.state_part_bits;
 		let mut states = vec![];
@@ -252,10 +266,15 @@ impl <F: PrimeField> FsmAdvice<F>{
 			let f_dst = F::from(nxt_state as u32);
 			let tr = f_ch + (f_src + one) * hex + (f_dst + one) * unit;
 			trans.push(tr);
+			//REMOVE LATER -------------------
+			if fsm_id==268435713 && (i==0 || i==nibbles.len()-1){
+				println!("DEBUG USE 6501: i:  {}, st1: {}, ch: {}, st2: {} => trans: {}", i, f_src+one, f_ch, f_dst+one, tr);
+			}
+			//REMOVE LATER ------------------- ABOVE
 			cur_state = nxt_state;
 		}
 
-		Self{states, trans, acdfa_state_part_bits}
+		Self{states, trans, acdfa_state_part_bits, _fsm_id: fsm_id}
 	}
 }
 
@@ -288,9 +307,10 @@ pub mod tests_fsm_gadget{
 		let acdfa = HexACDFA::new(1, &patterns);
 		let init_state = acdfa.init_state;
 		let inp_state = Fr::from( (init_state + 1) as u32);
-		let adv = FsmAdvice::new(&nibbles, &acdfa, inp_state);
+		let adv = FsmAdvice::new(&nibbles, &acdfa, inp_state, msf_id);
 		assert!(adv.acdfa_state_part_bits == rg.as_ref().acdfa_state_part_bits);
 		assert!(adv.states.len()==nibble_len+1);	
+		assert!(adv._fsm_id==msf_id);
 		let inp = vec![adv.states[0].clone()];
 		let oup = vec![adv.states[nibble_len].clone()];
 		let data = vec![
