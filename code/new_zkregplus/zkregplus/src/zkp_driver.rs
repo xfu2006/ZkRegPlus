@@ -139,14 +139,19 @@ where C: CurveGroup<ScalarField=F>,
 	let cap3 = CpCapacity{max_word_len: 3, final_states_len: 16, join_buf_capacity: 8, sig_buf_capacity: 4};
 	let cap4 = CpCapacity{max_word_len: 4, final_states_len: 16, join_buf_capacity: 8, sig_buf_capacity: 4};
 	let b_igc = false;
-	let comp1 = CpComponentMapper::<F,LK<F>>::new(cap1, db.clone(), b_igc);
+	let comp1 = CpComponentMapper::<F,LK<F>>::new(cap1.clone(), 
+		db.clone(), false);
+	let comp1_igc = CpComponentMapper::<F,LK<F>>::new(cap1, db.clone(), true);
 	let comp2 = CpComponentMapper::<F,LK<F>>::new(cap2, db.clone(), b_igc);
 	let comp3 = CpComponentMapper::<F,LK<F>>::new(cap3, db.clone(), b_igc);
 	let comp4 = CpComponentMapper::<F,LK<F>>::new(cap4, db.clone(), b_igc);
 	let _cg4 = CompositeGadgetMapper::<F,LK<F>>::new("w4",vec![Rc::new(RefCell::new(comp4))]); 
 	let _cg3 = CompositeGadgetMapper::<F,LK<F>>::new("w3",vec![Rc::new(RefCell::new(comp3))]); 
 	let _cg2 = CompositeGadgetMapper::<F,LK<F>>::new("w2",vec![Rc::new(RefCell::new(comp2))]); 
-	let cg1 = CompositeGadgetMapper::<F,LK<F>>::new("cp1",vec![Rc::new(RefCell::new(comp1.clone()))]); 
+	let cg1 = CompositeGadgetMapper::<F,LK<F>>::new("cp1",vec![
+		Rc::new(RefCell::new(comp1.clone())), 
+		Rc::new(RefCell::new(comp1_igc.clone())), 
+	]); 
 	//println!("DEBUG USE 1001: lkup_len: {}, avg_lk_wd: {}, comp1 share size: {}", lkup_len, avg_lk_wd, cg1.max_word_len()*avg_lk_wd);
 
 	//2. create sed components
@@ -210,6 +215,7 @@ where C: CurveGroup<ScalarField=F>,
 	let hybrid_cgm1 = CompositeGadgetMapper::<F,LK<F>>::new("hybrid_cgm1",
 		vec![
 			Rc::new(RefCell::new(comp1)),
+			Rc::new(RefCell::new(comp1_igc)),
 			Rc::new(RefCell::new(scomp1)),
 			Rc::new(RefCell::new(dcomp1)),
 		]);

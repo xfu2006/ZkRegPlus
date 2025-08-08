@@ -18761,6 +18761,16 @@ Friday 08/08/2025
 LOC (gadget): 13977
 LOC (circ): 2347 
 Goal 1. fix inv_err.
+	[a] fix error
+	[b] implement
+	[c] read dumpa
+
+Goal 2. now put igc CP component in the framework
+	[a] now put two cp components
+	[b] print_vec_var
+	[c] dump the failed and discharged sigs
+	[d] create a new signature which has 
+		IGC component and can be discharged by 
 		
 
 

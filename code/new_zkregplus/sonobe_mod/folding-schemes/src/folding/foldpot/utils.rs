@@ -27,6 +27,13 @@ use ark_r1cs_std::{
 
 pub const LOG_LEVEL:usize = 2;
 
+/// print a vector
+pub fn print_vec_var<F:PrimeField>(msg: &str, v: &Vec<FpVar<F>>){
+	println!("=== {} ===", msg);
+	for i in 0..v.len(){
+		println!("  i: {} => {}", i, v[i].value().unwrap());
+	}
+}
 /// get the RAM usage in GB
 pub fn get_mem_usage()->usize{
 	let usage = memory_stats().expect("call mem usage fails");

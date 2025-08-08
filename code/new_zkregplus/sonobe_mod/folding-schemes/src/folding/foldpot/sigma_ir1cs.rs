@@ -42,7 +42,7 @@ use crate::{
 	folding::{
 		circuits::{nonnative::uint::{NonNativeUintVar,LimbVar}},
 		foldpot::{
-			utils::{f1_to_f2_limbs, get_stack_space,check_logup},
+			utils::{f1_to_f2_limbs, get_stack_space,check_logup, print_vec_var},
 			container_config::{ContainerConfig},
 		}
 	}
@@ -3202,6 +3202,13 @@ where 	C: CurveGroup<ScalarField=F>,
 		)?;
 		let b_correct = not_final_step.or(&b_sigs)?; //require b_sigs true at
 													//final step
+		//if b_debug{
+		if true{
+			print_vec_var("DEBUG USE 6801: failed_sigs", &si.failed_sigs);
+			print_vec_var("DEBUG USE 6802: discharged_sigs",
+				&si.discharged_sigs);
+			println!("DEBUG USE 6803: b_correct: {}", b_correct.value()?);
+		}
 		b_correct.enforce_equal(&Boolean::TRUE)?;
 		#[cfg(test)]{
 			if b_correct.value().is_ok(){

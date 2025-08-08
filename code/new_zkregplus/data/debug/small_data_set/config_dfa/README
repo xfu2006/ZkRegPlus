@@ -1,0 +1,4 @@
+This is a set for DFA approach. Its DFA-2 sig has too small pattern
+words thus will enforce into DFA approach.
+
+The word fails DFA approach because "9" and "7" distance is 5 instead of 6
