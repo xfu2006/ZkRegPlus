@@ -6,6 +6,10 @@
 	Modified: 08/19/2024. Updated cmF computation.
 	Revised: 10/08/2024. Added support of CyclePair. Allow dual mode.
 	Revised: 12/24/2024. Add support for computing sum of w, l, vec_r, vec_v
+	Revised: 08/06/2025 added failed_sigs, discharged_sigs, their m_tbl
+		and the corresonding logic to set up the final output based on
+		that failed_sigs is a subset of discharged_sigs (or the samples
+		are discharged).
 */
 use serde::{Serialize,Deserialize};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -38,7 +42,7 @@ use crate::{
 	folding::{
 		circuits::{nonnative::uint::{NonNativeUintVar,LimbVar}},
 		foldpot::{
-			utils::{f1_to_f2_limbs},
+			utils::{f1_to_f2_limbs, get_stack_space,check_logup},
 			container_config::{ContainerConfig},
 		}
 	}
@@ -514,7 +518,10 @@ pub trait GadgetMapper<F:PrimeField, LK: LookupTableTwoCol<F>>{
 	/// given word input, previous witness, try to construct
 	/// the full problem statement (including non-deterministic witness). 
 	/// NOTE that the real i/o has only two elements in z_i array.
-	fn build_statement(&self, word: &Vec<F>, prev_stmt: &Option<StatementInst<F,LK>>, lkup: Rc<RefCell<LK>>, extra_info: &StatementExtraInfo<F>, advice: Rc<dyn NdAdvice>, lkup_size: usize) -> Result<StatementInst<F,LK>, Error>;
+	///
+	/// b_dummy_mode is added specifically for composable_gadget_mapper
+	/// the other legacy code can ignore it.
+	fn build_statement(&self, word: &Vec<F>, prev_stmt: &Option<StatementInst<F,LK>>, lkup: Rc<RefCell<LK>>, extra_info: &StatementExtraInfo<F>, advice: Rc<dyn NdAdvice>, lkup_size: usize, b_dummy_mode: bool) -> Result<StatementInst<F,LK>, Error>;
 
 	/// return the max word length that can be processed
 	fn max_word_len(&self) -> usize;
@@ -711,6 +718,10 @@ pub struct StatementInst<F:PrimeField, LK: LookupTableTwoCol<F>>{
 	/// Avoid generating duplicatings when generating WordInfo
 	/// and DischargeSigInfo, when constructing the proof.
 	pub discharged_sigs: Vec<F>,
+	/// to prove that failed_sigs is a subset of discharged_sigs (as multi-set)
+	/// this is essentially a lookup relation and its size is
+	/// the size of discharged_sig
+	pub mtbl_sigs: Vec<F>,
 
 	pub _lk: PhantomData<LK>
 }
@@ -807,6 +818,8 @@ pub struct StatementInstVar<F:PrimeField>{
 	pub failed_sigs: Vec<FpVar<F>>,
 	/// the discharged sigs
 	pub discharged_sigs: Vec<FpVar<F>>,
+	/// same length of discharged_sigs
+	pub mtbl_sigs: Vec<FpVar<F>>,
 }
 
 /// The configure structure of StatementInstance.
@@ -846,10 +859,14 @@ pub struct StatementConfig{
 	pub failed_sigs_size: usize,
 	/// the buffer size of discharged_sigs buffer
 	pub discharged_sigs_size: usize,
+	/// the mtable sigs len (=discharged_sigs_size)
+	pub mtbl_sigs_size: usize,
 	/// the starting idx of failed_sigs
 	pub idx_failed_sigs: usize,
 	/// the starting idx of the discharged_sigs
 	pub idx_discharged_sigs: usize,
+	/// the starting location of mtbl_sigs
+	pub idx_mtbl_sigs: usize,
 }
 
 impl StatementConfig{
@@ -869,6 +886,8 @@ impl StatementConfig{
 		let idx_m_share = idx_col2_share + lookup_share_size;
 		let idx_failed_sigs = idx_m_share + lookup_share_size;
 		let idx_discharged_sigs = idx_failed_sigs + failed_sigs_size;
+		let idx_mtbl_sigs = idx_discharged_sigs + discharged_sigs_size;
+		let mtbl_sigs_size = discharged_sigs_size;
 
 		Self{ input_size, output_size, data_size, word_subseg_size, 
 			lookup_share_size, 
@@ -876,7 +895,8 @@ impl StatementConfig{
 			idx_data, idx_subtable_id, idx_col1_share,
 			idx_col2_share, idx_m_share, 
 			failed_sigs_size, discharged_sigs_size,
-			idx_failed_sigs, idx_discharged_sigs
+			idx_failed_sigs, idx_discharged_sigs,
+			idx_mtbl_sigs, mtbl_sigs_size
 		}
 	}
 
@@ -887,7 +907,9 @@ impl StatementConfig{
 		self.input_size + self.output_size + self.data_size + 
 			self.word_subseg_size + self.lookup_share_size * 3
 			+ sub_table_size +  self.idx_inp 
-			+ self.failed_sigs_size + self.discharged_sigs_size
+			+ self.failed_sigs_size 
+			+ self.discharged_sigs_size 
+			+ self.mtbl_sigs_size
 	}
 }
 
@@ -997,6 +1019,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 		Self::print_vec(&self.m_share, "m_share");
 		Self::print_vec(&self.failed_sigs, "failed_sigs");
 		Self::print_vec(&self.discharged_sigs, "discharged_sigs");
+		Self::print_vec(&self.mtbl_sigs, "mtbl_sigs");
 		println!("---- DUMP COMPLETED ---------\n");
 	}
 
@@ -1044,6 +1067,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 			self.m_share.clone(),
 			self.failed_sigs.clone(),
 			self.discharged_sigs.clone(),
+			self.mtbl_sigs.clone(),
 		].concat();
 
 		res
@@ -1088,6 +1112,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 		let m_share = (&vec[cfg.idx_m_share..cfg.idx_m_share+cfg.lookup_share_size]).to_vec(); 
 		let failed_sigs= (&vec[cfg.idx_failed_sigs..cfg.idx_failed_sigs+cfg.failed_sigs_size]).to_vec(); 
 		let discharged_sigs= (&vec[cfg.idx_discharged_sigs..cfg.idx_discharged_sigs+cfg.discharged_sigs_size]).to_vec(); 
+		let mtbl_sigs= (&vec[cfg.idx_mtbl_sigs..cfg.idx_mtbl_sigs+cfg.mtbl_sigs_size]).to_vec(); 
 		Self{
 			pc_i, pc_i1, n_circ, n_circ_minus_pc,
 			act_input_size, act_output_size, act_lookup_share_size,
@@ -1100,6 +1125,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 			inp_buf, oup_buf, word_subseg, data, subtable_id,
 			col1_share, col2_share, m_share, 
 			failed_sigs, discharged_sigs,
+			mtbl_sigs,
 			_lk: PhantomData,
 
 		}
@@ -1213,6 +1239,7 @@ impl <F:PrimeField> StatementInstVar<F>{
 		let m_share = (&vec[cfg.idx_m_share..cfg.idx_m_share+cfg.lookup_share_size]).to_vec(); 
 		let failed_sigs= (&vec[cfg.idx_failed_sigs..cfg.idx_failed_sigs+cfg.failed_sigs_size]).to_vec(); 
 		let discharged_sigs= (&vec[cfg.idx_discharged_sigs..cfg.idx_discharged_sigs+cfg.discharged_sigs_size]).to_vec(); 
+		let mtbl_sigs= (&vec[cfg.idx_mtbl_sigs..cfg.idx_mtbl_sigs+cfg.mtbl_sigs_size]).to_vec(); 
 		Self{
 			pc_i, pc_i1, n_circ, n_circ_minus_pc,
 			act_input_size, act_output_size, act_lookup_share_size,
@@ -1222,7 +1249,7 @@ impl <F:PrimeField> StatementInstVar<F>{
 			col1_share, col2_share, m_share, total_words, r_F,
 			batch_r, batch_v, r_all_words, r_kzg_len, r_vec_r, r_vec_v, 
 				r_word_i, accumulated_word_len, f_result,
-			failed_sigs, discharged_sigs
+			failed_sigs, discharged_sigs, mtbl_sigs
 		}
 	}
 }
@@ -2621,6 +2648,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		let total_size = self.witness_config.statement_size;
 		let res = if self.dummy_stmt.is_some(){
 			let stmt = self.dummy_stmt.as_ref().unwrap().clone();
+			println!("DEBUG USE 6201: stmt: {}, total_size: {}", stmt.len(), total_size);
 			assert!(stmt.len()==total_size, "{} != {}", stmt.len(), total_size);
 			stmt
 		}else{
@@ -2692,7 +2720,13 @@ where 	C: CurveGroup<ScalarField=F>,
 		z_i: Vec<FpVar<F>>,
 		external_inputs: Vec<FpVar<F>>,
 	) -> Result<Vec<FpVar<F>>, SynthesisError> {
-
+		let b_debug = false; //set to false in production mode
+		//NOTE: cs.is_satisfied() can cause * stack overflow *
+		//if constraints are not constructed carefully.
+		//sometimes if a constraint has lc (linear combinations) too deep,
+		//it will penetrate the stack.
+		//when b_debug is set, we call cs.is_satisfied() for debugging
+		//and print the stack use
 		//1. converts witness from extrenal_inputs to structured version
 		assert!(z_i.len()==2);
 		let configs = self.gadgets.iter().map(|g| g.borrow().get_msg_size())
@@ -2724,11 +2758,15 @@ where 	C: CurveGroup<ScalarField=F>,
 			}
 			gi += 1;
 		}
-		//println!("DEBUG USE 102: after msg2 constraints: {}", cs.num_constraints());
-		//REMOVE LATER ------------
-		let csat = cs.is_satisfied();
-		if csat.is_ok(){ assert!(csat.unwrap(), "step 2"); }
-		//REMOVE LATER ------------ ABOVE
+		if b_debug{
+			let csat = cs.is_satisfied();
+			if csat.is_ok(){ assert!(csat.unwrap(), "step 2"); }
+			println!(concat!(
+				"--- DEBUG USE 7601: gen_step_constraints step 1. ",
+				"cs: {}, stack  =======, stack: {}"), 
+				cs.num_constraints(), get_stack_space()
+			);
+		}
 
 
 		//3. add all constraints by components
@@ -2736,11 +2774,15 @@ where 	C: CurveGroup<ScalarField=F>,
 			g.borrow().assert_msg3(i, cs.clone(), &wtns_var, &cfg)?;
 			//println!("DEBUG USE 103: after msg3 of module {}: constraints: {}", i, cs.num_constraints());
 		}
-		//REMOVE LATER ------------
-		let csat = cs.is_satisfied();
-		if csat.is_ok(){ assert!(csat.unwrap(), "step 3"); }
-		//REMOVE LATER ------------ ABOVE
-
+		if b_debug{
+			let csat = cs.is_satisfied();
+			if csat.is_ok(){ assert!(csat.unwrap(), "step 2"); }
+			println!(concat!(
+				"--- DEBUG USE 7601: gen_step_constraints step 3. ",
+				"cs: {}, stack  =======, stack: {}"), 
+				cs.num_constraints(), get_stack_space()
+			);
+		}
 
 		//4. enforce the input and output buffer equivalence
 		let (zero, one) = (F::zero(), F::one());
@@ -2808,11 +2850,15 @@ where 	C: CurveGroup<ScalarField=F>,
 			assert!(io_res.value()?, "io not match at final step!");
 		}
 		io_res.enforce_equal(&Boolean::TRUE)?;
-		//REMOVE LATER ------------
-		let csat = cs.is_satisfied();
-		if csat.is_ok(){ assert!(csat.unwrap(), "step 4"); }
-		//REMOVE LATER ------------ ABOVE
-
+		if b_debug{
+			let csat = cs.is_satisfied();
+			if csat.is_ok(){ assert!(csat.unwrap(), "step 4"); }
+			println!(concat!(
+				"--- DEBUG USE 7601: gen_step_constraints step 4. ",
+				"cs: {}, stack  =======, stack: {}"), 
+				cs.num_constraints(), get_stack_space()
+			);
+		}
 
 
 		//5. verify the Lookup related witnesses:
@@ -2846,17 +2892,31 @@ where 	C: CurveGroup<ScalarField=F>,
 		for i in 0..inv_hab22_left_size{
 			let v2 = &qry_tbl2[i];
 			let v = &alpha + &qry_tbl1[i] + &(v2 * &beta);
-			let prod = v.clone() * &wtns_var.inv_hab22_left[i];
+			let prod = &v * &wtns_var.inv_hab22_left[i];
 			prod.enforce_equal(&one_var)?;
-			#[cfg(test)]{ if prod.value().is_ok(){
-				assert!(prod.value().unwrap()==one, "fails inverse hab22 left");
-			}}
 			let b_zero = qry_tbl1[i].is_zero()?;
 			sum_hab22_left += b_zero.select(
 				&zero_var,
 				&wtns_var.inv_hab22_left[i])?;	
+			if i%100==0{//avoid building too long linear combinations
+				//cs.is_satisfied() -> eval_lc() -> assigned_value(*var)
+				//  when var is symbolic it's calling eval_lc() recursively
+				//  so here retrieve the value periodically to make recursive
+				//  chain shorter.
+				//sum_hab22_left = &sum_hab22_left + &zero_var;
+				let _v1 = sum_hab22_left.value()?;
+			}
 		}
 
+		if b_debug{
+			let csat = cs.is_satisfied();
+			if csat.is_ok(){ assert!(csat.unwrap(), "step 5.1"); }
+			println!(concat!(
+				"--- DEBUG USE 7601: gen_step_constraints step 5.1 ",
+				"cs: {}, stack  =======, stack: {}"), 
+				cs.num_constraints(), get_stack_space()
+			);
+		}
 
 		let mut lookup_share_size_left = si.act_lookup_share_size.clone();
 		for i in 0usize..inv_hab22_right_size{
@@ -2864,9 +2924,6 @@ where 	C: CurveGroup<ScalarField=F>,
 			let m_i = &si.m_share[i];
 			let prod = &v * &wtns_var.inv_hab22_right[i];
 			prod.enforce_equal(&one_var)?;
-			#[cfg(test)]{ if prod.value().is_ok(){
-				assert!(prod.value().unwrap().is_one());
-			}}
 			let b_left_zero = lookup_share_size_left.is_zero()?;
 			let b_not_add = (&si.col1_share[i] * &lookup_share_size_left)
 				.is_zero()?;
@@ -2876,25 +2933,39 @@ where 	C: CurveGroup<ScalarField=F>,
 			let to_add = &wtns_var.inv_hab22_right[i]*m_i;	
 			sum_hab22_right = b_not_add.select(&sum_hab22_right, 
 				&(&sum_hab22_right + &to_add))?;
+			if i%100==0{//avoid too long chain in later
+				//cs.satisfied()	
+				//sum_hab22_right = &sum_hab22_right + &zero_var;
+				//lookup_share_size_left= &lookup_share_size_left + &zero_var;
+				let _v1 = sum_hab22_right.value()?;
+				let _v2 = lookup_share_size_left.value()?;
+			}
 		}
 		let b_hab_res1 = sum_hab22_right.is_eq(&sum_hab22_left)?;
 		let b_hab_res = not_final_step.or(&b_hab_res1)?.or(&sum_hab22_right.is_zero()?)?; //when sum_hab22_right is zero, we regard it as dummy
-		#[cfg(test)]{if b_hab_res.value().is_ok(){
-			assert!(b_hab_res.value().unwrap());
-		} }
-		
+		#[cfg(test)]{
+			if b_hab_res.value().is_ok(){
+				assert!(b_hab_res.value().unwrap());
+			} 
+		}
 
 		if b_has_lookup{
 			#[cfg(test)]{
+				if b_hab_res.value().is_ok(){
 				assert!(b_hab_res.value()?, "failed checking hab22 equation");
+				}
 			}
 			b_hab_res.enforce_equal(&Boolean::TRUE)?;
 		}
-		//REMOVE LATER ------------
-		let csat = cs.is_satisfied();
-		if csat.is_ok(){ assert!(csat.unwrap(), "step 5"); }
-		//REMOVE LATER ------------ ABOVE
-
+		if b_debug{
+			let csat = cs.is_satisfied();
+			if csat.is_ok(){ assert!(csat.unwrap(), "step 5.2"); }
+			println!(concat!(
+				"--- DEBUG USE 7601: gen_step_constraints step 5.2",
+				"cs: {}, stack  =======, stack: {}"), 
+				cs.num_constraints(), get_stack_space()
+			);
+		}
 
 		//6. Check the validity of word_id and subseg_id
 		// NOTE: the first and the last zi_part2 will be checked
@@ -2908,11 +2979,16 @@ where 	C: CurveGroup<ScalarField=F>,
 		assert_imply(&b_last_full, &zi_part2.subseg_id.is_eq(
 			&zi_part2.total_word_segs)?).expect("is eq err");
 		assert_imply(&b_last_full, &si.subseg_id.is_eq(&one_var)?).expect("eq");
-		//REMOVE LATER ------------
-		let csat = cs.is_satisfied();
-		if csat.is_ok(){ assert!(csat.unwrap(), "step 6"); }
-		//REMOVE LATER ------------ ABOVE
 
+		if b_debug{
+			let csat = cs.is_satisfied();
+			if csat.is_ok(){ assert!(csat.unwrap(), "step 6"); }
+			println!(concat!(
+				"--- DEBUG USE 7601: gen_step_constraints step 6",
+				"cs: {}, stack  =======, stack: {}"), 
+				cs.num_constraints(), get_stack_space()
+			);
+		}
 
 		//7. compute the KZG evaluation of :
 		// [lookup col1, col2, words, vec_r, vec_v]
@@ -3007,10 +3083,15 @@ where 	C: CurveGroup<ScalarField=F>,
 				&sum_kzg_eval_word + &sum_kzg_eval_others;
 			//println!("DEBUG USE 501.9: sum_kzg_eval: {}, sum_vec_v_i: {}", sum_kzg_eval.value()?, sum_vec_v_i.value()?);
 		}
-		//REMOVE LATER ------------
-		let csat = cs.is_satisfied();
-		if csat.is_ok(){ assert!(csat.unwrap(), "step 7"); }
-		//REMOVE LATER ------------ ABOVE
+		if b_debug{
+			let csat = cs.is_satisfied();
+			if csat.is_ok(){ assert!(csat.unwrap(), "step 7"); }
+			println!(concat!(
+				"--- DEBUG USE 7601: gen_step_constraints step 7",
+				"cs: {}, stack  =======, stack: {}"), 
+				cs.num_constraints(), get_stack_space()
+			);
+		}
 
 		//8. VERIFY join constraints
 		let (_stmt_len, _stmt_cfg, _v_idx, extra_join_constraints, vec_idx_cpi) 
@@ -3030,10 +3111,15 @@ where 	C: CurveGroup<ScalarField=F>,
 			}
 		}
 
-		//REMOVE LATER ---------------
-		let csat = cs.is_satisfied();
-		if csat.is_ok(){ assert!(csat.unwrap(), "step 8 of sigma_ir1cs"); }
-		//REMOVE LATER --------------- ABOVE
+		if b_debug{
+			let csat = cs.is_satisfied();
+			if csat.is_ok(){ assert!(csat.unwrap(), "step 8"); }
+			println!(concat!(
+				"--- DEBUG USE 7601: gen_step_constraints step 8",
+				"cs: {}, stack  =======, stack: {}"), 
+				cs.num_constraints(), get_stack_space()
+			);
+		}
 
 		//9. build the new zi_part's cycle input.
 		let cp_inp = if self.b_full_mode{
@@ -3080,14 +3166,17 @@ where 	C: CurveGroup<ScalarField=F>,
 			cyclepair_input: cp_inp,
 		};
 
-		//REMOVE LATER ---------------
-		let csat = cs.is_satisfied();
-		if csat.is_ok(){ assert!(csat.unwrap(), "step 9 of sigma_ir1cs"); }
-		//REMOVE LATER --------------- ABOVE
+		if b_debug{
+			let csat = cs.is_satisfied();
+			if csat.is_ok(){ assert!(csat.unwrap(), "step 9"); }
+			println!(concat!(
+				"--- DEBUG USE 7601: gen_step_constraints step 9",
+				"cs: {}, stack  =======, stack: {}"), 
+				cs.num_constraints(), get_stack_space()
+			);
+		}
 
-
-
-		//5. now enforce and build `z_{i+1}`
+		//10. now enforce and build `z_{i+1}`
 		let cur_hc_cmF = z_i[0].clone();
 		let cur_cmF = wtns_var.cmF.clone(); //4 elements
 		let to_hash = vec![ vec![cur_hc_cmF], cur_cmF].concat();
@@ -3098,26 +3187,44 @@ where 	C: CurveGroup<ScalarField=F>,
 		let new_cur_hc_cmF = sponge.squeeze_field_elements(1)
 			.unwrap()[0].clone();
 
-
 		let hash_zi_part2= zi1_part2.hash(&self.poseidon_config, cs.clone());
-		//println!("DEBUG USE 104: after computing zi_part2: constraints: {}", cs.num_constraints());
 
-		//REMOVE LATER ---------------
-		let csat = cs.is_satisfied();
-		if csat.is_ok(){ assert!(csat.unwrap(), "step LAST of sigma_ir1cs"); }
-		//REMOVE LATER --------------- ABOVE
-
-		#[cfg(test)]{ 
-			if cs.is_satisfied().is_ok(){
-				assert!(cs.is_satisfied().unwrap());
+		//10.5 check the failed_sigs are covered by discharged sigs
+		let rc2 = &rc + &FpVar::<F>::new_constant(cs.clone(), 
+			F::from(237177234918187u64))?;
+		//rc2 is used to prevent the initial dummy case rc0 causing
+		//inverse err. In the real mode, rc will be the real Fiat-Shamir
+		let b_sigs = check_logup(cs.clone(),
+			&si.failed_sigs,
+			&si.discharged_sigs,
+			&si.mtbl_sigs,
+			&rc2,
+		)?;
+		let b_correct = not_final_step.or(&b_sigs)?; //require b_sigs true at
+													//final step
+		b_correct.enforce_equal(&Boolean::TRUE)?;
+		#[cfg(test)]{
+			if b_correct.value().is_ok(){
+				assert!(b_correct.value()?, "failed b_correct");
 			}
 		}
+
+		if b_debug{
+			let csat = cs.is_satisfied();
+			if csat.is_ok(){ assert!(csat.unwrap(), "step 10"); }
+			println!(concat!(
+				"--- DEBUG USE 7601: gen_step_constraints step 10",
+				"cs: {}, stack  =======, stack: {}"), 
+				cs.num_constraints(), get_stack_space()
+			);
+		}
+
 		Ok(vec![new_cur_hc_cmF, hash_zi_part2])
 	}
 }
 
 #[cfg(test)]
-pub mod tests{
+pub mod tests_sigma_ir1cs{
 	use core::marker::PhantomData;
 	use ark_ff::{PrimeField,ToConstraintField,BigInteger};
 	use ark_relations::r1cs::{ConstraintSystem,
@@ -3181,7 +3288,7 @@ pub mod tests{
 
 		/// return the sizes of inp/oup/data to append to the
 		/// buffer of GadgetMapper.
-		fn get_to_add_size(&self)->(usize, usize, usize){
+		fn get_to_add_size(&self)->(usize, usize, usize, usize, usize){
 			unimplemented!("no need to implement. legacy of caller handles it");
 		}
 
@@ -3250,7 +3357,7 @@ pub mod tests{
 
 		/// return the sizes of inp/oup/data to append to the
 		/// buffer of GadgetMapper.
-		fn get_to_add_size(&self)->(usize, usize, usize){
+		fn get_to_add_size(&self)->(usize, usize, usize, usize, usize){
 			unimplemented!("no need to implement. legacy of caller handles it");
 		}
 
@@ -3318,7 +3425,7 @@ pub mod tests{
 
 		/// return the sizes of inp/oup/data to append to the
 		/// buffer of GadgetMapper.
-		fn get_to_add_size(&self)->(usize, usize, usize){
+		fn get_to_add_size(&self)->(usize, usize, usize, usize, usize){
 			unimplemented!("no need to implement. legacy of caller handles it");
 		}
 
@@ -3435,7 +3542,7 @@ pub mod tests{
 		}
 
 		/// expecting [n], and build the rest of problem statement instance.
-		fn build_statement(&self, word: &Vec<F>, prev_stmt: &Option<StatementInst<F,LK>>, lkup: Rc<RefCell<LK>>, ea: &StatementExtraInfo<F>, _advice: Rc<dyn NdAdvice>, _lkup_size: usize) -> Result<StatementInst<F,LK>, Error>{
+		fn build_statement(&self, word: &Vec<F>, prev_stmt: &Option<StatementInst<F,LK>>, lkup: Rc<RefCell<LK>>, ea: &StatementExtraInfo<F>, _advice: Rc<dyn NdAdvice>, _lkup_size: usize, _b_dummy: bool) -> Result<StatementInst<F,LK>, Error>{
 			//1. compute the cube_root, sq_root, tbl_id
 			assert!(word.len()==1);
 			let n = word[0]; 
@@ -3467,6 +3574,10 @@ pub mod tests{
 			let pc_i1 = zero; //will be RESET later
 			let f_n_circ = ea.n_circ;
 			let ncirc_minus_pci = f_n_circ-pc_i;
+
+			let failed_sigs = vec![zero];
+			let discharged_sigs = vec![zero];
+			let mtbl_sigs = vec![one]; //as zero appeared once failed_sigs
 			let stmt = StatementInst{
 				pc_i: pc_i,
 				pc_i1: pc_i1, //will be reset later
@@ -3509,6 +3620,10 @@ pub mod tests{
 				col2_share: vec![zero; 4], //to be updated
 				m_share: vec![zero; 4],//to be updated
 
+				failed_sigs,
+				discharged_sigs,
+				mtbl_sigs,
+
 				_lk: PhantomData,
 			};
 			let _stmt_vec = stmt.to_vec();
@@ -3526,9 +3641,12 @@ pub mod tests{
 			let word_subseg_size = 2;
 			let data_size = 4;
 			let lookup_share_size = 4;//overwrite it to keep legacy code logic
+			let failed_sig_size = 1;
+			let discharged_sig_size = 1;
 			let cfg = StatementConfig::new(
 				input_size, output_size, word_subseg_size,
-				data_size, lookup_share_size
+				data_size, lookup_share_size,
+				failed_sig_size, discharged_sig_size
 			);
 
 			//2. generate the result to return
@@ -3651,7 +3769,7 @@ pub mod tests{
 			let dummy_adv = Rc::new(DummyNdAdvice{});
 			let stmt = mapper.borrow()
 				.build_statement(&inp, &None, lkup.clone(), 
-					&ea, dummy_adv, 4).expect("build stmt fails"); 
+					&ea, dummy_adv, 4, false).expect("build stmt fails"); 
 			//if tbl_id!=F::zero() {counter += 1;}
 			vec_stmt.push(stmt);
 		}
@@ -3699,6 +3817,9 @@ pub mod tests{
 
 	#[test]
 	pub fn test_stmt_serialize(){
+		let failed_sigs = vec![Fr::zero()];
+		let discharged_sigs = vec![Fr::zero()];
+		let mtbl_sigs= vec![Fr::one()]; //coz 0 appeared once in failed sigs
 		let stmt = StatementInst::<Fr,LookupTableTwoCol_Inst<Fr>>{
 			pc_i: Fr::from(2),
 			pc_i1: Fr::from(3),
@@ -3734,6 +3855,10 @@ pub mod tests{
 			col1_share: vec![Fr::from(101), Fr::from(102)],
 			col2_share: vec![Fr::from(201), Fr::from(202)],
 			m_share: vec![Fr::from(301), Fr::from(302)],
+
+			failed_sigs,
+			discharged_sigs,
+			mtbl_sigs,
 
 			_lk: PhantomData,
 		};

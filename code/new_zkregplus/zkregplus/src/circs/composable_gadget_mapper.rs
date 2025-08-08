@@ -22,6 +22,7 @@ use std::{
 	rc::{Rc},cell::{RefCell},
 	fmt::{Debug},
 };
+use crate::gadgets::commons::{gen_m_table};
 
 /// Compononent of a CompositeGadgetMapper.
 /// In general, a component mapper should be regarded as a self-contained
@@ -287,7 +288,8 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 	/// given word input, previous witness, try to construct
 	/// the full problem statement (including non-deterministic witness). 
 	/// NOTE that the real i/o has only two elements in z_i array.
-	fn build_statement(&self, word: &Vec<F>, prev_stmt: &Option<StatementInst<F,LK>>, lkup: Rc<RefCell<LK>>, ea: &StatementExtraInfo<F>, r_advice: Rc<dyn NdAdvice>, lkup_share_size: usize) -> Result<StatementInst<F,LK>, Error>{
+	fn build_statement(&self, word: &Vec<F>, prev_stmt: &Option<StatementInst<F,LK>>, lkup: Rc<RefCell<LK>>, ea: &StatementExtraInfo<F>, r_advice: Rc<dyn NdAdvice>, lkup_share_size: usize, b_dummy: bool) 
+	-> Result<StatementInst<F,LK>, Error>{
 		//1. expand word_seg to max capacity.
 		let mut rem_word = vec![F::zero(); self.max_word_len() - word.len()];
 		let mut word_seg = word.clone();
@@ -340,6 +342,8 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 		assert!(inp.len()==oup.len());
 		let data = vec_data.concat();
 		let failed_sigs = vec_failed_sigs.concat();
+		let failed_sigs = if b_dummy {vec![F::zero(); failed_sigs.len()]}
+			else {failed_sigs};
 		let discharged_sigs = vec_discharged_sigs.concat();
 
 		let subtbl_word = vec![F::zero(); self.max_word_len()];
@@ -363,6 +367,7 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 		//3. assemble the statement instance by setting its inp/oup/data/subtbl
 		let ncirc_minus_pci = ea.n_circ - ea.pc_i;
 		let zero = F::zero();
+		let mtbl_sigs = gen_m_table(&failed_sigs, &discharged_sigs);
 		let stmt = StatementInst{
 			pc_i: ea.pc_i,
 			pc_i1: ea.pc_i1, //will be reset later
@@ -402,6 +407,7 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 
 			failed_sigs: failed_sigs,
 			discharged_sigs: discharged_sigs,
+			mtbl_sigs: mtbl_sigs,
 
 			_lk: PhantomData,
 		};
@@ -410,7 +416,7 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 			let stmt_vec = stmt.to_vec();
 			assert!(stmt_vec.len()==cfg.total_size());
 		}
-			
+		
 		Ok(stmt)
 	}
 	/// return the max word length that can be processed, we require

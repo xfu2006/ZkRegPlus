@@ -221,10 +221,10 @@ where C: CurveGroup<ScalarField=F>,
 
 	//vec![ vec![c4,c3], vec![c2,c1] ]
 	//vec![ vec![_c2,_c1] ] //for saving cost
-	vec![ vec![_c1] ] //for saving cost
+	//vec![ vec![_c1] ] //for saving cost
 	//vec![ vec![sc1] ] //for saving cost
 	//vec![ vec![dc1] ] //for saving cost
-	//vec![ vec![hc1] ] //compsite of cg, sed, and dfa
+	vec![ vec![_hc1] ] //compsite of cg, sed, and dfa
 }
 
 

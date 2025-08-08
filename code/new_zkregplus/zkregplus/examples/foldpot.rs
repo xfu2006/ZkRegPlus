@@ -225,7 +225,7 @@ GadgetMapper<F,LK> for SumMapper<F, LK>{
 	/// This is for testing the "best fit" circ in multiple non-uniform
 	/// circ environment in supernova.
 	fn build_statement(&self, word: &Vec<F>, prev_wit: &Option<StatementInst<F,LK>>, lkup: Rc<RefCell<LK>>, ea: &StatementExtraInfo<F>, 
-	_adv: Rc<dyn NdAdvice>, _lkup_share_size: usize) 
+	_adv: Rc<dyn NdAdvice>, _lkup_share_size: usize, _b_dummy: bool) 
 	-> Result<StatementInst<F,LK>, Error>{
 		//1. making check on odd/even case
 		assert!(word.len()>=1);
@@ -311,8 +311,9 @@ GadgetMapper<F,LK> for SumMapper<F, LK>{
 			col1_share: vec![zero; 4], //to be updated, capcity 4
 			col2_share: vec![zero; 4], //to be updated
 			m_share: vec![zero; 4],//to be updated
-			failed_sigs: vec![zero; 0],
-			discharged_sigs: vec![zero;0],
+			failed_sigs: vec![zero],
+			discharged_sigs: vec![zero],
+			mtbl_sigs: vec![one],
 
 			_lk: PhantomData,
 		};

@@ -237,7 +237,7 @@ GadgetMapper<F,LK> for FoldPairMapper<F, LK>{
 	/// word: a and b (size 8*5 = 40 Fr)
 	/// [gt1, a, b, gt2] 160Fr maps to zi_inp.cyclepair_input
 	/// We do not rely on prev_stmt
-	fn build_statement(&self, word: &Vec<F>, _prev_stmt: &Option<StatementInst<F,LK>>, _lkup: Rc<RefCell<LK>>, ea: &StatementExtraInfo<F>, _advice: Rc<dyn NdAdvice>, _lkup_size: usize) -> Result<StatementInst<F,LK>, Error>{
+	fn build_statement(&self, word: &Vec<F>, _prev_stmt: &Option<StatementInst<F,LK>>, _lkup: Rc<RefCell<LK>>, ea: &StatementExtraInfo<F>, _advice: Rc<dyn NdAdvice>, _lkup_size: usize, _b_dummy: bool) -> Result<StatementInst<F,LK>, Error>{
 		//1. retrieve the information
 		assert!(word.len()==164);
 		let gt1 = word[0..12*5].to_vec();
@@ -255,6 +255,9 @@ GadgetMapper<F,LK> for FoldPairMapper<F, LK>{
 		let (zero, _one) = (F::zero(), F::one());
 		let f_n_circ = ea.n_circ;
 		let ncirc_minus_pci = f_n_circ-ea.pc_i;
+		let failed_sigs = vec![F::zero()];
+		let discharged_sigs = vec![F::zero()];
+		let mtbl_sigs= vec![F::one()]; //coz 0 appeared once in failed sigs
 		let stmt = StatementInst{
 			pc_i: ea.pc_i,
 			pc_i1: ea.pc_i1, 
@@ -287,8 +290,9 @@ GadgetMapper<F,LK> for FoldPairMapper<F, LK>{
 			col1_share: vec![zero; lkup_share_size],  
 			col2_share: vec![zero; lkup_share_size], 
 			m_share: vec![zero; lkup_share_size],
-			failed_sigs: vec![],
-			discharged_sigs: vec![],
+			failed_sigs,
+			discharged_sigs,
+			mtbl_sigs,
 
 			_lk: PhantomData,
 		};
@@ -304,8 +308,8 @@ GadgetMapper<F,LK> for FoldPairMapper<F, LK>{
 		let word_subseg_size = 40;
 		let data_size = 0;
 		let lkup_share_size = 0;
-		let failed_sigs_size= 0;
-		let discharged_sigs_size= 0;
+		let failed_sigs_size= 1; //empty 0
+		let discharged_sigs_size= 1; //empty 0
 		let cfg = StatementConfig::new(
 			input_size, output_size, word_subseg_size,
 			data_size,lkup_share_size ,
@@ -400,7 +404,7 @@ where 	C: CurveGroup<ScalarField=F>,
 	let dummy_adv = Rc::new(DummyNdAdvice{});
 	let lkup_share_size = 4;
 	let stmt_vec =sigma.get_mapper().borrow()
-		.build_statement(&dummy_input, &None, lkup, &ea, dummy_adv, lkup_share_size).unwrap().to_vec();
+		.build_statement(&dummy_input, &None, lkup, &ea, dummy_adv, lkup_share_size, false).unwrap().to_vec();
 	sigma.dummy_stmt = Some(stmt_vec);
 
 	sigma
@@ -529,7 +533,7 @@ pub mod tests_sigma_cyclepair{
 			vec![hc_a_in, hc_b_in, hc_a_out, hc_b_out]].concat();
 		let dummy_adv = Rc::new(DummyNdAdvice{});
 		let lkup_share_size = 4;
-		let stmt = mapper.borrow().build_statement(&inp, &None, lkup,&ea, dummy_adv, lkup_share_size).unwrap();
+		let stmt = mapper.borrow().build_statement(&inp, &None, lkup,&ea, dummy_adv, lkup_share_size, false).unwrap();
 
 		let fq_bits = Fq::MODULUS_BIT_SIZE as usize;
 		let b_full = true;

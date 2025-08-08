@@ -1787,10 +1787,6 @@ impl <F:PrimeField> SigmaGadget<F> for ComputeSigAdvGadget<F>{
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{
-		//REMOVE LATER -----------
-		let n1 = cs.num_constraints(); 
-		//REMOVE LATER ----------- ABOVE
-
 		//1. retrive the statement instance and get all parts
 		let cfg = self.get_container_cfg().expect("container cfg not set!");
 		let stmt = Container::<FpVar<F>>::load_from(i, wtns_cfg, wtns, &cfg)?;
@@ -1822,11 +1818,6 @@ impl <F:PrimeField> SigmaGadget<F> for ComputeSigAdvGadget<F>{
 			&eval_res_combo, &synthesis_res_combo, &sig_res_combo, 
 			r1.clone(), r2.clone(), cs.clone())?;
 			
-		//REMOVE LATER -----------
-		println!("DEBUG USE 9999: num_cons: {}", cs.num_constraints()-n1);
-		//REMOVE LATER ----------- ABOVE
-
-
 		Ok(())
 	}
 

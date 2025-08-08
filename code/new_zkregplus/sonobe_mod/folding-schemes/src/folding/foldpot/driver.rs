@@ -694,7 +694,7 @@ where
 				//need to build the statement to fill the m_map
 				let stmt_res = circ.get_mapper().borrow().build_statement(
 					&frag, &prev_stmt, self.lkup.clone(), &ei,
-						advice[subseg_id-1].clone(), lk_share_size);
+						advice[subseg_id-1].clone(), lk_share_size, false);
 				assert!(stmt_res.is_ok());
 				let stmt = stmt_res.unwrap();
 				stmt.fill_lkup_mvec(&mut m_map, &self.lkup); //needed here!
@@ -790,7 +790,7 @@ where
 				let stmt_res = circ.get_mapper().borrow().build_statement(
 					&frag, &prev_stmt, self.lkup.clone(), ei, 
 					vec_advice[wi][subseg_id-1].clone(),
-					share_size);
+					share_size, false);
 				assert!(stmt_res.is_ok());
 				let mut stmt = stmt_res.unwrap();
 
@@ -946,7 +946,8 @@ where
 				remaining = remaining[act_len..].to_vec();
 				let stmt_res = circ.get_mapper().borrow().build_statement(
 						&frag, &prev_stmt, self.lkup.clone(), 
-						ei, vec_advice[wi][subseg_id].clone(), share_size);
+						ei, vec_advice[wi][subseg_id].clone(), share_size,
+						false);
 				assert!(stmt_res.is_ok());
 				let mut stmt = stmt_res.unwrap();
 				stmt.update_lookup(start, start+share_size, &self.lkup, m_map);
@@ -1137,7 +1138,8 @@ where
 					lkup.clone(), 
 					&ei,
 					advice, 
-					lk_share_size);
+					lk_share_size,
+					true); //dummy mode
 				assert!(stmt_res.is_ok());
 				circ.set_dummy_stmt(stmt_res.unwrap().to_vec());
 			}else{
@@ -1434,9 +1436,10 @@ pub mod tests_driver{
 			unimplemented!("no need to implement. legacy of caller handles it");
 		}
 
-		/// return the sizes of inp/oup/data to append to the
+		/// return the sizes of inp/oup/data/failed/discharged sigs
+		/// to append to the
 		/// buffer of GadgetMapper.
-		fn get_to_add_size(&self)->(usize, usize, usize){
+		fn get_to_add_size(&self)->(usize, usize, usize, usize, usize){
 			unimplemented!("no need to implement. legacy of caller handles it");
 		}
 
@@ -1577,7 +1580,7 @@ pub mod tests_driver{
 		/// similarly throw error for odd circ if x_1 is not odd.
 		/// This is for testing the "best fit" circ in multiple non-uniform
 		/// circ environment in supernova.
-		fn build_statement(&self, word: &Vec<F>, prev_wit: &Option<StatementInst<F,LK>>, lkup: Rc<RefCell<LK>>, ea: &StatementExtraInfo<F>, _advice: Rc<dyn NdAdvice>, _lkup_share_size: usize) 
+		fn build_statement(&self, word: &Vec<F>, prev_wit: &Option<StatementInst<F,LK>>, lkup: Rc<RefCell<LK>>, ea: &StatementExtraInfo<F>, _advice: Rc<dyn NdAdvice>, _lkup_share_size: usize, _b_dummy: bool) 
 		-> Result<StatementInst<F,LK>, Error>{
 			//1. making check on odd/even case
 			assert!(word.len()>=1);
@@ -1624,6 +1627,9 @@ pub mod tests_driver{
 			}
 			let ncirc_minus_pci = ea.n_circ -ea.pc_i;
 			let (zero, one) = (F::zero(), F::one());
+			let failed_sigs = vec![F::zero()];
+			let discharged_sigs = vec![F::zero()];
+			let mtbl_sigs= vec![F::one()]; //coz 0 appeared once in failed sigs
 			let stmt = StatementInst{
 				pc_i: ea.pc_i,
 				pc_i1: ea.pc_i1, //will be reset later
@@ -1664,6 +1670,10 @@ pub mod tests_driver{
 				col2_share: vec![zero; 4], //to be updated
 				m_share: vec![zero; 4],//to be updated
 
+				failed_sigs,
+				discharged_sigs,
+				mtbl_sigs,
+
 				_lk: PhantomData,
 			};
 				
@@ -1680,9 +1690,12 @@ pub mod tests_driver{
 			let word_subseg_size = 2;
 			let data_size = 2;
 			let lookup_share_size = 4; //overwrite it here keep the original size
+			let failed_sig_size = 1;
+			let discharged_sig_size = 1;  //dummy sigs table of len 1.
 			let cfg = StatementConfig::new(
 				input_size, output_size, word_subseg_size,
-				data_size, lookup_share_size
+				data_size, lookup_share_size,
+				failed_sig_size, discharged_sig_size,
 			);
 
 			//2. generate the result to return

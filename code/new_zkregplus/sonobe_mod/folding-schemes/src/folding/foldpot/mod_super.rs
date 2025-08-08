@@ -1033,7 +1033,6 @@ where
 		let mut vec_pp = vec![];
 		let mut vec_vp = vec![];
 
-
 		//TO IMPROVE: can be distributed. However, it's not trivial.
 		// The reason is that F and PrepParams are not Send + Sync
 		// will need raw scoped multi-threads and challenel passing,
@@ -1081,6 +1080,7 @@ where
 				(cf_cs_pp, cf_cs_vp) = CS2::setup(&mut rng, cf_r1cs.A.n_rows)?;
 				(cp_cs_pp, cp_cs_vp) = CS2::setup(&mut rng, cp_r1cs_in.A.n_rows)?;
 			}
+
 			let prover_params = ProverParamsFoldPot::<C1, C2, CS1, CS2, LK, H> {
 				poseidon_config: prep_param.poseidon_config.clone(),
 				cs_pp: cs_pp.clone(),
@@ -1091,6 +1091,7 @@ where
 				lk_tbl: prep_param.lk_tbl.clone(),
 				cs_pp_len: r1cs.A.n_cols, 
 			};
+
 			let verifier_params = VerifierParamsFoldPot::<C1, C2, CS1, CS2, H> {
 				poseidon_config: prep_param.poseidon_config.clone(),
 				r1cs,
@@ -1162,6 +1163,7 @@ where
 			let (pkey, vkey) = setup_qa_nizk::<E>(&smatrix, b_debug);
 			(Some(pkey), Some(vkey))
 		};
+
 
 
 		//5. build up the cp_r1cs if needed
@@ -1853,7 +1855,7 @@ pub mod tests_mod_super {
 	use crate::folding::foldpot::{
 		sigma_ir1cs::{
 			SigmaIR1CS_Inst,StatementInst,
-			tests::{gen_six_root, SixRootMapper},
+			tests_sigma_ir1cs::{gen_six_root, SixRootMapper},
 		},
 	};
 

@@ -38,7 +38,7 @@ use data_processor::{
 use utils::{data::{u8_to_hex}};
 use crate::gadgets::{
 	commons::{mix_vec,new_const_var, check_eq,encode_cols_better,gen_m_table,
-		encode_cols_var_adv_better},
+		encode_cols_var_adv_better, print_vec},
 	traits::{Container,
 		Col,
 		IDX_WORD, IDX_INP,IDX_DATA, IDX_DISCHARGED_SIGS,
@@ -272,6 +272,7 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		assert!(v_dfa_id.len()==m && v_dfa.len()==m && inp_subsigs.len()==m);
 		assert!(nibbles.len()==nlen);
 
+		print_vec("DEBUG USE 6601: inp_subsigs", inp_subsigs);
 		//1. walk nibbles through transition of each DFA
 		//this will be sequential, in practice, it's ok
 		// NOTE: saved_states are adjused (by +1)

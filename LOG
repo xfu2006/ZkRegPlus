@@ -18639,9 +18639,10 @@ Goal 6. think about how SED works especially for short patterns?
 		-> not that simple because the m_table is no good.
 
 Wed 08/06/2025
-LOC (gadet): 13897
-LOC (circ): 2339
-LOC (sonobe): 18149
+LOC (gadet): 13897 -> 13987 (+90)
+LOC (circ): 2339 -> 2349 (+10)
+LOC (sonobe): 18149 -> 18206 (57)
+=> +157
 Goal 1. Design decision
 	[a] keep the sig and waste a bit on fail_sig actually not much
 	[b] in sigma_ir1cs add another block for m_table because now there
@@ -18675,14 +18676,91 @@ Goal 3. take care of the lkup
 Goal 4. fix the circ so that it can work
 	[a] line 303 -> fixed
 
-Goal 5. 
+Goal 5.  add m_table into sigma_ir1cs
+	[a] add m_table requirement
+	[b] fix all syntax errors
+		-> change cfg as well
+		-> six root mapper
+		-> line 3555
+		-> sig_cyclepair
+		-> driver
+		-> 1691
+	[c] unit testing of sigma_ir1cs
+		-> fix 1106 (also var version)
+		-> fix 3791
+		-> fix 1110
+	[d] clear syntax error in circ, it should generate the mtbl for sigs
+		-> fix 735
+		-> problem is that we have to put all components in one testing
+		framework.
+		-> problem: why DFA is not discharging it?
+		-> the input_subsigs are all 0 (dummy input?) but the cp_component
+			is getting non-dummy
+		=> driver.1134 -> composable_gadget_mapper:370
+		. It is indeed the dummy statements, why does cp_mapper
+			gets failed_sigs? -> because it's put there by default.
 
----- TODO --
-	[d] update inv2_left
-	[e] update the assert_msg3
-	[f] regression test
+Thursday 08/07/2025
+LOC (circ): 2349 -> 2347 (+2)
+LOC (sonobe): 18206 -> 18436 -> (230)
+Goal 1.  build_statement should have a dummy mode, so that
+	it can decide to output all 0's.
+	[a] in tradget gadget_mapper add b_dummy_mode
+	[b] implement dummy mode for output for composable gadget
+	[c] remove DEBUG USE 6600
 
--- TODO --
-Goal 4. argue that the sigs to include is from db
-	[a] check existing code how to prove in db
-	[b] 
+Goal 2. strange stack overflow problem
+	[a] show full stack
+	[b] in prepring add dbg msg 6501
+	[c] it breaks in get_r1cs_super
+		-> get_r1cs_from_cs
+		  -> circuit_super.generate_constraints
+		    -> sigma_ir1cs::generate_step_constraints
+	[d] add collection stack space and watchA
+	[e] it is the cs.is_satisfied() which causes stack exhausted.
+	[f] ConstraintSystem.is_satisfied() calls
+		which_is_unsatisfied() calls eval_lc() for a,b,c and check
+		if they are equal
+		-> in 05/04/2025 notes, there's a mention of calling value()
+			in verify_logup_inverse() function which helps to break
+			the problem
+		-> eval_lc() calls the assigned_value(*var)
+			-> if the var is symbolic, it will RECURSIVELY call eval_lc()!
+			-> so do have to somehow call value() function periodically
+		-> but we do not find any of th evalue function in step 5.1 and
+			5.2
+		-> try to multiply the sum_hab22_right and lookup_share_size_left
+			with const 1 for every 100 rounds; we also tried
+			add with const 0 for every 100 rounds but not working
+		-> also tried to retrieve value it's not working.
+		-> try these for both the left and right if-statements. -> working!!!
+			why? which one is effective?
+		-> it's the CALLING value()? is effective. The other don't matter
+		-> BLOODY BLOODY BLOODY LESSON!
+		-> Why was the previous code deleted? Next time, make sure to 
+		 	put the comment on such "strange fix" (like 05/04/2025 note)
+
+Goal 3. next bug: gen_dummy_stmt() 
+	[a] print 6201
+	[b] trace: 
+		zkp_driver: 351 -> 318 -> driver: 1227 -> 299
+			(driver 2) -> vec_circ has only one cyclepair circ
+			-> mod_super:458
+				-> mod: 341
+					-> sigma_ir1cs: 2652 (gen_dummy_stmt)
+	[c] fix the estimated failed_sig and discharged sig size to 1.
+
+Goal 4. implement check of failed_sigs
+	[a] print out the values
+	[b] incorporate the function verify_logup
+	[c] use non-final step to check it
+	[d] fix imports
+	[e] implement functions related to check logup
+
+Friday 08/08/2025
+LOC (gadget): 13977
+LOC (circ): 2347 
+Goal 1. fix inv_err.
+		
+
+

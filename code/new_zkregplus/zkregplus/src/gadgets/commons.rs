@@ -21,6 +21,11 @@ use ark_r1cs_std::{
 };
 use data_processor::clam_db::{RANGE2_BIT,RANGE2};
 
+pub fn print_vec<F:PrimeField>(msg: &str, v: &Vec<F>){
+	println!("=== {} ====", msg);
+	for i in 0..v.len(){ println!("  {} => {}", i, v[i]); }
+}
+
 /// quickly generate repeating of vec for n times.
 pub fn repeat_vec<F:PrimeField>(v: &[FpVar<F>], n: usize)->Vec<FpVar<F>>{
 	let (_vlen,total) = (v.len(), v.len()*n);

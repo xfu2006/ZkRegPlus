@@ -2094,6 +2094,7 @@ dependencies = [
  "ark-vesta",
  "color-eyre",
  "itertools 0.14.0",
+ "libc",
  "memory-stats",
  "noname 0.7.0",
  "num-bigint",

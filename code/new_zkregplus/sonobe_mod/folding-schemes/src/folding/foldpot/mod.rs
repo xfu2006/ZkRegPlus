@@ -1324,7 +1324,7 @@ pub mod tests_mod_basic {
 	use crate::folding::foldpot::{
 		sigma_ir1cs::{
 			SigmaIR1CS_Inst,StatementInst,LookupTableTwoCol_Inst,
-			tests::{gen_six_root, SixRootMapper},
+			tests_sigma_ir1cs::{gen_six_root, SixRootMapper},
 		}
 	};
 
