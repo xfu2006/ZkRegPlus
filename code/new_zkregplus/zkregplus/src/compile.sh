@@ -1,6 +1,6 @@
 # quick build 
-#RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" cargo check --tests 2>&1 | more 
 #cargo check --tests 2>&1 | more 
+#RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" cargo check --tests 2>&1 | more 
 
 # test zkpsmall example
 RUST_BACKTRACE=1 cargo test --release -- test_zkreg_main --show-output --nocapture

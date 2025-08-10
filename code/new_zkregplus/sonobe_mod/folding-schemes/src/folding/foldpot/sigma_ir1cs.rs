@@ -2720,6 +2720,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		external_inputs: Vec<FpVar<F>>,
 	) -> Result<Vec<FpVar<F>>, SynthesisError> {
 		let b_debug = false; //set to false in production mode
+		let b_show_sigs = true; //set to false in production mode
 		//NOTE: cs.is_satisfied() can cause * stack overflow *
 		//if constraints are not constructed carefully.
 		//sometimes if a constraint has lc (linear combinations) too deep,
@@ -3201,7 +3202,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		)?;
 		let b_correct = not_final_step.or(&b_sigs)?; //require b_sigs true at
 													//final step
-		if b_debug{
+		if b_show_sigs{
 			print_vec_var("DEBUG USE 6801: failed_sigs", &si.failed_sigs);
 			print_vec_var("DEBUG USE 6802: discharged_sigs",
 				&si.discharged_sigs);

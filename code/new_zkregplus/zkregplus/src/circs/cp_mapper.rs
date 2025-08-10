@@ -44,7 +44,7 @@ use std::{
 use folding_schemes::{
 	Error,
 	folding::foldpot::{
-		sigma_ir1cs::{ Capacity,  SigmaGadget, StatementConfig, NdAdvice,WordInfo,LookupTableTwoCol,StatementInst,StatementExtraInfo},
+		sigma_ir1cs::{ Capacity,  SigmaGadget, StatementConfig, NdAdvice,WordInfo,LookupTableTwoCol,StatementExtraInfo},
 		circuits_super::field_to_usize,
 	}
 };
@@ -56,6 +56,7 @@ use crate::{
 	gadgets::fsm::{FsmGadget,FsmAdvice},
 	gadgets::pack::{PackFinalGadget,PackFinalAdvice},
 	gadgets::sigs::{GetSigAdvice,SigGadgetCapacity,SigGadgetData,GetSigGadget},
+	gadgets::commons::{print_vec},
 };
 use data_processor::{
 	clam_db::{ClamavDB,CHAR,CRIT_INIT,
@@ -124,6 +125,9 @@ pub struct CpAdvice<F:PrimeField>{
 	pub packfinal_crit_advice: PackFinalAdvice<F>,
 	/// the advice for the sigs gadget
 	pub sigs_advice: GetSigAdvice<F>,
+
+	/// input buffer for the badget
+	pub inp_buf: Vec<F>,
 }
 
 impl <F:PrimeField> NdAdvice for CpAdvice<F>{
@@ -184,6 +188,7 @@ impl <F:PrimeField> CpAdvice<F>{
 			dfa_crit_advice,
 			packfinal_crit_advice,
 			sigs_advice,
+			inp_buf: inp_buf.clone(),
 		}
 	}
 }
@@ -544,7 +549,9 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 	/// the the comp_id for the 2nd is 1, and its stmt_map_id is 2. (idx
 	/// starting from 0). For conveneince, we sometimes use
 	/// the prev_stmt or the vector of its prev_stmt.
-	fn build_statement_comp(&self, _comp_id: usize, stmt_map_id: usize, word_seg: &Vec<F>, actual_word_len: usize, prev_stmt: &Option<StatementInst<F,LK>>, prev_stmt_vec: &Option<Vec<F>>, _lkup: &Rc<RefCell<LK>>, _extra_info: &StatementExtraInfo<F>, advice: &Rc<dyn NdAdvice>, _cfg: &StatementConfig, stmt_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>{
+	fn build_statement_comp(&self, _comp_id: usize, _stmt_map_id: usize, word_seg: &Vec<F>, actual_word_len: usize, _lkup: &Rc<RefCell<LK>>, _extra_info: &StatementExtraInfo<F>, advice: &Rc<dyn NdAdvice>, _cfg: &StatementConfig, _stmt_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>{
+		let b_debug = true;
+
 		//1. take the advice
 		let advice = advice.as_any().downcast_ref::<CpAdvice<F>>()
 			.expect("downcast err!");
@@ -558,40 +565,13 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		};
 
 		//2. build inp/oup/data and 3 segments of subtbl_ids
-		let zero = F::zero();
+		let _zero = F::zero();
 		let wlen = word_seg.len();
 		let olen = self.capacity.final_states_len;
 		let sizes = self.get_sizes();
 		let (inp_len, oup_len, data_len) =  (sizes[0], sizes[1], sizes[2]);
 		assert!(inp_len==oup_len);
-		let inp = if prev_stmt.is_some(){
-			//We have 4 gadgets here: word_extract, fsm, pack, sig
-			//the oup of these 4 gadgets are located respectively
-			//in stmt_map (for gadget) at id  according to
-			//	*** gen_gadgets_stmt_map() ***
-			// NO, 1, 2 (repeated), 1   
-			let oup_ranges = [
-				stmt_mapping[stmt_map_id + 1][1], //fsm
-				//stmt_mapping[stmt_map_id + 2][2],//pack (repeated)
-												   //, not include)
-				stmt_mapping[stmt_map_id + 3][1], //sig
-			];
-
-			let prev_oup = oup_ranges.into_iter().map(|(a,b)|{
-				prev_stmt_vec.as_ref().unwrap()[a.. b+1].to_vec()
-			}).flatten().collect::<Vec<F>>();
-			assert!(prev_oup.len()==oup_len, "prev_op: {} != oup_len: {}",
-				prev_oup.len(), oup_len);
-			prev_oup
-		}else {//construct the first buf
-			vec![
-				vec![advice.dfa_crit_advice.states[0]], //dfa_crit
-				vec![zero; slen], //inp_sigs
-			].concat()
-		};
-		//REMOVE LATER IF WORKING
 		let inp = advice.inp_buf.clone();
-		//REMOVE LATER ABOVE ---------------
 		assert!(inp.len()==inp_len);
 		let oup = vec![
 		  vec![advice.dfa_crit_advice.states[advice.dfa_crit_advice.states.len()-1]],  		//states
@@ -666,6 +646,11 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		let failed_sigs = advice.sigs_advice.oup.clone(); 
 		assert!(failed_sigs.len()==self.capacity.sig_buf_capacity);
 		let discharged_sigs = vec![];
+		
+		if b_debug{
+			print_vec(&format!("DEBUG USE 6901: CP b_igc: {}, failed_sigs", 
+				self.b_igc), &failed_sigs);
+		}
 
 		Ok(	vec![inp, oup, data, subtbl_inp, subtbl_oup, subtbl_data, 
 			failed_sigs, discharged_sigs] )

@@ -18838,21 +18838,44 @@ Goal 2. check sed and dfa see if they need simlilar fix
 		be retrieved from advice input (maybe just add that component
 		so that we can avoid converting stmt_vec) again - but again
 		this is smaller cost which we can ignore just ignore it.
+Goal 3. try if we could drop prev_stmt and prev_stmt_vec (at least)
+	-> check if directly using inp_buf would be better
+	-> drop prev_stmt and prev_stmt_vec and see if it works. 
 
--- TODO -- fix sed and dfa as well check if needs fix
--- TODO --
-Goal 4. create two new sigs for cp_igc approach
-	[a] create a new signature which has 
-		IGC component and can be discharged by 
-			-> introduce a wrong one
-			-> fix it
-		and IGC component which is not discharged
 
-Goal 5. SED component
-	[a] add fsm_adv gadget 
-		-> need two params: b_igc
-		-> update the container name and relative prefix
-			based on b_igc.
-		
+Sunday 08/10/2025
+Goal 1. create two new sigs for cp_igc approach
+	[a] figure out how to inspect the discharged sigs
+		-> in sigma_ir1cs 
+		-> check if it's ignoring pound keys for comments -> no
+			-> had to make copy
+	[b] create a new signature which has can be discharged by
+		cp_igc (it should not show up at all)
+	[c] create a new sig which is NOT discharged by cp,
+		but discharged by sed_cs
+	[d] create a new sig which is NOT dischargec by cp_igc,
+		but discharged by sed_igc
+	[e] continue to print out failed sigs and discharged sigs
+		in build_statment of cp, sed and dfa
+		-> in build_statement add print msg
+		-> check result
+	[f] inspect the result for sigs 1 to 4
+
+Goal 2. Planning for SED
+	[a] would multiple SED be included? -> no, unless
+		ISED is included. to include this possibility
+		maybe sed should be tagged with fsm_id
+	[b] not sed_igc will fail the current sed, becaues compute_sig
+		would need to build the lkup table for it.
+		so it cannot be introduced at this moment
+
+Goal 3. modifying sed
+	[a] commit before change
+	[b] add a class wide get_name() given two fsm_id
+	[c] add 2nd fsm_id as optional parameter and update constructor
+	[d] add object method get_name() 
+	[e] update the container name in sed_component.
+	
+
 
 

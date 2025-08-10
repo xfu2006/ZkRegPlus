@@ -134,7 +134,7 @@ where C: CurveGroup<ScalarField=F>,
 	//1. create cp_components
 	let avg_lk_wd = lkup_len/total_word_n + 1;
 	let avg_lk_wd = if avg_lk_wd<1 {1} else {avg_lk_wd};
-	let cap1 = CpCapacity{max_word_len: 1, final_states_len: 8, join_buf_capacity: 4, sig_buf_capacity: 2};
+	let cap1 = CpCapacity{max_word_len: 1, final_states_len: 8, join_buf_capacity: 8, sig_buf_capacity: 4};
 	let cap2 = CpCapacity{max_word_len: 2, final_states_len: 16, join_buf_capacity: 8, sig_buf_capacity: 2};
 	let cap3 = CpCapacity{max_word_len: 3, final_states_len: 16, join_buf_capacity: 8, sig_buf_capacity: 4};
 	let cap4 = CpCapacity{max_word_len: 4, final_states_len: 16, join_buf_capacity: 8, sig_buf_capacity: 4};
@@ -158,7 +158,7 @@ where C: CurveGroup<ScalarField=F>,
 	let max_word = 1;
 	let sigs = 2;
 	let subsigs = 4;
-	let avg_pat_per_sig = 4;
+	let avg_pat_per_sig = 6;
 	let avg_active_pat_per_sig = 2;
 	let store_id = 0; //implies 'all' for sig_id, for SED
 	let perc_pats_in_trace = 40;
@@ -201,7 +201,7 @@ where C: CurveGroup<ScalarField=F>,
 
 	//5. create dfa components and instances
 	let sigs=1;
-	let subsigs=2;
+	let subsigs=4;
 	let d_cap1 = DfaCapacity::new(max_word, sigs, subsigs);
 	let dcomp1 = DfaComponentMapper::<F,LK<F>>::new(d_cap1, db.clone());
 	//let dcg1 = CompositeGadgetMapper::<F,LK<F>>::new("d1",

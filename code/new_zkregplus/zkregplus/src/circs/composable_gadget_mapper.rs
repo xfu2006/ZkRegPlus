@@ -22,7 +22,7 @@ use std::{
 	rc::{Rc},cell::{RefCell},
 	fmt::{Debug},
 };
-use crate::gadgets::commons::{gen_m_table,print_vec};
+use crate::gadgets::commons::{gen_m_table};
 
 /// Compononent of a CompositeGadgetMapper.
 /// In general, a component mapper should be regarded as a self-contained
@@ -87,7 +87,11 @@ pub trait ComponentMapper<F:PrimeField, LK: LookupTableTwoCol<F>>: Debug{
 	/// the the comp_id for the 2nd is 1, and its stmt_map_id is 2. (idx
 	/// starting from 0). For conveneince, we sometimes use
 	/// the prev_stmt or the vector of its prev_stmt.
-	fn build_statement_comp(&self, comp_id: usize, stmt_map_id: usize, word_seg: &Vec<F>, actual_word_len: usize, prev_stmt: &Option<StatementInst<F,LK>>, prev_stmt_vec: &Option<Vec<F>>, lkup: &Rc<RefCell<LK>>, extra_info: &StatementExtraInfo<F>, _advice: &Rc<dyn NdAdvice>, cfg: &StatementConfig, comp_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>;
+	///
+	/// NOTE: we dropped stmt and stmt_vec from the parameters, so at this
+	/// moment stmt_map_id and comp_id are actually not useful anymore 
+	/// (deprecated). 
+	fn build_statement_comp(&self, comp_id: usize, stmt_map_id: usize, word_seg: &Vec<F>, actual_word_len: usize, lkup: &Rc<RefCell<LK>>, extra_info: &StatementExtraInfo<F>, _advice: &Rc<dyn NdAdvice>, cfg: &StatementConfig, comp_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>;
 
 	/// This is not required for those non-SED gadgets, they are handled
 	/// by legacy gode.
@@ -295,16 +299,13 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 	/// given word input, previous witness, try to construct
 	/// the full problem statement (including non-deterministic witness). 
 	/// NOTE that the real i/o has only two elements in z_i array.
-	fn build_statement(&self, word: &Vec<F>, prev_stmt: &Option<StatementInst<F,LK>>, lkup: Rc<RefCell<LK>>, ea: &StatementExtraInfo<F>, r_advice: Rc<dyn NdAdvice>, lkup_share_size: usize, b_dummy: bool) 
+	fn build_statement(&self, word: &Vec<F>, _prev_stmt: &Option<StatementInst<F,LK>>, lkup: Rc<RefCell<LK>>, ea: &StatementExtraInfo<F>, r_advice: Rc<dyn NdAdvice>, lkup_share_size: usize, b_dummy: bool) 
 	-> Result<StatementInst<F,LK>, Error>{
 		//1. expand word_seg to max capacity.
 		let mut rem_word = vec![F::zero(); self.max_word_len() - word.len()];
 		let mut word_seg = word.clone();
 		word_seg.append(&mut rem_word); //always guarnatee max len
 		let actual_word_len = word.len();
-		let prev_stmt_vec = if prev_stmt.is_some(){
-			Some(prev_stmt.as_ref().unwrap().to_vec())
-		}else{None};
 
 		//2. collect inp/oup/data/subtbl_id/failed_sig/discharged_sig
 		// from components
@@ -327,8 +328,7 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 			let comp = &self.vec_components[i];
 			let vecs = comp.borrow()
 				.build_statement_comp(i, stmt_map_id, 
-					&word_seg, actual_word_len,
-					prev_stmt, &prev_stmt_vec, &lkup,
+					&word_seg, actual_word_len, &lkup,
 					ea, &advices.vec_adv[i], &cfg, &stmt_map
 				)?;
 			#[cfg(test)]{

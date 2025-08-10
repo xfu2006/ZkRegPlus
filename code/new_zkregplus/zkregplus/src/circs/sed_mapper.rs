@@ -45,7 +45,7 @@ use std::{
 use folding_schemes::{
 	Error,
 	folding::foldpot::{
-		sigma_ir1cs::{ Capacity,  SigmaGadget, StatementConfig, NdAdvice,WordInfo,LookupTableTwoCol,StatementInst,StatementExtraInfo,DischargeSigInfo},
+		sigma_ir1cs::{ Capacity,  SigmaGadget, StatementConfig, NdAdvice,WordInfo,LookupTableTwoCol,StatementExtraInfo,DischargeSigInfo},
 		//circuits_super::field_to_usize,
 		container_config::{ContainerConfig},
 	}
@@ -60,11 +60,8 @@ use crate::{
 	gadgets::discharge_adv::{DischargeAdvGadget,DischargeAdvAdvice,DischargeAdvCapacity,StepQueue},
 	gadgets::compute_sig_adv::{ComputeSigAdvCapacity,ComputeSigAdvAdvice,
 		ComputeSigAdvGadget},
-	//gadgets::pack::{PackFinalGadget,PackFinalAdvice},
-	//gadgets::sigs::{GetSigAdvice,SigGadgetCapacity,SigGadgetData,GetSigGadget},
-	gadgets::traits::{
-		ComponentAdvice 
-	},
+	gadgets::traits::{ComponentAdvice},
+	gadgets::commons::{print_vec}
 };
 use data_processor::{
 	clam_db::{ClamavDB, 
@@ -665,7 +662,8 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 	/// the the comp_id for the 2nd is 1, and its stmt_map_id is 2. (idx
 	/// starting from 0). For conveneince, we sometimes use
 	/// the prev_stmt or the vector of its prev_stmt.
-	fn build_statement_comp(&self, _comp_id: usize, _stmt_map_id: usize, _word_seg: &Vec<F>, _actual_word_len: usize, _prev_stmt: &Option<StatementInst<F,LK>>, _prev_stmt_vec: &Option<Vec<F>>, _lkup: &Rc<RefCell<LK>>, _extra_info: &StatementExtraInfo<F>, advice: &Rc<dyn NdAdvice>, _cfg: &StatementConfig, _stmt_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>{
+	fn build_statement_comp(&self, _comp_id: usize, _stmt_map_id: usize, _word_seg: &Vec<F>, _actual_word_len: usize, _lkup: &Rc<RefCell<LK>>, _extra_info: &StatementExtraInfo<F>, advice: &Rc<dyn NdAdvice>, _cfg: &StatementConfig, _stmt_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>{
+		let b_debug = true;
 		//1. take the advice
 		let advice = advice.as_any().downcast_ref::<SedAdvice<F>>()
 			.expect("downcast err!");
@@ -681,6 +679,11 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 				}).collect::<Vec<Vec<F>>>()
 			}
 		);
+
+		if b_debug{
+			print_vec("DEBUG USE 6901: SED failed_sigs:", &res[6]);
+			print_vec("DEBUG USE 6901: SED discharged_sigs:", &res[7]);
+		}
 
 		assert!(res.len()==8);
 		Ok( res )
