@@ -18844,8 +18844,8 @@ Goal 3. try if we could drop prev_stmt and prev_stmt_vec (at least)
 
 
 Sunday 08/10/2025
-LOC (gadget): 13997
-LOC (circ): 2408
+LOC (gadget): 13997 -> 13987 (+10)
+LOC (circ): 2408 -> 2483 (+75)
 Goal 1. create two new sigs for cp_igc approach
 	[a] figure out how to inspect the discharged sigs
 		-> in sigma_ir1cs 
@@ -18894,6 +18894,10 @@ Goal 6. update the struct SedAdvice
 		to be passed? There should be JUST one vec_sigs_to_discharge
 			-> NO
 			-> change correspondingly.
+	[d] build up the dis_subsig_igc
+
+--- TODO --- 
+Goal 1. fix compute_sig_adv gadget to take two subsig list.
 	
 	
 

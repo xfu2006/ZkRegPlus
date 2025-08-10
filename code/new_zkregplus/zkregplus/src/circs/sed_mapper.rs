@@ -651,7 +651,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 			pm_fsm_id_igc,
 			pm_acdfa_cs,
 			pm_acdfa_igc,
-			&vec_sigs_to_discharge_cs,
+			&vec_sigs_to_discharge,
 			subsig_pat_store_cs,
 			subsig_pat_store_igc,
 			subsig_step_store_cs,
