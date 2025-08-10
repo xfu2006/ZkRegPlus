@@ -18844,6 +18844,8 @@ Goal 3. try if we could drop prev_stmt and prev_stmt_vec (at least)
 
 
 Sunday 08/10/2025
+LOC (gadget): 13997
+LOC (circ): 2408
 Goal 1. create two new sigs for cp_igc approach
 	[a] figure out how to inspect the discharged sigs
 		-> in sigma_ir1cs 
@@ -18870,11 +18872,29 @@ Goal 2. Planning for SED
 		so it cannot be introduced at this moment
 
 Goal 3. modifying sed
-	[a] commit before change
-	[b] add a class wide get_name() given two fsm_id
-	[c] add 2nd fsm_id as optional parameter and update constructor
-	[d] add object method get_name() 
-	[e] update the container name in sed_component.
+	[a] commit before change -> DONE
+	[b] design decision: include ISED support as well?
+		ISED is only one fsm, now here we have double components.
+		So maybe later if ISED is really needed should add a new class file.
+
+Goal 4. continue to modify sed 
+	[a] remove b_igc
+	[b] fix related logic
+	[c] gen_nd_advice_no_limit probably just
+		pass igc to it
+
+Goal 5. modify sed advice gn_nd_advice
+	[a] add vars for section 1 and 2
+	[b] gen_input
+
+Goal 6. update the struct SedAdvice
+	[a] update the data def
+	[b] update the constructor of SedAdvice
+	[c] read vec_sigs_to_discharge again: do we need two versions
+		to be passed? There should be JUST one vec_sigs_to_discharge
+			-> NO
+			-> change correspondingly.
+	
 	
 
 

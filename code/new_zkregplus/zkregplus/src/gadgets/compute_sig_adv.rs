@@ -177,15 +177,20 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 	/// Given the StepQueue (result of bwd_prf) from the DischargeAdvGadget
 	/// Generate the list of signatures that are discharged.
 	pub fn new(
-		acdfa_id: u32,
+		acdfa_id_cs: u32,
+		acdfa_id_igc: u32,
 		inp_sigs: &Vec<F>,
-		inp_subsigs: &Vec<F>,
+		inp_subsigs_cs: &Vec<F>,
+		inp_subsigs_igc: &Vec<F>,
 		discharge_infos: &Vec<DischargeSigInfo>, //must match inp_sigs
 					//extracting the dnf to the concat of inp_subsigs
-		sq_res: &Rc<RefCell<Container<F>>>, // the steps_queue from the DischargeAdv
+		sq_res_cs: &Rc<RefCell<Container<F>>>, // the steps_queue from the DischargeAdv
+		sq_res_igc: &Rc<RefCell<Container<F>>>, // the steps_queue from the DischargeAdv
 		capacity: &ComputeSigAdvCapacity,
-		subsig_store_info: &SubsigStepStore,
-		subsig_extra_info: &SubsigInfoStore,
+		subsig_store_info_cs: &SubsigStepStore,
+		subsig_store_info_igc: &SubsigStepStore,
+		subsig_extra_info_cs: &SubsigInfoStore,
+		subsig_extra_info_igc: &SubsigInfoStore,
 		v_sig_obj: &Vec<Arc<ClamavSig>>, //needs to cover all inp_sigs
 		sig_to_id: &HashMap<String,usize>,
 	) ->Self{

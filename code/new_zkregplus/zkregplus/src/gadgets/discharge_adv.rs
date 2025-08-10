@@ -1481,6 +1481,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 	/// the StepQueue of all related subsigs (NOTE: subsigs are provided
 	/// as non-deterministic advice)
 	pub fn new(
+		_b_igc: bool,
 		pat_loc: &Rc<RefCell<Container<F>>>,
 		inp_subsigs: &Vec<F>,
 		fsm_id: u32,
