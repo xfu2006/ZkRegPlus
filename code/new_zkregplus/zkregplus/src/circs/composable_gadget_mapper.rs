@@ -81,10 +81,13 @@ pub trait ComponentMapper<F:PrimeField, LK: LookupTableTwoCol<F>>: Debug{
 	/// in StatementConfig. Note we pass the max len word, padded.
 	/// the actual_word_len indicates the actual word seg in the word_seg.
 	///
-	/// NOTE: id refers to the component, we cannot use
-	///  but stmt_mapping is for ALL gadgets. So one ID of the component
-	///  can correspond to MULTIPLE gadgets in stmt_mapping.
-	fn build_statement_comp(&self, id: usize, word_seg: &Vec<F>, actual_word_len: usize, prev_stmt: &Option<StatementInst<F,LK>>, lkup: &Rc<RefCell<LK>>, extra_info: &StatementExtraInfo<F>, _advice: &Rc<dyn NdAdvice>, cfg: &StatementConfig, comp_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>;
+	/// NOTE: comp_id refers to the component, stmt_map_id refers
+	/// to the starting index of FIRST of its gadget in the stma_mapping.
+	/// e.g., let's say there are two components with 2 and 3 gadgets,
+	/// the the comp_id for the 2nd is 1, and its stmt_map_id is 2. (idx
+	/// starting from 0). For conveneince, we sometimes use
+	/// the prev_stmt or the vector of its prev_stmt.
+	fn build_statement_comp(&self, comp_id: usize, stmt_map_id: usize, word_seg: &Vec<F>, actual_word_len: usize, prev_stmt: &Option<StatementInst<F,LK>>, prev_stmt_vec: &Option<Vec<F>>, lkup: &Rc<RefCell<LK>>, extra_info: &StatementExtraInfo<F>, _advice: &Rc<dyn NdAdvice>, cfg: &StatementConfig, comp_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>;
 
 	/// This is not required for those non-SED gadgets, they are handled
 	/// by legacy gode.
@@ -299,6 +302,9 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 		let mut word_seg = word.clone();
 		word_seg.append(&mut rem_word); //always guarnatee max len
 		let actual_word_len = word.len();
+		let prev_stmt_vec = if prev_stmt.is_some(){
+			Some(prev_stmt.as_ref().unwrap().to_vec())
+		}else{None};
 
 		//2. collect inp/oup/data/subtbl_id/failed_sig/discharged_sig
 		// from components
@@ -316,12 +322,15 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 			.expect("downcast err!");
 		let (_, cfg, stmt_map, _, _) = 
 			self.gen_statement_structure(lkup_share_size);
+		let mut stmt_map_id = 0;
 		for i in 0..self.vec_components.len(){
 			let comp = &self.vec_components[i];
 			let vecs = comp.borrow()
-				.build_statement_comp(i, &word_seg, actual_word_len,
-					prev_stmt, &lkup,
-					ea, &advices.vec_adv[i], &cfg, &stmt_map)?;
+				.build_statement_comp(i, stmt_map_id, 
+					&word_seg, actual_word_len,
+					prev_stmt, &prev_stmt_vec, &lkup,
+					ea, &advices.vec_adv[i], &cfg, &stmt_map
+				)?;
 			#[cfg(test)]{
 				let sizes = comp.borrow().get_sizes();
 				for i in 0..3{
@@ -339,20 +348,12 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 
 			vec_failed_sigs.push(vecs[6].clone()); //no sid
 			vec_discharged_sigs.push(vecs[7].clone()); //no sid
+			stmt_map_id += comp.borrow().num_gadgets();
 		}
+		assert!(stmt_map_id == stmt_map.len());
 
 		let inp = vec_inp.concat();
 		let oup = vec_oup.concat();
-		//REMOVE LATER -----------------
-		println!("DEBUG USE 6721 ==== dump of vec_inp");
-		for i in 0..vec_inp.len(){
-			print_vec(&format!("comp_{}:", i), &vec_inp[i]);
-		}
-		println!("DEBUG USE 6722 ==== dump of vec_oup");
-		for i in 0..vec_oup.len(){
-			print_vec(&format!("comp_{}:", i), &vec_oup[i]);
-		}
-		//REMOVE LATER ----------------- ABOVE
 		assert!(inp.len()==oup.len());
 		let data = vec_data.concat();
 		let failed_sigs = vec_failed_sigs.concat();
@@ -429,7 +430,6 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 
 		#[cfg(test)]{
 			let stmt_vec = stmt.to_vec();
-			println!("DEBUG USE 6711: mapper: {}, outp: stmt[81]: {}, [84]: {}, inp: stmt[23]: {}, [26]: {}", self.name, stmt_vec[81], stmt_vec[84], stmt_vec[23], stmt_vec[26]);
 			assert!(stmt_vec.len()==cfg.total_size());
 		}
 		

@@ -658,7 +658,14 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 	/// it needs in prev_stmt which has the same structure as specified
 	/// in StatementConfig. Note we pass the max len word, padded.
 	/// the actual_word_len indicates the actual word seg in the word_seg.
-	fn build_statement_comp(&self, _id: usize, _word_seg: &Vec<F>, _actual_word_len: usize, _prev_stmt: &Option<StatementInst<F,LK>>, _lkup: &Rc<RefCell<LK>>, _extra_info: &StatementExtraInfo<F>, advice: &Rc<dyn NdAdvice>, _cfg: &StatementConfig, _stmt_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>{
+	///
+	/// NOTE: comp_id refers to the component, stmt_map_id refers
+	/// to the starting index of FIRST of its gadget in the stma_mapping.
+	/// e.g., let's say there are two components with 2 and 3 gadgets,
+	/// the the comp_id for the 2nd is 1, and its stmt_map_id is 2. (idx
+	/// starting from 0). For conveneince, we sometimes use
+	/// the prev_stmt or the vector of its prev_stmt.
+	fn build_statement_comp(&self, _comp_id: usize, _stmt_map_id: usize, _word_seg: &Vec<F>, _actual_word_len: usize, _prev_stmt: &Option<StatementInst<F,LK>>, _prev_stmt_vec: &Option<Vec<F>>, _lkup: &Rc<RefCell<LK>>, _extra_info: &StatementExtraInfo<F>, advice: &Rc<dyn NdAdvice>, _cfg: &StatementConfig, _stmt_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>{
 		//1. take the advice
 		let advice = advice.as_any().downcast_ref::<SedAdvice<F>>()
 			.expect("downcast err!");

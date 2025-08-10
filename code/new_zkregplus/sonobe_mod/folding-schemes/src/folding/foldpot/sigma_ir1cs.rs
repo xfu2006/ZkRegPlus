@@ -2648,7 +2648,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		let total_size = self.witness_config.statement_size;
 		let res = if self.dummy_stmt.is_some(){
 			let stmt = self.dummy_stmt.as_ref().unwrap().clone();
-			println!("DEBUG USE 6201: stmt: {}, total_size: {}", stmt.len(), total_size);
 			assert!(stmt.len()==total_size, "{} != {}", stmt.len(), total_size);
 			stmt
 		}else{
@@ -3202,8 +3201,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		)?;
 		let b_correct = not_final_step.or(&b_sigs)?; //require b_sigs true at
 													//final step
-		//if b_debug{
-		if true{
+		if b_debug{
 			print_vec_var("DEBUG USE 6801: failed_sigs", &si.failed_sigs);
 			print_vec_var("DEBUG USE 6802: discharged_sigs",
 				&si.discharged_sigs);

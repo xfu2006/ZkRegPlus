@@ -18759,7 +18759,7 @@ Goal 4. implement check of failed_sigs
 
 Friday 08/08/2025
 LOC (gadget): 13977
-LOC (circ): 2347 
+LOC (circ): 2347  -> 2408 (+60)
 Goal 1. fix inv_err.
 	[a] fix error
 	[b] implement
@@ -18818,9 +18818,28 @@ Goal 3. Debug why the new cp_iga fails
 	[j] need to fix build_statement_comp (provide vec_id
 		and stmt_mapping_id)
 
-	-- TODO -- remove 650x and 660x, 670x, 671x, 672x
+Monday 08/09/2025
+LOC (gadget): 13997
+LOC (circ): 2408
+Goal1. fix the build_statement_comp problem
+	[a] print out the stmt_map and figure the meanging
+		-> read about how cp_mapper deinfes stmt_map
+	[b] remove 650x and 660x, 670x, 671x, 672x -> DONE
+	bloody bug! costing 2 days!
+Goal 2. check sed and dfa see if they need simlilar fix
+	for building oup from previous statement
+	[a] sed: -> it calls advice gen_stmt_components
+		-> which calls container.gen_stmt_components
+		-> this is essentially from advice, where advice
+			already have the input built separately (classified
+			into inp/oup/... in each 
+		-> current advice is given prev_advice so they should be fine
+		-> so this is like to be fine actually maybe inp can
+		be retrieved from advice input (maybe just add that component
+		so that we can avoid converting stmt_vec) again - but again
+		this is smaller cost which we can ignore just ignore it.
 
-
+-- TODO -- fix sed and dfa as well check if needs fix
 -- TODO --
 Goal 4. create two new sigs for cp_igc approach
 	[a] create a new signature which has 

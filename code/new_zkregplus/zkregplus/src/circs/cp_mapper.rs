@@ -367,7 +367,6 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 				dfa_crit_advice.states.len()-1];
 			last_oup_state
 		});
-		println!("DEBUG USE 6601 cp igc: {}, inp_state: {}, has_prev_adv: {}", self.b_igc, inp_state, prev_adv.is_some());
 		let inp_sigs = prev_adv.map_or(vec![zero; capacity.sig_buf_capacity], 
 		|adv|{
 			let adv= adv.as_any().downcast_ref::<CpAdvice<F>>(); 
@@ -539,10 +538,13 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 	/// in StatementConfig. Note we pass the max len word, padded.
 	/// the actual_word_len indicates the actual word seg in the word_seg.
 	///
-	/// NOTE id: refers to the component, we cannot use
-	///  but stmt_mapping is for ALL gadgets. So one ID of the component
-	///  can correspond to MULTIPLE gadgets in stmt_mapping.
-	fn build_statement_comp(&self, _id: usize, word_seg: &Vec<F>, actual_word_len: usize, prev_stmt: &Option<StatementInst<F,LK>>, _lkup: &Rc<RefCell<LK>>, _extra_info: &StatementExtraInfo<F>, advice: &Rc<dyn NdAdvice>, _cfg: &StatementConfig, _stmt_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>{
+	/// NOTE: comp_id refers to the component, stmt_map_id refers
+	/// to the starting index of FIRST of its gadget in the stma_mapping.
+	/// e.g., let's say there are two components with 2 and 3 gadgets,
+	/// the the comp_id for the 2nd is 1, and its stmt_map_id is 2. (idx
+	/// starting from 0). For conveneince, we sometimes use
+	/// the prev_stmt or the vector of its prev_stmt.
+	fn build_statement_comp(&self, _comp_id: usize, stmt_map_id: usize, word_seg: &Vec<F>, actual_word_len: usize, prev_stmt: &Option<StatementInst<F,LK>>, prev_stmt_vec: &Option<Vec<F>>, _lkup: &Rc<RefCell<LK>>, _extra_info: &StatementExtraInfo<F>, advice: &Rc<dyn NdAdvice>, _cfg: &StatementConfig, stmt_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>{
 		//1. take the advice
 		let advice = advice.as_any().downcast_ref::<CpAdvice<F>>()
 			.expect("downcast err!");
@@ -563,21 +565,39 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		let (inp_len, oup_len, data_len) =  (sizes[0], sizes[1], sizes[2]);
 		assert!(inp_len==oup_len);
 		let inp = if prev_stmt.is_some(){
-			//we are assuming that CP is ALWAYS the first component included!
-			prev_stmt.as_ref().unwrap().oup_buf[0..oup_len].to_vec()
+			//We have 4 gadgets here: word_extract, fsm, pack, sig
+			//the oup of these 4 gadgets are located respectively
+			//in stmt_map (for gadget) at id  according to
+			//	*** gen_gadgets_stmt_map() ***
+			// NO, 1, 2 (repeated), 1   
+			let oup_ranges = [
+				stmt_mapping[stmt_map_id + 1][1], //fsm
+				//stmt_mapping[stmt_map_id + 2][2],//pack (repeated)
+												   //, not include)
+				stmt_mapping[stmt_map_id + 3][1], //sig
+			];
+
+			let prev_oup = oup_ranges.into_iter().map(|(a,b)|{
+				prev_stmt_vec.as_ref().unwrap()[a.. b+1].to_vec()
+			}).flatten().collect::<Vec<F>>();
+			assert!(prev_oup.len()==oup_len, "prev_op: {} != oup_len: {}",
+				prev_oup.len(), oup_len);
+			prev_oup
 		}else {//construct the first buf
 			vec![
 				vec![advice.dfa_crit_advice.states[0]], //dfa_crit
 				vec![zero; slen], //inp_sigs
 			].concat()
 		};
+		//REMOVE LATER IF WORKING
+		let inp = advice.inp_buf.clone();
+		//REMOVE LATER ABOVE ---------------
 		assert!(inp.len()==inp_len);
 		let oup = vec![
 		  vec![advice.dfa_crit_advice.states[advice.dfa_crit_advice.states.len()-1]],  		//states
 		  advice.sigs_advice.oup.clone(), //the oup_sigs
 		].concat(); 
 		assert!(oup.len()==oup_len);
-		println!("DEBUG USE 6602: build_stmt: self.b_igc: {}, oup_state: {}, has_prev: {}", self.b_igc, oup[0], prev_stmt.is_some()); 
 
 		//3. build the data
 		let nlen = wlen * LEGS;
