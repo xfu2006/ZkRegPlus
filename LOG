@@ -18897,8 +18897,8 @@ Goal 6. update the struct SedAdvice
 	[d] build up the dis_subsig_igc
 
 Monday 08/11/2025
-LOC (gadget): 13987
-LOC (circ): 2483
+LOC (gadget): 13987 -> 14134 (+57)
+LOC (circ): 2483 -> 2496 (+13)
 Goal 1. fix compute_sig_adv gadget to take two subsig list.
 	[a] constructor of ComputeSigAdvAdvice: read existing code
 	[b] fix all syntax errors
@@ -18928,6 +18928,16 @@ Goal 6. word_extract_adv
 		-> add attribute b_gic
 		-> correct self ref strings
 	[c] regress test
+
+Tuesday 08/12/2025
+LOC (gadget) 14134
+LOC (CIRC): 2496
+
+Goal 1. Implement and fix discharge adv advice
+	[a] need to store b_igc and relative offset to both advice and gadget
+	[b] fix all syntax bugs
+	[c] fix nameing in advice
+	[d] debug: cannot find fsm_adv_stmt_cs
 
 -- TODO -- fix DischargeAdvAdvice: (1) need to store b_igc and (2)
 --- need to declare relative offset.

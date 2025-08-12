@@ -2115,6 +2115,7 @@ pub mod tests_compute_sig_adv{
 			let pat_loc_cs = stmt_faa_cs.borrow().search_container("fsm_adv_stmt_cs packed_trace pat_loc sorted_tbl").unwrap();
 			let adv_disc_cs= DischargeAdvAdvice::new(
 				false, //case sensitive
+				2, //dist to fsm_cs
 				&pat_loc_cs,
 				&input_subsigs_cs,
 				fsm_id_cs, steps_store_cs, &cap_disc, &inp_steps_queue_cs
@@ -2126,6 +2127,7 @@ pub mod tests_compute_sig_adv{
 			let pat_loc_igc = stmt_faa_igc.borrow().search_container("fsm_adv_stmt_igc packed_trace pat_loc sorted_tbl").unwrap();
 			let adv_disc_igc= DischargeAdvAdvice::new(
 				true, //igc
+				2, //dist to fsm_adv_igc
 				&pat_loc_igc,
 				&input_subsigs_igc,
 				fsm_id_igc, steps_store_igc, &cap_disc, &inp_steps_queue_igc

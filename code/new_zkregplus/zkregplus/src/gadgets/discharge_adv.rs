@@ -307,8 +307,18 @@ pub struct DischargeAdvCapacity{
 /// Advice for the Discharge Subsig Gadget.
 #[derive(Clone,Debug)]
 pub struct DischargeAdvAdvice<F:PrimeField>{
+	/// if this is for fsm (acdfa) for ignore case
+	pub b_igc: bool,
+
+	/// distance to the fsm_adv gadget
+	/// this is a positive number (fsm_adv may be 1 or 2 positions
+	/// ahead in the composite component mapper). Store the
+	/// distance as a positive number
+	pub offset_fsm: usize,
+
 	/// the first id related to the corresponding ACDFA
 	pub fsm_id: u32,
+
 
 	/// the statement container object which is serialized to a vector
 	/// of statement
@@ -328,6 +338,15 @@ pub struct DischargeAdvAdvice<F:PrimeField>{
 /// a word.
 #[derive(Clone,Debug)]
 pub struct DischargeAdvGadget<F:PrimeField>{ 
+	/// if this is for fsm (acdfa) for ignore case
+	pub b_igc: bool,
+
+	/// distance to the fsm_adv gadget
+	/// this is a positive number (fsm_adv may be 1 or 2 positions
+	/// ahead in the composite component mapper). Store the
+	/// distance as a positive number
+	pub offset_fsm: usize,
+
 	/// the first related lookup subtbl_id defined in clam_db.rs
 	/// e.g., CRIT_INIT for the ACDFA of critical table in clam_db.rs
 	pub fsm_id: u32, 
@@ -1481,7 +1500,8 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 	/// the StepQueue of all related subsigs (NOTE: subsigs are provided
 	/// as non-deterministic advice)
 	pub fn new(
-		_b_igc: bool,
+		b_igc: bool,
+		offset_fsm: usize,
 		pat_loc: &Rc<RefCell<Container<F>>>,
 		inp_subsigs: &Vec<F>,
 		fsm_id: u32,
@@ -1489,12 +1509,15 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		capacity: &DischargeAdvCapacity, 
 		inp_step_queue: &StepQueue<F>, // the steps_queue from input
 	) ->Self{
-		let stmt_container = Container::<F>::new("discharge_adv_stmt");
+		let sname = if b_igc {"discharge_adv_stmt_igc"} else 
+			{"discharge_adv_stmt_cs"};
+		let stmt_container = Container::<F>::new(sname);
 		//1. constructure step_store. DEPRECATED. no need anymore
 		//as we have info encoded in lkup table StoreSteps.
 
 		//2. construct 1st (forward) step-queue
 		let (forward_step_queue, sq_fwd) = Self::gen_forward_steps_queue_combo(
+			b_igc,
 			&inp_subsigs, pat_loc, inp_step_queue, fsm_id, &capacity,
 			subsig_store_info);
 		let ct_fwd_sq = forward_step_queue.borrow().get_container("sq_res")
@@ -1508,7 +1531,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		stmt_container.borrow_mut().add_container(backward_step_queue);
 
 		Self{capacity: Clone::clone(capacity), fsm_id,
-			stmt_container}
+			stmt_container, b_igc, offset_fsm}
 	}
 
 
@@ -1606,8 +1629,10 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 
 	/// retrieve the steps_queue from input
 	pub fn get_output_steps_queue(&self)->Vec<F>{
+		let sname = if self.b_igc {"discharge_adv_stmt_igc"} 
+			else {"discharge_adv_stmt_cs"};
 		let res = self.stmt_container.borrow().search_container(
-			"discharge_adv_stmt bwd_steps_queue sq_res2").unwrap();
+			&format!("{} bwd_steps_queue sq_res2", sname)).unwrap();
 		let encoded = res.borrow().get_container("encoded").unwrap().
 			borrow().to_vec();
 		let locs = res.borrow().get_container("locs").unwrap().
@@ -2009,6 +2034,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 	/// Return: (1) the container of combo, and (2) forward result step queue
 	#[allow(dead_code)]
 	fn gen_forward_steps_queue_combo(
+		b_igc: bool,
 		_inp_subsigs: &Vec<F>,
 		pat_loc: &Rc<RefCell<Container<F>>>,
 		inp_step_queue: &StepQueue<F>, 
@@ -2023,8 +2049,9 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		// and the fwd prf. Add them to container
 		let (sq_to_add, sq_res, fwd_prf) = inp_step_queue
 			.gen_forward_prf(pat_loc, subsig_store_info);
+		let sname_fsm = if b_igc {"fsm_adv_stmt_igc"} else {"fsm_adv_stmt_cs"};
 		let pat_loc = pat_loc.borrow().duplicate_as_external_adv(-1,
-			Some("fsm_adv_stmt packed_trace pat_loc sorted_tbl".to_string()),
+			Some(format!("{} packed_trace pat_loc sorted_tbl", sname_fsm)),
 			Some("pat_loc".to_string()));
 		let ct_pat_loc = Rc::new(RefCell::new(pat_loc));
 
@@ -2373,6 +2400,8 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 
 impl <F:PrimeField> DischargeAdvGadget<F>{
 	pub fn new(
+		b_igc: bool,
+		offset_fsm: usize,
 		capacity: &DischargeAdvCapacity,
 		fsm_id: u32, 
 		prev_cfgs: &Vec<ContainerConfig>,
@@ -2398,7 +2427,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		let inp_steps_queue = vec![zero; step_q_size*2];
 		let inp_steps_queue_obj = StepQueue::parse_from(&inp_steps_queue,
 			capacity);
-		let dummy_adv = DischargeAdvAdvice::new(false, //case sensitive
+		let dummy_adv = DischargeAdvAdvice::new(b_igc, offset_fsm,
 			&pat_loc, &sigs, fsm_id, store_steps, 
 			Clone::clone(&capacity), &inp_steps_queue_obj);
 		let mut vec_cfg = prev_cfgs.clone();
@@ -2409,7 +2438,8 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 
 		Self{_f: PhantomData, capacity: Clone::clone(capacity), 
 			cfgs_context: None,
-			my_idx_in_context: None, dummy_cfg, fsm_id}
+			my_idx_in_context: None, dummy_cfg, fsm_id,
+			b_igc, offset_fsm}
 	}
 
 	/// return None if not set yet.
@@ -3453,7 +3483,7 @@ pub mod tests_discharge_adv_gadget{
 				.borrow().to_vec();
 			assert!(nibbles.len()==nibble_len);
 
-			let adv_faa = FsmAdvAdvice::new(false, //case sensitive,
+			let adv_faa = FsmAdvAdvice::new(b_igc, //case sensitive,
 				&nibbles, &acdfa, inp_state, 
 				inp_loc, &input_subsigs, &cap, fsm_id, 
 				&bundle.vec_subsig_stores[store_id]); 
@@ -3461,8 +3491,13 @@ pub mod tests_discharge_adv_gadget{
 			let cfg_faa = stmt_faa.borrow().get_cfg(); 
 
 			//2.3 the discharge_adv
-			let pat_loc = stmt_faa.borrow().search_container("fsm_adv_stmt packed_trace pat_loc sorted_tbl").unwrap();
+			let sname_fsm = if b_igc {"fsm_adv_stmt_igc"} 
+				else {"fsm_adv_stmt_cs"};
+			let pat_loc = stmt_faa.borrow().search_container(
+				&format!("{} packed_trace pat_loc sorted_tbl", sname_fsm))
+				.unwrap();
 			let adv_disc= DischargeAdvAdvice::new(false, //case sensitive
+				1, //offset to fsm
 				&pat_loc, &input_subsigs,
 				fsm_id, steps_store, &cap_disc, &inp_steps_queue);
 			let oup_queue = adv_disc.get_output_steps_queue();
@@ -3486,7 +3521,9 @@ pub mod tests_discharge_adv_gadget{
 
 			//2.7 create the gadget
 			let lkup_share_size = 4usize;
-			let mut dcg = DischargeAdvGadget::<Fr>::new(&cap_disc, fsm_id,
+			let mut dcg = DischargeAdvGadget::<Fr>::new(false, //case sentive,
+				1, //dist to fsm_adv gadget,
+				&cap_disc, fsm_id,
 				&vec![cfg_wea.clone(), cfg_faa.clone()],
 				&bundle.vec_subsig_step_stores[0], //for sed
 			);
@@ -3508,12 +3545,13 @@ pub mod tests_discharge_adv_gadget{
 
 			//4. reset the inputs for the next cycle
 			let states = stmt_faa.borrow()
-				.search_container("fsm_adv_stmt fsm_acc states")
+				.search_container(&format!("{} fsm_acc states", sname_fsm))
 				.expect("no states")
 				.borrow().to_vec();
 			inp_state = states[states.len()-1];
 			let locs = stmt_faa.borrow()
-				.search_container("fsm_adv_stmt fsm_acc locs")
+				.search_container(&format!("{} fsm_acc locs", 
+					sname_fsm))
 				.expect("no locs")
 				.borrow().to_vec();
 			inp_loc = locs[locs.len()-1];

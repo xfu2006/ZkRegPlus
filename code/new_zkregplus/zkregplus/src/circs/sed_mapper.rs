@@ -339,7 +339,7 @@ impl <F:PrimeField> SedAdvice<F>{
 		let inp_steps_queue_obj_cs = StepQueue::parse_from(
 			&inp.inp_steps_queue_cs, &da_cap);
 		let discharge_adv_advice_cs = DischargeAdvAdvice::<F>
-			::new(false, &pat_loc_cs, &subsigs_inp_cs, fsm_id_cs as u32, 
+			::new(false, 2, &pat_loc_cs, &subsigs_inp_cs, fsm_id_cs as u32, 
 				subsig_step_store_cs, &da_cap, &inp_steps_queue_obj_cs);
 
 		//3.2 the igc version
@@ -348,7 +348,7 @@ impl <F:PrimeField> SedAdvice<F>{
 		let inp_steps_queue_obj_igc = StepQueue::parse_from(
 			&inp.inp_steps_queue_igc, &da_cap);
 		let discharge_adv_advice_igc = DischargeAdvAdvice::<F>
-			::new(true, &pat_loc_igc, &subsigs_inp_igc, fsm_id_igc as u32, 
+			::new(true, 2, &pat_loc_igc, &subsigs_inp_igc, fsm_id_igc as u32, 
 				subsig_step_store_igc, &da_cap, &inp_steps_queue_obj_igc);
 
 
@@ -432,11 +432,11 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 
 		//1.3. discharge_subsig (2 gadgets)
 		let da_cap = &sed_capacity.da_capacity();
-		let g_da_cs = DischargeAdvGadget::<F>::new(&da_cap, fsm_id_cs,
+		let g_da_cs = DischargeAdvGadget::<F>::new(false, 2, &da_cap, fsm_id_cs,
 			&cfgs, subsig_step_store_cs);
 		cfgs.push( g_da_cs.dummy_cfg.clone() );
-		let g_da_igc = DischargeAdvGadget::<F>::new(&da_cap, fsm_id_igc,
-			&cfgs, subsig_step_store_igc);
+		let g_da_igc = DischargeAdvGadget::<F>::new(true, 2, &da_cap, 
+			fsm_id_igc, &cfgs, subsig_step_store_igc);
 		cfgs.push( g_da_igc.dummy_cfg.clone() );
 
 		//1.4 compute_sigs gadget (1 gadget)
