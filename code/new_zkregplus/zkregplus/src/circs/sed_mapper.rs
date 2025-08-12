@@ -117,11 +117,6 @@ pub struct SedComponentMapper<F:PrimeField, LK: LookupTableTwoCol<F>>{
 	pub _lk: PhantomData<LK>,
 	pub capacity: SedCapacity,
 
-	/// which store in BundleSubsigStore to use.
-	/// here '0' is for SED case where a collection of sigs to discharge.
-	/// will be ALWAYS 0. (keep it for legacy code - later expansion for ISED)
-	pub store_id: usize,
-
 	/// its own gadgets 
 	///pub gadgets: Vec<Rc<dyn SigmaGadget<F> + ContainerCompatible>>,
 	pub gadgets: Vec<Rc<RefCell<dyn SigmaGadget<F>>>>,
@@ -321,7 +316,8 @@ impl <F:PrimeField> SedAdvice<F>{
 		let subsigs_inp_cs = Self::collect_subsig_ids(vec_sigs_to_discharge,
 			discharge_info, sig_to_id, false, dfa_cs);
 		let fsm_adv_advice_cs = FsmAdvAdvice::<F>
-			::new(&nibbles,dfa_cs, inp.inp_state_cs,inp.inp_loc_cs,
+			::new(false, 
+				&nibbles,dfa_cs, inp.inp_state_cs,inp.inp_loc_cs,
 				&subsigs_inp_cs, &fsm_cap,fsm_id_cs as u32,
 				subsig_pat_store_cs);
 
@@ -329,7 +325,8 @@ impl <F:PrimeField> SedAdvice<F>{
 		let subsigs_inp_igc = Self::collect_subsig_ids(vec_sigs_to_discharge,
 			discharge_info, sig_to_id, true, dfa_igc);
 		let fsm_adv_advice_igc = FsmAdvAdvice::<F>
-			::new(&nibbles,dfa_igc, inp.inp_state_igc,inp.inp_loc_igc,
+			::new(true, //igc
+				&nibbles,dfa_igc, inp.inp_state_igc,inp.inp_loc_igc,
 				&subsigs_inp_igc, &fsm_cap, fsm_id_igc as u32,
 				subsig_pat_store_igc);
 
@@ -400,9 +397,6 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 	pub fn new(
 		sed_capacity: SedCapacity,
 		clamdb: Rc<ClamavDB<F>>,
-		b_igc: bool, //whether it's for ignore case ACDFA
-		store_id: usize, //0 means 'all' (SED). will always be 0, keep it
-						//for legacy
 	) ->Self{
 		let mut cfgs = vec![];
 		//1. build the gadgets
@@ -410,41 +404,62 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 		let g_wea = WordExtractAdvGadget::<F>::new(sed_capacity.wea_capacity().max_word_len, false); //default mode
 		cfgs.push( g_wea.dummy_cfg.clone() );
 
-		//1.2 the fsm adv gadget
-		let bundle = if b_igc {&clamdb.bundle_subsig_igc}
-			else {&clamdb.bundle_subsig};
-		let acdfa = &bundle.vec_acdfa[store_id];
-		let subsig_pat_store = &bundle.vec_subsig_stores[store_id];
-		let subsig_step_store = &bundle.vec_subsig_step_stores[store_id];
-		let subsig_info_store = &bundle.vec_subsig_info_stores[store_id];
-		let sig_id = if store_id==0{ 0 } else{//ised case
-			let sig_name = &bundle.vec_sig_names[store_id];
-			*clamdb.sig_to_id.get(sig_name).expect(
-				&format!("Cant find sig {}", sig_name))
-		}; //sig_id of the sig being discarged. store_id==0 is `all`
-		let fsm_id = ClamavDB::<F>::pm_acdfa_id(sig_id, b_igc); 
+		//1.2 the fsm adv gadget (2 gadgets)
+		let bundle_cs = &clamdb.bundle_subsig;
+		let bundle_igc = &clamdb.bundle_subsig_igc;
+		let acdfa_cs = &bundle_cs.vec_acdfa[0]; //0 stands for all
+		let acdfa_igc = &bundle_igc.vec_acdfa[0];
+		let subsig_pat_store_cs = &bundle_cs.vec_subsig_stores[0];
+		let subsig_pat_store_igc= &bundle_igc.vec_subsig_stores[0];
+		let subsig_step_store_cs = &bundle_cs.vec_subsig_step_stores[0];
+		let subsig_step_store_igc = &bundle_igc.vec_subsig_step_stores[0];
+		let subsig_info_store_cs = &bundle_cs.vec_subsig_info_stores[0];
+		let subsig_info_store_igc = &bundle_igc.vec_subsig_info_stores[0];
+		let sig_id = 0; //for all
+		let fsm_id_cs = ClamavDB::<F>::pm_acdfa_id(sig_id, false); 
+		let fsm_id_igc = ClamavDB::<F>::pm_acdfa_id(sig_id, true); 
 		//let fsm_cap = FsmAdvCapacity{max_nibble_len: nlen, 
 		//	acdfa_state_part_bits: state_bits};
 		let fsm_cap = &sed_capacity.faa_capacity();
-		let g_faa = FsmAdvGadget::<F>::new(acdfa, &fsm_cap, fsm_id, &cfgs, 
-			subsig_pat_store); 
-		cfgs.push( g_faa.dummy_cfg.clone() );
+		let g_faa_cs = FsmAdvGadget::<F>::new(acdfa_cs, 
+			&fsm_cap, fsm_id_cs, &cfgs, subsig_pat_store_cs); 
+		cfgs.push( g_faa_cs.dummy_cfg.clone() );
 
+		let fsm_cap = &sed_capacity.faa_capacity();
+		let g_faa_igc = FsmAdvGadget::<F>::new(acdfa_igc, 
+			&fsm_cap, fsm_id_igc, &cfgs, subsig_pat_store_igc); 
+		cfgs.push( g_faa_igc.dummy_cfg.clone() );
+
+		//1.3. discharge_subsig (2 gadgets)
 		let da_cap = &sed_capacity.da_capacity();
-		let g_da = DischargeAdvGadget::<F>::new(&da_cap, fsm_id,
-			&cfgs, subsig_step_store);
-		cfgs.push( g_da.dummy_cfg.clone() );
+		let g_da_cs = DischargeAdvGadget::<F>::new(&da_cap, fsm_id_cs,
+			&cfgs, subsig_step_store_cs);
+		cfgs.push( g_da_cs.dummy_cfg.clone() );
+		let g_da_igc = DischargeAdvGadget::<F>::new(&da_cap, fsm_id_igc,
+			&cfgs, subsig_step_store_igc);
+		cfgs.push( g_da_igc.dummy_cfg.clone() );
 
+		//1.4 compute_sigs gadget (1 gadget)
 		let csa_cap = &sed_capacity.csa_capacity();
 		let g_csa = ComputeSigAdvGadget::<F>::new(
-			fsm_id, &csa_cap, &cfgs,
-			subsig_step_store, subsig_info_store);
+			fsm_id_cs, 
+			fsm_id_igc, 
+			&csa_cap, 
+			&cfgs,
+			subsig_step_store_cs, 
+			subsig_step_store_igc, 
+			subsig_info_store_cs,
+			subsig_info_store_igc,
+		);
 		cfgs.push( g_csa.dummy_cfg.clone() );
 
+		//2. build the gadgets
 		let gadgets: Vec<Rc<RefCell<dyn SigmaGadget<F>>>> = vec![ 
 			Rc::new(RefCell::new(g_wea)), //word_extract_adv gadget
-			Rc::new(RefCell::new(g_faa)), //fsm_adv gadget
-			Rc::new(RefCell::new(g_da)), //discharge subsigs via SED
+			Rc::new(RefCell::new(g_faa_cs)), //fsm_adv gadget
+			Rc::new(RefCell::new(g_faa_igc)), //fsm_adv gadget
+			Rc::new(RefCell::new(g_da_cs)), //discharge subsigs via SED
+			Rc::new(RefCell::new(g_da_igc)), //discharge subsigs via SED
 			Rc::new(RefCell::new(g_csa)), //compute_sig_gadget 
 		];
 
@@ -454,7 +469,6 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 			capacity: sed_capacity,
 			clamdb,
 			gadgets,
-			store_id
 		}
 	}
 }
@@ -540,8 +554,8 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 		let bundle_cs = &self.clamdb.bundle_subsig;
 		let bundle_igc = &self.clamdb.bundle_subsig_igc;
 
-		let pm_acdfa_cs = &bundle_cs.vec_acdfa[self.store_id];
-		let pm_acdfa_igc= &bundle_igc.vec_acdfa[self.store_id];
+		let pm_acdfa_cs = &bundle_cs.vec_acdfa[0]; //0 stands for all
+		let pm_acdfa_igc= &bundle_igc.vec_acdfa[0];
 		let sig_to_id = &self.clamdb.sig_to_id;
 		let vec_sigs_to_discharge = 
 			bundle_cs.vec_sigs[0].iter().filter(|s|{
@@ -550,17 +564,16 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 				word_info.vec_sed_sigs.contains(id)
 			}).map(|s| s.clone()).collect::<Vec<Arc<ClamavSig>>>();
 	
-		assert!(self.store_id==0); //required (we do not do ISED in this module)
-		let subsig_pat_store_cs = &bundle_cs.vec_subsig_stores[self.store_id];
-		let subsig_pat_store_igc = &bundle_igc.vec_subsig_stores[self.store_id];
+		let subsig_pat_store_cs = &bundle_cs.vec_subsig_stores[0];
+		let subsig_pat_store_igc = &bundle_igc.vec_subsig_stores[0];
 		let subsig_step_store_cs = &bundle_cs
-			.vec_subsig_step_stores[self.store_id];
+			.vec_subsig_step_stores[0];
 		let subsig_step_store_igc = &bundle_igc
-			.vec_subsig_step_stores[self.store_id];
+			.vec_subsig_step_stores[0];
 		let subsig_info_store_cs = &bundle_cs
-			.vec_subsig_info_stores[self.store_id];
+			.vec_subsig_info_stores[0];
 		let subsig_info_store_igc = &bundle_igc
-			.vec_subsig_info_stores[self.store_id];
+			.vec_subsig_info_stores[0];
 		let discharge_info = word_info.vec_sed_sigs_info.clone();
 		let sig_id = 0; //meaning discharge all
 		let pm_fsm_id_cs = ClamavDB::<F>::pm_acdfa_id(sig_id, false);

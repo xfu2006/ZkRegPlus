@@ -2398,7 +2398,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		let inp_steps_queue = vec![zero; step_q_size*2];
 		let inp_steps_queue_obj = StepQueue::parse_from(&inp_steps_queue,
 			capacity);
-		let dummy_adv = DischargeAdvAdvice::new(
+		let dummy_adv = DischargeAdvAdvice::new(false, //case sensitive
 			&pat_loc, &sigs, fsm_id, store_steps, 
 			Clone::clone(&capacity), &inp_steps_queue_obj);
 		let mut vec_cfg = prev_cfgs.clone();
@@ -3453,7 +3453,8 @@ pub mod tests_discharge_adv_gadget{
 				.borrow().to_vec();
 			assert!(nibbles.len()==nibble_len);
 
-			let adv_faa = FsmAdvAdvice::new(&nibbles, &acdfa, inp_state, 
+			let adv_faa = FsmAdvAdvice::new(false, //case sensitive,
+				&nibbles, &acdfa, inp_state, 
 				inp_loc, &input_subsigs, &cap, fsm_id, 
 				&bundle.vec_subsig_stores[store_id]); 
 			let stmt_faa = adv_faa.stmt_container;
@@ -3461,7 +3462,8 @@ pub mod tests_discharge_adv_gadget{
 
 			//2.3 the discharge_adv
 			let pat_loc = stmt_faa.borrow().search_container("fsm_adv_stmt packed_trace pat_loc sorted_tbl").unwrap();
-			let adv_disc= DischargeAdvAdvice::new(&pat_loc, &input_subsigs,
+			let adv_disc= DischargeAdvAdvice::new(false, //case sensitive
+				&pat_loc, &input_subsigs,
 				fsm_id, steps_store, &cap_disc, &inp_steps_queue);
 			let oup_queue = adv_disc.get_output_steps_queue();
 			let stmt_disc= adv_disc.stmt_container;

@@ -18896,8 +18896,26 @@ Goal 6. update the struct SedAdvice
 			-> change correspondingly.
 	[d] build up the dis_subsig_igc
 
---- TODO --- 
+Monday 08/11/2025
+LOC (gadget): 13987
+LOC (circ): 2483
 Goal 1. fix compute_sig_adv gadget to take two subsig list.
+	[a] constructor of ComputeSigAdvAdvice: read existing code
+	[b] fix all syntax errors
+		-> call gen_subsigs_from_res
+		-> 2nd gen
+		-> 3rd gen
+Goal 2. fix discharge-adv -> DONE
+Goal 3. fix ComputeSigAdvGadget constructor.
+	[a] implement it
+	[b] sed_mapper
+	[c] fix zkp_driver
+Goal 4. fix compute_sig test framework
+	[a] sec 1
+	[b] sec 1.1 to 1.4
+	[c] sec 2.1 to 2.3
+	[d] 2.3.5
+	[e] 2.4 and 2.5
 	
 	
 

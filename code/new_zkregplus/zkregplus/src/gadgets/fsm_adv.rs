@@ -172,6 +172,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 	/// by loc.
 	/// Input: (input_state, inp_location) 
 	pub fn new(
+		_b_igc: bool,
 		nibbles: &Vec<F>, 
 		acdfa: &HexACDFA, 
 		inp_state: F,  //it's already adjusted (starting from 1)
@@ -181,6 +182,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		fsm_id: u32,
 		store_subsig_pat: &SubsigPatternStore
 	) ->Self{
+		if 1>0 {panic!("handle b_igc");}
 		let stmt_container = Container::<F>::new("fsm_adv_stmt");
 		//1. construct the fsm_acc combo which has the transition
 		// info and results in (state, loc) columns
@@ -532,7 +534,8 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		let nibbles = vec![F::zero(); capacity.max_nibble_len];
 		let dummy_inp_subsigs = vec![
 			F::from(store_subsig_pat.subsig_ids[0] as u32)];
-		let dummy_adv = FsmAdvAdvice::new(&nibbles, acdfa, dummy_inp_state,
+		let dummy_adv = FsmAdvAdvice::new(false, //case sensitive
+			&nibbles, acdfa, dummy_inp_state,
 			dummy_inp_loc, &dummy_inp_subsigs, capacity, 
 			fsm_id, store_subsig_pat);
 		let mut vec_cfg = prev_cfgs.clone();
@@ -885,7 +888,8 @@ pub mod tests_fsm_adv_gadget{
 		let input_subsigs = vec![Fr::from(
 			acdfa.gen_subsig_id(sig_id, subsig_id_raw) as u32)];  
 		let fsm_id = ClamavDB::<Fr>::pm_acdfa_id(0, b_igc); //0 for all
-		let adv_faa = FsmAdvAdvice::new(&nibbles, &acdfa, inp_state, 
+		let adv_faa = FsmAdvAdvice::new(false, //case sensitive,
+			&nibbles, &acdfa, inp_state, 
 			inp_loc, &input_subsigs, &cap, fsm_id, 
 			&bundle.vec_subsig_stores[0]); //for SED
 		let stmt_faa = adv_faa.stmt_container;

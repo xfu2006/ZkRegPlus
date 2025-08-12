@@ -1,9 +1,9 @@
 # quick check
-# cargo check --tests 2>&1 | less
+ cargo check --tests 2>&1 | less
 
 # test
 RUST_BACKTRACE=1 
-cargo test -- tests_sigs_gadget --show-output --nocapture
+#cargo test -- tests_sigs_gadget --show-output --nocapture
 #cargo test -- test_dfa_adv --show-output --nocapture
 #cargo test -- test_compute_sig_adv --show-output --nocapture
 #cargo test -- tests_word_extract_adv --show-output --nocapture
