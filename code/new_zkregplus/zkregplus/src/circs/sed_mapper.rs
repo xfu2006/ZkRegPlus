@@ -421,12 +421,12 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 		//let fsm_cap = FsmAdvCapacity{max_nibble_len: nlen, 
 		//	acdfa_state_part_bits: state_bits};
 		let fsm_cap = &sed_capacity.faa_capacity();
-		let g_faa_cs = FsmAdvGadget::<F>::new(acdfa_cs, 
+		let g_faa_cs = FsmAdvGadget::<F>::new(false, acdfa_cs, 
 			&fsm_cap, fsm_id_cs, &cfgs, subsig_pat_store_cs); 
 		cfgs.push( g_faa_cs.dummy_cfg.clone() );
 
 		let fsm_cap = &sed_capacity.faa_capacity();
-		let g_faa_igc = FsmAdvGadget::<F>::new(acdfa_igc, 
+		let g_faa_igc = FsmAdvGadget::<F>::new(true, acdfa_igc, 
 			&fsm_cap, fsm_id_igc, &cfgs, subsig_pat_store_igc); 
 		cfgs.push( g_faa_igc.dummy_cfg.clone() );
 

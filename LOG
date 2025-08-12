@@ -18916,6 +18916,21 @@ Goal 4. fix compute_sig test framework
 	[c] sec 2.1 to 2.3
 	[d] 2.3.5
 	[e] 2.4 and 2.5
+Goal 5. regression test for cp
+	[a] word extract
+	[b] fsm
+	[c] pack
+	[d] sigs
+
+Goal 6. word_extract_adv
+	[a] word extract
+	[b] fsm_adv -> ERROR 185
+		-> add attribute b_gic
+		-> correct self ref strings
+	[c] regress test
+
+-- TODO -- fix DischargeAdvAdvice: (1) need to store b_igc and (2)
+--- need to declare relative offset.
 	
 	
 

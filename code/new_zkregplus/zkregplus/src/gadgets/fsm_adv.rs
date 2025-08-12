@@ -106,6 +106,8 @@ pub struct FsmAdvAdvice<F:PrimeField>{
 /// All entries of such table are sorted.
 #[derive(Clone,Debug)]
 pub struct FsmAdvGadget<F:PrimeField>{ 
+	/// if this is for igc acdfa.
+	b_igc: bool, 
 	/// the first related lookup subtbl_id defined in clam_db.rs
 	/// e.g., CRIT_INIT for the ACDFA of critical table in clam_db.rs
 	pub fsm_id: u32, 
@@ -172,7 +174,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 	/// by loc.
 	/// Input: (input_state, inp_location) 
 	pub fn new(
-		_b_igc: bool,
+		b_igc: bool,
 		nibbles: &Vec<F>, 
 		acdfa: &HexACDFA, 
 		inp_state: F,  //it's already adjusted (starting from 1)
@@ -182,8 +184,9 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		fsm_id: u32,
 		store_subsig_pat: &SubsigPatternStore
 	) ->Self{
-		if 1>0 {panic!("handle b_igc");}
-		let stmt_container = Container::<F>::new("fsm_adv_stmt");
+		let sname = if b_igc {"fsm_adv_stmt_igc"} else {"fsm_adv_stmt_cs"};
+		let stmt_container = Container::<F>::new(sname);
+
 		//1. construct the fsm_acc combo which has the transition
 		// info and results in (state, loc) columns
 		let fsm_acc = Self::gen_fsm_acc_combo(nibbles, acdfa, 
@@ -521,6 +524,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 
 impl <F:PrimeField> FsmAdvGadget<F>{
 	pub fn new(
+		b_igc: bool,
 		acdfa: &HexACDFA,
 		capacity: &FsmAdvCapacity,
 		fsm_id: u32, 
@@ -546,7 +550,7 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 
 		Self{_f: PhantomData, capacity: Clone::clone(capacity), 
 			cfgs_context: None,
-			my_idx_in_context: None, dummy_cfg, fsm_id}
+			my_idx_in_context: None, dummy_cfg, fsm_id, b_igc}
 	}
 
 	/// return None if not set yet.
@@ -683,36 +687,38 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
 		//1. check sorted_set of states is correct
-		let col_to_sorted_combo = all
-			.search_container("fsm_adv_stmt packed_trace sorted_states")?;
+		let sname = if self.b_igc {"fsm_adv_stmt_igc"} else
+			{"fsm_adv_stmt_cs"};
+		let col_to_sorted_combo = all.search_container(
+			&format!("{} packed_trace sorted_states", sname))?;
 		verify_col_to_sorted_set(r1, &col_to_sorted_combo.borrow(), cs.clone())?;
 
 		//2. check the filtered table of state and loc
 		let states_col = all.search_container( 
-			"fsm_adv_stmt fsm_acc states")?;
+			&format!("{} fsm_acc states", sname))?;
 		let locs_col = all.search_container(
-			"fsm_adv_stmt fsm_acc locs")?;
+			&format!("{} fsm_acc locs", sname))?;
 		let state_loc_tbl = all.search_container(
-			"fsm_adv_stmt packed_trace state_loc_tbl")?;
+			&format!("{} packed_trace state_loc_tbl", sname))?;
 		let sorted_states = all.search_container(
-			"fsm_adv_stmt packed_trace sorted_states")?;
+			&format!("{} packed_trace sorted_states", sname))?;
 		verify_tbl_filtered_to_sorted_tbl(&r1, &r2,
 			&states_col, &locs_col, &sorted_states,  &state_loc_tbl, 
 			cs.clone())?;
 
 		//3. check the pattern_state_tbl
 		let proj_pats_col = all.search_container( 
-			"fsm_adv_stmt proj_subsig_store pat")?;
+			&format!("{} proj_subsig_store pat", sname))?;
 		let proj_states_col = all.search_container( 
-			"fsm_adv_stmt proj_subsig_store state")?;
+			&format!("{} proj_subsig_store state", sname))?;
 		let pat_state_tbl = all.search_container(
-			"fsm_adv_stmt packed_trace pat_state_tbl")?;
+			&format!("{} packed_trace pat_state_tbl", sname))?;
 		verify_tbl_to_sorted_tbl(&r1, &r2,
 			&proj_pats_col, &proj_states_col, &pat_state_tbl, cs.clone())?;
 
 		//4. check the pat_state_loc
 		let pat_state_loc_tbl = all.search_container(
-			"fsm_adv_stmt packed_trace pat_state_loc_tbl")?;
+			&format!("{} packed_trace pat_state_loc_tbl", sname))?;
 		verify_tbl_left_join(&r1, &r2,
 			&pat_state_tbl, &state_loc_tbl, 
 			&sorted_states, 
@@ -909,7 +915,7 @@ pub mod tests_fsm_adv_gadget{
 
 		//4. create the gadget
 		let lkup_share_size = 4usize;
-		let mut fag = FsmAdvGadget::<Fr>::new(&acdfa, &cap, fsm_id,
+		let mut fag = FsmAdvGadget::<Fr>::new(false, &acdfa, &cap, fsm_id,
 			&vec![cfg_wea.clone()], &bundle.vec_subsig_stores[0]);
 		fag.set_container_cfg(vec_cfg.clone().into(), 1);  //it's the 2nd cfg
 		let _sizes = fag.get_to_add_size(); //test if sizes are ok
