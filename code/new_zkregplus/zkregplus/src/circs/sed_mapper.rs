@@ -316,7 +316,7 @@ impl <F:PrimeField> SedAdvice<F>{
 		let subsigs_inp_cs = Self::collect_subsig_ids(vec_sigs_to_discharge,
 			discharge_info, sig_to_id, false, dfa_cs);
 		let fsm_adv_advice_cs = FsmAdvAdvice::<F>
-			::new(false, 
+			::new(false, 1, //distance to word extract gadget 
 				&nibbles,dfa_cs, inp.inp_state_cs,inp.inp_loc_cs,
 				&subsigs_inp_cs, &fsm_cap,fsm_id_cs as u32,
 				subsig_pat_store_cs);
@@ -326,6 +326,7 @@ impl <F:PrimeField> SedAdvice<F>{
 			discharge_info, sig_to_id, true, dfa_igc);
 		let fsm_adv_advice_igc = FsmAdvAdvice::<F>
 			::new(true, //igc
+				2, //offset to word_extract
 				&nibbles,dfa_igc, inp.inp_state_igc,inp.inp_loc_igc,
 				&subsigs_inp_igc, &fsm_cap, fsm_id_igc as u32,
 				subsig_pat_store_igc);
@@ -421,24 +422,30 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 		//let fsm_cap = FsmAdvCapacity{max_nibble_len: nlen, 
 		//	acdfa_state_part_bits: state_bits};
 		let fsm_cap = &sed_capacity.faa_capacity();
-		let g_faa_cs = FsmAdvGadget::<F>::new(false, acdfa_cs, 
-			&fsm_cap, fsm_id_cs, &cfgs, subsig_pat_store_cs); 
+		println!("DEBUG USE 6701: ====");
+		let g_faa_cs = FsmAdvGadget::<F>::new(false, 1, //dist to word extract
+			acdfa_cs, &fsm_cap, fsm_id_cs, &cfgs, subsig_pat_store_cs); 
 		cfgs.push( g_faa_cs.dummy_cfg.clone() );
 
+		println!("DEBUG USE 6702: ====");
 		let fsm_cap = &sed_capacity.faa_capacity();
-		let g_faa_igc = FsmAdvGadget::<F>::new(true, acdfa_igc, 
-			&fsm_cap, fsm_id_igc, &cfgs, subsig_pat_store_igc); 
+		let g_faa_igc = FsmAdvGadget::<F>::new(true, 2, //dist to wea
+			acdfa_igc, &fsm_cap, fsm_id_igc, &cfgs, subsig_pat_store_igc); 
 		cfgs.push( g_faa_igc.dummy_cfg.clone() );
 
+		println!("DEBUG USE 6703: ====");
 		//1.3. discharge_subsig (2 gadgets)
 		let da_cap = &sed_capacity.da_capacity();
 		let g_da_cs = DischargeAdvGadget::<F>::new(false, 2, &da_cap, fsm_id_cs,
 			&cfgs, subsig_step_store_cs);
 		cfgs.push( g_da_cs.dummy_cfg.clone() );
+
+		println!("DEBUG USE 6704: ====");
 		let g_da_igc = DischargeAdvGadget::<F>::new(true, 2, &da_cap, 
 			fsm_id_igc, &cfgs, subsig_step_store_igc);
 		cfgs.push( g_da_igc.dummy_cfg.clone() );
 
+		println!("DEBUG USE 6705: ====");
 		//1.4 compute_sigs gadget (1 gadget)
 		let csa_cap = &sed_capacity.csa_capacity();
 		let g_csa = ComputeSigAdvGadget::<F>::new(

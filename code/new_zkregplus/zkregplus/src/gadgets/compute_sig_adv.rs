@@ -18,7 +18,7 @@
 //!     -> output is the list of discharged sigs.
 
 use rayon::iter::{
-	//IntoParallelRefIterator,
+	IntoParallelRefIterator,
 	ParallelIterator,IntoParallelIterator
 //	, IndexedParallelIterator
 };
@@ -31,7 +31,7 @@ use ark_ff::{PrimeField};
 
 use crate::gadgets::{
 	commons::{encode_cols_better, gen_m_table, encode_cols_var_adv_better,
-		new_const_var, check_eq, new_var},
+		new_const_var, check_eq, new_var, print_vec},
 	db::{assert_logup, 
 		//verify_encoded_table, assert_well_formed_sorted
 	},
@@ -39,7 +39,7 @@ use crate::gadgets::{
 		Container, ComponentAdvice,
 		Col,
 		IDX_WORD, IDX_INP,IDX_DATA, 
-		//IDX_DISCHARGED_SIGS,
+		IDX_DISCHARGED_SIGS,
 		IDX_OUP, 
 		//IDX_SI_INP, IDX_SI_OUP,
 		IDX_SI_DATA,
@@ -51,8 +51,8 @@ use data_processor::{
 		ClamavSig},
 	clam_db::{RANGE2,ID_ENCODED_NORMAL_STEP, ID_ENCODED_LAST_STEP,RANGE2_BIT,
 		ID_COMP_OP, ID_COMP_NUM, ID_COMP_SUBSIG,ID_MIN_REQUIRED,
-		ID_SUBSIG_TYPE},
-	//hex_acdfa::HexACDFA,
+		ID_SUBSIG_TYPE, ID_SUBSIG_IGC},
+	hex_acdfa::HexACDFA,
 };
 use folding_schemes::folding::foldpot::{
 	sigma_ir1cs::{
@@ -219,7 +219,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		let inp_subsigs_cs = [&pad[..], &inp_subsigs_cs[..]].concat();
 		let inp_sigs = [&pad2[..], &inp_sigs[..]].concat();
 		let (eval_res_combo_cs, raw_res_cs) = 
-			Self::gen_eval_subsig_by_sq_combo(false, //case sensitive
+			Self::gen_eval_subsig_by_sq_combo(false, -2, //case sensitive
 			&inp_subsigs_cs, sq_res_cs, &capacity, subsig_store_info_cs);
 		stmt_container.borrow_mut().add_container(eval_res_combo_cs);
 
@@ -227,7 +227,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		let inp_subsigs_igc = [&pad[..], &inp_subsigs_igc[..]].concat();
 		let inp_sigs = [&pad2[..], &inp_sigs[..]].concat();
 		let (eval_res_combo_igc, raw_res_igc) = 
-			Self::gen_eval_subsig_by_sq_combo(true, //case sensitive
+			Self::gen_eval_subsig_by_sq_combo(true, -1, //case sensitive
 			&inp_subsigs_igc, sq_res_igc, &capacity, subsig_store_info_igc);
 		stmt_container.borrow_mut().add_container(eval_res_combo_igc);
 
@@ -260,7 +260,8 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 			&capacity, 
 			v_sig_obj,
 			&discharge_info, 
-			sig_to_id
+			sig_to_id,
+			&subsig_store_info_igc,
 		);
 		stmt_container.borrow_mut().add_container(sig_res_combo);
 
@@ -276,19 +277,24 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 	/// Return (res_combo, raw_eval_result)
 	/// -- see the paper definition or approx_eval_pm_ bounds_subsig in clamav.rs.
 	fn gen_eval_subsig_by_sq_combo(
-		_b_igc: bool,
+		b_igc: bool,
+		offset_discharge: i32,
 		inp_subsigs: &Vec<F>,
 		sq_res: &Rc<RefCell<Container<F>>>, //already sorted on subsig_step
 		capacity: &ComputeSigAdvCapacity,
 		subsig_store_info: &SubsigStepStore,
 	)->(Rc<RefCell<Container<F>>>,Vec<F>){
-		if 1>0 {panic!("needs to handle b_igc in gen_eval_subsig_by_sq");}
 		//0. init data
 		let (zero,one) = (F::zero(), F::one());
-		let res = Container::<F>::new("eval_res_combo");
+		let tname = if b_igc {"eval_res_combo_igc"} 
+			else {"eval_res_combo_cs"};
+		let res = Container::<F>::new(tname);
 		assert!(inp_subsigs.len()==capacity.subsigs);
-		let sq_res = sq_res.borrow().duplicate_as_external_adv(-1,
-			Some("discharge_adv_stmt bwd_steps_queue sq_res2".to_string()),
+		let sname = if b_igc {"discharge_adv_stmt_igc"}
+			else {"discharge_adv_stmt_cs"};
+		let sq_res = sq_res.borrow().duplicate_as_external_adv(
+			offset_discharge,
+			Some(format!("{} bwd_steps_queue sq_res2",sname)),
 			Some("sq_res".to_string())); //so later we do not have to create copy
 										 //in validate.
 
@@ -417,16 +423,21 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 	/// for a subsig.
 	/// see accpets_approx_pm_bounds() in clamav.rs for the processing logic
 	/// return (ProofCombo, FinalEvalResult for the inp_subsigs padded)
+	///
+	/// Note that raw_result has two versions: (1) context sensitive (cs)
+	/// and (2) IGC (ignore case). First, we have to pick up the
+	/// value based on b_igc of each subsig and merge the raw_result_cs
+	/// and raw_result_igc into one raw_result, and then the synthesis 
+	/// can be done.
 	fn gen_synthesis_subsig_combo(
-		_b_igc: bool, //whether this is for ignore case
+		b_igc: bool, //whether this is for ignore case
 		acdfa_id: u32, //the acdfa_id for the combo that includes info_stores
 		inp_subsigs: &Vec<F>,
 		raw_result: &Vec<F>, //one to one corresponding to inp_subsig, TriVal
 		capacity: &ComputeSigAdvCapacity,
-		_subsig_store_info: &SubsigStepStore,
+		subsig_store_info: &SubsigStepStore,
 		subsig_store_extra_info: &SubsigInfoStore,
 	)->(Rc<RefCell<Container<F>>>,Vec<F>){
-		if 1>0 {panic!("handle b_igc case");}
 		//0. retrieve data 
 		let n1 = inp_subsigs.len(); //capacity num_subsigs
 		assert!(n1==capacity.subsigs);
@@ -434,7 +445,9 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
         let max_val:usize = (1<<RANGE2_BIT) - 1;
         let max = F::from(max_val as u64);
 
-		let res = Container::<F>::new("synthesis_res_combo");
+		let tname = if b_igc {"synthesis_res_combo_igc"}
+			else {"synthesis_res_combo_cs"};
+		let res = Container::<F>::new(tname);
 
 		//1. prepare the result of general_regex
 		let gen_regex_res = raw_result;
@@ -470,10 +483,26 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 			let (op, num, subsig_type) = if subsig.is_zero(){
 				(CompOp::NONE as u8, 0, 0)
 			}else{
-				let extra_info = subsig_store_extra_info
-					.subsig_to_rec.get(&field_to_usize(&subsig))
-					.expect(&format!("Can't find info for subsig: {}", subsig));
-				(extra_info.comp_op, extra_info.comp_num, extra_info.subsig_type)
+				let extra_info_res = subsig_store_extra_info
+					.subsig_to_rec.get(&field_to_usize(&subsig));
+				if extra_info_res.is_some(){
+					let extra_info = extra_info_res.unwrap();
+					(extra_info.comp_op, extra_info.comp_num, 
+						extra_info.subsig_type)
+				}else{//this can only happen when subsig igc not matching
+					  //i.e., we are handling function param b_igc
+					  //which does not match subsig's igc.
+					  //we return a dummy value. It will be discarded
+					  //later in selection stage.
+					#[cfg(test)]{
+						let subsig_step_info = subsig_store_info
+							.subsig_to_steps.get(&field_to_usize(&subsig))
+							.expect(&format!("cannot find step info for: {}", 
+								subsig));
+						assert!(subsig_step_info.igc != b_igc);
+					}
+					(CompOp::NONE as u8, 0, 0)
+				}
 			};
 			let c_op = CompOp::from(op);
 			//for input_subsig 0, dummy value for raw_res is 0
@@ -567,7 +596,14 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		for i in 0..n1{
 			//3.1.1 retrieve extra info
 			let subsig = inp_subsigs[i];
-			if subsig.is_zero() {
+			let b_not_match_igc = if subsig.is_zero(){false} else{
+				let subsig_step_info = subsig_store_info
+					.subsig_to_steps.get(&field_to_usize(&subsig))
+					.expect(&format!("cannot find step info for: {}", 
+						subsig));
+				subsig_step_info.igc != b_igc
+			};
+			if subsig.is_zero() || b_not_match_igc {
 				vec_scc_res[i] = F::from(TriVal::Maybe as u8);
 				continue;
 			}
@@ -853,48 +889,64 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 	/// HERE: all sigs need to be discharged (they will be
 	///   the list of sigs to be reported as "discharged").
 	fn gen_discharge_sig_combo(
-		_inp_sigs: &Vec<F>,
+		inp_sigs: &Vec<F>,
 		_acdfa_id_cs: u32, //the acdfa_id for the case sensitive comb
 		_acdfa_id_igc: u32, //the acdfa_id for the case sensitive comb
-		_inp_subsigs_cs: &Vec<F>,
+		inp_subsigs_cs: &Vec<F>,
 		_inp_subsigs_igc: &Vec<F>,
-		_subsig_result_cs: &Vec<F>,
-		_subsig_result_igc: &Vec<F>,
-		_capacity: &ComputeSigAdvCapacity,
-		_v_sigs: &Vec<Arc<ClamavSig>>, //required to COVER inp_sigs
-		_discharge_infos: &Vec<DischargeSigInfo>, //must match inp_sigs
+		subsig_result_cs: &Vec<F>,
+		subsig_result_igc: &Vec<F>,
+		capacity: &ComputeSigAdvCapacity,
+		v_sigs: &Vec<Arc<ClamavSig>>, //required to COVER inp_sigs
+		discharge_infos: &Vec<DischargeSigInfo>, //must match inp_sigs
 					//extracting the dnf to the concat of inp_subsigs
-		_sig_to_id: &HashMap<String,usize>,
+		sig_to_id: &HashMap<String,usize>,
+		subsig_store_info: &SubsigStepStore, //just need one for igc info
 	)->Rc<RefCell<Container<F>>>{
-	/*
-		let zero = F::zero();
+		let (zero,one) = (F::zero(),F::one());
 		let frg = F::from(RANGE2);
 		let res = Container::<F>::new("sig_res_combo");
 		let n = capacity.subsigs;
-		assert!(inp_subsigs.len()==n);
-		assert!(subsig_result.len()==n); 
+		#[cfg(test)]{
+			assert!(inp_subsigs_cs.len()==n && _inp_subsigs_igc.len()==n);
+			for i in 0..n{assert!(inp_subsigs_cs[i]==_inp_subsigs_igc[i]);}
+			assert!(subsig_result_cs.len()==n); 
+			assert!(subsig_result_igc.len()==n); 
+		}
 
 		//1. from the discharge info, build the proof table
-		// sig - eval_dnf_id - step - count - subsig (expect res to be
-		// TriVal::False)
+		// sig - eval_dnf_id - step - count - subsig - igc
+		// (no need to list res here as it's expected to be TriVal::False)
 		// Special note: the subsig/res in this talbe is DIFFERENT
 		// from the subsig/res in the gen_synthesis_subsig_res (because
 		// here, we do NOT include the sub-components of a subsig (thus
 		// resulting a shorter list of subsigs and with different structure)
 		// we have to run a LOOKUP to retrieve the result values from
-		// the previous combo in step 2.
+		// the previous combo in step 2 (and note that we have two
+		// list of results: one for case sensitive and one for
+		// ignore case) - we have to run CONDIDIONAL lkup depending on
+		// if igc attribute matches for the corresponding subsig.
 		// NOTE: we pad the size to #subsigs because in real data
 		// vast majority are regular_regex 
 		// (not Counterh of SubsigCounterConstraint)
-		assert!(discharge_infos.len()==inp_sigs.len());
-		for i in 0..discharge_infos.len() {
-			let name = &discharge_infos[i].sig_name;
-			let sig_id = if name =="none" {zero} else {
-				F::from(*sig_to_id.get(name)
-					.expect(&format!("cannot find sig: {}", name)) as u64)
-			};
-			assert!(sig_id == inp_sigs[i]);
+
+		//1.1 create the table columns
+		#[cfg(test)]{
+			assert!(discharge_infos.len()==inp_sigs.len());
+			for i in 0..discharge_infos.len() {
+				let name = &discharge_infos[i].sig_name;
+				let sig_id = if name =="none" {zero} else {
+					F::from(*sig_to_id.get(name)
+						.expect(&format!("cannot find sig: {}", name)) as u64)
+				};
+				assert!(sig_id == inp_sigs[i]);
+			}
 		}
+		//produce a table of
+		//(eval_dnf_id, dnf_step, dnf_count, subsig_id, sig_id, igc)
+		//NOTE that the "primary key" is subsig_id. So there might
+		//be multiple subsig_id entries for hte same sig_id (depending
+		// on the dnf evaluation plan - dnf_count determines it).
 		let info_ts = discharge_infos.par_iter().map(|info|{
 			let (sig_id, vec_ssid) = if info.sig_name=="none" {//dummy case 
 				//don't genreate [1] instead generate 0
@@ -915,11 +967,22 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 			};
 			let eval_dnf_id = F::from(info.min_dnf_id as u64);
 			let eval_count = F::from(vec_ssid.len() as u64);
-			vec_ssid.iter().enumerate().map(|(i,ssid)|
-				(eval_dnf_id, F::from(i as u64), eval_count, *ssid, sig_id)
-			).collect::<Vec<(F,F,F,F,F)>>()
-		}).flatten().collect::<Vec<(F,F,F,F,F)>>();
-		let pad = vec![(zero,zero,zero,zero,zero); n-info_ts.len()];
+
+			vec_ssid.iter().enumerate().map(|(i,ssid)|{
+				let subsig_id = F::from(
+					HexACDFA::gen_subsig_id_worker(
+						field_to_usize(&sig_id),
+						field_to_usize(ssid),
+					) as u64);
+				let info = subsig_store_info.subsig_to_steps
+					.get(&field_to_usize(&subsig_id))
+					.expect(&format!("cannot locate rec: {}", ssid));
+				let igc = if info.igc {F::one()} else {F::zero()};
+				(eval_dnf_id, F::from(i as u64), eval_count, *ssid, sig_id, igc, subsig_id)
+			}).collect::<Vec<(F,F,F,F,F,F,F)>>()
+		}).flatten().collect::<Vec<(F,F,F,F,F,F,F)>>();
+
+		let pad = vec![(zero,zero,zero,zero,zero,zero,zero); n-info_ts.len()];
 		let info_ts = [&pad[..], &info_ts[..]].concat();
 		assert!(info_ts.len()==n);
 		let v_dnf_id = info_ts.iter().map(|t| t.0).collect::<Vec<F>>();
@@ -927,7 +990,12 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		let v_dnf_count = info_ts.iter().map(|t| t.2).collect::<Vec<F>>();
 		let v_real_subsigs = info_ts.iter().map(|t| t.3).collect::<Vec<F>>();
 		let v_sigs = info_ts.iter().map(|t| t.4).collect::<Vec<F>>();
+		let v_igc = info_ts.iter().map(|t| t.5).collect::<Vec<F>>();
+		//NOTE: v_computed_subsigs will not be stored in proof, at the
+		//validation stage, it will be omputed.
+		let v_computed_subsig = info_ts.iter().map(|t| t.6).collect::<Vec<F>>();
 
+		//1.2 create their SIDs
 		let info_id:u32 = 0x98882405; 
 		let f1 = F::from(info_id);
 		let factor = F::from(0x100000000 as u64); //32-bit 
@@ -955,6 +1023,17 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		}).collect::<Vec<F>>();
 		let v_sid_sigs = vec![frg; n];
 
+		let tbl_id_start = F::from(1u64<<32) * F::from(ID_SUBSIG_IGC);
+		let v_sid_igc = v_real_subsigs.iter().zip(v_sigs.iter())
+		.map(|(ssid, sig_id)|{
+			//note: check if sets tbl_id to 0? 
+			let subsig_id = HexACDFA::gen_subsig_id_worker(
+				field_to_usize(sig_id), field_to_usize(ssid)
+			);
+			let tbl_id = tbl_id_start + F::from(subsig_id as u64);
+			tbl_id
+		}).collect::<Vec<F>>();
+
 		//2. Now prove that each sig in v_sigs is discharged as false
 		//2.1 check that all subsig of a sig is well covered, i.e.,
 		// the dnf_step is increasing, it starts from 0 and its
@@ -966,44 +1045,68 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		// shows up multiple times, it's costing more on prover but
 		// does not affect soundness of proof.
 
-		//2.2 build subsigs from (sig_id, real_subsig) and lookup
-		// (subsig, False) in the (vec_subsig, vec_result) from the
-		// previous gen_sytneshsis_subsig_result(). This is needed
-		// as the structure of subsigs are different between the 
-		// two components.
-		let mut map = inp_subsigs.into_iter().zip(subsig_result.into_iter()).
-			map(|(x,y)| (*x,*y)).collect::<HashMap<F,F>>();
+		//2.2 from the v_computed_subsigs derived from
+		// the 6-column table (eval DNF steps), lookup (subsig, False) in
+		//  the (inp_subsig, False) from the previous discharge component. 
+		//
+		// NOTE that we are doing two lookups. One for
+		// case sensitive and one for ignore case.
+		// Thus, we use igc attribute as selector. If match,
+		// we look for real entries, if not match, the entry is 0.
+		//
+		// For example, assume that by v_computed_subsigs (according to
+		//  eval DNF plan), we expect subsig 9 has False as evaluation
+		//  result and subsig 9 is Ignore Case.
+		//  We thus expect that (9,False) exists in (inpu_subsigs, eval_res_IGC)
+		//    and don't care if it exists in (inp_subsigs, eval_res_CS).
+		//  So when we perform lookup (9, False) in the two column table
+		//   (inp_subsigs, eval_res_CS) the entry (9,False) should
+		//   be masked as dummy entry (0,0). However, when
+		//   we lookup (9,False) innto (inp_subsigs, eval_res_IGC)
+		//   it should retain its original form. We then have
+		//   to use IGC attribute as the selector when we prepare
+		//   source tables.
 		let f_false = F::from(TriVal::False as u8);
-		map.insert(zero, f_false); //for dummy entry
-		let mut v_computed_subsig = vec![zero; n];
-		for i in 0..n{
-			let subsig_id = F::from(HexACDFA::gen_subsig_id_worker(
-						field_to_usize(&v_sigs[i]), 
-						field_to_usize(&v_real_subsigs[i])
-					) as u64);
-			let res = map.get(&subsig_id)
-				.expect(&format!("cannot find subsig_id: {}", &subsig_id));
-			assert!(*res == f_false);
-			v_computed_subsig[i] = subsig_id;
-		}
-		let src = encode_cols_better(
+		let src = encode_cols_better(//expected to be ALL FALSE by eval_DNF
 			vec![&v_computed_subsig[..], &vec![f_false; n][..]],
 			vec![0,1]
 		);
-		//pad (0,1) for dummy entry
-		let pad_subsigs = [&inp_subsigs[..], &vec![zero][..]].concat();
-		let pad_res = [&subsig_result[..], &vec![f_false][..]].concat();
-		let dst = encode_cols_better(
-			vec![&pad_subsigs[..], &pad_res[..]],
+		let src_igc = src.iter().zip(v_igc.iter()).map(|(&a,&b)|
+			a*b).collect::<Vec<F>>(); //use igc to select
+		let src_cs= src.iter().zip(v_igc.iter()).map(|(&a,&b)|
+			a*(one-b)).collect::<Vec<F>>(); //use not igc to select
+
+		//pad (0,1) for dummy entry. Note that inp_subsigs_cs==inp_subscs_igc
+		//so pad_subsigs can be used for both cases
+		let pad_subsigs = [&inp_subsigs_cs[..], &vec![zero][..]].concat();
+		let pad_res_cs = [&subsig_result_cs[..], &vec![f_false][..]].concat();
+		let pad_res_igc= [&subsig_result_igc[..], &vec![f_false][..]].concat();
+		let dst_cs = encode_cols_better(
+			vec![&pad_subsigs[..], &pad_res_cs[..]],
 			vec![0,1]
 		);
-		let mtbl_lk_res = gen_m_table(&src, &dst);
+		let dst_igc= encode_cols_better(
+			vec![&pad_subsigs[..], &pad_res_igc[..]],
+			vec![0,1]
+		);
+		//only those have igc matched entries in src will be
+		//looked up in dst (otherwise they are 0 entries)
+		//NOTE if gen_m_table fails it implies USUALLY
+		//the expected False entry for a subsig is not there
+		//so the sample is actually VIRUS that cannot be discharged
+		let mtbl_lk_res_igc = gen_m_table(&src_igc, &dst_igc);
+		print_vec("DEBUG USE 6100.1: v_computed_subsig", &v_computed_subsig);
+		print_vec("DEBUG USE 6100.2: pad_subsigs", &pad_subsigs);
+		print_vec("DEBUG USE 6100.2: pad_res_cs", &pad_res_cs);
+		print_vec("DEBUG USE 6100.3: pad_res_igc", &pad_res_igc);
+		print_vec("DEBUG USE 6101: src_cs", &src_cs);
+		print_vec("DEBUG USE 6102: dst_cs", &dst_cs);
+		let mtbl_lk_res_cs = gen_m_table(&src_cs, &dst_cs);
 
 		//3. show that inp_sigs is a subset of v_sigs (covered)
 		// where we have proved all v_sigs are discharged
 		//note: v_sigs is required to have at least one dummy entry at beginning
 		let mtbl_sigs= gen_m_table(&inp_sigs, &v_sigs);
-
 
 		//4. add data columns into containers
 		let names = vec![
@@ -1011,14 +1114,16 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 				"v_dnf_id", 
 				"v_dnf_step", 
 				"v_dnf_count", 
-				"v_real_subsigs"
+				"v_real_subsigs",
+				"v_igc"
 				];
 		let col2d = vec![
 			v_sigs, 
 			v_dnf_id, 
 			v_dnf_step, 
 			v_dnf_count, 
-			v_real_subsigs
+			v_real_subsigs,
+			v_igc,
 		];
 		col2d.into_iter().zip(names.iter()).for_each(|(c, n)|{
 			res.borrow_mut().add_col(Col::new(c, n, IDX_DATA));
@@ -1028,15 +1133,22 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 			v_sid_dnf_id, 
 			v_sid_dnf_step, 
 			v_sid_dnf_count, 
-			v_sid_real_subsigs
+			v_sid_real_subsigs,
+			v_sid_igc
 		];
 		col2d_sid.into_iter().zip(names.iter()).for_each(|(c, n)|{
 			res.borrow_mut().add_col(Col::new(c, &format!("sid_{}",n),
 				IDX_SI_DATA));
 		});
-		assert!(mtbl_lk_res.len()==n+1);
-		res.borrow_mut().add_col(Col::new(mtbl_lk_res,"mtbl_lk_res",IDX_DATA));
-		res.borrow_mut().add_col(Col::new(vec![frg;n+1],"sid_mtbl_lk_res",
+		assert!(mtbl_lk_res_cs.len()==n+1);
+		assert!(mtbl_lk_res_igc.len()==n+1);
+		res.borrow_mut().add_col(Col::new(mtbl_lk_res_cs,"mtbl_lk_res_cs"
+			,IDX_DATA));
+		res.borrow_mut().add_col(Col::new(vec![frg;n+1],"sid_mtbl_lk_res_cs",
+			IDX_SI_DATA));
+		res.borrow_mut().add_col(Col::new(mtbl_lk_res_igc,"mtbl_lk_res_igc"
+			,IDX_DATA));
+		res.borrow_mut().add_col(Col::new(vec![frg;n+1],"sid_mtbl_lk_res_igc",
 			IDX_SI_DATA));
 		
 		assert!(mtbl_sigs.len()==n);
@@ -1047,10 +1159,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		res.borrow_mut().add_col(Col::new(inp_sigs.clone(),
 	 		"discharged_sigs",IDX_DISCHARGED_SIGS)); //no si needed
 
-
 		res
-		*/
-		todo!()
 	}
 
 
@@ -1639,12 +1748,14 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 
 	/// validate syntesis of subsig is correct.
 	///
-	/// COST: 2*n1 +  22*n
+	/// COST: 2*n1 +  33*n (compared with earlier: +11n after handling
+	///   both the cs and igc case)
 	/// where (n1 = num of sigs, n = num of subsigs)
 	/// in real data: worst case n1 = 300, n = 1000 (=> worst case: 23k)
 	fn validate_discharge_sig_combo(&self, 
 		eval_res_combo: &Rc<RefCell<Container<FpVar<F>>>>, 
-		synthesis_res_combo: &Rc<RefCell<Container<FpVar<F>>>>, 
+		synthesis_res_combo_cs: &Rc<RefCell<Container<FpVar<F>>>>, 
+		synthesis_res_combo_igc: &Rc<RefCell<Container<FpVar<F>>>>, 
 		discharge_sig_combo: &Rc<RefCell<Container<FpVar<F>>>>, 
 		r1: FpVar<F>,
 		_r2: FpVar<F>,
@@ -1657,20 +1768,22 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		let _max=new_const_var(&cs,F::from(max_val as u64));
 		let frg = new_const_var(&cs, F::from(RANGE2));
 		let names = vec![ "v_sigs", "v_dnf_id", "v_dnf_step", 
-			"v_dnf_count", "v_real_subsigs"];
+			"v_dnf_count", "v_real_subsigs", "v_igc"];
 		let cols = names.iter().map(|n|
 			discharge_sig_combo.borrow()
 				.get_container(n).unwrap().borrow().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
-		let (v_sigs, v_dnf_id, v_dnf_step, v_dnf_count, v_real_subsigs) = (
-			&cols[0], &cols[1], &cols[2], &cols[3], &cols[4]);
+		let (v_sigs, v_dnf_id, v_dnf_step, 
+			v_dnf_count, v_real_subsigs, v_igc) = (
+			&cols[0], &cols[1], &cols[2], &cols[3], &cols[4], &cols[5]);
 		let sid_cols = names.iter().map(|n|
 			discharge_sig_combo.borrow()
 				.get_container(&format!("sid_{}",n)).unwrap().borrow().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
 		let (v_sid_sigs, v_sid_dnf_id, v_sid_dnf_step, v_sid_dnf_count, 
-			v_sid_real_subsigs) = (&sid_cols[0], &sid_cols[1], &sid_cols[2], 
-				&sid_cols[3], &sid_cols[4]);
+			v_sid_real_subsigs, v_sid_igc) = 
+			(&sid_cols[0], &sid_cols[1], &sid_cols[2], 
+				&sid_cols[3], &sid_cols[4], &sid_cols[5]);
 		let n = v_sigs.len();
 		for i in 0..cols.len(){assert!(cols[i].len()==n);}
 		for i in 0..cols.len(){assert!(sid_cols[i].len()==n);}
@@ -1692,6 +1805,47 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		let f1_2 = new_const_var(&cs, F::from(info_id));
 		let part1_2 = &f1_2 * &factor3;
 
+		//1.2 construct v_computed_subsigs as non-determinitic advice
+		//then verify its validity.
+		//cost 2n
+		let v_real_subsigs_val = v_real_subsigs.iter().map(|x| 
+			x.value().unwrap()).collect::<Vec<F>>();
+		let v_sigs_val = v_sigs .iter().map(|x| 
+			x.value().unwrap()).collect::<Vec<F>>();
+		let v_computed_subsig_val = v_real_subsigs_val.into_iter()
+			.zip(v_sigs_val.into_iter()).map(|(ssid, sig_id)|
+			if ssid.is_zero() { F::zero()}
+			else {
+				let subsig_id = HexACDFA::gen_subsig_id_worker(
+					field_to_usize(&sig_id),
+					field_to_usize(&ssid),
+				);
+				F::from(subsig_id as u64)
+			}
+		).collect::<Vec<F>>();
+		let v_computed_subsig = v_computed_subsig_val.into_iter().map(|x|
+			new_var(&cs, x)
+		).collect::<Vec<FpVar<F>>>();
+
+		let bits = RANGE2_BIT;
+		let bit_part1 = bits*2/3; //16 for accomodating 64k sigs for bits 24
+		let bit_part2 = bits - bit_part1;
+		let f1 = new_const_var(&cs, F::from(1u64<<bit_part2));
+		for i in 0..n{
+			let subsig_id = &v_computed_subsig[i];
+			let sig_id = &v_sigs[i];
+			let ssid = &v_real_subsigs[i];
+			let exp = &f1 * sig_id + ssid; 
+			let diff = &exp - subsig_id;
+			let prod = ssid * &diff; //ignore 0 entries
+			check_eq(&prod, &zero, 
+				&format!("err checking computed subsig at i: {}", i))?;
+
+		}
+
+		//1.3 verify sids 
+		let tbl_id_start = new_const_var(&cs,
+			F::from(1u64<<32) * F::from(ID_SUBSIG_IGC));
 		for i in 0..n{
 			check_eq(&v_sid_dnf_id[i], &frg, "err sid dnf_id")?;
 			check_eq(&v_sid_dnf_step[i], &frg, "erro sid_dnf_step")?;
@@ -1707,6 +1861,11 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 				+ &v_dnf_step[i];
 			check_eq(&exp_sid_real_subsig, &v_sid_real_subsigs[i],
 				"err sid_real_subsig")?;
+			
+			//check v_sid_igc
+			let exp_sid_igc = &tbl_id_start + &v_computed_subsig[i];
+			check_eq(&exp_sid_igc, &v_sid_igc[i], 
+				&format!("failed sid_igc at i: {}", i))?;
 		}
 
 		//2. Now prove that each sig in v_sigs is discharged as false
@@ -1739,9 +1898,10 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		// (subsig, False) in the (vec_subsig, vec_result) from the
 		// previous gen_sytneshsis_subsig_result(). This is needed
 		// as the structure of subsigs are different between the 
-		// two components.
+		// two components. Note that there are two cases: (1) for context
+		// sensitive, and (2) for ignore case
 		//
-		// COST: 8n 
+		// COST: 16n 
 		let bits = RANGE2_BIT;
 		let bit_part1 = bits*2/3; //16 for accomodating 64k sigs for bits 24
 		let bit_part2 = bits - bit_part1;
@@ -1757,21 +1917,38 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 			&vec![&v_computed_subsig[..], &vec![f_false.clone(); n][..]],
 			&vec![0,1], &r1
 		);
+		let src_igc = src.iter().zip(v_igc.iter()).map(|(a,b)|
+			a*b).collect::<Vec<FpVar<F>>>();
+		let src_cs= src.iter().zip(v_igc.iter()).map(|(a,b)|
+			a*&(&one-b)).collect::<Vec<FpVar<F>>>();
+
 		//pad (0,1) for dummy entry
-		let inp_subsigs = eval_res_combo.borrow()
+		let inp_subsigs= eval_res_combo.borrow()
 			.get_container("inp_subsig").unwrap().borrow().to_vec();
-		let subsig_result = synthesis_res_combo.borrow()
+		let subsig_result_cs = synthesis_res_combo_cs.borrow()
+			.get_container("vec_subsig_final_res").unwrap()
+			.borrow().to_vec();
+		let subsig_result_igc= synthesis_res_combo_igc.borrow()
 			.get_container("vec_subsig_final_res").unwrap()
 			.borrow().to_vec();
 		let pad_subsigs = [&inp_subsigs[..], &vec![zero][..]].concat();
-		let pad_res = [&subsig_result[..], &vec![f_false][..]].concat();
-		let dst = encode_cols_var_adv_better(
-			&vec![&pad_subsigs[..], &pad_res[..]],
+		let pad_res_cs = [&subsig_result_cs[..], &vec![f_false.clone()][..]]
+			.concat();
+		let pad_res_igc = [&subsig_result_igc[..], &vec![f_false][..]].concat();
+		let dst_cs = encode_cols_var_adv_better(
+			&vec![&pad_subsigs[..], &pad_res_cs[..]],
 			&vec![0,1], &r1
 		);
-		let mtbl_lkup_res = discharge_sig_combo.borrow()
-			.get_container("mtbl_lk_res").unwrap().borrow().to_vec();
-		assert_logup(cs.clone(), &src, &dst, &mtbl_lkup_res, &r1)?;
+		let dst_igc = encode_cols_var_adv_better(
+			&vec![&pad_subsigs[..], &pad_res_igc[..]],
+			&vec![0,1], &r1
+		);
+		let mtbl_lkup_res_cs = discharge_sig_combo.borrow()
+			.get_container("mtbl_lk_res_cs").unwrap().borrow().to_vec();
+		let mtbl_lkup_res_igc = discharge_sig_combo.borrow()
+			.get_container("mtbl_lk_res_igc").unwrap().borrow().to_vec();
+		assert_logup(cs.clone(), &src_cs, &dst_cs, &mtbl_lkup_res_cs, &r1)?;
+		assert_logup(cs.clone(), &src_igc, &dst_igc, &mtbl_lkup_res_igc, &r1)?;
 
 		//3. show that inp_sigs is a subset of v_sigs (covered)
 		// where we have proved all v_sigs are discharged
@@ -1849,7 +2026,11 @@ impl <F:PrimeField> SigmaGadget<F> for ComputeSigAdvGadget<F>{
 		vec![]
 	}
 
-	// COST:  31n1 + 81n2 + 8n3
+	// COST (old):  31n1 + 81n2 + 8n3
+	// --> 41n1 + 1432n2 + 8n3
+	// coz: (1) validate_discharge_sig_combo +11n2, 
+	//   (2) one more copy ofvalidate_synthesis_result: 43n2
+	//   (3) one more copy of validate_eval_subsib_by_sq: 10n1 + 8n2
 	// using ratio below: rougly: 125n2 (number of subsigs)-> 125k (worst case)
 	// 29n1+2n1 + 22n2 69n2 + 10n2 + 8n3 + 
 	// where n1: scc table size (usually 20% of n2), in practice:200 
@@ -1866,8 +2047,12 @@ impl <F:PrimeField> SigmaGadget<F> for ComputeSigAdvGadget<F>{
 		let r2 = wtns.msg2[1].clone();
 
 		//2. validate the eval of subsig based on step queue result
-		let eval_res_combo = stmt.get_container("eval_res_combo")?;
-		self.validate_eval_subsig_by_sq_combo(&eval_res_combo.borrow(), 
+		//two instances (cs and igc)
+		let eval_res_combo_cs = stmt.get_container("eval_res_combo_cs")?;
+		self.validate_eval_subsig_by_sq_combo(&eval_res_combo_cs.borrow(), 
+			r1.clone(), r2.clone(), cs.clone())?;
+		let eval_res_combo_igc = stmt.get_container("eval_res_combo_igc")?;
+		self.validate_eval_subsig_by_sq_combo(&eval_res_combo_igc.borrow(), 
 			r1.clone(), r2.clone(), cs.clone())?;
 
 		//TODO: 
@@ -1879,15 +2064,29 @@ impl <F:PrimeField> SigmaGadget<F> for ComputeSigAdvGadget<F>{
 		// lkup e.g., using (ID_MIN_REQUIRED, ID_COMP_NUM) we can
 		// retrieve the related info. We handle the results in three 
 		// separate tables. (as the last one has dynamic size).
-		let synthesis_res_combo = stmt.get_container("synthesis_res_combo")?;
-		self.validate_synthesis_subsig_combo(&eval_res_combo.borrow(),
-			&synthesis_res_combo.borrow(), r1.clone(), r2.clone(), cs.clone())?;
+		let synthesis_res_combo_cs = stmt
+			.get_container("synthesis_res_combo_cs")?;
+		let synthesis_res_combo_igc = stmt
+			.get_container("synthesis_res_combo_igc")?;
+		self.validate_synthesis_subsig_combo(
+			&eval_res_combo_cs.borrow(),
+			&synthesis_res_combo_cs.borrow(), 
+			r1.clone(), r2.clone(), cs.clone()
+		)?;
+		self.validate_synthesis_subsig_combo(
+			&eval_res_combo_igc.borrow(),
+			&synthesis_res_combo_igc.borrow(), 
+			r1.clone(), r2.clone(), cs.clone()
+		)?;
 
 		//4. now evaluate all sigs and generate the list of sigs
 		//which are DISCHARGED.
 		let sig_res_combo= stmt.get_container("sig_res_combo")?;
 		self.validate_discharge_sig_combo(
-			&eval_res_combo, &synthesis_res_combo, &sig_res_combo, 
+			&eval_res_combo_cs, 
+			&synthesis_res_combo_cs, 
+			&synthesis_res_combo_igc, 
+			&sig_res_combo, 
 			r1.clone(), r2.clone(), cs.clone())?;
 			
 		Ok(())
@@ -2097,6 +2296,7 @@ pub mod tests_compute_sig_adv{
 
 		 	let adv_faa_cs = FsmAdvAdvice::new(
 				false, //case sensitive
+				1, //dist to wea 
 				&nibbles, &acdfa_cs, inp_state_cs, 
 				inp_loc_cs, &input_subsigs_cs, &cap, fsm_id_cs, 
 				&bundle_cs.vec_subsig_stores[store_id]); 
@@ -2105,6 +2305,7 @@ pub mod tests_compute_sig_adv{
 
 		 	let adv_faa_igc = FsmAdvAdvice::new(
 				true, //igc
+				2, //dist to wea
 				&nibbles, &acdfa_igc, inp_state_igc, 
 				inp_loc_igc, &input_subsigs_igc, &cap, fsm_id_igc, 
 				&bundle_igc.vec_subsig_stores[store_id]); 
@@ -2266,7 +2467,7 @@ pub mod tests_compute_sig_adv{
 			*/
 			// /* RECOVER LATER
 			//sig5: subsig counter constraint (here min req is 2)
-			"sig5;Engine:51-255,Target:1;(0|1)>1,2;/abc..123/;/56...fgh/",
+			"sig5;Engine:51-255,Target:1;(0|1)>1,2;/abc..123/i;/56...fgh/",
 			// */
 
 		].iter().map(|x| x.to_string()).collect::<Vec<String>>();
@@ -2307,7 +2508,7 @@ pub mod tests_compute_sig_adv{
 			// /* RECOVER LATER
 			//6. fails sig5 coz because it needs to have two distinnct
 			// matches but only matches 56...fgh (missing abc...123)
-			Tcase::new("abcdd122xabx56xxxfghxxabcdd122", "sig5"), 
+			Tcase::new("abCdd122xabx56xxxfghxxabcdd122", "sig5"), 
 			// */
 		];
 
@@ -2325,12 +2526,12 @@ pub mod tests_compute_sig_adv{
 	#[allow(dead_code)]
 	fn test_compute_sig_advice(){
 		//0. create a subsig step store
-		let item1 = SubsigStepStoreItem::new(100,
+		let item1 = SubsigStepStoreItem::new(100, false, //case sensitive
 			vec![	
 				(2, (10, 100)),
 				(3, (20,30)),
 			]);
-		let item2 = SubsigStepStoreItem::new(200,
+		let item2 = SubsigStepStoreItem::new(200, false, //case sensitive
 			vec![	
 				(20, (10,120)),
 				(30, (10,20)),

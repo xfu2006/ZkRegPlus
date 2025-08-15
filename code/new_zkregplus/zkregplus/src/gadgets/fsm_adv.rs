@@ -77,6 +77,9 @@ pub struct FsmAdvCapacity{
 /// Advice for the WordExtract Gadget.
 #[derive(Clone,Debug)]
 pub struct FsmAdvAdvice<F:PrimeField>{
+	/// distance to the word_extract gadget (sometimes it's 2)
+	pub offset_wea: usize,
+
 	/// the first id related to the corresponding ACDFA
 	pub fsm_id: u32,
 
@@ -108,6 +111,10 @@ pub struct FsmAdvAdvice<F:PrimeField>{
 pub struct FsmAdvGadget<F:PrimeField>{ 
 	/// if this is for igc acdfa.
 	b_igc: bool, 
+
+	/// distance to the word_extract gadget (sometimes it's 2)
+	pub offset_wea: usize,
+
 	/// the first related lookup subtbl_id defined in clam_db.rs
 	/// e.g., CRIT_INIT for the ACDFA of critical table in clam_db.rs
 	pub fsm_id: u32, 
@@ -175,6 +182,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 	/// Input: (input_state, inp_location) 
 	pub fn new(
 		b_igc: bool,
+		offset_wea: usize,
 		nibbles: &Vec<F>, 
 		acdfa: &HexACDFA, 
 		inp_state: F,  //it's already adjusted (starting from 1)
@@ -189,7 +197,8 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 
 		//1. construct the fsm_acc combo which has the transition
 		// info and results in (state, loc) columns
-		let fsm_acc = Self::gen_fsm_acc_combo(nibbles, acdfa, 
+		let fsm_acc = Self::gen_fsm_acc_combo(offset_wea as isize, 
+			nibbles, acdfa, 
 			inp_state, inp_loc, capacity, fsm_id);
 		let fsm_acc2 = fsm_acc.clone(); //low cost, need to add
 		//fsm_acc to fix location first before we build exteranl cols from it.
@@ -212,7 +221,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 
 
 		Self{capacity: Clone::clone(capacity), fsm_id,
-			stmt_container}
+			stmt_container, offset_wea}
 	}
 
 	/// Given the input generates the container of the following
@@ -227,6 +236,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 	/// si_locs (inp, mid, oup)
 	/// si_trans
 	fn gen_fsm_acc_combo(
+		wea_offset: isize,
 		nibbles: &Vec<F>, 
 		acdfa: &HexACDFA, 
 		inp_state: F,  //it's the adjusted state (starting rom 1)
@@ -336,10 +346,11 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 
 		//1.4 the nibbles (LATER when reconstructed, it is 
 		// retrieved from previous word_extract_adv gadget
+		let shift = 0 - (wea_offset as i32);
 		let col_nibbles = Col::<F>::new_external(nibbles.to_vec(), 
-			"nibbles", IDX_DATA, -1, "word_extract_stmt nibbles");
+			"nibbles", IDX_DATA, shift, "word_extract_stmt nibbles");
 		let col_si_nibbles = Col::<F>::new_external(vec![f_char; nlen], 
-			"si_nibbles", IDX_SI_DATA, -1, 
+			"si_nibbles", IDX_SI_DATA, shift, 
 			"word_extract_stmt si_nibbles");
 		#[cfg(test)]{assert!(col_nibbles.borrow().data.len()==nlen);}
 		#[cfg(test)]{assert!(col_si_nibbles.borrow().data.len()==nlen);}
@@ -525,6 +536,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 impl <F:PrimeField> FsmAdvGadget<F>{
 	pub fn new(
 		b_igc: bool,
+		offset_wea: usize,
 		acdfa: &HexACDFA,
 		capacity: &FsmAdvCapacity,
 		fsm_id: u32, 
@@ -539,6 +551,7 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		let dummy_inp_subsigs = vec![
 			F::from(store_subsig_pat.subsig_ids[0] as u32)];
 		let dummy_adv = FsmAdvAdvice::new(false, //case sensitive
+			offset_wea, //offset to word_extract
 			&nibbles, acdfa, dummy_inp_state,
 			dummy_inp_loc, &dummy_inp_subsigs, capacity, 
 			fsm_id, store_subsig_pat);
@@ -550,7 +563,8 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 
 		Self{_f: PhantomData, capacity: Clone::clone(capacity), 
 			cfgs_context: None,
-			my_idx_in_context: None, dummy_cfg, fsm_id, b_igc}
+			my_idx_in_context: None, dummy_cfg, fsm_id, b_igc,
+			offset_wea}
 	}
 
 	/// return None if not set yet.
@@ -895,6 +909,7 @@ pub mod tests_fsm_adv_gadget{
 			acdfa.gen_subsig_id(sig_id, subsig_id_raw) as u32)];  
 		let fsm_id = ClamavDB::<Fr>::pm_acdfa_id(0, b_igc); //0 for all
 		let adv_faa = FsmAdvAdvice::new(false, //case sensitive,
+			1, //dist to wea
 			&nibbles, &acdfa, inp_state, 
 			inp_loc, &input_subsigs, &cap, fsm_id, 
 			&bundle.vec_subsig_stores[0]); //for SED
@@ -915,7 +930,8 @@ pub mod tests_fsm_adv_gadget{
 
 		//4. create the gadget
 		let lkup_share_size = 4usize;
-		let mut fag = FsmAdvGadget::<Fr>::new(false, &acdfa, &cap, fsm_id,
+		let mut fag = FsmAdvGadget::<Fr>::new(false, 1, //dist to wea
+			&acdfa, &cap, fsm_id,
 			&vec![cfg_wea.clone()], &bundle.vec_subsig_stores[0]);
 		fag.set_container_cfg(vec_cfg.clone().into(), 1);  //it's the 2nd cfg
 		let _sizes = fag.get_to_add_size(); //test if sizes are ok

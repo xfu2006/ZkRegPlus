@@ -102,6 +102,7 @@ pub const ID_ENCODED_RG_START:u32=0x71090004;
 pub const ID_ENCODED_RG_END:u32=0x71090005;
 pub const ID_ENCODED_LAST_STEP:u32=0x71090006;
 pub const ID_ENCODED_PREV_ENCODED:u32=0x71090007;
+pub const ID_SUBSIG_IGC:u32=0x71090008;
 
 pub const ID_SIG_NO_CRIT:u32 = 0x73010001;
 pub const ID_SIG_NO_CRIT_COUNT:u32 = 0x73020001;
@@ -185,7 +186,8 @@ impl <F:PrimeField> fmt::Debug for ClamavDB<F>{
 
 impl SubsigPatternStoreItem{
 	/// input tuple: state_id and its patten IDs
-	pub fn new(subsig_id: usize, tuples: Vec<(usize, Vec<usize>)>)->Self{
+	pub fn new(subsig_id: usize, tuples: Vec<(usize, Vec<usize>)>)
+	->Self{
 		let mut state_ids = vec![];
 		let mut state_to_pattern_ids = HashMap::new();
 		for t in tuples{
@@ -431,9 +433,9 @@ impl SubsigPatternStore{
 }
 
 impl SubsigStepStoreItem{
-	pub fn new(subsig_id: usize, 
+	pub fn new(subsig_id: usize, igc: bool,
 		vec_pm_bounds: Vec<(usize,(usize,usize))>)->Self{
-		Self{subsig_id, vec_pm_bounds}
+		Self{subsig_id, vec_pm_bounds, igc}
 	}
 
 	pub fn dump(&self){
@@ -473,6 +475,9 @@ impl SubsigStepStore{
 	/// g1           2      p2          2       max       # here "max" is real
 	/// g1           3      max         max		max		  # dummy end entry
 	/// before valid entries it's padded with 0 entries.
+	///
+	/// We also add another table
+	/// <subsig_id, b_igc>
 	pub fn add_store_to_lkup<F:PrimeField>(&self, 
 		lkup: &mut LookupTableTwoCol_Inst<F>, 
 		acdfa_id: u32,
@@ -502,10 +507,11 @@ impl SubsigStepStore{
 		*/
 
 		//1. use a loop add sub-table for encoded-subsig, encoded_step, 
-		// encoded_pat_id, encoded_rg_start, encoded_rg_end
+		// encoded_pat_id, encoded_rg_start, encoded_rg_end,
 		let subcats = [ID_ENCODED_SUBSIG, ID_ENCODED_NORMAL_STEP,
 			ID_ENCODED_PAT,
-			ID_ENCODED_RG_START, ID_ENCODED_RG_END, ID_ENCODED_PREV_ENCODED];
+			ID_ENCODED_RG_START, ID_ENCODED_RG_END, ID_ENCODED_PREV_ENCODED,
+			];
 		let mut all_tuples = subcats.par_iter().enumerate().map(|(i,pid)|{
 			let info_col = &cols[i];
 			let encoded = &cols[5];
@@ -535,6 +541,19 @@ impl SubsigStepStore{
 
 			tuples
 		}).collect::<Vec<Vec<(F,F)>>>().concat();
+
+		//2. generate subtl subsig_id -> igc 
+		let tbl_id_start = F::from(1u64<<32) * F::from(ID_SUBSIG_IGC);
+		let tuples2 = self.subsig_ids.par_iter().map(|subsig_id|{
+			let item = self.subsig_to_steps.get(subsig_id)
+				.expect(&format!("cannot find subsigid: {}", subsig_id));
+			let f_igc = if item.igc {F::one()} else {F::zero()};
+			let tbl_id = tbl_id_start + F::from(*subsig_id as u64);
+			(tbl_id, f_igc)
+		}).collect::<Vec<(F,F)>>();
+
+		all_tuples = [&all_tuples[..], &tuples2[..]].concat();
+		all_tuples.sort();
 
 		#[cfg(test)]{//key of all_tuples should be sorted
 			for i in 0..all_tuples.len(){
@@ -592,7 +611,8 @@ impl SubsigStepStore{
 		).collect::<HashMap<usize, SubsigStepStoreItem>>();
 	
 		if  inp_subsigs_id.contains(&0){
-			let dummy_item =  SubsigStepStoreItem::new(0, vec![]); 
+			//set igc to false is ok because it's dummy item
+			let dummy_item =  SubsigStepStoreItem::new(0, false, vec![]); 
 			new_map.insert(0, dummy_item);
 		}
 
@@ -1360,6 +1380,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		HashMap<String, Vec<String>>)
 	{
 		//1. generate tuples to insert for each sig, and subsig object
+		let b_debug = true;
 		let store_items = selected_sigs.par_iter().map(|s|{
 			let sig_id = sig_to_id.get(&s.name)
 				.expect(&format!("can't find sig: {}", s.name));
@@ -1369,6 +1390,9 @@ impl <F:PrimeField> ClamavDB<F>{
 			for i in 0..s.vec_subsig_obj.len(){
 				//1. generate the subsig id
 				let subsig_id = acdfa.gen_subsig_id(*sig_id, i+1);
+				if b_debug{
+					println!("DEBUG USE 6101: add: SIG_ID: {}, igc: {}, subsig_id: {}, details:{} ", sig_id, s.vec_subsig_obj[i].b_ignore_case, subsig_id, s.vec_subsig_obj[i].value);
+				}
 
 				//2. retrieve the words from the pattern.
 				let words = s.vec_subsig_pm_bounds[i].iter().map(|x|
@@ -1431,6 +1455,7 @@ impl <F:PrimeField> ClamavDB<F>{
 					}).collect::<Vec<(usize,(usize,usize))>>()
 				};
 				let item = SubsigStepStoreItem{subsig_id: subsig_id,
+					igc: s.vec_subsig_obj[i].b_ignore_case,
 					vec_pm_bounds: vec_bounds};
 				store_step_items.push(item);
 
@@ -1473,7 +1498,7 @@ impl <F:PrimeField> ClamavDB<F>{
 						comp_op,
 						comp_num,
 						min_required,
-						component_subsigs
+						component_subsigs,
 					};
 					store_info_items.push(item);
 				}//end of check IGC

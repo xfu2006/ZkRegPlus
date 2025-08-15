@@ -281,7 +281,10 @@ impl ContainerConfig{
 					let src_container = context[srcidx]
 						.search_by_path(&qry_str);
 					if !src_container.is_some(){
-						println!("ERROR cannot find qry: {}", qry_str);
+						println!("ERROR: cannot find src_container");
+						println!("col to adjust: loc: {:#?}, name: {}, p2: {}", 
+							loc, name, p2);
+						println!("foreign column: offset: {}, qry_str: {}", offset, qry_str);
 						context[srcidx].dump(0);
 						panic!("STOP HERE. check details above");
 					}

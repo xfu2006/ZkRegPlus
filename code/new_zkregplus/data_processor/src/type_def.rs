@@ -251,6 +251,14 @@ pub struct SubsigInfoStore{
 pub struct SubsigStepStoreItem{
 	/// the subsig ID (which matches SubsigPatStoreItem's
 	pub subsig_id: usize,
+	/// whether the subsig is IGC
+	/// NOTICE that this is a TRUE flag of the subsig.
+	/// Even if the store is a NON-matching igc, this flag is set as it is
+	/// if non-match igc, the vec_p_bounds will be set to empty.
+	/// will eventually leads to FALSE for non-match igc mode (in sed),
+	/// which is OK, because compute_sig_adv will pick the correct result
+	/// based on IGC attribute.
+	pub igc: bool,
 	/// step info (this is basically retrieved from
 	/// vec_subsig_pm_bounds of the Sig object
 	/// NOTICE that if the b_ignore_case does not match with the store

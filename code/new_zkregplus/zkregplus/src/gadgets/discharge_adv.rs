@@ -1517,7 +1517,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 
 		//2. construct 1st (forward) step-queue
 		let (forward_step_queue, sq_fwd) = Self::gen_forward_steps_queue_combo(
-			b_igc,
+			b_igc, offset_fsm,
 			&inp_subsigs, pat_loc, inp_step_queue, fsm_id, &capacity,
 			subsig_store_info);
 		let ct_fwd_sq = forward_step_queue.borrow().get_container("sq_res")
@@ -2035,6 +2035,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 	#[allow(dead_code)]
 	fn gen_forward_steps_queue_combo(
 		b_igc: bool,
+		offset_fsm: usize,
 		_inp_subsigs: &Vec<F>,
 		pat_loc: &Rc<RefCell<Container<F>>>,
 		inp_step_queue: &StepQueue<F>, 
@@ -2050,7 +2051,9 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		let (sq_to_add, sq_res, fwd_prf) = inp_step_queue
 			.gen_forward_prf(pat_loc, subsig_store_info);
 		let sname_fsm = if b_igc {"fsm_adv_stmt_igc"} else {"fsm_adv_stmt_cs"};
-		let pat_loc = pat_loc.borrow().duplicate_as_external_adv(-1,
+		let shift = 0-(offset_fsm as i32);
+		println!("-- DEBUG USE 6101: shift: {}", shift);
+		let pat_loc = pat_loc.borrow().duplicate_as_external_adv(shift,
 			Some(format!("{} packed_trace pat_loc sorted_tbl", sname_fsm)),
 			Some("pat_loc".to_string()));
 		let ct_pat_loc = Rc::new(RefCell::new(pat_loc));
@@ -3484,6 +3487,7 @@ pub mod tests_discharge_adv_gadget{
 			assert!(nibbles.len()==nibble_len);
 
 			let adv_faa = FsmAdvAdvice::new(b_igc, //case sensitive,
+				1, //dist to wea gadget
 				&nibbles, &acdfa, inp_state, 
 				inp_loc, &input_subsigs, &cap, fsm_id, 
 				&bundle.vec_subsig_stores[store_id]); 
@@ -3615,12 +3619,12 @@ pub mod tests_discharge_adv_gadget{
 	#[test]
 	fn test_fwd_prf(){
 		//0. create a subsig step store
-		let item1 = SubsigStepStoreItem::new(100,
+		let item1 = SubsigStepStoreItem::new(100, false, //case sensitive
 			vec![	
 				(2, (10, 100)),
 				(3, (20,30)),
 			]);
-		let item2 = SubsigStepStoreItem::new(200,
+		let item2 = SubsigStepStoreItem::new(200, false,
 			vec![	
 				(20, (20,120)),
 				(30, (10,20)),

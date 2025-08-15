@@ -18930,19 +18930,135 @@ Goal 6. word_extract_adv
 	[c] regress test
 
 Tuesday 08/12/2025
-LOC (gadget) 14134
+LOC (gadget) 14134 -> 14193 (+60)
 LOC (CIRC): 2496
+LOC (data): 9108
 
 Goal 1. Implement and fix discharge adv advice
 	[a] need to store b_igc and relative offset to both advice and gadget
 	[b] fix all syntax bugs
 	[c] fix nameing in advice
 	[d] debug: cannot find fsm_adv_stmt_cs
+	[e] fix test_discharge_adv
 
--- TODO -- fix DischargeAdvAdvice: (1) need to store b_igc and (2)
---- need to declare relative offset.
-	
-	
+Goal 2. Implement compute_sig_adv in details
+	[a] handle b_igc in two gen_combo 
+	[b] inspect gen_sig_res_combo
+		-> inspect existing code
+
+Goal 3. planning
+	[a] check subsig_store -> ned to add b_igc
+	[b] does can it be passed -> yes can be passed as subsig_info_store
+
+
+Wed 08/13/2025
+LOC (data): 9108 -> 9138 (+20)
+LOC (circ): 2496
+LOC (gadget): 14193 -> 14263 (+70)
+total: +90
+
+Goal 1. add info b_igc to subsigs
+	[a] check if to add to store or extra info
+	-> put into step because it's existing in compute_sig_adv
+	[b] fix clam_data
+	[c] check how the data are generated
+	[d] regression test
+	-> constraints: 275025795 -> 262M now (need to cut 6M)
+	[e] regression test on gadgets 
+
+Goal 2. fix compute_sig_adv: can't find info for subsig_9
+	[a] line 477 <- 246. this is easy to handle
+	[b] lkine 596 -> now cleared
+
+Goal 3. gen_discharge_sig_combo
+	[a] add param store_step_info to it to retrieve b_igc
+	[b] sec 0 - process input data.
+	[c] read step 1
+	[d] step 1.1
+	[e] debug ssid not -> ecause it's real ID
+
+Thursday 08/14/2025
+LOC (gadget): 14263 -> 14383 (+120)
+Goal 1. compute_sig_adv step 1.1
+	[a] read code
+	[b] add the sig for v_igc
+	[c] dump and check values.
+
+Goal 2. step 2
+	[a] read step 2.1
+	[b] read step 2.2 
+	[c] refactor the v_computed_subsig and move it earlier
+		to the 6 columns
+
+Goal 3. step 2.2 do two lookups
+	[a] implementation
+	[b] review doc
+	[c] review code
+	[d] step 3
+
+Goal 4. step 4 add into containers -> DONE
+
+Goal 5. fix adjust_locations in test 
+	[a] read output, cannot fin dquery: word_extract_stmt
+		but it is locating fsm_adv_stmt_cs
+		so the offset is not right.
+	[b] dump qry string and requester 
+	[c] found ht eproblem fsm_adv_stmt_igc cannot find
+		word_extract_stmt_nibbles
+	[d] like discharge_adv, word_extract also need offset.
+	[e] regression test 
+	[f] test again -> fixed prior err
+	[g] another similar bug
+
+Goal 6. validate_discharge_sig_combo
+	[a] construct v_computed_subsigs
+	[b] verify that each is constructed well
+	[c] update cost
+	[d] check v_sid computation
+	[e] update cost
+	[f] inspect 3.
+	[g] update the cost
+
+Goal 7. testing
+	[a] regression test of all
+	[b] allow IGC in test case
+		-> it actually a sample fails on a subsig, 
+		the behavior is usually: gen_m_table fails
+			on he lookup of the result 
+	[c] manualy verification works (document it)
+
+Goal 8. debug (one good case fails)
+	[a] check sed adjust loc err again,
+		why is it still referring to -1 in loc string?
+		-> dump dbg 6701
+		-> fixed
+	[b] another one
+
+Friday 08/15/2025
+LOC (gadget): 14383
+LOC (circ): 2496 
+Goal 1. fix logical error
+	[a] canont find 2817 <- 1092
+	[b] failed on lkup for src_cs
+	[c] dump the subsig info
+	[d] inspect the correctness of collected subisgs
+		-> subsig 11: (0|1)>1,2
+		-> 9: abc...123 (igc)
+		-> 10: 56...fgh  (cs)
+		-> 17: 12345678990123 (igc) - for the other default charset sig
+		-> 18: 1234568009123 (cs) - for chargset sig
+	[c] analysis: subsig 11 is a hybrid subsig which relies on
+		9 (igc) and 10 (cs), so instead of doing lkup
+		from cs and igc columns, it is the eval-synthesis result
+		which should actually do the lkup.
+		-> decide sig should just be drawing from it
+
+Goal 2. redesign.
+		
+TODO: --- FIX locatoin error, FIX logical error ---
+TODO: -> remove dbg msg 6701
+
+
 
 
 
