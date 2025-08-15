@@ -19054,6 +19054,27 @@ Goal 1. fix logical error
 		-> decide sig should just be drawing from it
 
 Goal 2. redesign.
+	[a] plan
+	[b] read its code -> DONE
+	[c] change prototype of gen_synthesis_subsig_combo -> DONE
+	[d] add step merge list
+		-> step 0
+		-> added step 0.5
+		-> inspect step 1.
+		-> step 2
+		-> step 3
+		-> step 4 and 5
+	[e] inspect result -> good.
+
+Goal 3. implement the validate function
+	[a] interface
+	[b] need to put v_igc into the columns to add and their
+		v_sid_igc in gen_synthesis_combo
+	[c] check sid
+	[d] update cost profile
+
+Goal 4. Recover gen_discharge_sig_combo
+	[a] 
 		
 TODO: --- FIX locatoin error, FIX logical error ---
 TODO: -> remove dbg msg 6701

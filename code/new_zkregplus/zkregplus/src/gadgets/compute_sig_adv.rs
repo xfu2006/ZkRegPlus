@@ -233,30 +233,27 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 
 
 		//2. based on non-deterministic advice of eval order
-		// compute results of subsigs
-		//2.1 case sensitive 
-		let (synthesis_res_combo_cs, subsig_res_cs) = 
-			Self::gen_synthesis_subsig_combo(false, //case sensitive
-			acdfa_id_cs, &inp_subsigs_cs, &raw_res_cs, 
-			&capacity, subsig_store_info_cs, subsig_extra_info_cs);
-		stmt_container.borrow_mut().add_container(synthesis_res_combo_cs);
-
-		//2.2 igc case
-		let (synthesis_res_combo_igc, subsig_res_igc) = 
-			Self::gen_synthesis_subsig_combo(true, //ignore case
-			acdfa_id_igc, &inp_subsigs_igc, &raw_res_igc, 
-			&capacity, subsig_store_info_igc, subsig_extra_info_igc);
-		stmt_container.borrow_mut().add_container(synthesis_res_combo_igc);
+		let (synthesis_res_combo, subsig_res) = 
+			Self::gen_synthesis_subsig_combo(
+			acdfa_id_cs, acdfa_id_igc,
+			&inp_subsigs_cs, 
+			&raw_res_cs, &raw_res_igc,
+			&capacity, 
+			subsig_store_info_cs, 
+			subsig_extra_info_cs, subsig_extra_info_igc);
+		stmt_container.borrow_mut().add_container(synthesis_res_combo);
 
 		//3. based on the sysntehsis resout of subsigs
+		//TEMPORARY, CHANGE LATER
+		if 1>0 {panic!("TO CHANGE REMOVE EXTRA ENTRIES");}
 		let sig_res_combo = Self::gen_discharge_sig_combo(
 			&inp_sigs, 
 			acdfa_id_cs,
 			acdfa_id_igc,
 			&inp_subsigs_cs, 
-			&inp_subsigs_igc, 
-			&subsig_res_cs, 
-			&subsig_res_igc, 
+			&inp_subsigs_cs,  //to remove
+			&subsig_res, 
+			&subsig_res,  //to remove
 			&capacity, 
 			v_sig_obj,
 			&discharge_info, 
@@ -422,7 +419,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 	/// the column "subsig_final_result" is the real evaluation result
 	/// for a subsig.
 	/// see accpets_approx_pm_bounds() in clamav.rs for the processing logic
-	/// return (ProofCombo, FinalEvalResult for the inp_subsigs padded)
+	/// Return (ProofCombo, FinalEvalResult for the inp_subsigs padded)
 	///
 	/// Note that raw_result has two versions: (1) context sensitive (cs)
 	/// and (2) IGC (ignore case). First, we have to pick up the
@@ -430,13 +427,15 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 	/// and raw_result_igc into one raw_result, and then the synthesis 
 	/// can be done.
 	fn gen_synthesis_subsig_combo(
-		b_igc: bool, //whether this is for ignore case
-		acdfa_id: u32, //the acdfa_id for the combo that includes info_stores
+		acdfa_id_cs: u32, 
+		acdfa_id_igc: u32, 
 		inp_subsigs: &Vec<F>,
-		raw_result: &Vec<F>, //one to one corresponding to inp_subsig, TriVal
+		raw_result_cs: &Vec<F>, //one to one corresponding to inp_subsig, TriVal
+		raw_result_igc: &Vec<F>, 
 		capacity: &ComputeSigAdvCapacity,
 		subsig_store_info: &SubsigStepStore,
-		subsig_store_extra_info: &SubsigInfoStore,
+		subsig_store_extra_info_cs: &SubsigInfoStore,
+		subsig_store_extra_info_igc: &SubsigInfoStore,
 	)->(Rc<RefCell<Container<F>>>,Vec<F>){
 		//0. retrieve data 
 		let n1 = inp_subsigs.len(); //capacity num_subsigs
@@ -444,15 +443,48 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		let (zero,one) = (F::zero(), F::one());
         let max_val:usize = (1<<RANGE2_BIT) - 1;
         let max = F::from(max_val as u64);
+		let res = Container::<F>::new("synthesis_res_combo");
 
-		let tname = if b_igc {"synthesis_res_combo_igc"}
-			else {"synthesis_res_combo_cs"};
-		let res = Container::<F>::new(tname);
+		//0.5 - added step - merge raw_result_cs and raw_result_igc
+		let tbl_id_start = F::from(1u64<<32) * F::from(ID_SUBSIG_IGC);
+		let (v_igc, v_sid_igc): (Vec<F>, Vec<F>) = inp_subsigs
+			.par_iter().map(|f_subsig_id|{
+			let subsig_id = field_to_usize(f_subsig_id); 
+			if subsig_id==0{ //subsig dummy 0, treated as case sensitive
+							//when later generating ID or retrieve info
+				(zero, zero)
+			} else{
+				let info = subsig_store_info.subsig_to_steps
+					.get(&subsig_id)
+					.expect(&format!("cannot locate rec: {}", subsig_id));
+
+				let tbl_id = tbl_id_start + F::from(subsig_id as u64);	
+				let igc = if info.igc {one} else {zero};
+				(igc, tbl_id)
+			}
+		}).unzip();
+		assert!(raw_result_cs.len()==raw_result_igc.len());
+		assert!(raw_result_cs.len()==v_igc.len());
+		assert!(v_igc.len()==n1);
+		let raw_result = (0..raw_result_cs.len()).collect::<Vec<usize>>()
+			.into_iter().map(|i|{
+			if v_igc[i].is_one() {raw_result_igc[i]} else {raw_result_cs[i]}
+		}).collect::<Vec<F>>();
+		//REMOVE LATER -----------------
+		println!("DEBUG USE 6701 ==== dump of pick of raw result");
+		for i in 0..raw_result_cs.len(){
+			println!("  subsig: {}, raw_cs: {}, raw_igc: {} => {}",
+				inp_subsigs[i], raw_result_cs[i], raw_result_igc[i],
+				raw_result[i]);
+		}
+		//REMOVE LATER ----------------- ABOVE
+
 
 		//1. prepare the result of general_regex
 		let gen_regex_res = raw_result;
 		assert!(gen_regex_res.len()==inp_subsigs.len());
-		let map_gen_regex_res = inp_subsigs.iter().zip(gen_regex_res.iter()).map(|(sig,res)|{
+		let map_gen_regex_res = inp_subsigs.iter()
+			.zip(gen_regex_res.iter()).map(|(sig,res)|{
 			let u_sig = field_to_usize(sig);
 			(u_sig, *res)
 		}).collect::<HashMap<usize, F>>();
@@ -480,29 +512,20 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		for i in 0..n1{
 			let subsig = inp_subsigs[i];
 			let f_subsig = field_to_usize(&subsig);
-			let (op, num, subsig_type) = if subsig.is_zero(){
-				(CompOp::NONE as u8, 0, 0)
+			let (op, num, subsig_type, acdfa_id) = if subsig.is_zero(){
+				//NOTE: subsig 0 is treated as context sensitive
+				//Maybe value
+				(CompOp::NONE as u8, 0, 0, acdfa_id_cs)
 			}else{
-				let extra_info_res = subsig_store_extra_info
-					.subsig_to_rec.get(&field_to_usize(&subsig));
-				if extra_info_res.is_some(){
-					let extra_info = extra_info_res.unwrap();
-					(extra_info.comp_op, extra_info.comp_num, 
-						extra_info.subsig_type)
-				}else{//this can only happen when subsig igc not matching
-					  //i.e., we are handling function param b_igc
-					  //which does not match subsig's igc.
-					  //we return a dummy value. It will be discarded
-					  //later in selection stage.
-					#[cfg(test)]{
-						let subsig_step_info = subsig_store_info
-							.subsig_to_steps.get(&field_to_usize(&subsig))
-							.expect(&format!("cannot find step info for: {}", 
-								subsig));
-						assert!(subsig_step_info.igc != b_igc);
-					}
-					(CompOp::NONE as u8, 0, 0)
-				}
+				let b_igc = v_igc[i].is_one();
+				let subsig_store_extra_info = 
+					if b_igc {subsig_store_extra_info_igc}
+					else {subsig_store_extra_info_cs};
+				let info = subsig_store_extra_info
+					.subsig_to_rec.get(&field_to_usize(&subsig))
+					.expect(&format!("cannot find step info for: {}", subsig));
+				let acdfa_id = if b_igc {acdfa_id_igc} else {acdfa_id_cs};
+				(info.comp_op, info.comp_num, info.subsig_type, acdfa_id)
 			};
 			let c_op = CompOp::from(op);
 			//for input_subsig 0, dummy value for raw_res is 0
@@ -590,27 +613,26 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		let mut sid_scc_prf_abs_diff2 = vec![];
 
 		let mut vec_scc_res = vec![zero;n1]; //will be updated 
-		let vec_sid_scc_res = vec![zero; n1]; //don't care because
+		let vec_sid_scc_res = vec![zero;n1]; //don't care because
 									//vec_scc_res is computed.
 
 		for i in 0..n1{
 			//3.1.1 retrieve extra info
 			let subsig = inp_subsigs[i];
-			let b_not_match_igc = if subsig.is_zero(){false} else{
-				let subsig_step_info = subsig_store_info
-					.subsig_to_steps.get(&field_to_usize(&subsig))
-					.expect(&format!("cannot find step info for: {}", 
-						subsig));
-				subsig_step_info.igc != b_igc
-			};
-			if subsig.is_zero() || b_not_match_igc {
+			if subsig.is_zero(){
 				vec_scc_res[i] = F::from(TriVal::Maybe as u8);
 				continue;
 			}
+			let igc = v_igc[i].is_one();
+			let acdfa_id = if igc {acdfa_id_igc} else {acdfa_id_cs};
+			let subsig_store_extra_info = 
+				if igc {subsig_store_extra_info_igc}
+				else {subsig_store_extra_info_cs};
 			let extra_info = subsig_store_extra_info
 					.subsig_to_rec.get(&field_to_usize(&subsig))
 					.expect(&format!("Can't find info for subsig: {}", subsig));
-			if extra_info.subsig_type!=SubSigType::SubsigCountConstraint as u8{continue;}
+			if extra_info.subsig_type
+				!=SubSigType::SubsigCountConstraint as u8{continue;}
 
 			//3.1.2 insert entries
 			let mut vec_comps = extra_info.component_subsigs.clone();
@@ -869,6 +891,18 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		res.borrow_mut().add_col(Col::new(vec_sid_subsig_final_res, 
 			"vec_sid_subsig_final_res", IDX_SI_DATA));
 
+		//5.3.5 add the v_igc and v_sid_igc
+		res.borrow_mut().add_col(Col::new(v_igc, "v_igc", IDX_DATA));
+		res.borrow_mut().add_col(Col::new(v_sid_igc, "v_sid_igc", 
+			IDX_SI_DATA));
+
+		//REMOVE LATER --------------------
+		println!("DEBUG USE 6702 === final result ");
+		for i in 0..vec_subsig_final_res.len(){
+			println!(" -- i: {}, subsig: {} => {}", i, inp_subsigs[i], 
+				vec_subsig_final_res[i]);
+		}
+		//REMOVE LATER -------------------- ABOVE
 		(res, vec_subsig_final_res)
 	}
 
@@ -1372,10 +1406,11 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 	/// 29*n + 69*n2 (given n2<20%*n) ==> 43n (number of subsits)
 	/// in practice: this is 1000 *43 = 43k R1CS
 	fn validate_synthesis_subsig_combo(&self, 
-		eval_res_combo: &Container<FpVar<F>>, 
+		eval_res_combo_cs: &Container<FpVar<F>>, 
+		eval_res_combo_igc: &Container<FpVar<F>>, 
 		synthesis_res_combo: &Container<FpVar<F>>, 
-		r1: FpVar<F>,
-		r2: FpVar<F>,
+		_r1: FpVar<F>,
+		_r2: FpVar<F>,
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
 		//0. retrieve data from combo
@@ -1396,13 +1431,34 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		let (vec_sid_op, vec_sid_num, vec_sid_type) = 
 			(&sid_cols[0], &sid_cols[1], &sid_cols[2]); // no need
 						//to check sid_counter_res as it's computed in circ
+		let v_igc = synthesis_res_combo.get_container("v_igc")
+			.unwrap().borrow().to_vec();
+		let v_sid_igc = synthesis_res_combo.get_container("v_sid_igc")
+			.unwrap().borrow().to_vec();
+		let inp_subsigs = eval_res_combo_cs.get_container("inp_subsig")
+			.unwrap().borrow().to_vec();
 		let n = vec_op.len();
+
+		//0.5 validate v_sid_sig
+		//COST: 
+		let nc = cs.num_constraints();
+		assert!(v_igc.len()==v_sid_igc.len() && v_igc.len()==n);
+		assert!(inp_subsigs.len()==n);
+		let tbl_id_start = new_const_var(&cs,
+			F::from(1u64<<32) * F::from(ID_SUBSIG_IGC));
+		for i in 0..n{
+			let exp_sid_igc = &tbl_id_start + &inp_subsigs[i];
+			check_eq(&exp_sid_igc, &v_sid_igc[i], 
+				&format!("failed sid_igc at i: {}", i))?;
+		}
+		println!("DEBUG USE 6631: 0.5 cost: {}, n: {}",cs.num_constraints()-nc,n);
+		if 1>0 {panic!("STOP HERE 1000");}
+
+		/*
 		assert!(vec_num.len()==n && vec_counter_res.len()==n);
 
 		//1. retrieve the result of general regex
 		let gen_regex_res = eval_res_combo.get_container("subsig_raw_eval")
-			.unwrap().borrow().to_vec();
-		let inp_subsigs = eval_res_combo.get_container("inp_subsig")
 			.unwrap().borrow().to_vec();
 			
 		assert!(gen_regex_res.len()==n);
@@ -1744,6 +1800,8 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		}
 
 		Ok( () )
+		*/
+		todo!()
 	}
 
 	/// validate syntesis of subsig is correct.
@@ -2064,21 +2122,23 @@ impl <F:PrimeField> SigmaGadget<F> for ComputeSigAdvGadget<F>{
 		// lkup e.g., using (ID_MIN_REQUIRED, ID_COMP_NUM) we can
 		// retrieve the related info. We handle the results in three 
 		// separate tables. (as the last one has dynamic size).
-		let synthesis_res_combo_cs = stmt
-			.get_container("synthesis_res_combo_cs")?;
-		let synthesis_res_combo_igc = stmt
-			.get_container("synthesis_res_combo_igc")?;
+		let synthesis_res_combo= stmt
+			.get_container("synthesis_res_combo")?;
 		self.validate_synthesis_subsig_combo(
 			&eval_res_combo_cs.borrow(),
-			&synthesis_res_combo_cs.borrow(), 
+			&eval_res_combo_igc.borrow(),
+			&synthesis_res_combo.borrow(), 
 			r1.clone(), r2.clone(), cs.clone()
 		)?;
+		/* REMOVE LATER
 		self.validate_synthesis_subsig_combo(
 			&eval_res_combo_igc.borrow(),
 			&synthesis_res_combo_igc.borrow(), 
 			r1.clone(), r2.clone(), cs.clone()
 		)?;
+		*/
 
+		/* RECOVER LATER
 		//4. now evaluate all sigs and generate the list of sigs
 		//which are DISCHARGED.
 		let sig_res_combo= stmt.get_container("sig_res_combo")?;
@@ -2088,7 +2148,7 @@ impl <F:PrimeField> SigmaGadget<F> for ComputeSigAdvGadget<F>{
 			&synthesis_res_combo_igc, 
 			&sig_res_combo, 
 			r1.clone(), r2.clone(), cs.clone())?;
-			
+		*/	
 		Ok(())
 	}
 
