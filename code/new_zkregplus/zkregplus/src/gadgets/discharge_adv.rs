@@ -1527,6 +1527,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 
 		//3. construct 2nd (backward) step-queue
 		let backward_step_queue = Self::gen_backward_steps_queue_combo(
+			b_igc,
 			&sq_fwd, &ct_fwd_sq, capacity, subsig_store_info);
 		stmt_container.borrow_mut().add_container(backward_step_queue);
 
@@ -2133,6 +2134,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 	/// necessarily have to cover the total number of steps for a subsignature
 	#[allow(dead_code)]
 	fn gen_backward_steps_queue_combo(
+		b_igc: bool,
 		input_step_queue: &StepQueue<F>,
 		ct_fwd_res: &Rc<RefCell<Container<F>>>,
 		_capacity: &DischargeAdvCapacity,
@@ -2146,7 +2148,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		let (sq_to_del, sq_res, bwd_prf) = input_step_queue.gen_backward_prf();
 
 		if b_debug{
-			println!("========== DEBUG USE 301: inp_step_queue (fwd_res): ");
+			println!("========== DEBUG USE 301: igc: {}, inp_step_queue (fwd_res): ", b_igc);
 			input_step_queue.dump();
 			println!("========== DEBUG USE 302: to_del: ");
 			sq_to_del.dump();
@@ -2998,6 +3000,8 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		let prf_union = prf.borrow().get_container("prf_union")?;
 		self.validate_step_queue_union_prf(&ct_sq_res2, &ct_sq_to_del,
 			&ct_sq_res1, &r1, &r2, &prf_union)?;
+
+
 
 		//2. no need to validate sq_inp and step_store as it's based
 		//on fwd_prf which is already validated

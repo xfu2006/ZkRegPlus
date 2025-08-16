@@ -19035,7 +19035,7 @@ Goal 8. debug (one good case fails)
 	[b] another one
 
 Friday 08/15/2025
-LOC (gadget): 14383
+LOC (gadget): 14383 -> 14313 (-70 clean code)
 LOC (circ): 2496 
 Goal 1. fix logical error
 	[a] canont find 2817 <- 1092
@@ -19074,7 +19074,29 @@ Goal 3. implement the validate function
 	[d] update cost profile
 
 Goal 4. Recover gen_discharge_sig_combo
-	[a] 
+	[a] retrieve from repo
+	[b] recover validate_discharge
+	[c] encode gen_regex_res using selective.
+	[d] complete validate_synthesis function
+
+Goal 5. rework on gen_discharge component
+	[a] gen function clear
+	[b] validate function clear
+	[c] dump 6902
+	[d] inspect dump and keep them at the moment
+
+Goal 6. clear code
+	[a] add if b_debug
+	[b] clear assert_msg3 cost
+	[c] check the unsatisfied example
+	[d] verify cost.
+
+-- TODO -- problem: the fail case passed, why? subsig9 is
+	discharged as false in sed approach. 
+	It looks like the ACDFA is not built right for the case
+	insensitive sig. As it accepts aBc in different way.
+	=> needs to figure out how acdfa is constructed and
+		does it accept "aBc".
 		
 TODO: --- FIX locatoin error, FIX logical error ---
 TODO: -> remove dbg msg 6701

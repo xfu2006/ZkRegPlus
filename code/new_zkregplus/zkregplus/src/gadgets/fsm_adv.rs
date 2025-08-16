@@ -197,7 +197,9 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 
 		//1. construct the fsm_acc combo which has the transition
 		// info and results in (state, loc) columns
-		let fsm_acc = Self::gen_fsm_acc_combo(offset_wea as isize, 
+		let fsm_acc = Self::gen_fsm_acc_combo(
+			b_igc,
+			offset_wea as isize, 
 			nibbles, acdfa, 
 			inp_state, inp_loc, capacity, fsm_id);
 		let fsm_acc2 = fsm_acc.clone(); //low cost, need to add
@@ -236,6 +238,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 	/// si_locs (inp, mid, oup)
 	/// si_trans
 	fn gen_fsm_acc_combo(
+		b_igc: bool,
 		wea_offset: isize,
 		nibbles: &Vec<F>, 
 		acdfa: &HexACDFA, 
@@ -244,6 +247,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		capacity: &FsmAdvCapacity, 
 		fsm_id: u32) 
 	-> Rc<RefCell<Container<F>>>{
+		let b_debug = true;
 		let res = Container::<F>::new("fsm_acc");
 		let nlen = capacity.max_nibble_len;
 		assert!(nlen==nibbles.len(), "nlen: {}, nibbles.len: {}", nlen, nibbles.len());
@@ -272,7 +276,9 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 			trans.push(tr);
 			cur_state = nxt_state;
 			cur_loc = cur_loc + one;
-			
+			if b_debug{
+				println!("DEBUG USE 201: i: {}, src_adj: {}, ch {} => {}, igc: {}", i, f_src+one, f_ch, f_dst+one, b_igc);
+			}
 			raw_locs.push(cur_loc);
 		}
 		assert!(raw_states.len()==nlen+1 && raw_locs.len()==nlen+1);
