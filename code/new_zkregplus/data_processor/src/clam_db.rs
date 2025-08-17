@@ -46,8 +46,8 @@ pub const STATE_BIT:usize =  24;
 
 /// The bit-width of RANGE2 table 
 /// IN PRODUCTION NEEDS TO CHANGE THE SAME SIZE OF STATE_BIT
-pub const RANGE2_BIT: usize = 8;
-//pub const RANGE2_BIT: usize = 26; //(allowing 64M nibbles = 32MB)
+//pub const RANGE2_BIT: usize = 8;
+pub const RANGE2_BIT: usize = 26; //(allowing 64M nibbles = 32MB)
 
 // the following are trival related sub-table ids
 // they are located at the very beginning of the entire lkup
@@ -1380,7 +1380,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		HashMap<String, Vec<String>>)
 	{
 		//1. generate tuples to insert for each sig, and subsig object
-		let b_debug = true;
+		let b_debug = false;
 		let store_items = selected_sigs.par_iter().map(|s|{
 			let sig_id = sig_to_id.get(&s.name)
 				.expect(&format!("can't find sig: {}", s.name));
@@ -1571,6 +1571,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		b_igc: bool,  //whether it's ignore cases
 		cfg: &ClamavApproxConfig,  //cfg used by build_db
 	) -> BundleSubsigStore{
+		let b_debug = false;
 		//1. read the signatures
 		let sig_names_need_ised
 			=read_lines(needs_ised_list_file).iter().filter(|s|
@@ -1623,7 +1624,11 @@ impl <F:PrimeField> ClamavDB<F>{
 			collect::<HashSet<String>>().into_iter().map(|s| s)
 			.collect::<Vec<String>>();
 		pats.sort();
-		let all_acdfa = HexACDFA::new(0, &pats);
+		//TODO: fix later: needs to use new_adv with igc
+		if b_debug && b_igc{
+			println!("DEBUG USE 6105: in build_sed_bundle 0: b_igc: {}, pats: {:#?}", b_igc, pats);
+		}
+		let all_acdfa = HexACDFA::new_adv(0, &pats, b_igc);
 
 		//6.2 build the store and append it to all
 		let (store_0,map_pat_0) = Self
@@ -1738,7 +1743,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		needs_ised_igc_list_file: &str,
 		cfg: &ClamavApproxConfig, vlog: &mut Vec<String>)->Self{
 		let b_perf = true;
-		let b_debug = true;
+		let b_debug = false;
 		let mut timer = Timer::new();
 		//1. generate all signatures
 		let set_need_dfa = read_lines(needs_dfa_list_file).iter().filter(|s|
@@ -1812,10 +1817,14 @@ impl <F:PrimeField> ClamavDB<F>{
 		let dfa_crit = HexACDFA::new(0, &vec_crit_pat);
 		let vec_crit_pat_igc = map_crit_pat_igc.keys().cloned()
 				.collect::<Vec<String>>();
-		let dfa_crit_igc = HexACDFA::new_adv(0, &vec_crit_pat_igc, false);
+		//RECOVER LATER: we changed false to true. Keep it
+		//if data is correct.
+		let dfa_crit_igc = HexACDFA::new_adv(0, &vec_crit_pat_igc, true);
 		if b_perf {flog_perf(LOG1, 
-			&format!("Build ACDFA of Critial Patterns."),&mut timer,vlog);}
-		if b_perf{
+			&format!("Build ACDFA of Critial Patterns."),&mut timer,vlog);
+		}
+		if b_debug{
+			println!("DEBUG USE 6100: build_store: crit pat: {:#?}\n, crit_pat_igc: {:#?}", vec_crit_pat, vec_crit_pat_igc);
 		}
 
 		//4. generate bag of words
@@ -1828,6 +1837,10 @@ impl <F:PrimeField> ClamavDB<F>{
 			s.collect_bagwords_from_pmreg(true)).flat_map(|s| s).
 			collect::<HashSet<String>>().into_iter().map(|s| s)
 			.collect::<Vec<String>>();
+
+		if b_debug{
+			println!("DEBUG USE 6101: BAGWORDS pats: {:#?}\n -- pats_igc: {:#?}", pats, pats_igc);
+		}
 		if b_perf {flog_perf(LOG1, &format!("Build Bag-of-Words."), 
 			&mut timer, vlog);}
 

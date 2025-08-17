@@ -9,7 +9,7 @@
 
 extern crate aho_corasick;
 extern crate serde;
-
+use rayon::iter::{IntoParallelRefIterator,ParallelIterator};
 use std::collections::{HashMap,HashSet};
 use aho_corasick::{automaton::{Automaton},dfa::DFA as ACDFA,Anchored, state_id_to_usize, pattern_id_to_usize};
 use serde::{Serialize, Deserialize};
@@ -75,11 +75,53 @@ impl HexACDFA{
 		res
 	}
 
+	/// convert a hex string to its lower version
+	/// e.g. [6,1, 4, 1] ("aA") 
+	/// is converted to [6,1,6,1] ("aa") and keep other chars
+	/// the same as they are. 
+	/// This is to prevent the capitical case letters in 
+	/// the pattern string causes trouble for others.
+	/// For instance, if the system processes "Ab" first, it will
+	///    redirect transitions for "a".
+	/// But then if the system processes "ac" next, it will redirect
+	///    "A" agagin, which causes incorrect translation when future
+	/// patterns depend on "A" and "a".
+	pub fn to_v8_lower(s_src: &Vec<u8>)->Vec<u8>{
+		let mut s = s_src.clone(); 
+		for i in (0..s.len()).step_by(2){
+			let ch1 = s[i];
+			if i+1>=s.len() {break;}
+			let ch2 = s[i+1];
+			let val = ch1*16 + ch2;
+			if val>=0x41 && val<=0x5a{
+				let newval = val-0x41 + 0x61;
+				let newch1 = newval/16;
+				let newch2 = newval%16;
+				s[i] = newch1;
+				s[i+1] = newch2;
+			} 
+		}
+
+		s
+	}
+
 	/// create a new HexACDFA
 	pub fn new_adv(dfa_id: usize, patterns: &Vec<String>, b_case_ignore: bool)->HexACDFA{
+		let b_debug = false;
+		if b_debug{
+			println!("DEBUG USE 6200: HexACDFA::new_adv b_igc: {}, patterns: {:#?}", b_case_ignore, patterns);
+		}
 		//1. build the ACDFA DFA version
 		assert!(dfa_id<(1<<DEFAULT_ACDFA_DA_BITS), "DEFAULT_ACDFA_DA_BITS:{} too small! id: {} >= (1<<DEFAULT_ACDFA_DA_BIS)", DEFAULT_ACDFA_DA_BITS, dfa_id);
 		let vecu8 = patterns.iter().map(|s| {hex_to_u8(s)}).collect::<Vec<Vec<u8>>>();
+		let vecu8 = if b_case_ignore{
+				//need to convert all strings to lower case to avoid
+				//confusion, see comment v8_to_lower
+				vecu8.par_iter().map(|s| Self::to_v8_lower(s))
+					.collect::<Vec<Vec<u8>>>() 
+		}else{
+			vecu8
+		};
 		let dfa = ACDFA::new(&vecu8).unwrap();
 		let dfa_init = state_id_to_usize(dfa.start_state(Anchored::No).unwrap())/32;
 
@@ -397,9 +439,10 @@ impl HexACDFA{
 }
 
 #[cfg(test)]
-mod tests{
+mod tests_hex_acdfa{
 	use crate::hex_acdfa::*;
 	use std::collections::{HashSet};
+	use utils::data::{str_to_u8};
 
 	// test if s generates the expected pattern set
 	fn test_one_case(pats: &Vec<&str>, exp: &Vec<&str>, s: &str, bval: bool){
@@ -515,5 +558,17 @@ mod tests{
 			assert!(sigs==act_sigs, "ERROR for s: {}, expected sigs: {:?}, actual: {:?}", s, sigs, act_sigs);
 		}
 		println!("DUMP states_to_id: {:?}", states_to_id);
+	}
+
+	#[test]
+	fn test_v8_lower(){
+		let samples = ["123ABC", "A4a5678"];
+		for sample in samples{
+			let s2 = sample.to_lowercase();
+			let v8_1 = str_to_u8(&sample);
+			let v8_2 = str_to_u8(&s2);
+			let act_val = HexACDFA::to_v8_lower(&v8_1);
+			assert!(act_val == v8_2);
+		}
 	}
 }

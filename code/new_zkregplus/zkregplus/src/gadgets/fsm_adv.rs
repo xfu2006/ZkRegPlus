@@ -247,7 +247,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		capacity: &FsmAdvCapacity, 
 		fsm_id: u32) 
 	-> Rc<RefCell<Container<F>>>{
-		let b_debug = true;
+		let b_debug = false;
 		let res = Container::<F>::new("fsm_acc");
 		let nlen = capacity.max_nibble_len;
 		assert!(nlen==nibbles.len(), "nlen: {}, nibbles.len: {}", nlen, nibbles.len());

@@ -2414,9 +2414,11 @@ pub mod tests_compute_sig_adv{
 			// /* RECOVER LATER
 			//6. fails sig5 coz because it needs to have two distinnct
 			// matches but only matches 56...fgh (missing abc...123)
-			Tcase::new("aBcdd123xabx56xxxfghxxabcdd122", "sig5"), 
+			Tcase::new("aBcdd122xabx56xxxfghxxabcdd122", "sig5"), 
 				//changing to aBcdd123 should fail test as
 				//it cannot discharge sig5
+				// the unit test will report that sig5 not found in
+				// set of discharge because it cannot be discharged.
 			// */
 		];
 

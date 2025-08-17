@@ -19091,12 +19091,58 @@ Goal 6. clear code
 	[c] check the unsatisfied example
 	[d] verify cost.
 
--- TODO -- problem: the fail case passed, why? subsig9 is
+Saturday 08/16/2025
+Goal 1.  Address: the fail case passed, why? subsig9 is
 	discharged as false in sed approach. 
 	It looks like the ACDFA is not built right for the case
 	insensitive sig. As it accepts aBc in different way.
 	=> needs to figure out how acdfa is constructed and
 		does it accept "aBc".
+	=> read dbg 1101 and compare with 201 msg.
+	[a] it does get called print patterns
+	[b] why it's not building? -> it does not build abc...123
+		-> dump all
+		-> DBG 6200
+		-> check how it builds acdfa
+		-> DBG 6201 -> pats and pats igc
+		-> problem these bag of words are NOT added!
+	[c] check if vec_crit pat and igc are built right -> yes
+		they took on critical pattern out of every signature
+	[d] check if bag of words for SED are collected correctly -> yes
+	[e] but why ACDFA is not built right of crit pat?
+		-> found error, passed wrong fig
+		-> regression test and check if data is still ok
+	[f] fix dfa_crit
+	[g] analyze the result of acdfa fed to -> why it's still not working?
+		-> at this moment scanning still working which is good news. 
+		no big change though.
+	[h] but why th compute_sig_adv still not wroking?
+		-> it does build the hex_acdfa for
+			123, abc, hex"432345668901abcdef".
+		-> DEBUG 6200.
+		-> DEBUG USE 6106: print init state and final states
+		-> strangely acdfa igc not working but its unit tesing all passed
+
+Goal 2. need to debug acdfa
+	[a] observe how it rewrites transition table
+	[b] so the problem is that the strings are not all lower
+		they should be converted to ALL lower before processing
+		otherwise they are MESSING UP with each other!
+
+Sunday 08/17/2025
+Goal 1. fix hexacdfa issue
+	[a] add a function which converts a hex string to lower -> DONE
+	[b] unit test it -> DONE
+	[c] check if it fixes the sig5 problem -> DONE
+	[d] fix all debug message -> DONE 
+	[e] regress test -> test result good.
+	[f] see lkup size -> 275040958 -> just increased a bit from 
+		275025795
+
+
+	-- TODO -- the bundle generation also needs fix
+
+		
 		
 TODO: --- FIX locatoin error, FIX logical error ---
 TODO: -> remove dbg msg 6701

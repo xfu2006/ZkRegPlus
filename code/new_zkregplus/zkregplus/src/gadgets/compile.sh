@@ -2,7 +2,8 @@
 #cargo check --tests 2>&1 | less
 
 #2. test each gadget
-RUST_BACKTRACE=1 cargo test -- test_compute_sig_adv --show-output --nocapture
+RUST_BACKTRACE=1 
+cargo test -- test_compute_sig_adv --show-output --nocapture
 #cargo test -- tests_word_extract_adv --show-output --nocapture
 #cargo test -- tests_fsm_adv_gadget --show-output --nocapture
 #cargo test -- tests_discharge_adv_gadget --show-output --nocapture
