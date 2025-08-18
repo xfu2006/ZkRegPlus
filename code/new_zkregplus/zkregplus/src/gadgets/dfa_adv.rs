@@ -24,7 +24,7 @@ use ark_r1cs_std::{
 	},
 	alloc::AllocVar,
 	eq::EqGadget,
-	//R1CSVar,
+	R1CSVar,
 };
 use std::{any::Any, sync::{Arc}};
 use data_processor::{
@@ -875,6 +875,7 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
 		//0. retrieve data from combo
+		let b_debug = true;
 		let (zero,one)=(new_const_var(&cs,F::zero()),
 			new_const_var(&cs,F::one()));
         let max_val:usize = (1<<RANGE2_BIT) - 1;
@@ -1012,6 +1013,13 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		let mtbl_sigs= discharge_sig_combo.borrow()
 			.get_container("mtbl_sigs").unwrap().borrow().to_vec();
 		assert_logup(cs.clone(), &discharged_sigs, &v_sigs, &mtbl_sigs, &r1)?;
+
+		if b_debug{
+			println!("DEBUG USE 6901 === discharged sigs by DFA ===");
+			for i in 0..discharged_sigs.len(){
+				println!(" --i: {}, sig: {}", i, discharged_sigs[i].value()?);
+			}
+		}
 
 
 		Ok( () )

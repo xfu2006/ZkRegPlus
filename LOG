@@ -19139,13 +19139,80 @@ Goal 1. fix hexacdfa issue
 	[f] see lkup size -> 275040958 -> just increased a bit from 
 		275025795
 
+Goal 2. fix the sed circ err
+	[a] run and observe
+	[b] err location: 
+		SedComponentMapper::new
+			-> DischageAdvGadget::new
+				-> adjust locations broke
+			-> -2 was not tested in unit testing
+			-> code inspection looks good
+	[c] need to dump more info
 
-	-- TODO -- the bundle generation also needs fix
+Goal 3. debug the adjument of cfg err
+	[a] read code
+	[b] read dump
+		-> recursive adjust starts from idx 0 in vec_cfg
+		-> idx 0: word_extract_stmt
+		-> idx: 1: fsm_adv_stmt_cs
+		-> looks like there are some waste of efforts of adjust
+		because it's done many times, but since the layer is not too many
+		just let it sit as it is.
+	[c] 6109: would it be possible that hte same path appear MULTIPLE TIMES?
+	[d] What is this idx and identified cfg? read code again.
+		-> why would idx change? looks
+			both context[1] and [2] has name:
+				fsm_adv_cs (2 should have igc) though.
+		-> check 6781 and see if it has been changed
 
-		
-		
-TODO: --- FIX locatoin error, FIX logical error ---
-TODO: -> remove dbg msg 6701
+Goal 4. review the recursive adjuct location again
+	[a] update doc
+	[b] regualar column
+	[b] forieng column
+	[d] inspect the err
+	[e] 6781 is still not fixed
+		-> fsm gadget new is good
+		-> why into discharge gdget vec_cfg incorrect?
+		-> fixed its the dummy_cfg inst error
+	[f] check dump again -> looks like that fixed the problem. 
+		because the earlier bug retrieves 
+
+Goal 5. check the input subsig dump for igc
+	[a] review test case
+	[b] need to revise test case
+	[c] approach add the sigs one by one
+	[d] enable the dump discharged sigs
+		6901 and 6902 but cannot distingush IGC as SED is now merged.
+
+Monday 08/18/2025
+Goal 1. continue to debug plan
+	[a] redesign all signatures to discharge all scenarios
+	[b] make copy and then test the sigs one by one
+
+Goal 2. just one sig and debug
+	[a] debug compute_sig_adv::216
+	[b] 921: inp_sigs not paddded -> fixed
+	[c] strange ERROR on err count proof
+		sigs.rs:989 -> commons: 630
+		-> print out value of start and count of for sure cp failure count
+		-> directly compare with const var
+
+Goal 3. need to debug cps again
+	[a] read about the logic of ids_no_pat (what if 
+		there are dummy sigs)?
+		-> ids_no_pat is constructed as a clen array
+		-> clen: capacity.count_sig_no_crit_pat
+	[b] fixed
+
+Goal 4. compute_sig_adv:203
+	[a] 
+
+Goal 4. observe the cp_sig
+	[a] check that it does not appear in either SED or DFA list
+
+	
+
+
 
 
 

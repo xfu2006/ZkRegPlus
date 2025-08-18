@@ -204,7 +204,7 @@ impl <F:PrimeField> WordExtractAdvGadget<F>{
 		let mut vec_cfg = vec![dummy_adv.stmt_container.borrow().get_cfg()];
 		ContainerConfig::adjust_locations(&mut vec_cfg);
 		//even it's false, it's good enough for generating statement_structure
-		let dummy_cfg = vec_cfg[0].clone();
+		let dummy_cfg = vec_cfg[vec_cfg.len()-1].clone();
 
 		Self{_f: PhantomData, capacity: capacity, cfgs_context: None,
 			my_idx_in_context: None, dummy_cfg, b_map_char}

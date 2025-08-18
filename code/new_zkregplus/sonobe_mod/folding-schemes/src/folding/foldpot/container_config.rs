@@ -228,32 +228,47 @@ impl ContainerConfig{
 	/// gen_stmt_map_instructions().
 	pub fn adjust_locations(vec_cfgs: &mut Vec<ContainerConfig>){
 		let mut dst_locs = vec![0usize; 9];
-		for i in 0..vec_cfgs.len(){
+	for i in 0..vec_cfgs.len(){
 			let path_i = vec_cfgs[i].get_path();
-			Self::recursive_adjust_location(&path_i, vec_cfgs, &mut dst_locs);
+			Self::recursive_adjust_location(i, &path_i, vec_cfgs, &mut dst_locs);
 		}
 	}
 
-	/// Recursively adjust the cfg at path given.
-	/// Assuming all its dependency records before it are resolved.
-	/// Update the dst_loc whenever a 
-	/// real (i.e., not external src) col is updated.
+	/// Recursively adjust the cfg at path given, the root_idx
+	/// points to the Cfg which is the root level owner of the cfg to update.
+	/// i.e., context[root_idx] is the ROOT level owner of the target cfg.
+	/// Performs the following actions:
+	///  (1) resolve the source of all contained Columns if it has
+	///     an external source reference string.
+	///  (2) when this is a new column, update the corresponding segment
+	///     of the dst_locs correpsondingly. For instance, if this is
+	///     a column located in DATA segment, then dst_locs is updated
+	///     correspondingly by the size of the column. Also update its
+	///     location info in the corresponding DATA segement.
+	///
+	/// Assuming all its dependency records before are already resolved.
+	/// Update the dst_loc whenever a (i.e., not external src) col is updated,
+	/// where dst_loc is a 9 element array which records the size of
+	/// inp/oup/data/.... segements.
 	/// NOTE that context is an array of ContainerConfig which provides
 	/// resolving info, HOWEVER, itself might be changed during the process
 	/// to allow resolving columns immediately after it's updated.
 	fn recursive_adjust_location(
+		root_idx: usize, //the idx of the root cfg (to update) in the context
 		path: &str, //the path of the cfg to be changed
 		context: &mut Vec<ContainerConfig>, //root level to qry, can be updated.
 		dst_locs: &mut Vec<usize>, //the info to update
 	){
-		//1. locate the cfg and its root container index
+
+		//1. locate the target cfg and its root container index
 		assert!(dst_locs.len()==9);
 		let path = format!("{}", path);
-		let mut idx = 0;
 		let mut cfg = None;
 		for i in 0..context.len(){
 			let res = context[i].search_by_path(&path);
-			if res.is_some(){ idx = i; cfg = res; }
+			if res.is_some() && i==root_idx{ 
+				cfg = res; 
+			}
 		}
 		assert!(cfg.is_some());
 		let cfg = cfg.unwrap();
@@ -262,7 +277,9 @@ impl ContainerConfig{
 			ContainerConfig::Column(loc, name, p2)=>{
 				assert!(&path==&p2);
 				let (src,dest) = (loc.src.clone(), loc.dest.clone());
-				if dest.is_some(){//regular column
+				if dest.is_some(){
+					//regular column. According to its destination info
+					//update the dest_loc
 					let (seg_idx, _, len) = dest.unwrap().clone();
 					let start = dst_locs[seg_idx];
 					let new_src = (0,seg_idx,start,len, "".to_string(),true);
@@ -271,20 +288,21 @@ impl ContainerConfig{
 					dst_locs[seg_idx] += len; //updated with len
 					let new_col = ContainerConfig
 						::Column(new_loc, name.to_string(), path.clone());
-					let cnt_updates = context[idx].update_col(&path, &new_col);
+					let cnt_updates = context[root_idx]
+						.update_col(&path, &new_col);
 					assert!(cnt_updates==1);
-				}else{//foreign column
-					let i32idx = idx as i32;  
+				}else{
+					//foreign column, resolve the reference string
+					let i32idx = root_idx as i32;  
 					let (offset, _, _, _, qry_str, _b_resolved) = src;
 					let srcidxi32 = i32idx + offset;
 					let srcidx = srcidxi32 as usize;
 					let src_container = context[srcidx]
 						.search_by_path(&qry_str);
 					if !src_container.is_some(){
-						println!("ERROR: cannot find src_container");
-						println!("col to adjust: loc: {:#?}, name: {}, p2: {}", 
-							loc, name, p2);
-						println!("foreign column: offset: {}, qry_str: {}", offset, qry_str);
+						println!("Destination Column to adjust: name: {}, absolute_path: {}, loc: {:#?}", name, p2, loc);
+						println!("ERROR: cannot find container by  query string: {} in context [{}]: {}, offset: {}, my_idx: {}", qry_str, srcidx, context[srcidx].get_name(), offset, root_idx);
+						println!("Srccontext dump -----");
 						context[srcidx].dump(0);
 						panic!("STOP HERE. check details above");
 					}
@@ -301,7 +319,7 @@ impl ContainerConfig{
 							//no write to dst_locs because it's foreign
 							let new_col = ContainerConfig
 								::Column(new_loc,name.to_string(),path.clone());
-							assert!(context[idx].update_col(&path, &new_col)==1);
+							assert!(context[root_idx].update_col(&path, &new_col)==1);
 						},
 						_ => panic!("expect {} to be a column!", qry_str)
 					}
@@ -310,7 +328,7 @@ impl ContainerConfig{
 			ContainerConfig::Complex(vec_loc, _name, _my_path)=>{
 				vec_loc.iter().for_each(|c|{
 					let path = c.get_path();
-					Self::recursive_adjust_location(&path, context, dst_locs);
+					Self::recursive_adjust_location(root_idx, &path, context, dst_locs);
 				});
 			}//end match Complex
 		}; //end of match vec_cfg[i]

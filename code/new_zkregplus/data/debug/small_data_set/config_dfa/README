@@ -1,4 +1,11 @@
-This is a set for DFA approach. Its DFA-2 sig has too small pattern
-words thus will enforce into DFA approach.
+(1) shpw cp_cs and cp_igc works -> Win.Alphabet.SAMPLE1
+(2) show sed_cs and sed_cp works (cp not working)
+	sed_cs: because the distance between Aaaa and bbbbc is 6 (not 4)
+	sed_igc: because aaaaa and bbbbc distance is 5 (not 4) 
+(3) DFA_cs: it falls into DFA entry because pattern too short.
+	it is discharged because distance between 9 and 7 is not 6
+(4) DFA_igc: same for 'X' and 'y'
+	note: 'x' is
+
 
 The word fails DFA approach because "9" and "7" distance is 5 instead of 6

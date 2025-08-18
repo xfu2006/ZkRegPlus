@@ -497,6 +497,8 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 			final_states_buf_capacity: self.capacity.final_states_len,
 			join_buf_capacity: self.capacity.join_buf_capacity,
 			sig_buf_capacity: self.capacity.sig_buf_capacity,
+			//NOTE that this is the REAL VALUE
+			//not allowing one moreentry.
 			count_sig_no_crit_pat: self.clamdb.vec_sigs_no_critical_pat.len(), 
 		};
 		//data_len excluding the input of final_states

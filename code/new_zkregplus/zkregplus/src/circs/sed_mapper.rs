@@ -635,7 +635,6 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 				pm_fsm_id_igc,
 				&self.capacity.da_capacity()
 			).to_vec(&subsig_step_store_igc);
-		if 1>0 {panic!("DEBUG USE 6602: inp_subsigs_cs: {:#?}, inp_subsigs_igc: {:#?}", inp_subsigs_cs, inp_subsigs_igc);}
 
 		let (inp_state_igc, inp_loc_igc, inp_steps_queue_igc) = prev_adv
 		.as_ref().map_or(
@@ -655,7 +654,6 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 				(last_oup_state_igc,last_loc_igc,last_steps_queue_igc.to_vec())
 			}
 		);
-
 
 		//3. build the advice
 		let inp = SedInput{inp_state_cs, inp_loc_cs, inp_steps_queue_cs,

@@ -200,7 +200,12 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		let stmt_container = Container::<F>::new("compute_sig_adv_stmt");
 
 		//1. evaluate "atomic" subsigs based on sq_res 
+		println!("DEBUG USE 301: inp_subsigs_cs.len: {}, inp_subsigs_igc.len: {}", inp_subsigs_cs.len(), inp_subsigs_igc.len());
 		assert!(inp_subsigs_cs.len()==inp_subsigs_igc.len());
+		assert!(inp_subsigs_cs.len()<=capacity.subsigs, 
+			"inp_subsigs_cs.len: {} should be <= capacity.subsigs: {}",
+			inp_subsigs_cs.len(), capacity.subsigs);
+		assert!(inp_sigs.len()<=capacity.sigs);
 		let pad = vec![F::zero(); capacity.subsigs-inp_subsigs_cs.len()];
 		let pad2 = vec![F::zero(); capacity.sigs-inp_sigs.len()];
 		let dummy_di = DischargeSigInfo{
@@ -213,7 +218,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 			}; 
 		let discharge_info = [ &vec![dummy_di ;pad2.len()][..], 
 			&discharge_infos[..]].concat();
-		assert!(discharge_info.len()==inp_sigs.len());
+		assert!(discharge_info.len()==capacity.sigs);
 
 		//1.1 case sensitive 
 		let inp_subsigs_cs = [&pad[..], &inp_subsigs_cs[..]].concat();
@@ -225,7 +230,6 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 
 		//1.2 ignore case
 		let inp_subsigs_igc = [&pad[..], &inp_subsigs_igc[..]].concat();
-		let inp_sigs = [&pad2[..], &inp_sigs[..]].concat();
 		let (eval_res_combo_igc, raw_res_igc) = 
 			Self::gen_eval_subsig_by_sq_combo(true, -1, //case sensitive
 			&inp_subsigs_igc, sq_res_igc, &capacity, subsig_store_info_igc);
@@ -914,6 +918,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		let n = capacity.subsigs;
 		assert!(inp_subsigs.len()==n);
 		assert!(subsig_result.len()==n); 
+		assert!(inp_sigs.len()==capacity.sigs);
 
 		//1. from the discharge info, build the proof table
 		// sig - eval_dnf_id - step - count - subsig (expect res to be
@@ -927,6 +932,19 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		// NOTE: we pad the size to #subsigs because in real data
 		// vast majority are regular_regex 
 		// (not Counterh of SubsigCounterConstraint)
+		let pad_len = capacity.sigs - discharge_infos.len();
+		let dummy_di = DischargeSigInfo{
+				sig_name: "none".to_string(),
+				b_success: false,
+				min_cost: 0,
+				min_dnf_id: 0,
+				subsig_ids: vec![0],
+				subsig_igc: vec![false]
+			}; 
+		let discharge_infos = [ 
+			&vec![dummy_di ;pad_len][..], 
+			&discharge_infos[..]
+		].concat();
 		assert!(discharge_infos.len()==inp_sigs.len());
 		for i in 0..discharge_infos.len() {
 			let name = &discharge_infos[i].sig_name;
@@ -1873,7 +1891,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		assert_logup(cs.clone(), &discharged_sigs, &v_sigs, &mtbl_sigs, &r1)?;
 
 		if b_debug{
-			println!("DEBUG USE 6902 === discharged sigs ===");
+			println!("DEBUG USE 6902 === discharged sigs by SED ===");
 			for i in 0..discharged_sigs.len(){
 				println!(" --i: {}, sig: {}", i, discharged_sigs[i].value()?);
 			}

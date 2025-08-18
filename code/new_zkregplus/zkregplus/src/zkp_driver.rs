@@ -352,6 +352,14 @@ pub mod tests_zkp_driver{
 		let b_read_cache = false;
 		let b_write_cache = true;
 		//let set1 = "data/debug/small_data_set/config";  //for sed
+		//read the README about the design the sigs
+		//contains examples that needs to be discharged by
+		// (1) cp_igc and cp - Win.alphabet.SAMPLE1
+		// (2) sed_discharged (will show up in sed_cs discharged list)
+		// (3) sed_cp discharged (will show up in sed_cp discharged list)
+		// (4) DFA discharged (will show up in DFA discharged list)
+		// (5) DFA_cp note: DFA itself is CP (will show up in DFA discharged
+		//    list)
 		let set1 = "data/debug/small_data_set/config_dfa"; //for dfa 
 		zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
 			&format!("{}/sigs.dat",set1), //src sig

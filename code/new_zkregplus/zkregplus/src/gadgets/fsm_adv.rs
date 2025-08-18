@@ -556,7 +556,7 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		let nibbles = vec![F::zero(); capacity.max_nibble_len];
 		let dummy_inp_subsigs = vec![
 			F::from(store_subsig_pat.subsig_ids[0] as u32)];
-		let dummy_adv = FsmAdvAdvice::new(false, //case sensitive
+		let dummy_adv = FsmAdvAdvice::new(b_igc, 
 			offset_wea, //offset to word_extract
 			&nibbles, acdfa, dummy_inp_state,
 			dummy_inp_loc, &dummy_inp_subsigs, capacity, 
@@ -565,7 +565,7 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		vec_cfg.push(dummy_adv.stmt_container.borrow().get_cfg());
 		ContainerConfig::adjust_locations(&mut vec_cfg);
 		//even it's false, it's good enough for generating statement_structure
-		let dummy_cfg = vec_cfg[1].clone();
+		let dummy_cfg = vec_cfg[vec_cfg.len()-1].clone();
 
 		Self{_f: PhantomData, capacity: Clone::clone(capacity), 
 			cfgs_context: None,

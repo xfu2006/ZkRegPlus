@@ -2437,6 +2437,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			Clone::clone(&capacity), &inp_steps_queue_obj);
 		let mut vec_cfg = prev_cfgs.clone();
 		vec_cfg.push(dummy_adv.stmt_container.borrow().get_cfg());
+		println!("\n=====DEBUG USE 6666: ADJUST dummy Discharge CFG =====");
 		ContainerConfig::adjust_locations(&mut vec_cfg);
 		//even it's false, it's good enough for generating statement_structure
 		let dummy_cfg = vec_cfg[vec_cfg.len()-1].clone(); //it's the last one

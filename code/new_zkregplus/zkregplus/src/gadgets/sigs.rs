@@ -69,6 +69,10 @@ pub struct SigGadgetCapacity{
 	/// buffer to hold signatures
 	pub sig_buf_capacity: usize,
 	/// the number of sigs that HAVE NO CRIT PAT included in ACDFA
+	/// THIS IS THE REAL VALUE at set up.
+	/// It can be regarded as a system constant (set up initially)
+	/// It's taking the exact value of clamdb.vec_sig_no_crit_pat.len()
+	/// at set up (ALL CONFIGS should have the same value for this property).
 	pub count_sig_no_crit_pat: usize,
 }
 
@@ -138,6 +142,7 @@ impl <F: Clone> SigGadgetData<F>{
 			capacity.sig_buf_capacity,
 			capacity.count_sig_no_crit_pat,
 		);
+
 		
 		vec![
 			("final_states", olen), //will be later excluded from size calc
@@ -929,7 +934,7 @@ impl <F:PrimeField> SigmaGadget<F> for GetSigGadget<F>{
 			//dmmy value: for id_no_crit_pat, we'll check it separately
 			zero.clone(),
 			//count_no_crit_pat,
-			f_count,
+			f_count.clone(),
 			//oup signatures
 			f_range2.clone(), 
 		];
@@ -955,11 +960,13 @@ impl <F:PrimeField> SigmaGadget<F> for GetSigGadget<F>{
 		];
 		assert!(vals.len()==desc.len());
 		let mut start = 0;
-		let one_var= FpVar::<F>::new_constant(cs.clone(), F::one())?;
+		//let one_var= FpVar::<F>::new_constant(cs.clone(), F::one())?;
 
 
 		for i in 0..vals.len(){
-			let cur_len = desc[i].1;
+			let cur_len = desc[i].1; //SHOULD BE REGARDED AS A CONSTANT
+									 //IT'S a fixed CONSTANT set up
+									 //at the Capacity.
 
 			if i==vals.len()-3{//the id_no_pat. //cost 1 each unit.
 				//this branch ensures that the listed
@@ -979,15 +986,17 @@ impl <F:PrimeField> SigmaGadget<F> for GetSigGadget<F>{
 				check_arr_eq_arr(&subtbl_id[start..start+cur_len], 
 					&ids_no_pat, "check subtbl id for sig_no_crit_pat err")?;
 
-				//(2) the extracted count matches that of sigs_no_crit_pat_count
-				// which is asserted to be the one stored in clam_db in 
-				// next i (as ids starts from 0, so the count extracted
-				// from the ids is actually count - 1).
-				let extracted_count = &subtbl_id[start+cur_len-1]
-					-&subtbl_id[start];
+				//(2) the extracted count matches that of 
+				// sigs_no_crit_pat_count (this is simply
+				// and essentially asserting cur_len == proved_count
+				// where proved_count is ASSERTED EALIER BY the sid
+				// that it is the correct TOTAL_SIG_NO_PAT_COUNT saved
+				// in DB. 
+				// -- in fact - this step is actually not needed.
 				let proved_count = &data.sigs_no_crit_pat_count[0];
-				check_eq(&(proved_count-extracted_count),&one_var,
-					"err count prf")?;
+				let expected_count = new_const_var(&cs, F::from(
+					self.capacity.count_sig_no_crit_pat as u64));
+				check_eq(&proved_count,&expected_count, "err count prf")?;
 			}else if b_check_nz[i]{//cost 2
 				check_arr_eq_nz(&subtbl_id[start..start+cur_len],&vals[i], 
 					desc[i].0)?;
