@@ -13,7 +13,9 @@ extern crate rustomaton;
 extern crate utils;
 
 use self::rayon::prelude::*;
-use ark_ff::PrimeField;
+//use ark_ff::{BigInteger};
+use ark_ff::{PrimeField};
+//use hex;
 use std::{collections::{HashMap,HashSet}};
 use std::sync::{Arc};
 use std::fmt;
@@ -508,36 +510,93 @@ impl SubsigStepStore{
 
 		//1. use a loop add sub-table for encoded-subsig, encoded_step, 
 		// encoded_pat_id, encoded_rg_start, encoded_rg_end,
-		let subcats = [ID_ENCODED_SUBSIG, ID_ENCODED_NORMAL_STEP,
-			ID_ENCODED_PAT,
-			ID_ENCODED_RG_START, ID_ENCODED_RG_END, ID_ENCODED_PREV_ENCODED,
-			];
-		let mut all_tuples = subcats.par_iter().enumerate().map(|(i,pid)|{
-			let info_col = &cols[i];
-			let encoded = &cols[5];
-			let pats = &cols[2];
-			let steps = &cols[1];
-			let tuples = if i<5 {//except ID_ENCODED_PREV_ENCODED
-			  encoded.iter().zip(info_col.iter()).map(|(e,s)|{
-				let tbl_id = if i!=1 {Self::gen_step_tbl_id(*e, *pid)} else{
-					if i==pats.len()-1 || pats[i+1]!=max{
-						Self::gen_step_tbl_id(*e,ID_ENCODED_NORMAL_STEP)
+		let subcats = [
+			ID_ENCODED_SUBSIG,  //cat_id = 0
+			ID_ENCODED_NORMAL_STEP, //1
+			ID_ENCODED_PAT, //2
+			ID_ENCODED_RG_START,  //3
+			ID_ENCODED_RG_END,  //4
+			ID_ENCODED_PREV_ENCODED, //5
+		];
+		let encoded:&Vec<F> = &cols[5];
+		let pats = &cols[2];
+		let steps = &cols[1];
+		let subsigs = &cols[0];
+		// process each column row for column: cat_id in (0..5).
+		// pid is the real category ID like ID_ENCODED_SUB ... 
+		let mut all_tuples = subcats.par_iter().enumerate().map(|(cat_id,pid)|{
+			//process each column row
+			//b_add indicates whether the tuple should be added.
+			let info_col = &cols[cat_id]; //the column being processed
+			let tuples = if cat_id<5 {//except ID_ENCODED_PREV_ENCODED
+			  encoded.iter().zip(info_col.iter()).enumerate()
+			  .map(|(row_id,(&encode, &val))|{
+				//b_dummy: dummy entry
+			    let b_dummy = pats[row_id].is_zero() || pats[row_id]==max;  
+				let (b_include,tbl_id) = if cat_id!=1 {
+					//ENCODED_SUBSIG, ENCODED_PAT ...
+					//excluding ENCODED_NORMAL_STEP
+					//e..g when cat_id is 0, pid is ID_ENCODED_SUBSIG
+					(!b_dummy, Self::gen_step_tbl_id(encode, *pid))
+				}else{//cat_id is 1 (normal step) 
+					//recall the structure of cols (e.g., for 2 steps)
+					//   0  0
+					//   step 1
+					//   step 2 (last)
+					//   max max
+					// We need to tag step_0, step 1 as NORMAL_STEP,
+					//  step 2 as LAST_STEP
+					// ignore max (set b_include to false), but NOT for 0
+					// For another instance, for dummy subsig 0
+					// it has two rows
+					// ... 0  0 ....
+					// ... max max ...
+					// in this case, it has tag LAST_STEP for step 0,
+					//     and no NORMAL STEP.
+					//
+					// note: variable val represents the step
+					let tab_id = if row_id<pats.len()-1 && pats[row_id+1]==max{
+						let res=Self::gen_step_tbl_id(
+							encode,ID_ENCODED_LAST_STEP
+						);
+
+						res
 					}else{
-						Self::gen_step_tbl_id(*e,ID_ENCODED_LAST_STEP) 
-					}
+						let res=Self::gen_step_tbl_id(
+							encode,ID_ENCODED_NORMAL_STEP
+						);
+
+						res
+					};
+					let b_last= pats[row_id] == max;
+					(!b_last, tab_id)
 				};
-				(tbl_id, *s) 
-			  }).collect::<Vec<(F,F)>>()
-			}else{
+				//add a dummy entry for subsig 0 dummy record
+				let b_include = b_include || subsigs[row_id].is_zero();
+				(b_include, tbl_id, val) 
+			  }).collect::<Vec<(bool, F,F)>>()
+			}else{//ID_ENCODED_PREV_ENCODED
 			  let res = encoded.iter().zip(steps.iter()).enumerate()
-			  	.map(|(j,(e,s))|{
-					let tbl_id = Self::gen_step_tbl_id(*e,*pid);
-					if !s.is_zero() { (tbl_id, encoded[j-1]) }
-						else { (tbl_id, F::zero()) }
-				}).collect::<Vec<(F,F)>>();
+			  	.map(|(row_id,(&encode_word,&step))|{
+					let tbl_id = Self::gen_step_tbl_id(encode_word,*pid);
+					if !step.is_zero() { 
+						(true, tbl_id, encoded[row_id-1]) 
+					} else { 
+						//if it's not dummy subsig 0, we do not include it
+						// set bInclude to False.
+						//but for dummy subsig=0, include a zero record
+						//for dummy record.
+						(subsigs[row_id].is_zero(), tbl_id, F::zero()) 
+					}
+				}).collect::<Vec<(bool, F,F)>>();
 
 			  res
 			};
+
+			let tuples = tuples.iter()
+				.filter(|(b_include,_tag_id, _encoded)| *b_include)
+				.map(|(_,tag_id, encoded)| (*tag_id, *encoded))
+				.collect::<Vec<(F,F)>>();
 
 			tuples
 		}).collect::<Vec<Vec<(F,F)>>>().concat();

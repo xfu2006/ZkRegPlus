@@ -8,7 +8,7 @@
 use rayon::iter::{IntoParallelRefIterator,ParallelIterator,IntoParallelIterator
 	, IndexedParallelIterator};
 use std::{rc::{Rc},cell::{RefCell},collections::{HashMap}};
-use ark_ff::{PrimeField};
+use ark_ff::{PrimeField,Zero};
 use std::{marker::{PhantomData},collections::{HashSet}};
 use crate::gadgets::{
 	commons::{gen_m_table,check_arr_eq,encode_cols,decode_cols
@@ -799,8 +799,8 @@ impl <F:PrimeField> StepQueue<F>{
 		let vec_step= vec![vec![zero; n2], vec_step].concat();
 		let vec_subsigs= vec![vec![zero; n2], vec_subsigs].concat();
 		let vec_sid_step = vec_step.par_iter().enumerate().map(|(i,s)|{
-			if i<n2{
-				SubsigStepStore::gen_step_tbl_id(*s,ID_ENCODED_NORMAL_STEP)
+			if i<n2{//for dummy subsig 0, last step is 0
+				SubsigStepStore::gen_step_tbl_id(*s,ID_ENCODED_LAST_STEP)
 			}else{
 				let subsig = field_to_usize(&vec_subsigs[i]);
 				let info = subsig_store_info.subsig_to_steps.get(&subsig)
@@ -1104,10 +1104,13 @@ impl <F:PrimeField> StepFwdPrf<F>{
 
 		//src_step
 		let sids = se.iter().enumerate().map(|(i,s)| {
-			if i<n2{
-				SubsigStepStore::gen_step_tbl_id(*s,ID_ENCODED_NORMAL_STEP)
+			if i<n2{//it's pad (about zero subsig) - 0 step is its LASTstep
+				SubsigStepStore::gen_step_tbl_id(*s,ID_ENCODED_LAST_STEP)
 			}else{
 				let subsig = field_to_usize(&v2d[11][i-n2]);
+				//we assume not padded subsigs are real (but maybe this
+				//can be relaxed)
+				assert!(!subsig.is_zero());
 				let info = subsig_store_info.subsig_to_steps.get(&subsig)
 					.expect(&format!("cannot find subsig: {}",subsig));
 				let num_steps = info.vec_pm_bounds.len();
@@ -1383,8 +1386,8 @@ impl <F:PrimeField> StepBwdPrf<F>{
 
 		//3.1 src_step (col 1)
 		let sids = se.iter().enumerate().map(|(i,s)| {
-			if i<n2{
-				SubsigStepStore::gen_step_tbl_id(*s,ID_ENCODED_NORMAL_STEP)
+			if i<n2{//for dummy entriy subsig 0, step 0 is the last step
+				SubsigStepStore::gen_step_tbl_id(*s,ID_ENCODED_LAST_STEP)
 			}else{
 				let subsig = field_to_usize(&v_src_subsigs[i-n2]);
 				let info = subsig_store_info.subsig_to_steps.get(&subsig)

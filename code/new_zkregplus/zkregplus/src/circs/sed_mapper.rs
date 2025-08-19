@@ -236,8 +236,11 @@ impl <F:PrimeField> SedAdvice<F>{
 		vec_sigs_to_discharge: &Vec<Arc<ClamavSig>>, 
 		discharge_info: &Vec<DischargeSigInfo>,
 		sig_to_id: &HashMap<String,usize>,
-		b_igc: bool,
-		dfa: &HexACDFA 
+		_b_igc: bool, //in fact this will be IGNORED. Will collect ALL subsigs
+				//so cs and igc will generate the same
+		dfa: &HexACDFA, //different dfa given the same input will actually
+						//generate the same subsig_id. Actually not
+						//needed, keep it fore legacy.
 	)->Vec<F>{
 		assert!(vec_sigs_to_discharge.len() == discharge_info.len());
 		let set_subsigs_inp = vec_sigs_to_discharge.iter()
@@ -246,9 +249,7 @@ impl <F:PrimeField> SedAdvice<F>{
 			let sig_id = sig_to_id.get(&sig.name).expect(
 				&format!("can't find sig: {}", sig.name));
 			let f_subsig_ids = info.subsig_ids.iter()
-			.filter(|id|
-				sig.vec_subsig_obj[**id].b_ignore_case==b_igc
-			).map(|id|
+			.map(|id|
 				F::from(dfa.gen_subsig_id(*sig_id, *id+1) as u32)
 			).collect::<Vec<F>>();
 
@@ -322,8 +323,11 @@ impl <F:PrimeField> SedAdvice<F>{
 				subsig_pat_store_cs);
 
 		//2.2 the igc version
-		let subsigs_inp_igc = Self::collect_subsig_ids(vec_sigs_to_discharge,
-			discharge_info, sig_to_id, true, dfa_igc);
+		//let subsigs_inp_igc = Self::collect_subsig_ids(vec_sigs_to_discharge,
+		//	discharge_info, sig_to_id, true, dfa_igc);
+		let subsigs_inp_igc = subsigs_inp_cs.clone(); //they are the same
+			//all subsigs will be processed in both modes
+			//result will be selected by b_igc property of the subsig
 		let fsm_adv_advice_igc = FsmAdvAdvice::<F>
 			::new(true, //igc
 				2, //offset to word_extract

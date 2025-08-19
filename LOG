@@ -19205,10 +19205,88 @@ Goal 3. need to debug cps again
 	[b] fixed
 
 Goal 4. compute_sig_adv:203
-	[a] 
+	[a] inp_subsigs_cs != inp_subsigs_igc
+	[b] inp_subsigs are determined by the
+		collect_subsig_ids, but in the unit testing
+		it's generating all subsigs from the selected sig
+		which is better approach?
+		-> seems unit test case is the better approach!
+	[c] change sed_mapper -> fixed
 
-Goal 4. observe the cp_sig
-	[a] check that it does not appear in either SED or DFA list
+Goal 5. new bug sigma_ir1cs:212
+	[a] cannot find (2773006246545682352685258375168, )
+		-> 0x23001101710900061100000000
+		-> ENCODED_LAST_STEP is 0x7109006
+		-> print out all that should have last_step
+	[b] interestingly, for gadget unit testing it's never entered
+		for last step!
+	[c] go over code of add_store_to_lkup again (looks there's
+		a bug never added last step)
+
+Tuesday 08/19/2025
+LOC (data): 9250 -> 9304 (+64)
+Goal 1. continue to debug the normal and last step problem
+	[a] dump the cols
+	[b] this time cannot find (2773006246545682348214197420032,0)
+		-> 0x23001101710900020000000000 (NORMAL_STEP, 0)
+		-> looks like normal step and last step wrong
+	[c] check the semantics
+
+Goal 2. double check the generaton of tags one by one
+	[a] finish the boolean flag semantics
+	[b] normal steps semantics
+
+Goal 3. Observe dump
+	[a] col 0: subsig - check 6820.1 and 6820.2
+		-> it includes only the valid steps and ignored dummy entries
+		-> regressiontest
+	[b] col 1: step (normal and last)
+		-> step 0 (dummy) has a last step: 0
+		-> step 9 has a last step: 0
+		-> step 10 has normal step 0, last step 1
+		-> step 17 has normal step 0,1, last step 2,
+	[c] col 2: pattern
+		-> only 3 records saved: 11 -> 1, 17 -> 2,3
+	[d] col 3: rg_start
+		-> only 3 records
+	[d] col 4: rg_endA
+	[e] col 5: prev_encoded
+		-> regression testA
+
+Goal 4. Go back to solve the lkup err
+	[a] 2773006246545682348214197420032, ) -> 
+		normal step 0 for dummy subsig 0 is missing
+	[b] so the question is that why subsig 0 will have normal step 0
+		-> change dummy step to LAST_STEP
+	[c] new problem cannot find (0x23001101710900050000000000, 0)
+		-> add dummy entry for RANGE_START and RANGE_END.
+	[d] still complaining about NORMAL_STEP
+		-> see dump again
+		-> still complains about (0x23001101710900020000000000,0)
+			-> wihch is 2773006246545682348214197420032,
+		-> but it is NOT added!
+		-> fixed. last time only fixed StepFwdPrf, this time
+			fix the dummy entry of StepBwdPrf!
+		-> shoot bloody cost 1 hr in debug!
+		-> but THERE ARE MORE errors about 277...0032
+		-> fixed another instance
+	[e] new one (2773006246545682353711755558912,0)
+		-> 0x23001101710900070000000000
+		-> prev_encoded 
+		-> dump it
+		-> include dummy 
+	[f] regression test
+	[g] regression test 2 on sigs
+--- TODO remove related debug messages
+
+
+
+--- TODO continue with other sigs
+
+	-- TODO --
+	[c] regression testing
+	[d] remove debug msgs
+		
 
 	
 
