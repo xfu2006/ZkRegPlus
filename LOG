@@ -19277,6 +19277,8 @@ Goal 4. Go back to solve the lkup err
 		-> include dummy 
 	[f] regression test
 	[g] regression test 2 on sigs
+	[h] new lkup size:
+		271773445 -> saved about 4M. 259M now.
 --- TODO remove related debug messages
 
 
