@@ -272,7 +272,6 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		assert!(v_dfa_id.len()==m && v_dfa.len()==m && inp_subsigs.len()==m);
 		assert!(nibbles.len()==nlen);
 
-		print_vec("DEBUG USE 6601: inp_subsigs", inp_subsigs);
 		//1. walk nibbles through transition of each DFA
 		//this will be sequential, in practice, it's ok
 		// NOTE: saved_states are adjused (by +1)

@@ -1380,7 +1380,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		}).collect::<Vec<FpVar<F>>>();
 
 		if b_debug{
-			println!("DEBUG USE 6901: ==== subsig (raw) info ====");
+			println!("DEBUG USE 6901: compute_sig_gadget: ==== subsig (raw) info ====");
 			for i in 0..n{
 				println!(" -- i: {}, subsig: {}, res_cs: {}, res_igc: {}, igc: {} => {}", i, inp_subsigs[i].value()?,
 					gen_regex_res_cs[i].value()?,

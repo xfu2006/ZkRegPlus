@@ -19279,7 +19279,26 @@ Goal 4. Go back to solve the lkup err
 	[g] regression test 2 on sigs
 	[h] new lkup size:
 		271773445 -> saved about 4M. 259M now.
---- TODO remove related debug messages
+
+Wed 08/20/2025
+Goal 1. continue to add sig
+	[a] verify the current sig -> it's discharged correctly
+	[b] try to make it fail dis_info
+	[c] but 4 question marks represents 4 nibbles - 
+		shouldn't that be actually 2 chars?
+		-> experiment with 2 chars
+		-> it is discharged because the distance is regarded as 4
+			or 8?
+	[d] dump the distance pattern for all subsigs
+		-> dbg msg 6301
+			sig 17: pat_id:2 (10, inf), pag3: (18, 18)
+			-> this implies that each question mark is translated
+			into 2 nibbles
+	[e] check specification - two matches one byte
+		-> check how sig vec_subsig_object 
+		-> do a pcre regex as a comparison "bbbbb....cccc"
+		-> it looks like when translated it has 4 dots as well
+			So this happens to how question mark is translated.
 
 
 

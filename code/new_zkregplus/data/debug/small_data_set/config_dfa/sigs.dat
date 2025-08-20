@@ -1,3 +1,4 @@
 #2 samples (without special note sig are case sensitive), igcs has _igc at end
 cp_cs_igc;Engine:51-255,Target:1;0|1;09afcdeb1928374650123457890abcdef::i;0123498765423afedcb
 sed_cs;Engine:51-255,Target:1;0;4161616161????6262626263
+sed_cs2;Engine:51-255,Target:1;0;/ccccc....ddddd/

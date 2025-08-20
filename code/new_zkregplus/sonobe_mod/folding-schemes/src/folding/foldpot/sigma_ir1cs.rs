@@ -3203,10 +3203,10 @@ where 	C: CurveGroup<ScalarField=F>,
 		let b_correct = not_final_step.or(&b_sigs)?; //require b_sigs true at
 													//final step
 		if b_show_sigs{
-			print_vec_var("DEBUG USE 6801: failed_sigs", &si.failed_sigs);
-			print_vec_var("DEBUG USE 6802: discharged_sigs",
+			print_vec_var("DEBUG USE 6801: sigma_ir1cs: failed_sigs", &si.failed_sigs);
+			print_vec_var("DEBUG USE 6802: sigma_ir1cs: : discharged_sigs",
 				&si.discharged_sigs);
-			println!("DEBUG USE 6803: b_correct: {}", b_correct.value()?);
+			println!("DEBUG USE 6803 sigma_ir1cs: b_correct: {}", b_correct.value()?);
 		}
 		b_correct.enforce_equal(&Boolean::TRUE)?;
 		#[cfg(test)]{

@@ -2056,7 +2056,6 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			.gen_forward_prf(pat_loc, subsig_store_info);
 		let sname_fsm = if b_igc {"fsm_adv_stmt_igc"} else {"fsm_adv_stmt_cs"};
 		let shift = 0-(offset_fsm as i32);
-		println!("-- DEBUG USE 6101: shift: {}", shift);
 		let pat_loc = pat_loc.borrow().duplicate_as_external_adv(shift,
 			Some(format!("{} packed_trace pat_loc sorted_tbl", sname_fsm)),
 			Some("pat_loc".to_string()));
