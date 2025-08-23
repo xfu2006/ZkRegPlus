@@ -38,7 +38,7 @@ use data_processor::{
 use utils::{data::{u8_to_hex}};
 use crate::gadgets::{
 	commons::{mix_vec,new_const_var, check_eq,encode_cols_better,gen_m_table,
-		encode_cols_var_adv_better, print_vec},
+		encode_cols_var_adv_better },
 	traits::{Container,
 		Col,
 		IDX_WORD, IDX_INP,IDX_DATA, IDX_DISCHARGED_SIGS,

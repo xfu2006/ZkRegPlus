@@ -9,7 +9,6 @@ extern crate regex_syntax;
 extern crate serde;
 extern crate common_substrings;
 extern crate rustomaton;
-
 use std::collections::HashSet;
 use std::mem::{discriminant};
 use self::serde::{Serialize,Deserialize};
@@ -201,15 +200,29 @@ fn preprocess_rep(s: &str)->String{
 
 /// preprocess some chars not accepted by the rustomaton
 fn preprocess_badchars(s: &str)->String{
-	//let s2 = s.clone();
+	//1. handle slash
 	let s2 = s.replace("\\/", "\\x2f");
-	if &s2!=s {
-		println!("preprocess_badchars {} -> {}", s, &s2);
-		//use std::process;
-		//process::exit(1);
-	}
+	//for each "." as long as it is continued with alpha-numeric letter
+	//(but not *, ?), it is converted to a sequenc of ".."
+	//the reason is that one "." in pcre is 2-hex nibbles
 
-	s2
+	//2. handle dot
+	let mut s3 = String::with_capacity(s2.len());
+    let mut chars = s2.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '.' {
+            if let Some(&next) = chars.peek() {
+                if next == '.' || next.is_ascii_alphanumeric() {
+                    s3.push_str("..");
+                    continue;
+                }
+            }
+        }
+        s3.push(c);
+    }
+
+	s3
 }
 
 /// preprocess named references and numbered backreferences
@@ -1275,7 +1288,9 @@ pub fn collect_pm_reg_from_rustomaton_regex_worker(hir: &Hir,
 			let arr = class_to_arr(&v, &mut 0); //limit not used
 			let v_size = arr.len();
 			let res = if v_size<16 {vec![ PMRegItem::Wildcard((1, 1)) ]}
-				else{vec![ PMRegItem::Wildcard((2,2))]}; 
+				else if v_size==256 {//this is specific for handling "."
+					vec![ PMRegItem::Wildcard((1, 1)) ]
+				}else{vec![ PMRegItem::Wildcard((2,2))]}; 
 			res
 		},
 		HirKind::Alternation(v) => { 

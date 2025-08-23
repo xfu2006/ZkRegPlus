@@ -48,8 +48,9 @@ pub const STATE_BIT:usize =  24;
 
 /// The bit-width of RANGE2 table 
 /// IN PRODUCTION NEEDS TO CHANGE THE SAME SIZE OF STATE_BIT
-//pub const RANGE2_BIT: usize = 8;
-pub const RANGE2_BIT: usize = 26; //(allowing 64M nibbles = 32MB)
+//pub const RANGE2_BIT: usize = 10;
+pub const RANGE2_BIT: usize = 8;
+//pub const RANGE2_BIT: usize = 26; //(allowing 64M nibbles = 32MB)
 
 // the following are trival related sub-table ids
 // they are located at the very beginning of the entire lkup
@@ -1610,17 +1611,6 @@ impl <F:PrimeField> ClamavDB<F>{
 			map.insert(dfa_alpha_str, vec![]);
 		}
 
-		//REMOVE LATER ------------------
-		if false{
-		println!("DEBUG USE 6301 ============== dump of step store");
-		store_step.dump();
-		println!("DEBUG USE 6302 =========== dump of sigs ");
-		for s in  selected_sigs{
-			println!(" --- sig details ---: {:#?}", s);
-		}
-		}
-		//REMOVE LATER ------------------ ABOVE
-
 		((store_pat, store_step, store_info), map)
 	}
 
@@ -1947,7 +1937,6 @@ impl <F:PrimeField> ClamavDB<F>{
 			&sig_to_id);
 		lkup.vals.sort();
 		println!("PERFORMANCE 100: lkup size: {}", lkup.vals.len());
-
 
 		//9. build the object
 		let res = Self{

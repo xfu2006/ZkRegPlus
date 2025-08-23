@@ -19300,13 +19300,97 @@ Goal 1. continue to add sig
 		-> it looks like when translated it has 4 dots as well
 			So this happens to how question mark is translated.
 
+Goal 2. check subsig generation
+	[a] regression test first tests_clamav
+		note: tset_approx-pm, test_approx_pm_for_pm, test_discharge
+			fails
+		test pcrealso has two failed: test_convert, test_pcre_to_dfa
+	[b] find it: the preprocess regex
+		-> generate data
+		-> find out the semantics of GeneralRegex and PMReg
+	[c] instead pcre string should be doubled
+	[d] check which function should do that
+	[e] regression on pcre and test_clamav
+		-> pcre - still fails 2
+		-> clamav - now fails one instead of 3 
+	[f] reg test for discharge stats -> after change still ok.
+	[g] analyze of what if cannot be discharnged
+		-> driver:1179
+			-> driver: 695
+			   -> composable_gadget_mapper:385
 
+Thursday 08/21/2025
+Goal 1. add the other sigs: sed_igc
+	[a] add sig_sed_igc
+	[b] check if it appears in list: confirmed
+Goal 2. add dfa_cs
+	[a] problem: now cp b_igc now only report failed sig: 24 but not
+		2,3,4
 
---- TODO continue with other sigs
+Friday 08/22/2025
+LOC (circ): 2502
+LOC (gadget): 14352
+LOC (data): 9286
+Goal 1. debug sig4 why it's not included in cp?
+	[a] check why sig4 does not show up 
+		[sig4] does show up
+		but sig3 is not showing up for failed_sigs
+	[b] without sig4, sig3 appears in CP failed 
+	[c] strangely sig3 appears in the 2nd segment? it should
+		appear in the same as sig2?
+			-> change on letter in input string and checkA
+			-> chop off for a shorter string and see
+			-> this identifes an error: sig3 does not show
+				up in cp_igc failed and it does not show in SED
+			-> the reason it didn't discharge.
+
+Goal 2. try to replicate and discharge sig3 again
+	[a] observe the handling of pattern
+	[b] observe the change of transition
+	[c] observe how it accepts "Aaaaa"
+	[d] it looks like that it does run into final state, why the sigs
+		did not report?
+		-> if we put real strings there it's different
+			4,13
+		-> the reason is that it starts from 36 not 4.
+	[e] todo: add a function which print out the accept path
+		and call it -> just enable DEBUG mode
+
+Goal 5. Redesign the acdfa processing
+	[a] build up hash_rev_trans
+	[b] from accept state find all starting state for a string
+	[c] for each start_state do a mapping which results in
+		handling of igc transitions.
+		-> build the reverse map
+		-> dump reverse map
+		-> move the adding block
+		-> add a loop for each pattern
+		-> get the states by pattern
+	[d] alternative: build directly ACDFA using igc?
+		-> cannot' because we are doing nibbles
+	[e] need to redo revierse_hashmap has one more dimension
+
+==== TODO =====: debug rev_run
+	[a] declare forward_run(from state) given a string
+		-> do an adv function of acc_run.
 
 	-- TODO --
-	[c] regression testing
-	[d] remove debug msgs
+	[f] need a function which computes reverse pattern
+	[g] for each init state do the swapping 
+
+		--- TODO ----
+		-> add a function fo reverse reaching pattern
+		-> from the init state apply the padding
+	---
+	[d] remove 6200.2,3 and disable b_debug
+	
+
+-- TODO -- improve the err handling
+
+	-- TODO remove dbg msg 6301
+
+
+
 		
 
 	

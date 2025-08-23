@@ -489,7 +489,7 @@ pub fn preprocess_regex(s:&str, name: &str, sigtype: ClamSigType, cfg: &ClamavAp
 		}
 	}else if sigtype==ClamSigType::General{
 		s = s.replace("*", ".*");
-		s = s.replace("?", ".");
+		s = s.replace("?", "."); 
 		s = handle_range(&s);
 		(s, b_case_sensitive) = handle_modifier(&s);
 		s = handle_location(&s);
@@ -541,6 +541,7 @@ impl ClamavSig{
 				vec_tripples.par_iter().map(|t| t.2.clone()).collect(),
 				vec_tripples.par_iter().map(|t| t.3.clone()).collect(),
 			);
+
 
 		//2. handle expr
 		self.vec_pcre_info = vec_pi;
@@ -2076,6 +2077,7 @@ impl ClamavSig{
 		self.expr = sexpr2;
 		self.vec_subsig_obj = vec_sig_obj;
 		log(LOG2, &format!("preprocess_expr COMPLETED: name: {}, expr: {}", self.name, self.expr));
+
 	}
 
 }
@@ -2668,7 +2670,7 @@ pub fn default_clamav_cfg()->ClamavApproxConfig{
 
 
 #[cfg(test)]
-mod tests{
+mod tests_clamav{
 	extern crate rustomaton;
 	extern crate utils; 
 
