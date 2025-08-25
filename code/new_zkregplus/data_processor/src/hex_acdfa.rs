@@ -191,13 +191,7 @@ impl HexACDFA{
 		//(1) each state has a mapping from 16 chars to intermediate states
 		//(2) each intermediate state has a vector of 16 transitions to the
 		let dfa_trans = &dfa.trans;
-		//RECOVER LATER
-		//let mut vec_imm_state_info = (0..num_states).into_par_iter().map(|s|{
-		//RECOVE RLATER ABOVE
-		//REMOVE LATER
-		let mut vec_imm_state_info = (0..num_states).collect::<Vec<_>>()
-			.into_iter().map(|s|{
-		//REMOVE LATER ABOVE --
+		let mut vec_imm_state_info = (0..num_states).into_par_iter().map(|s|{
 			// trans1[i] means for nibble i, its destination immediate state
 			// (not finalized yet, just start from 0)
 			let mut trans1 = vec![0usize;16];
@@ -765,6 +759,8 @@ mod tests_hex_acdfa{
 	use utils::data::{str_to_u8};
 
 	// test if s generates the expected pattern set
+	// bval means the expected value whether the patterns collected
+	//  along the accept path matches the provided "exp" set. 
 	fn test_one_case(pats: &Vec<&str>, exp: &Vec<&str>, s: &str, bval: bool){
 		let patterns = pats.into_iter().map(|s| {String::from(*s)}).collect();
 		let dfa = HexACDFA::new(1, &patterns);
@@ -787,7 +783,6 @@ mod tests_hex_acdfa{
 				let word2 = &dfa.patterns[*wid];
 				assert!(vec_word.contains(wid));
 				assert!(word2==&w);
-
 			}
 		}
 	}
@@ -858,8 +853,7 @@ mod tests_hex_acdfa{
 		let exp_set = exp.into_iter().map(|s| {String::from(*s)}).collect::<HashSet<String>>();
 		let vu8 = hex_to_u8(&s);
 		let set1 = dfa.get_patterns( &dfa.acc_path(&vu8) );
-		println!("DEBUG USE 6701: pats: {:#?}, exp: {:#?}, s: {}, bval: {}, set1: {:#?}", pats, exp, s, bval, set1);
-		assert!((set1==exp_set)==bval, "failed on s: {}", s);
+		assert!((set1==exp_set)==bval, "failed on s: {}. set1: {:#?}, exp_set: {:#?}", s, set1, exp_set);
 	}
 
 	#[test]
@@ -887,10 +881,39 @@ mod tests_hex_acdfa{
 			&vec!["416243", "3451"], "6142433451", true);
 		test_one_case_ig(&vec!["01234567789abcdefa", "3031416243", "1235", "3451"],
 			&vec!["3031416243", "3451"], "112230316142433451", true);
-		test_one_case_ig(&vec!["01234567789abcdefa", "3031416243", "1235", "3451"],
-			&vec!["3031416243", "3451"], "112230311142433451", false);
-		test_one_case_ig(&vec!["01234567789abcdefa", "3031416243", "1235", "3451"],
-			&vec!["3031416243", "3451"], "112230316242433451", false);
+		test_one_case_ig(&vec!["01234567789abcdefa", "3031416243", "1235", "3451"], &vec!["3031416243", "3451"], "112230311142433451", false);
+		test_one_case_ig(&vec!["01234567789abcdefa", "3031416243", "1235", "3451"], &vec!["3031416243", "3451"], "112230316242433451", false);
+		test_one_case_ig(&vec!["3031416243", "30414362", "3451"], 
+			&vec!["3031416243", "3451"], "3331414342443451", false);
+		test_one_case_ig(&vec!["3031416243", "30414362", "3451"], 
+			&vec!["3031416243", "3451"], "303161424344345177", true);
+		test_one_case_ig(&vec!["3031416243", "30414362", "3451"], 
+			&vec!["3451"], "a2303162424344345177", true);
+		test_one_case_ig(&vec!["3031416243", "30414362", "3451"], 
+			&vec!["3031416243" ], "303161424344345277", true);
+		test_one_case_ig(&vec!["3031416243", "30414362", "3451"], 
+			&vec!["3031416243", "30414362", "3451"], 
+			"aa303161424344345177bb30416342aa3452", true);
+		test_one_case_ig(&vec!["6162", "6263", "6364"], &vec!["6162"], 
+			"41414162646264aa", true);
+		test_one_case_ig(&vec!["6162", "6263", "6364"], &vec!["6162", "6263"], 
+			"41414162636363aa", true);
+		test_one_case_ig(&vec!["6162", "6263", "6364"], &vec!["6162", "6364"], 
+			"41414142646344aa", true);
+		test_one_case_ig(&vec!["6162", "6263", "6364"], &vec!["6162", "6263"], 
+			"41614142424363aa", true);
+		test_one_case_ig(&vec!["616263", "6263", "6364"], 
+			&vec!["616263", "6263"], 
+			"41624342424363aa", true);
+		test_one_case_ig(&vec!["616263", "6263", "6364"], 
+			&vec!["6263"], 
+			"4143624351424363aa", true);
+		test_one_case_ig(&vec!["6162", "6263", "6364"], 
+			&vec!["6162", "6263", "6364"], 
+			"4141624364424363aa", true);
+		test_one_case_ig(&vec!["6162", "6263", "6364"], 
+			&vec!["6263"], 
+			"4143624351424363aa", true);
 	}
 
 	#[test]

@@ -19470,6 +19470,16 @@ Goal 3. check the output mapping
 		-> matches: the matches for every state in DFA.
 		-> it does the adjustment of state_id - 2 (which mapps exactly
 			what we did with the mapping)
+
+Goal 4. improve the unit testing for igc first.
+	[a] read existing test case
+		-> test_one_case
+		-> test_word_to_accept_id
+		-> test_state_id
+		-> test_simple_hex_dfa1 and test_simple_hex_dfa_ignore_case
+			are pretty similar.
+	[b] add more test cases
+	[c] remove debug statements.
 	[b] dump the infok
 
 --- TODO -- continue to check the translation table.
