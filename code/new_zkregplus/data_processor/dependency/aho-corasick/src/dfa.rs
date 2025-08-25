@@ -121,7 +121,7 @@ pub struct DFA {
     stride2: usize,
     /// The equivalence classes for this DFA. All transitions are defined on
     /// equivalence classes and not on the 256 distinct byte values.
-    byte_classes: ByteClasses,
+    pub byte_classes: ByteClasses,
     /// The length of the shortest pattern in this automaton.
     min_pattern_len: usize,
     /// The length of the longest pattern in this automaton.

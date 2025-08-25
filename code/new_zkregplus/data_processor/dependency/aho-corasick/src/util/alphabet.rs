@@ -7,18 +7,18 @@ use crate::util::int::Usize;
 /// of an FSM, but also on FSM build times because it reduces the number of
 /// transitions that need to be visited/set.
 #[derive(Clone, Copy)]
-pub(crate) struct ByteClasses([u8; 256]);
+pub struct ByteClasses([u8; 256]);
 
 impl ByteClasses {
     /// Creates a new set of equivalence classes where all bytes are mapped to
     /// the same class.
-    pub(crate) fn empty() -> ByteClasses {
+    pub fn empty() -> ByteClasses {
         ByteClasses([0; 256])
     }
 
     /// Creates a new set of equivalence classes where each byte belongs to
     /// its own equivalence class.
-    pub(crate) fn singletons() -> ByteClasses {
+    pub fn singletons() -> ByteClasses {
         let mut classes = ByteClasses::empty();
         for b in 0..=255 {
             classes.set(b, b);
@@ -28,13 +28,13 @@ impl ByteClasses {
 
     /// Set the equivalence class for the given byte.
     #[inline]
-    pub(crate) fn set(&mut self, byte: u8, class: u8) {
+    pub fn set(&mut self, byte: u8, class: u8) {
         self.0[usize::from(byte)] = class;
     }
 
     /// Get the equivalence class for the given byte.
     #[inline]
-    pub(crate) fn get(&self, byte: u8) -> u8 {
+    pub fn get(&self, byte: u8) -> u8 {
         self.0[usize::from(byte)]
     }
 
@@ -42,7 +42,7 @@ impl ByteClasses {
     /// these equivalence classes. Equivalently, this returns the total number
     /// of equivalence classes.
     #[inline]
-    pub(crate) fn alphabet_len(&self) -> usize {
+    pub fn alphabet_len(&self) -> usize {
         // Add one since the number of equivalence classes is one bigger than
         // the last one.
         usize::from(self.0[255]) + 1
@@ -56,7 +56,7 @@ impl ByteClasses {
     /// state IDs and indices can be done with shifts alone, which is much
     /// faster than integer division. The "stride2" is the exponent. i.e.,
     /// `2^stride2 = stride`.
-    pub(crate) fn stride2(&self) -> usize {
+    pub fn stride2(&self) -> usize {
         let zeros = self.alphabet_len().next_power_of_two().trailing_zeros();
         usize::try_from(zeros).unwrap()
     }
@@ -64,7 +64,7 @@ impl ByteClasses {
     /// Returns the stride for these equivalence classes, which corresponds
     /// to the smallest power of 2 greater than or equal to the number of
     /// equivalence classes.
-    pub(crate) fn stride(&self) -> usize {
+    pub fn stride(&self) -> usize {
         1 << self.stride2()
     }
 
@@ -72,17 +72,17 @@ impl ByteClasses {
     /// equivalence class. Equivalently, there are 257 equivalence classes
     /// and each class contains exactly one byte (plus the special EOI class).
     #[inline]
-    pub(crate) fn is_singleton(&self) -> bool {
+    pub fn is_singleton(&self) -> bool {
         self.alphabet_len() == 256
     }
 
     /// Returns an iterator over all equivalence classes in this set.
-    pub(crate) fn iter(&self) -> ByteClassIter {
+    pub fn iter(&self) -> ByteClassIter {
         ByteClassIter { it: 0..self.alphabet_len() }
     }
 
     /// Returns an iterator of the bytes in the given equivalence class.
-    pub(crate) fn elements(&self, class: u8) -> ByteClassElements {
+    pub fn elements(&self, class: u8) -> ByteClassElements {
         ByteClassElements { classes: self, class, bytes: 0..=255 }
     }
 
@@ -90,7 +90,7 @@ impl ByteClasses {
     ///
     /// That is, a sequence of contiguous ranges are returned. Typically, every
     /// class maps to a single contiguous range.
-    fn element_ranges(&self, class: u8) -> ByteClassElementRanges {
+    pub fn element_ranges(&self, class: u8) -> ByteClassElementRanges {
         ByteClassElementRanges { elements: self.elements(class), range: None }
     }
 }
@@ -122,7 +122,7 @@ impl core::fmt::Debug for ByteClasses {
 
 /// An iterator over each equivalence class.
 #[derive(Debug)]
-pub(crate) struct ByteClassIter {
+pub struct ByteClassIter {
     it: core::ops::Range<usize>,
 }
 
@@ -136,7 +136,7 @@ impl Iterator for ByteClassIter {
 
 /// An iterator over all elements in a specific equivalence class.
 #[derive(Debug)]
-pub(crate) struct ByteClassElements<'a> {
+pub struct ByteClassElements<'a> {
     classes: &'a ByteClasses,
     class: u8,
     bytes: core::ops::RangeInclusive<u8>,
@@ -158,7 +158,7 @@ impl<'a> Iterator for ByteClassElements<'a> {
 /// An iterator over all elements in an equivalence class expressed as a
 /// sequence of contiguous ranges.
 #[derive(Debug)]
-pub(crate) struct ByteClassElementRanges<'a> {
+pub struct ByteClassElementRanges<'a> {
     elements: ByteClassElements<'a>,
     range: Option<(u8, u8)>,
 }

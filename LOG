@@ -19370,29 +19370,117 @@ Goal 5. Redesign the acdfa processing
 		-> cannot' because we are doing nibbles
 	[e] need to redo revierse_hashmap has one more dimension
 
-==== TODO =====: debug rev_run
-	[a] declare forward_run(from state) given a string
-		-> do an adv function of acc_run.
+Saturday 08/23/2025
+LOC: (data): 9939
+Goal 1. design
+	[a] another idea: use 256 char version of acdfa directly
+	[b] then convert it to 16 char
 
-	-- TODO --
-	[f] need a function which computes reverse pattern
-	[g] for each init state do the swapping 
+Goal 2. Implementation
+	[a] create a new function old/new version
+	[b] unit test (old acdfa states: 28, trans: 896)
+		igc: 35, 1120
+	[c] read about ACDFA
 
-		--- TODO ----
-		-> add a function fo reverse reaching pattern
-		-> from the init state apply the padding
-	---
-	[d] remove 6200.2,3 and disable b_debug
-	
+Goal 3. Experiment with ACDFA
+	[a] pack nibbles to string (patterns)
+	[b] test accept a good string
+	[c] igc test case 1: states 24, trans 1536 (not case sensitive yet)
+		-> igc case still 24 and 1536
+	[d] use try_find to find it
 
--- TODO -- improve the err handling
+Goal 4. Clean and Plan Design
+	[a] clean
+	[b] print out and experiment with byte class
 
-	-- TODO remove dbg msg 6301
+Goal 5. read alphabet and ByteClasses
+	[a] byteclass is a vector of u8
+	[b] given byte it returns the its equivalent class
+	[c] elements() returns an interator of ByteClassElements
+	[d] we have approaches to get the ranges of an equivalent class
+		or get the equivalent class for a char.
 
+Goal 6. Design
+	[a] each char (8-bit) split into two nibbles.
+		We need to add an intermediate layer of states depend
+			how it splits:
+		for n1 in 0..16:
+			for n2 in 0..16
+			vec of dest determined by <n1,n2>
+		Now we need to merge states for the same vec<n1,n2>
+		Then we know for each state: how many more intermediate
+			state to add
+	[b] we need a pass which scans for each existing state
+		(1) the number of additional mid layer states needed
+		(2) 16 element mapping to the mid_layer states
+		(3) Vec<Vec<>> mapping for mid_layer state, each has
+			16 out oing transitions
+		(4) we just need to update the mid layer IDs
+	[c] with midlayer info we can process the state
+		for each existing state, now has 16 transitions out
+		for each new state, has also 16 transitions out.
+
+Goal 7. Implementation
+	[a] get basic stats alpha_size, 
+	[b] collect the intermediate state info
+	[c] adjust info
+
+Sunday 08/24/2025
+LOC (data): 9522 -> 9564 (+42)
+Goal 1. continue to implement new algorithm 
+	[a] state map
+	[b] build transition
+		-> doc
+		-> implementation
+		-> add timer
+		-> fix assertion fails
+	[c] inspect code again.
+	[d] build the output table
+
+Goal 2. figure out the trick of DFA outputs
+	[a] do a single string for the new approach
+	[b] then dump the data.
+
+Goal 3. try to identify the error in translation
+	[a] do a single char string read the output of translation
+	[b] initial dump looks lk
+	[c] dump the new found table
+
+Monday 08/25/2025
+LOC (data): 9564 
+Goal 1. continue to check the translation of transition table
+	[a] inspect code
+	[b] draw the diagram
+	[c] does ACDFA provide minimize function?
+		-> no, but we can prune transitions table
+	[d] check imm_start for each
+	[e] check mapping of transitions
+
+Goal 2. prune transitions
+	[a] dbg msg 6751
+	[b] define compute net state
+	[c] implement the graph computation
+	[d] check data
+		BEFORE PRUNE: 13, 192
+		AFTER PRUNE: 13, 112
+	[e] inspect the new transitions -> OK
+
+Goal 3. check the output mapping
+	[a] read source code
+		-> matches: the matches for every state in DFA.
+		-> it does the adjustment of state_id - 2 (which mapps exactly
+			what we did with the mapping)
+	[b] dump the infok
+
+--- TODO -- continue to check the translation table.
+	[b] there should be one accept state.
+
+-- TODO -- use the imm_state info to build the transitions.
+				
 
 
 		
-
+--- TODO ---- make sure no DEAD LOOP in both versions of ACDFA
 	
 
 

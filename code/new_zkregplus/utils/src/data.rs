@@ -49,6 +49,21 @@ pub fn str_to_hex(s: &str) -> String{
 	u8_to_hex(&v)
 }
 
+/// e.g., "4142" to "AB" (if string length is odd, padd 0 at the end)
+pub fn hex_to_str(s: &str)->String{
+	let mut vec: Vec<u8> = hex_to_u8(s);
+	if vec.len()%2==1{vec.push(0u8);}
+	let mut vec_res:Vec<char> = vec!['0'; vec.len()/2];
+	for i in 0..vec.len()/2{
+		assert!(vec[i]<16);
+		let ch = vec[i*2]*16 + vec[i*2+1];
+		vec_res[i] = ch as char;
+	}
+	let s:String = vec_res.iter().collect();
+
+	s
+}
+
 /// hex string to `Vec<u8>` e.g., "12ab" -> `vec![1, 2, 10, 11]`
 pub fn hex_to_u8(s: &str)->Vec<u8>{
 	let hs_map :HashMap::<char,u8> = [('0', 0), ('1', 1), ('2', 2), ('3', 3), ('4', 4), ('5', 5), ('6', 6), ('7', 7), ('8', 8), ('9', 9), ('a', 10), ('b', 11), ('c', 12), ('d', 13), ('e', 14), ('f', 15)].iter().cloned().collect();

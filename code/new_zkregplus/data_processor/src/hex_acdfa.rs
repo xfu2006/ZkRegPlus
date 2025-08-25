@@ -9,17 +9,21 @@
 
 extern crate aho_corasick;
 extern crate serde;
-use rayon::iter::{IntoParallelRefIterator,ParallelIterator,IndexedParallelIterator};
+use rayon::iter::{IntoParallelRefIterator,ParallelIterator,IntoParallelIterator};
 use std::collections::{HashMap,HashSet};
-use aho_corasick::{automaton::{Automaton},dfa::DFA as ACDFA,Anchored, state_id_to_usize, pattern_id_to_usize};
+use aho_corasick::{
+	automaton::{Automaton},dfa::DFA as ACDFA,Anchored, 
+		state_id_to_usize, pattern_id_to_usize};
 use serde::{Serialize, Deserialize};
-use utils::{logger::{flog,log,LOG1}, data::hex_to_u8};
+use utils::{logger::{flog,log,LOG1,log_perf}, 
+	data::{hex_to_u8, hex_to_str},
+	timer::Timer
+};
 use crate::{clam_db::{RANGE2_BIT}};
-use ark_ff::{Zero};
 
 
 pub const DEFAULT_ACDFA_DA_BITS:usize = 2; //bits to represent id
-pub const B_DEBUG:bool = true;
+pub const B_DEBUG:bool = false;
 
 #[derive(Serialize, Deserialize,Clone)]
 pub struct HexACDFA{
@@ -106,34 +110,323 @@ impl HexACDFA{
 		s
 	}
 
-	//from the start_state, find the the collection of init state
-	//that reaches the given end_state
-	fn rev_run(
-		end_states: &Vec<usize>, 
-		s: &Vec<u8>, 
-		trans: &Vec<Vec<Vec<usize>>>
-	)-> HashSet<usize>{
-		println!("DEBUG USE 6200.8 ---  end_states: {:#?}", end_states);
-		let mut cur_set = end_states.iter().map(|x| *x)
-			.collect::<HashSet::<usize>>();
-		for i in 0..s.len(){
-			let idx = s.len()-1 -i;
-			let ch = s[idx];
-			assert!(ch<16);
-			let idx_ch = ch as usize;
-			cur_set = cur_set.into_iter().map(|state|{
-				trans[state][idx_ch].clone()
-			}).flatten().into_iter().filter(|prev| !prev.is_zero())
-			.map(|prev| prev) //filter for avoiding trap state 0
-			.collect::<HashSet<usize>>();
-			println!(" -- DEBUG USE 6200.9 after ch: {} => {:#?}", ch, cur_set);
+	pub fn new_adv(dfa_id: usize, patterns: &Vec<String>, b_case_ignore: bool)->HexACDFA{
+		let b_old = false; //old means use old algorithm (for comparison only)
+		if b_old{
+			Self::new_adv_old(dfa_id, patterns, b_case_ignore)
+		}else{
+			if b_case_ignore{//only new works for igc but slower.
+				Self::new_adv_new(dfa_id, patterns, b_case_ignore)
+			}else{//for case sensitive use the old alg which is correct
+				Self::new_adv_old(dfa_id, patterns, b_case_ignore)
+			}
 		}
-		cur_set
 	}
 
 	/// create a new HexACDFA
-	pub fn new_adv(dfa_id: usize, patterns: &Vec<String>, b_case_ignore: bool)->HexACDFA{
+	/// We pack the patterns into alphabet 256 (every two hex nibbles into
+	/// one char). We process the IGNORE CASE handling at the regular
+	/// char level (2-hex nibbles). Then we convert this ACDFA into one
+	/// one 16-hex nibble charset. This allows safe handling of
+	/// ignore case.
+	///
+	/// Assumption: patterns have even len (hex_nibbles)
+	pub fn new_adv_new(dfa_id: usize, patterns: &Vec<String>, b_case_ignore: bool)->HexACDFA{
 		let b_debug = true;
+		assert!(b_case_ignore, concat!("This function for ignore case only. ",
+			"Running time is slow for case sensitive DFA,",
+			" which is much larger. ",
+			" Call the new_adv_old for case sensitive instead")
+		);
+
+		//0. process patterns for ACDFA ignore case
+		if b_debug{
+			println!(concat!(
+				"DEBUG USE 6200: HexACDFA::new_adv b_igc: {}, ",
+				"patterns: {:#?}"), 
+				b_case_ignore, patterns
+			);
+		}
+		for pat in patterns{ 
+			if pat.len()%2==1{ panic!("WARN: pattern len is odd: {}", pat); }
+		}
+		let new_patterns = patterns.iter().map(|s| hex_to_str(s))
+			.collect::<Vec<String>>();
+		let pats_in_bytes:Vec<Vec<u8>> = new_patterns.iter().map(|s| 
+			s.clone().into_bytes()).collect();
+
+		//1. build the ACDFA (ignore case) version
+		assert!(dfa_id<(1<<DEFAULT_ACDFA_DA_BITS));
+		let dfa = ACDFA::builder()
+			.ascii_case_insensitive(true).
+			build(&pats_in_bytes).unwrap();
+		if b_case_ignore{
+			println!("PERFORMANCE 2000.1: constructed raw ACDFA states: {}, trans: {}", dfa.num_states(), dfa.trans.len());
+		}
+
+		//2. for each existing state in dfa: compute the list of intermediate
+		//state info: note that they are not numbered yet. 
+		//each state has a vector of 16 elements leading to destination states
+		// NOTE: dfa_outputs matches the final state [0, acc_states-1]
+		// in the AFTER MAPPED processing. So, state 2 now becomes 0, etc.
+		//2.1 collect the basic stats
+		let alpha_size = dfa.alphabet_len; //number of equivalent classes
+		let alpha_size2 = alpha_size.next_power_of_two();
+		let alpha_size2 = if alpha_size.is_power_of_two() {alpha_size}
+			else {alpha_size2};
+		let num_states = dfa.num_states();
+		let dfa_outputs = &dfa.matches;
+		let acc_states = dfa.get_max_match_id()/alpha_size2-1;
+
+		println!("DEBUG USE 6200.7: num_states: {}, acc_states: {},  alpha_size: {}, alpha_size2: {}, trans.len(): {}", num_states, acc_states, alpha_size, alpha_size2, dfa.trans.len());
+		println!("DEBUG USE 6200.8. alphabet dump ==========: {:#?}", dfa.byte_classes);
+		assert!(num_states * alpha_size2 == dfa.trans.len());
+		let dfa_init = state_id_to_usize(
+			dfa.start_state(Anchored::No).unwrap()
+		)/alpha_size2;
+		assert!(num_states<(1<<RANGE2_BIT), 
+			"num_states: {}> 1<<RANGE2_BIT", num_states);
+
+		//2.2 build the information of intermediate state for each state
+		//(1) each state has a mapping from 16 chars to intermediate states
+		//(2) each intermediate state has a vector of 16 transitions to the
+		let dfa_trans = &dfa.trans;
+		//RECOVER LATER
+		//let mut vec_imm_state_info = (0..num_states).into_par_iter().map(|s|{
+		//RECOVE RLATER ABOVE
+		//REMOVE LATER
+		let mut vec_imm_state_info = (0..num_states).collect::<Vec<_>>()
+			.into_iter().map(|s|{
+		//REMOVE LATER ABOVE --
+			// trans1[i] means for nibble i, its destination immediate state
+			// (not finalized yet, just start from 0)
+			let mut trans1 = vec![0usize;16];
+
+			// vec_trans2[i] means that for intermediate state i
+			// its destination state for all 16 hex-nibbles.
+			// vec_trans2.len() relfects the real number of intermediate state
+			let mut vec_trans2: Vec<Vec<usize>> = Vec::new();
+
+			// map from dest_info to the immediate state id
+			// so that we can avoid adding redundant intermediate state.
+			let mut map:HashMap<Vec<usize>, usize> = HashMap::new();
+
+			let idx = s * alpha_size2;
+			let mut count_imm_state = 0;
+			for ch1 in 0..16u8{
+				let mut trans2 = vec![0usize;16];
+				for ch2 in 0..16u8{
+					let ch = ch1*16 + ch2;
+					let equiv = dfa.byte_classes.get(ch) as usize;
+					#[cfg(test)]{ assert!(equiv<alpha_size2);}
+					let dest = state_id_to_usize(dfa_trans[idx+equiv])
+						/alpha_size2;
+					trans2[ch2 as usize] = dest;
+				}
+				let imm_state = if map.contains_key(&trans2){
+					let id = map.get(&trans2).unwrap();
+					*id
+				}else{
+					let new_id = count_imm_state;
+					count_imm_state += 1;
+					map.insert(trans2.clone(), new_id);
+					vec_trans2.push(trans2);
+
+					new_id
+				};
+				trans1[ch1 as usize] = imm_state;
+			}
+			//REMOVE LATER -------------
+			println!("======\nDEBUG USE 6700.5: state: {}, trans1: {:#?}", s, trans1);
+			for i in 0..vec_trans2.len(){
+				println!("-- DEBUG USE 6700.6 -- trans2 for {} = {:#?}", i,
+					vec_trans2[i]);
+			}
+			//REMOVE LATER ------------- ABOVE
+			assert!(vec_trans2.len()==count_imm_state);
+			(trans1, vec_trans2)
+		}).collect::<Vec<_>>();
+
+		//2.3 now label the intermediate states
+		let mut imm_start = num_states;
+		for i in 0..vec_imm_state_info.len(){
+			println!("DEBUG USE 6231: imm_start for i: {} => {}", i, imm_start);
+			for j in 0.. vec_imm_state_info[i].0.len(){
+				vec_imm_state_info[i].0[j] += imm_start;
+			}
+			imm_start += vec_imm_state_info[i].1.len(); //that's the actual cnt
+		}
+		let count_imm_states = imm_start - num_states;
+		let old_num_states = num_states;
+		let num_states = old_num_states + count_imm_states;
+		println!("DEBUG USE 6200.9: added states: {}, new_states: {}", count_imm_states, num_states);
+
+		//2.4 build a state map which maps from original ACDFA states to
+		//new state. In the original ACDFA state [0,1] are NOT final
+		//states, then [2, 2+acc_states) are the final states, then
+		//the rest are non-accepting states
+		//we map [0,1] -> [acc_states, acc_states+1]
+		//		 [2, acc_states+1] -> [0, acc_states-1]
+		//		 [acc_states+2, END] -> [acc_states+2, END] the same
+		// NOTE: dfa_outputs matches EXACTLY the new range of accept
+		// states from [0, acc_states-1]. e.g., original state 2 is mapped
+		// to 0, and the dfa_outputs[0] contains all the pattern IDs that
+		// are accepted at that state.
+		let mut map_states = HashMap::<usize, usize>::new();
+		for i in 0..num_states{
+			if i<2{
+				map_states.insert(i, acc_states+i);
+			}else if i>=2 && i<=acc_states+1{
+				map_states.insert(i, i-2);
+			}else{
+				map_states.insert(i, i);
+			}
+		}
+
+		//2.5 compute the reachable states from init state.
+		// This is used to prune transition table. Note that
+		// for consecutive state sequence, UNREACHABLE states are
+		// stil there (will be stored in lkup table), but all their
+		// layer transitions are pruned for saving cost.
+		//note that we are using vec_imm_information, this DOES NOT
+		//invole mapping yet, all are raw format in the original ACDFA
+		//* reachable contains [0..old_num_states], not intermediate
+		let next_state = |state: usize| -> HashSet<usize>{
+			let vec_trans2 = &vec_imm_state_info[state].1;
+			let all_dest = vec_trans2.par_iter().map(|vec|{
+				vec.iter().map(|&x| x).collect::<HashSet<usize>>()
+			}).reduce(HashSet::new, |mut a,b|{
+				a.extend(b);
+				a
+			});
+			all_dest
+		};
+		let mut reachable = HashSet::<usize>::new();
+		let mut to_add = next_state(dfa_init); 
+		reachable.insert(dfa_init);
+		while to_add.len()>0{
+			//(a). expand from reachable set
+			let next_to_add: HashSet<usize> = to_add.par_iter().map(|&state|
+				next_state(state)
+			).reduce(HashSet::new, |mut a,b|{
+				a.extend(b);
+				a
+			});
+			reachable.extend(to_add);
+
+			//(b) determine if to continue or not
+			to_add = next_to_add.difference(&reachable).cloned().collect();
+		}
+
+		//2.6 redefine reachable by map_states
+		let reachable = reachable.iter().map(|x|{
+			Self::state_id(dfa_id, map_states[x])
+		}).collect::<HashSet<usize>>();
+		println!("DEBUG USE 6733: pruning {} out of {} old states",
+			old_num_states - reachable.len(), old_num_states);
+
+
+		//3. build up the transitions
+		// since now one (8-bit char) transition are split into two
+		// we need to dischard all transitions. For each state
+		// in the ORIGINAL state set, add two layers of transitions:
+		// one for intermediate and the second layer from intermediate
+		// states to the next states
+		// 
+		// deadstate at 0 (which is now mapped to acc_state) has just
+		// one layer, every transition leads back to itself
+		let mut timer = Timer::new();
+		let mut hash_trans = HashMap::<usize,Vec<usize>>::new();
+		for raw_src in 1..old_num_states{
+			let src = Self::state_id(dfa_id, map_states[&raw_src]); 
+			if !reachable.contains(&src) { continue; } 
+			let trans1 = &vec_imm_state_info[raw_src].0;	 
+			let vec_trans2 = &vec_imm_state_info[raw_src].1;
+			let mut vec_layer1 = vec![];
+			let start_imm = trans1.iter().map(|&i| i).min().unwrap();
+			for imm_idx in 0..trans1.len(){
+				let raw_imm = trans1[imm_idx];
+				let imm = Self::state_id(dfa_id, map_states[&raw_imm]);
+				vec_layer1.push(imm);
+				//trans1 might have dupliate entries
+				//avoid duplicate work
+				if !hash_trans.contains_key(&imm){
+					let trans2 = &vec_trans2[raw_imm-start_imm];
+					let mut vec_layer2 = vec![];
+					for raw_dst in trans2{
+						let dst = Self::state_id(dfa_id, map_states[&raw_dst]);
+						vec_layer2.push(dst); 
+					}
+					hash_trans.insert(imm, vec_layer2);
+				}
+			}
+			if hash_trans.contains_key(&src){ panic!("src: {} exists", src); }
+			hash_trans.insert(src, vec_layer1);
+		}
+		let state0 = Self::state_id(dfa_id, map_states[&0]); //0->acc_state now
+		hash_trans.insert(state0, vec![state0; 16]); //loop to dead state itself
+		let total_trans = hash_trans.par_iter().map(|(_k,v)| v.len())
+			.sum::<usize>();
+		log_perf(LOG1, 
+			&format!("PERF 2001.1 build trans time for states:: {}, trans: {}",
+			num_states, total_trans), &mut timer
+		);
+
+		//REMOVE LATER ---------------------
+		println!("DEBUG USE 6700.9 =====================");
+		let mut keys: Vec<_> = hash_trans.iter().map(|(k,_)| *k).collect();
+		keys.sort();
+		for k in keys{
+			let v = hash_trans.get(&k).unwrap();
+			println!(" --- state {} -----", k);
+			for j in 0..v.len(){
+				println!(" -- ch: {} => {}", j, v[j]);	
+			}
+		}
+		//REMOVE LATER ---------------------ABOVE
+
+		//4. build up the outputs table
+		//AS we noted earlier, dfa_outputs matches nicely the mapped 
+		// accpet states.
+		let mut hash_outputs = HashMap::<usize,Vec<usize>>::new();
+		let mut pattern_to_accept_ids = vec![vec![]; patterns.len()]; 
+		for i in 0..acc_states{
+			let state_id = Self::state_id(dfa_id, i);
+			let mut vec = vec![];
+			for pat_id in &dfa_outputs[i]{
+				vec.push( pattern_id_to_usize(*pat_id) );
+				pattern_to_accept_ids[*pat_id].push(state_id);
+			}
+			vec.sort();
+			hash_outputs.insert(state_id, vec);
+		}
+		let pattern_to_id = patterns.iter().enumerate().map(|(i,p)|
+			(p.to_string(), i)).collect::<HashMap<String,usize>>();
+
+		let init_state =  Self::state_id(dfa_id, map_states[&dfa_init]);
+		println!("DEBUG USE 6700.10: init_state: {}", init_state);
+		assert!(num_states<(1<<RANGE2_BIT), "RANGE2_BITS too small, reset!");
+		HexACDFA{
+			id: dfa_id,
+			id_bits: DEFAULT_ACDFA_DA_BITS,
+			num_states: num_states,
+			state_part_bits: RANGE2_BIT,
+			patterns: patterns.clone(),
+			num_acc_states: hash_outputs.keys().len(),
+			outputs: hash_outputs,
+			trans: hash_trans,
+			init_state: init_state,
+			b_case_ignore: b_case_ignore,
+			pattern_to_id,
+			pattern_to_accept_ids,
+		}
+	}
+
+	/// create a new HexACDFA
+	/// OLD version (not quite reliable in handling ignore case), assuming
+	/// even id state number for handling chars.
+	pub fn new_adv_old(dfa_id: usize, patterns: &Vec<String>, b_case_ignore: bool)->HexACDFA{
+		let b_debug = false;
 		if b_debug{
 			println!("DEBUG USE 6200: HexACDFA::new_adv b_igc: {}, patterns: {:#?}", b_case_ignore, patterns);
 		}
@@ -149,6 +442,7 @@ impl HexACDFA{
 			vecu8
 		};
 		let dfa = ACDFA::new(&vecu8).unwrap();
+		println!("DEBUG USE 6101: constructed raw ACDFA states: {}, trans: {}", dfa.num_states(), dfa.trans.len());
 		let dfa_init = state_id_to_usize(dfa.start_state(Anchored::No).unwrap())/32;
 
 		let alpha_size = dfa.alphabet_len;
@@ -184,12 +478,6 @@ impl HexACDFA{
 		// keep the original state (but ignore deadsstead 0, and ignore
 		// all other alphabet char other than 16
 		let mut hash_trans = HashMap::<usize,Vec<usize>>::new();
-		let mut hash_rev_trans = if b_case_ignore{
-			vec![vec![vec![];16]; num_states]
-		}else {vec![vec![vec![];16];0]}; //hash_rev_trans[state]
-									 //has 16 elements for each char
-									 //we need it fore igc case only for
-									 //making updates of transitions.
 		for i in 1..num_states{
 			let idx = i * 32;
 			let mut vec = vec![];
@@ -198,11 +486,6 @@ impl HexACDFA{
 				let dst = state_id_to_usize(dfa_trans[idx+j])/32;
 				let new_dst = Self::state_id(dfa_id, map_states[&dst]);
 				vec.push(new_dst);
-				if b_case_ignore{//only expand hash_rev_trans in i_igc mode
-					if !hash_rev_trans[new_dst][j].contains(&new_state){
-						hash_rev_trans[new_dst][j].push(new_state);
-					}
-				}
 			}
 			if hash_trans.contains_key(&new_state){
 				panic!("ERROR already hash state: {} for i: {}", new_state, i);
@@ -211,13 +494,35 @@ impl HexACDFA{
 		}
 		let state0 = Self::state_id(dfa_id, map_states[&0]);
 		hash_trans.insert(state0, vec![state0; 16]); //loop to dead state itself
+
+		//3. if b-ignore case update the transition table
+		//assumption: each alpha_numeric char is located at EVEN pos!
+		let init_state =  Self::state_id(dfa_id, map_states[&dfa_init]);
 		if b_case_ignore{
-			for j in 0..16{
-				if !hash_rev_trans[state0][j].contains(&state0){
-					hash_rev_trans[state0][j].push(state0);
+			for s in &vecu8{
+				let mut cur_state = init_state;
+				for i in (0..s.len()).step_by(2){
+					let ch1 = s[i];
+					let next_state = hash_trans.get(&cur_state)
+						.unwrap()[usize::from(ch1)];
+					if i+1>=s.len() {break;}
+					let ch2 = s[i+1];
+					let next_state2 = hash_trans.get(&next_state)
+						.unwrap()[usize::from(ch2)];
+					let val = ch1*16 + ch2;
+					if (val>=0x41 && val<=0x5a) || (val>=0x61 && val<=0x7a){
+						let newval = if val>=0x41 && val<=0x5a 
+							{(val - 0x41) + 0x61} else {(val-0x61) + 0x41};
+						let newch1 = newval/16;
+						let newch2 = newval%16;
+						hash_trans.entry(cur_state).and_modify(|v| v[usize::from(newch1)] = next_state);
+						hash_trans.entry(next_state).and_modify(|v| v[usize::from(newch2)] = next_state2);
+					} 
+					cur_state = next_state2;
 				}
 			}
 		}
+
 
 		//3. build up the outputs table
 		let mut hash_outputs = HashMap::<usize,Vec<usize>>::new();
@@ -238,62 +543,8 @@ impl HexACDFA{
 			(p.to_string(), i)).collect::<HashMap<String,usize>>();
 		assert!(num_states<(1<<RANGE2_BIT), "RANGE2_BITS too small, reset!");
 
-		//5. if b-ignore case update the transition table
-		//assumption: each alpha_numeric char is located at EVEN pos!
-		//5.1 build the set of start_states for each string
-		let _vec_start_states = if b_case_ignore{
-			patterns.iter().enumerate().map(|(i,pat)|{
-			let s = &vecu8[i];
-			let pat_id = pattern_to_id.get(pat).unwrap();
-			let ids = &pattern_to_accept_ids[*pat_id];
-			let res = Self::rev_run(ids, s, &hash_rev_trans);
-
-			res
-			}).collect::<Vec<HashSet<usize>>>()
-		}else{vec![]};
-
-		//REMOVE ALTER ------------------
-		if b_case_ignore{
-			println!("DEBUG USE 6200.8: vec_start_states: {:#?}", _vec_start_states);
-		}
-		//REMOVE ALTER ------------------ ABOVE
-
-		let init_state =  Self::state_id(dfa_id, map_states[&dfa_init]);
-		if b_case_ignore{
-			for pat in patterns{
-				println!("DEBUG USE 6200.6: pat: {}", pat);
-			/*
-				let mut cur_state = init_state;
-				for i in (0..s.len()).step_by(2){
-					let ch1 = s[i];
-					let next_state = hash_trans.get(&cur_state)
-						.unwrap()[usize::from(ch1)];
-					if i+1>=s.len() {break;}
-					let ch2 = s[i+1];
-					let next_state2 = hash_trans.get(&next_state)
-						.unwrap()[usize::from(ch2)];
-					let val = ch1*16 + ch2;
-					if (val>=0x41 && val<=0x5a) || (val>=0x61 && val<=0x7a){
-						let newval = if val>=0x41 && val<=0x5a 
-							{(val - 0x41) + 0x61} else {(val-0x61) + 0x41};
-						let newch1 = newval/16;
-						let newch2 = newval%16;
-						if b_debug{
-							println!("DEBUG USE 6200.1: old_val: 0x{:x}, new_val: 0x{:x}, cur_state:{} -> {} -> {}", val, newval, cur_state, next_state, next_state2);
-						}
-						hash_trans.entry(cur_state).and_modify(|v| v[usize::from(newch1)] = next_state);
-						hash_trans.entry(next_state).and_modify(|v| v[usize::from(newch2)] = next_state2);
-					} 
-					cur_state = next_state2;
-				}
-			*/
-			}//for s in pattern
-		}
-
-
-
 		//4. return
-		let res = HexACDFA{
+		HexACDFA{
 			id: dfa_id,
 			id_bits: DEFAULT_ACDFA_DA_BITS,
 			num_states: num_states,
@@ -306,23 +557,8 @@ impl HexACDFA{
 			b_case_ignore: b_case_ignore,
 			pattern_to_id,
 			pattern_to_accept_ids,
-		};
-
-		//REMOVE LATER ----------------------
-		if b_case_ignore{
-		use utils::data::str_to_u8;
-		let s1 = str_to_u8("aaaaa");
-		let s2 = str_to_u8("9uUuuuu257890abcdefAaaaa123bbbbcC");
-		println!("=== DEBUG USE 6200.2 for aaaaa");
-		let _acc1 = res.acc_path(&s1);
-		println!("DEBUG USE 6200.2: for s2: 9uUuu...Aaaaa123bbbcC");
-		let _acc2 = res.acc_path(&s2);
-		panic!("STOP HERE 1001");
 		}
-		
-		//REMOVE LATER ---------------------- ABOVE
 
-		res
 	}
 
 	/// if word is accepted by the DFA, return the corresponding IDs.
@@ -412,8 +648,6 @@ impl HexACDFA{
 
 		vec
 	}
-
-
 
 	/// each element of return is a tuple of (state_id, step_id)
 	pub fn packed_acc_path(&self, s: &Vec<u8>)->Vec<(usize, usize)>{
@@ -558,45 +792,16 @@ mod tests_hex_acdfa{
 		}
 	}
 
-	// test if s generates the expected pattern set, ignore case
-	fn test_one_case_ig(pats: &Vec<&str>, exp: &Vec<&str>, s: &str, bval: bool){
-		let patterns = pats.into_iter().map(|s| {String::from(*s)}).collect();
-		let dfa = HexACDFA::new_adv(1, &patterns, true);
-		let exp_set = exp.into_iter().map(|s| {String::from(*s)}).collect::<HashSet<String>>();
-		let vu8 = hex_to_u8(&s);
-		let set1 = dfa.get_patterns( &dfa.acc_path(&vu8) );
-		assert!((set1==exp_set)==bval, "failed on s: {}", s);
-	}
-
 	#[test]
-	fn test_simple_hex_dfa(){
-		test_one_case(&vec!["0123456789abcdef1", "123", "1234", "345"],
-			&vec!["123", "1234"], "012356", false);
-		test_one_case(&vec!["0123456789abcdef1", "123", "1234", "345"],
-			&vec!["123", "1234"], "012346", true);
-		test_one_case(&vec!["0123456789abcdef1", "123", "1234", "345"],
-			&vec!["123", "1234"], "012a123a123a6", false);
-		test_one_case(&vec!["0123456789abcdef1", "123", "1234", "345"],
-			&vec!["123", "1234"], "012a123a12346", true);
-	}
-
-	#[test]
-	fn test_simple_hex_dfa_ignore_case(){
-		//A - 0x41
-		//a - 0x61
-		//2nd entry is actually 'AbC'
-		test_one_case_ig(&vec!["01234567789abcdef", "416243", "1235", "3451"],
-			&vec!["416243", "3451"], "6162633451", true);
-		test_one_case_ig(&vec!["01234567789abcdef", "416243", "1235", "3451"],
-			&vec!["416243", "3451"], "5162633451", false);
-		test_one_case_ig(&vec!["01234567789abcdef", "416243", "1235", "3451"],
-			&vec!["416243", "3451"], "6142433451", true);
-		test_one_case_ig(&vec!["01234567789abcdef", "3031416243", "1235", "3451"],
-			&vec!["3031416243", "3451"], "112230316142433451", true);
-		test_one_case_ig(&vec!["01234567789abcdef", "3031416243", "1235", "3451"],
-			&vec!["3031416243", "3451"], "112230311142433451", false);
-		test_one_case_ig(&vec!["01234567789abcdef", "3031416243", "1235", "3451"],
-			&vec!["3031416243", "3451"], "112230316242433451", false);
+	fn test_v8_lower(){
+		let samples = ["123ABC", "A4a5678"];
+		for sample in samples{
+			let s2 = sample.to_lowercase();
+			let v8_1 = str_to_u8(&sample);
+			let v8_2 = str_to_u8(&s2);
+			let act_val = HexACDFA::to_v8_lower(&v8_1);
+			assert!(act_val == v8_2);
+		}
 	}
 
 	#[test]
@@ -646,15 +851,54 @@ mod tests_hex_acdfa{
 		println!("DUMP states_to_id: {:?}", states_to_id);
 	}
 
-	#[test]
-	fn test_v8_lower(){
-		let samples = ["123ABC", "A4a5678"];
-		for sample in samples{
-			let s2 = sample.to_lowercase();
-			let v8_1 = str_to_u8(&sample);
-			let v8_2 = str_to_u8(&s2);
-			let act_val = HexACDFA::to_v8_lower(&v8_1);
-			assert!(act_val == v8_2);
-		}
+	// test if s generates the expected pattern set, ignore case
+	fn test_one_case_ig(pats: &Vec<&str>, exp: &Vec<&str>, s: &str, bval: bool){
+		let patterns = pats.into_iter().map(|s| {String::from(*s)}).collect();
+		let dfa = HexACDFA::new_adv(1, &patterns, true);
+		let exp_set = exp.into_iter().map(|s| {String::from(*s)}).collect::<HashSet<String>>();
+		let vu8 = hex_to_u8(&s);
+		let set1 = dfa.get_patterns( &dfa.acc_path(&vu8) );
+		println!("DEBUG USE 6701: pats: {:#?}, exp: {:#?}, s: {}, bval: {}, set1: {:#?}", pats, exp, s, bval, set1);
+		assert!((set1==exp_set)==bval, "failed on s: {}", s);
 	}
+
+	#[test]
+	fn test_simple_hex_dfa1(){
+		test_one_case(&vec!["0123456789abcdef1", "123", "1234", "345"],
+			&vec!["123", "1234"], "012356", false);
+		test_one_case(&vec!["0123456789abcdef1", "123", "1234", "345"],
+			&vec!["123", "1234"], "012346", true);
+		test_one_case(&vec!["0123456789abcdef1", "123", "1234", "345"],
+			&vec!["123", "1234"], "012a123a123a6", false);
+		test_one_case(&vec!["0123456789abcdef1", "123", "1234", "345"],
+			&vec!["123", "1234"], "012a123a12346", true);
+	}
+
+	#[test]
+	fn test_simple_hex_dfa_ignore_case(){
+		//A - 0x41
+		//a - 0x61
+		//2nd entry is actually 'AbC'
+		test_one_case_ig(&vec!["01234567789abcdefa", "416243", "1235", "3451"],
+			&vec!["416243", "3451"], "6162633451", true);
+		test_one_case_ig(&vec!["01234567789abcdefa", "416243", "1235", "3451"],
+			&vec!["416243", "3451"], "5162633451", false);
+		test_one_case_ig(&vec!["01234567789abcdefa", "416243", "1235", "3451"],
+			&vec!["416243", "3451"], "6142433451", true);
+		test_one_case_ig(&vec!["01234567789abcdefa", "3031416243", "1235", "3451"],
+			&vec!["3031416243", "3451"], "112230316142433451", true);
+		test_one_case_ig(&vec!["01234567789abcdefa", "3031416243", "1235", "3451"],
+			&vec!["3031416243", "3451"], "112230311142433451", false);
+		test_one_case_ig(&vec!["01234567789abcdefa", "3031416243", "1235", "3451"],
+			&vec!["3031416243", "3451"], "112230316242433451", false);
+	}
+
+	#[test]
+	fn debug_hex_dfa(){
+		//A - 0x41
+		//a - 0x61
+		//2nd entry is actually 'AbC'
+		test_one_case_ig(&vec!["61"], &vec!["61"], "626163", true);
+	}
+
 }
