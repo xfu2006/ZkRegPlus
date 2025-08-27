@@ -310,8 +310,6 @@ impl <F:PrimeField> SedAdvice<F>{
 			F::from(*sig_id as u64)
 		}).collect::<Vec<F>>();
 		let fsm_cap = &capacity.faa_capacity();
-		println!("DEBUG USE 200: dis_charge_info: {:?}", discharge_info);
-		println!("DEBUG USE 201: vec_sigs_to_discharge: {:?}, fsm_id_cs: {}, fsm_id_igc: {}", vec_sigs_to_discharge, fsm_id_cs, fsm_id_igc);
 
 		//2.1 the cs version
 		let subsigs_inp_cs = Self::collect_subsig_ids(vec_sigs_to_discharge,

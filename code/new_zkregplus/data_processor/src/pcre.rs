@@ -380,7 +380,6 @@ pub fn clamav_genregex_to_dfa(s: &str) -> DFA<char>{
 	//2. conversion
 	let hir  = to_hir(&s);
 	let dfa = hex_hir_to_dfa(&hir, b_ignore_case, false);
-
 	dfa
 }
 

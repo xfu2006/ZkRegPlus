@@ -439,7 +439,6 @@ where
 			for layer_id in 0..self.layered_circs.len(){
 				//2.1.1 try generate advice by the first circ
 				// without any resource limits
-				println!("DEBUG USE 6200.1 entering loop: layerid: {} of layered: {}", layer_id, self.layered_circs.len());
 				let layer = &self.layered_circs[layer_id];
 				let circ1 = &layer[layer.len()-1];
 				//we assume all circs have the same max_word_len
@@ -452,7 +451,6 @@ where
 						max_word_len()==max_word_len);
 					}
 				}
-				println!("DEBUG USE 6200.2 vec_adv.len(): {}, max_word_len: {}, word.len(): {}, remaining.len(): {}", vec_adv.len(), max_word_len, word.len(), remaining.len());
 				let prev_adv = if vec_adv.len()==0 {None}
 					else {Some(vec_adv[vec_adv.len()-1].clone())};
 				let res = circ1.get_mapper().borrow()
@@ -500,7 +498,6 @@ where
 
 			let layer = &self.layered_circs[selected_layer];
 			while remaining.len()>0{
-				println!("DEBUG USE 6200.3: remaining.len(): {}, selected_layer: {}", remaining.len(), selected_layer);
 				//2.2.1. identify the circ with the smallest cost given
 				// the remaining.len
 				let mut min_id = 0;
@@ -534,10 +531,8 @@ where
 					let word = remaining[0..word_len].to_vec();
 					let prev_adv = if vec_adv.len()==0 {None}
 						else {Some(vec_adv[vec_adv.len()-1].clone())};
-					println!("DEBUG USE 6011: word_len: {}, last_word_len: {}", word_len, last_word_len);
 					if last_word_len!=word_len {
 						last_word_len = word_len;
-						println!(" ==> DEBUG USE 6012: gen_nd_advice by circ:.mapper: {}, prev_adv.is_some: {}", circ.get_mapper().borrow().get_name(), prev_adv.is_some());
 						last_res = circ.get_mapper().borrow()
 						  .gen_nd_advice_no_limit(&word, &word_info, prev_adv);
 					}
@@ -1249,7 +1244,6 @@ where
 	let (nova2_U_i1, nova2_W_i1, _nova2_r_Fr, _nova2__cmT)= 
 		nova2.gen_next_folded()?;
 	let (nova2_com_all_w, nova2_prf_qa_nizk, nova2_r_all_w, nova2_prf_kzg, nova2_kzg_all_com_ch) = nova2_W_i1.gen_com_all_w_and_qa_nizk_prf::<E, CS1E, false>( &qa_nizk_pkey, &driver2.nova_param.0.cs1e_pp, &qa_nizk_vkey, &nova2_U_i1, &driver2.poseidon_config);
-	println!("DEBUG USE 1001: kzg_ch: {}, eval: {}", kzg_all_com_ch, prf_kzg.eval);
 
 	//7. now build up the TwoPhaseDeciderCircuit.
 	let inp = TwoPhaseCircInput{

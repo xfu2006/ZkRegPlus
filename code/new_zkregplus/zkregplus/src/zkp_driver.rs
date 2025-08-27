@@ -134,20 +134,22 @@ where C: CurveGroup<ScalarField=F>,
 	//1. create cp_components
 	let avg_lk_wd = lkup_len/total_word_n + 1;
 	let avg_lk_wd = if avg_lk_wd<1 {1} else {avg_lk_wd};
-	let cap1 = CpCapacity{max_word_len: 1, final_states_len: 8, join_buf_capacity: 8, sig_buf_capacity: 4};
+	let cap1 = CpCapacity{max_word_len: 1, final_states_len: 8, join_buf_capacity: 8, sig_buf_capacity: 6};
+	let comp1 = CpComponentMapper::<F,LK<F>>::new(cap1.clone(), 
+		db.clone(), false);
+	let comp1_igc = CpComponentMapper::<F,LK<F>>::new(cap1, db.clone(), true);
+	/*
 	let cap2 = CpCapacity{max_word_len: 2, final_states_len: 16, join_buf_capacity: 8, sig_buf_capacity: 2};
 	let cap3 = CpCapacity{max_word_len: 3, final_states_len: 16, join_buf_capacity: 8, sig_buf_capacity: 4};
 	let cap4 = CpCapacity{max_word_len: 4, final_states_len: 16, join_buf_capacity: 8, sig_buf_capacity: 4};
 	let b_igc = false;
-	let comp1 = CpComponentMapper::<F,LK<F>>::new(cap1.clone(), 
-		db.clone(), false);
-	let comp1_igc = CpComponentMapper::<F,LK<F>>::new(cap1, db.clone(), true);
 	let comp2 = CpComponentMapper::<F,LK<F>>::new(cap2, db.clone(), b_igc);
 	let comp3 = CpComponentMapper::<F,LK<F>>::new(cap3, db.clone(), b_igc);
 	let comp4 = CpComponentMapper::<F,LK<F>>::new(cap4, db.clone(), b_igc);
 	let _cg4 = CompositeGadgetMapper::<F,LK<F>>::new("w4",vec![Rc::new(RefCell::new(comp4))]); 
 	let _cg3 = CompositeGadgetMapper::<F,LK<F>>::new("w3",vec![Rc::new(RefCell::new(comp3))]); 
 	let _cg2 = CompositeGadgetMapper::<F,LK<F>>::new("w2",vec![Rc::new(RefCell::new(comp2))]); 
+	*/
 	let cg1 = CompositeGadgetMapper::<F,LK<F>>::new("cp1",vec![
 		Rc::new(RefCell::new(comp1.clone())), 
 		Rc::new(RefCell::new(comp1_igc.clone())), 
@@ -156,11 +158,11 @@ where C: CurveGroup<ScalarField=F>,
 
 	//2. create sed components
 	let max_word = 1;
-	let sigs = 2;
-	let subsigs = 4;
-	let avg_pat_per_sig = 6;
-	let avg_active_pat_per_sig = 2;
-	let perc_pats_in_trace = 40;
+	let sigs = 3;
+	let subsigs = 6;
+	let avg_pat_per_sig = 8;
+	let avg_active_pat_per_sig = 3;
+	let perc_pats_in_trace = 60;
 	let perc_comp_subsigs = 50;
 	let scap1= SedCapacity::new(max_word, db.dfa_crit.state_part_bits, subsigs, 
 		avg_pat_per_sig, avg_active_pat_per_sig, perc_pats_in_trace, sigs, perc_comp_subsigs);
@@ -169,12 +171,13 @@ where C: CurveGroup<ScalarField=F>,
 
 
 	let lk_share1 = max_word*avg_lk_wd;
-	let lk_share2 = max_word*2*avg_lk_wd;
+	//let lk_share2 = max_word*2*avg_lk_wd;
 	let _c1 = SigmaIR1CS_Inst::<F,C,CS,LK<F>,
 		CompositeGadgetMapper<F,LK<F>>
 		,false>
 		::new_adv(format!("c1"), poseidon_config.clone(), 
 			Rc::new(RefCell::new(cg1)), false, lk_share1).expect("c1");
+	/*
 	let _c2 = SigmaIR1CS_Inst::<F,C,CS,LK<F>,
 		CompositeGadgetMapper<F,LK<F>>
 		,false>
@@ -190,6 +193,7 @@ where C: CurveGroup<ScalarField=F>,
 		,false>
 		::new_adv(format!("c4"), poseidon_config.clone(), 
 			Rc::new(RefCell::new(_cg4)), false, lk_share2).expect("c4");
+	*/
 
 	//4. create sed instances
 	//let sc1 = SigmaIR1CS_Inst::<F,C,CS,LK<F>,
@@ -199,8 +203,8 @@ where C: CurveGroup<ScalarField=F>,
 	//		Rc::new(RefCell::new(scg1)), false, lk_share1).expect("sc1");
 
 	//5. create dfa components and instances
-	let sigs=1;
-	let subsigs=4;
+	let sigs=3;
+	let subsigs=6;
 	let d_cap1 = DfaCapacity::new(max_word, sigs, subsigs);
 	let dcomp1 = DfaComponentMapper::<F,LK<F>>::new(d_cap1, db.clone());
 	//let dcg1 = CompositeGadgetMapper::<F,LK<F>>::new("d1",

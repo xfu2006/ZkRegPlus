@@ -115,9 +115,12 @@ impl HexACDFA{
 		if b_old{
 			Self::new_adv_old(dfa_id, patterns, b_case_ignore)
 		}else{
-			if b_case_ignore{//only new works for igc but slower.
+			if b_case_ignore{
+				//only new works for igc but slower.
 				Self::new_adv_new(dfa_id, patterns, b_case_ignore)
 			}else{//for case sensitive use the old alg which is correct
+				//also the old version is better at handling odd number
+				//of chars
 				Self::new_adv_old(dfa_id, patterns, b_case_ignore)
 			}
 		}
@@ -132,7 +135,7 @@ impl HexACDFA{
 	///
 	/// Assumption: patterns have even len (hex_nibbles)
 	pub fn new_adv_new(dfa_id: usize, patterns: &Vec<String>, b_case_ignore: bool)->HexACDFA{
-		let b_debug = true;
+		let b_debug = false;
 		assert!(b_case_ignore, concat!("This function for ignore case only. ",
 			"Running time is slow for case sensitive DFA,",
 			" which is much larger. ",
@@ -148,7 +151,7 @@ impl HexACDFA{
 			);
 		}
 		for pat in patterns{ 
-			if pat.len()%2==1{ panic!("WARN: pattern len is odd: {}", pat); }
+			if pat.len()%2==1{ println!("WARN: pattern len is odd: {}", pat); }
 		}
 		let new_patterns = patterns.iter().map(|s| hex_to_str(s))
 			.collect::<Vec<String>>();
@@ -178,8 +181,6 @@ impl HexACDFA{
 		let dfa_outputs = &dfa.matches;
 		let acc_states = dfa.get_max_match_id()/alpha_size2-1;
 
-		println!("DEBUG USE 6200.7: num_states: {}, acc_states: {},  alpha_size: {}, alpha_size2: {}, trans.len(): {}", num_states, acc_states, alpha_size, alpha_size2, dfa.trans.len());
-		println!("DEBUG USE 6200.8. alphabet dump ==========: {:#?}", dfa.byte_classes);
 		assert!(num_states * alpha_size2 == dfa.trans.len());
 		let dfa_init = state_id_to_usize(
 			dfa.start_state(Anchored::No).unwrap()
@@ -230,13 +231,6 @@ impl HexACDFA{
 				};
 				trans1[ch1 as usize] = imm_state;
 			}
-			//REMOVE LATER -------------
-			println!("======\nDEBUG USE 6700.5: state: {}, trans1: {:#?}", s, trans1);
-			for i in 0..vec_trans2.len(){
-				println!("-- DEBUG USE 6700.6 -- trans2 for {} = {:#?}", i,
-					vec_trans2[i]);
-			}
-			//REMOVE LATER ------------- ABOVE
 			assert!(vec_trans2.len()==count_imm_state);
 			(trans1, vec_trans2)
 		}).collect::<Vec<_>>();
@@ -244,7 +238,6 @@ impl HexACDFA{
 		//2.3 now label the intermediate states
 		let mut imm_start = num_states;
 		for i in 0..vec_imm_state_info.len(){
-			println!("DEBUG USE 6231: imm_start for i: {} => {}", i, imm_start);
 			for j in 0.. vec_imm_state_info[i].0.len(){
 				vec_imm_state_info[i].0[j] += imm_start;
 			}
@@ -253,7 +246,6 @@ impl HexACDFA{
 		let count_imm_states = imm_start - num_states;
 		let old_num_states = num_states;
 		let num_states = old_num_states + count_imm_states;
-		println!("DEBUG USE 6200.9: added states: {}, new_states: {}", count_imm_states, num_states);
 
 		//2.4 build a state map which maps from original ACDFA states to
 		//new state. In the original ACDFA state [0,1] are NOT final
@@ -316,9 +308,6 @@ impl HexACDFA{
 		let reachable = reachable.iter().map(|x|{
 			Self::state_id(dfa_id, map_states[x])
 		}).collect::<HashSet<usize>>();
-		println!("DEBUG USE 6733: pruning {} out of {} old states",
-			old_num_states - reachable.len(), old_num_states);
-
 
 		//3. build up the transitions
 		// since now one (8-bit char) transition are split into two
@@ -366,19 +355,6 @@ impl HexACDFA{
 			num_states, total_trans), &mut timer
 		);
 
-		//REMOVE LATER ---------------------
-		println!("DEBUG USE 6700.9 =====================");
-		let mut keys: Vec<_> = hash_trans.iter().map(|(k,_)| *k).collect();
-		keys.sort();
-		for k in keys{
-			let v = hash_trans.get(&k).unwrap();
-			println!(" --- state {} -----", k);
-			for j in 0..v.len(){
-				println!(" -- ch: {} => {}", j, v[j]);	
-			}
-		}
-		//REMOVE LATER ---------------------ABOVE
-
 		//4. build up the outputs table
 		//AS we noted earlier, dfa_outputs matches nicely the mapped 
 		// accpet states.
@@ -398,8 +374,8 @@ impl HexACDFA{
 			(p.to_string(), i)).collect::<HashMap<String,usize>>();
 
 		let init_state =  Self::state_id(dfa_id, map_states[&dfa_init]);
-		println!("DEBUG USE 6700.10: init_state: {}", init_state);
 		assert!(num_states<(1<<RANGE2_BIT), "RANGE2_BITS too small, reset!");
+
 		HexACDFA{
 			id: dfa_id,
 			id_bits: DEFAULT_ACDFA_DA_BITS,
@@ -436,7 +412,6 @@ impl HexACDFA{
 			vecu8
 		};
 		let dfa = ACDFA::new(&vecu8).unwrap();
-		println!("DEBUG USE 6101: constructed raw ACDFA states: {}, trans: {}", dfa.num_states(), dfa.trans.len());
 		let dfa_init = state_id_to_usize(dfa.start_state(Anchored::No).unwrap())/32;
 
 		let alpha_size = dfa.alphabet_len;
@@ -466,6 +441,34 @@ impl HexACDFA{
 				map_states.insert(i, i);
 			}
 		}
+		//1.6 build set of reachable states from the initial state
+		//later use it to prune transitions.
+		let next_state = |state: usize| -> HashSet<usize>{
+			let mut res = HashSet::new();
+			let idx = state * 32;
+			for j in 0..16{res.insert(state_id_to_usize(dfa_trans[idx+j])/32);}
+			res
+		};
+		let mut reachable = HashSet::new();
+		reachable.insert(dfa_init);
+		let mut to_add = next_state(dfa_init); 
+		while to_add.len()>0{
+			//(a). expand from reachable set
+			let next_to_add: HashSet<usize> = to_add.par_iter().map(|&state|
+				next_state(state)
+			).reduce(HashSet::new, |mut a,b|{
+				a.extend(b);
+				a
+			});
+			reachable.extend(to_add);
+
+			//(b) determine if to continue or not
+			to_add = next_to_add.difference(&reachable).cloned().collect();
+		}
+		let reachable = reachable.iter().map(|x|{
+			Self::state_id(dfa_id, map_states[x])
+		}).collect::<HashSet<usize>>();
+		println!("DEBUG USE 6723.1: reachable: {}, num_states: {}", reachable.len(), num_states);
 
 
 		//2. build up the transitions
@@ -476,21 +479,27 @@ impl HexACDFA{
 			let idx = i * 32;
 			let mut vec = vec![];
 			let new_state = Self::state_id(dfa_id, map_states[&i]);
-			for j in 0..16{
-				let dst = state_id_to_usize(dfa_trans[idx+j])/32;
-				let new_dst = Self::state_id(dfa_id, map_states[&dst]);
-				vec.push(new_dst);
+			if reachable.contains(&new_state){
+				//process the reachable state only!
+				for j in 0..16{
+					let dst = state_id_to_usize(dfa_trans[idx+j])/32;
+					let new_dst = Self::state_id(dfa_id, map_states[&dst]);
+					vec.push(new_dst);
+				}
+				if hash_trans.contains_key(&new_state){
+					panic!("ERROR already hash state: {} for i: {}", new_state, i);
+				}
+				hash_trans.insert(new_state, vec);
 			}
-			if hash_trans.contains_key(&new_state){
-				panic!("ERROR already hash state: {} for i: {}", new_state, i);
-			}
-			hash_trans.insert(new_state, vec);
 		}
 		let state0 = Self::state_id(dfa_id, map_states[&0]);
 		hash_trans.insert(state0, vec![state0; 16]); //loop to dead state itself
 
 		//3. if b-ignore case update the transition table
 		//assumption: each alpha_numeric char is located at EVEN pos!
+		//NOTE - the followig code are incorrect. 
+		//In production mode, this part will not be reached
+		//in new_adv(..) set the b_old to FALSE! to avoid enter this chunk.
 		let init_state =  Self::state_id(dfa_id, map_states[&dfa_init]);
 		if b_case_ignore{
 			for s in &vecu8{
@@ -781,8 +790,8 @@ mod tests_hex_acdfa{
 				let vec_word = dfa.outputs.get(&f).unwrap();
 				let wid = dfa.pattern_to_id.get(&w).unwrap();
 				let word2 = &dfa.patterns[*wid];
-				assert!(vec_word.contains(wid));
-				assert!(word2==&w);
+				assert!(vec_word.contains(wid), "vec_word: {:#?} not containing: {}", vec_word, wid);
+				assert!(word2==&w, "word2: {} != w: {}", word2, w);
 			}
 		}
 	}
@@ -866,6 +875,18 @@ mod tests_hex_acdfa{
 			&vec!["123", "1234"], "012a123a123a6", false);
 		test_one_case(&vec!["0123456789abcdef1", "123", "1234", "345"],
 			&vec!["123", "1234"], "012a123a12346", true);
+		test_one_case(&vec!["0123456789abcdef1", "6162", "6263", "6364"],
+			&vec!["6162", "6263", "6364"], "aa61626364bb", true);
+		test_one_case(&vec!["0123456789abcdef1", "6162", "6263", "6364"],
+			&vec!["6364"], "aa61426364bb", true);
+		test_one_case(&vec!["0123456789abcdef1", "616263", "6263"],
+			&vec!["616263", "6263"], "aa61626364bb", true);
+		test_one_case(&vec!["0123456789abcdef1", "616263", "6263"],
+			&vec!["6263"], "aa62626364bb", true);
+		test_one_case(&vec!["0123456789abcdef1", "616263", "6263"],
+			&vec!["6263"], "aa41626364bb", true);
+		test_one_case(&vec!["0123456789abcdef1", "616263", "6263"],
+			&vec![], "aa41624364bb", true);
 	}
 
 	#[test]

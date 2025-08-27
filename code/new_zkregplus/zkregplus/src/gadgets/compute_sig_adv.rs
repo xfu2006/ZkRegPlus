@@ -309,15 +309,22 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		vec_last_step[n-1] = vec_step[n2-1];
 		assert!(inp_subsigs[n-1]==vec_subsig[n2-1]);
 		inp_subsig_encoded[n-1]=vec_encoded[n2-1];
+		assert!(inp_subsigs.contains(&zero), 
+			"inp_subigs needs one dummy 0 entry");
 		let mut cur_idx = n-2;
+		let mut v_idx = n2-1;
 		for j in 1..n2{//from last to first
-			let i = n2-j;
-			if vec_subsig[i]!=vec_subsig[i-1]{
-				assert!(inp_subsigs[cur_idx]==vec_subsig[i-1]);
-				vec_last_step[cur_idx]=vec_step[i-1];
-				inp_subsig_encoded[cur_idx]=vec_encoded[i-1];
+			v_idx = n2-j;
+			if vec_subsig[v_idx]!=vec_subsig[v_idx-1]{
+				assert!(inp_subsigs[cur_idx]==vec_subsig[v_idx-1]);
+				vec_last_step[cur_idx]=vec_step[v_idx-1];
+				inp_subsig_encoded[cur_idx]=vec_encoded[v_idx-1];
 				cur_idx -=1;
 			}
+			if cur_idx==0 {break;}
+		}
+		for j in 0..v_idx{//verify the rest are zero
+			assert!(vec_subsig[j].is_zero() || vec_subsig[j]==inp_subsigs[cur_idx+1]);	
 		}
 		//now set the zero entries
 		while cur_idx>0{
@@ -1824,16 +1831,19 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		for i in 1..n{
 			let b_new_row = v_sigs[i].is_neq(&v_sigs[i-1])?;
 			let i_new_row: FpVar<F> = b_new_row.into();
-			let res = &i_new_row * &(
+			let res = (&i_new_row-&one) * &(//if this is NOT new row then:
 				//(a) id_increase by one
-				&v_dnf_step[i] - &v_dnf_step[i-1]
-			) + (&i_new_row - &one) * &(
+				//ignore the case for v_sigs[i]==0
+				&(&v_dnf_step[i] - &v_dnf_step[i-1] - &one) * &v_sigs[i]
+			) + &i_new_row * &(//if this is NEW row
 				//(b) starts from 0
 				&(&r1 * &v_dnf_step[i]) + 
-				//(c) previous row equals to count
-				&(&v_dnf_step[i-1] + &one - &v_dnf_count[i-1])
+				//(c) previous row_step equals to count (for previs sig)
+				// note we added one here becaues row_step starts from 0
+				// ignore the rule when v_sigs[i-1] is zero
+				&(&(&v_dnf_step[i-1] +&one - &v_dnf_count[i-1]) * &v_sigs[i-1])
 			);
-			let res = &res * &v_sigs[i]; //ignore zero entries
+
 			check_eq(&res, &zero, "fails well-formed check")?;
 		}
 

@@ -198,6 +198,7 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		let n1 = inp_subsigs.len();
 		assert!(n>=n1, "capacity.subsigs: {} < inp_subsigs: {}. adjust DfaCapacity.subsigs", n, n1);
 		let n2 = n - n1;
+		assert!(inp_sigs.len()<=capacity.sigs, "increase capacity.sigs: {} to cover inp_sigs: {}", capacity.sigs, inp_sigs.len());
 		let zero = F::zero();
 		assert!(v_dfa_id.len()==n1 && v_dfa.len()==n1);
 		let inp_subsigs = [&inp_subsigs[..], &vec![zero;n2][..]]

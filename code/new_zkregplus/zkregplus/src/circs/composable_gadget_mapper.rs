@@ -382,6 +382,11 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 		//3. assemble the statement instance by setting its inp/oup/data/subtbl
 		let ncirc_minus_pci = ea.n_circ - ea.pc_i;
 		let zero = F::zero();
+		assert!(discharged_sigs.contains(&F::zero()),
+			"Increase discharged sig buf. needs at least one 0 dummy entry");
+		assert!(failed_sigs.contains(&F::zero()),
+			"Increase failed sig buf. needs at least one 0 dummy entry");
+
 		let mtbl_sigs = gen_m_table(&failed_sigs, &discharged_sigs);
 		let stmt = StatementInst{
 			pc_i: ea.pc_i,

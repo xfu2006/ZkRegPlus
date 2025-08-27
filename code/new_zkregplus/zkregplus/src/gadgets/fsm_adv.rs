@@ -208,7 +208,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 
 		//2. construct the projected subsig-state-pattern store and the proof
 		//for it
-		assert!(inp_subsigs.len()<=capacity.subsigs);
+		assert!(inp_subsigs.len()<=capacity.subsigs, "inp_subsigs.len: {}, capacity.subsigs: {}", inp_subsigs.len(), capacity.subsigs);
 		let inp_subsigs = vec![inp_subsigs.clone(), vec![F::zero(); 
 			capacity.subsigs-inp_subsigs.len()]].concat();
 		let proj_store_combo = Self::gen_proj_store_combo(&inp_subsigs, 

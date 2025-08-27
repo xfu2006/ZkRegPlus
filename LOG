@@ -19447,7 +19447,7 @@ Goal 3. try to identify the error in translation
 	[c] dump the new found table
 
 Monday 08/25/2025
-LOC (data): 9564 
+LOC (data): 9564  -> 9658 (+94)
 Goal 1. continue to check the translation of transition table
 	[a] inspect code
 	[b] draw the diagram
@@ -19478,19 +19478,102 @@ Goal 4. improve the unit testing for igc first.
 		-> test_state_id
 		-> test_simple_hex_dfa1 and test_simple_hex_dfa_ignore_case
 			are pretty similar.
+	[b] expand the test cases for igc
+	[c] expand the test cases for cs tests
+
+Goal 5. improve old case by pruning by 
+	[a] add next state
+	[b] fixed bug /32 problem
+	[c] check how much can be saved 6723.1
+		-> not much 40 out of 43 states. 
 	[b] add more test cases
 	[c] remove debug statements.
 	[b] dump the infok
 
---- TODO -- continue to check the translation table.
-	[b] there should be one accept state.
+Goal 6. regression testing see new alg impact
+	[a] discharge stats -> still good. great news.
+	[b] it looks like reachable states does not save much
+	[b] old lkup size:
+		271773445 -> 268064698  (now 255.6M)
+			just need to cut 1.5M now.
 
--- TODO -- use the imm_state info to build the transitions.
-				
+Tuesday 08/25/2025
+LOC (circ):  2502
+LOC (gadget): 14352
+LOC (data): 9662
+Goal 1. Debug DFA_cs, err 735 
+	[a] check if replace 3 with 4 what happens
+		if ithas only cp_cs_igc it works
+	[b] fsm.rs:250
+	[c] found better approach -> dfa test stuck
+
+Goal 2. debug set_vec_automaton(cfg)
+	[a] clamav: gen_vec_automaton
+	[b] hex_hir_to_dfa
+
+Goal 3. regression testing
+	[a] hex-acdfa
+	[b] pcre
+	[c] clamav
+	[d] clamdb
+	[e] solved it's just converting to DFA too costly.
+
+Goal 4. go back to check DFA_cs failure problem
+	[a] 250 means didn't find transition
+	[b] technically each state should be well rounded to have
+		transitions
+		-> problem crit_igc (maybe input state not right)?
+	[c] composable_gadget_mapper: 468
+		-> cp_mapper:404
+		-> found it -> fix it
+
+Goal 5. New bug: cannot find 0 problem
+	[a] trace:
+		composable_gadget_mapper:385
+			-> gen_m_table cannot find 0
+			-> looks like needs dummy entry for buffer
+
+Goal 6. add dfa sig igc
+	[a] cannot find 5.
+	[b] it was NOT discharged by DFA igc. not even csA
+	[c] try to minize the shortcut stringA
+		-> reason dfa.config should include.
+
+Goal 7. experiement with case dfa sig capacity too small.
+	[a] capacity overflow add assert
+	[b] test again
+	[c] test all cases, working well.
+
+Wed 08/27/2025
+LOC (circ):  2502
+LOC (gadget): 14352
+LOC (data): 9662
+Goal 1. reverse test the negation of each case
+	[a] cp_cs fail, adjust the size of capacity of sigs, subsigs, and
+		average subsigs per trace
+	[b] index out of boundissue
+	[c] try to understand the issue
+		[c1] read existing code
+			-> vec_subsig is the column subsig from step_queue
+			-> it looks like to try to collect the last step from
+				every subsig
+		[c2] fix the loop
+			-> DONE
+		[c3] check result -> fixed
+	[d] another bug: failed well-formed check
+		[d1] trace: compute_sig_adv:1845 -> check_eq
+		[d2] dump value 6101: -> fixed
+		[d3] regression test
+	[e] conclusion: it's eventually discharged as sed
+		-> verified it's reported in the second segement
+		-> remove DEBUG USE 1001, 2002, 200, 202, 6102, 6200.3, 6011,
+			6012
+	[f] try igc case: add a fail case -> GOOD
+
+Goal 2. play with sed sigs and make them fail.
+--- TODO2--- read the existing driver code and think about improvement.
 
 
-		
---- TODO ---- make sure no DEAD LOOP in both versions of ACDFA
 	
 
 

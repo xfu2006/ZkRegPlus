@@ -1,11 +1,18 @@
-(1) shpw cp_cs and cp_igc works -> Win.Alphabet.SAMPLE1
-(2) show sed_cs and sed_cp works (cp not working)
-	sed_cs: because the distance between Aaaa and bbbbc is 6 (not 4)
-	sed_igc: because aaaaa and bbbbc distance is 6 (not 4) 
-(3) DFA_cs: it falls into DFA entry because pattern too short.
-	it is discharged because distance between 9 and 7 is not 6
-(4) DFA_igc: same for 'X' and 'y'
-	note: 'x' is
+(1) cp_cs and cp_igc -> will not show up in fail list of any
+	because their critical words did not show up.
+(2) sed_cs discharged: 
+	because the distance between Aaaa and bbbbc is 6 (not 4) nibbles
+	(i.e., the distance is three 8-bit chars, not two chars)
+(3)	sed_igc discharged: 
+	because aaaaa and bbbbc distance is 6 (not 4) 
+(4) DFA_cs: 
+	it falls into DFA entry because pattern too short.
+	it is discharged because distance between 9 and 7 is not 6 nibbles.
+	It will show up in the fail list of SED and CP, but then discharged
+	by DFA.
+(5) DFA_igc:
+	it fails because it requires 6 nibbles between ignore case
+	'x' and 'y' (but there are 8) 
 
 
 The word fails DFA approach because "9" and "7" distance is 5 instead of 6

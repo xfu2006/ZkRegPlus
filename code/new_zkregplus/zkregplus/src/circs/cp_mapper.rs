@@ -362,7 +362,11 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 
 		//2. build the capaicty and advice
 		let capacity = &self.capacity;
-		let init_state = F::from(self.clamdb.dfa_crit.init_state as u32);
+		let init_state = if !self.b_igc {
+			F::from(self.clamdb.dfa_crit.init_state as u32)
+		}else{
+			F::from(self.clamdb.dfa_crit_igc.init_state as u32)
+		};
 		//note inp_state if init, is adjusted by one
 		//for subsequent cases, output are already adjusted by 1.
 		let inp_state = prev_adv.as_ref().map_or(init_state+one, |adv|{
