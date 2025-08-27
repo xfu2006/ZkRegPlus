@@ -7,7 +7,8 @@
 	because aaaaa and bbbbc distance is 6 (not 4) 
 (4) DFA_cs: 
 	it falls into DFA entry because pattern too short.
-	it is discharged because distance between 9 and 7 is not 6 nibbles.
+	it is discharged because distance between 9 and 7 is not 6 nibbles 
+	(but 8 nibbles).
 	It will show up in the fail list of SED and CP, but then discharged
 	by DFA.
 (5) DFA_igc:

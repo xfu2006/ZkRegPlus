@@ -19571,6 +19571,13 @@ Goal 1. reverse test the negation of each case
 	[f] try igc case: add a fail case -> GOOD
 
 Goal 2. play with sed sigs and make them fail.
+	[a] fail sed cs -> passed
+	[b] fail sed igc -> passed
+	[c] recover all
+
+Goal 3. DFA approach
+	[a] fail DFA_cs
+	[b] fail DFA_igc
 --- TODO2--- read the existing driver code and think about improvement.
 
 
