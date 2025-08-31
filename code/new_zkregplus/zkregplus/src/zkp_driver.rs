@@ -116,9 +116,155 @@ fn load_files<F:PrimeField>(list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavA
 	(final_data, vec_word_info)
 }
 
+
+/// build the circuits. Notice that we keep the legacy layered circuit
+/// model (see driver.rs in foldpot module). However, we make the
+/// simplication that 
+/// *** EACH LAYER has ONE CIRC ***
+/// the reason is that we need to avoid complex calculation of capacity
+///   to satisfy the requirement that inp_buf = oup_buf for each circuit.
+/// The layers of circuit as onstructed as following: each layer
+/// has 1 circuit. These layers are organized as several
+///    categories, and each category has a group of circuits
+///    with different capacities.
+/// e.g., the following is a structure of 3 categories where category 
+/// (1) [cp, sed] and (2) [cp, sed, dfa_1], (3) [cp, sed, dfa_4]
+/// where for (3), the number of DFAs is 4.
+/// To reduce the number of circs needed which impacts final decider
+/// circuit, we assume the SAME word chunk length for all the
+/// circuits. Thus for circs in the SAME category, they differ
+/// in the capacity of internal buffer.
+///
+/// When we increase capacities, we do this in two levels:
+/// level1: increase subsigs, sigs supported, and level2:
+/// increase the other internal buffer capacities.
+/// Thus inside each category, we have a 2d loop to increase level
+/// 1 and level2 respectively.
+///
+/// Return: 2d layer of circs, but each layer has 1 circ.
+/// It's arranged from low cost to high cost so that the first
+/// circ satisfying a certain capacity will be the best one.
+#[allow(dead_code)]
+fn build_circs_adv<F,C,CS>(
+	poseidon_config: &PoseidonConfig<F>,
+	total_word_n: usize, //sum of word length, each word is packed,
+						//e.g., every 62 nibbles count as 1 in length (packed)
+						//e.g., two words each 124 bytes means total_word_n
+						// is 8 because each word has 248 nibbles, and
+						// they are packed into 4 Fr each (containing 62 
+						// nibbles)
+	chunk_len: usize, //it's also counted in packed length (62 nibbles per
+					  //1 char in word).
+					  //e.g., given LEGS = 62 for bn254, it means 
+					  //chunk length is 62 nibbles * 4-bits.
+					  //e.g., chunk_len:1024 means 31kb actual chunk length.
+					  //for 128kb chunk length it's chunk_len is 4130.
+	lkup_len: usize,
+	db: Rc<ClamavDB<F>>,
+	init_cp_capacity: &CpCapacity,
+	init_sed_capacity: &SedCapacity,
+	init_dfa_capacity: &DfaCapacity,
+	num_level1: usize, //level1 * level2 will be num of circs PER category
+	num_level2: usize,
+	num_category: usize, //cat0 has no DFA. All others differs in dfa num
+)->Vec<Vec<FC<F,C,CS>>>
+where C: CurveGroup<ScalarField=F>,
+	  CS: CommitmentScheme<C,false>,
+	  F: PrimeField + Absorb,
+{
+	//1. check the seed capacity consistency with the info
+	assert!(init_cp_capacity.max_word_len == chunk_len);
+	assert!(init_sed_capacity.wea_capacity().max_word_len == chunk_len);
+	assert!(init_dfa_capacity.wea_capacity().max_word_len == chunk_len);
+
+	//2. given fixed chunk_len and total_word_len computes the
+	//lkup_share needed to build up circuit
+	let avg_lk_wd = lkup_len/total_word_n + 1;
+	let avg_lk_wd = if avg_lk_wd<1 {1} else {avg_lk_wd};
+	let lk_share = chunk_len*avg_lk_wd;
+
+	//3. build up each category
+	let mut layer_circs = vec![];
+	for cat_id in 0..num_category{
+		let mut cp_cap_l1 = init_cp_capacity.clone();
+		let mut sed_cap_l1 = init_sed_capacity.clone();
+		let mut dfa_cap_l1 = init_dfa_capacity.clone();
+		for l1 in 0..num_level1{
+			let mut cp_cap_l2 = cp_cap_l1.clone();
+			let mut sed_cap_l2 = sed_cap_l1.clone();
+			let mut dfa_cap_l2 = dfa_cap_l1.clone();
+			for l2 in 0..num_level2{
+				//3.1 create cp (cs and igc)
+				let cp_cs = CpComponentMapper::<F,LK<F>>::new(
+					cp_cap_l2.clone(), db.clone(), false);
+				let cp_igc = CpComponentMapper::<F,LK<F>>::new(
+					cp_cap_l2.clone(), db.clone(), true);
+
+				//3.2 create sed (it has both cs and igc built in)
+				let sed = SedComponentMapper::<F,LK<F>>::new(
+					sed_cap_l2.clone(), db.clone());
+
+				//3.3 dfa is optional depending on cat_dfa_num is 0
+				let dfa = if cat_id == 0 { None }else{
+					Some(
+						DfaComponentMapper::<F,LK<F>>::new(dfa_cap_l2.clone(), 
+							db.clone())
+					)
+				};
+
+				//3.4 construct the circuit
+				let hybrid_cgm1 =if cat_id ==0{
+					CompositeGadgetMapper::<F,LK<F>>::new("hybrid_cgm1",
+						vec![
+							Rc::new(RefCell::new(cp_cs)),
+							Rc::new(RefCell::new(cp_igc)),
+							Rc::new(RefCell::new(sed)),
+						]
+					)
+				}else{//including the dfa
+					CompositeGadgetMapper::<F,LK<F>>::new("hybrid_cgm1",
+						vec![
+							Rc::new(RefCell::new(cp_cs)),
+							Rc::new(RefCell::new(cp_igc)),
+							Rc::new(RefCell::new(sed)),
+							Rc::new(RefCell::new(dfa.unwrap())),
+						]
+					)
+				};
+			
+				let circ= SigmaIR1CS_Inst::<F,C,CS,LK<F>,
+				CompositeGadgetMapper<F,LK<F>> ,false> ::new_adv(
+					format!("circ_cat_{}_l1_{}_l2_{}", cat_id, l1, l2), 
+					poseidon_config.clone(), 
+					Rc::new(RefCell::new(hybrid_cgm1)), 
+					false, //b_full_mode (whether supporting cyclepair - no for 
+							//regular circuit) 
+					lk_share
+				).expect("error building circ");
+				layer_circs.push( vec![circ] ); //legacy to keep 2d layer
+
+				//3.5 update the capacities.
+				cp_cap_l2 = cp_cap_l2.increased_copy(2); //increase by level 2
+				sed_cap_l2 = sed_cap_l2.increased_copy(2); 
+				dfa_cap_l2 = dfa_cap_l2.increased_copy(2); 
+			}//for loop level2
+			//update level 1 capacity
+			cp_cap_l1 = cp_cap_l1.increased_copy(1); //increase by level 1
+			sed_cap_l1 = sed_cap_l1.increased_copy(1); 
+			if cat_id>0{//the first capacity starts from the 2nd
+				dfa_cap_l1 = dfa_cap_l1.increased_copy(1); 
+			}
+		}//for loop level 1
+	}//for each cateogory
+
+	//return
+	layer_circs
+}
+
 /// build the list of circs. Note: for convenience of implementation,
 /// we put the circ config hard coded in this function. To change
 /// config, modify the local variables at the beginning of this function.
+#[allow(dead_code)]
 fn build_circs<F,C,CS>(poseidon_config: &PoseidonConfig<F>, total_word_n: usize, lkup_len: usize, db: Rc<ClamavDB<F>> ) 
 ->Vec<Vec<FC<F,C,CS>>>
 where C: CurveGroup<ScalarField=F>,
@@ -351,8 +497,8 @@ pub mod tests_zkp_driver{
 	type S = Groth16<Bn254>;
 	type C2G2 = ProjectiveG2;
 
-
-	fn small_data<F:PrimeField>(){
+	/// small data: each cat of signatures got one sample, one 2-Fr word
+	fn old_small_data<F:PrimeField>(){
 		let b_read_cache = false;
 		let b_write_cache = true;
 		//let set1 = "data/debug/small_data_set/config";  //for sed

@@ -66,6 +66,9 @@ pub struct DfaCapacity{
 	/// the number of subsigs to suport
 	pub subsigs: usize,
 
+	/// max word len (chunk processed) in packed nibbles.
+	pub max_word_len: usize,
+
 	// will contain capacities for word_extract_adv, fsm_adv ...
 	pub comp_capacities: Vec<Rc<dyn Capacity>>,
 }
@@ -98,6 +101,27 @@ pub struct DfaComponentMapper<F:PrimeField, LK: LookupTableTwoCol<F>>{
 
 
 impl DfaCapacity{
+	/// level 1 increase sigs
+	/// level 2 increase subsigs
+	pub fn increased_copy(&self, level: usize)->Self{
+		assert!(level==1 || level==2);
+		if level==1{
+			Self::new(
+				self.max_word_len,
+				self.sigs + 1,
+				((self.subsigs as f32 / self.sigs as f32) * 
+					((1+self.sigs) as f32)) as usize
+				
+			)
+		}else{
+			Self::new(
+				self.max_word_len,
+				self.sigs,
+				self.subsigs + 1
+			)
+		}
+	}
+
 	pub fn new(
 		max_word_len: usize, 
 		sigs: usize, 
@@ -112,7 +136,7 @@ impl DfaCapacity{
 			Rc::new(dfa_capacity),
 		];
 
-		Self{sigs, subsigs, comp_capacities}
+		Self{max_word_len, sigs, subsigs, comp_capacities}
 	}
 
 	/// syntax sugar for returning a reference to its wea_capacity
@@ -152,6 +176,7 @@ impl Capacity for DfaCapacity{
 		Rc::new(DfaCapacity{
 			sigs: self.sigs,
 			subsigs: self.subsigs,
+			max_word_len: self.max_word_len,
 			comp_capacities: self.comp_capacities.clone()
 		})
 	}

@@ -1090,6 +1090,7 @@ where
 	// here we assume that each circuit can always handle
 	// words of zeros, and set its dummy_statement for preprocess()
 	// to build keys.
+	let mut t1 = Timer::new("main", 0);
 	let mut vec_circ = vec_circ.clone();
 	let n_circ = vec_circ.iter().map(|row| row.len()).sum::<usize>();
 	let mut id = 0;
@@ -1144,13 +1145,13 @@ where
 			id += 1;
 		}
 	}
+	t1.prt("STEP 0: building dummy stmt for all circs");
 
 
 	//1. create instance
 	let mut rng = rand::rngs::OsRng;
 	let poseidon_config = poseidon_canonical_config::<C1::ScalarField>();
 	let _n_circs = vec_circ.len();
-	let mut t1 = Timer::new("main", 0);
 	let mut t_all = Timer::new("all", 0);
 
 	//2. create the driver1 for the 1st phase

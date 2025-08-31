@@ -19578,8 +19578,75 @@ Goal 2. play with sed sigs and make them fail.
 Goal 3. DFA approach
 	[a] fail DFA_cs
 	[b] fail DFA_igc
---- TODO2--- read the existing driver code and think about improvement.
+	-> ALL done here
 
+Goal 4. Check the source code of driver and see what we can improve
+	[a] can consider timer to keep track of all pieces and accumulated
+		time. print should support level of indentation.
+	[b] stage 0: build dummy statement for all circs
+
+
+Thursday 08/28/2025
+Goal 1. Think about zkp second function for medium scale test
+	[a] read current code
+		-> build_circ is currently hard coded
+		-> then it calls foldpot_main
+	[b] design improvement of build circ
+		basic circ: cp + sed + dfa (0)
+			with some basic config for cp and sed and dfa
+			we then increase the capacity
+	[c] small data provides the sample cp, sed, dfa config
+		and call zkp_driver, med data provides the
+
+Goal 2. implement the build_circ function
+	[a] prototype
+	[b] read foldpot_main function and see why circs has 2d vec
+		-> it is assuming that layers are sorted in descending
+			order of preference.
+			Inside each layer: the first one has the
+				largest capacity.
+	[c] gen_nd_advice workflow
+		[c1] unit test: requiring inp_size = oup_size for each
+			circ in each layer -> this is actually
+				hard to meet for the current design,
+				so maybe just one layer one circ
+		[c2] looks like the model of gen_nd_advice needs to be
+			simplified. do a new_version of function first and
+			then keep the old but do the same interface.
+
+Friday 08/29/2025
+LOC (zkp): 418 -> 529 (+110)
+LOC (sonobe): 18463
+
+Goal 1. continue build_circ function
+	[a] definition
+	[b] define workflow
+	[c] read about lkup_word
+		-> composite_gadget_mapper needs lkup share
+	[d] do the lkup share
+	[e] create capacities
+	[c] create components
+	[d] create circuit -> DONE
+
+Goal 2. implement increase() for related capacities
+	[a] cp_capacity -> DONE
+	[b] sed_capacity -> two levels
+		-> first level changes, and then level2 change intenral bufs
+	[c] sed increased capacity
+	[d] chagne loop structure
+	[d] cp increased
+	[e] dfa increase
+
+Sunday 08/31/2025
+Goal 1. implement the small data using the new build_circs function
+	[a] 
+-- TODO: 
+(1) establish a zkp second function for mid_test, with
+longer words. 
+(2) Then debug through driver step by step, remove debug info
+	and refine timing report
+(3) decide if need to save advice (is it memory costly)?
+--
 
 	
 

@@ -84,6 +84,20 @@ pub struct CpCapacity{
 	pub sig_buf_capacity: usize,
 }
 
+impl CpCapacity{
+	/// increase capacity, here we keep the same max_word_len
+	/// but double the rest
+	pub fn increased_copy(&mut self, level: usize)->Self{
+		assert!(level==2, "only accepting level 2");	
+		Self{
+			max_word_len: self.max_word_len,
+			final_states_len: self.final_states_len *2,
+			join_buf_capacity: self.join_buf_capacity *2,
+			sig_buf_capacity: self.sig_buf_capacity *2,
+		}
+	}
+}
+
 impl Capacity for CpCapacity{
 	/// Self represents the capacity of the circuit, other
 	/// represents the capacity requirement of a discharge proof (NdAdvice)

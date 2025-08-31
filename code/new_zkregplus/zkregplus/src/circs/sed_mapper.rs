@@ -91,6 +91,15 @@ use std::any::Any;
 pub struct SedCapacity{
 	// will contain capacities for word_extract_adv, fsm_adv ...
 	pub comp_capacities: Vec<Rc<dyn Capacity>>,
+
+	pub	max_word_len: usize, 
+	pub	acdfa_state_part_bits: usize, 
+	pub	subsigs: usize,
+	pub	avg_pats_per_subsig: usize,
+	pub	avg_active_pats_per_subsig: usize,
+	pub	perc_pats_in_trace: usize,
+	pub	sigs_sed: usize, //for sed approach to discharge
+	pub	perc_comp_subsigs: usize,
 }
 
 /// Represent the structure of Input
@@ -131,6 +140,7 @@ pub struct SedComponentMapper<F:PrimeField, LK: LookupTableTwoCol<F>>{
 // --------------------------------------------------------
 
 
+
 impl SedCapacity{
 	pub fn new(
 		max_word_len: usize, 
@@ -156,7 +166,38 @@ impl SedCapacity{
 			Rc::new(csa_capacity),
 		];
 
-		Self{comp_capacities}
+		Self{comp_capacities, max_word_len, acdfa_state_part_bits,
+			subsigs, avg_pats_per_subsig, avg_active_pats_per_subsig,
+			perc_pats_in_trace, sigs_sed, perc_comp_subsigs}
+	}
+
+	/// level1: double the subsig and sig size
+	/// level2: double the internal buf size
+	pub fn increased_copy(&self, level: usize)->Self{
+		assert!(level==1 || level==2);
+		if level==1{//incrase subsigs and sigs
+			Self::new(
+				self.max_word_len,
+				self.acdfa_state_part_bits,
+				self.subsigs * 2,
+				self.avg_pats_per_subsig,
+				self.avg_active_pats_per_subsig,
+				self.perc_pats_in_trace,
+				self.sigs_sed*2,
+				self.perc_comp_subsigs
+			)
+		}else{
+			Self::new(
+				self.max_word_len,
+				self.acdfa_state_part_bits,
+				self.subsigs,
+				self.avg_pats_per_subsig*2,
+				self.avg_active_pats_per_subsig*2,
+				self.perc_pats_in_trace*2,
+				self.sigs_sed,
+				self.perc_comp_subsigs*2
+			)
+		}
 	}
 
 	/// syntax sugar for returning a reference to its wea_capacity
@@ -203,7 +244,15 @@ impl Capacity for SedCapacity{
 	/// (which cause trouble why use dyn Capacity in Rc),
 	fn clone(&self) -> Rc<dyn Capacity>{
 		Rc::new(SedCapacity{
-			comp_capacities: self.comp_capacities.clone()
+			comp_capacities: self.comp_capacities.clone(),
+			max_word_len: self.max_word_len,
+			acdfa_state_part_bits: self.acdfa_state_part_bits,
+			subsigs: self.subsigs,
+			avg_pats_per_subsig: self.avg_pats_per_subsig,
+			avg_active_pats_per_subsig: self.avg_active_pats_per_subsig,
+			perc_pats_in_trace: self.perc_pats_in_trace,
+			sigs_sed: self.sigs_sed,
+			perc_comp_subsigs: self.perc_comp_subsigs,
 		})
 	}
 
