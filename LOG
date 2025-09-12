@@ -19637,16 +19637,366 @@ Goal 2. implement increase() for related capacities
 	[d] cp increased
 	[e] dfa increase
 
-Sunday 08/31/2025
+Sunday 08/31/202
+LOC (zkp): 538
 Goal 1. implement the small data using the new build_circs function
-	[a] 
--- TODO: 
-(1) establish a zkp second function for mid_test, with
+	[a] imporve the build_circ_adv function
+	[b] propgate change
+	[c] regression test
+		-> only level 2
+		-> dfa_missing ->fixedj
+
+Goal 2: establish a zkp second function for mid_test, with
 longer words. 
-(2) Then debug through driver step by step, remove debug info
-	and refine timing report
-(3) decide if need to save advice (is it memory costly)?
---
+	[a] create dfa
+	[b] fix init cap
+	[c] adjust perc_pat_in_trace number
+	[d] something is very slow: after DEBUG USE 6666 and DEBUG USE 301
+		it also stack overflow!
+		-> it's in sigma_ir1cs stuck at CS::setup
+		it's processing 7M circuit and it's CPU usage is 100%.
+		---> also the design of input has frequency of patterns
+			appearning too high compared with real data.
+		----> it's taking more than 5 minutes! for 7M why? even 100%
+		is too slow. -> release mode: 3 minutes. still very slow
+	[e] gdb experiment. instructions
+		========= GDB instructions
+		gdb ../../target/release/deps/zkreg_main_xxx
+		run --test zkp_driver::tests_zkp_driver::test_zkreg_main  --nocapture
+		========
+		this allows quickly identify slow point
+			-> the blow of stack overflow is caused by
+			assigned_value -> eval_lc
+			which is eventually called by verify_logup_inverse.
+			Yes, gdb is the helper.
+
+Monday 09/01/2025
+LOC (sonobe): 18468
+Goal 1. solve fix CS::setup too slow problem
+	[a] read Pedersen::CS
+	[b] seems no need because it's only used to generate grp_CMF
+		-> maybe an Arc does the job.
+	[c] check the new time
+	[d] apply rayon -> improved to 3 seconds, which is fine now.
+
+Goal 2. Debug the recursion stack overflow problem
+	[a] insert dump statements into verify_logup_inverse
+		-> solved the problem.
+	[b] remove the debugging msg
+
+Goal 3. yet another stack overflow case
+	[a] there is a slow stage again, but not sure which one caused it
+	[b] circuits_super::generate_constraints called
+		by driver::new
+		-> stuck on step 200915.
+	[c] add prints of num constraints
+	[d] can't figure out the line number in release mode gdb in debug mode
+		-> ok now
+	[e] it loks like it breaks right after SigmaIR1CS::generate_step_constraints
+	[f] improve the code of reporting see if it can capture
+		early in sigma_ir1cs code
+	[d] dump the number of constraints
+	[e] note that lkup size is 1.4M which leads to 40M cost!
+	first of all, lkup size should be the same when the word size
+		is smaller! -> leave the addressing of lkup size err later
+		-> deal with stackover flow first
+		-> fix check_logup() function
+		-> remove debug msg
+	[f] fixed the stack overflow bug (again it's a long loop in 
+		check_logup(), break the loop).
+
+Goal 4. read the existing driver
+	[a] pass_one
+
+
+Tuesday 09/02/2025
+LOC (sonobe): 18468 -> 18638 (+170)
+Goal 1. debug which slows down after aug_f 
+	[a] it's stuck in get_r1cs_from_cs
+	[b] stuck on ConstraintSystem finalize
+	-> temporarily disable constraint system finalize and see
+	if that's helping -> noit's complaining no symbolic LCs
+	-> very very flow cs.finalize
+	-> try change ark_relations default features to false 
+
+Goal 2. design advanced timer
+	[a] include attributes: name, cols, col_desc, data_col.
+	[b] start
+	[c] stop -> DONE
+	[d] prt_adv -> DONE
+
+Goal 3. read folding driver framework pass1
+	[a] doc -> DONE
+	[b] batch processor gen_claims 
+
+Wed 09/03/2025
+LOC (sonobe): 18638
+Goal 1. Continue to explore why finalize cs is SO slow. Need to read
+	the r1cs ConstraintSystem how it handles linear combination.
+	[a] read finalize
+	[b] most likely it's calling inlining -> verify
+	-> file is located at:
+	/home/xiang/.cargo/registry/src/index.crates.io-6f17d22bba15001f/ark-relations-0.4.0/src/r1cs/constraint_system.rs
+	-> in dependency add patch.io to force loading local ark-relations
+	-> put some idx 
+	-> the compilation is not quite reliable -> needs to go to sonobe to
+		clean build
+	-> what is lc_map -> whenever lc is created, it gets a new
+		index and inserted into the b-tree.
+		if we build large loop of long linear terms like
+		hab'22 check, there might be problems.
+	-> technically anywhere which has the break lc trick should be reviewed.
+
+Goal 2. still need to understand the trick of library importing
+	[a] put a patch.io for ark-relations (but for relation v0.4.0)
+		also in new_zkregpus Cargo.toml and see how it works.
+		-> still not triggering, strange
+	[b] comment out finalize and see where it breaks. -> still tries
+		to refer to the downloaded version. 
+	[c] put it in new_zkregplus/Cargo.toml
+
+Goal 3. now instrument code in dependency and analyze the statistics
+	[a] almost 1 sec for 1000 items
+	[b] lc map has 172M entries for 45M constraints!
+	[c] strangely we couldn't identify the itemized cost of
+		these operations.
+		Sometimes 1M items takes as small as 3 seconds, but sometimes
+		takes 100 seconds.
+		compactify() is the main cost.
+
+Thursday 09/04/2025
+Goal 1. study the code of compactify
+	[a] read code -> it's basically merging the coefs
+	[b] analyze its performance of items >100k
+		-> no lc items of 100k but there are
+			1M items costing 60 seconds
+		-> out of around 40 samples, 
+			no reduction at all!
+			avg takes: 0.4ms
+		-> what about simply comment it out?
+		-> it cuts about half. What about regression test?
+	[c] regression test what about comment out?
+		-> saves about half the time
+		-> LcIndex is usize
+		-> lc_map is a btree map from usize to LinearCombination
+		-> LinearCombination is a vector of (coef, var)
+		-> a_constraints: is a vector of LinearCombinatio
+			-> given a long chain of add (it creates a lot of
+				temp vars, and it probably creates square cost
+				for storing partial linear combinations again and again.
+				but this needs to verify by reading the code
+
+Goal 2. read the entire ark-relations code
+	[a] mod.rs
+		-> var can be a symbolicLc
+		-> var comparison when symbolicLc calls LinearCombination compare
+	[b] trace.rs -> didn't read used for debugging purpose
+	[c] error.rs -> err defs
+	[d] impl_lc.rs
+		basically implemented add, sub and mul by constant (not var)
+	[e] constraint_system.rs
+		new_lc creates a symbolic var
+		-> this should be covering
+			z = x + a*y
+		-> but what about z = x * y? It's not a linear combination
+			this is a constraint actually.
+		-> enforce constraints: a_constraints: each row has one linear
+			combination
+	[f] lc_num_times_used -> this one is SLOW!
+		it checks EVERY lc and see if the target is included!
+		That's n^2! 
+		for large constraints 170M entries this costs:
+	[g] transform_lc
+		for a symbolic var, it retrieves
+			the fully extracted lc -> 3.5 sec not relaly a big deal
+		-> it replaces every symbolic var with the corresponding lc
+		-> so if there is a long chain that
+			x_i1 = x_i + x_i-1 * a_i-1
+			then we'll have n^2 lc items stored.
+			So in building this, we should actually build one
+			lc instead |lc| items which blows up memory usage.
+		-> it shows the consecutive pattern of building a lot repetitive
+			lcs.
+		-> potential ways to parallelize this?
+
+Friday 09/05/2025
+Goal 1. planning
+	[a] parallel processing or solve waste of lc first?
+	[b] maybe parallel processing, but we have to fix the
+		Arc setting of this. It might also increase RAM requirement.
+	[c] what is it's relying on previous? 
+	[d] 1 million tasks could be 100 seconds or 1 sec.
+	-> would it be beneificial to do parallel? maybe 20 times faster.
+
+Goal 2. writing
+
+Saturday 09/06/2026
+Goal 1. parallel processing of transform_lc_map first
+	[a] make a old/new version
+	[b] solve import problem
+	[c] create locks and cond vars -> ver1 needs 22 sec
+	[d] use vec -> faster 4sec
+	[e] do thread pool clone problme  -> making a copy of
+		self.lc_map creates additional 20GB ram!
+	[f] waiting on dependee
+	[g] complete implementation
+		-> parallelism is not good for the current solution
+		when it has long chains.
+	[h] data: DEBUG USE 9901: idx: 20000000, time: 128.546620577s
+Goal 2. change the chunk method
+	-> but stuck at 91M.
+	-> may need to try DAG traversal.
+	
+
+Sunday 09/07/2026
+LOC (arc-relation): 2543->2816 (+173)
+Goal 1. try 2nd chance
+	[a] add func2
+	[b] read existing code about lc_num_times
+		-> init_time: 31.9ms for 1.4M
+		-> 3sec for 170M (reasonable)
+	[c] create an array that contains dependents-> costis about twice
+		counting lc_nums
+	[d] check 1.4M entry stats
+		0 dep: 784k, 1 dep: 432k, two dep: 200k, three_dep: 258, more_dep: 375
+		If there is something like v_i+1 = v_i * v_i-1 type of 
+			constraints, it's going to slow down.
+
+Monday 09/08/2026
+LOC (ark-relation): 2816
+Goal 1. implement 2nd algorithm
+	[a] init the queue
+	[b] build the vars we need
+	[c] read producer consumer example
+	[d] set up spawn thread framework
+
+Goal 2. single thread handling
+	[a] set up b_map
+	[b] set up the processing framework
+	[c] process lc framework
+	[d] update count
+	[e] we need a data structure for releasing nodes.
+		-> declare num_unresolved_parants
+		-> for each muli-child 
+		-> inspect code again
+	[f] rest of logic of new1 -> DONE
+	[g] initial run -> it looks like it's adding
+		existing items.
+
+Goal 3. debug why it's infinie loop
+	[a] assert larger ID appended
+		-> not working
+		-> the parallelism is good though
+	[b] found that task has to be updated
+	[c] it looks like dependency works well 
+	but some threads in the loop cannot be waked up, and the
+		thread who's not waked up is not stable
+	[d] cpu usage for real data is about 300%, 2 seconds per million. 
+	[e] the last 1 million entries it spends more than 1 hour. 
+		why deadlocked?
+		-> there are deadlock
+		-> it still has deadlock problem if we remove the print statement.
+	[f] the old 1-thread version is the fastest though.
+
+Tuesday 09/09/2025
+LOC (sonobe): 18638 -> 18668 (+30)
+Goal 1.  reduce the lc chain first.
+	[a] collect existing data:
+	DEBUG USE 9999: transform_lc: time: 5.730447597s for size: 14166728 --> 6275962
+	all: FOLDPOT Entire Process: mem: 10 GB: 75.704078165s
+	[b] implement assert_ver_log in sonobe utils
+	[c] problem of getting varialbe from FpVar -> solved
+	[d] but why it did not improve at all?
+	--- DEBUG USE 9999: transform_lc: time: 5.735502263s for size: 14166770 --> 6275992
+		-> because left len and righ tlen is only 1
+		-> test the real data 172M LCs
+		-> left is 6144 and right len is 6 -> but this might be just for 
+			a small circuit
+	[e] dump the lookup share size left.
+		It is 1.6M (left), 1.6M right
+		-> it's generating 60 times for each iteration.
+		-> for small example
+		constraints increase: 70k
+		lc increase: 280k (4 per constraint). Actually the avg is ok though.
+
+Wed 09/10/2025
+LOC (sonobe): 18668
+Goal 1. in constraint system add avg and max len
+	[a] add to transform_lc
+	[b] collect data. current data for small set:
+		--- DEBUG USE 9999: transform_lc: time: 5.759721508s for size: 14166770 --> 6275992
+	 **** DEBUG USE 9999: max_lc_len: 10065, avg: 2.7086522736166647
+
+Goal 2. add a one_var
+	[a] add for left
+	now data:
+	--- DEBUG USE 9999: transform_lc: time: 5.761466698s for size: 14148775 --> 6277561
+ **** DEBUG USE 9999: max_lc_len: 259, avg: 2.7019751779393304
+	 (max lc_len is cut from 10065 to 259!)
+	[c] fix the right hand size calculation
+	[d] left_size:  3164
+		right size: 3167
+	[e] seems the right hand size calluation does not help?
+	but still there's the longest chain of 259 there must be
+	somewhere else.
+
+Goal 3. fix the assert_verify_logup in utils of sonobe
+	[a] no need for util code they already have mul
+	[b] do it for gadgets common.rs
+	[c] fix some warnings
+	[d] somehow it still does not change anything about max_lc_len
+	[e] change the frequency of adding vars 0 - >it does
+		not change so this implies that verify logup
+			type is still somewhere -> maybe somewhere in gadget code
+			or circ code but not sure
+	[f] check current setting on large case of 170M constraints
+		-> it causes overflow! which did not occur before
+		-> recover those eval() one by one
+	[g] LARGE SET works now: 98 sec for 170M -> 127M
+		mex len: 6144 (might be further improved)
+	[h] what about new alg
+		new1: takes 198 sec (which is twice expensive)
+		new2 is even slower.
+
+Goal 4. check out which skipping of eval() caused problem
+	-> now it's not a problem after recompiling-> strange!
+
+Goal 5. inspect and find out who's introducing the 128 max chain
+	[a] add function report max lc_len
+	[b] call it in step constraints
+
+Monday 09/11/2025
+Goal 1. check report max_lc_len
+	[a] it's reporting 0? check num of lc
+	[b] declare a function in ConstraintSystemRef for reporting lc
+	[c] zero issue -> fixed
+	[d] but then too big
+	-> NOT WORKING. as this is inaccurane
+
+Friday 09/12/2025
+Goal 1. refine max_lec_len
+	[a] add param to transform_lc_old
+	[b] call transform_lc_old and re-adapt
+	[c] complainint about cannot find lc_index -> fixed
+	[d] binary search on which increases chain length
+		it increases from 6821.2 to 6821.3 from 66 to 110
+		-> iverified it is introduced by one gadget
+	[e] requite all gadget to have a name for debugging
+
+Goal 2. binary search and analyze which gadget introduces long chains of 
+	linear combination
+	[a] It's the FsmAdvGadget
+	[b] narrowed down to last step of assert msg3
+	[c] verify_col_to_sorted_set
+		-> step 4
+	[d] it's calling assert_logup
+	[e] it's calling assert_verify_invserse_logup
+		-> but it's already protected!
+	[f] remove the report_max_lc_len() in cs in FsmAdvGadget
+		6921.x
+		6931.x
+		6941.x
+		6951.x
 
 	
 

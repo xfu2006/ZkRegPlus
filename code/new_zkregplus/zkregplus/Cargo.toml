@@ -21,6 +21,7 @@ ark-crypto-primitives = { version = "^0.4.0", default-features = false, features
 ark-grumpkin = {version="0.4.0", features=["r1cs"]}
 ark-poly-commit = "^0.4.0"
 ark-relations = { version = "^0.4.0", default-features = false }
+#ark-relations = {path="../dependency/ark-relations"}
 ark-r1cs-std = { version = "0.4.0", default-features = false } # this is patched at the workspace level
 ark-snark = { version = "^0.4.0"}
 ark-serialize = "^0.4.0"
@@ -54,4 +55,6 @@ ark-grumpkin = {version="0.4.0", features=["r1cs"]}
 rand = "0.8.5"
 tracing = { version = "0.1", default-features = false, features = [ "attributes" ] }
 tracing-subscriber = { version = "0.2" }
+
+
 

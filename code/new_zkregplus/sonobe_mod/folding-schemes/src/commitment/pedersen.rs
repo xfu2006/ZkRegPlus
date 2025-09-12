@@ -1,3 +1,5 @@
+use rayon::iter::{IntoParallelIterator,ParallelIterator};
+use std::ops::Mul;
 use ark_ec::CurveGroup;
 use ark_ff::Field;
 use ark_r1cs_std::{boolean::Boolean, groups::GroupOpsBounds, prelude::CurveVar};
@@ -49,9 +51,34 @@ impl<C: CurveGroup, const H: bool> CommitmentScheme<C, H> for Pedersen<C, H> {
         mut rng: impl RngCore,
         len: usize,
     ) -> Result<(Self::ProverParams, Self::VerifierParams), Error> {
-        let generators: Vec<C::Affine> = std::iter::repeat_with(|| C::Affine::rand(&mut rng))
+		//NOTE: in production set b_fast = false
+		//b_fast is INSECURE (just for speeding up unit-testing only).
+		let b_fast = true; 
+
+        let generators: Vec<C::Affine> = if b_fast{
+			let g = C::Affine::rand(&mut rng);
+			let segs = 128usize;
+			let total_len = len.next_power_of_two();
+			let r = C::ScalarField::rand(&mut rng);
+			let gs = (0..segs).into_par_iter().map(|i|{
+				let r2 = r * C::ScalarField::from(i as u64);
+				let g2 = g.mul(r2).into_affine();
+				let n2 = total_len/segs;
+				let mut gs:Vec<C::Affine> = vec![g2; n2];
+				for i in 1..n2{
+					gs[i] = (gs[i-1] + gs[i-1]).into_affine();
+				}
+
+				gs
+			}).flatten().collect::<Vec<C::Affine>>();
+
+			gs
+		}else{ 
+			std::iter::repeat_with(|| C::Affine::rand(&mut rng))
             .take(len.next_power_of_two())
-            .collect();
+            .collect()
+		};
+
         let p = Params::<C> {
             h: C::rand(&mut rng),
             generators,

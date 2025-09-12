@@ -534,26 +534,50 @@ pub fn verify_logup_inverse<F:PrimeField>(cs: ConstraintSystemRef<F>,
 	v1: &[FpVar<F>], v2: &[FpVar<F>], m_tbl: &[FpVar<F>])
 	->Result<(), SynthesisError>{
 	assert!(v2.len()==m_tbl.len());
+	let one_var = FpVar::<F>::new_constant(cs.clone(), F::one())?; 
+	let one_wit_var = FpVar::<F>::new_witness(cs.clone(), 
+		||Ok(F::one())).unwrap();
+	one_wit_var.enforce_equal(&one_var)?; 
+
+
 	let mut sum_left = FpVar::<F>::new_constant(cs.clone(), F::zero())?;
-	for i in 0..v1.len(){ sum_left += &v1[i]; }
+	for i in 0..v1.len(){ 
+		sum_left += &v1[i]; 
+		if i%64==0{ //this is to prevent code calling assigned_value() chain
+			//too long which can cause stack overflow in recursion
+			//COMMENT OUT LATER IF DOES NOT HELP
+			let value = sum_left.value();
+			assert!(value.is_ok());
+			sum_left = &sum_left * &one_wit_var; //to break the long chain of
+							//linear combination
+		}
+	}
 
 	let mut sum_right = FpVar::<F>::new_constant(cs.clone(), F::zero())?;
 	for i in 0..v2.len(){ 
 		sum_right+= &(&v2[i] * &m_tbl[i]);
-		if i%128==0{//this is to prevent the cfg(test) code calling value
+		if i%64==0{//this is to prevent the cfg(test) code calling value
 			//for chain too long, which overflows stack when it's doing 
 			//recursion.
-			let value= sum_right.value();
-			assert!(value.is_ok());
+			//COMMENT OUT LATER IF DOES NOT HELP
+			//let value= sum_right.value();
+			//assert!(value.is_ok());
+			sum_right = &sum_right * &one_wit_var; //to break long chain
+				//of lc chain. ... Note: this may not be needed.
 		}
 	}
+	sum_right = &sum_right * &one_wit_var; //prevents which assert
+		//sum_left == sum_right, the two contains concat and generates
+		//2x long linear combination chain.
 
 	sum_left.enforce_equal(&sum_right)?;
+		
 	#[cfg(test)]{
 		if sum_left.value().is_ok(){ 
 			assert!(sum_left.value().unwrap()==sum_right.value().unwrap()); 
 		}
 	}
+
 	Ok( () )
 }
 

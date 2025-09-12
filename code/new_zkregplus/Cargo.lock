@@ -690,11 +690,10 @@ dependencies = [
 [[package]]
 name = "ark-relations"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00796b6efc05a3f48225e59cb6a2cda78881e7c390872d5786aaf112f31fb4f0"
 dependencies = [
  "ark-ff 0.4.1",
  "ark-std 0.4.0",
+ "rayon",
  "tracing",
  "tracing-subscriber 0.2.25",
 ]

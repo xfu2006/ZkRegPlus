@@ -288,6 +288,7 @@ where
 	  )->Self{
 
 	  	//1. set up the parameters
+		println!("DEBUG USE 8808.1: entering driver::new");
 		let mut t2 = Timer::new("Driver::new", 1);
         let _start = Instant::now();
 		let _b_debug = true;
@@ -729,6 +730,7 @@ where
 		vec_advice: &Vec<Vec<Rc<dyn NdAdvice>>>)
 	-> (Vec<StatementExtraInfo<C1::ScalarField>>, C1::ScalarField){
 		//1. prep the data
+		let mut timer = Timer::new("pass_two", 0);
 		let n_steps = vea.len();
 		let mut v_res = vec![];
 		let zero = C1::ScalarField::zero();
@@ -742,9 +744,10 @@ where
 		let _n_circ = field_to_usize(&vea[0].n_circ);
 		let mut hash_cmF= C1::ScalarField::zero();
 		let (ch, rc) = (zero, zero);
+		timer.prt("pass_two: step 0: init");
 
 		//2. create nova1
-		//println!("DEBUG USE 5017.1: lk_len: {}, shsare_size: {}, n_steps: {}", lk_len, share_size, n_steps);
+		println!("DEBUG USE 5017.1:  n_steps: {}", n_steps);
 		let pc_0 = zero;
 		let pc_0_val = field_to_usize(&pc_0);
         let mut nova1 =
@@ -761,6 +764,7 @@ where
 				total_words
             )
             .unwrap();
+		timer.prt("pass_two: step 2: init nova1");
 
 		//2. process the words one by one
 		let mut idx = 0;
@@ -769,6 +773,7 @@ where
 		let mut wi = 0;
 		let mut start = 0;
 		let lk_len = self.lkup.borrow().get_size();
+		println!("DEBUG USE 6702: lk_len: {}", lk_len);
 		for word in iter_words{
 			let mut remaining = word.clone();
 			let mut subseg_id = 1;
@@ -807,6 +812,7 @@ where
 				prev_stmt = Some(stmt);
 				idx += 1;
 				num_steps +=1;
+				timer.prt(&format!("pass_two: subseg_id: {}", subseg_id)); 
 			}//end for while remaining word 
 			let total_subsegs = subseg_id - 1;
 			assert!(total_subsegs == 
@@ -815,9 +821,10 @@ where
 			wi += 1;
 		}
 
-		//println!("DEBUG USE 402.5 num_steps: {}, vea.len: {}", num_steps, vea.len());
+		println!("DEBUG USE 402.5 num_steps: {}, vea.len: {}", num_steps, vea.len());
 		assert!(num_steps==vea.len(), "ERROR: pass2 num_steps incorrect, num_steps: {}, vea.len: {}", num_steps, vea.len());
 
+	
 		//3. update all extra info record
 		(v_res, hash_cmF)
 	}
@@ -1418,6 +1425,10 @@ pub mod tests_driver{
 	}
 
 	impl <F:PrimeField> SigmaGadget<F> for SumGadget<F>{
+		fn get_name(&self)->&str{
+			"SumGadget"
+		}
+
 		/// set the container cfg. This is only needed for those gadgets
 		/// in SED approach
 		fn set_container_cfg(&mut self, _cfgs_context: Rc<Vec<ContainerConfig>>, _idx: usize){

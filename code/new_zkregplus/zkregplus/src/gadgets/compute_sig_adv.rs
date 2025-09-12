@@ -1913,6 +1913,8 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 }
 
 impl <F:PrimeField> SigmaGadget<F> for ComputeSigAdvGadget<F>{
+	fn get_name(&self)->&str {"ComputeSigAdvGadget"}
+
 	/// set the container cfg. This is only needed for those gadgets
 	/// in SED approach
 	fn set_container_cfg(&mut self, cfgs_context: Rc<Vec<ContainerConfig>>, idx: usize){

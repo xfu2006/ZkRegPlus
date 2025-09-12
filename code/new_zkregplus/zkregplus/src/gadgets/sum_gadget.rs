@@ -35,6 +35,8 @@ impl <F:PrimeField> SumWordGadget<F>{
 }
 
 impl <F:PrimeField> SigmaGadget<F> for SumWordGadget<F>{
+	fn get_name(&self)->&str {"SumWordGadget"}
+
 	/// set the container cfg. This is only needed for those gadgets
 	/// in SED approach
 	fn set_container_cfg(&mut self, _cfgs_context: Rc<Vec<ContainerConfig>>, _idx: usize){

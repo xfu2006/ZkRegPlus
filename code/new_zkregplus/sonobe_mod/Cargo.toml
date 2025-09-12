@@ -38,3 +38,4 @@ ark-r1cs-std = { version = "0.4.0", path = "../dependency/r1cs-std", default-fea
 ark-bn254 = {version="0.4.0", path = "../dependency/ark-curves-cherry-picked/bn254"}
 #ark-grumpkin = { git = "https://github.com/arnaucube/ark-curves-cherry-picked", branch="cherry-pick"}
 ark-grumpkin = { path="../dependency/ark-curves-cherry-picked/grumpkin"}
+ark-relations = {version="0.4.0", path="../dependency/ark-relations", default-features=false}

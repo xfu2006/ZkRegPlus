@@ -332,6 +332,9 @@ pub trait SigmaIR1CS<F: PrimeField, LK: LookupTableTwoCol<F>, GM: GadgetMapper<F
 /// Components of SigmaIR1CS (their 3-messages are integrated
 /// to cut the recursion overhead)
 pub trait SigmaGadget<F:PrimeField>: Debug{
+	/// return a name
+	fn get_name(&self)->&str;
+
 	/// set the container cfg. This is only needed for those gadgets
 	/// in SED approach. Pass a sharee copy of all ContainerConfigs
 	/// for all gadgets in one circuit (or one component mapper, depending
@@ -2568,6 +2571,7 @@ where 	C: CurveGroup<ScalarField=F>,
 	fn new_adv(name: String, poseidon_config: PoseidonConfig<F>, 
 		g_mapper: Rc<RefCell<GM>>, b_full_mode: bool, lkup_share_size: usize)
 		-> Result<Self,Error>{
+		println!("DEBUG USE 101 -- sigma_ir1cs::new_adv");
 		let gadgets = g_mapper.borrow().get_gadgets();
 		//generate witness config
 		let (stmt_len, stmt_cfg, v_idx, _extra_joins, _ci_inp) = g_mapper
@@ -2583,6 +2587,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			m3_len += vec_msg_sizes[i].3;
 		}
 
+		println!("DEBUG USE 102 -- sigma_ir1cs::new_adv");
 		let cmF_size = 4usize;
 		let extra_var_size = 2usize;
 		let si = StatementInst::<F,LK>::from_vec(&stmt_cfg, &vec![F::zero(); stmt_len]);
@@ -2605,6 +2610,8 @@ where 	C: CurveGroup<ScalarField=F>,
 			inv_hab22_left_size: inv_hab22_left_size,
 			inv_hab22_right_size: inv_hab22_right_size,
 		};
+		println!("DEBUG USE 103 -- sigma_ir1cs::new_adv: stmt_len: {}, m1_len: {}", stmt_len, m1_len);
+
 		let mut rng = ark_std::test_rng();
 		let (cs_pp, _cs_vp) = CS::setup(&mut rng, stmt_len + m1_len +1)
 			.expect("setup error");
@@ -2720,7 +2727,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		external_inputs: Vec<FpVar<F>>,
 	) -> Result<Vec<FpVar<F>>, SynthesisError> {
 		let b_debug = false; //set to false in production mode
-		let b_show_sigs = true; //set to false in production mode
+		let b_show_sigs = false; //set to false in production mode
 		//NOTE: cs.is_satisfied() can cause * stack overflow *
 		//if constraints are not constructed carefully.
 		//sometimes if a constraint has lc (linear combinations) too deep,
@@ -2735,6 +2742,14 @@ where 	C: CurveGroup<ScalarField=F>,
 		assert!(cfg.get_total_size()==external_inputs.len(), "external_inputs.len: {} != cfg.total_size: {}", external_inputs.len(), cfg.get_total_size());
 		let wtns_var =  WitnessSigmaIR1CSVar::from_vec(&cfg, &external_inputs);
 		//println!("DEBUG USE 101: AFTER msg1: constraints: {}", cs.num_constraints());
+
+		//REMOVE LATER --------------
+		let max_lc_len = cs.report_max_lc_len();
+		println!("DEBUG USE 6821.1: max_lc_len: {} ", max_lc_len);
+		if max_lc_len>80{
+			panic!("STOP HERE 1031");
+		}
+		//REMOVE LATER -------------- ABOVE
 
 		//2. check message2 (ro over stmt and msg1)
 		let mut gi = 0;
@@ -2888,6 +2903,19 @@ where 	C: CurveGroup<ScalarField=F>,
 			vec![zero_var.clone(),zero_var.clone()], 
 			si.subtable_id.clone()].concat();
 
+		println!("DEBUG USE 1201: cs.lc_size: {}, constraints: {}", cs.inner().unwrap().borrow().lc_map.len(), cs.num_constraints());
+		//here to break very long linear combination sequence
+		//of the fum sum_i=1^n v[i]
+		//we periodically multiply the item v[i] with var with value 1
+		//this allows to break the chain thus avoid expensive inlining
+		//of transform_lc() which is called by cs.finalize() later.
+		//NOTE that we need it to be a witness var so that
+		// one_wit_var * v[i] will be interpreted as a constraint
+		// instead of a linear combination (i.e., one_wit_var is treated
+		//   as a var, instead of constant)
+		let one_wit_var = FpVar::<F>::new_witness(cs.clone(), ||Ok(F::one())).unwrap();
+		one_wit_var.enforce_equal(&one_var)?; 
+
 		//verify the correct of inverse and compute sum_hab22_left
 		for i in 0..inv_hab22_left_size{
 			let v2 = &qry_tbl2[i];
@@ -2898,15 +2926,19 @@ where 	C: CurveGroup<ScalarField=F>,
 			sum_hab22_left += b_zero.select(
 				&zero_var,
 				&wtns_var.inv_hab22_left[i])?;	
-			if i%100==0{//avoid building too long linear combinations
+			if i%64==0{//avoid building too long linear combinations
 				//cs.is_satisfied() -> eval_lc() -> assigned_value(*var)
 				//  when var is symbolic it's calling eval_lc() recursively
 				//  so here retrieve the value periodically to make recursive
 				//  chain shorter.
 				//sum_hab22_left = &sum_hab22_left + &zero_var;
+				//COMMENT OUT LATER IF DOES NOT HELP
 				let _v1 = sum_hab22_left.value()?;
+				sum_hab22_left = &sum_hab22_left * &one_wit_var;
+
 			}
 		}
+		println!("DEBUG USE 1201: AFTER inv_hab22: {}, cs.lc_size: {}, cons: {}", inv_hab22_left_size, cs.inner().unwrap().borrow().lc_map.len(), cs.num_constraints());
 
 		if b_debug{
 			let csat = cs.is_satisfied();
@@ -2916,7 +2948,9 @@ where 	C: CurveGroup<ScalarField=F>,
 				"cs: {}, stack  =======, stack: {}"), 
 				cs.num_constraints(), get_stack_space()
 			);
+
 		}
+			println!("--- DEBUG USE 7601.2 lkup_size: {}, inv_hab22_right_size: {}", si.act_lookup_share_size.value()?, inv_hab22_right_size);
 
 		let mut lookup_share_size_left = si.act_lookup_share_size.clone();
 		for i in 0usize..inv_hab22_right_size{
@@ -2933,12 +2967,15 @@ where 	C: CurveGroup<ScalarField=F>,
 			let to_add = &wtns_var.inv_hab22_right[i]*m_i;	
 			sum_hab22_right = b_not_add.select(&sum_hab22_right, 
 				&(&sum_hab22_right + &to_add))?;
-			if i%100==0{//avoid too long chain in later
+			if i%64==0{//avoid too long chain in later
 				//cs.satisfied()	
 				//sum_hab22_right = &sum_hab22_right + &zero_var;
 				//lookup_share_size_left= &lookup_share_size_left + &zero_var;
-				let _v1 = sum_hab22_right.value()?;
-				let _v2 = lookup_share_size_left.value()?;
+				//COMMENT OUT LATER IF DOES NOT HELP
+				//let _v1 = sum_hab22_right.value()?;
+				//let _v2 = lookup_share_size_left.value()?;
+				sum_hab22_right = &sum_hab22_right * &one_wit_var;
+				lookup_share_size_left = &lookup_share_size_left * &one_wit_var;
 			}
 		}
 		let b_hab_res1 = sum_hab22_right.is_eq(&sum_hab22_left)?;
@@ -2967,6 +3004,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			);
 		}
 
+
 		//6. Check the validity of word_id and subseg_id
 		// NOTE: the first and the last zi_part2 will be checked
 		// in the decider_circuit. Here's we are just checking
@@ -2989,6 +3027,7 @@ where 	C: CurveGroup<ScalarField=F>,
 				cs.num_constraints(), get_stack_space()
 			);
 		}
+
 
 		//7. compute the KZG evaluation of :
 		// [lookup col1, col2, words, vec_r, vec_v]
@@ -3093,6 +3132,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			);
 		}
 
+
 		//8. VERIFY join constraints
 		let (_stmt_len, _stmt_cfg, _v_idx, extra_join_constraints, vec_idx_cpi) 
 			= self.gadget_mapper.borrow().gen_statement_structure(self.stmt_config.lookup_share_size);
@@ -3176,6 +3216,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			);
 		}
 
+
 		//10. now enforce and build `z_{i+1}`
 		let cur_hc_cmF = z_i[0].clone();
 		let cur_cmF = wtns_var.cmF.clone(); //4 elements
@@ -3189,25 +3230,73 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		let hash_zi_part2= zi1_part2.hash(&self.poseidon_config, cs.clone());
 
+		if b_debug{
+			let csat = cs.is_satisfied();
+			if csat.is_ok(){ assert!(csat.unwrap(), "step 9.1"); }
+			println!(concat!(
+				"--- DEBUG USE 7601: gen_step_constraints step 9.1",
+				"cs: {}, stack  =======, stack: {}"), 
+				cs.num_constraints(), get_stack_space()
+			);
+		}
+		//REMOVE LATER --------------
+		let max_lc_len = cs.report_max_lc_len();
+		println!("DEBUG USE 6821.11: max_lc_len: {}, num_constraints: {}, lc: {} ", max_lc_len, cs.num_constraints(), cs.num_lc());
+		if max_lc_len>=80{
+			panic!("STOP HERE 1031");
+		}
+		//REMOVE LATER -------------- ABOVE
+
+
 		//10.5 check the failed_sigs are covered by discharged sigs
+		println!("REMOVE LATER 1111 =====");
 		let rc2 = &rc + &FpVar::<F>::new_constant(cs.clone(), 
 			F::from(237177234918187u64))?;
 		//rc2 is used to prevent the initial dummy case rc0 causing
 		//inverse err. In the real mode, rc will be the real Fiat-Shamir
+		println!("REMOVE LATER 1112 =====");
 		let b_sigs = check_logup(cs.clone(),
 			&si.failed_sigs,
 			&si.discharged_sigs,
 			&si.mtbl_sigs,
 			&rc2,
 		)?;
+		println!("REMOVE LATER 1113 =====");
 		let b_correct = not_final_step.or(&b_sigs)?; //require b_sigs true at
+
+		//REMOVE LATER --------------
+		let max_lc_len = cs.report_max_lc_len();
+		println!("DEBUG USE 6821.11.2: max_lc_len: {}, num_constraints: {}, lc: {} ", max_lc_len, cs.num_constraints(), cs.num_lc());
+		if max_lc_len>=80{
+			panic!("STOP HERE 1031");
+		}
+		//REMOVE LATER -------------- ABOVE
 													//final step
+		if b_debug{
+			let csat = cs.is_satisfied();
+			if csat.is_ok(){ assert!(csat.unwrap(), "step 9.2"); }
+			println!(concat!(
+				"--- DEBUG USE 7601: gen_step_constraints step 9.2",
+				"cs: {}, stack  =======, stack: {}"), 
+				cs.num_constraints(), get_stack_space()
+			);
+		}
+
 		if b_show_sigs{
 			print_vec_var("DEBUG USE 6801: sigma_ir1cs: failed_sigs", &si.failed_sigs);
 			print_vec_var("DEBUG USE 6802: sigma_ir1cs: : discharged_sigs",
 				&si.discharged_sigs);
 			println!("DEBUG USE 6803 sigma_ir1cs: b_correct: {}", b_correct.value()?);
 		}
+
+		//REMOVE LATER --------------
+		let max_lc_len = cs.report_max_lc_len();
+		println!("DEBUG USE 6821.11.3: max_lc_len: {}, num_constraints: {}, lc: {} ", max_lc_len, cs.num_constraints(), cs.num_lc());
+		if max_lc_len>=80{
+			panic!("STOP HERE 1031");
+		}
+		//REMOVE LATER -------------- ABOVE
+
 		b_correct.enforce_equal(&Boolean::TRUE)?;
 		#[cfg(test)]{
 			if b_correct.value().is_ok(){
@@ -3219,11 +3308,19 @@ where 	C: CurveGroup<ScalarField=F>,
 			let csat = cs.is_satisfied();
 			if csat.is_ok(){ assert!(csat.unwrap(), "step 10"); }
 			println!(concat!(
-				"--- DEBUG USE 7601: gen_step_constraints step 10",
+				"--- DEBUG USE 7601: gen_step_constraints step 10. RETURN!",
 				"cs: {}, stack  =======, stack: {}"), 
 				cs.num_constraints(), get_stack_space()
 			);
 		}
+
+		//REMOVE LATER --------------
+		let max_lc_len = cs.report_max_lc_len();
+		println!("DEBUG USE 6821.12: max_lc_len: {}, num_constraints: {}, lc: {} ", max_lc_len, cs.num_constraints(), cs.num_lc());
+		if max_lc_len>=80{
+			panic!("STOP HERE 1031");
+		}
+		//REMOVE LATER -------------- ABOVE
 
 		Ok(vec![new_cur_hc_cmF, hash_zi_part2])
 	}
@@ -3278,6 +3375,10 @@ pub mod tests_sigma_ir1cs{
 	}
 
 	impl <F:PrimeField> SigmaGadget<F> for VerCubicGadget<F>{
+		fn get_name(&self)->&str{
+			"VerCubicGadget"
+		}
+
 		/// set the container cfg. This is only needed for those gadgets
 		/// in SED approach
 		fn set_container_cfg(&mut self, _cfgs_context: Rc<Vec<ContainerConfig>>, _idx: usize){
@@ -3302,6 +3403,8 @@ pub mod tests_sigma_ir1cs{
 		fn est_cost(&self)->usize{
 			4
 		}
+
+
 
 		/// statment `(x;w)` where w is the cubic root of x
 		fn get_msg_size(&self) -> (usize, usize, usize, usize){
@@ -3348,6 +3451,10 @@ pub mod tests_sigma_ir1cs{
 	}
 
 	impl <F:PrimeField> SigmaGadget<F> for VerSquareGadget<F>{
+		fn get_name(&self)->&str{
+			"VerSquareGadget"
+		}
+
 		/// set the container cfg. This is only needed for those gadgets
 		/// in SED approach
 		fn set_container_cfg(&mut self, _cfgs_context: Rc<Vec<ContainerConfig>>, _idx: usize){
@@ -3416,6 +3523,10 @@ pub mod tests_sigma_ir1cs{
 	}
 
 	impl <F:PrimeField> SigmaGadget<F> for CounterIOGadget<F>{
+		fn get_name(&self)->&str{
+			"CounterIOGadget"
+		}
+
 		/// set the container cfg. This is only needed for those gadgets
 		/// in SED approach
 		fn set_container_cfg(&mut self, _cfgs_context: Rc<Vec<ContainerConfig>>, _idx: usize){

@@ -121,7 +121,7 @@ fn load_files<F:PrimeField>(list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavA
 /// model (see driver.rs in foldpot module). However, we make the
 /// simplication that 
 /// *** EACH LAYER has ONE CIRC ***
-/// the reason is that we need to avoid complex calculation of capacity
+/// The reason is that we need to avoid complex calculation of capacity
 ///   to satisfy the requirement that inp_buf = oup_buf for each circuit.
 /// The layers of circuit as onstructed as following: each layer
 /// has 1 circuit. These layers are organized as several
@@ -136,10 +136,8 @@ fn load_files<F:PrimeField>(list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavA
 /// in the capacity of internal buffer.
 ///
 /// When we increase capacities, we do this in two levels:
-/// level1: increase subsigs, sigs supported, and level2:
-/// increase the other internal buffer capacities.
-/// Thus inside each category, we have a 2d loop to increase level
-/// 1 and level2 respectively.
+/// level1 (between category) : increase subsigs, sigs supported, and DFAs.
+/// level2 (inside each category): increase the internal buffer.
 ///
 /// Return: 2d layer of circs, but each layer has 1 circ.
 /// It's arranged from low cost to high cost so that the first
@@ -164,9 +162,8 @@ fn build_circs_adv<F,C,CS>(
 	init_cp_capacity: &CpCapacity,
 	init_sed_capacity: &SedCapacity,
 	init_dfa_capacity: &DfaCapacity,
-	num_level1: usize, //level1 * level2 will be num of circs PER category
-	num_level2: usize,
-	num_category: usize, //cat0 has no DFA. All others differs in dfa num
+	num_category: usize, 
+	num_circs_per_category: usize
 )->Vec<Vec<FC<F,C,CS>>>
 where C: CurveGroup<ScalarField=F>,
 	  CS: CommitmentScheme<C,false>,
@@ -185,78 +182,77 @@ where C: CurveGroup<ScalarField=F>,
 
 	//3. build up each category
 	let mut layer_circs = vec![];
-	for cat_id in 0..num_category{
-		let mut cp_cap_l1 = init_cp_capacity.clone();
-		let mut sed_cap_l1 = init_sed_capacity.clone();
-		let mut dfa_cap_l1 = init_dfa_capacity.clone();
-		for l1 in 0..num_level1{
-			let mut cp_cap_l2 = cp_cap_l1.clone();
-			let mut sed_cap_l2 = sed_cap_l1.clone();
-			let mut dfa_cap_l2 = dfa_cap_l1.clone();
-			for l2 in 0..num_level2{
-				//3.1 create cp (cs and igc)
-				let cp_cs = CpComponentMapper::<F,LK<F>>::new(
-					cp_cap_l2.clone(), db.clone(), false);
-				let cp_igc = CpComponentMapper::<F,LK<F>>::new(
-					cp_cap_l2.clone(), db.clone(), true);
+	let mut cp_cap_l1 = init_cp_capacity.clone();
+	let mut sed_cap_l1 = init_sed_capacity.clone();
+	let mut dfa_cap_l1 = init_dfa_capacity.clone();
+	for l1 in 0..num_category{
+		let mut cp_cap_l2 = cp_cap_l1.clone();
+		let mut sed_cap_l2 = sed_cap_l1.clone();
+		let mut dfa_cap_l2 = dfa_cap_l1.clone();
+		for l2 in 0..num_circs_per_category{
+			//3.1 create cp (cs and igc)
+			let cp_cs = CpComponentMapper::<F,LK<F>>::new(
+				cp_cap_l2.clone(), db.clone(), false);
+			let cp_igc = CpComponentMapper::<F,LK<F>>::new(
+				cp_cap_l2.clone(), db.clone(), true);
 
-				//3.2 create sed (it has both cs and igc built in)
-				let sed = SedComponentMapper::<F,LK<F>>::new(
-					sed_cap_l2.clone(), db.clone());
+			//3.2 create sed (it has both cs and igc built in)
+			let sed = SedComponentMapper::<F,LK<F>>::new(
+				sed_cap_l2.clone(), db.clone());
 
-				//3.3 dfa is optional depending on cat_dfa_num is 0
-				let dfa = if cat_id == 0 { None }else{
-					Some(
-						DfaComponentMapper::<F,LK<F>>::new(dfa_cap_l2.clone(), 
-							db.clone())
-					)
-				};
+			//3.3 dfa is optional depending if config supports 0 subsigs
+			//which enforces dfa to be nil.
+			let dfa = if dfa_cap_l2.subsigs==0 { None }else{
+				Some(
+					DfaComponentMapper::<F,LK<F>>::new(dfa_cap_l2.clone(), 
+						db.clone())
+				)
+			};
 
-				//3.4 construct the circuit
-				let hybrid_cgm1 =if cat_id ==0{
-					CompositeGadgetMapper::<F,LK<F>>::new("hybrid_cgm1",
-						vec![
-							Rc::new(RefCell::new(cp_cs)),
-							Rc::new(RefCell::new(cp_igc)),
-							Rc::new(RefCell::new(sed)),
-						]
-					)
-				}else{//including the dfa
-					CompositeGadgetMapper::<F,LK<F>>::new("hybrid_cgm1",
-						vec![
-							Rc::new(RefCell::new(cp_cs)),
-							Rc::new(RefCell::new(cp_igc)),
-							Rc::new(RefCell::new(sed)),
-							Rc::new(RefCell::new(dfa.unwrap())),
-						]
-					)
-				};
-			
-				let circ= SigmaIR1CS_Inst::<F,C,CS,LK<F>,
-				CompositeGadgetMapper<F,LK<F>> ,false> ::new_adv(
-					format!("circ_cat_{}_l1_{}_l2_{}", cat_id, l1, l2), 
-					poseidon_config.clone(), 
-					Rc::new(RefCell::new(hybrid_cgm1)), 
-					false, //b_full_mode (whether supporting cyclepair - no for 
-							//regular circuit) 
-					lk_share
-				).expect("error building circ");
-				layer_circs.push( vec![circ] ); //legacy to keep 2d layer
+			//3.4 construct the circuit
+			let hybrid_cgm1 =if dfa_cap_l2.subsigs==0{
+				CompositeGadgetMapper::<F,LK<F>>::new("hybrid_cgm1",
+					vec![
+						Rc::new(RefCell::new(cp_cs)),
+						Rc::new(RefCell::new(cp_igc)),
+						Rc::new(RefCell::new(sed)),
+					]
+				)
+			}else{//including the dfa
+				CompositeGadgetMapper::<F,LK<F>>::new("hybrid_cgm1",
+					vec![
+						Rc::new(RefCell::new(cp_cs)),
+						Rc::new(RefCell::new(cp_igc)),
+						Rc::new(RefCell::new(sed)),
+						Rc::new(RefCell::new(dfa.unwrap())),
+					]
+				)
+			};
+		
+			let circ= SigmaIR1CS_Inst::<F,C,CS,LK<F>,
+			CompositeGadgetMapper<F,LK<F>> ,false> ::new_adv(
+				format!("circ_cat_{}_circ_{}", l1, l2), 
+				poseidon_config.clone(), 
+				Rc::new(RefCell::new(hybrid_cgm1)), 
+				false, //b_full_mode (whether supporting cyclepair - no for 
+						//regular circuit) 
+				lk_share
+			).expect("error building circ");
+			layer_circs.push( vec![circ] ); //legacy to keep 2d layer
 
-				//3.5 update the capacities.
-				cp_cap_l2 = cp_cap_l2.increased_copy(2); //increase by level 2
-				sed_cap_l2 = sed_cap_l2.increased_copy(2); 
-				dfa_cap_l2 = dfa_cap_l2.increased_copy(2); 
-			}//for loop level2
-			//update level 1 capacity
-			cp_cap_l1 = cp_cap_l1.increased_copy(1); //increase by level 1
-			sed_cap_l1 = sed_cap_l1.increased_copy(1); 
-			if cat_id>0{//the first capacity starts from the 2nd
-				dfa_cap_l1 = dfa_cap_l1.increased_copy(1); 
-			}
-		}//for loop level 1
-	}//for each cateogory
+			//3.5 update the capacities.
+			cp_cap_l2 = cp_cap_l2.increased_copy(2); //increase by level 2
+			sed_cap_l2 = sed_cap_l2.increased_copy(2); 
+			dfa_cap_l2 = dfa_cap_l2.increased_copy(2); 
+		}//for loop level2
+		//update level 1 capacity
+			println!("DEBUG USE 105 ==");
+		cp_cap_l1 = cp_cap_l1.increased_copy(1); //increase by level 1
+		sed_cap_l1 = sed_cap_l1.increased_copy(1); 
+		dfa_cap_l1 = dfa_cap_l1.increased_copy(1); 
+	}//for category
 
+			println!("DEBUG USE 106 ==");
 	//return
 	layer_circs
 }
@@ -405,6 +401,12 @@ pub fn zkp_driver<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + std::f
 	list_of_dfa_sigs: &str,
 	list_of_ised_sigs: &str,
 	list_of_ised_igc_sigs: &str,
+	chunk_len: usize, //see the definition of params for build_circs for below
+	init_cp_capacity: &CpCapacity, 
+	init_sed_capacity: &SedCapacity,
+	init_dfa_capacity: &DfaCapacity,
+	num_category: usize,
+	num_circs_per_category: usize,
 )
 where
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
@@ -465,7 +467,18 @@ where
 
 	//3. build the circuits
 	let rc_db = Rc::new(db.clone());
-	let vec_circs = build_circs::<CF1<C1>,C1,CS1>(&poseidon_config, total_word_len, lkup_len, rc_db);
+	let vec_circs = build_circs_adv::<CF1<C1>,C1,CS1>(
+		&poseidon_config, 
+		total_word_len, 
+		chunk_len,
+		lkup_len, 
+		rc_db,
+		init_cp_capacity,
+		init_sed_capacity,
+		init_dfa_capacity,
+		num_category,
+		num_circs_per_category
+	);
 
 	//4. run the foldpot_main
 	let sample_individual_prf = 0; //generate individual proof 1 (idx is 0)
@@ -484,6 +497,14 @@ pub mod tests_zkp_driver{
 	use ark_groth16::Groth16;
 	use folding_schemes::{commitment::{pedersen::Pedersen, kzg::KZG}};
 	use crate::zkp_driver::{zkp_driver};
+	use crate::circs::{
+		cp_mapper::{CpCapacity},
+		sed_mapper::{SedCapacity},
+		dfa_mapper::{DfaCapacity},
+	};
+	use data_processor::{
+		clam_db::{RANGE2_BIT},
+	};
 
 	type CS1 = Pedersen<Projective>;
 	//EXTERNAL commitment KZG for decider
@@ -498,19 +519,34 @@ pub mod tests_zkp_driver{
 	type C2G2 = ProjectiveG2;
 
 	/// small data: each cat of signatures got one sample, one 2-Fr word
-	fn old_small_data<F:PrimeField>(){
+	/// read the READ me in data/small_data_set/README for the design of sigs
+	#[allow(dead_code)]
+	fn small_data<F:PrimeField>(){
 		let b_read_cache = false;
 		let b_write_cache = true;
-		//let set1 = "data/debug/small_data_set/config";  //for sed
-		//read the README about the design the sigs
-		//contains examples that needs to be discharged by
-		// (1) cp_igc and cp - Win.alphabet.SAMPLE1
-		// (2) sed_discharged (will show up in sed_cs discharged list)
-		// (3) sed_cp discharged (will show up in sed_cp discharged list)
-		// (4) DFA discharged (will show up in DFA discharged list)
-		// (5) DFA_cp note: DFA itself is CP (will show up in DFA discharged
-		//    list)
 		let set1 = "data/debug/small_data_set/config_dfa"; //for dfa 
+		let max_word= 1; //this is chunk_len
+		let sigs = 3;
+		let subsigs = 6;
+		let avg_pat_per_sig = 8;
+		let avg_active_pat_per_sig = 3;
+		let perc_pats_in_trace = 60;
+		let perc_comp_subsigs = 50;
+		let num_category = 1;
+		let num_circs_per_category= 1;
+
+		let init_cp_cap= CpCapacity{
+			max_word_len: 1, final_states_len: 8, 
+			join_buf_capacity: 8, sig_buf_capacity: 6
+		};
+		let init_sed_cap= SedCapacity::new(
+			max_word, RANGE2_BIT, subsigs, 
+			avg_pat_per_sig, avg_active_pat_per_sig, 
+			perc_pats_in_trace, sigs, perc_comp_subsigs
+		);
+		let init_dfa_cap= DfaCapacity::new(max_word, sigs, subsigs);
+
+
 		zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
 			&format!("{}/sigs.dat",set1), //src sig
 			&format!("{}/binexec.dat",set1), //list of files to discharge
@@ -521,12 +557,70 @@ pub mod tests_zkp_driver{
 			&format!("{}/dfa.dat", set1), //signs that need dfa
 			&format!("{}/ised.dat", set1), //signs that need ised 
 			&format!("{}/ised_igc.dat",set1), //sigs that need ised igc
+			max_word, //this is the chunk len
+			&init_cp_cap,
+			&init_sed_cap,
+			&init_dfa_cap,
+			num_category,
+			num_circs_per_category
 		);
 	}
 
+	/// the sigs are the same as small data
+	/// now two categories (<cp, sed, dfa2>, <cp,sed,dfa3>)
+	///    where the 2nd category has to be used
+	/// has 1 long words (1k-packed nibbles - around 31kb)
+	/// read the READ me in data/small_data_set2/README for the design of sigs
+	#[allow(dead_code)]
+	fn small_data2<F:PrimeField>(){
+		let b_read_cache = false;
+		let b_write_cache = true;
+		let set1 = "data/debug/small_data_set2/config_dfa"; //for dfa 
+		let max_word= 512; 
+		let sigs = 3;
+		let subsigs = 6;
+		let avg_pat_per_sig = 8;
+		let avg_active_pat_per_sig = 3;
+		let perc_pats_in_trace = 1;
+		let perc_comp_subsigs = 20;
+		let num_category = 1;
+		let num_circs_per_category= 1;
+
+		let init_cp_cap= CpCapacity{
+			max_word_len: max_word, final_states_len: 8*max_word, 
+			join_buf_capacity: 8*max_word, sig_buf_capacity: 6*max_word
+		};
+		let init_sed_cap= SedCapacity::new(
+			max_word, RANGE2_BIT, subsigs, 
+			avg_pat_per_sig, avg_active_pat_per_sig, 
+			perc_pats_in_trace, sigs, perc_comp_subsigs
+		);
+		let dfa_sigs = 3;
+		let dfa_subsigs= 6;
+		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
+
+
+		zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+			&format!("{}/sigs.dat",set1), //src sig
+			&format!("{}/binexec.dat",set1), //list of files to discharge
+			"data/small_data_set/reports/report.dat", //report
+			b_read_cache,
+			b_write_cache,
+			"small_20", //cache name
+			&format!("{}/dfa.dat", set1), //signs that need dfa
+			&format!("{}/ised.dat", set1), //signs that need ised 
+			&format!("{}/ised_igc.dat",set1), //sigs that need ised igc
+			max_word, //this is the chunk len
+			&init_cp_cap,
+			&init_sed_cap,
+			&init_dfa_cap,
+			num_category,
+			num_circs_per_category
+		);
+	}
 
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
-		small_data::<Fr>();
+		small_data2::<Fr>();
 	}
 }

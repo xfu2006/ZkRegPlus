@@ -7,6 +7,7 @@
 /* Modified 08/09/2024 */
 
 use std::{rc::Rc, cell::RefCell};
+use crate::folding::foldpot::utils::Timer;
 use ark_crypto_primitives::sponge::{
     poseidon::{PoseidonConfig, PoseidonSponge},
     Absorb, CryptographicSponge,
@@ -1240,11 +1241,15 @@ where
 pub fn get_r1cs_from_cs<F: PrimeField>(
     circuit: impl ConstraintSynthesizer<F>,
 ) -> Result<R1CS<F>, Error> {
+	let mut t = Timer::new("get_r1cs_from_cs", 0);
     let cs = ConstraintSystem::<F>::new_ref();
     circuit.generate_constraints(cs.clone())?;
+	t.prt(&format!("DEBUG USE 9902: generated cs: {}", cs.num_constraints()));
     cs.finalize();
+	t.prt(&format!("DEBUG USE 9903: finalized cs: {}", cs.num_constraints()));
     let cs = cs.into_inner().ok_or(Error::NoInnerConstraintSystem)?;
     let r1cs = extract_r1cs::<F>(&cs);
+	t.prt(&format!("DEBUG USE 9904: finalized cs"));
     Ok(r1cs)
 }
 

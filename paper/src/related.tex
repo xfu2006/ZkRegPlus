@@ -335,7 +335,8 @@ allowing RAM check in IVC proofs (avoiding generating public verifier
 challenge over commitments of all witness at all steps), it also
 provides an alternative switchboard approach to SuperNova's approach
 in supporting non-uniform circuits, although enjoying the same
-asymptotic complexity.
+asymptotic complexity. Coral \cite{Coral} was built over
+Nebular for IVC proof of Context-Free Grammar.
 
 	In HEKATON \cite{HEKATON}, a parallel proof scheme is proposed (note:
 not folding). It shares a similar observation with Mangrove that
@@ -379,7 +380,7 @@ $10$ access per second).  This cannot satisfy our demand of efficiency.
 
 \subsection{Related in Field}
 Compare with zk-MiddleBox, Zombie \cite{Zombie23} and Zk-regex \cite{Luo23}
-and Reef \cite{Reef}.
+and Reef \cite{Reef}. Coral \cite{Coral} (there are several CFG work).
 
 A related line is the TLS Oracle problem where given an TLS session (encrypted), one proves the property of the data (e.g., correct generation of
  authentication key etc.). Traditionally this was done via MPC
@@ -388,4 +389,17 @@ A related line is the TLS Oracle problem where given an TLS session (encrypted),
   with rich set of properties, such as redacted emails, or compliance with
   security policies without revealing encrypted data, efficiently.
 
+{\em Coral \cite{Coral}:} The key idea Coral (to support zk-proof
+about CFG) is built upon Nebula \cite{Nebula} an off-line meomry checking
+technique that works with IVC. Its basic idea is to store
+ CFG grammar in public ROM, and parse tree in private ROM, and 
+ stacks in private RAM. Given the ''global" commitment to all memory
+ traces (very similar to our first pass of commitment in first pass,
+ adopting Mangrove \cite{Mangrove}) approach, its fingerprinting hash
+ greatly reduced the cost. The difference in our scheme is that:
+ we heavily rely on external lookup tables (as our database of
+ regex is so large, and encoding them in ROM is not efficient).
+ Compared with Coral, our benefits is that the signature set in
+ our data is three magnitudes larger than Coral. Coral's benefit
+ is the expressive power in handling CFG.
 \section{Conclusion}

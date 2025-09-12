@@ -80,9 +80,11 @@ pub fn assert_logup<F:PrimeField>(
 	let lkup_inv = lkup_inv_val.iter().map(|x| FpVar::new_witness(
 		cs.clone(), || Ok(x)).unwrap()).collect::<Vec<FpVar<F>>>();
 
+
 	//2. verify inverse
 	verify_inverse(cs.clone(), &qry, &qry_inv, &r, qry.len())?;
 	verify_inverse(cs.clone(), &lkup, &lkup_inv, &r, lkup.len())?;
+
 
 	//3. verify logup relation (m_table)
 	verify_logup_inverse(cs.clone(), &qry_inv, &lkup_inv, m_tbl)?; 

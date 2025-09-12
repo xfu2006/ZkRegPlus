@@ -394,6 +394,8 @@ where
     for<'a> &'a GC2: GroupOpsBounds<'a, C2, GC2>,
 {
     fn generate_constraints(self, cs: ConstraintSystemRef<CF1<C1>>) -> Result<(), SynthesisError> {
+		let b_debug = false;
+		println!("DEBUG USE 6701: aug_f generate_constraints");
 		//1. retrieve pp_hash, i, z_0, and z_i as Var (witness)
 		let stmt = self.external_inputs.clone().expect("stmt empty"); 
         let pp_hash = FpVar::<CF1<C1>>::new_witness(cs.clone(), || {
@@ -424,10 +426,12 @@ where
 		assert!(pc_i1_val == self.j, "statement.pc_i1: {} != self.j {}",
 			pc_i1_val, self.j);
 
-		//REMOVE LATER ---------------
-		let csat = cs.is_satisfied();
-		if csat.is_ok(){ assert!(csat.unwrap(), "step 2 of circuitsuper"); }
-		//REMOVE LATER --------------- ABOVE
+		if b_debug{
+			println!("DEBUG USE 7701: aug_f::gen_csr: {}", 
+				cs.num_constraints());
+			let csat = cs.is_satisfied();
+			if csat.is_ok(){ assert!(csat.unwrap(), "step 2 of circuitsuper"); }
+		}
 
 		//3. Compute z_{i+1} from the F circuit and use it as Witness to
 		// construct Var
@@ -436,29 +440,39 @@ where
   			self.F.gen_witness(&stmt, &self.zi_part2_inst.clone().unwrap());
   		let wtns_vec = witness.to_vec_fp_var(cs.clone());
 
-		//REMOVE LATER ---------------
-		let csat = cs.is_satisfied();
-		if csat.is_ok(){ assert!(csat.unwrap(), "step 2.5 of circuitsuper"); }
-		//REMOVE LATER --------------- ABOVE
+		if b_debug{
+			println!("DEBUG USE 7702: aug_f::gen_csr: {}", 
+				cs.num_constraints());
+			let csat = cs.is_satisfied();
+			if csat.is_ok(){ 
+				assert!(csat.unwrap(), "step 2.5 of circuitsuper"); 
+			}
+		}
 
         let z_i1 = self.F
                  .generate_step_constraints(cs.clone(), i_usize, z_i.clone(), wtns_vec)?;
 
-		//REMOVE LATER ---------------
-		let csat = cs.is_satisfied();
-		if csat.is_ok(){ assert!(csat.unwrap(), "step 2.6 of circuitsuper"); }
-		//REMOVE LATER --------------- ABOVE
+		if b_debug{
+			println!("DEBUG USE 7703: aug_f::gen_csr: {}", 
+				cs.num_constraints());
+			let csat = cs.is_satisfied();
+			if csat.is_ok(){ 
+				assert!(csat.unwrap(), "step 2.6 of circuitsuper"); 
+			}
+		}
 
-		#[cfg(test)]{
+		if b_debug{
 			let zi1_part2_hash = z_i1_part2.hash(&self.poseidon_config);
 			assert!(z_i1[1].value()? == zi1_part2_hash);
 		}
         let is_basecase = i.is_zero()?;
 
-		//REMOVE LATER ---------------
-		let csat = cs.is_satisfied();
-		if csat.is_ok(){ assert!(csat.unwrap(), "step 2.7 of circuitsuper"); }
-		//REMOVE LATER --------------- ABOVE
+		if b_debug{
+			let csat = cs.is_satisfied();
+			if csat.is_ok(){ 
+				assert!(csat.unwrap(), "step 2.7 of circuitsuper"); 
+			}
+		}
 
         let u_dummy = if self.b_full_mode {//x has 3 elements for full version
 		 CommittedInstanceFoldPotSuper::dummy(3, self.n_circ, self.b_full_mode)
@@ -469,10 +483,14 @@ where
             Ok(self.U_i.unwrap_or(u_dummy.clone()))
         })?;
 
-		//REMOVE LATER ---------------
-		let csat = cs.is_satisfied();
-		if csat.is_ok(){ assert!(csat.unwrap(), "step 3 of circuitsuper"); }
-		//REMOVE LATER --------------- ABOVE
+		if b_debug{
+			println!("DEBUG USE 7704: aug_f::gen_csr: {}", 
+				cs.num_constraints());
+			let csat = cs.is_satisfied();
+			if csat.is_ok(){ 
+				assert!(csat.unwrap(), "step 3 of circuitsuper"); 
+			}
+		}
 
 		//4. Construct U_i1_cmE, cmW, cmF from the hints
 		// and cyclefold related variables from hints
@@ -509,11 +527,14 @@ where
         let sponge = PoseidonSpongeVar::<C1::ScalarField>::new(cs.clone(), &self.poseidon_config);
         let mut transcript = sponge.clone();
 
-		//REMOVE LATER ---------------
-		let csat = cs.is_satisfied();
-		if csat.is_ok(){ assert!(csat.unwrap(), "step 4 of circuitsuper"); }
-		//REMOVE LATER --------------- ABOVE
-
+		if b_debug{
+			println!("DEBUG USE 7705: aug_f::gen_csr: {}", 
+				cs.num_constraints());
+			let csat = cs.is_satisfied();
+			if csat.is_ok(){ 
+				assert!(csat.unwrap(), "step 4 of circuitsuper"); 
+			}
+		}
 
 		//5. compute u_i.x as Var
         // u_i.x[0] = H(i, pc_i, z_0, z_i, U_i) (as Supernova)
@@ -543,10 +564,14 @@ where
 			(Some(cp_u_i_x), Some(cp_U_i_vec), Some(cp_U_i))
 		}else {(None,None,None)};
 
-		//REMOVE LATER ---------------
-		let csat = cs.is_satisfied();
-		if csat.is_ok(){ assert!(csat.unwrap(), "step 6 of circuitsuper"); }
-		//REMOVE LATER --------------- ABOVE
+		if b_debug{
+			println!("DEBUG USE 7706: aug_f::gen_csr: {}", 
+				cs.num_constraints());
+			let csat = cs.is_satisfied();
+			if csat.is_ok(){ 
+				assert!(csat.unwrap(), "step 6 of circuitsuper"); 
+			}
+		}
 
         //6. Construct u_i Var from hints
         let u_i = CommittedInstanceVarFoldPot {
@@ -619,7 +644,6 @@ where
 			cmE: U_i1_cmE.clone(), cmW: U_i1_cmW.clone(), cmF: U_i1_cmF.clone()
 		};
 
-
 		//9. build the U_i1 var version. Note that to amke sure that
 		// r1cs is generated for all possible pc_i values, we cannot
 		// directly set U_i1[pc_i] = Ui1_pci. Instead, we have to do
@@ -675,7 +699,9 @@ where
         x.enforce_equal(&is_basecase.select(&u_i1_x_base, &u_i1_x)?)?;
 
 
-		#[cfg(test)]{
+		if b_debug{
+			println!("DEBUG USE 7707: aug_f::gen_csr: {}", 
+				cs.num_constraints());
 			let b1 = is_basecase.value()?;
 			let x1 = u_i1_x.value()?;
 			let x1_base = u_i1_x_base.value()?;
@@ -683,8 +709,6 @@ where
 			let x_value = x.value()?;
 			assert!(expect_x == x_value);
 		}
-		//println!(">> step 8!!!");
-
 
         //11. CycleFold part
         // C.1. Compute cf1_u_i.x and cf2_u_i.x
@@ -892,7 +916,6 @@ where
 		}
 
 
-
 		//12. Cyclepair part only if it's full mode
 		if self.b_full_mode{
 			//1. read the input
@@ -963,11 +986,15 @@ where
         }; //end of cyclepair part
 
 
+		if b_debug{
+			println!("DEBUG USE 7708: aug_f::gen_csr: {}", 
+				cs.num_constraints());
+			if cs.is_satisfied().is_ok(){ 
+				assert!(cs.is_satisfied().unwrap());
+			}
+		}
 
-		#[cfg(test)]{ if cs.is_satisfied().is_ok(){ 
-			assert!(cs.is_satisfied().unwrap());
-		}}
-
+		println!("REMOVE LATER 1234. done with aug_f");
         Ok(())
     }
 }

@@ -12,6 +12,13 @@ use ark_bn254::{constraints::{GVar,PairingVar}, Bn254, Fr, G1Projective as Proje
 use ark_grumpkin::{constraints::GVar as GVar2, Projective as Projective2};
 use ark_groth16::Groth16;
 use folding_schemes::{commitment::{pedersen::Pedersen, kzg::KZG}};
+use zkregplus::circs::{
+	//composable_gadget_mapper::{CompositeGadgetMapper},
+	cp_mapper::{CpCapacity},
+	sed_mapper::{SedCapacity},
+	dfa_mapper::{DfaCapacity},
+};
+use data_processor::clam_db::RANGE2_BIT;
 
 type CS1 = Pedersen<Projective>;
 //EXTERNAL commitment KZG for decider
@@ -29,16 +36,45 @@ type C2G2 = ProjectiveG2;
 fn small_data<F:PrimeField>(){
 	let b_read_cache = false;
 	let b_write_cache = true;
+	let set1 = "data/debug/small_data_set/config_dfa"; //for dfa 
+	let max_word= 1; //this is chunk_len
+	let sigs = 3;
+	let subsigs = 6;
+	let avg_pat_per_sig = 8;
+	let avg_active_pat_per_sig = 3;
+	let perc_pats_in_trace = 60;
+	let perc_comp_subsigs = 50;
+	let num_category = 1;
+	let num_circs_per_category= 1;
+
+	let init_cp_cap= CpCapacity{
+		max_word_len: 1, final_states_len: 8, 
+		join_buf_capacity: 8, sig_buf_capacity: 6
+	};
+	let init_sed_cap= SedCapacity::new(
+		max_word, RANGE2_BIT, subsigs, 
+		avg_pat_per_sig, avg_active_pat_per_sig, 
+		perc_pats_in_trace, sigs, perc_comp_subsigs
+	);
+	let init_dfa_cap= DfaCapacity::new(max_word, sigs, subsigs);
+
+
 	zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
-		"data/small_data_set/config/sigs.dat", //src sig
-		"data/small_data_set/config/binexec.dat", //list of files to discharge
+		&format!("{}/sigs.dat",set1), //src sig
+		&format!("{}/binexec.dat",set1), //list of files to discharge
 		"data/small_data_set/reports/report.dat", //report
 		b_read_cache,
 		b_write_cache,
 		"small_20", //cache name
-		"data/small_data_set/config/dfa.dat", //signs that need dfa
-		"data/small_data_set/config/ised.dat", //signs that need ised 
-		"data/small_data_set/config/ised_igc.dat", //signs that need ised igc
+		&format!("{}/dfa.dat", set1), //signs that need dfa
+		&format!("{}/ised.dat", set1), //signs that need ised 
+		&format!("{}/ised_igc.dat",set1), //sigs that need ised igc
+		max_word, //this is the chunk len
+		&init_cp_cap,
+		&init_sed_cap,
+		&init_dfa_cap,
+		num_category,
+		num_circs_per_category
 	);
 }
 

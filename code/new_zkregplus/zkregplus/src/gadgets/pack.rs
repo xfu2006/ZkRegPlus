@@ -48,6 +48,8 @@ impl <F:PrimeField> PackFinalGadget<F>{
 }
 
 impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
+	fn get_name(&self)->&str {"PackFinalGadget"}
+
 	/// set the container cfg. This is only needed for those gadgets
 	/// in SED approach
 	fn set_container_cfg(&mut self, _cfgs_context: Rc<Vec<ContainerConfig>>, _idx: usize){

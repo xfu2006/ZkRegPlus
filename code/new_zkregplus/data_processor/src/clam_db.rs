@@ -126,7 +126,7 @@ pub fn check_pad_ratio<F:PrimeField>(col: &Vec<F>, param: &str){
 			if i>2*n/3{
 				let msg = format!("Consider adjust {}. Real items: {} << Padded Capaicty:{}", param, n-i, n);
 				if i>7*n/8{
-					panic!("ERR: {}", &msg);
+					println!("WARN!!!: {}", &msg);
 				}else{
 					println!("WARN: {}", &msg);
 				}

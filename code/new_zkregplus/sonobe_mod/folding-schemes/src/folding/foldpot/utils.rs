@@ -12,12 +12,15 @@ use memory_stats::memory_stats;
 use libc::{pthread_getattr_np, pthread_attr_getstack, pthread_self};
 use std::mem::MaybeUninit;
 use std::ptr;
-use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef};
+use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef,
+	LinearCombination,Variable};
 use ark_r1cs_std::{
 	boolean::{Boolean},
 	fields::{
 		//FieldVar,
-		fp::FpVar
+		fp::FpVar,
+		fp::FpVar::Constant,
+		fp::FpVar::Var,
 	},
 	alloc::AllocVar,
 	eq::EqGadget,
@@ -25,7 +28,11 @@ use ark_r1cs_std::{
 };
 
 
+// determines if timer prints (but will not block recording)
 pub const LOG_LEVEL:usize = 2;
+pub const LOG3:usize = 0;
+pub const LOG2:usize = 1;
+pub const LOG1:usize = 0;
 
 /// print a vector
 pub fn print_vec_var<F:PrimeField>(msg: &str, v: &Vec<FpVar<F>>){
@@ -76,13 +83,28 @@ pub fn expand2(v: &Vec<usize>)->Vec<(usize,usize)>{
 	v.into_iter().map(|x| (*x,*x)).collect::<Vec<(usize,usize)>>()
 }
 
+/// We use timer as a Timer but also as a data recorder.
+/// It can keeps track of all time pieces in microseconds
+/// and it keeps a customized 2-d column for every time piece
+#[allow(dead_code)]
 pub struct Timer{
 	/// instance it is started
 	inst: Instant,	
 	/// name of the timer
 	name: String,	
 	/// indentation lvel
-	level: usize
+	level: usize,
+
+	/// number of extra data cols
+	num_extra_cols: usize,
+	/// description of extra cols
+	desc_extra_cols: Vec<String>,
+	/// extra data cols (will have data if num_extra_cols>0)
+	extra_data: Vec<Vec<usize>>,
+	/// time pieces in microseconds
+	time_pieces: Vec<usize>,
+	/// if the clock is running
+	b_running: bool,
 }
 
 impl Timer{
@@ -91,19 +113,72 @@ impl Timer{
 		Self{
 			inst: Instant::now(),
 			name: s.to_string(),
-			level
+			level,
+			num_extra_cols: 0,
+			desc_extra_cols: vec![],
+			extra_data: vec![],
+			time_pieces: vec![],
+			b_running: true, //after creation it's started
 		}
 	}
 
+	pub fn new_adv(s: &str, level: usize, desc: &Vec<&str>)->Self{
+		Self{
+			inst: Instant::now(),
+			name: s.to_string(),
+			level,
+			num_extra_cols: 0,
+			desc_extra_cols: desc.iter().map(|s| s.to_string())
+				.collect::<Vec<String>>(),
+			extra_data: vec![],
+			time_pieces: vec![],
+			b_running: false, //needs manual start
+		}
+	}
+
+	/// can only be used in default mode where there is
+	/// no extra data (if has extra data, has to call prv_adv)
 	pub fn prt(&mut self, msg: &str){
-		if LOG_LEVEL<self.level {return;}
+		self.stop(vec![]);
+		if LOG_LEVEL>=self.level {
+			print!("");
+			for _i in 0..self.level{print!("-");}
+			print!(" {}: {}: {:?}", self.name, msg, self.inst.elapsed());
+			println!("");
+		}
+		self.start();
+	}
 
-		print!("");
-		for _i in 0..self.level{print!("-");}
-		print!(" {}: {}: {:?}", self.name, msg, self.inst.elapsed());
-		println!("");
+	/// expecting nonw-empty data_row. b_start indicate whether
+	/// to start the clock immediately
+	pub fn prt_adv(&mut self, msg: &str, data_row: Vec<usize>, b_start: bool){
+		self.stop(data_row);
+		if LOG_LEVEL>=self.level {
+			print!("");
+			for _i in 0..self.level{print!("-");}
+			print!(" {}: {}: {:?}", self.name, msg, self.inst.elapsed());
+			println!("");
+		}
+		if b_start{ self.start();}
+	}
 
-		self.inst = Instant::now();	
+	/// start ticking
+	pub fn start(&mut self){
+		assert!(!self.b_running);
+		self.inst = Instant::now();
+		self.b_running = true;
+	}
+
+	/// stop ticking and feed the data
+	pub fn stop(&mut self, extra_data_row: Vec<usize>){
+		assert!(self.b_running);
+		let micro_sec = self.inst.elapsed().as_micros();
+		self.time_pieces.push(micro_sec as usize);
+		assert!(extra_data_row.len()==self.num_extra_cols);
+		if extra_data_row.len()>0{
+			self.extra_data.push(extra_data_row);
+		}
+		self.b_running = false;
 	}
 }
 
@@ -221,9 +296,16 @@ pub fn verify_inverse<F:PrimeField>(cs: ConstraintSystemRef<F>,
 	for i in 0..elen{
 		let prod = &v2[i] * &(&v1[i] + beta);
 		prod.enforce_equal(&one_var)?;
-		#[cfg(test)]{
-			if prod.value().is_ok(){ assert!(prod.value()?==F::one()); }
-		}
+		//at this moment, we don't need to following because
+		//we break the build up of long linear combinations by
+		//inserting prod with one_witness_var every 100 items in
+		//sonobe code.
+		//COMMENT OUT LATER if does not help
+		//if i%128==0{//break too long chain of eval_f() to avoid stack overflow
+			//if prod.value().is_ok(){ 
+			//	assert!(prod.value()?==F::one()); 
+			//}
+		//}
 	}
 	Ok( () )
 }
@@ -239,21 +321,73 @@ pub fn is_logup_inverse_correct<F:PrimeField>(cs: ConstraintSystemRef<F>,
 	v1: &[FpVar<F>], v2: &[FpVar<F>], m_tbl: &[FpVar<F>])
 	->Result<Boolean<F>, SynthesisError>{
 	assert!(v2.len()==m_tbl.len());
-	let mut sum_left = FpVar::<F>::new_constant(cs.clone(), F::zero())?;
-	for i in 0..v1.len(){ sum_left += &v1[i]; }
+	let one_var= FpVar::<F>::new_constant(cs.clone(), F::one())?;
+	let one_wit_var = FpVar::<F>::new_witness(cs.clone(), ||Ok(F::one())).unwrap();
+	one_wit_var.enforce_equal(&one_var)?; 
+
+	let mut lc_left = LinearCombination::<F>::new();
+	let mut sum_left_val = F::zero();
+	let mut sum_left= FpVar::<F>::new_constant(cs.clone(), F::zero())?;
+	for i in 0..v1.len(){
+		let var = match &v1[i] { 
+			Constant(_) => panic!("expecting a var"),
+			Var(x) => x.variable
+		};
+		lc_left.extend_from_slice(&[ (F::one(), var) ]);
+		sum_left_val += v1[i].value()?;
+	}
+	let sum_left = FpVar::new_witness(cs.clone(), || Ok(sum_left_val)).unwrap();
+
+	//REMOVE LATER --------------
+	let max_lc_len = cs.report_max_lc_len();
+	println!("DEBUG USE 6921.1: max_lc_len: {}, num_constraints: {}, lc: {} ", max_lc_len, cs.num_constraints(), cs.num_lc());
+	if max_lc_len>=80{
+		panic!("STOP HERE 1031");
+	}
+	//REMOVE LATER -------------- ABOVE
+
+	//we still have to enforce it corresponds to lc_left
+	let sum_left_var = match &sum_left { 
+		Constant(_) => panic!("expecting a var"),
+		Var(x) => x.variable
+	};
+	cs.enforce_constraint( //lc * 1 = sum_left
+		lc_left,
+		LinearCombination::from(Variable::One),
+		LinearCombination::from(sum_left_var)
+	)?;
+
+	//REMOVE LATER --------------
+	let max_lc_len = cs.report_max_lc_len();
+	println!("DEBUG USE 6921.2: max_lc_len: {}, num_constraints: {}, lc: {} ", max_lc_len, cs.num_constraints(), cs.num_lc());
+	if max_lc_len>=80{
+		panic!("STOP HERE 1031");
+	}
+	//REMOVE LATER -------------- ABOVE
 
 	let mut sum_right = FpVar::<F>::new_constant(cs.clone(), F::zero())?;
 	for i in 0..v2.len(){ 
 		sum_right+= &(&v2[i] * &m_tbl[i]);
-		if i%128==0{//this is to prevent the cfg(test) code calling value
+		//COMMENT OUT LATER IF DOES NOT HELP
+		//if i%128==0{//this is to prevent the cfg(test) code calling value
 			//for chain too long, which overflows stack when it's doing 
 			//recursion.
-			let value= sum_right.value();
-			assert!(value.is_ok());
-		}
+			 //let value= sum_right.value();
+			 //assert!(value.is_ok());
+		//}
 	}
-
+	println!("DEBUG USE 1001: sum_left_val: {}, sum_right: {}, left_len: {}, right_len: {}", sum_left_val, sum_right.value()?, v1.len(), v2.len());
+	assert!(sum_left_val == sum_right.value()?);
 	let res = sum_left.is_eq(&sum_right)?;
+
+	//REMOVE LATER --------------
+	let max_lc_len = cs.report_max_lc_len();
+	println!("DEBUG USE 6921.3: max_lc_len: {}, num_constraints: {}, lc: {} ", max_lc_len, cs.num_constraints(), cs.num_lc());
+	if max_lc_len>=80{
+		panic!("STOP HERE 1031");
+	}
+	//REMOVE LATER -------------- ABOVE
+
 	Ok( res )
 }
 

@@ -751,6 +751,7 @@ where
 		//let total_cs_pp_len:usize = pp.vec_pp.iter().map(|pp| 
 		//	pp.cs_pp_len).sum();
 
+		println!("DEBUG USE 8801: before: aug_f:: generate_constraints()");
 		assert!(vec_F.len()==n_circs);
 		let r1cs =  vec_F.iter().enumerate().map(|(j,circ)|{
         	let cs = ConstraintSystem::<C1::ScalarField>::new_ref();
@@ -764,14 +765,18 @@ where
 			r1cs
 		}).collect::<Vec<R1CS<C1::ScalarField>>>();
 
+		println!("DEBUG USE 8802: after aug_f");
+
 		//3. build the cf_r1cs constraints 
 		let cs2 = ConstraintSystem::<C1::BaseField>::new_ref();
 		let cf_circuit= CycleFoldCircuit::<C1, GC1>::empty(FOLDPOT_CF_N_POINTS);
+		println!("DEBUG USE 8803: after aug_f");
 		cf_circuit.generate_constraints(cs2.clone())?;
 		cs2.finalize();
 		let cs2 = cs2.into_inner().ok_or(Error::NoInnerConstraintSystem)?;
 		let cf_r1cs = extract_r1cs::<C1::BaseField>(&cs2);
 
+		println!("DEBUG USE 8804: after aug_f");
 		//4. build the cp_r1cs constraints 
 		let cs2 = ConstraintSystem::<C1::BaseField>::new_ref();
 		let cp_circuit= CyclePairCircuit::<E, P, C1, C2G2>::empty();
@@ -780,22 +785,27 @@ where
 		let cs2 = cs2.into_inner().ok_or(Error::NoInnerConstraintSystem)?;
 		let cp_r1cs = extract_r1cs::<C1::BaseField>(&cs2);
 
+		println!("DEBUG USE 8805: after aug_f");
 
         //4. compute the public params hash and dummy instances
         let pp_hash = vp.pp_hash()?;
         let (w_dummy, u_dummy) = dummy_instance_foldpot::<C1>(&r1cs[j], size_F[j], start_F[j]);
         let (W_dummy, U_dummy) = dummy_instance_foldpot_super::<C1>(&r1cs, size_F.clone(), start_F.clone(), n_circ, b_full);
 
+		println!("DEBUG USE 8806: after aug_f");
 
         let (cf_w_dummy, cf_u_dummy): (nova::Witness<C2>, nova::CommittedInstance<C2>) = cf_r1cs.dummy_instance();
         let (cp_w_dummy, cp_u_dummy): (nova::Witness<C2>, nova::CommittedInstance<C2>) = cp_r1cs.dummy_instance();
 
+		println!("DEBUG USE 8807: after aug_f");
         // W_dummy=W_0 is a 'dummy witness', all zeroes, but with the size corresponding to the
         // R1CS that we're working with.
 		let _lktbl = LookupTableTwoCol_Inst::<C1::ScalarField>::dummy();
 		let cs1e_pp = pp.cs1e_pp.clone();
 		let cs_pp = pp.vec_pp.iter().map(|pp| pp.cs_pp.clone()).
 			collect::<Vec<CS1::ProverParams>>();
+
+		println!("DEBUG USE 8808: after aug_f");
         Ok(Self {
 			_gm: PhantomData,
 			_e: PhantomData,
@@ -1026,6 +1036,7 @@ where
         mut rng: impl RngCore,
         prep_param_src: &Self::PreprocessorParam,
     ) -> Result<(Self::ProverParam, Self::VerifierParam), Error> {
+		println!("DEBUG USE 8802.1: preproess");
 		//0. process lookup globally
 		let lookup = prep_param_src.vec_pp[0].lk_tbl.borrow();
 		let (_col1_raw, _col2_raw) = lookup.get_cols();
@@ -1033,6 +1044,7 @@ where
 		let mut vec_pp = vec![];
 		let mut vec_vp = vec![];
 
+		println!("DEBUG USE 8801.1.1");
 		//TO IMPROVE: can be distributed. However, it's not trivial.
 		// The reason is that F and PrepParams are not Send + Sync
 		// will need raw scoped multi-threads and challenel passing,
@@ -1050,6 +1062,7 @@ where
 				).expect("fail in generating r1cs");
 			idx_j += 1;
 			//if idx_j==1{ cp_r1cs = Some(cp_r1cs_in.clone()); }
+			println!("DEBUG USE 8802.1.2: after collected r1cs");
 
 			let cs_pp: CS1::ProverParams;
 			let cs_vp: CS1::VerifierParams;
@@ -1073,6 +1086,7 @@ where
 			} else {
 				let max_row_col = if r1cs.A.n_cols>r1cs.A.n_rows {r1cs.A.n_cols}
 					else {r1cs.A.n_rows};
+				println!("DEBUG USE 8802.1.2.1: setup max_row_col: {}", max_row_col);
 				(cs_pp, cs_vp) = CS1::setup(&mut rng, max_row_col)?;
 				total_w_len += r1cs.A.n_cols -1 - r1cs.l;
 				total_e_len += r1cs.A.n_rows;
@@ -1080,6 +1094,7 @@ where
 				(cf_cs_pp, cf_cs_vp) = CS2::setup(&mut rng, cf_r1cs.A.n_rows)?;
 				(cp_cs_pp, cp_cs_vp) = CS2::setup(&mut rng, cp_r1cs_in.A.n_rows)?;
 			}
+			println!("DEBUG USE 8802.1.3: after CS1 CS2 setup");
 
 			let prover_params = ProverParamsFoldPot::<C1, C2, CS1, CS2, LK, H> {
 				poseidon_config: prep_param.poseidon_config.clone(),
@@ -1111,10 +1126,12 @@ where
 
 		//+1 for extra random blinding factor
 		let new_total_cs_pp_len = total_w_len + total_e_len + 1;
+		println!("DEBUG USE 8802.2: preproess, new_total_cs_pp_len: {}", new_total_cs_pp_len);
 
 		let Ok( (cs1e_pp,cs1e_vp) ) = CS1E::setup(&mut rng, new_total_cs_pp_len)
 			else {panic!("cs1e setup failed");};
 		if b_full_mode {assert!(n_circ==1);}
+		println!("DEBUG USE 8802.3");
 		let (qa_pp, qa_vp) = {
 			//1. construct the full row
 			//let ped_row = vec_pp.iter().map(|p| CS1::pkey_in_affine(&p.cs_pp))
@@ -1163,6 +1180,7 @@ where
 			let (pkey, vkey) = setup_qa_nizk::<E>(&smatrix, b_debug);
 			(Some(pkey), Some(vkey))
 		};
+		println!("DEBUG USE 8802.4");
 
 
 
@@ -1178,12 +1196,14 @@ where
 			let cp_r1cs = extract_r1cs::<C1::BaseField>(&cs2);
 			Some(cp_r1cs)
 		};
+		println!("DEBUG USE 8802.5");
 
 
 		//println!("DEBUG USE 1709.1: cp_r1cs: {}", (&cp_r1cs).is_some());
 		let prover_params = ProverParamsFoldPotSuper{vec_pp, qa_pp, cs1e_pp};
 		let verifier_params = VerifierParamsFoldPotSuper{
 			vec_vp, cp_r1cs, qa_vp, cs1e_vp};
+		println!("DEBUG USE 8802.6");
 
         Ok((prover_params, verifier_params))
     }
@@ -1831,13 +1851,19 @@ where
 	C1::Affine: AffineFromField<CF2<C1>>,
 	C2G2::Affine: AffineFromField<CF2<C2G2>>,
 {
+	println!("DEBUG USE 8901: get_r1cs_super");
     let augmented_F_circuit =
         AugmentedFCircuitFoldPotSuper::<C1, C2, GC2, LK, FC, GM>::empty(poseidon_config, F_circuit,n_circ, j);
+	println!("DEBUG USE 8902: get_r1cs_super");
     let cf_circuit = CycleFoldCircuit::<C1, GC1>::empty(FOLDPOT_CF_N_POINTS);
+	println!("DEBUG USE 8903: get_r1cs_super");
     let cp_circuit = CyclePairCircuit::<E,P,C1, C2G2>::empty();
     //let cp_circuit = CycleFoldCircuit::<C1, GC1>::empty(FOLDPOT_CF_N_POINTS);
+	println!("DEBUG USE 8904: get_r1cs_super");
     let r1cs = get_r1cs_from_cs::<C1::ScalarField>(augmented_F_circuit)?;
+	println!("DEBUG USE 8905: get_r1cs_super");
     let cf_r1cs = get_r1cs_from_cs::<C2::ScalarField>(cf_circuit)?;
+	println!("DEBUG USE 8906: get_r1cs_super");
     let cp_r1cs = get_r1cs_from_cs::<C2::ScalarField>(cp_circuit)?;
     Ok((r1cs, cf_r1cs,cp_r1cs))
 }

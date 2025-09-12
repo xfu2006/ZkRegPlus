@@ -595,11 +595,13 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 	fn gen_nd_advice_no_limit(&self, word: &Vec<F>, word_info: &WordInfo,
 		prev_adv: Option<Rc<dyn NdAdvice>>
 	) ->Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>{
+		println!("DEBUG USE 101: sed gen_nd_advice");
 		//1. expand word to full length
 		let mut rem_word = vec![F::zero(); self.max_word_len() - word.len()];
 		let mut word_seg = word.clone();
 		word_seg.append(&mut rem_word);
 
+		println!("DEBUG USE 102: sed gen_nd_advice");
 		//2. collect the data for building advice.
 		//most vars have two versions: cs and igc
 		//cs stands for case sensitive
@@ -633,6 +635,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 		let pm_fsm_id_igc = ClamavDB::<F>::pm_acdfa_id(sig_id, true);
 
 		
+		println!("DEBUG USE 103: sed gen_nd_advice");
 		//3. generate the inputs.
 		//3.1 the case sensitive version
 		let init_state_cs = F::from((pm_acdfa_cs.init_state+1) as u32); //adj +1
@@ -649,6 +652,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 			).to_vec(&subsig_step_store_cs);
 
 
+		println!("DEBUG USE 104: sed gen_nd_advice");
 		let (inp_state_cs, inp_loc_cs, inp_steps_queue_cs) = prev_adv
 		.as_ref().map_or(
 			(init_state_cs, init_loc_cs, init_steps_queue_cs), |adv|{
@@ -668,6 +672,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 			}
 		);
 
+		println!("DEBUG USE 105: sed gen_nd_advice");
 		//3.2 the ignore case version 
 		let init_state_igc = F::from((pm_acdfa_igc.init_state+1) as u32);//adj+1
 		let init_loc_igc = F::one();
@@ -705,6 +710,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 		let inp = SedInput{inp_state_cs, inp_loc_cs, inp_steps_queue_cs,
 			inp_state_igc, inp_loc_igc, inp_steps_queue_igc};
 
+		println!("DEBUG USE 106: sed gen_nd_advice");
 		let advice = SedAdvice::<F>::new(
 			&word_seg, 
 			word.len(), 
@@ -726,6 +732,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 			&discharge_info
 		);
 
+		println!("DEBUG USE 107: sed gen_nd_advice");
 		let cap2 = Clone::clone(&self.capacity);
 		Some((Rc::new(cap2), Rc::new(advice)) )
 	}
