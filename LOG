@@ -20033,7 +20033,7 @@ Goal 2. fix the distance small err
 		-> DFA nibbls should e patched.
 
 Sunday 09/14/2025
-LOC (sonobe): 18707 -> 18722 
+LOC (sonobe): 18707 -> 18722 (+20)
 Goal 1. fix the query table computation, try to minimize it
 	[a] cost: 10M for 1.3M query (almost 8 per 1 query)
 	--- failed improvement --
@@ -20053,6 +20053,7 @@ Goal 2. Check why CS1,2 has doubled the size of commitment key
 	[b] the reason is total_w_len + total_e_len is about twice
 		the w length.
 	[c] so this is not fixable?
+
 Goal 3. readjust percent to 100th of percent
 	[a] change pcercent to basis: 0.01 percent.
 
