@@ -1155,7 +1155,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 			subsigs: capacity.subsigs,
 			avg_active_pats_per_subsig: 2, //it's ok, coz it's not affecting
 										  //parse_from
-			perc_pats_in_trace: capacity.perc_pats_in_trace
+			basis_pats_in_trace: capacity.perc_pats_in_trace*100, //CHANGE
 		};
 		let step_q_size = StepQueue::<F>::vec_size(&StepQueueType::Res,
 			&dis_cap);
@@ -2188,7 +2188,7 @@ pub mod tests_compute_sig_adv{
 			max_nibble_len: nibble_len, 
 			subsigs: cap.subsigs,
 			avg_active_pats_per_subsig: 2,
-			perc_pats_in_trace: cap.basis_pats_in_trace*100, //CHANGE LATER
+			basis_pats_in_trace: cap.basis_pats_in_trace,
 		};
 		let cap_sig= ComputeSigAdvCapacity{//capaciity of compute sig adv comp 
 			max_nibble_len: nibble_len, 
@@ -2512,7 +2512,7 @@ pub mod tests_compute_sig_adv{
 			max_nibble_len: 62, 
 			subsigs: 4,
 			avg_active_pats_per_subsig: 2,
-			perc_pats_in_trace: 48,
+			basis_pats_in_trace: 48*100, //48 percent
 		};
 		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),
 			q_type: StepQueueType::Res};

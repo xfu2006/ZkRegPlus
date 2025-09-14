@@ -156,7 +156,7 @@ impl SedCapacity{
 		let max_nibble_len = max_word_len * LEGS;
 		let faa_capacity = FsmAdvCapacity{max_nibble_len, acdfa_state_part_bits,			subsigs, avg_pats_per_subsig, basis_pats_in_trace};
 		let perc_pats_in_trace = 100 * basis_pats_in_trace; //temp
-		let da_capacity = DischargeAdvCapacity{max_nibble_len, subsigs, avg_active_pats_per_subsig, perc_pats_in_trace};
+		let da_capacity = DischargeAdvCapacity{max_nibble_len, subsigs, avg_active_pats_per_subsig, basis_pats_in_trace};
 		let csa_capacity = ComputeSigAdvCapacity{subsigs, sigs: sigs_sed, max_nibble_len,
 			perc_pats_in_trace, perc_comp_subsigs};
 			

@@ -298,10 +298,10 @@ pub struct DischargeAdvCapacity{
 	/// the STATIC number of steps of a subsig in average).
 	pub avg_active_pats_per_subsig: usize,
 
-	/// NOTE:  percentage number, e.g. 50 means 50 percent.
-	/// avg_pats*per_trace_perc/100 * max_nibble_len -> SIZE of packed tracke
+	/// NOTE:  basis point number, e.g. 50 means 50 x 0.01 percent.
+	/// avg_pats*per_trace_perc/10000 * max_nibble_len -> SIZE of packed tracke
 	/// wherethe packed trace is the (pat, loc) table size. 
-	pub perc_pats_in_trace: usize,
+	pub basis_pats_in_trace: usize,
 }
 
 /// Advice for the Discharge Subsig Gadget.
@@ -385,7 +385,7 @@ impl <F:PrimeField> StepQueue<F>{
 			StepQueueType::ToDel => 20, //10% 
 		};
 		let size_trace =  capacity.max_nibble_len 
-			* capacity.perc_pats_in_trace/100
+			* capacity.basis_pats_in_trace/10000
 			* perc_compress_ratio/100;
 		if size_pat > size_trace {size_pat} else {size_trace}
 	}
@@ -792,7 +792,7 @@ impl <F:PrimeField> StepQueue<F>{
 
 		//3. consruct container
 		let n = Self::vec_size(&self.q_type, &self.capacity);
-		assert!(n>vec_encoded.len(), "StepQueue type: {:?} buf too small, either adjust the compression ratio in vec_size() first, then check the perc_pats_in_trace in DischargeAdvCapacity, n: {}, vec_encoded.len: {}", self.q_type, n, vec_encoded.len());
+		assert!(n>vec_encoded.len(), "StepQueue type: {:?} buf too small, either adjust the compression ratio in vec_size() first, then check the basis_pats_in_trace in DischargeAdvCapacity, n: {}, vec_encoded.len: {}", self.q_type, n, vec_encoded.len());
 		let n2 = n-vec_encoded.len();
 		let vec_encoded = vec![vec![zero; n2], vec_encoded].concat();
 		let vec_locs= vec![vec![zero; n2], vec_locs].concat();
@@ -995,7 +995,7 @@ impl <F:PrimeField> StepQueueItem<F>{
 impl <F:PrimeField> StepFwdPrf<F>{
 	/// return the estimated needed size of buf for to_container
 	pub fn vec_size(&self)->usize{
-		self.capacity.perc_pats_in_trace * self.capacity.max_nibble_len/100
+		self.capacity.basis_pats_in_trace * self.capacity.max_nibble_len/10000
 	}
 
 	/// generate the container (including the si cols)
@@ -1073,7 +1073,7 @@ impl <F:PrimeField> StepFwdPrf<F>{
 			v_dst_loc, v_dst_pat_id, v_dst_pat_diff1, v_dst_pat_diff2,
 			v_dst_subsig];
 		let n = self.vec_size();
-		assert!(n>v2d[0].len(), "buf too small, adjust perc_pats_in_trace");
+		assert!(n>v2d[0].len(), "buf too small, adjust basis_pats_in_trace");
 		let n2 = n-v2d[0].len();
 		let pad = vec![zero; n2];
 		#[cfg(test)]{
@@ -1283,8 +1283,8 @@ impl <F:PrimeField> StepBwdPrfItem<F>{
 
 impl <F:PrimeField> StepBwdPrf<F>{
 	pub fn vec_size(&self)->usize{
-		let raw_size = self.capacity.perc_pats_in_trace 
-			* self.capacity.max_nibble_len / 100;
+		let raw_size = self.capacity.basis_pats_in_trace 
+			* self.capacity.max_nibble_len / 10000;
 		//given that StepBwdPrf is usually much smaller 
 		//we give it some fraction of the size of StepFwdPrf
 		//adjust in practice
@@ -1360,7 +1360,7 @@ impl <F:PrimeField> StepBwdPrf<F>{
 			v_src_min_loc,
 			v_prev_encoded, v_loc_to_del];
 		let n = self.vec_size();
-		assert!(n>v2d[0].len(), "buf too small for StepBwdPrf, adjust compress_ratio in vec_size() first, and then the perc_pats_in_trace in capacity");
+		assert!(n>v2d[0].len(), "buf too small for StepBwdPrf, adjust compress_ratio in vec_size() first, and then the basis_pats_in_trace in capacity");
 		let n2 = n-v2d[0].len();
 		let pad = vec![zero; n2];
 		let se = vec![pad.clone(), v2d[0].clone()].concat();//src_encoded
@@ -1454,8 +1454,8 @@ impl DischargeAdvCapacity{
 	/// should be the max of num_sub_sig_steps and perc_loc * max_nibble,
 	/// but we simplify the calculation here).
 	pub fn get_pat_loc_len(&self)->usize{
-		let pats_len = self.perc_pats_in_trace 
-			* self.max_nibble_len/100;
+		let pats_len = self.basis_pats_in_trace 
+			* self.max_nibble_len/10000;
 		pats_len
 	}
 }
@@ -1468,7 +1468,7 @@ impl Capacity for DischargeAdvCapacity{
 		self.max_nibble_len >= other.max_nibble_len &&
 		self.subsigs >= other.subsigs &&
 		self.avg_active_pats_per_subsig >= other.avg_active_pats_per_subsig &&
-		self.perc_pats_in_trace >= other.perc_pats_in_trace
+		self.basis_pats_in_trace >= other.basis_pats_in_trace
 
 	}
 
@@ -1479,7 +1479,7 @@ impl Capacity for DischargeAdvCapacity{
 			max_nibble_len: self.max_nibble_len,
 			subsigs: self.subsigs,
 			avg_active_pats_per_subsig: self.avg_active_pats_per_subsig,
-			perc_pats_in_trace: self.perc_pats_in_trace,
+			basis_pats_in_trace: self.basis_pats_in_trace,
 		})
 	}
 
@@ -1499,7 +1499,7 @@ impl <F: PrimeField> ComponentAdvice<F> for DischargeAdvAdvice<F>{
 
 impl <F: PrimeField> DischargeAdvAdvice<F>{
 	/// Given the <pats,locs> from the fsm_adv gadget (note it is padded
-	/// to perc_pat_per_trace * max_nibblelen/100), generate
+	/// to basis_pat_per_trace * max_nibblelen/10000), generate
 	/// the StepQueue of all related subsigs (NOTE: subsigs are provided
 	/// as non-deterministic advice)
 	pub fn new(
@@ -3464,7 +3464,7 @@ pub mod tests_discharge_adv_gadget{
 			max_nibble_len: nibble_len, 
 			subsigs: cap.subsigs,
 			avg_active_pats_per_subsig: 1,
-			perc_pats_in_trace: cap.basis_pats_in_trace*100, //CHANGE LATER!
+			basis_pats_in_trace: cap.basis_pats_in_trace,
 		};
 
 		//2. create advice for word_extract_adv, fsm_adv, and discharge_adv
@@ -3670,7 +3670,7 @@ pub mod tests_discharge_adv_gadget{
 			max_nibble_len: 62, 
 			subsigs: 4,
 			avg_active_pats_per_subsig: 4,
-			perc_pats_in_trace: 48,
+			basis_pats_in_trace: 48*100,
 		};
 		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),
 			q_type: StepQueueType::Res};
@@ -3814,7 +3814,7 @@ pub mod tests_discharge_adv_gadget{
 			max_nibble_len: 62, 
 			subsigs: 4,
 			avg_active_pats_per_subsig: 4,
-			perc_pats_in_trace: 48,
+			basis_pats_in_trace: 48*100,
 		};
 		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),
 			q_type: StepQueueType::Res};

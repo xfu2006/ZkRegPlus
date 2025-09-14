@@ -20056,6 +20056,15 @@ Goal 2. Check why CS1,2 has doubled the size of commitment key
 
 Goal 3. readjust percent to 100th of percent
 	[a] change pcercent to basis: 0.01 percent.
+	files: compute_sig_adv.rs, db.rs, dfa_adv.rs,
+		discharge_adv.rs, fsm_adv.rs
+	[b] fsm_adv.rs 
+		-> change all appearance of perc_
+		-> regression test
+	[c] discharge_adv.rs
+		-> change
+		-> unit test
+	[d] dfa_adv.rs
 
 
 
