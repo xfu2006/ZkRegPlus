@@ -2743,14 +2743,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		let wtns_var =  WitnessSigmaIR1CSVar::from_vec(&cfg, &external_inputs);
 		//println!("DEBUG USE 101: AFTER msg1: constraints: {}", cs.num_constraints());
 
-		//REMOVE LATER --------------
-		let max_lc_len = cs.report_max_lc_len();
-		println!("DEBUG USE 6821.1: max_lc_len: {} ", max_lc_len);
-		if max_lc_len>80{
-			panic!("STOP HERE 1031");
-		}
-		//REMOVE LATER -------------- ABOVE
-
 		//2. check message2 (ro over stmt and msg1)
 		let mut gi = 0;
 		while gi<self.gadgets.len() && configs[gi].2==0 {gi+=1;}
@@ -2877,12 +2869,15 @@ where 	C: CurveGroup<ScalarField=F>,
 
 
 		//5. verify the Lookup related witnesses:
+		// (0) extract the b_req_lkup array
 		// (1) verify inverse for inverse of Hab22 equations
 		// (2) compute the sum of Hab22 equations
 		//NOTE: however, they all have to be UPDATED because
 		//the m_vec has to be updated
 		// NOTE sometimes there is NO lookup involved at all,
 		// then skip this check!!!
+
+		//5.0 setup
 		let inv_hab22_left_size = self.witness_config.inv_hab22_left_size;
 		let inv_hab22_right_size = self.witness_config.inv_hab22_right_size;
 		//right_size is indicator of whether lookup is used
@@ -2903,7 +2898,19 @@ where 	C: CurveGroup<ScalarField=F>,
 			vec![zero_var.clone(),zero_var.clone()], 
 			si.subtable_id.clone()].concat();
 
-		println!("DEBUG USE 1201: cs.lc_size: {}, constraints: {}", cs.inner().unwrap().borrow().lc_map.len(), cs.num_constraints());
+		//NOTE: b_check_lkup should be regarded as a FIXED circuit specific
+		//array. To save implementation cost (avoiding large cascading
+		//structure change of code), we here build it from the qry_tbl1 value.
+		//when the value is 0 (mean's don't care), 
+		//b_check_lkup is set to FALSE; othersise TRUE.
+		//This array is gauranteed to be the SAME regardless of witness.
+		//Ideally, we should hard encode it in all gadget building functions
+		//and assemble the array, but here, we do it from var value for
+		//conveneince.
+		let b_check_lkup = qry_tbl1.iter().map(|x| {
+			!x.value().unwrap().is_zero()
+		}).collect::<Vec<bool>>();
+
 		//here to break very long linear combination sequence
 		//of the fum sum_i=1^n v[i]
 		//we periodically multiply the item v[i] with var with value 1
@@ -2916,16 +2923,21 @@ where 	C: CurveGroup<ScalarField=F>,
 		let one_wit_var = FpVar::<F>::new_witness(cs.clone(), ||Ok(F::one())).unwrap();
 		one_wit_var.enforce_equal(&one_var)?; 
 
-		//verify the correct of inverse and compute sum_hab22_left
+		println!("DEBUG USE 1201: BEFORE inv_hab22: {}, cs.lc_size: {}, cons: {}", inv_hab22_left_size, cs.inner().unwrap().borrow().lc_map.len(), cs.num_constraints());
+
+		//5.1 verify the correct of inverse and compute sum_hab22_left
+		assert!(b_check_lkup.len()==inv_hab22_left_size,
+			"b_check_up.len(): {} != inv_hab22_left: {}",
+			b_check_lkup.len(), inv_hab22_left_size
+		);
 		for i in 0..inv_hab22_left_size{
+			//note: b_check_lkup is CIRCUIT specific const array
+			if b_check_lkup[i]==false {continue;}
 			let v2 = &qry_tbl2[i];
 			let v = &alpha + &qry_tbl1[i] + &(v2 * &beta);
 			let prod = &v * &wtns_var.inv_hab22_left[i];
 			prod.enforce_equal(&one_var)?;
-			let b_zero = qry_tbl1[i].is_zero()?;
-			sum_hab22_left += b_zero.select(
-				&zero_var,
-				&wtns_var.inv_hab22_left[i])?;	
+			sum_hab22_left += &wtns_var.inv_hab22_left[i];
 			if i%64==0{//avoid building too long linear combinations
 				//cs.is_satisfied() -> eval_lc() -> assigned_value(*var)
 				//  when var is symbolic it's calling eval_lc() recursively
@@ -2952,6 +2964,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		}
 			println!("--- DEBUG USE 7601.2 lkup_size: {}, inv_hab22_right_size: {}", si.act_lookup_share_size.value()?, inv_hab22_right_size);
 
+		//5.2 check the right side
 		let mut lookup_share_size_left = si.act_lookup_share_size.clone();
 		for i in 0usize..inv_hab22_right_size{
 			let v = &alpha + &si.col1_share[i] + &si.col2_share[i] * &beta;
@@ -3239,39 +3252,21 @@ where 	C: CurveGroup<ScalarField=F>,
 				cs.num_constraints(), get_stack_space()
 			);
 		}
-		//REMOVE LATER --------------
-		let max_lc_len = cs.report_max_lc_len();
-		println!("DEBUG USE 6821.11: max_lc_len: {}, num_constraints: {}, lc: {} ", max_lc_len, cs.num_constraints(), cs.num_lc());
-		if max_lc_len>=80{
-			panic!("STOP HERE 1031");
-		}
-		//REMOVE LATER -------------- ABOVE
-
 
 		//10.5 check the failed_sigs are covered by discharged sigs
-		println!("REMOVE LATER 1111 =====");
 		let rc2 = &rc + &FpVar::<F>::new_constant(cs.clone(), 
 			F::from(237177234918187u64))?;
 		//rc2 is used to prevent the initial dummy case rc0 causing
 		//inverse err. In the real mode, rc will be the real Fiat-Shamir
-		println!("REMOVE LATER 1112 =====");
 		let b_sigs = check_logup(cs.clone(),
 			&si.failed_sigs,
 			&si.discharged_sigs,
 			&si.mtbl_sigs,
 			&rc2,
 		)?;
-		println!("REMOVE LATER 1113 =====");
 		let b_correct = not_final_step.or(&b_sigs)?; //require b_sigs true at
+			//at last step
 
-		//REMOVE LATER --------------
-		let max_lc_len = cs.report_max_lc_len();
-		println!("DEBUG USE 6821.11.2: max_lc_len: {}, num_constraints: {}, lc: {} ", max_lc_len, cs.num_constraints(), cs.num_lc());
-		if max_lc_len>=80{
-			panic!("STOP HERE 1031");
-		}
-		//REMOVE LATER -------------- ABOVE
-													//final step
 		if b_debug{
 			let csat = cs.is_satisfied();
 			if csat.is_ok(){ assert!(csat.unwrap(), "step 9.2"); }
@@ -3288,14 +3283,6 @@ where 	C: CurveGroup<ScalarField=F>,
 				&si.discharged_sigs);
 			println!("DEBUG USE 6803 sigma_ir1cs: b_correct: {}", b_correct.value()?);
 		}
-
-		//REMOVE LATER --------------
-		let max_lc_len = cs.report_max_lc_len();
-		println!("DEBUG USE 6821.11.3: max_lc_len: {}, num_constraints: {}, lc: {} ", max_lc_len, cs.num_constraints(), cs.num_lc());
-		if max_lc_len>=80{
-			panic!("STOP HERE 1031");
-		}
-		//REMOVE LATER -------------- ABOVE
 
 		b_correct.enforce_equal(&Boolean::TRUE)?;
 		#[cfg(test)]{
@@ -3314,13 +3301,6 @@ where 	C: CurveGroup<ScalarField=F>,
 			);
 		}
 
-		//REMOVE LATER --------------
-		let max_lc_len = cs.report_max_lc_len();
-		println!("DEBUG USE 6821.12: max_lc_len: {}, num_constraints: {}, lc: {} ", max_lc_len, cs.num_constraints(), cs.num_lc());
-		if max_lc_len>=80{
-			panic!("STOP HERE 1031");
-		}
-		//REMOVE LATER -------------- ABOVE
 
 		Ok(vec![new_cur_hc_cmF, hash_zi_part2])
 	}

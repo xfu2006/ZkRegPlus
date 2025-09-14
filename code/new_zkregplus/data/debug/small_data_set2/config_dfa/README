@@ -1,0 +1,24 @@
+The signatures are the SAME as small_data_set (design idea below).
+TEST1.bin is replication of TEST1.bin  in small_data_set, and
+	how it's discharged is explained below.
+
+(1) cp_cs and cp_igc -> will not show up in fail list of any
+	because their critical words did not show up.
+(2) sed_cs discharged: 
+	because the distance between Aaaa and bbbbc is 6 (not 4) nibbles
+	(i.e., the distance is three 8-bit chars, not two chars)
+(3)	sed_igc discharged: 
+	because aaaaa and bbbbc distance is 6 (not 4) 
+(4) DFA_cs: 
+	it falls into DFA entry because pattern too short.
+	it is discharged because distance between 9 and 7 is not 6 nibbles 
+	(but 8 nibbles).
+	It will show up in the fail list of SED and CP, but then discharged
+	by DFA.
+(5) DFA_igc:
+	it fails because it requires 6 nibbles between ignore case
+	'x' and 'y' (but there are 8) 
+	TEST1.bin fails DFA approach because "9" and "7" distance is 5 instead of 6
+
+# for TEST1.bin we make the patterns actually occur 3 times (to respond
+to sparse appearance of bad patterns.

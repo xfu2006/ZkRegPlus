@@ -325,45 +325,15 @@ pub fn is_logup_inverse_correct<F:PrimeField>(cs: ConstraintSystemRef<F>,
 	let one_wit_var = FpVar::<F>::new_witness(cs.clone(), ||Ok(F::one())).unwrap();
 	one_wit_var.enforce_equal(&one_var)?; 
 
-	let mut lc_left = LinearCombination::<F>::new();
-	let mut sum_left_val = F::zero();
 	let mut sum_left= FpVar::<F>::new_constant(cs.clone(), F::zero())?;
 	for i in 0..v1.len(){
-		let var = match &v1[i] { 
-			Constant(_) => panic!("expecting a var"),
-			Var(x) => x.variable
-		};
-		lc_left.extend_from_slice(&[ (F::one(), var) ]);
-		sum_left_val += v1[i].value()?;
+		sum_left = &sum_left + &v1[i];
+		if i%64==0{ //to break the long linear combination chain
+			sum_left = &sum_left * &one_wit_var; 
+			let _val = sum_left.value()?; //to avoid long eval chain
+		}
 	}
-	let sum_left = FpVar::new_witness(cs.clone(), || Ok(sum_left_val)).unwrap();
-
-	//REMOVE LATER --------------
-	let max_lc_len = cs.report_max_lc_len();
-	println!("DEBUG USE 6921.1: max_lc_len: {}, num_constraints: {}, lc: {} ", max_lc_len, cs.num_constraints(), cs.num_lc());
-	if max_lc_len>=80{
-		panic!("STOP HERE 1031");
-	}
-	//REMOVE LATER -------------- ABOVE
-
-	//we still have to enforce it corresponds to lc_left
-	let sum_left_var = match &sum_left { 
-		Constant(_) => panic!("expecting a var"),
-		Var(x) => x.variable
-	};
-	cs.enforce_constraint( //lc * 1 = sum_left
-		lc_left,
-		LinearCombination::from(Variable::One),
-		LinearCombination::from(sum_left_var)
-	)?;
-
-	//REMOVE LATER --------------
-	let max_lc_len = cs.report_max_lc_len();
-	println!("DEBUG USE 6921.2: max_lc_len: {}, num_constraints: {}, lc: {} ", max_lc_len, cs.num_constraints(), cs.num_lc());
-	if max_lc_len>=80{
-		panic!("STOP HERE 1031");
-	}
-	//REMOVE LATER -------------- ABOVE
+	sum_left = &sum_left * &one_wit_var;
 
 	let mut sum_right = FpVar::<F>::new_constant(cs.clone(), F::zero())?;
 	for i in 0..v2.len(){ 
@@ -376,17 +346,8 @@ pub fn is_logup_inverse_correct<F:PrimeField>(cs: ConstraintSystemRef<F>,
 			 //assert!(value.is_ok());
 		//}
 	}
-	println!("DEBUG USE 1001: sum_left_val: {}, sum_right: {}, left_len: {}, right_len: {}", sum_left_val, sum_right.value()?, v1.len(), v2.len());
-	assert!(sum_left_val == sum_right.value()?);
+	assert!(sum_left.value()? == sum_right.value()?);
 	let res = sum_left.is_eq(&sum_right)?;
-
-	//REMOVE LATER --------------
-	let max_lc_len = cs.report_max_lc_len();
-	println!("DEBUG USE 6921.3: max_lc_len: {}, num_constraints: {}, lc: {} ", max_lc_len, cs.num_constraints(), cs.num_lc());
-	if max_lc_len>=80{
-		panic!("STOP HERE 1031");
-	}
-	//REMOVE LATER -------------- ABOVE
 
 	Ok( res )
 }

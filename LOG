@@ -19998,7 +19998,63 @@ Goal 2. binary search and analyze which gadget introduces long chains of
 		6941.x
 		6951.x
 
-	
+Goal 3. regression testing
+	[a] small example -> note that max_lc_chain is still 259
+	[c] check large example -> so there is still place generating
+		long chain of 6144
+
+Goal 4. Repeat the process and try to locate
+	[a] between step 10.5 and 12
+	[b] the build one single LC does not work, it still has
+		a long lc chain so recover the original version of
+		the for loop of var build but break it every 64 items.
+	[c] remove 6921
+	[d] now cut the max_len to 130 for big example!
+
+Saturday 09/13/2025
+Goal 1. fix the lksize problem
+	[a] print out the lksize
+		chunk_len: 512 packed words  =
+			512 * 62 = (about 30k nibbles)
+		total_word_len: 3 packed words
+			this is about 28kb = 56k nibbles
+			this is about 1k packed words, it's not 3.
+	[b] remove DEB msg 91xx. 
+		-> fix the data proble: input path wrong it's too small
+	[c] now chunk_len 512, total_word_len: 919, lkup_len: 9498
+		it needs two circs, so each circ handles 1/2 about 5632
+		make file 5x larger
+	[d] lkup size is down but the query size is not small: 1.4M.
+
+Goal 2. fix the distance small err
+	[a] need to change the range table -> fixed
+	[b] there is another error nibbles len not match
+		maybe not fixing it right now, fix the size at this moment.
+		-> DFA nibbls should e patched.
+
+Sunday 09/14/2025
+LOC (sonobe): 18707 -> 18722 
+Goal 1. fix the query table computation, try to minimize it
+	[a] cost: 10M for 1.3M query (almost 8 per 1 query)
+	--- failed improvement --
+	DEBUG USE 1201: BEFORE inv_hab22: 1394767, cs.lc_size: 15549721, cons: 3548841
+	DEBUG USE 1201: AFTER inv_hab22: 1394767, cs.lc_size: 53273782, cons: 13333996
+		-> it's the same does not help
+		-> cost 9.8M
+	[b] cost analysis:
+		qry tbl1: 1.3M
+		actual non-zero items: 1252847 out of 1394767 -> around 89%
+	[c] collection time for 1.3M: needs 9.6ms!
+	[d] implement the b_arry_check 
+	[e] new constraints: 7326960, cost: 3.9M (saved about 6M)
+
+Goal 2. Check why CS1,2 has doubled the size of commitment key
+	[a] msg after CS1 CS2 setup (8802.2.)
+	[b] the reason is total_w_len + total_e_len is about twice
+		the w length.
+	[c] so this is not fixable?
+Goal 3. readjust percent to 100th of percent
+	[a] change pcercent to basis: 0.01 percent.
 
 
 

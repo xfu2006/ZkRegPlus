@@ -271,7 +271,7 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		let (m, nlen) = (capacity.subsigs, capacity.max_nibble_len);
 		let (_one,zero) = (F::one(),F::zero());
 		assert!(v_dfa_id.len()==m && v_dfa.len()==m && inp_subsigs.len()==m);
-		assert!(nibbles.len()==nlen);
+		assert!(nibbles.len()==nlen, "nibbles: {}, nlen: {}", nibbles.len(), nlen);
 
 		//1. walk nibbles through transition of each DFA
 		//this will be sequential, in practice, it's ok
