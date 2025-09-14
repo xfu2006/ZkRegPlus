@@ -3458,13 +3458,13 @@ pub mod tests_discharge_adv_gadget{
 			acdfa_state_part_bits: state_bits, 
 			subsigs: 4,
 			avg_pats_per_subsig: 4,
-			perc_pats_in_trace: 27 
+			basis_pats_in_trace: 27*100, 
 		};
 		let cap_disc = DischargeAdvCapacity{//capaciity of discharge comopnent
 			max_nibble_len: nibble_len, 
 			subsigs: cap.subsigs,
 			avg_active_pats_per_subsig: 1,
-			perc_pats_in_trace: cap.perc_pats_in_trace, 
+			perc_pats_in_trace: cap.basis_pats_in_trace*100, //CHANGE LATER!
 		};
 
 		//2. create advice for word_extract_adv, fsm_adv, and discharge_adv

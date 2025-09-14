@@ -13,14 +13,15 @@ use libc::{pthread_getattr_np, pthread_attr_getstack, pthread_self};
 use std::mem::MaybeUninit;
 use std::ptr;
 use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef,
-	LinearCombination,Variable};
+//	LinearCombination,Variable
+};
 use ark_r1cs_std::{
 	boolean::{Boolean},
 	fields::{
 		//FieldVar,
 		fp::FpVar,
-		fp::FpVar::Constant,
-		fp::FpVar::Var,
+		//fp::FpVar::Constant,
+		//fp::FpVar::Var,
 	},
 	alloc::AllocVar,
 	eq::EqGadget,

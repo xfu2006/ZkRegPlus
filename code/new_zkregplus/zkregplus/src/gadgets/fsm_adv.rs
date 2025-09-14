@@ -57,11 +57,11 @@ pub struct FsmAdvCapacity{
 	/// size of the final product (subsig-state-pat-loc) table
 	/// This is usually much smaller than the max_nibble_len,
 	/// It is mainly decided by the
-	/// ** percentage of final states in trace **
+	/// ** basis (0.01 percent) final states in trace **
 	/// This ratio is usually VERY SMALL.
 
-	/// NOTE:  percentage number, e.g. 50 means 50 percent.
-	/// avg_pats*per_trace_perc/100 * max_nibble_len -> SIZE of packed tracke
+	/// NOTE:  basis number, e.g. 50 means 50 basis points.
+	/// avg_pats*per_trace_perc/10000 * max_nibble_len -> SIZE of packed tracke
 	/// wherethe packed trace is the (pat, loc) table size. 
 	/// This is a hybird
 	/// ratio primary determined by the ratio of final states appearing
@@ -71,7 +71,7 @@ pub struct FsmAdvCapacity{
 	/// compund ratio. Usually this is a very small number, if the
 	/// final states do not appear frequently (i.e., do not use small
 	/// pattern words to generate ACDFA).
-	pub perc_pats_in_trace: usize,
+	pub basis_pats_in_trace: usize,
 }
 
 /// Advice for the WordExtract Gadget.
@@ -146,7 +146,7 @@ impl Capacity for FsmAdvCapacity{
 		self.max_nibble_len >= other.max_nibble_len &&
 		self.subsigs >= other.subsigs &&
 		self.avg_pats_per_subsig >= other.avg_pats_per_subsig &&
-		self.perc_pats_in_trace >= other.perc_pats_in_trace
+		self.basis_pats_in_trace >= other.basis_pats_in_trace
 
 	}
 
@@ -158,7 +158,7 @@ impl Capacity for FsmAdvCapacity{
 			acdfa_state_part_bits: self.acdfa_state_part_bits,
 			subsigs: self.subsigs,
 			avg_pats_per_subsig: self.avg_pats_per_subsig,
-			perc_pats_in_trace: self.perc_pats_in_trace,
+			basis_pats_in_trace: self.basis_pats_in_trace,
 		})
 	}
 
@@ -481,8 +481,8 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 			fs_acc_combo.borrow().get_container("locs").unwrap().borrow()
 			.duplicate_as_external(0, None)));
 
-		let packed_trace_size = capacity.perc_pats_in_trace * 
-			capacity.max_nibble_len/100;
+		let packed_trace_size = capacity.basis_pats_in_trace * 
+			capacity.max_nibble_len/10000;
 		let state_loc_tbl = tbl_filtered_to_sorted_tbl(
 			&state_col, 
 			&loc_col, 
@@ -511,8 +511,8 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		res.borrow_mut().add_container(pat_state_tbl);
 
 		//4. left join (pat-state) and (state-loc) both are sorted table.
-		let packed_trace_size = capacity.perc_pats_in_trace * 
-			capacity.max_nibble_len / 100;
+		let packed_trace_size = capacity.basis_pats_in_trace * 
+			capacity.max_nibble_len / 10000;
 		let pat_state_loc_tbl = tbl_left_join(
 			&pat_state_tbl2, &state_loc_tbl2, 
 			&sorted_states2, packed_trace_size, "pat_state_loc_tbl")
@@ -781,11 +781,11 @@ impl <F:PrimeField> SigmaGadget<F> for FsmAdvGadget<F>{
 	}
 
 	fn est_cost(&self)->usize{
-		// key is the low perc_pat_in_trace 
+		// key is the low basis_pat_in_trace 
 		let est = 
 			118 * 
 			self.capacity.max_nibble_len 
-			* self.capacity.perc_pats_in_trace/100 			
+			* self.capacity.basis_pats_in_trace/10000 			
 		+ 107 * self.capacity.avg_pats_per_subsig * self.capacity.subsigs;
 
 		est
@@ -900,7 +900,7 @@ pub mod tests_fsm_adv_gadget{
 			acdfa_state_part_bits: state_bits, 
 			subsigs: 4,
 			avg_pats_per_subsig: 4,
-			perc_pats_in_trace: 16 
+			basis_pats_in_trace: 16*100,
 		};
 
 		let nibbles = stmt_wea.borrow().get_container("nibbles").unwrap()

@@ -71,6 +71,9 @@ pub struct SumGadget<F:PrimeField>{
 }
 
 impl <F:PrimeField> SigmaGadget<F> for SumGadget<F>{
+	/// return its name
+	fn get_name(&self)->&str {"SumGadget"}
+
 	/// set the container cfg. This is only needed for those gadgets
 	/// in SED approach
 	fn set_container_cfg(&mut self,_cfg: Rc<Vec<ContainerConfig>>,_idx: usize){

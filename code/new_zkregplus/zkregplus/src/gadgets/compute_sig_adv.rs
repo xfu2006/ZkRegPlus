@@ -2182,19 +2182,19 @@ pub mod tests_compute_sig_adv{
 			acdfa_state_part_bits: state_bits, 
 			subsigs: 5,
 			avg_pats_per_subsig: 4,
-			perc_pats_in_trace: 27 
+			basis_pats_in_trace: 27*100, 
 		};
 		let cap_disc = DischargeAdvCapacity{//capaciity of discharge comopnent
 			max_nibble_len: nibble_len, 
 			subsigs: cap.subsigs,
 			avg_active_pats_per_subsig: 2,
-			perc_pats_in_trace: cap.perc_pats_in_trace, 
+			perc_pats_in_trace: cap.basis_pats_in_trace*100, //CHANGE LATER
 		};
 		let cap_sig= ComputeSigAdvCapacity{//capaciity of compute sig adv comp 
 			max_nibble_len: nibble_len, 
 			sigs: 1, 
 			subsigs: cap.subsigs,
-			perc_pats_in_trace: cap.perc_pats_in_trace, 
+			perc_pats_in_trace: cap.basis_pats_in_trace*100,  //CHANGE LATER
 			perc_comp_subsigs: 80, //real data will be much lower like 17 at most
 		};
 

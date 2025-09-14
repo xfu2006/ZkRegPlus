@@ -372,18 +372,8 @@ impl<F: Field> ConstraintSystem<F> {
         ) -> (usize, Option<Vec<F>>),
 	)-> BTreeMap<LcIndex, LinearCombination<F>>{
         // `transformed_lc_map` stores the transformed linear combinations.
-		let t1 = Instant::now();
         let mut transformed_lc_map = BTreeMap::<_, LinearCombination<F>>::new();
         let mut num_times_used = self.lc_num_times_used(false);
-
-		let total = self.lc_map.len();
-		let mut lc_idx = 0;
-		let mut item = 0;
-		let mut removed = 0;
-		let mut added = 0;
-		let mut start = Instant::now();
-		let mut remove_time = 0usize;
-		let mut compact_time = 0usize;
 
         // This loop goes through all the LCs in the map, starting from
         // the early ones. The transformer function is applied to the
@@ -395,8 +385,6 @@ impl<F: Field> ConstraintSystem<F> {
             // and updating them according to transformations in prior iterations.
 
             for &(coeff, var) in lc.iter() {
-				item += 1;
-
                 if var.is_lc() {
                     let lc_index = var.get_lc_index().expect("should be lc");
 
@@ -426,8 +414,6 @@ impl<F: Field> ConstraintSystem<F> {
                     //
                     num_times_used[lc_index.0] -= 1;
                     if num_times_used[lc_index.0] == 0 {
-						let timer = Instant::now();
-
                         // This lc is not used any more, so remove it.
                         transformed_lc_map.remove(&lc_index);
                     }
