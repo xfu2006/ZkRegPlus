@@ -20102,6 +20102,12 @@ Goal 4. imporve the performance of computing using rayon
 	[a] add timer
 	[b] compare timer 8888
 
+Goal 5. clean up code
+	[a] clean up code
+	[b] try another one
+	[c] lkup size left proble: some bugs had to check out.
+	]d] why it's failing?
+
 
 
 

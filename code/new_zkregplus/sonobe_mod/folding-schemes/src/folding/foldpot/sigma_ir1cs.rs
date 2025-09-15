@@ -44,7 +44,8 @@ use crate::{
 		foldpot::{
 			utils::{f1_to_f2_limbs, get_stack_space,check_logup, print_vec_var},
 			container_config::{ContainerConfig},
-		}
+			circuits_super::field_to_usize,
+		},
 	}
 };
 use std::{fmt,fmt::{Debug,Formatter}};
@@ -2328,8 +2329,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		let inv_hab22_left_size = si.subtable_id.len() + extra_var_size;
 		// right side is the lookup table share
 		let inv_hab22_right_size = si.col1_share.len();
-		let mut inv_hab22_left = vec![zero; inv_hab22_left_size];
-		let mut inv_hab22_right = vec![zero; inv_hab22_right_size];
 		let (alpha, beta) = (zi_part2.alpha, zi_part2.beta);
 		let unused_input_size = F::from(self.stmt_config.input_size as u32)
 			- si.act_input_size;
@@ -2343,8 +2342,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		let qry_tbl1 = vec![ vec![zero,zero], si.subtable_id.clone()].concat();
 		assert!(qry_tbl2.len()==inv_hab22_left_size);
 		assert!(qry_tbl1.len()==inv_hab22_left_size);
-		let mut sum_hab22_left = zi_part2.sum_hab22_left;
-		let mut sum_hab22_right = zi_part2.sum_hab22_right;
 
 		let _b_last = si.word_id==si.total_words
 			&& si.subseg_id==si.total_word_segs;
@@ -2359,14 +2356,18 @@ where 	C: CurveGroup<ScalarField=F>,
 				a * b
 			}).sum::<F>() + zi_part2.sum_hab22_left;
 
-		let mut lookup_share_size_left = si.act_lookup_share_size.clone();
-		let inv_hab22_right = (0..inv_hab22_right_size).into_par_iter().map(|i|{
+		let right_size = inv_hab22_right_size;
+		let inv_hab22_right = (0..right_size).into_par_iter().map(|i|{
 			let v = alpha + si.col1_share[i] + si.col2_share[i] * beta;
 			v.inverse().unwrap()
 		}).collect::<Vec<F>>();
-		let sum_hab22_right = (0..inv_hab22_right_size).into_par_iter().map(|i|{
+		let mut lookup_share_size_left = si.act_lookup_share_size.clone();
+		let sum_hab22_right = (0..right_size).into_par_iter().map(|i|{
 			inv_hab22_right[i] * si.m_share[i] * si.col1_share[i]
 		}).sum::<F>() + zi_part2.sum_hab22_right;
+		let cnt_zero = si.col1_share.par_iter().filter(|x|
+			x.is_zero()).count();
+		lookup_share_size_left -= F::from(cnt_zero as u64);
 
 		// this is disabled because fill_lkup is not called during
 		// preprocess mode

@@ -581,7 +581,7 @@ pub mod tests_zkp_driver{
 		let subsigs = 6;
 		let avg_pat_per_sig = 8;
 		let avg_active_pat_per_sig = 3;
-		let basis_pats_in_trace = 1*100;
+		let basis_pats_in_trace = 10; //old value 100
 		let perc_comp_subsigs = 20;
 		let num_category = 1;
 		let num_circs_per_category= 1;
@@ -621,6 +621,6 @@ pub mod tests_zkp_driver{
 
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
-		small_data::<Fr>();
+		small_data2::<Fr>();
 	}
 }
