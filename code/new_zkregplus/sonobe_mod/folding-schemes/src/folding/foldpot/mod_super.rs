@@ -1176,7 +1176,7 @@ where
 				kzg_row: kzg_row,
 				vec_rows: vec_rows,
 			};
-			let b_debug = true;
+			let b_debug = false;
 			let (pkey, vkey) = setup_qa_nizk::<E>(&smatrix, b_debug);
 			(Some(pkey), Some(vkey))
 		};
@@ -1240,6 +1240,8 @@ where
         _other_instances: Option<Self::MultiCommittedInstanceWithWitness>,
     ) -> Result<(), Error> {
 		println!("DEBUG USE 9900.1: prove_step: {}", self.i);
+		let b_debug = false;
+
         //1.  ensure that commitments are blinding if user has specified so.
 		// here we only sample one (as it's prover side self-check).
 		let j_pci1 = field_to_usize(&self.pc_i1); //for compute z_i1
@@ -1377,7 +1379,6 @@ where
             z_i1.clone(),
         );
 		let u_i1_x = if self.i.is_zero() {u_i1_x_base} else {u_i1_x};
-
 
         // u_{i+1}.x[1] = H(cf_U_{i+1})
         let cf_u_i1_x: C1::ScalarField;
@@ -1622,13 +1623,11 @@ where
 
 		//println!(">*>*>* prove_step step 1, augment circ: j: {}, pc_i: {}", &augmented_F_circuit.j, &self.pc_i);
         let cs = ConstraintSystem::<C1::ScalarField>::new_ref();
-
         augmented_F_circuit.generate_constraints(cs.clone())?;
 
-
-        #[cfg(test)]
-        assert!(cs.is_satisfied().unwrap());
-
+		if b_debug{
+        	assert!(cs.is_satisfied().unwrap());
+		}
 
         let cs = cs.into_inner().ok_or(Error::NoInnerConstraintSystem)?;
         let (w_i1, x_i1) = extract_w_x::<C1::ScalarField>(&cs);
@@ -1642,20 +1641,22 @@ where
 			}
 		}
 
-		//REMOVE LATER ---------------
-		let csat = cs.is_satisfied();
-		if csat.is_ok(){assert!(csat.unwrap(), "step final of modular_super"); }
-		//REMOVE LATER --------------- ABOVE
-
-
-        #[cfg(test)]
-		if self.b_full_mode{
-			if x_i1.len() != 3 {
-				return Err(Error::NotExpectedLength(x_i1.len(), 3));
+		if b_debug{
+			let csat = cs.is_satisfied();
+			if csat.is_ok(){
+				assert!(csat.unwrap(), "step final of modular_super"); 
 			}
-		}else{
-			if x_i1.len() != 2 {
-				return Err(Error::NotExpectedLength(x_i1.len(), 2));
+		}
+
+		if b_debug{
+			if self.b_full_mode{
+				if x_i1.len() != 3 {
+					return Err(Error::NotExpectedLength(x_i1.len(), 3));
+				}
+			}else{
+				if x_i1.len() != 2 {
+					return Err(Error::NotExpectedLength(x_i1.len(), 2));
+				}
 			}
 		}
 
@@ -1671,20 +1672,13 @@ where
         self.U_i = U_i1;
 		self.pc_i = C1::ScalarField::from(j_pci1 as u32);
 
+		if b_debug{
 
-        #[cfg(test)]
-        {
-			//println!(">*>*>* prove_step 4.5, j_pci1: {}, j_pci: {}", j_pci1, j_pci);
+			self.r1cs[j_pci1].check_instance_relation(&self.w_i.clone().into(), &self.u_i.clone().into())?;
 
-            self.r1cs[j_pci1].check_instance_relation(&self.w_i.clone().into(), &self.u_i.clone().into())?;
-
-		//println!(">*>*>* prove_step 4.6");
             self.r1cs[j_pci1]
                 .check_relaxed_instance_relation(&self.W_i.vec_wit[j_pci1].clone().into(), &self.U_i.vec_inst[j_pci1].clone().into())?;
-		//println!(">*>*>* prove_step 4.7");
         }
-		//println!(">*>*>* prove_step 5");
-
 
         Ok(())
     }

@@ -2349,26 +2349,25 @@ where 	C: CurveGroup<ScalarField=F>,
 		let _b_last = si.word_id==si.total_words
 			&& si.subseg_id==si.total_word_segs;
 
-		for i in 0..inv_hab22_left_size{
+		let inv_hab22_left = (0..inv_hab22_left_size).into_par_iter().map(|i|{
 			let v2 = qry_tbl2[i];
 			let v = alpha + qry_tbl1[i] + v2 * beta;
-			inv_hab22_left[i] = v.inverse().expect("inverse failed"); 
-			sum_hab22_left += if qry_tbl1[i].is_zero() {zero} 
-				else {inv_hab22_left[i]};
-		}
-		let mut lookup_share_size_left = si.act_lookup_share_size.clone();
-		for i in 0usize..inv_hab22_right_size{
-			let v = alpha + si.col1_share[i] + si.col2_share[i] * beta;
-			let m_i = si.m_share[i];
-			inv_hab22_right[i] = v.inverse().expect("inverse failed"); 
-			let to_add = if si.col1_share[i].is_zero() {zero} 
-				else {inv_hab22_right[i] * m_i};
-			sum_hab22_right= if lookup_share_size_left.is_zero()
-			{sum_hab22_right} else {sum_hab22_right + to_add};
-			lookup_share_size_left = if lookup_share_size_left.is_zero() {zero}
-				else {lookup_share_size_left - one};
+			v.inverse().expect("inv failed")
+		}).collect::<Vec<F>>();
+		let sum_hab22_left = qry_tbl1.par_iter().zip(inv_hab22_left.par_iter())
+			.map(|(&a,&b)|{
+				a * b
+			}).sum::<F>() + zi_part2.sum_hab22_left;
 
-		}
+		let mut lookup_share_size_left = si.act_lookup_share_size.clone();
+		let inv_hab22_right = (0..inv_hab22_right_size).into_par_iter().map(|i|{
+			let v = alpha + si.col1_share[i] + si.col2_share[i] * beta;
+			v.inverse().unwrap()
+		}).collect::<Vec<F>>();
+		let sum_hab22_right = (0..inv_hab22_right_size).into_par_iter().map(|i|{
+			inv_hab22_right[i] * si.m_share[i] * si.col1_share[i]
+		}).sum::<F>() + zi_part2.sum_hab22_right;
+
 		// this is disabled because fill_lkup is not called during
 		// preprocess mode
 		// assert!(!final_step || sum_hab22_left==sum_hab22_right);
@@ -2932,12 +2931,13 @@ where 	C: CurveGroup<ScalarField=F>,
 		);
 		for i in 0..inv_hab22_left_size{
 			//note: b_check_lkup is CIRCUIT specific const array
-			if b_check_lkup[i]==false {continue;}
+			//if b_check_lkup[i]==false {continue;}
 			let v2 = &qry_tbl2[i];
 			let v = &alpha + &qry_tbl1[i] + &(v2 * &beta);
 			let prod = &v * &wtns_var.inv_hab22_left[i];
 			prod.enforce_equal(&one_var)?;
-			sum_hab22_left += &wtns_var.inv_hab22_left[i];
+			//use 0 to disable add
+			sum_hab22_left += &(&qry_tbl1[i] * &wtns_var.inv_hab22_left[i]);
 			if i%64==0{//avoid building too long linear combinations
 				//cs.is_satisfied() -> eval_lc() -> assigned_value(*var)
 				//  when var is symbolic it's calling eval_lc() recursively
@@ -2977,7 +2977,11 @@ where 	C: CurveGroup<ScalarField=F>,
 			let val2 = &lookup_share_size_left - &one_var;
 			lookup_share_size_left = b_left_zero.select(&zero_var, &val2)?;
 
-			let to_add = &wtns_var.inv_hab22_right[i]*m_i;	
+			//if col1_share[i]==0, to disable the add
+			//because it's no care (actually this step is not needed
+			//because we assume lkup[1] will not be zero.
+			//put it here for consistency.
+			let to_add = &(&wtns_var.inv_hab22_right[i]*m_i)*&si.col1_share[i];	
 			sum_hab22_right = b_not_add.select(&sum_hab22_right, 
 				&(&sum_hab22_right + &to_add))?;
 			if i%64==0{//avoid too long chain in later
@@ -2991,19 +2995,20 @@ where 	C: CurveGroup<ScalarField=F>,
 				lookup_share_size_left = &lookup_share_size_left * &one_wit_var;
 			}
 		}
+
+
 		let b_hab_res1 = sum_hab22_right.is_eq(&sum_hab22_left)?;
 		let b_hab_res = not_final_step.or(&b_hab_res1)?.or(&sum_hab22_right.is_zero()?)?; //when sum_hab22_right is zero, we regard it as dummy
-		#[cfg(test)]{
-			if b_hab_res.value().is_ok(){
-				assert!(b_hab_res.value().unwrap());
-			} 
-		}
+
+		//REMOVE LATER -----------------
+		println!("DEBUG USE 6666.1: sum_hab_right: {}, sum_hab22_left: {}, not_final_step: {}", sum_hab22_right.value()?, sum_hab22_left.value()?, not_final_step.value()?);
+		println!("DEBUG USE 6666.2: word_id: {}, totla_words: {}", si.word_id.value()?, si.total_words.value()?);
+		println!("DEBUG USE 6666.3: subsig_id: {}, total_segs: {}", si.subseg_id.value()?, si.total_word_segs.value()?);
+		//REMOVE LATER ----------------- ABOVE
 
 		if b_has_lookup{
-			#[cfg(test)]{
-				if b_hab_res.value().is_ok(){
+			if b_hab_res.value().is_ok(){
 				assert!(b_hab_res.value()?, "failed checking hab22 equation");
-				}
 			}
 			b_hab_res.enforce_equal(&Boolean::TRUE)?;
 		}

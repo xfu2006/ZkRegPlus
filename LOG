@@ -20065,7 +20065,42 @@ Goal 3. readjust percent to 100th of percent
 		-> change
 		-> unit test
 	[d] dfa_adv.rs
+		-> fix its estimate_cost
+		-> change
+		-> unit testa
+	[e] compute_sig and sed
+		-> change
+		-> unit testing
 
+Monday 09/15/2025
+LOC (gadgets): 14409
+LOC (sonobe): 18728
+Goal 1. regression test
+	[a] gadgets
+	[b] small example
+	[c] not same length 228399 228397 the reason is still
+	it might be caused by the b_check_arr, reverse it and check.
+		-> still not working
+	[d] use col1 to guard inverse when sum up
+		-> still does NOT work!
+		-> dump if b_lastword info
+	[e] it is broken for other reason: mod_super:1647
+
+Goal 2. debug mod_super and improve its debug
+	[a] improved flow
+	[b] b_debug set to true in circuit_super
+		-> check which step it fails
+	[c] found it needs to update inv_hab22 correspondingly
+	[d] fixed.
+	[e] check the increased cost
+	[e] old data: new constraints: 7326960, cost: 3.9M (saved about 6M)
+		DEBUG USE 1201: 
+			new constraints 9149701 - 3548841
+				= 5.6M (added 1.4M)A
+
+Goal 4. imporve the performance of computing using rayon	
+	[a] add timer
+	[b] compare timer 8888
 
 
 

@@ -971,7 +971,7 @@ pub fn tbl_left_join<F:PrimeField>(
 
 
 	let tbl_res = two_col_tbl_left_join(&tbl1_cols, &tbl2_cols, target_size);
-	check_pad_ratio(&tbl_res[0], "FsmAdvCapaicty.perc_pats_in_trace");
+	check_pad_ratio(&tbl_res[0], "FsmAdvCapaicty.basis_pats_in_trace");
 	assert!(tbl_res.len()==5);
 
 	//2. lkup tbl1 in first 3 columns (guarantees tbl1 left join covered)

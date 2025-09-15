@@ -97,7 +97,7 @@ pub struct SedCapacity{
 	pub	subsigs: usize,
 	pub	avg_pats_per_subsig: usize,
 	pub	avg_active_pats_per_subsig: usize,
-	pub	perc_pats_in_trace: usize,
+	pub	basis_pats_in_trace: usize, //0.01 percent
 	pub	sigs_sed: usize, //for sed approach to discharge
 	pub	perc_comp_subsigs: usize,
 }
@@ -155,10 +155,9 @@ impl SedCapacity{
 		let wea_capacity = WordExtractAdvCapacity{max_word_len};
 		let max_nibble_len = max_word_len * LEGS;
 		let faa_capacity = FsmAdvCapacity{max_nibble_len, acdfa_state_part_bits,			subsigs, avg_pats_per_subsig, basis_pats_in_trace};
-		let perc_pats_in_trace = 100 * basis_pats_in_trace; //temp
 		let da_capacity = DischargeAdvCapacity{max_nibble_len, subsigs, avg_active_pats_per_subsig, basis_pats_in_trace};
 		let csa_capacity = ComputeSigAdvCapacity{subsigs, sigs: sigs_sed, max_nibble_len,
-			perc_pats_in_trace, perc_comp_subsigs};
+			basis_pats_in_trace, perc_comp_subsigs};
 			
 		let comp_capacities: Vec<Rc<dyn Capacity>> = vec![
 			Rc::new(wea_capacity),
@@ -169,7 +168,7 @@ impl SedCapacity{
 
 		Self{comp_capacities, max_word_len, acdfa_state_part_bits,
 			subsigs, avg_pats_per_subsig, avg_active_pats_per_subsig,
-			perc_pats_in_trace, sigs_sed, perc_comp_subsigs}
+			basis_pats_in_trace, sigs_sed, perc_comp_subsigs}
 	}
 
 	/// level1: double the subsig and sig size
@@ -183,7 +182,7 @@ impl SedCapacity{
 				self.subsigs * 2,
 				self.avg_pats_per_subsig,
 				self.avg_active_pats_per_subsig,
-				self.perc_pats_in_trace,
+				self.basis_pats_in_trace,
 				self.sigs_sed*2,
 				self.perc_comp_subsigs
 			)
@@ -194,7 +193,7 @@ impl SedCapacity{
 				self.subsigs,
 				self.avg_pats_per_subsig*2,
 				self.avg_active_pats_per_subsig*2,
-				self.perc_pats_in_trace*2,
+				self.basis_pats_in_trace*2,
 				self.sigs_sed,
 				self.perc_comp_subsigs*2
 			)
@@ -251,7 +250,7 @@ impl Capacity for SedCapacity{
 			subsigs: self.subsigs,
 			avg_pats_per_subsig: self.avg_pats_per_subsig,
 			avg_active_pats_per_subsig: self.avg_active_pats_per_subsig,
-			perc_pats_in_trace: self.perc_pats_in_trace,
+			basis_pats_in_trace: self.basis_pats_in_trace,
 			sigs_sed: self.sigs_sed,
 			perc_comp_subsigs: self.perc_comp_subsigs,
 		})

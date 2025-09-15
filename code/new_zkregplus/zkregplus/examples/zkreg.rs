@@ -42,7 +42,7 @@ fn small_data<F:PrimeField>(){
 	let subsigs = 6;
 	let avg_pat_per_sig = 8;
 	let avg_active_pat_per_sig = 3;
-	let perc_pats_in_trace = 60;
+	let basis_pats_in_trace = 60*100;
 	let perc_comp_subsigs = 50;
 	let num_category = 1;
 	let num_circs_per_category= 1;
@@ -54,7 +54,7 @@ fn small_data<F:PrimeField>(){
 	let init_sed_cap= SedCapacity::new(
 		max_word, RANGE2_BIT, subsigs, 
 		avg_pat_per_sig, avg_active_pat_per_sig, 
-		perc_pats_in_trace, sigs, perc_comp_subsigs
+		basis_pats_in_trace, sigs, perc_comp_subsigs
 	);
 	let init_dfa_cap= DfaCapacity::new(max_word, sigs, subsigs);
 

@@ -379,14 +379,14 @@ impl <F:PrimeField> StepQueue<F>{
 		// subsig patterns and the locations appeared in traces.
 		// adjust by the type of the StepQueue.
 		let size_pat = capacity.subsigs*capacity.avg_active_pats_per_subsig;
-		let perc_compress_ratio = match q_type{
+		let compress_ratio = match q_type{
 			StepQueueType::Res => 100, //100%
 			StepQueueType::ToAdd => 50, //50% (in practice maybe smaller)
 			StepQueueType::ToDel => 20, //10% 
 		};
 		let size_trace =  capacity.max_nibble_len 
 			* capacity.basis_pats_in_trace/10000
-			* perc_compress_ratio/100;
+			* compress_ratio/100;
 		if size_pat > size_trace {size_pat} else {size_trace}
 	}
 
@@ -1451,7 +1451,7 @@ impl <F:PrimeField> StepBwdPrf<F>{
 impl DischargeAdvCapacity{
 	/// this determines the pat_loc 2-col table len, it's also
 	/// the length of step_queue.  (although techniqlly step_queue len
-	/// should be the max of num_sub_sig_steps and perc_loc * max_nibble,
+	/// should be the max of num_sub_sig_steps and basis_loc * max_nibble,
 	/// but we simplify the calculation here).
 	pub fn get_pat_loc_len(&self)->usize{
 		let pats_len = self.basis_pats_in_trace 

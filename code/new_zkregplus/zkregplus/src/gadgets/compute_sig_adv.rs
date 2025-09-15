@@ -91,9 +91,9 @@ pub struct ComputeSigAdvCapacity{
 	/// max_nibble_len, used to determine inp_step_queue_obj
 	pub max_nibble_len: usize,
 
-	/// perc_pats_in_trace (used to be compatibile for the
+	/// basis_pats_in_trace (used to be compatibile for the
 	/// step_queue_res). It determines the related lookup argument size. 
-	pub perc_pats_in_trace: usize, 
+	pub basis_pats_in_trace: usize, 
 
 	/// percentage of subsigs that are components of SubsigCounterConstraint
 	/// e.g. (1|2|3)>4,2 requires that there are at least 5 matches
@@ -146,7 +146,7 @@ impl Capacity for ComputeSigAdvCapacity{
 		self.subsigs >= other.subsigs &&
 		self.sigs >= other.sigs &&
 		self.max_nibble_len>= other.max_nibble_len &&
-		self.perc_pats_in_trace>= other.perc_pats_in_trace &&
+		self.basis_pats_in_trace>= other.basis_pats_in_trace &&
 		self.perc_comp_subsigs >= other.perc_comp_subsigs
 	}
 
@@ -156,7 +156,7 @@ impl Capacity for ComputeSigAdvCapacity{
 		Rc::new(ComputeSigAdvCapacity{
 			subsigs: self.subsigs,
 			sigs: self.sigs,
-			perc_pats_in_trace: self.perc_pats_in_trace,
+			basis_pats_in_trace: self.basis_pats_in_trace,
 			max_nibble_len: self.max_nibble_len,
 			perc_comp_subsigs: self.perc_comp_subsigs,
 		})
@@ -1155,7 +1155,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 			subsigs: capacity.subsigs,
 			avg_active_pats_per_subsig: 2, //it's ok, coz it's not affecting
 										  //parse_from
-			basis_pats_in_trace: capacity.perc_pats_in_trace*100, //CHANGE
+			basis_pats_in_trace: capacity.basis_pats_in_trace,
 		};
 		let step_q_size = StepQueue::<F>::vec_size(&StepQueueType::Res,
 			&dis_cap);
@@ -2034,8 +2034,8 @@ impl ComputeSigAdvCapacity{
 	/// same as the function of DischargeAdvCapacity - looks like
 	/// no better way of refactoring. Just dupplicate it here.
 	pub fn get_pat_loc_len(&self)->usize{
-		let pats_len = self.perc_pats_in_trace 
-			* self.max_nibble_len/100;
+		let pats_len = self.basis_pats_in_trace 
+			* self.max_nibble_len/10000;
 		pats_len
 	}
 
@@ -2194,7 +2194,7 @@ pub mod tests_compute_sig_adv{
 			max_nibble_len: nibble_len, 
 			sigs: 1, 
 			subsigs: cap.subsigs,
-			perc_pats_in_trace: cap.basis_pats_in_trace*100,  //CHANGE LATER
+			basis_pats_in_trace: cap.basis_pats_in_trace,
 			perc_comp_subsigs: 80, //real data will be much lower like 17 at most
 		};
 

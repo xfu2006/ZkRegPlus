@@ -61,7 +61,8 @@ pub struct FsmAdvCapacity{
 	/// This ratio is usually VERY SMALL.
 
 	/// NOTE:  basis number, e.g. 50 means 50 basis points.
-	/// avg_pats*per_trace_perc/10000 * max_nibble_len -> SIZE of packed tracke
+	/// avg_pats * basis_trace_perc/10000 * max_nibble_len -> 
+	///     SIZE of packed tracke
 	/// wherethe packed trace is the (pat, loc) table size. 
 	/// This is a hybird
 	/// ratio primary determined by the ratio of final states appearing

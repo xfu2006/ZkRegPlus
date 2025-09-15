@@ -1060,17 +1060,12 @@ impl <F:PrimeField> SigmaGadget<F> for DfaAdvGadget<F>{
 	}
 
 	fn est_cost(&self)->usize{
-		// key is the low perc_pat_in_trace 
-		/*
-		let est = 
-			118 * 
-			self.capacity.max_nibble_len 
-			* self.capacity.perc_pats_in_trace/100 			
-		+ 107 * self.capacity.avg_pats_per_subsig * self.capacity.subsigs;
+		let s = self.capacity.sigs;
+		let su = self.capacity.subsigs;
+		let n = self.capacity.max_nibble_len;
 
-		est
-		*/
-		1024
+		//see sasert msg3
+		36*su + 2*s + 3*su*n
 	}
 
 	fn get_msg_size(&self) -> (usize, usize, usize, usize){
@@ -1095,6 +1090,10 @@ impl <F:PrimeField> SigmaGadget<F> for DfaAdvGadget<F>{
 		vec![]
 	}
 
+	//TOTAL COST: (m- subsigs, n: nibble length, s = sigs) 
+	// - note that subsigs are 
+	// usually small
+	// 14m + 3mn + 2s + 22m  = 36m + 2s + 3mn
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{
