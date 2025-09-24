@@ -20338,10 +20338,17 @@ Goal 2. prove multi-set
 	[c] implement and test it
 
 Wed 09/24/2025
-LOC (gadget): 15113
+LOC (gadget): 15113 -> 15211 (+100)
 Goal 1. go over the workflow again
 	[a] refactor function is_unique_sorted_set()
-	[b] multiset_prod again without ignore o
+	[b] multiset_prod again without ignore 0.
+
+Goal 2. mtbl lookup for tag combined entries
+	[a] build m_tbl
+	[b] verify the mtbl
+	[c] fil into filtered tbl framework
+
+TODO: address one bug and contineu with verify_filtered_table.
 
 
 

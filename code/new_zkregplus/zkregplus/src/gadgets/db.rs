@@ -503,10 +503,10 @@ pub fn prove_filter_tag<F:PrimeField>(
 	unique_key_size: usize,
 ) -> Result<Rc<RefCell<Container<F>>>, SynthesisError>{
 	//0. check data
-	let (n, m, k) = (key.len(), unique_key_size, sorted_key.len());
+	let (_n, m, k) = (key.len(), unique_key_size, sorted_key.len());
 	#[cfg(test)]{
-		assert!(tags.len()==n);
-		for i in 0..n{
+		assert!(tags.len()==_n);
+		for i in 0.._n{
 			assert!(tags[i].is_zero() || tags[i].is_one());
 		}
 		for i in 0..k-1{
@@ -532,15 +532,6 @@ pub fn prove_filter_tag<F:PrimeField>(
 	let mut union_key = [&no_key[..], &sorted_key[..]].concat();
 	union_key.sort();
 	assert!(union_key.len()==m+k);
-
-	//REMOVE LATER ----------------
-	use crate::gadgets::commons::print_vec;
-	print_vec("key", &key);
-	print_vec("sorted_key", &sorted_key);
-	print_vec("tags", &tags);
-	print_vec("no_key", &no_key);
-	print_vec("union_key", &union_key);
-	//REMOVE LATER ---------------- ABOVE
 
 	//3. prove union_key is sorted. provide the the pairwise diff
 	//as the proof.
@@ -599,7 +590,7 @@ pub fn verify_filter_tag<F:PrimeField>(
 	r1: &FpVar<F>,
 	r2: &FpVar<F>
 )->Result<(), SynthesisError>{
-	let b_perf = true;
+	let b_perf = false;
 	let cs = key[0].cs();
 	let mut nc = cs.num_constraints();
 
@@ -666,7 +657,7 @@ pub fn verify_filter_tag<F:PrimeField>(
 			cs.num_constraints() - nc);
 	}
 
-	todo!()
+	Ok( () )
 }
 
 /// convert two column (unsorted) table to a sorted and well
@@ -692,7 +683,7 @@ pub fn tbl_filtered_to_sorted_tbl<F:PrimeField>(
 	name: &str, //the name of the new container bundle
 	unique_key_size: usize, //when pack key to unique set, what's the size
 ) -> Result<Rc<RefCell<Container<F>>>, SynthesisError>{
-	let b_new = false;
+	let b_new = true;
 	if b_new{
 		tbl_filtered_to_sorted_tbl_new(key,val,sorted_set_key,target_size,name,
 			unique_key_size)
@@ -726,10 +717,10 @@ pub fn tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
 	println!("DEBUG USE 6101: m: {}, n: {}, k: {}", m, n, k);
 
 	//2. try to tag each key
-	// in_sorted_set_key: 2
-	// not_in_sorted_set_key: 1
+	// in_sorted_set_key: 1
+	// not_in_sorted_set_key: 0
 	// don't care (for dummy entries): 0
-	let (f_in, f_out, f_dummy) = (F::from(2u32), F::one(), F::zero());
+	let (f_in, f_out, f_dummy) = (F::from(1u32), F::zero(), F::zero());
 	let tags = keys.par_iter().map(|k|{
 		if k.is_zero(){ f_dummy} else{
 			if proj_keys.contains(k){ f_in }else { f_out }
@@ -919,7 +910,7 @@ pub fn verify_tbl_filtered_to_sorted_tbl<F:PrimeField>(
 	bundle: &Rc<RefCell<Container<FpVar<F>>>>, //result of tbl_filtered_to_sorted_tbl
 	cs: ConstraintSystemRef<F>
 ) -> Result<(), SynthesisError>{
-	let b_new = false;
+	let b_new = true;
 	if b_new{
 		verify_tbl_filtered_to_sorted_tbl_new(r1,r2,keys,vals,
 			sorted_set_key,bundle,cs)
@@ -937,26 +928,30 @@ pub fn verify_tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
 	_vals: &Rc<RefCell<Container<FpVar<F>>>>,
 	sorted_set_key: &Rc<RefCell<Container<FpVar<F>>>>, //the sorted_set bundle
 	bundle: &Rc<RefCell<Container<FpVar<F>>>>, //result of tbl_filtered_to_sorted_tbl
-	_cs: ConstraintSystemRef<F>
+	cs: ConstraintSystemRef<F>
 ) -> Result<(), SynthesisError>{
 	let b_perf = true;
-	//let mut nc = cs.num_constraints();
+	let mut nc = cs.num_constraints();
 	if b_perf{
 		println!(" --- verify_tbl_filtered_new keys: {}, sorted_keys: {}", 
 			keys.borrow().to_vec().len(), 
 			sorted_set_key.borrow().to_vec().len());
 	}
 
-	// ----- Part 1: verify the filtering of src (key,val) ---
-	//1.1 check the correctness of tag
+	//1. check the correctness of tag
 	let keys = keys.borrow().to_vec();
 	let sorted_keys = sorted_set_key.borrow().to_vec(); 
-	let tags = bundle.borrow().get_container("tags")?.borrow().to_vec();
-	let prf_tag = bundle.borrow().get_container("prf_tag")?;
+	let prf = bundle.borrow().get_container("prf")?;
+	let tags = prf.borrow().get_container("tags")?.borrow().to_vec();
+	let prf_tag = prf.borrow().get_container("prf_tag")?;
 	verify_filter_tag(&keys, &sorted_keys, &tags, &prf_tag, r1, r2)?;
+	if b_perf{
+		println!(" --- verify_tbl_filtered_new keys step 1: {}: ",
+			cs.num_constraints() - nc);
+	}
 
 
-	todo!()
+	Ok( () )
 }
 
 
@@ -973,6 +968,7 @@ pub fn verify_tbl_filtered_to_sorted_tbl_old<F:PrimeField>(
 ) -> Result<(), SynthesisError>{
 	let b_perf = true;
 	let mut nc = cs.num_constraints();
+	let nc0 = nc;
 	if b_perf{
 		println!(" --- verify_tbl_filtered_old keys: {}, sorted_keys: {}", 
 			keys.borrow().to_vec().len(), 
@@ -1122,6 +1118,8 @@ pub fn verify_tbl_filtered_to_sorted_tbl_old<F:PrimeField>(
 	if b_perf{
 		println!("  --- verify_tbl_filtered_old keys: step 2.4  cs: {}", 
 			cs.num_constraints() - nc);
+		println!("  --- # verify_tbl_filtered_old total: {}", 
+			cs.num_constraints() - nc0);
 	}
 
 	Ok( () )
