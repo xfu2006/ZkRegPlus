@@ -8,12 +8,17 @@ use rayon::{
 };
 use std::collections::{HashMap,HashSet};
 use ark_ff::{PrimeField,BigInteger};
-use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef};
+use ark_relations::{
+	lc, 
+	r1cs::{ SynthesisError,ConstraintSystemRef,LinearCombination,Variable }
+};
 use ark_r1cs_std::{
 	boolean::{Boolean},
 	fields::{
 		FieldVar,
-		fp::FpVar
+		fp::FpVar,
+	 	fp::FpVar::Var,
+	 	fp::FpVar::Constant,
 	},
 	alloc::AllocVar,
 	eq::EqGadget,
@@ -506,21 +511,91 @@ pub fn hashmap_to_sorted_2col_tbl<F:PrimeField>(map: &HashMap<F, Vec<F>>,n: usiz
 	(key, id, val)
 }
 
-
 /// verify v2 is an inverse of v1. elen is the expected length of both
-/// array. Beta is the random challenge
+/// array. Beta is the random challenge.
+/// COST: n constraints (n = elen)
 pub fn verify_inverse<F:PrimeField>(cs: ConstraintSystemRef<F>,
 	v1: &[FpVar<F>], v2: &[FpVar<F>], 
 	beta: &FpVar<F>, elen: usize)->Result<(), SynthesisError>{
+	let b_new = true;
+	let b_perf = false;
+	let nc = cs.num_constraints();
 	assert!(v1.len()==v2.len());
 	assert!(v1.len()==elen);
+	let res = if b_new{
+		verify_inverse_new(cs.clone(), v1, v2, beta, elen)
+	}else{
+		verify_inverse_old(cs.clone(), v1, v2, beta, elen)
+	};
+
+	if b_perf{ 
+		println!("--- verify_inverse: len: {}, cs: {}", elen,
+			cs.num_constraints() - nc)
+	};
+	res
+}
+
+/// old version: cost: 2N
+pub fn verify_inverse_old<F:PrimeField>(cs: ConstraintSystemRef<F>,
+	v1: &[FpVar<F>], v2: &[FpVar<F>], 
+	beta: &FpVar<F>, elen: usize)->Result<(), SynthesisError>{
+	let b_debug = true;
+
 	let one_var= FpVar::<F>::new_constant(cs.clone(), F::one())?;
 	for i in 0..elen{
+		if b_debug{
+			assert!((v2[i].value()?*(v1[i].value()? + beta.value()?)).is_one());
+		}
 		let prod = &v2[i] * &(&v1[i] + beta);
 		prod.enforce_equal(&one_var)?;
-		#[cfg(test)]{
-			if prod.value().is_ok(){ assert!(prod.value()?==F::one()); }
+	}
+	Ok( () )
+}
+
+/// convert a FP var to LinearCombination
+pub fn var_to_lb<F:PrimeField>(v: &FpVar<F>, coef: F)->LinearCombination<F>{
+	let res = match v{
+		Var(v) => LinearCombination::from( (coef, v.variable) ),
+		Constant(val) => LinearCombination::from(
+			(*val*coef, Variable::One)
+		)
+	};
+
+	res
+}
+
+/// convert a FP var tovar  
+pub fn fpvar_to_var<F:PrimeField>(v: &FpVar<F>)->Variable{
+	let res = match v{
+		Var(v) => v.variable,
+		Constant(_) => panic!("expecting var!")
+	};
+
+	res
+}
+
+
+/// verify v2: cost N.
+pub fn verify_inverse_new<F:PrimeField>(cs: ConstraintSystemRef<F>,
+	v1: &[FpVar<F>], v2: &[FpVar<F>], 
+	beta: &FpVar<F>, elen: usize)->Result<(), SynthesisError>{
+	let b_debug = true;
+
+	let lb_beta = var_to_lb(beta, F::one());
+	let lb_one = LinearCombination::from((F::one(),Variable::One));
+	for i in 0..elen{
+		if b_debug{
+			assert!((v2[i].value()?*(v1[i].value()? + beta.value()?)).is_one());
 		}
+
+		let lb_v2_i = var_to_lb(&v2[i], F::one());
+		let lb_v1_i = var_to_lb(&v1[i], F::one());
+
+		cs.enforce_constraint(
+			lb_v2_i,
+			lb_v1_i + lb_beta.clone(),
+			lb_one.clone(),
+		)?;
 	}
 	Ok( () )
 }
@@ -530,7 +605,30 @@ pub fn verify_inverse<F:PrimeField>(cs: ConstraintSystemRef<F>,
 /// INVERSE of the query table and lkup table.  Call verify_inverse()
 /// first on the inversed table and the original table before calling this
 /// function.
+///
+/// COST: n2 + 6
 pub fn verify_logup_inverse<F:PrimeField>(cs: ConstraintSystemRef<F>,
+	v1: &[FpVar<F>], v2: &[FpVar<F>], m_tbl: &[FpVar<F>])
+	->Result<(), SynthesisError>{
+	let b_new = true;
+	let b_perf = false;
+	let nc = cs.num_constraints();
+	let res = if b_new{
+		verify_logup_inverse_new(cs.clone(), v1, v2, m_tbl)
+	}else{
+		verify_logup_inverse_old(cs.clone(), v1, v2, m_tbl)
+	};
+	if b_perf{ 
+		println!("--- verify_logup_inverse: len1: {}, len2: {}, cs: {}", 
+			v1.len(), v2.len(), cs.num_constraints() - nc)
+	};
+	res
+
+}
+
+/// COST: 2*n2  (n1 almost cost nothing)
+/// v1 is the query table, v2 is the lookup table.
+pub fn verify_logup_inverse_old<F:PrimeField>(cs: ConstraintSystemRef<F>,
 	v1: &[FpVar<F>], v2: &[FpVar<F>], m_tbl: &[FpVar<F>])
 	->Result<(), SynthesisError>{
 	assert!(v2.len()==m_tbl.len());
@@ -566,6 +664,84 @@ pub fn verify_logup_inverse<F:PrimeField>(cs: ConstraintSystemRef<F>,
 				//of lc chain. ... Note: this may not be needed.
 		}
 	}
+	sum_right = &sum_right * &one_wit_var; //prevents which assert
+		//sum_left == sum_right, the two contains concat and generates
+		//2x long linear combination chain.
+
+	sum_left.enforce_equal(&sum_right)?;
+		
+	#[cfg(test)]{
+		if sum_left.value().is_ok(){ 
+			assert!(sum_left.value().unwrap()==sum_right.value().unwrap()); 
+		}
+	}
+
+	Ok( () )
+}
+
+/// COST: n2 + 6 (n1 almost cost nothing)
+pub fn verify_logup_inverse_new<F:PrimeField>(cs: ConstraintSystemRef<F>,
+	v1: &[FpVar<F>], v2: &[FpVar<F>], m_tbl: &[FpVar<F>])
+	->Result<(), SynthesisError>{
+	assert!(v2.len()==m_tbl.len());
+	let one_var = FpVar::<F>::new_constant(cs.clone(), F::one())?; 
+	let one_wit_var = FpVar::<F>::new_witness(cs.clone(), 
+		||Ok(F::one())).unwrap();
+	one_wit_var.enforce_equal(&one_var)?; 
+
+
+	let mut sum_left = FpVar::<F>::new_constant(cs.clone(), F::zero())?;
+	for i in 0..v1.len(){ 
+		sum_left += &v1[i]; 
+		if i%64==0{ //this is to prevent code calling assigned_value() chain
+			//too long which can cause stack overflow in recursion
+			//COMMENT OUT LATER IF DOES NOT HELP
+			let value = sum_left.value();
+			assert!(value.is_ok());
+			sum_left = &sum_left * &one_wit_var; //to break the long chain of
+							//linear combination
+		}
+	}
+
+	let mut sum_right = FpVar::<F>::new_witness(cs.clone(), || Ok(F::zero()))
+		.unwrap();
+	sum_right.enforce_equal(&FpVar::zero())?; //as we need sum_right as var
+	let mut vec_sum_right = vec![sum_right.clone()];
+
+	for i in 0..v2.len(){ 
+		//we try to simulate the following with one constraint
+		//sum_right+= &(&v2[i] * &m_tbl[i]);
+		let new_sum_right = FpVar::new_witness(cs.clone(),
+			|| Ok(vec_sum_right[i].value()? + 
+				m_tbl[i].value()?*v2[i].value()?)).unwrap(); 
+		vec_sum_right.push(new_sum_right.clone());
+
+		let lb_v2_i =  var_to_lb(&v2[i], F::one());
+		let lb_m_i=  var_to_lb(&m_tbl[i], F::one());
+		let lb_neg_sum_right =  var_to_lb(&vec_sum_right[i], -F::one());
+		let lb_new_sum_right =  var_to_lb(&new_sum_right, F::one());
+		let lb_diff = lb_new_sum_right + lb_neg_sum_right;
+		
+		cs.enforce_constraint(
+			lb_v2_i,
+			lb_m_i,
+			lb_diff,
+		)?;
+		
+
+		if i%64==0{//this is to prevent the cfg(test) code calling value
+			//for chain too long, which overflows stack when it's doing 
+			//recursion.
+			//COMMENT OUT LATER IF DOES NOT HELP
+			//let value= sum_right.value();
+			//assert!(value.is_ok());
+			sum_right = vec_sum_right[i].clone();
+			sum_right = &sum_right * &one_wit_var; //to break long chain
+				//of lc chain. ... Note: this may not be needed.
+			vec_sum_right[i] = sum_right;
+		}
+	}
+	sum_right = vec_sum_right[vec_sum_right.len()-1].clone();
 	sum_right = &sum_right * &one_wit_var; //prevents which assert
 		//sum_left == sum_right, the two contains concat and generates
 		//2x long linear combination chain.
@@ -847,6 +1023,142 @@ pub fn gen_m_table_cond<F:PrimeField>(qry: &Vec<F>, sel_qry: &Vec<F>,
 
 	m_tbl
 }
+
+/// it is cheapter than standard arkworks is_zero(), which costs 3 constraints.
+/// it returns 1 when v is zero and 0 when v is not zero.
+/// It's guaranteed to be boolean. COST: (2 constraints).
+/// the reason is that we skipped z*(1-z) = 0 check when arkworks converted
+/// to boolean. It's already guaranteed by the two constraints in the body.
+/// We output a FpVar (1/0) to avoid extra BoolVar constraint.
+pub fn is_zero_better<F:PrimeField>(x: &FpVar<F>, cs: &ConstraintSystemRef<F>)
+->Result<FpVar<F>, SynthesisError>{
+	let lb_zero= lc!();
+	let lb_one = lc!() + (F::one(), Variable::One);
+	let z = FpVar::new_witness(cs.clone(), || {
+        let xv = x.value()?;
+        if xv.is_zero() { Ok(F::one()) } else { Ok(F::zero()) }
+    })?;
+	let inv = FpVar::new_witness(cs.clone(), || {
+        let xv = x.value()?;
+        if xv.is_zero() { Ok(F::zero()) } else { Ok(xv.inverse().unwrap()) }
+    })?;
+    // Constraint 1: x * inv = 1 - z
+	let lb_x = var_to_lb(x, F::one());
+	let lb_z = var_to_lb(&z, F::one());
+	let lb_inv = var_to_lb(&inv, F::one());
+	let z_variable = fpvar_to_var(&z);
+	let lb_res = lb_one + (-F::one(), z_variable);
+	cs.enforce_constraint(
+		lb_x.clone(),
+		lb_inv,
+		lb_res
+	)?;
+
+    // Constraint 2: x * z = 0
+	cs.enforce_constraint(
+		lb_x,
+		lb_z,
+		lb_zero
+	)?;
+
+	Ok(z)
+}
+
+/// compute Prod_{i=1}^n (vec[i] + r) ignore the entries that
+/// has vec[i] = 0.
+/// This is used to prove permutation.
+///
+/// COST 4*n
+#[allow(dead_code)]
+pub fn multiset_prod_ignore_zero<F:PrimeField>(
+	cs: ConstraintSystemRef<F>,
+	vec: &[FpVar<F>],
+	r: &FpVar<F>
+)->FpVar<F>{
+	let bi_zero = vec.iter().map(|x| 
+		is_zero_better(x, &cs).unwrap()
+	).collect::<Vec<FpVar<F>>>();
+	let r_val = r.value().unwrap();
+
+	let mut prod = new_const_var(&cs, F::one());
+	let lb_minus_one = LinearCombination::from((-F::one(),Variable::One));
+	let lb_r= var_to_lb(r, F::one());
+	for i in 0..vec.len(){
+		//1. compute the value as non-deterministic witness var
+		let vec_i_val = vec[i].value().expect("error val at i");
+		let val = if vec_i_val.is_zero(){ F::one() }else{
+			r_val + vec_i_val	
+		};
+		let item = new_var(&cs, val);
+
+		//2. enforce the constraint on item (just need one constraint) 
+		//enforce: bi_zero is 0, then item=1; bi_zero is 1, then item=r + vec[i]
+		//this is:
+		// bi_zero * (item-1) + (1-bi_zero)*(item - r - vec[i])
+		// i.e., -bi_zero + item -r - vec[i] bi_zero * (r + vec[i]) = 0
+		// i.e., bi_zero*(r + vec[i] -1) = r + vec[i] - item
+		// this is just one constraint
+		let lb_bi_zero = var_to_lb(&bi_zero[i], F::one()); 
+		let lb_vec_i = var_to_lb(&vec[i], F::one());
+		let lb_minus_item = var_to_lb(&item, -F::one());
+		cs.enforce_constraint(
+			lb_bi_zero,
+			lb_r.clone() + lb_vec_i.clone() + lb_minus_one.clone(),
+			lb_r.clone() + lb_vec_i + lb_minus_item
+		).expect("enforce cs err");
+
+		//3. update product
+		prod = &prod * &item;
+	}
+
+	prod
+}
+
+/// compute Prod_{i=1}^n (vec[i] + r), (including those 0 entries)
+///
+/// COST 4*n
+pub fn multiset_prod<F:PrimeField>(
+	cs: ConstraintSystemRef<F>,
+	vec: &[FpVar<F>],
+	r: &FpVar<F>
+)->FpVar<F>{
+	let mut prod = new_const_var(&cs, F::one());
+	for i in 0..vec.len(){
+		prod = prod * (r + &vec[i]);
+	}
+	prod
+}
+
+/// assert that vec is a sorted table and for non-zero elements
+/// they are unique (distinct). We assume that vec_diff and vec
+/// already have their SID columns in RANGE2. vec_diff[i] = vec[i+1]-vec[i].
+/// vec_diff.len()==vec.len()=1. We assert that for each non zero
+/// element vec[i], the vec_diff[i]!=0.
+///
+/// COST: 3*n
+pub fn verify_unique_sorted_set<F:PrimeField>(vec: &[FpVar<F>],
+	vec_diff: &[FpVar<F>])->Result<(),SynthesisError>{
+	let n = vec.len();
+	assert!(vec_diff.len()==n-1);
+	let cs = vec[0].cs();
+	let zero = new_const_var(&cs, F::zero());
+	let lb_zero = var_to_lb(&zero, F::one());
+	for i in 0..n-1{
+		let b_diff_zero = is_zero_better(&vec_diff[i], &cs)?;
+		//let val = &union_key[i] * &b_diff_zero.into(); 
+		//val.enforce_equal(&zero)?;
+		//the following saves one constraint
+		let lb_diff_zero = var_to_lb(&b_diff_zero.into(),F::one());
+		let lb_vec_i= var_to_lb(&vec[i],F::one());
+		cs.enforce_constraint(
+			lb_diff_zero,
+			lb_vec_i,
+			lb_zero.clone()
+		)?; //if union_key[i] is NOT zero, then union_key_diff[i] is NOT zero
+	}
+	Ok( () )
+}
+
 
 #[cfg(test)]
 pub mod tests_commons{

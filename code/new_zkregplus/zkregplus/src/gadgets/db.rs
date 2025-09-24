@@ -36,7 +36,8 @@ use crate::gadgets::commons::{verify_inverse,verify_logup_inverse, check_eq,
 	check_arr_eq, check_arr_eq_arr, gen_m_table, new_const_var,
 	encode_2col, encode_2col_var, gen_m_table_cond,
 	new_var, two_col_tbl_to_sorted, gen_diff_col, two_col_tbl_left_join,
-	encode_cols, encode_cols_var};
+	encode_cols, encode_cols_var, 
+	multiset_prod, verify_unique_sorted_set, is_zero_better};
 
 
 // ----------------------------------------------------
@@ -53,7 +54,9 @@ use crate::gadgets::commons::{verify_inverse,verify_logup_inverse, check_eq,
 /// NOTE that there are two parts: using the Fiat-shamir challenge r,
 /// generate the inverse table for qry and lkup, and then, check the m_tbl
 /// relation: sum_{i=1}^{n} 1/(qry[i]+r) = sum_{j=1}^N m_tb[j]/(lkup[j]+r)
-/// COST: 2*qry_size + 3*lkup_size 
+/// COST: 2*qry_size + 3*lkup_size  (if old version of
+///		of verify_inverse and verify_logup_inverse used)
+/// NEW COST: qry_size + 2 * lkup_size.
 pub fn assert_logup<F:PrimeField>(
 	cs: ConstraintSystemRef<F>,
 	qry: &Vec<FpVar<F>>, 
@@ -62,6 +65,8 @@ pub fn assert_logup<F:PrimeField>(
 	r: &FpVar<F>)
 ->Result<(), SynthesisError>{
 	//1. generte the inverse table (as part of msg3)
+	let b_perf = false;
+	let nc = cs.num_constraints();
 	let r_val = r.value().expect("error get val of r");
 	let qry_val = qry.iter().map(|x| x.value().unwrap()).collect::<Vec<F>>();
 	let lkup_val = lkup.iter().map(|x| x.value().unwrap()).collect::<Vec<F>>();
@@ -89,6 +94,10 @@ pub fn assert_logup<F:PrimeField>(
 	//3. verify logup relation (m_table)
 	verify_logup_inverse(cs.clone(), &qry_inv, &lkup_inv, m_tbl)?; 
 
+	if b_perf{
+		println!(" --- assert_logup qry: {}, lkup: {}, cs: {}",
+			qry.len(), lkup.len(), cs.num_constraints() - nc);
+	}
 	Ok( () )
 }
 
@@ -476,6 +485,190 @@ pub fn verify_col_to_sorted_set<F:PrimeField>(
 	Ok( () )
 }
 
+
+/// Prove that the tag is the correct tagging of each element
+/// of the key array (if it is a valid element in sorted_key).
+/// We assume that sorted_key is a sorted set of unique elements
+/// padded with 0 at the beginning (where 0 is regarded as dummy).
+/// Key can be arbitrary order and allow duplicates, the tag has 1 or 0
+/// indicating that element is in sorted_key. Note that 0 is NOT regarded
+/// as a part of sorted key.
+///
+/// Example
+/// given sorted key: (0,1,2,3)
+/// given key (4,0,1,1,3) the tag vec is (0,0,1,1,1)
+/// where for key element 0, its tag is 0.
+pub fn prove_filter_tag<F:PrimeField>(
+	key: &Vec<F>, sorted_key: &Vec<F>, tags: &Vec<F>,
+	unique_key_size: usize,
+) -> Result<Rc<RefCell<Container<F>>>, SynthesisError>{
+	//0. check data
+	let (n, m, k) = (key.len(), unique_key_size, sorted_key.len());
+	#[cfg(test)]{
+		assert!(tags.len()==n);
+		for i in 0..n{
+			assert!(tags[i].is_zero() || tags[i].is_one());
+		}
+		for i in 0..k-1{
+			assert!(sorted_key[i].is_zero() ||
+				sorted_key[i] < sorted_key[i+1]);
+		}
+	}
+	//1. generate neg set of unique_key_size
+	let prf = Container::<F>::new("prf_tag");
+	let no_key_set = key.par_iter().zip(tags.par_iter()).filter(|(&k,&t)|{
+		k.is_zero() || t.is_zero()	
+	}).map(|(&k,_)|{
+		k
+	}).collect::<HashSet<F>>();
+	let mut no_key:Vec<F> = no_key_set.iter().cloned().collect();
+	assert!(no_key.len()<=m, "no_key.len: {} should >= unique_set_size: {}",
+		no_key.len(), m);
+	no_key.sort();
+	no_key = vec![vec![F::zero(); m-no_key.len()], no_key].concat();
+	#[cfg(test)] {assert!(no_key.contains(&F::zero()));}
+
+	//2. generate union of key
+	let mut union_key = [&no_key[..], &sorted_key[..]].concat();
+	union_key.sort();
+	assert!(union_key.len()==m+k);
+
+	//REMOVE LATER ----------------
+	use crate::gadgets::commons::print_vec;
+	print_vec("key", &key);
+	print_vec("sorted_key", &sorted_key);
+	print_vec("tags", &tags);
+	print_vec("no_key", &no_key);
+	print_vec("union_key", &union_key);
+	//REMOVE LATER ---------------- ABOVE
+
+	//3. prove union_key is sorted. provide the the pairwise diff
+	//as the proof.
+	let union_key_diff = (0..m+k-1).into_par_iter().map(|i|
+		union_key[i+1]-union_key[i]
+	).collect::<Vec<F>>();
+
+	//4. prove union_key is the union of no_key and sorted_key.
+	//NOW given: (1) sorted-key is sorted unique set, (2) union_key
+	// is hte union or sorted_key and no_key and its size is the
+	// sum of two. We can infer that: no_key is union_key - sorted_key
+	// and then no_key's is DISJOINT with sorted key.
+
+	//5. produce m_table for proving that (key,tag) belong to
+	// the following concat table:
+	//  [ (no_key, 0), (sorted_key, 1 except for 0 entries)]
+	let qry = encode_2col(&key, &tags);
+	let no_key_tag = vec![F::zero(); no_key.len()];
+	let sorted_key_tag = sorted_key.iter().map(|x| 
+		if x.is_zero() {F::zero()} else {F::one()}
+	).collect::<Vec<F>>();
+	let lkup = vec![encode_2col(&no_key, &no_key_tag),
+		encode_2col(&sorted_key, &sorted_key_tag)].concat();
+	let m_tbl = gen_m_table(&qry, &lkup);
+	assert!(m_tbl.len()==m+k);
+
+
+	//6. return
+	let (zero,rg2) = (F::zero(), F::from(RANGE2));
+	assert!(no_key.len()==m && union_key.len()==m+k 
+		&& union_key_diff.len()==m+k-1);
+	prf.borrow_mut().add_col(Col::new(no_key, "no_key", IDX_DATA));
+	prf.borrow_mut().add_col(Col::new(vec![rg2;m], "si_no_key", IDX_SI_DATA));
+	prf.borrow_mut().add_col(Col::new(union_key, "union_key", IDX_DATA));
+	prf.borrow_mut().add_col(Col::new(vec![rg2;m+k], 
+		"si_union_key", IDX_SI_DATA));
+	prf.borrow_mut().add_col(Col::new(union_key_diff, 
+		"union_key_diff", IDX_DATA));
+	prf.borrow_mut().add_col(Col::new(vec![rg2;m+k-1], 
+		"si_union_key_diff", IDX_SI_DATA));
+	prf.borrow_mut().add_col(Col::new(m_tbl, "m_tbl", IDX_DATA));
+	prf.borrow_mut().add_col(Col::new(vec![zero;m+k], 
+		"si_m_tbl", IDX_SI_DATA));
+
+	Ok(prf)
+}
+
+/// verify the given tags is the correct tagging of key
+/// for its elements in sorted_key or not.
+///
+/// COST: 3*(m+k-1) + 2*(m+k) -1 + 2n + 2m + 5k
+/// = 2n + 7m + 10k
+pub fn verify_filter_tag<F:PrimeField>(
+	key: &Vec<FpVar<F>>, sorted_key: &Vec<FpVar<F>>, tags: &Vec<FpVar<F>>,
+	prf: &Rc<RefCell<Container<FpVar<F>>>>,
+	r1: &FpVar<F>,
+	r2: &FpVar<F>
+)->Result<(), SynthesisError>{
+	let b_perf = true;
+	let cs = key[0].cs();
+	let mut nc = cs.num_constraints();
+
+	//1-2. retrieve neg_key and union key
+	let cols = ["no_key", "union_key", "union_key_diff", "m_tbl"].iter().map(|n|
+		prf.borrow().get_container(n).unwrap().borrow().to_vec())
+		.collect::<Vec<_>>();
+	let (no_key, union_key, union_key_diff, m_tbl) = (&cols[0],
+		&cols[1], &cols[2], &cols[3]);
+	let (n,m,k) = (key.len(), no_key.len(), sorted_key.len());
+	if b_perf {
+		println!("-- -- verify_filter_tag: step 1: key.len: {}, sorted_key.len: {}, no_key.len: {}, cs: {}", n, k, m, cs.num_constraints()-nc);
+		nc = cs.num_constraints();
+	}
+
+	//3. veify union_key is sorted.
+	// COST = 3*(m+k-1)
+	verify_unique_sorted_set(&union_key, &union_key_diff)?;
+	if b_perf{
+		println!("-- -- verify_filter_tag: step 3: cs: {}",
+			cs.num_constraints() - nc);
+		nc = cs.num_constraints();
+	}
+
+	//4. VERIFY that union_key is the union of no_key and sorted_key.
+	//NOW given: (1) sorted-key is sorted unique set, (2) union_key
+	// is hte union or sorted_key and no_key and its size is the
+	// sum of two. We can infer that: no_key is union_key - sorted_key
+	// and then proved the following:
+	// *** no_key's is DISJOINT with sorted key. ***
+
+	// COST: 2*(m+k)-1
+	let prod1 = multiset_prod(cs.clone(),
+		&union_key, r1);
+	let q1 = multiset_prod(cs.clone(),
+		&sorted_key, r1);
+	let q2 = multiset_prod(cs.clone(),
+		&no_key, r1);
+	let prod2 = q1 * q2;
+	prod2.enforce_equal(&prod1)?;
+	if b_perf{
+		println!("-- -- verify_filter_tag: step 4: cs: {}",
+			cs.num_constraints() - nc);
+		nc = cs.num_constraints();
+	}
+
+	//5. verify the (key,tag) as a 2-column table can be looked up
+	//in (union_key,tag) properly tagged.
+	//COST: n + 3k + n + 2*(m+k)
+	// = 2*n + 2*m + 5*k 
+	let qry = key.iter().zip(tags.iter()).map(|(k,t)|
+		k + r1 * t).collect::<Vec<FpVar<F>>>();
+	// tbl_1: (no_key,0) is itself as r1 * 0 is 0
+	// tbl_2: sorted_key_tag is 0 if sorted_key[i] is 0 o.t. 1
+	let tbl_2 = sorted_key.iter().map(|x|{
+		let b_zero = is_zero_better(x, &cs).unwrap();
+		x + r1 - r1 * &b_zero 
+	}).collect::<Vec<FpVar<F>>>();
+	let lkup = [&no_key[..], &tbl_2[..]].concat();
+	assert!(lkup.len()==m+k);
+	assert_logup(cs.clone(), &qry, &lkup, &m_tbl, r2)?;
+	if b_perf{
+		println!("-- -- verify_filter_tag: step 5: cs: {}",
+			cs.num_constraints() - nc);
+	}
+
+	todo!()
+}
+
 /// convert two column (unsorted) table to a sorted and well
 /// formed table, the the result of projection by a sorted_set of keys.
 /// The sorted_set-key is a sorted set of key values (as the
@@ -493,6 +686,81 @@ pub fn tbl_filtered_to_sorted_tbl<F:PrimeField>(
 	key: &Rc<RefCell<Container<F>>>,
 	val: &Rc<RefCell<Container<F>>>,
 	sorted_set_key: &Rc<RefCell<Container<F>>>, //the sorted_set bundle
+		//this is used to FILTER the (key,val) pair, e.g., key has
+		//states, but sorted_set_key has FINAL STATES only.
+	target_size: usize,
+	name: &str, //the name of the new container bundle
+	unique_key_size: usize, //when pack key to unique set, what's the size
+) -> Result<Rc<RefCell<Container<F>>>, SynthesisError>{
+	let b_new = false;
+	if b_new{
+		tbl_filtered_to_sorted_tbl_new(key,val,sorted_set_key,target_size,name,
+			unique_key_size)
+	}else{
+		tbl_filtered_to_sorted_tbl_old(key,val,sorted_set_key,target_size,name)
+	}
+}
+
+// new approach: We first provie a 
+pub fn tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
+	key: &Rc<RefCell<Container<F>>>,
+	val: &Rc<RefCell<Container<F>>>,
+	sorted_set_key: &Rc<RefCell<Container<F>>>, //the sorted_set bundle
+		//this is used to FILTER the (key,val) pair, e.g., key has
+		//states, but sorted_set_key has FINAL STATES only.
+	target_size: usize,
+	name: &str, //the name of the new container bundle
+	unique_key_size: usize, //when pack key to unique set, what's the size
+) -> Result<Rc<RefCell<Container<F>>>, SynthesisError>{
+	let res = Container::<F>::new(name);
+	let prf = Container::<F>::new("prf");
+
+	//1. extract the data columns
+	let keys = key.borrow().to_vec(); 
+	let vals = val.borrow().to_vec(); 
+	let proj_keys = sorted_set_key.borrow().get_container(
+		"sorted_val")?.borrow().to_vec();
+
+	let (m,n,k) = (keys.len(), target_size, proj_keys.len());
+	assert!(vals.len()==m);
+	println!("DEBUG USE 6101: m: {}, n: {}, k: {}", m, n, k);
+
+	//2. try to tag each key
+	// in_sorted_set_key: 2
+	// not_in_sorted_set_key: 1
+	// don't care (for dummy entries): 0
+	let (f_in, f_out, f_dummy) = (F::from(2u32), F::one(), F::zero());
+	let tags = keys.par_iter().map(|k|{
+		if k.is_zero(){ f_dummy} else{
+			if proj_keys.contains(k){ f_in }else { f_out }
+		}
+	}).collect::<Vec<F>>();
+	let si_tags = vec![F::zero(); tags.len()];//boolean, will be checked 
+												//so just use don't care
+	use crate::gadgets::commons::print_vec;
+	print_vec("DEBUG USE 6002: keys: ", &keys);
+	print_vec("DEBUG USE 6002: proj_keys: ", &proj_keys);
+	print_vec("DEBUG USE 6102: tags:", &tags);
+
+	//3. prove that the tag is correct
+	let prf_tag = prove_filter_tag(&keys, &proj_keys, &tags, unique_key_size)?;
+	prf.borrow_mut().add_col(Col::new(tags, "tags", IDX_DATA));
+	prf.borrow_mut().add_col(Col::new(si_tags, "si_tags", IDX_SI_DATA));
+	prf.borrow_mut().add_container(prf_tag);
+
+	//4. return
+	res.borrow_mut().add_container(prf);
+	Ok(res)
+}
+
+
+//old version more costly
+pub fn tbl_filtered_to_sorted_tbl_old<F:PrimeField>(
+	key: &Rc<RefCell<Container<F>>>,
+	val: &Rc<RefCell<Container<F>>>,
+	sorted_set_key: &Rc<RefCell<Container<F>>>, //the sorted_set bundle
+		//this is used to FILTER the (key,val) pair, e.g., key has
+		//states, but sorted_set_key has FINAL STATES only.
 	target_size: usize,
 	name: &str, //the name of the new container bundle
 ) -> Result<Rc<RefCell<Container<F>>>, SynthesisError>{
@@ -642,8 +910,59 @@ pub fn tbl_filtered_to_sorted_tbl<F:PrimeField>(
 	Ok( res )
 }
 
-/// verify in assert_msg3() that  
 pub fn verify_tbl_filtered_to_sorted_tbl<F:PrimeField>(
+	r1: &FpVar<F>, //random challenges from msg2
+	r2: &FpVar<F>,
+	keys: &Rc<RefCell<Container<FpVar<F>>>>,
+	vals: &Rc<RefCell<Container<FpVar<F>>>>,
+	sorted_set_key: &Rc<RefCell<Container<FpVar<F>>>>, //the sorted_set bundle
+	bundle: &Rc<RefCell<Container<FpVar<F>>>>, //result of tbl_filtered_to_sorted_tbl
+	cs: ConstraintSystemRef<F>
+) -> Result<(), SynthesisError>{
+	let b_new = false;
+	if b_new{
+		verify_tbl_filtered_to_sorted_tbl_new(r1,r2,keys,vals,
+			sorted_set_key,bundle,cs)
+	}else{
+		verify_tbl_filtered_to_sorted_tbl_old(r1,r2,keys,vals,
+			sorted_set_key,bundle,cs)
+	}
+}
+
+/// new version which is much less costly.
+pub fn verify_tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
+	r1: &FpVar<F>, //random challenges from msg2
+	r2: &FpVar<F>,
+	keys: &Rc<RefCell<Container<FpVar<F>>>>,
+	_vals: &Rc<RefCell<Container<FpVar<F>>>>,
+	sorted_set_key: &Rc<RefCell<Container<FpVar<F>>>>, //the sorted_set bundle
+	bundle: &Rc<RefCell<Container<FpVar<F>>>>, //result of tbl_filtered_to_sorted_tbl
+	_cs: ConstraintSystemRef<F>
+) -> Result<(), SynthesisError>{
+	let b_perf = true;
+	//let mut nc = cs.num_constraints();
+	if b_perf{
+		println!(" --- verify_tbl_filtered_new keys: {}, sorted_keys: {}", 
+			keys.borrow().to_vec().len(), 
+			sorted_set_key.borrow().to_vec().len());
+	}
+
+	// ----- Part 1: verify the filtering of src (key,val) ---
+	//1.1 check the correctness of tag
+	let keys = keys.borrow().to_vec();
+	let sorted_keys = sorted_set_key.borrow().to_vec(); 
+	let tags = bundle.borrow().get_container("tags")?.borrow().to_vec();
+	let prf_tag = bundle.borrow().get_container("prf_tag")?;
+	verify_filter_tag(&keys, &sorted_keys, &tags, &prf_tag, r1, r2)?;
+
+
+	todo!()
+}
+
+
+/// old version
+/// COST around 20 * max_nibble_len
+pub fn verify_tbl_filtered_to_sorted_tbl_old<F:PrimeField>(
 	r1: &FpVar<F>, //random challenges from msg2
 	_r2: &FpVar<F>,
 	keys: &Rc<RefCell<Container<FpVar<F>>>>,
@@ -652,6 +971,14 @@ pub fn verify_tbl_filtered_to_sorted_tbl<F:PrimeField>(
 	bundle: &Rc<RefCell<Container<FpVar<F>>>>, //result of tbl_filtered_to_sorted_tbl
 	cs: ConstraintSystemRef<F>
 ) -> Result<(), SynthesisError>{
+	let b_perf = true;
+	let mut nc = cs.num_constraints();
+	if b_perf{
+		println!(" --- verify_tbl_filtered_old keys: {}, sorted_keys: {}", 
+			keys.borrow().to_vec().len(), 
+			sorted_set_key.borrow().to_vec().len());
+	}
+
 	// ----- Part 1: verify the filtering of src (key,val) ---
 	//1.1 get all data to verify
 	let keys = keys.borrow().to_vec();
@@ -672,11 +999,22 @@ pub fn verify_tbl_filtered_to_sorted_tbl<F:PrimeField>(
 	let sids = names.iter().map(|n| 
 		prf.borrow().get_container(&format!("sid_{}",n))
 		.expect(&format!("err get {}", n))).collect::<Vec<_>>();
-	
+
+	if b_perf{
+		println!("  --- verify_tbl_filtered_old keys: step 1.1  cs: {}", 
+			cs.num_constraints() - nc);
+		nc = cs.num_constraints();
+	}
+
 	//1.2 check sids
 	let rg = new_const_var(&cs, F::from(RANGE2));
 	let zero= new_const_var(&cs, F::zero());
 	for vs in &sids{ check_arr_eq(&vs.borrow().to_vec(), &rg, "err sid")?; }
+	if b_perf{
+		println!("  --- verify_tbl_filtered_old keys: step 1.2  cs: {}", 
+			cs.num_constraints() - nc);
+		nc = cs.num_constraints();
+	}
 
 	//1.3. check val1==key-diff1, val2==key+diff2
 	let exp_val1 = keys.iter().zip(diff1.iter()).map(|(v,d)| v-d)
@@ -685,8 +1023,13 @@ pub fn verify_tbl_filtered_to_sorted_tbl<F:PrimeField>(
 		.collect::<Vec<FpVar<F>>>();
 	check_arr_eq_arr(&exp_val1, &val1, "err checking val1")?;
 	check_arr_eq_arr(&exp_val2, &val2, "err checking val2")?;
+	if b_perf{
+		println!("  --- verify_tbl_filtered_old keys: step 1.3  cs: {}", 
+			cs.num_constraints() - nc);
+		nc = cs.num_constraints();
+	}
 
-	//1.4 verify (id,val1) and (id,val2) all belong to sorted_set
+	//1.4 verify (id,val1) and (id+1,val2) all belong to sorted_set
 	let one_var = new_const_var(&cs, F::one());
 	let id_1 = id.iter().map(|x| &one_var + x).collect::<Vec<_>>(); 
 	let qry = vec![
@@ -695,6 +1038,11 @@ pub fn verify_tbl_filtered_to_sorted_tbl<F:PrimeField>(
 	].concat();
 	let lkup = encode_2col_var(&proj_ids, &proj_keys);
 	assert_logup(cs.clone(), &qry, &lkup, &m_tbl_sorted_set, r1)?;
+	if b_perf{
+		println!("  --- verify_tbl_filtered_old keys: step 1.4  cs: {}", 
+			cs.num_constraints() - nc);
+		nc = cs.num_constraints();
+	}
 		
 	// ----- Part 2: verify the resulting well formed table
 	//2.1 check sids 
@@ -714,6 +1062,11 @@ pub fn verify_tbl_filtered_to_sorted_tbl<F:PrimeField>(
 		.borrow().to_vec();
 	let sid_diff_key= prf.borrow_mut().get_container("sid_diff_key")?
 		.borrow().to_vec();
+	if b_perf{
+		println!("  --- verify_tbl_filtered_old keys: step 2.1  cs: {}", 
+			cs.num_constraints() - nc);
+		nc = cs.num_constraints();
+	}
 
 	//2.2 check the sorted_tbl is well formed and sorted
 	let packed_vals = tblcols[2].borrow().to_vec();
@@ -737,6 +1090,11 @@ pub fn verify_tbl_filtered_to_sorted_tbl<F:PrimeField>(
 		Some(&sid_diff_key),
 		r1.clone(), 
 		RANGE2_BIT)?;
+	if b_perf{
+		println!("  --- verify_tbl_filtered_old keys: step 2.2  cs: {}", 
+			cs.num_constraints() - nc);
+		nc = cs.num_constraints();
+	}
 
 	//2.3 do the double direction lookup to assert all (state,loc)
 	//appears appropraitely in the sorted table (state, id, loc)
@@ -755,9 +1113,17 @@ pub fn verify_tbl_filtered_to_sorted_tbl<F:PrimeField>(
 		.borrow().to_vec();
 
 	assert_logup_cond(cs.clone(), &encoded_src, &sel_src, &encoded_dst, &sel_dst, &mtbl_src_dst, r1)?;
+	if b_perf{
+		println!("  --- verify_tbl_filtered_old keys: step 2.3 cs: {}", 
+			cs.num_constraints() - nc);
+		nc = cs.num_constraints();
+	}
 	assert_logup_cond(cs.clone(), &encoded_dst, &sel_dst, &encoded_src, &sel_src, &mtbl_dst_src, r1)?;
+	if b_perf{
+		println!("  --- verify_tbl_filtered_old keys: step 2.4  cs: {}", 
+			cs.num_constraints() - nc);
+	}
 
-	println!("CHECK VALID OK SO FAR v2.1");
 	Ok( () )
 }
 
@@ -1218,12 +1584,31 @@ pub mod tests_db{
 	}
 
 	#[test]
-	fn test_assert_logup(){
+	fn test_assert_logup_standard(){
         let cs = ConstraintSystem::<Fr>::new_ref();
-		let qry = vec_to_var(cs.clone(), vec![1, 3, 2, 5, 3, 0, 0, 0, 0]);
-		let lkup = vec_to_var(cs.clone(), vec![0, 1, 3, 5, 2, 2]);
+		let qry = vec_to_var(cs.clone(), 
+			vec![1, 3, 2, 5, 3, 0, 0, 0, 0, 3]); // 10 elements
+		let lkup = vec_to_var(cs.clone(), vec![
+			0, 1, 3, 5, 2, 2,
+			500, 600, 700, 800, 900, 950, 
+			1001, 1002, 1003, 1004, 1005, 1006,
+			5001, 5002, 5003, 5004, 5005, 5006,
+			6001, 6002, 6003, 6004, 6005, 6006,
+			7001, 7002, 7003, 7004, 7005, 7006,
+			8001, 8002, 8003, 8004, 8005, 8006,
+			9001, 9002, 9003, 9004, 9005, 9006,
+		]); //48 elements
 		let r = fr_to_var(cs.clone(), Fr::from(123123123u32));
-		let m_tbl = vec_to_var(cs.clone(), vec![4, 1, 2, 1, 1, 0]);
+		let m_tbl = vec_to_var(cs.clone(), vec![
+			4, 1, 3, 1, 1, 0, 
+			0, 0, 0, 0, 0, 0,
+			0, 0, 0, 0, 0, 0,
+			0, 0, 0, 0, 0, 0,
+			0, 0, 0, 0, 0, 0,
+			0, 0, 0, 0, 0, 0,
+			0, 0, 0, 0, 0, 0,
+			0, 0, 0, 0, 0, 0,
+		]); //48 elements
 		assert!(assert_logup(cs.clone(), &qry, &lkup, &m_tbl, &r).is_ok());
 		assert!(cs.is_satisfied().unwrap());
 	}
@@ -1333,8 +1718,9 @@ pub mod tests_db{
 			.iter().map(|x| Fr::from(*x as u32)).collect::<Vec<Fr>>(),
 			"locs", IDX_DATA));
 		let n2 = 16;
+		let unique_key_size = 8;
 		let sorted_tbl = tbl_filtered_to_sorted_tbl(&states, 
-			&locs, &sorted_set, n2, "sorted tbl").unwrap();
+			&locs, &sorted_set, n2, "sorted tbl", unique_key_size).unwrap();
 
 		//3. construct claim/proof bundle and verify
 		let states = Container::rc_from(&states.borrow(), cs.clone());
@@ -1381,6 +1767,7 @@ pub mod tests_db{
 				&r1, &r2, &states, &locs, &sorted_tbl, cs.clone()).is_ok());
 		assert!(cs.is_satisfied().unwrap());
 	}
+
 
 	#[test]
 	fn test_tbl_left_join(){
@@ -1441,6 +1828,51 @@ pub mod tests_db{
 				&pat_state_loc_tbl, 
 				cs.clone()).is_ok());
 		assert!(cs.is_satisfied().unwrap());
+	}
+
+	#[test]
+	fn test_prove_tag(){
+		use crate::gadgets::db::{prove_filter_tag, verify_filter_tag};
+
+		let mut rng = test_rng();
+        let cs = ConstraintSystem::<Fr>::new_ref();
+		let r1 = FpVar::new_witness(cs.clone(),|| 
+			Ok(Fr::rand(&mut rng))).unwrap();
+		let r2 = FpVar::new_witness(cs.clone(),|| 
+			Ok(Fr::rand(&mut rng))).unwrap();
+
+		let key = vec![//32 elements
+				100, 0, 200, 300, 10, 20, 30, 0, 
+				1000, 2000, 1000, 2000, 3000, 2000, 3000, 2000,
+				1000, 2000, 1000, 2000, 3000, 2000, 3000, 2000,
+				1000, 2000, 1000, 2000, 3000, 2000, 3000, 2000,
+			].iter().map(|x| Fr::from(*x as u32)).collect::<Vec<Fr>>();
+		let sorted_key= vec![0, 10, 20, 30].
+			iter().map(|x| Fr::from(*x as u32)).collect::<Vec<Fr>>();
+		let tag= vec![//16 elements
+				0, 0, 0, 0, 1, 1, 1, 0, 
+				0, 0, 0, 0, 0, 0, 0, 0,
+				0, 0, 0, 0, 0, 0, 0, 0,
+				0, 0, 0, 0, 0, 0, 0, 0,
+			].iter().map(|x| Fr::from(*x as u32)).collect::<Vec<Fr>>();
+		let unique_key_size = 10;
+		let prf_tag = prove_filter_tag(&key, &sorted_key, &tag, 
+			unique_key_size).unwrap();
+
+		let var_key = key.iter().map(|x| new_var(&cs, *x))
+			.collect::<Vec<FpVar<Fr>>>();
+		let var_sorted_key = sorted_key.iter().map(|x| new_var(&cs, *x))
+			.collect::<Vec<FpVar<Fr>>>();
+		let var_tag= tag.iter().map(|x| new_var(&cs, *x))
+			.collect::<Vec<FpVar<Fr>>>();
+		let var_prf_tag = Container::rc_from(&prf_tag.borrow(), cs.clone());
+		assert!(
+			verify_filter_tag(&var_key, &var_sorted_key, &var_tag,
+				&var_prf_tag, &r1, &r2).is_ok()
+		);
+		assert!(cs.is_satisfied().unwrap());
+
+
 	}
 
 

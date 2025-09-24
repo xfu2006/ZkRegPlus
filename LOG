@@ -20074,7 +20074,7 @@ Goal 3. readjust percent to 100th of percent
 
 Monday 09/15/2025
 LOC (gadgets): 14409
-LOC (sonobe): 18728
+LOC (sonobe): 18728 -> 18723 (+100)
 Goal 1. regression test
 	[a] gadgets
 	[b] small example
@@ -20106,7 +20106,243 @@ Goal 5. clean up code
 	[a] clean up code
 	[b] try another one
 	[c] lkup size left proble: some bugs had to check out.
-	]d] why it's failing?
+	]d] why it's failing? check out the old file -> it's fixed now
+		after fixing the value of left over
+
+Goal 6. run small_data2
+	[a] basis: 10 -> new_total_cs_pp_len: 18698185
+		setup max_row_col: 9728690
+		looks like if lower than 10, it will generate error
+	[b] any other info to cut?
+	[c] at this moment there isnnibble len not padded error.
+	currently taking 438 seconds.
+
+Wed 09/16/2025
+LOC (sonobe): 18723
+Goal 1. explore other options to cut size.
+	[a] stmt_len: 2.8M
+	[b] 6901 failed sigs why it's so much?i (3071)
+		-> cp_mapper (because it's I/O is 3071 elements)
+		-> inp len: 3073 too big
+	[c] review all gadgets
+		[a] fsm -> only 2 elemets
+		[b] word_extract -> no
+		[c] sigs -> detremines by slen: 3072 why?
+		[d] change sig_buf_capacity to 2 * sigs
+		[e] run cost: cut the stmt_len to 2.7M (cut about 100k)
+		inv_hab22;: after 8520877 (compard with earlier 9149701
+			cut about 600k)
+	[d] review the join_buf_capacity (sigs.rs)
+		[a] jlen decides inv1_left and inv3_right
+			inv1_left - data.decoded_final_states_sigs_sigs
+			it's a table of state - sig (one state can corresponding to
+				multiple sig)
+		[b] current value of olen: 4096, jlen 4096, slen 6
+			-> change to be related to frequency instead of max_word
+			directly.
+			-> why it gets larger?
+			-> now change to: (4,4) for olen and jlen
+			-> now: stmt_len: 2567501 (cut about 200k)
+			-> lkup: AFTER inv_hab22: 1245329, cs.lc_size: 32486452, cons: 7758108
+					(cut about 800k)
+	[e] add msg 7103: after each gadget and see the cost, DUMP now:
+	----
+DEBUG USE 7103: after msg3 of module 0: WordExtractGadget:  constraints: 49237
+DEBUG USE 7103: after msg3 of module 1: FsmGadget:  constraints: 144470
+DEBUG USE 7103: after msg3 of module 2: PackFinalGadget:  constraints: 207984
+DEBUG USE 7103: after msg3 of module 3: GetSigGadget:  constraints: 208263
+DEBUG USE 7103: after msg3 of module 4: WordExtractGadget:  constraints: 243079
+DEBUG USE 7103: after msg3 of module 5: FsmGadget:  constraints: 338312
+DEBUG USE 7103: after msg3 of module 6: PackFinalGadget:  constraints: 401826
+DEBUG USE 7103: after msg3 of module 7: GetSigGadget:  constraints: 402105
+DEBUG USE 7103: after msg3 of module 8: WordExtractAdvGadget:  constraints: 436921
+CHECK VALID OK SO FAR v2.1
+DEBUG USE 7103: after msg3 of module 9: FsmAdvGadget:  constraints: 1271247
+CHECK VALID OK SO FAR v2.1
+DEBUG USE 7103: after msg3 of module 10: FsmAdvGadget:  constraints: 2105573
+PERF 102: discharge_adv: TOTAL num_cons: 4714
+DEBUG USE 7103: after msg3 of module 11: DischargeAdvGadget:  constraints: 2110287
+PERF 102: discharge_adv: TOTAL num_cons: 4714
+DEBUG USE 7103: after msg3 of module 12: DischargeAdvGadget:  constraints: 2115001
+
+	----
+	The perf killer is FsmAdvGadget
+	[f] read its cost estimate of FsmAdvGadget
+		-> avg_pats_per_subsig and basis_pats_in_trace
+
+Goal 3. analyze the cost of fsm_adv
+	[a] step 1-> done
+	[b] step 2-> done
+
+Wed 09/17/2025
+Goal 1. continue to analyze fsm_adv
+	[a] step 1 of verify packed_trace
+		-> verify sorted
+		-> verify table
+		-> states and locs 32k -> sorted states 530
+	[b] detailed analysis of verify the projected states and locs
+		[b1] insert cost analysis 7801
+
+Goal 2. read tbl_filtered_to_sorted_tbl and see if it is possible
+	to cut cost.
+	[a] for each key it builds a proof
+		(key1, key2, diff1, diff2) as the proof
+		whether the key is IN the projected_key set
+		based on two consecutive (key1,key2).
+	[b] maybe there are better ways of proving it? -> think about it
+		currently it takes 20n! which is a great cost
+	[c] make cost estimate permanent
+	[d] remove panic statement -> make sure it's working first.
+
+Goal 3. analysis of the verify tbl_filtered cost
+	[a] n = 32k, m = 0.5k (sorted states)
+	[b] breakdown of cost
+		1.2 - check SIDs - 5n
+		1.3 - check val diff - 2n
+		1.4 - logup for (id, val) - 4n
+		2.1 - check sid of mtbl - n (actually not needed)
+		2.3 - assert_logup 6n are two seletors
+		2.4 - assert_logup reverse 4n
+	-> 22n
+
+Goal 4. Plan
+	[a] key, val
+	[b] attach a boolean tag indicating whether key belongs to
+		sorted key or not
+	[c] in the proof including two tables:
+		filter_set
+		negation_set
+		Then treat the two tables as 2-col table and do a 
+			one direction lkup to prove the correctness of tagging
+	[d] Then do one logup one direction to prove that
+		all tagged set are included. A reverse logup to show
+		sorted table covers the orignal sets of items only.
+	[e] total cost:
+		3n +  10n = 13n
+	[f] still need to think can we save?
+		-> given a big table and a vector of boolean selectors
+			and given a small table
+		-> we can just run multi-set equivalence test
+			use selector to multiply with the item value.
+		-> big 2-col table isze N and small 2col-table size n: we have
+			2*N + 2n
+		We then do not even have to do 2 direction lkups.
+
+Thursday 09/18/2025
+Goal 1. improve the filtered table 
+	[a] check if there is any test cases already -> good already there
+	[b] set up the framework
+	[c] fsm adv detailed cost analysis
+
+Goal 2. design of the new table
+	[a] design how to label the table, we have
+		state_id, lable(final:2, non_final:1, 0) 0 means don't care
+		We have final_states, non-key-states provided as a table
+		we compute:
+			alpha + state_id + beta * lable_id
+		if it's don't care, state_id must be 0 thus we get a full 0 entry
+	(actual the value is alpha).
+		for any valid state and valid label they should
+		match one which is the table
+		So the cost:
+			N - compute weighted sum
+			N - lkup (try improve verify logup - should be patching
+					into one constraint 
+	[c] then test the two sorted are sorted and disjoint
+	[d] then to prove that the relation between the
+		trace and sorted set - multi-set equivalence
+		use tag-1 as selector, they are already proved to be correct
+		do the multi-set equivalence
+
+Friday 09/19/2025
+LOC (grid): 14594 ->  14669 (+75)
+Goal 1. create the table tag
+	[a] retrieve value
+	[b] checke -> ok
+
+Goal 2. improve assert_logupA
+	[a] framework
+	[b] old one still passing
+	[c] new one
+	-> DONE
+
+Saturday 09/20/2025
+LOC (grid): 14669 ->  14807 (+150)
+Goal 1. do the same for assert_log_up 
+	[a] implement arch
+	[b] implement new
+	[c] measure performance but why new is the same?A
+	[d] refactor -> FpVar to linear combination
+	--- TODO compare
+	[d] regression test:
+		ENTIRE CIRCUIT CONSTRUCTED *** . cons: 1987601
+		earlier:
+		DEBUG USE 7103: after msg3 of module 15: DfaAdvGadget:  constraints: 48195
+			(cut 4k)
+		--- DEBUG USE 7601.2 lkup_size: 3167, inv_hab22_right_size: 3167
+	[e] if using new logup check
+		DEBUG USE 7103: after msg3 of module 15: DfaAdvGadget:  constraints: 44001 (cut 4k)
+		lkup size the same
+		*** ENTIRE CIRCUIT CONSTRUCTED *** . cons: 1970817 (cut 10k)
+
+Sunday 09/21/2025
+LOC (gadget): 14807
+Goal 1. compare the resul tof logup for big file
+	[a] old
+	-- DEBUG USE 7103: after msg3 of module 15: DfaAdvGadget:  constraints: 2754349
+	-- DEBUG USE 7601.2 lkup_size: 25600, inv_hab22_right_size: 25600
+	--- DEBUG USE 7601: gen_step_constraints step 10. RETURN!cs: 8303345,
+	DEBUG USE 8802.2: preproess, new_total_cs_pp_len: 17491103
+	[b] new:
+	DEBUG USE 7103: after msg3 of module 15: DfaAdvGadget:  constraints: 2497039 (cut about 300k) not much
+	--- DEBUG USE 7601: gen_step_constraints step 10. RETURN!cs: 8046035, stack  DEBUG USE 8802.2: preproess, new_total_cs_pp_len: 16976483 (cut 0.5M out of
+		1M)
+
+Goal 2. design prove key tag is correct
+	[a] add attribute basis_unique_state (ratio of unique states
+		among the states collected in the path).
+			-> change
+			-> regression test -> DONE
+
+Monday 09/22/2025
+LOC (gadget): 14816 -> 15044 (+230)
+Goal 1. prover_filter_tag and its verify function 
+	[a] declare prove_filter_tag and verify_filter_tag -> DONE
+	[b] add unique size to filtered_table_function -> DONE
+	[c] call prove_filter_tag and verify_filter_tag
+		-> prove -> DONE
+		-> verify
+	[d] unit test framework for prove_filter_tag and verify_filter_tag
+
+Goal 2. implement the prove_filter_tag and verify_filter_tag
+	[a] check data  -> DONE
+	[b] generate neg_key (which is the set of keys that are
+		not in sorted_set_key) -> DONE
+	[c] generate union _key
+	[d] think about how to prove union key is the union of
+		sorted_key
+		[a] prove union key is sorted 
+		[b] union key is is a union multi_set check -> factor as
+			multi_set
+	[e] verify retrieve data
+
+Tuesdya 09/23/2025
+LOC (gadget) 15044 -> 15113 (+70)
+Goal 1.  lower the cost of b_zero
+	[a] declare the funciton
+	[b] implement it
+	[c] tested
+Goal 2. prove multi-set
+	[a] declare multiset function count
+	[b] call it
+	[c] implement and test it
+
+Wed 09/24/2025
+LOC (gadget): 15113
+Goal 1. go over the workflow again
+	[a] refactor function is_unique_sorted_set()
+	[b] multiset_prod again without ignore o
+
 
 
 

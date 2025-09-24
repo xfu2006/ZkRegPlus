@@ -44,7 +44,7 @@ use crate::{
 		foldpot::{
 			utils::{f1_to_f2_limbs, get_stack_space,check_logup, print_vec_var},
 			container_config::{ContainerConfig},
-			circuits_super::field_to_usize,
+			//circuits_super::field_to_usize,
 		},
 	}
 };
@@ -2726,7 +2726,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		z_i: Vec<FpVar<F>>,
 		external_inputs: Vec<FpVar<F>>,
 	) -> Result<Vec<FpVar<F>>, SynthesisError> {
-		let b_debug = false; //set to false in production mode
+		let b_debug = true; //set to false in production mode
 		let b_show_sigs = false; //set to false in production mode
 		//NOTE: cs.is_satisfied() can cause * stack overflow *
 		//if constraints are not constructed carefully.
@@ -2779,7 +2779,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		//3. add all constraints by components
 		for (i,g) in self.gadgets.iter().enumerate(){
 			g.borrow().assert_msg3(i, cs.clone(), &wtns_var, &cfg)?;
-			//println!("DEBUG USE 103: after msg3 of module {}: constraints: {}", i, cs.num_constraints());
+			println!("DEBUG USE 7103: after msg3 of module {}: {}:  constraints: {}", i, g.borrow().get_name(), cs.num_constraints());
 		}
 		if b_debug{
 			let csat = cs.is_satisfied();

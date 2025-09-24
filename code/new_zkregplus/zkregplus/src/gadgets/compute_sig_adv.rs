@@ -2183,6 +2183,7 @@ pub mod tests_compute_sig_adv{
 			subsigs: 5,
 			avg_pats_per_subsig: 4,
 			basis_pats_in_trace: 27*100, 
+			basis_unique_states: 20*100,
 		};
 		let cap_disc = DischargeAdvCapacity{//capaciity of discharge comopnent
 			max_nibble_len: nibble_len, 

@@ -100,6 +100,8 @@ pub struct SedCapacity{
 	pub	basis_pats_in_trace: usize, //0.01 percent
 	pub	sigs_sed: usize, //for sed approach to discharge
 	pub	perc_comp_subsigs: usize,
+	pub basis_unique_states: usize, //basis points of unique states
+		//extracted from all states of a path
 }
 
 /// Represent the structure of Input
@@ -151,10 +153,12 @@ impl SedCapacity{
 		basis_pats_in_trace: usize, //0.01 perc (basis points)
 		sigs_sed: usize, //for sed approach to discharge
 		perc_comp_subsigs: usize,
+		basis_unique_states: usize,
 	)->Self{
 		let wea_capacity = WordExtractAdvCapacity{max_word_len};
 		let max_nibble_len = max_word_len * LEGS;
-		let faa_capacity = FsmAdvCapacity{max_nibble_len, acdfa_state_part_bits,			subsigs, avg_pats_per_subsig, basis_pats_in_trace};
+		let faa_capacity = FsmAdvCapacity{max_nibble_len, acdfa_state_part_bits,			subsigs, avg_pats_per_subsig, basis_pats_in_trace,
+			basis_unique_states};
 		let da_capacity = DischargeAdvCapacity{max_nibble_len, subsigs, avg_active_pats_per_subsig, basis_pats_in_trace};
 		let csa_capacity = ComputeSigAdvCapacity{subsigs, sigs: sigs_sed, max_nibble_len,
 			basis_pats_in_trace, perc_comp_subsigs};
@@ -168,7 +172,8 @@ impl SedCapacity{
 
 		Self{comp_capacities, max_word_len, acdfa_state_part_bits,
 			subsigs, avg_pats_per_subsig, avg_active_pats_per_subsig,
-			basis_pats_in_trace, sigs_sed, perc_comp_subsigs}
+			basis_pats_in_trace, sigs_sed, perc_comp_subsigs,
+			basis_unique_states}
 	}
 
 	/// level1: double the subsig and sig size
@@ -184,7 +189,8 @@ impl SedCapacity{
 				self.avg_active_pats_per_subsig,
 				self.basis_pats_in_trace,
 				self.sigs_sed*2,
-				self.perc_comp_subsigs
+				self.perc_comp_subsigs,
+				self.basis_unique_states,
 			)
 		}else{
 			Self::new(
@@ -195,7 +201,8 @@ impl SedCapacity{
 				self.avg_active_pats_per_subsig*2,
 				self.basis_pats_in_trace*2,
 				self.sigs_sed,
-				self.perc_comp_subsigs*2
+				self.perc_comp_subsigs*2,
+				self.basis_unique_states*2,
 			)
 		}
 	}
@@ -253,6 +260,7 @@ impl Capacity for SedCapacity{
 			basis_pats_in_trace: self.basis_pats_in_trace,
 			sigs_sed: self.sigs_sed,
 			perc_comp_subsigs: self.perc_comp_subsigs,
+			basis_unique_states: self.basis_unique_states,
 		})
 	}
 

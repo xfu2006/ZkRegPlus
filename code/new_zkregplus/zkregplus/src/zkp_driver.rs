@@ -306,8 +306,9 @@ where C: CurveGroup<ScalarField=F>,
 	let avg_active_pat_per_sig = 3;
 	let basis_pats_in_trace = 6*100;
 	let perc_comp_subsigs = 50;
+	let basis_unique_states = 100; //1 percent
 	let scap1= SedCapacity::new(max_word, db.dfa_crit.state_part_bits, subsigs, 
-		avg_pat_per_sig, avg_active_pat_per_sig, basis_pats_in_trace, sigs, perc_comp_subsigs);
+		avg_pat_per_sig, avg_active_pat_per_sig, basis_pats_in_trace, sigs, perc_comp_subsigs, basis_unique_states);
 	let scomp1 = SedComponentMapper::<F,LK<F>>::new(scap1, db.clone());
 	//let scg1 = CompositeGadgetMapper::<F,LK<F>>::new("sed1",vec![Rc::new(RefCell::new(scomp1))]); 
 
@@ -534,6 +535,7 @@ pub mod tests_zkp_driver{
 		let perc_comp_subsigs = 50;
 		let num_category = 1;
 		let num_circs_per_category= 1;
+		let basis_unique_states = 100; //1 cerpcent
 
 		let init_cp_cap= CpCapacity{
 			max_word_len: 1, final_states_len: 8, 
@@ -542,7 +544,8 @@ pub mod tests_zkp_driver{
 		let init_sed_cap= SedCapacity::new(
 			max_word, RANGE2_BIT, subsigs, 
 			avg_pat_per_sig, avg_active_pat_per_sig, 
-			basis_pats_in_trace, sigs, perc_comp_subsigs
+			basis_pats_in_trace, sigs, perc_comp_subsigs,
+			basis_unique_states
 		);
 		let init_dfa_cap= DfaCapacity::new(max_word, sigs, subsigs);
 
@@ -581,19 +584,27 @@ pub mod tests_zkp_driver{
 		let subsigs = 6;
 		let avg_pat_per_sig = 8;
 		let avg_active_pat_per_sig = 3;
-		let basis_pats_in_trace = 10; //old value 100
+		let basis_pats_in_trace = 10; //old value 100 cur value 1/1000.
 		let perc_comp_subsigs = 20;
 		let num_category = 1;
 		let num_circs_per_category= 1;
+		let basis_unique_states = 100; //1 cpercent
 
 		let init_cp_cap= CpCapacity{
-			max_word_len: max_word, final_states_len: 8*max_word, 
-			join_buf_capacity: 8*max_word, sig_buf_capacity: 6*max_word
+			max_word_len: max_word, 
+			final_states_len: 8*max_word*basis_pats_in_trace/10000,  //related
+				//to the freq of final states, so freq * word_len
+			join_buf_capacity: 8*max_word*basis_pats_in_trace/10000, 
+			sig_buf_capacity: 2*sigs
 		};
 		let init_sed_cap= SedCapacity::new(
 			max_word, RANGE2_BIT, subsigs, 
-			avg_pat_per_sig, avg_active_pat_per_sig, 
-			basis_pats_in_trace, sigs, perc_comp_subsigs
+			avg_pat_per_sig, 
+			avg_active_pat_per_sig, 
+			basis_pats_in_trace, 
+			sigs, 
+			perc_comp_subsigs,
+			basis_unique_states
 		);
 		let dfa_sigs = 3;
 		let dfa_subsigs= 6;
