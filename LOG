@@ -20348,9 +20348,90 @@ Goal 2. mtbl lookup for tag combined entries
 	[b] verify the mtbl
 	[c] fil into filtered tbl framework
 
-TODO: address one bug and contineu with verify_filtered_table.
+Thursday 09/25/2025
+LOC (gadget): 15211 -> 15238 (+20)
+Goal 1. fix the m_tbl lkup issue
+	[a] length not match for m_tbl, db.rs: 654
+	-> fixed
 
+Friday 09/26/2025
+LOC (gadget): 15238 -> 15444 (+210)
+Goal 1. check old m_tbl
+Goal 2. refactor
+	[a] relable the functions
+	[b] build the sorted table
+	[c] check how to assert the wellformed
+	[d] read existing code
+Goal 3. handle the sorted_tbl construction
+	[a] get padded key, id, val
+	[b] compute diff
+	[c] check data
+	[d] display N,n,m,k
+	[e] fix data reporting
+Goal 4. multiset check
+	[a] declare the function
 
+Sat 09/27/2025
+LOC (gadget): 15400 -> 15462 (+62) 
+Goal 1. do a function for two column mulset_prod with selector tag.
+	[a] mulset_2col
+	[b] call it
+	[c] call it 2nd time and compare
+	[d] check size formul
+	[e] debug by eq check fails
+	[f] regression test on gadgets
+	[g] small data 1 circ -> need to fix unique_set_size
+		-> adjust unique set size
+
+Sunday 09/28/2025
+LOC (gadget): 15462
+Goal 1. debug lkup issue
+	[a] enlarge unique state set, does it remove problem? -> NO
+	[b] two entries missing:
+		both are (0x7000002, some neg number)
+	[c] binary search of errors try to gradually add
+		the code and see which part is causing problem
+		-> had to add packed val
+	[d] identified it's the problem of packed_diff
+
+Goal 2. fix the packed diff problem
+	[a] read packed_diff 
+	[b] print out their value -> looks fine but why lkup tbl is 
+		not working?
+		-> data dump shows that the -1 is labled with rg2
+			but when it's constructed it's not
+		-> old version? 
+		-> the problem is that data and SI_data are not added
+		in the right order
+	[c] remove prf category and put everyting in sorted_tbl
+	[d] finally fixed!
+
+Goal 3. analyze performance improvement.
+	[a] before logup and tbl_filter improve applied
+		module 8 size: 1271k-436k = 835k
+		right after module 14 R1CS: 2182741
+		lkup size: 1245329,
+		combined key size: 17491103
+
+	[b] after improving logup (cutting from 2N +3n to N + 2n)
+		module 8 size: 1143k-436k = 707k,
+		right after module 14: R1CS: 1925451
+		lkup size: 1245329,
+		combined key size:  16976483
+
+	[c] after tbl_filter improvement
+		module 8 size: 736k-436k = 300k (cut around 400k)
+			because reduces tbl_filter from 20N -> 5N
+				(600k -> 150k) that's around 450k saving.
+			but still verify fsm acceptance takes 4N
+				this is 120k.
+		right after module 14: R1CS: 1102129
+		lkup size: 930543 (cutting 300k)
+		combined key size: 12742979 (cutting around 30%)
+
+--- TODO -- Question: is it possible to just eliminate
+	the storage of transition? No, it has to be checked
+	against the lkup.
 
 
 

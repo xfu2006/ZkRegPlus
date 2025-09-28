@@ -3,7 +3,7 @@
 
 #2. test each gadget
 RUST_BACKTRACE=1 
-cargo test -- test_filter_tbl --show-output --nocapture
+#cargo test -- test_filter_tbl --show-output --nocapture
 
 # -------------
 #cargo test -- tests_fsm_adv_gadget --show-output --nocapture

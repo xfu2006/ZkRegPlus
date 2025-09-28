@@ -535,7 +535,7 @@ pub mod tests_zkp_driver{
 		let perc_comp_subsigs = 50;
 		let num_category = 1;
 		let num_circs_per_category= 1;
-		let basis_unique_states = 100; //1 cerpcent
+		let basis_unique_states = 38*100; //1 cerpcent
 
 		let init_cp_cap= CpCapacity{
 			max_word_len: 1, final_states_len: 8, 

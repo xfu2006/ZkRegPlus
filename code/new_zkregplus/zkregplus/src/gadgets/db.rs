@@ -37,7 +37,8 @@ use crate::gadgets::commons::{verify_inverse,verify_logup_inverse, check_eq,
 	encode_2col, encode_2col_var, gen_m_table_cond,
 	new_var, two_col_tbl_to_sorted, gen_diff_col, two_col_tbl_left_join,
 	encode_cols, encode_cols_var, 
-	multiset_prod, verify_unique_sorted_set, is_zero_better};
+	multiset_prod, verify_unique_sorted_set, is_zero_better,
+	multiset_prod_2col};
 
 
 // ----------------------------------------------------
@@ -184,6 +185,8 @@ pub fn verify_encoded_table<F:PrimeField>(
 /// asencding order. This is useful when the table is NOT a part of
 /// a verified external table, this guarantees UNIQUE KEY.
 /// NOTE: zero entries (key=0) are ignored (as they are dummy entry)
+///
+/// COST: 9n
 pub fn assert_well_formed_sorted<F:PrimeField>(
 	cs: ConstraintSystemRef<F>,
 	key: &Vec<FpVar<F>>,
@@ -522,11 +525,10 @@ pub fn prove_filter_tag<F:PrimeField>(
 		k
 	}).collect::<HashSet<F>>();
 	let mut no_key:Vec<F> = no_key_set.iter().cloned().collect();
-	assert!(no_key.len()<=m, "no_key.len: {} should >= unique_set_size: {}",
+	assert!(no_key.len()<m, "no_key.len: {} should < unique_set_size: {}",
 		no_key.len(), m);
 	no_key.sort();
 	no_key = vec![vec![F::zero(); m-no_key.len()], no_key].concat();
-	#[cfg(test)] {assert!(no_key.contains(&F::zero()));}
 
 	//2. generate union of key
 	let mut union_key = [&no_key[..], &sorted_key[..]].concat();
@@ -704,9 +706,11 @@ pub fn tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
 	unique_key_size: usize, //when pack key to unique set, what's the size
 ) -> Result<Rc<RefCell<Container<F>>>, SynthesisError>{
 	let res = Container::<F>::new(name);
-	let prf = Container::<F>::new("prf");
+	let sorted_tbl = Container::new("sorted_tbl");
 
-	//1. extract the data columns
+	//Part I. establish the tag column to indicate
+	//whether the key is in sorted_key_set (filter)
+	//1.1 extract the data columns
 	let keys = key.borrow().to_vec(); 
 	let vals = val.borrow().to_vec(); 
 	let proj_keys = sorted_set_key.borrow().get_container(
@@ -716,7 +720,7 @@ pub fn tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
 	assert!(vals.len()==m);
 	println!("DEBUG USE 6101: m: {}, n: {}, k: {}", m, n, k);
 
-	//2. try to tag each key
+	//1.2 try to tag each key
 	// in_sorted_set_key: 1
 	// not_in_sorted_set_key: 0
 	// don't care (for dummy entries): 0
@@ -728,19 +732,70 @@ pub fn tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
 	}).collect::<Vec<F>>();
 	let si_tags = vec![F::zero(); tags.len()];//boolean, will be checked 
 												//so just use don't care
-	use crate::gadgets::commons::print_vec;
-	print_vec("DEBUG USE 6002: keys: ", &keys);
-	print_vec("DEBUG USE 6002: proj_keys: ", &proj_keys);
-	print_vec("DEBUG USE 6102: tags:", &tags);
-
-	//3. prove that the tag is correct
+	//1.3 prove that the tag is correct
 	let prf_tag = prove_filter_tag(&keys, &proj_keys, &tags, unique_key_size)?;
-	prf.borrow_mut().add_col(Col::new(tags, "tags", IDX_DATA));
-	prf.borrow_mut().add_col(Col::new(si_tags, "si_tags", IDX_SI_DATA));
-	prf.borrow_mut().add_container(prf_tag);
 
-	//4. return
-	res.borrow_mut().add_container(prf);
+	//PART 2. constuct the filtered and sorted table and prove that
+	//its correctness
+	//2.1 build the sorted-table. consists of
+	// packed_key, packed_id, packed_val
+	// diff_key, diff_val (to prove they are sorted and well formed) 
+	let fil1 = keys.par_iter().zip(tags.par_iter()).filter(|(_k,t)|{
+		!t.is_zero()
+	}).map(|(k,_)| k.clone()).collect::<Vec<F>>();
+	let fil2 = vals.par_iter().zip(tags.par_iter()).filter(|(_v,t)|{
+		!t.is_zero()
+	}).map(|(v,_)| v.clone()).collect::<Vec<F>>();
+	let (packed_key,packed_id,packed_val)=two_col_tbl_to_sorted(&fil1,&fil2,n);
+
+	let f_rg = F::from(RANGE2);
+	let max_val:usize = (1<<RANGE2_BIT) - 1;
+	let max = F::from(max_val as u32);
+	let tbl_names = vec!["packed_key", "packed_id", "packed_val"];
+	let zero = F::zero();
+	let packed_diff = (1..packed_val.len()).collect::<Vec<_>>()
+		.into_par_iter().map(|i| packed_val[i] - packed_val[i-1])
+		.collect::<Vec<_>>();
+	
+	let diff_key= (1..packed_key.len()).collect::<Vec<_>>()
+		.into_par_iter().map(|i| packed_key[i] - packed_key[i-1])
+		.collect::<Vec<_>>();
+	let sid_packed_diff = (1..packed_val.len()).into_iter().map(|i|{
+		let res = if packed_diff[i-1]<max {f_rg} else {zero} ;
+		res
+	}).collect::<Vec<_>>();
+
+	let sid_diff_key= vec![f_rg; sid_packed_diff.len()];
+	assert!(packed_diff.len()==sid_packed_diff.len());
+	assert!(diff_key.len()==sid_diff_key.len());
+
+
+	//4. now basically do a filtered multi-set "permutation" check.
+	//no additional proof needed, just do it on the verifier side
+
+	//5. return (make sure data col and its sid col are added in
+	// the right order).
+	res.borrow_mut().add_col(Col::new(tags, "tags", IDX_DATA));
+	res.borrow_mut().add_col(Col::new(si_tags, "si_tags", IDX_SI_DATA));
+	res.borrow_mut().add_container(prf_tag);
+
+	sorted_tbl.borrow_mut().add_col(Col::new(packed_key,"packed_key",IDX_DATA));
+	sorted_tbl.borrow_mut().add_col(Col::new(packed_id,"packed_id",IDX_DATA));
+	sorted_tbl.borrow_mut().add_col(Col::new(packed_val,"packed_val",IDX_DATA));
+	assert!(tbl_names.len()==3);
+	for i in 0..tbl_names.len(){
+		sorted_tbl.borrow_mut().add_col(Col::new(vec![f_rg; n],
+			&format!("sid_{}", tbl_names[i]), IDX_SI_DATA));
+	}
+
+
+	sorted_tbl.borrow_mut().add_col(Col::new(diff_key,"diff_key",IDX_DATA));
+	sorted_tbl.borrow_mut().add_col(Col::new(sid_diff_key, "sid_diff_key", IDX_SI_DATA));
+	sorted_tbl.borrow_mut().add_col(Col::new(packed_diff,"packed_diff"
+		,IDX_DATA));
+	sorted_tbl.borrow_mut().add_col(Col::new(sid_packed_diff, "sid_packed_diff", IDX_SI_DATA));
+	res.borrow_mut().add_container(sorted_tbl);
+
 	Ok(res)
 }
 
@@ -921,36 +976,167 @@ pub fn verify_tbl_filtered_to_sorted_tbl<F:PrimeField>(
 }
 
 /// new version which is much less costly.
+///
+/// COST: 2N + 7m + 10k + 3n + 11n + 6n + 3N
+/// = 5N + 17n + 7m + 10k
+/// where N: keys, n: sorted_tbl.len, m: unique_state_size: k: sorted_set size
+/// n is determined by basis_pats_per_traces, m determined by 
+///  basis_unique_states
 pub fn verify_tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
 	r1: &FpVar<F>, //random challenges from msg2
 	r2: &FpVar<F>,
 	keys: &Rc<RefCell<Container<FpVar<F>>>>,
-	_vals: &Rc<RefCell<Container<FpVar<F>>>>,
+	vals: &Rc<RefCell<Container<FpVar<F>>>>,
 	sorted_set_key: &Rc<RefCell<Container<FpVar<F>>>>, //the sorted_set bundle
 	bundle: &Rc<RefCell<Container<FpVar<F>>>>, //result of tbl_filtered_to_sorted_tbl
 	cs: ConstraintSystemRef<F>
 ) -> Result<(), SynthesisError>{
-	let b_perf = true;
+	let b_perf = false;
 	let mut nc = cs.num_constraints();
+	let nc0 = nc;
+	let sorted_tbl= bundle.borrow().get_container("sorted_tbl")?;
 	if b_perf{
-		println!(" --- verify_tbl_filtered_new keys: {}, sorted_keys: {}", 
+		println!(" --- verify_tbl_filtered_new N: {}, n: {}, m: {}, k: {}", 
 			keys.borrow().to_vec().len(), 
-			sorted_set_key.borrow().to_vec().len());
+			sorted_tbl.borrow().
+				get_container("packed_key")?.borrow().to_vec().len(),
+			bundle.borrow().
+				get_container("prf_tag")?.borrow().
+				get_container("no_key")?.borrow().to_vec().len(),
+			sorted_set_key.borrow().get_container("sorted_val")?.
+				borrow().to_vec().len());
 	}
 
-	//1. check the correctness of tag
+	//Part I. establish the tag column to indicate
+	//whether the key is in sorted_key_set (filter)
+	//COST: 2N + 7m + 10k
+	// N = key.len
+	// n = sorted_table.packed_key.len (determined by basis_pats_in_trace)
+	// m = unique_key_size (detremined by basis_unique_states)
+	// k = sorted_set_key.len (determined by pat_per_subsig * subsigs)
 	let keys = keys.borrow().to_vec();
-	let sorted_keys = sorted_set_key.borrow().to_vec(); 
-	let prf = bundle.borrow().get_container("prf")?;
-	let tags = prf.borrow().get_container("tags")?.borrow().to_vec();
-	let prf_tag = prf.borrow().get_container("prf_tag")?;
+	let vals= vals.borrow().to_vec();
+	let sorted_keys = sorted_set_key.borrow().get_container("sorted_val")?
+		.borrow().to_vec(); 
+	let tags = bundle.borrow().get_container("tags")?.borrow().to_vec();
+	let prf_tag = bundle.borrow().get_container("prf_tag")?;
 	verify_filter_tag(&keys, &sorted_keys, &tags, &prf_tag, r1, r2)?;
 	if b_perf{
 		println!(" --- verify_tbl_filtered_new keys step 1: {}: ",
 			cs.num_constraints() - nc);
+		nc = cs.num_constraints();
+	}
+
+	//PART 2. constuct the filtered and sorted table and prove that
+	//its correctness
+	//2.1 retrieve data and check sids 
+	//COST: 3n
+	let rg = new_const_var(&cs, F::from(RANGE2));
+	let names = vec!["packed_key", "packed_id", "packed_val"];
+	let sids1 = names.iter().map(|n| 
+		sorted_tbl.borrow().get_container(&format!("sid_{}",n))
+		.expect(&format!("err get {}", n))).collect::<Vec<_>>();
+	for vs in &sids1{check_arr_eq(&vs.borrow().to_vec(), &rg, "err sid")?; }
+	let tblcols = names.iter().map(|n|
+		sorted_tbl.borrow().get_container(n).expect("err get tbl"))
+		.collect::<Vec<_>>();
+	let sid_sorted_diff = sorted_tbl.borrow_mut().get_container("sid_packed_diff")?
+		.borrow().to_vec();
+	let sid_diff_key= sorted_tbl.borrow_mut().get_container("sid_diff_key")?
+		.borrow().to_vec();
+	if b_perf{
+		println!("  --- verify_tbl_filtered_new keys: step 2.1  cs: {}", 
+			cs.num_constraints() - nc);
+		nc = cs.num_constraints();
+	}
+
+	//2.2 check sorted_tbl is well_formed and sorted
+	//COST: 11n
+	let packed_vals = tblcols[2].borrow().to_vec();
+	let packed_keys= tblcols[0].borrow().to_vec();
+	let diff_val = (1..packed_vals.len()).collect::<Vec<_>>()
+		.into_iter().map(|i|{
+			&packed_vals[i] - &packed_vals[i-1]
+		}).collect::<Vec<_>>();
+	let diff_key = (1..packed_keys.len()).collect::<Vec<_>>()
+		.into_iter().map(|i|{
+			&packed_keys[i] - &packed_keys[i-1]
+		}).collect::<Vec<_>>();
+
+	assert_well_formed_sorted(cs.clone(),
+		&tblcols[0].borrow().to_vec(), //packed_key
+		&tblcols[1].borrow().to_vec(), //id
+		&packed_vals, //val
+		Some(&diff_val),
+		Some(&sid_sorted_diff), //sid of diff col
+		Some(&diff_key),
+		Some(&sid_diff_key),
+		r1.clone(), 
+		RANGE2_BIT)?;
+	if b_perf{
+		println!("  --- verify_tbl_filtered_new keys: step 2.2  cs: {}", 
+			cs.num_constraints() - nc);
+		nc = cs.num_constraints();
 	}
 
 
+
+	//2.3. to show that the sorted table is a VALID projection (filtered)
+	//version of the (key,val) table.
+	// Basically we do a filtered multi-set "permutation" check.
+	//no additional proof needed, just do it on the verifier side
+	// IDEA:
+	// for (key, val, tag)  we are computing the PRODUCT of
+	// each item. 
+	// It is already proved that tag is 0 or 1 so the formula for
+	// item is:
+	// ------------------------------
+	// (r1 + key + r2 * val) for tag 1
+	// and 1 for tag 0
+	// ------------------------------
+	// this is:
+	// DEFINE t1 = r1 + key + r2 * val; 
+	// we have: tag * (item-t1) + (1-tag)*(item-1)
+	// where tag*(1-t1) + item - 1 = 0
+	// which is 2 constraints each (plus one constraint for
+	// computing product) -> 3 constraints.
+	//
+	// for the right side. we are checking (key,val) for 
+	// those items val!=0 and val!=max
+	// define tag = (val-0)*(val-max) != 0 [costing two constraints]
+	// then 3 more constraints for the same. But sinc ethe right table
+	// is small, this is acceptable.
+	// COST: 6n + 3N
+
+	let max_val:usize = (1<<RANGE2_BIT) - 1;
+	let max = F::from(max_val as u32);
+	let (vone, vmax) = (new_const_var(&cs, F::one()), new_const_var(&cs, max)); 
+	let tag_sorted_tbl = packed_vals.iter().map(|v|{
+		&vone - &is_zero_better(&(v * (v-&vmax)), &cs ).unwrap()
+	}).collect::<Vec<FpVar<F>>>();
+	if b_perf{
+		println!("  --- verify_tbl_filtered_new keys: step 2.3.1  cs: {}", 
+			cs.num_constraints() - nc);
+		nc = cs.num_constraints();
+	}
+
+	let v1 = multiset_prod_2col(cs.clone(), &packed_keys, &packed_vals,
+		&tag_sorted_tbl, r1, r2);
+	if b_perf{
+		println!("  --- verify_tbl_filtered_new keys: step 2.3.2  cs: {}", 
+			cs.num_constraints() - nc);
+		nc = cs.num_constraints();
+	}
+
+	let v2 = multiset_prod_2col(cs.clone(), &keys, &vals,
+		&tags, r1, r2);
+	if b_perf{
+		println!("  --- verify_tbl_filtered_new keys: step 2.3  cs: {}", 
+			cs.num_constraints() - nc);
+		println!("  --- verify_tbl_filered_new TOTAL: {}", 
+			cs.num_constraints()-nc0);
+	}
+	check_eq(&v1, &v2, "failed multiset eq check")?;
 	Ok( () )
 }
 
@@ -966,7 +1152,7 @@ pub fn verify_tbl_filtered_to_sorted_tbl_old<F:PrimeField>(
 	bundle: &Rc<RefCell<Container<FpVar<F>>>>, //result of tbl_filtered_to_sorted_tbl
 	cs: ConstraintSystemRef<F>
 ) -> Result<(), SynthesisError>{
-	let b_perf = true;
+	let b_perf = false;
 	let mut nc = cs.num_constraints();
 	let nc0 = nc;
 	if b_perf{
@@ -1708,11 +1894,29 @@ pub mod tests_db{
 
 		//2. build the table to project
 		let states= Container::new_single(Col::new(
-			vec![100, 200, 100, 53, 204, 205, 206, 207, 208]
+			vec![
+				100, 200, 100, 53, 204, 205, 206, 207, 208,
+				901, 901, 901, 901, 901, 901, 901, 901, 901, //dummy data
+				901, 901, 901, 901, 901, 901, 901, 901, 901, 
+				901, 901, 901, 901, 901, 901, 901, 901, 901, 
+				901, 901, 901, 901, 901, 901, 901, 901, 901, 
+				901, 901, 901, 901, 901, 901, 901, 901, 901, 
+				901, 901, 901, 901, 901, 901, 901, 901, 901, 
+				901, 901, 901, 901, 901, 901, 901, 901, 901, 
+			]
 			.iter().map(|x| Fr::from(*x as u32)).collect::<Vec<Fr>>(),
 			"states", IDX_DATA));
 		let locs =  Container::new_single(Col::new(
-			vec![1, 2, 3, 4, 5, 6, 7, 8, 9]
+			vec![
+				1, 2, 3, 4, 5, 6, 7, 8, 9,
+				11, 12, 13, 14, 15, 16, 17, 18, 19, //dummy data
+				101, 102, 103, 104, 105, 106, 107, 108, 109,
+				201, 202, 203, 204, 205, 206, 207, 208, 209,
+				211, 212, 213, 214, 215, 216, 217, 218, 219,
+				221, 222, 223, 224, 225, 226, 227, 228, 229,
+				231, 232, 233, 234, 235, 236, 237, 238, 239,
+				241, 242, 243, 244, 245, 246, 247, 248, 249,
+			]
 			.iter().map(|x| Fr::from(*x as u32)).collect::<Vec<Fr>>(),
 			"locs", IDX_DATA));
 		let n2 = 16;

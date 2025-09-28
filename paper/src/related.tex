@@ -227,6 +227,30 @@ multiple sub-matrix evaluation. We could adopt the same technique
 by spliting the pairing operation into multiple identical cycles,
 thus reducing decider size, which remain as a future direction.
 
+\subsection{Recusion Depth}
+For knowledge extraction property of our FoldPot system, we have
+to use the same security heuristics adopted in the lines of
+Nova and SuperNova: assuming a predetermined the concrete 
+and {\em constant} recursion depth. 
+Although recently there is a 
+concrete attack against coding based IVC's constant depth 
+\cite{bmnw24},
+there is no known attacks
+agains Nova series IVC schemes.  
+In \cite{Guan24} it is shown that IVC based on straignline 
+SNARKs enjoys unbounded recursion depth, but the analysis does not
+apply to our work.
+However in \cite{Campanelli25} Campenelli et al. show that
+if we seek binding property only instead of knowledge extraction,
+any snark (maybe with poly size extractor) suffice to support
+IVC with polynomial size. This fits our system goal very well
+to prove that the files behind a commitment conforms to (do not
+contain matches) of a collection of public regex patterns.
+We take this route to prove the soundness of our work.
+Another route (for recursion depth) problem is to structure
+the IVC as a tree-like PCD scheme, as suggested in
+\cite{ct10}.
+
 
 \subsection{Lookups}
 Many past lookups .... including CQ.

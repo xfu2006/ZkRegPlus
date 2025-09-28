@@ -41,12 +41,18 @@ Warning--empty publisher in Cam97
 Warning--empty address in Cam97
 Warning--empty publisher in Lunar
 Warning--empty address in Lunar
+Warning--no number and no volume in Campanelli25
+Warning--page numbers missing in both pages and numpages fields in Campanelli25
 Warning--empty publisher in LegoSnark
 Warning--empty address in LegoSnark
 Warning--empty publisher in HyperPlonk
 Warning--empty address in HyperPlonk
+Warning--empty publisher in Guan24
+Warning--empty address in Guan24
 Warning--empty publisher in Marlin
 Warning--empty address in Marlin
+Warning--empty publisher in ct10
+Warning--empty address in ct10
 Warning--empty publisher in RAMLookup
 Warning--empty address in RAMLookup
 Warning--empty publisher in SNARKPack
@@ -88,45 +94,45 @@ Warning--empty publisher in vSQL
 Warning--empty address in vSQL
 Warning--empty publisher in IntegriDB
 Warning--empty address in IntegriDB
-You've used 94 entries,
+You've used 98 entries,
             5981 wiz_defined-function locations,
-            2051 strings with 35409 characters,
-and the built_in function-call counts, 92331 in all, are:
-= -- 10121
-> -- 3422
+            2071 strings with 35947 characters,
+and the built_in function-call counts, 96651 in all, are:
+= -- 10641
+> -- 3561
 < -- 0
-+ -- 1153
-- -- 1170
-* -- 6577
-:= -- 9712
-add.period$ -- 470
-call.type$ -- 94
-change.case$ -- 701
-chr.to.int$ -- 88
-cite$ -- 165
-duplicate$ -- 8325
-empty$ -- 5833
-format.name$ -- 1500
-if$ -- 21056
-int.to.chr$ -- 8
++ -- 1201
+- -- 1217
+* -- 6878
+:= -- 10128
+add.period$ -- 490
+call.type$ -- 98
+change.case$ -- 730
+chr.to.int$ -- 91
+cite$ -- 175
+duplicate$ -- 8723
+empty$ -- 6114
+format.name$ -- 1562
+if$ -- 22105
+int.to.chr$ -- 9
 int.to.str$ -- 1
-missing$ -- 174
-newline$ -- 824
-num.names$ -- 652
-pop$ -- 3298
+missing$ -- 188
+newline$ -- 858
+num.names$ -- 679
+pop$ -- 3469
 preamble$ -- 2
-purify$ -- 1440
+purify$ -- 1499
 quote$ -- 0
-skip$ -- 3329
+skip$ -- 3473
 stack$ -- 0
-substring$ -- 6409
-swap$ -- 684
+substring$ -- 6711
+swap$ -- 718
 text.length$ -- 0
 text.prefix$ -- 0
 top$ -- 0
-type$ -- 2711
-warning$ -- 71
-while$ -- 486
+type$ -- 2811
+warning$ -- 77
+while$ -- 508
 width$ -- 0
-write$ -- 1855
+write$ -- 1934
 (There was 1 error message)

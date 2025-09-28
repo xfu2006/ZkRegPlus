@@ -202,7 +202,6 @@ impl <F:PrimeField> LookupTableTwoCol<F> for LookupTableTwoCol_Inst<F>{
 	/// Given entries defined in tbl_ids and vals, update the corresponding
 	/// hashmaps (the occurence entries)
 	fn fill_mvec(&self, tbl_ids: &Vec<F>, vals: &Vec<F>, map: &mut HashMap<usize, usize>){
-
 		assert!(tbl_ids.len()==vals.len(), "tbl_id.len != vals.len");
 		let idx = tbl_ids.par_iter().zip(vals.par_iter()).enumerate()
 			.map(|(i, (x,y))|{

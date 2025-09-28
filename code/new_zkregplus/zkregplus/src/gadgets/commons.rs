@@ -1064,6 +1064,53 @@ pub fn is_zero_better<F:PrimeField>(x: &FpVar<F>, cs: &ConstraintSystemRef<F>)
 	Ok(z)
 }
 
+/// compute multiset_prod only counts sel[i] is 1.
+/// sel is a "boolean" array.
+/// COST: 3n
+#[allow(dead_code)]
+pub fn multiset_prod_2col<F:PrimeField>(
+	cs: ConstraintSystemRef<F>,
+	col1: &[FpVar<F>],
+	col2: &[FpVar<F>],
+	sel: &[FpVar<F>],
+	r1: &FpVar<F>,
+	r2: &FpVar<F>
+)->FpVar<F>{
+	let n = col1.len();
+	let f_one = F::one();
+	let lb_one = LinearCombination::from((F::one(),Variable::One));
+	assert!(col2.len()==n && sel.len()==n);
+	let mut prod = new_const_var(&cs, f_one);
+	for i in 0..n{
+		let v1 = r1 + &col1[i] + &(&col2[i] * r2);
+		let v1_val = v1.value().unwrap();
+		let sel_val = sel[i].value().unwrap();
+		let item_val = if sel_val.is_zero() {f_one} else {v1_val};
+		let item = new_var(&cs, item_val);
+
+		prod = &prod * &item;
+
+		//enforce that when 
+		//	sel[i] is 0: item is 1 
+		//  sel[i] is 1: item is  v1
+		//  we have: 
+		// sel*(item-val) + (1-sel)*(item-1)
+		// sel*(1-val) + item-1 = 0;
+		let lb_minus_val = var_to_lb(&v1, -F::one());
+		let lb_minus_item = var_to_lb(&item, -F::one()); 
+		let lb_sel = var_to_lb(&sel[i], F::one());
+		cs.enforce_constraint(
+			lb_sel,
+			lb_one.clone() + lb_minus_val,
+			lb_one.clone() + lb_minus_item
+		).unwrap();
+
+	}
+
+	prod
+}
+
+
 /// compute Prod_{i=1}^n (vec[i] + r) ignore the entries that
 /// has vec[i] = 0.
 /// This is used to prove permutation.
