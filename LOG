@@ -20429,9 +20429,27 @@ Goal 3. analyze performance improvement.
 		lkup size: 930543 (cutting 300k)
 		combined key size: 12742979 (cutting around 30%)
 
---- TODO -- Question: is it possible to just eliminate
-	the storage of transition? No, it has to be checked
-	against the lkup. But is it possible to cut the locs?
+Monday 09/29/2025
+LOC (gadget): 15462
+Goal 1. plan col modification
+	[a] add an attribue to Col
+	[b] Col -> gen_stmt_component -> Add bool 
+	[c] Container -> gen_stmt_component -> Add 
+		chunk_info(start, end, b_const)
+	[d] build_stmt_comp -> also return
+		Vec<Vec<ChunkInfo>>
+	[e] modify build_statement in composable_gadget_mapper
+	[f] StatementInst has subtable_id_desc for
+		chunk info so that it builds the subtable_id using
+		const or var.
+	[g] StatementInst generate::stmt_config
+	[h] change Witness to_vec_fp_var to handle
+		statement specifically. should take the StatementConfig
+
+Goal 2. any alternative plan?
+	[a] no, had to start from col, because it's layered
+
+Goal 3. modify col 
 
 
 

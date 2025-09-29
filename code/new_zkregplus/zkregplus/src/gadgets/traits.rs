@@ -49,6 +49,9 @@ pub struct Col<F: Clone>{
 	pub data: Vec<F>, 
 	/// its location (must be Col type)
 	pub cfg: ContainerConfig,
+	/// whether it is a constant col. 
+	/// This is important for later converting to FpVar to save cost
+	pub b_const: bool,
 }
 
 /// Two modes: single mode which consists of one Reference to a column.
@@ -99,9 +102,24 @@ impl <F: Clone> Col<F>{
 		let loc = Location{src:(0,0,0,data.len(), String::new(), false), 
 			dest: Some((idx_seg,0,data.len()))}; //revisable later
 		let name = format!("{}", name);
+		let b_const = false;
 		let cfg = ContainerConfig::Column(loc, name.to_string(), 
-			format!("{} {}", name.clone(), name) ); //path can be later updated
-		Rc::new(RefCell::new(Self{data, cfg}))
+			format!("{} {}", name.clone(), name), b_const); 
+			//path can be later updated
+		Rc::new(RefCell::new(Self{data, cfg, b_const: b_const}))
+	}
+
+	pub fn new_const(data: Vec<F>, name: &str, idx_seg: usize)
+	->Rc<RefCell<Self>>{
+		//set to not resolved yet, it will be set to true in adjust_loc
+		let loc = Location{src:(0,0,0,data.len(), String::new(), false), 
+			dest: Some((idx_seg,0,data.len()))}; //revisable later
+		let name = format!("{}", name);
+		let b_const = true;
+		let cfg = ContainerConfig::Column(loc, name.to_string(), 
+			format!("{} {}", name.clone(), name), b_const ); 
+				//path can be later updated
+		Rc::new(RefCell::new(Self{data, cfg, b_const}))
 	}
 
 	/// construct a foreign column. Still provides the data,
@@ -116,9 +134,11 @@ impl <F: Clone> Col<F>{
 			qry_str.to_string(), false), 
 			dest: None};
 		let name = format!("{}", name);
+		let b_const = false;
 		let cfg = ContainerConfig::Column(loc, name.to_string(),
-			format!("{} {}", name.clone(), name)); //path later to be updated
-		Rc::new(RefCell::new(Self{data, cfg}))
+			format!("{} {}", name.clone(), name), b_const); 
+				//path later to be updated
+		Rc::new(RefCell::new(Self{data, cfg, b_const}))
 	}
 
 	/// generate the <inp,oup,data,subtbl_id_inp,subtbl_id_oup,subtbl_id_data,
@@ -126,7 +146,7 @@ impl <F: Clone> Col<F>{
 	pub fn gen_stmt_components(&self)->Vec<Vec<F>>{
 		//1. retrieve the save_to_location
 		let loc = match &self.cfg{
-			ContainerConfig::Column(loc,_,_) => loc,
+			ContainerConfig::Column(loc,_,_,_) => loc,
 			ContainerConfig::Complex(_,_,_) => 
 				panic!("expect ContainerConfig of column to be Location")
 		};
@@ -295,7 +315,7 @@ impl <F: Clone> Container<F>{
 			Container::Single(rc_col)=>{
 				//make it an EXTERNAL column
 				let new_cfg= match &rc_col.borrow().cfg{
-					ContainerConfig::Column(loc, name, _)=> {
+					ContainerConfig::Column(loc, name, _, b_const)=> {
 						//two cases to handle: (1) it's ALREADY an external col,
 						//(2) it's a real DATA col.
 						let name2=if new_name.is_some(){new_name.unwrap()} 
@@ -322,13 +342,14 @@ impl <F: Clone> Container<F>{
 						//it's referenceing external
 						let new_loc = Location{src:new_src, dest: new_dest};
 						ContainerConfig::Column(new_loc, name2.to_string(), 
-							name2.to_string() ) //its path will be set later
+							name2.to_string(), *b_const) //its path will be set later
 					},
 					_ => panic!("cannot handle complex")
 				};
 				let new_rc_col = Rc::new(RefCell::new(Col{
 					data: rc_col.borrow().data.clone(),
 					cfg: new_cfg,
+					b_const: rc_col.borrow().b_const,
 				}));
 				Container::Single(new_rc_col)
 			}
@@ -477,6 +498,7 @@ impl <F: PrimeField> Container<FpVar<F>>{
 				let col = Col::<FpVar<F>>{
 					data: vec_to_var(&cs, &rc_col.borrow().data),
 					cfg: rc_col.borrow().cfg.clone(),
+					b_const: rc_col.borrow().b_const,
 				};
 				Container::Single(Rc::new(RefCell::new(col)))
 			},
@@ -497,11 +519,12 @@ impl <F: PrimeField> Container<FpVar<F>>{
 		cfg: &ContainerConfig,
 		start_pos: usize)->Result<(Self, usize), SynthesisError>{
 		match cfg{
-			ContainerConfig::Column(loc, _name, _) => {
+			ContainerConfig::Column(loc, _name, _, b_const) => {
 				let len = loc.src.3;
 				let col = Col::<FpVar<F>>{
 					data: stmt_vec[start_pos..start_pos+len].to_vec(),
 					cfg: cfg.clone(), 
+					b_const: *b_const
 				};
 				Ok( 
 				 (Container::Single(Rc::new(RefCell::new(col))),start_pos+len) 

@@ -44,7 +44,7 @@ pub struct Location{
 #[derive(Clone,Debug)]
 pub enum ContainerConfig{
 	/// for Column. Two strings are: name and abs_path 
-	Column(Location, String, String),
+	Column(Location, String, String, bool),
 	/// Complex case that it has a vector of container config
 	Complex(Vec<ContainerConfig>, String, String),
 }
@@ -80,7 +80,7 @@ impl Location{
 impl ContainerConfig{
 	pub fn reset_path(&mut self, parent_path: &String){
 		match self{
-			ContainerConfig::Column(_loc, name, ref mut path) => {
+			ContainerConfig::Column(_loc, name, ref mut path, _b_const) => {
 				let new_path = format!("{} {}", parent_path, name); 
 				*path = new_path.to_string();
 			},
@@ -96,14 +96,14 @@ impl ContainerConfig{
 	/// return its name
 	pub fn get_name(&self)->String{
 		match self{
-			ContainerConfig::Column(_,name,_)=>name.to_string(),
+			ContainerConfig::Column(_,name,_,_)=>name.to_string(),
 			ContainerConfig::Complex(_,name,_)=>name.to_string()
 		}
 	}
 
 	pub fn get_path(&self)->String{
 		match self{
-			ContainerConfig::Column(_,_,path)=>path.to_string(),
+			ContainerConfig::Column(_,_,path,_)=>path.to_string(),
 			ContainerConfig::Complex(_,_,path)=>path.to_string()
 		}
 	}
@@ -115,13 +115,14 @@ impl ContainerConfig{
 	pub fn update_col(&mut self, path: &str, new_col: &ContainerConfig)
 	->usize{
 		match self{
-			ContainerConfig::Column(ref mut loc,ref mut name,ref mut path)=>{
+			ContainerConfig::Column(ref mut loc,ref mut name,ref mut path,ref mut b_const)=>{
 				match new_col{
-					ContainerConfig::Column(newloc, newname, newpath)=>{
+					ContainerConfig::Column(newloc, newname, newpath,new_b_const)=>{
 						if &path==&newpath{
 							*loc = newloc.clone();
 							*name= newname.to_string();
 							*path = newpath.to_string();
+							*b_const = *new_b_const;
 
 							1//updated 1
 						}else {0}
@@ -169,7 +170,7 @@ impl ContainerConfig{
 		if vec_names.len()==1 {return Some(self.clone());} //that's me
 
 		match self{
-			ContainerConfig::Column(_,_,_)=>{
+			ContainerConfig::Column(_,_,_,_)=>{
 				assert!(vec_names.len()==1);
 				Some( self.clone() )
 			},
@@ -190,7 +191,7 @@ impl ContainerConfig{
 	/// recursively convert all Location to map instructions
 	pub fn gen_stmt_map_instructions(&self)->Vec<(i32, usize, usize, usize)>{
 		match self{
-			ContainerConfig::Column(loc,_,_) => loc.gen_stmt_map_instructions(),
+			ContainerConfig::Column(loc,_,_,_) => loc.gen_stmt_map_instructions(),
 			ContainerConfig::Complex(vec, _,_) => {
 				vec.iter().fold(Vec::<(i32,usize,usize,usize)>::new(), 
 				|sum, container|{
@@ -206,7 +207,7 @@ impl ContainerConfig{
 	/// this is for building up statement (consider dest only).
 	pub fn get_to_add_size(&self)->Vec<usize>{
 		match self{
-			ContainerConfig::Column(loc,_,_) => loc.get_to_add_size(),
+			ContainerConfig::Column(loc,_,_,_) => loc.get_to_add_size(),
 			ContainerConfig::Complex(vec,_,_) => {
 				vec.iter().fold(vec![0usize;9], 
 				|sum: Vec<usize>, container|{
@@ -274,7 +275,7 @@ impl ContainerConfig{
 		let cfg = cfg.unwrap();
 
 		match cfg{//note cfg is just a copy
-			ContainerConfig::Column(loc, name, p2)=>{
+			ContainerConfig::Column(loc, name, p2, b_const)=>{
 				assert!(&path==&p2);
 				let (src,dest) = (loc.src.clone(), loc.dest.clone());
 				if dest.is_some(){
@@ -287,7 +288,7 @@ impl ContainerConfig{
 					let new_loc = Location{src:new_src, dest: new_dest};
 					dst_locs[seg_idx] += len; //updated with len
 					let new_col = ContainerConfig
-						::Column(new_loc, name.to_string(), path.clone());
+						::Column(new_loc, name.to_string(), path.clone(), b_const);
 					let cnt_updates = context[root_idx]
 						.update_col(&path, &new_col);
 					assert!(cnt_updates==1);
@@ -308,7 +309,7 @@ impl ContainerConfig{
 					}
 					let src_container = src_container.unwrap();
 					match src_container{
-						ContainerConfig::Column(loc, _s, _) => {
+						ContainerConfig::Column(loc, _s, _, b_const) => {
 							let (src_offset, segid, start, len, _s, b_resolved)
 								= loc.src.clone();
 							assert!(b_resolved);
@@ -318,7 +319,7 @@ impl ContainerConfig{
 							let new_loc = Location{src: new_src, dest: None};
 							//no write to dst_locs because it's foreign
 							let new_col = ContainerConfig
-								::Column(new_loc,name.to_string(),path.clone());
+								::Column(new_loc,name.to_string(),path.clone(), b_const);
 							assert!(context[root_idx].update_col(&path, &new_col)==1);
 						},
 						_ => panic!("expect {} to be a column!", qry_str)
@@ -338,7 +339,7 @@ impl ContainerConfig{
 	pub fn dump(&self, step: usize){
 		let indent_str = std::iter::repeat(" ").take(step).collect::<String>();
 		match self{
-			ContainerConfig::Column(loc,s,_) 
+			ContainerConfig::Column(loc,s,_,_) 
 				=> println!("{}{}(seg: {})", indent_str, s, loc.src.1),
 			ContainerConfig::Complex(vec, name, _)=>{
 				println!("{}{}", indent_str, name);
