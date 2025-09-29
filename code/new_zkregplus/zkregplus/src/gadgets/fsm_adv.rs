@@ -715,7 +715,7 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 	/// validate the correctness of packed_trace containercontainer
 	///
 	/// COST: let (ap = average pat per sig, su - subsigs)
-	/// 21 * ap * su + 
+	/// MAINLY  4*N (check trace) + 5*N (check tbl filter)
 	fn validate_packed_trace(
 		&self, 
 		r1: &FpVar<F>, //random nonce from msg2

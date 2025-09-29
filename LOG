@@ -20431,7 +20431,7 @@ Goal 3. analyze performance improvement.
 
 --- TODO -- Question: is it possible to just eliminate
 	the storage of transition? No, it has to be checked
-	against the lkup.
+	against the lkup. But is it possible to cut the locs?
 
 
 
