@@ -74,7 +74,7 @@ pub enum Container<F: Clone>{
 pub trait ComponentAdvice<F:PrimeField>: Debug{
 	/// generate the <inp,oup,data,subtbl_id_inp,subtbl_id_oup,subtbl_id_data>
 	fn gen_stmt_components(&self)-> Vec<Vec<F>>{
-		self.get_container().borrow().gen_stmt_components()
+		self.get_container().borrow().gen_stmt_components().0
 	}
 
 
@@ -143,7 +143,10 @@ impl <F: Clone> Col<F>{
 
 	/// generate the <inp,oup,data,subtbl_id_inp,subtbl_id_oup,subtbl_id_data,
 	///   failed_sigs, discharged_sigs>
-	pub fn gen_stmt_components(&self)->Vec<Vec<F>>{
+	/// RETURNS specifically: the chunk info of the subtbl_id_data for
+	/// the id #5. It's a list of chunk info: (len, b_const)
+	/// the total len of chunk info should be the same as subtbl_id_data.
+	pub fn gen_stmt_components(&self)->(Vec<Vec<F>>, Vec<(usize,bool)>){
 		//1. retrieve the save_to_location
 		let loc = match &self.cfg{
 			ContainerConfig::Column(loc,_,_,_) => loc,
@@ -151,15 +154,20 @@ impl <F: Clone> Col<F>{
 				panic!("expect ContainerConfig of column to be Location")
 		};
 		let dest = loc.dest;
-		let res:Vec<Vec<F>> = dest.map_or(vec![vec![]; 8], 
+		let res:(Vec<Vec<F>>,Vec<(usize,bool)>) = dest.map_or(
+			(vec![vec![]; 8], vec![]), 
 			|(seg_id, _start, len)|{
 				let mut res = vec![vec![]; 8];
+				let mut info = vec![];
 				if seg_id>0 {//not word, ignore word.
 					let real_id = seg_id - 1;
 					assert!(self.data.len()==len);
 					res[real_id] = self.data.clone();
+					if real_id==5{//subtbl_id_data
+						info.push( (len, self.b_const) )
+					}
 				}
-				res
+				(res, info)
 			}
 		);
 
@@ -431,21 +439,26 @@ impl <F: Clone> Container<F>{
 	}
 
 	/// generate the <inp,oup,data,subtbl_id_inp,subtbl_id_oup,subtbl_id_data>
-	pub fn gen_stmt_components(&self)->Vec<Vec<F>>{
+	/// and the descriptor for sid_table_data.
+	pub fn gen_stmt_components(&self)->(Vec<Vec<F>>, Vec<(usize,bool)>){
 		match self{
 			Container::Single(rc_col) => {
 				rc_col.borrow().gen_stmt_components()
 			},
 			Container::Complex(vec_container,_,_,_) =>  {
 				vec_container.iter().fold(
-					vec![vec![]; 8],
+					(vec![vec![]; 8], vec![]),
 					|sum, adv|{
-						let cps = adv.borrow().gen_stmt_components();
+						let (cps, sid_info)=adv.borrow().gen_stmt_components();
 						assert!(cps.len()==8);
-						sum.into_iter().zip(cps.into_iter()).map(|(a,b)|{
+						let new_cps = sum.0.into_iter().zip(
+							cps.into_iter()).map(|(a,b)|{
 							let res:Vec<F> = vec![a, b].concat();
 							res
-						}).collect::<Vec<Vec<F>>>()
+						}).collect::<Vec<Vec<F>>>();
+						let new_sid_info:Vec<(usize,bool)> = 
+							[sum.1, sid_info].concat();
+						(new_cps, new_sid_info)
 					}
 				)
 			}
@@ -566,5 +579,41 @@ impl <F: PrimeField> Container<FpVar<F>>{
 		assert!(len==stmt_vec.len());
 
 		Ok( res )
+	}
+}
+
+#[cfg(test)]
+pub mod tests_traits{
+	use ark_bn254::{Fr};
+	use crate::gadgets::traits::{Col,Container,IDX_SI_DATA,IDX_DATA,
+		IDX_INP, IDX_SI_INP};
+
+	#[test]
+	pub fn test_const_cols(){
+		let col1 = Col::<Fr>::new(vec![Fr::from(2u32);10], "col1", IDX_DATA); 
+		let sid_col1 = Col::<Fr>::new_const(vec![Fr::from(20u32);10], "scol1", IDX_SI_DATA);
+		let c1 = Container::<Fr>::new("c1");
+		c1.borrow_mut().add_col(col1);
+		c1.borrow_mut().add_col(sid_col1);
+
+		let col21 = Col::<Fr>::new(vec![Fr::from(3u32);10], "col21", IDX_DATA); 
+		let sid_col21 = Col::<Fr>::new(vec![Fr::from(30u32);20], "scol21", IDX_SI_DATA);
+		let c2 = Container::<Fr>::new("c2");
+		c2.borrow_mut().add_col(col21);
+		c2.borrow_mut().add_col(sid_col21);
+
+		let col31 = Col::<Fr>::new_const(vec![Fr::from(4u32);10], "col21", IDX_INP); 
+		let sid_col31 = Col::<Fr>::new(vec![Fr::from(40u32);10], "scol21", IDX_SI_INP);
+		let c3 = Container::<Fr>::new("c3");
+		c3.borrow_mut().add_col(col31);
+		c3.borrow_mut().add_col(sid_col31);
+
+		let all = Container::<Fr>::new("all");
+		all.borrow_mut().add_container(c1);
+		all.borrow_mut().add_container(c2);
+		all.borrow_mut().add_container(c3);
+
+		let (_cps, sinfo) = all.borrow().gen_stmt_components();
+		assert!(sinfo==vec![(10, true), (20, false)]);
 	}
 }

@@ -386,7 +386,7 @@ pub mod tests_word_extract_adv_gadget{
 		let cfg = stmt_cont.borrow().get_cfg();
 		let mut vec_cfg =vec![cfg];
 		ContainerConfig::adjust_locations(&mut vec_cfg); //resolve
-		let cps = stmt_cont.borrow().gen_stmt_components(); //from inp to si_data
+		let cps = stmt_cont.borrow().gen_stmt_components().0; //from inp to si_data
 		let lkup_share_size = 4usize;
 		let mut weg = WordExtractAdvGadget::<Fr>::new(wlen, b_map_char);
 		weg.set_container_cfg(vec_cfg.clone().into(), 0); 

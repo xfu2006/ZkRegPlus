@@ -992,7 +992,7 @@ pub mod tests_fsm_adv_gadget{
 		//3. generate the 7 segments of output for building statment
 		let cps1 = stmt_wea.borrow().gen_stmt_components(); //from inp to si_data
 		let cps2 = stmt_faa.borrow().gen_stmt_components(); //from inp to si_data
-		let cps = cps1.into_iter().zip(cps2.into_iter()).map(|(a,b)|
+		let cps = cps1.0.into_iter().zip(cps2.0.into_iter()).map(|(a,b)|
 			vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
 
 		//4. create the gadget

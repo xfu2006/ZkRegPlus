@@ -3528,9 +3528,9 @@ pub mod tests_discharge_adv_gadget{
 			let cps1 = stmt_wea.borrow().gen_stmt_components(); 
 			let cps2 = stmt_faa.borrow().gen_stmt_components(); 
 			let cps3 = stmt_disc.borrow().gen_stmt_components(); 
-			let cps = cps1.into_iter().zip(cps2.into_iter()).map(|(a,b)|
+			let cps = cps1.0.into_iter().zip(cps2.0.into_iter()).map(|(a,b)|
 				vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
-			let cps = cps.into_iter().zip(cps3.into_iter()).map(|(a,b)|
+			let cps = cps.into_iter().zip(cps3.0.into_iter()).map(|(a,b)|
 				vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
 
 			//2.7 create the gadget

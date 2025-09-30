@@ -2316,15 +2316,15 @@ pub mod tests_compute_sig_adv{
 				let cps4 = stmt_disc_cs.borrow().gen_stmt_components(); 
 				let cps5 = stmt_disc_igc.borrow().gen_stmt_components(); 
 				let cps6 = stmt_sig.borrow().gen_stmt_components(); 
-				let cps = cps1.into_iter().zip(cps2.into_iter()).map(|(a,b)|
+				let cps = cps1.0.into_iter().zip(cps2.0.into_iter()).map(|(a,b)|
 					vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
-				let cps = cps.into_iter().zip(cps3.into_iter()).map(|(a,b)|
+				let cps = cps.into_iter().zip(cps3.0.into_iter()).map(|(a,b)|
 					vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
-				let cps = cps.into_iter().zip(cps4.into_iter()).map(|(a,b)|
+				let cps = cps.into_iter().zip(cps4.0.into_iter()).map(|(a,b)|
 					vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
-				let cps = cps.into_iter().zip(cps5.into_iter()).map(|(a,b)|
+				let cps = cps.into_iter().zip(cps5.0.into_iter()).map(|(a,b)|
 					vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
-				let cps = cps.into_iter().zip(cps6.into_iter()).map(|(a,b)|
+				let cps = cps.into_iter().zip(cps6.0.into_iter()).map(|(a,b)|
 					vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
 
 				//2.7 create the discharge gadget
