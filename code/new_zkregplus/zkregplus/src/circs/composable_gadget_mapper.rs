@@ -54,8 +54,10 @@ pub trait ComponentMapper<F:PrimeField, LK: LookupTableTwoCol<F>>: Debug{
 	///   [inp,oup,data, subtbl_inp, subtbl_oup, subtbl_data,
 	///        failed_sigs, discharged_sigs]
 	/// return the 8 range entry for each of its compoments.
+	/// In addition, it returns Vec<(usize, bool)> about the
+	/// chunk info of si_data (bool indicates if it is constant or not)
 	fn get_gadgets_stmt_map(&self, vec_alloc: &Vec<(usize,usize)>)
-	->Vec<Vec<(usize,usize)>>;
+	->(Vec<Vec<(usize,usize)>>, Vec<(usize,bool)>);
 
 	/// return the ``global" join constraints, so that
 	/// it can generate constraints to bind its own statement elements
@@ -231,10 +233,10 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 			discharged_sigs_size) = (sum_sizes[0], sum_sizes[1], 
 				sum_sizes[2], sum_sizes[3], sum_sizes[4]);
 		let word_subseg_size = self.max_word_len(); 
-		let cfg = StatementConfig::new(
+		let mut cfg = StatementConfig::new(
 			input_size, output_size, word_subseg_size,
 			data_size, lkup_share_size, failed_sigs_size, discharged_sigs_size
-		);
+		); //will have si_data_info reset later
 
 		//3. generate the map for each component. Each component's statement
 		// is structured as
@@ -246,6 +248,7 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 		let idx_inp_in_subtbl_id = cfg.idx_subtable_id + 0;
 		let idx_oup_in_subtbl_id = cfg.idx_subtable_id + cfg.input_size;
 		let idx_data_in_subtbl_id = cfg.idx_subtable_id + cfg.input_size + cfg.output_size + cfg.word_subseg_size;
+		let mut si_data_info = vec![];
 		for i in 0..self.vec_components.len(){
 			//NOTE: ranges are including both ends
 			// e.g., (1,1) has one element, (2, 3) has 2 elements
@@ -276,14 +279,17 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 				rg_subtbl_id_inp, rg_subtbl_id_oup, rg_subtbl_id_data,
 				rg_failed_sigs, rg_discharged_sigs,
 			];
-			let mut comp_maps = self.vec_components[i].borrow()
+			let (mut comp_maps, mut new_si_info) 
+				= self.vec_components[i].borrow()
 				.get_gadgets_stmt_map(&cur_alloc);
 			assert!(comp_maps.len()==self.vec_components[i].borrow().num_gadgets());
 			vec_maps.append(&mut comp_maps);
+			si_data_info.append(&mut new_si_info);
 		}
 		let num_gadgets = self.vec_components.iter().map(|x| x.borrow().num_gadgets())
 			.sum::<usize>();
 		assert!(vec_maps.len()==num_gadgets);
+		cfg.reset_si_data_info(si_data_info);
 	
 
 		//4. collect the joins

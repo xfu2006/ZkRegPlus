@@ -436,9 +436,9 @@ where
 		//3. Compute z_{i+1} from the F circuit and use it as Witness to
 		// construct Var
         let i_usize = self.i_usize.unwrap_or(0);
- 		let (witness, _wit_cfg, z_i1_part2) = 
+ 		let (witness, wit_cfg, z_i1_part2) = 
   			self.F.gen_witness(&stmt, &self.zi_part2_inst.clone().unwrap());
-  		let wtns_vec = witness.to_vec_fp_var(cs.clone());
+  		let wtns_vec = witness.to_vec_fp_var(cs.clone(), &wit_cfg);
 
 		if b_debug{
 			println!("DEBUG USE 7702: aug_f::gen_csr: {}", 

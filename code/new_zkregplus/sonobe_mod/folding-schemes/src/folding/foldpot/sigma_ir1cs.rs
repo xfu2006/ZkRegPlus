@@ -872,6 +872,11 @@ pub struct StatementConfig{
 	pub idx_discharged_sigs: usize,
 	/// the starting location of mtbl_sigs
 	pub idx_mtbl_sigs: usize,
+
+	/// the chunk info of the si_data
+	/// bool indicates if it's const segment.
+	/// usize is the length of the segment
+	pub si_data_info: Vec<(usize,bool)>,
 }
 
 impl StatementConfig{
@@ -893,6 +898,8 @@ impl StatementConfig{
 		let idx_discharged_sigs = idx_failed_sigs + failed_sigs_size;
 		let idx_mtbl_sigs = idx_discharged_sigs + discharged_sigs_size;
 		let mtbl_sigs_size = discharged_sigs_size;
+		let si_data_info = vec![(data_size, false)]; //by default,
+			//cover entire sid_data table and not constant (no optimization)
 
 		Self{ input_size, output_size, data_size, word_subseg_size, 
 			lookup_share_size, 
@@ -901,8 +908,15 @@ impl StatementConfig{
 			idx_col2_share, idx_m_share, 
 			failed_sigs_size, discharged_sigs_size,
 			idx_failed_sigs, idx_discharged_sigs,
-			idx_mtbl_sigs, mtbl_sigs_size
+			idx_mtbl_sigs, mtbl_sigs_size,
+			si_data_info,
 		}
+	}
+
+	pub fn reset_si_data_info(&mut self, info: Vec<(usize, bool)>){
+		let total_size = info.iter().map(|(x,_)| x).sum::<usize>();
+		assert!(total_size == self.data_size);
+		self.si_data_info = info;
 	}
 
 	pub fn total_size(&self)-> usize{
@@ -1798,6 +1812,9 @@ pub struct WitnessSigmaIR1CSConfig{
 	pub inv_hab22_left_size: usize,
 	/// should be equal to the m_share (max) size
 	pub inv_hab22_right_size: usize,
+
+	/// statement config
+	pub stmt_cfg: StatementConfig,
 }
  
 impl WitnessSigmaIR1CSConfig{
@@ -1853,8 +1870,7 @@ pub struct WitnessSigmaIR1CS<F:PrimeField>{
 }
 
 impl <F:PrimeField> WitnessSigmaIR1CS<F>{
-	pub fn to_vec_fp_var(&self, cs: ConstraintSystemRef<F>)
-		->Vec<FpVar<F>>{
+	pub fn to_vec_fp_var(&self, cs: ConstraintSystemRef<F>, _cfg: &WitnessSigmaIR1CSConfig) ->Vec<FpVar<F>>{
 		let vec = self.cmF.iter()
 			.chain(vec![self.unused_input_size, self.unused_output_size].iter())
 			.chain(self.statement.iter())
@@ -1868,7 +1884,7 @@ impl <F:PrimeField> WitnessSigmaIR1CS<F>{
 		let z_i = vec.iter().map(|f| 
 			FpVar::<F>::new_witness(cs.clone(), || Ok(f)).unwrap()
 		).collect::<Vec<FpVar<F>>>();
-
+		if 1>0 {panic!("STOP HERE 2000 implement to_vec_fp");}
 		z_i
 	}
 
@@ -2071,7 +2087,7 @@ where 	C: CurveGroup<ScalarField=F>,
 	pub fn witness_to_vec_fp_var(&self, cs: ConstraintSystemRef<F>)
 	->Vec<FpVar<F>>{
 		let wit = self.witness.as_ref();
-		wit.expect("wit is null").to_vec_fp_var(cs)
+		wit.expect("wit is null").to_vec_fp_var(cs, &self.witness_config)
 	}
 
 	pub fn get_mapper(&self) -> Rc<RefCell<GM>>{
@@ -2116,6 +2132,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			zi_part2_size: ZiPartTwoInst::<F>::size(self.b_full_mode, self.fq_bits),
 			inv_hab22_left_size: inv_hab22_left_size,
 			inv_hab22_right_size: inv_hab22_right_size,
+			stmt_cfg: stmt_cfg,
 		};
 		wtns_cfg
 	}
@@ -2251,7 +2268,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		// will be enforced somewhere else, but need
 		// the cyclepair input
 		let lkup_share_size = self.stmt_config.lookup_share_size;
-		let (stmt_len, _stmt_cfg, v_idx, _, cp_inp) = self.gadget_mapper
+		let (stmt_len, stmt_cfg, v_idx, _, cp_inp) = self.gadget_mapper
 			.borrow()
 			.gen_statement_structure(lkup_share_size); 
 		assert!(stmt_len==stmt.len(), "stmt.len(): {} != stmt_len: {}",
@@ -2388,6 +2405,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			zi_part2_size: ZiPartTwoInst::<F>::size(self.b_full_mode, self.fq_bits),
 			inv_hab22_left_size: inv_hab22_left_size,
 			inv_hab22_right_size: inv_hab22_right_size,
+			stmt_cfg: stmt_cfg,
 		};
 
 		//6. compute the KZG evaluation of :
@@ -2610,6 +2628,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			zi_part2_size: ZiPartTwoInst::<F>::size(b_full_mode, fq_bits),
 			inv_hab22_left_size: inv_hab22_left_size,
 			inv_hab22_right_size: inv_hab22_right_size,
+			stmt_cfg: stmt_cfg.clone(),
 		};
 		println!("DEBUG USE 103 -- sigma_ir1cs::new_adv: stmt_len: {}, m1_len: {}", stmt_len, m1_len);
 
@@ -2967,7 +2986,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		// case 3: 3 constraints: 1 for weighted sum; 1 for 
 		//    verify inverse; 1 for multiplying with qry1[i] before
 		//    summing it up.
-		let cv_zero = FpVar::<F>::new_constant(cs.clone(), F::zero());
+		//let cv_zero = FpVar::<F>::new_constant(cs.clone(), F::zero());
 		let lb_one = LinearCombination::from((F::one(),Variable::One));
 		for i in 0..inv_hab22_left_size{
 			let tb_id = qry_tbl1[i].value()?;
@@ -2975,7 +2994,6 @@ where 	C: CurveGroup<ScalarField=F>,
 				if tb_id.is_zero(){//case 1 do nothing, 0 r1cs
 				}else{//case 2
 					let nc = cs.num_constraints();
-					let v2 = &qry_tbl2[i];
 					/*
 					let v = &alpha + &(&qry_tbl1[i]*&beta) + &qry_tbl2[i];
 					let prod = &v * &wtns_var.inv_hab22_left[i];
@@ -2988,7 +3006,6 @@ where 	C: CurveGroup<ScalarField=F>,
 					}
 				}
 			}else{
-				let nc = cs.num_constraints();
 				let v = &alpha + &(&qry_tbl1[i]*&beta) + &qry_tbl2[i];
 				let lb_v = var_to_lb(&v, F::one());
 				let lb_wit= var_to_lb(&wtns_var.inv_hab22_left[i], F::one());

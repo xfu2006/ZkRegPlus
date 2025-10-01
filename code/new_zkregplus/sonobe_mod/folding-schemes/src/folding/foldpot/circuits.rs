@@ -487,9 +487,9 @@ where
 		// MOVED up here
         // get z_{i+1} from the F circuit
         let i_usize = self.i_usize.unwrap_or(0);
-		let (witness, _wit_cfg, _z_i1_part2) = 
+		let (witness, wit_cfg, _z_i1_part2) = 
 			self.F.gen_witness(&stmt, &self.zi_part2_inst.clone().unwrap());
-		let wtns_vec = witness.to_vec_fp_var(cs.clone());
+		let wtns_vec = witness.to_vec_fp_var(cs.clone(), &wit_cfg);
         let z_i1 =
             self.F
                 .generate_step_constraints(cs.clone(), i_usize, z_i.clone(), wtns_vec)?;

@@ -472,7 +472,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaCompo
 	///    entries solely depending on the gadget's own structure, need
 	///    to read each gadget's doc for its statement structure)
 	fn get_gadgets_stmt_map(&self, vec_alloc: &Vec<(usize,usize)>)
-	->Vec<Vec<(usize,usize)>>{
+	->(Vec<Vec<(usize,usize)>>, Vec<(usize,bool)>){
 		//1. get the allocation and make sure not exceeding boundaries
 		assert!(vec_alloc.len()==9); 
 		let (s_wd, e_wd) = vec_alloc[0];
@@ -528,7 +528,9 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaCompo
 		}
 
 		assert!(vec_res.len()==self.num_gadgets());
-		vec_res
+		if 1>0 {panic!("STOP HERE 300 implement");}
+		let vec_chunk_info = vec![];
+		(vec_res, vec_chunk_info)
 	}
 
 	/// return the inp, oup, data and 3 subtable segments,

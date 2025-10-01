@@ -20510,15 +20510,26 @@ Goal 1. collect data
 			10881887 -> cutcuit size: 5.04M now (cut around 900k)
 
 Goal 2. setup the framework
-	[a] ComponentMapper define function get_si_data_info()
-	[b] in Gadgets: implement get_si_data_info()
-	[c] in gen_statement_structure put the chunk_info
-	[d] sigma_ir1cs::gen_witness: calls gen_statement_structure
-		which puts the statement config the info of
-			chunk_info of sid_table, and idx_start_data
-	[e] WitnessSigmaIR1CS::to_vec_fp_var needs the
+	[a] ComponentMapper modify get_gadgets_stmt_map to
+		return si_data information
+			-> put dummy implementation firstj
+	[b] in gen_statement_structure put the chunk_info
+		-> read existing code
+		-> in StatementConfig add the si_data_info and add
+			function for resetting si_data_info.
+		-> handle all syntax errors
+		-> construct si_data_info and call reset si_data_info 
+	[c] gen_witness_structure: put stmt_cfg into witness_config -> but 
+		it is only called once (not in workflow actually)
+			-> add stmt_cfg to witns cfg
+			-> fix syntax error
+	[c_main] sigma_ir1cs::gen_witness: calls gen_statement_structure
+		which puts the statement config into witness config.
+			-> DONE
+	[d] WitnessSigmaIR1CS::to_vec_fp_var needs the
 		StatementConfig the sid_tbl and sid_tbl_start
-	[f] wtns_vec is constructed in 
+			-> DONE
+	[e] wtns_vec is constructed in 
 		circuits_super::generate_constraints,
 		then when it's passed to F.generate_step_constraints
 			wtns_vector is already loaded properly with the 

@@ -542,11 +542,11 @@ pub mod tests_sigma_cyclepair{
 		let fq_bits = Fq::MODULUS_BIT_SIZE as usize;
 		let b_full = true;
 		let zi_part2_inst = ZiPartTwoInst::<F>::dummy(b_full, fq_bits);
-		let (wtns, _, _zipart2) = sigma.gen_witness(&stmt.to_vec(), 
+		let (wtns, wtns_cfg, _zipart2) = sigma.gen_witness(&stmt.to_vec(), 
 			&zi_part2_inst);
 
 		let cs = ConstraintSystem::<F>::new_ref();
-		let external_inputs = wtns.to_vec_fp_var(cs.clone());
+		let external_inputs = wtns.to_vec_fp_var(cs.clone(), &wtns_cfg);
 		let zero = Fr::zero();
 		let num_words = 1;
 		let z0_part2 = ZiPartTwoInst::<Fr>::new(zero, zero, 
