@@ -20480,16 +20480,50 @@ Goal 1. Planning on how to convert to FpVar
 		The StatementConfig it needs is returned by gen_witness
 
 Goal 2. improve the sigma_ir1cs first
-	[a] BOFORE IMPROVEMENT ---------------------
+	[a] regression testing first
+	[b] replace sigma_ir1cs handling of query table
+	[c] BOFORE IMPROVEMENT ---------------------
+		---- PERFORMANCE DATA --------------------
 		module 8 size: 736k-436k = 300k 
 		right after module 14: R1CS: 1102129
 		lkup size: 930543 (cutting 300k)
+		qry cost (compare DEBUG 1201): 3.737M  -> (4 r1cs each)
 		combined key size: 12742979 -> circuit size 6.3M
-		
+	[d] new code estimate: ignore 0 constant, handle non zero constant
+		and then nonzero var -> ranges between 0, 2, 3 vars depending
+		on the case
+	[e] case 1
+	[f] case 3 -> cutting from 4 constraints to 3 constraints now
 
---- TODO -- in ContainerConfig add functions like get_sid_data info
---- similar to get_to_add_size.
-Goal
+Wed 10/01/2025
+LOC (sonobe): 18810
+LOC (circ): 2615
+
+Goal 1. collect data
+	[a] ATER case 3 improevement
+		---- PERFORMANCE DATA --------------------
+		module 8 size: 736k-436k = 300k  (same)
+		right after module 14: R1CS: 1102129 (same)
+		lkup size: 930543 (cutting 300k)
+		qry cost (compare DEBUG 1201): 2.81M  -> (3 r1cs each)
+		combined key size: old: 12742979 -> circuit size 6.3M (old)
+			10881887 -> cutcuit size: 5.04M now (cut around 900k)
+
+Goal 2. setup the framework
+	[a] ComponentMapper define function get_si_data_info()
+	[b] in Gadgets: implement get_si_data_info()
+	[c] in gen_statement_structure put the chunk_info
+	[d] sigma_ir1cs::gen_witness: calls gen_statement_structure
+		which puts the statement config the info of
+			chunk_info of sid_table, and idx_start_data
+	[e] WitnessSigmaIR1CS::to_vec_fp_var needs the
+		StatementConfig the sid_tbl and sid_tbl_start
+	[f] wtns_vec is constructed in 
+		circuits_super::generate_constraints,
+		then when it's passed to F.generate_step_constraints
+			wtns_vector is already loaded properly with the 
+			const vars
+		The StatementConfig it needs is returned by gen_witness
 
 
 

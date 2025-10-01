@@ -15,18 +15,20 @@ use std::ptr;
 use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef,
 //	LinearCombination,Variable
 };
+
 use ark_r1cs_std::{
 	boolean::{Boolean},
 	fields::{
 		//FieldVar,
 		fp::FpVar,
-		//fp::FpVar::Constant,
-		//fp::FpVar::Var,
+		fp::FpVar::Constant,
+		fp::FpVar::Var,
 	},
 	alloc::AllocVar,
 	eq::EqGadget,
 	R1CSVar,
 };
+use ark_relations::r1cs::{Variable,LinearCombination};
 
 
 // determines if timer prints (but will not block recording)
@@ -34,6 +36,28 @@ pub const LOG_LEVEL:usize = 2;
 pub const LOG3:usize = 0;
 pub const LOG2:usize = 1;
 pub const LOG1:usize = 0;
+
+/// convert a FP var to LinearCombination
+pub fn var_to_lb<F:PrimeField>(v: &FpVar<F>, coef: F)->LinearCombination<F>{
+	let res = match v{
+		Var(v) => LinearCombination::from( (coef, v.variable) ),
+		Constant(val) => LinearCombination::from(
+			(*val*coef, Variable::One)
+		)
+	};
+
+	res
+}
+
+/// convert a FP var tovar  
+pub fn fpvar_to_var<F:PrimeField>(v: &FpVar<F>)->Variable{
+	let res = match v{
+		Var(v) => v.variable,
+		Constant(_) => panic!("expecting var!")
+	};
+
+	res
+}
 
 /// print a vector
 pub fn print_vec_var<F:PrimeField>(msg: &str, v: &Vec<FpVar<F>>){

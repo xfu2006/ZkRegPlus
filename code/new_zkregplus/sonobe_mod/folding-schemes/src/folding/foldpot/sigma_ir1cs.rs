@@ -20,7 +20,8 @@ use std::any::Any;
 use ark_ec::{CurveGroup,pairing::Pairing};
 use ark_ff::{PrimeField,ToConstraintField,Field};
 use num_bigint::{BigUint};
-use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
+use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError, 
+	LinearCombination, Variable};
 use ark_crypto_primitives::sponge::{
 	constraints::CryptographicSpongeVar,
     poseidon::{PoseidonConfig, PoseidonSponge, constraints::PoseidonSpongeVar},
@@ -42,7 +43,8 @@ use crate::{
 	folding::{
 		circuits::{nonnative::uint::{NonNativeUintVar,LimbVar}},
 		foldpot::{
-			utils::{f1_to_f2_limbs, get_stack_space,check_logup, print_vec_var},
+			utils::{f1_to_f2_limbs, get_stack_space,check_logup, print_vec_var,
+				var_to_lb},
 			container_config::{ContainerConfig},
 			//circuits_super::field_to_usize,
 		},
@@ -710,7 +712,7 @@ pub struct StatementInst<F:PrimeField, LK: LookupTableTwoCol<F>>{
 	pub col1_share: Vec<F>,
 	/// col2 share
 	pub col2_share: Vec<F>,
-	/// the vec m value share, later it computes m_i/(col1 * beta + col2 * beta^2 + gamma) using the Hab'22 logup approach. 
+	/// the vec m value share, later it computes m_i/(col1 * beta + col2 + gamma) using the Hab'22 logup approach. 
 	pub m_share: Vec<F>,
 
 	/// the failed sigs, required to be padded by 0,
@@ -814,7 +816,7 @@ pub struct StatementInstVar<F:PrimeField>{
 	pub col1_share: Vec<FpVar<F>>,
 	/// col2 share
 	pub col2_share: Vec<FpVar<F>>,
-	/// the vec m value share, later it computes m_i/(col1 * beta + col2 * beta^2 + gamma) using the Hab'22 logup approach. 
+	/// the vec m value share, later it computes m_i/(col1 * beta + col2 + gamma) using the Hab'22 logup approach. 
 	pub m_share: Vec<FpVar<F>>,
 
 	/// the failed sigs
@@ -1291,8 +1293,8 @@ pub struct ZiPartTwoInst<F:PrimeField>{
 	pub sum_oup: F,
 
 	/// alpha and beta used for Hab'22 lookup scheme.
-	/// left: 1/(alpha +col1val + col2val*beta) of query table.
-	/// right: m_i/(alpha + col1val + cal2val*beta) of lookup table.
+	/// left: 1/(alpha +col1val*beta + col2val) of query table.
+	/// right: m_i/(alpha + col1val*beta + cal2val) of lookup table.
 	/// then sum up m_i and the 1's for the lookup table
 	pub alpha: F,
 	/// beta used for lookup
@@ -1521,8 +1523,8 @@ pub struct ZiPartTwoInstVar<F:PrimeField>{
 	pub sum_oup: FpVar<F>,
 
 	/// alpha and beta used for Hab'22 lookup scheme.
-	/// left: 1/(alpha +col1val + col2val*beta) of query table.
-	/// right: m_i/(alpha + col1val + cal2val*beta) of lookup table.
+	/// left: 1/(alpha +col1val*beta + col2val) of query table.
+	/// right: m_i/(alpha + col1val*beta + cal2val) of lookup table.
 	/// then sum up m_i and the 1's for the lookup table
 	pub alpha: FpVar<F>,
 	/// beta used for lookup
@@ -1843,7 +1845,7 @@ pub struct WitnessSigmaIR1CS<F:PrimeField>{
 	pub msg3: Vec<F>,
 	/// the ZiPartTwoInst (which hashes to z_i.1). 
 	pub zi_part2: Vec<F>,
-	/// 1/(alpha + col1 + col2*beta) for the query table (query table is
+	/// 1/(alpha + col1*beta + col2) for the query table (query table is
 	///  cmF + extra vars + statement + msg1)
 	pub inv_hab22_left: Vec<F>,
 	/// m_i/(alpha + col1 + col2*col2) for the col1/col2 share
@@ -1904,7 +1906,7 @@ pub struct WitnessSigmaIR1CSVar<F:PrimeField> {
 	pub msg3: Vec<FpVar<F>>,
 	/// the zi_part2
 	pub zi_part2: Vec<FpVar<F>>,
-	/// 1/(alpha + col1 + col2*beta) for the query table (query table is
+	/// 1/(alpha + col1*beta + col2) for the query table (query table is
 	///  cmF + extra vars + statement + msg1)
 	pub inv_hab22_left: Vec<FpVar<F>>,
 	/// m_i/(alpha + col1 + col2*col2) for the col1/col2 share
@@ -2347,7 +2349,7 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		let inv_hab22_left = (0..inv_hab22_left_size).into_par_iter().map(|i|{
 			let v2 = qry_tbl2[i];
-			let v = alpha + qry_tbl1[i] + v2 * beta;
+			let v = alpha + qry_tbl1[i]*beta + v2 ;
 			v.inverse().expect("inv failed")
 		}).collect::<Vec<F>>();
 		let sum_hab22_left = qry_tbl1.par_iter().zip(inv_hab22_left.par_iter())
@@ -2357,7 +2359,7 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		let right_size = inv_hab22_right_size;
 		let inv_hab22_right = (0..right_size).into_par_iter().map(|i|{
-			let v = alpha + si.col1_share[i] + si.col2_share[i] * beta;
+			let v = alpha + si.col1_share[i]*beta + si.col2_share[i];
 			v.inverse().unwrap()
 		}).collect::<Vec<F>>();
 		let mut lookup_share_size_left = si.act_lookup_share_size.clone();
@@ -2929,6 +2931,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			"b_check_up.len(): {} != inv_hab22_left: {}",
 			b_check_lkup.len(), inv_hab22_left_size
 		);
+		/* OLD TO REMOVE 4 R1CS each
 		for i in 0..inv_hab22_left_size{
 			//note: b_check_lkup is CIRCUIT specific const array
 			//if b_check_lkup[i]==false {continue;}
@@ -2938,6 +2941,66 @@ where 	C: CurveGroup<ScalarField=F>,
 			prod.enforce_equal(&one_var)?;
 			//use 0 to disable add
 			sum_hab22_left += &(&qry_tbl1[i] * &wtns_var.inv_hab22_left[i]);
+			if i%64==0{//avoid building too long linear combinations
+				//cs.is_satisfied() -> eval_lc() -> assigned_value(*var)
+				//  when var is symbolic it's calling eval_lc() recursively
+				//  so here retrieve the value periodically to make recursive
+				//  chain shorter.
+				//sum_hab22_left = &sum_hab22_left + &zero_var;
+				//COMMENT OUT LATER IF DOES NOT HELP
+				let _v1 = sum_hab22_left.value()?;
+				sum_hab22_left = &sum_hab22_left * &one_wit_var;
+
+			}
+		}
+		*/
+		//IDEA: when qry1[i] is a CONSTANT it means that this is
+		// circuit specifc const (not dynamically assigned).
+		// case 1: it's a 0. so simply ignore it. As regardless of
+		//    witness, this is part of a circuit, it's safe to do so.
+		//    cost: 0 constraint.
+		// case 2: it's a non-zero. So it IS a "static" lookup for
+		//    qry2[i] (tbl_id is qry1[i]). So this is going to
+		//    cost: 1 constraint (because multiplication with const
+		//    does not cost.
+		// --- qry1[i] is a NON-CONSTANT (dynamically assigned tbl ID)
+		// case 3: 3 constraints: 1 for weighted sum; 1 for 
+		//    verify inverse; 1 for multiplying with qry1[i] before
+		//    summing it up.
+		let cv_zero = FpVar::<F>::new_constant(cs.clone(), F::zero());
+		let lb_one = LinearCombination::from((F::one(),Variable::One));
+		for i in 0..inv_hab22_left_size{
+			let tb_id = qry_tbl1[i].value()?;
+			if qry_tbl1[i].is_constant(){
+				if tb_id.is_zero(){//case 1 do nothing, 0 r1cs
+				}else{//case 2
+					let nc = cs.num_constraints();
+					let v2 = &qry_tbl2[i];
+					/*
+					let v = &alpha + &(&qry_tbl1[i]*&beta) + &qry_tbl2[i];
+					let prod = &v * &wtns_var.inv_hab22_left[i];
+					prod.enforce_equal(&one_var)?;
+					sum_hab22_left += &(&qry_tbl1[i] * &wtns_var.inv_hab22_left[i]);
+					*/
+					if 1>0 {
+						panic!("STOP HERE 1000. case 2 cons: {}", 
+							cs.num_constraints() - nc);
+					}
+				}
+			}else{
+				let nc = cs.num_constraints();
+				let v = &alpha + &(&qry_tbl1[i]*&beta) + &qry_tbl2[i];
+				let lb_v = var_to_lb(&v, F::one());
+				let lb_wit= var_to_lb(&wtns_var.inv_hab22_left[i], F::one());
+				cs.enforce_constraint(
+					lb_v,
+					lb_wit,
+					lb_one.clone(),
+				)?;
+
+				sum_hab22_left += &(&qry_tbl1[i] * &wtns_var.inv_hab22_left[i]);
+			};
+
 			if i%64==0{//avoid building too long linear combinations
 				//cs.is_satisfied() -> eval_lc() -> assigned_value(*var)
 				//  when var is symbolic it's calling eval_lc() recursively
@@ -2967,7 +3030,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		//5.2 check the right side
 		let mut lookup_share_size_left = si.act_lookup_share_size.clone();
 		for i in 0usize..inv_hab22_right_size{
-			let v = &alpha + &si.col1_share[i] + &si.col2_share[i] * &beta;
+			let v = &alpha + &(&beta*&si.col1_share[i]) + &si.col2_share[i];
 			let m_i = &si.m_share[i];
 			let prod = &v * &wtns_var.inv_hab22_right[i];
 			prod.enforce_equal(&one_var)?;
