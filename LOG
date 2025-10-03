@@ -20536,6 +20536,20 @@ Goal 2. setup the framework
 			const vars
 		The StatementConfig it needs is returned by gen_witness
 
+Thursday 10/02/2025
+LOC (sonobe): 18810
+LOC (circ): 2615
+LOC (gadget): 15540
+Goal 1. fix test_gadget_adv how to build the stmt_cfg
+	[a] fix fsm_adv gadget StatementConfig problem
+	[b] word extract 377
+	[c] regression testing on gadget -> can't we have to impleent to_vec_fp
+
+Goal 2. implement to_fec_fp_var
+	[a] plan
+	[b] other parts
+	[c] major part
+	[d] fix syntax errors
 
 
 

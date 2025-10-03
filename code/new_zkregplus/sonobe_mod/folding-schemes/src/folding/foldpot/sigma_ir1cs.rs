@@ -1870,10 +1870,68 @@ pub struct WitnessSigmaIR1CS<F:PrimeField>{
 }
 
 impl <F:PrimeField> WitnessSigmaIR1CS<F>{
-	pub fn to_vec_fp_var(&self, cs: ConstraintSystemRef<F>, _cfg: &WitnessSigmaIR1CSConfig) ->Vec<FpVar<F>>{
-		let vec = self.cmF.iter()
+	pub fn to_vec_fp_var(&self, cs: ConstraintSystemRef<F>, cfg: &WitnessSigmaIR1CSConfig) ->Vec<FpVar<F>>{
+		//1. build the special stmt var coz constants can be handled
+		//separately.
+		//basically we TAKE OUT the si_data part and handle it
+		//separately based on the si_data_info (for const var - which is
+		//cheaper).
+		//The other parts directly converted to FpVar witness
+		let stmt_cfg = &cfg.stmt_cfg;
+		let si_info = &stmt_cfg.si_data_info;
+		let data_len2 = si_info.iter().map(|(s,_)| s).sum::<usize>();
+		let idx_si_data = stmt_cfg.idx_subtable_id + stmt_cfg.input_size
+			+stmt_cfg.output_size;
+		let si_data_len = stmt_cfg.data_size;
+		assert!(data_len2==si_data_len);
+		assert!(self.statement.len()==stmt_cfg.total_size(), 
+			"stmt.len: {} != cfg.total_size: {}", self.statement.len(),
+			stmt_cfg.total_size());
+
+		println!("DEBUG USE 6101: stmt_cfg: {:#?}", stmt_cfg);
+		println!("DEBUG USE 6102: si_data_len: {}, idx_si_data: {}, end of si_data: {}", stmt_cfg.data_size, idx_si_data, idx_si_data + si_data_len);
+		println!("DEBUG USE 6103: stmt len: {}" ,self.statement.len());
+
+		let st_part1 = &self.statement[0..idx_si_data];
+		let st_part2 = &self.statement[idx_si_data..idx_si_data+si_data_len];
+		let st_part3 = &self.statement[idx_si_data+si_data_len..];
+		let fp_part1 = st_part1.iter().map(|f|
+			FpVar::<F>::new_witness(cs.clone(), || Ok(f)).unwrap()
+		).collect::<Vec<FpVar<F>>>();
+		let fp_part3 = st_part3.iter().map(|f|
+			FpVar::<F>::new_witness(cs.clone(), || Ok(f)).unwrap()
+		).collect::<Vec<FpVar<F>>>();
+		let mut idx_start = 0;
+		let mut vec_starts = vec![];
+		for (ulen, _) in si_info{
+			vec_starts.push(idx_start);
+			idx_start += ulen;
+		}
+		assert!(vec_starts.len()==si_info.len());
+		let fp_part2 = (0..vec_starts.len()).into_iter().map(|i|{
+			let (ulen, b_const) = si_info[i];
+			let start = vec_starts[i];
+			let frag = &st_part2[start..start+ulen];
+			if b_const{
+				frag.iter().map(|f|
+					FpVar::<F>::new_constant(cs.clone(), f.clone()).unwrap()
+				).collect::<Vec<FpVar<F>>>()
+			}else{
+				frag.iter().map(|f|
+					FpVar::<F>::new_witness(cs.clone(), || Ok(f)).unwrap()
+				).collect::<Vec<FpVar<F>>>()
+			}
+		}).flatten().collect::<Vec<FpVar<F>>>();
+		let z_i2= [fp_part1, fp_part2, fp_part3].concat();
+		assert!(z_i2.len()==self.statement.len());
+
+
+		//2. assemble the the other parts
+		let vec1 = self.cmF.iter()
 			.chain(vec![self.unused_input_size, self.unused_output_size].iter())
-			.chain(self.statement.iter())
+			.map(|f| f.clone())
+			.collect::<Vec<F>>();
+		let vec3 = self.cmF.iter()
 			.chain(self.msg1.iter()).
 			chain(self.msg2.iter()).chain(self.msg3.iter()).
 			chain(self.zi_part2.iter()).
@@ -1881,11 +1939,15 @@ impl <F:PrimeField> WitnessSigmaIR1CS<F>{
 			chain(self.inv_hab22_right.iter())
 			.map(|f| f.clone())
 			.collect::<Vec<F>>();
-		let z_i = vec.iter().map(|f| 
+
+		let z_i1 = vec1.iter().map(|f| 
 			FpVar::<F>::new_witness(cs.clone(), || Ok(f)).unwrap()
 		).collect::<Vec<FpVar<F>>>();
-		if 1>0 {panic!("STOP HERE 2000 implement to_vec_fp");}
-		z_i
+		let z_i3 = vec3.iter().map(|f| 
+			FpVar::<F>::new_witness(cs.clone(), || Ok(f)).unwrap()
+		).collect::<Vec<FpVar<F>>>();
+		
+		[z_i1, z_i2, z_i3].concat()
 	}
 
 	/// return cmF

@@ -230,7 +230,7 @@ pub mod tests_word_extract_gadget{
 			sigma_ir1cs::{
 				SigmaGadget, WitnessSigmaIR1CS,
 				WitnessSigmaIR1CSConfig, WitnessSigmaIR1CSVar,
-				ZiPartTwoInst,
+				ZiPartTwoInst, StatementConfig,
 			},
 			container_config::ContainerConfig,
 		},
@@ -333,6 +333,15 @@ pub mod tests_word_extract_gadget{
 		let extra_var_size = 2usize;
 		let inv_hab22_right_size = lkup_share_size;
 		let inv_hab22_left_size = subtbl_id.len() + extra_var_size;
+		let inp_size = inp.len();
+		let oup_size = oup.len();
+		let word_subseg_size = word.len();
+		let data_size = data.len();
+		let failed_sig_size = failed_sigs.len();
+		let discharged_sig_size = discharged_sigs.len();
+		let stmt_cfg = StatementConfig::new(
+			inp_size, oup_size, word_subseg_size,
+			data_size, lkup_share_size, failed_sig_size, discharged_sig_size);
 		let cfg = WitnessSigmaIR1CSConfig{
 			cmF_size: cmf_size, //4 field elements for cmF
 			extra_var_size: extra_var_size, 
@@ -346,10 +355,12 @@ pub mod tests_word_extract_gadget{
 			zi_part2_size: ZiPartTwoInst::<F>::size(true, fq_bits),
 			inv_hab22_left_size: inv_hab22_left_size,
 			inv_hab22_right_size: inv_hab22_right_size,
+			stmt_cfg,
 		};
 
 		//3. construct the witness var
 		let zero = F::zero();
+
 		let wit = WitnessSigmaIR1CS::<F>{
 			cmF: vec![zero; cmf_size],
 			unused_input_size: zero,
@@ -363,7 +374,7 @@ pub mod tests_word_extract_gadget{
 			inv_hab22_right: vec![zero; cfg.inv_hab22_right_size],
 		};
         let cs = ConstraintSystem::<F>::new_ref();
-		let vec_var = wit.to_vec_fp_var(cs.clone());
+		let vec_var = wit.to_vec_fp_var(cs.clone(), &cfg);
 		let witvar = WitnessSigmaIR1CSVar::from_vec(&cfg, &vec_var);
 		g.assert_msg3(0, cs.clone(), &witvar, &cfg).expect("assert m3 fail");
 		assert!(cs.is_satisfied().unwrap());
