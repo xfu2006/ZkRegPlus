@@ -20551,6 +20551,53 @@ Goal 2. implement to_fec_fp_var
 	[c] major part
 	[d] fix syntax errors
 
+Friday 10/02/2025
+LOC (sonobe): 18810 -> 18895 (+85)
+LOC (circ): 2615 -> 2627 (+12)
+LOC (gadget): 15540 -> 15619 (+80)
+Goal 1. continue to debug to_vec_fp_var
+	[a] review the code
+	[b] observe data: looks there's a 23 distance err, so the 
+		question is that the statement attribute of
+			WitnessVar does it include the 23 attributes?
+		it's determined by the stmt_len gen_statement_structure
+		the total_size() it DOES INCLUDE the idx_inp
+	[c] check if the stmt constructed matches its size -> found it
+
+Goal 2. update gadget test_gadget_adv function think about
+	how to construct the statement instance should just 
+	fill the data as build_table in composable_gadget
+	[a] add the stmt
+	[b] it's complaining subtbl_id does not include the word_subseg
+		-> how does circ handle it?
+		-> correct it if necessary-
+Goal 3. check err commons.rs 614
+	[a] looks like an alignment issue coz it's not reading 
+		the right data.
+	[b] in to_vec_fp_var adjust the idx of sid_tbl
+	[c] check the DATA contents of sid: inp: 2, oup: 2, word: 2, 
+		data: 1493 => total 1499
+		total: 1499 -> fixed
+Goal 4. debug 
+	[a] why does si_data of fsm_adv has 0 at beginning
+	[b] checked all IDX_SI_DATA and IDX_SI_INP
+		there is no zero element
+	[c] this implies that gen_stmt_components
+
+Saturday 10/04/2025
+Goal 1. need to debug into assert_msg3 of fsm_adv and check
+if it is reading stmt right.
+	[a] read container::load_from -> basically
+			retrieve Container from the vector of stmt_vec
+			using ContainerConfig because each column has its
+			position
+	[b] insert debug msg
+		[a] dump the container config and see if the locations look right -> ok
+		[b] check extract_stmt_vec dbg msg 6931, print out the info 
+			around
+	[c] analyze it
+			
+
 
 
 

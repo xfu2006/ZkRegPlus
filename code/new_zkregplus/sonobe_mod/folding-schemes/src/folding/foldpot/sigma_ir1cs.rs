@@ -1881,7 +1881,7 @@ impl <F:PrimeField> WitnessSigmaIR1CS<F>{
 		let si_info = &stmt_cfg.si_data_info;
 		let data_len2 = si_info.iter().map(|(s,_)| s).sum::<usize>();
 		let idx_si_data = stmt_cfg.idx_subtable_id + stmt_cfg.input_size
-			+stmt_cfg.output_size;
+			+stmt_cfg.output_size + stmt_cfg.word_subseg_size;
 		let si_data_len = stmt_cfg.data_size;
 		assert!(data_len2==si_data_len);
 		assert!(self.statement.len()==stmt_cfg.total_size(), 
@@ -1891,6 +1891,12 @@ impl <F:PrimeField> WitnessSigmaIR1CS<F>{
 		println!("DEBUG USE 6101: stmt_cfg: {:#?}", stmt_cfg);
 		println!("DEBUG USE 6102: si_data_len: {}, idx_si_data: {}, end of si_data: {}", stmt_cfg.data_size, idx_si_data, idx_si_data + si_data_len);
 		println!("DEBUG USE 6103: stmt len: {}" ,self.statement.len());
+		println!("DEBUG USE 6104 ==== DUMP OF subtbl_id =====");
+		let si_size = stmt_cfg.input_size + stmt_cfg.output_size
+			+stmt_cfg.word_subseg_size + stmt_cfg.data_size;
+		for i in 0..si_size{
+			println!(" -- i: {}, si: {}", i, self.statement[stmt_cfg.idx_subtable_id + i]);
+		}
 
 		let st_part1 = &self.statement[0..idx_si_data];
 		let st_part2 = &self.statement[idx_si_data..idx_si_data+si_data_len];

@@ -225,12 +225,15 @@ pub mod tests_word_extract_gadget{
 	use ark_relations::r1cs::ConstraintSystem;
 	use std::{rc::Rc};
 	use ark_bn254::{Fr};
+	use crate::gadgets::commons::gen_m_table;
 	use folding_schemes::{
 		folding::foldpot::{
 			sigma_ir1cs::{
 				SigmaGadget, WitnessSigmaIR1CS,
 				WitnessSigmaIR1CSConfig, WitnessSigmaIR1CSVar,
 				ZiPartTwoInst, StatementConfig,
+				StatementInst,
+				LookupTableTwoCol_Inst,
 			},
 			container_config::ContainerConfig,
 		},
@@ -238,6 +241,7 @@ pub mod tests_word_extract_gadget{
 	use crate::gadgets::word_extract::{WordExtractGadget,WordExtractAdvice};
 	use utils::data::{rand_fe_by_bits};
 	use data_processor::clam_db::CHAR;
+	use ark_std::marker::PhantomData;
 
 	pub fn test_gadget<F:PrimeField + Absorb> (
 		g: Rc<dyn SigmaGadget<F>>, 
@@ -273,9 +277,76 @@ pub mod tests_word_extract_gadget{
 		//1. generate the msg1, msg2, and msg3
 		//assert!(subtbl_id.len()== inp.len() + oup.len() + data.len());
 		let mut rng = ark_std::test_rng();
+		// RECOVER IF not working
+		// REMOVE LATER if the unit test works
+		/*
 		let stmt_vec = vec![word.clone(), inp.clone(), oup.clone(),
 			data.clone(), subtbl_id.clone(), failed_sigs.clone(),
 			discharged_sigs.clone()].concat();
+		*/
+		let (zero,one) = (F::zero(),F::one());
+		let mtbl_sigs = gen_m_table(&failed_sigs, &discharged_sigs);
+		let si_inp_oup = subtbl_id[0..inp.len()+oup.len()].to_vec();
+		let si_data = subtbl_id[inp.len()+oup.len()..].to_vec();
+		let si_word = vec![zero; word.len()];
+		//REMOVE LATER ----------------
+		use crate::gadgets::commons::print_vec;
+		print_vec("DEBUG USE 6601: si_inp_oup", &si_inp_oup);
+		print_vec("DEBUG USE 6602: si_word", &si_word);
+		print_vec("DEBUG USE 6603: si_data", &si_data);
+		//REMOVE LATER ---------------- ABOVE
+
+		let new_subtbl_id = [
+			&si_inp_oup[..],
+			&si_word[..],
+			&si_data[..],
+		].concat(); //to be compatible with the general system that the 
+		//subtbl_id needs to include word (see build_statement
+		//of composable_gadget_mapper
+		let stmt = StatementInst::<F,LookupTableTwoCol_Inst<F>>{
+			pc_i: zero,
+			pc_i1: zero,
+			n_circ: one,
+			n_circ_minus_pc: one,
+			act_input_size: F::from(inp.len() as u32),
+			act_output_size: F::from(oup.len() as u32),
+			act_lookup_share_size: F::from(lkup_share_size as u32),
+			act_word_subseg_size: F::from(word.len() as u32),
+			word_id: zero,
+			subseg_id: zero,
+			total_word_len: F::from(word.len() as u32),
+			total_word_segs: one,
+			total_words: one,
+			r_F: F::from(2u32), //temp for debug
+
+			batch_r: zero,
+			batch_v: zero,
+			r_all_words: zero,
+			r_kzg_len: zero,
+			r_vec_r: zero,
+			r_vec_v: zero,
+			r_word_i: zero,
+			accumulated_word_len: zero,
+			f_result: zero,
+
+			inp_buf: inp.to_vec(),
+			oup_buf: oup.to_vec(),
+			word_subseg: word.clone(),
+			data: data.to_vec(),
+			subtable_id: new_subtbl_id.clone(),
+			col1_share: vec![zero; lkup_share_size], //will be filled 
+			col2_share: vec![zero; lkup_share_size], //to be updated
+			m_share: vec![zero; lkup_share_size],//will be filled
+
+			failed_sigs: failed_sigs.to_vec(),
+			discharged_sigs: discharged_sigs.to_vec(),
+			mtbl_sigs: mtbl_sigs.to_vec(),
+
+			_lk: PhantomData,
+		};
+		let stmt_vec = stmt.to_vec();
+
+
 
 		let g = g.as_ref();
 		let vec_msg_size = g.get_msg_size();
@@ -332,7 +403,7 @@ pub mod tests_word_extract_gadget{
 		let cmf_size = 4usize;
 		let extra_var_size = 2usize;
 		let inv_hab22_right_size = lkup_share_size;
-		let inv_hab22_left_size = subtbl_id.len() + extra_var_size;
+		let inv_hab22_left_size = new_subtbl_id.len() + extra_var_size;
 		let inp_size = inp.len();
 		let oup_size = oup.len();
 		let word_subseg_size = word.len();

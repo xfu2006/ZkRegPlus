@@ -490,6 +490,9 @@ impl <F: PrimeField> Container<FpVar<F>>{
 	pub fn extract_stmt_vec(i: usize, cfg: &WitnessSigmaIR1CSConfig,
 		wtns: &WitnessSigmaIR1CSVar<F>)->Vec<FpVar<F>>{
 		let (stmt_idx, _, _, _) = cfg.get_gadget_indices(i);
+		//REMOVE LATER ------------
+		println!("DEBUG USE 6931.1: stmt_idx: {:#?}", stmt_idx);
+		//REMOVE LATER ------------ ABOVE
 		let my_stmt = stmt_idx.iter().map(|(a,b)|
 			wtns.statement[*a..*b+1].to_vec()).flatten()
 			.collect::<Vec<FpVar<F>>>();

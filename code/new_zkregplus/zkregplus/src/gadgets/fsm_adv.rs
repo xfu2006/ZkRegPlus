@@ -859,12 +859,18 @@ impl <F:PrimeField> SigmaGadget<F> for FsmAdvGadget<F>{
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{
+		//REMOVE LATER---------------
+		println!("DEBUG USE 6931: before extract stmt vec");
+		//REMOVE LATER--------------- ABOVE
+
 		//1. retrive the statement instance and get all parts
 		let cfg = self.get_container_cfg().expect("container cfg not set!");
 		let stmt = Container::<FpVar<F>>::load_from(i, wtns_cfg, wtns, &cfg)?;
 		//REMOVE LATER ------------
 		println!("DEBUG USE 6801: capacity: {:?}", self.capacity);
 		let nc = cs.num_constraints();
+		println!("DEBUG USE 6921: assert_msg3 of fsm_adv: container cfg==");
+		cfg.dump(0);
 		//REMOVE LATER ------------ ABOVE
 
 		//2. validate the fsm_acc combo 
@@ -992,6 +998,13 @@ pub mod tests_fsm_adv_gadget{
 		//3. generate the 7 segments of output for building statment
 		let cps1 = stmt_wea.borrow().gen_stmt_components(); //from inp to si_data
 		let cps2 = stmt_faa.borrow().gen_stmt_components(); //from inp to si_data
+
+		//REMOVE LATER -----------------
+		println!("DEBUG USE 6911 ======= wea si_data=========");
+		print_vec("wea_si_data", &cps1.0[5]);
+		println!("DEBUG USE 6912 ======= wea si_data=========");
+		print_vec("fsa_si_data", &cps2.0[5]);
+		//REMOVE LATER ----------------- ABOVE
 		let cps = cps1.0.into_iter().zip(cps2.0.into_iter()).map(|(a,b)|
 			vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
 
@@ -1003,6 +1016,11 @@ pub mod tests_fsm_adv_gadget{
 		fag.set_container_cfg(vec_cfg.clone().into(), 1);  //it's the 2nd cfg
 		let _sizes = fag.get_to_add_size(); //test if sizes are ok
 		let rg = Rc::new(fag);
+
+		//REMOVE LATER -----------------
+		use crate::gadgets::commons::print_vec;
+		print_vec("DEBUG USE 6901: si_data from fsm_adv: ", &cps[5]);
+		//REMOVE LATER ----------------- ABOVE
 
 		//3. test it
 		test_gadget_adv::<Fr>(rg, &word, &cps[0], &cps[1], &cps[2],
