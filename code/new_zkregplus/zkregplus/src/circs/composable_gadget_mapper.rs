@@ -247,7 +247,7 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 		let mut vec_maps = vec![];
 		let idx_inp_in_subtbl_id = cfg.idx_subtable_id + 0;
 		let idx_oup_in_subtbl_id = cfg.idx_subtable_id + cfg.input_size;
-		let idx_data_in_subtbl_id = cfg.idx_subtable_id + cfg.input_size + cfg.output_size + cfg.word_subseg_size;
+		let idx_data_in_subtbl_id = cfg.idx_subtable_id + cfg.input_size + cfg.output_size;
 		let mut si_data_info = vec![];
 		for i in 0..self.vec_components.len(){
 			//NOTE: ranges are including both ends

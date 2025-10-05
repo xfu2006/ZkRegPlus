@@ -890,7 +890,7 @@ impl StatementConfig{
 		let idx_word_subseg = idx_oup + output_size;
 		let idx_data = idx_word_subseg + word_subseg_size;
 		let idx_subtable_id = idx_data + data_size;
-		let subtable_size = input_size + output_size + word_subseg_size + data_size;
+		let subtable_size = input_size + output_size + data_size;
 		let idx_col1_share = idx_subtable_id + subtable_size;
 		let idx_col2_share = idx_col1_share + lookup_share_size;
 		let idx_m_share = idx_col2_share + lookup_share_size;
@@ -921,7 +921,7 @@ impl StatementConfig{
 
 	pub fn total_size(&self)-> usize{
 		let sub_table_size = self.input_size + self.output_size + 
-			self.word_subseg_size + self.data_size;
+			self.data_size;
 
 		self.input_size + self.output_size + self.data_size + 
 			self.word_subseg_size + self.lookup_share_size * 3
@@ -985,7 +985,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 	pub fn gen_config(&self)->StatementConfig{
 		assert!(self.col1_share.len() == self.col2_share.len() 
 			&& self.col1_share.len() == self.m_share.len() );
-		assert!(self.subtable_id.len()==self.inp_buf.len() + self.oup_buf.len()+self.word_subseg.len() + self.data.len(), "subtbl_id.len: {} != inplen: {} + ouplen: {} + word_subseg_size: {} + data_size: {}", self.subtable_id.len(), self.inp_buf.len(), self.oup_buf.len(), self.word_subseg.len(), self.data.len());
+		assert!(self.subtable_id.len()==self.inp_buf.len() + self.oup_buf.len()+  self.data.len());
 		StatementConfig::new(
 			self.inp_buf.len(),
 			self.oup_buf.len(),
@@ -1045,8 +1045,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 	/// serialize into one vector
 	pub fn to_vec(&self) -> Vec<F>{
 		assert!(self.subtable_id.len() == self.inp_buf.len()  + 
-			self.oup_buf.len() + self.word_subseg.len()
-			+ self.data.len());
+			self.oup_buf.len() + self.data.len());
 		let res = vec![
 			vec![
 				self.pc_i,
@@ -1125,7 +1124,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 		let oup_buf = (&vec[cfg.idx_oup..cfg.idx_oup+cfg.output_size]).to_vec();
 		let word_subseg = (&vec[cfg.idx_word_subseg..cfg.idx_word_subseg+cfg.word_subseg_size]).to_vec();
 		let data= (&vec[cfg.idx_data..cfg.idx_data+cfg.data_size]).to_vec();
-		let subtable_id= (&vec[cfg.idx_subtable_id..cfg.idx_subtable_id+cfg.input_size+cfg.output_size+cfg.word_subseg_size+cfg.data_size]).to_vec();
+		let subtable_id= (&vec[cfg.idx_subtable_id..cfg.idx_subtable_id+cfg.input_size+cfg.output_size+cfg.data_size]).to_vec();
 		let col1_share = (&vec[cfg.idx_col1_share..cfg.idx_col1_share+cfg.lookup_share_size]).to_vec(); 
 		let col2_share = (&vec[cfg.idx_col2_share..cfg.idx_col2_share+cfg.lookup_share_size]).to_vec(); 
 		let m_share = (&vec[cfg.idx_m_share..cfg.idx_m_share+cfg.lookup_share_size]).to_vec(); 
@@ -1191,7 +1190,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 		let lk_ref = lk.borrow();
 		let tbl_ids = self.subtable_id.clone();
 		let mut vec_val  = vec![self.inp_buf.clone(), self.oup_buf.clone(), 
-			self.word_subseg.clone(), self.data.clone()].concat();
+			self.data.clone()].concat();
 
 		assert!(tbl_ids.len()==vec_val.len());
 
@@ -1252,7 +1251,7 @@ impl <F:PrimeField> StatementInstVar<F>{
 		let oup_buf = (&vec[cfg.idx_oup..cfg.idx_oup+cfg.output_size]).to_vec();
 		let word_subseg = (&vec[cfg.idx_word_subseg..cfg.idx_word_subseg+cfg.word_subseg_size]).to_vec();
 		let data= (&vec[cfg.idx_data..cfg.idx_data+cfg.data_size]).to_vec();
-		let subtable_id= (&vec[cfg.idx_subtable_id..cfg.idx_subtable_id+cfg.input_size+cfg.output_size+cfg.word_subseg_size+cfg.data_size]).to_vec();
+		let subtable_id= (&vec[cfg.idx_subtable_id..cfg.idx_subtable_id+cfg.input_size+cfg.output_size+cfg.data_size]).to_vec();
 		let col1_share = (&vec[cfg.idx_col1_share..cfg.idx_col1_share+cfg.lookup_share_size]).to_vec(); 
 		let col2_share = (&vec[cfg.idx_col2_share..cfg.idx_col2_share+cfg.lookup_share_size]).to_vec(); 
 		let m_share = (&vec[cfg.idx_m_share..cfg.idx_m_share+cfg.lookup_share_size]).to_vec(); 
@@ -1881,7 +1880,7 @@ impl <F:PrimeField> WitnessSigmaIR1CS<F>{
 		let si_info = &stmt_cfg.si_data_info;
 		let data_len2 = si_info.iter().map(|(s,_)| s).sum::<usize>();
 		let idx_si_data = stmt_cfg.idx_subtable_id + stmt_cfg.input_size
-			+stmt_cfg.output_size + stmt_cfg.word_subseg_size;
+			+stmt_cfg.output_size;
 		let si_data_len = stmt_cfg.data_size;
 		assert!(data_len2==si_data_len);
 		assert!(self.statement.len()==stmt_cfg.total_size(), 
@@ -1889,14 +1888,6 @@ impl <F:PrimeField> WitnessSigmaIR1CS<F>{
 			stmt_cfg.total_size());
 
 		println!("DEBUG USE 6101: stmt_cfg: {:#?}", stmt_cfg);
-		println!("DEBUG USE 6102: si_data_len: {}, idx_si_data: {}, end of si_data: {}", stmt_cfg.data_size, idx_si_data, idx_si_data + si_data_len);
-		println!("DEBUG USE 6103: stmt len: {}" ,self.statement.len());
-		println!("DEBUG USE 6104 ==== DUMP OF subtbl_id =====");
-		let si_size = stmt_cfg.input_size + stmt_cfg.output_size
-			+stmt_cfg.word_subseg_size + stmt_cfg.data_size;
-		for i in 0..si_size{
-			println!(" -- i: {}, si: {}", i, self.statement[stmt_cfg.idx_subtable_id + i]);
-		}
 
 		let st_part1 = &self.statement[0..idx_si_data];
 		let st_part2 = &self.statement[idx_si_data..idx_si_data+si_data_len];
@@ -3863,7 +3854,7 @@ pub mod tests_sigma_ir1cs{
 				subtable_id: vec![
 					zero, zero,  //inp_buf
 					zero, zero, //oup_buf
-					tbl_id, zero, //word_sub
+					tbl_id, zero, //word_sug (legacy) - not checked.
 					zero, zero, zero, zero //data
 				],
 				col1_share: vec![zero; 4], //to be updated, capcity 4

@@ -20595,7 +20595,40 @@ if it is reading stmt right.
 		[a] dump the container config and see if the locations look right -> ok
 		[b] check extract_stmt_vec dbg msg 6931, print out the info 
 			around
-	[c] analyze it
+		[c] check the index for si_data: this is stmt_map but
+			it consists of a lot of smaller fragment
+	[c] check how get_stmt_map_instructions are done
+		[c1] it's calling cfg.gen_stmt_map_instructions
+			-> it's essentially the loading instruction of each column
+
+Goal 2. redesign: should remove si_word from the subtbl_id, because
+	word has no restriction at all ,no need to check anyway.
+	[a] change word_extract test_gadget_adv to remove new_subtbl_id
+	[b] in circ composite_circ_adv check how subtbl_id are constructed
+		[b1] build statement 
+		[b2] gen_statement_structure
+		[b3] check subtable_id
+		[b3] check the use of word_subseg_size
+	[c] debug trace
+
+Goal 3. debug a simpler component word_extract
+
+Goal 4. read the test_gadget_adv again
+	[a] inp/oup/data. .... is it the entire or separate gadget? -> entire
+	[b] get_msg_size
+	[c] assert_msg3
+	[d] test gadget_adv
+	[e] read get_gadgets_stmt_map
+		-> (s,e) pairs
+		-> segs_starts for 9 segments
+		-> call each gadgets stmt_map_instructions
+	[f] test_gadget 
+
+Goal 5. port the sed_mapper collect stmt instructions into the
+	test_gadget_code
+
+Sunday 10/05/2025
+Goal 1.  collect alloc_vec first, and then port the sed_mapper code
 			
 
 

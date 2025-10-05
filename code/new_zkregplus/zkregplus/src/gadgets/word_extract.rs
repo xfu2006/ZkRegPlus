@@ -117,6 +117,9 @@ impl <F:PrimeField> SigmaGadget<F> for WordExtractGadget<F>{
 		let my_stmt = stmt_idx.iter().map(|(a,b)|
 			wtns.statement[*a..*b+1].to_vec()).flatten()
 			.collect::<Vec<FpVar<F>>>();
+		println!("DEBUG USE 2100: stmt_idx: {:#?}", stmt_idx);
+		println!("DEBUG USE 2101: my_stmt.len: {}", my_stmt.len());
+		println!("DEBUG USE 2102: self.get_msg_size().0: {}", self.get_msg_size().0);
 		assert!(my_stmt.len()==self.get_msg_size().0);
 		let wlen = self.max_word_len;
 		let data_len = 1 + wlen * LEGS;
@@ -259,6 +262,8 @@ pub mod tests_word_extract_gadget{
 	/// Given a gadget, and a statement vector
 	/// generate its msg1 to 3 and call assert3_msg3
 	/// Check if the generated constraint system is satisfiable.
+	///
+	/// we are assuming g is the "last" of the vec_cfgs
 	pub fn test_gadget_adv<F:PrimeField + Absorb> (
 		g: Rc<dyn SigmaGadget<F>>, 
 		word: &Vec<F>,
@@ -275,7 +280,7 @@ pub mod tests_word_extract_gadget{
 		vec_cfgs: Option<Vec<ContainerConfig>>, //set when b_legacy false
 	){
 		//1. generate the msg1, msg2, and msg3
-		//assert!(subtbl_id.len()== inp.len() + oup.len() + data.len());
+		assert!(subtbl_id.len()== inp.len() + oup.len() + data.len());
 		let mut rng = ark_std::test_rng();
 		// RECOVER IF not working
 		// REMOVE LATER if the unit test works
@@ -286,23 +291,7 @@ pub mod tests_word_extract_gadget{
 		*/
 		let (zero,one) = (F::zero(),F::one());
 		let mtbl_sigs = gen_m_table(&failed_sigs, &discharged_sigs);
-		let si_inp_oup = subtbl_id[0..inp.len()+oup.len()].to_vec();
-		let si_data = subtbl_id[inp.len()+oup.len()..].to_vec();
-		let si_word = vec![zero; word.len()];
-		//REMOVE LATER ----------------
-		use crate::gadgets::commons::print_vec;
-		print_vec("DEBUG USE 6601: si_inp_oup", &si_inp_oup);
-		print_vec("DEBUG USE 6602: si_word", &si_word);
-		print_vec("DEBUG USE 6603: si_data", &si_data);
-		//REMOVE LATER ---------------- ABOVE
 
-		let new_subtbl_id = [
-			&si_inp_oup[..],
-			&si_word[..],
-			&si_data[..],
-		].concat(); //to be compatible with the general system that the 
-		//subtbl_id needs to include word (see build_statement
-		//of composable_gadget_mapper
 		let stmt = StatementInst::<F,LookupTableTwoCol_Inst<F>>{
 			pc_i: zero,
 			pc_i1: zero,
@@ -333,7 +322,7 @@ pub mod tests_word_extract_gadget{
 			oup_buf: oup.to_vec(),
 			word_subseg: word.clone(),
 			data: data.to_vec(),
-			subtable_id: new_subtbl_id.clone(),
+			subtable_id: subtbl_id.clone(),
 			col1_share: vec![zero; lkup_share_size], //will be filled 
 			col2_share: vec![zero; lkup_share_size], //to be updated
 			m_share: vec![zero; lkup_share_size],//will be filled
@@ -352,12 +341,12 @@ pub mod tests_word_extract_gadget{
 		let vec_msg_size = g.get_msg_size();
 		let (_stmt_size, msg1_size, msg2_size, msg3_size)  = vec_msg_size;
 		let stmt_size = stmt_vec.len(); //NOTE: overwrite because
+		//assert!(stmt_vec.len()==stmt_size); not ncessarily when
 		// stmt_vec might contain combined stmt_vec from multiple gadgets.
 
-		//assert!(stmt_vec.len()==stmt_size); not ncessarily when
 		// stmt_vec has MULTIPLE gadgets involved.
 		let v_idx = if b_legacy {
-			vec![(0, stmt_vec.len()-1)] //cp cases
+			vec![(0, stmt_vec.len()-1)] //cp cases, only one gadget
 		}else{
 			// this pretty much simulate the implementation of
 			// sed_mapper.rs get_gadgets_stmt_map
@@ -403,7 +392,7 @@ pub mod tests_word_extract_gadget{
 		let cmf_size = 4usize;
 		let extra_var_size = 2usize;
 		let inv_hab22_right_size = lkup_share_size;
-		let inv_hab22_left_size = new_subtbl_id.len() + extra_var_size;
+		let inv_hab22_left_size = subtbl_id.len() + extra_var_size;
 		let inp_size = inp.len();
 		let oup_size = oup.len();
 		let word_subseg_size = word.len();
