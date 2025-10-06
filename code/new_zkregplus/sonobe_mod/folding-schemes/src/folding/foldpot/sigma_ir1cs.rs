@@ -1928,8 +1928,7 @@ impl <F:PrimeField> WitnessSigmaIR1CS<F>{
 			.chain(vec![self.unused_input_size, self.unused_output_size].iter())
 			.map(|f| f.clone())
 			.collect::<Vec<F>>();
-		let vec3 = self.cmF.iter()
-			.chain(self.msg1.iter()).
+		let vec3 = self.msg1.iter().
 			chain(self.msg2.iter()).chain(self.msg3.iter()).
 			chain(self.zi_part2.iter()).
 			chain(self.inv_hab22_left.iter()).
@@ -1943,8 +1942,10 @@ impl <F:PrimeField> WitnessSigmaIR1CS<F>{
 		let z_i3 = vec3.iter().map(|f| 
 			FpVar::<F>::new_witness(cs.clone(), || Ok(f)).unwrap()
 		).collect::<Vec<FpVar<F>>>();
-		
-		[z_i1, z_i2, z_i3].concat()
+		let res = [z_i1, z_i2, z_i3].concat();
+
+		assert!(res.len()==cfg.get_total_size());
+		res
 	}
 
 	/// return cmF

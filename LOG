@@ -20628,9 +20628,66 @@ Goal 5. port the sed_mapper collect stmt instructions into the
 	test_gadget_code
 
 Sunday 10/05/2025
-Goal 1.  collect alloc_vec first, and then port the sed_mapper code
-			
+LOC (gadget): 15619 -> 15675 (+60)
+Goal 1. collect alloc_vec first, and then port the sed_mapper code
+	[a] generate stmt
+	[b] for stmt review the general case
+	[c] compute ranges
 
+Monday 10/06/2025
+LOC (adget): 15675 -> 15713 (+40)
+Goal 1. continue the change of test_gadget_adv
+	[a] read the sed_mapper code
+	[b] read the existing code
+	[c] but how does sed_mapper collect vec_chunk_info? 
+		-> this would need a recursive function from ContainerConfig
+	[d] but how does legacy case handle multiple gadgets
+		-> only one gadget's inp/oup is passed
+	[e] implement the case for non-legacy case
+	[f] think about how to handle legacy case
+
+Goal 2. debug and unit testing
+	[a] passwd word_extract but failed fsm
+	[b] the earlier setting does not work as there is not
+		get_stmt_map_instructions in fsm, sig, pack.rs
+	[c] also the adv case does not work for 2 gadgets together
+
+Goal 3. debug fsm_adget first
+	[a] read: how does assert_msg3 work?
+		-> it retrieves stmt using stmt_map from WitnessSigmaIR1CSConfig
+			.get_gadget_indices
+		-> WitnessSigmaIR1CSConfig retrives indices from
+			its own stmt_map
+		-> cp_map manually defined the gadgets_stmt_map
+			for each component
+	[b] handle the special case, manually construct stmt_vec to follow
+		the original case
+
+Goal 4. debug fsm.rs
+	[a] read how the stmt_vec is constructed
+	[b] pad in test case when constructing data
+	[c] similalry handle pack.rs
+
+Goal 5. debug pack.rs
+	[a] error 202
+	[b] check if stmt is constructed well -> ok
+	[c] check the stmt in gen_msg3
+	[d] check msg3 gen and retrieve
+		the retrieve msg3 retrieved 4 more elements
+		that is: idx_msg3 is 4 more than its supposed CORRECT VALUE.
+		-> to_pad_size is: 34 which is not related though
+	[e] read how msg3_idx is GENERATED.
+		-> it accumulates the msg1, msg2, msg3 index one by one
+		-> compare 7101 7101.2 7201
+	[f] problem is with the to_vec_fp_var() and
+			witnessvar::from
+		-> msg 8101 and 8101.1 and 2
+		-> find the error
+		-> ass the assert
+		-> remove msg 8101, 8101.1, 7101, 7102
+			
+Goal 6. debug sigs.rs
+	[a] pad the subtbl_id -> passed
 
 
 

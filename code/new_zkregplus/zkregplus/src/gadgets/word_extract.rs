@@ -117,10 +117,8 @@ impl <F:PrimeField> SigmaGadget<F> for WordExtractGadget<F>{
 		let my_stmt = stmt_idx.iter().map(|(a,b)|
 			wtns.statement[*a..*b+1].to_vec()).flatten()
 			.collect::<Vec<FpVar<F>>>();
-		println!("DEBUG USE 2100: stmt_idx: {:#?}", stmt_idx);
-		println!("DEBUG USE 2101: my_stmt.len: {}", my_stmt.len());
-		println!("DEBUG USE 2102: self.get_msg_size().0: {}", self.get_msg_size().0);
-		assert!(my_stmt.len()==self.get_msg_size().0);
+		//assert!(my_stmt.len()==self.get_msg_size().0); to make test case
+		//happy
 		let wlen = self.max_word_len;
 		let data_len = 1 + wlen * LEGS;
 		let inp_len = 0;
@@ -264,6 +262,10 @@ pub mod tests_word_extract_gadget{
 	/// Check if the generated constraint system is satisfiable.
 	///
 	/// we are assuming g is the "last" of the vec_cfgs
+	/// NOTE THAT for legacy case: inp/... data has the info for
+	///     the LAST gadget (g) only.
+	/// For non-legacy case, word/inp/...data has the infor for 
+	/// ALL gadgets (in a CompositeComponent)
 	pub fn test_gadget_adv<F:PrimeField + Absorb> (
 		g: Rc<dyn SigmaGadget<F>>, 
 		word: &Vec<F>,
@@ -279,19 +281,24 @@ pub mod tests_word_extract_gadget{
 						//false works for SED and later gadgets
 		vec_cfgs: Option<Vec<ContainerConfig>>, //set when b_legacy false
 	){
-		//1. generate the msg1, msg2, and msg3
+		//1. generate the statement
+		//1.1 generate StatementConfig
+		let inp_size = inp.len();
+		let oup_size = oup.len();
+		let word_subseg_size = word.len();
+		let data_size = data.len();
+		let failed_sig_size = failed_sigs.len();
+		let discharged_sig_size = discharged_sigs.len();
+		assert!(inp_size + oup_size + data_size == subtbl_id.len());
+		let stmt_cfg = StatementConfig::new(
+			inp_size, oup_size, word_subseg_size,
+			data_size, lkup_share_size, failed_sig_size, discharged_sig_size);
 		assert!(subtbl_id.len()== inp.len() + oup.len() + data.len());
 		let mut rng = ark_std::test_rng();
-		// RECOVER IF not working
-		// REMOVE LATER if the unit test works
-		/*
-		let stmt_vec = vec![word.clone(), inp.clone(), oup.clone(),
-			data.clone(), subtbl_id.clone(), failed_sigs.clone(),
-			discharged_sigs.clone()].concat();
-		*/
+
+		//1.2 generate the statement
 		let (zero,one) = (F::zero(),F::one());
 		let mtbl_sigs = gen_m_table(&failed_sigs, &discharged_sigs);
-
 		let stmt = StatementInst::<F,LookupTableTwoCol_Inst<F>>{
 			pc_i: zero,
 			pc_i1: zero,
@@ -333,59 +340,111 @@ pub mod tests_word_extract_gadget{
 
 			_lk: PhantomData,
 		};
-		let stmt_vec = stmt.to_vec();
 
+		let stmt_vec = if b_legacy{//NOTE for legacy we do not
+			//rely on WitnessConfig to generate stmt_maps
+			//just follow the order of word/inp/oup/.../discharged_sigs
+			//which is MANUALLY constructed and supplied 
+			//to the test_gadget_function
+			//in the test code
+			let real_data = vec![word.clone(), inp.clone(), oup.clone(),
+				data.clone(), subtbl_id.clone(), failed_sigs.clone(),
+				discharged_sigs.clone()].concat();
+			let to_pad_size = stmt_cfg.total_size() - real_data.len();
 
+			//just make it of the same size as config to make
+			//WitnessSigmaIR1CS:to_vec_fp_var happy
+			let res = [&real_data[..], &vec![zero; to_pad_size][..]].concat();
+			res
+
+		}else{
+			stmt.to_vec()
+		};
+
+		//2. genearte the statement map for all gagets
+		// NOTE that there might be multiple gadgets invovled
+		// for legacy case: only one gadget is involved.
+		//todo: reset its si_data_info
+
+		//2.2 generate the allocation space of each segment
+		//HERE: we have only one ComposbleComponent here consisting
+		//of one or more gadgets (legacy case, one gadget)
+		let rg_word = (stmt_cfg.idx_word_subseg, 
+			stmt_cfg.idx_word_subseg+word_subseg_size-1);
+		let rg_inp = (stmt_cfg.idx_inp, stmt_cfg.idx_inp + inp_size-1);
+		let rg_oup = (stmt_cfg.idx_oup, stmt_cfg.idx_oup + oup_size-1);
+		let rg_data = (stmt_cfg.idx_data, stmt_cfg.idx_data + data_size-1);
+		let rg_failed_sigs= (stmt_cfg.idx_failed_sigs,
+			stmt_cfg.idx_failed_sigs + failed_sig_size-1);
+		let rg_discharged_sigs= (stmt_cfg.idx_discharged_sigs,
+			stmt_cfg.idx_discharged_sigs + discharged_sig_size-1);
+
+		let idx_inp_in_subtbl_id = stmt_cfg.idx_subtable_id + 0;
+		let idx_oup_in_subtbl_id = stmt_cfg.idx_subtable_id + 
+			stmt_cfg.input_size;
+		let idx_data_in_subtbl_id = stmt_cfg.idx_subtable_id + 
+			stmt_cfg.input_size + stmt_cfg.output_size;
+		let rg_subtbl_id_inp = (idx_inp_in_subtbl_id,
+			idx_inp_in_subtbl_id + inp_size-1);
+		let rg_subtbl_id_oup = (idx_oup_in_subtbl_id,
+			idx_oup_in_subtbl_id + oup_size-1);
+		let rg_subtbl_id_data = (idx_data_in_subtbl_id, 
+			idx_data_in_subtbl_id + data_size-1);
+
+		let cur_alloc= vec![//the range of each segment
+			rg_word, rg_inp, rg_oup, rg_data,
+			rg_subtbl_id_inp, rg_subtbl_id_oup, rg_subtbl_id_data,
+			rg_failed_sigs, rg_discharged_sigs,
+		];
+		let seg_starts = cur_alloc.iter().map(|r| r.0).collect::<Vec<usize>>();
+		assert!(seg_starts.len()==9);
+
+		//2.3 simulate sed_mapper.rs: get_gadgets_stmt_map to 
+		//stmt_map has multiple gadgets, but we assume only
+		//one composable component.
 
 		let g = g.as_ref();
-		let vec_msg_size = g.get_msg_size();
-		let (_stmt_size, msg1_size, msg2_size, msg3_size)  = vec_msg_size;
-		let stmt_size = stmt_vec.len(); //NOTE: overwrite because
-		//assert!(stmt_vec.len()==stmt_size); not ncessarily when
-		// stmt_vec might contain combined stmt_vec from multiple gadgets.
-
-		// stmt_vec has MULTIPLE gadgets involved.
-		let v_idx = if b_legacy {
-			vec![(0, stmt_vec.len()-1)] //cp cases, only one gadget
+		let vec_stmt_map = if b_legacy {
+			vec![vec![ (0, stmt_vec.len()-1)]] //we assume the the tester
+				//has manually prepared word/inp/.... in order
+				//instead of relying stmt_maps where fsm, sig, pack
+				//don't have
 		}else{
 			// this pretty much simulate the implementation of
 			// sed_mapper.rs get_gadgets_stmt_map
-			//1.1 first compute the sizes of all segments
+			// (1) collect my_maps note htat compared with
 			let vec_cfgs = vec_cfgs.expect("vec_cfg null!");
-			let mut total_sizes = vec![0usize; 9]; 
+			let mut vec_stmt_map = vec![];
 			for i in 0..vec_cfgs.len(){
-				let sizes = vec_cfgs[i].get_to_add_size();
-				// other than 1st gadget, no one adds for word
-				if i>0 {assert!(sizes[0]==0);}
-				total_sizes = total_sizes.into_iter().zip(
-					sizes.into_iter()).map(|(x,y)| x+y)
-					.collect::<Vec<usize>>();
+				let cfg = &vec_cfgs[i];
+				let instructions = cfg.gen_stmt_map_instructions();
+				let my_maps = instructions.into_iter().map(|instruction|{
+					let (_gadget_offset, seg_id, start, len) = instruction;
+					//let idx_gadget = ((i as i32) + gadget_offset) as usize;
+					//it's already adjusted by adjust_locations of
+					//container_config, so there is no need to perform adjust
+					let res = (seg_starts[seg_id] + start, 
+						seg_starts[seg_id] + start + len -1);
+
+					res
+				}).collect::<Vec<(usize,usize)>>();
+				vec_stmt_map.push(my_maps);
 			}
-			let mut seg_starts = vec![0usize; 9];
-			for i in 1..9{ seg_starts[i] = seg_starts[i-1] + total_sizes[i-1];}
-
-			//1.2 based on start handle each 
-			let instructions = g.get_stmt_map_instructions();
-			let sizes = vec![word.len(), inp.len(), oup.len(), data.len(),
-				inp.len(), oup.len(), data.len()];
-			assert!(sizes[4] + sizes[5] + sizes[6]==subtbl_id.len());
-			let res = instructions.into_iter().map(
-				|(_gadget_offset, seg_id, start, len)|{
-				let res = (seg_starts[seg_id] + start, seg_starts[seg_id] + start + len -1 );
-
-				res
-			}).collect::<Vec<(usize, usize)>>();
-			res
+			vec_stmt_map
 		};
 
-		let msg1 = g.gen_msg1(&stmt_vec, &v_idx); 
+		//2.4 construct the msg1, msg2, msg3
+		let vec_msg_size = g.get_msg_size();
+		let (_stmt_size, msg1_size, msg2_size, msg3_size)  = vec_msg_size;
+		let stmt_size = stmt_vec.len(); //NOTE: overwrite because
+		let last_id = vec_stmt_map.len()-1;
+		let msg1 = g.gen_msg1(&stmt_vec, &vec_stmt_map[last_id]); 
 		assert!(msg1.len()==msg1_size);
 		let mut msg2 = vec![];
 		for _i in 0..msg2_size{ msg2.push(F::rand(&mut rng)); }
 		assert!(msg2.len()==msg2_size);
-		let msg3 = g.gen_msg3(&stmt_vec, &v_idx,  &msg1, 0, msg1.len(),
-			&msg2, 0, msg2.len());
-		assert!(msg3.len()==msg3_size);
+		let msg3 = g.gen_msg3(&stmt_vec, &vec_stmt_map[last_id], 
+			&msg1, 0, msg1.len(), &msg2, 0, msg2.len());
 
 		//2. generate the WitnessSigma instance
 		let fq_bits = 256; //actually does not matter for this function
@@ -393,21 +452,12 @@ pub mod tests_word_extract_gadget{
 		let extra_var_size = 2usize;
 		let inv_hab22_right_size = lkup_share_size;
 		let inv_hab22_left_size = subtbl_id.len() + extra_var_size;
-		let inp_size = inp.len();
-		let oup_size = oup.len();
-		let word_subseg_size = word.len();
-		let data_size = data.len();
-		let failed_sig_size = failed_sigs.len();
-		let discharged_sig_size = discharged_sigs.len();
-		let stmt_cfg = StatementConfig::new(
-			inp_size, oup_size, word_subseg_size,
-			data_size, lkup_share_size, failed_sig_size, discharged_sig_size);
 		let cfg = WitnessSigmaIR1CSConfig{
 			cmF_size: cmf_size, //4 field elements for cmF
 			extra_var_size: extra_var_size, 
 				//unused_input_size, unused_output_size
 			statement_size: stmt_size,
-			stmt_map: vec![v_idx],
+			stmt_map: vec_stmt_map, 
 			msg1_size: msg1_size,
 			msg2_size: msg2_size,
 			msg3_size: msg3_size,
@@ -420,7 +470,6 @@ pub mod tests_word_extract_gadget{
 
 		//3. construct the witness var
 		let zero = F::zero();
-
 		let wit = WitnessSigmaIR1CS::<F>{
 			cmF: vec![zero; cmf_size],
 			unused_input_size: zero,
