@@ -489,9 +489,12 @@ impl <F: PrimeField> Container<FpVar<F>>{
 	/// the get_stmt_mapping_sintructions() implementation guarantees that.
 	pub fn extract_stmt_vec(i: usize, cfg: &WitnessSigmaIR1CSConfig,
 		wtns: &WitnessSigmaIR1CSVar<F>)->Vec<FpVar<F>>{
+		//REMOVE LATER ----------------
+		println!("DEBUG USE 6931.0 call get_gadget_indices i: {}", i);
+		//REMOVE LATER ---------------- ABOVE
 		let (stmt_idx, _, _, _) = cfg.get_gadget_indices(i);
 		//REMOVE LATER ------------
-		println!("DEBUG USE 6931.1: stmt_idx: {:#?}", stmt_idx);
+		println!("DEBUG USE 6931.1: i: {}, stmt_idx: {:#?}", i, stmt_idx);
 		//REMOVE LATER ------------ ABOVE
 		let my_stmt = stmt_idx.iter().map(|(a,b)|
 			wtns.statement[*a..*b+1].to_vec()).flatten()
@@ -537,6 +540,7 @@ impl <F: PrimeField> Container<FpVar<F>>{
 		match cfg{
 			ContainerConfig::Column(loc, _name, _, b_const) => {
 				let len = loc.src.3;
+				println!("DEBUG USE 6951: load_from_worker col: name: {}, start_pos: {}, len: {}, loc.src: {:#?}, stmt_vec.len: {}", _name, start_pos, len, loc.src, stmt_vec.len());
 				let col = Col::<FpVar<F>>{
 					data: stmt_vec[start_pos..start_pos+len].to_vec(),
 					cfg: cfg.clone(), 

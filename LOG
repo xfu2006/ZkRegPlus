@@ -20690,4 +20690,30 @@ Goal 6. debug sigs.rs
 	[a] pad the subtbl_id -> passed
 
 
+Tuesday 10/07/2025
+LOC (gadgets): 15713
+Goal 1. regression test -> OK
+Goal 2. debug fsm_adv index 374 out of length 252
+	[a] fsm_adv: load_from(i, wtns_cfg, wtns)
+		-> traits: line 541
+	[b] dump the column location
+		=> extracted: 3 + 1 + 1 + 124 + 124
+				= 253 elements
+		=> but it's trying to construct:
+			mid_states, si_mid_states, si_mid_locs
+			-> so each would be 123 * 3 = 369 elements at least
+		=> so stmt_idx is constructed in the wrong way!
+	[c] so the get_gadget_indices(i) does not work continue 
+		to debug ita
+		-> check what is generated
+		-> fixed should treat as last gadget
+
+Goal 3. debug why compute_sigs fails?
+	[a] erro trace:
+		sigma_ir1cs:1826
+		<- trait.rs 492
+		<- trait.rs: 580
+		<- compute_sig_adv:rs 1988 assert_msg3
+			why test_gadget is 5?
+-- TODO -- debug fsm_adv see why the stmt_vec is not long enough.
 

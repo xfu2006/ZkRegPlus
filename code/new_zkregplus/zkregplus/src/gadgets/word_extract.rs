@@ -261,7 +261,7 @@ pub mod tests_word_extract_gadget{
 	/// generate its msg1 to 3 and call assert3_msg3
 	/// Check if the generated constraint system is satisfiable.
 	///
-	/// we are assuming g is the "last" of the vec_cfgs
+	/// we are assuming g is the "LAST" of the vec_cfgs
 	/// NOTE THAT for legacy case: inp/... data has the info for
 	///     the LAST gadget (g) only.
 	/// For non-legacy case, word/inp/...data has the infor for 
@@ -418,6 +418,11 @@ pub mod tests_word_extract_gadget{
 			for i in 0..vec_cfgs.len(){
 				let cfg = &vec_cfgs[i];
 				let instructions = cfg.gen_stmt_map_instructions();
+				//REMOVE LATER -----------------
+				println!("DEBUG USE 6631.1 i: {} dump of cfg", i);
+				cfg.dump(0);
+				println!("------------------ instructions -----{:#?}", instructions);
+				//REMOVE LATER -----------------
 				let my_maps = instructions.into_iter().map(|instruction|{
 					let (_gadget_offset, seg_id, start, len) = instruction;
 					//let idx_gadget = ((i as i32) + gadget_offset) as usize;
@@ -452,6 +457,7 @@ pub mod tests_word_extract_gadget{
 		let extra_var_size = 2usize;
 		let inv_hab22_right_size = lkup_share_size;
 		let inv_hab22_left_size = subtbl_id.len() + extra_var_size;
+		let n_gadgets = vec_stmt_map.len();
 		let cfg = WitnessSigmaIR1CSConfig{
 			cmF_size: cmf_size, //4 field elements for cmF
 			extra_var_size: extra_var_size, 
@@ -461,7 +467,13 @@ pub mod tests_word_extract_gadget{
 			msg1_size: msg1_size,
 			msg2_size: msg2_size,
 			msg3_size: msg3_size,
-			vec_msg_sizes: vec![vec_msg_size],
+			vec_msg_sizes: vec![vec_msg_size; n_gadgets], //this is simulated
+				//as ContainerConfig cannot generate vec_messages (only gadget
+				//can). But to avoid changing the interfaces, we populate
+				//all as the same vec_msg_size for the LAST gadget g.
+				//this is ok, as get_gadget_indices() later is called
+				//on building assert_msg3, but it only needs the stmt_size
+				//not the msg1-3 sizes. So this should be ok.
 			zi_part2_size: ZiPartTwoInst::<F>::size(true, fq_bits),
 			inv_hab22_left_size: inv_hab22_left_size,
 			inv_hab22_right_size: inv_hab22_right_size,
@@ -485,7 +497,8 @@ pub mod tests_word_extract_gadget{
         let cs = ConstraintSystem::<F>::new_ref();
 		let vec_var = wit.to_vec_fp_var(cs.clone(), &cfg);
 		let witvar = WitnessSigmaIR1CSVar::from_vec(&cfg, &vec_var);
-		g.assert_msg3(0, cs.clone(), &witvar, &cfg).expect("assert m3 fail");
+		let last_idx = cfg.stmt_map.len()-1;
+		g.assert_msg3(last_idx, cs.clone(), &witvar, &cfg).expect("assert m3 fail");
 		assert!(cs.is_satisfied().unwrap());
 	}
 
