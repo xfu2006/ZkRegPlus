@@ -108,6 +108,10 @@ impl <F:PrimeField + Absorb> SigmaGadget<F> for FoldPairGadget<F>{
 		unimplemented!("not needed. handled by legacy code");
 	}
 
+	fn get_container_config(&self)->ContainerConfig{
+		unimplemented!("not needed. handled by legacy code");
+	}
+
 	/// Get the instructions for build its statement.
 	/// NOTE: this is only needed for those used in SedGadgetMapper.
 	/// Others are handled by legacy code in their gadget mapper.
@@ -290,7 +294,8 @@ GadgetMapper<F,LK> for FoldPairMapper<F, LK>{
 			inp_buf: vec![gt1.clone(), vec![hc_a_in, hc_b_in]].concat(), 
 			oup_buf: vec![gt2.clone(), vec![hc_a_out, hc_b_out]].concat(),  				word_subseg: vec![a, b].concat(), 
 			data: vec![], //empty
-			subtable_id: vec![zero; 62 + 62 + 40 +  0],
+			//subtable_id: vec![zero; 62 + 62 + 40 +  0],
+			subtable_id: vec![zero; 62 + 62 +  0], //removed word
 			col1_share: vec![zero; lkup_share_size],  
 			col2_share: vec![zero; lkup_share_size], 
 			m_share: vec![zero; lkup_share_size],

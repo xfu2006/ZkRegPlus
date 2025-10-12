@@ -188,6 +188,29 @@ impl ContainerConfig{
 		}
 	}
 
+	/// split si_data by columns and return if each column
+	/// is a constant (to save cost in logup check).
+	/// total size should be equal to si_data length. 
+	/// each (usize, bool) indicate the column length and whether it's boolean
+	pub fn gen_si_data_info(&self)-> Vec<(usize, bool)>{
+		match self{
+			ContainerConfig::Column(loc,_,_,b_const) => 
+				if loc.src.1==6 && loc.src.0==0{//si_data (IDX_SI_DATA)
+					//only when it is NOT foreign
+					vec![(loc.src.3, *b_const)]
+				}else{//don't handle other segments
+					vec![]
+				},
+			ContainerConfig::Complex(vec, _,_) => {
+				vec.iter().fold(Vec::<(usize,bool)>::new(), 
+				|sum, container|{
+					let res = container.gen_si_data_info();
+					vec![sum, res].concat()
+				})
+			}
+		}
+	}
+
 	/// recursively convert all Location to map instructions
 	pub fn gen_stmt_map_instructions(&self)->Vec<(i32, usize, usize, usize)>{
 		match self{

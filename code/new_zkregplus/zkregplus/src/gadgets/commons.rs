@@ -356,6 +356,7 @@ pub fn two_col_tbl_left_join<F:PrimeField>(
 	let max_val:usize = (1<<RANGE2_BIT) - 1;
 	let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
 
+	println!("DEBUG USE 6999.2===");
 	//2. build a hashmap of tbl2. map from real key to (begin,end) included
 	// on both ends. keys are never zero.
 	let n = tbl2[0].len();
@@ -434,6 +435,18 @@ pub fn two_col_tbl_left_join<F:PrimeField>(
 /// assert that the table is sorted in keys and values (per key)
 pub fn assert_wellformed_sorted_two_col_tbl<F:PrimeField>(tbl: &Vec<Vec<F>>){
 	assert_wellformed_sorted_two_col_tbl_adv(tbl, false);
+}
+
+/// print a two dimension table
+pub fn print_tbl<F:PrimeField>(name: &str, tbl: &Vec<Vec<F>>){
+	println!("===== {} ====", name);
+	let n = tbl[0].len();
+	for i in 0..n{
+		for j in 0..tbl.len(){
+			print!(" {} ", tbl[j][i]);
+		}
+		println!("");
+	}
 }
 /// assert that the table is sorted in keys and values (per key)
 /// (key, id, col) padded with zero and max entries. Relaxed mean that

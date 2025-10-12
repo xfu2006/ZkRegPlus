@@ -427,7 +427,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaCompo
 		//3. build a dummy advice first to get the vec_dfa
 		let n = self.capacity.subsigs;
 		let inp = DfaInput{v_inp_state: vec![F::one(); n]};
-		let dummy_adv = DfaAdvice::new(word, word.len(), &self.capacity,
+		let dummy_adv = DfaAdvice::new(&word_seg, word.len(), &self.capacity,
 			&inp, &v_sigs, &sig_to_id, &discharge_info);
 		let v_dfa = &dummy_adv.dfa_adv_advice.v_dfa;
 		assert!(v_dfa.len()==n);
@@ -454,7 +454,9 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaCompo
 
 
 		let advice = DfaAdvice::<F>::new(
-			&word, word.len(), &self.capacity, &inp, 
+			&word_seg, 
+			word.len(), 
+			&self.capacity, &inp, 
 			&v_sigs, &sig_to_id, &discharge_info //keep the v_sigs earlier
 		);
 
@@ -481,7 +483,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaCompo
 		let (s_data, _e_data) = vec_alloc[3];
 		let (s_subtbl_inp, _e_subtbl_inp) = vec_alloc[4];
 		let (s_subtbl_oup, _e_subtbl_oup) = vec_alloc[5];
-		let (s_subtbl_data, _e_subtbl_data) = vec_alloc[6];
+		let (s_subtbl_data, e_subtbl_data_end) = vec_alloc[6];
 		let (s_failed_sigs, _e_failed_sigs) = vec_alloc[7];
 		let (s_discharged_sigs, _e_discharged_sigs) = vec_alloc[8];
 		let wlen = self.max_word_len();
@@ -500,6 +502,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaCompo
 		];
 
 		//2. based on seg_starts construct map instruction
+		let mut vec_si_info = vec![];
 		for i in 0..self.gadgets.len(){
 			//2.1. collect maps
 			let instructions = self.gadgets[i].borrow()
@@ -525,11 +528,19 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaCompo
 			for j in 0..9 {nxt_starts[j] += ns[j];}
 			seg_starts.push(nxt_starts);
 			vec_res.push(my_maps);
+
+			let si_data_info = self.gadgets[i].borrow()
+				.get_container_config().gen_si_data_info();
+			vec_si_info.push(si_data_info);
 		}
 
 		assert!(vec_res.len()==self.num_gadgets());
-		if 1>0 {panic!("STOP HERE 300 implement");}
-		let vec_chunk_info = vec![];
+		let vec_chunk_info = vec_si_info.concat();
+		let total_si_info_len = vec_chunk_info.iter().map(|(s,_)| s)
+			.sum::<usize>();
+		let total_si_data_len = e_subtbl_data_end-s_subtbl_data+1;
+		assert!(total_si_info_len==total_si_data_len);
+
 		(vec_res, vec_chunk_info)
 	}
 

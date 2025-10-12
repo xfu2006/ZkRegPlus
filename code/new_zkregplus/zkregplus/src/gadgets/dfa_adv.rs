@@ -181,6 +181,7 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		v_sig_obj: &Vec<Arc<ClamavSig>>, //needs to cover all inp_sigs
 		sig_to_id: &HashMap<String,usize>,
 	) ->Self{
+
 		let stmt_container = Container::<F>::new("dfa_adv_stmt");
 		//1. padding the input when necessary
 		let dummy_fsm_id = F::from(ClamavDB::<F>::dfa_id(0, 0));
@@ -1038,6 +1039,9 @@ impl <F:PrimeField> SigmaGadget<F> for DfaAdvGadget<F>{
 		self.my_idx_in_context = Some(idx);
 	}
 
+	fn get_container_config(&self)->ContainerConfig{
+		self.get_container_cfg().unwrap()
+	}
 	/// Get the instructions for build its statement.
 	/// NOTE: this is only needed for those used in SedGadgetMapper.
 	/// Others are handled by legacy code in their gadget mapper.

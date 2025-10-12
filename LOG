@@ -20407,7 +20407,7 @@ Goal 2. fix the packed diff problem
 	[d] finally fixed!
 
 Goal 3. analyze performance improvement.
-	----- PERFORMANCE DATA ------
+	----- PERFORMANCE DATA ------ ID: 001
 	[a] before logup and tbl_filter improve applied
 		module 8 size: 1271k-436k = 835k
 		right after module 14 R1CS: 2182741
@@ -20483,7 +20483,7 @@ Goal 2. improve the sigma_ir1cs first
 	[a] regression testing first
 	[b] replace sigma_ir1cs handling of query table
 	[c] BOFORE IMPROVEMENT ---------------------
-		---- PERFORMANCE DATA --------------------
+		---- PERFORMANCE DATA -------------------- ID: 002
 		module 8 size: 736k-436k = 300k 
 		right after module 14: R1CS: 1102129
 		lkup size: 930543 (cutting 300k)
@@ -20501,7 +20501,7 @@ LOC (circ): 2615
 
 Goal 1. collect data
 	[a] ATER case 3 improevement
-		---- PERFORMANCE DATA --------------------
+		---- PERFORMANCE DATA -------------------- ID: 003
 		module 8 size: 736k-436k = 300k  (same)
 		right after module 14: R1CS: 1102129 (same)
 		lkup size: 930543 (cutting 300k)
@@ -20691,7 +20691,8 @@ Goal 6. debug sigs.rs
 
 
 Tuesday 10/07/2025
-LOC (gadgets): 15713
+LOC (gadgets): 15713 -> 15697 (-20)
+LOC (circ): 2627
 Goal 1. regression test -> OK
 Goal 2. debug fsm_adv index 374 out of length 252
 	[a] fsm_adv: load_from(i, wtns_cfg, wtns)
@@ -20715,5 +20716,150 @@ Goal 3. debug why compute_sigs fails?
 		<- trait.rs: 580
 		<- compute_sig_adv:rs 1988 assert_msg3
 			why test_gadget is 5?
--- TODO -- debug fsm_adv see why the stmt_vec is not long enough.
+	[b] check discharge 
+
+Goal 4. check WitSig vec_msg_size
+	[a] read WitSigConfig def
+		msg1_size, msg2_size and msg3_size should
+		be the total msg size
+	[b] regression testing
+
+Goal 5. remove debug msg
+	[a] 6951
+	[b] identify the next component to work with 
+
+Goal 6. modify cp_mapper
+	[a] read existing code
+	[b] do it gadgets by gadgets. At the end sum up all segements
+		and verify its equal length as subtbl_data
+	
+Goal 7. pack sigs
+	[a] implement it
+	[b] do the unit testing code but crash
+	[c] fix crash
+	[d] data matches but si_data allocation is -1. why? -> who's passing
+		to it?
+
+Wed 10/08/2025
+LOC (circ): 2673 
+LOC (gadget): 15697
+LOC (sonobe): 19816
+Goal 1. fix the composite circ gen_statement_structure 
+	[a] read existing code
+	[b] fix the starting position problem
+	[c] check cp_mapper unit testing again
+
+Goal 2. implement sed_mapper.get_gageet_stmt_map and collect
+	si_info
+	[a] set up framework -> DONE
+	[b] in container_config add gen_si_data_info() -> DONE
+	[c] in sed_mapper.rs call get_container and get_si_data_info() -> DONE
+	[d] collect the si_data_size and verify -> DONE
+	[e] set up get_container_cfg() framework -> DONE
+	[e] implement gen_si_data_info -> DONE
+	[f] verify
+
+Goal 3. debug why general framework does not match size
+	[a] dump info
+	[b] ignore foreign column
+	[c] dfa implementation similarly
+
+Goal 4. debug sigma_ir1 to_vec() assertion fail problem
+	[a] print out print out the inp/oup/data size of each segment
+		of components
+		7, 7, 287
+		152, 152, 8767
+		6, 6, 942, 942
+		=> 
+		inp: 165
+		oup: 165
+		data: 9996
+		but none of them match: inp: 172, oup: 172, data: 9383
+	[b] remove subwrd in subtbl_id -> fixed
+	[c] remove dbg msg
+
+Goal 5. sigma_ir1cs.rs: 2428
+	[a] read code
+	[b] fix
+
+Goal 6. implement case 2
+	[a] read code
+	[b] add perf code
+	[c] design alg
+	[d] implementation
+	[e] measure constraint
+	[f] collect data -> at this moment case3 has 94%
+	[g] but it fails the test 5.1
+
+Goal 7. fix contraint 5.1
+	[a] why prod * v != 1? 2101.1 and 2101.2
+	[b] problem qry_tabl2 DOES NOT MATCH between 2101.1 and 2101.2
+
+Thursday 10/09/2025
+Goal 1. qry_tbl2
+	[a] find the problem
+	[b] fix
+
+Goal 2. failed to check hab22 -> fixed
+Goal 3. to_vec() fails again, data len is 0
+	[a] fails on create_sigma_fold_pair
+
+Friday 10/10/2025
+Goal 1. debug sigma_cycle_pair
+	[a] read code
+	[b] debug -> solved now framework can run
+
+Goal 2. fix the data segment -> now it's complaining about assert
+	tbl wellformedness (fsm_adv::new)
+	[a] regressoin test first
+		-> all pass but why?
+	[b] identify the problem
+		-> two_col_tbl_left_joi
+		-> cleared -> RANGE TABLE needs to use 18-bit!!!
+		in clam_db
+
+Goal 3. dfa_adv.rs: 274
+	[a] nibbles: 23808, nlen: 31744
+	[b] why the nibbles passed to dfa is not 
+		-> it's passed over from word_extract_nibles
+	[c] check how fsm_adv handles the incomplete nibble sequence
+		passed over from word_extract
+		-> looks like inconsistent between dfa mapper and sed mapper.
+
+Saturday 10/11/2025
+Goal 1. debug dfa_adv length problem
+	[a] check is sed_mapper padding
+		-> dbg 6331
+	[b] observation: sed component has the input padded but not for
+		dfa -> why check trace
+	[c] fix problem
+	[d] regression test
+
+Goal 2. new bug: sigma_ir1cs.rs: 214: cannot find entry for tbl_id[282640]: (1879048194: 285697): 272210
+	-> it's cannot find 285697 which is indeed greater than 262144.
+		-> looks like it's caused by some distance calculation
+		-> make adjustment of the file and see how it looks like
+		making the pattern closer
+		-> does not make the difference but TEST1.bin is 170613 bytes
+		roughly 350k. so it can be greater than the size capacity.
+
+	-> use a shorter file so that size *2 < 2^18
+	-> working!
+	all: FOLDPOT Entire Process: mem: 71 GB: 892.049831534s
+	-> but the const rate 0 seems very low though.
+
+Sunday 10/12/2025
+Goal 1. collect data
+		---- PERFORMANCE DATA -------------------- ID: 004 (before changing
+		any modules except cp_mapper already one)
+		module 8 size: 541k-436k =  100k (why improved? the flie size should
+			not impact)
+		right after module 14: R1CS: 911k 
+		lkup size: 930031 (cutting 300k)
+		qry cost (compare DEBUG 1201): 3.9-1.48M = 2.42M (improved 0.4M compared
+				with 2.8M)
+		combined key size: 10381083 (max_row_col: 5.52M)
+
+Goal 2. improve word_extract 
+
 

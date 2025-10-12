@@ -79,6 +79,11 @@ impl <F:PrimeField> SigmaGadget<F> for SumGadget<F>{
 	fn set_container_cfg(&mut self,_cfg: Rc<Vec<ContainerConfig>>,_idx: usize){
 		unimplemented!("not needed. handled by legacy code");
 	}
+
+	fn get_container_config(&self)->ContainerConfig{
+		unimplemented!("not needed. handled by legacy code");
+	}
+
 	/// Get the instructions for build its statement.
 	/// NOTE: this is only needed for those used in SedGadgetMapper.
 	/// Others are handled by legacy code in their gadget mapper.

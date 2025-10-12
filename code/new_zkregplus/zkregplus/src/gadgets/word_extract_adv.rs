@@ -136,6 +136,7 @@ impl <F: PrimeField> WordExtractAdvAdvice<F>{
 		//2. do the conversion
 		let nibbles = packed_to_nibbles(&word);
 		assert!(nibbles.len() == LEGS * word.len());
+		println!("DEBUG USE 6331.1 in word_extract nibbles: {}", nibbles.len());
 		#[cfg(test)]{ 
 			use utils::data::{pack_nibbles};
 			let packed = pack_nibbles(&nibbles);
@@ -230,6 +231,10 @@ impl <F:PrimeField> SigmaGadget<F> for WordExtractAdvGadget<F>{
 	fn set_container_cfg(&mut self, cfgs_context: Rc<Vec<ContainerConfig>>, idx: usize){
 		self.cfgs_context = Some(cfgs_context);
 		self.my_idx_in_context = Some(idx);
+	}
+
+	fn get_container_config(&self)->ContainerConfig{
+		self.get_container_cfg().unwrap()
 	}
 
 	/// Get the instructions for build its statement.

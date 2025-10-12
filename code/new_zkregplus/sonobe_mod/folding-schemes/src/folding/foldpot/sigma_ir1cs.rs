@@ -205,7 +205,10 @@ impl <F:PrimeField> LookupTableTwoCol<F> for LookupTableTwoCol_Inst<F>{
 	/// hashmaps (the occurence entries)
 	fn fill_mvec(&self, tbl_ids: &Vec<F>, vals: &Vec<F>, map: &mut HashMap<usize, usize>){
 		assert!(tbl_ids.len()==vals.len(), "tbl_id.len != vals.len");
-		let idx = tbl_ids.par_iter().zip(vals.par_iter()).enumerate()
+		let idx = tbl_ids.iter().zip(vals.iter()).enumerate()
+		//RECOVER LATER ----------
+		//let idx = tbl_ids.par_iter().zip(vals.par_iter()).enumerate()
+		//RECOVER LATER ----------
 			.map(|(i, (x,y))|{
 			//if subtbl_id is 0, ignore any entry just return idx 0
 			if x.is_zero(){ 0usize}
@@ -302,6 +305,7 @@ pub trait SigmaIR1CS<F: PrimeField, LK: LookupTableTwoCol<F>, GM: GadgetMapper<F
 	/// approach.
 	fn set_container_config(&mut self, advice: &Rc<dyn NdAdvice>); 
 
+
 	/// Given the  problem statement (actually non-determisnitc advice
 	/// provided by the prover)
 	/// and z_i.1 (part 2 of pub input, z_i.0 is
@@ -348,6 +352,9 @@ pub trait SigmaGadget<F:PrimeField>: Debug{
 	/// in the SED component or circuit, take caution when interpreting
 	/// its semantics).
 	fn set_container_cfg(&mut self, cfgs_context: Rc<Vec<ContainerConfig>>, idx: usize);
+
+	/// retrieve its conainer config
+	fn get_container_config(&self)->ContainerConfig;
 
 	/// return the estimated cost in terms of number of constraints.
 	/// This is mainly used to apply heurstics to pick the applicable
@@ -1887,8 +1894,6 @@ impl <F:PrimeField> WitnessSigmaIR1CS<F>{
 			"stmt.len: {} != cfg.total_size: {}", self.statement.len(),
 			stmt_cfg.total_size());
 
-		println!("DEBUG USE 6101: stmt_cfg: {:#?}", stmt_cfg);
-
 		let st_part1 = &self.statement[0..idx_si_data];
 		let st_part2 = &self.statement[idx_si_data..idx_si_data+si_data_len];
 		let st_part3 = &self.statement[idx_si_data+si_data_len..];
@@ -2215,6 +2220,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		self.gadget_mapper.borrow_mut().set_container_config(advice);
 	}
 
+
 	/// return the estimated cost in terms of number of constraints.
 	/// This is mainly used to apply heurstics to pick the applicable
 	/// circuit with minimal cost for a given word
@@ -2415,7 +2421,10 @@ where 	C: CurveGroup<ScalarField=F>,
 		let qry_tbl2 = vec![
 			vec![unused_input_size, unused_output_size],
 			si.inp_buf.clone(), si.oup_buf.clone(),
-			si.word_subseg.clone(), si.data.clone()
+		//	si.word_subseg.clone(),  removed because si_word is not constructed
+		//  word has no range restriction, it can be anything because
+		// it's packed.
+			si.data.clone()
 		].concat();
 		let qry_tbl1 = vec![ vec![zero,zero], si.subtable_id.clone()].concat();
 		assert!(qry_tbl2.len()==inv_hab22_left_size);
@@ -2427,7 +2436,8 @@ where 	C: CurveGroup<ScalarField=F>,
 		let inv_hab22_left = (0..inv_hab22_left_size).into_par_iter().map(|i|{
 			let v2 = qry_tbl2[i];
 			let v = alpha + qry_tbl1[i]*beta + v2 ;
-			v.inverse().expect("inv failed")
+			let res = v.inverse().expect("inv failed");
+			res
 		}).collect::<Vec<F>>();
 		let sum_hab22_left = qry_tbl1.par_iter().zip(inv_hab22_left.par_iter())
 			.map(|(&a,&b)|{
@@ -2972,11 +2982,14 @@ where 	C: CurveGroup<ScalarField=F>,
 		let qry_tbl2 = vec![
 			vec![unused_input_size, unused_output_size],
 			si.inp_buf.clone(), si.oup_buf.clone(),
-			si.word_subseg.clone(), si.data.clone()
+			//si.word_subseg.clone(),  REMOVE no need to tag word seg
+			//as it's arbitrary
+			si.data.clone()
 		].concat();
 		let qry_tbl1 = vec![ 
 			vec![zero_var.clone(),zero_var.clone()], 
 			si.subtable_id.clone()].concat();
+		assert!(qry_tbl2.len()==qry_tbl1.len());
 
 		//NOTE: b_check_lkup should be regarded as a FIXED circuit specific
 		//array. To save implementation cost (avoiding large cascading
@@ -3048,24 +3061,26 @@ where 	C: CurveGroup<ScalarField=F>,
 		//    summing it up.
 		//let cv_zero = FpVar::<F>::new_constant(cs.clone(), F::zero());
 		let lb_one = LinearCombination::from((F::one(),Variable::One));
+		let (mut n_case1, mut n_case2, mut n_case3) = (0,0,0);
 		for i in 0..inv_hab22_left_size{
 			let tb_id = qry_tbl1[i].value()?;
-			if qry_tbl1[i].is_constant(){
+			if qry_tbl1[i].is_constant(){ 
 				if tb_id.is_zero(){//case 1 do nothing, 0 r1cs
-				}else{//case 2
-					let nc = cs.num_constraints();
-					/*
+					n_case1 += 1;
+				}else{//case 2. only 1 constraint coz qry[i] is CONSTANT
 					let v = &alpha + &(&qry_tbl1[i]*&beta) + &qry_tbl2[i];
-					let prod = &v * &wtns_var.inv_hab22_left[i];
-					prod.enforce_equal(&one_var)?;
-					sum_hab22_left += &(&qry_tbl1[i] * &wtns_var.inv_hab22_left[i]);
-					*/
-					if 1>0 {
-						panic!("STOP HERE 1000. case 2 cons: {}", 
-							cs.num_constraints() - nc);
-					}
+					let lb_v = var_to_lb(&v, F::one());
+					let lb_wit= var_to_lb(&wtns_var.inv_hab22_left[i], F::one());
+					cs.enforce_constraint(
+						lb_v,
+						lb_wit,
+						lb_one.clone(),
+					)?;
+					sum_hab22_left += &(&qry_tbl1[i] * &wtns_var.inv_hab22_left[i]); //this one does not cost really it's just a pure add (0 r1cs)
+
+					n_case2 += 1;
 				}
-			}else{
+			}else{//3 r1cs 
 				let v = &alpha + &(&qry_tbl1[i]*&beta) + &qry_tbl2[i];
 				let lb_v = var_to_lb(&v, F::one());
 				let lb_wit= var_to_lb(&wtns_var.inv_hab22_left[i], F::one());
@@ -3076,6 +3091,7 @@ where 	C: CurveGroup<ScalarField=F>,
 				)?;
 
 				sum_hab22_left += &(&qry_tbl1[i] * &wtns_var.inv_hab22_left[i]);
+				n_case3 += 1;
 			};
 
 			if i%64==0{//avoid building too long linear combinations
@@ -3091,6 +3107,8 @@ where 	C: CurveGroup<ScalarField=F>,
 			}
 		}
 		println!("DEBUG USE 1201: AFTER inv_hab22: {}, cs.lc_size: {}, cons: {}", inv_hab22_left_size, cs.inner().unwrap().borrow().lc_map.len(), cs.num_constraints());
+		let n_total = n_case1 + n_case2 + n_case3;
+		println!("PERFORAMNCE 1003: n_case1: ({}, {:.2}%), n_case2: ({}, {:.2}%), n_case3: ({}, {:.2}%)", n_case1, 100.0*(n_case1 as f64)/(n_total as f64), n_case2, 100.0*(n_case2 as f64)/(n_total as f64), n_case3, 100.0*(n_case3 as f64)/(n_total as f64));
 
 		if b_debug{
 			let csat = cs.is_satisfied();

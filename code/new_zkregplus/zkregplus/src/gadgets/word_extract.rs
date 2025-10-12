@@ -42,6 +42,10 @@ impl <F:PrimeField> SigmaGadget<F> for WordExtractGadget<F>{
 		unimplemented!("not needed. handled by legacy code");
 	}
 
+	fn get_container_config(&self)->ContainerConfig{
+		unimplemented!("not needed. handled by legacy code");
+	}
+
 	/// Get the instructions for build its statement.
 	fn get_stmt_map_instructions(&self)->Vec<(i32, usize, usize, usize)>{
 		let wlen = self.max_word_len;
@@ -418,11 +422,6 @@ pub mod tests_word_extract_gadget{
 			for i in 0..vec_cfgs.len(){
 				let cfg = &vec_cfgs[i];
 				let instructions = cfg.gen_stmt_map_instructions();
-				//REMOVE LATER -----------------
-				println!("DEBUG USE 6631.1 i: {} dump of cfg", i);
-				cfg.dump(0);
-				println!("------------------ instructions -----{:#?}", instructions);
-				//REMOVE LATER -----------------
 				let my_maps = instructions.into_iter().map(|instruction|{
 					let (_gadget_offset, seg_id, start, len) = instruction;
 					//let idx_gadget = ((i as i32) + gadget_offset) as usize;

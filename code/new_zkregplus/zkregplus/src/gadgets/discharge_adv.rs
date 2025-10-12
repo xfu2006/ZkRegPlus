@@ -3240,6 +3240,10 @@ impl <F:PrimeField> SigmaGadget<F> for DischargeAdvGadget<F>{
 		self.my_idx_in_context = Some(idx);
 	}
 
+	fn get_container_config(&self)->ContainerConfig{
+		self.get_container_cfg().unwrap()
+	}
+
 	/// Get the instructions for build its statement.
 	/// NOTE: this is only needed for those used in SedGadgetMapper.
 	/// Others are handled by legacy code in their gadget mapper.

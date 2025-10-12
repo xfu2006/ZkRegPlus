@@ -463,7 +463,6 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		let wlen = self.max_word_len();
 		assert!(e_wd - s_wd + 1 == wlen);
 		let mut vec_res= vec![];
-
 	
 		//1. word extract gadget prob statement:
 		// [word; act_w_len; extracted_word, no_inp/out, subtbl_ids]
@@ -473,6 +472,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		let we_len = we.iter().map(|x| x.1-x.0+1).sum::<usize>();
 		assert!(we_len==self.gadgets[0].borrow().get_msg_size().0);
 		vec_res.push(we);
+
 
 		//2. dfa_crit problem statement
 		// [inp; oup; data; subtbl_id (inp; states; oup; trans)]
@@ -500,7 +500,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 
 		//3. pack_crit gadget problem statement structure
 		//[data; subtbl_id]
-		let (olen,_jlen,slen) = (self.capacity.final_states_len,
+		let (olen,jlen,slen) = (self.capacity.final_states_len,
 			self.capacity.join_buf_capacity, self.capacity.sig_buf_capacity);
 		let pack_crit= vec![
 			(s_inp, s_inp),  //the input state
@@ -556,9 +556,45 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 
 		//2. build the results
 		assert!(vec_res.len()==self.num_gadgets());
-		if 1>0 {panic!("STOP HERE 100 implement");}
-		let vec_chunk_info = vec![];
-		(vec_res, vec_chunk_info)
+		let vec_si_info = vec![ //chunk infor for si_data
+			// *** see subtbl_data definition in build_statement_comp ***
+			// -- the word extract generated data
+			(1, true), // vec![zero], //act_wrd_len
+			// -- the fsm gadget generated data
+			(nlen, true), // vec![f_char; nlen], //the extracted word
+			(nlen-1, true), //vec![f_crit_states; nlen-1], //the states
+			(nlen, true), // vec![f_crit_trans; nlen], //the transitions
+			// -- the pack gadget generated data
+			//TODO!
+			(olen, false), 	//advice.packfinal_crit_advice.subtbl_id.clone(), 
+							//for final states, padded
+							//since it might be padded with zero (undecided
+							//at run time - we have to set it to false)
+			(olen, true), // vec![zero; olen], //the m_table
+			// -- the sig gadget generated data
+			//	advice.sigs_advice.gen_subtbl_id_for_data(), (below)
+			(olen, false),  //all gen_sids are generated run time -> false
+			(olen, false),
+			(olen, true),
+			(jlen, false),
+			(jlen, false),
+			(jlen, true),
+			(jlen, true),
+			(slen, true),
+			(slen, true),
+			(slen, true),
+			(jlen, true),
+			(sig_cap.count_sig_no_crit_pat, false), //ids_no_pat
+			(1, true),
+
+		];
+		let total_si_info_size = vec_si_info.iter().map(|(s,_)| s)
+			.sum::<usize>();
+		let total_data_size = vec_alloc[3].1 - vec_alloc[3].0 + 1;
+		let total_si_data_size = vec_alloc[6].1 - vec_alloc[6].0 + 1;
+		assert!(total_si_info_size==total_data_size);
+		assert!(total_si_info_size==total_si_data_size);
+		(vec_res, vec_si_info)
 	}
 
 	/// return the inp, oup, data, failed, discharged_sigs

@@ -99,6 +99,7 @@ pub trait ComponentMapper<F:PrimeField, LK: LookupTableTwoCol<F>>: Debug{
 	/// by legacy gode.
 	fn set_container_config(&mut self, _advice: &Rc<dyn NdAdvice>); 
 
+
 }
 
 
@@ -267,12 +268,11 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 				cfg.idx_discharged_sigs+ vec_starts[i][4] + vec_sizes[i][4]-1);
 
 			let rg_subtbl_id_inp = (idx_inp_in_subtbl_id +  vec_starts[i][0],
-				idx_inp_in_subtbl_id + vec_sizes[i][0]-1);
+				idx_inp_in_subtbl_id + vec_starts[i][0] + vec_sizes[i][0]-1);
 			let rg_subtbl_id_oup = (idx_oup_in_subtbl_id +  vec_starts[i][1],
-				idx_oup_in_subtbl_id + vec_sizes[i][1]-1);
+				idx_oup_in_subtbl_id + vec_starts[i][1] + vec_sizes[i][1]-1);
 			let rg_subtbl_id_data = (idx_data_in_subtbl_id +  vec_starts[i][2],
-				idx_data_in_subtbl_id + vec_sizes[i][2]-1);
-
+				idx_data_in_subtbl_id + vec_starts[i][2] + vec_sizes[i][2]-1);
 
 			let cur_alloc= vec![
 				rg_word, rg_inp, rg_oup, rg_data,
@@ -290,7 +290,7 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 			.sum::<usize>();
 		assert!(vec_maps.len()==num_gadgets);
 		cfg.reset_si_data_info(si_data_info);
-	
+		
 
 		//4. collect the joins
 		let opt_joins = self.vec_components.iter().enumerate().map(|(i,c)|
@@ -367,13 +367,14 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 			else {failed_sigs};
 		let discharged_sigs = vec_discharged_sigs.concat();
 
-		let subtbl_word = vec![F::zero(); self.max_word_len()];
+		//subtbl_word is not needed any more because
+		//it doesnot need to be checked anyway.
+		//let subtbl_word = vec![F::zero(); self.max_word_len()];
 		let subtbl_inp = vec_st_inp.concat();
 		let subtbl_oup = vec_st_oup.concat();
 		let subtbl_data = vec_st_data.concat();
-		let subtbl_id = vec![subtbl_inp, subtbl_oup, subtbl_word, subtbl_data]
+		let subtbl_id = vec![subtbl_inp, subtbl_oup, subtbl_data]
 			.concat();
-
 
 		#[cfg(test)]{
 			assert!(inp.len()==cfg.input_size);

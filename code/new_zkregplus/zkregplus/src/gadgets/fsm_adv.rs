@@ -201,6 +201,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 	) ->Self{
 		let sname = if b_igc {"fsm_adv_stmt_igc"} else {"fsm_adv_stmt_cs"};
 		let stmt_container = Container::<F>::new(sname);
+		println!("DEBUG USE 6331.3 in fsm_adv: nibbles len: {}", nibbles.len());
 
 		//1. construct the fsm_acc combo which has the transition
 		// info and results in (state, loc) columns
@@ -800,6 +801,10 @@ impl <F:PrimeField> SigmaGadget<F> for FsmAdvGadget<F>{
 		self.my_idx_in_context = Some(idx);
 	}
 
+	fn get_container_config(&self)->ContainerConfig{
+		self.get_container_cfg().unwrap()
+	}
+
 	/// Get the instructions for build its statement.
 	/// NOTE: this is only needed for those used in SedGadgetMapper.
 	/// Others are handled by legacy code in their gadget mapper.
@@ -859,44 +864,23 @@ impl <F:PrimeField> SigmaGadget<F> for FsmAdvGadget<F>{
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{
-		//REMOVE LATER---------------
-		println!("DEBUG USE 6931: before extract stmt vec");
-		//REMOVE LATER--------------- ABOVE
 
 		//1. retrive the statement instance and get all parts
 		let cfg = self.get_container_cfg().expect("container cfg not set!");
 		let stmt = Container::<FpVar<F>>::load_from(i, wtns_cfg, wtns, &cfg)?;
-		//REMOVE LATER ------------
-		println!("DEBUG USE 6801: capacity: {:?}", self.capacity);
-		let nc = cs.num_constraints();
-		println!("DEBUG USE 6921: assert_msg3 of fsm_adv: container cfg==");
-		cfg.dump(0);
-		//REMOVE LATER ------------ ABOVE
 
 		//2. validate the fsm_acc combo 
 		let fsm_acc = stmt.get_container("fsm_acc")?;
 		self.validate_fsm_acc_container(&fsm_acc.borrow(), cs.clone())?;
-		//REMOVE LATER ------------
-		println!("DEBUG USE 6801.1: cs: {}", cs.num_constraints()-nc);
-		let nc = cs.num_constraints();
-		//REMOVE LATER ------------ ABOVE
 
 		//3. validate the proj_subsig_store
 		let pss = stmt.get_container("proj_subsig_store")?;
 		let r1 = wtns.msg2[0].clone();
 		let r2 = wtns.msg2[1].clone();
 		self.validate_proj_subsig_store(&pss.borrow(),r1.clone(),cs.clone())?;
-		//REMOVE LATER ------------
-		println!("DEBUG USE 6801.2: cs: {}", cs.num_constraints()-nc);
-		let nc = cs.num_constraints();
-		//REMOVE LATER ------------ ABOVE
 
 		//3. validate the packed trace combo
 		self.validate_packed_trace(&r1, &r2, &stmt, cs.clone())?;
-		//REMOVE LATER ------------
-		println!("DEBUG USE 6801.3: cs: {}", cs.num_constraints()-nc);
-		//REMOVE LATER ------------ ABOVE
-		
 
 		Ok(())
 	}
