@@ -20849,17 +20849,40 @@ Goal 2. new bug: sigma_ir1cs.rs: 214: cannot find entry for tbl_id[282640]: (187
 	-> but the const rate 0 seems very low though.
 
 Sunday 10/12/2025
+LOC (gadget): 15753
 Goal 1. collect data
 		---- PERFORMANCE DATA -------------------- ID: 004 (before changing
 		any modules except cp_mapper already one)
-		module 8 size: 541k-436k =  100k (why improved? the flie size should
-			not impact)
+		module 8 size: 541k-246=  300k
 		right after module 14: R1CS: 911k 
 		lkup size: 930031 (cutting 300k)
 		qry cost (compare DEBUG 1201): 3.9-1.48M = 2.42M (improved 0.4M compared
 				with 2.8M)
 		combined key size: 10381083 (max_row_col: 5.52M)
+		n_case1: (44, 0.00%), n_case2: (190500, 20.48%), n_case3: (739487, 79.51%)
+
 
 Goal 2. improve word_extract 
+	[a] read assert_msg3
+	[b] comment out the check out f_char constant in assert msg3
+		-> improved from nibbles to w_len because
+		-> weighted sum is essentially add costing nothing!
+		---- PERFORMANCE DATA -------------------- ID: 005 (after word_extract)
+		module 8 size: 541k-246=  300k 
+		right after module 14: R1CS: 911k 
+		lkup size: 930031 
+		qry cost (compare DEBUG 1201): 3.9-1.48M = 2.42M 
+		combined key size: 10381083 (max_row_col: 5.52M)
+		n_case1: (44, 0.00%), n_case2: (190500, 20.48%), n_case3: (739487, 79.51%)
+		GenConstraints: Step 4: *** ENTIRE CIRCUIT CONSTRUCTED *** . cons: 24444663: 16.409024ms
+		main: Step 12. Gen groth16 prf, mem: 71 GB: 199.433283615s
+		-------------
+	[c] exactly the same, no cost improvement as const comparison anyway
+		does not count into constriant system.
+	[d] regression test.
+
+Goal 3. 
+
+
 
 

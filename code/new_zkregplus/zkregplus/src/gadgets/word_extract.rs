@@ -12,7 +12,6 @@ use ark_r1cs_std::{
 	alloc::AllocVar,
 	eq::EqGadget,
 };
-use data_processor::{clam_db::CHAR};
 use std::any::Any;
 use utils::{data::{packed_to_nibbles}};
 use std::rc::{Rc};
@@ -112,9 +111,14 @@ impl <F:PrimeField> SigmaGadget<F> for WordExtractGadget<F>{
 		vec![]
 	}
 
+	/// COST:
+	/// r1cs: 6*word_len (note: not nibbles), vasr: 4*word_len
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{
+		let b_debug = false;
+		let nc = cs.num_constraints();
+		let nv = cs.num_witness_variables();
 
 		//1. retrive the statement instance and get all parts
 		let (stmt_idx, _, _, _) = cfg.get_gadget_indices(i);
@@ -127,7 +131,7 @@ impl <F:PrimeField> SigmaGadget<F> for WordExtractGadget<F>{
 		let data_len = 1 + wlen * LEGS;
 		let inp_len = 0;
 		let oup_len = 0;
-		let subtbl_id_len = data_len + inp_len + oup_len;
+		let _subtbl_id_len = data_len + inp_len + oup_len;
 
 		//2. get the parts of the statement
 		//organize statement: structured as
@@ -136,8 +140,8 @@ impl <F:PrimeField> SigmaGadget<F> for WordExtractGadget<F>{
 		let word_seg = my_stmt[0..wlen].to_vec(); //from word
 		let act_seg_len = my_stmt[wlen].clone(); //from data
 		let extracted_word = my_stmt[wlen+1..wlen+1+LEGS*wlen].to_vec();
-		let subtbl_id = my_stmt[wlen+1+LEGS*wlen..
-			wlen+1+LEGS*wlen+subtbl_id_len].to_vec();
+		let _subtbl_id = my_stmt[wlen+1+LEGS*wlen..
+			wlen+1+LEGS*wlen+ _subtbl_id_len].to_vec();
 		let mut remain =  act_seg_len.clone();
 
 		//3. build the power of 4's
@@ -169,15 +173,25 @@ impl <F:PrimeField> SigmaGadget<F> for WordExtractGadget<F>{
 
 		//5. assert the range of all chars should be CHAR range
 		// note we are asserting data[1..]
-		let char_tbl = FpVar::<F>::new_constant(cs.clone(), F::from(CHAR))?;
-		for i in 1..data_len{
-			subtbl_id[i].enforce_equal(&char_tbl)?;
-			#[cfg(test)]{
-				use ark_r1cs_std::{R1CSVar};
-				if subtbl_id[i].value().is_ok(){
-					assert!(subtbl_id[i].value()?==char_tbl.value()?);
-				}
-			}
+		//NO need anymore as all subtbl IDs are CONSTANT.
+		//They are fixed in circuit
+		// This leads to logup check from 3 constraints -> 1 constraint
+		// Also we do not need to check them here as they are 
+		// constants.
+		// in fact even if excuting them does not generate new constraints.
+// 		use data_processor::clam_db::CHAR;
+//  		let char_tbl = FpVar::<F>::new_constant(cs.clone(), F::from(CHAR))?;
+//  		for i in 1..data_len{
+//  			_subtbl_id[i].enforce_equal(&char_tbl)?;
+//  			#[cfg(test)]{
+//  				use ark_r1cs_std::{R1CSVar};
+//  				if _subtbl_id[i].value().is_ok(){
+//  					assert!(_subtbl_id[i].value()?==char_tbl.value()?);
+//  				}
+//  			}
+//  		}
+		if b_debug{
+			println!("## word_extract cost for word_len: {}, nibbles: {}, r1cs: {}, vars: {}", wlen, wlen*LEGS, cs.num_constraints()-nc, cs.num_witness_variables()-nv);
 		}
 
 		Ok(())
