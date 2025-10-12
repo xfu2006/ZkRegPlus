@@ -149,8 +149,12 @@ impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{
+		let b_debug = true;
+		let mut nc = cs.num_constraints();
+		let mut nv = cs.num_witness_variables();
 
 		//1. retrive the statement instance 
+		//COST: 0 n1rs, 0 var
 		let (stmt_idx, _msg1_idx, msg2_idx, msg3_idx) = cfg.get_gadget_indices(i);
 		let my_stmt = stmt_idx.iter().map(|(a,b)|
 			wtns.statement[*a..*b+1].to_vec()).flatten()
@@ -159,22 +163,38 @@ impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
 		//disabled for manually test cases which is not constructed
 		//from Witness.
 		let (ilen, olen) = (self.inp_states_len, self.oup_states_len);
+		if b_debug{
+			println!("## pack step 1. olen: {}, ilen: {}, r1cs: {}, vars: {}", 
+				olen, ilen, cs.num_constraints()-nc, 
+					cs.num_witness_variables()-nv);
+			nc = cs.num_constraints();
+			nv = cs.num_witness_variables();
+		}
 
 		//2. get the parts of the statement
 		//organize statement: structured as
 		// [word, inp, output, data, subtbl_id]
 		// NOTE: no word, input and output
+		//COST: 0 r1cs, 0 var
 		let data_seg = my_stmt[0..ilen+olen*2].to_vec(); 
 		let subtbl_id = &my_stmt[ilen+olen*2..ilen+olen*2+olen];
 		assert!(data_seg.len() + subtbl_id.len()
 			== self.get_msg_size().0);
 		let (alpha, beta) = (wtns.msg2[msg2_idx].clone(), 
 			wtns.msg2[msg2_idx+1].clone());
-
-
 		let msg3 = wtns.msg3[msg3_idx..msg3_idx+ilen+olen].to_vec();
+		if b_debug{
+			println!("## pack step 2. olen: {}, ilen: {}, r1cs: {}, vars: {}", 
+				olen, ilen, cs.num_constraints()-nc, 
+					cs.num_witness_variables()-nv);
+			nc = cs.num_constraints();
+			nv = cs.num_witness_variables();
+		}
+
 		//3. assert that all output states must be in range
 		// if the state is not zero (padding), it must be a final state
+		// COST: 4 * inp/oup len r1cs, vars: 2 * inp len
+		// could be improved, but not worth it as inp/oup buf small.
 		let oup_states = &data_seg[ilen..ilen+olen];
 		let tblid_finals= FpVar::<F>::new_constant(cs.clone(), 
 			F::from(self.fsm_id + 2))?;//e.g., CRIT_FINALS
@@ -189,6 +209,13 @@ impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
 					assert!(subtbl_id[i].value()?==val.value()?);
 				}
 			}
+		}
+		if b_debug{
+			println!("## pack step 3. olen: {}, ilen: {}, r1cs: {}, vars: {}", 
+				olen, ilen, cs.num_constraints()-nc, 
+					cs.num_witness_variables()-nv);
+			nc = cs.num_constraints();
+			nv = cs.num_witness_variables();
 		}
 
 		//4. assert validity of msg3 (inverse relation)
@@ -212,6 +239,12 @@ impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
 				use ark_r1cs_std::{R1CSVar};
 				if prod.value().is_ok(){ assert!(prod.value()?==F::one()); }
 			}
+		}
+		if b_debug{
+			println!("## pack step 4. olen: {}, ilen: {}, r1cs: {}, vars: {}", 
+				olen, ilen, cs.num_constraints()-nc, 
+					cs.num_witness_variables()-nv);
+			if 1>0 {panic!("STOP HERE 3001");}
 		}
 
 		Ok(())
@@ -265,11 +298,8 @@ impl <F: PrimeField> PackFinalAdvice<F>{
 		);
 		let mut oup_states:Vec<F> = map.iter().map(|(k,_)| k.clone()).collect();
 
-
-
 		let mut m_table: Vec<F> = map.iter().map(|(_,v)| 
 			F::from(*v as u32)).collect();
-
 
 		let mut subtbl_id = vec![tblid_final.clone(); m_table.len()];
 		assert!(oup_states.len() == m_table.len());

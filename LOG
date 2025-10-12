@@ -20881,7 +20881,20 @@ Goal 2. improve word_extract
 		does not count into constriant system.
 	[d] regression test.
 
-Goal 3. 
+Goal 3. improve fsm gadget
+	[a] read assert_msg3
+	[b] before: ## fsm cost for nibbles: 31744, r1cs: 31746, vars: 0
+		=> the same
+		---- PERFORMANCE DATA -------------------- ID: 006 (after fsm)
+		module 8 size: 541k-246=  300k 
+		right after module 14: R1CS: 911k 
+		lkup size: 930031 
+		qry cost (compare DEBUG 1201): 3.9-1.48M = 2.42M 
+		combined key size: 10381083 (max_row_col: 5.52M)
+		n_case1: (44, 0.00%), n_case2: (190500, 20.48%), n_case3: (739487, 79.51%)
+		GenConstraints: Step 4: *** ENTIRE CIRCUIT CONSTRUCTED *** . cons: 24444663: 16.409024ms
+		main: Step 12. Gen groth16 prf, mem: 71 GB: 199.433283615s
+		-------------
 
 
 

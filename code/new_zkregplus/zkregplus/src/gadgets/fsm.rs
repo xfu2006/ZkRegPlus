@@ -132,9 +132,14 @@ impl <F:PrimeField> SigmaGadget<F> for FsmGadget<F>{
 		vec![]
 	}
 
+	//COST: r1cs: 1*nlen, vars: 0
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{
+		let b_debug = false;
+		let nc = cs.num_constraints();
+		let nv = cs.num_witness_variables();
+
 		//1. retrive the statement instance and get all parts
 		let (stmt_idx, _, _, _) = cfg.get_gadget_indices(i);
 		let my_stmt = stmt_idx.iter().map(|(a,b)|
@@ -166,17 +171,20 @@ impl <F:PrimeField> SigmaGadget<F> for FsmGadget<F>{
 		let states = vec![inp.clone(), data_seg[nlen..2*nlen-1].to_vec(), 
 			oup.clone()].concat();
 		assert!(states.len()==nlen+1);
-		let tblid_states = FpVar::<F>::new_constant(cs.clone(), 
-			F::from(self.fsm_id + 6))?;//e.g., corresponding to CRIT_STATES
-		for i in 0..nlen+1{
-			subtbl_id[i].enforce_equal(&tblid_states)?;
-			#[cfg(test)]{
-				use ark_r1cs_std::{R1CSVar};
-				if subtbl_id[i].value().is_ok(){
-					assert!(subtbl_id[i].value()?==tblid_states.value()?);
-				}
-			}
-		}
+		// THE FOLLOWING IS ACTUALLY NOT NEEDED.
+		// FSM IS ONLY PERFORMED ON TWO ACDFAS (fixed)
+		// THESE ARE FIXED CONSTAN in circuit. no need to check
+// 		let tblid_states = FpVar::<F>::new_constant(cs.clone(), 
+// 			F::from(self.fsm_id + 6))?;//e.g., corresponding to CRIT_STATES
+// 		for i in 0..nlen+1{
+// 			subtbl_id[i].enforce_equal(&tblid_states)?;
+// 			#[cfg(test)]{
+// 				use ark_r1cs_std::{R1CSVar};
+// 				if subtbl_id[i].value().is_ok(){
+// 					assert!(subtbl_id[i].value()?==tblid_states.value()?);
+// 				}
+// 			}
+// 		}
 
 		//4. assert all transitions in range
 		let unit_var = FpVar::<F>::new_constant(cs.clone(),
@@ -201,16 +209,25 @@ impl <F:PrimeField> SigmaGadget<F> for FsmGadget<F>{
 				}
 			}
 		}
-		let tblid_trans= FpVar::<F>::new_constant(cs.clone(), 
-			F::from(self.fsm_id + 3))?;//e.g., corresponding to CRIT_TRANSITIONS
-		for i in nlen+1..nlen+1+nlen{
-			subtbl_id[i].enforce_equal(&tblid_trans)?;
-			#[cfg(test)]{
-				use ark_r1cs_std::{R1CSVar};
-				if subtbl_id[i].value().is_ok(){
-					assert!(subtbl_id[i].value()?==tblid_trans.value()?);
-				}
-			}
+
+//		This part is NOT needed as trans id is constant in IRCUIT
+//      In fact: even executing the following codes does nont
+//      increase the circuit size/cost as all are constant operations
+//
+// 		let tblid_trans= FpVar::<F>::new_constant(cs.clone(), 
+// 			F::from(self.fsm_id + 3))?;//e.g., corresponding to CRIT_TRANSITIONS
+// 		for i in nlen+1..nlen+1+nlen{
+// 			subtbl_id[i].enforce_equal(&tblid_trans)?;
+// 			#[cfg(test)]{
+// 				use ark_r1cs_std::{R1CSVar};
+// 				if subtbl_id[i].value().is_ok(){
+// 					assert!(subtbl_id[i].value()?==tblid_trans.value()?);
+// 				}
+// 			}
+// 		}
+
+		if b_debug{
+			println!("## fsm cost for nibbles: {}, r1cs: {}, vars: {}", nlen, cs.num_constraints()-nc, cs.num_witness_variables()-nv);
 		}
 
 		Ok(())
