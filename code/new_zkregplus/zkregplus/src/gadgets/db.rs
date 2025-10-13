@@ -60,9 +60,9 @@ use crate::gadgets::commons::{verify_inverse,verify_logup_inverse, check_eq,
 /// NEW COST: qry_size + 2 * lkup_size.
 pub fn assert_logup<F:PrimeField>(
 	cs: ConstraintSystemRef<F>,
-	qry: &Vec<FpVar<F>>, 
-	lkup: &Vec<FpVar<F>>,
-	m_tbl: &Vec<FpVar<F>>, 
+	qry: &[FpVar<F>], 
+	lkup: &[FpVar<F>],
+	m_tbl: &[FpVar<F>], 
 	r: &FpVar<F>)
 ->Result<(), SynthesisError>{
 	//1. generte the inverse table (as part of msg3)

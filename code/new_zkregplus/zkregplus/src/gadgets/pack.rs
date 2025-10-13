@@ -1,4 +1,6 @@
-/* Created 03/04/2025 */
+/* Created 03/04/2025 
+	Revised: 10/13/2025 -> improved m_table performance to 1xnlen
+*/
 
 use std::rc::{Rc};
 use rayon::iter::{ParallelIterator,IntoParallelIterator,
@@ -22,6 +24,7 @@ use ark_r1cs_std::{
 	eq::EqGadget,
 };
 use std::any::Any;
+use crate::gadgets::db::assert_logup;
 
 
 #[allow(dead_code)]
@@ -196,6 +199,7 @@ impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
 		// COST: 4 * inp/oup len r1cs, vars: 2 * inp len
 		// could be improved, but not worth it as inp/oup buf small.
 		let oup_states = &data_seg[ilen..ilen+olen];
+		let m_table = &data_seg[ilen+olen..ilen+2*olen];
 		let tblid_finals= FpVar::<F>::new_constant(cs.clone(), 
 			F::from(self.fsm_id + 2))?;//e.g., CRIT_FINALS
 		let zero_var= FpVar::<F>::new_constant(cs.clone(), 
@@ -240,6 +244,13 @@ impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
 				if prod.value().is_ok(){ assert!(prod.value()?==F::one()); }
 			}
 		}
+		//REMOVE LATER ------------
+		use ark_r1cs_std::R1CSVar;
+		for i in 0..m_table.len(){
+			println!("DEBUG USE 6101: i: {}, m[i]: {}", i, m_table[i].value()?);
+		}
+		//REMOVE LATER ------------ ABOVE
+		assert_logup(cs.clone(), &inp_states, &oup_states, m_table, &beta)?;
 		if b_debug{
 			println!("## pack step 4. olen: {}, ilen: {}, r1cs: {}, vars: {}", 
 				olen, ilen, cs.num_constraints()-nc, 

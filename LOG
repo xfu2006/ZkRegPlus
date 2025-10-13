@@ -20896,6 +20896,11 @@ Goal 3. improve fsm gadget
 		main: Step 12. Gen groth16 prf, mem: 71 GB: 199.433283615s
 		-------------
 
+Goal 4. improve the pack gadget
+	[a] add code to measure cost
+		the first three steps are nothing
+		the last step creates 63k r1cs and 31k vars
+	[b] read code
 
-
-
+--- TODO -- fix the m_table problem. need to additionally assert that
+--- m_table is not 0.
