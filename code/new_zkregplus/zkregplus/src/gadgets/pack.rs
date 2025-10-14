@@ -17,11 +17,11 @@ use folding_schemes::folding::foldpot::{
 };
 use ark_r1cs_std::{
 	fields::{
-		FieldVar,
+		//FieldVar,
 		fp::FpVar
 	},
 	alloc::AllocVar,
-	eq::EqGadget,
+	//eq::EqGadget,
 };
 use std::any::Any;
 use crate::gadgets::db::assert_logup;
@@ -94,8 +94,11 @@ impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
 		//       (1) verify oup_states are all in final_states, or the val
 		//              is 0 (padding value): oup_len
 		// ]
-		// NO msg1, but 1 messaege 2 for Logup, 3
+		// NO msg1, but 1 messaege 2 for Logup, no msg3
 		// Total statement len:  2*(inp_len + oup_len)
+		// actual msg3 is inverse of two tables (ilen + olen)
+		// BUT we can generate it in assert_msg3() directly, so we
+		// do not list the size here.
 		let (ilen, olen) = (self.inp_states_len, self.oup_states_len);
 		let word_len = 0;
 		let inp_len = 0;
@@ -105,7 +108,7 @@ impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
 		let stat_len = word_len + inp_len + oup_len + data_len + subtbl_id_len;
 		assert!(stat_len == ilen + 3*olen);
 
-		(stat_len, 0, 2, ilen+olen)
+		(stat_len, 0, 2, 0)
 	}
 
 	fn gen_msg1(&self, _stmt_vec: &Vec<F>, _v_idx: &Vec<(usize,usize)>) 
@@ -113,40 +116,12 @@ impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
 		vec![] // dummy
 	}
 
-	fn gen_msg3(&self, stmt_vec: &Vec<F>, stmt_idx: &Vec<(usize,usize)>, 
+	fn gen_msg3(&self, _stmt_vec: &Vec<F>, _stmt_idx: &Vec<(usize,usize)>, 
 		_msg1_vec: &Vec<F>, _idx_msg1: usize, _len_msg1: usize,
-		msg2_vec: &Vec<F>, idx_msg2: usize, _len_msg2: usize) -> Vec<F>{
-		// msg3 structure: 
-		//	(1) inverse table for left: inp_staes: inp_len
-		//  (2) inverse table for right: oup_states: oup_len
-		//  length: inp_len + oup_len
-
-		//1. retrieve the statement and get the data part
-		let my_stmt = stmt_idx.iter().map(|(a,b)|
-			stmt_vec[*a..*b+1].to_vec()).flatten()
-			.collect::<Vec<F>>();
-		//assert!(my_stmt.len()==self.get_msg_size().0);
-		//note >= is to let manually construct my_stmt to pass the check
-		//in unit test case.
-
-		//2. generate the inverse array for inp_states and oup_states
-		let (ilen, olen) = (self.inp_states_len, self.oup_states_len);
-		let inp_states = &my_stmt[0..ilen];
-		let oup_states = &my_stmt[ilen..ilen+olen];
-		let (alpha, beta) = (msg2_vec[idx_msg2], msg2_vec[idx_msg2+1]);
-
-		//3. return msg3
-		let inv_inp = inp_states.into_par_iter().map(|x|
-			(alpha + x).inverse().expect("inverse failed")
-		).collect::<Vec<F>>();
-		let inv_oup = oup_states.into_par_iter().map(|x|
-			(beta + x).inverse().expect("inverse failed")
-		).collect::<Vec<F>>();
-
-		let msg3= vec![inv_inp, inv_oup].concat();
-		assert!(msg3.len()==ilen+olen);
-
-		msg3	
+		_msg2_vec: &Vec<F>, _idx_msg2: usize, _len_msg2: usize) -> Vec<F>{
+		vec![]
+		//the inverse table can be computed directly in assert_msg3()
+		//when it calls assert_logup()
 	}
 
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
@@ -183,7 +158,7 @@ impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
 		let subtbl_id = &my_stmt[ilen+olen*2..ilen+olen*2+olen];
 		assert!(data_seg.len() + subtbl_id.len()
 			== self.get_msg_size().0);
-		let (alpha, beta) = (wtns.msg2[msg2_idx].clone(), 
+		let (_alpha, beta) = (wtns.msg2[msg2_idx].clone(), 
 			wtns.msg2[msg2_idx+1].clone());
 		let msg3 = wtns.msg3[msg3_idx..msg3_idx+ilen+olen].to_vec();
 		if b_debug{
@@ -200,10 +175,11 @@ impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
 		// could be improved, but not worth it as inp/oup buf small.
 		let oup_states = &data_seg[ilen..ilen+olen];
 		let m_table = &data_seg[ilen+olen..ilen+2*olen];
-		let tblid_finals= FpVar::<F>::new_constant(cs.clone(), 
+		let _tblid_finals= FpVar::<F>::new_constant(cs.clone(), 
 			F::from(self.fsm_id + 2))?;//e.g., CRIT_FINALS
-		let zero_var= FpVar::<F>::new_constant(cs.clone(), 
+		let _zero_var= FpVar::<F>::new_constant(cs.clone(), 
 			F::zero())?;//e.g., CRIT_FINALS
+		/*
 		for i in 0..olen{
 			let val = oup_states[i].is_zero()?.select(&zero_var,&tblid_finals)?;
 			subtbl_id[i].enforce_equal(&val)?;
@@ -214,6 +190,7 @@ impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
 				}
 			}
 		}
+		*/
 		if b_debug{
 			println!("## pack step 3. olen: {}, ilen: {}, r1cs: {}, vars: {}", 
 				olen, ilen, cs.num_constraints()-nc, 
@@ -223,11 +200,12 @@ impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
 		}
 
 		//4. assert validity of msg3 (inverse relation)
-		let one_var= FpVar::<F>::new_constant(cs.clone(), 
+		let _one_var= FpVar::<F>::new_constant(cs.clone(), 
 			F::one())?;//e.g., CRIT_FINALS
 		let inp_states = &data_seg[0..ilen];
-		let inp_inv = msg3[0..ilen].to_vec();
-		let oup_inv = msg3[ilen..ilen+olen].to_vec();
+		let _inp_inv = msg3[0..ilen].to_vec();
+		let _oup_inv = msg3[ilen..ilen+olen].to_vec();
+		/*
 		for i in 0..ilen{
 			let prod = &inp_inv[i] * &(&inp_states[i] + &alpha);
 			prod.enforce_equal(&one_var)?;
@@ -244,12 +222,7 @@ impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
 				if prod.value().is_ok(){ assert!(prod.value()?==F::one()); }
 			}
 		}
-		//REMOVE LATER ------------
-		use ark_r1cs_std::R1CSVar;
-		for i in 0..m_table.len(){
-			println!("DEBUG USE 6101: i: {}, m[i]: {}", i, m_table[i].value()?);
-		}
-		//REMOVE LATER ------------ ABOVE
+		*/
 		assert_logup(cs.clone(), &inp_states, &oup_states, m_table, &beta)?;
 		if b_debug{
 			println!("## pack step 4. olen: {}, ilen: {}, r1cs: {}, vars: {}", 
@@ -284,6 +257,7 @@ impl <F: PrimeField> PackFinalAdvice<F>{
 	/// corresponding subtbl_ids. 
 	/// Identify the set of final states, and layout 
 	/// the ouput states (padded with zero) at end.
+	/// NOTE that here tblid_final 
 	pub fn new(inp_states: &Vec<F>, subtbl_ids: &Vec<F>, tblid_final: &F,
 		capacity: usize)->Self{
 		//1. construct the output hashset and their occurence.
@@ -308,6 +282,11 @@ impl <F: PrimeField> PackFinalAdvice<F>{
 			}
 		);
 		let mut oup_states:Vec<F> = map.iter().map(|(k,_)| k.clone()).collect();
+		/* RECOVER LATER
+		#[cfg(test)]{
+			assert!(oup_states.contains(F::zero(), "oup_states should contain zero"));
+		}
+		*/
 
 		let mut m_table: Vec<F> = map.iter().map(|(_,v)| 
 			F::from(*v as u32)).collect();

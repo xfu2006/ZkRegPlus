@@ -20902,5 +20902,26 @@ Goal 4. improve the pack gadget
 		the last step creates 63k r1cs and 31k vars
 	[b] read code
 
---- TODO -- fix the m_table problem. need to additionally assert that
---- m_table is not 0.
+Monday 10/13/2025
+LOC (gadget): 15823
+Goal 1. pack.rs
+	[a] review code
+	[b] change msg_size
+	[c] change the generation of advice
+		-> read existing code
+		-> problem: the existing alg is wrong
+		we need to filter the state by their output_id
+	[d] we have to do a filtered map, but this is going to be costly!
+
+Goal 2. need to read sigs.rs to decide action on pack.rs -> no need
+	to change its assumption, just do another component in pack.rs
+
+Goal 3. need to update the cpCapacity with the property
+	of SedCapacity!
+
+Tuesday 10/14/2025
+
+
+-- TODO -- (1) add the unique_states buffer capacity to
+-----------   pack.rs, (2) add the logic of bidrectional mapping to pack.rs
+
