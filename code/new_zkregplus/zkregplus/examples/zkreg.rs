@@ -40,7 +40,7 @@ fn small_data<F:PrimeField>(){
 	let max_word= 1; //this is chunk_len
 	let sigs = 3;
 	let subsigs = 6;
-	let avg_pat_per_sig = 8;
+	let avg_pats_per_subsig = 8;
 	let avg_active_pat_per_sig = 3;
 	let basis_pats_in_trace = 60*100;
 	let basis_unique_states= 50*100;
@@ -48,13 +48,16 @@ fn small_data<F:PrimeField>(){
 	let num_category = 1;
 	let num_circs_per_category= 1;
 
-	let init_cp_cap= CpCapacity{
-		max_word_len: 1, final_states_len: 8, 
-		join_buf_capacity: 8, sig_buf_capacity: 6
+	let init_cp_cap = CpCapacity{
+		max_word_len: max_word, 
+		basis_pats_in_trace,
+		basis_unique_states,
+		subsigs,
+		avg_pats_per_subsig
 	};
 	let init_sed_cap= SedCapacity::new(
 		max_word, RANGE2_BIT, subsigs, 
-		avg_pat_per_sig, avg_active_pat_per_sig, 
+		avg_pats_per_subsig, avg_active_pat_per_sig, 
 		basis_pats_in_trace, sigs, perc_comp_subsigs,
 		basis_unique_states
 	);

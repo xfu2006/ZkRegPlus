@@ -20920,8 +20920,70 @@ Goal 3. need to update the cpCapacity with the property
 	of SedCapacity!
 
 Tuesday 10/14/2025
+LOC (gadget): 15823 -> 18845 (+20)
+LOC (circ): 2682 -> 2715 (+40)
+Goal 1. update circ capacity as the one like sed capacity
+	[a] update the definition
+	[b] fix related syntax bugs
+	[c] fix zkp_driver syntax errors
+	[d] passing capacity to components
+	[e] create a function to generate these attributes
+	[f] other syntax errors of sig_buf_capacity
+	[g] regression testing
 
+Goal 2. modify pack.rs
+	[a] update document
+	[b] update capacity
+	[c] update cp_mapper
+	[d] get_msg_size
 
--- TODO -- (1) add the unique_states buffer capacity to
------------   pack.rs, (2) add the logic of bidrectional mapping to pack.rs
+Goal 3. assert_msg3
+	[a] insert cost analysis
+	[b] step 1
+	[c] step 2
+	[d] step 3
+
+Wed 10/15/2025
+LOC (gadget) 15845 -> 14945 (+100) 
+Goal 1. generate advice
+	[a] change structure def
+	[b] read existing code of new()
+	[c] change the parameter list
+	[d] check what is the capacity of PackFinalAdvice
+
+Goal 2. update cp_mapper correspodingly
+	[a] verify fsm subtbl has the right setting -> yes
+
+Goal 3. implement test_pack
+	[a] section 1
+	[b] section 2
+	
+Goal 4. debug
+	[a] len not match
+Goal 5. implement
+	[a] check get_messages
+	[b] todo - relax the entries for 0 entries.
+
+Thursday 10/15/2025
+LOC (gadget) 15945 -> 15960 (+15)
+Goal 1. design the check of m_table non-zero
+	[a] check doc about structure of data
+	[b] implement the imply relation
+	[c] measure costA
+
+Friday 10/16/2025
+LOC (gadget) 15960 -> 15997 (+40) 
+Goal 1. constinue with non-zero check
+	[a] syntax check
+	[b] check the subtbl_id
+
+Saturday 10/18/2025
+LOC (gadget): 15997 -> 
+Goal 1. fix pack.rs 3.3
+	[a] fix
+	[b] collect data for step 3
+
+Goal 4. step 4
+	[a] 
+-- TODO -- fix 3.3 and implement 4.
 

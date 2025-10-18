@@ -73,18 +73,35 @@ pub struct CpCapacity{
 	/// maximum word capacity: note: after extracted,
 	/// the word seg expands to 62X (248bit/4 = 62) nibbles.
 	pub max_word_len: usize,
-
-	/// the capacity for PackFinal to hold final states
-	pub final_states_len: usize,
-
-	/// the capacity of join buf for the sigs gadget
-	pub join_buf_capacity: usize,
-
-	/// the capacity of signature inp/oup of sigs gadget
-	pub sig_buf_capacity: usize,
+	///0.0.1 percent, reflect the
+	///ratio of final states in trace
+	pub basis_pats_in_trace: usize, 
+	///0.01 percent, reflects the
+	///ratio of UNIQUE states in a trace
+	pub basis_unique_states: usize, 
+	///the number of subsigs out of (note not sigs)
+	pub subsigs: usize, 
+	///how many patterns per subsig
+	pub avg_pats_per_subsig: usize, 
 }
 
 impl CpCapacity{
+	/// return the original 
+	/// (final_states_len, join_buf_capacity,sig_buf_capacity, imm_buf_len)
+	/// in the old design of the
+	/// CpCapacity for legacy consistency.
+	pub fn get_old_stats(&self)->(usize, usize, usize, usize){
+		let final_states_len = self.max_word_len * 
+			self.basis_pats_in_trace / 10000;
+		let join_buf_capacity= self.subsigs * 
+			self.avg_pats_per_subsig;
+		let sig_buf_capacity= self.subsigs;
+		let imm_buf_len = self.max_word_len 
+			* self.basis_unique_states / 10000;
+		
+		(final_states_len, join_buf_capacity, sig_buf_capacity, imm_buf_len)
+	}
+
 	/// increase capacity, here we keep the same max_word_len
 	/// but double the rest
 	pub fn increased_copy(&mut self, level: usize)->Self{
@@ -93,9 +110,10 @@ impl CpCapacity{
 		}else{
 			Self{
 				max_word_len: self.max_word_len,
-				final_states_len: self.final_states_len *2,
-				join_buf_capacity: self.join_buf_capacity *2,
-				sig_buf_capacity: self.sig_buf_capacity *2,
+				basis_pats_in_trace: self.basis_pats_in_trace * 2,
+				basis_unique_states: self.basis_unique_states * 2,
+				subsigs: self.subsigs * 2,
+				avg_pats_per_subsig: self.avg_pats_per_subsig,
 			}
 		}
 	}
@@ -110,9 +128,10 @@ impl Capacity for CpCapacity{
 			.expect("downcast err"); 
 
 		self.max_word_len>= other.max_word_len &&
-		self.final_states_len>= other.final_states_len &&
-		self.join_buf_capacity>= other.join_buf_capacity &&
-		self.sig_buf_capacity>= other.sig_buf_capacity
+		self.basis_pats_in_trace>= other.basis_pats_in_trace &&
+		self.basis_unique_states>= other.basis_unique_states &&
+		self.subsigs>= other.subsigs &&
+		self.avg_pats_per_subsig>= other.avg_pats_per_subsig 
 	}
 
 	/// to get around the requirement on Clone trait which require Sized
@@ -120,9 +139,10 @@ impl Capacity for CpCapacity{
 	fn clone(&self) -> Rc<dyn Capacity>{
 		Rc::new(CpCapacity{
 			max_word_len: self.max_word_len,
-			final_states_len: self.final_states_len,
-			join_buf_capacity: self.join_buf_capacity,
-			sig_buf_capacity: self.sig_buf_capacity
+			basis_pats_in_trace: self.basis_pats_in_trace,
+			basis_unique_states: self.basis_unique_states,
+			subsigs: self.subsigs,
+			avg_pats_per_subsig: self.avg_pats_per_subsig,
 		})
 	}
 
@@ -165,6 +185,10 @@ impl <F:PrimeField> CpAdvice<F>{
 			vec_sig_id_no_crit_pat: &Vec<usize>, //the pats to include 
 					//in failed_sigs by default
 		)->Self{
+		//0. construct the capacity fields needed by sub-components
+		let (final_states_len,join_buf_capacity,sig_buf_capacity,imm_buf_len)
+			 = capacity.get_old_stats();
+
 		//1. build the word extraction gadget's advice
 		let inp_state = inp_buf[0].clone();
 		let wd_extract_advice = WordExtractAdvice::<F>
@@ -175,8 +199,9 @@ impl <F:PrimeField> CpAdvice<F>{
 
 
 		//2. build the packing final states gadget's advice
-		let f_nonfinal_id = F::from((fsm_id+ 1) as u32);
-		let f_final_id = F::from((fsm_id+ 2) as u32);
+		/* REMOVE LATER
+		//let f_nonfinal_id = F::from((fsm_id+ 1) as u32);
+		//let f_final_id = F::from((fsm_id+ 2) as u32);
 		let subtbl_ids = dfa_crit_advice.states.iter().map(|s|{
 			let val_s = field_to_usize(s);
 			let tbl_id = if dfa_crit.is_final(val_s - 1) {f_final_id} 
@@ -184,18 +209,23 @@ impl <F:PrimeField> CpAdvice<F>{
 
 			tbl_id
 		}).collect::<Vec<F>>();
+		*/
+		let vec_b_final = dfa_crit_advice.states.iter().map(|s|{
+			let val_s = field_to_usize(s);
+			dfa_crit.is_final(val_s - 1)
+		}).collect::<Vec<bool>>();
 		let packfinal_crit_advice = PackFinalAdvice::<F>
-			::new(&dfa_crit_advice.states, &subtbl_ids, &f_final_id, 
-				capacity.final_states_len);
+			::new(&dfa_crit_advice.states, &vec_b_final,
+				imm_buf_len, final_states_len, fsm_id as u32);
 
 		//3. build the advice for the sigs gadget
 		let sig_cap = SigGadgetCapacity{
-			final_states_buf_capacity: capacity.final_states_len,
-			join_buf_capacity: capacity.join_buf_capacity,
-			sig_buf_capacity: capacity.sig_buf_capacity,
+			final_states_buf_capacity: final_states_len,
+			join_buf_capacity: join_buf_capacity,
+			sig_buf_capacity: sig_buf_capacity,
 			count_sig_no_crit_pat: vec_sig_id_no_crit_pat.len(),
 		};
-		let inp_sigs = inp_buf[1..capacity.sig_buf_capacity+1].to_vec();
+		let inp_sigs = inp_buf[1..sig_buf_capacity+1].to_vec();
 		
 		let sigs_advice = GetSigAdvice::<F>::new(
 			&packfinal_crit_advice.oup_states, &inp_sigs, sig_cap, 
@@ -236,19 +266,22 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> CpComponentMapper<F,LK>{
 		b_igc: bool //whether it's for ignore case ACDFA
 	) ->Self{
 		//1. build the gadgets
+		let (final_states_len, join_buf_capacity, sig_buf_capacity,imm_buf_len) 
+			= cp_capacity.get_old_stats();
+
 		let nlen = cp_capacity.max_word_len * LEGS;
 		let state_bits = clamdb.dfa_crit.state_part_bits;
 		let fsm_id = if b_igc {CRIT_IGC_INIT} else {CRIT_INIT};
 
 		let g_extract = WordExtractGadget::<F>::new(cp_capacity.max_word_len);
 		let dfa_crit = FsmGadget::<F>::new(nlen, fsm_id, state_bits); 
-		let pack_crit = PackFinalGadget::<F>::new(nlen+1, 
-			cp_capacity.final_states_len, fsm_id);
+		let pack_crit = PackFinalGadget::<F>::new(nlen+1, imm_buf_len,
+			final_states_len, fsm_id);
 
 		let sig_cap = SigGadgetCapacity{
-			final_states_buf_capacity: cp_capacity.final_states_len,
-			join_buf_capacity: cp_capacity.join_buf_capacity,
-			sig_buf_capacity: cp_capacity.sig_buf_capacity,
+			final_states_buf_capacity: final_states_len,
+			join_buf_capacity: join_buf_capacity,
+			sig_buf_capacity: sig_buf_capacity,
 			count_sig_no_crit_pat: clamdb.vec_sigs_no_critical_pat.len(),  
 		};
 		let sig_gadget= GetSigGadget::<F>::new(&sig_cap, fsm_id);
@@ -259,10 +292,10 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> CpComponentMapper<F,LK>{
 			Rc::new(RefCell::new(sig_gadget)), //generate signatures
 		];
 		assert!(clamdb.as_ref().vec_sigs_no_critical_pat.len()
-			<cp_capacity.sig_buf_capacity,
+			<sig_buf_capacity,
 			"vec_sigs_no_crit_pat.len(): {} > sig_buf_capacity: {}",
 			clamdb.as_ref().vec_sigs_no_critical_pat.len(), 
-			cp_capacity.sig_buf_capacity);
+			sig_buf_capacity);
 
 		Self{
 			_f: PhantomData, 
@@ -297,9 +330,12 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 	/// return the sizes of inp, oup, data, failed_sigs, discharged_sigs
 	fn get_sizes(&self)->Vec<usize>{
 		//1. gadget of word extension
+		let (final_states_len,join_buf_capacity,sig_buf_capacity,_imm_buf_len) = 
+			self.capacity.get_old_stats();
+
 		let wlen = self.capacity.max_word_len;
 		let nlen = LEGS * wlen; //nibble len
-		let flen = self.capacity.final_states_len;
+		let flen = final_states_len;
 		let clen = self.clamdb.vec_sigs_no_critical_pat.len();
 		let inp_g_ext = 0;
 		let oup_g_ext = 0;
@@ -311,21 +347,21 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 									 // "shared" nibbles with w_extract
 		let data_pack= 2*flen; // the increased are final_staes, m_table
 
-		let inp_sigs= self.capacity.sig_buf_capacity;
-		let oup_sigs= self.capacity.sig_buf_capacity;
-		let data_sigs = self.capacity.final_states_len * 3 
-			+ self.capacity.join_buf_capacity * 5
-			+ self.capacity.sig_buf_capacity * 3
+		let inp_sigs= sig_buf_capacity;
+		let oup_sigs= sig_buf_capacity;
+		let data_sigs = final_states_len * 3 
+			+ join_buf_capacity * 5
+			+ sig_buf_capacity * 3
 			+ clen + 1; //for the sigs_no_crit_pat and its count
 
 		let sig_cap = SigGadgetCapacity{
-			final_states_buf_capacity: self.capacity.final_states_len,
-			join_buf_capacity: self.capacity.join_buf_capacity,
-			sig_buf_capacity: self.capacity.sig_buf_capacity,
+			final_states_buf_capacity: final_states_len,
+			join_buf_capacity: join_buf_capacity,
+			sig_buf_capacity: sig_buf_capacity,
 			count_sig_no_crit_pat: self.clamdb.vec_sigs_no_critical_pat.len(), 
 		};
 		assert!(data_sigs == SigGadgetData::<F>::get_len(&sig_cap) 
-			- self.capacity.final_states_len);
+			- final_states_len);
 
 		//2. collect all data
 		let vec_inp_len = vec![inp_g_ext, inp_dfa, inp_sigs];
@@ -336,7 +372,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		let inp_size:usize = vec_inp_len.iter().map(|x| x).sum();
 		let oup_size:usize = vec_oup_len.iter().map(|x| x).sum();
 		let data_size:usize = vec_data_len.iter().map(|x| x).sum();
-		let failed_sig_size = self.capacity.sig_buf_capacity;
+		let failed_sig_size = sig_buf_capacity;
 		let discharged_sig_size = 0;
 		vec![inp_size, oup_size, data_size,failed_sig_size,discharged_sig_size]
 	}
@@ -379,6 +415,8 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 
 		//2. build the capaicty and advice
 		let capacity = &self.capacity;
+		let (_final_states_len,_join_buf_capacity,sig_buf_capacity,_imm_buf_len)
+			 = capacity.get_old_stats();
 		let init_state = if !self.b_igc {
 			F::from(self.clamdb.dfa_crit.init_state as u32)
 		}else{
@@ -393,7 +431,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 				dfa_crit_advice.states.len()-1];
 			last_oup_state
 		});
-		let inp_sigs = prev_adv.map_or(vec![zero; capacity.sig_buf_capacity], 
+		let inp_sigs = prev_adv.map_or(vec![zero; sig_buf_capacity], 
 		|adv|{
 			let adv= adv.as_any().downcast_ref::<CpAdvice<F>>(); 
 			let last_oup_sigs = &adv.unwrap().sigs_advice.oup;
@@ -463,6 +501,8 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		let wlen = self.max_word_len();
 		assert!(e_wd - s_wd + 1 == wlen);
 		let mut vec_res= vec![];
+		let (final_states_len,join_buf_capacity,sig_buf_capacity,_imm_buf_len)
+			 = self.capacity.get_old_stats();
 	
 		//1. word extract gadget prob statement:
 		// [word; act_w_len; extracted_word, no_inp/out, subtbl_ids]
@@ -500,8 +540,8 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 
 		//3. pack_crit gadget problem statement structure
 		//[data; subtbl_id]
-		let (olen,jlen,slen) = (self.capacity.final_states_len,
-			self.capacity.join_buf_capacity, self.capacity.sig_buf_capacity);
+		let (olen,jlen,slen) = (final_states_len, 
+			join_buf_capacity, sig_buf_capacity);
 		let pack_crit= vec![
 			(s_inp, s_inp),  //the input state
 			(s_data+1+nlen, s_data+1+nlen+ nlen-2), //the nlen-1 states in mid 
@@ -515,9 +555,9 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		//4. statement for sigs
 		// [inp; oup; data; sub_tbl; failed_sigs]
 		let sig_cap = SigGadgetCapacity{
-			final_states_buf_capacity: self.capacity.final_states_len,
-			join_buf_capacity: self.capacity.join_buf_capacity,
-			sig_buf_capacity: self.capacity.sig_buf_capacity,
+			final_states_buf_capacity: final_states_len,
+			join_buf_capacity: join_buf_capacity,
+			sig_buf_capacity: sig_buf_capacity,
 			//NOTE that this is the REAL VALUE
 			//not allowing one moreentry.
 			count_sig_no_crit_pat: self.clamdb.vec_sigs_no_critical_pat.len(), 
@@ -614,10 +654,12 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		let b_debug = true;
 
 		//1. take the advice
+		let (final_states_len,join_buf_capacity,sig_buf_capacity,_imm_buf_len)
+			 = self.capacity.get_old_stats();
 		let advice = advice.as_any().downcast_ref::<CpAdvice<F>>()
 			.expect("downcast err!");
-		let (olen,jlen,slen) = (self.capacity.final_states_len,
-			self.capacity.join_buf_capacity, self.capacity.sig_buf_capacity);
+		let (olen,jlen,slen) = (final_states_len,
+			join_buf_capacity, sig_buf_capacity);
 		let sig_cap = SigGadgetCapacity{
 			final_states_buf_capacity: olen,
 			join_buf_capacity: jlen,
@@ -628,7 +670,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		//2. build inp/oup/data and 3 segments of subtbl_ids
 		let _zero = F::zero();
 		let wlen = word_seg.len();
-		let olen = self.capacity.final_states_len;
+		let olen = final_states_len;
 		let sizes = self.get_sizes();
 		let (inp_len, oup_len, data_len) =  (sizes[0], sizes[1], sizes[2]);
 		assert!(inp_len==oup_len);
@@ -705,7 +747,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 
 		//4. the failed sigs and discharged sigs
 		let failed_sigs = advice.sigs_advice.oup.clone(); 
-		assert!(failed_sigs.len()==self.capacity.sig_buf_capacity);
+		assert!(failed_sigs.len()==sig_buf_capacity);
 		let discharged_sigs = vec![];
 		
 		if b_debug{

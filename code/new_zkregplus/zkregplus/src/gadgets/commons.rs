@@ -846,6 +846,26 @@ pub fn check_eq<F:PrimeField>(v1: &FpVar<F>, v2: &FpVar<F>, _msg: &str)
 	Ok( () )
 }
 
+/// Check two fp_var NOT equal. Cost 4 gate.
+pub fn check_neq<F:PrimeField>(v1: &FpVar<F>, v2: &FpVar<F>, _msg: &str)
+->Result<(),SynthesisError>{
+	#[cfg(test)]{
+		if v1.value().is_ok(){ 
+			assert!(v1.value()?!=v2.value()?, "ERROR on check_neq: {}. v1: {}, v2: {}", _msg, v1.value()?, v2.value()?);
+		}
+	}
+	let cs = v1.cs();
+	let nc = cs.num_constraints();
+	let beq = is_zero_better(&(v1-v2), &cs)?;
+	let zero_var = FpVar::<F>::constant(F::zero());
+	check_eq(&beq, &zero_var, "ERR in check_neq")?;
+	println!("STOP HERE 3333: {}", cs.num_constraints()-nc);
+
+	Ok( () )
+	
+}
+
+
 /// Check two fp_var equal or v1[i] is zero
 pub fn check_eq_nz<F:PrimeField>(v1: &FpVar<F>, v2: &FpVar<F>, z_const: &FpVar<F>,_msg: &str)
 ->Result<(),SynthesisError>{
