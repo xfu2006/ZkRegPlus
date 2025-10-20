@@ -21036,7 +21036,34 @@ Goal 2. debug
 		sigma_ir1cs::gen_witness -> each gadget gen_msg3
 
 Goal 3. check cp_mapper data layout again
-	[a]
+	[a] check sigs gadget data to vec
+	[b] still the same error
+	[c] redo cp_mapper code review again
+
+Goal 4. Review cp_mapper code again
+	[a] fix map
+	[b] build_statement_comp
+
+Goal 5. new bug cp_mapper not working again
+	[a] adjust m_tbl sequence in test code
+	[b] unit test
+	[c] cp_mapper unit test -> working
+	[d] remove all DEBUG MESSge.
+
+Goal 6. collect data after pack.rs is improved
+		---- PERFORMANCE DATA -------------------- ID: 007 (after pack)
+		nlen = 32k
+		module 3: 84k-49k= 35k (very close to nlen - cut half)
+		module 8 size: 488k-193k: 295k (slightly cut) 
+		right after module 14: R1CS: 858k (improved 60k) 
+		lkup size: 931k (same) 
+		qry cost (compare DEBUG 1201): 3.859-1.43M = 2.43M 
+		combined key size: 10283441 (max_row_col: 5.47)
+		PERFORAMNCE 1003: n_case1: (820, 0.09%), n_case2: (190730, 20.47%), n_case3: (740397, 79.45%) (roughly the same)
+
+	 GenConstraints: Step 4: *** ENTIRE CIRCUIT CONSTRUCTED *** . cons: 24257638: 14.073128ms (almost hte same)
+		main: Step 12. Gen groth16 prf, mem: 70 GB: 199.433283615s
+		-------------
 
 === TODO == investgate accepted_states
 	[c] in final report -> print max/low/avg of the stat.
