@@ -2210,6 +2210,11 @@ pub fn quick_discharge_file_by_crit_bag_pm_old(fname: &str,
 	let dfa_acc_path = dfa_bag.acc_path(&nibbles);
 	let hs= dfa_bag.get_pattern_stats(&dfa_acc_path);
 	let dfa_acc_path_igc = dfa_bag_igc.acc_path(&nibbles);
+	let total_unique_states = dfa_acc_path.par_iter().map(|&s|
+		s).collect::<HashSet<usize>>().len()
+			+ dfa_acc_path_igc.par_iter().map(|&s| s)
+		.collect::<HashSet<usize>>().len();
+
 	let hs_igc= dfa_bag_igc.get_pattern_stats(&dfa_acc_path_igc);
 	let mut set_sigs_bag = HashSet::<String>::new();
 	let v_sigs_failed_bag = if b_include_bs{
@@ -2327,6 +2332,7 @@ pub fn quick_discharge_file_by_crit_bag_pm_old(fname: &str,
 		total_accepted: total_accepted,
 		total_pm_witness_len: total_pm_witness_len,
 		ind_pm_reg: set_ind_pm_reg,
+		total_unique_states: total_unique_states,
 	};
 
 	data
@@ -2374,6 +2380,11 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 	//2. process by pm bounds
 	let dfa_acc_path = dfa_bag.acc_path(&nibbles);
 	let dfa_acc_path_igc = dfa_bag_igc.acc_path(&nibbles);
+	let total_unique_states = dfa_acc_path.par_iter().map(|&s|
+		s).collect::<HashSet<usize>>().len()
+			+ dfa_acc_path_igc.par_iter().map(|&s| s)
+		.collect::<HashSet<usize>>().len();
+		
 	let hs_occ_old = dfa_bag.get_pattern_pos(&dfa_acc_path);
 	let hs_occ_igc_old = dfa_bag_igc.get_pattern_pos(&dfa_acc_path_igc);
 	//let hs_occ = filter_by(&hs_occ_old, &pats_crit);
@@ -2454,6 +2465,7 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		total_accepted: total_accepted,
 		total_pm_witness_len: total_pm_witness_len,
 		ind_pm_reg: set_ind_pm_reg,
+		total_unique_states: total_unique_states,
 	}
 }
 

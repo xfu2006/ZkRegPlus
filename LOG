@@ -20978,12 +20978,65 @@ Goal 1. constinue with non-zero check
 	[b] check the subtbl_id
 
 Saturday 10/18/2025
-LOC (gadget): 15997 -> 
+LOC (gadget): 15997 -> 15994
 Goal 1. fix pack.rs 3.3
 	[a] fix
 	[b] collect data for step 3
 
-Goal 4. step 4
-	[a] 
--- TODO -- fix 3.3 and implement 4.
+Goal 2. step 4
+	[a] prod unique
+	[b] prod oup_states
+	[c] unit test
 
+Goal 3. measure real unique states
+	[a] read paper_data_gen and identify how each file is discharged 
+	[b] check which one is discharge_file
+
+Goal 4. modify FailDischargeRecord to add unique_states ratio
+	[a] check what is hs_acc
+		-> total_acc is just the total accepted pattern
+	[b] add the attribute -> DONE
+	[c] in clamav::quick_discharge
+		from acc_path, collect the stats -> DONE
+	[d] print the stats
+	--> unique_states is good but acc_path data is no good
+	-> unique_states: max 0.002%
+
+Sunday 10/19/2025
+Goal 1. now implement circ
+	[a] generate data
+	[b] get sizes
+	[c] get joins
+	[d] get adgets_stmt_map
+
+Goal 2. change build stmt_comp
+	[a] added unique states
+	[b] checked subtbl
+	[c] debug. pack.rs: 430 -> fixed
+	[d] out_capacity: -> fixed
+	[e] cp_mapper:743
+	[f] verify_logup_err
+
+Monday 10/20/2025
+Goal 1. debug sigs
+	[a] check buid_gagdts_stmt_map and see
+		sigs allocation
+	[b] stmt_component
+	[c] check how it constructs advice -> looks fine
+	[d] check err message again
+
+Goal 2. debug
+	[a] assert sum_left fails for states - states_sigs_state
+	decoded states_final_states has no entries but final states has
+	2
+	[b] check final states and their patterns
+	[c] the final states passed to advice is all 0.
+		but gen_msg3 got some valid final states
+		-> who's calling gen_msg3?
+		sigma_ir1cs::gen_witness -> each gadget gen_msg3
+
+Goal 3. check cp_mapper data layout again
+	[a]
+
+=== TODO == investgate accepted_states
+	[c] in final report -> print max/low/avg of the stat.

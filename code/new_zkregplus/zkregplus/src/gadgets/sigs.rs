@@ -602,8 +602,9 @@ impl <F: PrimeField> GetSigAdvice<F>{
 			).collect::<Vec<F>>();
 
 		let vec_subtbl_ids = vec![
-			// subtbl_ids for final_states [ignore it ] as it's already
-			// checked by previous gadgets.
+			// subtbl_ids for final_states [ignore it ] 
+			// as final_states are IMPORTED from pack.rs (subtbl_id)
+			// already generated
 			//vec![f_final_states; olen],
 
 			// for pub final_states_sigs_count: Vec<F>, 

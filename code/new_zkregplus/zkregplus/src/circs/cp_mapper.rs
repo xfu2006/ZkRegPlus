@@ -23,10 +23,11 @@
 //       extracted_word [62*wlen], 
 //       -- introduced by gadget fsm --
 //       states [62*wlen-1], //not including first and last
-//       -- introduced by gadget pack_fs
 //       transitions [62*wlen]
+//       -- introduced by gadget pack_fs
+//       unique_states [imm_buf_len]
+//       m_table [final [imm_buf_len]]
 //       final_states [final_states_len]
-//       m_table [final_states_len]
 //       -- introduced by gadget sigs
 //       many items (call its advice to generate data item
 // failed_sigs: the COPY of the  oup_sigs (last #sigs elements of oup)
@@ -91,13 +92,13 @@ impl CpCapacity{
 	/// in the old design of the
 	/// CpCapacity for legacy consistency.
 	pub fn get_old_stats(&self)->(usize, usize, usize, usize){
-		let final_states_len = self.max_word_len * 
+		let final_states_len = self.max_word_len *  LEGS *
 			self.basis_pats_in_trace / 10000;
-		let join_buf_capacity= self.subsigs * 
+		let join_buf_capacity= self.subsigs *  
 			self.avg_pats_per_subsig;
 		let sig_buf_capacity= self.subsigs;
-		let imm_buf_len = self.max_word_len 
-			* self.basis_unique_states / 10000;
+		let imm_buf_len = self.max_word_len * LEGS  *
+			 self.basis_unique_states / 10000;
 		
 		(final_states_len, join_buf_capacity, sig_buf_capacity, imm_buf_len)
 	}
@@ -199,17 +200,6 @@ impl <F:PrimeField> CpAdvice<F>{
 
 
 		//2. build the packing final states gadget's advice
-		/* REMOVE LATER
-		//let f_nonfinal_id = F::from((fsm_id+ 1) as u32);
-		//let f_final_id = F::from((fsm_id+ 2) as u32);
-		let subtbl_ids = dfa_crit_advice.states.iter().map(|s|{
-			let val_s = field_to_usize(s);
-			let tbl_id = if dfa_crit.is_final(val_s - 1) {f_final_id} 
-				else {f_nonfinal_id};
-
-			tbl_id
-		}).collect::<Vec<F>>();
-		*/
 		let vec_b_final = dfa_crit_advice.states.iter().map(|s|{
 			let val_s = field_to_usize(s);
 			dfa_crit.is_final(val_s - 1)
@@ -226,6 +216,11 @@ impl <F:PrimeField> CpAdvice<F>{
 			count_sig_no_crit_pat: vec_sig_id_no_crit_pat.len(),
 		};
 		let inp_sigs = inp_buf[1..sig_buf_capacity+1].to_vec();
+
+		//REMOVE LATER ---------------
+		print_vec("DEBUG USE 6700: oup_states to pass", &packfinal_crit_advice
+			.oup_states);
+		//REMOVE LATER --------------- ABPVE
 		
 		let sigs_advice = GetSigAdvice::<F>::new(
 			&packfinal_crit_advice.oup_states, &inp_sigs, sig_cap, 
@@ -330,7 +325,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 	/// return the sizes of inp, oup, data, failed_sigs, discharged_sigs
 	fn get_sizes(&self)->Vec<usize>{
 		//1. gadget of word extension
-		let (final_states_len,join_buf_capacity,sig_buf_capacity,_imm_buf_len) = 
+		let (final_states_len,join_buf_capacity,sig_buf_capacity,mlen) = 
 			self.capacity.get_old_stats();
 
 		let wlen = self.capacity.max_word_len;
@@ -345,7 +340,8 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		let oup_dfa= 1;
 		let data_dfa= 2*nlen-1; //NOTE: excluding the gadget's
 									 // "shared" nibbles with w_extract
-		let data_pack= 2*flen; // the increased are final_staes, m_table
+		let data_pack= 2*mlen+flen; // the increased are unique_states, 
+									//final_staes, m_table
 
 		let inp_sigs= sig_buf_capacity;
 		let oup_sigs= sig_buf_capacity;
@@ -501,7 +497,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		let wlen = self.max_word_len();
 		assert!(e_wd - s_wd + 1 == wlen);
 		let mut vec_res= vec![];
-		let (final_states_len,join_buf_capacity,sig_buf_capacity,_imm_buf_len)
+		let (final_states_len,join_buf_capacity,sig_buf_capacity,mlen)
 			 = self.capacity.get_old_stats();
 	
 		//1. word extract gadget prob statement:
@@ -545,10 +541,20 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		let pack_crit= vec![
 			(s_inp, s_inp),  //the input state
 			(s_data+1+nlen, s_data+1+nlen+ nlen-2), //the nlen-1 states in mid 
+					//NOTE: this is BORROWED from the dfa_data
 			(s_oup, s_oup), //the state in output buffer
-			(s_data+3*nlen, s_data+3*nlen + olen-1), //the final states
-			(s_data+3*nlen+olen, s_data+3*nlen+olen + olen-1), //the m_table
-			(s_subtbl_data+3*nlen, s_subtbl_data+3*nlen+ olen-1), //subtbl_id for final_states
+			(s_data+3*nlen, s_data+3*nlen + mlen-1), //the unique states
+			(s_data+3*nlen+mlen, s_data+3*nlen+mlen + mlen-1), //the m_table
+			(s_data+3*nlen+2*mlen, s_data+3*nlen+2*mlen 
+				+ olen-1), //final states
+			(s_subtbl_data+3*nlen, s_subtbl_data+3*nlen+ mlen-1), //subtbl_id 
+								//for unique_states
+			(s_subtbl_data+3*nlen+mlen, s_subtbl_data+3*nlen+mlen
+					+ mlen-1), //subtbl for m_table
+			(s_subtbl_data+3*nlen+2*mlen, s_subtbl_data+3*nlen+2*mlen +olen-1),
+								//sub
+								//for final states
+
 		];
 		vec_res.push(pack_crit);
 
@@ -564,9 +570,11 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		};
 		//data_len excluding the input of final_states
 		let sig_data_len = SigGadgetData::<F>::get_len(&sig_cap) - olen; 
-		let sig_data_start = s_data+3*nlen+olen + olen;
+		let sig_data_start = s_data+3*nlen+2*mlen+olen; //
+			//the part EXCLUDING the final states
 		//see subtbl_data definition in build_stement_comp
-		let sig_st_start = s_subtbl_data + 3*nlen + 2*olen; 
+		let sig_st_start = s_subtbl_data + 3*nlen + 2*mlen + olen;
+			//the part EXCLUDING final states
 		let sig_st_len = sig_data_len;  //data (excluding fs input)
 		let sig_st_oup_start = s_subtbl_oup +  1;
 		let sig_st_oup_len = slen;
@@ -586,10 +594,12 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		let sigs_range = vec![
 			(s_inp+1, s_inp+1 + slen-1),  //inp
 			(s_oup+1, s_oup+1 + slen-1),  //oup
-			(s_data+3*nlen, s_data+3*nlen + olen-1), //the final states
+			(sig_data_start-olen, sig_data_start-olen + olen-1), 
+				//the final states (ACTUALLY imported from pack.rs last part)
 			(sig_data_start, sig_data_start +  sig_data_len-1), //data without final states input
 			(sig_st_start, sig_st_start + sig_st_len-1), //subtbl_ids (data part)
 			(sig_st_oup_start, sig_st_oup_start+ sig_st_oup_len-1),//st_oup
+				//excluding oup
 			(s_failed_sigs, e_failed_sigs), //failed sigs
 		];
 		vec_res.push(sigs_range);
@@ -605,12 +615,11 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 			(nlen-1, true), //vec![f_crit_states; nlen-1], //the states
 			(nlen, true), // vec![f_crit_trans; nlen], //the transitions
 			// -- the pack gadget generated data
-			//TODO!
-			(olen, false), 	//advice.packfinal_crit_advice.subtbl_id.clone(), 
-							//for final states, padded
-							//since it might be padded with zero (undecided
-							//at run time - we have to set it to false)
-			(olen, true), // vec![zero; olen], //the m_table
+			(mlen, false), //unique_states (dynamically generated)
+			(mlen, true), // vec![zero; mlen], //the m_table
+			(olen, true), 	//final states (all zero, no need to check
+							//as there are 2-directoinal lookup from
+							//unique states
 			// -- the sig gadget generated data
 			//	advice.sigs_advice.gen_subtbl_id_for_data(), (below)
 			(olen, false),  //all gen_sids are generated run time -> false
@@ -654,7 +663,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		let b_debug = true;
 
 		//1. take the advice
-		let (final_states_len,join_buf_capacity,sig_buf_capacity,_imm_buf_len)
+		let (final_states_len,join_buf_capacity,sig_buf_capacity,mlen)
 			 = self.capacity.get_old_stats();
 		let advice = advice.as_any().downcast_ref::<CpAdvice<F>>()
 			.expect("downcast err!");
@@ -689,17 +698,20 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		assert!(wd_data.len()==wlen*LEGS + 1);
 		assert!(advice.dfa_crit_advice.states.len()==nlen+1);
 		assert!(advice.dfa_crit_advice.trans.len()==nlen);
+		assert!(advice.packfinal_crit_advice.unique_states.len()==mlen);
+		assert!(advice.packfinal_crit_advice.m_table.len()==mlen);
 		assert!(advice.packfinal_crit_advice.oup_states.len()==olen);
-		assert!(advice.packfinal_crit_advice.m_table.len()==olen);
 		let data_sigs = advice.sigs_advice.data.clone()
-			.to_vec()[olen..].to_vec();
+			.to_vec()[olen..].to_vec(); //reason: oup_states
+										//shared between pack.rs and sigs.rs
 		assert!(data_sigs.len()==SigGadgetData::<F>::get_len(&sig_cap) - olen);
 		let data = vec![
 			advice.wd_extract_advice.data.clone(),
 			advice.dfa_crit_advice.states[1..nlen].to_vec(),
 			advice.dfa_crit_advice.trans.clone(),
-			advice.packfinal_crit_advice.oup_states.clone(),
+			advice.packfinal_crit_advice.unique_states.clone(),
 			advice.packfinal_crit_advice.m_table.clone(),
+			advice.packfinal_crit_advice.oup_states.clone(),
 			data_sigs
 		].concat();
 		assert!(data.len()==data_len);
@@ -736,10 +748,10 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 			vec![f_crit_trans; nlen], //the transitions
 			// -- the pack gadget generated data
 			advice.packfinal_crit_advice
-				.subtbl_id.clone(), //for final states, padded
-			vec![zero; olen], //the m_table
+				.subtbl_id.clone(), //for unque states, final states, m_tbl
 			// -- the sig gadget generated data
-			advice.sigs_advice.gen_subtbl_id_for_data(),
+			advice.sigs_advice.gen_subtbl_id_for_data(), //it has
+				//excluded the final_states, which already in pack.rs
 		].concat();
 		assert!(subtbl_data.len()==data.len());
 		assert!(subtbl_inp.len()==inp.len());

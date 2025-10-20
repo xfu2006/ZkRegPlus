@@ -102,6 +102,18 @@ pub fn print_discharge_stats(vdata: &Vec<FailDischargeRecord>,
 		for x in v{ if *x>0 {res +=1;} }
 		res	
 	};
+	let avg_f64 = |v: &Vec<f64>|->f64 {
+		let sum:f64 = v.iter().sum();
+		sum/(v.len() as f64)
+	};
+	let max_f64= |v: &Vec<f64>|->f64 {
+		let imax:f64 = v.iter().copied().reduce(f64::max).unwrap();
+		imax
+	};
+	let min_f64= |v: &Vec<f64>|->f64 {
+		let imin:f64 = v.iter().copied().reduce(f64::min).unwrap();
+		imin
+	};
 	flog(LOG1, &format!("==== WARNING: UNABLE TO DISCHARGE by crit_gab_pm which needs DFA discharge ====="), vlog);
 	let mut all_cbp = HashSet::<String>::new();
 	for rec in vdata{
@@ -235,8 +247,17 @@ pub fn print_discharge_stats(vdata: &Vec<FailDischargeRecord>,
 	let accpath_len:usize=vdata.iter().map(|v| v.total_acc_path_len).sum();
 	let hs_len:usize=vdata.iter().map(|v| v.total_hs_size).sum();
 	let acc_states:usize=vdata.iter().map(|v| v.total_accepted).sum();
-	flog(LOG1, &format!("hs_len/acc_path: {}%, hs_len: {}, accpath_len: {}", (hs_len as f64)*100.0/(accpath_len as f64), hs_len, accpath_len), vlog);
-	flog(LOG1, &format!("accepted states/acc_path: {}%, accepted_states: {}, accpath_len: {}", (acc_states as f64)*100.0/(accpath_len as f64), acc_states, accpath_len), vlog);
+	flog(LOG1, &format!("hs_len (number of accepted patterns but only counting position once)/acc_path: {}%, hs_len: {}, accpath_len: {}", (hs_len as f64)*100.0/(accpath_len as f64), hs_len, accpath_len), vlog);
+	flog(LOG1, &format!("accepted states (counting multiple pos for one state)/acc_path: {}%, accepted_states: {}, accpath_len: {}", (acc_states as f64)*100.0/(accpath_len as f64), acc_states, accpath_len), vlog);
+	let vec_unique_state_ratio = vdata.iter().map(|v|
+		//because it includes two automata's data (case sentive and igc)
+		(v.total_unique_states as f64)*100.0/(2.0*accpath_len as f64)
+	).collect::<Vec<f64>>();
+	flog(LOG1, &format!("unique states ratio: avg: {}%, max: {}%, min: {}%",
+		avg_f64(&vec_unique_state_ratio),	
+		max_f64(&vec_unique_state_ratio),	
+		min_f64(&vec_unique_state_ratio)
+	), vlog);	
 	let pm_proj_ratios = vdata.iter().map(|v|
 		if v.total_accepted>0 {
 		(v.total_pm_witness_len as f64)/(v.total_accepted as f64)} else {0.0f64})
@@ -281,8 +302,11 @@ pub fn report_all_discharge_approach_stats<F:PrimeField>(sig_file: &str, needs_d
 	let file_names = &read_lines(&format!("{}/{}", proot, discharge_list_file));
 	let final_data = file_names.into_par_iter().map(|fpath|
 	{
-		if b_quick{ quick_discharge_file(fpath, &db, &cfg) }
-		else {discharge_file(fpath, &db, &cfg)}
+		if b_quick{ 
+			quick_discharge_file(fpath, &db, &cfg) 
+		} else {
+			discharge_file(fpath, &db, &cfg)
+		}
 	}).collect::<Vec<FailDischargeRecord>>();// for each file
 
 	//3. write the report

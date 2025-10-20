@@ -193,9 +193,8 @@ impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
 		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{
 		let b_debug = false;
-		let mut nc = cs.num_constraints();
-		let mut nv = cs.num_witness_variables();
-
+		let nc = cs.num_constraints();
+		let nv = cs.num_witness_variables();
 		//1. retrive the statement instance 
 		//COST: 0 n1rs, 0 var
 		let (stmt_idx, _msg1_idx, msg2_idx, _msg3_idx) = 
@@ -235,8 +234,8 @@ impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
 		let _zero_var= FpVar::<F>::new_constant(cs.clone(), F::zero())?;
 		let inp_states = &data_seg[0..ilen];
 		let unique_states = &data_seg[ilen..ilen+mlen];
-		let oup_states = &data_seg[ilen+mlen..ilen+mlen+olen];
-		let m_table = &data_seg[ilen+mlen+olen..ilen+2*mlen+olen];
+		let m_table = &data_seg[ilen+mlen..ilen+2*mlen];
+		let oup_states = &data_seg[ilen+2*mlen..ilen+2*mlen+olen];
 		assert_logup(cs.clone(), &inp_states,  &unique_states, m_table, &beta)?;
 
 		//3.2 assert that when unique_states[i] is NOT zero, then
@@ -427,11 +426,10 @@ impl <F: PrimeField> PackFinalAdvice<F>{
 		vec_final_states.sort();
 		let set_final_states = vec_final_states.par_iter().map(|&s|
 			s).collect::<HashSet<F>>();
-		assert!(vec_final_states[0]!=zero); //at this moment, no 0 state.
-		assert!(vec_final_states.len()<capacity_out);
+		assert!(vec_final_states.len()<capacity_out, "INCREASE capacity_out: {}, final: states: {}", capacity_out, vec_final_states.len());
 		let vec_final_states = [ 
 			&vec![zero; capacity_out - vec_final_states.len()][..],
-			&vec_final_states[..]
+			&vec_final_states[..],
 		].concat();
 
 		//2. construct the immediate states
@@ -467,8 +465,8 @@ impl <F: PrimeField> PackFinalAdvice<F>{
 		assert!(sid_unique_states.len()==capacity_imm);
 		let subtbl_id = [
 			&sid_unique_states[..], //for imm_states
+			&vec![zero; capacity_imm][..], //for m_table
 			&vec![zero; capacity_out][..], //for oup_states (final only)
-			&vec![zero; capacity_out][..], //for m_table
 		].concat();
 
 		Self{unique_states: vec_imm_states, oup_states: vec_final_states, 
@@ -518,8 +516,8 @@ pub mod tests_pack_gadget{
 		let data = vec![
 			inp_states.clone(),
 			adv.unique_states,
-			adv.oup_states,
 			adv.m_table,
+			adv.oup_states,
 		].concat();
 		assert!(data.len()==capacity + 2*imm_buf_len + inp_states.len());
 		let to_pad_size = inp.len() + oup.len() + data.len() 

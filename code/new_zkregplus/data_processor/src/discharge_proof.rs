@@ -5,13 +5,15 @@
 
 use std::collections::HashSet;
 
-/// record of failed discharges (e.g., the approach
+/// record of discharges (e.g., the approach
 /// failed to discharge the string, that is the string
 /// is regarded to approximate match using the approach.
 /// usually it's regarded as false positive (that is
 /// a file which is actually NOT a match of sig patter, but is
 /// reported as Maybe or Yes by the approximation approach 
 /// (pm-reg, bag, critical patterns).
+/// NOTE the name is misleading: if discharged, it also has
+/// the record.
 #[derive(Clone,Debug)]
 pub struct FailDischargeRecord{
 	pub fname: String,
@@ -20,8 +22,11 @@ pub struct FailDischargeRecord{
 	pub bag: HashSet<String>, //sigs NOT discharged by bag approach
 	pub pm: HashSet<String>, //sigs NOT discharged by PM approach
 	pub all_dfa: HashSet<String>, //after applying DFA to what is left of 3 approaches
+	pub total_unique_states: usize,//the number of total unique states
+									//along the path
 	pub total_acc_path_len: usize, //the sum of all acc path len
 	pub total_hs_size: usize, //the size of the hash map for accepted strings
+								//this is the total number of accepted strings
 	pub total_accepted: usize, //the number of accepted states along acc path 
 	pub total_pm_witness_len: usize, //total witness len for pm-reg
 	pub ind_pm_reg: HashSet<String>, //the set sigs cannot be discharged by INDIVIDUAL pm-reg
