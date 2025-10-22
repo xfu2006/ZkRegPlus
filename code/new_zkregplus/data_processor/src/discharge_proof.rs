@@ -28,7 +28,12 @@ pub struct FailDischargeRecord{
 	pub total_hs_size: usize, //the size of the hash map for accepted strings
 								//this is the total number of accepted strings
 	pub total_accepted: usize, //the number of accepted states along acc path 
+				//this is the TOTAL number of accepted states
+				//regardless of the FILTER results after CP approach(
+				//it includes ALL states from ALL sigs) along
+				//PM approach DFAacceptance path.
 	pub total_pm_witness_len: usize, //total witness len for pm-reg
+				//this is more realistic
 	pub ind_pm_reg: HashSet<String>, //the set sigs cannot be discharged by INDIVIDUAL pm-reg
 }
 

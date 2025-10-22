@@ -74,9 +74,6 @@ pub struct CpCapacity{
 	/// maximum word capacity: note: after extracted,
 	/// the word seg expands to 62X (248bit/4 = 62) nibbles.
 	pub max_word_len: usize,
-	///0.0.1 percent, reflect the
-	///ratio of final states in trace
-	pub basis_pats_in_trace: usize, 
 	///0.01 percent, reflects the
 	///ratio of UNIQUE states in a trace
 	pub basis_unique_states: usize, 
@@ -84,6 +81,8 @@ pub struct CpCapacity{
 	pub subsigs: usize, 
 	///how many patterns per subsig
 	pub avg_pats_per_subsig: usize, 
+	/// average number of usbsigs per sig
+	pub avg_subsig_per_sig: usize,
 }
 
 impl CpCapacity{
@@ -92,8 +91,8 @@ impl CpCapacity{
 	/// in the old design of the
 	/// CpCapacity for legacy consistency.
 	pub fn get_old_stats(&self)->(usize, usize, usize, usize){
-		let final_states_len = self.max_word_len *  LEGS *
-			self.basis_pats_in_trace / 10000;
+		let final_states_len = self.avg_subsig_per_sig * self.avg_pats_per_subsig
+			*self.subsigs;
 		let join_buf_capacity= self.subsigs *  
 			self.avg_pats_per_subsig;
 		let sig_buf_capacity= self.subsigs;
@@ -111,10 +110,10 @@ impl CpCapacity{
 		}else{
 			Self{
 				max_word_len: self.max_word_len,
-				basis_pats_in_trace: self.basis_pats_in_trace * 2,
 				basis_unique_states: self.basis_unique_states * 2,
 				subsigs: self.subsigs * 2,
 				avg_pats_per_subsig: self.avg_pats_per_subsig,
+				avg_subsig_per_sig: self.avg_subsig_per_sig+1,
 			}
 		}
 	}
@@ -129,10 +128,10 @@ impl Capacity for CpCapacity{
 			.expect("downcast err"); 
 
 		self.max_word_len>= other.max_word_len &&
-		self.basis_pats_in_trace>= other.basis_pats_in_trace &&
 		self.basis_unique_states>= other.basis_unique_states &&
 		self.subsigs>= other.subsigs &&
-		self.avg_pats_per_subsig>= other.avg_pats_per_subsig 
+		self.avg_pats_per_subsig>= other.avg_pats_per_subsig &&
+		self.avg_subsig_per_sig>= other.avg_subsig_per_sig 
 	}
 
 	/// to get around the requirement on Clone trait which require Sized
@@ -140,10 +139,10 @@ impl Capacity for CpCapacity{
 	fn clone(&self) -> Rc<dyn Capacity>{
 		Rc::new(CpCapacity{
 			max_word_len: self.max_word_len,
-			basis_pats_in_trace: self.basis_pats_in_trace,
 			basis_unique_states: self.basis_unique_states,
 			subsigs: self.subsigs,
 			avg_pats_per_subsig: self.avg_pats_per_subsig,
+			avg_subsig_per_sig: self.avg_subsig_per_sig,
 		})
 	}
 

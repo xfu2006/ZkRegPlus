@@ -21053,17 +21053,76 @@ Goal 5. new bug cp_mapper not working again
 Goal 6. collect data after pack.rs is improved
 		---- PERFORMANCE DATA -------------------- ID: 007 (after pack)
 		nlen = 32k
-		module 3: 84k-49k= 35k (very close to nlen - cut half)
-		module 8 size: 488k-193k: 295k (slightly cut) 
-		right after module 14: R1CS: 858k (improved 60k) 
-		lkup size: 931k (same) 
-		qry cost (compare DEBUG 1201): 3.859-1.43M = 2.43M 
-		combined key size: 10283441 (max_row_col: 5.47)
-		PERFORAMNCE 1003: n_case1: (820, 0.09%), n_case2: (190730, 20.47%), n_case3: (740397, 79.45%) (roughly the same)
+		module 2 pack: 85k-49k= 35k (very close to nlen - cut half) - 
+		module 8 size: 491-196k: 295k (slightly cut) 
+		right after module 14: R1CS: 862k (improved 60k) 
+		lkup size: 932k (same) 
+		qry cost (compare DEBUG 1201): 3.86-1.43M = 2.43M 
+		combined key size: 10294099 (max_row_col: 5.48M)
+		PERFORAMNCE 1003: n_case1: (1046, 0.11%), n_case2: (190956, 20.47%), n_case3: (740849, 79.42%)
 
 	 GenConstraints: Step 4: *** ENTIRE CIRCUIT CONSTRUCTED *** . cons: 24257638: 14.073128ms (almost hte same)
 		main: Step 12. Gen groth16 prf, mem: 70 GB: 199.433283615s
 		-------------
+	Data for sigs: currently 2.8k -> because percentage of patterns 
+	is very low
+	DEBUG USE 7103: after msg3 of module 2: PackFinalGadget:  constraints: 84780
+DEBUG USE 7103: after msg3 of module 3: GetSigGadget:  constraints: 86562
 
-=== TODO == investgate accepted_states
-	[c] in final report -> print max/low/avg of the stat.
+
+Goal 7. collect the number of final states
+	[a] read the exsting code
+		-> (1) cp: collect final states and from final states
+			get patterns -> sigs
+		-> (2) total_pm_witness_len reflects the real affected sigs
+		BAD NEWS: avg: 60% and max 300%!
+		this means that we have to pay 1000x price for trace length!
+
+Tuesday 10/21/2025
+Goal 1.  check if random padding would help.
+	[a] see where files get padded
+	[B] EXAMPLE: data/samples/binexec_merged128k/anthoscli__02, sig: Win.Exploit.CVE_2017_0062-6012405-0, hs_occ: 1145 => 4, sum_vec(hs_occ): 3682342 -> 1342775
+	-> Win.Exploit.CVE_2017_0062-6012405-0;Engine:51-255,Target:0;0&1=0;0:01000000{36}20454d46{14}0000????????00000000;0:01000000{36}20454d46{14}00000000000000000000
+	-> -- DEBUG USE 302.1: fname: data/samples/binexec_merged128k/anthoscli__02, sig: Win.Exploit.CVE_2017_0062-6012405-0, hs_occ: 1145 => 4, sum_vec(hs_occ): 3682342 -> 1342775
+	-- DEBUG USE 302.2: hs_occ_igc: 82 => 0, sum_vec(hs_occ_igc): 562243 -> 0
+	-- DEBUG USE 302.3: pm_witness_len: 1342775
+	-- DEBUG USE 302.4 XXX: pattern ====
+	 word: 0000 => 866355
+	 word: 00000000 => 426360
+	 word: 01000000 => 49574
+	 word: 00000000000000000000 => 486
+	 ** TOTAL pm_witness_len: 2669161
+	#==> this is a 6MB file and apparently 20454d46 does not
+		appear often. However for occ stack, we do have to
+			process all mappings.
+
+Wed 10/22/2025
+Goal 1. check cp capacity
+	[a] add basis_unique_final states
+	[b] regression testing
+	[c] check perf data
+
+Goal 2. continue to improve sigs.rs
+	[a] check COST profile of word_extract, fsm, pack
+	[b] read sigs.rs
+
+Goal 2. continue to read the dump
+	[a] there are 300 sigs generates more than 1000 appearance of patterns
+		-> so convert them all to DFA not realistic
+	[b] improvement: [TODO - DESIGN - IDEA think] 
+		[b1] increase the length requirement of bag words
+		[b2] avoid certain special patterns such as 0000 sequence
+		[b3] most sigs have many subsigs, so no need to include in the
+			stats of all subsigs, just focus on discharged subsigs in 
+			estimate
+	[c] observe patterns again
+		[c1] mostly it's a lot of 000000 patterns 
+			CVE_2017_3036-6309463-0;Engine:81-255,Target:0;1;0:0A0501{1}00000000
+		[c2] Mamianune-6230992-0;Engine:51-255,FileSize:0-20000,NumberOfSections:1-1,Target:1;0&1&(2|3|4|5);EP+0:E8??000000;200:2E74657874;EP+10:863032F38630;
+			=> this maybe discharged through subsig1 directly
+		[c3] Win.Packed.Gandcrab-6552923-4
+		[c4] in.Packed.Gandcrab-6552923-4;Engine:71-255,Target:1;0&((1>5)|(2>5)|(3>5)|(4>5)|(5>5)|(6>5)|(7>5)|(8>5)|(9>5))&10;0:4d5a{-196608}????0080??000080{-255}00000000000000000000000000000100!(00)000000??0?0080{-4096}0000000000000000000000000000010000000000??0?0000{-4096}!(0000)??0?!(0000)01000000000000000000;6a0?6a0?ff15;5050ff15;5353ff15;5151ff15;5252ff15;5656ff15;5757ff15;5555ff15;5454ff15;EOF-208:0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000!(00)!(00)!(00)!(00)!(00)!(00)!(00)!(00)
+		[c5] short patterns like ffff
+
+Goal 3. investimate what is the best way to calculate the cost
+	[a] read approx_eval_pm_bounds_subsig 

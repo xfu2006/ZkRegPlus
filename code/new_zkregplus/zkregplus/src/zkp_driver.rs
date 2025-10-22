@@ -284,12 +284,13 @@ where C: CurveGroup<ScalarField=F>,
 	let basis_pats_in_trace = 6*100;
 	let perc_comp_subsigs = 50;
 	let basis_unique_states = 100; //1 percent
+	let avg_subsig_per_sig = 2;
 	let cap1 = CpCapacity{
 		max_word_len: max_word, 
-		basis_pats_in_trace,
 		basis_unique_states,
 		subsigs,
-		avg_pats_per_subsig
+		avg_pats_per_subsig,
+		avg_subsig_per_sig,
 	};
 	let comp1 = CpComponentMapper::<F,LK<F>>::new(cap1.clone(), 
 		db.clone(), false);
@@ -543,12 +544,13 @@ pub mod tests_zkp_driver{
 		let num_circs_per_category= 1;
 		let basis_unique_states = 38*100; //1 cerpcent
 
+		let avg_subsig_per_sig = 2;
 		let init_cp_cap= CpCapacity{
 			max_word_len: max_word, 
-			basis_pats_in_trace,
 			basis_unique_states,
 			subsigs,
-			avg_pats_per_subsig
+			avg_pats_per_subsig,
+			avg_subsig_per_sig
 		};
 		let init_sed_cap= SedCapacity::new(
 			max_word, RANGE2_BIT, subsigs, 
@@ -598,13 +600,14 @@ pub mod tests_zkp_driver{
 		let num_category = 1;
 		let num_circs_per_category= 1;
 		let basis_unique_states = 100; //1 cpercent
+		let avg_subsig_per_sig = 3;
 
 		let init_cp_cap= CpCapacity{
 			max_word_len: max_word, 
-			basis_pats_in_trace,
 			basis_unique_states,
 			subsigs,
-			avg_pats_per_subsig
+			avg_pats_per_subsig,
+			avg_subsig_per_sig,
 		};
 		let init_sed_cap= SedCapacity::new(
 			max_word, RANGE2_BIT, subsigs, 

@@ -2398,21 +2398,6 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		.filter(|x| set_sigs_crit.contains(&x.name))
 		.map(|v| v.clone() )
 		.collect::<Vec<Arc<ClamavSig>>>();
-	//REMOVE LATER ------------------
-	let mut total_ssc= 0;
-	let mut total_subsigs = 0;
-	let mut total_comp = 0;
-	for sig in &v_sigs_pm{
-		total_subsigs += sig.vec_subsig_obj.len();
-		for sso in &sig.vec_subsig_obj{
-			if sso.set_subsigs.len()>0{
-				total_comp += sso.set_subsigs.len();
-				total_ssc += 1;
-			}
-		}
-	}
-	println!("DEBUG USE 8888.1: total_subsigs: {}, total_comp: {}, total_ssc: {} => ratio: {:.2}%", total_subsigs, total_comp, total_ssc, (total_comp as f32)/(total_subsigs as f32)*100.0);
-	//REMOVE LATER ABOVE ------------
 	let pm_res = v_sigs_pm.par_iter().map(|sig|{//parallel processing
 		//1. collect the pag of words and their appearance location
 		let bag_pm = sig.collect_bagwords_from_pmreg(false); 
@@ -2424,6 +2409,15 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		let (res, info) = 
 			sig.accepts_approx_pm_bounds(&hs_occ_new, &hs_occ_igc_new);
 		let pm_witness_len = sum_vec_size(&hs_occ_new) + sum_vec_size(&hs_occ_igc_new);
+		if pm_witness_len>1000{
+			println!("-- DEBUG USE 302.1: fname: {}, sig: {}, hs_occ: {} => {}, sum_vec(hs_occ): {} -> {}", fname, sig.name, hs_occ.len(), hs_occ_new.len(), sum_vec_size(&hs_occ), sum_vec_size(&hs_occ_new));
+			println!("-- DEBUG USE 302.2: hs_occ_igc: {} => {}, sum_vec(hs_occ_igc): {} -> {}", hs_occ_igc.len(), hs_occ_igc_new.len(), sum_vec_size(&hs_occ_igc), sum_vec_size(&hs_occ_igc_new));
+			println!("-- DEBUG USE 302.3: pm_witness_len: {}", pm_witness_len);
+			println!("-- DEBUG USE 302.4 XXX: pattern ====");
+			for (k,v) in &hs_occ_new{
+				println!(" word: {} => {}", k, v.len());
+			}
+		}
 		(res, sig.name.clone(), info, pm_witness_len)
 	}).collect::<Vec<(TriVal,String, Option<DischargeSigInfo>,usize)>>();
 	let mut vec_sed_sigs_info = vec![]; 
@@ -2437,6 +2431,7 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 			vec_sed_sigs_info.push(info.unwrap());
 		}
 	}
+	println!(" ** TOTAL pm_witness_len: {}", total_pm_witness_len);
 	let total_acc_path_len = dfa_acc_path.len() + dfa_acc_path_igc.len();
 	let total_hs_size = hs_occ.len() + hs_occ_igc.len();
 	let total_accepted = sum_vec_size(&hs_occ) + sum_vec_size(&hs_occ_igc);

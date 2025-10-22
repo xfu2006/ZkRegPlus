@@ -248,7 +248,7 @@ pub fn print_discharge_stats(vdata: &Vec<FailDischargeRecord>,
 	let hs_len:usize=vdata.iter().map(|v| v.total_hs_size).sum();
 	let acc_states:usize=vdata.iter().map(|v| v.total_accepted).sum();
 	flog(LOG1, &format!("hs_len (number of accepted patterns but only counting position once)/acc_path: {}%, hs_len: {}, accpath_len: {}", (hs_len as f64)*100.0/(accpath_len as f64), hs_len, accpath_len), vlog);
-	flog(LOG1, &format!("accepted states (counting multiple pos for one state)/acc_path: {}%, accepted_states: {}, accpath_len: {}", (acc_states as f64)*100.0/(accpath_len as f64), acc_states, accpath_len), vlog);
+	flog(LOG1, &format!("accepted states (counting multiple pos for one state, and ALL sigs)/acc_path: {}%, accepted_states: {}, accpath_len: {}", (acc_states as f64)*100.0/(accpath_len as f64), acc_states, accpath_len), vlog);
 	let vec_unique_state_ratio = vdata.iter().map(|v|
 		//because it includes two automata's data (case sentive and igc)
 		(v.total_unique_states as f64)*100.0/(2.0*accpath_len as f64)
@@ -265,12 +265,18 @@ pub fn print_discharge_stats(vdata: &Vec<FailDischargeRecord>,
 	let r_max: f64 = pm_proj_ratios.clone().into_iter().max_by(|a,b| a.total_cmp(b)).unwrap();
 	let r_sum: f64 = pm_proj_ratios.iter().sum::<f64>();
 	let r_avg = r_sum/(pm_proj_ratios.len() as f64);
-	flog(LOG1, &format!("pm_reg (sde) total projected table size/layer1 table: (avg: max): ({},{}). This indicates the cost of layer2 projectio", r_avg, r_max), vlog);
+	flog(LOG1, &format!("*** pm_reg pm_witness/total_accepted: (avg: max) -> appearahce of each acpeted states: ({:.2}%,{:.2}%). ", r_avg*100.0, r_max*100.0), vlog);
 	let pm_witness_ratio = vdata.iter().map(|v|
 		(v.total_pm_witness_len as f64)/(v.total_acc_path_len as f64)).collect::<Vec<f64>>();
 	let w_max: f64 = pm_witness_ratio.clone().into_iter().max_by(|a,b| a.total_cmp(b)).unwrap();
 	let w_avg: f64 = pm_witness_ratio.iter().sum::<f64>()/(pm_proj_ratios.len() as f64);
-	flog(LOG1, &format!("pm_reg (sde) total witness_len/file_size: (avg: max): ({},{}). This indicates total cost of discharging one file against ALL bag left sigs", w_avg, w_max), vlog);
+	//REMOVE LATER ==========
+	for i in 0..vdata.len(){
+		println!(" --i: witness_len: {}, acc_path_len: {}", vdata[i].total_pm_witness_len, vdata[i].total_acc_path_len);
+	}
+	//REMOVE LATER ========== ABOVE
+	flog(LOG1, &format!("pm_reg (sde) total witness_len/file_size: (avg: max): ({}%,{}%). This indicates total cost of discharging one file against ALL bag left sigs", w_avg*100.0, w_max*100.0), vlog);
+	
 
 
 }
