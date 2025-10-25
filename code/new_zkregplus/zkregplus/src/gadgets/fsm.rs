@@ -133,6 +133,7 @@ impl <F:PrimeField> SigmaGadget<F> for FsmGadget<F>{
 	}
 
 	//COST: r1cs: 1*nlen, vars: 0
+	// nlen = nibble len
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{

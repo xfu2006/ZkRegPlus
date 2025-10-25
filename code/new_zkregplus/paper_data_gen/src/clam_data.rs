@@ -260,7 +260,7 @@ pub fn print_discharge_stats(vdata: &Vec<FailDischargeRecord>,
 	), vlog);	
 	let pm_proj_ratios = vdata.iter().map(|v|
 		if v.total_accepted>0 {
-		(v.total_pm_witness_len as f64)/(v.total_accepted as f64)} else {0.0f64})
+		(v.total_pm_witness_len as f64)/(v.flen as f64)} else {0.0f64})
 		.collect::<Vec<f64>>();
 	let r_max: f64 = pm_proj_ratios.clone().into_iter().max_by(|a,b| a.total_cmp(b)).unwrap();
 	let r_sum: f64 = pm_proj_ratios.iter().sum::<f64>();

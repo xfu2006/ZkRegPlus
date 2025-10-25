@@ -21126,3 +21126,133 @@ Goal 2. continue to read the dump
 
 Goal 3. investimate what is the best way to calculate the cost
 	[a] read approx_eval_pm_bounds_subsig 
+		-> cost is the allowed position
+		-> but it DOES NOT reflect the real worst case cost
+			because maybe all positions would have to be listed
+	[b] design
+	[c] add cost2 to approx_eval_pm_bounds_subsig
+	[d] add min_cost2 in DischargeSigInfo and accepts_approx_pm_bounds
+	[e] update the quick_discharge_file_by_crit_bag_pm_new
+
+Goal 4. check the gadgets cost profile
+	[a] word_extract
+	[b] fsm and pack (both around 1xnlen) which is good
+
+Goal 5. read existing code of pack.rs
+	[a] SigGadgetMsg3
+	[b] advice
+	[c] subtbl_id itself has no more improvement as it's already
+		tagged correct
+	[d] assert msg3
+		-> verify_inverse and verify_logup are obth new and
+		already optmized
+		-> verify merge of list seems to be done using
+			multiset cheaper, but leave as it is as this is small cost
+		-> break long add chain.
+	[d] add measure cost
+		-> 
+
+Goal 6. check why cost code fails
+	[a] check if new_pm_len improves the calculation
+		dbg msg 302
+	[b] problem:
+	- DEBUG USE 302.1: fname: data/samples/binexec_merged128k/cfdisk, sig: Win.Packed.addsub-6961201-1, hs_occ: 671 => 1, sum_vec(hs_occ): 139835 -> 2303, pm_len: 2303, new_pm_len: 1156106
+		It has:
+		Win.Packed.addsub-6961201-1;Engine:51-255,Container:CL_TYPE_MSEXE,FileSize:102400-2048000,Target:1;0>250;81(85|AD)??F?FFFF{4}81(85|AD)??F?FFFF
+		the "250" is calling the problem
+	- the reason is that pattern is repeated 250 times!
+
+Thursday 10/23/2025
+Goal 1. check how to approximate hte length of SED segments
+	[a]  find out where is the config
+	[b] ClamavApproxConfig -> change the default_clamav_cfg()
+		in setting
+	[c] check the result Win.Packed.adsub-6961201-1
+		and the final result
+		-> but when adjusted to smaller, it crashes the program
+	[d] verified pat.len() is 502 for addsub-961201-1
+	[e] the len is capped but it does not help with new_pm_len
+
+Friday 10/24/2025
+Goal 1. find out how to restrict pat.len
+	[a] how is pre-processing handling subsig.vec_subsig_pm_bounds
+		-> it's in gen_approx_pm_bounds_new
+		-> it does treat to limit by repeat limit
+		-> read what is vec_pmreg_to_res -> later can take advantage
+			of it to handle 0000 patterns
+		-> read the restrctions
+	[b] read the config -> limit by max_pm_section
+	[c] compare the result of addsub-961201-1 now
+
+Goal 2. continue to refine cp_capacity
+	[a] read how join_buf is defined in pack.rs and then sig.rs
+	[b] join_buf capacity is defined by subsigs * avg_pats_per_subsig
+	[c] cp capacity has no basis_final_state it only has number of subsigs and
+		avg_pats_per_subsig which is ok.
+	[d] regression test
+
+Goal 3. continue to investigate WHY the new_pm_wid is huge
+	[a] old data
+	- DEBUG USE 302.1: fname: data/samples/binexec_merged128k/cfdisk, sig: Win.Packed.addsub-6961201-1, hs_occ: 671 => 1, sum_vec(hs_occ): 139835 -> 2303, pm_len: 2303, new_pm_len: 1156106 (1073741824 slighly newer version)
+	[b] instruent workflow  (DEBUG USE 601.1 to 9 series) on the file
+		and specific signature
+		-> approx_eval_pm_bounds_subsig
+		-> accepts_approx_pm_bounds
+		-> quick_discharge_file_by_crit_bag_pm_new
+
+Goal 4. prepare the improve word_extract_adv.rs
+	[a] read code
+
+Goal 6. continue to debug the strange cost problem
+	[a] add parameter fname
+	[b] found the reason: cfdisk FAILS! -> correct the min cost
+	[c] now the result is good. the avg of sed cost is 9%
+		and the max is 90%.
+	[d] now playing with other configs (enlarge pm sections)
+		see that if it increases cost.
+			-> increase max pm section to 32 -> 9.57% 112%
+			---
+17   633    (213,269,633)   (1,3,587)   (1,3,587)   (0,0,0) (0,0,0)))
+18   163    (225,274,163)   (1,3,156)   (1,3,156)   (0,0,0) (0,0,0)))
+19   158    (246,282,158)   (1,3,156)   (1,3,156)   (0,0,0) (0,0,0)))
+20   67     (267,298,67)    (2,3,66)    (2,3,66)    (0,0,0) (0,0,0)))
+21   153    (283,300,153)   (1,3,151)   (1,3,151)   (0,0,0) (0,0,0)))
+22   14     (282,305,14)    (2,3,12)    (2,3,12)    (0,0,0) (0,0,0)))
+23   7  (279,329,7) (3,5,7) (3,5,7) (0,0,0) (0,0,0)))
+24   9  (335,356,9) (3,5,9) (3,5,9) (0,0,0) (0,0,0)))
+25   5  (321,373,5) (3,5,5) (3,5,5) (0,0,0) (0,0,0)))
+
+
+			-> cuts to 10 -> 8.95% and 90.167%
+			------
+17   633    (215,273,633)   (1,3,612)   (1,3,612)   (0,0,0) (0,0,0)))
+18   163    (228,279,163)   (2,3,163)   (2,3,163)   (0,0,0) (0,0,0)))
+19   158    (250,287,158)   (2,3,157)   (2,3,157)   (0,0,0) (0,0,0)))
+20   67     (272,303,67)    (2,3,67)    (2,3,67)    (0,0,0) (0,0,0)))
+21   153    (288,306,153)   (2,3,153)   (2,3,153)   (0,0,0) (0,0,0)))
+22   14     (286,311,14)    (2,3,14)    (2,3,14)    (0,0,0) (0,0,0)))
+23   7  (282,334,7) (3,6,7) (3,6,7) (0,0,0) (0,0,0)))
+24   9  (340,361,9) (3,5,9) (3,5,9) (0,0,0) (0,0,0)))
+25   5  (325,378,5) (3,5,5) (3,5,5) (0,0,0) (0,0,0)))
+			---------------
+	[e]  change min_bag_len from 6 to 16, and min_pm_word_len from 4 to 8
+		=> cut sed cost to 0.31523614219281937%,14.186841615263631%), but
+			it fails too many SEDs not working
+	[f] change min_pm_word_len from 4 to 6
+		-> cuts to (avg, max): 7.02% and 64.035%
+		-> but it leaves out a lot of signatures unsolved
+	[g] set min_pm_word_len from 6 back to 5
+		-> still fail a lot
+	[h] reverts back to 4 and play with max_pm_section from 10 -> 6
+		no change 8.95% and 90.167 ad data same
+	[i] cut to 4 -> no change from 10.
+	[j] change repeat_limit to 64 -> does not work
+	[k] change combination limit
+		-> no big change
+		-> lkup size: 267864650 (now ok <256M)
+
+Saturday 10/2025/2025
+Goal 1. 
+
+
+

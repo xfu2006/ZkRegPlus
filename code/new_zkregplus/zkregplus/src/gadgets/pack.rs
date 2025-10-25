@@ -189,6 +189,9 @@ impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
 	///  (1)  nlen + 6*mlen
 	///  (2)  4*mlen + 4*olen
 	/// TOTAL = nlen + 10*mlen + 4*olen 
+	/// in real setting: mlen much less 0.05% of trace and olen is usually
+	/// fixed at lower than several thousand 
+	/// (number of subsigs * pattern/subsig)
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{

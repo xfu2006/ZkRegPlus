@@ -91,7 +91,7 @@ impl CpCapacity{
 	/// in the old design of the
 	/// CpCapacity for legacy consistency.
 	pub fn get_old_stats(&self)->(usize, usize, usize, usize){
-		let final_states_len = self.avg_subsig_per_sig * self.avg_pats_per_subsig
+		let final_states_len = self.avg_pats_per_subsig
 			*self.subsigs;
 		let join_buf_capacity= self.subsigs *  
 			self.avg_pats_per_subsig;
@@ -216,10 +216,6 @@ impl <F:PrimeField> CpAdvice<F>{
 		};
 		let inp_sigs = inp_buf[1..sig_buf_capacity+1].to_vec();
 
-		//REMOVE LATER ---------------
-		print_vec("DEBUG USE 6700: oup_states to pass", &packfinal_crit_advice
-			.oup_states);
-		//REMOVE LATER --------------- ABPVE
 		
 		let sigs_advice = GetSigAdvice::<F>::new(
 			&packfinal_crit_advice.oup_states, &inp_sigs, sig_cap, 

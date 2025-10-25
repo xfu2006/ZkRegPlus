@@ -866,7 +866,9 @@ impl ClamavSig{
 							{cfg.repeat_limit} else {repeat};
 					for _i in 0..repeat {res.append(&mut vec.clone());}
 					let res = vec_pmreg_to_res(&res);
-					res
+					let maxlen= if res.len()>cfg.max_pm_sections{
+						cfg.max_pm_sections} else {res.len()};
+					res[0..maxlen].to_vec()
 				}
 			};
 			vec
@@ -909,7 +911,7 @@ impl ClamavSig{
 	/// refers to (min_cost, min_dnf_id, dnf_item located at min_dnf_id>).
 	/// note the min_dnf_id starts from 0
 	pub fn accepts_approx_pm_bounds(&self, hs: &HashMap<String, Vec<usize>>,
-		hs_igc: &HashMap<String, Vec<usize>>)
+		hs_igc: &HashMap<String, Vec<usize>>, fname: &str)
 	-> (TriVal, Option<DischargeSigInfo>){
 		assert!(self.vec_subsig_obj.len() == self.vec_subsig_pm_bounds.len(),
 			"vec_subsig.len() not matching vec_subsig_pm_bounds, call gen_approx_pm_bounds");
@@ -922,7 +924,7 @@ impl ClamavSig{
 			let mut item_res = TriVal::False;
 			let mut total_cost = 0;
 			for id in item{
-				let (res,cost) = self.approx_eval_pm_bounds_subsig(*id,hs, hs_igc);
+				let (res,_cost,cost) = self.approx_eval_pm_bounds_subsig(*id,hs, hs_igc, fname);
 				total_cost += cost;
 				let res = match self.vec_subsig_obj[*id].subsig_type{
 					SubSigType::GeneralRegex => res,
@@ -947,8 +949,10 @@ impl ClamavSig{
 						let mut cnt_maybe= 0;
 						let mut _cnt_false= 0;
 						for cid in &self.vec_subsig_obj[*id].set_subsigs{
-							let (res, _cost)=self.approx_eval_pm_bounds_subsig(
-								*cid, hs, hs_igc);
+							let (res, _cost, _cost2)=
+								self.approx_eval_pm_bounds_subsig(
+									*cid, hs, hs_igc, fname
+								);
 							match res{
 								TriVal::True => cnt_true +=1,
 								TriVal::Maybe => cnt_maybe+=1,
@@ -981,27 +985,28 @@ impl ClamavSig{
 					min_cost = total_cost;
 					min_dnf_id = dnf_id; 
 				}
+			}else{
+				min_cost = 0; //it fails anyway, will not discharge
+							//through sed.
 			}
 			dnf_id += 1;
 
 			bres = bres & item_res;
 		}
 
-		let info = if !found_discharge {None} else {
-			let subsig_ids = self.collect_subsig_ids(min_dnf_id);
-			let subsig_igc = subsig_ids.iter().map(|id|
-				self.vec_subsig_obj[*id].b_ignore_case
-			).collect::<Vec<bool>>();
+		let subsig_ids = self.collect_subsig_ids(min_dnf_id);
+		let subsig_igc = subsig_ids.iter().map(|id|
+			self.vec_subsig_obj[*id].b_ignore_case
+		).collect::<Vec<bool>>();
 
-			Some(DischargeSigInfo{
+		let info=Some(DischargeSigInfo{
 				sig_name: self.name.clone(),
-				b_success: true,
+				b_success: found_discharge,
 				min_cost, 
 				min_dnf_id,
 				subsig_ids,
 				subsig_igc,
-			})
-		};
+			});
 
 		(bres, info)
 	}
@@ -1010,11 +1015,18 @@ impl ClamavSig{
 	/// Return: (TriVal, cost)
 	/// cost is the total length of the allowed_pos for all legs of the
 	/// subsignature
+	/// cost2 is the total number of appearance for all ag words
+	/// in the subsignature. (cost2 is much greater than cost, as
+	/// cost is the result applying the range check between neighboring
+	/// patterns)
+	/// return (DisChargeResult, cost, cost2)
 	fn approx_eval_pm_bounds_subsig(&self, subsig_id: usize,  
-		hs:&HashMap<String,Vec<usize>>, hs_igc: &HashMap<String,Vec<usize>>) 
-		->(TriVal, usize){
+		hs:&HashMap<String,Vec<usize>>, hs_igc: &HashMap<String,Vec<usize>>,
+		fname: &str) 
+		->(TriVal, usize, usize){
 		let pat = &self.vec_subsig_pm_bounds[subsig_id];
 		let mut cost = 0;
+		let mut cost2 = 0;
 		//if pat.len()==0{
 			//println!("WARN: pm bounds empty for sig: {}, subsig_id: {}", 
 			//	self.to_str(), subsig_id);
@@ -1039,6 +1051,8 @@ impl ClamavSig{
 			}else{
 				hs.get(word).map_or(vec![], |v| v.to_vec())
 			};
+			cost2+= arr_cur_pos.len();
+			println!("DEBUG USE 601.3: in approx_eval_pm_bounds: subsig_id: {} of sig: {}, cost2: {}, pat_id: {} of pats: {}, pat: {}, fname: {}", subsig_id, self.name, cost2, id, pat.len(), word, fname);
 
 			let allowed_pos = arr_cur_pos.into_iter().filter(|x|{
 				if allowed.len()==0 {return false;}
@@ -1086,7 +1100,7 @@ impl ClamavSig{
 			arr_pos = allowed_pos;
 		}
 		let res = if arr_pos.len()>0 {TriVal::Maybe} else {TriVal::False};
-		(res, cost)
+		(res, cost, cost2)
 	}
 
 	/// collect bagwords from pmreg (in case it uses different min-len requirement)
@@ -2183,7 +2197,6 @@ pub fn quick_discharge_file_by_crit_bag_pm_old(fname: &str,
 	dfa_crit_igc: &HexACDFA, dfa_bag_igc: &HexACDFA,
 	b_optimize_pm: bool, cfg: &ClamavApproxConfig
 	)->FailDischargeRecord{
-
 	let b_include_bs = false;
 
 	//1. process by critical pattern
@@ -2267,8 +2280,10 @@ pub fn quick_discharge_file_by_crit_bag_pm_old(fname: &str,
 		//println!("DEBUG USE 302: hs_occ: {} => {}, sum_vec(hs_occ): {} -> {}", hs_occ.len(), hs_occ_new.len(), sum_vec_size(&hs_occ), sum_vec_size(&hs_occ_new));
 
 		//3. filter by the new one
-		let (res,_)=sig.accepts_approx_pm_bounds(&hs_occ_new, &hs_occ_igc_new);
-		total_pm_witness_len += sum_vec_size(&hs_occ_new) + sum_vec_size(&hs_occ_igc_new);
+		let (res,info)= sig.accepts_approx_pm_bounds(
+			&hs_occ_new, &hs_occ_igc_new, fname);
+		let info = info.unwrap(); //will always succeed 
+		total_pm_witness_len += info.min_cost;
 		if res ==TriVal::Maybe || res==TriVal::True{
 			set_sigs_pm.insert( sig.name.clone() );
 		}
@@ -2310,7 +2325,7 @@ pub fn quick_discharge_file_by_crit_bag_pm_old(fname: &str,
 			let dfa_acc_path_igc = dfa_pm_igc.acc_path(&nibbles);
 			let hs_occ= dfa_pm.get_pattern_pos(&dfa_acc_path);
 			let hs_occ_igc= dfa_pm_igc.get_pattern_pos(&dfa_acc_path_igc);
-			let (res,_) = sig.accepts_approx_pm_bounds(&hs_occ, &hs_occ_igc);
+			let (res,_) = sig.accepts_approx_pm_bounds(&hs_occ, &hs_occ_igc,fname);
 			//println!("DEBUG USE 603: res: {:?}", res);
 			if res==TriVal::Maybe || res==TriVal::True{
 				set_ind_pm_reg.insert( sig.name.clone() );
@@ -2352,6 +2367,8 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 	dfa_crit_igc: &HexACDFA, dfa_bag_igc: &HexACDFA,
 	_b_optimize_pm: bool, _cfg: &ClamavApproxConfig)
 ->FailDischargeRecord{
+	println!("DEBUG USE 400: quick discharge === {}, nibble len: {}", fname, nibbles.len());
+
 	//0. internal function closure
 	let sum_vec_size = |hs: &HashMap<String,Vec<usize>>| -> usize{
 		hs.into_iter().map(|(_,v)| v.len()).sum::<usize>()
@@ -2404,21 +2421,19 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		let bag_pm_igc = sig.collect_bagwords_from_pmreg(true);
 		let hs_occ_new = filter_by(&hs_occ, &bag_pm);
 		let hs_occ_igc_new = filter_by(&hs_occ_igc, &bag_pm_igc); 
-
+	
 		//3. process each one and return the result
 		let (res, info) = 
-			sig.accepts_approx_pm_bounds(&hs_occ_new, &hs_occ_igc_new);
+			sig.accepts_approx_pm_bounds(&hs_occ_new, &hs_occ_igc_new, fname);
+		let info = info.unwrap();
 		let pm_witness_len = sum_vec_size(&hs_occ_new) + sum_vec_size(&hs_occ_igc_new);
-		if pm_witness_len>1000{
-			println!("-- DEBUG USE 302.1: fname: {}, sig: {}, hs_occ: {} => {}, sum_vec(hs_occ): {} -> {}", fname, sig.name, hs_occ.len(), hs_occ_new.len(), sum_vec_size(&hs_occ), sum_vec_size(&hs_occ_new));
-			println!("-- DEBUG USE 302.2: hs_occ_igc: {} => {}, sum_vec(hs_occ_igc): {} -> {}", hs_occ_igc.len(), hs_occ_igc_new.len(), sum_vec_size(&hs_occ_igc), sum_vec_size(&hs_occ_igc_new));
-			println!("-- DEBUG USE 302.3: pm_witness_len: {}", pm_witness_len);
-			println!("-- DEBUG USE 302.4 XXX: pattern ====");
-			for (k,v) in &hs_occ_new{
-				println!(" word: {} => {}", k, v.len());
-			}
-		}
-		(res, sig.name.clone(), info, pm_witness_len)
+		let new_pm_witness_len = info.min_cost; //more accurate because
+
+		//REMOVE LATER ---------------
+			//it drops the subsig which are not used.
+			println!("-- DEBUG USE 302.1: fname: {}, sig: {}, hs_occ: {} => {}, sum_vec(hs_occ): {} -> {}, pm_len: {}, new_pm_len: {} => RESULT: {}", fname, sig.name, hs_occ.len(), hs_occ_new.len(), sum_vec_size(&hs_occ), sum_vec_size(&hs_occ_new), pm_witness_len, new_pm_witness_len, info.b_success);
+		//REMOVE LATER --------------- ABOVE
+		(res, sig.name.clone(), Some(info), new_pm_witness_len)
 	}).collect::<Vec<(TriVal,String, Option<DischargeSigInfo>,usize)>>();
 	let mut vec_sed_sigs_info = vec![]; 
 	let mut total_pm_witness_len = 0; 
@@ -2490,7 +2505,7 @@ pub fn quick_discharge_file_by_crit_bag_pm(
 /// NOTE: we didn't do the bag of words as in quick_discharge old version,
 /// just for saving implementation cost.
 pub fn quick_discharge_file_adv(
-	_fname: &str,
+	fname: &str,
 	nibbles: &Vec<u8>, 
 	v_sigs: &Vec<Arc<ClamavSig>>,
 	vec_sigs_no_crit_pat: &Vec<Arc<ClamavSig>>,
@@ -2547,7 +2562,7 @@ pub fn quick_discharge_file_adv(
 
 		//3. process each one and return the result
 		let (res, info) = 
-			sig.accepts_approx_pm_bounds(&hs_occ_new, &hs_occ_igc_new);
+			sig.accepts_approx_pm_bounds(&hs_occ_new, &hs_occ_igc_new,fname);
 		(res, sig.name.clone(), info)
 	}).collect::<Vec<(TriVal,String, Option<DischargeSigInfo>)>>();
 	let mut vec_sed_sigs_info = vec![]; 
@@ -2660,15 +2675,11 @@ pub fn find_sig(sig_name:&str, fpath: &str, sigtype: ClamSigType, cfg: &ClamavAp
 pub fn default_clamav_cfg()->ClamavApproxConfig{
 	ClamavApproxConfig{
 		//max_pm_sections: 32, // OLD
-		max_pm_sections: 10, // OLD
-		//max_pm_sections: 4, //does not help much
+		max_pm_sections: 10, // LATEST OLD
 		combination_limit: 127, 
-		//repeat_limit: 1024*6, //OLD -> avg step: 46
-		//repeat_limit: 1024, //-> avg step: 20
-		repeat_limit: 256,  //-> avg step: 19 
-		//repeat_limit: 64,  //-> avg step: 19 
-		min_bag_len: 6,
-		min_pm_word_len: 4,
+		repeat_limit: 256,  //-> avg step: 19  
+		min_bag_len: 6,  //doesn't affect seems
+		min_pm_word_len: 4, // increase to 5 will kill a lot
 	}
 }
 //-----------------------------------------

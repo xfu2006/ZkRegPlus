@@ -28,7 +28,8 @@ use ark_r1cs_std::{
 	eq::EqGadget,
 };
 use std::any::Any;
-use crate::gadgets::commons::{verify_logup_inverse, verify_inverse, verify_encoded_states_sig_count, verify_encoded_states_sig, check_imply, check_eq, check_arr_eq, check_arr_eq_nz, expand_vec,gen_m_table,new_const_var,check_arr_eq_arr};
+use crate::gadgets::commons::{verify_logup_inverse, verify_inverse, verify_encoded_states_sig_count, verify_encoded_states_sig, check_imply, check_eq, check_arr_eq, check_arr_eq_nz, expand_vec,gen_m_table,new_const_var,check_arr_eq_arr,
+new_var};
 use data_processor::{
 	clam_db::{RANGE2,RANGE2_BIT,ID_SIG_NO_CRIT_COUNT,ID_SIG_NO_CRIT}, 
 	hex_acdfa::HexACDFA
@@ -50,6 +51,12 @@ use folding_schemes::{folding::foldpot::circuits_super::{field_to_usize}};
 /// The challenge here is that k is a different value for each state,
 /// So the transcript like input maximizes memory efficiency.
 /// We then apply log-up to reason about subset (lookup) relation
+///
+/// NOTE that the input: final states is a UNIQUE SET of final states
+/// for the real data: this is the product of 
+/// patterns per subsig * subsigs per sig
+/// This is usually a set of up to 8k elements in the worst case.
+/// The cost of this gadget is much smaller compared with others.
 #[derive(Clone,Debug)]
 pub struct GetSigGadget<F:PrimeField>{ 
 	_f: PhantomData<F>,
@@ -710,6 +717,8 @@ impl <F:PrimeField> SigmaGadget<F> for GetSigGadget<F>{
 
 	/// return the estimated cost
 	fn est_cost(&self)->usize{
+		//NOTE: this is not accurate as some functions have been
+		//updated. 
 		let (olen, jlen, slen) = (self.capacity.final_states_buf_capacity, 
 			self.capacity.join_buf_capacity, self.capacity.sig_buf_capacity);
 		let costs = vec![
@@ -833,10 +842,23 @@ impl <F:PrimeField> SigmaGadget<F> for GetSigGadget<F>{
 		msg3_vec	
 	}
 
+	/// COST: 12*olen + 32*jlen + 10*slen + 2*clen
+	/// olen: final_states_buf: which is pats_subsig * total subsigs
+	///   real data worst case 8k
+	/// jlen: join_buf_capacity : subsigs * avg_pats_per (same as final_states
+	///    buf, keep it for legacy issue
+	/// slen: sig_buf_capacity (real data fixed number of <256)
+	/// clen: crit_no_pat (which automatically fails cp approach and
+	///   needs SED aporach (real data fixed number <128)
+	/// So around 40 * (pats_subsig * subsig) [
+	///   note those subsigs are in fact very small number, not including
+	///    those no_cp_pattern which are automatically included
+	///   in practice this could be less than 10k total cost]
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{
-
+		let b_perf = false;
+		let (nc,nv) = (cs.num_constraints(), cs.num_witness_variables());
 		//0. retrive the statement instance 
 		let (olen, jlen, slen, clen) = (self.capacity.final_states_buf_capacity,
 			self.capacity.join_buf_capacity, self.capacity.sig_buf_capacity,
@@ -911,6 +933,11 @@ impl <F:PrimeField> SigmaGadget<F> for GetSigGadget<F>{
 		//3. check the ranges (subtables). Here subtbl_id has the 
 		//same structure of data + oup. Use a SigGadgetData to
 		//deserialize the subtbl_id vector and verify in batch.
+		//NOTE most of these parts (subtbl can be optimized)
+		// for const against const comparison, it does not generate
+		// constraints (so comment them out only decreases a bit
+		// on the computing time). Given entire gadget is small,
+		// we do not perform any more optimization here to save efforts.
 		let f_final_2_sig = FpVar::<F>::new_constant(cs.clone(),
 			F::from((self.fsm_id+4) as u32))?;
 		let f_final_sig_count = FpVar::<F>::new_constant(cs.clone(),
@@ -1035,6 +1062,8 @@ impl <F:PrimeField> SigmaGadget<F> for GetSigGadget<F>{
 		let mut sum_left= FpVar::<F>::new_constant(cs.clone(), F::zero())?;
 		let mut sum_right= sum_left.clone();
 		let one_var= FpVar::<F>::new_constant(cs.clone(), F::one())?;
+		let fp_one= new_var(&cs, F::one());
+		check_eq(&fp_one, &one_var, "fp_one should be one_var")?;
 		for i in 0..olen{
 			sum_left= (&data.decoded_final_states_sigs_count_count[i])
 				.is_zero()?
@@ -1043,7 +1072,10 @@ impl <F:PrimeField> SigmaGadget<F> for GetSigGadget<F>{
 					&(&sum_left*alpha
 						+&data.decoded_final_states_sigs_count_count[i])
 				)?;
-
+			if i%64==0{
+				sum_left = &sum_left * &fp_one; //to break long chain of
+						//linear combination
+			}
 		}
 
 		
@@ -1073,6 +1105,9 @@ impl <F:PrimeField> SigmaGadget<F> for GetSigGadget<F>{
 				&(&sum_right*alpha + &data.decoded_final_states_sigs_ids[i]), 
 				&sum_right
 			)?;
+			if i%64==0{
+				sum_right = &sum_right * &fp_one;
+			}
 
 			//3. in non-padding mode, ensure difference between IDs
 			// is one for the same signature
@@ -1085,6 +1120,9 @@ impl <F:PrimeField> SigmaGadget<F> for GetSigGadget<F>{
 		}
 		check_eq(&sum_left, &sum_right, "sum_left==sum_right")?;
 
+		if b_perf{
+			println!("### sig gadget: olen: {}, jlen: {}, slen: {}, clen: {} => cs: {}, vars: {}", olen, jlen, slen, clen, cs.num_constraints()-nc, cs.num_witness_variables()-nv); 
+		}
 
 		Ok(())
 	}
@@ -1127,7 +1165,7 @@ pub mod tests_sigs_gadget{
 			final_states_buf_capacity: 16,
 			join_buf_capacity: 8,
 			sig_buf_capacity: 5,
-			count_sig_no_crit_pat: 2,
+			count_sig_no_crit_pat: 3,
 		};
 			
 		let gadget= GetSigGadget::<Fr>::new(&capacity, fsm_id);
@@ -1136,9 +1174,12 @@ pub mod tests_sigs_gadget{
 		//2. build the advice
 		let inp= vec![ //sigs
 			vec![Fr::one()],
-			vec![Fr::zero(); 4]
+			vec![Fr::zero(); capacity.sig_buf_capacity-1]
 		].concat(); //as required, padded as zero.
-		let vec_sig_id_no_crit_pat = vec![2usize, 5usize]; //sig2,5 which
+		let vec_sig_id_no_crit_pat = vec![
+			vec![0usize; capacity.count_sig_no_crit_pat-2],
+			vec![2usize, 5usize],
+		].concat(); //sig2,5 which
 			//have no mapping of any critical patterns, so we list
 		let adv = GetSigAdvice::new(&final_states, &inp, capacity, &acdfa, 
 			&map_crit_pat, &sig_to_id, fsm_id as usize, 

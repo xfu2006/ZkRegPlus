@@ -3,6 +3,9 @@
 */
 
 // This is a better refactored version of word_extractor.rs
+// It extract a word (packed with 62 nibbles) into nibbles.
+// NOTE that it has two modes: char mode (for regular DFA),
+// and normal mode (for ACDFA).
 
 use rayon::{ iter::{ParallelIterator,IntoParallelIterator,IntoParallelRefIterator} };
 use std::{rc::{Rc},cell::{RefCell}};
@@ -127,7 +130,7 @@ impl <F: PrimeField> WordExtractAdvAdvice<F>{
 		let col_word = Col::<F>::new(word.clone(), "word", IDX_WORD);
 		let col_act_size= Col::<F>::new(vec![f_act_size], "act_size", 
 			IDX_DATA);
-		let col_si_act_size = Col::<F>::new(vec![F::zero()], "si_act_size",
+		let col_si_act_size = Col::<F>::new_const(vec![F::zero()], "si_act_size",
 			IDX_SI_DATA); //as it's zero no need to check actually
 		stmt_container.borrow_mut().add_col(col_word);
 		stmt_container.borrow_mut().add_col(col_act_size);
