@@ -21252,7 +21252,22 @@ Goal 6. continue to debug the strange cost problem
 		-> lkup size: 267864650 (now ok <256M)
 
 Saturday 10/2025/2025
-Goal 1. 
+Goal 1. handle special patterns such as 0000
+	[a] figure out the semantics of vec_subsig_pm_bounds
+	[b] implementation of remove_special_pats
+	[c] debug merge patterns
+	[d] debug a case that merge 2 consecutive patterns
+	[e] remove calculation error involving max
+	[f] correct another cal error which does not include word len
+
+Goal 2. check data
+	[a] it improves to 0.28% and 8.53%
+	[b] verify
+	[c] play with the max_pm_len and see if it further cut cost
+		of DFA.
+	[d] check the regression testing of zkp_driver2.
+-- TODO -- check if need to apply heursitics for small patterns to
+allow original vec_pats.
 
 
 

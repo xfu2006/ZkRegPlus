@@ -871,8 +871,64 @@ impl ClamavSig{
 					res[0..maxlen].to_vec()
 				}
 			};
-			vec
+
+			let new_vec = self.remove_special_pats(&vec, s);
+			new_vec
 		}).collect::<Vec<Vec<(String, (usize, usize) )>>>();
+	}
+
+	/// handle special patterns like 0000
+	/// e.g., given abcd....0000...dede 
+	/// which has vec_subsig_pm_bounds: 
+	/// [ ("abcd", (0,0)), ("0000", (4,4)), ("dede",(3,3))]
+	/// we merge it to
+	/// abcd...........dede
+	/// thus we are dropping the item ("0000",(4,4)) and change the last item
+	/// to
+	/// ("dede", (7,7))
+	fn remove_special_pats(&self, v: &Vec<(String,(usize,usize))>, _subsig_obj: &SubSigObj)->Vec<(String,(usize,usize))>{
+		let r1 = Regex::new(r"^0+$").unwrap();
+		let mut res = vec![];
+		let mut i = 0;
+		let mut _removed = 0;
+		while i<v.len(){
+			let item = &v[i];
+			let s = &item.0;
+			let (mut min,mut max) = (item.1.0, item.1.1);
+			if !r1.is_match(&s) {
+				res.push(item.clone());
+				i += 1;
+			}else{
+				//loop to find the next item to merge
+				//note: if not found, no item to add anyway
+				//the ".*" will be appended automatically
+				i += 1;
+				_removed += 1;
+				while i<v.len(){
+					let next_item = &v[i];
+					min = if next_item.1.0==usize::MAX || min==usize::MAX {
+						usize::MAX
+					} else {
+							min + next_item.1.0 + v[i-1].0.len()
+					};
+					max = if next_item.1.1==usize::MAX || max==usize::MAX{
+						usize::MAX} else {
+							max + next_item.1.1 + v[i-1].0.len()
+						};
+					if !r1.is_match(&next_item.0){
+						let new_item = (next_item.0.clone(), (min,max));
+						res.push(new_item);
+						i +=1; 
+						break;
+					}else{
+						i += 1;
+						_removed += 1;
+					}
+				}
+			}
+		}
+
+		res
 	}
 
 	// based on dnf_id, collect the raw_subsig_ids
@@ -2674,8 +2730,7 @@ pub fn find_sig(sig_name:&str, fpath: &str, sigtype: ClamSigType, cfg: &ClamavAp
 /// generate a default clamav config.
 pub fn default_clamav_cfg()->ClamavApproxConfig{
 	ClamavApproxConfig{
-		//max_pm_sections: 32, // OLD
-		max_pm_sections: 10, // LATEST OLD
+		max_pm_sections: 10, // LATEST OLD 32 does not help much
 		combination_limit: 127, 
 		repeat_limit: 256,  //-> avg step: 19  
 		min_bag_len: 6,  //doesn't affect seems
