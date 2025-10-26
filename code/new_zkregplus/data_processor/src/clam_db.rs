@@ -50,8 +50,8 @@ pub const STATE_BIT:usize =  24;
 /// IN PRODUCTION NEEDS TO CHANGE THE SAME SIZE OF STATE_BIT
 //pub const RANGE2_BIT: usize = 10;
 //pub const RANGE2_BIT: usize = 8;
-pub const RANGE2_BIT: usize = 18;
-//pub const RANGE2_BIT: usize = 26; //(allowing 64M nibbles = 32MB)
+//pub const RANGE2_BIT: usize = 18;
+pub const RANGE2_BIT: usize = 26; //(allowing 64M nibbles = 32MB)
 
 // the following are trival related sub-table ids
 // they are located at the very beginning of the entire lkup
@@ -1051,12 +1051,6 @@ impl <F:PrimeField> ClamavDB<F>{
 		let state_2_sig_id = tbl_id_init+4;
 		let state_sig_count_id = tbl_id_init+5;
 		let all_states_id = tbl_id_init+6;
-
-		//REMOVE LATER -----------
-		println!("DEBUG USE 6701: add_acdfa_to_lkup acdfa stats");
-		let mut vlog = vec![];
-		acdfa.log_stats("---", &mut vlog);
-		//REMOVE LATER ----------- ABOVE
 
 		//2. build the single entry sub-table for init
 		let init_st = acdfa.init_state as u32;

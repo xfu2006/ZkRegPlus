@@ -1078,7 +1078,7 @@ impl ClamavSig{
 	/// return (DisChargeResult, cost, cost2)
 	fn approx_eval_pm_bounds_subsig(&self, subsig_id: usize,  
 		hs:&HashMap<String,Vec<usize>>, hs_igc: &HashMap<String,Vec<usize>>,
-		fname: &str) 
+		_fname: &str) 
 		->(TriVal, usize, usize){
 		let pat = &self.vec_subsig_pm_bounds[subsig_id];
 		let mut cost = 0;
@@ -1108,7 +1108,6 @@ impl ClamavSig{
 				hs.get(word).map_or(vec![], |v| v.to_vec())
 			};
 			cost2+= arr_cur_pos.len();
-			println!("DEBUG USE 601.3: in approx_eval_pm_bounds: subsig_id: {} of sig: {}, cost2: {}, pat_id: {} of pats: {}, pat: {}, fname: {}", subsig_id, self.name, cost2, id, pat.len(), word, fname);
 
 			let allowed_pos = arr_cur_pos.into_iter().filter(|x|{
 				if allowed.len()==0 {return false;}
@@ -2482,13 +2481,9 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		let (res, info) = 
 			sig.accepts_approx_pm_bounds(&hs_occ_new, &hs_occ_igc_new, fname);
 		let info = info.unwrap();
-		let pm_witness_len = sum_vec_size(&hs_occ_new) + sum_vec_size(&hs_occ_igc_new);
+		let _pm_witness_len = sum_vec_size(&hs_occ_new) + sum_vec_size(&hs_occ_igc_new);
 		let new_pm_witness_len = info.min_cost; //more accurate because
 
-		//REMOVE LATER ---------------
-			//it drops the subsig which are not used.
-			println!("-- DEBUG USE 302.1: fname: {}, sig: {}, hs_occ: {} => {}, sum_vec(hs_occ): {} -> {}, pm_len: {}, new_pm_len: {} => RESULT: {}", fname, sig.name, hs_occ.len(), hs_occ_new.len(), sum_vec_size(&hs_occ), sum_vec_size(&hs_occ_new), pm_witness_len, new_pm_witness_len, info.b_success);
-		//REMOVE LATER --------------- ABOVE
 		(res, sig.name.clone(), Some(info), new_pm_witness_len)
 	}).collect::<Vec<(TriVal,String, Option<DischargeSigInfo>,usize)>>();
 	let mut vec_sed_sigs_info = vec![]; 
@@ -2502,7 +2497,6 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 			vec_sed_sigs_info.push(info.unwrap());
 		}
 	}
-	println!(" ** TOTAL pm_witness_len: {}", total_pm_witness_len);
 	let total_acc_path_len = dfa_acc_path.len() + dfa_acc_path_igc.len();
 	let total_hs_size = hs_occ.len() + hs_occ_igc.len();
 	let total_accepted = sum_vec_size(&hs_occ) + sum_vec_size(&hs_occ_igc);
