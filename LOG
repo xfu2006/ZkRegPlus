@@ -21054,12 +21054,13 @@ Goal 6. collect data after pack.rs is improved
 		---- PERFORMANCE DATA -------------------- ID: 007 (after pack)
 		nlen = 32k
 		module 2 pack: 85k-49k= 35k (very close to nlen - cut half) - 
-		module 8 size: 491-196k: 295k (slightly cut) 
-		right after module 14: R1CS: 862k (improved 60k) 
+		module 8 size: 488-194k: 294k (slightly cut) 
+		right after module 14: R1CS: 859(improved 60k) 
 		lkup size: 932k (same) 
 		qry cost (compare DEBUG 1201): 3.86-1.43M = 2.43M 
-		combined key size: 10294099 (max_row_col: 5.48M)
-		PERFORAMNCE 1003: n_case1: (1046, 0.11%), n_case2: (190956, 20.47%), n_case3: (740849, 79.42%)
+		combined key size: 10285043 (max_row_col: 5.48M)
+		n_case1: (856, 0.09%), n_case2: (190764, 20.47%), n_case3: (740463, 79.44%)
+
 
 	 GenConstraints: Step 4: *** ENTIRE CIRCUIT CONSTRUCTED *** . cons: 24257638: 14.073128ms (almost hte same)
 		main: Step 12. Gen groth16 prf, mem: 70 GB: 199.433283615s
@@ -21251,7 +21252,7 @@ Goal 6. continue to debug the strange cost problem
 		-> no big change
 		-> lkup size: 267864650 (now ok <256M)
 
-Saturday 10/2025/2025
+Saturday 10/25/2025
 Goal 1. handle special patterns such as 0000
 	[a] figure out the semantics of vec_subsig_pm_bounds
 	[b] implementation of remove_special_pats
@@ -21260,17 +21261,43 @@ Goal 1. handle special patterns such as 0000
 	[e] remove calculation error involving max
 	[f] correct another cal error which does not include word len
 	[g] check who generates the highest sed ratio
+	[a] PERFORMANCE: it improves to avg: 0.28% and max: 8.53%
 	[h] PERFORMANCE: luckily: most files below 1% and only 2 small 20kb
 		file around 8%.
+		Vast majority is less than 1%, which is very nice!
 
 Goal 2. check data
-	[a] it improves to avg: 0.28% and max: 8.53%
 	[b] verify
 	[c] play with the max_pm_len and see if it further cut cost
 		of DFA.
 	[d] check the regression testing of zkp_driver2.
 
---- TODO -- improve word_extract
+Sunday 10/26/2025
+LOC: (gadget): 16041
+Goal 1. collect pre-data
+Goal 2. implementation
+	[a] add const columns
+	[b] measure cost
+	[c] assert msg3
+	[d] manually meaure cost
+	[e] collect real data
+		---- PERFORMANCE DATA ---------------- ID: 008 (after wordextract_adv)
+		nlen = 32k
+		module 8 size: 152k-159k: 3k
+		right after module 14: R1CS: 859 -> 795k (improved 60k) 
+		lkup size: 932k (same) 
+		qry cost (compare DEBUG 1201): 3.67-1.37M = 2.40M 
+		combined key size: 10285043->9904415: saved 300k
+		(max_row_col: 5.28M -> saved 200k
+		n_case1: (856, 0.09%), n_case2: (190764, 20.47%), n_case3: (740463, 79.44%)
+			-> new
+		PERFORAMNCE 1003: n_case1: (856, 0.09%), n_case2: (254252, 27.28%), n_case3: (676975, 72.63%)
 
+
+
+	 GenConstraints: Step 4: *** ENTIRE CIRCUIT CONSTRUCTED *** . cons: 24257638: 14.073128ms (almost hte same) -> 23372081 (saved 1M)
+		main: Step 12. Gen groth16 prf, mem: 70 GB: 199.433283615s
+		-> 68GB 193 s.
+		-------------
 
 

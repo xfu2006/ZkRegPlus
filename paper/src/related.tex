@@ -227,6 +227,28 @@ multiple sub-matrix evaluation. We could adopt the same technique
 by spliting the pairing operation into multiple identical cycles,
 thus reducing decider size, which remain as a future direction.
 
+{\bf Fiat-Shamir} Recently it is shown that when
+circuit has white-box access to the hash function used
+for Fiat-Shamir transformations, there exists
+diagonization attacks \cite{kho25fiat,arnon2025pow}, where
+a proof-of-work remedy is given. The attack aims at
+{\em general purpose proof system} such as the GKR protocol
+which allows adversary prover to submit {\em any} circuit, where
+the adversary can provide a proof for false statement.
+In our design, the circuit does have white-box access to hash.
+However, our circuit is specific (not general purpose), and
+we take a security heurstic assumption that the circuit 
+is set up by a trusted party (so that the prover does not have
+the ability to create circuit). To further mitigate the attack,
+we use two {\em different paddings} when the real hash() is used in circuit,
+and when hash() is used for Fiat-Shamir. This reduces the likelihood
+that a malicoius adversary use some gates in the circuit to simulate
+the Fiat-Shamir transformation hashes. However, in the furture work,
+it is interesting to apply another layer of formal verification
+to prove that a circuit's gates cannot be leveraged to build
+the Fiat-Shamir transformation hash.
+
+
 \subsection{Recusion Depth}
 For knowledge extraction property of our FoldPot system, we have
 to use the same security heuristics adopted in the lines of

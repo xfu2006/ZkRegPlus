@@ -33,7 +33,7 @@ use utils::{data::{packed_to_nibbles,u8_to_hex}};
 use crate::gadgets::{
 	traits::{ComponentAdvice,Col, IDX_WORD, IDX_DATA,IDX_INP, IDX_OUP, IDX_SI_DATA, Container},
 	word_extract::{LEGS},
-	commons::{check_arr_eq,check_eq},
+	commons::{check_eq},
 };
 
 
@@ -130,8 +130,10 @@ impl <F: PrimeField> WordExtractAdvAdvice<F>{
 		let col_word = Col::<F>::new(word.clone(), "word", IDX_WORD);
 		let col_act_size= Col::<F>::new(vec![f_act_size], "act_size", 
 			IDX_DATA);
-		let col_si_act_size = Col::<F>::new_const(vec![F::zero()], "si_act_size",
-			IDX_SI_DATA); //as it's zero no need to check actually
+		let col_si_act_size = Col::<F>::new_const(
+			vec![F::zero()], "si_act_size",
+			IDX_SI_DATA
+		); //as it's zero no need to check actually
 		stmt_container.borrow_mut().add_col(col_word);
 		stmt_container.borrow_mut().add_col(col_act_size);
 		stmt_container.borrow_mut().add_col(col_si_act_size);
@@ -139,7 +141,6 @@ impl <F: PrimeField> WordExtractAdvAdvice<F>{
 		//2. do the conversion
 		let nibbles = packed_to_nibbles(&word);
 		assert!(nibbles.len() == LEGS * word.len());
-		println!("DEBUG USE 6331.1 in word_extract nibbles: {}", nibbles.len());
 		#[cfg(test)]{ 
 			use utils::data::{pack_nibbles};
 			let packed = pack_nibbles(&nibbles);
@@ -152,8 +153,10 @@ impl <F: PrimeField> WordExtractAdvAdvice<F>{
 		//3. construct the problem statement container for serialization
 		let nlen = nibbles.len();
 		let col_si_nibbles= if !b_map_char{//default mode
-			Col::<F>::new(vec![F::from(CHAR); nlen], 
-			"si_nibbles", IDX_SI_DATA)
+			Col::<F>::new_const(
+				vec![F::from(CHAR); nlen], 
+				"si_nibbles", IDX_SI_DATA
+			)
 		}else{//for DFA (instead of ACDFA
 			let s_nibbles = nibbles.par_iter().map(|n| field_to_usize(n) as u8)
 				.collect::<Vec<u8>>();
@@ -163,8 +166,8 @@ impl <F: PrimeField> WordExtractAdvAdvice<F>{
 			let vec = s2.into_par_iter().map(|ch|{
 				f_char_map + F::from(ch as u8)
 			}).collect::<Vec<F>>();
-
-			Col::<F>::new(vec, "si_nibbles", IDX_SI_DATA)
+			//NOTE: it's NOT constant mode
+			Col::<F>::new(vec, "si_nibbles", IDX_SI_DATA) 
 		};
 		//conditional add two extra columns only when in b_map_char
 		if b_map_char{
@@ -172,8 +175,10 @@ impl <F: PrimeField> WordExtractAdvAdvice<F>{
 				Col::<F>::new(nibbles.clone(), "nibbles_copy", IDX_DATA)
 			);
 			stmt_container.borrow_mut().add_col(
-				Col::<F>::new(vec![F::from(CHAR);nlen],"si_nibbles_copy",
-				IDX_SI_DATA));
+				Col::<F>::new_const(
+					vec![F::from(CHAR);nlen],"si_nibbles_copy",
+					IDX_SI_DATA)
+				);
 		}
 
 		let col_nibbles= Col::<F>::new(nibbles, "nibbles", IDX_DATA);
@@ -227,7 +232,13 @@ impl <F:PrimeField> WordExtractAdvGadget<F>{
 }
 
 impl <F:PrimeField> SigmaGadget<F> for WordExtractAdvGadget<F>{
-	fn get_name(&self)->&str {"WordExtractAdvGadget"}
+	fn get_name(&self)->&str {
+		if self.b_map_char{
+			"WordExtractAdvGadget(b_map_mode)"
+		}else{
+			"WordExtractAdvGadget"
+		}
+	}
 
 	/// set the container cfg. This is only needed for those gadgets
 	/// in SED approach
@@ -265,7 +276,12 @@ impl <F:PrimeField> SigmaGadget<F> for WordExtractAdvGadget<F>{
 	fn est_cost(&self)->usize{
 		// obtain the value by actually measure the size of R1CS
 		// in assert_msg3
-		let est = self.capacity.max_word_len * 68;
+		// this is about 1x nlen
+		let est = if self.b_map_char {
+			self.capacity.max_word_len*6
+		}else{//6*wlen + nlen = (62+6)*wlen
+			self.capacity.max_word_len * 68
+		};
 		est
 	}
 
@@ -289,28 +305,36 @@ impl <F:PrimeField> SigmaGadget<F> for WordExtractAdvGadget<F>{
 		vec![] //no msg3
 	}
 
+	/// COST: default mode: 6*wlen (very small)
+	///       b_map mode: 6*wlen + nlen
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(),SynthesisError>{
+		let b_perf = false;
+		let (nc, nv) = (cs.num_constraints(), cs.num_witness_variables());
+
 		//1. retrive the statement instance and get all parts
 		let cfg = self.get_container_cfg().expect("container cfg not set!");
 		let stmt = Container::<FpVar<F>>::load_from(i, wtns_cfg, wtns, &cfg)?;
 
 		//2. get the parts of the statement
+		//COST: 0
 		let col_word = stmt.get_col("word")?;
 		let word_seg= &col_word.borrow().data;
 		assert!(word_seg.len()==self.capacity.max_word_len);
 		let col_nibble = stmt.get_col("nibbles")?;
 		let nibbles = &col_nibble.borrow().data;
 		let act_seg_len= stmt.get_col("act_size")?.borrow().data[0].clone();
-		let col_si_nibbles = stmt.get_col("si_nibbles")?;
-		let si_nibbles= &col_si_nibbles.borrow().data;
+		//let col_si_nibbles = stmt.get_col("si_nibbles")?;
+		//let si_nibbles= &col_si_nibbles.borrow().data;
 		//actually no need to check si_act_size (it's tagged with 0 don't care)
 		let _si_act_size= stmt.get_col("si_act_size")?.borrow()
 			.data[0].clone(); 
 		let mut remain =  act_seg_len.clone();
+		let nlen = nibbles.len();
 
 		//3. build the power of 4's
+		// COST: 0, because they are all const.
 		let zero_var = FpVar::<F>::new_constant(cs.clone(), F::zero())?;
 		let one_var = FpVar::<F>::new_constant(cs.clone(), F::one())?;
 		let f4 = FpVar::<F>::new_constant(cs.clone(), F::from(16u32))?;
@@ -319,6 +343,8 @@ impl <F:PrimeField> SigmaGadget<F> for WordExtractAdvGadget<F>{
 		for i in 1..LEGS{ vec_pows[i]	 = &vec_pows[i-1] * &f4; }
 
 		//4. check extraction correct
+		//COST: 6*wlen (because add does not cost anything)
+		//note the vec_pows are const
 		let wlen = self.capacity.max_word_len;
 		for i in 0..wlen{
 			let b_remain_zero = remain.is_zero()?;
@@ -339,19 +365,26 @@ impl <F:PrimeField> SigmaGadget<F> for WordExtractAdvGadget<F>{
 		}
 
 		//5. check the sub-tbl_ids
-		let char_tbl = FpVar::<F>::new_constant(cs.clone(), F::from(CHAR))?;
+		//let char_tbl = FpVar::<F>::new_constant(cs.clone(), F::from(CHAR))?;
+		//COST: default mode: 0, b_map mode: nlen
 		if !self.b_map_char{
-			check_arr_eq(&si_nibbles,&char_tbl,"failing check of si_nibbles")?;
+			// this is A constant table, no need to check
+			//check_arr_eq(&si_nibbles,&char_tbl,"failing check of si_nibbles")?;
 		}else{
-			let si_nibbles_copy = stmt.get_container("si_nibbles_copy")
-				.unwrap().borrow().to_vec();
+			//let si_nibbles_copy = stmt.get_container("si_nibbles_copy")
+			//	.unwrap().borrow().to_vec();
 			let nibbles_copy = stmt.get_container("nibbles_copy").unwrap().
 				borrow().to_vec();
-			check_arr_eq(&si_nibbles_copy, &char_tbl, "failing si_ni copy")?;
+			// this is a CONSTANT table, no need to check
+			//check_arr_eq(&si_nibbles_copy, &char_tbl, "failing si_ni copy")?;
 			for i in 0..nibbles.len(){
 				check_eq(&nibbles_copy[i], &nibbles[i], 
 					"failing eq extra")?;
 			}
+		}
+		if b_perf{
+			println!(" ### word_extract_adv(b_map: {}): wlen: {}, nlen: {}, nc: {}, nv: {}", self.b_map_char, wlen,
+			nlen, cs.num_constraints() - nc,cs.num_witness_variables()-nv);
 		}
 
 		Ok(())

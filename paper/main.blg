@@ -22,6 +22,8 @@ Warning--empty address in Kaizen
 Warning--empty address in AHV95
 Warning--no number and no volume in Coral
 Warning--page numbers missing in both pages and numpages fields in Coral
+Warning--empty publisher in arnon2025pow
+Warning--empty address in arnon2025pow
 Warning--empty publisher in Jolt
 Warning--empty address in Jolt
 Warning--empty publisher in SpecialFiat
@@ -68,6 +70,8 @@ Warning--empty publisher in ZkMiddleBox
 Warning--empty address in ZkMiddleBox
 Warning--empty publisher in Kate10
 Warning--empty address in Kate10
+Warning--empty publisher in kho25fiat
+Warning--empty address in kho25fiat
 Warning--empty publisher in Mirage
 Warning--empty address in Mirage
 Warning--page numbers missing in both pages and numpages fields in Mirage
@@ -94,45 +98,45 @@ Warning--empty publisher in vSQL
 Warning--empty address in vSQL
 Warning--empty publisher in IntegriDB
 Warning--empty address in IntegriDB
-You've used 98 entries,
+You've used 100 entries,
             5981 wiz_defined-function locations,
-            2071 strings with 35947 characters,
-and the built_in function-call counts, 96651 in all, are:
-= -- 10641
-> -- 3561
+            2080 strings with 36223 characters,
+and the built_in function-call counts, 98964 in all, are:
+= -- 10888
+> -- 3623
 < -- 0
-+ -- 1201
-- -- 1217
-* -- 6878
-:= -- 10128
-add.period$ -- 490
-call.type$ -- 98
-change.case$ -- 730
-chr.to.int$ -- 91
-cite$ -- 175
-duplicate$ -- 8723
-empty$ -- 6114
-format.name$ -- 1562
-if$ -- 22105
++ -- 1222
+- -- 1240
+* -- 7027
+:= -- 10343
+add.period$ -- 500
+call.type$ -- 100
+change.case$ -- 743
+chr.to.int$ -- 93
+cite$ -- 181
+duplicate$ -- 8961
+empty$ -- 6280
+format.name$ -- 1593
+if$ -- 22661
 int.to.chr$ -- 9
 int.to.str$ -- 1
-missing$ -- 188
-newline$ -- 858
-num.names$ -- 679
-pop$ -- 3469
+missing$ -- 198
+newline$ -- 872
+num.names$ -- 693
+pop$ -- 3576
 preamble$ -- 2
-purify$ -- 1499
+purify$ -- 1528
 quote$ -- 0
-skip$ -- 3473
+skip$ -- 3562
 stack$ -- 0
-substring$ -- 6711
-swap$ -- 718
+substring$ -- 6882
+swap$ -- 738
 text.length$ -- 0
 text.prefix$ -- 0
 top$ -- 0
-type$ -- 2811
-warning$ -- 77
-while$ -- 508
+type$ -- 2871
+warning$ -- 81
+while$ -- 524
 width$ -- 0
-write$ -- 1934
+write$ -- 1972
 (There was 1 error message)
