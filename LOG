@@ -21286,6 +21286,15 @@ Goal 2. implementation
 		module 8 size: 152k-159k: 3k
 		right after module 14: R1CS: 859 -> 795k (improved 60k) 
 		lkup size: 932k (same) 
+		module 9: fsmadv gadget: cost: 751k-457k = 294k
+		----------
+		DEBUG USE 7103: after msg3 of module 9: FsmAdvGadget:  constraints: 457119
+ --- validate_packed_trace step 1: -- col len: 48, sorted_val: 48, cs: 781
+ --- verify_packed trace step 2: states : 31745 --- sorted staes: 530--- cs: 162566
+ --- verify_packed trace step 3: verify pattern-state: 48--- cs: 1489
+--- verify packed_trace: cs: 2140
+DEBUG USE 7103: after msg3 of module 10: FsmAdvGadget:  constraints: 751947
+		-----------
 		qry cost (compare DEBUG 1201): 3.67-1.37M = 2.40M 
 		combined key size: 10285043->9904415: saved 300k
 		(max_row_col: 5.28M -> saved 200k
@@ -21300,4 +21309,61 @@ Goal 2. implementation
 		-> 68GB 193 s.
 		-------------
 
+Goal 3. fsm_adv gadget
+	[a] read existing code
+	[b] annotate
+	[c] FsmAdvGadget
+	[d] gen_fsm_combo
+	[e] gen_proj_store_combo
+	[f] gen_packe_trace_combo
+	[g] tbl_filter
+	[h] validate_acc_container -> 
+		-> cost
+		-> evalevaleMY
 
+Monday 10/27/2025
+LOC (gadget): 16118  -> 16135 (+20)
+Goal 1. improve fsm_adv 
+	[a] validate_fcc_container
+	[b] validate_proj_store
+		-> step 1
+		-> sep 2 and 3
+		-> step 4
+
+Goal 2: validate packed trace
+	[a] step 1
+	[b] fix verify_col_to_sorted_set
+
+Goal 3. improve verify_tbl_filtered_to_sorted_tbl_new
+	[a] read existing code
+	[b] think about new algo which project to final states first.
+	-> acc states/file len ratio
+		avg: 6.9%
+		max: 89% 
+		about 30 out 700 files greater than 10%
+		vast majority less than 30%.
+
+Tuesday 10/28/2025
+LOC (gadget): 16135 
+Goal 1. continue to improve the patters and figure what is the
+	most frequently visited pattern
+	[a] find out the most frequent pattern
+	[b] try to remove them and see if it goes on well
+	[c] read the most freq patterns 
+	[d] add handling of new patterns "ffff" into funciton "0000"
+		in revmove_special_patsk
+	[e] data collection: killing ffff fails 7 signatures
+	[f] do a heurstics, if the resulting new pattern is too short,
+		use the old one.
+	[g] try discharge Win.Trojan.FakeDefrag-1-> looks ok
+		it now solves all problems
+		-> lkup size: 262390893
+
+Wed 10/29/2025
+LOC (gadget): 16135
+Goal 1. change gen_fsm_acc_combo
+	[a] change the doc
+	[b] cur_state and cur_loc
+	[c] regression testing -> fails at 1st decider
+	[d] check out old one and see
+	still fails -> needs to check out previous version.

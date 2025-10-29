@@ -247,8 +247,21 @@ pub fn print_discharge_stats(vdata: &Vec<FailDischargeRecord>,
 	let accpath_len:usize=vdata.iter().map(|v| v.total_acc_path_len).sum();
 	let hs_len:usize=vdata.iter().map(|v| v.total_hs_size).sum();
 	let acc_states:usize=vdata.iter().map(|v| v.total_accepted).sum();
+	let acc_ratio = vdata.iter().map(|v| (v.total_accepted as f64)/(v.total_acc_path_len as f64)*100.0).collect::<Vec<f64>>();
 	flog(LOG1, &format!("hs_len (number of accepted patterns but only counting position once)/acc_path: {}%, hs_len: {}, accpath_len: {}", (hs_len as f64)*100.0/(accpath_len as f64), hs_len, accpath_len), vlog);
 	flog(LOG1, &format!("accepted states (counting multiple pos for one state, and ALL sigs)/acc_path: {}%, accepted_states: {}, accpath_len: {}", (acc_states as f64)*100.0/(accpath_len as f64), acc_states, accpath_len), vlog);
+	flog(LOG1, &format!("acc_states/path_len: avg: {}%, max: {}%",
+		avg_f64(&acc_ratio),
+		max_f64(&acc_ratio)), vlog);
+	//REMOVE LATER -------------
+	for i in 0..vdata.len(){
+		if acc_ratio[i]>10.0{
+			println!("DEBUG USE 7101: i: {}, acc_ratio: {}%, flen: {}, fname: {}",
+				i, acc_ratio[i], vdata[i].total_acc_path_len,
+				vdata[i].fname);
+		}
+	}
+	//REMOVE LATER ------------- ABOVE
 	let vec_unique_state_ratio = vdata.iter().map(|v|
 		//because it includes two automata's data (case sentive and igc)
 		(v.total_unique_states as f64)*100.0/(2.0*accpath_len as f64)

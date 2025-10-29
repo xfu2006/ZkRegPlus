@@ -480,14 +480,18 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 		let fsm_id_igc = ClamavDB::<F>::pm_acdfa_id(sig_id, true); 
 		//let fsm_cap = FsmAdvCapacity{max_nibble_len: nlen, 
 		//	acdfa_state_part_bits: state_bits};
+		let b_const_fsm_id = true;
 		let fsm_cap = &sed_capacity.faa_capacity();
 		let g_faa_cs = FsmAdvGadget::<F>::new(false, 1, //dist to word extract
-			acdfa_cs, &fsm_cap, fsm_id_cs, &cfgs, subsig_pat_store_cs); 
+			acdfa_cs, &fsm_cap, fsm_id_cs, &cfgs, subsig_pat_store_cs,
+			b_const_fsm_id
+		); 
 		cfgs.push( g_faa_cs.dummy_cfg.clone() );
 
 		let fsm_cap = &sed_capacity.faa_capacity();
 		let g_faa_igc = FsmAdvGadget::<F>::new(true, 2, //dist to wea
-			acdfa_igc, &fsm_cap, fsm_id_igc, &cfgs, subsig_pat_store_igc); 
+			acdfa_igc, &fsm_cap, fsm_id_igc, &cfgs, subsig_pat_store_igc,
+			b_const_fsm_id); 
 		cfgs.push( g_faa_igc.dummy_cfg.clone() );
 
 		//1.3. discharge_subsig (2 gadgets)

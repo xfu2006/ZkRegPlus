@@ -888,14 +888,16 @@ impl ClamavSig{
 	/// ("dede", (7,7))
 	fn remove_special_pats(&self, v: &Vec<(String,(usize,usize))>, _subsig_obj: &SubSigObj)->Vec<(String,(usize,usize))>{
 		let r1 = Regex::new(r"^0+$").unwrap();
+		let r2 = Regex::new(r"^(ff)+|(FF)+$").unwrap();
 		let mut res = vec![];
 		let mut i = 0;
 		let mut _removed = 0;
+		let mut ff_removed = 0;
 		while i<v.len(){
 			let item = &v[i];
 			let s = &item.0;
 			let (mut min,mut max) = (item.1.0, item.1.1);
-			if !r1.is_match(&s) {
+			if !r1.is_match(&s) & !r2.is_match(&s){
 				res.push(item.clone());
 				i += 1;
 			}else{
@@ -904,6 +906,9 @@ impl ClamavSig{
 				//the ".*" will be appended automatically
 				i += 1;
 				_removed += 1;
+				if r2.is_match(&s){
+					ff_removed += 1;
+				}
 				while i<v.len(){
 					let next_item = &v[i];
 					min = if next_item.1.0==usize::MAX || min==usize::MAX {
@@ -928,7 +933,11 @@ impl ClamavSig{
 			}
 		}
 
-		res
+		if ff_removed>1 && res.len()<2{//if killed too much use the original
+			v.clone()
+		}else{
+			res
+		}
 	}
 
 	// based on dnf_id, collect the raw_subsig_ids
@@ -2483,23 +2492,49 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		let info = info.unwrap();
 		let _pm_witness_len = sum_vec_size(&hs_occ_new) + sum_vec_size(&hs_occ_igc_new);
 		let new_pm_witness_len = info.min_cost; //more accurate because
+		//REMOVE LATER --------
+		let mut max_occ = 0;
+		let mut max_pat = format!("unknown");
+		for (pat, vec) in hs_occ_new{
+			if vec.len()>max_occ{
+				max_occ = vec.len();
+				max_pat = pat.clone();
+			}
+		}
+		//REMOVE LATER --------
 
-		(res, sig.name.clone(), Some(info), new_pm_witness_len)
-	}).collect::<Vec<(TriVal,String, Option<DischargeSigInfo>,usize)>>();
+		(res, sig.name.clone(), Some(info), new_pm_witness_len, (max_pat, max_occ))
+	}).collect::<Vec<(TriVal,String, Option<DischargeSigInfo>,usize, (String,usize))>>();
 	let mut vec_sed_sigs_info = vec![]; 
 	let mut total_pm_witness_len = 0; 
-	for pres in pm_res{
-		let (res, name, info, wit_len) = pres;
+	for pres in &pm_res{
+		let (res, name, info, wit_len, _) = pres;
 		total_pm_witness_len += wit_len;
-		if res==TriVal::Maybe || res==TriVal::True{
+		if *res==TriVal::Maybe || *res==TriVal::True{
 			set_sigs_pm.insert( name.clone() );
 		}else{//for discharged ones, push info
-			vec_sed_sigs_info.push(info.unwrap());
+			vec_sed_sigs_info.push(info.clone().unwrap());
 		}
 	}
 	let total_acc_path_len = dfa_acc_path.len() + dfa_acc_path_igc.len();
 	let total_hs_size = hs_occ.len() + hs_occ_igc.len();
 	let total_accepted = sum_vec_size(&hs_occ) + sum_vec_size(&hs_occ_igc);
+	//REMOVE LATER ---------
+	let mut max_occ = 0;
+	let mut max_pat = format!("");
+	for (_,_,_,_,(pat, occ)) in &pm_res{
+		if *occ>max_occ{
+			max_occ = *occ;
+			max_pat = pat.clone();
+		}
+	}
+	if total_accepted*10>total_acc_path_len{
+		println!("DEBUG USE 8801: fname: {}, accepted ratio: {}%, max pat: {}", 
+			fname, (total_accepted as f64)/(total_acc_path_len as f64)*100.0, 
+			max_pat);
+	}
+
+	//REMOVE LATER --------- ABOVE
 
 	//4. process by dfa
 	let dfa_sigs = v_sigs.iter().filter(|s| set_sigs_pm.contains(&s.name)).

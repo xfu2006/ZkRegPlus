@@ -1,5 +1,6 @@
 /* Created 03/26/2025, 
    Completed: 04/02/2025 
+   Revised: 10/25/2025 -> cut const sid columns cost
 */
 
 // This is a better refactored version of word_extractor.rs
