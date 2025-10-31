@@ -567,16 +567,17 @@ pub fn prove_filter_tag<F:PrimeField>(
 	assert!(no_key.len()==m && union_key.len()==m+k 
 		&& union_key_diff.len()==m+k-1);
 	prf.borrow_mut().add_col(Col::new(no_key, "no_key", IDX_DATA));
-	prf.borrow_mut().add_col(Col::new(vec![rg2;m], "si_no_key", IDX_SI_DATA));
+	prf.borrow_mut().add_col(Col::new_const(
+		vec![rg2;m], "si_no_key", IDX_SI_DATA));
 	prf.borrow_mut().add_col(Col::new(union_key, "union_key", IDX_DATA));
-	prf.borrow_mut().add_col(Col::new(vec![rg2;m+k], 
+	prf.borrow_mut().add_col(Col::new_const(vec![rg2;m+k], 
 		"si_union_key", IDX_SI_DATA));
 	prf.borrow_mut().add_col(Col::new(union_key_diff, 
 		"union_key_diff", IDX_DATA));
-	prf.borrow_mut().add_col(Col::new(vec![rg2;m+k-1], 
+	prf.borrow_mut().add_col(Col::new_const(vec![rg2;m+k-1], 
 		"si_union_key_diff", IDX_SI_DATA));
 	prf.borrow_mut().add_col(Col::new(m_tbl, "m_tbl", IDX_DATA));
-	prf.borrow_mut().add_col(Col::new(vec![zero;m+k], 
+	prf.borrow_mut().add_col(Col::new_const(vec![zero;m+k], 
 		"si_m_tbl", IDX_SI_DATA));
 
 	Ok(prf)
@@ -719,7 +720,6 @@ pub fn tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
 
 	let (m,n,k) = (keys.len(), target_size, proj_keys.len());
 	assert!(vals.len()==m);
-	println!("DEBUG USE 6101: m: {}, n: {}, k: {}", m, n, k);
 
 	//1.2 try to tag each key
 	// in_sorted_set_key: 1
@@ -777,7 +777,7 @@ pub fn tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
 	//5. return (make sure data col and its sid col are added in
 	// the right order).
 	res.borrow_mut().add_col(Col::new(tags, "tags", IDX_DATA));
-	res.borrow_mut().add_col(Col::new(si_tags, "si_tags", IDX_SI_DATA));
+	res.borrow_mut().add_col(Col::new_const(si_tags, "si_tags", IDX_SI_DATA));
 	res.borrow_mut().add_container(prf_tag);
 
 	sorted_tbl.borrow_mut().add_col(Col::new(packed_key,"packed_key",IDX_DATA));
@@ -785,16 +785,16 @@ pub fn tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
 	sorted_tbl.borrow_mut().add_col(Col::new(packed_val,"packed_val",IDX_DATA));
 	assert!(tbl_names.len()==3);
 	for i in 0..tbl_names.len(){
-		sorted_tbl.borrow_mut().add_col(Col::new(vec![f_rg; n],
+		sorted_tbl.borrow_mut().add_col(Col::new_const(vec![f_rg; n],
 			&format!("sid_{}", tbl_names[i]), IDX_SI_DATA));
 	}
 
 
 	sorted_tbl.borrow_mut().add_col(Col::new(diff_key,"diff_key",IDX_DATA));
-	sorted_tbl.borrow_mut().add_col(Col::new(sid_diff_key, "sid_diff_key", IDX_SI_DATA));
+	sorted_tbl.borrow_mut().add_col(Col::new_const(sid_diff_key, "sid_diff_key", IDX_SI_DATA));
 	sorted_tbl.borrow_mut().add_col(Col::new(packed_diff,"packed_diff"
 		,IDX_DATA));
-	sorted_tbl.borrow_mut().add_col(Col::new(sid_packed_diff, "sid_packed_diff", IDX_SI_DATA));
+	sorted_tbl.borrow_mut().add_col(Col::new(sid_packed_diff, "sid_packed_diff", IDX_SI_DATA));//this one is not const
 	res.borrow_mut().add_container(sorted_tbl);
 
 	Ok(res)

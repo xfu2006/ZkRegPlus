@@ -510,7 +510,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 	/// 
 	/// Workflow: 
 	/// (1) projected_subsig_store -> sorted set of states 
-	/// (2) (state,loc) -- filter by sorted set of states --
+	/// (2) (state_final,loc_final) -- filter by sorted set of states --
 	///    ---> well formed table (state, id, loc)
 	/// (3) do table join (sugsit, pat, state) join with (state, id, loc)
 	///    over key state. Basically, expand each (subsig, pat, state)
@@ -534,6 +534,8 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		let ext_state = Rc::new(RefCell::new(ext_state));
 		let sorted_set_size = capacity.avg_pats_per_subsig 
 			* capacity.subsigs;
+		let final_states_len= capacity.basis_acc_states *
+			capacity.max_nibble_len /10000; //final states for ALL sigs
 		let sorted_states = col_to_sorted_set(&ext_state, sorted_set_size, 
 			"sorted_states");
 		let sorted_states2 = sorted_states.clone(); //low cost rc clone
@@ -542,11 +544,15 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		//2. (state,loc) filtered by sorted_states 
 		// --> sorted_and well formed table (state, id, loc)
 		let state_col = Rc::new(RefCell::new(
-			fs_acc_combo.borrow().get_container("states").unwrap().borrow()
+			fs_acc_combo.borrow().get_container("states_final")
+			.unwrap().borrow()
 			.duplicate_as_external(0, None)));
 		let loc_col = Rc::new(RefCell::new(
-			fs_acc_combo.borrow().get_container("locs").unwrap().borrow()
+			fs_acc_combo.borrow().get_container("locs_final").unwrap().borrow()
 			.duplicate_as_external(0, None)));
+		#[cfg(test)]{
+			assert!(state_col.borrow().to_vec().len()==final_states_len);
+		}
 
 		let packed_trace_size = capacity.basis_pats_in_trace * 
 			capacity.max_nibble_len/10000;
@@ -567,7 +573,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 
 		//3. projecting the (subsig-state-pat) sorted set further
 		// to (pat-state) sorted table for further tbl join.
-		// where adjust avg_pats_per_subsig if too small.
+		// Adjust avg_pats_per_subsig if too small.
 		let pat_state_set_size = capacity.avg_pats_per_subsig 
 			* capacity.subsigs;
 		let ext_pat= proj_store_combo.borrow()
@@ -914,9 +920,9 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 
 		//2. check the filtered table of state and loc
 		let states_col = all.search_container( 
-			&format!("{} fsm_acc states", sname))?;
+			&format!("{} fsm_acc states_final", sname))?;
 		let locs_col = all.search_container(
-			&format!("{} fsm_acc locs", sname))?;
+			&format!("{} fsm_acc locs_final", sname))?;
 		let state_loc_tbl = all.search_container(
 			&format!("{} packed_trace state_loc_tbl", sname))?;
 		let sorted_states = all.search_container(

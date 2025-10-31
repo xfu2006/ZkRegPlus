@@ -21401,3 +21401,9 @@ Goal 2. imlement the rhs
 Goal 3. inspect gen_proj_store
 	[a] regresion testing -> DONE
 Goal 4. validate_proj_store and update cost profile 
+	[a] check implementation 1
+	[b] step 2
+	[c] step 3
+	[d] regression test
+Goal 5. gen_pack_trace
+	[a] improve prove_filter_tag
