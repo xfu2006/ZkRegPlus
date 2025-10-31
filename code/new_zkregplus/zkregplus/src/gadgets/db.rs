@@ -1353,15 +1353,15 @@ pub fn tbl_to_sorted_tbl<F:PrimeField>(
 	});
 	vec![sid_sorted_key, sid_sorted_id, sid_sorted_val].into_iter()
 	.zip(s_names.iter()).for_each(|(c,n)|{
-		prf.borrow_mut().add_col(Col::new(c, &format!("sid_{}",n),IDX_SI_DATA));
+		prf.borrow_mut().add_col(Col::new_const(c, &format!("sid_{}",n),IDX_SI_DATA));
 	});
 	vec![diff_key, diff_val].into_iter().zip(d_names.iter()).for_each(|(c,n)|{
 		prf.borrow_mut().add_col(Col::new(c, &format!("{}",n),IDX_DATA));
-	});
+	}); 
 	vec![sid_diff_key, sid_diff_val].into_iter().zip(d_names.iter())
 	.for_each(|(c,n)|{
 		prf.borrow_mut().add_col(Col::new(c, &format!("sid_{}",n),IDX_SI_DATA));
-	});
+	}); //this one is not const
 
 	//3. lkup in both directions (ignore 0 entries).
 	let encoded_src = encode_2col(&keys, &vals);
@@ -1374,14 +1374,12 @@ pub fn tbl_to_sorted_tbl<F:PrimeField>(
 	let mtbl_dst_src = gen_m_table_cond(&encoded_dst, &sel_dst, 
 		&encoded_src, &sel_src);
 
-	prf.borrow_mut().add_col(Col::new(vec![zero; mtbl_src_dst.len()],
+	prf.borrow_mut().add_col(Col::new_const(vec![zero; mtbl_src_dst.len()],
 		"sid_mtbl_src_dst", IDX_SI_DATA));
-	prf.borrow_mut().add_col(Col::new(vec![zero; mtbl_dst_src.len()],
+	prf.borrow_mut().add_col(Col::new_const(vec![zero; mtbl_dst_src.len()],
 		"sid_mtbl_dst_src", IDX_SI_DATA));
 	prf.borrow_mut().add_col(Col::new(mtbl_src_dst,"mtbl_src_dst",IDX_DATA));
 	prf.borrow_mut().add_col(Col::new(mtbl_dst_src, "mtbl_dst_src",IDX_DATA));
-
-
 
 	//4. return
 	res.borrow_mut().add_container(sorted_tbl);
@@ -1535,14 +1533,14 @@ pub fn tbl_left_join<F:PrimeField>(
 		if x.is_zero() {zero} else {one}).collect::<Vec<F>>();
 	let mtbl_tbl1_res = gen_m_table_cond(&tbl1_encoded, &tbl1_sel,
 		&res_firsthalf_encoded, &res_firsthalf_sel);
-	prf.borrow_mut().add_col(Col::new(vec![zero; mtbl_tbl1_res.len()],
+	prf.borrow_mut().add_col(Col::new_const(vec![zero; mtbl_tbl1_res.len()],
 		"sid_mtbl_tbl1_res", IDX_SI_DATA));
 	prf.borrow_mut().add_col(Col::new(mtbl_tbl1_res,"mtbl_tbl1_res",IDX_DATA));
 
 	//3. lkup first 3 column in tbl1 (guarnatee no extra) 
 	let mtbl_res_tbl1= gen_m_table_cond( 
 		&res_firsthalf_encoded, &res_firsthalf_sel, &tbl1_encoded, &tbl1_sel);
-	prf.borrow_mut().add_col(Col::new(vec![zero; mtbl_res_tbl1.len()],
+	prf.borrow_mut().add_col(Col::new_const(vec![zero; mtbl_res_tbl1.len()],
 		"sid_mtbl_res_tbl1", IDX_SI_DATA));
 	prf.borrow_mut().add_col(Col::new(mtbl_res_tbl1,"mtbl_res_tbl1",IDX_DATA));
 
@@ -1590,7 +1588,7 @@ pub fn tbl_left_join<F:PrimeField>(
 	let mtbl_sechalf_tbl2= gen_m_table_cond(
 		&res_sechalf_encoded, &res_sechalf_sel, &tbl2_encoded, &tbl2_sel);
 
-	prf.borrow_mut().add_col(Col::new(vec![zero; mtbl_sechalf_tbl2.len()],
+	prf.borrow_mut().add_col(Col::new_const(vec![zero; mtbl_sechalf_tbl2.len()],
 		"sid_mtbl_sechalf_tbl2", IDX_SI_DATA));
 	prf.borrow_mut().add_col(Col::new(mtbl_sechalf_tbl2,"mtbl_sechalf_tbl2"
 		,IDX_DATA));
@@ -1611,7 +1609,7 @@ pub fn tbl_left_join<F:PrimeField>(
 		join_tbl.borrow_mut().add_col(Col::new(c, n, IDX_DATA));
 	});
 	vec_c_len.iter().zip(join_tbl_names.iter()).for_each(|(l,n)|{
-		join_tbl.borrow_mut().add_col(Col::new(vec![f_rg;*l],
+		join_tbl.borrow_mut().add_col(Col::new_const(vec![f_rg;*l],
 			&format!("sid_{}",n), IDX_SI_DATA));
 	});
 

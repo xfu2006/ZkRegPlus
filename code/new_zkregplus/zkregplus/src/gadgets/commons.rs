@@ -356,7 +356,6 @@ pub fn two_col_tbl_left_join<F:PrimeField>(
 	let max_val:usize = (1<<RANGE2_BIT) - 1;
 	let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
 
-	println!("DEBUG USE 6999.2===");
 	//2. build a hashmap of tbl2. map from real key to (begin,end) included
 	// on both ends. keys are never zero.
 	let n = tbl2[0].len();
