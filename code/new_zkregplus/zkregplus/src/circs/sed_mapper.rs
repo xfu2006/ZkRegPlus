@@ -101,7 +101,9 @@ pub struct SedCapacity{
 	pub	sigs_sed: usize, //for sed approach to discharge
 	pub	perc_comp_subsigs: usize,
 	pub basis_unique_states: usize, //basis points of unique states
-		//extracted from all states of a path
+		//extracted from all states of a path (usually this is < 0.5%)
+	pub basis_acc_states: usize, //basis points of ALL accepted states
+		//along the path (usually less than 5%, max 305)
 }
 
 /// Represent the structure of Input
@@ -154,11 +156,12 @@ impl SedCapacity{
 		sigs_sed: usize, //for sed approach to discharge
 		perc_comp_subsigs: usize,
 		basis_unique_states: usize,
+		basis_acc_states: usize,
 	)->Self{
 		let wea_capacity = WordExtractAdvCapacity{max_word_len};
 		let max_nibble_len = max_word_len * LEGS;
 		let faa_capacity = FsmAdvCapacity{max_nibble_len, acdfa_state_part_bits,			subsigs, avg_pats_per_subsig, basis_pats_in_trace,
-			basis_unique_states};
+			basis_unique_states, basis_acc_states};
 		let da_capacity = DischargeAdvCapacity{max_nibble_len, subsigs, avg_active_pats_per_subsig, basis_pats_in_trace};
 		let csa_capacity = ComputeSigAdvCapacity{subsigs, sigs: sigs_sed, max_nibble_len,
 			basis_pats_in_trace, perc_comp_subsigs};
@@ -173,7 +176,7 @@ impl SedCapacity{
 		Self{comp_capacities, max_word_len, acdfa_state_part_bits,
 			subsigs, avg_pats_per_subsig, avg_active_pats_per_subsig,
 			basis_pats_in_trace, sigs_sed, perc_comp_subsigs,
-			basis_unique_states}
+			basis_unique_states, basis_acc_states}
 	}
 
 	/// level1: double the subsig and sig size
@@ -191,6 +194,7 @@ impl SedCapacity{
 				self.sigs_sed*2,
 				self.perc_comp_subsigs,
 				self.basis_unique_states,
+				self.basis_acc_states,
 			)
 		}else{
 			Self::new(
@@ -203,6 +207,7 @@ impl SedCapacity{
 				self.sigs_sed,
 				self.perc_comp_subsigs*2,
 				self.basis_unique_states*2,
+				self.basis_acc_states*2,
 			)
 		}
 	}
@@ -261,6 +266,7 @@ impl Capacity for SedCapacity{
 			sigs_sed: self.sigs_sed,
 			perc_comp_subsigs: self.perc_comp_subsigs,
 			basis_unique_states: self.basis_unique_states,
+			basis_acc_states: self.basis_acc_states,
 		})
 	}
 
@@ -480,18 +486,14 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 		let fsm_id_igc = ClamavDB::<F>::pm_acdfa_id(sig_id, true); 
 		//let fsm_cap = FsmAdvCapacity{max_nibble_len: nlen, 
 		//	acdfa_state_part_bits: state_bits};
-		let b_const_fsm_id = true;
 		let fsm_cap = &sed_capacity.faa_capacity();
 		let g_faa_cs = FsmAdvGadget::<F>::new(false, 1, //dist to word extract
-			acdfa_cs, &fsm_cap, fsm_id_cs, &cfgs, subsig_pat_store_cs,
-			b_const_fsm_id
-		); 
+			acdfa_cs, &fsm_cap, fsm_id_cs, &cfgs, subsig_pat_store_cs); 
 		cfgs.push( g_faa_cs.dummy_cfg.clone() );
 
 		let fsm_cap = &sed_capacity.faa_capacity();
 		let g_faa_igc = FsmAdvGadget::<F>::new(true, 2, //dist to wea
-			acdfa_igc, &fsm_cap, fsm_id_igc, &cfgs, subsig_pat_store_igc,
-			b_const_fsm_id); 
+			acdfa_igc, &fsm_cap, fsm_id_igc, &cfgs, subsig_pat_store_igc); 
 		cfgs.push( g_faa_igc.dummy_cfg.clone() );
 
 		//1.3. discharge_subsig (2 gadgets)

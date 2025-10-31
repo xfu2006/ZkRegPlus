@@ -1,7 +1,9 @@
-/* Recreated 04/03/2025, Completed: 05/04/2025 */
+/* Recreated 04/03/2025, Completed: 05/04/2025 
+	Revise started: 10/30/2025
+*/
 
 //! This module generates the (pat-loc) for a nibble sequence.
-
+use rayon::iter::{ParallelIterator,IntoParallelRefIterator,IntoParallelIterator};
 use std::{rc::{Rc},cell::{RefCell}};
 use ark_ff::{PrimeField};
 use std::marker::{PhantomData};
@@ -13,12 +15,12 @@ use folding_schemes::folding::foldpot::{
 use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef};
 use ark_r1cs_std::{
 	fields::{
-		//FieldVar,
+		FieldVar,
 		fp::FpVar
 	},
 	alloc::AllocVar,
 	//eq::EqGadget,
-	//R1CSVar,
+	R1CSVar,
 };
 use std::any::Any;
 use data_processor::{
@@ -27,7 +29,8 @@ use data_processor::{
 	type_def::{SubsigPatternStore},
 };
 use crate::gadgets::{
-	commons::{check_arr_eq,check_eq,check_increase,gen_m_table},
+	commons::{check_arr_eq,check_eq,check_increase,gen_m_table,new_const_var,
+		is_zero_better, new_var},
 	traits::{Container,Col,IDX_WORD, IDX_INP,IDX_DATA, IDX_SI_INP, 
 		IDX_OUP, IDX_SI_OUP, IDX_SI_DATA,ComponentAdvice},
 	db::{assert_logup,verify_encoded_table,assert_well_formed_sorted,col_to_sorted_set, verify_col_to_sorted_set, tbl_filtered_to_sorted_tbl, verify_tbl_filtered_to_sorted_tbl,tbl_to_sorted_tbl, verify_tbl_to_sorted_tbl, tbl_left_join, verify_tbl_left_join},
@@ -77,6 +80,11 @@ pub struct FsmAdvCapacity{
 	/// Along the path (all states), what is the basis
 	/// of the unique states.
 	pub basis_unique_states: usize,
+
+	/// Along the path how many how final states (allowing duplicates)
+	/// and not restricted to the projected combo store
+	/// Usually this is less than 5%, wost case 30%.
+	pub basis_acc_states: usize,
 }
 
 /// Advice for the WordExtract Gadget.
@@ -86,6 +94,8 @@ pub struct FsmAdvAdvice<F:PrimeField>{
 	pub offset_wea: usize,
 
 	/// the first id related to the corresponding ACDFA
+	/// NOTE that as the gadget is ONLY CALLED in SED
+	/// it has only two choices: IGC and CS for PM  (0x2000000 and 0x3000000)
 	pub fsm_id: u32,
 
 	/// the statement container object which is serialized to a vector
@@ -152,7 +162,8 @@ impl Capacity for FsmAdvCapacity{
 		self.subsigs >= other.subsigs &&
 		self.avg_pats_per_subsig >= other.avg_pats_per_subsig &&
 		self.basis_pats_in_trace >= other.basis_pats_in_trace &&
-		self.basis_unique_states >= other.basis_unique_states
+		self.basis_unique_states >= other.basis_unique_states &&
+		self.basis_acc_states >= other.basis_acc_states
 
 	}
 
@@ -166,6 +177,7 @@ impl Capacity for FsmAdvCapacity{
 			avg_pats_per_subsig: self.avg_pats_per_subsig,
 			basis_pats_in_trace: self.basis_pats_in_trace,
 			basis_unique_states: self.basis_unique_states,
+			basis_acc_states: self.basis_acc_states,
 		})
 	}
 
@@ -197,11 +209,10 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		inp_subsigs: &Vec<F>,
 		capacity: &FsmAdvCapacity, 
 		fsm_id: u32,
-		store_subsig_pat: &SubsigPatternStore,
+		store_subsig_pat: &SubsigPatternStore
 	) ->Self{
 		let sname = if b_igc {"fsm_adv_stmt_igc"} else {"fsm_adv_stmt_cs"};
 		let stmt_container = Container::<F>::new(sname);
-		println!("DEBUG USE 6331.3 in fsm_adv: nibbles len: {}", nibbles.len());
 
 		//1. construct the fsm_acc combo which has the transition
 		// info and results in (state, loc) columns
@@ -240,11 +251,16 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 	/// states: (inp, mid, oup): modeled as a container of 3 columns
 	/// locs: (inp, mid, oup)
 	/// trans
+	/// states_final (this means ALL final states, not projected using 
+	///    proj_store of the subsigs yet)
+	/// locs_final
 	///
 	/// si_nibbles
 	/// si_states (inp, mid, oup)
 	/// si_locs (inp, mid, oup)
 	/// si_trans
+	/// si_states_final
+	/// si_locs_final
 	fn gen_fsm_acc_combo(
 		b_igc: bool,
 		wea_offset: isize,
@@ -260,6 +276,8 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		let nlen = capacity.max_nibble_len;
 		assert!(nlen==nibbles.len(), "nlen: {}, nibbles.len: {}", nlen, nibbles.len());
 		let acdfa_state_part_bits = acdfa.state_part_bits;
+
+		//1. build the raw transition table
 		let mut raw_states = vec![];
 		let mut raw_locs = vec![];
 		let mut trans = vec![];
@@ -291,25 +309,57 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		}
 		assert!(raw_states.len()==nlen+1 && raw_locs.len()==nlen+1);
 
-		let f_id_state = F::from(fsm_id+6);
+		let _f_id_state = F::from(fsm_id+6);
 		let f_id_trans= F::from(fsm_id+3);
 		let f_id_loc= F::from(RANGE2);
 		let f_char= F::from(CHAR);
+		let f_id_non_final = F::from(fsm_id+1);
+		let f_id_final = F::from(fsm_id+2);
+		let vec_si_states = raw_states.par_iter().map(|s|{
+			let f_s = field_to_usize(s) - 1;
+			if acdfa.is_final(f_s) {f_id_final} else {f_id_non_final}
+		}).collect::<Vec<F>>();
 
-		//1.1 the inp/mid/oup states
+		//2. build the states_final and locs_final
+		// NOTE: we do not include element 0 coz it's already
+		// handled in the previous seg.
+		let states_final = (1..vec_si_states.len()).into_par_iter().filter(|i|{
+				vec_si_states[*i]==f_id_final
+			}).map(|i| raw_states[i]).collect::<Vec<F>>();
+		let locs_final = (1..vec_si_states.len()).into_par_iter().filter(|i|{
+				vec_si_states[*i]==f_id_final
+			}).map(|i| raw_locs[i]).collect::<Vec<F>>();
+		assert!(states_final.len()==locs_final.len());
+		let target_size = nlen*capacity.basis_acc_states/10000;
+		assert!(states_final.len()<=target_size, "basis_acc_states too small: target_size: {} < states_final.len {}", target_size, states_final.len());
+		let (oflen,to_pad) = (states_final.len(), 
+			target_size - states_final.len());
+		let zero = F::zero();
+		let f_range2 = F::from(RANGE2 as u32);
+		let states_final = vec![ vec![zero; to_pad], states_final].concat();
+		let locs_final = vec![ vec![zero; to_pad], locs_final].concat();
+		let si_states_final = vec![
+			vec![zero; to_pad],vec![f_id_final; oflen]
+		].concat();
+		let si_locs_final = vec![
+			vec![zero; to_pad], vec![f_range2; oflen]
+		].concat();
+
+		//3. build the containers
+		//3.1 the inp/mid/oup states
 		let col_inp_state = Col::<F>::new(vec![raw_states[0]],
 			"inp_state",IDX_INP);
-		let col_si_inp_state = Col::<F>::new(vec![f_id_state],
+		let col_si_inp_state = Col::<F>::new(vec![vec_si_states[0]],
 			"si_inp_state",IDX_SI_INP);
 
 		let col_mid_states = Col::<F>::new(raw_states[1..nlen].to_vec(),
 			"mid_states", IDX_DATA);
-		let col_si_mid_states = Col::<F>::new(vec![f_id_state; nlen-1], 
+		let col_si_mid_states = Col::<F>::new(vec_si_states[1..nlen].to_vec(),
 			"si_mid_states", IDX_SI_DATA);
 
 		let col_oup_state = Col::<F>::new(vec![raw_states[nlen]],
 			"oup_state",IDX_OUP);
-		let col_si_oup_state = Col::<F>::new(vec![f_id_state],
+		let col_si_oup_state = Col::<F>::new(vec![vec_si_states[nlen]],
 			"si_oup_state",IDX_SI_OUP);
 
 		let states = Container::concat_cols(
@@ -321,20 +371,20 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		res.borrow_mut().add_container(states.clone()); //remove clone later
 		res.borrow_mut().add_container(si_states);
 
-		//1.2 the inp/mid/oup locations
+		//3.2 the inp/mid/oup locations
 		let col_inp_loc = Col::<F>::new(vec![raw_locs[0]],
 			"inp_loc",IDX_INP);
-		let col_si_inp_loc = Col::<F>::new(vec![f_id_loc],
+		let col_si_inp_loc = Col::<F>::new_const(vec![f_id_loc],
 			"si_inp_loc",IDX_SI_INP);
 
 		let col_mid_locs = Col::<F>::new(raw_locs[1..nlen].to_vec(),
 			"mid_locs", IDX_DATA);
-		let col_si_mid_locs = Col::<F>::new(vec![f_id_loc; nlen-1], 
+		let col_si_mid_locs = Col::<F>::new_const(vec![f_id_loc; nlen-1], 
 			"si_mid_locs", IDX_SI_DATA);
 
 		let col_oup_loc = Col::<F>::new(vec![raw_locs[nlen]],
 			"oup_loc",IDX_OUP);
-		let col_si_oup_loc = Col::<F>::new(vec![f_id_loc],
+		let col_si_oup_loc = Col::<F>::new_const(vec![f_id_loc],
 			"si_oup_loc",IDX_SI_OUP);
 
 		let locs = Container::concat_cols(
@@ -346,19 +396,17 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		res.borrow_mut().add_container(locs);
 		res.borrow_mut().add_container(si_locs);
 
-		
-
-		//1.3. the transitions
+		//3.3. the transitions
 		let col_trans = Col::<F>::new(trans, 
 			"trans", IDX_DATA);
-		let col_si_trans = Col::<F>::new(vec![f_id_trans; nlen],
+		let col_si_trans = Col::<F>::new_const(vec![f_id_trans; nlen],
 			"si_trans", IDX_SI_DATA);
 		#[cfg(test)]{assert!(col_trans.borrow().data.len()==nlen);}
 		#[cfg(test)]{assert!(col_si_trans.borrow().data.len()==nlen);}
 		res.borrow_mut().add_col(col_trans);
 		res.borrow_mut().add_col(col_si_trans);
 
-		//1.4 the nibbles (LATER when reconstructed, it is 
+		//3.4 the nibbles (LATER when reconstructed, it is 
 		// retrieved from previous word_extract_adv gadget
 		let shift = 0 - (wea_offset as i32);
 		let col_nibbles = Col::<F>::new_external(nibbles.to_vec(), 
@@ -369,9 +417,23 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		#[cfg(test)]{assert!(col_nibbles.borrow().data.len()==nlen);}
 		#[cfg(test)]{assert!(col_si_nibbles.borrow().data.len()==nlen);}
 
-
 		res.borrow_mut().add_col(col_nibbles);
 		res.borrow_mut().add_col(col_si_nibbles);
+
+		//3.5 the state columns
+		let col_states_final = Col::<F>::new(states_final,
+			"states_final", IDX_DATA);
+		let col_si_states_final = Col::<F>::new(si_states_final,
+			"si_states_final", IDX_SI_DATA);
+		let col_locs_final = Col::<F>::new(locs_final,
+			"locs_final", IDX_DATA);
+		let col_si_locs_final = Col::<F>::new(si_locs_final,
+			"si_locs_final", IDX_SI_DATA);
+		res.borrow_mut().add_col(col_states_final);
+		res.borrow_mut().add_col(col_si_states_final);
+		res.borrow_mut().add_col(col_locs_final);
+		res.borrow_mut().add_col(col_si_locs_final);
+
 
 		res	
 	}
@@ -559,7 +621,6 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		fsm_id: u32, 
 		prev_cfgs: &Vec<ContainerConfig>,
 		store_subsig_pat: &SubsigPatternStore,
-		_b_const_fsm_id: bool
 		)
 	-> Self{
 		//1. create the dummy input and dummy container config.
@@ -597,34 +658,57 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 	}
 
 	/// validate the correctness of fsm_acc container
-	/// COST: (nlen - nibble len)
-	///    4*nlen
-	fn validate_fsm_acc_container(&self, fsm_acc: &Container<FpVar<F>>, cs: ConstraintSystemRef<F>)
+	/// COST: (nlen - nibble len, alen - acc_states_ratio * neln
+	///         note acc_states are ALL acc states even including
+	///         non-related sigs. This average is 5% in real data.)
+	///    3*nlen + 5*alen
+	fn validate_fsm_acc_container(&self, fsm_acc: &Container<FpVar<F>>, r1: FpVar<F>, _r2: FpVar<F>, cs: ConstraintSystemRef<F>)
 	->Result<(), SynthesisError>{
 		//1. asserts all states and transitions must be in range
 		// NOTE: we do not have to assert in range for nibbles they
 		// are done already in word_extract_adv gadget
+		let b_perf = true;
+		let (nc, nv) = (cs.num_constraints(), cs.num_witness_variables());
 		let nlen = self.capacity.max_nibble_len;
-		let tblid_state = FpVar::new_constant(cs.clone(),
+		let alen = self.capacity.max_nibble_len 
+			* self.capacity.basis_acc_states/10000;
+		let _tblid_state = FpVar::new_constant(cs.clone(),
 			F::from(self.fsm_id+6))?;
-		let tblid_trans= FpVar::<F>::new_constant(cs.clone(), 
+		let _tblid_trans= FpVar::<F>::new_constant(cs.clone(), 
 			F::from(self.fsm_id + 3))?;
 		let si_states = fsm_acc.get_container("si_states")?.borrow().to_vec();
 		let si_trans= fsm_acc.get_container("si_trans")?.borrow().to_vec();
 		assert!(si_states.len()==nlen+1 && si_trans.len()==nlen);
 
-		check_arr_eq(&si_states,&tblid_state,"checking states in range")?;
-		check_arr_eq(&si_trans,&tblid_trans,"checking trans in range")?;
+		//2. NO need to check transition id because its constant.
+		// ALSO no need to check the si_states_id as there will be a 
+		// logup check between all states and the final_states
+		// the way we perform it is the Logup relation
+		// (sid_state - fsm_id) is either 1 or 0 as selector
+		// NOW, if a "fake" sid_state is provided, they can only
+		// be (RANGE2, 0, some other fsm_state_sid) where
+		// all of these are at least 2^28 away rom the real value. (because
+		// how these fsm_id constants are defined like 
+		// 0x2000 0000, 0x3000 0000 etc). 
+		// on the right hand size, all logup entries are summed up
+		// with m_tbl entry set to 1. So, the only way is to
+		// have sufficient logup entries with the appropriate count
+		// which are caused by the DISTANCE caused by the "fake".
+		// We know the the max size of the right hand side table
+		// is much smaller than nlen (which is no more than 128k)
+		// Thus, there is no way for supplying fake SID_STATE for
+		// the states to work.
+		//check_arr_eq(&si_states,&tblid_state,"checking states in range")?;
+		//check_arr_eq(&si_trans,&tblid_trans,"checking trans in range")?;
 
 		//2. assert correctness of building transition as weighted sum
 		// of src, char, dst states
+		// COST 2*nlen
 		let unit_var = FpVar::<F>::new_constant(cs.clone(),
 			F::from((1<<(self.capacity.acdfa_state_part_bits+4)) as u32))?;
 		let hex_var = FpVar::<F>::new_constant(cs.clone(),
 			F::from(16 as u32))?;
 		let chars = fsm_acc.get_container("nibbles")?.borrow().to_vec();
-
-
 		let states = fsm_acc.get_container("states")?.borrow().to_vec();
 		let trans = fsm_acc.get_container("trans")?.borrow().to_vec();
 		assert!(chars.len()==nlen && states.len()==nlen+1 && trans.len()==nlen);
@@ -640,11 +724,93 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 			check_eq(&trans, &exp_trans, 
 				&format!("checking transition {} ", i))?;
 		}
-
-		//3. assert the locations (increasing by 1)
 		let locs = fsm_acc.get_container("locs")?.borrow().to_vec();
 		assert!(locs.len()==nlen+1);
 		check_increase(&locs)?;
+
+		//3. check the validity of final states
+		//3.1 build a vec_dummy array to indicate the dummy entries
+		//on the states_final and locs_final
+		//COST: 2*alen
+		let zero_var = FpVar::<F>::zero();
+		let one_var = FpVar::<F>::one();
+		let one_wit_var = new_var(&cs, F::one());
+		check_eq(&one_var, &one_wit_var, "one wit var err")?;
+		let f_id_final = new_const_var(&cs, F::from(self.fsm_id+2));
+		let f_range = new_const_var(&cs, F::from(RANGE2 as u32));
+		let si_states_final= fsm_acc.get_container("si_states_final")?
+			.borrow().to_vec();
+		let si_locs_final= fsm_acc.get_container("si_locs_final")?
+			.borrow().to_vec();
+		let states_final= fsm_acc.get_container("states_final")?
+			.borrow().to_vec();
+		let locs_final= fsm_acc.get_container("locs_final")?
+			.borrow().to_vec();
+		let vec_not_dummy = states_final.iter().map(|s|
+			&one_var - &is_zero_better(s, &cs).unwrap()
+		).collect::<Vec<FpVar<F>>>();
+
+		//3.1 check the validity of sid_states_final 
+		//either it is 0 or fid_state (note that even we skip checking
+		//sid of the "full" states vec, because of the logup, we do
+		//have to check them here to provide the source of validity.
+		//formally:
+		// i.e., sid_states_final[i] = vec_not_dummy[i] * fid_final
+		// this costs one constraint
+		// similarly: for sid_locs_final[i]:
+		// sid_locs_final = vec_dummy[i] * f_range2
+		// COST: 2*alen
+		for i in 0..alen{
+			check_eq(&si_states_final[i], &(&vec_not_dummy[i] * &f_id_final),
+				"failed si_states check")?;
+			check_eq(&si_locs_final[i], &(&vec_not_dummy[i] * &f_range),
+				"failed si_states check")?;
+		}
+
+		//3.2 use sid_states_final to sum up the logup equation LHS
+		//COST: nlen
+		let mut lhs_sum = zero_var.clone();
+		assert!(states.len()==nlen+1);
+		let unit_cvar = new_const_var(&cs, F::from(1u32<<RANGE2_BIT));
+		let f_id_non_final = F::from(self.fsm_id+1);
+		let non_final_cvar = new_const_var(&cs, f_id_non_final); 
+		for i in 0..nlen{
+			//we skip item [0] because it's handled in
+			//the last round
+			//Here the mul with unit_var is costing nothing
+			//as unit_cvar is a CONSTANT.
+			//We do NOT use another random here because locs[i]
+			//has ALREADY been proved to be in range RANGE2
+			//so we can just "concat" these two numbers of bit-strings
+			let item = &r1 + &states[i+1] + &unit_cvar*&locs[i+1]; 
+			let item_val = item.value()?;
+			let inv = item_val.inverse().expect("INV err");
+			let inv_var = new_var(&cs, inv);
+			let sel = &si_states[i+1] - &non_final_cvar; 
+			lhs_sum = &lhs_sum + &inv_var * &sel;
+			if i%64==0{
+				lhs_sum = &lhs_sum * &one_wit_var; 
+					//to break long linear combination
+			}
+		}
+
+		//3.3 use vec_not_dummy[i] to sum up the Logup RHS 
+		//COST: alen
+		let mut rhs_sum = zero_var.clone();
+		assert!(vec_not_dummy.len()==alen);
+		assert!(locs_final.len()==alen);
+		for i in 0..alen{
+			let item = &r1 + &states_final[i] + &unit_cvar*&locs_final[i];
+			let item_val = item.value()?;
+			let inv = item_val.inverse().expect("INV err");
+			let inv_var = new_var(&cs, inv);
+			rhs_sum = &rhs_sum + &inv_var * &vec_not_dummy[i];
+		}
+		check_eq(&lhs_sum, &rhs_sum, "logup check fails")?;
+
+		if b_perf{
+			println!(" ### --- validate_fsm_acc_container, nlen: {}, alen: {}, nc: {}, nv: {}", nlen, alen, cs.num_constraints() - nc,cs.num_witness_variables()-nv);
+		}
 
 		Ok( () )
 	}
@@ -860,7 +1026,8 @@ impl <F:PrimeField> SigmaGadget<F> for FsmAdvGadget<F>{
 		vec![]
 	}
 
-	/// COST (n- nibble len,
+	/// COST (nlen - nibble len, alen - perc of accepted states * trace len
+	///     note that accepted states are for all
 	/// 4*n + 
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
@@ -869,15 +1036,17 @@ impl <F:PrimeField> SigmaGadget<F> for FsmAdvGadget<F>{
 		//1. retrive the statement instance and get all parts
 		let cfg = self.get_container_cfg().expect("container cfg not set!");
 		let stmt = Container::<FpVar<F>>::load_from(i, wtns_cfg, wtns, &cfg)?;
-
-		//2. validate the fsm_acc combo 
-		let fsm_acc = stmt.get_container("fsm_acc")?;
-		self.validate_fsm_acc_container(&fsm_acc.borrow(), cs.clone())?;
-
-		//3. validate the proj_subsig_store
 		let pss = stmt.get_container("proj_subsig_store")?;
 		let r1 = wtns.msg2[0].clone();
 		let r2 = wtns.msg2[1].clone();
+
+		//2. validate the fsm_acc combo 
+		// 3*nlen + 5*alen
+		let fsm_acc = stmt.get_container("fsm_acc")?;
+		self.validate_fsm_acc_container(&fsm_acc.borrow(), r1.clone(),
+			r2.clone(), cs.clone())?;
+
+		//3. validate the proj_subsig_store
 		self.validate_proj_subsig_store(&pss.borrow(),r1.clone(),cs.clone())?;
 
 		//3. validate the packed trace combo
@@ -951,6 +1120,7 @@ pub mod tests_fsm_adv_gadget{
 			avg_pats_per_subsig: 4,
 			basis_pats_in_trace: 16*100,
 			basis_unique_states: 20*100,
+			basis_acc_states: 5*100,
 		};
 
 		let nibbles = stmt_wea.borrow().get_container("nibbles").unwrap()
@@ -997,7 +1167,7 @@ pub mod tests_fsm_adv_gadget{
 		let lkup_share_size = 4usize;
 		let mut fag = FsmAdvGadget::<Fr>::new(false, 1, //dist to wea
 			&acdfa, &cap, fsm_id,
-			&vec![cfg_wea.clone()], &bundle.vec_subsig_stores[0], true);
+			&vec![cfg_wea.clone()], &bundle.vec_subsig_stores[0]);
 		fag.set_container_cfg(vec_cfg.clone().into(), 1);  //it's the 2nd cfg
 		let _sizes = fag.get_to_add_size(); //test if sizes are ok
 		let rg = Rc::new(fag);

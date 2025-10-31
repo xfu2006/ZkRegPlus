@@ -237,9 +237,6 @@ pub fn assert_well_formed_sorted_adv<F:PrimeField>(
 	// compared with the naive algorithm, the fingerprint algorithm
 	// costs (5  vs 12 per row), [for case sid_sort_diff is none]
 	// with check sort and ignore zero entries it's 7 constraints per row.
-	//
-	//NOTE as all RANGE2 sid are constants, we do NOt HAVE to check them
-	//manually here. treat it like circuit constants.
 
 	//0. quick check of data
 	let n = key.len();
@@ -249,7 +246,7 @@ pub fn assert_well_formed_sorted_adv<F:PrimeField>(
 	let zero = FpVar::<F>::new_constant(cs.clone(), F::zero())?;
 	let one = FpVar::<F>::new_constant(cs.clone(), F::one())?;
 	let max = FpVar::<F>::new_constant(cs.clone(), F::from(max_val as u32))?;
-	let _rg2 = FpVar::<F>::new_constant(cs.clone(), F::from(RANGE2))?;
+	let rg2 = FpVar::<F>::new_constant(cs.clone(), F::from(RANGE2))?;
 	check_eq(&id[0], &zero, "check id0")?;
 	let b_check_sort = sid_sort_diff.is_some();
 	let b_check_sort_key = sid_diff_key.is_some();
@@ -271,8 +268,7 @@ pub fn assert_well_formed_sorted_adv<F:PrimeField>(
 		//simply check here all are in ascending order
 		//we do not have the value problem ascending by chunks
 		//this is ascending along the entire column.
-		//NO need to check
-		//check_arr_eq(&sid_diff_key.unwrap(), &rg2, "err sid_sort key")?; 
+		check_arr_eq(&sid_diff_key.unwrap(), &rg2, "err sid_sort key")?; 
 	}
 
 	// -------------------------------------------------------
@@ -411,7 +407,7 @@ pub fn col_to_sorted_set<F:PrimeField>(
 		vec![f_rg2; src_len+2], //sid_mtbl_2
 	];
 	let cols_sid = vec2d_sid.into_iter().zip(names.into_iter()).map(|(c,n)|
-		Col::new_const(c, &format!("sid_{}",n), IDX_SI_DATA))
+		Col::new(c, &format!("sid_{}",n), IDX_SI_DATA))
 		.collect::<Vec<Rc<RefCell<Col<F>>>>>();
 	for i in 0..cols.len(){
 		assert!(cols[i].borrow().data.len()==lens[i]);
@@ -428,7 +424,7 @@ pub fn col_to_sorted_set<F:PrimeField>(
 /// we take advantage the fact in assert3(), randoms from msg2 can
 /// be used given that src info (to be verified) are all locaed in stmt/msg1
 /// which are fixed.
-/// COST: 4m + 7n (where m is the len of larger src_col, n is the size of
+/// COST: 7m + 14n (where m is the len of larger src_col, n is the size of
 ///     the compressed sorted set)
 pub fn verify_col_to_sorted_set<F:PrimeField>(
 	r: &FpVar<F>,
@@ -436,7 +432,6 @@ pub fn verify_col_to_sorted_set<F:PrimeField>(
 	cs: ConstraintSystemRef<F>
 ) -> Result<(), SynthesisError>{
 	//1. retrieve the src data colomn and other cols
-	//COST: 0
 	let src_data = c.get_container_by_idx(0); 
 	let src_col = src_data.borrow().to_vec();
 	let id = c.get_container("id")?.borrow().to_vec();
@@ -444,20 +439,19 @@ pub fn verify_col_to_sorted_set<F:PrimeField>(
 	let diff = c.get_container("diff")?.borrow().to_vec();
 	let mtbl_1= c.get_container("mtbl_1")?.borrow().to_vec();
 	let mtbl_2= c.get_container("mtbl_2")?.borrow().to_vec();
-	//let sid_id = c.get_container("sid_id")?.borrow().to_vec();
-	//let sid_sorted_val = c.get_container("sid_sorted_val")?.borrow().to_vec();
-	//let sid_diff = c.get_container("sid_diff")?.borrow().to_vec();
-	//let sid_mtbl_1= c.get_container("sid_mtbl_1")?.borrow().to_vec();
-	//let sid_mtbl_2= c.get_container("sid_mtbl_2")?.borrow().to_vec();
+	let sid_id = c.get_container("sid_id")?.borrow().to_vec();
+	let sid_sorted_val = c.get_container("sid_sorted_val")?.borrow().to_vec();
+	let sid_diff = c.get_container("sid_diff")?.borrow().to_vec();
+	let sid_mtbl_1= c.get_container("sid_mtbl_1")?.borrow().to_vec();
+	let sid_mtbl_2= c.get_container("sid_mtbl_2")?.borrow().to_vec();
 
 	//2. check the sid columns (all in RANGE2): cost 4m+n
-	//FIXED constants: no need to check (as they are circuit constants)
-	//let rg2 = FpVar::new_constant(cs.clone(), F::from(RANGE2))?;
-	//check_arr_eq(&sid_id, &rg2, "error sid_id")?; 
-	//check_arr_eq(&sid_sorted_val, &rg2, "error sid_sorted_val")?; 
-	//check_arr_eq(&sid_diff, &rg2, "error sid_diff")?; 
-	//check_arr_eq(&sid_mtbl_1, &rg2, "error sid_mtbl1")?; 
-	//check_arr_eq(&sid_mtbl_2, &rg2, "error sid_mtbl2")?; 
+	let rg2 = FpVar::new_constant(cs.clone(), F::from(RANGE2))?;
+	check_arr_eq(&sid_id, &rg2, "error sid_id")?; 
+	check_arr_eq(&sid_sorted_val, &rg2, "error sid_sorted_val")?; 
+	check_arr_eq(&sid_diff, &rg2, "error sid_diff")?; 
+	check_arr_eq(&sid_mtbl_1, &rg2, "error sid_mtbl1")?; 
+	check_arr_eq(&sid_mtbl_2, &rg2, "error sid_mtbl2")?; 
 
 	//3. check the validity diff column: cost:m 
 	let n = sorted_val.len();
@@ -466,7 +460,7 @@ pub fn verify_col_to_sorted_set<F:PrimeField>(
 		a + b).collect::<Vec<FpVar<F>>>();
 	check_arr_eq_arr(&vec_sum, &sorted_val[1..n], "failed diff check")?;
 
-	//4. lookup: cost 3(m+n): m: source data, n: target_set_size
+	//4. lookup: cost 5(m+n): m: source data, n: target_set_size
 	let max_val:usize = (1<<RANGE2_BIT) - 1;
 	let zero = FpVar::<F>::new_constant(cs.clone(), F::zero())?;
 	let max = FpVar::<F>::new_constant(cs.clone(), F::from(max_val as u32))?;
@@ -480,14 +474,15 @@ pub fn verify_col_to_sorted_set<F:PrimeField>(
 	let one = FpVar::<F>::new_constant(cs.clone(), F::one())?;
 	//when val is 0 it should be 0, otherwise it is 1, do this again using
 	//random combination which is cheaper.
-	//basically we are checking:
-	// val_is_not_zero  == diff_id
+	let mut res = zero.clone();
 	for i in 0..diff_id.len(){
-		let val_zero = &one - &is_zero_better(&sorted_val[i+1], &cs)?;
-		println!("DEBUG USE 101: i: {}, sorted_val: {}, diff_id: {}",
-			i, sorted_val[i+1].value()?, diff_id[i].value()?);
-		check_eq(&val_zero, &diff_id[i], "fail check")?;
-			
+		//NOTE that we've already proved that val is ascending.
+		//if val is 0 -> diff_id MUST be 0.
+		//if val is not 0 -> diff_id MUST be 1.
+		let item1 = &(&one-&sorted_val[i+1]) * &diff_id[i];
+		res = &(&res * r) + &item1;
+		let item2 = &sorted_val[i+1] * &(&one - &diff_id[i]);
+		res = &(&res * r) + &item2;
 	}
 
 	Ok( () )
@@ -789,16 +784,16 @@ pub fn tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
 	sorted_tbl.borrow_mut().add_col(Col::new(packed_val,"packed_val",IDX_DATA));
 	assert!(tbl_names.len()==3);
 	for i in 0..tbl_names.len(){
-		sorted_tbl.borrow_mut().add_col(Col::new_const(vec![f_rg; n],
+		sorted_tbl.borrow_mut().add_col(Col::new(vec![f_rg; n],
 			&format!("sid_{}", tbl_names[i]), IDX_SI_DATA));
 	}
 
 
 	sorted_tbl.borrow_mut().add_col(Col::new(diff_key,"diff_key",IDX_DATA));
-	sorted_tbl.borrow_mut().add_col(Col::new_const(sid_diff_key, "sid_diff_key", IDX_SI_DATA));
+	sorted_tbl.borrow_mut().add_col(Col::new(sid_diff_key, "sid_diff_key", IDX_SI_DATA));
 	sorted_tbl.borrow_mut().add_col(Col::new(packed_diff,"packed_diff"
 		,IDX_DATA));
-	sorted_tbl.borrow_mut().add_col(Col::new_const(sid_packed_diff, "sid_packed_diff", IDX_SI_DATA));
+	sorted_tbl.borrow_mut().add_col(Col::new(sid_packed_diff, "sid_packed_diff", IDX_SI_DATA));
 	res.borrow_mut().add_container(sorted_tbl);
 
 	Ok(res)
@@ -996,7 +991,7 @@ pub fn verify_tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
 	bundle: &Rc<RefCell<Container<FpVar<F>>>>, //result of tbl_filtered_to_sorted_tbl
 	cs: ConstraintSystemRef<F>
 ) -> Result<(), SynthesisError>{
-	let b_perf = true;
+	let b_perf = false;
 	let mut nc = cs.num_constraints();
 	let nc0 = nc;
 	let sorted_tbl= bundle.borrow().get_container("sorted_tbl")?;
@@ -1357,12 +1352,9 @@ pub fn tbl_to_sorted_tbl<F:PrimeField>(
 	});
 	vec![sid_sorted_key, sid_sorted_id, sid_sorted_val].into_iter()
 	.zip(s_names.iter()).for_each(|(c,n)|{
-		prf.borrow_mut().add_col(
-			Col::new_const(c, &format!("sid_{}",n),IDX_SI_DATA)
-		);
+		prf.borrow_mut().add_col(Col::new(c, &format!("sid_{}",n),IDX_SI_DATA));
 	});
 	vec![diff_key, diff_val].into_iter().zip(d_names.iter()).for_each(|(c,n)|{
-		//note these two cols are not const.
 		prf.borrow_mut().add_col(Col::new(c, &format!("{}",n),IDX_DATA));
 	});
 	vec![sid_diff_key, sid_diff_val].into_iter().zip(d_names.iter())
@@ -1381,9 +1373,9 @@ pub fn tbl_to_sorted_tbl<F:PrimeField>(
 	let mtbl_dst_src = gen_m_table_cond(&encoded_dst, &sel_dst, 
 		&encoded_src, &sel_src);
 
-	prf.borrow_mut().add_col(Col::new_const(vec![zero; mtbl_src_dst.len()],
+	prf.borrow_mut().add_col(Col::new(vec![zero; mtbl_src_dst.len()],
 		"sid_mtbl_src_dst", IDX_SI_DATA));
-	prf.borrow_mut().add_col(Col::new_const(vec![zero; mtbl_dst_src.len()],
+	prf.borrow_mut().add_col(Col::new(vec![zero; mtbl_dst_src.len()],
 		"sid_mtbl_dst_src", IDX_SI_DATA));
 	prf.borrow_mut().add_col(Col::new(mtbl_src_dst,"mtbl_src_dst",IDX_DATA));
 	prf.borrow_mut().add_col(Col::new(mtbl_dst_src, "mtbl_dst_src",IDX_DATA));
@@ -1542,14 +1534,14 @@ pub fn tbl_left_join<F:PrimeField>(
 		if x.is_zero() {zero} else {one}).collect::<Vec<F>>();
 	let mtbl_tbl1_res = gen_m_table_cond(&tbl1_encoded, &tbl1_sel,
 		&res_firsthalf_encoded, &res_firsthalf_sel);
-	prf.borrow_mut().add_col(Col::new_const(vec![zero; mtbl_tbl1_res.len()],
+	prf.borrow_mut().add_col(Col::new(vec![zero; mtbl_tbl1_res.len()],
 		"sid_mtbl_tbl1_res", IDX_SI_DATA));
 	prf.borrow_mut().add_col(Col::new(mtbl_tbl1_res,"mtbl_tbl1_res",IDX_DATA));
 
 	//3. lkup first 3 column in tbl1 (guarnatee no extra) 
 	let mtbl_res_tbl1= gen_m_table_cond( 
 		&res_firsthalf_encoded, &res_firsthalf_sel, &tbl1_encoded, &tbl1_sel);
-	prf.borrow_mut().add_col(Col::new_const(vec![zero; mtbl_res_tbl1.len()],
+	prf.borrow_mut().add_col(Col::new(vec![zero; mtbl_res_tbl1.len()],
 		"sid_mtbl_res_tbl1", IDX_SI_DATA));
 	prf.borrow_mut().add_col(Col::new(mtbl_res_tbl1,"mtbl_res_tbl1",IDX_DATA));
 
@@ -1597,7 +1589,7 @@ pub fn tbl_left_join<F:PrimeField>(
 	let mtbl_sechalf_tbl2= gen_m_table_cond(
 		&res_sechalf_encoded, &res_sechalf_sel, &tbl2_encoded, &tbl2_sel);
 
-	prf.borrow_mut().add_col(Col::new_const(vec![zero; mtbl_sechalf_tbl2.len()],
+	prf.borrow_mut().add_col(Col::new(vec![zero; mtbl_sechalf_tbl2.len()],
 		"sid_mtbl_sechalf_tbl2", IDX_SI_DATA));
 	prf.borrow_mut().add_col(Col::new(mtbl_sechalf_tbl2,"mtbl_sechalf_tbl2"
 		,IDX_DATA));
@@ -1607,7 +1599,6 @@ pub fn tbl_left_join<F:PrimeField>(
 	// that the expansion of (k1,k2) is complete. because the two dummy
 	// entries are verified to be in tbl2. Note: no need on key
 	let (diff_val, sid_diff_val) = gen_diff_col(&tbl_res[4]);
-	//note sid_diff_val is NOT const
 	prf.borrow_mut().add_col(Col::new(sid_diff_val,"sid_diff_val",IDX_SI_DATA));
 	prf.borrow_mut().add_col(Col::new(diff_val,"diff_val",IDX_DATA));
 
@@ -1619,7 +1610,7 @@ pub fn tbl_left_join<F:PrimeField>(
 		join_tbl.borrow_mut().add_col(Col::new(c, n, IDX_DATA));
 	});
 	vec_c_len.iter().zip(join_tbl_names.iter()).for_each(|(l,n)|{
-		join_tbl.borrow_mut().add_col(Col::new_const(vec![f_rg;*l],
+		join_tbl.borrow_mut().add_col(Col::new(vec![f_rg;*l],
 			&format!("sid_{}",n), IDX_SI_DATA));
 	});
 

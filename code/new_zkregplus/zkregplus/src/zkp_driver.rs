@@ -284,6 +284,7 @@ where C: CurveGroup<ScalarField=F>,
 	let basis_pats_in_trace = 6*100;
 	let perc_comp_subsigs = 50;
 	let basis_unique_states = 100; //1 percent
+	let basis_acc_states = 500; //5 percent
 	let avg_subsig_per_sig = 2;
 	let cap1 = CpCapacity{
 		max_word_len: max_word, 
@@ -315,7 +316,7 @@ where C: CurveGroup<ScalarField=F>,
 
 	//2. create sed components
 	let scap1= SedCapacity::new(max_word, db.dfa_crit.state_part_bits, subsigs, 
-		avg_pats_per_subsig, avg_active_pats_per_subsig, basis_pats_in_trace, sigs, perc_comp_subsigs, basis_unique_states);
+		avg_pats_per_subsig, avg_active_pats_per_subsig, basis_pats_in_trace, sigs, perc_comp_subsigs, basis_unique_states, basis_acc_states);
 	let scomp1 = SedComponentMapper::<F,LK<F>>::new(scap1, db.clone());
 	//let scg1 = CompositeGadgetMapper::<F,LK<F>>::new("sed1",vec![Rc::new(RefCell::new(scomp1))]); 
 
@@ -542,7 +543,8 @@ pub mod tests_zkp_driver{
 		let perc_comp_subsigs = 50;
 		let num_category = 1;
 		let num_circs_per_category= 1;
-		let basis_unique_states = 38*100; //1 cerpcent
+		let basis_unique_states = 38*100; //38 cerpcent
+		let basis_acc_states = 60*100; //60 cerpcent
 
 		let avg_subsig_per_sig = 2;
 		let init_cp_cap= CpCapacity{
@@ -556,7 +558,7 @@ pub mod tests_zkp_driver{
 			max_word, RANGE2_BIT, subsigs, 
 			avg_pats_per_subsig, avg_active_pats_per_subsig, 
 			basis_pats_in_trace, sigs, perc_comp_subsigs,
-			basis_unique_states
+			basis_unique_states, basis_acc_states
 		);
 		let init_dfa_cap= DfaCapacity::new(max_word, sigs, subsigs);
 
@@ -600,6 +602,7 @@ pub mod tests_zkp_driver{
 		let num_category = 1;
 		let num_circs_per_category= 1;
 		let basis_unique_states = 100; //1 cpercent
+		let basis_acc_states = 500; //5 cpercent
 		let avg_subsig_per_sig = 3;
 
 		let init_cp_cap= CpCapacity{
@@ -616,7 +619,8 @@ pub mod tests_zkp_driver{
 			basis_pats_in_trace, 
 			sigs, 
 			perc_comp_subsigs,
-			basis_unique_states
+			basis_unique_states,
+			basis_acc_states,
 		);
 		let dfa_sigs = 3;
 		let dfa_subsigs= 6;

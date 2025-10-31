@@ -21283,7 +21283,7 @@ Goal 2. implementation
 	[e] collect real data
 		---- PERFORMANCE DATA ---------------- ID: 008 (after wordextract_adv)
 		nlen = 32k
-		module 8 size: 152k-159k: 3k
+		module 8 size: 162k-159k: 3k
 		right after module 14: R1CS: 859 -> 795k (improved 60k) 
 		lkup size: 932k (same) 
 		module 9: fsmadv gadget: cost: 751k-457k = 294k
@@ -21367,3 +21367,37 @@ Goal 1. change gen_fsm_acc_combo
 	[c] regression testing -> fails at 1st decider
 	[d] check out old one and see
 	still fails -> needs to check out previous version.
+	=> so it might be some db ops which cause problem
+
+Thursday 10/30/2025
+LOC (gadget): 16135 -> 16204 (+80)
+Goal 1. revise gen_acc_combo
+	[a] add attribute basis_acc_states into attribute
+	[b] regression test
+	[c] update the doc of gen_fsm_acc_combo
+	[d] do the final states
+	[e] regression test
+
+Goal 2. add the column states_final and loc_final and their columns
+	[a] filter and get states and locs
+	[b] pad 
+	[c] construct si_locs and si_states
+	[d] regression test
+
+Goal 3. assert fsm_combo
+	[a] put the doc justifying
+	[b] assert correctness of transition
+
+Friday 10/31/2025
+LOC (gadget): 15204 -> 
+Goal 1. implement improved lhs
+	[a] impl
+	[b] measure cost
+Goal 2. imlement the rhs
+	[a] impl 
+	[b] measure cost
+	[c] check formula
+	[d] regression testing
+-- TODO -- 
+Goal 3. inspect gen_proj_store
+Goal 4. 
