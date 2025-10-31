@@ -29,7 +29,7 @@ use data_processor::{
 	type_def::{SubsigPatternStore},
 };
 use crate::gadgets::{
-	commons::{check_arr_eq,check_eq,check_increase,gen_m_table,new_const_var,
+	commons::{check_eq,check_increase,gen_m_table,new_const_var,
 		is_zero_better, new_var},
 	traits::{Container,Col,IDX_WORD, IDX_INP,IDX_DATA, IDX_SI_INP, 
 		IDX_OUP, IDX_SI_OUP, IDX_SI_DATA,ComponentAdvice},
@@ -494,17 +494,14 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		let cols:Vec<_> = cols.iter().zip(col_names.iter()).map(|(d,n)|
 			Col::<F>::new(d.to_vec(), n, IDX_DATA)).collect();
 		let sid_cols:Vec<_> = sid_cols.iter().zip(col_names.iter()).map(|(d,n)|
-			Col::<F>::new(d.to_vec(),&format!("sid_{}", n),IDX_SI_DATA))
+			Col::<F>::new_const(d.to_vec(),&format!("sid_{}", n),IDX_SI_DATA))
 			.collect();
-
 
 		//note not much cost as it's rc
 		for i in 0..cols.len(){ res.borrow_mut().add_col(cols[i].clone()); }
 		for i in 0..sid_cols.len(){res.borrow_mut().add_col(sid_cols[i].clone());}
 
-
 		res
-
 	}
 
 	/// Generate packed_trace in the following form:
@@ -828,16 +825,18 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 	/// -- to the set of sigs to discharge.
 	/// This needs r1 (a random challenge Fiat-Shamir) from msg2.
 	/// COST [su - subsigs, ap - avg_pat_persubsig]
-	/// 7*su*ap +  4*su*ap + 8*su*ap 
-	/// = 19*su*ap
+	/// COST: subsig*(1 + 11*avg_pat_subsig)
 	fn validate_proj_subsig_store(&self, 
 		proj_store: &Container<FpVar<F>>,  //the projected result
 		r1: FpVar<F>,
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
+		let b_perf = false;
+		let (nc, nv) = (cs.num_constraints(), cs.num_witness_variables());
 		//1. check all subtable IDs are correct.
 		// This includes the check that the encoded column is
 		// indeed in the external lookup table.
+		// COST: 0
 		let col_names = vec!["subsig", "id1", "state", "id2", "pat", 
 			"encoded", "inp_subsigs", "m_tbl"];
 		let f_substore_id = F::from((self.fsm_id + STORE_SUBSIG) as u32);
@@ -851,12 +850,15 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 				.borrow().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
 		assert!(sid_cols.len()==vals.len());
-		for i in 0..vals.len(){
-			check_arr_eq(&sid_cols[i], &vals[i], 
-				&format!("err check sid of {}", col_names[i]))?;
-		}
+
+		//NOT needed anymore
+		//for i in 0..vals.len(){
+		//	check_arr_eq(&sid_cols[i], &vals[i], 
+		//		&format!("err check sid of {}", col_names[i]))?;
+		//}
 
 		//2. check the m_tbl proof
+		//COST: subsigs + 2*subsigs*avg_pat*subsig 
 		let cols = col_names.iter().map(|name| proj_store.get_container(&name).
 			unwrap().borrow().to_vec()
 			).collect::<Vec<Vec<FpVar<F>>>>();
@@ -865,17 +867,23 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		assert_logup(cs.clone(), &inp_subsigs, &subsig, &m_tbl, &r1)?; 
 
 		//3. check the validity of encoding
+		//COST: avg_pat_subsig * subsig
 		let unit_bits = self.capacity.acdfa_state_part_bits;
 		assert!(unit_bits==RANGE2_BIT, "reset HexACDFA state part bits or RANGE2_BIT so that they are aligned");
 		verify_encoded_table(cs.clone(),
 			unit_bits, &vec![subsig,id1,state,id2,pat], encoded)?;
 
 		//4. check the table is wellformed 
+		//COST: 8 avg_pat_subsig * subsig
 		let unit_bits = self.capacity.acdfa_state_part_bits;
 		//note: no sorted proof is needed as it's proved to be part of
 		//external table, thus guarantee completeness of vals for a key.
 		assert_well_formed_sorted(cs.clone(),subsig,id1,state,None,None,None,
 			None, r1,unit_bits)?;
+
+		if b_perf{
+			println!(" ### --- validate_proj_store: subsigs: {}, pats_per_subsig: {}, nc: {}, nv: {}", self.capacity.subsigs, self.capacity.avg_pats_per_subsig, cs.num_constraints() - nc,cs.num_witness_variables()-nv);
+		}
 
 		Ok( () )
 	}
@@ -1041,12 +1049,13 @@ impl <F:PrimeField> SigmaGadget<F> for FsmAdvGadget<F>{
 		let r2 = wtns.msg2[1].clone();
 
 		//2. validate the fsm_acc combo 
-		// 3*nlen + 5*alen
+		// nlen*(3+ 5*ratio_acc_states_per_trace)
 		let fsm_acc = stmt.get_container("fsm_acc")?;
 		self.validate_fsm_acc_container(&fsm_acc.borrow(), r1.clone(),
 			r2.clone(), cs.clone())?;
 
 		//3. validate the proj_subsig_store
+		// COST: subsig*(1 + 11*avg_pat_subsig)
 		self.validate_proj_subsig_store(&pss.borrow(),r1.clone(),cs.clone())?;
 
 		//3. validate the packed trace combo
@@ -1117,7 +1126,7 @@ pub mod tests_fsm_adv_gadget{
 		let cap = FsmAdvCapacity{max_nibble_len: nibble_len, 
 			acdfa_state_part_bits: state_bits, 
 			subsigs: 4,
-			avg_pats_per_subsig: 4,
+			avg_pats_per_subsig: 100,
 			basis_pats_in_trace: 16*100,
 			basis_unique_states: 20*100,
 			basis_acc_states: 5*100,

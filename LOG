@@ -21398,6 +21398,6 @@ Goal 2. imlement the rhs
 	[b] measure cost
 	[c] check formula
 	[d] regression testing
--- TODO -- 
 Goal 3. inspect gen_proj_store
-Goal 4. 
+	[a] regresion testing -> DONE
+Goal 4. validate_proj_store and update cost profile 

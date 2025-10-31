@@ -246,7 +246,7 @@ pub fn assert_well_formed_sorted_adv<F:PrimeField>(
 	let zero = FpVar::<F>::new_constant(cs.clone(), F::zero())?;
 	let one = FpVar::<F>::new_constant(cs.clone(), F::one())?;
 	let max = FpVar::<F>::new_constant(cs.clone(), F::from(max_val as u32))?;
-	let rg2 = FpVar::<F>::new_constant(cs.clone(), F::from(RANGE2))?;
+	let _rg2 = FpVar::<F>::new_constant(cs.clone(), F::from(RANGE2))?;
 	check_eq(&id[0], &zero, "check id0")?;
 	let b_check_sort = sid_sort_diff.is_some();
 	let b_check_sort_key = sid_diff_key.is_some();
@@ -268,7 +268,8 @@ pub fn assert_well_formed_sorted_adv<F:PrimeField>(
 		//simply check here all are in ascending order
 		//we do not have the value problem ascending by chunks
 		//this is ascending along the entire column.
-		check_arr_eq(&sid_diff_key.unwrap(), &rg2, "err sid_sort key")?; 
+		//NOT needed as it's constant
+		//check_arr_eq(&sid_diff_key.unwrap(), &rg2, "err sid_sort key")?; 
 	}
 
 	// -------------------------------------------------------
