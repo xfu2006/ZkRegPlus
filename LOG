@@ -21483,3 +21483,29 @@ DEBUG USE 7103: after msg3 of module 11: DischargeAdvGadget:  constraints: 40043
 
 Monday 11/03/2025
 LOC (gadget) 16400
+Goal 1. part I of discharge
+	[a] read structs
+	[b] gen_forward_prf
+	[c] gen_backward_prf
+	[d] improve to container
+		-> regression test
+
+Goal 2. StepQueueItem
+	[a] gen_forward_prf
+	[b] StepFwadPrf
+	[c] to container
+	[d] regresion test
+	[e] StepBwdPrf
+	[f] regression test
+
+Goal 3. gen_step_queue_union_prf
+	[a] gen_to_del_valid_prf
+	[b] gen_bwdprf_valid_prf
+
+Goal 4. DischargeAdvGadget
+Goal 5. validate_store_steps_combo
+	[a] measure cost and imporve
+	[b] measure step 1
+	[b] measure step 2
+	[d] measure step 3
+		-> original: 2067 -> 1935
