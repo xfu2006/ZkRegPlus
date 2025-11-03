@@ -1099,6 +1099,7 @@ pub fn is_zero_better<F:PrimeField>(x: &FpVar<F>, cs: &ConstraintSystemRef<F>)
 /// compute multiset_prod only counts sel[i] is 1.
 /// sel is a "boolean" array.
 /// COST: 3n
+/// if unit var is a constant -> it's 2n
 #[allow(dead_code)]
 pub fn multiset_prod_2col<F:PrimeField>(
 	cs: ConstraintSystemRef<F>,
@@ -1106,7 +1107,7 @@ pub fn multiset_prod_2col<F:PrimeField>(
 	col2: &[FpVar<F>],
 	sel: &[FpVar<F>],
 	r1: &FpVar<F>,
-	r2: &FpVar<F>
+	unit_var: &FpVar<F>
 )->FpVar<F>{
 	let n = col1.len();
 	let f_one = F::one();
@@ -1114,7 +1115,7 @@ pub fn multiset_prod_2col<F:PrimeField>(
 	assert!(col2.len()==n && sel.len()==n);
 	let mut prod = new_const_var(&cs, f_one);
 	for i in 0..n{
-		let v1 = r1 + &col1[i] + &(&col2[i] * r2);
+		let v1 = r1 + &col1[i] + &(&col2[i] * unit_var);
 		let v1_val = v1.value().unwrap();
 		let sel_val = sel[i].value().unwrap();
 		let item_val = if sel_val.is_zero() {f_one} else {v1_val};

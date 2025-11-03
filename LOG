@@ -21389,7 +21389,7 @@ Goal 3. assert fsm_combo
 	[b] assert correctness of transition
 
 Friday 10/31/2025
-LOC (gadget): 15204 -> 
+LOC (gadget): 16204 -> 16303 (+100)
 Goal 1. implement improved lhs
 	[a] impl
 	[b] measure cost
@@ -21407,3 +21407,76 @@ Goal 4. validate_proj_store and update cost profile
 	[d] regression test
 Goal 5. gen_pack_trace
 	[a] improve prove_filter_tag
+	[b] tbl_to_sorted table
+	[c] tbl_left_join
+	[d] regression test
+Goal 6. validate_pack_trace
+	[a] assert the length
+
+Saturday 11/01/2025
+LOC (gadget) 16303 -> 16320 (+20)
+Goal 1. verify_tbl_filtered_to_sorted_tbl
+	[a] check semantics of parameters
+	[b] verify filter tag
+		-> verify_unique_sorted_set
+	[c] comment out sid check
+
+Goal 2. label step 1 cost
+	[a] check where is alen show up in length -> it's about
+		proj_store so it's just subsigs * avg_pat
+	[b] lable step2 cost
+
+Goal 3. verify_tbl_sorted_tbl
+	[a] read source code
+	[b] annotate cost
+
+Sunday 11/02/2025
+LOC (gadget) 16320 
+Goal 1. continue to measure verify_tbl_join
+	[a] check gen code
+	[b] check the length passed
+	[c] improve the code
+	[d] improve 2nd lkup 4429 -> 4151 (2*n2)
+
+Goal 2. further improve assert_well_formed
+	[a] case 1: 2 + 3 = 5
+	[b] case 2: 2 + 4 = 6
+	[c] case 3: 2 + 4 = 6
+	[d] total: 4151 -> 3759 (cut 4*n2)
+
+Goal 3. data measure meent again
+	[a] verify tbl_join cost:  updated
+	[b] step 2: 
+	[c] step 1: 
+	[d] regresion 1 -> ok
+	[e] regression 2 -> ok
+	[f] update data for validate_tbl_join
+	[g] check step 1 cost:
+
+Goal 4. performance data --> 
+		---- PERFORMANCE DATA ---------------- ID: 009 (after fsm_adv)
+		nlen = 32k
+		module 8 size: 162k-159k: 3k
+		right after module 14: R1CS:  795k->440k (improved 360k) 
+		module 9: fsmadv gadget: cost: 294k -> 117k (improved 170k!)
+		lkup size: 932k->271k (improved 650k!)
+		qry cost (compare DEBUG 1201): 2.87-1.01M = 1.87M (improved 700k!)
+		combined key size: 9904415->8266759: saved 1.6M
+		(max_row_col: 5.28M->4.44M -> saved 800k) 
+		PERFORAMNCE 1003: n_case1: (856, 0.09%), n_case2: (254252, 27.28%), n_case3: (676975, 72.63%)
+		=> new
+		PERFORAMNCE 1003: n_case1: (5488, 0.63%), n_case2: (385032, 43.85%), n_case3: (487495, 55.52%)
+
+
+
+
+	 GenConstraints: Step 4: *** ENTIRE CIRCUIT CONSTRUCTED *** . 23372081 
+	 ==> 19470729 (saved 4M)
+	main: Step 12. Gen groth16 prf, mem: 70 GB: 199.433283615s
+		====> 58GB (saved 12GB)
+
+	Next to improve: discharge_adv:
+	EBUG USE 7103: after msg3 of module 10: FsmAdvGadget:  constraints: 396443
+PERF 102: discharge_adv: TOTAL num_cons: 3993
+DEBUG USE 7103: after msg3 of module 11: DischargeAdvGadget:  constraints: 400436
+	===================

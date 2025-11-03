@@ -23,7 +23,8 @@ use std::{rc::{Rc}, cell::{RefCell},collections::{HashSet}};
 use ark_ff::{PrimeField};
 use crate::gadgets::{traits::{Container,Col,IDX_DATA, IDX_SI_DATA}};
 use ark_r1cs_std::{R1CSVar,alloc::AllocVar, eq::EqGadget,fields::FieldVar};
-use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef};
+use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef,LinearCombination,
+	Variable};
 use ark_r1cs_std::fields::fp::FpVar;
 use rayon::iter::{
 	ParallelIterator,
@@ -38,7 +39,7 @@ use crate::gadgets::commons::{verify_inverse,verify_logup_inverse, check_eq,
 	new_var, two_col_tbl_to_sorted, gen_diff_col, two_col_tbl_left_join,
 	encode_cols, encode_cols_var, 
 	multiset_prod, verify_unique_sorted_set, is_zero_better,
-	multiset_prod_2col};
+	multiset_prod_2col,var_to_lb};
 
 
 // ----------------------------------------------------
@@ -103,6 +104,7 @@ pub fn assert_logup<F:PrimeField>(
 }
 
 /// assert_logup for the selector version.
+/// COST: 2*qry_size + 3*lkup_size
 pub fn assert_logup_cond<F:PrimeField>(
 	cs: ConstraintSystemRef<F>,
 	qry: &Vec<FpVar<F>>, 
@@ -141,7 +143,6 @@ pub fn assert_logup_cond<F:PrimeField>(
 
 	//3. verify logup relation (m_table)
 	verify_logup_inverse(cs.clone(), &qry_inv, &lkup_inv, m_tbl)?; 
-
 	Ok( () )
 }
 
@@ -186,7 +187,7 @@ pub fn verify_encoded_table<F:PrimeField>(
 /// a verified external table, this guarantees UNIQUE KEY.
 /// NOTE: zero entries (key=0) are ignored (as they are dummy entry)
 ///
-/// COST: 9n
+/// COST: 5n (to 7n depending on setting)
 pub fn assert_well_formed_sorted<F:PrimeField>(
 	cs: ConstraintSystemRef<F>,
 	key: &Vec<FpVar<F>>,
@@ -236,7 +237,6 @@ pub fn assert_well_formed_sorted_adv<F:PrimeField>(
 	// random combination of zero values to save cost.
 	// compared with the naive algorithm, the fingerprint algorithm
 	// costs (5  vs 12 per row), [for case sid_sort_diff is none]
-	// with check sort and ignore zero entries it's 7 constraints per row.
 
 	//0. quick check of data
 	let n = key.len();
@@ -289,51 +289,105 @@ pub fn assert_well_formed_sorted_adv<F:PrimeField>(
 
 
 	// finger printing algorithm
-	let mut sum = zero.clone();
+	//let mut sum = zero.clone();
 	let f_rg2= F::from(RANGE2);
+	// vec_sid_diff is used to asserting ascending.
+	// NOTE that regardless of up and down, now the vec_sid_diff will always
+	// be zero.
 	let vec_sid_diff = if sid_sort_diff.is_some(){
 		let sid_s2 = sid_sort_diff.unwrap();
 		assert!(sid_s2.len()==key.len()-1);
 		sid_s2.iter().map(|x| x.clone()-f_rg2).collect::<Vec<_>>()
 	}else{vec![zero.clone(); key.len()-1]};
 	for i in 1..n{
-		let b_same_key = key[i].is_eq(&key[i-1])?; 
-		let bk: FpVar<F> = b_same_key.into();
+		//let b_same_key = key[i].is_eq(&key[i-1])?; 
+		let bk= is_zero_better(&(&key[i]-&key[i-1]), &cs)?;
 		let id_diff = &id[i]-&id[i-1]-&one;
 		let val_diff = &val1[i-1]-&max;
 		//NOTE: bk is either 0 or 1 (already asserted as boolean)
 		//bk=0 implies id_diff is 0
 		//bk=1 implies val[i-1]=max and val[i]=0
-		//this implies res =0, we use random combination to enforce all RES are 0
-		//outside of loop
-		let res = if !b_check_sort{ 
+		let lb_zero= LinearCombination::from((F::zero(),Variable::One));
+		let r2 = &r * &r;
+		if !b_check_sort{ 
 			if !b_relaxed{
+				// -- do not check sort
+				// -- do not check relaxed, require id increasing strictly
+				// -- by 1.
 				//NOTE: if key[i-1]=0, we regard it as dummy entry so do NOT
 				//enforce the rule that res be 0.
 				// technically, when key[i-1]=0, its 
 				// id and val entries for key 0 can be 
 				// anything, because they are ignored. but when we generate
 				// table, we make them 0.
+				// NOTE we do not check id increasing, we just
+				// check if key[i-1]!=key[i], then 
+				// val1[i-1]=max and val1[i]=0
+				/* OLD
 				let part2 = &val_diff + &(&r * &val1[i]);
-				&key[i-1]*(&bk * &id_diff + &(&one-&bk)*&part2)
+				let res = &key[i-1]*(&(&one-&bk)*&part2);
+				check_eq(&res, &zero, "failed no-sort, no-b_relaxed")?;
+				*/
+				// IMPROVED
+				let part1 = &id_diff;
+				let part2 = &val_diff + &(&r * &val1[i]); //val1[i-1]=max and
+						//va1[i]=0
+				let res = &bk * &(part1-&part2) + &part2;
+				#[cfg(test)]{
+					assert!(key[i-1].value()? * res.value()? == F::zero());
+				}
+				let lb_res= var_to_lb(&res, F::one());
+				let lb_key = var_to_lb(&key[i-1], F::one());
+				cs.enforce_constraint(
+					lb_key,
+					lb_res,
+					lb_zero.clone()
+				)?;
 			}else{//b_relaxed mode
 				//part1 means id[i]-id[i-1] is either 1 or 0
 				let part1 = &id_diff * &(&id[i]-&id[i-1]);
 				let part2 = &val_diff + &(&r * &val1[i]);
-				&key[i-1]*(&bk * &part1+ &(&one-&bk)*&part2)
+				let res = &bk * &(&part1-&part2) + &part2;
+				#[cfg(test)]{
+					assert!(key[i-1].value()? * res.value()? == F::zero());
+				}
+				let lb_res= var_to_lb(&res, F::one());
+				let lb_key = var_to_lb(&key[i-1], F::one());
+				cs.enforce_constraint(
+					lb_key,
+					lb_res,
+					lb_zero.clone()
+				)?;
 			}
 		} else {//this is only checked when b_relaxed is false
 			#[cfg(test)] {assert!(!b_relaxed);}
-			let sid_diff = &vec_sid_diff[i-1];
+			/* OLD version
 			let part1 = &id_diff + &(sid_diff* &r);
 			let part2 = &val_diff + &(&r * &val1[i]);
 			let res = &key[i-1] * &(&bk * &part1 + &(&one-&bk)*&part2);
-
-			res
-		};
-		sum = &sum * &r + &res;
+			*/
+			//IMPROVED VERSION below
+			let sid_diff = &vec_sid_diff[i-1];
+			let part1 = &id_diff + &(sid_diff*&r2);  //sid_diff
+				//note that it might be about val depending on which
+				//array is being checked ensures increasing
+			let part2 = &val_diff + &(&r * &val1[i]);
+			let res = &(&bk * &(part1-&part2)) + &part2;
+			//check res is 0
+			#[cfg(test)]{
+				assert!(key[i-1].value()? * res.value()? == F::zero());
+			}
+			let lb_res= var_to_lb(&res, F::one());
+			let lb_key = var_to_lb(&key[i-1], F::one());
+			cs.enforce_constraint(
+				lb_key,
+				lb_res,
+				lb_zero.clone()
+			)?;
+		}
+		//sum = &sum * &r + &res; CHECKED locally in each branch
 	}
-	check_eq(&sum, &zero, "check sum fails")?;
+	//check_eq(&sum, &zero, "check sum fails")?; #checked already in each iter.
 	
 	Ok( () )
 }
@@ -387,15 +441,15 @@ pub fn col_to_sorted_set<F:PrimeField>(
 		sorted_val[*i] - sorted_val[*i-1]).collect::<Vec<F>>();
 
 	//3. create the mtables. m_tbl1: look extended src into sorted_val
-	// m_tbl2: look sorted_val into extended_src.
 	let src_len = src.len();
 	let extended_src = vec![src, vec![zero, max]].concat();
 	let m_tbl1 = gen_m_table(&extended_src, &sorted_val);
-	let m_tbl2 = gen_m_table(&sorted_val, &extended_src);
+	//only m_tbl is ok we'll check that all non-zero entries
+	//have non-zero haves in m_tbl1, this proves 2-direction coverage.
 
 	//3. generate the cols
-	let vec2d = vec![ids, sorted_val, diffs, m_tbl1, m_tbl2];
-	let names = vec!["id", "sorted_val", "diff", "mtbl_1", "mtbl_2"];
+	let vec2d = vec![ids, sorted_val, diffs, m_tbl1];
+	let names = vec!["id", "sorted_val", "diff", "mtbl_1"];
 	let lens = vec![target_n, target_n, target_n-1, target_n, src_len+2];
 	let cols = vec2d.into_iter().zip(names.clone().into_iter()).map(|(c,n)|
 		Col::new(c, n, IDX_DATA)).collect::<Vec<Rc<RefCell<Col<F>>>>>();
@@ -405,7 +459,6 @@ pub fn col_to_sorted_set<F:PrimeField>(
 		vec![f_rg2; target_n],  //sid_sorted_val
 		vec![f_rg2; target_n-1], //sid_diff
 		vec![f_rg2; target_n], //sid_mtbl_1
-		vec![f_rg2; src_len+2], //sid_mtbl_2
 	];
 	let cols_sid = vec2d_sid.into_iter().zip(names.into_iter()).map(|(c,n)|
 		Col::new(c, &format!("sid_{}",n), IDX_SI_DATA))
@@ -420,12 +473,47 @@ pub fn col_to_sorted_set<F:PrimeField>(
 
 	res
 }
+///assume col1 has the same length of col2
+/// col1[i]!=0 implies that col2[i]!=0
+/// COST: 2n
+pub fn verify_col1_nonzero_imply_col2_nonzero<F:PrimeField>(
+	col1: &Vec<FpVar<F>>,
+	col2: &Vec<FpVar<F>>,
+	cs: ConstraintSystemRef<F>
+)->Result<(), SynthesisError>{
+	let zero = F::zero();
+	let one_var = FpVar::<F>::constant(F::one());
+	let lb_zero= LinearCombination::from((F::zero(),Variable::One));
+	assert!(col1.len()==col2.len());
+	for i in 0..col2.len(){
+		// we are argueing that
+		// when col1[i]!=0:
+		//    col2[i]!=0, i.e., there exists inverse_col2[i]
+		//    s.t.
+		//    col1[i] * (col2[i] * inv_col2[i] - 1) = 0
+		//    when col1[i]==0 it's don't care
+		let col2_i_val = col2[i].value()?;
+		let inv_col2_val = if col2_i_val.is_zero() {zero} else{
+			col2_i_val.inverse().expect("error no inverse")};
+		let inv_col2_var = new_var(&cs, inv_col2_val);
+		let item2 = &col2[i] * &inv_col2_var- &one_var;
+		let lb_item2 = var_to_lb(&item2, F::one());
+		let lb_col1_i = var_to_lb(&col1[i], F::one());
+		cs.enforce_constraint(
+			lb_col1_i,
+			lb_item2,
+			lb_zero.clone()
+		)?;
+	}
+
+	Ok( () )
+}
 
 /// verify a col_to_sorted_set bundle is correct
 /// we take advantage the fact in assert3(), randoms from msg2 can
 /// be used given that src info (to be verified) are all locaed in stmt/msg1
 /// which are fixed.
-/// COST: 7m + 14n (where m is the len of larger src_col, n is the size of
+/// COST: m + 8n (where m is the len of larger src_col, n is the size of
 ///     the compressed sorted set)
 pub fn verify_col_to_sorted_set<F:PrimeField>(
 	r: &FpVar<F>,
@@ -439,20 +527,20 @@ pub fn verify_col_to_sorted_set<F:PrimeField>(
 	let sorted_val = c.get_container("sorted_val")?.borrow().to_vec();
 	let diff = c.get_container("diff")?.borrow().to_vec();
 	let mtbl_1= c.get_container("mtbl_1")?.borrow().to_vec();
-	let mtbl_2= c.get_container("mtbl_2")?.borrow().to_vec();
-	let sid_id = c.get_container("sid_id")?.borrow().to_vec();
-	let sid_sorted_val = c.get_container("sid_sorted_val")?.borrow().to_vec();
-	let sid_diff = c.get_container("sid_diff")?.borrow().to_vec();
-	let sid_mtbl_1= c.get_container("sid_mtbl_1")?.borrow().to_vec();
-	let sid_mtbl_2= c.get_container("sid_mtbl_2")?.borrow().to_vec();
+	//let sid_id = c.get_container("sid_id")?.borrow().to_vec();
+	//let sid_sorted_val = c.get_container("sid_sorted_val")?.borrow().to_vec();
+	//let sid_diff = c.get_container("sid_diff")?.borrow().to_vec();
+	//let sid_mtbl_1= c.get_container("sid_mtbl_1")?.borrow().to_vec();
+	//let sid_mtbl_2= c.get_container("sid_mtbl_2")?.borrow().to_vec();
 
 	//2. check the sid columns (all in RANGE2): cost 4m+n
-	let rg2 = FpVar::new_constant(cs.clone(), F::from(RANGE2))?;
-	check_arr_eq(&sid_id, &rg2, "error sid_id")?; 
-	check_arr_eq(&sid_sorted_val, &rg2, "error sid_sorted_val")?; 
-	check_arr_eq(&sid_diff, &rg2, "error sid_diff")?; 
-	check_arr_eq(&sid_mtbl_1, &rg2, "error sid_mtbl1")?; 
-	check_arr_eq(&sid_mtbl_2, &rg2, "error sid_mtbl2")?; 
+	//NO need to check as these are constants
+	//let rg2 = FpVar::new_constant(cs.clone(), F::from(RANGE2))?;
+	//check_arr_eq(&sid_id, &rg2, "error sid_id")?; 
+	//check_arr_eq(&sid_sorted_val, &rg2, "error sid_sorted_val")?; 
+	//check_arr_eq(&sid_diff, &rg2, "error sid_diff")?; 
+	//check_arr_eq(&sid_mtbl_1, &rg2, "error sid_mtbl1")?; 
+	//check_arr_eq(&sid_mtbl_2, &rg2, "error sid_mtbl2")?; 
 
 	//3. check the validity diff column: cost:m 
 	let n = sorted_val.len();
@@ -461,13 +549,14 @@ pub fn verify_col_to_sorted_set<F:PrimeField>(
 		a + b).collect::<Vec<FpVar<F>>>();
 	check_arr_eq_arr(&vec_sum, &sorted_val[1..n], "failed diff check")?;
 
-	//4. lookup: cost 5(m+n): m: source data, n: target_set_size
+	//4. lookup: cost m+4n: m: source data, n: target_set_size
 	let max_val:usize = (1<<RANGE2_BIT) - 1;
 	let zero = FpVar::<F>::new_constant(cs.clone(), F::zero())?;
 	let max = FpVar::<F>::new_constant(cs.clone(), F::from(max_val as u32))?;
 	let extended_src = vec![src_col, vec![zero.clone(),max]].concat();
 	assert_logup(cs.clone(), &extended_src, &sorted_val, &mtbl_1, r)?;
-	assert_logup(cs.clone(), &sorted_val, &extended_src, &mtbl_2, r)?;
+	//then just assert that mtbl_2 is non-zero for non-zero entries
+	verify_col1_nonzero_imply_col2_nonzero(&sorted_val, &mtbl_1, cs.clone())?;
 
 	//5. verify the ID column: cost: 4n
 	let diff_id = (1..id.len()).collect::<Vec<_>>().iter().map(|i|
@@ -718,7 +807,7 @@ pub fn tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
 	let proj_keys = sorted_set_key.borrow().get_container(
 		"sorted_val")?.borrow().to_vec();
 
-	let (m,n,k) = (keys.len(), target_size, proj_keys.len());
+	let (m,n,_k) = (keys.len(), target_size, proj_keys.len());
 	assert!(vals.len()==m);
 
 	//1.2 try to tag each key
@@ -978,17 +1067,17 @@ pub fn verify_tbl_filtered_to_sorted_tbl<F:PrimeField>(
 
 /// new version which is much less costly.
 ///
-/// COST: 2N + 7m + 10k + 3n + 11n + 6n + 3N
-/// = 5N + 17n + 7m + 10k
-/// where N: keys, n: sorted_tbl.len, m: unique_state_size: k: sorted_set size
-/// n is determined by basis_pats_per_traces, m determined by 
-///  basis_unique_states
+/// = 4N + 16n + 7m + 10k
+/// where N: source table length, n: destination table lenth,
+///  m: size of unique key (including keys not in filter key), 
+///  k: sorted_set size (the key used for filtering)
 pub fn verify_tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
 	r1: &FpVar<F>, //random challenges from msg2
 	r2: &FpVar<F>,
 	keys: &Rc<RefCell<Container<FpVar<F>>>>,
 	vals: &Rc<RefCell<Container<FpVar<F>>>>,
 	sorted_set_key: &Rc<RefCell<Container<FpVar<F>>>>, //the sorted_set bundle
+		// the key used for filtering
 	bundle: &Rc<RefCell<Container<FpVar<F>>>>, //result of tbl_filtered_to_sorted_tbl
 	cs: ConstraintSystemRef<F>
 ) -> Result<(), SynthesisError>{
@@ -1031,13 +1120,11 @@ pub fn verify_tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
 	//PART 2. constuct the filtered and sorted table and prove that
 	//its correctness
 	//2.1 retrieve data and check sids 
-	//COST: 3n
-	let rg = new_const_var(&cs, F::from(RANGE2));
+	//COST: 0 
+	let _rg = new_const_var(&cs, F::from(RANGE2));
 	let names = vec!["packed_key", "packed_id", "packed_val"];
-	let sids1 = names.iter().map(|n| 
-		sorted_tbl.borrow().get_container(&format!("sid_{}",n))
-		.expect(&format!("err get {}", n))).collect::<Vec<_>>();
-	for vs in &sids1{check_arr_eq(&vs.borrow().to_vec(), &rg, "err sid")?; }
+	//no need to check constant
+	//for vs in &sids1{check_arr_eq(&vs.borrow().to_vec(), &rg, "err sid")?; }
 	let tblcols = names.iter().map(|n|
 		sorted_tbl.borrow().get_container(n).expect("err get tbl"))
 		.collect::<Vec<_>>();
@@ -1107,7 +1194,7 @@ pub fn verify_tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
 	// define tag = (val-0)*(val-max) != 0 [costing two constraints]
 	// then 3 more constraints for the same. But sinc ethe right table
 	// is small, this is acceptable.
-	// COST: 6n + 3N
+	// COST: 5n + 2N
 
 	let max_val:usize = (1<<RANGE2_BIT) - 1;
 	let max = F::from(max_val as u32);
@@ -1116,22 +1203,29 @@ pub fn verify_tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
 		&vone - &is_zero_better(&(v * (v-&vmax)), &cs ).unwrap()
 	}).collect::<Vec<FpVar<F>>>();
 	if b_perf{
+		// COST: 3*n
 		println!("  --- verify_tbl_filtered_new keys: step 2.3.1  cs: {}", 
 			cs.num_constraints() - nc);
 		nc = cs.num_constraints();
 	}
 
+	let unit_var = new_const_var(&cs, F::from(1u32<<RANGE2_BIT));
+	//as all fields are already proved to be in RANGE2, use unit_var (const)
+	//instead of r2 as random combin operator (this is like doing
+	//bitwise concat of two fields).
 	let v1 = multiset_prod_2col(cs.clone(), &packed_keys, &packed_vals,
-		&tag_sorted_tbl, r1, r2);
+		&tag_sorted_tbl, r1, &unit_var);
 	if b_perf{
+		// cost 2*n
 		println!("  --- verify_tbl_filtered_new keys: step 2.3.2  cs: {}", 
 			cs.num_constraints() - nc);
 		nc = cs.num_constraints();
 	}
 
 	let v2 = multiset_prod_2col(cs.clone(), &keys, &vals,
-		&tags, r1, r2);
+		&tags, r1, &unit_var);
 	if b_perf{
+		// cost 2*N
 		println!("  --- verify_tbl_filtered_new keys: step 2.3  cs: {}", 
 			cs.num_constraints() - nc);
 		println!("  --- verify_tbl_filered_new TOTAL: {}", 
@@ -1388,7 +1482,9 @@ pub fn tbl_to_sorted_tbl<F:PrimeField>(
 	Ok(res)
 }
 
-/// verify in assert_msg3() that  
+/// verify in bundle contains a sorted table
+/// of the given columns of (keys, vals)
+/// COST: 27*n
 pub fn verify_tbl_to_sorted_tbl<F:PrimeField>(
 	r1: &FpVar<F>, //random challenges from msg2
 	_r2: &FpVar<F>,
@@ -1426,16 +1522,17 @@ pub fn verify_tbl_to_sorted_tbl<F:PrimeField>(
 	// ALSO Note sid_diff_key and sid_diff_val is already checked
 	// in assert_well_formed_sorted. So we only need to check sid for
 	// sorted_key, id, val.
-	let f_rg = new_var(&cs, F::from(RANGE2)); 
-	let sid_names = vec!["sorted_key", "sorted_id", "sorted_val"];
-	let scols= sid_names.iter().map(|n|
-			prf.borrow().get_container(&format!("sid_{}",n))
-			.unwrap().borrow().to_vec()
-		).collect::<Vec<Vec<FpVar<F>>>>();
-	for i in 0..scols.len(){
-		check_arr_eq(&scols[i], &f_rg,&format!("sid err: {}", sid_names[i]))?;
-	}
-	//sid_diff_val needs needs special treatment
+	// SKIP THE ENTIRE SECTION OF CHECK AS THE ARE CHECKING CONSTANTS.
+	//let f_rg = new_var(&cs, F::from(RANGE2)); 
+	//let sid_names = vec!["sorted_key", "sorted_id", "sorted_val"];
+	//let scols= sid_names.iter().map(|n|
+	//		prf.borrow().get_container(&format!("sid_{}",n))
+	//		.unwrap().borrow().to_vec()
+	//	).collect::<Vec<Vec<FpVar<F>>>>();
+	//for i in 0..scols.len(){
+	//	check_arr_eq(&scols[i], &f_rg,&format!("sid err: {}", sid_names[i]))?;
+	//}
+	//but sid_diff_val needs needs special treatment
 
 	//3. check logups (bi-directional) - conditional means
 	// to ignore zero entries
@@ -1613,13 +1710,13 @@ pub fn tbl_left_join<F:PrimeField>(
 			&format!("sid_{}",n), IDX_SI_DATA));
 	});
 
-
 	res.borrow_mut().add_container(join_tbl);
 	res.borrow_mut().add_container(prf);
 	Ok(res)
 }
 
-/// verify in assert_msg3() that  
+/// verify that tbl1 left join with tbl2 results in output
+/// COST roughly: 20* src_len + 38 * dst_len
 pub fn verify_tbl_left_join<F:PrimeField>(
 	r1: &FpVar<F>, //random challenges from msg2
 	r2: &FpVar<F>,
@@ -1649,12 +1746,15 @@ pub fn verify_tbl_left_join<F:PrimeField>(
 		.borrow().to_vec()).collect::<Vec<Vec<FpVar<F>>>>();
 
 	//2. verify tbl1 in first 3 columns 
+	let one_var = FpVar::<F>::constant(F::one());
 	let tbl1_encoded = encode_cols_var(&tbl1_cols, &vec![0,1,2]);
 	let tbl1_sel = tbl1_cols[0].iter().map(|x| 
-		x.is_zero().unwrap().not().into()).collect::<Vec<FpVar<F>>>();
+		&one_var - &is_zero_better(x,&cs).unwrap()).collect::<Vec<FpVar<F>>>();
 	let res_firsthalf_encoded = encode_cols_var(&tbl_res, &vec![0,1,2]); 
+	//let res_firsthalf_sel = tbl_res[0].iter().map(|x|
+	//	x.is_zero().unwrap().not().into() ).collect::<Vec<FpVar<F>>>();
 	let res_firsthalf_sel = tbl_res[0].iter().map(|x|
-		x.is_zero().unwrap().not().into() ).collect::<Vec<FpVar<F>>>();
+		&one_var - is_zero_better(x, &cs).unwrap() ).collect::<Vec<FpVar<F>>>();
 	let mtbl_tbl1_res= prf.borrow().get_container("mtbl_tbl1_res")?
 		.borrow().to_vec();
 	assert_logup_cond(cs.clone(), &tbl1_encoded, &tbl1_sel, 
@@ -1679,7 +1779,6 @@ pub fn verify_tbl_left_join<F:PrimeField>(
 	// of tbl1 are preserved, but adversary prover can insert DUPLICATED
 	// entries (expanded with join), but this only comes at the cost of
 	// proving, but does not affect soundness of the proof.
-
 	assert_well_formed_sorted_adv(cs.clone(),
 		&tbl_res[0], //key1
 		&tbl_res[1], //id
@@ -1713,10 +1812,10 @@ pub fn verify_tbl_left_join<F:PrimeField>(
 		}).collect::<Vec<Vec<FpVar<F>>>>();
 	let tbl2_encoded = encode_cols_var(&tbl2_cols, &vec![0,1,2]);
 	let tbl2_sel = tbl2_cols[0].iter().map(|x| 
-		x.is_zero().unwrap().not().into()).collect::<Vec<FpVar<F>>>();
+		&one_var - &is_zero_better(x,&cs).unwrap() ).collect::<Vec<FpVar<F>>>();
 	let res_sechalf_encoded = encode_cols_var(&tbl_res, &vec![2,3,4]); 
 	let res_sechalf_sel = tbl_res[2].iter().map(|x|
-		x.is_zero().unwrap().not().into() ).collect::<Vec<FpVar<F>>>();
+		&one_var - is_zero_better(x,&cs).unwrap() ).collect::<Vec<FpVar<F>>>();
 	let mtbl_sechalf_tbl2= prf.borrow().get_container("mtbl_sechalf_tbl2")?
 		.borrow().to_vec();
 	assert_logup_cond(cs.clone(), &res_sechalf_encoded, &res_sechalf_sel, 

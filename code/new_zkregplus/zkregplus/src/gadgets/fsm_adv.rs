@@ -534,7 +534,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		let ext_state = Rc::new(RefCell::new(ext_state));
 		let sorted_set_size = capacity.avg_pats_per_subsig 
 			* capacity.subsigs;
-		let final_states_len= capacity.basis_acc_states *
+		let _final_states_len= capacity.basis_acc_states *
 			capacity.max_nibble_len /10000; //final states for ALL sigs
 		let sorted_states = col_to_sorted_set(&ext_state, sorted_set_size, 
 			"sorted_states");
@@ -551,7 +551,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 			fs_acc_combo.borrow().get_container("locs_final").unwrap().borrow()
 			.duplicate_as_external(0, None)));
 		#[cfg(test)]{
-			assert!(state_col.borrow().to_vec().len()==final_states_len);
+			assert!(state_col.borrow().to_vec().len()==_final_states_len);
 		}
 
 		let packed_trace_size = capacity.basis_pats_in_trace * 
@@ -670,7 +670,7 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		//1. asserts all states and transitions must be in range
 		// NOTE: we do not have to assert in range for nibbles they
 		// are done already in word_extract_adv gadget
-		let b_perf = true;
+		let b_perf = false;
 		let (nc, nv) = (cs.num_constraints(), cs.num_witness_variables());
 		let nlen = self.capacity.max_nibble_len;
 		let alen = self.capacity.max_nibble_len 
@@ -830,7 +830,6 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 	/// -- this is fine, as we'll prove that it corresponds uniquely
 	/// -- to the set of sigs to discharge.
 	/// This needs r1 (a random challenge Fiat-Shamir) from msg2.
-	/// COST [su - subsigs, ap - avg_pat_persubsig]
 	/// COST: subsig*(1 + 11*avg_pat_subsig)
 	fn validate_proj_subsig_store(&self, 
 		proj_store: &Container<FpVar<F>>,  //the projected result
@@ -896,8 +895,15 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 
 	/// validate the correctness of packed_trace containercontainer
 	///
-	/// COST: let (ap = average pat per sig, su - subsigs)
-	/// MAINLY  4*N (check trace) + 5*N (check tbl filter)
+	/// COST: 
+	/// 10* subsigs * avg_pat_per_subsig + 
+	/// + nlen*(4*basis_acc_states/10000 + 14 * basis_pats/10000
+	///			+ 7 * basis_unique/10000) + 10*subsigs_avg_pats*subsigs
+	/// + 17 * subsigs*avg_pats_subsig
+	/// + 17 * subsigs *avg_pats_subsig + 31 * nlen * (basis_pats/10000)
+	/// = 
+	/// nlen*(4*basis_acc_states + 45*basis_pats + 7*basis_unique_states)/10000
+	/// + 44 * subsigs * avg_pats_per_subsig
 	fn validate_packed_trace(
 		&self, 
 		r1: &FpVar<F>, //random nonce from msg2
@@ -905,20 +911,39 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		all: &Container<FpVar<F>>,  //entire container
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
-		let b_perf = true;
+		let b_perf = false;
 		let mut nc = cs.num_constraints();
 		//1. check sorted_set of states is correct
+		// cost: 10* subsigs * avg_pat_per_subsig
+		let nlen = self.capacity.max_nibble_len;
+		let _alen = self.capacity.max_nibble_len 
+			* self.capacity.basis_acc_states/10000;
+		let _plen = self.capacity.subsigs * 
+			self.capacity.avg_pats_per_subsig;
 		let sname = if self.b_igc {"fsm_adv_stmt_igc"} else
 			{"fsm_adv_stmt_cs"};
 		let col_to_sorted_combo = all.search_container(
 			&format!("{} packed_trace sorted_states", sname))?;
 		verify_col_to_sorted_set(r1, &col_to_sorted_combo.borrow(), cs.clone())?;
+		#[cfg(test)]{
+			assert!(_plen==col_to_sorted_combo.borrow().get_container("id")
+				.unwrap().borrow().to_vec().len());
+			assert!(_plen==col_to_sorted_combo.borrow().get_container("sorted_val").unwrap().borrow().to_vec().len());
+		}
 		if b_perf{
 			println!(" --- validate_packed_trace step 1: -- col len: {}, sorted_val: {}, cs: {}", col_to_sorted_combo.borrow().get_container("id").unwrap().borrow().to_vec().len(), col_to_sorted_combo.borrow().get_container("sorted_val").unwrap().borrow().to_vec().len(), cs.num_constraints()-nc);
 			nc = cs.num_constraints();
 		}
 
 		//2. check the filtered table of state and loc
+		//COST: 4*N + 16n + 7m + 10k
+		//where N = ratio_acc_states * nlen
+		//  n = ratio_pats_in_trace * nlen 
+		//  m = ratio_unique_states * nlen
+		//  k = avg_pats_per_subsig * subsigs 
+		// i.e.,
+		//nlen(4*basis_acc_state/10000 + 14*basis_pats/10000
+		//	+ 7 *basis_unique_states/10000) + 10 * subsigs *avg_pats*subsigs
 		let states_col = all.search_container( 
 			&format!("{} fsm_acc states_final", sname))?;
 		let locs_col = all.search_container(
@@ -931,15 +956,12 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 			&states_col, &locs_col, &sorted_states,  &state_loc_tbl, 
 			cs.clone())?;
 		if b_perf{
-			print!(" --- verify_packed trace step 2: states : {}", 
-				states_col.borrow().to_vec().len());
-			print!(" --- sorted staes: {}", 
-				sorted_states.borrow().to_vec().len());
-			println!("--- cs: {}", cs.num_constraints()-nc);
+			println!(" --- validate_pack_trace step 2, nlen: {} cs: {}", nlen, cs.num_constraints()-nc);
 			nc = cs.num_constraints();
 		}
 
 		//3. check the pattern_state_tbl
+		// COST: 17 * subsigs * avg_pats_subsig
 		let proj_pats_col = all.search_container( 
 			&format!("{} proj_subsig_store pat", sname))?;
 		let proj_states_col = all.search_container( 
@@ -956,6 +978,8 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		}
 
 		//4. check the pat_state_loc
+		//COST: 17 * subsigs *avg_pats_per_subsig + 
+		//   31 * pats_per_trace * nlen
 		let pat_state_loc_tbl = all.search_container(
 			&format!("{} packed_trace pat_state_loc_tbl", sname))?;
 		verify_tbl_left_join(&r1, &r2,
@@ -963,7 +987,7 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 			&sorted_states, 
 			&pat_state_loc_tbl, cs.clone())?;
 		if b_perf{
-			println!("--- verify packed_trace: cs: {}", 
+			println!("--- verify packed_trace step 4: cs: {}", 
 				cs.num_constraints()-nc);
 		}
 
@@ -1042,11 +1066,22 @@ impl <F:PrimeField> SigmaGadget<F> for FsmAdvGadget<F>{
 
 	/// COST (nlen - nibble len, alen - perc of accepted states * trace len
 	///     note that accepted states are for all
-	/// 4*n + 
+	/// nlen*(3+9*ratio_acc_states + 45*ratio_pats + 7*ratio_unique_states)
+	///  + subsig *(1+ 55*avg_pats_per_subsig)
+	/// REAL DATA:  average
+	/// ratio_acc_states < 6%  (max 30%)
+	/// ratio_pats <0.5%
+	/// ratio_unique_states < 0.1%
+	/// avg_pats_per_subsig = 5 avg (max 10 - limited by config, which
+	///   does not cause false positive of flagging malware)
+	/// subsigs - 2k
+	/// So total cost < nlen * 4 + 2k * 250 (max) 
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{
-
+		let b_perf = false;
+		let mut nc = cs.num_constraints();
+		let nc0 = cs.num_constraints();
 		//1. retrive the statement instance and get all parts
 		let cfg = self.get_container_cfg().expect("container cfg not set!");
 		let stmt = Container::<FpVar<F>>::load_from(i, wtns_cfg, wtns, &cfg)?;
@@ -1059,13 +1094,29 @@ impl <F:PrimeField> SigmaGadget<F> for FsmAdvGadget<F>{
 		let fsm_acc = stmt.get_container("fsm_acc")?;
 		self.validate_fsm_acc_container(&fsm_acc.borrow(), r1.clone(),
 			r2.clone(), cs.clone())?;
+		if b_perf{
+			println!(" ## fsm_adv step1: {}", cs.num_constraints()-nc);
+			nc = cs.num_constraints();
+		}
 
 		//3. validate the proj_subsig_store
 		// COST: subsig*(1 + 11*avg_pat_subsig)
 		self.validate_proj_subsig_store(&pss.borrow(),r1.clone(),cs.clone())?;
+		if b_perf{
+			println!(" ## fsm_adv step2: {}", cs.num_constraints()-nc);
+			nc = cs.num_constraints();
+		}
 
 		//3. validate the packed trace combo
+		// nlen*(4*basis_acc_states + 45*basis_pats + 7*basis_unique_states)/10000
+		// + 44 * subsigs * avg_pats_per_subsig
 		self.validate_packed_trace(&r1, &r2, &stmt, cs.clone())?;
+		if b_perf{
+			println!(" ## fsm_adv step3: {}, total: {}", 
+				cs.num_constraints()-nc,
+				cs.num_constraints()-nc0
+			);
+		}
 
 		Ok(())
 	}
@@ -1131,11 +1182,11 @@ pub mod tests_fsm_adv_gadget{
 		//stack. check out why?
 		let cap = FsmAdvCapacity{max_nibble_len: nibble_len, 
 			acdfa_state_part_bits: state_bits, 
-			subsigs: 4,
-			avg_pats_per_subsig: 100,
-			basis_pats_in_trace: 16*100,
-			basis_unique_states: 20*100,
-			basis_acc_states: 5*100,
+			subsigs: 5,
+			avg_pats_per_subsig: 4,
+			basis_pats_in_trace: 50*100,
+			basis_unique_states: 40*100,
+			basis_acc_states: 10*100,
 		};
 
 		let nibbles = stmt_wea.borrow().get_container("nibbles").unwrap()
@@ -1169,12 +1220,6 @@ pub mod tests_fsm_adv_gadget{
 		let cps1 = stmt_wea.borrow().gen_stmt_components(); //from inp to si_data
 		let cps2 = stmt_faa.borrow().gen_stmt_components(); //from inp to si_data
 
-		//REMOVE LATER -----------------
-		println!("DEBUG USE 6911 ======= wea si_data=========");
-		print_vec("wea_si_data", &cps1.0[5]);
-		println!("DEBUG USE 6912 ======= wea si_data=========");
-		print_vec("fsa_si_data", &cps2.0[5]);
-		//REMOVE LATER ----------------- ABOVE
 		let cps = cps1.0.into_iter().zip(cps2.0.into_iter()).map(|(a,b)|
 			vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
 
@@ -1186,11 +1231,6 @@ pub mod tests_fsm_adv_gadget{
 		fag.set_container_cfg(vec_cfg.clone().into(), 1);  //it's the 2nd cfg
 		let _sizes = fag.get_to_add_size(); //test if sizes are ok
 		let rg = Rc::new(fag);
-
-		//REMOVE LATER -----------------
-		use crate::gadgets::commons::print_vec;
-		print_vec("DEBUG USE 6901: si_data from fsm_adv: ", &cps[5]);
-		//REMOVE LATER ----------------- ABOVE
 
 		//3. test it
 		test_gadget_adv::<Fr>(rg, &word, &cps[0], &cps[1], &cps[2],
