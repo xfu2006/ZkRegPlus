@@ -2774,7 +2774,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			prf_fwd.borrow().get_container(&format!("sid_{}",n)).unwrap()
 				.borrow().to_vec()
 		}).collect::<Vec<Vec<FpVar<F>>>>();
-		let frg = new_const_var(&cs, F::from(RANGE2));
+		//let frg = new_const_var(&cs, F::from(RANGE2));
 
 		//1. check sid ranges. This basically chencks the binding
 		//between each col with their corresponding encoded column.
@@ -2893,12 +2893,15 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		//3.3. now prove that (dst_loc, dst_pat_id, dst_loc)
 		//are valid (they can be found in the concat of
 		//    pat-loc table  || now_show_loc table
+		// because all subcols are already proved in RANGE2
+		// factor can be just bits
+		let f_unit = FpVar::<F>::constant(F::from(1u32<<RANGE2_BIT));
 		let src_combined = encode_cols_var_adv(
 			&vec![dst_pat.to_vec(), dst_pat_id.to_vec(), dst_loc.to_vec()], 
-			&vec![0,1,2], &r1);	
+			&vec![0,1,2], &f_unit);	
 		let dst_combined_1 = encode_cols_var_adv(
 			&vec![pat.to_vec(), pat_id.to_vec(), loc.to_vec()], 
-			&vec![0,1,2], &r1);	
+			&vec![0,1,2], &f_unit);	
 		let dst_combined_2 = nsp.iter().map(|item|{
 			//each no show location has two entries
 			encode_cols_var_adv(
@@ -2908,8 +2911,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 					vec![zero.clone(), max.clone()], //dummy locs
 				], 
 				&vec![0,1,2],
-				&r1
-
+				&f_unit
 			)
 		}).flatten().collect::<Vec<FpVar<F>>>();
 		let dst_combined = [ dst_combined_1, dst_combined_2 ].concat();
@@ -2919,6 +2921,8 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		assert_logup(cs.clone(), &src_combined, &dst_combined, &mtb_pat, r1)?;
 
 		//4. prove encoded-loc corresponds to res_queue
+		//because ONLY encoded is not RANGE2, the others 
+		//can be combined using f_unit
 		let res_encoded= sq_res.borrow().get_container("encoded")
 			.unwrap().borrow().to_vec();
 		let _res_step= sq_res.borrow().get_container("step")
@@ -2929,8 +2933,8 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			.unwrap().borrow().to_vec();
 
 		let dst_adj= encode_cols_var_adv(&vec![src_encoded.to_vec(), 
-			src_loc.to_vec()], &vec![0,1], &r1);
-		let src_combined = encode_cols_var_adv(&vec![res_encoded.clone(), res_loc.clone()], &vec![0,1], &r1);
+			src_loc.to_vec()], &vec![0,1], &f_unit);
+		let src_combined = encode_cols_var_adv(&vec![res_encoded.clone(), res_loc.clone()], &vec![0,1], &f_unit);
 		let info_id= new_const_var(&cs,F::from(0x23001101u32)); 
 		let f1 = new_const_var(&cs,F::from(1u64<<RANGE2_BIT));
         let factor1 = &f1*&f1*&f1*&f1*&f1; //models encoded
@@ -2940,8 +2944,10 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		let src_sel = sid_res_step.iter().zip(res_encoded.iter())
 			.map(|(sid_step, encoded)|{
 				let final_id = &part1_alt + encoded;
-				let res:FpVar<F> = final_id.is_eq(&sid_step).unwrap().into();
-				&one - &res
+				//let res:FpVar<F> = final_id.is_eq(&sid_step).unwrap().into();
+				//&one - &res
+				//optimized
+				&one - &is_zero_better(&(&final_id-sid_step), &cs).unwrap()
 			}).collect::<Vec<FpVar<F>>>();
 		let src_adj = src_combined.iter().zip(src_sel.iter()).map(|(a,b)|
 			a * b).collect::<Vec<FpVar<F>>>();
@@ -2967,30 +2973,53 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		//  starting pat_id does NOT necesarily starts from 0 - so that's
 		//  no check for boundaries).
 		for i in 1..dst_pat_id.len(){
-			//b_same either 1 or 0
-			let item1= &dst_encoded[i] + &(&src_loc[i]*r1);
-			let item2= &dst_encoded[i-1] + &(&src_loc[i-1]*r1);
-			let b_same:FpVar<F>=item1.is_eq(&item2)?.into();
+			//b_same either 1 or 0 
+			// as src_loc is in range, the two can be combined using f_unit
+			let item1= &dst_encoded[i] + &(&src_loc[i]*&f_unit);
+			let item2= &dst_encoded[i-1] + &(&src_loc[i-1]*&f_unit);
+			//let b_same:FpVar<F>=item1.is_eq(&item2)?.into();
+			//let item1 = &b_same * (&dst_pat_id[i]-&dst_pat_id[i-1]-&one);
+			//let item = &dst_encoded[i]* &item1;
+			//check_eq(&item, &zero, "failed increase check")?;
+			//-- optimized version below
+			let b_same = is_zero_better(&(&item1-&item2), &cs).unwrap();
 			let item1 = &b_same * (&dst_pat_id[i]-&dst_pat_id[i-1]-&one);
-			let item = &dst_encoded[i]* &item1;
-			check_eq(&item, &zero, "failed increase check")?;
+			let lb_item1 = var_to_lb(&item1, F::one());
+			let lb_dst = var_to_lb(&dst_encoded[i], F::one());
+			#[cfg(test)]{
+				assert!(item1.value()? * dst_encoded[i].value()? == F::zero());
+			}
+			cs.enforce_constraint(
+				lb_item1,
+				lb_dst,
+				lb_zero.clone()
+			)?;
+
 		}
 
 		//6. prove the validity of diff1/diff2
 		//6.1 retrieve the data (cost: n)
-		let sid_abs_rg2_max = prf_fwdprf_valid.borrow()
-			.get_container("sid_abs_rg2_max").unwrap().borrow().to_vec();
-		check_arr_eq(&sid_abs_rg2_max,&frg,&format!("err abs_sid_rg2_max"))?; 
+		//let sid_abs_rg2_max = prf_fwdprf_valid.borrow()
+		//	.get_container("sid_abs_rg2_max").unwrap().borrow().to_vec();
+		//CONST ne noeed to check
+		//check_arr_eq(&sid_abs_rg2_max,&frg,&format!("err abs_sid_rg2_max"))?; 
 		let abs_rg2_max = prf_fwdprf_valid.borrow().get_container("abs_rg2_max")
 				.unwrap().borrow().to_vec();
 
 		//6.2 compute the border cases
-		//cost: 4n
+		//cost: 4n -> improved to 2n
 		let vec_b_begin = (0..diff1.len()).into_iter().map(|i|{
 			let b_begin = if i==0 {one.clone()} else {
-				(&dst_subsig[i]*r1+&src_loc[i]).is_neq(
-					&(&dst_subsig[i-1]*r1 + &src_loc[i-1])
-				).unwrap().into()
+		//		(&dst_subsig[i]*r1+&src_loc[i]).is_neq(
+		//			&(&dst_subsig[i-1]*r1 + &src_loc[i-1])
+		//		).unwrap().into()
+				//optimized version: using f_unit to replace r1 as
+				//loc and subsig are already proved in RANGE2
+				let res = &(&dst_subsig[i] * &f_unit) + &src_loc[i]
+					- &(&dst_subsig[i-1] * &f_unit) - &src_loc[i-1];
+				let b_res = &one - &is_zero_better(&res, &cs).unwrap();
+
+				b_res
 			};
 			b_begin
 		}).collect::<Vec<FpVar<F>>>();
@@ -3010,8 +3039,19 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			//cost:3n
 			let item21 = &rg2 - &max + &abs_rg2_max[i];
 			let item22 = &max- &rg2 + &abs_rg2_max[i];
-			let item2 = &item21 * &item22;
-			check_eq(&item2, &zero, "err abs2")?;
+			//let item2 = &item21 * &item22;
+			//check_eq(&item2, &zero, "err abs2")?;
+			// -- optimized version
+			let lb_21 = var_to_lb(&item21, F::one());
+			let lb_22 = var_to_lb(&item22, F::one());
+			#[cfg(test)]{
+				assert!(item21.value()? * item22.value()? == F::zero());
+			}
+			cs.enforce_constraint(
+				lb_21,
+				lb_22,
+				lb_zero.clone()
+			)?;
 
 			//step 2. use abs_rg2_max to update rg2
 			//when they are greater than max
