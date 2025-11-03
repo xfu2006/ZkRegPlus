@@ -21431,7 +21431,7 @@ Goal 3. verify_tbl_sorted_tbl
 	[b] annotate cost
 
 Sunday 11/02/2025
-LOC (gadget) 16320 
+LOC (gadget) 16320 -> 16400 (+80)
 Goal 1. continue to measure verify_tbl_join
 	[a] check gen code
 	[b] check the length passed
@@ -21480,3 +21480,6 @@ Goal 4. performance data -->
 PERF 102: discharge_adv: TOTAL num_cons: 3993
 DEBUG USE 7103: after msg3 of module 11: DischargeAdvGadget:  constraints: 400436
 	===================
+
+Monday 11/03/2025
+LOC (gadget) 16400

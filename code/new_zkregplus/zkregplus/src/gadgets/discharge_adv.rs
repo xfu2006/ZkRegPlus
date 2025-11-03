@@ -1,6 +1,7 @@
 /* Created 05/06/2025
    Implementation initially completed 06/11/2025
    Further improvement to cut cost and completed: 06/26/2025
+   Revision: 11/03/2025. cutting cost on const_var
 */
 //! This gadget is used for discharging subsigs using the streaming alg.
 //! It produces the sigs that discharged.
@@ -3464,7 +3465,7 @@ pub mod tests_discharge_adv_gadget{
 			avg_pats_per_subsig: 4,
 			basis_pats_in_trace: 27*100, 
 			basis_unique_states: 20*100,
-			basis_acc_states: 5*100,
+			basis_acc_states: 15*100,
 		};
 		let cap_disc = DischargeAdvCapacity{//capaciity of discharge comopnent
 			max_nibble_len: nibble_len, 
