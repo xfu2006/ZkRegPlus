@@ -21508,4 +21508,17 @@ Goal 5. validate_store_steps_combo
 	[b] measure step 1
 	[b] measure step 2
 	[d] measure step 3
-		-> original: 2067 -> 1935
+		-> original: 2067 -> 1935 -> 1902 -> 1894 -> 1748
+			-> 1715 -> 1649 -> 1585 -> 1488 -> 1392
+			-> 1326 -> 1293 -> 1260
+
+Goal 6. validate backward 
+	[a] step 1
+	[b] step 2
+		original:  2n -> 1.3 n
+	[c] step 3
+		oriignal: 848
+
+Tuesday 11/04/2025
+Goal 1.  validate_bwdprf_valid_prf
+
