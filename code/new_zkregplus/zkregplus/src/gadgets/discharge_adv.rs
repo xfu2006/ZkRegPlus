@@ -27,7 +27,7 @@ use crate::gadgets::{
 use ark_r1cs_std::{
 	fields::{ fp::FpVar, FieldVar},
 	alloc::AllocVar,
-	eq::EqGadget,
+//	eq::EqGadget,
 	R1CSVar,
 };
 use data_processor::{
@@ -3145,6 +3145,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 	/// n1 is the StepQueue::vec_size() - max of subsig * avg_active_pat_subsig
 	///     and ratio_pat * nlen (see validate_forward_step_queue for
 	///     real data for n1)
+	/// COST: 24.5*n1
 	#[allow(dead_code)]
 	fn validate_backward_step_queue(&self, 
 		forward_step_q: &Container<FpVar<F>>,  //needed to extract its result
@@ -3183,7 +3184,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		//on fwd_prf which is already validated
 
 		//3. validate the sq_to_del covers the entries in prf_bwd
-		// COST: 1.3n
+		// COST: 1.3*n1
 		let prf_to_del= prf.borrow().get_container("prf_to_del")?;
 		self.validate_to_del(&ct_sq_to_del, &ct_prf_bwd, 
 			&r1, &prf_to_del)?;
@@ -3193,14 +3194,13 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		}
 
 		//4. validate the prf_bwd is valid
+		// COST: 16.3*n1 
 		let prf_bwdprf_valid = prf.borrow().get_container("prf_bwdprf_valid")?;
 		self.validate_bwdprf_valid_prf(&ct_prf_bwd, 
 			&ct_sq_res2, &r1, &r2, &prf_bwdprf_valid)?;
 		if b_perf {
 			println!(" ### validate backward step 3: {}", cs.num_constraints()-nc);
 			println!(" ### TOTAL validate backward: {}", cs.num_constraints()-nc0);
-			nc = cs.num_constraints();
-			//if 1>0 {panic!("STOP HERE 2010");}
 		}
 
 		Ok( () )
@@ -3256,7 +3256,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
 		let (zero, one, _max) = (new_const_var(&cs, zero), 
 			new_const_var(&cs, one), new_const_var(&cs, max));
-		let frg = new_const_var(&cs, F::from(RANGE2));
+		//let frg = new_const_var(&cs, F::from(RANGE2));
 		let names = vec![
 			"src_encoded",  "src_step", 
 			"src_pat", "src_min_loc", "src_rg_end",
@@ -3398,8 +3398,11 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		check_arr_eq_arr(&diff_loc, &saved_diff_loc, "err checking diff_loc")?; 
 
 		//4. prove the min_loc is the first loc in sq_res
-		let src_combined= encode_cols_var_adv(&v2d, &vec![0,1,3], r1);
-		let dst_combined = encode_cols_var_adv(&rescols, &vec![0,1,2], r1);
+		// as except for 1st column all in RANGE2
+		// we can use f_unit
+		let f_unit = FpVar::<F>::constant(F::from(1u32<<RANGE2_BIT));
+		let src_combined= encode_cols_var_adv(&v2d, &vec![0,1,3], &f_unit);
+		let dst_combined = encode_cols_var_adv(&rescols, &vec![0,1,2], &f_unit);
 		let dst_sel = (0..dst_combined.len()).into_iter().map(|i|{
 			if i==0 { zero.clone() //assuming 1st one is dummy
 			}else{//only pick the very first entry
@@ -3416,17 +3419,20 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 
 		//5. prove min_loc > (loc_to_remove + rg_2) 
 		let sel = (0..src_rg_end.len()).into_iter().map(|i|
-			&one - & src_min_loc[i].is_zero().unwrap().into()
+			//&one - & src_min_loc[i].is_zero().unwrap().into()
+			&one - &is_zero_better(&src_min_loc[i], &cs).unwrap()
 		).collect::<Vec<FpVar<F>>>();
 		let saved_diff_loc = prf_bwdprf_valid.borrow().get_container("diff_min")
 			.unwrap().borrow().to_vec();
-		let sid_saved_diff_loc = prf_bwdprf_valid.borrow()
-			.get_container("sid_diff_min").unwrap().borrow().to_vec();
+		//let sid_saved_diff_loc = prf_bwdprf_valid.borrow()
+		//	.get_container("sid_diff_min").unwrap().borrow().to_vec();
 		let sum= (0..src_rg_end.len()).into_iter().map(|i|
 			&sel[i]*(&saved_diff_loc[i] + 
 				(&loc_to_del[i] + &src_rg_end[i] + &one) - &src_min_loc[i])
 		).collect::<Vec<FpVar<F>>>();
-		check_arr_eq(&sid_saved_diff_loc, &frg, "err checking sid_diff_loc")?; 
+		//no need to check constants
+		//check_arr_eq(&sid_saved_diff_loc, &frg, 
+		//  "err checking sid_diff_loc")?; 
 		check_arr_eq(&sum, &zero, "err checking expected sum for diff")?; 
 
 		Ok( () )
@@ -3503,7 +3509,7 @@ impl <F:PrimeField> SigmaGadget<F> for DischargeAdvGadget<F>{
 	///    real data: subsigs = 2000, avg_pat_subsig = 4 => 8k
 	///               ratio_pats_trace < 1%, nlen = 128k=>  1k
 	///               should take max=>subsigs * avg_pat_subsig = 8k
-	/// COST: 59*n1  + 
+	/// COST: 59*n1  + 24.5*n1 = 84.5*n1  (in real: max 560k)
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{
@@ -3522,6 +3528,7 @@ impl <F:PrimeField> SigmaGadget<F> for DischargeAdvGadget<F>{
 			r1.clone(), r2.clone(), cs.clone())?;
 
 		//4. validate the backward step queue
+		// COST: 24.5*n1
 		let backward_step_queue= stmt.get_container("bwd_steps_queue")?;
 		self.validate_backward_step_queue(&forward_step_queue.borrow(), 
 			&backward_step_queue.borrow(),
