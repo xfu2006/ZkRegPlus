@@ -32,7 +32,7 @@ use ark_ff::{PrimeField};
 
 use crate::gadgets::{
 	commons::{encode_cols_better, gen_m_table, encode_cols_var_adv_better,
-		new_const_var, check_eq, new_var},
+		new_const_var, check_eq, new_var, is_zero_better, var_to_lb},
 	db::{assert_logup, 
 		//verify_encoded_table, assert_well_formed_sorted
 	},
@@ -76,7 +76,8 @@ use ark_r1cs_std::{
 	R1CSVar,
 	boolean::Boolean,
 };
-use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef};
+use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef,Variable,
+	LinearCombination};
 // -----------------------------------------------
 //		Structs
 // -----------------------------------------------
@@ -724,8 +725,8 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		assert!(scc_prf_subsig.len()<=n2, "Adjust perc_comp_subsig in Config! Needed scc_prf len: {} < current_tuples: {}", n2, scc_prf_subsig.len());
 		let pad = vec![F::zero(); n2-scc_prf_subsig.len()];
 		let pad2 = vec![frg; n2-scc_prf_subsig.len()];
-		scc_prf_subsig = [&pad[..], &scc_prf_subsig[..]].concat();
-		scc_prf_comp_subsig_encode = [&pad[..], &scc_prf_comp_subsig_encode[..]].concat();
+		scc_prf_subsig = [&pad[..], &scc_prf_subsig[..]].concat(); 
+		scc_prf_comp_subsig_encode = [&pad[..], &scc_prf_comp_subsig_encode[..]].concat(); 
 		scc_prf_comp_subsig = [&pad[..], &scc_prf_comp_subsig[..]].concat();
 		scc_prf_min_req = [&pad[..], &scc_prf_min_req[..]].concat();
 		scc_prf_raw = [&pad[..], &scc_prf_raw[..]].concat(); //it's padding value will be 1
@@ -735,17 +736,24 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		scc_prf_abs_diff1 = [&pad[..], &scc_prf_abs_diff1[..]].concat();
 		scc_prf_abs_diff2 = [&pad[..], &scc_prf_abs_diff2[..]].concat();
 
-		sid_scc_prf_subsig = [&pad[..], &sid_scc_prf_subsig[..]].concat();
-		sid_scc_prf_comp_subsig_encode = [&pad[..], &sid_scc_prf_comp_subsig_encode[..]]
-			.concat();
-		sid_scc_prf_comp_subsig = [&pad[..], &sid_scc_prf_comp_subsig[..]].concat();
+		// -- sids
+		sid_scc_prf_subsig = [&pad[..], &sid_scc_prf_subsig[..]].concat(); 
+			//const 0
+		sid_scc_prf_comp_subsig_encode = [&pad[..], &sid_scc_prf_comp_subsig_encode[..]].concat(); //NON const
+		sid_scc_prf_comp_subsig = [&pad2[..], &sid_scc_prf_comp_subsig[..]].concat(); //const
 		sid_scc_prf_min_req = [&pad[..], &sid_scc_prf_min_req[..]].concat();
-		sid_scc_prf_raw = [&pad[..], &sid_scc_prf_raw[..]].concat();
+			//non const
+		sid_scc_prf_raw = [&pad[..], &sid_scc_prf_raw[..]].concat(); //const 0
 		sid_scc_prf_cnt_true = [&pad[..], &sid_scc_prf_cnt_true[..]].concat();
+			//const 0
 		sid_scc_prf_cnt_maybe = [&pad[..], &sid_scc_prf_cnt_maybe[..]].concat();
+			//const 0
 		sid_scc_prf_row_res = [&pad[..], &sid_scc_prf_row_res[..]].concat();
+			//const 0
 		sid_scc_prf_abs_diff1= [&pad2[..], &sid_scc_prf_abs_diff1[..]].concat();
+			//const rg2
 		sid_scc_prf_abs_diff2= [&pad2[..], &sid_scc_prf_abs_diff2[..]].concat();
+			//const rg2
 		assert!(vec_scc_res.len()==n1);
 		assert!(vec_sid_scc_res.len()==n1);
 
@@ -760,6 +768,11 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 			&sid_scc_prf_cnt_maybe, &sid_scc_prf_row_res,
 			&sid_scc_prf_abs_diff1, &sid_scc_prf_abs_diff2
 		];
+		let bconst_sid_col2d = [
+			true, false, true, false, true,
+			true, true, true, true, true
+		];
+		assert!(bconst_sid_col2d.len()==sid_col2d.len());
 		for c in col2d {assert!(c.len()==n2);}
 		for c in sid_col2d {assert!(c.len()==n2);}
 
@@ -839,17 +852,19 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 
 		//5. construct container
 		//5.1 the counter constraint part
-		res.borrow_mut().add_col(Col::new(vec_op, "vec_op", IDX_DATA));
-		res.borrow_mut().add_col(Col::new(vec_sid_op, "sid_op", IDX_SI_DATA));
+		res.borrow_mut().add_col(Col::new(vec_op, "vec_op", IDX_DATA)); 
+		res.borrow_mut().add_col(Col::new(vec_sid_op, 
+			"sid_op", IDX_SI_DATA)); //not constnat
 		res.borrow_mut().add_col(Col::new(vec_num, "vec_num", IDX_DATA));
-		res.borrow_mut().add_col(Col::new(vec_sid_num, "sid_num", IDX_SI_DATA));
+		res.borrow_mut().add_col(Col::new(vec_sid_num, 
+			"sid_num", IDX_SI_DATA)); //not constant
 		res.borrow_mut().add_col(Col::new(vec_counter_res, 
 			"vec_counter_res", IDX_DATA));
-		res.borrow_mut().add_col(Col::new(vec_sid_counter_res, 
-			"sid_counter_res", IDX_SI_DATA));
+		res.borrow_mut().add_col(Col::new_const(vec_sid_counter_res, 
+			"sid_counter_res", IDX_SI_DATA)); //const 0
 		res.borrow_mut().add_col(Col::new(vec_type, "vec_type", IDX_DATA));
 		res.borrow_mut().add_col(Col::new(vec_sid_type, "vec_sid_type", 
-			IDX_SI_DATA));
+			IDX_SI_DATA)); //non_const
 
 		//5.2 the subsig counter constraint part
 		let names = vec![
@@ -866,37 +881,42 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		];
 		for i in 0..col2d.len(){
 			res.borrow_mut().add_col(Col::new(col2d[i].clone(), names[i], IDX_DATA));
-			res.borrow_mut().add_col(Col::new(sid_col2d[i].clone(), 
-				&format!("sid_{}",names[i]), IDX_SI_DATA));
+			if bconst_sid_col2d[i]{ //only 2 are not constants
+				res.borrow_mut().add_col(Col::new_const(sid_col2d[i].clone(), 
+					&format!("sid_{}",names[i]), IDX_SI_DATA));
+			}else{
+				res.borrow_mut().add_col(Col::new(sid_col2d[i].clone(), 
+					&format!("sid_{}",names[i]), IDX_SI_DATA));
+			}
 		}
 		assert!(mtbl_comp_score.len()==n1);
 		res.borrow_mut().add_col(Col::new(mtbl_comp_score, 
 			"mtbl_comp_score", IDX_DATA));
-		res.borrow_mut().add_col(Col::new(vec![frg; n1], 
+		res.borrow_mut().add_col(Col::new_const(vec![frg; n1], 
 			"sid_mtbl_comp_score", IDX_SI_DATA));
 
 		assert!(mtbl_find_scc_res.len()==n2);
 		res.borrow_mut().add_col(Col::new(mtbl_find_scc_res, 
 			"mtbl_find_scc_res", IDX_DATA));
-		res.borrow_mut().add_col(Col::new(vec![frg; n2], 
+		res.borrow_mut().add_col(Col::new_const(vec![frg; n2], 
 			"sid_mtbl_find_scc_res", IDX_SI_DATA));
 
 		assert!(vec_scc_res.len()==vec_sid_scc_res.len());
 		res.borrow_mut().add_col(Col::new(vec_scc_res, 
 			"vec_scc_res", IDX_DATA));
-		res.borrow_mut().add_col(Col::new(vec_sid_scc_res, 
-			"vec_sid_scc_res", IDX_SI_DATA));
+		res.borrow_mut().add_col(Col::new_const(vec_sid_scc_res, 
+			"vec_sid_scc_res", IDX_SI_DATA)); //const zero
 
 		//5.3 add the final result
 		res.borrow_mut().add_col(Col::new(vec_subsig_final_res.clone(), 
 			"vec_subsig_final_res", IDX_DATA));
-		res.borrow_mut().add_col(Col::new(vec_sid_subsig_final_res, 
-			"vec_sid_subsig_final_res", IDX_SI_DATA));
+		res.borrow_mut().add_col(Col::new_const(vec_sid_subsig_final_res, 
+			"vec_sid_subsig_final_res", IDX_SI_DATA)); //zero
 
 		//5.3.5 add the v_igc and v_sid_igc
 		res.borrow_mut().add_col(Col::new(v_igc, "v_igc", IDX_DATA));
 		res.borrow_mut().add_col(Col::new(v_sid_igc, "v_sid_igc", 
-			IDX_SI_DATA));
+			IDX_SI_DATA)); //non constant
 
 		(res, vec_subsig_final_res)
 	}
@@ -1097,24 +1117,33 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 			res.borrow_mut().add_col(Col::new(c, n, IDX_DATA));
 		});
 		let col2d_sid = vec![
-			v_sid_sigs, 
-			v_sid_dnf_id, 
-			v_sid_dnf_step, 
-			v_sid_dnf_count, 
-			v_sid_real_subsigs
+			v_sid_sigs,  //const
+			v_sid_dnf_id,  //const
+			v_sid_dnf_step,  //const
+			v_sid_dnf_count,  //NOT const
+			v_sid_real_subsigs //NOT const
 		];
-		col2d_sid.into_iter().zip(names.iter()).for_each(|(c, n)|{
-			res.borrow_mut().add_col(Col::new(c, &format!("sid_{}",n),
-				IDX_SI_DATA));
+		let bconst_col2d_sid = vec![
+			true, true, true, false, false
+		];
+		col2d_sid.into_iter().zip(names.iter()).zip(bconst_col2d_sid.iter())
+		.for_each(|((c, n),b)|{
+			if *b{
+				res.borrow_mut().add_col(Col::new_const(
+					c, &format!("sid_{}",n), IDX_SI_DATA));
+			}else{
+				res.borrow_mut().add_col(Col::new(
+					c, &format!("sid_{}",n), IDX_SI_DATA));
+			}
 		});
 		assert!(mtbl_lk_res.len()==n+1);
 		res.borrow_mut().add_col(Col::new(mtbl_lk_res,"mtbl_lk_res",IDX_DATA));
-		res.borrow_mut().add_col(Col::new(vec![frg;n+1],"sid_mtbl_lk_res",
+		res.borrow_mut().add_col(Col::new_const(vec![frg;n+1],"sid_mtbl_lk_res",
 			IDX_SI_DATA));
 		
 		assert!(mtbl_sigs.len()==n);
 		res.borrow_mut().add_col(Col::new(mtbl_sigs,"mtbl_sigs",IDX_DATA));
-		res.borrow_mut().add_col(Col::new(vec![frg;n],"sid_mtbl_sigs",
+		res.borrow_mut().add_col(Col::new_const(vec![frg;n],"sid_mtbl_sigs",
 			IDX_SI_DATA));
 		assert!(inp_sigs.len()==capacity.sigs);
 		res.borrow_mut().add_col(Col::new(inp_sigs.clone(),
@@ -1225,7 +1254,10 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 
 	/// validate raw_eval result based on step queue is correct for
 	/// each subsig.
-	/// COST: 10n1 + 8n2 (n1: num of subsigs, n2: sq_res len which
+	/// n2 is the StepQueue::vec_size() - max of subsig * avg_active_pat_subsig
+	///     and ratio_pat * nlen (see validate_forward_step_queue for
+	///     real data for n1)
+	/// COST: 6n1 + 5n2 (n1: num of subsigs, n2: sq_res len which
 	///    is determined by discharge_adv::StepQueue::vec_size (perc_pat_in_trace)
 	fn validate_eval_subsig_by_sq_combo(&self, 
 		eval_res_combo: &Container<FpVar<F>>, 
@@ -1234,7 +1266,9 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
 		//0. retrieve data from combo
-		let (zero,one)=(new_const_var(&cs,F::zero()),new_const_var(&cs,F::one()));
+		let b_perf = true;
+		let nc = cs.num_constraints();
+		let (_zero,one)=(new_const_var(&cs,F::zero()),new_const_var(&cs,F::one()));
 		let names = ["inp_subsig", "last_step", "subsig_raw_eval", 
 			"inp_subsig_encoded"];
 		let cols = names.iter().map(|n|
@@ -1268,17 +1302,22 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		//final evaluation result anyway (and cannot be discharged).
 		//it's the loss of prover,and cannot affect soundness (but likley
 		//raise false alarm). So it's ok to do 1-direction lookup
-		// COST: 5n1 + 8n2 (where n1 is subsigs, n2 is sq_res length)
+		// COST: 5n1 + 8n2 (where n1 is subsigs, n2 is sq_res length) [old]
+		// --> cost improved by using f_unit (we didn't change formula here)
+		let f_unit = FpVar::<F>::constant(F::from(1u32<<RANGE2_BIT));
 		let src= encode_cols_var_adv_better(&vec![&inp_subsig_encoded[..],
-			&inp_subsig[..], &last_step[..], &sid_last_step], &vec![0,1,2,3], &r1);
+			&inp_subsig[..], &last_step[..], &sid_last_step], &vec![0,1,2,3], 
+				&f_unit);
 		let dst_sel = (0..n2).into_iter().map(|i|{
 			if i==n2-1{one.clone()} else{ 
-				sq_subsig[i].is_neq(&sq_subsig[i+1]).unwrap().into() 
+				//sq_subsig[i].is_neq(&sq_subsig[i+1]).unwrap().into() 
+				&one- is_zero_better(&(&sq_subsig[i]-&sq_subsig[i+1]),
+					&cs).unwrap()
 			}
 		}).collect::<Vec<FpVar<F>>>();
 		let dst_combined = encode_cols_var_adv_better(
-			&vec![&sq_encoded[..], &sq_subsig[..], &sq_step[..], &sq_sid_step[..]], 
-			&vec![0,1,2,3], &r1);
+			&vec![&sq_encoded[..], &sq_subsig[..], &sq_step[..], 
+				&sq_sid_step[..]], &vec![0,1,2,3], &f_unit);
 		let dst = dst_combined.iter().zip(dst_sel.iter()).map(|(a,b)|
 			a * b).collect::<Vec<FpVar<F>>>();
 		let mtbl_last_step = eval_res_combo.get_container("mtbl_last_step")
@@ -1302,12 +1341,14 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		let part1_last_var = new_const_var(&cs, part1_alt);
 		#[cfg(test)]{ assert!(TriVal::False as u8==1u8 && TriVal::Maybe as u8==3);}
 
+		let lb_zero= LinearCombination::from((F::zero(),Variable::One));
 		for i in 0..subsig_raw_eval.len(){
 			//3.1 NOTE eval has two possible values:
 			// subsig_raw_val is ALREADY PROVED to be either ONE of
 			// TriVal::False (1), or Trival::Maybe (3)
 			// b_last_step should be true when v is 3 (Maybe) and false if v=1.
-			let b_last_step = subsig_raw_eval[i].is_neq(&one)?;
+			//let b_last_step = subsig_raw_eval[i].is_neq(&one)?;
+			let b_last_step = &one - is_zero_better(&(&subsig_raw_eval[i]-&one),&cs).unwrap();
 
 			//3.3 retrieve existing tag (note that we've already proved
 			//that it is projected from sq_res, and also sq_res has already
@@ -1317,13 +1358,48 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 
 			//3.2 build the ACTUAL sid_tag  from subsig_raw_eval
 			//as a nondeterministic advice. We'll verify its correctness
-			let part1 = b_last_step.select(&part1_last_var, &part1_normal_var)?;
+			//let part1 = b_last_step.select(&part1_last_var, &part1_normal_var)?;
+			let part1_val = if b_last_step.value()?==F::one(){
+				part1_last_var.value()?
+			}else{
+				part1_normal_var.value()?
+			};
+			let part1 = new_var(&cs, part1_val);
+			// we assert b_last * (part1-last_var) + (1-b_last)*(part1-normal)=0
+			// i.e. b_last * (last_var -normal)  = part1 - normal 
+			let lb_last_step = var_to_lb(&b_last_step, F::one());
+			let lb_neg_normal = var_to_lb(&part1_normal_var, -F::one());
+			let lb_part1 = var_to_lb(&part1, F::one());
+			let lb_last_var = var_to_lb(&part1_last_var, F::one());
+			cs.enforce_constraint(
+				lb_last_step,
+				lb_last_var + lb_neg_normal.clone(),
+				lb_part1 + lb_neg_normal
+			)?;
+
 			let sid_act = &part1 + &inp_subsig_encoded[i];
-			let diff = &inp_subsig[i]*&(&sid_act - valid_sid);
-			check_eq(&diff, &zero, "sid check failed")?; //only required for 
+			//let diff = &inp_subsig[i]*&(&sid_act - valid_sid);
+			//check_eq(&diff, &zero, "sid check failed")?; //only required for 
 													//non-zero "real" entries
+			let lb_sid_act = var_to_lb(&sid_act, F::one());
+			let lb_neg_valid_sid = var_to_lb(&valid_sid, -F::one());
+			let lb_inp_subsig = var_to_lb(&inp_subsig[i], F::one());
+			#[cfg(test)]{
+				assert!(inp_subsig[i].value()? * (sid_act.value()?-
+					valid_sid.value()?)==F::zero());
+			}
+			
+			cs.enforce_constraint(
+				lb_inp_subsig,
+				lb_sid_act + lb_neg_valid_sid,
+				lb_zero.clone()
+			)?;
 		}
 
+		if b_perf{
+			println!(" ### validate_eval_subsig_by_sq_combo: subsigs: {}, sq_res.len: {}, cost: {}", inp_subsig.len(), sq_encoded.len(), cs.num_constraints()-nc); 
+			if 1>0 {panic!("STOP HERE 2000");}
+		}
 
 		Ok( () )
 	}
