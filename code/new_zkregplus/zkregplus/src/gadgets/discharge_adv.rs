@@ -3154,7 +3154,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		r2: FpVar<F>,
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
-		let b_perf = true;
+		let b_perf = false;
 		let mut nc = cs.num_constraints();
 		let nc0 = cs.num_constraints();
 
@@ -3534,7 +3534,7 @@ impl <F:PrimeField> SigmaGadget<F> for DischargeAdvGadget<F>{
 			&backward_step_queue.borrow(),
 			r1.clone(), r2.clone(), cs.clone())?;
 
-		let b_perf = true;
+		let b_perf = false;
 		if b_perf{
 			println!("PERF 102: discharge_adv: TOTAL num_cons: {}", 
 				cs.num_constraints()-n1);	

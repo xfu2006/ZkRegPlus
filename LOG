@@ -21482,7 +21482,7 @@ DEBUG USE 7103: after msg3 of module 11: DischargeAdvGadget:  constraints: 40043
 	===================
 
 Monday 11/03/2025
-LOC (gadget) 16400
+LOC (gadget) 16400 -> 16591 (+190)
 Goal 1. part I of discharge
 	[a] read structs
 	[b] gen_forward_prf
@@ -21520,5 +21520,31 @@ Goal 6. validate backward
 		oriignal: 848
 
 Tuesday 11/04/2025
+LOC (gadgets): 16591 -> 16617 (+30)
 Goal 1.  validate_bwdprf_valid_prf
+	[a] original: 848 -> 832 -> 800 -> 758 
+		-> 735 -> 670 -> 570 -> 554 -> 538
+	[b] regressoin test -> ok
+
+Goal 2. data comparison
+---- PERFORMANCE DATA ---------------- ID: 009 (after fsm_adv)
+nlen = 32k
+module 10: cuts from 3993 to 2675 (cutting 1.3k)j
+qry cost (compare DEBUG 1201): 2.86-1.01M = 1.86M (same)
+combined key size: 8266759 -> 8251791: saved 10k
+(max_row_col: 4.4M -> 4.4M same) 
+PERFORAMNCE 1003: n_case1: (5488, 0.63%), n_case2: (385032, 43.85%), n_case3: (487495, 55.52%)
+=>
+ERFORAMNCE 1003: n_case1: (6496, 0.74%), n_case2: (385974, 43.96%), n_case3: (485545, 55.30%)
+
+ GenConstraints: Step 4: *** ENTIRE CIRCUIT CONSTRUCTED *** . 
+ 19470729 => 19434197 (saved 30k)
+main: Step 12. Gen groth16 prf, mem: 58 GB (same)
+
+Next to improve: compute_adv: 402869 - 401793 = 1k
+===================
+
+Wed 11/05/2025
+LOC (gadgets) -> 16617
+
 
