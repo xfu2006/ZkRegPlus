@@ -401,22 +401,23 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		res.borrow_mut().add_container(Rc::new(RefCell::new(sq_res)));
 		res.borrow_mut().add_col(Col::new(inp_subsigs.clone(), 
 			"inp_subsig", IDX_DATA));
-		res.borrow_mut().add_col(Col::new(vec![frg;n], "sid_inp_subsig", 
+		res.borrow_mut().add_col(Col::new_const(vec![frg;n], "sid_inp_subsig", 
 			IDX_SI_DATA));
 		res.borrow_mut().add_col(Col::new(inp_subsig_encoded, 
 			"inp_subsig_encoded", IDX_DATA));
-		res.borrow_mut().add_col(Col::new(vec![zero;n], "sid_inp_subsig_encoded", 
-			IDX_SI_DATA));
+		res.borrow_mut().add_col(Col::new_const(vec![zero;n], 
+			"sid_inp_subsig_encoded", IDX_SI_DATA));
 		res.borrow_mut().add_col(Col::new(vec_last_step, "last_step", IDX_DATA));
 		res.borrow_mut().add_col(Col::new(sid_last_step, "sid_last_step", 
-			IDX_SI_DATA));
+			IDX_SI_DATA)); //can't be const
 		res.borrow_mut().add_col(Col::new(vec_res.clone(), 
 			"subsig_raw_eval", IDX_DATA));
-		res.borrow_mut().add_col(Col::new(vec![frg;n], "sid_subsig_raw_eval", IDX_SI_DATA));
+		res.borrow_mut().add_col(Col::new_const(vec![frg;n], 
+			"sid_subsig_raw_eval", IDX_SI_DATA));
 		res.borrow_mut().add_col(Col::new(mtbl_last_step, "mtbl_last_step", 
 			IDX_DATA));
-		res.borrow_mut().add_col(Col::new(sid_m_tbl_last_step, 
-			"sid_mtbl_last_step", IDX_SI_DATA));
+		res.borrow_mut().add_col(Col::new_const(sid_m_tbl_last_step, 
+			"sid_mtbl_last_step", IDX_SI_DATA)); //it's zero
 		(res, vec_res)
 	}
 
