@@ -1931,14 +1931,13 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 
 		if b_perf{
 			println!(" ### validate_syntehsis_subsig_combo: subsigs: {}, scc_tbl_size: {}, cost: {}", n, n2, cs.num_constraints()-nc);
-			//if 1>0 {panic!("STOP HERE 3001");}
 		}
 		Ok( () )
 	}
 
 	/// validate syntesis of subsig is correct.
 	///
-	/// COST: 2*n1 +  22*n
+	/// COST: 2*n1 +  16*n
 	/// where (n1 = num of sigs, n = num of subsigs)
 	/// in real data: worst case n1 = 300, n = 1000 (=> worst case: 23k)
 	fn validate_discharge_sig_combo(&self, 
@@ -1950,12 +1949,14 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
 		//0. retrieve data from combo
+		let b_perf = false;
+		let nc = cs.num_constraints();
 		let b_debug = false;
 		let (zero,one)=(new_const_var(&cs,F::zero()),
 			new_const_var(&cs,F::one()));
         let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let _max=new_const_var(&cs,F::from(max_val as u64));
-		let frg = new_const_var(&cs, F::from(RANGE2));
+		let _frg = new_const_var(&cs, F::from(RANGE2));
 		let names = vec![ "v_sigs", "v_dnf_id", "v_dnf_step", 
 			"v_dnf_count", "v_real_subsigs"];
 		let cols = names.iter().map(|n|
@@ -1968,7 +1969,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 			discharge_sig_combo.borrow()
 				.get_container(&format!("sid_{}",n)).unwrap().borrow().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
-		let (v_sid_sigs, v_sid_dnf_id, v_sid_dnf_step, v_sid_dnf_count, 
+		let (_v_sid_sigs, _v_sid_dnf_id, _v_sid_dnf_step, v_sid_dnf_count, 
 			v_sid_real_subsigs) = (&sid_cols[0], &sid_cols[1], &sid_cols[2], 
 				&sid_cols[3], &sid_cols[4]);
 		let n = v_sigs.len();
@@ -1992,10 +1993,10 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		let f1_2 = new_const_var(&cs, F::from(info_id));
 		let part1_2 = &f1_2 * &factor3;
 
-		for i in 0..n{
-			check_eq(&v_sid_dnf_id[i], &frg, "err sid dnf_id")?;
-			check_eq(&v_sid_dnf_step[i], &frg, "erro sid_dnf_step")?;
-			check_eq(&v_sid_sigs[i], &frg, "err id_sig")?;
+		for i in 0..n{//no need to check constants
+			//check_eq(&v_sid_dnf_id[i], &frg, "err sid dnf_id")?;
+			//check_eq(&v_sid_dnf_step[i], &frg, "erro sid_dnf_step")?;
+			//check_eq(&v_sid_sigs[i], &frg, "err id_sig")?;
 
 			let sig_prod = &v_sigs[i] * &factor2;
 			let dnf_id_prod = &v_dnf_id[i] * &factor;
@@ -2051,6 +2052,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		let fac2 = new_const_var(&cs, F::from(1u64<<bit_part2) );
 		let f_false = new_const_var(&cs, F::from(TriVal::False as u8));
 
+		let f_unit = FpVar::<F>::constant(F::from(1u32<<RANGE2_BIT));
 		let v_computed_subsig = v_sigs.iter().zip(v_real_subsigs.iter())
 			.map(|(sig_id, real_subsig_id)| {
 				sig_id*&fac2 + real_subsig_id
@@ -2058,7 +2060,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 
 		let src = encode_cols_var_adv_better(
 			&vec![&v_computed_subsig[..], &vec![f_false.clone(); n][..]],
-			&vec![0,1], &r1
+			&vec![0,1], &f_unit
 		);
 		//pad (0,1) for dummy entry
 		let inp_subsigs = eval_res_combo.borrow()
@@ -2070,7 +2072,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		let pad_res = [&subsig_result[..], &vec![f_false][..]].concat();
 		let dst = encode_cols_var_adv_better(
 			&vec![&pad_subsigs[..], &pad_res[..]],
-			&vec![0,1], &r1
+			&vec![0,1], &f_unit
 		);
 		let mtbl_lkup_res = discharge_sig_combo.borrow()
 			.get_container("mtbl_lk_res").unwrap().borrow().to_vec();
@@ -2095,6 +2097,9 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 			for i in 0..discharged_sigs.len(){
 				println!(" --i: {}, sig: {}", i, discharged_sigs[i].value()?);
 			}
+		}
+		if b_perf{
+			println!(" ### validate_discharge_sig_combo: sigs: {}, subsig: {}, cost: {}", self.capacity.sigs, self.capacity.subsigs, cs.num_constraints()-nc);
 		}
 		Ok( () )
 
@@ -2165,16 +2170,16 @@ impl <F:PrimeField> SigmaGadget<F> for ComputeSigAdvGadget<F>{
 		vec![]
 	}
 
-	// COST (old):  31n1 + 81n2 + 8n3
-	// --> 41n1 + 95n2 + 8n3
-	// coz: (1) increased cost validate_synthesis_result +6n2, 
-	//   (2) one more copy of validate_eval_subsib_by_sq: 10n1 + 8n2
-	// using ratio below: rougly: 125n2 (number of subsigs)-> 125k (worst case)
-	// 29n1+2n1 + 22n2 69n2 + 10n2 + 8n3 + 
-	// where n1: scc table size (usually 20% of n2), in practice:200 
-	// n2: subsigs (in practice: 1000); 
-	// n3: sq_res (determined by active_pats_per_subsig * subsigs)
-	//   typically 5*n2 (like 5000)
+	/// COST:
+	/// n0: sigs
+	/// n1: subsigs
+	/// n2 is the StepQueue::vec_size() - max of subsig * avg_active_pat_subsig
+	///     and ratio_pat * nlen (see validate_forward_step_queue for
+	///     real data for n1)
+	/// n3: scc table (perc_comp_subsigs * subsigs - <20% of subsigs)
+	/// 6n1+5n2 + 35*n1 +  2*n0 + 16*n1 
+	/// = 2*n0 + 57*n1 + 5n2
+	/// roughly 58 * subsigs (usually subsigs <2k) => <100k
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{

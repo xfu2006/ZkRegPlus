@@ -21545,7 +21545,7 @@ Next to improve: compute_adv: 402869 - 401793 = 1k
 ===================
 
 Wed 11/05/2025
-LOC (gadgets) -> 16617
+LOC (gadgets) -> 16617 -> 16850 (+230)
 Goal 1. imporve compute_sigs
 	[a] read code
 	[b] capacity
@@ -21568,6 +21568,12 @@ Goal 7. implement function better_select
 	[c] implement is prod_zero
 	[d] 324 -> 309
 	[e] update cost: 35n
+
+Thursday 11/06/2025
+LOC (gadgets): 16850
+Goal 1.  last validate function
+	[a] 532 -> 457
+	[b] 
 
 -- TODO last validate function
 
