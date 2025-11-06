@@ -1096,6 +1096,49 @@ pub fn is_zero_better<F:PrimeField>(x: &FpVar<F>, cs: &ConstraintSystemRef<F>)
 	Ok(z)
 }
 
+/// construct a variable if bvar=1, return v1 
+/// otherwise return v2. Assumption: bvar is an int var either 1 or 0.
+/// COST:  1
+pub fn better_select<F:PrimeField>(bvar: &FpVar<F>, v1: &FpVar<F>, v2: &FpVar<F>)->FpVar<F>{
+	let bval = bvar.value().unwrap();
+	assert!(bval.is_zero() || bval.is_one());
+	let val = if bval.is_one(){ v1.value().unwrap()} else {v2.value().unwrap()};
+	let cs = bvar.cs();
+	let var = new_var(&cs, val);
+	//enforce bvar*(v1-v2) = v-v2;
+	let lb_bvar = var_to_lb(bvar, F::one());
+	let lb_v1 = var_to_lb(v1, F::one());
+	let lb_neg_v2 = var_to_lb(v2, -F::one());
+	let lb_var = var_to_lb(&var, F::one());
+	cs.enforce_constraint(
+		lb_bvar,
+		lb_v1 + lb_neg_v2.clone(),
+		lb_var + lb_neg_v2
+	).unwrap();
+
+	var
+}
+
+/// check the product of v1 and v2 is zero
+/// cost is 1
+pub fn check_prod_zero<F:PrimeField>(v1: &FpVar<F>, v2: &FpVar<F>, lb_zero: LinearCombination<F>, _msg: &str)
+-> Result<(),SynthesisError>
+{
+	let cs = v1.cs();
+	let lb_v1 = var_to_lb(v1, F::one());
+	let lb_v2 = var_to_lb(v2, F::one());
+	#[cfg(test)]{
+		assert!(v1.value()? * v2.value()? == F::zero(), "ERR on check prod zero: {}", _msg); 
+	}
+	cs.enforce_constraint(
+		lb_v1,
+		lb_v2,
+		lb_zero
+	)?;
+	Ok( () )
+}
+
+
 /// compute multiset_prod only counts sel[i] is 1.
 /// sel is a "boolean" array.
 /// COST: 3n

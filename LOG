@@ -21527,7 +21527,7 @@ Goal 1.  validate_bwdprf_valid_prf
 	[b] regressoin test -> ok
 
 Goal 2. data comparison
----- PERFORMANCE DATA ---------------- ID: 009 (after fsm_adv)
+---- PERFORMANCE DATA ---------------- ID: 010 (after discharge_adv)
 nlen = 32k
 module 10: cuts from 3993 to 2675 (cutting 1.3k)j
 qry cost (compare DEBUG 1201): 2.86-1.01M = 1.86M (same)
@@ -21546,5 +21546,29 @@ Next to improve: compute_adv: 402869 - 401793 = 1k
 
 Wed 11/05/2025
 LOC (gadgets) -> 16617
+Goal 1. imporve compute_sigs
+	[a] read code
+	[b] capacity
+	[c] advice
+
+Goal 2. improve gen_eval_subsig_by_sq_combo
+Goal 3. gen_synthesis_subsig_combo
+	[a] mark sid columns with bool const
+	[b] remove err
+	[c] regression test
+Goal 4. improve gen_discharge_sig_combo
+Goal 5. imporve validate_eval_subsig_by_sq_combo
+	[a] print cost: 348	-> 198 -> 193
+	[b] measure cost again
+Goal 6. improve validte_synthesis_subsig_combo
+	[a] 399 -> 389 -> 379 -> 371 -> 362
+	[b] -> 349 -> 341 -> 337 -> 324
+Goal 7. implement function better_select
+	[c] implement and test
+	[c] implement is prod_zero
+	[d] 324 -> 309
+	[e] update cost: 35n
+
+-- TODO last validate function
 
 

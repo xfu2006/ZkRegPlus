@@ -32,7 +32,8 @@ use ark_ff::{PrimeField};
 
 use crate::gadgets::{
 	commons::{encode_cols_better, gen_m_table, encode_cols_var_adv_better,
-		new_const_var, check_eq, new_var, is_zero_better, var_to_lb},
+		new_const_var, check_eq, new_var, is_zero_better, var_to_lb,
+		check_prod_zero, better_select},
 	db::{assert_logup, 
 		//verify_encoded_table, assert_well_formed_sorted
 	},
@@ -74,7 +75,7 @@ use ark_r1cs_std::{
 	//alloc::AllocVar,
 	eq::EqGadget,
 	R1CSVar,
-	boolean::Boolean,
+	//boolean::Boolean,
 };
 use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef,Variable,
 	LinearCombination};
@@ -201,13 +202,9 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		v_sig_obj: &Vec<Arc<ClamavSig>>, //needs to cover all inp_sigs
 		sig_to_id: &HashMap<String,usize>,
 	) ->Self{
-		let b_perf = true;
 		let stmt_container = Container::<F>::new("compute_sig_adv_stmt");
 
 		//1. evaluate "atomic" subsigs based on sq_res 
-		if b_perf{
-			println!("DEBUG USE 301: inp_subsigs_cs.len: {}, inp_subsigs_igc.len: {}", inp_subsigs_cs.len(), inp_subsigs_igc.len());
-		}
 		assert!(inp_subsigs_cs.len()==inp_subsigs_igc.len());
 		assert!(inp_subsigs_cs.len()<=capacity.subsigs, 
 			"inp_subsigs_cs.len: {} should be <= capacity.subsigs: {}",
@@ -1266,7 +1263,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
 		//0. retrieve data from combo
-		let b_perf = true;
+		let b_perf = false;
 		let nc = cs.num_constraints();
 		let (_zero,one)=(new_const_var(&cs,F::zero()),new_const_var(&cs,F::one()));
 		let names = ["inp_subsig", "last_step", "subsig_raw_eval", 
@@ -1398,7 +1395,6 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 
 		if b_perf{
 			println!(" ### validate_eval_subsig_by_sq_combo: subsigs: {}, sq_res.len: {}, cost: {}", inp_subsig.len(), sq_encoded.len(), cs.num_constraints()-nc); 
-			if 1>0 {panic!("STOP HERE 2000");}
 		}
 
 		Ok( () )
@@ -1406,10 +1402,11 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 
 	/// validate syntesis of subsig is correct.
 	/// COST:  let n = number of subsigs, n2 = scc table size (20% of n at most
-	///				in practice)
+	///				in practice) = perc_scc * subsigs
 	/// 29*n + 69*n2 (given n2<20%*n) ==> 43n (number of subsigs)
 	///   + additional cs/igc cost 6n = 49n.
 	/// in practice: this is 1000 *49 = 49k R1CS
+	/// UPDATED: around 35n (when perc_copm_subsigs is 20%)
 	fn validate_synthesis_subsig_combo(&self, 
 		eval_res_combo_cs: &Container<FpVar<F>>, 
 		eval_res_combo_igc: &Container<FpVar<F>>, 
@@ -1419,7 +1416,9 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
 		//0. retrieve data from combo
-		let b_debug = true;
+		let b_debug = false;
+		let b_perf = true;
+		let nc = cs.num_constraints();
 		let (zero,one)=(new_const_var(&cs,F::zero()),new_const_var(&cs,F::one()));
         let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let max=new_const_var(&cs,F::from(max_val as u64));
@@ -1448,16 +1447,28 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 
 		//1 (correspond to gen_synthesis_subsig_combo 0.5)
 		//  Validate v_sid_sig and conditional select the value of gen_reg_rex
-		//COST: 6n 
+		//COST: 4n 
 		assert!(v_igc.len()==v_sid_igc.len() && v_igc.len()==n);
 		assert!(inp_subsigs.len()==n);
 		let tbl_id_start = new_const_var(&cs,
 			F::from(1u64<<32) * F::from(ID_SUBSIG_IGC));
+		let lb_zero= LinearCombination::from((F::zero(),Variable::One));
 		for i in 0..n{
 			let exp_sid_igc = &tbl_id_start + &inp_subsigs[i];
 			let diff = &exp_sid_igc - &v_sid_igc[i];
-			let prod = &diff * &inp_subsigs[i];
-			check_eq(&prod, &zero, &format!("failed sid_igc at i: {}", i))?;
+			//let prod = &diff * &inp_subsigs[i];
+			//check_eq(&prod, &zero, &format!("failed sid_igc at i: {}", i))?;
+			#[cfg(test)]{
+				assert!(diff.value()? * inp_subsigs[i].value()?==F::zero());
+			}
+			let lb_diff = var_to_lb(&diff, F::one());
+			let lb_subsig = var_to_lb(&inp_subsigs[i], F::one());
+			cs.enforce_constraint(
+				lb_diff,
+				lb_subsig,
+				lb_zero.clone()
+			)?;
+
 		}
 		let gen_regex_res_cs = eval_res_combo_cs
 			.get_container("subsig_raw_eval").unwrap().borrow().to_vec();
@@ -1465,8 +1476,27 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 			.get_container("subsig_raw_eval").unwrap().borrow().to_vec();
 		assert!(gen_regex_res_cs.len()==n && gen_regex_res_igc.len()==n);
 		let gen_regex_res = (0..n).collect::<Vec<usize>>().into_iter().map(|i|{
-			let b_cs = v_igc[i].is_zero().unwrap();
-			b_cs.select(&gen_regex_res_cs[i], &gen_regex_res_igc[i]).unwrap()
+			//let b_cs = v_igc[i].is_zero().unwrap();
+			//b_cs.select(&gen_regex_res_cs[i], &gen_regex_res_igc[i]).unwrap()
+			let b_cs = is_zero_better(&v_igc[i], &cs).unwrap();
+			let val = if b_cs.value().unwrap()==F::one(){
+				gen_regex_res_cs[i].value().unwrap()
+			}else{
+				gen_regex_res_igc[i].value().unwrap()
+			};
+			let var = new_var(&cs, val);
+			//b_cs*(res[i]-res_igc[i]) = var - res_igc[i] 
+			let lb_b = var_to_lb(&b_cs, F::one());
+			let lb_res = var_to_lb(&gen_regex_res_cs[i], F::one());
+			let lb_neg_res_igc = var_to_lb(&gen_regex_res_igc[i], -F::one());
+			let lb_var = var_to_lb(&var, F::one());
+			cs.enforce_constraint(
+				lb_b,
+				lb_res + lb_neg_res_igc.clone(),
+				lb_var + lb_neg_res_igc.clone()
+			).unwrap();
+
+			var
 		}).collect::<Vec<FpVar<F>>>();
 
 		if b_debug{
@@ -1516,7 +1546,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		let piece_op = new_const_var(&cs, F::from(ID_COMP_OP as u32)); 
 		let piece_num = new_const_var(&cs, F::from(ID_COMP_NUM as u32)); 
 		let piece_type= new_const_var(&cs, F::from(ID_SUBSIG_TYPE as u32)); 
-		for i in 0..n{
+		for i in 0..n{//non-constants
 			let f3 = &inp_subsigs[i];
 			let f3_fac = f3 * &factor_var; 
 			let prefix = &part1 + &f3_fac;
@@ -1529,7 +1559,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		}
 
 		//2.2 verify the calculation of counter_res is correct.
-		// cost: 9n
+		// cost: 9n -> improved to 7n
 		let eq_var = new_const_var(&cs, F::from(CompOp::EQ as u8));
 		let lt_var = new_const_var(&cs, F::from(CompOp::LT as u8));
 		let three_var = new_const_var(&cs, F::from(3u8));
@@ -1539,7 +1569,8 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 			// cost: 5n
 			let cond = &(&vec_op[i] - &lt_var) * 
 				&(&(&vec_op[i]-&eq_var) + &(&r1 * &vec_num[i]));
-			let b_cond = cond.is_zero()?;
+			//let b_cond = cond.is_zero()?;
+			let b_cond = is_zero_better(&cond, &cs)?;
 
 			//2.2.2 compute the neg_res
 			//we create the using as non-deterministic advice
@@ -1564,10 +1595,40 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 			//2.2.3 enforce the conditional assignment
 			// counter_res = if i_condition {!raw_res} else {raw_res}
 			// cost: 3n
-			let exp_res = b_cond.select(&neg_raw_res, raw_res)?;
+			//let exp_res = b_cond.select(&neg_raw_res, raw_res)?;
 			// ignore subsig 0 case as it's dummy
-			check_eq(&(&inp_subsigs[i]*&(&exp_res- &vec_counter_res[i])), 
-				&zero, "err counter_res")?;
+			//check_eq(&(&inp_subsigs[i]*&(&exp_res- &vec_counter_res[i])), 
+			//	&zero, "err counter_res")?;
+			let exp_res_val = if b_cond.value()? == F::one(){
+				neg_raw_res.value()?
+			}else{
+				raw_res.value()?
+			};
+			let exp_res = new_var(&cs, exp_res_val);
+			#[cfg(test)]{
+				assert!(inp_subsigs[i].value()? * 
+					(exp_res.value()? - vec_counter_res[i].value()?)
+				==F::zero());
+			}
+			//opt 1: enforce bcond.select ...
+			// b_cond *(neg_raw_res-raw_res) = exp_res - raw_res
+			let lb_neg_raw_res = var_to_lb(&neg_raw_res, F::one());
+			let lb_minus_raw_res = var_to_lb(&raw_res, -F::one());
+			let lb_b_cond = var_to_lb(&b_cond, F::one());
+			let lb_exp_res = var_to_lb(&exp_res, F::one());
+			cs.enforce_constraint(
+				lb_b_cond,
+				lb_neg_raw_res + lb_minus_raw_res.clone(),
+				lb_exp_res.clone() + lb_minus_raw_res
+			)?;
+			//opt2 enforce check_eq(inp_subsigs[i] * (exp_res - vec_conter[i)
+			let lb_inp_subsig = var_to_lb(&inp_subsigs[i], F::one());
+			let lb_neg_counter_res = var_to_lb(&vec_counter_res[i], -F::one());
+			cs.enforce_constraint(
+				lb_inp_subsig,
+				lb_exp_res + lb_neg_counter_res,
+				lb_zero.clone()
+			)?;
 		}
 
 		//3. the SubsigCountConstraint part
@@ -1577,7 +1638,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		//and their min_req by leveraging the database saved in external lkup
 		//
 		//-- 3.1.0 retrieve data
-		//COST: 13*n2 
+		//COST: 0*n2 
 		let n2 = self.capacity.get_scc_prf_size();
 		let names = vec![
 			"scc_prf_subsig", "scc_prf_comp_subsig_encode", 
@@ -1597,7 +1658,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 			synthesis_res_combo.get_container(n).unwrap().borrow().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
 		let (sid_scc_prf_comp_subsig_encode, sid_scc_prf_comp_subsig, 
-			sid_scc_prf_min_req, sid_scc_prf_abs_diff1, sid_scc_prf_abs_diff2)
+			sid_scc_prf_min_req, _sid_scc_prf_abs_diff1, _sid_scc_prf_abs_diff2)
 		= (&sid_col2d[0], &sid_col2d[1], &sid_col2d[2], 
 			&sid_col2d[3], &sid_col2d[4]);
 
@@ -1618,8 +1679,9 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 				"sid_comp_encoded err")?;
 			check_eq(&(f3*&(exp_sid_min-&sid_scc_prf_min_req[i])), &zero,"sid_min err")?;
 			check_eq(&(f3*&(&sid_scc_prf_comp_subsig[i]-&frg)),&zero,"sid_comp_subsig err")?;
-			check_eq(&sid_scc_prf_abs_diff1[i], &frg, "sid_abs_diff1 err")?;
-			check_eq(&sid_scc_prf_abs_diff2[i], &frg, "sid_abs_diff2 err")?;
+			//no need to check onstant sids
+			//check_eq(&sid_scc_prf_abs_diff1[i], &frg, "sid_abs_diff1 err")?;
+			//check_eq(&sid_scc_prf_abs_diff2[i], &frg, "sid_abs_diff2 err")?;
 		}
 
 		//-- 3.1.2 check the validity of sid_comp_count
@@ -1649,9 +1711,14 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 			let prev_subsig = &col2d[0][i-1];
 			let diff = &vec_cnt[i]-&vec_cnt[i-1];
 			let diff_sid = subsig-prev_subsig;
-			let same_subsig:FpVar<F> = diff_sid.is_zero()?.into(); //1 or 0
-			let is_raw_true:FpVar<F> = col2d[4][i].is_eq(&tri_true)?.into();
-			let is_raw_maybe:FpVar<F> = col2d[4][i].is_eq(&tri_maybe)?.into();
+			//let same_subsig:FpVar<F> = diff_sid.is_zero()?.into(); //1 or 0
+			let same_subsig:FpVar<F> = is_zero_better(&diff_sid, &cs)?; //1 or 0
+			//let is_raw_true:FpVar<F> = col2d[4][i].is_eq(&tri_true)?.into();
+			let is_raw_true:FpVar<F> = is_zero_better(
+				&(&col2d[4][i]-&tri_true), &cs)?;
+			//let is_raw_maybe:FpVar<F> = col2d[4][i].is_eq(&tri_maybe)?.into();
+			let is_raw_maybe:FpVar<F> = is_zero_better(
+				&(&col2d[4][i]-&tri_maybe), &cs)?;
 			//(1) if same_sid needs to enforce diff is one, otherwise don't care
 			//(2) requires count to start from 1, if it's not the same_id
 			//(3) requires that vec_comp is MAX when it's the last row
@@ -1693,21 +1760,25 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		// COST: n2 +  3*n2 + n2 + n + 2n2 + 3n
 		// = 7*n2 + 4*n (where n2 is scc_prf_size and n is subsigs) 
 		// in practice n2 is at most 20% of n1.
+		// as cols are all in RANGE2, just use f_unit to do combination
+		// improved to 5*n2 + 4*n
+		let f_unit = FpVar::<F>::constant(F::from(1u32<<RANGE2_BIT));
 		let src_s_r = encode_cols_var_adv_better(
 			&vec![&col2d[2][..],&col2d[4][..]], //comp_subsig and raw
 			&vec![0,1],
-			&r1
+			&f_unit
 		);
 		let src_sel = col2d[2].iter().map(|s|{//comp_subsig
-			let b_eq = s.is_eq(&max).unwrap();
-			&one - &(b_eq.into())
+			//let b_eq = s.is_eq(&max).unwrap();
+			let b_eq = is_zero_better(&(s-&max), &cs).unwrap();
+			&one - &b_eq
 		}).collect::<Vec<FpVar<F>>>();
 		let src_s_r = src_s_r.iter().zip(src_sel.iter()).map(|(a,b)|
 			a * b).collect::<Vec<FpVar<F>>>();
 		let dest_s_r = encode_cols_var_adv_better(
 			&vec![&inp_subsigs[..], &gen_regex_res[..]],
 			&vec![0,1],
-			&r1
+			&f_unit
 		);
 		let mtbl_comp_score = synthesis_res_combo.get_container("mtbl_comp_score").unwrap().borrow().to_vec();
 		assert_logup(cs.clone(), &src_s_r, &dest_s_r, &mtbl_comp_score, &r1)?;
@@ -1717,20 +1788,33 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		//their square equal. Note that the sid of abs_diff is already
 		//checked earlier.
 		//
-		//COST: 8*n2
+		//COST: 6*n2
 		for i in 0..n2{
 			let subsig = &col2d[0][i];
 			let diff1 = &col2d[5][i] - &col2d[3][i]; //cnt_true - min_req
 			let abs_diff1 = &col2d[8][i];
 			let res1 = &diff1*&diff1 - abs_diff1*abs_diff1;
 			//enforce those for real entries, i.e., subsig!=0
-			check_eq(&(subsig*(&res1-&zero)), &zero, "err on abs_diff1")?;
+			//check_eq(&(subsig*(&res1-&zero)), &zero, "err on abs_diff1")?;
+			let lb_res1 = var_to_lb(&res1, F::one());
+			let lb_subsig = var_to_lb(&subsig, F::one());
+			cs.enforce_constraint(
+				lb_res1,
+				lb_subsig.clone(),
+				lb_zero.clone()
+			)?;
 
 			//diff2 = min_req - (cnt_maybe + cnt_true + 1)
 			let diff2 = &col2d[3][i] - &one - &col2d[5][i] - &col2d[6][i];
 			let abs_diff2 = &col2d[9][i];
 			let res2 = &diff2*&diff2 - abs_diff2*abs_diff2;
-			check_eq(&(subsig*(&res2-&zero)), &zero, "err on abs_diff2")?;
+			//check_eq(&(subsig*(&res2-&zero)), &zero, "err on abs_diff2")?;
+			let lb_res2 = var_to_lb(&res2, F::one());
+			cs.enforce_constraint(
+				lb_res2,
+				lb_subsig.clone(),
+				lb_zero.clone()
+			)?;
 		}
 
 
@@ -1754,12 +1838,20 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 				&b_case2.select(&tri_false, &tri_maybe)?)?;
 			let row_res = &col2d[7][i];
 			let subsig = &col2d[0][i];
-			check_eq(&(subsig*(row_res-exp_res)), &zero, "err on row_res")?;
+			//check_eq(&(subsig*(row_res-exp_res)), &zero, "err on row_res")?;
+			let lb_res= var_to_lb(&row_res, F::one());
+			let lb_exp_res= var_to_lb(&exp_res, -F::one());
+			let lb_subsig = var_to_lb(&subsig, F::one());
+			cs.enforce_constraint(
+				lb_res + lb_exp_res,
+				lb_subsig.clone(),
+				lb_zero.clone()
+			)?;
 		}
 
 		//3.5 check the validity of vec_scc_res, leveraging vec_type	
 		//COST: n: subsigs, n2: scc_table (which is usually up to 20% of n)
-		//  6n + 9*n2
+		//  6n + 5*n2
 		let vec_scc_res= synthesis_res_combo.get_container("vec_scc_res")
 			.unwrap().borrow().to_vec();
 		let mtbl_find_scc_res= synthesis_res_combo
@@ -1767,15 +1859,16 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		let var_scc = new_const_var(&cs, 
 			F::from(SubSigType::SubsigCountConstraint as u8)); //it's 2
 		let is_scc= vec_type.iter().map(|t|
-			t.is_eq(&var_scc).unwrap()
-		).collect::<Vec<Boolean<F>>>();
+			//t.is_eq(&var_scc).unwrap()
+			is_zero_better(&(t-&var_scc), &cs).unwrap()
+		).collect::<Vec<FpVar<F>>>();
 		let src_sel = is_scc.iter().map(|t| 
 			t.clone().into()).collect::<Vec<FpVar<F>>>();
 		assert!(vec_scc_res.len()==n && src_sel.len()==n);
 		let src = encode_cols_var_adv_better(
 			&vec![&inp_subsigs[..], &vec_scc_res[..]],
 			&vec![0,1],
-			&r1
+			&f_unit
 		);
 		let src = src.iter().zip(src_sel.iter()).map(|(a,b)|
 			a * b).collect::<Vec<FpVar<F>>>();
@@ -1783,10 +1876,11 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		let dst= encode_cols_var_adv_better(//scc_prf_subisg and scc_prf_row_res
 			&vec![&col2d[0][..], &col2d[7][..]],
 			&vec![0,1],
-			&r1
+			&f_unit
 		);
 		let dst_sel = col2d[2].iter().map(|c|   
-			c.is_eq(&max).unwrap().into() //if comp_subsig eq to max
+			//c.is_eq(&max).unwrap().into() //if comp_subsig eq to max
+			is_zero_better(&(c-&max), &cs).unwrap()
 		).collect::<Vec<FpVar<F>>>();
 		let dst = dst.iter().zip(dst_sel.iter()).map(|(a,b)|
 			a * b).collect::<Vec<FpVar<F>>>();
@@ -1800,8 +1894,9 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		let var_regular = new_const_var(&cs,
 			F::from(SubSigType::GeneralRegex as u8)); // 0
 		let is_reg = vec_type.iter().map(|t|
-			t.is_eq(&var_regular).unwrap()
-		).collect::<Vec<Boolean<F>>>();
+			//t.is_eq(&var_regular).unwrap()
+			is_zero_better(&(t-&var_regular), &cs).unwrap()
+		).collect::<Vec<FpVar<F>>>();
 		assert!(vec_scc_res.len()==n);
 		assert!(gen_regex_res.len()==n);
 		assert!(vec_counter_res.len()==n);
@@ -1809,23 +1904,35 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 			.get_container("vec_subsig_final_res").unwrap().borrow().to_vec();
 		for i in 0..n{//since it's small about 1k entries, just single thread
 			let subsig = &inp_subsigs[i];
-			let res = is_scc[i].select(&vec_scc_res[i],
-				&is_reg[i].select(&gen_regex_res[i],
-					&vec_counter_res[i]).unwrap()
-			).unwrap();
-			check_eq(&(subsig*&(&res-&vec_subsig_final_res[i])),
-				&zero, "fail final subsig")?;
+			//let res = is_scc[i].select(&vec_scc_res[i],
+			//	&is_reg[i].select(&gen_regex_res[i],
+			//		&vec_counter_res[i]).unwrap()
+			//).unwrap();
+			let res = better_select(&is_scc[i], &vec_scc_res[i],
+				&better_select(
+					&is_reg[i], &gen_regex_res[i], &vec_counter_res[i]
+				)
+			);
+			//check_eq(&(subsig*&(&res-&vec_subsig_final_res[i])),
+			//	&zero, "fail final subsig")?;
+			check_prod_zero(&subsig, &(&res-&vec_subsig_final_res[i]),
+				lb_zero.clone(), "fail final subsig")?;
 		}
 
-		//REMOVE LATER ------------------------
-		println!("DEBUG USE 6803 === final result in validate ===");
-		for i in 0..n{
-			println!(" --i: {}, subsig: {}, res: {}", 
-				i, 
-				inp_subsigs[i].value()?,
-				vec_subsig_final_res[i].value()?);
+		if b_debug{
+			println!("DEBUG USE 6803 === final result in validate ===");
+			for i in 0..n{
+				println!(" --i: {}, subsig: {}, res: {}", 
+					i, 
+					inp_subsigs[i].value()?,
+					vec_subsig_final_res[i].value()?);
+			}
 		}
-		//REMOVE LATER ------------------------ ABOVE
+
+		if b_perf{
+			println!(" ### validate_syntehsis_subsig_combo: subsigs: {}, scc_tbl_size: {}, cost: {}", n, n2, cs.num_constraints()-nc);
+			//if 1>0 {panic!("STOP HERE 3001");}
+		}
 		Ok( () )
 	}
 
@@ -1843,7 +1950,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
 		//0. retrieve data from combo
-		let b_debug = true;
+		let b_debug = false;
 		let (zero,one)=(new_const_var(&cs,F::zero()),
 			new_const_var(&cs,F::one()));
         let max_val:usize = (1<<RANGE2_BIT) - 1;
@@ -2268,7 +2375,7 @@ pub mod tests_compute_sig_adv{
 		let cap = FsmAdvCapacity{
 			max_nibble_len: nibble_len, 
 			acdfa_state_part_bits: state_bits, 
-			subsigs: 5,
+			subsigs: 25,
 			avg_pats_per_subsig: 4,
 			basis_pats_in_trace: 27*100, 
 			basis_unique_states: 20*100,
@@ -2285,7 +2392,7 @@ pub mod tests_compute_sig_adv{
 			sigs: 1, 
 			subsigs: cap.subsigs,
 			basis_pats_in_trace: cap.basis_pats_in_trace,
-			perc_comp_subsigs: 80, //real data will be much lower like 17 at most
+			perc_comp_subsigs: 20, //real data will be much lower like 17 at most
 		};
 
 		//2. create advice for word_extract_adv, fsm_adv, and discharge_adv
