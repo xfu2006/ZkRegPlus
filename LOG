@@ -21610,6 +21610,7 @@ Goal 2. plan for Dfa improvement
 		32k * 6 * 1.5 = 300k. Which is very reasonable cost.
 
 Friday 11/07/2025
+LOC (gadgets): 16850
 Goal 1. check how DFAs are created for each sig
 	[a] it does process each subsig_id of the DFA
 	[b] check how many subsigs are there and dump the sig names
@@ -21620,6 +21621,24 @@ Goal 1. check how DFAs are created for each sig
 			one automata
 		Doc.Dropper.Agent-6330744-0 -> dishcarge subsig 3
 		Pdf.Exploit.APSB16_26-1 -> discharge one of them
-
-Goal 2. Idea
+		So the actual cost will be lower.
+Goal 2. improve the dfa gadget: gen_mul_fsm_acc_combo
+Goal 3. improve gen_discharge_sig_combo
+Goal 4. validate_mul_fsm_acc_container
+	[a] fix err first
+	[b] cost: 766
+	[c] 766 -> 510
+Goal 5. imporve check of sid_transitions
+	[a] declare pack check and build pows
+	[b] build pows
+	[c] 510 -> 300
+Goal 6. check transitions
+	[a] check packcheck_arr_eq(arr1, arr2)
+		-> it's guaranteed that arr1 and arr2 each element
+			are no more than 56-bit
+	[b] declare functions
+	[d] implement pack
+	[e] implement check
+	[f] call functions
+	
 

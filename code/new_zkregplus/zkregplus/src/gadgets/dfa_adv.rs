@@ -39,7 +39,8 @@ use data_processor::{
 use utils::{data::{u8_to_hex}};
 use crate::gadgets::{
 	commons::{mix_vec,new_const_var, check_eq,encode_cols_better,gen_m_table,
-		encode_cols_var_adv_better },
+		encode_cols_var_adv_better , packcheck_vec, build_pows_31,
+		build_pows_56},
 	traits::{Container,
 		Col,
 		IDX_WORD, IDX_INP,IDX_DATA, IDX_DISCHARGED_SIGS,
@@ -280,6 +281,7 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		// NOTE: saved_states are adjused (by +1)
 		// when query DFA, recover them by -1
 		//1.1 buld all info using as much parallelism as possible
+		let frg = F::from(RANGE2);
 		let v2d = (0..m).collect::<Vec<_>>().into_par_iter().map(|j|{
 			//for each dfa
 			let dfa = &v_dfa[j];
@@ -288,7 +290,8 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 			let mut v_states = vec![zero; nlen + 1];
 			let mut v_trans = vec![zero; nlen];
 			v_states[0] = F::from((src+1) as u32);
-			let f_id_state = fsm_id + F::from(6u32);
+			let f_id_state = frg; //ONLY range proof is good enough
+				//the CHUNK in transition will FORBID INVALID state!
 			let f_id_trans= fsm_id + F::from(3u32);
 			//sequentially walk nibbles through DFA
 			let s_nibbles = nibbles.iter().map(|n| field_to_usize(n) as u8)
@@ -337,7 +340,6 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		let n = capacity.subsigs;
 		assert!(inp_subsigs.len()==n);
 		assert!(v_dfa_id.len()==n);
-		let frg = F::from(RANGE2);
 		let v_sig = inp_subsigs.iter().map(|&ssid| 
 			extract_sigid(ssid).0
 		).collect::<Vec<F>>();
@@ -351,30 +353,29 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 			IDX_DATA)); 
 		res.borrow_mut().add_col(Col::<F>::new(v_dfa_id.to_vec(), "v_dfa_id",
 			IDX_DATA)); 
-		res.borrow_mut().add_col(Col::<F>::new(vec![frg;n], "sid_v_sig",
+
+		res.borrow_mut().add_col(Col::<F>::new_const(vec![frg;n], "sid_v_sig",
 			IDX_SI_DATA)); 
-		res.borrow_mut().add_col(Col::<F>::new(vec![frg;n], "sid_v_subsig",
+		res.borrow_mut().add_col(Col::<F>::new_const(vec![frg;n], "sid_v_subsig",
 			IDX_SI_DATA)); 
-		res.borrow_mut().add_col(Col::<F>::new(vec![frg;n], "sid_v_raw_subsig",
-			IDX_SI_DATA)); 
-		res.borrow_mut().add_col(Col::<F>::new(vec![zero;n], "sid_v_dfa_id",
-			IDX_SI_DATA)); 
+		res.borrow_mut().add_col(Col::<F>::new_const(vec![frg;n], "sid_v_raw_subsig", IDX_SI_DATA)); 
+		res.borrow_mut().add_col(Col::<F>::new_const(vec![zero;n], 
+			"sid_v_dfa_id", IDX_SI_DATA)); 
 
 		//1.4 add columns related to inp/mid/oup states
 		let col_inp_state = Col::<F>::new(states[0..m].to_vec(),
 			"inp_state",IDX_INP);
-		let col_si_inp_state = Col::<F>::new(sid_states[0..m].to_vec(),
+		let col_si_inp_state = Col::<F>::new_const(sid_states[0..m].to_vec(),
 			"si_inp_state",IDX_SI_INP);
 
 		let col_mid_states = Col::<F>::new(states[m..m*nlen].to_vec(),
 			"mid_states", IDX_DATA);
-		let col_si_mid_states = Col::<F>::new(sid_states[m..m*nlen]
+		let col_si_mid_states = Col::<F>::new_const(sid_states[m..m*nlen]
 			.to_vec(), "si_mid_states", IDX_SI_DATA);
 
 		let col_oup_state = Col::<F>::new(states[m*nlen..m*(nlen+1)].to_vec(),
 			"oup_state",IDX_OUP);
-		let col_si_oup_state = Col::<F>::new(sid_states[m*nlen..m*(nlen+1)]
-			.to_vec(), "si_oup_state",IDX_SI_OUP);
+		let col_si_oup_state = Col::<F>::new_const(sid_states[m*nlen..m*(nlen+1)] .to_vec(), "si_oup_state",IDX_SI_OUP);
 		let raw_states = &states;
 
 		let states = Container::concat_cols(
@@ -436,7 +437,7 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 			"si_oup_state_copy",IDX_SI_DATA));
 		res.borrow_mut().add_col(Col::<F>::new(subsig_res.clone(),
 			"subsig_res",IDX_DATA));
-		res.borrow_mut().add_col(Col::<F>::new(vec![zero;m],
+		res.borrow_mut().add_col(Col::<F>::new_const(vec![zero;m],
 			"si_subsig_res",IDX_SI_DATA)); //don't care as they'll be TriVal
 
 
@@ -640,12 +641,12 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		});
 		assert!(mtbl_lk_res.len()==n+1);
 		res.borrow_mut().add_col(Col::new(mtbl_lk_res,"mtbl_lk_res",IDX_DATA));
-		res.borrow_mut().add_col(Col::new(vec![frg;n+1],"sid_mtbl_lk_res",
-			IDX_SI_DATA));
+		res.borrow_mut().add_col(Col::new_const(vec![zero;n+1],
+			"sid_mtbl_lk_res", IDX_SI_DATA));
 		
 		assert!(mtbl_sigs.len()==n);
 		res.borrow_mut().add_col(Col::new(mtbl_sigs,"mtbl_sigs",IDX_DATA));
-		res.borrow_mut().add_col(Col::new(vec![frg;n],"sid_mtbl_sigs",
+		res.borrow_mut().add_col(Col::new_const(vec![zero;n],"sid_mtbl_sigs",
 			IDX_SI_DATA));
 		res.borrow_mut().add_col(Col::new(inp_sigs.clone(),
 			"discharged_sigs",IDX_DISCHARGED_SIGS));
@@ -719,17 +720,19 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 	// validate the correctness of (subsig, res). where res:false meaning
 	// not accepted by the dfas.
 	//
-	//COST: 14m + 3mn (m: subsigs, n: nibble length) -> subsigs
+	//COST: 10m + mn*3/8 (m: subsigs, n: nibble length) -> subsigs
 	//are usually very small (<10). meanly 3mn.
 	fn validate_mul_fsm_acc_container(&self, fsm_acc: &Container<FpVar<F>>, cs: ConstraintSystemRef<F>)
 	->Result<(), SynthesisError>{
 		//1. check the relations between v_sig, v_subsig,
 		//v_raw_subsig and v_dfa_id
 		//COST: 6n (where n = subsigs, in practice this is small: <10)
+		let b_perf = true;
+		let nc = cs.num_constraints();
 		let n = self.capacity.subsigs;
 		let (zero,one) = (new_const_var(&cs, F::zero()), 
 			new_const_var(&cs, F::one()));
-		let fr = new_const_var(&cs, F::from(RANGE2));
+		//let fr = new_const_var(&cs, F::from(RANGE2));
 		let bits = RANGE2_BIT; //26 bit
 		let bit_part1 = bits*2/3; //16 for accomodating 64k sigs for bits 24
 		let bit_part2 = bits - bit_part1;
@@ -744,15 +747,16 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		let (v_sig, v_subsig, v_raw_subsig, v_dfa_id) = (&cols[0],
 			&cols[1], &cols[2], &cols[3]);
 		for col in &cols {assert!(col.len()==n);}
-		let sids = names.iter().map(|n| fsm_acc.get_container(
-			&format!("sid_{}",n)).unwrap().borrow().to_vec())
-			.collect::<Vec<Vec<FpVar<F>>>>();
+		//let sids = names.iter().map(|n| fsm_acc.get_container(
+		//	&format!("sid_{}",n)).unwrap().borrow().to_vec())
+		//	.collect::<Vec<Vec<FpVar<F>>>>();
 		for i in 0..n{
 			//1. ensure v_sig, subsig, raw_subsig in range
 			//so that we can reason about dfa_id
-			check_eq(&sids[0][i], &fr, "sid v_sig failed")?;	
-			check_eq(&sids[1][i], &fr, "sid v_subsig_sig failed")?;	
-			check_eq(&sids[2][i], &fr, "sid v_raw_subsig failed")?;	
+			//NO need to check const SID they are fixed constants in sid
+			//check_eq(&sids[0][i], &fr, "sid v_sig failed")?;	
+			//check_eq(&sids[1][i], &fr, "sid v_subsig_sig failed")?;	
+			//check_eq(&sids[2][i], &fr, "sid v_raw_subsig failed")?;	
 
 			//2. check the relation between subsig <-- sig and raw_subsig 
 			let exp_subsig = &v_raw_subsig[i] + &(&v_sig[i] * &f_part2);
@@ -765,6 +769,8 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 			let exp_dfa_id = &start + &(&f_part3 * &v_sig[i]) + 
 				&v_raw_subsig[i] - &one;
 			let diff = &exp_dfa_id - &v_dfa_id[i];
+			//we could improve it with cs.enforce_constraints on lb
+			//and cut 1 constraint but n is small.
 			check_eq(&(&v_sig[i]*&diff), &zero, "fail dfa_id")?;
 		}
 
@@ -776,8 +782,7 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		// Here for the nibbles, they are lableled to their corresponding
 		// translation, and this is gauranteed correct translation
 		// given the nibbles_copy proof.
-		//
-		// COST: 2*m*nlen
+		// m * n * 3/8
 		let names = vec!["states", "trans"];
 		let cols = names.iter().map(|n| fsm_acc.get_container(n)
 			.unwrap().borrow().to_vec()).collect::<Vec<Vec<FpVar<F>>>>();
@@ -788,28 +793,70 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		let (si_states,si_trans)=(&sids[0],&sids[1]);
 
 		let (m,nlen) = (self.capacity.subsigs,self.capacity.max_nibble_len);
-		let f_6 = new_const_var(&cs, F::from(6u32));
+		//let f_6 = new_const_var(&cs, F::from(6u32));
 		let f_3 = new_const_var(&cs, F::from(3u32));
-		let tblid_states = v_dfa_id.iter().map(|s| s + &f_6)
-			.collect::<Vec<FpVar<F>>>();
+		//let tblid_states = v_dfa_id.iter().map(|s| s + &f_6)
+		//	.collect::<Vec<FpVar<F>>>();
 		let tblid_trans = v_dfa_id.iter().map(|s| s + &f_3)
 			.collect::<Vec<FpVar<F>>>();
 		assert!(si_states.len()==m*(nlen+1) && si_trans.len()==m*nlen);
-		for i in 0..nlen+1{
-			for j in 0..m{
-		  		check_eq(&si_states[i*m+j],&tblid_states[j],"err si_state")?;
-			}
-		}
-		for i in 0..nlen{
-			for j in 0..m{
-		  		check_eq(&si_trans[i*m+j],&tblid_trans[j],"err si_trans")?;
-			}
+		assert!(tblid_trans.len()==m);
+
+		//let frg = new_const_var(&cs, F::from(RANGE2));
+		// NO NEED TO CHECK CONSTANTS in circuit.
+		//for i in 0..nlen+1{
+		//	for j in 0..m{
+		// 		check_eq(&si_states[i*m+j],&frg,"err si_state")?;
+		//	}
+		//}
+
+		// --- WE IMPROVE THE FOLLOWING TO m*n/8 ---------
+		// IDEA: trans_id is a FIXED value among tbl col2 and all
+		// col2 values are NO MORE THAN 32-BIT
+		// Note that later: (trans, si_trans) is checked in Sonobe
+		// for lookup. so adversary will NOT be able to put
+		// a FAKE col2 value here, otherwise it's NOT GOING to
+		// pass the logup check in Sonobe later.
+		//
+		// With that being said, the ONLY trick value the adversary
+		// can play is THAT it inserts a VALID col2 value (note: it's
+		// always within 32-bit) but it's NOT the valid sid_trans.
+		// Now note here if we do BIT-STRING concat of 8 such
+		// values in one FIELD ELEMENT (and check - as all segs
+		// are already limited to 32-bit - one check allows to
+		// check all 8 legs are valid!). Thus we end up with
+		// the cost of nlen/8 for check of sids for ONE DFA.
+		// ------------------------------------------------
+		//for i in 0..nlen{
+		//	for j in 0..m{
+		// 		check_eq(&si_trans[i*m+j],&tblid_trans[j],"err si_trans")?;
+		//	}
+		//}
+		let vec_si_trans = (0..m).into_iter().map(|dfa_id|{
+			let vec_si = (0..nlen).into_iter().map(|j|{
+				si_trans[m*j + dfa_id].clone()
+			}).collect::<Vec<FpVar<F>>>();
+			vec_si
+		}).collect::<Vec<Vec<FpVar<F>>>>();
+		let pows_31 = build_pows_31(cs.clone());
+		for i in 0..m{
+			let exp_val = tblid_trans[i].clone();  
+			packcheck_vec(&vec_si_trans[i], &exp_val, &pows_31)?;
 		}
 
 		//3. assert correctness of building transition as weighted sum
 		// of src, char, dst states
 		//
-		//COST: m*nlen
+		//COST: m*nlen/4
+		// IDEA of optimization: so where
+		// since char is restricted to 4 bit, states are restricted
+		// to 26 bit. The transition EXPECTED is computed is 
+		// GURANTEED to be 56-bit
+		// the transitions RETRIEVED from te proof are EARLIER
+		// restricted by their SID_transition (and thus ALSO
+		// guaranteed to be 56-bit
+		// To compare the TWO arrays are essentially the same
+		// we can simply pack 4 element's check INTO one!
 		let unit_var = FpVar::<F>::new_constant(cs.clone(),
 			F::from((1<<(RANGE2_BIT+4)) as u32))?;
 		let hex_var = FpVar::<F>::new_constant(cs.clone(),
@@ -822,18 +869,41 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 
 		assert!(chars.len()==nlen && states.len()==(nlen+1)*m 
 			&& trans.len()==nlen*m);
-		for i in 0..nlen{
-			let ch = &chars[i];
-			for j in 0..m{//for each DFA
-				let st1 = &states[i*m+j]; //already plus one
-				let st2 = &states[(i+1)*m+j];
-				// simulate clam_db.rs: add_acdfa_to_lkup
+		let pows_51 = build_pows_56(cs.clone());
+		assert!(pows_51.len()==4);
+		//PACKED VERSIOn
+		for dfa_id in 0..m{//for each DFA
+			for i in 0..nlen/4{
+				let start = i * 4;
+				let mut sum_trans = one.clone();
+				let mut sum_exp = one.clone();
+				for j in 0..4{//CHECK every 4 transitions
+					let idx = start + j; //index of char
+					let ch = &chars[idx];
+					let st1 = &states[idx*m+dfa_id]; //already plus one
+					let st2 = &states[(idx+1)*m+dfa_id];
+					let exp_trans = ch + 
+						&(st1 * &hex_var) +
+						&(st2 * &unit_var); //no need to plus one, already did
+					let trans = &trans[idx*m+dfa_id];
+					sum_trans = &sum_trans + &(&pows_51[j] * trans); //cost 
+						//nothing because mul with constant!
+					sum_exp = &sum_exp + &(&pows_51[j] * &exp_trans); 
+				}
+				check_eq(&sum_trans, &sum_exp,  "ERROR checking trans")?;
+			}
+		}
+		//IF nlen is not multiple of 4
+		for dfa_id in 0..m{//for each DFA
+			for idx in nlen/4*4 .. nlen{
+				let ch = &chars[idx];
+				let st1 = &states[idx*m+dfa_id]; //already plus one
+				let st2 = &states[(idx+1)*m+dfa_id];
 				let exp_trans = ch + 
 					&(st1 * &hex_var) +
 					&(st2 * &unit_var); //no need to plus one, already did
-				let trans = &trans[i*m+j];
-				check_eq(&trans, &exp_trans, 
-					&format!("ERR: checking transition i:{}, j:{} ", i,j))?;
+				let trans = &trans[idx*m+dfa_id];
+				check_eq(&exp_trans, &trans, "ERROR checking trans part2")?;
 			}
 		}
 
@@ -857,6 +927,10 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 			check_eq(&exp_res, &res, "failing res check")?;
 		}
 
+		if b_perf{
+			println!(" ### validate_mul_fsm_acc_container: m: {}, nlen: {}. cost: {}", m, nlen, cs.num_constraints()-nc); 
+		}
+
 		Ok( () )
 	}
 
@@ -878,11 +952,13 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 	) ->Result<(), SynthesisError>{
 		//0. retrieve data from combo
 		let b_debug = true;
+		let b_perf = true;
+		let nc = cs.num_constraints();
 		let (zero,one)=(new_const_var(&cs,F::zero()),
 			new_const_var(&cs,F::one()));
         let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let _max=new_const_var(&cs,F::from(max_val as u64));
-		let frg = new_const_var(&cs, F::from(RANGE2));
+		let _frg = new_const_var(&cs, F::from(RANGE2));
 		let names = vec![ "v_sigs", "v_dnf_id", "v_dnf_step", 
 			"v_dnf_count", "v_real_subsigs"];
 		let cols = names.iter().map(|n|
@@ -895,7 +971,7 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 			discharge_sig_combo.borrow()
 				.get_container(&format!("sid_{}",n)).unwrap().borrow().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
-		let (v_sid_sigs, v_sid_dnf_id, v_sid_dnf_step, v_sid_dnf_count, 
+		let (_v_sid_sigs, _v_sid_dnf_id, _v_sid_dnf_step, v_sid_dnf_count, 
 			v_sid_real_subsigs) = (&sid_cols[0], &sid_cols[1], &sid_cols[2], 
 				&sid_cols[3], &sid_cols[4]);
 		let n = v_sigs.len();
@@ -920,9 +996,10 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		let part1_2 = &f1_2 * &factor3;
 
 		for i in 0..n{
-			check_eq(&v_sid_dnf_id[i], &frg, "err sid dnf_id")?;
-			check_eq(&v_sid_dnf_step[i], &frg, "erro sid_dnf_step")?;
-			check_eq(&v_sid_sigs[i], &frg, "err id_sig")?;
+			//no need for constants check
+			//check_eq(&v_sid_dnf_id[i], &frg, "err sid dnf_id")?;
+			//check_eq(&v_sid_dnf_step[i], &frg, "erro sid_dnf_step")?;
+			//check_eq(&v_sid_sigs[i], &frg, "err id_sig")?;
 
 			let sig_prod = &v_sigs[i] * &factor2;
 			let dnf_id_prod = &v_dnf_id[i] * &factor;
@@ -1023,7 +1100,10 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 			}
 		}
 
-
+		if b_perf{
+			println!(" ### check discharge_subsig: sig: {}, subsigs: {}, cost: {}", self.capacity.sigs, self.capacity.subsigs, cs.num_constraints()-nc);
+		}
+			
 		Ok( () )
 
 	}

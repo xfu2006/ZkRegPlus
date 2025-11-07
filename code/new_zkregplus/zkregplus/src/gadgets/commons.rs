@@ -431,6 +431,67 @@ pub fn two_col_tbl_left_join<F:PrimeField>(
 	res
 }
 
+/// build vec of 8 elements [2^31, ... 2^248]
+pub fn build_pows_31<F:PrimeField>(cs: ConstraintSystemRef<F>)
+-> Vec<FpVar<F>>{
+	let f16 = new_const_var(&cs, F::from(1u32<<16));
+	let f15 = new_const_var(&cs, F::from(1u32<<15));
+	let f31 = &f16 * &f15;
+	let mut vec = vec![];
+	let mut item = f31.clone();
+	for _i in 0..8{
+		vec.push(item.clone());
+		item = &item * &f31;
+	}
+
+	vec
+}
+
+/// build vec of 4 elements [2^56, ... 2^(56*4)]
+pub fn build_pows_56<F:PrimeField>(cs: ConstraintSystemRef<F>)
+-> Vec<FpVar<F>>{
+	let f16 = new_const_var(&cs, F::from(1u32<<16));
+	let f6= new_const_var(&cs, F::from(1u32<<6));
+	let f56 = &f16 * &f16 * &f16 * &f16 * &f6;
+	let mut vec = vec![];
+	let mut item = f56.clone();
+	for _i in 0..4{
+		vec.push(item.clone());
+		item = &item * &f56;
+	}
+
+	vec
+}
+
+
+/// pack the check of 8 values into one check
+/// assuming that each element of vec is ALREADY IN RANGE 31-BIT
+/// COST is vec.len()/8
+/// ASSUMING vec_pows_31 has 8 elements [2^31, 2^62, 2^93 ..., 2^248]
+pub fn packcheck_vec<F:PrimeField>(vec: &Vec<FpVar<F>>, exp_val: &FpVar<F>,
+	pows_31: &Vec<FpVar<F>>)
+->Result<(),SynthesisError>{
+	assert!(pows_31.len()==8);
+	let cs = vec[0].cs();
+	let c1 = new_const_var(&cs, F::one());
+	let mut total_exp = c1.clone();
+	for i in 0..8{ total_exp = &total_exp + &(exp_val * &pows_31[i]); }
+
+	for i in 0..vec.len()/8{//note mul with const does not cost
+		let mut total_var = c1.clone();
+		for j in 0..8{ total_var = &total_var + &(&vec[i*8 + j]*&pows_31[j]); }
+		check_eq(&total_var, &total_exp, "failed vec check")?;
+	}
+	//check the remaining
+	let start = vec.len()/8 * 8;
+	for i in start..vec.len(){
+		check_eq(&vec[i], exp_val, "failed vec check part 2")?;
+	}
+	Ok( () )
+}
+
+
+
 /// assert that the table is sorted in keys and values (per key)
 pub fn assert_wellformed_sorted_two_col_tbl<F:PrimeField>(tbl: &Vec<Vec<F>>){
 	assert_wellformed_sorted_two_col_tbl_adv(tbl, false);
