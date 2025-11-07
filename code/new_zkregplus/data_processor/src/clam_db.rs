@@ -49,8 +49,8 @@ pub const STATE_BIT:usize =  24;
 /// The bit-width of RANGE2 table 
 /// IN PRODUCTION NEEDS TO CHANGE THE SAME SIZE OF STATE_BIT
 //pub const RANGE2_BIT: usize = 10;
-//pub const RANGE2_BIT: usize = 8;
-pub const RANGE2_BIT: usize = 18;
+pub const RANGE2_BIT: usize = 8;
+//pub const RANGE2_BIT: usize = 18;
 //pub const RANGE2_BIT: usize = 26; //(allowing 64M nibbles = 32MB)
 
 // the following are trival related sub-table ids
@@ -1337,6 +1337,7 @@ impl <F:PrimeField> ClamavDB<F>{
 				let tuples = sig.vec_subsig_automaton.iter().enumerate()
 				.map(|(subsig_id,dfa)|{
 					let tbl_id = Self::dfa_id(*sig_id as u32, subsig_id as u32);
+					println!("DEBUG USE 8877.2: produce dfa for {}, subsig_id: {}", sig_name, subsig_id);
 					Self::gen_dfa_lkup(&dfa, tbl_id)
 				}).flatten().collect::<Vec<(F,F)>>();
 

@@ -1,4 +1,5 @@
-/* Created 07/16/2025, Completed: 07/27/2025 */
+/* Created 07/16/2025, Completed: 07/27/2025
+	Revised 11/06/2025: improve efficiency*/
 
 //! This module dischages a nibble sequence against a collection
 //! of DFAs (each one-to-one corresponding to a subsignature),

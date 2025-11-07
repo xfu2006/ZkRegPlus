@@ -21573,8 +21573,53 @@ Thursday 11/06/2025
 LOC (gadgets): 16850
 Goal 1.  last validate function
 	[a] 532 -> 457
-	[b] 
+	[b] -> 407
+	[c] update profile
+Goal 2. compare performance
+---- PERFORMANCE DATA ---------------- ID: 011 (after compute_sig_adv)
+nlen = 32k
+module 13: 700 (saved 300) 
+qry cost (compare DEBUG 1201): 2.86-1.01M = 1.86M (same)
+combined key size: 8251791 -> 8250210: saved 1k
+(max_row_col: 4.43M -> 4.43M same) 
+ERFORAMNCE 1003: n_case1: (6496, 0.74%), n_case2: (385974, 43.96%), n_case3: (485545, 55.30%)
+==> 
+PERFORAMNCE 1003: n_case1: (6593, 0.75%), n_case2: (386039, 43.97%), n_case3: (485383, 55.28%)
 
--- TODO last validate function
+Next to improve: Dfa: 1008-437k = 573k
+===================
 
+Goal 2. plan for Dfa improvement
+	[a] print how many subsigs
+	[b] current cost: 3 * subsigs * nlen
+	[c] main focus should be cutting the factor of 3.
+	looks like we can cut from 3mn to 2mn, but no better than that.
+	[d] in practice: 
+		nlen = 32k
+		subsigs = 6
+		so we have 32k * 6 * 3 = around 600k
+		This will save 180k. but no more than that.
+	[e] but we maybe handling 4 transitions at the same time
+		still 4-trans per big num
+		(1) 4-trans multiply into big num 1 constraint because it's
+			const
+		(2) 12 states mutiply constants into one big trans
+			1 constraint
+		--> so we have 2 constraints per 4 transitions. 
+		then it's 1.5mn cost
+		32k * 6 * 1.5 = 300k. Which is very reasonable cost.
+
+Friday 11/07/2025
+Goal 1. check how DFAs are created for each sig
+	[a] it does process each subsig_id of the DFA
+	[b] check how many subsigs are there and dump the sig names
+		-> altogether 32 DFAs
+		worst case 32*32*0.75 = 700kb
+		average 2 DFA
+		exapmle: Email.Phishing.VOF1-6314020-0 -> actually only
+			one automata
+		Doc.Dropper.Agent-6330744-0 -> dishcarge subsig 3
+		Pdf.Exploit.APSB16_26-1 -> discharge one of them
+
+Goal 2. Idea
 
