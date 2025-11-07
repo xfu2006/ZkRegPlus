@@ -17,10 +17,10 @@ use folding_schemes::folding::foldpot::{
 	container_config::{ContainerConfig},
 	circuits_super::field_to_usize,
 };
-use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef};
+use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef,Variable,LinearCombination};
 use ark_r1cs_std::{
 	fields::{
-		//FieldVar,
+		FieldVar,
 		fp::FpVar
 	},
 	alloc::AllocVar,
@@ -40,7 +40,7 @@ use utils::{data::{u8_to_hex}};
 use crate::gadgets::{
 	commons::{mix_vec,new_const_var, check_eq,encode_cols_better,gen_m_table,
 		encode_cols_var_adv_better , packcheck_vec, build_pows_31,
-		build_pows_56},
+		build_pows_56, var_to_lb},
 	traits::{Container,
 		Col,
 		IDX_WORD, IDX_INP,IDX_DATA, IDX_DISCHARGED_SIGS,
@@ -727,7 +727,7 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		//1. check the relations between v_sig, v_subsig,
 		//v_raw_subsig and v_dfa_id
 		//COST: 6n (where n = subsigs, in practice this is small: <10)
-		let b_perf = true;
+		let b_perf = false;
 		let nc = cs.num_constraints();
 		let n = self.capacity.subsigs;
 		let (zero,one) = (new_const_var(&cs, F::zero()), 
@@ -936,8 +936,8 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 
 	/// validate all given ipu_sigs are DISCHARGED correctly.
 	///
-	/// COST: 2*n1 +  22*n
-	/// where (n1 = num of sigs, n = num of subsigs)
+	/// COST: 9*n1 +  14*n2
+	/// where (n1 = num of sigs, n2 = num of subsigs)
 	/// typically this is very small, n1 <4, n<10 => cost<300.
 	/// this is adapted from the same function from compute_adv_sig.rs
 	/// Here we made some simplification that there is no additional
@@ -951,8 +951,8 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
 		//0. retrieve data from combo
-		let b_debug = true;
-		let b_perf = true;
+		let b_debug = false;
+		let b_perf = false;
 		let nc = cs.num_constraints();
 		let (zero,one)=(new_const_var(&cs,F::zero()),
 			new_const_var(&cs,F::one()));
@@ -981,7 +981,7 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		//1. check the validity of sid cols (sequential as circ does not
 		//allow parallelism)
 		//
-		// Cost: 5n
+		// Cost: 5n -> 2n
 		let info_id:u32 = 0x98882405; 
 		let f1_val = F::from(info_id);
 		let factor_val = F::from(0x100000000 as u64); //32-bit 
@@ -1020,8 +1020,9 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		// NOTE that the validity of v_dnf_step, ... columns are proved
 		// already via v_sid columns in step 1.
 		//
-		// COST: 6n + 3
+		// COST: 5n + 3
 		check_eq(&v_sigs[0], &zero, "we require one dummy entry at begin")?;
+		let lb_zero= LinearCombination::from((F::zero(),Variable::One));
 		for i in 1..n{
 			let b_new_row = v_sigs[i].is_neq(&v_sigs[i-1])?;
 			let i_new_row: FpVar<F> = b_new_row.into();
@@ -1034,8 +1035,15 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 				//(c) previous row equals to count
 				&(&v_dnf_step[i-1] + &one - &v_dnf_count[i-1])
 			);
-			let res = &res * &v_sigs[i]; //ignore zero entries
-			check_eq(&res, &zero, "fails well-formed check")?;
+			//let res = &res * &v_sigs[i]; //ignore zero entries
+			//check_eq(&res, &zero, "fails well-formed check")?;
+			let lb_res = var_to_lb(&res, F::one());
+			let lb_sig = var_to_lb(&v_sigs[i], F::one());
+			cs.enforce_constraint(
+				lb_res,
+				lb_sig,
+				lb_zero.clone()
+			)?;
 		}
 
 
@@ -1045,7 +1053,7 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		// as the structure of subsigs are different between the 
 		// two components.
 		//
-		// COST: 8n 
+		// COST: 4n 
 		let bits = RANGE2_BIT;
 		let bit_part1 = bits*2/3; //16 for accomodating 64k sigs for bits 24
 		let bit_part2 = bits - bit_part1;
@@ -1057,9 +1065,10 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 				sig_id*&fac2 + real_subsig_id
 		}).collect::<Vec<FpVar<F>>>();
 
+		let f_unit = FpVar::<F>::constant(F::from(1u32<<RANGE2_BIT));
 		let src = encode_cols_var_adv_better(
 			&vec![&v_computed_subsig[..], &vec![f_false.clone(); n][..]],
-			&vec![0,1], &r1
+			&vec![0,1], &f_unit
 		);
 		//pad (0,1) for dummy entry
 		//NOTE that here we assume that there are no SubsigCounterConstriant
@@ -1073,7 +1082,7 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		let pad_res = [&subsig_result[..], &vec![f_false][..]].concat();
 		let dst = encode_cols_var_adv_better(
 			&vec![&pad_subsigs[..], &pad_res[..]],
-			&vec![0,1], &r1
+			&vec![0,1], &f_unit
 		);
 		let mtbl_lkup_res = discharge_sig_combo.borrow()
 			.get_container("mtbl_lk_res").unwrap().borrow().to_vec();
@@ -1178,11 +1187,16 @@ impl <F:PrimeField> SigmaGadget<F> for DfaAdvGadget<F>{
 	//TOTAL COST: (m- subsigs, n: nibble length, s = sigs) 
 	// - note that subsigs are 
 	// usually small
-	// 14m + 3mn + 2s + 22m  = 36m + 2s + 3mn
+	// 10*m + mn*3/8 + 9*s + 14*m
+	// 3/8*mn + 24m + 9*s
+	// in practice: m<20, s<5. So the major cost is
+	// 3/8 *mn
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{
 		//1. retrive the statement instance and get all parts
+		let b_perf = true;
+		let nc = cs.num_constraints();
 		let cfg = self.get_container_cfg().expect("container cfg not set!");
 		let stmt = Container::<FpVar<F>>::load_from(i, wtns_cfg, wtns, &cfg)?;
 		let r1 = wtns.msg2[0].clone();
@@ -1197,6 +1211,14 @@ impl <F:PrimeField> SigmaGadget<F> for DfaAdvGadget<F>{
 		self.validate_discharge_sig_combo(&mul_fsm_acc,
 			&sig_res_combo, r1.clone(), r2.clone(), cs.clone())?;
 
+		if b_perf{
+			println!(" ### dfa_adv: sigs: {}, subsigs: {}, nlen: {}, cost: {}",
+				self.capacity.sigs,
+				self.capacity.subsigs,
+				self.capacity.max_nibble_len,
+				cs.num_constraints()-nc
+			);
+		}
 		Ok(())
 	}
 }
