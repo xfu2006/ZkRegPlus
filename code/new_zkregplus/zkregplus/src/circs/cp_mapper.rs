@@ -739,7 +739,9 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 			vec![zero], //act_wrd_len
 			// -- the fsm gadget generated data
 			vec![f_char; nlen], //the extracted word
-			vec![f_crit_states; nlen-1], //the states
+			//vec![f_crit_states; nlen-1], //the states
+			vec![f_range2; nlen-1], //ONLY need to bind it to rg2
+									//transition sid will ENFORCE the state
 			vec![f_crit_trans; nlen], //the transitions
 			// -- the pack gadget generated data
 			advice.packfinal_crit_advice

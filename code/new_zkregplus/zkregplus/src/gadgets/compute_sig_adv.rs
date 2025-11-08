@@ -1417,7 +1417,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 	) ->Result<(), SynthesisError>{
 		//0. retrieve data from combo
 		let b_debug = false;
-		let b_perf = true;
+		let b_perf = false;
 		let nc = cs.num_constraints();
 		let (zero,one)=(new_const_var(&cs,F::zero()),new_const_var(&cs,F::one()));
         let max_val:usize = (1<<RANGE2_BIT) - 1;

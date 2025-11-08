@@ -15,11 +15,12 @@ use ark_r1cs_std::{
 		fp::FpVar
 	},
 	alloc::AllocVar,
-	eq::EqGadget,
+	//eq::EqGadget,
 //	R1CSVar,
 };
 use std::any::Any;
 use data_processor::hex_acdfa::HexACDFA;
+use crate::gadgets::commons::{build_pows_56,check_eq,new_const_var};
 
 #[allow(dead_code)]
 /// This gadget is responsible for checking transitions
@@ -132,14 +133,15 @@ impl <F:PrimeField> SigmaGadget<F> for FsmGadget<F>{
 		vec![]
 	}
 
-	//COST: r1cs: 1*nlen, vars: 0
-	// nlen = nibble len
+	//COST: r1cs: 1/4 * nlen, vars: 0
+	// nlen = nibble len -> improved to nlen/4
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{
 		let b_debug = false;
 		let nc = cs.num_constraints();
 		let nv = cs.num_witness_variables();
+		let one = new_const_var(&cs, F::one());
 
 		//1. retrive the statement instance and get all parts
 		let (stmt_idx, _, _, _) = cfg.get_gadget_indices(i);
@@ -188,27 +190,53 @@ impl <F:PrimeField> SigmaGadget<F> for FsmGadget<F>{
 // 		}
 
 		//4. assert all transitions in range
+		// IMPROVED to nlen/4 (using the trick from dfa_adv.rs
+		// basic idea is that as the range of char-state-state
+		// is controlled, the transition is guranteed to be no more than
+		// 56-bit. we can pack checking 4 transitions in just one round
 		let unit_var = FpVar::<F>::new_constant(cs.clone(),
 			F::from((1<<(self.acdfa_state_part_bits+4)) as u32))?;
 		let hex_var = FpVar::<F>::new_constant(cs.clone(),
 			F::from(16 as u32))?;
-		for i in 0..nlen{
-			let ch = &data_seg[i];
-			let st1 = &states[i]; //already plus one
-			let st2 = &states[i+1];
-			// simulate clam_db.rs: add_acdfa_to_lkup
+		let pows_51 = build_pows_56(cs.clone());
+		for i in 0..nlen/4{
+			let start = i * 4;
+			let mut sum_trans = one.clone();
+			let mut sum_exp = one.clone();
+			for j in 0..4{//check every 4 transitions
+				let idx = start + j;
+				let ch = &data_seg[idx];
+				let st1 = &states[idx]; //already plus one
+				let st2 = &states[idx+1];
+				// simulate clam_db.rs: add_acdfa_to_lkup
+				let exp_trans = ch + 
+					&(st1 * &hex_var) +
+					&(st2 * &unit_var); //no need to plus one, already did
+				let trans = &data_seg[2*nlen-1 + idx];
+				sum_trans = &sum_trans + &(&pows_51[j] * trans); //cost 
+					//nothing because mul with constant!
+				sum_exp = &sum_exp + &(&pows_51[j] * &exp_trans); 
+
+				#[cfg(test)]{
+					use ark_r1cs_std::{R1CSVar};
+					if exp_trans.value().is_ok(){
+						assert!(exp_trans.value()?==trans.value()?);
+					}
+				}
+			}//end for j
+			check_eq(&sum_trans, &sum_exp,  "ERROR checking trans")?;
+		}
+
+		//IF nlen is not multiple of 4
+		for idx in nlen/4*4 .. nlen{
+			let ch = &data_seg[idx];
+			let st1 = &states[idx]; //already plus one
+			let st2 = &states[idx+1];
 			let exp_trans = ch + 
 				&(st1 * &hex_var) +
 				&(st2 * &unit_var); //no need to plus one, already did
-			let trans = &data_seg[2*nlen-1 + i];
-			exp_trans.enforce_equal(trans)?;
-
-			#[cfg(test)]{
-				use ark_r1cs_std::{R1CSVar};
-				if exp_trans.value().is_ok(){
-					assert!(exp_trans.value()?==trans.value()?);
-				}
-			}
+			let trans = &data_seg[2*nlen-1 + idx];
+			check_eq(&exp_trans, &trans, "ERROR checking trans part2")?;
 		}
 
 //		This part is NOT needed as trans id is constant in IRCUIT

@@ -21610,7 +21610,7 @@ Goal 2. plan for Dfa improvement
 		32k * 6 * 1.5 = 300k. Which is very reasonable cost.
 
 Friday 11/07/2025
-LOC (gadgets): 16850
+LOC (gadgets): 16850 -> 17019 (+280)
 Goal 1. check how DFAs are created for each sig
 	[a] it does process each subsig_id of the DFA
 	[b] check how many subsigs are there and dump the sig names
@@ -21661,4 +21661,20 @@ next to improve: FsmGadget: 49k-17k = 32k
 ===================
 
 	
-
+Saturday 11/08/2025
+LOC: (gadgets): 17019
+Goal 1. improve the fsm gadget
+	[a] unit testing
+	[b] regression test 1
+	[c] regression test 2
+---- PERFORMANCE DATA ---------------- ID: 013 (after fsm improvement)
+nlen = 32k
+module 3: 32k -> 8k (imporved 75%!)
+qry cost (compare DEBUG 1201): 1.93M - 464= 1.47M (roughly the same)
+combined key size: 6797636->6750020: (saved 50k)
+(max_row_col: 3.86M->3.86M  (not much change)
+PERFORAMNCE 1003: n_case1: (6618, 0.75%), n_case2: (576515, 65.66%), n_case3: (294882, 33.59%)
+--> 
+PERFORAMNCE 1003: n_case1: (6618, 0.75%), n_case2: (576515, 65.66%), n_case3: (294882, 33.59%) [not much change]
+next to improve: FsmAdvGadget: module 10: 348k-231k = 117k
+===================
