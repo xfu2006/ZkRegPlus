@@ -21678,3 +21678,5 @@ PERFORAMNCE 1003: n_case1: (6618, 0.75%), n_case2: (576515, 65.66%), n_case3: (2
 PERFORAMNCE 1003: n_case1: (6618, 0.75%), n_case2: (576515, 65.66%), n_case3: (294882, 33.59%) [not much change]
 next to improve: FsmAdvGadget: module 10: 348k-231k = 117k
 ===================
+
+Goal 2. improve fsm_adv 3n -> 1.25n

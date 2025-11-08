@@ -1,4 +1,6 @@
-/* Created 03/03/2025 */
+/* Created 03/03/2025 
+  revised 11/08/2025 -> improved the constraint cost to 1/4 * nlen
+*/
 
 use std::rc::{Rc};
 use ark_ff::{PrimeField};
