@@ -231,7 +231,7 @@ impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
 		// thus convincing: (1) all inp_states can be found in unique states
 		//, and (2) all unique states can be found in inp_states (pad with 0)
 		// NOTE: no need to check subtbl_ids, as based on fixed
-		//COST: ilen + 6*mlen 
+		//COST: ilen + 6*mlen  (ilen is the max-nibble-len)
 		//3.1 assert log up
 		//COST: ilen + 2*mlen
 		let _zero_var= FpVar::<F>::new_constant(cs.clone(), F::zero())?;

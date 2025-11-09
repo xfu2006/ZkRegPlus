@@ -893,6 +893,43 @@ pub fn check_increase<F:PrimeField>(vec: &Vec<FpVar<F>>)
 	Ok( () )
 }
 
+/// pack the check of 8 values into one check
+/// assuming that each element of vec is ALREADY IN RANGE 31-BIT
+/// COST is vec.len()/4
+/// ASSUMING vec_pows_31 has 8 elements [2^31, 2^62, 2^93 ..., 2^248]
+pub fn packcheck_increase<F:PrimeField>(vec: &Vec<FpVar<F>>, 
+	pows_31: &Vec<FpVar<F>>)
+->Result<(),SynthesisError>{
+	assert!(pows_31.len()==8);
+	let cs = vec[0].cs();
+	let c1 = new_const_var(&cs, F::one());
+	let c0 = new_const_var(&cs, F::zero());
+	let vec_inc = (0..8).into_iter().map(|i|
+		new_const_var(&cs, F::from( i as u32))
+	).collect::<Vec<FpVar<F>>>();
+
+	for i in 0..vec.len()/8{//note mul with const does not cost
+		let mut total_exp = c0.clone();
+		for j in 0..8{ total_exp = &total_exp + 
+			&( &(&vec[i*8] +&vec_inc[j]) * &pows_31[j]); }
+		let mut total_var = c0.clone();
+		for j in 0..8{ total_var = &total_var + &(&vec[i*8 + j]*&pows_31[j]); }
+		check_eq(&total_var, &total_exp, "failed vec check inc")?;
+		if i>0{
+			check_eq(&(&vec[i*8]-&vec[i*8-1]), &c1, "failed conn check inc")?;
+		}
+	}
+	//check the remaining
+	let start = vec.len()/8 * 8;
+	for i in start..vec.len()-1{
+		if i>0{
+			check_eq(&(&vec[i+1]-&vec[i]), &c1, "failed inc check part 2")?;
+		}
+	}
+	Ok( () )
+}
+
+
 /// Check two fp_var equal. Cost 1 gate.
 pub fn check_eq<F:PrimeField>(v1: &FpVar<F>, v2: &FpVar<F>, _msg: &str)
 ->Result<(),SynthesisError>{

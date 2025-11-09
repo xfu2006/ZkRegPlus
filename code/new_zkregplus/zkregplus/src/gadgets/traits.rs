@@ -112,8 +112,15 @@ impl <F: Clone> Col<F>{
 	pub fn new_const(data: Vec<F>, name: &str, idx_seg: usize)
 	->Rc<RefCell<Self>>{
 		//set to not resolved yet, it will be set to true in adjust_loc
+		#[cfg(test)]{
+			let ele1 = data[0];
+			for i in 0..data.len(){
+				assert!(data[i] == ele1);
+			}
+		}
 		let loc = Location{src:(0,0,0,data.len(), String::new(), false), 
 			dest: Some((idx_seg,0,data.len()))}; //revisable later
+		
 		let name = format!("{}", name);
 		let b_const = true;
 		let cfg = ContainerConfig::Column(loc, name.to_string(), 

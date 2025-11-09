@@ -12,7 +12,8 @@ use folding_schemes::folding::foldpot::{
 	container_config::{ContainerConfig},
 	circuits_super::field_to_usize,
 };
-use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef};
+use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef,Variable,
+	LinearCombination};
 use ark_r1cs_std::{
 	fields::{
 		FieldVar,
@@ -29,8 +30,9 @@ use data_processor::{
 	type_def::{SubsigPatternStore},
 };
 use crate::gadgets::{
-	commons::{check_eq,check_increase,gen_m_table,new_const_var,
-		is_zero_better, new_var},
+	commons::{check_eq,gen_m_table,new_const_var,
+		is_zero_better, new_var, build_pows_56, build_pows_31,
+		packcheck_increase, var_to_lb},
 	traits::{Container,Col,IDX_WORD, IDX_INP,IDX_DATA, IDX_SI_INP, 
 		IDX_OUP, IDX_SI_OUP, IDX_SI_DATA,ComponentAdvice},
 	db::{assert_logup,verify_encoded_table,assert_well_formed_sorted,col_to_sorted_set, verify_col_to_sorted_set, tbl_filtered_to_sorted_tbl, verify_tbl_filtered_to_sorted_tbl,tbl_to_sorted_tbl, verify_tbl_to_sorted_tbl, tbl_left_join, verify_tbl_left_join},
@@ -664,7 +666,7 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 	/// COST: (nlen - nibble len, alen - acc_states_ratio * neln
 	///         note acc_states are ALL acc states even including
 	///         non-related sigs. This average is 5% in real data.)
-	///    3*nlen + 5*alen
+	///    2.5*nlen + 6*alen
 	fn validate_fsm_acc_container(&self, fsm_acc: &Container<FpVar<F>>, r1: FpVar<F>, _r2: FpVar<F>, cs: ConstraintSystemRef<F>)
 	->Result<(), SynthesisError>{
 		//1. asserts all states and transitions must be in range
@@ -707,6 +709,7 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		//2. assert correctness of building transition as weighted sum
 		// of src, char, dst states
 		// COST 2*nlen
+		// --> IMPROVED to: 2*1/4*nlen = 1/2 * nlen
 		let unit_var = FpVar::<F>::new_constant(cs.clone(),
 			F::from((1<<(self.capacity.acdfa_state_part_bits+4)) as u32))?;
 		let hex_var = FpVar::<F>::new_constant(cs.clone(),
@@ -715,21 +718,58 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		let states = fsm_acc.get_container("states")?.borrow().to_vec();
 		let trans = fsm_acc.get_container("trans")?.borrow().to_vec();
 		assert!(chars.len()==nlen && states.len()==nlen+1 && trans.len()==nlen);
-		for i in 0..nlen{
-			let ch = &chars[i];
-			let st1 = &states[i]; //already plus one
-			let st2 = &states[i+1];
-			// simulate clam_db.rs: add_acdfa_to_lkup
+		let pows_51 = build_pows_56(cs.clone());
+		let one = new_const_var(&cs, F::one());
+		for i in 0..nlen/4{
+			let start = i * 4;
+			let mut sum_trans = one.clone();
+			let mut sum_exp = one.clone();
+			for j in 0..4{//check every 4 transitions
+				let idx = start + j;
+				let ch = &chars[idx];
+				let st1 = &states[idx]; //already plus one
+				let st2 = &states[idx+1];
+				// simulate clam_db.rs: add_acdfa_to_lkup
+				let exp_trans = ch + 
+					&(st1 * &hex_var) +
+					&(st2 * &unit_var); //no need to plus one, already did
+				let trans = &trans[idx];
+				//check_eq(&trans, &exp_trans, 
+				//&format!("checking transition {} ", i))?;
+				sum_trans = &sum_trans + &(&pows_51[j] * trans); //cost 
+					//nothing because mul with constant!
+				sum_exp = &sum_exp + &(&pows_51[j] * &exp_trans); 
+
+				#[cfg(test)]{
+					if exp_trans.value().is_ok(){
+						assert!(exp_trans.value()?==trans.value()?);
+					}
+				}
+			}//end for j
+			check_eq(&sum_trans, &sum_exp,  "ERROR checking trans")?;
+		}
+		//IF nlen is not multiple of 4
+		for idx in nlen/4*4 .. nlen{
+			let ch = &chars[idx];
+			let st1 = &states[idx]; //already plus one
+			let st2 = &states[idx+1];
 			let exp_trans = ch + 
 				&(st1 * &hex_var) +
 				&(st2 * &unit_var); //no need to plus one, already did
-			let trans = &trans[i];
-			check_eq(&trans, &exp_trans, 
-				&format!("checking transition {} ", i))?;
+			let trans = &trans[idx];
+			check_eq(&exp_trans, &trans, "ERROR checking trans part2")?;
 		}
+
+
 		let locs = fsm_acc.get_container("locs")?.borrow().to_vec();
 		assert!(locs.len()==nlen+1);
-		check_increase(&locs)?;
+		//check_increase(&locs)?;
+		//optimized to: as locs are already guarnateed to be less than
+		//26 bit, use packcheck_increase() instead
+		//cut cost to 1/4 of nlen
+		let pows_31 = build_pows_31(cs.clone());
+		packcheck_increase(&locs, &pows_31)?;
+
 
 		//3. check the validity of final states
 		//3.1 build a vec_dummy array to indicate the dummy entries
@@ -771,12 +811,13 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		}
 
 		//3.2 use sid_states_final to sum up the logup equation LHS
-		//COST: nlen
+		//COST: 2*nlen
 		let mut lhs_sum = zero_var.clone();
 		assert!(states.len()==nlen+1);
 		let unit_cvar = new_const_var(&cs, F::from(1u32<<RANGE2_BIT));
 		let f_id_non_final = F::from(self.fsm_id+1);
 		let non_final_cvar = new_const_var(&cs, f_id_non_final); 
+		let lb_one= LinearCombination::from((F::one(),Variable::One));
 		for i in 0..nlen{
 			//we skip item [0] because it's handled in
 			//the last round
@@ -789,6 +830,14 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 			let item_val = item.value()?;
 			let inv = item_val.inverse().expect("INV err");
 			let inv_var = new_var(&cs, inv);
+			let lb_item = var_to_lb(&item, F::one());
+			let lb_inv = var_to_lb(&inv_var, F::one());
+			//check_eq(&(&item *&inv_var), &one, "inv failed")?;
+			cs.enforce_constraint(
+				lb_item,
+				lb_inv,
+				lb_one.clone()
+			)?;
 			let sel = &si_states[i+1] - &non_final_cvar; 
 			lhs_sum = &lhs_sum + &inv_var * &sel;
 			if i%64==0{
@@ -798,7 +847,7 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		}
 
 		//3.3 use vec_not_dummy[i] to sum up the Logup RHS 
-		//COST: alen
+		//COST: 2*alen
 		let mut rhs_sum = zero_var.clone();
 		assert!(vec_not_dummy.len()==alen);
 		assert!(locs_final.len()==alen);
@@ -807,6 +856,14 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 			let item_val = item.value()?;
 			let inv = item_val.inverse().expect("INV err");
 			let inv_var = new_var(&cs, inv);
+			let lb_item = var_to_lb(&item, F::one());
+			let lb_inv = var_to_lb(&inv_var, F::one());
+			//check_eq(&(&item *&inv_var), &one, "inv failed")?;
+			cs.enforce_constraint(
+				lb_item,
+				lb_inv,
+				lb_one.clone()
+			)?;
 			rhs_sum = &rhs_sum + &inv_var * &vec_not_dummy[i];
 		}
 		check_eq(&lhs_sum, &rhs_sum, "logup check fails")?;
@@ -1066,7 +1123,7 @@ impl <F:PrimeField> SigmaGadget<F> for FsmAdvGadget<F>{
 
 	/// COST (nlen - nibble len, alen - perc of accepted states * trace len
 	///     note that accepted states are for all
-	/// nlen*(3+9*ratio_acc_states + 45*ratio_pats + 7*ratio_unique_states)
+	/// nlen*(2.5+9*ratio_acc_states + 45*ratio_pats + 7*ratio_unique_states)
 	///  + subsig *(1+ 55*avg_pats_per_subsig)
 	/// REAL DATA:  average
 	/// ratio_acc_states < 6%  (max 30%)

@@ -21662,7 +21662,7 @@ next to improve: FsmGadget: 49k-17k = 32k
 
 	
 Saturday 11/08/2025
-LOC: (gadgets): 17019
+LOC: (gadgets): 17019 -> 17143 (+130)
 Goal 1. improve the fsm gadget
 	[a] unit testing
 	[b] regression test 1
@@ -21680,3 +21680,30 @@ next to improve: FsmAdvGadget: module 10: 348k-231k = 117k
 ===================
 
 Goal 2. improve fsm_adv 3n -> 1.25n
+	[a] imporve transition
+	[b] regression test
+
+Goal 3. check increase
+	[a] declare packcheck_increase
+	[b] test
+	[c] regression test
+
+Goal 4. think about improving
+	logup check of  -> looks no way to check
+	and we need to correct the code which adds n cost
+	--> this only slightly increased from 3n -> 2.5 n
+
+---- PERFORMANCE DATA ---------------- ID: 014 (after slight fsm_adv improv)
+nlen = 32k
+module 10: 117k -> (320k-217k = 103k) [imporved 15k] 
+qry cost (compare DEBUG 1201): 1.91M - 435k= 1.47M (roughly the same)
+combined key size: 6797636-> 6721448 : (saved 50k)
+(max_row_col: 3.86M->3.86M  (not much change)
+PERFORAMNCE 1003: n_case1: (6618, 0.75%), n_case2: (576515, 65.66%), n_case3: (294882, 33.59%) [not much change]
+-> 
+PERFORAMNCE 1003: n_case1: (6618, 0.75%), n_case2: (576515, 65.66%), n_case3: (294882, 33.59%)
+Next to improve: PackFinalGadget: 61k-25k = 36k -> no more room to improve
+===================
+
+TODO: check the next step: logup check cost in sonobe (check new_const
+	column to vec would make it easier?)
