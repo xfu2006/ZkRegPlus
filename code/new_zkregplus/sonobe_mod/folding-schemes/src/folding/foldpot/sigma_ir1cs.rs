@@ -1915,9 +1915,18 @@ impl <F:PrimeField> WitnessSigmaIR1CS<F>{
 			let start = vec_starts[i];
 			let frag = &st_part2[start..start+ulen];
 			if b_const{
-				frag.iter().map(|f|
-					FpVar::<F>::new_constant(cs.clone(), f.clone()).unwrap()
-				).collect::<Vec<FpVar<F>>>()
+				#[cfg(test)]{
+					let ele1 = frag[0];
+					for i in 0..frag.len(){
+						assert!(frag[i]==ele1);
+					}
+				}
+				//frag.iter().map(|f|
+				//	FpVar::<F>::new_constant(cs.clone(), f.clone()).unwrap()
+				//).collect::<Vec<FpVar<F>>>()
+				let var = FpVar::<F>::new_constant(cs.clone(), frag[0].clone())
+					.unwrap();
+				vec![var; frag.len()]
 			}else{
 				frag.iter().map(|f|
 					FpVar::<F>::new_witness(cs.clone(), || Ok(f)).unwrap()
@@ -2868,8 +2877,10 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		//3. add all constraints by components
 		for (i,g) in self.gadgets.iter().enumerate(){
+			let (nc, ni, nv) = (cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables());
 			g.borrow().assert_msg3(i, cs.clone(), &wtns_var, &cfg)?;
-			println!("DEBUG USE 7103: after msg3 of module {}: {}:  constraints: {}", i, g.borrow().get_name(), cs.num_constraints());
+			let stmt_len = g.borrow().get_msg_size().0;
+			println!("DEBUG USE 7103: after msg3 of module {}: {}:\n\tINCREASED: constraints: {}, const vars: {}, wit vars: {} ==> NOW:\n\tCS:{}, const: {}, witness: {}\n\t\n\t ==> stmt_size: {} ", i, g.borrow().get_name(), cs.num_constraints()-nc, cs.num_instance_variables()-ni, cs.num_witness_variables()-nv, cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables(), stmt_len);
 		}
 		if b_debug{
 			let csat = cs.is_satisfied();
@@ -3518,6 +3529,9 @@ pub mod tests_sigma_ir1cs{
 	}
 
 	impl <F:PrimeField> SigmaGadget<F> for VerCubicGadget<F>{
+		fn get_container_config(&self)->ContainerConfig{
+			unimplemented!("not needed. legacy code")
+		}
 		fn get_name(&self)->&str{
 			"VerCubicGadget"
 		}
@@ -3594,6 +3608,9 @@ pub mod tests_sigma_ir1cs{
 	}
 
 	impl <F:PrimeField> SigmaGadget<F> for VerSquareGadget<F>{
+		fn get_container_config(&self)->ContainerConfig{
+			unimplemented!("not needed. legacy code")
+		}
 		fn get_name(&self)->&str{
 			"VerSquareGadget"
 		}
@@ -3666,6 +3683,11 @@ pub mod tests_sigma_ir1cs{
 	}
 
 	impl <F:PrimeField> SigmaGadget<F> for CounterIOGadget<F>{
+
+		fn get_container_config(&self)->ContainerConfig{
+			unimplemented!("not needed. legacy code")
+		}
+
 		fn get_name(&self)->&str{
 			"CounterIOGadget"
 		}

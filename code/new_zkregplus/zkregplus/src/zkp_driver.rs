@@ -622,8 +622,8 @@ pub mod tests_zkp_driver{
 			basis_unique_states,
 			basis_acc_states,
 		);
-		let dfa_sigs = 3;
-		let dfa_subsigs= 6;
+		let dfa_sigs = 2;
+		let dfa_subsigs= 3;
 		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
 
 

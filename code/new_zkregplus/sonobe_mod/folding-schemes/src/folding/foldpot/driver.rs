@@ -1425,6 +1425,9 @@ pub mod tests_driver{
 	}
 
 	impl <F:PrimeField> SigmaGadget<F> for SumGadget<F>{
+		fn get_container_config(&self)->ContainerConfig{
+			unimplemented!("not needed. legacy code")
+		}
 		fn get_name(&self)->&str{
 			"SumGadget"
 		}

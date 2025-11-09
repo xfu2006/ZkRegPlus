@@ -21703,7 +21703,42 @@ PERFORAMNCE 1003: n_case1: (6618, 0.75%), n_case2: (576515, 65.66%), n_case3: (2
 -> 
 PERFORAMNCE 1003: n_case1: (6618, 0.75%), n_case2: (576515, 65.66%), n_case3: (294882, 33.59%)
 Next to improve: PackFinalGadget: 61k-25k = 36k -> no more room to improve
+47GB now.
 ===================
 
-TODO: check the next step: logup check cost in sonobe (check new_const
-	column to vec would make it easier?)
+Sunday 11/09/2025
+LOC (sonobe): 18956
+Goal 1. examine const_var generation to save cost
+	[a] find where it converts const colunn
+	[b] add unit testing code
+	[c] check data
+	[c] make changes
+Goal 2. check the handling of three cases -> 3 r1cs is correct
+Goal 3. check the number of variables created at each module
+	-> added variables is not that much
+Goal 4. print out the to_add_size of each variable
+	[a] print out msg size stmt len
+	[b] which adds more?
+Goal 5. use more reliastic size data for dfa (1sig - 2 subsigs)
+---> maybe do not store states at all and only transitions?
+---> we only need to check transitions, decompose states from transitions
+	because transitions are already proved to be success.
+	extracted part does not need sid check? --> actually we do need.
+	we do need to check range for states, transitions
+	so this is at least 2n.
+---- PERFORMANCE DATA ---------------- ID: 015 (after cutting config of dfa_adv)
+nlen = 32k
+module 14: 70k-> 35k [cut half]
+qry cost (compare DEBUG 1201): 1.49MM - 400kk= 1.00M (cut 400k!)
+	--> coz dfa query table is costly. each dfa costs over 100k
+		-> 3 dfas saving 300k
+combined key size: 6797636-> 5.6M: (saved 1.2M)
+(max_row_col: 3.86M->3.2M  (0.66M)
+PERFORAMNCE 1003: n_case1: (6618, 0.75%), n_case2: (576515, 65.66%), n_case3: (294882, 33.59%)
+-> 
+PERFORAMNCE 1003: n_case1: (6606, 0.96%), n_case2: (481277, 70.00%), n_case3: (199626, 29.04%)
+47GB now. ---> 41GB
+===================
+
+*** TODO: can be further compress without changing much on the structure?
+-> try NOT to save constant values? this might be saving 70% of sid tables.
