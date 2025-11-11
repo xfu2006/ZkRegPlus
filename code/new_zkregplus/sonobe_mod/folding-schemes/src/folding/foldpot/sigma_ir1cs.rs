@@ -927,9 +927,24 @@ impl StatementConfig{
 	}
 
 	pub fn total_size(&self)-> usize{
+		let b_perf = true;
 		let sub_table_size = self.input_size + self.output_size + 
 			self.data_size;
 
+		if b_perf{
+			println!(" ### Statement Total Size = inp: {} + oup: {} + data: {} + word: {} + lkup_share: {} x 3 + subtbl: {} + idx_inp: {} + failed_sig: {} + discharged_sig: {} +  mtbl_sigs: {}", 
+				self.input_size,
+				self.output_size,
+				self.data_size,
+				self.word_subseg_size,
+				self.lookup_share_size,
+				sub_table_size,
+				self.idx_inp,
+				self.failed_sigs_size,
+				self.discharged_sigs_size,
+				self.mtbl_sigs_size
+			);
+		}
 		self.input_size + self.output_size + self.data_size + 
 			self.word_subseg_size + self.lookup_share_size * 3
 			+ sub_table_size +  self.idx_inp 
@@ -1839,6 +1854,10 @@ impl WitnessSigmaIR1CSConfig{
 
 	/// get the total size if serialized into vector
 	pub fn get_total_size(&self)->usize{
+		let b_perf = true;
+		if b_perf{
+			println!(" ### WITNESS structure: stmt_size: {}, msg1: {}, msg2: {}, msg3: {}, zi_part2: {}, inv_hab22_left: {} inv_hab22_right: {}", self.statement_size, self.msg1_size, self.msg2_size, self.msg3_size, self.zi_part2_size, self.inv_hab22_left_size, self.inv_hab22_right_size);
+		}
 		self.cmF_size + self.extra_var_size + self.statement_size + 
 		self.msg1_size + self.msg2_size + self.msg3_size + 
 		self.zi_part2_size + 
@@ -2834,6 +2853,13 @@ where 	C: CurveGroup<ScalarField=F>,
 		//when b_debug is set, we call cs.is_satisfied() for debugging
 		//and print the stack use
 		//1. converts witness from extrenal_inputs to structured version
+		let perf_level = 2;
+		let (mut nc, mut nv) = (cs.num_constraints(), cs.num_witness_variables());
+		if perf_level>=1{
+			println!("-- -- gen_step_cs START: cs: {}, vars: {}",
+				cs.num_constraints(),
+				cs.num_witness_variables());
+		}
 		assert!(z_i.len()==2);
 		let configs = self.gadgets.iter().map(|g| g.borrow().get_msg_size())
 			.collect::<Vec<(usize, usize, usize, usize)>>();
@@ -2841,6 +2867,14 @@ where 	C: CurveGroup<ScalarField=F>,
 		assert!(cfg.get_total_size()==external_inputs.len(), "external_inputs.len: {} != cfg.total_size: {}", external_inputs.len(), cfg.get_total_size());
 		let wtns_var =  WitnessSigmaIR1CSVar::from_vec(&cfg, &external_inputs);
 		//println!("DEBUG USE 101: AFTER msg1: constraints: {}", cs.num_constraints());
+		if perf_level>=1{
+			println!("-- -- gen_step_cs step 1: cs: {}, vars: {}",
+				cs.num_constraints() - nc,
+				cs.num_witness_variables() - nv);
+				nc = cs.num_constraints();
+				nv = cs.num_witness_variables();
+			println!("-- -- ## witness: stmt: {}, msg1: {}, msg2: {}, msg3: {}", wtns_var.statement.len(), wtns_var.msg1.len(), wtns_var.msg2.len(), wtns_var.msg3.len());
+		}
 
 		//2. check message2 (ro over stmt and msg1)
 		let mut gi = 0;
@@ -2873,6 +2907,13 @@ where 	C: CurveGroup<ScalarField=F>,
 				cs.num_constraints(), get_stack_space()
 			);
 		}
+		if perf_level>=1{
+			println!("-- -- gen_step_cs step 2: cs: {}, vars: {}",
+				cs.num_constraints() - nc,
+				cs.num_witness_variables() - nv);
+				nc = cs.num_constraints();
+				nv = cs.num_witness_variables();
+		}
 
 
 		//3. add all constraints by components
@@ -2880,7 +2921,9 @@ where 	C: CurveGroup<ScalarField=F>,
 			let (nc, ni, nv) = (cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables());
 			g.borrow().assert_msg3(i, cs.clone(), &wtns_var, &cfg)?;
 			let stmt_len = g.borrow().get_msg_size().0;
-			println!("DEBUG USE 7103: after msg3 of module {}: {}:\n\tINCREASED: constraints: {}, const vars: {}, wit vars: {} ==> NOW:\n\tCS:{}, const: {}, witness: {}\n\t\n\t ==> stmt_size: {} ", i, g.borrow().get_name(), cs.num_constraints()-nc, cs.num_instance_variables()-ni, cs.num_witness_variables()-nv, cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables(), stmt_len);
+			if perf_level >= 2{	
+				println!("-- -- after msg3 of module {}: {}:\n\tINCREASED: constraints: {}, const vars: {}, wit vars: {} ==> NOW:\n\tCS:{}, const: {}, witness: {}\n\t\n\t ==> stmt_size: {} ", i, g.borrow().get_name(), cs.num_constraints()-nc, cs.num_instance_variables()-ni, cs.num_witness_variables()-nv, cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables(), stmt_len);						
+			}
 		}
 		if b_debug{
 			let csat = cs.is_satisfied();
@@ -2890,6 +2933,13 @@ where 	C: CurveGroup<ScalarField=F>,
 				"cs: {}, stack  =======, stack: {}"), 
 				cs.num_constraints(), get_stack_space()
 			);
+		}
+		if perf_level>=1{
+			println!("-- -- gen_step_cs step 3: cs: {}, vars: {}",
+				cs.num_constraints() - nc,
+				cs.num_witness_variables() - nv);
+				nc = cs.num_constraints();
+				nv = cs.num_witness_variables();
 		}
 
 		//4. enforce the input and output buffer equivalence
@@ -2966,6 +3016,13 @@ where 	C: CurveGroup<ScalarField=F>,
 				"cs: {}, stack  =======, stack: {}"), 
 				cs.num_constraints(), get_stack_space()
 			);
+		}
+		if perf_level>=1{
+			println!("-- -- gen_step_cs step 4: cs: {}, vars: {}",
+				cs.num_constraints() - nc,
+				cs.num_witness_variables() - nv);
+				nc = cs.num_constraints();
+				nv = cs.num_witness_variables();
 		}
 
 
@@ -3117,9 +3174,17 @@ where 	C: CurveGroup<ScalarField=F>,
 
 			}
 		}
-		println!("DEBUG USE 1201: AFTER inv_hab22: {}, cs.lc_size: {}, cons: {}", inv_hab22_left_size, cs.inner().unwrap().borrow().lc_map.len(), cs.num_constraints());
-		let n_total = n_case1 + n_case2 + n_case3;
-		println!("PERFORAMNCE 1003: n_case1: ({}, {:.2}%), n_case2: ({}, {:.2}%), n_case3: ({}, {:.2}%)", n_case1, 100.0*(n_case1 as f64)/(n_total as f64), n_case2, 100.0*(n_case2 as f64)/(n_total as f64), n_case3, 100.0*(n_case3 as f64)/(n_total as f64));
+		if perf_level>=1{
+			println!("DEBUG USE 1201: AFTER inv_hab22: {}, cs.lc_size: {}, cons: {}", inv_hab22_left_size, cs.inner().unwrap().borrow().lc_map.len(), cs.num_constraints());
+			let n_total = n_case1 + n_case2 + n_case3;
+			println!("PERFORAMNCE 1003: n_case1: ({}, {:.2}%), n_case2: ({}, {:.2}%), n_case3: ({}, {:.2}%)", n_case1, 100.0*(n_case1 as f64)/(n_total as f64), n_case2, 100.0*(n_case2 as f64)/(n_total as f64), n_case3, 100.0*(n_case3 as f64)/(n_total as f64));
+			println!("-- -- gen_step_cs step 5.0: inv_hab22_left: {}, cs: {}, vars: {}",
+				inv_hab22_left_size,
+				cs.num_constraints() - nc,
+				cs.num_witness_variables() - nv);
+				nc = cs.num_constraints();
+				nv = cs.num_witness_variables();
+		}
 
 		if b_debug{
 			let csat = cs.is_satisfied();
@@ -3190,6 +3255,15 @@ where 	C: CurveGroup<ScalarField=F>,
 				cs.num_constraints(), get_stack_space()
 			);
 		}
+		if perf_level>=1{
+			println!("-- -- gen_step_cs step 5.2: cs: {}, vars: {}",
+				cs.num_constraints() - nc,
+				cs.num_witness_variables() - nv);
+				nc = cs.num_constraints();
+				nv = cs.num_witness_variables();
+		}
+
+
 
 
 		//6. Check the validity of word_id and subseg_id
@@ -3214,6 +3288,14 @@ where 	C: CurveGroup<ScalarField=F>,
 				cs.num_constraints(), get_stack_space()
 			);
 		}
+		if perf_level>=1{
+			println!("-- -- gen_step_cs step 6: cs: {}, vars: {}",
+				cs.num_constraints() - nc,
+				cs.num_witness_variables() - nv);
+				nc = cs.num_constraints();
+				nv = cs.num_witness_variables();
+		}
+
 
 
 		//7. compute the KZG evaluation of :
@@ -3318,6 +3400,13 @@ where 	C: CurveGroup<ScalarField=F>,
 				cs.num_constraints(), get_stack_space()
 			);
 		}
+		if perf_level>=1{
+			println!("-- -- gen_step_cs step 7: cs: {}, vars: {}",
+				cs.num_constraints() - nc,
+				cs.num_witness_variables() - nv);
+				nc = cs.num_constraints();
+				nv = cs.num_witness_variables();
+		}
 
 
 		//8. VERIFY join constraints
@@ -3346,6 +3435,13 @@ where 	C: CurveGroup<ScalarField=F>,
 				"cs: {}, stack  =======, stack: {}"), 
 				cs.num_constraints(), get_stack_space()
 			);
+		}
+		if perf_level>=1{
+			println!("-- -- gen_step_cs step 8: cs: {}, vars: {}",
+				cs.num_constraints() - nc,
+				cs.num_witness_variables() - nv);
+				nc = cs.num_constraints();
+				nv = cs.num_witness_variables();
 		}
 
 		//9. build the new zi_part's cycle input.
@@ -3401,6 +3497,13 @@ where 	C: CurveGroup<ScalarField=F>,
 				"cs: {}, stack  =======, stack: {}"), 
 				cs.num_constraints(), get_stack_space()
 			);
+		}
+		if perf_level>=1{
+			println!("-- -- gen_step_cs step 9: cs: {}, vars: {}",
+				cs.num_constraints() - nc,
+				cs.num_witness_variables() - nv);
+				nc = cs.num_constraints();
+				nv = cs.num_witness_variables();
 		}
 
 
@@ -3473,6 +3576,11 @@ where 	C: CurveGroup<ScalarField=F>,
 				"cs: {}, stack  =======, stack: {}"), 
 				cs.num_constraints(), get_stack_space()
 			);
+		}
+		if perf_level>=1{
+			println!("-- -- gen_step_cs step 10: cs: {}, vars: {}",
+				cs.num_constraints() - nc,
+				cs.num_witness_variables() - nv);
 		}
 
 

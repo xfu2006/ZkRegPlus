@@ -21707,7 +21707,7 @@ Next to improve: PackFinalGadget: 61k-25k = 36k -> no more room to improve
 ===================
 
 Sunday 11/09/2025
-LOC (sonobe): 18956
+LOC (sonobe): 18956->19129 (+60)
 Goal 1. examine const_var generation to save cost
 	[a] find where it converts const colunn
 	[b] add unit testing code
@@ -21742,3 +21742,95 @@ PERFORAMNCE 1003: n_case1: (6606, 0.96%), n_case2: (481277, 70.00%), n_case3: (1
 
 *** TODO: can be further compress without changing much on the structure?
 -> try NOT to save constant values? this might be saving 70% of sid tables.
+
+Monday 10/10/1025
+Goal 1. check why there are lots of vars already
+	[a] instrument and print cost
+	[b]  ---- data ----
+	-- circuit_super gen_cs: START: cs: 0, vars: 0
+	DEBUG USE 6701: aug_f generate_constraints
+	-- circuit_super gen_cs step 1: cs: 0, vars: 6
+	-- circuit_super gen_cs step 2: cs: 0, vars: 0
+	DEBUG USE 9910: stmt_len: 1498451
+	-- -- gen_step_cs START: cs: 0, vars: 1739434
+	[c] it happens in circuit_super::genenerate_constraints
+
+Goal 2. read code why?
+	[a] entire witness generates 1.8M variables!
+	[b] F.generate_step_constraints() takes the witness_vec
+		-> vectorized is passed in so that
+		wtns_var is gneerated, 
+		assert_msg3 needs to access wtns_var
+
+Goal 3. if assert_msg3 generates vars but why needs witness_var?
+	[a] read WitnessVar. it has statement, msg1, msg2, msg3
+		but sometimes we put fixed segment of witnesses
+			into statement as well. So statement occupies
+			the vast majority
+		small example: 30k / 62 = 500x blow up
+		small2 example: 1.7M/32k = 50x blow up
+	[b] figure out how the statement is built
+	[c] estimate of data
+		----- CP --- 2 sets
+		word_extract - n
+		fsm - 2n 
+		pack - negligible 
+		sigs - negligible 
+		--- sed ---
+		word_extract n
+		fsm_adv: 3.5n x 2 = 7n
+		discharge - neg
+		compute sig - neg
+		-- dfa --- (currently 3)
+		word-extract n
+		dfa - 6n 
+	 -----
+	    data: 3n*2 (2cp) + 7n + 7n = 20 n
+		sid_data: 20 n
+	 ----- if sid_data cuts 70%, that's a cut of 14n
+	 	==> 26n (this is almost 40% cut)
+	  --> cuts fsm_adv 2n
+	  --> if control padding of case 3 logup, can cut another 20% of
+	  	constraints. from avg 1.6 -> 1.3.
+
+Goal 4. print out the real data
+	[a] in cp get_sizes print data
+	[b] in sed get_sizes print data
+	[c] in dfa get_sizes print data
+	[d] check data -> align with the estimate above
+	Data 687k = 20n 
+	lkup*3 = 120k = 4n
+	subtbl: 687k
+	Total = 1.5M
+	--> length of wtns_vec: 2.2M (vars: 1739428)
+
+Tuesday 11/11/2025
+Goal 1. analyze the witness structure
+	[a] witness: 
+		statement len: 1.49M + inv_hab22_left: 687k + inv_hab22_right: 40k
+		==> 2.1M 
+		in sid_table: 687k around 70% are constants (480k are constants)
+		So 2.1M - 480k = 1.73M real variables
+	[b] Can some data but cut?
+		-> SID: already cut
+		-> data itself (20n): 
+			(1) can the states be packed?
+				-> states would have to extracted from transition to compare
+					1st and 2nd state do agree for neighboring transition
+					states themselves (as vars) cannot be saved
+				-> we do have to check states' range (26-bit), this is
+					if this split into multi-leg (3 leg) 10-bit lkup
+					it's even more expensive, better just 1 logup check
+				-> so we do need SIDs for both states and transitions
+			(2) can chars be packed?
+				-> technically this can be done using plookup
+				it saves 1n. This then may cut 3n
+					
+Goal 2. data before performance					
+	-- PERF --
+	data: 687K, stmt_len: 1.49M, wtns_vec: 2.227M (ars: 1739428)
+
+Goal 3. improve fsm_adv and cut the data loc
+	[a] estimate custs data + sid + inv => 3n (100k)
+		two components cuts 3n*2 = 6n (200k) out of 2.27M wtns vec 
+		10%

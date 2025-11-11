@@ -575,6 +575,15 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 
 	/// return the sizes of inp, oup, data buffer, failed_sigs, discharged_sigs
 	fn get_sizes(&self)->Vec<usize>{
+		let b_perf = true;
+		if b_perf{
+			println!(" ## sed gadgets data len: ===");
+			for i in 0..self.gadgets.len(){
+				let vs = self.gadgets[i].borrow().get_to_add_size();
+				println!("  -- {}: {}", self.gadgets[i].borrow().get_name(),
+					vs.2);
+			}
+		}
 		let sizes = self.gadgets.iter().map(|g| g.borrow().get_to_add_size())
 			.collect::<Vec<(usize, usize, usize, usize, usize)>>();
 		let total = sizes.into_iter().fold((0,0,0,0,0), |x,y|

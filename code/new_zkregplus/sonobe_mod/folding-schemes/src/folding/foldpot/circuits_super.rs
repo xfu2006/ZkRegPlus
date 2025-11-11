@@ -395,6 +395,13 @@ where
 {
     fn generate_constraints(self, cs: ConstraintSystemRef<CF1<C1>>) -> Result<(), SynthesisError> {
 		let b_debug = false;
+		let perf_level = 2;
+		let (mut nc, mut nv) = (cs.num_constraints(), cs.num_witness_variables());
+		if perf_level>=1{
+			println!("-- circuit_super gen_cs: START: cs: {}, vars: {}",
+				cs.num_constraints(),
+				cs.num_witness_variables());
+		}
 		println!("DEBUG USE 6701: aug_f generate_constraints");
 		//1. retrieve pp_hash, i, z_0, and z_i as Var (witness)
 		let stmt = self.external_inputs.clone().expect("stmt empty"); 
@@ -414,6 +421,13 @@ where
                 .z_i
                 .unwrap_or(vec![CF1::<C1>::zero(); self.F.state_len()]))
         })?;
+		if perf_level>=1{
+			println!("-- circuit_super gen_cs step 1: cs: {}, vars: {}",
+				cs.num_constraints() - nc,
+				cs.num_witness_variables() - nv);
+				nc = cs.num_constraints();
+				nv = cs.num_witness_variables();
+		}
 
 
 		//2. retrieve pc_i and pc_i1 (j) from the statement instance
@@ -432,6 +446,13 @@ where
 			let csat = cs.is_satisfied();
 			if csat.is_ok(){ assert!(csat.unwrap(), "step 2 of circuitsuper"); }
 		}
+		if perf_level>=1{
+			println!("-- circuit_super gen_cs step 2: cs: {}, vars: {}",
+				cs.num_constraints() - nc,
+				cs.num_witness_variables() - nv);
+				nc = cs.num_constraints();
+				nv = cs.num_witness_variables();
+		}
 
 		//3. Compute z_{i+1} from the F circuit and use it as Witness to
 		// construct Var
@@ -439,6 +460,14 @@ where
  		let (witness, wit_cfg, z_i1_part2) = 
   			self.F.gen_witness(&stmt, &self.zi_part2_inst.clone().unwrap());
   		let wtns_vec = witness.to_vec_fp_var(cs.clone(), &wit_cfg);
+		if perf_level>=1{
+			println!("-- circuit_super gen_cs step 3.0: cs: {}, vars: {}, wtns_vec: {}",
+				cs.num_constraints() - nc,
+				cs.num_witness_variables() - nv,
+				wtns_vec.len());
+				nc = cs.num_constraints();
+				nv = cs.num_witness_variables();
+		}
 
 		if b_debug{
 			println!("DEBUG USE 7702: aug_f::gen_csr: {}", 
@@ -491,6 +520,13 @@ where
 				assert!(csat.unwrap(), "step 3 of circuitsuper"); 
 			}
 		}
+		if perf_level>=1{
+			println!("-- circuit_super gen_cs step 3: cs: {}, vars: {}",
+				cs.num_constraints() - nc,
+				cs.num_witness_variables() - nv);
+				nc = cs.num_constraints();
+				nv = cs.num_witness_variables();
+		}
 
 		//4. Construct U_i1_cmE, cmW, cmF from the hints
 		// and cyclefold related variables from hints
@@ -535,6 +571,13 @@ where
 				assert!(csat.unwrap(), "step 4 of circuitsuper"); 
 			}
 		}
+		if perf_level>=1{
+			println!("-- circuit_super gen_cs step 4: cs: {}, vars: {}",
+				cs.num_constraints() - nc,
+				cs.num_witness_variables() - nv);
+				nc = cs.num_constraints();
+				nv = cs.num_witness_variables();
+		}
 
 		//5. compute u_i.x as Var
         // u_i.x[0] = H(i, pc_i, z_0, z_i, U_i) (as Supernova)
@@ -572,6 +615,13 @@ where
 				assert!(csat.unwrap(), "step 6 of circuitsuper"); 
 			}
 		}
+		if perf_level>=1{
+			println!("-- circuit_super gen_cs step 5: cs: {}, vars: {}",
+				cs.num_constraints() - nc,
+				cs.num_witness_variables() - nv);
+				nc = cs.num_constraints();
+				nv = cs.num_witness_variables();
+		}
 
         //6. Construct u_i Var from hints
         let u_i = CommittedInstanceVarFoldPot {
@@ -590,6 +640,13 @@ where
                 Ok(self.u_i_cmF.unwrap_or(C1::zero()))
             })?,
         };
+		if perf_level>=1{
+			println!("-- circuit_super gen_cs step 6: cs: {}, vars: {}",
+				cs.num_constraints() - nc,
+				cs.num_witness_variables() - nv);
+				nc = cs.num_constraints();
+				nv = cs.num_witness_variables();
+		}
 
 
         //7. compute the Fiat-shamir challenge
@@ -608,6 +665,13 @@ where
             bits.resize(C1::BaseField::MODULUS_BIT_SIZE as usize, Boolean::FALSE);
             NonNativeUintVar::from(&bits)
         };
+		if perf_level>=1{
+			println!("-- circuit_super gen_cs step 7: cs: {}, vars: {}",
+				cs.num_constraints() - nc,
+				cs.num_witness_variables() - nv);
+				nc = cs.num_constraints();
+				nv = cs.num_witness_variables();
+		}
 
 		//8. using the hints/advice (in Augmented structure) construct
 		// the Var instance of U_i1[pc_i]. Note that its
@@ -643,6 +707,13 @@ where
 				else{ vec![new_x_0, new_x_1]},
 			cmE: U_i1_cmE.clone(), cmW: U_i1_cmW.clone(), cmF: U_i1_cmF.clone()
 		};
+		if perf_level>=1{
+			println!("-- circuit_super gen_cs step 8: cs: {}, vars: {}",
+				cs.num_constraints() - nc,
+				cs.num_witness_variables() - nv);
+				nc = cs.num_constraints();
+				nv = cs.num_witness_variables();
+		}
 
 		//9. build the U_i1 var version. Note that to amke sure that
 		// r1cs is generated for all possible pc_i values, we cannot
@@ -708,6 +779,13 @@ where
 			let expect_x = if b1 {x1_base} else {x1};
 			let x_value = x.value()?;
 			assert!(expect_x == x_value);
+		}
+		if perf_level>=1{
+			println!("-- circuit_super gen_cs step 9: cs: {}, vars: {}",
+				cs.num_constraints() - nc,
+				cs.num_witness_variables() - nv);
+				nc = cs.num_constraints();
+				nv = cs.num_witness_variables();
 		}
 
         //11. CycleFold part
@@ -914,6 +992,13 @@ where
 		#[cfg(test)]{
 			assert!(exp_cf_x.value()?==cf_x.value()?, "exp_cf_x error");
 		}
+		if perf_level>=1{
+			println!("-- circuit_super gen_cs step 11: cs: {}, vars: {}",
+				cs.num_constraints() - nc,
+				cs.num_witness_variables() - nv);
+				nc = cs.num_constraints();
+				nv = cs.num_witness_variables();
+		}
 
 
 		//12. Cyclepair part only if it's full mode
@@ -992,6 +1077,11 @@ where
 			if cs.is_satisfied().is_ok(){ 
 				assert!(cs.is_satisfied().unwrap());
 			}
+		}
+		if perf_level>=1{
+			println!("-- circuit_super gen_cs step 12: cs: {}, vars: {}",
+				cs.num_constraints() - nc,
+				cs.num_witness_variables() - nv);
 		}
 
 		println!("REMOVE LATER 1234. done with aug_f");

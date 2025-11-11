@@ -320,6 +320,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 	/// return the sizes of inp, oup, data, failed_sigs, discharged_sigs
 	fn get_sizes(&self)->Vec<usize>{
 		//1. gadget of word extension
+		let b_perf = true;
 		let (final_states_len,join_buf_capacity,sig_buf_capacity,mlen) = 
 			self.capacity.get_old_stats();
 
@@ -355,6 +356,13 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 			- final_states_len);
 
 		//2. collect all data
+		if b_perf{
+			println!(" ## CP mapper data len, nlen: {} ###", nlen);
+			println!("    -- word_extract: {}", data_g_ext);
+			println!("    -- word_fsm: {}", data_dfa);
+			println!("    -- pack: {}", data_pack);
+			println!("    -- sigs: {}", data_sigs);
+		}
 		let vec_inp_len = vec![inp_g_ext, inp_dfa, inp_sigs];
 		let vec_oup_len = vec![oup_g_ext,  oup_dfa, oup_sigs];
 		let vec_data_len = vec![data_g_ext,  data_dfa, data_pack, data_sigs];
