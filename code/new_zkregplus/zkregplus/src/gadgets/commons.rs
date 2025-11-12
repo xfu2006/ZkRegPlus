@@ -1216,6 +1216,29 @@ pub fn better_select<F:PrimeField>(bvar: &FpVar<F>, v1: &FpVar<F>, v2: &FpVar<F>
 
 	var
 }
+/// construct a variable if bvar=1, return v1 
+/// otherwise return v2. Assumption: bvar is an int var either 1 or 0.
+/// check that vres is the result
+/// COST:  1
+pub fn better_select_check<F:PrimeField>(bvar: &FpVar<F>, v1: &FpVar<F>, v2: &FpVar<F>, vres: &FpVar<F>)->Result<(),SynthesisError>{
+	let bval = bvar.value().unwrap();
+	assert!(bval.is_zero() || bval.is_one());
+	let val = if bval.is_one(){ v1.value().unwrap()} else {v2.value().unwrap()};
+	#[cfg(test)]{ assert!(val==vres.value()?, "failed better select check"); }
+	let cs = bvar.cs();
+	//enforce bvar*(v1-v2) = v-v2;
+	let lb_bvar = var_to_lb(bvar, F::one());
+	let lb_v1 = var_to_lb(v1, F::one());
+	let lb_neg_v2 = var_to_lb(v2, -F::one());
+	let lb_var = var_to_lb(&vres, F::one());
+	cs.enforce_constraint(
+		lb_bvar,
+		lb_v1 + lb_neg_v2.clone(),
+		lb_var + lb_neg_v2
+	).unwrap();
+
+	Ok( () )
+}
 
 /// check the product of v1 and v2 is zero
 /// cost is 1

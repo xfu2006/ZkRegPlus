@@ -1,5 +1,6 @@
 /* Recreated 04/03/2025, Completed: 05/04/2025 
 	Revise started: 10/30/2025
+	Revised 2: 11/11/2025 (cut loc from data)
 */
 
 //! This module generates the (pat-loc) for a nibble sequence.
@@ -31,8 +32,8 @@ use data_processor::{
 };
 use crate::gadgets::{
 	commons::{check_eq,gen_m_table,new_const_var,
-		is_zero_better, new_var, build_pows_56, build_pows_31,
-		packcheck_increase, var_to_lb},
+		is_zero_better, new_var, build_pows_56, 
+		 var_to_lb, better_select_check},
 	traits::{Container,Col,IDX_WORD, IDX_INP,IDX_DATA, IDX_SI_INP, 
 		IDX_OUP, IDX_SI_OUP, IDX_SI_DATA,ComponentAdvice},
 	db::{assert_logup,verify_encoded_table,assert_well_formed_sorted,col_to_sorted_set, verify_col_to_sorted_set, tbl_filtered_to_sorted_tbl, verify_tbl_filtered_to_sorted_tbl,tbl_to_sorted_tbl, verify_tbl_to_sorted_tbl, tbl_left_join, verify_tbl_left_join},
@@ -251,7 +252,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 	/// structure: root level name: fsm_acc
 	/// nibbles
 	/// states: (inp, mid, oup): modeled as a container of 3 columns
-	/// locs: (inp, mid, oup)
+	/// locs: (inp, mid, oup) -> REMOVE the mid part.
 	/// trans
 	/// states_final (this means ALL final states, not projected using 
 	///    proj_store of the subsigs yet)
@@ -259,7 +260,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 	///
 	/// si_nibbles
 	/// si_states (inp, mid, oup)
-	/// si_locs (inp, mid, oup)
+	/// si_locs (inp, mid, oup) -> REMOVE THE mid part
 	/// si_trans
 	/// si_states_final
 	/// si_locs_final
@@ -287,7 +288,6 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		// NOTE: state needs to be added 1 to be pushed
 		// 0 is considered padding value. Similarly loc starts from 1
 		raw_states.push(F::from( (cur_state+1) as u32));
-		let mut cur_loc = inp_loc.clone();
 		raw_locs.push(inp_loc);
 		let unit = F::from((1<<(acdfa_state_part_bits+4)) as u32);
 		let hex = F::from(16 as u32);
@@ -303,13 +303,14 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 			let tr = f_ch + (f_src + one) * hex + (f_dst + one) * unit;
 			trans.push(tr);
 			cur_state = nxt_state;
-			cur_loc = cur_loc + one;
+			//cur_loc = cur_loc + one;
 			if b_debug{
 				println!("DEBUG USE 201: i: {}, src_adj: {}, ch {} => {}, igc: {}", i, f_src+one, f_ch, f_dst+one, b_igc);
 			}
-			raw_locs.push(cur_loc);
+			//raw_locs.push(cur_loc); REMOVE THE MID PART
+			//can be calculated directly in the last
 		}
-		assert!(raw_states.len()==nlen+1 && raw_locs.len()==nlen+1);
+		assert!(raw_states.len()==nlen+1 && raw_locs.len()==1);
 
 		let _f_id_state = F::from(fsm_id+6);
 		let f_id_trans= F::from(fsm_id+3);
@@ -330,7 +331,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 			}).map(|i| raw_states[i]).collect::<Vec<F>>();
 		let locs_final = (1..vec_si_states.len()).into_par_iter().filter(|i|{
 				vec_si_states[*i]==f_id_final
-			}).map(|i| raw_locs[i]).collect::<Vec<F>>();
+			}).map(|i| raw_locs[0] + F::from(i as u32)).collect::<Vec<F>>();
 		assert!(states_final.len()==locs_final.len());
 		let target_size = nlen*capacity.basis_acc_states/10000;
 		assert!(states_final.len()<=target_size, "basis_acc_states too small: target_size: {} < states_final.len {}", target_size, states_final.len());
@@ -341,10 +342,10 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		let states_final = vec![ vec![zero; to_pad], states_final].concat();
 		let locs_final = vec![ vec![zero; to_pad], locs_final].concat();
 		let si_states_final = vec![
-			vec![zero; to_pad],vec![f_id_final; oflen]
+			vec![f_range2; to_pad],vec![f_id_final; oflen]
 		].concat();
 		let si_locs_final = vec![
-			vec![zero; to_pad], vec![f_range2; oflen]
+			vec![f_range2; to_pad], vec![f_range2; oflen]
 		].concat();
 
 		//3. build the containers
@@ -379,22 +380,23 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		let col_si_inp_loc = Col::<F>::new_const(vec![f_id_loc],
 			"si_inp_loc",IDX_SI_INP);
 
-		let col_mid_locs = Col::<F>::new(raw_locs[1..nlen].to_vec(),
-			"mid_locs", IDX_DATA);
-		let col_si_mid_locs = Col::<F>::new_const(vec![f_id_loc; nlen-1], 
-			"si_mid_locs", IDX_SI_DATA);
+		//let col_mid_locs = Col::<F>::new(raw_locs[1..nlen].to_vec(),
+		//	"mid_locs", IDX_DATA);
+		//let col_si_mid_locs = Col::<F>::new_const(vec![f_id_loc; nlen-1], 
+		//	"si_mid_locs", IDX_SI_DATA);
 
-		let col_oup_loc = Col::<F>::new(vec![raw_locs[nlen]],
+		let col_oup_loc = Col::<F>::new(vec![raw_locs[0] 
+			+ F::from(nlen as u32)],
 			"oup_loc",IDX_OUP);
 		let col_si_oup_loc = Col::<F>::new_const(vec![f_id_loc],
 			"si_oup_loc",IDX_SI_OUP);
 
 		let locs = Container::concat_cols(
-			vec![col_inp_loc, col_mid_locs, col_oup_loc], "locs");
+			vec![col_inp_loc, col_oup_loc], "locs");
 		let si_locs = Container::concat_cols(vec![col_si_inp_loc, 
-			col_si_mid_locs, col_si_oup_loc], "si_locs");
-		#[cfg(test)]{assert!(locs.borrow().to_vec().len()==nlen+1);}
-		#[cfg(test)]{assert!(si_locs.borrow().to_vec().len()==nlen+1);}
+			 col_si_oup_loc], "si_locs");
+		#[cfg(test)]{assert!(locs.borrow().to_vec().len()==2);}
+		#[cfg(test)]{assert!(si_locs.borrow().to_vec().len()==2);}
 		res.borrow_mut().add_container(locs);
 		res.borrow_mut().add_container(si_locs);
 
@@ -666,7 +668,7 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 	/// COST: (nlen - nibble len, alen - acc_states_ratio * neln
 	///         note acc_states are ALL acc states even including
 	///         non-related sigs. This average is 5% in real data.)
-	///    2.5*nlen + 6*alen
+	///    2.25*nlen + 5*alen
 	fn validate_fsm_acc_container(&self, fsm_acc: &Container<FpVar<F>>, r1: FpVar<F>, _r2: FpVar<F>, cs: ConstraintSystemRef<F>)
 	->Result<(), SynthesisError>{
 		//1. asserts all states and transitions must be in range
@@ -709,7 +711,7 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		//2. assert correctness of building transition as weighted sum
 		// of src, char, dst states
 		// COST 2*nlen
-		// --> IMPROVED to: 2*1/4*nlen = 1/2 * nlen
+		// --> IMPROVED to: 1/4*nlen = 1/4 * nlen
 		let unit_var = FpVar::<F>::new_constant(cs.clone(),
 			F::from((1<<(self.capacity.acdfa_state_part_bits+4)) as u32))?;
 		let hex_var = FpVar::<F>::new_constant(cs.clone(),
@@ -762,13 +764,19 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 
 
 		let locs = fsm_acc.get_container("locs")?.borrow().to_vec();
-		assert!(locs.len()==nlen+1);
+		let inp_loc = &locs[0];
+		let oup_loc = &locs[1];
+		#[cfg(test)]{
+			assert!(inp_loc.value()? 
+				+ F::from(nlen as u32) == oup_loc.value()?);
+		}
 		//check_increase(&locs)?;
 		//optimized to: as locs are already guarnateed to be less than
 		//26 bit, use packcheck_increase() instead
 		//cut cost to 1/4 of nlen
-		let pows_31 = build_pows_31(cs.clone());
-		packcheck_increase(&locs, &pows_31)?;
+		//let pows_31 = build_pows_31(cs.clone());
+		//packcheck_increase(&locs, &pows_31)?;
+		// --> no need anymore as locs are directly computed
 
 
 		//3. check the validity of final states
@@ -802,12 +810,13 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		// this costs one constraint
 		// similarly: for sid_locs_final[i]:
 		// sid_locs_final = vec_dummy[i] * f_range2
-		// COST: 2*alen
+		// COST: alen
+		let lb_minus_final = var_to_lb(&f_id_final, -F::one());
 		for i in 0..alen{
-			check_eq(&si_states_final[i], &(&vec_not_dummy[i] * &f_id_final),
-				"failed si_states check")?;
-			check_eq(&si_locs_final[i], &(&vec_not_dummy[i] * &f_range),
-				"failed si_states check")?;
+			better_select_check(&vec_not_dummy[i], &f_id_final, &f_range,
+				&si_states_final[i])?;
+			//check_eq(&si_locs_final[i], &(&vec_not_dummy[i] * &f_range),
+			// NO Need as locs are computed correctly always
 		}
 
 		//3.2 use sid_states_final to sum up the logup equation LHS
@@ -819,6 +828,7 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		let non_final_cvar = new_const_var(&cs, f_id_non_final); 
 		let lb_one= LinearCombination::from((F::one(),Variable::One));
 		for i in 0..nlen{
+			let nc = cs.num_constraints();
 			//we skip item [0] because it's handled in
 			//the last round
 			//Here the mul with unit_var is costing nothing
@@ -826,7 +836,8 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 			//We do NOT use another random here because locs[i]
 			//has ALREADY been proved to be in range RANGE2
 			//so we can just "concat" these two numbers of bit-strings
-			let item = &r1 + &states[i+1] + &unit_cvar*&locs[i+1]; 
+			let item = &r1 + &states[i+1] + &unit_cvar*&(inp_loc + 
+				&new_const_var(&cs, F::from( (i+1) as u32)));
 			let item_val = item.value()?;
 			let inv = item_val.inverse().expect("INV err");
 			let inv_var = new_var(&cs, inv);

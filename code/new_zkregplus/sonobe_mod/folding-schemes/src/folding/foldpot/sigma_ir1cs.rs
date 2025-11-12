@@ -2844,7 +2844,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		z_i: Vec<FpVar<F>>,
 		external_inputs: Vec<FpVar<F>>,
 	) -> Result<Vec<FpVar<F>>, SynthesisError> {
-		let b_debug = true; //set to false in production mode
+		let b_debug = false; //set to false in production mode
 		let b_show_sigs = false; //set to false in production mode
 		//NOTE: cs.is_satisfied() can cause * stack overflow *
 		//if constraints are not constructed carefully.
@@ -2922,7 +2922,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			g.borrow().assert_msg3(i, cs.clone(), &wtns_var, &cfg)?;
 			let stmt_len = g.borrow().get_msg_size().0;
 			if perf_level >= 2{	
-				println!("-- -- after msg3 of module {}: {}:\n\tINCREASED: constraints: {}, const vars: {}, wit vars: {} ==> NOW:\n\tCS:{}, const: {}, witness: {}\n\t\n\t ==> stmt_size: {} ", i, g.borrow().get_name(), cs.num_constraints()-nc, cs.num_instance_variables()-ni, cs.num_witness_variables()-nv, cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables(), stmt_len);						
+				println!("-- -- after msg3 of module {}: {}:\n\tINCREASED: constraints: {}, const vars: {}, wit vars: {} ==> NOW:\n\tCS:{}, const: {}, witness: {}\n\t ==> stmt_size: {}\n\n ", i, g.borrow().get_name(), cs.num_constraints()-nc, cs.num_instance_variables()-ni, cs.num_witness_variables()-nv, cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables(), stmt_len);						
 			}
 		}
 		if b_debug{
@@ -3084,7 +3084,9 @@ where 	C: CurveGroup<ScalarField=F>,
 		let one_wit_var = FpVar::<F>::new_witness(cs.clone(), ||Ok(F::one())).unwrap();
 		one_wit_var.enforce_equal(&one_var)?; 
 
-		println!("DEBUG USE 1201: BEFORE inv_hab22: {}, cs.lc_size: {}, cons: {}", inv_hab22_left_size, cs.inner().unwrap().borrow().lc_map.len(), cs.num_constraints());
+		if perf_level>=1{
+			println!(" -- -- ### gen_step-cs step 5: BEFORE inv_hab22: {}, cs.lc_size: {}, cons: {}", inv_hab22_left_size, cs.inner().unwrap().borrow().lc_map.len(), cs.num_constraints());
+		}
 
 		//5.1 verify the correct of inverse and compute sum_hab22_left
 		assert!(b_check_lkup.len()==inv_hab22_left_size,
@@ -3175,7 +3177,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			}
 		}
 		if perf_level>=1{
-			println!("DEBUG USE 1201: AFTER inv_hab22: {}, cs.lc_size: {}, cons: {}", inv_hab22_left_size, cs.inner().unwrap().borrow().lc_map.len(), cs.num_constraints());
+			println!(" -- -- ### gen_step_cs step 5: AFTER inv_hab22: {}, cs.lc_size: {}, cons: {}", inv_hab22_left_size, cs.inner().unwrap().borrow().lc_map.len(), cs.num_constraints());
 			let n_total = n_case1 + n_case2 + n_case3;
 			println!("PERFORAMNCE 1003: n_case1: ({}, {:.2}%), n_case2: ({}, {:.2}%), n_case3: ({}, {:.2}%)", n_case1, 100.0*(n_case1 as f64)/(n_total as f64), n_case2, 100.0*(n_case2 as f64)/(n_total as f64), n_case3, 100.0*(n_case3 as f64)/(n_total as f64));
 			println!("-- -- gen_step_cs step 5.0: inv_hab22_left: {}, cs: {}, vars: {}",

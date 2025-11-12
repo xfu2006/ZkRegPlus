@@ -21805,6 +21805,7 @@ Goal 4. print out the real data
 	--> length of wtns_vec: 2.2M (vars: 1739428)
 
 Tuesday 11/11/2025
+LOC (gadgets): 17146
 Goal 1. analyze the witness structure
 	[a] witness: 
 		statement len: 1.49M + inv_hab22_left: 687k + inv_hab22_right: 40k
@@ -21834,3 +21835,39 @@ Goal 3. improve fsm_adv and cut the data loc
 	[a] estimate custs data + sid + inv => 3n (100k)
 		two components cuts 3n*2 = 6n (200k) out of 2.27M wtns vec 
 		10%
+	[b] cut data log (only keep inp and oup loc) in gadgets
+	[c] validate_fsm_acc_container
+		-> remove loc check
+		-> err 815
+	[d] fix 820
+	[e] cost problem, it grows from 2 to 3.
+	[f] regresion testing
+Goal 4. performance comparison
+---- PERFORMANCE DATA ---------------- ID: 016 (after improving fsm_adv)
+nlen = 32k
+module 10: 102k (3n) -> 93k (cut 0.5n)
+qry cost (compare DEBUG 1201): 1.40MM - 380k= 1.02M  same?
+combined key size: 5.6M -> 5.4M (cut 200k) good
+(max_row_col: 3.2M   -> 3.06M (cut 140k which is 4n) good
+PERFORAMNCE 1003: n_case1: (6606, 0.96%), n_case2: (481277, 70.00%), n_case3: (199626, 29.04%)
+-->
+PERFORAMNCE 1003: n_case1: (6606, 1.06%), n_case2: (417791, 66.95%), n_case3: (199626, 31.99%)
+-- Note: cat2 cut 64k (2n) so it brought up case3 ratio up.
+47GB now. ---> 41GB -> 40GB now
+===================
+
+Analysis: new improvement: try to put all dummy as f_rg2
+	[a] 417k case2 and 199k case3
+		current 417k + 3*199k = 1014k
+		-> imporved 417k + 2*199 = 815k (improve 200k)
+
+-- TODO: examine each gadget about the dummy part and fix them ->
+-- 32k -> 3M r1cs or vars (it's expanding 100 times)
+folding itself -> 1M -> 10 sec. 700M -> 7000 sec (2 hrs)
+	then total cost: 200 hrs * 3 dollars = 600 dollars. -> may need
+	to improve driver to leverage some level of parallelism.
+
+Wed 11/12/2025
+LOC (gadgets): 17180 ->
+Goal 1. put selfcheck in Col::new() add check zero
+Goal 2. check fsm

@@ -16,6 +16,7 @@
 //			Trait and Struct Declarations
 // ---------------------------------------------
 use ark_ff::{PrimeField};
+use ark_std::{Zero};
 use ark_relations::r1cs::SynthesisError;
 use std::{rc::Rc,cell::RefCell,fmt::Debug};
 use std::collections::{HashMap};
