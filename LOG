@@ -21868,6 +21868,37 @@ folding itself -> 1M -> 10 sec. 700M -> 7000 sec (2 hrs)
 	to improve driver to leverage some level of parallelism.
 
 Wed 11/12/2025
-LOC (gadgets): 17180 ->
+LOC (gadgets): 17180 -> 17236 (+50)
 Goal 1. put selfcheck in Col::new() add check zero
-Goal 2. check fsm
+	[a] trick is to separate the implementation of methods,
+		only add Zero in the small Impl code
+	[b] regression test
+Goal 2. word_extract -> OK.
+Goal 3. fsm_adv
+	-> it looks like sid_diff_val 
+	-> it is used in assert_well_formed_ness
+	-> maybe replacing with another boolean arr?
+Goal 4. fix assert_well_formed issue
+	[a] for diff (generate absolute diff) and put sid_diff as simply RANGE2
+	[b] create function gen_abs_diff()
+	[c] create function gen_sidcol_for_diff() 
+
+Thursday 11/13/2025
+LOC (gadgets): 17236->17300 (+70)
+Goal 1. implement  gen_sidcol_for_diff
+	[a] implementation
+	[b] cost measurement
+Goal 2. remove gen_diff_col and fix all other related
+	[a] tbl_to_sorted_tbl
+	[b]check verify_to_sorted_tbl
+	[c] test db
+		-> fix array index err
+		-> constraint err
+		-> fix tbl_join check
+		-> check constraint err 
+
+Friday 11/14/2025
+LOC (gadgets): 17300
+Goal 1. test_tbl_to_sorted_tbl
+-- TODO -- check all function sof check db -> test_tbl_to_sorted_tbl
+--> ALSO remove the cs.is_satisfied().unwrap()

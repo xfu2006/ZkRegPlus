@@ -36,7 +36,8 @@ use data_processor::clam_db::{RANGE2,RANGE2_BIT,check_pad_ratio};
 use crate::gadgets::commons::{verify_inverse,verify_logup_inverse, check_eq, 
 	check_arr_eq, check_arr_eq_arr, gen_m_table, new_const_var,
 	encode_2col, encode_2col_var, gen_m_table_cond,
-	new_var, two_col_tbl_to_sorted, gen_diff_col, two_col_tbl_left_join,
+	new_var, two_col_tbl_to_sorted, 
+	gen_abs_diff_col, two_col_tbl_left_join, gen_assert_sidcol_for_diff,
 	encode_cols, encode_cols_var, 
 	multiset_prod, verify_unique_sorted_set, is_zero_better,
 	multiset_prod_2col,var_to_lb};
@@ -253,23 +254,27 @@ pub fn assert_well_formed_sorted_adv<F:PrimeField>(
 	if b_check_sort{
 		let sort_diff = sort_diff.unwrap();
 		assert!(sort_diff.len()==val1.len()-1);
-		let exp_val1 = val1.iter().zip(sort_diff.iter()).map(|(a,b)|{
-			a + b
-		}).collect::<Vec<FpVar<F>>>();
-		check_arr_eq_arr(&val1[1..], &exp_val1[0..n-1], "err diff")?;
+		//let exp_val1 = val1.iter().zip(sort_diff.iter()).map(|(a,b)|{
+		//	a + b
+		//}).collect::<Vec<FpVar<F>>>();
+		//check_arr_eq_arr(&val1[1..], &exp_val1[0..n-1], "err diff")?;
+		// NO LONGER NEEDED - as this is checked in
+		// gen_assert_sidcol_for_diff
 	}
 	if b_check_sort_key{
 		let sort_diff_key = sort_diff_key.unwrap();
 		assert!(sort_diff_key.len()==key.len()-1);
-		let exp_key = key.iter().zip(sort_diff_key.iter()).map(|(a,b)|{
-			a + b
-		}).collect::<Vec<FpVar<F>>>();
-		check_arr_eq_arr(&key[1..], &exp_key[0..n-1], "err diff key")?;
+		//let exp_key = key.iter().zip(sort_diff_key.iter()).map(|(a,b)|{
+		//	a + b
+		//}).collect::<Vec<FpVar<F>>>();
+		//check_arr_eq_arr(&key[1..], &exp_key[0..n-1], "err diff key")?;
 		//simply check here all are in ascending order
 		//we do not have the value problem ascending by chunks
 		//this is ascending along the entire column.
 		//NOT needed as it's constant
 		//check_arr_eq(&sid_diff_key.unwrap(), &rg2, "err sid_sort key")?; 
+		// NO LONGER NEEDED - as this is checked in
+		// gen_assert_sidcol_for_diff
 	}
 
 	// -------------------------------------------------------
@@ -1434,8 +1439,8 @@ pub fn tbl_to_sorted_tbl<F:PrimeField>(
 	let n = sorted_key.len();
 	let (sid_sorted_key, sid_sorted_id, sid_sorted_val) =( 
 		vec![f_rg;n], vec![f_rg; n], vec![f_rg; n]); 
-	let (diff_key, sid_diff_key) = gen_diff_col(&sorted_key);
-	let (diff_val, sid_diff_val) = gen_diff_col(&sorted_val);
+	let diff_key = gen_abs_diff_col(&sorted_key);
+	let diff_val = gen_abs_diff_col(&sorted_val);
 
 	//2. prove that the resulting table is well formed and
 	// key and val sorted
@@ -1449,12 +1454,13 @@ pub fn tbl_to_sorted_tbl<F:PrimeField>(
 	.zip(s_names.iter()).for_each(|(c,n)|{
 		prf.borrow_mut().add_col(Col::new_const(c, &format!("sid_{}",n),IDX_SI_DATA));
 	});
+	let (d1,d2) = (diff_key.len(), diff_val.len());
 	vec![diff_key, diff_val].into_iter().zip(d_names.iter()).for_each(|(c,n)|{
 		prf.borrow_mut().add_col(Col::new(c, &format!("{}",n),IDX_DATA));
 	}); 
-	vec![sid_diff_key, sid_diff_val].into_iter().zip(d_names.iter())
+	vec![vec![f_rg; d1], vec![f_rg; d2]].into_iter().zip(d_names.iter())
 	.for_each(|(c,n)|{
-		prf.borrow_mut().add_col(Col::new(c, &format!("sid_{}",n),IDX_SI_DATA));
+		prf.borrow_mut().add_col(Col::new_const(c, &format!("sid_{}",n),IDX_SI_DATA));
 	}); //this one is not const
 
 	//3. lkup in both directions (ignore 0 entries).
@@ -1506,14 +1512,18 @@ pub fn verify_tbl_to_sorted_tbl<F:PrimeField>(
 	let sel_keys=sorted_tbl.borrow().get_container_by_idx(0).borrow().to_vec();
 	let sel_ids=sorted_tbl.borrow().get_container_by_idx(1).borrow().to_vec();
 	let sel_vals=sorted_tbl.borrow().get_container_by_idx(2).borrow().to_vec();
+	let sid_diff_val = gen_assert_sidcol_for_diff(&sel_vals, &cols_prf[0]);
+	let sid_diff_key= gen_assert_sidcol_for_diff(&sel_keys, &cols_prf[2]);
 	assert_well_formed_sorted(cs.clone(),
 		&sel_keys,
 		&sel_ids,
 		&sel_vals,
 		Some(&cols_prf[0]), //diff_val
-		Some(&cols_prf[1]), //sid_diff_val
+		//Some(&cols_prf[1]), //sid_diff_val
+		Some(&sid_diff_val),
 		Some(&cols_prf[2]), //diff_key
-		Some(&cols_prf[3]), //sid_diff_key
+		//Some(&cols_prf[3]), //sid_diff_key
+		Some(&sid_diff_key),
 		r1.clone(), 
 		RANGE2_BIT)?;
 
@@ -1637,7 +1647,7 @@ pub fn tbl_left_join<F:PrimeField>(
 	//3. lkup first 3 column in tbl1 (guarnatee no extra) 
 	let mtbl_res_tbl1= gen_m_table_cond( 
 		&res_firsthalf_encoded, &res_firsthalf_sel, &tbl1_encoded, &tbl1_sel);
-	prf.borrow_mut().add_col(Col::new_const(vec![zero; mtbl_res_tbl1.len()],
+	prf.borrow_mut().add_col(Col::new_const(vec![f_rg; mtbl_res_tbl1.len()],
 		"sid_mtbl_res_tbl1", IDX_SI_DATA));
 	prf.borrow_mut().add_col(Col::new(mtbl_res_tbl1,"mtbl_res_tbl1",IDX_DATA));
 
@@ -1685,7 +1695,7 @@ pub fn tbl_left_join<F:PrimeField>(
 	let mtbl_sechalf_tbl2= gen_m_table_cond(
 		&res_sechalf_encoded, &res_sechalf_sel, &tbl2_encoded, &tbl2_sel);
 
-	prf.borrow_mut().add_col(Col::new_const(vec![zero; mtbl_sechalf_tbl2.len()],
+	prf.borrow_mut().add_col(Col::new_const(vec![f_rg; mtbl_sechalf_tbl2.len()],
 		"sid_mtbl_sechalf_tbl2", IDX_SI_DATA));
 	prf.borrow_mut().add_col(Col::new(mtbl_sechalf_tbl2,"mtbl_sechalf_tbl2"
 		,IDX_DATA));
@@ -1694,8 +1704,9 @@ pub fn tbl_left_join<F:PrimeField>(
 	// combined with 5 makes sure
 	// that the expansion of (k1,k2) is complete. because the two dummy
 	// entries are verified to be in tbl2. Note: no need on key
-	let (diff_val, sid_diff_val) = gen_diff_col(&tbl_res[4]);
-	prf.borrow_mut().add_col(Col::new(sid_diff_val,"sid_diff_val",IDX_SI_DATA));
+	let diff_val = gen_abs_diff_col(&tbl_res[4]);
+	prf.borrow_mut().add_col(Col::new(vec![f_rg; diff_val.len()],
+		"sid_diff_val",IDX_SI_DATA));
 	prf.borrow_mut().add_col(Col::new(diff_val,"diff_val",IDX_DATA));
 
 
@@ -1826,8 +1837,10 @@ pub fn verify_tbl_left_join<F:PrimeField>(
 	// that the expansion of (k1,k2) is complete. because the two dummy
 	// entries are verified to be in tbl2. Note: no need on key
 	let diff_val = prf.borrow().get_container("diff_val")?.borrow().to_vec();
-	let sid_diff_val = prf.borrow().get_container("sid_diff_val")?
-		.borrow().to_vec();
+	//let sid_diff_val = prf.borrow().get_container("sid_diff_val")?
+	//	.borrow().to_vec();
+	let sid_diff_val = gen_assert_sidcol_for_diff(&tbl_res[4], &diff_val);
+	assert!(sid_diff_val.len()==tbl_res[4].len()-1);
 	assert_well_formed_sorted(cs.clone(),
 		&tbl_res[2], //key2
 		&tbl_res[3], //id

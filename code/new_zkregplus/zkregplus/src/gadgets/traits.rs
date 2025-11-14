@@ -15,8 +15,7 @@
 // ---------------------------------------------
 //			Trait and Struct Declarations
 // ---------------------------------------------
-use ark_ff::{PrimeField};
-use ark_std::{Zero};
+use ark_ff::{PrimeField,Zero};
 use ark_relations::r1cs::SynthesisError;
 use std::{rc::Rc,cell::RefCell,fmt::Debug};
 use std::collections::{HashMap};
@@ -93,12 +92,19 @@ pub trait ComponentAdvice<F:PrimeField>: Debug{
 // ---------------------------------------------
 //			Implementations
 // ---------------------------------------------
-impl <F: Clone> Col<F>{
+impl <F: Clone + Zero> Col<F>{
 	/// construct a regular column. idx_seg is where it is located
 	/// in statement vec. Its location will be later filled.
 	/// NOTE: the name must be one word.
 	pub fn new(data: Vec<F>, name: &str, idx_seg: usize)
 	->Rc<RefCell<Self>>{
+		#[cfg(test)]{
+			for x in &data{
+				if idx_seg == IDX_SI_DATA{ 
+					assert!(!x.is_zero(), "We requirement that when idx_seg is IDX_SI_DATA, no elements can be zero to speed up logup check");
+				}
+			}
+		}
 		//set to not resolved yet, it will be set to true in adjust_loc
 		let loc = Location{src:(0,0,0,data.len(), String::new(), false), 
 			dest: Some((idx_seg,0,data.len()))}; //revisable later
@@ -109,7 +115,9 @@ impl <F: Clone> Col<F>{
 			//path can be later updated
 		Rc::new(RefCell::new(Self{data, cfg, b_const: b_const}))
 	}
+}
 
+impl <F: Clone> Col<F>{
 	//MAKE sure data all elements are the same. We cannot 
 	//test it in the function (adding PartialEq will coz too many changes)
 	pub fn new_const(data: Vec<F>, name: &str, idx_seg: usize)

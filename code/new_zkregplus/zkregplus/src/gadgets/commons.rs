@@ -283,6 +283,103 @@ pub fn encode_cols_var_adv<F:PrimeField>(cols: &Vec<Vec<FpVar<F>>>,
 }
 
 /// given n length F generating the difference col (length n-1)
+/// the diff value is the ABSOLUTE value
+pub fn gen_abs_diff_col<F:PrimeField>(col: &Vec<F>)->Vec<F>{
+	let zero = F::zero();
+	let max_val:usize = (1<<RANGE2_BIT) - 1;
+	let max = F::from(max_val as u32);
+	//let f_rg= F::from(RANGE2);
+	let col = (1..col.len()).collect::<Vec<usize>>().into_par_iter().map(|i|{
+		let diff = col[i] - col[i-1];
+		let diff = if diff<=max {diff} else {zero-diff};
+		diff	
+	}).collect::<Vec<F>>();
+
+	col
+}
+
+/// Generate a SID column for a diff col, so that it can be used
+/// in assert_wellformedness. Note that we could actually generate
+/// a boolean vec, but to be compatible with the legacy code of
+/// assert_well_formed_ness, we are generating
+/// 0 - key[i]>key[i+1]
+/// frg2 - key[i]<=key[i+1
+/// the resulting length is n-1. Note that it reflects the "sid"
+/// for (key[i+1]-key[i])_{i=0}^{n-1}
+/// this function also asserts that it is consistent with the
+/// value of abs_diff column (that is when it's value is
+/// 0 - key[i] = key[i+1] + abs_diff[i].
+/// otherwise key[i+1] = key[i] + abs_diff[i]
+/// Here abs_diff[i] EARLIER has been proved to be all in RANGE2.
+///
+/// COST: 2n
+pub fn gen_assert_sidcol_for_diff<F:PrimeField>(key: &Vec<FpVar<F>>,
+	diff: &Vec<FpVar<F>>)
+-> Vec<FpVar<F>>{
+	//1. generate the return
+	let b_perf = true;
+	let cs = diff[0].cs();
+	let nc = cs.num_constraints();
+	let (zero, frg) = (F::zero(), F::from(RANGE2 as u32));
+	let vals = (0..key.len()-1).collect::<Vec<_>>().iter().map(|&i|{
+		if key[i].value().unwrap() >key[i+1].value().unwrap()
+			{zero} else {frg}
+	}).collect::<Vec<F>>();
+	let res = vals.iter().map(|&x|
+		new_var(&cs, x)
+	).collect::<Vec<FpVar<F>>>();
+
+	//2. (a) res is "boolean" i.e. res * (res - rg2) = 0
+	//(b) assert res is valid
+	//when res = 0, key[i+1] + diff[i] = key[i]
+	// when res * inv_rg2 = 1, key[i] + diff[i] = key[i+1]
+	// so we have:
+	// res * (key[i+1] - diff[i] - key[i]) + 
+	// (1-res * inv_rg2)* (key[i] - diff[i] - key[i+1]) = 0
+	// i.e.,
+	// res * ((key[i+1](1+inv_rg2)+diff[i](inv_rg2-1) -key[i](inv_rg2+1)))
+	// = key[i+1] + diff[i] - key[i] 
+	let n = res.len();
+	let lb_zero= lc!();
+	let const_rg2 = new_const_var(&cs, F::from(RANGE2));
+	let rg2 = F::from(RANGE2);
+	let val_rg_plus_1 = rg2.inverse().unwrap() + F::one();
+	let val_rg_minus_1 = rg2.inverse().unwrap() - F::one();
+
+	let minus_rg2 = var_to_lb(&const_rg2, -F::one());
+	for i in 0..n{
+		let lb_res = var_to_lb(&res[i], F::one());
+		cs.enforce_constraint(
+			lb_res.clone(),
+			lb_res.clone() + minus_rg2.clone(),
+			lb_zero.clone()
+		).unwrap();
+
+		let minus_key = var_to_lb(&key[i], -F::one());
+		let key_1 = var_to_lb(&key[i+1], F::one());
+		let lb_diff = var_to_lb(&diff[i], F::one());
+		cs.enforce_constraint(
+			lb_res,
+			key_1.clone()*val_rg_plus_1 + 
+				lb_diff.clone() * val_rg_minus_1 + 
+				minus_key.clone()*val_rg_plus_1,
+			key_1 + lb_diff + minus_key
+		).unwrap();
+	}
+
+	if b_perf{
+		println!(" ### gen_assert_sidcol_for_diff: n: {}, cs: {}",
+			n, cs.num_constraints() - nc);
+		//TO REMOVE 
+		assert!(cs.is_satisfied().unwrap());
+	}
+
+	res
+}
+
+
+/* REMOVE LATER
+/// given n length F generating the difference col (length n-1)
 /// and its SID
 pub fn gen_diff_col<F:PrimeField>(col: &Vec<F>)->(Vec<F>,Vec<F>){
 	let zero = F::zero();
@@ -302,6 +399,7 @@ pub fn gen_diff_col<F:PrimeField>(col: &Vec<F>)->(Vec<F>,Vec<F>){
 
 	(col_diff, col_sid)
 }
+*/
 
 /// Convert two col table to first compress all entries (no duplicates),
 /// and then to well formed and sorted on both keys and vals
@@ -1223,8 +1321,8 @@ pub fn better_select<F:PrimeField>(bvar: &FpVar<F>, v1: &FpVar<F>, v2: &FpVar<F>
 pub fn better_select_check<F:PrimeField>(bvar: &FpVar<F>, v1: &FpVar<F>, v2: &FpVar<F>, vres: &FpVar<F>)->Result<(),SynthesisError>{
 	let bval = bvar.value().unwrap();
 	assert!(bval.is_zero() || bval.is_one());
-	let val = if bval.is_one(){ v1.value().unwrap()} else {v2.value().unwrap()};
-	#[cfg(test)]{ assert!(val==vres.value()?, "failed better select check"); }
+	let _val = if bval.is_one(){v1.value().unwrap()} else {v2.value().unwrap()};
+	#[cfg(test)]{ assert!(_val==vres.value()?, "failed better select check"); }
 	let cs = bvar.cs();
 	//enforce bvar*(v1-v2) = v-v2;
 	let lb_bvar = var_to_lb(bvar, F::one());

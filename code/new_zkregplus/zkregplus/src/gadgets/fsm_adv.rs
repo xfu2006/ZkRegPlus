@@ -765,10 +765,10 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 
 		let locs = fsm_acc.get_container("locs")?.borrow().to_vec();
 		let inp_loc = &locs[0];
-		let oup_loc = &locs[1];
+		let _oup_loc = &locs[1];
 		#[cfg(test)]{
 			assert!(inp_loc.value()? 
-				+ F::from(nlen as u32) == oup_loc.value()?);
+				+ F::from(nlen as u32) == _oup_loc.value()?);
 		}
 		//check_increase(&locs)?;
 		//optimized to: as locs are already guarnateed to be less than
@@ -791,8 +791,8 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		let f_range = new_const_var(&cs, F::from(RANGE2 as u32));
 		let si_states_final= fsm_acc.get_container("si_states_final")?
 			.borrow().to_vec();
-		let si_locs_final= fsm_acc.get_container("si_locs_final")?
-			.borrow().to_vec();
+		//let si_locs_final= fsm_acc.get_container("si_locs_final")?
+		//	.borrow().to_vec();
 		let states_final= fsm_acc.get_container("states_final")?
 			.borrow().to_vec();
 		let locs_final= fsm_acc.get_container("locs_final")?
@@ -811,7 +811,7 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		// similarly: for sid_locs_final[i]:
 		// sid_locs_final = vec_dummy[i] * f_range2
 		// COST: alen
-		let lb_minus_final = var_to_lb(&f_id_final, -F::one());
+		//let lb_minus_final = var_to_lb(&f_id_final, -F::one());
 		for i in 0..alen{
 			better_select_check(&vec_not_dummy[i], &f_id_final, &f_range,
 				&si_states_final[i])?;
@@ -828,7 +828,7 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		let non_final_cvar = new_const_var(&cs, f_id_non_final); 
 		let lb_one= LinearCombination::from((F::one(),Variable::One));
 		for i in 0..nlen{
-			let nc = cs.num_constraints();
+			//let nc = cs.num_constraints();
 			//we skip item [0] because it's handled in
 			//the last round
 			//Here the mul with unit_var is costing nothing
