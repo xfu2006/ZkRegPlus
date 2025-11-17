@@ -484,8 +484,10 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 	///  **
 	/// return the map entries for each of its gadgets (note:
 	///    entries solely depending on the gadget's own structure)
+	/// Then return three secs of : si_data_info, si_inp_inof, si_oup_info
 	fn get_gadgets_stmt_map(&self, vec_alloc: &Vec<(usize,usize)>)
-	->(Vec<Vec<(usize,usize)>>, Vec<(usize,bool)>){
+	->(Vec<Vec<(usize,usize)>>, Vec<(usize,bool)>, 
+		Vec<(usize,bool)>, Vec<(usize,bool)>){
 		//1. get the allocation and make sure not exceeding boundaries
 		assert!(vec_alloc.len()==9); 
 		let (s_wd, e_wd) = vec_alloc[0];
@@ -609,7 +611,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 
 		//2. build the results
 		assert!(vec_res.len()==self.num_gadgets());
-		let vec_si_info = vec![ //chunk infor for si_data
+		let vec_si_data_info = vec![ //chunk infor for si_data
 			// *** see subtbl_data definition in build_statement_comp ***
 			// -- the word extract generated data
 			(1, true), // vec![zero], //act_wrd_len
@@ -640,13 +642,25 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 			(1, true),
 
 		];
-		let total_si_info_size = vec_si_info.iter().map(|(s,_)| s)
+		let total_si_info_size = vec_si_data_info.iter().map(|(s,_)| s)
 			.sum::<usize>();
 		let total_data_size = vec_alloc[3].1 - vec_alloc[3].0 + 1;
 		let total_si_data_size = vec_alloc[6].1 - vec_alloc[6].0 + 1;
 		assert!(total_si_info_size==total_data_size);
 		assert!(total_si_info_size==total_si_data_size);
-		(vec_res, vec_si_info)
+
+		let vec_si_inp_info = vec![//chunk info for si_inp
+			//word_extract and fsm
+			(1, true), //state
+			(slen, true), //signatures
+		];
+		let total_si_inp_info_size = vec_si_inp_info.iter().map(|(s,_)| s)
+			.sum::<usize>();
+		assert!(total_si_inp_info_size == vec_alloc[4].1-vec_alloc[4].0+1);
+		assert!(vec_alloc[0].1-vec_alloc[0].0==vec_alloc[4].1-vec_alloc[4].0);
+		let vec_si_oup_info = vec_si_inp_info.clone();
+
+		(vec_res, vec_si_data_info, vec_si_inp_info, vec_si_oup_info)
 	}
 
 	/// return the inp, oup, data, failed, discharged_sigs

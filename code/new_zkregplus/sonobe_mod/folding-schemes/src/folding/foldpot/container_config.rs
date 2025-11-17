@@ -188,25 +188,43 @@ impl ContainerConfig{
 		}
 	}
 
-	/// split si_data by columns and return if each column
+	/// split si_data (and similar si_inp, si_oup)
+	/// by columns and return if each column
 	/// is a constant (to save cost in logup check).
-	/// total size should be equal to si_data length. 
+	/// total size should be equal to si_data (si_inp, si_oup) length. 
 	/// each (usize, bool) indicate the column length and whether it's boolean
-	pub fn gen_si_data_info(&self)-> Vec<(usize, bool)>{
+	/// return 3 vectors for si_data, si_inp and si_oup
+	pub fn gen_si_info(&self)-> (Vec<(usize, bool)>, Vec<(usize,bool)>,
+		Vec<(usize,bool)>){
 		match self{
 			ContainerConfig::Column(loc,_,_,b_const) => 
-				if (loc.src.1==6)
-					&& loc.src.0==0{//si_data (IDX_SI_INP/OUP/DATA)
+				if loc.src.1==6 && loc.src.0==0{//si_data 
 					//only when it is NOT foreign
-					vec![(loc.src.3, *b_const)]
+					(vec![(loc.src.3, *b_const)], vec![], vec![])
+				}else if loc.src.1==5 && loc.src.0==0{//si_oup
+					//only when it is NOT foreign
+					(vec![], vec![], vec![(loc.src.3, *b_const)])
+				}else if loc.src.1==4 && loc.src.0==0{//si_inp
+					//only when it is NOT foreign
+					(vec![], vec![(loc.src.3, *b_const)], vec![])
 				}else{//don't handle other segments
-					vec![]
+					(vec![], vec![], vec![])
 				},
 			ContainerConfig::Complex(vec, _,_) => {
-				vec.iter().fold(Vec::<(usize,bool)>::new(), 
+				vec.iter().fold(
+				(
+					Vec::<(usize,bool)>::new(), 
+					Vec::<(usize,bool)>::new(), 
+					Vec::<(usize,bool)>::new(), 
+				),
 				|sum, container|{
-					let res = container.gen_si_data_info();
-					vec![sum, res].concat()
+					let res = container.gen_si_info();
+
+					(
+						[&sum.0[..], &res.0[..]].concat(),
+						[&sum.1[..], &res.1[..]].concat(),
+						[&sum.1[..], &res.1[..]].concat(),
+					)
 				})
 			}
 		}

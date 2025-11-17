@@ -884,6 +884,8 @@ pub struct StatementConfig{
 	/// bool indicates if it's const segment.
 	/// usize is the length of the segment
 	pub si_data_info: Vec<(usize,bool)>,
+	pub si_inp_info: Vec<(usize,bool)>,
+	pub si_oup_info: Vec<(usize,bool)>,
 }
 
 impl StatementConfig{
@@ -906,6 +908,8 @@ impl StatementConfig{
 		let idx_mtbl_sigs = idx_discharged_sigs + discharged_sigs_size;
 		let mtbl_sigs_size = discharged_sigs_size;
 		let si_data_info = vec![(data_size, false)]; //by default,
+		let si_inp_info = vec![(input_size, false)]; //by default,
+		let si_oup_info = vec![(output_size, false)]; //by default,
 			//cover entire sid_data table and not constant (no optimization)
 
 		Self{ input_size, output_size, data_size, word_subseg_size, 
@@ -917,13 +921,26 @@ impl StatementConfig{
 			idx_failed_sigs, idx_discharged_sigs,
 			idx_mtbl_sigs, mtbl_sigs_size,
 			si_data_info,
+			si_inp_info,
+			si_oup_info,
 		}
 	}
 
-	pub fn reset_si_data_info(&mut self, info: Vec<(usize, bool)>){
-		let total_size = info.iter().map(|(x,_)| x).sum::<usize>();
-		assert!(total_size == self.data_size);
-		self.si_data_info = info;
+	pub fn reset_si_info(&mut self, 
+		info_data: Vec<(usize, bool)>,
+		info_inp: Vec<(usize, bool)>,
+		info_oup: Vec<(usize, bool)>
+	){
+		let total_data_size = info_data.iter().map(|(x,_)| x).sum::<usize>();
+		assert!(total_data_size == self.data_size);
+		let total_inp_size = info_inp.iter().map(|(x,_)| x).sum::<usize>();
+		assert!(total_inp_size == self.input_size);
+		let total_oup_size = info_oup.iter().map(|(x,_)| x).sum::<usize>();
+		assert!(total_oup_size == self.output_size);
+
+		self.si_data_info = info_data;
+		self.si_inp_info = info_inp;
+		self.si_oup_info = info_oup;
 	}
 
 	pub fn total_size(&self)-> usize{

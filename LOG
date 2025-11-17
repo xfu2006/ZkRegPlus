@@ -21957,7 +21957,25 @@ Goal 1. Debug info_len not equal to data len problem
 	[c] problem: input has si_encoded and it does have
 		the need to put const zero there
 
-Goal 2. similarly support
+Goal 2. similarly support si_inp_info and si_oup_info
+	[a] in composite gen_statement_structure call
+		get structure to collect si_data_info, si_inp_info, si_oup_info
+	[b] implement gen_statement_structure
+	[c] add si_inp and si_oup info to StatementConfig
+
+Goal 3. check how to to_vec_fp_var() converts data why inp/oup not handled
+	[a] can be handled
+
+Goal 4. Implementation 1: add si_inp_info and si_oup_info
+	to gen_statement_structure
+	[a] change the required interface and fix all syntax errors
+	[b] cp_mapper
+	[c] sed_mapper
+		-> update framework for sed
+		-> similarly for dfa
+		-> update composable
+		-> add si_inp and oup to SigmaIR1CS
+	[d] fix rest
 
 
 

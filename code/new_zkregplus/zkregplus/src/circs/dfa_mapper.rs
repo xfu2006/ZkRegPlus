@@ -482,16 +482,18 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaCompo
 	/// their problem statement(note:
 	///    entries solely depending on the gadget's own structure, need
 	///    to read each gadget's doc for its statement structure)
+	/// Return then three Vec<(col_size, if_const)> for data, inp, oup
 	fn get_gadgets_stmt_map(&self, vec_alloc: &Vec<(usize,usize)>)
-	->(Vec<Vec<(usize,usize)>>, Vec<(usize,bool)>){
+	->(Vec<Vec<(usize,usize)>>, Vec<(usize,bool)>, Vec<(usize,bool)>,
+		Vec<(usize,bool)>){
 		//1. get the allocation and make sure not exceeding boundaries
 		assert!(vec_alloc.len()==9); 
 		let (s_wd, e_wd) = vec_alloc[0];
 		let (s_inp, _e_inp) = vec_alloc[1];
 		let (s_oup, _e_oup) = vec_alloc[2];
 		let (s_data, _e_data) = vec_alloc[3];
-		let (s_subtbl_inp, _e_subtbl_inp) = vec_alloc[4];
-		let (s_subtbl_oup, _e_subtbl_oup) = vec_alloc[5];
+		let (s_subtbl_inp, e_subtbl_inp) = vec_alloc[4];
+		let (s_subtbl_oup, e_subtbl_oup) = vec_alloc[5];
 		let (s_subtbl_data, e_subtbl_data_end) = vec_alloc[6];
 		let (s_failed_sigs, _e_failed_sigs) = vec_alloc[7];
 		let (s_discharged_sigs, _e_discharged_sigs) = vec_alloc[8];
@@ -511,7 +513,9 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaCompo
 		];
 
 		//2. based on seg_starts construct map instruction
-		let mut vec_si_info = vec![];
+		let mut vec_si_data_info = vec![];
+		let mut vec_si_inp_info = vec![];
+		let mut vec_si_oup_info = vec![];
 		for i in 0..self.gadgets.len(){
 			//2.1. collect maps
 			let instructions = self.gadgets[i].borrow()
@@ -538,19 +542,32 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaCompo
 			seg_starts.push(nxt_starts);
 			vec_res.push(my_maps);
 
-			let si_data_info = self.gadgets[i].borrow()
-				.get_container_config().gen_si_data_info();
-			vec_si_info.push(si_data_info);
+			let (si_data_info, si_inp_info, si_oup_info) = 
+				self.gadgets[i].borrow()
+				.get_container_config().gen_si_info();
+			vec_si_data_info.push(si_data_info);
+			vec_si_inp_info.push(si_inp_info);
+			vec_si_oup_info.push(si_oup_info);
 		}
 
 		assert!(vec_res.len()==self.num_gadgets());
-		let vec_chunk_info = vec_si_info.concat();
-		let total_si_info_len = vec_chunk_info.iter().map(|(s,_)| s)
+		let vec_si_data_info = vec_si_data_info.concat();
+		let vec_si_inp_info = vec_si_inp_info.concat();
+		let vec_si_oup_info = vec_si_oup_info.concat();
+		let total_si_info_data_len = vec_si_data_info.iter().map(|(s,_)| s)
+			.sum::<usize>();
+		let total_si_info_inp_len = vec_si_inp_info.iter().map(|(s,_)| s)
+			.sum::<usize>();
+		let total_si_info_oup_len = vec_si_oup_info.iter().map(|(s,_)| s)
 			.sum::<usize>();
 		let total_si_data_len = e_subtbl_data_end-s_subtbl_data+1;
-		assert!(total_si_info_len==total_si_data_len);
+		let total_si_inp_len = e_subtbl_inp-s_subtbl_inp+1;
+		let total_si_oup_len = e_subtbl_oup-s_subtbl_oup+1;
+		assert!(total_si_info_data_len==total_si_data_len);
+		assert!(total_si_info_inp_len==total_si_inp_len);
+		assert!(total_si_info_oup_len==total_si_oup_len);
 
-		(vec_res, vec_chunk_info)
+		(vec_res, vec_si_data_info, vec_si_inp_info, vec_si_oup_info)
 	}
 
 	/// return the inp, oup, data and 3 subtable segments,
