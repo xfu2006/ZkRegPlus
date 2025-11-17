@@ -21977,6 +21977,20 @@ Goal 4. Implementation 1: add si_inp_info and si_oup_info
 		-> add si_inp and oup to SigmaIR1CS
 	[d] fix rest
 
+Goal 5. gen_si_info
+	[a] impl
+	[b] folding
+	[c] regression testing
+
+Goal 6. bugs
+	[a] cp_mapper:660 -> fixed
+
+Goal 7. add the handling of inp/oup
+	[a] impl
+	[b] test
+
+-- TODO -- check sigma_cyclepair inp/oup sid set up.
+
 
 
 Goal 1. remove the multiplication in query and lookup logup check

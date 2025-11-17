@@ -1919,19 +1919,33 @@ impl <F:PrimeField> WitnessSigmaIR1CS<F>{
 		//separately based on the si_data_info (for const var - which is
 		//cheaper).
 		//The other parts directly converted to FpVar witness
+		//handle this similarly for si_inp and si_oup
 		let stmt_cfg = &cfg.stmt_cfg;
-		let si_info = &stmt_cfg.si_data_info;
-		let data_len2 = si_info.iter().map(|(s,_)| s).sum::<usize>();
-		let idx_si_data = stmt_cfg.idx_subtable_id + stmt_cfg.input_size
-			+stmt_cfg.output_size;
+		let si_data_info = &stmt_cfg.si_data_info;
+		let si_inp_info = &stmt_cfg.si_inp_info;
+		let si_oup_info = &stmt_cfg.si_oup_info;
+		let data_len2 = si_data_info.iter().map(|(s,_)| s).sum::<usize>();
+		let inp_len2 = si_inp_info.iter().map(|(s,_)| s).sum::<usize>();
+		let oup_len2 = si_oup_info.iter().map(|(s,_)| s).sum::<usize>();
 		let si_data_len = stmt_cfg.data_size;
+		let si_inp_len = stmt_cfg.input_size;
+		let si_oup_len = stmt_cfg.output_size;
 		assert!(data_len2==si_data_len);
+		assert!(inp_len2==si_inp_len);
+		assert!(oup_len2==si_oup_len);
 		assert!(self.statement.len()==stmt_cfg.total_size(), 
 			"stmt.len: {} != cfg.total_size: {}", self.statement.len(),
 			stmt_cfg.total_size());
 
-		let st_part1 = &self.statement[0..idx_si_data];
-		let st_part2 = &self.statement[idx_si_data..idx_si_data+si_data_len];
+		let idx_si_data = stmt_cfg.idx_subtable_id + stmt_cfg.input_size
+			+stmt_cfg.output_size;
+		let idx_si_inp= stmt_cfg.idx_subtable_id;
+		let idx_si_oup= stmt_cfg.idx_subtable_id + stmt_cfg.input_size;
+
+		let st_part1 = &self.statement[0..idx_si_inp];
+		let st_inp= &self.statement[idx_si_inp..idx_si_oup];
+		let st_oup= &self.statement[idx_si_oup..idx_si_data];
+		let st_data= &self.statement[idx_si_data..idx_si_data+si_data_len];
 		let st_part3 = &self.statement[idx_si_data+si_data_len..];
 		let fp_part1 = st_part1.iter().map(|f|
 			FpVar::<F>::new_witness(cs.clone(), || Ok(f)).unwrap()
@@ -1939,37 +1953,51 @@ impl <F:PrimeField> WitnessSigmaIR1CS<F>{
 		let fp_part3 = st_part3.iter().map(|f|
 			FpVar::<F>::new_witness(cs.clone(), || Ok(f)).unwrap()
 		).collect::<Vec<FpVar<F>>>();
-		let mut idx_start = 0;
-		let mut vec_starts = vec![];
-		for (ulen, _) in si_info{
-			vec_starts.push(idx_start);
-			idx_start += ulen;
-		}
-		assert!(vec_starts.len()==si_info.len());
-		let fp_part2 = (0..vec_starts.len()).into_iter().map(|i|{
-			let (ulen, b_const) = si_info[i];
-			let start = vec_starts[i];
-			let frag = &st_part2[start..start+ulen];
-			if b_const{
-				#[cfg(test)]{
-					let ele1 = frag[0];
-					for i in 0..frag.len(){
-						assert!(frag[i]==ele1);
-					}
-				}
-				//frag.iter().map(|f|
-				//	FpVar::<F>::new_constant(cs.clone(), f.clone()).unwrap()
-				//).collect::<Vec<FpVar<F>>>()
-				let var = FpVar::<F>::new_constant(cs.clone(), frag[0].clone())
-					.unwrap();
-				vec![var; frag.len()]
-			}else{
-				frag.iter().map(|f|
-					FpVar::<F>::new_witness(cs.clone(), || Ok(f)).unwrap()
-				).collect::<Vec<FpVar<F>>>()
+
+		//2. define the construction function
+		let build_col = |si_info: &Vec<(usize,bool)>, vals: &[F]|
+		->Vec<FpVar<F>>{
+			let mut idx_start = 0;
+			let mut vec_starts = vec![];
+			for (ulen, _) in si_info{
+				vec_starts.push(idx_start);
+				idx_start += ulen;
 			}
-		}).flatten().collect::<Vec<FpVar<F>>>();
-		let z_i2= [fp_part1, fp_part2, fp_part3].concat();
+			assert!(vec_starts.len()==si_info.len());
+			let fp_part2 = (0..vec_starts.len()).into_iter().map(|i|{
+				let (ulen, b_const) = si_info[i];
+				let start = vec_starts[i];
+				let frag = &vals[start..start+ulen];
+				if b_const{
+					#[cfg(test)]{
+						let ele1 = frag[0];
+						for i in 0..frag.len(){
+							assert!(frag[i]==ele1);
+						}
+					}
+					//frag.iter().map(|f|
+					//	FpVar::<F>::new_constant(cs.clone(), f.clone()).unwrap()
+					//).collect::<Vec<FpVar<F>>>()
+					let var = FpVar::<F>::new_constant(cs.clone(), frag[0].clone())
+						.unwrap();
+					vec![var; frag.len()]
+				}else{
+					frag.iter().map(|f|
+						FpVar::<F>::new_witness(cs.clone(), || Ok(f)).unwrap()
+					).collect::<Vec<FpVar<F>>>()
+				}
+			}).flatten().collect::<Vec<FpVar<F>>>();
+
+			fp_part2
+		};
+
+		//3. build the new parts
+		let new_st_inp = build_col(&si_inp_info, st_inp);
+		let new_st_oup = build_col(&si_oup_info, st_oup);
+		let new_st_data = build_col(&si_data_info, st_data);
+
+		let z_i2= [fp_part1, new_st_inp, new_st_oup, new_st_data, 
+			fp_part3].concat();
 		assert!(z_i2.len()==self.statement.len());
 
 

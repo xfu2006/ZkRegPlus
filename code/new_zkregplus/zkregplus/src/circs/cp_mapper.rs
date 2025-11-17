@@ -657,7 +657,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		let total_si_inp_info_size = vec_si_inp_info.iter().map(|(s,_)| s)
 			.sum::<usize>();
 		assert!(total_si_inp_info_size == vec_alloc[4].1-vec_alloc[4].0+1);
-		assert!(vec_alloc[0].1-vec_alloc[0].0==vec_alloc[4].1-vec_alloc[4].0);
+		assert!(vec_alloc[1].1-vec_alloc[1].0==vec_alloc[4].1-vec_alloc[4].0);
 		let vec_si_oup_info = vec_si_inp_info.clone();
 
 		(vec_res, vec_si_data_info, vec_si_inp_info, vec_si_oup_info)
