@@ -21900,5 +21900,68 @@ Goal 2. remove gen_diff_col and fix all other related
 Friday 11/14/2025
 LOC (gadgets): 17300
 Goal 1. test_tbl_to_sorted_tbl
--- TODO -- check all function sof check db -> test_tbl_to_sorted_tbl
---> ALSO remove the cs.is_satisfied().unwrap()
+	[a] crash on constraints
+	[b] dump the data
+	[c] problem is that diff is longer htan key!
+Goal 2. fix test filter tbl -> passed.
+	FSM now passed now
+Goal 3. check next err
+	[a] compute_sig
+	[b] locate err
+
+Saturday 11/15/2025
+LOC (gadgets): 17306
+Goal 1. regression test discharge
+	[a] check if sigs are there
+Goal 2. compute_sig
+	[a] check why gen_m_tbl fails
+	[b] vec_sid_step does not match 
+Goal 3. new problem
+	[a] which col generates err?
+	[b] add entry for scc_min_req
+Goal 4. check failed sigs
+	[a] 
+Goal 5. check cp gadget
+	[a] cp_mapper, first sid change to rg2
+
+Sunday 11/16/2025
+LOC (sonobe): 19611-> 
+Goal 1. initial check the is_zero for case 3 qry_tbl[1]
+	[a] add unit test code and check 
+	[b] quickly check dfa_adv
+	[c] quickly fix 3 columns in dfa_adv to new_const
+---- PERFORMANCE DATA ---------------- ID: 017 (after improving dfa_adv)
+nlen = 32k
+module 15: 35k
+qry cost (compare DEBUG 1201): 983k-406k = 583k same (improved 20k)?
+combined key size: 5.4M->5.4M
+(max_row_col: 3.06M the same)
+PERFORAMNCE 1003: n_case1: (6606, 1.06%), n_case2: (417791, 66.95%), n_case3: (199626, 31.99%)
+PERFORAMNCE 1003: n_case1: (6256, 1.00%), n_case2: (418518, 67.07%), n_case3: (199249, 31.93%)
+40GB now (same)
+===================
+
+Goal 2. check if the zero check really works
+	[a] it crashes at id 20
+	[b] it looks like input, two cp (7, 7) it's the 6'th into
+		sed.
+	[c] this should be the 2nd element of the input of discharge
+	[d] looks like SI_INP is not marked as constant
+		this is the problem in container_config parser mode error
+			it only handles SI_DATA.
+
+Monday 11/17/2025
+Goal 1. Debug info_len not equal to data len problem
+	[a] fixed
+	[b] but need to check how si_inp columns are converted
+	[c] problem: input has si_encoded and it does have
+		the need to put const zero there
+
+Goal 2. similarly support
+
+
+
+Goal 1. remove the multiplication in query and lookup logup check
+	[a] git commit first
+	[b] compare
+

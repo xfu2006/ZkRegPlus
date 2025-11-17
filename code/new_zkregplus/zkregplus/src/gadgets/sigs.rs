@@ -28,7 +28,7 @@ use ark_r1cs_std::{
 	eq::EqGadget,
 };
 use std::any::Any;
-use crate::gadgets::commons::{verify_logup_inverse, verify_inverse, verify_encoded_states_sig_count, verify_encoded_states_sig, check_imply, check_eq, check_arr_eq, check_arr_eq_nz, expand_vec,gen_m_table,new_const_var,check_arr_eq_arr,
+use crate::gadgets::commons::{verify_logup_inverse, verify_inverse, verify_encoded_states_sig_count, verify_encoded_states_sig, check_imply, check_eq, check_arr_eq, check_arr_eq_or_rg2, expand_vec,gen_m_table,new_const_var,check_arr_eq_arr,
 new_var};
 use data_processor::{
 	clam_db::{RANGE2,RANGE2_BIT,ID_SIG_NO_CRIT_COUNT,ID_SIG_NO_CRIT}, 
@@ -581,9 +581,9 @@ impl <F: PrimeField> GetSigAdvice<F>{
 	/// generate the sid for non-zero elements of vec
 	fn gen_sid(vec: &Vec<F>, n: usize, sid: F)->Vec<F>{
 		assert!(n==vec.len());
-		let zero = F::zero();
+		let frg= F::from(RANGE2 as u32);
 		vec.par_iter().map(|x|
-			if x.is_zero() {zero} else {sid}
+			if x.is_zero() {frg} else {sid}
 		).collect::<Vec<F>>()
 	}
 
@@ -1035,8 +1035,8 @@ impl <F:PrimeField> SigmaGadget<F> for GetSigGadget<F>{
 				let expected_count = new_const_var(&cs, F::from(
 					self.capacity.count_sig_no_crit_pat as u64));
 				check_eq(&proved_count,&expected_count, "err count prf")?;
-			}else if b_check_nz[i]{//cost 2
-				check_arr_eq_nz(&subtbl_id[start..start+cur_len],&vals[i], 
+			}else if b_check_nz[i]{//cost 1 each
+				check_arr_eq_or_rg2(&subtbl_id[start..start+cur_len],&vals[i], 
 					desc[i].0)?;
 			}else{//cost 1
 				check_arr_eq(&subtbl_id[start..start+cur_len],&vals[i], 

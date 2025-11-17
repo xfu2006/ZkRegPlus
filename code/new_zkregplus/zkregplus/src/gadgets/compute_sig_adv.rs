@@ -341,7 +341,11 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		let v_false = F::from(TriVal::False as u8);
 		let v_maybe = F::from(TriVal::Maybe as u8);
 		let mut vec_res = vec![v_false; n];
-		let mut sid_last_step= vec![zero; n];
+		let mut sid_last_step= vec![
+				//for dummy subsig 0, last step is 0 (see discharge_adv)
+				//built of vec_sid_step
+				SubsigStepStore::gen_step_tbl_id(F::zero(),ID_ENCODED_LAST_STEP); n
+		];
 		for i in 0..n{
 			if inp_subsigs[i]==zero{
 				//vec_res[i] = F::from(TriVal::False as u8);
@@ -453,6 +457,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
         let max_val:usize = (1<<RANGE2_BIT) - 1;
         let max = F::from(max_val as u64);
 		let res = Container::<F>::new("synthesis_res_combo");
+		let frg = F::from(RANGE2);
 
 		//0.5 - added step - merge raw_result_cs and raw_result_igc
 		let tbl_id_start = F::from(1u64<<32) * F::from(ID_SUBSIG_IGC);
@@ -461,7 +466,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 			let subsig_id = field_to_usize(f_subsig_id); 
 			if subsig_id==0{ //subsig dummy 0, treated as case sensitive
 							//when later generating ID or retrieve info
-				(zero, zero)
+				(zero, frg)
 			} else{
 				let info = subsig_store_info.subsig_to_steps
 					.get(&subsig_id)
@@ -586,7 +591,6 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		let factor = F::from(1u32 << RANGE2_BIT);
         let max_val:usize = (1<<RANGE2_BIT) - 1;
         let _max = F::from(max_val as u64);
-		let frg = F::from(RANGE2);
 
 		let mut scc_prf_subsig = vec![]; //scc_prf stands for subsig_count_constraint
 		let mut scc_prf_comp_subsig_encode = vec![];  //encoded version with id 
@@ -722,6 +726,20 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		assert!(scc_prf_subsig.len()<=n2, "Adjust perc_comp_subsig in Config! Needed scc_prf len: {} < current_tuples: {}", n2, scc_prf_subsig.len());
 		let pad = vec![F::zero(); n2-scc_prf_subsig.len()];
 		let pad2 = vec![frg; n2-scc_prf_subsig.len()];
+		let igc = v_igc[0].is_one();
+		let acdfa_id = if igc {acdfa_id_igc} else {acdfa_id_cs};
+		//TODO: double check if this value is gauranteed in
+		//the clam_db.rs to genreate dummy entry for subsig_id = 0
+		let pad_comp_subsig_encode = vec![
+			SubsigInfoStore::gen_info_tbl_id(acdfa_id,0,ID_COMP_SUBSIG)
+			;n2-scc_prf_subsig.len()
+		];
+		let pad_min_req = vec![
+			SubsigInfoStore::gen_info_tbl_id::<F>(acdfa_id, 
+					0, ID_MIN_REQUIRED)
+			;n2-scc_prf_subsig.len()
+		];
+
 		scc_prf_subsig = [&pad[..], &scc_prf_subsig[..]].concat(); 
 		scc_prf_comp_subsig_encode = [&pad[..], &scc_prf_comp_subsig_encode[..]].concat(); 
 		scc_prf_comp_subsig = [&pad[..], &scc_prf_comp_subsig[..]].concat();
@@ -736,9 +754,10 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		// -- sids
 		sid_scc_prf_subsig = [&pad[..], &sid_scc_prf_subsig[..]].concat(); 
 			//const 0
-		sid_scc_prf_comp_subsig_encode = [&pad[..], &sid_scc_prf_comp_subsig_encode[..]].concat(); //NON const
+		sid_scc_prf_comp_subsig_encode = [&pad_comp_subsig_encode[..], &sid_scc_prf_comp_subsig_encode[..]].concat(); //NON const
 		sid_scc_prf_comp_subsig = [&pad2[..], &sid_scc_prf_comp_subsig[..]].concat(); //const
-		sid_scc_prf_min_req = [&pad[..], &sid_scc_prf_min_req[..]].concat();
+
+		sid_scc_prf_min_req = [&pad_min_req[..], &sid_scc_prf_min_req[..]].concat();
 			//non const
 		sid_scc_prf_raw = [&pad[..], &sid_scc_prf_raw[..]].concat(); //const 0
 		sid_scc_prf_cnt_true = [&pad[..], &sid_scc_prf_cnt_true[..]].concat();

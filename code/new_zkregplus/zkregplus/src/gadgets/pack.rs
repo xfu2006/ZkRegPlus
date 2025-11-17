@@ -5,6 +5,7 @@
 
 use std::rc::{Rc};
 use rayon::iter::{ParallelIterator, IndexedParallelIterator,IntoParallelRefIterator};
+use data_processor::clam_db::RANGE2;
 use ark_ff::{PrimeField};
 use std::{
 	marker::{PhantomData},
@@ -459,8 +460,9 @@ impl <F: PrimeField> PackFinalAdvice<F>{
 		// m_table: don't care (size: final_states_len)
 		let f_non_final = F::from(fsm_id + 1); 
 		let f_final = F::from(fsm_id + 2); 
+		let frg = F::from(RANGE2 as u32);
 		let sid_unique_states = vec_imm_states.par_iter().map(|s|{
-			if s.is_zero() {zero}
+			if s.is_zero() {frg}
 			else{
 				if set_final_states.contains(s){ f_final } else {f_non_final}
 			}
@@ -525,7 +527,6 @@ pub mod tests_pack_gadget{
 		assert!(data.len()==capacity + 2*imm_buf_len + inp_states.len());
 		let to_pad_size = inp.len() + oup.len() + data.len() 
 			- adv.subtbl_id.len();
-		println!("DEBUG USE 7888: to_pad_size: {}", to_pad_size);
 		adv.subtbl_id = [&adv.subtbl_id[..], &vec![Fr::zero(); to_pad_size][..]]
 			.concat(); //to make the Witness.to_vec_fp_var check happy
 					   //in cp_map.rs this onstraint inp+oup+data.len

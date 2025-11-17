@@ -195,7 +195,8 @@ impl ContainerConfig{
 	pub fn gen_si_data_info(&self)-> Vec<(usize, bool)>{
 		match self{
 			ContainerConfig::Column(loc,_,_,b_const) => 
-				if loc.src.1==6 && loc.src.0==0{//si_data (IDX_SI_DATA)
+				if (loc.src.1==6)
+					&& loc.src.0==0{//si_data (IDX_SI_INP/OUP/DATA)
 					//only when it is NOT foreign
 					vec![(loc.src.3, *b_const)]
 				}else{//don't handle other segments

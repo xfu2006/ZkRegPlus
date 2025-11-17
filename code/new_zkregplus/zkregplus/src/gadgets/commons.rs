@@ -317,7 +317,7 @@ pub fn gen_assert_sidcol_for_diff<F:PrimeField>(key: &Vec<FpVar<F>>,
 	diff: &Vec<FpVar<F>>)
 -> Vec<FpVar<F>>{
 	//1. generate the return
-	let b_perf = true;
+	let b_perf = false;
 	let cs = diff[0].cs();
 	let nc = cs.num_constraints();
 	let (zero, frg) = (F::zero(), F::from(RANGE2 as u32));
@@ -370,8 +370,6 @@ pub fn gen_assert_sidcol_for_diff<F:PrimeField>(key: &Vec<FpVar<F>>,
 	if b_perf{
 		println!(" ### gen_assert_sidcol_for_diff: n: {}, cs: {}",
 			n, cs.num_constraints() - nc);
-		//TO REMOVE 
-		assert!(cs.is_satisfied().unwrap());
 	}
 
 	res
@@ -1123,6 +1121,37 @@ pub fn check_arr_eq_nz<F:PrimeField>(vec: &[FpVar<F>], z: &FpVar<F>, _msg: &str)
 	}
 	Ok( () )
 }
+
+/// Check array eq or the value if rg2
+///COST: n
+pub fn check_arr_eq_or_rg2<F:PrimeField>(vec: &[FpVar<F>], z: &FpVar<F>, _msg: &str)
+->Result<(),SynthesisError>{
+	let fp_zero = FpVar::<F>::new_constant(z.cs().clone(), F::zero())?;
+	let rg2 = F::from(RANGE2 as u32);
+	let fp_rg2= FpVar::<F>::new_constant(z.cs().clone(), rg2)?;
+	let lb_minus_v2 = var_to_lb(z, -F::one());
+	let lb_minus_rg2 = var_to_lb(&fp_rg2, -F::one());
+	let lb_zero = var_to_lb(&fp_zero, F::one());
+	let cs = vec[0].cs();
+	for i in 0..vec.len(){
+		let lb_v1 = var_to_lb(&vec[i], F::one());
+		//check_eq_nz(&vec[i], &z, &fp_zero, &format!("check eq {} fails: {}", i, _msg))?;
+		#[cfg(test)]{
+			let z_val = z.value().unwrap(); 
+			let v1 = vec[i].value().unwrap();
+			assert!(v1==z_val || v1==rg2);
+		}
+		cs.enforce_constraint(
+			lb_v1.clone() + lb_minus_rg2.clone(),
+			lb_v1 + lb_minus_v2.clone(),
+			lb_zero.clone(),
+		)?;
+
+	}
+	Ok( () )
+}
+
+
 
 
 /// check two boolean var equal

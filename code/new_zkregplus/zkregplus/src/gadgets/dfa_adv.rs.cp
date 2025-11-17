@@ -388,7 +388,8 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 
 		//1.3. the transitions
 		let col_trans = Col::<F>::new(trans, "trans", IDX_DATA);
-		let col_si_trans = Col::<F>::new(sid_trans, "si_trans", IDX_SI_DATA);
+		let col_si_trans = Col::<F>::new_const(
+			sid_trans, "si_trans", IDX_SI_DATA);
 		res.borrow_mut().add_col(col_trans);
 		res.borrow_mut().add_col(col_si_trans);
 
@@ -637,22 +638,15 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		];
 		let b_sid_const = vec![true, true, true, false, false];
 		col2d_sid.into_iter().zip(names.iter().zip(b_sid_const))
-		//col2d_sid.into_iter().zip(names.iter()).for_each(|(c, n)|{
-		.for_each(|(c,(n,b))|{
-			if b{
-				res.borrow_mut().add_col(Col::new_const(c, &format!("sid_{}",n),
-					IDX_SI_DATA));
-			}else{
+		.for_each(|(c, (n,b_const))|{
+	//		if b_const{
+	//			res.borrow_mut().add_col(Col::new_const(c, &format!("sid_{}",n),
+	//				IDX_SI_DATA));
+	//		}else{
 				res.borrow_mut().add_col(Col::new(c, &format!("sid_{}",n),
 					IDX_SI_DATA));
-			}
+//			}
 		});
-		/*
-		col2d_sid.into_iter().zip(names.iter()).for_each(|(c, n)|{
-			res.borrow_mut().add_col(Col::new(c, &format!("sid_{}",n),
-				IDX_SI_DATA));
-		});
-		*/
 		assert!(mtbl_lk_res.len()==n+1);
 		res.borrow_mut().add_col(Col::new(mtbl_lk_res,"mtbl_lk_res",IDX_DATA));
 		res.borrow_mut().add_col(Col::new_const(vec![zero;n+1],

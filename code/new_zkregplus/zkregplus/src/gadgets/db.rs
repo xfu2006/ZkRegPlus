@@ -845,21 +845,25 @@ pub fn tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
 
 	let f_rg = F::from(RANGE2);
 	let max_val:usize = (1<<RANGE2_BIT) - 1;
-	let max = F::from(max_val as u32);
+	let _max = F::from(max_val as u32);
 	let tbl_names = vec!["packed_key", "packed_id", "packed_val"];
-	let zero = F::zero();
-	let packed_diff = (1..packed_val.len()).collect::<Vec<_>>()
-		.into_par_iter().map(|i| packed_val[i] - packed_val[i-1])
-		.collect::<Vec<_>>();
+	let _zero = F::zero();
+	//let packed_diff = (1..packed_val.len()).collect::<Vec<_>>()
+	//	.into_par_iter().map(|i| packed_val[i] - packed_val[i-1])
+	//	.collect::<Vec<_>>();
+	let packed_diff = gen_abs_diff_col(&packed_val); //absolute value now
 	
-	let diff_key= (1..packed_key.len()).collect::<Vec<_>>()
-		.into_par_iter().map(|i| packed_key[i] - packed_key[i-1])
-		.collect::<Vec<_>>();
-	let sid_packed_diff = (1..packed_val.len()).into_iter().map(|i|{
-		let res = if packed_diff[i-1]<max {f_rg} else {zero} ;
-		res
-	}).collect::<Vec<_>>();
+	//let diff_key= (1..packed_key.len()).collect::<Vec<_>>()
+	//	.into_par_iter().map(|i| packed_key[i] - packed_key[i-1])
+	//	.collect::<Vec<_>>();
+	let diff_key = gen_abs_diff_col(&packed_key);
+	//let sid_packed_diff = (1..packed_val.len()).into_iter().map(|i|{
+	//	let res = if packed_diff[i-1]<max {f_rg} else {zero} ;
+	//	res
+	//}).collect::<Vec<_>>();
+	let sid_packed_diff = vec![f_rg; packed_diff.len()];
 
+	//let sid_diff_key= vec![f_rg; sid_packed_diff.len()];
 	let sid_diff_key= vec![f_rg; sid_packed_diff.len()];
 	assert!(packed_diff.len()==sid_packed_diff.len());
 	assert!(diff_key.len()==sid_diff_key.len());
@@ -888,7 +892,7 @@ pub fn tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
 	sorted_tbl.borrow_mut().add_col(Col::new_const(sid_diff_key, "sid_diff_key", IDX_SI_DATA));
 	sorted_tbl.borrow_mut().add_col(Col::new(packed_diff,"packed_diff"
 		,IDX_DATA));
-	sorted_tbl.borrow_mut().add_col(Col::new(sid_packed_diff, "sid_packed_diff", IDX_SI_DATA));//this one is not const
+	sorted_tbl.borrow_mut().add_col(Col::new_const(sid_packed_diff, "sid_packed_diff", IDX_SI_DATA));//this one is not const
 	res.borrow_mut().add_container(sorted_tbl);
 
 	Ok(res)
@@ -1127,16 +1131,16 @@ pub fn verify_tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
 	//2.1 retrieve data and check sids 
 	//COST: 0 
 	let _rg = new_const_var(&cs, F::from(RANGE2));
-	let names = vec!["packed_key", "packed_id", "packed_val"];
+	let names = vec!["packed_key", "packed_id", "packed_val", "packed_diff", "diff_key"];
 	//no need to check constant
 	//for vs in &sids1{check_arr_eq(&vs.borrow().to_vec(), &rg, "err sid")?; }
 	let tblcols = names.iter().map(|n|
 		sorted_tbl.borrow().get_container(n).expect("err get tbl"))
 		.collect::<Vec<_>>();
-	let sid_sorted_diff = sorted_tbl.borrow_mut().get_container("sid_packed_diff")?
-		.borrow().to_vec();
-	let sid_diff_key= sorted_tbl.borrow_mut().get_container("sid_diff_key")?
-		.borrow().to_vec();
+	//let sid_sorted_diff = sorted_tbl.borrow_mut().get_container("sid_packed_diff")?
+	//	.borrow().to_vec();
+	//let sid_diff_key= sorted_tbl.borrow_mut().get_container("sid_diff_key")?
+	//	.borrow().to_vec();
 	if b_perf{
 		println!("  --- verify_tbl_filtered_new keys: step 2.1  cs: {}", 
 			cs.num_constraints() - nc);
@@ -1147,14 +1151,18 @@ pub fn verify_tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
 	//COST: 11n
 	let packed_vals = tblcols[2].borrow().to_vec();
 	let packed_keys= tblcols[0].borrow().to_vec();
-	let diff_val = (1..packed_vals.len()).collect::<Vec<_>>()
-		.into_iter().map(|i|{
-			&packed_vals[i] - &packed_vals[i-1]
-		}).collect::<Vec<_>>();
-	let diff_key = (1..packed_keys.len()).collect::<Vec<_>>()
-		.into_iter().map(|i|{
-			&packed_keys[i] - &packed_keys[i-1]
-		}).collect::<Vec<_>>();
+	//let diff_val = (1..packed_vals.len()).collect::<Vec<_>>()
+	//	.into_iter().map(|i|{
+	//		&packed_vals[i] - &packed_vals[i-1]
+	//	}).collect::<Vec<_>>();
+	//let diff_key = (1..packed_keys.len()).collect::<Vec<_>>()
+	//	.into_iter().map(|i|{
+	//		&packed_keys[i] - &packed_keys[i-1]
+	//	}).collect::<Vec<_>>();
+	let diff_val = tblcols[3].borrow().to_vec();
+	let diff_key= tblcols[4].borrow().to_vec();
+	let sid_sorted_diff = gen_assert_sidcol_for_diff(&packed_vals, &diff_val);
+	let sid_diff_key= gen_assert_sidcol_for_diff(&packed_keys, &diff_key);
 
 	assert_well_formed_sorted(cs.clone(),
 		&tblcols[0].borrow().to_vec(), //packed_key

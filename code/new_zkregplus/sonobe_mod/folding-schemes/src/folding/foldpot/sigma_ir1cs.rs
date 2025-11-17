@@ -3150,7 +3150,14 @@ where 	C: CurveGroup<ScalarField=F>,
 
 					n_case2 += 1;
 				}
-			}else{//3 r1cs 
+			}else{//3 r1cs . We have made sure all qry_tb1[i] (tbl_id is NON
+				//zero)
+				//if b_debug{
+					println!("DEBUG USE 6101 -- i: {}, qry_tbl[i]: {}", i,
+						qry_tbl1[i].value().unwrap());
+					assert!(!qry_tbl1[i].value().unwrap().is_zero(), 
+						"ERROR: qry_tbl[{}] is zero for case 3", i);
+				//}
 				let v = &alpha + &(&qry_tbl1[i]*&beta) + &qry_tbl2[i];
 				let lb_v = var_to_lb(&v, F::one());
 				let lb_wit= var_to_lb(&wtns_var.inv_hab22_left[i], F::one());

@@ -227,7 +227,6 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 		}
 		let mut sum_sizes = vec![0,0,0,0,0];
 		for vs in &vec_sizes{ for j in 0..vs.len(){sum_sizes[j] += vs[j] } }
-
 		//2. generate the config of statement. Note we assume
 		// all components process the same max word len
 		let (input_size, output_size, data_size, failed_sigs_size,
