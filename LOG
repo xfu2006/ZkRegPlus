@@ -21989,11 +21989,25 @@ Goal 7. add the handling of inp/oup
 	[a] impl
 	[b] test
 
--- TODO -- check sigma_cyclepair inp/oup sid set up.
+Tuesday 11/18/2025
+Goal 1. check why cyclepair fails
+	[a] read its code
+	[b] problem is that it does not have data just have
+		inp/oup they are NOT constant
+	[c] in sigma_ir1cs need to have an attribute
+		for optimization tag
+	[d] implemented the logup check
 
+Goal 2. read driver code and think about revision plan. 
 
-
+Wed 11/19/2025
 Goal 1. remove the multiplication in query and lookup logup check
-	[a] git commit first
-	[b] compare
+	[a] check why it fails 
+		-> recovers the hab22 and hab22_right sum
+		-> check how SigmaCyclepair new_av -> verified
+		-> but why would hab22 check fail?
+			-> check lkup if multipl with col1_share is necesaary
+Goal 2. change b_optimize_ to b_cyclepair
+	[a] change def and address all syntax errors
+	[b] change the convert_fp logic
 

@@ -1701,10 +1701,12 @@ pub mod tests_driver{
 			let lookup_share_size = 4; //overwrite it here keep the original size
 			let failed_sig_size = 1;
 			let discharged_sig_size = 1;  //dummy sigs table of len 1.
+			let b_cyclepair = false;
 			let cfg = StatementConfig::new(
 				input_size, output_size, word_subseg_size,
 				data_size, lookup_share_size,
 				failed_sig_size, discharged_sig_size,
+				b_cyclepair
 			);
 
 			//2. generate the result to return
@@ -1763,10 +1765,10 @@ pub mod tests_driver{
 		let lkup_share_size = 4;
 		let vec_circ = vec![
 			vec![
-				SigmaIR1CS_Inst::<Fr,C1,CS1,LK,SumMapper<Fr,LK>,H>::new_adv("oddsum".to_string(), poseidon_config.clone(), Rc::new(RefCell::new(odd_mapper)), false, lkup_share_size).unwrap(),
+				SigmaIR1CS_Inst::<Fr,C1,CS1,LK,SumMapper<Fr,LK>,H>::new_adv("oddsum".to_string(), poseidon_config.clone(), Rc::new(RefCell::new(odd_mapper)), false, lkup_share_size, true).unwrap(),
 			],
 			vec![
-				SigmaIR1CS_Inst::<Fr,C1,CS1,LK,SumMapper<Fr,LK>,H>::new_adv("evensum".to_string(), poseidon_config.clone(), Rc::new(RefCell::new(even_mapper)), false, lkup_share_size)
+				SigmaIR1CS_Inst::<Fr,C1,CS1,LK,SumMapper<Fr,LK>,H>::new_adv("evensum".to_string(), poseidon_config.clone(), Rc::new(RefCell::new(even_mapper)), false, lkup_share_size, true)
 			.unwrap()]
 		];
 		t1.prt("Step 0. setup sigma_ir1cs odd/eve sum instance");

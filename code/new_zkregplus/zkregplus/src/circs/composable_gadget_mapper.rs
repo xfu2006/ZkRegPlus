@@ -236,9 +236,11 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 			discharged_sigs_size) = (sum_sizes[0], sum_sizes[1], 
 				sum_sizes[2], sum_sizes[3], sum_sizes[4]);
 		let word_subseg_size = self.max_word_len(); 
+		let b_cyclepair = false;
 		let mut cfg = StatementConfig::new(
 			input_size, output_size, word_subseg_size,
-			data_size, lkup_share_size, failed_sigs_size, discharged_sigs_size
+			data_size, lkup_share_size, failed_sigs_size, discharged_sigs_size,
+			b_cyclepair
 		); //will have si_data_info reset later
 
 		//3. generate the map for each component. Each component's statement

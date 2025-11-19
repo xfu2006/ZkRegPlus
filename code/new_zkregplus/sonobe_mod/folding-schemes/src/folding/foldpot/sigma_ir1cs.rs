@@ -258,6 +258,8 @@ pub trait SigmaIR1CS<F: PrimeField, LK: LookupTableTwoCol<F>, GM: GadgetMapper<F
 	/// return the statement config
 	fn get_stmt_config(&self)->StatementConfig;
 
+	fn is_cyclepair(&self)->bool;
+
 	/// return the lkup_share_size
 	fn get_lkup_share_size(&self)->usize;
 
@@ -276,7 +278,8 @@ pub trait SigmaIR1CS<F: PrimeField, LK: LookupTableTwoCol<F>, GM: GadgetMapper<F
 	/// fq_bits is the bit width of base prime field, it is
 	/// needed for calculating limbs of NonNativeUint,
 	fn new_adv(name: String, poseidon_config: PoseidonConfig<F>, 
-		g_mapper: Rc<RefCell<GM>>, b_full_mode: bool, lkup_share_size: usize)
+		g_mapper: Rc<RefCell<GM>>, b_full_mode: bool, lkup_share_size: usize,
+		b_cyclepair: bool)
 		->Result<Self,Error> where Self: Sized;
 
 	/// Similar to step_native to allow self to modify itself.
@@ -886,13 +889,17 @@ pub struct StatementConfig{
 	pub si_data_info: Vec<(usize,bool)>,
 	pub si_inp_info: Vec<(usize,bool)>,
 	pub si_oup_info: Vec<(usize,bool)>,
+
+	/// if true, si_data, inp, and oup will be set to constant
+	pub b_cyclepair: bool,
 }
 
 impl StatementConfig{
 	pub fn new(input_size: usize, output_size: usize,
 		word_subseg_size: usize, data_size: usize, 
 		lookup_share_size: usize, 
-		failed_sigs_size: usize, discharged_sigs_size: usize)
+		failed_sigs_size: usize, discharged_sigs_size: usize,
+		b_cyclepair: bool)
 	->Self{
 		let idx_inp = 23;
 		let idx_oup = idx_inp + input_size;
@@ -907,9 +914,10 @@ impl StatementConfig{
 		let idx_discharged_sigs = idx_failed_sigs + failed_sigs_size;
 		let idx_mtbl_sigs = idx_discharged_sigs + discharged_sigs_size;
 		let mtbl_sigs_size = discharged_sigs_size;
-		let si_data_info = vec![(data_size, false)]; //by default,
-		let si_inp_info = vec![(input_size, false)]; //by default,
-		let si_oup_info = vec![(output_size, false)]; //by default,
+		let b_val = if b_cyclepair {true} else {false};
+		let si_data_info = vec![(data_size, b_val)];
+		let si_inp_info = vec![(input_size, b_val)]; //by default,
+		let si_oup_info = vec![(output_size, b_val)]; //by default,
 			//cover entire sid_data table and not constant (no optimization)
 
 		Self{ input_size, output_size, data_size, word_subseg_size, 
@@ -923,6 +931,7 @@ impl StatementConfig{
 			si_data_info,
 			si_inp_info,
 			si_oup_info,
+			b_cyclepair
 		}
 	}
 
@@ -1021,7 +1030,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 	}
 
 
-	pub fn gen_config(&self)->StatementConfig{
+	pub fn gen_config(&self, b_cyclepair: bool)->StatementConfig{
 		assert!(self.col1_share.len() == self.col2_share.len() 
 			&& self.col1_share.len() == self.m_share.len() );
 		assert!(self.subtable_id.len()==self.inp_buf.len() + self.oup_buf.len()+  self.data.len());
@@ -1032,7 +1041,8 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 			self.data.len(),
 			self.col1_share.len(),
 			self.failed_sigs.len(),
-			self.discharged_sigs.len()
+			self.discharged_sigs.len(),
+			b_cyclepair
 		)
 	}
 
@@ -1978,9 +1988,10 @@ impl <F:PrimeField> WitnessSigmaIR1CS<F>{
 					//frag.iter().map(|f|
 					//	FpVar::<F>::new_constant(cs.clone(), f.clone()).unwrap()
 					//).collect::<Vec<FpVar<F>>>()
-					let var = FpVar::<F>::new_constant(cs.clone(), frag[0].clone())
-						.unwrap();
-					vec![var; frag.len()]
+					if frag.len()==0 {vec![]} else{
+						let var = FpVar::<F>::new_constant(cs.clone(), frag[0].clone()) .unwrap();
+						vec![var; frag.len()]
+					}
 				}else{
 					frag.iter().map(|f|
 						FpVar::<F>::new_witness(cs.clone(), || Ok(f)).unwrap()
@@ -2138,6 +2149,9 @@ where 	C: CurveGroup<ScalarField=F>,
 	/// as cyclepair input.
 	pub b_full_mode: bool,
 
+	/// if the instance is cyclepair, we will tag sid differently
+	pub b_cyclepair: bool,
+
 	/// name of the instance
 	pub name: String,
 
@@ -2209,6 +2223,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			fq_bits: self.fq_bits,
 			dummy_stmt: self.dummy_stmt.clone(),
 			_lk: PhantomData,
+			b_cyclepair: self.b_cyclepair
 		}
 	}
 }
@@ -2291,6 +2306,10 @@ where 	C: CurveGroup<ScalarField=F>,
 	/// approach.
 	fn set_container_config(&mut self, advice: &Rc<dyn NdAdvice>){ 
 		self.gadget_mapper.borrow_mut().set_container_config(advice);
+	}
+
+	fn is_cyclepair(&self)->bool{
+		self.b_cyclepair
 	}
 
 
@@ -2731,7 +2750,8 @@ where 	C: CurveGroup<ScalarField=F>,
 	/// whether full mode (supporting cyclepair), and
 	/// bits of Fq (base prime field)
 	fn new_adv(name: String, poseidon_config: PoseidonConfig<F>, 
-		g_mapper: Rc<RefCell<GM>>, b_full_mode: bool, lkup_share_size: usize)
+		g_mapper: Rc<RefCell<GM>>, b_full_mode: bool, lkup_share_size: usize,
+		b_cyclepair: bool)
 		-> Result<Self,Error>{
 		println!("DEBUG USE 101 -- sigma_ir1cs::new_adv");
 		let gadgets = g_mapper.borrow().get_gadgets();
@@ -2788,7 +2808,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			stmt_config: stmt_cfg,
 			params: cs_pp, b_full_mode: b_full_mode, fq_bits: fq_bits,
 			dummy_stmt: None,
-			_lk: PhantomData})
+			_lk: PhantomData, b_cyclepair})
 	}
 
 	fn step_native_mut(
@@ -3196,13 +3216,16 @@ where 	C: CurveGroup<ScalarField=F>,
 					n_case2 += 1;
 				}
 			}else{//3 r1cs . We have made sure all qry_tb1[i] (tbl_id is NON
-				//zero)
-				//if b_debug{
+				//zero) if optimized - 2 r1cs because if we can guarantee
+				//that qry_tbl1[i] is NOT Nill
+				//if b_debug && self.b_cyclepair{
+				//RECOVER THE ABOVE LATER
+				if !self.b_cyclepair{
 					println!("DEBUG USE 6101 -- i: {}, qry_tbl[i]: {}", i,
 						qry_tbl1[i].value().unwrap());
 					assert!(!qry_tbl1[i].value().unwrap().is_zero(), 
 						"ERROR: qry_tbl[{}] is zero for case 3", i);
-				//}
+				}
 				let v = &alpha + &(&qry_tbl1[i]*&beta) + &qry_tbl2[i];
 				let lb_v = var_to_lb(&v, F::one());
 				let lb_wit= var_to_lb(&wtns_var.inv_hab22_left[i], F::one());
@@ -3211,8 +3234,12 @@ where 	C: CurveGroup<ScalarField=F>,
 					lb_wit,
 					lb_one.clone(),
 				)?;
-
-				sum_hab22_left += &(&qry_tbl1[i] * &wtns_var.inv_hab22_left[i]);
+				if !self.b_cyclepair{
+					//sum_hab22_left += &wtns_var.inv_hab22_left[i];
+					sum_hab22_left += &(&qry_tbl1[i] * &wtns_var.inv_hab22_left[i]);
+				}else{
+					sum_hab22_left += &(&qry_tbl1[i] * &wtns_var.inv_hab22_left[i]);
+				}
 				n_case3 += 1;
 			};
 
@@ -3269,7 +3296,19 @@ where 	C: CurveGroup<ScalarField=F>,
 			//because it's no care (actually this step is not needed
 			//because we assume lkup[1] will not be zero.
 			//put it here for consistency.
-			let to_add = &(&wtns_var.inv_hab22_right[i]*m_i)*&si.col1_share[i];	
+			let to_add = if !self.b_cyclepair{
+				if b_debug{
+					assert!(!si.col1_share[i].value().unwrap().is_zero());
+				}
+				//&wtns_var.inv_hab22_right[i]*m_i //because col1_share
+				//is guaranteed to be not zero
+				&(&wtns_var.inv_hab22_right[i]*m_i)*&si.col1_share[i]
+			}else{
+				if b_debug{
+					assert!(!si.col1_share[i].value().unwrap().is_zero());
+				}
+				&(&wtns_var.inv_hab22_right[i]*m_i)*&si.col1_share[i]
+			};	
 			sum_hab22_right = b_not_add.select(&sum_hab22_right, 
 				&(&sum_hab22_right + &to_add))?;
 			if i%64==0{//avoid too long chain in later
@@ -4087,10 +4126,12 @@ pub mod tests_sigma_ir1cs{
 			let lookup_share_size = 4;//overwrite it to keep legacy code logic
 			let failed_sig_size = 1;
 			let discharged_sig_size = 1;
+			let b_cyclepair = false;
 			let cfg = StatementConfig::new(
 				input_size, output_size, word_subseg_size,
 				data_size, lookup_share_size,
-				failed_sig_size, discharged_sig_size
+				failed_sig_size, discharged_sig_size,
+				b_cyclepair
 			);
 
 			//2. generate the result to return
@@ -4162,7 +4203,7 @@ pub mod tests_sigma_ir1cs{
 		let six_ir1cs = 
 			SigmaIR1CS_Inst::<F,C,CS,LK,SixRootMapper<F,LK>,H>
 			::new_adv(format!("six_ir1cs"), 
-			poseidon_config, mapper.clone(), false, share_size)
+			poseidon_config, mapper.clone(), false, share_size, false)
 			.expect("creating ir1cs failed");
 
 		//2. create the inputs and then statements
@@ -4306,7 +4347,8 @@ pub mod tests_sigma_ir1cs{
 
 			_lk: PhantomData,
 		};
-		let cfg = stmt.gen_config();
+		let b_cyclepair = false;
+		let cfg = stmt.gen_config(b_cyclepair);
 		let v1 = stmt.to_vec();
 		let stmt2 = StatementInst::<Fr,LookupTableTwoCol_Inst<Fr>>
 			::from_vec(&cfg, &v1);

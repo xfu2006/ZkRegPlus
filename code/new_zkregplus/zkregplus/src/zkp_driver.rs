@@ -228,7 +228,7 @@ where C: CurveGroup<ScalarField=F>,
 					]
 				)
 			};
-		
+			let b_cyclepair = false;	
 			let circ= SigmaIR1CS_Inst::<F,C,CS,LK<F>,
 			CompositeGadgetMapper<F,LK<F>> ,false> ::new_adv(
 				format!("circ_cat_{}_circ_{}", l1, l2), 
@@ -236,7 +236,8 @@ where C: CurveGroup<ScalarField=F>,
 				Rc::new(RefCell::new(hybrid_cgm1)), 
 				false, //b_full_mode (whether supporting cyclepair - no for 
 						//regular circuit) 
-				lk_share
+				lk_share,
+				b_cyclepair
 			).expect("error building circ");
 			layer_circs.push( vec![circ] ); //legacy to keep 2d layer
 
@@ -322,12 +323,14 @@ where C: CurveGroup<ScalarField=F>,
 
 
 	let lk_share1 = max_word*avg_lk_wd;
+	let b_cyclepair = false;
 	//let lk_share2 = max_word*2*avg_lk_wd;
 	let _c1 = SigmaIR1CS_Inst::<F,C,CS,LK<F>,
 		CompositeGadgetMapper<F,LK<F>>
 		,false>
 		::new_adv(format!("c1"), poseidon_config.clone(), 
-			Rc::new(RefCell::new(cg1)), false, lk_share1).expect("c1");
+			Rc::new(RefCell::new(cg1)), false, lk_share1,
+			b_cyclepair).expect("c1");
 	/*
 	let _c2 = SigmaIR1CS_Inst::<F,C,CS,LK<F>,
 		CompositeGadgetMapper<F,LK<F>>
@@ -377,7 +380,8 @@ where C: CurveGroup<ScalarField=F>,
 		CompositeGadgetMapper<F,LK<F>>
 		,false>
 		::new_adv(format!("hc1"), poseidon_config.clone(), 
-			Rc::new(RefCell::new(hybrid_cgm1)), false, lk_share1).expect("hc1");
+			Rc::new(RefCell::new(hybrid_cgm1)), false, lk_share1,
+			b_cyclepair).expect("hc1");
 
 	//vec![ vec![c4,c3], vec![c2,c1] ]
 	//vec![ vec![_c2,_c1] ] //for saving cost

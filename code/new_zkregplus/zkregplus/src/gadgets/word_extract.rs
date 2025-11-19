@@ -308,9 +308,11 @@ pub mod tests_word_extract_gadget{
 		let failed_sig_size = failed_sigs.len();
 		let discharged_sig_size = discharged_sigs.len();
 		assert!(inp_size + oup_size + data_size == subtbl_id.len());
+		let b_cyclepair = false;
 		let stmt_cfg = StatementConfig::new(
 			inp_size, oup_size, word_subseg_size,
-			data_size, lkup_share_size, failed_sig_size, discharged_sig_size);
+			data_size, lkup_share_size, failed_sig_size, discharged_sig_size,
+			b_cyclepair);
 		assert!(subtbl_id.len()== inp.len() + oup.len() + data.len());
 		let mut rng = ark_std::test_rng();
 

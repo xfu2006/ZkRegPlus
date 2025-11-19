@@ -319,10 +319,12 @@ GadgetMapper<F,LK> for FoldPairMapper<F, LK>{
 		let lkup_share_size = 0;
 		let failed_sigs_size= 1; //empty 0
 		let discharged_sigs_size= 1; //empty 0
+		let b_cyclepair = true;
 		let cfg = StatementConfig::new(
 			input_size, output_size, word_subseg_size,
 			data_size,lkup_share_size ,
 			failed_sigs_size, discharged_sigs_size,
+			b_cyclepair
 		);
 
 		//2. generate the result to return
@@ -371,7 +373,8 @@ where 	C: CurveGroup<ScalarField=F>,
 	//1. create a sigma instance
 	let mapper = FoldPairMapper::<F,LK>{_f: PhantomData, _lk: PhantomData, poseidon_config: poseidon_config.clone()};
 	let lkup_share_size = 0;
-	let mut sigma = SigmaIR1CS_Inst::<F, C, CS, LK, FoldPairMapper<F,LK>, H>::new_adv("paircycle".to_string(), poseidon_config.clone(), Rc::new(RefCell::new(mapper)), true, lkup_share_size).expect("error new sigma");
+	let mut sigma = SigmaIR1CS_Inst::<F, C, CS, LK, FoldPairMapper<F,LK>, H>::new_adv("paircycle".to_string(), poseidon_config.clone(), Rc::new(RefCell::new(mapper)), true, lkup_share_size, true).expect("error new sigma"); 
+	//set true for b_cyclepair 
 
 	//2. set up a dummy external input (witness) 
 	// because hc and hc_out is not zero
