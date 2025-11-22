@@ -652,6 +652,6 @@ pub mod tests_zkp_driver{
 
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
-		small_data::<Fr>();
+		small_data2::<Fr>();
 	}
 }

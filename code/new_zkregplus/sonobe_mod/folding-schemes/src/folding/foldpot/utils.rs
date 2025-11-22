@@ -12,8 +12,10 @@ use memory_stats::memory_stats;
 use libc::{pthread_getattr_np, pthread_attr_getstack, pthread_self};
 use std::mem::MaybeUninit;
 use std::ptr;
-use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef,
+use ark_relations::{lc,
+	r1cs::{SynthesisError,ConstraintSystemRef,
 //	LinearCombination,Variable
+	}
 };
 
 use ark_r1cs_std::{
@@ -36,6 +38,48 @@ pub const LOG_LEVEL:usize = 2;
 pub const LOG3:usize = 0;
 pub const LOG2:usize = 1;
 pub const LOG1:usize = 0;
+
+
+/// it is cheapter than standard arkworks is_zero(), which costs 3 constraints.
+/// it returns 1 when v is zero and 0 when v is not zero.
+/// It's guaranteed to be boolean. COST: (2 constraints).
+/// the reason is that we skipped z*(1-z) = 0 check when arkworks converted
+/// to boolean. It's already guaranteed by the two constraints in the body.
+/// We output a FpVar (1/0) to avoid extra BoolVar constraint.
+pub fn is_zero_better<F:PrimeField>(x: &FpVar<F>, cs: &ConstraintSystemRef<F>)
+->Result<FpVar<F>, SynthesisError>{
+	let lb_zero= lc!();
+	let lb_one = lc!() + (F::one(), Variable::One);
+	let z = FpVar::new_witness(cs.clone(), || {
+        let xv = x.value()?;
+        if xv.is_zero() { Ok(F::one()) } else { Ok(F::zero()) }
+    })?;
+	let inv = FpVar::new_witness(cs.clone(), || {
+        let xv = x.value()?;
+        if xv.is_zero() { Ok(F::zero()) } else { Ok(xv.inverse().unwrap()) }
+    })?;
+    // Constraint 1: x * inv = 1 - z
+	let lb_x = var_to_lb(x, F::one());
+	let lb_z = var_to_lb(&z, F::one());
+	let lb_inv = var_to_lb(&inv, F::one());
+	let z_variable = fpvar_to_var(&z);
+	let lb_res = lb_one + (-F::one(), z_variable);
+	cs.enforce_constraint(
+		lb_x.clone(),
+		lb_inv,
+		lb_res
+	)?;
+
+    // Constraint 2: x * z = 0
+	cs.enforce_constraint(
+		lb_x,
+		lb_z,
+		lb_zero
+	)?;
+
+	Ok(z)
+}
+
 
 /// convert a FP var to LinearCombination
 pub fn var_to_lb<F:PrimeField>(v: &FpVar<F>, coef: F)->LinearCombination<F>{

@@ -44,7 +44,7 @@ use crate::{
 		circuits::{nonnative::uint::{NonNativeUintVar,LimbVar}},
 		foldpot::{
 			utils::{f1_to_f2_limbs, get_stack_space,check_logup, print_vec_var,
-				var_to_lb},
+				var_to_lb },
 			container_config::{ContainerConfig},
 			//circuits_super::field_to_usize,
 		},
@@ -205,10 +205,7 @@ impl <F:PrimeField> LookupTableTwoCol<F> for LookupTableTwoCol_Inst<F>{
 	/// hashmaps (the occurence entries)
 	fn fill_mvec(&self, tbl_ids: &Vec<F>, vals: &Vec<F>, map: &mut HashMap<usize, usize>){
 		assert!(tbl_ids.len()==vals.len(), "tbl_id.len != vals.len");
-		let idx = tbl_ids.iter().zip(vals.iter()).enumerate()
-		//RECOVER LATER ----------
-		//let idx = tbl_ids.par_iter().zip(vals.par_iter()).enumerate()
-		//RECOVER LATER ----------
+		let idx = tbl_ids.par_iter().zip(vals.par_iter()).enumerate()
 			.map(|(i, (x,y))|{
 			//if subtbl_id is 0, ignore any entry just return idx 0
 			if x.is_zero(){ 0usize}
@@ -218,7 +215,13 @@ impl <F:PrimeField> LookupTableTwoCol<F> for LookupTableTwoCol_Inst<F>{
 			}
 		}).collect::<Vec<usize>>();
 		for i in idx{
-			map.entry(i).and_modify(|c| *c +=1).or_insert(1);
+			//IGNORE the 0 entries as we have made sure that
+			//subtbl_id (non-constant) will NOT have 0 id's
+			//in this case, ignore (0,0) entries
+			//see the improve of case 3 of sum_hab22_left and sum_hab22_right
+			if i!=0{
+				map.entry(i).and_modify(|c| *c +=1).or_insert(1);
+			}
 		}
 	}
 	/// return the two columns
@@ -2532,9 +2535,10 @@ where 	C: CurveGroup<ScalarField=F>,
 			res
 		}).collect::<Vec<F>>();
 		let sum_hab22_left = qry_tbl1.par_iter().zip(inv_hab22_left.par_iter())
-			.map(|(&a,&b)|{
-				a * b
-			}).sum::<F>() + zi_part2.sum_hab22_left;
+		.map(|(&a,&b)|{
+				if a.is_zero() {zero}
+				else {b}
+		}).sum::<F>() + zi_part2.sum_hab22_left;
 
 		let right_size = inv_hab22_right_size;
 		let inv_hab22_right = (0..right_size).into_par_iter().map(|i|{
@@ -2543,7 +2547,8 @@ where 	C: CurveGroup<ScalarField=F>,
 		}).collect::<Vec<F>>();
 		let mut lookup_share_size_left = si.act_lookup_share_size.clone();
 		let sum_hab22_right = (0..right_size).into_par_iter().map(|i|{
-			inv_hab22_right[i] * si.m_share[i] * si.col1_share[i]
+			if si.col1_share[i].is_zero() {zero} 
+			else{ inv_hab22_right[i] * si.m_share[i]}
 		}).sum::<F>() + zi_part2.sum_hab22_right;
 		let cnt_zero = si.col1_share.par_iter().filter(|x|
 			x.is_zero()).count();
@@ -3195,6 +3200,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		//    verify inverse; 1 for multiplying with qry1[i] before
 		//    summing it up.
 		//let cv_zero = FpVar::<F>::new_constant(cs.clone(), F::zero());
+		println!("DEBUG USE 6651.LEFT: step i: {}, alpha: {}, beta: {}, inv_hab22_left_size: {}", _i, alpha.value()?, beta.value()?, inv_hab22_left_size);
 		let lb_one = LinearCombination::from((F::one(),Variable::One));
 		let (mut n_case1, mut n_case2, mut n_case3) = (0,0,0);
 		for i in 0..inv_hab22_left_size{
@@ -3211,18 +3217,14 @@ where 	C: CurveGroup<ScalarField=F>,
 						lb_wit,
 						lb_one.clone(),
 					)?;
-					sum_hab22_left += &(&qry_tbl1[i] * &wtns_var.inv_hab22_left[i]); //this one does not cost really it's just a pure add (0 r1cs)
+					sum_hab22_left += &wtns_var.inv_hab22_left[i]; //this one does not cost really it's just a pure add (0 r1cs)
 
 					n_case2 += 1;
 				}
 			}else{//3 r1cs . We have made sure all qry_tb1[i] (tbl_id is NON
 				//zero) if optimized - 2 r1cs because if we can guarantee
 				//that qry_tbl1[i] is NOT Nill
-				//if b_debug && self.b_cyclepair{
-				//RECOVER THE ABOVE LATER
-				if !self.b_cyclepair{
-					println!("DEBUG USE 6101 -- i: {}, qry_tbl[i]: {}", i,
-						qry_tbl1[i].value().unwrap());
+				if b_debug{
 					assert!(!qry_tbl1[i].value().unwrap().is_zero(), 
 						"ERROR: qry_tbl[{}] is zero for case 3", i);
 				}
@@ -3234,12 +3236,7 @@ where 	C: CurveGroup<ScalarField=F>,
 					lb_wit,
 					lb_one.clone(),
 				)?;
-				if !self.b_cyclepair{
-					//sum_hab22_left += &wtns_var.inv_hab22_left[i];
-					sum_hab22_left += &(&qry_tbl1[i] * &wtns_var.inv_hab22_left[i]);
-				}else{
-					sum_hab22_left += &(&qry_tbl1[i] * &wtns_var.inv_hab22_left[i]);
-				}
+				sum_hab22_left += &wtns_var.inv_hab22_left[i];
 				n_case3 += 1;
 			};
 
@@ -3250,7 +3247,6 @@ where 	C: CurveGroup<ScalarField=F>,
 				//  chain shorter.
 				//sum_hab22_left = &sum_hab22_left + &zero_var;
 				//COMMENT OUT LATER IF DOES NOT HELP
-				let _v1 = sum_hab22_left.value()?;
 				sum_hab22_left = &sum_hab22_left * &one_wit_var;
 
 			}
@@ -3280,6 +3276,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			println!("--- DEBUG USE 7601.2 lkup_size: {}, inv_hab22_right_size: {}", si.act_lookup_share_size.value()?, inv_hab22_right_size);
 
 		//5.2 check the right side
+		println!("DEBUG USE 6651.RIGHT: i: {}, alpha: {}, beta: {}, inv_hab22_right_size: {}", _i, alpha.value()?, beta.value()?, inv_hab22_right_size);
 		let mut lookup_share_size_left = si.act_lookup_share_size.clone();
 		for i in 0usize..inv_hab22_right_size{
 			let v = &alpha + &(&beta*&si.col1_share[i]) + &si.col2_share[i];
@@ -3296,10 +3293,15 @@ where 	C: CurveGroup<ScalarField=F>,
 			//because it's no care (actually this step is not needed
 			//because we assume lkup[1] will not be zero.
 			//put it here for consistency.
+			//if b_debug{
+			/*
+			if si.col1_share[i].value().unwrap().is_zero() && !si.col2_share[i].value()?.is_zero(){
+				println!("DEBUG USE 7777: i: {}, col1: {}, col2: {}", i, si.col1_share[i].value().unwrap(), si.col2_share[i].value().unwrap());
+				panic!("STOP HERE 7777");
+			}
+				//assert!(!si.col1_share[i].value().unwrap().is_zero());
+			//}
 			let to_add = if !self.b_cyclepair{
-				if b_debug{
-					assert!(!si.col1_share[i].value().unwrap().is_zero());
-				}
 				//&wtns_var.inv_hab22_right[i]*m_i //because col1_share
 				//is guaranteed to be not zero
 				&(&wtns_var.inv_hab22_right[i]*m_i)*&si.col1_share[i]
@@ -3309,6 +3311,15 @@ where 	C: CurveGroup<ScalarField=F>,
 				}
 				&(&wtns_var.inv_hab22_right[i]*m_i)*&si.col1_share[i]
 			};	
+			*/
+			let to_add = &wtns_var.inv_hab22_right[i]*m_i;
+			if b_debug{
+				if si.col1_share[i].value()?.is_zero(){
+					assert!(m_i.value()?.is_zero());
+				}
+			}
+			//let to_add = &(&wtns_var.inv_hab22_right[i]*m_i)*&col1_nz;
+			//let to_add = &wtns_var.inv_hab22_right[i]*m_i;
 			sum_hab22_right = b_not_add.select(&sum_hab22_right, 
 				&(&sum_hab22_right + &to_add))?;
 			if i%64==0{//avoid too long chain in later
@@ -3326,12 +3337,6 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		let b_hab_res1 = sum_hab22_right.is_eq(&sum_hab22_left)?;
 		let b_hab_res = not_final_step.or(&b_hab_res1)?.or(&sum_hab22_right.is_zero()?)?; //when sum_hab22_right is zero, we regard it as dummy
-
-		//REMOVE LATER -----------------
-		println!("DEBUG USE 6666.1: sum_hab_right: {}, sum_hab22_left: {}, not_final_step: {}", sum_hab22_right.value()?, sum_hab22_left.value()?, not_final_step.value()?);
-		println!("DEBUG USE 6666.2: word_id: {}, totla_words: {}", si.word_id.value()?, si.total_words.value()?);
-		println!("DEBUG USE 6666.3: subsig_id: {}, total_segs: {}", si.subseg_id.value()?, si.total_word_segs.value()?);
-		//REMOVE LATER ----------------- ABOVE
 
 		if b_has_lookup{
 			if b_hab_res.value().is_ok(){
@@ -3648,10 +3653,10 @@ where 	C: CurveGroup<ScalarField=F>,
 		}
 
 		if b_show_sigs{
-			print_vec_var("DEBUG USE 6801: sigma_ir1cs: failed_sigs", &si.failed_sigs);
-			print_vec_var("DEBUG USE 6802: sigma_ir1cs: : discharged_sigs",
+			print_vec_var("DEBUG USE 7801: sigma_ir1cs: failed_sigs", &si.failed_sigs);
+			print_vec_var("DEBUG USE 7802: sigma_ir1cs: : discharged_sigs",
 				&si.discharged_sigs);
-			println!("DEBUG USE 6803 sigma_ir1cs: b_correct: {}", b_correct.value()?);
+			println!("DEBUG USE 7803 sigma_ir1cs: b_correct: {}", b_correct.value()?);
 		}
 
 		b_correct.enforce_equal(&Boolean::TRUE)?;

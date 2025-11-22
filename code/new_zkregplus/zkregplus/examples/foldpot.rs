@@ -345,6 +345,7 @@ GadgetMapper<F,LK> for SumMapper<F, LK>{
 			input_size, output_size, word_subseg_size,
 			data_size, lookup_share_size,
 			failed_sigs_size, discharged_sigs_size,
+			false, //b_cyclepair
 		);
 
 		//2. generate the result to return
@@ -400,8 +401,8 @@ fn main(){
 	let poseidon_config = poseidon_canonical_config::<Fr>();
 	let lk_share_size = 4; //does not matter, will be adjusted in driver 
 	let vec_circ = vec![
-		vec![	SigmaIR1CS_Inst::<Fr,C1,CS1,LK,GM,H>::new_adv("oddsum".to_string(), poseidon_config.clone(), Rc::new(RefCell::new(odd_mapper)), false, lk_share_size).unwrap()],
-		vec![SigmaIR1CS_Inst::<Fr,C1,CS1,LK,GM,H>::new_adv("evensum".to_string(), poseidon_config.clone(), Rc::new(RefCell::new(even_mapper)), false, lk_share_size).unwrap()]];
+		vec![	SigmaIR1CS_Inst::<Fr,C1,CS1,LK,GM,H>::new_adv("oddsum".to_string(), poseidon_config.clone(), Rc::new(RefCell::new(odd_mapper)), false, lk_share_size, false).unwrap()],
+		vec![SigmaIR1CS_Inst::<Fr,C1,CS1,LK,GM,H>::new_adv("evensum".to_string(), poseidon_config.clone(), Rc::new(RefCell::new(even_mapper)), false, lk_share_size, false).unwrap()]];
 	let _n_circs = vec_circ.len();
 	t1.prt("Step 0. setup sigma_ir1cs odd/eve sum instance");
 

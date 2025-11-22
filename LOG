@@ -22010,4 +22010,106 @@ Goal 1. remove the multiplication in query and lookup logup check
 Goal 2. change b_optimize_ to b_cyclepair
 	[a] change def and address all syntax errors
 	[b] change the convert_fp logic
+	[c] pass b_cyclepair in 
+	[d] unit testing
+		[a] len proble
+	[e] check the share col1[i] is zero and also col2[i]
+Goal 3. check why it's needed to multiply col1?
+	[a] replace col1 with is_better_zero
+	[b] check the m_i value for zero cases.
+	-> m_i is NOT zero for qry_tbl[i]=0
+Goal 4. check how m_i is generated
+	[a] check fill_mvec
+	[b] change
+	[c] check 0 entry values
+	[d] strangely it does not fix the problem
+	[e] strangely why does IT need to multiply with qry_tbl[1]?
+Goal 5. print out the tbl entries being summed.
+	[a] the inv_left and inv_right is not right
+	[b] looks the inv value are DIFFERENT! how come????
+
+Thursdya 11/20/2025
+Goal 1. continue debug the inv_22
+	[a] dump data again
+	[b] fix more vars error
+	[c] double check msg 6651 and 7751 compare alpha and beta values
+		the alpha and alpha is different!
+	[d] print alpha/beta again. looks like alpha/beta is changing!
+	---> problem: 7751 why 4 mesages for the same step
+
+Friday 11/21/2025
+Goal 1. continue to debug
+	[a] it looks alpha and beta are consistent after step 7
+	[b] prin tout values
+	[c] it's verified that 6651.LEFT: step i: 0 is indeed changed
+
+Goal 2. check the call chain of how alpha, beta get assigned
+	[a] (alpha, beta) <- zi_part2 (gen_step_constraints)
+		<= generate_constraints
+		<= prove_step
+		<= pass_three called twice 
+			[a] Phase 1 after step 2
+			[b] After step 7 of phase 2.
+	[b] observe the error behaviors, does not reach Step 3 of phase 1.
+
+Goal 3. observe how zi_part2 is generated
+	[a] in prove_step witness is generated using self.zi_part2_inst
+	[b] zi_part2_inst is given in FoldPotSuper
+
+Goal 4. figure why there is two steps of gen_step_cs: 7751
+	[a] the first step is genenerate_constraints called in init_adv
+	[b] the 2nd step is in prove_step
+	[c] debug plan: cut the data between:
+		(c1) DEBUG USE 9900.1 prove_step
+		(c2) crash point
+		--> then write a Python file to analyze the data
+
+Goal 5. analyze data
+	[a] there are data different!
+	[b] lkup entries some have much more! apparently 
+		e.g. entry (RANGE2, 0), (RANGE2, 152)
+		these look like constant entries and they should be actually ignored
+	[c] add more entry for 6651
+	[d] FOUND IT: bloody bug it's in case 2!
+	[e] but still fails!
+	--> analyze again
+	[f] now problem is for qry_tbl:
+		277300 ... val [0] it's not in lookup table at all
+		it's subtbl id:
+		(2773006246545682350413220675584,0) appears 193 times
+			-> 0x23001101710900040000000000 -> ID_ENCODED_RG_START
+		(2773006246545682351512732303360,0) appears 301 times
+			-> 0x23001101710900050000000000 --> ID_ENCODED_RG_END
+		(6021829604927571596867207170,0) appears 12 times
+			-> 0x137524050000000070130002 -> ID_SUBSIG_TYPE
+		(6021829604927571596867207169,0) appears 12 times
+			-> 0x137524050000000070130001 -> ID_COMP_OP
+	--> this implies that they are (subtbl_id, 0) entries
+		they DO belong to the lookup table, but gen_m_table
+		didnot generate the value counter value m_i
+	--> wait one entry in lookup table has 2 appearance!
+	--> but the number of counting times match! (but even if
+		there are duplicate entries the m_table approach should work ok)
+		why it's complaining?
+
+Sat 11/22/2025
+Goal 1. continue to analyze data
+	[a] handle duplicate entries
+	[b] they are actually correct
+	[c] why would sum fail? -> found it in generate_witness
+
+Goal 2. improve generate_witness code - > good!
+Goal 3. clean code
+
+---- PERFORMANCE DATA ---------------- ID: 017 (after improving case3 of logup)
+nlen = 32k
+module 15: 35k (same)
+qry cost (compare DEBUG 1201): 624k 
+combined key size: 5.4M -> 4.9M (improved 500k)
+(max_row_col: 3.06M -> 2.82M improved 200k)
+PERFORAMNCE 1003: n_case1: (6256, 1.00%), n_case2: (418518, 67.07%), n_case3: (199249, 31.93%)
+-->
+PERFORAMNCE 1003: n_case1: (6380, 1.02%), n_case2: (418680, 67.09%), n_case3: (198963, 31.88%)
+40GB now (same) -> 37GB (improves 10%)
+===================
 
