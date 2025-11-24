@@ -852,6 +852,7 @@ where
 			)
 	{
 
+		let mut t1 = Timer::new("pass_three", 1);
 		//1. build the batch proof and individual proof
 		let batch_prfs = if !self.b_full_mode{
 			let words = {
@@ -891,6 +892,7 @@ where
 		}else{
 			None
 		};
+		t1.prt("Step 1: build batch prf");
 
 		//2. build up the initial z_0
 		let zero = E::ScalarField::zero();
@@ -908,6 +910,7 @@ where
 		let z0_part2_hash = z0_part2.hash(&self.poseidon_config);
         let z_0 = vec![hash_cmF, z0_part2_hash]; //[stage hc_cmF, z_0]
 		let _n_steps = vea.len();
+		t1.prt("Step 2: build initial z0");
 
 		//3. build the nova instance
         let mut nova =
@@ -924,6 +927,7 @@ where
 				total_words
             )
             .unwrap();
+		t1.prt("Step 3: build nova");
 
 		//3. prove steps
         let mut rng = ark_std::test_rng();
@@ -973,6 +977,7 @@ where
 		} //for each word
 		assert!(num_steps==vea.len());
         assert_eq!(C1::ScalarField::from(num_steps as u32), nova.i);
+		t1.prt(&format!("Step 4: prove steps: {}", num_steps));
 
 		//4. generate the output
 		let _verifier_param = self.nova_param.1.clone();
@@ -987,6 +992,7 @@ where
 				nova.i.clone(),
 				r1, r2, r3, r4).unwrap();
 		}
+		t1.prt(&format!("Step 5: verify steps: {}", num_steps));
 
 		(nova, num_steps, batch_prfs)
 	}
@@ -1196,6 +1202,7 @@ where
 	t1.prt(&format!("Step 3. Phase 1. pass_three. Prove All. {} Steps for {} words ", vsi2.len(), vec_words.len()));
 	let Some((mut batch_prf, ind_prf)) = batch_ind_prfs.map(|x| (x.0, x.1))
 		else {panic!("batch proof is none!");};
+	t1.prt("Step 3. Phase 1. pass_three. Prove steps.");
 
 	//let ind_prf = batch_ind_prfs.map(|x| x.1);
 	//5. generate the inputs for cyclepair

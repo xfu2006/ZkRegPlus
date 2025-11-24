@@ -22115,3 +22115,41 @@ PERFORAMNCE 1003: n_case1: (6380, 1.02%), n_case2: (418680, 67.09%), n_case3: (1
 
 Sunday 11/23/2025
 Goal 1. now read the code of driver
+	[a] foldpot_main is the main driver
+		-> set up dumm circ (300ms)
+		-> Driver::new main cost is set up Nova params (70 sec)
+	[b] phase 1
+		[a] pass_one dispatch words (2 sec for 106kb)
+			--> so 720MB/106kb * 2 sec 
+			= 720 * 1000/106 * 2
+			= 4 hrs
+		[b] given that it might be generating 1.3M stmt_len
+			for 16kb. The expansion rate is at least 100 * 32 = 3200
+			expansion rate.
+			700MB data * 3200
+			= 2.1TB!
+			So -> needs to avoid saving vec_advice.
+		[c] pass_two: compute the cmF (18 sec)
+			-> looks like pass_two and be merged with pass_one
+		[d] pass_three: (70 sec for 320k)
+			estimate: 70 sec * 720MB/16k
+				= 720 * 1000/106 * 70
+				= 7200 * 70
+				= 140 hrs = 5 days (ok)
+			-> build nova: 15 sec
+			-> prove 7 steps: 72 sec (10 seconds each) for 
+	[b] phase 2
+		[a] main step 4: gen cyclepair inputs: 9 s
+		[b] pass_one: 4ms
+		[b] pass_two: commit_F 2sec
+		[c] pass_three: prove steps 5: 9 sec
+		[d] build decider circ: 4 sec
+		[e] gen groth: 70 sec
+		[f] groth proof: 101 sec
+
+Goal 2. collect improvement ideas
+	[a] put all three passes into one so that we can save the 
+		cost of vec_advice
+	[b] allow sigma_ir1cs to skip the logup check if we don't run
+		full data check for log up
+	[c] improve the timer printing
