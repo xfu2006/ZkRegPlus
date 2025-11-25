@@ -39,6 +39,7 @@ discharge_subsig_adv (one for case sentive and one for ignore case).
 
 */
 
+use utils::{logger::{log, LOG3,LOG4, LOG_LEVEL}};
 use std::{
 	marker::PhantomData,
 	rc::{Rc},
@@ -66,7 +67,7 @@ use crate::{
 	gadgets::compute_sig_adv::{ComputeSigAdvCapacity,ComputeSigAdvAdvice,
 		ComputeSigAdvGadget},
 	gadgets::traits::{ComponentAdvice},
-	gadgets::commons::{print_vec}
+	//gadgets::commons::{print_vec}
 };
 use data_processor::{
 	clam_db::{ClamavDB, 
@@ -575,13 +576,14 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 
 	/// return the sizes of inp, oup, data buffer, failed_sigs, discharged_sigs
 	fn get_sizes(&self)->Vec<usize>{
-		let b_perf = true;
+		let log_level = LOG4;
+		let b_perf = true && log_level>=LOG_LEVEL;
 		if b_perf{
-			println!(" ## sed gadgets data len: ===");
+			log(log_level, &format!(" ## sed gadgets data len: ==="));
 			for i in 0..self.gadgets.len(){
 				let vs = self.gadgets[i].borrow().get_to_add_size();
-				println!("  -- {}: {}", self.gadgets[i].borrow().get_name(),
-					vs.2);
+				log(log_level, &format!("  --  {}: {}",
+					self.gadgets[i].borrow().get_name(), vs.2));
 			}
 		}
 		let sizes = self.gadgets.iter().map(|g| g.borrow().get_to_add_size())
@@ -864,7 +866,8 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 	/// starting from 0). For conveneince, we sometimes use
 	/// the prev_stmt or the vector of its prev_stmt.
 	fn build_statement_comp(&self, _comp_id: usize, _stmt_map_id: usize, _word_seg: &Vec<F>, _actual_word_len: usize, _lkup: &Rc<RefCell<LK>>, _extra_info: &StatementExtraInfo<F>, advice: &Rc<dyn NdAdvice>, _cfg: &StatementConfig, _stmt_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>{
-		let b_debug = true;
+		let log_level = LOG3;
+		let b_perf = log_level >= LOG_LEVEL;
 		//1. take the advice
 		let advice = advice.as_any().downcast_ref::<SedAdvice<F>>()
 			.expect("downcast err!");
@@ -881,9 +884,17 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 			}
 		);
 
-		if b_debug{
-			print_vec("DEBUG USE 6901: SED failed_sigs:", &res[6]);
-			print_vec("DEBUG USE 6901: SED discharged_sigs:", &res[7]);
+		if b_perf{
+			log(log_level, &format!("## build_stmt: SED failed sigs"));
+			for i in 0..res[6].len(){
+				log(log_level, &format!(" -- {} => {}",
+					i, &res[6][i]));
+			}
+			log(log_level, &format!("## build_stmt: SED discharged sigs"));
+			for i in 0..res[7].len(){
+				log(log_level, &format!(" -- {} => {}",
+					i, &res[7][i]));
+			}
 		}
 
 		assert!(res.len()==8);

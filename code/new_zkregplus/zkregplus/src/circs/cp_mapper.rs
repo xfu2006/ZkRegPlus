@@ -34,7 +34,7 @@
 // discharged_sigs: size 0
 
 // subtbl: follow inp/oup/data
-
+use utils::{logger::{log, LOG3,LOG_LEVEL}};
 use std::{
 	marker::PhantomData,
 	rc::{Rc},
@@ -57,7 +57,7 @@ use crate::{
 	gadgets::fsm::{FsmGadget,FsmAdvice},
 	gadgets::pack::{PackFinalGadget,PackFinalAdvice},
 	gadgets::sigs::{GetSigAdvice,SigGadgetCapacity,SigGadgetData,GetSigGadget},
-	gadgets::commons::{print_vec},
+	//gadgets::commons::{print_vec},
 };
 use data_processor::{
 	clam_db::{ClamavDB,CHAR,CRIT_INIT,
@@ -320,7 +320,8 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 	/// return the sizes of inp, oup, data, failed_sigs, discharged_sigs
 	fn get_sizes(&self)->Vec<usize>{
 		//1. gadget of word extension
-		let b_perf = true;
+		let log_level = LOG3;
+		let b_perf = true && log_level >=LOG_LEVEL;
 		let (final_states_len,join_buf_capacity,sig_buf_capacity,mlen) = 
 			self.capacity.get_old_stats();
 
@@ -357,11 +358,11 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 
 		//2. collect all data
 		if b_perf{
-			println!(" ## CP mapper data len, nlen: {} ###", nlen);
-			println!("    -- word_extract: {}", data_g_ext);
-			println!("    -- word_fsm: {}", data_dfa);
-			println!("    -- pack: {}", data_pack);
-			println!("    -- sigs: {}", data_sigs);
+			log(log_level, &format!(" ## CP mapper data len, nlen: {} ###", nlen));
+			log(log_level, &format!("  -- word_extract: {}", data_g_ext));
+			log(log_level, &format!("  -- word_fsm: {}", data_dfa));
+			log(log_level, &format!("  -- pack: {}", data_pack));
+			log(log_level, &format!( "  -- sigs: {}", data_sigs));
 		}
 		let vec_inp_len = vec![inp_g_ext, inp_dfa, inp_sigs];
 		let vec_oup_len = vec![oup_g_ext,  oup_dfa, oup_sigs];
@@ -677,7 +678,8 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 	/// starting from 0). For conveneince, we sometimes use
 	/// the prev_stmt or the vector of its prev_stmt.
 	fn build_statement_comp(&self, _comp_id: usize, _stmt_map_id: usize, word_seg: &Vec<F>, actual_word_len: usize, _lkup: &Rc<RefCell<LK>>, _extra_info: &StatementExtraInfo<F>, advice: &Rc<dyn NdAdvice>, _cfg: &StatementConfig, _stmt_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>{
-		let b_debug = true;
+		let log_level = LOG3;
+		let b_perf = log_level >= LOG_LEVEL;
 
 		//1. take the advice
 		let (final_states_len,join_buf_capacity,sig_buf_capacity,mlen)
@@ -781,9 +783,13 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		assert!(failed_sigs.len()==sig_buf_capacity);
 		let discharged_sigs = vec![];
 		
-		if b_debug{
-			print_vec(&format!("DEBUG USE 6901: CP b_igc: {}, failed_sigs", 
-				self.b_igc), &failed_sigs);
+		if b_perf{
+			log(log_level, &format!("## build_stmt: CP b_igc: {}. Failed sigs:",
+				self.b_igc));
+			for i in 0..failed_sigs.len(){
+				log(log_level, &format!(" -- {} => {}",
+					i, failed_sigs[i]));
+			}
 		}
 
 		Ok(	vec![inp, oup, data, subtbl_inp, subtbl_oup, subtbl_data, 

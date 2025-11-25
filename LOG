@@ -22153,3 +22153,49 @@ Goal 2. collect improvement ideas
 	[b] allow sigma_ir1cs to skip the logup check if we don't run
 		full data check for log up
 	[c] improve the timer printing
+
+Monday 11/24/2025
+LOC (sonobe): 19332->19410 (+80)
+Goal 1. start the framework definition
+	[a] declaration
+	[b] read genreate claims
+	[c] data: gen_pack 3 packed fields -> 100 bytes, negligible mem
+	[d] data: gen_pack: 100kb -> still 0MB, it's costing almost nothing
+
+Goal 2. observe the current timer design for data collection)
+	[a] prt_adv never used
+	[b] database should have categories
+		key, [(cat, data)]
+	[c] data we are interested in:
+		dfa size itemized
+		lkup table breakup
+		each step data 
+		each step memory consumption
+	[d] how to control debug messages
+		b_debug = B_DEBUG_LEVEL
+		prefix = indentation * debug level
+
+Goal 3. use the dbg level to print the message
+	[a] clear to automata info
+	[b] systematically use log
+
+Tuesday 11/25/2025
+LOC (sonobe): 19410 -> 19429 (+20)
+Goal 1. clean zkp_driver
+	[a] build_db label all steps
+	[b] check all steps
+	[c] make log to print indentation
+	[d] improve log msg
+	[e] clear clamav messages
+	[f] clear zkp_driver messages
+	[g] basis_pats_in_trace
+Goal 2. mappers
+	[a] cp mapper cost
+	[b] sed
+	[c] dfa
+	[d] statment total size
+	[e] sigma_ir1cs
+Goal 3. read the logic first step of foldpot main
+	[a] it fills the circs with empty statements 
+
+-- TODO -- remove more debug messages about driver new

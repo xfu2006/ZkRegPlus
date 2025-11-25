@@ -30,7 +30,7 @@ use rustomaton::dfa::DFA;
 use utils::{
 	os::{read_lines,create_new_cache_dir,write_to_file,proj_root,read,write_sigs_to_dir},
 	timer::{Timer},
-	logger::{flog,flog_perf,LOG1},
+	logger::{flog,flog_perf,LOG2,LOG1,LOG_LEVEL},
 };
 use folding_schemes::{folding::foldpot::sigma_ir1cs::{LookupTableTwoCol_Inst}};
 
@@ -49,8 +49,8 @@ pub const STATE_BIT:usize =  24;
 /// The bit-width of RANGE2 table 
 /// IN PRODUCTION NEEDS TO CHANGE THE SAME SIZE OF STATE_BIT
 //pub const RANGE2_BIT: usize = 10;
-//pub const RANGE2_BIT: usize = 8;
-pub const RANGE2_BIT: usize = 18;
+pub const RANGE2_BIT: usize = 8;
+//pub const RANGE2_BIT: usize = 18;
 //pub const RANGE2_BIT: usize = 26; //(allowing 64M nibbles = 32MB)
 
 // the following are trival related sub-table ids
@@ -1150,19 +1150,8 @@ impl <F:PrimeField> ClamavDB<F>{
 		//5. assemble
 		let v2d = vec![ vec_init, vec_non_final, vec_final, vec_trans,
 			vec_final_2_sig, vec_final2sig_count, vec_all_states];
-		//REMOVE LATER --------------
-		println!(" -- vec_init: {}, vec_non_final: {}, vec_final: {}\n -- vec_trans: {}\n -- vec_final_2_sig: {}, vec_final2sig_count: {}\n -- vec_all_states: {}", 
-			v2d[0].len(), v2d[1].len(), v2d[2].len(), v2d[3].len(),
-			v2d[4].len(), v2d[5].len(), v2d[6].len());
-		//REMOVE LATER -------------- ABOVE
 		let mut res = v2d.concat();
-		//REMOVE LATER -------------
-		let n1 = lk.vals.len();
-		//REMOVE LATER ------------- ABOVE
 		lk.vals.append(&mut res);
-		//REMOVE LATER ----------------
-		println!("DEBUG USE 6702: after add: INCREASED {} \n\n", lk.vals.len()-n1);
-		//REMOVE LATER ---------------- ABOVE
 	}
 
 	/// add a range table to lookup (the range are INCLUDED, i.e.,
@@ -1323,6 +1312,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		vec_sig_obj: &Vec<Arc<ClamavSig>>,
 		sig_to_id: &HashMap<String,usize>
 	) {
+		let b_debug = false;
 	
 		//1. generate (sig, eval_dnf_id) -> count
 		let tuples_all = vec_sig_obj.par_iter()
@@ -1337,7 +1327,9 @@ impl <F:PrimeField> ClamavDB<F>{
 				let tuples = sig.vec_subsig_automaton.iter().enumerate()
 				.map(|(subsig_id,dfa)|{
 					let tbl_id = Self::dfa_id(*sig_id as u32, subsig_id as u32);
-					println!("DEBUG USE 8877.2: produce dfa for {}, subsig_id: {}", sig_name, subsig_id);
+					if b_debug{
+						println!("DEBUG USE 8877.2: produce dfa for {}, subsig_id: {}", sig_name, subsig_id);
+					}
 					Self::gen_dfa_lkup(&dfa, tbl_id)
 				}).flatten().collect::<Vec<(F,F)>>();
 
@@ -1798,7 +1790,8 @@ impl <F:PrimeField> ClamavDB<F>{
 		needs_ised_list_file: &str,
 		needs_ised_igc_list_file: &str,
 		cfg: &ClamavApproxConfig, vlog: &mut Vec<String>)->Self{
-		let b_perf = true;
+		let log_level = LOG2;
+		let b_perf = true && log_level>=LOG_LEVEL;
 		let b_debug = false;
 		let mut timer = Timer::new();
 		//1. generate all signatures
@@ -1820,9 +1813,9 @@ impl <F:PrimeField> ClamavDB<F>{
 			}
 			s
 		}).collect::<Vec<ClamavSig>>();
-		if b_perf {flog_perf(LOG1, &format!("Generate signatures"), &mut timer,
+		if b_perf {flog_perf(log_level, &format!("Build_DB: Step 1: Generate signatures"), &mut timer,
 			vlog);}
-		if b_perf {flog_perf(LOG1, &format!("Writing signatures"), &mut timer,
+		if b_perf {flog_perf(log_level, &format!("Bluld_DB: Step 2: Writing signatures"), &mut timer,
 			vlog);}
 
 		//2. collect critical pattern
@@ -1839,7 +1832,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		let v_sigs_no_critical_pat = v_sigs.iter().filter(|s| s.b_no_crit_pat)
 			.map(|s| s.clone()).collect::<Vec<Arc<ClamavSig>>>();
 
-		if b_perf {flog_perf(LOG1, &format!("Extract Critial Patterns."), 
+		if b_perf {flog_perf(log_level, &format!("Build_DB: Step 3: Extract Critial Patterns."), 
 				&mut timer, vlog);}
 		if b_debug{
 			//check if each signature is contained in map_crit_pat
@@ -1876,8 +1869,8 @@ impl <F:PrimeField> ClamavDB<F>{
 		//RECOVER LATER: we changed false to true. Keep it
 		//if data is correct.
 		let dfa_crit_igc = HexACDFA::new_adv(0, &vec_crit_pat_igc, true);
-		if b_perf {flog_perf(LOG1, 
-			&format!("Build ACDFA of Critial Patterns."),&mut timer,vlog);
+		if b_perf {flog_perf(log_level, 
+			&format!("Build_DB: Step 4: Build ACDFA of Critial Patterns."),&mut timer,vlog);
 		}
 		if b_debug{
 			println!("DEBUG USE 6100: build_store: crit pat: {:#?}\n, crit_pat_igc: {:#?}", vec_crit_pat, vec_crit_pat_igc);
@@ -1893,12 +1886,11 @@ impl <F:PrimeField> ClamavDB<F>{
 			s.collect_bagwords_from_pmreg(true)).flat_map(|s| s).
 			collect::<HashSet<String>>().into_iter().map(|s| s)
 			.collect::<Vec<String>>();
+		if b_perf {flog_perf(log_level, &format!("Build_DB: Step 5: Build Bag-of-Words."), &mut timer, vlog);}
 
 		if b_debug{
 			println!("DEBUG USE 6101: BAGWORDS pats: {:#?}\n -- pats_igc: {:#?}", pats, pats_igc);
 		}
-		if b_perf {flog_perf(LOG1, &format!("Build Bag-of-Words."), 
-			&mut timer, vlog);}
 
 		//5. build DFA for bag of words (also for pm)
 		// -- SKIPPED, it is vec_acdfa[0] of bundle_subsig now.
@@ -1916,6 +1908,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		let bundle_subsig_igc=
 			Self::build_ised_bundle(&v_sigs, &sig_to_id, 
 				needs_ised_igc_list_file, true, cfg); 
+		if b_perf {flog_perf(log_level, &format!("Build_DB: Step 6: Build SED bundles."), &mut timer, vlog);}
 
 		//8. build lkup
 		let mut lkup = LookupTableTwoCol_Inst::<F>::dummy();
@@ -1932,7 +1925,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		Self::add_sig_no_crit_pat(&mut lkup, &v_sigs_no_critical_pat, 
 			&sig_to_id);
 		lkup.vals.sort();
-		println!("PERFORMANCE 100: lkup size: {}", lkup.vals.len());
+		if b_perf {flog_perf(log_level, &format!("Build_DB: Step 7: ADD all to lkup. Lkup size: {}", lkup.vals.len()), &mut timer, vlog);}
 
 		//9. build the object
 		let res = Self{

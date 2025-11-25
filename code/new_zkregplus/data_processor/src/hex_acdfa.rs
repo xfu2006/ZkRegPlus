@@ -15,7 +15,7 @@ use aho_corasick::{
 	automaton::{Automaton},dfa::DFA as ACDFA,Anchored, 
 		state_id_to_usize, pattern_id_to_usize};
 use serde::{Serialize, Deserialize};
-use utils::{logger::{flog,log,LOG1,log_perf}, 
+use utils::{logger::{flog,log,LOG3,LOG1,log_perf}, 
 	data::{hex_to_u8, hex_to_str},
 	timer::Timer
 };
@@ -136,6 +136,7 @@ impl HexACDFA{
 	/// Assumption: patterns have even len (hex_nibbles)
 	pub fn new_adv_new(dfa_id: usize, patterns: &Vec<String>, b_case_ignore: bool)->HexACDFA{
 		let b_debug = false;
+		let log_level = LOG3;
 		assert!(b_case_ignore, concat!("This function for ignore case only. ",
 			"Running time is slow for case sensitive DFA,",
 			" which is much larger. ",
@@ -164,7 +165,9 @@ impl HexACDFA{
 			.ascii_case_insensitive(true).
 			build(&pats_in_bytes).unwrap();
 		if b_case_ignore{
-			println!("PERFORMANCE 2000.1: constructed raw ACDFA states: {}, trans: {}", dfa.num_states(), dfa.trans.len());
+			if b_debug{
+				println!("PERFORMANCE 2000.1: constructed raw ACDFA states: {}, trans: {}", dfa.num_states(), dfa.trans.len());
+			}
 		}
 
 		//2. for each existing state in dfa: compute the list of intermediate
@@ -350,7 +353,7 @@ impl HexACDFA{
 		hash_trans.insert(state0, vec![state0; 16]); //loop to dead state itself
 		let total_trans = hash_trans.par_iter().map(|(_k,v)| v.len())
 			.sum::<usize>();
-		log_perf(LOG1, 
+		log_perf(log_level, 
 			&format!("PERF 2001.1 build trans time for states:: {}, trans: {}",
 			num_states, total_trans), &mut timer
 		);
@@ -468,7 +471,9 @@ impl HexACDFA{
 		let reachable = reachable.iter().map(|x|{
 			Self::state_id(dfa_id, map_states[x])
 		}).collect::<HashSet<usize>>();
-		println!("DEBUG USE 6723.1: reachable: {}, num_states: {}", reachable.len(), num_states);
+		if b_debug{
+			println!("DEBUG USE 6723.1: reachable: {}, num_states: {}", reachable.len(), num_states);
+		}
 
 
 		//2. build up the transitions

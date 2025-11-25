@@ -18,6 +18,7 @@
 	where si_[seg] always match the [seg], e.g., |si_data| = |data|.
 */
 
+use utils::{logger::{log,LOG3,LOG_LEVEL}};
 use std::{
 	marker::PhantomData,
 	rc::{Rc},
@@ -42,7 +43,7 @@ use crate::{
 	gadgets::word_extract::{LEGS},
 	gadgets::dfa_adv::{DfaAdvCapacity,DfaAdvAdvice,DfaAdvGadget},
 	gadgets::traits::{ComponentAdvice},
-	gadgets::commons::{print_vec},
+	//gadgets::commons::{print_vec},
 };
 use data_processor::{
 	clam_db::{ClamavDB},
@@ -376,13 +377,15 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaCompo
 
 	/// return the sizes of inp, oup, data buffer
 	fn get_sizes(&self)->Vec<usize>{
-		let b_perf = true;
+		let log_level = LOG3;
+		let b_perf = true && log_level>=LOG_LEVEL;
 		if b_perf{
-			println!(" ## dfa gadgets data len: ===");
+			log(log_level, &format!(" ## dfa gadgets data len: ==="));
 			for i in 0..self.gadgets.len(){
 				let vs = self.gadgets[i].borrow().get_to_add_size();
-				println!("  -- {}: {}", self.gadgets[i].borrow().get_name(),
-					vs.2);
+				log(log_level, &format!("  -- {}: {}", 
+					self.gadgets[i].borrow().get_name(),
+					vs.2));
 			}
 		}
 		let sizes = self.gadgets.iter().map(|g| g.borrow().get_to_add_size())
@@ -584,7 +587,8 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaCompo
 	/// starting from 0). For conveneince, we sometimes use
 	/// the prev_stmt or the vector of its prev_stmt.
 	fn build_statement_comp(&self, _comp_id: usize, _stmt_map_id: usize, _word_seg: &Vec<F>, _actual_word_len: usize, _lkup: &Rc<RefCell<LK>>, _extra_info: &StatementExtraInfo<F>, advice: &Rc<dyn NdAdvice>, _cfg: &StatementConfig, _stmt_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>{
-		let b_debug = true;
+		let log_level = LOG3;
+		let b_perf = LOG_LEVEL >= log_level;
 		//1. take the advice
 		let advice = advice.as_any().downcast_ref::<DfaAdvice<F>>()
 			.expect("downcast err!");
@@ -601,9 +605,17 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaCompo
 			}
 		);
 
-		if b_debug{
-			print_vec("DEBUG USE 6901: DFA failed_sigs:", &res[6]);
-			print_vec("DEBUG USE 6901: DFA discharged_sigs:", &res[7]);
+		if b_perf{
+			log(log_level, &format!("## build_stmt: DFA failed sigs"));
+			for i in 0..res[6].len(){
+				log(log_level, &format!(" -- {} => {}",
+					i, &res[6][i]));
+			}
+			log(log_level, &format!("## build_stmt: DFA discharged sigs"));
+			for i in 0..res[7].len(){
+				log(log_level, &format!(" -- {} => {}",
+					i, &res[7][i]));
+			}
 		}
 
 		assert!(res.len()==8);

@@ -33,6 +33,9 @@ pub const WARN:usize = 1;
 pub const LOG1:usize = 2;
 pub const LOG2:usize = 3;
 pub const LOG3:usize = 4;
+pub const LOG4:usize = 5;
+pub const LOG5:usize = 6;
+pub const LOG6:usize = 7;
 pub const LOG_LEVEL:usize = LOG1;
 
 pub const DEFAULT_ACDFA_DA_BITS:usize = 2;

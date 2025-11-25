@@ -13,8 +13,11 @@ pub const WARN:usize = 1;
 pub const LOG1:usize = 2;
 pub const LOG2:usize = 3;
 pub const LOG3:usize = 4;
+pub const LOG4:usize = 5;
+pub const LOG5:usize = 6;
+pub const LOG6:usize = 7;
 /// current default log level for entire system
-pub const LOG_LEVEL:usize = LOG1;
+pub const LOG_LEVEL:usize = LOG2;
 
 /// convert from log level to its name
 pub fn name_log_level(i: usize)->String{
@@ -24,6 +27,9 @@ pub fn name_log_level(i: usize)->String{
 		LOG1=> String::from("LOG1"),
 		LOG2=> String::from("LOG2"),
 		LOG3=> String::from("LOG3"),
+		LOG4=> String::from("LOG4"),
+		LOG5=> String::from("LOG5"),
+		LOG6=> String::from("LOG6"),
 		_ => String::from("UNKNOWN")
 	}
 }
@@ -32,7 +38,9 @@ pub fn log(log_level: usize, msg: &String){
 	let b_write = false;
 	let fpath = "./log.txt";
 	if log_level<=LOG_LEVEL{ 
-		println!("{}: {}", name_log_level(log_level), msg); 
+		let indent_level = if log_level<2 {0} else {log_level-2};
+		let indent_str = "-- ".repeat(indent_level);
+		println!("{}: {} {}", name_log_level(log_level), indent_str, msg); 
 		if b_write{
 			append_to_file(fpath, &format!("{}: {}\n", 
 				name_log_level(log_level), msg));
@@ -43,7 +51,9 @@ pub fn log(log_level: usize, msg: &String){
 /// write all messages into an accumulator (acc)
 pub fn flog(log_level: usize, msg: &String, acc: &mut Vec<String>){
 	if log_level<=LOG_LEVEL{ 
-		println!("{}", msg); 
+		let indent_level = if log_level<2 {0} else {log_level-2};
+		let indent_str = "-- ".repeat(indent_level);
+		println!("{}: {} {}", name_log_level(log_level), indent_str, msg); 
 		acc.push(msg.clone());
 	}
 }

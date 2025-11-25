@@ -110,10 +110,16 @@ pub fn print_vec_var<F:PrimeField>(msg: &str, v: &Vec<FpVar<F>>){
 		println!("  i: {} => {}", i, v[i].value().unwrap());
 	}
 }
+
 /// get the RAM usage in GB
 pub fn get_mem_usage()->usize{
 	let usage = memory_stats().expect("call mem usage fails");
 	usage.virtual_mem/(1024*1024*1024)
+}
+
+pub fn get_mem_usage_mb()->usize{
+	let usage = memory_stats().expect("call mem usage fails");
+	usage.virtual_mem/(1024*1024)
 }
 
 /// get the stack available in bytes

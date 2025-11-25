@@ -39,7 +39,7 @@ use self::rustomaton::{
 
 //use utils::consts::{WARN,LOG1,LOG2,LOG3, B_SINGLE_JOB_MODE,COMBINATION_LIMIT,RANGE_MAX,MAX_PM_SECTIONS, REPEAT_LEN_LIMIT, MIN_BAG_WORD_LEN, TEST_MODE};
 use utils::{
-	logger::{log, log_perf,LOG1,LOG2,LOG3},
+	logger::{log, log_perf,LOG1,LOG2,LOG3,LOG4,LOG5,LOG_LEVEL},
 	os::{read_lines},
 	timer::{Timer},
 	data::{u8_to_hex}
@@ -571,6 +571,7 @@ impl ClamavSig{
 
 	/// can be expensive when we have a lot of patterns, make it optional
 	pub fn gen_vec_automaton(&self, cfg: &ClamavApproxConfig) -> Vec<Arc<DFA<char>>>{
+		let log_level = LOG4;
 		let mut vec_subsig_automaton = vec![];
 		for (id, subsig) in self.vec_subsig_obj.iter().enumerate(){
 			let mut timer = Timer::new();
@@ -629,8 +630,8 @@ impl ClamavSig{
 				let dfa = pcre_to_dfa(&s, cfg.combination_limit, cfg.repeat_limit);
 				dfa
 			};
-			log(LOG1, &format!(" dfa size: {:?}", size_dfa(&dfa)));
-			log_perf(LOG1, " build dfa: ", &mut timer);
+			log(log_level, &format!(" gen_vec_automaton build dfa size: {:?}", size_dfa(&dfa)));
+			log_perf(log_level, " gen_vec_automaton build dfa: ", &mut timer);
 			vec_subsig_automaton.push( Arc::new(dfa) );
 		}
 		vec_subsig_automaton
@@ -1328,6 +1329,8 @@ impl ClamavSig{
 	/// For Instance `< [ab, cd], [12, 34] >`, a string "ab34" would
 	/// satisfy it but "abab" would not because none of `[12, 34]` appears.
 	pub fn gen_approx_bagwords(&mut self, cfg: &ClamavApproxConfig){
+		let b_debug = LOG_LEVEL > LOG5;
+
 		for obj in &self.vec_subsig_obj{
 			//0. if obj is not general regex or counter constraint ignore.
 			if obj.subsig_type==SubSigType::SubsigCountConstraint{
@@ -1346,7 +1349,9 @@ impl ClamavSig{
 		}
 		let total_size = self.vec_subsig_bagwords.iter().map(|v| v.len()).sum::<usize>();
 		if total_size==0{
-			println!("WARNING: all empty bag words for sig: {}", self.to_str());
+			if b_debug{
+				println!("WARNING: all empty bag words for sig: {}", self.to_str());
+			}
 		}
 	}
 
@@ -1757,9 +1762,10 @@ impl ClamavSig{
 	/// as the ONLY ONE element of the 2d vector
 	pub fn to_neg_automaton(&self, timeout_sec: usize)
 		->(bool, bool, Vec<Vec<NFA<char>>>, String){
-		log(LOG1, &format!("TO automaton{:?}: Attempt 1: single NFA", 
+		let log_level = LOG2;
+		log(log_level, &format!("TO automaton{:?}: Attempt 1: single NFA", 
 			self.name));
-		log(LOG3, &format!("DETAILS: {:?}", self));
+		log(log_level+1, &format!("DETAILS: {:?}", self));
 		let (sender, receiver) = mpsc::channel();
 		let obj = self.clone();
 		let _t = thread::spawn(move ||{
@@ -1769,29 +1775,28 @@ impl ClamavSig{
 			//Then to compute its NEGATION: Disjunctions of CONJUNCTIONS!
 			for item_id in 0..obj.eval_dnf.vec_disjunc.len(){
 				let item = &obj.eval_dnf.vec_disjunc[item_id];
-				log(LOG3, &format!("--- Processing item: {:?}", &item));
+				log(log_level+1, &format!("--- Processing item: {:?}", &item));
 				let mut item_nfa = empty_nfa();
 				for i in 0..item.len(){
 					let id = item[i];	
 					let cur_nfa= build_nfa(&obj.vec_subsigs[id], obj.vec_bneg[id]);
-					log(LOG3, &format!("---- ---- Handle id: {}, expr: {}, b_neg: {}, resulting dfa size: {:?}", id, obj.vec_subsigs[id], obj.vec_bneg[id], size_nfa(&cur_nfa)));
+					log(log_level+1, &format!("---- ---- Handle id: {}, expr: {}, b_neg: {}, resulting dfa size: {:?}", id, obj.vec_subsigs[id], obj.vec_bneg[id], size_nfa(&cur_nfa)));
 					item_nfa = if i==0 {cur_nfa.clone()} else {item_nfa.unite(cur_nfa)};
 					//dfa = dfa.minimize_hop();
-					log(LOG3, &format!("---- ----  UNITING NFA => {:?}", size_nfa(&item_nfa)));
+					log(log_level+1, &format!("---- ----  UNITING NFA => {:?}", size_nfa(&item_nfa)));
 				}
-				log(LOG3, &format!("---- BEFORE NEGATE NFA size: {:?}", size_nfa(&item_nfa)));
+				log(log_level+1, &format!("---- BEFORE NEGATE NFA size: {:?}", size_nfa(&item_nfa)));
 				let item_nfa = item_nfa.negate();
-				log(LOG3, &format!("---- AFTER NEGATE Item {:?} => NFA: {:?} \n", &item, size_nfa(&item_nfa)));
+				log(log_level+1, &format!("---- AFTER NEGATE Item {:?} => NFA: {:?} \n", &item, size_nfa(&item_nfa)));
 				nfa = if item_id==0 {item_nfa} else {nfa.unite(item_nfa)}; 
-				log(LOG3, &format!("---- AFTER UNITE DNF automata => NFA: {:?} \n", size_nfa(&nfa)));
+				log(log_level+1, &format!("---- AFTER UNITE DNF automata => NFA: {:?} \n", size_nfa(&nfa)));
 			}
-			log_perf(LOG1, &format!("FINAL SIZE of NFA_easy: {}: {:?}", &obj.name, size_nfa(&nfa)), &mut timer);
+			log_perf(log_level, &format!("FINAL SIZE of NFA_easy: {}: {:?}", &obj.name, size_nfa(&nfa)), &mut timer);
 			let vec_res = vec![vec![nfa]];
 			match sender.send(vec_res){
 				Ok(()) => {},
 				Err(_) => {}
 			}
-			println!("OK");
 		});
 
 		let res = receiver.recv_timeout(Duration::from_millis((timeout_sec as u64)*1000));
@@ -1801,7 +1806,7 @@ impl ClamavSig{
 		}
 
 		//2. try step two  DISJUNCTION of CONJUNCTION OF A LOT DFA
-		log(LOG1, &format!("Attempt 2: Disjunction of Conjunction of DFA"));
+		log(log_level, &format!("Attempt 2: Disjunction of Conjunction of DFA"));
 		let (sender, receiver) = mpsc::channel();
 		let obj = self.clone();
 		let _t = thread::spawn(move ||{
@@ -1810,23 +1815,22 @@ impl ClamavSig{
 			for item_id in 0..obj.eval_dnf.vec_disjunc.len(){
 				let mut vec_dfa = vec![];
 				let item = &obj.eval_dnf.vec_disjunc[item_id];
-				log(LOG1, &format!("--- Processing item: {:?}", &item));
+				log(log_level, &format!("--- Processing item: {:?}", &item));
 				for i in 0..item.len(){
 					let id = item[i];
 					//note: already negated
 					let cur_dfa= build_nfa(&obj.vec_subsigs[id], !obj.vec_bneg[id]);
-					log(LOG1, &format!("---- ---- Handle id: {}, expr: {}, b_neg: {}, resulting negated dfa size: {:?}", id, obj.vec_subsigs[id], obj.vec_bneg[id], size_nfa(&cur_dfa)));
+					log(log_level, &format!("---- ---- Handle id: {}, expr: {}, b_neg: {}, resulting negated dfa size: {:?}", id, obj.vec_subsigs[id], obj.vec_bneg[id], size_nfa(&cur_dfa)));
 					vec_dfa.push(cur_dfa);
 				}
-				log(LOG1, &format!("--- vec_dfa size: {}", vec_dfa.len()));
+				log(log_level, &format!("--- vec_dfa size: {}", vec_dfa.len()));
 				vec_res.push(vec_dfa);
 			}
-			log_perf(LOG1, &format!("FINAL SIZE of NFA_complex: {}: {:?}", &obj.name, get_total_size(&vec_res)), &mut timer);
+			log_perf(log_level, &format!("FINAL SIZE of NFA_complex: {}: {:?}", &obj.name, get_total_size(&vec_res)), &mut timer);
 			match sender.send(vec_res){
 				Ok(()) => {},
 				Err(_) => {}
 			}
-			println!("OK");
 		});
 		let res = receiver.recv_timeout(Duration::from_millis(
 			(timeout_sec as u64)*1000));
@@ -1849,7 +1853,8 @@ impl ClamavSig{
 
 	/// use infix evaluation of expr
 	fn gen_eval_dnf(&mut self){
-		log(LOG2, &format!("gen_eval_dnf: {}", self.expr));
+		let log_level = LOG3;
+		log(log_level, &format!("gen_eval_dnf: {}", self.expr));
 		let mut stack_operator = VecDeque::<char>::new();
 		let mut stack_operands = VecDeque::<EvalDNF>::new();
 		let chars:Vec<char> = self.expr.chars().into_iter().collect();
@@ -1896,9 +1901,7 @@ impl ClamavSig{
 		}
 		assert!(stack_operands.len()==1, "stack_operands.len!=1, dump: {:?}", self);
 		self.eval_dnf = stack_operands.pop_back().unwrap();
-		log(LOG3, &format!("gen_eval_dnf RESULT: {:?}", self.eval_dnf));
-
-
+		log(log_level, &format!("gen_eval_dnf RESULT: {:?}", self.eval_dnf));
 	}
 
 	/// perform ONE operator, and change the stacks, assuming
@@ -1955,6 +1958,7 @@ impl ClamavSig{
 	/// (i.e., no class chars, no union class etc.)
 	fn preprocess_expr_new(&mut self, b_pm: bool){
 		//0. make a copy of all existing subsigs
+		let log_level = LOG3;
 		let mut vec_sig_obj= vec![];
 		for (id,x) in self.vec_subsigs.iter().enumerate(){
 			vec_sig_obj.push( SubSigObj{value: x.clone(),
@@ -1968,7 +1972,7 @@ impl ClamavSig{
 
 
 		//1. process "id=num or id<num or id>num or id==num" case
-		log(LOG2, &format!("preprocess_expr_pm: name: {}, expr: {}", self.name, self.expr));
+		log(log_level, &format!("preprocess_expr_pm: name: {}, expr: {}", self.name, self.expr));
 		let mut sexpr2 = String::from(&self.expr);
 		for subexp in find_all(r"\d+( *)(=|<|>|==)( *)\d+", &self.expr){
 			let id = extract_nums(&subexp)[0]; 
@@ -2154,7 +2158,7 @@ impl ClamavSig{
 		validate_expr(&sexpr2, &self.name);
 		self.expr = sexpr2;
 		self.vec_subsig_obj = vec_sig_obj;
-		log(LOG2, &format!("preprocess_expr COMPLETED: name: {}, expr: {}", self.name, self.expr));
+		log(log_level, &format!("preprocess_expr COMPLETED: name: {}, expr: {}", self.name, self.expr));
 
 	}
 
@@ -3247,7 +3251,8 @@ mod tests_clamav{
 			let nibbles = hex_to_u8(s);
 			let hs_occ = dfa.get_pattern_pos(&dfa.acc_path(&nibbles));
 			let sig = &arr_sigs[sid];
-			let (act_res,_) = sig.accepts_approx_pm_bounds(&hs_occ, &hs_occ);
+			let (act_res,_) = sig.accepts_approx_pm_bounds(&hs_occ, &hs_occ,
+				"na");
 			assert!(act_res==exp_val, "for sig: {}, str: {}, act_res: {:?}, expected: {:?}", sig.to_str(), s, act_res, exp_val);
 		}
 	}
@@ -3310,7 +3315,7 @@ mod tests_clamav{
 			let sig = &arr_sigs[sid];
 			let bagwords_pm = sig.collect_bagwords_from_pmreg(false);
 			let hs_occ = filter_by(&hs_occ, &bagwords_pm); 
-			let (act_res,_) = sig.accepts_approx_pm_bounds(&hs_occ, &hs_occ);
+			let (act_res,_) = sig.accepts_approx_pm_bounds(&hs_occ, &hs_occ, "na");
 			assert!(act_res==exp_val, "for sig: {}, str: {}, act_res: {:?}, expected: {:?}", sig.to_str(), s, act_res, exp_val);
 		}
 	}

@@ -3,6 +3,7 @@
 */
 
 //use std::collections::{HashSet};
+use utils::{logger::{log,LOG1,log_perf}, timer::Timer as GTimer};
 use ark_ff::{Field,PrimeField,ToConstraintField};
 use ark_ec::{Group, CurveGroup,
 	pairing::{Pairing},
@@ -62,6 +63,7 @@ type FC<F,C,CS> = SigmaIR1CS_Inst<F,C,CS,LK<F>,GM<F>,false>;
 fn load_files<F:PrimeField>(list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavApproxConfig, b_read_cache: bool, b_write_cache: bool, cache_dir: &str)
 	->(Vec<Vec<F>>, Vec<WordInfo>){
 	//1. read the list of files
+	let b_debug = false;
 	let proot = proj_root();
 	let file_names = &read_lines(&format!("{}/{}", proot, list_file_path));
 
@@ -80,7 +82,10 @@ fn load_files<F:PrimeField>(list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavA
 		let s_wi= read(&format!("{}/vec_word_info.txt", sdir));
 		let vec_word_info:Vec<WordInfo> = serde_json::from_str(&s_wi)
 				.expect("Convert vec_sigs fails");
-		println!("DEBUG USE 2001: loaded vec_word_info: {:?}", vec_word_info);
+		if b_debug{
+			println!("DEBUG USE 2001: loaded vec_word_info: {:?}", 
+				vec_word_info);
+		}
 		vec_word_info
 	}else{
 		let vec_word_info = file_names.into_par_iter().map(|fpath|
@@ -100,15 +105,19 @@ fn load_files<F:PrimeField>(list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavA
 				&db.bundle_subsig_igc.vec_acdfa[0], //dfa_patterns_igc,
 				cfg, 
 				&db.sig_to_id); //use optimize mode
-
-			println!("DEBUG USE 1001: quick_res: {:?}", rec);
+			if b_debug{
+				println!("DEBUG USE 1001: quick_res: {:?}", rec);
+			}
 			rec
 		}).collect::<Vec<WordInfo>>();
 
 		if b_write_cache{
 			let s_wi = serde_json::to_string(&vec_word_info).unwrap();
 			write_to_file(&format!("{}/vec_word_info.txt", &sdir), &s_wi);
-			println!("DEBUG USE 2002: SAVED vec_word_info: {:?}", vec_word_info);
+			if b_debug{
+				println!("DEBUG USE 2002: SAVED vec_word_info: {:?}", 
+					vec_word_info);
+			}
 		}
 		vec_word_info
 	};
@@ -247,13 +256,11 @@ where C: CurveGroup<ScalarField=F>,
 			dfa_cap_l2 = dfa_cap_l2.increased_copy(2); 
 		}//for loop level2
 		//update level 1 capacity
-			println!("DEBUG USE 105 ==");
 		cp_cap_l1 = cp_cap_l1.increased_copy(1); //increase by level 1
 		sed_cap_l1 = sed_cap_l1.increased_copy(1); 
 		dfa_cap_l1 = dfa_cap_l1.increased_copy(1); 
 	}//for category
 
-			println!("DEBUG USE 106 ==");
 	//return
 	layer_circs
 }
@@ -465,18 +472,25 @@ where
 	C2G2::Affine: AffineFromField<CF2<C2G2>>,
 {
 	//1. build or load the clamdb
+	let log_level = LOG1;
+	let mut gt1 = GTimer::new();
+	log(log_level, &format!("=== ZKP driver starts ===="));
 	let poseidon_config = poseidon_canonical_config::<CF1<C1>>();
 	let mut vlog = vec![];
     let cfg = default_clamav_cfg();
     let db = ClamavDB::<CF1<C1>>::build_or_load(&cfg, sig_file, 
 		list_of_dfa_sigs, list_of_ised_sigs, list_of_ised_igc_sigs,
 		&mut vlog, cache_dir, b_read_cache, b_write_cache);
-    db.print_summary(&mut vlog);
+	if log_level>=LOG1+1{
+    	db.print_summary(&mut vlog);
+	}
+	log_perf(log_level, &format!("ZIP driver step 1: build DB."), &mut gt1);
 	
 	//2. load the files as vec of words
 	let (vec_words, vec_word_info) = load_files::<CF1<C1>>(list_file_to_scan, &db, &cfg, b_read_cache, b_write_cache, cache_dir);
 	let total_word_len:usize = vec_words.iter().map(|w| w.len()).sum();
 	let lkup_len = db.lkup.get_size();
+	log_perf(log_level, &format!("ZIP driver step 2: load words."), &mut gt1);
 
 	//3. build the circuits
 	let rc_db = Rc::new(db.clone());
@@ -492,6 +506,7 @@ where
 		num_category,
 		num_circs_per_category
 	);
+	log_perf(log_level, &format!("ZIP driver step 2: build circs."), &mut gt1);
 
 	//4. run the foldpot_main
 	let sample_individual_prf = 0; //generate individual proof 1 (idx is 0)
@@ -543,7 +558,8 @@ pub mod tests_zkp_driver{
 		let subsigs = 6;
 		let avg_pats_per_subsig = 8;
 		let avg_active_pats_per_subsig = 3;
-		let basis_pats_in_trace = 60*100;
+		//let basis_pats_in_trace = 60*100; //OLD
+		let basis_pats_in_trace = 30*100;
 		let perc_comp_subsigs = 50;
 		let num_category = 1;
 		let num_circs_per_category= 1;
@@ -652,6 +668,6 @@ pub mod tests_zkp_driver{
 
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
-		small_data2::<Fr>();
+		small_data::<Fr>();
 	}
 }

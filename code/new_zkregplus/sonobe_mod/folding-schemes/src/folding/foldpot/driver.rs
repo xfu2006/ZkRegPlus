@@ -2,8 +2,11 @@
 	Created 08/27/2024 
 	Modified 12/25/2024: added snark_rand_input structure
 	Modified 01/08/2025: added main workflow foldpot_main
+	Modified 11/24/2025: merge pass1 to pass3 to save memory
 */
 
+extern crate utils;
+use utils::{logger::{log, log_perf, LOG1}, timer::Timer as GTimer};
 use std::{
     //process::{Stdio,Command},
     //fs::{read_to_string,OpenOptions,remove_file,File,metadata},
@@ -38,7 +41,7 @@ use crate::{
 		circuits::{CF1, CF2, CF3},
 		foldpot::{
 			qa_nizk::{QaNizkProof},
-			utils::{Timer,get_mem_usage},
+			utils::{Timer,get_mem_usage,get_mem_usage_mb},
 			circuits_super::{field_to_usize},
 			mod_super::{PreprocessorParamFoldPotSuper,FoldPotSuper},
 			sigma_ir1cs::{SigmaIR1CS,LookupTableTwoCol,SigmaIR1CS_Inst,ZiPartTwoInst,StatementExtraInfo,GadgetMapper,Capacity,NdAdvice,WordInfo},
@@ -612,6 +615,8 @@ where
 			{batch_pack.as_ref().unwrap().2.clone()}
 			else {SnarkAdvice::empty(&words)};
 
+
+
 		//1. init
 		let mut vec_res = Vec::<StatementExtraInfo<C1::ScalarField>>::new();
 		let zero = C1::ScalarField::zero();
@@ -998,6 +1003,55 @@ where
 	}
 
 
+	/// integrates all three passes together so that
+	/// we do not have to generate all advices all at one time.
+	pub fn pass_all(&mut self, 
+		_phase_name: &str,
+		_iter_words: &mut dyn Iterator<Item = &Vec<C1::ScalarField>>,
+		iter_words2: &mut dyn Iterator<Item = &Vec<C1::ScalarField>>,
+		_total_words: usize,
+		idx_ind_proof: usize,
+	  	mut rng: impl RngCore +  CryptoRng,
+		_vec_word_info: &Vec<WordInfo>) 
+	-> (
+		FoldPotSuper<E,P,C2G2,C1,GC1,C2,GC2,FC,CS1,CS2,CS1E, LK, GM>,
+		usize, 
+		Option<(BatchProof<E,S>,IndividualProof<E>)>,
+	    Option<(BatchClaim<E>, IndividualClaim<E>, 
+			SnarkAdvice<E::ScalarField>)>
+		){
+		//0. generate the claim first
+		//estimate: 700M data = 700M/31 = 23M field elements in words
+		//given 62 nibbles per word.
+		//words = 23M * 32 byte = 700M data
+		//each claim is small, up to 300 claims. So small.
+		let mut t1 = Timer::new("PassOne", 1);
+		let m1 = get_mem_usage_mb(); 
+		let words = {
+			iter_words2.map(|v| v.to_vec())
+			.collect::<Vec<Vec<C1::ScalarField>>>()
+		};
+		let _n_words = words.len();
+		let total_wd_len = words.iter().map(|x| x.len()).sum::<usize>();
+
+		let batch_pack = if !self.b_full_mode{
+			assert!(self.batch_param.is_some());
+			let pk = &self.batch_param.as_ref().unwrap().0;
+			let _vk = &self.batch_param.as_ref().unwrap().1;
+			let (global_claim, ind_claims, snark_inp) = 
+				BatchProcessor::<E,LK,S,CS1E>::gen_claims(pk, &mut rng, &words, self.lkup.clone()).unwrap();
+			Some( (global_claim, ind_claims[idx_ind_proof].clone(), snark_inp) )
+		}else{
+			None
+		};
+		let m2 = get_mem_usage_mb();
+		let _snark_inp = if !self.b_full_mode
+			{batch_pack.as_ref().unwrap().2.clone()}
+			else {SnarkAdvice::empty(&words)};
+		t1.prt(&format!("step 1: generate batch/ind claims. mem: {} GB, increased mem: {} MB, for total_word_len: {} packed fields.", m2/1024, m2-m1, total_wd_len));
+
+		todo!()
+	}
 
 	
 }
@@ -1099,11 +1153,13 @@ where
 	C1::Config: SWCurveConfig,
 	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug,
 {
-	//0. fix the circuit with dummy statements
+	//0. Fix the circuit swith dummy statements
 	// here we assume that each circuit can always handle
 	// words of zeros, and set its dummy_statement for preprocess()
 	// to build keys.
-	let mut t1 = Timer::new("main", 0);
+	let log_level: usize = LOG1;
+	let mut gt1 = GTimer::new();
+	log(log_level, &format!("===== fold_pot starts ====="));
 	let mut vec_circ = vec_circ.clone();
 	let n_circ = vec_circ.iter().map(|row| row.len()).sum::<usize>();
 	let mut id = 0;
@@ -1158,7 +1214,8 @@ where
 			id += 1;
 		}
 	}
-	t1.prt("STEP 0: building dummy stmt for all circs");
+	log_perf(log_level, &format!("Step 1: build dummy stmt for all circs"),
+		&mut gt1);
 
 
 	//1. create instance
@@ -1175,15 +1232,18 @@ where
 	let mut driver1 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,FC,S,LK,GM>
 		::new(poseidon_config.clone(), 
 			lkup, vec_circ, rng, b_full, max_total_n, n_words);
-	t1.prt("Step 0.5. setup driver1");
+	log_perf(log_level, &format!("Step 2: set up driver 1"),
+		&mut gt1);
 
 	//3. phase 1 pass 1
+	if 1>0 {panic!("STOP HERE 1000");}
 	let mut iter = vec_words.iter();
 	let mut iter_2 = vec_words.iter();
-	let mut iter2 = vec_words.iter();
-	let mut iter2_2 = vec_words.iter();
-	let mut iter3 = vec_words.iter();
-	let mut iter3_2 = vec_words.iter();
+	let mut _iter2 = vec_words.iter();
+	let mut _iter2_2 = vec_words.iter();
+	let _iter3 = vec_words.iter();
+	let _iter3_2 = vec_words.iter();
+	/*
 	let (vsi,m_map,vec_nd_adv, batch_claims) = 
 		driver1.pass_one(&mut iter,&mut iter_2, 
 		vec_words.len(), idx_individual_prf, &mut rng, &vec_words_info);
@@ -1199,10 +1259,22 @@ where
 		driver1.pass_three(&mut iter3, &mut iter3_2, vec_words.len(), 
 			&vsi2, &m_map,
 			idx_individual_prf, &mut rng, hash_cmF, &batch_claims, &vec_nd_adv);
-	t1.prt(&format!("Step 3. Phase 1. pass_three. Prove All. {} Steps for {} words ", vsi2.len(), vec_words.len()));
+	*/
+	let (nova1, _num_steps, batch_ind_prfs, batch_claims) = driver1.pass_all(
+		"Phase 1",
+		&mut iter,
+		&mut iter_2, 
+		vec_words.len(), 
+		idx_individual_prf, 
+		&mut rng, 
+		&vec_words_info
+	);
+
+	//t1.prt(&format!("Step 3. Phase 1: words: {} ", vec_words.len()));
 	let Some((mut batch_prf, ind_prf)) = batch_ind_prfs.map(|x| (x.0, x.1))
 		else {panic!("batch proof is none!");};
-	t1.prt("Step 3. Phase 1. pass_three. Prove steps.");
+	//t1.prt("Step 3. Phase 1. pass_three. Prove steps.");
+
 
 	//let ind_prf = batch_ind_prfs.map(|x| x.1);
 	//5. generate the inputs for cyclepair
@@ -1218,7 +1290,7 @@ where
 
 	let n_circs = 1;
 	let circ_cyclepair = create_sigma_fold_pair::<C1::ScalarField, C1, CS1, LK, false>(n_circs, poseidon_config.clone());
-	t1.prt("Step 4. Generate Cyclepair Inputs and prf_qa_nizk.");
+	//t1.prt("Step 4. Generate Cyclepair Inputs and prf_qa_nizk.");
 	
 	//6. another three rounds
 	let vec_words = cyclepair_inputs.clone();
@@ -1236,21 +1308,21 @@ where
 	//let driver2 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,FC,S,LK>
 	let mut driver2 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,SigmaIR1CS_Inst<C1::ScalarField, C1, CS1, LK, FoldPairMapper<CF1<C1>,LK>,false>,S,LK,FoldPairMapper<CF1<C1>,LK>>
 		::new(poseidon_config.clone(), lkup, vec_circ, rng, b_full, max_total_n, n_words);
-	t1.prt("Step 5. Create Second Phase Driver.");
+	//t1.prt("Step 5. Create Second Phase Driver.");
 
 	let vec_word_info = vec![WordInfo::dummy(); vec_words.len()];
 	let (vsi,m_map,vec_nd_adv, bt_claims) = 
 		driver2.pass_one(&mut iter, &mut iter_2,
 		vec_words.len(), idx_individual_prf, &mut rng, &vec_word_info);
 
-	t1.prt("Step 6. 2nd Phase Pass 1. Dispatch w.");
+	//t1.prt("Step 6. 2nd Phase Pass 1. Dispatch w.");
 	let (vsi2, hash_cmF) = driver2.pass_two(&mut iter2, &mut iter2_2, 
 		vec_words.len(), &vsi, &m_map, &vec_nd_adv);
-	t1.prt("Step 7. 2nd Phase Pass 2. commit F.");
+	//t1.prt("Step 7. 2nd Phase Pass 2. commit F.");
 
 	let (nova2, _num_steps, _batch_prfs) = 
 		driver2.pass_three(&mut iter3, &mut iter3_2, vec_words.len(), &vsi2, &m_map, idx_individual_prf, &mut rng, hash_cmF, &bt_claims, &vec_nd_adv);
-	t1.prt(&format!("Step 8. 2nd Phase Pass 3. Prove Steps. mem: {} GB", get_mem_usage()));
+	//t1.prt(&format!("Step 8. 2nd Phase Pass 3. Prove Steps. mem: {} GB", get_mem_usage()));
 
 	let qa_nizk_pkey = &driver2.nova_param.0.qa_pp.expect("qa_pp null!"); 
 	let qa_nizk_vkey = driver2.nova_param.1.qa_vp.as_ref()
@@ -1284,7 +1356,7 @@ where
 			cyclepair_inputs, qa_nizk_vkey_hash.clone(), 
 			driver2.poseidon_config.clone(),
 			com_all_w, r_all_w, nova2_com_all_w, nova2_r_all_w, inp)?; 
-	t1.prt(&format!("Step 9. Build decider circuit. Mem: {} GB", get_mem_usage()));
+	//t1.prt(&format!("Step 9. Build decider circuit. Mem: {} GB", get_mem_usage()));
 
 
 
@@ -1306,7 +1378,7 @@ where
 			&mut rng).unwrap();
 		(g16_pk, g16_vk)
 	};
-	t1.prt(&format!("Step 11. Gen groth16 keys, mem: {} GB", get_mem_usage()));
+	//t1.prt(&format!("Step 11. Gen groth16 keys, mem: {} GB", get_mem_usage()));
 
 	//10. produce the groth16 snark
 	let snark_proof: S::Proof = S::prove(&g16_pk, decider_circuit, &mut rng)
@@ -1328,7 +1400,7 @@ where
 
 		snark_proof,
 	);
-	t1.prt(&format!("Step 12. Gen groth16 prf, mem: {} GB", get_mem_usage()));
+	//t1.prt(&format!("Step 12. Gen groth16 prf, mem: {} GB", get_mem_usage()));
 
 	//11. verify the batch proof
 	let mut batch_ver_param = driver1.batch_param.as_ref().unwrap().1.clone();
@@ -1346,7 +1418,7 @@ where
 		&driver1.poseidon_config,
 		true //now full verification
 	)); //note
-	t1.prt(&format!("Step 13. Verify Batch Proof"));
+	//t1.prt(&format!("Step 13. Verify Batch Proof"));
 
 
 	//12. verify the individual proof
@@ -1357,7 +1429,7 @@ where
 		&batch_prf, 
 		&ind_prf)
 	);
-	t1.prt(&format!("Step 14. Verify Individual Proof"));
+	//t1.prt(&format!("Step 14. Verify Individual Proof"));
 
 	t_all.prt(&format!("FOLDPOT Entire Process: mem: {} GB", get_mem_usage()));
 
