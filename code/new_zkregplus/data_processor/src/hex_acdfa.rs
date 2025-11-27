@@ -15,7 +15,7 @@ use aho_corasick::{
 	automaton::{Automaton},dfa::DFA as ACDFA,Anchored, 
 		state_id_to_usize, pattern_id_to_usize};
 use serde::{Serialize, Deserialize};
-use utils::{logger::{flog,log,LOG3,LOG1,log_perf}, 
+use utils::{logger::{flog,log,LOG6,LOG1,log_perf}, 
 	data::{hex_to_u8, hex_to_str},
 	timer::Timer
 };
@@ -136,7 +136,7 @@ impl HexACDFA{
 	/// Assumption: patterns have even len (hex_nibbles)
 	pub fn new_adv_new(dfa_id: usize, patterns: &Vec<String>, b_case_ignore: bool)->HexACDFA{
 		let b_debug = false;
-		let log_level = LOG3;
+		let log_level = LOG6;
 		assert!(b_case_ignore, concat!("This function for ignore case only. ",
 			"Running time is slow for case sensitive DFA,",
 			" which is much larger. ",

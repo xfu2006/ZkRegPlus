@@ -1076,7 +1076,7 @@ impl <F:PrimeField> StepFwdPrf<F>{
 			v_dst_loc, v_dst_pat_id, v_dst_pat_diff1, v_dst_pat_diff2,
 			v_dst_subsig];
 		let n = self.vec_size();
-		assert!(n>v2d[0].len(), "buf too small, adjust basis_pats_in_trace");
+		assert!(n>v2d[0].len(), "buf too small, adjust basis_pats_in_trace. n: {}, v2dlen: {}", n, v2d[0].len());
 		let n2 = n-v2d[0].len();
 		let pad = vec![zero; n2];
 		#[cfg(test)]{

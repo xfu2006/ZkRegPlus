@@ -22198,4 +22198,57 @@ Goal 2. mappers
 Goal 3. read the logic first step of foldpot main
 	[a] it fills the circs with empty statements 
 
--- TODO -- remove more debug messages about driver new
+Wed 11/26/2025
+Goal 1. remove more debug messages about driver new
+	[a] DEBUG USE 8802
+	[b] first 3 steps of Driver new
+	[c] how to pass the max key size? -> don't pass make the key 
+		processing the same log level
+
+Goal 2. instrument mod super preprocess
+	[a] set up framework
+	[b] process each pp
+	[c] remove 8901 8902, 
+	[d] redo gen_constraints circuit_super
+
+Goal 3. more message
+	[a] 9910
+	[b] many other in sigma_ir1cs
+
+Thursday 11/27/2025
+LOC (sonobe): 19420
+Goal 1. step1 of pass one
+Goal 2. step2 of pass one
+	[a] set up the framework
+	[b] test the RAM consumption
+		-> fix ERROR tbl[0][i] error -> RANGE2_BIT -> improve warning msg
+	[c] it does not consume a lot of RAM though. why?
+	[d] make the file big and try 900KB vs 100kb word
+	[e] instead of making long file and readjust params,
+		make 100kb * 80 = 8M and see what's going on
+	[g] for 8M it's costing 19G
+		so for 1G it's going to cost 2TB
+		max 32M -> 64GB peak time
+	[h] two choices: keep the nv_advice for one word
+		or completely change the nd advice structure
+Goal 3. read code
+	[a] loop structure
+		-> call plan_nd_advice for a word generating steps
+		-> for each segment, based on the advice, generate the
+			statement, based on the statement generate the extra info
+		-> about 15 field elements for ExtraInfo, not big anyway
+	[b] gen_nd_advice
+		-> it selects a layer first
+		-> all circs in each layer has the same inp/oup
+		-> then it searches through circs in a layer to find hte best
+			-> in fact in pracice we'll just do one circ per layer
+		-> it does build the advice step by step by chunking
+			the advice
+	[c] read pass_two. looks like the only step is to generate cmF
+	[c] read pass_three. pretty much the same loop
+Goal 4. Design
+	[a] gen_nd_advice -> add a bollean flag not to add advice
+	[b] in the loop generate the advice itself
+	[c] add the gen_cmF logic from pass_two
+	[d] add the prove_step from pass_three
+		

@@ -39,7 +39,7 @@ use self::rustomaton::{
 
 //use utils::consts::{WARN,LOG1,LOG2,LOG3, B_SINGLE_JOB_MODE,COMBINATION_LIMIT,RANGE_MAX,MAX_PM_SECTIONS, REPEAT_LEN_LIMIT, MIN_BAG_WORD_LEN, TEST_MODE};
 use utils::{
-	logger::{log, log_perf,LOG1,LOG2,LOG3,LOG4,LOG5,LOG_LEVEL},
+	logger::{log, log_perf,LOG1,LOG2,LOG4,LOG6,LOG_LEVEL},
 	os::{read_lines},
 	timer::{Timer},
 	data::{u8_to_hex}
@@ -1329,7 +1329,7 @@ impl ClamavSig{
 	/// For Instance `< [ab, cd], [12, 34] >`, a string "ab34" would
 	/// satisfy it but "abab" would not because none of `[12, 34]` appears.
 	pub fn gen_approx_bagwords(&mut self, cfg: &ClamavApproxConfig){
-		let b_debug = LOG_LEVEL > LOG5;
+		let b_debug = LOG_LEVEL >= LOG6;
 
 		for obj in &self.vec_subsig_obj{
 			//0. if obj is not general regex or counter constraint ignore.
@@ -1853,7 +1853,7 @@ impl ClamavSig{
 
 	/// use infix evaluation of expr
 	fn gen_eval_dnf(&mut self){
-		let log_level = LOG3;
+		let log_level = LOG6;
 		log(log_level, &format!("gen_eval_dnf: {}", self.expr));
 		let mut stack_operator = VecDeque::<char>::new();
 		let mut stack_operands = VecDeque::<EvalDNF>::new();
@@ -1958,7 +1958,7 @@ impl ClamavSig{
 	/// (i.e., no class chars, no union class etc.)
 	fn preprocess_expr_new(&mut self, b_pm: bool){
 		//0. make a copy of all existing subsigs
-		let log_level = LOG3;
+		let log_level = LOG6;
 		let mut vec_sig_obj= vec![];
 		for (id,x) in self.vec_subsigs.iter().enumerate(){
 			vec_sig_obj.push( SubSigObj{value: x.clone(),

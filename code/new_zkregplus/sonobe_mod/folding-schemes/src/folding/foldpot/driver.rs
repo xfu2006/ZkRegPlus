@@ -6,7 +6,7 @@
 */
 
 extern crate utils;
-use utils::{logger::{log, log_perf, LOG1}, timer::Timer as GTimer};
+use utils::{logger::{log, log_perf, LOG1,LOG_LEVEL,LOG2}, timer::Timer as GTimer};
 use std::{
     //process::{Stdio,Command},
     //fs::{read_to_string,OpenOptions,remove_file,File,metadata},
@@ -41,7 +41,7 @@ use crate::{
 		circuits::{CF1, CF2, CF3},
 		foldpot::{
 			qa_nizk::{QaNizkProof},
-			utils::{Timer,get_mem_usage,get_mem_usage_mb},
+			utils::{Timer,get_mem_usage,get_mem_usage_mb,format_bytes},
 			circuits_super::{field_to_usize},
 			mod_super::{PreprocessorParamFoldPotSuper,FoldPotSuper},
 			sigma_ir1cs::{SigmaIR1CS,LookupTableTwoCol,SigmaIR1CS_Inst,ZiPartTwoInst,StatementExtraInfo,GadgetMapper,Capacity,NdAdvice,WordInfo},
@@ -289,16 +289,23 @@ where
 	  max_total_n: usize,
 	  n_words: usize,
 	  )->Self{
-
+		let log_level = LOG2;
+		let b_perf = LOG_LEVEL >= log_level;
+		let mut gt1 = GTimer::new();
 	  	//1. set up the parameters
-		println!("DEBUG USE 8808.1: entering driver::new");
-		let mut t2 = Timer::new("Driver::new", 1);
         let _start = Instant::now();
 		let _b_debug = true;
 		let layered_circuits = F_circuits;
 		let circuits = layered_circuits.concat(); 
 		let size_F = circuits.iter().map(|f| f.get_size_f())
 			.collect::<Vec<usize>>();
+		if b_perf{
+			log_perf(log_level, &format!("Driver New: Step 1: foldpot keys"), 
+				&mut gt1);
+			for i in 0..size_F.len(){
+				log(log_level, &format!(" -- circ {} size: {}", i, size_F[i]));
+			}
+		}
         let prep_param =
             PreprocessorParamFoldPotSuper::<C1, C2, 
 				FC, CS1, CS2, LK, GM, false>
@@ -309,7 +316,8 @@ where
 				size_F.clone(),
 				b_full_mode
 			);
-		t2.prt(&format!("step 1. create prep_param. size_F{}", size_F.len()));
+		log_perf(log_level, &format!(
+			"Driver New: Step 2: foldpot params.", ), &mut gt1);
 
 
         let nova_params = FoldPotSuper::<
@@ -327,7 +335,9 @@ where
             false,
         >::preprocess(&mut rng, &prep_param)
         .unwrap();
-		t2.prt(&format!("step 2. create nova_param."));
+		log_perf(log_level, &format!(
+			"Driver New: Step 3: preprocess keys"), 
+			&mut gt1);
 
 		//2. create adummy FoldPotSuper instance
 		assert!(circuits.len() == size_F.len());
@@ -342,7 +352,9 @@ where
 			::new(ch, rc, &poseidon_config, b_full_mode, fq_bits, n_words);
 		let z0_part2_hash = z0_part2.hash(&poseidon_config);
         let _z_0 = vec![hash_cmF, z0_part2_hash]; //[stage hc_cmF, z_0]
-		t2.prt(&format!("step 3. compute z_0 default."));
+		log_perf(log_level, &format!(
+			"Driver New: Step 3.5: create default z0"), 
+			&mut gt1);
 
 		//4. set up the batch processor if it is NOT full mode (1st stage)
 		let max_w_lk = if max_total_n > lkup_inp.borrow().get_size() 
@@ -351,7 +363,9 @@ where
 				::setup(&mut rng, max_w_lk, n_words,
 				poseidon_config.clone()));
 
-		t2.prt(&format!("step 4. batch param ."));
+		log_perf(log_level, &format!(
+			"Driver New: Step 4: batch param"), 
+			&mut gt1);
 
 		Self{
 			lkup: lkup_inp.clone(),
@@ -1006,13 +1020,13 @@ where
 	/// integrates all three passes together so that
 	/// we do not have to generate all advices all at one time.
 	pub fn pass_all(&mut self, 
-		_phase_name: &str,
-		_iter_words: &mut dyn Iterator<Item = &Vec<C1::ScalarField>>,
+		phase_name: &str,
+		iter_words: &mut dyn Iterator<Item = &Vec<C1::ScalarField>>,
 		iter_words2: &mut dyn Iterator<Item = &Vec<C1::ScalarField>>,
-		_total_words: usize,
+		total_words: usize,
 		idx_ind_proof: usize,
 	  	mut rng: impl RngCore +  CryptoRng,
-		_vec_word_info: &Vec<WordInfo>) 
+		vec_word_info: &Vec<WordInfo>) 
 	-> (
 		FoldPotSuper<E,P,C2G2,C1,GC1,C2,GC2,FC,CS1,CS2,CS1E, LK, GM>,
 		usize, 
@@ -1025,7 +1039,8 @@ where
 		//given 62 nibbles per word.
 		//words = 23M * 32 byte = 700M data
 		//each claim is small, up to 300 claims. So small.
-		let mut t1 = Timer::new("PassOne", 1);
+		let log_level = LOG2;
+		let mut gt1 = GTimer::new();
 		let m1 = get_mem_usage_mb(); 
 		let words = {
 			iter_words2.map(|v| v.to_vec())
@@ -1045,10 +1060,115 @@ where
 			None
 		};
 		let m2 = get_mem_usage_mb();
-		let _snark_inp = if !self.b_full_mode
+		let snark_inp = if !self.b_full_mode
 			{batch_pack.as_ref().unwrap().2.clone()}
 			else {SnarkAdvice::empty(&words)};
-		t1.prt(&format!("step 1: generate batch/ind claims. mem: {} GB, increased mem: {} MB, for total_word_len: {} packed fields.", m2/1024, m2-m1, total_wd_len));
+		log_perf(log_level, &format!(
+			"{} step 1: generate batch/ind claims. mem: {} GB, increased mem: {} MB, for words: {}, total_word_len: {} packed fields.", phase_name, m2/1024, m2-m1, total_words, total_wd_len), 
+			&mut gt1);
+
+		//1. init
+		let mut vec_res = Vec::<StatementExtraInfo<C1::ScalarField>>::new();
+		let zero = C1::ScalarField::zero();
+		let b_full_mode = self.b_full_mode;
+		let fq_bits = <<C1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as usize;
+		let z0_part2 = ZiPartTwoInst::<C1::ScalarField>
+			::new(zero, zero, &self.poseidon_config, b_full_mode, fq_bits, total_words);
+		let z0_part2_hash = z0_part2.hash(&self.poseidon_config);
+		let _z_0 = vec![zero, z0_part2_hash]; //will replaced
+		let mut m_map = HashMap::<usize,usize>::new();
+		let pc_0_val = 0;
+		let _pc_0 = C1::ScalarField::from(pc_0_val as u32);
+		log_perf(log_level, &format!(
+			"{} step 2: generate z0", phase_name), &mut gt1);
+
+
+		//2. while loop to process words one by one
+		// figure out the num_steps (and reset in self)
+		// compute the final hash_cmF
+		let mut word_id = 1;
+		let n_circ = self.circuits.len();
+		let _vec_mapper= self.circuits.iter().map(|c| c.get_mapper()).
+			collect::<Vec<Rc<RefCell<GM>>>>();
+		let mut vec_advice = vec![];
+		let mut prev_stmt = None;
+		let lkup_len= self.lkup.borrow().get_size();
+		let mut total_lkup_covered = 0;
+		let m3 = get_mem_usage_mb();
+		for word in iter_words{
+			//2.1 first try out and determine the length info for each
+			let mut remaining = word.clone();
+			let mut subseg_id = 1;
+			let total_word_len = word.len();
+			let mut acc_wd_len = 0;
+			let _mapper = self.circuits[0].get_mapper();
+			let (steps, vec_pci, vec_len, _vec_cap_req, advice) = self.plan_nd_advice(&word, &vec_word_info[word_id-1]).expect("Planning advice fails!"); 
+			for i in 0..steps{
+				let pc_i = if i==0 {0} else {vec_pci[i-1]};
+				let pc_i1 = vec_pci[i]; //this is actually pc_i1 for this circ
+				let circ = &self.circuits[pc_i1];
+				let _max_len = circ.max_word_len();
+				let act_len = vec_len[i];
+				acc_wd_len += act_len;
+				let frag = remaining[0..act_len].to_vec();
+				remaining = remaining[act_len..].to_vec();
+				#[cfg(test)]{
+					//use crate::folding::foldpot::sigma_ir1cs::{Capacity};
+					assert!(act_len<=_max_len);
+					let rc_cap = _vec_cap_req[i].clone();
+					assert!(circ.get_mapper().borrow().get_capacity()
+						.can_satisfy(&rc_cap));
+					if i==steps-1 {assert!(remaining.len()==0);}
+				}
+				let lk_share_size = circ.get_lkup_share_size();
+
+				let ei = StatementExtraInfo::<C1::ScalarField>{
+					total_words: C1::ScalarField::from(total_words as u32),
+					word_id: C1::ScalarField::from(word_id as u32),
+					subseg_id: C1::ScalarField::from(subseg_id as u32),
+					total_word_len: C1::ScalarField::from(total_word_len as u32),
+					total_word_segs: C1::ScalarField::from(steps as u32),
+					n_circ: C1::ScalarField::from(n_circ as u32),
+					pc_i:  C1::ScalarField::from(pc_i as u32), 
+					pc_i1:  C1::ScalarField::from(pc_i1 as u32), //update later
+					act_word_subseg_size: C1::ScalarField::from(act_len as u32),
+					batch_r: snark_inp.vec_r[(word_id as usize)-1],
+					batch_v: snark_inp.vec_v[(word_id as usize)-1],
+					r_all_words: snark_inp.r_all_words,
+					r_kzg_len: snark_inp.r_kzg_len,
+					r_vec_r: snark_inp.r_vec_r_kzg,
+					r_vec_v: snark_inp.r_vec_v_kzg,
+					r_word_i: snark_inp.rands[(word_id as usize)-1],
+					accumulated_word_len: C1::ScalarField::from(acc_wd_len as u32),
+				};//end constructor StatementExtraInfo
+
+				//need to build the statement to fill the m_map
+				let stmt_res = circ.get_mapper().borrow().build_statement(
+					&frag, &prev_stmt, self.lkup.clone(), &ei,
+						advice[subseg_id-1].clone(), lk_share_size, false);
+				assert!(stmt_res.is_ok());
+				let stmt = stmt_res.unwrap();
+				stmt.fill_lkup_mvec(&mut m_map, &self.lkup); //needed here!
+				let ea = stmt.to_extra_info();
+				vec_res.push(ea);
+				prev_stmt= Some(stmt);
+
+
+				subseg_id +=1;
+				total_lkup_covered += lk_share_size;
+			}
+
+			vec_advice.push(advice);
+			word_id +=1;
+		}
+		let m4 = get_mem_usage_mb();
+		log_perf(log_level, &format!(
+			"{} step 3: dispatch w, mem: {} MB for total_word_len: {}: ", 
+			phase_name, m4-m3, format_bytes(total_wd_len*31))
+			, &mut gt1);
+
+		assert!(total_lkup_covered >= lkup_len, "total: {}, lkup_len: {}", total_lkup_covered, lkup_len);
+		//(vec_res, m_map, vec_advice, batch_pack)
 
 		todo!()
 	}
@@ -1236,7 +1356,6 @@ where
 		&mut gt1);
 
 	//3. phase 1 pass 1
-	if 1>0 {panic!("STOP HERE 1000");}
 	let mut iter = vec_words.iter();
 	let mut iter_2 = vec_words.iter();
 	let mut _iter2 = vec_words.iter();

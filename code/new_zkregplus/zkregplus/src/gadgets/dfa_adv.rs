@@ -1209,7 +1209,7 @@ impl <F:PrimeField> SigmaGadget<F> for DfaAdvGadget<F>{
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{
 		//1. retrive the statement instance and get all parts
-		let b_perf = true;
+		let b_perf = false;
 		let nc = cs.num_constraints();
 		let cfg = self.get_container_cfg().expect("container cfg not set!");
 		let stmt = Container::<FpVar<F>>::load_from(i, wtns_cfg, wtns, &cfg)?;

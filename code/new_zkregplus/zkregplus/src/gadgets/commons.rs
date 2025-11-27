@@ -625,7 +625,7 @@ pub fn assert_wellformed_sorted_two_col_tbl_adv<F:PrimeField>(tbl: &Vec<Vec<F>>,
 			assert!(tbl[2][i-1]==max || (tbl[0][i-1]==zero && tbl[2][i-1]==zero));
 		}else{//same key
 			assert!(tbl[0][i]==zero || tbl[1][i] == tbl[1][i-1] + one || (b_relax && tbl[1][i]==tbl[1][i-1]));
-			assert!(tbl[0][i]==zero || tbl[2][i] > tbl[2][i-1]);
+			assert!(tbl[0][i]==zero || tbl[2][i] > tbl[2][i-1], "tbl[0][i]: {}, tbl[2][i]: {}, tbl2[i][i-1]: {}. Not satisfy tbl[0][i]==zero or tbl[2][i]>tbl[2][i-1]. FAILURE usual cause: RANGE2_BIT not sufficient", tbl[0][i], tbl[2][i], tbl[2][i-1]);
 		}
 		if i==n-1{ assert!(tbl[2][i]==max || tbl[0][i]==zero); }
 	}

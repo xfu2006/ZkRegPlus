@@ -18,7 +18,7 @@
 	where si_[seg] always match the [seg], e.g., |si_data| = |data|.
 */
 
-use utils::{logger::{log,LOG3,LOG_LEVEL}};
+use utils::{logger::{log,LOG5,LOG_LEVEL}};
 use std::{
 	marker::PhantomData,
 	rc::{Rc},
@@ -377,7 +377,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaCompo
 
 	/// return the sizes of inp, oup, data buffer
 	fn get_sizes(&self)->Vec<usize>{
-		let log_level = LOG3;
+		let log_level = LOG5;
 		let b_perf = true && log_level>=LOG_LEVEL;
 		if b_perf{
 			log(log_level, &format!(" ## dfa gadgets data len: ==="));
@@ -587,7 +587,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaCompo
 	/// starting from 0). For conveneince, we sometimes use
 	/// the prev_stmt or the vector of its prev_stmt.
 	fn build_statement_comp(&self, _comp_id: usize, _stmt_map_id: usize, _word_seg: &Vec<F>, _actual_word_len: usize, _lkup: &Rc<RefCell<LK>>, _extra_info: &StatementExtraInfo<F>, advice: &Rc<dyn NdAdvice>, _cfg: &StatementConfig, _stmt_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>{
-		let log_level = LOG3;
+		let log_level = LOG5;
 		let b_perf = LOG_LEVEL >= log_level;
 		//1. take the advice
 		let advice = advice.as_any().downcast_ref::<DfaAdvice<F>>()

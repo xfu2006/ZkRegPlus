@@ -11,7 +11,7 @@
 		that failed_sigs is a subset of discharged_sigs (or the samples
 		are discharged).
 */
-use utils::{logger::{log, LOG_LEVEL, LOG2, LOG4}};
+use utils::{logger::{log, LOG_LEVEL, LOG5,LOG6}};
 use serde::{Serialize,Deserialize};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use crate::commitment::CommitmentScheme;
@@ -957,7 +957,7 @@ impl StatementConfig{
 	}
 
 	pub fn total_size(&self)-> usize{
-		let log_level = LOG4;
+		let log_level = LOG6;
 		let b_perf = true;
 		let sub_table_size = self.input_size + self.output_size + 
 			self.data_size;
@@ -1886,10 +1886,8 @@ impl WitnessSigmaIR1CSConfig{
 
 	/// get the total size if serialized into vector
 	pub fn get_total_size(&self)->usize{
-		let b_perf = true;
-		if b_perf{
-			println!(" ### WITNESS structure: stmt_size: {}, msg1: {}, msg2: {}, msg3: {}, zi_part2: {}, inv_hab22_left: {} inv_hab22_right: {}", self.statement_size, self.msg1_size, self.msg2_size, self.msg3_size, self.zi_part2_size, self.inv_hab22_left_size, self.inv_hab22_right_size);
-		}
+		let log_level = LOG6;
+		log(log_level, &format!(" ### WITNESS structure: stmt_size: {}, msg1: {}, msg2: {}, msg3: {}, zi_part2: {}, inv_hab22_left: {} inv_hab22_right: {}", self.statement_size, self.msg1_size, self.msg2_size, self.msg3_size, self.zi_part2_size, self.inv_hab22_left_size, self.inv_hab22_right_size));
 		self.cmF_size + self.extra_var_size + self.statement_size + 
 		self.msg1_size + self.msg2_size + self.msg3_size + 
 		self.zi_part2_size + 
@@ -2438,8 +2436,6 @@ where 	C: CurveGroup<ScalarField=F>,
 			stmt.len(), stmt_len);
 		let v_stmt = stmt.clone();
 
-		println!("DEBUG USE 9910: stmt_len: {}", v_stmt.len());
-
 		assert!(v_idx.len()==self.gadgets.len(), "v_idx.len(): {} != gadgets.len: {}", v_idx.len(), self.gadgets.len());
 		let vec_msg_sizes = self.gadgets.iter().map(|g| 
 			g.borrow().get_msg_size())
@@ -2915,8 +2911,8 @@ where 	C: CurveGroup<ScalarField=F>,
 	) -> Result<Vec<FpVar<F>>, SynthesisError> {
 		let b_debug = false; //set to false in production mode
 		let b_show_sigs = false; //set to false in production mode
-		let log_level = LOG2;
-		let b_perf = log_level >=LOG_LEVEL;
+		let log_level = LOG5;
+		let b_perf = LOG_LEVEL>=log_level;
 		//NOTE: cs.is_satisfied() can cause * stack overflow *
 		//if constraints are not constructed carefully.
 		//sometimes if a constraint has lc (linear combinations) too deep,

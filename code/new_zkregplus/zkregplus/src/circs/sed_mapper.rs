@@ -39,7 +39,7 @@ discharge_subsig_adv (one for case sentive and one for ignore case).
 
 */
 
-use utils::{logger::{log, LOG3,LOG4, LOG_LEVEL}};
+use utils::{logger::{log, LOG5,LOG6, LOG_LEVEL}};
 use std::{
 	marker::PhantomData,
 	rc::{Rc},
@@ -576,7 +576,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 
 	/// return the sizes of inp, oup, data buffer, failed_sigs, discharged_sigs
 	fn get_sizes(&self)->Vec<usize>{
-		let log_level = LOG4;
+		let log_level = LOG6;
 		let b_perf = true && log_level>=LOG_LEVEL;
 		if b_perf{
 			log(log_level, &format!(" ## sed gadgets data len: ==="));
@@ -866,7 +866,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 	/// starting from 0). For conveneince, we sometimes use
 	/// the prev_stmt or the vector of its prev_stmt.
 	fn build_statement_comp(&self, _comp_id: usize, _stmt_map_id: usize, _word_seg: &Vec<F>, _actual_word_len: usize, _lkup: &Rc<RefCell<LK>>, _extra_info: &StatementExtraInfo<F>, advice: &Rc<dyn NdAdvice>, _cfg: &StatementConfig, _stmt_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>{
-		let log_level = LOG3;
+		let log_level = LOG5;
 		let b_perf = log_level >= LOG_LEVEL;
 		//1. take the advice
 		let advice = advice.as_any().downcast_ref::<SedAdvice<F>>()

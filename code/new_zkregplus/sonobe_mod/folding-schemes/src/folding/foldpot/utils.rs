@@ -39,6 +39,23 @@ pub const LOG3:usize = 0;
 pub const LOG2:usize = 1;
 pub const LOG1:usize = 0;
 
+pub fn format_bytes(bytes: usize) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = 1024.0 * 1024.0;
+    const GB: f64 = 1024.0 * 1024.0 * 1024.0;
+
+    let b = bytes as f64;
+    if b < KB {
+        format!("{} bytes", bytes)
+    } else if b < MB {
+        format!("{:.2} KB", b / KB)
+    } else if b < GB {
+        format!("{:.2} MB", b / MB)
+    } else {
+        format!("{:.2} GB", b / GB)
+    }
+}
+
 
 /// it is cheapter than standard arkworks is_zero(), which costs 3 constraints.
 /// it returns 1 when v is zero and 0 when v is not zero.

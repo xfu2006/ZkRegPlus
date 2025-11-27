@@ -330,7 +330,7 @@ impl<F: Field> ConstraintSystem<F> {
         ) -> (usize, Option<Vec<F>>),
     ) {
 		let b_new = false; //strangely 1-thread is faster.
-		let b_perf = true;
+		let b_perf = false;
 		let timer = Instant::now();
 		let size = self.lc_map.len();
 		if !b_new{
@@ -855,13 +855,11 @@ impl<F: Field> ConstraintSystem<F> {
     /// do not contribute to the size of the multi-scalar multiplication, which
     /// is the dominating cost.
     pub fn inline_all_lcs(&mut self) {
-		println!("DEBUG USE 1102: into inline_all_lcs v2");
         // Only inline when a matrix representing R1CS is needed.
         if !self.should_construct_matrices() {
             return;
         }
 
-		println!("DEBUG USE 1103: calling transform_lc_map");
         // A dummy closure is used, which means that
         // - it does not modify the inlined LC.
         // - it does not add new witness variables.
