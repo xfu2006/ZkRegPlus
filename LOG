@@ -22251,4 +22251,13 @@ Goal 4. Design
 	[b] in the loop generate the advice itself
 	[c] add the gen_cmF logic from pass_two
 	[d] add the prove_step from pass_three
-		
+Goal 5. gen_nd_advice
+	[a] change interface
+	[b] add log_info
+	[c] b_save memory
+	[d] geneerate advice locally
+	[e] check data -> yes, confirmed solved RAM problem!
+		the total RAM consumption shrinks from 16G to 5.2G. nice!
+
+	
+-- TODO -- put the pass_two into the loop

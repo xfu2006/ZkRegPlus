@@ -401,11 +401,14 @@ where
 	/// statement, however, it's going to slow down the folding.
 	/// IDEALLY, we should generate as much info as possible,
 	/// so build_statement will be most likely copying over info.
-	pub fn plan_nd_advice(&self, word: &Vec<CF1<C1>>, word_info: &WordInfo)
+	/// TO save memomry, b_save_nd_adivce indicates whether
+	/// to push advice into vec<nd_advice>
+	pub fn plan_nd_advice(&self, log_level: usize, b_save_advice: bool,
+		word: &Vec<CF1<C1>>, word_info: &WordInfo)
 		-> Result<(usize, Vec<usize>, Vec<usize>, Vec<Rc<dyn Capacity>>, Vec<Rc<dyn NdAdvice>>),Error>{
-			println!("### DEBUG USE 7001: entering plan_nd_advice, layers: {}, word.len(): {}", self.layered_circs.len(), word.len());
+			let mut gt1 = GTimer::new();
+			log_perf(log_level, &format!("Entering plan_nd_advice, layers: {}, word.len(): {}.", self.layered_circs.len(), word.len()), &mut gt1);
 			let mut remaining = word.clone();
-			let mut timer = Timer::new("timer", 2);
 			#[cfg(test)]{//check if all circs have the same inp/oup
 				// check the max_word_len is decreasing (thus avg cost
 				//increasing
@@ -438,6 +441,8 @@ where
 			let mut vec_size = vec![];
 			let mut vec_cap = vec![];
 			let mut vec_adv:Vec<Rc<dyn NdAdvice>> = vec![];
+			log_perf(log_level, &format!("plan_nd_advice step 1: check circs."),
+				&mut gt1);
 
 			//2.1 Determine the LAYER of circuit to work with. 
 			// Here: we assume layers are arranged in descending
@@ -452,6 +457,9 @@ where
 			//   maybe handling the shortest max-word - thus fastest), 
 			//   if fails, no need
 			//   to play with rest of circuits.
+			// NOTE: in FACT TO SIMPLIFY CIRCUIT DESIGN, each layer will
+			// ONLY hae one circ (as to make inp/oup for circuits exactly
+			// the same will take too much design time)
 			let mut b_found = false;
 			let mut selected_layer = 0;
 			for layer_id in 0..self.layered_circs.len(){
@@ -493,7 +501,7 @@ where
 				}
 			}
 			assert!(b_found, "UNABLE to find any layer of circuits working!");
-			timer.prt("SELECTION TIME");
+			log_perf(log_level, &format!("plan_nd_advice step 2: select layer. selected layer: {}.", selected_layer), &mut gt1);
 
 			//2.2. For each step, determine which circuit in the 
 			// selected layer to work for a partial fragement of the remaining
@@ -564,7 +572,10 @@ where
 						vec_pci.push(pci);
 						vec_size.push(word_len);
 						vec_cap.push(cap);
-						vec_adv.push(advice);
+						if b_save_advice{ //to save memory
+							//advice will then have to be re-generated later.
+							vec_adv.push(advice);
+						}
 						remaining = remaining[word_len..].to_vec();
 						b_found = true;
 						break;
@@ -573,6 +584,7 @@ where
 				}
 				assert!(b_found, "CANNOT find satisfying circ for remaining length: {}!", remaining.len());
 			}//end of while remaining loop
+			log_perf(log_level, &format!("plan_nd_advice step 3: gen advice and try each circ. circs: {}, wordlen: {}.", vec_pci.len(), format_bytes(word.len()*31)), &mut gt1);
 
 			Ok( (vec_pci.len(), vec_pci, vec_size, vec_cap, vec_adv  ))
 }
@@ -606,6 +618,7 @@ where
 		 Option<(BatchClaim<E>, IndividualClaim<E>, SnarkAdvice<E::ScalarField>
 		)>){
 		//0. generate the claim first
+		let log_level = LOG2;
 		let mut t2 = Timer::new("PassOne", 1);
 		let words = {
 			iter_words2.map(|v| v.to_vec())
@@ -666,7 +679,7 @@ where
 			let total_word_len = word.len();
 			let mut acc_wd_len = 0;
 			let _mapper = self.circuits[0].get_mapper();
-			let (steps, vec_pci, vec_len, _vec_cap_req, advice) = self.plan_nd_advice(&word, &vec_word_info[word_id-1]).expect("Planning advice fails!"); 
+			let (steps, vec_pci, vec_len, _vec_cap_req, advice) = self.plan_nd_advice(log_level+1, true, &word, &vec_word_info[word_id-1]).expect("Planning advice fails!"); 
 			for i in 0..steps{
 				let pc_i = if i==0 {0} else {vec_pci[i-1]};
 				let pc_i1 = vec_pci[i]; //this is actually pc_i1 for this circ
@@ -1095,14 +1108,20 @@ where
 		let lkup_len= self.lkup.borrow().get_size();
 		let mut total_lkup_covered = 0;
 		let m3 = get_mem_usage_mb();
+		let mut gtw = GTimer::new();
 		for word in iter_words{
+			let mut gt2 = GTimer::new();
 			//2.1 first try out and determine the length info for each
 			let mut remaining = word.clone();
 			let mut subseg_id = 1;
 			let total_word_len = word.len();
 			let mut acc_wd_len = 0;
 			let _mapper = self.circuits[0].get_mapper();
-			let (steps, vec_pci, vec_len, _vec_cap_req, advice) = self.plan_nd_advice(&word, &vec_word_info[word_id-1]).expect("Planning advice fails!"); 
+			let word_info = &vec_word_info[word_id-1];
+			let (steps, vec_pci, vec_len, _vec_cap_req, advice) = self.plan_nd_advice(log_level+2, false, &word, word_info).expect("Planning advice fails!"); //note: empty advice will be returned
+			let mut prev_adv = None;
+			log_perf(log_level+2, &format!("{} decide circ alloc for word_id: {}, word_len: {}. ", phase_name, word_id, format_bytes(total_word_len*31)), 
+				&mut gt2);
 			for i in 0..steps{
 				let pc_i = if i==0 {0} else {vec_pci[i-1]};
 				let pc_i1 = vec_pci[i]; //this is actually pc_i1 for this circ
@@ -1141,23 +1160,36 @@ where
 					r_word_i: snark_inp.rands[(word_id as usize)-1],
 					accumulated_word_len: C1::ScalarField::from(acc_wd_len as u32),
 				};//end constructor StatementExtraInfo
+				log_perf(log_level+2, &format!("-- For subseg_id: {} gen_statment_extra_info.", subseg_id), &mut gt2);
 
 				//need to build the statement to fill the m_map
+				let res = circ.get_mapper().borrow()
+					.gen_nd_advice_no_limit(&frag, word_info, prev_adv);
+				assert!(res.is_some(), "UNABLE to generate advice for word id: {}, segment_id: {}", word_id, subseg_id); 
+				let cur_adv = res.unwrap().1;
 				let stmt_res = circ.get_mapper().borrow().build_statement(
 					&frag, &prev_stmt, self.lkup.clone(), &ei,
-						advice[subseg_id-1].clone(), lk_share_size, false);
+					//	advice[subseg_id-1].clone(), 
+						cur_adv.clone(),
+						lk_share_size, false);
 				assert!(stmt_res.is_ok());
+				prev_adv = Some(cur_adv);
+				log_perf(log_level+2, &format!("-- For subseg_id: {} gen_advice.", subseg_id), &mut gt2);
+
 				let stmt = stmt_res.unwrap();
 				stmt.fill_lkup_mvec(&mut m_map, &self.lkup); //needed here!
 				let ea = stmt.to_extra_info();
 				vec_res.push(ea);
 				prev_stmt= Some(stmt);
+				log_perf(log_level+2, &format!("-- For subseg_id: {} gen_statement.", subseg_id), &mut gt2);
 
 
 				subseg_id +=1;
 				total_lkup_covered += lk_share_size;
 			}
 
+			log_perf(log_level+1, &format!("{} generate advice and com_F for word: {} of size: {}.", phase_name, word_id, format_bytes(total_word_len*31)), 
+				&mut gtw);
 			vec_advice.push(advice);
 			word_id +=1;
 		}
