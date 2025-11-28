@@ -22216,7 +22216,7 @@ Goal 3. more message
 	[b] many other in sigma_ir1cs
 
 Thursday 11/27/2025
-LOC (sonobe): 19420
+LOC (sonobe): 19420 -> 19571 (+150)
 Goal 1. step1 of pass one
 Goal 2. step2 of pass one
 	[a] set up the framework
@@ -22259,5 +22259,17 @@ Goal 5. gen_nd_advice
 	[e] check data -> yes, confirmed solved RAM problem!
 		the total RAM consumption shrinks from 16G to 5.2G. nice!
 
+Friday 11/28/2025
+LOC (sonobe): 19571 -> 
+Goal 1. incorporate pass two into loop 
+	[a] create nova instance, but it needs the number of steps
+	[b] read compute_step_hc_cmF
+	[c] in mod_super.rs need to refactor compute_cmF
+
+Goal 2. refacotr compute_cmF
+	[a] create function prototype
+	[b] call the function in compute cmf
+	[c] implement it
+	[d] unit test modusuper 
 	
 -- TODO -- put the pass_two into the loop

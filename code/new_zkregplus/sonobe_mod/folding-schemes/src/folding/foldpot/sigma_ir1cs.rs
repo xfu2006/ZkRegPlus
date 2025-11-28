@@ -2385,7 +2385,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		// the cyclepair input
 		let lkup_share_size = self.stmt_config.lookup_share_size;
 		let (stmt_len, _stmt_cfg, v_idx, _, _cp_inp) = self.gadget_mapper.borrow().gen_statement_structure(lkup_share_size); 
-		println!("DEBUG USE 9991.3.4: lkup_share_size: {}", lkup_share_size);
 		assert!(stmt_len==stmt.len(), "stmt.len(): {} != stmt_len: {}",
 			stmt.len(), stmt_len);
 		let v_stmt = stmt.clone();
@@ -4116,7 +4115,7 @@ pub mod tests_sigma_ir1cs{
 				subtable_id: vec![
 					zero, zero,  //inp_buf
 					zero, zero, //oup_buf
-					tbl_id, zero, //word_sug (legacy) - not checked.
+			//		tbl_id, zero, //word_sug (legacy) - not checked.
 					zero, zero, zero, zero //data
 				],
 				col1_share: vec![zero; 4], //to be updated, capcity 4

@@ -58,6 +58,49 @@ use crate::{
 		decider_eth_circuit_super::{KZGChallengesGadgetSuper},
 	}
 };
+// utility function for compute step cmF
+pub fn compute_step_hc_cmF_adv<
+	C1: CurveGroup,
+	LK:LookupTableTwoCol<C1::ScalarField>,
+    CS1: CommitmentScheme<C1,H>,
+	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug,
+    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<C1::ScalarField, LK, GM>,
+	const H: bool
+>(
+	hc_cmF: C1::ScalarField, 
+	stmt: &StatementInst<C1::ScalarField, LK>,
+	circ: &FC,
+	cs_pp: &CS1::ProverParams,
+	poseidon_config: &PoseidonConfig<C1::ScalarField>
+) -> Result<C1::ScalarField, Error>
+where
+    <C1 as CurveGroup>::BaseField: PrimeField,
+    <C1 as Group>::ScalarField: Absorb,
+{
+	//1. create the sponge
+	let mut sponge_cmf = 
+		PoseidonSponge::<C1::ScalarField>::new(poseidon_config);
+
+	//2. compute the cmF using witness of F
+	//let act_idx = field_to_usize(&self.pc_i);
+	let fq_bits = <<C1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as usize;
+	let zi_part2 = ZiPartTwoInst::dummy(circ.is_full_mode(), fq_bits); //does not matter
+	let cmF = circ.gen_cmF::<C1,CS1,H>(&stmt.to_vec(), &zi_part2, cs_pp)
+		.expect("gen_cmF error");
+
+	let mut vec_cmF = vec![];
+	cmF.to_native_sponge_field_elements_as_vec()
+		.to_sponge_field_elements(&mut vec_cmF);
+	let to_hash = vec![
+		vec![hc_cmF],
+		vec_cmF,
+	].concat();
+	sponge_cmf.absorb(&to_hash);
+
+	//3. hash the result
+	let new_hc_cmF:C1::ScalarField=sponge_cmf.squeeze_field_elements(1)[0];
+	Ok(new_hc_cmF)
+}
 
 
 /// SuperNova version of CmomittedInstance. It is just a collection
@@ -939,6 +982,7 @@ where
 	/// given the statement of the current step and the current hashchain
 	/// of cmF, compute the cmF.
 	pub fn compute_step_hc_cmF(&self, hc_cmF: C1::ScalarField, stmt: &StatementInst<C1::ScalarField, LK>) -> Result<C1::ScalarField, Error>{
+		/* REMOVE LATER if the call of compute_step_hc_cmF_adv works
 		//1. create the sponge
         let mut sponge_cmf = 
 			PoseidonSponge::<C1::ScalarField>::new(&self.poseidon_config);
@@ -973,6 +1017,14 @@ where
 		//3. hash the result
 		let new_hc_cmF:C1::ScalarField=sponge_cmf.squeeze_field_elements(1)[0];
 		Ok(new_hc_cmF)
+		*/
+
+		let act_idx = field_to_usize(&self.pc_i1);
+		let circ = &self.F[act_idx];
+		let cs_pp = &self.cs_pp[act_idx];
+		compute_step_hc_cmF_adv::<C1, LK, CS1, GM, FC, H>(
+			hc_cmF, stmt, circ, cs_pp, &self.poseidon_config
+		)
 	}
 
 }
@@ -1180,7 +1232,7 @@ where
 			let (pkey, vkey) = setup_qa_nizk::<E>(&smatrix, b_debug);
 			(Some(pkey), Some(vkey), cols_len)
 		};
-		log_perf(log_level, &format!("preprocess() Step 4: rows: {}, cols: {}", 3*n_circ+1, cols_len), &mut gt1);
+		log_perf(log_level, &format!("preprocess() Step 4 qa_nizk: rows: {}, cols: {}", 3*n_circ+1, cols_len), &mut gt1);
 
 		//5. build up the cp_r1cs if needed
 		let cp_r1cs = if !b_full_mode{

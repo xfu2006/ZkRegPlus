@@ -43,7 +43,8 @@ use crate::{
 			qa_nizk::{QaNizkProof},
 			utils::{Timer,get_mem_usage,get_mem_usage_mb,format_bytes},
 			circuits_super::{field_to_usize},
-			mod_super::{PreprocessorParamFoldPotSuper,FoldPotSuper},
+			mod_super::{PreprocessorParamFoldPotSuper,FoldPotSuper,
+				compute_step_hc_cmF_adv},
 			sigma_ir1cs::{SigmaIR1CS,LookupTableTwoCol,SigmaIR1CS_Inst,ZiPartTwoInst,StatementExtraInfo,GadgetMapper,Capacity,NdAdvice,WordInfo},
 			sigma_cyclepair::{create_sigma_fold_pair,FoldPairMapper},
 			//decider_eth_super::{DeciderFoldPotSuper},
@@ -1109,6 +1110,7 @@ where
 		let mut total_lkup_covered = 0;
 		let m3 = get_mem_usage_mb();
 		let mut gtw = GTimer::new();
+		let mut hash_cmF= C1::ScalarField::zero();
 		for word in iter_words{
 			let mut gt2 = GTimer::new();
 			//2.1 first try out and determine the length info for each
@@ -1123,9 +1125,12 @@ where
 			log_perf(log_level+2, &format!("{} decide circ alloc for word_id: {}, word_len: {}. ", phase_name, word_id, format_bytes(total_word_len*31)), 
 				&mut gt2);
 			for i in 0..steps{
+				//2.1 set up params
 				let pc_i = if i==0 {0} else {vec_pci[i-1]};
 				let pc_i1 = vec_pci[i]; //this is actually pc_i1 for this circ
 				let circ = &self.circuits[pc_i1];
+				let cs_pp = &self.nova_param.0.vec_pp[pc_i1].cs_pp;
+				let poseidon_config = &self.nova_param.0.vec_pp[0].poseidon_config; //to imitate what FoldPotSuper.init_adv takes vec_pp[0].poseidon_config
 				let _max_len = circ.max_word_len();
 				let act_len = vec_len[i];
 				acc_wd_len += act_len;
@@ -1141,6 +1146,7 @@ where
 				}
 				let lk_share_size = circ.get_lkup_share_size();
 
+				//2.2 build the StatementExtraInfo
 				let ei = StatementExtraInfo::<C1::ScalarField>{
 					total_words: C1::ScalarField::from(total_words as u32),
 					word_id: C1::ScalarField::from(word_id as u32),
@@ -1162,6 +1168,7 @@ where
 				};//end constructor StatementExtraInfo
 				log_perf(log_level+2, &format!("-- For subseg_id: {} gen_statment_extra_info.", subseg_id), &mut gt2);
 
+				//2.3 generate the advice and statement
 				//need to build the statement to fill the m_map
 				let res = circ.get_mapper().borrow()
 					.gen_nd_advice_no_limit(&frag, word_info, prev_adv);
@@ -1175,17 +1182,21 @@ where
 				assert!(stmt_res.is_ok());
 				prev_adv = Some(cur_adv);
 				log_perf(log_level+2, &format!("-- For subseg_id: {} gen_advice.", subseg_id), &mut gt2);
-
 				let stmt = stmt_res.unwrap();
 				stmt.fill_lkup_mvec(&mut m_map, &self.lkup); //needed here!
+
+				//2.4 update the hash_cmF
+				hash_cmF = compute_step_hc_cmF_adv::<C1,LK,CS1,GM,FC,false>(
+					hash_cmF, &stmt, circ, cs_pp, poseidon_config)
+					.expect("compute step hc cmF err");
+
+				//2.5 making updates
 				let ea = stmt.to_extra_info();
 				vec_res.push(ea);
 				prev_stmt= Some(stmt);
-				log_perf(log_level+2, &format!("-- For subseg_id: {} gen_statement.", subseg_id), &mut gt2);
-
-
 				subseg_id +=1;
 				total_lkup_covered += lk_share_size;
+				log_perf(log_level+2, &format!("-- For subseg_id: {} gen_cmf and update.", subseg_id), &mut gt2);
 			}
 
 			log_perf(log_level+1, &format!("{} generate advice and com_F for word: {} of size: {}.", phase_name, word_id, format_bytes(total_word_len*31)), 
