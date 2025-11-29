@@ -5,7 +5,7 @@
 */
 
 /// contains [Nova](https://eprint.iacr.org/2021/370.pdf) related circuits
-use utils::{logger::{log_perf,LOG4}, timer::Timer as GTimer};
+use utils::{logger::{log_perf,LOG5}, timer::Timer as GTimer};
 use ark_crypto_primitives::sponge::{
     constraints::{AbsorbGadget, CryptographicSpongeVar},
     poseidon::{constraints::PoseidonSpongeVar, PoseidonConfig},
@@ -396,7 +396,7 @@ where
 {
     fn generate_constraints(self, cs: ConstraintSystemRef<CF1<C1>>) -> Result<(), SynthesisError> {
 		let b_debug = false;
-		let log_level = LOG4;
+		let log_level = LOG5;
 		let mut gt1 = GTimer::new();
 		let (mut nc, mut nv) = (cs.num_constraints(), cs.num_witness_variables());
 		log_perf(log_level, &format!(

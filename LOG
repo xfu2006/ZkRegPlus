@@ -22260,7 +22260,7 @@ Goal 5. gen_nd_advice
 		the total RAM consumption shrinks from 16G to 5.2G. nice!
 
 Friday 11/28/2025
-LOC (sonobe): 19571 -> 
+LOC (sonobe): 19571 -> 19802 (+230)
 Goal 1. incorporate pass two into loop 
 	[a] create nova instance, but it needs the number of steps
 	[b] read compute_step_hc_cmF
@@ -22296,12 +22296,47 @@ Goal 5. put 3rd pass in
 	[g] proving a stepa
 	[f] return data
 
--- TODO -- for 2nd phase, do the same.
-[d] paste the loop 
-[e] remove minor vars
-[f] collect data
-[g] proving a stepa
-[f] return data
--- TODO -- for 2nd phase, do the same.
-	
--- TODO -- put the pass_two into the loop
+Saturday 11/29/2025
+LOC (sonobe): 19802 
+Goal 1. do the same for 2nd phase
+	[a] implement
+	[b] test
+	[c] err 1351
+	[d] full test -> OK
+
+Goal 2. analyze the prove_step cost
+	[a] print the cost
+	[b] analyze the cost if reasonable
+	breakdown of cost:
+	============ circuit size: 2.8M
+LOG4: -- -- --  prove_step: Step 1. gen_witness: stmt_len: 1371479, wtns size: 2036851 686 ms
+LOG4: -- -- --  prove_step: Step 2. fold_inst. inst size: 2827000 2197 ms
+LOG4: -- -- --  prove_step: Step 3. fold cyclefold and cyclepair circuits. 68 ms
+LOG4: -- -- --  prove_step: Step 4. generate augmented F.cs: 2110312 4717 ms
+LOG4: -- -- --  prove_step: Step 5. commit to instance: wit len: 2827000 1916 ms
+LOG3: -- --  -- prove_step cost: i: 4, circ_id: 0, stmt_len: 1371479, wtns size: 2036851 9585 ms
+  ==================
+  	-> commit inst is only 2 sec
+	-> but fold_inst takes 2 sec, and generate augmented F takes 4.7 sec
+		-> fold_inst can be improved as it's not taking advantage of 
+			parallel
+		-> observation circuit_super gen_cs step 3 and step 3.0 is the major cost
+
+Goal 3. continue with the rest of the framework
+	[a] add log infor for phase 1 and phase 2
+	[b] read the existing code for next step
+	[c] add log info to generate constraint of two phase circuit
+	[d] check log info
+	[e] phase1 circ gen_cs_adv
+	[f] phase2 circ gen_cs_adv
+	[g] disable warnings
+	[h] observe data
+	[g] test bigger set.
+
+
+**************************************************************************
+*** TODO *** 
+(1) improve prove_step step 2: fold_inst (use parallel)
+(2) improve prove_step step 4. generate augmented F.cs - need to do further analysis (in particular its step 3 and 3.0)
+************
+**************************************************************************

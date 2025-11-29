@@ -1291,6 +1291,8 @@ where
     ) -> Result<(), Error> {
 		let b_debug = false;
 		let log_level = LOG4;
+		let mut gt1 = GTimer::new();
+		let mut gt2 = GTimer::new();
 
         //1.  ensure that commitments are blinding if user has specified so.
 		// here we only sample one (as it's prover side self-check).
@@ -1349,8 +1351,6 @@ where
         let (wtns, wtns_config, z_i1_part2) = self
             .F[j_pci1]
             .gen_witness(&external_inputs, &self.zi_part2_inst);
-		log(log_level-1, &format!("** stmt_len: {}, wtns size: {}", 
-			wtns.statement.len(), wtns_config.get_total_size()));
 		//ADDED: now rebuild z_i1 (`z_{i+1}`)
 		let zi_part2 = self.zi_part2_inst.hash(&self.poseidon_config);
 		assert!(self.z_i[1]==zi_part2, "z_i[1] != zi_part2");
@@ -1364,6 +1364,7 @@ where
 		sponge_cmf.absorb(&to_hash);
 		let new_hc_cmF:C1::ScalarField=sponge_cmf.squeeze_field_elements(1)[0];
 		let z_i1 = vec![new_hc_cmF, z_i1_part2.hash(&self.poseidon_config)];
+		log_perf(log_level, &format!("prove_step: Step 1. gen_witness: stmt_len: {}, wtns size: {}", wtns.statement.len(), wtns_config.get_total_size()), &mut gt2);
 
         //5. compute cross terms T and cmT for AugmentedFCircuit (active at j)
         // r_bits is the r used to the RLC of the F' instances
@@ -1405,6 +1406,7 @@ where
 		U_i1.x_2 = if !self.b_full_mode {None} else{
 			Some(self.U_i.x_2.unwrap() + r_Fr * self.u_i.x[2])
 		};
+		log_perf(log_level, &format!("prove_step: Step 2. fold_inst. inst size: {}", self.W_i.vec_wit[j_pci].W.len()), &mut gt2);
 			
         //6. folded instance output (public input, x) for generating
 		// r1cs of the augmented F circuit.
@@ -1608,7 +1610,7 @@ where
 
 				(Some(cp_u_i.cmW), Some(self.cp_U_i.as_ref().clone().unwrap().clone()), Some(cp_cmT), cp_u_i1_x, Some(cp_W_i1), Some(cp_U_i1), Some(cp_w_i), Some(cp_u_i))
 			}else{ (None, None, None, None, None, None, None, None) };
-
+			log_perf(log_level, &format!("prove_step: Step 3. fold cyclefold and cyclepair circuits."), &mut gt2);
 
             augmented_F_circuit = AugmentedFCircuitFoldPotSuper
 			::<C1, C2, GC2, LK, FC, GM> {
@@ -1675,12 +1677,13 @@ where
 
 		//println!(">*>*>* prove_step step 1, augment circ: j: {}, pc_i: {}", &augmented_F_circuit.j, &self.pc_i);
         let cs = ConstraintSystem::<C1::ScalarField>::new_ref();
+		let c1 = cs.num_constraints();
         augmented_F_circuit.generate_constraints(cs.clone())?;
 
 		if b_debug{
         	assert!(cs.is_satisfied().unwrap());
 		}
-
+		let c2 = cs.num_constraints();
         let cs = cs.into_inner().ok_or(Error::NoInnerConstraintSystem)?;
         let (w_i1, x_i1) = extract_w_x::<C1::ScalarField>(&cs);
 
@@ -1711,6 +1714,7 @@ where
 				}
 			}
 		}
+		log_perf(log_level, &format!("prove_step: Step 4. generate augmented F.cs: {}", c2-c1), &mut gt2);
 
         // set values for next iteration
         self.i += C1::ScalarField::one();
@@ -1731,6 +1735,8 @@ where
             self.r1cs[j_pci1]
                 .check_relaxed_instance_relation(&self.W_i.vec_wit[j_pci1].clone().into(), &self.U_i.vec_inst[j_pci1].clone().into())?;
         }
+		log_perf(log_level, &format!("prove_step: Step 5. commit to instance: wit len: {}", self.w_i.W.len()), &mut gt2);
+		log_perf(log_level-1, &format!("-- prove_step cost: i: {}, circ_id: {}, stmt_len: {}, wtns size: {}", self.i, j_pci1, wtns.statement.len(), wtns_config.get_total_size()), &mut gt1);
 
         Ok(())
     }

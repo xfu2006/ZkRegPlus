@@ -34,7 +34,7 @@
 // discharged_sigs: size 0
 
 // subtbl: follow inp/oup/data
-use utils::{logger::{log, LOG5,LOG_LEVEL}};
+use utils::{logger::{log, LOG6,LOG_LEVEL}};
 use std::{
 	marker::PhantomData,
 	rc::{Rc},
@@ -320,7 +320,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 	/// return the sizes of inp, oup, data, failed_sigs, discharged_sigs
 	fn get_sizes(&self)->Vec<usize>{
 		//1. gadget of word extension
-		let log_level = LOG5;
+		let log_level = LOG6;
 		let b_perf = true && log_level >=LOG_LEVEL;
 		let (final_states_len,join_buf_capacity,sig_buf_capacity,mlen) = 
 			self.capacity.get_old_stats();
@@ -678,7 +678,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 	/// starting from 0). For conveneince, we sometimes use
 	/// the prev_stmt or the vector of its prev_stmt.
 	fn build_statement_comp(&self, _comp_id: usize, _stmt_map_id: usize, word_seg: &Vec<F>, actual_word_len: usize, _lkup: &Rc<RefCell<LK>>, _extra_info: &StatementExtraInfo<F>, advice: &Rc<dyn NdAdvice>, _cfg: &StatementConfig, _stmt_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>{
-		let log_level = LOG5;
+		let log_level = LOG6;
 		let b_perf = log_level >= LOG_LEVEL;
 
 		//1. take the advice

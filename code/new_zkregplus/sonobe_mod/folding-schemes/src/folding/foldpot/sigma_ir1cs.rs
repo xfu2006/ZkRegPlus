@@ -11,7 +11,7 @@
 		that failed_sigs is a subset of discharged_sigs (or the samples
 		are discharged).
 */
-use utils::{logger::{log, LOG_LEVEL, LOG5,LOG6}};
+use utils::{logger::{log, LOG_LEVEL, LOG6}};
 use serde::{Serialize,Deserialize};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use crate::commitment::CommitmentScheme;
@@ -2910,7 +2910,7 @@ where 	C: CurveGroup<ScalarField=F>,
 	) -> Result<Vec<FpVar<F>>, SynthesisError> {
 		let b_debug = false; //set to false in production mode
 		let b_show_sigs = false; //set to false in production mode
-		let log_level = LOG5;
+		let log_level = LOG6;
 		let b_perf = LOG_LEVEL>=log_level;
 		//NOTE: cs.is_satisfied() can cause * stack overflow *
 		//if constraints are not constructed carefully.

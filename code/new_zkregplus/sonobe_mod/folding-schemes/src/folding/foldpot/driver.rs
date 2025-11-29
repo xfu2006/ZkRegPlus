@@ -1480,6 +1480,7 @@ where
 	// to build keys.
 	let log_level: usize = LOG1;
 	let mut gt1 = GTimer::new();
+	let mut gt_all = GTimer::new();
 	log(log_level, &format!("===== fold_pot starts ====="));
 	let mut vec_circ = vec_circ.clone();
 	let n_circ = vec_circ.iter().map(|row| row.len()).sum::<usize>();
@@ -1535,7 +1536,7 @@ where
 			id += 1;
 		}
 	}
-	log_perf(log_level, &format!("Step 1: build dummy stmt for all circs"),
+	log_perf(log_level, &format!("FoldPot Step 1: build dummy stmt for all circs"),
 		&mut gt1);
 
 
@@ -1543,7 +1544,6 @@ where
 	let mut rng = rand::rngs::OsRng;
 	let poseidon_config = poseidon_canonical_config::<C1::ScalarField>();
 	let _n_circs = vec_circ.len();
-	let mut t_all = Timer::new("all", 0);
 
 	//2. create the driver1 for the 1st phase
 	let mut _num_steps = 2; //will change
@@ -1553,30 +1553,13 @@ where
 	let mut driver1 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,FC,S,LK,GM>
 		::new(poseidon_config.clone(), 
 			lkup, vec_circ, rng, b_full, max_total_n, n_words);
-	log_perf(log_level, &format!("Step 2: set up driver 1"),
+	log_perf(log_level, &format!("FoldPot: Step 2: set up driver 1"),
 		&mut gt1);
 
 	//3. phase 1 pass 1
 	let mut iter = vec_words.iter();
 	let mut iter_2 = vec_words.iter();
 	let mut iter_3 = vec_words.iter();
-	/*
-	let (vsi,m_map,vec_nd_adv, batch_claims) = 
-		driver1.pass_one(&mut iter,&mut iter_2, 
-		vec_words.len(), idx_individual_prf, &mut rng, &vec_words_info);
-	t1.prt("Step 1. Phase 1: pass_one. Dispatch words.");
-
-	//3. pass two to compute the cmF
-	let (vsi2, hash_cmF) =driver1.pass_two(&mut iter2, &mut iter2_2,
-		vec_words.len(), &vsi, &m_map, &vec_nd_adv);
-	t1.prt("Step 2. Phase 1. pass_two. Compute commit to F.");
-
-	//4. pass three: prove steps
-	let (nova1, _num_steps, batch_ind_prfs) = 
-		driver1.pass_three(&mut iter3, &mut iter3_2, vec_words.len(), 
-			&vsi2, &m_map,
-			idx_individual_prf, &mut rng, hash_cmF, &batch_claims, &vec_nd_adv);
-	*/
 	let (nova1, _num_steps, batch_ind_prfs, batch_claims) = driver1.pass_all(
 		"Phase 1",
 		&mut iter,
@@ -1587,14 +1570,12 @@ where
 		&mut rng, 
 		&vec_words_info
 	);
-
-	//t1.prt(&format!("Step 3. Phase 1: words: {} ", vec_words.len()));
 	let Some((mut batch_prf, ind_prf)) = batch_ind_prfs.map(|x| (x.0, x.1))
 		else {panic!("batch proof is none!");};
-	//t1.prt("Step 3. Phase 1. pass_three. Prove steps.");
+	log_perf(log_level, &format!("FoldPot: Step 3: Phase 1: main circuits IVC PROVE STEPS (Folding) DONE. total_word_len: {}, steps: {}.", format_bytes(max_total_n * 31), _num_steps),
+		&mut gt1);
 
 
-	//let ind_prf = batch_ind_prfs.map(|x| x.1);
 	//5. generate the inputs for cyclepair
 	let qa_nizk_pkey = &driver1.nova_param.0.qa_pp.expect("qa_pp null!"); 
 	let qa_nizk_vkey = &driver1.nova_param.1.qa_vp.expect("qa_vp null!"); 
@@ -1608,16 +1589,12 @@ where
 
 	let n_circs = 1;
 	let circ_cyclepair = create_sigma_fold_pair::<C1::ScalarField, C1, CS1, LK, false>(n_circs, poseidon_config.clone());
-	//t1.prt("Step 4. Generate Cyclepair Inputs and prf_qa_nizk.");
 	
 	//6. another three rounds
 	let vec_words = cyclepair_inputs.clone();
 	let mut iter = vec_words.iter();
 	let mut iter_2 = vec_words.iter();
-	let mut iter2 = vec_words.iter();
-	let mut iter2_2 = vec_words.iter();
-	let mut iter3 = vec_words.iter();
-	let mut iter3_2 = vec_words.iter();
+	let mut iter_3 = vec_words.iter();
 	let vec_circ = vec![vec![ circ_cyclepair] ];
 	let _n_circs = vec_circ.len();
 	let b_full = true;
@@ -1626,21 +1603,17 @@ where
 	//let driver2 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,FC,S,LK>
 	let mut driver2 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,SigmaIR1CS_Inst<C1::ScalarField, C1, CS1, LK, FoldPairMapper<CF1<C1>,LK>,false>,S,LK,FoldPairMapper<CF1<C1>,LK>>
 		::new(poseidon_config.clone(), lkup, vec_circ, rng, b_full, max_total_n, n_words);
-	//t1.prt("Step 5. Create Second Phase Driver.");
-
 	let vec_word_info = vec![WordInfo::dummy(); vec_words.len()];
-	let (vsi,m_map,vec_nd_adv, bt_claims) = 
-		driver2.pass_one(&mut iter, &mut iter_2,
-		vec_words.len(), idx_individual_prf, &mut rng, &vec_word_info);
-
-	//t1.prt("Step 6. 2nd Phase Pass 1. Dispatch w.");
-	let (vsi2, hash_cmF) = driver2.pass_two(&mut iter2, &mut iter2_2, 
-		vec_words.len(), &vsi, &m_map, &vec_nd_adv);
-	//t1.prt("Step 7. 2nd Phase Pass 2. commit F.");
-
-	let (nova2, _num_steps, _batch_prfs) = 
-		driver2.pass_three(&mut iter3, &mut iter3_2, vec_words.len(), &vsi2, &m_map, idx_individual_prf, &mut rng, hash_cmF, &bt_claims, &vec_nd_adv);
-	//t1.prt(&format!("Step 8. 2nd Phase Pass 3. Prove Steps. mem: {} GB", get_mem_usage()));
+	let (nova2, _num_steps, _batch_prfs, _bt_claims) = driver2.pass_all(
+		"Phase 2",
+		&mut iter,
+		&mut iter_2, 
+		&mut iter_3, 
+		vec_words.len(), 
+		idx_individual_prf, 
+		&mut rng, 
+		&vec_word_info
+	);
 
 	let qa_nizk_pkey = &driver2.nova_param.0.qa_pp.expect("qa_pp null!"); 
 	let qa_nizk_vkey = driver2.nova_param.1.qa_vp.as_ref()
@@ -1649,6 +1622,7 @@ where
 	let (nova2_U_i1, nova2_W_i1, _nova2_r_Fr, _nova2__cmT)= 
 		nova2.gen_next_folded()?;
 	let (nova2_com_all_w, nova2_prf_qa_nizk, nova2_r_all_w, nova2_prf_kzg, nova2_kzg_all_com_ch) = nova2_W_i1.gen_com_all_w_and_qa_nizk_prf::<E, CS1E, false>( &qa_nizk_pkey, &driver2.nova_param.0.cs1e_pp, &qa_nizk_vkey, &nova2_U_i1, &driver2.poseidon_config);
+	log_perf(log_level, &format!("FoldPot: Step 4: Phase 2: cyclefold and cyclepair IVC PROVE STEPS (folding) DONE. num_steps: {}", _num_steps), &mut gt1);
 
 	//7. now build up the TwoPhaseDeciderCircuit.
 	let inp = TwoPhaseCircInput{
@@ -1674,7 +1648,7 @@ where
 			cyclepair_inputs, qa_nizk_vkey_hash.clone(), 
 			driver2.poseidon_config.clone(),
 			com_all_w, r_all_w, nova2_com_all_w, nova2_r_all_w, inp)?; 
-	//t1.prt(&format!("Step 9. Build decider circuit. Mem: {} GB", get_mem_usage()));
+	log_perf(log_level, &format!("FoldPot Step 5: build decider circuit. MEM: {} GB", get_mem_usage()), &mut gt1);
 
 
 
@@ -1696,7 +1670,7 @@ where
 			&mut rng).unwrap();
 		(g16_pk, g16_vk)
 	};
-	//t1.prt(&format!("Step 11. Gen groth16 keys, mem: {} GB", get_mem_usage()));
+	log_perf(log_level, &format!("FoldPot Step 6: setup Groth16. MEM: {} GB.",  get_mem_usage()), &mut gt1);
 
 	//10. produce the groth16 snark
 	let snark_proof: S::Proof = S::prove(&g16_pk, decider_circuit, &mut rng)
@@ -1718,7 +1692,7 @@ where
 
 		snark_proof,
 	);
-	//t1.prt(&format!("Step 12. Gen groth16 prf, mem: {} GB", get_mem_usage()));
+	log_perf(log_level, &format!("FoldPot Step 7: Gen Groth16 Proof. MEM: {} GB.",  get_mem_usage()), &mut gt1);
 
 	//11. verify the batch proof
 	let mut batch_ver_param = driver1.batch_param.as_ref().unwrap().1.clone();
@@ -1736,8 +1710,8 @@ where
 		&driver1.poseidon_config,
 		true //now full verification
 	)); //note
-	//t1.prt(&format!("Step 13. Verify Batch Proof"));
-
+	log_perf(log_level, &format!("FoldPot Step 8: Verify Batch Proof."), 
+		&mut gt1);
 
 	//12. verify the individual proof
 	assert!(BatchProcessor::<E,LK,S,CS1E>::verify_individual(
@@ -1747,9 +1721,9 @@ where
 		&batch_prf, 
 		&ind_prf)
 	);
-	//t1.prt(&format!("Step 14. Verify Individual Proof"));
-
-	t_all.prt(&format!("FOLDPOT Entire Process: mem: {} GB", get_mem_usage()));
+	log_perf(log_level, &format!("FOLDPOT Step 9. Verify Individual Proof."), 
+		&mut gt1);
+	log_perf(log_level, &format!("**** FOLDPOT Now Complete ***** MEM: {} GB.",  get_mem_usage()), &mut gt_all);
 
 	Ok( () )
 }
