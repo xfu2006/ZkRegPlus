@@ -5,7 +5,7 @@
 	Revised: 10/07/2024 -> Added x2 (support of FoldPair)
 */
 
-use utils::{logger::{log, log_perf, LOG3}, timer::Timer as GTimer};
+use utils::{logger::{log, log_perf, LOG3,LOG4}, timer::Timer as GTimer};
 use std::{rc::Rc, cell::RefCell};
 use ark_crypto_primitives::sponge::{
     poseidon::{PoseidonConfig, PoseidonSponge},
@@ -1289,8 +1289,8 @@ where
         // Nova does not support multi-instances folding
         _other_instances: Option<Self::MultiCommittedInstanceWithWitness>,
     ) -> Result<(), Error> {
-		println!("DEBUG USE 9900.1: prove_step: {}", self.i);
 		let b_debug = false;
+		let log_level = LOG4;
 
         //1.  ensure that commitments are blinding if user has specified so.
 		// here we only sample one (as it's prover side self-check).
@@ -1346,9 +1346,11 @@ where
         let i_usize: usize = usize::from_le_bytes(i_bytes);
 
 		//4. build `z_{i+1}`: z_i1_part2 is the part 2 instance of the `z_{i+1}`
-        let (wtns, _wtns_config, z_i1_part2) = self
+        let (wtns, wtns_config, z_i1_part2) = self
             .F[j_pci1]
             .gen_witness(&external_inputs, &self.zi_part2_inst);
+		log(log_level-1, &format!("** stmt_len: {}, wtns size: {}", 
+			wtns.statement.len(), wtns_config.get_total_size()));
 		//ADDED: now rebuild z_i1 (`z_{i+1}`)
 		let zi_part2 = self.zi_part2_inst.hash(&self.poseidon_config);
 		assert!(self.z_i[1]==zi_part2, "z_i[1] != zi_part2");

@@ -22270,6 +22270,38 @@ Goal 2. refacotr compute_cmF
 	[a] create function prototype
 	[b] call the function in compute cmf
 	[c] implement it
-	[d] unit test modusuper 
+	[d] unit test modusuper  -> unable to unit test now
+
+Goal 3. generate cmf
+	[a] identify where to plug in the gen cmf
+	[b] call the function
+	[c] prepare parameters
+	[d] unit testinga -> good
+
+Goal 4. show timing of qa_nizk set up
+	[a] show timing
+	[b] check out qa_nizk impl
+	[c] kzg commit of 380k -> 473ms (msm)
+		qa_nizk 4 * 380k = 1.2M short group mul -> 3.4 sec
+			about 10 times (reasonable because its short msm)
+		-> no more improvement to make 
+
+Goal 5. put 3rd pass in
+	[a] put the code to generate the global proof
+	[b] analyze why it fails
+	[c] prep data before loop
+	[d] paste the loop 
+	[e] remove minor vars
+	[f] collect data
+	[g] proving a stepa
+	[f] return data
+
+-- TODO -- for 2nd phase, do the same.
+[d] paste the loop 
+[e] remove minor vars
+[f] collect data
+[g] proving a stepa
+[f] return data
+-- TODO -- for 2nd phase, do the same.
 	
 -- TODO -- put the pass_two into the loop
