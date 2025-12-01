@@ -339,9 +339,7 @@ where
 	GM: GadgetMapper<C1::ScalarField,LK> + std::clone::Clone + Debug,
 {
     pub fn new(poseidon_config: PoseidonConfig<C1::ScalarField>, F: FC, lk: Rc<RefCell<LK>>, size_F: usize) -> Self {
-		let external_inp_size = F.gen_dummy_stmt().len();
-		let start_F = 12 + external_inp_size; 
-		//let start_F = 12;
+		let start_F = 12;
 							//because there are 6 vars (pp_hash, i,z_0 (2 ele), 
 							//z_i (2 ele) - see gen_constraints of circuit.rs)
 							//before F.witness in AugFCirc.
@@ -504,6 +502,7 @@ where <C as Group>::ScalarField: Absorb,
         let w_len = r1cs.A.n_cols - 1 - r1cs.l;
         let w_dummy = nova::Witness::<C>::dummy(w_len, r1cs.A.n_rows);
         let u_dummy = nova::CommittedInstance::<C>::dummy(r1cs.l);
+		assert!(w_dummy.W.len()>=size_F + start_F);
 		let w2 = WitnessFoldPot{
 			E: w_dummy.E,
 			rE: w_dummy.rE,

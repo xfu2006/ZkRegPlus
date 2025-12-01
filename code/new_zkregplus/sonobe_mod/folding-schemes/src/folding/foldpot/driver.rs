@@ -676,7 +676,7 @@ where
 		for word in iter_words{
 			//2.1 first try out and determine the length info for each
 			let mut remaining = word.clone();
-			let mut subseg_id = 1;
+			let mut subseg_id = 0;
 			let total_word_len = word.len();
 			let mut acc_wd_len = 0;
 			let _mapper = self.circuits[0].get_mapper();
@@ -809,7 +809,7 @@ where
 		println!("DEBUG USE 6702: lk_len: {}", lk_len);
 		for word in iter_words{
 			let mut remaining = word.clone();
-			let mut subseg_id = 1;
+			let mut subseg_id = 0;
 			while remaining.len()>0{
 				//2.1 compute the problem statement instance again
 				// with the correct word/segment data
@@ -1107,13 +1107,14 @@ where
 		let n_circ = self.circuits.len();
 		let _vec_mapper= self.circuits.iter().map(|c| c.get_mapper()).
 			collect::<Vec<Rc<RefCell<GM>>>>();
-		let mut prev_stmt = None;
 		let lkup_len= self.lkup.borrow().get_size();
 		let mut total_lkup_covered = 0;
 		let m3 = get_mem_usage_mb();
 		let mut gtw = GTimer::new();
 		let mut hash_cmF= C1::ScalarField::zero();
 		for word in iter_words{
+			let mut prev_stmt = None;
+			let mut prev_adv = None;
 			let mut gt2 = GTimer::new();
 			//2.1 first try out and determine the length info for each
 			let mut remaining = word.clone();
@@ -1123,7 +1124,6 @@ where
 			let _mapper = self.circuits[0].get_mapper();
 			let word_info = &vec_word_info[word_id-1];
 			let (steps, vec_pci, vec_len, _vec_cap_req, _advice) = self.plan_nd_advice(log_level+2, false, &word, word_info).expect("Planning advice fails!"); //note: empty advice will be returned
-			let mut prev_adv = None;
 			log_perf(log_level+2, &format!("{} decide circ alloc for word_id: {}, word_len: {}. ", phase_name, word_id, format_bytes(total_word_len*31)), 
 				&mut gt2);
 			for i in 0..steps{
@@ -1291,18 +1291,19 @@ where
 		//6. LOOP prove steps
         let mut rng = ark_std::test_rng();
 		let mut idx = 0;
-		let mut prev_stmt = None;
 		let mut num_steps = 0;
 		let _lk_len = self.lkup.borrow().get_size();
 		//let mut wi = 0;
-		let mut start = 0;
-		let mut prev_adv = None;
 		let mut gtw2 = GTimer::new();
 		let m7 = get_mem_usage_mb();
 		let mut word_id = 1;
+		let mut start = 0; //global position in ENTIRE sequence for update lkup
+							//share in each statement
 		for word in iter_words3{
+			let mut prev_adv = None;
+			let mut prev_stmt = None;
 			let mut remaining = word.clone();
-			let mut subseg_id = 0;
+			let mut subseg_id = 1;
 			let word_info = &vec_word_info[word_id-1];
 			while remaining.len()>0{
 				//6.1 compute the problem statement instance again
@@ -1338,13 +1339,13 @@ where
 				nova.pc_i1 = vea[idx].pc_i1;
             	nova.prove_step(&mut rng, v_stmt, other_inst)
 					.expect("prove step error");
+				log_perf(log_level+1, &format!("prove_step for word_id: {}, seg_id: {}, stmt_len: {}", word_id, subseg_id, stmt_len), &mut gtw2);
 
 				//2.3 update 
 				prev_stmt = Some(stmt);
 				idx += 1;
 				num_steps +=1;
 				subseg_id += 1;
-				log_perf(log_level+1, &format!("prove_step for word_id: {}, seg_id: {}, stmt_len: {}", word_id, subseg_id, stmt_len), &mut gtw2);
 			}//end for while remaining word 
 			word_id += 1;
 		} //for each word

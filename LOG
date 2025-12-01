@@ -22331,7 +22331,140 @@ Goal 3. continue with the rest of the framework
 	[f] phase2 circ gen_cs_adv
 	[g] disable warnings
 	[h] observe data
-	[g] test bigger set.
+	[g] test bigger set. -> DONE.
+	[h] 8M data -> problem, it crashes. why? can replicate using small example
+
+Sunday 11/30/2025
+Goal 1. debug multiword instance
+	[a] read code - subsig_id
+	[b] it breaks at tbl_left_join loc seems to be out of range
+	[c] check if making updates to start will make any difference
+		-> but it breaks hab22 ccheck
+Goal 2. read and understand update_lkup with (start, start+share_size)
+	[a] global start is indeed needed for the distributing of lkup share
+	[b] but why is it impacting the loc? -> fixed looks like the
+		prev_advice problem
+	[c] try large data set - it breaks on the first prove_step, 
+		circuit size not matcing witness.
+	-- should prev statement and prev advice be reset for 
+		each word???
+Goal 3. debug
+	[a] prev_advice -> should be used for each word
+	[b] but previous_statement is not used in composable_gadget interface
+
+Goal 4. debug the small example again the batch failure
+	[a] observe the failure
+	[b] fails at 1704 -> verify_batch->snark verifier fails.
+	[c] turn on debug on sigma_ir1cs
+		-> breaks at prove step 3081
+		-> wd 2, seg 2
+		-> dump the values of io_res
+		-> make suseg_id starts from 0
+		-> check the logic of sum_io
+		-> print out initial sum_inp 
+		--> verified the cause: sum_inp and sum_oup is NOT
+		set to zero when word starts
+	[d] figure out who is generating zi_part2a -> gen_witness
+		-> who prepares zi_part2 for gen_witness?
+		generate_constraints -> gen_witness
+			update generate_step_constraints and gen_witness
+			when reading sum_inp/sum_oup from zi_part2 or zi_part2var
+			it will update the next zi_part2
+	[e] but the output still not the same!
+		-> use first_seg and last_seg as condition
+		-> still not working! it even breaks just one word.
+		-> check what is the advice generated
+		-> found it b_last_seg is wrong
+		-> remove debug messages
+
+Goal 5. try to fix the other bug
+	[a] obsreve: it complains at foldmot mod.rs:288
+		2.62M out of 2.416M commit (start_F and size_F) somehow not right
+	[b] put debug msg 6600.1
+		-> DEBUG USE 6600.1: W len: 2416766, start_F: 1310051, size_F: 1310039
+			-> r1cs.A.n_cols: 2416769, r1cs.l: 2, w_len: 2416766, rows: 1700080
+		-> DEBUG USE 6600.1: W len: 192662, start_F: 25775, size_F: 25763
+			(must smaller for small test case)
+		--- one word version for test set 2
+		-> DEBUG USE 6600.1: W len: 2827006, start_F: 1371491, size_F: 1371479
+		---> the sum is slightly smaller then W len
+	[c] try enable debug and see.-> still crash at the size problem
+	[d] add a check of W.len() vs start_F and size_F in dummy instance.
+	[e] could be two possible reasons: start_F ad size_F are incorrectly
+		computed?
+		-->  (see down below). looks like external_inp_size is correct.
+		DEBUG USE 6601.1: external_inp_size: 1310039, size_F: 1310039
+		DEBUG USE 6601.2: r1cs.A.n_cols: 2416769, r1cs.l: 2, w_len: 2416766, rows: 1700080
+		DEBUG USE 6601.2: r1cs.A.n_cols: 2416769, r1cs.l: 2, w_len: 2416766, rows: 1700080
+		DEBUG USE 6601.3: prove_step: exteral_inputs: 1310039
+-- guess: this might have to do with the statement might have
+	a lot of constant vars?
+	== TODO: study the start_F and size_F definition again.
+
+Monday 12/01/2025
+Goal 1. read code about size_F and startF
+	[a] size_F: statement size + msg1_size
+		-> but does it include constants?
+	[b] StatementConfig has si_data_info which can be used
+		to tell si_data ingredients
+	[c] Statement has all attributes and 
+		inp/oup/data/si_data etc.
+		assert_msg3() created variables are not included in statement
+	[d] there are six elements before statement serialized
+		cmF size: 4
+		extra_var_size: 2
+		before statement\
+	[f] how is witness to vec?:
+		-> to_vec_fp_var: it still generates the same length of
+			Vec<FpVar<...>> but among them a lot of them are constants
+		-> it is called in circuit_super:generate_constraints
+		-> before it generate_constriants called F.gen_witness()
+			which generate the WitnessConfig
+Goal 2. how is start_F and size_F is generated
+	[a]  put a temp stop 1000
+	[b] drier:new 311
+		-> preprocessParamsFoldPot
+		-> mod_super: calls PreprocessParamsFoldPot and pass
+			vec_size_F
+		-> size_f is called from circuit get_size_f()
+		-> there is ONLY ONE which returns size_f by
+			returning the sum of statement_size and msg1_size
+
+Goal 3. observe mod.rs 302 how is the witness generated?
+	[a] how is W generated -> it's in WitnessFoldPot
+	[b] check how WitnesssFoldPot::new is called
+		-> foldpot_main -> pass_all
+			-> prove_step
+			-> which calls FoldpotWitness:new() and pass a vector 
+				of Field Elements to it
+			-> the vector is the witness_assignment
+	[c] design: ideally should just get the size_F from
+		the static information (config).
+		but should verify in the to_vec_fp() that it matches the estimate
+
+Goal 4. Adjust to vec_fp
+	[a] it is called earlier than the FoldPotWitness::new
+	[b] build part1 and check how many vars are constructed
+	[c] verified: 1 const, 12 vars
+	[d] build the statement and check the data
+		num_wit: 884993, and statement: 1310039,
+		m1: 
+
+Goal 5. redesign get_size_f
+	[a] provide a function in witness config
+	[b] call it in sigma_ir1cs.get_size_f
+	[c] call it in to_vec_fp_var()
+	[d] implement it
+	[e] check the new estimated size_F
+	[f] update the start_F and check the value of size_F
+	[g] test the small example
+	[h] test the large example
+	[i] remove messages
+	[g] test the real one -> 128GB can only support one of them in 
+		decider circuit construction
+
+-- TOOD -- remove DEBUG USE 6601.x
+
 
 
 **************************************************************************

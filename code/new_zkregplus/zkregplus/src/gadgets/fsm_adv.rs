@@ -571,7 +571,6 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 			unique_key_size,
 		).expect("tbl_filtered_to_sorted_tbl err");
 		let state_loc_tbl2 = state_loc_tbl.clone(); //low cost clone rc
-
 		res.borrow_mut().add_container(state_loc_tbl);
 
 

@@ -43,7 +43,11 @@ rand = "0.8.5"
 # tmp import for espresso's sumcheck
 espresso_subroutines = {git="https://github.com/EspressoSystems/hyperplonk", package="subroutines"}
 
-folding-schemes = {path="../sonobe_mod/folding-schemes", package="folding-schemes", features =["light-test"]}
+folding-schemes = { path="../sonobe_mod/folding-schemes", package="folding-schemes", features =["light-test"] }
+
+# FULL test needs 250GB
+# folding-schemes = { path="../sonobe_mod/folding-schemes", package="folding-schemes"}
+
 solidity-verifiers= {path="../sonobe_mod/solidity-verifiers", package="solidity-verifiers"}
 
 

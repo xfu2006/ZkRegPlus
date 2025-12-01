@@ -1871,6 +1871,23 @@ pub struct WitnessSigmaIR1CSConfig{
 }
  
 impl WitnessSigmaIR1CSConfig{
+	/// compute the size_F, mainly compute the statement_size + msg1_size
+	/// minus the contents in the statement, because we only count
+	/// witness variables.
+	pub fn get_size_f(&self)->usize{
+		let raw_size_F = self.statement_size + self.msg1_size;
+
+		let si_data_info = &self.stmt_cfg.si_data_info;
+		let si_inp_info = &self.stmt_cfg.si_inp_info;
+		let si_oup_info = &self.stmt_cfg.si_oup_info;
+		let all_info = [&si_data_info[..], 
+			&si_inp_info[..], &si_oup_info[..]].concat();
+		let total_const = all_info.iter().filter(|(_,b)| *b)
+			.map(|(size,_)| size).sum::<usize>();
+
+		raw_size_F - total_const
+	}
+
 	/// return the stmt_idx for statement, then the starting
 	/// idx for msg1, msg2, msg3 in the combined message segments.
 	pub fn get_gadget_indices(&self, i: usize) 
@@ -1925,49 +1942,11 @@ pub struct WitnessSigmaIR1CS<F:PrimeField>{
 }
 
 impl <F:PrimeField> WitnessSigmaIR1CS<F>{
+	/// convert the witness instance to a vector of FpVar (may consists of
+	/// constants + witness vars)
 	pub fn to_vec_fp_var(&self, cs: ConstraintSystemRef<F>, cfg: &WitnessSigmaIR1CSConfig) ->Vec<FpVar<F>>{
-		//1. build the special stmt var coz constants can be handled
-		//separately.
-		//basically we TAKE OUT the si_data part and handle it
-		//separately based on the si_data_info (for const var - which is
-		//cheaper).
-		//The other parts directly converted to FpVar witness
-		//handle this similarly for si_inp and si_oup
-		let stmt_cfg = &cfg.stmt_cfg;
-		let si_data_info = &stmt_cfg.si_data_info;
-		let si_inp_info = &stmt_cfg.si_inp_info;
-		let si_oup_info = &stmt_cfg.si_oup_info;
-		let data_len2 = si_data_info.iter().map(|(s,_)| s).sum::<usize>();
-		let inp_len2 = si_inp_info.iter().map(|(s,_)| s).sum::<usize>();
-		let oup_len2 = si_oup_info.iter().map(|(s,_)| s).sum::<usize>();
-		let si_data_len = stmt_cfg.data_size;
-		let si_inp_len = stmt_cfg.input_size;
-		let si_oup_len = stmt_cfg.output_size;
-		assert!(data_len2==si_data_len);
-		assert!(inp_len2==si_inp_len);
-		assert!(oup_len2==si_oup_len);
-		assert!(self.statement.len()==stmt_cfg.total_size(), 
-			"stmt.len: {} != cfg.total_size: {}", self.statement.len(),
-			stmt_cfg.total_size());
-
-		let idx_si_data = stmt_cfg.idx_subtable_id + stmt_cfg.input_size
-			+stmt_cfg.output_size;
-		let idx_si_inp= stmt_cfg.idx_subtable_id;
-		let idx_si_oup= stmt_cfg.idx_subtable_id + stmt_cfg.input_size;
-
-		let st_part1 = &self.statement[0..idx_si_inp];
-		let st_inp= &self.statement[idx_si_inp..idx_si_oup];
-		let st_oup= &self.statement[idx_si_oup..idx_si_data];
-		let st_data= &self.statement[idx_si_data..idx_si_data+si_data_len];
-		let st_part3 = &self.statement[idx_si_data+si_data_len..];
-		let fp_part1 = st_part1.iter().map(|f|
-			FpVar::<F>::new_witness(cs.clone(), || Ok(f)).unwrap()
-		).collect::<Vec<FpVar<F>>>();
-		let fp_part3 = st_part3.iter().map(|f|
-			FpVar::<F>::new_witness(cs.clone(), || Ok(f)).unwrap()
-		).collect::<Vec<FpVar<F>>>();
-
-		//2. define the construction function
+		//0. define an assisting function to build col considering
+		// the constants
 		let build_col = |si_info: &Vec<(usize,bool)>, vals: &[F]|
 		->Vec<FpVar<F>>{
 			let mut idx_start = 0;
@@ -2005,32 +1984,83 @@ impl <F:PrimeField> WitnessSigmaIR1CS<F>{
 			fp_part2
 		};
 
-		//3. build the new parts
-		let new_st_inp = build_col(&si_inp_info, st_inp);
-		let new_st_oup = build_col(&si_oup_info, st_oup);
-		let new_st_data = build_col(&si_data_info, st_data);
-
-		let z_i2= [fp_part1, new_st_inp, new_st_oup, new_st_data, 
-			fp_part3].concat();
-		assert!(z_i2.len()==self.statement.len());
-
-
-		//2. assemble the the other parts
+		//1. build the part1: cmF, extra_vars before the statement
 		let vec1 = self.cmF.iter()
 			.chain(vec![self.unused_input_size, self.unused_output_size].iter())
 			.map(|f| f.clone())
 			.collect::<Vec<F>>();
-		let vec3 = self.msg1.iter().
-			chain(self.msg2.iter()).chain(self.msg3.iter()).
+		let z_i1 = vec1.iter().map(|f| 
+			FpVar::<F>::new_witness(cs.clone(), || Ok(f)).unwrap()
+		).collect::<Vec<FpVar<F>>>();
+		let size_F = cfg.get_size_f();
+
+		//2. build the special stmt var (FIXED M part) - including
+		// the statement and msg1. (excluding msg2, msg3 ...)
+		// NOTE: constants are handled for si_data/inp/oup
+		//2.1 set up the indexes and sizes for segments
+		let stmt_cfg = &cfg.stmt_cfg;
+		let si_data_info = &stmt_cfg.si_data_info;
+		let si_inp_info = &stmt_cfg.si_inp_info;
+		let si_oup_info = &stmt_cfg.si_oup_info;
+		let data_len2 = si_data_info.iter().map(|(s,_)| s).sum::<usize>();
+		let inp_len2 = si_inp_info.iter().map(|(s,_)| s).sum::<usize>();
+		let oup_len2 = si_oup_info.iter().map(|(s,_)| s).sum::<usize>();
+		let si_data_len = stmt_cfg.data_size;
+		let si_inp_len = stmt_cfg.input_size;
+		let si_oup_len = stmt_cfg.output_size;
+		assert!(data_len2==si_data_len);
+		assert!(inp_len2==si_inp_len);
+		assert!(oup_len2==si_oup_len);
+		assert!(self.statement.len()==stmt_cfg.total_size(), 
+			"stmt.len: {} != cfg.total_size: {}", self.statement.len(),
+			stmt_cfg.total_size());
+
+		let idx_si_data = stmt_cfg.idx_subtable_id + stmt_cfg.input_size
+			+stmt_cfg.output_size;
+		let idx_si_inp= stmt_cfg.idx_subtable_id;
+		let idx_si_oup= stmt_cfg.idx_subtable_id + stmt_cfg.input_size;
+
+		let st_part1 = &self.statement[0..idx_si_inp];
+		let st_inp= &self.statement[idx_si_inp..idx_si_oup];
+		let st_oup= &self.statement[idx_si_oup..idx_si_data];
+		let st_data= &self.statement[idx_si_data..idx_si_data+si_data_len];
+		let st_part3 = &self.statement[idx_si_data+si_data_len..];
+
+		//2.2 build the parts following their structure in witness
+		let fp_part1 = st_part1.iter().map(|f|
+			FpVar::<F>::new_witness(cs.clone(), || Ok(f)).unwrap()
+		).collect::<Vec<FpVar<F>>>();
+
+		let new_st_inp = build_col(&si_inp_info, st_inp); //addressing consts
+		let new_st_oup = build_col(&si_oup_info, st_oup);
+		let new_st_data = build_col(&si_data_info, st_data);
+
+		let fp_part3 = st_part3.iter().map(|f|
+			FpVar::<F>::new_witness(cs.clone(), || Ok(f)).unwrap()
+		).collect::<Vec<FpVar<F>>>();
+
+		let fp_m1 = self.msg1.iter().map(|f| 
+			FpVar::<F>::new_witness(cs.clone(), || Ok(f)).unwrap()
+		).collect::<Vec<FpVar<F>>>();
+		let _m1_len = self.msg1.len();
+
+		let z_i2= [fp_part1, new_st_inp, new_st_oup, new_st_data, 
+			fp_part3, fp_m1].concat();
+		assert!(z_i2.len()==self.statement.len() + _m1_len);
+		assert!(size_F == cs.num_witness_variables() - 12); //because
+			//there are 12 vars before the start of F (fixed segment)
+			// which is statement + msg1
+			// see where 12 vars in mod.rs::PreprocessorParamFoldPot::new
+
+		//2. assemble the the other parts
+		let vec3 = self.msg2.iter().
+			chain(self.msg3.iter()).
 			chain(self.zi_part2.iter()).
 			chain(self.inv_hab22_left.iter()).
 			chain(self.inv_hab22_right.iter())
 			.map(|f| f.clone())
 			.collect::<Vec<F>>();
 
-		let z_i1 = vec1.iter().map(|f| 
-			FpVar::<F>::new_witness(cs.clone(), || Ok(f)).unwrap()
-		).collect::<Vec<FpVar<F>>>();
 		let z_i3 = vec3.iter().map(|f| 
 			FpVar::<F>::new_witness(cs.clone(), || Ok(f)).unwrap()
 		).collect::<Vec<FpVar<F>>>();
@@ -2669,11 +2699,14 @@ where 	C: CurveGroup<ScalarField=F>,
 		//6.1 enforce the input/output buffer, compute
 		// weighted sum of poly using Holm's approach 
 		let (zero, one) = (F::zero(), F::one());
-		let b_first =  si.word_id==one && si.subseg_id==one;
-		let b_last = si.word_id==si.total_words 
-			&& si.subseg_id==si.total_word_segs;
-		let mut sum_inp = zi_part2.sum_inp;
-		let mut sum_oup = zi_part2.sum_oup;
+		//let b_first =  si.word_id==one && si.subseg_id==one;
+		//let b_last = si.word_id==si.total_words 
+		//	&& si.subseg_id==si.total_word_segs;
+		let b_first_seg = si.subseg_id==one;
+		let b_last_seg = si.subseg_id==si.total_word_segs;
+		let mut sum_inp = if b_first_seg {zero} else {zi_part2.sum_inp};
+		let mut sum_oup = if b_first_seg {zero} else {zi_part2.sum_oup};
+
 		assert!(si.act_input_size<=F::from(self.stmt_config.input_size as u32),
 			"si.act_input_size: {} > stmt_config.input_size: {}",
 			si.act_input_size, self.stmt_config.input_size);
@@ -2684,12 +2717,12 @@ where 	C: CurveGroup<ScalarField=F>,
 		let mut inp_left = si.act_input_size.clone();
 		let mut oup_left = si.act_output_size.clone();
 		for i in 0..self.stmt_config.input_size{
-			sum_inp = if b_first || inp_left.is_zero() {sum_inp}
+			sum_inp = if b_first_seg || inp_left.is_zero() {sum_inp}
 			else{ sum_inp * ch + si.inp_buf[i] };
 			inp_left = if inp_left.is_zero() {zero} else {inp_left - one};
 		}
 		for i in 0..self.stmt_config.output_size{
-			sum_oup = if b_last || oup_left.is_zero() {sum_oup}
+			sum_oup = if b_last_seg || oup_left.is_zero() {sum_oup}
 			else{ sum_oup * ch + si.oup_buf[i] };
 			oup_left = if oup_left.is_zero() {zero} else {oup_left - one};
 		}
@@ -2702,7 +2735,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		} else {None};
 
 		//println!("DEBUG USE 500.0.2. BEFORE building zi1_part2: sum_vec_v_i: {}", sum_vec_v_i);
-
 		let zi1_part2 = ZiPartTwoInst::<F>{
 			ch: zi_part2.ch.clone(),
 			rc: zi_part2.rc.clone(),
@@ -2854,9 +2886,7 @@ where 	C: CurveGroup<ScalarField=F>,
 
 	/// return the size of F (problem statement + msg1)
 	fn get_size_f(&self) -> usize{
-		let cfg = &self.witness_config;
-		let size_F = cfg.statement_size + cfg.msg1_size;
-		size_F
+		self.witness_config.get_size_f()
 	}
 }
 
@@ -3018,6 +3048,8 @@ where 	C: CurveGroup<ScalarField=F>,
 		let si = StatementInstVar::<F>::from_vec(&self.stmt_config, &wtns_var.statement);
 		let b_first = si.word_id.is_eq(&one_var)?
 			.and(&si.subseg_id.is_eq(&one_var)?)?;
+		let b_first_seg = si.subseg_id.is_eq(&one_var)?;
+		let b_last_seg = si.subseg_id.is_eq(&si.total_word_segs)?;
 		let b_last = si.word_id.is_eq(&si.total_words)?
 			.and(&si.subseg_id.is_eq(&si.total_word_segs)?)?;
 		//NOTE: later needs to set sub-table id for unused_input_size
@@ -3041,8 +3073,10 @@ where 	C: CurveGroup<ScalarField=F>,
 		let zi_part2 = ZiPartTwoInstVar::from_vec(&wtns_var.zi_part2, fq_bits); 
 		let ch = zi_part2.ch.clone();
 		let rc = zi_part2.rc.clone();
-		let mut sum_inp = zi_part2.sum_inp.clone();
-		let mut sum_oup = zi_part2.sum_oup.clone();
+		let mut sum_inp = b_first_seg.select(&zero_var, 
+			&zi_part2.sum_inp)?;
+		let mut sum_oup = b_first_seg.select(&zero_var,
+			&zi_part2.sum_oup)?;
 		let mut inp_left = si.act_input_size.clone();
 		let mut oup_left = si.act_output_size.clone();
 		for i in 0..self.stmt_config.input_size{
@@ -3050,7 +3084,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			//sum_inp = if b_first || inp_left.is_zero() {sum_inp}
 			//else{ sum_inp * r + si.inp_buf[i] };
 			// inp_left = if inp_left.is_zero() {zero} else {inp_left - one};
-			let cond = b_first.or(&inp_left.is_zero()?)?;
+			let cond = b_first_seg.or(&inp_left.is_zero()?)?;
 			let new_val = sum_inp.clone() * ch.clone() + si.inp_buf[i].clone();
 			sum_inp = cond.select(&sum_inp, &new_val)?; 
 			let new_inp_left  = inp_left.clone() - &one_var;
@@ -3060,7 +3094,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			//sum_oup = if b_last || oup_left.is_zero() {sum_oup}
 			//else{ sum_oup * r + si.oup_buf[i] };
 			//oup_left = if oup_left.is_zero() {zero} else {oup_left - one};
-			let cond = b_last.or(&oup_left.is_zero()?)?;
+			let cond = b_last_seg.or(&oup_left.is_zero()?)?;
 			let new_val = sum_oup.clone()*ch.clone() + si.oup_buf[i].clone();
 			sum_oup = cond.select(&sum_oup, &new_val)?;
 			let new_oup_left  = oup_left.clone() - &one_var;
