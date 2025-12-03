@@ -5,7 +5,7 @@
 */
 
 /// contains [Nova](https://eprint.iacr.org/2021/370.pdf) related circuits
-use utils::{logger::{log_perf,LOG5}, timer::Timer as GTimer};
+use utils::{logger::{log_perf,LOG4}, timer::Timer as GTimer};
 use ark_crypto_primitives::sponge::{
     constraints::{AbsorbGadget, CryptographicSpongeVar},
     poseidon::{constraints::PoseidonSpongeVar, PoseidonConfig},
@@ -396,7 +396,7 @@ where
 {
     fn generate_constraints(self, cs: ConstraintSystemRef<CF1<C1>>) -> Result<(), SynthesisError> {
 		let b_debug = false;
-		let log_level = LOG5;
+		let log_level = LOG4;
 		let mut gt1 = GTimer::new();
 		let (mut nc, mut nv) = (cs.num_constraints(), cs.num_witness_variables());
 		log_perf(log_level, &format!(
@@ -459,9 +459,17 @@ where
         let i_usize = self.i_usize.unwrap_or(0);
  		let (witness, wit_cfg, z_i1_part2) = 
   			self.F.gen_witness(&stmt, &self.zi_part2_inst.clone().unwrap());
+		log_perf(log_level, &format!(
+			"-- circuit_super gen_cs step 3.0 generate wit: cs: {}, vars: {}",
+			cs.num_constraints() - nc,
+			cs.num_witness_variables() - nv,
+			), &mut gt1);
+		nc = cs.num_constraints();
+		nv = cs.num_witness_variables();
+
   		let wtns_vec = witness.to_vec_fp_var(cs.clone(), &wit_cfg);
 		log_perf(log_level, &format!(
-			"-- circuit_super gen_cs step 3.0: cs: {}, vars: {}, wtns_vec: {}",
+			"-- circuit_super gen_cs step 3.1: to_vec_fp_var: cs: {}, vars: {}, wtns_vec: {}",
 			cs.num_constraints() - nc,
 			cs.num_witness_variables() - nv,
 			wtns_vec.len()), &mut gt1);
@@ -479,6 +487,13 @@ where
 
         let z_i1 = self.F
                  .generate_step_constraints(cs.clone(), i_usize, z_i.clone(), wtns_vec)?;
+
+		log_perf(log_level,&format!( 
+			"-- circuit_super gen_cs step 3.2: gen_step_cs cs: {}, vars: {}",
+				cs.num_constraints() - nc,
+				cs.num_witness_variables() - nv), &mut gt1);
+		nc = cs.num_constraints();
+		nv = cs.num_witness_variables();
 
 		if b_debug{
 			println!("DEBUG USE 7703: aug_f::gen_csr: {}", 
@@ -521,7 +536,7 @@ where
 		}
 
 		log_perf(log_level,&format!( 
-			"-- circuit_super gen_cs step 3: cs: {}, vars: {}",
+			"-- circuit_super gen_cs step 3.4 others: cs: {}, vars: {}",
 				cs.num_constraints() - nc,
 				cs.num_witness_variables() - nv), &mut gt1);
 		nc = cs.num_constraints();

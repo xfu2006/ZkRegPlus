@@ -1176,6 +1176,7 @@ where
 					.gen_nd_advice_no_limit(&frag, word_info, prev_adv);
 				assert!(res.is_some(), "UNABLE to generate advice for word id: {}, segment_id: {}", word_id, subseg_id); 
 				let cur_adv = res.unwrap().1;
+				log_perf(log_level+2, &format!("-- For subseg_id: {} gen_advice.", subseg_id), &mut gt2);
 				let stmt_res = circ.get_mapper().borrow().build_statement(
 					&frag, &prev_stmt, self.lkup.clone(), &ei,
 					//	advice[subseg_id-1].clone(), 
@@ -1183,7 +1184,7 @@ where
 						lk_share_size, false);
 				assert!(stmt_res.is_ok());
 				prev_adv = Some(cur_adv);
-				log_perf(log_level+2, &format!("-- For subseg_id: {} gen_advice.", subseg_id), &mut gt2);
+				log_perf(log_level+2, &format!("-- For subseg_id: {} build stmt.", subseg_id), &mut gt2);
 				let stmt = stmt_res.unwrap();
 				stmt.fill_lkup_mvec(&mut m_map, &self.lkup); //needed here!
 
@@ -1198,7 +1199,7 @@ where
 				prev_stmt= Some(stmt);
 				subseg_id +=1;
 				total_lkup_covered += lk_share_size;
-				log_perf(log_level+2, &format!("-- For subseg_id: {} gen_cmf and update.", subseg_id), &mut gt2);
+				log_perf(log_level+2, &format!("-- For subseg_id: {} gen_cmf and update. ", subseg_id), &mut gt2);
 			}
 
 			log_perf(log_level+1, &format!("{} generate advice and com_F for word: {} of size: {}.", phase_name, word_id, format_bytes(total_word_len*31)), 

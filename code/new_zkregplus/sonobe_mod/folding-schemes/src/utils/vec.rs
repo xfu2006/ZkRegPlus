@@ -2,7 +2,7 @@ use ark_ff::PrimeField;
 use ark_poly::{univariate::DensePolynomial,DenseUVPolynomial};
 pub use ark_relations::r1cs::Matrix as R1CSMatrix;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::cfg_iter;
+//use ark_std::cfg_iter;
 use ark_std::rand::Rng;
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
@@ -73,7 +73,9 @@ pub fn vec_add<F: PrimeField>(a: &[F], b: &[F]) -> Result<Vec<F>, Error> {
             b.len(),
         ));
     }
-    Ok(a.iter().zip(b.iter()).map(|(x, y)| *x + y).collect())
+	//OLD
+    //Ok(a.iter().zip(b.iter()).map(|(x, y)| *x + y).collect())
+    Ok(a.par_iter().zip(b.par_iter()).map(|(x, y)| *x + y).collect())
 }
 
 pub fn vec_sub<F: PrimeField>(a: &[F], b: &[F]) -> Result<Vec<F>, Error> {
@@ -85,15 +87,21 @@ pub fn vec_sub<F: PrimeField>(a: &[F], b: &[F]) -> Result<Vec<F>, Error> {
             b.len(),
         ));
     }
-    Ok(a.iter().zip(b.iter()).map(|(x, y)| *x - y).collect())
+	//old 
+	//Ok(a.iter().zip(b.iter()).map(|(x, y)| *x - y).collect())
+    Ok(a.par_iter().zip(b.par_iter()).map(|(x, y)| *x - y).collect())
 }
 
 pub fn vec_scalar_mul<F: PrimeField>(vec: &[F], c: &F) -> Vec<F> {
-    vec.iter().map(|a| *a * c).collect()
+	//OLD version
+    //vec.iter().map(|a| *a * c).collect()
+    vec.par_iter().map(|a| *a * c).collect()
 }
 
 pub fn is_zero_vec<F: PrimeField>(vec: &[F]) -> bool {
-    vec.iter().all(|a| a.is_zero())
+	//OLD
+    //vec.iter().all(|a| a.is_zero())
+    vec.par_iter().all(|a| a.is_zero())
 }
 
 pub fn mat_vec_mul_dense<F: PrimeField>(M: &[Vec<F>], z: &[F]) -> Result<Vec<F>, Error> {
@@ -127,12 +135,26 @@ pub fn mat_vec_mul<F: PrimeField>(M: &SparseMatrix<F>, z: &[F]) -> Result<Vec<F>
             z.len(),
         ));
     }
-    let mut res = vec![F::zero(); M.n_rows];
-    for (row_i, row) in M.coeffs.iter().enumerate() {
+    //for (row_i, row) in M.coeffs.iter().enumerate() {
+	//use rayon instead: Xiang Fu
+    /* 
+		OLD code:
+		let mut res = vec![F::zero(); M.n_rows];
+    	for (row_i, row) in M.coeffs.iter().enumerate(){
+        	for &(value, col_i) in row.iter() {
+            	res[row_i] += value * z[col_i];
+        	}
+    	};
+	*/
+	// NEW version 
+    let res = M.coeffs.par_iter().map(|row| {
+		let mut res = F::zero();
         for &(value, col_i) in row.iter() {
-            res[row_i] += value * z[col_i];
+            res += value * z[col_i];
         }
-    }
+		res
+    }).collect::<Vec<F>>();
+	assert!(res.len()==M.n_rows);
     Ok(res)
 }
 
@@ -158,7 +180,10 @@ pub fn hadamard<F: PrimeField>(a: &[F], b: &[F]) -> Result<Vec<F>, Error> {
             b.len(),
         ));
     }
-    Ok(cfg_iter!(a).zip(b).map(|(a, b)| *a * b).collect())
+	//Old version
+    //Ok(cfg_iter!(a).zip(b).map(|(a, b)| *a * b).collect())
+	//parallel 
+    Ok(a.par_iter().zip(b.par_iter()).map(|(a, b)| *a * b).collect())
 }
 
 /// returns the interpolated polynomial of degree=v.len().next_power_of_two(), which passes through all

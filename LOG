@@ -22463,7 +22463,87 @@ Goal 5. redesign get_size_f
 	[g] test the real one -> 128GB can only support one of them in 
 		decider circuit construction
 
--- TOOD -- remove DEBUG USE 6601.x
+Tuesday 12/02/2025
+Goal 1. improve commit
+	[a] dump 220ms for gen_advice and build statement
+		515ms for commit which is ok because statement is about 1.3M
+		which is GOOD.
+		170ms for generating advice, 50 for build statement => 0.2 sec
+		so this is reasonable cost comparing with prove step.
+		--- prove_step is 10 sec for 16kb
+		estimate: 10 sec * 700MB/16kb = 124 hrs  
+		altogether processing speed:
+		0.7 sec for 16kb
+		-> 44.8 sec for 1MB
+		-> 31500 sec for 700MB
+		-> 8.75 hrs (which is about 1/50 of the total cost of 500 hrs 
+		==> this is about 7% of total cost  -> so move it to later investigatio		n
+		==> total estimate: 132 hrs => 5.5 days -> 300 dollars of cost. 
+
+Goal 2. try to improve fold_inst
+	[a] -> current cost: 
+	 prove_step: Step 2. fold_inst. inst size: 2827006 2243 ms
+	[b] read mod_super fold instance
+		-> it's the compute_cmT which costs most:
+		------
+		- --  prove_step: Step 1.1 compute_cmT. T: 2110320 1692 ms
+		LOG4: -- -- --  prove_step: Step 1.2 r_Fr 47 ms
+		LOG4: -- -- --  prove_step: Step 2 ***. fold_inst. inst size: 2827006 218 ms  (serialize fold)
+		LOG4: -- -- --  prove_step: Step 2. fold_inst. inst size: 2827006 59 ms
+		----
+	[c] read compute_cmT: computeT costs 1.2 sec, commit to T: 289ms
+
+Wed 12/03/2025
+Goal 1. improve the fold instance performance
+	[a] read the code of compute_cmT
+		-> LOG1:   compute_T step 1 clone 237 ms
+		DEBUG USE 6602.1 A.cols: 2827009, A: rows: 2110320, B: cols: 2827009, B.rows: 2110320, z1: 2827009, z2: 2827009
+		LOG1:   compute_T step 2 mat_vec_mul 587 ms
+		LOG1:   compute_T step 3 hadmard 11 ms
+		LOG1:   compute_T step 4 multiscar 98 ms
+		LOG1:   compute_T step 5 vec_sub 88 ms
+	-> Total: 1024ms
+	[b] cut the clone 
+		-> regression test -> working
+		-> cost now: 818 ms, 917ms, 816ms
+	[c] read the mat_mul code
+		-> it basically sums every row and there are many rows
+		-> observation for each row ONLY very few cols
+	[d] try replace it with rayon, it's cutting from 587ms -> 90ms
+		-> regression test -> ok
+	[e] do another layer of parallel processing -> not much help.
+		-> interestingly just call 6 matrix in parall using rayon 
+		does not work. maybe rayon think the size is too small
+	[f] improve hadmard 11 ms -> no improvement coz too small
+	[g] improve multiscalar, improved from 98ms to 8ms -> good
+		-> regression test
+		vec-sub -> improved from 88 ms to 19ms
+	[g] total now: 125ms -> good enough
+	[h] regression test -> GOOD
+Goal 2. check compute_cmT
+	[c] read compute_cmT: computeT costs 1.2 sec, commit to T: 289ms (OLD)
+	-> now improves to 137 + 247 = 380ms (than 1.2 sec)
+	-> for commit, no better can be done as it only takes
+		245ms for 2.1M
+Goal 3. analyze performance of other parts
+	[a] r_Fr from 47ms to 1ms 
+	[b] fold_inst 2.8M from 218ms -> 99ms
+	============ circuit size: 2.8M (IMPROVEMENT shown below)
+LOG4: -- -- --  prove_step: Step 1. gen_witness: stmt_len: 1371479, wtns size: 2036851 686 ms -> 753ms (somehow increased 80ms)
+LOG4: -- -- --  prove_step: Step 2. fold_inst. inst size: 2827000 2197 ms
+		==> 894 (improved 1200ms)
+LOG4: -- -- --  prove_step: Step 3. fold cyclefold and cyclepair circuits. 68 ms
+		==> 51ms (the same)
+LOG4: -- -- --  prove_step: Step 4. generate augmented F.cs: 2110312 4717 ms
+		==> 5484 (increased 600ms?)
+LOG4: -- -- --  prove_step: Step 5. commit to instance: wit len: 2827000 1916 ms -> 1763 ms (improved 150ms?)
+LOG3: -- --  -- prove_step cost: i: 4, circ_id: 0, stmt_len: 1371479, wtns size: 2036851 9585 ms
+  ==================
+
+Goal 4. next goal: check generated augmented F.cs
+	[a] data: build_augf: 61ms, misc 5us, gen constraints: 4.6 sec!
+
+
 
 
 

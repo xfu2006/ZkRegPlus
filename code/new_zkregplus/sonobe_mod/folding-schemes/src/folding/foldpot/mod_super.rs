@@ -1391,7 +1391,6 @@ where
 				&T, cmT,
             )?;
 
-
 		let mut W_i1 = self.W_i.clone();
 		let mut U_i1 = self.U_i.clone();
 		W_i1.vec_wit[j_pci] = W_i1_j;
