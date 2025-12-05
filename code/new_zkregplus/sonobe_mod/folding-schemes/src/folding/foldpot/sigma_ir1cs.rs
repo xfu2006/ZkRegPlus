@@ -11,7 +11,7 @@
 		that failed_sigs is a subset of discharged_sigs (or the samples
 		are discharged).
 */
-use utils::{logger::{log, LOG_LEVEL, LOG6}};
+use utils::{logger::{log, log_perf, LOG_LEVEL, LOG4, LOG6}, timer::Timer as GTimer};
 use serde::{Serialize,Deserialize};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use crate::commitment::CommitmentScheme;
@@ -2457,6 +2457,8 @@ where 	C: CurveGroup<ScalarField=F>,
 		//0. check input, will not need the extra constraints
 		// will be enforced somewhere else, but need
 		// the cyclepair input
+		let log_level = LOG4;
+		let mut gt1 = GTimer::new();
 		let lkup_share_size = self.stmt_config.lookup_share_size;
 		let (stmt_len, stmt_cfg, v_idx, _, cp_inp) = self.gadget_mapper
 			.borrow()
@@ -2472,6 +2474,9 @@ where 	C: CurveGroup<ScalarField=F>,
 		let mut v_msg1:Vec<F> = vec![];
 		let mut v_msg2:Vec<F> = vec![];
 		let mut v_msg3:Vec<F> = vec![];
+		log_perf(log_level, &format!("gen_witness step 1: gen stmt structure"),
+			&mut gt1);
+		
 
 		//1. generate message1
 		for (i,g) in self.gadgets.iter().enumerate(){
@@ -2480,6 +2485,9 @@ where 	C: CurveGroup<ScalarField=F>,
 				"ERROR: mistaching msg1 size for i: {}", i);
 			v_msg1.append(&mut msg1); 
 		}
+		log_perf(log_level, &format!("gen_witness step 2: gen msg1"),
+			&mut gt1);
+
 		//2. generate cmF
 		// note that r_F is in statement. No need for extra blinding factor
 		let vec = vec![
@@ -2489,9 +2497,11 @@ where 	C: CurveGroup<ScalarField=F>,
 		let (zero,one) = (F::zero(),F::one());
 		let grp_cmF = CS::commit(&self.params, 
 			&vec, &zero).expect("commit fails");
+		log_perf(log_level, &format!("gen_witness step 3.1: gen cmF, for vec.len: {}", vec.len()), &mut gt1);
 		let mut cmF = vec![];
 		grp_cmF.to_native_sponge_field_elements_as_vec()
 			.to_sponge_field_elements(&mut cmF);
+		log_perf(log_level, &format!("gen_witness step 3.2: cmF to native field, "), &mut gt1);
 
 		//3. generate message2
 		let mut gi = 0;
@@ -2506,6 +2516,8 @@ where 	C: CurveGroup<ScalarField=F>,
 			}
 			gi += 1;
 		}
+		log_perf(log_level, &format!("gen_witness step 4: gen msg2"),
+			&mut gt1);
 
 		//4. generate message3
 		let mut msg1_start = 0;
@@ -2521,6 +2533,8 @@ where 	C: CurveGroup<ScalarField=F>,
 			v_msg3.append(&mut msg3); 
 
 		}
+		log_perf(log_level, &format!("gen_witness step 5: gen msg3"),
+			&mut gt1);
 
 		//5. build the Lookup related witnesses:
 		// (1) inverse for inverse of Hab22 equations
@@ -2554,18 +2568,28 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		let _b_last = si.word_id==si.total_words
 			&& si.subseg_id==si.total_word_segs;
+		log_perf(log_level, &format!("gen_witness step 6: gen qry tbl"),
+			&mut gt1);
 
+		let zero_result = alpha.inverse().expect("inv alpha failed");  
 		let inv_hab22_left = (0..inv_hab22_left_size).into_par_iter().map(|i|{
 			let v2 = qry_tbl2[i];
-			let v = alpha + qry_tbl1[i]*beta + v2 ;
-			let res = v.inverse().expect("inv failed");
-			res
+			if v2.is_zero() && qry_tbl1[i].is_zero(){
+				zero_result
+			}else{
+				let v = alpha + qry_tbl1[i]*beta + v2 ;
+				v.inverse().expect("inv failed")
+			}
 		}).collect::<Vec<F>>();
+		log_perf(log_level, &format!("gen_witness step 7.1: hab22 inverse, hab2 len: {}", inv_hab22_left.len()),
+			&mut gt1);
 		let sum_hab22_left = qry_tbl1.par_iter().zip(inv_hab22_left.par_iter())
 		.map(|(&a,&b)|{
 				if a.is_zero() {zero}
 				else {b}
 		}).sum::<F>() + zi_part2.sum_hab22_left;
+		log_perf(log_level, &format!("gen_witness step 7.2: gen hab22 left, hab2 len: {}", inv_hab22_left.len()),
+			&mut gt1);
 
 		let right_size = inv_hab22_right_size;
 		let inv_hab22_right = (0..right_size).into_par_iter().map(|i|{
@@ -2601,6 +2625,8 @@ where 	C: CurveGroup<ScalarField=F>,
 			inv_hab22_right_size: inv_hab22_right_size,
 			stmt_cfg: stmt_cfg,
 		};
+		log_perf(log_level, &format!("gen_witness step 8: gen hab22 right"),
+			&mut gt1);
 
 		//6. compute the KZG evaluation of :
 		// [lookup col1, col2, words, vec_r, vec_v]
@@ -2693,6 +2719,8 @@ where 	C: CurveGroup<ScalarField=F>,
 			let _sum_kzg_eval = sum_kzg_eval_lk + 
 				sum_kzg_eval_word + sum_kzg_eval_others;
 				//println!("DEBUG USE 500.9: sum_kzg_eval: {}, sum_vec_v_i: {}", sum_kzg_eval, sum_vec_v_i);
+			log_perf(log_level, &format!("gen_witness step 9: gen kzg sum"),
+			&mut gt1);
 		}
 
 		//6. compute the zi_vec
@@ -2726,6 +2754,8 @@ where 	C: CurveGroup<ScalarField=F>,
 			else{ sum_oup * ch + si.oup_buf[i] };
 			oup_left = if oup_left.is_zero() {zero} else {oup_left - one};
 		}
+		log_perf(log_level, &format!("gen_witness step 10: gen inp/oup"),
+			&mut gt1);
 
 		let fq_bits = <<C as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as usize;
 		let cp = if self.b_full_mode {
@@ -2762,6 +2792,8 @@ where 	C: CurveGroup<ScalarField=F>,
 			
 			cyclepair_input: cp,
 		};
+		log_perf(log_level, &format!("gen_witness step 11: assemble ret"),
+			&mut gt1);
 
 		(WitnessSigmaIR1CS::<F>{
 			cmF: cmF,

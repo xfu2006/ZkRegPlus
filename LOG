@@ -22542,9 +22542,33 @@ LOG3: -- --  -- prove_step cost: i: 4, circ_id: 0, stmt_len: 1371479, wtns size:
 
 Goal 4. next goal: check generated augmented F.cs
 	[a] data: build_augf: 61ms, misc 5us, gen constraints: 4.6 sec!
+	[b] major cost step 3.0: 871ms, step 3: 3.6 sec
+	[c] further breakdown:
+		3.0 gen_witness -> 674ms
+		to_vec: 183ms
+		gen_step_cs: 3.6 sec!
+		misc: 1ms
 
+R 12/04/2025
+Goal 1. improve the gen_witness
+	[a] put log info into gen_witness
+	looks the most expensive genCMF.
+	[b] majority of cost:
+	--------------
+	gen_witness step 3.1: gen cmF, for vec.len: 1371479 556 ms
+	LOG4: -- -- --  gen_witness step 7: gen hab22 left 70 ms
+	LOG4: -- -- --  gen_witness step 8: gen hab22 right 15 ms
+	------------
+[a] gen cmF will not improve
+[b] check gen hab22
+	hab len: 624k time: 74ms
+	-> parallel inverse.
+	-> it's like 8 million field inverse per sec.
 
-
+Friday 12/05/2025
+Goal 1.  try to see zero case cache case
+	[a] it makes no difference
+[b] get group_F and pass it to gen_witness
 
 
 **************************************************************************
