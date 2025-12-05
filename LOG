@@ -22568,7 +22568,22 @@ Goal 1. improve the gen_witness
 Friday 12/05/2025
 Goal 1.  try to see zero case cache case
 	[a] it makes no difference
-[b] get group_F and pass it to gen_witness
+Goal 2. get group_F and pass it to gen_witness
+	[a] commit first
+	[b] change gen_witness prototype
+	[c] fix all calls
+		[c1] step_native_mut
+		[c2] circuits.rs
+	[d] the CS::Params is causing trouble because SigmaIR1CS
+		itself does not even have CS parameter it should be hiding
+		in the gen_witness
+Goal 3. need to remove the requirement of params from 
+	gen_witness() function
+	[a] put the internal type
+	[b] now has to put H into SigmaIR1CS	
+		-> lots of cascading chanes
+	[c] regression: esting.
+--- TODO: check the TODO cmF
 
 
 **************************************************************************

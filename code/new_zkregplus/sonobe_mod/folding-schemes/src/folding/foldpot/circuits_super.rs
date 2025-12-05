@@ -457,9 +457,12 @@ where
 
 		//3. Compute z_{i+1} from the F circuit and use it as Witness to
 		// construct Var
+		//TODO cmF
+		let pre_cmF = None; 
         let i_usize = self.i_usize.unwrap_or(0);
  		let (witness, wit_cfg, z_i1_part2) = 
-  			self.F.gen_witness(&stmt, &self.zi_part2_inst.clone().unwrap());
+  			self.F.gen_witness(&stmt, &self.zi_part2_inst.clone().unwrap(),
+				pre_cmF);
 		log_perf(log_level, &format!(
 			"-- circuit_super gen_cs step 3.0 generate wit: cs: {}, vars: {}",
 			cs.num_constraints() - nc,

@@ -512,7 +512,7 @@ where
 	let sample_individual_prf = 0; //generate individual proof 1 (idx is 0)
 	let lkup = Rc::new(RefCell::new(db.lkup));
 	foldpot_main::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,FC<CF1<C1>,C1,CS1>,
-		S,LK<CF1<C1>>,GM<CF1<C1>>>(
+		S,LK<CF1<C1>>,GM<CF1<C1>>, false>(
 		lkup, vec_circs, vec_words, vec_word_info, sample_individual_prf).expect("main err");
 
 }

@@ -1456,7 +1456,8 @@ where
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
     GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
 	LK: LookupTableTwoCol<C1::ScalarField>,
-    CS1: CommitmentScheme<C1, H> + CommitmentScheme<C1>,
+    //CS1: CommitmentScheme<C1, H> + CommitmentScheme<C1>,
+    CS1: CommitmentScheme<C1, H>,
     CS1E: CommitmentScheme<C1, H>, //should be kzg
     // enforce that the CS2 is Pedersen commitment scheme, since we're at Ethereum's EVM decider
     CS2: CommitmentScheme<C2, H, ProverParams = PedersenParams<C2>>,
@@ -1514,7 +1515,7 @@ where
 		inp: TwoPhaseCircInput<CF1<C1>,C1>,
     ) -> Result<Self, Error> {
 		let circ1 = Phase1Circuit::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,LK,GM,H>::from_nova::<FC>(nova1, com_all_w_1, r_all_w_1)?;
-		let circ2 = Phase2Circuit::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,LK,GM2,H>::from_nova::<SigmaIR1CS_Inst<C1::ScalarField, C1, CS1, LK, GM2, false>>(nova2, com_all_w_2, r_all_w_2, cyclepair_inputs)?;
+		let circ2 = Phase2Circuit::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,LK,GM2,H>::from_nova::<SigmaIR1CS_Inst<C1::ScalarField, C1, CS1, LK, GM2, H>>(nova2, com_all_w_2, r_all_w_2, cyclepair_inputs)?;
 		Ok( Self{ circ1, circ2, inp } )
     }
 

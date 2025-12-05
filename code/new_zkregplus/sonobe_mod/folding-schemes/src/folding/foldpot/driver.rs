@@ -308,7 +308,7 @@ where
 		}
         let prep_param =
             PreprocessorParamFoldPotSuper::<C1, C2, 
-				FC, CS1, CS2, LK, GM, false>
+				FC, CS1, CS2, LK, GM, H>
 			::new(
 				poseidon_config.clone(), 
 				circuits.clone(),
@@ -332,7 +332,7 @@ where
 			CS1E,
 			LK,
 			GM,
-            false,
+            H,
         >::preprocess(&mut rng, &prep_param)
         .unwrap();
 		log_perf(log_level, &format!(
@@ -359,7 +359,7 @@ where
 		//4. set up the batch processor if it is NOT full mode (1st stage)
 		let max_w_lk = if max_total_n > lkup_inp.borrow().get_size() 
 			{max_total_n+1} else {lkup_inp.borrow().get_size()+1};
-		let batch_param = Some(BatchProcessor::<E,LK,S,CS1E>
+		let batch_param = Some(BatchProcessor::<E,LK,S,CS1E,H>
 				::setup(&mut rng, max_w_lk, n_words,
 				poseidon_config.clone()));
 
@@ -631,7 +631,7 @@ where
 			let pk = &self.batch_param.as_ref().unwrap().0;
 			let _vk = &self.batch_param.as_ref().unwrap().1;
 			let (global_claim, ind_claims, snark_inp) = 
-				BatchProcessor::<E,LK,S,CS1E>::gen_claims(pk, &mut rng, &words, self.lkup.clone()).unwrap();
+				BatchProcessor::<E,LK,S,CS1E,H>::gen_claims(pk, &mut rng, &words, self.lkup.clone()).unwrap();
 			Some( (global_claim, ind_claims[idx_ind_proof].clone(), snark_inp) )
 		}else{
 			None
@@ -784,7 +784,7 @@ where
 		let pc_0_val = field_to_usize(&pc_0);
         let mut nova1 =
             FoldPotSuper::<E,P, C2G2, C1, GC1, C2, GC2, FC,
-			CS1, CS2, CS1E, LK, GM, false>::init_adv(
+			CS1, CS2, CS1E, LK, GM, H>::init_adv(
                 &self.nova_param,
 				self.circuits.clone(),
                 z_0.clone(),
@@ -908,17 +908,17 @@ where
 				poseidon_config: self.poseidon_config.clone(),
 			};
 
-			let (batch_proof, _rand_inp2) = BatchProcessor::<E,LK,S,CS1E>
+			let (batch_proof, _rand_inp2) = BatchProcessor::<E,LK,S,CS1E,H>
 				::prove_batch(pk, &snark_inp, &words, self.lkup.clone(),
 				&rand_inp);
-			assert!(BatchProcessor::<E,LK,S,CS1E>::verify_batch(vk, 
+			assert!(BatchProcessor::<E,LK,S,CS1E,H>::verify_batch(vk, 
 				None, None, None,
 				&global_claim, &batch_proof, &self.poseidon_config, 
 				false)); //note part2 of the proof will be checked later
-			let ind_prf = BatchProcessor::<E,LK,S,CS1E>::prove_individual(pk, 
+			let ind_prf = BatchProcessor::<E,LK,S,CS1E,H>::prove_individual(pk, 
 				&snark_inp, &words, &ind_claim,
 				idx_individual_prf);
-			let _res = BatchProcessor::<E,LK,S,CS1E>::verify_individual(vk, idx_individual_prf, &ind_claim, &batch_proof, &ind_prf);
+			let _res = BatchProcessor::<E,LK,S,CS1E,H>::verify_individual(vk, idx_individual_prf, &ind_claim, &batch_proof, &ind_prf);
 			#[cfg(test)] {assert!(_res);}
 			Some((batch_proof, ind_prf))
 		}else{
@@ -947,7 +947,7 @@ where
 		//3. build the nova instance
         let mut nova =
             FoldPotSuper::<E,P, C2G2, C1, GC1, C2, GC2, FC,
-			CS1, CS2, CS1E, LK, GM, false>::init_adv(
+			CS1, CS2, CS1E, LK, GM, H>::init_adv(
                 &self.nova_param,
 				self.circuits.clone(),
                 z_0.clone(),
@@ -1017,7 +1017,7 @@ where
 		//5. test and verify
 		#[cfg(test)]{
         	let (r1, r2, r3, r4) = nova.instances();
-        	FoldPotSuper::<E,P,C2G2, C1, GC1, C2, GC2, FC, CS1, CS2, CS1E, LK, GM, false>::verify(
+        	FoldPotSuper::<E,P,C2G2, C1, GC1, C2, GC2, FC, CS1, CS2, CS1E, LK, GM, H>::verify(
 				_verifier_param,
 				z_0,
 				nova.z_i.clone(),
@@ -1068,7 +1068,7 @@ where
 			let pk = &self.batch_param.as_ref().unwrap().0;
 			let _vk = &self.batch_param.as_ref().unwrap().1;
 			let (global_claim, ind_claims, snark_inp) = 
-				BatchProcessor::<E,LK,S,CS1E>::gen_claims(pk, &mut rng, &words, self.lkup.clone()).unwrap();
+				BatchProcessor::<E,LK,S,CS1E,H>::gen_claims(pk, &mut rng, &words, self.lkup.clone()).unwrap();
 			Some( (global_claim, ind_claims[idx_ind_proof].clone(), snark_inp) )
 		}else{
 			None
@@ -1188,7 +1188,7 @@ where
 				stmt.fill_lkup_mvec(&mut m_map, &self.lkup); //needed here!
 
 				//2.4 update the hash_cmF
-				hash_cmF = compute_step_hc_cmF_adv::<C1,LK,CS1,GM,FC,false>(
+				hash_cmF = compute_step_hc_cmF_adv::<C1,LK,CS1,GM,FC,H>(
 					hash_cmF, &stmt, circ, cs_pp, poseidon_config)
 					.expect("compute step hc cmF err");
 
@@ -1235,17 +1235,17 @@ where
 				poseidon_config: self.poseidon_config.clone(),
 			};
 
-			let (batch_proof, _rand_inp2) = BatchProcessor::<E,LK,S,CS1E>
+			let (batch_proof, _rand_inp2) = BatchProcessor::<E,LK,S,CS1E,H>
 				::prove_batch(pk, &snark_inp, &words, self.lkup.clone(),
 				&rand_inp);
-			assert!(BatchProcessor::<E,LK,S,CS1E>::verify_batch(vk, 
+			assert!(BatchProcessor::<E,LK,S,CS1E,H>::verify_batch(vk, 
 				None, None, None,
 				&global_claim, &batch_proof, &self.poseidon_config, 
 				false)); //note part2 of the proof will be checked later
-			let ind_prf = BatchProcessor::<E,LK,S,CS1E>::prove_individual(pk, 
+			let ind_prf = BatchProcessor::<E,LK,S,CS1E,H>::prove_individual(pk, 
 				&snark_inp, &words, &ind_claim,
 				idx_ind_proof);
-			let _res = BatchProcessor::<E,LK,S,CS1E>::verify_individual(vk, idx_ind_proof, &ind_claim, &batch_proof, &ind_prf);
+			let _res = BatchProcessor::<E,LK,S,CS1E,H>::verify_individual(vk, idx_ind_proof, &ind_claim, &batch_proof, &ind_prf);
 			#[cfg(test)] {assert!(_res);}
 			Some((batch_proof, ind_prf))
 		}else{
@@ -1272,7 +1272,7 @@ where
 		//6. build the nova instance
         let mut nova =
             FoldPotSuper::<E,P, C2G2, C1, GC1, C2, GC2, FC,
-			CS1, CS2, CS1E, LK, GM, false>::init_adv(
+			CS1, CS2, CS1E, LK, GM, H>::init_adv(
                 &self.nova_param,
 				self.circuits.clone(),
                 z_0.clone(),
@@ -1361,7 +1361,7 @@ where
 		//5. test and verify
 		#[cfg(test)]{
         	let (r1, r2, r3, r4) = nova.instances();
-        	FoldPotSuper::<E,P,C2G2, C1, GC1, C2, GC2, FC, CS1, CS2, CS1E, LK, GM, false>::verify(
+        	FoldPotSuper::<E,P,C2G2, C1, GC1, C2, GC2, FC, CS1, CS2, CS1E, LK, GM, H>::verify(
 				_verifier_param,
 				z_0,
 				nova.z_i.clone(),
@@ -1439,14 +1439,15 @@ where
     FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM>,
     //FC: SigmaIR1CS_Inst<C1::ScalarField, C1, CS1, LK, false>,
 	LK: LookupTableTwoCol<C1::ScalarField> + 'static,
-    CS1: CommitmentScheme<C1, ProverParams = PedersenParams<C1>>,
+    CS1: CommitmentScheme<C1, H, ProverParams = PedersenParams<C1>> +
+		CommitmentScheme<C1, ProverParams=PedersenParams<C1>>,
     CS1E: CommitmentScheme<
-        C1,
+        C1, H,
         ProverChallenge = C1::ScalarField,
         Challenge = C1::ScalarField,
         Proof = KZGProof<C1>,
     >,
-    CS2: CommitmentScheme<C2, ProverParams = PedersenParams<C2>>,
+    CS2: CommitmentScheme<C2, H, ProverParams = PedersenParams<C2>>,
     S: SNARK<C1::ScalarField>,
     <C1 as CurveGroup>::BaseField: PrimeField,
     <C2 as CurveGroup>::BaseField: PrimeField,
@@ -1551,8 +1552,7 @@ where
 	let b_full = false;
 	let n_words = vec_words.len();
 	let max_total_n:usize = vec_words.iter().map(|x| x.len()).sum();
-	let mut driver1 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,FC,S,LK,GM>
-		::new(poseidon_config.clone(), 
+	let mut driver1 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,FC,S,LK,GM,H> ::new(poseidon_config.clone(), 
 			lkup, vec_circ, rng, b_full, max_total_n, n_words);
 	log_perf(log_level, &format!("FoldPot: Step 2: set up driver 1"),
 		&mut gt1);
@@ -1583,13 +1583,13 @@ where
 	let qa_nizk_vkey_hash = qa_nizk_vkey.hash(&driver1.poseidon_config);
 	let qa_nizk_vkey_hash1 = qa_nizk_vkey_hash.clone();
 	let (U_i1, W_i1, _r_Fr, _cmT)= nova1.gen_next_folded()?;
-	let (com_all_w, prf_qa_nizk, r_all_w, prf_kzg, kzg_all_com_ch) = W_i1.gen_com_all_w_and_qa_nizk_prf::<E, CS1E, false>(&qa_nizk_pkey, &driver1.nova_param.0.cs1e_pp, &qa_nizk_vkey, &U_i1, &driver1.poseidon_config);
+	let (com_all_w, prf_qa_nizk, r_all_w, prf_kzg, kzg_all_com_ch) = W_i1.gen_com_all_w_and_qa_nizk_prf::<E, CS1E, H>(&qa_nizk_pkey, &driver1.nova_param.0.cs1e_pp, &qa_nizk_vkey, &U_i1, &driver1.poseidon_config);
 	let cyclepair_inputs = U_i1
 		.generate_cyclepair_inputs::<E>(qa_nizk_pkey, qa_nizk_vkey,
 			&com_all_w, &prf_qa_nizk, &poseidon_config); 
 
 	let n_circs = 1;
-	let circ_cyclepair = create_sigma_fold_pair::<C1::ScalarField, C1, CS1, LK, false>(n_circs, poseidon_config.clone());
+	let circ_cyclepair = create_sigma_fold_pair::<C1::ScalarField, C1, CS1, LK, H>(n_circs, poseidon_config.clone());
 	
 	//6. another three rounds
 	let vec_words = cyclepair_inputs.clone();
@@ -1602,7 +1602,7 @@ where
 	let lk = LK::new(vec![]);
 	let lkup = Rc::new(RefCell::new(lk));
 	//let driver2 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,FC,S,LK>
-	let mut driver2 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,SigmaIR1CS_Inst<C1::ScalarField, C1, CS1, LK, FoldPairMapper<CF1<C1>,LK>,false>,S,LK,FoldPairMapper<CF1<C1>,LK>>
+	let mut driver2 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,SigmaIR1CS_Inst<C1::ScalarField, C1, CS1, LK, FoldPairMapper<CF1<C1>,LK>,H>,S,LK,FoldPairMapper<CF1<C1>,LK>,H>
 		::new(poseidon_config.clone(), lkup, vec_circ, rng, b_full, max_total_n, n_words);
 	let vec_word_info = vec![WordInfo::dummy(); vec_words.len()];
 	let (nova2, _num_steps, _batch_prfs, _bt_claims) = driver2.pass_all(
@@ -1622,7 +1622,7 @@ where
 	let qa_nizk_vkey_hash = qa_nizk_vkey.hash(&driver2.poseidon_config);
 	let (nova2_U_i1, nova2_W_i1, _nova2_r_Fr, _nova2__cmT)= 
 		nova2.gen_next_folded()?;
-	let (nova2_com_all_w, nova2_prf_qa_nizk, nova2_r_all_w, nova2_prf_kzg, nova2_kzg_all_com_ch) = nova2_W_i1.gen_com_all_w_and_qa_nizk_prf::<E, CS1E, false>( &qa_nizk_pkey, &driver2.nova_param.0.cs1e_pp, &qa_nizk_vkey, &nova2_U_i1, &driver2.poseidon_config);
+	let (nova2_com_all_w, nova2_prf_qa_nizk, nova2_r_all_w, nova2_prf_kzg, nova2_kzg_all_com_ch) = nova2_W_i1.gen_com_all_w_and_qa_nizk_prf::<E, CS1E, H>( &qa_nizk_pkey, &driver2.nova_param.0.cs1e_pp, &qa_nizk_vkey, &nova2_U_i1, &driver2.poseidon_config);
 	log_perf(log_level, &format!("FoldPot: Step 4: Phase 2: cyclefold and cyclepair IVC PROVE STEPS (folding) DONE. num_steps: {}", _num_steps), &mut gt1);
 
 	//7. now build up the TwoPhaseDeciderCircuit.
@@ -1701,7 +1701,7 @@ where
 	batch_ver_param.kzg_driver2 = Some(driver2.nova_param.1.cs1e_vp.clone());
 	let qa_nizk_vkey2 = driver2.nova_param.1.qa_vp.expect("qa_vp null!"); 
 	let (batch_claim, ind_claim, _) = batch_claims.unwrap();
-	assert!(BatchProcessor::<E,LK,S,CS1E>::verify_batch(
+	assert!(BatchProcessor::<E,LK,S,CS1E,H>::verify_batch(
 		&batch_ver_param,
 		Some(qa_nizk_vkey_hash1),
 		Some(qa_nizk_vkey2.clone()), //needs to be from nova qa_nizk
@@ -1715,7 +1715,7 @@ where
 		&mut gt1);
 
 	//12. verify the individual proof
-	assert!(BatchProcessor::<E,LK,S,CS1E>::verify_individual(
+	assert!(BatchProcessor::<E,LK,S,CS1E,H>::verify_individual(
 		&driver1.batch_param.as_ref().unwrap().1, 
 		idx_individual_prf, 
 		&ind_claim,
@@ -2155,7 +2155,7 @@ pub mod tests_driver{
 		];
 		let sample_individual_prf = 1; //generate individual proof 1
 		let vec_word_info = vec![WordInfo::dummy(); vec_words.len()];
-		let _prf = foldpot_main::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,SigmaIR1CS_Inst<Fr,C1,CS1,LK,SumMapper<Fr,LK>,H>,S,LK,SumMapper<Fr,LK>>(lkup, vec_circ, vec_words, vec_word_info, sample_individual_prf);
+		let _prf = foldpot_main::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,SigmaIR1CS_Inst<Fr,C1,CS1,LK,SumMapper<Fr,LK>,H>,S,LK,SumMapper<Fr,LK>, false>(lkup, vec_circ, vec_words, vec_word_info, sample_individual_prf);
 	}
 
 }

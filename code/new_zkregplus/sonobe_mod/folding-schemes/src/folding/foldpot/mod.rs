@@ -556,7 +556,7 @@ where
         prep_param: &Self::PreprocessorParam,
     ) -> Result<(Self::ProverParam, Self::VerifierParam), Error> {
         let (r1cs, cf_r1cs, cp_r1cs) =
-            get_r1cs::<C1, GC1, C2, GC2, FC, LK, GM>(&prep_param.poseidon_config, prep_param.F.clone())?;
+            get_r1cs::<C1, GC1, C2, GC2, FC, LK, GM, H>(&prep_param.poseidon_config, prep_param.F.clone())?;
 
         // if cs params exist, use them, if not, generate new ones
 		// TODO: add prover param setup for lookups
@@ -744,7 +744,7 @@ where
         // `transcript` is for challenge generation.
         let mut transcript = sponge.clone();
 
-        let augmented_F_circuit: AugmentedFCircuitFoldPot<C1, C2, GC2, LK, FC, GM>;
+        let augmented_F_circuit: AugmentedFCircuitFoldPot<C1, C2, GC2, LK, FC, GM, H>;
 
         // Nova does not support (by design) multi-instances folding
         if _other_instances.is_some() {
@@ -776,9 +776,11 @@ where
         let i_usize: usize = usize::from_le_bytes(i_bytes);
 
 		//z_i1_part2 is the part 2 instance of the `z_{i+1}`
+		//TODO cmF
+		let pre_cmF = None;
         let (wtns, _wtns_config, z_i1_part2) = self
             .F
-            .gen_witness(&external_inputs, &self.zi_part2_inst);
+            .gen_witness(&external_inputs, &self.zi_part2_inst, pre_cmF);
 		//ADDED: now rebuild z_i1 (`z_{i+1}`)
 		let zi_part2 = self.zi_part2_inst.hash(&self.poseidon_config);
 		assert!(self.z_i[1]==zi_part2, "z_i[1] != zi_part2");
@@ -830,7 +832,7 @@ where
         if self.i == C1::ScalarField::zero() {
             cf_u_i1_x = self.cf_U_i.hash_cyclefold(&sponge, self.pp_hash);
             // base case
-            augmented_F_circuit = AugmentedFCircuitFoldPot::<C1,C2,GC2,LK,FC,GM> {
+            augmented_F_circuit = AugmentedFCircuitFoldPot::<C1,C2,GC2,LK,FC,GM,H> {
 				_gm: PhantomData,
 				_lk: PhantomData,
                 _gc2: PhantomData,
@@ -946,7 +948,7 @@ where
 
             cf_u_i1_x = cfF_U_i1.hash_cyclefold(&sponge, self.pp_hash);
 
-            augmented_F_circuit = AugmentedFCircuitFoldPot::<C1,C2,GC2,LK,FC,GM> {
+            augmented_F_circuit = AugmentedFCircuitFoldPot::<C1,C2,GC2,LK,FC,GM,H> {
 				_gm: PhantomData,
 				_lk: PhantomData,
                 _gc2: PhantomData,
@@ -1161,8 +1163,10 @@ where
 		let circ = &self.F;
 		let fq_bits = <<C1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as usize;
 		let zi_part2 = ZiPartTwoInst::dummy(circ.is_full_mode(), fq_bits); //does not matter
+		//TODO cmF
+		let pre_cmF = None;
 		let (wit, _wconfig, _zi1_part2) = circ
-			.gen_witness(&stmt.to_vec(), &zi_part2);
+			.gen_witness(&stmt.to_vec(), &zi_part2, pre_cmF);
 		let cmF = wit.gen_cmF::<C1,CS1,H>(&self.cs_pp).expect("gen_cmF error"); 
 		let mut vec_cmF = vec![];
 		cmF.to_native_sponge_field_elements_as_vec()
@@ -1308,7 +1312,7 @@ where
 	C1::Config: SWCurveConfig,
 	GM: GadgetMapper<C1::ScalarField,LK> + std::clone::Clone + Debug,
 {
-    let (r1cs, cf_r1cs, _cp_r1cs) = get_r1cs::<C1, GC1, C2, GC2, FC, LK, GM>(poseidon_config, F_circuit)?;
+    let (r1cs, cf_r1cs, _cp_r1cs) = get_r1cs::<C1, GC1, C2, GC2, FC, LK, GM, H>(poseidon_config, F_circuit)?;
     Ok((r1cs.A.n_rows, cf_r1cs.A.n_rows))
 }
 

@@ -70,7 +70,7 @@ pub fn compute_step_hc_cmF_adv<
 	hc_cmF: C1::ScalarField, 
 	stmt: &StatementInst<C1::ScalarField, LK>,
 	circ: &FC,
-	cs_pp: &CS1::ProverParams,
+	_cs_pp: &CS1::ProverParams,
 	poseidon_config: &PoseidonConfig<C1::ScalarField>
 ) -> Result<C1::ScalarField, Error>
 where
@@ -85,7 +85,7 @@ where
 	//let act_idx = field_to_usize(&self.pc_i);
 	let fq_bits = <<C1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as usize;
 	let zi_part2 = ZiPartTwoInst::dummy(circ.is_full_mode(), fq_bits); //does not matter
-	let cmF = circ.gen_cmF::<C1,CS1,H>(&stmt.to_vec(), &zi_part2, cs_pp)
+	let cmF = circ.gen_cmF(&stmt.to_vec(), &zi_part2)
 		.expect("gen_cmF error");
 
 	let mut vec_cmF = vec![];
@@ -799,8 +799,8 @@ where
 		let r1cs =  vec_F.iter().enumerate().map(|(j,circ)|{
         	let cs = ConstraintSystem::<C1::ScalarField>::new_ref();
         	let augmented_F_circuit =
-            	AugmentedFCircuitFoldPotSuper::<C1, C2, GC2, LK, FC, GM>::empty(
-					&poseidon_config, circ.clone(), n_circs, j);
+            	AugmentedFCircuitFoldPotSuper::<C1, C2, GC2, LK, FC, GM, H>
+					::empty(&poseidon_config, circ.clone(), n_circs, j);
         	augmented_F_circuit.generate_constraints(cs.clone()).expect("gen constraints failure");
         	cs.finalize();
         	let cs = cs.into_inner().ok_or(Error::NoInnerConstraintSystem).expect("cs gen failure");
@@ -1106,7 +1106,7 @@ where
 		let mut max_circ_pp_size = 0;
 		for prep_param in &prep_param_src.vec_pp{
 			let (r1cs,cf_r1cs,cp_r1cs_in) 
-				= get_r1cs_super::<E, P, C2G2, C1, GC1, C2, GC2, FC, LK, GM>(
+				= get_r1cs_super::<E, P, C2G2, C1, GC1, C2, GC2, FC, LK, GM,H>(
 				&prep_param.poseidon_config, 
 				prep_param.F.clone(), n_circ, idx_j
 				).expect("fail in generating r1cs");
@@ -1318,7 +1318,7 @@ where
         let sponge = PoseidonSponge::<C1::ScalarField>::new(&self.poseidon_config);
         // `transcript` is for challenge generation.
         let mut transcript = sponge.clone();
-        let augmented_F_circuit: AugmentedFCircuitFoldPotSuper<C1,C2,GC2,LK,FC,GM>;
+        let augmented_F_circuit: AugmentedFCircuitFoldPotSuper<C1,C2,GC2,LK,FC,GM,H>;
         if _other_instances.is_some() {
             return Err(Error::NoMultiInstances);
         }
@@ -1348,9 +1348,11 @@ where
         let i_usize: usize = usize::from_le_bytes(i_bytes);
 
 		//4. build `z_{i+1}`: z_i1_part2 is the part 2 instance of the `z_{i+1}`
+		//TODO cmF
+		let pre_cmF = None;
         let (wtns, wtns_config, z_i1_part2) = self
             .F[j_pci1]
-            .gen_witness(&external_inputs, &self.zi_part2_inst);
+            .gen_witness(&external_inputs, &self.zi_part2_inst, pre_cmF);
 		//ADDED: now rebuild z_i1 (`z_{i+1}`)
 		let zi_part2 = self.zi_part2_inst.hash(&self.poseidon_config);
 		assert!(self.z_i[1]==zi_part2, "z_i[1] != zi_part2");
@@ -1444,7 +1446,7 @@ where
 
             // base case
             augmented_F_circuit = AugmentedFCircuitFoldPotSuper
-				::<C1, C2, GC2, LK, FC, GM> {
+				::<C1, C2, GC2, LK, FC, GM, H> {
 				_gm: PhantomData,
                 _lk: PhantomData,
                 _gc2: PhantomData,
@@ -1612,7 +1614,7 @@ where
 			log_perf(log_level, &format!("prove_step: Step 3. fold cyclefold and cyclepair circuits."), &mut gt2);
 
             augmented_F_circuit = AugmentedFCircuitFoldPotSuper
-			::<C1, C2, GC2, LK, FC, GM> {
+			::<C1, C2, GC2, LK, FC, GM, H> {
 				_gm: PhantomData,
                 _lk: PhantomData,
                 _gc2: PhantomData,
@@ -1903,7 +1905,7 @@ where
 	C2G2::Affine: AffineFromField<CF2<C2G2>>,
 {
     let augmented_F_circuit =
-        AugmentedFCircuitFoldPotSuper::<C1, C2, GC2, LK, FC, GM>::empty(poseidon_config, F_circuit,n_circ, j);
+        AugmentedFCircuitFoldPotSuper::<C1, C2, GC2, LK, FC, GM, H>::empty(poseidon_config, F_circuit,n_circ, j);
     let cf_circuit = CycleFoldCircuit::<C1, GC1>::empty(FOLDPOT_CF_N_POINTS);
     let cp_circuit = CyclePairCircuit::<E,P,C1, C2G2>::empty();
     //let cp_circuit = CycleFoldCircuit::<C1, GC1>::empty(FOLDPOT_CF_N_POINTS);

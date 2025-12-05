@@ -2417,7 +2417,7 @@ where 	C: CurveGroup<ScalarField=F>,
 
 	/// generate the commitment to the fixed memory segment
 	/// it actually has the same first part of gen_witness
-	fn gen_cmF<C1: CurveGroup<ScalarField=F>, CS1: CommitmentScheme<C1,H1>, const H1: bool>(&self, stmt: &Vec<F>, _zi_part2: &ZiPartTwoInst<F>, params: &CS1::ProverParams) -> Result<C1, Error>{
+	fn gen_cmF(&self, stmt: &Vec<F>, _zi_part2: &ZiPartTwoInst<F>) -> Result<Self::C, Error>{
 		//0. check input, will not need the extra constraints
 		// will be enforced somewhere else, but need
 		// the cyclepair input
@@ -2446,7 +2446,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			v_msg1.clone()
 		].concat();
 		let (zero,_one) = (F::zero(),F::one());
-		let grp_cmF = CS1::commit(params, 
+		let grp_cmF = Self::CS::commit(&self.params, 
 			&vec, &zero).expect("commit fails");
 
 		Ok( grp_cmF )
@@ -2900,7 +2900,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		//1. generate the real witness out of the problem statement
 		//here since step_native_mut is not called by other parts
 		//we do not optimize to provide precomputed cmF
-		let res = self.gen_witness::<C,CS,H>(&external_inputs, &z_i, None, &self.params);
+		let res = self.gen_witness(&external_inputs, &z_i, None);
 		self.witness = Some(Rc::new(res.0));
 		self.witness_config = res.1;
 		//2. return the next global state (part 2)

@@ -488,11 +488,11 @@ where
 		// MOVED up here
         // get z_{i+1} from the F circuit
         let i_usize = self.i_usize.unwrap_or(0);
-		//TODO: set pre_cmF
+		//TODO cmF: set pre_cmF
 		let pre_cmF = None;
 		let (witness, wit_cfg, _z_i1_part2) = 
 			self.F.gen_witness(&stmt, &self.zi_part2_inst.clone().unwrap(),
-				pre_cmF, &self.F.params);
+				pre_cmF);
 		let wtns_vec = witness.to_vec_fp_var(cs.clone(), &wit_cfg);
         let z_i1 =
             self.F

@@ -410,7 +410,7 @@ where
 
 	
 		let qa_nizk_vkey_hash = vkey_qanizk.hash(&poseidon_config);
-		let vkey = BatchProcessorVerifierParams::<'a, E,CS1E>{
+		let vkey = BatchProcessorVerifierParams::<'a, E,CS1E,H>{
 			kzg: kzg.1, vec: vec.1, poseidon_config,
 			vk_qa_nizk: vkey_qanizk,
 			kzg_driver1: None,
@@ -900,10 +900,10 @@ mod tests_batch_proc {
 			(Fr::from(1u32), Fr::from(1u32))]);
 		let lkup = Rc::new(RefCell::new(lk));
 
-		let keysize = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>, CS1E>::key_size(&words);
-		let (pk,vk) = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>, CS1E>::setup(&mut rng,keysize,n_words,
+		let keysize = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>, CS1E, false>::key_size(&words);
+		let (pk,vk) = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>, CS1E, false>::setup(&mut rng,keysize,n_words,
 			poseidon_canonical_config::<Fr>());
-		let (global_claim, ind_claims, snark_inp) = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>, Groth16<Bn254>, CS1E>::gen_claims(&pk, &mut rng, &words, lkup.clone()).unwrap();
+		let (global_claim, ind_claims, snark_inp) = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>, Groth16<Bn254>, CS1E, false>::gen_claims(&pk, &mut rng, &words, lkup.clone()).unwrap();
 
 		let i = 2;
 		let poseidon_config = poseidon_canonical_config::<Fr>();
@@ -920,11 +920,11 @@ mod tests_batch_proc {
 			poseidon_config: poseidon_config.clone()
 		};
 
-		let (batch_proof, _rand_inp2) = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>, CS1E> ::prove_batch(&pk, &snark_inp, &words, lkup, &partial_input); 
-		assert!(BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E>::verify_batch(&vk, None, None, None, &global_claim, &batch_proof, &poseidon_config, false));
-		let ind_prf = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E>::prove_individual(&pk, 
+		let (batch_proof, _rand_inp2) = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>, CS1E, false> ::prove_batch(&pk, &snark_inp, &words, lkup, &partial_input); 
+		assert!(BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E, false>::verify_batch(&vk, None, None, None, &global_claim, &batch_proof, &poseidon_config, false));
+		let ind_prf = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E,false>::prove_individual(&pk, 
 			&snark_inp, &words, &ind_claims[i], i);
-		let res = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E>::verify_individual(&vk, i,
+		let res = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E,false>::verify_individual(&vk, i,
 			&ind_claims[i], &batch_proof, &ind_prf);
 		assert!(res, "verify indidivudal proof failed");
    }
