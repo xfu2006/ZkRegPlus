@@ -64,7 +64,7 @@ pub fn compute_step_hc_cmF_adv<
 	LK:LookupTableTwoCol<C1::ScalarField>,
     CS1: CommitmentScheme<C1,H>,
 	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug,
-    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<C1::ScalarField, LK, GM>,
+    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM>,
 	const H: bool
 >(
 	hc_cmF: C1::ScalarField, 
@@ -465,7 +465,7 @@ pub struct PreprocessorParamFoldPotSuper<C1, C2, FC, CS1, CS2, LK, GM, const H: 
 where
     C1: CurveGroup,
     C2: CurveGroup,
-    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<C1::ScalarField, LK, GM>,
+    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM>,
 	LK: LookupTableTwoCol<C1::ScalarField>,
     CS1: CommitmentScheme<C1, H>,
     CS2: CommitmentScheme<C2, H>,
@@ -485,7 +485,7 @@ where
     C1: CurveGroup,
     <C1 as Group>::ScalarField: Absorb,
     C2: CurveGroup,
-    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<C1::ScalarField, LK, GM>,
+    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM>,
 	LK: LookupTableTwoCol<C1::ScalarField>,
     CS1: CommitmentScheme<C1, H>,
     CS2: CommitmentScheme<C2, H>,
@@ -569,13 +569,13 @@ where
 /// with pc_i indicating the current pc (which circuit to use).
 /// Compared with FoldPot (Nova + CycleFold) all elements are not vectors.
 #[derive(Clone, Debug)]
-pub struct FoldPotSuper<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E, CF3<C2G2>> + std::fmt::Debug, C2G2, C1, GC1, C2, GC2, FC, CS1, CS2, CS1E, LK, GM, const H: bool = false>
+pub struct FoldPotSuper<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E, CF3<C2G2>> + std::fmt::Debug, C2G2, C1, GC1, C2, GC2, FC, CS1, CS2, CS1E, LK, GM, const H: bool>
 where
     C1: CurveGroup,
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
     C2: CurveGroup,
     GC2: CurveVar<C2, CF2<C2>>,
-    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<C1::ScalarField, LK, GM>,
+    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM>,
 	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug,
 	LK: LookupTableTwoCol<C1::ScalarField>,
     CS1: CommitmentScheme<C1, H>,
@@ -712,7 +712,7 @@ where
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
  //   C2: CurveGroup,
     GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
-    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<C1::ScalarField, LK, GM>,
+    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM>,
 	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug,
 	LK: LookupTableTwoCol<C1::ScalarField>,
     CS1: CommitmentScheme<C1, H>,
@@ -1037,7 +1037,7 @@ where
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
   //  C2: CurveGroup,
     GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
-    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<C1::ScalarField, LK, GM>,
+    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM>,
 	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug,
 	LK: LookupTableTwoCol<C1::ScalarField>,
     CS1: CommitmentScheme<C1, H>,
@@ -1869,7 +1869,7 @@ where
 /// AugmentedFCircuitSuper (note: different from Nova)
 /// and the CycleFold circuit
 #[allow(clippy::type_complexity)]
-pub fn get_r1cs_super<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E, CF3<C2G2>> + std::fmt::Debug, C2G2, C1, GC1, C2, GC2, FC, LK, GM>(
+pub fn get_r1cs_super<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E, CF3<C2G2>> + std::fmt::Debug, C2G2, C1, GC1, C2, GC2, FC, LK, GM, const H: bool>(
     poseidon_config: &PoseidonConfig<C1::ScalarField>,
     F_circuit: FC, n_circ: usize, j: usize
 ) -> Result<(R1CS<C1::ScalarField>, R1CS<C2::ScalarField>, R1CS<C2::ScalarField>), Error>
@@ -1878,7 +1878,7 @@ where
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
     C2: CurveGroup,
     GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
-    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<C1::ScalarField, LK, GM>,
+    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM>,
 	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug,
 	LK: LookupTableTwoCol<C1::ScalarField>,
     <C1 as CurveGroup>::BaseField: PrimeField,

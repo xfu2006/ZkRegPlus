@@ -93,10 +93,10 @@ impl <E:Pairing> SnarkRandInput<E> where
 /// The batch processor. Treat it as a collection of functions..
 /// CS1E is actually KZG, but to be compative with driver
 pub struct BatchProcessor<E:Pairing, LK: LookupTableTwoCol<E::ScalarField>,
-	S: SNARK<E::ScalarField>, CS1E>
+	S: SNARK<E::ScalarField>, CS1E, const H: bool>
 where
     CS1E: CommitmentScheme<
-        E::G1,
+        E::G1, H,
         ProverChallenge = E::ScalarField,
         Challenge = E::ScalarField,
         Proof = KZGProof<E::G1>,
@@ -123,9 +123,9 @@ pub struct BatchProcessorProverParams<'a, E:Pairing>{
 
 /// verifier key
 #[derive(Clone,Debug)]
-pub struct BatchProcessorVerifierParams<'a, E:Pairing, CS1E>
+pub struct BatchProcessorVerifierParams<'a, E:Pairing, CS1E, const H: bool>
 where CS1E: CommitmentScheme<
-        E::G1,
+        E::G1, H,
         ProverChallenge = E::ScalarField,
         Challenge = E::ScalarField,
         Proof = KZGProof<E::G1>,
@@ -344,11 +344,12 @@ impl <'a,
 	F:PrimeField + Absorb, 
 	LK: LookupTableTwoCol<E::ScalarField>, 
 	S: SNARK<F>, 
-	CS1E> 
-BatchProcessor <E,LK,S,CS1E> 
+	CS1E,
+	const H: bool> 
+BatchProcessor <E,LK,S,CS1E,H> 
 where
     CS1E: CommitmentScheme<
-        E::G1,
+        E::G1, H,
         ProverChallenge = E::ScalarField,
         Challenge = E::ScalarField,
         Proof = KZGProof<E::G1>>,
@@ -377,7 +378,7 @@ where
 	/// and the lookup table size
 	pub fn setup(mut rng: impl RngCore, max_total_n: usize, n_words: usize,
 		poseidon_config: PoseidonConfig<F>) 
-	-> (BatchProcessorProverParams<'a, E>, BatchProcessorVerifierParams<'a,E,CS1E>){
+	-> (BatchProcessorProverParams<'a, E>, BatchProcessorVerifierParams<'a,E,CS1E,H>){
 		let b_debug = true;
 		let kzg= KZG::<E>::setup(&mut rng, max_total_n+2)
 			.expect("kzg key fail");
@@ -562,7 +563,7 @@ where
 	}
 
 	/// verify individual proof.
-	pub fn verify_individual(vkey: &BatchProcessorVerifierParams<'a,E,CS1E>,
+	pub fn verify_individual(vkey: &BatchProcessorVerifierParams<'a,E,CS1E,H>,
 		i: usize,
 		claim: &IndividualClaim<E>,
 		batch_proof: &BatchProof<E,S>,
@@ -735,7 +736,7 @@ where
 	/// verifying kzg_all_com and comE, W, F; and nova2_qa_nizk_vkey2 
 	/// does the same for the 2nd circuit.
 	pub fn verify_batch(
-		vkey: &BatchProcessorVerifierParams<'a,E,CS1E>, 
+		vkey: &BatchProcessorVerifierParams<'a,E,CS1E,H>, 
 		nova1_qa_nizk_vkey_hash: Option<E::ScalarField>, //only use in part2 
 		nova2_qa_nizk_vkey: Option<QaNizkVerifierParams<E>>, //only use in part2
 		snark_vk: Option<S::VerifyingKey>,

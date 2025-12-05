@@ -258,7 +258,10 @@ impl <F:PrimeField> LookupTableTwoCol<F> for LookupTableTwoCol_Inst<F>{
 }
 
 /// Just for syntactic enforce the use of struct SigmaIR1CS
-pub trait SigmaIR1CS<F: PrimeField, LK: LookupTableTwoCol<F>, GM: GadgetMapper<F,LK> + Debug + std::clone::Clone>{
+pub trait SigmaIR1CS<const H: bool, F: PrimeField, LK: LookupTableTwoCol<F>, GM: GadgetMapper<F,LK> + Debug + std::clone::Clone>{
+	type C: CurveGroup<ScalarField=F>;
+	type CS: CommitmentScheme<Self::C, H>;  //commitment scheme
+
 	/// return the statement config
 	fn get_stmt_config(&self)->StatementConfig;
 
@@ -321,10 +324,12 @@ pub trait SigmaIR1CS<F: PrimeField, LK: LookupTableTwoCol<F>, GM: GadgetMapper<F
 	/// Note that this is problem specific, the 
 	/// relation mapper needs to know how to map the i/o statement
 	/// to the sub-protocols.
-	fn gen_witness(&self, stmt: &Vec<F>, zi_part2: &ZiPartTwoInst<F>) -> (WitnessSigmaIR1CS<F>, WitnessSigmaIR1CSConfig, ZiPartTwoInst<F>);
+	/// the precomputed_group_cmF is provided if we already know
+	/// the commitment t othe fixed fragment of stmt.
+	fn gen_witness(&self, stmt: &Vec<F>, zi_part2: &ZiPartTwoInst<F>, precomputed_group_cmF: Option<Self::C>) -> (WitnessSigmaIR1CS<F>, WitnessSigmaIR1CSConfig, ZiPartTwoInst<F>);
 
 	/// Generate the commitment to the fixed segment
-	fn gen_cmF<C:CurveGroup<ScalarField=F>,CS: CommitmentScheme<C,H>,const H:bool>(&self, stmt: &Vec<F>, zi_part2: &ZiPartTwoInst<F>, params: &CS::ProverParams ) -> Result<C, Error>;
+	fn gen_cmF(&self, stmt: &Vec<F>, zi_part2: &ZiPartTwoInst<F>) -> Result<Self::C, Error>;
 
 	/// return the size of F (problem statement (including 
 	/// non-determinstic prover
@@ -2325,7 +2330,7 @@ where 	C: CurveGroup<ScalarField=F>,
 }
 
 
-impl <F,C,CS,LK, GM,const H: bool> SigmaIR1CS<F,LK,GM> 
+impl <F,C,CS,LK, GM,const H: bool> SigmaIR1CS<H,F,LK,GM> 
 for SigmaIR1CS_Inst<F,C,CS,LK, GM, H>
 where 	C: CurveGroup<ScalarField=F>,
 		CS: CommitmentScheme<C, H>,
@@ -2333,6 +2338,9 @@ where 	C: CurveGroup<ScalarField=F>,
 		LK: LookupTableTwoCol<F>,
 		GM: GadgetMapper<F,LK> + std::clone::Clone + Debug,
 {
+	type C = C;
+	type CS = CS;
+
 	/// use advice to generate container config and set it for
 	/// each gadget (if gadgetes support container config for
 	/// deseiralization). This is only needed for those gadgets in SED
@@ -2453,11 +2461,14 @@ where 	C: CurveGroup<ScalarField=F>,
 	/// The 3rd element of the return is the part 2 of
 	/// the `z_{i+1}` part 2), that is the contents of `z_{i+1}`
 	/// for the next global state of the circ.
-	fn gen_witness(&self, stmt: &Vec<F>, zi_part2: &ZiPartTwoInst<F>) -> (WitnessSigmaIR1CS<F>, WitnessSigmaIR1CSConfig, ZiPartTwoInst<F>){
+	fn gen_witness(&self, stmt: &Vec<F>, zi_part2: &ZiPartTwoInst<F>, precomputed_group_cmF: Option<Self::C>) -> (WitnessSigmaIR1CS<F>, WitnessSigmaIR1CSConfig, ZiPartTwoInst<F>)
+	{
 		//0. check input, will not need the extra constraints
 		// will be enforced somewhere else, but need
 		// the cyclepair input
 		let log_level = LOG4;
+		let b_debug = true;
+
 		let mut gt1 = GTimer::new();
 		let lkup_share_size = self.stmt_config.lookup_share_size;
 		let (stmt_len, stmt_cfg, v_idx, _, cp_inp) = self.gadget_mapper
@@ -2495,8 +2506,19 @@ where 	C: CurveGroup<ScalarField=F>,
 			v_msg1.clone()
 		].concat();
 		let (zero,one) = (F::zero(),F::one());
-		let grp_cmF = CS::commit(&self.params, 
-			&vec, &zero).expect("commit fails");
+		let grp_cmF = if precomputed_group_cmF.is_some(){
+			let res = precomputed_group_cmF.unwrap();
+			if b_debug{
+		    	let res2 = CS::commit(&self.params, 
+					&vec, &zero).expect("commit fails");
+				assert!(res==res2);
+				if 1>0 {panic!("REMOVE LATER DEBUG USE 66210");}
+			}
+			res
+		}else{
+		    CS::commit(&self.params, 
+				&vec, &zero).expect("commit fails")
+		};
 		log_perf(log_level, &format!("gen_witness step 3.1: gen cmF, for vec.len: {}", vec.len()), &mut gt1);
 		let mut cmF = vec![];
 		grp_cmF.to_native_sponge_field_elements_as_vec()
@@ -2571,15 +2593,10 @@ where 	C: CurveGroup<ScalarField=F>,
 		log_perf(log_level, &format!("gen_witness step 6: gen qry tbl"),
 			&mut gt1);
 
-		let zero_result = alpha.inverse().expect("inv alpha failed");  
 		let inv_hab22_left = (0..inv_hab22_left_size).into_par_iter().map(|i|{
 			let v2 = qry_tbl2[i];
-			if v2.is_zero() && qry_tbl1[i].is_zero(){
-				zero_result
-			}else{
-				let v = alpha + qry_tbl1[i]*beta + v2 ;
-				v.inverse().expect("inv failed")
-			}
+			let v = alpha + qry_tbl1[i]*beta + v2 ;
+			v.inverse().expect("inv failed")
 		}).collect::<Vec<F>>();
 		log_perf(log_level, &format!("gen_witness step 7.1: hab22 inverse, hab2 len: {}", inv_hab22_left.len()),
 			&mut gt1);
@@ -2881,7 +2898,9 @@ where 	C: CurveGroup<ScalarField=F>,
 		external_inputs: Vec<F>,
 	) -> Result<ZiPartTwoInst<F>, Error> {
 		//1. generate the real witness out of the problem statement
-		let res = self.gen_witness(&external_inputs, &z_i);
+		//here since step_native_mut is not called by other parts
+		//we do not optimize to provide precomputed cmF
+		let res = self.gen_witness::<C,CS,H>(&external_inputs, &z_i, None, &self.params);
 		self.witness = Some(Rc::new(res.0));
 		self.witness_config = res.1;
 		//2. return the next global state (part 2)

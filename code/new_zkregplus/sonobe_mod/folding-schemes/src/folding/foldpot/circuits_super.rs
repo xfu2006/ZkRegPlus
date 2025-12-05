@@ -263,8 +263,9 @@ pub struct AugmentedFCircuitFoldPotSuper<
     C2: CurveGroup,
     GC2: CurveVar<C2, CF2<C2>>,
 	LK: LookupTableTwoCol<C1::ScalarField>,
-    FC: FCircuit<CF1<C1>> + SigmaIR1CS<CF1<C1>,LK, GM>,
+    FC: FCircuit<CF1<C1>> + SigmaIR1CS<H, CF1<C1>,LK, GM>,
 	GM: GadgetMapper<C1::ScalarField,LK> + std::clone::Clone + Debug,
+	const H: bool,
 > where
     for<'a> &'a GC2: GroupOpsBounds<'a, C2, GC2>,
 {
@@ -316,8 +317,8 @@ pub struct AugmentedFCircuitFoldPotSuper<
 }
 
 
-impl<C1: CurveGroup, C2: CurveGroup, GC2: CurveVar<C2, CF2<C2>>, LK, FC: FCircuit<CF1<C1>> + SigmaIR1CS<CF1<C1>, LK, GM>, GM>
-    AugmentedFCircuitFoldPotSuper<C1, C2, GC2, LK, FC, GM>
+impl<C1: CurveGroup, C2: CurveGroup, GC2: CurveVar<C2, CF2<C2>>, LK, FC: FCircuit<CF1<C1>> + SigmaIR1CS<H, CF1<C1>, LK, GM>, GM, const H: bool>
+    AugmentedFCircuitFoldPotSuper<C1, C2, GC2, LK, FC, GM, H>
 where
     for<'a> &'a GC2: GroupOpsBounds<'a, C2, GC2>,
 	LK: LookupTableTwoCol<C1::ScalarField>,
@@ -378,14 +379,14 @@ where
 }
 
 
-impl<C1, C2, GC2, LK, FC, GM> ConstraintSynthesizer<CF1<C1>> 
-for AugmentedFCircuitFoldPotSuper<C1, C2, GC2, LK, FC, GM >
+impl<C1, C2, GC2, LK, FC, GM, const H: bool> ConstraintSynthesizer<CF1<C1>> 
+for AugmentedFCircuitFoldPotSuper<C1, C2, GC2, LK, FC, GM, H >
 where
     C1: CurveGroup,
     C2: CurveGroup,
     GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
 	LK: LookupTableTwoCol<C1::ScalarField>,
-    FC: FCircuit<CF1<C1>> + SigmaIR1CS<CF1<C1>, LK, GM >,
+    FC: FCircuit<CF1<C1>> + SigmaIR1CS<H, CF1<C1>, LK, GM >,
     <C1 as CurveGroup>::BaseField: PrimeField,
     <C2 as CurveGroup>::BaseField: PrimeField,
     <C1 as Group>::ScalarField: Absorb,

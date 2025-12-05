@@ -73,24 +73,24 @@ use crate::commitment::{
 /// that input files are huge, it works in streaming mode to save memory.
 /// Here we fix the curve and commitment schemes used.
 #[derive(Clone)]
-pub struct Driver<'c, E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + std::fmt::Debug + Clone, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, FC, S, LK, GM> 
+pub struct Driver<'c, E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + std::fmt::Debug + Clone, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, FC, S, LK, GM, const H: bool> 
 where
 //    C1: CurveGroup,
  //   C2: CurveGroup,
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
     GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
-    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<C1::ScalarField, LK, GM>,
+    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM>,
 	LK: LookupTableTwoCol<C1::ScalarField>,
     // CS1E is a KZG commitment, where challenge is C1::Fr elem
     CS1E: CommitmentScheme<
-        C1,
+        C1, H,
         ProverChallenge = C1::ScalarField,
         Challenge = C1::ScalarField,
         Proof = KZGProof<C1>,
     >,
-    CS1: CommitmentScheme<C1, ProverParams = PedersenParams<C1>>,
+    CS1: CommitmentScheme<C1,H, ProverParams = PedersenParams<C1>>,
     // enforce that the CS2 is Pedersen commitment scheme, since we're at Ethereum's EVM decider
-    CS2: CommitmentScheme<C2, ProverParams = PedersenParams<C2>>,
+    CS2: CommitmentScheme<C2,H, ProverParams = PedersenParams<C2>>,
     S: SNARK<C1::ScalarField>,
     <C1 as CurveGroup>::BaseField: PrimeField,
     <C2 as CurveGroup>::BaseField: PrimeField,
@@ -135,7 +135,7 @@ where
 		CS1, CS2, LK, false>, 
 	*/
 	/// the prover/verifier parameters
-	pub nova_param: (<FoldPotSuper<E,P,C2G2, C1, GC1, C2, GC2, FC, CS1, CS2, CS1E, LK, GM> as FoldingScheme<C1,C2,FC>>::ProverParam, <FoldPotSuper<E,P,C2G2,C1, GC1, C2, GC2, FC, CS1, CS2, CS1E, LK,GM> as FoldingScheme<C1,C2,FC>>::VerifierParam),
+	pub nova_param: (<FoldPotSuper<E,P,C2G2, C1, GC1, C2, GC2, FC, CS1, CS2, CS1E, LK, GM, H> as FoldingScheme<C1,C2,FC>>::ProverParam, <FoldPotSuper<E,P,C2G2,C1, GC1, C2, GC2, FC, CS1, CS2, CS1E, LK,GM, H> as FoldingScheme<C1,C2,FC>>::VerifierParam),
 
 	/// the decidider parameters
 	/*
@@ -145,7 +145,7 @@ where
 	*/
 
 	pub batch_param: Option<(BatchProcessorProverParams<'c,E>,
-		BatchProcessorVerifierParams<'c,E,CS1E>)>,
+		BatchProcessorVerifierParams<'c,E,CS1E,H>)>,
 
 	/// when true, the cyclepair instance is supported
 	pub b_full_mode: bool,
@@ -160,14 +160,14 @@ where
 
 
 
-impl <'c, E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + std::fmt::Debug + Clone, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, FC, S, LK, GM> Debug for
-Driver <'c, E,P,C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, FC, S, LK, GM> 
+impl <'c, E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + std::fmt::Debug + Clone, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, FC, S, LK, GM, const H: bool> Debug for
+Driver <'c, E,P,C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, FC, S, LK, GM, H> 
 where
 //    C1: CurveGroup,
  //   C2: CurveGroup,
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
     GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
-    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<C1::ScalarField, LK, GM>,
+    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM>,
 	LK: LookupTableTwoCol<C1::ScalarField>,
     // CS1 is a KZG commitment, where challenge is C1::Fr elem
 	/*
@@ -179,14 +179,14 @@ where
     >,
 	*/
     // enforce that the CS2 is Pedersen commitment scheme, since we're at Ethereum's EVM decider
-    CS1: CommitmentScheme<C1, ProverParams = PedersenParams<C1>>,
+    CS1: CommitmentScheme<C1, H, ProverParams = PedersenParams<C1>>,
     CS1E: CommitmentScheme<
-        C1,
+        C1, H,
         ProverChallenge = C1::ScalarField,
         Challenge = C1::ScalarField,
         Proof = KZGProof<C1>,
     >,
-    CS2: CommitmentScheme<C2, ProverParams = PedersenParams<C2>>,
+    CS2: CommitmentScheme<C2, H, ProverParams = PedersenParams<C2>>,
     S: SNARK<C1::ScalarField>,
     <C1 as CurveGroup>::BaseField: PrimeField,
     <C2 as CurveGroup>::BaseField: PrimeField,
@@ -223,24 +223,23 @@ where
 	}
 }
 
-impl <'c, E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + std::fmt::Debug+Clone, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, FC, S, LK, GM> Driver
-	<'c, E,P,C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, FC, S, LK, GM> 
+impl <'c, E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + std::fmt::Debug+Clone, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, FC, S, LK, GM, const H: bool> Driver <'c, E,P,C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, FC, S, LK, GM, H> 
 where
     //C1: CurveGroup,
     //C2: CurveGroup,
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
     GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
-    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<C1::ScalarField, LK, GM>,
+    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM>,
 	LK: LookupTableTwoCol<C1::ScalarField>,
-    CS1: CommitmentScheme<C1, ProverParams = PedersenParams<C1>>,
+    CS1: CommitmentScheme<C1,H, ProverParams = PedersenParams<C1>>,
     CS1E: CommitmentScheme<
-        C1,
+        C1,H,
         ProverChallenge = C1::ScalarField,
         Challenge = C1::ScalarField,
         Proof = KZGProof<C1>,
     >,
     // enforce that the CS2 is Pedersen commitment scheme, since we're at Ethereum's EVM decider
-    CS2: CommitmentScheme<C2, ProverParams = PedersenParams<C2>>,
+    CS2: CommitmentScheme<C2, H, ProverParams = PedersenParams<C2>>,
     S: SNARK<C1::ScalarField>,
     <C1 as CurveGroup>::BaseField: PrimeField,
     <C2 as CurveGroup>::BaseField: PrimeField,
@@ -880,7 +879,7 @@ where
 		hash_cmF: C1::ScalarField,
 		claim_pack: &Option<(BatchClaim<E>, IndividualClaim<E>, SnarkAdvice<E::ScalarField>)>,
 		vec_advice: &Vec<Vec<Rc<dyn NdAdvice>>>)
-	-> (FoldPotSuper<E,P,C2G2,C1,GC1,C2,GC2,FC,CS1,CS2,CS1E, LK, GM>,
+	-> (FoldPotSuper<E,P,C2G2,C1,GC1,C2,GC2,FC,CS1,CS2,CS1E, LK, GM, H>,
 		usize, Option<(BatchProof<E,S>,IndividualProof<E>)>
 			)
 	{
@@ -1043,7 +1042,7 @@ where
 	  	mut rng: impl RngCore +  CryptoRng,
 		vec_word_info: &Vec<WordInfo>) 
 	-> (
-		FoldPotSuper<E,P,C2G2,C1,GC1,C2,GC2,FC,CS1,CS2,CS1E, LK, GM>,
+		FoldPotSuper<E,P,C2G2,C1,GC1,C2,GC2,FC,CS1,CS2,CS1E, LK, GM, H>,
 		usize, 
 		Option<(BatchProof<E,S>,IndividualProof<E>)>,
 	    Option<(BatchClaim<E>, IndividualClaim<E>, 
@@ -1427,7 +1426,7 @@ pub fn write_to_file(fname: &str, line: &str){
 /// using dummy instances), later.
 ///
 /// NOTE: vec_circ should be ordered as required by Driver (see its doc)
-pub fn foldpot_main<E:Pairing<G1=C1,G2=C2G2>,P:PairingVar<E,CF3<C2G2>>+std::fmt::Debug+Clone,C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, FC, S, LK, GM>(
+pub fn foldpot_main<E:Pairing<G1=C1,G2=C2G2>,P:PairingVar<E,CF3<C2G2>>+std::fmt::Debug+Clone,C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, FC, S, LK, GM, const H: bool>(
 	lkup: Rc<RefCell<LK>>, //the lookup table defines the regex automatas
 	vec_circ: Vec<Vec<FC>>,
 	vec_words: Vec<Vec<E::ScalarField>>,
@@ -1437,7 +1436,7 @@ pub fn foldpot_main<E:Pairing<G1=C1,G2=C2G2>,P:PairingVar<E,CF3<C2G2>>+std::fmt:
 where
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
     GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
-    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<C1::ScalarField, LK, GM>,
+    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM>,
     //FC: SigmaIR1CS_Inst<C1::ScalarField, C1, CS1, LK, false>,
 	LK: LookupTableTwoCol<C1::ScalarField> + 'static,
     CS1: CommitmentScheme<C1, ProverParams = PedersenParams<C1>>,

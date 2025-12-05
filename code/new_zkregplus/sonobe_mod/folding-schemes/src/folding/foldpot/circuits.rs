@@ -351,8 +351,9 @@ pub struct AugmentedFCircuitFoldPot<
     C2: CurveGroup,
     GC2: CurveVar<C2, CF2<C2>>,
 	LK: LookupTableTwoCol<C1::ScalarField>,
-    FC: FCircuit<CF1<C1>> + SigmaIR1CS<CF1<C1>,LK, GM>,
+    FC: FCircuit<CF1<C1>> + SigmaIR1CS<H,CF1<C1>,LK, GM>,
 	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug,
+	const H: bool,
 > where
     for<'a> &'a GC2: GroupOpsBounds<'a, C2, GC2>,
 {
@@ -390,8 +391,8 @@ pub struct AugmentedFCircuitFoldPot<
     pub cf_x: Option<CF1<C1>>, // public input (u_{i+1}.x[1])
 }
 
-impl<C1: CurveGroup, C2: CurveGroup, GC2: CurveVar<C2, CF2<C2>>, LK: LookupTableTwoCol<CF1<C1>>, FC: FCircuit<CF1<C1>> + SigmaIR1CS<CF1<C1>,LK, GM>, GM>
-    AugmentedFCircuitFoldPot<C1, C2, GC2, LK, FC, GM>
+impl<C1: CurveGroup, C2: CurveGroup, GC2: CurveVar<C2, CF2<C2>>, LK: LookupTableTwoCol<CF1<C1>>, FC: FCircuit<CF1<C1>> + SigmaIR1CS<H, CF1<C1>,LK, GM>, GM, const H: bool>
+    AugmentedFCircuitFoldPot<C1, C2, GC2, LK, FC, GM, H>
 where
 	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug,
     for<'a> &'a GC2: GroupOpsBounds<'a, C2, GC2>,
@@ -438,14 +439,14 @@ where
     }
 }
 
-impl<C1, C2, GC2, LK, FC, GM> ConstraintSynthesizer<CF1<C1>> 
-for AugmentedFCircuitFoldPot<C1, C2, GC2, LK, FC,GM >
+impl<C1, C2, GC2, LK, FC, GM, const H: bool> ConstraintSynthesizer<CF1<C1>> 
+for AugmentedFCircuitFoldPot<C1, C2, GC2, LK, FC,GM,H>
 where
     C1: CurveGroup,
     C2: CurveGroup,
     GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
 	LK: LookupTableTwoCol<C1::ScalarField>,
-    FC: FCircuit<CF1<C1>> + SigmaIR1CS<CF1<C1>,LK, GM>,
+    FC: FCircuit<CF1<C1>> + SigmaIR1CS<H, CF1<C1>,LK, GM>,
     <C1 as CurveGroup>::BaseField: PrimeField,
     <C2 as CurveGroup>::BaseField: PrimeField,
     <C1 as Group>::ScalarField: Absorb,
@@ -487,8 +488,11 @@ where
 		// MOVED up here
         // get z_{i+1} from the F circuit
         let i_usize = self.i_usize.unwrap_or(0);
+		//TODO: set pre_cmF
+		let pre_cmF = None;
 		let (witness, wit_cfg, _z_i1_part2) = 
-			self.F.gen_witness(&stmt, &self.zi_part2_inst.clone().unwrap());
+			self.F.gen_witness(&stmt, &self.zi_part2_inst.clone().unwrap(),
+				pre_cmF, &self.F.params);
 		let wtns_vec = witness.to_vec_fp_var(cs.clone(), &wit_cfg);
         let z_i1 =
             self.F

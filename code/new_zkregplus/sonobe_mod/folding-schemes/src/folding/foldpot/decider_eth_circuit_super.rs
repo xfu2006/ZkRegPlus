@@ -514,7 +514,7 @@ where
 	/// and save in its own data members. (noe: com_all_w is used
 	/// to compute kzg_all_com_ch in circuit)
     pub fn from_nova<FC: FCircuit<C1::ScalarField> 
-		+ SigmaIR1CS<C1::ScalarField, LK, GM>> 
+		+ SigmaIR1CS<H, C1::ScalarField, LK, GM>> 
 		(nova: FoldPotSuper<E,P,C2G2,C1,GC1,C2,GC2,FC,CS1,CS2,CS1E,LK, GM, H>, 
 		 com_all_w: C1,
 		 r_all_w: C1::ScalarField) -> Result<Self, Error> {
@@ -1008,7 +1008,7 @@ where
 	/// NOTE: we do not need com_all_w and r_all_w like circ1
 	/// because we only have one circuit.
     pub fn from_nova<FC: FCircuit<C1::ScalarField> 
-		+ SigmaIR1CS<C1::ScalarField, LK, GM>> 
+		+ SigmaIR1CS<H, C1::ScalarField, LK, GM>> 
 		(nova: FoldPotSuper<E,P,C2G2,C1,GC1,C2,GC2,FC,CS1,CS2,CS1E,LK, GM, H>, 
 		 com_all_w_2: C1,
 		 r_all_w_2: C1::ScalarField,
@@ -1498,11 +1498,11 @@ where
 	/// and builds up the checks to verify the consistency among the
 	/// non-deterministic advice.
     pub fn from_nova<
-	FC: FCircuit<C1::ScalarField> + SigmaIR1CS<C1::ScalarField, LK, GM>,
+	FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM>,
 		>
 		(
         nova1: FoldPotSuper<E, P, C2G2, C1, GC1, C2, GC2, FC, CS1, CS2, CS1E, LK, GM, H>,
-        nova2: FoldPotSuper<E, P, C2G2, C1, GC1, C2, GC2, SigmaIR1CS_Inst<C1::ScalarField, C1, CS1,LK,GM2, false>, CS1, CS2, CS1E, LK, GM2, H>,
+        nova2: FoldPotSuper<E, P, C2G2, C1, GC1, C2, GC2, SigmaIR1CS_Inst<C1::ScalarField, C1, CS1,LK,GM2, H>, CS1, CS2, CS1E, LK, GM2, H>,
 
 		cyclepair_inputs: Vec<Vec<C1::ScalarField>>,
 		_qa_nizk_vkey_hash: C1::ScalarField,
