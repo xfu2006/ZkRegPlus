@@ -2084,7 +2084,9 @@ impl <F:PrimeField> WitnessSigmaIR1CS<F>{
 			self.msg1.clone()
 		].concat();
 		let zero = F::zero();
-		CS::commit(params, &vec, &zero)
+		let res = CS::commit(params, &vec, &zero);
+
+		res
 	}
 }
 
@@ -2467,7 +2469,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		// will be enforced somewhere else, but need
 		// the cyclepair input
 		let log_level = LOG4;
-		let b_debug = true;
+		let b_debug = false;
 
 		let mut gt1 = GTimer::new();
 		let lkup_share_size = self.stmt_config.lookup_share_size;
@@ -2512,12 +2514,12 @@ where 	C: CurveGroup<ScalarField=F>,
 		    	let res2 = CS::commit(&self.params, 
 					&vec, &zero).expect("commit fails");
 				assert!(res==res2);
-				if 1>0 {panic!("REMOVE LATER DEBUG USE 66210");}
 			}
 			res
 		}else{
-		    CS::commit(&self.params, 
-				&vec, &zero).expect("commit fails")
+		    let res = CS::commit(&self.params, 
+				&vec, &zero).expect("commit fails");
+			res
 		};
 		log_perf(log_level, &format!("gen_witness step 3.1: gen cmF, for vec.len: {}", vec.len()), &mut gt1);
 		let mut cmF = vec![];
@@ -3383,10 +3385,6 @@ where 	C: CurveGroup<ScalarField=F>,
 			//put it here for consistency.
 			//if b_debug{
 			/*
-			if si.col1_share[i].value().unwrap().is_zero() && !si.col2_share[i].value()?.is_zero(){
-				println!("DEBUG USE 7777: i: {}, col1: {}, col2: {}", i, si.col1_share[i].value().unwrap(), si.col2_share[i].value().unwrap());
-				panic!("STOP HERE 7777");
-			}
 				//assert!(!si.col1_share[i].value().unwrap().is_zero());
 			//}
 			let to_add = if !self.b_cyclepair{

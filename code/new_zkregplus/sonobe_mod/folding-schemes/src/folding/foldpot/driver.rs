@@ -79,7 +79,7 @@ where
  //   C2: CurveGroup,
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
     GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
-    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM>,
+    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM,C=C1>,
 	LK: LookupTableTwoCol<C1::ScalarField>,
     // CS1E is a KZG commitment, where challenge is C1::Fr elem
     CS1E: CommitmentScheme<
@@ -130,10 +130,6 @@ where
 	circuits: Vec<FC>,
 	/// lookup table
 	lkup: Rc<RefCell<LK>>,
-	/* REMOVE LATER
-	prep_param: PreprocessorParamFoldPotSuper::<C1, C2, FC,
-		CS1, CS2, LK, false>, 
-	*/
 	/// the prover/verifier parameters
 	pub nova_param: (<FoldPotSuper<E,P,C2G2, C1, GC1, C2, GC2, FC, CS1, CS2, CS1E, LK, GM, H> as FoldingScheme<C1,C2,FC>>::ProverParam, <FoldPotSuper<E,P,C2G2,C1, GC1, C2, GC2, FC, CS1, CS2, CS1E, LK,GM, H> as FoldingScheme<C1,C2,FC>>::VerifierParam),
 
@@ -167,7 +163,7 @@ where
  //   C2: CurveGroup,
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
     GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
-    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM>,
+    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM,C=C1>,
 	LK: LookupTableTwoCol<C1::ScalarField>,
     // CS1 is a KZG commitment, where challenge is C1::Fr elem
 	/*
@@ -229,7 +225,7 @@ where
     //C2: CurveGroup,
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
     GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
-    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM>,
+    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM,C=C1>,
 	LK: LookupTableTwoCol<C1::ScalarField>,
     CS1: CommitmentScheme<C1,H, ProverParams = PedersenParams<C1>>,
     CS1E: CommitmentScheme<
@@ -782,6 +778,7 @@ where
 		println!("DEBUG USE 5017.1:  n_steps: {}", n_steps);
 		let pc_0 = zero;
 		let pc_0_val = field_to_usize(&pc_0);
+		let precomputed_cmF = None;
         let mut nova1 =
             FoldPotSuper::<E,P, C2G2, C1, GC1, C2, GC2, FC,
 			CS1, CS2, CS1E, LK, GM, H>::init_adv(
@@ -793,7 +790,8 @@ where
 				self.b_full_mode,
 				ch, 
 				rc,
-				total_words
+				total_words,
+				precomputed_cmF
             )
             .unwrap();
 		timer.prt("pass_two: step 2: init nova1");
@@ -833,7 +831,7 @@ where
 				//2.2 compute hash_cmF
 				nova1.pc_i = stmt.pc_i;
 				nova1.pc_i1 = stmt.pc_i1;
-				hash_cmF = nova1.compute_step_hc_cmF(hash_cmF, &stmt)
+				(hash_cmF,_) = nova1.compute_step_hc_cmF(hash_cmF, &stmt)
 				.expect("hash_cmf generation error");
 				//println!("DEBUG USE 402.1: hash_cmF: {}", hash_cmF);
 
@@ -945,6 +943,7 @@ where
 		t1.prt("Step 2: build initial z0");
 
 		//3. build the nova instance
+		let precomputed_cmF = None;
         let mut nova =
             FoldPotSuper::<E,P, C2G2, C1, GC1, C2, GC2, FC,
 			CS1, CS2, CS1E, LK, GM, H>::init_adv(
@@ -956,7 +955,8 @@ where
 				self.b_full_mode,
 				ch,
 				rc,
-				total_words
+				total_words,
+				precomputed_cmF
             )
             .unwrap();
 		t1.prt("Step 3: build nova");
@@ -1103,6 +1103,11 @@ where
 		// compute the final hash_cmF
 		//------------------------------------------
 		let mut word_id = 1;
+		let mut vec_grp_cmF = vec![]; //does not cost much to save
+			//estimate 64 bytes * 700MB/128kb = 
+			//64 * 5.6k = 330kb,
+			//so we can use it to cut prove_step time to avoid computing
+
 		let n_circ = self.circuits.len();
 		let _vec_mapper= self.circuits.iter().map(|c| c.get_mapper()).
 			collect::<Vec<Rc<RefCell<GM>>>>();
@@ -1175,6 +1180,7 @@ where
 					.gen_nd_advice_no_limit(&frag, word_info, prev_adv);
 				assert!(res.is_some(), "UNABLE to generate advice for word id: {}, segment_id: {}", word_id, subseg_id); 
 				let cur_adv = res.unwrap().1;
+
 				log_perf(log_level+2, &format!("-- For subseg_id: {} gen_advice.", subseg_id), &mut gt2);
 				let stmt_res = circ.get_mapper().borrow().build_statement(
 					&frag, &prev_stmt, self.lkup.clone(), &ei,
@@ -1188,9 +1194,12 @@ where
 				stmt.fill_lkup_mvec(&mut m_map, &self.lkup); //needed here!
 
 				//2.4 update the hash_cmF
-				hash_cmF = compute_step_hc_cmF_adv::<C1,LK,CS1,GM,FC,H>(
-					hash_cmF, &stmt, circ, cs_pp, poseidon_config)
-					.expect("compute step hc cmF err");
+				let res =  compute_step_hc_cmF_adv
+						::<C1,LK,CS1,GM,FC,H>(
+						hash_cmF, &stmt, circ, cs_pp, poseidon_config)
+						.expect("compute step hc cmF err");
+				hash_cmF = res.0;
+				vec_grp_cmF.push(res.1);
 
 				//2.5 making updates
 				let ea = stmt.to_extra_info();
@@ -1206,6 +1215,7 @@ where
 			word_id +=1;
 		}
 		let m4 = get_mem_usage_mb();
+		assert!(vec_grp_cmF.len()==vec_res.len());
 		assert!(total_lkup_covered >= lkup_len, "total: {}, lkup_len: {}", total_lkup_covered, lkup_len);
 		log_perf(log_level, &format!(
 			"{} step 3: dispatch w and generate cmF, mem: {} MB for total_word_len: {}: ", phase_name, m4-m3, format_bytes(total_wd_len*31))
@@ -1281,7 +1291,8 @@ where
 				self.b_full_mode,
 				ch,
 				rc,
-				total_words
+				total_words,
+				Some(vec_grp_cmF)
             )
             .unwrap();
 		log_perf(log_level, &format!(
@@ -1297,7 +1308,7 @@ where
 		let mut gtw2 = GTimer::new();
 		let m7 = get_mem_usage_mb();
 		let mut word_id = 1;
-		let mut start = 0; //global position in ENTIRE sequence for update lkup
+		let mut _start = 0; //global position in ENTIRE sequence for update lkup
 							//share in each statement
 		for word in iter_words3{
 			let mut prev_adv = None;
@@ -1320,15 +1331,18 @@ where
 					.gen_nd_advice_no_limit(&frag, word_info, prev_adv);
 				assert!(res.is_some(), "UNABLE to generate advice for word id: {}, segment_id: {}", word_id, subseg_id); 
 				let cur_adv = res.unwrap().1;
+
 				let stmt_res = circ.get_mapper().borrow().build_statement(
 						&frag, &prev_stmt, self.lkup.clone(), 
 						ei, cur_adv.clone(), share_size,
 						false);
 				assert!(stmt_res.is_ok());
 				prev_adv = Some(cur_adv);
-				let mut stmt = stmt_res.unwrap();
-				stmt.update_lookup(start,start+share_size, &self.lkup, &m_map);
-				start += share_size;
+				let stmt = stmt_res.unwrap();
+				//NOTE: should not do update_lookup as it
+				//make duplicates counting of lookup elements for a second time
+				//stmt.update_lookup(start,start+share_size, &self.lkup, &m_map);
+				_start += share_size;
 				log_perf(log_level+1, &format!("-- gen advice for word_id: {}, seg_id: {}", word_id, subseg_id), &mut gtw2);
 
 				//2.2. prove step
@@ -1436,7 +1450,7 @@ pub fn foldpot_main<E:Pairing<G1=C1,G2=C2G2>,P:PairingVar<E,CF3<C2G2>>+std::fmt:
 where
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
     GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
-    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM>,
+    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM,C=C1>,
     //FC: SigmaIR1CS_Inst<C1::ScalarField, C1, CS1, LK, false>,
 	LK: LookupTableTwoCol<C1::ScalarField> + 'static,
     CS1: CommitmentScheme<C1, H, ProverParams = PedersenParams<C1>> +

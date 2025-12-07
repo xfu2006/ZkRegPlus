@@ -64,7 +64,8 @@ pub fn compute_step_hc_cmF_adv<
 	LK:LookupTableTwoCol<C1::ScalarField>,
     CS1: CommitmentScheme<C1,H>,
 	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug,
-    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM>,
+    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM,
+C = C1>,
 	const H: bool
 >(
 	hc_cmF: C1::ScalarField, 
@@ -72,7 +73,7 @@ pub fn compute_step_hc_cmF_adv<
 	circ: &FC,
 	_cs_pp: &CS1::ProverParams,
 	poseidon_config: &PoseidonConfig<C1::ScalarField>
-) -> Result<C1::ScalarField, Error>
+) -> Result<(C1::ScalarField,C1), Error>
 where
     <C1 as CurveGroup>::BaseField: PrimeField,
     <C1 as Group>::ScalarField: Absorb,
@@ -85,7 +86,7 @@ where
 	//let act_idx = field_to_usize(&self.pc_i);
 	let fq_bits = <<C1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as usize;
 	let zi_part2 = ZiPartTwoInst::dummy(circ.is_full_mode(), fq_bits); //does not matter
-	let cmF = circ.gen_cmF(&stmt.to_vec(), &zi_part2)
+	let cmF:C1 = circ.gen_cmF(&stmt.to_vec(), &zi_part2)
 		.expect("gen_cmF error");
 
 	let mut vec_cmF = vec![];
@@ -99,7 +100,7 @@ where
 
 	//3. hash the result
 	let new_hc_cmF:C1::ScalarField=sponge_cmf.squeeze_field_elements(1)[0];
-	Ok(new_hc_cmF)
+	Ok( (new_hc_cmF, cmF) )
 }
 
 
@@ -575,7 +576,7 @@ where
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
     C2: CurveGroup,
     GC2: CurveVar<C2, CF2<C2>>,
-    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM>,
+    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM, C=C1>,
 	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug,
 	LK: LookupTableTwoCol<C1::ScalarField>,
     CS1: CommitmentScheme<C1, H>,
@@ -677,6 +678,10 @@ where
 
 	/// number of words
 	pub n_words: usize,
+
+	/// cached (pre-computed) commitment to Fixed segments
+	/// usually from pass1 of driver
+	pub vec_precomputed_group_cmF: Option<Vec<C1>>,
 }
 
 /// This just creates DUMMY instance. 
@@ -712,7 +717,7 @@ where
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
  //   C2: CurveGroup,
     GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
-    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM>,
+    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM,C=C1>,
 	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug,
 	LK: LookupTableTwoCol<C1::ScalarField>,
     CS1: CommitmentScheme<C1, H>,
@@ -768,6 +773,7 @@ where
 		ch: C1::ScalarField,
 		rc: C1::ScalarField,
 		n_words: usize,
+		vec_precomputed_group_cmF: Option<Vec<C1>>,
     ) -> Result<Self, Error> {
         let (pp, vp) = params;
 		let size_F = pp.vec_pp.iter().map(|p| p.size_F)
@@ -888,6 +894,7 @@ where
 			pc_i1: pc_0.clone(),
 
 			n_words: n_words,
+			vec_precomputed_group_cmF,
         })
     }
 
@@ -981,7 +988,7 @@ where
 
 	/// given the statement of the current step and the current hashchain
 	/// of cmF, compute the cmF.
-	pub fn compute_step_hc_cmF(&self, hc_cmF: C1::ScalarField, stmt: &StatementInst<C1::ScalarField, LK>) -> Result<C1::ScalarField, Error>{
+	pub fn compute_step_hc_cmF(&self, hc_cmF: C1::ScalarField, stmt: &StatementInst<C1::ScalarField, LK>) -> Result<(C1::ScalarField,C1), Error>{
 		/* REMOVE LATER if the call of compute_step_hc_cmF_adv works
 		//1. create the sponge
         let mut sponge_cmf = 
@@ -1037,7 +1044,7 @@ where
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
   //  C2: CurveGroup,
     GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
-    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM>,
+    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM, C=C1>,
 	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug,
 	LK: LookupTableTwoCol<C1::ScalarField>,
     CS1: CommitmentScheme<C1, H>,
@@ -1348,8 +1355,13 @@ where
         let i_usize: usize = usize::from_le_bytes(i_bytes);
 
 		//4. build `z_{i+1}`: z_i1_part2 is the part 2 instance of the `z_{i+1}`
-		//TODO cmF
-		let pre_cmF = None;
+		let usize_i= field_to_usize(&self.i);
+		let pre_cmF = if self.vec_precomputed_group_cmF.is_some(){
+			Some(self.vec_precomputed_group_cmF.as_ref().
+				unwrap()[usize_i].clone())
+		}else{
+			None	
+		};
         let (wtns, wtns_config, z_i1_part2) = self
             .F[j_pci1]
             .gen_witness(&external_inputs, &self.zi_part2_inst, pre_cmF);
@@ -2019,6 +2031,7 @@ pub mod tests_mod_super {
 		let pc_0_val = 0;
 		let _pc_0 = Fr::from(pc_0_val as u32);
 		let b_full = false;
+		let precomputed_cmF = None;
         let nova1 =
             FoldPotSuper::<E,P,C2G2, Projective, GVar, Projective2, GVar2, SigmaIR1CS_Inst<Fr,Projective,CS1,LK, GM, H>, CS1, CS2, CS1E, LK, GM, H>::init_adv(
                 &nova_params,
@@ -2030,12 +2043,13 @@ pub mod tests_mod_super {
 				ch,
 				rc,
 				num_steps,
+				precomputed_cmF
             )
             .unwrap();
 
 		let mut hash_cmF= Fr::zero();
 		for i in 0..num_steps{
-			hash_cmF = nova1.compute_step_hc_cmF(hash_cmF, &vec_stmts[i])
+			(hash_cmF,_) = nova1.compute_step_hc_cmF(hash_cmF, &vec_stmts[i])
 				.expect("hash_cmf generation error");
 		}
 		let fq_bits = <<Projective as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as usize;
@@ -2049,6 +2063,7 @@ pub mod tests_mod_super {
 		// the previous step
 		println!("DEBUG USE 1000 ########################### START PASS 2\n\n\n");
         let z_0 = vec![hash_cmF, z0_part2_hash]; //[stage hc_cmF, z_0]
+		let precomputed_cmF = None;
         let mut nova =
             FoldPotSuper::<E,P,C2G2, Projective, GVar, Projective2, GVar2, SigmaIR1CS_Inst<Fr,Projective,CS1,LK,GM,H>, CS1, CS2, CS1E, LK, GM, H>::init_adv(
                 &nova_params,
@@ -2060,6 +2075,7 @@ pub mod tests_mod_super {
 				ch,
 				rc,
 				num_steps,
+				precomputed_cmF,
             )
             .unwrap();
 

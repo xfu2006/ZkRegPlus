@@ -22585,6 +22585,49 @@ Goal 3. need to remove the requirement of params from
 	[c] regression: esting.
 --- TODO: check the TODO cmF
 
+Sat 12/06/2025
+Goal 1. try to improve cmF
+	[a] modify compute_step_hc_cmF_adv
+		-> cascading changes
+	[b] collect vector of cmFs
+	[c] unit testing
+	[d] pass cached_group_cmF
+	[f] fixed all syntax errors
+
+Goal 2. address prove step
+	[a] where is the step ID?
+	[b] why it's generating different values? dump first couple of elements
+		at two places
+		7777.1.1 
+		and 7777.1.2
+	[c] looks like the stmt value is different?
+
+Sunday 12/07/2025
+Goal 1. debug prove_step cmF problem
+	[a] check statement using small examples
+	[b] check why statement not working
+	[c] compare the stmt and nd_advice
+	[d] check if the stored statement is the same as the newly generated
+		statement
+	[e] if not match, then pass the stored advice and see if there 
+		is any change
+	[d] both vector have contents but somehow they differ!
+		always the same: 16239, st8435457 vs 0
+	[e] observe the code again, it's the problem of update lookup because it adds share updates. But now it fails the snark verification.
+	[f] for now do the improvement first.
+
+Goal 2. continue to implement improvement of passing saved grp_cF
+	[a] make it work
+	[b] clean up all debug messages
+	[c] regression testing with larger set
+
+Goal 3. check the other pre_cmF
+	[a] circuit.rs
+	[b] mod.rs
+
+Goal 4. circuit_super.rs
+
+--- now address all TODO cmF especially for prove_step.
 
 **************************************************************************
 *** TODO *** 

@@ -776,8 +776,8 @@ where
         let i_usize: usize = usize::from_le_bytes(i_bytes);
 
 		//z_i1_part2 is the part 2 instance of the `z_{i+1}`
-		//TODO cmF
 		let pre_cmF = None;
+		if 1>0 {panic!("this function should NOT be called. call mod_super.rs prove_step() instead");}
         let (wtns, _wtns_config, z_i1_part2) = self
             .F
             .gen_witness(&external_inputs, &self.zi_part2_inst, pre_cmF);
@@ -1163,8 +1163,8 @@ where
 		let circ = &self.F;
 		let fq_bits = <<C1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as usize;
 		let zi_part2 = ZiPartTwoInst::dummy(circ.is_full_mode(), fq_bits); //does not matter
-		//TODO cmF
 		let pre_cmF = None;
+		if 1>0 {panic!("this function should not be called. Call the one in mod_super.rs instead");}
 		let (wit, _wconfig, _zi1_part2) = circ
 			.gen_witness(&stmt.to_vec(), &zi_part2, pre_cmF);
 		let cmF = wit.gen_cmF::<C1,CS1,H>(&self.cs_pp).expect("gen_cmF error"); 
