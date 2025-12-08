@@ -849,6 +849,7 @@ where
 				qa_nizk_vkey_hash: nova1_qa_nizk_vkey_hash
 					.expect("nova1 qanizk vkey hash empty!"), 
 			};
+			println!("DEBUG USE 6602.2: snark_inp: {:#?}", snark_inp);
 			let public_input: Vec<F> = snark_inp.to_vec().expect("to_vec err");
         	let snark_v= S::verify(
 				&snark_vk.expect("snark vkey empty!"), 

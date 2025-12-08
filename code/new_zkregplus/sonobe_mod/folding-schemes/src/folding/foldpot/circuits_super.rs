@@ -314,6 +314,9 @@ pub struct AugmentedFCircuitFoldPotSuper<
 	pub n_circ: usize,
 	/// j, the Fj to compute `z_{i+1}` = Fj(z_i), regard it as hard coded
 	pub j: C1::ScalarField,
+
+	/// precomputed commitment to the Fixed segment (if its available)
+	pub precomputed_cmF: Option<C1>,
 }
 
 
@@ -374,6 +377,7 @@ where
 
 			n_circ: n_circ, //dummy anway. but make at least one circ
 			j: C1::ScalarField::from(j as u32),
+			precomputed_cmF: None,
         }
     }
 }
@@ -386,7 +390,7 @@ where
     C2: CurveGroup,
     GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
 	LK: LookupTableTwoCol<C1::ScalarField>,
-    FC: FCircuit<CF1<C1>> + SigmaIR1CS<H, CF1<C1>, LK, GM >,
+    FC: FCircuit<CF1<C1>> + SigmaIR1CS<H, CF1<C1>, LK, GM, C=C1 >,
     <C1 as CurveGroup>::BaseField: PrimeField,
     <C2 as CurveGroup>::BaseField: PrimeField,
     <C1 as Group>::ScalarField: Absorb,
@@ -396,7 +400,7 @@ where
     for<'a> &'a GC2: GroupOpsBounds<'a, C2, GC2>,
 {
     fn generate_constraints(self, cs: ConstraintSystemRef<CF1<C1>>) -> Result<(), SynthesisError> {
-		let b_debug = false;
+		let b_debug = true;
 		let log_level = LOG4;
 		let mut gt1 = GTimer::new();
 		let (mut nc, mut nv) = (cs.num_constraints(), cs.num_witness_variables());
@@ -457,9 +461,7 @@ where
 
 		//3. Compute z_{i+1} from the F circuit and use it as Witness to
 		// construct Var
-		//TODO cmF
-		let pre_cmF = None; 
-		if 1>0 {println!("STOP HERE 3000");}
+		let pre_cmF = self.precomputed_cmF;
         let i_usize = self.i_usize.unwrap_or(0);
  		let (witness, wit_cfg, z_i1_part2) = 
   			self.F.gen_witness(&stmt, &self.zi_part2_inst.clone().unwrap(),

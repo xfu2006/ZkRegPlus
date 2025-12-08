@@ -22625,7 +22625,24 @@ Goal 3. check the other pre_cmF
 	[a] circuit.rs
 	[b] mod.rs
 
-Goal 4. circuit_super.rs
+Goal 4. circuit_super.rs generate_constraints
+	[a] it's called in preprocess
+	[b] check 3000 dump again
+
+Goal 5. Debut the new problem of failing snark verifier
+	[a] recompile
+	[b] enable debug in gen_constraintsa
+	[c] why it FAILs at the last step after circuit is already checked
+		satisfiability?
+	[d] check the circuit is satisfied or not -> but the cs is satisfied
+	[e] check the inputs, difference
+	-> kzg_sum1 different!
+		(a) versio 1: from nova1.zi_part2_inst.sum_kzg_eval_lk
+			+ ...
+		(b) version: prf.agg_kzg_prf.eval
+	-> why would stmt be different?
+		-> recover by passing None
+		-> now the eval works. why???
 
 --- now address all TODO cmF especially for prove_step.
 

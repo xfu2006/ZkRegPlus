@@ -2469,7 +2469,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		// will be enforced somewhere else, but need
 		// the cyclepair input
 		let log_level = LOG4;
-		let b_debug = false;
+		let b_debug = true;
 
 		let mut gt1 = GTimer::new();
 		let lkup_share_size = self.stmt_config.lookup_share_size;
@@ -2991,7 +2991,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		z_i: Vec<FpVar<F>>,
 		external_inputs: Vec<FpVar<F>>,
 	) -> Result<Vec<FpVar<F>>, SynthesisError> {
-		let b_debug = false; //set to false in production mode
+		let b_debug = true; //set to false in production mode
 		let b_show_sigs = false; //set to false in production mode
 		let log_level = LOG6;
 		let b_perf = LOG_LEVEL>=log_level;

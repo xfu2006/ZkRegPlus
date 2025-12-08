@@ -1235,7 +1235,7 @@ where
 				kzg_row: kzg_row,
 				vec_rows: vec_rows,
 			};
-			let b_debug = false;
+			let b_debug = true;
 			let (pkey, vkey) = setup_qa_nizk::<E>(&smatrix, b_debug);
 			(Some(pkey), Some(vkey), cols_len)
 		};
@@ -1296,7 +1296,7 @@ where
         // Nova does not support multi-instances folding
         _other_instances: Option<Self::MultiCommittedInstanceWithWitness>,
     ) -> Result<(), Error> {
-		let b_debug = false;
+		let b_debug = true;
 		let log_level = LOG4;
 		let mut gt1 = GTimer::new();
 		let mut gt2 = GTimer::new();
@@ -1498,6 +1498,7 @@ where
 				n_circ: field_to_usize(&self.n_circ), 
 				j: self.pc_i1.clone(), //this is the j for Fj(z0)-> z1
 									//its value should be pc_1
+				precomputed_cmF: pre_cmF
             };
 
             #[cfg(test)]
@@ -1667,7 +1668,7 @@ where
 
 				n_circ: field_to_usize(&self.n_circ), 
 				j: self.pc_i1.clone(), //this is the pc for Fj(zi) -> z_i1
-
+				precomputed_cmF: pre_cmF
             };
 
             self.cf_W_i = cfF_W_i1;
@@ -1892,7 +1893,7 @@ where
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
     C2: CurveGroup,
     GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
-    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM>,
+    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM, C=C1>,
 	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug,
 	LK: LookupTableTwoCol<C1::ScalarField>,
     <C1 as CurveGroup>::BaseField: PrimeField,

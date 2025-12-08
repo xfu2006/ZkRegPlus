@@ -1054,6 +1054,7 @@ where
 		//words = 23M * 32 byte = 700M data
 		//each claim is small, up to 300 claims. So small.
 		let log_level = LOG2;
+		let b_debug = true;
 		let mut gt1 = GTimer::new();
 		let m1 = get_mem_usage_mb(); 
 		let words = {
@@ -1292,7 +1293,8 @@ where
 				ch,
 				rc,
 				total_words,
-				Some(vec_grp_cmF)
+				//Some(vec_grp_cmF)snark_inp
+				None,
             )
             .unwrap();
 		log_perf(log_level, &format!(
@@ -1338,10 +1340,10 @@ where
 						false);
 				assert!(stmt_res.is_ok());
 				prev_adv = Some(cur_adv);
-				let stmt = stmt_res.unwrap();
+				let mut stmt = stmt_res.unwrap();
 				//NOTE: should not do update_lookup as it
 				//make duplicates counting of lookup elements for a second time
-				//stmt.update_lookup(start,start+share_size, &self.lkup, &m_map);
+				stmt.update_lookup(_start,_start+share_size, &self.lkup, &m_map);
 				_start += share_size;
 				log_perf(log_level+1, &format!("-- gen advice for word_id: {}, seg_id: {}", word_id, subseg_id), &mut gtw2);
 
@@ -1373,7 +1375,7 @@ where
 		let _verifier_param = self.nova_param.1.clone();
 
 		//5. test and verify
-		#[cfg(test)]{
+		if b_debug{
         	let (r1, r2, r3, r4) = nova.instances();
         	FoldPotSuper::<E,P,C2G2, C1, GC1, C2, GC2, FC, CS1, CS2, CS1E, LK, GM, H>::verify(
 				_verifier_param,
@@ -1658,6 +1660,7 @@ where
 
 			qa_nizk_vkey_hash: qa_nizk_vkey_hash1, 
 	};
+	println!("DEBUG USE 6602.1: snark_inp: {:#?}", inp);
 	let decider_circuit = TwoPhaseDeciderEthCircuitSuper
 		::from_nova::<FC>(nova1, nova2, 
 			cyclepair_inputs, qa_nizk_vkey_hash.clone(), 
