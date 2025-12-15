@@ -22644,11 +22644,234 @@ Goal 5. Debut the new problem of failing snark verifier
 		-> recover by passing None
 		-> now the eval works. why???
 
---- now address all TODO cmF especially for prove_step.
+Monday 12/08/2025
+Goal 1. debug the strange rc problem still related to lookup
+	[a] read code update_lkup
+	[b] it is indeed needed in pass-3, but the problem is that
+		cmF fixed segment needs to include m_table!
+	[c] think -> need 3 pass?
 
-**************************************************************************
-*** TODO *** 
-(1) improve prove_step step 2: fold_inst (use parallel)
-(2) improve prove_step step 4. generate augmented F.cs - need to do further analysis (in particular its step 3 and 3.0)
-************
-**************************************************************************
+Goal 2. implementation
+	[a] read loop1-2
+	[b] read loop3
+	[c] decide which loop to use -> use loop3
+	[d] go over pass1.
+	[e] add vec_wordnames to pass_all
+	[f] pass 1
+	[g] pass 2
+	[h] pass 3
+Goal 3. regression test
+	[a] test
+	[b] larger test
+	[c] remove debug message -> DONE
+	[d] check perf
+		-> Pass 1:
+			gen_advice: 150ms.
+			200ms for each segment
+		-> Pass 2:
+			200ms for gen advice and stmt
+			cmF -> 520ms
+			total: 700ms for each segment
+		-> Pass 3 per proof:
+			-> it does save 500ms for each step of prove_step twice
+				(saved 560ms * 2 = 1.1 sec)
+			-> but it adds 200ms for pass1
+				-> so actually saved 0.8 to 0.9 sec
+			-> total cost: 7.0 to 7.2 sec now
+				major cost: generate aug F.cs 4170s
+Goal 4. identify the next improvement
+	[a] dump the cost of augF.cs
+	[b] cost anaysis: naub cost: 3.2 gen_step-cs
+	costly items: 
+		step 3: 2212 ms (it's the call of gadgets one by one - seems
+			no hope to save it? - breakdown the detailed cost)
+			-for adding (363k constraint - slower)
+		step 5: AFTER inv_hab22: 1212 ms (for adding 1.2M constraints)
+		step 5.2: 627ms (for adding 533k constraints)
+		step 7:321ms (for adding 300k constraints) 
+	[c] question - but do you build circuit every time?
+		-> the problem is that circuit are rebuilt every time
+		almost 4M gates: it costs about 4 seconds.
+		But the real commitment takes about less than 3 seconds.
+	[d] need to think about it.
+
+Tuesday 12/09/2025
+Goal 1. try improve augF generation
+	[a] check how augF generate constraints (mainly how it's createing
+		cs
+	[b] looks like it's not working by setting up mode
+Goal 2. check the cost of constructing circuits
+	[a] note that there is a construct_matrices boolean flag
+		in prover mode, it does not construct the constraints
+		which might reduce time.
+	[b] no generatin constraints working, but
+		-> cut only about 30% of cost
+		-> gen_step_cs step 3. 2212ms->1630ms
+			step 5: 1212ms -> 513ms
+			step 5.2: 627ms -> 454ms
+			step 7: 312ms -> 237ms
+		overall it's cutting from 7.0-7.2 sec to 6.2 sec
+		overall gen augF.cs is down from 4.6 sec to 3.5 sec (saving 1 sec)
+		Note that minimally. So now we are cutting from about 
+			10 sec to 6.2 sec
+Goal 3. can we parallel the generation of circuit?
+	[a] read how aug_F generates its circuit in circuit_super.rs
+	[b] figure out how does it call F.generate constraints?
+	[c] can we merge two r1cs instance -> no
+	[d] probably we have to make gen_constraints() too mode,
+		early mode, continue mode and full mode
+	[e] can we move self.F.generate_step_constraints() early?
+		looks like possible. 
+	[f] problem. z_i1 is returnted by self.F.generate_step_constraints()
+		then it needs to be sequential because
+			z_i1 encodes the information of
+				sum_hab22_lefft and sum_kzg_eval_lk
+			-> it's possible to precompute them for parallel processing
+			but it looks like not worth the efforts.
+
+Wed 12/10/2025
+Goal 1. how to further improve the performance of sigma_ir1cs
+	generate_step_constraints
+	[a] dump and analyze data
+	--  gen_step_cs step 3: cs: 363393, vars: 252124 1735 ms
+		==> it's calling assert_msg3 one by one
+	-- gen_step_cs step 5: AFTER inv_hab22: 624023, cs.lc_size: 8819347, cons: 1207105 754 ms
+		==> it's doing 3 case computing of sum_hab22
+		==> inv_hab22_left size 624k, cs added 826k, vars
+			added 208k.
+	-- gen_step_cs step 5.2: cs: 533769, vars: 410886 603 ms
+		=> cs added 533k, vars: 410k, 
+	--  gen_step_cs step 7: cs: 291380, vars: 249899 316 ms
+
+Goal 2. analyze step 5 for 624k inv_hab22 entries
+	[a] add timer and analyze
+	[b] case2 time avg 2 us
+	[c] case 3 time - avg 2 us  -> so its about 500k per second
+	[d] case 3.1 900ns, 3.2 28ns, 3.3: 380ns, 3.4 260ns
+	[e] check detailed timing of enfofce_constraint
+		[a] add dump
+		[b] note that it's also doing the tracing!
+		[c] also why it's outputting should_enforce_constraint()
+			is true, which is ALREADY disabled?
+		[c1] disable the should_enfoce constraint.
+			-> now 
+			3.1 577 ns, 3.2 55 ns, 3.3 76 ns, 3.4 260 ns
+			--> 3.3 improved from 380ns to 76ns
+		[c2] disable the tracing part
+			3.1 604ns, 3.2 52ns, 3.3 73ns, 3.4 258ns
+			--> seems not cutting much
+		[c3] after puuting inline always to should_construct_matrices
+			and enforce_constraint -> does not help much
+		[c4] manually measure the function enforce_constraint
+			(a) with insert into matrix 200-400 ns
+			(b) after 15-17ns
+Goal 3. what's happening with FpVar?
+	[a] check the add function and time it
+	157ns!
+	[b] DEBUG USE 7777: e1: 54 ns, e2: 503, e3: 542
+		-> actual 54, 450, 40 ns
+	[c] so it's the cost of new_lc()
+		which creates linear combination
+		what about placing it into if branch on construct_matrices
+			without inserting into lc? --> looks like no change
+		-> each nano call itself calls: costs 30 ns
+### TODO ### It looks that LinearCombination e.g.,
+	op_impl is costly when doing linear combination add.
+	# but the question is: (1) shall we include linear combinations
+		(2) how can we speed it up?
+
+Thursday 12/11/2025
+Goal 1. read the source code of FpVar add again
+	[a] AllocatedFp does correspond to a witness variable (Variable)
+	[b] AllocatedFp::Add
+		-> it creates the result value
+		-> build the linear combination -> it returns a Variable which
+		represents LC
+		-> Variable has 3 types: Instance, Witness and
+			SymbolicLc(LcIndex)
+			there is an lc_map which maps from index of var to
+				the LinearCombination
+		-> create the result variable
+		-> WHAT IF do not create linear combination but just
+			create a winess variable what's going to happen?
+Goal 2. experiment with FpVar add do not create linear combination
+	[a] 50 vs 200 ns
+	[b] but it breaks r1cs not same size when mat_mult 
+		check where it breaks.
+		breaks at nifs.rs:56 compute_T
+			<-- compute_cmT
+			  <-- prove_step of FoldPotSuper which has the r1cs[]
+			  	array and it passes r1cs to compute_cmT
+				and the. the size incompatible.
+
+Sunday 12/14/2025
+Goal 1. why it's generating different sizes of witness vars
+	[a] observe the compute_cmT nifs:5
+	[b] M.n_cols is much higher than z.len
+	where z is from w1 and w2.W
+	[c] this is contrarary to expectation that 
+		r1cs cols should be less because 
+	[d] in mod.rs add b_old and check
+		cols: 184024, z.width: 184024
+	[e] but the wrong version still gives the right answer why?
+		[e1] debug again
+		[e2] it looks A.cols is 192665 initially but
+			for the direct witness versin it expands 3 times
+			426570
+	[f] read transform_lc again in constraint_system
+		inline_all_lcs is called in finalize
+		check whether it's called: but it is NOT called in prove_step
+		-> so this implies the logic of add for linear combinations
+		need to be re-studied.
+	[g] conclusion: it's not related to transform_lc_map
+		-> instead FpVar + FpVar should be regarded
+			as a symbolic var (expression) until it is used in enforcement.
+	[h] SO. we do have to revert it back to what it is.
+
+Monday 12/15/2025
+Goal 1.  try just create a SYMBOLIC VAR with one value instead of chains.
+	[a] how to construct lc of one pair?
+		it's a vector of (F,Variable)
+	[b] now it constructs everything but fails the snark proof, even
+		with dbug on it still fails
+	[c] see if it's worth to explore more (comment out all code in FpVar::add
+		for now)
+			gen_step_cs improved from 1620 to 1565, so it's about 10%
+			not really worth the efforts
+	[d] just revert to what it was before for FpVar::add
+Goal 2.  analyze the performance:
+	step 31, 32, 38 usually small
+		but e4 can cost around 200 to 800
+		given each step costing itself about 30ns,
+		e4 is costing problem
+		the largest value is even 1968241 ns
+			which is: 1ms
+	-> 50M entryies
+	-> e5: 253 nanosecond
+	-> max: 2M
+	-> num greater than 100k: 77
+	-> num greater than 10k: 1651 out of 50M this is a very small number
+		can be regarded as resulted from context swictch.
+	*** the timer cost is: 22 ns (e3-e2) ***
+	e1: (avg 17) -> cost to take value
+	e2:  (avg 40) -> lc!() --> real cost: 40-17-22 = 1 ns
+	e3: (avg 62) -> nothing between --> real cost: 0ns
+	e4: (avg 231) -> 2 lc plus + one new lc --> real cost: 231-62-22 = 157ns
+	e5: (avg 253) -> AllocatedFp::new() -> real cost: 253-231-22 = 0ns
+	****
+Goal 3. further breakdown the analysis of e4
+	[a] run data again.
+	[b] analyze again
+		e3: 2 lc plus --> real cost: 130-42-22 = 66ns
+		e4: new lc --> real cost: 245-130-22 = 97ns
+	[c] e3: 179-60-22 = 97ns
+		e4: 341-179-22 = 140 ns
+	[c] again: 
+		e3: 178-60-22 = 96ns
+		e4: 339-178-22 = 139ns
+
+Goal 4. analyze the performance of new_lc: cost 139ns
+	[a] break down the cost 191million entries
+		e1: 17 ns-22ns = 0ns (create LcIndex)
+		e2: 42-17-22 = 3ns   (create SymlicLc variable)
+		e3:  172-42-22 = 108ns  (insert into lc_map)

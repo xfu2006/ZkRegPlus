@@ -190,6 +190,7 @@ impl<F: Field> ConstraintSystem<F> {
     }
 
     /// Check whether or not `self` will construct matrices.
+    #[inline(always)]
     pub fn should_construct_matrices(&self) -> bool {
         match self.mode {
             SynthesisMode::Setup => true,
@@ -244,17 +245,23 @@ impl<F: Field> ConstraintSystem<F> {
     /// Obtain a variable representing a linear combination.
     #[inline]
     pub fn new_lc(&mut self, lc: LinearCombination<F>) -> crate::r1cs::Result<Variable> {
-        let index = LcIndex(self.num_linear_combinations);
-        let var = Variable::SymbolicLc(index);
+		use ark_std::time::Instant;
+        let start = Instant::now();
 
-        self.lc_map.insert(index, lc);
+        let index = LcIndex(self.num_linear_combinations);
+		let e1= start.elapsed().as_nanos();
+        let var = Variable::SymbolicLc(index);
+		let e2= start.elapsed().as_nanos();
+		self.lc_map.insert(index, lc);
+		let e3= start.elapsed().as_nanos();
+		println!("DEBUG USE 7777: e1: {} ns, e2: {}, e3: {}", e1, e2, e3);
 
         self.num_linear_combinations += 1;
         Ok(var)
     }
 
     /// Enforce a R1CS constraint with the name `name`.
-    #[inline]
+    #[inline(always)]
     pub fn enforce_constraint(
         &mut self,
         a: LinearCombination<F>,
@@ -270,11 +277,15 @@ impl<F: Field> ConstraintSystem<F> {
             self.c_constraints.push(c_index);
         }
         self.num_constraints += 1;
+		/* LOOKS LIKE simply set default-features = false
+		on ark-r1cs-std crate does not disalbe it.
+		so temporary solution commitent it here. Xiang Fu.
         #[cfg(feature = "std")]
         {
-            let trace = ConstraintTrace::capture();
+           let trace = ConstraintTrace::capture();
             self.constraint_traces.push(trace);
         }
+		*/
         Ok(())
     }
 

@@ -17,7 +17,7 @@ pub const LOG4:usize = 5;
 pub const LOG5:usize = 6;
 pub const LOG6:usize = 7;
 /// current default log level for entire system
-pub const LOG_LEVEL:usize = LOG4;
+pub const LOG_LEVEL:usize = LOG6;
 
 /// convert from log level to its name
 pub fn name_log_level(i: usize)->String{
@@ -61,7 +61,9 @@ pub fn flog(log_level: usize, msg: &String, acc: &mut Vec<String>){
 /// log the performance.
 pub fn log_perf(log_level: usize, log_title: &str, timer: &mut Timer){
 	timer.stop();
-	if timer.time_us()<1000{
+	if timer.time_ns()<1000{
+		log(log_level, &format!("{} {} ns", log_title, timer.time_ns()));
+	}else if timer.time_us()<1000{
 		log(log_level, &format!("{} {} us", log_title, timer.time_us()));
 	}else{
 		log(log_level, &format!("{} {} ms", log_title, timer.time_us()/1000));

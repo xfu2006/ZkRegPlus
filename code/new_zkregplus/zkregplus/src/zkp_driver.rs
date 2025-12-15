@@ -60,8 +60,9 @@ type FC<F,C,CS> = SigmaIR1CS_Inst<F,C,CS,LK<F>,GM<F>,false>;
 // --------- type aliases for zkp_driver above -------------
 
 /// load the files and pack them as nibbles
+/// return (words in packed nibbles, word info, file names)
 fn load_files<F:PrimeField>(list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavApproxConfig, b_read_cache: bool, b_write_cache: bool, cache_dir: &str)
-	->(Vec<Vec<F>>, Vec<WordInfo>){
+	->(Vec<Vec<F>>, Vec<WordInfo>, Vec<String>){
 	//1. read the list of files
 	let b_debug = false;
 	let proot = proj_root();
@@ -122,7 +123,7 @@ fn load_files<F:PrimeField>(list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavA
 		vec_word_info
 	};
 
-	(final_data, vec_word_info)
+	(final_data, vec_word_info, file_names.clone())
 }
 
 
@@ -487,7 +488,7 @@ where
 	log_perf(log_level, &format!("ZIP driver step 1: build DB."), &mut gt1);
 	
 	//2. load the files as vec of words
-	let (vec_words, vec_word_info) = load_files::<CF1<C1>>(list_file_to_scan, &db, &cfg, b_read_cache, b_write_cache, cache_dir);
+	let (vec_words, vec_word_info, vec_word_fnames) = load_files::<CF1<C1>>(list_file_to_scan, &db, &cfg, b_read_cache, b_write_cache, cache_dir);
 	let total_word_len:usize = vec_words.iter().map(|w| w.len()).sum();
 	let lkup_len = db.lkup.get_size();
 	log_perf(log_level, &format!("ZIP driver step 2: load words."), &mut gt1);
@@ -513,7 +514,7 @@ where
 	let lkup = Rc::new(RefCell::new(db.lkup));
 	foldpot_main::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,FC<CF1<C1>,C1,CS1>,
 		S,LK<CF1<C1>>,GM<CF1<C1>>, false>(
-		lkup, vec_circs, vec_words, vec_word_info, sample_individual_prf).expect("main err");
+		lkup, vec_circs, vec_words, vec_word_info, sample_individual_prf,vec_word_fnames).expect("main err");
 
 }
 
@@ -668,6 +669,6 @@ pub mod tests_zkp_driver{
 
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
-		small_data::<Fr>();
+		small_data2::<Fr>();
 	}
 }

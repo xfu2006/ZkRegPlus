@@ -20,7 +20,7 @@ use ark_r1cs_std::{
 	//prelude::*,
     ToConstraintFieldGadget,
 };
-use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystem};
+use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystem,SynthesisMode};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::fmt::Debug;
 use ark_std::rand::RngCore;
@@ -1235,7 +1235,7 @@ where
 				kzg_row: kzg_row,
 				vec_rows: vec_rows,
 			};
-			let b_debug = true;
+			let b_debug = false;
 			let (pkey, vkey) = setup_qa_nizk::<E>(&smatrix, b_debug);
 			(Some(pkey), Some(vkey), cols_len)
 		};
@@ -1296,7 +1296,9 @@ where
         // Nova does not support multi-instances folding
         _other_instances: Option<Self::MultiCommittedInstanceWithWitness>,
     ) -> Result<(), Error> {
-		let b_debug = true;
+		let b_debug = false; // should be the same as
+			//circuit_super.generate_constraints.b_debug!
+			//as the CS is set up with no matrix mode when not b_debug
 		let log_level = LOG4;
 		let mut gt1 = GTimer::new();
 		let mut gt2 = GTimer::new();
@@ -1691,6 +1693,14 @@ where
 
 		//println!(">*>*>* prove_step step 1, augment circ: j: {}, pc_i: {}", &augmented_F_circuit.j, &self.pc_i);
         let cs = ConstraintSystem::<C1::ScalarField>::new_ref();
+		if !b_debug{//NOTE: b_debug of mod_super:generate_constraints
+			//should be set to the same as this function.
+			//OTHERWISE, it will have issues with witness assignment in
+			//debug mode
+			//we only need the all variables generated
+			//no need for r1cs A,B,C matrices construction
+			cs.set_mode(SynthesisMode::Prove{construct_matrices:false});
+		}
 		let c1 = cs.num_constraints();
         augmented_F_circuit.generate_constraints(cs.clone())?;
 
@@ -1751,7 +1761,7 @@ where
         }
 		log_perf(log_level, &format!("prove_step: Step 5. commit to instance: wit len: {}", self.w_i.W.len()), &mut gt2);
 		log_perf(log_level-1, &format!("-- prove_step cost: i: {}, circ_id: {}, stmt_len: {}, wtns size: {}", self.i, j_pci1, wtns.statement.len(), wtns_config.get_total_size()), &mut gt1);
-
+		//if 1>0{panic!("STOP HERE 2003");}
         Ok(())
     }
 

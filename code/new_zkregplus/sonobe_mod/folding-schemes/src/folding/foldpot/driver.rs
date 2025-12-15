@@ -290,7 +290,7 @@ where
 		let mut gt1 = GTimer::new();
 	  	//1. set up the parameters
         let _start = Instant::now();
-		let _b_debug = true;
+		let _b_debug = false;
 		let layered_circuits = F_circuits;
 		let circuits = layered_circuits.concat(); 
 		let size_F = circuits.iter().map(|f| f.get_size_f())
@@ -1040,8 +1040,9 @@ where
 		total_words: usize,
 		idx_ind_proof: usize,
 	  	mut rng: impl RngCore +  CryptoRng,
-		vec_word_info: &Vec<WordInfo>) 
-	-> (
+		vec_word_info: &Vec<WordInfo>,
+		vec_word_fnames: &Vec<String>
+	) -> (
 		FoldPotSuper<E,P,C2G2,C1,GC1,C2,GC2,FC,CS1,CS2,CS1E, LK, GM, H>,
 		usize, 
 		Option<(BatchProof<E,S>,IndividualProof<E>)>,
@@ -1054,7 +1055,7 @@ where
 		//words = 23M * 32 byte = 700M data
 		//each claim is small, up to 300 claims. So small.
 		let log_level = LOG2;
-		let b_debug = true;
+		let b_debug = false;
 		let mut gt1 = GTimer::new();
 		let m1 = get_mem_usage_mb(); 
 		let words = {
@@ -1078,9 +1079,6 @@ where
 		let snark_inp = if !self.b_full_mode
 			{claim_pack.as_ref().unwrap().2.clone()}
 			else {SnarkAdvice::empty(&words)};
-		log_perf(log_level, &format!(
-			"{} step 1: generate batch/ind claims. mem: {} GB, increased mem: {} MB, for words: {}, total_word_len: {} packed fields.", phase_name, m2/1024, m2-m1, total_words, total_wd_len), 
-			&mut gt1);
 
 		//1. init
 		let mut vec_res = Vec::<StatementExtraInfo<C1::ScalarField>>::new();
@@ -1095,19 +1093,20 @@ where
 		let pc_0_val = 0;
 		let _pc_0 = C1::ScalarField::from(pc_0_val as u32);
 		log_perf(log_level, &format!(
-			"{} step 2: generate z0", phase_name), &mut gt1);
+			"{} step 1: generate batch/ind claims. mem: {} GB, increased mem: {} MB, for words: {}, total_word_len: {} packed fields.", phase_name, m2/1024, m2-m1, total_words, total_wd_len), 
+			&mut gt1);
 
 
 		//------------------------------------------
-		//2. PASS1-2 combined: while loop to process words one by one
-		// figure out the num_steps (and reset in self)
-		// compute the final hash_cmF
+		//2. PASS-1: while loop to process words one by one
+		// figure out the num_steps (and reset in self),
+		// DISPATCH the lookup table.
+		// Unfortunately, we cannot generate the cmF yet
+		// as vec_m for shared lookup is not computed yet
+		// until lookup table is distributed and couter index
+		// computed.
 		//------------------------------------------
 		let mut word_id = 1;
-		let mut vec_grp_cmF = vec![]; //does not cost much to save
-			//estimate 64 bytes * 700MB/128kb = 
-			//64 * 5.6k = 330kb,
-			//so we can use it to cut prove_step time to avoid computing
 
 		let n_circ = self.circuits.len();
 		let _vec_mapper= self.circuits.iter().map(|c| c.get_mapper()).
@@ -1116,11 +1115,11 @@ where
 		let mut total_lkup_covered = 0;
 		let m3 = get_mem_usage_mb();
 		let mut gtw = GTimer::new();
-		let mut hash_cmF= C1::ScalarField::zero();
-		for word in iter_words{
+		for (word, word_fname) in iter_words.zip(vec_word_fnames.iter()){
 			let mut prev_stmt = None;
 			let mut prev_adv = None;
 			let mut gt2 = GTimer::new();
+
 			//2.1 first try out and determine the length info for each
 			let mut remaining = word.clone();
 			let mut subseg_id = 1;
@@ -1129,15 +1128,12 @@ where
 			let _mapper = self.circuits[0].get_mapper();
 			let word_info = &vec_word_info[word_id-1];
 			let (steps, vec_pci, vec_len, _vec_cap_req, _advice) = self.plan_nd_advice(log_level+2, false, &word, word_info).expect("Planning advice fails!"); //note: empty advice will be returned
-			log_perf(log_level+2, &format!("{} decide circ alloc for word_id: {}, word_len: {}. ", phase_name, word_id, format_bytes(total_word_len*31)), 
-				&mut gt2);
+			log_perf(log_level+2, &format!("{} - Pass 1: decide circ alloc for word_id: {}, fname: {}, word_len: {}. ", phase_name, word_id, word_fname, format_bytes(total_word_len*31)), &mut gt2);
 			for i in 0..steps{
 				//2.1 set up params
 				let pc_i = if i==0 {0} else {vec_pci[i-1]};
 				let pc_i1 = vec_pci[i]; //this is actually pc_i1 for this circ
 				let circ = &self.circuits[pc_i1];
-				let cs_pp = &self.nova_param.0.vec_pp[pc_i1].cs_pp;
-				let poseidon_config = &self.nova_param.0.vec_pp[0].poseidon_config; //to imitate what FoldPotSuper.init_adv takes vec_pp[0].poseidon_config
 				let _max_len = circ.max_word_len();
 				let act_len = vec_len[i];
 				acc_wd_len += act_len;
@@ -1173,7 +1169,7 @@ where
 					r_word_i: snark_inp.rands[(word_id as usize)-1],
 					accumulated_word_len: C1::ScalarField::from(acc_wd_len as u32),
 				};//end constructor StatementExtraInfo
-				log_perf(log_level+2, &format!("-- For subseg_id: {} gen_statment_extra_info.", subseg_id), &mut gt2);
+				log_perf(log_level+2, &format!("-- Pass 1. For wd: {}, subseg_id: {} gen_statment_extra_info.", word_id, subseg_id), &mut gt2);
 
 				//2.3 generate the advice and statement
 				//need to build the statement to fill the m_map
@@ -1182,7 +1178,7 @@ where
 				assert!(res.is_some(), "UNABLE to generate advice for word id: {}, segment_id: {}", word_id, subseg_id); 
 				let cur_adv = res.unwrap().1;
 
-				log_perf(log_level+2, &format!("-- For subseg_id: {} gen_advice.", subseg_id), &mut gt2);
+				log_perf(log_level+2, &format!("-- Pass 1. gen_advice."), &mut gt2);
 				let stmt_res = circ.get_mapper().borrow().build_statement(
 					&frag, &prev_stmt, self.lkup.clone(), &ei,
 					//	advice[subseg_id-1].clone(), 
@@ -1190,17 +1186,13 @@ where
 						lk_share_size, false);
 				assert!(stmt_res.is_ok());
 				prev_adv = Some(cur_adv);
-				log_perf(log_level+2, &format!("-- For subseg_id: {} build stmt.", subseg_id), &mut gt2);
+				log_perf(log_level+2, &format!("-- Pass 1. build stmt."), &mut gt2);
 				let stmt = stmt_res.unwrap();
 				stmt.fill_lkup_mvec(&mut m_map, &self.lkup); //needed here!
+					//for updating couners of lookup
+					//later in PASS2 it generates the m_table for
+					//each lookup for the corresponding lookup shares.
 
-				//2.4 update the hash_cmF
-				let res =  compute_step_hc_cmF_adv
-						::<C1,LK,CS1,GM,FC,H>(
-						hash_cmF, &stmt, circ, cs_pp, poseidon_config)
-						.expect("compute step hc cmF err");
-				hash_cmF = res.0;
-				vec_grp_cmF.push(res.1);
 
 				//2.5 making updates
 				let ea = stmt.to_extra_info();
@@ -1208,25 +1200,113 @@ where
 				prev_stmt= Some(stmt);
 				subseg_id +=1;
 				total_lkup_covered += lk_share_size;
-				log_perf(log_level+2, &format!("-- For subseg_id: {} gen_cmf and update. ", subseg_id), &mut gt2);
+				log_perf(log_level+2, &format!("-- Pass 1. update. "), &mut gt2);
 			}
 
-			log_perf(log_level+1, &format!("{} generate advice and com_F for word: {} of size: {}.", phase_name, word_id, format_bytes(total_word_len*31)), 
+			log_perf(log_level+1, &format!("{} Pass 1. generate advice word: {} of size: {}.", phase_name, word_id, format_bytes(total_word_len*31)), 
 				&mut gtw);
 			word_id +=1;
 		}
 		let m4 = get_mem_usage_mb();
-		assert!(vec_grp_cmF.len()==vec_res.len());
 		assert!(total_lkup_covered >= lkup_len, "total: {}, lkup_len: {}", total_lkup_covered, lkup_len);
 		log_perf(log_level, &format!(
-			"{} step 3: dispatch w and generate cmF, mem: {} MB for total_word_len: {}: ", phase_name, m4-m3, format_bytes(total_wd_len*31))
+			"{} step 2: dispatch w into steps. mem: {} MB for total_word_len: {}: ", phase_name, m4-m3, format_bytes(total_wd_len*31))
 			, &mut gt1);
 
+		
 		//------------------------------------------
-		//3. PASS-3: now do the prove_step
+		//3. PASS-2: now with the m_map defined, distributing
+		//lkup and update m_table for query tables in each 
+		//statement. To avoid consuming memory, we regenerate
+		//all advice again.
+		//------------------------------------------
+		let m_pass2_1 = get_mem_usage_mb();
+		let mut vea = vec_res; //just rename var for the code from pass_three
+		let mut idx = 0;
+		let mut num_steps = 0;
+		let _lk_len = self.lkup.borrow().get_size();
+		let mut gtw2 = GTimer::new();
+		let mut word_id = 1;
+		let mut start = 0; //global position in ENTIRE sequence for update lkup
+							//share in each statement
+		let mut vec_grp_cmF = vec![]; //does not cost much to save
+			//estimate 64 bytes * 700MB/128kb = 
+			//64 * 5.6k = 330kb,
+			//so we can use it to cut prove_step time to avoid computing
+		let mut hash_cmF= C1::ScalarField::zero();
+
+		for word in &words{
+			let mut prev_adv = None;
+			let mut prev_stmt = None;
+			let mut remaining = word.clone();
+			let mut subseg_id = 1;
+			let word_info = &vec_word_info[word_id-1];
+			let word_fname = &vec_word_fnames[word_id-1];
+			log_perf(log_level+2, &format!("{} - Pass 2. to generate cmF for word_id: {}, fname: {}, word_len: {}. ", phase_name, word_id, word_fname, format_bytes(word.len()*31)), &mut gtw2); 
+			while remaining.len()>0{
+				//3.1 compute the problem statement instance 
+				let j = field_to_usize(&vea[idx].pc_i1);
+				let circ = &self.circuits[j];
+				let share_size = circ.get_stmt_config().lookup_share_size;
+				let ei = &vea[idx];
+				let act_len = field_to_usize(&vea[idx].act_word_subseg_size);
+				let frag = remaining[0..act_len].to_vec();
+				remaining = remaining[act_len..].to_vec();
+
+				//3.2 generate the adice again
+				let res = circ.get_mapper().borrow()
+					.gen_nd_advice_no_limit(&frag, word_info, prev_adv);
+				assert!(res.is_some(), "UNABLE to generate advice for word id: {}, segment_id: {}", word_id, subseg_id); 
+				let cur_adv = res.unwrap().1;
+				log_perf(log_level+2, &format!("-- Pass2. gen advice. sugseg_id: {}", subseg_id), &mut gtw2);
+
+				//3.3 generate the statement again
+				let stmt_res = circ.get_mapper().borrow().build_statement(
+						&frag, &prev_stmt, self.lkup.clone(), 
+						ei, cur_adv.clone(), share_size,
+						false);
+				assert!(stmt_res.is_ok());
+				prev_adv = Some(cur_adv);
+				let mut stmt = stmt_res.unwrap();
+				log_perf(log_level+2, &format!("-- Pass2. gen statement"), &mut gtw2);
+				stmt.update_lookup(start,start+share_size, &self.lkup, &m_map);
+				start += share_size;
+				log_perf(log_level+2, &format!("-- Pass 2. update lkup, share_size: {}", share_size), &mut gtw2);
+
+				//3.4 update the hash_cmF
+				let pc_i1 = field_to_usize(&vea[idx].pc_i1);
+				let cs_pp = &self.nova_param.0.vec_pp[pc_i1].cs_pp;
+				let poseidon_config = &self.nova_param.0.vec_pp[0].poseidon_config; //to imitate what FoldPotSuper.init_adv takes vec_pp[0].poseidon_config
+				let res =  compute_step_hc_cmF_adv
+						::<C1,LK,CS1,GM,FC,H>(
+						hash_cmF, &stmt, circ, cs_pp, poseidon_config)
+						.expect("compute step hc cmF err");
+				hash_cmF = res.0;
+				vec_grp_cmF.push(res.1);
+				log_perf(log_level+2, &format!("-- Pass 2. compute cmF. "), &mut gtw2);
+
+				//3.5 update 
+				let ea = stmt.to_extra_info();
+				vea[idx] = ea; //UPDATE.
+				prev_stmt = Some(stmt);
+				idx += 1;
+				num_steps +=1;
+				subseg_id += 1;
+				log_perf(log_level+2, &format!("-- Pass 2. update extra info. "), &mut gtw2);
+			}//end for while remaining word 
+			word_id += 1;
+		} //for each word
+		assert!(num_steps==vea.len(), "num_steps: {}, vea.len: {}", num_steps, vea.len());
+
+
+		let m_pass2_2 = get_mem_usage_mb();
+		log_perf(log_level, &format!(
+			"{} step 3: generate cmF, mem: {} MB for total_word_len: {}: ", phase_name, m_pass2_2-m_pass2_1, format_bytes(total_wd_len*31)) , &mut gt1);
+
+		//------------------------------------------
+		//4. PASS-3: now do the prove_step
 		//------------------------------------------
 		let m5 = get_mem_usage_mb();
-		let vea = vec_res; //just rename var for the code from pass_three
 		let n_steps = vea.len();
 		let batch_prfs = if !self.b_full_mode{
 			assert!(self.batch_param.is_some());
@@ -1293,8 +1373,8 @@ where
 				ch,
 				rc,
 				total_words,
-				//Some(vec_grp_cmF)snark_inp
-				None,
+				Some(vec_grp_cmF)
+				//None,
             )
             .unwrap();
 		log_perf(log_level, &format!(
@@ -1318,6 +1398,8 @@ where
 			let mut remaining = word.clone();
 			let mut subseg_id = 1;
 			let word_info = &vec_word_info[word_id-1];
+			let word_fname = &vec_word_fnames[word_id-1];
+			log_perf(log_level+2, &format!("{} - Pass 3. to prove steps for word_id: {}, fname: {}, word_len: {}. ", phase_name, word_id, word_fname, format_bytes(word.len()*31)), &mut gtw2); 
 			while remaining.len()>0{
 				//6.1 compute the problem statement instance again
 				// with the correct cmF
@@ -1333,6 +1415,7 @@ where
 					.gen_nd_advice_no_limit(&frag, word_info, prev_adv);
 				assert!(res.is_some(), "UNABLE to generate advice for word id: {}, segment_id: {}", word_id, subseg_id); 
 				let cur_adv = res.unwrap().1;
+				log_perf(log_level+1, &format!("-- Pass 3. gen advice for word_id: {}, seg_id: {}", word_id, subseg_id), &mut gtw2);
 
 				let stmt_res = circ.get_mapper().borrow().build_statement(
 						&frag, &prev_stmt, self.lkup.clone(), 
@@ -1341,11 +1424,12 @@ where
 				assert!(stmt_res.is_ok());
 				prev_adv = Some(cur_adv);
 				let mut stmt = stmt_res.unwrap();
-				//NOTE: should not do update_lookup as it
-				//make duplicates counting of lookup elements for a second time
+				log_perf(log_level+1, &format!("-- Pass 3. gen stmt"), 
+					&mut gtw2);
+
 				stmt.update_lookup(_start,_start+share_size, &self.lkup, &m_map);
 				_start += share_size;
-				log_perf(log_level+1, &format!("-- gen advice for word_id: {}, seg_id: {}", word_id, subseg_id), &mut gtw2);
+				log_perf(log_level+1, &format!("-- Pass 3. update lkup: share size: {}", share_size), &mut gtw2);
 
 				//2.2. prove step
 				let v_stmt = stmt.to_vec();
@@ -1355,7 +1439,7 @@ where
 				nova.pc_i1 = vea[idx].pc_i1;
             	nova.prove_step(&mut rng, v_stmt, other_inst)
 					.expect("prove step error");
-				log_perf(log_level+1, &format!("prove_step for word_id: {}, seg_id: {}, stmt_len: {}", word_id, subseg_id, stmt_len), &mut gtw2);
+				log_perf(log_level+1, &format!("-- Pass 3. prove_step cost for word_id: {}, seg_id: {}, stmt_len: {}", word_id, subseg_id, stmt_len), &mut gtw2);
 
 				//2.3 update 
 				prev_stmt = Some(stmt);
@@ -1448,6 +1532,7 @@ pub fn foldpot_main<E:Pairing<G1=C1,G2=C2G2>,P:PairingVar<E,CF3<C2G2>>+std::fmt:
 	vec_words: Vec<Vec<E::ScalarField>>,
 	vec_words_info: Vec<WordInfo>,
 	idx_individual_prf: usize, 
+	vec_word_fnames: Vec<String>
 ) -> Result<(), Error>
 where
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
@@ -1497,6 +1582,7 @@ where
 	// words of zeros, and set its dummy_statement for preprocess()
 	// to build keys.
 	let log_level: usize = LOG1;
+	assert!(vec_word_fnames.len()==vec_words.len());
 	let mut gt1 = GTimer::new();
 	let mut gt_all = GTimer::new();
 	log(log_level, &format!("===== fold_pot starts ====="));
@@ -1585,7 +1671,8 @@ where
 		vec_words.len(), 
 		idx_individual_prf, 
 		&mut rng, 
-		&vec_words_info
+		&vec_words_info,
+		&vec_word_fnames
 	);
 	let Some((mut batch_prf, ind_prf)) = batch_ind_prfs.map(|x| (x.0, x.1))
 		else {panic!("batch proof is none!");};
@@ -1609,6 +1696,10 @@ where
 	
 	//6. another three rounds
 	let vec_words = cyclepair_inputs.clone();
+	let vec_word_fnames2 = (0..vec_words.len()).collect::<Vec<_>>()
+	.iter().map(|i|
+		format!("cyclepair inst {}", i)
+	).collect::<Vec<String>>();
 	let mut iter = vec_words.iter();
 	let mut iter_2 = vec_words.iter();
 	let mut iter_3 = vec_words.iter();
@@ -1629,7 +1720,8 @@ where
 		vec_words.len(), 
 		idx_individual_prf, 
 		&mut rng, 
-		&vec_word_info
+		&vec_word_info,
+		&vec_word_fnames2
 	);
 
 	let qa_nizk_pkey = &driver2.nova_param.0.qa_pp.expect("qa_pp null!"); 
@@ -2170,9 +2262,13 @@ pub mod tests_driver{
 			vec![Fr::from(1), Fr::from(2), Fr::from(100)],
 			vec![Fr::from(4), Fr::from(2), From::from(2)]
 		];
+		let vec_word_fnames = vec![
+			format!("file1"),
+			format!("file2"),
+		];
 		let sample_individual_prf = 1; //generate individual proof 1
 		let vec_word_info = vec![WordInfo::dummy(); vec_words.len()];
-		let _prf = foldpot_main::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,SigmaIR1CS_Inst<Fr,C1,CS1,LK,SumMapper<Fr,LK>,H>,S,LK,SumMapper<Fr,LK>, false>(lkup, vec_circ, vec_words, vec_word_info, sample_individual_prf);
+		let _prf = foldpot_main::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,SigmaIR1CS_Inst<Fr,C1,CS1,LK,SumMapper<Fr,LK>,H>,S,LK,SumMapper<Fr,LK>, false>(lkup, vec_circ, vec_words, vec_word_info, sample_individual_prf, vec_word_fnames);
 	}
 
 }

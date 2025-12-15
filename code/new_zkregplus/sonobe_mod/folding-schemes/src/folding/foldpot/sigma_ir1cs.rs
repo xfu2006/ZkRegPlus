@@ -11,7 +11,7 @@
 		that failed_sigs is a subset of discharged_sigs (or the samples
 		are discharged).
 */
-use utils::{logger::{log, log_perf, LOG_LEVEL, LOG4, LOG6}, timer::Timer as GTimer};
+use utils::{logger::{log, log_perf, LOG6}, timer::Timer as GTimer};
 use serde::{Serialize,Deserialize};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use crate::commitment::CommitmentScheme;
@@ -2468,8 +2468,8 @@ where 	C: CurveGroup<ScalarField=F>,
 		//0. check input, will not need the extra constraints
 		// will be enforced somewhere else, but need
 		// the cyclepair input
-		let log_level = LOG4;
-		let b_debug = true;
+		let log_level = LOG6;
+		let b_debug = false;
 
 		let mut gt1 = GTimer::new();
 		let lkup_share_size = self.stmt_config.lookup_share_size;
@@ -2991,10 +2991,9 @@ where 	C: CurveGroup<ScalarField=F>,
 		z_i: Vec<FpVar<F>>,
 		external_inputs: Vec<FpVar<F>>,
 	) -> Result<Vec<FpVar<F>>, SynthesisError> {
-		let b_debug = true; //set to false in production mode
+		let b_debug = false; //set to false in production mode
 		let b_show_sigs = false; //set to false in production mode
 		let log_level = LOG6;
-		let b_perf = LOG_LEVEL>=log_level;
 		//NOTE: cs.is_satisfied() can cause * stack overflow *
 		//if constraints are not constructed carefully.
 		//sometimes if a constraint has lc (linear combinations) too deep,
@@ -3003,12 +3002,11 @@ where 	C: CurveGroup<ScalarField=F>,
 		//and print the stack use
 		//1. converts witness from extrenal_inputs to structured version
 		let (mut nc, mut nv) = (cs.num_constraints(), cs.num_witness_variables());
-		if b_perf{
-			log(log_level, &format!("### gen_step_cs START: cs: {}, vars: {}",
-				cs.num_constraints(),
-				cs.num_witness_variables()
-			));
-		}
+		let mut gt = GTimer::new();
+		log_perf(log_level, &format!("### gen_step_cs START: cs: {}, vars: {}",
+			cs.num_constraints(),
+			cs.num_witness_variables()
+		), &mut gt);
 		assert!(z_i.len()==2);
 		let configs = self.gadgets.iter().map(|g| g.borrow().get_msg_size())
 			.collect::<Vec<(usize, usize, usize, usize)>>();
@@ -3016,15 +3014,13 @@ where 	C: CurveGroup<ScalarField=F>,
 		assert!(cfg.get_total_size()==external_inputs.len(), "external_inputs.len: {} != cfg.total_size: {}", external_inputs.len(), cfg.get_total_size());
 		let wtns_var =  WitnessSigmaIR1CSVar::from_vec(&cfg, &external_inputs);
 		//println!("DEBUG USE 101: AFTER msg1: constraints: {}", cs.num_constraints());
-		if b_perf{
-			log(log_level, &format!(
-				"gen_step_cs step 1: cs: {}, vars: {}",
-				cs.num_constraints() - nc,
-				cs.num_witness_variables() - nv));
-				nc = cs.num_constraints();
-				nv = cs.num_witness_variables();
-			log(log_level, &format!("-- witness: stmt: {}, msg1: {}, msg2: {}, msg3: {}", wtns_var.statement.len(), wtns_var.msg1.len(), wtns_var.msg2.len(), wtns_var.msg3.len()));
-		}
+		log_perf(log_level, &format!(
+			"gen_step_cs step 1: cs: {}, vars: {}",
+			cs.num_constraints() - nc,
+			cs.num_witness_variables() - nv), &mut gt);
+			nc = cs.num_constraints();
+			nv = cs.num_witness_variables();
+		log(log_level, &format!("-- witness: stmt: {}, msg1: {}, msg2: {}, msg3: {}", wtns_var.statement.len(), wtns_var.msg1.len(), wtns_var.msg2.len(), wtns_var.msg3.len()));
 
 		//2. check message2 (ro over stmt and msg1)
 		let mut gi = 0;
@@ -3057,13 +3053,11 @@ where 	C: CurveGroup<ScalarField=F>,
 				cs.num_constraints(), get_stack_space()
 			);
 		}
-		if b_perf{
-			log(log_level,&format!("gen_step_cs step 2: cs: {}, vars: {}",
-				cs.num_constraints() - nc,
-				cs.num_witness_variables() - nv));
-				nc = cs.num_constraints();
-				nv = cs.num_witness_variables();
-		}
+		log_perf(log_level,&format!("gen_step_cs step 2: cs: {}, vars: {}",
+			cs.num_constraints() - nc,
+			cs.num_witness_variables() - nv), &mut gt);
+		nc = cs.num_constraints();
+		nv = cs.num_witness_variables();
 
 
 		//3. add all constraints by components
@@ -3071,9 +3065,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			let (nc, ni, nv) = (cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables());
 			g.borrow().assert_msg3(i, cs.clone(), &wtns_var, &cfg)?;
 			let stmt_len = g.borrow().get_msg_size().0;
-			if b_perf{
-				log(log_level, &format!("-- -- after msg3 of module {}: {}:\n\tINCREASED: constraints: {}, const vars: {}, wit vars: {} ==> NOW:\n\tCS:{}, const: {}, witness: {}\n\t ==> stmt_size: {}\n\n ", i, g.borrow().get_name(), cs.num_constraints()-nc, cs.num_instance_variables()-ni, cs.num_witness_variables()-nv, cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables(), stmt_len));						
-			}
+			log(log_level+1, &format!("-- -- after msg3 of module {}: {}:\n\tINCREASED: constraints: {}, const vars: {}, wit vars: {} ==> NOW:\n\tCS:{}, const: {}, witness: {}\n\t ==> stmt_size: {}\n\n ", i, g.borrow().get_name(), cs.num_constraints()-nc, cs.num_instance_variables()-ni, cs.num_witness_variables()-nv, cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables(), stmt_len));						
 		}
 		if b_debug{
 			let csat = cs.is_satisfied();
@@ -3084,14 +3076,12 @@ where 	C: CurveGroup<ScalarField=F>,
 				cs.num_constraints(), get_stack_space()
 			);
 		}
-		if b_perf{
-			log(log_level, &format!(
-				"gen_step_cs step 3: cs: {}, vars: {}",
-				cs.num_constraints() - nc,
-				cs.num_witness_variables() - nv));
-				nc = cs.num_constraints();
-				nv = cs.num_witness_variables();
-		}
+		log_perf(log_level, &format!(
+			"gen_step_cs step 3: cs: {}, vars: {}",
+			cs.num_constraints() - nc,
+			cs.num_witness_variables() - nv), &mut gt);
+			nc = cs.num_constraints();
+			nv = cs.num_witness_variables();
 
 		//4. enforce the input and output buffer equivalence
 		let (zero, one) = (F::zero(), F::one());
@@ -3172,15 +3162,13 @@ where 	C: CurveGroup<ScalarField=F>,
 				cs.num_constraints(), get_stack_space()
 			);
 		}
-		if b_perf{
-			log(log_level, &format!(
-				"gen_step_cs step 4: cs: {}, vars: {}",
-				cs.num_constraints() - nc,
-				cs.num_witness_variables() - nv)
-			);
-			nc = cs.num_constraints();
-			nv = cs.num_witness_variables();
-		}
+		log_perf(log_level, &format!(
+			"gen_step_cs step 4: cs: {}, vars: {}",
+			cs.num_constraints() - nc,
+			cs.num_witness_variables() - nv), &mut gt
+		);
+		nc = cs.num_constraints();
+		nv = cs.num_witness_variables();
 
 
 		//5. verify the Lookup related witnesses:
@@ -3241,9 +3229,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		let one_wit_var = FpVar::<F>::new_witness(cs.clone(), ||Ok(F::one())).unwrap();
 		one_wit_var.enforce_equal(&one_var)?; 
 
-		if b_perf{
-			log(log_level, &format!("gen_step-cs step 5: BEFORE inv_hab22: {}, cs.lc_size: {}, cons: {}", inv_hab22_left_size, cs.inner().unwrap().borrow().lc_map.len(), cs.num_constraints()));
-		}
+		log(log_level, &format!("gen_step-cs step 5: BEFORE inv_hab22: {}, cs.lc_size: {}, cons: {}", inv_hab22_left_size, cs.inner().unwrap().borrow().lc_map.len(), cs.num_constraints()));
 
 		//5.1 verify the correct of inverse and compute sum_hab22_left
 		assert!(b_check_lkup.len()==inv_hab22_left_size,
@@ -3336,18 +3322,16 @@ where 	C: CurveGroup<ScalarField=F>,
 				sum_hab22_left = &sum_hab22_left * &one_wit_var;
 
 			}
-		}
-		if b_perf{
-			log(log_level, &format!("gen_step_cs step 5: AFTER inv_hab22: {}, cs.lc_size: {}, cons: {}", inv_hab22_left_size, cs.inner().unwrap().borrow().lc_map.len(), cs.num_constraints()));
-			let n_total = n_case1 + n_case2 + n_case3;
-			log(log_level, &format!("-- Breakdown of logup cases: n_case1: ({}, {:.2}%), n_case2: ({}, {:.2}%), n_case3: ({}, {:.2}%)", n_case1, 100.0*(n_case1 as f64)/(n_total as f64), n_case2, 100.0*(n_case2 as f64)/(n_total as f64), n_case3, 100.0*(n_case3 as f64)/(n_total as f64)));
-			log(log_level, &format!("-- gen_step_cs step 5.0: inv_hab22_left: {}, cs: {}, vars: {}",
-				inv_hab22_left_size,
-				cs.num_constraints() - nc,
-				cs.num_witness_variables() - nv));
-				nc = cs.num_constraints();
-				nv = cs.num_witness_variables();
-		}
+	}
+		log_perf(log_level, &format!("gen_step_cs step 5: AFTER inv_hab22: {}, cs.lc_size: {}, cons: {}", inv_hab22_left_size, cs.inner().unwrap().borrow().lc_map.len(), cs.num_constraints()), &mut gt);
+		let n_total = n_case1 + n_case2 + n_case3;
+		log(log_level, &format!("-- Breakdown of logup cases: n_case1: ({}, {:.2}%), n_case2: ({}, {:.2}%), n_case3: ({}, {:.2}%)", n_case1, 100.0*(n_case1 as f64)/(n_total as f64), n_case2, 100.0*(n_case2 as f64)/(n_total as f64), n_case3, 100.0*(n_case3 as f64)/(n_total as f64)));
+		log(log_level, &format!("-- gen_step_cs step 5.0: inv_hab22_left: {}, cs: {}, vars: {}",
+			inv_hab22_left_size,
+			cs.num_constraints() - nc,
+			cs.num_witness_variables() - nv));
+			nc = cs.num_constraints();
+			nv = cs.num_witness_variables();
 
 		if b_debug{
 			let csat = cs.is_satisfied();
@@ -3359,9 +3343,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			);
 
 		}
-		if b_perf{
-			log(log_level, &format!("-- lkup_size: {}, inv_hab22_right_size: {}", si.act_lookup_share_size.value()?, inv_hab22_right_size));
-		}
+		log(log_level, &format!("-- lkup_size: {}, inv_hab22_right_size: {}", si.act_lookup_share_size.value()?, inv_hab22_right_size));
 
 		//5.2 check the right side
 		if b_debug{
@@ -3439,15 +3421,13 @@ where 	C: CurveGroup<ScalarField=F>,
 				cs.num_constraints(), get_stack_space()
 			);
 		}
-		if b_perf{
-			log(log_level, &format!(
+		log_perf(log_level, &format!(
 				"-- -- gen_step_cs step 5.2: cs: {}, vars: {}",
 				cs.num_constraints() - nc,
-				cs.num_witness_variables() - nv)
+				cs.num_witness_variables() - nv), &mut gt
 			);
-			nc = cs.num_constraints();
-			nv = cs.num_witness_variables();
-		}
+		nc = cs.num_constraints();
+		nv = cs.num_witness_variables();
 
 
 
@@ -3474,15 +3454,13 @@ where 	C: CurveGroup<ScalarField=F>,
 				cs.num_constraints(), get_stack_space()
 			);
 		}
-		if b_perf{
-			log(log_level, &format!(
-				"gen_step_cs step 6: cs: {}, vars: {}",
-				cs.num_constraints() - nc,
-				cs.num_witness_variables() - nv)
-			);
-			nc = cs.num_constraints();
-			nv = cs.num_witness_variables();
-		}
+		log_perf(log_level, &format!(
+			"gen_step_cs step 6: cs: {}, vars: {}",
+			cs.num_constraints() - nc,
+			cs.num_witness_variables() - nv), &mut gt
+		);
+		nc = cs.num_constraints();
+		nv = cs.num_witness_variables();
 
 
 
@@ -3588,14 +3566,12 @@ where 	C: CurveGroup<ScalarField=F>,
 				cs.num_constraints(), get_stack_space()
 			);
 		}
-		if b_perf{
-			log(log_level, &format!("gen_step_cs step 7: cs: {}, vars: {}",
-				cs.num_constraints() - nc,
-				cs.num_witness_variables() - nv)
-			);
-			nc = cs.num_constraints();
-			nv = cs.num_witness_variables();
-		}
+		log_perf(log_level, &format!("gen_step_cs step 7: cs: {}, vars: {}",
+			cs.num_constraints() - nc,
+			cs.num_witness_variables() - nv), &mut gt
+		);
+		nc = cs.num_constraints();
+		nv = cs.num_witness_variables();
 
 
 		//8. VERIFY join constraints
@@ -3625,15 +3601,13 @@ where 	C: CurveGroup<ScalarField=F>,
 				cs.num_constraints(), get_stack_space()
 			);
 		}
-		if b_perf{
-			log(log_level, &format!(
-				"gen_step_cs step 8: cs: {}, vars: {}",
-				cs.num_constraints() - nc,
-				cs.num_witness_variables() - nv)
-			);
-			nc = cs.num_constraints();
-			nv = cs.num_witness_variables();
-		}
+		log_perf(log_level, &format!(
+			"gen_step_cs step 8: cs: {}, vars: {}",
+			cs.num_constraints() - nc,
+			cs.num_witness_variables() - nv), &mut gt
+		);
+		nc = cs.num_constraints();
+		nv = cs.num_witness_variables();
 
 		//9. build the new zi_part's cycle input.
 		let cp_inp = if self.b_full_mode{
@@ -3689,15 +3663,13 @@ where 	C: CurveGroup<ScalarField=F>,
 				cs.num_constraints(), get_stack_space()
 			);
 		}
-		if b_perf{
-			log(log_level, &format!(
-				"gen_step_cs step 9: cs: {}, vars: {}",
-				cs.num_constraints() - nc,
-				cs.num_witness_variables() - nv)
-			);
-			nc = cs.num_constraints();
-			nv = cs.num_witness_variables();
-		}
+		log_perf(log_level, &format!(
+			"gen_step_cs step 9: cs: {}, vars: {}",
+			cs.num_constraints() - nc,
+			cs.num_witness_variables() - nv), &mut gt
+		);
+		nc = cs.num_constraints();
+		nv = cs.num_witness_variables();
 
 
 		//10. now enforce and build `z_{i+1}`
@@ -3770,13 +3742,11 @@ where 	C: CurveGroup<ScalarField=F>,
 				cs.num_constraints(), get_stack_space()
 			);
 		}
-		if b_perf{
-			log(log_level, &format!(
-				"gen_step_cs step 10: cs: {}, vars: {}",
-				cs.num_constraints() - nc,
-				cs.num_witness_variables() - nv)
-			);
-		}
+		log_perf(log_level, &format!(
+			"gen_step_cs step 10: cs: {}, vars: {}",
+			cs.num_constraints() - nc,
+			cs.num_witness_variables() - nv), &mut gt
+		);
 
 
 		Ok(vec![new_cur_hc_cmF, hash_zi_part2])

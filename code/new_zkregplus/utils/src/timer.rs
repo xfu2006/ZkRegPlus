@@ -7,8 +7,8 @@ use std::time::Instant;
 
 /// timer class for recording time in microseconds
 pub struct Timer{
-	///running time in micro-second (accumulated)
-	time_us: usize,
+	///running time in nano-second
+	time_ns: usize,
 
 	/// the time timer starts
 	start_time: Instant,
@@ -18,12 +18,17 @@ pub struct Timer{
 impl Timer{
 	/// return the elapsed time in micro-seconds.
 	pub fn time_us(&self) -> usize{
-		self.time_us
+		self.time_ns/1000
+	}
+
+	/// return the elapsed time in nano-seconds
+	pub fn time_ns(&self) -> usize{
+		self.time_ns
 	}
 
 	/// constructor
 	pub fn new() -> Timer{
-		return Timer{time_us: 0, start_time: Instant::now()};
+		return Timer{time_ns: 0, start_time: Instant::now()};
 	}
 
 	/// start recording
@@ -33,22 +38,22 @@ impl Timer{
 
 	/// clear start time and also elapsed time
 	pub fn clear_start(&mut self){
-		self.time_us = 0;
+		self.time_ns = 0;
 		self.start_time = Instant::now();
 	}
 
 	/// stop the timer and accumulates the time
 	pub fn stop(&mut self){
-		self.time_us += self.start_time.elapsed().as_micros() as usize;
+		self.time_ns += self.start_time.elapsed().as_nanos() as usize;
 	}
 
 	/// clear elapsed time.
 	pub fn clear(&mut self){
-		self.time_us = 0;
+		self.time_ns = 0;
 	}
 
 	/// get the elapsed time in milli-seconds.
 	pub fn ms(&self) -> usize{
-		self.time_us/1000
+		self.time_ns/1000000
 	}
 }

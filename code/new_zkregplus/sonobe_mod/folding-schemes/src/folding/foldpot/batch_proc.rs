@@ -379,7 +379,7 @@ where
 	pub fn setup(mut rng: impl RngCore, max_total_n: usize, n_words: usize,
 		poseidon_config: PoseidonConfig<F>) 
 	-> (BatchProcessorProverParams<'a, E>, BatchProcessorVerifierParams<'a,E,CS1E,H>){
-		let b_debug = true;
+		let b_debug = false;
 		let kzg= KZG::<E>::setup(&mut rng, max_total_n+2)
 			.expect("kzg key fail");
 		let kzg_frag = KZG::<E>::pkey_in_affine(&kzg.0, n_words+1);
