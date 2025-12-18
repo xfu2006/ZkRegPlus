@@ -6,7 +6,7 @@ use ark_std::{
     any::{Any, TypeId},
     boxed::Box,
     cell::{Ref, RefCell, RefMut},
-    collections::{BTreeMap,VecDeque},
+    collections::{BTreeMap,VecDeque,HashMap},
     format,
     rc::Rc,
     string::String,
@@ -65,7 +65,8 @@ pub struct ConstraintSystem<F: Field> {
     pub cache_map: Rc<RefCell<BTreeMap<TypeId, Box<dyn Any>>>>,
 
 	/// the map from index to linear combination
-    pub lc_map: BTreeMap<LcIndex, LinearCombination<F>>,
+    //pub lc_map: BTreeMap<LcIndex, LinearCombination<F>>,
+    pub lc_map: HashMap<LcIndex, LinearCombination<F>>,
 
     #[cfg(feature = "std")]
     constraint_traces: Vec<Option<ConstraintTrace>>,
@@ -145,7 +146,8 @@ impl<F: Field> ConstraintSystem<F> {
             #[cfg(feature = "std")]
             constraint_traces: Vec::new(),
 
-            lc_map: BTreeMap::new(),
+            //lc_map: BTreeMap::new(),
+            lc_map: HashMap::new(),
             lc_assignment_cache: Rc::new(RefCell::new(BTreeMap::new())),
 
             mode: SynthesisMode::Prove {
@@ -245,16 +247,9 @@ impl<F: Field> ConstraintSystem<F> {
     /// Obtain a variable representing a linear combination.
     #[inline]
     pub fn new_lc(&mut self, lc: LinearCombination<F>) -> crate::r1cs::Result<Variable> {
-		use ark_std::time::Instant;
-        let start = Instant::now();
-
         let index = LcIndex(self.num_linear_combinations);
-		let e1= start.elapsed().as_nanos();
         let var = Variable::SymbolicLc(index);
-		let e2= start.elapsed().as_nanos();
 		self.lc_map.insert(index, lc);
-		let e3= start.elapsed().as_nanos();
-		println!("DEBUG USE 7777: e1: {} ns, e2: {}, e3: {}", e1, e2, e3);
 
         self.num_linear_combinations += 1;
         Ok(var)
@@ -351,7 +346,7 @@ impl<F: Field> ConstraintSystem<F> {
 			//self.transform_lc_map_new_2()
 		}
 		if b_perf{
-			println!(" --- DEBUG USE 9999: transform_lc: time: {:?} for size: {} --> {}", timer.elapsed(), size, self.lc_map.len());
+			println!(" --- transform_lc: time: {:?} for size: {} --> {}", timer.elapsed(), size, self.lc_map.len());
 			//let total_len: usize = self.lc_map.par_iter().map(|(_k,v)|
 			//	v.len()).sum();
 			//let avg_len = (total_len as f64)/(self.lc_map.len() as f64);
@@ -381,15 +376,37 @@ impl<F: Field> ConstraintSystem<F> {
             usize,
             &mut LinearCombination<F>,
         ) -> (usize, Option<Vec<F>>),
-	)-> BTreeMap<LcIndex, LinearCombination<F>>{
+	//)-> BTreeMap<LcIndex, LinearCombination<F>>{
+	)-> HashMap<LcIndex, LinearCombination<F>>{
         // `transformed_lc_map` stores the transformed linear combinations.
-        let mut transformed_lc_map = BTreeMap::<_, LinearCombination<F>>::new();
+        //let mut transformed_lc_map = BTreeMap::<_, LinearCombination<F>>::new();
+        let mut transformed_lc_map = HashMap::<_, LinearCombination<F>>::new();
         let mut num_times_used = self.lc_num_times_used(false);
+		let b_debug = false;
+
+		if b_debug{
+			let mut keys = self.lc_map.keys()
+				.cloned().collect::<Vec<LcIndex>>();
+			keys.sort();
+			let last_val:usize = keys[keys.len()-1].0; 
+			assert!(keys.len()==last_val+1);
+		}
+		let max_idx = self.lc_map.len()-1;
+
 
         // This loop goes through all the LCs in the map, starting from
         // the early ones. The transformer function is applied to the
         // inlined LC, where new witness variables can be created.
-        for (&index, lc) in &self.lc_map {
+		// ** BY XIANG FU **
+		// SINCE the BTreeMap is replaced by the hashmap
+		// index is no longer sorted in self.lc_map
+		// we need to retrieve the index from 0 to max val (luckily
+		// it is consecutive
+		// ******************
+        //for (&index, lc) in &self.lc_map {
+		for idx in 0..max_idx+1{
+			let index = LcIndex(idx);
+			let lc = self.lc_map.get(&index).unwrap();
             let mut transformed_lc = LinearCombination::new();
 
             // Inline the LC, unwrapping symbolic LCs that may constitute it,
@@ -485,11 +502,11 @@ impl<F: Field> ConstraintSystem<F> {
     ) {
         //1. init data structures
 		// `transformed_lc_map` stores the transformed linear combinations.
-		println!("DEBUG USE 2101: entering transform_lc_map");
 		let t1 = Arc::new(Mutex::new(Instant::now()));
         let transformed_lc_map = 
 			Arc::new(Mutex::new(
-				BTreeMap::<LcIndex, LinearCombination<F>>::new()
+				//BTreeMap::<LcIndex, LinearCombination<F>>::new()
+				HashMap::<LcIndex, LinearCombination<F>>::new()
 			));
         let num_times_used = Arc::new(Mutex::new(
 			self.lc_num_times_used(false) ));
@@ -502,7 +519,6 @@ impl<F: Field> ConstraintSystem<F> {
 		}).collect::<HashMap<usize, Arc<(Mutex<_>,Condvar)>>>();
 		*/
 		let max_idx = self.lc_map.par_iter().map(|(ldx, _)| ldx.0).max().unwrap();
-		println!("DEBUG USE 2102.1: max_idx: {}", max_idx);
 		let locks = Arc::new((0..max_idx+1).into_par_iter().map(|_|
 			Mutex::new(false) ).collect::<Vec<Mutex<_>>>());
 		let conds = Arc::new((0..max_idx+1).into_par_iter().map(|_|
@@ -578,8 +594,6 @@ impl<F: Field> ConstraintSystem<F> {
 					*cnt += 1;
 					if *cnt%(1000*1000)==0{
 						let mut timer = t1.lock().unwrap();
-						println!("--DEBUG USE 9901: cnt: {}, time: {:?}",
-							cnt, timer.elapsed());
 						*timer = Instant::now();
 					}
 					//wait up everybody waiting on me
@@ -611,13 +625,13 @@ impl<F: Field> ConstraintSystem<F> {
     ) {
         //1. init data structures
 		//1.1 num times
-		println!("DEBUG USE 2101: entering transform_lc_map");
 		let mut timer = Instant::now();
 		let b_debug = true;
 		let t1 = Arc::new(Mutex::new(Instant::now()));
         let transformed_lc_map = 
 			Arc::new(Mutex::new(
-				BTreeMap::<LcIndex, LinearCombination<F>>::new()
+				//BTreeMap::<LcIndex, LinearCombination<F>>::new()
+				HashMap::<LcIndex, LinearCombination<F>>::new()
 			));
         let num_times_used = Arc::new(Mutex::new(
 			self.lc_num_times_used(false) ));
@@ -687,7 +701,7 @@ impl<F: Field> ConstraintSystem<F> {
 
 		//3. start threads and process until processed == n_total
 		rayon::scope(|scope|{
-		  for thread_id in 0..threads{
+		  for _thread_id in 0..threads{
 		    //3.1 clone vars needed for sharing local vars
 			// all are low cost clone of Arc
 			let task_queue = task_queue.clone(); 
@@ -711,11 +725,6 @@ impl<F: Field> ConstraintSystem<F> {
 						//3.3.1 retrieve one task (if all processed do not wait)
 						let mut q = task_queue.lock().unwrap();
 						while q.is_empty() && cur_proc<n_total{
-							/* REMOVE LATER
-							if cur_proc>1000*1000{
-								println!("--- DEBUG USE 9001: thread {} wait. cur_proc: {}, n_total: {}", thread_id, cur_proc, n_total);
-							}
-							*/
 							q = cond_queue.wait(q).unwrap();
 							//if we're waiting but cur_proc reaches max (all done)
 							//break out
@@ -729,7 +738,6 @@ impl<F: Field> ConstraintSystem<F> {
 							//cond_queue again as we are going to unlock it.
 							//this is needed if there are multi-threads waiting
 							cond_queue.notify_all();
-							println!("*** DEBUG USE 9002: thread {} quit", thread_id);
 							None
 						} else {
 							Some(q.pop_front().expect("queue pop err"))
@@ -1398,7 +1406,6 @@ impl<F: Field> ConstraintSystemRef<F> {
     /// do not contribute to the size of the multi-scalar multiplication, which
     /// is the dominating cost.
     pub fn inline_all_lcs(&self) {
-		println!("DEBUG USE 1101: into inline_all_lcs");
         if let Some(cs) = self.inner() {
             cs.borrow_mut().inline_all_lcs()
         }

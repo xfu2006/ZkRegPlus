@@ -22875,3 +22875,45 @@ Goal 4. analyze the performance of new_lc: cost 139ns
 		e1: 17 ns-22ns = 0ns (create LcIndex)
 		e2: 42-17-22 = 3ns   (create SymlicLc variable)
 		e3:  172-42-22 = 108ns  (insert into lc_map)
+	the majority cost is lc_map insertion needs 108ns
+	[b] git commit before chaing BTreeMap to HashMap
+	[c] --> make HashMap
+	[d] compare the result
+	----> why does it complain about idx not found? ??? change to hashmpa
+		should not affect it.
+
+Thursday 12/18/2025
+Goal 1. debug why change to hashmap results in err 415:
+	[a] read transform_lc_map_old
+		-> it loops through (index, lc) in self.lc_map
+		-> needs to assume that index is already sorted.
+		--> current dat:
+			sort time for 1.1M 90ms (really nothing)
+			compacting 1.2 s (which is also ok)
+			right after gen_cs_step 12: need to compare later
+		--> passing
+		--> large data also passing
+	[b] remove DEBUG USE 7777 and related timer to speed up
+	[c] comparative data study
+	==== OLD DATA ========
+	--  gen_step_cs step 3: cs: 363393, vars: 252124 1735 ms
+	-- gen_step_cs step 5: AFTER inv_hab22: 624023, cs.lc_size: 8819347, cons: 1207105 754 ms
+		==> it's doing 3 case computing of sum_hab22
+		==> inv_hab22_left size 624k, cs added 826k, vars
+			added 208k.
+	-- gen_step_cs step 5.2: cs: 533769, vars: 410886 603 ms
+		=> cs added 533k, vars: 410k, 
+	--  gen_step_cs step 7: cs: 291380, vars: 249899 316 ms
+
+	==== NEW DATA =======
+		gen_step_cs step 3: 1735ms -> 1611ms (not much 10%)
+		gen_step_cs 5: 754->631ms (not much 20%)
+		gen_step_cs step 5.2 603ms->439ms (not much 25%)
+		gen_step_cs step 7: 316ms -> 228ms (30%)
+	--> prove_step cost: 9585ms -> 6183ms (cut 30%)
+	LOG1:  FoldPot Step 8: Verify Batch Proof. 51 ms
+LOG1:  FOLDPOT Step 9. Verify Individual Proof. 4 ms
+LOG1:  **** FOLDPOT Now Complete ***** MEM: 31 GB. 412510 ms
+
+=== TODO: maybe just do a vector as hashmap keys are consecutive ====
+

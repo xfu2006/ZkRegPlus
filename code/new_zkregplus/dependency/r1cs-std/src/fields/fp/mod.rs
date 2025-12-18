@@ -113,9 +113,6 @@ impl<F: PrimeField> AllocatedFp<F> {
     /// This does not create any constraints.
     #[tracing::instrument(target = "r1cs")]
     pub fn add(&self, other: &Self) -> Self {
-		use ark_std::time::Instant;
-		let start = Instant::now();
-
         let value = match (self.value, other.value) {
             (Some(val1), Some(val2)) => Some(val1 + &val2),
             (..) => None,
@@ -128,16 +125,10 @@ impl<F: PrimeField> AllocatedFp<F> {
             .unwrap();
 		*/
 		//ITEMIZED	
-	  	let e1= start.elapsed().as_nanos();
 		let lc1 = lc!();
-	  	let e2= start.elapsed().as_nanos();
 		let lc2 = lc1 + self.variable + other.variable;
-	  	let e3= start.elapsed().as_nanos();
 		let variable = self.cs.new_lc(lc2).unwrap();
-	  	let e4= start.elapsed().as_nanos();
         let res = AllocatedFp::new(value, variable, self.cs.clone());
-	  	let e5= start.elapsed().as_nanos();
-        //println!("DEBUG USE 7777: e1: {} ns, e2: {}, e3: {}, e4: {}, e5: {}", e1, e2, e3, e4, e5);
 		res
     }
 

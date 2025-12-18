@@ -29,7 +29,7 @@ use core::cmp::Ordering;
 /// A sparse representation of constraint matrices.
 pub type Matrix<F> = Vec<Vec<(F, usize)>>;
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug,Hash)]
 /// An opaque counter for symbolic linear combinations.
 pub struct LcIndex(usize);
 
