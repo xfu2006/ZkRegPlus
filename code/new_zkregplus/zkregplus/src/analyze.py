@@ -23,5 +23,5 @@ def analyze(pat):
 analyze("e1");
 analyze("e2");
 analyze("e3");
-#analyze("e4");
+analyze("e4");
 #analyze("e5");

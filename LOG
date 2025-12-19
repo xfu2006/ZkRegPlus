@@ -22915,5 +22915,73 @@ Goal 1. debug why change to hashmap results in err 415:
 LOG1:  FOLDPOT Step 9. Verify Individual Proof. 4 ms
 LOG1:  **** FOLDPOT Now Complete ***** MEM: 31 GB. 412510 ms
 
+Friday 12/19/2025
+Goal 1. analyze the performance
+	[a] add lc counts 
+	gen_step_cs step 3: cs: 363393, vars: 252124, lc: 2761720 1604 ms
+    gen_step_cs step 5: AFTER inv_hab22: 624023, cs.lc_size: 5198032, cons: 1207105 618 ms
+		- gen_step_cs step 5.0: inv_hab22_left: 624023, cs: 826358, vars: 208715, lc: 2271610
+		-- -- gen_step_cs step 5.2: cs: 533769, vars: 410886: lc: 327681 439 ms
+    gen_step_cs step 7: cs: 291380, vars: 249899, lc: 207377 231 ms 
+
+Goal 2. anaylyze the new_lc cost
+	[a] average: 200ns
+	[b] max: 0.9s but among 191 million new_lc requet,
+		only 12k above 10k.
+	[c] average cost per lc:
+		gen_step_cs step 3: 580ns
+		step 5.2:  1339ns
+		step 7: 1147ns
+
+Goal 3. check step 5.2
+	[a] collect time: e1: 15835ns  (small set)
+		this is for inv_hab22_right_size: 3167, 
+			cs:41280, vars: 31776, lc: 149177
+		per iteration:
+			cs: 13
+			vars: 10
+			lc: 47
+			per nc cost: 336 ns
+	[b] large set: e1: 12675
+		this is for inv_hab22_right_size: 40960
+			cs: 533769, vars: 410886, lc: 1928988
+		per iteration:
+			cs: 13
+			vars: 10
+			lc: 47
+			per nc cost: 269ns (so looks like
+				lc creation of 200ns is still big)
+Goal 4. check new_lc cost again
+	[a] small data set: 200ns 
+	[b] large data set: 175ns -> slightly down
+	[c] analyze detailed steps:
+		(1) 18ns (almost nothing): create LcIndex wrapper of uszie
+		(2) 26 -> (almost nothing) ns: Variable create SymbolicLc 
+		(3) 147 -> (almost 130ns): lc_map.insert
+	[d] 2nd run with big data
+		e1: 15 ns (create LcIndex) -> 0
+		e2: 21 ns (create Variable::SymbolicLc) ->0
+		e3: 189 ns (lc_map.insert) -> 169
+		e4: 21 ns (cost of timing function)
+	[e] 3rd run with big data set
+		e1: 19  -> 0
+		e2: 19 ->0
+		e3: 181 -> 160
+		e4: 21 -> 0
+	[f] 4th run
+		e1: 15  -> 0
+		e2: 21 -> 1
+		e3: 176 -> 156 ns
+		e4: 20  -> 0
+	[g] manually estimate the cost of lc_map.insert
+		add lc_vec and compare its performance with lc_map
+		and also check the clone cost of lc
+		e2: clone: 77
+		e3: hash_map: insert: 160
+		e4: vec insert: 29->20: 9ns
+	===> SO using a vector as lc_map can cut from 
+		160ns to 9ns.
+
 === TODO: maybe just do a vector as hashmap keys are consecutive ====
+== TODO == either moreve lc_vec or retain it;
 

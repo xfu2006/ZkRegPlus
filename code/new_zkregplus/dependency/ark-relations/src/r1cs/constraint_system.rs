@@ -68,6 +68,10 @@ pub struct ConstraintSystem<F: Field> {
     //pub lc_map: BTreeMap<LcIndex, LinearCombination<F>>,
     pub lc_map: HashMap<LcIndex, LinearCombination<F>>,
 
+	//REMOVE LATER ----
+	pub lc_vec: Vec<LinearCombination<F>>,
+	//REMOVE LATER ---- ABOVE
+
     #[cfg(feature = "std")]
     constraint_traces: Vec<Option<ConstraintTrace>>,
 
@@ -148,6 +152,9 @@ impl<F: Field> ConstraintSystem<F> {
 
             //lc_map: BTreeMap::new(),
             lc_map: HashMap::new(),
+			//REMOVE LATER -------
+            lc_vec: Vec::new(),
+			//REMOVE LATER ------- ABOVE
             lc_assignment_cache: Rc::new(RefCell::new(BTreeMap::new())),
 
             mode: SynthesisMode::Prove {
@@ -247,11 +254,19 @@ impl<F: Field> ConstraintSystem<F> {
     /// Obtain a variable representing a linear combination.
     #[inline]
     pub fn new_lc(&mut self, lc: LinearCombination<F>) -> crate::r1cs::Result<Variable> {
+		let start = Instant::now();
         let index = LcIndex(self.num_linear_combinations);
+		let e1 = start.elapsed().as_nanos();
         let var = Variable::SymbolicLc(index);
+		let lc2 = lc.clone(); 
+		let e2 = start.elapsed().as_nanos();
 		self.lc_map.insert(index, lc);
+		let e3 = start.elapsed().as_nanos();
+		self.lc_vec.push(lc2);
+		let e4 = start.elapsed().as_nanos();
 
         self.num_linear_combinations += 1;
+		println!("DEBUG USE 7777: e1: {} ns, e2: {} ns, e3: {} ns, e4: {} ns", e1, e2-e1, e3-e2, e4-e3);
         Ok(var)
     }
 
