@@ -22982,6 +22982,49 @@ Goal 4. check new_lc cost again
 	===> SO using a vector as lc_map can cut from 
 		160ns to 9ns.
 
-=== TODO: maybe just do a vector as hashmap keys are consecutive ====
-== TODO == either moreve lc_vec or retain it;
+Saturday 12/20/2025
+Goal 1. change hashmap of lc_map in constraint_system.rs in ark_relations
+	[a] git commit before
+	[b] change lc_map as
+	[c] fix a number of errors
+	[d] 677
+	[e] 783
+	[f] 1037
+Goal 2. do have to change and implement the "remove"
+	[a] 261
+	[b] 307
+	[c] 328
+	[d] 425
+	[e] 797
+	[f] 904
+	[g] 815
+	[h] 1049
+	[i] 308 again
+	[j] 571
+Goal 3. there are still bugsA
+	[a] 476
+	[b] small exam now work
+	[c] large data set
+Goal 4. Compare data
+	===== OLD and new ==> 
+	gen_step_cs step 3: cs: 363393, vars: 252124, lc: 2761720 1604 ms
+		-> 1261 ms
+    gen_step_cs step 5: AFTER inv_hab22: 624023, cs.lc_size: 5198032, cons: 1207105 618 ms -> 309 ms
+		- gen_step_cs step 5.0: inv_hab22_left: 624023, cs: 826358, vars: 208715, lc: 2271610
+		-- -- gen_step_cs step 5.2: cs: 533769, vars: 410886: lc: 327681 439 ms
+		-> 413ms
+    gen_step_cs step 7: cs: 291380, vars: 249899, lc: 207377 231 ms  -> 212 ms
+	===> further cut from 6 sec -> to 5 sec, right before Pass3 cut 
+		from 1 sec to 0.2 sec so total saved about 2sec
+	===> overall cost from 7 sec to 5.2 sec.
+=============== Now breakdown of a step:
+	(1) gen witnes 121 ms (1.37M)
+	(2) fold including one commitment (652ms)
+	(3) generate autF cs 2.8 sec 
+	(4) commitment fold 1.6 sec
+	someothing else: 200ms
+	Among 5.2 sec cost (652ms + 1.6 sec = 2.3 sec is hard required cost)
+	genenerate CS costs more than commitment!
+	LOG1:  **** FOLDPOT Now Complete ***** MEM: 31 GB. 254838 ms
+=== But final timing improved from 412 sec to 254 sec
 

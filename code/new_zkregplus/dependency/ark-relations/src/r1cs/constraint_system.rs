@@ -6,7 +6,7 @@ use ark_std::{
     any::{Any, TypeId},
     boxed::Box,
     cell::{Ref, RefCell, RefMut},
-    collections::{BTreeMap,VecDeque,HashMap},
+    collections::{BTreeMap,VecDeque},
     format,
     rc::Rc,
     string::String,
@@ -66,11 +66,8 @@ pub struct ConstraintSystem<F: Field> {
 
 	/// the map from index to linear combination
     //pub lc_map: BTreeMap<LcIndex, LinearCombination<F>>,
-    pub lc_map: HashMap<LcIndex, LinearCombination<F>>,
-
-	//REMOVE LATER ----
-	pub lc_vec: Vec<LinearCombination<F>>,
-	//REMOVE LATER ---- ABOVE
+    //pub lc_map: HashMap<LcIndex, LinearCombination<F>>,
+	pub lc_map: Vec<Option<LinearCombination<F>>>,
 
     #[cfg(feature = "std")]
     constraint_traces: Vec<Option<ConstraintTrace>>,
@@ -150,11 +147,7 @@ impl<F: Field> ConstraintSystem<F> {
             #[cfg(feature = "std")]
             constraint_traces: Vec::new(),
 
-            //lc_map: BTreeMap::new(),
-            lc_map: HashMap::new(),
-			//REMOVE LATER -------
-            lc_vec: Vec::new(),
-			//REMOVE LATER ------- ABOVE
+            lc_map: Vec::new(),
             lc_assignment_cache: Rc::new(RefCell::new(BTreeMap::new())),
 
             mode: SynthesisMode::Prove {
@@ -254,19 +247,13 @@ impl<F: Field> ConstraintSystem<F> {
     /// Obtain a variable representing a linear combination.
     #[inline]
     pub fn new_lc(&mut self, lc: LinearCombination<F>) -> crate::r1cs::Result<Variable> {
-		let start = Instant::now();
         let index = LcIndex(self.num_linear_combinations);
-		let e1 = start.elapsed().as_nanos();
         let var = Variable::SymbolicLc(index);
-		let lc2 = lc.clone(); 
-		let e2 = start.elapsed().as_nanos();
-		self.lc_map.insert(index, lc);
-		let e3 = start.elapsed().as_nanos();
-		self.lc_vec.push(lc2);
-		let e4 = start.elapsed().as_nanos();
-
+		#[cfg(test)]{
+			assert!(index.0==self.lc_map.len());
+		}
+		self.lc_map.push(Some(lc));
         self.num_linear_combinations += 1;
-		println!("DEBUG USE 7777: e1: {} ns, e2: {} ns, e3: {} ns, e4: {} ns", e1, e2-e1, e3-e2, e4-e3);
         Ok(var)
     }
 
@@ -305,8 +292,11 @@ impl<F: Field> ConstraintSystem<F> {
         let mut num_times_used = vec![0; self.lc_map.len()];
 
         // Iterate over every lc in constraint system
-        for (index, lc) in self.lc_map.iter() {
-            num_times_used[index.0] += count_sinks as usize;
+        for index in 0..self.lc_map.len() {
+			let lc = &self.lc_map[index];
+			if !lc.is_some(){continue;}
+			let lc = &lc.as_ref().unwrap();
+            num_times_used[index] += count_sinks as usize;
 
             // Increment the counter for each lc that this lc has a direct dependency on.
             for &(_, var) in lc.iter() {
@@ -325,7 +315,9 @@ impl<F: Field> ConstraintSystem<F> {
 	pub fn report_max_lc_len(&self)->usize{
 		let lc_map = self.transform_lc_map_old_worker(	&mut |_,_,_| (0,None));
 		if lc_map.len()==0{return 0;}
-		let res:usize = lc_map.par_iter().map(|(_,v)| v.len()).max().unwrap();
+		let res:usize = lc_map.par_iter().map(|v| 
+			if v.is_some() {v.as_ref().unwrap().len()} else {0}
+		).max().unwrap();
 
 		res
 	}
@@ -392,20 +384,13 @@ impl<F: Field> ConstraintSystem<F> {
             &mut LinearCombination<F>,
         ) -> (usize, Option<Vec<F>>),
 	//)-> BTreeMap<LcIndex, LinearCombination<F>>{
-	)-> HashMap<LcIndex, LinearCombination<F>>{
+	//)-> HashMap<LcIndex, LinearCombination<F>>{
+	)-> Vec<Option<LinearCombination<F>>>{
         // `transformed_lc_map` stores the transformed linear combinations.
         //let mut transformed_lc_map = BTreeMap::<_, LinearCombination<F>>::new();
-        let mut transformed_lc_map = HashMap::<_, LinearCombination<F>>::new();
+        //let mut transformed_lc_map = HashMap::<_, LinearCombination<F>>::new();
+        let mut transformed_lc_map = Vec::<Option<LinearCombination<F>>>::new();
         let mut num_times_used = self.lc_num_times_used(false);
-		let b_debug = false;
-
-		if b_debug{
-			let mut keys = self.lc_map.keys()
-				.cloned().collect::<Vec<LcIndex>>();
-			keys.sort();
-			let last_val:usize = keys[keys.len()-1].0; 
-			assert!(keys.len()==last_val+1);
-		}
 		let max_idx = self.lc_map.len()-1;
 
 
@@ -421,7 +406,10 @@ impl<F: Field> ConstraintSystem<F> {
         //for (&index, lc) in &self.lc_map {
 		for idx in 0..max_idx+1{
 			let index = LcIndex(idx);
-			let lc = self.lc_map.get(&index).unwrap();
+			let lc = &self.lc_map[idx];
+			if !lc.is_some() {continue;} //this is for removed entry
+										//no need to process it
+			let lc = &self.lc_map[idx].as_ref().unwrap();
             let mut transformed_lc = LinearCombination::new();
 
             // Inline the LC, unwrapping symbolic LCs that may constitute it,
@@ -438,9 +426,7 @@ impl<F: Field> ConstraintSystem<F> {
                     // `new_lc_map` since a LC can only depend on other
                     // LCs with lower indices, which we have transformed.
                     //
-                    let lc = transformed_lc_map
-                        .get(&lc_index)
-                        .expect(&format!("could not find lc for idx: {}", lc_index.0));
+                    let lc = transformed_lc_map[lc_index.0].as_ref().unwrap();
                     transformed_lc.extend((lc * coeff).0.into_iter());
 
                     // Delete linear combinations that are no longer used.
@@ -458,7 +444,10 @@ impl<F: Field> ConstraintSystem<F> {
                     num_times_used[lc_index.0] -= 1;
                     if num_times_used[lc_index.0] == 0 {
                         // This lc is not used any more, so remove it.
-                        transformed_lc_map.remove(&lc_index);
+						// but here since it's changed to Vec
+						// just leave it there as unused
+                        //transformed_lc_map.remove(&lc_index);
+						transformed_lc_map[lc_index.0] = None;
                     }
                 } else {
                     // Otherwise, it's a concrete variable and so we
@@ -479,7 +468,9 @@ impl<F: Field> ConstraintSystem<F> {
 
             // Insert the transformed LC. (COMMENTED OUT BASED 
 			//ON ASSUMPTION ON INLINE - NO NEW WITNESS ADDED
-            transformed_lc_map.insert(index, transformed_lc);
+            //transformed_lc_map.insert(index, transformed_lc);
+			assert!(transformed_lc_map.len()==index.0);
+            transformed_lc_map.push(Some(transformed_lc));
 
             // Update the witness counter.
 			//BASED ON ASSUMPTION INLINE - NO NEW WITNESS ADDED
@@ -518,10 +509,16 @@ impl<F: Field> ConstraintSystem<F> {
         //1. init data structures
 		// `transformed_lc_map` stores the transformed linear combinations.
 		let t1 = Arc::new(Mutex::new(Instant::now()));
+        //let transformed_lc_map = 
+		//	Arc::new(Mutex::new(
+		//		//BTreeMap::<LcIndex, LinearCombination<F>>::new()
+		//		HashMap::<LcIndex, LinearCombination<F>>::new()
+		//	));
         let transformed_lc_map = 
 			Arc::new(Mutex::new(
 				//BTreeMap::<LcIndex, LinearCombination<F>>::new()
-				HashMap::<LcIndex, LinearCombination<F>>::new()
+				//HashMap::<LcIndex, LinearCombination<F>>::new()
+				Vec::<Option<LinearCombination<F>>>::new()
 			));
         let num_times_used = Arc::new(Mutex::new(
 			self.lc_num_times_used(false) ));
@@ -533,7 +530,8 @@ impl<F: Field> ConstraintSystem<F> {
 			(ldx.0, Arc::new( (Mutex::new(1), cond_var) ))
 		}).collect::<HashMap<usize, Arc<(Mutex<_>,Condvar)>>>();
 		*/
-		let max_idx = self.lc_map.par_iter().map(|(ldx, _)| ldx.0).max().unwrap();
+		//let max_idx = self.lc_map.par_iter().map(|(ldx, _)| ldx.0).max().unwrap();
+		let max_idx = self.lc_map.len()-1; //
 		let locks = Arc::new((0..max_idx+1).into_par_iter().map(|_|
 			Mutex::new(false) ).collect::<Vec<Mutex<_>>>());
 		let conds = Arc::new((0..max_idx+1).into_par_iter().map(|_|
@@ -561,8 +559,10 @@ impl<F: Field> ConstraintSystem<F> {
 			let counter = counter.clone();
 			scope.spawn(move |_|{
 			  	for idx in idx_begin..idx_end{//process all idx
-					let lc_idx =LcIndex(idx);
-					let lc = bmap.get(&lc_idx).unwrap();
+					//let lc = bmap.get(&lc_idx).unwrap();
+					let lc = &bmap[idx];
+					if !lc.is_some(){continue;}
+					let lc = lc.as_ref().unwrap();
             		let mut transformed_lc = LinearCombination::new();
             		for &(coeff, var) in lc.iter() {
                 		if var.is_lc() {
@@ -576,19 +576,21 @@ impl<F: Field> ConstraintSystem<F> {
 							{
 								let tmap= transformed_lc_map
 									.lock().unwrap();
-								let lc = tmap.get(&d_index)
-									.expect(&format!("expect val at idx: {}",
-										d_index.0));
+								//let lc = tmap.get(&d_index)
+								//	.expect(&format!("expect val at idx: {}",
+								//		d_index.0));
+								let lc = &tmap[d_index.0];
 								lc.clone()
 							}; //make tmap out of scope
 
-                    		transformed_lc.extend((lc * coeff).0.into_iter());
+                    		transformed_lc.extend((lc.unwrap() * coeff)
+								.0.into_iter());
 							let mut num_times = num_times_used.lock().unwrap();
                     		num_times[d_index.0] -= 1;
                     		if num_times[d_index.0] == 0 {
 								let mut tmap= transformed_lc_map
 									.lock().unwrap();
-								tmap.remove(&d_index);
+								tmap[d_index.0] = None;
 							}
 						}else{
                     		transformed_lc.push((coeff, var));
@@ -596,10 +598,12 @@ impl<F: Field> ConstraintSystem<F> {
 					}
 					
             		transformed_lc.compactify();
-					let index = LcIndex(idx);
+					//let index = LcIndex(idx);
 					{
-            			transformed_lc_map.lock().unwrap()
-							.insert(index, transformed_lc);
+            			//transformed_lc_map.lock().unwrap()
+						//	.insert(index, transformed_lc);
+						transformed_lc_map.lock().unwrap()[idx] 
+							= Some(transformed_lc); //update
 					}
 					//no check of is_in_setupmode and new_witness_vars
 					//as we don't call transfer and don't generate
@@ -646,7 +650,8 @@ impl<F: Field> ConstraintSystem<F> {
         let transformed_lc_map = 
 			Arc::new(Mutex::new(
 				//BTreeMap::<LcIndex, LinearCombination<F>>::new()
-				HashMap::<LcIndex, LinearCombination<F>>::new()
+				//HashMap::<LcIndex, LinearCombination<F>>::new()
+				Vec::<Option<LinearCombination<F>>>::new()
 			));
         let num_times_used = Arc::new(Mutex::new(
 			self.lc_num_times_used(false) ));
@@ -668,19 +673,23 @@ impl<F: Field> ConstraintSystem<F> {
 		let mut three_dep = 0;
 		let mut more_dep = 0;
 		let mut starting = 0;
-        for (index, lc) in self.lc_map.iter() {
+        //for (index, lc) in self.lc_map.iter() {
+        for idx in 0..self.lc_map.len() {
+			let lc = &self.lc_map[idx];
+			if !lc.is_some(){ continue; }
+			let lc = lc.as_ref().unwrap();
 			let mut cnt = 0;
             for &(_, var) in lc.iter() {
                 if var.is_lc() {
                     let lc_index = var.get_lc_index().expect("should be lc");
-                    child_list[lc_index.0].push(index.0);
-					par_list[index.0].push(lc_index.0);
+                    child_list[lc_index.0].push(idx);
+					par_list[idx].push(lc_index.0);
 					cnt += 1;
                 }
             }
 			if cnt==0 {
 				starting += 1;
-				task_queue.push_back(index.0); //no dependees, can handle now 
+				task_queue.push_back(idx); //no dependees, can handle now 
 			};
 			if cnt==1 {singles_dep += 1};
 			if cnt==2 {two_dep += 1};
@@ -772,7 +781,10 @@ impl<F: Field> ConstraintSystem<F> {
 						//its LC, and materialize the LC of the task
 						let idx:usize = task.unwrap();
 						let lc_idx =LcIndex(idx);
-						let lc = bmap.get(&lc_idx).unwrap();
+						//let lc = bmap.get(&lc_idx).unwrap();
+						let lc = &bmap[lc_idx.0];
+						if !lc.is_some() {continue;}
+						let lc = lc.as_ref().unwrap();
             			let mut transformed_lc = LinearCombination::<F>::new();
 						for &(coeff, var) in lc.iter() {//retrieve each var
 							if var.is_lc() {//they are already there
@@ -782,14 +794,15 @@ impl<F: Field> ConstraintSystem<F> {
 								{
 									let tmap= transformed_lc_map
 										.lock().unwrap();
-									let lc = tmap.get(&d_index).expect(
-										&format!("expect val at idx: {}",
-											d_index.0)
-									);
+									//let lc = tmap.get(&d_index).expect(
+									//	&format!("expect val at idx: {}",
+									//		d_index.0)
+									//);
+									let lc = &tmap[d_index.0];
 									lc.clone()
 								}; //make tmap out of scope
 
-								transformed_lc.extend((lc*coeff).0.into_iter());
+								transformed_lc.extend((lc.unwrap()*coeff).0.into_iter());
 								{//block to unlock the lock immediately
 									let mut num_times = num_times_used
 										.lock().unwrap();
@@ -797,7 +810,7 @@ impl<F: Field> ConstraintSystem<F> {
 									if num_times[d_index.0] == 0 {
 										let mut tmap= transformed_lc_map
 											.lock().unwrap();
-										tmap.remove(&d_index);
+										tmap[d_index.0] = None;
 									}
 								}//remove unused entries
 							}else{//if it's var directly
@@ -810,8 +823,10 @@ impl<F: Field> ConstraintSystem<F> {
 						transformed_lc.compactify();
 						let index = LcIndex(idx);
 						{//single block to release lock immediately
-							transformed_lc_map.lock().unwrap()
-								.insert(index, transformed_lc);
+							//transformed_lc_map.lock().unwrap()
+							//	.insert(index, transformed_lc);
+							transformed_lc_map.lock().unwrap()[index.0]
+								= Some(transformed_lc);
 						}
 
 						//3.3.2.3 update the dependee info of 
@@ -1021,17 +1036,18 @@ impl<F: Field> ConstraintSystem<F> {
             let a: Vec<_> = self
                 .a_constraints
                 .iter()
-                .map(|index| self.make_row(self.lc_map.get(index).unwrap()))
+                .map(|index| self.make_row(self.lc_map[index.0].as_ref().unwrap()))
                 .collect();
             let b: Vec<_> = self
                 .b_constraints
                 .iter()
-                .map(|index| self.make_row(self.lc_map.get(index).unwrap()))
+                //.map(|index| self.make_row(self.lc_map.get(index).unwrap()))
+                .map(|index| self.make_row(self.lc_map[index.0].as_ref().unwrap()))
                 .collect();
             let c: Vec<_> = self
                 .c_constraints
                 .iter()
-                .map(|index| self.make_row(self.lc_map.get(index).unwrap()))
+                .map(|index| self.make_row(self.lc_map[index.0].as_ref().unwrap()))
                 .collect();
 
             let a_num_non_zero: usize = a.iter().map(|lc| lc.len()).sum();
@@ -1055,7 +1071,8 @@ impl<F: Field> ConstraintSystem<F> {
     }
 
     fn eval_lc(&self, lc: LcIndex) -> Option<F> {
-        let lc = self.lc_map.get(&lc)?;
+        //let lc = self.lc_map.get(&lc)?;
+        let lc = &self.lc_map[lc.0].as_ref().unwrap();
         let mut acc = F::zero();
         for (coeff, var) in lc.iter() {
             acc += *coeff * self.assigned_value(*var)?;
