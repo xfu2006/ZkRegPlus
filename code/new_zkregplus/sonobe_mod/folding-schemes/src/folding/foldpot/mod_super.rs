@@ -1761,7 +1761,7 @@ where
         }
 		log_perf(log_level, &format!("prove_step: Step 5. commit to instance: wit len: {}", self.w_i.W.len()), &mut gt2);
 		log_perf(log_level-1, &format!("-- prove_step cost: i: {}, circ_id: {}, stmt_len: {}, wtns size: {}", self.i, j_pci1, wtns.statement.len(), wtns_config.get_total_size()), &mut gt1);
-		//if 1>0{panic!("STOP HERE 2003");}
+
         Ok(())
     }
 

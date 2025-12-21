@@ -23028,3 +23028,16 @@ Goal 4. Compare data
 	LOG1:  **** FOLDPOT Now Complete ***** MEM: 31 GB. 254838 ms
 === But final timing improved from 412 sec to 254 sec
 
+Sunday 12/21/2025
+Goal 1. improve lc_assignment_cache
+	[a] data: lc_assignment_cache
+		[a1] large dataset: (23 million retrieve fail and 3.7 million success)
+		-> i average it needs 3857 ns! (too much)
+		3.8k ns * 22 million 
+		= 80 sec spent over this!
+		[a2] small dataset: 258k false vs 108k true (higher ratio)a
+		avg: 1934 ns (smaller value) -> why? maybe higher ratio?
+	[b] use small data set to itemize cost
+		part 1 BTreeMap get: 55 ns
+		but lc_eval: 2670 ns
+

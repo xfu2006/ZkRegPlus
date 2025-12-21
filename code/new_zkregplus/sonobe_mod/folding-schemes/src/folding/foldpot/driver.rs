@@ -1026,6 +1026,7 @@ where
 		}
 		t1.prt(&format!("Step 5: verify steps: {}", num_steps));
 
+		
 		(nova, num_steps, batch_prfs)
 	}
 
@@ -1678,7 +1679,7 @@ where
 		else {panic!("batch proof is none!");};
 	log_perf(log_level, &format!("FoldPot: Step 3: Phase 1: main circuits IVC PROVE STEPS (Folding) DONE. total_word_len: {}, steps: {}.", format_bytes(max_total_n * 31), _num_steps),
 		&mut gt1);
-
+	if 1>0 {panic!("STOP HERE 2003");}
 
 	//5. generate the inputs for cyclepair
 	let qa_nizk_pkey = &driver1.nova_param.0.qa_pp.expect("qa_pp null!"); 

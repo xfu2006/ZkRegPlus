@@ -61,8 +61,8 @@ pub struct ConstraintSystem<F: Field> {
     /// == SynthesisMode::Setup`.
     pub witness_assignment: Vec<F>,
 
-    /// Map for gadgets to cache computation results.
-    pub cache_map: Rc<RefCell<BTreeMap<TypeId, Box<dyn Any>>>>,
+    // Map for gadgets to cache computation results.
+    //pub cache_map: Rc<RefCell<BTreeMap<TypeId, Box<dyn Any>>>>,
 
 	/// the map from index to linear combination
     //pub lc_map: BTreeMap<LcIndex, LinearCombination<F>>,
@@ -143,7 +143,7 @@ impl<F: Field> ConstraintSystem<F> {
             c_constraints: Vec::new(),
             instance_assignment: vec![F::one()],
             witness_assignment: Vec::new(),
-            cache_map: Rc::new(RefCell::new(BTreeMap::new())),
+            //cache_map: Rc::new(RefCell::new(BTreeMap::new())),
             #[cfg(feature = "std")]
             constraint_traces: Vec::new(),
 
@@ -1136,14 +1136,24 @@ impl<F: Field> ConstraintSystem<F> {
             Variable::Witness(idx) => self.witness_assignment.get(idx).copied(),
             Variable::Instance(idx) => self.instance_assignment.get(idx).copied(),
             Variable::SymbolicLc(idx) => {
+				use std::time::Instant;
+				let start = Instant::now();
                 let value = self.lc_assignment_cache.borrow().get(&idx).copied();
-                if value.is_some() {
+				let e1 = start.elapsed().as_nanos();
+
+                let ret = if value.is_some() {
                     value
                 } else {
                     let value = self.eval_lc(idx)?;
                     self.lc_assignment_cache.borrow_mut().insert(idx, value);
                     Some(value)
-                }
+                };
+				let e2 = start.elapsed().as_nanos();
+				if !value.is_some(){
+					println!("DEBUG USE 7777: e1: {} ns, e2: {} ns"
+						, e1, e2-e1);
+				}
+				ret
             },
         }
     }
