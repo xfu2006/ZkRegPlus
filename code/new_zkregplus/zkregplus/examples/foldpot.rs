@@ -415,7 +415,11 @@ fn main(){
 		vec![Fr::from(1), Fr::from(2), Fr::from(100)],
 		vec![Fr::from(4), Fr::from(2), From::from(2)]
 	];
+	let vec_word_fnames = vec![
+		format!("a1.txt"),
+		format!("a2.txt")
+	];
 	let vec_word_info = vec![WordInfo::dummy(); vec_words.len()];
 	let sample_individual_prf = 1; //generate individual proof 1
-	foldpot_main::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,FC,S,LK,GM>(lkup, vec_circ, vec_words, vec_word_info, sample_individual_prf).expect("err foldpot");
+	foldpot_main::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,FC,S,LK,GM,false>(lkup, vec_circ, vec_words, vec_word_info, sample_individual_prf, vec_word_fnames).expect("err foldpot");
 }

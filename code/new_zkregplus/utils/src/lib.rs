@@ -6,4 +6,6 @@ pub mod logger;
 pub mod os;
 /// data (conversion) related operations
 pub mod data;
+/// constants
+pub mod consts;
 

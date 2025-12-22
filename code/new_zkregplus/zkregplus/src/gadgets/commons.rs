@@ -1,6 +1,6 @@
 /* Created 03/07/2025 */
 // common utility functions
-
+use utils::{consts::ADD_CHAIN_SIZE};
 use rayon::{
 	iter::{ParallelIterator,IntoParallelIterator, 
 		IntoParallelRefIterator,IndexedParallelIterator, IntoParallelRefMutIterator},
@@ -810,7 +810,7 @@ pub fn verify_logup_inverse_old<F:PrimeField>(cs: ConstraintSystemRef<F>,
 	let mut sum_left = FpVar::<F>::new_constant(cs.clone(), F::zero())?;
 	for i in 0..v1.len(){ 
 		sum_left += &v1[i]; 
-		if i%64==0{ //this is to prevent code calling assigned_value() chain
+		if i%ADD_CHAIN_SIZE==0{ //this is to prevent code calling assigned_value() chain
 			//too long which can cause stack overflow in recursion
 			//COMMENT OUT LATER IF DOES NOT HELP
 			let value = sum_left.value();
@@ -823,7 +823,7 @@ pub fn verify_logup_inverse_old<F:PrimeField>(cs: ConstraintSystemRef<F>,
 	let mut sum_right = FpVar::<F>::new_constant(cs.clone(), F::zero())?;
 	for i in 0..v2.len(){ 
 		sum_right+= &(&v2[i] * &m_tbl[i]);
-		if i%64==0{//this is to prevent the cfg(test) code calling value
+		if i%ADD_CHAIN_SIZE==0{//this is to prevent the cfg(test) code calling value
 			//for chain too long, which overflows stack when it's doing 
 			//recursion.
 			//COMMENT OUT LATER IF DOES NOT HELP
@@ -862,7 +862,7 @@ pub fn verify_logup_inverse_new<F:PrimeField>(cs: ConstraintSystemRef<F>,
 	let mut sum_left = FpVar::<F>::new_constant(cs.clone(), F::zero())?;
 	for i in 0..v1.len(){ 
 		sum_left += &v1[i]; 
-		if i%64==0{ //this is to prevent code calling assigned_value() chain
+		if i%ADD_CHAIN_SIZE==0{ //this is to prevent code calling assigned_value() chain
 			//too long which can cause stack overflow in recursion
 			//COMMENT OUT LATER IF DOES NOT HELP
 			let value = sum_left.value();
@@ -898,7 +898,7 @@ pub fn verify_logup_inverse_new<F:PrimeField>(cs: ConstraintSystemRef<F>,
 		)?;
 		
 
-		if i%64==0{//this is to prevent the cfg(test) code calling value
+		if i%ADD_CHAIN_SIZE==0{//this is to prevent the cfg(test) code calling value
 			//for chain too long, which overflows stack when it's doing 
 			//recursion.
 			//COMMENT OUT LATER IF DOES NOT HELP

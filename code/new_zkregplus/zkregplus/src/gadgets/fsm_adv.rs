@@ -4,6 +4,7 @@
 */
 
 //! This module generates the (pat-loc) for a nibble sequence.
+use utils::{consts::ADD_CHAIN_SIZE};
 use rayon::iter::{ParallelIterator,IntoParallelRefIterator,IntoParallelIterator};
 use std::{rc::{Rc},cell::{RefCell}};
 use ark_ff::{PrimeField};
@@ -850,7 +851,7 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 			)?;
 			let sel = &si_states[i+1] - &non_final_cvar; 
 			lhs_sum = &lhs_sum + &inv_var * &sel;
-			if i%64==0{
+			if i%ADD_CHAIN_SIZE==0{
 				lhs_sum = &lhs_sum * &one_wit_var; 
 					//to break long linear combination
 			}

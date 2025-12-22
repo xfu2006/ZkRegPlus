@@ -1,5 +1,5 @@
 /* Created 03/06/2025, completed 03/11/2025 */
-
+use utils::{consts::ADD_CHAIN_SIZE};
 use std::rc::{Rc};
 use rayon::iter::{
 	ParallelIterator,
@@ -1072,7 +1072,7 @@ impl <F:PrimeField> SigmaGadget<F> for GetSigGadget<F>{
 					&(&sum_left*alpha
 						+&data.decoded_final_states_sigs_count_count[i])
 				)?;
-			if i%64==0{
+			if i%ADD_CHAIN_SIZE==0{
 				sum_left = &sum_left * &fp_one; //to break long chain of
 						//linear combination
 			}
@@ -1105,7 +1105,7 @@ impl <F:PrimeField> SigmaGadget<F> for GetSigGadget<F>{
 				&(&sum_right*alpha + &data.decoded_final_states_sigs_ids[i]), 
 				&sum_right
 			)?;
-			if i%64==0{
+			if i%ADD_CHAIN_SIZE==0{
 				sum_right = &sum_right * &fp_one;
 			}
 

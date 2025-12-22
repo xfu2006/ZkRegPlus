@@ -23040,4 +23040,72 @@ Goal 1. improve lc_assignment_cache
 	[b] use small data set to itemize cost
 		part 1 BTreeMap get: 55 ns
 		but lc_eval: 2670 ns
+	[c] observe small data set only for pass_all() first call
+		138k false (vs 258k in full) so about half
+		avg of step 2 is still 2841ns
 
+Goal 2. improve the data storage anyway and see data
+	[a] change data type
+	[b] line 152 err
+	[c] check small data again
+		-> it looks resize greatly expanded the cost from 1934ns to 7000ns! 
+		-> it does cut the step 1 from 50ns to 0ns
+	[d] resize to lc_map len directly
+	[e] large data set:
+		eval cost: 4063 ns
+		resize cost amortized to 110 ns
+	===== OLD and new ==> 
+	gen_step_cs step 3: cs: 363393, vars: 252124, lc: 2761720 1261 ms -> 917ms (saved 300 ms)
+    gen_step_cs step 5: AFTER inv_hab22: 624023, cs.lc_size: 5198032, cons: 1207105 309 ms -> 387 ms (increased 80ms)
+		-- -- gen_step_cs step 5.2: cs: 533769, vars: 410886: lc: 327681 413ms
+			-> 508 ms (increased 80 ms)
+    gen_step_cs step 7: cs: 291380, vars: 249899, lc: 207377 212 ms
+	=== prove step: 5.0 sec
+	=== overall cost prove step 5.2 sec (almost no change)
+
+Goal 4. try to reset the standard 64 cut off chain to smaller numbers
+	and see if it helps prover cost
+	===== OLD and new ==>  (64->32)
+	gen_step_cs step 3: cs: 363393->365491, vars: 252124->252222, lc: 2761720->2761720 917ms  -> 1013ms
+    gen_step_cs step 5: AFTER inv_hab22: 624023 (same), cs.lc_size: 5198032 (same), cons: 1207105->1218953 387 ms  -> 377ms
+		-- -- gen_step_cs step 5.2: cs: 533769->535049, vars: 410886->412166: lc: 327681 
+		508 ms ->516ms
+    gen_step_cs step 7: cs: 291380 (same), vars: 249899 (same), lc: 207377 (same) 212 ms -> 265ms
+	=== prove step: 5.0 sec (same)
+	=== overall cost prove step 5.2 sec (almost no change) -> same
+
+		
+	===== OLD and new ==>  (64->8)
+	gen_step_cs step 3: cs: 363393->378127, vars: 252124->266868, lc: 2761720->2761720 917ms  -> 969ms 
+    gen_step_cs step 5: AFTER inv_hab22: 624023 (same), cs.lc_size: 5198032 (same), cons: 1207105->1218953 387 ms  ->404ms 
+		-- -- gen_step_cs step 5.2: cs: 533769->542729, vars: 410886->419846: lc: 327681 
+		508 ms ->509ms
+    gen_step_cs step 7: cs: 291380 (same), vars: 249899 (same), lc: 207377 (same) 212 ms ->260ms 
+	=== prove step: 5.2 sec (same)
+	=== overall cost prove step 5.4 sec (almost no change) -> same
+
+	===== OLD and new ==>  (64->256)
+	not much changeA
+
+	=== recover 64 and put inline for eval_lc, no big change
+
+== TODO ==: idea it looks the LinearCombination could have a tree
+	structure as it is mainly built upon add operations.
+	By directly querying the symbolic value of the two children
+	we can quickly get the value. (current cost of lc_eval
+		avg time:  3661
+		avg len:  (only 1.5?)
+	==> but it might be just counting info
+
+Monday 12/22/2025
+Goal 1. recount including children
+	[a] 7368627 (5564) -> 7368525, 7368526
+		7368526 (119)
+		7368525 (3533) ->  7368523, 7368524
+		7368523 (1405) -> 1090044, 7368522
+		7368524 (216)
+		7368522 (234ns) -> 109100 (witness) 234ns
+		It looks the depth is not deep, but eacy layer
+		takes about 1000ns. What's the cost of retrieving witness?
+	[b] verified retrieving witness and const is negligible <20ns
+	why retrieving SymbolicLC vale takes 8072ns!

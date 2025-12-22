@@ -28,6 +28,8 @@ pub const B_SINGLE_JOB_MODE:bool = true;
 /// always reload a data file even if it exists
 pub const ALWAYS_INIT:bool = true;
 
+pub const ADD_CHAIN_SIZE: usize = 64;
+
 pub const ERR:usize = 0;
 pub const WARN:usize = 1;
 pub const LOG1:usize = 2;

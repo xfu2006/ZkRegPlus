@@ -1,6 +1,7 @@
 /* Created 01/07/2025
 Utility classes/functions
 */
+use utils::{consts::ADD_CHAIN_SIZE};
 use rayon::iter::{ParallelIterator,IntoParallelIterator};
 use std::time::{Instant};
 use ark_ff::{PrimeField,BigInteger};
@@ -420,7 +421,7 @@ pub fn is_logup_inverse_correct<F:PrimeField>(cs: ConstraintSystemRef<F>,
 	let mut sum_left= FpVar::<F>::new_constant(cs.clone(), F::zero())?;
 	for i in 0..v1.len(){
 		sum_left = &sum_left + &v1[i];
-		if i%64==0{ //to break the long linear combination chain
+		if i%ADD_CHAIN_SIZE==0{ //to break the long linear combination chain
 			sum_left = &sum_left * &one_wit_var; 
 			let _val = sum_left.value()?; //to avoid long eval chain
 		}

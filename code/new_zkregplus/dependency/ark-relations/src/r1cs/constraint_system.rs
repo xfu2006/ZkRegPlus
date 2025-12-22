@@ -3,10 +3,13 @@ use crate::r1cs::ConstraintTrace;
 use crate::r1cs::{LcIndex, LinearCombination, Matrix, SynthesisError, Variable};
 use ark_ff::Field;
 use ark_std::{
-    any::{Any, TypeId},
-    boxed::Box,
+    //any::{Any, TypeId},
+    //boxed::Box,
     cell::{Ref, RefCell, RefMut},
-    collections::{BTreeMap,VecDeque},
+    collections::{
+//		BTreeMap,
+		VecDeque
+	},
     format,
     rc::Rc,
     string::String,
@@ -76,7 +79,8 @@ pub struct ConstraintSystem<F: Field> {
     b_constraints: Vec<LcIndex>,
     c_constraints: Vec<LcIndex>,
 
-    lc_assignment_cache: Rc<RefCell<BTreeMap<LcIndex, F>>>,
+    //lc_assignment_cache: Rc<RefCell<BTreeMap<LcIndex, F>>>,
+    lc_assignment_cache: Rc<RefCell<Vec<Option<F>>>>,
 }
 
 impl<F: Field> Default for ConstraintSystem<F> {
@@ -148,7 +152,7 @@ impl<F: Field> ConstraintSystem<F> {
             constraint_traces: Vec::new(),
 
             lc_map: Vec::new(),
-            lc_assignment_cache: Rc::new(RefCell::new(BTreeMap::new())),
+            lc_assignment_cache: Rc::new(RefCell::new(Vec::new())),
 
             mode: SynthesisMode::Prove {
                 construct_matrices: true,
@@ -247,6 +251,7 @@ impl<F: Field> ConstraintSystem<F> {
     /// Obtain a variable representing a linear combination.
     #[inline]
     pub fn new_lc(&mut self, lc: LinearCombination<F>) -> crate::r1cs::Result<Variable> {
+		//1. create the lc
         let index = LcIndex(self.num_linear_combinations);
         let var = Variable::SymbolicLc(index);
 		#[cfg(test)]{
@@ -254,6 +259,7 @@ impl<F: Field> ConstraintSystem<F> {
 		}
 		self.lc_map.push(Some(lc));
         self.num_linear_combinations += 1;
+
         Ok(var)
     }
 
@@ -1070,13 +1076,35 @@ impl<F: Field> ConstraintSystem<F> {
         }
     }
 
+	#[inline(always)]
     fn eval_lc(&self, lc: LcIndex) -> Option<F> {
         //let lc = self.lc_map.get(&lc)?;
+		let start = Instant::now();
+		let my_idx = lc.0;
         let lc = &self.lc_map[lc.0].as_ref().unwrap();
         let mut acc = F::zero();
+		let mut e3 = start.elapsed().as_nanos();
+		let mut c_e3 = 0;
+		let mut c_e4 = 0;
         for (coeff, var) in lc.iter() {
-            acc += *coeff * self.assigned_value(*var)?;
+			let v1 = self.assigned_value(*var).unwrap();
+			let e3_2 = start.elapsed().as_nanos();
+			c_e3 += e3_2 - e3;
+			e3 = e3_2;
+
+            acc += *coeff * v1;
+			let e4_2 = start.elapsed().as_nanos();
+			c_e4 += e4_2 - e3_2;
         }
+		let e1 = start.elapsed().as_nanos();
+		let e2 = lc.len();
+		/*
+		if lc.len()==2{
+			println!("DEBUG USE 7777: e1: {} ns, e2: {}, e3: {}, e4: {}, me: {}, c1: {:?}, c2: {:?}", e1, e2, c_e3, c_e4, my_idx, lc[0].1, lc[1].1);
+		}else{
+			println!("DEBUG USE 7777: e1: {} ns, e2: {}, e3: {}, e4: {}. me: {}, c1: {:?}", e1, e2, c_e3, c_e4, my_idx, lc[0].1);
+		}
+		*/
         Some(acc)
     }
 
@@ -1130,32 +1158,52 @@ impl<F: Field> ConstraintSystem<F> {
 
     /// Obtain the assignment corresponding to the `Variable` `v`.
     pub fn assigned_value(&self, v: Variable) -> Option<F> {
-        match v {
+		let start = Instant::now();
+        let res = match v {
             Variable::One => Some(F::one()),
             Variable::Zero => Some(F::zero()),
             Variable::Witness(idx) => self.witness_assignment.get(idx).copied(),
             Variable::Instance(idx) => self.instance_assignment.get(idx).copied(),
             Variable::SymbolicLc(idx) => {
-				use std::time::Instant;
-				let start = Instant::now();
-                let value = self.lc_assignment_cache.borrow().get(&idx).copied();
-				let e1 = start.elapsed().as_nanos();
+				let value = if self.lc_assignment_cache
+					.borrow_mut().len()>idx.0{
+					self.lc_assignment_cache.borrow_mut()[idx.0]
+				}else{
+					None
+				};
 
                 let ret = if value.is_some() {
                     value
                 } else {
                     let value = self.eval_lc(idx)?;
-                    self.lc_assignment_cache.borrow_mut().insert(idx, value);
+					if self.lc_assignment_cache.borrow_mut().len()<idx.0+1{
+						let resize_len = self.lc_assignment_cache.borrow_mut().len()*2;
+						let resize_len = if resize_len<1024*512 {1024*512} else {resize_len};
+						let resize_len = if resize_len<idx.0+1 {idx.0*2} else {resize_len};
+						self.lc_assignment_cache.borrow_mut()
+							.resize_with(resize_len, || None);
+					}
+                    self.lc_assignment_cache.borrow_mut()[idx.0] = Some(value);
                     Some(value)
                 };
-				let e2 = start.elapsed().as_nanos();
-				if !value.is_some(){
-					println!("DEBUG USE 7777: e1: {} ns, e2: {} ns"
-						, e1, e2-e1);
-				}
 				ret
             },
-        }
+        };
+		let e1 = start.elapsed().as_nanos();
+		match v{
+			Variable::One => 
+			   println!("DEBUG USE 7777:  e1: {}", e1),
+			Variable::Zero=>
+			   println!("DEBUG USE 7777:  e1: {}", e1),
+			 Variable::Witness(idx)=>
+			   println!("DEBUG USE 7777:  e2: {}", e1),
+			 Variable::Instance(idx)=>
+			   println!("DEBUG USE 7777:  e3: {}", e1),
+			 Variable::SymbolicLc(idx)=>
+			   println!("DEBUG USE 7777:  e4: {}", e1),
+		}
+		res
+
     }
 }
 /// The A, B and C matrices of a Rank-One `ConstraintSystem`.

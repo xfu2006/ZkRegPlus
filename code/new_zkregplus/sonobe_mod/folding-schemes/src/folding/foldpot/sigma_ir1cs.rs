@@ -11,7 +11,7 @@
 		that failed_sigs is a subset of discharged_sigs (or the samples
 		are discharged).
 */
-use utils::{logger::{log, log_perf, LOG6}, timer::Timer as GTimer};
+use utils::{consts::ADD_CHAIN_SIZE, logger::{log, log_perf, LOG6}, timer::Timer as GTimer};
 use serde::{Serialize,Deserialize};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use crate::commitment::CommitmentScheme;
@@ -3253,7 +3253,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			prod.enforce_equal(&one_var)?;
 			//use 0 to disable add
 			sum_hab22_left += &(&qry_tbl1[i] * &wtns_var.inv_hab22_left[i]);
-			if i%64==0{//avoid building too long linear combinations
+			if i%ADD_CHAIN_SIZE==0{//avoid building too long linear combinations
 				//cs.is_satisfied() -> eval_lc() -> assigned_value(*var)
 				//  when var is symbolic it's calling eval_lc() recursively
 				//  so here retrieve the value periodically to make recursive
@@ -3319,7 +3319,7 @@ where 	C: CurveGroup<ScalarField=F>,
 				n_case3 += 1;
 			};
 
-			if i%64==0{//avoid building too long linear combinations
+			if i%ADD_CHAIN_SIZE==0{//avoid building too long linear combinations
 				//cs.is_satisfied() -> eval_lc() -> assigned_value(*var)
 				//  when var is symbolic it's calling eval_lc() recursively
 				//  so here retrieve the value periodically to make recursive
@@ -3410,7 +3410,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			//let to_add = &wtns_var.inv_hab22_right[i]*m_i;
 			sum_hab22_right = b_not_add.select(&sum_hab22_right, 
 				&(&sum_hab22_right + &to_add))?;
-			if i%64==0{//avoid too long chain in later
+			if i%ADD_CHAIN_SIZE==0{//avoid too long chain in later
 				//cs.satisfied()	
 				//sum_hab22_right = &sum_hab22_right + &zero_var;
 				//lookup_share_size_left= &lookup_share_size_left + &zero_var;
