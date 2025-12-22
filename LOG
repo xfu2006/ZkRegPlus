@@ -23109,3 +23109,23 @@ Goal 1. recount including children
 		takes about 1000ns. What's the cost of retrieving witness?
 	[b] verified retrieving witness and const is negligible <20ns
 	why retrieving SymbolicLC vale takes 8072ns!
+
+Goal 2. call the eval_lc right now
+	[a] call the function at new_lc (e5)
+	[b] print
+
+Goal 3. remove the Rc<RefCell<>> on lc_assignment_cache
+	[a] propergate changes
+	[b] unfortunately it needs to propraget to
+		r1cs_std (and there are two versions of ark-r1cs-std
+			does not help
+	[c] short data: one round of gen_step_cs 5.2 iteration 3167 
+		-> lc: (generates 149klc) -> average 45 lc per iteration
+		-> 10kns per iteration
+		looks like e4 and e5 are bottleneck it consumes 8k of 18k
+		inverse is slow so should try to process them in batches.
+	[d] large data: 368k iterations -> 533k cs, 410k var, 327k lc
+		each iteration: 12k ns -> 368k *12k = 450 ms
+		is_zero() cost. so 4000 ns per is_zero() is reasonable
+
+== TODO == improve the performance of b_zero by passing inverse() result

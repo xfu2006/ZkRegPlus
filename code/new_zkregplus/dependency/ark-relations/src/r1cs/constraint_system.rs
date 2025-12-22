@@ -1078,33 +1078,12 @@ impl<F: Field> ConstraintSystem<F> {
 
 	#[inline(always)]
     fn eval_lc(&self, lc: LcIndex) -> Option<F> {
-        //let lc = self.lc_map.get(&lc)?;
-		let start = Instant::now();
-		let my_idx = lc.0;
         let lc = &self.lc_map[lc.0].as_ref().unwrap();
         let mut acc = F::zero();
-		let mut e3 = start.elapsed().as_nanos();
-		let mut c_e3 = 0;
-		let mut c_e4 = 0;
         for (coeff, var) in lc.iter() {
 			let v1 = self.assigned_value(*var).unwrap();
-			let e3_2 = start.elapsed().as_nanos();
-			c_e3 += e3_2 - e3;
-			e3 = e3_2;
-
             acc += *coeff * v1;
-			let e4_2 = start.elapsed().as_nanos();
-			c_e4 += e4_2 - e3_2;
         }
-		let e1 = start.elapsed().as_nanos();
-		let e2 = lc.len();
-		/*
-		if lc.len()==2{
-			println!("DEBUG USE 7777: e1: {} ns, e2: {}, e3: {}, e4: {}, me: {}, c1: {:?}, c2: {:?}", e1, e2, c_e3, c_e4, my_idx, lc[0].1, lc[1].1);
-		}else{
-			println!("DEBUG USE 7777: e1: {} ns, e2: {}, e3: {}, e4: {}. me: {}, c1: {:?}", e1, e2, c_e3, c_e4, my_idx, lc[0].1);
-		}
-		*/
         Some(acc)
     }
 
@@ -1158,7 +1137,6 @@ impl<F: Field> ConstraintSystem<F> {
 
     /// Obtain the assignment corresponding to the `Variable` `v`.
     pub fn assigned_value(&self, v: Variable) -> Option<F> {
-		let start = Instant::now();
         let res = match v {
             Variable::One => Some(F::one()),
             Variable::Zero => Some(F::zero()),
@@ -1189,19 +1167,6 @@ impl<F: Field> ConstraintSystem<F> {
 				ret
             },
         };
-		let e1 = start.elapsed().as_nanos();
-		match v{
-			Variable::One => 
-			   println!("DEBUG USE 7777:  e1: {}", e1),
-			Variable::Zero=>
-			   println!("DEBUG USE 7777:  e1: {}", e1),
-			 Variable::Witness(idx)=>
-			   println!("DEBUG USE 7777:  e2: {}", e1),
-			 Variable::Instance(idx)=>
-			   println!("DEBUG USE 7777:  e3: {}", e1),
-			 Variable::SymbolicLc(idx)=>
-			   println!("DEBUG USE 7777:  e4: {}", e1),
-		}
 		res
 
     }
