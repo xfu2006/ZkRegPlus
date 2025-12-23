@@ -259,7 +259,6 @@ impl<F: Field> ConstraintSystem<F> {
 		}
 		self.lc_map.push(Some(lc));
         self.num_linear_combinations += 1;
-
         Ok(var)
     }
 
@@ -1440,7 +1439,7 @@ impl<F: Field> ConstraintSystemRef<F> {
     }
 
     /// Enforce a R1CS constraint with the name `name`.
-    #[inline]
+    #[inline(always)]
     pub fn enforce_constraint(
         &self,
         a: LinearCombination<F>,

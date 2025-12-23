@@ -144,10 +144,12 @@ impl<F: Field> Add<(F, Variable)> for LinearCombination<F> {
 impl<F: Field> AddAssign<(F, Variable)> for LinearCombination<F> {
     #[inline]
     fn add_assign(&mut self, (coeff, var): (F, Variable)) {
-        match self.get_var_loc(&var) {
+        let res = match self.get_var_loc(&var) {
             Ok(found) => self.0[found].0 += &coeff,
             Err(not_found) => self.0.insert(not_found, (coeff, var)),
-        }
+        };
+
+		res
     }
 }
 
@@ -203,7 +205,8 @@ impl<F: Field> Add<Variable> for LinearCombination<F> {
 
     #[inline]
     fn add(self, other: Variable) -> LinearCombination<F> {
-        self + (F::one(), other)
+        let res = self + (F::one(), other);
+		res
     }
 }
 
@@ -284,12 +287,13 @@ impl<F: Field> Add<&LinearCombination<F>> for &LinearCombination<F> {
         } else if self.0.is_empty() {
             return other.clone();
         }
-        op_impl(
+        let res = op_impl(
             self,
             other,
             |coeff| coeff,
             |cur_coeff, other_coeff| cur_coeff + other_coeff,
-        )
+        );
+		res
     }
 }
 
@@ -320,12 +324,14 @@ impl<'a, F: Field> Add<&'a LinearCombination<F>> for LinearCombination<F> {
         } else if self.0.is_empty() {
             return other.clone();
         }
-        op_impl(
+        let res = op_impl(
             &self,
             other,
             |coeff| coeff,
             |cur_coeff, other_coeff| cur_coeff + other_coeff,
-        )
+        );
+
+		res
     }
 }
 

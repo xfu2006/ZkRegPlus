@@ -189,11 +189,12 @@ impl<F: PrimeField> AllocatedFp<F> {
             Ok(self.value.get()? * &other.value.get()?)
         })
         .unwrap();
+		let lc1 = LinearCombination::<F>::from((F::one(),self.variable)); //this is MUCH better
+		let lc2 = LinearCombination::<F>::from((F::one(),other.variable));
+		let lc3 = LinearCombination::<F>::from((F::one(),product.variable));
         self.cs
             .enforce_constraint(
-                lc!() + self.variable,
-                lc!() + other.variable,
-                lc!() + product.variable,
+				lc1, lc2, lc3
             )
             .unwrap();
         product
@@ -332,6 +333,7 @@ impl<F: PrimeField> AllocatedFp<F> {
     pub fn is_eq(&self, other: &Self) -> Result<Boolean<F>, SynthesisError> {
         Ok(self.is_neq(other)?.not())
     }
+
 
     /// Outputs the bit `self != other`.
     ///
@@ -942,6 +944,50 @@ impl<F: PrimeField> ToBytesGadget<F> for FpVar<F> {
             Self::Var(v) => v.to_non_unique_bytes(),
         }
     }
+}
+
+impl<F: PrimeField>  FpVar<F> {
+	/// Special is_zero() with multiplier provided as hint
+	/// This is an adaptation of is_neq 
+	/// Require: if self is zero, multipler is one,
+	/// if self is NOT zero, multipler is its inverse.
+	/// Generate 3 constraints:
+	/// (1) self * multiplier = 1 - res
+	/// (2) self * res = 0
+	/// (3) res is boolean: res * (1 - res) = 0 (this is ALREADY
+	///    enforced in the call of Boolean::new_withness()).
+    pub fn is_zero_adv(&self, f_multiplier: &F) -> Result<Boolean<F>, SynthesisError> {
+		match self{
+			Self::Constant(v) =>  
+				Boolean::new_constant(self.cs().clone(), v.is_zero()),
+			Self::Var(v) => {
+				#[cfg(test)]{
+					let my_val = v.value().unwrap();
+					if !my_val.is_zero(){ 
+						assert!(f_multiplier * my_val == F::one()); 
+					}
+				}
+				let cs = self.cs();
+				let res = Boolean::new_witness(cs.clone(), || {
+					Ok(v.value().unwrap().is_zero())
+				})?;
+				let multiplier = cs.new_witness_variable(|| 
+					{Ok(*f_multiplier)})?;
+
+				cs.enforce_constraint(
+					lc!() + v.variable,
+					lc!() + multiplier,
+					res.not().lc(),
+				)?;
+				cs.enforce_constraint(
+					lc!() + v.variable,
+					res.lc(),
+					lc!(),
+				)?;
+				Ok(res)
+			}
+		}
+	}
 }
 
 impl<F: PrimeField> ToConstraintFieldGadget<F> for FpVar<F> {

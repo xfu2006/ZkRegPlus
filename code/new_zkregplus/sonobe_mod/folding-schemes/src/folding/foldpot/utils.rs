@@ -2,7 +2,7 @@
 Utility classes/functions
 */
 use utils::{consts::ADD_CHAIN_SIZE};
-use rayon::iter::{ParallelIterator,IntoParallelIterator};
+use rayon::iter::{ParallelIterator,IntoParallelIterator,IntoParallelRefIterator};
 use std::time::{Instant};
 use ark_ff::{PrimeField,BigInteger};
 use ark_std::{Zero};
@@ -57,6 +57,15 @@ pub fn format_bytes(bytes: usize) -> String {
     }
 }
 
+/// generate the inverse for vec[i] if vec[i]!=0; otherwise
+/// return 0, using parallelism
+pub fn gen_vec_inverse<F:PrimeField>(vec: &Vec<F>)->Vec<F>{
+	vec.par_iter().map(|v|{
+		if v.is_zero(){F::zero()} else{
+			v.inverse().unwrap()
+		}
+	}).collect::<Vec<F>>()
+}
 
 /// it is cheapter than standard arkworks is_zero(), which costs 3 constraints.
 /// it returns 1 when v is zero and 0 when v is not zero.

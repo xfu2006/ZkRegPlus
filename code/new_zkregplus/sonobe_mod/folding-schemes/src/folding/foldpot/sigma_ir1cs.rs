@@ -45,7 +45,7 @@ use crate::{
 		circuits::{nonnative::uint::{NonNativeUintVar,LimbVar}},
 		foldpot::{
 			utils::{f1_to_f2_limbs, get_stack_space,check_logup, print_vec_var,
-				var_to_lb },
+				var_to_lb , gen_vec_inverse},
 			container_config::{ContainerConfig},
 			//circuits_super::field_to_usize,
 		},
@@ -3370,24 +3370,38 @@ where 	C: CurveGroup<ScalarField=F>,
 			println!("DEBUG USE 6651.RIGHT: i: {}, alpha: {}, beta: {}, inv_hab22_right_size: {}", _i, alpha.value()?, beta.value()?, inv_hab22_right_size);
 		}
 		let mut lookup_share_size_left = si.act_lookup_share_size.clone();
+		//5.2.1 compute the inverse first to speed up is_zero()? call
+		//REMOVE LATER -------------
+		use ark_std::time::Instant;
+		let start = Instant::now();		
+		//REMOVE LATER -------------
+		let val_lkup_left = lookup_share_size_left.value()?;
+		let vec_left = (0..inv_hab22_right_size).collect::<Vec<_>>().
+			into_par_iter().map(|i|{
+				val_lkup_left - F::from(i as u64)
+			}).collect::<Vec<F>>();
+		let v_inv_lzero = gen_vec_inverse(&vec_left);
+		let v_col1_share = si.col1_share.iter().map(|v| v.value().unwrap())
+			.collect::<Vec<F>>();
+		let v_val_not_add = v_col1_share.par_iter().zip(
+			vec_left.par_iter()
+		).map(|(&a,&b)| a*b).collect::<Vec<F>>();
+		let v_inv_not_add = gen_vec_inverse(&v_val_not_add);
+		assert!(v_inv_lzero.len()==inv_hab22_right_size);
+		assert!(v_val_not_add.len()==inv_hab22_right_size);
+		println!("DEBUG USE 7777: gen_vec_inverse {} ns", start.elapsed().as_nanos());
+
+		//5.2.2 now process the inv_hab22_right
 		for i in 0usize..inv_hab22_right_size{
-			//REMOVE LATER -------------
-			use ark_std::time::Instant;
-			let start = Instant::now();		
-			//REMOVE LATER -------------
 			let v = &alpha + &(&beta*&si.col1_share[i]) + &si.col2_share[i];
-			let e1 = start.elapsed().as_nanos();
 			let m_i = &si.m_share[i];
 			let prod = &v * &wtns_var.inv_hab22_right[i];
-			let e2 = start.elapsed().as_nanos();
 			prod.enforce_equal(&one_var)?;
-			let e3 = start.elapsed().as_nanos();
-			let b_left_zero = lookup_share_size_left.is_zero()?;
-			let b_REMOVE = lookup_share_size_left.is_zero_adv(&prod)?;
-			let e4 = start.elapsed().as_nanos();
-			let b_not_add = (&si.col1_share[i] * &lookup_share_size_left)
-				.is_zero()?;
-			let e5 = start.elapsed().as_nanos();
+			let b_left_zero = lookup_share_size_left.is_zero_adv(
+				&v_inv_lzero[i]
+			)?;
+			let item_prod = &si.col1_share[i] * &lookup_share_size_left;
+			let b_not_add = item_prod.is_zero_adv(&v_inv_not_add[i])?;
 			let val2 = &lookup_share_size_left - &one_var;
 			lookup_share_size_left = b_left_zero.select(&zero_var, &val2)?;
 
@@ -3430,9 +3444,6 @@ where 	C: CurveGroup<ScalarField=F>,
 				sum_hab22_right = &sum_hab22_right * &one_wit_var;
 				lookup_share_size_left = &lookup_share_size_left * &one_wit_var;
 			}
-			let e6 = start.elapsed().as_nanos();
-			println!("DEBUG USE 7777: e1: {}, e2: {}, e3: {}, e4: {}, e5: {}, e6: {}, e7: {}", e1, e2-e1, e3-e2, e4-e3, e5-e4, e6-e5, e6);
-
 		}
 
 

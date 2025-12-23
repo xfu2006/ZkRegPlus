@@ -90,9 +90,6 @@ pub trait FieldVar<F: Field, ConstraintF: Field>:
     /// Returns the constant `F::zero()`.
     fn zero() -> Self;
 
-	fn is_zero_adv(&self, _multiplyer: &Self)->Result<Boolean<ConstraintF>,SynthesisError>{
-		todo!()
-	}
     /// Returns a `Boolean` representing whether `self == Self::zero()`.
     fn is_zero(&self) -> Result<Boolean<ConstraintF>, SynthesisError> {
         self.is_eq(&Self::zero())

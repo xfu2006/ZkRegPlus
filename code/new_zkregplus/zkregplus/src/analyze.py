@@ -21,10 +21,13 @@ def analyze(pat):
 		if x>bar: cnt+=1;
 	print("NUM greater than",bar,":", cnt);
 
-analyze("e1");
-analyze("e2");
-analyze("e3");
-analyze("e4");
-analyze("e5");
-analyze("e6");
-analyze("e7");
+#analyze("e11");
+#analyze("e12");
+#analyze("e13");
+#analyze("e14");
+#analyze("e15");
+#analyze("e6");
+#analyze("e7");
+#analyze("e8");
+#analyze("e9");
+analyze("total5");

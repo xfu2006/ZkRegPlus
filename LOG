@@ -23128,4 +23128,53 @@ Goal 3. remove the Rc<RefCell<>> on lc_assignment_cache
 		each iteration: 12k ns -> 368k *12k = 450 ms
 		is_zero() cost. so 4000 ns per is_zero() is reasonable
 
-== TODO == improve the performance of b_zero by passing inverse() result
+Tuesday 12/23/2025
+Goal 1. measure the perf of inverse
+	[a] total cost: 3600, it costs 3300
+		but there's still 400 ns missing?
+		print?
+Goal 2. gen_multiplier
+	[a] in utils add gen_vec_inverse()
+	[b] call int between 5.1 and 5.2
+		1.5 out of 44 ms which is good
+Goal 3. implement special is_zero with hint
+	[a] implement it
+	[b] add test code
+	[c] when b_debug is enabled it throws err, the reason is 
+		that constraint system is not built for folding
+		-> need to open up all b_debug to true
+Goal 4. improve 5.2
+	[a] collect hints
+	[b] unit teting
+	[c] check init data e4 and e5:  cut the prod still takes some
+		time
+	[d] each println takes 642ns
+	Now cutting rom 11k ns to 4.6k ns
+	[e] large data set is even better 3209 ns
+		[e1] gen inverse 10ms, total 150ms 
+		iteration 40k, cs: 533k, vars: 410k, lc: 245k
+		each iteration:
+			13 r1cs, 10 vars, 6 lc
+			3700 s per iteration average cost per lc: 150ns 
+	[f] step 5.2 cost improved from 509 ms to 160ms
+Goal 5. FpVar mul cost
+	(a) Total: ==== 3306ns! very expensive 
+	(b) FpVar::new_with (one mul) - 74ns
+	(c) new_lc + lc_add: 623ns (3 steps)  ---> why?
+		(c1) new_lc: 27 ns
+		(c2) lc_add: 73 ns 
+		(c3) lc_add_assign: also 73ns
+		(c4) improve it by avoiding + operator just create the var
+			-> now proved from 623ns to 53ns!!!lunlun
+Goal 6. Check enforce_constraints() cost
+	-> should focus on prove_step1 as add_constraint is actually an empty
+	-> now only 20ns 
+Goal 7. Go back and check FpVar mul cost: => 150ns
+	mul 54 ns + 3 lc (3*7) + add_cs (50) = 120 ns
+	==> now step 5.2 cost improved from 160ms -> 102ms. which is good!
+
+=== TODO === check add constraints
+(d) add constraint: 623ns --> why?
+
+
+=== TODO: fix the b_debug = true problem there is no constraint to check.
