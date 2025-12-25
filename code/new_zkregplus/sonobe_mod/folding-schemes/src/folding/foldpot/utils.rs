@@ -13,6 +13,7 @@ use memory_stats::memory_stats;
 use libc::{pthread_getattr_np, pthread_attr_getstack, pthread_self};
 use std::mem::MaybeUninit;
 use std::ptr;
+use ark_r1cs_std::fields::fp::AllocatedFp;
 use ark_relations::{lc,
 	r1cs::{SynthesisError,ConstraintSystemRef,
 //	LinearCombination,Variable
@@ -119,6 +120,79 @@ pub fn var_to_lb<F:PrimeField>(v: &FpVar<F>, coef: F)->LinearCombination<F>{
 
 	res
 }
+
+/// assumption v1 and v2 both have to be AllocatedFp
+/// This will be faser than &v1 * &v1 (avg: 271ns)
+/// Cost: 231 ns (improved 40ns) 
+#[inline(always)]
+pub fn alloc_fpvar_mul<F:PrimeField>(v1: &FpVar<F>, v2: &FpVar<F>)->FpVar<F>{
+	if let Var(rv1) = v1{
+		if let Var(rv2) = v2{
+			return FpVar::<F>::Var(AllocatedFp::<F>::mul(&rv1, &rv2));
+		}
+	}
+	panic!("v1 or v2 is not AllocatedFpVar")
+}
+
+/// sum up 3 FpVar (allow constants)
+#[inline(always)]
+pub fn sum3<F:PrimeField>(v1: &FpVar<F>, v2: &FpVar<F>, v3: &FpVar<F>)
+->FpVar<F>{
+	 let value = v1.value().unwrap() + v2.value().unwrap() + 
+	 		v3.value().unwrap();
+
+	let tp1 = var_to_tuple(v1);
+	let tp2 = var_to_tuple(v2);
+	let tp3 = var_to_tuple(v3);
+	let lb = LinearCombination::<F>(
+		vec![tp1, tp2, tp3]
+	);
+	let variable = v1.cs().new_lc(lb).unwrap();
+	let res = AllocatedFp::new(Some(value), variable, v1.cs().clone());
+
+	FpVar::Var(res)
+}
+
+/// subtraction (faster than trait dispatch),  allow constants
+/// Can improve about 30 ns for &v1 - &v2 (196ns -> 160ns)
+#[inline(always)]
+pub fn sub2<F:PrimeField>(v1: &FpVar<F>, v2: &FpVar<F>)
+->FpVar<F>{
+	 let value = v1.value().unwrap() - v2.value().unwrap();
+
+	let tp1 = var_to_tuple(v1);
+	let tp2 = var_to_tuple_adv(v2, F::zero()-F::one());
+	let lb = LinearCombination::<F>(
+		vec![tp1, tp2]
+	);
+	let variable = v1.cs().new_lc(lb).unwrap();
+	let res = AllocatedFp::new(Some(value), variable, v1.cs().clone());
+
+	FpVar::Var(res)
+}
+
+/// FpVar to a tuple (can handle consants
+#[inline(always)]
+pub fn var_to_tuple<F:PrimeField>(v: &FpVar<F>)->(F,Variable){
+	let res = match v{
+		Var(v) => (F::one(), v.variable) ,
+		Constant(val) => (*val, Variable::One)
+	};
+
+	res
+}
+
+/// FpVar to a tuple (can handle consants
+#[inline(always)]
+pub fn var_to_tuple_adv<F:PrimeField>(v: &FpVar<F>, c: F)->(F,Variable){
+	let res = match v{
+		Var(v) => (c, v.variable) ,
+		Constant(val) => (*val*c, Variable::One)
+	};
+
+	res
+}
+
 
 /// convert a FP var tovar  
 pub fn fpvar_to_var<F:PrimeField>(v: &FpVar<F>)->Variable{

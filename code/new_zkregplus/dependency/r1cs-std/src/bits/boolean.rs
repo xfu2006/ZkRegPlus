@@ -27,6 +27,31 @@ pub(crate) fn bool_to_field<F: Field>(val: impl Borrow<bool>) -> F {
     }
 }
 
+/// faster implementation than Boolean::new_witness_var(.) because
+/// we skipped trait dispatch (115 vs 130ns of Boolean)
+/// as an allocatedFp. It also returns the Variable for it in ConstraintSys.
+#[inline(always)]
+pub fn new_boolean_witness<F:PrimeField>(cs: ConstraintSystemRef<F>,
+	v: bool)->(Boolean<F>,Variable){
+        let variable = cs.new_witness_variable(|| Ok(v.into())).unwrap();
+		// Constrain: (1 - a) * a = 0
+		let lc1 = LinearCombination::<F>(
+			vec![
+				(F::one(), Variable::One),
+				(F::zero()-F::one(), variable)
+			]
+		);
+		//let lc2 = lc!() + variable;
+		let lc2 = LinearCombination::<F>(
+			vec![(F::one(), variable)]
+		);
+		let lc3 = lc!();
+		cs.enforce_constraint(lc1, lc2, lc3).unwrap();
+
+		(AllocatedBool{variable,cs}.into(), variable)
+}
+
+
 impl<F: Field> AllocatedBool<F> {
     /// Get the assigned value for `self`.
     pub fn value(&self) -> Result<bool, SynthesisError> {
@@ -191,8 +216,22 @@ impl<F: Field> AllocVar<bool, F> for AllocatedBool<F> {
 
             // Constrain: (1 - a) * a = 0
             // This constrains a to be either 0 or 1.
-
+			/*
             cs.enforce_constraint(lc!() + Variable::One - variable, lc!() + variable, lc!())?;
+			*/
+			//let lc1 = lc!() + Variable::One - variable;
+			let lc1 = LinearCombination::<F>(
+				vec![
+					(F::one(), Variable::One),
+					(F::zero()-F::one(), variable)
+				]
+			);
+			//let lc2 = lc!() + variable;
+			let lc2 = LinearCombination::<F>(
+				vec![(F::one(), variable)]
+			);
+			let lc3 = lc!();
+			cs.enforce_constraint(lc1, lc2, lc3)?;
 
             Ok(Self { variable, cs })
         }

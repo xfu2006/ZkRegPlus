@@ -9,6 +9,7 @@ use crate::{
     fields::{FieldOpsBounds, FieldVar},
     prelude::*,
     Assignment, ToConstraintFieldGadget, Vec,
+	boolean::{new_boolean_witness},
 };
 use ark_std::iter::Sum;
 
@@ -125,10 +126,16 @@ impl<F: PrimeField> AllocatedFp<F> {
             .unwrap();
 		*/
 		//ITEMIZED	
-		let lc1 = lc!();
-		let lc2 = lc1 + self.variable + other.variable;
+		//let lc1 = lc!();
+		//let lc2 = lc1 + self.variable + other.variable;
+		let lc2 = LinearCombination::<F>( 
+			vec![
+				(F::one(), self.variable),
+				(F::one(), other.variable)
+			]);
 		let variable = self.cs.new_lc(lc2).unwrap();
         let res = AllocatedFp::new(value, variable, self.cs.clone());
+
 		res
     }
 
@@ -824,12 +831,12 @@ impl_ops!(
 );
 
 impl_ops!(
-    FpVar<F>,
-    F,
-    Mul,
-    mul,
-    MulAssign,
-    mul_assign,
+    FpVar<F>, 
+	F,
+    Mul, 
+	mul,
+    MulAssign, 
+	mul_assign,
     |this: &'a FpVar<F>, other: &'a FpVar<F>| {
         use FpVar::*;
         match (this, other) {
@@ -961,27 +968,38 @@ impl<F: PrimeField>  FpVar<F> {
 			Self::Constant(v) =>  
 				Boolean::new_constant(self.cs().clone(), v.is_zero()),
 			Self::Var(v) => {
+				let cs = self.cs();
 				#[cfg(test)]{
 					let my_val = v.value().unwrap();
 					if !my_val.is_zero(){ 
 						assert!(f_multiplier * my_val == F::one()); 
 					}
 				}
-				let cs = self.cs();
-				let res = Boolean::new_witness(cs.clone(), || {
-					Ok(v.value().unwrap().is_zero())
-				})?;
+				let cs_clone = cs.clone();
+				let v1 = v.value().unwrap().is_zero();
+				//let res = Boolean::new_witness(cs_clone, || Ok(v1))?; //140ns
+				let (res, res_var) = new_boolean_witness(cs_clone, v1); //
 				let multiplier = cs.new_witness_variable(|| 
 					{Ok(*f_multiplier)})?;
-
+				let vec1 = vec![(F::one(), v.variable)];
+				let lc1 = 	LinearCombination::<F>(vec1);
 				cs.enforce_constraint(
-					lc!() + v.variable,
-					lc!() + multiplier,
-					res.not().lc(),
+					//lc!() + v.variable,
+					lc1.clone(), 
+					//lc!() + multiplier,
+					LinearCombination::<F>(vec![(F::one(), multiplier)]),
+					//res.not().lc(),
+					LinearCombination::<F>(
+						vec![
+							(F::one(), Variable::One),
+							(F::zero()-F::one(), res_var)
+						]),
 				)?;
 				cs.enforce_constraint(
-					lc!() + v.variable,
-					res.lc(),
+					//lc!() + v.variable,
+					lc1,
+					//res.lc(),
+					LinearCombination::<F>(vec![(F::one(), res_var)]),
 					lc!(),
 				)?;
 				Ok(res)

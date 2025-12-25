@@ -12,6 +12,7 @@
 		are discharged).
 */
 use utils::{consts::ADD_CHAIN_SIZE, logger::{log, log_perf, LOG6}, timer::Timer as GTimer};
+use crate::folding::foldpot::utils::{sum3,alloc_fpvar_mul,sub2};
 use serde::{Serialize,Deserialize};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use crate::commitment::CommitmentScheme;
@@ -47,7 +48,7 @@ use crate::{
 			utils::{f1_to_f2_limbs, get_stack_space,check_logup, print_vec_var,
 				var_to_lb , gen_vec_inverse},
 			container_config::{ContainerConfig},
-			//circuits_super::field_to_usize,
+			circuits_super::field_to_usize,
 		},
 	}
 };
@@ -3378,7 +3379,12 @@ where 	C: CurveGroup<ScalarField=F>,
 		let val_lkup_left = lookup_share_size_left.value()?;
 		let vec_left = (0..inv_hab22_right_size).collect::<Vec<_>>().
 			into_par_iter().map(|i|{
-				val_lkup_left - F::from(i as u64)
+				let u_left = field_to_usize(&val_lkup_left);
+				if u_left>=i {
+					val_lkup_left - F::from(i as u64)
+				}else{
+					F::zero()
+				}
 			}).collect::<Vec<F>>();
 		let v_inv_lzero = gen_vec_inverse(&vec_left);
 		let v_col1_share = si.col1_share.iter().map(|v| v.value().unwrap())
@@ -3393,17 +3399,26 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		//5.2.2 now process the inv_hab22_right
 		for i in 0usize..inv_hab22_right_size{
-			let v = &alpha + &(&beta*&si.col1_share[i]) + &si.col2_share[i];
+			//let v_temp = &beta * &si.col1_share[i]; //cost 271ns
+			let v_temp = alloc_fpvar_mul(&beta, &si.col1_share[i]); //231ns
+			//let v = &alpha + &v_temp + &si.col2_share[i]; //255ns
+			let v = sum3(&alpha,&v_temp,&si.col2_share[i]); //160ns
 			let m_i = &si.m_share[i];
-			let prod = &v * &wtns_var.inv_hab22_right[i];
+			//let prod = &v * &wtns_var.inv_hab22_right[i];
+			let prod = alloc_fpvar_mul(&v,  &wtns_var.inv_hab22_right[i]);
 			prod.enforce_equal(&one_var)?;
 			let b_left_zero = lookup_share_size_left.is_zero_adv(
 				&v_inv_lzero[i]
 			)?;
-			let item_prod = &si.col1_share[i] * &lookup_share_size_left;
+			//let e3 = start.elapsed().as_nanos();
+			//let item_prod = &si.col1_share[i] * &lookup_share_size_left;
+			let item_prod = alloc_fpvar_mul(&si.col1_share[i], &lookup_share_size_left);
 			let b_not_add = item_prod.is_zero_adv(&v_inv_not_add[i])?;
-			let val2 = &lookup_share_size_left - &one_var;
+			//let e4 = start.elapsed().as_nanos();
+			//let val2 = &lookup_share_size_left - &one_var;
+			let val2 = sub2(&lookup_share_size_left, &one_var);
 			lookup_share_size_left = b_left_zero.select(&zero_var, &val2)?;
+			//let e5 = start.elapsed().as_nanos();
 
 			//if col1_share[i]==0, to disable the add
 			//because it's no care (actually this step is not needed
@@ -3434,6 +3449,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			//let to_add = &wtns_var.inv_hab22_right[i]*m_i;
 			sum_hab22_right = b_not_add.select(&sum_hab22_right, 
 				&(&sum_hab22_right + &to_add))?;
+			//let e6 = start.elapsed().as_nanos();
 			if i%ADD_CHAIN_SIZE==0{//avoid too long chain in later
 				//cs.satisfied()	
 				//sum_hab22_right = &sum_hab22_right + &zero_var;
@@ -3537,8 +3553,18 @@ where 	C: CurveGroup<ScalarField=F>,
 			//6.2 update sum_kzg_eval_lk
 			let old_sum_kzg_eval_lk = sum_kzg_eval_lk.clone();
 			let mut lookup_share_size_left = si.act_lookup_share_size.clone();
+			let val_lkup_left = lookup_share_size_left.value()?;
+			let vec_left = (0..self.stmt_config.lookup_share_size)
+			.collect::<Vec<_>>(). into_par_iter().map(|i|{
+					let u_left = field_to_usize(&val_lkup_left);
+					if u_left>=i { val_lkup_left - F::from(i as u64) }
+						else{ F::zero()}
+				}).collect::<Vec<F>>();
+			let v_inv_lzero = gen_vec_inverse(&vec_left);
+			assert!(v_inv_lzero.len()==self.stmt_config.lookup_share_size);
 			for i in 0..self.stmt_config.lookup_share_size{
-				let b_lk_left_zero = lookup_share_size_left.is_zero()?;
+				//let b_lk_left_zero = lookup_share_size_left.is_zero()?;
+				let b_lk_left_zero = lookup_share_size_left.is_zero_adv(&v_inv_lzero[i])?;
 				sum_kzg_eval_lk= b_lk_left_zero.select(&sum_kzg_eval_lk,
 					&(&(&sum_kzg_eval_lk* &ch)
 					+ &(&si.col1_share[i] * &rcs[0])
@@ -3557,8 +3583,18 @@ where 	C: CurveGroup<ScalarField=F>,
 			let old_sum_vec_v_i = sum_vec_v_i.clone();
 			sum_vec_v_i = b_first_seg.select(&zero_var, &sum_vec_v_i)?;
 			let mut word_size_left = si.act_word_subseg_size.clone();
+			let val_lkup_left = word_size_left.value()?;
+			let vec_left = (0..self.stmt_config.word_subseg_size)
+			.collect::<Vec<_>>(). into_par_iter().map(|i|{
+					let u_left = field_to_usize(&val_lkup_left);
+					if u_left>=i { val_lkup_left - F::from(i as u64) }
+						else{ F::zero()}
+				}).collect::<Vec<F>>();
+			let v_inv_lzero = gen_vec_inverse(&vec_left);
+			assert!(v_inv_lzero.len()==self.stmt_config.word_subseg_size);
 			for i in 0..self.stmt_config.word_subseg_size{
-				let b_wd_left_zero = word_size_left.is_zero()?;
+				//let b_wd_left_zero = word_size_left.is_zero()?;
+				let b_wd_left_zero = word_size_left.is_zero_adv(&v_inv_lzero[i])?;
 				let word_to_add=&si.word_subseg[i] * &rcs[2];
 				sum_kzg_eval_word = b_wd_left_zero.select(
 					&sum_kzg_eval_word,

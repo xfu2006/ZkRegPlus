@@ -23171,10 +23171,100 @@ Goal 6. Check enforce_constraints() cost
 	-> now only 20ns 
 Goal 7. Go back and check FpVar mul cost: => 150ns
 	mul 54 ns + 3 lc (3*7) + add_cs (50) = 120 ns
-	==> now step 5.2 cost improved from 160ms -> 102ms. which is good!
+	==> now gen_step_cs step 5.2 cost improved from 160ms -> 102ms. which is good!
 
-=== TODO === check add constraints
-(d) add constraint: 623ns --> why?
+Wed 12/24/2025
+Goal 1. check the cost of add constraints 
+	[a] analyze 5.2 cost again
+	[b] mul cost: 176 but why &fp * &fp involves additional cost 
+	measured e1: 1281
+	e11: 173 (actual cost of mul but 117 when restrict to prove_step)
+	e12: 448 (println cost)
+	e13: 330 (simpler println)
+	[c] It looks like Mul::Mul wrapper to FpVar::mul
+		costs over 400ns! why?
+	[d] play with [profile.release] lto="fat" to see 
+		if it would speed up across trate calls
+		now custs to 311ns (but still: it has about 150ns overhead)
+	[e] now cuts to 232 ns (vs 173ns) -> this is 50ns overhead
+	*** FpMul: 170ns -> +50 ns overhead -> 230ns
+Goal 2. check ost of add
+	[a] original cost: 88ns -> improved to 68ns
+	[b] it reduces the lc from 327k to 245k but increased cost
+		from 102ms to 120ms
+Goal 3. do an inline function to directly handle FpVar x FpVar
+	instead of multiple layers
+	[a] original data: 252, 324, 313, 283, 223, 226, 256, 291 -> 271.0
+	[a] do asserted_alloc_fpvar_mul
+	[c] compare: 221, 225, 227, 222, 273, 204, 239, 256, 220 -> 231.0
+Goal 4. do inline function for sum3 3 vars
+	[a] original version: 251, 250, 263
+	[b] improved 160,  177,  151ns
+	[c] overall: gen_step_cs step 5.2  further cut lc from 245k to 207k
+		-> still 107ms
+		==== COST ====
+		FpVar::Mul via dispatch: 270ns
+		Mul direct: 230ns
+		2 FpVar::add via dispatch: 250ns -> 125 each?
+		sum3: 160ns
+		==============
+
+Thursday 12/25/2025
+Goal 1. continue to improve 7 steps in 5.2
+  [a] replace mul by fpvar mul 
+  [b] do sub2
+  [c] check enforce_eq
+  [d] itemize the cost of is_zero_ad
+  [d] improve linear combination creation
+  	[d1] add new_lc_adv() -> actually for temporary LC no need
+		to register them at all, even if for the lcs passed
+			to enforce_constraint will register them anyway
+Goal 2. improve is_zero_adv
+	[a] cost:
+		e11 (inv test) -> 0
+		e12: (Bool::new_witness): 190 , 132, 141, 128
+			-> cs_clone: 5 
+			-> is_zero: 5 
+			-> Bool::new_witness: 170
+				-> its enforce constraint costs: 143! (internal cost: 60 why 
+					it's 143?)
+					-> new_witness_var: 32 
+					-> lc1: 24 -> 17 
+					-> lc2: 16 -> 12
+					-> lc3: 0
+					-> enforce_cstr: 10 
+			=> create a new_bool_witness() simulating the Bool::new_witness
+				above
+			** ==> improved to 123, 113, 
+		e13: (new witness): 30
+		e14: (enforce constraint): 220
+			-> directly retrieve variable by new_boolean_var
+			-> directly build linear combination
+			===> *improved to: 100,  
+		e15: (enforce_constraint 2): 90 -> 30!
+		totao: 530 ==> 340 (-200!) 
+
+	
+Goal 3. analyze data
+  [b] data
+	[a] e2 (mul) 240ns -> 205ns
+	[b] e3 (enforce_eq)  351ns -> keep the same
+	[c] e4 (is_zero_adv) 559ns -> 360 (-200!) 
+	[d] e5 (mul) 240ns -> 205ns
+	[e] e6 (is_zero_adv) 447ns -> 322 (-130!)
+	[f] e7 (minus) 196ns -> 170ns
+	[g] e8 (select) 466ns -> ROUGLY 2 multiplication it's ok.
+	[h] e9 (select + one mul):  900ns
+	==> gen_step_cs step 5.2 improved from 107ms to 90ms	
+
+Goal 4. improve stpe 7: gen_step_cs step 7: 
+	[a] old data: cs: 291380, vars: 249899, lc: 207377 206 ms
+		new data=> cs: 291380, vars: 249899, lc: 165905 63 ms
+			=> improved 60 to 70%!
+			mainly due to precomputed inverse.
+		=> LOG1:  **** FOLDPOT Now Complete ***** MEM: 26 GB. 249210 ms
+
+
 
 
 === TODO: fix the b_debug = true problem there is no constraint to check.
