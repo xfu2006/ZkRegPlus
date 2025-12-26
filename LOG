@@ -23266,10 +23266,103 @@ Goal 4. improve stpe 7: gen_step_cs step 7:
 
 Friday 12/26/2025
 Goal 1. improve step 5.0
-	OLD data:  ==============
-		gen_step_cs step 5: AFTER inv_hab22: 624023, cs.lc_size: 5198032, cons: 1207105 303 ms
-		inv_hab22_left: 624023, cs: 826358, vars: 208715, lc: 2271610
+	[a] is inv_hab22_left checkec? -> yes
+	OLD/NEW data:  ==============
+		gen_step_cs step 5: AFTER inv_hab22: 624023, cs.lc_size: 5198032, cons: 1207105 303 ms ==> 158ms
+		inv_hab22_left: 624023, cs: 826358--> SAME, 
+			vars: 208715 ---> SAME, 
+			lc: 2271610 ==> 617644
 	======================
+
+Goal 2. improve step 4
+	[a] implementation
+	[b] data ============
+	LOG6: -- -- -- -- --  gen_step_cs step 4: 
+		output size: 145
+		cs: 2933 => 2063, 
+		vars: 2342 => 1762, 
+		lc: 1460=>880
+		28 ms,  =>31 ms (because size too small)
+
+Goal 3. improve step 3
+	[a] add Timer to document teach step -> DONE
+	[b] collect data and save dump3.txt into temp dir
+	[c] data shown below
+	========== DATA =====================
+	LOG6: -- -- -- -- --  -- -- after msg3 of module 0: WordExtractGadget:
+    INCREASED: constraints: 3072, const vars: 0, wit vars: 2048
+    ==> NOW: CS:17493, const: 1, witness: 1628244
+     ==> stmt_size: 64002.  17 ms
+LOG6: -- -- -- -- --  -- -- after msg3 of module 1: FsmGadget:
+    INCREASED: constraints: 7936, const vars: 0, wit vars: 0
+    ==> NOW: CS:25429, const: 1, witness: 1628244
+     ==> stmt_size: 158722.  48 ms
+LOG6: -- -- -- -- --  -- -- after msg3 of module 2: PackFinalGadget:
+    INCREASED: constraints: 35611, const vars: 0, wit vars: 35293
+    ==> NOW: CS:61040, const: 1, witness: 1663537
+     ==> stmt_size: 1364.  23 ms
+LOG6: -- -- -- -- --  -- -- after msg3 of module 3: GetSigGadget:
+    INCREASED: constraints: 1774, const vars: 0, wit vars: 978
+    ==> NOW: CS:62814, const: 1, witness: 1664515
+     ==> stmt_size: 882.  837 us
+LOG6: -- -- -- -- --  -- -- after msg3 of module 4: WordExtractGadget:
+    INCREASED: constraints: 3072, const vars: 0, wit vars: 2048
+    ==> NOW: CS:65886, const: 1, witness: 1666563
+     ==> stmt_size: 64002.  31 ms
+LOG6: -- -- -- -- --  -- -- after msg3 of module 5: FsmGadget:
+    INCREASED: constraints: 7936, const vars: 0, wit vars: 0
+    ==> NOW: CS:73822, const: 1, witness: 1666563
+     ==> stmt_size: 158722.  49 ms
+LOG6: -- -- -- -- --  -- -- after msg3 of module 6: PackFinalGadget:
+    INCREASED: constraints: 35611, const vars: 0, wit vars: 35293
+    ==> NOW: CS:109433, const: 1, witness: 1701856
+     ==> stmt_size: 1364.  19 ms
+LOG6: -- -- -- -- --  -- -- after msg3 of module 7: GetSigGadget:
+    INCREASED: constraints: 1774, const vars: 0, wit vars: 978
+    ==> NOW: CS:111207, const: 1, witness: 1702834
+     ==> stmt_size: 882.  787 us
+LOG6: -- -- -- -- --  -- -- after msg3 of module 8: WordExtractAdvGadget:
+    INCREASED: constraints: 3072, const vars: 0, wit vars: 2048
+    ==> NOW: CS:114279, const: 1, witness: 1704882
+     ==> stmt_size: 64002.  15 ms
+LOG6: -- -- -- -- --  -- -- after msg3 of module 9: FsmAdvGadget:
+    INCREASED: constraints: 93452, const vars: 0, wit vars: 83138
+    ==> NOW: CS:207731, const: 1, witness: 1788020
+     ==> stmt_size: 142578.  303 ms
+LOG6: -- -- -- -- --  -- -- after msg3 of module 10: FsmAdvGadget:
+    INCREASED: constraints: 93452, const vars: 0, wit vars: 83138
+    ==> NOW: CS:301183, const: 1, witness: 1871158
+     ==> stmt_size: 142578.  288 ms
+LOG6: -- -- -- -- --  -- -- after msg3 of module 11: DischargeAdvGadget:
+    INCREASED: constraints: 2675, const vars: 0, wit vars: 2230
+    ==> NOW: CS:303858, const: 1, witness: 1873388
+     ==> stmt_size: 2824.  4 ms
+LOG6: -- -- -- -- --  -- -- after msg3 of module 12: DischargeAdvGadget:
+    INCREASED: constraints: 2675, const vars: 0, wit vars: 2230
+    ==> NOW: CS:306533, const: 1, witness: 1875618
+     ==> stmt_size: 2824.  4 ms
+LOG6: -- -- -- -- --  -- -- after msg3 of module 13: ComputeSigAdvGadget:
+    INCREASED: constraints: 680, const vars: 0, wit vars: 604
+    ==> NOW: CS:307213, const: 1, witness: 1876222
+     ==> stmt_size: 424.  2 ms
+LOG6: -- -- -- -- --  -- -- after msg3 of module 14: WordExtractAdvGadget(b_map_mode):
+    INCREASED: constraints: 34816, const vars: 0, wit vars: 2048
+    ==> NOW: CS:342029, const: 1, witness: 1878270
+     ==> stmt_size: 127490.  28 ms
+LOG6: -- -- -- -- --  -- -- after msg3 of module 15: DfaAdvGadget:
+    INCREASED: constraints: 35785, const vars: 0, wit vars: 50
+    ==> NOW: CS:377814, const: 1, witness: 1878320
+     ==> stmt_size: 381014.  230 ms
+===========================================================
+
+	Priority: FsmAdv, DfaAdv, WordExtractAdv 
+
+Goal 4. Set up the WordExtract as example to unit test
+	[a] unit test
+	[b] fails size_F
+	-> it looks like its stmt_cfg is not set up correctly
+	[c] read how cp handles it
+	[d] read how the other handles it
 
 
 === TODO: fix the b_debug = true problem there is no constraint to check.

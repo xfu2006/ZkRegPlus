@@ -12,7 +12,7 @@
 		are discharged).
 */
 use utils::{consts::ADD_CHAIN_SIZE, logger::{log, log_perf, LOG6}, timer::Timer as GTimer};
-use crate::folding::foldpot::utils::{sum3,alloc_fpvar_mul,sub2};
+use crate::folding::foldpot::utils::{sum3,alloc_fpvar_mul,sub2,var_to_tuple, var_to_tuple_adv};
 use serde::{Serialize,Deserialize};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use crate::commitment::CommitmentScheme;
@@ -1953,6 +1953,7 @@ impl <F:PrimeField> WitnessSigmaIR1CS<F>{
 	pub fn to_vec_fp_var(&self, cs: ConstraintSystemRef<F>, cfg: &WitnessSigmaIR1CSConfig) ->Vec<FpVar<F>>{
 		//0. define an assisting function to build col considering
 		// the constants
+		let init_vars = cs.num_witness_variables();
 		let build_col = |si_info: &Vec<(usize,bool)>, vals: &[F]|
 		->Vec<FpVar<F>>{
 			let mut idx_start = 0;
@@ -2053,10 +2054,18 @@ impl <F:PrimeField> WitnessSigmaIR1CS<F>{
 		let z_i2= [fp_part1, new_st_inp, new_st_oup, new_st_data, 
 			fp_part3, fp_m1].concat();
 		assert!(z_i2.len()==self.statement.len() + _m1_len);
-		assert!(size_F == cs.num_witness_variables() - 12); //because
+		assert!(init_vars==0 || init_vars==6);
+		assert!(size_F == cs.num_witness_variables() - init_vars - 6); //because
 			//there are 12 vars before the start of F (fixed segment)
 			// which is statement + msg1
 			// see where 12 vars in mod.rs::PreprocessorParamFoldPot::new
+			// NOTE that when the function is in "normal" workflow
+			// the pp_hash, i, z_0 (2 ele), z_i (2 ele) is already
+			// encoded into the constraint system by 
+			// circuit_super.generate_constraints before calling
+			// to_vec_fp_var(). So init_vars will have 6.
+			// for gadgets unit testing function test_adv() it
+			// does not do this, and the init_var is 0
 
 		//2. assemble the the other parts
 		let vec3 = self.msg2.iter().
@@ -3063,11 +3072,12 @@ where 	C: CurveGroup<ScalarField=F>,
 
 
 		//3. add all constraints by components
+		let mut gt3 = GTimer::new();
 		for (i,g) in self.gadgets.iter().enumerate(){
 			let (nc, ni, nv) = (cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables());
 			g.borrow().assert_msg3(i, cs.clone(), &wtns_var, &cfg)?;
 			let stmt_len = g.borrow().get_msg_size().0;
-			log(log_level+1, &format!("-- -- after msg3 of module {}: {}:\n\tINCREASED: constraints: {}, const vars: {}, wit vars: {} ==> NOW:\n\tCS:{}, const: {}, witness: {}\n\t ==> stmt_size: {}\n\n ", i, g.borrow().get_name(), cs.num_constraints()-nc, cs.num_instance_variables()-ni, cs.num_witness_variables()-nv, cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables(), stmt_len));						
+			log_perf(log_level, &format!("-- -- after msg3 of module {}: {}:\n\tINCREASED: constraints: {}, const vars: {}, wit vars: {} \n\t==> NOW: CS:{}, const: {}, witness: {}\n\t ==> stmt_size: {}. ", i, g.borrow().get_name(), cs.num_constraints()-nc, cs.num_instance_variables()-ni, cs.num_witness_variables()-nv, cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables(), stmt_len), &mut gt3);						
 		}
 		if b_debug{
 			let csat = cs.is_satisfied();
@@ -3127,26 +3137,46 @@ where 	C: CurveGroup<ScalarField=F>,
 			&zi_part2.sum_oup)?;
 		let mut inp_left = si.act_input_size.clone();
 		let mut oup_left = si.act_output_size.clone();
+
+		let val_lkup_left = inp_left.value()?;
+		let vec_left = (0..self.stmt_config.input_size).collect::<Vec<_>>().
+			into_par_iter().map(|i|{
+				let u_left = field_to_usize(&val_lkup_left);
+				if u_left>=i {val_lkup_left-F::from(i as u64)}else{F::zero()}
+			}).collect::<Vec<F>>();
+		let v_inv_lzero = gen_vec_inverse(&vec_left);
+		assert!(v_inv_lzero.len()==self.stmt_config.input_size);
 		for i in 0..self.stmt_config.input_size{
 			//simulate the gen_witness:
 			//sum_inp = if b_first || inp_left.is_zero() {sum_inp}
 			//else{ sum_inp * r + si.inp_buf[i] };
 			// inp_left = if inp_left.is_zero() {zero} else {inp_left - one};
-			let cond = b_first_seg.or(&inp_left.is_zero()?)?;
+			let is_inp_left_zero = inp_left.is_zero_adv(&v_inv_lzero[i])?;
+			let cond = b_first_seg.or(&is_inp_left_zero)?;
 			let new_val = sum_inp.clone() * ch.clone() + si.inp_buf[i].clone();
 			sum_inp = cond.select(&sum_inp, &new_val)?; 
 			let new_inp_left  = inp_left.clone() - &one_var;
-			inp_left = inp_left.is_zero()?.select(&zero_var, &new_inp_left)?;
+			inp_left = is_inp_left_zero.select(&zero_var, &new_inp_left)?;
 		}
+
+		let val_lkup_left = oup_left.value()?;
+		let vec_left = (0..self.stmt_config.output_size).collect::<Vec<_>>().
+			into_par_iter().map(|i|{
+				let u_left = field_to_usize(&val_lkup_left);
+				if u_left>=i {val_lkup_left-F::from(i as u64)}else{F::zero()}
+			}).collect::<Vec<F>>();
+		let v_inv_lzero = gen_vec_inverse(&vec_left);
+		assert!(v_inv_lzero.len()==self.stmt_config.output_size);
 		for i in 0..self.stmt_config.output_size{
 			//sum_oup = if b_last || oup_left.is_zero() {sum_oup}
 			//else{ sum_oup * r + si.oup_buf[i] };
 			//oup_left = if oup_left.is_zero() {zero} else {oup_left - one};
-			let cond = b_last_seg.or(&oup_left.is_zero()?)?;
+			let is_oup_left_zero = oup_left.is_zero_adv(&v_inv_lzero[i])?;
+			let cond = b_last_seg.or(&is_oup_left_zero)?;
 			let new_val = sum_oup.clone()*ch.clone() + si.oup_buf[i].clone();
 			sum_oup = cond.select(&sum_oup, &new_val)?;
 			let new_oup_left  = oup_left.clone() - &one_var;
-			oup_left = oup_left.is_zero()?.select(&zero_var, &new_oup_left)?;
+			oup_left = is_oup_left_zero.select(&zero_var, &new_oup_left)?;
 		}
 
 		let eq_inp_oup = sum_inp.is_eq(&sum_oup)?;
@@ -3168,10 +3198,11 @@ where 	C: CurveGroup<ScalarField=F>,
 			);
 		}
 		log_perf(log_level, &format!(
-			"gen_step_cs step 4: cs: {}, vars: {}, lc: {}",
+			"gen_step_cs step 4: cs: {}, vars: {}, lc: {}, output_size: {}",
 			cs.num_constraints() - nc,
 			cs.num_witness_variables() - nv,
-			cs.num_lc() - nl
+			cs.num_lc() - nl,
+			self.stmt_config.output_size
 			), &mut gt
 		);
 		nc = cs.num_constraints();
@@ -3289,9 +3320,17 @@ where 	C: CurveGroup<ScalarField=F>,
 				if tb_id.is_zero(){//case 1 do nothing, 0 r1cs
 					n_case1 += 1;
 				}else{//case 2. only 1 constraint coz qry[i] is CONSTANT
-					let v = &alpha + &(&qry_tbl1[i]*&beta) + &qry_tbl2[i];
-					let lb_v = var_to_lb(&v, F::one());
+					//let v = &alpha + &(&qry_tbl1[i]*&beta) + &qry_tbl2[i];
+					//let lb_v = var_to_lb(&v, F::one());
+					let lb_v = LinearCombination::<F>(
+						vec![
+							var_to_tuple(&alpha),
+							var_to_tuple_adv(&beta, tb_id),
+							var_to_tuple(&qry_tbl2[i])
+						]
+					);
 					let lb_wit= var_to_lb(&wtns_var.inv_hab22_left[i], F::one());
+					
 					cs.enforce_constraint(
 						lb_v,
 						lb_wit,
@@ -3308,8 +3347,17 @@ where 	C: CurveGroup<ScalarField=F>,
 					assert!(!qry_tbl1[i].value().unwrap().is_zero(), 
 						"ERROR: qry_tbl[{}] is zero for case 3", i);
 				}
-				let v = &alpha + &(&qry_tbl1[i]*&beta) + &qry_tbl2[i];
-				let lb_v = var_to_lb(&v, F::one());
+				//let v = &alpha + &(&qry_tbl1[i]*&beta) + &qry_tbl2[i];
+				//let lb_v = var_to_lb(&v, F::one());
+				//let v1 = &qry_tbl1[i]*&beta;
+				let v1 = alloc_fpvar_mul(&qry_tbl1[i], &beta);
+				let lb_v = LinearCombination::<F>(
+					vec![
+						var_to_tuple(&alpha),
+						var_to_tuple(&v1),
+						var_to_tuple(&qry_tbl2[i])
+					]
+				);
 				let lb_wit= var_to_lb(&wtns_var.inv_hab22_left[i], F::one());
 				cs.enforce_constraint(
 					lb_v,
