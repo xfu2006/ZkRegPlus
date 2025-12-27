@@ -23399,4 +23399,18 @@ Goal 1.  improve step 2 of FsmAdv
 	[f] unit test
 
 Goal 2. improve step 7 of validte_fsm_acc_container
+	old/new data: LOG2: --  validate_fsm_acc_container step 7 224 ms
+	[a] precompute inverse 
+		=> cut to 40ms now
+	[b] do lb_item directly
+		-> why does it fail?
+		-> try small data set
+		=> cut to 28ms now
+	[c] further optimize the sum of lhs
+		=> cut to 18 ms now
+	[c] further improve RHS inverse step 8 3ms now -> 1ms
+
+=== TODO further improve validate_pack_trace
+
+
 === TODO: fix the b_debug = true problem there is no constraint to check.

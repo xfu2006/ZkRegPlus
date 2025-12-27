@@ -724,7 +724,7 @@ pub fn verify_inverse<F:PrimeField>(cs: ConstraintSystemRef<F>,
 pub fn verify_inverse_old<F:PrimeField>(cs: ConstraintSystemRef<F>,
 	v1: &[FpVar<F>], v2: &[FpVar<F>], 
 	beta: &FpVar<F>, elen: usize)->Result<(), SynthesisError>{
-	let b_debug = true;
+	let b_debug = false;
 
 	let one_var= FpVar::<F>::new_constant(cs.clone(), F::one())?;
 	for i in 0..elen{
@@ -764,7 +764,7 @@ pub fn fpvar_to_var<F:PrimeField>(v: &FpVar<F>)->Variable{
 pub fn verify_inverse_new<F:PrimeField>(cs: ConstraintSystemRef<F>,
 	v1: &[FpVar<F>], v2: &[FpVar<F>], 
 	beta: &FpVar<F>, elen: usize)->Result<(), SynthesisError>{
-	let b_debug = true;
+	let b_debug = false;
 
 	let lb_beta = var_to_lb(beta, F::one());
 	let lb_one = LinearCombination::from((F::one(),Variable::One));

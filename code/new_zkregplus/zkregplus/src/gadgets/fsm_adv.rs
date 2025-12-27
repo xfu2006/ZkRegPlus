@@ -1052,7 +1052,7 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		r1: FpVar<F>,
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
-		let b_perf = true;
+		let b_perf = false;
 		let log_level = LOG2;
 		let mut gt = GTimer::new();
 		let (nc, nv) = (cs.num_constraints(), cs.num_witness_variables());
