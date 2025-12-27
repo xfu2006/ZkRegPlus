@@ -559,6 +559,22 @@ pub fn build_pows_56<F:PrimeField>(cs: ConstraintSystemRef<F>)
 	vec
 }
 
+/// build vec of 4 elements [2^56, ... 2^(56*4)]
+pub fn build_pows_56_val<F:PrimeField>() -> Vec<F>{
+	let f16 = F::from(1u32<<16);
+	let f6= F::from(1u32<<6);
+	let f56 = f16 * f16 * f16 * f16 * f6;
+	let mut vec = vec![];
+	let mut item = f56.clone();
+	for _i in 0..4{
+		vec.push(item);
+		item = item * f56;
+	}
+
+	vec
+}
+
+
 
 /// pack the check of 8 values into one check
 /// assuming that each element of vec is ALREADY IN RANGE 31-BIT

@@ -14,6 +14,7 @@ use folding_schemes::folding::foldpot::{
 	sigma_ir1cs::{SigmaGadget,WitnessSigmaIR1CSVar,WitnessSigmaIR1CSConfig, NdAdvice,Capacity},
 	container_config::{ContainerConfig},
 	circuits_super::field_to_usize,
+	utils::{var_to_tuple_adv},
 };
 use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef,Variable,
 	LinearCombination};
@@ -34,7 +35,7 @@ use data_processor::{
 };
 use crate::gadgets::{
 	commons::{check_eq,gen_m_table,new_const_var,
-		is_zero_better, new_var, build_pows_56, 
+		is_zero_better, new_var, build_pows_56_val,
 		 var_to_lb, better_select_check},
 	traits::{Container,Col,IDX_WORD, IDX_INP,IDX_DATA, IDX_SI_INP, 
 		IDX_OUP, IDX_SI_OUP, IDX_SI_DATA,ComponentAdvice},
@@ -726,39 +727,79 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		let states = fsm_acc.get_container("states")?.borrow().to_vec();
 		let trans = fsm_acc.get_container("trans")?.borrow().to_vec();
 		assert!(chars.len()==nlen && states.len()==nlen+1 && trans.len()==nlen);
-		let pows_51 = build_pows_56(cs.clone());
-		let one = new_const_var(&cs, F::one());
+		let pows_51 = build_pows_56_val();
+		//constants for the states. Note that
+		//for every 4 transitions, there are 5 states involved.
+		//for each state the constant actually includes the value for
+		//4 transitions.
+		let unit= F::from((1<<(self.capacity.acdfa_state_part_bits+4)) as u32);
+		let hex = F::from(16 as u32);
+		let mut st_cons = vec![F::zero();5];
+		for i in 0..4{
+			st_cons[i] += hex * pows_51[i];
+			st_cons[i+1] += unit * pows_51[i];
+		}
+
+		let lb_one = LinearCombination::<F>(vec![(F::one(), Variable::One)]);
 		if b_perf{
 			log_perf(log_level, "validate_fsm_acc_container step 2.1", &mut gt);
 		}
+		//IDEA: since char, st1, st2 are all already proved in range.
+		//It can be proved that transition is no more than 52-bit
+		//We then PACK 4 transitions in one to save constraints
 		for i in 0..nlen/4{
 			let start = i * 4;
-			let mut sum_trans = one.clone();
-			let mut sum_exp = one.clone();
-			for j in 0..4{//check every 4 transitions
+			//LOGICAL CODE BELOW. But we will later directly
+			//create LinearCombination to SAVE cost
+			// ---------------------------------------
+// 			let mut sum_trans = one.clone();
+// 			let mut sum_exp = one.clone();
+// 			for j in 0..4{//check every 4 transitions
+// 				let idx = start + j;
+// 				let ch = &chars[idx];
+// 				let st1 = &states[idx]; //already plus one
+// 				let st2 = &states[idx+1];
+// 				// simulate clam_db.rs: add_acdfa_to_lkup
+// 				let exp_trans = ch + 
+// 					&(st1 * &hex_var) +
+// 					&(st2 * &unit_var); //no need to plus one, already did
+// 				let trans = &trans[idx];
+// 				//check_eq(&trans, &exp_trans, 
+// 				//&format!("checking transition {} ", i))?;
+// 				sum_trans = &sum_trans + &(&pows_51[j] * trans); //cost 
+// 					//nothing because mul with constant!
+// 				sum_exp = &sum_exp + &(&pows_51[j] * &exp_trans); 
+// 				#[cfg(test)]{
+// 					if exp_trans.value().is_ok(){
+// 						assert!(exp_trans.value()?==trans.value()?);
+// 					}
+// 				}
+// 			}//end for j
+//			check_eq(&sum_trans, &sum_exp,  "ERROR checking trans")?;
+			//----------- LOGICAL CODE ABOVE -------------------
+			let mut vec_sum_trans = vec![(F::zero(), Variable::One); 9];
+				//2 tuples for each tranistion
+				//an additional one for the last st2.
+			let mut vec_sum_exp = vec![(F::zero(), Variable::One); 4];
+			for j in 0..4{
 				let idx = start + j;
 				let ch = &chars[idx];
-				let st1 = &states[idx]; //already plus one
-				let st2 = &states[idx+1];
-				// simulate clam_db.rs: add_acdfa_to_lkup
-				let exp_trans = ch + 
-					&(st1 * &hex_var) +
-					&(st2 * &unit_var); //no need to plus one, already did
-				let trans = &trans[idx];
-				//check_eq(&trans, &exp_trans, 
-				//&format!("checking transition {} ", i))?;
-				sum_trans = &sum_trans + &(&pows_51[j] * trans); //cost 
-					//nothing because mul with constant!
-				sum_exp = &sum_exp + &(&pows_51[j] * &exp_trans); 
-				/*
-				#[cfg(test)]{
-					if exp_trans.value().is_ok(){
-						assert!(exp_trans.value()?==trans.value()?);
-					}
+				vec_sum_trans[j*2] = var_to_tuple_adv(ch, pows_51[j]);
+				vec_sum_trans[j*2+1] = var_to_tuple_adv(&states[idx], 
+					st_cons[j]);
+				if j==3{
+					vec_sum_trans[j*2+2]=var_to_tuple_adv(&states[idx+1],
+						st_cons[j+1]);
 				}
-				*/
-			}//end for j
-			check_eq(&sum_trans, &sum_exp,  "ERROR checking trans")?;
+				vec_sum_exp[j] = var_to_tuple_adv(&trans[idx], pows_51[j]);
+			}
+			let lb1 = LinearCombination::<F>(vec_sum_trans);
+			let lb3 = LinearCombination::<F>(vec_sum_exp);
+			//to assert that sum of transition == sum of expected transition
+			//for every 4 transitions given that they are already proved
+			//in range.
+			cs.enforce_constraint( lb1, lb_one.clone(), lb3)?;
+
 		}
 		if b_perf{
 			log_perf(log_level, "validate_fsm_acc_container step 2.2", &mut gt);

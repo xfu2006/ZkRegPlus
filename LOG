@@ -23388,6 +23388,13 @@ Goal 5. tag fsmadv
 		validate_fsm_acc_container step 2 and 7
 
 Sunday 12/27/2025
-Goal 1.  improve step 2.
-
+Goal 1.  improve step 2 of FsmAdv
+	old/new data: LOG2: --  validate_fsm_acc_container step 2.2 65 ms ==> 479us!
+	INCREASED: constraints: 93452 (same), const vars: 0, wit vars: 83138 (same)
+	[a] set up framework
+	[b] build_pow51
+	[c] continue set up framework
+	[d] build up the other arrays
+	[e] implementation -> DONE
+	[f] unit test
 === TODO: fix the b_debug = true problem there is no constraint to check.
