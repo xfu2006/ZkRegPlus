@@ -6,7 +6,8 @@
 //! This module generates the (pat-loc) for a nibble sequence.
 use utils::{consts::ADD_CHAIN_SIZE, logger::{log_perf, LOG1,LOG2}, 
 	timer::Timer as GTimer};
-use rayon::iter::{ParallelIterator,IntoParallelRefIterator,IntoParallelIterator};
+use rayon::iter::{ParallelIterator,IntoParallelRefIterator,
+	IndexedParallelIterator, IntoParallelIterator};
 use std::{rc::{Rc},cell::{RefCell}};
 use ark_ff::{PrimeField};
 use std::marker::{PhantomData};
@@ -894,6 +895,19 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		let f_id_non_final = F::from(self.fsm_id+1);
 		let non_final_cvar = new_const_var(&cs, f_id_non_final); 
 		let lb_one= LinearCombination::from((F::one(),Variable::One));
+		//3.2.1 precompute the value of inverse values
+		let states_val = states.iter().map(|s| s.value().unwrap())
+			.collect::<Vec<F>>();
+		let r1_val = r1.value()?;
+		let unit_val = unit_cvar.value()?;
+		let inp_val = inp_loc.value()?;
+		println!("DEBUG USE 101: states_val: {}, nlen: {}", states_val.len(), nlen);
+		let vec_inv = states_val.into_par_iter().enumerate().map(|(i,s)|{
+			let val = r1_val + s + unit_val *(inp_val + F::from(i as u32));
+			val.inverse().expect("INV err")
+		}).collect::<Vec<F>>();
+		assert!(vec_inv.len()==nlen+1); //because have 1 more last state
+		//3.2.2 now compute the constraints
 		for i in 0..nlen{
 			//let nc = cs.num_constraints();
 			//we skip item [0] because it's handled in
@@ -903,12 +917,19 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 			//We do NOT use another random here because locs[i]
 			//has ALREADY been proved to be in range RANGE2
 			//so we can just "concat" these two numbers of bit-strings
-			let item = &r1 + &states[i+1] + &unit_cvar*&(inp_loc + 
-				&new_const_var(&cs, F::from( (i+1) as u32)));
-			let item_val = item.value()?;
-			let inv = item_val.inverse().expect("INV err");
+			//let item = &r1 + &states[i+1] + &unit_cvar*&(inp_loc + 
+			//	&new_const_var(&cs, F::from( (i+1) as u32)));
+			//let item_val = item.value()?;
+			//let inv = item_val.inverse().expect("INV err");
+			//let lb_item = var_to_lb(&item, F::one());
+			let lb_item = LinearCombination::<F>( vec![
+				(unit_val * F::from((i+1) as u32), Variable::One),
+				var_to_tuple_adv(&states[i+1], F::one()),
+				var_to_tuple_adv(&r1, F::one()),
+				var_to_tuple_adv(&inp_loc, unit_val),
+			]);
+			let inv = vec_inv[i+1]; //improved using precompued value
 			let inv_var = new_var(&cs, inv);
-			let lb_item = var_to_lb(&item, F::one());
 			let lb_inv = var_to_lb(&inv_var, F::one());
 			//check_eq(&(&item *&inv_var), &one, "inv failed")?;
 			cs.enforce_constraint(
@@ -917,7 +938,11 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 				lb_one.clone()
 			)?;
 			let sel = &si_states[i+1] - &non_final_cvar; 
+			assert!(!si_states[i+1].is_constant());
 			lhs_sum = &lhs_sum + &inv_var * &sel;
+
+			//NOT needed as si_states is NOT constant so it
+			//forms a constraint each iteration
 			if i%ADD_CHAIN_SIZE==0{
 				lhs_sum = &lhs_sum * &one_wit_var; 
 					//to break long linear combination

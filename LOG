@@ -23397,4 +23397,6 @@ Goal 1.  improve step 2 of FsmAdv
 	[d] build up the other arrays
 	[e] implementation -> DONE
 	[f] unit test
+
+Goal 2. improve step 7 of validte_fsm_acc_container
 === TODO: fix the b_debug = true problem there is no constraint to check.
