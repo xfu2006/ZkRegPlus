@@ -23361,8 +23361,33 @@ Goal 4. Set up the WordExtract as example to unit test
 	[a] unit test
 	[b] fails size_F
 	-> it looks like its stmt_cfg is not set up correctly
-	[c] read how cp handles it
-	[d] read how the other handles it
+	-> cp returns get_gadgets_stmt_map
+	-> sed returns get_badget_stmt_map
+	-> in gen_statement_structure in composable_gadget_mapper	
+		is collects by calling get_badget_stmt_map
+		and then reset stmt_cfg.reset_si_info(...)
+	[c] question: since we have not reset anything here,
+		it should be using the default si_info why is it failed
+		observation: it's always 6 greater than its ideal size
+	[d] check the verification: what about the init_var?
+		now in the working case init_cs_vars is 6. how to
+		explain the fact init_cs_vars? who enters it? 
+	[e] find out why there is a init_cs_vars
+	[f] read how cp handles it
+	[g] read how the other handles it
+	[h] regression test -> ALL PASSED
 
+Goal 5. tag fsmadv
+	[a] level 1 a
+	[b] OLD DATA 
+	LOG6: -- -- -- -- --  -- -- after msg3 of module 10: FsmAdvGadget: 
+	INCREASED: constraints: 93452, const vars: 0, wit vars: 83138
+    ==> NOW: CS:301183, const: 1, witness: 1871158
+     ==> stmt_size: 142578.  288 ms
+	[c] observe data:
+		validate_fsm_acc_container step 2 and 7
+
+Sunday 12/27/2025
+Goal 1.  improve step 2.
 
 === TODO: fix the b_debug = true problem there is no constraint to check.

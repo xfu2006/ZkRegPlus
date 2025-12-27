@@ -4,7 +4,8 @@
 */
 
 //! This module generates the (pat-loc) for a nibble sequence.
-use utils::{consts::ADD_CHAIN_SIZE};
+use utils::{consts::ADD_CHAIN_SIZE, logger::{log_perf, LOG1,LOG2}, 
+	timer::Timer as GTimer};
 use rayon::iter::{ParallelIterator,IntoParallelRefIterator,IntoParallelIterator};
 use std::{rc::{Rc},cell::{RefCell}};
 use ark_ff::{PrimeField};
@@ -674,7 +675,9 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		//1. asserts all states and transitions must be in range
 		// NOTE: we do not have to assert in range for nibbles they
 		// are done already in word_extract_adv gadget
-		let b_perf = false;
+		let b_perf = true;
+		let log_level = LOG2;
+		let mut gt = GTimer::new();
 		let (nc, nv) = (cs.num_constraints(), cs.num_witness_variables());
 		let nlen = self.capacity.max_nibble_len;
 		let alen = self.capacity.max_nibble_len 
@@ -686,6 +689,9 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		let si_states = fsm_acc.get_container("si_states")?.borrow().to_vec();
 		let si_trans= fsm_acc.get_container("si_trans")?.borrow().to_vec();
 		assert!(si_states.len()==nlen+1 && si_trans.len()==nlen);
+		if b_perf{
+			log_perf(log_level, "validate_fsm_acc_container step 1", &mut gt);
+		}
 
 		//2. NO need to check transition id because its constant.
 		// ALSO no need to check the si_states_id as there will be a 
@@ -722,6 +728,9 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		assert!(chars.len()==nlen && states.len()==nlen+1 && trans.len()==nlen);
 		let pows_51 = build_pows_56(cs.clone());
 		let one = new_const_var(&cs, F::one());
+		if b_perf{
+			log_perf(log_level, "validate_fsm_acc_container step 2.1", &mut gt);
+		}
 		for i in 0..nlen/4{
 			let start = i * 4;
 			let mut sum_trans = one.clone();
@@ -741,15 +750,20 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 				sum_trans = &sum_trans + &(&pows_51[j] * trans); //cost 
 					//nothing because mul with constant!
 				sum_exp = &sum_exp + &(&pows_51[j] * &exp_trans); 
-
+				/*
 				#[cfg(test)]{
 					if exp_trans.value().is_ok(){
 						assert!(exp_trans.value()?==trans.value()?);
 					}
 				}
+				*/
 			}//end for j
 			check_eq(&sum_trans, &sum_exp,  "ERROR checking trans")?;
 		}
+		if b_perf{
+			log_perf(log_level, "validate_fsm_acc_container step 2.2", &mut gt);
+		}
+
 		//IF nlen is not multiple of 4
 		for idx in nlen/4*4 .. nlen{
 			let ch = &chars[idx];
@@ -760,6 +774,9 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 				&(st2 * &unit_var); //no need to plus one, already did
 			let trans = &trans[idx];
 			check_eq(&exp_trans, &trans, "ERROR checking trans part2")?;
+		}
+		if b_perf{
+			log_perf(log_level, "validate_fsm_acc_container step 3", &mut gt);
 		}
 
 
@@ -777,6 +794,9 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		//let pows_31 = build_pows_31(cs.clone());
 		//packcheck_increase(&locs, &pows_31)?;
 		// --> no need anymore as locs are directly computed
+		if b_perf{
+			log_perf(log_level, "validate_fsm_acc_container step 4", &mut gt);
+		}
 
 
 		//3. check the validity of final states
@@ -800,6 +820,9 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		let vec_not_dummy = states_final.iter().map(|s|
 			&one_var - &is_zero_better(s, &cs).unwrap()
 		).collect::<Vec<FpVar<F>>>();
+		if b_perf{
+			log_perf(log_level, "validate_fsm_acc_container step 5", &mut gt);
+		}
 
 		//3.1 check the validity of sid_states_final 
 		//either it is 0 or fid_state (note that even we skip checking
@@ -817,6 +840,9 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 				&si_states_final[i])?;
 			//check_eq(&si_locs_final[i], &(&vec_not_dummy[i] * &f_range),
 			// NO Need as locs are computed correctly always
+		}
+		if b_perf{
+			log_perf(log_level, "validate_fsm_acc_container step 6", &mut gt);
 		}
 
 		//3.2 use sid_states_final to sum up the logup equation LHS
@@ -856,6 +882,9 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 					//to break long linear combination
 			}
 		}
+		if b_perf{
+			log_perf(log_level, "validate_fsm_acc_container step 7", &mut gt);
+		}
 
 		//3.3 use vec_not_dummy[i] to sum up the Logup RHS 
 		//COST: 2*alen
@@ -878,6 +907,10 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 			rhs_sum = &rhs_sum + &inv_var * &vec_not_dummy[i];
 		}
 		check_eq(&lhs_sum, &rhs_sum, "logup check fails")?;
+		if b_perf{
+			log_perf(log_level, "validate_fsm_acc_container step 8", &mut gt);
+		}
+
 
 		if b_perf{
 			println!(" ### --- validate_fsm_acc_container, nlen: {}, alen: {}, nc: {}, nv: {}", nlen, alen, cs.num_constraints() - nc,cs.num_witness_variables()-nv);
@@ -904,7 +937,9 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		r1: FpVar<F>,
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
-		let b_perf = false;
+		let b_perf = true;
+		let log_level = LOG2;
+		let mut gt = GTimer::new();
 		let (nc, nv) = (cs.num_constraints(), cs.num_witness_variables());
 		//1. check all subtable IDs are correct.
 		// This includes the check that the encoded column is
@@ -923,6 +958,9 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 				.borrow().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
 		assert!(sid_cols.len()==vals.len());
+		if b_perf{
+			log_perf(log_level, "valid_proj_subsig_store step 1", &mut gt);
+		}
 
 		//NOT needed anymore
 		//for i in 0..vals.len(){
@@ -945,6 +983,9 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		assert!(unit_bits==RANGE2_BIT, "reset HexACDFA state part bits or RANGE2_BIT so that they are aligned");
 		verify_encoded_table(cs.clone(),
 			unit_bits, &vec![subsig,id1,state,id2,pat], encoded)?;
+		if b_perf{
+			log_perf(log_level, "valid_proj_subsig_store step 2", &mut gt);
+		}
 
 		//4. check the table is wellformed 
 		//COST: 8 avg_pat_subsig * subsig
@@ -953,6 +994,9 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		//external table, thus guarantee completeness of vals for a key.
 		assert_well_formed_sorted(cs.clone(),subsig,id1,state,None,None,None,
 			None, r1,unit_bits)?;
+		if b_perf{
+			log_perf(log_level, "valid_proj_subsig_store step 3", &mut gt);
+		}
 
 		if b_perf{
 			println!(" ### --- validate_proj_store: subsigs: {}, pats_per_subsig: {}, nc: {}, nv: {}", self.capacity.subsigs, self.capacity.avg_pats_per_subsig, cs.num_constraints() - nc,cs.num_witness_variables()-nv);
@@ -979,7 +1023,9 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		all: &Container<FpVar<F>>,  //entire container
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
-		let b_perf = false;
+		let b_perf = true;
+		let log_level = LOG2;
+		let mut gt = GTimer::new();
 		let mut nc = cs.num_constraints();
 		//1. check sorted_set of states is correct
 		// cost: 10* subsigs * avg_pat_per_subsig
@@ -993,6 +1039,10 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		let col_to_sorted_combo = all.search_container(
 			&format!("{} packed_trace sorted_states", sname))?;
 		verify_col_to_sorted_set(r1, &col_to_sorted_combo.borrow(), cs.clone())?;
+		if b_perf{
+			log_perf(log_level, "valid_packed_trace step 1", &mut gt);
+		}
+
 		#[cfg(test)]{
 			assert!(_plen==col_to_sorted_combo.borrow().get_container("id")
 				.unwrap().borrow().to_vec().len());
@@ -1027,6 +1077,9 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 			println!(" --- validate_pack_trace step 2, nlen: {} cs: {}", nlen, cs.num_constraints()-nc);
 			nc = cs.num_constraints();
 		}
+		if b_perf{
+			log_perf(log_level, "valid_packed_trace step 2", &mut gt);
+		}
 
 		//3. check the pattern_state_tbl
 		// COST: 17 * subsigs * avg_pats_subsig
@@ -1044,6 +1097,9 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 			println!("--- cs: {}", cs.num_constraints()-nc);
 			nc = cs.num_constraints();
 		}
+		if b_perf{
+			log_perf(log_level, "valid_packed_trace step 3", &mut gt);
+		}
 
 		//4. check the pat_state_loc
 		//COST: 17 * subsigs *avg_pats_per_subsig + 
@@ -1057,6 +1113,9 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		if b_perf{
 			println!("--- verify packed_trace step 4: cs: {}", 
 				cs.num_constraints()-nc);
+		}
+		if b_perf{
+			log_perf(log_level, "valid_packed_trace step 4", &mut gt);
 		}
 
 		Ok( () )
@@ -1147,7 +1206,9 @@ impl <F:PrimeField> SigmaGadget<F> for FsmAdvGadget<F>{
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{
-		let b_perf = false;
+		let b_perf = true;
+		let log_level = LOG1;
+		let mut gt = GTimer::new();
 		let mut nc = cs.num_constraints();
 		let nc0 = cs.num_constraints();
 		//1. retrive the statement instance and get all parts
@@ -1163,7 +1224,8 @@ impl <F:PrimeField> SigmaGadget<F> for FsmAdvGadget<F>{
 		self.validate_fsm_acc_container(&fsm_acc.borrow(), r1.clone(),
 			r2.clone(), cs.clone())?;
 		if b_perf{
-			println!(" ## fsm_adv step1: {}", cs.num_constraints()-nc);
+			log_perf(log_level, &format!(
+				" ## fsm_adv step1: {}", cs.num_constraints()-nc), &mut gt);
 			nc = cs.num_constraints();
 		}
 
@@ -1171,7 +1233,8 @@ impl <F:PrimeField> SigmaGadget<F> for FsmAdvGadget<F>{
 		// COST: subsig*(1 + 11*avg_pat_subsig)
 		self.validate_proj_subsig_store(&pss.borrow(),r1.clone(),cs.clone())?;
 		if b_perf{
-			println!(" ## fsm_adv step2: {}", cs.num_constraints()-nc);
+			log_perf(log_level, &format!(
+				" ##fsm_adv step2: {}", cs.num_constraints()-nc), &mut gt);
 			nc = cs.num_constraints();
 		}
 
@@ -1180,10 +1243,10 @@ impl <F:PrimeField> SigmaGadget<F> for FsmAdvGadget<F>{
 		// + 44 * subsigs * avg_pats_per_subsig
 		self.validate_packed_trace(&r1, &r2, &stmt, cs.clone())?;
 		if b_perf{
-			println!(" ## fsm_adv step3: {}, total: {}", 
+			log_perf(log_level, &format!(" ## fsm_adv step3: {}, total: {}", 
 				cs.num_constraints()-nc,
 				cs.num_constraints()-nc0
-			);
+			), &mut gt);
 		}
 
 		Ok(())
