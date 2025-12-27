@@ -4,7 +4,7 @@
 */
 
 //! This module generates the (pat-loc) for a nibble sequence.
-use utils::{consts::ADD_CHAIN_SIZE, logger::{log_perf, LOG1,LOG2}, 
+use utils::{logger::{log_perf, LOG1,LOG2}, 
 	timer::Timer as GTimer};
 use rayon::iter::{ParallelIterator,IntoParallelRefIterator,
 	IndexedParallelIterator, IntoParallelIterator};
@@ -15,7 +15,7 @@ use folding_schemes::folding::foldpot::{
 	sigma_ir1cs::{SigmaGadget,WitnessSigmaIR1CSVar,WitnessSigmaIR1CSConfig, NdAdvice,Capacity},
 	container_config::{ContainerConfig},
 	circuits_super::field_to_usize,
-	utils::{var_to_tuple_adv},
+	utils::{var_to_tuple_adv, var_to_tuple},
 };
 use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef,Variable,
 	LinearCombination};
@@ -677,7 +677,7 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		//1. asserts all states and transitions must be in range
 		// NOTE: we do not have to assert in range for nibbles they
 		// are done already in word_extract_adv gadget
-		let b_perf = true;
+		let b_perf = false;
 		let log_level = LOG2;
 		let mut gt = GTimer::new();
 		let (nc, nv) = (cs.num_constraints(), cs.num_witness_variables());
@@ -889,7 +889,6 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 
 		//3.2 use sid_states_final to sum up the logup equation LHS
 		//COST: 2*nlen
-		let mut lhs_sum = zero_var.clone();
 		assert!(states.len()==nlen+1);
 		let unit_cvar = new_const_var(&cs, F::from(1u32<<RANGE2_BIT));
 		let f_id_non_final = F::from(self.fsm_id+1);
@@ -907,7 +906,22 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 			val.inverse().expect("INV err")
 		}).collect::<Vec<F>>();
 		assert!(vec_inv.len()==nlen+1); //because have 1 more last state
+
+		let si_state_vals = si_states.iter().map(|s| s.value().unwrap())
+			.collect::<Vec<F>>();
+		let c_non_final = non_final_cvar.value()?;
+		let mut exp_lhs_sum_val = vec![F::zero();nlen+1];
+		for i in 1..nlen+1{
+			exp_lhs_sum_val[i] = exp_lhs_sum_val[i-1] + 
+				(si_state_vals[i] - c_non_final) * vec_inv[i];
+		}
+		let exp_lhs_sum = exp_lhs_sum_val.into_iter().map(|v|
+			new_var(&cs, v)
+		).collect::<Vec<FpVar<F>>>();
+
 		//3.2.2 now compute the constraints
+		let tp_r1 = var_to_tuple_adv(&r1, F::one());
+		let tp_inp_loc = var_to_tuple_adv(&inp_loc, unit_val);
 		for i in 0..nlen{
 			//let nc = cs.num_constraints();
 			//we skip item [0] because it's handled in
@@ -924,9 +938,9 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 			//let lb_item = var_to_lb(&item, F::one());
 			let lb_item = LinearCombination::<F>( vec![
 				(unit_val * F::from((i+1) as u32), Variable::One),
+				tp_r1.clone(),
 				var_to_tuple_adv(&states[i+1], F::one()),
-				var_to_tuple_adv(&r1, F::one()),
-				var_to_tuple_adv(&inp_loc, unit_val),
+				tp_inp_loc.clone(),
 			]);
 			let inv = vec_inv[i+1]; //improved using precompued value
 			let inv_var = new_var(&cs, inv);
@@ -934,20 +948,35 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 			//check_eq(&(&item *&inv_var), &one, "inv failed")?;
 			cs.enforce_constraint(
 				lb_item,
-				lb_inv,
+				lb_inv.clone(),
 				lb_one.clone()
 			)?;
-			let sel = &si_states[i+1] - &non_final_cvar; 
-			assert!(!si_states[i+1].is_constant());
-			lhs_sum = &lhs_sum + &inv_var * &sel;
+		
+			
+			//let sel = &si_states[i+1] - &non_final_cvar; 
+			//assert!(!si_states[i+1].is_constant());
+			//lhs_sum = &lhs_sum + &inv_var * &sel;
+			//OPTIMIZED CODE below
+			//we are stating 
+			//exp_lhs_sum[i+1] = exp_hs_sum[i] + inv[i] * si[i+1] - inv[i]*non_final_cvar
+			//which is: 
+			// inv[i] * si[i+1] = exp_lhs_sum[i+1] - exp_hs_sum[i] + non_final_cvar* inv[i]
+			let lb_si = var_to_lb(&si_states[i+1], F::one());
+			let lb3 = LinearCombination::<F>(vec![
+				var_to_tuple_adv(&exp_lhs_sum[i+1], F::one()),
+				var_to_tuple_adv(&exp_lhs_sum[i], F::zero()-F::one()),
+				var_to_tuple_adv(&inv_var, c_non_final),
+			]);
+			cs.enforce_constraint(lb_inv, lb_si, lb3)?;
 
-			//NOT needed as si_states is NOT constant so it
+			//NOT needed (anymore as there is no longer chain)
 			//forms a constraint each iteration
-			if i%ADD_CHAIN_SIZE==0{
-				lhs_sum = &lhs_sum * &one_wit_var; 
-					//to break long linear combination
-			}
+			//if i%ADD_CHAIN_SIZE==0{
+			//	lhs_sum = &lhs_sum * &one_wit_var; 
+			//		//to break long linear combination
+			//}
 		}
+		let lhs_sum = exp_lhs_sum[nlen].clone(); //take the last one
 		if b_perf{
 			log_perf(log_level, "validate_fsm_acc_container step 7", &mut gt);
 		}
@@ -957,12 +986,32 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		let mut rhs_sum = zero_var.clone();
 		assert!(vec_not_dummy.len()==alen);
 		assert!(locs_final.len()==alen);
+		//3.3.1 precompute invese
+		let states_final_val = states_final.iter().map(|s|
+			s.value().unwrap()).collect::<Vec<F>>();
+		assert!(states_final_val.len()==alen);
+		let locs_final_val = locs_final.iter().map(|s|
+			s.value().unwrap()).collect::<Vec<F>>();
+		let vec_inv= states_final_val.par_iter().zip(locs_final_val.par_iter()).map(|(&a,&b)|{
+			let item = r1_val + a + unit_val * b;
+			item.inverse().expect("INV err")
+		}).collect::<Vec<F>>();
+		assert!(vec_inv.len()==alen);
+		//3.3.2 build constraints
 		for i in 0..alen{
-			let item = &r1 + &states_final[i] + &unit_cvar*&locs_final[i];
-			let item_val = item.value()?;
-			let inv = item_val.inverse().expect("INV err");
-			let inv_var = new_var(&cs, inv);
-			let lb_item = var_to_lb(&item, F::one());
+			//let item = &r1 + &states_final[i] + &unit_cvar*&locs_final[i];
+			//let item_val = item.value()?;
+			//let inv = item_val.inverse().expect("INV err");
+			//let inv_var = new_var(&cs, inv);
+			//let lb_item = var_to_lb(&item, F::one());
+
+			//OPTIMIZED version:
+			let inv_var = new_var(&cs, vec_inv[i]); 
+			let lb_item = LinearCombination::<F>(vec![
+				tp_r1.clone(),
+				var_to_tuple(&states_final[i]),
+				var_to_tuple_adv(&locs_final[i], unit_val)
+			]);
 			let lb_inv = var_to_lb(&inv_var, F::one());
 			//check_eq(&(&item *&inv_var), &one, "inv failed")?;
 			cs.enforce_constraint(
