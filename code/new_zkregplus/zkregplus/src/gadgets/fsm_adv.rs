@@ -1,6 +1,9 @@
 /* Recreated 04/03/2025, Completed: 05/04/2025 
 	Revise started: 10/30/2025
 	Revised 2: 11/11/2025 (cut loc from data)
+	Revised 3: 12/18/2025 (further improved circuit building cost
+		by mainly pre-compute field inverse and direct encoding
+		of LinearCombinations.
 */
 
 //! This module generates the (pat-loc) for a nibble sequence.
@@ -1138,7 +1141,7 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		all: &Container<FpVar<F>>,  //entire container
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
-		let b_perf = true;
+		let b_perf = false;
 		let log_level = LOG2;
 		let mut gt = GTimer::new();
 		let mut nc = cs.num_constraints();
@@ -1321,7 +1324,7 @@ impl <F:PrimeField> SigmaGadget<F> for FsmAdvGadget<F>{
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{
-		let b_perf = true;
+		let b_perf = false;
 		let log_level = LOG1;
 		let mut gt = GTimer::new();
 		let mut nc = cs.num_constraints();

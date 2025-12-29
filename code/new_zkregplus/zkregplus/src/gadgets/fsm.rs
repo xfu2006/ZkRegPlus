@@ -9,8 +9,10 @@ use folding_schemes::folding::foldpot::{
 	sigma_ir1cs::{SigmaGadget,WitnessSigmaIR1CSVar,WitnessSigmaIR1CSConfig, NdAdvice },
 	container_config::{ContainerConfig},
 	circuits_super::field_to_usize,
+	utils::{var_to_tuple_adv},
 };
-use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef};
+use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef,LinearCombination,
+	Variable};
 use ark_r1cs_std::{
 	fields::{
 //		FieldVar,
@@ -22,7 +24,7 @@ use ark_r1cs_std::{
 };
 use std::any::Any;
 use data_processor::hex_acdfa::HexACDFA;
-use crate::gadgets::commons::{build_pows_56,check_eq,new_const_var};
+use crate::gadgets::commons::{build_pows_56_val,check_eq};
 
 #[allow(dead_code)]
 /// This gadget is responsible for checking transitions
@@ -143,7 +145,7 @@ impl <F:PrimeField> SigmaGadget<F> for FsmGadget<F>{
 		let b_debug = false;
 		let nc = cs.num_constraints();
 		let nv = cs.num_witness_variables();
-		let one = new_const_var(&cs, F::one());
+		//let one = new_const_var(&cs, F::one());
 
 		//1. retrive the statement instance and get all parts
 		let (stmt_idx, _, _, _) = cfg.get_gadget_indices(i);
@@ -200,33 +202,68 @@ impl <F:PrimeField> SigmaGadget<F> for FsmGadget<F>{
 			F::from((1<<(self.acdfa_state_part_bits+4)) as u32))?;
 		let hex_var = FpVar::<F>::new_constant(cs.clone(),
 			F::from(16 as u32))?;
-		let pows_51 = build_pows_56(cs.clone());
+		//let pows_51 = build_pows_56(cs.clone());
+		let pows_51 = build_pows_56_val();
+		let unit= F::from((1<<(self.acdfa_state_part_bits+4)) as u32);
+		let hex = F::from(16 as u32);
+		let mut st_cons = vec![F::zero();5];
+		for i in 0..4{
+			st_cons[i] += hex * pows_51[i];
+			st_cons[i+1] += unit * pows_51[i];
+		}
+
+		let lb_one = LinearCombination::<F>(vec![(F::one(), Variable::One)]);
 		for i in 0..nlen/4{
 			let start = i * 4;
-			let mut sum_trans = one.clone();
-			let mut sum_exp = one.clone();
-			for j in 0..4{//check every 4 transitions
+			// LOGICAL CODE --------------
+// 			let mut sum_trans = one.clone();
+// 			let mut sum_exp = one.clone();
+// 			for j in 0..4{//check every 4 transitions
+// 				let idx = start + j;
+// 				let ch = &data_seg[idx];
+// 				let st1 = &states[idx]; //already plus one
+// 				let st2 = &states[idx+1];
+// 				// simulate clam_db.rs: add_acdfa_to_lkup
+// 				let exp_trans = ch + 
+// 					&(st1 * &hex_var) +
+// 					&(st2 * &unit_var); //no need to plus one, already did
+// 				let trans = &data_seg[2*nlen-1 + idx];
+// 				sum_trans = &sum_trans + &(&pows_51[j] * trans); //cost 
+// 					//nothing because mul with constant!
+// 				sum_exp = &sum_exp + &(&pows_51[j] * &exp_trans); 
+// 
+// 				#[cfg(test)]{
+// 					use ark_r1cs_std::{R1CSVar};
+// 					if exp_trans.value().is_ok(){
+// 						assert!(exp_trans.value()?==trans.value()?);
+// 					}
+// 				}
+// 			}//end for j
+// 			check_eq(&sum_trans, &sum_exp,  "ERROR checking trans")?;
+//          OPTIMIZATION BELOW ---------------
+			let mut vec_sum_trans = vec![(F::zero(), Variable::One); 9];
+				//2 tuples for each tranistion
+				//an additional one for the last st2.
+			let mut vec_sum_exp = vec![(F::zero(), Variable::One); 4];
+			for j in 0..4{
 				let idx = start + j;
 				let ch = &data_seg[idx];
-				let st1 = &states[idx]; //already plus one
-				let st2 = &states[idx+1];
-				// simulate clam_db.rs: add_acdfa_to_lkup
-				let exp_trans = ch + 
-					&(st1 * &hex_var) +
-					&(st2 * &unit_var); //no need to plus one, already did
-				let trans = &data_seg[2*nlen-1 + idx];
-				sum_trans = &sum_trans + &(&pows_51[j] * trans); //cost 
-					//nothing because mul with constant!
-				sum_exp = &sum_exp + &(&pows_51[j] * &exp_trans); 
-
-				#[cfg(test)]{
-					use ark_r1cs_std::{R1CSVar};
-					if exp_trans.value().is_ok(){
-						assert!(exp_trans.value()?==trans.value()?);
-					}
+				vec_sum_trans[j*2] = var_to_tuple_adv(ch, pows_51[j]);
+				vec_sum_trans[j*2+1] = var_to_tuple_adv(&states[idx], 
+					st_cons[j]);
+				if j==3{
+					vec_sum_trans[j*2+2]=var_to_tuple_adv(&states[idx+1],
+						st_cons[j+1]);
 				}
-			}//end for j
-			check_eq(&sum_trans, &sum_exp,  "ERROR checking trans")?;
+				vec_sum_exp[j] = var_to_tuple_adv(&data_seg[2*nlen-1+idx], pows_51[j]);
+			}
+			let lb1 = LinearCombination::<F>(vec_sum_trans);
+			let lb3 = LinearCombination::<F>(vec_sum_exp);
+			//to assert that sum of transition == sum of expected transition
+			//for every 4 transitions given that they are already proved
+			//in range.
+			cs.enforce_constraint( lb1, lb_one.clone(), lb3)?;
+
 		}
 
 		//IF nlen is not multiple of 4

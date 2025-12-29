@@ -1,5 +1,6 @@
 /* Created 03/07/2025 */
 // common utility functions
+use folding_schemes::folding::foldpot::utils::{var_to_tuple_adv,var_to_tuple};
 use utils::{consts::ADD_CHAIN_SIZE};
 use rayon::{
 	iter::{ParallelIterator,IntoParallelIterator, 
@@ -766,7 +767,7 @@ pub fn verify_inverse_new<F:PrimeField>(cs: ConstraintSystemRef<F>,
 	beta: &FpVar<F>, elen: usize)->Result<(), SynthesisError>{
 	let b_debug = false;
 
-	let lb_beta = var_to_lb(beta, F::one());
+	let beta_tuple= var_to_tuple(&beta);
 	let lb_one = LinearCombination::from((F::one(),Variable::One));
 	for i in 0..elen{
 		if b_debug{
@@ -774,11 +775,14 @@ pub fn verify_inverse_new<F:PrimeField>(cs: ConstraintSystemRef<F>,
 		}
 
 		let lb_v2_i = var_to_lb(&v2[i], F::one());
-		let lb_v1_i = var_to_lb(&v1[i], F::one());
+		let lb_v1_i = LinearCombination::<F>(vec![
+			var_to_tuple(&v1[i]),
+			beta_tuple.clone(),
+		]);
 
 		cs.enforce_constraint(
 			lb_v2_i,
-			lb_v1_i + lb_beta.clone(),
+			lb_v1_i,
 			lb_one.clone(),
 		)?;
 	}
@@ -865,7 +869,7 @@ pub fn verify_logup_inverse_old<F:PrimeField>(cs: ConstraintSystemRef<F>,
 }
 
 /// COST: n2 + 6 (n1 almost cost nothing)
-pub fn verify_logup_inverse_new<F:PrimeField>(cs: ConstraintSystemRef<F>,
+pub fn verify_logup_inverse_old1<F:PrimeField>(cs: ConstraintSystemRef<F>,
 	v1: &[FpVar<F>], v2: &[FpVar<F>], m_tbl: &[FpVar<F>])
 	->Result<(), SynthesisError>{
 	assert!(v2.len()==m_tbl.len());
@@ -903,9 +907,13 @@ pub fn verify_logup_inverse_new<F:PrimeField>(cs: ConstraintSystemRef<F>,
 
 		let lb_v2_i =  var_to_lb(&v2[i], F::one());
 		let lb_m_i=  var_to_lb(&m_tbl[i], F::one());
-		let lb_neg_sum_right =  var_to_lb(&vec_sum_right[i], -F::one());
-		let lb_new_sum_right =  var_to_lb(&new_sum_right, F::one());
-		let lb_diff = lb_new_sum_right + lb_neg_sum_right;
+		//let lb_neg_sum_right =  var_to_lb(&vec_sum_right[i], -F::one());
+		//let lb_new_sum_right =  var_to_lb(&new_sum_right, F::one());
+		//let lb_diff = lb_new_sum_right + lb_neg_sum_right;
+		let lb_diff = LinearCombination::<F>(vec![
+			var_to_tuple_adv(&vec_sum_right[i], -F::one()),
+			var_to_tuple(&new_sum_right),
+		]);
 		
 		cs.enforce_constraint(
 			lb_v2_i,
@@ -930,6 +938,74 @@ pub fn verify_logup_inverse_new<F:PrimeField>(cs: ConstraintSystemRef<F>,
 	sum_right = &sum_right * &one_wit_var; //prevents which assert
 		//sum_left == sum_right, the two contains concat and generates
 		//2x long linear combination chain.
+
+	sum_left.enforce_equal(&sum_right)?;
+		
+	#[cfg(test)]{
+		if sum_left.value().is_ok(){ 
+			assert!(sum_left.value().unwrap()==sum_right.value().unwrap()); 
+		}
+	}
+
+	Ok( () )
+}
+
+/// IDEA: every lblcok of ADD_CHAIN, build a huge LinearCombination 
+/// and sum it up
+pub fn sum_vec_vars<F:PrimeField>(v: &[FpVar<F>])->FpVar<F>{
+	let cs = v[0].cs();
+	let one_var = FpVar::<F>::new_constant(cs.clone(), F::one()).unwrap(); 
+	let one_wit_var = FpVar::<F>::new_witness(cs.clone(), 
+		||Ok(F::one())).unwrap();
+	one_wit_var.enforce_equal(&one_var).unwrap(); 
+	let mut sum = FpVar::<F>::new_constant(cs.clone(), F::zero()).unwrap();
+	let lb_one = LinearCombination::<F>(vec![(F::one(), Variable::One)]);
+
+	let blocks = v.len() / ADD_CHAIN_SIZE;
+	for i in 0..blocks{
+		//1. build up the big linear combination
+		let start = i * ADD_CHAIN_SIZE;
+		let mut vec_sum_tuples = vec![(F::one(), Variable::One); 
+			ADD_CHAIN_SIZE];
+		let mut f_sum = F::zero();
+		for j in 0..ADD_CHAIN_SIZE{
+			f_sum += v[start+j].value().unwrap();
+			vec_sum_tuples[j]  = var_to_tuple(&v[start+j]);
+		}
+
+		//2. sum it up
+		let lb = LinearCombination::<F>(vec_sum_tuples);
+		let x = FpVar::<F>::new_witness(cs.clone(), || Ok(f_sum)).unwrap();
+		cs.enforce_constraint(
+			lb, 
+			lb_one.clone(),
+			var_to_lb(&x, F::one())
+		).unwrap();
+		sum = sum + &x * &one_wit_var; 
+	}
+	for i in blocks * ADD_CHAIN_SIZE .. v.len(){
+		sum  = &sum + &v[i];
+	}
+
+	sum
+}
+
+/// COST: n2 + 6 (n1 almost cost nothing)
+pub fn verify_logup_inverse_new<F:PrimeField>(cs: ConstraintSystemRef<F>,
+	v1: &[FpVar<F>], v2: &[FpVar<F>], m_tbl: &[FpVar<F>])
+	->Result<(), SynthesisError>{
+	assert!(v2.len()==m_tbl.len());
+	let one_var = FpVar::<F>::new_constant(cs.clone(), F::one())?; 
+	let one_wit_var = FpVar::<F>::new_witness(cs.clone(), 
+		||Ok(F::one())).unwrap();
+	one_wit_var.enforce_equal(&one_var)?; 
+
+	let sum_left = sum_vec_vars(&v1);
+
+	assert!(v2.len()==m_tbl.len());
+	let v3 = v2.iter().zip(m_tbl.iter()).map(|(v,m)|
+		v * m).collect::<Vec<FpVar<F>>>();
+	let sum_right = sum_vec_vars(&v3);
 
 	sum_left.enforce_equal(&sum_right)?;
 		
@@ -1306,7 +1382,6 @@ pub fn gen_m_table_cond<F:PrimeField>(qry: &Vec<F>, sel_qry: &Vec<F>,
 pub fn is_zero_better<F:PrimeField>(x: &FpVar<F>, cs: &ConstraintSystemRef<F>)
 ->Result<FpVar<F>, SynthesisError>{
 	let lb_zero= lc!();
-	let lb_one = lc!() + (F::one(), Variable::One);
 	let z = FpVar::new_witness(cs.clone(), || {
         let xv = x.value()?;
         if xv.is_zero() { Ok(F::one()) } else { Ok(F::zero()) }
@@ -1320,7 +1395,10 @@ pub fn is_zero_better<F:PrimeField>(x: &FpVar<F>, cs: &ConstraintSystemRef<F>)
 	let lb_z = var_to_lb(&z, F::one());
 	let lb_inv = var_to_lb(&inv, F::one());
 	let z_variable = fpvar_to_var(&z);
-	let lb_res = lb_one + (-F::one(), z_variable);
+	let lb_res = LinearCombination::<F>(vec![
+		(F::one(), Variable::One),
+		(-F::one(), z_variable)
+	]);
 	cs.enforce_constraint(
 		lb_x.clone(),
 		lb_inv,
@@ -1336,6 +1414,42 @@ pub fn is_zero_better<F:PrimeField>(x: &FpVar<F>, cs: &ConstraintSystemRef<F>)
 
 	Ok(z)
 }
+
+/// compared with is_zero_better, it provides a precomputed inverse value
+pub fn is_zero_better_adv<F:PrimeField>(x: &FpVar<F>, inverse: &F, cs: &ConstraintSystemRef<F>)
+->Result<FpVar<F>, SynthesisError>{
+	let lb_zero= lc!();
+	let z = FpVar::new_witness(cs.clone(), || {
+        let xv = x.value()?;
+        if xv.is_zero() { Ok(F::one()) } else { Ok(F::zero()) }
+    })?;
+	let inv = FpVar::new_witness(cs.clone(), || { Ok(inverse) })?;
+    // Constraint 1: x * inv = 1 - z
+	let lb_x = var_to_lb(x, F::one());
+	let lb_z = var_to_lb(&z, F::one());
+	let lb_inv = var_to_lb(&inv, F::one());
+	let z_variable = fpvar_to_var(&z);
+	//let lb_res = lb_one + (-F::one(), z_variable);
+	let lb_res = LinearCombination::<F>(vec![
+		(F::one(), Variable::One),
+		(-F::one(), z_variable)
+	]);
+	cs.enforce_constraint(
+		lb_x.clone(),
+		lb_inv,
+		lb_res
+	)?;
+
+    // Constraint 2: x * z = 0
+	cs.enforce_constraint(
+		lb_x,
+		lb_z,
+		lb_zero
+	)?;
+
+	Ok(z)
+}
+
 
 /// construct a variable if bvar=1, return v1 
 /// otherwise return v2. Assumption: bvar is an int var either 1 or 0.
@@ -1516,6 +1630,19 @@ pub fn multiset_prod<F:PrimeField>(
 	prod
 }
 
+/// compute the inverse
+pub fn gen_vec_inverse<F:PrimeField>(vec: &Vec<F>)->Vec<F>{
+	if vec.len()<16{
+		vec.iter().map(|v| 
+			if v.is_zero() {F::zero()} else {v.inverse().unwrap()}
+		).collect::<Vec<F>>()
+	}else{
+		vec.par_iter().map(|v| 
+			if v.is_zero() {F::zero()} else {v.inverse().unwrap()}
+		).collect::<Vec<F>>()
+	}
+}
+
 /// assert that vec is a sorted table and for non-zero elements
 /// they are unique (distinct). We assume that vec_diff and vec
 /// already have their SID columns in RANGE2. vec_diff[i] = vec[i+1]-vec[i].
@@ -1530,8 +1657,11 @@ pub fn verify_unique_sorted_set<F:PrimeField>(vec: &[FpVar<F>],
 	let cs = vec[0].cs();
 	let zero = new_const_var(&cs, F::zero());
 	let lb_zero = var_to_lb(&zero, F::one());
+	let vec_diff_val = vec_diff.iter().map(|x| x.value().unwrap())
+		.collect::<Vec<F>>();
+	let vec_inv = gen_vec_inverse(&vec_diff_val);
 	for i in 0..n-1{
-		let b_diff_zero = is_zero_better(&vec_diff[i], &cs)?;
+		let b_diff_zero = is_zero_better_adv(&vec_diff[i], &vec_inv[i], &cs)?;
 		//let val = &union_key[i] * &b_diff_zero.into(); 
 		//val.enforce_equal(&zero)?;
 		//the following saves one constraint

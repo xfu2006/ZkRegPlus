@@ -40,7 +40,7 @@ use crate::gadgets::commons::{verify_inverse,verify_logup_inverse, check_eq,
 	gen_abs_diff_col, two_col_tbl_left_join, gen_assert_sidcol_for_diff,
 	encode_cols, encode_cols_var, 
 	multiset_prod, verify_unique_sorted_set, is_zero_better,
-	multiset_prod_2col,var_to_lb};
+	multiset_prod_2col,var_to_lb, is_zero_better_adv, gen_vec_inverse};
 
 
 // ----------------------------------------------------
@@ -304,9 +304,12 @@ pub fn assert_well_formed_sorted_adv<F:PrimeField>(
 		assert!(sid_s2.len()==key.len()-1);
 		sid_s2.iter().map(|x| x.clone()-f_rg2).collect::<Vec<_>>()
 	}else{vec![zero.clone(); key.len()-1]};
+	let diff_val = (1..n).collect::<Vec<_>>().into_iter().map(|i|
+		key[i].value().unwrap()-key[i-1].value().unwrap()).collect::<Vec<F>>();
+	let vec_inv = gen_vec_inverse(&diff_val);
 	for i in 1..n{
 		//let b_same_key = key[i].is_eq(&key[i-1])?; 
-		let bk= is_zero_better(&(&key[i]-&key[i-1]), &cs)?;
+		let bk= is_zero_better_adv(&(&key[i]-&key[i-1]), &vec_inv[i-1], &cs)?;
 		let id_diff = &id[i]-&id[i-1]-&one;
 		let val_diff = &val1[i-1]-&max;
 		//NOTE: bk is either 0 or 1 (already asserted as boolean)
@@ -490,6 +493,13 @@ pub fn verify_col1_nonzero_imply_col2_nonzero<F:PrimeField>(
 	let one_var = FpVar::<F>::constant(F::one());
 	let lb_zero= LinearCombination::from((F::zero(),Variable::One));
 	assert!(col1.len()==col2.len());
+	//1. precompute inverse()
+	let col2_val = col2.iter().map(|x| x.value().unwrap()).collect::<Vec<F>>();
+	let vec_inv = col2_val.par_iter().map(|v|
+		if v.is_zero() {zero} else {v.inverse().expect("INV err")}
+	).collect::<Vec<F>>();
+	assert!(vec_inv.len()==col2.len());
+	//2. encode the constraints
 	for i in 0..col2.len(){
 		// we are argueing that
 		// when col1[i]!=0:
@@ -497,10 +507,11 @@ pub fn verify_col1_nonzero_imply_col2_nonzero<F:PrimeField>(
 		//    s.t.
 		//    col1[i] * (col2[i] * inv_col2[i] - 1) = 0
 		//    when col1[i]==0 it's don't care
-		let col2_i_val = col2[i].value()?;
-		let inv_col2_val = if col2_i_val.is_zero() {zero} else{
-			col2_i_val.inverse().expect("error no inverse")};
-		let inv_col2_var = new_var(&cs, inv_col2_val);
+
+		//let col2_i_val = col2[i].value()?;
+		//let inv_col2_val = if col2_i_val.is_zero() {zero} else{
+		//	col2_i_val.inverse().expect("error no inverse")};
+		let inv_col2_var = new_var(&cs, vec_inv[i]);
 		let item2 = &col2[i] * &inv_col2_var- &one_var;
 		let lb_item2 = var_to_lb(&item2, F::one());
 		let lb_col1_i = var_to_lb(&col1[i], F::one());
@@ -743,8 +754,11 @@ pub fn verify_filter_tag<F:PrimeField>(
 		k + r1 * t).collect::<Vec<FpVar<F>>>();
 	// tbl_1: (no_key,0) is itself as r1 * 0 is 0
 	// tbl_2: sorted_key_tag is 0 if sorted_key[i] is 0 o.t. 1
-	let tbl_2 = sorted_key.iter().map(|x|{
-		let b_zero = is_zero_better(x, &cs).unwrap();
+	let sorted_key_val  = sorted_key.iter().map(|s| s.value().unwrap())
+		.collect::<Vec<F>>();
+	let vec_inv = gen_vec_inverse(&sorted_key_val);
+	let tbl_2 = sorted_key.iter().enumerate().map(|(i,x)|{
+		let b_zero = is_zero_better_adv(x, &vec_inv[i], &cs).unwrap();
 		x + r1 - r1 * &b_zero 
 	}).collect::<Vec<FpVar<F>>>();
 	let lkup = [&no_key[..], &tbl_2[..]].concat();
@@ -1212,8 +1226,14 @@ pub fn verify_tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
 	let max_val:usize = (1<<RANGE2_BIT) - 1;
 	let max = F::from(max_val as u32);
 	let (vone, vmax) = (new_const_var(&cs, F::one()), new_const_var(&cs, max)); 
-	let tag_sorted_tbl = packed_vals.iter().map(|v|{
-		&vone - &is_zero_better(&(v * (v-&vmax)), &cs ).unwrap()
+	let vmax_val = vmax.value().unwrap();
+	let vec_vals = packed_vals.iter().map(|v| {
+		let v1 = v.value().unwrap();
+		v1 * (v1 - vmax_val)
+	}).collect::<Vec<F>>();
+	let vec_inv = gen_vec_inverse(&vec_vals);
+	let tag_sorted_tbl = packed_vals.iter().enumerate().map(|(i,v)|{
+		&vone - &is_zero_better_adv(&(v * (v-&vmax)), &vec_inv[i],&cs).unwrap()
 	}).collect::<Vec<FpVar<F>>>();
 	if b_perf{
 		// COST: 3*n
@@ -1830,11 +1850,17 @@ pub fn verify_tbl_left_join<F:PrimeField>(
 			vec![v1, v2].concat()
 		}).collect::<Vec<Vec<FpVar<F>>>>();
 	let tbl2_encoded = encode_cols_var(&tbl2_cols, &vec![0,1,2]);
-	let tbl2_sel = tbl2_cols[0].iter().map(|x| 
-		&one_var - &is_zero_better(x,&cs).unwrap() ).collect::<Vec<FpVar<F>>>();
+	let col0_val = tbl2_cols[0].iter().map(|x| x.value().unwrap())
+		.collect::<Vec<F>>();
+	let vec_inv = gen_vec_inverse(&col0_val);
+	let tbl2_sel = tbl2_cols[0].iter().enumerate().map(|(i,x)| 
+		&one_var - &is_zero_better_adv(x,&vec_inv[i],&cs).unwrap() ).collect::<Vec<FpVar<F>>>();
 	let res_sechalf_encoded = encode_cols_var(&tbl_res, &vec![2,3,4]); 
-	let res_sechalf_sel = tbl_res[2].iter().map(|x|
-		&one_var - is_zero_better(x,&cs).unwrap() ).collect::<Vec<FpVar<F>>>();
+	let col2_val = tbl_res[2].iter().map(|x| x.value().unwrap())
+		.collect::<Vec<F>>();
+	let vec_inv = gen_vec_inverse(&col2_val);
+	let res_sechalf_sel = tbl_res[2].iter().enumerate().map(|(i,x)|
+		&one_var - is_zero_better_adv(x,&vec_inv[i],&cs).unwrap() ).collect::<Vec<FpVar<F>>>();
 	let mtbl_sechalf_tbl2= prf.borrow().get_container("mtbl_sechalf_tbl2")?
 		.borrow().to_vec();
 	assert_logup_cond(cs.clone(), &res_sechalf_encoded, &res_sechalf_sel, 

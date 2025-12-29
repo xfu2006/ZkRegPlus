@@ -23381,7 +23381,7 @@ Goal 5. tag fsmadv
 	[a] level 1 a
 	[b] OLD DATA 
 	LOG6: -- -- -- -- --  -- -- after msg3 of module 10: FsmAdvGadget: 
-	INCREASED: constraints: 93452, const vars: 0, wit vars: 83138
+	INCREASED: constraints: 93452 => 92956, const vars: 0, wit vars: 83138 => 82643
     ==> NOW: CS:301183, const: 1, witness: 1871158
      ==> stmt_size: 142578.  288 ms
 	[c] observe data:
@@ -23390,7 +23390,7 @@ Goal 5. tag fsmadv
 Sunday 12/27/2025
 Goal 1.  improve step 2 of FsmAdv
 	old/new data: LOG2: --  validate_fsm_acc_container step 2.2 65 ms ==> 479us!
-	INCREASED: constraints: 93452 (same), const vars: 0, wit vars: 83138 (same)
+	INCREASED: constraints: 93452 (same)=> 92970, const vars: 0, wit vars: 83138 (same) => 82657
 	[a] set up framework
 	[b] build_pow51
 	[c] continue set up framework
@@ -23410,7 +23410,34 @@ Goal 2. improve step 7 of validte_fsm_acc_container
 		=> cut to 18 ms now
 	[c] further improve RHS inverse step 8 3ms now -> 1ms
 
-=== TODO further improve validate_pack_trace
+Sunday 12/28/2025
+Goal 1. continue to pack trace
+	[a] step 1
+	[b] step 2
+		-> is_zero_better
+	[c] improve step 3 and 4
+	[d] improve verify_logup_inverse for build up sum
+		-> new function sum_vec_vars
+	[a] compare DATA
+LOG2: --  valid_packed_trace step 1 750 us -> SAME  (477 us)
+ --- validate_packed_trace step 1: -- col len: 48, sorted_val: 48, cs: 482
+ --- validate_pack_trace step 2, nlen: 31744 cs: 9563
+LOG2: --  valid_packed_trace step 2 5 ms -> 3ms 
+ --- verify_packed trace step 3: verify pattern-state: 48--- cs: 1298
+LOG2: --  valid_packed_trace step 3 1 ms -> 863 us
+--- verify packed_trace step 4: cs: 1813
+LOG2: --  valid_packed_trace step 4 1 ms
+LOG1:   ## fsm_adv step3: 13156, total: 92956 8 ms => 6ms
 
+Goal 2. improve fsm.rs similarly
+	[a] DATA  (old and new)
+	-------
+	LOG6: -- -- -- -- --  -- -- after msg3 of module 1: FsmGadget:
+    INCREASED: constraints: 7936, const vars: 0, wit vars: 0
+    ==> NOW: CS:25429 (SAME), const: 1, witness: 1628244 (SAME)
+     ==> stmt_size: 158722.  70 ms ==>> 9ms
+	 -------------
+
+== TODO == DfaAdvGadget reduce cost.
 
 === TODO: fix the b_debug = true problem there is no constraint to check.
