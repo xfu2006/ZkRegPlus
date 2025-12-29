@@ -8,6 +8,8 @@
 //! Then it assembles subsig result and report the discharge (via DFA)
 //! result for sigs.
 
+use utils::{logger::{log_perf, LOG1,LOG2}, 
+	timer::Timer as GTimer};
 use rayon::iter::{ParallelIterator,IntoParallelIterator,IntoParallelRefIterator};
 use std::{rc::{Rc},cell::{RefCell},collections::{HashMap}};
 use ark_ff::{PrimeField};
@@ -16,6 +18,7 @@ use folding_schemes::folding::foldpot::{
 	sigma_ir1cs::{SigmaGadget,WitnessSigmaIR1CSVar,WitnessSigmaIR1CSConfig, NdAdvice,Capacity,DischargeSigInfo},
 	container_config::{ContainerConfig},
 	circuits_super::field_to_usize,
+	utils::{var_to_tuple_adv},
 };
 use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef,Variable,LinearCombination};
 use ark_r1cs_std::{
@@ -39,8 +42,8 @@ use data_processor::{
 use utils::{data::{u8_to_hex}};
 use crate::gadgets::{
 	commons::{mix_vec,new_const_var, check_eq,encode_cols_better,gen_m_table,
-		encode_cols_var_adv_better , packcheck_vec, build_pows_31,
-		build_pows_56, var_to_lb},
+		encode_cols_var_adv_better , packcheck_vec, build_pows_31_val,
+		build_pows_56_val, var_to_lb, gen_vec_inverse, is_eq_adv,better_select},
 	traits::{Container,
 		Col,
 		IDX_WORD, IDX_INP,IDX_DATA, IDX_DISCHARGED_SIGS,
@@ -741,7 +744,9 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		//1. check the relations between v_sig, v_subsig,
 		//v_raw_subsig and v_dfa_id
 		//COST: 6n (where n = subsigs, in practice this is small: <10)
-		let b_perf = false;
+		let b_perf = true;
+		let log_level = LOG2;
+		let mut gt = GTimer::new();
 		let nc = cs.num_constraints();
 		let n = self.capacity.subsigs;
 		let (zero,one) = (new_const_var(&cs, F::zero()), 
@@ -786,6 +791,9 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 			//we could improve it with cs.enforce_constraints on lb
 			//and cut 1 constraint but n is small.
 			check_eq(&(&v_sig[i]*&diff), &zero, "fail dfa_id")?;
+		}
+		if b_perf{
+			log_perf(log_level, "validate_mul_fsm step 1", &mut gt);
 		}
 
 		//2. asserts all states and transitions must be in range
@@ -852,10 +860,13 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 			}).collect::<Vec<FpVar<F>>>();
 			vec_si
 		}).collect::<Vec<Vec<FpVar<F>>>>();
-		let pows_31 = build_pows_31(cs.clone());
+		let pows_31 = build_pows_31_val();
 		for i in 0..m{
 			let exp_val = tblid_trans[i].clone();  
 			packcheck_vec(&vec_si_trans[i], &exp_val, &pows_31)?;
+		}
+		if b_perf{
+			log_perf(log_level, "validate_mul_fsm step 2", &mut gt);
 		}
 
 		//3. assert correctness of building transition as weighted sum
@@ -883,11 +894,20 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 
 		assert!(chars.len()==nlen && states.len()==(nlen+1)*m 
 			&& trans.len()==nlen*m);
-		let pows_51 = build_pows_56(cs.clone());
+		let pows_51 = build_pows_56_val();
 		assert!(pows_51.len()==4);
+		let unit= F::from((1<<(bits+4)) as u32);
+		let hex = F::from(16 as u32);
+		let mut st_cons = vec![F::zero();5];
+		for i in 0..4{
+			st_cons[i] += hex * pows_51[i];
+			st_cons[i+1] += unit * pows_51[i];
+		}
+		let lb_one = LinearCombination::<F>(vec![(F::one(), Variable::One)]);
 		//PACKED VERSIOn
 		for dfa_id in 0..m{//for each DFA
 			for i in 0..nlen/4{
+				/* LOGICAL VERSION 
 				let start = i * 4;
 				let mut sum_trans = one.clone();
 				let mut sum_exp = one.clone();
@@ -905,6 +925,30 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 					sum_exp = &sum_exp + &(&pows_51[j] * &exp_trans); 
 				}
 				check_eq(&sum_trans, &sum_exp,  "ERROR checking trans")?;
+				*/
+				let start = i * 4;
+				let mut vec_sum_trans = vec![(F::zero(), Variable::One); 9];
+					//2 tuples for each tranistion
+					//an additional one for the last st2.
+				let mut vec_sum_exp = vec![(F::zero(), Variable::One); 4];
+				for j in 0..4{
+					let idx = start + j;
+					let ch = &chars[idx];
+					vec_sum_trans[j*2] = var_to_tuple_adv(ch, pows_51[j]);
+					vec_sum_trans[j*2+1] = var_to_tuple_adv(
+						&states[idx*m+dfa_id], st_cons[j]);
+					if j==3{
+						vec_sum_trans[j*2+2]=var_to_tuple_adv(&states[(idx+1)*m+dfa_id], st_cons[j+1]);
+					}
+					vec_sum_exp[j] = var_to_tuple_adv(&trans[idx*m+dfa_id], 
+						pows_51[j]);
+				}
+				let lb1 = LinearCombination::<F>(vec_sum_trans);
+				let lb3 = LinearCombination::<F>(vec_sum_exp);
+				//to assert that sum of transition == sum of expected transition
+				//for every 4 transitions given that they are already proved
+				//in range.
+				cs.enforce_constraint( lb1, lb_one.clone(), lb3)?;
 			}
 		}
 		//IF nlen is not multiple of 4
@@ -920,6 +964,9 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 				check_eq(&exp_trans, &trans, "ERROR checking trans part2")?;
 			}
 		}
+		if b_perf{
+			log_perf(log_level, "validate_mul_fsm step 3", &mut gt);
+		}
 
 		//4. check the validity of subsig_res
 		//
@@ -932,17 +979,28 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		let f_true = new_const_var(&cs, F::from(TriVal::True as u8)); //2
 		let f_false = new_const_var(&cs, F::from(TriVal::False as u8)); //1
 
+		let f_two = F::from(2u32);
+		let vals = si_oup_state_copy.iter().zip(v_dfa_id.iter()).
+			map(|(x,y)| y.value().unwrap() - x.value().unwrap() + f_two)
+			.collect::<Vec<F>>();
+		let vec_inv = gen_vec_inverse(&vals);
 		for i in 0..m{
 			let tbl_id = &v_dfa_id[i];
 			let final_tbl_id = tbl_id+&two;
-			let b_final = final_tbl_id.is_eq(&si_oup_state_copy[i])?;
-			let exp_res = b_final.select(&f_true, &f_false)?;
+			//let b_final = final_tbl_id.is_eq(&si_oup_state_copy[i])?;
+			let b_final2 = is_eq_adv(&final_tbl_id, &si_oup_state_copy[i], 
+				&vec_inv[i], &cs);
+			//let exp_res = b_final.select(&f_true, &f_false)?;
+			let exp_res2 = better_select(&b_final2, &f_true, &f_false);
 			let res = &subsig_res[i];
-			check_eq(&exp_res, &res, "failing res check")?;
+			check_eq(&exp_res2, &res, "failing res check")?;
 		}
 
 		if b_perf{
 			println!(" ### validate_mul_fsm_acc_container: m: {}, nlen: {}. cost: {}", m, nlen, cs.num_constraints()-nc); 
+		}
+		if b_perf{
+			log_perf(log_level, "validate_mul_fsm step 4", &mut gt);
 		}
 
 		Ok( () )
@@ -966,7 +1024,9 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 	) ->Result<(), SynthesisError>{
 		//0. retrieve data from combo
 		let b_debug = false;
-		let b_perf = false;
+		let b_perf = true;
+		let log_level = LOG2;
+		let mut gt = GTimer::new();
 		let nc = cs.num_constraints();
 		let (zero,one)=(new_const_var(&cs,F::zero()),
 			new_const_var(&cs,F::one()));
@@ -991,6 +1051,9 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		let n = v_sigs.len();
 		for i in 0..cols.len(){assert!(cols[i].len()==n);}
 		for i in 0..cols.len(){assert!(sid_cols[i].len()==n);}
+		if b_perf{
+			log_perf(log_level, "validate_discharge_sig step 0", &mut gt);
+		}
 
 		//1. check the validity of sid cols (sequential as circ does not
 		//allow parallelism)
@@ -1026,6 +1089,9 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 			check_eq(&exp_sid_real_subsig, &v_sid_real_subsigs[i],
 				"err sid_real_subsig")?;
 		}
+		if b_perf{
+			log_perf(log_level, "validate_discharge_sig step 1", &mut gt);
+		}
 
 		//2. Now prove that each sig in v_sigs is discharged as false
 		//2.1 check that all subsig of a sig is well covered, i.e.,
@@ -1058,6 +1124,9 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 				lb_sig,
 				lb_zero.clone()
 			)?;
+		}
+		if b_perf{
+			log_perf(log_level, "validate_discharge_sig step 2.1", &mut gt);
 		}
 
 
@@ -1101,6 +1170,9 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		let mtbl_lkup_res = discharge_sig_combo.borrow()
 			.get_container("mtbl_lk_res").unwrap().borrow().to_vec();
 		assert_logup(cs.clone(), &src, &dst, &mtbl_lkup_res, &r1)?;
+		if b_perf{
+			log_perf(log_level, "validate_discharge_sig step 2.2", &mut gt);
+		}
 
 		//3. show that inp_sigs is a subset of v_sigs (covered)
 		// where we have proved all v_sigs are discharged
@@ -1121,6 +1193,9 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 			for i in 0..discharged_sigs.len(){
 				println!(" --i: {}, sig: {}", i, discharged_sigs[i].value()?);
 			}
+		}
+		if b_perf{
+			log_perf(log_level, "validate_discharge_sig step 3", &mut gt);
 		}
 
 		if b_perf{
@@ -1209,21 +1284,32 @@ impl <F:PrimeField> SigmaGadget<F> for DfaAdvGadget<F>{
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{
 		//1. retrive the statement instance and get all parts
-		let b_perf = false;
+		let b_perf = true;
+		let log_level = LOG1;
+		let mut gt = GTimer::new();
 		let nc = cs.num_constraints();
 		let cfg = self.get_container_cfg().expect("container cfg not set!");
 		let stmt = Container::<FpVar<F>>::load_from(i, wtns_cfg, wtns, &cfg)?;
+		if b_perf{
+			log_perf(log_level, "dfa: step 0. load stmt", &mut gt);
+		}
 		let r1 = wtns.msg2[0].clone();
 		let r2 = wtns.msg2[1].clone();
 
 		//2. validate the fsm_acc combo 
 		let mul_fsm_acc = stmt.get_container("mul_fsm_acc")?;
 		self.validate_mul_fsm_acc_container(&mul_fsm_acc.borrow(), cs.clone())?;
+		if b_perf{
+			log_perf(log_level, "dfa: step 1. validate_mul_fsm ", &mut gt);
+		}
 
 		//2. validate the discharging of sig.
 		let sig_res_combo= stmt.get_container("sig_res_combo")?;
 		self.validate_discharge_sig_combo(&mul_fsm_acc,
 			&sig_res_combo, r1.clone(), r2.clone(), cs.clone())?;
+		if b_perf{
+			log_perf(log_level, "dfa: step 2. validate_discharge_sig_combo", &mut gt);
+		}
 
 		if b_perf{
 			println!(" ### dfa_adv: sigs: {}, subsigs: {}, nlen: {}, cost: {}",

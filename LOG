@@ -23438,6 +23438,29 @@ Goal 2. improve fsm.rs similarly
      ==> stmt_size: 158722.  70 ms ==>> 9ms
 	 -------------
 
-== TODO == DfaAdvGadget reduce cost.
+Monday 12/29/2025
+Goal 1. DfaAdvGadget reduce cost.
+	[a] plug in cost measure
+	[b] add sum_weighted_vec(v: Vec<FpVar<>>, weights: Vec<F>)->FpVar
+======== OLD/NEW DATA ===================
+LOG6: -- -- -- -- --  -- -- after msg3 of module 15: DfaAdvGadget:
+    INCREASED: constraints: 35781, const vars: 0, wit vars: 46
+    ==> NOW: CS:377770, const: 1, witness: 1878278
+     ==> stmt_size: 381014.  305 ms
+-------------------------------------
+LOG2: --  validate_mul_fsm step 1 17 us
+LOG2: --  validate_mul_fsm step 2 52 ms (**) -> 23 ms
+LOG2: --  validate_mul_fsm step 3 196 ms (**) => 20ms 
+ ### validate_mul_fsm_acc_container: m: 3, nlen: 31744. cost: 35733
+LOG2: --  validate_mul_fsm step 4 28 us 
+LOG1:  dfa: step 1. validate_mul_fsm  276 ms ==> 72 ms (but what's the extra 20ms?)
+LOG2: --  validate_discharge_sig step 0 7 us
+LOG2: --  validate_discharge_sig step 1 7 us
+LOG2: --  validate_discharge_sig step 2.1 7 us
+LOG2: --  validate_discharge_sig step 2.2 510 us
+LOG2: --  validate_discharge_sig step 3 288 us
+ ### check discharge_subsig: sig: 2, subsigs: 3, cost: 48
+LOG1:  dfa: step 2. validate_discharge_sig_combo 844 us
+=======================================================
 
 === TODO: fix the b_debug = true problem there is no constraint to check.

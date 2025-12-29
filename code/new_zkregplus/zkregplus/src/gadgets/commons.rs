@@ -18,6 +18,7 @@ use ark_r1cs_std::{
 	fields::{
 		FieldVar,
 		fp::FpVar,
+		fp::AllocatedFp,
 	 	fp::FpVar::Var,
 	 	fp::FpVar::Constant,
 	},
@@ -544,6 +545,21 @@ pub fn build_pows_31<F:PrimeField>(cs: ConstraintSystemRef<F>)
 	vec
 }
 
+/// build vec of 8 elements [2^31, ... 2^248]
+pub fn build_pows_31_val<F:PrimeField>() -> Vec<F>{
+	let f16 = F::from(1u32<<16);
+	let f15 = F::from(1u32<<15);
+	let f31 = f16 * f15;
+	let mut vec = vec![];
+	let mut item = f31.clone();
+	for _i in 0..8{
+		vec.push(item.clone());
+		item = item * f31;
+	}
+
+	vec
+}
+
 /// build vec of 4 elements [2^56, ... 2^(56*4)]
 pub fn build_pows_56<F:PrimeField>(cs: ConstraintSystemRef<F>)
 -> Vec<FpVar<F>>{
@@ -575,6 +591,25 @@ pub fn build_pows_56_val<F:PrimeField>() -> Vec<F>{
 	vec
 }
 
+///compute sum (v[i] * weights[i]) where weights as consants
+/// we assume that v and weights are small
+/// so do not use parallelism here
+#[inline(always)]
+pub fn sum_vec_vars_weighted<F:PrimeField>(v: &[FpVar<F>], weights: &[F])
+->FpVar<F>{
+	assert!(v.len()==weights.len());
+	let vec_tuples = v.iter().zip(weights.iter()).map(|(x,&w)|
+		var_to_tuple_adv(x, w)
+	).collect::<Vec<(F,Variable)>>();
+	let v_sum= v.iter().zip(weights.iter()).map(|(x,&w)|
+		x.value().unwrap() * w
+	).sum::<F>();
+	let lb = LinearCombination::<F>(vec_tuples);
+	let cs = v[0].cs();
+	let var = cs.new_lc(lb).unwrap();
+	let alloc_var = AllocatedFp::new(Some(v_sum), var, cs.clone());
+	FpVar::Var(alloc_var)
+}
 
 
 /// pack the check of 8 values into one check
@@ -582,17 +617,20 @@ pub fn build_pows_56_val<F:PrimeField>() -> Vec<F>{
 /// COST is vec.len()/8
 /// ASSUMING vec_pows_31 has 8 elements [2^31, 2^62, 2^93 ..., 2^248]
 pub fn packcheck_vec<F:PrimeField>(vec: &Vec<FpVar<F>>, exp_val: &FpVar<F>,
-	pows_31: &Vec<FpVar<F>>)
+	pows_31: &Vec<F>)
 ->Result<(),SynthesisError>{
 	assert!(pows_31.len()==8);
-	let cs = vec[0].cs();
-	let c1 = new_const_var(&cs, F::one());
-	let mut total_exp = c1.clone();
-	for i in 0..8{ total_exp = &total_exp + &(exp_val * &pows_31[i]); }
+	//let cs = vec[0].cs();
+	//let c1 = new_const_var(&cs, F::one());
+	assert!(pows_31.len()==8);
+	//for i in 0..8{ total_exp = &total_exp + &(exp_val * &pows_31[i]); }
+	let vec_exp_val = vec![exp_val.clone(); 8];
+	let total_exp = sum_vec_vars_weighted(&vec_exp_val[..], &pows_31);
 
 	for i in 0..vec.len()/8{//note mul with const does not cost
-		let mut total_var = c1.clone();
-		for j in 0..8{ total_var = &total_var + &(&vec[i*8 + j]*&pows_31[j]); }
+		//let mut total_var = c1.clone();
+		//for j in 0..8{ total_var = &total_var + &(&vec[i*8 + j]*&pows_31[j]); }
+		let total_var = sum_vec_vars_weighted(&vec[i*8..(i+1)*8], &pows_31); 
 		check_eq(&total_var, &total_exp, "failed vec check")?;
 	}
 	//check the remaining
@@ -1413,6 +1451,44 @@ pub fn is_zero_better<F:PrimeField>(x: &FpVar<F>, cs: &ConstraintSystemRef<F>)
 	)?;
 
 	Ok(z)
+}
+
+pub fn is_eq_adv<F:PrimeField>(x: &FpVar<F>, y: &FpVar<F>, inverse: &F, cs: &ConstraintSystemRef<F>)->FpVar<F>{
+	let lb_zero: LinearCombination<F> = lc!();
+	//let lb_one = LinearCombination::<F>(vec![(F::one(), Variable::One)]);
+	let lb_x_y = LinearCombination::<F>(vec![
+		var_to_tuple_adv(x, F::one()),
+		var_to_tuple_adv(y, -F::one()),
+	]);
+	let inv = FpVar::new_witness(cs.clone(), || { Ok(inverse) }).unwrap();
+	let lb_inv = var_to_lb(&inv, F::one());
+	let z = FpVar::new_witness(cs.clone(), || {
+        let xv = x.value().unwrap()-y.value().unwrap();
+        if xv.is_zero() { Ok(F::one()) } else { Ok(F::zero()) }
+    }).unwrap();
+	let lb_z = var_to_lb(&z, F::one());
+	let z_variable = fpvar_to_var(&z);
+
+	//Constraint 1: (x-y)*inv = 1-z
+	let lb_res = LinearCombination::<F>(vec![
+		(F::one(), Variable::One),
+		(-F::one(), z_variable)
+	]);
+
+	cs.enforce_constraint(
+		lb_x_y.clone(),
+		lb_inv,
+		lb_res
+	).unwrap();
+
+    //Constraint 2: (x-y) * z = 0
+	cs.enforce_constraint(
+		lb_x_y,
+		lb_z,
+		lb_zero
+	).unwrap();
+
+	z
 }
 
 /// compared with is_zero_better, it provides a precomputed inverse value
