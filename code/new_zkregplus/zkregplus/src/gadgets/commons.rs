@@ -1,6 +1,5 @@
 /* Created 03/07/2025 */
 // common utility functions
-use folding_schemes::folding::foldpot::utils::{var_to_tuple_adv,var_to_tuple};
 use utils::{consts::ADD_CHAIN_SIZE};
 use rayon::{
 	iter::{ParallelIterator,IntoParallelIterator, 
@@ -590,6 +589,29 @@ pub fn build_pows_56_val<F:PrimeField>() -> Vec<F>{
 
 	vec
 }
+
+/// FpVar to a tuple (can handle consants
+#[inline(always)]
+pub fn var_to_tuple<F:PrimeField>(v: &FpVar<F>)->(F,Variable){
+	let res = match v{
+		Var(v) => (F::one(), v.variable) ,
+		Constant(val) => (*val, Variable::One)
+	};
+
+	res
+}
+
+/// FpVar to a tuple (can handle consants
+#[inline(always)]
+pub fn var_to_tuple_adv<F:PrimeField>(v: &FpVar<F>, c: F)->(F,Variable){
+	let res = match v{
+		Var(v) => (c, v.variable) ,
+		Constant(val) => (*val*c, Variable::One)
+	};
+
+	res
+}
+
 
 ///compute sum (v[i] * weights[i]) where weights as consants
 /// we assume that v and weights are small

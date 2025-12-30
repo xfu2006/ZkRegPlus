@@ -903,7 +903,6 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		let r1_val = r1.value()?;
 		let unit_val = unit_cvar.value()?;
 		let inp_val = inp_loc.value()?;
-		println!("DEBUG USE 101: states_val: {}, nlen: {}", states_val.len(), nlen);
 		let vec_inv = states_val.into_par_iter().enumerate().map(|(i,s)|{
 			let val = r1_val + s + unit_val *(inp_val + F::from(i as u32));
 			val.inverse().expect("INV err")

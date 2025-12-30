@@ -32,7 +32,7 @@ use crate::{
 	gadgets::{
 		db::assert_logup,
 		commons::{gen_m_table,new_var, var_to_lb,new_const_var,
-			is_zero_better}
+			is_zero_better, gen_vec_inverse, var_to_tuple, var_to_tuple_adv}
 	}
 };
 
@@ -251,9 +251,12 @@ impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
 		// then apply not (a) or b we have
 		// unique_states[i]==0 + m_table[i]!=0 is true (non_zero)
 		// COST: 2*mlen
-		let zero = F::zero();
+		//let zero = F::zero();
 		let one_var = FpVar::<F>::constant(F::one());
 		let lb_zero= LinearCombination::from((F::zero(),Variable::One));
+		let m_vals= m_table.iter().map(|m|{m.value().unwrap()})
+			.collect::<Vec<F>>();
+		let vec_inv = gen_vec_inverse(&m_vals);
 		for i in 0..m_table.len(){
 			// we are argueing that
 			// when unique_states[i]!=0:
@@ -261,10 +264,10 @@ impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
 			//    s.t.
 			//    unique_states[i] * (mtable[i] * inverse_mtable[i] - 1) = 0
 			//    when unique_states[i]==0 it's don't care
-			let m_tbl_i_val = m_table[i].value()?;
-			let inv_m_val = if m_tbl_i_val.is_zero() {zero} else{
-				m_tbl_i_val.inverse().expect("error no inverse")};
-			let inv_m_var = new_var(&cs, inv_m_val);
+			//let m_tbl_i_val = m_table[i].value()?;
+			//let inv_m_val = if m_tbl_i_val.is_zero() {zero} else{
+			//	m_tbl_i_val.inverse().expect("error no inverse")};
+			let inv_m_var = new_var(&cs, vec_inv[i]);
 			let item2 = &m_table[i] * &inv_m_var - &one_var;
 			let lb_item2 = var_to_lb(&item2, F::one());
 			let lb_unique_i = var_to_lb(&unique_states[i], F::one());
@@ -331,7 +334,10 @@ impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
 		let mut prod_unique= FpVar::<F>::new_constant(cs.clone(), 
 			F::one())?;
 		let one_var= prod_unique.clone();
-		let lb_neg_one= LinearCombination::from((-F::one(),Variable::One));
+		let tp_neg_one= (-F::one(),Variable::One);
+		//let lb_neg_one = LinearCombination::<F>(vec![
+		//	(-F::one(), Variable::One)
+		//]);
 
 		for i in 0..mlen{
 			//(a) assert conditional select of item
@@ -342,12 +348,19 @@ impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
 				unique_states[i].value()?
 			} else {F::one()};
 			let item = new_var(&cs, item_val);
-			let lb_sel = var_to_lb(&sel_unique[i], F::one());
-			let lb_item = var_to_lb(&item, F::one());
+			let tp_sel = var_to_tuple_adv(&sel_unique[i], F::one());
+			let lb_sel = LinearCombination::<F>(vec![tp_sel.clone()]);
+			//let lb_item = var_to_lb(&item, F::one());
+			let lb_four = LinearCombination::<F>(vec![
+				tp_sel,
+				var_to_tuple(&item),
+				tp_neg_one,
+			]);
 			cs.enforce_constraint(
 				lb_sel.clone(),
 				vec_lb_unique[i].clone(),
-				lb_sel + lb_item + lb_neg_one.clone()
+				//lb_sel + lb_item + lb_neg_one.clone()
+				lb_four
 			)?;
 			prod_unique = &prod_unique * &item;
 		}
@@ -368,12 +381,19 @@ impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
 			} else {F::one()};
 			let item = new_var(&cs, item_val);
 			let lb_sel = var_to_lb(&sel_oup[i], F::one());
-			let lb_item = var_to_lb(&item, F::one());
+			let tp_sel = var_to_tuple_adv(&sel_oup[i], F::one());
+			//let lb_item = var_to_lb(&item, F::one());
 			let lb_oup = var_to_lb(&oup_states[i], F::one());
+			let lb_four = LinearCombination::<F>(vec![
+				tp_sel,
+				var_to_tuple(&item),
+				tp_neg_one,
+			]);
 			cs.enforce_constraint(
 				lb_sel.clone(),
 				lb_oup,
-				lb_sel + lb_item + lb_neg_one.clone()
+				//lb_sel + lb_item + lb_neg_one.clone()
+				lb_four
 			)?;
 			prod_oup = &prod_oup * &item;
 		}

@@ -23453,7 +23453,7 @@ LOG2: --  validate_mul_fsm step 2 52 ms (**) -> 23 ms
 LOG2: --  validate_mul_fsm step 3 196 ms (**) => 20ms 
  ### validate_mul_fsm_acc_container: m: 3, nlen: 31744. cost: 35733
 LOG2: --  validate_mul_fsm step 4 28 us 
-LOG1:  dfa: step 1. validate_mul_fsm  276 ms ==> 72 ms (but what's the extra 20ms?)
+LOG1:  dfa: step 1. validate_mul_fsm  276 ms ==> 72 ms (but what's the extra 20ms?) --> load stmt? 
 LOG2: --  validate_discharge_sig step 0 7 us
 LOG2: --  validate_discharge_sig step 1 7 us
 LOG2: --  validate_discharge_sig step 2.1 7 us
@@ -23463,4 +23463,27 @@ LOG2: --  validate_discharge_sig step 3 288 us
 LOG1:  dfa: step 2. validate_discharge_sig_combo 844 us
 =======================================================
 
+Tuesday 12/30/2025
+Goal 1. Quickly go over part 2 of DfaGadget -> just num of subsigs
+	it's small not worth the efforts
+Goal 2. WordExtract 
+	[a] improve the sum component using sumweighted
+	[b] DATA
+-------------------------------------
+LOG6: -- -- -- -- --  -- -- after msg3 of module 0: WordExtractGadget:
+    INCREASED: constraints: 3072, const vars: 0, wit vars: 2048
+    ==> NOW: CS:17493, const: 1, witness: 1628244
+     ==> stmt_size: 64002.  15 ms => 8 ms => 5ms (precompute inv)
+	[c] similarly word_extract_adv
+		=> 23ms => 5ms
+Goal 3. Pack sigs
+	[a] data: 17 ms
+	[b] now overall: gen_step_cs step 3 improved from 1069ms to 251 ms
+	[c] improve gen_step_cs dump msg
+	Now overal is improved to 3.5 sec for each prove step (improved
+from about 10 seconds). The hard bottom line is about 3 msm (2.1 sec)
+So. stop here to save development cost.
+
+
 === TODO: fix the b_debug = true problem there is no constraint to check.
+

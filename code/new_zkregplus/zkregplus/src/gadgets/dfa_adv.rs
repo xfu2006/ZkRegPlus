@@ -744,7 +744,7 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		//1. check the relations between v_sig, v_subsig,
 		//v_raw_subsig and v_dfa_id
 		//COST: 6n (where n = subsigs, in practice this is small: <10)
-		let b_perf = true;
+		let b_perf = false;
 		let log_level = LOG2;
 		let mut gt = GTimer::new();
 		let nc = cs.num_constraints();
@@ -1024,7 +1024,7 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 	) ->Result<(), SynthesisError>{
 		//0. retrieve data from combo
 		let b_debug = false;
-		let b_perf = true;
+		let b_perf = false;
 		let log_level = LOG2;
 		let mut gt = GTimer::new();
 		let nc = cs.num_constraints();
@@ -1284,7 +1284,7 @@ impl <F:PrimeField> SigmaGadget<F> for DfaAdvGadget<F>{
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{
 		//1. retrive the statement instance and get all parts
-		let b_perf = true;
+		let b_perf = false;
 		let log_level = LOG1;
 		let mut gt = GTimer::new();
 		let nc = cs.num_constraints();

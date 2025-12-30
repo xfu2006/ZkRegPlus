@@ -7,6 +7,7 @@
 // NOTE that it has two modes: char mode (for regular DFA),
 // and normal mode (for ACDFA).
 
+use ark_r1cs_std::R1CSVar;
 use rayon::{ iter::{ParallelIterator,IntoParallelIterator,IntoParallelRefIterator} };
 use std::{rc::{Rc},cell::{RefCell}};
 use ark_ff::{PrimeField};
@@ -21,7 +22,7 @@ use folding_schemes::{
 use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef};
 use ark_r1cs_std::{
 	fields::{
-		FieldVar,
+		//FieldVar,
 		fp::FpVar
 	},
 	alloc::AllocVar,
@@ -33,7 +34,7 @@ use utils::{data::{packed_to_nibbles,u8_to_hex}};
 use crate::gadgets::{
 	traits::{ComponentAdvice,Col, IDX_WORD, IDX_DATA,IDX_INP, IDX_OUP, IDX_SI_DATA, Container},
 	word_extract::{LEGS},
-	commons::{check_eq},
+	commons::{check_eq, sum_vec_vars_weighted},
 };
 
 
@@ -337,26 +338,35 @@ impl <F:PrimeField> SigmaGadget<F> for WordExtractAdvGadget<F>{
 		// COST: 0, because they are all const.
 		let zero_var = FpVar::<F>::new_constant(cs.clone(), F::zero())?;
 		let one_var = FpVar::<F>::new_constant(cs.clone(), F::one())?;
-		let f4 = FpVar::<F>::new_constant(cs.clone(), F::from(16u32))?;
-		let f1 = FpVar::<F>::new_constant(cs.clone(), F::from(1u32))?;
+		//let f4 = FpVar::<F>::new_constant(cs.clone(), F::from(16u32))?;
+		//let f1 = FpVar::<F>::new_constant(cs.clone(), F::from(1u32))?;
+		let f4 = F::from(16u32);
+		let f1 = F::one();
 		let mut vec_pows = vec![f1; LEGS];
-		for i in 1..LEGS{ vec_pows[i]	 = &vec_pows[i-1] * &f4; }
+		for i in 1..LEGS{ vec_pows[i]	 = vec_pows[i-1] * f4; }
 
 		//4. check extraction correct
 		//COST: 6*wlen (because add does not cost anything)
 		//note the vec_pows are const
 		let wlen = self.capacity.max_word_len;
+		let remain_val = remain.value()?;
+		let vec_inv= (0..wlen).into_par_iter().map(|i|{
+			let res = remain_val - F::from(i as u32);
+			if res.is_zero() {F::zero()} else {res.inverse().unwrap()}
+		}).collect::<Vec<F>>();
 		for i in 0..wlen{
-			let b_remain_zero = remain.is_zero()?;
+			let b_remain_zero = remain.is_zero_adv(&vec_inv[i])?;
 			let wd = b_remain_zero.select(&zero_var, &word_seg[i])?;
-			let mut wsum = zero_var.clone();
-			for j in 0..LEGS{
-				let idx = i*LEGS + j;
-				wsum += &vec_pows[j] * &nibbles[idx];
-			}
+			// LOGICAL
+			//let mut wsum = zero_var.clone();
+			//for j in 0..LEGS{
+			//	let idx = i*LEGS + j;
+			//	wsum += &vec_pows[j] * &nibbles[idx];
+			//}
+			let wsum = sum_vec_vars_weighted(
+				&nibbles[i*LEGS..(i+1)*LEGS], &vec_pows);
 			wsum.enforce_equal(&wd)?;
 			#[cfg(test)]{
-				use ark_r1cs_std::R1CSVar;
 				if wsum.value().is_ok(){
 					assert!(wsum.value()?==wd.value()?);
 				}

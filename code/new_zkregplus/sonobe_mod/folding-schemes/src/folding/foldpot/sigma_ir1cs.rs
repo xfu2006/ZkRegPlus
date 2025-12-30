@@ -11,7 +11,7 @@
 		that failed_sigs is a subset of discharged_sigs (or the samples
 		are discharged).
 */
-use utils::{consts::ADD_CHAIN_SIZE, logger::{log, log_perf, LOG6}, timer::Timer as GTimer};
+use utils::{consts::ADD_CHAIN_SIZE, logger::{log, log_perf, LOG6,LOG7}, timer::Timer as GTimer};
 use crate::folding::foldpot::utils::{sum3,alloc_fpvar_mul,sub2,var_to_tuple, var_to_tuple_adv};
 use serde::{Serialize,Deserialize};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -963,7 +963,7 @@ impl StatementConfig{
 	}
 
 	pub fn total_size(&self)-> usize{
-		let log_level = LOG6;
+		let log_level = LOG7;
 		let b_perf = true;
 		let sub_table_size = self.input_size + self.output_size + 
 			self.data_size;
@@ -1909,7 +1909,7 @@ impl WitnessSigmaIR1CSConfig{
 
 	/// get the total size if serialized into vector
 	pub fn get_total_size(&self)->usize{
-		let log_level = LOG6;
+		let log_level = LOG7;
 		log(log_level, &format!(" ### WITNESS structure: stmt_size: {}, msg1: {}, msg2: {}, msg3: {}, zi_part2: {}, inv_hab22_left: {} inv_hab22_right: {}", self.statement_size, self.msg1_size, self.msg2_size, self.msg3_size, self.zi_part2_size, self.inv_hab22_left_size, self.inv_hab22_right_size));
 		self.cmF_size + self.extra_var_size + self.statement_size + 
 		self.msg1_size + self.msg2_size + self.msg3_size + 
@@ -2478,7 +2478,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		//0. check input, will not need the extra constraints
 		// will be enforced somewhere else, but need
 		// the cyclepair input
-		let log_level = LOG6;
+		let log_level = LOG7;
 		let b_debug = false;
 
 		let mut gt1 = GTimer::new();
@@ -3077,7 +3077,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			let (nc, ni, nv) = (cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables());
 			g.borrow().assert_msg3(i, cs.clone(), &wtns_var, &cfg)?;
 			let stmt_len = g.borrow().get_msg_size().0;
-			log_perf(log_level, &format!("-- -- after msg3 of module {}: {}:\n\tINCREASED: constraints: {}, const vars: {}, wit vars: {} \n\t==> NOW: CS:{}, const: {}, witness: {}\n\t ==> stmt_size: {}. ", i, g.borrow().get_name(), cs.num_constraints()-nc, cs.num_instance_variables()-ni, cs.num_witness_variables()-nv, cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables(), stmt_len), &mut gt3);						
+			log_perf(log_level+1, &format!("-- -- after msg3 of module {}: {}:\n\tINCREASED: constraints: {}, const vars: {}, wit vars: {} \n\t==> NOW: CS:{}, const: {}, witness: {}\n\t ==> stmt_size: {}. ", i, g.borrow().get_name(), cs.num_constraints()-nc, cs.num_instance_variables()-ni, cs.num_witness_variables()-nv, cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables(), stmt_len), &mut gt3);						
 		}
 		if b_debug{
 			let csat = cs.is_satisfied();
@@ -3268,7 +3268,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		let one_wit_var = FpVar::<F>::new_witness(cs.clone(), ||Ok(F::one())).unwrap();
 		one_wit_var.enforce_equal(&one_var)?; 
 
-		log(log_level, &format!("gen_step_cs step 5: BEFORE inv_hab22: {}, cs.lc_size: {}, cons: {}", inv_hab22_left_size, cs.inner().unwrap().borrow().lc_map.len(), cs.num_constraints()));
 
 		//5.1 verify the correct of inverse and compute sum_hab22_left
 		assert!(b_check_lkup.len()==inv_hab22_left_size,
@@ -3379,18 +3378,18 @@ where 	C: CurveGroup<ScalarField=F>,
 
 			}
 	}
-		log_perf(log_level, &format!("gen_step_cs step 5: AFTER inv_hab22: {}, cs.lc_size: {}, cons: {}", inv_hab22_left_size, cs.inner().unwrap().borrow().lc_map.len(), cs.num_constraints()), &mut gt);
+		//log(log_level, &format!("gen_step_cs step 5: BEFORE inv_hab22: {}, cs.lc_size: {}, cons: {}", inv_hab22_left_size, cs.inner().unwrap().borrow().lc_map.len(), cs.num_constraints()));
 		let n_total = n_case1 + n_case2 + n_case3;
-		log(log_level, &format!("-- Breakdown of logup cases: n_case1: ({}, {:.2}%), n_case2: ({}, {:.2}%), n_case3: ({}, {:.2}%)", n_case1, 100.0*(n_case1 as f64)/(n_total as f64), n_case2, 100.0*(n_case2 as f64)/(n_total as f64), n_case3, 100.0*(n_case3 as f64)/(n_total as f64)));
-		log(log_level, &format!("-- gen_step_cs step 5.0: inv_hab22_left: {}, cs: {}, vars: {}, lc: {}",
-			inv_hab22_left_size,
-			cs.num_constraints() - nc,
-			cs.num_witness_variables() - nv,
-			cs.num_lc() - nl
-			));
-			nc = cs.num_constraints();
-			nv = cs.num_witness_variables();
-			nl = cs.num_lc();
+		log_perf(log_level, &format!("gen_step_cs step 5: AFTER inv_hab22: {}, INCREASED cs.lc_size: {}, cons: {}, vars: {} -- Breakdown of logup cases: n_case1: ({}, {:.2}%), n_case2: ({}, {:.2}%), n_case3: ({}, {:.2}%)"
+		, inv_hab22_left_size, cs.inner().unwrap().borrow().lc_map.len() - nl, cs.num_constraints()-nc, cs.num_witness_variables()-nv,
+		n_case1, 100.0*(n_case1 as f64)/(n_total as f64), n_case2, 100.0*(n_case2 as f64)/(n_total as f64), n_case3, 100.0*(n_case3 as f64)/(n_total as f64)
+		), &mut gt);
+		//log(log_level, &format!("-- Breakdown of logup cases: n_case1: ({}, {:.2}%), n_case2: ({}, {:.2}%), n_case3: ({}, {:.2}%)", 
+		//n_case1, 100.0*(n_case1 as f64)/(n_total as f64), n_case2, 100.0*(n_case2 as f64)/(n_total as f64), n_case3, 100.0*(n_case3 as f64)/(n_total as f64)
+		//));
+		nc = cs.num_constraints();
+		nv = cs.num_witness_variables();
+		nl = cs.num_lc();
 
 		if b_debug{
 			let csat = cs.is_satisfied();
@@ -3402,7 +3401,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			);
 
 		}
-		log(log_level, &format!("-- lkup_size: {}, inv_hab22_right_size: {}", si.act_lookup_share_size.value()?, inv_hab22_right_size));
+		//log(log_level, &format!("-- lkup_size: {}, inv_hab22_right_size: {}", si.act_lookup_share_size.value()?, inv_hab22_right_size));
 		log_perf(log_level, &format!(
 				"-- -- gen_step_cs step 5.1: cs: {}, vars: {}: lc: {}",
 				cs.num_constraints() - nc,
@@ -3420,10 +3419,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		}
 		let mut lookup_share_size_left = si.act_lookup_share_size.clone();
 		//5.2.1 compute the inverse first to speed up is_zero()? call
-		//REMOVE LATER -------------
-		use ark_std::time::Instant;
-		let start = Instant::now();		
-		//REMOVE LATER -------------
 		let val_lkup_left = lookup_share_size_left.value()?;
 		let vec_left = (0..inv_hab22_right_size).collect::<Vec<_>>().
 			into_par_iter().map(|i|{
@@ -3443,7 +3438,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		let v_inv_not_add = gen_vec_inverse(&v_val_not_add);
 		assert!(v_inv_lzero.len()==inv_hab22_right_size);
 		assert!(v_val_not_add.len()==inv_hab22_right_size);
-		println!("DEBUG USE 7777: gen_vec_inverse {} ns", start.elapsed().as_nanos());
 
 		//5.2.2 now process the inv_hab22_right
 		for i in 0usize..inv_hab22_right_size{

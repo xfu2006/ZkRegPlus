@@ -16,6 +16,7 @@ pub const LOG3:usize = 4;
 pub const LOG4:usize = 5;
 pub const LOG5:usize = 6;
 pub const LOG6:usize = 7;
+pub const LOG7:usize = 8;
 /// current default log level for entire system
 pub const LOG_LEVEL:usize = LOG6;
 
