@@ -38,6 +38,7 @@ use crate::folding::foldpot::{
 	sigma_ir1cs::{LookupTableTwoCol},
 	decider_eth_circuit_super::{TwoPhaseCircInput},
 	from_field::{AffineFromField},
+	utils::{B_DEBUG},
 };
 use crate::transcript::AbsorbNonNative;
 use crate::utils::vec::poly_from_vec;
@@ -379,7 +380,7 @@ where
 	pub fn setup(mut rng: impl RngCore, max_total_n: usize, n_words: usize,
 		poseidon_config: PoseidonConfig<F>) 
 	-> (BatchProcessorProverParams<'a, E>, BatchProcessorVerifierParams<'a,E,CS1E,H>){
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let kzg= KZG::<E>::setup(&mut rng, max_total_n+2)
 			.expect("kzg key fail");
 		let kzg_frag = KZG::<E>::pkey_in_affine(&kzg.0, n_words+1);
@@ -567,7 +568,8 @@ where
 		i: usize,
 		claim: &IndividualClaim<E>,
 		batch_proof: &BatchProof<E,S>,
-		ind_proof: &IndividualProof<E>)->bool{
+		ind_proof: &IndividualProof<E>,
+		)->bool{
 		//1. verify the generated challenges
 		assert!(i==claim.i);	
 		let mut sponge= PoseidonSponge::<E::ScalarField> 
@@ -735,6 +737,14 @@ where
 	/// between vec_com and kzg_com; the 2nd one: nova1_qa_nizk_vkey is for
 	/// verifying kzg_all_com and comE, W, F; and nova2_qa_nizk_vkey2 
 	/// does the same for the 2nd circuit.
+	///
+	/// when optional kzg_sum1 is passed as non-nill,
+	/// it implies that the b_check_lkup flag is false for driver (that is
+	/// we use a much smaller lkup share in circuit so that the entire
+	/// lkup table is NOT covered by the folding of circuits). Thus,
+	/// kzg_sum1 produced by the circuits will NOT BE equal 
+	/// to the KZG eval of the lkup as a poly. So we use the opt_kzg_sum1
+	/// in this case to let the verification pass.
 	pub fn verify_batch(
 		vkey: &BatchProcessorVerifierParams<'a,E,CS1E,H>, 
 		nova1_qa_nizk_vkey_hash: Option<E::ScalarField>, //only use in part2 
@@ -743,7 +753,9 @@ where
 		claim: &BatchClaim<E>,
 		prf: &BatchProof<E,S>,
 		poseidon_config: &PoseidonConfig<E::ScalarField>,
-		b_check_part2: bool)->bool{
+		b_check_part2: bool,
+		opt_kzg_sum1: Option<F>, //optional kzg_sum1
+		)->bool{
 		//0. build rand input for generate Fiat-Shamir randoms
 		let rand_inp = SnarkRandInput::<E>{
 			kzg_all_words: claim.kzg_all_words.clone(),
@@ -827,7 +839,13 @@ where
 			}
 
 			//4. check the snark proof
-			let kzg_sum1 = prf.agg_kzg_prf.eval;
+			let kzg_sum1 = if opt_kzg_sum1.is_some(){
+				opt_kzg_sum1.unwrap() //in NOT check lkup mode
+					//the full eval of entire lkup KZG will not work
+					//take the circuits' output instead.
+			}else{
+				prf.agg_kzg_prf.eval //normal mode
+			};
 			let snark_inp = TwoPhaseCircInput{
 				ch1: prf.ch,
 				rc1: prf.rc,
@@ -922,7 +940,7 @@ mod tests_batch_proc {
 		};
 
 		let (batch_proof, _rand_inp2) = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>, CS1E, false> ::prove_batch(&pk, &snark_inp, &words, lkup, &partial_input); 
-		assert!(BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E, false>::verify_batch(&vk, None, None, None, &global_claim, &batch_proof, &poseidon_config, false));
+		assert!(BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E, false>::verify_batch(&vk, None, None, None, &global_claim, &batch_proof, &poseidon_config, false, None));
 		let ind_prf = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E,false>::prove_individual(&pk, 
 			&snark_inp, &words, &ind_claims[i], i);
 		let res = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E,false>::verify_individual(&vk, i,

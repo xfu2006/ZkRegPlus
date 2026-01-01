@@ -12,6 +12,7 @@ I was expecting a `,' or a `}'---line 22443 of file fu2.bib
 (Error may have been on previous line)
 I'm skipping whatever remains of this entry
 Warning--I didn't find a database entry for "Sangria"
+Warning--I didn't find a database entry for "Campanelli25"
 Reallocated singl_function (elt_size=4) to 100 items from 50.
 Reallocated glb_str_ptr (elt_size=4) to 20 items from 10.
 Reallocated global_strs (elt_size=200001) to 20 items from 10.
@@ -43,8 +44,6 @@ Warning--empty publisher in Cam97
 Warning--empty address in Cam97
 Warning--empty publisher in Lunar
 Warning--empty address in Lunar
-Warning--no number and no volume in Campanelli25
-Warning--page numbers missing in both pages and numpages fields in Campanelli25
 Warning--empty publisher in LegoSnark
 Warning--empty address in LegoSnark
 Warning--empty publisher in HyperPlonk
@@ -98,45 +97,45 @@ Warning--empty publisher in vSQL
 Warning--empty address in vSQL
 Warning--empty publisher in IntegriDB
 Warning--empty address in IntegriDB
-You've used 100 entries,
+You've used 99 entries,
             5981 wiz_defined-function locations,
-            2080 strings with 36223 characters,
-and the built_in function-call counts, 98964 in all, are:
-= -- 10888
-> -- 3623
+            2078 strings with 36104 characters,
+and the built_in function-call counts, 97955 in all, are:
+= -- 10726
+> -- 3592
 < -- 0
-+ -- 1222
-- -- 1240
-* -- 7027
-:= -- 10343
-add.period$ -- 500
-call.type$ -- 100
-change.case$ -- 743
-chr.to.int$ -- 93
-cite$ -- 181
-duplicate$ -- 8961
-empty$ -- 6280
-format.name$ -- 1593
-if$ -- 22661
++ -- 1212
+- -- 1231
+* -- 6957
+:= -- 10254
+add.period$ -- 495
+call.type$ -- 99
+change.case$ -- 736
+chr.to.int$ -- 92
+cite$ -- 178
+duplicate$ -- 8879
+empty$ -- 6220
+format.name$ -- 1580
+if$ -- 22387
 int.to.chr$ -- 9
 int.to.str$ -- 1
-missing$ -- 198
-newline$ -- 872
-num.names$ -- 693
-pop$ -- 3576
+missing$ -- 194
+newline$ -- 864
+num.names$ -- 686
+pop$ -- 3538
 preamble$ -- 2
-purify$ -- 1528
+purify$ -- 1513
 quote$ -- 0
-skip$ -- 3562
+skip$ -- 3539
 stack$ -- 0
-substring$ -- 6882
-swap$ -- 738
+substring$ -- 6828
+swap$ -- 734
 text.length$ -- 0
 text.prefix$ -- 0
 top$ -- 0
-type$ -- 2871
-warning$ -- 81
-while$ -- 524
+type$ -- 2855
+warning$ -- 79
+while$ -- 521
 width$ -- 0
-write$ -- 1972
+write$ -- 1954
 (There was 1 error message)

@@ -33,6 +33,7 @@ use crate::folding::foldpot::{
 	sigma_ir1cs::{SigmaIR1CS,ZiPartTwoInst,LookupTableTwoCol,CyclePairInput,CyclePairInputVar,GadgetMapper},
 	mod_super::{CommittedInstanceFoldPotSuper},
 	cyclepair::{CyclePairCommittedInstanceVar,CyclePairChallengeGadget, NIFSFullGadgetCyclePair,cp_io_len},
+	utils::{B_DEBUG},
 	
 };
 use super::{CommittedInstanceFoldPot, FOLDPOT_CF_N_POINTS};
@@ -400,7 +401,7 @@ where
     for<'a> &'a GC2: GroupOpsBounds<'a, C2, GC2>,
 {
     fn generate_constraints(self, cs: ConstraintSystemRef<CF1<C1>>) -> Result<(), SynthesisError> {
-		let b_debug = false; //should be the same as
+		let b_debug = B_DEBUG; //should be the same as
 			//mod_super.generate_constraints.b_debug
 			//as the CS is set up with no matrix mode when not b_debug
 		let log_level = LOG5;

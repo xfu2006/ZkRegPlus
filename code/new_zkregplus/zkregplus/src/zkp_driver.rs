@@ -173,7 +173,8 @@ fn build_circs_adv<F,C,CS>(
 	init_sed_capacity: &SedCapacity,
 	init_dfa_capacity: &DfaCapacity,
 	num_category: usize, 
-	num_circs_per_category: usize
+	num_circs_per_category: usize,
+	b_check_lkup: bool
 )->Vec<Vec<FC<F,C,CS>>>
 where C: CurveGroup<ScalarField=F>,
 	  CS: CommitmentScheme<C,false>,
@@ -188,7 +189,8 @@ where C: CurveGroup<ScalarField=F>,
 	//lkup_share needed to build up circuit
 	let avg_lk_wd = lkup_len/total_word_n + 1;
 	let avg_lk_wd = if avg_lk_wd<1 {1} else {avg_lk_wd};
-	let lk_share = chunk_len*avg_lk_wd;
+	let lk_share = if b_check_lkup {chunk_len*avg_lk_wd} else{
+		16 }; //give a SMALLER lkup_share if we do not check lkup
 
 	//3. build up each category
 	let mut layer_circs = vec![];
@@ -247,7 +249,7 @@ where C: CurveGroup<ScalarField=F>,
 				false, //b_full_mode (whether supporting cyclepair - no for 
 						//regular circuit) 
 				lk_share,
-				b_cyclepair
+				b_cyclepair, b_check_lkup
 			).expect("error building circ");
 			layer_circs.push( vec![circ] ); //legacy to keep 2d layer
 
@@ -270,7 +272,7 @@ where C: CurveGroup<ScalarField=F>,
 /// we put the circ config hard coded in this function. To change
 /// config, modify the local variables at the beginning of this function.
 #[allow(dead_code)]
-fn build_circs<F,C,CS>(poseidon_config: &PoseidonConfig<F>, total_word_n: usize, lkup_len: usize, db: Rc<ClamavDB<F>> ) 
+fn build_circs<F,C,CS>(poseidon_config: &PoseidonConfig<F>, total_word_n: usize, lkup_len: usize, db: Rc<ClamavDB<F>>, b_check_lkup: bool ) 
 ->Vec<Vec<FC<F,C,CS>>>
 where C: CurveGroup<ScalarField=F>,
 	  CS: CommitmentScheme<C,false>,
@@ -338,7 +340,7 @@ where C: CurveGroup<ScalarField=F>,
 		,false>
 		::new_adv(format!("c1"), poseidon_config.clone(), 
 			Rc::new(RefCell::new(cg1)), false, lk_share1,
-			b_cyclepair).expect("c1");
+			b_cyclepair, b_check_lkup).expect("c1");
 	/*
 	let _c2 = SigmaIR1CS_Inst::<F,C,CS,LK<F>,
 		CompositeGadgetMapper<F,LK<F>>
@@ -389,7 +391,7 @@ where C: CurveGroup<ScalarField=F>,
 		,false>
 		::new_adv(format!("hc1"), poseidon_config.clone(), 
 			Rc::new(RefCell::new(hybrid_cgm1)), false, lk_share1,
-			b_cyclepair).expect("hc1");
+			b_cyclepair, b_check_lkup).expect("hc1");
 
 	//vec![ vec![c4,c3], vec![c2,c1] ]
 	//vec![ vec![_c2,_c1] ] //for saving cost
@@ -428,6 +430,7 @@ pub fn zkp_driver<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + std::f
 	init_dfa_capacity: &DfaCapacity,
 	num_category: usize,
 	num_circs_per_category: usize,
+	b_check_lkup: bool,
 )
 where
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
@@ -505,7 +508,8 @@ where
 		init_sed_capacity,
 		init_dfa_capacity,
 		num_category,
-		num_circs_per_category
+		num_circs_per_category,
+		b_check_lkup
 	);
 	log_perf(log_level, &format!("ZIP driver step 2: build circs."), &mut gt1);
 
@@ -550,7 +554,7 @@ pub mod tests_zkp_driver{
 	/// small data: each cat of signatures got one sample, one 2-Fr word
 	/// read the READ me in data/small_data_set/README for the design of sigs
 	#[allow(dead_code)]
-	fn small_data<F:PrimeField>(){
+	fn small_data<F:PrimeField>(b_check_lkup: bool){
 		let b_read_cache = false;
 		let b_write_cache = true;
 		let set1 = "data/debug/small_data_set/config_dfa"; //for dfa 
@@ -599,7 +603,8 @@ pub mod tests_zkp_driver{
 			&init_sed_cap,
 			&init_dfa_cap,
 			num_category,
-			num_circs_per_category
+			num_circs_per_category,
+			b_check_lkup
 		);
 	}
 
@@ -609,7 +614,7 @@ pub mod tests_zkp_driver{
 	/// has 1 long words (1k-packed nibbles - around 31kb)
 	/// read the READ me in data/small_data_set2/README for the design of sigs
 	#[allow(dead_code)]
-	fn small_data2<F:PrimeField>(){
+	fn small_data2<F:PrimeField>(b_check_lkup: bool){
 		let b_read_cache = false;
 		let b_write_cache = true;
 		let set1 = "data/debug/small_data_set2/config_dfa"; //for dfa 
@@ -663,12 +668,14 @@ pub mod tests_zkp_driver{
 			&init_sed_cap,
 			&init_dfa_cap,
 			num_category,
-			num_circs_per_category
+			num_circs_per_category,
+			b_check_lkup
 		);
 	}
 
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
-		small_data2::<Fr>();
+		let b_check_lkup = false;
+		small_data2::<Fr>(b_check_lkup);
 	}
 }

@@ -56,6 +56,7 @@ use crate::{
 		qa_nizk::{QaNizkProverParams,QaNizkVerifierParams,SparseMatrix,setup_qa_nizk,prove_qa_nizk_fast},
 		sigma_cyclepair::{compute_hc},
 		decider_eth_circuit_super::{KZGChallengesGadgetSuper},
+		utils::{B_DEBUG}
 	}
 };
 // utility function for compute step cmF
@@ -1235,7 +1236,7 @@ where
 				kzg_row: kzg_row,
 				vec_rows: vec_rows,
 			};
-			let b_debug = false;
+			let b_debug = B_DEBUG;
 			let (pkey, vkey) = setup_qa_nizk::<E>(&smatrix, b_debug);
 			(Some(pkey), Some(vkey), cols_len)
 		};
@@ -1296,7 +1297,7 @@ where
         // Nova does not support multi-instances folding
         _other_instances: Option<Self::MultiCommittedInstanceWithWitness>,
     ) -> Result<(), Error> {
-		let b_debug = false; // should be the same as
+		let b_debug = B_DEBUG; // should be the same as
 			//circuit_super.generate_constraints.b_debug!
 			//as the CS is set up with no matrix mode when not b_debug
 		let log_level = LOG4;

@@ -12,7 +12,7 @@
 		are discharged).
 */
 use utils::{consts::ADD_CHAIN_SIZE, logger::{log, log_perf, LOG6,LOG7}, timer::Timer as GTimer};
-use crate::folding::foldpot::utils::{sum3,alloc_fpvar_mul,sub2,var_to_tuple, var_to_tuple_adv};
+use crate::folding::foldpot::utils::{sum3,alloc_fpvar_mul,sub2,var_to_tuple, var_to_tuple_adv, B_DEBUG};
 use serde::{Serialize,Deserialize};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use crate::commitment::CommitmentScheme;
@@ -268,6 +268,8 @@ pub trait SigmaIR1CS<const H: bool, F: PrimeField, LK: LookupTableTwoCol<F>, GM:
 
 	fn is_cyclepair(&self)->bool;
 
+	fn is_check_lkup(&self)->bool;
+
 	/// return the lkup_share_size
 	fn get_lkup_share_size(&self)->usize;
 
@@ -287,7 +289,7 @@ pub trait SigmaIR1CS<const H: bool, F: PrimeField, LK: LookupTableTwoCol<F>, GM:
 	/// needed for calculating limbs of NonNativeUint,
 	fn new_adv(name: String, poseidon_config: PoseidonConfig<F>, 
 		g_mapper: Rc<RefCell<GM>>, b_full_mode: bool, lkup_share_size: usize,
-		b_cyclepair: bool)
+		b_cyclepair: bool, b_check_lkup: bool)
 		->Result<Self,Error> where Self: Sized;
 
 	/// Similar to step_native to allow self to modify itself.
@@ -2199,6 +2201,11 @@ where 	C: CurveGroup<ScalarField=F>,
 	/// as cyclepair input.
 	pub b_full_mode: bool,
 
+	/// by default it should be true. Use false value
+	/// when debug (a small lkup share which does not check the
+	/// the entire lookup table).
+	pub b_check_lkup: bool,
+
 	/// if the instance is cyclepair, we will tag sid differently
 	pub b_cyclepair: bool,
 
@@ -2273,7 +2280,8 @@ where 	C: CurveGroup<ScalarField=F>,
 			fq_bits: self.fq_bits,
 			dummy_stmt: self.dummy_stmt.clone(),
 			_lk: PhantomData,
-			b_cyclepair: self.b_cyclepair
+			b_cyclepair: self.b_cyclepair,
+			b_check_lkup: self.b_check_lkup
 		}
 	}
 }
@@ -2363,6 +2371,10 @@ where 	C: CurveGroup<ScalarField=F>,
 
 	fn is_cyclepair(&self)->bool{
 		self.b_cyclepair
+	}
+
+	fn is_check_lkup(&self)->bool{
+		self.b_check_lkup
 	}
 
 
@@ -2479,7 +2491,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		// will be enforced somewhere else, but need
 		// the cyclepair input
 		let log_level = LOG7;
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 
 		let mut gt1 = GTimer::new();
 		let lkup_share_size = self.stmt_config.lookup_share_size;
@@ -2846,7 +2858,7 @@ where 	C: CurveGroup<ScalarField=F>,
 	/// bits of Fq (base prime field)
 	fn new_adv(name: String, poseidon_config: PoseidonConfig<F>, 
 		g_mapper: Rc<RefCell<GM>>, b_full_mode: bool, lkup_share_size: usize,
-		b_cyclepair: bool)
+		b_cyclepair: bool, b_check_lkup: bool)
 		-> Result<Self,Error>{
 		let gadgets = g_mapper.borrow().get_gadgets();
 		//generate witness config
@@ -2900,7 +2912,8 @@ where 	C: CurveGroup<ScalarField=F>,
 			stmt_config: stmt_cfg,
 			params: cs_pp, b_full_mode: b_full_mode, fq_bits: fq_bits,
 			dummy_stmt: None,
-			_lk: PhantomData, b_cyclepair})
+			_lk: PhantomData, b_cyclepair,
+			b_check_lkup})
 	}
 
 	fn step_native_mut(
@@ -3001,7 +3014,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		z_i: Vec<FpVar<F>>,
 		external_inputs: Vec<FpVar<F>>,
 	) -> Result<Vec<FpVar<F>>, SynthesisError> {
-		let b_debug = false; //set to false in production mode
+		let b_debug = B_DEBUG; //set to false in production mode
 		let b_show_sigs = false; //set to false in production mode
 		let log_level = LOG6;
 		//NOTE: cs.is_satisfied() can cause * stack overflow *
@@ -3508,7 +3521,10 @@ where 	C: CurveGroup<ScalarField=F>,
 		let b_hab_res1 = sum_hab22_right.is_eq(&sum_hab22_left)?;
 		let b_hab_res = not_final_step.or(&b_hab_res1)?.or(&sum_hab22_right.is_zero()?)?; //when sum_hab22_right is zero, we regard it as dummy
 
-		if b_has_lookup{
+		if b_has_lookup && self.b_check_lkup{ 
+			//NOTE self.b_check_lkup is ONLY for testing purpose
+			//when we pass a large lookup table but set small lkup_share_size
+			//in circ.
 			if b_hab_res.value().is_ok(){
 				assert!(b_hab_res.value()?, "failed checking hab22 equation");
 			}
@@ -4411,11 +4427,12 @@ pub mod tests_sigma_ir1cs{
 			.1.lookup_share_size;
 		assert!(share_size * n_steps >= lk_len, "ERROR: share_size * n_step < lookup table size, increase number of steps!");
         let poseidon_config = poseidon_canonical_config::<F>();
+		let b_check_lkup = true;
 		let six_ir1cs = 
 			SigmaIR1CS_Inst::<F,C,CS,LK,SixRootMapper<F,LK>,H>
 			::new_adv(format!("six_ir1cs"), 
-			poseidon_config, mapper.clone(), false, share_size, false)
-			.expect("creating ir1cs failed");
+			poseidon_config, mapper.clone(), false, share_size, false, 
+				b_check_lkup).expect("creating ir1cs failed");
 
 		//2. create the inputs and then statements
 		//let mut counter = 0;

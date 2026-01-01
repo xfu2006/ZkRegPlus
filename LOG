@@ -23484,6 +23484,60 @@ Goal 3. Pack sigs
 from about 10 seconds). The hard bottom line is about 3 msm (2.1 sec)
 So. stop here to save development cost.
 
+Goal 4. Planning 
+	[a] circ decides its lookup size
+	[b] in SigmaIR1CS set up an internal attribute b_check_lkup
+		and put it in new_adv (set the default value b_check_lkup)
+	[c] just need to skp the check for b_check_lkup
+	[d] set up a test case which allocates very small circ size
+		and ignore lookup
 
-=== TODO: fix the b_debug = true problem there is no constraint to check.
+W 12/31/2025
+Goal 1. add the optional check 
+	[a] in sigma_ir1cs add the optional
+	[b] in zkp_driver add the boolean flag
+		-> set up lkup size
+		-> how does it determine the lkup mtable?
+			-> it calls fill_lkup_mvec
+		-> how does it assign the m_tbl share to the circ
+		-> statement.update_lkup
+	[c] do a quick test using false value
+		-> patch the assert
+		-> add the conditional check
+		-> but why would it fail?
+		-> need to run the debug mode
 
+Goal 2.  fix the b_debug = true problem there is no constraint to check.
+	[a] set to global variable B_DEBUG
+	[b] still does not work
+
+R 01/01/2026
+Goal 1. fix the dbugging issues -> fixed working well
+	[a] try enable b_debug flag one by one and see what's the problem
+	[b] enable the b_debug for decider circuit only
+		it's the 2nd debug which caused problem
+	[c] check how is it different
+	[d] improve the eval_lc() and return null if the value for a var is
+		missing, this allows exception handles better.
+	[e] check if the additional branch causes slow down
+	-> no big change
+	[f] do a 10x larger data set
+		-> whatch RAM consumption -> good no change
+		10 sets 479 ms - 240 ms = 250 sec /10 = 25 sec each for folding
+		for 100k
+
+Goal 2. debug the problem of check_lkup_table flag
+	[a] true case for small data set
+	[b] false case -> it fails the SNARK verification
+	-> it's the kzg_sum1 not matching with the snark input
+
+Goal 3. reading
+	[a] how is kzg_sum1 computed in snark_inp
+		pub input kzg_sum1 retrieved from nova1.zi_part2_inst
+		(this is computed by the circuit)
+	[b] how is kzg_sum1 in 6602.2
+		it is computed kzg proof agg_kzg_prf.eval
+
+Goal 4. design
+	[a] verify_batch takes an additional optional kzg_sum value
+		use it to build the snark input

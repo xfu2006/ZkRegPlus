@@ -40,6 +40,7 @@ pub const LOG_LEVEL:usize = 2;
 pub const LOG3:usize = 0;
 pub const LOG2:usize = 1;
 pub const LOG1:usize = 0;
+pub const B_DEBUG:bool = true;
 
 pub fn format_bytes(bytes: usize) -> String {
     const KB: f64 = 1024.0;

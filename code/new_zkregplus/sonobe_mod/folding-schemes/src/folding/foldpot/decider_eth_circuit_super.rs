@@ -39,7 +39,7 @@ use crate::folding::{
 		mod_super::{WitnessFoldPotSuper,CommittedInstanceFoldPotSuper, FoldPotSuper},
 		circuits_super::{field_to_usize,CommittedInstanceVarFoldPotSuper},
 		sigma_cyclepair::{compute_hc_var, hash_var},
-		utils::{get_mem_usage,f1_limbs_to_f2},
+		utils::{get_mem_usage,f1_limbs_to_f2, B_DEBUG},
 	},
 };
 use crate::arith::r1cs::R1CS;
@@ -584,7 +584,7 @@ where
     pub fn generate_constraints_adv(self, _dump_level: usize, cs: ConstraintSystemRef<CF1<C1>>) -> Result<Phase1CircuitRet<CF1<C1>,C1>, Error> {
 		//1. generate Vector the R1CS var (one for each circuit)
 		let log_level = LOG3;
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let mut t1 = GTimer::new();
 		let c0 = cs.num_constraints();
 		let mut c1 = cs.num_constraints();
@@ -1065,7 +1065,7 @@ where
 		let mut c1 = cs.num_constraints();
 		let mut t1 = GTimer::new();
 		let log_level = LOG3;
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let (cyclepair_inputs_var, expected_final_result, hashchain_b) = 
 			self.process_cyclepair_inp(cs.clone());
 		log_perf(log_level, &format!("Phase2 Circ gen_cs: Step 1: gen_expected_final_result. r1cs: {}", cs.num_constraints()-c1), &mut t1);
@@ -1110,7 +1110,7 @@ where
 		if b_debug{
 			use ark_r1cs_std::R1CSVar;
 			if expected_final_result.value().is_ok(){
-			assert!(expected_final_result.value()?
+				assert!(expected_final_result.value()?
 					==my_phase1_ret.final_result.value()?);
 			} 
 		}
@@ -1568,7 +1568,7 @@ where
 		let mut gt1 = GTimer::new();
 		let mut gt2 = GTimer::new();
 		let log_level = LOG2;
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 
 		//1. let the two circuits generate constraints first
 		let c0 = cs.num_constraints();

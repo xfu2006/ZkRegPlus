@@ -1080,7 +1080,9 @@ impl<F: Field> ConstraintSystem<F> {
         let lc = &self.lc_map[lc.0].as_ref().unwrap();
         let mut acc = F::zero();
         for (coeff, var) in lc.iter() {
-			let v1 = self.assigned_value(*var).unwrap();
+			let v1 = self.assigned_value(*var);
+			if v1.is_none(){ return None; }
+			let v1 = v1.unwrap();
             acc += *coeff * v1;
         }
         Some(acc)

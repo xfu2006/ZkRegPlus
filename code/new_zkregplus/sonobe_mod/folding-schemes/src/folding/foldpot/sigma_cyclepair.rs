@@ -373,7 +373,8 @@ where 	C: CurveGroup<ScalarField=F>,
 	//1. create a sigma instance
 	let mapper = FoldPairMapper::<F,LK>{_f: PhantomData, _lk: PhantomData, poseidon_config: poseidon_config.clone()};
 	let lkup_share_size = 0;
-	let mut sigma = SigmaIR1CS_Inst::<F, C, CS, LK, FoldPairMapper<F,LK>, H>::new_adv("paircycle".to_string(), poseidon_config.clone(), Rc::new(RefCell::new(mapper)), true, lkup_share_size, true).expect("error new sigma"); 
+	let b_check_lkup = true;
+	let mut sigma = SigmaIR1CS_Inst::<F, C, CS, LK, FoldPairMapper<F,LK>, H>::new_adv("paircycle".to_string(), poseidon_config.clone(), Rc::new(RefCell::new(mapper)), true, lkup_share_size, true, b_check_lkup).expect("error new sigma"); 
 	//set true for b_cyclepair 
 
 	//2. set up a dummy external input (witness) 

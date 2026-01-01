@@ -41,7 +41,7 @@ use crate::{
 		circuits::{CF1, CF2, CF3},
 		foldpot::{
 			qa_nizk::{QaNizkProof},
-			utils::{Timer,get_mem_usage,get_mem_usage_mb,format_bytes},
+			utils::{Timer,get_mem_usage,get_mem_usage_mb,format_bytes,B_DEBUG},
 			circuits_super::{field_to_usize},
 			mod_super::{PreprocessorParamFoldPotSuper,FoldPotSuper,
 				compute_step_hc_cmF_adv},
@@ -881,7 +881,7 @@ where
 		usize, Option<(BatchProof<E,S>,IndividualProof<E>)>
 			)
 	{
-
+		if 1>0 {panic!("pass_three is deprecated. Call pass_all insetead");}
 		let mut t1 = Timer::new("pass_three", 1);
 		//1. build the batch proof and individual proof
 		let batch_prfs = if !self.b_full_mode{
@@ -912,7 +912,7 @@ where
 			assert!(BatchProcessor::<E,LK,S,CS1E,H>::verify_batch(vk, 
 				None, None, None,
 				&global_claim, &batch_proof, &self.poseidon_config, 
-				false)); //note part2 of the proof will be checked later
+				false, None)); //note part2 of the proof will be checked later
 			let ind_prf = BatchProcessor::<E,LK,S,CS1E,H>::prove_individual(pk, 
 				&snark_inp, &words, &ind_claim,
 				idx_individual_prf);
@@ -1056,7 +1056,7 @@ where
 		//words = 23M * 32 byte = 700M data
 		//each claim is small, up to 300 claims. So small.
 		let log_level = LOG2;
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let mut gt1 = GTimer::new();
 		let m1 = get_mem_usage_mb(); 
 		let words = {
@@ -1209,7 +1209,11 @@ where
 			word_id +=1;
 		}
 		let m4 = get_mem_usage_mb();
-		assert!(total_lkup_covered >= lkup_len, "total: {}, lkup_len: {}", total_lkup_covered, lkup_len);
+		let b_check_lkup = self.layered_circs[0][0].is_check_lkup(); //assume
+			//all circ have the same
+		if b_check_lkup{
+			assert!(total_lkup_covered >= lkup_len, "total: {}, lkup_len: {}", total_lkup_covered, lkup_len);
+		}
 		log_perf(log_level, &format!(
 			"{} step 2: dispatch w into steps. mem: {} MB for total_word_len: {}: ", phase_name, m4-m3, format_bytes(total_wd_len*31))
 			, &mut gt1);
@@ -1333,7 +1337,7 @@ where
 			assert!(BatchProcessor::<E,LK,S,CS1E,H>::verify_batch(vk, 
 				None, None, None,
 				&global_claim, &batch_proof, &self.poseidon_config, 
-				false)); //note part2 of the proof will be checked later
+				false,None)); //note part2 of the proof will be checked lateri
 			let ind_prf = BatchProcessor::<E,LK,S,CS1E,H>::prove_individual(pk, 
 				&snark_inp, &words, &ind_claim,
 				idx_ind_proof);
@@ -1735,12 +1739,13 @@ where
 	log_perf(log_level, &format!("FoldPot: Step 4: Phase 2: cyclefold and cyclepair IVC PROVE STEPS (folding) DONE. num_steps: {}", _num_steps), &mut gt1);
 
 	//7. now build up the TwoPhaseDeciderCircuit.
+	let kzg_sum1 = nova1.zi_part2_inst.sum_kzg_eval_lk
+				+ nova1.zi_part2_inst.sum_kzg_eval_word
+				+ nova1.zi_part2_inst.sum_kzg_eval_others;
 	let inp = TwoPhaseCircInput{
 			ch1: nova1.zi_part2_inst.ch.clone(),
 			rc1: nova1.zi_part2_inst.rc.clone(),
-			kzg_sum1: nova1.zi_part2_inst.sum_kzg_eval_lk
-				+ nova1.zi_part2_inst.sum_kzg_eval_word
-				+ nova1.zi_part2_inst.sum_kzg_eval_others,
+			kzg_sum1: kzg_sum1,
 			kzg_all_com_ch1: kzg_all_com_ch,
 			eval_w_e1: prf_kzg.eval,
 
@@ -1811,6 +1816,8 @@ where
 	batch_ver_param.kzg_driver2 = Some(driver2.nova_param.1.cs1e_vp.clone());
 	let qa_nizk_vkey2 = driver2.nova_param.1.qa_vp.expect("qa_vp null!"); 
 	let (batch_claim, ind_claim, _) = batch_claims.unwrap();
+	let b_check_lkup = driver1.layered_circs[0][0].is_check_lkup(); 
+	let opt_kzg_sum1 = if b_check_lkup {None} else {Some(kzg_sum1)};
 	assert!(BatchProcessor::<E,LK,S,CS1E,H>::verify_batch(
 		&batch_ver_param,
 		Some(qa_nizk_vkey_hash1),
@@ -1819,7 +1826,8 @@ where
 		&batch_claim,
 		&batch_prf, 
 		&driver1.poseidon_config,
-		true //now full verification
+		true, //now full verification
+		opt_kzg_sum1
 	)); //note
 	log_perf(log_level, &format!("FoldPot Step 8: Verify Batch Proof."), 
 		&mut gt1);
@@ -2245,12 +2253,13 @@ pub mod tests_driver{
 			(SumMapper::<Fr,LK>::new(true), SumMapper::<Fr,LK>::new(false));
         let poseidon_config = poseidon_canonical_config::<Fr>();
 		let lkup_share_size = 4;
+		let b_check_lkup = true;
 		let vec_circ = vec![
 			vec![
-				SigmaIR1CS_Inst::<Fr,C1,CS1,LK,SumMapper<Fr,LK>,H>::new_adv("oddsum".to_string(), poseidon_config.clone(), Rc::new(RefCell::new(odd_mapper)), false, lkup_share_size, true).unwrap(),
+				SigmaIR1CS_Inst::<Fr,C1,CS1,LK,SumMapper<Fr,LK>,H>::new_adv("oddsum".to_string(), poseidon_config.clone(), Rc::new(RefCell::new(odd_mapper)), false, lkup_share_size, true, b_check_lkup).unwrap(),
 			],
 			vec![
-				SigmaIR1CS_Inst::<Fr,C1,CS1,LK,SumMapper<Fr,LK>,H>::new_adv("evensum".to_string(), poseidon_config.clone(), Rc::new(RefCell::new(even_mapper)), false, lkup_share_size, true)
+				SigmaIR1CS_Inst::<Fr,C1,CS1,LK,SumMapper<Fr,LK>,H>::new_adv("evensum".to_string(), poseidon_config.clone(), Rc::new(RefCell::new(even_mapper)), false, lkup_share_size, true, b_check_lkup)
 			.unwrap()]
 		];
 		t1.prt("Step 0. setup sigma_ir1cs odd/eve sum instance");
