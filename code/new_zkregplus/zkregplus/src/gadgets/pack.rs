@@ -461,7 +461,7 @@ impl <F: PrimeField> PackFinalAdvice<F>{
 			.collect::<HashSet<F>>().into_iter().collect::<Vec<F>>();
 		vec_imm_states.sort();
 		assert!(vec_imm_states[0]!=zero);
-		assert!(vec_imm_states.len()<capacity_imm);
+		assert!(vec_imm_states.len()<capacity_imm, "imm_states: {} > capacity_imm: {}", vec_imm_states.len(), capacity_imm);
 		let vec_imm_states = [
 			&vec![zero; capacity_imm - vec_imm_states.len()][..],
 			&vec_imm_states

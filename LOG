@@ -23541,3 +23541,53 @@ Goal 3. reading
 Goal 4. design
 	[a] verify_batch takes an additional optional kzg_sum value
 		use it to build the snark input
+	[b] use the kzg_sum value to build snark input in verify.
+
+Friday 01/02/2025
+Goal 1. measure cost of 18-bit vs 26-bit
+	[a] 26-bit 419sec ms 424sec
+	[b] build db 11 sec vs 55 ms not that big a deal
+	[c] if just read db it's 8.2 sec (even if not writing)
+		it's not saving much!
+
+Goal 2. try small_data3 which has full sigs
+	[a] full data: build DB: 577 sec,
+		but load DB only 41 sec (MUCH better!) 
+		also memory foot print much smaller
+	[b] vec_sig_no_crit_pat: 144> 6
+
+Saturday 01/03/2025
+Goal 1. check why lack of resources was not detected in 
+	circ decision?
+	[a] try replicate a small example
+		build_circs_adv (206) - it creates CpCommponentMapper with	
+			cp_cap_l2
+		This is a hard requirement that sig_buf_capacity
+		should be greater
+
+Goal 2. still subsigs too small (3 vs 6)
+	[a] trace the err
+		driver:1131 call plan_nd_advice
+		 -> gen_nd_advice_no_limit
+		   -> it should be returnoning None but it crashed
+		     -> cp_mapper (468) : gen_nd_advice_no_slimit
+			   -> CpAdvice::new (220)
+			      -> GetSigAdvice::new (524)
+				  	set_oup_vec is generated from the set of
+					final states, and then the output buffer is determined
+					by the capacity
+
+Goal 3. Design
+	[a] figure out how to pass err
+	[b] GetSigAdvice returns optional Self
+	[c] CpAdvice returns optional
+	[d] gen_nd_advice_no_limit should ALWAYS return something?
+	[e] there is a problem of the current design
+		-> it just uses the current capacity and return
+		the current capacity and the advice. If 
+		it fails it fails
+	[f] looks like the easiest way use a loop to select, or when fail
+		use a suggestion 
+
+
+-- TODO -- fix bug: gen_dummy_stmt
