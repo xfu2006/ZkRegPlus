@@ -23589,5 +23589,21 @@ Goal 3. Design
 	[f] looks like the easiest way use a loop to select, or when fail
 		use a suggestion 
 
+Sunday 01/04/2026
+LOC (circ): 2850
+LOC (gadgets): 17987
+Goal 1. design of improvement
+	[a] CpAdvice::compute_capacity()
+	[b] PackAdvice::compute_capacity()
+	[c] SigAdvice::compute_capacity()
 
--- TODO -- fix bug: gen_dummy_stmt
+Goal 2. Implementation
+	[a] set up framework
+	[b] PackAdvice::compute_capacity()
+	[c] SigAdvice::compute_capcity()
+	[d] CpAdvice::compute_capacity()
+	[e] handle request in circ allocation
+	[d] construct compute_capacity and then pass it to construct
+		advice
+
+
