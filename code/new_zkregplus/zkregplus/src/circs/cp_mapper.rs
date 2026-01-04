@@ -172,6 +172,8 @@ impl <F:PrimeField> NdAdvice for CpAdvice<F>{
 }
 
 impl <F:PrimeField> CpAdvice<F>{
+	// compute the capacity needed for input words
+
 	/// word seg must be full maxword len
 	pub fn new(
 			word_seg: &Vec<F>, //must be full len pad with zero
