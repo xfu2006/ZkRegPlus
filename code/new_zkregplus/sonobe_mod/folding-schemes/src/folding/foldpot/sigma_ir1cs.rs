@@ -559,6 +559,12 @@ pub trait GadgetMapper<F:PrimeField, LK: LookupTableTwoCol<F>>{
 	fn gen_nd_advice_no_limit(&self, word: &Vec<F>, word_info: &WordInfo,
 		prev_adv: Option<Rc<dyn NdAdvice>>) 
 		->Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>;
+
+	/// Generate the advice using its own capacity.
+	/// If return nil, it means it cannot handle it
+	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
+		prev_adv: Option<Rc<dyn NdAdvice>>) 
+		->Option<Rc<dyn NdAdvice>>;
 }
 
 /// Extra (mostly sequence) info for build statement
@@ -4233,6 +4239,14 @@ pub mod tests_sigma_ir1cs{
 					(Rc::new(DummyCapacity{word_seg_len: word.len()}), 
 			 		Rc::new(DummyNdAdvice{}))
 				)
+			}else{None }
+		}
+
+		fn gen_nd_advice(&self, word: &Vec<F>, _wi: &WordInfo,
+			_prv_adv: Option<Rc<dyn NdAdvice>>) 
+		-> Option<(Rc<dyn NdAdvice>)>{
+			if word.len()<=self.max_word_len(){
+				Some( Rc::new(DummyNdAdvice{}))
 			}else{None }
 		}
 

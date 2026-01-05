@@ -40,8 +40,9 @@ use std::{
 	rc::{Rc},
 	cell::{RefCell},
 	fmt::{Debug},
-	collections::{HashMap},
+	collections::{HashMap,HashSet},
 };
+use rayon::iter::{IndexedParallelIterator,IntoParallelRefIterator,ParallelIterator};
 use folding_schemes::{
 	Error,
 	folding::foldpot::{
@@ -81,8 +82,8 @@ pub struct CpCapacity{
 	pub subsigs: usize, 
 	///how many patterns per subsig
 	pub avg_pats_per_subsig: usize, 
-	/// average number of usbsigs per sig
-	pub avg_subsig_per_sig: usize,
+	// NOT used: average number of usbsigs per sig
+	//pub avg_subsig_per_sig: usize,
 }
 
 impl CpCapacity{
@@ -113,7 +114,7 @@ impl CpCapacity{
 				basis_unique_states: self.basis_unique_states * 2,
 				subsigs: self.subsigs * 2,
 				avg_pats_per_subsig: self.avg_pats_per_subsig,
-				avg_subsig_per_sig: self.avg_subsig_per_sig+1,
+				//avg_subsig_per_sig: self.avg_subsig_per_sig+1,
 			}
 		}
 	}
@@ -130,8 +131,8 @@ impl Capacity for CpCapacity{
 		self.max_word_len>= other.max_word_len &&
 		self.basis_unique_states>= other.basis_unique_states &&
 		self.subsigs>= other.subsigs &&
-		self.avg_pats_per_subsig>= other.avg_pats_per_subsig &&
-		self.avg_subsig_per_sig>= other.avg_subsig_per_sig 
+		self.avg_pats_per_subsig>= other.avg_pats_per_subsig 
+		//self.avg_subsig_per_sig>= other.avg_subsig_per_sig 
 	}
 
 	/// to get around the requirement on Clone trait which require Sized
@@ -142,7 +143,7 @@ impl Capacity for CpCapacity{
 			basis_unique_states: self.basis_unique_states,
 			subsigs: self.subsigs,
 			avg_pats_per_subsig: self.avg_pats_per_subsig,
-			avg_subsig_per_sig: self.avg_subsig_per_sig,
+			//avg_subsig_per_sig: self.avg_subsig_per_sig,
 		})
 	}
 
@@ -172,8 +173,6 @@ impl <F:PrimeField> NdAdvice for CpAdvice<F>{
 }
 
 impl <F:PrimeField> CpAdvice<F>{
-	// compute the capacity needed for input words
-
 	/// word seg must be full maxword len
 	pub fn new(
 			word_seg: &Vec<F>, //must be full len pad with zero
@@ -230,6 +229,73 @@ impl <F:PrimeField> CpAdvice<F>{
 			inp_buf: inp_buf.clone(),
 		}
 	}
+
+	/// compute the capacity needed for input words
+	pub fn compute_capacity(
+			word_seg: &Vec<F>, //must be full len pad with zero
+			actual_size: usize,
+			inp_buf: &Vec<F>,  //input buffer
+			dfa_crit: &HexACDFA,
+			map_crit_pat: &HashMap<String,Vec<String>>,
+			sig_to_id: &HashMap<String,usize>,
+			fsm_id: usize, //e.g., CRIT_INIT or CRIT_IGC_INIT
+			vec_sig_id_no_crit_pat: &Vec<usize>, //the pats to include 
+					//in failed_sigs by default
+		)->CpCapacity{
+		//1. compute the word extract and fsm advice
+		//this is needed because it's the actual contents of the
+		//output states which determinces the capacity of pack
+		//and sig 
+		let inp_state = inp_buf[0].clone();
+		let wd_extract_advice = WordExtractAdvice::<F>
+			::new(word_seg, actual_size);
+		let nibbles = wd_extract_advice.data[1..].to_vec();
+		let dfa_crit_advice = FsmAdvice::<F>
+			::new(&nibbles, dfa_crit, inp_state, fsm_id as u32);
+
+		//2. build the capacity for PackFinalAdvice
+		let vec_b_final = dfa_crit_advice.states.iter().map(|s|{
+			let val_s = field_to_usize(s);
+			dfa_crit.is_final(val_s - 1)
+		}).collect::<Vec<bool>>();
+		let mut vec_final_states = dfa_crit_advice.states.par_iter().zip(
+			vec_b_final.par_iter())
+			.filter(|(_, &b)| b).map(|(s,_)| s.clone())
+			.collect::<HashSet<F>>().into_iter().collect::<Vec<F>>();
+		vec_final_states.sort();
+		let (cap_out, cap_imm) = PackFinalAdvice::<F>
+			::compute_capacity(&dfa_crit_advice.states, &vec_b_final);
+
+		//3. build the capacity for SigAdvice
+		let inp_sigs = &inp_buf[1..].to_vec();
+		let sig_cap = GetSigAdvice::<F>::
+			compute_capacity(
+			    &vec_final_states, 
+        		inp_sigs,
+        		dfa_crit, 
+        		map_crit_pat, 
+        		sig_to_id, 
+        		fsm_id, 
+        		vec_sig_id_no_crit_pat
+			);
+
+		let max_word_len =  word_seg.len();
+		let (olen,jlen,slen,_clen) = (sig_cap.final_states_buf_capacity,
+			sig_cap.join_buf_capacity, sig_cap.sig_buf_capacity,
+			sig_cap.count_sig_no_crit_pat);
+		let subsigs = slen;
+		let avg_pats_per_subsig = *(vec![olen / subsigs,
+			jlen / subsigs, cap_out/subsigs].iter().max().unwrap()) + 1;
+		let basis_unique_states = cap_imm * 10000 / (LEGS * max_word_len) + 1;
+		let res = CpCapacity{
+			max_word_len, subsigs, 
+			basis_unique_states,
+			avg_pats_per_subsig,
+		};
+
+		res
+	}
+
 }
 
 
@@ -303,6 +369,7 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> CpComponentMapper<F,LK>{
 			clamdb
 		}
 	}
+
 }
 
 impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpComponentMapper<F,LK>{
@@ -411,19 +478,19 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 	}
 
 	/// Also responsible for generating nd_advice
-	fn gen_nd_advice_no_limit(&self, word: &Vec<F>, _word_info: &WordInfo,
-		prev_adv: Option<Rc<dyn NdAdvice>>)
+	/// when b_use_self_capacity is true fix the capacity using its sown
+	/// otherwise compute the capacity needed
+	fn gen_nd_advice_no_limit_adv(&self, word: &Vec<F>, _word_info: &WordInfo,
+		prev_adv: Option<Rc<dyn NdAdvice>>, b_use_self_capacity: bool)
 		->Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>{
+
 		//1. expand to full length
 		let (zero,one) = (F::zero(),F::one());
 		let mut rem_word = vec![F::zero(); self.max_word_len() - word.len()];
 		let mut word_seg = word.clone();
 		word_seg.append(&mut rem_word);
 
-		//2. build the capaicty and advice
-		let capacity = &self.capacity;
-		let (_final_states_len,_join_buf_capacity,sig_buf_capacity,_imm_buf_len)
-			 = capacity.get_old_stats();
+		//2. build the input for computing advice 
 		let init_state = if !self.b_igc {
 			F::from(self.clamdb.dfa_crit.init_state as u32)
 		}else{
@@ -438,13 +505,6 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 				dfa_crit_advice.states.len()-1];
 			last_oup_state
 		});
-		let inp_sigs = prev_adv.map_or(vec![zero; sig_buf_capacity], 
-		|adv|{
-			let adv= adv.as_any().downcast_ref::<CpAdvice<F>>(); 
-			let last_oup_sigs = &adv.unwrap().sigs_advice.oup;
-			last_oup_sigs.to_vec()
-		});
-		let inp_buf = vec![ vec![inp_state], inp_sigs].concat();
 		
 		let (acdfa, map_crit) = if self.b_igc{
 			(&self.clamdb.as_ref().dfa_crit_igc, 
@@ -467,6 +527,40 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		).collect::<Vec<usize>>();
 		vec_sig_id_no_crit_pat.sort();
 
+		//2. estimate the capacity
+		//NOTE that we do not have a real inp_buf
+		//simulate it at the best
+		let sig_buf_capacity = 1; //min value possible
+		let inp_sigs = prev_adv.clone().map_or(vec![zero; sig_buf_capacity], 
+		|adv|{
+			let adv= adv.as_any().downcast_ref::<CpAdvice<F>>(); 
+			let last_oup_sigs = &adv.unwrap().sigs_advice.oup;
+			last_oup_sigs.to_vec()
+		});
+		let est_inp_buf = vec![ vec![inp_state], inp_sigs].concat();
+		let capacity_alt = CpAdvice::compute_capacity(
+			&word_seg, 
+			word.len(), 
+			&est_inp_buf, 
+			acdfa,
+			map_crit,
+			sigs_to_id,
+			fsm_id as usize,
+			&vec_sig_id_no_crit_pat,
+		);
+		let capacity = if b_use_self_capacity {&self.capacity}
+			else {&capacity_alt};
+		let (_final_states_len,_join_buf_capacity,sig_buf_capacity,_imm_buf_len)
+			 = capacity.get_old_stats();
+
+		//3. compute the advice
+		let inp_sigs = prev_adv.map_or(vec![zero; sig_buf_capacity], 
+		|adv|{
+			let adv= adv.as_any().downcast_ref::<CpAdvice<F>>(); 
+			let last_oup_sigs = &adv.unwrap().sigs_advice.oup;
+			last_oup_sigs.to_vec()
+		});
+		let inp_buf = vec![ vec![inp_state], inp_sigs].concat();
 		let advice = CpAdvice::<F>::new(
 			&word_seg, 
 			word.len(), 
@@ -480,9 +574,25 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		);
 
 		//3. build the advice
-		let cap2 = Clone::clone(&self.capacity);
-		Some((Rc::new(cap2), Rc::new(advice)) )
+		Some((Rc::new(Clone::clone(capacity)), Rc::new(advice)) )
 	}
+
+	fn gen_nd_advice_no_limit(&self, word: &Vec<F>, _word_info: &WordInfo,
+		prev_adv: Option<Rc<dyn NdAdvice>>)
+		->Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>{
+		self.gen_nd_advice_no_limit_adv(word, _word_info,
+			prev_adv, false)
+	}
+
+	fn gen_nd_advice(&self, word: &Vec<F>, _word_info: &WordInfo,
+		prev_adv: Option<Rc<dyn NdAdvice>>)
+		->Option<Rc<dyn NdAdvice>>{
+		let res = self.gen_nd_advice_no_limit_adv(word, _word_info,
+			prev_adv, true);
+		if res.is_some(){ Some(res.unwrap().1) }else{ None }
+	}
+
+
 
 	/// Given its own gadget stmt_map: 9 range entries for
 	///  ** 

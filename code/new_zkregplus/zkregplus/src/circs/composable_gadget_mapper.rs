@@ -74,10 +74,23 @@ pub trait ComponentMapper<F:PrimeField, LK: LookupTableTwoCol<F>>: Debug{
 	/// cmp_cfgs: each tuple is (idx_inp, idx_oup, idx_data) for each component.
 	fn get_joins(&self, i: usize, stmt_cfg: &StatementConfig, comp_cfgs: &Vec<Vec<usize>>)->Vec<( (usize,usize), (usize,usize) )>;
 
-	/// Also responsible for generating nd_advice
+	/// Also responsible for generating nd_advice, regardless of
+	/// capacity
 	fn gen_nd_advice_no_limit(&self, word: &Vec<F>, word_info: &WordInfo,
 		prev_adv: Option<Rc<dyn NdAdvice>>)
 		->Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>;
+
+	/// Also responsible for generating nd_advice with its own capacity
+	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
+		prev_adv: Option<Rc<dyn NdAdvice>>)
+		->Option<Rc<dyn NdAdvice>>;
+
+	/// Also responsible for generating nd_advice, regardless of
+	/// capacity
+	fn gen_nd_advice_no_limit_adv(&self, word: &Vec<F>, word_info: &WordInfo,
+		prev_adv: Option<Rc<dyn NdAdvice>>, b_use_self_cap: bool)
+		->Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>;
+
 
 	/// return the inp, oup, data and 3 subtable segments,
 	/// and then failed_sigs, discharged_sigs. (8 vecs)
@@ -164,6 +177,44 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>{
 		}
 	}
 	pub fn set_name(&mut self, name: &str){ self.name = format!("{}", name); }
+
+	/// Assuming there is no limit of capacity, given the word
+	/// generate its advice, and return the capacity requirement.
+	/// If return nil, it means it cannot handle it
+	/// when use_self_cap is true it means to use its own capacity
+	fn gen_nd_advice_no_limit_adv(&self, word: &Vec<F>, word_info: &WordInfo,
+		r_prev_adv: Option<Rc<dyn NdAdvice>>, use_self_cap: bool)
+		->Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>{
+
+		let vec_prev_adv = if r_prev_adv.is_some(){
+			r_prev_adv.unwrap().as_any().downcast_ref
+				::<CompositeAdvice>().expect("downcast err")
+				.vec_adv.iter().map(|x| 
+					Some(x.clone())
+				).collect::<Vec<Option<Rc<dyn NdAdvice>>>>()
+
+		}else{vec![None; self.vec_components.len()]};
+
+		let res= self.vec_components.iter().zip(vec_prev_adv.into_iter()).
+			map(|(c,a)|{
+				let res = c.borrow()
+					.gen_nd_advice_no_limit_adv(&word, &word_info, a, use_self_cap);
+				if res.is_some(){
+					(Some(res.clone().unwrap().0), Some(res.unwrap().1))
+				}else{ (None,None)}
+			}
+		).collect::<Vec<(Option<Rc<dyn Capacity>>,Option<Rc<dyn NdAdvice>>)>>();
+
+		let vec_cap = res.iter().map(|(a,_b)| a.clone().expect("cap null"))
+			.collect();
+		let vec_adv = res.iter().map(|(_a,b)| b.clone().expect("adv null"))
+			.collect();
+
+		Some( ( 
+			Rc::new(CompositeCapacity{vec_cap}),
+			Rc::new(CompositeAdvice{vec_adv})
+		) )
+	}
 }
 
 impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadgetMapper<F,LK>{
@@ -468,40 +519,17 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 		max_len
 	}
 
-	/// Assuming there is no limit of capacity, given the word
-	/// generate its advice, and return the capacity requirement.
-	/// If return nil, it means it cannot handle it
 	fn gen_nd_advice_no_limit(&self, word: &Vec<F>, word_info: &WordInfo,
 		r_prev_adv: Option<Rc<dyn NdAdvice>>)
 		->Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>{
+		self.gen_nd_advice_no_limit_adv(word, word_info, r_prev_adv, false)
+	}
 
-		let vec_prev_adv = if r_prev_adv.is_some(){
-			r_prev_adv.unwrap().as_any().downcast_ref
-				::<CompositeAdvice>().expect("downcast err")
-				.vec_adv.iter().map(|x| 
-					Some(x.clone())
-				).collect::<Vec<Option<Rc<dyn NdAdvice>>>>()
-
-		}else{vec![None; self.vec_components.len()]};
-
-		let res= self.vec_components.iter().zip(vec_prev_adv.into_iter()).
-			map(|(c,a)|{
-				let res = c.borrow()
-					.gen_nd_advice_no_limit(&word, &word_info, a);
-				if res.is_some(){
-					(Some(res.clone().unwrap().0), Some(res.unwrap().1))
-				}else{ (None,None)}
-			}
-		).collect::<Vec<(Option<Rc<dyn Capacity>>,Option<Rc<dyn NdAdvice>>)>>();
-
-		let vec_cap = res.iter().map(|(a,_b)| a.clone().expect("cap null"))
-			.collect();
-		let vec_adv = res.iter().map(|(_a,b)| b.clone().expect("adv null"))
-			.collect();
-
-		Some( ( 
-			Rc::new(CompositeCapacity{vec_cap}),
-			Rc::new(CompositeAdvice{vec_adv})
-		) )
+	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
+		r_prev_adv: Option<Rc<dyn NdAdvice>>)
+		->Option<Rc<dyn NdAdvice>>{
+		let res = 
+		self.gen_nd_advice_no_limit_adv(word, word_info, r_prev_adv, true);
+		if res.is_some() {Some(res.unwrap().1)} else {None}
 	}
 }

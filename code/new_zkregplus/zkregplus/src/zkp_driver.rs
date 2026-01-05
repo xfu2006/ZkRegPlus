@@ -296,13 +296,12 @@ where C: CurveGroup<ScalarField=F>,
 	let perc_comp_subsigs = 50;
 	let basis_unique_states = 100; //1 percent
 	let basis_acc_states = 500; //5 percent
-	let avg_subsig_per_sig = 2;
+	//let avg_subsig_per_sig = 2;
 	let cap1 = CpCapacity{
 		max_word_len: max_word, 
 		basis_unique_states,
 		subsigs,
 		avg_pats_per_subsig,
-		avg_subsig_per_sig,
 	};
 	let comp1 = CpComponentMapper::<F,LK<F>>::new(cap1.clone(), 
 		db.clone(), false);
@@ -561,7 +560,7 @@ pub mod tests_zkp_driver{
 		let max_word= 1; //this is chunk_len
 		let sigs = 3;
 		//let subsigs = 6; GOOD setting
-		let subsigs = 3;
+		let subsigs = 4;
 		let avg_pats_per_subsig = 8;
 		let avg_active_pats_per_subsig = 3;
 		//let basis_pats_in_trace = 60*100; //OLD
@@ -572,13 +571,13 @@ pub mod tests_zkp_driver{
 		let basis_unique_states = 38*100; //38 cerpcent
 		let basis_acc_states = 60*100; //60 cerpcent
 
-		let avg_subsig_per_sig = 2;
+		//let avg_subsig_per_sig = 2;
 		let init_cp_cap= CpCapacity{
 			max_word_len: max_word, 
 			basis_unique_states,
 			subsigs,
 			avg_pats_per_subsig,
-			avg_subsig_per_sig
+			//avg_subsig_per_sig
 		};
 		let init_sed_cap= SedCapacity::new(
 			max_word, RANGE2_BIT, subsigs, 
@@ -630,14 +629,14 @@ pub mod tests_zkp_driver{
 		let num_circs_per_category= 1;
 		let basis_unique_states = 100; //1 cpercent
 		let basis_acc_states = 500; //5 cpercent
-		let avg_subsig_per_sig = 3;
+		//let avg_subsig_per_sig = 3;
 
 		let init_cp_cap= CpCapacity{
 			max_word_len: max_word, 
 			basis_unique_states,
 			subsigs,
 			avg_pats_per_subsig,
-			avg_subsig_per_sig,
+			//avg_subsig_per_sig,
 		};
 		let init_sed_cap= SedCapacity::new(
 			max_word, RANGE2_BIT, subsigs, 
@@ -692,14 +691,14 @@ pub mod tests_zkp_driver{
 		let num_circs_per_category= 1;
 		let basis_unique_states = 200; //1 cpercent
 		let basis_acc_states = 500; //5 cpercent
-		let avg_subsig_per_sig = 3;
+		//let avg_subsig_per_sig = 3;
 
 		let init_cp_cap= CpCapacity{
 			max_word_len: max_word, 
 			basis_unique_states,
 			subsigs,
 			avg_pats_per_subsig,
-			avg_subsig_per_sig,
+			//avg_subsig_per_sig,
 		};
 		let init_sed_cap= SedCapacity::new(
 			max_word, RANGE2_BIT, subsigs, 

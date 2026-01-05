@@ -222,6 +222,14 @@ GadgetMapper<F,LK> for FoldPairMapper<F, LK>{
 		}else{None }
 	}
 
+	fn gen_nd_advice(&self, word: &Vec<F>, _wi: &WordInfo,
+		_prev_adv: Option<Rc<dyn NdAdvice>>) 
+		-> Option<Rc<dyn NdAdvice>>{
+		if word.len()<=self.max_word_len(){
+			Some( Rc::new(DummyNdAdvice{}) )
+		}else{None }
+	}
+
 
 	fn get_name(&self) -> String { "FoldPairMapper".to_string() }
 

@@ -539,6 +539,8 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 			gadgets,
 		}
 	}
+
+	
 }
 
 impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedComponentMapper<F,LK>{
@@ -574,51 +576,9 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 	/// return the max word capacity of the component
 	fn max_word_len(&self)->usize{ self.capacity.wea_capacity().max_word_len }
 
-	/// return the sizes of inp, oup, data buffer, failed_sigs, discharged_sigs
-	fn get_sizes(&self)->Vec<usize>{
-		let log_level = LOG7;
-		let b_perf = true && log_level>=LOG_LEVEL;
-		if b_perf{
-			log(log_level, &format!(" ## sed gadgets data len: ==="));
-			for i in 0..self.gadgets.len(){
-				let vs = self.gadgets[i].borrow().get_to_add_size();
-				log(log_level, &format!("  --  {}: {}",
-					self.gadgets[i].borrow().get_name(), vs.2));
-			}
-		}
-		let sizes = self.gadgets.iter().map(|g| g.borrow().get_to_add_size())
-			.collect::<Vec<(usize, usize, usize, usize, usize)>>();
-		let total = sizes.into_iter().fold((0,0,0,0,0), |x,y|
-			(x.0+y.0, x.1+y.1, x.2+y.2, x.3+y.3, x.4+y.4));
-		vec![total.0, total.1, total.2, total.3, total.4]
-	}
-
-	/// return the ``global" join constraints, so that
-	/// it can generate constraints to bind its own statement elements
-	/// with others. the comp_cfgs has the following structure,
-	/// (inp_start_idx, oup_start_idx, data_start_idx) for each component
-	/// in the upper level statement.
-	/// The join statement are ``global" in the sense that
-	/// they refer to the global position.
-	/// i - informs the component that it is the i'th component
-	/// stmg_cfg provides statement structure info.
-	/// cmp_cfgs: each tuple is (idx_inp, idx_oup, idx_data) for each component.
-	fn get_joins(&self, i: usize, stmt_cfg: &StatementConfig, comp_cfgs: &Vec<Vec<usize>>)->Vec<((usize,usize), (usize,usize))>{
-		//1. the data[0] of g_ext needs to be act_word_len
-		let my_cfg = &comp_cfgs[i];
-		let idx_my_data = my_cfg[2]; //0: inp_start_idx,1: oup_start_idx, 2:dat
-		let idx_g_ext_data = idx_my_data + stmt_cfg.idx_data;
-		let idx_act_wlen = 7; //the idx of act_word_subseg_size in Statement
-		let rg_g_ext = (idx_g_ext_data, idx_g_ext_data); //just 1 element
-		let rg_g_ext_upper = (idx_act_wlen, idx_act_wlen);
-
-		//2. no join for fsm_adv and discharge_adv
-		vec![ (rg_g_ext, rg_g_ext_upper) ]
-	}
-
 	/// Also responsible for generating nd_advice
-	fn gen_nd_advice_no_limit(&self, word: &Vec<F>, word_info: &WordInfo,
-		prev_adv: Option<Rc<dyn NdAdvice>>
+	fn gen_nd_advice_no_limit_adv(&self, word: &Vec<F>, word_info: &WordInfo,
+		prev_adv: Option<Rc<dyn NdAdvice>>, _use_self_cap: bool
 	) ->Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>{
 		//1. expand word to full length
 		let mut rem_word = vec![F::zero(); self.max_word_len() - word.len()];
@@ -753,6 +713,62 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 		let cap2 = Clone::clone(&self.capacity);
 		Some((Rc::new(cap2), Rc::new(advice)) )
 	}
+	fn gen_nd_advice_no_limit(&self, word: &Vec<F>, word_info: &WordInfo,
+		r_prev_adv: Option<Rc<dyn NdAdvice>>)
+		->Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>{
+		self.gen_nd_advice_no_limit_adv(word, word_info, r_prev_adv, false)
+	}
+
+	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
+		r_prev_adv: Option<Rc<dyn NdAdvice>>)
+		->Option<Rc<dyn NdAdvice>>{
+		let res = 
+		self.gen_nd_advice_no_limit_adv(word, word_info, r_prev_adv, true);
+		if res.is_some() {Some(res.unwrap().1)} else {None}
+	}
+
+	/// return the sizes of inp, oup, data buffer, failed_sigs, discharged_sigs
+	fn get_sizes(&self)->Vec<usize>{
+		let log_level = LOG7;
+		let b_perf = true && log_level>=LOG_LEVEL;
+		if b_perf{
+			log(log_level, &format!(" ## sed gadgets data len: ==="));
+			for i in 0..self.gadgets.len(){
+				let vs = self.gadgets[i].borrow().get_to_add_size();
+				log(log_level, &format!("  --  {}: {}",
+					self.gadgets[i].borrow().get_name(), vs.2));
+			}
+		}
+		let sizes = self.gadgets.iter().map(|g| g.borrow().get_to_add_size())
+			.collect::<Vec<(usize, usize, usize, usize, usize)>>();
+		let total = sizes.into_iter().fold((0,0,0,0,0), |x,y|
+			(x.0+y.0, x.1+y.1, x.2+y.2, x.3+y.3, x.4+y.4));
+		vec![total.0, total.1, total.2, total.3, total.4]
+	}
+
+	/// return the ``global" join constraints, so that
+	/// it can generate constraints to bind its own statement elements
+	/// with others. the comp_cfgs has the following structure,
+	/// (inp_start_idx, oup_start_idx, data_start_idx) for each component
+	/// in the upper level statement.
+	/// The join statement are ``global" in the sense that
+	/// they refer to the global position.
+	/// i - informs the component that it is the i'th component
+	/// stmg_cfg provides statement structure info.
+	/// cmp_cfgs: each tuple is (idx_inp, idx_oup, idx_data) for each component.
+	fn get_joins(&self, i: usize, stmt_cfg: &StatementConfig, comp_cfgs: &Vec<Vec<usize>>)->Vec<((usize,usize), (usize,usize))>{
+		//1. the data[0] of g_ext needs to be act_word_len
+		let my_cfg = &comp_cfgs[i];
+		let idx_my_data = my_cfg[2]; //0: inp_start_idx,1: oup_start_idx, 2:dat
+		let idx_g_ext_data = idx_my_data + stmt_cfg.idx_data;
+		let idx_act_wlen = 7; //the idx of act_word_subseg_size in Statement
+		let rg_g_ext = (idx_g_ext_data, idx_g_ext_data); //just 1 element
+		let rg_g_ext_upper = (idx_act_wlen, idx_act_wlen);
+
+		//2. no join for fsm_adv and discharge_adv
+		vec![ (rg_g_ext, rg_g_ext_upper) ]
+	}
+
 
 	/// Given its own gadget stmt_map: 9 range entries for:
 	///   word, inp,oup,data,

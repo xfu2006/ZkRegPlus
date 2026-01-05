@@ -23590,20 +23590,58 @@ Goal 3. Design
 		use a suggestion 
 
 Sunday 01/04/2026
-LOC (circ): 2850
-LOC (gadgets): 17987
+LOC (circ): 2850 -> 2906 (+50)
+LOC (gadgets): 17987 -> 18031 (+40)
 Goal 1. design of improvement
 	[a] CpAdvice::compute_capacity()
 	[b] PackAdvice::compute_capacity()
 	[c] SigAdvice::compute_capacity()
 
 Goal 2. Implementation
-	[a] set up framework
+	[a] set up framework -> DONE
+
+Goal 3. implement CpAdivce::compute_capacity
+	[a] set up the framework -> DONE
+	[b] CpAdvice::compute_capacity()
+
+Goal 4. implement PackFinalAdvice::compute_capacity -> DONE
+
+Monday 01/05/2026
+LOC (circ): 2906
+LOC (gadgets) 18031
+Goal 1. improve SigAdivce::compute_capacity
+	[a] read new()
+	[b] plan for compute_capacity
+	[c] pass to CpMapper 
+	[d] problem inp_sigs: 
+		-> read the structure of inp/oup buffer of cp_mapper
+	[e] check sig capacity output
+
+Goal 2. construct CpCapacity
+	[a] drop the avg_subsig_per_sig 
 	[b] PackAdvice::compute_capacity()
 	[c] SigAdvice::compute_capcity()
-	[d] CpAdvice::compute_capacity()
 	[e] handle request in circ allocation
 	[d] construct compute_capacity and then pass it to construct
 		advice
+
+Goal 3. Debug why the capacity computed is 3 for subsigs
+	[a] avg_pats_per_subsig 0 problem: fixed by +1
+	[b] issue 817
+
+Goal 4. check issue 817
+	[a] try understand the logic
+	[b] should declare a seaprate function gen_nd_adivce
+		and then return its own
+	[c] declare gen_nd_advice -> DONE
+	[d] in cp_mapper, implement it by refactoring -> DONE
+	[e] in sed and dfa do the same -> DONE
+	[f] fix others -> DONE
+	[g] check data -> not working didn't get passed
+	[h] another round of change
+
+Goal 5. beautify the output
+	[a] read plan_nd_advice
+	[b] clear the debug statements
 
 

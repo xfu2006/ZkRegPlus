@@ -82,7 +82,8 @@ fn small_data<F:PrimeField>(){
 		&init_sed_cap,
 		&init_dfa_cap,
 		num_category,
-		num_circs_per_category
+		num_circs_per_category,
+		true,
 	);
 }
 

@@ -494,6 +494,10 @@ where
 					b_found = true;
 					selected_layer = layer_id;
 					break;
+				}else{
+					if layer_id == self.layered_circs.len()-1{
+						println!("UNABLE to find circ: cap needed: {:#?} and last circ capacility: {:#?}", cap, circ.get_mapper().borrow().get_capacity());
+					}
 				}
 			}
 			assert!(b_found, "UNABLE to find any layer of circuits working!");
@@ -1605,9 +1609,9 @@ where
 			let frag = vec![zero; wlen];
 			let prev_adv: Option<Rc<dyn NdAdvice>> = None; //fine to set None
 			let r_advice= circ.get_mapper().borrow()
-					.gen_nd_advice_no_limit(&frag, &word_info,prev_adv);
+					.gen_nd_advice(&frag, &word_info,prev_adv); //use its own capacity
 			if r_advice.is_some(){//advice is generated
-				let advice = r_advice.unwrap().1;
+				let advice = r_advice.unwrap();
 				let ei = StatementExtraInfo::<C1::ScalarField>{
 					total_words: one,
 					word_id: one,
@@ -2056,6 +2060,16 @@ pub mod tests_driver{
 					Rc::new(DummyCapacity{word_seg_len: word.len()}), 
 			 		Rc::new(DummyNdAdvice{})
 				))
+			}else{None }
+		}
+
+		fn gen_nd_advice(&self, word: &Vec<F>, _word_info: &WordInfo,
+			_prev_adv: Option<Rc<dyn NdAdvice>>) 
+		-> Option<(Rc<dyn NdAdvice>)>{
+			if word.len()<=self.max_word_len(){
+				let w0_val = field_to_usize(&word[0]);
+				if (w0_val%2==1) != self.b_odd { return None; }
+				Some( Rc::new(DummyNdAdvice{}))
 			}else{None }
 		}
 

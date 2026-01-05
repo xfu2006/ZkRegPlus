@@ -497,6 +497,35 @@ impl <F: PrimeField> PackFinalAdvice<F>{
 		Self{unique_states: vec_imm_states, oup_states: vec_final_states, 
 			m_table, subtbl_id}
 	}
+
+	/// Given the same info as new(), estimate the
+	/// capacity needed (capacity_imm, capacity_out)
+	pub fn compute_capacity(
+		inp_states: &Vec<F>, 
+		vec_b_final: &Vec<bool>, 
+	)-> (usize, usize){
+		//1. construct the output states (all final states)
+		assert!(inp_states.len()==vec_b_final.len());
+		let vec_final_states = inp_states.par_iter().zip(
+			vec_b_final.par_iter())
+			.filter(|(_, &b)| b).map(|(s,_)| s.clone())
+			.collect::<HashSet<F>>().into_iter().collect::<Vec<F>>();
+		let set_final_states = vec_final_states.par_iter().map(|&s|
+			s).collect::<HashSet<F>>();
+		let capacity_out = set_final_states.len() + 1; //leave one for 0 entry
+
+		//2. estimate the immedaite states needed
+		let vec_imm_states = inp_states.par_iter().map(|&s| s)
+			.collect::<HashSet<F>>().into_iter().collect::<Vec<F>>();
+		let capacity_imm = vec_imm_states.len() + 1;
+
+		//3. no need to generate m_table, it's the same size of
+		//of vec_imm_states
+
+		//4. no need to construct subtbl_id its size is
+		//the sum of imm_states and output_states
+		(capacity_out, capacity_imm)
+	}
 }
 
 #[cfg(test)]

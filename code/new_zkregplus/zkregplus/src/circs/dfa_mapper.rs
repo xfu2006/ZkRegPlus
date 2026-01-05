@@ -340,6 +340,7 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> DfaComponentMapper<F,LK>{
 			clamdb,
 		}
 	}
+
 }
 
 impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaComponentMapper<F,LK>{
@@ -419,8 +420,8 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaCompo
 	}
 
 	/// Also responsible for generating nd_advice
-	fn gen_nd_advice_no_limit(&self, word: &Vec<F>, word_info: &WordInfo,
-		prev_adv: Option<Rc<dyn NdAdvice>>
+	fn gen_nd_advice_no_limit_adv(&self, word: &Vec<F>, word_info: &WordInfo,
+		prev_adv: Option<Rc<dyn NdAdvice>>, _use_self_cap: bool
 	) ->Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>{
 		//1. expand word to full length
 		let mut rem_word = vec![F::zero(); self.max_word_len() - word.len()];
@@ -475,6 +476,19 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaCompo
 		//3. build the advice
 		let cap2 = Clone::clone(&self.capacity);
 		Some((Rc::new(cap2), Rc::new(advice)) )
+	}
+	fn gen_nd_advice_no_limit(&self, word: &Vec<F>, word_info: &WordInfo,
+		r_prev_adv: Option<Rc<dyn NdAdvice>>)
+		->Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>{
+		self.gen_nd_advice_no_limit_adv(word, word_info, r_prev_adv, false)
+	}
+
+	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
+		r_prev_adv: Option<Rc<dyn NdAdvice>>)
+		->Option<Rc<dyn NdAdvice>>{
+		let res = 
+		self.gen_nd_advice_no_limit_adv(word, word_info, r_prev_adv, true);
+		if res.is_some() {Some(res.unwrap().1)} else {None}
 	}
 
 	/// Given its own gadget stmt_map: 9 range entries for:

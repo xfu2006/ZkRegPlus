@@ -414,6 +414,7 @@ impl <F: PrimeField> NdAdvice for GetSigAdvice<F>{
 }
 
 impl <F: PrimeField> GetSigAdvice<F>{
+
 	/// Given a sequence of final_states (with padding).
 	/// Identify the data needed to build data segment and subtables.
 	pub fn new(
@@ -522,7 +523,8 @@ impl <F: PrimeField> GetSigAdvice<F>{
 		expand_vec(&mut oup, slen);
 		oup.sort();
 		assert!(oup[0].is_zero(), 
-			"output buf too small, needs 1st element to be dummy zero");
+			"output buf: {} too small, needs 1st element to be dummy zero",
+			oup.len());
 
 		//3. generate the m_tables
 		let m_tbl_joins_to_sigs = gen_m_table(
@@ -570,6 +572,79 @@ impl <F: PrimeField> GetSigAdvice<F>{
 		
 		Self{data, capacity, oup, fsm_id, vec_sig_id_no_crit_pat:
 			vec_sig_id_no_crit_pat.clone()}
+	}
+
+	/// compute the capacity needed. All params
+	/// are similar to new(), and we are essentially doing a simplified
+	/// version of new()
+	pub fn compute_capacity(
+		final_states: &Vec<F>,  //the input
+		inp_sigs: &Vec<F>, //the input signatures
+		acdfa: &HexACDFA,
+		map_crit_pat: &HashMap<String,Vec<String>>,
+		sig_to_id: &HashMap<String,usize>,
+		_fsm_id: usize,
+		vec_sig_id_no_crit_pat: &Vec<usize>,
+	)->SigGadgetCapacity{
+		//1. simulate computation of data
+		let mut final_states_sigs_count = vec![];
+		let mut hashset_sigs_to_merge = HashSet::<F>::new(); 
+		let mut decoded_final_states_sigs_sigs = vec![];
+		let sigbit_factor = F::from(1u32 << RANGE2_BIT);
+		for s1 in final_states{
+			let s = s1.clone();
+			if s.is_zero() {continue;}
+
+			let i = field_to_usize(&s) - 1; //the real state idx
+			let pats = acdfa.final_to_patterns(i);
+			let vec_sigs = pats.iter().map(|pat|{
+				map_crit_pat.get(pat).expect("err").to_vec()
+			}).flatten().collect::<Vec<String>>();
+			let vec_sigs_id = vec_sigs.iter().map(|s|
+				*sig_to_id.get(s).expect("sig_2_id err")
+			).collect::<Vec<usize>>();
+		
+			for id in 0..vec_sigs_id.len(){
+				let f_sig = F::from(vec_sigs_id[id] as u32);
+				decoded_final_states_sigs_sigs.push( f_sig );
+				hashset_sigs_to_merge.insert(f_sig);
+			}
+			let count = vec_sigs_id.len();
+
+			let encoded = s * sigbit_factor + F::from(count as u32);
+			final_states_sigs_count.push(encoded);
+		}
+		let sigs_to_merge = hashset_sigs_to_merge.iter().map(|x| x.clone())
+			.collect::<Vec<F>>();
+		let sigs_to_include = vec_sig_id_no_crit_pat.iter().map(|x| 
+			F::from(*x as u64)).collect::<HashSet<F>>();
+		assert!(sigs_to_include.is_disjoint(&hashset_sigs_to_merge));
+		let vec_sigs_to_include = vec_sig_id_no_crit_pat.iter().map(|x|
+			F::from(*x as u64)).collect::<Vec<F>>(); 
+		let output_vec = [&inp_sigs[..], &sigs_to_merge[..],
+			&vec_sigs_to_include[..]].concat();
+		let set_ouput_vec = output_vec.iter().filter(|x| !x.is_zero())
+			.map(|x| x.clone())
+			.collect::<HashSet<F>>();
+		let oup = set_ouput_vec.iter().map(|x| x.clone()).
+			collect::<Vec<F>>();
+
+		//2. compute the needed data
+		let olens = vec![final_states.len(), final_states_sigs_count.len()];
+		let jlens = vec![decoded_final_states_sigs_sigs.len()];
+		let slens = vec![inp_sigs.len(), sigs_to_merge.len(), oup.len()];
+		let olen = olens.iter().max().unwrap() + 1; //to allow one 0 entry
+		let jlen = jlens.iter().max().unwrap() + 1;
+		let slen = slens.iter().max().unwrap() + 1;
+
+		let cap = SigGadgetCapacity{
+			final_states_buf_capacity: olen,
+			join_buf_capacity: jlen,
+			sig_buf_capacity: slen,
+			count_sig_no_crit_pat: vec_sigs_to_include.len(), 
+		};
+
+		cap
 	}
 
 	/// generate the subtbl_ids for its oup
