@@ -23607,8 +23607,8 @@ Goal 3. implement CpAdivce::compute_capacity
 Goal 4. implement PackFinalAdvice::compute_capacity -> DONE
 
 Monday 01/05/2026
-LOC (circ): 2906
-LOC (gadgets) 18031
+LOC (circ): 2906 -> 3020 (+120)
+LOC (gadgets) 18031 -> 18091 (+60)
 Goal 1. improve SigAdivce::compute_capacity
 	[a] read new()
 	[b] plan for compute_capacity
@@ -23643,5 +23643,42 @@ Goal 4. check issue 817
 Goal 5. beautify the output
 	[a] read plan_nd_advice
 	[b] clear the debug statements
+
+Goal 6. Planning on how to deal with sed capacity
+	[a] structure should be roughly the same
+		following the structure t obulid advice
+		do the estimate of capacity, the compute_capacity
+		will be similar customized structure as it needs customized
+		input
+	[b] look for circuit. use first seg to estimate, however
+		it may not work for all segs then it's essentially
+		a binary search of circ.
+
+Tuesday 01/06/2026
+LOC (circ): 3020 
+LOC (gadgets): 18091 
+LOC (sonobe): 20388
+
+Goal 1. use plan_nd_avice
+	[a] read existing code
+	[b] set up the framework
+	[c] check the min using identification
+	[d] discussion: gen_nd_advice_no_limit has no control of
+		inp/oup buffer cannot guarantee they even agree!
+		So should actually remove gen_nd_advice_no_limit, and
+		call gen_nd_advice instead. It should 
+		quickly return an error why it fails
+	[e] should declare a function circ.gen_advices(),
+		then use a binary search to search for the first segement 
+		of word and then search for the entire word.
+
+Goal 2. implementation 
+	[a] gen_nd_advice -> Advice or Vec<(String,usize)>
+	[b] remove gen_nd_advice_limit and replace them with 
+		call of gen_nd_advice
+	[c] make propagation changes
+	[d]
+
+-- TODO -- set up the framework of binary search first.
 
 

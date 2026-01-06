@@ -402,6 +402,18 @@ where
 	pub fn plan_nd_advice(&self, log_level: usize, b_save_advice: bool,
 		word: &Vec<CF1<C1>>, word_info: &WordInfo)
 		-> Result<(usize, Vec<usize>, Vec<usize>, Vec<Rc<dyn Capacity>>, Vec<Rc<dyn NdAdvice>>),Error>{
+		let b_new = true;
+		if b_new{
+			self.plan_nd_advice_new(log_level, b_save_advice, word, word_info)
+		}else{
+			self.plan_nd_advice_old(log_level, b_save_advice, word, word_info)
+		}
+	}
+
+	/// old version: it assues multiple circs in one layer
+	pub fn plan_nd_advice_old(&self, log_level: usize, b_save_advice: bool,
+		word: &Vec<CF1<C1>>, word_info: &WordInfo)
+		-> Result<(usize, Vec<usize>, Vec<usize>, Vec<Rc<dyn Capacity>>, Vec<Rc<dyn NdAdvice>>),Error>{
 			let mut gt1 = GTimer::new();
 			log_perf(log_level, &format!("Entering plan_nd_advice, layers: {}, word.len(): {}.", self.layered_circs.len(), word.len()), &mut gt1);
 			let mut remaining = word.clone();
@@ -588,6 +600,32 @@ where
 
 			Ok( (vec_pci.len(), vec_pci, vec_size, vec_cap, vec_adv  ))
 }
+
+
+	/// generate the nd_advice by picking up the circ.
+	/// Here we assume that layer of circs are sorted by the cost (increasing).
+	/// and each layer has ONLY ONE circ (so we do not have to worry about
+	/// ensuring same inp/oup buffer).
+	///
+	/// We first pick the first segment of the word to figure out the
+	/// minimum capacity needed (by calling gen_nd_advice_no_limit).
+	/// We then use a binary search method to locate the MINIMUM layer
+	/// of circ that is needed (and call gen_nd_advice) to verify it works
+	/// for ALL segements of a word.
+	pub fn plan_nd_advice_new(&self, log_level: usize, b_save_advice: bool,
+		word: &Vec<CF1<C1>>, word_info: &WordInfo)
+		-> Result<(usize, Vec<usize>, Vec<usize>, Vec<Rc<dyn Capacity>>, Vec<Rc<dyn NdAdvice>>),Error>{
+		//1. verify each layer has only one circ
+		let mut gt1 = GTimer::new();
+		log_perf(log_level, &format!("Entering plan_nd_advice, layers: {}, word.len(): {}.", self.layered_circs.len(), word.len()), &mut gt1);
+		for i in 0..self.layered_circs.len(){
+			assert!(self.layered_circs[i].len()==1, "only 1 circ per layer!");
+		}
+
+		//2. quickly identify the min_layer needed
+		todo!()
+		
+	}
 
 
 	/// It processes a collection of words, and collect
