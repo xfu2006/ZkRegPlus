@@ -23690,8 +23690,8 @@ Goal 4. implement gen_nd_advice_for_word at layer
 Goal 5. find working layer
 
 Wed 01/07/2026
-LOC (circ): 3020 
-LOC (gadgets): 18091 
+LOC (circ): 3020 -> 2899 (-130) -> 
+LOC (gadgets): 18091 -> 18142 (+50) 
 LOC (sonobe): 20559 
 
 Goal 1. fix the circ/gadget framework (cp first)
@@ -23716,5 +23716,40 @@ Goal 4. Implementation
 	[a] cp_mapper gen_nd_advice
 	[b] seg1 and 2
 	[c] CpAdvice::new
+		-> word_extract
+		-> misc errors in example
+		-> fsm
 
+Goal 5. pack.rs
+	[a] change prototype
+	[b] add two cases cap_out and cap_imm
+	[c] processing these two cases
+
+Goal 6. sig.rs
+	[a] add checks
+	[b] unit testingA
+
+Goal 7. composable_gadget
+	[a] impl gen_nd_advice
+	[b] plan how to handle sed_gen_advice
+
+Goal 8. Implement sed_gen_advice step by step
+	[a] framework
+	[b] step 1
+	[c] step 2
+	[d] structure advice
+
+Goal 9. do the same for dfa_adv
+	[a] framework
+	[b] step 1 and 2
+
+Goal 10. debug common.rs:1074
+	[a] trace:
+		driver:1861 (new)
+		-> 319 (FoldPotSuper::preprocess)
+		-> mod_super:1936 (build the aug_F circuit) and get r1cs
+		-> sigma_ir1cs:3091 generate_step_constraints
+		-> pack.rs: 246 assert_logup fails
+	[b] check why it fails logup check
+	[c] apparently cp_mapper parsing is messed up
 

@@ -219,7 +219,7 @@ impl <F:PrimeField> DfaAdvice<F>{
 			vec_sigs_to_discharge: &Vec<Arc<ClamavSig>>, //the sigs to 
 			sig_to_id: &HashMap<String,usize>, //map from sig to id
 			discharge_info: &Vec<DischargeSigInfo>, //info: subsigs to process
-		)->Self{
+		)->Result<Self, Error>{
 		//1. build the word extraction gadget's advice
 		let wd_extract_advice = WordExtractAdvAdvice::<F>
 			::new(word_seg, actual_size, true); //use char map mode for sid
@@ -302,7 +302,7 @@ impl <F:PrimeField> DfaAdvice<F>{
 			Rc::new(dfa_adv_advice.clone()),
 		];
 
-		Self{wd_extract_advice, dfa_adv_advice, vec_advices}
+		Ok(Self{wd_extract_advice, dfa_adv_advice, vec_advices})
 	}
 }
 
@@ -420,14 +420,9 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaCompo
 	}
 
 
-	fn gen_nd_advice(&self, _word: &Vec<F>, _word_info: &WordInfo,
-		_r_prev_adv: Option<Rc<dyn NdAdvice>>)
+	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
+		prev_adv: Option<Rc<dyn NdAdvice>>)
 		->Result<Rc<dyn NdAdvice>, Error>{
-		/*
-		let res = 
-		self.gen_nd_advice_no_limit_adv(word, word_info, r_prev_adv, true);
-		if res.is_some() {Some(res.unwrap().1)} else {None}
-		*/
 		//1. expand word to full length
 		let mut rem_word = vec![F::zero(); self.max_word_len() - word.len()];
 		let mut word_seg = word.clone();
@@ -446,13 +441,12 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaCompo
 		let n = self.capacity.subsigs;
 		let inp = DfaInput{v_inp_state: vec![F::one(); n]};
 		let dummy_adv = DfaAdvice::new(&word_seg, word.len(), &self.capacity,
-			&inp, &v_sigs, &sig_to_id, &discharge_info);
+			&inp, &v_sigs, &sig_to_id, &discharge_info)?;
 		let v_dfa = &dummy_adv.dfa_adv_advice.v_dfa;
 		assert!(v_dfa.len()==n);
 		let init_states = v_dfa.iter().map(|dfa| 
 			F::from((dfa.initial+1) as u32)).collect::<Vec<F>>();
 
-		
 		//4. generate the inputs EITHER from input or initial
 		let inp_states = prev_adv.as_ref().map_or(
 			init_states, |adv|{
@@ -476,12 +470,9 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaCompo
 			word.len(), 
 			&self.capacity, &inp, 
 			&v_sigs, &sig_to_id, &discharge_info //keep the v_sigs earlier
-		);
+		)?;
 
-		//3. build the advice
-		let cap2 = Clone::clone(&self.capacity);
-		Some((Rc::new(cap2), Rc::new(advice)) )
-		todo!()
+		Ok( Rc::new(advice) )
 	}
 
 	/// Given its own gadget stmt_map: 9 range entries for:

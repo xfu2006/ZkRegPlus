@@ -615,8 +615,8 @@ pub mod tests_zkp_driver{
 	/// read the READ me in data/small_data_set2/README for the design of sigs
 	#[allow(dead_code)]
 	fn small_data2<F:PrimeField>(b_check_lkup: bool){
-		let b_read_cache = true;
-		let b_write_cache = false;
+		let b_read_cache = false;
+		let b_write_cache = !b_read_cache;
 		let set1 = "data/debug/small_data_set2/config_dfa"; //for dfa 
 		let max_word= 512; 
 		let sigs = 3;
@@ -677,7 +677,7 @@ pub mod tests_zkp_driver{
 	/// However, just run a small file
 	#[allow(dead_code)]
 	fn small_data3<F:PrimeField>(b_check_lkup: bool){
-		let b_read_cache = true;
+		let b_read_cache = false;
 		let b_write_cache = ! b_read_cache;
 		let set1 = "data/paper_data/config/"; //for dfa 
 		let max_word= 512; 

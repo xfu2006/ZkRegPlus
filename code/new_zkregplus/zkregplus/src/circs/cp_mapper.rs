@@ -462,6 +462,10 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		word_seg.append(&mut rem_word);
 
 		//2. build the input for computing advice 
+		let capacity = &self.capacity;
+        let (_final_states_len,_join_buf_capacity,sig_buf_capacity,_imm_buf_len)
+                        = capacity.get_old_stats();
+
 		let init_state = if !self.b_igc {
 			F::from(self.clamdb.dfa_crit.init_state as u32)
 		}else{
@@ -499,7 +503,6 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		vec_sig_id_no_crit_pat.sort();
 
 		//3. compute the advice
-		let sig_buf_capacity = self.capacity.subsigs;
 		let inp_sigs = prev_adv.map_or(vec![zero; sig_buf_capacity], 
 		|adv|{
 			let adv= adv.as_any().downcast_ref::<CpAdvice<F>>(); 
