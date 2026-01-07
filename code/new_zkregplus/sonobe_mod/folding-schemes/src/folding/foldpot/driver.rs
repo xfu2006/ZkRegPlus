@@ -382,14 +382,102 @@ where
 			b_full_mode: b_full_mode, }
 	}
 
+	/// generate the advice using the circuit at layer_i
+	/// return if success (num_steps, vec<PCI>, vec<size of word seg>,
+	/// 	vec<capacity needed>, vec<advice>)
+	fn gen_nd_advice_at_layer(&self, layer_i: usize,
+		_log_level: usize, b_save_advice: bool,
+		word: &Vec<CF1<C1>>, word_info: &WordInfo)
+		-> Result<(usize, Vec<usize>, Vec<usize>, Vec<Rc<dyn Capacity>>, Vec<Rc<dyn NdAdvice>>),Error>{
+		//let mut gt1 = GTimer::new();
+		let mut vec_pci = vec![];
+		let mut vec_size = vec![];
+		let mut vec_cap = vec![];
+		let mut vec_adv:Vec<Rc<dyn NdAdvice>> = vec![];
+		let layer = &self.layered_circs[layer_i]; 
+		let circ = &layer[0];
+		let max_wlen = circ.get_mapper().borrow().max_word_len();
+		let wlen = word.len();
+		let num_segs = if wlen % max_wlen==0{wlen/max_wlen} 
+			else {wlen/max_wlen+1};
+		let pci = layer_i; //because every layer has only one circ
+		let cap = circ.get_mapper().borrow().get_capacity();
+		for i in 0..num_segs{
+			let start = i*max_wlen;
+			let end = if (i+1)*max_wlen>wlen {wlen} else {(i+1)*max_wlen};
+			let seg = word[start..end].to_vec();
+			let prev_adv = if vec_adv.len()==0 {None}
+				else {Some(vec_adv[vec_adv.len()-1].clone())};
+			let advice = circ.get_mapper().borrow()
+				.gen_nd_advice(&seg, &word_info, prev_adv)?;
+			vec_pci.push(pci);
+			vec_size.push(end-start);
+			vec_cap.push(cap.clone());
+			if b_save_advice{ vec_adv.push(advice); }
+		}
+		Ok ((num_segs, vec_size, vec_pci, vec_cap, vec_adv))
+	}
+
+	/// find a working layer that would successfully generate
+	/// return if success (LAYER_ID, num_steps, vec<PCI>, vec<size of word seg>,
+	/// 	vec<capacity needed>, vec<advice>)
+	///
+	/// This function uses heurstics here to find a working layer for
+	/// the word as fast as possible. The idea is to take a "mid" seg
+	/// of the word and use it to binary search a working layer.
+	/// if the word itself is very short or very long, just 
+	/// return the max ID (as this fiding_working_layer step is
+	/// not going to save much anyway)
+	fn find_working_layer_for_wd(&self, log_level: usize, b_save_advice: bool, word: &Vec<CF1<C1>>, word_info: &WordInfo)-> Result<(usize, usize, Vec<usize>, Vec<usize>, Vec<Rc<dyn Capacity>>, Vec<Rc<dyn NdAdvice>>),Error>{
+		let full_len = word.len();
+		let max_wlen = self.layered_circs[0][0].get_mapper().borrow()
+			.max_word_len();
+		let long_bar = 1024 * 1024 / 31 * 4; //4MB of data
+		let max_layer_id = self.layered_circs.len()-1;
+
+		//1. compute guessed_layer
+		let guessed_layer = if full_len < 4 * max_wlen || full_len > long_bar{
+			max_layer_id
+		}else{//sample a segment and binary search (on the seg
+			//but not the entire word to save cost
+			let seg = word[full_len/2..full_len/2+max_wlen].to_vec();
+			let min_layer = 0;
+			let res = self.gen_nd_advice_at_layer(max_layer_id,
+				log_level, b_save_advice, &seg, word_info)?;
+			let (num_segs, vec_pci, vec_seg_size, vec_cap, vec_adv) = res;
+			let (best_layer, _num_segs, _vec_seg_size, 
+				_vec_pci, _vec_cap, _vec_adv) = self.bin_search_best_layer(
+					log_level, b_save_advice, &seg, word_info, 
+					min_layer, max_layer_id,
+					num_segs, vec_pci, vec_seg_size, vec_cap, vec_adv);
+
+			best_layer
+		};
+
+		//2. check if guessed layer works for the full word 
+		let res = self.gen_nd_advice_at_layer(guessed_layer,
+			log_level, b_save_advice, &word, word_info);
+		if res.is_ok(){ 
+			let (num_segs, vec_pci, vec_seg_size,vec_cap,vec_adv)=res.unwrap();
+			Ok( (guessed_layer, num_segs, vec_pci, vec_seg_size, vec_cap, 
+				vec_adv) )
+		}else{//try the max id
+			let res2 = self.gen_nd_advice_at_layer(max_layer_id,
+				log_level, b_save_advice, &word, word_info)?;
+			let (num_segs, vec_pci, vec_seg_size, vec_cap, vec_adv) = res2;
+			Ok( (max_layer_id, num_segs, vec_pci, vec_seg_size, vec_cap
+				, vec_adv) )
+		}
+	}
+
 
 	/// Given a word, and given its circuits, plan the steps to
 	/// prove the word (free of malware sigs). Use estimate of
 	/// cost to determine the pc_i of each step.
 	/// Returns:
 	///( num_steps, 
-	///      Vec<PCI>, 
 	///      Vec<size of word seg>, 
+	///      Vec<PCI>, 
 	///      Vec<Capacity Needed for circs[pci]>,
 	///      Vec<Advice for the circuits[pci]>
 	///)
@@ -410,13 +498,109 @@ where
 		}
 	}
 
-	/// old version: it assues multiple circs in one layer
-	pub fn plan_nd_advice_old(&self, log_level: usize, b_save_advice: bool,
+
+	/// return if success (LAYER_ID, num_steps, vec<PCI>, vec<size of word seg>,
+	/// 	vec<capacity needed>, vec<advice>)
+	/// we do NOT know the result for min_layer, but for sure
+	/// max_layer is a WORKING layer for word. We need to find
+	/// the minimum working layer for the word to save cost
+	/// (the corresponding info is attached).
+	/// The function will ALWAYS be successful, as the worst case is
+	/// max layer info
+	/// Returns:
+	///( best_layer, num_steps, 
+	///      Vec<size of word seg>, 
+	///      Vec<PCI>, 
+	///      Vec<Capacity Needed for circs[pci]>,
+	///      Vec<Advice for the circuits[pci]>
+	///)
+	fn bin_search_best_layer(&self, log_level: usize, b_save_advice: bool,
+		word: &Vec<CF1<C1>>, word_info: &WordInfo, 
+		min_layer: usize, 
+		max_layer: usize,
+		max_layer_num_segs: usize,
+		max_layer_vec_seg_size: Vec<usize>,
+		max_layer_vec_pci: Vec<usize>,
+		max_layer_vec_cap: Vec<Rc<dyn Capacity>>,
+		max_layer_vec_adv: Vec<Rc<dyn NdAdvice>>)
+		-> (usize, usize, Vec<usize>, Vec<usize>, Vec<Rc<dyn Capacity>>, Vec<Rc<dyn NdAdvice>>){
+		let mut gt1 = GTimer::new();
+		let mut min_layer_id = min_layer;
+		let (mut best_layer,mut max_layer_id) = (max_layer, max_layer);
+		let (mut num_segs, mut vec_seg_size, mut vec_pci,
+			mut vec_cap, mut vec_adv) = (max_layer_num_segs,
+			max_layer_vec_seg_size, max_layer_vec_pci, 
+				max_layer_vec_cap, max_layer_vec_adv);
+		while min_layer_id <= max_layer_id && max_layer_id>0{
+			let mid_id = (min_layer_id + max_layer_id)/2;
+			let mid_id = if mid_id == max_layer_id {max_layer_id-1} 
+				else {mid_id}; //to avoid redundant work
+			let res = self.gen_nd_advice_at_layer(mid_id,
+				log_level, b_save_advice, word, word_info);
+			if res.is_ok(){
+				(num_segs, vec_seg_size, vec_pci, vec_cap, vec_adv) 
+					= res.unwrap();
+				best_layer = mid_id;
+				if mid_id==0 { break; }else{ max_layer_id = mid_id - 1; }
+			}else{
+				min_layer_id = mid_id + 1;
+			}
+			log_perf(log_level, &format!("bin_search: min_id: {}, max_id: {}, mid_id: {}.  word.len(): {}.", min_layer_id, max_layer_id, mid_id, word.len()), &mut gt1);
+		}
+		(best_layer, num_segs, vec_seg_size, vec_pci, vec_cap, vec_adv)	
+	}
+	/// generate the nd_advice by picking up the circ.
+	/// Here we assume that layer of circs are sorted by the cost (increasing).
+	/// and each layer has ONLY ONE circ (so we do not have to worry about
+	/// ensuring same inp/oup buffer).
+	///
+	/// We first pick the first segment of the word to figure out the
+	/// minimum capacity needed (by calling gen_nd_advice_no_limit).
+	/// We then use a binary search method to locate the MINIMUM layer
+	/// of circ that is needed (and call gen_nd_advice) to verify it works
+	/// for ALL segements of a word.
+	pub fn plan_nd_advice_new(&self, log_level: usize, b_save_advice: bool,
 		word: &Vec<CF1<C1>>, word_info: &WordInfo)
 		-> Result<(usize, Vec<usize>, Vec<usize>, Vec<Rc<dyn Capacity>>, Vec<Rc<dyn NdAdvice>>),Error>{
+		//0. verify each layer has only one circ
+		let mut gt1 = GTimer::new();
+		let mut gt2 = GTimer::new();
+		log_perf(log_level, &format!("plan_nd_advice step 0. layers: {}, word.len(): {}.", self.layered_circs.len(), word.len()), &mut gt1);
+		let mwl = self.layered_circs[0][0].get_mapper().borrow().max_word_len();
+		for i in 0..self.layered_circs.len(){
+			assert!(self.layered_circs[i].len()==1, "only 1 circ per layer!");
+			assert!(self.layered_circs[i][0]
+				.get_mapper().borrow().max_word_len() != mwl); 
+				//all circ should support same max word len
+		}
+
+		//1. quickly identify the MAX working layer needed 
+		let res = self.find_working_layer_for_wd(log_level, b_save_advice,
+			word, word_info)?;
+		let (max_layer_id, num_segs, vec_pci, vec_seg_size, 
+			vec_cap, vec_adv) = res;
+		log_perf(log_level+1, &format!("plan_nd_advice, step 1: find_working_layer. "), &mut gt1);
+
+		//2. binary search to identify the MINIMUM layer that works 
+		let min_layer = 0;
+		let (_best_layer, num_segs, vec_seg_size, vec_pci, vec_cap, vec_adv) = 
+			self.bin_search_best_layer(log_level+2, b_save_advice,
+				word, word_info, min_layer, max_layer_id,
+				num_segs, vec_pci, vec_seg_size, vec_cap, vec_adv);
+		log_perf(log_level+1, &format!("plan_nd_advice, step 2: bin_search."), &mut gt1);
+		log_perf(log_level, &format!("plan_nd_advice. Total:  best_layer: {}, word.len(): {}.", _best_layer, word.len()), &mut gt2);
+
+		Ok( (num_segs, vec_seg_size, vec_pci, vec_cap, vec_adv ) )
+	}
+
+	/// old version: it assues multiple circs in one layer
+	pub fn plan_nd_advice_old(&self, log_level: usize, _b_save_advice: bool,
+		word: &Vec<CF1<C1>>, word_info: &WordInfo)
+		-> Result<(usize, Vec<usize>, Vec<usize>, Vec<Rc<dyn Capacity>>, Vec<Rc<dyn NdAdvice>>),Error>{
+			if 1>0 {panic!("should not call this function. It is invalid. Keep the legacy code for future improvement.");}
 			let mut gt1 = GTimer::new();
 			log_perf(log_level, &format!("Entering plan_nd_advice, layers: {}, word.len(): {}.", self.layered_circs.len(), word.len()), &mut gt1);
-			let mut remaining = word.clone();
+			let remaining = word.clone();
 			#[cfg(test)]{//check if all circs have the same inp/oup
 				// check the max_word_len is decreasing (thus avg cost
 				//increasing
@@ -445,10 +629,10 @@ where
 			}
 
 			//2. chunk the words and plan
-			let mut vec_pci = vec![];
-			let mut vec_size = vec![];
-			let mut vec_cap = vec![];
-			let mut vec_adv:Vec<Rc<dyn NdAdvice>> = vec![];
+			let vec_pci = vec![];
+			let vec_size = vec![];
+			let vec_cap = vec![];
+			let vec_adv:Vec<Rc<dyn NdAdvice>> = vec![];
 			log_perf(log_level, &format!("plan_nd_advice step 1: check circs."),
 				&mut gt1);
 
@@ -468,8 +652,8 @@ where
 			// NOTE: in FACT TO SIMPLIFY CIRCUIT DESIGN, each layer will
 			// ONLY hae one circ (as to make inp/oup for circuits exactly
 			// the same will take too much design time)
-			let mut b_found = false;
-			let mut selected_layer = 0;
+			let b_found = false;
+			let selected_layer = 0;
 			for layer_id in 0..self.layered_circs.len(){
 				//2.1.1 try generate advice by the first circ
 				// without any resource limits
@@ -488,8 +672,8 @@ where
 				let prev_adv = if vec_adv.len()==0 {None}
 					else {Some(vec_adv[vec_adv.len()-1].clone())};
 				let res = circ1.get_mapper().borrow()
-					.gen_nd_advice_no_limit(&word, &word_info, prev_adv);
-				if !res.is_some() {
+					.gen_nd_advice(&word, &word_info, prev_adv);
+				if !res.is_ok() {
 					//quick elimination of apparent non-working layer
 					//this is usually quickly decided by looking at
 					//word_info in gen_nd_advice_no_limit
@@ -499,18 +683,18 @@ where
 				//if structure wise ok, still need to check details
 				//of buffer capacity ok, so do have to run a real
 				//instance of capacity check
-				let (cap, _advice) = res.unwrap();
-				let circ = &layer[0];
-				if circ.get_mapper().borrow()
-					.get_capacity().can_satisfy(&cap){
-					b_found = true;
-					selected_layer = layer_id;
-					break;
-				}else{
-					if layer_id == self.layered_circs.len()-1{
-						println!("UNABLE to find circ: cap needed: {:#?} and last circ capacility: {:#?}", cap, circ.get_mapper().borrow().get_capacity());
-					}
-				}
+				//let (cap, _advice) = res.unwrap();
+				//let circ = &layer[0];
+				//if circ.get_mapper().borrow()
+				//	.get_capacity().can_satisfy(&cap){
+				//	b_found = true;
+				//	selected_layer = layer_id;
+				//	break;
+				//}else{
+				//	if layer_id == self.layered_circs.len()-1{
+				//		println!("UNABLE to find circ: cap needed: {:#?} and last circ capacility: {:#?}", cap, circ.get_mapper().borrow().get_capacity());
+				//	}
+				//}
 			}
 			assert!(b_found, "UNABLE to find any layer of circuits working!");
 			log_perf(log_level, &format!("plan_nd_advice step 2: select layer. selected layer: {}.", selected_layer), &mut gt1);
@@ -556,8 +740,8 @@ where
 				//2.2.2 now search forward until capacity is satisfied.
 				//Stop immediately once capacity can be satisfied
 				let mut last_word_len = 0;
-				let mut last_res = None;
-				let mut b_found = false;
+				let mut _last_res = None;
+				let b_found = false;
 				for idx in min_id..layer.len(){
 					//for every word_len try generating the unlimited resource
 					//request
@@ -571,28 +755,28 @@ where
 						else {Some(vec_adv[vec_adv.len()-1].clone())};
 					if last_word_len!=word_len {
 						last_word_len = word_len;
-						last_res = circ.get_mapper().borrow()
-						  .gen_nd_advice_no_limit(&word, &word_info, prev_adv);
+						_last_res = Some(circ.get_mapper().borrow()
+						  .gen_nd_advice(&word, &word_info, prev_adv)
+						  .unwrap());
 					}
-					assert!(last_res.is_some());
 				
 					//verify the circ does can satisfy the request
-					if circ.get_mapper().borrow().get_capacity()
-						.can_satisfy(&last_res.as_ref().unwrap().0){
-						let (cap, advice) = last_res.unwrap();
-						let pci = vec_start[selected_layer] + idx;
-						vec_pci.push(pci);
-						vec_size.push(word_len);
-						vec_cap.push(cap);
-						if b_save_advice{ //to save memory
-							//advice will then have to be re-generated later.
-							vec_adv.push(advice);
-						}
-						remaining = remaining[word_len..].to_vec();
-						b_found = true;
-						break;
-					}
-					if b_found {break;}
+ // 					if circ.get_mapper().borrow().get_capacity()
+ // 						.can_satisfy(&last_res.as_ref().unwrap().0){
+ // 						let (cap, advice) = last_res.unwrap();
+ // 						let pci = vec_start[selected_layer] + idx;
+ // 						pec_pci.push(pci);
+ // 						vec_size.push(word_len);
+ // 						vec_cap.push(cap);
+ // 						if b_save_advice{ //to save memory
+ // 							//advice will then have to be re-generated later.
+ // 							vec_adv.push(advice);
+ // 						}
+ // 						remaining = remaining[word_len..].to_vec();
+ // 						b_found = true;
+ // 						break;
+ // 					}
+ // 					if b_found {break;}
 				}
 				assert!(b_found, "CANNOT find satisfying circ for remaining length: {}!", remaining.len());
 			}//end of while remaining loop
@@ -600,33 +784,6 @@ where
 
 			Ok( (vec_pci.len(), vec_pci, vec_size, vec_cap, vec_adv  ))
 }
-
-
-	/// generate the nd_advice by picking up the circ.
-	/// Here we assume that layer of circs are sorted by the cost (increasing).
-	/// and each layer has ONLY ONE circ (so we do not have to worry about
-	/// ensuring same inp/oup buffer).
-	///
-	/// We first pick the first segment of the word to figure out the
-	/// minimum capacity needed (by calling gen_nd_advice_no_limit).
-	/// We then use a binary search method to locate the MINIMUM layer
-	/// of circ that is needed (and call gen_nd_advice) to verify it works
-	/// for ALL segements of a word.
-	pub fn plan_nd_advice_new(&self, log_level: usize, b_save_advice: bool,
-		word: &Vec<CF1<C1>>, word_info: &WordInfo)
-		-> Result<(usize, Vec<usize>, Vec<usize>, Vec<Rc<dyn Capacity>>, Vec<Rc<dyn NdAdvice>>),Error>{
-		//1. verify each layer has only one circ
-		let mut gt1 = GTimer::new();
-		log_perf(log_level, &format!("Entering plan_nd_advice, layers: {}, word.len(): {}.", self.layered_circs.len(), word.len()), &mut gt1);
-		for i in 0..self.layered_circs.len(){
-			assert!(self.layered_circs[i].len()==1, "only 1 circ per layer!");
-		}
-
-		//2. quickly identify the min_layer needed
-		todo!()
-		
-	}
-
 
 	/// It processes a collection of words, and collect
 	/// a vector of StatementExtraInfo, mainly for sequence (word_id, seg_id)
@@ -1217,9 +1374,9 @@ where
 				//2.3 generate the advice and statement
 				//need to build the statement to fill the m_map
 				let res = circ.get_mapper().borrow()
-					.gen_nd_advice_no_limit(&frag, word_info, prev_adv);
-				assert!(res.is_some(), "UNABLE to generate advice for word id: {}, segment_id: {}", word_id, subseg_id); 
-				let cur_adv = res.unwrap().1;
+					.gen_nd_advice(&frag, word_info, prev_adv);
+				assert!(res.is_ok(), "UNABLE to generate advice for word id: {}, segment_id: {}", word_id, subseg_id); 
+				let cur_adv = res.unwrap();
 
 				log_perf(log_level+2, &format!("-- Pass 1. gen_advice."), &mut gt2);
 				let stmt_res = circ.get_mapper().borrow().build_statement(
@@ -1302,9 +1459,9 @@ where
 
 				//3.2 generate the adice again
 				let res = circ.get_mapper().borrow()
-					.gen_nd_advice_no_limit(&frag, word_info, prev_adv);
-				assert!(res.is_some(), "UNABLE to generate advice for word id: {}, segment_id: {}", word_id, subseg_id); 
-				let cur_adv = res.unwrap().1;
+					.gen_nd_advice(&frag, word_info, prev_adv);
+				assert!(res.is_ok(), "UNABLE to generate advice for word id: {}, segment_id: {}", word_id, subseg_id); 
+				let cur_adv = res.unwrap();
 				log_perf(log_level+2, &format!("-- Pass2. gen advice. sugseg_id: {}", subseg_id), &mut gtw2);
 
 				//3.3 generate the statement again
@@ -1459,9 +1616,9 @@ where
 				remaining = remaining[act_len..].to_vec();
 
 				let res = circ.get_mapper().borrow()
-					.gen_nd_advice_no_limit(&frag, word_info, prev_adv);
-				assert!(res.is_some(), "UNABLE to generate advice for word id: {}, segment_id: {}", word_id, subseg_id); 
-				let cur_adv = res.unwrap().1;
+					.gen_nd_advice(&frag, word_info, prev_adv);
+				assert!(res.is_ok(), "UNABLE to generate advice for word id: {}, segment_id: {}", word_id, subseg_id); 
+				let cur_adv = res.unwrap();
 				log_perf(log_level+1, &format!("-- Pass 3. gen advice for word_id: {}, seg_id: {}", word_id, subseg_id), &mut gtw2);
 
 				let stmt_res = circ.get_mapper().borrow().build_statement(
@@ -1648,7 +1805,7 @@ where
 			let prev_adv: Option<Rc<dyn NdAdvice>> = None; //fine to set None
 			let r_advice= circ.get_mapper().borrow()
 					.gen_nd_advice(&frag, &word_info,prev_adv); //use its own capacity
-			if r_advice.is_some(){//advice is generated
+			if r_advice.is_ok(){//advice is generated
 				let advice = r_advice.unwrap();
 				let ei = StatementExtraInfo::<C1::ScalarField>{
 					total_words: one,
@@ -2088,27 +2245,22 @@ pub mod tests_driver{
 			Rc::new(DummyCapacity{word_seg_len})
 		}
 
-		fn gen_nd_advice_no_limit(&self, word: &Vec<F>, _word_info: &WordInfo,
-			_prev_adv: Option<Rc<dyn NdAdvice>>) 
-		-> Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>{
-			if word.len()<=self.max_word_len(){
-				let w0_val = field_to_usize(&word[0]);
-				if (w0_val%2==1) != self.b_odd { return None; }
-				Some((
-					Rc::new(DummyCapacity{word_seg_len: word.len()}), 
-			 		Rc::new(DummyNdAdvice{})
-				))
-			}else{None }
-		}
-
 		fn gen_nd_advice(&self, word: &Vec<F>, _word_info: &WordInfo,
 			_prev_adv: Option<Rc<dyn NdAdvice>>) 
-		-> Option<(Rc<dyn NdAdvice>)>{
+		-> Result<Rc<dyn NdAdvice>, Error>{
 			if word.len()<=self.max_word_len(){
 				let w0_val = field_to_usize(&word[0]);
-				if (w0_val%2==1) != self.b_odd { return None; }
-				Some( Rc::new(DummyNdAdvice{}))
-			}else{None }
+				if (w0_val%2==1) != self.b_odd { 
+					Err( 
+						Error::CapErr(
+							vec![(format!("w0_val%2==1 != b_odd"), word.len())])
+					)
+				}else{
+					Ok( Rc::new(DummyNdAdvice{}))
+				}
+			}else{ 
+				Err( Error::CapErr(vec![(format!("max_word_len"), word.len())]))
+			}
 		}
 
 

@@ -213,21 +213,14 @@ GadgetMapper<F,LK> for FoldPairMapper<F, LK>{
 		Rc::new(DummyCapacity{word_seg_len: self.max_word_len()})
 	}
 
-	fn gen_nd_advice_no_limit(&self, word: &Vec<F>, _wi: &WordInfo,
-		_prev_adv: Option<Rc<dyn NdAdvice>>) 
-		-> Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>{
-		if word.len()<=self.max_word_len(){
-			Some((Rc::new(DummyCapacity{word_seg_len: word.len()}), 
-				  Rc::new(DummyNdAdvice{}) ))
-		}else{None }
-	}
-
 	fn gen_nd_advice(&self, word: &Vec<F>, _wi: &WordInfo,
 		_prev_adv: Option<Rc<dyn NdAdvice>>) 
-		-> Option<Rc<dyn NdAdvice>>{
+		-> Result<Rc<dyn NdAdvice>, Error>{
 		if word.len()<=self.max_word_len(){
-			Some( Rc::new(DummyNdAdvice{}) )
-		}else{None }
+			Ok( Rc::new(DummyNdAdvice{}) )
+		}else{
+			Err(Error::CapErr(vec![(format!("max_word_len"), word.len())]))
+		}
 	}
 
 

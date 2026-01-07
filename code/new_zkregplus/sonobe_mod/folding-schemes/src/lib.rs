@@ -105,6 +105,8 @@ pub enum Error {
     NoMultiInstances,
     #[error("Missing 'other' instances, since this is a multi-instances folding scheme")]
     MissingOtherInstances,
+	#[error("Capability error")]
+	CapErr(Vec<(String,usize)>)
 }
 
 /// FoldingScheme defines trait that is implemented by the diverse folding schemes. It is defined

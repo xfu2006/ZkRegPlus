@@ -59,6 +59,7 @@ use ark_ff::{One};
 use std::fs::File;
 use std::io::prelude::*;
 
+
 /// i.e., information related to discharge Sig using
 /// SED or ISED
 #[derive(Clone,Debug,Serialize,Deserialize)]
@@ -553,18 +554,11 @@ pub trait GadgetMapper<F:PrimeField, LK: LookupTableTwoCol<F>>{
 	/// return the max word length that can be processed
 	fn max_word_len(&self) -> usize;
 
-	/// Assuming there is no limit of capacity, given the word
-	/// generate its advice, and return the capacity requirement.
-	/// If return nil, it means it cannot handle it
-	fn gen_nd_advice_no_limit(&self, word: &Vec<F>, word_info: &WordInfo,
-		prev_adv: Option<Rc<dyn NdAdvice>>) 
-		->Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>;
-
 	/// Generate the advice using its own capacity.
 	/// If return nil, it means it cannot handle it
 	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
 		prev_adv: Option<Rc<dyn NdAdvice>>) 
-		->Option<Rc<dyn NdAdvice>>;
+		->Result<Rc<dyn NdAdvice>, Error>;
 }
 
 /// Extra (mostly sequence) info for build statement
@@ -4231,23 +4225,17 @@ pub mod tests_sigma_ir1cs{
 			Rc::new( DummyCapacity{word_seg_len} )
 		}
 
-		fn gen_nd_advice_no_limit(&self, word: &Vec<F>, _wi: &WordInfo,
-			_prv_adv: Option<Rc<dyn NdAdvice>>) 
-		-> Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>{
-			if word.len()<=self.max_word_len(){
-				Some(
-					(Rc::new(DummyCapacity{word_seg_len: word.len()}), 
-			 		Rc::new(DummyNdAdvice{}))
-				)
-			}else{None }
-		}
 
 		fn gen_nd_advice(&self, word: &Vec<F>, _wi: &WordInfo,
 			_prv_adv: Option<Rc<dyn NdAdvice>>) 
-		-> Option<(Rc<dyn NdAdvice>)>{
+		-> Result<Rc<dyn NdAdvice>, Error>{
 			if word.len()<=self.max_word_len(){
-				Some( Rc::new(DummyNdAdvice{}))
-			}else{None }
+				Ok( Rc::new(DummyNdAdvice{}))
+			}else{
+				Err(
+					Error::CapErr(vec![(format!("max_word_len"), word.len())])
+				)
+			}
 		}
 
 		fn get_name(&self) -> String { "SixRootMapper".to_string() }

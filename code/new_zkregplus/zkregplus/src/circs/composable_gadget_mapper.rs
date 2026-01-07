@@ -519,17 +519,14 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 		max_len
 	}
 
-	fn gen_nd_advice_no_limit(&self, word: &Vec<F>, word_info: &WordInfo,
-		r_prev_adv: Option<Rc<dyn NdAdvice>>)
-		->Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>{
-		self.gen_nd_advice_no_limit_adv(word, word_info, r_prev_adv, false)
-	}
-
-	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
-		r_prev_adv: Option<Rc<dyn NdAdvice>>)
-		->Option<Rc<dyn NdAdvice>>{
+	fn gen_nd_advice(&self, _word: &Vec<F>, _word_info: &WordInfo,
+		_r_prev_adv: Option<Rc<dyn NdAdvice>>)
+		->Result<Rc<dyn NdAdvice>, Error>{
+		/*
 		let res = 
 		self.gen_nd_advice_no_limit_adv(word, word_info, r_prev_adv, true);
 		if res.is_some() {Some(res.unwrap().1)} else {None}
+		*/
+		todo!()
 	}
 }

@@ -23657,7 +23657,7 @@ Goal 6. Planning on how to deal with sed capacity
 Tuesday 01/06/2026
 LOC (circ): 3020 
 LOC (gadgets): 18091 
-LOC (sonobe): 20388
+LOC (sonobe): 20388 -> 20559 (+180)
 
 Goal 1. use plan_nd_avice
 	[a] read existing code
@@ -23673,12 +23673,34 @@ Goal 1. use plan_nd_avice
 		of word and then search for the entire word.
 
 Goal 2. implementation 
-	[a] gen_nd_advice -> Advice or Vec<(String,usize)>
+	[a] gen_nd_advice -> Advice or Vec<(String,usize)> -> DONE
 	[b] remove gen_nd_advice_limit and replace them with 
-		call of gen_nd_advice
-	[c] make propagation changes
-	[d]
+		call of gen_nd_advice -> DONE
+	[c] make propagation changes -> DONE in sigma_ir1cs only
 
--- TODO -- set up the framework of binary search first.
+Goal 3. implementation 2
+	[a] gen_nd_advice_at_layer() -> same output
+	[b] gen_nd_advice call gen_nd_advice_at_layer binary search.
+	[c] a function quick_estimate_work_layer()
+	[d] implementation of the plan_nd_advice function bin search
+	[e] do a separate bin_search
+	[f] implement bin_search
+
+Goal 4. implement gen_nd_advice_for_word at layer
+Goal 5. find working layer
+
+Wed 01/07/2026
+LOC (circ): 3020 
+LOC (gadgets): 18091 
+LOC (sonobe): 20559 
+
+Goal 1. fix the circ/gadget framework (cp first)
+	[a] read existing code
+	[b] compute_capacity the problem is that it needs the
+		previous advice (for the first one) whose inp/oup buf
+		depends on the capacity. So it would be rather
+		simply just ask to gen_advice based on the existing capacity
+		and then raise the Error on the needed capacity.
+		Such termination should be as soon as possible.
 
 
