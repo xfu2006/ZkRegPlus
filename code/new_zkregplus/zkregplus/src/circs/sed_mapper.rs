@@ -359,7 +359,7 @@ impl <F:PrimeField> SedAdvice<F>{
 			subsig_info_store_igc: &SubsigInfoStore,//steps extra_info store
 			sig_to_id: &HashMap<String,usize>, //map from sig to id (common)
 			discharge_info: &Vec<DischargeSigInfo>, //info: (common)
-		)->Self{
+		)->Result<Self, Error>{
 		//1. build the word extraction gadget's advice
 		let wd_extract_advice = WordExtractAdvAdvice::<F>
 			::new(word_seg, actual_size, false); //default mode for char sid
@@ -446,13 +446,13 @@ impl <F:PrimeField> SedAdvice<F>{
 			Rc::new(compute_sig_adv_advice.clone()),
 		];
 
-		Self{
+		Ok(Self{
 			wd_extract_advice, 
 			fsm_adv_advice_cs, fsm_adv_advice_igc, 
 			discharge_adv_advice_cs, discharge_adv_advice_igc, 
 			compute_sig_adv_advice,
 			vec_advices
-		}
+		})
 	}
 }
 
@@ -576,15 +576,15 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 	/// return the max word capacity of the component
 	fn max_word_len(&self)->usize{ self.capacity.wea_capacity().max_word_len }
 
-	/* REMOVE LATER
-	/// Also responsible for generating nd_advice
-	fn gen_nd_advice_no_limit_adv(&self, word: &Vec<F>, word_info: &WordInfo,
-		prev_adv: Option<Rc<dyn NdAdvice>>, _use_self_cap: bool
-	) ->Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>{
+	/// genera the avice using its own capacity
+	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
+		r_prev_adv: Option<Rc<dyn NdAdvice>>)
+		->Result<Rc<dyn NdAdvice>, Error>{
 		//1. expand word to full length
 		let mut rem_word = vec![F::zero(); self.max_word_len() - word.len()];
 		let mut word_seg = word.clone();
 		word_seg.append(&mut rem_word);
+
 		//2. collect the data for building advice.
 		//most vars have two versions: cs and igc
 		//cs stands for case sensitive
@@ -617,7 +617,6 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 		let pm_fsm_id_cs = ClamavDB::<F>::pm_acdfa_id(sig_id, false);
 		let pm_fsm_id_igc = ClamavDB::<F>::pm_acdfa_id(sig_id, true);
 
-		
 		//3. generate the inputs.
 		//3.1 the case sensitive version
 		let init_state_cs = F::from((pm_acdfa_cs.init_state+1) as u32); //adj +1
@@ -631,10 +630,12 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 				&subsig_step_store_cs,
 				pm_fsm_id_cs,
 				&self.capacity.da_capacity()
-			).to_vec(&subsig_step_store_cs);
+			).to_vec(&subsig_step_store_cs); //it's ok even with capacity
+				//it's just to pass it as data member, will not crash
+				//if lack of capacity
 
 
-		let (inp_state_cs, inp_loc_cs, inp_steps_queue_cs) = prev_adv
+		let (inp_state_cs, inp_loc_cs, inp_steps_queue_cs) = r_prev_adv
 		.as_ref().map_or(
 			(init_state_cs, init_loc_cs, init_steps_queue_cs), |adv|{
 				let adv= adv.as_any().downcast_ref::<SedAdvice<F>>(); 
@@ -667,7 +668,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 				&self.capacity.da_capacity()
 			).to_vec(&subsig_step_store_igc);
 
-		let (inp_state_igc, inp_loc_igc, inp_steps_queue_igc) = prev_adv
+		let (inp_state_igc, inp_loc_igc, inp_steps_queue_igc) = r_prev_adv
 		.as_ref().map_or(
 			(init_state_igc, init_loc_igc, init_steps_queue_igc), |adv|{
 				let adv= adv.as_any().downcast_ref::<SedAdvice<F>>(); 
@@ -709,27 +710,10 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 			subsig_info_store_igc,
 			&self.clamdb.sig_to_id,
 			&discharge_info
-		);
+		)?;
 
-		let cap2 = Clone::clone(&self.capacity);
-		Some((Rc::new(cap2), Rc::new(advice)) )
-	}
-	fn gen_nd_advice_no_limit(&self, word: &Vec<F>, word_info: &WordInfo,
-		r_prev_adv: Option<Rc<dyn NdAdvice>>)
-		->Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>{
-		self.gen_nd_advice_no_limit_adv(word, word_info, r_prev_adv, false)
-	}
-	*/
+		Ok( Rc::new(advice) )
 
-	fn gen_nd_advice(&self, _word: &Vec<F>, _word_info: &WordInfo,
-		_r_prev_adv: Option<Rc<dyn NdAdvice>>)
-		->Result<Rc<dyn NdAdvice>, Error>{
-		/*
-		let res = 
-		self.gen_nd_advice_no_limit_adv(word, word_info, r_prev_adv, true);
-		if res.is_some() {Some(res.unwrap().1)} else {None}
-		*/
-		todo!()
 	}
 
 	/// return the sizes of inp, oup, data buffer, failed_sigs, discharged_sigs
