@@ -48,11 +48,11 @@ fn small_data<F:PrimeField>(){
 	let perc_comp_subsigs = 50;
 	let num_category = 1;
 	let num_circs_per_category= 1;
-	let avg_subsig_per_sig = 3;
+	//let avg_subsig_per_sig = 3;
 
 	let init_cp_cap = CpCapacity{
 		max_word_len: max_word, 
-		avg_subsig_per_sig,
+		//avg_subsig_per_sig,
 		basis_unique_states,
 		subsigs,
 		avg_pats_per_subsig

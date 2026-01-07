@@ -74,22 +74,10 @@ pub trait ComponentMapper<F:PrimeField, LK: LookupTableTwoCol<F>>: Debug{
 	/// cmp_cfgs: each tuple is (idx_inp, idx_oup, idx_data) for each component.
 	fn get_joins(&self, i: usize, stmt_cfg: &StatementConfig, comp_cfgs: &Vec<Vec<usize>>)->Vec<( (usize,usize), (usize,usize) )>;
 
-	/// Also responsible for generating nd_advice, regardless of
-	/// capacity
-	fn gen_nd_advice_no_limit(&self, word: &Vec<F>, word_info: &WordInfo,
-		prev_adv: Option<Rc<dyn NdAdvice>>)
-		->Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>;
-
 	/// Also responsible for generating nd_advice with its own capacity
 	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
 		prev_adv: Option<Rc<dyn NdAdvice>>)
-		->Option<Rc<dyn NdAdvice>>;
-
-	/// Also responsible for generating nd_advice, regardless of
-	/// capacity
-	fn gen_nd_advice_no_limit_adv(&self, word: &Vec<F>, word_info: &WordInfo,
-		prev_adv: Option<Rc<dyn NdAdvice>>, b_use_self_cap: bool)
-		->Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>;
+		->Result<Rc<dyn NdAdvice>, Error>;
 
 
 	/// return the inp, oup, data and 3 subtable segments,
@@ -178,6 +166,7 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>{
 	}
 	pub fn set_name(&mut self, name: &str){ self.name = format!("{}", name); }
 
+	/* REMOVE LATER
 	/// Assuming there is no limit of capacity, given the word
 	/// generate its advice, and return the capacity requirement.
 	/// If return nil, it means it cannot handle it
@@ -215,6 +204,7 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>{
 			Rc::new(CompositeAdvice{vec_adv})
 		) )
 	}
+	*/
 }
 
 impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadgetMapper<F,LK>{

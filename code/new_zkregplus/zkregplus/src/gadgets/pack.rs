@@ -14,9 +14,12 @@ use std::{
 use ark_relations::{
 	r1cs::{SynthesisError,ConstraintSystemRef,LinearCombination,Variable}
 };
-use folding_schemes::folding::foldpot::{
-	sigma_ir1cs::{SigmaGadget,WitnessSigmaIR1CSVar,WitnessSigmaIR1CSConfig, NdAdvice},
-	container_config::{ContainerConfig},
+use folding_schemes::{
+	Error,
+	folding::foldpot::{
+		sigma_ir1cs::{SigmaGadget,WitnessSigmaIR1CSVar,WitnessSigmaIR1CSConfig, NdAdvice},
+		container_config::{ContainerConfig},
+	}
 };
 use ark_r1cs_std::{
 	R1CSVar,
@@ -438,7 +441,8 @@ impl <F: PrimeField> PackFinalAdvice<F>{
 	/// to construct the buffer: capacity_imm is for immediate buffer
 	/// and capacity_out is for the vector of final states
 	pub fn new(inp_states: &Vec<F>, vec_b_final: &Vec<bool>, 
-		capacity_imm: usize, capacity_out: usize, fsm_id: u32 )->Self{
+		capacity_imm: usize, capacity_out: usize, fsm_id: u32 )->
+		Result<Self,Error>{
 		//1. construct the out_states (all final states
 		// and pad zero at the beginning)
 		let zero = F::zero();
@@ -450,7 +454,9 @@ impl <F: PrimeField> PackFinalAdvice<F>{
 		vec_final_states.sort();
 		let set_final_states = vec_final_states.par_iter().map(|&s|
 			s).collect::<HashSet<F>>();
-		assert!(vec_final_states.len()<capacity_out, "INCREASE capacity_out: {}, final: states: {}", capacity_out, vec_final_states.len());
+		if vec_final_states.len()>capacity_out-1{
+			return Err(Error::CapErr(vec![(format!("capacity_out"), vec_final_states.len()+1)]));
+		}
 		let vec_final_states = [ 
 			&vec![zero; capacity_out - vec_final_states.len()][..],
 			&vec_final_states[..],
@@ -461,6 +467,9 @@ impl <F: PrimeField> PackFinalAdvice<F>{
 			.collect::<HashSet<F>>().into_iter().collect::<Vec<F>>();
 		vec_imm_states.sort();
 		assert!(vec_imm_states[0]!=zero);
+		if vec_imm_states.len()>capacity_imm-1{
+			return Err(Error::CapErr(vec![(format!("capacity_imm"), vec_final_states.len()+1)]));
+		}
 		assert!(vec_imm_states.len()<capacity_imm, "imm_states: {} > capacity_imm: {}", vec_imm_states.len(), capacity_imm);
 		let vec_imm_states = [
 			&vec![zero; capacity_imm - vec_imm_states.len()][..],
@@ -494,8 +503,8 @@ impl <F: PrimeField> PackFinalAdvice<F>{
 			&vec![zero; capacity_out][..], //for oup_states (final only)
 		].concat();
 
-		Self{unique_states: vec_imm_states, oup_states: vec_final_states, 
-			m_table, subtbl_id}
+		Ok(Self{unique_states: vec_imm_states, oup_states: vec_final_states, 
+			m_table, subtbl_id})
 	}
 
 	/// Given the same info as new(), estimate the
@@ -564,7 +573,7 @@ pub mod tests_pack_gadget{
 		//2. build the advice
 		let mut adv = 
 			PackFinalAdvice::new(&inp_states, &vec_b_final, 
-				imm_buf_len, capacity, msf_id);
+				imm_buf_len, capacity, msf_id).unwrap();
 		let inp = vec![];
 		let oup = vec![];
 		let data = vec![

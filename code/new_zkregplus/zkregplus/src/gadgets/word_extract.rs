@@ -18,6 +18,7 @@ use ark_r1cs_std::{
 use std::any::Any;
 use utils::{data::{packed_to_nibbles}};
 use std::rc::{Rc};
+use folding_schemes::{Error};
 
 pub const LEGS:usize = 62;
 /// This gadget is responsible for extract a word (248-bit)
@@ -225,7 +226,7 @@ impl <F: PrimeField> WordExtractAdvice<F>{
 	/// word_seg is the one with max compacity, actual size
 	/// is the actual word len. We convert all remaining 
 	/// as 0.
-	pub fn new(word_seg: &Vec<F>, actual_size: usize)->Self{
+	pub fn new(word_seg: &Vec<F>, actual_size: usize)->Result<Self, Error>{
 		//1. normalize the input
 		let mut word = word_seg.clone();
 		for i in actual_size..word_seg.len(){ word[i] = F::zero(); }
@@ -245,7 +246,7 @@ impl <F: PrimeField> WordExtractAdvice<F>{
 		data.append(&mut nibbles);
 
 
-		Self{data}
+		Ok(Self{data}) //no capacity issue always return Ok.
 	}
 }
 
@@ -540,7 +541,7 @@ pub mod tests_word_extract_gadget{
 		let adv = WordExtractAdvice::new(&word, act_size);
 		let inp = vec![];
 		let oup = vec![];
-		let data = adv.data.clone();
+		let data = adv.unwrap().data.clone();
 		let mut subtbl_id = vec![Fr::from(CHAR); 
 			inp.len() + oup.len() + data.len()];
 		subtbl_id[0] = Fr::zero(); //don't care for act_word_len

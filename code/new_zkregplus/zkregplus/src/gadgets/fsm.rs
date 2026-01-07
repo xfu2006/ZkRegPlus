@@ -5,11 +5,14 @@
 use std::rc::{Rc};
 use ark_ff::{PrimeField};
 use std::marker::{PhantomData};
-use folding_schemes::folding::foldpot::{
-	sigma_ir1cs::{SigmaGadget,WitnessSigmaIR1CSVar,WitnessSigmaIR1CSConfig, NdAdvice },
-	container_config::{ContainerConfig},
-	circuits_super::field_to_usize,
-	utils::{var_to_tuple_adv},
+use folding_schemes::{
+	Error,
+	folding::foldpot::{
+		sigma_ir1cs::{SigmaGadget,WitnessSigmaIR1CSVar,WitnessSigmaIR1CSConfig, NdAdvice },
+		container_config::{ContainerConfig},
+		circuits_super::field_to_usize,
+		utils::{var_to_tuple_adv},
+	}
 };
 use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef,LinearCombination,
 	Variable};
@@ -325,7 +328,8 @@ impl <F: PrimeField> FsmAdvice<F>{
 	/// as 0.
 	/// NOTE: inp_state is the ADJUSTED satate (+1 of the raw_state on
 	/// ACDFA)
-	pub fn new(nibbles: &Vec<F>, acdfa: &HexACDFA, inp_state: F, fsm_id: u32)->Self{
+	pub fn new(nibbles: &Vec<F>, acdfa: &HexACDFA, inp_state: F, fsm_id: u32)
+	->Result<Self, Error>{
 		//1. normalize the input
 		let acdfa_state_part_bits = acdfa.state_part_bits;
 		let mut states = vec![];
@@ -349,8 +353,8 @@ impl <F: PrimeField> FsmAdvice<F>{
 			trans.push(tr);
 			cur_state = nxt_state;
 		}
-
-		Self{states, trans, acdfa_state_part_bits, _fsm_id: fsm_id}
+		//no capacity issue always return Ok result
+		Ok(Self{states, trans, acdfa_state_part_bits, _fsm_id: fsm_id})
 	}
 }
 
@@ -384,7 +388,7 @@ pub mod tests_fsm_gadget{
 		let acdfa = HexACDFA::new(1, &patterns);
 		let init_state = acdfa.init_state;
 		let inp_state = Fr::from( (init_state + 1) as u32);
-		let adv = FsmAdvice::new(&nibbles, &acdfa, inp_state, msf_id);
+		let adv = FsmAdvice::new(&nibbles, &acdfa, inp_state, msf_id).unwrap();
 		assert!(adv.acdfa_state_part_bits == rg.as_ref().acdfa_state_part_bits);
 		assert!(adv.states.len()==nibble_len+1);	
 		assert!(adv._fsm_id==msf_id);

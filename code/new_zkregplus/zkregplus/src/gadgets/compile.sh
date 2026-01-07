@@ -1,5 +1,5 @@
 #1. quick compile 
-cargo check --tests 2>&1 | less
+#cargo check --tests 2>&1 | less
 
 #2. test each gadget
 RUST_BACKTRACE=1 
@@ -16,7 +16,7 @@ RUST_BACKTRACE=1
 #RUST_BACKTRACE=1 cargo test -- tests_word_extract_gadget --show-output --nocapture
 #cargo test -- tests_fsm_gadget --show-output --nocapture
 #cargo test -- tests_pack_gadget --show-output --nocapture
-#cargo test -- tests_sigs_gadget --show-output --nocapture
+cargo test -- tests_sigs_gadget --show-output --nocapture
 
 #3. other misc. unused scripts
 #cargo test -- test_encode --show-output --nocapture

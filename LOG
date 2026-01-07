@@ -23703,4 +23703,18 @@ Goal 1. fix the circ/gadget framework (cp first)
 		and then raise the Error on the needed capacity.
 		Such termination should be as soon as possible.
 
+Goal 2. fix the interface first
+	[a] warnings in sonobe
+	[b] composable_gadget_mapper
+
+Goal 3. New design of cp_mapper
+	[a] gen_nd_advice call each component based on the current capacity
+		-> each comment new may return Error
+	[b] modify them one by one
+
+Goal 4. Implementation
+	[a] cp_mapper gen_nd_advice
+	[b] seg1 and 2
+	[c] CpAdvice::new
+
 

@@ -200,17 +200,19 @@ GadgetMapper<F,LK> for SumMapper<F, LK>{
 
 	/// given a vector of circuits' gadget mapper, given a word
 	/// return the (steps, Vec<pci>, ND_Advice object)
-	fn gen_nd_advice_no_limit(&self, word: &Vec<F>, _wi: &WordInfo,
+	fn gen_nd_advice(&self, word: &Vec<F>, _wi: &WordInfo,
 		_prev_advice: Option<Rc<dyn NdAdvice>>)
-		-> Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>{
+		-> Result<Rc<dyn NdAdvice>, Error>{
 			if word.len()<=self.max_word_len(){
 				let w0_val = field_to_usize(&word[0]);
-				if (w0_val%2==1) != self.b_odd { return None; }
-				Some((
-					Rc::new(DummyCapacity{word_seg_len: word.len()}), 
-			 		Rc::new(DummyNdAdvice{})
-				))
-			}else{None }
+				if (w0_val%2==1) != self.b_odd { 
+					Err(Error::CapErr(vec![(format!("odderr"),word.len())]))
+				}else{
+					Ok( Rc::new(DummyNdAdvice{}))
+				}
+			}else{
+				Err(Error::CapErr(vec![(format!("wlen"),word.len())]))
+			}
 	}
 
 	fn get_name(&self) -> String{

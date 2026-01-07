@@ -40,9 +40,9 @@ use std::{
 	rc::{Rc},
 	cell::{RefCell},
 	fmt::{Debug},
-	collections::{HashMap,HashSet},
+	collections::{HashMap},
 };
-use rayon::iter::{IndexedParallelIterator,IntoParallelRefIterator,ParallelIterator};
+//use rayon::iter::{IndexedParallelIterator,IntoParallelRefIterator,ParallelIterator};
 use folding_schemes::{
 	Error,
 	folding::foldpot::{
@@ -185,7 +185,7 @@ impl <F:PrimeField> CpAdvice<F>{
 			fsm_id: usize, //e.g., CRIT_INIT or CRIT_IGC_INIT
 			vec_sig_id_no_crit_pat: &Vec<usize>, //the pats to include 
 					//in failed_sigs by default
-		)->Self{
+		)->Result<Self, Error>{
 		//0. construct the capacity fields needed by sub-components
 		let (final_states_len,join_buf_capacity,sig_buf_capacity,imm_buf_len)
 			 = capacity.get_old_stats();
@@ -193,10 +193,10 @@ impl <F:PrimeField> CpAdvice<F>{
 		//1. build the word extraction gadget's advice
 		let inp_state = inp_buf[0].clone();
 		let wd_extract_advice = WordExtractAdvice::<F>
-			::new(word_seg, actual_size);
+			::new(word_seg, actual_size)?;
 		let nibbles = wd_extract_advice.data[1..].to_vec();
 		let dfa_crit_advice = FsmAdvice::<F>
-			::new(&nibbles, dfa_crit, inp_state, fsm_id as u32);
+			::new(&nibbles, dfa_crit, inp_state, fsm_id as u32)?;
 
 
 		//2. build the packing final states gadget's advice
@@ -204,9 +204,28 @@ impl <F:PrimeField> CpAdvice<F>{
 			let val_s = field_to_usize(s);
 			dfa_crit.is_final(val_s - 1)
 		}).collect::<Vec<bool>>();
-		let packfinal_crit_advice = PackFinalAdvice::<F>
+		let pack_res = PackFinalAdvice::<F>
 			::new(&dfa_crit_advice.states, &vec_b_final,
 				imm_buf_len, final_states_len, fsm_id as u32);
+		let packfinal_crit_advice = match pack_res{
+			Ok(adv) => Ok(adv),
+			Err(Error::CapErr(vec)) => {
+				let vec_err = vec.iter().map(|(s,val)|{
+					if s=="capacity_imm"{
+						let basis_unique_states = val * 10000 
+							/(capacity.max_word_len * LEGS) + 1;
+						(format!("cp::basis_unique_states"),basis_unique_states)
+					}else if s=="capacity_out"{
+						let avg_pats_per_subsig = val / capacity.subsigs + 1;
+						(format!("cp::avg_pats_per_subsig"),avg_pats_per_subsig)
+					}else{
+						(format!("unknown capacity err: {}", s), 0)
+					}
+				}).collect::<Vec<(String,usize)>>();
+				Err(Error::CapErr(vec_err))
+			},
+			_ => pack_res 
+		}?;
 
 		//3. build the advice for the sigs gadget
 		let sig_cap = SigGadgetCapacity{
@@ -218,82 +237,38 @@ impl <F:PrimeField> CpAdvice<F>{
 		let inp_sigs = inp_buf[1..sig_buf_capacity+1].to_vec();
 
 		
-		let sigs_advice = GetSigAdvice::<F>::new(
+		let sigs_res = GetSigAdvice::<F>::new(
 			&packfinal_crit_advice.oup_states, &inp_sigs, sig_cap, 
 			dfa_crit, map_crit_pat, sig_to_id, fsm_id, vec_sig_id_no_crit_pat);
-		Self{
+		let sigs_advice = match sigs_res{
+			Ok(adv) => Ok(adv),
+			Err(Error::CapErr(vec)) => {
+				let vec_err = vec.iter().map(|(s,val)|{
+					if s=="slen"{
+						let subsigs = val;
+						(format!("cp::subsigs"),*subsigs)
+					}else if s=="olen"{
+						let avg_pats_per_subsig = val / capacity.subsigs + 1;
+						(format!("cp::avg_pats_per_subsig"),avg_pats_per_subsig)
+					}else if s=="jlen"{
+						let avg_pats_per_subsig = val / capacity.subsigs + 1;
+						(format!("cp::avg_pats_per_subsig"),avg_pats_per_subsig)
+					}else{
+						(format!("unknown capacity err: {}", s), 0)
+					}
+				}).collect::<Vec<(String,usize)>>();
+				Err(Error::CapErr(vec_err))
+			},
+			_ => sigs_res 
+		}?;
+
+		Ok(Self{
 			wd_extract_advice,
 			dfa_crit_advice,
 			packfinal_crit_advice,
 			sigs_advice,
 			inp_buf: inp_buf.clone(),
-		}
-	}
-
-	/// compute the capacity needed for input words
-	pub fn compute_capacity(
-			word_seg: &Vec<F>, //must be full len pad with zero
-			actual_size: usize,
-			inp_buf: &Vec<F>,  //input buffer
-			dfa_crit: &HexACDFA,
-			map_crit_pat: &HashMap<String,Vec<String>>,
-			sig_to_id: &HashMap<String,usize>,
-			fsm_id: usize, //e.g., CRIT_INIT or CRIT_IGC_INIT
-			vec_sig_id_no_crit_pat: &Vec<usize>, //the pats to include 
-					//in failed_sigs by default
-		)->CpCapacity{
-		//1. compute the word extract and fsm advice
-		//this is needed because it's the actual contents of the
-		//output states which determinces the capacity of pack
-		//and sig 
-		let inp_state = inp_buf[0].clone();
-		let wd_extract_advice = WordExtractAdvice::<F>
-			::new(word_seg, actual_size);
-		let nibbles = wd_extract_advice.data[1..].to_vec();
-		let dfa_crit_advice = FsmAdvice::<F>
-			::new(&nibbles, dfa_crit, inp_state, fsm_id as u32);
-
-		//2. build the capacity for PackFinalAdvice
-		let vec_b_final = dfa_crit_advice.states.iter().map(|s|{
-			let val_s = field_to_usize(s);
-			dfa_crit.is_final(val_s - 1)
-		}).collect::<Vec<bool>>();
-		let mut vec_final_states = dfa_crit_advice.states.par_iter().zip(
-			vec_b_final.par_iter())
-			.filter(|(_, &b)| b).map(|(s,_)| s.clone())
-			.collect::<HashSet<F>>().into_iter().collect::<Vec<F>>();
-		vec_final_states.sort();
-		let (cap_out, cap_imm) = PackFinalAdvice::<F>
-			::compute_capacity(&dfa_crit_advice.states, &vec_b_final);
-
-		//3. build the capacity for SigAdvice
-		let inp_sigs = &inp_buf[1..].to_vec();
-		let sig_cap = GetSigAdvice::<F>::
-			compute_capacity(
-			    &vec_final_states, 
-        		inp_sigs,
-        		dfa_crit, 
-        		map_crit_pat, 
-        		sig_to_id, 
-        		fsm_id, 
-        		vec_sig_id_no_crit_pat
-			);
-
-		let max_word_len =  word_seg.len();
-		let (olen,jlen,slen,_clen) = (sig_cap.final_states_buf_capacity,
-			sig_cap.join_buf_capacity, sig_cap.sig_buf_capacity,
-			sig_cap.count_sig_no_crit_pat);
-		let subsigs = slen;
-		let avg_pats_per_subsig = *(vec![olen / subsigs,
-			jlen / subsigs, cap_out/subsigs].iter().max().unwrap()) + 1;
-		let basis_unique_states = cap_imm * 10000 / (LEGS * max_word_len) + 1;
-		let res = CpCapacity{
-			max_word_len, subsigs, 
-			basis_unique_states,
-			avg_pats_per_subsig,
-		};
-
-		res
+		})
 	}
 
 }
@@ -477,13 +452,9 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		vec![ (rg_g_ext, rg_g_ext_upper) ]
 	}
 
-	/// Also responsible for generating nd_advice
-	/// when b_use_self_capacity is true fix the capacity using its sown
-	/// otherwise compute the capacity needed
-	fn gen_nd_advice_no_limit_adv(&self, word: &Vec<F>, _word_info: &WordInfo,
-		prev_adv: Option<Rc<dyn NdAdvice>>, b_use_self_capacity: bool)
-		->Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>{
-
+	fn gen_nd_advice(&self, word: &Vec<F>, _word_info: &WordInfo,
+		prev_adv: Option<Rc<dyn NdAdvice>>)
+		->Result<Rc<dyn NdAdvice>, Error>{
 		//1. expand to full length
 		let (zero,one) = (F::zero(),F::one());
 		let mut rem_word = vec![F::zero(); self.max_word_len() - word.len()];
@@ -527,33 +498,8 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		).collect::<Vec<usize>>();
 		vec_sig_id_no_crit_pat.sort();
 
-		//2. estimate the capacity
-		//NOTE that we do not have a real inp_buf
-		//simulate it at the best
-		let sig_buf_capacity = 1; //min value possible
-		let inp_sigs = prev_adv.clone().map_or(vec![zero; sig_buf_capacity], 
-		|adv|{
-			let adv= adv.as_any().downcast_ref::<CpAdvice<F>>(); 
-			let last_oup_sigs = &adv.unwrap().sigs_advice.oup;
-			last_oup_sigs.to_vec()
-		});
-		let est_inp_buf = vec![ vec![inp_state], inp_sigs].concat();
-		let capacity_alt = CpAdvice::compute_capacity(
-			&word_seg, 
-			word.len(), 
-			&est_inp_buf, 
-			acdfa,
-			map_crit,
-			sigs_to_id,
-			fsm_id as usize,
-			&vec_sig_id_no_crit_pat,
-		);
-		let capacity = if b_use_self_capacity {&self.capacity}
-			else {&capacity_alt};
-		let (_final_states_len,_join_buf_capacity,sig_buf_capacity,_imm_buf_len)
-			 = capacity.get_old_stats();
-
 		//3. compute the advice
+		let sig_buf_capacity = self.capacity.subsigs;
 		let inp_sigs = prev_adv.map_or(vec![zero; sig_buf_capacity], 
 		|adv|{
 			let adv= adv.as_any().downcast_ref::<CpAdvice<F>>(); 
@@ -564,32 +510,16 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		let advice = CpAdvice::<F>::new(
 			&word_seg, 
 			word.len(), 
-			&capacity, 
+			&self.capacity, 
 			&inp_buf, 
 			acdfa,
 			map_crit,
 			sigs_to_id,
 			fsm_id as usize,
 			&vec_sig_id_no_crit_pat,
-		);
+		)?;
 
-		//3. build the advice
-		Some((Rc::new(Clone::clone(capacity)), Rc::new(advice)) )
-	}
-
-	fn gen_nd_advice_no_limit(&self, word: &Vec<F>, _word_info: &WordInfo,
-		prev_adv: Option<Rc<dyn NdAdvice>>)
-		->Option<(Rc<dyn Capacity>, Rc<dyn NdAdvice>)>{
-		self.gen_nd_advice_no_limit_adv(word, _word_info,
-			prev_adv, false)
-	}
-
-	fn gen_nd_advice(&self, word: &Vec<F>, _word_info: &WordInfo,
-		prev_adv: Option<Rc<dyn NdAdvice>>)
-		->Option<Rc<dyn NdAdvice>>{
-		let res = self.gen_nd_advice_no_limit_adv(word, _word_info,
-			prev_adv, true);
-		if res.is_some(){ Some(res.unwrap().1) }else{ None }
+		Ok( Rc::new(advice) )
 	}
 
 

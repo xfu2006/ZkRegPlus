@@ -13,10 +13,13 @@ use std::{
 	collections::{HashMap,HashSet}
 };
 use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef};
-use folding_schemes::folding::foldpot::{
-	sigma_ir1cs::{SigmaGadget,WitnessSigmaIR1CSVar,WitnessSigmaIR1CSConfig, 
-	NdAdvice},
-	container_config::{ContainerConfig},
+use folding_schemes::{
+	Error,
+	folding::foldpot::{
+		sigma_ir1cs::{SigmaGadget,WitnessSigmaIR1CSVar,WitnessSigmaIR1CSConfig, 
+		NdAdvice},
+		container_config::{ContainerConfig},
+	},
 };
 use ark_r1cs_std::{
 	boolean::Boolean,
@@ -426,7 +429,7 @@ impl <F: PrimeField> GetSigAdvice<F>{
 		sig_to_id: &HashMap<String,usize>,
 		fsm_id: usize,
 		vec_sig_id_no_crit_pat: &Vec<usize>,
-	)->Self{
+	)->Result<Self, Error>{
 		//1. sets up the data
 		assert!(vec_sig_id_no_crit_pat.len()==capacity.count_sig_no_crit_pat);
 		let (olen, jlen, slen) = (
@@ -435,10 +438,20 @@ impl <F: PrimeField> GetSigAdvice<F>{
 			capacity.sig_buf_capacity
 		);
 		let mut final_states = final_states.clone();
+		if final_states.len()>olen-1{
+			return Err(
+				Error::CapErr(vec![(format!("olen"), final_states.len()+1)])
+			);
+		}
 		expand_vec(&mut final_states, olen); //the input
 		let sigbit_factor = F::from(1u32 << RANGE2_BIT);
 		let sigbit_fac2 = sigbit_factor * sigbit_factor;
 		assert!(final_states.len() == olen);
+		if inp_sigs.len()>slen{
+			return Err(
+				Error::CapErr(vec![(format!("slen"), inp_sigs.len())])
+			);
+		}
 		assert!(inp_sigs.len()==slen);
 
 		//2. compute the signures and the counts (note state IDs
@@ -509,17 +522,41 @@ impl <F: PrimeField> GetSigAdvice<F>{
 			collect::<Vec<F>>();
 
 		//3. set up their sizes and genreate data
+		if final_states_sigs_count.len()>olen-1{
+			return Err(
+				Error::CapErr(vec![(format!("olen"), 
+					final_states_sigs_count.len()+1)])
+			);
+		}
 		expand_vec(&mut final_states_sigs_count, olen);
 		expand_vec(&mut decoded_final_states_sigs_count_states, olen);
 		expand_vec(&mut decoded_final_states_sigs_count_count, olen);
 
+		if final_states_sigs.len()>jlen-1{
+			return Err(
+				Error::CapErr(vec![(format!("jlen"), 
+					final_states_sigs.len()+1)])
+			);
+		}
 		expand_vec(&mut final_states_sigs, jlen);
 		expand_vec(&mut decoded_final_states_sigs_states, jlen);
 		expand_vec(&mut decoded_final_states_sigs_ids, jlen);
 		expand_vec(&mut decoded_final_states_sigs_sigs, jlen);
 
+		if sigs_to_merge.len()>slen-1{
+			return Err(
+				Error::CapErr(vec![(format!("slen"), 
+					sigs_to_merge.len()+1)])
+			);
+		}
 		expand_vec(&mut sigs_to_merge, slen); 
 
+		if oup.len()>slen-1{
+			return Err(
+				Error::CapErr(vec![(format!("slen"), 
+					oup.len()+1)])
+			);
+		}
 		expand_vec(&mut oup, slen);
 		oup.sort();
 		assert!(oup[0].is_zero(), 
@@ -570,8 +607,8 @@ impl <F: PrimeField> GetSigAdvice<F>{
 			assert!(data3.to_vec()==vec2);
 		}
 		
-		Self{data, capacity, oup, fsm_id, vec_sig_id_no_crit_pat:
-			vec_sig_id_no_crit_pat.clone()}
+		Ok(Self{data, capacity, oup, fsm_id, vec_sig_id_no_crit_pat:
+			vec_sig_id_no_crit_pat.clone()})
 	}
 
 	/// compute the capacity needed. All params
@@ -1258,7 +1295,7 @@ pub mod tests_sigs_gadget{
 			//have no mapping of any critical patterns, so we list
 		let adv = GetSigAdvice::new(&final_states, &inp, capacity, &acdfa, 
 			&map_crit_pat, &sig_to_id, fsm_id as usize, 
-			&vec_sig_id_no_crit_pat);
+			&vec_sig_id_no_crit_pat).unwrap();
 		let oup = adv.oup.clone();
 		let data = adv.data.clone().to_vec();
 
