@@ -23779,7 +23779,25 @@ Goal 2. Comparison: check out old version
 	[a] set up debug 6109.1 and 6109.2 at
 		(1) gen_dummy_stmt
 		(2) gen_step_constraints (on external_inputs)
+		-> check out version Jan 4 16:49
+	[b] observation: gen_dummy_stmt already exists but who's setting it
+		-> foldpot_main -> 
+		-> driver: 1640: circ.set_dummy_stmt 
 			it calls get_r1cs_from_cs
-	[c] 
+	[c] now check out the latest version
+		now dbg messages are 6109.0, 6109.1, 6109.2
+	[d] FOUND IT: theo original scheme calls gen_nd_no_limit
+		so it is "always" able to generate something,
+		but the circuit capacity is so small that 
+		it will NOT pass the 0'word.
+	[e] remove debug messages 6109
+
+Goal 3. improve the way that it increases one by one
+	[a] identify source
+	[b] why is final states increasing? -> fixed
+
+Goal 4. driver.rs 572 -> fixed
+Goal 5. driver.rs 1336
+	-> looks like vec_pci is swapped with vec_num_segs -> FIXED
 
 

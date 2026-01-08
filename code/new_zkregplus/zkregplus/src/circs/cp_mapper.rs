@@ -217,7 +217,7 @@ impl <F:PrimeField> CpAdvice<F>{
 						(format!("cp::basis_unique_states"),basis_unique_states)
 					}else if s=="capacity_out"{
 						let avg_pats_per_subsig = val / capacity.subsigs + 1;
-						(format!("cp::avg_pats_per_subsig"),avg_pats_per_subsig)
+						(format!("cp::avg_pats_per_subsig from pack.rs"),avg_pats_per_subsig)
 					}else{
 						(format!("unknown capacity err: {}", s), 0)
 					}
@@ -249,10 +249,10 @@ impl <F:PrimeField> CpAdvice<F>{
 						(format!("cp::subsigs"),*subsigs)
 					}else if s=="olen"{
 						let avg_pats_per_subsig = val / capacity.subsigs + 1;
-						(format!("cp::avg_pats_per_subsig"),avg_pats_per_subsig)
+						(format!("cp::avg_pats_per_subsig from sigs.rs olen"),avg_pats_per_subsig)
 					}else if s=="jlen"{
 						let avg_pats_per_subsig = val / capacity.subsigs + 1;
-						(format!("cp::avg_pats_per_subsig"),avg_pats_per_subsig)
+						(format!("cp::avg_pats_per_subsig from sigs.rs jlen"),avg_pats_per_subsig)
 					}else{
 						(format!("unknown capacity err: {}", s), 0)
 					}

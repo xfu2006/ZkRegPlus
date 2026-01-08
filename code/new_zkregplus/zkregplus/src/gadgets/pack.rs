@@ -214,16 +214,6 @@ impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
 		//from Witness.
 		let (ilen, mlen, olen) = (self.inp_states_len, 
 			self.imm_buf_len, self.oup_states_len);
-		println!("DEBUG USE 6201: ilen: {}, mlen: {}, olen: {}, wtns.stmt: {}", ilen, mlen, olen, wtns.statement.len());
-		println!("DEBUG USE 6203  witness stmt ===");
-		for i in 0..wtns.statement.len(){
-			if !wtns.statement[i].value().unwrap().is_zero(){
-				println!(" -- i: {} => {}", i, wtns.statement[i].value().unwrap());
-			}
-			if i==2 && wtns.statement[i].value().unwrap().is_zero(){
-				panic!("STOP HERE 2000");
-			}
-		}
 
 		//2. get the parts of the statement
 		//organize statement: structured as
@@ -253,12 +243,6 @@ impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
 		let unique_states = &data_seg[ilen..ilen+mlen];
 		let m_table = &data_seg[ilen+mlen..ilen+2*mlen];
 		let oup_states = &data_seg[ilen+2*mlen..ilen+2*mlen+olen];
-		//REMOVE LATER --------
-		use crate::gadgets::commons::print_vec;
-		print_vec("DEBUG UES 6101: inp_states", &inp_states.iter().map(|x| x.value().unwrap()).collect::<Vec<_>>());
-		print_vec("DEBUG UES 6102: unique_states", &unique_states.iter().map(|x| x.value().unwrap()).collect::<Vec<_>>());
-		print_vec("DEBUG UES 6103: m_tbl", &m_table.iter().map(|x| x.value().unwrap()).collect::<Vec<_>>());
-		//REMOVE LATER -------- ABOVE
 		assert_logup(cs.clone(), &inp_states,  &unique_states, m_table, &beta)?;
 
 		//3.2 assert that when unique_states[i] is NOT zero, then
@@ -496,12 +480,6 @@ impl <F: PrimeField> PackFinalAdvice<F>{
 		let m_table = gen_m_table(inp_states, &vec_imm_states);
 		assert!(m_table.len()==vec_imm_states.len());
 
-		//REMOVE LATER --------
-		use crate::gadgets::commons::print_vec;
-		print_vec("DEBUG UES 6001: inp_states", &inp_states);
-		print_vec("DEBUG UES 6002: unique_states", &vec_imm_states);
-		print_vec("DEBUG UES 6003: m_tbl", &m_table);
-		//REMOVE LATER -------- ABOVE
 		//4. construct the subtbl_id
 		// it has 3 parts:
 		// unique_states: real identifation of whether it's 

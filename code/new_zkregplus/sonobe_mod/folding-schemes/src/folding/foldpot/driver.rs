@@ -383,7 +383,7 @@ where
 	}
 
 	/// generate the advice using the circuit at layer_i
-	/// return if success (num_steps, vec<PCI>, vec<size of word seg>,
+	/// return if success (num_steps, vec<size of word seg>, vec<PCI>
 	/// 	vec<capacity needed>, vec<advice>)
 	fn gen_nd_advice_at_layer(&self, layer_i: usize,
 		_log_level: usize, b_save_advice: bool,
@@ -419,7 +419,7 @@ where
 	}
 
 	/// find a working layer that would successfully generate
-	/// return if success (LAYER_ID, num_steps, vec<PCI>, vec<size of word seg>,
+	/// return if success (LAYER_ID, num_steps, vec<size of word seg>, vec<PCI>
 	/// 	vec<capacity needed>, vec<advice>)
 	///
 	/// This function uses heurstics here to find a working layer for
@@ -444,12 +444,12 @@ where
 			let min_layer = 0;
 			let res = self.gen_nd_advice_at_layer(max_layer_id,
 				log_level, b_save_advice, &seg, word_info)?;
-			let (num_segs, vec_pci, vec_seg_size, vec_cap, vec_adv) = res;
+			let (num_segs, vec_seg_size, vec_pci, vec_cap, vec_adv) = res;
 			let (best_layer, _num_segs, _vec_seg_size, 
 				_vec_pci, _vec_cap, _vec_adv) = self.bin_search_best_layer(
 					log_level, b_save_advice, &seg, word_info, 
 					min_layer, max_layer_id,
-					num_segs, vec_pci, vec_seg_size, vec_cap, vec_adv);
+					num_segs, vec_seg_size, vec_pci, vec_cap, vec_adv);
 
 			best_layer
 		};
@@ -458,14 +458,15 @@ where
 		let res = self.gen_nd_advice_at_layer(guessed_layer,
 			log_level, b_save_advice, &word, word_info);
 		if res.is_ok(){ 
-			let (num_segs, vec_pci, vec_seg_size,vec_cap,vec_adv)=res.unwrap();
-			Ok( (guessed_layer, num_segs, vec_pci, vec_seg_size, vec_cap, 
+			let (num_segs, vec_seg_size, vec_pci, 
+				vec_cap,vec_adv)=res.unwrap();
+			Ok( (guessed_layer, num_segs, vec_seg_size, vec_pci, vec_cap, 
 				vec_adv) )
 		}else{//try the max id
 			let res2 = self.gen_nd_advice_at_layer(max_layer_id,
 				log_level, b_save_advice, &word, word_info)?;
-			let (num_segs, vec_pci, vec_seg_size, vec_cap, vec_adv) = res2;
-			Ok( (max_layer_id, num_segs, vec_pci, vec_seg_size, vec_cap
+			let (num_segs, vec_seg_size, vec_pci, vec_cap, vec_adv) = res2;
+			Ok( (max_layer_id, num_segs, vec_seg_size, vec_pci, vec_cap
 				, vec_adv) )
 		}
 	}
@@ -499,8 +500,8 @@ where
 	}
 
 
-	/// return if success (LAYER_ID, num_steps, vec<PCI>, vec<size of word seg>,
-	/// 	vec<capacity needed>, vec<advice>)
+	/// return if success (LAYER_ID, num_steps, vec<size of word seg>,
+	///     vec<pci>,	vec<capacity needed>, vec<advice>)
 	/// we do NOT know the result for min_layer, but for sure
 	/// max_layer is a WORKING layer for word. We need to find
 	/// the minimum working layer for the word to save cost
@@ -570,14 +571,14 @@ where
 		for i in 0..self.layered_circs.len(){
 			assert!(self.layered_circs[i].len()==1, "only 1 circ per layer!");
 			assert!(self.layered_circs[i][0]
-				.get_mapper().borrow().max_word_len() != mwl); 
+				.get_mapper().borrow().max_word_len() == mwl); 
 				//all circ should support same max word len
 		}
 
 		//1. quickly identify the MAX working layer needed 
 		let res = self.find_working_layer_for_wd(log_level, b_save_advice,
 			word, word_info)?;
-		let (max_layer_id, num_segs, vec_pci, vec_seg_size, 
+		let (max_layer_id, num_segs, vec_seg_size, vec_pci,
 			vec_cap, vec_adv) = res;
 		log_perf(log_level+1, &format!("plan_nd_advice, step 1: find_working_layer. "), &mut gt1);
 
@@ -586,7 +587,8 @@ where
 		let (_best_layer, num_segs, vec_seg_size, vec_pci, vec_cap, vec_adv) = 
 			self.bin_search_best_layer(log_level+2, b_save_advice,
 				word, word_info, min_layer, max_layer_id,
-				num_segs, vec_pci, vec_seg_size, vec_cap, vec_adv);
+				num_segs, vec_seg_size, vec_pci, vec_cap, vec_adv);
+
 		log_perf(log_level+1, &format!("plan_nd_advice, step 2: bin_search."), &mut gt1);
 		log_perf(log_level, &format!("plan_nd_advice. Total:  best_layer: {}, word.len(): {}.", _best_layer, word.len()), &mut gt2);
 
@@ -782,7 +784,7 @@ where
 			}//end of while remaining loop
 			log_perf(log_level, &format!("plan_nd_advice step 3: gen advice and try each circ. circs: {}, wordlen: {}.", vec_pci.len(), format_bytes(word.len()*31)), &mut gt1);
 
-			Ok( (vec_pci.len(), vec_pci, vec_size, vec_cap, vec_adv  ))
+			Ok( (vec_pci.len(), vec_size, vec_pci, vec_cap, vec_adv  ))
 }
 
 	/// It processes a collection of words, and collect
@@ -874,7 +876,7 @@ where
 			let total_word_len = word.len();
 			let mut acc_wd_len = 0;
 			let _mapper = self.circuits[0].get_mapper();
-			let (steps, vec_pci, vec_len, _vec_cap_req, advice) = self.plan_nd_advice(log_level+1, true, &word, &vec_word_info[word_id-1]).expect("Planning advice fails!"); 
+			let (steps, vec_len, vec_pci, _vec_cap_req, advice) = self.plan_nd_advice(log_level+1, true, &word, &vec_word_info[word_id-1]).expect("Planning advice fails!"); 
 			for i in 0..steps{
 				let pc_i = if i==0 {0} else {vec_pci[i-1]};
 				let pc_i1 = vec_pci[i]; //this is actually pc_i1 for this circ
@@ -1002,7 +1004,6 @@ where
 		let mut wi = 0;
 		let mut start = 0;
 		let lk_len = self.lkup.borrow().get_size();
-		println!("DEBUG USE 6702: lk_len: {}", lk_len);
 		for word in iter_words{
 			let mut remaining = word.clone();
 			let mut subseg_id = 0;
@@ -1327,7 +1328,7 @@ where
 			let mut acc_wd_len = 0;
 			let _mapper = self.circuits[0].get_mapper();
 			let word_info = &vec_word_info[word_id-1];
-			let (steps, vec_pci, vec_len, _vec_cap_req, _advice) = self.plan_nd_advice(log_level+2, false, &word, word_info).expect("Planning advice fails!"); //note: empty advice will be returned
+			let (steps, vec_len, vec_pci, _vec_cap_req, _advice) = self.plan_nd_advice(log_level+2, false, &word, word_info).expect("Planning advice fails!"); //note: empty advice will be returned
 			log_perf(log_level+2, &format!("{} - Pass 1: decide circ alloc for word_id: {}, fname: {}, word_len: {}. ", phase_name, word_id, word_fname, format_bytes(total_word_len*31)), &mut gt2);
 			for i in 0..steps{
 				//2.1 set up params
@@ -1805,42 +1806,39 @@ where
 			let prev_adv: Option<Rc<dyn NdAdvice>> = None; //fine to set None
 			let r_advice= circ.get_mapper().borrow()
 					.gen_nd_advice(&frag, &word_info,prev_adv); //use its own capacity
-			if r_advice.is_ok(){//advice is generated
-				let advice = r_advice.unwrap();
-				let ei = StatementExtraInfo::<C1::ScalarField>{
-					total_words: one,
-					word_id: one,
-					subseg_id: one,
-					total_word_len: C1::ScalarField::from(wlen as u32),
-					total_word_segs: one,
-					n_circ: C1::ScalarField::from(n_circ as u32),
-					pc_i:  C1::ScalarField::from(id as u32),
-					pc_i1:  C1::ScalarField::from(id as u32), //update later
-					act_word_subseg_size: C1::ScalarField::from(wlen as u32),
-					batch_r: zero,
-					batch_v: zero,
-					r_all_words: zero,
-					r_kzg_len: zero,
-					r_vec_r: zero,
-					r_vec_v: zero,
-					r_word_i: zero,
-					accumulated_word_len: C1::ScalarField::from(wlen as u32),
-				};//end constructor StatementExtraInfo
-				circ.set_container_config(&advice);
-				let stmt_res = circ.get_mapper().borrow().build_statement(
-					&frag, 
-					&prev_stmt, 
-					lkup.clone(), 
-					&ei,
-					advice, 
-					lk_share_size,
-					true); //dummy mode
-				assert!(stmt_res.is_ok());
-				circ.set_dummy_stmt(stmt_res.unwrap().to_vec());
-			}else{
-				//do nothing, just let the circ's gen_dummy_statement
-				//later to return zero vec
-			}
+			assert!(r_advice.is_ok(), "UNABLE to generate advice for circ at layer {} for full 0-word. Needs to adjust capacity: {:#?}", i, r_advice);
+
+			let advice = r_advice.unwrap();
+			let ei = StatementExtraInfo::<C1::ScalarField>{
+				total_words: one,
+				word_id: one,
+				subseg_id: one,
+				total_word_len: C1::ScalarField::from(wlen as u32),
+				total_word_segs: one,
+				n_circ: C1::ScalarField::from(n_circ as u32),
+				pc_i:  C1::ScalarField::from(id as u32),
+				pc_i1:  C1::ScalarField::from(id as u32), //update later
+				act_word_subseg_size: C1::ScalarField::from(wlen as u32),
+				batch_r: zero,
+				batch_v: zero,
+				r_all_words: zero,
+				r_kzg_len: zero,
+				r_vec_r: zero,
+				r_vec_v: zero,
+				r_word_i: zero,
+				accumulated_word_len: C1::ScalarField::from(wlen as u32),
+			};//end constructor StatementExtraInfo
+			circ.set_container_config(&advice);
+			let stmt_res = circ.get_mapper().borrow().build_statement(
+				&frag, 
+				&prev_stmt, 
+				lkup.clone(), 
+				&ei,
+				advice, 
+				lk_share_size,
+				true); //dummy mode
+			assert!(stmt_res.is_ok());
+			circ.set_dummy_stmt(stmt_res.unwrap().to_vec());
 			id += 1;
 		}
 	}
@@ -1882,7 +1880,6 @@ where
 		else {panic!("batch proof is none!");};
 	log_perf(log_level, &format!("FoldPot: Step 3: Phase 1: main circuits IVC PROVE STEPS (Folding) DONE. total_word_len: {}, steps: {}.", format_bytes(max_total_n * 31), _num_steps),
 		&mut gt1);
-	//if 1>0 {panic!("STOP HERE 2003");}
 
 	//5. generate the inputs for cyclepair
 	let qa_nizk_pkey = &driver1.nova_param.0.qa_pp.expect("qa_pp null!"); 
@@ -1957,7 +1954,6 @@ where
 
 			qa_nizk_vkey_hash: qa_nizk_vkey_hash1, 
 	};
-	println!("DEBUG USE 6602.1: snark_inp: {:#?}", inp);
 	let decider_circuit = TwoPhaseDeciderEthCircuitSuper
 		::from_nova::<FC>(nova1, nova2, 
 			cyclepair_inputs, qa_nizk_vkey_hash.clone(), 
