@@ -2943,6 +2943,9 @@ where 	C: CurveGroup<ScalarField=F>,
 	/// sigma_ir1cs
 	fn gen_dummy_stmt(&self) -> Vec<F>{
 		let total_size = self.witness_config.statement_size;
+		//REMOVE LATER -----------
+		println!("DEBUG USE 6109.1: gen_dummy_stmt: {}", self.dummy_stmt.is_some());
+		//REMOVE LATER ----------- ABOVE
 		let res = if self.dummy_stmt.is_some(){
 			let stmt = self.dummy_stmt.as_ref().unwrap().clone();
 			assert!(stmt.len()==total_size, "{} != {}", stmt.len(), total_size);
@@ -3017,6 +3020,15 @@ where 	C: CurveGroup<ScalarField=F>,
 		let b_debug = B_DEBUG; //set to false in production mode
 		let b_show_sigs = false; //set to false in production mode
 		let log_level = LOG6;
+		//REMOVE LATER ------------
+		if 1>0 {panic!("STOP HERE 2009");}
+		println!("DEBUG USE 6108.2 ---- first all elements of external_inputs");
+		for i in 0..external_inputs.len(){
+			if !external_inputs[i].value().unwrap().is_zero(){
+				println!(" -- i : {}, val: {}", i, external_inputs[i].value().unwrap());
+			}
+		}
+		//REMOVE LATER ------------ ABOVE
 		//NOTE: cs.is_satisfied() can cause * stack overflow *
 		//if constraints are not constructed carefully.
 		//sometimes if a constraint has lc (linear combinations) too deep,

@@ -450,6 +450,15 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 			_lk: PhantomData,
 		};
 
+		//REMOVE LATER -------------
+		println!("DEBUG USE 6108.1: first 30 elements of stmt ---");
+		let svec = stmt.to_vec();
+		for i in 0..svec.len(){
+			if !svec[i].is_zero(){
+				println!(" -- i: {}, val: {}", i, svec[i]);
+			}
+		}
+		//REMOVE LATER ------------- ABOVE
 
 		#[cfg(test)]{
 			let stmt_vec = stmt.to_vec();

@@ -214,15 +214,14 @@ impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
 		//from Witness.
 		let (ilen, mlen, olen) = (self.inp_states_len, 
 			self.imm_buf_len, self.oup_states_len);
-		println!("DEBUG USE 6201: ilen: {}, mlen: {}, olen: {}", ilen, mlen, olen);
-		println!("DEBUG USE 6202  my_stmt ===");
-		for i in 0..my_stmt.len(){
-			println!(" -- i: {} => {}", i, my_stmt[i].value().unwrap());
-		}
+		println!("DEBUG USE 6201: ilen: {}, mlen: {}, olen: {}, wtns.stmt: {}", ilen, mlen, olen, wtns.statement.len());
 		println!("DEBUG USE 6203  witness stmt ===");
 		for i in 0..wtns.statement.len(){
 			if !wtns.statement[i].value().unwrap().is_zero(){
 				println!(" -- i: {} => {}", i, wtns.statement[i].value().unwrap());
+			}
+			if i==2 && wtns.statement[i].value().unwrap().is_zero(){
+				panic!("STOP HERE 2000");
 			}
 		}
 

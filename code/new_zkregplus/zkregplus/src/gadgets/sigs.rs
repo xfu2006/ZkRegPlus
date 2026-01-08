@@ -562,6 +562,7 @@ impl <F: PrimeField> GetSigAdvice<F>{
 		assert!(oup[0].is_zero(), 
 			"output buf: {} too small, needs 1st element to be dummy zero",
 			oup.len());
+		if 1>0 {panic!("STOP HERE 305");}
 
 		//3. generate the m_tables
 		let m_tbl_joins_to_sigs = gen_m_table(
