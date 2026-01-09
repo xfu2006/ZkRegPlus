@@ -26,6 +26,7 @@ use ark_r1cs_std::{R1CSVar,alloc::AllocVar, eq::EqGadget,fields::FieldVar};
 use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef,LinearCombination,
 	Variable};
 use ark_r1cs_std::fields::fp::FpVar;
+use folding_schemes::{Error};
 use rayon::iter::{
 	ParallelIterator,
 	IntoParallelIterator,
@@ -607,10 +608,12 @@ pub fn verify_col_to_sorted_set<F:PrimeField>(
 /// given sorted key: (0,1,2,3)
 /// given key (4,0,1,1,3) the tag vec is (0,0,1,1,1)
 /// where for key element 0, its tag is 0.
+///
+/// might through CapErr("unique_key_size")
 pub fn prove_filter_tag<F:PrimeField>(
 	key: &Vec<F>, sorted_key: &Vec<F>, tags: &Vec<F>,
 	unique_key_size: usize,
-) -> Result<Rc<RefCell<Container<F>>>, SynthesisError>{
+) -> Result<Rc<RefCell<Container<F>>>, Error>{
 	//0. check data
 	let (_n, m, k) = (key.len(), unique_key_size, sorted_key.len());
 	#[cfg(test)]{
@@ -631,6 +634,10 @@ pub fn prove_filter_tag<F:PrimeField>(
 		k
 	}).collect::<HashSet<F>>();
 	let mut no_key:Vec<F> = no_key_set.iter().cloned().collect();
+	if no_key.len()>=m{
+		return Err(Error::CapErr(vec![(format!("unique_key_size"), 
+			no_key.len()+1)]));
+	}
 	assert!(no_key.len()<m, "no_key.len: {} should < unique_set_size: {}",
 		no_key.len(), m);
 	no_key.sort();
@@ -785,6 +792,8 @@ pub fn verify_filter_tag<F:PrimeField>(
 ///
 /// It returns the bundle that includes the sorted table (key: "sorted_tbl")
 /// and the corresponding proof (key: "prf")
+///
+/// might through CapErr("unique_key_size", "target_size")
 pub fn tbl_filtered_to_sorted_tbl<F:PrimeField>(
 	key: &Rc<RefCell<Container<F>>>,
 	val: &Rc<RefCell<Container<F>>>,
@@ -794,7 +803,7 @@ pub fn tbl_filtered_to_sorted_tbl<F:PrimeField>(
 	target_size: usize,
 	name: &str, //the name of the new container bundle
 	unique_key_size: usize, //when pack key to unique set, what's the size
-) -> Result<Rc<RefCell<Container<F>>>, SynthesisError>{
+) -> Result<Rc<RefCell<Container<F>>>, Error>{
 	let b_new = true;
 	if b_new{
 		tbl_filtered_to_sorted_tbl_new(key,val,sorted_set_key,target_size,name,
@@ -814,7 +823,7 @@ pub fn tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
 	target_size: usize,
 	name: &str, //the name of the new container bundle
 	unique_key_size: usize, //when pack key to unique set, what's the size
-) -> Result<Rc<RefCell<Container<F>>>, SynthesisError>{
+) -> Result<Rc<RefCell<Container<F>>>, Error>{
 	let res = Container::<F>::new(name);
 	let sorted_tbl = Container::new("sorted_tbl");
 
@@ -855,7 +864,8 @@ pub fn tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
 	let fil2 = vals.par_iter().zip(tags.par_iter()).filter(|(_v,t)|{
 		!t.is_zero()
 	}).map(|(v,_)| v.clone()).collect::<Vec<F>>();
-	let (packed_key,packed_id,packed_val)=two_col_tbl_to_sorted(&fil1,&fil2,n);
+	let (packed_key,packed_id,packed_val) =
+		two_col_tbl_to_sorted(&fil1,&fil2,n)?;
 
 	let f_rg = F::from(RANGE2);
 	let max_val:usize = (1<<RANGE2_BIT) - 1;
@@ -922,7 +932,7 @@ pub fn tbl_filtered_to_sorted_tbl_old<F:PrimeField>(
 		//states, but sorted_set_key has FINAL STATES only.
 	target_size: usize,
 	name: &str, //the name of the new container bundle
-) -> Result<Rc<RefCell<Container<F>>>, SynthesisError>{
+) -> Result<Rc<RefCell<Container<F>>>, Error>{
 	let res = Container::new(name);
 	let sorted_tbl = Container::new("sorted_tbl");
 	let prf = Container::new("prf");
@@ -1000,7 +1010,8 @@ pub fn tbl_filtered_to_sorted_tbl_old<F:PrimeField>(
 	).collect::<Vec<_>>();
 	let fil1= filtered_tuples.par_iter().map(|x| x.0).collect::<Vec<F>>();
 	let fil2 = filtered_tuples.par_iter().map(|x| x.1).collect::<Vec<F>>();
-	let (packed_key,packed_id,packed_val)=two_col_tbl_to_sorted(&fil1,&fil2,n);
+	let (packed_key,packed_id,packed_val) =
+		two_col_tbl_to_sorted(&fil1,&fil2,n)?;
 	let max_val:usize = (1<<RANGE2_BIT) - 1;
 	let max = F::from(max_val as u32);
 	let sel_dst = packed_val.iter().map(|v|
@@ -1443,12 +1454,14 @@ pub fn verify_tbl_filtered_to_sorted_tbl_old<F:PrimeField>(
 /// filtering step. Given 2 columns, compress all pairs to unique
 /// and organize them as sorted table of form (key-id-val) which is well
 /// formed and key column is sorted.
+///
+/// might throw CapErr("target_size")
 pub fn tbl_to_sorted_tbl<F:PrimeField>(
 	key: &Rc<RefCell<Container<F>>>,
 	val: &Rc<RefCell<Container<F>>>,
 	target_size: usize,
 	name: &str, //the name of the new container bundle
-) -> Result<Rc<RefCell<Container<F>>>, SynthesisError>{
+) -> Result<Rc<RefCell<Container<F>>>, Error>{
 	//1. generating the resulting table (data column and sid columns)
 	let (zero,_one) = (F::zero(), F::one());
 	let max_val:usize = (1<<RANGE2_BIT) - 1;
@@ -1460,7 +1473,7 @@ pub fn tbl_to_sorted_tbl<F:PrimeField>(
 	let vals = val.borrow().to_vec();
 	let f_rg = F::from(RANGE2); 
 	let (sorted_key, sorted_id, sorted_val)
-		=two_col_tbl_to_sorted(&keys, &vals, target_size);
+		=two_col_tbl_to_sorted(&keys, &vals, target_size)?;
 	let encoded_dst = encode_2col(&sorted_key, &sorted_val);
 	let sel_dst = sorted_key.iter().zip(sorted_val.iter()).map(|(x,y)|
 		*x * (max - *x) * (*y) * (max-*y)).collect::<Vec<F>>();
@@ -1629,6 +1642,8 @@ pub fn verify_tbl_to_sorted_tbl<F:PrimeField>(
 /// well formed also for first 3 columns (in some relaxed sense that
 /// when key is the same, id increases by 0 or 1).
 /// As usual prepadded by 0 entries.
+///
+/// Might throw CapErr("target_size")
 pub fn tbl_left_join<F:PrimeField>(
 	tbl1: &Rc<RefCell<Container<F>>>, //needs to be sorted_tbl
 	tbl2: &Rc<RefCell<Container<F>>>, //needs to be sorted_tbl
@@ -1637,7 +1652,7 @@ pub fn tbl_left_join<F:PrimeField>(
 			//otherwise, it can be generated in the function
 	target_size: usize,
 	name: &str, //the name of the new container bundle
-) -> Result<Rc<RefCell<Container<F>>>, SynthesisError>{
+) -> Result<Rc<RefCell<Container<F>>>, Error>{
 	//1. generate the resulting table
 	let (zero, one) = (F::zero(), F::one());
 	let max_val:usize = (1<<RANGE2_BIT) - 1;
@@ -1654,7 +1669,7 @@ pub fn tbl_left_join<F:PrimeField>(
 		.get_container_by_idx(i).borrow().to_vec()).collect::<Vec<Vec<F>>>();
 
 
-	let tbl_res = two_col_tbl_left_join(&tbl1_cols, &tbl2_cols, target_size);
+	let tbl_res = two_col_tbl_left_join(&tbl1_cols, &tbl2_cols, target_size)?;
 	check_pad_ratio(&tbl_res[0], "FsmAdvCapaicty.basis_pats_in_trace");
 	assert!(tbl_res.len()==5);
 

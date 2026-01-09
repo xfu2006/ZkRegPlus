@@ -23759,9 +23759,9 @@ Goal 10. debug common.rs:1074
 		-> but now the wtns.statment is slightly lrager 13224
 
 Thursday 01/08/2025
-LOC (circ): 2902
-LOC (gadgets): 18165
-LOC (sonobe): 20559 
+LOC (circ): 2902 -> 2901
+LOC (gadgets): 18165 -> 18165
+LOC (sonobe): 20559 -> 20556
 Goal 1. debug check why the witness statement is not constructed well.
 	[a] check how witness retrieves its var
 		sigma_ir1cs::generate_step_constraints() - 6108.2
@@ -23799,5 +23799,29 @@ Goal 3. improve the way that it increases one by one
 Goal 4. driver.rs 572 -> fixed
 Goal 5. driver.rs 1336
 	-> looks like vec_pci is swapped with vec_num_segs -> FIXED
+Goal 6. try another resource issue -> DONE
+	-> regression test
+Goal 7. sed component framework
+	[a] use exception for new() of advice
+	[b] word_extract_adv good
+Goal 8. fsm_adv
+	[a] setup framework -> DONE
+	[b] gen_fsm_acc_combo -> DONE
+
+Friday 01/09/2025
+LOC (circ): 2901
+LOC (gadgets): 18165
+LOC (sonobe): 20556
+Goal 1. refine fsm_adv
+	[a] prove_filter_tag -> DONE
+	[b] two_col_tbl_to_sorted -> DONE
+	[c] tbl_filtered_to_sorted_tbl_new -> DONE
+	[d] two_col_tbl_left_join -> DONE
+	[e] tbl_left_join -> DONE
+	[f] gen_packed_trace_combo -> DONE
+	[g] add docs
+
+Goal 2. 
+
 
 

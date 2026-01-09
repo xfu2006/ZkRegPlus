@@ -222,7 +222,7 @@ impl <F:PrimeField> DfaAdvice<F>{
 		)->Result<Self, Error>{
 		//1. build the word extraction gadget's advice
 		let wd_extract_advice = WordExtractAdvAdvice::<F>
-			::new(word_seg, actual_size, true); //use char map mode for sid
+			::new(word_seg, actual_size, true)?; //use char map mode for sid
 
 		//2. build dfa_adv advice
 		//we build a 2-d structure of info first and then

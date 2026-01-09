@@ -3708,7 +3708,8 @@ pub mod tests_discharge_adv_gadget{
 			let word = if word.len()==wlen {word} else
 				{vec![word.clone(), vec![zero; wlen-word.len()]].concat()};	
 			let act_size = word.len();
-			let adv_wea = WordExtractAdvAdvice::new(&word, act_size,false);
+			let adv_wea = WordExtractAdvAdvice::new(&word, act_size,false)
+				.expect("word_extract_adv err");
 			let stmt_wea = adv_wea.stmt_container;
 			let cfg_wea = stmt_wea.borrow().get_cfg(); 
 
@@ -3721,7 +3722,8 @@ pub mod tests_discharge_adv_gadget{
 				1, //dist to wea gadget
 				&nibbles, &acdfa, inp_state, 
 				inp_loc, &input_subsigs, &cap, fsm_id, 
-				&bundle.vec_subsig_stores[store_id]); 
+				&bundle.vec_subsig_stores[store_id])
+					.expect("fsm_adv advice err"); 
 			let stmt_faa = adv_faa.stmt_container;
 			let cfg_faa = stmt_faa.borrow().get_cfg(); 
 

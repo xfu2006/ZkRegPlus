@@ -14,11 +14,14 @@ use rayon::iter::{ParallelIterator,IntoParallelRefIterator,
 use std::{rc::{Rc},cell::{RefCell}};
 use ark_ff::{PrimeField};
 use std::marker::{PhantomData};
-use folding_schemes::folding::foldpot::{
-	sigma_ir1cs::{SigmaGadget,WitnessSigmaIR1CSVar,WitnessSigmaIR1CSConfig, NdAdvice,Capacity},
-	container_config::{ContainerConfig},
-	circuits_super::field_to_usize,
-	utils::{var_to_tuple_adv, var_to_tuple},
+use folding_schemes::{
+	Error,
+	folding::foldpot::{
+		sigma_ir1cs::{SigmaGadget,WitnessSigmaIR1CSVar,WitnessSigmaIR1CSConfig, NdAdvice,Capacity},
+		container_config::{ContainerConfig},
+		circuits_super::field_to_usize,
+		utils::{var_to_tuple_adv, var_to_tuple},
+	}
 };
 use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef,Variable,
 	LinearCombination};
@@ -209,6 +212,9 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 	/// Given nibbles and ACDFA, produce the (state,loc) sequence, sorted
 	/// by loc.
 	/// Input: (input_state, inp_location) 
+	/// 
+	/// might throw CapErr("fsm_adv::subsigs", "basis_pats_in_trace",
+	/// "basis_unique_states", "avg_pats_per_subsig")
 	pub fn new(
 		b_igc: bool,
 		offset_wea: usize,
@@ -220,7 +226,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		capacity: &FsmAdvCapacity, 
 		fsm_id: u32,
 		store_subsig_pat: &SubsigPatternStore
-	) ->Self{
+	) ->Result<Self, Error>{
 		let sname = if b_igc {"fsm_adv_stmt_igc"} else {"fsm_adv_stmt_cs"};
 		let stmt_container = Container::<F>::new(sname);
 
@@ -230,14 +236,18 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 			b_igc,
 			offset_wea as isize, 
 			nibbles, acdfa, 
-			inp_state, inp_loc, capacity, fsm_id);
+			inp_state, inp_loc, capacity, fsm_id)?;
 		let fsm_acc2 = fsm_acc.clone(); //low cost, need to add
 		//fsm_acc to fix location first before we build exteranl cols from it.
 		stmt_container.borrow_mut().add_container(fsm_acc);
 
 		//2. construct the projected subsig-state-pattern store and the proof
 		//for it
-		assert!(inp_subsigs.len()<=capacity.subsigs, "inp_subsigs.len: {}, capacity.subsigs: {}", inp_subsigs.len(), capacity.subsigs);
+		if inp_subsigs.len()>capacity.subsigs{
+			return Err(Error::CapErr(vec![(format!("fsm_adv::subsigs"), 
+				inp_subsigs.len())]));
+		}
+		//assert!(inp_subsigs.len()<=capacity.subsigs, "inp_subsigs.len: {}, capacity.subsigs: {}", inp_subsigs.len(), capacity.subsigs);
 		let inp_subsigs = vec![inp_subsigs.clone(), vec![F::zero(); 
 			capacity.subsigs-inp_subsigs.len()]].concat();
 		let proj_store_combo = Self::gen_proj_store_combo(&inp_subsigs, 
@@ -247,12 +257,12 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 
 		//3. construct the packed tracie
 		let packed_trace_combo = Self::gen_packed_trace_combo(&fsm_acc2,
-			&proj_store_combo2, capacity);
+			&proj_store_combo2, capacity)?;
 		stmt_container.borrow_mut().add_container(packed_trace_combo);
 
 
-		Self{capacity: Clone::clone(capacity), fsm_id,
-			stmt_container, offset_wea}
+		Ok(Self{capacity: Clone::clone(capacity), fsm_id,
+			stmt_container, offset_wea})
 	}
 
 	/// Given the input generates the container of the following
@@ -280,7 +290,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		inp_loc: F, //starting from 1. 
 		capacity: &FsmAdvCapacity, 
 		fsm_id: u32) 
-	-> Rc<RefCell<Container<F>>>{
+	-> Result<Rc<RefCell<Container<F>>>, Error>{
 		let b_debug = false;
 		let res = Container::<F>::new("fsm_acc");
 		let nlen = capacity.max_nibble_len;
@@ -341,7 +351,11 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 			}).map(|i| raw_locs[0] + F::from(i as u32)).collect::<Vec<F>>();
 		assert!(states_final.len()==locs_final.len());
 		let target_size = nlen*capacity.basis_acc_states/10000;
-		assert!(states_final.len()<=target_size, "basis_acc_states too small: target_size: {} < states_final.len {}", target_size, states_final.len());
+		if states_final.len()>target_size{
+			let target_basis_acc_states = states_final.len() * 10000/nlen + 1;
+			return Err(Error::CapErr(vec![(format!("fsm_adv::basis_access_states"), target_basis_acc_states)]));
+		}
+		//assert!(states_final.len()<=target_size, "basis_acc_states too small: target_size: {} < states_final.len {}", target_size, states_final.len());
 		let (oflen,to_pad) = (states_final.len(), 
 			target_size - states_final.len());
 		let zero = F::zero();
@@ -446,7 +460,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		res.borrow_mut().add_col(col_si_locs_final);
 
 
-		res	
+		Ok(res)
 	}
 
 	/// Generate the projected SubsigPatternStore and its PROOF as a combo.
@@ -530,12 +544,15 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 	/// NOTE that since the ratio of final states in (state,loc) trace.
 	/// Even the concrete table join cost is high, but since table size
 	/// is small, it's going to be much smaller than the trace size.
+	///
+	/// might throw CapErr on "fsm_adv::basis_pats_in_trace",
+	/// "fsm_adv::basis_unique_states", "fsm_adv::avg_pats_per_subsig",
 	#[allow(dead_code)]
 	fn gen_packed_trace_combo(
 		fs_acc_combo: &Rc<RefCell<Container<F>>>,
 		proj_store_combo: &Rc<RefCell<Container<F>>>,
 		capacity: &FsmAdvCapacity,
-	)->Rc<RefCell<Container<F>>>{
+	)->Result<Rc<RefCell<Container<F>>>, Error>{
 		let res = Container::<F>::new("packed_trace");
 
 		//1. extract proj_store_combo column "states" to a sorted set
@@ -576,10 +593,27 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 			packed_trace_size,
 			"state_loc_tbl",
 			unique_key_size,
-		).expect("tbl_filtered_to_sorted_tbl err");
+		);
+		let state_loc_tbl = match state_loc_tbl{
+			Ok(adv) => Ok(adv),
+			Err(Error::CapErr(vec)) => {
+				let vec_err = vec.iter().map(|(s,val)|{
+					if s=="target_size"{
+						let t_val= val * 10000/capacity.max_nibble_len + 1;
+						(format!("fsm_adv::basis_pats_in_trace"),t_val)
+					}else if s=="unique_key_size"{
+						let t_val= val * 10000/capacity.max_nibble_len + 1;
+						(format!("fsm_adv::basis_unique_states from tbl_filtered_to_sorted_tbl"),t_val)
+					}else{
+						(format!("unknown capacity err: {}", s), 0)
+					}
+				}).collect::<Vec<(String,usize)>>();
+				Err(Error::CapErr(vec_err))
+			},
+			_ => state_loc_tbl 
+		}?;
 		let state_loc_tbl2 = state_loc_tbl.clone(); //low cost clone rc
 		res.borrow_mut().add_container(state_loc_tbl);
-
 
 		//3. projecting the (subsig-state-pat) sorted set further
 		// to (pat-state) sorted table for further tbl join.
@@ -591,8 +625,23 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 			.duplicate_as_external(0,None);
 		let ext_pat= Rc::new(RefCell::new(ext_pat));
 		let pat_state_tbl = tbl_to_sorted_tbl( 
-			&ext_pat, &ext_state, pat_state_set_size, "pat_state_tbl")
-			.expect("tbl_filter err");
+			&ext_pat, &ext_state, pat_state_set_size, "pat_state_tbl");
+		let pat_state_tbl = match pat_state_tbl{
+			Ok(adv) => Ok(adv),
+			Err(Error::CapErr(vec)) => {
+				let vec_err = vec.iter().map(|(s,val)|{
+					if s=="target_size"{
+						let t_val= val /capacity.subsigs + 1;
+						(format!("fsm_adv::avg_pats_per_subsig"),t_val)
+					}else{
+						(format!("unknown capacity err: {}", s), 0)
+					}
+				}).collect::<Vec<(String,usize)>>();
+				Err(Error::CapErr(vec_err))
+			},
+			_ => pat_state_tbl 
+		}?;
+
 		let pat_state_tbl2 = pat_state_tbl.clone(); //clone rc low cost
 		res.borrow_mut().add_container(pat_state_tbl);
 
@@ -601,8 +650,24 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 			capacity.max_nibble_len / 10000;
 		let pat_state_loc_tbl = tbl_left_join(
 			&pat_state_tbl2, &state_loc_tbl2, 
-			&sorted_states2, packed_trace_size, "pat_state_loc_tbl")
-			.expect("err join");
+			&sorted_states2, packed_trace_size, "pat_state_loc_tbl");
+		let pat_state_loc_tbl = match pat_state_loc_tbl{
+			Ok(adv) => Ok(adv),
+			Err(Error::CapErr(vec)) => {
+				let vec_err = vec.iter().map(|(s,val)|{
+					if s=="target_size"{
+						let t_val= val*1000 /capacity.max_nibble_len+ 1;
+						( format!(
+						   "fsm_adv::basis_pats_in_trace from tbl_left_join"),t_val
+						  )
+					}else{
+						(format!("unknown capacity err: {}", s), 0)
+					}
+				}).collect::<Vec<(String,usize)>>();
+				Err(Error::CapErr(vec_err))
+			},
+			_ => pat_state_loc_tbl 
+		}?;
 
 		let pat_col = pat_state_loc_tbl.borrow()
 			.get_container("join_tbl").expect("err get join_tbl").borrow()
@@ -621,7 +686,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		res.borrow_mut().add_container(pat_loc_tbl);
 
 		//6. return
-		res
+		Ok( res )
 	}
 }
 
@@ -646,7 +711,7 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 			offset_wea, //offset to word_extract
 			&nibbles, acdfa, dummy_inp_state,
 			dummy_inp_loc, &dummy_inp_subsigs, capacity, 
-			fsm_id, store_subsig_pat);
+			fsm_id, store_subsig_pat).expect("fsm_adv advice err");
 		let mut vec_cfg = prev_cfgs.clone();
 		vec_cfg.push(dummy_adv.stmt_container.borrow().get_cfg());
 		ContainerConfig::adjust_locations(&mut vec_cfg);
@@ -1415,7 +1480,8 @@ pub mod tests_fsm_adv_gadget{
 		let f_nibbles = nibbles_raw.iter().map(|x| Fr::from(*x as u32))
 			.collect::<Vec<Fr>>();
 		let word = vec![pack_nibbles(&f_nibbles), vec![Fr::zero()]].concat();
-		let adv_wea = WordExtractAdvAdvice::new(&word, act_size, false);
+		let adv_wea = WordExtractAdvAdvice::new(&word, act_size, false)
+			.expect("word_extract_adv err");
 		let stmt_wea = adv_wea.stmt_container;
 		let cfg_wea = stmt_wea.borrow().get_cfg(); 
 
@@ -1454,7 +1520,7 @@ pub mod tests_fsm_adv_gadget{
 			1, //dist to wea
 			&nibbles, &acdfa, inp_state, 
 			inp_loc, &input_subsigs, &cap, fsm_id, 
-			&bundle.vec_subsig_stores[0]); //for SED
+			&bundle.vec_subsig_stores[0]).unwrap(); //for SED
 		let stmt_faa = adv_faa.stmt_container;
 		let cfg_faa = stmt_faa.borrow().get_cfg(); 
 

@@ -6,6 +6,7 @@ use rayon::{
 		IntoParallelRefIterator,IndexedParallelIterator, IntoParallelRefMutIterator},
 	//prelude::{ParallelSliceMut}
 };
+use folding_schemes::{Error};
 use std::collections::{HashMap,HashSet};
 use ark_ff::{PrimeField,BigInteger};
 use ark_relations::{
@@ -406,7 +407,9 @@ pub fn gen_diff_col<F:PrimeField>(col: &Vec<F>)->(Vec<F>,Vec<F>){
 /// (any cell value zero)
 /// are removed.
 /// Return the key, id, val column.
-pub fn two_col_tbl_to_sorted<F: PrimeField>(col1: &Vec<F>, col2: &Vec<F>, target_size: usize)-> (Vec<F>,Vec<F>,Vec<F>){
+///
+/// might throw CapErr("target_size");
+pub fn two_col_tbl_to_sorted<F: PrimeField>(col1: &Vec<F>, col2: &Vec<F>, target_size: usize)-> Result<(Vec<F>,Vec<F>,Vec<F>), Error>{
 	//1. collect a hash map which maps from key to a vector of vals sorted.
 	let max_val:usize = (1<<RANGE2_BIT) - 1;
 	let max = F::from(max_val as u32);
@@ -440,11 +443,13 @@ pub fn two_col_tbl_to_sorted<F: PrimeField>(col1: &Vec<F>, col2: &Vec<F>, target
 /// assuming tbl1 and tbl2 are both well formed two column table with
 /// structure (key, id, val). Produce the table needed of structure
 /// (k1, id1, k2, id2, val) where val of tbl1 serves as the forieng key.
+///
+/// Might throw CapErr("target_size")
 pub fn two_col_tbl_left_join<F:PrimeField>(
 	tbl1: &Vec<Vec<F>>, 
 	tbl2: &Vec<Vec<F>>, 
 	target_size: usize
-) -> Vec<Vec<F>>{
+) -> Result<Vec<Vec<F>>,Error>{
 	//1. data check
 	#[cfg(test)]{
 		assert_wellformed_sorted_two_col_tbl(tbl1);
@@ -515,6 +520,12 @@ pub fn two_col_tbl_left_join<F:PrimeField>(
 
 	//4. pad at the beginning
 	let tn = tuples.len();
+	if tn>target_size{
+		return Err(
+			Error::CapErr(vec![(format!("target_size"), 
+			tn
+		)]));
+	}
 	assert!(tn<=target_size, "tn: {}, target_size: {}. Consider adjust related capacity parameter", tn, target_size);
 	let to_pad = vec![zero; target_size - tuples.len()];
 	let res = (0..5).collect::<Vec<usize>>().into_iter().map(|i|{
@@ -525,7 +536,7 @@ pub fn two_col_tbl_left_join<F:PrimeField>(
 	}).collect::<Vec<Vec<F>>>();
 	assert!(res.len()==5);
 
-	res
+	Ok( res )
 }
 
 /// build vec of 8 elements [2^31, ... 2^248]
@@ -720,7 +731,9 @@ pub fn assert_wellformed_sorted_two_col_tbl_adv<F:PrimeField>(tbl: &Vec<Vec<F>>,
 /// 100 1  2   
 /// 100 2  50  
 /// 100 1  max # max = 2^RANGE2_BIT - 1
-pub fn hashmap_to_sorted_2col_tbl<F:PrimeField>(map: &HashMap<F, Vec<F>>,n: usize) -> (Vec<F>, Vec<F>, Vec<F>){
+///
+/// might throw CapErr("target_size");
+pub fn hashmap_to_sorted_2col_tbl<F:PrimeField>(map: &HashMap<F, Vec<F>>,n: usize) -> Result<(Vec<F>, Vec<F>, Vec<F>),Error>{
 	//1. collect the sorted keys first
 	let mut sorted_keys = map.keys().map(|x| x.clone())
 		.collect::<Vec<F>>();
@@ -744,7 +757,10 @@ pub fn hashmap_to_sorted_2col_tbl<F:PrimeField>(map: &HashMap<F, Vec<F>>,n: usiz
 		res
 	}).flatten().collect::<Vec<Vec<F>>>(); 
 
-
+	if n<=tuples.len(){
+		return Err(Error::CapErr(vec![(format!("target_size"), 
+			tuples.len()+1)]));
+	}
 	assert!(n>tuples.len(),"n:{} lower than tuples.len(): {}",n,tuples.len());
 	let part1 = vec![vec![zero, zero, zero]; n - tuples.len()];
 	let all_tuples = vec![part1, tuples].concat();
@@ -754,7 +770,7 @@ pub fn hashmap_to_sorted_2col_tbl<F:PrimeField>(map: &HashMap<F, Vec<F>>,n: usiz
 	let val= all_tuples.par_iter().map(|t| t[2]).collect::<Vec<_>>();
 	assert!(key.len()==n);
 
-	(key, id, val)
+	Ok( (key, id, val) )
 }
 
 /// verify v2 is an inverse of v1. elen is the expected length of both

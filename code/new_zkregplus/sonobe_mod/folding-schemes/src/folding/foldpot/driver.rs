@@ -1328,7 +1328,8 @@ where
 			let mut acc_wd_len = 0;
 			let _mapper = self.circuits[0].get_mapper();
 			let word_info = &vec_word_info[word_id-1];
-			let (steps, vec_len, vec_pci, _vec_cap_req, _advice) = self.plan_nd_advice(log_level+2, false, &word, word_info).expect("Planning advice fails!"); //note: empty advice will be returned
+			let (steps, vec_len, vec_pci, _vec_cap_req, _advice) = self.plan_nd_advice(log_level+2, false, &word, word_info)
+				.expect(&format!("\n\n ==== **** ===== \nPlanning advice fails for {}! Could not find a circuit satisfying the following: ", word_fname)); //note: empty advice will be returned
 			log_perf(log_level+2, &format!("{} - Pass 1: decide circ alloc for word_id: {}, fname: {}, word_len: {}. ", phase_name, word_id, word_fname, format_bytes(total_word_len*31)), &mut gt2);
 			for i in 0..steps{
 				//2.1 set up params

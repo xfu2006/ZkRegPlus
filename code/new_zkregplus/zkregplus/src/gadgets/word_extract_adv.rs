@@ -13,6 +13,7 @@ use std::{rc::{Rc},cell::{RefCell}};
 use ark_ff::{PrimeField};
 use std::marker::{PhantomData};
 use folding_schemes::{
+	Error,
 	folding::foldpot::{
 	sigma_ir1cs::{SigmaGadget,WitnessSigmaIR1CSVar,WitnessSigmaIR1CSConfig, NdAdvice,Capacity},
 	container_config::{ContainerConfig},
@@ -122,7 +123,8 @@ impl <F: PrimeField> WordExtractAdvAdvice<F>{
 	///    correspondingly
 	/// This approach prevents attacker to pick a tuple in other sub-table
 	/// that goes out of the range of char.
-	pub fn new(word_seg: &Vec<F>, actual_size: usize, b_map_char:bool)->Self{
+	pub fn new(word_seg: &Vec<F>, actual_size: usize, b_map_char:bool)->
+		Result<Self,Error>{
 		//1. normalize the input
 		let stmt_container = Container::new("word_extract_stmt");
 		let mut word = word_seg.clone();
@@ -188,7 +190,8 @@ impl <F: PrimeField> WordExtractAdvAdvice<F>{
 		stmt_container.borrow_mut().add_col(col_nibbles);
 		stmt_container.borrow_mut().add_col(col_si_nibbles);
 
-		Self{stmt_container}
+		//will always be successful no resource issue
+		Ok(Self{stmt_container})
 	}
 }
 
@@ -210,7 +213,7 @@ impl <F:PrimeField> WordExtractAdvGadget<F>{
 		let capacity = WordExtractAdvCapacity{max_word_len};
 		let dummy_wd = vec![F::zero(); max_word_len];
 		let dummy_adv = WordExtractAdvAdvice::new(&dummy_wd, max_word_len,
-			b_map_char);
+			b_map_char).unwrap();
 		let mut vec_cfg = vec![dummy_adv.stmt_container.borrow().get_cfg()];
 		ContainerConfig::adjust_locations(&mut vec_cfg);
 		//even it's false, it's good enough for generating statement_structure
@@ -430,7 +433,8 @@ pub mod tests_word_extract_adv_gadget{
 		let mut rng = ark_std::test_rng();
 		let (wlen, act_size) = (8usize, 6usize);
 		let word = vec![rand_fe_by_bits(248, &mut rng); wlen];
-		let adv = WordExtractAdvAdvice::new(&word, act_size, b_map_char);
+		let adv = WordExtractAdvAdvice::new(&word, act_size, b_map_char)
+			.expect("word_extract_adv advice err");
 		let stmt_cont = adv.stmt_container; 
 
 		//2. create gadget

@@ -2442,7 +2442,8 @@ pub mod tests_compute_sig_adv{
 			let word = if word.len()==wlen {word} else
 				{vec![word.clone(), vec![zero; wlen-word.len()]].concat()};	
 			let act_size = word.len();
-			let adv_wea = WordExtractAdvAdvice::new(&word, act_size,false);
+			let adv_wea = WordExtractAdvAdvice::new(&word, act_size,false)
+				.expect("word_extract_adv err");
 			let stmt_wea = adv_wea.stmt_container;
 			let cfg_wea = stmt_wea.borrow().get_cfg(); 
 
@@ -2456,7 +2457,8 @@ pub mod tests_compute_sig_adv{
 				1, //dist to wea 
 				&nibbles, &acdfa_cs, inp_state_cs, 
 				inp_loc_cs, &input_subsigs_cs, &cap, fsm_id_cs, 
-				&bundle_cs.vec_subsig_stores[store_id]); 
+				&bundle_cs.vec_subsig_stores[store_id])
+					.expect("fsm_adv advice err"); 
 			let stmt_faa_cs = adv_faa_cs.stmt_container;
 			let cfg_faa_cs = stmt_faa_cs.borrow().get_cfg(); 
 
@@ -2465,7 +2467,8 @@ pub mod tests_compute_sig_adv{
 				2, //dist to wea
 				&nibbles, &acdfa_igc, inp_state_igc, 
 				inp_loc_igc, &input_subsigs_igc, &cap, fsm_id_igc, 
-				&bundle_igc.vec_subsig_stores[store_id]); 
+				&bundle_igc.vec_subsig_stores[store_id])
+					.expect("fsm_adv advice err"); 
 			let stmt_faa_igc = adv_faa_igc.stmt_container;
 			let cfg_faa_igc = stmt_faa_igc.borrow().get_cfg(); 
 

@@ -1411,7 +1411,8 @@ pub mod tests_dfa_adv_gadget{
 		); //use optimize mode
 
 		//note: set true to use char map for nibbles.
-		let adv_wea = WordExtractAdvAdvice::new(&word, act_size, true);
+		let adv_wea = WordExtractAdvAdvice::new(&word, act_size, true)
+			.expect("word_extract_adv err");
 		let stmt_wea = adv_wea.stmt_container;
 		let cfg_wea = stmt_wea.borrow().get_cfg(); 
 

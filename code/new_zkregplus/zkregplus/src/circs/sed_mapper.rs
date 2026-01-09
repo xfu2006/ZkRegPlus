@@ -362,7 +362,7 @@ impl <F:PrimeField> SedAdvice<F>{
 		)->Result<Self, Error>{
 		//1. build the word extraction gadget's advice
 		let wd_extract_advice = WordExtractAdvAdvice::<F>
-			::new(word_seg, actual_size, false); //default mode for char sid
+			::new(word_seg, actual_size, false)?; //default mode for char sid
 
 		//2. build the fsm_adv advice (cs and igc)
 		assert!(vec_sigs_to_discharge.len()==discharge_info.len());
@@ -382,7 +382,7 @@ impl <F:PrimeField> SedAdvice<F>{
 			::new(false, 1, //distance to word extract gadget 
 				&nibbles,dfa_cs, inp.inp_state_cs,inp.inp_loc_cs,
 				&subsigs_inp_cs, &fsm_cap,fsm_id_cs as u32,
-				subsig_pat_store_cs);
+				subsig_pat_store_cs)?;
 
 		//2.2 the igc version
 		//let subsigs_inp_igc = Self::collect_subsig_ids(vec_sigs_to_discharge,
@@ -395,7 +395,7 @@ impl <F:PrimeField> SedAdvice<F>{
 				2, //offset to word_extract
 				&nibbles,dfa_igc, inp.inp_state_igc,inp.inp_loc_igc,
 				&subsigs_inp_igc, &fsm_cap, fsm_id_igc as u32,
-				subsig_pat_store_igc);
+				subsig_pat_store_igc)?;
 
 		//3. build the discharge_adv advice (cs and igc)
 		let da_cap = &capacity.da_capacity();
