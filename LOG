@@ -23820,8 +23820,29 @@ Goal 1. refine fsm_adv
 	[e] tbl_left_join -> DONE
 	[f] gen_packed_trace_combo -> DONE
 	[g] add docs
+	[h] check wehre basis_acc_states is used
 
-Goal 2. 
+Goal 2. refine discharge_adv
+	[a] set up framework
+	[b] gen_forward_steps_queue_combo
+		[b1] gen_forward_prf -> no need for CapErr
+		[b2] gen_step_queue_union_prf -> no need for CapErr
+		[b3] gen_to_add_valid_prf -> no need for CapErro
+	[c] gen_backward_steps_queue_combo
+		[c1] gen_backward_prf
+		[c2] gen_step_queue_union_prf
+		[c3] gen_to_del_valid_prf
+		[c4] prf_bwdprf_valid
+	[d] check why capacity not used?
+		[a] avg_active_pats_per_subsig
+			-> used in StepQueue::vec_size() and then to_container()
+			-> need to distinguish which case it is
+		[b] basis_pats_in_trace
+			-> also used in StepQueue::vec_size() -> addressed
+			-> StepFwdPrf::vec_size()
+			-> StepBwdPrf::vec_size
+			-> get_pat_loc_len()
+	[b] advice::new
 
 
 

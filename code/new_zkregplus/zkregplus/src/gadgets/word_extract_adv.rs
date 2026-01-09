@@ -1,5 +1,6 @@
 /* Created 03/26/2025, 
    Completed: 04/02/2025 
+	Revised 4: 01/09/2026 (improve exception handling for capacity)
 */
 
 // This is a better refactored version of word_extractor.rs

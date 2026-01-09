@@ -1210,15 +1210,15 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 			basis_pats_in_trace: capacity.basis_pats_in_trace,
 		};
 		let step_q_size = StepQueue::<F>::vec_size(&StepQueueType::Res,
-			&dis_cap);
+			&dis_cap).0;
 		let sq_res_vec = vec![zero; step_q_size*2];
 		let sq_res_obj= StepQueue::parse_from(&sq_res_vec, &dis_cap);
 		let sq_res_cs = sq_res_obj.to_container(
 			"sq_res2_cs", false, true, true, true,
-			&store_steps_cs);
+			&store_steps_cs).expect("sq_res_cs err");
 		let sq_res_igc = sq_res_obj.to_container(
 			"sq_res2_igc ", false, true, true, true,
-			&store_steps_igc);
+			&store_steps_igc).expect("sq_res_igc err");
 		let mut sigs_to_id = HashMap::<String,usize>::new();
 		sigs_to_id.insert("none".to_string(), 0);
 
@@ -2480,7 +2480,7 @@ pub mod tests_compute_sig_adv{
 				&pat_loc_cs,
 				&input_subsigs_cs,
 				fsm_id_cs, steps_store_cs, &cap_disc, &inp_steps_queue_cs
-			);
+			).expect("discharge_adv advice err");
 			let oup_queue_cs = adv_disc_cs.get_output_steps_queue();
 			let stmt_disc_cs= adv_disc_cs.stmt_container;
 			let cfg_disc_cs= stmt_disc_cs.borrow().get_cfg(); 
@@ -2492,7 +2492,7 @@ pub mod tests_compute_sig_adv{
 				&pat_loc_igc,
 				&input_subsigs_igc,
 				fsm_id_igc, steps_store_igc, &cap_disc, &inp_steps_queue_igc
-			);
+			).expect("discharge_adv advice err");
 			let oup_queue_igc = adv_disc_igc.get_output_steps_queue();
 			let stmt_disc_igc= adv_disc_igc.stmt_container;
 			let cfg_disc_igc= stmt_disc_igc.borrow().get_cfg(); 
@@ -2740,7 +2740,8 @@ pub mod tests_compute_sig_adv{
 		};
 		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),
 			q_type: StepQueueType::Res};
-		let ct = sq.to_container("ct", true, false, false, false, &steps_info);
+		let ct = sq.to_container("ct", true, false, false, false, &steps_info)
+			.expect("ct err");
 		let pat = ct.borrow().get_container("encoded")
 			.unwrap().borrow().to_vec();
 		let loc = ct.borrow().get_container("locs").unwrap().borrow().to_vec();

@@ -738,6 +738,6 @@ pub mod tests_zkp_driver{
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
-		small_data::<Fr>(b_check_lkup);
+		small_data2::<Fr>(b_check_lkup);
 	}
 }

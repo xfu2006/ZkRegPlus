@@ -4,6 +4,7 @@
 	Revised 3: 12/18/2025 (further improved circuit building cost
 		by mainly pre-compute field inverse and direct encoding
 		of LinearCombinations.
+	Revised 4: 01/09/2026 (improve exception handling for capacity)
 */
 
 //! This module generates the (pat-loc) for a nibble sequence.
@@ -281,6 +282,8 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 	/// si_trans
 	/// si_states_final
 	/// si_locs_final
+	///
+	/// might throw CapErr("fsm_adv::basic_acc_states")
 	fn gen_fsm_acc_combo(
 		b_igc: bool,
 		wea_offset: isize,
@@ -353,7 +356,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		let target_size = nlen*capacity.basis_acc_states/10000;
 		if states_final.len()>target_size{
 			let target_basis_acc_states = states_final.len() * 10000/nlen + 1;
-			return Err(Error::CapErr(vec![(format!("fsm_adv::basis_access_states"), target_basis_acc_states)]));
+			return Err(Error::CapErr(vec![(format!("fsm_adv::basis_acc_states"), target_basis_acc_states)]));
 		}
 		//assert!(states_final.len()<=target_size, "basis_acc_states too small: target_size: {} < states_final.len {}", target_size, states_final.len());
 		let (oflen,to_pad) = (states_final.len(), 
@@ -1212,8 +1215,6 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		//1. check sorted_set of states is correct
 		// cost: 10* subsigs * avg_pat_per_subsig
 		let nlen = self.capacity.max_nibble_len;
-		let _alen = self.capacity.max_nibble_len 
-			* self.capacity.basis_acc_states/10000;
 		let _plen = self.capacity.subsigs * 
 			self.capacity.avg_pats_per_subsig;
 		let sname = if self.b_igc {"fsm_adv_stmt_igc"} else

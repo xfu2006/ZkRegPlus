@@ -407,7 +407,7 @@ impl <F:PrimeField> SedAdvice<F>{
 			&inp.inp_steps_queue_cs, &da_cap);
 		let discharge_adv_advice_cs = DischargeAdvAdvice::<F>
 			::new(false, 2, &pat_loc_cs, &subsigs_inp_cs, fsm_id_cs as u32, 
-				subsig_step_store_cs, &da_cap, &inp_steps_queue_obj_cs);
+				subsig_step_store_cs, &da_cap, &inp_steps_queue_obj_cs)?;
 
 		//3.2 the igc version
 		let pat_loc_igc = fsm_adv_advice_igc.stmt_container.borrow()
@@ -416,7 +416,7 @@ impl <F:PrimeField> SedAdvice<F>{
 			&inp.inp_steps_queue_igc, &da_cap);
 		let discharge_adv_advice_igc = DischargeAdvAdvice::<F>
 			::new(true, 2, &pat_loc_igc, &subsigs_inp_igc, fsm_id_igc as u32, 
-				subsig_step_store_igc, &da_cap, &inp_steps_queue_obj_igc);
+				subsig_step_store_igc, &da_cap, &inp_steps_queue_obj_igc)?;
 
 
 		//4. build the compute_sig advice  (note: just one copy)
@@ -630,7 +630,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 				&subsig_step_store_cs,
 				pm_fsm_id_cs,
 				&self.capacity.da_capacity()
-			).to_vec(&subsig_step_store_cs); //it's ok even with capacity
+			).to_vec(&subsig_step_store_cs)?; //it's ok even with capacity
 				//it's just to pass it as data member, will not crash
 				//if lack of capacity
 
@@ -666,7 +666,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 				&subsig_step_store_igc,
 				pm_fsm_id_igc,
 				&self.capacity.da_capacity()
-			).to_vec(&subsig_step_store_igc);
+			).to_vec(&subsig_step_store_igc)?;
 
 		let (inp_state_igc, inp_loc_igc, inp_steps_queue_igc) = r_prev_adv
 		.as_ref().map_or(
