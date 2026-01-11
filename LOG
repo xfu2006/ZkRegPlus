@@ -23873,10 +23873,15 @@ Goal 4. make quick test
 	[c] active_pats_per_subsig
 
 Sunday 01/11/2026
-Goal 1.  better CapErr for active_pats_per_subsig
+LOC (gadgets): 18301 -> 
+Goal 1.  better CapErr for active_pats_per_subsig -> DONE
 	[a] add exception to ProjStore::to_cols
 	[b] propagate handling in clam_db
-	[c] 
-(2) better handling the sigs (should have thrown error in gen_advice)
-	[b] 
+	[c] fix fsm_adv handling of proj_store::n
+	[d] test
+	[e] test 1 dummy advice
+	[f] test 2 case
+	[c] test good case min value
+Goal 2. better handling the sigs (should have thrown error in gen_advice)
+	[a] study how cp_mapper allocates the distributed_sigs and failed sigs
 
