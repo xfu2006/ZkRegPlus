@@ -520,9 +520,10 @@ pub fn two_col_tbl_left_join<F:PrimeField>(
 
 	//4. pad at the beginning
 	let tn = tuples.len();
+	println!("DEBUG USE 6101: tn: {}, target_size: {}", tn, target_size);
 	if tn>target_size{
 		return Err(
-			Error::CapErr(vec![(format!("target_size"), 
+			Error::CapErr(vec![(format!("target_size::2col_left_join"), 
 			tn
 		)]));
 	}
@@ -758,7 +759,7 @@ pub fn hashmap_to_sorted_2col_tbl<F:PrimeField>(map: &HashMap<F, Vec<F>>,n: usiz
 	}).flatten().collect::<Vec<Vec<F>>>(); 
 
 	if n<=tuples.len(){
-		return Err(Error::CapErr(vec![(format!("target_size"), 
+		return Err(Error::CapErr(vec![(format!("target_size::hashmap_2col"), 
 			tuples.len()+1)]));
 	}
 	assert!(n>tuples.len(),"n:{} lower than tuples.len(): {}",n,tuples.len());

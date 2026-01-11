@@ -408,8 +408,10 @@ where
 			let seg = word[start..end].to_vec();
 			let prev_adv = if vec_adv.len()==0 {None}
 				else {Some(vec_adv[vec_adv.len()-1].clone())};
+			println!("DEBUG USE 6105.1: before gen_nd_advice for seg: {}", i);
 			let advice = circ.get_mapper().borrow()
 				.gen_nd_advice(&seg, &word_info, prev_adv)?;
+			println!("DEBUG USE 6105.2: AFTER gen_nd_advice for seg: {}", i);
 			vec_pci.push(pci);
 			vec_size.push(end-start);
 			vec_cap.push(cap.clone());

@@ -1669,7 +1669,10 @@ pub fn tbl_left_join<F:PrimeField>(
 		.get_container_by_idx(i).borrow().to_vec()).collect::<Vec<Vec<F>>>();
 
 
-	let tbl_res = two_col_tbl_left_join(&tbl1_cols, &tbl2_cols, target_size)?;
+	let tbl_res = two_col_tbl_left_join(&tbl1_cols, &tbl2_cols, target_size);
+	println!("DEBUG USE 6101.2: tbl_res: {}", tbl_res.is_ok());
+
+	let tbl_res = tbl_res?;
 	check_pad_ratio(&tbl_res[0], "FsmAdvCapaicty.basis_pats_in_trace");
 	assert!(tbl_res.len()==5);
 

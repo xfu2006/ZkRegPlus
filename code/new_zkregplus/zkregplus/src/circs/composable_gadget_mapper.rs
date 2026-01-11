@@ -506,6 +506,7 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 				_ => panic!("unable to handle r: {:?}", r),
 			}
 		).collect::<Vec<Vec<(String,usize)>>>().concat();
+		println!("DEBUG USE 6101.3: name: {}, vec_errs: {:#?}", self.get_name(), vec_errs);
 
 		let vec_adv= res.iter().map(|r|
 			match r{

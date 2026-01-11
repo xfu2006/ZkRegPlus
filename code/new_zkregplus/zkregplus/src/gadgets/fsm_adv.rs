@@ -667,19 +667,26 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		//4. left join (pat-state) and (state-loc) both are sorted table.
 		let packed_trace_size = capacity.basis_pats_in_trace * 
 			capacity.max_nibble_len / 10000;
+		println!("\n\n ***DEBUG USE 6101.0 -- before call tbl_left_join pat_state_loc_tbl");
 		let pat_state_loc_tbl = tbl_left_join(
 			&pat_state_tbl2, &state_loc_tbl2, 
 			&sorted_states2, packed_trace_size, "pat_state_loc_tbl");
+		println!("DEBUG USE 6101.4 -- AFTER tbl_left_join pat_state_loc_tbl: {}", pat_state_loc_tbl.is_ok());
 		let pat_state_loc_tbl = match pat_state_loc_tbl{
 			Ok(adv) => Ok(adv),
 			Err(Error::CapErr(vec)) => {
 				let vec_err = vec.iter().map(|(s,val)|{
-					if s=="target_size"{
-						let t_val= val*1000 /capacity.max_nibble_len+ 1;
+					if s=="target_size::2col_left_join"{
+						let t_val= val*10000 /capacity.max_nibble_len+ 1;
 						( format!(
-						   "fsm_adv::basis_pats_in_trace from tbl_left_join"),t_val
+						   "fsm_adv::basis_pats_in_trace from tbl_left_join for 2col_left_join"), t_val
 						  )
-					}else{
+					}else if s=="target_size::hashmap_2col"{
+						let t_val= val*10000 /capacity.max_nibble_len+ 1;
+						( format!(
+						   "fsm_adv::basis_pats_in_trace from tbl_left_join for hashmap_2col"),t_val
+						  )
+					} else{
 						(format!("unknown capacity err: {}", s), 0)
 					}
 				}).collect::<Vec<(String,usize)>>();

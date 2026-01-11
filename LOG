@@ -23884,4 +23884,58 @@ Goal 1.  better CapErr for active_pats_per_subsig -> DONE
 	[c] test good case min value
 Goal 2. better handling the sigs (should have thrown error in gen_advice)
 	[a] study how cp_mapper allocates the distributed_sigs and failed sigs
+		-> it allocates discharged_sig_size to be 0
+		-> failed_sig_size to be sig_buf_capacity
+		-> to avoid composable throw error when building stmt
+			actually just need to make sure that failed_sig
+			has at least one dummy entry and discharged_sig_size
+			to accomodate one dummy entry
+	[b] check how it fills the failed sig
+		-> it's in build_statement_comp
+	[c] unit testing repeat the err
+		-> 2 it is thrown in driver framework now, but in gen_stmt which
+			is not good
+	[d] in cp_mapper make the changes
+		[a] increase discharged size
+		[b] build dummy dishcarged elements
+		[c] throw err failed sigs does not have dummy entry
+		[d] now 2 sigs is good for small_data()
+		[e] 1 -> fails compute_sig_adv.rs
+	[e] improve compute_sig_adv.rs
+	[f] now it's working! in advice
+Goal 3. test avg_active_pats_per_susig
+	[a] good value is reset 
+	[b] even set to 0 it still works -> why? -> no need to check
+Goal 4. test basis_pats_in trae
+	[a] successfully reported err
+	[b] but 2nd error does not give proper value -> fixed
+Goal 5. strange bug: when basis_pats_in_trace is between 0 to 10
+	it successfully reports err, when it's between 10-20
+	it throws same message: 
+	   "sigma_ir1cs.rs:2948:13: 8076 != 8080"
+	when it's between 20-30 it's complaining but not suggesting 
+		the right value.
+	[a] check the 22 case first and see why it's not giving 
+		the right propmpt
+	[b] why it crashes after the 2nd CapErr instead of the 1st one?
+	-> analyze trace -> 
+		driver 1331: plan_nd_advice
+		-> driver:579 find_working_layer
+		-> driver:458 gen_nd_advice_at_layer
+		-> driver:411 circ.gen_nd_advice
+		-> comosable_mapper:496 vec_component:gen_nd_adivce
+	==> it looks like it tries to RUN ALL components and collect ALL 
+		errors, but it captures one. analyze the scenario that
+		it crashes on the second error
+	--> analyze trace 2 ->
+		driver 1331: plan_nd_advice
+		-> it did not show details
+	=> after increasing it causes the problem because it passes
+		seg0 but fails seg1. So that's a reasonable explaination for it
+
+=============== TODO =============
+-- TODO -- analyze the strage sigma_ir1cs.rs:2948 error (it looks like
+	earlier capacity errors happen in gen_nd_advice
+	this error happens BEFORE gen_nd_advice and in preprocessing
+-- TODO -- drop the debug messages 610x.y
 
