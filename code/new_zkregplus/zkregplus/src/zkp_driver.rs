@@ -483,7 +483,8 @@ where
     let cfg = default_clamav_cfg();
     let db = ClamavDB::<CF1<C1>>::build_or_load(&cfg, sig_file, 
 		list_of_dfa_sigs, list_of_ised_sigs, list_of_ised_igc_sigs,
-		&mut vlog, cache_dir, b_read_cache, b_write_cache);
+		&mut vlog, cache_dir, b_read_cache, b_write_cache)
+		.expect("db creation error");
 	if log_level>=LOG1+1{
     	db.print_summary(&mut vlog);
 	}
@@ -560,8 +561,8 @@ pub mod tests_zkp_driver{
 		let max_word= 1; //this is chunk_len
 		let sigs = 3;
 		//let subsigs = 6; GOOD setting
-		let subsigs = 4;
-		let avg_pats_per_subsig = 8;
+		let subsigs = 4; 
+		let avg_pats_per_subsig = 4; //old good val 8
 		let avg_active_pats_per_subsig = 3;
 		//let basis_pats_in_trace = 60*100; //OLD
 		let basis_pats_in_trace = 30*100;
@@ -738,6 +739,6 @@ pub mod tests_zkp_driver{
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
-		small_data2::<Fr>(b_check_lkup);
+		small_data::<Fr>(b_check_lkup);
 	}
 }

@@ -3861,7 +3861,7 @@ pub mod tests_discharge_adv_gadget{
 		let sigs_dir = "debug/sed/workdir";
 		let cfg = default_clamav_cfg();
 		let db = ClamavDB::<Fr>::build_test_db(&cfg, &sigs_dir, &sigs, 
-			&needs_dfa, &needs_ised, &needs_ised_igc);
+			&needs_dfa, &needs_ised, &needs_ised_igc).expect("db err");
 
 		//2. define the test cases
 		let testcases = vec![

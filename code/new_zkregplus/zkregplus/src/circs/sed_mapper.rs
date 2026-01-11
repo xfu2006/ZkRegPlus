@@ -434,7 +434,7 @@ impl <F:PrimeField> SedAdvice<F>{
 			Clone::clone(&csa_cap), 
 			subsig_step_store_cs,  subsig_step_store_igc,
 			subsig_info_store_cs, subsig_info_store_igc,
-			vec_sigs_to_discharge, sig_to_id);
+			vec_sigs_to_discharge, sig_to_id)?;
 
 		//3. assemble all advices
 		let vec_advices:Vec<Rc<dyn ComponentAdvice<F>>> = vec![

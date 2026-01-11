@@ -400,8 +400,20 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 		//3. assemble the statement instance by setting its inp/oup/data/subtbl
 		let ncirc_minus_pci = ea.n_circ - ea.pc_i;
 		let zero = F::zero();
+		if !discharged_sigs.contains(&F::zero()){
+			return Err(Error::CapErr(
+				vec![(format!("build_stmt::dis_charged_sigs (adjust cap::sigs)"), 
+				discharged_sigs.len())])); //no need to +1, as this value
+					//is already the capacity.sigs + 1
+		}
 		assert!(discharged_sigs.contains(&F::zero()),
 			"Increase discharged sig buf. needs at least one 0 dummy entry");
+		if !failed_sigs.contains(&F::zero()){
+			return Err(Error::CapErr(
+				vec![(format!("build_stmt::failed_sigs (adjust cap::sigs)"), 
+				failed_sigs.len())])); //no need to +1, as this value
+					//is already the capacity.sigs + 1
+		}
 		assert!(failed_sigs.contains(&F::zero()),
 			"Increase failed sig buf. needs at least one 0 dummy entry");
 

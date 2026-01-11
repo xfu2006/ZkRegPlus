@@ -23810,7 +23810,7 @@ Goal 8. fsm_adv
 
 Friday 01/09/2025
 LOC (circ): 2901
-LOC (gadgets): 18165
+LOC (gadgets): 18165 -> 18300 (+140)
 LOC (sonobe): 20556
 Goal 1. refine fsm_adv
 	[a] prove_filter_tag -> DONE
@@ -23844,5 +23844,39 @@ Goal 2. refine discharge_adv
 			-> get_pat_loc_len()
 	[b] advice::new
 
+Sat 01/10/2026
+LOC (gadgets): 18301
+Goal 1. compute_sig
+	[a] set up framework
+	[b] gen_eval_subsig_by_sq_combo
+	[c] gen_step_tbl_id
+	[d] gen_synthesis_subsig_combo
+	[e] gen_discharge_sig_combo
+	[f] veirfy struct capacity
+	[g] basis_pats_in_trace not used
+		-> get_pat_loc_len -> only used in estimate
+		and passed onto discharge > it's ok to ignore it
 
+Goal 2. dfa_adv component
+	[a] verified ok
+
+Goal 3. dfa_adv
+	[a] set up framework
+	[b] gen_mul_fsm_acc_combo
+	[c] gen_discharge_sig_combo
+	[d] double check all capacity attributes
+
+Goal 4. make quick test
+	[a] sigs
+		-> why would sigs affect discharged sig size?
+	[b] subsigs
+	[c] active_pats_per_subsig
+
+Sunday 01/11/2026
+Goal 1.  better CapErr for active_pats_per_subsig
+	[a] add exception to ProjStore::to_cols
+	[b] propagate handling in clam_db
+	[c] 
+(2) better handling the sigs (should have thrown error in gen_advice)
+	[b] 
 

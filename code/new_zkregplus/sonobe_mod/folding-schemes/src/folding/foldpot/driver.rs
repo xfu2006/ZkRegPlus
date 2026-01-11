@@ -1371,13 +1371,13 @@ where
 					r_word_i: snark_inp.rands[(word_id as usize)-1],
 					accumulated_word_len: C1::ScalarField::from(acc_wd_len as u32),
 				};//end constructor StatementExtraInfo
-				log_perf(log_level+2, &format!("-- Pass 1. For wd: {}, subseg_id: {} gen_statment_extra_info.", word_id, subseg_id), &mut gt2);
+				log_perf(log_level+2, &format!("-- Pass 1. For wd: {}, subseg_id: {} gen_statment_extra_info.", word_fname, subseg_id), &mut gt2);
 
 				//2.3 generate the advice and statement
 				//need to build the statement to fill the m_map
 				let res = circ.get_mapper().borrow()
 					.gen_nd_advice(&frag, word_info, prev_adv);
-				assert!(res.is_ok(), "UNABLE to generate advice for word id: {}, segment_id: {}", word_id, subseg_id); 
+				assert!(res.is_ok(), "UNABLE to generate advice for word id: {}, segment_id: {}, ERROR: {:#?}", word_fname, subseg_id, res); 
 				let cur_adv = res.unwrap();
 
 				log_perf(log_level+2, &format!("-- Pass 1. gen_advice."), &mut gt2);
@@ -1386,7 +1386,7 @@ where
 					//	advice[subseg_id-1].clone(), 
 						cur_adv.clone(),
 						lk_share_size, false);
-				assert!(stmt_res.is_ok());
+				assert!(stmt_res.is_ok(), "UNABLE to generate statement for word id: {}, segment _id: {}, ERR: {:#?}", word_id, subseg_id, stmt_res);
 				prev_adv = Some(cur_adv);
 				log_perf(log_level+2, &format!("-- Pass 1. build stmt."), &mut gt2);
 				let stmt = stmt_res.unwrap();

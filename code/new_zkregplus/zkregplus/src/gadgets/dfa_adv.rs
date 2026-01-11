@@ -1,5 +1,7 @@
 /* Created 07/16/2025, Completed: 07/27/2025
-	Revised 11/06/2025: improve efficiency*/
+	Revised 11/06/2025: improve efficiency
+	Revised 01/10/2026: improve capaicity err exception
+*/
 
 //! This module dischages a nibble sequence against a collection
 //! of DFAs (each one-to-one corresponding to a subsignature),
@@ -14,11 +16,14 @@ use rayon::iter::{ParallelIterator,IntoParallelIterator,IntoParallelRefIterator}
 use std::{rc::{Rc},cell::{RefCell},collections::{HashMap}};
 use ark_ff::{PrimeField};
 use std::marker::{PhantomData};
-use folding_schemes::folding::foldpot::{
-	sigma_ir1cs::{SigmaGadget,WitnessSigmaIR1CSVar,WitnessSigmaIR1CSConfig, NdAdvice,Capacity,DischargeSigInfo},
-	container_config::{ContainerConfig},
-	circuits_super::field_to_usize,
-	utils::{var_to_tuple_adv},
+use folding_schemes::{
+	Error,
+	folding::foldpot::{
+		sigma_ir1cs::{SigmaGadget,WitnessSigmaIR1CSVar,WitnessSigmaIR1CSConfig, NdAdvice,Capacity,DischargeSigInfo},
+		container_config::{ContainerConfig},
+		circuits_super::field_to_usize,
+		utils::{var_to_tuple_adv},
+	}
 };
 use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef,Variable,LinearCombination};
 use ark_r1cs_std::{
@@ -185,7 +190,7 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 					//extracting the dnf to the concat of inp_subsigs
 		v_sig_obj: &Vec<Arc<ClamavSig>>, //needs to cover all inp_sigs
 		sig_to_id: &HashMap<String,usize>,
-	) ->Self{
+	) ->Result<Self,Error>{
 
 		let stmt_container = Container::<F>::new("dfa_adv_stmt");
 		//1. padding the input when necessary
@@ -202,8 +207,15 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		
 		let n = capacity.subsigs;
 		let n1 = inp_subsigs.len();
+		if n<n1{
+			return Err(Error::CapErr(vec![(format!("dfa_adv::subsigs"), n1)]));
+		}
 		assert!(n>=n1, "capacity.subsigs: {} < inp_subsigs: {}. adjust DfaCapacity.subsigs", n, n1);
 		let n2 = n - n1;
+		if inp_sigs.len()>capacity.sigs{
+			return Err(Error::CapErr(vec![(format!("dfa_adv::sigs"), 
+				inp_sigs.len())]));
+		}
 		assert!(inp_sigs.len()<=capacity.sigs, "increase capacity.sigs: {} to cover inp_sigs: {}", capacity.sigs, inp_sigs.len());
 		let zero = F::zero();
 		assert!(v_dfa_id.len()==n1 && v_dfa.len()==n1);
@@ -211,6 +223,10 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 			.concat();
 		let inp_sigs = [&inp_sigs[..], 
 			&vec![zero;capacity.sigs-inp_sigs.len()][..]].concat();
+		if capacity.sigs<discharge_infos.len(){
+			return Err(Error::CapErr(vec![(format!("dfa_adv::sigs"), 
+				discharge_infos.len())]));
+		}
 		let discharge_infos= [&discharge_infos[..], 
 			&vec![dummy_info;capacity.sigs-discharge_infos.len()][..]].concat();
 		assert!(inp_sigs.len()==capacity.sigs);
@@ -229,7 +245,7 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		// each DFA.
 		let (mul_fsm_acc, subsig_res) = Self::gen_mul_fsm_acc_combo(
 			nibbles, &inp_subsigs, &v_dfa_id, &v_dfa, &inp_states, capacity
-		);
+		)?;
 		stmt_container.borrow_mut().add_container(mul_fsm_acc);
 
 		//3. construct the sig_res_combo
@@ -241,17 +257,17 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 			&v_sig_obj,
 			&discharge_infos,
 			&sig_to_id
-		);
+		)?;
 		stmt_container.borrow_mut().add_container(sig_res_combo);
 
-		Self{
+		Ok( Self{
 			capacity: Clone::clone(capacity), 
 			inp_subsigs: inp_subsigs.clone(),
 			v_dfa_id: v_dfa_id.clone(),
 			v_dfa: v_dfa.clone(),
 			f_inp_states: inp_states.clone(),
 			stmt_container
-		}
+		} )
 	}
 
 	/// Given the input generates the container of the following
@@ -263,6 +279,7 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 	/// Return:
 	/// (1) the proof combo, 
 	/// (2) the subsig_res which corresponds to inp_subsigs)
+	/// actually throws no CapErr
 	#[allow(dead_code)]
 	fn gen_mul_fsm_acc_combo(
 		nibbles: &Vec<F>, 
@@ -271,7 +288,7 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		v_dfa: &Vec<Arc<DFA<char>>>, //1-1 corresponding to inp_subsigs
 		inp_states: &Vec<F>,
 		capacity: &DfaAdvCapacity) 
-	-> (Rc<RefCell<Container<F>>>,Vec<F>){
+	-> Result<(Rc<RefCell<Container<F>>>,Vec<F>),Error>{
 		//0. set up data
 		let res = Container::<F>::new("mul_fsm_acc");
 		let (m, nlen) = (capacity.subsigs, capacity.max_nibble_len);
@@ -444,7 +461,7 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 			"si_subsig_res",IDX_SI_DATA)); //don't care as they'll be TriVal
 
 
-		(res, subsig_res)
+		Ok( (res, subsig_res) )
 	}
 
 	/// This module is adapted from the one in compute_sig_adv.rs
@@ -463,6 +480,7 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 	/// where the (subsig,res) is from the gen_synsis_subsig_combo.
 	/// HERE: all sigs need to be discharged (they will be
 	///   the list of sigs to be reported as "discharged").
+	/// throws CapErr:subsigs
 	#[allow(dead_code)]
 	fn gen_discharge_sig_combo(
 		inp_sigs: &Vec<F>,
@@ -473,7 +491,7 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		discharge_infos: &Vec<DischargeSigInfo>, //must match inp_sigs
 					//extracting the dnf to the concat of inp_subsigs
 		sig_to_id: &HashMap<String,usize>,
-	)->Rc<RefCell<Container<F>>>{
+	)->Result<Rc<RefCell<Container<F>>>,Error>{
 		let zero = F::zero();
 		let frg = F::from(RANGE2);
 		let res = Container::<F>::new("sig_res_combo");
@@ -527,6 +545,10 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 				(eval_dnf_id, F::from(i as u64), eval_count, *ssid, sig_id)
 			).collect::<Vec<(F,F,F,F,F)>>()
 		}).flatten().collect::<Vec<(F,F,F,F,F)>>();
+		if n<info_ts.len(){
+			return Err(Error::CapErr(vec![(format!("dfa_adv::subsigs"), 
+				info_ts.len())]));
+		}
 		let pad = vec![(zero,zero,zero,zero,zero); n-info_ts.len()];
 		let info_ts = [&pad[..], &info_ts[..]].concat();
 		assert!(info_ts.len()==n);
@@ -671,7 +693,7 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		//	"sid_discharged_sigs", IDX_SI_DATA));
 
 
-		res
+		Ok( res )
 	}
 
 }
@@ -708,7 +730,7 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		let dummy_adv = DfaAdvAdvice::new(&nibbles, &dummy_inp_subsigs,
 			&dummy_v_dfa_id, &dummy_v_dfa, &dummy_inp_states, capacity,
 				&inp_sigs, &discharge_infos, &v_sig_obj, &sigs_to_id
-			);
+			).expect("dummy dfa_adv advice err");
 		let mut vec_cfg = prev_cfgs.clone();
 		vec_cfg.push(dummy_adv.stmt_container.borrow().get_cfg());
 		ContainerConfig::adjust_locations(&mut vec_cfg);
@@ -1382,7 +1404,7 @@ pub mod tests_dfa_adv_gadget{
 		//DFA discharges it. The Critical pattern and SED fail because
 		// pattern "a" and "c" too short.
 		let path= "debug/dfa/simple";
-		let db = ClamavDB::<Fr>::build_db_from_dir(path);
+		let db = ClamavDB::<Fr>::build_db_from_dir(path).expect("db err");
 
 		//2. create advice for word_extract_adv and dfa_adv
 		// both advices are needed for producing related container_config
@@ -1482,7 +1504,7 @@ pub mod tests_dfa_adv_gadget{
 			&nibbles, &v_subsig_ids, &v_fsm_id, 
 			&v_dfa, &v_inp_state, &cap,
 			&inp_sigs, &discharge_infos, &v_sigs, &db.sig_to_id
-		);
+		).expect("adv_dfa advice err");
 		let stmt_faa = adv_faa.stmt_container;
 		let cfg_faa = stmt_faa.borrow().get_cfg(); 
 

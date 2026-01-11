@@ -326,10 +326,10 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> CpComponentMapper<F,LK>{
 		];
 		assert!(clamdb.as_ref().vec_sigs_no_critical_pat.len()
 			<sig_buf_capacity,
-			concat!("NEEDS to INCREASE the MINIMUM CpCapacity.subsigs from {} to {}.\n",
+			concat!("\n\n ==== **** ==== \nNEEDS to INCREASE the MINIMUM CpCapacity.subsigs from {} to {}.\n",
 			"because from sig DB there are {} subsigs have no critical pattern,",
 			"they will not pass CP component and will need to be passed ",
-			"to SED. The CpCapacity.subsigs need to be greater."),
+			"to SED. The CpCapacity.subsigs need to be greater. This applies to all input words (system wide)"),
 			sig_buf_capacity,
 			clamdb.as_ref().vec_sigs_no_critical_pat.len() + 1, 
 			clamdb.as_ref().vec_sigs_no_critical_pat.len(), 

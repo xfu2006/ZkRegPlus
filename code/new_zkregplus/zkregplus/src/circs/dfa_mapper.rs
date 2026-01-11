@@ -294,7 +294,7 @@ impl <F:PrimeField> DfaAdvice<F>{
 				&nibbles, &v_subsig_ids, &v_fsm_id,
 				&v_dfa, &v_inp_state, &dfa_cap,
 				&inp_sigs, &discharge_info, &v_sigs, &sig_to_id,
-			);
+			)?;
 
 		//3. assemble all advices
 		let vec_advices:Vec<Rc<dyn ComponentAdvice<F>>> = vec![

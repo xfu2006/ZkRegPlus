@@ -32,7 +32,10 @@ use utils::{
 	timer::{Timer},
 	logger::{flog,flog_perf,LOG2,LOG1,LOG_LEVEL},
 };
-use folding_schemes::{folding::foldpot::sigma_ir1cs::{LookupTableTwoCol_Inst}};
+use folding_schemes::{
+	Error,
+	folding::foldpot::sigma_ir1cs::{LookupTableTwoCol_Inst}
+};
 
 /// Table Ids - actual col1 of the 2-column lookup table.
 /// NOTE: for each (AC)DFA, it has four sub-tables: non_final_states,
@@ -49,8 +52,8 @@ pub const STATE_BIT:usize =  24;
 /// The bit-width of RANGE2 table 
 /// IN PRODUCTION NEEDS TO CHANGE THE SAME SIZE OF STATE_BIT
 //pub const RANGE2_BIT: usize = 10;
-//pub const RANGE2_BIT: usize = 8;
-pub const RANGE2_BIT: usize = 18;
+pub const RANGE2_BIT: usize = 8;
+//pub const RANGE2_BIT: usize = 18;
 //pub const RANGE2_BIT: usize = 26; //(allowing 64M nibbles = 32MB)
 
 // the following are trival related sub-table ids
@@ -252,14 +255,15 @@ impl SubsigPatternStore{
 		lkup: &mut LookupTableTwoCol_Inst<F>, 
 		acdfa_id: u32,
 		state_part_bits: usize,
-	) {
-		let cols = self.gen_cols(state_part_bits, None);
+	) -> Result<(), Error>{
+		let cols = self.gen_cols(state_part_bits, None)?;
 		let tbl_id = F::from(acdfa_id + STORE_SUBSIG);
 
 		let mut tuples = cols[5].par_iter().map(|v|{
 			(tbl_id, *v)
 		}).collect::<Vec<(F,F)>>();
 		lkup.vals.append(&mut tuples);
+		Ok( () )
 	}
 
 	/// Generate a new store by projecting to subsigs_id
@@ -293,7 +297,9 @@ impl SubsigPatternStore{
 	/// If padding too much
 	/// we'll print warning (for tbl_len 2 times larger than actual tbl
 	/// length, and panic if 8 times larger).
-	pub fn gen_cols<F:PrimeField>(&self, state_part_bits: usize, n: Option<usize>)->Vec<Vec<F>>{
+	///
+	/// might throw CapErr: proj_store:n
+	pub fn gen_cols<F:PrimeField>(&self, state_part_bits: usize, n: Option<usize>)->Result<Vec<Vec<F>>, Error>{
 		//NOTE: entry format
 		// (subsig_id, id1, state_id, id2, pat_id)
 		//1. define the encode function
@@ -352,6 +358,11 @@ impl SubsigPatternStore{
 		*/
 		if n.is_some(){
 			let n = n.unwrap();
+			if n<estimated_len{
+				return Err(Error::CapErr(vec![(format!("proj_store::n"), 
+					estimated_len
+				)]));
+			}
 			assert!(n>=estimated_len, "ProjStore buffer len too small. n: {}, estimated: {}, Consider increasing the properties such as  avg_pats_per_subsig or subsigs in FsmAdvCapacity config.", n, estimated_len);
 		}
 		let inner_zero_entries = if n.is_some() {n.unwrap()- estimated_len}
@@ -432,7 +443,7 @@ impl SubsigPatternStore{
 		//RECOVER LATER  -----------
 		//check_pad_ratio(&res[0], "FsmAdvCapacity.avg_pat_per_subsig"); 
 		//RECOVER LATER  ABOVE
-		res
+		Ok( res )
 	}
 }
 
@@ -1387,11 +1398,12 @@ impl <F:PrimeField> ClamavDB<F>{
 
 
 	/// add the corresponding ACDFA and subsig_store to the lkup
+	/// might throw CapErr: proj_store::n
 	fn add_bundle_subsig_to_lkup(lkup: &mut LookupTableTwoCol_Inst<F>, 
 		sig_to_id: &HashMap<String,usize>, 
 		bundle: &BundleSubsigStore,
 		b_igc: bool,
-	){
+	)->Result<(), Error>{
 		let state_bits = bundle.vec_acdfa[0].state_part_bits;
 		for i in 0..bundle.vec_sig_names.len(){
 			let sig_id:usize = if i==0 {0} 
@@ -1401,12 +1413,13 @@ impl <F:PrimeField> ClamavDB<F>{
 			Self::add_acdfa_to_lkup(lkup,&bundle.vec_acdfa[i],
 				dfa_id, &bundle.vec_map_pattern_sig[i], sig_to_id);
 			bundle.vec_subsig_stores[i]
-				.add_store_to_lkup(lkup, dfa_id, state_bits);
+				.add_store_to_lkup(lkup, dfa_id, state_bits)?;
 			bundle.vec_subsig_step_stores[i]
 				.add_store_to_lkup(lkup, dfa_id, state_bits);
 			bundle.vec_subsig_info_stores[i]
 				.add_store_to_lkup(lkup, dfa_id, state_bits);
 		}
+		Ok( () )
 	}
 
 	/// return the subsig_id to the state id in ACDFA for the
@@ -1742,7 +1755,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		needs_dfa: &Vec<String>,
 		needs_ised: &Vec<String>,
 		needs_ised_igc: &Vec<String>)
-	-> Self{
+	-> Result<Self, Error>{
 		//padded sig to enforce full alphabet
 		let sigs = vec![
 			sigs.clone(),
@@ -1751,6 +1764,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		write_sigs_to_dir(&sigs, sigs_dir, needs_dfa, 
 			needs_ised, needs_ised_igc);
 		let db = Self::build_db_from_dir_adv(sigs_dir, &cfg);
+
 		db
 	}
 
@@ -1763,11 +1777,11 @@ impl <F:PrimeField> ClamavDB<F>{
 	/// needs_ised_igc.txt - the list of sigs that need ised (ignore case)
 	/// This function is mainly for debugging purpose. It does NOT save
 	/// or load
-	pub fn build_db_from_dir(dir: &str)->Self{
+	pub fn build_db_from_dir(dir: &str)->Result<Self, Error>{
 		let cfg = default_clamav_cfg(); 
 		Self::build_db_from_dir_adv(dir, &cfg)
 	}
-	pub fn build_db_from_dir_adv(dir: &str, cfg: &ClamavApproxConfig)->Self{
+	pub fn build_db_from_dir_adv(dir: &str, cfg: &ClamavApproxConfig)->Result<Self, Error>{
 		let cfg = cfg.clone();
 		let rt = proj_root();
 		let sig_file= format!("{}/data/{}/sigs.db",rt,dir);
@@ -1775,6 +1789,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		let needs_ised_file= format!("{}/data/{}/needs_ised.txt",rt , dir);
 		let needs_ised_igc_file=format!("{}/data/{}/needs_ised_igc.txt",rt,dir);
 		let mut vlog = vec![];
+
 
 		Self::build_db(&sig_file, &needs_dfa_file, &needs_ised_file,
 			&needs_ised_igc_file, &cfg, &mut vlog)
@@ -1789,7 +1804,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		needs_dfa_list_file: &str, 
 		needs_ised_list_file: &str,
 		needs_ised_igc_list_file: &str,
-		cfg: &ClamavApproxConfig, vlog: &mut Vec<String>)->Self{
+		cfg: &ClamavApproxConfig, vlog: &mut Vec<String>)->Result<Self, Error>{
 		let log_level = LOG2;
 		let b_perf = true && log_level>=LOG_LEVEL;
 		let b_debug = false;
@@ -1918,8 +1933,8 @@ impl <F:PrimeField> ClamavDB<F>{
 		Self::add_acdfa_to_lkup(&mut lkup, &dfa_crit_igc, CRIT_IGC_INIT, &map_crit_pat_igc, &sig_to_id);
 		Self::add_range_to_lkup(&mut lkup, F::from(CHAR), (0,16));
 		Self::add_range_to_lkup(&mut lkup, F::from(RANGE2), (0,1<<RANGE2_BIT));
-		Self::add_bundle_subsig_to_lkup(&mut lkup, &sig_to_id, &bundle_subsig, false);
-		Self::add_bundle_subsig_to_lkup(&mut lkup, &sig_to_id, &bundle_subsig_igc, true);
+		Self::add_bundle_subsig_to_lkup(&mut lkup, &sig_to_id, &bundle_subsig, false)?;
+		Self::add_bundle_subsig_to_lkup(&mut lkup, &sig_to_id, &bundle_subsig_igc, true)?;
 		Self::add_sig_evaldnf_to_lkup(&mut lkup, &v_sigs, &sig_to_id); 
 		Self::add_sig_dfa_to_lkup(&mut lkup, &v_sigs, &sig_to_id);
 		Self::add_sig_no_crit_pat(&mut lkup, &v_sigs_no_critical_pat, 
@@ -1947,7 +1962,7 @@ impl <F:PrimeField> ClamavDB<F>{
 
 		};
 
-		res
+		Ok(res)
 	}
 	
 	/// print summary in console, and append to vlog
@@ -2093,7 +2108,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		vlog: &mut Vec<String>,
 		cache_dir: &str,
 		b_read_cache: bool,
-		b_write_cache: bool)->Self{
+		b_write_cache: bool)->Result<Self, Error>{
 			let proot = proj_root();
 			let db = if b_read_cache{
 				flog(LOG1, &format!("loadClamDB from: {}", cache_dir),vlog);
@@ -2104,11 +2119,11 @@ impl <F:PrimeField> ClamavDB<F>{
 					&format!("{}/{}", proot, needs_dfa_list_file), 
 					&format!("{}/{}", proot, needs_ised_list_file), 
 					&format!("{}/{}", proot, needs_ised_igc_list_file), 
-					&cfg, vlog);
+					&cfg, vlog)?;
 				if b_write_cache {db.save(cache_dir);}
 				db	
 			};
-			db
+			Ok(db)
 	}
 
 }

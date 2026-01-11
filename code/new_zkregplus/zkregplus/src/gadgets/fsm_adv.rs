@@ -252,7 +252,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		let inp_subsigs = vec![inp_subsigs.clone(), vec![F::zero(); 
 			capacity.subsigs-inp_subsigs.len()]].concat();
 		let proj_store_combo = Self::gen_proj_store_combo(&inp_subsigs, 
-			store_subsig_pat,fsm_id, capacity);
+			store_subsig_pat,fsm_id, capacity)?;
 		let proj_store_combo2 = proj_store_combo.clone(); //rc clone low cost
 		stmt_container.borrow_mut().add_container(proj_store_combo);
 
@@ -473,12 +473,13 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 	/// Its corresponding subtbl_id 
 	///
 	/// Note: call assert_proj_store_combi() in assert_msg3.
+	/// might throw CapErr:avg_pats_per_subsig
 	fn gen_proj_store_combo(
 		inp_subsigs: &Vec<F>, 
 		store_subsig_pat: &SubsigPatternStore,
 		fsm_id: u32,
 		capacity: &FsmAdvCapacity,
-	)->Rc<RefCell<Container<F>>>{
+	)->Result<Rc<RefCell<Container<F>>>, Error>{
 		//1. generate the projected store
 		let state_part_bits = capacity.acdfa_state_part_bits;
 		assert!(state_part_bits == RANGE2_BIT);
@@ -487,7 +488,22 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		assert!(subsig_ids.len()==capacity.subsigs);
 		let n = capacity.subsigs * capacity.avg_pats_per_subsig;
 		let proj_store = store_subsig_pat.project_by(&subsig_ids);
-		let mut cols = proj_store.gen_cols::<F>(state_part_bits, Some(n));
+		let cols = proj_store.gen_cols::<F>(state_part_bits, Some(n));
+		let mut cols = match cols{
+			Ok(v_cols) => Ok(v_cols),
+			Err(Error::CapErr(vec)) => {
+				let vec_err = vec.iter().map(|(s,val)|{
+					if s=="proj_store::n"{
+						let new_n = val / capacity.subsigs + 1;
+						(format!("fsm_adv::avg_pats_per_subsig"),new_n)
+					}else{
+						(format!("unknown capacity err: {}", s), 0)
+					}
+				}).collect::<Vec<(String,usize)>>();
+				Err(Error::CapErr(vec_err))
+			},
+			_ =>cols 
+		}?;
 		cols.push(inp_subsigs.clone());
 		let f_substore_id = F::from((fsm_id + STORE_SUBSIG) as u32);
 		let f_range2 = F::from(RANGE2 as u32);
@@ -529,7 +545,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		for i in 0..cols.len(){ res.borrow_mut().add_col(cols[i].clone()); }
 		for i in 0..sid_cols.len(){res.borrow_mut().add_col(sid_cols[i].clone());}
 
-		res
+		Ok(res)
 	}
 
 	/// Generate packed_trace in the following form:
@@ -714,7 +730,7 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 			offset_wea, //offset to word_extract
 			&nibbles, acdfa, dummy_inp_state,
 			dummy_inp_loc, &dummy_inp_subsigs, capacity, 
-			fsm_id, store_subsig_pat).expect("fsm_adv advice err");
+			fsm_id, store_subsig_pat).expect("\n\n ==== **** =====\nCannot handle dummy advice generation for fsm_adv. Needs to raise the following for at least one circ. ");
 		let mut vec_cfg = prev_cfgs.clone();
 		vec_cfg.push(dummy_adv.stmt_container.borrow().get_cfg());
 		ContainerConfig::adjust_locations(&mut vec_cfg);
@@ -1469,7 +1485,7 @@ pub mod tests_fsm_adv_gadget{
 		// the word to discharge "abc1111111cba" (will be discharged via
 		// SED but not CP.).
 		let path = "debug/sed/simple";
-		let db = ClamavDB::<Fr>::build_db_from_dir(path);
+		let db = ClamavDB::<Fr>::build_db_from_dir(path).expect("db err");
 
 		//2. create advice for word_extract_adv and fsm_adv
 		// both advices are needed for producing related container_config
