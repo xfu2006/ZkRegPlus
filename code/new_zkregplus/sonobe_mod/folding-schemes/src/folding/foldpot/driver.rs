@@ -1329,7 +1329,7 @@ where
 			let _mapper = self.circuits[0].get_mapper();
 			let word_info = &vec_word_info[word_id-1];
 			let (steps, vec_len, vec_pci, _vec_cap_req, _advice) = self.plan_nd_advice(log_level+2, false, &word, word_info)
-				.expect(&format!("\n\n ==== **** ===== \nPlanning advice fails for {}! Could not find a circuit satisfying the following: ", word_fname)); //note: empty advice will be returned
+				.expect(&format!("\n\n ==== **** ===== \nPlanning advice fails for {}! Could not find a circuit satisfying the following: \n ==============\n", word_fname)); //note: empty advice will be returned
 			log_perf(log_level+2, &format!("{} - Pass 1: decide circ alloc for word_id: {}, fname: {}, word_len: {}. ", phase_name, word_id, word_fname, format_bytes(total_word_len*31)), &mut gt2);
 			for i in 0..steps{
 				//2.1 set up params
@@ -1377,7 +1377,7 @@ where
 				//need to build the statement to fill the m_map
 				let res = circ.get_mapper().borrow()
 					.gen_nd_advice(&frag, word_info, prev_adv);
-				assert!(res.is_ok(), "UNABLE to generate advice for word id: {}, segment_id: {}, ERROR: {:#?}", word_fname, subseg_id, res); 
+				assert!(res.is_ok(), "\n\n===== **** =====\nUNABLE to generate advice for word id: {}, segment_id: {}, ERROR: {:#?}\n==============\n", word_fname, subseg_id, res); 
 				let cur_adv = res.unwrap();
 
 				log_perf(log_level+2, &format!("-- Pass 1. gen_advice."), &mut gt2);
@@ -1386,7 +1386,7 @@ where
 					//	advice[subseg_id-1].clone(), 
 						cur_adv.clone(),
 						lk_share_size, false);
-				assert!(stmt_res.is_ok(), "UNABLE to generate statement for word id: {}, segment _id: {}, ERR: {:#?}", word_id, subseg_id, stmt_res);
+				assert!(stmt_res.is_ok(), "\n\n === *** === \nUNABLE to generate statement for word id: {}, segment _id: {}, ERR: {:#?}. *** SHOULD IMPROVE the CapErr framework. Exception should be thrown in gen_nd_advice instead of build_stmt ***", word_fname, subseg_id, stmt_res);
 				prev_adv = Some(cur_adv);
 				log_perf(log_level+2, &format!("-- Pass 1. build stmt."), &mut gt2);
 				let stmt = stmt_res.unwrap();

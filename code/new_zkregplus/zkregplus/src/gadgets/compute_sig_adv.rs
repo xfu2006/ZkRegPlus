@@ -216,6 +216,10 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		assert!(inp_subsigs_cs.len()<=capacity.subsigs, 
 			"inp_subsigs_cs.len: {} should be <= capacity.subsigs: {}",
 			inp_subsigs_cs.len(), capacity.subsigs);
+		if inp_sigs.len()>capacity.sigs{
+			return Err(Error::CapErr(vec![(format!("comp_sig::sigs"), 
+				inp_sigs.len())]));
+		}
 		assert!(inp_sigs.len()<=capacity.sigs);
 		let pad = vec![F::zero(); capacity.subsigs-inp_subsigs_cs.len()];
 		let pad2 = vec![F::zero(); capacity.sigs-inp_sigs.len()];

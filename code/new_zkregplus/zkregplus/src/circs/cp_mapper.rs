@@ -31,7 +31,8 @@
 //       -- introduced by gadget sigs
 //       many items (call its advice to generate data item
 // failed_sigs: the COPY of the  oup_sigs (last #sigs elements of oup)
-// discharged_sigs: size 0
+//   -- will reserve at least one dummy (0) entry
+// discharged_sigs: size 1 (to ensure at least one dummy entry)
 
 // subtbl: follow inp/oup/data
 use utils::{logger::{log, LOG7,LOG_LEVEL}};
@@ -422,7 +423,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		let oup_size:usize = vec_oup_len.iter().map(|x| x).sum();
 		let data_size:usize = vec_data_len.iter().map(|x| x).sum();
 		let failed_sig_size = sig_buf_capacity;
-		let discharged_sig_size = 0;
+		let discharged_sig_size = 1;
 		vec![inp_size, oup_size, data_size,failed_sig_size,discharged_sig_size]
 	}
 
@@ -831,7 +832,11 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpCompon
 		//4. the failed sigs and discharged sigs
 		let failed_sigs = advice.sigs_advice.oup.clone(); 
 		assert!(failed_sigs.len()==sig_buf_capacity);
-		let discharged_sigs = vec![];
+		if !failed_sigs.contains(&F::zero()){
+			return Err(Error::CapErr(vec![(format!("cp::sigs to accomodate one dummy entry: "), failed_sigs.len() + 1
+			)]));
+		}
+		let discharged_sigs = vec![F::zero()]; //dummy entry
 		
 		if b_perf{
 			log(log_level, &format!("## build_stmt: CP b_igc: {}. Failed sigs:",

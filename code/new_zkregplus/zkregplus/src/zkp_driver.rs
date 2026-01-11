@@ -559,7 +559,7 @@ pub mod tests_zkp_driver{
 		let b_write_cache = !b_read_cache;
 		let set1 = "data/debug/small_data_set/config_dfa"; //for dfa 
 		let max_word= 1; //this is chunk_len
-		let sigs = 3;
+		let sigs = 2; //good setting: 2
 		//let subsigs = 6; GOOD setting
 		let subsigs = 4; 
 		let avg_pats_per_subsig = 4; //old good val 8
@@ -739,6 +739,6 @@ pub mod tests_zkp_driver{
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
-		small_data2::<Fr>(b_check_lkup);
+		small_data::<Fr>(b_check_lkup);
 	}
 }
