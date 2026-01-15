@@ -24088,5 +24088,28 @@ Goal 6. can we do better?
 Thursday 01/16/2026
 Goal 1. analyze failure
 	[a] avg_pats_per_subsig is 650! much much greater than
-	8 we have. This results in a 52M constraints gates!
+	8 we have. This results in a 52M constraints gates! (vs 210k circ)
+	[b] analyze who submits fsm_adv:avg_pats_per_subsig
+	-> it's from proj_store
+	[c] read code
+		-> dump the subsig_id and pats data in projected storev
+		-> problem is that one subsig has one pattern actually
+			but it maps to a lot of states.
+			the max one has 7k states
+	[d] is avg_pats_per_subsig used anywhere ealse?
+		-> it's used in cp
+		-> but it seems to be used to determine
+			oup_states_len (and better to be unique_states_per_trace)
+			or unique_acc_states_per_trace.
+		-> anyway, active_pats_per_trace is not a good name for both
+		components and there should be separate properties.
+	[e] the first question - easy way is to check if we can
+		change the filter property without changing source code
+
+Goal 2. play with the suggested 650 and see the cost of each component
+	[a] it increases sigs to 1.2M, and fsm_adv to 3.7M each which
+		pumps the circuit size to 10M:q
+
+Goal 2. play with config and see if we can improve the performance
+	[a] 
 

@@ -496,7 +496,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 				let vec_err = vec.iter().map(|(s,val)|{
 					if s=="proj_store::n"{
 						let new_n = val / capacity.subsigs + 1;
-						(format!("fsm_adv::avg_pats_per_subsig"),new_n)
+						(format!("fsm_adv::avg_pats_per_subsig from proj_store"),new_n)
 					}else{
 						(format!("unknown capacity err: {}", s), 0)
 					}
@@ -656,7 +656,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 				let vec_err = vec.iter().map(|(s,val)|{
 					if s=="target_size"{
 						let t_val= val /capacity.subsigs + 1;
-						(format!("fsm_adv::avg_pats_per_subsig"),t_val)
+						(format!("fsm_adv::avg_pats_per_subsig from pat_state"),t_val)
 					}else{
 						(format!("unknown capacity err at step 3: {}", s), 0)
 					}
@@ -1416,7 +1416,7 @@ impl <F:PrimeField> SigmaGadget<F> for FsmAdvGadget<F>{
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{
-		let b_perf = false;
+		let b_perf = true;
 		let log_level = LOG1;
 		let mut gt = GTimer::new();
 		let mut nc = cs.num_constraints();

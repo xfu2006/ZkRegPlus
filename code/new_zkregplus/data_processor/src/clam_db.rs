@@ -208,6 +208,20 @@ impl SubsigPatternStoreItem{
 
 		Self{subsig_id, state_ids, state_to_pattern_ids}
 	}
+
+	pub fn dump(&self){
+		println!("==== subsig_id: {}", self.subsig_id);	
+		let mut total = 0;
+		for state_id in &self.state_ids{
+			println!(" -- state_id: {}", state_id);
+			let pats = self.state_to_pattern_ids.get(&state_id).unwrap();
+			for pat in pats{
+				println!(" -- -- {}", pat);
+			}
+			total += pats.len();
+		}
+		println!(" ==== Summary: subsig: {}, total pats: {}", self.subsig_id, total);
+	}
 }
 
 
@@ -445,6 +459,13 @@ impl SubsigPatternStore{
 		//check_pad_ratio(&res[0], "FsmAdvCapacity.avg_pat_per_subsig"); 
 		//RECOVER LATER  ABOVE
 		Ok( res )
+	}
+
+	pub fn dump(&self){
+		for subsig in &self.subsig_ids{
+			let rec = self.subsig_to_rec.get(&subsig).unwrap();
+			rec.dump();
+		}
 	}
 }
 
@@ -2148,7 +2169,7 @@ mod tests_clam_db{
 		let mut vlog = vec![];
 		let db = ClamavDB::<Fr>::
 			build_db(&sig_file, &needs_dfa_file, &needs_ised_file,
-				&needs_ised_igc_file, &cfg,&mut vlog);
+				&needs_ised_igc_file, &cfg,&mut vlog).expect("build db err");
 		assert!(db.vec_sigs.len()==3, "ERROR loaded: vec_sigs: {:?}", 
 			db.vec_sigs);
 		db.save("debug1");
