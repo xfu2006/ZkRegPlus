@@ -745,7 +745,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		}
 
 		let n2 = capacity.get_scc_prf_size();
-		if scc_prf_subsig.len()>n2-1{
+		if scc_prf_subsig.len()+1>n2{
 			let new_val = (scc_prf_subsig.len()+1)*100/capacity.subsigs + 1;
 			return Err(Error::CapErr(vec![(format!("comp_sig::perc_comp_subsigs"), new_val)]));
 
@@ -1275,7 +1275,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 			store_extra_info_igc, 
 			&v_sig_obj, 
 			&sigs_to_id 
-		).expect("create dummy advice err");
+		).expect("\n\n===== ***** =======Create dummy advice err. This is system-wide, unable to create circ. Needs to increase capacity as suggested.\n===============\n");
 		let mut vec_cfg = prev_cfgs.clone();
 		vec_cfg.push(dummy_adv.stmt_container.borrow().get_cfg());
 

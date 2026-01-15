@@ -283,7 +283,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 	/// si_states_final
 	/// si_locs_final
 	///
-	/// might throw CapErr("fsm_adv::basic_acc_states")
+	/// might throw CapErr("fsm_adv::basis_acc_states")
 	fn gen_fsm_acc_combo(
 		b_igc: bool,
 		wea_offset: isize,
@@ -354,6 +354,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 			}).map(|i| raw_locs[0] + F::from(i as u32)).collect::<Vec<F>>();
 		assert!(states_final.len()==locs_final.len());
 		let target_size = nlen*capacity.basis_acc_states/10000;
+		let target_size = if target_size < 2 {2} else {target_size};
 		if states_final.len()>target_size{
 			let target_basis_acc_states = states_final.len() * 10000/nlen + 1;
 			return Err(Error::CapErr(vec![(format!("fsm_adv::basis_acc_states"), target_basis_acc_states)]));
@@ -573,7 +574,6 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		capacity: &FsmAdvCapacity,
 	)->Result<Rc<RefCell<Container<F>>>, Error>{
 		let res = Container::<F>::new("packed_trace");
-
 		//1. extract proj_store_combo column "states" to a sorted set
 		let ext_state= proj_store_combo.borrow()
 			.get_container("state").unwrap().borrow()
@@ -583,6 +583,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 			* capacity.subsigs;
 		let _final_states_len= capacity.basis_acc_states *
 			capacity.max_nibble_len /10000; //final states for ALL sigs
+		let _final_states_len = if _final_states_len<2 {2} else {_final_states_len};
 		let sorted_states = col_to_sorted_set(&ext_state, sorted_set_size, 
 			"sorted_states");
 		let sorted_states2 = sorted_states.clone(); //low cost rc clone
@@ -605,6 +606,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 			capacity.max_nibble_len/10000;
 		let unique_key_size = capacity.basis_unique_states *
 			capacity.max_nibble_len/10000;
+
 		let state_loc_tbl = tbl_filtered_to_sorted_tbl(
 			&state_col, 
 			&loc_col, 
@@ -619,12 +621,15 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 				let vec_err = vec.iter().map(|(s,val)|{
 					if s=="target_size"{
 						let t_val= val * 10000/capacity.max_nibble_len + 1;
-						(format!("fsm_adv::basis_pats_in_trace"),t_val)
+						(format!("fsm_adv::basis_pats_in_trace from tbl_filtered_to_sorted_tbl"),t_val)
 					}else if s=="unique_key_size"{
 						let t_val= val * 10000/capacity.max_nibble_len + 1;
 						(format!("fsm_adv::basis_unique_states from tbl_filtered_to_sorted_tbl"),t_val)
+					}else if s=="target_size::hashmap_2col"{
+						let t_val= val * 10000/capacity.max_nibble_len + 1;
+						(format!("fsm_adv::basis_pats_in_trace from tbl_filtered_to_sorted_tbl"),t_val)
 					}else{
-						(format!("unknown capacity err: {}", s), 0)
+						(format!("unknown capacity err at step 2: {}", s), 0)
 					}
 				}).collect::<Vec<(String,usize)>>();
 				Err(Error::CapErr(vec_err))
@@ -653,7 +658,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 						let t_val= val /capacity.subsigs + 1;
 						(format!("fsm_adv::avg_pats_per_subsig"),t_val)
 					}else{
-						(format!("unknown capacity err: {}", s), 0)
+						(format!("unknown capacity err at step 3: {}", s), 0)
 					}
 				}).collect::<Vec<(String,usize)>>();
 				Err(Error::CapErr(vec_err))
@@ -667,11 +672,9 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		//4. left join (pat-state) and (state-loc) both are sorted table.
 		let packed_trace_size = capacity.basis_pats_in_trace * 
 			capacity.max_nibble_len / 10000;
-		println!("\n\n ***DEBUG USE 6101.0 -- before call tbl_left_join pat_state_loc_tbl");
 		let pat_state_loc_tbl = tbl_left_join(
 			&pat_state_tbl2, &state_loc_tbl2, 
 			&sorted_states2, packed_trace_size, "pat_state_loc_tbl");
-		println!("DEBUG USE 6101.4 -- AFTER tbl_left_join pat_state_loc_tbl: {}", pat_state_loc_tbl.is_ok());
 		let pat_state_loc_tbl = match pat_state_loc_tbl{
 			Ok(adv) => Ok(adv),
 			Err(Error::CapErr(vec)) => {
@@ -687,7 +690,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 						   "fsm_adv::basis_pats_in_trace from tbl_left_join for hashmap_2col"),t_val
 						  )
 					} else{
-						(format!("unknown capacity err: {}", s), 0)
+						(format!("unknown capacity err at step4: {}", s), 0)
 					}
 				}).collect::<Vec<(String,usize)>>();
 				Err(Error::CapErr(vec_err))
@@ -778,6 +781,7 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		let nlen = self.capacity.max_nibble_len;
 		let alen = self.capacity.max_nibble_len 
 			* self.capacity.basis_acc_states/10000;
+		let alen = if alen<2 {2} else {alen};
 		let _tblid_state = FpVar::new_constant(cs.clone(),
 			F::from(self.fsm_id+6))?;
 		let _tblid_trans= FpVar::<F>::new_constant(cs.clone(), 

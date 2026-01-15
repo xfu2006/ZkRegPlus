@@ -219,10 +219,21 @@ pub fn get_mem_usage()->usize{
 	usage.virtual_mem/(1024*1024*1024)
 }
 
+/// get the RAM in MB
 pub fn get_mem_usage_mb()->usize{
 	let usage = memory_stats().expect("call mem usage fails");
 	usage.virtual_mem/(1024*1024)
 }
+
+/// number of MB to string
+pub fn mb2s(mb: usize)->String{
+	if mb<1024{ 
+		format!("{} MB", mb)	
+	} else{ 
+		format!("{} GB", mb/1024)
+	}
+}
+
 
 /// get the stack available in bytes
 pub fn get_stack_space()->usize{

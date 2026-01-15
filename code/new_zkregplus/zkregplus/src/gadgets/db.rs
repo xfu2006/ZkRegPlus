@@ -1670,7 +1670,6 @@ pub fn tbl_left_join<F:PrimeField>(
 
 
 	let tbl_res = two_col_tbl_left_join(&tbl1_cols, &tbl2_cols, target_size);
-	println!("DEBUG USE 6101.2: tbl_res: {}", tbl_res.is_ok());
 
 	let tbl_res = tbl_res?;
 	check_pad_ratio(&tbl_res[0], "FsmAdvCapaicty.basis_pats_in_trace");

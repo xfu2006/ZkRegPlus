@@ -468,7 +468,7 @@ impl <F: PrimeField> PackFinalAdvice<F>{
 		vec_imm_states.sort();
 		assert!(vec_imm_states[0]!=zero);
 		if vec_imm_states.len()>capacity_imm-1{
-			return Err(Error::CapErr(vec![(format!("capacity_imm"), vec_final_states.len()+1)]));
+			return Err(Error::CapErr(vec![(format!("capacity_imm"), vec_imm_states.len()+1)]));
 		}
 		assert!(vec_imm_states.len()<capacity_imm, "imm_states: {} > capacity_imm: {}", vec_imm_states.len(), capacity_imm);
 		let vec_imm_states = [

@@ -28,6 +28,11 @@ use crate::commitment::{
 	kzg
 };
 use rayon::prelude::*;
+use utils::{
+	timer::Timer,
+	logger::{log_perf},
+	consts::LOG1,
+};
 use core::marker::PhantomData;
 use crate::folding::foldpot::{
 	veccom::{VecCom},
@@ -38,7 +43,7 @@ use crate::folding::foldpot::{
 	sigma_ir1cs::{LookupTableTwoCol},
 	decider_eth_circuit_super::{TwoPhaseCircInput},
 	from_field::{AffineFromField},
-	utils::{B_DEBUG},
+	utils::{B_DEBUG,get_mem_usage_mb,mb2s},
 };
 use crate::transcript::AbsorbNonNative;
 use crate::utils::vec::poly_from_vec;
@@ -381,8 +386,20 @@ where
 		poseidon_config: PoseidonConfig<F>) 
 	-> (BatchProcessorProverParams<'a, E>, BatchProcessorVerifierParams<'a,E,CS1E,H>){
 		let b_debug = B_DEBUG;
-		let kzg= KZG::<E>::setup(&mut rng, max_total_n+2)
+		let logl = LOG1;
+		let mut gt = Timer::new();
+		let mut gt2 = Timer::new();
+		let mut m1 = get_mem_usage_mb();
+		let m0 = m1;
+		log_perf(logl, &format!("BatchProcessor step 1. BEFOFORE setting up kzg: {}, RAM NOW: {}", max_total_n, mb2s(get_mem_usage_mb())), &mut gt);
+		m1 = get_mem_usage_mb();
+	
+		let kzg =  KZG::<E>::setup(&mut rng, max_total_n+2)
 			.expect("kzg key fail");
+		let m2 = get_mem_usage_mb();
+		log_perf(logl, &format!("BatchProcessor step 2. setting up kzg: {}, INCREASED RAM now: {}. ", max_total_n, mb2s(m2-m1)), &mut gt);
+		m1 = m2;
+
 		let kzg_frag = KZG::<E>::pkey_in_affine(&kzg.0, n_words+1);
 		//lg is for random blinding factor
 		let lg= KZG::<E>::pkey_in_affine(&kzg.0, n_words+2)[n_words+1];
@@ -390,6 +407,10 @@ where
 		let vec = VecCom::<E>::setup(&mut rng, n_words + 1).expect("vec setup fails"); 
 		let mut vec_frag = VecCom::<E>::pkey_in_affine(&vec.0, n_words+1);
 		vec_frag.reverse(); //because it's order is the REVERSE
+		let m2 = get_mem_usage_mb();
+		log_perf(logl, &format!("BatchProcessor step 3. setting up veccom: {}, INCREASED RAM: {} ", n_words, mb2s(m2-m1)), &mut gt);
+		m1 = m2;
+
 		//of the vector which generates kzg
 		let vz = vec![ E::G1::zero().into_affine(); n_words + 1];
 		//w will be [vec_r || vec_v]
@@ -399,9 +420,14 @@ where
 			vec![vz.clone(), kzg_frag.clone(),vec![lg]].concat(), // -> kzg_vec_v 
 			vec![vz.clone(), vec_frag.clone(),vec![lg]].concat(), // -> vecom_vec_v
 		];
+		let m2 = get_mem_usage_mb();
+		log_perf(logl, &format!("BatchProcessor step 4. setting up matrix: {}, INCREASED RAM now: {}", (&matrix[0]).len(), mb2s(m2-m1)), &mut gt);
+		m1 = m2;
 		let mat = Matrix::<E::G1>{rows: matrix.len(), cols: matrix[0].len(), 
 			matrix};
 		let (pkey_qanizk, vkey_qanizk) = setup_qa_nizk_standard::<E>(&mat, b_debug);
+		let m2 = get_mem_usage_mb();
+		log_perf(logl, &format!("BatchProcessor step 5. setting up qa_nizk, INCREASED RAM: {}. ", mb2s(m2-m1)), &mut gt);
 
 		let pkey = BatchProcessorProverParams::<'a, E>{
 			kzg: kzg.0, vec: vec.0, 
@@ -418,6 +444,8 @@ where
 			kzg_driver2: None,
 			qa_nizk_vkey_hash: qa_nizk_vkey_hash, 
 		};
+		let m2 = get_mem_usage_mb();
+		log_perf(logl, &format!("BatchProcessor step 5. setting up qa_nizk, INCREASED RAM: {}, TOTAL RAM now: {}. ", mb2s(m2-m0), mb2s(m2)), &mut gt2);
 		(pkey, vkey)
 	}
 

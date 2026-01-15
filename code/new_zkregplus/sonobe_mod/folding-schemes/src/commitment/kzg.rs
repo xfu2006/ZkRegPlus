@@ -154,6 +154,8 @@ where
         mut rng: impl RngCore,
         len: usize,
     ) -> Result<(Self::ProverParams, Self::VerifierParams), Error> {
+		/* COMMENTED OUT by Xiang Fu
+		 as kzg10 costing 3x times of RAM than what is needed.
         let len = len.next_power_of_two();
         let universal_params =
             KZG10::<E, DensePolynomial<E::ScalarField>>::setup(len, false, &mut rng)
@@ -171,6 +173,64 @@ where
             prepared_beta_h: universal_params.prepared_beta_h.clone(),
         };
         Ok((powers, vk))
+		*/
+		//THE following code is mainly adapted from kzg10 of arkworks/poly-commit/kzg10
+		//we simply skipped the construction of neg_powers_of_h and
+		//powers_of_gamma_g
+		use ark_std::UniformRand;
+		use ark_ec::scalar_mul::fixed_base::FixedBase;
+		use std::ops::Mul;
+
+        let len = len.next_power_of_two();
+		let beta = E::ScalarField::rand(&mut rng);
+        let g = E::G1::rand(&mut rng);
+		let gamma_g = E::G1::rand(&mut rng);
+		let h = E::G2::rand(&mut rng);
+		let max_degree = len;
+
+		let mut powers_of_beta = vec![E::ScalarField::one(); max_degree+2];
+        let mut cur = beta;
+        for i in 0..=max_degree {
+            //powers_of_beta.push(cur);
+			powers_of_beta[i+1] = cur;
+            cur *= &beta;
+        }
+
+		let window_size = FixedBase::get_mul_window_size(max_degree + 1);
+		let scalar_bits = E::ScalarField::MODULUS_BIT_SIZE as usize;
+        let g_table = FixedBase::get_window_table(scalar_bits, 
+			window_size, g);
+        let powers_of_g = FixedBase::msm::<E::G1>(
+			scalar_bits, window_size, &g_table, &powers_of_beta);
+
+		let aff_powers_of_g = <E::G1 as CurveGroup>::normalize_batch(
+			&powers_of_g);
+		// to save RAM: we use the following
+		//THIS IS VERY SLOW THOUGH, par_into_iter()?
+		//let aff_powers_of_g = powers_of_g.into_iter().map(|g|
+		//	g.into_affine()).collect::<Vec<_>>();
+		//use rayon::iter::IntoParallelIterator;
+		//let aff_powers_of_g = powers_of_g.into_par_iter().map(|g|
+		//	g.into_affine()).collect::<Vec<_>>();
+        let powers = ProverKey::<E::G1> {
+            powers_of_g: ark_std::borrow::Cow::Owned(aff_powers_of_g),
+        };
+
+		let h = h.into_affine();
+        let beta_h = h.mul(beta).into_affine();
+        let prepared_h = h.into();
+        let prepared_beta_h = beta_h.into();
+
+        let vk = VerifierKey {
+            g: g.into(),
+            gamma_g: gamma_g.into(),
+            h: h,
+            beta_h: beta_h,
+            prepared_h: prepared_h,
+            prepared_beta_h: prepared_beta_h,
+        };
+        Ok((powers, vk))
+
     }
 
     /// commit implements the CommitmentScheme commit interface, adapting the implementation from

@@ -311,7 +311,7 @@ pub trait SigmaIR1CS<const H: bool, F: PrimeField, LK: LookupTableTwoCol<F>, GM:
 	fn gen_dummy_stmt(&self) -> Vec<F>;
 
 	/// set its own dummy statement
-	fn set_dummy_stmt(&mut self, vec: Vec<F>);
+	fn set_dummy_stmt(&mut self, stmt: StatementInst<F,LK>);
 
 	/// use advice to generate container config and set it for
 	/// each gadget (if gadgetes support container config for
@@ -852,7 +852,7 @@ pub struct StatementInstVar<F:PrimeField>{
 /// The configure structure of StatementInstance.
 /// A StatementInstance is essentially the non-deterministic 
 /// advice (witness)
-#[derive(Debug,Clone)]
+#[derive(Debug,Clone,PartialEq)]
 pub struct StatementConfig{
 	/// fixed allocation of input buffer
 	pub input_size: usize,
@@ -2305,6 +2305,53 @@ where 	C: CurveGroup<ScalarField=F>,
 		self.gadget_mapper.clone()
 	}
 
+	/// provide the information of poseidon config, mapper,
+	/// whether full mode (supporting cyclepair), and
+	/// bits of Fq (base prime field)
+	pub fn gen_configs(g_mapper: Rc<RefCell<GM>>, b_full_mode: bool, lkup_share_size: usize)
+		-> Result<(WitnessSigmaIR1CSConfig,StatementConfig),Error>{
+		let gadgets = g_mapper.borrow().get_gadgets();
+		let (stmt_len, stmt_cfg, v_idx, _extra_joins, _ci_inp) = g_mapper
+			.borrow().gen_statement_structure(lkup_share_size);
+		let vec_msg_sizes = gadgets.iter().map(|g| g.borrow().get_msg_size())
+			.collect::<Vec<(usize, usize, usize, usize)>>();
+		let mut m1_len = 0usize;
+		let mut m2_len = 0usize;
+		let mut m3_len = 0usize;
+		for (i,_g) in gadgets.iter().enumerate(){
+			m1_len += vec_msg_sizes[i].1;
+			m2_len += vec_msg_sizes[i].2;
+			m3_len += vec_msg_sizes[i].3;
+		}
+
+		let cmF_size = 4usize;
+		let extra_var_size = 2usize;
+		let si = StatementInst::<F,LK>::from_vec(&stmt_cfg, &vec![F::zero(); stmt_len]);
+		let inv_hab22_left_size = si.subtable_id.len() + extra_var_size;
+		// right side is the lookup table share
+
+		let fq_bits = <<C as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as usize;
+		let inv_hab22_right_size = si.col1_share.len();
+		let wtns_cfg = WitnessSigmaIR1CSConfig{
+			cmF_size: cmF_size, //4 field elements for cmF
+			extra_var_size: extra_var_size, 
+				//unused_input_size, unused_output_size
+			statement_size: stmt_len,
+			stmt_map: v_idx,
+			msg1_size: m1_len,
+			msg2_size: m2_len,
+			msg3_size: m3_len,
+			vec_msg_sizes: vec_msg_sizes,
+			zi_part2_size: ZiPartTwoInst::<F>::size(b_full_mode, fq_bits),
+			inv_hab22_left_size: inv_hab22_left_size,
+			inv_hab22_right_size: inv_hab22_right_size,
+			stmt_cfg: stmt_cfg.clone(),
+		};
+
+		Ok( (wtns_cfg, stmt_cfg) )
+	}
+
+
 	/// generate the witness structure
 	pub fn gen_witness_structure(&self, lkup_share_size: usize) 
 		-> WitnessSigmaIR1CSConfig{
@@ -2367,6 +2414,12 @@ where 	C: CurveGroup<ScalarField=F>,
 	/// approach.
 	fn set_container_config(&mut self, advice: &Rc<dyn NdAdvice>){ 
 		self.gadget_mapper.borrow_mut().set_container_config(advice);
+		assert!(self.stmt_config== self.witness_config.stmt_cfg);
+		let (wtns_cfg, stmt_cfg) = Self::gen_configs(self.gadget_mapper.clone(),
+			self.b_full_mode, self.witness_config.stmt_cfg.lookup_share_size)
+			.expect("set_container_cfg err");	
+		self.witness_config = wtns_cfg;
+		self.stmt_config = stmt_cfg;
 	}
 
 	fn is_cyclepair(&self)->bool{
@@ -2860,44 +2913,11 @@ where 	C: CurveGroup<ScalarField=F>,
 		g_mapper: Rc<RefCell<GM>>, b_full_mode: bool, lkup_share_size: usize,
 		b_cyclepair: bool, b_check_lkup: bool)
 		-> Result<Self,Error>{
-		let gadgets = g_mapper.borrow().get_gadgets();
-		//generate witness config
-		let (stmt_len, stmt_cfg, v_idx, _extra_joins, _ci_inp) = g_mapper
-			.borrow().gen_statement_structure(lkup_share_size);
-		let vec_msg_sizes = gadgets.iter().map(|g| g.borrow().get_msg_size())
-			.collect::<Vec<(usize, usize, usize, usize)>>();
-		let mut m1_len = 0usize;
-		let mut m2_len = 0usize;
-		let mut m3_len = 0usize;
-		for (i,_g) in gadgets.iter().enumerate(){
-			m1_len += vec_msg_sizes[i].1;
-			m2_len += vec_msg_sizes[i].2;
-			m3_len += vec_msg_sizes[i].3;
-		}
-
-		let cmF_size = 4usize;
-		let extra_var_size = 2usize;
-		let si = StatementInst::<F,LK>::from_vec(&stmt_cfg, &vec![F::zero(); stmt_len]);
-		let inv_hab22_left_size = si.subtable_id.len() + extra_var_size;
-		// right side is the lookup table share
-
-		let fq_bits = <<C as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as usize;
-		let inv_hab22_right_size = si.col1_share.len();
-		let wtns_cfg = WitnessSigmaIR1CSConfig{
-			cmF_size: cmF_size, //4 field elements for cmF
-			extra_var_size: extra_var_size, 
-				//unused_input_size, unused_output_size
-			statement_size: stmt_len,
-			stmt_map: v_idx,
-			msg1_size: m1_len,
-			msg2_size: m2_len,
-			msg3_size: m3_len,
-			vec_msg_sizes: vec_msg_sizes,
-			zi_part2_size: ZiPartTwoInst::<F>::size(b_full_mode, fq_bits),
-			inv_hab22_left_size: inv_hab22_left_size,
-			inv_hab22_right_size: inv_hab22_right_size,
-			stmt_cfg: stmt_cfg.clone(),
-		};
+		let gadgets = g_mapper.borrow().get_gadgets().clone();
+		let (wtns_cfg, stmt_cfg) = Self::gen_configs(g_mapper.clone(), 
+			b_full_mode, lkup_share_size)?;
+		let stmt_len = wtns_cfg.statement_size;
+		let m1_len = wtns_cfg.msg1_size;
 
 		let mut rng = ark_std::test_rng();
 		let (cs_pp, _cs_vp) = CS::setup(&mut rng, stmt_len + m1_len +1)
@@ -2935,7 +2955,9 @@ where 	C: CurveGroup<ScalarField=F>,
 	}
 
 	/// set its dummy stmt
-	fn set_dummy_stmt(&mut self, vec: Vec<F>){
+	//fn set_dummy_stmt(&mut self, vec: Vec<F>){
+	fn set_dummy_stmt(&mut self, stmt: StatementInst<F,LK>){
+		let vec = stmt.to_vec();
 		self.dummy_stmt = Some(vec);
 	}
 

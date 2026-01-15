@@ -520,7 +520,6 @@ pub fn two_col_tbl_left_join<F:PrimeField>(
 
 	//4. pad at the beginning
 	let tn = tuples.len();
-	println!("DEBUG USE 6101: tn: {}, target_size: {}", tn, target_size);
 	if tn>target_size{
 		return Err(
 			Error::CapErr(vec![(format!("target_size::2col_left_join"), 

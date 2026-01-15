@@ -402,19 +402,17 @@ where
 			else {wlen/max_wlen+1};
 		let pci = layer_i; //because every layer has only one circ
 		let cap = circ.get_mapper().borrow().get_capacity();
+		let mut prev_adv = None;
 		for i in 0..num_segs{
 			let start = i*max_wlen;
 			let end = if (i+1)*max_wlen>wlen {wlen} else {(i+1)*max_wlen};
 			let seg = word[start..end].to_vec();
-			let prev_adv = if vec_adv.len()==0 {None}
-				else {Some(vec_adv[vec_adv.len()-1].clone())};
-			println!("DEBUG USE 6105.1: before gen_nd_advice for seg: {}", i);
 			let advice = circ.get_mapper().borrow()
 				.gen_nd_advice(&seg, &word_info, prev_adv)?;
-			println!("DEBUG USE 6105.2: AFTER gen_nd_advice for seg: {}", i);
 			vec_pci.push(pci);
 			vec_size.push(end-start);
 			vec_cap.push(cap.clone());
+			prev_adv = Some(advice.clone());
 			if b_save_advice{ vec_adv.push(advice); }
 		}
 		Ok ((num_segs, vec_size, vec_pci, vec_cap, vec_adv))
@@ -568,7 +566,7 @@ where
 		//0. verify each layer has only one circ
 		let mut gt1 = GTimer::new();
 		let mut gt2 = GTimer::new();
-		log_perf(log_level, &format!("plan_nd_advice step 0. layers: {}, word.len(): {}.", self.layered_circs.len(), word.len()), &mut gt1);
+		log_perf(log_level, &format!("plan_nd_advice step 0. layers: {}, word.len(): {}, b_save_adivce: {}", self.layered_circs.len(), word.len(), b_save_advice), &mut gt1);
 		let mwl = self.layered_circs[0][0].get_mapper().borrow().max_word_len();
 		for i in 0..self.layered_circs.len(){
 			assert!(self.layered_circs[i].len()==1, "only 1 circ per layer!");
@@ -1379,7 +1377,7 @@ where
 				//need to build the statement to fill the m_map
 				let res = circ.get_mapper().borrow()
 					.gen_nd_advice(&frag, word_info, prev_adv);
-				assert!(res.is_ok(), "\n\n===== **** =====\nUNABLE to generate advice for word id: {}, segment_id: {}, ERROR: {:#?}\n==============\n", word_fname, subseg_id, res); 
+				assert!(res.is_ok(), "\n\n===== **** =====\nUNABLE to generate advice for word: {}, segment_id: {}, ERROR: {:#?}\n==============\n", word_fname, subseg_id, res); 
 				let cur_adv = res.unwrap();
 
 				log_perf(log_level+2, &format!("-- Pass 1. gen_advice."), &mut gt2);
@@ -1809,7 +1807,7 @@ where
 			let prev_adv: Option<Rc<dyn NdAdvice>> = None; //fine to set None
 			let r_advice= circ.get_mapper().borrow()
 					.gen_nd_advice(&frag, &word_info,prev_adv); //use its own capacity
-			assert!(r_advice.is_ok(), "UNABLE to generate advice for circ at layer {} for full 0-word. Needs to adjust capacity: {:#?}", i, r_advice);
+			assert!(r_advice.is_ok(), "\n\n===== **** ====== \nUNABLE to generate advice for circ at layer {} for full 0-word. This is a system-wide change needed. Needs to adjust capacity: {:#?}", i, r_advice);
 
 			let advice = r_advice.unwrap();
 			let ei = StatementExtraInfo::<C1::ScalarField>{
@@ -1837,11 +1835,11 @@ where
 				&prev_stmt, 
 				lkup.clone(), 
 				&ei,
-				advice, 
+				advice,  //REMOVE LATER clone()
 				lk_share_size,
 				true); //dummy mode
 			assert!(stmt_res.is_ok());
-			circ.set_dummy_stmt(stmt_res.unwrap().to_vec());
+			circ.set_dummy_stmt(stmt_res.unwrap());
 			id += 1;
 		}
 	}

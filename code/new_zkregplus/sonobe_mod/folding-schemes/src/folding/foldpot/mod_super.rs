@@ -51,7 +51,7 @@ use crate::{
 		nifs::{NIFSFoldPot},
 		circuits_super::{ChallengeGadgetFoldPotSuper,AugmentedFCircuitFoldPotSuper, field_to_usize},
 		sigma_ir1cs::{SigmaIR1CS,LookupTableTwoCol,LookupTableTwoCol_Inst,ZiPartTwoInst,StatementInst, GadgetMapper},
-		utils::{f1_limbs_to_f2, f1_to_f2_limbs, get_mem_usage_mb},
+		utils::{f1_limbs_to_f2, f1_to_f2_limbs, get_mem_usage_mb,mb2s},
 		cyclepair::{CyclePairCircuit,fold_cyclepair_circuit},
 		qa_nizk::{QaNizkProverParams,QaNizkVerifierParams,SparseMatrix,setup_qa_nizk,prove_qa_nizk_fast},
 		sigma_cyclepair::{compute_hc},
@@ -1091,16 +1091,19 @@ where
     ) -> Result<(Self::ProverParam, Self::VerifierParam), Error> {
 		let log_level = LOG3;
 		let mut gt1 = GTimer::new();
-		let m1 = get_mem_usage_mb();
 		//0. process lookup globally
 		let lookup = prep_param_src.vec_pp[0].lk_tbl.borrow();
 		let (_col1_raw, _col2_raw) = lookup.get_cols();
+		let lkup_len = _col1_raw.len();
+		let mut m1 = get_mem_usage_mb();
+		let m0 = m1;
+		log_perf(log_level, &format!("preprocess() START: lkup size: {}, RAM: {} ", lkup_len, mb2s(m1)), &mut gt1);
 		let mut _cp_r1cs: Option<R1CS<C2::ScalarField>> = None;
 		let mut vec_pp = vec![];
 		let mut vec_vp = vec![];
-		let lkup_len = _col1_raw.len();
-		log_perf(log_level, &format!("preprocess() Step 1: lkup size: {}",
-			lkup_len), &mut gt1);
+		let m2 = get_mem_usage_mb();
+		log_perf(log_level, &format!("preprocess() Step 1: INCREASED RAM: {}. ", mb2s(m2-m1)), &mut gt1);
+		m1 = m2;
 
 		//TO IMPROVE: can be distributed. However, it's not trivial.
 		// The reason is that F and PrepParams are not Send + Sync
@@ -1178,7 +1181,9 @@ where
 			vec_pp.push(prover_params);
 			vec_vp.push(verifier_params);
 		}
-		log_perf(log_level, &format!("preprocess() Step 2: setup circ params. circs: {}, max_circ_pp: {}, total_w: {}, total_e: {}", vec_pp.len(), max_circ_pp_size, total_w_len, total_e_len), &mut gt1);
+		let m2 = get_mem_usage_mb();
+		log_perf(log_level, &format!("preprocess() Step 2: setup circ params. circs: {}, max_circ_pp: {}, total_w: {}, total_e: {}, increased RAM: {}. ", vec_pp.len(), max_circ_pp_size, total_w_len, total_e_len, mb2s(m2-m1)), &mut gt1);
+		m1 = m2;
 
 		let b_full_mode = prep_param_src.b_full_mode;
 		let mut rng = rand::rngs::OsRng;
@@ -1189,7 +1194,9 @@ where
 		let Ok( (cs1e_pp,cs1e_vp) ) = CS1E::setup(&mut rng, new_total_cs_pp_len)
 			else {panic!("cs1e setup failed");};
 		if b_full_mode {assert!(n_circ==1);}
-		log_perf(log_level, &format!("preprocess() Step 3: cs1e_pp: {}", new_total_cs_pp_len), &mut gt1);
+		let m2 = get_mem_usage_mb();
+		log_perf(log_level, &format!("preprocess() Step 3: cs1e_pp: {}, INCREASED RAM: {}. ", new_total_cs_pp_len, mb2s(m2-m1)), &mut gt1);
+		m1 = m2;
 
 		let (qa_pp, qa_vp, cols_len) = {
 			//1. construct the full row
@@ -1240,7 +1247,8 @@ where
 			let (pkey, vkey) = setup_qa_nizk::<E>(&smatrix, b_debug);
 			(Some(pkey), Some(vkey), cols_len)
 		};
-		log_perf(log_level, &format!("preprocess() Step 4 qa_nizk: rows: {}, cols: {}", 3*n_circ+1, cols_len), &mut gt1);
+		let m2 = get_mem_usage_mb();
+		log_perf(log_level, &format!("preprocess() Step 4 qa_nizk: rows: {}, cols: {}, INCREASED RAM: {}. ", 3*n_circ+1, cols_len, mb2s(m2-m1)), &mut gt1);
 
 		//5. build up the cp_r1cs if needed
 		let cp_r1cs = if !b_full_mode{
@@ -1261,7 +1269,7 @@ where
 		let verifier_params = VerifierParamsFoldPotSuper{
 			vec_vp, cp_r1cs, qa_vp, cs1e_vp};
 		let m2 = get_mem_usage_mb();
-		log(log_level-1, &format!("- KEYS info: n_circs: {}, total_w: {}, total_e: {}, cs1e: {}, max_pp: {}, RAM: {} MB", n_circ, total_w_len, total_e_len, new_total_cs_pp_len, max_circ_pp_size, m2-m1) ); 
+		log(log_level-1, &format!("- KEYS info: n_circs: {}, total_w: {}, total_e: {}, cs1e: {}, max_pp: {}, INCREASED RAM: {}, TOTAL RAM: {}.", n_circ, total_w_len, total_e_len, new_total_cs_pp_len, max_circ_pp_size, mb2s(m2-m0), mb2s(m2)) ); 
 
         Ok((prover_params, verifier_params))
     }

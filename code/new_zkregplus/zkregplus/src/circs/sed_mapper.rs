@@ -876,7 +876,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 		//1. take the advice
 		let advice = advice.as_any().downcast_ref::<SedAdvice<F>>()
 			.expect("downcast err!");
-
+		
 		let res = advice.vec_advices.iter().fold(
 			vec![vec![]; 8],
 			|sum, adv|{

@@ -213,9 +213,10 @@ impl <F:PrimeField> CpAdvice<F>{
 			Err(Error::CapErr(vec)) => {
 				let vec_err = vec.iter().map(|(s,val)|{
 					if s=="capacity_imm"{
+						println!("DEBUG USE 6101: comm_imm val: {}, max_word_len: {}, legs: {}, current basis_unique_states: {}", val, capacity.max_word_len, LEGS, capacity.basis_unique_states);
 						let basis_unique_states = val * 10000 
 							/(capacity.max_word_len * LEGS) + 1;
-						(format!("cp::basis_unique_states"),basis_unique_states)
+						(format!("cp::basis_unique_states from pack.rs"),basis_unique_states)
 					}else if s=="capacity_out"{
 						let avg_pats_per_subsig = val / capacity.subsigs + 1;
 						(format!("cp::avg_pats_per_subsig from pack.rs"),avg_pats_per_subsig)

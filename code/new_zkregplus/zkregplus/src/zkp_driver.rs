@@ -561,18 +561,18 @@ pub mod tests_zkp_driver{
 		let max_word= 1; //this is chunk_len
 		let sigs = 2; //good setting: 2
 		//let subsigs = 6; GOOD setting
-		let subsigs = 4; 
-		let avg_pats_per_subsig = 4; 
+		let subsigs = 4;  
+		let avg_pats_per_subsig = 3;  
 		let avg_active_pats_per_subsig = 0; //good value 0 (does not matter)
-		//let basis_pats_in_trace = 60*100; //OLD
-		let basis_pats_in_trace = 22*100; //good value 30*100
-		let perc_comp_subsigs = 50;
+		//let avg_subsig_per_sig = 2; //NO NEED ANY MORE
+		let basis_pats_in_trace = 25*100;   
+		let perc_comp_subsigs = 26;  //26 for subsigs=4, 34 for subsigs=3
+		let basis_unique_states = 23*100; 
+		let basis_acc_states = 5*100;  //good value  5
+
 		let num_category = 1;
 		let num_circs_per_category= 1;
-		let basis_unique_states = 38*100; //38 cerpcent
-		let basis_acc_states = 60*100; //60 cerpcent
 
-		//let avg_subsig_per_sig = 2;
 		let init_cp_cap= CpCapacity{
 			max_word_len: max_word, 
 			basis_unique_states,
@@ -679,20 +679,20 @@ pub mod tests_zkp_driver{
 	/// However, just run a small file
 	#[allow(dead_code)]
 	fn small_data3<F:PrimeField>(b_check_lkup: bool){
-		let b_read_cache = false;
+		let b_read_cache = true;
 		let b_write_cache = ! b_read_cache;
 		let set1 = "data/paper_data/config/"; //for dfa 
 		let max_word= 512; 
 		let sigs = 4;
-		let subsigs = 150;
-		let avg_pats_per_subsig = 8;
+		let subsigs = 220;
+		let avg_pats_per_subsig = 8; //old value 8
 		let avg_active_pats_per_subsig = 3;
 		let basis_pats_in_trace = 10; //old value 100 cur value 1/1000.
 		let perc_comp_subsigs = 20;
 		let num_category = 1;
 		let num_circs_per_category= 1;
-		let basis_unique_states = 200; //1 cpercent
-		let basis_acc_states = 500; //5 cpercent
+		let basis_unique_states = 1900; //19 cpercent
+		let basis_acc_states = 900; //9 cpercent
 		//let avg_subsig_per_sig = 3;
 
 		let init_cp_cap= CpCapacity{
@@ -740,6 +740,6 @@ pub mod tests_zkp_driver{
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
-		small_data::<Fr>(b_check_lkup);
+		small_data3::<Fr>(b_check_lkup);
 	}
 }

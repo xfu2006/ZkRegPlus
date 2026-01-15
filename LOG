@@ -23933,9 +23933,160 @@ Goal 5. strange bug: when basis_pats_in_trace is between 0 to 10
 	=> after increasing it causes the problem because it passes
 		seg0 but fails seg1. So that's a reasonable explaination for it
 
-=============== TODO =============
--- TODO -- analyze the strage sigma_ir1cs.rs:2948 error (it looks like
+Monday 01/12/2026
+Goal 1. debug the strange issue
+	[a] observation:
+	 -- analyze the strage sigma_ir1cs.rs:2948 error (it looks like
 	earlier capacity errors happen in gen_nd_advice
 	this error happens BEFORE gen_nd_advice and in preprocessing
--- TODO -- drop the debug messages 610x.y
+
+	[b] from stmt it can generate config and can compute total_size
+		which can print details
+	[c] trace:
+		driver: 1862: calls Driver::new
+		driver: 319: after PreprocessorParamFoldSuper::new() it calls
+			FoldPotSuper::new
+		mod_super:1117 get_r1cs_super
+		mod_super: 1932: aug_f circuit::empty
+		sigma_ir1cs: 2948: gen_dummy_stmt it asserts
+			stmt.len()==circ.witness_config.statmeent_size
+	[d] find out who's setting the statement_size?
+		real statement_vec.len() = 8076
+		but witness_config.statementlen = 8080
+		This is after dummy_statement is built over 0words
+		put DEBUG USE 6604.1 and 6604.2 for statement_len set
+		-> but they are not called
+	[e] check how SigmaIR1CS_Inst set up its witness_configA
+	[f] DEBUG USE 6401 wtns_config.statement_size and check
+		where is set_dummy_statement
+		-> so the set up of dummy_stmt actually 
+			is DIFFERENT from the witness_config size.
+			how?
+	[g] compare the difference of stmt_cfg
+		[a] 6501.1 -> in SigmaIR1CS_Inst::new_adv
+		[b] 6501.2 -> in gen_dummy_stmt
+		proble data size differs in 2
+	[h] analyze which component generate DIFFERENT size of data size?
+		6601.1 structure
+		6601.2 build_statement
+	[i] 6701.1 and 6701.2 for sed component
+		=> identified it's the ComputeSigAdvGadget which
+			has 131 for get_sizes().
+	[j] find out why the same ComputeSigAdvGadget would generate
+		two different sizes for get_to_add_size()?
+		-> the reason 6801.1 container_cfg is different!
+		-> find out who's resetting container_cfg trace
+	==== trace who calls reset container cfg?
+		driver:1834 in part_0 of foldpot_main
+			this resets the container_config of each circ
+			and then reset its dummy_statement
+
+Goal 3. Fix the issue
+	[a] re_implement set_container_config(&advice)
+		basically also reset the wtns_config for all
+		necessary components
+			-> refactor to generate the config
+	[b] redo the set_dummy_stmt to take the real statement
+		generate stmt_config and double check if it matches
+		the wtns config
+		-> but it throws err
+		-> traces:
+			driver:1856
+
+	[c] remove 6401, 6501, 6701, 6801 -> DONE
+	[d] test if it's reporting error for range 12-22 correctly -> okA
+	-> ok
+
+Goal 4. test perc_comp_subsigs
+
+Tuesday 01/13/2026
+Goal 1.  Fix and test compute_sig adv about the above
+	[a] trace -> fixed
+	[b] test all ranges -> done
+
+Goal 2. basic_unique_states
+	[a] try all ranges -> OK
+
+Goal 3. basic_acc_states
+	[a] try all ranges, crashes
+	trace:
+		fsm_adv.1277 validate_packed_trace
+			calls verify_tbl_filtered_to_sorted_tbl
+			-> db: verify_filter_tag db.rs (710)
+	problem: states_col len is 0 -> target_size too small
+	[b] remove all debug emssages 610x
+	[c] test all ranges
+	[d] but why it passes plan_nd_advice? The others do fail plan_nd_advice
+	[e] trace a small setting for basis_acc_states does it actually
+		go through gen_nd_advice
+		-> looks the segment 1 of the word has an extra "2"
+			final state at the beginning
+		-> it passes inp_state correclty but not inp_loc
+	[f] fix the gen_nd_advice problem
+		[a] improve gen_nd_advice_at_layer to handle prev_adv -> fixed
+		[b] remove messages
+
+Goal 4. systematically play with all params
+	[a] basis_acc_states
+	[b] sigs
+	[c] subsigs
+
+Goal 5. small_data3 (full data set)
+	[a] somehow full 26-bit not work anymore given RAM consumption
+	[b] now use 24-bit (still not working), use 23-bit
+	
+Goal 5. debug subsig 3 problem (it should be reported in gen_advice)
+	[a] now pass
+	[b] check avg_pats_per_subsig
+
+Wed 01/14/2026
+Goal 1. refine resource print
+	[a] mod_super
+	[b] batch process
+	[c] data:
+		for circ of 110k it creates 320M key! (small_data)
+		for circ of 2M it creates 2GB (1000x times)
+		batch processor actually does not increase? 
+Goal 2. continue to test handle basis_pats_in_trace
+	[a] value 1 causes panic on unknown capacity 
+	[b] find out source
+	[c] correct error handling
+	[d] check all range values
+Goal 3. basis unique states
+	[a] 1, 3, 4, 
+	[b] problem it asks for 2097 given it 2200 still not working?
+	-> fixed
+	[c] 22, 23
+Goal 4. basis_acc_states -> fixed
+Goal 5. study the circ creation algorithm for mult-circ
+	[a] build_circs_adv
+	[b] two layers
+	[c] later maybe just simplify to 2 categories and 
+		2 circs in between.
+Goal 6. check small_data3 problem
+	[a] pass1 (write data true) -> 
+		before preprocess 59GB.
+		preprocess keys: 2M circ -> 2GB
+		but batch process: 203M kzg (starting 49GB), crashed there
+	[b] pass2 (load data)
+		before process: RAM 47GB (reduction of 12GB)
+		-> circ 2M: increased 2GB
+		batch process: before starts 38GB, crashed here for 203M 
+			kzg.
+	[c] see how much KZG is costing -> limit to 20MB
+		-> REAL DATA: 3GB
+		-> peak: 14GB (3x of the real consumption)
+		-> so 200MB shold take 30GB (peak 100GB)
+Goal 6. can we do better?
+	[a] read source code of arkworks it has
+		gamma_g and nega_beta_h which seems not used
+	[b] try to rebulid the code
+	[c] unit testing
+	[d] do a 20M temp again and compare
+	[e] improved
+
+Thursday 01/16/2026
+Goal 1. analyze failure
+	[a] avg_pats_per_subsig is 650! much much greater than
+	8 we have. This results in a 52M constraints gates!
 
