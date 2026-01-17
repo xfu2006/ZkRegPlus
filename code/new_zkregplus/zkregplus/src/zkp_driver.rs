@@ -194,35 +194,32 @@ where C: CurveGroup<ScalarField=F>,
 
 	//3. build up each category
 	let mut layer_circs = vec![];
-	let mut cp_cap_l1 = init_cp_capacity.clone();
-	let mut sed_cap_l1 = init_sed_capacity.clone();
-	let mut dfa_cap_l1 = init_dfa_capacity.clone();
+	let mut cp_cap= init_cp_capacity.clone();
+	let mut sed_cap= init_sed_capacity.clone();
+	let mut dfa_cap= init_dfa_capacity.clone();
 	for l1 in 0..num_category{
-		let mut cp_cap_l2 = cp_cap_l1.clone();
-		let mut sed_cap_l2 = sed_cap_l1.clone();
-		let mut dfa_cap_l2 = dfa_cap_l1.clone();
 		for l2 in 0..num_circs_per_category{
 			//3.1 create cp (cs and igc)
 			let cp_cs = CpComponentMapper::<F,LK<F>>::new(
-				cp_cap_l2.clone(), db.clone(), false);
+				cp_cap.clone(), db.clone(), false);
 			let cp_igc = CpComponentMapper::<F,LK<F>>::new(
-				cp_cap_l2.clone(), db.clone(), true);
+				cp_cap.clone(), db.clone(), true);
 
 			//3.2 create sed (it has both cs and igc built in)
 			let sed = SedComponentMapper::<F,LK<F>>::new(
-				sed_cap_l2.clone(), db.clone());
+				sed_cap.clone(), db.clone());
 
 			//3.3 dfa is optional depending if config supports 0 subsigs
 			//which enforces dfa to be nil.
-			let dfa = if dfa_cap_l2.subsigs==0 { None }else{
+			let dfa = if dfa_cap.subsigs==0 { None }else{
 				Some(
-					DfaComponentMapper::<F,LK<F>>::new(dfa_cap_l2.clone(), 
+					DfaComponentMapper::<F,LK<F>>::new(dfa_cap.clone(), 
 						db.clone())
 				)
 			};
 
 			//3.4 construct the circuit
-			let hybrid_cgm1 =if dfa_cap_l2.subsigs==0{
+			let hybrid_cgm1 =if dfa_cap.subsigs==0{
 				CompositeGadgetMapper::<F,LK<F>>::new("hybrid_cgm1",
 					vec![
 						Rc::new(RefCell::new(cp_cs)),
@@ -254,14 +251,14 @@ where C: CurveGroup<ScalarField=F>,
 			layer_circs.push( vec![circ] ); //legacy to keep 2d layer
 
 			//3.5 update the capacities.
-			cp_cap_l2 = cp_cap_l2.increased_copy(2); //increase by level 2
-			sed_cap_l2 = sed_cap_l2.increased_copy(2); 
-			dfa_cap_l2 = dfa_cap_l2.increased_copy(2); 
+			cp_cap = cp_cap.increased_copy(2); //increase by level 2
+			sed_cap = sed_cap.increased_copy(2); 
+			dfa_cap = dfa_cap.increased_copy(2); 
 		}//for loop level2
 		//update level 1 capacity
-		cp_cap_l1 = cp_cap_l1.increased_copy(1); //increase by level 1
-		sed_cap_l1 = sed_cap_l1.increased_copy(1); 
-		dfa_cap_l1 = dfa_cap_l1.increased_copy(1); 
+		cp_cap = cp_cap.increased_copy(1); //increase by level 1
+		sed_cap = sed_cap.increased_copy(1); 
+		dfa_cap = dfa_cap.increased_copy(1); 
 	}//for category
 
 	//return
@@ -553,8 +550,10 @@ pub mod tests_zkp_driver{
 
 	/// small data: each cat of signatures got one sample, one 2-Fr word
 	/// read the READ me in data/small_data_set/README for the design of sigs
+	/// COST: 7GB and 36 sec.
 	#[allow(dead_code)]
 	fn small_data<F:PrimeField>(b_check_lkup: bool){
+		assert!(RANGE2_BIT==8, "set RANGE2_BIT to 8");
 		let b_read_cache = false;
 		let b_write_cache = !b_read_cache;
 		let set1 = "data/debug/small_data_set/config_dfa"; //for dfa 
@@ -610,28 +609,28 @@ pub mod tests_zkp_driver{
 	}
 
 	/// the sigs are the same as small data
-	/// now two categories (<cp, sed, dfa2>, <cp,sed,dfa3>)
-	///    where the 2nd category has to be used
 	/// has 1 long words (1k-packed nibbles - around 31kb)
 	/// read the READ me in data/small_data_set2/README for the design of sigs
+	/// COST: 18GB and 160 sec
 	#[allow(dead_code)]
 	fn small_data2<F:PrimeField>(b_check_lkup: bool){
+		assert!(RANGE2_BIT==18, "set RANGE2_BIT to 18");
 		let b_read_cache = false;
 		let b_write_cache = !b_read_cache;
 		let set1 = "data/debug/small_data_set2/config_dfa"; //for dfa 
 		let max_word= 512; 
-		let sigs = 3;
-		let subsigs = 6;
-		let avg_pats_per_subsig = 8;
+		let sigs = 2; 
+		let subsigs = 4; 
+		let avg_pats_per_subsig = 4; 
 		let avg_active_pats_per_subsig = 0; //good value 0, actually does
 			//not matter?
-		let basis_pats_in_trace = 10; //old value 100 cur value 1/1000.
-		let perc_comp_subsigs = 20;
+		let basis_pats_in_trace = 6; 
+		let perc_comp_subsigs = 26; 
+		let basis_unique_states = 5; 
+		let basis_acc_states = 2; 
+
 		let num_category = 1;
 		let num_circs_per_category= 1;
-		let basis_unique_states = 100; //1 cpercent
-		let basis_acc_states = 500; //5 cpercent
-		//let avg_subsig_per_sig = 3;
 
 		let init_cp_cap= CpCapacity{
 			max_word_len: max_word, 
@@ -675,16 +674,85 @@ pub mod tests_zkp_driver{
 		);
 	}
 
+	/// the sigs are the same as small data2
+	/// has 1 long words (1k-packed nibbles - around 31kb)
+	/// has 2 second long word (eady and almost no match)
+	/// read the READ me in data/small_data_set2/README for the design of sigs
+	/// Difference: 2 categories and 2 circs each (multiple circs) -> 4 circs
+	/// for testing circ selection
+	#[allow(dead_code)]
+	fn small_data3<F:PrimeField>(b_check_lkup: bool){
+		assert!(RANGE2_BIT==18, "set RANGE2_BIT to 18");
+		let b_read_cache = false;
+		let b_write_cache = !b_read_cache;
+		let set1 = "data/debug/small_data_set2/config_dfa"; //for dfa 
+		let max_word= 512; 
+		let sigs = 1;  //good value 2
+		let subsigs = 3;  //good value 4
+		let avg_pats_per_subsig = 3;  //good value 4
+		let avg_active_pats_per_subsig = 0; //good value 0, actually does
+			//not matter?
+		let basis_pats_in_trace = 2;  //good value 4
+		let perc_comp_subsigs = 34;  //good value 34 
+		let basis_unique_states = 2;  //good value 5
+		let basis_acc_states = 1;  //good value 2
+		let dfa_sigs = 1;
+		let dfa_subsigs= 2*dfa_sigs;
+
+		let num_category = 2;
+		let num_circs_per_category= 2;
+
+		let init_cp_cap= CpCapacity{
+			max_word_len: max_word, 
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+			//avg_subsig_per_sig,
+		};
+		let init_sed_cap= SedCapacity::new(
+			max_word, RANGE2_BIT, subsigs, 
+			avg_pats_per_subsig, 
+			avg_active_pats_per_subsig, 
+			basis_pats_in_trace, 
+			sigs, 
+			perc_comp_subsigs,
+			basis_unique_states,
+			basis_acc_states,
+		);
+		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
+
+
+		zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+			&format!("{}/sigs.dat",set1), //src sig
+			&format!("{}/binexec2.dat",set1), //list of files to discharge
+			"data/small_data_set/reports/small_data3.dat", //report
+			b_read_cache,
+			b_write_cache,
+			"small_20", //cache name
+			&format!("{}/dfa.dat", set1), //signs that need dfa
+			&format!("{}/ised.dat", set1), //signs that need ised 
+			&format!("{}/ised_igc.dat",set1), //sigs that need ised igc
+			max_word, //this is the chunk len
+			&init_cp_cap,
+			&init_sed_cap,
+			&init_dfa_cap,
+			num_category,
+			num_circs_per_category,
+			b_check_lkup
+		);
+	}
+
 	/// the sigs are the FULL SET of sigs
 	/// However, just run a small file
 	#[allow(dead_code)]
-	fn small_data3<F:PrimeField>(b_check_lkup: bool){
+	fn full_data1<F:PrimeField>(b_check_lkup: bool){
+		assert!(RANGE2_BIT==23, "set RANGE2_BIT to 23");
 		let b_read_cache = true;
 		let b_write_cache = ! b_read_cache;
 		let set1 = "data/paper_data/config/"; //for dfa 
 		let max_word= 512; 
 		let sigs = 4;
-		let subsigs = 220;
+		let subsigs = 448; //220 for prev db
 		let avg_pats_per_subsig = 8; //old value 8
 		let avg_active_pats_per_subsig = 3;
 		let basis_pats_in_trace = 10; //old value 100 cur value 1/1000.
@@ -740,6 +808,9 @@ pub mod tests_zkp_driver{
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
-		small_data3::<Fr>(b_check_lkup);
+		//small_data::<Fr>(b_check_lkup); //small data
+		//small_data2::<Fr>(b_check_lkup);  //10k data 
+		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data
+		full_data1::<Fr>(b_check_lkup);
 	}
 }

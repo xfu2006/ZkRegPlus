@@ -534,8 +534,6 @@ where
 				max_layer_vec_cap, max_layer_vec_adv);
 		while min_layer_id <= max_layer_id && max_layer_id>0{
 			let mid_id = (min_layer_id + max_layer_id)/2;
-			let mid_id = if mid_id == max_layer_id {max_layer_id-1} 
-				else {mid_id}; //to avoid redundant work
 			let res = self.gen_nd_advice_at_layer(mid_id,
 				log_level, b_save_advice, word, word_info);
 			if res.is_ok(){
@@ -548,6 +546,7 @@ where
 			}
 			log_perf(log_level, &format!("bin_search: min_id: {}, max_id: {}, mid_id: {}.  word.len(): {}.", min_layer_id, max_layer_id, mid_id, word.len()), &mut gt1);
 		}
+
 		(best_layer, num_segs, vec_seg_size, vec_pci, vec_cap, vec_adv)	
 	}
 	/// generate the nd_advice by picking up the circ.
@@ -1258,6 +1257,7 @@ where
 		let log_level = LOG2;
 		let b_debug = B_DEBUG;
 		let mut gt1 = GTimer::new();
+
 		let m1 = get_mem_usage_mb(); 
 		let words = {
 			iter_words2.map(|v| v.to_vec())
@@ -1276,10 +1276,10 @@ where
 		}else{
 			None
 		};
-		let m2 = get_mem_usage_mb();
 		let snark_inp = if !self.b_full_mode
 			{claim_pack.as_ref().unwrap().2.clone()}
 			else {SnarkAdvice::empty(&words)};
+		let m2 = get_mem_usage_mb();
 
 		//1. init
 		let mut vec_res = Vec::<StatementExtraInfo<C1::ScalarField>>::new();

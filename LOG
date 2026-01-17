@@ -24109,7 +24109,98 @@ Goal 1. analyze failure
 Goal 2. play with the suggested 650 and see the cost of each component
 	[a] it increases sigs to 1.2M, and fsm_adv to 3.7M each which
 		pumps the circuit size to 10M:q
+	[b] fsm_adv:
+		step2: 1.3M
+		step3: 9.7M! because 44*subsigs*avg_pats_per_subig
+					= 44 * 250 * 680 = 8M
 
-Goal 2. play with config and see if we can improve the performance
-	[a] 
+Goal 3. read the fsm_adv logic
+	[a] gen_proj_store it generates table of
+		subsig - state - pat
+		Note that the problem is that one pattern might have a lot of
+		matching states which generates a super big table
+	[b] gen_packed_trace_combo
+		(1) extract proj store states to sorted set of states
+		(2) (state,loc) filtered by sorted states (state, loc)
+		(3) project (subsig-state-pat) -> (pat-state)
+		(4) left join pat-state with state-loc
+		=> pat_loc
+	[c] problem is that there are too many states in the extracted
+		proj_store, which we use as filter table. But it looks like
+		from each state it does not hook  into many patterns.
+	[d] new idea: how about no projected store at all?
+		given (state-loc) our goal is ptorudce pat-loc for the given
+			input the subsigs
+		1st step: given small ratio of acc_states, cut down to
+			(acc_state, loc), just need (state->pat) map in
+			lookup, maybe even no need to filter by subsig
+
+
+Goal 4. play with config and see if we can improve the performance
+	[a] first solve dfa_mapper error
+	[b] try setting min_word_len 4->6
+		-> this results in avg_pats_per_subsig:44 (down from 650)
+		-> however it fails most samples. This is no good.
+	[c] try min_bag_word from 6 -> 10
+		-> does not help needs 448.
+
+==> SO would have to update fsm_adv
+
+Friday 01/16/2026
+Goal 1. figure the smallest setting of smalldata2
+Goal 2. adapt smalldata2 to smalldata3 which has 4 circs
+	make some parameters to be half so that it would need circ 3 out of 4.
+Goal 3. Read db and understand role
+	[a] SubsigPatternStore, it maps subsig -> state_id -> patterns
+	[b] read gen_col of SubsigPattenStoreItem.
+		So one subsig actualy can have a lot of state_id's
+		But in fact only a number of them show up in the real path
+	[c] So we need to look into look up table
+		state_id  ->
+			(1) if it does not below to any input_subsig,
+				produce nothing
+			(2) produce items (state_id, subsig) -> pat list
+	[d] there could be cases state_id does NOT belong to 
+		any of the input_subsigs but just belong to some other
+		sigs. How to handle it? We could have a sorted list
+			of (subsig, state_id) and prove that
+			state_id is NOT one of the list IDs.
+			-> but this would need require to get subsig processed
+			one by one
+	[e] from subsigs -> allowed pats
+		from each state (filter the pats by the allowed pat list)
+			-> from (state, loc)
+				each each state by the retrieved (state, pat)
+					but filtered by pat2
+		-> this approach depends on the rate of acc_states mainly
+		-> need to do some experiments and collect the real states.
+Goal 4. Planning can we move the BatchClaim later?
+	[a] it still has to be before the prove_step but maybe
+		can be moved after gen_nd_advice
+Goal 5. create small_data3 pack framework
+	[a] three categories and 2 circs each -> DONE
+	[b] update each increased_copy for 3 components -> DONE
+	[c] check running data
+	[d] found error with bin_search-> infinite loop on mid_id2
+
+Saturday 01/17/2026
+Goal 1. check if it's possible to move down the BatchProof generator
+	and even the setup
+	-> can't because step 1 needs it
+	-> but for debug mode can simply return None.
+Goal 2. implement the data_report() function to make a decision
+	in fsm_adv improved design.
+	[a] set up framework
+	[b] get the states
+	[c] do the projection of store and then analyze its state
+		[c1] the set of states
+		[c2] the set of permitted patterns
+		[c3] average states per pat
+		[c4] average pat per state
+		[c5] super-long state list
+-- NEEDS TO DOUBLE CHECK LOGIC - why small_data2 has NO accepted states 
+	at all?
+
+
+
 

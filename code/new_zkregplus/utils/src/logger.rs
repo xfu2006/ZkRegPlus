@@ -18,7 +18,7 @@ pub const LOG5:usize = 6;
 pub const LOG6:usize = 7;
 pub const LOG7:usize = 8;
 /// current default log level for entire system
-pub const LOG_LEVEL:usize = LOG7;
+pub const LOG_LEVEL:usize = LOG6;
 
 /// convert from log level to its name
 pub fn name_log_level(i: usize)->String{
@@ -31,6 +31,7 @@ pub fn name_log_level(i: usize)->String{
 		LOG4=> String::from("LOG4"),
 		LOG5=> String::from("LOG5"),
 		LOG6=> String::from("LOG6"),
+		LOG7=> String::from("LOG7"),
 		_ => String::from("UNKNOWN")
 	}
 }

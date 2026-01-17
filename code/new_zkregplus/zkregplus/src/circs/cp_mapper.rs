@@ -107,14 +107,21 @@ impl CpCapacity{
 	/// increase capacity, here we keep the same max_word_len
 	/// but double the rest
 	pub fn increased_copy(&mut self, level: usize)->Self{
-		if level!=2{
-			Clone::clone(&self)
+		assert!(level==1 || level==2);
+		if level==1{
+			Self{
+				max_word_len: self.max_word_len,
+				basis_unique_states: self.basis_unique_states,
+				subsigs: self.subsigs * 2,
+				avg_pats_per_subsig: self.avg_pats_per_subsig,
+				//avg_subsig_per_sig: self.avg_subsig_per_sig+1,
+			}
 		}else{
 			Self{
 				max_word_len: self.max_word_len,
 				basis_unique_states: self.basis_unique_states * 2,
-				subsigs: self.subsigs * 2,
-				avg_pats_per_subsig: self.avg_pats_per_subsig,
+				subsigs: self.subsigs,
+				avg_pats_per_subsig: self.avg_pats_per_subsig * 2,
 				//avg_subsig_per_sig: self.avg_subsig_per_sig+1,
 			}
 		}

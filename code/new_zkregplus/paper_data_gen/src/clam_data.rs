@@ -308,7 +308,7 @@ pub fn report_all_discharge_approach_stats<F:PrimeField>(sig_file: &str, needs_d
 	let cfg = default_clamav_cfg();
 	let proot = proj_root();
 	let b_write_cache = true;
-	let db = ClamavDB::<F>::build_or_load(&cfg, sig_file, needs_dfa_file, needs_ised_file, needs_ised_igc_file, &mut vlog, cache_dir, b_read_cache, b_write_cache);
+	let db = ClamavDB::<F>::build_or_load(&cfg, sig_file, needs_dfa_file, needs_ised_file, needs_ised_igc_file, &mut vlog, cache_dir, b_read_cache, b_write_cache).expect("build db err");
 	db.print_summary(&mut vlog);
 
 	println!("Step 2. discharging all files ...");

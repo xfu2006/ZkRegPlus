@@ -109,16 +109,14 @@ impl DfaCapacity{
 		if level==1{
 			Self::new(
 				self.max_word_len,
-				self.sigs + 1,
-				((self.subsigs as f32 / self.sigs as f32) * 
-					((1+self.sigs) as f32)) as usize
-				
+				self.sigs*2,
+				self.subsigs*2,
 			)
 		}else{
 			Self::new(
 				self.max_word_len,
 				self.sigs,
-				self.subsigs + 1
+				self.subsigs
 			)
 		}
 	}
@@ -277,6 +275,10 @@ impl <F:PrimeField> DfaAdvice<F>{
 		
 		let n = capacity.subsigs;
 		let n1 = v_subsig_ids.len();
+		if n<n1{
+			return Err(Error::CapErr(vec![(format!("dfa_mapper::subsigs"), 
+				n1)]));
+		}
 		assert!(n>=n1);
 		assert!(v_fsm_id.len()==n1 && v_dfa.len()==n1);
 		let n2 = n-n1;

@@ -2766,7 +2766,7 @@ pub fn default_clamav_cfg()->ClamavApproxConfig{
 		max_pm_sections: 10, // LATEST OLD 32 does not help much
 		combination_limit: 127, 
 		repeat_limit: 256,  //-> avg step: 19  
-		min_bag_len: 6,  //doesn't affect seems
+		min_bag_len: 6,  
 		min_pm_word_len: 4, // increase to 5 will kill a lot
 	}
 }

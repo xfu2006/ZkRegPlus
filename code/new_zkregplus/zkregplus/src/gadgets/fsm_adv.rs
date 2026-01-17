@@ -5,6 +5,8 @@
 		by mainly pre-compute field inverse and direct encoding
 		of LinearCombinations.
 	Revised 4: 01/09/2026 (improve exception handling for capacity)
+	Revised 5: further improve algorithm for handling superlarge
+		size of states from projected subsig store (started 01/17/2026)
 */
 
 //! This module generates the (pat-loc) for a nibble sequence.
@@ -12,7 +14,7 @@ use utils::{logger::{log_perf, LOG1,LOG2},
 	timer::Timer as GTimer};
 use rayon::iter::{ParallelIterator,IntoParallelRefIterator,
 	IndexedParallelIterator, IntoParallelIterator};
-use std::{rc::{Rc},cell::{RefCell}};
+use std::{rc::{Rc},cell::{RefCell}, collections::{HashSet,HashMap}};
 use ark_ff::{PrimeField};
 use std::marker::{PhantomData};
 use folding_schemes::{
@@ -42,7 +44,7 @@ use data_processor::{
 	type_def::{SubsigPatternStore},
 };
 use crate::gadgets::{
-	commons::{check_eq,gen_m_table,new_const_var,
+	commons::{check_eq,gen_m_table,new_const_var,print_vec,
 		is_zero_better, new_var, build_pows_56_val,
 		 var_to_lb, better_select_check},
 	traits::{Container,Col,IDX_WORD, IDX_INP,IDX_DATA, IDX_SI_INP, 
@@ -228,6 +230,12 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		fsm_id: u32,
 		store_subsig_pat: &SubsigPatternStore
 	) ->Result<Self, Error>{
+		let b_debug = true;
+		if b_debug{
+			Self::analyze_data(b_igc, nibbles, acdfa, inp_state, inp_loc,
+				inp_subsigs, capacity, fsm_id, store_subsig_pat);
+		}
+		
 		let sname = if b_igc {"fsm_adv_stmt_igc"} else {"fsm_adv_stmt_cs"};
 		let stmt_container = Container::<F>::new(sname);
 
@@ -264,6 +272,106 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 
 		Ok(Self{capacity: Clone::clone(capacity), fsm_id,
 			stmt_container, offset_wea})
+	}
+
+	/// this function is used to analyze the input data
+	/// and decide appropriate algorithm to use
+	pub fn analyze_data(
+		b_igc: bool,
+		nibbles: &Vec<F>, 
+		acdfa: &HexACDFA, 
+		inp_state: F,  //it's already adjusted (starting from 1)
+		inp_loc: F, //it's starting from 1 (for first component). 
+		inp_subsigs: &Vec<F>,
+		capacity: &FsmAdvCapacity, 
+		fsm_id: u32,
+		store_subsig_pat: &SubsigPatternStore
+	){
+		println!(" === ANALYSIS OF fsm_adv DATA ===\nb_igc: {}, nibbles_len: {}, inp_state: {}, inp_loc: {}", b_igc, nibbles.len(), inp_state, inp_loc);
+		//1. build the states
+		let state_part_bits = capacity.acdfa_state_part_bits;
+		let nlen = capacity.max_nibble_len;
+		let mut raw_states = vec![];
+		let mut raw_locs = vec![];
+		let mut cur_state = field_to_usize(&inp_state) - 1;
+		// NOTE: state needs to be added 1 to be pushed
+		// 0 is considered padding value. Similarly loc starts from 1
+		raw_states.push(F::from( (cur_state+1) as u32));
+		raw_locs.push(inp_loc);
+		let _unit = F::from((1<<(state_part_bits+4)) as u32);
+		let _hex = F::from(16 as u32);
+		let one = F::one();
+		for i in 0..nibbles.len(){
+			let ch: u8 = field_to_usize(&nibbles[i]).try_into().unwrap();
+			let nxt_state = acdfa.trans.get(&cur_state).unwrap()[ch as usize];
+			raw_states.push(F::from( (nxt_state+1) as u32)); 
+			cur_state = nxt_state;
+		}
+		assert!(raw_states.len()==nlen+1 && raw_locs.len()==1);
+
+		let f_id_non_final = F::from(fsm_id+1);
+		let f_id_final = F::from(fsm_id+2);
+		let vec_si_states = raw_states.par_iter().map(|s|{
+			let f_s = field_to_usize(s) - 1;
+			if acdfa.is_final(f_s) {f_id_final} else {f_id_non_final}
+		}).collect::<Vec<F>>();
+
+		//2. build the states_final and locs_final
+		// NOTE: we do not include element 0 coz it's already
+		// handled in the previous seg.
+		let states_final = (1..vec_si_states.len()).into_par_iter().filter(|i|{
+				vec_si_states[*i]==f_id_final
+			}).map(|i| raw_states[i]).collect::<Vec<F>>();
+		let locs_final = (1..vec_si_states.len()).into_par_iter().filter(|i|{
+				vec_si_states[*i]==f_id_final
+			}).map(|i| raw_locs[0] + F::from(i as u32)).collect::<Vec<F>>();
+		assert!(states_final.len()==locs_final.len());
+		println!("acc_states ratio: {}, state_final.len: {}", 
+			(states_final.len() as f64)/(nlen as f64), states_final.len());
+
+		//3. construct the projected subsig store and print out
+		// the data
+		let subsig_ids = inp_subsigs.iter().map(|f| field_to_usize(f))
+			.collect::<Vec<usize>>();
+		let proj_store = store_subsig_pat.project_by(&subsig_ids);
+		let mut set_store_states = HashSet::new();
+		let mut set_store_pats = HashSet::new();
+		let mut vec_store_states = vec![];
+		let mut vec_store_pats = vec![];
+		for (subsig, store_item) in proj_store.subsig_to_rec{
+			for id in store_item.state_ids{
+				set_store_states.insert(id);
+				vec_store_states.push(id);
+			}
+			for (id, vec_pat) in store_item.state_to_pattern_ids{
+				println!("DEBUG USE 6101: state: {} => pats: {:#?}", id, vec_pat);
+				for pat in vec_pat{
+					set_store_pats.insert(pat);
+					vec_store_pats.push(pat);
+				}
+			}
+		}
+		println!("Projected Store Data: subsigs: {}, allowed states: {}, allowed patterns: {}", subsig_ids.len(), set_store_states.len(), set_store_pats.len());
+		println!("  vec_allowed_states: {}, vec_allowed_pats: {} -- real projection cost (original design)", vec_store_states.len(), vec_store_pats.len());
+
+		//4. from states_final and acdfa find all patterns
+		let mut acc_state_to_pat_id = HashMap::<usize, Vec<usize>>::new();
+		let mut alt1_len = 0;
+		for acc_state in states_final{
+			let state_id = field_to_usize(&acc_state) - 1;
+			let pat_ids = acdfa.outputs.get(&state_id).unwrap();
+			alt1_len += pat_ids.len();
+			acc_state_to_pat_id.insert(state_id, pat_ids.to_vec());
+			println!("DEBUG USE 6202: state: {} => pats: {:#?}", state_id, 
+				&pat_ids); 			
+		}
+		println!("Estimate of alg design 1 (no filter): output len: {}",
+			alt1_len);
+			
+
+		println!(" ========== END OF ANALYSIS ===========");
+		
+
 	}
 
 	/// Given the input generates the container of the following
@@ -353,6 +461,8 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 				vec_si_states[*i]==f_id_final
 			}).map(|i| raw_locs[0] + F::from(i as u32)).collect::<Vec<F>>();
 		assert!(states_final.len()==locs_final.len());
+
+
 		let target_size = nlen*capacity.basis_acc_states/10000;
 		let target_size = if target_size < 2 {2} else {target_size};
 		if states_final.len()>target_size{
@@ -704,6 +814,18 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		let loc_col = pat_state_loc_tbl.borrow()
 			.get_container("join_tbl").expect("err get join_tbl").borrow()
 			.get_container_by_idx(4).borrow().duplicate_as_external(0,None);
+
+		//REMOVE LATER --------------
+		println!("DEBUG USE 6301 === pat-loc ====");
+		let pats = pat_col.to_vec();
+		let locs = loc_col.to_vec();
+		for i in 0..pats.len(){
+			if !pats[i].is_zero(){
+				println!(" -- i: {}, pats[i]: {}, locs[i]: {}", i, pats[i], locs[i]);
+			}
+		}
+		println!("===== END: pats.len: {}", pats.len());
+		//REMOVE LATER -------------- ABOVE
 
 		res.borrow_mut().add_container(pat_state_loc_tbl);
 
@@ -1416,7 +1538,7 @@ impl <F:PrimeField> SigmaGadget<F> for FsmAdvGadget<F>{
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{
-		let b_perf = true;
+		let b_perf = false;
 		let log_level = LOG1;
 		let mut gt = GTimer::new();
 		let mut nc = cs.num_constraints();
