@@ -24198,9 +24198,98 @@ Goal 2. implement the data_report() function to make a decision
 		[c3] average states per pat
 		[c4] average pat per state
 		[c5] super-long state list
--- NEEDS TO DOUBLE CHECK LOGIC - why small_data2 has NO accepted states 
-	at all?
 
+Sunday 01/18/2026
+Goal 1. continue the data analysis
+	[a] correct the state mapping
+	[b] disable the gen_combo functions so that it does not throw errors
+		in fsm_adv but continue to do the analysis
+		[b1] add implementation
+		[b2] unit testing -> PASSING
+		[b3] unit testing other dependency modules
+			-> needs sorted_id
+			-> needs fsm_acc 
+			-> trace and check why fsm_acc is needed?
+				dis:3851
+				dis:3891
+				dis:3831
+				traits:415
+			-> ok now.
+		[b4] unit testing integration -> ok now
+	[b] if possible enlarge the word len and check the 
+		data such as acc_states
+		-> make 512 * 8 = 2k * 32 bytes = 64k bytes per seg
+		-> capacity ok now (given fsm generates now pat-loc)
+		-> problem: compute_sig_adv complains about res == f_false.
+
+Monday 01/19/2026
+Goal 1. add an analysis of states to pat 
+	[a] compute max number of pattersn in a state
+	[b] compute how many have >5 , >10, and avg
+	[c] print out some samles
+	[d] make it optional
+	[e] print out the alternative design the vec of pats per subsig
+
+Goal 2. stats from the full data
+	[a] total states: 6.4M, acc_states: 612k, num of states with >= pattern: 61k
+		max_pattern: 18, avg: 1.11
+	[b] real data: acc_ratio: 0.01, nibble len: 253k (i.e.,64kb)
+		final_sttes: 2.7k, output len: 3.0k, 
+			projected pats: 611 (actually don't even need it to screen).
+	[c] try bigger range and see if the data same
+Goal 3. stats from the full data
+	[a] find a difficult one
+		[a1] DEBUG USE 7101: i: 48, acc_ratio: 31.868036732368115%, flen: 635298, fname: data/samples/binexec_merged128k/_codecs_hk.so
+		[a2] gdb (6.6M)
+	----------------
+	[b] play with the bit-width 23-bit to 26 (fails) and then to 24
+		[b1]_codecs_hk.so -> acc_ratio: 0.77! way too high!
+		[b2] gdb
+	[a] total states: 6.4M, acc_states: 612k, num of states with >= pattern: 61k
+		max_pattern: 18, avg: 1.11
+	[b] real data: acc_ratio: 0.01, nibble len: 253k (i.e.,64kb)
+		final_sttes: 2.7k, output len: 3.0k, 
+			projected pats: 611 (actually don't even need it to screen).
+	[c] try bigger range and see if the data same
+		
+
+Goal 4. plan to improve fsm_adv
+	[a] subsig_store: can drop
+	[b] acdfa: need states to patterns list (expension rate is only 1.11)
+		so this is minimum.
+	[c] gen_fsm_combo generates the (acc_state, loc)
+	[d] gen_packed_trace directly build
+		(state-pat-loc) by expanding from acc_states to 
+			all patterns to the state
+		state-pat-loc can be encoded as
+			state-pat-id-total-loc  where (state,pat,id,total) is the
+				one encoded in lookup, note that each item is proved
+				in RANGE2, so weighted sum of them is simply bit-pattern
+				encoding.
+			avoid (0,max) delination can save 2x.
+		need to prove:
+			(1) state-pat-id-total in lookup
+			(2) conditional lookup (state-loc) bi-direction
+		Then resort pat-id-loc table, prove
+			(1) well formed
+			(2) double direction permutation or lookup check.
+	[e] estimate: maybe 40 * acc_states_len
+		so if acc_states_len is 2 percent, it's no more than a full scan
+		
+Goal 5. encode states to pats
+	[a] check where SubsigPatStore is useda -> only in fsm_adv
+	[b] check SubsigPatStore add_lookup (print msg: 9001)
+		--> ???
+	[c] find out how acdfa is added
+		--> it has final_to_sigs
+		--> similarly we can build final_to_pats
+		--> we can just encode 4 columns together including count
+
+Goal 5. implement states to pats plan
+	[a] similarly to a final_to_pats
+	[b] print message 9002 to print out entries added
+	[c] in DEBUG 701: find out the most frequent state (pat)
+	[c] collect data and see how many are saved, remove 9001 and 9002.
 
 
 

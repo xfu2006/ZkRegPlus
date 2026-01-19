@@ -54,7 +54,7 @@ pub const STATE_BIT:usize =  24;
 //pub const RANGE2_BIT: usize = 10;
 //pub const RANGE2_BIT: usize = 8;
 //pub const RANGE2_BIT: usize = 18;
-pub const RANGE2_BIT: usize = 23; //good for small size 8M nibbles = 4MB
+pub const RANGE2_BIT: usize = 24; //good for small size 16M nibbles = 8MB
 //pub const RANGE2_BIT: usize = 26; //(allowing 64M nibbles = 32MB)
 
 // the following are trival related sub-table ids
@@ -277,6 +277,7 @@ impl SubsigPatternStore{
 		let mut tuples = cols[5].par_iter().map(|v|{
 			(tbl_id, *v)
 		}).collect::<Vec<(F,F)>>();
+		println!("DEBUG USE 9001: SubsigPatternStore added to lkup: {}", tuples.len());
 		lkup.vals.append(&mut tuples);
 		Ok( () )
 	}

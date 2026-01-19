@@ -44,7 +44,7 @@ use data_processor::{
 	type_def::{SubsigPatternStore},
 };
 use crate::gadgets::{
-	commons::{check_eq,gen_m_table,new_const_var,print_vec,
+	commons::{check_eq,gen_m_table,new_const_var,
 		is_zero_better, new_var, build_pows_56_val,
 		 var_to_lb, better_select_check},
 	traits::{Container,Col,IDX_WORD, IDX_INP,IDX_DATA, IDX_SI_INP, 
@@ -230,10 +230,60 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		fsm_id: u32,
 		store_subsig_pat: &SubsigPatternStore
 	) ->Result<Self, Error>{
-		let b_debug = true;
-		if b_debug{
+		let b_debug_to_remove = true;
+		if b_debug_to_remove{
 			Self::analyze_data(b_igc, nibbles, acdfa, inp_state, inp_loc,
 				inp_subsigs, capacity, fsm_id, store_subsig_pat);
+
+			//build a fake adivce to return to save cost.
+			let sname = if b_igc {"fsm_adv_stmt_igc"} else {"fsm_adv_stmt_cs"};
+			let stmt_container = Container::<F>::new(sname);
+			let packed_trace = Container::<F>::new("packed_trace");
+			let packed_trace_size = capacity.basis_pats_in_trace * 
+				capacity.max_nibble_len / 10000;
+			let zcol = vec![F::zero(); packed_trace_size];
+			let scol = vec![F::from(RANGE2); packed_trace_size];
+			let pat_loc_tbl = Container::<F>::new("pat_loc");
+			let sorted_tbl = Container::<F>::new("sorted_tbl");
+			sorted_tbl.borrow_mut()
+				.add_col(Col::<F>::new(zcol.clone(), "sorted_key", IDX_DATA));
+			sorted_tbl.borrow_mut()
+				.add_col(Col::<F>::new(zcol.clone(), "sorted_id", IDX_DATA));
+			sorted_tbl.borrow_mut()
+				.add_col(Col::<F>::new(zcol.clone(), "sorted_val", IDX_DATA));
+			sorted_tbl.borrow_mut()
+				.add_col(Col::<F>::new(scol.clone(), 
+					"sid_sorted_key", IDX_SI_DATA));
+			sorted_tbl.borrow_mut()
+				.add_col(Col::<F>::new(scol.clone(), 
+					"sid_sorted_id", IDX_SI_DATA));
+			sorted_tbl.borrow_mut()
+				.add_col(Col::<F>::new(scol, "sid_sorted_val", IDX_SI_DATA));
+			pat_loc_tbl.borrow_mut().add_container(sorted_tbl);
+			packed_trace.borrow_mut().add_container(pat_loc_tbl);
+			stmt_container.borrow_mut().add_container(packed_trace);
+
+			//just fake 1 inp state 1 oupstate
+			//needed by discharge_test to build inp/oup state
+			let nlen = capacity.max_nibble_len;
+			let f_rg2 = F::from(RANGE2);
+			let col_states = Col::<F>::new(vec![inp_state],
+				"states",IDX_DATA);
+			let col_locs = Col::<F>::new(vec![inp_loc + F::from(nlen as u64)],
+				"locs",IDX_DATA);
+			let sid_states = Col::<F>::new(vec![f_rg2], "si_sttes",IDX_SI_DATA);
+			let sid_cols = Col::<F>::new(vec![f_rg2], "oup_state",IDX_SI_DATA);
+			let fsm_acc = Container::new("fsm_acc");
+			fsm_acc.borrow_mut().add_col(col_states);
+			fsm_acc.borrow_mut().add_col(col_locs);
+			fsm_acc.borrow_mut().add_col(sid_states);
+			fsm_acc.borrow_mut().add_col(sid_cols);
+			stmt_container.borrow_mut().add_container(fsm_acc);
+
+			return Ok(Self{ 
+				offset_wea, fsm_id, stmt_container, 
+				capacity: Clone::clone(capacity),
+			});
 		}
 		
 		let sname = if b_igc {"fsm_adv_stmt_igc"} else {"fsm_adv_stmt_cs"};
@@ -287,7 +337,46 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		fsm_id: u32,
 		store_subsig_pat: &SubsigPatternStore
 	){
+		let b_expensive = false; //set to false by default
 		println!(" === ANALYSIS OF fsm_adv DATA ===\nb_igc: {}, nibbles_len: {}, inp_state: {}, inp_loc: {}", b_igc, nibbles.len(), inp_state, inp_loc);
+		//0. analyze acdfa stats
+		if b_expensive{
+			let mut num2 = 0; //num of states that have >= 5 pats
+			let mut num5 = 0; //num of states that have >= 5 pats
+			let mut num10 = 0; //num of states that have >=10 pats
+			let mut max_pats = 0; //max num of patterns for one state
+			let mut max_id = 0; //who has the max_pats
+			let mut total_pats = 0; //total count of pats across all states
+			let mut acc_states = 0;
+			for state in 0..acdfa.num_states{
+				let count = if acdfa.outputs.contains_key(&state){
+					acc_states += 1;
+					acdfa.outputs.get(&state).unwrap().len()
+				}else{
+					0
+				};
+				total_pats += count;
+				if count>=2 {num2+=1;}
+				if count>=5 {num5+=1;}
+				if count>=10 {num10+=1;}
+				if count>max_pats{
+					max_pats = count;
+					max_id = state;
+				}
+			}
+			println!("acdfa states: {}, acc_states: {}, num of states with >=2 patterns: {}, num5 :{}, num10: {}, max patterns: {}, avg: {}",
+				acdfa.num_states,
+				acc_states,
+				num2, num5, num10,
+				max_pats, (total_pats as f64)/(acc_states as f64)
+			);
+			println!("--- max pattersn at state: {}, num_patterns: {}", 
+				max_id, max_pats);
+			let pats = acdfa.outputs.get(&max_id).unwrap();
+			for pat_id in pats{
+				println!(" -- pat: {}", acdfa.patterns[*pat_id]); 
+			}
+		}
 		//1. build the states
 		let state_part_bits = capacity.acdfa_state_part_bits;
 		let nlen = capacity.max_nibble_len;
@@ -300,7 +389,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		raw_locs.push(inp_loc);
 		let _unit = F::from((1<<(state_part_bits+4)) as u32);
 		let _hex = F::from(16 as u32);
-		let one = F::one();
+		let _one = F::one();
 		for i in 0..nibbles.len(){
 			let ch: u8 = field_to_usize(&nibbles[i]).try_into().unwrap();
 			let nxt_state = acdfa.trans.get(&cur_state).unwrap()[ch as usize];
@@ -338,18 +427,21 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		let mut set_store_pats = HashSet::new();
 		let mut vec_store_states = vec![];
 		let mut vec_store_pats = vec![];
-		for (subsig, store_item) in proj_store.subsig_to_rec{
+		let mut total_proj_pats = 0;
+		for (_subsig, store_item) in proj_store.subsig_to_rec{
+			let mut set_pats = HashSet::new();
 			for id in store_item.state_ids{
 				set_store_states.insert(id);
 				vec_store_states.push(id);
 			}
-			for (id, vec_pat) in store_item.state_to_pattern_ids{
-				println!("DEBUG USE 6101: state: {} => pats: {:#?}", id, vec_pat);
+			for (_id, vec_pat) in store_item.state_to_pattern_ids{
 				for pat in vec_pat{
 					set_store_pats.insert(pat);
 					vec_store_pats.push(pat);
+					set_pats.insert(pat);
 				}
 			}
+			total_proj_pats += set_pats.len();
 		}
 		println!("Projected Store Data: subsigs: {}, allowed states: {}, allowed patterns: {}", subsig_ids.len(), set_store_states.len(), set_store_pats.len());
 		println!("  vec_allowed_states: {}, vec_allowed_pats: {} -- real projection cost (original design)", vec_store_states.len(), vec_store_pats.len());
@@ -358,20 +450,17 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		let mut acc_state_to_pat_id = HashMap::<usize, Vec<usize>>::new();
 		let mut alt1_len = 0;
 		for acc_state in states_final{
-			let state_id = field_to_usize(&acc_state) - 1;
-			let pat_ids = acdfa.outputs.get(&state_id).unwrap();
-			alt1_len += pat_ids.len();
-			acc_state_to_pat_id.insert(state_id, pat_ids.to_vec());
-			println!("DEBUG USE 6202: state: {} => pats: {:#?}", state_id, 
-				&pat_ids); 			
+			let real_state_id = field_to_usize(&acc_state) - 1;
+			let real_pat_ids = acdfa.outputs.get(&real_state_id).unwrap();
+			alt1_len += real_pat_ids.len();
+			let pat_ids = real_pat_ids.iter().map(|x| x+1)
+				.collect::<Vec<usize>>();
+			acc_state_to_pat_id.insert(real_state_id+1, pat_ids.to_vec());
 		}
-		println!("Estimate of alg design 1 (no filter): output len: {}",
-			alt1_len);
+		println!("Estimate of alg design 1 (no filter): output len: {}, projected_pats (sum of set of pats per subsig): {}", alt1_len, total_proj_pats);
 			
 
 		println!(" ========== END OF ANALYSIS ===========");
-		
-
 	}
 
 	/// Given the input generates the container of the following
@@ -814,18 +903,6 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		let loc_col = pat_state_loc_tbl.borrow()
 			.get_container("join_tbl").expect("err get join_tbl").borrow()
 			.get_container_by_idx(4).borrow().duplicate_as_external(0,None);
-
-		//REMOVE LATER --------------
-		println!("DEBUG USE 6301 === pat-loc ====");
-		let pats = pat_col.to_vec();
-		let locs = loc_col.to_vec();
-		for i in 0..pats.len(){
-			if !pats[i].is_zero(){
-				println!(" -- i: {}, pats[i]: {}, locs[i]: {}", i, pats[i], locs[i]);
-			}
-		}
-		println!("===== END: pats.len: {}", pats.len());
-		//REMOVE LATER -------------- ABOVE
 
 		res.borrow_mut().add_container(pat_state_loc_tbl);
 
@@ -1535,9 +1612,18 @@ impl <F:PrimeField> SigmaGadget<F> for FsmAdvGadget<F>{
 	///   does not cause false positive of flagging malware)
 	/// subsigs - 2k
 	/// So total cost < nlen * 4 + 2k * 250 (max) 
+	/// PROBLEM: estimate of avg_pats_per_subsig does not
+	/// precisely reflect the cost of proj_store as some subsigs
+	/// have super large sets of states (which compressed into one pat)
+	/// but the proje_store needs to have these states built in
+	/// so this function is deprecated.
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{
+		let b_debug_to_remove = true;
+		if b_debug_to_remove{
+			return Ok( () );
+		}
 		let b_perf = false;
 		let log_level = LOG1;
 		let mut gt = GTimer::new();

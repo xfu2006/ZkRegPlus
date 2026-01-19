@@ -747,15 +747,16 @@ pub mod tests_zkp_driver{
 	#[allow(dead_code)]
 	fn full_data1<F:PrimeField>(b_check_lkup: bool){
 		assert!(RANGE2_BIT==23, "set RANGE2_BIT to 23");
-		let b_read_cache = true;
+		let b_read_cache = false;
 		let b_write_cache = ! b_read_cache;
-		let set1 = "data/paper_data/config/"; //for dfa 
-		let max_word= 512; 
-		let sigs = 4;
-		let subsigs = 448; //220 for prev db
+		let set1 = "data/debug/full_data_set/config/"; //for dfa 
+		//let max_word= 512; 
+		let max_word= 512 * 8; 
+		let sigs = 320;
+		let subsigs = 500; //220 for prev db
 		let avg_pats_per_subsig = 8; //old value 8
 		let avg_active_pats_per_subsig = 3;
-		let basis_pats_in_trace = 10; //old value 100 cur value 1/1000.
+		let basis_pats_in_trace = 36; //old value 100 cur value 1/1000.
 		let perc_comp_subsigs = 20;
 		let num_category = 1;
 		let num_circs_per_category= 1;
@@ -788,10 +789,137 @@ pub mod tests_zkp_driver{
 		zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
 			&format!("{}/main.dat",set1), //src sig
 			&format!("{}/binexec_1.dat",set1), //list of files to discharge
-			"data/small_data3/reports/report.dat", //report
+			"data/debug/full_data_set/reports/report.dat", //report
 			b_read_cache,
 			b_write_cache,
-			"small_data3", //cache name
+			"full_data", //cache name
+			&format!("{}/main_dfa.dat", set1), //signs that need dfa
+			&format!("{}/needs_ised.dat", set1), //signs that need ised 
+			&format!("{}/needs_ised_igc.dat",set1), //sigs that need ised igc
+			max_word, //this is the chunk len
+			&init_cp_cap,
+			&init_sed_cap,
+			&init_dfa_cap,
+			num_category,
+			num_circs_per_category,
+			b_check_lkup
+		);
+	}
+	/// the sigs are the FULL SET of sigs
+	/// It runs a large but difficult file: gdb (6.6M)
+	#[allow(dead_code)]
+	fn full_data2<F:PrimeField>(b_check_lkup: bool){
+		assert!(RANGE2_BIT==24, "set RANGE2_BIT to 24");
+		let b_read_cache = true;
+		let b_write_cache = ! b_read_cache;
+		let set1 = "data/debug/full_data_set/config/"; //for dfa 
+		//let max_word= 512; 
+		let max_word= 512 * 8; 
+		let sigs = 320;
+		let subsigs = 500; //220 for prev db
+		let avg_pats_per_subsig = 8; //old value 8
+		let avg_active_pats_per_subsig = 3;
+		let basis_pats_in_trace = 36; //old value 100 cur value 1/1000.
+		let perc_comp_subsigs = 20;
+		let num_category = 1;
+		let num_circs_per_category= 1;
+		let basis_unique_states = 1900; //19 cpercent
+		let basis_acc_states = 900; //9 cpercent
+		//let avg_subsig_per_sig = 3;
+
+		let init_cp_cap= CpCapacity{
+			max_word_len: max_word, 
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+			//avg_subsig_per_sig,
+		};
+		let init_sed_cap= SedCapacity::new(
+			max_word, RANGE2_BIT, subsigs, 
+			avg_pats_per_subsig, 
+			avg_active_pats_per_subsig, 
+			basis_pats_in_trace, 
+			sigs, 
+			perc_comp_subsigs,
+			basis_unique_states,
+			basis_acc_states,
+		);
+		let dfa_sigs = 2;
+		let dfa_subsigs= 3;
+		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
+
+
+		zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+			&format!("{}/main.dat",set1), //src sig
+			&format!("{}/binexec_2.dat",set1), //list of files to discharge
+			"data/debug/full_data_set/reports/report2.dat", //report
+			b_read_cache,
+			b_write_cache,
+			"full_data", //cache name
+			&format!("{}/main_dfa.dat", set1), //signs that need dfa
+			&format!("{}/needs_ised.dat", set1), //signs that need ised 
+			&format!("{}/needs_ised_igc.dat",set1), //sigs that need ised igc
+			max_word, //this is the chunk len
+			&init_cp_cap,
+			&init_sed_cap,
+			&init_dfa_cap,
+			num_category,
+			num_circs_per_category,
+			b_check_lkup
+		);
+	}
+
+	/// the sigs are the FULL SET of sigs
+	/// It runs a large but difficult file: gdb (6.6M)
+	#[allow(dead_code)]
+	fn full_data3<F:PrimeField>(b_check_lkup: bool){
+		assert!(RANGE2_BIT==24, "set RANGE2_BIT to 24");
+		let b_read_cache = true;
+		let b_write_cache = ! b_read_cache;
+		let set1 = "data/debug/full_data_set/config/"; //for dfa 
+		//let max_word= 512; 
+		let max_word= 512 * 8; 
+		let sigs = 320;
+		let subsigs = 500; //220 for prev db
+		let avg_pats_per_subsig = 8; //old value 8
+		let avg_active_pats_per_subsig = 3;
+		let basis_pats_in_trace = 36; //old value 100 cur value 1/1000.
+		let perc_comp_subsigs = 20;
+		let num_category = 1;
+		let num_circs_per_category= 1;
+		let basis_unique_states = 1900; //19 cpercent
+		let basis_acc_states = 900; //9 cpercent
+		//let avg_subsig_per_sig = 3;
+
+		let init_cp_cap= CpCapacity{
+			max_word_len: max_word, 
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+			//avg_subsig_per_sig,
+		};
+		let init_sed_cap= SedCapacity::new(
+			max_word, RANGE2_BIT, subsigs, 
+			avg_pats_per_subsig, 
+			avg_active_pats_per_subsig, 
+			basis_pats_in_trace, 
+			sigs, 
+			perc_comp_subsigs,
+			basis_unique_states,
+			basis_acc_states,
+		);
+		let dfa_sigs = 2;
+		let dfa_subsigs= 3;
+		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
+
+
+		zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+			&format!("{}/main.dat",set1), //src sig
+			&format!("{}/binexec_3.dat",set1), //list of files to discharge
+			"data/debug/full_data_set/reports/report2.dat", //report
+			b_read_cache,
+			b_write_cache,
+			"full_data", //cache name
 			&format!("{}/main_dfa.dat", set1), //signs that need dfa
 			&format!("{}/needs_ised.dat", set1), //signs that need ised 
 			&format!("{}/needs_ised_igc.dat",set1), //sigs that need ised igc
@@ -811,6 +939,8 @@ pub mod tests_zkp_driver{
 		//small_data::<Fr>(b_check_lkup); //small data
 		//small_data2::<Fr>(b_check_lkup);  //10k data 
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data
-		full_data1::<Fr>(b_check_lkup);
+		//full_data1::<Fr>(b_check_lkup);
+		//full_data2::<Fr>(b_check_lkup); //full data high acc state 
+		full_data3::<Fr>(b_check_lkup); //full data large file
 	}
 }
