@@ -77,6 +77,7 @@ pub fn print_discharge_stats(vdata: &Vec<FailDischargeRecord>,
 	for rec in vdata{ vec_stats[rec.flen].push(rec.clone()); }
 	let b_more_details = false;
 	let b_include_bs = false;
+	let b_show_high_acc = true; //show most_freq patterns
 
 	//2. print details
 	if b_more_details{
@@ -253,15 +254,15 @@ pub fn print_discharge_stats(vdata: &Vec<FailDischargeRecord>,
 	flog(LOG1, &format!("acc_states/path_len: avg: {}%, max: {}%",
 		avg_f64(&acc_ratio),
 		max_f64(&acc_ratio)), vlog);
-	//REMOVE LATER -------------
-	for i in 0..vdata.len(){
-		if acc_ratio[i]>10.0{
-			println!("DEBUG USE 7101: i: {}, acc_ratio: {}%, flen: {}, fname: {}",
-				i, acc_ratio[i], vdata[i].total_acc_path_len,
-				vdata[i].fname);
+	if b_show_high_acc{
+		for i in 0..vdata.len(){
+			if acc_ratio[i]>10.0{
+				println!("HIGH acc_states cost files: i: {}, acc_ratio: {}%, flen: {}, fname: {}, patterns: {:#?}", i, 
+					acc_ratio[i], vdata[i].total_acc_path_len,
+					vdata[i].fname, vdata[i].most_freq_sed_cs_pats);
+			}
 		}
 	}
-	//REMOVE LATER ------------- ABOVE
 	let vec_unique_state_ratio = vdata.iter().map(|v|
 		//because it includes two automata's data (case sentive and igc)
 		(v.total_unique_states as f64)*100.0/(2.0*accpath_len as f64)

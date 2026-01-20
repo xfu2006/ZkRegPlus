@@ -35,6 +35,10 @@ pub struct FailDischargeRecord{
 	pub total_pm_witness_len: usize, //total witness len for pm-reg
 				//this is more realistic
 	pub ind_pm_reg: HashSet<String>, //the set sigs cannot be discharged by INDIVIDUAL pm-reg
+	pub most_freq_sed_cs_pats: Option<HashSet<String>>, //only
+		//available for those accept states ratio >10%
+		//these are most frequent patterns
+		//context sensitve only as igc is usually must lower
 }
 
 /// The configuration of prover (all numbers are power of 2)

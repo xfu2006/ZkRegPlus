@@ -702,6 +702,38 @@ impl HexACDFA{
 		res
 	}
 
+	/// get the set of patterns which are of the MOST FREQUENTLY visited 
+	/// state
+	pub fn get_most_freq_patterns(&self, acc_path: &Vec<usize>)
+		->HashSet<String>{
+		let mut res = HashSet::<String>::new();
+		//1. find the most frequent accept state
+		let mut counts = HashMap::<usize,usize>::new();
+		let mut max_count = 0;
+		let mut max_state = 0;
+		for state in acc_path{
+			if self.is_accept(*state){
+				let count = 
+					*counts.entry(*state).and_modify(|count| *count += 1)
+					.or_insert(1);
+				if count>max_count{
+					max_count = count;
+					max_state = *state;
+				}
+			}
+		}
+		if counts.len()==0 {return res; } //empty set
+
+		//2. find all of its patterns
+		let vec = &self.outputs[&max_state];
+		for id_pat in vec{
+			res.insert( self.patterns[*id_pat].clone() );
+		}
+
+		res
+	}
+
+
 	/// for each string show the vector of positions
 	pub fn get_pattern_pos(&self, acc_path: &Vec<usize>)->HashMap<String,Vec<usize>>{
 		let mut res = HashMap::<String, Vec<usize>>::new();

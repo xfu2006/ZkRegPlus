@@ -277,7 +277,6 @@ impl SubsigPatternStore{
 		let mut tuples = cols[5].par_iter().map(|v|{
 			(tbl_id, *v)
 		}).collect::<Vec<(F,F)>>();
-		println!("DEBUG USE 9001: SubsigPatternStore added to lkup: {}", tuples.len());
 		lkup.vals.append(&mut tuples);
 		Ok( () )
 	}
@@ -1085,6 +1084,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		let state_2_sig_id = tbl_id_init+4;
 		let state_sig_count_id = tbl_id_init+5;
 		let all_states_id = tbl_id_init+6;
+		let state_2_pat = tbl_id_init+7;
 
 		//2. build the single entry sub-table for init
 		let init_st = acdfa.init_state as u32;
@@ -1180,10 +1180,38 @@ impl <F:PrimeField> ClamavDB<F>{
 			(f_final_sig_count, encoded)
 		}).collect::<Vec<(F,F)>>();
 
+		//5. encode the finals to pats
+		// each encoded word has structure
+		// final_state - pat_id - id - count
+		// where pat_id is the REAL_PAT id + 1
+		// id starts from 0
+		// count is the number of patterns related to final_state - 1
+		let f_final_2_pat = F::from(state_2_pat);
+		let sigbit_fac3 = sigbit_factor * sigbit_fac2;
+
+		let vec_final_2_pat =  (0..acdfa.num_acc_states).into_par_iter().map(|i|
+		{
+			let pats = acdfa.outputs.get(&i).unwrap();
+			let res = pats.into_iter().enumerate().map(|(id,pat_id)| {
+				// encoded is (final_state+1) || (pat_id+1) || id || count
+				let f_state = F::from((i+1) as u32);
+				let f_pat = F::from((pat_id+1) as u32);
+				let f_id = F::from(id as u32);
+				let f_total = F::from((pats.len()-1) as u32);
+				let encoded = f_state*sigbit_fac3 + 
+					f_pat * sigbit_fac2 + 
+					f_id * sigbit_factor +
+					f_total;
+				(f_final_2_pat, encoded)
+			}).collect::<Vec<(F,F)>>();
+			res
+		}).flatten().collect::<Vec<(F,F)>>();
+
 
 		//5. assemble
 		let v2d = vec![ vec_init, vec_non_final, vec_final, vec_trans,
-			vec_final_2_sig, vec_final2sig_count, vec_all_states];
+			vec_final_2_sig, vec_final2sig_count, vec_all_states,
+			vec_final_2_pat];
 		let mut res = v2d.concat();
 		lk.vals.append(&mut res);
 	}
@@ -1435,8 +1463,10 @@ impl <F:PrimeField> ClamavDB<F>{
 			let dfa_id = Self::pm_acdfa_id(sig_id, b_igc); 
 			Self::add_acdfa_to_lkup(lkup,&bundle.vec_acdfa[i],
 				dfa_id, &bundle.vec_map_pattern_sig[i], sig_to_id);
-			bundle.vec_subsig_stores[i]
-				.add_store_to_lkup(lkup, dfa_id, state_bits)?;
+			//bundle.vec_subsig_stores[i]
+			//	.add_store_to_lkup(lkup, dfa_id, state_bits)?;
+			// SubsigPatternStore no longer needed
+			// replaced by state_2_pat in acc_dfa.
 			bundle.vec_subsig_step_stores[i]
 				.add_store_to_lkup(lkup, dfa_id, state_bits);
 			bundle.vec_subsig_info_stores[i]
@@ -1851,6 +1881,17 @@ impl <F:PrimeField> ClamavDB<F>{
 			}
 			s
 		}).collect::<Vec<ClamavSig>>();
+		//REMOVE LATER ---------
+		for s in &v_sigs{
+			let b_has_ff = s.vec_subsig_pm_bounds.iter().any(|vec|
+				vec.iter().any(|t| t.0=="ffff")
+			);
+			if b_has_ff {
+			  println!("DEBUG USE 9107: after generation: sig: {} has ffff", 
+			  	s.name);
+			}
+		}
+		//REMOVE LATER --------- AOBOVE
 		if b_perf {flog_perf(log_level, &format!("Build_DB: Step 1: Generate signatures"), &mut timer,
 			vlog);}
 		if b_perf {flog_perf(log_level, &format!("Bluld_DB: Step 2: Writing signatures"), &mut timer,

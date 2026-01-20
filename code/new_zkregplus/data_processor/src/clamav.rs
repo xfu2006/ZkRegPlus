@@ -873,6 +873,9 @@ impl ClamavSig{
 				}
 			};
 
+			//REMOVE LATER -----------
+			println!("DEBUG USE 9100: processing: sig: {}, subsig: {}", self.name, s.value);
+			//REMOVE LATER ----------- ABOVE
 			let new_vec = self.remove_special_pats(&vec, s);
 			new_vec
 		}).collect::<Vec<Vec<(String, (usize, usize) )>>>();
@@ -889,7 +892,11 @@ impl ClamavSig{
 	/// ("dede", (7,7))
 	fn remove_special_pats(&self, v: &Vec<(String,(usize,usize))>, _subsig_obj: &SubSigObj)->Vec<(String,(usize,usize))>{
 		let r1 = Regex::new(r"^0+$").unwrap();
-		let r2 = Regex::new(r"^(ff)+|(FF)+$").unwrap();
+		//let r2 = Regex::new(r"^(ff)+|(FF)+$").unwrap();
+		let r2 = Regex::new(r"^((ff)+|(FF)+)$").unwrap();
+		let r3 = Regex::new(r"^((ffff)+|(FFFF))+$").unwrap();
+		let b_has_ff = v.iter().any(|(s,_v)| r3.is_match(s));
+
 		let mut res = vec![];
 		let mut i = 0;
 		let mut _removed = 0;
@@ -934,11 +941,30 @@ impl ClamavSig{
 			}
 		}
 
-		if ff_removed>1 && res.len()<2{//if killed too much use the original
+		let res = if ff_removed>1 && res.len()<2{
+			//if killed too much use the original
 			v.clone()
 		}else{
 			res
+		};
+
+		if res.len()<v.len(){
+			println!("DEBUG USE 9101: CUT from original_v.len: {}, res.len: {}\n v: {:#?}\n res: {:#?}", v.len(), res.len(), v, res);
 		}
+
+		let b_has_ff2 = res.iter().any(|(s,_v)| r3.is_match(s));
+		if b_has_ff{
+			println!("DEBUG USE 9102: has ffff: original_v.len: {}, res.len: {}\n v: {:#?}\n res: {:#?}", v.len(), res.len(), v, res);
+		}
+		if b_has_ff2{
+			println!("DEBUG USE 9102: RESULT has ffff: original_v.len: {}, res.len: {}\n v: {:#?}\n res: {:#?}", v.len(), res.len(), v, res);
+		}
+		println!("DEBUG USE 9104");
+		if res.len()==0{
+			println!("DEBUG USE 9105: v.len() is 0");
+		}
+
+		res
 	}
 
 	// based on dnf_id, collect the raw_subsig_ids
@@ -1086,6 +1112,12 @@ impl ClamavSig{
 	/// cost is the result applying the range check between neighboring
 	/// patterns)
 	/// return (DisChargeResult, cost, cost2)
+	///
+	/// NOTE: when vec_subsig_pm_bounds has NO PATTERNS at all
+	/// it will simply return MayBe (because there is no way to tell
+	/// if the subsig is satisfied by the string or not).
+	/// NOTE2: for "regular" case there is always two outcomes:
+	///   Maybe and False (because you can NEVER assuure that it's a True).
 	fn approx_eval_pm_bounds_subsig(&self, subsig_id: usize,  
 		hs:&HashMap<String,Vec<usize>>, hs_igc: &HashMap<String,Vec<usize>>,
 		_fname: &str) 
@@ -1171,13 +1203,18 @@ impl ClamavSig{
 	/// collect bagwords from pmreg (in case it uses different min-len requirement)
 	pub fn collect_bagwords_from_pmreg(&self, b_ignore_case: bool) -> HashSet<String>{
 		let mut hs_res = HashSet::<String>::new();
-		assert!(self.vec_subsig_pm_bounds.len()>0, "WARN: pm_bounds vec 0: {}",
-			self.name);
+		//assert!(self.vec_subsig_pm_bounds.len()>0, "WARN: pm_bounds vec 0: {}", self.name);
+		//NO NEED it should be equal to the number of sugsigs
 		for (id, vec) in self.vec_subsig_pm_bounds.iter().enumerate(){
 			if b_ignore_case != self.vec_subsig_obj[id].b_ignore_case{
 				continue;
 			}
 			for t in vec{
+				//REMOVE LATER ---------------
+				if t.0 == "ffff"{
+					println!("DEBUG USE 9106: sig: {} finds ffff", self.name);
+				}
+				//REMOVE LATER --------------- ABOVE
 				hs_res.insert(t.0.clone());
 			}
 
@@ -2416,6 +2453,7 @@ pub fn quick_discharge_file_by_crit_bag_pm_old(fname: &str,
 		total_pm_witness_len: total_pm_witness_len,
 		ind_pm_reg: set_ind_pm_reg,
 		total_unique_states: total_unique_states,
+		most_freq_sed_cs_pats: None,
 	};
 
 	data
@@ -2549,6 +2587,13 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 	}).map(|s| s.name.clone()).collect::<HashSet<String>>();
 	let set_ind_pm_reg = set_sigs_dfa.clone(); //no ind_pm setp, just clone dfa result
 
+	//5. collect most frequent pats
+	let acc_ratio = (total_accepted as f64)/(total_acc_path_len as f64)*100.0;
+	let most_freq_sed_cs_pats = if acc_ratio<10.0{
+		None
+	}else{
+		Some(dfa_bag.get_most_freq_patterns(&dfa_acc_path))
+	};
 
 	//6. compute stats 
 	let file_len = ((nibbles.len()/2).ilog2() + 1) as usize;
@@ -2565,6 +2610,7 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		total_pm_witness_len: total_pm_witness_len,
 		ind_pm_reg: set_ind_pm_reg,
 		total_unique_states: total_unique_states,
+		most_freq_sed_cs_pats,
 	}
 }
 

@@ -3267,6 +3267,7 @@ dependencies = [
  "ark-ff 0.4.1",
  "data_processor",
  "rayon",
+ "regex",
  "utils",
 ]
 
