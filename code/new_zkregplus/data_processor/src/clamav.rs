@@ -891,21 +891,39 @@ impl ClamavSig{
 	/// to
 	/// ("dede", (7,7))
 	fn remove_special_pats(&self, v: &Vec<(String,(usize,usize))>, _subsig_obj: &SubSigObj)->Vec<(String,(usize,usize))>{
-		let r1 = Regex::new(r"^0+$").unwrap();
-		//let r2 = Regex::new(r"^(ff)+|(FF)+$").unwrap();
-		let r2 = Regex::new(r"^((ff)+|(FF)+)$").unwrap();
-		let r3 = Regex::new(r"^((ffff)+|(FFFF))+$").unwrap();
-		let b_has_ff = v.iter().any(|(s,_v)| r3.is_match(s));
+		let vec_r = vec![
+			Regex::new(r"^0+$").unwrap(),
+			Regex::new(r"^((ff)+|(FF)+)$").unwrap(),
+			Regex::new(r"^(1|2|3|4)0000000$").unwrap(),
+			Regex::new(r"^(2|4)000$").unwrap(),
+			Regex::new(r"^488.$").unwrap(),
+			Regex::new(r"^430.$").unwrap(),
+			Regex::new(r"^0004$").unwrap(),
+			Regex::new(r"^feff$").unwrap(),
+			Regex::new(r"^00008$").unwrap(),
+			Regex::new(r"^000080$").unwrap(),
+			Regex::new(r"^000.$").unwrap(),
+			Regex::new(r"^0.00$").unwrap(),
+			Regex::new(r"^00.0$").unwrap(),
+			Regex::new(r"^0.0000$").unwrap(),
+			Regex::new(r"^202020$").unwrap(),
+		];
+		let is_special = |s: &String,vec_r: &Vec<Regex>| -> bool{
+			for r1 in vec_r{
+				if r1.is_match(s){
+					return true;	
+				}
+			}
+			return false;
+		};
 
 		let mut res = vec![];
 		let mut i = 0;
-		let mut _removed = 0;
-		let mut ff_removed = 0;
 		while i<v.len(){
 			let item = &v[i];
 			let s = &item.0;
 			let (mut min,mut max) = (item.1.0, item.1.1);
-			if !r1.is_match(&s) & !r2.is_match(&s){
+			if !is_special(&s, &vec_r){
 				res.push(item.clone());
 				i += 1;
 			}else{
@@ -913,10 +931,6 @@ impl ClamavSig{
 				//note: if not found, no item to add anyway
 				//the ".*" will be appended automatically
 				i += 1;
-				_removed += 1;
-				if r2.is_match(&s){
-					ff_removed += 1;
-				}
 				while i<v.len(){
 					let next_item = &v[i];
 					min = if next_item.1.0==usize::MAX || min==usize::MAX {
@@ -928,41 +942,31 @@ impl ClamavSig{
 						usize::MAX} else {
 							max + next_item.1.1 + v[i-1].0.len()
 						};
-					if !r1.is_match(&next_item.0){
+					if !is_special(&next_item.0, &vec_r){
 						let new_item = (next_item.0.clone(), (min,max));
 						res.push(new_item);
 						i +=1; 
 						break;
 					}else{
 						i += 1;
-						_removed += 1;
 					}
 				}
 			}
 		}
 
+		/* RECOVER LATER IF NOT WORKING
 		let res = if ff_removed>1 && res.len()<2{
 			//if killed too much use the original
 			v.clone()
 		}else{
 			res
 		};
+		*/
 
 		if res.len()<v.len(){
 			println!("DEBUG USE 9101: CUT from original_v.len: {}, res.len: {}\n v: {:#?}\n res: {:#?}", v.len(), res.len(), v, res);
 		}
 
-		let b_has_ff2 = res.iter().any(|(s,_v)| r3.is_match(s));
-		if b_has_ff{
-			println!("DEBUG USE 9102: has ffff: original_v.len: {}, res.len: {}\n v: {:#?}\n res: {:#?}", v.len(), res.len(), v, res);
-		}
-		if b_has_ff2{
-			println!("DEBUG USE 9102: RESULT has ffff: original_v.len: {}, res.len: {}\n v: {:#?}\n res: {:#?}", v.len(), res.len(), v, res);
-		}
-		println!("DEBUG USE 9104");
-		if res.len()==0{
-			println!("DEBUG USE 9105: v.len() is 0");
-		}
 
 		res
 	}
@@ -2589,7 +2593,7 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 
 	//5. collect most frequent pats
 	let acc_ratio = (total_accepted as f64)/(total_acc_path_len as f64)*100.0;
-	let most_freq_sed_cs_pats = if acc_ratio<10.0{
+	let most_freq_sed_cs_pats = if acc_ratio<5.0{
 		None
 	}else{
 		Some(dfa_bag.get_most_freq_patterns(&dfa_acc_path))

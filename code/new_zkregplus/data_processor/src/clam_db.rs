@@ -1887,8 +1887,7 @@ impl <F:PrimeField> ClamavDB<F>{
 				vec.iter().any(|t| t.0=="ffff")
 			);
 			if b_has_ff {
-			  println!("DEBUG USE 9107: after generation: sig: {} has ffff", 
-			  	s.name);
+			  println!("DEBUG USE 9107: after generation: sig: {} has ffff,Details: {:#?}\n", s.name, s.vec_subsig_pm_bounds);
 			}
 		}
 		//REMOVE LATER --------- AOBOVE

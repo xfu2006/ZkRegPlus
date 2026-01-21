@@ -24349,6 +24349,19 @@ Goal 3. find out how bag_dfa is constructed and why does it contain "ffff"?
 		Win.Packed.addsub-6963063-0;Engine:51-255,FileSize:153600-409600,Target:1;0>250;81(85|AD)??F?FFFF{4}81(85|AD)??F?FFFF
 		Both requiring FFFF occuring at certain places
 	[f] test: how make them all empty?
+	[g] why it's not working? check debug 9107
+
+Goal 4. inspect the handle_special_pat agl again
+	[a] fix the bug of check pattern
+	[b] good news is that: 
+		down from 61% max to 9.67% max.
+	[b] check 9102 on all cases
+
+Goal 5. further imrpvoe
+	[a] display all greater than 5%
+	[b] add more patterns
+	[c] good now cuts from
+		3% avg and 5% max
 
 
 --- TODO -- examine how is "ffff" introduced.

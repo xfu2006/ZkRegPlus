@@ -256,7 +256,7 @@ pub fn print_discharge_stats(vdata: &Vec<FailDischargeRecord>,
 		max_f64(&acc_ratio)), vlog);
 	if b_show_high_acc{
 		for i in 0..vdata.len(){
-			if acc_ratio[i]>10.0{
+			if acc_ratio[i]>=5.0{
 				println!("HIGH acc_states cost files: i: {}, acc_ratio: {}%, flen: {}, fname: {}, patterns: {:#?}", i, 
 					acc_ratio[i], vdata[i].total_acc_path_len,
 					vdata[i].fname, vdata[i].most_freq_sed_cs_pats);
