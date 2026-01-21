@@ -56,6 +56,8 @@ use crate::gadgets::{
 //		Structs
 // -----------------------------------------------
 
+pub const B_FSM_ADV_NEW: bool = true; //new alg skils expensive proj_store
+
 /// Capacity of the gadget
 #[derive(Clone,Debug)]
 pub struct FsmAdvCapacity{
@@ -230,7 +232,70 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		fsm_id: u32,
 		store_subsig_pat: &SubsigPatternStore
 	) ->Result<Self, Error>{
-		let b_analyze = false;
+		if B_FSM_ADV_NEW{
+			Self::new_v2(b_igc, offset_wea, nibbles, acdfa, inp_state,
+				inp_loc, inp_subsigs, capacity, fsm_id, store_subsig_pat)
+		}else{
+			Self::new_v1(b_igc, offset_wea, nibbles, acdfa, inp_state,
+				inp_loc, inp_subsigs, capacity, fsm_id, store_subsig_pat)
+		}
+	}
+
+	/// the idea is to skip proj_store and directly pull out
+	/// the information of pat-state (and skip subsig-states because
+	/// one subsig can correspond to too many states)
+	#[allow(dead_code)]
+	pub fn new_v2(
+		b_igc: bool,
+		offset_wea: usize,
+		nibbles: &Vec<F>, 
+		acdfa: &HexACDFA, 
+		inp_state: F,  //it's already adjusted (starting from 1)
+		inp_loc: F, //it's starting from 1 (for first component). 
+		_inp_subsigs: &Vec<F>,
+		capacity: &FsmAdvCapacity, 
+		fsm_id: u32,
+		_store_subsig_pat: &SubsigPatternStore
+	) ->Result<Self, Error>{
+		let sname = if b_igc {"fsm_adv_stmt_igc"} else {"fsm_adv_stmt_cs"};
+		let stmt_container = Container::<F>::new(sname);
+
+		//1. construct the fsm_acc combo which has the transition
+		// info and results in (state, loc) columns
+		let fsm_acc = Self::gen_fsm_acc_combo(
+			b_igc,
+			offset_wea as isize, 
+			nibbles, acdfa, 
+			inp_state, inp_loc, capacity, fsm_id)?;
+		let fsm_acc2 = fsm_acc.clone(); //low cost, need to add
+		//fsm_acc to fix location first before we build exteranl cols from it.
+		stmt_container.borrow_mut().add_container(fsm_acc);
+
+		//2. generate the packed trace_combo
+		//which eventually returns (pat-loc) table 
+		let packed_trace_combo = Self::gen_packed_trace_combo_v2(
+			&fsm_acc2, capacity, acdfa)?;
+		stmt_container.borrow_mut().add_container(packed_trace_combo);
+
+		Ok(Self{capacity: Clone::clone(capacity), fsm_id,
+			stmt_container, offset_wea})
+	}
+
+	/// OLD deprecated version
+	#[allow(dead_code)]
+	pub fn new_v1(
+		b_igc: bool,
+		offset_wea: usize,
+		nibbles: &Vec<F>, 
+		acdfa: &HexACDFA, 
+		inp_state: F,  //it's already adjusted (starting from 1)
+		inp_loc: F, //it's starting from 1 (for first component). 
+		inp_subsigs: &Vec<F>,
+		capacity: &FsmAdvCapacity, 
+		fsm_id: u32,
+		store_subsig_pat: &SubsigPatternStore
+	) ->Result<Self, Error>{
+		let b_analyze = false; //set to false by default
 		let b_return_dummy_advice = false; //set to false by default
 		if b_analyze{
 			Self::analyze_data(b_igc, nibbles, acdfa, inp_state, inp_loc,
@@ -923,6 +988,20 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		//6. return
 		Ok( res )
 	}
+
+	/// better version of gen_packed_trace_combo. We avoided
+	/// the huge number of states associated with a subsig.
+	/// basic idea: 
+	/// (1) retrieve (final_states, loc) from fsm_combo 
+	#[allow(dead_code)]
+	fn gen_packed_trace_combo_v2(
+		_fs_acc_combo: &Rc<RefCell<Container<F>>>,
+		_capacity: &FsmAdvCapacity,
+		_acdfa: &HexACDFA,
+	)->Result<Rc<RefCell<Container<F>>>, Error>{
+		let res = Container::<F>::new("packed_trace");
+		todo!()
+	}
 }
 
 impl <F:PrimeField> FsmAdvGadget<F>{
@@ -1537,6 +1616,112 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		Ok( () )
 	}
 
+	/// VERSION 1 of assert_msg3 - DEPRECATED
+	/// COST (nlen - nibble len, alen - perc of accepted states * trace len
+	///     note that accepted states are for all
+	/// nlen*(2.5+9*ratio_acc_states + 45*ratio_pats + 7*ratio_unique_states)
+	///  + subsig *(1+ 55*avg_pats_per_subsig)
+	/// REAL DATA:  average
+	/// ratio_acc_states < 6%  (max 30%)
+	/// ratio_pats <0.5%
+	/// ratio_unique_states < 0.1%
+	/// avg_pats_per_subsig = 5 avg (max 10 - limited by config, which
+	///   does not cause false positive of flagging malware)
+	/// subsigs - 2k
+	/// So total cost < nlen * 4 + 2k * 250 (max) 
+	///
+	///  *** PROBLEM of Performance ***: 
+	/// estimate of avg_pats_per_subsig does not
+	/// precisely reflect the cost of proj_store as some subsigs
+	/// have super large sets of states (which compressed into one pat)
+	/// but the proje_store needs to have these states built in
+	/// so this function is deprecated.
+	#[allow(dead_code)]
+	fn assert_msg3_v1(&self, i: usize, cs: ConstraintSystemRef<F>, 
+		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
+		-> Result<(), SynthesisError>{
+		let b_perf = false;
+		let log_level = LOG1;
+		let mut gt = GTimer::new();
+		let mut nc = cs.num_constraints();
+		let nc0 = cs.num_constraints();
+		//1. retrive the statement instance and get all parts
+		let cfg = self.get_container_cfg().expect("container cfg not set!");
+		let stmt = Container::<FpVar<F>>::load_from(i, wtns_cfg, wtns, &cfg)?;
+		let pss = stmt.get_container("proj_subsig_store")?;
+		let r1 = wtns.msg2[0].clone();
+		let r2 = wtns.msg2[1].clone();
+
+		//2. validate the fsm_acc combo 
+		// nlen*(3+ 5*ratio_acc_states_per_trace)
+		let fsm_acc = stmt.get_container("fsm_acc")?;
+		self.validate_fsm_acc_container(&fsm_acc.borrow(), r1.clone(),
+			r2.clone(), cs.clone())?;
+		if b_perf{
+			log_perf(log_level, &format!(
+				" ## fsm_adv step1: {}", cs.num_constraints()-nc), &mut gt);
+			nc = cs.num_constraints();
+		}
+
+		//3. validate the proj_subsig_store
+		// COST: subsig*(1 + 11*avg_pat_subsig)
+		self.validate_proj_subsig_store(&pss.borrow(),r1.clone(),cs.clone())?;
+		if b_perf{
+			log_perf(log_level, &format!(
+				" ##fsm_adv step2: {}", cs.num_constraints()-nc), &mut gt);
+			nc = cs.num_constraints();
+		}
+
+		//3. validate the packed trace combo
+		// nlen*(4*basis_acc_states + 45*basis_pats + 7*basis_unique_states)/10000
+		// + 44 * subsigs * avg_pats_per_subsig
+		self.validate_packed_trace(&r1, &r2, &stmt, cs.clone())?;
+		if b_perf{
+			log_perf(log_level, &format!(" ## fsm_adv step3: {}, total: {}", 
+				cs.num_constraints()-nc,
+				cs.num_constraints()-nc0
+			), &mut gt);
+		}
+
+		Ok(())
+	}
+
+	#[allow(dead_code)]
+	fn assert_msg3_v2(&self, i: usize, cs: ConstraintSystemRef<F>, 
+		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
+		-> Result<(), SynthesisError>{
+		let b_perf = false;
+		let log_level = LOG1;
+		let mut gt = GTimer::new();
+		let mut nc = cs.num_constraints();
+		let nc0 = cs.num_constraints();
+		//1. retrive the statement instance and get all parts
+		let cfg = self.get_container_cfg().expect("container cfg not set!");
+		let stmt = Container::<FpVar<F>>::load_from(i, wtns_cfg, wtns, &cfg)?;
+		//let _pss = stmt.get_container("proj_subsig_store")?;
+		let r1 = wtns.msg2[0].clone();
+		let r2 = wtns.msg2[1].clone();
+
+		//2. validate the fsm_acc combo 
+		// nlen*(3+ 5*ratio_acc_states_per_trace)
+		let fsm_acc = stmt.get_container("fsm_acc")?;
+		self.validate_fsm_acc_container(&fsm_acc.borrow(), r1.clone(),
+			r2.clone(), cs.clone())?;
+		if b_perf{
+			log_perf(log_level, &format!(
+				" ## fsm_adv step1: {}", cs.num_constraints()-nc), &mut gt);
+			nc = cs.num_constraints();
+		}
+
+		if b_perf{
+			log_perf(log_level, &format!(" ## fsm_adv step3: {}, total: {}", 
+				cs.num_constraints()-nc,
+				cs.num_constraints()-nc0
+			), &mut gt);
+		}
+		Ok( () )
+	}
+
 }
 
 impl <F:PrimeField> SigmaGadget<F> for FsmAdvGadget<F>{
@@ -1607,75 +1792,16 @@ impl <F:PrimeField> SigmaGadget<F> for FsmAdvGadget<F>{
 		vec![]
 	}
 
-	/// COST (nlen - nibble len, alen - perc of accepted states * trace len
-	///     note that accepted states are for all
-	/// nlen*(2.5+9*ratio_acc_states + 45*ratio_pats + 7*ratio_unique_states)
-	///  + subsig *(1+ 55*avg_pats_per_subsig)
-	/// REAL DATA:  average
-	/// ratio_acc_states < 6%  (max 30%)
-	/// ratio_pats <0.5%
-	/// ratio_unique_states < 0.1%
-	/// avg_pats_per_subsig = 5 avg (max 10 - limited by config, which
-	///   does not cause false positive of flagging malware)
-	/// subsigs - 2k
-	/// So total cost < nlen * 4 + 2k * 250 (max) 
-	/// PROBLEM: estimate of avg_pats_per_subsig does not
-	/// precisely reflect the cost of proj_store as some subsigs
-	/// have super large sets of states (which compressed into one pat)
-	/// but the proje_store needs to have these states built in
-	/// so this function is deprecated.
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{
-		let b_debug_to_remove = true;
-		if b_debug_to_remove{
-			return Ok( () );
+		if B_FSM_ADV_NEW{
+			self.assert_msg3_v2(i, cs, wtns, wtns_cfg)
+		}else{
+			self.assert_msg3_v1(i, cs, wtns, wtns_cfg)
 		}
-		let b_perf = false;
-		let log_level = LOG1;
-		let mut gt = GTimer::new();
-		let mut nc = cs.num_constraints();
-		let nc0 = cs.num_constraints();
-		//1. retrive the statement instance and get all parts
-		let cfg = self.get_container_cfg().expect("container cfg not set!");
-		let stmt = Container::<FpVar<F>>::load_from(i, wtns_cfg, wtns, &cfg)?;
-		let pss = stmt.get_container("proj_subsig_store")?;
-		let r1 = wtns.msg2[0].clone();
-		let r2 = wtns.msg2[1].clone();
-
-		//2. validate the fsm_acc combo 
-		// nlen*(3+ 5*ratio_acc_states_per_trace)
-		let fsm_acc = stmt.get_container("fsm_acc")?;
-		self.validate_fsm_acc_container(&fsm_acc.borrow(), r1.clone(),
-			r2.clone(), cs.clone())?;
-		if b_perf{
-			log_perf(log_level, &format!(
-				" ## fsm_adv step1: {}", cs.num_constraints()-nc), &mut gt);
-			nc = cs.num_constraints();
-		}
-
-		//3. validate the proj_subsig_store
-		// COST: subsig*(1 + 11*avg_pat_subsig)
-		self.validate_proj_subsig_store(&pss.borrow(),r1.clone(),cs.clone())?;
-		if b_perf{
-			log_perf(log_level, &format!(
-				" ##fsm_adv step2: {}", cs.num_constraints()-nc), &mut gt);
-			nc = cs.num_constraints();
-		}
-
-		//3. validate the packed trace combo
-		// nlen*(4*basis_acc_states + 45*basis_pats + 7*basis_unique_states)/10000
-		// + 44 * subsigs * avg_pats_per_subsig
-		self.validate_packed_trace(&r1, &r2, &stmt, cs.clone())?;
-		if b_perf{
-			log_perf(log_level, &format!(" ## fsm_adv step3: {}, total: {}", 
-				cs.num_constraints()-nc,
-				cs.num_constraints()-nc0
-			), &mut gt);
-		}
-
-		Ok(())
 	}
+
 }
 
 // ---------------------------------------------------

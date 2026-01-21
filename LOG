@@ -24367,7 +24367,14 @@ Wed 01/21/2026
 LOC (gadget): 18601
 Goal 1. collect data for the next step 
 	-> acdfa states: 6415039, acc_states: 564543, num of states with >=2 patterns: 56706, num5 :528, num10: 120, max patterns: 18, avg: 1.119927091470446
-	-> full data1:
+	-> full data1: (nice: it's now half a percent)
+	-------------- DATA ----------------
+		b_igc: false, nibbles_len: 253952, inp_state: 564546, inp_loc: 1
+acc_states ratio: 0.0054301600302419355, state_final.len: 1379
+Projected Store Data: subsigs: 229, allowed states: 4544, allowed patterns: 59
+  vec_allowed_states: 37143, vec_allowed_pats: 37143 -- real projection cost (original design)
+Estimate of alg design 1 (no filter): output len: 1572, projected_pats (sum of set of pats per subsig): 259
+
 	-> full data2: large acc rate: now: 1 percent
 		b_igc: false, nibbles_len: 253952, inp_state: 564546, inp_loc: 1
 acc_states ratio: 0.01106508316532258, state_final.len: 2810
@@ -24375,7 +24382,14 @@ acc_states ratio: 0.01106508316532258, state_final.len: 2810
   vec_allowed_states: 37143, vec_allowed_pats: 37143 -- real projection cost (original design)
 Estimate of alg design 1 (no filter): output len: 2917, projected_pats (sum of set of pats per subsig): 259
 
-	-> fill data3: large file
+	-> fill data3: large file (acc ratio: 3 percent. still better than most)
+	b_igc: false, nibbles_len: 253952, inp_state: 564546, inp_loc: 1
+acc_states ratio: 0.032080865675403226, state_final.len: 8147
+Projected Store Data: subsigs: 229, allowed states: 4544, allowed patterns: 59
+  vec_allowed_states: 37143, vec_allowed_pats: 37143 -- real projection cost (original design)
+Estimate of alg design 1 (no filter): output len: 8483, projected_pats (sum of set of pats per subsig): 259
+
+	-------------- DATA ENDS ----------------
 
 Goal 2. read code to check the format of pat-loc 
 	-> it is 3 column padded with 0 entries
@@ -24388,7 +24402,45 @@ Goal 3. set fsm_adv to normal mode even with data collection
 		-> fsm_adv
 		-> discharge
 		-> compute_sig
-Goal 4. plan the revision for tbl_to_sorted_tble 
+Goal 4. revision for tbl_to_sorted_tble 
+	[a] read related functions
+		-> tbl_to_sorted_tbl
+			-> two_col_tbl_to_sorted
+				-> hashamp_to_sorted_2col_tbl
+		-> tbl_filter_to_sorted_tbl
+			-> prove_filter_tag
+	[b] identify the functions needed in fsm_adv -> tbl_to_sorted_tbl
+
+Goal 5. design: top down approach from fsm_adv first
+	[a] strategy: add new functions and keep the old functions
+	[b] read gen_fsm_combo and see if we need
+	[c] read gen_packed_trace
+		-> (state,loc) -> filtered by the states from proj_store
+		-> (state - multi -loc table)
+		-> from proj_store construct pat_state table
+		-> left join pat-state and state-loc
+		-> pat_loc_tbl to sorted table
+	[d] new design gen_fsm_combo + gen_packed_trace_v2
+	[e] gen_packed_trace_v2
+		-> from (fstate, loc) retrieve (unique_fstates)
+		-> retrieve (unique_fstates, pats) from DB.
+		-> (unique_fstates,pats) -> (pats, list_of_unique_states)
+		-> left join (pats, list_of_unique_states) with (state, loc)
+		-> tbl_to_filter_tbl pack (pats, loc)
+	[f] virtually all DB operations will be involved.
+		[f1] or every db operation have two versions _old and _new
+		[f2] do a wrapper function to pick _old or _new
+		[f3] once all code finished drop _new()
+
+Goal 6. add new framework
+	[a] add gen_packed_trace_v2
+	[b] add new_v1, new_v2 and assert_msg3_v1 and asserg_msg3_v2
+
+Goal 7. examine fsm_combo
+	[a] it does construct the final trace
+	[b] it already provides the states_final which is good
+
+Goal 8. gen_packed_trace_v2
 
 
 
