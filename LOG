@@ -24363,8 +24363,32 @@ Goal 5. further imrpvoe
 	[c] good now cuts from
 		3% avg and 5% max
 
+Wed 01/21/2026
+LOC (gadget): 18601
+Goal 1. collect data for the next step 
+	-> acdfa states: 6415039, acc_states: 564543, num of states with >=2 patterns: 56706, num5 :528, num10: 120, max patterns: 18, avg: 1.119927091470446
+	-> full data1:
+	-> full data2: large acc rate: now: 1 percent
+		b_igc: false, nibbles_len: 253952, inp_state: 564546, inp_loc: 1
+acc_states ratio: 0.01106508316532258, state_final.len: 2810
+		Projected Store Data: subsigs: 229, allowed states: 4544, allowed patterns: 59
+  vec_allowed_states: 37143, vec_allowed_pats: 37143 -- real projection cost (original design)
+Estimate of alg design 1 (no filter): output len: 2917, projected_pats (sum of set of pats per subsig): 259
 
---- TODO -- examine how is "ffff" introduced.
+	-> fill data3: large file
+
+Goal 2. read code to check the format of pat-loc 
+	-> it is 3 column padded with 0 entries
+	-> currently given one state to one pat, it's wasting 2x entries
+		and the check of (s-0)*(s-max) wastes at least one r1cs
+		in building well-formedness constraints
+Goal 3. set fsm_adv to normal mode even with data collection
+	-> add a boolean flag
+	-> regression test
+		-> fsm_adv
+		-> discharge
+		-> compute_sig
+Goal 4. plan the revision for tbl_to_sorted_tble 
 
 
 

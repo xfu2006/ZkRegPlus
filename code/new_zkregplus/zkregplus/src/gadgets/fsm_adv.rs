@@ -230,60 +230,66 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		fsm_id: u32,
 		store_subsig_pat: &SubsigPatternStore
 	) ->Result<Self, Error>{
-		let b_debug_to_remove = true;
-		if b_debug_to_remove{
+		let b_analyze = false;
+		let b_return_dummy_advice = false; //set to false by default
+		if b_analyze{
 			Self::analyze_data(b_igc, nibbles, acdfa, inp_state, inp_loc,
 				inp_subsigs, capacity, fsm_id, store_subsig_pat);
 
 			//build a fake adivce to return to save cost.
-			let sname = if b_igc {"fsm_adv_stmt_igc"} else {"fsm_adv_stmt_cs"};
-			let stmt_container = Container::<F>::new(sname);
-			let packed_trace = Container::<F>::new("packed_trace");
-			let packed_trace_size = capacity.basis_pats_in_trace * 
-				capacity.max_nibble_len / 10000;
-			let zcol = vec![F::zero(); packed_trace_size];
-			let scol = vec![F::from(RANGE2); packed_trace_size];
-			let pat_loc_tbl = Container::<F>::new("pat_loc");
-			let sorted_tbl = Container::<F>::new("sorted_tbl");
-			sorted_tbl.borrow_mut()
-				.add_col(Col::<F>::new(zcol.clone(), "sorted_key", IDX_DATA));
-			sorted_tbl.borrow_mut()
-				.add_col(Col::<F>::new(zcol.clone(), "sorted_id", IDX_DATA));
-			sorted_tbl.borrow_mut()
-				.add_col(Col::<F>::new(zcol.clone(), "sorted_val", IDX_DATA));
-			sorted_tbl.borrow_mut()
-				.add_col(Col::<F>::new(scol.clone(), 
-					"sid_sorted_key", IDX_SI_DATA));
-			sorted_tbl.borrow_mut()
-				.add_col(Col::<F>::new(scol.clone(), 
-					"sid_sorted_id", IDX_SI_DATA));
-			sorted_tbl.borrow_mut()
-				.add_col(Col::<F>::new(scol, "sid_sorted_val", IDX_SI_DATA));
-			pat_loc_tbl.borrow_mut().add_container(sorted_tbl);
-			packed_trace.borrow_mut().add_container(pat_loc_tbl);
-			stmt_container.borrow_mut().add_container(packed_trace);
+			if b_return_dummy_advice{
+				let sname = if b_igc {"fsm_adv_stmt_igc"} 
+					else {"fsm_adv_stmt_cs"};
+				let stmt_container = Container::<F>::new(sname);
+				let packed_trace = Container::<F>::new("packed_trace");
+				let packed_trace_size = capacity.basis_pats_in_trace * 
+					capacity.max_nibble_len / 10000;
+				let zcol = vec![F::zero(); packed_trace_size];
+				let scol = vec![F::from(RANGE2); packed_trace_size];
+				let pat_loc_tbl = Container::<F>::new("pat_loc");
+				let sorted_tbl = Container::<F>::new("sorted_tbl");
+				sorted_tbl.borrow_mut().add_col(Col::<F>::new(zcol.clone(), 
+					"sorted_key", IDX_DATA));
+				sorted_tbl.borrow_mut().add_col(Col::<F>::new(zcol.clone(), 
+					"sorted_id", IDX_DATA));
+				sorted_tbl.borrow_mut().add_col(Col::<F>::new(zcol.clone(), 
+					"sorted_val", IDX_DATA));
+				sorted_tbl.borrow_mut()
+					.add_col(Col::<F>::new(scol.clone(), 
+						"sid_sorted_key", IDX_SI_DATA));
+				sorted_tbl.borrow_mut()
+					.add_col(Col::<F>::new(scol.clone(), 
+						"sid_sorted_id", IDX_SI_DATA));
+				sorted_tbl.borrow_mut()
+					.add_col(Col::<F>::new(scol, "sid_sorted_val", IDX_SI_DATA));
+				pat_loc_tbl.borrow_mut().add_container(sorted_tbl);
+				packed_trace.borrow_mut().add_container(pat_loc_tbl);
+				stmt_container.borrow_mut().add_container(packed_trace);
 
-			//just fake 1 inp state 1 oupstate
-			//needed by discharge_test to build inp/oup state
-			let nlen = capacity.max_nibble_len;
-			let f_rg2 = F::from(RANGE2);
-			let col_states = Col::<F>::new(vec![inp_state],
-				"states",IDX_DATA);
-			let col_locs = Col::<F>::new(vec![inp_loc + F::from(nlen as u64)],
-				"locs",IDX_DATA);
-			let sid_states = Col::<F>::new(vec![f_rg2], "si_sttes",IDX_SI_DATA);
-			let sid_cols = Col::<F>::new(vec![f_rg2], "oup_state",IDX_SI_DATA);
-			let fsm_acc = Container::new("fsm_acc");
-			fsm_acc.borrow_mut().add_col(col_states);
-			fsm_acc.borrow_mut().add_col(col_locs);
-			fsm_acc.borrow_mut().add_col(sid_states);
-			fsm_acc.borrow_mut().add_col(sid_cols);
-			stmt_container.borrow_mut().add_container(fsm_acc);
+				//just fake 1 inp state 1 oupstate
+				//needed by discharge_test to build inp/oup state
+				let nlen = capacity.max_nibble_len;
+				let f_rg2 = F::from(RANGE2);
+				let col_states = Col::<F>::new(vec![inp_state],
+					"states",IDX_DATA);
+				let col_locs = Col::<F>::new(vec![inp_loc + F::from(nlen as u64)],
+					"locs",IDX_DATA);
+				let sid_states = Col::<F>::new(vec![f_rg2], 
+					"si_sttes",IDX_SI_DATA);
+				let sid_cols = Col::<F>::new(vec![f_rg2], 
+					"oup_state",IDX_SI_DATA);
+				let fsm_acc = Container::new("fsm_acc");
+				fsm_acc.borrow_mut().add_col(col_states);
+				fsm_acc.borrow_mut().add_col(col_locs);
+				fsm_acc.borrow_mut().add_col(sid_states);
+				fsm_acc.borrow_mut().add_col(sid_cols);
+				stmt_container.borrow_mut().add_container(fsm_acc);
 
-			return Ok(Self{ 
-				offset_wea, fsm_id, stmt_container, 
-				capacity: Clone::clone(capacity),
-			});
+				return Ok(Self{ 
+					offset_wea, fsm_id, stmt_container, 
+					capacity: Clone::clone(capacity),
+				});
+			}
 		}
 		
 		let sname = if b_igc {"fsm_adv_stmt_igc"} else {"fsm_adv_stmt_cs"};
@@ -376,6 +382,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 			for pat_id in pats{
 				println!(" -- pat: {}", acdfa.patterns[*pat_id]); 
 			}
+			if 1>0 {panic!("ONCE collecting expensive data. disable it.");}
 		}
 		//1. build the states
 		let state_part_bits = capacity.acdfa_state_part_bits;

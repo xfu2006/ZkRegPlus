@@ -52,9 +52,9 @@ pub const STATE_BIT:usize =  24;
 /// The bit-width of RANGE2 table 
 /// IN PRODUCTION NEEDS TO CHANGE THE SAME SIZE OF STATE_BIT
 //pub const RANGE2_BIT: usize = 10;
-//pub const RANGE2_BIT: usize = 8;
+pub const RANGE2_BIT: usize = 8;
 //pub const RANGE2_BIT: usize = 18;
-pub const RANGE2_BIT: usize = 24; //good for small size 16M nibbles = 8MB
+//pub const RANGE2_BIT: usize = 24; //good for small size 16M nibbles = 8MB
 //pub const RANGE2_BIT: usize = 26; //(allowing 64M nibbles = 32MB)
 
 // the following are trival related sub-table ids
@@ -1881,16 +1881,6 @@ impl <F:PrimeField> ClamavDB<F>{
 			}
 			s
 		}).collect::<Vec<ClamavSig>>();
-		//REMOVE LATER ---------
-		for s in &v_sigs{
-			let b_has_ff = s.vec_subsig_pm_bounds.iter().any(|vec|
-				vec.iter().any(|t| t.0=="ffff")
-			);
-			if b_has_ff {
-			  println!("DEBUG USE 9107: after generation: sig: {} has ffff,Details: {:#?}\n", s.name, s.vec_subsig_pm_bounds);
-			}
-		}
-		//REMOVE LATER --------- AOBOVE
 		if b_perf {flog_perf(log_level, &format!("Build_DB: Step 1: Generate signatures"), &mut timer,
 			vlog);}
 		if b_perf {flog_perf(log_level, &format!("Bluld_DB: Step 2: Writing signatures"), &mut timer,

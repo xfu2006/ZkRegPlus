@@ -873,9 +873,6 @@ impl ClamavSig{
 				}
 			};
 
-			//REMOVE LATER -----------
-			println!("DEBUG USE 9100: processing: sig: {}, subsig: {}", self.name, s.value);
-			//REMOVE LATER ----------- ABOVE
 			let new_vec = self.remove_special_pats(&vec, s);
 			new_vec
 		}).collect::<Vec<Vec<(String, (usize, usize) )>>>();
@@ -952,19 +949,6 @@ impl ClamavSig{
 					}
 				}
 			}
-		}
-
-		/* RECOVER LATER IF NOT WORKING
-		let res = if ff_removed>1 && res.len()<2{
-			//if killed too much use the original
-			v.clone()
-		}else{
-			res
-		};
-		*/
-
-		if res.len()<v.len(){
-			println!("DEBUG USE 9101: CUT from original_v.len: {}, res.len: {}\n v: {:#?}\n res: {:#?}", v.len(), res.len(), v, res);
 		}
 
 
@@ -1214,11 +1198,6 @@ impl ClamavSig{
 				continue;
 			}
 			for t in vec{
-				//REMOVE LATER ---------------
-				if t.0 == "ffff"{
-					println!("DEBUG USE 9106: sig: {} finds ffff", self.name);
-				}
-				//REMOVE LATER --------------- ABOVE
 				hs_res.insert(t.0.clone());
 			}
 

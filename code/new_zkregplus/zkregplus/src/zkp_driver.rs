@@ -746,8 +746,8 @@ pub mod tests_zkp_driver{
 	/// However, just run a small file
 	#[allow(dead_code)]
 	fn full_data1<F:PrimeField>(b_check_lkup: bool){
-		assert!(RANGE2_BIT==23, "set RANGE2_BIT to 23");
-		let b_read_cache = false;
+		assert!(RANGE2_BIT==24, "set RANGE2_BIT to 24");
+		let b_read_cache = true;
 		let b_write_cache = ! b_read_cache;
 		let set1 = "data/debug/full_data_set/config/"; //for dfa 
 		//let max_word= 512; 
@@ -939,8 +939,8 @@ pub mod tests_zkp_driver{
 		//small_data::<Fr>(b_check_lkup); //small data
 		//small_data2::<Fr>(b_check_lkup);  //10k data 
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data
-		//full_data1::<Fr>(b_check_lkup);
+		full_data1::<Fr>(b_check_lkup);
 		//full_data2::<Fr>(b_check_lkup); //full data high acc state 
-		full_data3::<Fr>(b_check_lkup); //full data large file
+		//full_data3::<Fr>(b_check_lkup); //full data large file
 	}
 }

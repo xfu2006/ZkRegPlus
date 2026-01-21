@@ -730,7 +730,7 @@ pub fn assert_wellformed_sorted_two_col_tbl_adv<F:PrimeField>(tbl: &Vec<Vec<F>>,
 /// 100 0  0    
 /// 100 1  2   
 /// 100 2  50  
-/// 100 1  max # max = 2^RANGE2_BIT - 1
+/// 100 3  max # max = 2^RANGE2_BIT - 1
 ///
 /// might throw CapErr("target_size");
 pub fn hashmap_to_sorted_2col_tbl<F:PrimeField>(map: &HashMap<F, Vec<F>>,n: usize) -> Result<(Vec<F>, Vec<F>, Vec<F>),Error>{
