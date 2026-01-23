@@ -46,7 +46,7 @@ use data_processor::{
 use crate::gadgets::{
 	commons::{check_eq,gen_m_table,new_const_var,
 		is_zero_better, new_var, build_pows_56_val,
-		 var_to_lb, better_select_check},
+		 var_to_lb, better_select_check, gen_abs_diff_col},
 	traits::{Container,Col,IDX_WORD, IDX_INP,IDX_DATA, IDX_SI_INP, 
 		IDX_OUP, IDX_SI_OUP, IDX_SI_DATA,ComponentAdvice},
 	db::{assert_logup,verify_encoded_table,assert_well_formed_sorted,col_to_sorted_set, verify_col_to_sorted_set, tbl_filtered_to_sorted_tbl, verify_tbl_filtered_to_sorted_tbl,tbl_to_sorted_tbl, verify_tbl_to_sorted_tbl, tbl_left_join, verify_tbl_left_join},
@@ -232,13 +232,40 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		fsm_id: u32,
 		store_subsig_pat: &SubsigPatternStore
 	) ->Result<Self, Error>{
-		if B_FSM_ADV_NEW{
+		let b_debug = false;
+		let res = if B_FSM_ADV_NEW{
 			Self::new_v2(b_igc, offset_wea, nibbles, acdfa, inp_state,
 				inp_loc, inp_subsigs, capacity, fsm_id, store_subsig_pat)
 		}else{
 			Self::new_v1(b_igc, offset_wea, nibbles, acdfa, inp_state,
 				inp_loc, inp_subsigs, capacity, fsm_id, store_subsig_pat)
+		};
+		if b_debug{
+			res.as_ref().unwrap().dump_pat_loc();
 		}
+
+		res
+	}
+
+	/// used for debugging purpose.
+	/// dump the pat loc table generated
+	pub fn dump_pat_loc(&self){
+		let packed_combo = self.stmt_container.borrow().
+			get_container("packed_trace").unwrap();
+		let pat_loc_tbl = packed_combo.borrow().get_container("pat_loc")
+			.unwrap();
+		let pats = pat_loc_tbl.borrow().
+			search_container("pat_loc sorted_tbl sorted_key").
+			unwrap().borrow().to_vec();
+		let locs= pat_loc_tbl.borrow().
+			search_container("pat_loc sorted_tbl sorted_val").
+			unwrap().borrow().to_vec();
+		assert!(pats.len()==locs.len());
+		println!("--- pat-loc table, len: {}---", pats.len());
+		for i in 0..pats.len(){
+			println!("pat: {}, loc: {}", pats[i], locs[i]);
+		}
+		println!("---------------------");
 	}
 
 	/// the idea is to skip proj_store and directly pull out
@@ -274,7 +301,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		//2. generate the packed trace_combo
 		//which eventually returns (pat-loc) table 
 		let packed_trace_combo = Self::gen_packed_trace_combo_v2(
-			&fsm_acc2, capacity, acdfa)?;
+			&fsm_acc2, capacity, acdfa, fsm_id)?;
 		stmt_container.borrow_mut().add_container(packed_trace_combo);
 
 		Ok(Self{capacity: Clone::clone(capacity), fsm_id,
@@ -991,16 +1018,143 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 
 	/// better version of gen_packed_trace_combo. We avoided
 	/// the huge number of states associated with a subsig.
+	/// Here the improvement is made over the following observations:
+	/// (1) typically the ratio of accepted states in trace is
+	///  less than 3%, or max 5% for the linux data set
+	/// (2) the expansion rate from final states -> related patterns
+	/// is only 1.1
+	/// Then, we can just generate a slightly larger (pat-loc) sequence
+	/// where a tiny portins of pats are actually not related to
+	/// the input subsig list. This over approximation is conservative
+	/// when we later reason about the step/backward queue and subsig
+	/// eval result in discharge_sig.rs and compute_sig.rs
+	///
 	/// basic idea: 
-	/// (1) retrieve (final_states, loc) from fsm_combo 
+	/// (1) retrieve (final_states, final_locs) from fsm_combo 
+	/// (2) non-deterministically build the projection from
+	///      lookup - (states - mul-pats) where states is a superset
+	///      of the final states in the trace.
+	/// (3) left join the (final_locs, final_states) with (states - multi-pats)
+	///     --> (final_locs - final_states -> multi pats)
+	/// (4) from the above table pack it as (pats -> multi-locs)
 	#[allow(dead_code)]
 	fn gen_packed_trace_combo_v2(
-		_fs_acc_combo: &Rc<RefCell<Container<F>>>,
-		_capacity: &FsmAdvCapacity,
-		_acdfa: &HexACDFA,
+		fsm_acc_combo: &Rc<RefCell<Container<F>>>,
+		capacity: &FsmAdvCapacity,
+		acdfa: &HexACDFA,
+		fsm_id: u32,
 	)->Result<Rc<RefCell<Container<F>>>, Error>{
 		let res = Container::<F>::new("packed_trace");
-		todo!()
+		//1. retrive (final_states, loc) from fsm_combo
+		let states_final= fsm_acc_combo.borrow()
+			.get_container("states_final").unwrap().borrow()
+			.duplicate_as_external(0,None);
+		let _locs_final= fsm_acc_combo.borrow()
+			.get_container("locs_final").unwrap().borrow()
+			.duplicate_as_external(0,None);
+
+		//2. non-deterministically build the projection from
+		//acdfa -> (states -> multi-pats) which is a well-formed
+		//table.
+		//2.1 extract set of states
+		let set_states = states_final.to_vec()
+			.par_iter().filter(|x|
+			!x.is_zero()).map(|x| *x).collect::<HashSet<F>>().iter()
+			.map(|x| *x).collect::<Vec<F>>();
+	
+		//2.1 build the table like clam_db.rs::add_acdfa_to_lkup 
+		//struture <encoded, state, pat>
+		let state_2_pat = fsm_id+7;
+		let f_final_2_pat = F::from(state_2_pat);
+		let f_rg2 = F::from(RANGE2);
+		let max_val:usize = (1<<RANGE2_BIT) - 1;
+		let max = F::from(max_val as u32);
+		let sigbit_factor = F::from(1u32 << RANGE2_BIT);
+
+		let tuples = set_states.par_iter().map(|x|{
+			let raw_state = field_to_usize(x) - 1;
+			let mut pats = acdfa.outputs.get(&raw_state).unwrap().clone();
+			pats.sort();
+			let pats = pats.iter().map(|id| F::from(*id as u32) + F::one())
+				.collect::<Vec<F>>();
+			let pats = [ &[F::zero()], &pats[..], &[max]].concat();
+			let res = pats.into_iter().map(|pat| {
+				let f_state = *x;
+				let encoded = f_state*sigbit_factor + pat;
+
+				(encoded, f_state, pat)
+			}).collect::<Vec<(F,F,F)>>();
+			res
+		}).flatten().collect::<Vec<(F,F,F)>>();
+
+		let nlen = capacity.max_nibble_len;
+		let ulen = nlen * capacity.basis_unique_states/10000;
+		let u3len = ((ulen as f32) * 3.3) as usize; 
+			//because the ratio is roughly 1.1
+			//and adding 0 and max as padding
+		if tuples.len()>u3len{
+			let new_val = ((tuples.len() as f32)/3.3 
+				* 10000.0/(nlen as f32) + 1.0) as usize;
+			return Err(Error::CapErr(
+				vec![(format!(
+					"fsm_adv::basis_unique_states from proj state-pat"), 
+					new_val)
+				])
+			);
+		}
+		let z = F::zero();
+		let padding = vec![(z,z,z); ulen - tuples.len()];
+		let tuples = [&padding[..], &tuples[..]].concat();
+		let proj_encoded = tuples.par_iter().map(|t| t.0.clone())
+			.collect::<Vec<F>>();
+		let proj_states = tuples.par_iter().map(|t| t.1.clone())
+			.collect::<Vec<F>>();
+		let proj_pats = tuples.par_iter().map(|t| t.2.clone())
+			.collect::<Vec<F>>();
+		assert!(proj_encoded.len()==ulen);
+		let sid_proj_encoded = vec![f_final_2_pat; ulen];
+		let sid_proj_states = vec![f_rg2; ulen];
+		let sid_proj_pats= vec![f_rg2; ulen];
+		res.borrow_mut().add_col(Col::<F>::new(proj_encoded,
+			"proj_encoded", IDX_DATA));
+		res.borrow_mut().add_col(Col::<F>::new_const(sid_proj_encoded,
+			"sid_proj_encoded", IDX_SI_DATA));
+		//manually construct a sorted_val table
+		let diff_val = gen_abs_diff_col(&proj_pats);
+		let diff_val_len = diff_val.len();
+		let proj_states_pats = Container::<F>::new("proj_states_pats");
+		proj_states_pats.borrow_mut().add_col(
+			Col::<F>::new(proj_states, "key", IDX_DATA));
+		proj_states_pats.borrow_mut().add_col(Col::<F>
+			::new_const(sid_proj_states,
+			"sid_key", IDX_SI_DATA));
+		proj_states_pats.borrow_mut().add_col(Col::<F>
+			::new(proj_pats, "val", IDX_DATA));
+		proj_states_pats.borrow_mut().add_col(Col::<F>
+			::new_const(sid_proj_pats,
+			"sid_val", IDX_SI_DATA));
+		proj_states_pats.borrow_mut().add_col(Col::<F>
+			::new(diff_val, "diff_val", IDX_DATA));
+		proj_states_pats.borrow_mut().add_col(Col::<F>
+			::new_const(vec![f_rg2; diff_val_len],
+			"sid_diff_val", IDX_SI_DATA));
+		res.borrow_mut().add_container(proj_states_pats);
+
+		/*
+		let ext_state = Rc::new(RefCell::new(ext_state));
+		let sorted_set_size = capacity.avg_pats_per_subsig 
+			* capacity.subsigs;
+		let _final_states_len= capacity.basis_acc_states *
+			capacity.max_nibble_len /10000; //final states for ALL sigs
+		let _final_states_len = if _final_states_len<2 {2} else {_final_states_len};
+		let sorted_states = col_to_sorted_set(&ext_state, sorted_set_size, 
+			"sorted_states");
+		let sorted_states2 = sorted_states.clone(); //low cost rc clone
+		res.borrow_mut().add_container(sorted_states); //once created, add it.
+		*/
+
+
+		Ok( res )
 	}
 }
 
@@ -1616,6 +1770,67 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		Ok( () )
 	}
 
+	/// COST: ???
+	fn validate_packed_trace_v2(
+		&self, 
+		_r1: &FpVar<F>, //random nonce from msg2
+		_r2: &FpVar<F>, //random nonce from msg2
+		all: &Container<FpVar<F>>,  //entire container
+		cs: ConstraintSystemRef<F>
+	) ->Result<(), SynthesisError>{
+		let b_perf = false;
+		let log_level = LOG2;
+		let mut gt = GTimer::new();
+		let mut nc = cs.num_constraints();
+		let sname = if self.b_igc {"fsm_adv_stmt_igc"} else {"fsm_adv_stmt_cs"};
+		let nlen = self.capacity.max_nibble_len;
+		let ulen = nlen * self.capacity.basis_unique_states/10000;
+		let u3len = ((ulen as f32) * 3.3) as usize; 
+
+		//1. retrieve the state_final and locs final from fsm_acc combo
+		//no cost
+		let states_final= 
+			all.search_container(
+			&format!("{} fsm_acc states_final", sname))?;
+		let _locs_final= 
+			all.search_container(
+			&format!("{} fsm_acc locs_final", sname))?;
+		if b_perf{
+			log_perf(log_level, "valid_packed_trace step 1", &mut gt);
+		}
+
+		//2. verify the projected states-pat table.
+		//2.1 verify the proj_states-pat table is lightly 
+		// well formed (i.e., a 2-col sorted-val table)
+		let tbl_proj_states_pats = 
+			all.search_container(
+			&format!("{} packed_trace proj_states_pats", sname))?;
+
+		//2.2. verify the encoded column is indeed an encoded
+		//form of the proj_states and proj_pats column
+		//NOTE that the sid of encoded column AUTOMATICALLY
+		//asserts that the encoded_column is part of the database
+		//also note that since this function is actually "de-factor"
+		//only twice: one for cs and one for igc of the acdfa for
+		//bag words, it's actually "fixed circuit" and the 
+		//sid is "fixed/constants" for these two types. No need to double check
+		//sid values.
+		//Also note: we do NOT have to check if the proj_states
+		//cover ALL the accept states along the trace, as
+		//later when we assert the left-join relation, 
+		// it automatically implies this relation.
+		//between the states column and the 
+		let col_encoded = 
+			all.search_container(
+			&format!("{} packed_trace proj_encoded", sname))?
+			.borrow().to_vec();
+		println!("DEBUG USE 6101: col_encoded.len(): {}, u3len: {}", col_encoded.len(), u3len);
+		assert!(col_encoded.len()==u3len);
+
+		Ok( () )
+	}
+
+
 	/// VERSION 1 of assert_msg3 - DEPRECATED
 	/// COST (nlen - nibble len, alen - perc of accepted states * trace len
 	///     note that accepted states are for all
@@ -1713,12 +1928,16 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 			nc = cs.num_constraints();
 		}
 
+
+		//3. validate the packed trace
+		self.validate_packed_trace_v2(&r1, &r2, &stmt, cs.clone())?;
 		if b_perf{
 			log_perf(log_level, &format!(" ## fsm_adv step3: {}, total: {}", 
 				cs.num_constraints()-nc,
 				cs.num_constraints()-nc0
 			), &mut gt);
 		}
+
 		Ok( () )
 	}
 

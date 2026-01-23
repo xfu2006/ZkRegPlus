@@ -1182,26 +1182,31 @@ impl <F:PrimeField> ClamavDB<F>{
 
 		//5. encode the finals to pats
 		// each encoded word has structure
-		// final_state - pat_id - id - count
+		// final_state - pat_id  like the following padded by 0 and max
 		// where pat_id is the REAL_PAT id + 1
-		// id starts from 0
-		// count is the number of patterns related to final_state - 1
+		// e.g., s1 corresponds to 3 pats, 
+		// table is:
+		// s1 - 0
+		// s1 - pat1
+		// s1 - pat2
+		// s1 - pat3
+		// s1 - max
+		// with pat1 < pat2 < pat3
 		let f_final_2_pat = F::from(state_2_pat);
-		let sigbit_fac3 = sigbit_factor * sigbit_fac2;
+		let max_val:usize = (1<<RANGE2_BIT) - 1;
+		let max = F::from(max_val as u32);
 
 		let vec_final_2_pat =  (0..acdfa.num_acc_states).into_par_iter().map(|i|
 		{
-			let pats = acdfa.outputs.get(&i).unwrap();
-			let res = pats.into_iter().enumerate().map(|(id,pat_id)| {
+			let mut pats = acdfa.outputs.get(&i).unwrap().clone();
+			pats.sort();
+			let pats = pats.iter().map(|x| F::from(*x as u32) + F::one())
+				.collect::<Vec<F>>();
+			let pats = [ &[F::zero()], &pats[..], &[max]].concat();
+			let res = pats.into_iter().enumerate().map(|(_id,pat_id)| {
 				// encoded is (final_state+1) || (pat_id+1) || id || count
 				let f_state = F::from((i+1) as u32);
-				let f_pat = F::from((pat_id+1) as u32);
-				let f_id = F::from(id as u32);
-				let f_total = F::from((pats.len()-1) as u32);
-				let encoded = f_state*sigbit_fac3 + 
-					f_pat * sigbit_fac2 + 
-					f_id * sigbit_factor +
-					f_total;
+				let encoded = f_state*sigbit_factor + pat_id;
 				(f_final_2_pat, encoded)
 			}).collect::<Vec<(F,F)>>();
 			res

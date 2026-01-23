@@ -7,7 +7,7 @@ use rayon::{
 	//prelude::{ParallelSliceMut}
 };
 use folding_schemes::{Error};
-use std::collections::{HashMap,HashSet};
+use std::{collections::{HashMap,HashSet}};
 use ark_ff::{PrimeField,BigInteger};
 use ark_relations::{
 	lc, 
@@ -772,6 +772,7 @@ pub fn hashmap_to_sorted_2col_tbl<F:PrimeField>(map: &HashMap<F, Vec<F>>,n: usiz
 
 	Ok( (key, id, val) )
 }
+
 
 /// verify v2 is an inverse of v1. elen is the expected length of both
 /// array. Beta is the random challenge.

@@ -24364,7 +24364,7 @@ Goal 5. further imrpvoe
 		3% avg and 5% max
 
 Wed 01/21/2026
-LOC (gadget): 18601
+LOC (gadget): 18601 -> 18720 (+120)
 Goal 1. collect data for the next step 
 	-> acdfa states: 6415039, acc_states: 564543, num of states with >=2 patterns: 56706, num5 :528, num10: 120, max patterns: 18, avg: 1.119927091470446
 	-> full data1: (nice: it's now half a percent)
@@ -24441,6 +24441,106 @@ Goal 7. examine fsm_combo
 	[b] it already provides the states_final which is good
 
 Goal 8. gen_packed_trace_v2
+	[a] set up framework
 
 
+Thursday 01/22/2026
+LOC (gadget): 18720 -> 18801 (+80) 
+Goal 1. algorithm desig
+	[a] read the original gen_packed_trace
+		-> (1) from proj_store and states and -> set of states
+		-> (2) filter (state,loc) by set of states
+			state corresponds to multiple loc
+		-> (3) state-pat multi-set to pat-multi-states (note verify
+			cost 27n)
+		-> (4) left join pat-state state-loc (verify cost
+			 20 * src + 30 dst)
+			 	and form pat-state-loc
+		-> (5) compress pat-state-loc to pat-loc (so this is again 27n)
+	[b] new algorithm
+		let flen be the number of final states along nibble path,
+			flen is now <5% or 3% for most of nibble path.
+			expanded to patterns is less than 1.1 expansion rate.
+		-> (1) retrieve (final_state, loc) 
+		-> (2) build (encoded, final_state, count_down, pat, loc) 
+			expanded table.
+				verify encoded is encoded of (final_state, count_down, pat)
+				COST: 2*flen + 5*flen sid check = 7*flen
+		-> (3) compress the (final_state, pat) table to sorted tbl
+			COST: 27*flen
+		-> (4) left join pat-state state -loc
+			COST: 50*flen 
+		-> (5) compress pat-state-lot to pat-loc
+			COST: 27*flen
+		So we have: around 97*flen
+	[c] plan fininish new alg of fsm_adv first and then
+		replace the sorted_tbl related function
 
+Goal 2. quickly change the db -> DONE
+Goal 3. need to compare the two alternative designs for sorted table.
+Consider what is the cost assert a sorted table is well formed.
+	[a] design 1:
+		key val id count
+		COST:
+			(1) condition id==count 2n
+			(2) id select from 0 or prev_id+1 based on prev id==count
+				3n
+			(3) count select from previous count or aibtrary value
+				based on prev_id=count
+				2n
+			(4) SID constraints check for 4 columns 4n
+			TOTAL: 11n
+	[b] design 2:
+		key  0         diff
+		key  val1      val1-0
+		...
+		key  valk      val2-val1
+		key  MAX
+		COST: in the worst case n2 = 3n
+		(1) diff col n2
+		(2) if prev=max then cur = 0
+			i.e. (prev-max)!=0 or cur = 0
+			i.e., exists inv
+				(inv * (prev-max) = 0) * cur = 0
+			2n2
+		(3) sid constraints for 3 cols 3*n2
+		total: 9n2 = worst case 27n
+	[c] but for the sake of saving development cost,
+		when we do sorted table on one pat maps to multiple locations
+		it has to be one pat maps to MANY locattions.
+		So it's wasting a bit on the pat-state table but that is
+		very small (the size of unique states len)
+		so the 0-max approach is still better.
+
+Goal 4. switch back to 0-max approach
+Goal 5. gen_new_packed_trace2	
+	[a] retrieve the (final_state, final_loc) from the previus
+	[b] set up framework of verify_packed_trace
+
+Friday 01/23/2026
+LOC (gadgets): 18801 -> 
+Goal 1. read the current design of tbl_join
+	[a] it looks can be greatly simplified because it
+		assumes table 1 is well formed as well
+	[b] read is_well_formed should be redefined as well
+
+Goal 2. define the framework
+	[a] go over the workflow
+	[b] add the validate func
+	[c] in advice add a function to dump the pat-loc
+	[d] test data: real loc 17 and 7
+	[e] switch back to new model
+
+Goal 3. build the projection table
+	[a] collect states
+	[b] contruct patterns
+	[c] capacity
+	[d] construct columns
+
+Goal 4. refine it
+	[a] define function two_col_to_sorted_val_tbl -> DONE
+	[b] call it -> DONE
+	[c] implement two_col_to_sorted_val_tbl -> DONE
+	[d] define function assert_sorted_val_tbl
+	[e] call it
+	[f] implement it
