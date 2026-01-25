@@ -1146,6 +1146,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		let f_final_sig_count = F::from(state_sig_count_id);
 		let sigbit_factor = F::from(1u32 << RANGE2_BIT);
 		let sigbit_fac2 = sigbit_factor * sigbit_factor;
+		let sigbit_fac3 = sigbit_fac2 * sigbit_factor;
 
 		let vec_temp =  (0..acdfa.num_acc_states).into_par_iter().map(|i|
 		//let vec_temp =  (0..acdfa.num_acc_states).into_iter().map(|i|
@@ -1182,36 +1183,47 @@ impl <F:PrimeField> ClamavDB<F>{
 
 		//5. encode the finals to pats
 		// each encoded word has structure
-		// final_state - pat_id  like the following padded by 0 and max
-		// where pat_id is the REAL_PAT id + 1
-		// e.g., s1 corresponds to 3 pats, 
-		// table is:
-		// s1 - 0
-		// s1 - pat1
-		// s1 - pat2
-		// s1 - pat3
-		// s1 - max
-		// with pat1 < pat2 < pat3
+		// final_state - pat_id -id - count
+		// where id starts from 0 and count is the real count -1
+		// sig - pat - id - count
+		// s1 -  p1  - 0  - 0  (last record)
+		// s2 -  p2  - 0  - 1
+		// s2 -  p3  - 1  - 1   (last record)
+		// NOTE that state_id and pat_id all starts from 1, i.e.,
+		// they have +1 from their real ID in acdfa
 		let f_final_2_pat = F::from(state_2_pat);
-		let max_val:usize = (1<<RANGE2_BIT) - 1;
-		let max = F::from(max_val as u32);
-
-		let vec_final_2_pat =  (0..acdfa.num_acc_states).into_par_iter().map(|i|
+		//5.1 real state to pat tuples
+		let mut vec_final_2_pat =  (0..acdfa.num_acc_states).into_par_iter().map(|i|
 		{
 			let mut pats = acdfa.outputs.get(&i).unwrap().clone();
-			pats.sort();
+			pats.sort(); //actually not really necessary.
 			let pats = pats.iter().map(|x| F::from(*x as u32) + F::one())
 				.collect::<Vec<F>>();
-			let pats = [ &[F::zero()], &pats[..], &[max]].concat();
-			let res = pats.into_iter().enumerate().map(|(_id,pat_id)| {
+			assert!(pats.len()>0, "pats.len() 0 for raw acc state: {}", i);
+			let count_1 = F::from( (pats.len() - 1) as u32);
+			let res = pats.into_iter().enumerate().map(|(id,pat_id)| {
 				// encoded is (final_state+1) || (pat_id+1) || id || count
 				let f_state = F::from((i+1) as u32);
-				let encoded = f_state*sigbit_factor + pat_id;
+				let encoded = f_state*sigbit_fac3+ 
+					pat_id *sigbit_fac2 + 
+					F::from(id as u32) * sigbit_factor + 
+					count_1;
 				(f_final_2_pat, encoded)
 			}).collect::<Vec<(F,F)>>();
 			res
 		}).flatten().collect::<Vec<(F,F)>>();
 
+
+		//5.2 build the padding tuple (1-tuple for state "0" - dummy entry)
+		let f_state = F::zero();
+		let pat_id = F::zero();
+		let f_id = F::zero();
+		let f_count = F::zero(); //1 count -1 is 0from(id as u32);
+		let encoded = f_state*sigbit_fac3+ 
+				pat_id *sigbit_fac2 + 
+				f_id * sigbit_factor + 
+				f_count;
+		vec_final_2_pat.push( (f_final_2_pat, encoded) );
 
 		//5. assemble
 		let v2d = vec![ vec_init, vec_non_final, vec_final, vec_trans,

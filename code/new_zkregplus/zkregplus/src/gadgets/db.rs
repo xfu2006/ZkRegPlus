@@ -27,6 +27,7 @@ use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef,LinearCombination,
 	Variable};
 use ark_r1cs_std::fields::fp::FpVar;
 use folding_schemes::{Error};
+use utils::{logger::{log_perf,LOG2},timer::{Timer}};
 use rayon::iter::{
 	ParallelIterator,
 	IntoParallelIterator,
@@ -41,7 +42,8 @@ use crate::gadgets::commons::{verify_inverse,verify_logup_inverse, check_eq,
 	gen_abs_diff_col, two_col_tbl_left_join, gen_assert_sidcol_for_diff,
 	encode_cols, encode_cols_var, 
 	multiset_prod, verify_unique_sorted_set, is_zero_better,
-	multiset_prod_2col,var_to_lb, is_zero_better_adv, gen_vec_inverse};
+	multiset_prod_2col,var_to_lb, is_zero_better_adv, gen_vec_inverse,
+	var_to_tuple, var_to_tuple_adv};
 
 
 // ----------------------------------------------------
@@ -171,6 +173,127 @@ pub fn verify_encoded_table<F:PrimeField>(
 		check_eq(&expected, &encoded[i], "checking exp")?;
 	}
 
+	Ok( () )
+}
+
+/// Assert the table ia a wide-wellformed table padded with (0,0,0,0) entries
+/// e.g.
+/// key - val - id - count (note count are actually real count -1)
+/// 0     0     0    0
+/// 0     0     0    0
+/// 1     2     0    2  (actually 3 entreis)
+/// 1     200   1    2 
+/// 1     3     2    2
+/// 2     100   0    1 (actually 2 entries
+/// 2     100   1    1
+/// 
+/// *** ASSUMPTION: all cell values are in RANGE2 ***
+/// This reduces encoding cost.
+/// Well formed means that for each key there is a consecutive sequence
+/// of ID starting from 0 to count_1.
+/// NOTE that the func does NOT guarantee key is sorted, nor val is sorted.
+/// IT does NOT guarantee that key is unique, i.e.,
+/// there might be cases that a same key appear MULTIPLE times,
+/// each time correpsonds to a DIFFERENT BLOCK. 
+/// In the case where it is used as a projected state-pat table,
+/// this "unique" state to pat block mapping is guaranteed by an
+/// extra check with the external lookup that encodes acdfa state-pat relation.
+///
+/// COST: 3n
+pub fn assert_wide_wellformed<F:PrimeField>(
+	tbl: &Rc<RefCell<Container<FpVar<F>>>>,
+) ->Result<(),SynthesisError>{
+	let b_perf = false;
+	let b_debug = false;
+	let logl = LOG2;
+	let mut gt = Timer::new();
+
+	//1. get the key, val, diff_val col
+	let key = tbl.borrow().get_container("key").unwrap().borrow().to_vec();
+	let n = key.len();
+	assert!(n>0);
+	let cs = key[0].cs();
+	let val = tbl.borrow().get_container("val").unwrap().borrow().to_vec();
+	let id = tbl.borrow().get_container("id").unwrap().borrow().to_vec();
+	let count = tbl.borrow().get_container("count").unwrap().borrow().to_vec();
+	assert!(n>0 && val.len()==n && id.len()==n && count.len()==n);
+	let nc = cs.num_constraints();
+
+	//2. verify the following:
+	//for row i: let b_last_i be id[i]==count[i] (last row of a key)
+	//if !b_last_i:
+	//   (key[i+1], id[i+1], count[i+1]) = (key[i], id[i], count[i])
+	// -- call packed_i1 as key[i+1] *RANGE2^2 + id[i+1]*RANGE2 + count[i+1]
+	// --  and packed_i as the RHS
+	//else:
+	//   id[i+1] = 0
+	// so we have:
+	// b_last_i * (id[i+1])
+	// + (1-b_last_i) *(packed_i1 - packed_i) = 0
+	// which is:
+	// *** 
+	//  b_last_i * (id[i+1] + packed_i - packed_i1) =  packed_i - packed_i1
+	// ***
+	// NOTE that since all values are in RANGE2 (26-bit)
+	// (key[i+1],id[i+1], count[i+1]) are actually can be packed
+	// with CONSTANT multiplication with RANGE2 powers to merge into
+	// ONE number without costing extra constraints!
+
+	let v_id= id.iter().map(|id| id.value().unwrap()).collect::<Vec<F>>();
+	let v_ct= count.iter().map(|ct| ct.value().unwrap()).collect::<Vec<F>>();
+	let v_diff = v_id.par_iter().zip(v_ct.par_iter()).map(|(&a,&b)| a-b)
+		.collect::<Vec<F>>();
+	let vec_inv = gen_vec_inverse(&v_diff);
+	for i in 0..n-1{
+		//2(a) - 2cs
+		let blast= is_zero_better_adv(&(&id[i]-&count[i]), 
+			&vec_inv[i], &cs)?; //2cs
+		//2(b) the huge constraint - 1 cs
+		let lb_last = var_to_lb(&blast, F::one());
+		let fac3 = F::one();
+		let fac2 = F::one() * F::from(RANGE2);
+		let fac1 = fac2 * F::from(RANGE2);
+		let lb_2 = LinearCombination::<F>(
+			vec![
+				var_to_tuple(&id[i+1]),
+				var_to_tuple_adv(&key[i], fac1), //packed_i
+				var_to_tuple_adv(&id[i], fac2),
+				var_to_tuple_adv(&count[i], fac3),
+				var_to_tuple_adv(&key[i+1], -fac1), //packed_i1
+				var_to_tuple_adv(&id[i+1], -fac2),
+				var_to_tuple_adv(&count[i+1], -fac3),
+			]
+		);
+		let lb_3 = LinearCombination::<F>(
+			vec![
+				var_to_tuple_adv(&key[i], fac1), //packed_i
+				var_to_tuple_adv(&id[i], fac2),
+				var_to_tuple_adv(&count[i], fac2),
+				var_to_tuple_adv(&key[i+1], -fac1), //packed_i1
+				var_to_tuple_adv(&id[i+1], -fac2),
+				var_to_tuple_adv(&count[i+1], -fac2),
+			]
+		);
+		cs.enforce_constraint(
+			lb_last,
+			lb_2,
+			lb_3
+		)?;
+
+	}
+	check_eq(&id[n-1], &count[n-1], "last row not good")?;
+	if b_debug{
+		assert!(cs.is_satisfied().unwrap());
+	}
+	if b_perf {
+		log_perf(logl, &format!("assert_light_well. n: {}, cs: {}",
+			n, cs.num_constraints()-nc), &mut gt);
+	}
+
+
+	//3. verify sid_val are all RANGE2 - actually no real check
+	//is needed because this column is encoded as a CONSTANT column
+	//like constant wires in circ.
 	Ok( () )
 }
 

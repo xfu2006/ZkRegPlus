@@ -24518,7 +24518,7 @@ Goal 5. gen_new_packed_trace2
 	[b] set up framework of verify_packed_trace
 
 Friday 01/23/2026
-LOC (gadgets): 18801 -> 
+LOC (gadgets): 18801 -> 18947 (+150)
 Goal 1. read the current design of tbl_join
 	[a] it looks can be greatly simplified because it
 		assumes table 1 is well formed as well
@@ -24539,8 +24539,51 @@ Goal 3. build the projection table
 
 Goal 4. refine it
 	[a] define function two_col_to_sorted_val_tbl -> DONE
-	[b] call it -> DONE
-	[c] implement two_col_to_sorted_val_tbl -> DONE
-	[d] define function assert_sorted_val_tbl
-	[e] call it
-	[f] implement it
+	[b] implement two_col_to_sorted_val_tbl -> DONE
+	[c] call it 
+		-> DONE -> still use the original workflow
+
+Goal 5. assertion step 1
+	[a] verify step 1
+	[b] set up the framework
+
+Sat 01/24/2026
+LOC (gadgets): 18947 -> 19084 (+130) 
+Goal 1. debug u3len issue
+	[a] trace:
+		1829
+	[b] fixed
+Goal 2. assert light-weight well formed
+	[a] declare framework
+	[b] retrieve columns
+	[c] check diff_val
+	[d] compute bmax
+	[e] compute v3
+-> the algorithm not right ,needs to fix tomorrow.
+
+Sunday 01/25/2026
+LOC (gadgets): 19084 -> 19040 (-50) -> 
+Goal 1. design
+	[a] we have to REDO the join approach and use wide table
+		as join cost might be 3 times.
+Goal 2. refine clam_db -> DONE
+Goal 3. plan and implement
+	[a] declare function two_col_to_wide_wellformed() -> DONE
+	[b] build the wide_table from states padded -> DONE
+	[c] build the encoded column and its sid column -> DONE
+	[d] in verify function call the is_wide_wellformed() -> DONE
+	[e] verify encode is really encoded as it is. -> DONE
+Goal 4. Refine db build up again for dummy 0 sigs
+	[a] implement it
+	[b] print all entries. (6101)
+Goal 5. implement two_col to sorted table
+	[a] simulate the structure of two_col_to_sorted_table
+	[b] create hashmap_to_wide_wellformed
+	[c] implement hashmap_to_wide_wellformed
+	[d] print out (6102) -> verified all there in 6101
+	[e] remove debug msg
+Goal 6. implement the assert_wide_wellformed
+Goal 7. implement assert_encode_cols_in_range
+	[a] implement
+	[b] debug
+	[c] 

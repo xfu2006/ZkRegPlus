@@ -1,6 +1,6 @@
 /* Created 03/07/2025 */
 // common utility functions
-use utils::{consts::ADD_CHAIN_SIZE,logger::{log_perf,LOG2}, timer::Timer};
+use utils::{consts::ADD_CHAIN_SIZE,logger::{log_perf,LOG2}};
 use rayon::{
 	iter::{ParallelIterator,IntoParallelIterator, 
 		IntoParallelRefIterator,IndexedParallelIterator, IntoParallelRefMutIterator},
@@ -228,40 +228,32 @@ pub fn encode_cols_var<F:PrimeField>(cols: &Vec<Vec<FpVar<F>>>,
 }
 
 /// verify the target_col isthe reslt of encoding cols using
-/// RANGE2 powers as factor. Here we assume that
-/// all col cells are in RANGE2 (which is usually verified
-/// by corresponding column in IDX_SI_DATA segement).
-///
-/// COST: n where n is the target_col_len
+/// RANGE2 powers as factor.
 pub fn verify_encode_cols_in_range<F:PrimeField>(target_col: &[FpVar<F>],
 	cols: &[&[FpVar<F>]]) -> Result<(),SynthesisError>{
 	//1. build the factor array for use
-	let b_perf = false;
-	let b_debug = false;
-	let mut gt = Timer::new();
+	let b_perf = true;
+	let b_debug = true;
 	assert!(target_col.len()>0);
 	let cs = target_col[0].cs();
 	let nc = cs.num_constraints();
-	let factor = F::from(1u32<<RANGE2_BIT);	
+	let factor = F::from(RANGE2);
 	let logl = LOG2;
 	let num_cols = cols.len();
 	let mut coefs = vec![F::one(); num_cols];
-	for i in 1..coefs.len() {coefs[i] = coefs[i-1] * factor;}
+	for i in 1..coefs.len() {coefs[i] = &coefs[i-1] * &factor;}
 	coefs.reverse();
 
 	//2. encode the check
 	let n = target_col.len();
 	for col in cols{assert!(col.len()==n);}
 	let lb_one = LinearCombination::from((F::one(),Variable::One));
-	let mut vec2 = vec![(F::one(), Variable::One); num_cols];
+	let mut vec2 = vec![(F::one(), Variable::ONE); n_cols];
 	for i in 0..n{
 		//2.1 assert that target[i] = weighted sum of cols[j][i]
 		let lb_target = var_to_lb(&target_col[i], F::one());
-		let mut sum = F::zero();
 		for j in 0..num_cols{
 			vec2[j] = var_to_tuple_adv(&cols[j][i], coefs[j]);
-			sum += coefs[j] * cols[j][i].value()?;
-
 		}
 		let lb_res = LinearCombination::<F>(vec2.clone());
 		cs.enforce_constraint(
@@ -275,6 +267,7 @@ pub fn verify_encode_cols_in_range<F:PrimeField>(target_col: &[FpVar<F>],
 		log_perf(logl, &format!("assert_encode_cols_in_range. n: {}, cs: {}",
 			n, cs.num_constraints()-nc), &mut gt);
 	}
+	if 1>0 {panic!("STOP HERE 2021");}
 
 	Ok( () )
 }

@@ -46,10 +46,12 @@ use data_processor::{
 use crate::gadgets::{
 	commons::{check_eq,gen_m_table,new_const_var,
 		is_zero_better, new_var, build_pows_56_val,
-		 var_to_lb, better_select_check, gen_abs_diff_col},
+		 var_to_lb, better_select_check, 
+		 two_col_to_wide_wellformed,encode_cols_better,
+		 verify_encode_cols_in_range},
 	traits::{Container,Col,IDX_WORD, IDX_INP,IDX_DATA, IDX_SI_INP, 
 		IDX_OUP, IDX_SI_OUP, IDX_SI_DATA,ComponentAdvice},
-	db::{assert_logup,verify_encoded_table,assert_well_formed_sorted,col_to_sorted_set, verify_col_to_sorted_set, tbl_filtered_to_sorted_tbl, verify_tbl_filtered_to_sorted_tbl,tbl_to_sorted_tbl, verify_tbl_to_sorted_tbl, tbl_left_join, verify_tbl_left_join},
+	db::{assert_logup,verify_encoded_table,assert_well_formed_sorted,col_to_sorted_set, verify_col_to_sorted_set, tbl_filtered_to_sorted_tbl, verify_tbl_filtered_to_sorted_tbl,tbl_to_sorted_tbl, verify_tbl_to_sorted_tbl, tbl_left_join, verify_tbl_left_join, assert_wide_wellformed},
 };
 
 // -----------------------------------------------
@@ -1062,97 +1064,73 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 			!x.is_zero()).map(|x| *x).collect::<HashSet<F>>().iter()
 			.map(|x| *x).collect::<Vec<F>>();
 	
-		//2.1 build the table like clam_db.rs::add_acdfa_to_lkup 
-		//struture <encoded, state, pat>
-		let state_2_pat = fsm_id+7;
-		let f_final_2_pat = F::from(state_2_pat);
-		let f_rg2 = F::from(RANGE2);
-		let max_val:usize = (1<<RANGE2_BIT) - 1;
-		let max = F::from(max_val as u32);
-		let sigbit_factor = F::from(1u32 << RANGE2_BIT);
-
-		let tuples = set_states.par_iter().map(|x|{
-			let raw_state = field_to_usize(x) - 1;
+		//2.2 build the table like clam_db.rs::add_acdfa_to_lkup 
+		// extract the states - pats columns
+		let tuples = set_states.par_iter().map(|state|{
+			let raw_state = field_to_usize(state) - 1;
 			let mut pats = acdfa.outputs.get(&raw_state).unwrap().clone();
 			pats.sort();
-			let pats = pats.iter().map(|id| F::from(*id as u32) + F::one())
-				.collect::<Vec<F>>();
-			let pats = [ &[F::zero()], &pats[..], &[max]].concat();
-			let res = pats.into_iter().map(|pat| {
-				let f_state = *x;
-				let encoded = f_state*sigbit_factor + pat;
+			assert!(pats.len()>0);
+			pats.iter().map(|id| {
+				let pat_id = F::from( (id+1) as u32 );
+				(*state, pat_id)
+			}).collect::<Vec<(F,F)>>()
+		}).flatten().collect::<Vec<(F,F)>>();
+		let proj_states = tuples.par_iter().map(|t| t.0).collect::<Vec<F>>();
+		let proj_pats= tuples.par_iter().map(|t| t.1).collect::<Vec<F>>();
 
-				(encoded, f_state, pat)
-			}).collect::<Vec<(F,F,F)>>();
-			res
-		}).flatten().collect::<Vec<(F,F,F)>>();
-
+		//2.2 build the wide-wellformed table
+		//a wide-wellformed table is one which has
+		//column key-val-id-count
+		//where id starts from 0 and count is the real count -1
+		//NOTE that it's light weighted. We do not gurantee
+		//that key is sorted. The table is padded
+		//by a real key-0 entries which are also well formed.
+		//.e.g,
+		// key - val - id - count
+		// 0     1     0      2
+		// 0     10    1      2   (last of padding entry)
+		// 1    10     0      3
+		// 1      5     1     3  (note not necessarily val is osrted
+		// 1     20     2     3  (last entry) 
+		// HERE the well-formed means that the id for a key starts
+		// from 0 and ends at count-1. Thus it guarantees that
+		// the entries projected from lookup is "COMPLETE" (having
+		// all related entries copied).
+		// NOTE2: here we construct the table with NO duplicate entries.
+		// even if there are duplicate entries (same key-multi val)
+		// appeared multiple times, it does not affect the correctness
+		// of left join.
 		let nlen = capacity.max_nibble_len;
 		let ulen = nlen * capacity.basis_unique_states/10000;
-		let u3len = ((ulen as f32) * 3.3) as usize; 
-			//because the ratio is roughly 1.1
-			//and adding 0 and max as padding
-		if tuples.len()>u3len{
-			let new_val = ((tuples.len() as f32)/3.3 
-				* 10000.0/(nlen as f32) + 1.0) as usize;
+		if ulen<proj_states.len(){
+			let new_val = tuples.len() * 10000/nlen + 1;
+			assert!(new_val * nlen /10000 >= tuples.len());
 			return Err(Error::CapErr(
 				vec![(format!(
-					"fsm_adv::basis_unique_states from proj state-pat"), 
-					new_val)
-				])
-			);
+					"fsm_adv::basis_unique_states proj_state-pat"), new_val) ]
+			));
 		}
-		let z = F::zero();
-		let padding = vec![(z,z,z); ulen - tuples.len()];
-		let tuples = [&padding[..], &tuples[..]].concat();
-		let proj_encoded = tuples.par_iter().map(|t| t.0.clone())
-			.collect::<Vec<F>>();
-		let proj_states = tuples.par_iter().map(|t| t.1.clone())
-			.collect::<Vec<F>>();
-		let proj_pats = tuples.par_iter().map(|t| t.2.clone())
-			.collect::<Vec<F>>();
-		assert!(proj_encoded.len()==ulen);
-		let sid_proj_encoded = vec![f_final_2_pat; ulen];
-		let sid_proj_states = vec![f_rg2; ulen];
-		let sid_proj_pats= vec![f_rg2; ulen];
-		res.borrow_mut().add_col(Col::<F>::new(proj_encoded,
-			"proj_encoded", IDX_DATA));
-		res.borrow_mut().add_col(Col::<F>::new_const(sid_proj_encoded,
-			"sid_proj_encoded", IDX_SI_DATA));
-		//manually construct a sorted_val table
-		let diff_val = gen_abs_diff_col(&proj_pats);
-		let diff_val_len = diff_val.len();
-		let proj_states_pats = Container::<F>::new("proj_states_pats");
-		proj_states_pats.borrow_mut().add_col(
-			Col::<F>::new(proj_states, "key", IDX_DATA));
-		proj_states_pats.borrow_mut().add_col(Col::<F>
-			::new_const(sid_proj_states,
-			"sid_key", IDX_SI_DATA));
-		proj_states_pats.borrow_mut().add_col(Col::<F>
-			::new(proj_pats, "val", IDX_DATA));
-		proj_states_pats.borrow_mut().add_col(Col::<F>
-			::new_const(sid_proj_pats,
-			"sid_val", IDX_SI_DATA));
-		proj_states_pats.borrow_mut().add_col(Col::<F>
-			::new(diff_val, "diff_val", IDX_DATA));
-		proj_states_pats.borrow_mut().add_col(Col::<F>
-			::new_const(vec![f_rg2; diff_val_len],
-			"sid_diff_val", IDX_SI_DATA));
-		res.borrow_mut().add_container(proj_states_pats);
+		let ct_stat_pat = two_col_to_wide_wellformed(&proj_states, &proj_pats,
+			ulen, "tbl_proj_states_pats")
+			.expect("We expect length err already handled above already");
 
-		/*
-		let ext_state = Rc::new(RefCell::new(ext_state));
-		let sorted_set_size = capacity.avg_pats_per_subsig 
-			* capacity.subsigs;
-		let _final_states_len= capacity.basis_acc_states *
-			capacity.max_nibble_len /10000; //final states for ALL sigs
-		let _final_states_len = if _final_states_len<2 {2} else {_final_states_len};
-		let sorted_states = col_to_sorted_set(&ext_state, sorted_set_size, 
-			"sorted_states");
-		let sorted_states2 = sorted_states.clone(); //low cost rc clone
-		res.borrow_mut().add_container(sorted_states); //once created, add it.
-		*/
-
+		//2.3 constuct the encoded col
+		let c1 = ct_stat_pat.borrow().get_container("key")?.borrow().to_vec();
+		let c2 = ct_stat_pat.borrow().get_container("val")?.borrow().to_vec();
+		let c3 = ct_stat_pat.borrow().get_container("id")?.borrow().to_vec();
+		let c4 = ct_stat_pat.borrow().get_container("count")?.borrow().to_vec();
+		let cols =  vec![&c1[..],&c2[..],&c3[..],&c4[..]];
+		let encoded = encode_cols_better(cols,vec![0,1,2,3]);
+		assert!(encoded.len()==ulen);
+		let col_encoded= Col::new(encoded, 
+			"encoded_proj_state_pat", IDX_DATA);
+		let tbl_id = F::from((fsm_id + 7) as u32);
+		let col_sid_encoded= Col::new_const(vec![tbl_id; ulen],
+			"si_encoded_proj_stat_pat", IDX_SI_DATA);
+		res.borrow_mut().add_container(ct_stat_pat);
+		res.borrow_mut().add_col(col_encoded);
+		res.borrow_mut().add_col(col_sid_encoded);
 
 		Ok( res )
 	}
@@ -1778,33 +1756,46 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		all: &Container<FpVar<F>>,  //entire container
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
-		let b_perf = false;
+		let b_perf = true;
 		let log_level = LOG2;
 		let mut gt = GTimer::new();
 		let mut nc = cs.num_constraints();
 		let sname = if self.b_igc {"fsm_adv_stmt_igc"} else {"fsm_adv_stmt_cs"};
 		let nlen = self.capacity.max_nibble_len;
 		let ulen = nlen * self.capacity.basis_unique_states/10000;
-		let u3len = ((ulen as f32) * 3.3) as usize; 
 
 		//1. retrieve the state_final and locs final from fsm_acc combo
 		//no cost
-		let states_final= 
+		let _states_final= 
 			all.search_container(
 			&format!("{} fsm_acc states_final", sname))?;
 		let _locs_final= 
 			all.search_container(
 			&format!("{} fsm_acc locs_final", sname))?;
 		if b_perf{
-			log_perf(log_level, "valid_packed_trace step 1", &mut gt);
+			log_perf(log_level, &format!(
+				"valid_packed_trace step 1. cs: {}", cs.num_constraints()-nc),
+				&mut gt);
+			nc = cs.num_constraints();
 		}
 
 		//2. verify the projected states-pat table.
 		//2.1 verify the proj_states-pat table is lightly 
 		// well formed (i.e., a 2-col sorted-val table)
+		//NOTE that this proof mainly guarantees that
+		//the projection from the acdfa part of lookup is COMPLETE (covering
+		//all pat_id entries related to a state).
+		//COST: 3*ulen
 		let tbl_proj_states_pats = 
 			all.search_container(
-			&format!("{} packed_trace proj_states_pats", sname))?;
+			&format!("{} packed_trace tbl_proj_states_pats", sname))?;
+		assert_wide_wellformed(&tbl_proj_states_pats)?;
+		if b_perf{
+			log_perf(log_level, &format!(
+				"valid_packed_trace step 2.1, ulen: {} cs: {}", 
+					ulen, cs.num_constraints()-nc), &mut gt);
+			nc = cs.num_constraints();
+		}
 
 		//2.2. verify the encoded column is indeed an encoded
 		//form of the proj_states and proj_pats column
@@ -1819,13 +1810,30 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		//cover ALL the accept states along the trace, as
 		//later when we assert the left-join relation, 
 		// it automatically implies this relation.
-		//between the states column and the 
+		//
+		// COST: ulen
 		let col_encoded = 
 			all.search_container(
-			&format!("{} packed_trace proj_encoded", sname))?
+			&format!("{} packed_trace encoded_proj_state_pat", sname))?
 			.borrow().to_vec();
-		println!("DEBUG USE 6101: col_encoded.len(): {}, u3len: {}", col_encoded.len(), u3len);
-		assert!(col_encoded.len()==u3len);
+		let c1 = tbl_proj_states_pats.borrow().get_container("key")
+			.unwrap().borrow().to_vec();
+		let c2 = tbl_proj_states_pats.borrow().get_container("val")
+			.unwrap().borrow().to_vec();
+		let c3 = tbl_proj_states_pats.borrow().get_container("id")
+			.unwrap().borrow().to_vec();
+		let c4 = tbl_proj_states_pats.borrow().get_container("count")
+			.unwrap().borrow().to_vec();
+		let vec_cols = [&c1[..], &c2[..], &c3[..], &c4[..]];
+		verify_encode_cols_in_range(&col_encoded[..], &vec_cols)?;
+
+		if b_perf{
+			log_perf(log_level, &format!(
+				"valid_packed_trace step 2. ulen: {}, cs: {}", 
+				ulen,cs.num_constraints()-nc), &mut gt);
+			//nc = cs.num_constraints();
+		}
+
 
 		Ok( () )
 	}
