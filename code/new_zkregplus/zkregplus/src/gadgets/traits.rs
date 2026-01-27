@@ -227,6 +227,7 @@ impl <F: Clone> Container<F>{
 		}
 	}
 
+
 	/// return its current absolute path, this result can change if it's
 	/// replaced as a child of another container.
 	pub fn get_path(&self)->String{

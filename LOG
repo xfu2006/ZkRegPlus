@@ -24562,7 +24562,7 @@ Goal 2. assert light-weight well formed
 -> the algorithm not right ,needs to fix tomorrow.
 
 Sunday 01/25/2026
-LOC (gadgets): 19084 -> 19040 (-50) -> 
+LOC (gadgets): 19084 -> 19040 (-50) -> 19237 (+200)
 Goal 1. design
 	[a] we have to REDO the join approach and use wide table
 		as join cost might be 3 times.
@@ -24586,4 +24586,26 @@ Goal 6. implement the assert_wide_wellformed
 Goal 7. implement assert_encode_cols_in_range
 	[a] implement
 	[b] debug
-	[c] 
+	[c] fix range2 errr
+
+Monday 01/26/2026
+LOC (gadgtes): 19237
+Goal 1. read tbl_left_join
+	[a] tbl_left_join
+	[b] verify_tbl_left_join
+	[c] they are only used fsm_adv
+Goal 2. define the prototypes
+	[a] wide_tbl_left_join
+	[b] validae_wide_tbl_left_join
+Goal 3. set up the unit testing framework for tbl_left_join_wide
+	[a] add the function
+	[b] set up the inputs
+	[c] set up test scripts
+Goal 4. do both functions step by step
+	[a] documentation
+	[b] check data
+	[c] build the hashmap
+	[d] build the join table
+	[e] set up the verif function
+
+-- TODO: check why dummy entries are appended to the END?

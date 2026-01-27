@@ -19,7 +19,7 @@ We have two cateogries of functions:
 	values given msg2.
 */
 
-use std::{rc::{Rc}, cell::{RefCell},collections::{HashSet}};
+use std::{rc::{Rc}, cell::{RefCell},collections::{HashSet,HashMap}};
 use ark_ff::{PrimeField};
 use crate::gadgets::{traits::{Container,Col,IDX_DATA, IDX_SI_DATA}};
 use ark_r1cs_std::{R1CSVar,alloc::AllocVar, eq::EqGadget,fields::FieldVar};
@@ -43,7 +43,7 @@ use crate::gadgets::commons::{verify_inverse,verify_logup_inverse, check_eq,
 	encode_cols, encode_cols_var, 
 	multiset_prod, verify_unique_sorted_set, is_zero_better,
 	multiset_prod_2col,var_to_lb, is_zero_better_adv, gen_vec_inverse,
-	var_to_tuple, var_to_tuple_adv};
+	var_to_tuple, var_to_tuple_adv, encode_cols_better};
 
 
 // ----------------------------------------------------
@@ -202,14 +202,16 @@ pub fn verify_encoded_table<F:PrimeField>(
 /// COST: 3n
 pub fn assert_wide_wellformed<F:PrimeField>(
 	tbl: &Rc<RefCell<Container<FpVar<F>>>>,
+	keycol_name: &str, //default it's "key" but can be something else
 ) ->Result<(),SynthesisError>{
-	let b_perf = false;
-	let b_debug = false;
+	let b_perf = true;
+	let b_debug = true;
 	let logl = LOG2;
 	let mut gt = Timer::new();
 
 	//1. get the key, val, diff_val col
-	let key = tbl.borrow().get_container("key").unwrap().borrow().to_vec();
+	let key = tbl.borrow().get_container(keycol_name)
+		.unwrap().borrow().to_vec();
 	let n = key.len();
 	assert!(n>0);
 	let cs = key[0].cs();
@@ -218,6 +220,19 @@ pub fn assert_wide_wellformed<F:PrimeField>(
 	let count = tbl.borrow().get_container("count").unwrap().borrow().to_vec();
 	assert!(n>0 && val.len()==n && id.len()==n && count.len()==n);
 	let nc = cs.num_constraints();
+
+	if b_debug{
+		println!("DEBUG USE 6201: dump of wide well-fromed table");
+		for i in 0..val.len(){
+			println!(" -- i: {}, key: {}, val: {}, id: {}, count: {}",
+				i,
+				key[i].value().unwrap(),
+				val[i].value().unwrap(),
+				id[i].value().unwrap(),
+				count[i].value().unwrap(),
+			);
+		}
+	}
 
 	//2. verify the following:
 	//for row i: let b_last_i be id[i]==count[i] (last row of a key)
@@ -1894,6 +1909,134 @@ pub fn tbl_left_join<F:PrimeField>(
 	Ok(res)
 }
 
+/// two column table left join a wide-well-formed table
+/// "Left join" (in fact doing a cross product of a two column
+/// table with a wide well-formed table).
+/// We assume: each value in col2 has a CORRESPONDING key in the
+/// tbl2. Also col2[0] and tbl2[0] are both dummy entries (so that
+/// we can skip conditional check).
+/// Assumption on tbl2: keys can appear multiple times (at the cost
+///   of the prover), however, each key corresponds to one UNIQUE block
+///   of values.
+/// e.g.,
+/// col1 - col2 (like loc, state)
+/// 0      0  (dummy)
+/// 100    1
+/// 200    2
+/// tbl2: (state - pat) - id - count
+/// 0  0  0  0
+/// 1  11 0  0 (actual count 1)
+/// 2  21 0  2 (actual count 3
+/// 2  22 1  2
+/// 2  22 2  2
+/// --- generates -----------
+/// loc state  pat id count
+/// 0   0      0   0  0
+/// 100 1      11  0  0
+/// 200 2      21  0  2 (expanded into 3 entries)
+/// 200 2      22  1  2
+/// 200 2      23  2  2
+pub fn tbl_left_join_wide<F:PrimeField>(
+	col1: &Vec<F>,
+	col2: &Vec<F>,
+	tbl2: &Rc<RefCell<Container<F>>>,
+	target_size: usize,
+	name: &str, //the name of the new container bundle
+) -> Result<Rc<RefCell<Container<F>>>, Error>{
+	// ---- Construct Join Table ----------------
+	//1. data verify and capacity check
+	let res = Container::<F>::new(name);
+	let join_tbl= Container::<F>::new("join_tbl");
+	let prf = Container::<F>::new("prf");
+	let n1 = col1.len();
+	assert!(col2.len()==n1);
+	let t2cols= vec!["key", "val", "id", "count"].into_iter().map(|n| 
+		tbl2.borrow().get_container(n).expect("errcol").borrow().to_vec()
+	).collect::<Vec<Vec<F>>>();
+	let n2 = t2cols[0].len();
+	for col in &t2cols{assert!(col.len()==n2);}
+	let (keys,vals,ids,counts) = (&t2cols[0],&t2cols[1],&t2cols[2],&t2cols[3]);
+	if !keys[0].is_zero(){//need one dummy entry to avoid later cond logup
+		return Err(Error::CapErr(vec![(format!("tbl2"), 
+			keys.len()+1)]));
+	}
+
+	//2. build the joined table
+	//2.1 build a hashmap from key -> (val, id, count)
+	//here we assume tbl2 does NOT have duplicate keys except for 0-entry
+	let mut key2tuple = HashMap::new();
+	for i in 0..n2{
+		if !keys[i].is_zero(){
+			let t = (vals[i],ids[i],counts[i]);
+			key2tuple.entry(keys[i])
+				.or_insert_with(Vec::new)
+				.push(t);
+		}
+	}
+	let z = F::zero();
+	key2tuple.insert(z, vec![(z,z,z)]);
+	#[cfg(test)]{
+		let one = F::one();
+		for (_key, t) in &key2tuple{
+			assert!(t[0].1==z); //id starts from 0
+			for i in 1..t.len(){
+				assert!(t[i].1==t[i-1].1 + one); //id increasing
+				assert!(t[i].2==t[i-1].2); //count the same
+			}
+		}
+	}
+
+	//2.2. now do the cross-product by matching the col2 with 
+	//tbl2
+	//resulting: col1 - col2(key) - val - id - count
+	let tuples = (0..n1).into_par_iter().map(|i|{
+		let v1 = col1[i];
+		let v2 = col2[i];
+		let tps = key2tuple.get(&v2).expect(
+			&format!("key: {} does not exist.", v2));
+		tps.iter().map(|t|{ (v1, v2, t.0, t.1, t.2) })
+			.collect::<Vec<(F,F,F,F,F)>>()
+	}).flatten().collect::<Vec<(F,F,F,F,F)>>();
+	if tuples.len()>target_size{
+		return Err(Error::CapErr(vec![(format!("target_size"), tuples.len())]));
+	}
+	let mut jcols= vec![vec![z;target_size]; 5];
+	for i in 0..tuples.len(){
+		let t = tuples[i];
+		jcols[0][i] = t.0;
+		jcols[1][i] = t.1;
+		jcols[2][i] = t.2;
+		jcols[3][i] = t.3;
+		jcols[4][i] = t.4;
+	}
+	let enc_c12 = encode_cols_better( 
+		vec![&jcols[0][..], &jcols[1][..]], vec![0,1]
+	); //later used for wellformed prf
+	let f_rg2= F::from(RANGE2);
+	let names = vec!["c1","c2","val","id","count"];
+	let join_cols = jcols.into_iter().zip(names.iter()).map(|(c,n)|
+		Col::new(c, n, IDX_DATA)).collect::<Vec<Rc<RefCell<Col<F>>>>>();
+	let join_sid_cols = names.iter().map(|n| Col::new_const(
+		vec![f_rg2;target_size], &format!("sid_{}", n), IDX_SI_DATA)
+	).collect::<Vec<Rc<RefCell<Col<F>>>>>();
+	for i in 0..5{
+		join_tbl.borrow_mut().add_col(join_cols[i].clone());
+		join_tbl.borrow_mut().add_col(join_sid_cols[i].clone()); //low cost
+			//clone of Rc
+	}
+	
+	// ---- Construct Proof ----------------
+	//1. construct the encoded column of <c1,c2>
+	prf.borrow_mut().add_col(Col::new(enc_c12, "enc_c12", IDX_DATA));
+	prf.borrow_mut().add_col(
+		Col::new_const(vec![z;target_size], "sid_enc_c12", IDX_SI_DATA));
+
+	res.borrow_mut().add_container(join_tbl);
+	res.borrow_mut().add_container(prf);
+
+	Ok( res )
+}
+
 /// verify that tbl1 left join with tbl2 results in output
 /// COST roughly: 20* src_len + 38 * dst_len
 pub fn verify_tbl_left_join<F:PrimeField>(
@@ -2025,6 +2168,70 @@ pub fn verify_tbl_left_join<F:PrimeField>(
 		None, //sid_diff_key
 		r1.clone(), 
 		RANGE2_BIT)?;
+
+	Ok( () )
+}
+/// Verify the valididyt of the combo of left_join with wide table
+/// See the assumption and description of the left-join (in fact
+///  cross prouct) with wide table tbl2 in `fn tbl_left_join_wide()` doc
+/// Consider the following example from the tbl_left_join_wide
+/// loc state  pat id count
+/// 0   0      0   0  0
+/// 100 1      11  0  0
+/// 200 2      21  0  2 (expanded into 3 entries)
+/// 200 2      22  1  2
+/// 200 2      23  2  2
+/// The key is that: 
+/// if we regard <loc,state> as one column, it is actually
+///   well-formed, i.e., for each unique <loc,state>, the 
+///   pat-id-count is well formed.
+/// Then if we run the two-direction lookup between
+/// the output table and the original two source tables, we
+/// are able to prove that it is indeed the cross-product
+/// of the two, i.e., expanding each row in the 1st table 
+/// with the corresponding blocks of records from the 2nd table.
+pub fn verify_tbl_left_join_wide<F:PrimeField>(
+	_r1: &FpVar<F>, //random challenges from msg2
+	_r2: &FpVar<F>,
+	_col1: &Vec<FpVar<F>>,
+	_col2: &Vec<FpVar<F>>,
+	output: &Rc<RefCell<Container<FpVar<F>>>>,  //the output table
+	cs: ConstraintSystemRef<F>
+) -> Result<(), SynthesisError>{
+	//0. retrieve data
+	let b_perf = true;
+	let logl = LOG2;
+	let mut nc = cs.num_constraints();
+	let mut gt = Timer::new();
+
+	let (zero,one)=(new_const_var(&cs,F::zero()),new_const_var(&cs,F::one()));
+	let join_tbl= output.borrow().get_container("join_tbl")?;
+	let prf = output.borrow().get_container("prf")?;
+	let names = vec!["c1","c2","val","id","count"];
+	let ct_jcols = names.iter().map(|n|
+		join_tbl.borrow().get_container(n).unwrap()
+	).collect::<Vec<Rc<RefCell<Container<FpVar<F>>>>>>();
+	let ct_enc_c12 = prf.borrow().get_container("enc_c12").unwrap(); 
+	let enc_c12 = ct_enc_c12.borrow().to_vec();
+	let c1 = ct_jcols[0].borrow().to_vec(); //c1
+	let c2 = ct_jcols[1].borrow().to_vec(); //c2
+	let n = enc_c12.len();
+	assert!(c1.len()==n && c2.len()==n);
+
+	//1. verify the validity of ct_enc_c12
+	//1.1 construct <c1,c2> - val - id - count as a table and
+	//assert its well-formedness
+	let tbl_tmp = Container::new("tmp_tbl");
+	tbl_tmp.borrow_mut().add_container(ct_enc_c12.clone());
+	tbl_tmp.borrow_mut().add_container(ct_jcols[2].clone());//low cost clone
+	tbl_tmp.borrow_mut().add_container(ct_jcols[3].clone());//low cost clone
+	tbl_tmp.borrow_mut().add_container(ct_jcols[4].clone());//low cost clone
+	assert_wide_wellformed(&tbl_tmp, "enc_c12")?;
+	if b_perf{
+		log_perf(logl, &format!("verify_join_wide. step 1.1: n: {}, cs: {}",
+			n, cs.num_constraints()-nc), &mut gt);
+		//nc = cs.num_constraints();
+	}
 
 	Ok( () )
 }
@@ -2360,6 +2567,59 @@ pub mod tests_db{
 		assert!(cs.is_satisfied().unwrap());
 
 
+	}
+
+	#[test]
+	fn test_tbl_left_join_wide(){
+		use crate::gadgets::db::{tbl_left_join_wide,verify_tbl_left_join_wide};
+		use crate::gadgets::commons::two_col_to_wide_wellformed;
+
+		let mut rng = test_rng();
+        let cs = ConstraintSystem::<Fr>::new_ref();
+		let r1 = FpVar::new_witness(cs.clone(),|| 
+			Ok(Fr::rand(&mut rng))).unwrap();
+		let r2 = FpVar::new_witness(cs.clone(),|| 
+			Ok(Fr::rand(&mut rng))).unwrap();
+
+		let locs = vec![0, 100, 200, 400].iter().map(|x|
+			Fr::from(*x as u32)).collect::<Vec<Fr>>();
+		let states = vec![0, 1, 1, 2].iter().map(|x|
+			Fr::from(*x as u32)).collect::<Vec<Fr>>();
+		
+		let proj_states_pats = two_col_to_wide_wellformed::<Fr>(
+			&vec![1, 1, 2, 2, 2]
+				.iter().map(|x| Fr::from(*x as u32)).collect::<Vec<Fr>>(),
+			&vec![11,  12,  21, 22, 23]
+				.iter().map(|x| Fr::from(*x as u32)).collect::<Vec<Fr>>(),
+			8, //target size,
+			"proj_states_pats"
+		).unwrap();
+
+		let n = 16;
+		let loc_state_pat_tbl = tbl_left_join_wide(
+			&locs,
+			&states, 
+			&proj_states_pats,
+			n, 
+			"loc_state_pat_tbl"
+		).unwrap();
+
+		let col_states = states.iter().map(|s| new_var(&cs, *s))
+			.collect::<Vec<FpVar<Fr>>>();
+		let col_locs = locs.iter().map(|s| new_var(&cs, *s))
+			.collect::<Vec<FpVar<Fr>>>();
+		let loc_state_pat_tbl= Container::rc_from(
+			&loc_state_pat_tbl.borrow(), cs.clone());
+
+		assert!( 
+			verify_tbl_left_join_wide(
+				&r1, &r2, 
+				&col_locs,
+				&col_states,
+				&loc_state_pat_tbl,
+				cs.clone()
+			).is_ok());
+		assert!(cs.is_satisfied().unwrap());
 	}
 
 
