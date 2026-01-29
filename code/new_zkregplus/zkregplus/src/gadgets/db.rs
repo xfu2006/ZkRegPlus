@@ -43,7 +43,9 @@ use crate::gadgets::commons::{verify_inverse,verify_logup_inverse, check_eq,
 	encode_cols, encode_cols_var, 
 	multiset_prod, verify_unique_sorted_set, is_zero_better,
 	multiset_prod_2col,var_to_lb, is_zero_better_adv, gen_vec_inverse,
-	var_to_tuple, var_to_tuple_adv, encode_cols_better};
+	var_to_tuple, var_to_tuple_adv, encode_cols_better, 
+	verify_encode_cols_in_range, gen_2d_lkup_prf,
+	verify_2d_lkup_prf};
 
 
 // ----------------------------------------------------
@@ -204,8 +206,8 @@ pub fn assert_wide_wellformed<F:PrimeField>(
 	tbl: &Rc<RefCell<Container<FpVar<F>>>>,
 	keycol_name: &str, //default it's "key" but can be something else
 ) ->Result<(),SynthesisError>{
-	let b_perf = true;
-	let b_debug = true;
+	let b_perf = false;
+	let b_debug = false;
 	let logl = LOG2;
 	let mut gt = Timer::new();
 
@@ -237,17 +239,20 @@ pub fn assert_wide_wellformed<F:PrimeField>(
 	//2. verify the following:
 	//for row i: let b_last_i be id[i]==count[i] (last row of a key)
 	//if !b_last_i:
-	//   (key[i+1], id[i+1], count[i+1]) = (key[i], id[i], count[i])
-	// -- call packed_i1 as key[i+1] *RANGE2^2 + id[i+1]*RANGE2 + count[i+1]
-	// --  and packed_i as the RHS
+	//   (key[i+1],count[i+1], id[i+1) = (key[i],count[i],id[i]) + 1
+	//   -- note that as 3 elements are all in RANGE2 already
+	//   -- treat them as bit-concanation as one number
+	//   -- call packed_i1 as key[i+1] *RANGE^2 + count[i+1]^RANGE + id[i+1]
+	//    -- and similarly packed_ is defined
 	//else:
 	//   id[i+1] = 0
 	// so we have:
 	// b_last_i * (id[i+1])
-	// + (1-b_last_i) *(packed_i1 - packed_i) = 0
+	// + (1-b_last_i) *(packed_i1 - packed_i - 1) = 0
 	// which is:
 	// *** 
-	//  b_last_i * (id[i+1] + packed_i - packed_i1) =  packed_i - packed_i1
+	//     b_last_i * (id[i+1] + packed_i - packed_i1 + 1) 
+	//  =  packed_i - packed_i1 +1
 	// ***
 	// NOTE that since all values are in RANGE2 (26-bit)
 	// (key[i+1],id[i+1], count[i+1]) are actually can be packed
@@ -272,21 +277,23 @@ pub fn assert_wide_wellformed<F:PrimeField>(
 			vec![
 				var_to_tuple(&id[i+1]),
 				var_to_tuple_adv(&key[i], fac1), //packed_i
-				var_to_tuple_adv(&id[i], fac2),
-				var_to_tuple_adv(&count[i], fac3),
+				var_to_tuple_adv(&count[i], fac2),
+				var_to_tuple_adv(&id[i], fac3),
 				var_to_tuple_adv(&key[i+1], -fac1), //packed_i1
-				var_to_tuple_adv(&id[i+1], -fac2),
-				var_to_tuple_adv(&count[i+1], -fac3),
+				var_to_tuple_adv(&count[i+1], -fac2),
+				var_to_tuple_adv(&id[i+1], -fac3),
+				(F::one(), Variable::One), //+1
 			]
 		);
 		let lb_3 = LinearCombination::<F>(
 			vec![
 				var_to_tuple_adv(&key[i], fac1), //packed_i
-				var_to_tuple_adv(&id[i], fac2),
 				var_to_tuple_adv(&count[i], fac2),
+				var_to_tuple_adv(&id[i], fac3),
 				var_to_tuple_adv(&key[i+1], -fac1), //packed_i1
-				var_to_tuple_adv(&id[i+1], -fac2),
 				var_to_tuple_adv(&count[i+1], -fac2),
+				var_to_tuple_adv(&id[i+1], -fac3),
+				(F::one(), Variable::One), //+1
 			]
 		);
 		cs.enforce_constraint(
@@ -1943,7 +1950,6 @@ pub fn tbl_left_join_wide<F:PrimeField>(
 	target_size: usize,
 	name: &str, //the name of the new container bundle
 ) -> Result<Rc<RefCell<Container<F>>>, Error>{
-	// ---- Construct Join Table ----------------
 	//1. data verify and capacity check
 	let res = Container::<F>::new(name);
 	let join_tbl= Container::<F>::new("join_tbl");
@@ -2001,17 +2007,39 @@ pub fn tbl_left_join_wide<F:PrimeField>(
 		return Err(Error::CapErr(vec![(format!("target_size"), tuples.len())]));
 	}
 	let mut jcols= vec![vec![z;target_size]; 5];
+	let offset = target_size - tuples.len();
 	for i in 0..tuples.len(){
 		let t = tuples[i];
-		jcols[0][i] = t.0;
-		jcols[1][i] = t.1;
-		jcols[2][i] = t.2;
-		jcols[3][i] = t.3;
-		jcols[4][i] = t.4;
+		jcols[0][i+offset] = t.0;
+		jcols[1][i+offset] = t.1;
+		jcols[2][i+offset] = t.2;
+		jcols[3][i+offset] = t.3;
+		jcols[4][i+offset] = t.4;
 	}
 	let enc_c12 = encode_cols_better( 
 		vec![&jcols[0][..], &jcols[1][..]], vec![0,1]
 	); //later used for wellformed prf
+	
+	// ---- Construct Proof ----------------
+	//1. construct the encoded column of <c1,c2>
+	prf.borrow_mut().add_col(Col::new(enc_c12, "enc_c12", IDX_DATA));
+	prf.borrow_mut().add_col(
+		Col::new_const(vec![z;target_size], "sid_enc_c12", IDX_SI_DATA));
+
+
+	//2. prove that the encoded colmn <c1,c2> has a 2-way
+	//lookup into <col1,col2> that is
+	//every <c1,c2> pair in the result join-table can be found
+	// in <col1,col2>; likewise every pair of <col1,col2> can be
+	// found in <c1,c2> in the join table output.
+	let lkupprf_c1c2 = gen_2d_lkup_prf(
+		vec![&jcols[0][..], &jcols[1][..]], //<c1,c2>
+		vec![&col1[..], &col2[..]],
+		"lkupprf_c1c2"
+	);
+	prf.borrow_mut().add_container(lkupprf_c1c2);
+
+	//3. assemble the container using the data above
 	let f_rg2= F::from(RANGE2);
 	let names = vec!["c1","c2","val","id","count"];
 	let join_cols = jcols.into_iter().zip(names.iter()).map(|(c,n)|
@@ -2024,14 +2052,7 @@ pub fn tbl_left_join_wide<F:PrimeField>(
 		join_tbl.borrow_mut().add_col(join_sid_cols[i].clone()); //low cost
 			//clone of Rc
 	}
-	
-	// ---- Construct Proof ----------------
-	//1. construct the encoded column of <c1,c2>
-	prf.borrow_mut().add_col(Col::new(enc_c12, "enc_c12", IDX_DATA));
-	prf.borrow_mut().add_col(
-		Col::new_const(vec![z;target_size], "sid_enc_c12", IDX_SI_DATA));
-
-	res.borrow_mut().add_container(join_tbl);
+	res.borrow_mut().add_container(join_tbl.clone());
 	res.borrow_mut().add_container(prf);
 
 	Ok( res )
@@ -2191,10 +2212,10 @@ pub fn verify_tbl_left_join<F:PrimeField>(
 /// of the two, i.e., expanding each row in the 1st table 
 /// with the corresponding blocks of records from the 2nd table.
 pub fn verify_tbl_left_join_wide<F:PrimeField>(
-	_r1: &FpVar<F>, //random challenges from msg2
+	r1: &FpVar<F>, //random challenges from msg2
 	_r2: &FpVar<F>,
-	_col1: &Vec<FpVar<F>>,
-	_col2: &Vec<FpVar<F>>,
+	col1: &Vec<FpVar<F>>,
+	col2: &Vec<FpVar<F>>,
 	output: &Rc<RefCell<Container<FpVar<F>>>>,  //the output table
 	cs: ConstraintSystemRef<F>
 ) -> Result<(), SynthesisError>{
@@ -2221,6 +2242,7 @@ pub fn verify_tbl_left_join_wide<F:PrimeField>(
 	//1. verify the validity of ct_enc_c12
 	//1.1 construct <c1,c2> - val - id - count as a table and
 	//assert its well-formedness
+	//COST: 3n
 	let tbl_tmp = Container::new("tmp_tbl");
 	tbl_tmp.borrow_mut().add_container(ct_enc_c12.clone());
 	tbl_tmp.borrow_mut().add_container(ct_jcols[2].clone());//low cost clone
@@ -2228,10 +2250,31 @@ pub fn verify_tbl_left_join_wide<F:PrimeField>(
 	tbl_tmp.borrow_mut().add_container(ct_jcols[4].clone());//low cost clone
 	assert_wide_wellformed(&tbl_tmp, "enc_c12")?;
 	if b_perf{
-		log_perf(logl, &format!("verify_join_wide. step 1.1: n: {}, cs: {}",
-			n, cs.num_constraints()-nc), &mut gt);
+		log_perf(logl, &format!("verify_join_wide. step 1.1: assert wide wellformed: n: {}, cs: {}", n, cs.num_constraints()-nc), &mut gt);
+		nc = cs.num_constraints();
+	}
+
+	//1.2 assert that the encoded column is indeed the encoding
+	//of c1 and c2
+	//COST: n
+	verify_encode_cols_in_range(&enc_c12[..],
+		&vec![&c1[..], &c2[..]])?;
+	if b_perf{
+		log_perf(logl, &format!("verify_join_wide. step 1.2: assert encoding. n: {}, cs: {}", n, cs.num_constraints()-nc), &mut gt);
 		//nc = cs.num_constraints();
 	}
+
+	//3. verify that the join table <c1,c2> has a 2-direction
+	// lookup into <proj_states, proj_loc>
+	let lkupprf_c1c2 = prf.borrow().get_container("lkupprf_c1c2").expect(
+		"can't find lkupprf_c1c2"); 
+	verify_2d_lkup_prf(
+		r1.clone(),
+		&vec![&c1[..], &c2[..]],
+		&vec![&col1[..], &col2[..]],
+		&lkupprf_c1c2
+	)?;
+
 
 	Ok( () )
 }

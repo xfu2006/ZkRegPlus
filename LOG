@@ -24589,7 +24589,7 @@ Goal 7. implement assert_encode_cols_in_range
 	[c] fix range2 errr
 
 Monday 01/26/2026
-LOC (gadgtes): 19237
+LOC (gadgtes): 19237 -> 19545 (+220)
 Goal 1. read tbl_left_join
 	[a] tbl_left_join
 	[b] verify_tbl_left_join
@@ -24608,4 +24608,21 @@ Goal 4. do both functions step by step
 	[d] build the join table
 	[e] set up the verif function
 
--- TODO: check why dummy entries are appended to the END?
+Tuesday 01/27/2026
+LOC (gadgets): 19545  -> 19562 (+15)
+Goal 1.  check why dummy entries are appended to the END?
+	[a] check how the cross-product table is constructed
+	[b] fixed
+Goal 2. check the problem still complaining about constrait fail
+	[a] found it fac2->fac3
+	[b] remove debug msg
+
+Wed/R 01/28/2026-01/29/2026
+LOC (gadgets): 19562 -> 
+Goal 1. read existing tables
+	[a] gen_m_tbl
+	[b] define the prototype
+	[c] documentaitona
+	[d] algorith design: zero entries makes it much more
+		expensive than expected
+	[e] 

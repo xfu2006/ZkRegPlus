@@ -1,8 +1,8 @@
 #1. quick compile 
-#cargo check --tests 2>&1 | less
+cargo check --tests 2>&1 | less
 
 # TO REMOVE ****
-RUST_BACKTRACE=1 cargo test -- test_tbl_left_join_wide --show-output --nocapture
+#RUST_BACKTRACE=1 cargo test -- test_tbl_left_join_wide --show-output --nocapture
 # TO REMOVE ABOVE *****
 
 #2. test each gadget

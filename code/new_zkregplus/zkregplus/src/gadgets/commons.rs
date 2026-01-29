@@ -1025,6 +1025,42 @@ pub fn verify_inverse_new<F:PrimeField>(cs: ConstraintSystemRef<F>,
 	Ok( () )
 }
 
+///  assert that v2 is the inverse of the combined values from v1.
+/// assuming v1 all column's cell already in RANGE2.
+/// COST: n
+pub fn verify_inverse_mul_col<F:PrimeField>(
+	_cs: ConstraintSystemRef<F>,
+	_v1: &Vec<&[FpVar<F>]>, 
+	_v2: &[FpVar<F>], 
+	_beta: &FpVar<F>
+)->Result<(), SynthesisError>{
+	/*
+	let b_debug = false;
+
+	let beta_tuple= var_to_tuple(&beta);
+	let lb_one = LinearCombination::from((F::one(),Variable::One));
+	for i in 0..elen{
+		if b_debug{
+			assert!((v2[i].value()?*(v1[i].value()? + beta.value()?)).is_one());
+		}
+
+		let lb_v2_i = var_to_lb(&v2[i], F::one());
+		let lb_v1_i = LinearCombination::<F>(vec![
+			var_to_tuple(&v1[i]),
+			beta_tuple.clone(),
+		]);
+
+		cs.enforce_constraint(
+			lb_v2_i,
+			lb_v1_i,
+			lb_one.clone(),
+		)?;
+	}
+	Ok( () )
+	*/
+	todo!()
+}
+
 /// verify the log-up relation. check if all elements of (inverse of) v1 belong
 /// to v2. Here v1 and v2 should be the
 /// INVERSE of the query table and lkup table.  Call verify_inverse()
@@ -1552,6 +1588,170 @@ pub fn gen_m_table<F:PrimeField>(qry: &Vec<F>, lkup: &Vec<F>)->Vec<F>{
 
 	m_tbl
 }
+
+/// Generate 2 direction lookup proof.
+/// Here we have a collection of query columns, where we assume
+/// all values in RANGE2. Similarly, same number of lkup_cols with
+/// all values in RANGE2 (so that we can simply concat values as bit-paterns).
+/// We prove that all values of query_cols (combines) can be found in
+/// lkup_cols, and all combined values of lkup_cols can be found in 
+/// qury columns (2-direciton lookup).
+/// NOTE: we require: the lookup table (except for 0 entry)
+/// has *** NO duplicate values ***! [in this case, query size
+/// is usually larger, e.g., lookup table is the pat-loc table
+/// and the query table is the pat-loc column in pat-state-loc joined table,
+/// and it is larger)].
+///
+/// Idea: we only need to construct the m_tbl for proving all elements
+/// in query table are in lookup table. Then we just need to justify that
+/// each element of lookup table has a POSITIVE m_tbl value (counts in query).
+/// Then we simply send the vector: m_tbl - vec![1; mtbl.len()], which
+/// we use the SID table to justify that it's in range. Note that
+/// this scheme works if we assume: *** lookup table have NO DUPLICATES ***
+///
+/// Now, the only complication is that both lookup table and 
+/// query table have MULTIPLE 0 elements. This can be easily
+/// addressed by sendng over the COUNT_OF_0_IN_QUERY and COUNT_OF_0_IN_LKUP
+/// and for m_tbl value for 0 elements in LOOKUP (simply assign 1).
+/// This easily balances the equation check.
+/// Eg.g.,
+/// qry-tbl (2col)              lkup-tbl(2col)   m-tbl (counts of occ in qry)
+/// 0  0                        0    0           1
+/// 0  0                        1    2           3 
+/// 1  2                        2    3           1
+/// 2  3
+/// 1  2
+/// 1  2
+/// We write bit-concat of two column values as 0-0, let r be random
+/// 1/(0-0 + r)  + 1/(0-0+r) + 1/(1-2 + r) +... 1/(1-2 + r)
+/// = 
+/// 1 * 1/(0-0 + r) + 3 * 1/(1-2 + r) + 1 * 1/(2-3+r)
+///   + COUNT_DIFF * 1(0-0 + r)
+/// The count difference is 1 qry table has one more (0,0) entry.
+/// The verification cost will be just one Logup check cost,
+/// because the "range check" for mtbl-vec![1; mtbl.len()] is free.
+pub fn gen_2d_lkup_prf<F:PrimeField>(
+	qry_cols: Vec<&[F]>, 
+	lkup_cols: Vec<&[F]>, 
+	name: &str)->Rc<RefCell<Container<F>>>{
+	//1. compute the combined cell values
+	let res = Container::<F>::new(name);
+	assert!(qry_cols.len()==lkup_cols.len());
+	let n1 = qry_cols[0].len();
+	let n2 = lkup_cols[0].len();
+	for c in &qry_cols {assert!(c.len()==n1);}
+	for c in &lkup_cols {assert!(c.len()==n2);}
+	let ids = (0..qry_cols.len()).collect::<Vec<usize>>();
+	let qry = encode_cols_better(qry_cols.clone(), ids.clone()); 
+	let lkup = encode_cols_better(lkup_cols.clone(), ids); 
+	assert!(qry.len()==n1 && lkup.len()==n2);
+
+	//2. data-check (no duplicate elements)
+	let count0_qry = qry.par_iter().filter(|x| x.is_zero()).count();
+	let count0_lkup= lkup.par_iter().filter(|x| x.is_zero()).count();
+	let nz_lkup = lkup.par_iter().filter(|x| !x.is_zero()).map(|x| *x)
+		.collect::<HashSet<F>>();
+	assert!(nz_lkup.len()+count0_lkup==lkup.len(), "lkup should have no-duplicates of NON-zero values!");
+
+	//3. compute the m_tbl (offset by 1)
+	let m_tbl = gen_m_table(&qry, &lkup);
+	let mz = m_tbl.par_iter().find_any(|x| x.is_zero());
+	assert!(mz.is_none(), "m_tbl has zero entries");
+	let m_tbl_1 = m_tbl.par_iter().map(|&x| x - F::one())
+		.collect::<Vec<F>>();
+	let f_rg= F::from(RANGE2);
+	let sid_m_tbl_1 = vec![f_rg; m_tbl_1.len()];
+	res.borrow_mut().add_col(Col::new(m_tbl_1, "m_tbl_1", IDX_DATA));
+	res.borrow_mut().add_col(
+		Col::new_const(sid_m_tbl_1, "sid_m_tbl_1", IDX_DATA));
+
+	//4. compute the difference in 0 entries
+	let f_zero_diff = F::from(count0_qry as u32) - F::from(count0_lkup as u32);
+	res.borrow_mut().add_col(
+		Col::new(vec![f_zero_diff], "zero_diff", IDX_DATA));
+	res.borrow_mut().add_col(Col::new_const(
+		vec![F::zero()], "sid_zero_diff", IDX_SI_DATA));
+
+	res
+}
+
+/// verify the 2-way lookup between qry_cols and lkup_cols
+/// where we assume all values in RANGE2, and no DUPLICATED non-zero
+/// combined alues in lkup_cols. 
+/// Idea: we just run one lookup between qry_cols and lkup_cols
+/// and reason about that all entries in lkup table are COVERED
+/// (with positive m_table entries). 
+pub fn verify_2d_lkup_prf<F:PrimeField>(
+	r: FpVar<F>,
+	qry_cols: &Vec<&[FpVar<F>]>, 
+	lkup_cols: &Vec<&[FpVar<F>]>, 
+	prf: &Rc<RefCell<Container<FpVar<F>>>>	
+)-> Result<(), SynthesisError>{
+	//1. retrieve data
+	let b_perf = true;
+	let b_debug = true;
+	let cs = r.cs();
+	let logl = LOG2;
+	let mut gt = Timer::new();
+	let mut nc = cs.num_constraints();
+	let m_tbl_1 = prf.borrow().get_container("m_tbl_1").unwrap()
+		.borrow().to_vec();
+	let zero_diff = prf.borrow().get_container("zero_diff").unwrap()
+		.borrow().to_vec()[0].clone();
+	let r_val = r.value().expect("error get val of r");
+	let n_cols = qry_cols.len();
+	assert!(lkup_cols.len() == n_cols);
+	let n_q = qry_cols[0].len();
+	let n_l = lkup_cols[0].len();
+	for c in qry_cols{assert!(c.len()==n_q);}
+	for c in lkup_cols{assert!(c.len()==n_l);}
+	let qry_cols_vals = qry_cols.iter().map(|c|
+		c.iter().map(|x| x.value().unwrap()).collect::<Vec<F>>()
+	).collect::<Vec<Vec<F>>>();
+	let lkup_cols_vals = lkup_cols.iter().map(|c|
+		c.iter().map(|x| x.value().unwrap()).collect::<Vec<F>>()
+	).collect::<Vec<Vec<F>>>();
+	let qry_cols_vals = qry_cols_vals.iter().map(|c| &c[..])
+		.collect::<Vec<&[F]>>();
+	let lkup_cols_vals = lkup_cols_vals.iter().map(|c| &c[..])
+		.collect::<Vec<&[F]>>();
+	let ids = (0..qry_cols.len()).collect::<Vec<usize>>();
+	let qry_val = encode_cols_better(qry_cols_vals, ids.clone()); 
+	let lkup_val = encode_cols_better(lkup_cols_vals, ids); 
+	let inv_qry_val = gen_vec_inverse(&qry_val);
+	let inv_lkup_val = gen_vec_inverse(&lkup_val);
+	let inv_qry = inv_qry_val.iter().map(|&v| new_var(&cs, v))
+		.collect::<Vec<FpVar<F>>>();
+	let inv_lkup = inv_lkup_val.iter().map(|&v| new_var(&cs, v))
+		.collect::<Vec<FpVar<F>>>();
+	if b_perf {
+		log_perf(logl, &format!("verif_2dlkup step0 build witness. n_q: {}, n_l: {}, cs: {}", n_q, n_l, cs.num_constraints()-nc), &mut gt);
+		nc = cs.num_constraints();
+	}
+
+	//2. verify the inverse relations are fine
+	verify_inverse_mul_col(cs.clone(),&qry_cols, &inv_qry, &r)?;
+
+
+/*
+	let qry_val = qry.iter().map(|x| x.value().unwrap()).collect::<Vec<F>>();
+	let lkup_val = lkup.iter().map(|x| x.value().unwrap()).collect::<Vec<F>>();
+	let qry_inv_val = qry_val.into_par_iter().map(|x| 
+		(r_val+x).inverse().expect("inv err")
+	).collect::<Vec<F>>();
+	*/
+
+	//1. do a customized assert_logup with the corresponding
+	//m_tbl
+	if b_perf {
+		log_perf(logl, &format!("verif_2dlkup step1. n_q: {}, n_l: {}, cs: {}",
+			n_q, n_l, cs.num_constraints()-nc), &mut gt);
+		nc = cs.num_constraints();
+	}
+
+	Ok( () )
+}
+	
 
 /// generate the correpsonding m_table, its size will be
 /// equal to lkup for CONDITIONAL LOOKUP where
