@@ -44,8 +44,8 @@ use crate::gadgets::commons::{verify_inverse,verify_logup_inverse, check_eq,
 	multiset_prod, verify_unique_sorted_set, is_zero_better,
 	multiset_prod_2col,var_to_lb, is_zero_better_adv, gen_vec_inverse,
 	var_to_tuple, var_to_tuple_adv, encode_cols_better, 
-	verify_encode_cols_in_range, gen_2d_lkup_prf,
-	verify_2d_lkup_prf};
+	verify_encode_cols_in_range, gen_2d_lkup_prf, gen_1d_lkup_prf,
+	verify_2d_lkup_prf, verify_1d_lkup_prf};
 
 
 // ----------------------------------------------------
@@ -1951,6 +1951,7 @@ pub fn tbl_left_join_wide<F:PrimeField>(
 	name: &str, //the name of the new container bundle
 ) -> Result<Rc<RefCell<Container<F>>>, Error>{
 	//1. data verify and capacity check
+	let b_debug = false;
 	let res = Container::<F>::new(name);
 	let join_tbl= Container::<F>::new("join_tbl");
 	let prf = Container::<F>::new("prf");
@@ -1965,6 +1966,22 @@ pub fn tbl_left_join_wide<F:PrimeField>(
 	if !keys[0].is_zero(){//need one dummy entry to avoid later cond logup
 		return Err(Error::CapErr(vec![(format!("tbl2"), 
 			keys.len()+1)]));
+	}
+	if b_debug{
+		println!("===tbl_left_join_wide tbl1===");
+		for i in 0..col1.len(){
+			println!(" --i: {}, col1: {}, col2: {}", i, col1[i], col2[i]);
+		}
+		println!("===tbl_left_join_wide tbl2 (key,val,id,count)===");
+		for i in 0..t2cols[0].len(){
+			println!(" --i: {},  {}   {}   {}    {}",
+				i, 
+				t2cols[0][i], 
+				t2cols[1][i], 
+				t2cols[2][i], 
+				t2cols[3][i], 
+			);
+		}
 	}
 
 	//2. build the joined table
@@ -2039,7 +2056,17 @@ pub fn tbl_left_join_wide<F:PrimeField>(
 	);
 	prf.borrow_mut().add_container(lkupprf_c1c2);
 
-	//3. assemble the container using the data above
+	//3. prove that the <c2,val,id,count> has a 1-way lookup relation
+	//with tbl2, i.e., every <c2,val,id,count> entry can be found in
+	//tbl2
+	let lkupprf_tbl2 = gen_1d_lkup_prf(
+		vec![&jcols[1][..], &jcols[2][..], &jcols[3][..], &jcols[4][..]],
+		vec![ &t2cols[0][..], &t2cols[1][..], &t2cols[2][..], &t2cols[3][..]],
+		"lkupprf_tbl2",
+	);
+	prf.borrow_mut().add_container(lkupprf_tbl2);
+
+	//4. assemble the container using the data above
 	let f_rg2= F::from(RANGE2);
 	let names = vec!["c1","c2","val","id","count"];
 	let join_cols = jcols.into_iter().zip(names.iter()).map(|(c,n)|
@@ -2052,6 +2079,7 @@ pub fn tbl_left_join_wide<F:PrimeField>(
 		join_tbl.borrow_mut().add_col(join_sid_cols[i].clone()); //low cost
 			//clone of Rc
 	}
+
 	res.borrow_mut().add_container(join_tbl.clone());
 	res.borrow_mut().add_container(prf);
 
@@ -2211,21 +2239,32 @@ pub fn verify_tbl_left_join<F:PrimeField>(
 /// are able to prove that it is indeed the cross-product
 /// of the two, i.e., expanding each row in the 1st table 
 /// with the corresponding blocks of records from the 2nd table.
+///
+/// COST: let n1,n2,n be the lenth of tbl1, tbl2, output tbl
+/// COST = 3*n + n + n + 2*n2 + n + 2*n1 
+///      = 2*n1 + 2*n2 + 6*n
+///      =~ roughly 10n
+/// Compared with verify_tbl_left_join() this is MUCH LIGHTER
+///    mainly because we have assumption on tbl2 has no non-zero duplicates.
+///    and using wide table (so less check of border conditions).
 pub fn verify_tbl_left_join_wide<F:PrimeField>(
 	r1: &FpVar<F>, //random challenges from msg2
 	_r2: &FpVar<F>,
-	col1: &Vec<FpVar<F>>,
-	col2: &Vec<FpVar<F>>,
+	col1: &Vec<FpVar<F>>, //col1 of tbl1
+	col2: &Vec<FpVar<F>>, //col2 of tbl2
+	tbl2: &Rc<RefCell<Container<FpVar<F>>>>, //2nd tbl
 	output: &Rc<RefCell<Container<FpVar<F>>>>,  //the output table
 	cs: ConstraintSystemRef<F>
 ) -> Result<(), SynthesisError>{
 	//0. retrieve data
-	let b_perf = true;
+	let b_perf = false;
+	let b_debug = false;
 	let logl = LOG2;
 	let mut nc = cs.num_constraints();
+	let nc0 = nc;
 	let mut gt = Timer::new();
 
-	let (zero,one)=(new_const_var(&cs,F::zero()),new_const_var(&cs,F::one()));
+	//let (zero,one)=(new_const_var(&cs,F::zero()),new_const_var(&cs,F::one()));
 	let join_tbl= output.borrow().get_container("join_tbl")?;
 	let prf = output.borrow().get_container("prf")?;
 	let names = vec!["c1","c2","val","id","count"];
@@ -2236,8 +2275,16 @@ pub fn verify_tbl_left_join_wide<F:PrimeField>(
 	let enc_c12 = ct_enc_c12.borrow().to_vec();
 	let c1 = ct_jcols[0].borrow().to_vec(); //c1
 	let c2 = ct_jcols[1].borrow().to_vec(); //c2
+	let c_val = ct_jcols[2].borrow().to_vec(); 
+	let c_id = ct_jcols[3].borrow().to_vec(); 
+	let c_count = ct_jcols[4].borrow().to_vec(); 
 	let n = enc_c12.len();
 	assert!(c1.len()==n && c2.len()==n);
+
+	let tbl2_names = vec!["key", "val", "id", "count"];
+	let t2cols = tbl2_names.iter().map(|name|
+		tbl2.borrow().get_container(name).unwrap().borrow().to_vec()
+	).collect::<Vec<Vec<FpVar<F>>>>();
 
 	//1. verify the validity of ct_enc_c12
 	//1.1 construct <c1,c2> - val - id - count as a table and
@@ -2261,21 +2308,47 @@ pub fn verify_tbl_left_join_wide<F:PrimeField>(
 		&vec![&c1[..], &c2[..]])?;
 	if b_perf{
 		log_perf(logl, &format!("verify_join_wide. step 1.2: assert encoding. n: {}, cs: {}", n, cs.num_constraints()-nc), &mut gt);
-		//nc = cs.num_constraints();
+		nc = cs.num_constraints();
 	}
 
-	//3. verify that the join table <c1,c2> has a 2-direction
-	// lookup into <proj_states, proj_loc>
+	//2. verify that the join table <c1,c2> has a 2-direction
+	// lookup into tbl1 e.g., <proj_states, proj_loc>
+	//COST: n + 2*n1
 	let lkupprf_c1c2 = prf.borrow().get_container("lkupprf_c1c2").expect(
 		"can't find lkupprf_c1c2"); 
+	let n1 = col1.len();
 	verify_2d_lkup_prf(
 		r1.clone(),
 		&vec![&c1[..], &c2[..]],
 		&vec![&col1[..], &col2[..]],
 		&lkupprf_c1c2
 	)?;
+	if b_perf{
+		log_perf(logl, &format!("verify_join_wide. step 2: 2d lkup. n1: {}, n: {}, cs: {}", n1, n, cs.num_constraints()-nc), &mut gt);
+		nc = cs.num_constraints();
+	}
 
-
+	//2. do a multiple column 1-way lookup show that
+	//every entry of <c2, val, id, count> belongs to
+	//tabl2 (note that one way is good enough)
+	//COST: n + 2*n2
+	let n2 = t2cols[0].len();
+	let lkupprf_tbl2 = prf.borrow().get_container("lkupprf_tbl2").expect(
+		"can't find lkupprf_tbl2");
+	verify_1d_lkup_prf(
+		r1.clone(),
+		&vec![&c2[..], &c_val[..], &c_id[..], &c_count[..]], 
+		&vec![&t2cols[0][..], &t2cols[1][..], &t2cols[2][..], &t2cols[3][..]],
+		&lkupprf_tbl2
+	)?;
+	if b_debug{ assert!(cs.is_satisfied().unwrap()); }
+	if b_perf{
+		log_perf(logl, &format!("verify_join_wide. step 3: 1d lkup: n2: {}, n: {}, cs: {}", n2, n, cs.num_constraints()-nc), &mut gt);
+	}
+	if b_perf{
+		log_perf(logl, &format!("verify_join_wide. TOTAL: n1: {}, n2: {}, n: {}, cs: {}", n1, n2, n, cs.num_constraints()-nc0), &mut gt);
+	}
+	
 	Ok( () )
 }
 
@@ -2653,13 +2726,16 @@ pub mod tests_db{
 			.collect::<Vec<FpVar<Fr>>>();
 		let loc_state_pat_tbl= Container::rc_from(
 			&loc_state_pat_tbl.borrow(), cs.clone());
+		let proj_states_pats = Container::rc_from(
+			&proj_states_pats.borrow(), cs.clone());
 
 		assert!( 
 			verify_tbl_left_join_wide(
 				&r1, &r2, 
-				&col_locs,
+				&col_locs, //col1 and 2 of 1st tbl
 				&col_states,
-				&loc_state_pat_tbl,
+				&proj_states_pats, //2nd tbl
+				&loc_state_pat_tbl, //output tbl 
 				cs.clone()
 			).is_ok());
 		assert!(cs.is_satisfied().unwrap());

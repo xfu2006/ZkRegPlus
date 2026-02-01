@@ -24618,11 +24618,74 @@ Goal 2. check the problem still complaining about constrait fail
 	[b] remove debug msg
 
 Wed/R 01/28/2026-01/29/2026
-LOC (gadgets): 19562 -> 
+LOC (gadgets): 19562 -> 19788 (+220) 
 Goal 1. read existing tables
 	[a] gen_m_tbl
 	[b] define the prototype
 	[c] documentaitona
 	[d] algorith design: zero entries makes it much more
 		expensive than expected
-	[e] 
+	[e] define the verify 
+Goal 2. call these functions
+	[a] call gen_2d_prf
+	[b] call verify_2d_prf
+	[c] check duplicate check err
+	[d] build mtbl
+	[e] build diff
+Goal 3. verification
+	[a] retrieve data
+	[b] verify_inverse frmaework
+
+Friday 01/30/2026
+LOC (gadgets): 19788 -> 19868 (+80)
+Goal 1. implement verify_inverse_mul_col
+	[a] read existing code
+	[b] implement
+	[c] unit test
+	[d] fixed. cost: n
+
+Goal 2. go over the workflow of 
+	[a] sum inverse.
+	[b] check its size
+	[c] add the adjustment
+	[d] collect m_tbl value
+	[e] test done
+
+Sat 01/31/2026
+LOC (gadgets): 19868 -> 20086 (+220)
+Goal 1. declare mul-col-lkup one way
+	[a] declare
+	[b] use htem in tbl_join_wide
+	[c] declare gen prof
+	[d] call it
+
+Goal 2. implement the gen_1d_lkup_prf
+	[a] doc
+	[b] collect data
+	[c] sum_left
+	[d] sum_right
+
+Goal 3. measure verify_tble_join_wide cost
+	[a] fix one bug
+	[b] read the existing code
+	[c] debug no key 0
+
+Sunday 02/01/2026
+LOC (gadgets): 20086 -> 20167 (+80) 
+Goal 1. fix the cost -> fixed
+Goal 2. read existing code
+	[a] tbl_to_sorted_tbl
+	[b] verify_tbl_to_sorted_tbl -> 27n
+	[c] check how the pat-loc tbl is used
+		-> do need pt pat-id-loc to reason about
+		nonexiistence
+	[d] discharge 80 * n1 = 80 * ratio_pats * n = 4n.
+		which is acceptable.
+Goal 3. put the tbl_to_sorted_set and see if it works
+	[a] implement
+	[b] test
+	[c] unit testing
+	[d] circ unit testing small data
+Goal 4. debug small data 
+	[a] wy tbl_left_join_wide fails?
+	[b] hashmap_2col error -> passed

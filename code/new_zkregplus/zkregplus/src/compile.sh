@@ -3,8 +3,7 @@
 #RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" cargo check --tests 2>&1 | more 
 
 # test zkpsmall example
-RUST_BACKTRACE=1 
-cargo test --lib --release -- test_zkreg_main --show-output --nocapture 
+RUST_BACKTRACE=1 cargo test --lib --release -- test_zkreg_main --show-output --nocapture 
 #RUST_BACKTRACE=1 cargo test --lib -- test_zkreg_main --show-output --nocapture 
 #RUST_BACKTRACE=1 cargo test --lib -- test_zkreg_main --show-output --nocapture 
 #RUST_BACKTRACE=full cargo test -- test_zkreg_main --show-output --nocapture

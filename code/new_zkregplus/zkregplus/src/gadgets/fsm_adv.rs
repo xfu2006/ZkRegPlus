@@ -658,13 +658,16 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 
 		let target_size = nlen*capacity.basis_acc_states/10000;
 		let target_size = if target_size < 2 {2} else {target_size};
-		if states_final.len()>target_size{
-			let target_basis_acc_states = states_final.len() * 10000/nlen + 1;
+		if states_final.len() + 1>target_size{
+			//needs at least one padding entry
+			let target_basis_acc_states = (states_final.len()+1) * 10000/nlen 
+				+ 1;
 			return Err(Error::CapErr(vec![(format!("fsm_adv::basis_acc_states"), target_basis_acc_states)]));
 		}
 		//assert!(states_final.len()<=target_size, "basis_acc_states too small: target_size: {} < states_final.len {}", target_size, states_final.len());
 		let (oflen,to_pad) = (states_final.len(), 
 			target_size - states_final.len());
+		assert!(to_pad>0, "to_add needs >0 to leave one dummy entry");
 		let zero = F::zero();
 		let f_range2 = F::from(RANGE2 as u32);
 		let states_final = vec![ vec![zero; to_pad], states_final].concat();
@@ -1054,7 +1057,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		let states_final= fsm_acc_combo.borrow()
 			.get_container("states_final").unwrap().borrow()
 			.duplicate_as_external(0,None);
-		let _locs_final= fsm_acc_combo.borrow()
+		let locs_final= fsm_acc_combo.borrow()
 			.get_container("locs_final").unwrap().borrow()
 			.duplicate_as_external(0,None);
 
@@ -1140,12 +1143,20 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		//here only need pat-state to be wide-wellfomed
 		let packed_trace_size = capacity.basis_pats_in_trace * 
 			capacity.max_nibble_len / 10000;
+		if capacity.basis_pats_in_trace > 2*capacity.basis_acc_states{
+			println!("WARNING: basis_pats_in_trace: {} should be usually 1.1 * basis_acc_states: {}. It's too large. ", capacity.basis_pats_in_trace, capacity.basis_acc_states);
+		}
+		if capacity.basis_pats_in_trace > 5*capacity.basis_acc_states{
+			panic!("ERROR: basis_pats_in_trace: {} is usually 1.1 * basis_acc_states: {}. It's too high. ", capacity.basis_pats_in_trace, capacity.basis_acc_states);
+		}
 		let loc_state_pat_tbl = tbl_left_join_wide(
-			 &proj_pats, &proj_pats, &ct_stat_pat,
+			 &locs_final.to_vec(), 
+			 &states_final.to_vec(), 
+			 &ct_stat_pat,
 			 packed_trace_size, 
 			 "loc_state_pat_tbl"
 		);
-		let _loc_state_pat_tbl = match loc_state_pat_tbl{
+		let loc_state_pat_tbl = match loc_state_pat_tbl{
 			Ok(adv) => Ok(adv),
 			Err(Error::CapErr(vec)) => {
 				let vec_err = vec.iter().map(|(s,val)|{
@@ -1168,7 +1179,44 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 			},
 			_ => loc_state_pat_tbl 
 		}?;
+		let pat_col = loc_state_pat_tbl.borrow()
+			.get_container("join_tbl").expect("err get join_tbl").borrow()
+			.get_container("val").unwrap().borrow()
+			.duplicate_as_external(0,None);
+		let loc_col = loc_state_pat_tbl.borrow()
+			.get_container("join_tbl").expect("err get join_tbl").borrow()
+			.get_container("c1").unwrap().borrow()
+			.duplicate_as_external(0,None);
+		#[cfg(test)]{
+			assert!(pat_col.to_vec().len()==loc_col.to_vec().len());
+		}
+		res.borrow_mut().add_container(loc_state_pat_tbl);
 
+		//5. compress pat_state_loc_tbl to pat_loc_tbl
+		let pat_loc_tbl = tbl_to_sorted_tbl(
+			&Rc::new(RefCell::new(pat_col)), 
+			&Rc::new(RefCell::new(loc_col)), 
+			packed_trace_size, "pat_loc");
+		let pat_loc_tbl = match pat_loc_tbl	{
+			Ok(adv) => Ok(adv),
+			Err(Error::CapErr(vec)) => {
+				let vec_err = vec.iter().map(|(s,val)|{
+					if s=="target_size::hashmap_2col"{
+						let t_val= val*10000 /capacity.max_nibble_len+ 1;
+						( format!(
+						   "fsm_adv::basis_pats_in_trace from tbl_to_sorted")
+						   ,t_val
+						  )
+					} else{
+						(format!("unknown capacity err at step4: {}", s), 0)
+					}
+				}).collect::<Vec<(String,usize)>>();
+				Err(Error::CapErr(vec_err))
+			},
+			_ => pat_loc_tbl
+		}?;
+
+		res.borrow_mut().add_container(pat_loc_tbl);
 		Ok( res )
 	}
 }
@@ -1785,7 +1833,14 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		Ok( () )
 	}
 
+	/// validate packed_trace
 	/// COST: ???
+	/// let alen = ratio_of_acc_states * nlen (usually 5%)
+	///   plen = ratio_of_patterns * nlen (usually alen *1.1 6%)
+	///   ulen = ratio of unique states * neln (usually less than 1%) 
+	/// 3*ulen + ulen + 2ulen + 2aleb + 6plen + 27plen
+	/// = 6ulen + 4alen + 33plen
+	/// roughly 34 * ratio_of_patterns * nlen (usually< 1.5 nlen)
 	fn validate_packed_trace_v2(
 		&self, 
 		r1: &FpVar<F>, //random nonce from msg2
@@ -1796,10 +1851,16 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		let b_perf = true;
 		let log_level = LOG2;
 		let mut gt = GTimer::new();
+		let mut gt0 = GTimer::new();
 		let mut nc = cs.num_constraints();
+		let nc0 = cs.num_constraints();
 		let sname = if self.b_igc {"fsm_adv_stmt_igc"} else {"fsm_adv_stmt_cs"};
 		let nlen = self.capacity.max_nibble_len;
 		let ulen = nlen * self.capacity.basis_unique_states/10000;
+		let alen = self.capacity.max_nibble_len 
+			* self.capacity.basis_acc_states/10000;
+		let plen = self.capacity.max_nibble_len 
+			* self.capacity.basis_pats_in_trace /10000;
 
 		//1. retrieve the state_final and locs final from fsm_acc combo
 		//no cost
@@ -1866,20 +1927,47 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 
 		if b_perf{
 			log_perf(log_level, &format!(
-				"valid_packed_trace step 2. ulen: {}, cs: {}", 
+				"valid_packed_trace step 2.2. ulen: {}, cs: {}", 
 				ulen,cs.num_constraints()-nc), &mut gt);
-			//nc = cs.num_constraints();
+			nc = cs.num_constraints();
 		}
 
 		//3. check the loc_state_pat_tbl
-		let pat_state_loc_tbl = all.search_container(
+		//COST: 2*alen + 2*ulen + 6*plen 
+		let loc_state_pat_tbl = all.search_container(
 			&format!("{} packed_trace loc_state_pat_tbl", sname))?;
 		verify_tbl_left_join_wide(&r1, &r2,
 			&locs_final,
 			&states_final,
-			&pat_state_loc_tbl, 
+			&tbl_proj_states_pats,
+			&loc_state_pat_tbl, 
 			cs.clone()
 		)?;
+		if b_perf{
+			log_perf(log_level, &format!(
+				"valid_packed_trace step 3. ulen: {}, alen: {}, plen: {}, cs: {}", ulen, alen, plen, cs.num_constraints()-nc), &mut gt);
+			nc = cs.num_constraints();
+		}
+
+		//4. verify the pat-loc table is projected from the pat_state_loc_tbl 
+		//COST: 27*plen 
+		let pat_col= loc_state_pat_tbl.borrow()
+			.get_container("join_tbl")?.borrow()
+			.get_container("val")?;
+		let loc_col= loc_state_pat_tbl.borrow()
+			.get_container("join_tbl")?.borrow()
+			.get_container("c1")?;
+		let pat_loc_tbl = all.search_container( 
+			&format!("{} packed_trace pat_loc", sname))?;
+		#[cfg(test)]{
+			assert!(pat_col.borrow().to_vec().len()==plen);
+		}
+		verify_tbl_to_sorted_tbl(&r1, &r2,
+			&pat_col, &loc_col, &pat_loc_tbl, cs.clone())?;
+		if b_perf{
+			log_perf(log_level, &format!("validate_packed trace trace step 4: verify pat_loc tbl (len: {})  is sorted: {}. ", plen, cs.num_constraints()-nc), &mut gt);
+			log_perf(log_level, &format!("valid_packed_trace TOTAL: ulen: {}, alen: {}, plen: {}, nlen: {}, COST: {} cs. ", ulen, alen, plen, nlen, cs.num_constraints()-nc0), &mut gt0);
+		}
 
 
 		Ok( () )
@@ -2141,7 +2229,7 @@ pub mod tests_fsm_adv_gadget{
 			acdfa_state_part_bits: state_bits, 
 			subsigs: 5,
 			avg_pats_per_subsig: 4,
-			basis_pats_in_trace: 50*100,
+			basis_pats_in_trace: 15*100,
 			basis_unique_states: 40*100,
 			basis_acc_states: 10*100,
 		};

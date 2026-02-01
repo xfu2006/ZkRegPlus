@@ -2436,7 +2436,7 @@ pub mod tests_compute_sig_adv{
 			acdfa_state_part_bits: state_bits, 
 			subsigs: 25,
 			avg_pats_per_subsig: 4,
-			basis_pats_in_trace: 27*100, 
+			basis_pats_in_trace: 8*100, 
 			basis_unique_states: 20*100,
 			basis_acc_states: 5*100,
 		};

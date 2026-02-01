@@ -807,13 +807,19 @@ impl <F:PrimeField> StepQueue<F>{
 		//3. consruct container
 		let (n, n_pat,_n_trace) = Self::vec_size(&self.q_type, &self.capacity);
 		if n<vec_encoded.len()+1{
-			let new_val_active_pats = ((vec_encoded.len()+1)/n+1) * 
-				self.capacity.avg_active_pats_per_subsig;
-			let new_val_basis_pats = ((vec_encoded.len()+1)/n+1) * 
-				self.capacity.basis_pats_in_trace;
+			let n = if n==0 {1} else {n};
 			if n_pat==n{
+				println!("DEBUG USE 101: vec_encoded.len: {}, n: {}", 
+					vec_encoded.len(), n);
+				//scale because vec_size() has another level of adjustment
+				//so we scape up correspondingly
+				let new_val_active_pats = (( ((vec_encoded.len()+1) as f32)/(n as f32) * (self.capacity.avg_active_pats_per_subsig as f32)) as usize) + 1;
 				return Err(Error::CapErr(vec![(format!("dis_adv::avg_active_pats_per_subsig"), new_val_active_pats)]));
 			}else{
+				//let new_val_basis_pats = ((vec_encoded.len()+1)/n+1) * 
+				//self.capacity.basis_pats_in_trace;
+				//SAME REASON: scale up due to vec_size() adjustment
+				let new_val_basis_pats= (( ((vec_encoded.len()+1) as f32)/(n as f32) * (self.capacity.basis_pats_in_trace as f32)) as usize) + 1;
 				return Err(Error::CapErr(vec![(format!("dis_adv::basis_pats_in_trace"), new_val_basis_pats)]));
 			}
 		}

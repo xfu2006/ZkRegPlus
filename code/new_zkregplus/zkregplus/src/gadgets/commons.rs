@@ -712,6 +712,17 @@ pub fn var_to_tuple<F:PrimeField>(v: &FpVar<F>)->(F,Variable){
 	res
 }
 
+#[inline(always)]
+pub fn var_to_variable<F:PrimeField>(v: &FpVar<F>)->Variable{
+	let res = match v{
+		Var(v) => v.variable,
+		Constant(_) => panic!("var is contsntat")
+	};
+
+	res
+}
+
+
 /// FpVar to a tuple (can handle consants
 #[inline(always)]
 pub fn var_to_tuple_adv<F:PrimeField>(v: &FpVar<F>, c: F)->(F,Variable){
@@ -1029,36 +1040,49 @@ pub fn verify_inverse_new<F:PrimeField>(cs: ConstraintSystemRef<F>,
 /// assuming v1 all column's cell already in RANGE2.
 /// COST: n
 pub fn verify_inverse_mul_col<F:PrimeField>(
-	_cs: ConstraintSystemRef<F>,
-	_v1: &Vec<&[FpVar<F>]>, 
-	_v2: &[FpVar<F>], 
-	_beta: &FpVar<F>
+	cs: ConstraintSystemRef<F>,
+	v1: &Vec<&[FpVar<F>]>, 
+	v2: &[FpVar<F>], 
+	beta: &FpVar<F>
 )->Result<(), SynthesisError>{
-	/*
+	//1. preprare the factors
 	let b_debug = false;
-
-	let beta_tuple= var_to_tuple(&beta);
+	let num_cols = v1.len();
+	let n = v1[0].len();
+	for c in v1 {assert!(c.len()==n);}
+	let factor = F::from(1u32<<RANGE2_BIT);	
+	let mut coefs = vec![F::one(); num_cols];
+	for i in 1..coefs.len() {coefs[i] = coefs[i-1] * factor;}
+	coefs.reverse();
 	let lb_one = LinearCombination::from((F::one(),Variable::One));
-	for i in 0..elen{
+	let mut lb_v1_template = coefs.iter().map(|coef|{
+		(*coef, Variable::One)
+	}).collect::<Vec<(F, Variable)>>();
+	lb_v1_template.push( var_to_tuple(beta) );
+	let beta_val = beta.value()?;
+
+	//2. enforce the inverse relation
+	for i in 0..n{
+		let mut vec_lb_v1 = lb_v1_template.clone();
+		for j in 0..num_cols {vec_lb_v1[j].1 = var_to_variable(&v1[j][i]) };
+		let lb_v1 = LinearCombination(vec_lb_v1);
 		if b_debug{
-			assert!((v2[i].value()?*(v1[i].value()? + beta.value()?)).is_one());
+			let mut v1_val = F::zero();
+			for j in 0..num_cols{ v1_val += v1[j][i].value()? * coefs[j]; }
+			v1_val += beta_val;
+			assert!(v2[i].value()? * v1_val == F::one());
 		}
 
 		let lb_v2_i = var_to_lb(&v2[i], F::one());
-		let lb_v1_i = LinearCombination::<F>(vec![
-			var_to_tuple(&v1[i]),
-			beta_tuple.clone(),
-		]);
 
 		cs.enforce_constraint(
 			lb_v2_i,
-			lb_v1_i,
+			lb_v1,
 			lb_one.clone(),
 		)?;
 	}
+	if b_debug{ assert!(cs.is_satisfied().unwrap()); }
 	Ok( () )
-	*/
-	todo!()
 }
 
 /// verify the log-up relation. check if all elements of (inverse of) v1 belong
@@ -1224,6 +1248,7 @@ pub fn verify_logup_inverse_old1<F:PrimeField>(cs: ConstraintSystemRef<F>,
 
 /// IDEA: every lblcok of ADD_CHAIN, build a huge LinearCombination 
 /// and sum it up
+/// COST: vlen/ADD_CHAIN_SIZE (64)
 pub fn sum_vec_vars<F:PrimeField>(v: &[FpVar<F>])->FpVar<F>{
 	let cs = v[0].cs();
 	let one_var = FpVar::<F>::new_constant(cs.clone(), F::one()).unwrap(); 
@@ -1654,7 +1679,13 @@ pub fn gen_2d_lkup_prf<F:PrimeField>(
 	assert!(nz_lkup.len()+count0_lkup==lkup.len(), "lkup should have no-duplicates of NON-zero values!");
 
 	//3. compute the m_tbl (offset by 1)
-	let m_tbl = gen_m_table(&qry, &lkup);
+	//modify the m_tbl such that each 0 entry is lkup is mandatoriy
+	//assign a value "1" (which will be compensated by the zero_diff
+	//calcuation later). This avoids to assign "0" to 0 entries i lkup
+	//if there are multiple of them.
+	//then perform "-1" to each m_tbl entry.
+	let mut m_tbl = gen_m_table(&qry, &lkup);
+	for i in 0..lkup.len(){if lkup[i].is_zero() {m_tbl[i] = F::one();}}
 	let mz = m_tbl.par_iter().find_any(|x| x.is_zero());
 	assert!(mz.is_none(), "m_tbl has zero entries");
 	let m_tbl_1 = m_tbl.par_iter().map(|&x| x - F::one())
@@ -1663,7 +1694,7 @@ pub fn gen_2d_lkup_prf<F:PrimeField>(
 	let sid_m_tbl_1 = vec![f_rg; m_tbl_1.len()];
 	res.borrow_mut().add_col(Col::new(m_tbl_1, "m_tbl_1", IDX_DATA));
 	res.borrow_mut().add_col(
-		Col::new_const(sid_m_tbl_1, "sid_m_tbl_1", IDX_DATA));
+		Col::new_const(sid_m_tbl_1, "sid_m_tbl_1", IDX_SI_DATA));
 
 	//4. compute the difference in 0 entries
 	let f_zero_diff = F::from(count0_qry as u32) - F::from(count0_lkup as u32);
@@ -1675,12 +1706,48 @@ pub fn gen_2d_lkup_prf<F:PrimeField>(
 	res
 }
 
+// this is essentially the gen_m_tbl
+// the only difference is that we handle multiple columns
+// NOTE that unlike the gen_2d_lkup we have NO restriction
+// on that no non-zero duplicate elemnets in lookup. This is
+// actually pretty standard 1-way lookup (Logup relation [Hab'22])
+pub fn gen_1d_lkup_prf<F:PrimeField>(
+	qry_cols: Vec<&[F]>, 
+	lkup_cols: Vec<&[F]>, 
+	name: &str)->Rc<RefCell<Container<F>>>{
+	//1. compute the combined cell values
+	let res = Container::<F>::new(name);
+	assert!(qry_cols.len()==lkup_cols.len());
+	let n1 = qry_cols[0].len();
+	let n2 = lkup_cols[0].len();
+	for c in &qry_cols {assert!(c.len()==n1);}
+	for c in &lkup_cols {assert!(c.len()==n2);}
+	let ids = (0..qry_cols.len()).collect::<Vec<usize>>();
+	let qry = encode_cols_better(qry_cols.clone(), ids.clone()); 
+	let lkup = encode_cols_better(lkup_cols.clone(), ids); 
+	assert!(qry.len()==n1 && lkup.len()==n2);
+
+	//2. generate the proof
+	let f_rg= F::from(RANGE2);
+	let m_tbl = gen_m_table(&qry, &lkup);
+	let sid_m_tbl_1 = vec![f_rg; m_tbl.len()];
+	res.borrow_mut().add_col(Col::new(m_tbl, "m_tbl", IDX_DATA));
+	res.borrow_mut().add_col(Col::new_const(sid_m_tbl_1, "sid_m_tbl", 
+		IDX_SI_DATA));
+
+	res
+}
+
 /// verify the 2-way lookup between qry_cols and lkup_cols
 /// where we assume all values in RANGE2, and no DUPLICATED non-zero
 /// combined alues in lkup_cols. 
 /// Idea: we just run one lookup between qry_cols and lkup_cols
 /// and reason about that all entries in lkup table are COVERED
-/// (with positive m_table entries). 
+/// (basically proving that all m_table entries are positive, with
+/// the only exception to handle 0-entries). 
+///
+/// COST: let n_q and n_l be the length of qry and lkup table
+/// nq + 2*n_l + 6
 pub fn verify_2d_lkup_prf<F:PrimeField>(
 	r: FpVar<F>,
 	qry_cols: &Vec<&[FpVar<F>]>, 
@@ -1688,12 +1755,13 @@ pub fn verify_2d_lkup_prf<F:PrimeField>(
 	prf: &Rc<RefCell<Container<FpVar<F>>>>	
 )-> Result<(), SynthesisError>{
 	//1. retrieve data
-	let b_perf = true;
-	let b_debug = true;
+	let b_perf = false;
+	let b_debug = false;
 	let cs = r.cs();
 	let logl = LOG2;
 	let mut gt = Timer::new();
 	let mut nc = cs.num_constraints();
+	let nc0 = nc;
 	let m_tbl_1 = prf.borrow().get_container("m_tbl_1").unwrap()
 		.borrow().to_vec();
 	let zero_diff = prf.borrow().get_container("zero_diff").unwrap()
@@ -1718,40 +1786,181 @@ pub fn verify_2d_lkup_prf<F:PrimeField>(
 	let ids = (0..qry_cols.len()).collect::<Vec<usize>>();
 	let qry_val = encode_cols_better(qry_cols_vals, ids.clone()); 
 	let lkup_val = encode_cols_better(lkup_cols_vals, ids); 
-	let inv_qry_val = gen_vec_inverse(&qry_val);
-	let inv_lkup_val = gen_vec_inverse(&lkup_val);
+	let inv_qry_val = gen_vec_inverse(&qry_val.par_iter().map(|x|
+		*x + r_val).collect::<Vec<F>>());
+	let inv_lkup_val = gen_vec_inverse(&lkup_val.par_iter().map(|x|
+		*x + r_val).collect::<Vec<F>>());
 	let inv_qry = inv_qry_val.iter().map(|&v| new_var(&cs, v))
 		.collect::<Vec<FpVar<F>>>();
 	let inv_lkup = inv_lkup_val.iter().map(|&v| new_var(&cs, v))
 		.collect::<Vec<FpVar<F>>>();
 	if b_perf {
-		log_perf(logl, &format!("verif_2dlkup step0 build witness. n_q: {}, n_l: {}, cs: {}", n_q, n_l, cs.num_constraints()-nc), &mut gt);
+		log_perf(logl, &format!("verif_2dlkup step 0. build witness. n_q: {}, n_l: {}, cs: {}", n_q, n_l, cs.num_constraints()-nc), &mut gt);
 		nc = cs.num_constraints();
 	}
 
 	//2. verify the inverse relations are fine
+	//COST: n_q + n_l 
 	verify_inverse_mul_col(cs.clone(),&qry_cols, &inv_qry, &r)?;
-
-
-/*
-	let qry_val = qry.iter().map(|x| x.value().unwrap()).collect::<Vec<F>>();
-	let lkup_val = lkup.iter().map(|x| x.value().unwrap()).collect::<Vec<F>>();
-	let qry_inv_val = qry_val.into_par_iter().map(|x| 
-		(r_val+x).inverse().expect("inv err")
-	).collect::<Vec<F>>();
-	*/
-
-	//1. do a customized assert_logup with the corresponding
-	//m_tbl
+	verify_inverse_mul_col(cs.clone(),&lkup_cols, &inv_lkup, &r)?;
+	if b_debug{ assert!(cs.is_satisfied().unwrap()); }
 	if b_perf {
-		log_perf(logl, &format!("verif_2dlkup step1. n_q: {}, n_l: {}, cs: {}",
-			n_q, n_l, cs.num_constraints()-nc), &mut gt);
+		log_perf(logl, &format!("verif_2dlkup step 1. build witness. n_q: {}, n_l: {}, cs: {}", n_q, n_l, cs.num_constraints()-nc), &mut gt);
 		nc = cs.num_constraints();
+	}
+
+
+	//3. do a customized assert_logup with the corresponding
+	//m_tbl_1 (here, we import and slightly modify the logic of
+	//verify_logup_inverse_new. Slight differences are:
+	//(1) m_tbl_1 needs to plus one for each item
+	//(2) needs to add zero_diff entry
+	//multiple columns involved and m_tbl_1 is m_tbl shifted by one
+	//we need to lastly handle the zero_diff entries.
+	//Given ADD_CHAIN_SIZE is 64.
+	//COST: n_l*1.02 + nq*0.02 + 4
+	//3.1 sum up the Logup equation on the left (the query table)
+	let zero_inv_val = r_val.inverse().unwrap();
+	let zero_inv = new_var(&cs, zero_inv_val);
+	let mut sum_left = sum_vec_vars(&inv_qry);
+	let one_var = FpVar::<F>::new_constant(cs.clone(), F::one())?; 
+	check_eq(&(&zero_inv * &r), &one_var, "fails zero_inv check")?;
+	let adj = &zero_inv * &zero_diff;
+	sum_left -= adj;
+	if b_perf {
+		log_perf(logl, &format!("verif_2dlkup step 3.1 logup_check. n_q: {}, n_l: {}, cs: {}", n_q, n_l, cs.num_constraints()-nc), &mut gt);
+		nc = cs.num_constraints();
+	}
+
+	//3.2 build up the values first (to speed up mtbl + vec[1]
+	assert!(inv_lkup.len()==m_tbl_1.len());
+	let m_tbl_1_val = m_tbl_1.iter().map(|x| x.value().unwrap())
+		.collect::<Vec<F>>();
+	assert!(m_tbl_1_val.len()==inv_lkup_val.len());
+	let prod_val = m_tbl_1_val.par_iter().zip(inv_lkup_val.par_iter())
+		.map(|(&x,&y)| (x + F::one()) * y).collect::<Vec<F>>();
+	let prods = prod_val.into_iter().map(|x| new_var(&cs, x))
+		.collect::<Vec<FpVar<F>>>();
+	for i in 0..m_tbl_1.len(){
+		let lb_m_tbl = LinearCombination(vec![ //m_tbl_1[i] + 1
+			var_to_tuple(&m_tbl_1[i]),
+			(F::one(), Variable::One),
+		]);
+		let lb_inv = var_to_lb(&inv_lkup[i], F::one());
+		let lb_res = var_to_lb(&prods[i], F::one());
+		cs.enforce_constraint( lb_m_tbl, lb_inv, lb_res)?;
+	}
+	let sum_right = sum_vec_vars(&prods);
+	check_eq(&sum_left, &sum_right, "logup check fails")?;
+	if b_debug{ assert!(cs.is_satisfied().unwrap()); }
+	if b_perf {
+		log_perf(logl, &format!("verif_2dlkup step 3.2 logup_check. n_q: {}, n_l: {}, cs: {}", n_q, n_l, cs.num_constraints()-nc), &mut gt);
+	}
+	if b_perf {
+		log_perf(logl, &format!("verif_2dlkup TOTAL . n_q: {}, n_l: {}, cs: {}",
+			n_q, n_l, cs.num_constraints()-nc0), &mut gt);
 	}
 
 	Ok( () )
 }
-	
+
+// verify the standard [Hab'22] Logup relation
+// Here we assume all cell values are in RANGE2
+// COST: nq + 2*lkup 
+// (there is a small factor of
+//  extra 0.02*nq + 0.02*lkup because ADDCHAIN_SIZE is 64, it incurs
+//  0.02 factor in long chain of add constraints).
+pub fn verify_1d_lkup_prf<F:PrimeField>(
+	r: FpVar<F>,
+	qry_cols: &Vec<&[FpVar<F>]>, 
+	lkup_cols: &Vec<&[FpVar<F>]>, 
+	prf: &Rc<RefCell<Container<FpVar<F>>>>	
+)-> Result<(), SynthesisError>{
+	//1. retrieve data
+	let b_perf = false;
+	let b_debug = false;
+	let cs = r.cs();
+	let logl = LOG2;
+	let mut gt = Timer::new();
+	let mut nc = cs.num_constraints();
+	let nc0 = nc;
+	let m_tbl = prf.borrow().get_container("m_tbl").unwrap()
+		.borrow().to_vec();
+	let r_val = r.value().expect("error get val of r");
+	let n_cols = qry_cols.len();
+	assert!(lkup_cols.len() == n_cols);
+	let n_q = qry_cols[0].len();
+	let n_l = lkup_cols[0].len();
+	for c in qry_cols{assert!(c.len()==n_q);}
+	for c in lkup_cols{assert!(c.len()==n_l);}
+	let qry_cols_vals = qry_cols.iter().map(|c|
+		c.iter().map(|x| x.value().unwrap()).collect::<Vec<F>>()
+	).collect::<Vec<Vec<F>>>();
+	let lkup_cols_vals = lkup_cols.iter().map(|c|
+		c.iter().map(|x| x.value().unwrap()).collect::<Vec<F>>()
+	).collect::<Vec<Vec<F>>>();
+	let qry_cols_vals = qry_cols_vals.iter().map(|c| &c[..])
+		.collect::<Vec<&[F]>>();
+	let lkup_cols_vals = lkup_cols_vals.iter().map(|c| &c[..])
+		.collect::<Vec<&[F]>>();
+	let ids = (0..qry_cols.len()).collect::<Vec<usize>>();
+	let qry_val = encode_cols_better(qry_cols_vals, ids.clone()); 
+	let lkup_val = encode_cols_better(lkup_cols_vals, ids); 
+	let inv_qry_val = gen_vec_inverse(&qry_val.par_iter().map(|x|
+		*x + r_val).collect::<Vec<F>>());
+	let inv_lkup_val = gen_vec_inverse(&lkup_val.par_iter().map(|x|
+		*x + r_val).collect::<Vec<F>>());
+	let inv_qry = inv_qry_val.iter().map(|&v| new_var(&cs, v))
+		.collect::<Vec<FpVar<F>>>();
+	let inv_lkup = inv_lkup_val.iter().map(|&v| new_var(&cs, v))
+		.collect::<Vec<FpVar<F>>>();
+	if b_perf {
+		log_perf(logl, &format!("verif_1dlkup step 0. build witness. n_q: {}, n_l: {}, cs: {}", n_q, n_l, cs.num_constraints()-nc), &mut gt);
+		nc = cs.num_constraints();
+	}
+
+	//2. verify the inverse relations are fine
+	//COST: n_q + n_l 
+	verify_inverse_mul_col(cs.clone(),&qry_cols, &inv_qry, &r)?;
+	verify_inverse_mul_col(cs.clone(),&lkup_cols, &inv_lkup, &r)?;
+	if b_debug{ assert!(cs.is_satisfied().unwrap()); }
+	if b_perf {
+		log_perf(logl, &format!("verif_1dlkup step 1. build witness. n_q: {}, n_l: {}, cs: {}", n_q, n_l, cs.num_constraints()-nc), &mut gt);
+		nc = cs.num_constraints();
+	}
+
+	//3. do a customized assert_logup for multi-columns
+	//COST: n_l*1.02 + nq*0.02 + 4
+	//3.1  the sum of inverse of query table
+	let sum_left = sum_vec_vars(&inv_qry);
+
+	//3.2 the sum of inverse of lookup table
+	assert!(inv_lkup.len()==m_tbl.len());
+	let m_tbl_val = m_tbl.iter().map(|x| x.value().unwrap())
+		.collect::<Vec<F>>();
+	let prod_val = m_tbl_val.par_iter().zip(inv_lkup_val.par_iter())
+		.map(|(&x,&y)| x * y).collect::<Vec<F>>();
+	let prods = prod_val.into_iter().map(|x| new_var(&cs, x))
+		.collect::<Vec<FpVar<F>>>();
+	for i in 0..m_tbl.len(){
+		let lb_m_tbl = var_to_lb(&m_tbl[i], F::one());
+		let lb_inv = var_to_lb(&inv_lkup[i], F::one());
+		let lb_res = var_to_lb(&prods[i], F::one());
+		cs.enforce_constraint( lb_m_tbl, lb_inv, lb_res)?;
+	}
+	let sum_right = sum_vec_vars(&prods);
+	check_eq(&sum_left, &sum_right, "logup check fails")?;
+	if b_debug{ assert!(cs.is_satisfied().unwrap()); }
+	if b_perf {
+		log_perf(logl, &format!("verif_1dlkup step 3.2 logup_check. n_q: {}, n_l: {}, cs: {}", n_q, n_l, cs.num_constraints()-nc), &mut gt);
+	}
+	if b_perf {
+		log_perf(logl, &format!("verif_1dlkup TOTAL . n_q: {}, n_l: {}, cs: {}",
+			n_q, n_l, cs.num_constraints()-nc0), &mut gt);
+	}
+
+	Ok( () )
+}
 
 /// generate the correpsonding m_table, its size will be
 /// equal to lkup for CONDITIONAL LOOKUP where
