@@ -24711,3 +24711,11 @@ Goal 2. adjustment of resources for full data1
 		and the subsig id looks large 8 million (maybe normal)
 	[c] test small_data2
 
+Goal 3. deploy system on gogle cloud
+	[a] change config to 256GB
+	[b] *** started 09:44am (verified it's spot mode)
+	[c] run small_data2 first -> sightly slower than my laptop (180 sec
+		vs 166 sec) 18GB
+	[d] now run full_data2 (hard file) with high acc state on server
+
+
