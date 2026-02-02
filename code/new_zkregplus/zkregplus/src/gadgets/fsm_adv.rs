@@ -11,7 +11,7 @@
 
 //! This module generates the (pat-loc) for a nibble sequence.
 use utils::{logger::{log_perf, LOG1,LOG2}, 
-	timer::Timer as GTimer};
+	timer::Timer as GTimer, consts::ADD_CHAIN_SIZE};
 use rayon::iter::{ParallelIterator,IntoParallelRefIterator,
 	IndexedParallelIterator, IntoParallelIterator};
 use std::{rc::{Rc},cell::{RefCell}, collections::{HashSet,HashMap}};
@@ -1619,6 +1619,9 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 				lb_one.clone()
 			)?;
 			rhs_sum = &rhs_sum + &inv_var * &vec_not_dummy[i];
+			if i%ADD_CHAIN_SIZE==0{
+				rhs_sum = &rhs_sum * &one_wit_var; //to break long chain
+			}
 		}
 		check_eq(&lhs_sum, &rhs_sum, "logup check fails")?;
 		if b_perf{

@@ -24689,3 +24689,25 @@ Goal 3. put the tbl_to_sorted_set and see if it works
 Goal 4. debug small data 
 	[a] wy tbl_left_join_wide fails?
 	[b] hashmap_2col error -> passed
+	[c] regression small data2->18GB now
+	[d] regression small data3
+		-> skig kill
+
+Monday 02/02/2026
+Goal 1. debug the stack proble
+	[a] set up gdb script to debug stack overflow
+	[b] gdb ../../target/release/deps/zkreg_main_xxx
+        run --test zkp_driver::tests_zkp_driver::test_zkreg_main  --nocapture 
+	[c] stack overflow is caused by computing constraint_assigned value
+		there are over 6000 recursive calls
+		call trace is
+			FsmAdv validate_fsm_acc_container check_eq
+	[d] check out which one it is -> it hs check_eq lhs_sum
+	[e] check again -> works
+
+Goal 2. adjustment of resources for full data1
+	[a] fails the compute_sig_adv
+	[b] recompute the db ->  still fails compute_sig check
+		and the subsig id looks large 8 million (maybe normal)
+	[c] test small_data2
+

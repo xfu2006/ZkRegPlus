@@ -751,17 +751,17 @@ pub mod tests_zkp_driver{
 		let b_write_cache = ! b_read_cache;
 		let set1 = "data/debug/full_data_set/config/"; //for dfa 
 		//let max_word= 512; 
-		let max_word= 512 * 8; 
+		let max_word= 512 * 4; 
 		let sigs = 320;
 		let subsigs = 500; //220 for prev db
 		let avg_pats_per_subsig = 8; //old value 8
 		let avg_active_pats_per_subsig = 3;
-		let basis_pats_in_trace = 36; //old value 100 cur value 1/1000.
 		let perc_comp_subsigs = 20;
 		let num_category = 1;
 		let num_circs_per_category= 1;
-		let basis_unique_states = 1900; //19 cpercent
+		let basis_unique_states = 250; //last known good vlaue: 1900
 		let basis_acc_states = 900; //9 cpercent
+		let basis_pats_in_trace = 1000; //10 percent
 		//let avg_subsig_per_sig = 3;
 
 		let init_cp_cap= CpCapacity{
@@ -936,9 +936,9 @@ pub mod tests_zkp_driver{
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
-		small_data::<Fr>(b_check_lkup); //small data
-		//small_data2::<Fr>(b_check_lkup);  //10k data 
-		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data
+		//small_data::<Fr>(b_check_lkup); //small data
+		small_data2::<Fr>(b_check_lkup);  //10k data 
+		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//full_data1::<Fr>(b_check_lkup);
 		//full_data2::<Fr>(b_check_lkup); //full data high acc state 
 		//full_data3::<Fr>(b_check_lkup); //full data large file

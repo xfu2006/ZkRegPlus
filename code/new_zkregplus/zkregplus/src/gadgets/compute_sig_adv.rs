@@ -1119,6 +1119,12 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 			map(|(x,y)| (*x,*y)).collect::<HashMap<F,F>>();
 		let f_false = F::from(TriVal::False as u8);
 		map.insert(zero, f_false); //for dummy entry
+		//REMOVE LATER -----------
+		println!("DEBUG USE 6101: in compute_subsig====");
+		for (subsig, res) in &map{
+			println!(" -- subsig: {}, res: {}", subsig, res);
+		}
+		//REMOVE LATER ----------- ABOVE
 		let mut v_computed_subsig = vec![zero; n];
 		for i in 0..n{
 			let subsig_id = F::from(HexACDFA::gen_subsig_id_worker(
@@ -1127,7 +1133,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 					) as u64);
 			let res = map.get(&subsig_id)
 				.expect(&format!("cannot find subsig_id: {}", &subsig_id));
-			assert!(*res == f_false);
+			assert!(*res == f_false, "ERROR: subsig_id: {}, res: {} is not false", subsig_id, res);
 			v_computed_subsig[i] = subsig_id;
 		}
 		let src = encode_cols_better(
