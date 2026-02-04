@@ -295,6 +295,16 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		subsig_store_info: &SubsigStepStore,
 	)->Result<(Rc<RefCell<Container<F>>>,Vec<F>), Error>{
 		//0. init data
+		let b_debug = true;
+		if b_debug{
+			println!("DEBUG USE 6701 -- list of inp_subsigs, b_igc: {}", b_igc);
+			for i in 0..inp_subsigs.len(){
+				if !inp_subsigs[i].is_zero(){
+					println!(" -- i: {}, subsig: {}", i, inp_subsigs[i]);
+				}
+			}
+		
+		}
 		let (zero,one) = (F::zero(), F::one());
 		let tname = if b_igc {"eval_res_combo_igc"} 
 			else {"eval_res_combo_cs"};
@@ -374,6 +384,13 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 				assert!(max_step>=vec_last_step[i]);
 				let b_last_step = max_step==vec_last_step[i];
 				vec_res[i] = if b_last_step {v_maybe} else {v_false};
+				if b_debug{
+					if vec_res[i]!=v_false{
+						println!("DEBUG USE 6702: res for subsig: {} is NOT false. max_step: {}, last_step[i]: {}", inp_subsigs[i], max_step, vec_last_step[i]);
+					
+					
+					}
+				}
 				let tag = if b_last_step {ID_ENCODED_LAST_STEP} else
 					{ID_ENCODED_NORMAL_STEP};
 				let sid = SubsigStepStore::gen_step_tbl_id(
@@ -473,6 +490,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		subsig_store_extra_info_igc: &SubsigInfoStore,
 	)->Result<(Rc<RefCell<Container<F>>>,Vec<F>),Error>{
 		//0. retrieve data 
+		let b_debug = true;
 		let n1 = inp_subsigs.len(); //capacity num_subsigs
 		assert!(n1==capacity.subsigs);
 		let (zero,one) = (F::zero(), F::one());
@@ -577,6 +595,11 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 			vec_type[i] = F::from(subsig_type as u8);
 			vec_sid_type[i] = SubsigInfoStore::gen_info_tbl_id(acdfa_id,
 				f_subsig, ID_SUBSIG_TYPE);
+			if b_debug{
+				if !subsig.is_zero(){
+					println!("DEBUG USE 6703: i: {}, b_igc: {}, subsig: {}, raw_res: {:?}, count_res: {:?}", i, v_igc[i], subsig, raw_res, count_res);
+				}
+			}
 		}
 
 		//3. prepare the result for the subsig_count_constraint
@@ -714,6 +737,14 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 				} else {
 					TriVal::Maybe //not for sure
 				};
+				if b_debug{
+					if j==vec_comps.len()-1
+					&& !subsig.is_zero()
+					&& res!=TriVal::False
+					{
+						println!("*** DEBUG USE 6704: subsig: {} comp: {}, res: {:?}, cnt_true: {}, cnt_maybe: {}, min_req: {}", subsig, vec_comps.len(), res, cnt_true, cnt_maybe, min_req);
+					}
+				}
 				let res = if j<vec_comps.len()-1{F::from(res as u8)} else {
 					//copy from last
 					scc_prf_row_res[scc_prf_row_res.len()-1]
@@ -991,6 +1022,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 					//extracting the dnf to the concat of inp_subsigs
 		sig_to_id: &HashMap<String,usize>,
 	)->Result<Rc<RefCell<Container<F>>>,Error>{
+		let b_debug = true;
 		let zero = F::zero();
 		let frg = F::from(RANGE2);
 		let res = Container::<F>::new("sig_res_combo");
@@ -1052,6 +1084,28 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 				let dnf_id = info.min_dnf_id;
 				let vssid = sig_obj.eval_dnf.vec_disjunc[dnf_id].iter().map(
 					|x| F::from((*x+1) as u64)).collect::<Vec<F>>();
+				if b_debug{
+					let vec_bad_subsig_id = vec![
+						F::from(36204545 as u64),
+						F::from(35920897 as u64),
+						F::from(36031496 as u64),
+						F::from(35360770 as u64),
+					];
+					for ssid in &vssid{
+						let real_subsig_id = field_to_usize(ssid) - 1;
+						let my_subsig_id = 
+							F::from(
+								HexACDFA::gen_subsig_id_worker(
+								field_to_usize(&sig_id), 
+								real_subsig_id+1) as u64);
+						let b_match = vec_bad_subsig_id.iter().any(|x|
+							*x == my_subsig_id);
+						if b_match{
+							let subsig=&sig_obj.vec_subsig_obj[real_subsig_id];
+							println!("*** DEBUG USE 6708 found bad subsig_id: {}, in sig: {}, real_id: {}, details: {}", my_subsig_id, sig_obj.name, real_subsig_id, subsig.value);
+						}
+					}
+				}
 				(sig_id, vssid)
 			};
 			let eval_dnf_id = F::from(info.min_dnf_id as u64);
@@ -1119,12 +1173,14 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 			map(|(x,y)| (*x,*y)).collect::<HashMap<F,F>>();
 		let f_false = F::from(TriVal::False as u8);
 		map.insert(zero, f_false); //for dummy entry
-		//REMOVE LATER -----------
-		println!("DEBUG USE 6101: in compute_subsig====");
-		for (subsig, res) in &map{
-			println!(" -- subsig: {}, res: {}", subsig, res);
+		if b_debug{
+			println!("DEBUG USE 6105: in compute_subsig res====");
+			for (subsig, res) in &map{
+				if !subsig.is_zero(){
+					println!(" -- subsig: {}, res: {}", subsig, res);
+				}
+			}
 		}
-		//REMOVE LATER ----------- ABOVE
 		let mut v_computed_subsig = vec![zero; n];
 		for i in 0..n{
 			let subsig_id = F::from(HexACDFA::gen_subsig_id_worker(
@@ -1133,6 +1189,9 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 					) as u64);
 			let res = map.get(&subsig_id)
 				.expect(&format!("cannot find subsig_id: {}", &subsig_id));
+			if b_debug && !subsig_id.is_zero(){
+				println!("DEBUG USE 6706: WILL REPORT ERROR on subsig: {}, res: {}", subsig_id, res);
+			}
 			assert!(*res == f_false, "ERROR: subsig_id: {}, res: {} is not false", subsig_id, res);
 			v_computed_subsig[i] = subsig_id;
 		}

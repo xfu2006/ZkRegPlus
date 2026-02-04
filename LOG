@@ -24716,6 +24716,30 @@ Goal 3. deploy system on gogle cloud
 	[b] *** started 09:44am (verified it's spot mode)
 	[c] run small_data2 first -> sightly slower than my laptop (180 sec
 		vs 166 sec) 18GB
-	[d] now run full_data2 (hard file) with high acc state on server
+	[e] install the sample sigs and files
+		use DOWNLOAD.py and gen_data.py to construct flies
+	[f] now run full_data2 (hard file) with high acc state on server
+	[g] full_data2 also fails on subsig assertion
+		*res == f_false
+		but only two instances, on the server, temporarily
+		disable them and see what's the other result
+	[h] problem of subsigs:
+		- subsig: 36204545, res: 3
+		-- subsig: 35920897, res: 3
+		-- subsig: 36031496, res: 3
+		-- subsig: 35360770, res: 3
 
+Goal 4. think about how to debug compute_sig 
+	[a] ERROR: fails *res == f_false
+	[b] read code gen_eval_subsig_by_sq_combo
 
+Tuesday 02/02/2026
+LOC (gadgets): 20167
+Goal 1. add debug code to compute_sig_adv.rs
+	[a] add DEBUG USE 610x
+	[b] check what is the real v_real_subsigs
+	[c] needs to refine 6108 msg.
+Goal 2. need to understand the compute_subsig test case
+
+Wed 02/03/2026
+LOC (gadgets): 20167 -> 
