@@ -24742,4 +24742,41 @@ Goal 1. add debug code to compute_sig_adv.rs
 Goal 2. need to understand the compute_subsig test case
 
 Wed 02/03/2026
-LOC (gadgets): 20167 -> 
+LOC (gadgets): 20167 -> 20235 (+70)
+Goal 1. understand the unit test case -> DONE
+Goal 2. improve prints
+Goal 3. run over server -> takes 100 sec
+Goal 4. study error: ERROR: subsig_id: 35360770, res: 3 is not false
+	-> DEBUG USE 6706: WILL REPORT ERROR on subsig: 35360770, res: 3
+	-> 6105: 35360770
+	-> *** DEBUG USE 6708 found bad subsig_id: 35360770, in sig: Win.Downloader.Upatre-5744092-0, real_id: 1, details: .*5265676973746572436c617373.*
+	-> it's a regular one keyword subsig
+Goal 5. create small_debug
+
+Thursday 02/04/2026
+LOC (gadgets) 20235 -> 20235
+Goal 1. dump info
+	[a] dump the information of discharge_info, the question is
+	how the preprocessing passed it?
+	[b] impl -> 6700.x 
+	[c] observe data
+	[d] display the failed and discharged sig of everyone
+		6701.
+
+Friday 02/04/2026
+LOC (gadgets) 20235 -> 
+Goal 1. read load_files
+	[a] it is defined in zk_driver
+	[b] it is using quick_discharge_file_adv
+	[c] quick_discharge_file_adv in data_processor:clamav
+	[d] load_files just return them
+Goal 2. read paper_data if quick_discharge_file_adv is used
+	and how it's generated
+	[a] it calls report_all_discharge_approach_stats
+	-> clals discharge_prover::quick_discharge_file
+		-> it calls clamav::quick_discharge_file_by_crit_bag_pm
+			but returns FailDischargeRecord
+		-> these two functions are very similar, but apparently
+		there are some inconsistencies out there.
+	[b] 
+-- TODO -- [e] need to check load_files()

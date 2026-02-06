@@ -674,6 +674,70 @@ pub mod tests_zkp_driver{
 		);
 	}
 
+	/// This function is used for debugging
+	#[allow(dead_code)]
+	fn small_data_debug<F:PrimeField>(b_check_lkup: bool){
+		assert!(RANGE2_BIT==24, "set RANGE2_BIT to 24");
+		let b_read_cache = false;
+		let b_write_cache = !b_read_cache;
+		let set1 = "data/debug/small_data_set2/config_dfa"; //for dfa 
+		let max_word= 512*4; 
+		let sigs = 2; 
+		let subsigs = 4; 
+		let avg_pats_per_subsig = 4; 
+		let avg_active_pats_per_subsig = 0; //good value 0, actually does
+			//not matter?
+		let basis_pats_in_trace = 6; 
+		let perc_comp_subsigs = 26; 
+		let basis_unique_states = 5; 
+		let basis_acc_states = 2; 
+
+		let num_category = 1;
+		let num_circs_per_category= 1;
+
+		let init_cp_cap= CpCapacity{
+			max_word_len: max_word, 
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+			//avg_subsig_per_sig,
+		};
+		let init_sed_cap= SedCapacity::new(
+			max_word, RANGE2_BIT, subsigs, 
+			avg_pats_per_subsig, 
+			avg_active_pats_per_subsig, 
+			basis_pats_in_trace, 
+			sigs, 
+			perc_comp_subsigs,
+			basis_unique_states,
+			basis_acc_states,
+		);
+		let dfa_sigs = 2;
+		let dfa_subsigs= 3;
+		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
+
+
+		zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+			&format!("{}/sigs_debug.dat",set1), //src sig
+			&format!("{}/binexec_debug.dat",set1), //list of files to discharge
+			"data/small_data_set/reports/report.dat", //report
+			b_read_cache,
+			b_write_cache,
+			"small_20", //cache name
+			&format!("{}/dfa.dat", set1), //signs that need dfa
+			&format!("{}/ised.dat", set1), //signs that need ised 
+			&format!("{}/ised_igc.dat",set1), //sigs that need ised igc
+			max_word, //this is the chunk len
+			&init_cp_cap,
+			&init_sed_cap,
+			&init_dfa_cap,
+			num_category,
+			num_circs_per_category,
+			b_check_lkup
+		);
+	}
+
+
 	/// the sigs are the same as small data2
 	/// has 1 long words (1k-packed nibbles - around 31kb)
 	/// has 2 second long word (eady and almost no match)
@@ -937,7 +1001,8 @@ pub mod tests_zkp_driver{
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
 		//small_data::<Fr>(b_check_lkup); //small data
-		small_data2::<Fr>(b_check_lkup);  //10k data 
+		//small_data2::<Fr>(b_check_lkup);  //10k data 
+		small_data_debug::<Fr>(b_check_lkup);  //for debug
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//full_data1::<Fr>(b_check_lkup);
 		//full_data2::<Fr>(b_check_lkup); //full data high acc state 

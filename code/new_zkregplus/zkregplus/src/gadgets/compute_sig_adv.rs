@@ -207,6 +207,15 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		sig_to_id: &HashMap<String,usize>,
 	) ->Result<Self, Error>{
 		let stmt_container = Container::<F>::new("compute_sig_adv_stmt");
+		let b_debug = true;
+		if b_debug{
+			println!("DEBUG USE 6700.0: inp_sigs.len: {}, discharge_info: {}, v_sig_obj.len: {}", inp_sigs.len(), discharge_infos.len(), v_sig_obj.len());
+			for i in 0..inp_sigs.len(){
+				println!("DEBUG USE 6700: discharge_info for sig: {}", inp_sigs[i]);
+				println!("DEBUG USE 6700: discharge_info: {:?}", discharge_infos[i]);
+
+			}
+		}
 
 		//1. evaluate "atomic" subsigs based on sq_res 
 		assert!(inp_subsigs_cs.len()==inp_subsigs_igc.len());

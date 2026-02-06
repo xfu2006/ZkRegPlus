@@ -362,7 +362,7 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 			vec_st_inp.push(vecs[3].clone());
 			vec_st_oup.push(vecs[4].clone());
 			vec_st_data.push(vecs[5].clone());
-
+			println!("DEBUG USE 7109: comp: id: {}, failed_sigs: {:?}, discharged_sigs: {:?}", i, &vecs[6], &vecs[7]);
 			vec_failed_sigs.push(vecs[6].clone()); //no sid
 			vec_discharged_sigs.push(vecs[7].clone()); //no sid
 			stmt_map_id += comp.borrow().num_gadgets();
@@ -416,6 +416,7 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 		assert!(failed_sigs.contains(&F::zero()),
 			"Increase failed sig buf. needs at least one 0 dummy entry");
 
+		println!("DEBUG USE 6809: failed_sigs: {:#?}, discharged_sigs: {:#?}", failed_sigs, discharged_sigs);
 		let mtbl_sigs = gen_m_table(&failed_sigs, &discharged_sigs);
 		let stmt = StatementInst{
 			pc_i: ea.pc_i,
