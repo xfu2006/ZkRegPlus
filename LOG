@@ -24764,7 +24764,7 @@ Goal 1. dump info
 		6701.
 
 Friday 02/04/2026
-LOC (gadgets) 20235 -> 
+LOC (gadgets) 20235 -> 20244 (+10) 
 Goal 1. read load_files
 	[a] it is defined in zk_driver
 	[b] it is using quick_discharge_file_adv
@@ -24778,5 +24778,25 @@ Goal 2. read paper_data if quick_discharge_file_adv is used
 			but returns FailDischargeRecord
 		-> these two functions are very similar, but apparently
 		there are some inconsistencies out there.
-	[b] 
--- TODO -- [e] need to check load_files()
+Goal 3. make quick_discharge_file_adv refactored
+	[a] make quick_discharge_file_adv deprecated -> DONE
+	[b] add WordInfo to return of quick_discharge_file_crit_bag_pm
+	[c] make zkreg framework work
+Goal 4. improve integrity
+	[a] FailDischargeInfo function is_success()
+	[b] WordInfo is_success()
+Goal 5. go over the quick_discharge code again
+	[a] set_sigs_crit: those who fails critical pattern
+	[b] set_sigs_pm: those who failed pm approach
+	[c] set_sigs_dfa: those who failed dfa approach 
+	[d] check FailDischargeRecord assign -> ok
+	[e] call the check zk-driver
+	[f] for the small example, it does show that
+		it fails discharging, but why does it pass
+		for the entire db generation test program?
+		-> it actually first fails the #4 small sig igc_cs
+		-> now just leave the real sig: Win.Downloader.Upatre-5744092-0
+			with one more sig to cover the alphabet
+	==> strangely it passed on the local computer!
+== TODO === check if the file really has a match over Wn.Downloader.Updatre
+	pattern subsig 2.

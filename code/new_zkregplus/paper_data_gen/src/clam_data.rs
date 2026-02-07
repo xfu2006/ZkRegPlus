@@ -285,8 +285,16 @@ pub fn print_discharge_stats(vdata: &Vec<FailDischargeRecord>,
 	let w_max: f64 = pm_witness_ratio.clone().into_iter().max_by(|a,b| a.total_cmp(b)).unwrap();
 	let w_avg: f64 = pm_witness_ratio.iter().sum::<f64>()/(pm_proj_ratios.len() as f64);
 	flog(LOG1, &format!("pm_reg (sde) total witness_len/file_size: (avg: max): ({}%,{}%). This indicates total cost of discharging one file against ALL bag left sigs", w_avg*100.0, w_max*100.0), vlog);
-	
 
+	let fail_count = vdata.iter().filter(|rec| rec.is_fail()).count();
+	println!(" === failed files: {} =====", fail_count); 
+	for rec in vdata{
+		if rec.is_fail(){
+			println!(" -- file {} fails: {:#?}", rec.fname, 
+				rec.all_dfa);
+		}
+	}
+	println!("==== failed files dump complete ==="); 
 
 }
 

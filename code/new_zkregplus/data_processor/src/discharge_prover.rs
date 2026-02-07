@@ -32,7 +32,8 @@ pub fn quick_discharge_file<F:PrimeField>(fname: &str, db: &ClamavDB<F>,
 			&db.bundle_subsig.vec_acdfa[0], // dfa_patterns, 
 			&db.dfa_crit_igc,
 			&db.bundle_subsig_igc.vec_acdfa[0], //dfa_patterns_igc,
-			true, cfg) //use optimize mode for 'true'
+			true, cfg,
+			&db.sig_to_id).0 //use optimize mode for 'true'
 }
 
 /// Really discharge each one by one by generating the real proof.

@@ -1385,7 +1385,7 @@ pub mod tests_dfa_adv_gadget{
 	};
 	use data_processor::{clam_db::{ClamavDB}, 
 		hex_acdfa::HexACDFA, type_def::{ClamavSig},
-		clamav::{quick_discharge_file_adv,default_clamav_cfg},
+		clamav::{quick_discharge_file_by_crit_bag_pm,default_clamav_cfg},
 
 	};
 	use folding_schemes::folding::foldpot::{
@@ -1417,7 +1417,7 @@ pub mod tests_dfa_adv_gadget{
 			.collect::<Vec<Fr>>();
 		let word = vec![pack_nibbles(&f_nibbles), vec![Fr::zero()]].concat();
 		let cfg = default_clamav_cfg();
-		let wi: WordInfo = quick_discharge_file_adv(
+		let wi: WordInfo = quick_discharge_file_by_crit_bag_pm(
 			"word2.txt", 
 			&nibbles_raw,
 			&db.vec_sigs,
@@ -1428,9 +1428,9 @@ pub mod tests_dfa_adv_gadget{
 			&db.bundle_subsig.vec_acdfa[0], //dfa_patterns, 
 			&db.dfa_crit_igc,
 			&db.bundle_subsig_igc.vec_acdfa[0], //dfa_patterns_igc,
-			&cfg, 
+			true, &cfg, 
 			&db.sig_to_id
-		); //use optimize mode
+		).1; //use optimize mode
 
 		//note: set true to use char map for nibbles.
 		let adv_wea = WordExtractAdvAdvice::new(&word, act_size, true)

@@ -23,7 +23,7 @@ use utils::{
 	data::{pack_nibbles}
 };
 use data_processor::{
-	clamav::{default_clamav_cfg, quick_discharge_file_adv},
+	clamav::{default_clamav_cfg, quick_discharge_file_by_crit_bag_pm},
 	clam_db::{ClamavDB},
 	type_def::ClamavApproxConfig,
 };
@@ -93,7 +93,7 @@ fn load_files<F:PrimeField>(list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavA
 		{
 			let abspath = format!("{}/{}", &proj_root(), fpath);
 			let nibbles = read_nibbles(&abspath);
-			let rec = quick_discharge_file_adv(
+			let (fail_info, rec) = quick_discharge_file_by_crit_bag_pm(
 				fpath, 
 				&nibbles,
 				&db.vec_sigs,
@@ -104,11 +104,20 @@ fn load_files<F:PrimeField>(list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavA
 				&db.bundle_subsig.vec_acdfa[0], //dfa_patterns, 
 				&db.dfa_crit_igc,
 				&db.bundle_subsig_igc.vec_acdfa[0], //dfa_patterns_igc,
-				cfg, 
+				true, cfg, 
 				&db.sig_to_id); //use optimize mode
-			if b_debug{
-				println!("DEBUG USE 1001: quick_res: {:?}", rec);
+			//REMOVE LATER -------------
+			println!("DEBUG USE 6701.1: fail_rec: {:#?}", fail_info);
+			println!("DEBUG USE 6701.2: word_info: {:#?}", rec);
+			//REMOVE LATER ------------- ABOVE
+			if !rec.is_success(){
+				println!("FAILED discharging file: {} on sigs: {:?}",
+					fail_info.fname,
+					fail_info.all_dfa);
+				println!(" -- word_info: {:?}", rec.vec_ised_sigs);
 			}
+			assert!(rec.is_success());
+			assert!(!fail_info.is_fail());
 			rec
 		}).collect::<Vec<WordInfo>>();
 

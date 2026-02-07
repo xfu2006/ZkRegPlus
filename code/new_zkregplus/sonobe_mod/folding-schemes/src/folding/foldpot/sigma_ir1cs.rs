@@ -96,7 +96,8 @@ pub struct WordInfo{
 
 	/// one to one corresponds to vec_sed_sigs
 	pub vec_sed_sigs_info: Vec<DischargeSigInfo>,
-	/// one to one corresponds to vec_ised_sigs
+	/// one to one corresponds to vec_ised_sigs (NOT USED ANY MORE)
+	/// will always be EMPTY.
 	pub vec_ised_sigs_info: Vec<DischargeSigInfo>,
 
 	/// one to one corresponds to vec_dfa_sigs
@@ -113,6 +114,11 @@ impl WordInfo{
 			vec_ised_sigs_info: vec![],
 			vec_dfa_sigs_info: vec![],
 		} 
+	}
+
+	pub fn is_success(&self)->bool{
+		self.vec_ised_sigs.len() == 0	//this implies there
+			//are failed sigs by DFA approach which is the last step
 	}
 }
 

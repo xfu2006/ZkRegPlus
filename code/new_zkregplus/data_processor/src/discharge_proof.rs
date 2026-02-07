@@ -41,6 +41,12 @@ pub struct FailDischargeRecord{
 		//context sensitve only as igc is usually must lower
 }
 
+impl FailDischargeRecord{
+	pub fn is_fail(&self)->bool{
+		self.all_dfa.len()>0
+	}
+}
+
 /// The configuration of prover (all numbers are power of 2)
 #[derive(Clone,Debug)]
 pub struct DischargeByCPConfig{

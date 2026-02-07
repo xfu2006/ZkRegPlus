@@ -2399,7 +2399,7 @@ pub mod tests_compute_sig_adv{
 	use data_processor::{clam_db::{ClamavDB,RANGE2_BIT}, 
 		type_def::{ClamavApproxConfig,SubsigStepStore,SubsigStepStoreItem,
 			ClamavSig},
-		clamav::{default_clamav_cfg, quick_discharge_file_adv}};
+		clamav::{default_clamav_cfg, quick_discharge_file_by_crit_bag_pm}};
 	use folding_schemes::folding::foldpot::sigma_ir1cs::{SigmaGadget,
 		WordInfo, DischargeSigInfo};
 	use folding_schemes::folding::foldpot::container_config::ContainerConfig;
@@ -2451,7 +2451,7 @@ pub mod tests_compute_sig_adv{
 			.map(|s| s.clone())
 			.collect::<Vec<Arc<ClamavSig>>>()[0];
 		let v_sig_obj = vec![sig.clone()];
-		let wi: WordInfo = quick_discharge_file_adv(
+		let wi: WordInfo = quick_discharge_file_by_crit_bag_pm(
 			"word.txt", 
 			&nibbles_raw,
 			&db.vec_sigs,
@@ -2462,9 +2462,9 @@ pub mod tests_compute_sig_adv{
 			&db.bundle_subsig.vec_acdfa[0], //dfa_patterns, 
 			&db.dfa_crit_igc,
 			&db.bundle_subsig_igc.vec_acdfa[0], //dfa_patterns_igc,
-			cfg, 
+			true, cfg, 
 			&db.sig_to_id
-		); //use optimize mode
+		).1; //use optimize mode
 
 		//1.2 verify the sig_to_discharge is in the word info.
 		// NOTE that here we essentially require that sig_to_discharge

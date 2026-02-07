@@ -19,13 +19,18 @@ and general NFA \cite{Luo23}.
 
 This paper considers two research problems: (1) can we
 scale variety of zkreg proof techniques for handling a large
-{\em collection} of regex-patterns? Note that this is a difficult problem,
+{\em collection} of regex-patterns and prove that a hidden string
+{\em is not a member} of any of these patterns? 
+Note that this is a difficult problem,
 except for the case of fixed patterns using AC-DFA \cite{Zkreg}, 
 to intersect or negate regex can easily lead to exponential cost; 
 (2) does there exist more efficient weaker regex subset
 which leads to more efficient techniques?
 We tackle the above research problems by providing the
 following contributions.
+We find our technique very useful, e.g., in policy compliant
+secure messaging \cite{alwen2025policy}, where content
+moderation is needed in certain context, such as preventing child sexual abuse.
 
 {\bf Empirical analysis of regex in practice:} 
 The analysis forms the basis for efficient ZKP techniques we 

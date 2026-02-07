@@ -2284,7 +2284,7 @@ pub fn quick_discharge_file_by_crit_bag_pm_old(fname: &str,
 	dfa_crit: &HexACDFA, dfa_bag: &HexACDFA,
 	dfa_crit_igc: &HexACDFA, dfa_bag_igc: &HexACDFA,
 	b_optimize_pm: bool, cfg: &ClamavApproxConfig
-	)->FailDischargeRecord{
+	)->(FailDischargeRecord, WordInfo){
 	let b_include_bs = false;
 
 	//1. process by critical pattern
@@ -2423,7 +2423,7 @@ pub fn quick_discharge_file_by_crit_bag_pm_old(fname: &str,
 
 	// 5.4 compute combinations
 	let file_len = ((nibbles.len()/2).ilog2() + 1) as usize;
-	let data = FailDischargeRecord{
+	let _data = FailDischargeRecord{
 		fname: fname.to_string(),
 		flen: file_len,
 		bag: set_sigs_bag,
@@ -2439,7 +2439,7 @@ pub fn quick_discharge_file_by_crit_bag_pm_old(fname: &str,
 		most_freq_sed_cs_pats: None,
 	};
 
-	data
+	panic!("should call quick_discharge_file_by_crit_bag_new")
 }
 
 ///new version (if not working use the old version)
@@ -2454,10 +2454,9 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 	map_crit_pat_igc: &HashMap<String, Vec<String>>,
 	dfa_crit: &HexACDFA, dfa_bag: &HexACDFA,
 	dfa_crit_igc: &HexACDFA, dfa_bag_igc: &HexACDFA,
-	_b_optimize_pm: bool, _cfg: &ClamavApproxConfig)
-->FailDischargeRecord{
-	println!("DEBUG USE 400: quick discharge === {}, nibble len: {}", fname, nibbles.len());
-
+	_b_optimize_pm: bool, _cfg: &ClamavApproxConfig,
+	sig_to_id: &HashMap<String,usize>)
+->(FailDischargeRecord, WordInfo){
 	//0. internal function closure
 	let sum_vec_size = |hs: &HashMap<String,Vec<usize>>| -> usize{
 		hs.into_iter().map(|(_,v)| v.len()).sum::<usize>()
@@ -2517,7 +2516,6 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		let info = info.unwrap();
 		let _pm_witness_len = sum_vec_size(&hs_occ_new) + sum_vec_size(&hs_occ_igc_new);
 		let new_pm_witness_len = info.min_cost; //more accurate because
-		//REMOVE LATER --------
 		let mut max_occ = 0;
 		let mut max_pat = format!("unknown");
 		for (pat, vec) in hs_occ_new{
@@ -2526,8 +2524,6 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 				max_pat = pat.clone();
 			}
 		}
-		//REMOVE LATER --------
-
 		(res, sig.name.clone(), Some(info), new_pm_witness_len, (max_pat, max_occ))
 	}).collect::<Vec<(TriVal,String, Option<DischargeSigInfo>,usize, (String,usize))>>();
 	let mut vec_sed_sigs_info = vec![]; 
@@ -2544,7 +2540,7 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 	let total_acc_path_len = dfa_acc_path.len() + dfa_acc_path_igc.len();
 	let total_hs_size = hs_occ.len() + hs_occ_igc.len();
 	let total_accepted = sum_vec_size(&hs_occ) + sum_vec_size(&hs_occ_igc);
-	//REMOVE LATER ---------
+
 	let mut max_occ = 0;
 	let mut max_pat = format!("");
 	for (_,_,_,_,(pat, occ)) in &pm_res{
@@ -2559,15 +2555,23 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 			max_pat);
 	}
 
-	//REMOVE LATER --------- ABOVE
-
 	//4. process by dfa
 	let dfa_sigs = v_sigs.iter().filter(|s| set_sigs_pm.contains(&s.name)).
 		map(|s| s.clone()).collect::<Vec<Arc<ClamavSig>>>();
-	let set_sigs_dfa = dfa_sigs.iter().filter(|s| {
-		let (res,_discharge_info) = s.accepts_by_automaton(nibbles);
-		res
-	}).map(|s| s.name.clone()).collect::<HashSet<String>>();
+	//let set_sigs_dfa = dfa_sigs.iter().filter(|s| {
+	//	let (res,_discharge_info) = s.accepts_by_automaton(nibbles);
+	//	res
+	//}).map(|s| s.name.clone()).collect::<HashSet<String>>();
+	let mut set_sigs_dfa = HashSet::<String>::new();
+	let mut vec_dfa_sigs_info = vec![];
+	for s in dfa_sigs{
+		let (res, info) = s.accepts_by_automaton(nibbles);
+		if res==true{
+			set_sigs_dfa.insert(s.name.clone()); //failed to discharge via dfa
+		}else{
+			vec_dfa_sigs_info.push(info.unwrap()); //add info about best route
+		}
+	}
 	let set_ind_pm_reg = set_sigs_dfa.clone(); //no ind_pm setp, just clone dfa result
 
 	//5. collect most frequent pats
@@ -2580,13 +2584,13 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 
 	//6. compute stats 
 	let file_len = ((nibbles.len()/2).ilog2() + 1) as usize;
-	FailDischargeRecord{
+	let fdr = FailDischargeRecord{
 		fname: fname.to_string(),
 		flen: file_len,
 		bag: set_sigs_bag,
-		crit: set_sigs_crit,
-		pm: set_sigs_pm,
-		all_dfa: set_sigs_dfa,
+		crit: set_sigs_crit.clone(),
+		pm: set_sigs_pm.clone(),
+		all_dfa: set_sigs_dfa.clone(),
 		total_acc_path_len: total_acc_path_len,
 		total_hs_size: total_hs_size,
 		total_accepted: total_accepted,
@@ -2594,9 +2598,32 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		ind_pm_reg: set_ind_pm_reg,
 		total_unique_states: total_unique_states,
 		most_freq_sed_cs_pats,
-	}
+	};
+
+	let vec_sed_sigs = set_sigs_crit.difference(&set_sigs_pm).map(|s|
+		*sig_to_id.get(s).unwrap()).collect::<Vec<usize>>();
+	let vec_dfa_sigs = set_sigs_pm.difference(&set_sigs_dfa).map(|s|
+		*sig_to_id.get(s).unwrap()).collect::<Vec<usize>>();
+	let vec_ised_sigs = set_sigs_dfa.iter().map(|s|
+		*sig_to_id.get(s).unwrap()).collect::<Vec<usize>>(); //
+		//this actually indicates failed sigs because
+		//dfa is the last step
+
+	//6.-- no need, we will direclty jump to dfa approach
+	let vec_ised_sigs_info = vec![];
+	assert!(vec_sed_sigs_info.len()==vec_sed_sigs.len());
+	assert!(vec_dfa_sigs_info.len()==vec_dfa_sigs.len());
+
+
+	let wi = WordInfo{ 
+		vec_sed_sigs, vec_dfa_sigs, vec_ised_sigs, 
+		vec_sed_sigs_info, vec_ised_sigs_info, vec_dfa_sigs_info};
+	
+	(fdr, wi)
 }
 
+/// Return the FailDischargeRecord and WordInfo (even if it fails
+/// to discharge)
 pub fn quick_discharge_file_by_crit_bag_pm(
 	fname: &str,
 	nibbles: &Vec<u8>, 
@@ -2609,20 +2636,23 @@ pub fn quick_discharge_file_by_crit_bag_pm(
 	dfa_crit_igc: &HexACDFA, 
 	dfa_bag_igc: &HexACDFA,
 	b_optimize_pm: bool, 
-	cfg: &ClamavApproxConfig)
-->FailDischargeRecord{
+	cfg: &ClamavApproxConfig,
+	sig_to_id: &HashMap<String,usize>)
+->(FailDischargeRecord,WordInfo){
 	quick_discharge_file_by_crit_bag_pm_new(
 		fname,
 		nibbles, v_sigs, vec_sigs_no_crit_pat,
 		map_crit_pat, map_crit_pat_igc,
 		dfa_crit, dfa_bag, dfa_crit_igc, dfa_bag_igc,
-		b_optimize_pm, cfg)
+		b_optimize_pm, cfg, sig_to_id)
 }
 
 /// This one works by cp -> sed -> dfa and return the WordInfo
 /// NOTE: we didn't do the bag of words as in quick_discharge old version,
 /// just for saving implementation cost.
-pub fn quick_discharge_file_adv(
+///
+/// NOTE: this function is deprecated
+pub fn deprecated_quick_discharge_file_adv(
 	fname: &str,
 	nibbles: &Vec<u8>, 
 	v_sigs: &Vec<Arc<ClamavSig>>,
@@ -2634,7 +2664,7 @@ pub fn quick_discharge_file_adv(
 	_cfg: &ClamavApproxConfig,
 	sig_to_id: &HashMap<String,usize>
 	)->WordInfo{
-
+	if 1>0 {panic!("Deprecated: call quick_discharge_file_by_pm_reg");}
 	//1. process by critical pattern
 	let pats_crit = dfa_crit.get_patterns(&dfa_crit.acc_path(&nibbles));
 	let pats_crit_igc = dfa_crit_igc.get_patterns( 
@@ -3396,6 +3426,9 @@ mod tests_clamav{
 				{ClamSigType::PM} else {ClamSigType::General};
 			Arc::new(gen_clamav_sig(s, sig_type,&cfg))
 		}).collect();
+		let sig_to_id = v_sigs.iter().enumerate().map(|(i,s)|
+			(s.name.clone(), i+1)
+		).collect::<HashMap<String,usize>>();
 		
 		let mut v_sigs = v_sigs.iter().map(|s1| {
 			let mut s = s1.as_ref().clone();
@@ -3529,7 +3562,8 @@ mod tests_clamav{
 				&v_sigs, &v_sigs_no_crit_pat,
 				&map_crit_pat, &map_crit_pat_igc,
 					&dfa_crit, &dfa_bag, &dfa_crit_igc,
-					&dfa_bag_igc, false, &cfg);
+					&dfa_bag_igc, false, &cfg,
+					&sig_to_id).0;
 			assert!(act.crit==set_crit, "ERROR: s: {}. act.crit: {:?} != set_crit: {:?}", s, act.crit, set_crit);
 			assert!(act.bag==set_bag, "ERROR: s: {}. act.bag: {:?} != set_bag: {:?}", s, act.bag, set_bag);
 			assert!(act.pm==set_pm, "ERROR: s: {}. act.pm: {:?} != set_pm: {:?}", s, act.pm, set_pm);
