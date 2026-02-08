@@ -106,10 +106,6 @@ fn load_files<F:PrimeField>(list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavA
 				&db.bundle_subsig_igc.vec_acdfa[0], //dfa_patterns_igc,
 				true, cfg, 
 				&db.sig_to_id); //use optimize mode
-			//REMOVE LATER -------------
-			println!("DEBUG USE 6701.1: fail_rec: {:#?}", fail_info);
-			println!("DEBUG USE 6701.2: word_info: {:#?}", rec);
-			//REMOVE LATER ------------- ABOVE
 			if !rec.is_success(){
 				println!("FAILED discharging file: {} on sigs: {:?}",
 					fail_info.fname,

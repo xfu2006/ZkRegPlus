@@ -3118,7 +3118,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			let (nc, ni, nv) = (cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables());
 			g.borrow().assert_msg3(i, cs.clone(), &wtns_var, &cfg)?;
 			let stmt_len = g.borrow().get_msg_size().0;
-			log_perf(log_level+1, &format!("-- -- after msg3 of module {}: {}:\n\tINCREASED: constraints: {}, const vars: {}, wit vars: {} \n\t==> NOW: CS:{}, const: {}, witness: {}\n\t ==> stmt_size: {}. ", i, g.borrow().get_name(), cs.num_constraints()-nc, cs.num_instance_variables()-ni, cs.num_witness_variables()-nv, cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables(), stmt_len), &mut gt3);						
+			log_perf(log_level, &format!("-- -- after msg3 of module {}: {}:\n\tINCREASED: constraints: {}, const vars: {}, wit vars: {} \n\t==> NOW: CS:{}, const: {}, witness: {}\n\t ==> stmt_size: {}. ", i, g.borrow().get_name(), cs.num_constraints()-nc, cs.num_instance_variables()-ni, cs.num_witness_variables()-nv, cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables(), stmt_len), &mut gt3);						
 		}
 		if b_debug{
 			let csat = cs.is_satisfied();
@@ -3842,10 +3842,12 @@ where 	C: CurveGroup<ScalarField=F>,
 			);
 		}
 		log_perf(log_level, &format!(
-			"gen_step_cs step 9: cs: {}, vars: {}, lc: {}",
+			"gen_step_cs step 9: cs: {}, vars: {}, lc: {}, TOTAL: cs: {}, vars: {}",
 			cs.num_constraints() - nc,
 			cs.num_witness_variables() - nv,
-			cs.num_lc() - nl
+			cs.num_lc() - nl,
+			cs.num_constraints(),
+			cs.num_witness_variables()
 			), &mut gt
 		);
 		nc = cs.num_constraints();

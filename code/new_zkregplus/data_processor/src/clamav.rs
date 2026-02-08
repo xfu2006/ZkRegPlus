@@ -995,10 +995,6 @@ impl ClamavSig{
 	-> (TriVal, Option<DischargeSigInfo>){
 		assert!(self.vec_subsig_obj.len() == self.vec_subsig_pm_bounds.len(),
 			"vec_subsig.len() not matching vec_subsig_pm_bounds, call gen_approx_pm_bounds");
-		println!("DEBUG USE 6721: sig accept by approx bounds: signame: {}, hs: {:#?}, hs_igc: {:#?}", self.name, hs, hs_igc);
-		for id in 0..self.vec_subsig_obj.len(){
-			println!(" -- subsig {}: {}", id, self.vec_subsig_obj[id].value);
-		}
 		let mut bres = TriVal::True;
 		let mut min_dnf_id = 0usize;
 		let mut min_cost = 1usize<<30;
@@ -1009,7 +1005,6 @@ impl ClamavSig{
 			let mut total_cost = 0;
 			for id in item{
 				let (res,_cost,cost) = self.approx_eval_pm_bounds_subsig(*id,hs, hs_igc, fname);
-				println!("DEBUG USE 6722: -- discharge {} of {:?} res: {:?}, cost: {}", id, item, res, cost);
 				total_cost += cost;
 				let res = match self.vec_subsig_obj[*id].subsig_type{
 					SubSigType::GeneralRegex => res,
@@ -1063,14 +1058,11 @@ impl ClamavSig{
 				item_res = item_res | res;
 
 			}//end of evaluating DNF
-			println!("DEBUG USE 7202.5 ires: {:?} for item: {:?}", item_res, item);
 			if item_res==TriVal::False{//this is a good discharging proof!
 				found_discharge = true;
-				println!(" *** DEBUG USE 7205.5.1 found_discharge: min_cost: {}, total_cost: {}", min_cost, total_cost);
 				if min_cost > total_cost {
 					min_cost = total_cost;
 					min_dnf_id = dnf_id; 
-					println!("DEBUG USE 7203.0 discharges via dnf_id: {}, min_dnf_id: {} ", dnf_id, min_dnf_id);
 				}
 			}else{
 				//min_cost = 0; //it fails anyway, will not discharge
@@ -2483,9 +2475,6 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		let vec1 = map_crit_pat_igc.get(pat).unwrap();	
 		for x in vec1{ set_sigs_crit.insert(String::from(x)); }
 	}
-	//REMOVE LATER ------------------
-	set_sigs_crit.insert(format!("Win.Downloader.Upatre-5744092-0"));
-	//REMOVE LATER ------------------ ABOVE
 	for s in vec_sigs_no_crit_pat{ 
 		set_sigs_crit.insert(s.as_ref().name.clone());
 	}

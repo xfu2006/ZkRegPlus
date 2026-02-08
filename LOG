@@ -24842,6 +24842,10 @@ Goal 3. Debug the clamv quick_discharge_part and see
 	[d] regresion test.
 	[e] regression test on paper_data_gen. -> GOOD still no failed files.
 		All states roughly the same.
---- TODO ---
-REMOVE debug message 670x, 680x and 710x , 672x messages
-REMOVE the adding Win.Downloader to the sig_sed
+
+Sunday 02/28/2026
+Goal 1. clean code
+	[a] REMOVE debug message 670x, 680x and 710x , 672x messages
+	[b] commit and upload
+	[c] test on server
+	[d] cost: 4M for 512*4*32 = 64k bytes. 

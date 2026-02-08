@@ -1851,7 +1851,7 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 		all: &Container<FpVar<F>>,  //entire container
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
-		let b_perf = true;
+		let b_perf = false;
 		let log_level = LOG2;
 		let mut gt = GTimer::new();
 		let mut gt0 = GTimer::new();
