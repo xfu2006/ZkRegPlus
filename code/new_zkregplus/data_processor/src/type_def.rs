@@ -183,6 +183,9 @@ pub struct ClamavSig{
 pub struct EvalDNF{
 	/// vector of vectors that represents a DNF. e.g., [ [0,1], [2,3] ] 
 	/// represents (0|1) & (2|3), i.e., a CONJUNCTION of DISJUNCTIONS!
+	/// IN another word, to prove "discharge" - not satisfying
+	/// we only need to EITHER prove: both 0 and 1 are not matched
+	/// OR both 2 and 3 are NOT matched
 	pub vec_disjunc: Vec<Vec<usize>>,
 }
 

@@ -24771,7 +24771,8 @@ Goal 1. read load_files
 	[c] quick_discharge_file_adv in data_processor:clamav
 	[d] load_files just return them
 Goal 2. read paper_data if quick_discharge_file_adv is used
-	and how it's generated
+	[a] 
+
 	[a] it calls report_all_discharge_approach_stats
 	-> clals discharge_prover::quick_discharge_file
 		-> it calls clamav::quick_discharge_file_by_crit_bag_pm
@@ -24798,5 +24799,49 @@ Goal 5. go over the quick_discharge code again
 		-> now just leave the real sig: Win.Downloader.Upatre-5744092-0
 			with one more sig to cover the alphabet
 	==> strangely it passed on the local computer!
-== TODO === check if the file really has a match over Wn.Downloader.Updatre
+	===> it directly passed CP
+
+Saturday 02/07/2026
+Goal 1. test on server and see and how it's generated
+	[a]
+	check if the file really has a match over Wn.Downloader.Updatre
 	pattern subsig 2.
+	[b] the reported discharge plan for sed (Win.Downloader.Upatre-5744092-0).
+		it's discharge subsig #1 (id starts from 0)
+	[c] 
+	-> *** DEBUG USE 6708 found bad subsig_id: 35360770, in sig: Win.Downloader.Upatre-5744092-0, real_id: 1, details: .*5265676973746572436c617373.*
+
+Goal 2. in local version fore the adding of Win.Downloader....
+	[a] yes can repeat the ERROR subsig 3 is false  (now swap the order
+		it subsig becomes 258)
+	[b] need to decompose subsig 258 into sig id and subsig id,
+		and calibrate it with the sig-id and sub-sig id in WordInfo
+		=> 6711: pats
+		=> 6700: discharge_info (subsig ids are raw ids)
+			the proposed subsig_id is 1 (starting from 0)
+			which is "52656769737466724"
+		=> verify it indeed detects the patterni enable debug
+			in gen_fsm
+		=> it does generate the sequence at i: 2691 
+	[c] so then it's the problem why eval subsig will let it through?
+
+Goal 3. Debug the clamv quick_discharge_part and see
+	why it decides to let it pass?
+	[a] find code sig.accepts_approx_pm_bounds
+		672x messages
+	[b] find out the discharge results for each dnf
+		-> vec_dis_vec subsig_id from 0 but there are 7 subsigs?
+		-> dump each of them -> dumped
+	[c] why discharge 1 is False?
+	-> check DEBUG USE 7203. 
+	-> It is indeed discharged as maybe.
+	-> it looks like that it's the pick of min_dnf_id which is the problem
+		it should have to be 1?
+	-> looks like it update it's discharged but did not give the min ID.
+	-> seems to be fixing
+	[d] regresion test.
+	[e] regression test on paper_data_gen. -> GOOD still no failed files.
+		All states roughly the same.
+--- TODO ---
+REMOVE debug message 670x, 680x and 710x , 672x messages
+REMOVE the adding Win.Downloader to the sig_sed
