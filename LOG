@@ -24848,4 +24848,23 @@ Goal 1. clean code
 	[a] REMOVE debug message 670x, 680x and 710x , 672x messages
 	[b] commit and upload
 	[c] test on server
-	[d] cost: 4M for 512*4*32 = 64k bytes. 
+	[d] cost: 4M for 512*4*32 = 64k bytes.
+
+Goal 2. test on server
+	[a] started 09:04
+	[b] total_e: 12709563, but cs1e_pp: 32233984
+	[c] raised acc_states to 111 (1.1 percent) and acc_pats_in_trace to
+		140(1.4 PERCENT)
+	[d] somehow there's lookup error if we lower sigs from 320 to 200. 
+	still the problem: 
+	(268435461, 258096791045042898731)
+	0x10000005 (CRIT_STATE_2_SIG)
+	0xdfdd000000400872b -> it DOES NOT look like a sig
+	[e] redo the build of the database.
+	[f] now it fails again on count_subsig
+	[g] rebuild the database and try 512x4 word length.
+	-> now it's copmlaining basis_acc_states 146
+	-> change acc_states to 1.6 percent and acc_pat_in_trace to 2.0 percent
+	-> then change to (2.0 and 2.5) percent
+	-> fails again for 
+	(268435461, 256691667961303305736)

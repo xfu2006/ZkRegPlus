@@ -1544,7 +1544,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
 		//0. retrieve data from combo
-		let b_debug = false;
+		let b_debug = true;
 		let b_perf = false;
 		let nc = cs.num_constraints();
 		let (zero,one)=(new_const_var(&cs,F::zero()),new_const_var(&cs,F::one()));
@@ -1874,6 +1874,26 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 						)
 					) 
 				);
+			if b_debug{
+				println!("DEBUG USE 6300: i: {}, subsig: {}",
+					i, subsig.value()?);
+				println!("DEBUG USE 6311: same_subsig: {}, diff: {}, col2d[5][i]: {}, is_raw_true: {}, col2d[5][i-1]: {}",
+					same_subsig.value()?,
+					diff.value()?,
+					col2d[5][i].value()?,
+					is_raw_true.value()?,
+					col2d[5][i-1].value()?
+				);
+				println!("DEBUG USE 6312: prev_subsig: {}, vec_count[i-1]: {}, col2d[2][i-1]: {}, max: {}, col2d[5][i]: {}, is_raw_true: {}, col2d[7][i]: {}, is_raw_maybe: {}",
+					prev_subsig.value()?,
+					vec_cnt[i-1].value()?,
+					col2d[2][i-1].value()?,
+					max.value()?,
+					col2d[5][i].value()?,
+					is_raw_true.value()?,
+					col2d[6][i].value()?,
+					is_raw_maybe.value()?);
+			}
 			check_eq(&eq, &zero, "failed on count (2 cases: inc by 1 and start from 1), or the check of cnt_true/cnt_maybe ")?;
 		}
 		//does need to check the very last row for vec_comp is max (well formed)
