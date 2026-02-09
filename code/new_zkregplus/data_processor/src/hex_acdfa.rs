@@ -677,14 +677,18 @@ impl HexACDFA{
 	}
 	/// given the final state indiex, return the related 
 	/// signature names
-	pub fn final_to_patterns(&self, final_state_idx: usize)->HashSet<String>{
+	/// RETURN a sorted vector (set) of patterns
+	pub fn final_to_patterns(&self, final_state_idx: usize)->Vec<String>{
 		assert!(self.is_accept(final_state_idx));
 		let vec = &self.outputs[&final_state_idx];
 		let mut res = HashSet::<String>::new();
 		for id_pat in vec{
 			res.insert( self.patterns[*id_pat].clone() );
 		}
-		res
+		let mut vec = res.into_iter().map(|x| x).collect::<Vec<String>>();
+		vec.sort();
+
+		vec
 	}
 
 	/// from the acceptance path, collects the set of patterns

@@ -24851,7 +24851,7 @@ Goal 1. clean code
 	[d] cost: 4M for 512*4*32 = 64k bytes.
 
 Goal 2. test on server
-	[a] started 09:04
+	[a] started 09:04 -> 13:56 (almost 4 hours)
 	[b] total_e: 12709563, but cs1e_pp: 32233984
 	[c] raised acc_states to 111 (1.1 percent) and acc_pats_in_trace to
 		140(1.4 PERCENT)
@@ -24868,3 +24868,51 @@ Goal 2. test on server
 	-> then change to (2.0 and 2.5) percent
 	-> fails again for 
 	(268435461, 256691667961303305736)
+	[h] do another it fails on
+	ERROR on failed on count (2 cases: inc by 1 and start from 1), or the check of cnt_true/cnt_maybe . v1: 540472560, v2:
+		ComputeSigAdvGadget<F>::validate_synthesis_subsig_combo
+	This is repeatable though
+	ERROR on failed on count (2 cases: inc by 1 and start from 1), or the check of cnt_true/cnt_maybe . v1: 540472560, v2
+	[h] but when using the load cache mode it fails on table ements
+		again before even building the statement (sigma_ir1cs:223)
+	[g] try to collect the bad using long approach and see why it fails
+		the 2 caes: inc 1 and start 1.
+	[i] strangely cannot repeat error any more, set the
+		basis_uniqe_states to 468 (5% this is high though).
+		-> needs to increase to 854
+
+Monday 02/09/2026
+Goal 1. continue to debug the count sig failure
+	[a] repeat the experient and collect the debug data
+	[b] study the logic
+	[c] cannot repeat the logic
+	[d] still cannot repeat the logic
+
+Goal 2. debug sigma_ir1cs.rs:223
+	[a] read about sigma_ir1cs.rs:223
+	[b] it looks from data part dump the vec_val
+	[c] dump 400350 to 403410 where it breaks at 403407
+		check the tbl_id and vals
+		-> tbl_id[472689]: (268435461, 85203601350289559048
+		-> CRIT_STATE_2_SIG
+	[d] how to figure out who INSERTED?
+		-> it looks like a encoded sig in the sigs.rs component
+		and it is somehow misaligned 
+	[e] to verify the location dump the:
+		final_states_sigs,
+		decoded_final_states_sigs_states
+		decoded_final_states_sigs_ids,
+		decoded_final_states_sigs_sigs
+	[F] DEBUG USE 6931: add state_to_sig
+		DEBUG USE 6932: in sigs add the encoded state_to_sig
+		DEBUG USE 6933: dump the probelmatic area 472689 vinicity
+		tbl_id[473407]: (268435461, 255489206860795382331)
+		-> it is ADDED as 35387
+		-> BUT it does NOT exist in DB no 6931 msg
+		-> has to RUN in no cache mode
+	[g] run in no cache mode
+		472758]: (268435461, 102038056757400473096)
+			-> f_sig: 36360
+		-
+
+-- TODO -- disable b_debug in compute_sig_adv

@@ -878,23 +878,23 @@ pub mod tests_zkp_driver{
 	/// It runs a large but difficult file: gdb (6.6M)
 	#[allow(dead_code)]
 	fn full_data2<F:PrimeField>(b_check_lkup: bool){
-		assert!(RANGE2_BIT==24, "set RANGE2_BIT to 24");
-		let b_read_cache = true;
-		let b_write_cache = ! b_read_cache;
-		let set1 = "data/debug/full_data_set/config/"; //for dfa 
-		//let max_word= 512; 
-		let max_word= 512 * 8; 
-		let sigs = 320;
-		let subsigs = 500; //220 for prev db
-		let avg_pats_per_subsig = 8; //old value 8
-		let avg_active_pats_per_subsig = 3;
-		let basis_pats_in_trace = 36; //old value 100 cur value 1/1000.
-		let perc_comp_subsigs = 20;
-		let num_category = 1;
-		let num_circs_per_category= 1;
-		let basis_unique_states = 1900; //19 cpercent
-		let basis_acc_states = 900; //9 cpercent
-		//let avg_subsig_per_sig = 3;
+		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
+	    assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
+        let b_read_cache = true;
+        let b_write_cache = ! b_read_cache;
+        let set1 = "data/debug/full_data_set/config/"; //for dfa
+        //let max_word= 512;
+        let max_word= 512 * 4;
+        let sigs = 320;
+        let subsigs = 500; //220 for prev db
+        let avg_pats_per_subsig = 8; //old value 8
+        let avg_active_pats_per_subsig = 3;
+        let perc_comp_subsigs = 20;
+        let num_category = 1;
+        let num_circs_per_category= 1;
+        let basis_unique_states = 1900; //ld vlaue 19 cpercent
+        let basis_acc_states = 200; //old value 9 cpercent
+        let basis_pats_in_trace = 250 ; //1.2 * basis_acc_states
 
 		let init_cp_cap= CpCapacity{
 			max_word_len: max_word, 
