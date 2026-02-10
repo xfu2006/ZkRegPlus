@@ -1544,7 +1544,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
 		//0. retrieve data from combo
-		let b_debug = true;
+		let b_debug = false;
 		let b_perf = false;
 		let nc = cs.num_constraints();
 		let (zero,one)=(new_const_var(&cs,F::zero()),new_const_var(&cs,F::one()));
@@ -1863,7 +1863,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 				&(&(&one-&same_subsig) * 
 					&(prev_subsig *
 					   &(//eq2 part
-							&(&vec_cnt[i-1]-&one) +
+							&(&vec_cnt[i]-&one) +
 						//eq 3 part: last row has max in scc_prf_comp_subsig 
 						//row 0 should be automatically ok as we checked
 						//it's dummy entry subsig #0, which has all 0's.

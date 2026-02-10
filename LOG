@@ -24914,5 +24914,30 @@ Goal 2. debug sigma_ir1cs.rs:223
 		472758]: (268435461, 102038056757400473096)
 			-> f_sig: 36360
 		-
+	[h] read the ID meaning in data_processor/clam_db.rs
+		-> problem in hex_acdfa final_to_pats() is NOT fixed
+		very time!
+		=> retur na sorted vec
 
--- TODO -- disable b_debug in compute_sig_adv
+Tuesday 02/10/2026
+Goal 1. continue to debug ssprf issue in compute_sig
+	[a0] Usage: 8:30am-9:25am (1 hr)
+	[a] collect dump2
+	[b] analyze the data which item check fails?
+	----------DEBUG USE 6300: i: 93, subsig: 36031504
+DEBUG USE 6311: same_subsig: 1, diff: 1, col2d[5][i]: , is_raw_true: , col2d[5][i-1]:
+DEBUG USE 6312: prev_subsig: 36031504, vec_count[i-1]: 14, col2d[2][i-1]: 36031502, max: 67108863, col2d[5][i]: , is_raw_true: , col2d[7][i]: 1, is_raw_maybe:
+DEBUG USE 6300: i: 94, subsig: 36031504
+DEBUG USE 6311: same_subsig: 1, diff: 1, col2d[5][i]: , is_raw_true: , col2d[5][i-1]:
+DEBUG USE 6312: prev_subsig: 36031504, vec_count[i-1]: 15, col2d[2][i-1]: 36031503, max: 67108863, col2d[5][i]: , is_raw_true: , col2d[7][i]: 1, is_raw_maybe:
+DEBUG USE 6300: i: 95, subsig: 36204549
+DEBUG USE 6311: same_subsig: , diff: 21888242871839275222246405745257275088548364400416034343698204186575808495602, col2d[5][i]: , is_raw_true: , col2d[5][i-1]:
+DEBUG USE 6312: prev_subsig: 36031504, vec_count[i-1]: 16, col2d[2][i-1]: 67108863, max: 67108863, col2d[5][i]: , is_raw_true: , col2d[7][i]: 1, is_raw_maybe: 1
+   -----
+
+   -> so the problem is checking vec_count[i-1]
+   [c] observation: fixed. but then there is a logup check fail
+
+Goal 2.
+-- TODO -- disable b_debug in compute_sig_adv, 
+	REMOVE DEBUG USE 6311-6314
