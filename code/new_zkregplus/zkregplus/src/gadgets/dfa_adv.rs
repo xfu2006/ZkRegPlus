@@ -776,6 +776,7 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		//let fr = new_const_var(&cs, F::from(RANGE2));
 		let bits = RANGE2_BIT; //26 bit
 		let bit_part1 = bits*2/3; //16 for accomodating 64k sigs for bits 24
+		let bit_part1 = if bits>19 {16} else {bit_part1};
 		let bit_part2 = bits - bit_part1;
 		let _f_part1 = new_const_var(&cs, F::from(1u32<<bit_part1));
 		let f_part2 = new_const_var(&cs, F::from(1u32<<bit_part2));
@@ -1161,6 +1162,7 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		// COST: 4n 
 		let bits = RANGE2_BIT;
 		let bit_part1 = bits*2/3; //16 for accomodating 64k sigs for bits 24
+		let bit_part1 = if bits>19 {16} else {bit_part1};
 		let bit_part2 = bits - bit_part1;
 		let fac2 = new_const_var(&cs, F::from(1u64<<bit_part2) );
 		let f_false = new_const_var(&cs, F::from(TriVal::False as u8));
@@ -1359,6 +1361,7 @@ pub fn extract_sigid<F:PrimeField>(subsig_id: F)->(F,F){
 	let u_subsig_id = field_to_usize(&subsig_id);
 	let bits = RANGE2_BIT; //26 bit
 	let bit_part1 = bits*2/3; //16 for accomodating 64k sigs for bits 24
+	let bit_part1 = if bits>19 {16} else {bit_part1};
 	let bit_part2 = bits - bit_part1;
 	let sig_id = u_subsig_id >> bit_part2;
 	let real_subsig_id = u_subsig_id - (sig_id<<bit_part2);

@@ -25012,3 +25012,19 @@ Goal 2. Debug verifyLogup
 
 Wed 02/11/2026
 Goal 1. new bug: DfaAdvGadget::validate_mul_fsm_acc_container fail on dfa_id: 
+	[a] collect data
+	ERROR on fail dfa_id. v1: 650639310848, v2:
+	ERROR on fail dfa_id. v1: 650639310848, v2:
+	[b] so every time fails on dfa_id with the same value
+	[c] same issue as compute_sig_adv when bits is long
+		bits_part2 is calculated wrong
+	[d] push the change
+	[e] regression test
+
+Goal 2. implementation plan
+	[a] fix treefold first or set up gridview framework?
+	[b] should set up gridview framework first.
+	[c] should use a top-down approach and set up the 
+		function prototype of gridfold first, take
+		the needed params for the column fold and row fold
+		functio first.
