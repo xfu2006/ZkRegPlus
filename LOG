@@ -24938,6 +24938,77 @@ DEBUG USE 6312: prev_subsig: 36031504, vec_count[i-1]: 16, col2d[2][i-1]: 671088
    -> so the problem is checking vec_count[i-1]
    [c] observation: fixed. but then there is a logup check fail
 
-Goal 2.
+Goal 2. Debug verifyLogup
+	[a] in validate_discharge_sig_combo -> assert_logup -> verify_logup_inverse
+	complaining sum_left not equal to sum_right
+	[b] add debug message 6321 and 6322 dump the tables
+	[c] interestingly most input subsigs are not there
+		-> add how these tables are generaed 6320.
+	[d] observation: when the data is generated
+		the source table has the right data as dest table
+		but when the table is retrieved in verification function
+		it's different
+	[e] print v_computed_subisg
+	[f] data from 6321 in verifier code
+	-i: 273, src: 650189396246529, v_compu_subsig: 9688577, f_false: 1
+	DEBUG USE 6320 the built up case
+	-- i: 273, src: 1300378725384193, v_computed_subsig: 19377153, f_false: 1
+	first 10 entries from DEBUG USE 6320
+	------
+	- i: 273, src: 1300378725384193, v_computed_subsig: 19377153, f_false: 1
+-- i: 274, src: 1300378926710785, v_computed_subsig: 19377156, f_false: 1
+-- i: 275, src: 1300378993819649, v_computed_subsig: 19377157, f_false: 1
+-- i: 276, src: 2003172813963265, v_computed_subsig: 29849601, f_false: 1
+-- i: 277, src: 2365668053745665, v_computed_subsig: 35251201, f_false: 1
+-- i: 278, src: 2365668120854529, v_computed_subsig: 35251202, f_false: 1
+-- i: 279, src: 2365736773222401, v_computed_subsig: 35252225, f_false: 1
+-- i: 280, src: 2365736840331265, v_computed_subsig: 35252226, f_false: 1
+-- i: 281, src: 2365874212175873, v_computed_subsig: 35254273, f_false: 1
+-- i: 282, src: 2365874279284737, v_computed_subsig: 35254274, f_false: 1
+-- i: 283, src: 2366011651129345, v_computed_subsig: 35256321, f_false: 1
+-- i: 284, src: 2366011718238209, v_computed_subsig: 35256322, f_false: 1
+-- i: 285, src: 2366080370606081, v_computed_subsig: 35257345, f_false: 1
+-- i: 286, src: 2366080437714945, v_computed_subsig: 35257346, f_false: 1
+-- i: 287, src: 2366355248513025, v_computed_subsig: 35261441, f_false: 1
+-- i: 288, src: 2366355315621889, v_computed_subsig: 35261442, f_false: 1
+-- i: 289, src: 2366492687466497, v_computed_subsig: 35263489, f_false: 1
+-- i: 290, src: 2366492754575361, v_computed_subsig: 35263490, f_false: 1
+  ------
+  first 10 entries from DEBUG USE 6321
+  --i: 273, src: 650189396246529, v_compu_subsig: 9688577, f_false: 1
+--i: 274, src: 650189597573121, v_compu_subsig: 9688580, f_false: 1
+--i: 275, src: 650189664681985, v_compu_subsig: 9688581, f_false: 1
+--i: 276, src: 1001586440536065, v_compu_subsig: 14924801, f_false: 1
+--i: 277, src: 1182834060427265, v_compu_subsig: 17625601, f_false: 1
+--i: 278, src: 1182834127536129, v_compu_subsig: 17625602, f_false: 1
+--i: 279, src: 1182868420165633, v_compu_subsig: 17626113, f_false: 1
+--i: 280, src: 1182868487274497, v_compu_subsig: 17626114, f_false: 1
+--i: 281, src: 1182937139642369, v_compu_subsig: 17627137, f_false: 1
+--i: 282, src: 1182937206751233, v_compu_subsig: 17627138, f_false: 1
+--i: 283, src: 1183005859119105, v_compu_subsig: 17628161, f_false: 1
+--i: 284, src: 1183005926227969, v_compu_subsig: 17628162, f_false: 1
+--i: 285, src: 1183040218857473, v_compu_subsig: 17628673, f_false: 1
+--i: 286, src: 1183040285966337, v_compu_subsig: 17628674, f_false: 1
+--i: 287, src: 1183177657810945, v_compu_subsig: 17630721, f_false: 1
+--i: 288, src: 1183177724919809, v_compu_subsig: 17630722, f_false: 1
+--i: 289, src: 1183246377287681, v_compu_subsig: 17631745, f_false: 1
+--i: 290, src: 1183246444396545, v_compu_subsig: 17631746, f_false: 1
 -- TODO -- disable b_debug in compute_sig_adv, 
 	REMOVE DEBUG USE 6311-6314
+
+	[d] It looks like there is a mis-calculation of computed_subsig
+	DEBUG 6322.1 and 6322.2
+	-- 6322.1 --
+	-- i: 273, sig: 18923, real_subsig: 1, => computed_subsig: 19377153
+ -- i: 274, sig: 18923, real_subsig: 4, => computed_subsig: 19377156
+ 	-- 6322.2 --
+	-- i: 273, sig: 18923, real_subsig: 1, => computed_subsig: 9688577
+ -- i: 274, sig: 18923, real_subsig: 4, => computed_subsig: 9688580
+==> generating different numbers!
+	-> the problem might be caused by u64 because
+		it might be going out of scope
+	-> there is another issue that missing one line change
+		from the gen_worker_id in the FpVar part -> added it
+
+Wed 02/11/2026
+Goal 1. new bug: DfaAdvGadget::validate_mul_fsm_acc_container fail on dfa_id: 

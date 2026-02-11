@@ -1106,7 +1106,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 							F::from(
 								HexACDFA::gen_subsig_id_worker(
 								field_to_usize(&sig_id), 
-								real_subsig_id+1) as u64);
+								real_subsig_id+1) as u128);
 						let b_match = vec_bad_subsig_id.iter().any(|x|
 							*x == my_subsig_id);
 						if b_match{
@@ -1195,7 +1195,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 			let subsig_id = F::from(HexACDFA::gen_subsig_id_worker(
 						field_to_usize(&v_sigs[i]), 
 						field_to_usize(&v_real_subsigs[i])
-					) as u64);
+					) as u128);
 			let res = map.get(&subsig_id)
 				.expect(&format!("cannot find subsig_id: {}", &subsig_id));
 			if b_debug && !subsig_id.is_zero(){
@@ -2196,6 +2196,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		// COST: 8n 
 		let bits = RANGE2_BIT;
 		let bit_part1 = bits*2/3; //16 for accomodating 64k sigs for bits 24
+		let bit_part1 = if bits>19 {16} else {bit_part1};
 		let bit_part2 = bits - bit_part1;
 		let fac2 = new_const_var(&cs, F::from(1u64<<bit_part2) );
 		let f_false = new_const_var(&cs, F::from(TriVal::False as u8));
