@@ -25021,10 +25021,42 @@ Goal 1. new bug: DfaAdvGadget::validate_mul_fsm_acc_container fail on dfa_id:
 	[d] push the change
 	[e] regression test
 
-Goal 2. implementation plan
-	[a] fix treefold first or set up gridview framework?
-	[b] should set up gridview framework first.
-	[c] should use a top-down approach and set up the 
-		function prototype of gridfold first, take
-		the needed params for the column fold and row fold
-		functio first.
+Goal 2. first time it worked!
+	[a] each prove_step for 512 * 4 * 32 = 64kb words
+		it costs about 18 seconds of prove time 
+		estimate: 1M -> 288 sec.
+		which is actually pretty good for 700M data maybe
+			just 56 hours two days
+	[b] peak time ram 160G, final RAM 139GB
+	[c] prove_step: Step 1. gen_witness: stmt_len: 6556183, wtns size: 9860744 117
+
+Goal 3. fine tune the parameters
+	[a] adjust f_worker size
+	[b] cut subsigs and sigs to half
+		=> prove_step: Step 1. gen_witness: stmt_len: 6448763, wtns size: 9686024 1167 ms (not helping much)
+	[c] *** Groth16 TwoPhaseCirc TOTAL constraints: 41100582 ***. circ1: 40232850, circ2: 867694 constraints. 45704 ms
+	LOG1:  **** FOLDPOT Now Complete ***** MEM: 137 GB. 1477956 ms
+	-> not much saving
+	[c] need to play with unique_states.
+		unique_states cutting from 19 perc to 10 perc
+		prove_step cost for word_id: 1, seg_id: 1, stmt_len: 6083067 16716 ms
+		-> OG1:  *** Groth16 TwoPhaseCirc TOTAL constraints: 37717841 ***. circ1: 36850109, circ2: 867694 constraints. 42615 ms
+		This cuts about 10%.
+	==> Stay with that, that's the best we can accomplish
+
+Goal 4. play with a larger (6.7M GDB file) which is also difficult.
+	medium level
+	[a] why does basis_acc_states 996? This is almost 10%!
+	[b] need to find out why. -> because of smaller segment tends 
+		to have fluctuation
+
+Thursday 02/12/2026
+Goal 1. continue with the GDB example
+	[a] problem! complaining ERROR: subsig_id: 37691400, res: 3 is not false
+	[b] needs to find out which sig and which subsig
+	[c] resource wise it becomes a 19M circuits! -> this potentially
+		might be a big problem as full circuit construction
+			takes 217M which leaves only 40M available for circuit!
+
+Goal 2. run a working example and collect the full circuit size allowed.
+

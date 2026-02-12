@@ -744,14 +744,16 @@ where
 			if csat.is_ok(){ assert!(csat.unwrap(), "step 7 decidercirc1"); }
 		}
 
-        #[cfg(feature = "light-test")]
-        println!("[WARNING]: Running with the 'light-test' feature, skipping the big part of the DeciderEthCircuit.\n           Only for testing purposes.");
+        //#[cfg(feature = "light-test")]
+        //println!("[WARNING]: Running with the 'light-test' feature, skipping the big part of the DeciderEthCircuit.\n           Only for testing purposes.");
 
         // The following two checks (and their respective allocations) are disabled for normal
         // tests since they take several millions of constraints and would take several minutes
         // (and RAM) to run the test. It is active by default, and not active only when
         // 'light-test' feature is used.
-        #[cfg(not(feature = "light-test"))]
+        //#[cfg(not(feature = "light-test"))]
+		let b_light_test = false;
+		if !b_list_test
         {
             use super::FOLDPOT_CF_N_POINTS;
             use crate::commitment::pedersen::PedersenGadget;
@@ -1117,9 +1119,11 @@ where
 		expected_final_result.enforce_equal(&my_phase1_ret.final_result)?;
 
 		//5. perform an extra cyclepair check!
-        #[cfg(feature = "light-test")]
-        println!("[WARNING]: Running with the 'light-test' feature, skipping the cyclepair part of the DeciderEthCircuit.\n Only for testing purposes.");
-        #[cfg(not(feature = "light-test"))]
+        //#[cfg(feature = "light-test")]
+        //println!("[WARNING]: Running with the 'light-test' feature, skipping the cyclepair part of the DeciderEthCircuit.\n Only for testing purposes.");
+        //#[cfg(not(feature = "light-test"))]
+		let b_light_test = false;
+		if !b_light_test
         {
             use crate::commitment::pedersen::PedersenGadget;
             use crate::folding::circuits::cyclefold::{CycleFoldCommittedInstanceVar};

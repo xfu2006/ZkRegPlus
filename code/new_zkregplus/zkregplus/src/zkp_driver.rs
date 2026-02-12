@@ -892,7 +892,7 @@ pub mod tests_zkp_driver{
         let perc_comp_subsigs = 20;
         let num_category = 1;
         let num_circs_per_category= 1;
-        let basis_unique_states = 1900; //ld vlaue 19 cpercent
+        let basis_unique_states = 1000; //ld vlaue 19 cpercent
         let basis_acc_states = 200; //old value 9 cpercent
         let basis_pats_in_trace = 250 ; //1.2 * basis_acc_states
 
@@ -952,12 +952,12 @@ pub mod tests_zkp_driver{
 		let subsigs = 500; //220 for prev db
 		let avg_pats_per_subsig = 8; //old value 8
 		let avg_active_pats_per_subsig = 3;
-		let basis_pats_in_trace = 36; //old value 100 cur value 1/1000.
 		let perc_comp_subsigs = 20;
 		let num_category = 1;
 		let num_circs_per_category= 1;
-		let basis_unique_states = 1900; //19 cpercent
-		let basis_acc_states = 900; //9 cpercent
+		let basis_unique_states = 1500; //19 cpercent
+		let basis_acc_states = 1200; //9 cpercent
+		let basis_pats_in_trace = 1400; //old value 100 cur value 1/1000.
 		//let avg_subsig_per_sig = 3;
 
 		let init_cp_cap= CpCapacity{
