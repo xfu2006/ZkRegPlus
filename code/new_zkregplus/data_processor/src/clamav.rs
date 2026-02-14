@@ -993,6 +993,16 @@ impl ClamavSig{
 	pub fn accepts_approx_pm_bounds(&self, hs: &HashMap<String, Vec<usize>>,
 		hs_igc: &HashMap<String, Vec<usize>>, fname: &str)
 	-> (TriVal, Option<DischargeSigInfo>){
+		let mut b_debug = true;
+		let debug_sig = "Win.Packed.Gandcrab-6911085-1";
+		b_debug = b_debug && format!("{}",debug_sig) == self.name;
+		if b_debug {
+			println!("DEBUG USE 6999.1: sig: {}", self.name);
+			for i in 0..self.vec_subsig_obj.len(){
+				println!(" -- subsig[{}]: {}", i, self.vec_subsig_obj[i].value);
+			}
+		}
+
 		assert!(self.vec_subsig_obj.len() == self.vec_subsig_pm_bounds.len(),
 			"vec_subsig.len() not matching vec_subsig_pm_bounds, call gen_approx_pm_bounds");
 		let mut bres = TriVal::True;
@@ -1063,6 +1073,9 @@ impl ClamavSig{
 				if min_cost > total_cost {
 					min_cost = total_cost;
 					min_dnf_id = dnf_id; 
+				}
+				if b_debug{
+					println!("-- DEBUG USE 6999.2 found one discharge dnf_id: {}, dnf_item: {:?}, cost: {}, min_dnf_id: {}, min_cost: {}", dnf_id, item, total_cost, min_dnf_id, min_cost);
 				}
 			}else{
 				//min_cost = 0; //it fails anyway, will not discharge

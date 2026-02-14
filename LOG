@@ -25052,11 +25052,160 @@ Goal 4. play with a larger (6.7M GDB file) which is also difficult.
 
 Thursday 02/12/2026
 Goal 1. continue with the GDB example
+	running time 8:30am-9:30am, 11:10am-12:30pm.(256GB version) 1 hr *0.5 $
+		12:30pm-1:30PM  (448GB version) 2 hrs * 0.8$
+		2:07pm- 6:48PM    (896GB version) - 5 hrs * 1$
+		== total estimate: 7$.
 	[a] problem! complaining ERROR: subsig_id: 37691400, res: 3 is not false
 	[b] needs to find out which sig and which subsig
 	[c] resource wise it becomes a 19M circuits! -> this potentially
 		might be a big problem as full circuit construction
 			takes 217M which leaves only 40M available for circuit!
+	-> LOG1:  *** Groth16 TwoPhaseCirc TOTAL constraints: 254933119 ***. circ1: 54249915, circ2: 200683166 constraints. 1784887 ms
+	-> run out of RAM killed by sig 9
+	-> increase to 448GB machine (costing about 1 dollar now)
 
 Goal 2. run a working example and collect the full circuit size allowed.
+	-> peak use is about 424GB
+	-> eventually used up all 424GB. 
+	-> 
+	116m 446GB
+	=== DETAILS =========
+LOG1:  FoldPot Step 5: build decider circuit. MEM: 82 GB 5237 ms
+LOG1:  Phase1 Circ gen_cs: Step 1: r1cs: 0 6695 ms
+LOG1:  Phase1 Circ gen_cs: Step 2: igen Ui, Wi, Ui1, Wi1 witness: r1cs: 4698 1292 ms
+LOG1:  Phase1 Circ gen_cs: Step 3: collect all_w_e. len: 17633792, : r1cs: 3285. 1427 ms
+LOG1:  Phase1 Circ gen_cs: Step 4: eval all_w_e. r1cs: 17651012. 8377 ms
+LOG1:  Phase1 Circ gen_cs: Step 5: Enforce u_i standard and hash. r1cs: 5179. 14 ms
+LOG1:  Phase1 Circ gen_cs: Step 6: verify zi_part2. r1cs: 1498, memory usage: 100. 892 ms
+LOG1:  Phase1 Circ gen_cs: Step 7: check 1 circs. r1cs: 20412203 25484 ms
+DEBUG USE 101: before cs: 38084213
+DEBUG USE 102: AFTER cs: 44884399
+LOG1:  Phase1 Circ gen_cs: Step 8: Verify U_i1 is folded U_i and u_i. r1cs: 6806530, RAM: 119 GB. 5498 ms
+LOG1:  Phase1 Circ gen_cs: Step 9: check cf_W_i commits to cf_U_i. r1cs: 4924048, RAM: 121 GB. 74528 ms
+LOG1:  Phase1 Circ gen_cs: Step 10: check cf_W_i satisfies cyclefold instance. r1cs: 4441462, RAM: 123 GB. 7631 ms
+LOG1:  Phase1 Circ gen_cs: COMPLETED. TOTAL r1cs: 54249915, RAM: 123 GB. 1265 ms
+LOG2: --  TwoPhaseCirc build circ1: 54249915 cs. 135062 ms
+LOG1:  Phase2 Circ gen_cs: Step 1: gen_expected_final_result. r1cs: 16755 134 ms
+LOG1:  Phase2 Circ gen_cs: Step 2: check cyclepair consistency. r1cs: 40 28 us
+LOG1:  Phase1 Circ gen_cs: Step 1: r1cs: 0 314 ms
+LOG1:  Phase1 Circ gen_cs: Step 2: igen Ui, Wi, Ui1, Wi1 witness: r1cs: 4698 45 ms
+LOG1:  Phase1 Circ gen_cs: Step 3: collect all_w_e. len: 368893, : r1cs: 3285. 18 ms
+LOG1:  Phase1 Circ gen_cs: Step 4: eval all_w_e. r1cs: 369253. 140 ms
+LOG1:  Phase1 Circ gen_cs: Step 5: Enforce u_i standard and hash. r1cs: 5779. 11 ms
+LOG1:  Phase1 Circ gen_cs: Step 6: verify zi_part2. r1cs: 13778, memory usage: 119. 1098 ms
+LOG1:  Phase1 Circ gen_cs: Step 7: check 1 circs. r1cs: 454105 755 ms
+DEBUG USE 101: before cs: 55124248
+DEBUG USE 102: AFTER cs: 61924434
+LOG1:  Phase1 Circ gen_cs: Step 8: Verify U_i1 is folded U_i and u_i. r1cs: 6806834, RAM: 119 GB. 5511 ms
+LOG1:  Phase1 Circ gen_cs: Step 9: check cf_W_i commits to cf_U_i. r1cs: 4924048, RAM: 125 GB. 73257 ms
+LOG1:  Phase1 Circ gen_cs: Step 10: check cf_W_i satisfies cyclefold instance. r1cs: 4441462, RAM: 127 GB. 7265 ms
+LOG1:  Phase1 Circ gen_cs: COMPLETED. TOTAL r1cs: 17023242, RAM: 127 GB. 1240 msLOG1:  Phase2 Circ gen_cs: Step 3: Main circ construction. r1cs: 17023242 89888 ms
+LOG1:  Phase2 Circ gen_cs: Step 5: check u_i.x[2]=cp_U_i.hash(). r1cs: 13787269 7936 ms
+LOG1:  Phase2 Circ gen_cs: Step 6.1: check cp_W_i commits to cp_U_i. r1cs: 41218685, RAM: 154 GB 718013 ms
+LOG1:  Phase2 Circ gen_cs: Step 6.2: check cp_E_i commits to cp_U_i. r1cs: 41168285, RAM: 194 GB 717112 ms
+LOG1:  Phase2 Circ gen_cs: Step 7: check cp_W_i satisfies cyclepair instance. r1cs: 87468890, RAM: 231 GB 121498 ms
+LOG1:  Phase2 Circ gen_cs: COMPLETE. TOTAL r1cs: 200683166, RAM: 231 GB 2413 ms
+LOG2: --  TwoPhaseCirc build circ2: 200683166 cs. 1657056 ms
+LOG2: --  TwoPhaseCirc connect 2 circs: 38 cs. 107 ms
+LOG1:  *** Groth16 TwoPhaseCirc TOTAL constraints: 254933119 ***. circ1: 54249915, circ2: 200683166 constraints. 1792226 ms
+LOG1:  FoldPot Step 6: setup Groth16. MEM: 450 GB. 2494608 ms
+LOG1:  Phase1 Circ gen_cs: Step 1: r1cs: 0 5531 ms
+LOG1:  Phase1 Circ gen_cs: Step 2: igen Ui, Wi, Ui1, Wi1 witness: r1cs: 4698 2492 ms
+LOG1:  Phase1 Circ gen_cs: Step 3: collect all_w_e. len: 17633792, : r1cs: 3285. 1518 ms
+LOG1:  Phase1 Circ gen_cs: Step 4: eval all_w_e. r1cs: 17651012. 7579 ms
+LOG1:  Phase1 Circ gen_cs: Step 5: Enforce u_i standard and hash. r1cs: 5179. 2223 ms
+LOG1:  Phase1 Circ gen_cs: Step 6: verify zi_part2. r1cs: 1498, memory usage: 463. 3956 ms
+LOG1:  Phase1 Circ gen_cs: Step 7: check 1 circs. r1cs: 20412203 17332 ms
+DEBUG USE 101: before cs: 38084213
+DEBUG USE 102: AFTER cs: 44884399
+LOG1:  Phase1 Circ gen_cs: Step 8: Verify U_i1 is folded U_i and u_i. r1cs: 6806530, RAM: 472 GB. 11719 ms
+LOG1:  Phase1 Circ gen_cs: Step 9: check cf_W_i commits to cf_U_i. r1cs: 4924048, RAM: 472 GB. 81991 ms
+LOG1:  Phase1 Circ gen_cs: Step 10: check cf_W_i satisfies cyclefold instance. r1cs: 4441462, RAM: 472 GB. 11393 ms
+LOG1:  Phase1 Circ gen_cs: COMPLETED. TOTAL r1cs: 54249915, RAM: 472 GB. 4212 ms
+LOG2: --  TwoPhaseCirc build circ1: 54249915 cs. 152827 ms
+LOG1:  Phase2 Circ gen_cs: Step 1: gen_expected_final_result. r1cs: 16755 147 ms
+LOG1:  Phase2 Circ gen_cs: Step 2: check cyclepair consistency. r1cs: 40 28 us
+LOG1:  Phase1 Circ gen_cs: Step 1: r1cs: 0 289 ms
+LOG1:  Phase1 Circ gen_cs: Step 2: igen Ui, Wi, Ui1, Wi1 witness: r1cs: 4698 56 ms
+LOG1:  Phase1 Circ gen_cs: Step 3: collect all_w_e. len: 368893, : r1cs: 3285. 24 ms
+LOG1:  Phase1 Circ gen_cs: Step 4: eval all_w_e. r1cs: 369253. 177 ms
+LOG1:  Phase1 Circ gen_cs: Step 5: Enforce u_i standard and hash. r1cs: 5779. 13 msLOG1:  Phase1 Circ gen_cs: Step 6: verify zi_part2. r1cs: 13778, memory usage: 468. 4159 ms
+LOG1:  Phase1 Circ gen_cs: Step 7: check 1 circs. r1cs: 454105 924 ms
+DEBUG USE 101: before cs: 55124248
+DEBUG USE 102: AFTER cs: 61924434
+LOG1:  Phase1 Circ gen_cs: Step 8: Verify U_i1 is folded U_i and u_i. r1cs: 6806834, RAM: 470 GB. 9534 ms
+LOG1:  Phase1 Circ gen_cs: Step 9: check cf_W_i commits to cf_U_i. r1cs: 4924048, RAM: 486 GB. 86171 ms
+LOG1:  Phase1 Circ gen_cs: Step 10: check cf_W_i satisfies cyclefold instance. r1cs: 4441462, RAM: 488 GB. 12056 ms
+LOG1:  Phase1 Circ gen_cs: COMPLETED. TOTAL r1cs: 17023242, RAM: 488 GB. 4327 ms
+LOG1:  Phase2 Circ gen_cs: Step 3: Main circ construction. r1cs: 17023242 118396 ms
+LOG1:  Phase2 Circ gen_cs: Step 5: check u_i.x[2]=cp_U_i.hash(). r1cs: 13787269 8620 ms
+LOG1:  Phase2 Circ gen_cs: Step 6.1: check cp_W_i commits to cp_U_i. r1cs: 41218685, RAM: 492 GB 757379 ms
+LOG1:  Phase2 Circ gen_cs: Step 6.2: check cp_E_i commits to cp_U_i. r1cs: 41168285, RAM: 528 GB 764138 ms
+LOG1:  Phase2 Circ gen_cs: Step 7: check cp_W_i satisfies cyclepair instance. r1cs: 87468890, RAM: 528 GB 133178 ms
+LOG1:  Phase2 Circ gen_cs: COMPLETE. TOTAL r1cs: 200683166, RAM: 528 GB 4881 ms
+LOG2: --  TwoPhaseCirc build circ2: 200683166 cs. 1786838 ms
+LOG2: --  TwoPhaseCirc connect 2 circs: 38 cs. 117 ms
+LOG1:  *** Groth16 TwoPhaseCirc TOTAL constraints: 254933119 ***. circ1: 54249915, circ2: 200683166 constraints. 1939783 ms
+==== > for LOG3: -- --  -- Pass 3. prove_step cost for word_id: 1, seg_id: 1, stmt_len: 6190487 17976 ms
+LOG3: -- --  -- prove_step cost: i: 1, circ_id: 0, stmt_len: 6190487, wtns size: 9312200 17331 ms
+===============
 
+If we change from 2% to 10% we have:
+ LOG1:  *** Groth16 TwoPhaseCirc TOTAL constraints: 286714116 ***. circ1: 86030912, circ2: 200683166 constraints. 1863499 ms
+        Because: OG3: -- --  -- prove_step cost: i: 1, circ_id: 0, stmt_len: 9761999, wtns size: 14669468 28452 ms
+===> so increase of 3.6M statement len: eventually increases 30M r1cs.
+===> 1M statement len -> 10M R1CS eventually.
+=======> Currently it only supports 6M statement.
+=======> changing acc_rate from 2% to 10% leads from 6M to 9M statement.
+	-> NOTE THAT it's not increasing 5 times, just 50%.
+=======> If we change to two separate circs, 256M allows 25M
+	statements. We could probably support
+		12M + 6M +  (3 circs)
+
+--- need to think about possibility of getting two separate circs.
+
+Friday 02/13/2026
+server (256gb) usage: 
+	2:00pm-5:11pm (estimate: 3 hrs -> 1.5 $)
+Goal 1. investigate and make the debug example for full_data3 - gdb example
+	check why it fails
+	[a] run small data
+	[b] regress test on full_data1 (a small file) -> build db 
+		actually passed it.
+	[c] regress test again  -> OK
+	[d] debug full_data3() -> subsig 37691400
+		[d1] signame: (debug 6708)
+		** DEBUG USE 6708 found bad subsig_id: 37691400, in sig: Win.Packed.Gandcrab-6911085-1, real_id: 7, details: 3>5
+	[e] put the data in small_debug
+
+Goal 2. read the decider circuit code and review its logic (if it's possible
+	to device into two circs)?
+	[a] RelaxedR1CSGadget check_native and check_nonnaitive
+		hadamard product
+	[b] WitnessVarFoldPotSuper
+	[c] Phase1CircuitRet
+	[d] Phase2CircuitRet
+	[e] Phase1Circuit: checked R1CS relation for all circuits
+		and cf instances; evaluated all_w_e on kzg.
+	[g] but why would Phase2Circ runs Phase1 circ again?
+	[h] TwoPhaseDeciderEthCircuitSuper
+Goal 3. Plan
+	[a] we can separate the two circuits and prove them separately
+		the only public i/o could be just a hash value
+	[b] there is a FIXED cost of verifying cf instances in circuit 1
+		but that maybe at most 10M constraints.
+	[c] so we are left with a budget of 250M r1cs for circuit 1.
+		60M for a large scale project and we support maybe 4 circs.
+	[f] Phase2Circuit: 
+	[f] Phase2Circuit
+
+Goal 4. continue to debug
+	[a] large data set report: ** DEBUG USE 6708 found bad subsig_id: 37691400, in sig: Win.Packed.Gandcrab-6911085-1, real_id: 7, details: 3>5
+	[b] NEW report (because sig id changes:)
+		--: Strangely cannot reproduce the error.
+		the discharge info for the sig is
+		{min_dnf_id: 0, subsig=[0], cost is 24k}.
+
+Sat 02/14/2026
+Goal 1.  DEBUG how it discharges the sig.

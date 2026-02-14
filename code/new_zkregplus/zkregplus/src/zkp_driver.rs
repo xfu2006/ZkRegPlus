@@ -692,10 +692,10 @@ pub mod tests_zkp_driver{
 		let avg_pats_per_subsig = 4; 
 		let avg_active_pats_per_subsig = 0; //good value 0, actually does
 			//not matter?
-		let basis_pats_in_trace = 6; 
 		let perc_comp_subsigs = 26; 
 		let basis_unique_states = 5; 
-		let basis_acc_states = 2; 
+		let basis_acc_states = 400; 
+		let basis_pats_in_trace = 450; 
 
 		let num_category = 1;
 		let num_circs_per_category= 1;
@@ -723,8 +723,8 @@ pub mod tests_zkp_driver{
 
 
 		zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
-			&format!("{}/sigs_debug.dat",set1), //src sig
-			&format!("{}/binexec_debug.dat",set1), //list of files to discharge
+			&format!("{}/sigs_debug2.dat",set1), //src sig
+			&format!("{}/binexec_debug2.dat",set1), //list of files to discharge
 			"data/small_data_set/reports/report.dat", //report
 			b_read_cache,
 			b_write_cache,
@@ -815,7 +815,7 @@ pub mod tests_zkp_driver{
 	/// However, just run a small file
 	#[allow(dead_code)]
 	fn full_data1<F:PrimeField>(b_check_lkup: bool){
-		assert!(RANGE2_BIT==24, "set RANGE2_BIT to 24");
+		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
 		let b_read_cache = true;
 		let b_write_cache = ! b_read_cache;
 		let set1 = "data/debug/full_data_set/config/"; //for dfa 
@@ -879,7 +879,7 @@ pub mod tests_zkp_driver{
 	#[allow(dead_code)]
 	fn full_data2<F:PrimeField>(b_check_lkup: bool){
 		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
-	    assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
+		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
         let b_read_cache = true;
         let b_write_cache = ! b_read_cache;
         let set1 = "data/debug/full_data_set/config/"; //for dfa
@@ -893,8 +893,10 @@ pub mod tests_zkp_driver{
         let num_category = 1;
         let num_circs_per_category= 1;
         let basis_unique_states = 1000; //ld vlaue 19 cpercent
-        let basis_acc_states = 200; //old value 9 cpercent
-        let basis_pats_in_trace = 250 ; //1.2 * basis_acc_states
+    //    let basis_acc_states = 200; //old value 9 cpercent --> GOOD setting
+     //   let basis_pats_in_trace = 250 ; //1.2 * basis_acc_states
+        let basis_acc_states = 1200; //old value 9 cpercent --> GOOD setting
+        let basis_pats_in_trace = 1440 ; //1.2 * basis_acc_states
 
 		let init_cp_cap= CpCapacity{
 			max_word_len: max_word, 
@@ -942,23 +944,22 @@ pub mod tests_zkp_driver{
 	/// It runs a large but difficult file: gdb (6.6M)
 	#[allow(dead_code)]
 	fn full_data3<F:PrimeField>(b_check_lkup: bool){
-		assert!(RANGE2_BIT==24, "set RANGE2_BIT to 24");
+		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
 		let b_read_cache = true;
 		let b_write_cache = ! b_read_cache;
 		let set1 = "data/debug/full_data_set/config/"; //for dfa 
-		//let max_word= 512; 
-		let max_word= 512 * 8; 
-		let sigs = 320;
-		let subsigs = 500; //220 for prev db
-		let avg_pats_per_subsig = 8; //old value 8
-		let avg_active_pats_per_subsig = 3;
-		let perc_comp_subsigs = 20;
-		let num_category = 1;
-		let num_circs_per_category= 1;
-		let basis_unique_states = 1500; //19 cpercent
-		let basis_acc_states = 1200; //9 cpercent
-		let basis_pats_in_trace = 1400; //old value 100 cur value 1/1000.
-		//let avg_subsig_per_sig = 3;
+		let max_word= 512 * 8;
+        let sigs = 320;
+        let subsigs = 500; //220 for prev db
+        let avg_pats_per_subsig = 8; //old value 8
+        let avg_active_pats_per_subsig = 3;
+        let perc_comp_subsigs = 20;
+        let num_category = 1;
+        let num_circs_per_category= 1;
+        let basis_unique_states = 1500; //19 cpercent
+        let basis_acc_states = 1200; //9 cpercent
+        let basis_pats_in_trace = 1400; //old value 100 cur value 1/1000.
+        //let avg_subsig_per_sig = 3;
 
 		let init_cp_cap= CpCapacity{
 			max_word_len: max_word, 

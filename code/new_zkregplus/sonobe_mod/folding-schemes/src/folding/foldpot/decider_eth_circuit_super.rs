@@ -753,7 +753,7 @@ where
         // 'light-test' feature is used.
         //#[cfg(not(feature = "light-test"))]
 		let b_light_test = false;
-		if !b_list_test
+		if !b_light_test
         {
             use super::FOLDPOT_CF_N_POINTS;
             use crate::commitment::pedersen::PedersenGadget;
