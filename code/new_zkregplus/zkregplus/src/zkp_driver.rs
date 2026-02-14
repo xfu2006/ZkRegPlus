@@ -79,7 +79,10 @@ fn load_files<F:PrimeField>(list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavA
     }).collect::<Vec<Vec<F>>>();
 
 	let sdir = format!("{}/data/cache/{}/", &proj_root(), cache_dir);
-    let vec_word_info= if b_read_cache{
+	/* DON'T - as each new bin-exec pack will cause loading outdated
+    let vec_word_info= 
+		cache
+		if b_read_cache{
 		let s_wi= read(&format!("{}/vec_word_info.txt", sdir));
 		let vec_word_info:Vec<WordInfo> = serde_json::from_str(&s_wi)
 				.expect("Convert vec_sigs fails");
@@ -89,7 +92,8 @@ fn load_files<F:PrimeField>(list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavA
 		}
 		vec_word_info
 	}else{
-		let vec_word_info = file_names.into_par_iter().map(|fpath|
+	*/
+	let vec_word_info = file_names.into_par_iter().map(|fpath|
 		{
 			let abspath = format!("{}/{}", &proj_root(), fpath);
 			let nibbles = read_nibbles(&abspath);
@@ -117,6 +121,7 @@ fn load_files<F:PrimeField>(list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavA
 			rec
 		}).collect::<Vec<WordInfo>>();
 
+		/*
 		if b_write_cache{
 			let s_wi = serde_json::to_string(&vec_word_info).unwrap();
 			write_to_file(&format!("{}/vec_word_info.txt", &sdir), &s_wi);
@@ -127,6 +132,7 @@ fn load_files<F:PrimeField>(list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavA
 		}
 		vec_word_info
 	};
+	*/
 
 	(final_data, vec_word_info, file_names.clone())
 }
@@ -945,11 +951,11 @@ pub mod tests_zkp_driver{
 	#[allow(dead_code)]
 	fn full_data3<F:PrimeField>(b_check_lkup: bool){
 		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
-		let b_read_cache = true;
+		let b_read_cache = false;
 		let b_write_cache = ! b_read_cache;
 		let set1 = "data/debug/full_data_set/config/"; //for dfa 
 		let max_word= 512 * 8;
-        let sigs = 320;
+        let sigs = 350;
         let subsigs = 500; //220 for prev db
         let avg_pats_per_subsig = 8; //old value 8
         let avg_active_pats_per_subsig = 3;

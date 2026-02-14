@@ -25209,3 +25209,28 @@ Goal 4. continue to debug
 
 Sat 02/14/2026
 Goal 1.  DEBUG how it discharges the sig.
+	[a] on server enable all logs
+	[b] DEBUG 6922.1: print all records of sig get discharged and min_dnf_id
+		on server
+
+Goal 2. local debug add debug code and see how the sig is discharged
+	[a] 6999.1 dump sig info
+	[b] 6999.2 dump dnf_id infoA
+	[c] local debug info:
+		there is ONE and only one item, cost 21k.
+
+Goal 3. now push he code to server and use the new DEBUG 6999.1 and 6999.2
+	info
+	[a] subsig - 37691400
+	[b] did not find win.Packed.Gandcrab-6911085-1 discharge
+		dnf record in 6999.1 (enable all dump)
+	stragely it never hits 6999.1 even  -> FOUND it needs the real mode
+		to call quick_discharge.
+	---
+	DEBUG USE 6700: discharge_info: DischargeSigInfo { sig_name: "Win.Packed.Gandcrab-6911085-1", b_success: true, min_cost: 0, min_dnf_id: 3, subsig_ids: [7], subsig_igc: [false] }
+	---
+---> if the load info is laded from cache, then, it must be for another binary file, which was wrong. 
+---> note for fulldata_3 it needs comp_sig:sigs:333, dfa_adv::sigs:3.
+
+Goal 4: in zkp_driver remove the cache to load the discharge info.
+	-> figure out the sigs to load.
