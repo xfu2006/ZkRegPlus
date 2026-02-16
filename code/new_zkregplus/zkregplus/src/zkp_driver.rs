@@ -966,7 +966,7 @@ pub mod tests_zkp_driver{
         let basis_acc_states = 1200; //9 cpercent
         let basis_pats_in_trace = 1500; //old value 100 cur value 1/1000.
 		let dfa_sigs = 3;
-		let dfa_subsigs= 3;
+		let dfa_subsigs= 4;
         //let avg_subsig_per_sig = 3;
 
 		let init_cp_cap= CpCapacity{

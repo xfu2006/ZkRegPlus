@@ -25337,3 +25337,50 @@ Needs 98 min for the error to show up!
 
 Monday 02/16/2026
 Goal 1. debug the build advice problem 
+	[a] add timing statements in composable and various components
+		and identify who's the most expensive
+	[b] it looks the CP takes most of the time itemize the cost.
+	[c] identified: pack is taking extra long
+
+Goal 2. fix the DFA complaint -> FIXED
+	[a] v_sigs is cols[0] where cols[0] is "v_sigs" column
+		in validate_discharge_sig_combo
+	[b] check in gen_discharge_sig_combo
+	[c] fixed compacity
+
+Goal 3. main bottleneck pack.rs -> FIXED
+	[a] add timing funcitons
+	[b] it looks like the gen_m_tbl function takes lot of time.
+	[c] fixed -> there is an additional check of lkup which
+		slows down things a lot.
+
+Goal 4. read the two phase circuit again
+	[a] verify nova1 and nova2 design -> nova2 is indeed
+		about the collection of pairing checks.
+	[b] but are the pairing checks built?
+		cyclepair_inputs  = W+i1.gen_com_all_w_and_qa_nizk_prf
+		for each circuit each has (W,E,F) they are partial
+		fragment of all_w_e.
+		qainzk generates 3 pairing equations for each
+		generate_cyclepair_inputs collect each apiring equations
+			out of this check.
+	[c] nova2 is to fold and compute these equations
+	[d] how does decider_circuit checks the cyclepair input
+		between nova1 and nova2?
+		--> Phase2Circuit does have cyclepair_inputs AS its 
+			non-deterministic advice!
+
+Goal 5. read the Phase2Circuit generation pay special attention
+	to cyclepair_inputs
+	[a] process_cyclepair_inp gets the vectors
+		of cyclepair_inp equations and computes hashchain of
+		G1 and G2 elements involved
+	[b] circ2 is passed with the vec coms of circ1Ret (of main circuit)
+		and use it to rebuild the cyclepair
+	[c] circ2's main circuit computes the hashchain of cycleinput
+		where it, given the CIRC1's vec_coms computes it again and
+			verify that they match (so that circ2 is 
+			indeed processing circ1's cyclepair input)
+	[d] IN CONCLUSION: Phase2 Circ does NEED a NON-DETERMINISTIC
+		advice of the Phase1 circuit output.
+

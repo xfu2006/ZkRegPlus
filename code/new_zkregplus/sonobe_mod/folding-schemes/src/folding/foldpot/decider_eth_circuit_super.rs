@@ -887,6 +887,8 @@ where
 /// Phase 2 Circuit that implements the in-circuit checks 
 /// It basically proves the same as Phase1 circuit (using its main_circ),
 /// and some additional features:
+/// THIS CIRCUIT in driver is SPECIFICALLY to compute (as its main function)
+///   the hashchain of cyclepair_input (and also folding cyclepair checks).
 /// There exists: [z_i, n, z_n, (U_i, W_i), (u_i, w_i), 
 ///          com_all_W,  {(com_W, com_E, com_F)}_i=1^k, prf_qa_nizk ]
 /// (1) there exists (U_i, W_i), (u_i, w_i) that folds to (U_i1)
@@ -902,7 +904,9 @@ where
 /// ---------------------------------------------------------
 ///  In additio, it proves the following.
 /// (2) Verify the {(com_W, com_E, com_F)}_i=1^k sequence matches
-///         the ones returned in Phase1 circuit
+///         the ones returned in Phase1 circuit (NOTE not its main circ,
+///              which computes the hashchain of cyclepair inp,
+///              it's the MAIN zkregplus circ).
 /// (3) compute the hashchain(G_1): [com_All_w, (comW, com_E, com_F)_i=1^k, prf]
 ///             hashchain(G_2): the qa-nizk key series
 ///     and verify that hash(hashchain(G_1), hashchain(G_2)) is the same
@@ -1344,7 +1348,9 @@ pub struct TwoPhaseCircInput<F: PrimeField,C: CurveGroup<ScalarField=F>>{
 	/// hash of the qa_nizk_vkey
 	pub qa_nizk_vkey_hash: F,
 
-	/// the comE of U_{i+1} of circ2
+	/// the comE of U_{i+1} of circ2 (they will go to the
+	/// QA-NIZK proof). Circ 2 handles the MANY comE,W,F for each
+	/// sub circuit (so these of Circ1 don't have to get disclosed)
 	pub comE2: C,
 	/// the comW of U_{i+1} of circ2
 	pub comW2: C,
