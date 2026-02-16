@@ -598,7 +598,7 @@ where
             }).unwrap()).collect::<Vec<
 				R1CSVar::<C1::ScalarField,CF1<C1>,FpVar<CF1<C1>>>
 			>>();
-		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 1: r1cs: {}", cs.num_constraints()-c1), &mut t1);
+		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 1: generae r1cs_var. INCREASSED {} constraints", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
 
 		//2. generate Var version of pp_hash, z_0, z_i
@@ -628,7 +628,7 @@ where
         let W_i1 = WitnessVarFoldPotSuper::<C1>::new_witness(cs.clone(), || {
             Ok(self.W_i1.unwrap())
         })?;
-		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 2: igen Ui, Wi, Ui1, Wi1 witness: r1cs: {}", cs.num_constraints()-c1), &mut t1);
+		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 2: igen Ui, Wi, Ui1, Wi1 witness: INCREASED {} constraints", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
 
 		//3. compute the KZG challenge in circuit
@@ -648,13 +648,14 @@ where
 		).flatten().collect::<Vec<FpVar<C1::ScalarField>>>();
 		all_w.append(&mut all_e);
 		all_w.push(r_all_w);
-		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 3: collect all_w_e. len: {}, : r1cs: {}.", all_w.len(), cs.num_constraints()-c1), &mut t1);
+		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 3: collect all_w_e. len: {}, : INCREASED: {} constraints.", 
+			all_w.len(), cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
 
 		let one= FpVar::<C1::ScalarField>::new_witness(cs.clone(),  || 
 			Ok(C1::ScalarField::from(1u32)) ).unwrap();
         let eval_w_e= evaluate_gadget::<CF1<C1>>(all_w, kzg_all_com_ch, one)?;
-		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 4: eval all_w_e. r1cs: {}.", cs.num_constraints()-c1), &mut t1);
+		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 4: eval all_w_e. INCREASED {} constrains.", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
 
         //4. u_i.cmE==cm(0), u_i.u==1
@@ -705,7 +706,7 @@ where
 		// u_1.x = hash(U_1, ...) where U_1 is really from the dummy case.
         let is_basecase = i_minus_one.is_zero()?;
         (u_i.x[0]).enforce_equal(&is_basecase.select(&u_i1_x_base, &u_i_x)?)?;
-		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 5: Enforce u_i standard and hash. r1cs: {}.", cs.num_constraints()-c1), &mut t1);
+		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 5: Enforce u_i standard and hash. INCREASED r1cs: {}.", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
 
 		//6. Added check z_i is well-formed (and in-particular) its
@@ -721,7 +722,7 @@ where
 			assert!(zi_p2.value().unwrap()==z_i[1].value().unwrap());
 		}}
 		zi_p2.enforce_equal(&z_i[1])?;
-		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 6: verify zi_part2. r1cs: {}, memory usage: {}.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
+		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 6: verify zi_part2. INCREASED r1cs: {}, memory usage: {}.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 		c1 = cs.num_constraints();
 
 
@@ -737,7 +738,7 @@ where
 				U_i1.vec_inst[i].u.clone(), 
 				z_U1)?;
 		}
-		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 7: check {} circs. r1cs: {}", self.n_circ, cs.num_constraints()-c1), &mut t1);
+		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 7: check {} circs. INCREASED r1cs: {}", self.n_circ, cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
 		if b_debug{
 			let csat = cs.is_satisfied();
@@ -797,7 +798,7 @@ where
 				cmT
 			)?;
 			Ui1_pci.enforce_equal(&expected_Ui1_pci)?;
-			log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 8: Verify U_i1 is folded U_i and u_i. r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
+			log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 8: Verify U_i1 is folded U_i and u_i. INCREASED r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 			c1 = cs.num_constraints();
 
 			//8. Verify cyclefold instance
@@ -836,7 +837,7 @@ where
             let computed_cmW =
                 PedersenGadget::<C2, GC2>::commit(H2, G, cf_W_i_W_bits?, cf_W_i.rW.to_bits_le()?)?;
             cf_U_i.cmW.enforce_equal(&computed_cmW)?;
-			log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 9: check cf_W_i commits to cf_U_i. r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
+			log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 9: check cf_W_i commits to cf_U_i. INCREASED r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 			c1 = cs.num_constraints();
 
 			//10. check cyclefold witness satisfy its r1cs
@@ -846,7 +847,7 @@ where
 				cf_W_i.W.to_vec()].concat();
             RelaxedR1CSGadget::check_nonnative(cf_r1cs, 
 				cf_W_i.E, cf_U_i.u.clone(), cf_z_U)?;
-			log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 10: check cf_W_i satisfies cyclefold instance. r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
+			log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 10: check cf_W_i satisfies cyclefold instance. INCREASED r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
         }
 
 		if b_debug{

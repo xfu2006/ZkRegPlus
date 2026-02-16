@@ -964,7 +964,9 @@ pub mod tests_zkp_driver{
         let num_circs_per_category= 1;
         let basis_unique_states = 1500; //19 cpercent
         let basis_acc_states = 1200; //9 cpercent
-        let basis_pats_in_trace = 1400; //old value 100 cur value 1/1000.
+        let basis_pats_in_trace = 1500; //old value 100 cur value 1/1000.
+		let dfa_sigs = 3;
+		let dfa_subsigs= 3;
         //let avg_subsig_per_sig = 3;
 
 		let init_cp_cap= CpCapacity{
@@ -984,8 +986,6 @@ pub mod tests_zkp_driver{
 			basis_unique_states,
 			basis_acc_states,
 		);
-		let dfa_sigs = 2;
-		let dfa_subsigs= 3;
 		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
 
 
@@ -1012,9 +1012,9 @@ pub mod tests_zkp_driver{
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
-		//small_data::<Fr>(b_check_lkup); //small data
+		small_data::<Fr>(b_check_lkup); //small data
 		//small_data2::<Fr>(b_check_lkup);  //10k data 
-		small_data_debug::<Fr>(b_check_lkup);  //for debug
+		//small_data_debug::<Fr>(b_check_lkup);  //for debug
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//full_data1::<Fr>(b_check_lkup);
 		//full_data2::<Fr>(b_check_lkup); //full data high acc state 

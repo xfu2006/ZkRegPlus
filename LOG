@@ -25234,3 +25234,106 @@ Goal 3. now push he code to server and use the new DEBUG 6999.1 and 6999.2
 
 Goal 4: in zkp_driver remove the cache to load the discharge info.
 	-> figure out the sigs to load.
+	[a] increased to 350 sigs
+	[b] first time throw err and then crashes. 
+
+Sunday 02/15/2026
+Goal 1. continue to check full_data3
+	[a] run again
+	[b] need to change dfa_sig = 3
+
+Goal 2. go over the impl of two decider circuit again
+	[a] Phase1Ret has all commitments and eval_w_e essentially
+	[b] Phase1Circuit produces Phase1Ret basically asserts that
+		there exists IVC proof for z_n, and
+			kzg_eval_sum works for the challenge.
+	LOG4: -- -- --  plan_nd_advice step 0. layers: 1, word.len(): 220210, b_save_adivce: false 2 us quite expensive
+		starting 5:47pm-5:54pm
+		==> note that gen_nd_advice is VERY SLOW! (decide circ_alloc
+			takes 1100 seconds!)
+		Pass1: gen_advice needs 22 sec!!!, build stmt needs 2.3 sec. 
+			update needs 1 sec.
+		==> later need to check why.
+Resource ok but got one error in prove_step
+-------------
+thread 'zkp_driver::tests_zkp_driver::test_zkreg_main' panicked at zkregplus/src/gadgets/commons.rs:1425:13:
+ERROR on we require one dummy entry at begin. v1: 35028, v2:
+stack backtrace:
+   0: rust_begin_unwind
+             at /rustc/07dca489ac2d933c78d3c5158e3f43beefeb02ce/library/std/src/panicking.rs:645:5
+   1: core::panicking::panic_fmt
+             at /rustc/07dca489ac2d933c78d3c5158e3f43beefeb02ce/library/core/src/panicking.rs:72:14
+   2: zkregplus::gadgets::commons::check_eq
+   3: zkregplus::gadgets::dfa_adv::DfaAdvGadget<F>::validate_discharge_sig_combo
+   4: <zkregplus::gadgets::dfa_adv::DfaAdvGadget<F> as folding_schemes::folding::foldpot::sigma_ir1cs::SigmaGadget<F>>::assert_msg3
+ -----------------------
+ Break down of gadge cost
+ LOG6: -- -- -- -- --  -- -- after msg3 of module 0: WordExtractGadget:
+        INCREASED: constraints: 24576, const vars: 0, wit vars: 16384
+        ==> NOW: CS:38997, const: 1, witness: 22946230
+         ==> stmt_size: 512002.  42 ms
+LOG6: -- -- -- -- --  -- -- after msg3 of module 1: FsmGadget:
+        INCREASED: constraints: 63488, const vars: 0, wit vars: 0
+        ==> NOW: CS:102485, const: 1, witness: 22946230
+         ==> stmt_size: 1269762.  80 ms
+LOG6: -- -- -- -- --  -- -- after msg3 of module 2: PackFinalGadget:
+        INCREASED: constraints: 660001, const vars: 0, wit vars: 621908
+        ==> NOW: CS:762486, const: 1, witness: 23568138
+         ==> stmt_size: 160368.  356 ms
+LOG6: -- -- -- -- --  -- -- after msg3 of module 3: GetSigGadget:
+        INCREASED: constraints: 147848, const vars: 0, wit vars: 81558
+        ==> NOW: CS:910334, const: 1, witness: 23649696
+         ==> stmt_size: 73292.  107 ms
+LOG6: -- -- -- -- --  -- -- after msg3 of module 4: WordExtractGadget:
+        INCREASED: constraints: 24576, const vars: 0, wit vars: 16384
+        ==> NOW: CS:934910, const: 1, witness: 23666080
+         ==> stmt_size: 512002.  43 ms
+LOG6: -- -- -- -- --  -- -- after msg3 of module 5: FsmGadget:
+        INCREASED: constraints: 63488, const vars: 0, wit vars: 0
+        ==> NOW: CS:998398, const: 1, witness: 23666080
+         ==> stmt_size: 1269762.  82 ms
+LOG6: -- -- -- -- --  -- -- after msg3 of module 6: PackFinalGadget:
+        INCREASED: constraints: 660001, const vars: 0, wit vars: 621908
+        ==> NOW: CS:1658399, const: 1, witness: 24287988
+         ==> stmt_size: 160368.  379 ms
+LOG6: -- -- -- -- --  -- -- after msg3 of module 7: GetSigGadget:
+        INCREASED: constraints: 147848, const vars: 0, wit vars: 81558
+        ==> NOW: CS:1806247, const: 1, witness: 24369546
+         ==> stmt_size: 73292.  65 ms
+LOG6: -- -- -- -- --  -- -- after msg3 of module 8: WordExtractAdvGadget:
+        INCREASED: constraints: 24576, const vars: 0, wit vars: 16384
+        ==> NOW: CS:1830823, const: 1, witness: 24385930
+         ==> stmt_size: 512002.  40 ms
+		 LOG6: -- -- -- -- --  -- -- after msg3 of module 9: FsmAdvGadget:
+        INCREASED: constraints: 2280062, const vars: 0, wit vars: 1919454
+        ==> NOW: CS:4110885, const: 1, witness: 26305384
+         ==> stmt_size: 2646152.  1719 ms
+LOG6: -- -- -- -- --  -- -- after msg3 of module 10: FsmAdvGadget:
+        INCREASED: constraints: 2280062, const vars: 0, wit vars: 1919454
+        ==> NOW: CS:6390947, const: 1, witness: 28224838
+         ==> stmt_size: 2646152.  1461 ms
+LOG6: -- -- -- -- --  -- -- after msg3 of module 11: DischargeAdvGadget:
+        INCREASED: constraints: 3125643, const vars: 0, wit vars: 2573805
+        ==> NOW: CS:9516590, const: 1, witness: 30798643
+         ==> stmt_size: 3265672.  2926 ms
+LOG6: -- -- -- -- --  -- -- after msg3 of module 12: DischargeAdvGadget:
+        INCREASED: constraints: 3125643, const vars: 0, wit vars: 2573805
+        ==> NOW: CS:12642233, const: 1, witness: 33372448
+         ==> stmt_size: 3265672.  3227 ms
+LOG6: -- -- -- -- --  -- -- after msg3 of module 13: ComputeSigAdvGadget:
+        INCREASED: constraints: 414161, const vars: 0, wit vars: 407266
+        ==> NOW: CS:13056394, const: 1, witness: 33779714
+         ==> stmt_size: 177570.  267 ms
+LOG6: -- -- -- -- --  -- -- after msg3 of module 14: WordExtractAdvGadget(b_map_mode):
+        INCREASED: constraints: 278528, const vars: 0, wit vars: 16384
+        ==> NOW: CS:13334922, const: 1, witness: 33796098
+         ==> stmt_size: 1019906.  213 ms
+LOG6: -- -- -- -- --  -- -- after msg3 of module 15: DfaAdvGadget:
+        INCREASED: constraints: 285766, const vars: 0, wit vars: 50
+        ==> NOW: CS:13620688, const: 1, witness: 33796148
+         ==> stmt_size: 3047510.  778 ms
+=========================
+Needs 98 min for the error to show up!
+
+Monday 02/16/2026
+Goal 1. debug the build advice problem 

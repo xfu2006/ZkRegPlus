@@ -545,10 +545,11 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 				(eval_dnf_id, F::from(i as u64), eval_count, *ssid, sig_id)
 			).collect::<Vec<(F,F,F,F,F)>>()
 		}).flatten().collect::<Vec<(F,F,F,F,F)>>();
-		if n<info_ts.len(){
+		if n<=info_ts.len(){
 			return Err(Error::CapErr(vec![(format!("dfa_adv::subsigs"), 
-				info_ts.len())]));
+				info_ts.len()+1)]));
 		}
+		assert!(n-info_ts.len()>0); //ensure one dummy entry
 		let pad = vec![(zero,zero,zero,zero,zero); n-info_ts.len()];
 		let info_ts = [&pad[..], &info_ts[..]].concat();
 		assert!(info_ts.len()==n);
