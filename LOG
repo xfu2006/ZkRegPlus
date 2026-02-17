@@ -25353,6 +25353,12 @@ Goal 3. main bottleneck pack.rs -> FIXED
 	[b] it looks like the gen_m_tbl function takes lot of time.
 	[c] fixed -> there is an additional check of lkup which
 		slows down things a lot.
+	[d] ========DATA===========: prove cost: 
+		stmt_len: LOG3: -- --  
+		-- Pass 3. prove_step cost for word_id: 1, seg_id: 52, 
+		stmt_len: 21100889 66324 ms
+		=== so this is about 1 min for 128k for prove_step
+		=== 1 hr: 6M
 
 Goal 4. read the two phase circuit again
 	[a] verify nova1 and nova2 design -> nova2 is indeed
@@ -25384,3 +25390,48 @@ Goal 5. read the Phase2Circuit generation pay special attention
 	[d] IN CONCLUSION: Phase2 Circ does NEED a NON-DETERMINISTIC
 		advice of the Phase1 circuit output.
 
+Goal 6. read the TwoPhaseCircuit
+	[a] it calls circ to generate the ret and
+		it passed it to the circ2 as non-deterministic advice
+	[b] then it checks that
+		kzg_sum in the public input is AS specified.
+	[c] It basically computes circ1 and circ2 and
+		get their outputs (kzg, eval_w_e etc)
+		and check with the public input
+	[d] design strategy:
+		(a) Separate out Phase1 Circ as the Main circ
+			whose gen_constraints produces hte public outoput
+				of the hash of the Phase1Circ Ret
+		(b) TwoPhaseCirc reanemd to Phase2 Circ
+			which takes non-deterministic input
+				of the first circ and takes the public input
+				and does most of the job.
+
+Goal 7. cuts back length to 64kb and see how it changes on
+	the requirement of params.
+	[a] 128kb block  
+	============================
+		stmt_len: LOG3: -- --  
+		-- Pass 3. prove_step cost for word_id: 1, seg_id: 52, 
+		stmt_len: 21100889 66324 ms
+		=== so this is about 1 min for 128k for prove_step
+		=== 1 hr: 6M
+	============================
+		expansion ratio: 164 (128k -> 21M)
+
+	[b] 64kb block
+		basis_pats_in_trace from 1500 -> (1512) 1550 -> (1588) -> 1600
+			-> (1633) -> 1700 -> (1734) -> 1800 -> (1845) -> 2000
+			-> (2019) -> 2200
+	========================
+		-- --  -- Pass 3. prove_step cost for word_id: 1, seg_id: 9, 
+		stmt_len: 12706269 39378 ms
+		===> all_w_e = 42M, check R1CS 50m => 100M R1CS!
+	==== So this is about 40 sec for 64k sec for prove step
+	=== 1 hr:
+	== expansion ratio: 198 (64k -> 12M)  
+	===> lost performance: 20%.
+
+Tuesday 02/17/2026
+Goal 1. get the full_data3 setting
+Goal 2. add full_data4.

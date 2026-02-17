@@ -948,13 +948,16 @@ pub mod tests_zkp_driver{
 
 	/// the sigs are the FULL SET of sigs
 	/// It runs a large but difficult file: gdb (6.6M)
+	/// COST: stmt_len: 12.7M => all_w_e = 42M => circ1 100M R1CS
+	/// prove_step: 39 sec
+	/// if using max_word 512 *8 (128kb) => it's 21M. prove_step: 60 sec
 	#[allow(dead_code)]
 	fn full_data3<F:PrimeField>(b_check_lkup: bool){
 		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
 		let b_read_cache = false;
 		let b_write_cache = ! b_read_cache;
-		let set1 = "data/debug/full_data_set/config/"; //for dfa 
-		let max_word= 512 * 8;
+		let set1 = "data/debug/full_data_set/config/"; //for dfa
+        let max_word= 512 * 4;
         let sigs = 350;
         let subsigs = 500; //220 for prev db
         let avg_pats_per_subsig = 8; //old value 8
@@ -962,12 +965,13 @@ pub mod tests_zkp_driver{
         let perc_comp_subsigs = 20;
         let num_category = 1;
         let num_circs_per_category= 1;
-        let basis_unique_states = 1500; //19 cpercent
+        let basis_unique_states = 1600; //15 cpercent
         let basis_acc_states = 1200; //9 cpercent
-        let basis_pats_in_trace = 1500; //old value 100 cur value 1/1000.
-		let dfa_sigs = 3;
-		let dfa_subsigs= 4;
+        let basis_pats_in_trace = 2200; //old value 100 cur value 1/1000.
+        let dfa_sigs = 3;
+        let dfa_subsigs= 4;
         //let avg_subsig_per_sig = 3;
+
 
 		let init_cp_cap= CpCapacity{
 			max_word_len: max_word, 
@@ -1007,6 +1011,81 @@ pub mod tests_zkp_driver{
 			num_circs_per_category,
 			b_check_lkup
 		);
+	}
+
+	/// This runs the full signature set on the most difficult files
+	/// each is 15-32MB file
+	/// details:
+	/// -rw-rw-r-- 1 xiang xiang 33554416 Jun  8  2025 anthoscli__00
+	/// -rw-rw-r-- 1 xiang xiang 33554416 Jun  8  2025 anthoscli__01
+	/// -rwxrwxr-x 1 xiang xiang 22720144 Jun  8  2025 libpython3.9.so
+	/// -rwxrwxr-x 1 xiang xiang 22720144 Jun  8  2025 libpython3.9.so.1.0
+	/// -rwxrwxr-x 1 xiang xiang 20785824 Jun  8  2025 libicudata.so.50.2
+	/// -rwxrwxr-x 1 xiang xiang 15603008 Jun  8  2025 cc1plus
+
+	fn full_data4<F:PrimeField>(b_check_lkup: bool){
+		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
+		let b_read_cache = false;
+		let b_write_cache = ! b_read_cache;
+		let set1 = "data/debug/full_data_set/config/"; //for dfa
+        let max_word= 512 * 4;
+        let sigs = 350;
+        let subsigs = 500; //220 for prev db
+        let avg_pats_per_subsig = 8; //old value 8
+        let avg_active_pats_per_subsig = 3;
+        let perc_comp_subsigs = 20;
+        let num_category = 1;
+        let num_circs_per_category= 1;
+        let basis_unique_states = 1600; //15 cpercent
+        let basis_acc_states = 1200; //9 cpercent
+        let basis_pats_in_trace = 2200; //old value 100 cur value 1/1000.
+        let dfa_sigs = 3;
+        let dfa_subsigs= 4;
+        //let avg_subsig_per_sig = 3;
+
+
+		let init_cp_cap= CpCapacity{
+			max_word_len: max_word, 
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+			//avg_subsig_per_sig,
+		};
+		let init_sed_cap= SedCapacity::new(
+			max_word, RANGE2_BIT, subsigs, 
+			avg_pats_per_subsig, 
+			avg_active_pats_per_subsig, 
+			basis_pats_in_trace, 
+			sigs, 
+			perc_comp_subsigs,
+			basis_unique_states,
+			basis_acc_states,
+		);
+		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
+
+		//just test one at a time
+		let min = 0; //0
+		let max = 1; //6
+		for id in min..max{
+			zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+				&format!("{}/main.dat",set1), //src sig
+				&format!("{}/binexec_4_{}.dat",set1, id+1), //list of files to discharge
+				"data/debug/full_data_set/reports/report2.dat", //report
+				b_read_cache,
+				b_write_cache,
+				"full_data", //cache name
+				&format!("{}/main_dfa.dat", set1), //signs that need dfa
+				&format!("{}/needs_ised.dat", set1), //signs that need ised 
+				&format!("{}/needs_ised_igc.dat",set1), //sigs that need ised igc
+				max_word, //this is the chunk len
+				&init_cp_cap,
+				&init_sed_cap,
+				&init_dfa_cap,
+				num_category,
+				num_circs_per_category,
+				b_check_lkup
+			);
+		}
 	}
 
 	#[test]
