@@ -1,6 +1,8 @@
 /* Created 09/15/2024. Adaptation for super_nova 
    Changed 01/09/2025. Add TwoPhaseDeciderCircuit to accomodate to
    	the two phase cyclepair strategy.
+   Changed 02/17/2026. Add MainCircuit as a wrapper of Phase1Circuit
+   	and rename TwoPhaseDeciderCircuit as CyclePairCircuit
 */
 
 /// This file implements the onchain (Ethereum's EVM) decider circuit. 

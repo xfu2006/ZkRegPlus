@@ -954,7 +954,7 @@ pub mod tests_zkp_driver{
 	#[allow(dead_code)]
 	fn full_data3<F:PrimeField>(b_check_lkup: bool){
 		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
-		let b_read_cache = false;
+		let b_read_cache = true;
 		let b_write_cache = ! b_read_cache;
 		let set1 = "data/debug/full_data_set/config/"; //for dfa
         let max_word= 512 * 4;
@@ -1025,7 +1025,7 @@ pub mod tests_zkp_driver{
 
 	fn full_data4<F:PrimeField>(b_check_lkup: bool){
 		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
-		let b_read_cache = false;
+		let b_read_cache = true;
 		let b_write_cache = ! b_read_cache;
 		let set1 = "data/debug/full_data_set/config/"; //for dfa
         let max_word= 512 * 4;
