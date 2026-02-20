@@ -7,6 +7,7 @@ use ark_r1cs_std::{
 use ark_relations::r1cs::{Namespace, SynthesisError};
 use ark_std::Zero;
 use core::borrow::Borrow;
+use crate::folding::foldpot::from_field::AffineFromField;
 
 use crate::transcript::{AbsorbNonNative, AbsorbNonNativeGadget};
 
@@ -57,7 +58,7 @@ impl<C: CurveGroup> ToConstraintFieldGadget<C::ScalarField> for NonNativeAffineV
 
 /// The out-circuit counterpart of `NonNativeAffineVar::to_constraint_field`
 #[allow(clippy::type_complexity)]
-fn nonnative_affine_to_field_elements<C: CurveGroup>(
+pub fn nonnative_affine_to_field_elements<C: CurveGroup>(
     p: C,
 ) -> (Vec<C::ScalarField>, Vec<C::ScalarField>) {
     let affine = p.into_affine();
@@ -67,6 +68,19 @@ fn nonnative_affine_to_field_elements<C: CurveGroup>(
     let x = nonnative_field_to_field_elements(x);
     let y = nonnative_field_to_field_elements(y);
     (x, y)
+}
+impl<C: CurveGroup> NonNativeAffineVar<C> 
+where
+	 C::Affine: AffineFromField<C::BaseField>,
+	 <C as ark_ec::CurveGroup>::BaseField: From <num_bigint::BigUint>
+{
+	pub fn value(&self)->C{
+		use ark_r1cs_std::R1CSVar;
+		let x: C::BaseField = self.x.value().unwrap().into();
+		let y: C::BaseField  = self.y.value().unwrap().into();
+		let pt = C::Affine::from_fields(x,y);
+		pt.into()
+	}
 }
 
 impl<C: CurveGroup> NonNativeAffineVar<C> {
@@ -83,6 +97,7 @@ impl<C: CurveGroup> NonNativeAffineVar<C> {
         let y = NonNativeUintVar::inputize(*y);
         Ok((x, y))
     }
+
 }
 
 impl<C: CurveGroup> AbsorbNonNative<C::ScalarField> for C {

@@ -11,6 +11,7 @@
 use utils::{logger::{log_perf, LOG2, LOG3}, timer::Timer as GTimer};
 use std::fmt::{Debug};
 use itertools::Itertools;
+use ark_ec::AffineRepr;
 use ark_crypto_primitives::sponge::{
     constraints::CryptographicSpongeVar,
     poseidon::{constraints::PoseidonSpongeVar, PoseidonConfig, PoseidonSponge},
@@ -18,6 +19,7 @@ use ark_crypto_primitives::sponge::{
 };
 use ark_ec::{CurveGroup, Group, pairing::Pairing, short_weierstrass::SWCurveConfig};
 use ark_ff::{PrimeField, Field, ToConstraintField};
+use ark_crypto_primitives::sponge::constraints::AbsorbGadget;
 use ark_r1cs_std::{
     alloc::{AllocVar, AllocationMode},
     boolean::Boolean,
@@ -28,10 +30,11 @@ use ark_r1cs_std::{
     ToConstraintFieldGadget,
 };
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, Namespace, SynthesisError};
-use ark_std::{Zero};
+use ark_std::{Zero,UniformRand};
 use core::{borrow::Borrow, marker::PhantomData};
 
 use crate::folding::foldpot::from_field::{AffineFromField};
+use crate::transcript::AbsorbNonNativeGadget;
 use crate::folding::{
 	foldpot::{
 		CommittedInstanceFoldPot, WitnessFoldPot, 
@@ -41,7 +44,7 @@ use crate::folding::{
 		mod_super::{WitnessFoldPotSuper,CommittedInstanceFoldPotSuper, FoldPotSuper},
 		circuits_super::{field_to_usize,CommittedInstanceVarFoldPotSuper},
 		sigma_cyclepair::{compute_hc_var, hash_var},
-		utils::{get_mem_usage,f1_limbs_to_f2, B_DEBUG},
+		utils::{get_mem_usage,f1_limbs_to_f2, B_DEBUG, new_var},
 	},
 };
 use crate::arith::r1cs::R1CS;
@@ -253,6 +256,43 @@ where
     }
 }
 
+/// This corresponds to Phase1CircuitRet 
+#[derive(Clone, Debug, PartialEq)]
+pub struct Phase1CircuitRetVal<F: PrimeField,C: CurveGroup<ScalarField=F>>{
+	/// the ch (challenge)
+	pub ch: F,
+	/// the rc (combination)
+	pub rc: F,
+	/// kzg_sum: sum_kzg_eval_lk + sum_kzg_eval_word + sum_kzg_eval_others
+	pub kzg_sum: F,
+	/// rows of [com_all_w, (comW, comE, comF)] for all vec_inst of U_{i+1}
+	pub vec_coms: Vec<C>,
+	/// the final result of the last zi_part2_inst
+	pub final_result: F,
+	/// the u_i instance (last)
+	pub u_i: CommittedInstanceFoldPot<C>,
+
+	/// the challene used for evaluating all_W, all_E of circuit 1
+	/// NOTE that this kzg is for the decider circuit, as 
+	/// W and E are NOT available after the Fiat-Shamir randoms are put in
+	/// So it's different from the kzg_sum in the above section for
+	/// fixed memory.
+	pub kzg_all_com_ch: F,
+	/// the evaluation result of com_all_w_e
+	pub eval_w_e: F,
+
+	/// the cmE of U_i1[0] (only used for phase 2 circuit
+	pub u_i1_0_cmE: C,
+	/// the cmW of U_i1[0] (only used for phase 2 circuit
+	pub u_i1_0_cmW: C,
+	/// the cmF of U_i1[0] (only used for phase 2 circuit
+	pub u_i1_0_cmF: C,
+
+	/// a randf which allows generate a random hash for the same
+	/// data
+	pub randf: F,
+}
+
 /// Packs the wires returned by Phase1Circuit (most info
 /// retrieved from the ZiPartTwo of the last running instance),
 /// the vec_coms retrieved from U_i1's all instances.
@@ -260,7 +300,10 @@ where
 /// does not increase the total number of constraints
 #[derive(Clone, Debug)]
 pub struct Phase1CircuitRet<F:PrimeField, C: CurveGroup<ScalarField=F>>
-where C::BaseField: PrimeField
+where C::BaseField: PrimeField,
+	C::Config: SWCurveConfig,
+	 <C as Group>::ScalarField: Absorb,
+	 C::Affine: AffineFromField<C::BaseField>,
 {
 	/// the ch (challenge)
 	pub ch: FpVar<F>,
@@ -290,17 +333,25 @@ where C::BaseField: PrimeField
 	pub u_i1_0_cmW: NonNativeAffineVar<C>,
 	/// the cmF of U_i1[0] (only used for phase 2 circuit
 	pub u_i1_0_cmF: NonNativeAffineVar<C>,
+
+	/// a randf which allows generate a random hash for the same
+	/// data
+	pub randf: FpVar<F>,
 }
 
 impl <F:PrimeField, C: CurveGroup<ScalarField=F>> Phase1CircuitRet<F,C>
 where C::BaseField: PrimeField,
-	C::Config: SWCurveConfig
+	C::Config: SWCurveConfig,
+	 <C as Group>::ScalarField: Absorb,
+	 C::Affine: AffineFromField<C::BaseField>,
 {
 	pub fn dummy(cs: ConstraintSystemRef<F>)->Self{
 		let zvar = FpVar::<F>::new_witness(cs.clone(), 
 			|| Ok(F::zero())).expect("create fpvar error");
 		let avar = NonNativeAffineVar::<C>::zero_var(cs.clone());
 		let ci = CommittedInstanceFoldPot::<C>::dummy(2);
+		let randf = FpVar::<F>::new_witness(cs.clone(), 
+			|| Ok(F::zero())).expect("create fpvar error");
 		Self{
 			ch: zvar.clone(),
 			rc: zvar.clone(),
@@ -315,21 +366,111 @@ where C::BaseField: PrimeField,
 			u_i1_0_cmE: avar.clone(),
 			u_i1_0_cmW: avar.clone(),
 			u_i1_0_cmF: avar.clone(),
+
+			randf
 		}
+	}
+
+	pub fn from(val: &Phase1CircuitRetVal<F,C>, cs: &ConstraintSystemRef<F>)
+	->Self{
+		let b_debug = true;
+		let res = Self{
+			ch: new_var(cs, val.ch),
+			rc: new_var(cs, val.rc),
+			kzg_sum: new_var(cs, val.kzg_sum),
+			vec_coms: val.vec_coms.iter().map(|c|{
+				NonNativeAffineVar::<C>::new_variable(cs.clone(), || Ok(c),
+					AllocationMode::Witness).unwrap()	
+			}).collect::<Vec<NonNativeAffineVar<C>>>(),
+			final_result: new_var(cs, val.final_result),
+			u_i: CommittedInstanceVarFoldPot::<C>::new_variable(cs.clone(),
+				|| Ok(val.u_i.clone()), AllocationMode::Witness).unwrap(),
+			kzg_all_com_ch: new_var(cs, val.kzg_all_com_ch),
+			eval_w_e: new_var(cs, val.eval_w_e),
+			u_i1_0_cmE: NonNativeAffineVar::<C>::new_variable(cs.clone(), ||
+				Ok(val.u_i1_0_cmE), AllocationMode::Witness).unwrap(),
+			u_i1_0_cmW: NonNativeAffineVar::<C>::new_variable(cs.clone(), ||
+				Ok(val.u_i1_0_cmW), AllocationMode::Witness).unwrap(),
+			u_i1_0_cmF: NonNativeAffineVar::<C>::new_variable(cs.clone(), ||
+				Ok(val.u_i1_0_cmF), AllocationMode::Witness).unwrap(),
+			randf: new_var(cs, val.randf),
+		};
+		if b_debug{
+			let res2 = res.val();
+			assert!(*val==res2);
+		}
+
+		res
+	}
+
+	pub fn val(&self)->Phase1CircuitRetVal<F,C>{
+		use ark_r1cs_std::R1CSVar;
+		Phase1CircuitRetVal{
+			ch: self.ch.value().unwrap(),
+			rc: self.rc.value().unwrap(),
+			kzg_sum: self.kzg_sum.value().unwrap(),
+			vec_coms: self.vec_coms.iter().map(|c|{
+				let x: C::BaseField = c.x.value().unwrap().into();
+				let y: C::BaseField  = c.y.value().unwrap().into();
+				let pt = C::Affine::from_fields(x,y);
+				pt.into()
+		    }).collect::<Vec<C>>(),
+			final_result: self.final_result.value().unwrap(),
+			u_i: self.u_i.value(),
+			kzg_all_com_ch: self.kzg_all_com_ch.value().unwrap(),
+			eval_w_e: self.eval_w_e.value().unwrap(),
+			u_i1_0_cmE: self.u_i1_0_cmE.value(),	
+			u_i1_0_cmW: self.u_i1_0_cmW.value(),	
+			u_i1_0_cmF: self.u_i1_0_cmF.value(),	
+			randf: self.randf.value().unwrap(),	
+		}
+	}
+
+	/// serialize to a vec of FpVar
+	pub fn to_vec(&self)->Vec<FpVar<F>>{
+		let res = vec![
+			vec![self.ch.clone(), self.rc.clone(), self.kzg_sum.clone()],
+			self.vec_coms.iter().map(|c|{
+				c.to_native_sponge_field_elements().unwrap()
+			}).flatten().collect::<Vec<_>>(),
+			vec![self.final_result.clone()],
+			self.u_i.to_sponge_field_elements().unwrap(),
+			vec![self.kzg_all_com_ch.clone(), self.eval_w_e.clone()],
+			// NO need to hash u_i1_0_cmE, cmW, and cmF as we 
+			// don't really use the hash() function for Phase2Circ
+			// We only use the Main circ where these 3 elements are not used
+			vec![self.randf.clone()]	
+				
+		].concat();
+		res
+	}
+
+	/// hash the Phase1Ret structure
+	pub fn hash(&self, ps_cfg: &PoseidonConfig<F>, cs: ConstraintSystemRef<F>)->FpVar<F>{
+		let nc = cs.num_constraints();
+        let mut sponge = PoseidonSpongeVar::<F>::new(cs.clone(), ps_cfg);
+		let vec = self.to_vec();
+		sponge.absorb(&vec).expect("absort err");
+		let res=sponge.squeeze_field_elements(1).expect("hash err")[0].clone();
+		res
 	}
 }
 
 /// Packs the wires returned by Phase2Circuit 
 pub struct Phase2CircuitRet<F:PrimeField, C: CurveGroup<ScalarField=F>>
-where C::BaseField: PrimeField{
+where C::BaseField: PrimeField,
+	C::Config: SWCurveConfig,
+	 <C as Group>::ScalarField: Absorb,
+	 C::Affine: AffineFromField<C::BaseField>{
 	pub hashchain_b: FpVar<F>,
 	pub main_ret: Phase1CircuitRet<F, C>,
 }
 
 impl <F:PrimeField, C: CurveGroup<ScalarField=F>> Phase2CircuitRet<F,C>
 where C::BaseField: PrimeField,
-	C::Config: SWCurveConfig
-{
+	C::Config: SWCurveConfig,
+	 C::Affine: AffineFromField<C::BaseField>,
+	 <C as Group>::ScalarField: Absorb{
 	pub fn dummy(cs: ConstraintSystemRef<F>)->Self{
 		let zvar = FpVar::<F>::new_witness(cs.clone(), 
 			|| Ok(F::zero())).expect("create fpvar error");
@@ -583,7 +724,7 @@ where
 	/// In addition to generate constraints, for stage 1 circuit
 	/// return the <<com_E, com_W, com_F>>; for stage 2 circuit
 	/// return the final_result = hash_a_b
-    pub fn generate_constraints_adv(self, _dump_level: usize, cs: ConstraintSystemRef<CF1<C1>>) -> Result<Phase1CircuitRet<CF1<C1>,C1>, Error> {
+    pub fn generate_constraints_adv(&self, _dump_level: usize, cs: ConstraintSystemRef<CF1<C1>>, randf: CF1<C1>) -> Result<Phase1CircuitRet<CF1<C1>,C1>, Error> {
 		//1. generate Vector the R1CS var (one for each circuit)
 		let log_level = LOG3;
 		let b_debug = B_DEBUG;
@@ -613,22 +754,22 @@ where
         let i = FpVar::<CF1<C1>>::new_witness(cs.clone(), || 
 			Ok(self.i.unwrap_or_else(CF1::<C1>::zero)))?;
         let z_0 = Vec::<FpVar<CF1<C1>>>::new_witness(cs.clone(), || {
-            Ok(self.z_0.unwrap_or(vec![CF1::<C1>::zero()]))
+            Ok(self.z_0.clone().unwrap_or(vec![CF1::<C1>::zero()]))
         })?;
         let z_i = Vec::<FpVar<CF1<C1>>>::new_witness(cs.clone(), || {
-            Ok(self.z_i.unwrap_or(vec![CF1::<C1>::zero()]))
+            Ok(self.z_i.clone().unwrap_or(vec![CF1::<C1>::zero()]))
         })?;
 		let _x_len = if self.b_full_mode {3} else {2};
         let u_dummy_native = CommittedInstanceFoldPot::<C1>::dummy(2);
         let u_i = CommittedInstanceVarFoldPot::<C1>::new_witness(cs.clone(), 
-			|| { Ok(self.u_i.unwrap_or(u_dummy_native.clone()))
+			|| { Ok(self.u_i.clone().unwrap_or(u_dummy_native.clone()))
         })?;
-        let U_i = CommittedInstanceVarFoldPotSuper::<C1>::new_witness(cs.clone(), || { Ok(self.U_i.unwrap()) })?;
+        let U_i = CommittedInstanceVarFoldPotSuper::<C1>::new_witness(cs.clone(), || { Ok(self.U_i.clone().unwrap()) })?;
         let U_i1 = CommittedInstanceVarFoldPotSuper::<C1>::new_witness(
-			cs.clone(), || { Ok(self.U_i1.unwrap())
+			cs.clone(), || { Ok(self.U_i1.clone().unwrap())
         })?;
         let W_i1 = WitnessVarFoldPotSuper::<C1>::new_witness(cs.clone(), || {
-            Ok(self.W_i1.unwrap())
+            Ok(self.W_i1.clone().unwrap())
         })?;
 		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 2: igen Ui, Wi, Ui1, Wi1 witness: INCREASED {} constraints", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
@@ -650,6 +791,7 @@ where
 		).flatten().collect::<Vec<FpVar<C1::ScalarField>>>();
 		all_w.append(&mut all_e);
 		all_w.push(r_all_w);
+		let len_all_w_e = all_w.len();
 		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 3: collect all_w_e. len: {}, : INCREASED: {} constraints.", 
 			all_w.len(), cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
@@ -716,7 +858,7 @@ where
 		//the value of eval_lkup_col1, eval_lkup_col2 retrieved from
 		//the public input
 		let zi_part2_inst_var = ZiPartTwoInstVar::from::<C1>(
-			&self.zi_part2_inst.expect("zi_part null"), cs.clone());
+			&self.zi_part2_inst.clone().expect("zi_part null"), cs.clone());
 		let zi_p2 = zi_part2_inst_var.hash(&self.poseidon_config, cs.clone());
 		#[cfg(test)]{
 			use ark_r1cs_std::R1CSVar;
@@ -755,7 +897,7 @@ where
         // (and RAM) to run the test. It is active by default, and not active only when
         // 'light-test' feature is used.
         //#[cfg(not(feature = "light-test"))]
-		let b_light_test = false;
+		let b_light_test = true;
 		if !b_light_test
         {
             use super::FOLDPOT_CF_N_POINTS;
@@ -814,10 +956,10 @@ where
 					- 1 - self.cf_r1cs.l, self.cf_E_len);
             let cf_U_i = CycleFoldCommittedInstanceVar::<C2, GC2>
 			::new_witness(cs.clone(), || {
-                Ok(self.cf_U_i.unwrap_or_else(|| cf_u_dummy_native.clone()))
+                Ok(self.cf_U_i.clone().unwrap_or_else(|| cf_u_dummy_native.clone()))
             })?;
             let cf_W_i = CycleFoldWitnessVar::<C2>::new_witness(cs.clone(), || {
-                Ok(self.cf_W_i.unwrap_or(w_dummy_native.clone()))
+                Ok(self.cf_W_i.clone().unwrap_or(w_dummy_native.clone()))
             })?;
             let (cf_u_i_x, _) = cf_U_i.clone().hash(&sponge, pp_hash.clone())?;
             (u_i.x[1]).enforce_equal(&cf_u_i_x)?;
@@ -826,7 +968,7 @@ where
             let H2 = GC2::new_constant(cs.clone(), 
 				self.cf_pedersen_params.h)?;
             let G = Vec::<GC2>::new_constant(cs.clone(), 
-				self.cf_pedersen_params.generators)?;
+				self.cf_pedersen_params.generators.clone())?;
             let cf_W_i_E_bits: Result<Vec<Vec<Boolean<CF1<C1>>>>, SynthesisError> = cf_W_i.E.iter().map(|E_i| E_i.to_bits_le()).collect();
             let cf_W_i_W_bits: Result<Vec<Vec<Boolean<CF1<C1>>>>, SynthesisError> = cf_W_i.W.iter().map(|W_i| W_i.to_bits_le()).collect();
             let computed_cmE = PedersenGadget::<C2, GC2>::commit(
@@ -862,6 +1004,11 @@ where
 		).flatten().collect::<Vec<NonNativeAffineVar<C1>>>();
 		let mut vec_coms = vec![com_all_w_clone];
 		vec_coms.append(&mut vec_coms_part2);
+        let mut rng = ark_std::test_rng();
+		let randf_val = C1::ScalarField::rand(&mut rng);
+		let randf = FpVar::<CF1<C1>>::new_witness(cs.clone(), ||{
+			Ok(randf_val)
+		})?;
 		let res = Phase1CircuitRet::<C1::ScalarField, C1>{
 			ch: zi_part2_inst_var.ch,
 			rc: zi_part2_inst_var.rc,
@@ -878,11 +1025,13 @@ where
 			u_i1_0_cmE: U_i1.vec_inst[0].cmE.clone(),
 			u_i1_0_cmW: U_i1.vec_inst[0].cmW.clone(),
 			u_i1_0_cmF: U_i1.vec_inst[0].cmF.clone(),
+
+			randf
 		};
 
 		let _last_c1 = c1; //just to disable the warning on c1.
-		log_perf(log_level, &format!("Phase1 Circ gen_cs: COMPLETED. TOTAL r1cs: {}, RAM: {} GB.", cs.num_constraints()-c0, get_mem_usage()), &mut t1);
-		Ok( res )
+		log_perf(log_level, &format!("Phase1 Circ gen_cs: COMPLETED. TOTAL all_w_e: {}, r1cs: {}, RAM: {} GB.", len_all_w_e, cs.num_constraints()-c0, get_mem_usage()), &mut t1); 
+			Ok( res )
 	}
 }
 
@@ -1110,7 +1259,8 @@ where
 		assert!(self.main_circ.cp_U_i.is_some());  //2nd phase require it
 		let my_phase1_ret={
 			let main_circ2 = self.main_circ.clone();
-			main_circ2.generate_constraints_adv(3,cs.clone()).unwrap()
+			let randf = CF1::<C1>::zero();
+			main_circ2.generate_constraints_adv(3,cs.clone(),randf).unwrap()
 		};
 		log_perf(log_level, &format!("Phase2 Circ gen_cs: Step 3: Main circ construction. r1cs: {}", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
@@ -1129,7 +1279,7 @@ where
         //#[cfg(feature = "light-test")]
         //println!("[WARNING]: Running with the 'light-test' feature, skipping the cyclepair part of the DeciderEthCircuit.\n Only for testing purposes.");
         //#[cfg(not(feature = "light-test"))]
-		let b_light_test = false;
+		let b_light_test = true;
 		if !b_light_test
         {
             use crate::commitment::pedersen::PedersenGadget;
@@ -1413,12 +1563,205 @@ CF2<C>: PrimeField
 	}
 }
 
+/// Main Circuit (which asserts that there exists a 
+/// FoldSuper instance (both predicate and witness)
+/// that evaluates at a given random point to a certain kzg_sum value
+/// and satisfies the circuit relation (the ZkregReg relation circs).
+/// It is basically a wrapper of Phase1 circ, except that
+/// it GENERATES 1 field element: the hash of the Phase1Ret.
+#[derive(Clone, Debug)]
+pub struct MainDeciderCircuit<E:Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + Debug, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, LK, GM, const H: bool = false>
+where
+    C1: CurveGroup,
+    GC1: CurveVar<C1, CF2<C1>>,
+    C2: CurveGroup,
+    GC2: CurveVar<C2, CF2<C2>>,
+    CS1: CommitmentScheme<C1, H>,
+    CS1E: CommitmentScheme<C1, H>,
+    CS2: CommitmentScheme<C2, H>,
+	LK: LookupTableTwoCol<C1::ScalarField>,
+	//New for cyclepair
+	for<'a> &'a P::G1Var: GroupOpsBounds<'a, E::G1, P::G1Var>,
+	for<'a> &'a P::G2Var: GroupOpsBounds<'a, E::G2, P::G2Var>,
+	for<'a> &'a P::GTVar: FieldOpsBounds<'a, E::TargetField, P::GTVar>,
+	P::G1Var: ToConstraintFieldGadget<CF2<E::G1>>,
+	CF2<E::G1>: PrimeField,
+	P::G2Var: ToConstraintFieldGadget<CF3<E::G2>>,
+	CF3<E::G2>: PrimeField,
+    C1: CurveGroup<BaseField = <C2G2::BaseField as Field>::BasePrimeField, ScalarField=C2G2::ScalarField>,
+	C2G2: CurveGroup,
+	E::G1: ToConstraintField<CF2<C1>>,
+	E::G2: ToConstraintField<CF2<C1>>,
+	E::TargetField: ToConstraintField<CF2<C1>> + Field<BasePrimeField=CF3<C1>>,
+	C1::Affine: AffineFromField<CF2<C1>>,
+	C2G2::Affine: AffineFromField<CF2<C2G2>>,
+	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug,
+
+	// to call nova function
+    for<'a> &'a GC1: GroupOpsBounds<'a, C1, GC1>,
+    for<'a> &'a GC2: GroupOpsBounds<'a, C2, GC2>,
+    <C2 as CurveGroup>::BaseField: PrimeField,
+    <C2 as Group>::ScalarField: Absorb,
+	C1::Config: SWCurveConfig,
+	P: Clone,
+{
+	/// circuit 1 for nova1
+	pub circ1:  Phase1Circuit<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,LK,GM,H>,
+	/// the result
+	pub res: Phase1CircuitRetVal<C1::ScalarField,C1>,
+	/// the randf
+	pub randf: C1::ScalarField,
+}
+
+impl<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + Debug, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, LK, GM, const H: bool> MainDeciderCircuit<E,P,C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, LK, GM, H>
+where
+    //C1: CurveGroup,
+    //C2: CurveGroup,
+    GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
+    GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
+	LK: LookupTableTwoCol<C1::ScalarField>,
+    //CS1: CommitmentScheme<C1, H> + CommitmentScheme<C1>,
+    CS1: CommitmentScheme<C1, H>,
+    CS1E: CommitmentScheme<C1, H>, //should be kzg
+    // enforce that the CS2 is Pedersen commitment scheme, since we're at Ethereum's EVM decider
+    CS2: CommitmentScheme<C2, H, ProverParams = PedersenParams<C2>>,
+    <C1 as Group>::ScalarField: Absorb,
+    <C1 as CurveGroup>::BaseField: PrimeField,
+	CF2<C1>: PrimeField,
+	CF2<C2>: PrimeField,
+	//New for cyclepair
+	for<'a> &'a P::G1Var: GroupOpsBounds<'a, E::G1, P::G1Var>,
+	for<'a> &'a P::G2Var: GroupOpsBounds<'a, E::G2, P::G2Var>,
+	for<'a> &'a P::GTVar: FieldOpsBounds<'a, E::TargetField, P::GTVar>,
+	P::G1Var: ToConstraintFieldGadget<CF2<E::G1>>,
+	CF2<E::G1>: PrimeField,
+	P::G2Var: ToConstraintFieldGadget<CF3<E::G2>>,
+	P::GTVar: ToConstraintFieldGadget<CF2<E::G1>>,
+	CF3<E::G2>: PrimeField,
+    C1: CurveGroup<BaseField = <C2G2::BaseField as Field>::BasePrimeField, ScalarField=C2G2::ScalarField>,
+	C2G2: CurveGroup,
+	C2: CurveGroup<BaseField = C1::ScalarField, ScalarField=C1::BaseField>,
+	E::G1: ToConstraintField<CF2<C1>>,
+	E::G2: ToConstraintField<CF2<C1>>,
+	E::TargetField: ToConstraintField<CF2<C1>> + Field<BasePrimeField=CF3<C1>>,
+	C1::Affine: AffineFromField<CF2<C1>>,
+	C2G2::Affine: AffineFromField<CF2<C2G2>>,
+	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug,
+
+	// to call nova function
+    for<'a> &'a GC1: GroupOpsBounds<'a, C1, GC1>,
+    for<'a> &'a GC2: GroupOpsBounds<'a, C2, GC2>,
+    <C2 as CurveGroup>::BaseField: PrimeField,
+    <C2 as Group>::ScalarField: Absorb,
+	C1::Config: SWCurveConfig,
+	P: Clone,
+{
+	/// Retrieve the non-deterministic advice from the nova instance
+	/// and save in its own data members. Basically,
+	/// it builds two decider circuits, one for each nova,
+	/// and builds up the checks to verify the consistency among the
+	/// non-deterministic advice.
+    pub fn from_nova<
+	FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM,C=C1>,
+		>
+		(
+        nova1: FoldPotSuper<E, P, C2G2, C1, GC1, C2, GC2, FC, CS1, CS2, CS1E, LK, GM, H>,
+		com_all_w_1: C1,
+		r_all_w_1: C1::ScalarField,
+		randf: C1::ScalarField,
+    ) -> Result<Self, Error> {
+		use ark_relations::r1cs::ConstraintSystem;
+		let circ1 = Phase1Circuit::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,LK,GM,H>::from_nova::<FC>(nova1, com_all_w_1, r_all_w_1)?;
+
+        let cs = ConstraintSystem::<CF1<C1>>::new_ref();
+		let res = circ1.generate_constraints_adv(0, cs, randf).unwrap().val();
+		Ok(Self{circ1, res, randf})
+    }
+
+}
+
+impl<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + Debug, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, LK, GM, const H: bool> ConstraintSynthesizer<CF1<C1>> for MainDeciderCircuit<E,P,C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, LK, GM, H>
+where
+    //C1: CurveGroup,
+    //C2: CurveGroup,
+    GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
+    GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
+	LK: LookupTableTwoCol<C1::ScalarField>,
+    CS1: CommitmentScheme<C1, H> + CommitmentScheme<C1>,
+    CS1E: CommitmentScheme<C1, H>, //should be kzg
+    // enforce that the CS2 is Pedersen commitment scheme, since we're at Ethereum's EVM decider
+    CS2: CommitmentScheme<C2, H, ProverParams = PedersenParams<C2>>,
+    <C1 as Group>::ScalarField: Absorb,
+    <C1 as CurveGroup>::BaseField: PrimeField,
+	CF2<C1>: PrimeField,
+	CF2<C2>: PrimeField,
+	//New for cyclepair
+	for<'a> &'a P::G1Var: GroupOpsBounds<'a, E::G1, P::G1Var>,
+	for<'a> &'a P::G2Var: GroupOpsBounds<'a, E::G2, P::G2Var>,
+	for<'a> &'a P::GTVar: FieldOpsBounds<'a, E::TargetField, P::GTVar>,
+	P::G1Var: ToConstraintFieldGadget<CF2<E::G1>>,
+	CF2<E::G1>: PrimeField,
+	P::G2Var: ToConstraintFieldGadget<CF3<E::G2>>,
+	P::GTVar: ToConstraintFieldGadget<CF2<E::G1>>,
+	CF3<E::G2>: PrimeField,
+    C1: CurveGroup<BaseField = <C2G2::BaseField as Field>::BasePrimeField, ScalarField=C2G2::ScalarField>,
+	C2G2: CurveGroup,
+	C2: CurveGroup<BaseField = C1::ScalarField, ScalarField=C1::BaseField>,
+	E::G1: ToConstraintField<CF2<C1>>,
+	E::G2: ToConstraintField<CF2<C1>>,
+	E::TargetField: ToConstraintField<CF2<C1>> + Field<BasePrimeField=CF3<C1>>,
+	C1::Affine: AffineFromField<CF2<C1>>,
+	C2G2::Affine: AffineFromField<CF2<C2G2>>,
+	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug,
+
+	// to call nova function
+    for<'a> &'a GC1: GroupOpsBounds<'a, C1, GC1>,
+    for<'a> &'a GC2: GroupOpsBounds<'a, C2, GC2>,
+    <C2 as CurveGroup>::BaseField: PrimeField,
+    <C2 as Group>::ScalarField: Absorb,
+	C1::Config: SWCurveConfig,
+	P: Clone,
+{
+    fn generate_constraints(self, cs: ConstraintSystemRef<CF1<C1>>) -> Result<(), SynthesisError> {
+		let mut gt2 = GTimer::new();
+		let b_debug = B_DEBUG;
+		let log_level = LOG2;
+
+		//1. let the two circuits generate constraints first
+		let c0 = cs.num_constraints();
+		let phase1_ret=self.circ1
+			.generate_constraints_adv(2,cs.clone(),self.randf).unwrap();
+		#[cfg(test)]{
+			use ark_r1cs_std::R1CSVar;
+			if phase1_ret.ch.value().is_ok(){
+				let phase1_ret_val = phase1_ret.val();
+				assert!(phase1_ret_val == self.res);
+			}
+		}
+		let hash_res = phase1_ret.hash(&self.circ1.poseidon_config, cs.clone());
+		log_perf(log_level, &format!("TwoPhaseCirc build circ1: {} cs.",
+			cs.num_constraints()-c0), &mut gt2);
+		let c1 = cs.num_constraints();
+
+		if b_debug{
+			let cs_ok = cs.is_satisfied();
+			if cs_ok.is_ok(){ assert!(cs_ok.unwrap()); }
+		}
+
+		log_perf(log_level-1, &format!("*** MainDeciderCirtuit TOTAL constraints: {} ***. ", cs.num_constraints()), &mut gt2);
+
+		Ok( () )
+
+	}
+}
+
+
 /// Circuit that implements the in-circuit checks for the two phase
 /// Scheme. In fact, it employs two instances of DeciderEthCircuitSuper,
 /// and pass the cyclepair_input in between to make sure that
 /// they are consistent.
 #[derive(Clone, Debug)]
-pub struct TwoPhaseDeciderEthCircuitSuper<E:Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + Debug, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, LK, GM, GM2, const H: bool = false>
+pub struct CyclePairCircuit<E:Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + Debug, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, LK, GM, GM2, const H: bool = false>
 where
     C1: CurveGroup,
     GC1: CurveVar<C1, CF2<C1>>,
@@ -1462,7 +1805,7 @@ where
 	inp:  TwoPhaseCircInput<CF1<C1>,C1>,
 }
 
-impl<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + Debug, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, LK, GM, GM2, const H: bool> TwoPhaseDeciderEthCircuitSuper<E,P,C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, LK, GM, GM2, H>
+impl<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + Debug, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, LK, GM, GM2, const H: bool> CyclePairCircuit<E,P,C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, LK, GM, GM2, H>
 where
     //C1: CurveGroup,
     //C2: CurveGroup,
@@ -1534,7 +1877,7 @@ where
 
 }
 
-impl<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + Debug, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, LK, GM, GM2, const H: bool> ConstraintSynthesizer<CF1<C1>> for TwoPhaseDeciderEthCircuitSuper<E,P,C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, LK, GM, GM2, H>
+impl<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + Debug, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, LK, GM, GM2, const H: bool> ConstraintSynthesizer<CF1<C1>> for CyclePairCircuit<E,P,C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, LK, GM, GM2, H>
 where
     //C1: CurveGroup,
     //C2: CurveGroup,
@@ -1585,8 +1928,9 @@ where
 
 		//1. let the two circuits generate constraints first
 		let c0 = cs.num_constraints();
+		let randf = CF1::<C1>::zero();
 		let phase1_ret=self.circ1
-			.generate_constraints_adv(2,cs.clone()).unwrap();
+			.generate_constraints_adv(2,cs.clone(), randf).unwrap();
 		//let phase1_ret = Phase1CircuitRet::dummy(cs.clone());
 		log_perf(log_level, &format!("TwoPhaseCirc build circ1: {} cs.",
 			cs.num_constraints()-c0), &mut gt2);

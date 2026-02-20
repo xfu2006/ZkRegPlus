@@ -120,7 +120,12 @@ def exec_merge_plan(src_dir, dest_dir, plan, split_size):
 TARGET_SIZE = 128*1024; 
 TARGET_DIR = "binexec_merged128k";
 SRC_DIR = "binexec";
-SPLIT_SIZE = 32 * 1024 * 1024 - 16; #leave a little room less than 32M
+SPLIT_SIZE = 32 * 1024 * 1024 - 100 * 1024; #leave a little room less than 32M
+	# the reason is that in the last segment when we perform
+	# the calcluation of allowed positions (cur_pos + allowed_range)
+	# if we cut the size to 32M - allowed_range this saves
+	# conditional assignment cost in the discharge_sig.rs component.
+	# we know that allowed_range is no more than 100kb in data.
 
 os.system("rm -fr " + TARGET_DIR);
 os.system("mkdir " + TARGET_DIR);

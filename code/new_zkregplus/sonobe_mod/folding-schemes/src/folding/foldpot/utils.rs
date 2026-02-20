@@ -295,6 +295,11 @@ pub struct Timer{
 	b_running: bool,
 }
 
+pub fn new_var<F:PrimeField>(cs: &ConstraintSystemRef<F>, v: F)
+->FpVar<F>{
+	FpVar::<F>::new_witness(cs.clone(), ||
+		Ok(v)).expect("new var err")
+}
 impl Timer{
 	/// level means indentation level
 	pub fn new(s: &str, level: usize)->Self{

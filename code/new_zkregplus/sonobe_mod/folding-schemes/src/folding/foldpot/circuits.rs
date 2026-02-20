@@ -31,7 +31,7 @@ use crate::Error;
 use ark_std::{fmt::Debug, One, Zero};
 use core::{borrow::Borrow, marker::PhantomData};
 
-use crate::folding::foldpot::{CommittedInstance, sigma_ir1cs::{SigmaIR1CS,ZiPartTwoInst, LookupTableTwoCol,GadgetMapper}};
+use crate::folding::foldpot::{CommittedInstance, sigma_ir1cs::{SigmaIR1CS,ZiPartTwoInst, LookupTableTwoCol,GadgetMapper}, from_field::AffineFromField};
 use super::{CommittedInstanceFoldPot, FOLDPOT_CF_N_POINTS};
 use crate::constants::N_BITS_RO;
 use crate::folding::circuits::{
@@ -154,6 +154,24 @@ where
         .concat())
     }
 }
+impl<C> CommittedInstanceVarFoldPot<C>
+where
+    C: CurveGroup,
+    <C as Group>::ScalarField: Absorb,
+    <C as ark_ec::CurveGroup>::BaseField: ark_ff::PrimeField,
+	 C::Affine: AffineFromField<C::BaseField>,
+    <C as ark_ec::CurveGroup>::BaseField: From <num_bigint::BigUint>
+{
+	pub fn value(&self)->CommittedInstanceFoldPot<C>{
+		CommittedInstanceFoldPot{
+			u: self.u.value().unwrap(),
+			x: self.x.value().unwrap(),
+			cmE: self.cmE.value(),
+			cmW: self.cmW.value(),
+			cmF: self.cmF.value(),
+		}
+	}
+}
 
 impl<C> CommittedInstanceVarFoldPot<C>
 where
@@ -205,6 +223,7 @@ where
 		self.x.enforce_equal(&other.x)?;
 		Ok( () )
 	}
+
 }
 
 /// Implements the circuit that does the checks of the Non-Interactive Folding Scheme Verifier

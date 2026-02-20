@@ -25433,9 +25433,80 @@ Goal 7. cuts back length to 64kb and see how it changes on
 	===> lost performance: 20%.
 
 Tuesday 02/17/2026
+LOC (sonobe) 20850 -> 20957  (+140)
 Goal 1. get the full_data3 setting
 Goal 2. add full_data4.
 	[a] find out where are the files
 	[b] add full_data4
 	[c] start collecting data on server
-Goal 3. 
+Goal 3. MainCircuit
+	[a] declare data members: circ1 -> DONE
+	[b] declare framework for implement gen_constraints -> 
+Goal 4. Modify Phase1Ret declaration put a random there if not
+	[a] add the data member
+	[b] fix all syntax errors
+Goal 5. add the hash() to Phase1Ret -> DONE
+Goal 6. plan on change of driver
+	[a] read existing code
+	[b] how to retrieve the public input?
+		It looks like gen constraints is unavoidable 
+		or the least implementation effort, should
+		be done using from_nova
+	[c] can batch processor key can be released early?
+		-> looks like in driver the prover parameters
+			and the verifier parameters can be separated
+		-> prover params can be set to nil if it has no use.
+Goal 7. define the workflow first
+	[a] construct MainDecider Circuit instance
+	[b] generate nark proof
+
+Wed 02/17/2026
+LOC (sonobe) 20957
+Goal 1. define Phase1RetVal -> DONE
+	[a] define from()
+	[b] define to() 
+Goal 2. implement MainCirc
+	[a] to() -> TODO
+
+Thursday 02/18/2026
+LOC (sonobe) 20957
+Goal 1. collect data
+	[a] now set the basis_packed_trace to 3200.
+	[b] now raise from 3600 -> 4000
+		-> Ideal value is between 3600 and 4000
+		-> it complains about
+		:Cannot find entry for tbl_id[205173]: (1879048194, 67170305):
+		After 3.5 hours of running! -> Pass 1 subsig_id: 529
+		sigma_ir1cs.rs:223:21:
+		Again it's in fill_mvec
+			tbl_id: 0x70000002
+			val: 0x400f001
+			It's complaining that
+			0x4000f001 is not in RANGE2
+		This looks like the last segment!
+		-> this looks like the last dist + allowed_gap
+		-> so need to adjust file size to 31M to cover that
+			to save computing time
+
+Goal 2. continue the Phase1 circuit framework 
+	[a] to function 
+		-> AffineFromField
+		-> CommittedInstanceVarFoldPot
+	[b] value() of CommittedInstanceFoldPot
+		-> 
+	[c] from() function generates the instance
+		with Phase1RetVal.
+	[d] unit testing
+Goal 3. MiainDeciderCircuit::from_nova
+	[a] add the RetVal
+	[b] implement from_nova
+	[c] implement gen_constraints
+	[d] check the RAM consumption regarding the new setting
+		of using clone a lot.
+	[e] add the cost
+Goal 4. Implement the gen_constraints -> DONE
+Goal 5. Re-implement the TwoPaseCircuit
+	[a] renamce as CyclepairCircuit
+	[b] remodel 
+	
+
