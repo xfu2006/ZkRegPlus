@@ -25566,5 +25566,10 @@ Sunday 02/22/2026
 LOC (sonobe) 21092 -> 
 Goal 1. collect data 
 	[a] copy over new main.dat
-Goal 2. research possibility of separating out the
-	config for the 
+Goal 2. research various quick fixes of driver to improve memory footprint
+	[a] change batch_param to batct_pk and batch_vk
+	[b] before pass_all step_4: gen_batc_prf memory is: increased RAM is 0
+Goal 3. check if it's possible to clear nova1
+	[a] impl
+	[b] unit testing
+	[c] clear code

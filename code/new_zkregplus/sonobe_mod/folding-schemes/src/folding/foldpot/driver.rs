@@ -141,8 +141,8 @@ where
 		<DeciderFoldPotSuper<E,P,C2G2,C1, GC1, C2, GC2, FC, CS1, CS2, S, FoldPotSuper<E,P,C2G2,C1,GC1,C2,GC2,FC,CS1,CS2,LK>,LK> as DeciderTrait<C1,C2,FC,FoldPotSuper<E,P,C2G2,C1,GC1,C2,GC2,FC,CS1,CS2,LK>>>::VerifierParam),
 	*/
 
-	pub batch_param: Option<(BatchProcessorProverParams<'c,E>,
-		BatchProcessorVerifierParams<'c,E,CS1E,H>)>,
+	pub batch_pk: Option<BatchProcessorProverParams<'c,E>>,
+	pub batch_vk: Option<BatchProcessorVerifierParams<'c,E,CS1E,H>>,
 
 	/// when true, the cyclepair instance is supported
 	pub b_full_mode: bool,
@@ -356,9 +356,9 @@ where
 		//4. set up the batch processor if it is NOT full mode (1st stage)
 		let max_w_lk = if max_total_n > lkup_inp.borrow().get_size() 
 			{max_total_n+1} else {lkup_inp.borrow().get_size()+1};
-		let batch_param = Some(BatchProcessor::<E,LK,S,CS1E,H>
+		let batch_param = BatchProcessor::<E,LK,S,CS1E,H>
 				::setup(&mut rng, max_w_lk, n_words,
-				poseidon_config.clone()));
+				poseidon_config.clone());
 
 		log_perf(log_level, &format!(
 			"Driver New: Step 4: batch param"), 
@@ -372,7 +372,8 @@ where
 			//prep_param: prep_param,
 			nova_param: nova_params, 
 			//decider_param: decider_params,
-			batch_param: batch_param,
+			batch_pk: Some(batch_param.0),
+			batch_vk: Some(batch_param.1),
 
 			_gc1: PhantomData,
 			_c2: PhantomData,
@@ -824,9 +825,9 @@ where
 		t2.prt(&format!("step 1: word len: {}", words.len()));
 
 		let batch_pack = if !self.b_full_mode{
-			assert!(self.batch_param.is_some());
-			let pk = &self.batch_param.as_ref().unwrap().0;
-			let _vk = &self.batch_param.as_ref().unwrap().1;
+			assert!(self.batch_pk.is_some());
+			let pk = &self.batch_pk.as_ref().unwrap();
+			let _vk = &self.batch_vk.as_ref().unwrap();
 			let (global_claim, ind_claims, snark_inp) = 
 				BatchProcessor::<E,LK,S,CS1E,H>::gen_claims(pk, &mut rng, &words, self.lkup.clone()).unwrap();
 			Some( (global_claim, ind_claims[idx_ind_proof].clone(), snark_inp) )
@@ -1089,9 +1090,9 @@ where
 				iter_words2.map(|v| v.to_vec())
 				.collect::<Vec<Vec<C1::ScalarField>>>()
 			};
-			assert!(self.batch_param.is_some());
-			let pk = &self.batch_param.as_ref().unwrap().0;
-			let vk = &self.batch_param.as_ref().unwrap().1;
+			assert!(self.batch_pk.is_some());
+			let pk = &self.batch_pk.as_ref().unwrap();
+			let vk = &self.batch_vk.as_ref().unwrap();
 			let _zero = E::ScalarField::zero();
 			let (global_claim, ind_claim, snark_inp) = 
 				(&claim_pack.as_ref().unwrap().0, &claim_pack.as_ref().unwrap().1, &claim_pack.as_ref().unwrap().2);
@@ -1268,9 +1269,8 @@ where
 		let total_wd_len = words.iter().map(|x| x.len()).sum::<usize>();
 
 		let claim_pack = if !self.b_full_mode{
-			assert!(self.batch_param.is_some());
-			let pk = &self.batch_param.as_ref().unwrap().0;
-			let _vk = &self.batch_param.as_ref().unwrap().1;
+			assert!(self.batch_pk.is_some());
+			let pk = &self.batch_pk.as_ref().unwrap();
 			let (global_claim, ind_claims, snark_inp) = 
 				BatchProcessor::<E,LK,S,CS1E,H>::gen_claims(pk, &mut rng, &words, self.lkup.clone()).unwrap();
 			Some( (global_claim, ind_claims[idx_ind_proof].clone(), snark_inp) )
@@ -1516,9 +1516,9 @@ where
 		let m5 = get_mem_usage_mb();
 		let n_steps = vea.len();
 		let batch_prfs = if !self.b_full_mode{
-			assert!(self.batch_param.is_some());
-			let pk = &self.batch_param.as_ref().unwrap().0;
-			let vk = &self.batch_param.as_ref().unwrap().1;
+			assert!(self.batch_pk.is_some());
+			let pk = &self.batch_pk.as_ref().unwrap();
+			let vk = &self.batch_vk.as_ref().unwrap();
 			let _zero = E::ScalarField::zero();
 			let (global_claim, ind_claim, snark_inp) = 
 				(&claim_pack.as_ref().unwrap().0, &claim_pack.as_ref().unwrap().1, &claim_pack.as_ref().unwrap().2);
@@ -1549,6 +1549,7 @@ where
 		}else{
 			None
 		};
+		self.batch_pk = None; //clear the RAM
 		let m6 = get_mem_usage_mb();
 		log_perf(log_level, &format!(
 			"{} step 4: generate batch prf, mem: {} MB for words: {}, n_steps: {}: ", phase_name, m6-m5, words.len(), n_steps) , &mut gt1);
@@ -1852,52 +1853,115 @@ where
 	let mut rng = rand::rngs::OsRng;
 	let poseidon_config = poseidon_canonical_config::<C1::ScalarField>();
 	let _n_circs = vec_circ.len();
-
-	//2. create the driver1 for the 1st phase
-	let mut _num_steps = 2; //will change
 	let b_full = false;
 	let n_words = vec_words.len();
 	let max_total_n:usize = vec_words.iter().map(|x| x.len()).sum();
-	let mut driver1 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,FC,S,LK,GM,H> ::new(poseidon_config.clone(), 
-			lkup, vec_circ, rng, b_full, max_total_n, n_words);
-	log_perf(log_level, &format!("FoldPot: Step 2: set up driver 1"),
-		&mut gt1);
 
-	//3. phase 1 pass 1
-	let mut iter = vec_words.iter();
-	let mut iter_2 = vec_words.iter();
-	let mut iter_3 = vec_words.iter();
-	let (nova1, _num_steps, batch_ind_prfs, batch_claims) = driver1.pass_all(
-		"Phase 1",
-		&mut iter,
-		&mut iter_2, 
-		&mut iter_3, 
-		vec_words.len(), 
-		idx_individual_prf, 
-		&mut rng, 
-		&vec_words_info,
-		&vec_word_fnames
-	);
-	let Some((mut batch_prf, ind_prf)) = batch_ind_prfs.map(|x| (x.0, x.1))
-		else {panic!("batch proof is none!");};
-	log_perf(log_level, &format!("FoldPot: Step 3: Phase 1: main circuits IVC PROVE STEPS (Folding) DONE. total_word_len: {}, steps: {}.", format_bytes(max_total_n * 31), _num_steps),
-		&mut gt1);
+	//2. create the driver1 for the 1st phase
+	//put in one block to avoid do two snarks at the same time to
+	//save RAM.
+	let (snark_proof_main,mainres,mainres_hash, g16_vk_main, cyclepair_inputs,
+			kzg_sum1, ch1, rc1, _randf,
+			prf_kzg, kzg_all_com_ch, qa_nizk_vkey_hash1,
+			com_all_w, r_all_w, mut batch_prf,
+			mut batch_ver_param, batch_claims, b_check_lkup,
+			driver1_poseidon_config, ind_prf
+		) 
+	= {
+		let mut driver1 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,FC,S,LK,GM,H> ::new(poseidon_config.clone(), 
+				lkup, vec_circ, rng, b_full, max_total_n, n_words);
+		log_perf(log_level, &format!("FoldPot: Step 2: set up driver 1"),
+			&mut gt1);
+	
+		//3. phase 1 pass 1
+		let mut iter = vec_words.iter();
+		let mut iter_2 = vec_words.iter();
+		let mut iter_3 = vec_words.iter();
+		let (nova1, _num_steps, batch_ind_prfs, batch_claims) 
+		  = driver1.pass_all(
+			"Phase 1",
+			&mut iter,
+			&mut iter_2, 
+			&mut iter_3, 
+			vec_words.len(), 
+			idx_individual_prf, 
+			&mut rng, 
+			&vec_words_info,
+			&vec_word_fnames
+		);
+		let Some((batch_prf, ind_prf)) = batch_ind_prfs.map(|x| (x.0, x.1))
+			else {panic!("batch proof is none!");};
+		log_perf(log_level, &format!("FoldPot: Step 3: Phase 1: main circuits IVC PROVE STEPS (Folding) DONE. total_word_len: {}, steps: {}.", format_bytes(max_total_n * 31), _num_steps),
+			&mut gt1);
+	
+		//5. generate the inputs for cyclepair
+		let qa_nizk_pkey = &driver1.nova_param.0.qa_pp.expect("qa_pp null!"); 
+		let qa_nizk_vkey = &driver1.nova_param.1.qa_vp.expect("qa_vp null!"); 
+		let qa_nizk_vkey_hash = qa_nizk_vkey.hash(&driver1.poseidon_config);
+		let qa_nizk_vkey_hash1 = qa_nizk_vkey_hash.clone();
+		let (U_i1, W_i1, _r_Fr, _cmT)= nova1.gen_next_folded()?;
+		let (com_all_w, prf_qa_nizk, r_all_w, prf_kzg, kzg_all_com_ch) = W_i1.gen_com_all_w_and_qa_nizk_prf::<E, CS1E, H>(&qa_nizk_pkey, &driver1.nova_param.0.cs1e_pp, &qa_nizk_vkey, &U_i1, &driver1.poseidon_config);
+		let cyclepair_inputs = U_i1
+			.generate_cyclepair_inputs::<E>(qa_nizk_pkey, qa_nizk_vkey,
+				&com_all_w, &prf_qa_nizk, &poseidon_config); 
+	
+		//6. now bulid the main circuit, which execues
+		//the main logic: verifies the ZkregPlus relation
+		//and verifies the all witness + e_vec evaluates to a value
+		//at a given random point
+		// it later generates a cyclepair-input (a collection of
+		// pairing equations to be passed to CyclePair circuit)
+		let kzg_sum1 = nova1.zi_part2_inst.sum_kzg_eval_lk
+					+ nova1.zi_part2_inst.sum_kzg_eval_word
+					+ nova1.zi_part2_inst.sum_kzg_eval_others;
+		let ch1 = nova1.zi_part2_inst.ch.clone();
+		let rc1 = nova1.zi_part2_inst.rc.clone();
+		let randf = C1::ScalarField::rand(&mut rng);
+	
+		let (snark_proof_main,mainres,mainres_hash, g16_vk_main) = {
+			let main_circ = MainDeciderCircuit::from_nova::<FC>(nova1,
+				com_all_w.clone(), r_all_w.clone(), randf)?;
+			let mainres = main_circ.res.clone();
+			let mainres_hash = main_circ.res_hash.clone(); 
+			log_perf(log_level, &format!("FoldPot Step 4: build MAIN decider circuit. MEM: {} GB", get_mem_usage()), &mut gt1);
+	
+			let (g16_pk, g16_vk) = {//to save ram, clone will be freed
+				let (g16_pk, g16_vk) = S::circuit_specific_setup(
+					main_circ.clone(), 
+					&mut rng).unwrap();
+				(g16_pk, g16_vk)
+			};
+			log_perf(log_level, &format!("FoldPot Step 5: setup Groth16. MEM: {} GB.",  get_mem_usage()), &mut gt1);
+	
+			let snark_proof_main: S::Proof = S::prove(&g16_pk, 
+				main_circ, &mut rng)
+				.map_err(|e| Error::Other(e.to_string()))?;
+			log_perf(log_level, &format!("FoldPot Step 6: Gen Groth16 Proof for MainCirc. MEM: {} GB.",  get_mem_usage()), &mut gt1);
+	
+			(snark_proof_main, mainres, mainres_hash, g16_vk)
+		};
 
-	//5. generate the inputs for cyclepair
-	let qa_nizk_pkey = &driver1.nova_param.0.qa_pp.expect("qa_pp null!"); 
-	let qa_nizk_vkey = &driver1.nova_param.1.qa_vp.expect("qa_vp null!"); 
-	let qa_nizk_vkey_hash = qa_nizk_vkey.hash(&driver1.poseidon_config);
-	let qa_nizk_vkey_hash1 = qa_nizk_vkey_hash.clone();
-	let (U_i1, W_i1, _r_Fr, _cmT)= nova1.gen_next_folded()?;
-	let (com_all_w, prf_qa_nizk, r_all_w, prf_kzg, kzg_all_com_ch) = W_i1.gen_com_all_w_and_qa_nizk_prf::<E, CS1E, H>(&qa_nizk_pkey, &driver1.nova_param.0.cs1e_pp, &qa_nizk_vkey, &U_i1, &driver1.poseidon_config);
-	let cyclepair_inputs = U_i1
-		.generate_cyclepair_inputs::<E>(qa_nizk_pkey, qa_nizk_vkey,
-			&com_all_w, &prf_qa_nizk, &poseidon_config); 
+		//7. prepare the other data.
+		let mut batch_ver_param = driver1.batch_vk.clone().unwrap().clone();
+		batch_ver_param.kzg_driver1 = Some(
+			driver1.nova_param.1.cs1e_vp.clone());
+		let b_check_lkup = driver1.layered_circs[0][0].is_check_lkup(); 
+		let driver1_poseidon_config = driver1.poseidon_config.clone();
+		(snark_proof_main, mainres, mainres_hash, g16_vk_main, 
+			cyclepair_inputs,
+			kzg_sum1, ch1, rc1, randf,
+			prf_kzg, kzg_all_com_ch, qa_nizk_vkey_hash1,
+			com_all_w, r_all_w, batch_prf, 
+			batch_ver_param, batch_claims, b_check_lkup,
+			driver1_poseidon_config, ind_prf
+		)
+	};
 
+
+	//6. another three rounds for Phase2 CyclePair Circ its proof
 	let n_circs = 1;
 	let circ_cyclepair = create_sigma_fold_pair::<C1::ScalarField, C1, CS1, LK, H>(n_circs, poseidon_config.clone());
 	
-	//6. another three rounds
 	let vec_words = cyclepair_inputs.clone();
 	let vec_word_fnames2 = (0..vec_words.len()).collect::<Vec<_>>()
 	.iter().map(|i|
@@ -1934,47 +1998,10 @@ where
 	let (nova2_U_i1, nova2_W_i1, _nova2_r_Fr, _nova2__cmT)= 
 		nova2.gen_next_folded()?;
 	let (nova2_com_all_w, nova2_prf_qa_nizk, nova2_r_all_w, nova2_prf_kzg, nova2_kzg_all_com_ch) = nova2_W_i1.gen_com_all_w_and_qa_nizk_prf::<E, CS1E, H>( &qa_nizk_pkey, &driver2.nova_param.0.cs1e_pp, &qa_nizk_vkey, &nova2_U_i1, &driver2.poseidon_config);
-	log_perf(log_level, &format!("FoldPot: Step 4: Phase 2: cyclefold and cyclepair IVC PROVE STEPS (folding) DONE. num_steps: {}", _num_steps), &mut gt1);
-
-	//7. now bulid the main circuit, which execues
-	//the main logic: verifies the ZkregPlus relation
-	//and verifies the all witness + e_vec evaluates to a value
-	//at a given random point
-	// it later generates a cyclepair-input (a collection of
-	// pairing equations to be passed to CyclePair circuit)
-	let kzg_sum1 = nova1.zi_part2_inst.sum_kzg_eval_lk
-				+ nova1.zi_part2_inst.sum_kzg_eval_word
-				+ nova1.zi_part2_inst.sum_kzg_eval_others;
-	let ch1 = nova1.zi_part2_inst.ch.clone();
-	let rc1 = nova1.zi_part2_inst.rc.clone();
-	let randf = C1::ScalarField::rand(&mut rng);
-
-	let (snark_proof_main,mainres,mainres_hash, g16_vk_main) = {
-		let main_circ = MainDeciderCircuit::from_nova::<FC>(nova1,
-			com_all_w.clone(), r_all_w.clone(), randf)?;
-		let mainres = main_circ.res.clone();
-		let mainres_hash = main_circ.res_hash.clone(); 
-		log_perf(log_level, &format!("FoldPot Step 5: build MAIN decider circuit. MEM: {} GB", get_mem_usage()), &mut gt1);
-
-		let (g16_pk, g16_vk) = {//to save ram, clone will be freed
-			let (g16_pk, g16_vk) = S::circuit_specific_setup(
-				main_circ.clone(), 
-				&mut rng).unwrap();
-			(g16_pk, g16_vk)
-		};
-		log_perf(log_level, &format!("FoldPot Step 6: setup Groth16. MEM: {} GB.",  get_mem_usage()), &mut gt1);
-
-		let snark_proof_main: S::Proof = S::prove(&g16_pk, 
-			main_circ, &mut rng)
-			.map_err(|e| Error::Other(e.to_string()))?;
-		log_perf(log_level, &format!("FoldPot Step 7: Gen Groth16 Proof for MainCirc. MEM: {} GB.",  get_mem_usage()), &mut gt1);
-
-		(snark_proof_main, mainres, mainres_hash, g16_vk)
-	};
+	log_perf(log_level, &format!("FoldPot: Step 7: Phase 2: cyclefold and cyclepair IVC PROVE STEPS (folding) DONE. num_steps: {}", _num_steps), &mut gt1);
 
 
-
-	//7. now build up the CyclePair circuit which processes
+	//8. now build up the CyclePair circuit which processes
 	// the pairing equations generated by the first circuit (e.g., qa-nizk ones)
 	// it uses the Phase1Ret.hash() to link with the output of
 	// the MainCircuit
@@ -2002,7 +2029,7 @@ where
 				driver2.poseidon_config.clone(),
 				com_all_w, r_all_w, nova2_com_all_w, nova2_r_all_w, mainres,
 				inp)?; 
-		log_perf(log_level, &format!("FoldPot Step 6: build CyclePair circuit. MEM: {} GB", get_mem_usage()), &mut gt1);
+		log_perf(log_level, &format!("FoldPot Step 8: build CyclePair circuit. MEM: {} GB", get_mem_usage()), &mut gt1);
 
 		//9. set up the keys (maybe later can be cached)
 		let (g16_pk, g16_vk) = {//to save ram, clone will be freed
@@ -2011,7 +2038,7 @@ where
 				&mut rng).unwrap();
 			(g16_pk, g16_vk)
 		};
-		log_perf(log_level, &format!("FoldPot Step 7: setup Groth16 for CpCircuit. MEM: {} GB.",  get_mem_usage()), &mut gt1);
+		log_perf(log_level, &format!("FoldPot Step 9: setup Groth16 for CpCircuit. MEM: {} GB.",  get_mem_usage()), &mut gt1);
 
 		//10. produce the groth16 snark
 		let snark_proof_cp: S::Proof = S::prove(&g16_pk, cp_circuit, &mut rng)
@@ -2038,15 +2065,12 @@ where
 		snark_proof_cp,
 		mainres_hash,
 	);
-	log_perf(log_level, &format!("FoldPot Step 8: Gen Groth16 Proof for CpCircuit. MEM: {} GB.",  get_mem_usage()), &mut gt1);
+	log_perf(log_level, &format!("FoldPot Step 10: Gen Groth16 Proof for CpCircuit. MEM: {} GB.",  get_mem_usage()), &mut gt1);
 
 	//11. verify the batch proof
-	let mut batch_ver_param = driver1.batch_param.as_ref().unwrap().1.clone();
-	batch_ver_param.kzg_driver1 = Some(driver1.nova_param.1.cs1e_vp.clone());
-	batch_ver_param.kzg_driver2 = Some(driver2.nova_param.1.cs1e_vp.clone());
 	let qa_nizk_vkey2 = driver2.nova_param.1.qa_vp.expect("qa_vp null!"); 
+	batch_ver_param.kzg_driver2 = Some(driver2.nova_param.1.cs1e_vp.clone());
 	let (batch_claim, ind_claim, _) = batch_claims.unwrap();
-	let b_check_lkup = driver1.layered_circs[0][0].is_check_lkup(); 
 	let opt_kzg_sum1 = if b_check_lkup {None} else {Some(kzg_sum1)};
 	assert!(BatchProcessor::<E,LK,S,CS1E,H>::verify_batch(
 		&batch_ver_param,
@@ -2056,22 +2080,23 @@ where
 		Some(g16_vk_cp),
 		&batch_claim,
 		&batch_prf, 
-		&driver1.poseidon_config,
+		&driver1_poseidon_config,
 		true, //now full verification
 		opt_kzg_sum1
 	)); //note
-	log_perf(log_level, &format!("FoldPot Step 9: Verify Batch Proof."), 
+	log_perf(log_level, &format!("FoldPot Step 11: Verify Batch Proof."), 
 		&mut gt1);
 
 	//12. verify the individual proof
 	assert!(BatchProcessor::<E,LK,S,CS1E,H>::verify_individual(
-		&driver1.batch_param.as_ref().unwrap().1, 
+		//&driver1.batch_vk.as_ref().unwrap(),
+		&batch_ver_param,
 		idx_individual_prf, 
 		&ind_claim,
 		&batch_prf, 
 		&ind_prf)
 	);
-	log_perf(log_level, &format!("FOLDPOT Step 10. Verify Individual Proof."), 
+	log_perf(log_level, &format!("FOLDPOT Step 12. Verify Individual Proof."), 
 		&mut gt1);
 	log_perf(log_level, &format!("**** FOLDPOT Now Complete ***** MEM: {} GB.",  get_mem_usage()), &mut gt_all);
 

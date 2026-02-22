@@ -11,7 +11,7 @@
 use utils::{logger::{log_perf, LOG2, LOG3}, timer::Timer as GTimer};
 use std::fmt::{Debug};
 use itertools::Itertools;
-use ark_ec::AffineRepr;
+//use ark_ec::AffineRepr;
 use ark_crypto_primitives::sponge::{
     constraints::CryptographicSpongeVar,
     poseidon::{constraints::PoseidonSpongeVar, PoseidonConfig, PoseidonSponge},
@@ -450,7 +450,6 @@ where C::BaseField: PrimeField,
 
 	/// hash the Phase1Ret structure
 	pub fn hash(&self, ps_cfg: &PoseidonConfig<F>, cs: ConstraintSystemRef<F>)->FpVar<F>{
-		let nc = cs.num_constraints();
         let mut sponge = PoseidonSpongeVar::<F>::new(cs.clone(), ps_cfg);
 		let vec = self.to_vec();
 		sponge.absorb(&vec).expect("absort err");
@@ -727,7 +726,7 @@ where
 	/// In addition to generate constraints, for stage 1 circuit
 	/// return the <<com_E, com_W, com_F>>; for stage 2 circuit
 	/// return the final_result = hash_a_b
-    pub fn generate_constraints_adv(&self, _dump_level: usize, cs: ConstraintSystemRef<CF1<C1>>, randf: CF1<C1>) -> Result<Phase1CircuitRet<CF1<C1>,C1>, Error> {
+    pub fn generate_constraints_adv(&self, _dump_level: usize, cs: ConstraintSystemRef<CF1<C1>>, _randf: CF1<C1>) -> Result<Phase1CircuitRet<CF1<C1>,C1>, Error> {
 		//1. generate Vector the R1CS var (one for each circuit)
 		let log_level = LOG3;
 		let b_debug = B_DEBUG;
@@ -1740,7 +1739,7 @@ where
 	P: Clone,
 {
     fn generate_constraints(self, cs: ConstraintSystemRef<CF1<C1>>) -> Result<(), SynthesisError> {
-		use ark_r1cs_std::R1CSVar;
+		let mut gt1 = GTimer::new();
 		let mut gt2 = GTimer::new();
 		let b_debug = B_DEBUG;
 		let log_level = LOG2;
@@ -1749,29 +1748,32 @@ where
 		let c0 = cs.num_constraints();
 		let phase1_ret=self.circ1
 			.generate_constraints_adv(2,cs.clone(),self.randf).unwrap();
+		let mainres_hash = phase1_ret.hash(&self.circ1.poseidon_config,
+			cs.clone());
+
+		//2. set up the hash of ret as the PUBLIC i/o of circ
+		use ark_r1cs_std::R1CSVar;
+		let mainres_hash_val = if mainres_hash.value().is_ok(){
+			mainres_hash.value()?
+		}else{C1::ScalarField::zero()};
+		let mainres_pub = FpVar::<C1::ScalarField>::new_input(cs.clone(),
+			|| Ok(mainres_hash_val) )?; //it is the ONLY PUBLIC VAR of circ!!! 
+		mainres_hash.enforce_equal(&mainres_pub)?;
 		#[cfg(test)]{
 			if phase1_ret.ch.value().is_ok(){
 				let phase1_ret_val = phase1_ret.val();
 				assert!(phase1_ret_val == self.res);
 			}
 		}
-		let hash_res = phase1_ret.hash(&self.circ1.poseidon_config, cs.clone());
-		let hash_res_val = if hash_res.value().is_ok(){
-			hash_res.value().expect("hash_res value() err")
-		}else {C1::ScalarField::zero()};
-		let hash_res_io = FpVar::<CF1<C1>>::new_input(cs.clone(),
-			|| Ok(hash_res_val)).expect("new hash_res io err");
-			//this is the ONLY i/o of the MainDeciderCircuit
 		log_perf(log_level, &format!("TwoPhaseCirc build circ1: {} cs.",
 			cs.num_constraints()-c0), &mut gt2);
-		let c1 = cs.num_constraints();
 
 		if b_debug{
 			let cs_ok = cs.is_satisfied();
 			if cs_ok.is_ok(){ assert!(cs_ok.unwrap()); }
 		}
 
-		log_perf(log_level-1, &format!("*** MainDeciderCirtuit TOTAL constraints: {} ***. ", cs.num_constraints()), &mut gt2);
+		log_perf(log_level-1, &format!("*** MainDeciderCirtuit TOTAL constraints: {} ***. ", cs.num_constraints()), &mut gt1);
 
 		Ok( () )
 
@@ -1881,8 +1883,8 @@ where
 		cyclepair_inputs: Vec<Vec<C1::ScalarField>>,
 		_qa_nizk_vkey_hash: C1::ScalarField,
 		_poseidon_config: PoseidonConfig<C1::ScalarField>,
-		com_all_w_1: C1,
-		r_all_w_1: C1::ScalarField,
+		_com_all_w_1: C1,
+		_r_all_w_1: C1::ScalarField,
 		com_all_w_2: C1,
 		r_all_w_2: C1::ScalarField,
 		mainres: Phase1CircuitRetVal<CF1<C1>, C1>, //will generate cyclepair inp

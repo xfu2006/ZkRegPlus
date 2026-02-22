@@ -1,7 +1,7 @@
 # COMPILE DEBUG
-RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" cargo check --tests 2>&1 | more 
+#RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" cargo check --tests 2>&1 | more 
 #cargo check --tests 2>dump.txt
-#cargo check --tests 2>&1 | less
+cargo check --tests 2>&1 | less
 
 # COMPILE FULL
 #RUSTFLAGS="-Awarnings" cargo build 

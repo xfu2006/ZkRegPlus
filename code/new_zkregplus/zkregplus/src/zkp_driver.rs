@@ -19,7 +19,9 @@ use ark_crypto_primitives::sponge::{
     Absorb,
 };
 use utils::{
-	os::{proj_root, read_lines,read_nibbles,read,write_to_file},
+	os::{proj_root, read_lines,read_nibbles,
+//		read,write_to_file
+	},
 	data::{pack_nibbles}
 };
 use data_processor::{
@@ -61,10 +63,10 @@ type FC<F,C,CS> = SigmaIR1CS_Inst<F,C,CS,LK<F>,GM<F>,false>;
 
 /// load the files and pack them as nibbles
 /// return (words in packed nibbles, word info, file names)
-fn load_files<F:PrimeField>(list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavApproxConfig, b_read_cache: bool, b_write_cache: bool, cache_dir: &str)
+fn load_files<F:PrimeField>(list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavApproxConfig, _b_read_cache: bool, _b_write_cache: bool, _cache_dir: &str)
 	->(Vec<Vec<F>>, Vec<WordInfo>, Vec<String>){
 	//1. read the list of files
-	let b_debug = false;
+	let _b_debug = false;
 	let proot = proj_root();
 	let file_names = &read_lines(&format!("{}/{}", proot, list_file_path));
 
@@ -78,7 +80,7 @@ fn load_files<F:PrimeField>(list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavA
 		packed
     }).collect::<Vec<Vec<F>>>();
 
-	let sdir = format!("{}/data/cache/{}/", &proj_root(), cache_dir);
+	//let sdir = format!("{}/data/cache/{}/", &proj_root(), cache_dir);
 	/* DON'T - as each new bin-exec pack will cause loading outdated
     let vec_word_info= 
 		cache
@@ -1022,7 +1024,7 @@ pub mod tests_zkp_driver{
 	/// -rwxrwxr-x 1 xiang xiang 22720144 Jun  8  2025 libpython3.9.so.1.0
 	/// -rwxrwxr-x 1 xiang xiang 20785824 Jun  8  2025 libicudata.so.50.2
 	/// -rwxrwxr-x 1 xiang xiang 15603008 Jun  8  2025 cc1plus
-
+	#[allow(dead_code)]
 	fn full_data4<F:PrimeField>(b_check_lkup: bool){
 		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
 		let b_read_cache = true;

@@ -271,7 +271,7 @@ where
         ci2: CommittedInstanceVarFoldPot<C>, // u_i
 		cmT: NonNativeAffineVar<C>
     ) -> Result<CommittedInstanceVarFoldPot<C>, Error> {
-		let cs = ci1.cmE.x.cs();
+		//let cs = ci1.cmE.x.cs();
 		let r_bits = r.to_bits_le()?;
 		let cmE = ci1.cmE.add(
 			&ci2.cmE.scalar_mul(&r_bits)?)?
