@@ -25563,7 +25563,7 @@ Goal 1. continue implementation of CyclepairCirc
 Goal 2. update driver on the proof (there are two proofs now) -> DONE
 
 Sunday 02/22/2026
-LOC (sonobe) 21092 -> 
+LOC (sonobe) 21092 -> 21128 (+40) 
 Goal 1. collect data 
 	[a] copy over new main.dat
 Goal 2. research various quick fixes of driver to improve memory footprint
@@ -25572,4 +25572,12 @@ Goal 2. research various quick fixes of driver to improve memory footprint
 Goal 3. check if it's possible to clear nova1
 	[a] impl
 	[b] unit testing
-	[c] clear code
+	[c] clear code -> someow introduced a bug
+	[d] fixed
+	[e] further clean up code 
+Goal 4. plan how zkp_driver can be improved
+	[a] zkp_driver takes three more caps and changes can be minimal
+Goal 5. implementation
+	[a] zkp_driver_adv which takes 3 more parameters
+	[b] zkp_driver calls zkp_driver_adv
+	[c] full_data3 and full_data4 can call the adv version
