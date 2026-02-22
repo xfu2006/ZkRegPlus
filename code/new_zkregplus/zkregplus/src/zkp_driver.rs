@@ -1136,7 +1136,7 @@ pub mod tests_zkp_driver{
         let num_category = 1;
         let num_circs_per_category= 1;
         let basis_unique_states = 2000; //15 cpercent
-        let basis_acc_states = 1200; //9 cpercent
+        let basis_acc_states = 2000; //9 cpercent
         let basis_pats_in_trace = 4000; //old value 100 cur value 1/1000.
         let dfa_sigs = 3;
         let dfa_subsigs= 4;
