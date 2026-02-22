@@ -25554,11 +25554,17 @@ Goal 5. Revise Cyclepair circuit
 		-> 
 
 Saturday 02/21/2026
-LOC (sonobe): 21080 -> 
+LOC (sonobe): 21080 -> 21103 (+30)
 Goal 1. continue implementation of CyclepairCirc 
 	[a] gen_constraints -> DONE
 	[b] unit test
 	[c] debug why mainres_hash not match
 	[d] remove 6111.1
-Goal 2. update driver on the proof (there are two proofs now)
-	[a] 
+Goal 2. update driver on the proof (there are two proofs now) -> DONE
+
+Sunday 02/22/2026
+LOC (sonobe) 21092 -> 
+Goal 1. collect data 
+	[a] copy over new main.dat
+Goal 2. research possibility of separating out the
+	config for the 

@@ -3,6 +3,7 @@
 	Modified 12/25/2024: added snark_rand_input structure
 	Modified 01/08/2025: added main workflow foldpot_main
 	Modified 11/24/2025: merge pass1 to pass3 to save memory
+	Modified 02/22/2026: further improve memory consumption
 */
 
 extern crate utils;

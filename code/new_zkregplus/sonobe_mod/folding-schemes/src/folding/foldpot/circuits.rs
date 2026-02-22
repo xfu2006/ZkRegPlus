@@ -272,7 +272,6 @@ where
 		cmT: NonNativeAffineVar<C>
     ) -> Result<CommittedInstanceVarFoldPot<C>, Error> {
 		let cs = ci1.cmE.x.cs();
-		println!("DEBUG USE 101: before cs: {}", cs.num_constraints());
 		let r_bits = r.to_bits_le()?;
 		let cmE = ci1.cmE.add(
 			&ci2.cmE.scalar_mul(&r_bits)?)?
@@ -281,8 +280,6 @@ where
 			&ci2.cmW.scalar_mul(&r_bits)?)?;
 		let cmF = ci1.cmF.add(
 			&ci2.cmF.scalar_mul(&r_bits)?)?;
-		println!("DEBUG USE 102: AFTER cs: {}", cs.num_constraints());
-
 
         Ok(CommittedInstanceVarFoldPot {
             cmE: cmE,
