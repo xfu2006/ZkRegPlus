@@ -25581,3 +25581,5 @@ Goal 5. implementation
 	[a] zkp_driver_adv which takes 3 more parameters
 	[b] zkp_driver calls zkp_driver_adv
 	[c] full_data3 and full_data4 can call the adv version
+-- TODO -- add capacity input for sed, and list the b_igc when 
+	gadgtes throw Err.

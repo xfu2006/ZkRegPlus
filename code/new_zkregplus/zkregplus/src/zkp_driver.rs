@@ -182,9 +182,12 @@ fn build_circs_adv<F,C,CS>(
 					  //for 128kb chunk length it's chunk_len is 4130.
 	lkup_len: usize,
 	db: Rc<ClamavDB<F>>,
-	init_cp_capacity: &CpCapacity,
-	init_sed_capacity: &SedCapacity,
-	init_dfa_capacity: &DfaCapacity,
+	init_cp_capacity_cs: &CpCapacity,
+	init_sed_capacity_cs: &SedCapacity,
+	init_dfa_capacity_cs: &DfaCapacity,
+	init_cp_capacity_igc: &CpCapacity,
+	init_sed_capacity_igc: &SedCapacity,
+	init_dfa_capacity_igc: &DfaCapacity,
 	num_category: usize, 
 	num_circs_per_category: usize,
 	b_check_lkup: bool
@@ -194,9 +197,12 @@ where C: CurveGroup<ScalarField=F>,
 	  F: PrimeField + Absorb,
 {
 	//1. check the seed capacity consistency with the info
-	assert!(init_cp_capacity.max_word_len == chunk_len);
-	assert!(init_sed_capacity.wea_capacity().max_word_len == chunk_len);
-	assert!(init_dfa_capacity.wea_capacity().max_word_len == chunk_len);
+	assert!(init_cp_capacity_cs.max_word_len == chunk_len);
+	assert!(init_cp_capacity_igc.max_word_len == chunk_len);
+	assert!(init_sed_capacity_cs.wea_capacity().max_word_len == chunk_len);
+	assert!(init_sed_capacity_igc.wea_capacity().max_word_len == chunk_len);
+	assert!(init_dfa_capacity_cs.wea_capacity().max_word_len == chunk_len);
+	assert!(init_dfa_capacity_igc.wea_capacity().max_word_len == chunk_len);
 
 	//2. given fixed chunk_len and total_word_len computes the
 	//lkup_share needed to build up circuit
@@ -207,32 +213,37 @@ where C: CurveGroup<ScalarField=F>,
 
 	//3. build up each category
 	let mut layer_circs = vec![];
-	let mut cp_cap= init_cp_capacity.clone();
-	let mut sed_cap= init_sed_capacity.clone();
-	let mut dfa_cap= init_dfa_capacity.clone();
+	let mut cp_cap_cs= init_cp_capacity_cs.clone();
+	let mut cp_cap_igc= init_cp_capacity_igc.clone();
+	let mut sed_cap_cs = init_sed_capacity_cs.clone();
+	let mut sed_cap_igc = init_sed_capacity_igc.clone();
+	let mut dfa_cap_cs = init_dfa_capacity_cs.clone();
+	let mut dfa_cap_igc = init_dfa_capacity_igc.clone();
+
 	for l1 in 0..num_category{
 		for l2 in 0..num_circs_per_category{
 			//3.1 create cp (cs and igc)
 			let cp_cs = CpComponentMapper::<F,LK<F>>::new(
-				cp_cap.clone(), db.clone(), false);
+				cp_cap_cs.clone(), db.clone(), false);
 			let cp_igc = CpComponentMapper::<F,LK<F>>::new(
-				cp_cap.clone(), db.clone(), true);
+				cp_cap_igc.clone(), db.clone(), true);
 
 			//3.2 create sed (it has both cs and igc built in)
 			let sed = SedComponentMapper::<F,LK<F>>::new(
-				sed_cap.clone(), db.clone());
+				sed_cap_cs.clone(), db.clone());
 
 			//3.3 dfa is optional depending if config supports 0 subsigs
 			//which enforces dfa to be nil.
-			let dfa = if dfa_cap.subsigs==0 { None }else{
+			let dfa = if dfa_cap_cs.subsigs==0 || dfa_cap_igc.subsigs==0{ 
+				None }else{
 				Some(
-					DfaComponentMapper::<F,LK<F>>::new(dfa_cap.clone(), 
+					DfaComponentMapper::<F,LK<F>>::new(dfa_cap_cs.clone(), 
 						db.clone())
 				)
 			};
 
 			//3.4 construct the circuit
-			let hybrid_cgm1 =if dfa_cap.subsigs==0{
+			let hybrid_cgm1 =if dfa_cap_cs.subsigs==0 || dfa_cap_igc.subsigs==0{
 				CompositeGadgetMapper::<F,LK<F>>::new("hybrid_cgm1",
 					vec![
 						Rc::new(RefCell::new(cp_cs)),
@@ -264,14 +275,20 @@ where C: CurveGroup<ScalarField=F>,
 			layer_circs.push( vec![circ] ); //legacy to keep 2d layer
 
 			//3.5 update the capacities.
-			cp_cap = cp_cap.increased_copy(2); //increase by level 2
-			sed_cap = sed_cap.increased_copy(2); 
-			dfa_cap = dfa_cap.increased_copy(2); 
+			cp_cap_cs = cp_cap_cs.increased_copy(2); //increase by level 2
+			sed_cap_cs = sed_cap_cs.increased_copy(2); 
+			dfa_cap_cs = dfa_cap_cs.increased_copy(2); 
+			cp_cap_igc = cp_cap_igc.increased_copy(2); //increase by level 2
+			sed_cap_igc = sed_cap_igc.increased_copy(2); 
+			dfa_cap_igc = dfa_cap_igc.increased_copy(2); 
 		}//for loop level2
 		//update level 1 capacity
-		cp_cap = cp_cap.increased_copy(1); //increase by level 1
-		sed_cap = sed_cap.increased_copy(1); 
-		dfa_cap = dfa_cap.increased_copy(1); 
+		cp_cap_cs = cp_cap_cs.increased_copy(1); //increase by level 1
+		sed_cap_cs = sed_cap_cs.increased_copy(1); 
+		dfa_cap_cs = dfa_cap_cs.increased_copy(1); 
+		cp_cap_igc = cp_cap_igc.increased_copy(1); //increase by level 1
+		sed_cap_igc = sed_cap_igc.increased_copy(1); 
+		dfa_cap_igc = dfa_cap_igc.increased_copy(1); 
 	}//for category
 
 	//return
@@ -484,6 +501,83 @@ where
 	C1::Config: SWCurveConfig,
 	C2G2::Affine: AffineFromField<CF2<C2G2>>,
 {
+	// re-use the capacity for BOTH cs and ignore_case
+	// this is usaully inefficient for ignore_case (but
+	// we do this for small samples for convenience)
+	zkp_driver_adv::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(sig_file, list_file_to_scan, _logfile,
+		b_read_cache, b_write_cache, cache_dir,
+		list_of_dfa_sigs, list_of_ised_sigs, list_of_ised_igc_sigs,
+		chunk_len,
+		init_cp_capacity, init_sed_capacity, init_dfa_capacity,
+		init_cp_capacity, init_sed_capacity, init_dfa_capacity,
+		num_category, num_circs_per_category, b_check_lkup
+	);
+}
+pub fn zkp_driver_adv<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + std::fmt::Debug + Clone, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, S> 
+(
+	sig_file: &str, 
+	list_file_to_scan: &str, 
+	_logfile: &str, 
+	b_read_cache: bool, 
+	b_write_cache: bool, 
+	cache_dir: &str, 
+	list_of_dfa_sigs: &str,
+	list_of_ised_sigs: &str,
+	list_of_ised_igc_sigs: &str,
+	chunk_len: usize, //see the definition of params for build_circs for below
+	init_cp_capacity_cs: &CpCapacity, 
+	init_sed_capacity_cs: &SedCapacity,
+	init_dfa_capacity_cs: &DfaCapacity,
+	init_cp_capacity_igc: &CpCapacity, 
+	init_sed_capacity_igc: &SedCapacity,
+	init_dfa_capacity_igc: &DfaCapacity,
+	num_category: usize,
+	num_circs_per_category: usize,
+	b_check_lkup: bool,
+)
+where
+    GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
+    GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
+    // CS1E is a KZG commitment, where challenge is C1::Fr elem
+    CS1E: CommitmentScheme<
+        C1,
+        ProverChallenge = C1::ScalarField,
+        Challenge = C1::ScalarField,
+        Proof = KZGProof<C1>,
+    >,
+    CS1: CommitmentScheme<C1, ProverParams = PedersenParams<C1>>,
+    // enforce that the CS2 is Pedersen commitment scheme, since we're at Ethereum's EVM decider
+    CS2: CommitmentScheme<C2, ProverParams = PedersenParams<C2>>,
+    S: SNARK<C1::ScalarField>,
+    <C1 as CurveGroup>::BaseField: PrimeField,
+    <C2 as CurveGroup>::BaseField: PrimeField,
+    <C1 as Group>::ScalarField: Absorb,
+    <C2 as Group>::ScalarField: Absorb,
+  //  C1: CurveGroup<BaseField = C2::ScalarField, ScalarField = C2::BaseField>,
+    for<'b> &'b GC1: GroupOpsBounds<'b, C1, GC1>,
+    for<'b> &'b GC2: GroupOpsBounds<'b, C2, GC2>,
+	//New for cyclepair
+	for<'a> &'a P::G1Var: GroupOpsBounds<'a, E::G1, P::G1Var>,
+	for<'a> &'a P::G2Var: GroupOpsBounds<'a, E::G2, P::G2Var>,
+	for<'a> &'a P::GTVar: FieldOpsBounds<'a, E::TargetField, P::GTVar>,
+	P::G1Var: ToConstraintFieldGadget<CF2<E::G1>>,
+	CF2<E::G1>: PrimeField,
+	P::G2Var: ToConstraintFieldGadget<CF3<E::G2>>,
+	P::GTVar: ToConstraintFieldGadget<CF2<E::G1>>,
+	CF3<E::G2>: PrimeField,
+    //C1: CurveGroup<BaseField = <C2G2::BaseField as Field>::BasePrimeField, ScalarField=C2G2::ScalarField>,
+	//C2G2: CurveGroup,
+	<E as Pairing>::ScalarField: Absorb,
+    C1: CurveGroup<BaseField = <C2G2::BaseField as Field>::BasePrimeField, ScalarField=E::ScalarField>,
+	C2G2: CurveGroup<ScalarField=E::ScalarField>,
+	C2: CurveGroup<BaseField = C1::ScalarField, ScalarField=C1::BaseField>,
+	E::G1: ToConstraintField<CF2<C1>>,
+	E::G2: ToConstraintField<CF2<C1>>,
+	E::TargetField: ToConstraintField<CF2<C1>> + Field<BasePrimeField=CF3<C1>>,
+	C1::Affine: AffineFromField<CF2<C1>>,
+	C1::Config: SWCurveConfig,
+	C2G2::Affine: AffineFromField<CF2<C2G2>>,
+{
 	//1. build or load the clamdb
 	let log_level = LOG1;
 	let mut gt1 = GTimer::new();
@@ -514,9 +608,12 @@ where
 		chunk_len,
 		lkup_len, 
 		rc_db,
-		init_cp_capacity,
-		init_sed_capacity,
-		init_dfa_capacity,
+		init_cp_capacity_cs,
+		init_sed_capacity_cs,
+		init_dfa_capacity_cs,
+		init_cp_capacity_igc,
+		init_sed_capacity_igc,
+		init_dfa_capacity_igc,
 		num_category,
 		num_circs_per_category,
 		b_check_lkup
@@ -1031,16 +1128,16 @@ pub mod tests_zkp_driver{
 		let b_write_cache = ! b_read_cache;
 		let set1 = "data/debug/full_data_set/config/"; //for dfa
         let max_word= 512 * 4;
-        let sigs = 350;
-        let subsigs = 500; //220 for prev db
+        let sigs = 380;
+        let subsigs = 560; //220 for prev db
         let avg_pats_per_subsig = 8; //old value 8
         let avg_active_pats_per_subsig = 3;
         let perc_comp_subsigs = 20;
         let num_category = 1;
         let num_circs_per_category= 1;
-        let basis_unique_states = 1600; //15 cpercent
+        let basis_unique_states = 2000; //15 cpercent
         let basis_acc_states = 1200; //9 cpercent
-        let basis_pats_in_trace = 2200; //old value 100 cur value 1/1000.
+        let basis_pats_in_trace = 4000; //old value 100 cur value 1/1000.
         let dfa_sigs = 3;
         let dfa_subsigs= 4;
         //let avg_subsig_per_sig = 3;
