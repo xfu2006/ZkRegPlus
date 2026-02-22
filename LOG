@@ -25469,7 +25469,7 @@ Goal 2. implement MainCirc
 	[a] to() -> TODO
 
 Thursday 02/18/2026
-LOC (sonobe) 20957
+LOC (sonobe) 20957 -> 21045 (+90)
 Goal 1. collect data
 	[a] now set the basis_packed_trace to 3200.
 	[b] now raise from 3600 -> 4000
@@ -25508,5 +25508,57 @@ Goal 4. Implement the gen_constraints -> DONE
 Goal 5. Re-implement the TwoPaseCircuit
 	[a] renamce as CyclepairCircuit
 	[b] remodel 
-	
 
+Friday 02/20/2026
+LOC (sonobe) 21045 -> 21080 (+35)
+Goal 1. adjust gen.py
+	[a] study structure
+	[b] update on server
+	[c] run on sample 2 see if the config is ok
+	[d] but why it fails discharging ascii_1? try again on ascii_0
+	[e] looks ascii_0 is fine
+	[f] run paper_data_gen and see -> but it's running fine
+		what's the problem?
+	[g] added two more dfas to the main_dfa.dat in the config 
+	-> FIXED so it's to include two more DFAs
+	[h] increase subsigs to 560 and dfa_subsig to 5.
+	[g] still has problem on dfa_adv.rs fails assertion.
+	    strangely it directly fails sample 3 as well
+		(i.e., current #1, #2, #3 fails)
+
+Goal 2. CyclePairCircuit
+	[a] rename inp 
+	[b] cp circuit from_nova
+		-> change struct
+		-> change from_nova()
+		-> change gen_constraints
+		-> clear the workflow first
+
+Goal 3. think about the role of mainres_hash (make it public)?
+	[a] is should be the (ONLY) public input of the main circuit
+	[b] it should also be one of the public input of the cp circuit
+
+Goal 4. Implementation revision
+	[a] put gen snarkprf1 in separate block -> DONE
+	[b] make mainres as i/o of circuit -> DONE
+	[c] make mainres part of I/O for cycleinp -> DONE
+
+Goal 5. Revise Cyclepair circuit
+	[a] separate block of RAM
+	[b] read how circ2 handles cyclepair_inp
+		-> it has circ1 res
+		-> it computes cyclepair inputs from circ1 res's commitments
+		-> it returns hashchain_b which is the hash of
+			qa_nizk_key
+	[c] *** the hashchain_b is the qa_nizk_key's hash from circ1
+		-> 
+
+Saturday 02/21/2026
+LOC (sonobe): 21080 -> 
+Goal 1. continue implementation of CyclepairCirc 
+	[a] gen_constraints -> DONE
+	[b] unit test
+	[c] debug why mainres_hash not match
+	[d] remove 6111.1
+Goal 2. update driver on the proof (there are two proofs now)
+	[a] 

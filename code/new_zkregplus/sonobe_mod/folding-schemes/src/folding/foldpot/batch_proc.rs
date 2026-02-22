@@ -41,7 +41,7 @@ use crate::folding::foldpot::{
 		QaNizkVerifierParams, prove_qa_nizk_fast,
 		QaNizkProof, verify_qa_nizk},
 	sigma_ir1cs::{LookupTableTwoCol},
-	decider_eth_circuit_super::{TwoPhaseCircInput},
+	decider_eth_circuit_super::{CircPubInput},
 	from_field::{AffineFromField},
 	utils::{B_DEBUG,get_mem_usage_mb,mb2s},
 };
@@ -255,8 +255,12 @@ pub struct BatchProof<E:Pairing, S: SNARK<E::ScalarField>>{
 	/// the QA_nizk for kzg_all_com2 and comE2, comW2, comF2
 	pub qa_nizk_prf2: Option<QaNizkProof<E>>,
 
-	/// the snark proof for the two circs (TwoPhaseCirc)
-	pub snark_proof: Option<S::Proof>,
+	/// the snark proof for the Main circ
+	pub snark_proof_main: Option<S::Proof>,
+	/// the snark proof for the Cyclepair circ
+	pub snark_proof_cp: Option<S::Proof>,
+	/// the hash of the mainres from te Main circ
+	pub mainres_hash: Option<E::ScalarField>,
 
 	/// hash chain of cmF
 	pub hash_cmF: E::ScalarField,	
@@ -277,7 +281,9 @@ impl <E:Pairing, S: SNARK<E::ScalarField>> BatchProof<E,S>{
 		comF2: E::G1,
 		qa_nizk_prf2: QaNizkProof<E>,
 
-		snark_proof: S::Proof
+		snark_proof_main: S::Proof,
+		snark_proof_cp: S::Proof,
+		mainres_hash: E::ScalarField
 	){
 		self.kzg_all_com1 = Some(kzg_all_com1);
 		self.kzg_all_com_ch1 = Some(kzg_all_com_ch1);
@@ -292,7 +298,11 @@ impl <E:Pairing, S: SNARK<E::ScalarField>> BatchProof<E,S>{
 		self.comF2 = Some(comF2);
 
 		self.qa_nizk_prf2 = Some(qa_nizk_prf2);
-		self.snark_proof = Some(snark_proof);
+		self.snark_proof_main = Some(snark_proof_main);
+		self.snark_proof_cp = Some(snark_proof_cp);
+		self.mainres_hash= Some(mainres_hash);
+
+
 	}
 }
 
@@ -749,7 +759,9 @@ where
 			comF2: None,
 			qa_nizk_prf2: None,
 
-			snark_proof: None,
+			snark_proof_main: None,
+			snark_proof_cp: None,
+			mainres_hash: None,
 			hash_cmF: rand_inp.hash_cmF.clone(), 
 		};
 
@@ -777,7 +789,8 @@ where
 		vkey: &BatchProcessorVerifierParams<'a,E,CS1E,H>, 
 		nova1_qa_nizk_vkey_hash: Option<E::ScalarField>, //only use in part2 
 		nova2_qa_nizk_vkey: Option<QaNizkVerifierParams<E>>, //only use in part2
-		snark_vk: Option<S::VerifyingKey>,
+		snark_vk_main: Option<S::VerifyingKey>,
+		snark_vk_cp: Option<S::VerifyingKey>,
 		claim: &BatchClaim<E>,
 		prf: &BatchProof<E,S>,
 		poseidon_config: &PoseidonConfig<E::ScalarField>,
@@ -874,7 +887,20 @@ where
 			}else{
 				prf.agg_kzg_prf.eval //normal mode
 			};
-			let snark_inp = TwoPhaseCircInput{
+			//4.1 verify the maincirc snark proof
+			let pub_inp = vec![prf.mainres_hash.unwrap()];
+			let snark_v_main = S::verify(
+				&snark_vk_main.expect("snark vkey_main empty"),
+				&pub_inp,
+				&prf.snark_proof_main.as_ref().clone()
+					.expect("snark main empty")
+			);
+			if !snark_v_main.is_ok() || !snark_v_main.unwrap().clone() {
+				return false;
+			}
+
+			//4.2 verify te cpcirc snark proof
+			let snark_inp = CircPubInput{
 				ch1: prf.ch,
 				rc1: prf.rc,
 				kzg_sum1: kzg_sum1,
@@ -882,6 +908,7 @@ where
 					.expect("com_ch1 null"),
 				eval_w_e1: prf.kzg_all_com_prf1.clone()
 					.expect("eval_w_e1 null").eval,
+				mainres_hash: prf.mainres_hash.unwrap(),
 
 				kzg_all_com_ch2: prf.kzg_all_com_ch2.clone()
 					.expect("com_ch2 null"),
@@ -894,16 +921,15 @@ where
 
 				qa_nizk_vkey_hash: nova1_qa_nizk_vkey_hash
 					.expect("nova1 qanizk vkey hash empty!"), 
+
 			};
-			println!("DEBUG USE 6602.2: snark_inp: {:#?}", snark_inp);
 			let public_input: Vec<F> = snark_inp.to_vec().expect("to_vec err");
-        	let snark_v= S::verify(
-				&snark_vk.expect("snark vkey empty!"), 
+        	let snark_v_cp= S::verify(
+				&snark_vk_cp.expect("snark vkey empty!"), 
 				&public_input, 
-				&prf.snark_proof.as_ref().clone().expect("snark pf empty"));
+				&prf.snark_proof_cp.as_ref().clone().expect("snark pf empty"));
 					//.map_err(|e| Error::Other(e.to_string())).unwrap();
-			println!("DEBUG USE 102: snark_v: {:?}", snark_v);
-			if !snark_v.is_ok() || !snark_v.unwrap().clone() {
+			if !snark_v_cp.is_ok() || !snark_v_cp.unwrap().clone() {
 				return false;
 			}
 		}
@@ -968,7 +994,7 @@ mod tests_batch_proc {
 		};
 
 		let (batch_proof, _rand_inp2) = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>, CS1E, false> ::prove_batch(&pk, &snark_inp, &words, lkup, &partial_input); 
-		assert!(BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E, false>::verify_batch(&vk, None, None, None, &global_claim, &batch_proof, &poseidon_config, false, None));
+		assert!(BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E, false>::verify_batch(&vk, None, None, None, None, &global_claim, &batch_proof, &poseidon_config, false, None));
 		let ind_prf = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E,false>::prove_individual(&pk, 
 			&snark_inp, &words, &ind_claims[i], i);
 		let res = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E,false>::verify_individual(&vk, i,

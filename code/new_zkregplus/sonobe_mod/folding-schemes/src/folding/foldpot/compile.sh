@@ -10,6 +10,7 @@ RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" cargo check --tests 2>&1 | more
 #RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" RUST_TEST_TIME_INTEGRATION=3600000,36000000 RUST_BACKTRACE=1 RUSTFLAGS="-Awarnings" time cargo test --features "light-test" --release -- tests_driver --show-output --nocapture  
 #2>&1 | less
 #RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" RUST_TEST_TIME_INTEGRATION=3600000,36000000 RUST_BACKTRACE=1 RUSTFLAGS="-Awarnings" time cargo test --features "light-test" --release -- tests_sigma_ir1cs --show-output --nocapture  
+#RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" RUST_TEST_TIME_INTEGRATION=3600000,36000000 RUST_BACKTRACE=1 RUSTFLAGS="-Awarnings" time cargo test --features "light-test" --release -- tests_batch_proc --show-output --nocapture  
 
 # -- TEST no release
 #RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" RUST_TEST_TIME_INTEGRATION=3600000,36000000 RUST_BACKTRACE=1 time cargo test -- tests_driver --show-output 

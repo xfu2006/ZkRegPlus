@@ -396,8 +396,11 @@ where C::BaseField: PrimeField,
 			randf: new_var(cs, val.randf),
 		};
 		if b_debug{
-			let res2 = res.val();
-			assert!(*val==res2);
+			use ark_r1cs_std::R1CSVar;
+			if res.ch.value().is_ok(){
+				let res2 = res.val();
+				assert!(*val==res2);
+			}
 		}
 
 		res
@@ -1039,7 +1042,8 @@ where
 /// It basically proves the same as Phase1 circuit (using its main_circ),
 /// and some additional features:
 /// THIS CIRCUIT in driver is SPECIFICALLY to compute (as its main function)
-///   the hashchain of cyclepair_input (and also folding cyclepair checks).
+///   the *** hashchain *** 
+///   of cyclepair_input (and also folding cyclepair checks).
 /// There exists: [z_i, n, z_n, (U_i, W_i), (u_i, w_i), 
 ///          com_all_W,  {(com_W, com_E, com_F)}_i=1^k, prf_qa_nizk ]
 /// (1) there exists (U_i, W_i), (u_i, w_i) that folds to (U_i1)
@@ -1064,7 +1068,8 @@ where
 ///     as computed by the cyclepair circuits's final result (in ZiPart2)
 /// (4) verify that hashchain(G_2) is the same as the QA-NIZK verifier key
 ///     hash
-/// --> the above essentially finishes the proof of circ1's com_all_w
+/// --> the above essentially finishes the proof of circ1's (MainDeciderCircuit
+///       for ZkregPlus relation)'s com_all_w
 ///   matches the (W_i || E_i)_i=1^k for the comW, comE, comF of each subcirc
 ///   of circ1.
 /// As this is a "sub-circuit", it does NOT have public I/O, instead,
@@ -1113,7 +1118,7 @@ where
 	/// main circuit which handles its own proof 
 	main_circ:  Phase1Circuit<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,LK,GM, H>,
 	/// its own cyclepair_inputs, need to be consistent with the
-	/// phase1circ return later in gen_constraints
+	/// phase1circ (by the MainDeciderCircuit) return later in gen_constraints
     cyclepair_inputs: Vec<Vec<CF1<C1>>>,
 }
 
@@ -1280,6 +1285,8 @@ where
         //println!("[WARNING]: Running with the 'light-test' feature, skipping the cyclepair part of the DeciderEthCircuit.\n Only for testing purposes.");
         //#[cfg(not(feature = "light-test"))]
 		let b_light_test = true;
+		let part1_enable = false;
+		let part2_enable = false;
 		if !b_light_test
         {
             use crate::commitment::pedersen::PedersenGadget;
@@ -1318,14 +1325,12 @@ where
 			//check R1CS relation: 90MB (100GB) -> 241GB NOW. 
 			//TOTAL: 217M constraints now!!!!. (about 1hr to this point)
 			//*** set the debug_disable to true on real server
-			let debug_enable1 = true;
-			let debug_enable2 = false;
 
             let H2 = GC2::new_constant(cs.clone(), 
 				self.main_circ.cp_pedersen_params.h)?;
             let G = Vec::<GC2>::new_constant(cs.clone(), 
 				self.main_circ.cp_pedersen_params.generators)?;
-			if debug_enable1{
+			if part1_enable{
 				let cp_W_i_E_bits: Result<Vec<Vec<Boolean<CF1<C1>>>>, SynthesisError> = cp_W_i.E.iter().map(|E_i| E_i.to_bits_le()).collect();
 				let computed_cmE = PedersenGadget::<C2, GC2>::commit(
 					H2.clone(),
@@ -1341,7 +1346,7 @@ where
 			log_perf(log_level, &format!("Phase2 Circ gen_cs: Step 6.1: check cp_W_i commits to cp_U_i. r1cs: {}, RAM: {} GB", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 			c1 = cs.num_constraints();
 
-			if debug_enable2{
+			if part2_enable{
 				let cp_W_i_W_bits: Result<Vec<Vec<Boolean<CF1<C1>>>>, SynthesisError> = cp_W_i.W.iter().map(|W_i| W_i.to_bits_le()).collect();
 				let computed_cmW =
 					PedersenGadget::<C2, GC2>::commit(H2, G, cp_W_i_W_bits?, cp_W_i.rW.to_bits_le()?)?;
@@ -1466,10 +1471,10 @@ where
     }
 }
 
-/// Represents the public i/o of the TwoPhaseDeciderCircuit,
+/// Represents the public i/o of the CyclePairCircInput,
 /// most elements can be retrieved from nova
 #[derive(Clone, Debug, PartialEq)]
-pub struct TwoPhaseCircInput<F: PrimeField,C: CurveGroup<ScalarField=F>>{
+pub struct CircPubInput<F: PrimeField,C: CurveGroup<ScalarField=F>>{
 	/// the ch of circ1
 	pub ch1: F,
 	/// the rc of circ1
@@ -1480,6 +1485,8 @@ pub struct TwoPhaseCircInput<F: PrimeField,C: CurveGroup<ScalarField=F>>{
 	pub kzg_all_com_ch1: F,
 	/// the evaluation of kzg_all_com at kzg_all_com_ch
 	pub eval_w_e1: F,
+	/// the hash of the Circ1Ret of the main circ
+	pub mainres_hash: F,
 
 	// the ch of circ2: removed (not needed): because the
 	// circuit computes the hash(hashchain(a), hashchain(b))
@@ -1500,6 +1507,7 @@ pub struct TwoPhaseCircInput<F: PrimeField,C: CurveGroup<ScalarField=F>>{
 	/// hash of the qa_nizk_vkey
 	pub qa_nizk_vkey_hash: F,
 
+
 	/// the comE of U_{i+1} of circ2 (they will go to the
 	/// QA-NIZK proof). Circ 2 handles the MANY comE,W,F for each
 	/// sub circuit (so these of Circ1 don't have to get disclosed)
@@ -1510,7 +1518,7 @@ pub struct TwoPhaseCircInput<F: PrimeField,C: CurveGroup<ScalarField=F>>{
 	pub comF2: C,
 }
 
-impl <F: PrimeField, C: CurveGroup<ScalarField=F>> TwoPhaseCircInput<F,C>
+impl <F: PrimeField, C: CurveGroup<ScalarField=F>> CircPubInput<F,C>
 where
 C::Affine: AffineFromField<CF2<C>>,
 CF2<C>: PrimeField
@@ -1522,6 +1530,7 @@ CF2<C>: PrimeField
 			self.kzg_sum1.clone(),
 			self.kzg_all_com_ch1.clone(),
 			self.eval_w_e1.clone(),
+			self.mainres_hash.clone(),
 
 			self.kzg_all_com_ch2.clone(),
 			self.eval_w_e2.clone(),
@@ -1539,10 +1548,10 @@ CF2<C>: PrimeField
 	/// parse from vector
 	pub fn from_vec(v: &Vec<F>)->Self{
 		let (ch1, rc1, kzg_sum1, kzg_all_com_ch1, eval_w_e1,
-			  kzg_all_com_ch2, eval_w_e2) = 
-			v[0..7].to_vec().into_iter().collect_tuple().unwrap();
-		let qa_nizk_vkey_hash = v[7];
-		let vec_rest = &v[8..v.len()];
+			  mainres_hash, kzg_all_com_ch2, eval_w_e2) = 
+			v[0..8].to_vec().into_iter().collect_tuple().unwrap();
+		let qa_nizk_vkey_hash = v[8];
+		let vec_rest = &v[9..v.len()];
 		assert!(vec_rest.len()==5*6);
 		let vec_fq = vec_rest.chunks(5).map(|chunk| {
 			f1_limbs_to_f2::<F, CF2<C>>(&chunk.to_vec())
@@ -1558,6 +1567,7 @@ CF2<C>: PrimeField
 			ch1, rc1, kzg_sum1, kzg_all_com_ch1, eval_w_e1,
 			kzg_all_com_ch2, eval_w_e2,
 			qa_nizk_vkey_hash,
+			mainres_hash,
 			comE2, comW2, comF2
 		}
 	}
@@ -1611,6 +1621,8 @@ where
 	pub res: Phase1CircuitRetVal<C1::ScalarField,C1>,
 	/// the randf
 	pub randf: C1::ScalarField,
+	/// the hash of the main result
+	pub res_hash: C1::ScalarField,
 }
 
 impl<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + Debug, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, LK, GM, const H: bool> MainDeciderCircuit<E,P,C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, LK, GM, H>
@@ -1671,11 +1683,16 @@ where
 		randf: C1::ScalarField,
     ) -> Result<Self, Error> {
 		use ark_relations::r1cs::ConstraintSystem;
+		use ark_r1cs_std::R1CSVar;
 		let circ1 = Phase1Circuit::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,LK,GM,H>::from_nova::<FC>(nova1, com_all_w_1, r_all_w_1)?;
 
         let cs = ConstraintSystem::<CF1<C1>>::new_ref();
-		let res = circ1.generate_constraints_adv(0, cs, randf).unwrap().val();
-		Ok(Self{circ1, res, randf})
+		let res = circ1.generate_constraints_adv(0, cs.clone(), randf).unwrap();
+		let res_val = res.val();
+		let res_hash_var = res.hash(&circ1.poseidon_config,
+			cs.clone());
+		let res_hash = res_hash_var.value()?;
+		Ok(Self{circ1, res: res_val, randf, res_hash})
     }
 
 }
@@ -1723,6 +1740,7 @@ where
 	P: Clone,
 {
     fn generate_constraints(self, cs: ConstraintSystemRef<CF1<C1>>) -> Result<(), SynthesisError> {
+		use ark_r1cs_std::R1CSVar;
 		let mut gt2 = GTimer::new();
 		let b_debug = B_DEBUG;
 		let log_level = LOG2;
@@ -1732,13 +1750,18 @@ where
 		let phase1_ret=self.circ1
 			.generate_constraints_adv(2,cs.clone(),self.randf).unwrap();
 		#[cfg(test)]{
-			use ark_r1cs_std::R1CSVar;
 			if phase1_ret.ch.value().is_ok(){
 				let phase1_ret_val = phase1_ret.val();
 				assert!(phase1_ret_val == self.res);
 			}
 		}
 		let hash_res = phase1_ret.hash(&self.circ1.poseidon_config, cs.clone());
+		let hash_res_val = if hash_res.value().is_ok(){
+			hash_res.value().expect("hash_res value() err")
+		}else {C1::ScalarField::zero()};
+		let hash_res_io = FpVar::<CF1<C1>>::new_input(cs.clone(),
+			|| Ok(hash_res_val)).expect("new hash_res io err");
+			//this is the ONLY i/o of the MainDeciderCircuit
 		log_perf(log_level, &format!("TwoPhaseCirc build circ1: {} cs.",
 			cs.num_constraints()-c0), &mut gt2);
 		let c1 = cs.num_constraints();
@@ -1761,7 +1784,7 @@ where
 /// and pass the cyclepair_input in between to make sure that
 /// they are consistent.
 #[derive(Clone, Debug)]
-pub struct CyclePairCircuit<E:Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + Debug, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, LK, GM, GM2, const H: bool = false>
+pub struct CyclePairCircuit<E:Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + Debug, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, LK, GM2, const H: bool = false>
 where
     C1: CurveGroup,
     GC1: CurveVar<C1, CF2<C1>>,
@@ -1786,7 +1809,6 @@ where
 	E::TargetField: ToConstraintField<CF2<C1>> + Field<BasePrimeField=CF3<C1>>,
 	C1::Affine: AffineFromField<CF2<C1>>,
 	C2G2::Affine: AffineFromField<CF2<C2G2>>,
-	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug,
 	GM2: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug,
 
 	// to call nova function
@@ -1797,15 +1819,15 @@ where
 	C1::Config: SWCurveConfig,
 	P: Clone,
 {
-	/// circuit 1 for nova1
-	circ1:  Phase1Circuit<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,LK,GM,H>,
 	/// circuit 2 for nova2
 	circ2:  Phase2Circuit<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,LK,GM2,H>,
 	/// public input for the circuit
-	inp:  TwoPhaseCircInput<CF1<C1>,C1>,
+	inp:  CircPubInput<CF1<C1>,C1>,
+	/// Maincirc res
+	mainres: Phase1CircuitRetVal<CF1<C1>,C1>,
 }
 
-impl<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + Debug, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, LK, GM, GM2, const H: bool> CyclePairCircuit<E,P,C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, LK, GM, GM2, H>
+impl<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + Debug, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, LK, GM2, const H: bool> CyclePairCircuit<E,P,C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, LK, GM2, H>
 where
     //C1: CurveGroup,
     //C2: CurveGroup,
@@ -1838,7 +1860,6 @@ where
 	E::TargetField: ToConstraintField<CF2<C1>> + Field<BasePrimeField=CF3<C1>>,
 	C1::Affine: AffineFromField<CF2<C1>>,
 	C2G2::Affine: AffineFromField<CF2<C2G2>>,
-	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug,
 	GM2: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug,
 
 	// to call nova function
@@ -1851,16 +1872,12 @@ where
 {
 	/// Retrieve the non-deterministic advice from the nova instance
 	/// and save in its own data members. Basically,
-	/// it builds two decider circuits, one for each nova,
-	/// and builds up the checks to verify the consistency among the
-	/// non-deterministic advice.
-    pub fn from_nova<
-	FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM,C=C1>,
-		>
+	/// it builds  a phase2 decider circuit, which
+	/// processes the return (commitments) from MainDeciderCircuit
+	/// and links up the information between two circs.
+    pub fn from_nova
 		(
-        nova1: FoldPotSuper<E, P, C2G2, C1, GC1, C2, GC2, FC, CS1, CS2, CS1E, LK, GM, H>,
         nova2: FoldPotSuper<E, P, C2G2, C1, GC1, C2, GC2, SigmaIR1CS_Inst<C1::ScalarField, C1, CS1,LK,GM2, H>, CS1, CS2, CS1E, LK, GM2, H>,
-
 		cyclepair_inputs: Vec<Vec<C1::ScalarField>>,
 		_qa_nizk_vkey_hash: C1::ScalarField,
 		_poseidon_config: PoseidonConfig<C1::ScalarField>,
@@ -1868,16 +1885,16 @@ where
 		r_all_w_1: C1::ScalarField,
 		com_all_w_2: C1,
 		r_all_w_2: C1::ScalarField,
-		inp: TwoPhaseCircInput<CF1<C1>,C1>,
+		mainres: Phase1CircuitRetVal<CF1<C1>, C1>, //will generate cyclepair inp
+		inp: CircPubInput<CF1<C1>,C1>, //will be verified against mainres
     ) -> Result<Self, Error> {
-		let circ1 = Phase1Circuit::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,LK,GM,H>::from_nova::<FC>(nova1, com_all_w_1, r_all_w_1)?;
 		let circ2 = Phase2Circuit::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,LK,GM2,H>::from_nova::<SigmaIR1CS_Inst<C1::ScalarField, C1, CS1, LK, GM2, H>>(nova2, com_all_w_2, r_all_w_2, cyclepair_inputs)?;
-		Ok( Self{ circ1, circ2, inp } )
+		Ok( Self{ circ2, inp, mainres } )
     }
 
 }
 
-impl<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + Debug, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, LK, GM, GM2, const H: bool> ConstraintSynthesizer<CF1<C1>> for CyclePairCircuit<E,P,C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, LK, GM, GM2, H>
+impl<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + Debug, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, LK, GM2, const H: bool> ConstraintSynthesizer<CF1<C1>> for CyclePairCircuit<E,P,C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, LK, GM2, H>
 where
     //C1: CurveGroup,
     //C2: CurveGroup,
@@ -1909,7 +1926,7 @@ where
 	E::TargetField: ToConstraintField<CF2<C1>> + Field<BasePrimeField=CF3<C1>>,
 	C1::Affine: AffineFromField<CF2<C1>>,
 	C2G2::Affine: AffineFromField<CF2<C2G2>>,
-	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug,
+	//GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug,
 	GM2: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug,
 
 	// to call nova function
@@ -1925,28 +1942,36 @@ where
 		let mut gt2 = GTimer::new();
 		let log_level = LOG2;
 		let b_debug = B_DEBUG;
-
-		//1. let the two circuits generate constraints first
 		let c0 = cs.num_constraints();
-		let randf = CF1::<C1>::zero();
-		let phase1_ret=self.circ1
-			.generate_constraints_adv(2,cs.clone(), randf).unwrap();
-		//let phase1_ret = Phase1CircuitRet::dummy(cs.clone());
-		log_perf(log_level, &format!("TwoPhaseCirc build circ1: {} cs.",
-			cs.num_constraints()-c0), &mut gt2);
-		let c1 = cs.num_constraints();
 
-		let phase2_ret = self.circ2.generate_constraints_adv(&phase1_ret, cs.clone()).unwrap();
+		//1. create circ2 (cyclepair circ generate constraints)
+		// circ2 takes the phase1_ret, encodes its vector of
+		// commitments as cyclepair_input, and compute the
+		// hashchain of these commitments, and its cyclepair
+		// component verifies the correctness of the pairing equations
+		// that involves these commitments.
+		let phase1_ret = Phase1CircuitRet::from(&self.mainres, &cs);
+		let mainres_hash = phase1_ret.hash(&self.circ2.main_circ
+			.poseidon_config, cs.clone());
+		let phase2_ret = self.circ2.generate_constraints_adv(
+			&phase1_ret, 
+			cs.clone()).unwrap();
 		let c2 = cs.num_constraints();
-		log_perf(log_level, &format!("TwoPhaseCirc build circ2: {} cs.",
-			c2-c1), &mut gt2);
-
+		log_perf(log_level, &format!("CyclePairCirc step 1. build circ: {} cs.",
+			c2-c0), &mut gt2);
 
 		//2. establish the public inputs and check the consistency
 		// with the phase1 and phase2 returns.
+		// this includes the check:
+		// (1) the public input mainres_hash MATCHES the hash
+		//    of the Circ1Ret from MainCirc. (thus connecting the two circs)
+		// (2) the phase2 circ ret cmE, cmF, cmW match that of the public inp
+		// (3) the cyclepair input generates hashchain_b and it
+		//       matches the one in pub_input.
 		let _s_dbg = vec![
 			"ch1", "rc1", "kzg_sum1", "kzg_all_com_ch1", "eval_w_e1",
-			"kzg_all_com_ch2", "eval_w_2", "qa_nizk_vkey_hash",
+			"mainres_hash",
+			"kzg_all_com_ch2", "eval_w_2", "qa_nizk_vkey_hash", 
 		];
 		let vec_inp = self.inp.to_vec().expect("Inp to Vec error")
 			.into_iter().map(|x: C1::ScalarField|
@@ -1954,11 +1979,15 @@ where
 					.expect("FpVar new input fails"))
 			.collect::<Vec<FpVar<CF1<C1>>>>();
 
+
 		let mut vec_ret = vec![
 			phase1_ret.ch, phase1_ret.rc, phase1_ret.kzg_sum,
 				phase1_ret.kzg_all_com_ch, phase1_ret.eval_w_e,
+				mainres_hash,
 			phase2_ret.main_ret.kzg_all_com_ch, phase2_ret.main_ret.eval_w_e,
-				phase2_ret.hashchain_b];
+				phase2_ret.hashchain_b ];
+
+
 		let limbs = phase2_ret.main_ret.u_i1_0_cmE.x.0.len();
 		let coms = vec![phase2_ret.main_ret.u_i1_0_cmE,
 			phase2_ret.main_ret.u_i1_0_cmW, phase2_ret.main_ret.u_i1_0_cmF];
@@ -1984,15 +2013,14 @@ where
 			vec_ret[i].enforce_equal(&vec_inp[i])?;
 		}
 		let c3 = cs.num_constraints();
-		log_perf(log_level, &format!("TwoPhaseCirc connect 2 circs: {} cs.",
-			c3-c2), &mut gt2);
+		log_perf(log_level, &format!("CyclePairCirc Step 2: validate all other data: {} cs.", c3-c2), &mut gt2);
 
 		if b_debug{
 			let cs_ok = cs.is_satisfied();
 			if cs_ok.is_ok(){ assert!(cs_ok.unwrap()); }
 		}
 
-		log_perf(log_level-1, &format!("*** Groth16 TwoPhaseCirc TOTAL constraints: {} ***. circ1: {}, circ2: {} constraints.", cs.num_constraints(), c1, c2-c1), &mut gt1);
+		log_perf(log_level-1, &format!("*** CyclePairCirc TOTAL constraints: {} ***.", cs.num_constraints()), &mut gt1);
 		Ok( () )
 
 	}
@@ -2030,12 +2058,13 @@ pub mod tests_decider_eth_circuit_super {
 	fn test_phase2_input(){
 		//1. generate random
         let mut rng = ark_std::test_rng();
-		let inp= TwoPhaseCircInput::<Fr, Projective>{
+		let inp= CircPubInput::<Fr, Projective>{
 			ch1: Fr::rand(&mut rng),
 			rc1: Fr::rand(&mut rng),
 			kzg_sum1: Fr::rand(&mut rng),
 			kzg_all_com_ch1: Fr::rand(&mut rng),
 			eval_w_e1: Fr::rand(&mut rng),
+			mainres_hash: Fr::rand(&mut rng),
 
 			kzg_all_com_ch2: Fr::rand(&mut rng),
 			eval_w_e2: Fr::rand(&mut rng),
@@ -2047,7 +2076,7 @@ pub mod tests_decider_eth_circuit_super {
 		};
 
 		let vec = inp.to_vec().unwrap();
-		let inp2 = TwoPhaseCircInput::<Fr,Projective>::from_vec(&vec);
+		let inp2 = CircPubInput::<Fr,Projective>::from_vec(&vec);
 		let vec2 = inp2.to_vec().unwrap();
 		assert!(vec==vec2);
 		assert!(inp==inp2);
