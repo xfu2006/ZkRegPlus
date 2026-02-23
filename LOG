@@ -25566,6 +25566,10 @@ Sunday 02/22/2026
 LOC (sonobe) 21092 -> 21128 (+40) 
 Goal 1. collect data 
 	[a] copy over new main.dat
+	[b] looks like phase 0 can pass after correction.
+		But advice generation takes 20 seconds
+		prove_step takes 1 minute! 
+		This is about 3.6M per minute. This needs 8 days to complete.
 Goal 2. research various quick fixes of driver to improve memory footprint
 	[a] change batch_param to batct_pk and batch_vk
 	[b] before pass_all step_4: gen_batc_prf memory is: increased RAM is 0
@@ -25581,5 +25585,20 @@ Goal 5. implementation
 	[a] zkp_driver_adv which takes 3 more parameters
 	[b] zkp_driver calls zkp_driver_adv
 	[c] full_data3 and full_data4 can call the adv version
+
+Monday 02/23/2026
+LOC
+Goal 1. collect data
+	[a] still problem with asc__02. it crashes at DFA debug it later
+	[b] check the full memory consumption of two circs now
+		-> before entering snark prf 128GB
+		-> full_data2() circ1: all_w_e: 37M -> 80MR1CS -> peak RAM: 250GB
+		-> cp circuit: all_w_e small but because of modeling pairing
+			-> 200M R1CS 
+			-> peak use of RAM 430GB (almost reaching 448GB)
+		-> It looks with 60M more it needs around 512GB eventually. 
+			But if in circ1, we leave to upper limit 200M, it looks
+			to be fine with 448GB machine.
+Goal 2. change sed
 -- TODO -- add capacity input for sed, and list the b_igc when 
 	gadgtes throw Err.

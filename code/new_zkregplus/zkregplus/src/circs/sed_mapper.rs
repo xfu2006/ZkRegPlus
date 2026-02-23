@@ -1,4 +1,6 @@
 /* Created 03/18/2025
+	Revised 02/23/2026: add separate capacity for case senstive
+		and ignore case
 */
 
 /*!
