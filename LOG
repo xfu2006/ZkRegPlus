@@ -25628,9 +25628,38 @@ Goal 3. SedCapacity revision
 Tuesday 02/24/2026
 LOC (circ) 2989 -> 
 LOC (gadgets) 20267 -> 
+Goal 0. data collection
+	[a] the #2 22M file needs very high basis_pats_in_trace: 100%.
+		-> so this raises witness to 78M which will blow up
+		circ1.
+Goal 1. read compute_sig_adv component first
+	[a] what is the perc_pat_per_trace used to build the step_queue
+	[b] gen_synthnthesis assumes that raw_result_cs and raw_result_igc
+		has the SAME set of subsigs and select the result
+		from one of these -> later we actually should merge
+		the two list
+	[c] validate_synthesis - it does verify the selection process
+		-> later we need to do a join, so just concatenate
+		the list and check the m_tbl and verify that the 
+		value is 1. Can be modeled as a function
+	[d] what's the use of basis_pats_in_trace -> we should
+			distinguish between basis_pats_in_trace
+			with pats_expansion_factor
 
--- TODO --
+Goal 2. ComputeSigAdvCapacity
+	[a] add cs/igc version for subsigs, basis_pats_in_trace
+		also add pats_expansion_factor_cs/igc
+	[b] clear all syntax errors
+		-> ComputeSigAdvCapacity constructor and functions
+		-> Sed calling of constructor
+		-> update zkp_driver
+	[c] compSigAdvice new
+
+Goal 3. gen_eval_subsig_by_sq_combo and validate_eval_subsig_by_sq_combo
+	[a] gen_eval_subsig
+	[b] validate_eval_subsig
+
+Goal 4. gen_synthesis_combo and validate_synthesis_combo
+	[a] 
+
 Goal 1: update compute_sig_adv component
-	[a] update its Capacity so that there is a cs_perc_pat
-		and other attributes just maintain the same for simplicity
-	[b] update the assertion function one by one.

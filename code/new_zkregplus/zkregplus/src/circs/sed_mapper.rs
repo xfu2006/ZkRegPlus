@@ -101,6 +101,8 @@ pub struct SedCapacity{
 	pub	avg_pats_per_subsig: usize,
 	pub	avg_active_pats_per_subsig: usize,
 	pub	basis_pats_in_trace: usize, //0.01 percent
+	pub pats_expansion_rate: usize, //to model the rate of
+		//pats staying over more than one segment of word
 	pub	sigs_sed: usize, //for sed approach to discharge
 	pub	perc_comp_subsigs: usize,
 	pub basis_unique_states: usize, //basis points of unique states
@@ -168,6 +170,7 @@ impl SedCapacity{
 		avg_pats_per_subsig: usize,
 		avg_active_pats_per_subsig: usize,
 		basis_pats_in_trace: usize, //0.01 perc (basis points)
+		pats_expansion_rate: usize,
 		sigs_sed: usize, //for sed approach to discharge
 		perc_comp_subsigs: usize,
 		basis_unique_states: usize,
@@ -178,8 +181,18 @@ impl SedCapacity{
 		let faa_capacity = FsmAdvCapacity{max_nibble_len, acdfa_state_part_bits,			subsigs, avg_pats_per_subsig, basis_pats_in_trace,
 			basis_unique_states, basis_acc_states};
 		let da_capacity = DischargeAdvCapacity{max_nibble_len, subsigs, avg_active_pats_per_subsig, basis_pats_in_trace};
-		let csa_capacity = ComputeSigAdvCapacity{subsigs, sigs: sigs_sed, max_nibble_len,
-			basis_pats_in_trace, perc_comp_subsigs};
+		//NOTE csa_capacity for the other cs/igc case will be temporarily
+		//set and later merged (because one csa coresponds to two discharge
+		//adv components
+		let csa_capacity = ComputeSigAdvCapacity{
+			subsigs_cs: subsigs, 
+			subsigs_igc: subsigs, 
+			sigs: sigs_sed, max_nibble_len,
+			basis_pats_in_trace_cs: basis_pats_in_trace,
+			basis_pats_in_trace_igc: basis_pats_in_trace, 
+			pats_expansion_rate_cs: pats_expansion_rate,
+			pats_expansion_rate_igc: pats_expansion_rate,
+			perc_comp_subsigs};
 			
 		let comp_capacities: Vec<Rc<dyn Capacity>> = vec![
 			Rc::new(wea_capacity),
@@ -191,7 +204,7 @@ impl SedCapacity{
 		Self{comp_capacities, max_word_len, acdfa_state_part_bits,
 			subsigs, avg_pats_per_subsig, avg_active_pats_per_subsig,
 			basis_pats_in_trace, sigs_sed, perc_comp_subsigs,
-			basis_unique_states, basis_acc_states}
+			basis_unique_states, basis_acc_states, pats_expansion_rate}
 	}
 
 	/// level1: double the subsig and sig size
@@ -206,6 +219,7 @@ impl SedCapacity{
 				self.avg_pats_per_subsig,
 				self.avg_active_pats_per_subsig,
 				self.basis_pats_in_trace,
+				self.pats_expansion_rate,
 				self.sigs_sed*2,
 				self.perc_comp_subsigs,
 				self.basis_unique_states,
@@ -218,7 +232,8 @@ impl SedCapacity{
 				self.subsigs,
 				self.avg_pats_per_subsig*2,
 				self.avg_active_pats_per_subsig*2,
-				self.basis_pats_in_trace*2,
+				self.basis_pats_in_trace + 800,//add 8 percent
+				self.pats_expansion_rate*2,
 				self.sigs_sed,
 				self.perc_comp_subsigs*2,
 				self.basis_unique_states*2,
@@ -278,6 +293,7 @@ impl Capacity for SedCapacity{
 			avg_pats_per_subsig: self.avg_pats_per_subsig,
 			avg_active_pats_per_subsig: self.avg_active_pats_per_subsig,
 			basis_pats_in_trace: self.basis_pats_in_trace,
+			pats_expansion_rate: self.pats_expansion_rate,
 			sigs_sed: self.sigs_sed,
 			perc_comp_subsigs: self.perc_comp_subsigs,
 			basis_unique_states: self.basis_unique_states,

@@ -89,18 +89,35 @@ use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef,Variable,
 /// Capacity of the gadget
 #[derive(Clone,Debug,PartialEq)]
 pub struct ComputeSigAdvCapacity{
-	/// how many subsigs 
-	pub subsigs: usize,
+	/// how many subsigs  for the case sensitive part
+	pub subsigs_cs: usize,
+	/// how many subsigs  for the ignore case part
+	pub subsigs_igc: usize,
 
-	/// how many sigs 
+	/// how many sigs (same for both cs and igc part)
 	pub sigs: usize,
 
 	/// max_nibble_len, used to determine inp_step_queue_obj
+	/// same for both cs and igc
 	pub max_nibble_len: usize,
 
 	/// basis_pats_in_trace (used to be compatibile for the
-	/// step_queue_res). It determines the related lookup argument size. 
-	pub basis_pats_in_trace: usize, 
+	/// step_queue_res). Combined with expansion rate,
+	/// It determines the related lookup argument size. 
+	pub basis_pats_in_trace_cs: usize, 
+	/// baiss_pats for igc 
+	pub basis_pats_in_trace_igc: usize, 
+
+	/// NOTE that pats_pasis_in_trace tells the ratio of pats
+	/// in trace (regarding the currection section size).
+	/// However, some positions may stay LONGER than than the current
+	/// section. Pats_expansion_rate measures in average how many
+	/// more patterns (from the previous sections) we need to hold
+	/// in step queue. So basis_pats_in_trace * pats_expansion_rate
+	/// decides the step queue
+	pub pats_expansion_rate_cs: usize,
+	/// pats_expansion_rate for igc case
+	pub pats_expansion_rate_igc: usize,
 
 	/// percentage of subsigs that are components of SubsigCounterConstraint
 	/// e.g. (1|2|3)>4,2 requires that there are at least 5 matches
@@ -112,6 +129,7 @@ pub struct ComputeSigAdvCapacity{
 	/// Perc of subsigs which has subsig_count_constraints  and similar
 	/// counter constraints.
 	/// Real data: perc_comp_subsigs is 17 for binexec data set.
+	/// Same for both cs and igc case
 	pub perc_comp_subsigs: usize,
 }
 
@@ -152,10 +170,14 @@ impl Capacity for ComputeSigAdvCapacity{
 		let other = r_other.as_any().downcast_ref::<ComputeSigAdvCapacity>()
 			.expect("downcast err"); 
 
-		self.subsigs >= other.subsigs &&
+		self.subsigs_cs >= other.subsigs_cs &&
+		self.subsigs_igc >= other.subsigs_igc &&
 		self.sigs >= other.sigs &&
 		self.max_nibble_len>= other.max_nibble_len &&
-		self.basis_pats_in_trace>= other.basis_pats_in_trace &&
+		self.basis_pats_in_trace_cs>= other.basis_pats_in_trace_cs &&
+		self.basis_pats_in_trace_igc>= other.basis_pats_in_trace_igc &&
+		self.pats_expansion_rate_cs >= other.pats_expansion_rate_cs &&
+		self.pats_expansion_rate_igc >= other.pats_expansion_rate_igc &&
 		self.perc_comp_subsigs >= other.perc_comp_subsigs
 	}
 
@@ -163,9 +185,13 @@ impl Capacity for ComputeSigAdvCapacity{
 	/// (which cause trouble why use dyn Capacity in Rc),
 	fn clone(&self) -> Rc<dyn Capacity>{
 		Rc::new(ComputeSigAdvCapacity{
-			subsigs: self.subsigs,
+			subsigs_cs: self.subsigs_cs,
+			subsigs_igc: self.subsigs_igc,
 			sigs: self.sigs,
-			basis_pats_in_trace: self.basis_pats_in_trace,
+			basis_pats_in_trace_cs: self.basis_pats_in_trace_cs,
+			basis_pats_in_trace_igc: self.basis_pats_in_trace_igc,
+			pats_expansion_rate_cs: self.pats_expansion_rate_cs,
+			pats_expansion_rate_igc: self.pats_expansion_rate_igc,
 			max_nibble_len: self.max_nibble_len,
 			perc_comp_subsigs: self.perc_comp_subsigs,
 		})
@@ -218,19 +244,23 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		}
 
 		//1. evaluate "atomic" subsigs based on sq_res 
-		assert!(inp_subsigs_cs.len()==inp_subsigs_igc.len());
-		if inp_subsigs_cs.len()>capacity.subsigs{
-			return Err(Error::CapErr(vec![(format!("comp_sig::subsigs"), inp_subsigs_cs.len())]));
+		if inp_subsigs_cs.len()>capacity.subsigs_cs{
+			return Err(Error::CapErr(vec![(format!("comp_sig::subsigs_cs"), inp_subsigs_cs.len())]));
 		}
-		assert!(inp_subsigs_cs.len()<=capacity.subsigs, 
+		assert!(inp_subsigs_cs.len()<=capacity.subsigs_cs, 
 			"inp_subsigs_cs.len: {} should be <= capacity.subsigs: {}",
-			inp_subsigs_cs.len(), capacity.subsigs);
+			inp_subsigs_cs.len(), capacity.subsigs_cs);
+		if inp_subsigs_igc.len()>capacity.subsigs_igc{
+			return Err(Error::CapErr(vec![(format!("comp_sig::subsigs_igc"), inp_subsigs_igc.len())]));
+		}
+		assert!(inp_subsigs_igc.len()<=capacity.subsigs_igc, 
+			"inp_subsigs_igc.len: {} should be <= capacity.subsigs: {}",
+			inp_subsigs_igc.len(), capacity.subsigs_igc);
 		if inp_sigs.len()>capacity.sigs{
 			return Err(Error::CapErr(vec![(format!("comp_sig::sigs"), 
 				inp_sigs.len())]));
 		}
 		assert!(inp_sigs.len()<=capacity.sigs);
-		let pad = vec![F::zero(); capacity.subsigs-inp_subsigs_cs.len()];
 		let pad2 = vec![F::zero(); capacity.sigs-inp_sigs.len()];
 		let dummy_di = DischargeSigInfo{
 				sig_name: "none".to_string(),
@@ -245,7 +275,8 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		assert!(discharge_info.len()==capacity.sigs);
 
 		//1.1 case sensitive 
-		let inp_subsigs_cs = [&pad[..], &inp_subsigs_cs[..]].concat();
+		let pad_cs = vec![F::zero(); capacity.subsigs_cs-inp_subsigs_cs.len()];
+		let inp_subsigs_cs = [&pad_cs[..], &inp_subsigs_cs[..]].concat();
 		let inp_sigs = [&pad2[..], &inp_sigs[..]].concat();
 		let (eval_res_combo_cs, raw_res_cs) = 
 			Self::gen_eval_subsig_by_sq_combo(false, -2, //case sensitive
@@ -253,18 +284,20 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		stmt_container.borrow_mut().add_container(eval_res_combo_cs);
 
 		//1.2 ignore case
-		let inp_subsigs_igc = [&pad[..], &inp_subsigs_igc[..]].concat();
+		let pad_igc = vec![F::zero();
+			capacity.subsigs_igc-inp_subsigs_igc.len()];
+		let inp_subsigs_igc = [&pad_igc[..], &inp_subsigs_igc[..]].concat();
 		let (eval_res_combo_igc, raw_res_igc) = 
 			Self::gen_eval_subsig_by_sq_combo(true, -1, //case sensitive
 			&inp_subsigs_igc, sq_res_igc, &capacity, subsig_store_info_igc)?;
 		stmt_container.borrow_mut().add_container(eval_res_combo_igc);
-
 
 		//2. based on non-deterministic advice of eval order
 		let (synthesis_res_combo, subsig_res) = 
 			Self::gen_synthesis_subsig_combo(
 			acdfa_id_cs, acdfa_id_igc,
 			&inp_subsigs_cs, 
+			&inp_subsigs_igc, 
 			&raw_res_cs, &raw_res_igc,
 			&capacity, 
 			subsig_store_info_cs, 
@@ -272,9 +305,12 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		stmt_container.borrow_mut().add_container(synthesis_res_combo);
 
 		//3. based on the sysntehsis resout of subsigs
+		let mut inp_subsigs = vec![&inp_subsigs_cs[..], &inp_subsigs_igc[..]]
+			.concat();
+		inp_subsigs.sort();
 		let sig_res_combo = Self::gen_discharge_sig_combo(
 			&inp_sigs, 
-			&inp_subsigs_cs, 
+			&inp_subsigs, 
 			&subsig_res, 
 			&capacity, 
 			v_sig_obj,
@@ -298,7 +334,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 	fn gen_eval_subsig_by_sq_combo(
 		b_igc: bool,
 		offset_discharge: i32,
-		inp_subsigs: &Vec<F>,
+		inp_subsigs: &Vec<F>, //this is either one of inp_subsigs_cs or igc
 		sq_res: &Rc<RefCell<Container<F>>>, //already sorted on subsig_step
 		capacity: &ComputeSigAdvCapacity,
 		subsig_store_info: &SubsigStepStore,
@@ -318,7 +354,9 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		let tname = if b_igc {"eval_res_combo_igc"} 
 			else {"eval_res_combo_cs"};
 		let res = Container::<F>::new(tname);
-		assert!(inp_subsigs.len()==capacity.subsigs);
+		let cap_subsigs = if b_igc {capacity.subsigs_cs} else
+			{capacity.subsigs_igc};
+		assert!(inp_subsigs.len()==cap_subsigs);
 		let sname = if b_igc {"discharge_adv_stmt_igc"}
 			else {"discharge_adv_stmt_cs"};
 		let sq_res = sq_res.borrow().duplicate_as_external_adv(
@@ -328,12 +366,16 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 										 //in validate.
 
 		//1. extract subsig, and its last step from sq_res
-		let vec_subsig = sq_res.get_container("subsig").unwrap().borrow().to_vec();
-		let vec_step = sq_res.get_container("step").unwrap().borrow().to_vec();
-		let vec_encoded= sq_res.get_container("encoded").unwrap().borrow().to_vec();
-		let vec_sid_step= sq_res.get_container("si_step").unwrap().borrow().to_vec();
+		let vec_subsig = sq_res.get_container("subsig").unwrap()
+			.borrow().to_vec();
+		let vec_step = sq_res.get_container("step").unwrap()
+			.borrow().to_vec();
+		let vec_encoded= sq_res.get_container("encoded").unwrap()
+			.borrow().to_vec();
+		let vec_sid_step= sq_res.get_container("si_step")
+			.unwrap().borrow().to_vec();
 		assert!(vec_subsig.len()==vec_step.len());
-		assert!(inp_subsigs.len()==capacity.subsigs);
+		assert!(inp_subsigs.len()==cap_subsigs);
 	
 		//the following loop are based on the assumption that
 		//sq_res is already sorted on (subsig-step), and
@@ -345,8 +387,8 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		assert!(inp_subsigs[n-1]==vec_subsig[n2-1]);
 		inp_subsig_encoded[n-1]=vec_encoded[n2-1];
 		if !inp_subsigs.contains(&zero){
-			return Err(Error::CapErr(vec![(format!("comp_sig::subsigs"), 
-				inp_subsigs.len()+1)]));
+			return Err(Error::CapErr(vec![(format!("comp_sig::subsigs_{}",
+				b_igc), inp_subsigs.len()+1)]));
 		}
 		assert!(inp_subsigs.contains(&zero), 
 			"inp_subigs needs one dummy 0 entry");
@@ -480,17 +522,24 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 	/// see accpets_approx_pm_bounds() in clamav.rs for the processing logic
 	/// Return (ProofCombo, FinalEvalResult for the inp_subsigs padded)
 	///
+	/// Note that inp_subsigs_cs and inp_subsigs_igc are DISJOINT
+	///   similarly, raw_results_cs and raw_result_igc are DISJOINT.
 	/// Note that raw_result has two versions: (1) case sensitive (cs)
-	/// and (2) IGC (ignore case). First, we have to pick up the
+	/// and (2) IGC (ignore case). 
+	///   inp_subsigs = union of inp_subsigs_cs + inp_subsigs_igc
+	///   raw_result = union of raw_result_cs + raw_result_igc
+	/// --- TO REMOVE BELOW ---
+	///First, we have to pick up the
 	/// value based on b_igc of each subsig and merge the raw_result_cs
 	/// and raw_result_igc into one raw_result, and then the synthesis 
 	/// can be done.
-	///
+	/// --- TO REMOVE ABOVE
 	/// Might throw CapErr: subsigs, perc_comp_subsigs
 	fn gen_synthesis_subsig_combo(
 		acdfa_id_cs: u32, 
 		acdfa_id_igc: u32, 
-		inp_subsigs: &Vec<F>,
+		inp_subsigs_cs: &Vec<F>,
+		inp_subsigs_igc: &Vec<F>,
 		raw_result_cs: &Vec<F>, //one to one corresponding to inp_subsig, TriVal
 		raw_result_igc: &Vec<F>, 
 		capacity: &ComputeSigAdvCapacity,
@@ -500,8 +549,10 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 	)->Result<(Rc<RefCell<Container<F>>>,Vec<F>),Error>{
 		//0. retrieve data 
 		let b_debug = false;
-		let n1 = inp_subsigs.len(); //capacity num_subsigs
-		assert!(n1==capacity.subsigs);
+		let n1_cs = inp_subsigs_cs.len(); //capacity num_subsigs
+		let n1_igc = inp_subsigs_igc.len(); //capacity num_subsigs
+		assert!(n1_cs==capacity.subsigs_cs);
+		assert!(n1_igc==capacity.subsigs_igc);
 		let (zero,one) = (F::zero(), F::one());
         let max_val:usize = (1<<RANGE2_BIT) - 1;
         let max = F::from(max_val as u64);
@@ -543,6 +594,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 			(u_sig, *res)
 		}).collect::<HashMap<usize, F>>();
 
+		/*
 		//2. prepare the result for counter_constraint 
 		// the structure for each subsig is
 		// (num, op, counter_res) where counter_res is defined using
@@ -1002,6 +1054,8 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 			IDX_SI_DATA)); //non constant
 
 		Ok( (res, vec_subsig_final_res) )
+		*/
+		todo!()
 	}
 
 	/// Given the final result of subsig,
@@ -1035,7 +1089,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		let zero = F::zero();
 		let frg = F::from(RANGE2);
 		let res = Container::<F>::new("sig_res_combo");
-		let n = capacity.subsigs;
+		let n = capacity.subsigs_cs + capacity.subsigs_igc;
 		assert!(inp_subsigs.len()==n);
 		assert!(subsig_result.len()==n); 
 		assert!(inp_sigs.len()==capacity.sigs);
@@ -1292,8 +1346,8 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 	-> Self{
 		//1. create the dummy input and dummy container config.
 		let zero = F::zero();	
-		let subsigs_cs = vec![zero; capacity.subsigs];
-		let subsigs_igc = vec![zero; capacity.subsigs];
+		let subsigs_cs = vec![zero; capacity.subsigs_cs];
+		let subsigs_igc = vec![zero; capacity.subsigs_igc];
 		let sigs = vec![zero; capacity.sigs];
 		let v_sig_obj: Vec<Arc<ClamavSig>> = vec![]; //empty one
 		//make a dummy one
@@ -1308,21 +1362,33 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 			}; capacity.sigs];
 
 		//2. create the dummy sq_res
-		let dis_cap = DischargeAdvCapacity{
+		let dis_cap_cs = DischargeAdvCapacity{
 			max_nibble_len: capacity.max_nibble_len,
-			subsigs: capacity.subsigs,
+			subsigs: capacity.subsigs_cs,
 			avg_active_pats_per_subsig: 2, //it's ok, coz it's not affecting
 										  //parse_from
-			basis_pats_in_trace: capacity.basis_pats_in_trace,
+			basis_pats_in_trace: capacity.basis_pats_in_trace_cs,
 		};
-		let step_q_size = StepQueue::<F>::vec_size(&StepQueueType::Res,
-			&dis_cap).0;
-		let sq_res_vec = vec![zero; step_q_size*2];
-		let sq_res_obj= StepQueue::parse_from(&sq_res_vec, &dis_cap);
-		let sq_res_cs = sq_res_obj.to_container(
+		let dis_cap_igc= DischargeAdvCapacity{
+			max_nibble_len: capacity.max_nibble_len,
+			subsigs: capacity.subsigs_igc,
+			avg_active_pats_per_subsig: 2, //it's ok, coz it's not affecting
+										  //parse_from
+			basis_pats_in_trace: capacity.basis_pats_in_trace_igc,
+		};
+		let step_q_size_cs = StepQueue::<F>::vec_size(&StepQueueType::Res,
+			&dis_cap_cs).0;
+		let step_q_size_igc= StepQueue::<F>::vec_size(&StepQueueType::Res,
+			&dis_cap_igc).0;
+		let sq_res_vec_cs = vec![zero; step_q_size_cs];
+		let sq_res_vec_igc = vec![zero; step_q_size_igc];
+		let sq_res_obj_cs = StepQueue::parse_from(&sq_res_vec_cs, &dis_cap_cs);
+		let sq_res_obj_igc = StepQueue::parse_from(&sq_res_vec_igc, 
+			&dis_cap_igc);
+		let sq_res_cs = sq_res_obj_cs.to_container(
 			"sq_res2_cs", false, true, true, true,
 			&store_steps_cs).expect("sq_res_cs err");
-		let sq_res_igc = sq_res_obj.to_container(
+		let sq_res_igc = sq_res_obj_igc.to_container(
 			"sq_res2_igc ", false, true, true, true,
 			&store_steps_igc).expect("sq_res_igc err");
 		let mut sigs_to_id = HashMap::<String,usize>::new();
@@ -1377,10 +1443,11 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 	/// validate raw_eval result based on step queue is correct for
 	/// each subsig.
 	/// n2 is the StepQueue::vec_size() - max of subsig * avg_active_pat_subsig
-	///     and ratio_pat * nlen (see validate_forward_step_queue for
+	///     and basis_pats_in_trace/10000 * pats_expansion_rate * nlen (see validate_forward_step_queue for
 	///     real data for n1)
 	/// COST: 6n1 + 5n2 (n1: num of subsigs, n2: sq_res len which
-	///    is determined by discharge_adv::StepQueue::vec_size (perc_pat_in_trace)
+	///    is determined by discharge_adv::StepQueue::vec_size 
+	/// (perc_pat_in_trace * pats_expansion_rate)
 	fn validate_eval_subsig_by_sq_combo(&self, 
 		eval_res_combo: &Container<FpVar<F>>, 
 		r1: FpVar<F>,
@@ -1426,6 +1493,8 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		//raise false alarm). So it's ok to do 1-direction lookup
 		// COST: 5n1 + 8n2 (where n1 is subsigs, n2 is sq_res length) [old]
 		// --> cost improved by using f_unit (we didn't change formula here)
+		//TODO: can be improved by calling combined_logup function
+		// and just add padding zero.
 		let f_unit = FpVar::<F>::constant(F::from(1u32<<RANGE2_BIT));
 		let src= encode_cols_var_adv_better(&vec![&inp_subsig_encoded[..],
 			&inp_subsig[..], &last_step[..], &sid_last_step], &vec![0,1,2,3], 
@@ -1450,7 +1519,6 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 		//to save cost: assert eval_res is boolean (either 1 or 0)
 		//and then use it to enforce sid_last_step == sid for MAX_STEP
 		//COST: 5n1  where n1 is the number of subsigs
-
 		let info_id= F::from(0x23001101u32); //tag to avoid collision
 		let f1 = F::from(1u64<<RANGE2_BIT);
         let factor1 = f1*f1*f1*f1*f1; //models encoded
@@ -2379,9 +2447,14 @@ impl <F:PrimeField> SigmaGadget<F> for ComputeSigAdvGadget<F>{
 impl ComputeSigAdvCapacity{
 	/// same as the function of DischargeAdvCapacity - looks like
 	/// no better way of refactoring. Just dupplicate it here.
-	pub fn get_pat_loc_len(&self)->usize{
-		let pats_len = self.basis_pats_in_trace 
+	pub fn get_pat_loc_len(&self, b_igc: bool)->usize{
+		let basis_pats_in_trace = if b_igc {self.basis_pats_in_trace_igc}
+			else {self.basis_pats_in_trace_cs};
+		let pats_expansion_rate = if b_igc {self.pats_expansion_rate_igc}
+			else {self.pats_expansion_rate_cs};
+		let pats_len = basis_pats_in_trace * pats_expansion_rate
 			* self.max_nibble_len/10000;
+
 		pats_len
 	}
 
