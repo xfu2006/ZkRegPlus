@@ -480,7 +480,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 	/// see accpets_approx_pm_bounds() in clamav.rs for the processing logic
 	/// Return (ProofCombo, FinalEvalResult for the inp_subsigs padded)
 	///
-	/// Note that raw_result has two versions: (1) context sensitive (cs)
+	/// Note that raw_result has two versions: (1) case sensitive (cs)
 	/// and (2) IGC (ignore case). First, we have to pick up the
 	/// value based on b_igc of each subsig and merge the raw_result_cs
 	/// and raw_result_igc into one raw_result, and then the synthesis 

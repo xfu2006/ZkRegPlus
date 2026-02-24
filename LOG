@@ -25587,7 +25587,7 @@ Goal 5. implementation
 	[c] full_data3 and full_data4 can call the adv version
 
 Monday 02/23/2026
-LOC
+LOC (circ): 2927 -> 2989 (+60)
 Goal 1. collect data
 	[a] still problem with asc__02. it crashes at DFA debug it later
 	[b] check the full memory consumption of two circs now
@@ -25600,5 +25600,37 @@ Goal 1. collect data
 			But if in circ1, we leave to upper limit 200M, it looks
 			to be fine with 448GB machine.
 Goal 2. change sed
--- TODO -- add capacity input for sed, and list the b_igc when 
-	gadgtes throw Err.
+	[a] read about how DischargeInfo is generated for SED.
+		Does it distinguish beweteen subsigs that are b_igc?
+			-> it's put into sed if it fails either the cp cs or igc
+			-> accepts_approx_pm_bounds
+				-> approx_eval_pm_bounds_subsig, uses the corresponding
+					hashtable based on subsig_obj cs/igc type
+	[b] read about how subsig is determined when it is
+			discharged (by cs or sed component of discharge_adv.rs
+			-> the same subsig list is submitted
+	[c] but how is it discharged?
+		-> the same subsig will be discharged in BOTH
+			the two cs/igc discharge_adv.rs
+		-> the results will be merged in compute_subsig.
+Goal 3. continue to change sed
+	[a] read collect_subsig_id
+	[b] apply the b_igc logic
+	[c] update the new function
+	[d] change gadget new
+Goal 3. SedCapacity revision
+	[a] declare SedCapacityCombo to represent collection of two
+		capacities
+	[b] make it the official capacity of Sed
+	[c] update zkp_driver
+	[d] regression test 
+
+Tuesday 02/24/2026
+LOC (circ) 2989 -> 
+LOC (gadgets) 20267 -> 
+
+-- TODO --
+Goal 1: update compute_sig_adv component
+	[a] update its Capacity so that there is a cs_perc_pat
+		and other attributes just maintain the same for simplicity
+	[b] update the assertion function one by one.

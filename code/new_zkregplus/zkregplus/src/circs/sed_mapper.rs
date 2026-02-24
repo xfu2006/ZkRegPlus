@@ -89,7 +89,7 @@ use std::any::Any;
 //		Structs
 // --------------------------------------------------------
 
-/// Capacity of the Cp Cmponent
+/// Component Capacity of the Cp Cmponent
 #[derive(Clone,Debug)]
 pub struct SedCapacity{
 	// will contain capacities for word_extract_adv, fsm_adv ...
@@ -107,6 +107,18 @@ pub struct SedCapacity{
 		//extracted from all states of a path (usually this is < 0.5%)
 	pub basis_acc_states: usize, //basis points of ALL accepted states
 		//along the path (usually less than 5%, max 305)
+}
+
+/// Now the "official" capacity of the SedComponent
+#[derive(Clone,Debug)]
+pub struct SedCapacityCombo{
+	// will contain capacities cs and igc
+	pub comp_capacities: Vec<Rc<dyn Capacity>>,
+
+	/// the capacity for components for the case sensitive part
+	pub cs: SedCapacity,
+	/// the capacity for components for the case sensitive insensitive part
+	pub igc: SedCapacity,
 }
 
 /// Represent the structure of Input
@@ -131,7 +143,7 @@ pub struct SedInput<F:PrimeField>{
 pub struct SedComponentMapper<F:PrimeField, LK: LookupTableTwoCol<F>>{ 
 	pub _f: PhantomData<F>,
 	pub _lk: PhantomData<LK>,
-	pub capacity: SedCapacity,
+	pub capacity: SedCapacityCombo,
 
 	/// its own gadgets 
 	///pub gadgets: Vec<Rc<dyn SigmaGadget<F> + ContainerCompatible>>,
@@ -276,6 +288,44 @@ impl Capacity for SedCapacity{
 	/// needed for downcasting for composite gadget mapper
 	fn as_any(&self) -> &dyn Any { self }
 }
+impl SedCapacityCombo{
+	pub fn new(cs: &SedCapacity, igc: &SedCapacity)->Self{
+		let comp_capacities: Vec<Rc<dyn Capacity>> = vec![
+			Rc::new(Clone::clone(cs)),
+			Rc::new(Clone::clone(igc)),
+		];
+		Self{comp_capacities, cs: Clone::clone(cs), igc: Clone::clone(igc)}
+	}
+}
+
+impl Capacity for SedCapacityCombo{
+	/// Self represents the capacity of the circuit, other
+	/// represents the capacity requirement of a discharge proof (NdAdvice)
+	/// It is essentially a comparison operation.
+	fn can_satisfy(&self, r_other: &Rc<dyn Capacity>) -> bool{
+		
+		let other = r_other.as_any().downcast_ref::<SedCapacityCombo>()
+			.expect("downcast err"); 
+		assert!(self.comp_capacities.len()==other.comp_capacities.len());
+		let mut res = true;
+		for i in 0..self.comp_capacities.len(){
+			res &= self.comp_capacities[i].can_satisfy(&
+				other.comp_capacities[i]);
+		}
+
+		res
+	}
+
+	/// to get around the requirement on Clone trait which require Sized
+	/// (which cause trouble why use dyn Capacity in Rc),
+	fn clone(&self) -> Rc<dyn Capacity>{
+		Rc::new(SedCapacityCombo::new(&self.cs, &self.igc))
+	}
+
+	/// needed for downcasting for composite gadget mapper
+	fn as_any(&self) -> &dyn Any { self }
+}
+
 
 /// The non-deterministic advice for the CP component
 #[derive(Debug)]
@@ -298,12 +348,12 @@ impl <F:PrimeField> NdAdvice for SedAdvice<F>{
 impl <F:PrimeField> SedAdvice<F>{
 	/// from a collection of signatures collect the subsigs id
 	/// return a vector of subsigs sorted.
+	/// ONLY return the subsigs that match the b_igc
 	fn collect_subsig_ids(
 		vec_sigs_to_discharge: &Vec<Arc<ClamavSig>>, 
 		discharge_info: &Vec<DischargeSigInfo>,
 		sig_to_id: &HashMap<String,usize>,
-		_b_igc: bool, //in fact this will be IGNORED. Will collect ALL subsigs
-				//so cs and igc will generate the same
+		b_igc: bool, 
 		dfa: &HexACDFA, //different dfa given the same input will actually
 						//generate the same subsig_id. Actually not
 						//needed, keep it fore legacy.
@@ -315,7 +365,9 @@ impl <F:PrimeField> SedAdvice<F>{
 			let sig_id = sig_to_id.get(&sig.name).expect(
 				&format!("can't find sig: {}", sig.name));
 			let f_subsig_ids = info.subsig_ids.iter()
-			.map(|id|
+			.filter(|&id|{
+				sig.vec_subsig_obj[*id].b_ignore_case== b_igc
+			}).map(|id|
 				F::from(dfa.gen_subsig_id(*sig_id, *id+1) as u32)
 			).collect::<Vec<F>>();
 
@@ -344,7 +396,8 @@ impl <F:PrimeField> SedAdvice<F>{
 			//1. global info
 			word_seg: &Vec<F>, //must be full len pad with zero
 			actual_size: usize,
-			capacity: &SedCapacity,
+			cs_capacity: &SedCapacity,
+			igc_capacity: &SedCapacity,
 			inp: &SedInput<F>,
 
 			//2. needed for fsm_adv advice
@@ -375,7 +428,8 @@ impl <F:PrimeField> SedAdvice<F>{
 				.expect(&format!("can't find sig: {}", sig.name));
 			F::from(*sig_id as u64)
 		}).collect::<Vec<F>>();
-		let fsm_cap = &capacity.faa_capacity();
+		let fsm_cap_cs = &cs_capacity.faa_capacity();
+		let fsm_cap_igc = &igc_capacity.faa_capacity();
 
 		//2.1 the cs version
 		let subsigs_inp_cs = Self::collect_subsig_ids(vec_sigs_to_discharge,
@@ -383,46 +437,46 @@ impl <F:PrimeField> SedAdvice<F>{
 		let fsm_adv_advice_cs = FsmAdvAdvice::<F>
 			::new(false, 1, //distance to word extract gadget 
 				&nibbles,dfa_cs, inp.inp_state_cs,inp.inp_loc_cs,
-				&subsigs_inp_cs, &fsm_cap,fsm_id_cs as u32,
+				&subsigs_inp_cs, &fsm_cap_cs,fsm_id_cs as u32,
 				subsig_pat_store_cs)?;
 
 		//2.2 the igc version
-		//let subsigs_inp_igc = Self::collect_subsig_ids(vec_sigs_to_discharge,
-		//	discharge_info, sig_to_id, true, dfa_igc);
-		let subsigs_inp_igc = subsigs_inp_cs.clone(); //they are the same
-			//all subsigs will be processed in both modes
-			//result will be selected by b_igc property of the subsig
+		let subsigs_inp_igc= Self::collect_subsig_ids(vec_sigs_to_discharge,
+			discharge_info, sig_to_id, true, dfa_igc);
 		let fsm_adv_advice_igc = FsmAdvAdvice::<F>
 			::new(true, //igc
 				2, //offset to word_extract
 				&nibbles,dfa_igc, inp.inp_state_igc,inp.inp_loc_igc,
-				&subsigs_inp_igc, &fsm_cap, fsm_id_igc as u32,
+				&subsigs_inp_igc, &fsm_cap_igc, fsm_id_igc as u32,
 				subsig_pat_store_igc)?;
 
 		//3. build the discharge_adv advice (cs and igc)
-		let da_cap = &capacity.da_capacity();
+		let da_cap_cs = &cs_capacity.da_capacity();
+		let da_cap_igc = &igc_capacity.da_capacity();
 		//3.1 the cs version
 		let pat_loc_cs = fsm_adv_advice_cs.stmt_container.borrow()
 			.search_container("fsm_adv_stmt_cs packed_trace pat_loc sorted_tbl")
 			.unwrap();
 		let inp_steps_queue_obj_cs = StepQueue::parse_from(
-			&inp.inp_steps_queue_cs, &da_cap);
+			&inp.inp_steps_queue_cs, &da_cap_cs);
 		let discharge_adv_advice_cs = DischargeAdvAdvice::<F>
 			::new(false, 2, &pat_loc_cs, &subsigs_inp_cs, fsm_id_cs as u32, 
-				subsig_step_store_cs, &da_cap, &inp_steps_queue_obj_cs)?;
+				subsig_step_store_cs, &da_cap_cs, &inp_steps_queue_obj_cs)?;
 
 		//3.2 the igc version
 		let pat_loc_igc = fsm_adv_advice_igc.stmt_container.borrow()
 			.search_container("fsm_adv_stmt_igc packed_trace pat_loc sorted_tbl").unwrap();
 		let inp_steps_queue_obj_igc = StepQueue::parse_from(
-			&inp.inp_steps_queue_igc, &da_cap);
+			&inp.inp_steps_queue_igc, &da_cap_igc);
 		let discharge_adv_advice_igc = DischargeAdvAdvice::<F>
 			::new(true, 2, &pat_loc_igc, &subsigs_inp_igc, fsm_id_igc as u32, 
-				subsig_step_store_igc, &da_cap, &inp_steps_queue_obj_igc)?;
+				subsig_step_store_igc, &da_cap_igc, &inp_steps_queue_obj_igc)?;
 
 
 		//4. build the compute_sig advice  (note: just one copy)
-		let csa_cap = &capacity.csa_capacity();
+		let csa_cap = &cs_capacity.csa_capacity(); //typically this is the 
+				//larger one (since compute_sig component is small, 
+				// we do not further refactor capacity ere
 		let stmt_disc_cs = &discharge_adv_advice_cs.stmt_container;
 		let sq_res_cs = stmt_disc_cs.borrow().search_container("discharge_adv_stmt_cs bwd_steps_queue sq_res2").expect("sq_res err");
 		let stmt_disc_igc = &discharge_adv_advice_igc.stmt_container;
@@ -464,13 +518,14 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 	/// of PackFinal (number of final states), and reference to clamdb
 
 	pub fn new(
-		sed_capacity: SedCapacity,
+		cs_capacity: SedCapacity,
+		igc_capacity: SedCapacity,
 		clamdb: Rc<ClamavDB<F>>,
 	) ->Self{
 		let mut cfgs = vec![];
 		//1. build the gadgets
 		//1.1 the word extract gadget
-		let g_wea = WordExtractAdvGadget::<F>::new(sed_capacity.wea_capacity().max_word_len, false); //default mode
+		let g_wea = WordExtractAdvGadget::<F>::new(cs_capacity.wea_capacity().max_word_len, false); //default mode , same for cs and igc
 		cfgs.push( g_wea.dummy_cfg.clone() );
 
 		//1.2 the fsm adv gadget (2 gadgets)
@@ -489,28 +544,29 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 		let fsm_id_igc = ClamavDB::<F>::pm_acdfa_id(sig_id, true); 
 		//let fsm_cap = FsmAdvCapacity{max_nibble_len: nlen, 
 		//	acdfa_state_part_bits: state_bits};
-		let fsm_cap = &sed_capacity.faa_capacity();
+		let fsm_cap_cs = &cs_capacity.faa_capacity();
 		let g_faa_cs = FsmAdvGadget::<F>::new(false, 1, //dist to word extract
-			acdfa_cs, &fsm_cap, fsm_id_cs, &cfgs, subsig_pat_store_cs); 
+			acdfa_cs, &fsm_cap_cs, fsm_id_cs, &cfgs, subsig_pat_store_cs); 
 		cfgs.push( g_faa_cs.dummy_cfg.clone() );
 
-		let fsm_cap = &sed_capacity.faa_capacity();
+		let fsm_cap_igc = &igc_capacity.faa_capacity();
 		let g_faa_igc = FsmAdvGadget::<F>::new(true, 2, //dist to wea
-			acdfa_igc, &fsm_cap, fsm_id_igc, &cfgs, subsig_pat_store_igc); 
+			acdfa_igc, &fsm_cap_igc, fsm_id_igc, &cfgs, subsig_pat_store_igc); 
 		cfgs.push( g_faa_igc.dummy_cfg.clone() );
 
 		//1.3. discharge_subsig (2 gadgets)
-		let da_cap = &sed_capacity.da_capacity();
-		let g_da_cs = DischargeAdvGadget::<F>::new(false, 2, &da_cap, fsm_id_cs,
-			&cfgs, subsig_step_store_cs);
+		let da_cap_cs = &cs_capacity.da_capacity();
+		let da_cap_igc = &igc_capacity.da_capacity();
+		let g_da_cs = DischargeAdvGadget::<F>::new(false, 2, &da_cap_cs, 
+			fsm_id_cs, &cfgs, subsig_step_store_cs);
 		cfgs.push( g_da_cs.dummy_cfg.clone() );
 
-		let g_da_igc = DischargeAdvGadget::<F>::new(true, 2, &da_cap, 
+		let g_da_igc = DischargeAdvGadget::<F>::new(true, 2, &da_cap_igc, 
 			fsm_id_igc, &cfgs, subsig_step_store_igc);
 		cfgs.push( g_da_igc.dummy_cfg.clone() );
 
 		//1.4 compute_sigs gadget (1 gadget)
-		let csa_cap = &sed_capacity.csa_capacity();
+		let csa_cap = &cs_capacity.csa_capacity(); //just take the larger one
 		let g_csa = ComputeSigAdvGadget::<F>::new(
 			fsm_id_cs, 
 			fsm_id_igc, 
@@ -536,7 +592,7 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 		Self{
 			_f: PhantomData, 
 			_lk: PhantomData, 
-			capacity: sed_capacity,
+			capacity: SedCapacityCombo::new(&cs_capacity, &igc_capacity),
 			clamdb,
 			gadgets,
 		}
@@ -576,7 +632,12 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 	}
 
 	/// return the max word capacity of the component
-	fn max_word_len(&self)->usize{ self.capacity.wea_capacity().max_word_len }
+	fn max_word_len(&self)->usize{ 
+		let n = self.capacity.cs.wea_capacity().max_word_len;
+		assert!(self.capacity.igc.wea_capacity().max_word_len==n);
+
+		n
+	}
 
 	/// genera the avice using its own capacity
 	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
@@ -631,7 +692,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 				&inp_subsigs_cs,
 				&subsig_step_store_cs,
 				pm_fsm_id_cs,
-				&self.capacity.da_capacity()
+				&self.capacity.cs.da_capacity()
 			).to_vec(&subsig_step_store_cs)?; //it's ok even with capacity
 				//it's just to pass it as data member, will not crash
 				//if lack of capacity
@@ -667,7 +728,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 				&inp_subsigs_igc,
 				&subsig_step_store_igc,
 				pm_fsm_id_igc,
-				&self.capacity.da_capacity()
+				&self.capacity.igc.da_capacity()
 			).to_vec(&subsig_step_store_igc)?;
 
 		let (inp_state_igc, inp_loc_igc, inp_steps_queue_igc) = r_prev_adv
@@ -696,7 +757,8 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 		let advice = SedAdvice::<F>::new(
 			&word_seg, 
 			word.len(), 
-			&self.capacity, 
+			&self.capacity.cs, 
+			&self.capacity.igc, 
 			&inp, 
 
 			pm_fsm_id_cs,

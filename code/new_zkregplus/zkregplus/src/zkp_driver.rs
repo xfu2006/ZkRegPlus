@@ -230,7 +230,9 @@ where C: CurveGroup<ScalarField=F>,
 
 			//3.2 create sed (it has both cs and igc built in)
 			let sed = SedComponentMapper::<F,LK<F>>::new(
-				sed_cap_cs.clone(), db.clone());
+				sed_cap_cs.clone(), 
+				sed_cap_igc.clone(), 
+				db.clone());
 
 			//3.3 dfa is optional depending if config supports 0 subsigs
 			//which enforces dfa to be nil.
@@ -298,6 +300,7 @@ where C: CurveGroup<ScalarField=F>,
 /// build the list of circs. Note: for convenience of implementation,
 /// we put the circ config hard coded in this function. To change
 /// config, modify the local variables at the beginning of this function.
+/// DEPRECATED
 #[allow(dead_code)]
 fn build_circs<F,C,CS>(poseidon_config: &PoseidonConfig<F>, total_word_n: usize, lkup_len: usize, db: Rc<ClamavDB<F>>, b_check_lkup: bool ) 
 ->Vec<Vec<FC<F,C,CS>>>
@@ -312,6 +315,7 @@ where C: CurveGroup<ScalarField=F>,
 	// one handling length 4.
 
 	//1. create cp_components
+	if 1>0 {panic!("this function is depcrecated");}
 	let avg_lk_wd = lkup_len/total_word_n + 1;
 	let avg_lk_wd = if avg_lk_wd<1 {1} else {avg_lk_wd};
 	let max_word = 1;
@@ -354,7 +358,7 @@ where C: CurveGroup<ScalarField=F>,
 	//2. create sed components
 	let scap1= SedCapacity::new(max_word, db.dfa_crit.state_part_bits, subsigs, 
 		avg_pats_per_subsig, avg_active_pats_per_subsig, basis_pats_in_trace, sigs, perc_comp_subsigs, basis_unique_states, basis_acc_states);
-	let scomp1 = SedComponentMapper::<F,LK<F>>::new(scap1, db.clone());
+	let scomp1 = SedComponentMapper::<F,LK<F>>::new(scap1.clone(), scap1, db.clone());
 	//let scg1 = CompositeGadgetMapper::<F,LK<F>>::new("sed1",vec![Rc::new(RefCell::new(scomp1))]); 
 
 
@@ -1137,9 +1141,9 @@ pub mod tests_zkp_driver{
         let num_circs_per_category= 1;
         let basis_unique_states = 2000; //15 cpercent
         let basis_acc_states = 2000; //9 cpercent
-        let basis_pats_in_trace = 4000; //old value 100 cur value 1/1000.
-        let dfa_sigs = 3;
-        let dfa_subsigs= 4;
+        let basis_pats_in_trace = 5000; //old value 100 cur value 1/1000.
+        let dfa_sigs = 6;
+        let dfa_subsigs= 6;
         //let avg_subsig_per_sig = 3;
 
 
@@ -1190,8 +1194,8 @@ pub mod tests_zkp_driver{
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
-		//small_data::<Fr>(b_check_lkup); //small data
-		small_data2::<Fr>(b_check_lkup);  //10k data 
+		small_data::<Fr>(b_check_lkup); //small data
+		//small_data2::<Fr>(b_check_lkup);  //10k data 
 		//small_data_debug::<Fr>(b_check_lkup);  //for debug
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//full_data1::<Fr>(b_check_lkup);
