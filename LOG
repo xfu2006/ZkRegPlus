@@ -25660,6 +25660,17 @@ Goal 3. gen_eval_subsig_by_sq_combo and validate_eval_subsig_by_sq_combo
 	[b] validate_eval_subsig
 
 Goal 4. gen_synthesis_combo and validate_synthesis_combo
-	[a] 
+	[a] documentation
+	[b] read step 0 of gen_synthesis_combo ->
+		it's defining raw result by selecting
+		from ONE of the two identitical length list (for each entry).
+		validate_synthesis is using a binary conditional selection
+		for raw_res
+	[c] new plan:
+
+Goal 5. define function gen_disjoint_union and verify_disjoint_union
+
+-- TODO -- continue with gen_disjoint_union_prf and verify_disjoin_union prf
+	[b] read step 0 of validate_synthesis_combo
 
 Goal 1: update compute_sig_adv component

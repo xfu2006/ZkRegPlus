@@ -2086,6 +2086,37 @@ pub fn tbl_left_join_wide<F:PrimeField>(
 	Ok( res )
 }
 
+/// assert that res is a union of set1 and set2 (regarding non-zero values)
+/// and for set1 and set2 except for 0 elements, all elements
+/// are unique (appear once), i.e., (non-zero items in set1 and set2 
+/// are disjoint).
+/// Basic idea: 
+/// (1) generate concat set3 = set1 + set2 
+/// (2) we run a lookup from set3 (as qury table) to res (as lkup)
+///      we just need to justify that each entry of m_tbl is exactly 1
+///      except for 0 entries (this proves that set1 and set2 are disjoint).
+///      it also improves that non-zero-items of set3 = non-zero-items res
+///      this is because that every non-zero items of res is covered.
+pub fn gen_disjoint_union_prf<F:PrimeField>(
+	_set1: &Vec<F>,
+	_set2: &Vec<F>,
+	_res: &Vec<F>,
+	_name: &str,
+) -> Result<Rc<RefCell<Container<F>>>, Error>{
+	todo!()
+}
+
+/// verify if set1 and set2 are disjoint (regading their non-zero elements),
+/// and res is a union of these two sets 
+pub fn verify_disjoint_union_prf<F:PrimeField>(
+	_set1: &Vec<FpVar<F>>,
+	_set2: &Vec<FpVar<F>>,
+	_res: &Vec<FpVar<F>>,
+	_prf: &Rc<RefCell<Container<FpVar<F>>>>
+) -> Result<(), SynthesisError>{
+	todo!()
+}
+
 /// verify that tbl1 left join with tbl2 results in output
 /// COST roughly: 20* src_len + 38 * dst_len
 pub fn verify_tbl_left_join<F:PrimeField>(

@@ -560,6 +560,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 		let frg = F::from(RANGE2);
 
 		//0.5 - added step - merge raw_result_cs and raw_result_igc
+		/*
 		let tbl_id_start = F::from(1u64<<32) * F::from(ID_SUBSIG_IGC);
 		let (v_igc, v_sid_igc): (Vec<F>, Vec<F>) = inp_subsigs
 			.par_iter().map(|f_subsig_id|{
@@ -584,6 +585,15 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 			.into_iter().map(|i|{
 			if v_igc[i].is_one() {raw_result_igc[i]} else {raw_result_cs[i]}
 		}).collect::<Vec<F>>();
+		*/
+		//0.5 merge the inp_subsigs and raw_result.
+		//we are assuming that inp_sigs and inps_igc
+		let mut inp_subsigs = vec![&inp_subsigs_cs[..], &inp_subsigs_igc[..]]
+			.concat(); 
+		inp_subsigs.sort();
+		let mut raw_result = vec![&raw_result_cs[..], &raw_result_igc[..]]
+			.concat();
+		raw_result.sort();
 
 		//1. prepare the result of general_regex
 		let gen_regex_res = raw_result;
@@ -2312,10 +2322,13 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 				println!(" --i: {}, sig: {}", i, discharged_sigs[i].value()?);
 			}
 		}
+		/* RECOVER LATER
 		if b_perf{
 			println!(" ### validate_discharge_sig_combo: sigs: {}, subsig: {}, cost: {}", self.capacity.sigs, self.capacity.subsigs, cs.num_constraints()-nc);
 		}
 		Ok( () )
+		*/
+		todo!()
 
 	}
 
@@ -2357,7 +2370,8 @@ impl <F:PrimeField> SigmaGadget<F> for ComputeSigAdvGadget<F>{
 
 	fn est_cost(&self)->usize{
 		//TODO: refine formula in real data later
-		let est = self.capacity.get_pat_loc_len() * 1000;
+		let est = self.capacity.get_pat_loc_len(true) * 1000
+			+ self.capacity.get_pat_loc_len(false) * 1000;
 
 		est
 	}
@@ -2460,7 +2474,7 @@ impl ComputeSigAdvCapacity{
 
 	/// compute the buffer size of subsig count constraint proof
 	pub fn get_scc_prf_size(&self)->usize{
-		self.perc_comp_subsigs * self.subsigs / 100
+		self.perc_comp_subsigs * (self.subsigs_cs + self.subsigs_igc) / 100
 	}
 }
 
@@ -2595,6 +2609,7 @@ pub mod tests_compute_sig_adv{
 
 		//1.4 capacilities of fsm and discharge components
 		let wlen = 2usize;
+		let pats_expansion_rate = 1;
 		let (nibble_len, state_bits) = (wlen*LEGS, acdfa_cs.state_part_bits);
 		let cap = FsmAdvCapacity{
 			max_nibble_len: nibble_len, 
@@ -2614,9 +2629,13 @@ pub mod tests_compute_sig_adv{
 		let cap_sig= ComputeSigAdvCapacity{//capaciity of compute sig adv comp 
 			max_nibble_len: nibble_len, 
 			sigs: 1, 
-			subsigs: cap.subsigs,
-			basis_pats_in_trace: cap.basis_pats_in_trace,
+			subsigs_cs: cap.subsigs,
+			subsigs_igc: cap.subsigs,
+			basis_pats_in_trace_cs: cap.basis_pats_in_trace,
+			basis_pats_in_trace_igc: cap.basis_pats_in_trace,
 			perc_comp_subsigs: 20, //real data will be much lower like 17 at most
+			pats_expansion_rate_cs: pats_expansion_rate,
+			pats_expansion_rate_igc: pats_expansion_rate,
 		};
 
 		//2. create advice for word_extract_adv, fsm_adv, and discharge_adv
