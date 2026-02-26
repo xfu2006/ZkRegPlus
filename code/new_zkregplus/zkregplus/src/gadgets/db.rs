@@ -2097,24 +2097,71 @@ pub fn tbl_left_join_wide<F:PrimeField>(
 ///      except for 0 entries (this proves that set1 and set2 are disjoint).
 ///      it also improves that non-zero-items of set3 = non-zero-items res
 ///      this is because that every non-zero items of res is covered.
+/// GENERATE the proof
+/// NOTE THAT the res is simply a concat of set1 and set2
 pub fn gen_disjoint_union_prf<F:PrimeField>(
-	_set1: &Vec<F>,
-	_set2: &Vec<F>,
-	_res: &Vec<F>,
-	_name: &str,
-) -> Result<Rc<RefCell<Container<F>>>, Error>{
-	todo!()
+	set1: &Vec<F>,
+	set2: &Vec<F>,
+	name: &str,
+) -> Result<(Vec<F>,Rc<RefCell<Container<F>>>), Error>{
+	let set3 = vec![&set1[..], &set2[..]].concat();
+	let res = set3.clone();
+	let prf= Container::new(name);
+	let m_tbl = gen_m_table(&set3, &res);
+	let n = m_tbl.len();
+	prf.borrow_mut().add_col(Col::new(m_tbl, "m_tbl", IDX_DATA));
+
+	let f_rg2= F::from(RANGE2);
+	prf.borrow_mut().add_col(Col::new_const(vec![f_rg2;n],
+		"sid_m_tbl",  IDX_SI_DATA));
+
+	Ok( (res, prf) )
 }
 
 /// verify if set1 and set2 are disjoint (regading their non-zero elements),
 /// and res is a union of these two sets 
+/// COST: 4*(n1+n2)
 pub fn verify_disjoint_union_prf<F:PrimeField>(
-	_set1: &Vec<FpVar<F>>,
-	_set2: &Vec<FpVar<F>>,
-	_res: &Vec<FpVar<F>>,
-	_prf: &Rc<RefCell<Container<FpVar<F>>>>
+	set1: &Vec<FpVar<F>>,
+	set2: &Vec<FpVar<F>>,
+	res: &Vec<FpVar<F>>,
+	prf: &Rc<RefCell<Container<FpVar<F>>>>,
+	r: &FpVar<F>
 ) -> Result<(), SynthesisError>{
-	todo!()
+	//1. verify the m_tbl works for set3 vs res
+	//COST: 3 * (n1 + n2)
+	assert!(set1.len()>0, "input len must >0");
+	let cs = set1[0].cs();
+	let b_perf = false;
+	let nc = cs.num_constraints();
+	let m_tbl = prf.borrow().get_container("m_tbl")?.borrow().to_vec();
+	let set3 = vec![&set1[..], &set2[..]].concat();
+	let n = res.len();
+	assert!(set3.len()==n && res.len()==n);
+	assert_logup(cs.clone(), &set3, &res, &m_tbl, r)?;
+
+	
+	//2. verify that if res[i]!=0 then m_tbl[i]=1
+	// this is: res[i] * (m_tbl[i] - 1) = 0 for each i
+	//COST: (n1+n2)
+	let lb_zero = LinearCombination::from((F::zero(),Variable::One));
+	for i in 0..n{
+		let lb1 = var_to_lb(&res[i], F::one());
+		let lb2 = LinearCombination(
+			vec![
+				var_to_tuple(&m_tbl[i]),
+				(-F::one(), Variable::One)	
+			]
+		);
+		let lb3 = lb_zero.clone(); 
+
+		cs.enforce_constraint(lb1, lb2, lb3)?;
+	}
+	if b_perf{
+		println!("-- verify_disjoint_union_prf: n1: {}, n2: {}, cost: {} R1CS",
+			set1.len(), set2.len(), cs.num_constraints()- nc);
+	}
+	Ok( () )
 }
 
 /// verify that tbl1 left join with tbl2 results in output
@@ -2714,6 +2761,41 @@ pub mod tests_db{
 		assert!(cs.is_satisfied().unwrap());
 
 
+	}
+
+	#[test]
+	fn test_disjoint_union(){
+		use crate::gadgets::db::{
+			gen_disjoint_union_prf, 
+			verify_disjoint_union_prf
+		};
+		use ark_r1cs_std::R1CSVar;
+
+		let mut rng = test_rng();
+        let cs = ConstraintSystem::<Fr>::new_ref();
+		let r1 = FpVar::new_witness(cs.clone(),|| 
+			Ok(Fr::rand(&mut rng))).unwrap();
+		let n1 = 100;
+		let n2 = 200;
+		let set1 = (0..n1).into_iter().map(|_|{
+			FpVar::new_witness(cs.clone(),|| Ok(Fr::rand(&mut rng))).unwrap()
+		}).collect::<Vec<FpVar<Fr>>>();
+		let set2 = (0..n2).into_iter().map(|_|{
+			FpVar::new_witness(cs.clone(),|| Ok(Fr::rand(&mut rng))).unwrap()
+		}).collect::<Vec<FpVar<Fr>>>();
+		let set1_val = set1.iter().map(|x| x.value().unwrap())
+			.collect::<Vec<Fr>>();
+		let set2_val = set2.iter().map(|x| x.value().unwrap())
+			.collect::<Vec<Fr>>();
+		let (res_val, prf_val) = 
+			gen_disjoint_union_prf(&set1_val, &set2_val, "uprf").unwrap();
+			
+		let res= res_val.iter().map(|x| new_var(&cs, *x))
+			.collect::<Vec<FpVar<Fr>>>();
+		let prf = Container::rc_from(&prf_val.borrow(), cs.clone());
+		assert!(verify_disjoint_union_prf(&set1, &set2, &res, &prf,
+			&r1).is_ok());
+		assert!(cs.is_satisfied().unwrap());
 	}
 
 	#[test]

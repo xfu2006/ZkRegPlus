@@ -365,7 +365,7 @@ impl <F:PrimeField> SedAdvice<F>{
 	/// from a collection of signatures collect the subsigs id
 	/// return a vector of subsigs sorted.
 	/// ONLY return the subsigs that match the b_igc
-	fn collect_subsig_ids(
+	pub fn collect_subsig_ids(
 		vec_sigs_to_discharge: &Vec<Arc<ClamavSig>>, 
 		discharge_info: &Vec<DischargeSigInfo>,
 		sig_to_id: &HashMap<String,usize>,

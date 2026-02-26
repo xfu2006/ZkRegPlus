@@ -25670,7 +25670,53 @@ Goal 4. gen_synthesis_combo and validate_synthesis_combo
 
 Goal 5. define function gen_disjoint_union and verify_disjoint_union
 
--- TODO -- continue with gen_disjoint_union_prf and verify_disjoin_union prf
-	[b] read step 0 of validate_synthesis_combo
+Wed 02/25/2026
+LOC (gadgets): 20267 ->  20570 (+300) 
+Goal 1.  continue with gen_disjoint_union_prf and verify_disjoin_union prf
+	[a] gen prf
+	[b] verify the proof
+	[c] set up the unit testing framework
 
-Goal 1: update compute_sig_adv component
+Goal 2. think about how to use it.
+	[a] modify semantics to direct concat
+	[b] verify the input_subsigs
+	[c] correct test case regarding inp_subsigs eneration
+
+Goal 3. verification validation
+	[a] call the function
+	[b] do the debug code
+	[c] add the proof
+
+Goal4. check part 2
+Goal 5. unit testing and debug
+	[a] cols[col_ids[i].len -> fixed
+	[b] logup failure
+
+Thursday 02/26/2026
+LOC (gadgets): 20570 -> 20430 (cutting to remove -140)
+LOC (circ): 3005
+Goal 1. debug the lkup 
+	[a] lkup size: 6600 v_computed_subsig 50 elements
+			6601: padded_subsig: 51 elements
+				idx 24: (0,1)
+				idx 49: (11,1)
+				idx 50: (0,1)
+			6602: m_tbl: 51 elements two non-zero 
+		--- verify
+			6701: v_subsig: 50 elements (last 11) all others 0
+			6702: idx 24: (11,1), idx 49: (9,1), added
+				element idx 50: (0,1)
+	[b] problem: it looks like the order is different -> fixed
+Goal 2. regression test
+	[a] compute_sig
+	[b] discharge_adv
+Goal 3. small circ regress test
+	[a] passing!
+	[b] but small2 does not work
+
+-- TODO -- 
+Goal 1. debug small2
+Goal 2. start refactor discharge_adv
+
+
+
