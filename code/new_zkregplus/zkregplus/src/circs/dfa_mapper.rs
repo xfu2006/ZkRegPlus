@@ -18,7 +18,7 @@
 	where si_[seg] always match the [seg], e.g., |si_data| = |data|.
 */
 
-use utils::{logger::{log,LOG7,LOG_LEVEL}};
+use utils::{logger::{log,log_perf, LOG1, LOG7,LOG_LEVEL}, timer::Timer};
 use std::{
 	marker::PhantomData,
 	rc::{Rc},
@@ -218,9 +218,13 @@ impl <F:PrimeField> DfaAdvice<F>{
 			sig_to_id: &HashMap<String,usize>, //map from sig to id
 			discharge_info: &Vec<DischargeSigInfo>, //info: subsigs to process
 		)->Result<Self, Error>{
+		let mut t1 = Timer::new();
+		let b_perf = true;
+
 		//1. build the word extraction gadget's advice
 		let wd_extract_advice = WordExtractAdvAdvice::<F>
 			::new(word_seg, actual_size, true)?; //use char map mode for sid
+		if b_perf{ log_perf(LOG1, "-- DFA advice step1: word_extract", &mut t1); }
 
 		//2. build dfa_adv advice
 		//we build a 2-d structure of info first and then
@@ -303,6 +307,7 @@ impl <F:PrimeField> DfaAdvice<F>{
 			Rc::new(wd_extract_advice.clone()),
 			Rc::new(dfa_adv_advice.clone()),
 		];
+		if b_perf{ log_perf(LOG1, "-- DFA advice step2: dfa", &mut t1); }
 
 		Ok(Self{wd_extract_advice, dfa_adv_advice, vec_advices})
 	}

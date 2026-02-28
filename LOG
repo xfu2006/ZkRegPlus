@@ -25714,9 +25714,58 @@ Goal 3. small circ regress test
 	[a] passing!
 	[b] but small2 does not work
 
--- TODO -- 
+Friday 02/27/2026
+LOC (circ): 3005 -> 3018 
+LOC (gadgets): 20441 -> 20467 (+20) 
 Goal 1. debug small2
-Goal 2. start refactor discharge_adv
+	[a] think about how to set up the ComputeSigCapacity
+		-> sed has word-extract, 2 fsmadv, 2 discharge
+			and 1 compute_sig
+	[b] its capacity has 2 sedCapacity component so ComputeSig
+			capacity of the gadget does NEED to get
+			the info from  -> DONE
+	[c] but it still copmlains about vec.len()%2==0
+	[d] try to understand the parse_logic -> it does need 
+		the length to be even
+	[e] print out the step_q_size_cs and ic versions
+
+Goal 2. change zkp_driver small2 and see if lightly igc will change
+	the result
+	[a]  prove_step: Step 1. gen_witness: stmt_len: 1213019, wtns size: 1819426 162 ms
+		LOG1:  *** MainDeciderCirtuit TOTAL constraints: 6700266 ***.  4987 ms
+	[b] new data almost cut all to half except for subsigs from 4->3
+		LOG4: -- -- --  prove_step: Step 1. gen_witness: stmt_len: 1212911, wtns size: 1819264 166 ms
+		LOG1:  *** MainDeciderCirtuit TOTAL constraints: 6699478 ***.  5820 ms
+	-> slightly change because perc_acc_rate is the same for cs and igc
+	-> ok.
+
+Goal 3. modify all gadgets to lable b_igc in CapErr
+	[a] wordextrct
+	[b] fsm
+	[c] pack 
+	[d] sig -> used fsm_id can be improve later but good for now
+	[e] fsm_adv
+	[f] discharge_adv
+		-> add StepQuueue IGC
+	[g] compute_sig
+	[h] dfa -> no need
+	[i] regresion test
+
+Goal 4. add the pat_expansion_factor into sed capacity
+	[a] add it
+	[b] fix syntax errors
+
+Sat 02/28/2026
+LOC (gadgets): 20467
+Goal 1. make pats_expansion_ratio work for estimate of 
+	size (whenever bais_pats_in_trace)
+	[a] examine each place basis_pats_in_trace
+	[b] replace all related CapErr
+	[c] apply the same to compute_sig_adv
+	[d] regression test
+Goal 2. insert the perf profiling code for generate advice
+	[a]
+Goal 2. use that to distinguish full_data3 and see the f
 
 
 

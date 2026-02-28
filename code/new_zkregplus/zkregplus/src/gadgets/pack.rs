@@ -455,7 +455,7 @@ impl <F: PrimeField> PackFinalAdvice<F>{
 		let set_final_states = vec_final_states.par_iter().map(|&s|
 			s).collect::<HashSet<F>>();
 		if vec_final_states.len()>capacity_out-1{
-			return Err(Error::CapErr(vec![(format!("capacity_out"), vec_final_states.len()+1)]));
+			return Err(Error::CapErr(vec![(format!("capacity_out: fsm_id: 0x{:x}", fsm_id), vec_final_states.len()+1)]));
 		}
 		let vec_final_states = [ 
 			&vec![zero; capacity_out - vec_final_states.len()][..],
@@ -468,7 +468,7 @@ impl <F: PrimeField> PackFinalAdvice<F>{
 		vec_imm_states.sort();
 		assert!(vec_imm_states[0]!=zero);
 		if vec_imm_states.len()>capacity_imm-1{
-			return Err(Error::CapErr(vec![(format!("capacity_imm"), vec_imm_states.len()+1)]));
+			return Err(Error::CapErr(vec![(format!("capacity_imm: fsm_id: 0x{:x}", fsm_id), vec_imm_states.len()+1)]));
 		}
 		assert!(vec_imm_states.len()<capacity_imm, "imm_states: {} > capacity_imm: {}", vec_imm_states.len(), capacity_imm);
 		let vec_imm_states = [

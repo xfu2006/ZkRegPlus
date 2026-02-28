@@ -305,7 +305,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 
 		//2. generate the packed trace_combo
 		//which eventually returns (pat-loc) table 
-		let packed_trace_combo = Self::gen_packed_trace_combo_v2(
+		let packed_trace_combo = Self::gen_packed_trace_combo_v2(b_igc,
 			&fsm_acc2, capacity, acdfa, fsm_id)?;
 		stmt_container.borrow_mut().add_container(packed_trace_combo);
 
@@ -406,8 +406,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		//2. construct the projected subsig-state-pattern store and the proof
 		//for it
 		if inp_subsigs.len()>capacity.subsigs{
-			return Err(Error::CapErr(vec![(format!("fsm_adv::subsigs"), 
-				inp_subsigs.len())]));
+			return Err(Error::CapErr(vec![(format!("fsm_adv::subsigs b_igc: {}", b_igc), inp_subsigs.len())]));
 		}
 		//assert!(inp_subsigs.len()<=capacity.subsigs, "inp_subsigs.len: {}, capacity.subsigs: {}", inp_subsigs.len(), capacity.subsigs);
 		let inp_subsigs = vec![inp_subsigs.clone(), vec![F::zero(); 
@@ -418,7 +417,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		stmt_container.borrow_mut().add_container(proj_store_combo);
 
 		//3. construct the packed tracie
-		let packed_trace_combo = Self::gen_packed_trace_combo(&fsm_acc2,
+		let packed_trace_combo = Self::gen_packed_trace_combo(b_igc, &fsm_acc2,
 			&proj_store_combo2, capacity)?;
 		stmt_container.borrow_mut().add_container(packed_trace_combo);
 
@@ -662,7 +661,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 			//needs at least one padding entry
 			let target_basis_acc_states = (states_final.len()+1) * 10000/nlen 
 				+ 1;
-			return Err(Error::CapErr(vec![(format!("fsm_adv::basis_acc_states"), target_basis_acc_states)]));
+			return Err(Error::CapErr(vec![(format!("fsm_adv::basis_acc_states, b_igc: {}", b_igc), target_basis_acc_states)]));
 		}
 		//assert!(states_final.len()<=target_size, "basis_acc_states too small: target_size: {} < states_final.len {}", target_size, states_final.len());
 		let (oflen,to_pad) = (states_final.len(), 
@@ -802,9 +801,9 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 				let vec_err = vec.iter().map(|(s,val)|{
 					if s=="proj_store::n"{
 						let new_n = val / capacity.subsigs + 1;
-						(format!("fsm_adv::avg_pats_per_subsig from proj_store"),new_n)
+						(format!("fsm_adv::avg_pats_per_subsig from proj_store, fsm_id: 0x{:x}", fsm_id),new_n)
 					}else{
-						(format!("unknown capacity err: {}", s), 0)
+						(format!("fsm_adv::unknown capacity err: {}, fsm_id: 0x{:x}", s, fsm_id), 0)
 					}
 				}).collect::<Vec<(String,usize)>>();
 				Err(Error::CapErr(vec_err))
@@ -875,6 +874,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 	/// "fsm_adv::basis_unique_states", "fsm_adv::avg_pats_per_subsig",
 	#[allow(dead_code)]
 	fn gen_packed_trace_combo(
+		b_igc: bool,
 		fs_acc_combo: &Rc<RefCell<Container<F>>>,
 		proj_store_combo: &Rc<RefCell<Container<F>>>,
 		capacity: &FsmAdvCapacity,
@@ -927,15 +927,15 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 				let vec_err = vec.iter().map(|(s,val)|{
 					if s=="target_size"{
 						let t_val= val * 10000/capacity.max_nibble_len + 1;
-						(format!("fsm_adv::basis_pats_in_trace from tbl_filtered_to_sorted_tbl"),t_val)
+						(format!("fsm_adv::basis_pats_in_trace from tbl_filtered_to_sorted_tbl, b_igc: {}", b_igc),t_val)
 					}else if s=="unique_key_size"{
 						let t_val= val * 10000/capacity.max_nibble_len + 1;
-						(format!("fsm_adv::basis_unique_states from tbl_filtered_to_sorted_tbl"),t_val)
+						(format!("fsm_adv::basis_unique_states from tbl_filtered_to_sorted_tbl, b_igc: {}", b_igc),t_val)
 					}else if s=="target_size::hashmap_2col"{
 						let t_val= val * 10000/capacity.max_nibble_len + 1;
-						(format!("fsm_adv::basis_pats_in_trace from tbl_filtered_to_sorted_tbl"),t_val)
+						(format!("fsm_adv::basis_pats_in_trace from tbl_filtered_to_sorted_tbl, b_igc: {}", b_igc),t_val)
 					}else{
-						(format!("unknown capacity err at step 2: {}", s), 0)
+						(format!("fsm_adv::unknown capacity err at step 2: b_igc: {},  {}", b_igc, s), 0)
 					}
 				}).collect::<Vec<(String,usize)>>();
 				Err(Error::CapErr(vec_err))
@@ -962,9 +962,9 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 				let vec_err = vec.iter().map(|(s,val)|{
 					if s=="target_size"{
 						let t_val= val /capacity.subsigs + 1;
-						(format!("fsm_adv::avg_pats_per_subsig from pat_state"),t_val)
+						(format!("fsm_adv::avg_pats_per_subsig from pat_state, b_igc: {}", b_igc),t_val)
 					}else{
-						(format!("unknown capacity err at step 3: {}", s), 0)
+						(format!("unknown capacity err at step 3: {}, b_igc: {}", s, b_igc), 0)
 					}
 				}).collect::<Vec<(String,usize)>>();
 				Err(Error::CapErr(vec_err))
@@ -988,15 +988,15 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 					if s=="target_size::2col_left_join"{
 						let t_val= val*10000 /capacity.max_nibble_len+ 1;
 						( format!(
-						   "fsm_adv::basis_pats_in_trace from tbl_left_join for 2col_left_join"), t_val
+						   "fsm_adv::basis_pats_in_trace from tbl_left_join for 2col_left_join, b_igc: {}", b_igc), t_val
 						  )
 					}else if s=="target_size::hashmap_2col"{
 						let t_val= val*10000 /capacity.max_nibble_len+ 1;
 						( format!(
-						   "fsm_adv::basis_pats_in_trace from tbl_left_join for hashmap_2col"),t_val
+						   "fsm_adv::basis_pats_in_trace from tbl_left_join for hashmap_2col, b_igc: {}", b_igc),t_val
 						  )
 					} else{
-						(format!("unknown capacity err at step4: {}", s), 0)
+						(format!("unknown capacity err at step4: {}, b_igc: {}", s, b_igc), 0)
 					}
 				}).collect::<Vec<(String,usize)>>();
 				Err(Error::CapErr(vec_err))
@@ -1047,6 +1047,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 	/// (4) from the above table pack it as (pats -> multi-locs)
 	#[allow(dead_code)]
 	fn gen_packed_trace_combo_v2(
+		b_igc: bool,
 		fsm_acc_combo: &Rc<RefCell<Container<F>>>,
 		capacity: &FsmAdvCapacity,
 		acdfa: &HexACDFA,
@@ -1115,7 +1116,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 			assert!(new_val * nlen /10000 >= tuples.len()+1);
 			return Err(Error::CapErr(
 				vec![(format!(
-					"fsm_adv::basis_unique_states proj_state-pat"), new_val) ]
+					"fsm_adv::basis_unique_states proj_state-pat, b_igc: {}", b_igc), new_val) ]
 			));
 		}
 		let ct_stat_pat = two_col_to_wide_wellformed(&proj_states, &proj_pats,
@@ -1146,7 +1147,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		if capacity.basis_pats_in_trace > 2*capacity.basis_acc_states{
 			println!("WARNING: basis_pats_in_trace: {} should be usually 1.1 * basis_acc_states: {}. It's too large. ", capacity.basis_pats_in_trace, capacity.basis_acc_states);
 		}
-		if capacity.basis_pats_in_trace > 5*capacity.basis_acc_states{
+		if capacity.basis_pats_in_trace > 10*capacity.basis_acc_states{
 			panic!("ERROR: basis_pats_in_trace: {} is usually 1.1 * basis_acc_states: {}. It's too high. ", capacity.basis_pats_in_trace, capacity.basis_acc_states);
 		}
 		let loc_state_pat_tbl = tbl_left_join_wide(
@@ -1163,16 +1164,16 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 					if s=="tbl2"{
 						let val = (ulen+1)*10000 /capacity.max_nibble_len+ 1;
 						( 
-						  format!("fsm_adv::basis_unique_states joinwide"), 
+						  format!("fsm_adv::basis_unique_states joinwide, b_igc: {}", b_igc), 
 						  val 
 						)
 					}else if s=="target_size"{
 						let t_val= val*10000 /capacity.max_nibble_len+ 1;
 						( format!(
-						   "fsm_adv::basis_pats_in_trace from joinwide"),t_val
+						   "fsm_adv::basis_pats_in_trace from joinwide, b_igc: {}", b_igc),t_val
 						  )
 					} else{
-						(format!("unknown capacity err at step4: {}", s), 0)
+						(format!("unknown capacity err at step4: {}, b_igc: {}", s, b_igc), 0)
 					}
 				}).collect::<Vec<(String,usize)>>();
 				Err(Error::CapErr(vec_err))
@@ -1204,11 +1205,11 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 					if s=="target_size::hashmap_2col"{
 						let t_val= val*10000 /capacity.max_nibble_len+ 1;
 						( format!(
-						   "fsm_adv::basis_pats_in_trace from tbl_to_sorted")
+						   "fsm_adv::basis_pats_in_trace from tbl_to_sorted, b_igc: {}", b_igc)
 						   ,t_val
 						  )
 					} else{
-						(format!("unknown capacity err at step4: {}", s), 0)
+						(format!("unknown capacity err at step4: {}, b_igc: {}", s, b_igc), 0)
 					}
 				}).collect::<Vec<(String,usize)>>();
 				Err(Error::CapErr(vec_err))

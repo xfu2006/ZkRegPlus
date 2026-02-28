@@ -35,7 +35,7 @@
 // discharged_sigs: size 1 (to ensure at least one dummy entry)
 
 // subtbl: follow inp/oup/data
-use utils::{logger::{log, LOG7,LOG_LEVEL}};
+use utils::{logger::{log, log_perf, LOG1, LOG7,LOG_LEVEL}, timer::Timer };
 use std::{
 	marker::PhantomData,
 	rc::{Rc},
@@ -195,6 +195,8 @@ impl <F:PrimeField> CpAdvice<F>{
 					//in failed_sigs by default
 		)->Result<Self, Error>{
 		//0. construct the capacity fields needed by sub-components
+		let mut t1 = Timer::new();
+		let b_perf = true;
 		let (final_states_len,join_buf_capacity,sig_buf_capacity,imm_buf_len)
 			 = capacity.get_old_stats();
 
@@ -205,6 +207,7 @@ impl <F:PrimeField> CpAdvice<F>{
 		let nibbles = wd_extract_advice.data[1..].to_vec();
 		let dfa_crit_advice = FsmAdvice::<F>
 			::new(&nibbles, dfa_crit, inp_state, fsm_id as u32)?;
+		if b_perf{ log_perf(LOG1, "-- CpMapper gen_adv step1", &mut t1); }
 
 
 		//2. build the packing final states gadget's advice
@@ -234,6 +237,7 @@ impl <F:PrimeField> CpAdvice<F>{
 			},
 			_ => pack_res 
 		}?;
+		if b_perf{ log_perf(LOG1, "-- CpMapper gen_adv step2: pack_res", &mut t1); }
 
 		//3. build the advice for the sigs gadget
 		let sig_cap = SigGadgetCapacity{
@@ -243,6 +247,7 @@ impl <F:PrimeField> CpAdvice<F>{
 			count_sig_no_crit_pat: vec_sig_id_no_crit_pat.len(),
 		};
 		let inp_sigs = inp_buf[1..sig_buf_capacity+1].to_vec();
+		if b_perf{ log_perf(LOG1, "-- CpMapper gen_adv step3: sig", &mut t1); }
 
 		
 		let sigs_res = GetSigAdvice::<F>::new(
@@ -269,6 +274,7 @@ impl <F:PrimeField> CpAdvice<F>{
 			},
 			_ => sigs_res 
 		}?;
+		if b_perf{ log_perf(LOG1, "-- CpMapper gen_adv step4: assemble", &mut t1); }
 
 		Ok(Self{
 			wd_extract_advice,

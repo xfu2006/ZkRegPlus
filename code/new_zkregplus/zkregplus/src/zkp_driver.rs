@@ -184,10 +184,9 @@ fn build_circs_adv<F,C,CS>(
 	db: Rc<ClamavDB<F>>,
 	init_cp_capacity_cs: &CpCapacity,
 	init_sed_capacity_cs: &SedCapacity,
-	init_dfa_capacity_cs: &DfaCapacity,
+	init_dfa_capacity: &DfaCapacity, //no cs/igc distinction
 	init_cp_capacity_igc: &CpCapacity,
 	init_sed_capacity_igc: &SedCapacity,
-	init_dfa_capacity_igc: &DfaCapacity,
 	num_category: usize, 
 	num_circs_per_category: usize,
 	b_check_lkup: bool
@@ -201,8 +200,7 @@ where C: CurveGroup<ScalarField=F>,
 	assert!(init_cp_capacity_igc.max_word_len == chunk_len);
 	assert!(init_sed_capacity_cs.wea_capacity().max_word_len == chunk_len);
 	assert!(init_sed_capacity_igc.wea_capacity().max_word_len == chunk_len);
-	assert!(init_dfa_capacity_cs.wea_capacity().max_word_len == chunk_len);
-	assert!(init_dfa_capacity_igc.wea_capacity().max_word_len == chunk_len);
+	assert!(init_dfa_capacity.wea_capacity().max_word_len == chunk_len);
 
 	//2. given fixed chunk_len and total_word_len computes the
 	//lkup_share needed to build up circuit
@@ -217,8 +215,7 @@ where C: CurveGroup<ScalarField=F>,
 	let mut cp_cap_igc= init_cp_capacity_igc.clone();
 	let mut sed_cap_cs = init_sed_capacity_cs.clone();
 	let mut sed_cap_igc = init_sed_capacity_igc.clone();
-	let mut dfa_cap_cs = init_dfa_capacity_cs.clone();
-	let mut dfa_cap_igc = init_dfa_capacity_igc.clone();
+	let mut dfa_cap= init_dfa_capacity.clone();
 
 	for l1 in 0..num_category{
 		for l2 in 0..num_circs_per_category{
@@ -236,16 +233,15 @@ where C: CurveGroup<ScalarField=F>,
 
 			//3.3 dfa is optional depending if config supports 0 subsigs
 			//which enforces dfa to be nil.
-			let dfa = if dfa_cap_cs.subsigs==0 || dfa_cap_igc.subsigs==0{ 
-				None }else{
+			let dfa = if dfa_cap.subsigs==0{ None }else{
 				Some(
-					DfaComponentMapper::<F,LK<F>>::new(dfa_cap_cs.clone(), 
+					DfaComponentMapper::<F,LK<F>>::new(dfa_cap.clone(), 
 						db.clone())
 				)
 			};
 
 			//3.4 construct the circuit
-			let hybrid_cgm1 =if dfa_cap_cs.subsigs==0 || dfa_cap_igc.subsigs==0{
+			let hybrid_cgm1 =if dfa_cap.subsigs==0{
 				CompositeGadgetMapper::<F,LK<F>>::new("hybrid_cgm1",
 					vec![
 						Rc::new(RefCell::new(cp_cs)),
@@ -279,18 +275,16 @@ where C: CurveGroup<ScalarField=F>,
 			//3.5 update the capacities.
 			cp_cap_cs = cp_cap_cs.increased_copy(2); //increase by level 2
 			sed_cap_cs = sed_cap_cs.increased_copy(2); 
-			dfa_cap_cs = dfa_cap_cs.increased_copy(2); 
 			cp_cap_igc = cp_cap_igc.increased_copy(2); //increase by level 2
 			sed_cap_igc = sed_cap_igc.increased_copy(2); 
-			dfa_cap_igc = dfa_cap_igc.increased_copy(2); 
+			dfa_cap= dfa_cap.increased_copy(2); 
 		}//for loop level2
 		//update level 1 capacity
 		cp_cap_cs = cp_cap_cs.increased_copy(1); //increase by level 1
 		sed_cap_cs = sed_cap_cs.increased_copy(1); 
-		dfa_cap_cs = dfa_cap_cs.increased_copy(1); 
 		cp_cap_igc = cp_cap_igc.increased_copy(1); //increase by level 1
 		sed_cap_igc = sed_cap_igc.increased_copy(1); 
-		dfa_cap_igc = dfa_cap_igc.increased_copy(1); 
+		dfa_cap= dfa_cap.increased_copy(1); 
 	}//for category
 
 	//return
@@ -514,7 +508,7 @@ where
 		list_of_dfa_sigs, list_of_ised_sigs, list_of_ised_igc_sigs,
 		chunk_len,
 		init_cp_capacity, init_sed_capacity, init_dfa_capacity,
-		init_cp_capacity, init_sed_capacity, init_dfa_capacity,
+		init_cp_capacity, init_sed_capacity, 
 		num_category, num_circs_per_category, b_check_lkup
 	);
 }
@@ -532,10 +526,9 @@ pub fn zkp_driver_adv<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + st
 	chunk_len: usize, //see the definition of params for build_circs for below
 	init_cp_capacity_cs: &CpCapacity, 
 	init_sed_capacity_cs: &SedCapacity,
-	init_dfa_capacity_cs: &DfaCapacity,
+	init_dfa_capacity: &DfaCapacity, //only one DFA (no cs/igc distinction)
 	init_cp_capacity_igc: &CpCapacity, 
 	init_sed_capacity_igc: &SedCapacity,
-	init_dfa_capacity_igc: &DfaCapacity,
 	num_category: usize,
 	num_circs_per_category: usize,
 	b_check_lkup: bool,
@@ -615,10 +608,9 @@ where
 		rc_db,
 		init_cp_capacity_cs,
 		init_sed_capacity_cs,
-		init_dfa_capacity_cs,
+		init_dfa_capacity,
 		init_cp_capacity_igc,
 		init_sed_capacity_igc,
-		init_dfa_capacity_igc,
 		num_category,
 		num_circs_per_category,
 		b_check_lkup
@@ -641,7 +633,7 @@ pub mod tests_zkp_driver{
 	use ark_grumpkin::{constraints::GVar as GVar2, Projective as Projective2};
 	use ark_groth16::Groth16;
 	use folding_schemes::{commitment::{pedersen::Pedersen, kzg::KZG}};
-	use crate::zkp_driver::{zkp_driver};
+	use crate::zkp_driver::{zkp_driver, zkp_driver_adv};
 	use crate::circs::{
 		cp_mapper::{CpCapacity},
 		sed_mapper::{SedCapacity},
@@ -773,8 +765,28 @@ pub mod tests_zkp_driver{
 		let dfa_subsigs= 3;
 		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
 
+		let init_cp_cap_igc= CpCapacity{
+			max_word_len: max_word, 
+			basis_unique_states: basis_unique_states,
+			subsigs: subsigs,
+			avg_pats_per_subsig: avg_pats_per_subsig,
+			//avg_subsig_per_sig,
+		};
+		let init_sed_cap_igc= SedCapacity::new(
+			max_word, RANGE2_BIT, 
+			subsigs, 
+			 avg_pats_per_subsig, 
+			 avg_active_pats_per_subsig, 
+			 basis_pats_in_trace-1, 
+			 pats_expansion_rate,
+			 sigs, 
+			 perc_comp_subsigs,
+			 basis_unique_states,
+			 basis_acc_states,
+		);
 
-		zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+
+		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
 			&format!("{}/sigs.dat",set1), //src sig
 			&format!("{}/binexec.dat",set1), //list of files to discharge
 			"data/small_data_set/reports/report.dat", //report
@@ -788,6 +800,8 @@ pub mod tests_zkp_driver{
 			&init_cp_cap,
 			&init_sed_cap,
 			&init_dfa_cap,
+			&init_cp_cap_igc,
+			&init_sed_cap_igc,
 			num_category,
 			num_circs_per_category,
 			b_check_lkup
@@ -996,7 +1010,7 @@ pub mod tests_zkp_driver{
 		);
 	}
 	/// the sigs are the FULL SET of sigs
-	/// It runs a large but difficult file: gdb (6.6M)
+	/// It runs a small but challenging file _codecs_hk.so (158kb)
 	#[allow(dead_code)]
 	fn full_data2<F:PrimeField>(b_check_lkup: bool){
 		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
@@ -1156,8 +1170,8 @@ pub mod tests_zkp_driver{
         let num_category = 1;
         let num_circs_per_category= 1;
         let basis_unique_states = 2000; //15 cpercent
-        let basis_acc_states = 2000; //9 cpercent
-        let basis_pats_in_trace = 6000; //old value 100 cur value 1/1000.
+        let basis_acc_states = 12000; //9 cpercent
+        let basis_pats_in_trace = 18000; //old value 100 cur value 1/1000.
         let dfa_sigs = 6;
         let dfa_subsigs= 6;
 		let pats_expansion_rate = 1;

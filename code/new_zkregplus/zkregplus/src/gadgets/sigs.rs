@@ -440,7 +440,7 @@ impl <F: PrimeField> GetSigAdvice<F>{
 		let mut final_states = final_states.clone();
 		if final_states.len()>olen{
 			return Err(
-				Error::CapErr(vec![(format!("olen"), final_states.len()+1)])
+				Error::CapErr(vec![(format!("olen: fsm_id: 0x{:x}", fsm_id), final_states.len()+1)])
 			);
 		}
 		expand_vec(&mut final_states, olen); //the input
@@ -449,7 +449,7 @@ impl <F: PrimeField> GetSigAdvice<F>{
 		assert!(final_states.len() == olen);
 		if inp_sigs.len()>slen{
 			return Err(
-				Error::CapErr(vec![(format!("slen"), inp_sigs.len())])
+				Error::CapErr(vec![(format!("slen: fsm_id: 0x{:x}", fsm_id), inp_sigs.len())])
 			);
 		}
 		assert!(inp_sigs.len()==slen);
@@ -524,7 +524,7 @@ impl <F: PrimeField> GetSigAdvice<F>{
 		//3. set up their sizes and genreate data
 		if final_states_sigs_count.len()>olen-1{
 			return Err(
-				Error::CapErr(vec![(format!("olen"), 
+				Error::CapErr(vec![(format!("olen: fsm_id: 0x{:x}", fsm_id), 
 					final_states_sigs_count.len()+1)])
 			);
 		}
@@ -534,7 +534,7 @@ impl <F: PrimeField> GetSigAdvice<F>{
 
 		if final_states_sigs.len()>jlen-1{
 			return Err(
-				Error::CapErr(vec![(format!("jlen"), 
+				Error::CapErr(vec![(format!("jlen: fsm_id: 0x{:x}", fsm_id), 
 					final_states_sigs.len()+1)])
 			);
 		}
@@ -545,7 +545,7 @@ impl <F: PrimeField> GetSigAdvice<F>{
 
 		if sigs_to_merge.len()>slen-1{
 			return Err(
-				Error::CapErr(vec![(format!("slen"), 
+				Error::CapErr(vec![(format!("slen: fsm_id: 0x{:x}", fsm_id), 
 					sigs_to_merge.len()+1)])
 			);
 		}
@@ -553,7 +553,7 @@ impl <F: PrimeField> GetSigAdvice<F>{
 
 		if oup.len()>slen-1{
 			return Err(
-				Error::CapErr(vec![(format!("slen"), 
+				Error::CapErr(vec![(format!("slen: 0x{:x}", fsm_id), 
 					oup.len()+1)])
 			);
 		}

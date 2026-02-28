@@ -1367,6 +1367,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 			avg_active_pats_per_subsig: 2, //it's ok, coz it's not affecting
 										  //parse_from
 			basis_pats_in_trace: capacity.basis_pats_in_trace_cs,
+			pats_expansion_rate: 1,
 		};
 		let dis_cap_igc= DischargeAdvCapacity{
 			max_nibble_len: capacity.max_nibble_len,
@@ -1374,6 +1375,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 			avg_active_pats_per_subsig: 2, //it's ok, coz it's not affecting
 										  //parse_from
 			basis_pats_in_trace: capacity.basis_pats_in_trace_igc,
+			pats_expansion_rate: 1,
 		};
 		let step_q_size_cs = StepQueue::<F>::vec_size(&StepQueueType::Res,
 			&dis_cap_cs).0;
@@ -1381,9 +1383,9 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 			&dis_cap_igc).0;
 		let sq_res_vec_cs = vec![zero; step_q_size_cs];
 		let sq_res_vec_igc = vec![zero; step_q_size_igc];
-		let sq_res_obj_cs = StepQueue::parse_from(&sq_res_vec_cs, &dis_cap_cs);
+		let sq_res_obj_cs = StepQueue::parse_from(&sq_res_vec_cs, &dis_cap_cs, false);
 		let sq_res_obj_igc = StepQueue::parse_from(&sq_res_vec_igc, 
-			&dis_cap_igc);
+			&dis_cap_igc, true);
 		let sq_res_cs = sq_res_obj_cs.to_container(
 			"sq_res2_cs", false, true, true, true,
 			&store_steps_cs).expect("sq_res_cs err");
@@ -2586,6 +2588,7 @@ pub mod tests_compute_sig_adv{
 			subsigs: cap.subsigs,
 			avg_active_pats_per_subsig: 2,
 			basis_pats_in_trace: cap.basis_pats_in_trace,
+			pats_expansion_rate: 1,
 		};
 		let cap_sig= ComputeSigAdvCapacity{//capaciity of compute sig adv comp 
 			max_nibble_len: nibble_len, 
@@ -2609,11 +2612,11 @@ pub mod tests_compute_sig_adv{
 		//2.0 input that needs to be fed to advice. update it at end of loop
 		let mut inp_state_cs = Fr::from((acdfa_cs.init_state + 1) as u32);
 		let mut inp_loc_cs = Fr::from(1u32);
-		let mut inp_steps_queue_cs = DischargeAdvAdvice::gen_empty_steps_queue_serialized(&input_subsigs_cs, &steps_store_cs, fsm_id_cs, &cap_disc);  
+		let mut inp_steps_queue_cs = DischargeAdvAdvice::gen_empty_steps_queue_serialized(false, &input_subsigs_cs, &steps_store_cs, fsm_id_cs, &cap_disc);  
 
 		let mut inp_state_igc = Fr::from((acdfa_igc.init_state + 1) as u32);
 		let mut inp_loc_igc = Fr::from(1u32);
-		let mut inp_steps_queue_igc = DischargeAdvAdvice::gen_empty_steps_queue_serialized(&input_subsigs_igc, &steps_store_igc, fsm_id_igc, &cap_disc);  
+		let mut inp_steps_queue_igc = DischargeAdvAdvice::gen_empty_steps_queue_serialized(true, &input_subsigs_igc, &steps_store_igc, fsm_id_igc, &cap_disc);  
 
 		for i in 0..n_cycles{
 			//2.1 the word_extract_adv
@@ -2785,9 +2788,9 @@ pub mod tests_compute_sig_adv{
 				.borrow().to_vec();
 			inp_loc_cs = locs_cs[locs_cs.len()-1];
 			inp_loc_igc = locs_igc[locs_igc.len()-1];
-			inp_steps_queue_cs = StepQueue::parse_from(&oup_queue_cs,&cap_disc);
+			inp_steps_queue_cs = StepQueue::parse_from(&oup_queue_cs,&cap_disc, false);
 			inp_steps_queue_igc = StepQueue::parse_from(&oup_queue_igc,
-				&cap_disc);
+				&cap_disc, true);
 		}
 
 		//4. verify the sigs_to_discharge have been discharged
@@ -2917,16 +2920,18 @@ pub mod tests_compute_sig_adv{
 			subsigs: 4,
 			avg_active_pats_per_subsig: 2,
 			basis_pats_in_trace: 48*100, //48 percent
+			pats_expansion_rate: 1,
 		};
+		let b_igc = false;
 		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),
-			q_type: StepQueueType::Res};
+			q_type: StepQueueType::Res, b_igc};
 		let ct = sq.to_container("ct", true, false, false, false, &steps_info)
 			.expect("ct err");
 		let pat = ct.borrow().get_container("encoded")
 			.unwrap().borrow().to_vec();
 		let loc = ct.borrow().get_container("locs").unwrap().borrow().to_vec();
 		let vec = vec![pat, loc].concat();
-		let sq2 = StepQueue::parse_from(&vec, &capacity);
+		let sq2 = StepQueue::parse_from(&vec, &capacity, b_igc);
 		assert!(sq == sq2);
 
 		//2. test the forward proof

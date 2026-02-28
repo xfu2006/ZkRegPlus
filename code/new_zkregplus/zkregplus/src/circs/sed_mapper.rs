@@ -41,7 +41,7 @@ discharge_subsig_adv (one for case sentive and one for ignore case).
 
 */
 
-use utils::{logger::{log, LOG7, LOG_LEVEL}};
+use utils::{logger::{log, log_perf, LOG7, LOG1, LOG_LEVEL}, timer::Timer};
 use std::{
 	marker::PhantomData,
 	rc::{Rc},
@@ -180,7 +180,7 @@ impl SedCapacity{
 		let max_nibble_len = max_word_len * LEGS;
 		let faa_capacity = FsmAdvCapacity{max_nibble_len, acdfa_state_part_bits,			subsigs, avg_pats_per_subsig, basis_pats_in_trace,
 			basis_unique_states, basis_acc_states};
-		let da_capacity = DischargeAdvCapacity{max_nibble_len, subsigs, avg_active_pats_per_subsig, basis_pats_in_trace};
+		let da_capacity = DischargeAdvCapacity{max_nibble_len, subsigs, avg_active_pats_per_subsig, basis_pats_in_trace, pats_expansion_rate};
 		//NOTE csa_capacity for the other cs/igc case will be temporarily
 		//set and later merged (because one csa coresponds to two discharge
 		//adv components
@@ -431,9 +431,13 @@ impl <F:PrimeField> SedAdvice<F>{
 			sig_to_id: &HashMap<String,usize>, //map from sig to id (common)
 			discharge_info: &Vec<DischargeSigInfo>, //info: (common)
 		)->Result<Self, Error>{
+		let mut t1 = Timer::new();
+		let b_perf = true;
+
 		//1. build the word extraction gadget's advice
 		let wd_extract_advice = WordExtractAdvAdvice::<F>
 			::new(word_seg, actual_size, false)?; //default mode for char sid
+		if b_perf{ log_perf(LOG1, "-- Sed advice step1: word_extract", &mut t1); }
 
 		//2. build the fsm_adv advice (cs and igc)
 		assert!(vec_sigs_to_discharge.len()==discharge_info.len());
@@ -455,6 +459,7 @@ impl <F:PrimeField> SedAdvice<F>{
 				&nibbles,dfa_cs, inp.inp_state_cs,inp.inp_loc_cs,
 				&subsigs_inp_cs, &fsm_cap_cs,fsm_id_cs as u32,
 				subsig_pat_store_cs)?;
+		if b_perf{ log_perf(LOG1, "-- Sed advice step2: fsm_cs", &mut t1); }
 
 		//2.2 the igc version
 		let subsigs_inp_igc= Self::collect_subsig_ids(vec_sigs_to_discharge,
@@ -465,6 +470,7 @@ impl <F:PrimeField> SedAdvice<F>{
 				&nibbles,dfa_igc, inp.inp_state_igc,inp.inp_loc_igc,
 				&subsigs_inp_igc, &fsm_cap_igc, fsm_id_igc as u32,
 				subsig_pat_store_igc)?;
+		if b_perf{ log_perf(LOG1, "-- Sed advice step3: fsm_igc", &mut t1); }
 
 		//3. build the discharge_adv advice (cs and igc)
 		let da_cap_cs = &cs_capacity.da_capacity();
@@ -474,25 +480,31 @@ impl <F:PrimeField> SedAdvice<F>{
 			.search_container("fsm_adv_stmt_cs packed_trace pat_loc sorted_tbl")
 			.unwrap();
 		let inp_steps_queue_obj_cs = StepQueue::parse_from(
-			&inp.inp_steps_queue_cs, &da_cap_cs);
+			&inp.inp_steps_queue_cs, &da_cap_cs, false);
 		let discharge_adv_advice_cs = DischargeAdvAdvice::<F>
 			::new(false, 2, &pat_loc_cs, &subsigs_inp_cs, fsm_id_cs as u32, 
 				subsig_step_store_cs, &da_cap_cs, &inp_steps_queue_obj_cs)?;
+		if b_perf{ log_perf(LOG1, "-- Sed advice step4: discharge_cs", &mut t1); }
 
 		//3.2 the igc version
 		let pat_loc_igc = fsm_adv_advice_igc.stmt_container.borrow()
 			.search_container("fsm_adv_stmt_igc packed_trace pat_loc sorted_tbl").unwrap();
 		let inp_steps_queue_obj_igc = StepQueue::parse_from(
-			&inp.inp_steps_queue_igc, &da_cap_igc);
+			&inp.inp_steps_queue_igc, &da_cap_igc, true);
 		let discharge_adv_advice_igc = DischargeAdvAdvice::<F>
 			::new(true, 2, &pat_loc_igc, &subsigs_inp_igc, fsm_id_igc as u32, 
 				subsig_step_store_igc, &da_cap_igc, &inp_steps_queue_obj_igc)?;
+		if b_perf{ log_perf(LOG1, "-- Sed advice step5: discharge_igc", &mut t1); }
 
 
 		//4. build the compute_sig advice  (note: just one copy)
-		let csa_cap = &cs_capacity.csa_capacity(); //typically this is the 
+		let csa_cap_igc = &igc_capacity.csa_capacity(); //typically this is the 
+		let mut csa_cap: ComputeSigAdvCapacity = Clone::clone(&cs_capacity.csa_capacity()); //typically this is the 
 				//larger one (since compute_sig component is small, 
 				// we do not further refactor capacity ere
+		csa_cap.basis_pats_in_trace_igc = csa_cap_igc.basis_pats_in_trace_igc;
+		csa_cap.pats_expansion_rate_igc= csa_cap_igc.pats_expansion_rate_igc;
+		csa_cap.subsigs_igc = csa_cap_igc.subsigs_igc;
 		let stmt_disc_cs = &discharge_adv_advice_cs.stmt_container;
 		let sq_res_cs = stmt_disc_cs.borrow().search_container("discharge_adv_stmt_cs bwd_steps_queue sq_res2").expect("sq_res err");
 		let stmt_disc_igc = &discharge_adv_advice_igc.stmt_container;
@@ -503,7 +515,7 @@ impl <F:PrimeField> SedAdvice<F>{
 			&subsigs_inp_cs, &subsigs_inp_igc,
 			&discharge_info,
 			&sq_res_cs, &sq_res_igc,
-			Clone::clone(&csa_cap), 
+			&csa_cap,
 			subsig_step_store_cs,  subsig_step_store_igc,
 			subsig_info_store_cs, subsig_info_store_igc,
 			vec_sigs_to_discharge, sig_to_id)?;
@@ -517,6 +529,7 @@ impl <F:PrimeField> SedAdvice<F>{
 			Rc::new(discharge_adv_advice_igc.clone()),
 			Rc::new(compute_sig_adv_advice.clone()),
 		];
+		if b_perf{ log_perf(LOG1, "-- Sed advice step6: compute_sig", &mut t1); }
 
 		Ok(Self{
 			wd_extract_advice, 
@@ -582,7 +595,14 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 		cfgs.push( g_da_igc.dummy_cfg.clone() );
 
 		//1.4 compute_sigs gadget (1 gadget)
-		let csa_cap = &cs_capacity.csa_capacity(); //just take the larger one
+		let csa_cap_igc = &igc_capacity.csa_capacity(); //typically this is the 
+		let mut csa_cap:ComputeSigAdvCapacity = 
+			Clone::clone(cs_capacity.csa_capacity()); //typically this is the 
+				//larger one (since compute_sig component is small, 
+				// we do not further refactor capacity ere
+		csa_cap.basis_pats_in_trace_igc = csa_cap_igc.basis_pats_in_trace_igc;
+		csa_cap.pats_expansion_rate_igc= csa_cap_igc.pats_expansion_rate_igc;
+		csa_cap.subsigs_igc = csa_cap_igc.subsigs_igc;
 		let g_csa = ComputeSigAdvGadget::<F>::new(
 			fsm_id_cs, 
 			fsm_id_igc, 
@@ -705,6 +725,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 				&discharge_info, sig_to_id, false, &pm_acdfa_cs);
 		let init_steps_queue_cs = DischargeAdvAdvice
 			::gen_empty_steps_queue_serialized(
+				false, //b_igc = false
 				&inp_subsigs_cs,
 				&subsig_step_store_cs,
 				pm_fsm_id_cs,
@@ -741,6 +762,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedCompo
 				&discharge_info, sig_to_id, true, &pm_acdfa_igc);
 		let init_steps_queue_igc = DischargeAdvAdvice
 			::gen_empty_steps_queue_serialized(
+				true, //b_igc
 				&inp_subsigs_igc,
 				&subsig_step_store_igc,
 				pm_fsm_id_igc,
