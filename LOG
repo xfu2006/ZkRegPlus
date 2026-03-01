@@ -25756,7 +25756,7 @@ Goal 4. add the pat_expansion_factor into sed capacity
 	[b] fix syntax errors
 
 Sat 02/28/2026
-LOC (gadgets): 20467
+LOC (gadgets): 20467 -> 20484 (+20)
 Goal 1. make pats_expansion_ratio work for estimate of 
 	size (whenever bais_pats_in_trace)
 	[a] examine each place basis_pats_in_trace
@@ -25764,8 +25764,45 @@ Goal 1. make pats_expansion_ratio work for estimate of
 	[c] apply the same to compute_sig_adv
 	[d] regression test
 Goal 2. insert the perf profiling code for generate advice
-	[a]
-Goal 2. use that to distinguish full_data3 and see the f
+	[a] cp
+	[b] sed
+	[c] dfa
+	[d] observe output
+Goal 3. use that to distinguish full_data3 and see the if it improves 
+	[a] add zkp_dirve_adv, the orignal data
+		=== DATA ===
+		out of 4 sec of gen_advice for full_data3
+			dishcarge_cs takes 3245ms
+			discharge_igc takes 126ms
 
+Goal 4. add a function to discharge to analyze the data
+	[a] add a dump to dump the subsig details in data_processor
+		in clam_db build_db look if b_debug_subsig
+	[a] check does StepQueue has dump?
 
+Goal 5. continue to collect data full_data3
+		==== DATA ========
+	[a] original data with the exact copy of configs for
+		zkp_driver_adv now
+		out of 4 sec of gen_advice for full_data3
+			dishcarge_cs takes 3245ms
+			discharge_igc takes 126ms
+		LOG4: -- -- --  prove_step: Step 1. gen_witness: stmt_len: 12723497, wtns size: 19111682 2314 ms
+		LOG3: -- --  Phase1 Circ gen_cs: Step 3: collect all_w_e. len: 43059665, : INCREASED: 3285 constraints. 3455 ms
+		MainDeciderCircuit: MainDeciderCirtuit TOTAL constraints: 94088269 ***
+		FsmAdv: increased 1.44M
+		DisAdv: increased 2.3M
+		ComputeSig: increaed 330k
+	[b] use pats_expansion_rate to lower basis_pats_in_trace 
+		reduces Fsm from 1.44M -> 1.0M
+		increases DisAdv from 2.3M to 2.4M (slightly larger subsigs)
+	[c] separate the cs and igc version
+		======== DATA =============
+		stmt_len: 10319009, wtns size: 15498075 1879 ms
+		LOG3: -- --  -- prove_step cost: i: 4, circ_id: 0, stmt_len: 10319009, wtns size: 15498075 30993 ms
+		LOG3: -- --  Phase1 Circ gen_cs: Step 3: collect all_w_e. len: 33472821, : INCREASED: 3285 constraints. 2779 ms
+		OG1:  *** MainDeciderCirtuit TOTAL constraints: 72738196 ***.  68517 ms
+		FSMAdv: increased 1.1M (igc: 500k)
+		DisAdv: increased 2.9M (igc: 368k) more room to cut
+		ComputeSig: 263k
 

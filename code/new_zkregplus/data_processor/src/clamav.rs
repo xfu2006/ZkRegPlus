@@ -993,7 +993,7 @@ impl ClamavSig{
 	pub fn accepts_approx_pm_bounds(&self, hs: &HashMap<String, Vec<usize>>,
 		hs_igc: &HashMap<String, Vec<usize>>, fname: &str)
 	-> (TriVal, Option<DischargeSigInfo>){
-		let mut b_debug = true;
+		let mut b_debug = false;
 		let debug_sig = "Win.Packed.Gandcrab-6911085-1";
 		b_debug = b_debug && format!("{}",debug_sig) == self.name;
 		if b_debug {

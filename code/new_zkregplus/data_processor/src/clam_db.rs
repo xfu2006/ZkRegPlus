@@ -1512,6 +1512,7 @@ impl <F:PrimeField> ClamavDB<F>{
 	{
 		//1. generate tuples to insert for each sig, and subsig object
 		let b_debug = false;
+		let b_debug_subsig = true;
 		let store_items = selected_sigs.par_iter().map(|s|{
 			let sig_id = sig_to_id.get(&s.name)
 				.expect(&format!("can't find sig: {}", s.name));
@@ -1523,6 +1524,10 @@ impl <F:PrimeField> ClamavDB<F>{
 				let subsig_id = acdfa.gen_subsig_id(*sig_id, i+1);
 				if b_debug{
 					println!("DEBUG USE 6101: add: SIG_ID: {}, igc: {}, subsig_id: {}, details:{} ", sig_id, s.vec_subsig_obj[i].b_ignore_case, subsig_id, s.vec_subsig_obj[i].value);
+				}
+				let subsig_id_to_watch = 123331;
+				if b_debug_subsig && subsig_id==subsig_id_to_watch{
+					println!("DEBUG USE 9101: add: SIG_ID: {}, igc: {}, subsig_id: {}, details:{} ", sig_id, s.vec_subsig_obj[i].b_ignore_case, subsig_id, s.vec_subsig_obj[i].value);
 				}
 
 				//2. retrieve the words from the pattern.

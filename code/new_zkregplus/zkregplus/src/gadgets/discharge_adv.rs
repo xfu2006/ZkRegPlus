@@ -12,6 +12,9 @@ use rayon::iter::{IntoParallelRefIterator,ParallelIterator,IntoParallelIterator
 use std::{rc::{Rc},cell::{RefCell},collections::{HashMap}};
 use ark_ff::{PrimeField,Zero};
 use std::{marker::{PhantomData},collections::{HashSet}};
+
+use utils::{logger::{log_perf, LOG1}, 
+	timer::Timer as GTimer};
 use crate::gadgets::{
 	commons::{gen_m_table,check_arr_eq,encode_cols,decode_cols,new_var,
 		var_to_lb, is_zero_better, 
@@ -797,6 +800,7 @@ impl <F:PrimeField> StepQueue<F>{
 		b_subsig: bool, 
 		subsig_store_info: &SubsigStepStore,
 	)->Result<Rc<RefCell<Container<F>>>, Error>{
+		let b_debug = true;
 		#[cfg(test)] { assert!(is_sorted(&self.subsigs)); }
 		assert!(!b_inp || !b_oup); //b_inp and b_oup cannot be on the same time
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
@@ -840,6 +844,10 @@ impl <F:PrimeField> StepQueue<F>{
 				//pats_expansion_rate.
 				//scale up due to vec_size() adjustment
 				let new_pats_expansion_rate= (( ((vec_encoded.len()+1) as f32)/(n as f32) * (self.capacity.pats_expansion_rate as f32)) as usize) + 1;
+				if b_debug{
+					println!("DEBUG USE 9002: to throw pats_expansion_rate ERROR on Step_Queue in discharge_adv. DUMP of data");
+					self.dump();
+				}
 				return Err(Error::CapErr(vec![(format!("dis_adv::pats_expansion_rate, b_igc: {}", self.b_igc), new_pats_expansion_rate)]));
 			}
 		}
@@ -1060,6 +1068,7 @@ impl <F:PrimeField> StepFwdPrf<F>{
 		subsig_store_info: &SubsigStepStore
 	) ->Result<Rc<RefCell<Container<F>>>, Error>{
 		//0. check data
+		let b_debug = true;
 		#[cfg(test)] { assert!(is_sorted(&self.subsigs)); }
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, _one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
@@ -1129,6 +1138,10 @@ impl <F:PrimeField> StepFwdPrf<F>{
 		let n = self.vec_size();
 		if n<v2d[0].len()+1{
 			let new_val = (v2d[0].len()+1)*10000/(self.capacity.max_nibble_len*self.capacity.basis_pats_in_trace) + 1;
+			if b_debug{
+				println!("DEBUG USE 9003: to throw pats_expansion_rate ERROR on StepFwdProof in discharge_adv. DUMP of data");
+				self.dump();
+			}
 			return Err(Error::CapErr(vec![(format!("dis_adv::pats_expansion_rate, b_igc: {}", self.b_igc), new_val)]));
 		}
 		assert!(n>=v2d[0].len()+1, "buf too small, adjust pats_expansion_rate. n: {}, v2dlen: {}", n, v2d[0].len());
@@ -1371,6 +1384,7 @@ impl <F:PrimeField> StepBwdPrf<F>{
 	///    dst_rg_start, dst_rg_end, dst_loc, pat_id, diff1, diff2)
 	/// might throw CapErr("dis_adv::pats_expansion_rate")
 	pub fn to_container(&self, name: &str, subsig_store_info: &SubsigStepStore)->Result<Rc<RefCell<Container<F>>>,Error>{
+		let b_debug = true;
 		//0. check data
 		#[cfg(test)] { assert!(is_sorted(&self.subsigs)); }
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
@@ -1422,6 +1436,10 @@ impl <F:PrimeField> StepBwdPrf<F>{
 		let n = self.vec_size();
 		if n<v2d[0].len()+1{
 			let new_val= (v2d[0].len()+1)*10000/(self.capacity.max_nibble_len*self.capacity.basis_pats_in_trace) + 1;
+			if b_debug{
+				println!("DEBUG USE 9005: to throw pats_expansion_rate ERROR on StepBwdProof in discharge_adv. DUMP of data");
+				self.dump();
+			}
 			return Err(Error::CapErr(vec![(format!("dis_adv::pats_expansion_rate, b_igc: {}", self.b_igc), new_val)]));
 		}
 		assert!(n>=v2d[0].len()+1, "buf too small for StepBwdPrf, adjust compress_ratio in vec_size() first, and then the pats_expansion_rate in capacity");
@@ -2128,6 +2146,8 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 	)->Result<(Rc<RefCell<Container<F>>>, StepQueue<F>), Error>{
 		let b_debug = false;
 		let res = Container::<F>::new("fwd_steps_queue");
+		let mut t1 = GTimer::new();
+		let b_perf = true;
 		//0. Generate the logical data:
 		// from inp_step_queue generate the to_add, merged_result, 
 		// and the fwd prf. Add them to container
@@ -2171,12 +2191,14 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		//------------------------------------------------------------------
 		//--- now argue that the generated step_queue and fwd_prf are correct
 		//------------------------------------------------------------------
+		if b_perf{log_perf(LOG1, "-- -- gen_fwd step0", &mut t1);}
 		//1. prove the sq_inp + sq_to_add = sq_res
 		let prf = Container::new("prf");
 		//1. prove inp_queue + to_add = sq_res
 		let prf_union = Self::gen_step_queue_union_prf("prf_union",
 			&ct_sq_inp, &ct_sq_to_add, &ct_sq_res);
 		prf.borrow_mut().add_container(prf_union);
+		if b_perf{log_perf(LOG1, "-- -- gen_fwd step1", &mut t1);}
 
 		//2. prove that sq_inp has the same structure of the store_steps.
 		// This part is SKIPPED, as we have the new DB to bind
@@ -2194,12 +2216,14 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		let prf_to_add_valid = Self::gen_to_add_valid_prf("prf_to_add",
 			&ct_sq_to_add, &prf_fwd);
 		prf.borrow_mut().add_container(prf_to_add_valid);
+		if b_perf{log_perf(LOG1, "-- -- gen_fwd step2-3", &mut t1);}
 
 		//4. prove the validity of the fwd_prf
 		let prf_fwdprf_valid = Self::gen_fwdprf_valid_prf("prf_fwdprf_valid",
 			&prf_fwd, &ct_pat_loc, &ct_sq_res, capacity)?;
 			//might throw CapErr on subsigs, just forward it
 		prf.borrow_mut().add_container(prf_fwdprf_valid);
+		if b_perf{log_perf(LOG1, "-- -- gen_fwd step4", &mut t1);}
 
 		// --- now return 
 		res.borrow_mut().add_container(prf);
@@ -2227,6 +2251,8 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		// Add them to container
 		let res = Container::<F>::new("bwd_steps_queue");
 		let b_debug = false;
+		let mut t1 = GTimer::new();
+		let b_perf = true;
 		let (sq_to_del, sq_res, bwd_prf) = input_step_queue.gen_backward_prf();
 
 		if b_debug{
@@ -2252,6 +2278,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		res.borrow_mut().add_container(ct_sq_res2.clone());
 		res.borrow_mut().add_container(bwd_prf.to_container("prf_bwd", 
 			subsig_store_info)?);
+		if b_perf{log_perf(LOG1, "-- -- gen_bwd step0", &mut t1);}
 
 
 		//------------------------------------------------------------------
@@ -2262,6 +2289,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		let prf_union = Self::gen_step_queue_union_prf("prf_union",
 			&ct_sq_res2, &ct_sq_to_del, &ct_fwd_res);
 		prf.borrow_mut().add_container(prf_union);
+		if b_perf{log_perf(LOG1, "-- -- gen_bwd step1", &mut t1);}
 
 		//2. no need to argume for the sq_inp conforms to store_steps
 		//as we are working on existing fwd prfs
@@ -2272,11 +2300,13 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		let prf_to_del_valid = Self::gen_to_del_valid_prf("prf_to_del",
 			&ct_sq_to_del, &prf_bwd);
 		prf.borrow_mut().add_container(prf_to_del_valid);
+		if b_perf{log_perf(LOG1, "-- -- gen_bwd step2-3", &mut t1);}
 
 		//4. prove the validity of the bwd_prf
 		let prf_bwdprf_valid = Self::gen_bwdprf_valid_prf("prf_bwdprf_valid",
 			&prf_bwd, &ct_sq_res2);
 		prf.borrow_mut().add_container(prf_bwdprf_valid);
+		if b_perf{log_perf(LOG1, "-- -- gen_bwd step4", &mut t1);}
 
 		// --- now return 
 		res.borrow_mut().add_container(prf);
@@ -3755,7 +3785,7 @@ pub mod tests_discharge_adv_gadget{
 			acdfa_state_part_bits: state_bits, 
 			subsigs: 4,
 			avg_pats_per_subsig: 4,
-			basis_pats_in_trace: 27*100, 
+			basis_pats_in_trace: 25*100, 
 			basis_unique_states: 20*100,
 			basis_acc_states: 15*100,
 		};

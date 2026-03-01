@@ -10,6 +10,7 @@ following:
   DFAGadgetMapper (optional): component mapper
 */
 
+use utils::{logger::{log_perf, LOG1 }, timer::Timer};
 use std::any::{Any};
 use folding_schemes::{
 	Error,
@@ -482,6 +483,8 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
 		r_prev_adv: Option<Rc<dyn NdAdvice>>)
 		->Result<Rc<dyn NdAdvice>, Error>{
+		let b_perf = true;
+		let mut t1 = Timer::new();
 		let vec_prev_adv = if r_prev_adv.is_some(){
 			r_prev_adv.unwrap().as_any().downcast_ref
 				::<CompositeAdvice>().expect("downcast err")
@@ -512,6 +515,8 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadg
 			}
 		).collect::<Vec<Vec<Rc<dyn NdAdvice>>>>().concat();
 		assert!(vec_errs.len() + vec_adv.len() == res.len());
+
+		if b_perf{ log_perf(LOG1, "Generate Advice", &mut t1); }
 	
 		if vec_errs.len()>0{ Err(Error::CapErr(vec_errs)) } else{
 			Ok(Rc::new(CompositeAdvice{vec_adv}))

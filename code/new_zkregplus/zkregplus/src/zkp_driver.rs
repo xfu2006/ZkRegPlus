@@ -1082,6 +1082,8 @@ pub mod tests_zkp_driver{
 	/// COST: stmt_len: 12.7M => all_w_e = 42M => circ1 100M R1CS
 	/// prove_step: 39 sec
 	/// if using max_word 512 *8 (128kb) => it's 21M. prove_step: 60 sec
+	/// IMPROVEC COST: after applying the tricks of separating
+	///    igc and cs. stmt_len: 10M, all_w_e: 33M => circ1 72M R1CS
 	#[allow(dead_code)]
 	fn full_data3<F:PrimeField>(b_check_lkup: bool){
 		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
@@ -1104,7 +1106,7 @@ pub mod tests_zkp_driver{
 		let pats_expansion_rate = 1;
         //let avg_subsig_per_sig = 3;
 
-
+		let shrink=8;
 		let init_cp_cap= CpCapacity{
 			max_word_len: max_word, 
 			basis_unique_states,
@@ -1124,9 +1126,27 @@ pub mod tests_zkp_driver{
 			basis_acc_states,
 		);
 		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
+	   let init_cp_cap_igc= CpCapacity{
+            max_word_len: max_word,
+            basis_unique_states,
+            subsigs: subsigs/2,
+            avg_pats_per_subsig,
+            //avg_subsig_per_sig,
+        };
+        let init_sed_cap_igc= SedCapacity::new(
+            max_word, RANGE2_BIT, subsigs,
+            avg_pats_per_subsig,
+            avg_active_pats_per_subsig,
+            basis_pats_in_trace/shrink,
+            pats_expansion_rate,
+            sigs/shrink,
+            perc_comp_subsigs,
+            basis_unique_states,
+            basis_acc_states/shrink,
+        );
 
 
-		zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
 			&format!("{}/main.dat",set1), //src sig
 			&format!("{}/binexec_3.dat",set1), //list of files to discharge
 			"data/debug/full_data_set/reports/report2.dat", //report
@@ -1140,6 +1160,8 @@ pub mod tests_zkp_driver{
 			&init_cp_cap,
 			&init_sed_cap,
 			&init_dfa_cap,
+			&init_cp_cap_igc,
+			&init_sed_cap_igc,
 			num_category,
 			num_circs_per_category,
 			b_check_lkup
@@ -1170,11 +1192,11 @@ pub mod tests_zkp_driver{
         let num_category = 1;
         let num_circs_per_category= 1;
         let basis_unique_states = 2000; //15 cpercent
-        let basis_acc_states = 12000; //9 cpercent
-        let basis_pats_in_trace = 18000; //old value 100 cur value 1/1000.
+        let basis_acc_states = 1200; //9 cpercent
+        let basis_pats_in_trace = 1440; //old value 100 cur value 1/1000.
         let dfa_sigs = 6;
         let dfa_subsigs= 6;
-		let pats_expansion_rate = 1;
+		let pats_expansion_rate = 4;
         //let avg_subsig_per_sig = 3;
 
 
@@ -1197,12 +1219,31 @@ pub mod tests_zkp_driver{
 			basis_acc_states,
 		);
 		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
+	   let shrink = 8; 
+	   let init_cp_cap_igc= CpCapacity{
+            max_word_len: max_word,
+            basis_unique_states,
+            subsigs: subsigs/2,
+            avg_pats_per_subsig,
+            //avg_subsig_per_sig,
+        };
+        let init_sed_cap_igc= SedCapacity::new(
+            max_word, RANGE2_BIT, subsigs,
+            avg_pats_per_subsig,
+            avg_active_pats_per_subsig,
+            basis_pats_in_trace/shrink,
+            pats_expansion_rate,
+            sigs/shrink,
+            perc_comp_subsigs,
+            basis_unique_states,
+            basis_acc_states/shrink,
+        );
 
 		//just test one at a time
-		let min = 0; //0
-		let max = 1; //6
+		let min = 2; //0
+		let max = 3; //6
 		for id in min..max{
-			zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+			zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
 				&format!("{}/main.dat",set1), //src sig
 				&format!("{}/binexec_4_{}.dat",set1, id+1), //list of files to discharge
 				"data/debug/full_data_set/reports/report2.dat", //report
@@ -1216,6 +1257,8 @@ pub mod tests_zkp_driver{
 				&init_cp_cap,
 				&init_sed_cap,
 				&init_dfa_cap,
+				&init_cp_cap_igc,
+				&init_sed_cap_igc,
 				num_category,
 				num_circs_per_category,
 				b_check_lkup
@@ -1227,11 +1270,12 @@ pub mod tests_zkp_driver{
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
 		//small_data::<Fr>(b_check_lkup); //small data
-		small_data2::<Fr>(b_check_lkup);  //10k data 
+		//small_data2::<Fr>(b_check_lkup);  //10k data 
 		//small_data_debug::<Fr>(b_check_lkup);  //for debug
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//full_data1::<Fr>(b_check_lkup);
 		//full_data2::<Fr>(b_check_lkup); //full data high acc state 
 		//full_data3::<Fr>(b_check_lkup); //full data large file
+		full_data4::<Fr>(b_check_lkup); //full data large file
 	}
 }
