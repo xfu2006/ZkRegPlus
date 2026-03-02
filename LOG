@@ -25927,6 +25927,12 @@ Goal 8. improve gen_backward_prf
 		this last_loc
 	[c] in gen_backward_steps_queue_combo pass this default_min_loc
 	[d] in validate_backward_steps_queue_combo pass this default_min_loc
+	[e] read the gen_bwdprf_valid_prf
+		-> prove sq res is sorted
+		-> do a data set 	
+	[f] read validate_bwdprf_valid_prf
+
+-- TODO -- need to set up bwd_prf to check the validate_bwdprf_valid_prf.
 
 -- TODO -- imporve gen_step_queue_union_prf
 

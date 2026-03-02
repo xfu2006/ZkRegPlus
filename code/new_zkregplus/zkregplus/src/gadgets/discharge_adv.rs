@@ -633,9 +633,13 @@ impl <F:PrimeField> StepQueue<F>{
 	///of the subsig. (Thus each subsig has at least one level 0 record
 	/// in the final step-queue after elimination even if it has no real
 	/// entries in step queue).
+	/// last_loc is used as the default value for min_loc if
+	/// one step queue item does not have any locs in it at all
+	/// so that it can be used for backward elimination of locs in
+	/// prev steps that have "no possiblity" to derive next step locs.
 	///
 	/// Return: <ToRemove, Result, StepBwdPrf>
-	pub fn gen_backward_prf(&self) ->(Self, Self, StepBwdPrf<F>){
+	pub fn gen_backward_prf(&self, last_loc: F) ->(Self, Self, StepBwdPrf<F>){
 		//1. init data
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, _one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
@@ -670,7 +674,7 @@ impl <F:PrimeField> StepQueue<F>{
 				let (_rg_start,rg_end) = (vec_res[j].rg_start, 
 					vec_res[j].rg_end); //retrieve the fresh LAST result
 				let min_loc = vec_res[j].locs.iter().map(|l| *l).min().
-					map_or(F::zero(), |x| x); //note that when j=0
+					map_or(last_loc, |x| x); //note that when j=0
 						//vec_res[j] is vec![items[steps-1]].
 						//see how vec_res is initialized.
 
@@ -1343,7 +1347,7 @@ impl <F:PrimeField> StepFwdPrfItem<F>{
 impl <F:PrimeField> StepBwdPrfItem<F>{
 	/// src_encoded: encoding of (subsig, step, loc, rg_start, rg_end)
 	/// min_loc the minimum loc of src_encoded, if no locs available, it's
-	/// 0. previous_encoded can be inferred.
+	/// the given last_loc in pat_loc. previous_encoded can be inferred.
 	/// locs_to_del is the vector of locations to be deleted
 	/// for the PREVIOUS step.
 	pub fn new(src_encoded: F, src_min_loc: F, prev_encoded: F,
@@ -1625,7 +1629,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		//as we have info encoded in lkup table StoreSteps.
 
 		//2. construct 1st (forward) step-queue
-		let (forward_step_queue, sq_fwd) = Self::gen_forward_steps_queue_combo(
+		let (forward_step_queue, sq_fwd, last_loc) = Self::gen_forward_steps_queue_combo(
 			b_igc, offset_fsm,
 			&inp_subsigs, pat_loc, inp_step_queue, fsm_id, &capacity,
 			subsig_store_info)?;
@@ -1636,7 +1640,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		//3. construct 2nd (backward) step-queue
 		let backward_step_queue = Self::gen_backward_steps_queue_combo(
 			b_igc,
-			&sq_fwd, &ct_fwd_sq, subsig_store_info)?;
+			&sq_fwd, &ct_fwd_sq, subsig_store_info, last_loc)?;
 		stmt_container.borrow_mut().add_container(backward_step_queue);
 
 		Ok(Self{capacity: Clone::clone(capacity), fsm_id,
@@ -1868,6 +1872,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 	/// wrapping entries with the query).
 	///
 	/// might throw CapErr: dis_adv::subsigs
+	/// return the prf container and last_loc
 	#[allow(dead_code)]
 	fn gen_fwdprf_valid_prf(
 		prf_name: &str,
@@ -1875,7 +1880,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		pat_loc: &Rc<RefCell<Container<F>>>,
 		sq_res: &Rc<RefCell<Container<F>>>,
 		capacity: &DischargeAdvCapacity,
-	)->Result<Rc<RefCell<Container<F>>>, Error>{
+	)->Result<(Rc<RefCell<Container<F>> >,F), Error>{
 		//0. data retrieval
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
@@ -1984,6 +1989,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			.unwrap().borrow().to_vec();
 		let loc = pat_loc.borrow().get_container("sorted_val")
 			.unwrap().borrow().to_vec();
+		let last_loc = loc[loc.len()-1];
 		let set_pat_in_trace = pat.iter().filter(|p| !p.is_zero())
 			.map(|&p| p).collect::<HashSet<F>>();
 		let set_dst_pat = dst_pat.iter().filter(|p| !p.is_zero())
@@ -2136,7 +2142,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		res.borrow_mut().add_col(Col::new_const(vec![frg;len1],
 			"sid_abs_rg2_max", IDX_SI_DATA));
 
-		Ok(res)
+		Ok( (res, last_loc) )
 	}
 
 	/// The 1st of the 2-step streaming algorithm for producing
@@ -2151,6 +2157,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 	/// in-range locations for the next layer (id+1). 
 	///
 	/// Return: (1) the container of combo, and (2) forward result step queue
+	///, and (2) the LAST locatoin in pat_loc
 	#[allow(dead_code)]
 	fn gen_forward_steps_queue_combo(
 		b_igc: bool,
@@ -2161,7 +2168,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		_fsm_id: u32,
 		capacity: &DischargeAdvCapacity,
 		subsig_store_info: &SubsigStepStore,
-	)->Result<(Rc<RefCell<Container<F>>>, StepQueue<F>), Error>{
+	)->Result<(Rc<RefCell<Container<F>>>, StepQueue<F>, F), Error>{
 		let b_debug = false;
 		let res = Container::<F>::new("fwd_steps_queue");
 		let mut t1 = GTimer::new();
@@ -2237,15 +2244,16 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		if b_perf{log_perf(LOG1, "-- -- gen_fwd step2-3", &mut t1);}
 
 		//4. prove the validity of the fwd_prf
-		let prf_fwdprf_valid = Self::gen_fwdprf_valid_prf("prf_fwdprf_valid",
-			&prf_fwd, &ct_pat_loc, &ct_sq_res, capacity)?;
+		let (prf_fwdprf_valid, last_loc) = 
+			Self::gen_fwdprf_valid_prf("prf_fwdprf_valid",
+				&prf_fwd, &ct_pat_loc, &ct_sq_res, capacity)?;
 			//might throw CapErr on subsigs, just forward it
 		prf.borrow_mut().add_container(prf_fwdprf_valid);
 		if b_perf{log_perf(LOG1, "-- -- gen_fwd step4", &mut t1);}
 
 		// --- now return 
 		res.borrow_mut().add_container(prf);
-		Ok( (res, sq_res) )
+		Ok( (res, sq_res, last_loc) )
 	}
 
 	/// The second of the 2-step streaming algorithm for producing
@@ -2263,6 +2271,9 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		input_step_queue: &StepQueue<F>,
 		ct_fwd_res: &Rc<RefCell<Container<F>>>,
 		subsig_store_info: &SubsigStepStore,
+		last_loc: F, //this is the LAST Location of the accepted pat-loc
+				//sequence, used as default min value if one step que
+				//has no error at all, for backward prune
 	)->Result<Rc<RefCell<Container<F>>>, Error>{
 		//0. Generate the logical data:
 		// from inp_step_queue generate the to_del, res, bwd_prf, 
@@ -2271,7 +2282,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		let b_debug = false;
 		let mut t1 = GTimer::new();
 		let b_perf = true;
-		let (sq_to_del, sq_res, bwd_prf) = input_step_queue.gen_backward_prf();
+		let (sq_to_del, sq_res, bwd_prf) = input_step_queue.gen_backward_prf(last_loc);
 
 		if b_debug{
 			println!("========== DEBUG USE 301: igc: {}, inp_step_queue (fwd_res): ", b_igc);
@@ -2322,7 +2333,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 
 		//4. prove the validity of the bwd_prf
 		let prf_bwdprf_valid = Self::gen_bwdprf_valid_prf("prf_bwdprf_valid",
-			&prf_bwd, &ct_sq_res2);
+			&prf_bwd, &ct_sq_res2, last_loc);
 		prf.borrow_mut().add_container(prf_bwdprf_valid);
 		if b_perf{log_perf(LOG1, "-- -- gen_bwd step4", &mut t1);}
 
@@ -2387,31 +2398,55 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 
 	/// prove the validity of prf_bwd. Mainly it shows that
 	/// (1) validity of min_loc (take the 1st 
-	///    loc from the sq_res and show that sq_res loc is sorted
+	///    non-dummy loc from the sq_res and show that sq_res loc is sorted
 	///    This needs that we prove that sq_res is sorted in ascending
 	///     order in its encoded key. As encoded is the encoding of
 	///     (subsig, step, ....). It implies it's also sorted by subsig.
+	///   When there is no entry for a (subsig-step), then the 
+	///   last_loc is used as the min_loc, as this is the min_loc
+	///   for future entries (to be generated in future subsegment)
 	/// (2) prev_loc + rg2 < min_loc (which invlidates the prev_loc),
-	///    so that there in the future ll be no subsequent loc for
+	///    so that there in the future there willll be no subsequent loc for
 	///    prev_loc
 	#[allow(dead_code)]
 	fn gen_bwdprf_valid_prf(
 		prf_name: &str,
 		prf_bwd: &Rc<RefCell<Container<F>>>,
 		sq_res: &Rc<RefCell<Container<F>>>,
+		last_loc: F, //last loc in pat-loc of this batch (segment of word)
+				//this serves as the "default" min-loc when there is
+				//no min-loc for a subsig-step.
 	)->Rc<RefCell<Container<F>>>{
 		//0. data retrieval
+		let b_debug = true;
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
-		let (zero, one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
+		let (zero, one, _max) = (F::zero(), F::one(), 
+			F::from(max_val as u32));
 		let res = Container::new(prf_name);
 		let names = vec![
 			"src_encoded", "src_step", 
 			"src_pat", "src_min_loc", "src_rg_end",
 			"prev_encoded", "loc_to_del"
-		];
+		]; //note src_min_loc is ALREADY correctly marked as last_loc
+			//earlier in gen_backward_prf when subsig-step has no
+			//entry in sq-res
 		let v2d= names.iter().map(|n|{
 			prf_bwd.borrow().get_container(n).unwrap().borrow().to_vec() 
 		}).collect::<Vec<Vec<F>>>();
+		if b_debug{
+			println!("DEBUG USE 6501 --- prf_bwd ----\n");
+			println!("senc\tsrc_step\tsrc_pat\tsrc_min_loc\ts_rg-end\tprevenc\tloc_to_del");
+			for i in 0..v2d[0].len(){
+				println!("{}\t{}\t{}\t{}\t{}\t{}\t{}",
+					v2d[0][i],
+					v2d[1][i],
+					v2d[2][i],
+					v2d[3][i],
+					v2d[4][i],
+					v2d[5][i],
+					v2d[6][i]);
+			}
+		}
 		let (
 			_src_encoded, _src_step,
 			_src_pat, src_min_loc, src_rg_end,
@@ -2442,18 +2477,36 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			sq_res.borrow().get_container(n).unwrap().borrow().to_vec()
 		).collect::<Vec<Vec<F>>>();
 		#[cfg(test)]{ assert!(is_sorted(&rescols[0])); }
+		if b_debug{
+			println!("DEBUG USE 6502 --- res cos --------");
+			println!("encoded\tstep\tlocs\tsubsig");
+			for i in 0..rescols[0].len(){
+				println!("{}\t{}\t{}\t{}", 
+					rescols[0][i],
+					rescols[1][i],
+					rescols[2][i],
+					rescols[3][i]
+				);
+			}
+		}
 
 		//3.1 prove that subsig is sorted
+		//we compute difference bewteen each pair entries and
+		//the sid_diff_subsig proves that they are valid positive numbers
+		//or 0, thus proving it's sorted.
 		let diff_subsig = (0..rescols[3].len()-1).into_par_iter().map(|i|{
 			rescols[3][i+1] - rescols[3][i] 
 		}).collect::<Vec<F>>();
 		let len2 = diff_subsig.len();
 		#[cfg(test)]{ check_rg2(&diff_subsig, &vec![frg;diff_subsig.len()]); }
-		res.borrow_mut().add_col(Col::new(diff_subsig, "diff_subsig", IDX_DATA));
+		res.borrow_mut().add_col(Col::new(diff_subsig, 
+			"diff_subsig", IDX_DATA));
 		res.borrow_mut().add_col(Col::new_const(vec![frg;len2], 
 			"sid_diff_subsig", IDX_SI_DATA));
 
 		//3.2 prove that step is sorted per subsig
+		//sel is used to disable the check when
+		//a new subsig emerges in the table.
 		let sel = (0..rescols[3].len()).into_par_iter().map(|i|{
 			if i==0 {zero} else{
 				if rescols[3][i]!=rescols[3][i-1] {zero} else {one}
@@ -2487,13 +2540,13 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		res.borrow_mut().add_col(Col::new_const(vec![frg;len1], 
 			"sid_diff_loc", IDX_SI_DATA));
 
-
-		
-		//4. prove the min_loc is the first loc in sq_res
-		// it's basically a lkup.
-		// src_combined: encoded-step-min_loc
-		// dst_combined: encoded-step-loc and selected by if it
-		//    is the very first effective entry of each encoded-step
+		//4. prove the min_loc is the first non-negative first loc in sq_res 
+		// for each (subsig-step); otherwise, if no such entry exists
+		// for a subsig-step, then min_loc is equal to last_loc
+		// It's basically a lkup.
+		// src_combined: (encoded-step)-min_loc
+		// dst_combined: (encoded-step)-loc and selected by if it
+		//    is the very first non-dummy entry of each encoded-step
 		//    (relying on the fact that the table
 		//    is sorted in encoded, thus (subsig-step)). 
 		let src_combined= encode_cols(&v2d, &vec![0,1,3]);
@@ -2507,8 +2560,10 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 				if rescols[0][i-1] != rescols[0][i] {one} else {zero}
 			}
 		}).collect::<Vec<F>>();
+		//dst_adj[i] is the first non-dummy entry or last loc
+		//case 1: dst_sel is 1: 
 		let dst_adj = dst_combined.par_iter().zip(dst_sel.par_iter())
-			.map(|(&x,&y)| x*y).collect::<Vec<F>>();
+			.map(|(&x,&y)| x*y ).collect::<Vec<F>>();
 		let mtb_src = gen_m_table(&src_combined, &dst_adj);
 		let len1 = mtb_src.len();
 		res.borrow_mut().add_col(Col::new(mtb_src, "mtb_min_loc", IDX_DATA));
@@ -2663,13 +2718,14 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 	///               ratio_pats_trace < 1%, nlen = 128k=>  1k
 	///               should take max=>subsigs * avg_pat_subsig = 8k
 	/// COST: 59*n1 
+	/// RETURN the last_loc
 	#[allow(dead_code)]
 	fn validate_forward_step_queue(&self, 
 		forward_step_q: &Container<FpVar<F>>, 
 		r1: FpVar<F>,
 		r2: FpVar<F>,
 		cs: ConstraintSystemRef<F>
-	) ->Result<(), SynthesisError>{
+	) ->Result<FpVar<F>, SynthesisError>{
 		let b_perf = false;
 		let mut nc = cs.num_constraints();
 		let nc0 = cs.num_constraints();
@@ -2721,7 +2777,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		//4. validate the prf_fwd
 		//COST: 37*n1 
 		let prf_fwdprf_valid = prf.borrow().get_container("prf_fwdprf_valid")?;
-		self.validate_fwdprf_valid_prf(&ct_prf_fwd, 
+		let last_loc = self.validate_fwdprf_valid_prf(&ct_prf_fwd, 
 			&ct_sq_res, &ct_pat_loc,
 			&r1, &r2, &prf_fwdprf_valid)?;
 		if b_perf {
@@ -2731,7 +2787,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 				cs.num_constraints()-nc0);
 		}
 
-		Ok( () )
+		Ok( last_loc )
 	}
 
 	/// validate the proof for q1 + q2 = q3
@@ -2867,6 +2923,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 	/// Validate that the prf_fwd is wellformed (e.g., encoded corresponds
 	/// to the right subsig-pat-rg info), and diff1/diff2 are generated
 	/// correctly (for asserting the correct query result from pat-loc)
+	/// returns last_loc
 	#[allow(dead_code)]
 	fn validate_fwdprf_valid_prf(&self,
 		prf_fwd: &Rc<RefCell<Container<FpVar<F>>>>,
@@ -2875,7 +2932,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		r1: &FpVar<F>,
 		_r2: &FpVar<F>,
 		prf_fwdprf_valid: &Rc<RefCell<Container<FpVar<F>>>>,
-	)->Result<(), SynthesisError>{
+	)->Result<FpVar<F>, SynthesisError>{
 		//0. retrieve data
 		let cs = r1.cs(); 
 
@@ -2984,6 +3041,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 				.unwrap().borrow().to_vec()
 			).collect::<Vec<Vec<FpVar<F>>>>();
 		let (pat, pat_id, loc) = (&pat_cols[0], &pat_cols[1], &pat_cols[2]); 
+		let last_loc = loc[loc.len()-1].clone();
 		let _nsp_names = ["nsp", "nsp_p1", "p2_nsp"];
 		//let sid_nsp_p1 = prf_fwdprf_valid.borrow().get_container("sid_nsp_p1")
 		//	.unwrap().borrow().to_vec();
@@ -3261,7 +3319,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 
 		}
 
-		Ok( () )
+		Ok( last_loc )
 	}
 
 	/// validate forward_step_queue combo (info and prf) are valid
@@ -3276,7 +3334,8 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		backward_step_q: &Container<FpVar<F>>, //backward combo 
 		r1: FpVar<F>,
 		r2: FpVar<F>,
-		cs: ConstraintSystemRef<F>
+		cs: ConstraintSystemRef<F>,
+		last_loc: FpVar<F>, //used as the default min_loc
 	) ->Result<(), SynthesisError>{
 		let b_perf = false;
 		let mut nc = cs.num_constraints();
@@ -3321,7 +3380,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		// COST: 16.3*n1 
 		let prf_bwdprf_valid = prf.borrow().get_container("prf_bwdprf_valid")?;
 		self.validate_bwdprf_valid_prf(&ct_prf_bwd, 
-			&ct_sq_res2, &r1, &r2, &prf_bwdprf_valid)?;
+			&ct_sq_res2, &r1, &r2, &prf_bwdprf_valid, last_loc)?;
 		if b_perf {
 			println!(" ### validate backward step 3: {}", cs.num_constraints()-nc);
 			println!(" ### TOTAL validate backward: {}", cs.num_constraints()-nc0);
@@ -3373,6 +3432,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		r1: &FpVar<F>,
 		r2: &FpVar<F>,
 		prf_bwdprf_valid: &Rc<RefCell<Container<FpVar<F>>>>,
+		last_loc: FpVar<F>, //used as min_loc default
 	)->Result<(), SynthesisError>{
 		//0. retrieve data
 		let cs = r1.cs(); 
@@ -3648,15 +3708,16 @@ impl <F:PrimeField> SigmaGadget<F> for DischargeAdvGadget<F>{
 		//3. validate the forward step queue
 		// COST: 59*n1
 		let forward_step_queue= stmt.get_container("fwd_steps_queue")?;
-		self.validate_forward_step_queue(&forward_step_queue.borrow(), 
-			r1.clone(), r2.clone(), cs.clone())?;
+		let last_loc = self.validate_forward_step_queue(
+			&forward_step_queue.borrow(), r1.clone(), r2.clone(), 
+			cs.clone())?;
 
 		//4. validate the backward step queue
 		// COST: 24.5*n1
 		let backward_step_queue= stmt.get_container("bwd_steps_queue")?;
 		self.validate_backward_step_queue(&forward_step_queue.borrow(), 
 			&backward_step_queue.borrow(),
-			r1.clone(), r2.clone(), cs.clone())?;
+			r1.clone(), r2.clone(), cs.clone(), last_loc)?;
 
 		let b_perf = false;
 		if b_perf{
@@ -4176,7 +4237,8 @@ pub mod tests_discharge_adv_gadget{
 			q_type: StepQueueType::Res, b_igc};
 
 		//2. test the backward proof
-		let (to_remove, res, prf) = sq.gen_backward_prf();
+		let last_loc = Fr::from(100u32); //last step's location
+		let (to_remove, res, prf) = sq.gen_backward_prf(last_loc);
 
 		let b_details = true;
 		if b_details{
