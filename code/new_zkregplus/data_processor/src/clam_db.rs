@@ -1513,6 +1513,13 @@ impl <F:PrimeField> ClamavDB<F>{
 		//1. generate tuples to insert for each sig, and subsig object
 		let b_debug = false;
 		let b_debug_subsig = true;
+		let set_subsig_to_debug = vec![
+			"36551681", "36598786", "36556803", "37690369", "36552705", 
+			"37897218", "19382275", "36260869", "19377157", "36260865", 
+			"19191811", "37218306", "37218307", "37218308", "37218309", 
+			"37218310", "37218311", "37214209", "36553731", "36164609", 
+			"35836932", "35442690", "129"
+		].iter().map(|x| format!("{}",x)).collect::<HashSet<String>>();
 		let store_items = selected_sigs.par_iter().map(|s|{
 			let sig_id = sig_to_id.get(&s.name)
 				.expect(&format!("can't find sig: {}", s.name));
@@ -1525,9 +1532,9 @@ impl <F:PrimeField> ClamavDB<F>{
 				if b_debug{
 					println!("DEBUG USE 6101: add: SIG_ID: {}, igc: {}, subsig_id: {}, details:{} ", sig_id, s.vec_subsig_obj[i].b_ignore_case, subsig_id, s.vec_subsig_obj[i].value);
 				}
-				let subsig_id_to_watch = 123331;
-				if b_debug_subsig && subsig_id==subsig_id_to_watch{
-					println!("DEBUG USE 9101: add: SIG_ID: {}, igc: {}, subsig_id: {}, details:{} ", sig_id, s.vec_subsig_obj[i].b_ignore_case, subsig_id, s.vec_subsig_obj[i].value);
+				if b_debug_subsig && 
+				  set_subsig_to_debug.contains(&format!("{}",subsig_id)){
+					println!("DEBUG USE 9101: add: SIG: {}, igc: {}, subsig_id: {}, details:{} ", s.name, s.vec_subsig_obj[i].b_ignore_case, subsig_id, s.vec_subsig_obj[i].value);
 				}
 
 				//2. retrieve the words from the pattern.

@@ -1269,13 +1269,13 @@ pub mod tests_zkp_driver{
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
-		//small_data::<Fr>(b_check_lkup); //small data
+		small_data::<Fr>(b_check_lkup); //small data
 		//small_data2::<Fr>(b_check_lkup);  //10k data 
 		//small_data_debug::<Fr>(b_check_lkup);  //for debug
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//full_data1::<Fr>(b_check_lkup);
 		//full_data2::<Fr>(b_check_lkup); //full data high acc state 
 		//full_data3::<Fr>(b_check_lkup); //full data large file
-		full_data4::<Fr>(b_check_lkup); //full data large file
+		//full_data4::<Fr>(b_check_lkup); //full data large file
 	}
 }

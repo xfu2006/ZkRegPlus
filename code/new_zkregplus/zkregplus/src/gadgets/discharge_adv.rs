@@ -3,6 +3,8 @@
    Further improvement to cut cost and completed: 06/26/2025
    Revision: 11/03/2025. cutting cost on const_var
    Revision: 01/09/2026. add exception support.
+   Revision: 03/01/2026. improve advice generation and
+   	performance.
 */
 //! This gadget is used for discharging subsigs using the streaming alg.
 //! It produces the sigs that discharged.

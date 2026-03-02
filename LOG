@@ -25806,3 +25806,48 @@ Goal 5. continue to collect data full_data3
 		DisAdv: increased 2.9M (igc: 368k) more room to cut
 		ComputeSig: 263k
 
+Sunday 03/01/2026
+Goal 1. import full-data3 spec 
+Goal 2. insert perf analysis code into discharge_adv and collect data
+	[a] push commit
+	[b] analyze data
+	[c] strange Pedersen comm err
+Goal 3. read the discharge_adv code
+	[a] step queue
+	[b] step forward prf item
+	[c] step backward proof
+Goal 4. consider how to improve gen_forward_prf
+Goal 5. new data: 
+	[a] 18563073
+	[b] find the probematic subsigs:
+	-----
+	'36551681': 55775, 
+	'36598786': 28734, 
+	'36556803': 21633, 
+	'37690369': 6412, 
+	'36552705': 5866, 
+	'37897218': 3977, 
+	'19382275': 3931, 
+	'36260869': 3353, 
+	'19377157': 2431, 
+	'36260865': 2134, 
+	'19191811': 1276, 
+	'37218306': 1226, 
+	'37218307': 1226, 
+	'37218308': 1226, 
+	'37218309': 1226, 
+	'37218310': 1226, 
+	'37218311': 1226, 
+	'37214209': 1151, 
+	'36553731': 1136, 
+	'36164609': 877, 
+	'35836932': 379, 
+	'35442690': 235
+
+Monday 03/02/2026
+Goal 1. incorporate code to analyze above signatures and other 
+	debug approaches
+	[a] DEBUG USE 9101
+	[b] test it
+-- TODO -- study these subsigs.
+
