@@ -527,9 +527,6 @@ impl <F:PrimeField> StepQueue<F>{
 		let hm_loc = Self::pat_loc_to_hm(pat_loc);
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
-		let mut stores_to_add = HashMap::new();
-		let mut stores_res = HashMap::new();
-		let mut stores_prf = HashMap::new();
 
 		//2. process each subsig, propagating step by step
 		let tuples = self.subsigs.par_iter().map(|subsig|{ 
@@ -595,16 +592,22 @@ impl <F:PrimeField> StepQueue<F>{
 				//otherwise push the most recent queue_item
 				vec_res.push(cur_q_item);
 			}
-			(subsig.clone(), vec_to_add, vec_res, vec_fwd_prf)
+			
+			((subsig.clone(), vec_to_add),
+			 (subsig.clone(), vec_res),
+			 (subsig.clone(), vec_fwd_prf)
+			)
 		}).collect::<Vec<_>>();
+		let (v1, (v2, v3)): (Vec<_>,(Vec<_>,Vec<_>)) = 
+			tuples.into_iter().map(|(a,b,c)| (a,(b,c))).unzip();
 
 		//2.3 update the stores
-		for t in tuples{
-			let (subsig, vec_to_add, vec_res, vec_fwd_prf) = t;
-			stores_to_add.insert(subsig, vec_to_add);
-			stores_res.insert(subsig, vec_res);
-			stores_prf.insert(subsig, vec_fwd_prf);
-		}
+		let stores_to_add = v1.into_par_iter().map(|t| t)
+			.collect::<HashMap<F,Vec<_>>>();
+		let stores_res = v2.into_par_iter().map(|t| t )
+			.collect::<HashMap<F,Vec<_>>>();
+		let stores_prf = v3.into_par_iter().map(|t| t)
+			.collect::<HashMap<F,Vec<_>>>();
 
 		//3. construct the return
 		let sq_to_add = StepQueue::new(self.subsigs.clone(),
@@ -636,10 +639,6 @@ impl <F:PrimeField> StepQueue<F>{
 		//1. init data
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, _one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
-		let mut stores_to_del= HashMap::new();
-		let mut stores_res = HashMap::new();
-		let mut stores_prf = HashMap::new();
-
 		//2. process each subsig, propagating step by step
 		//for subsig in &self.subsigs{
 		let tuples = self.subsigs.par_iter().map(|subsig|{
@@ -671,7 +670,9 @@ impl <F:PrimeField> StepQueue<F>{
 				let (_rg_start,rg_end) = (vec_res[j].rg_start, 
 					vec_res[j].rg_end); //retrieve the fresh LAST result
 				let min_loc = vec_res[j].locs.iter().map(|l| *l).min().
-					map_or(F::zero(), |x| x);
+					map_or(F::zero(), |x| x); //note that when j=0
+						//vec_res[j] is vec![items[steps-1]].
+						//see how vec_res is initialized.
 
 				//2.2.2 compute to_del
 				let mut to_del = items[i-1].locs.iter().filter(|loc|
@@ -721,16 +722,21 @@ impl <F:PrimeField> StepQueue<F>{
 			let new_vec_res = [	items[0..(n-n2-1)].to_vec(), vec_res].concat();
 			assert!(new_vec_res.len()==items.len());
 
-			(*subsig, vec_to_del, new_vec_res, vec_bwd_prf)
+			((subsig.clone(), vec_to_del), 
+				(subsig.clone(),new_vec_res), 
+				(subsig.clone(),vec_bwd_prf)
+			)
 		}).collect::<Vec<_>>();
+		let (v1, (v2, v3)): (Vec<_>,(Vec<_>,Vec<_>)) = 
+			tuples.into_iter().map(|(a,b,c)| (a,(b,c))).unzip();
+		let stores_to_del= v1.into_par_iter().map(|t| t)
+			.collect::<HashMap<F,Vec<_>>>();
+		let stores_res = v2.into_par_iter().map(|t| t )
+			.collect::<HashMap<F,Vec<_>>>();
+		let stores_prf = v3.into_par_iter().map(|t| t)
+			.collect::<HashMap<F,Vec<_>>>();
 
 		//3. construct the return
-		for t in tuples{
-			let (subsig, vec_to_del, new_vec_res, vec_bwd_prf) = t;
-			stores_to_del.insert(subsig, vec_to_del);
-			stores_res.insert(subsig, new_vec_res);
-			stores_prf.insert(subsig, vec_bwd_prf);
-		}
 		let sq_to_del= StepQueue::new(self.subsigs.clone(),
 			stores_to_del, &self.capacity, StepQueueType::ToDel, self.b_igc);
 		let sq_res = StepQueue::new(self.subsigs.clone(),
@@ -996,6 +1002,7 @@ impl <F:PrimeField> StepQueueItem<F>{
 		locs_available: &Vec<(F,F)>, //query res for available locs for nxt pat 
 	)->(StepQueueItem<F>, StepFwdPrfItem<F>){
 		//0. initial data
+		let b_debug = false;
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (_zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
 
@@ -1004,7 +1011,7 @@ impl <F:PrimeField> StepQueueItem<F>{
 		let vec_locs = locs_available
 			.par_iter().map(|x| x.1).collect::<Vec<F>>();
 		assert!(vec_locs.len()>=2); //it should at least have two dummy entries
-		#[cfg(test)]{
+		if b_debug{
 		 use super::commons::{is_incrementing_by_one};
 	 	 assert!(is_sorted(&vec_locs) && is_incrementing_by_one(&vec_pat_id));
 		}

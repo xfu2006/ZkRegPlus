@@ -25847,7 +25847,86 @@ Goal 5. new data:
 Monday 03/02/2026
 Goal 1. incorporate code to analyze above signatures and other 
 	debug approaches
-	[a] DEBUG USE 9101
-	[b] test it
--- TODO -- study these subsigs.
+	[a] DEBUG USE 9101 for dump of related subsigs
+	[b] verify adding time measurement
+
+Goal 2. implement improved performance
+	[a] fwd prf
+	[b] bwd prf
+	[c] fsm_adv generate advice
+	[b] regress testing
+
+Goal 3. commit performanc eimprovement code and update to server
+	[a] get full_data4 config from server
+	[b] commit and deploy to server
+
+Goal 4. continue to read code
+	[a] gen_step_queue_union_prf
+		-> seems don't need gen_m_table just need 
+			a sipmle grand_product
+Goal 5. study the signatures
+	'36551681': 55775, "Win.Ransomware.Cerber-5970076-0, igc: false, subsig_id: 36551681, details:.*a1........8945..8b0d........894d..c745..........8b55..81c2........8955..c745..........8b45..05e0......8945..8b0d........894d..8b45..3145.*"
+		=> need to check details (this should be removed by back-prf?)
+	'36598786': 28734, "SIG: Win.Exploit.CVE_2017_8558-6331321-0, igc: false, subsig_id: 36598786, details:.*ffffffff.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?33................07000000.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?d1........81..2083b8ed33.*"
+		=> needs to check details (should be handled by existing)
+	'36556803': 21633, "DEBUG USE 9101: add: SIG: Win.Ransomware.Cerber-5970165-0, igc: false, subsig_id: 36556803, details:0>50" 
+	'37690369': 6412, "DEBUG USE 9101: add: SIG: Win.Packed.Gandcrab-6911085-1, igc: false, subsig_id: 37690369, details:.*004d.....................?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?006f.....................?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?0064.....................?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?0075.....................?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?006c.....................?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?0065.....................?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?0033.....................?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?0032.....................?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?0046.....................?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?0069.....................?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?0072.....................?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?0073.....................?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?0074.....................?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?0057.*"
+		=> should also be removed very well.
+	'36552705': 5866, "SIG: Win.Ransomware.Cerber-5970079-0, igc: false, subsig_id: 36552705, details:.*894d..8b55..3155..8b55...?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?.?5dc3.*"
+		=> similar
+	'37897218': 3977,  "SIG: Win.Malware.Eixaacsmcij-6912565-0, igc: false, subsig_id: 37897218, details:.*737b41214d3920.*"
+		=> check if it ever occurs?
+	'19382275': 3931,  "details:.*48....7048....6001000048....680100004885c075..f6....0174.*"
+		=> this should be also easy to remove
+
+Goal 6. check the data of improvement on gen_advice
+	[a] improved gen_advice time from 22 sec to 5 sec
+	[b] most costly: 
+		fsm_packed_trace for cs (408 ms)
+		gen_fwd step0 5572 ms
+	[c] further breakdown and check the data
+	[d] collect_tuples even if parallel still costs a lot of time
+		(8 sec)
+
+Goal 7. read dump of subsig 36551681
+	'36551681': 55775, "Win.Ransomware.Cerber-5970076-0, igc: false, subsig_id: 36551681, details:.*a1........8945..8b0d........894d..c745..........8b55..81c2........8955..c745..........8b45..05e0......8945..8b0d........894d..8b45..3145.*"
+		=> need to check details (this should be removed by back-prf?)
+	(1) pat1: "8945" has 938 occurence
+	between step1 and step2: 55774-942/3 = 335802 = 18277 entries
+	===> but somehow it has 17000 additional entries with much LOWER
+		locations not included in the dump of step: 0
+	===> the largest single thread takes that much time much greater
+		than the other threads.
+		
+
+Goal 7. read the forward proof (especially about the two entries)
+	[a] empty fwd proof item has 2 dummy entries
+	[b] it looks like regardless if there are available next entries
+		or not, a current entry will always generate a proof
+	[c] read the gen_forward_prf1 again
+		-> given range of strat and, using binsearch 
+			to retrieve to_add (for next step) and corresponding
+			proof
+		-> to_add might be empty, prf is NOT (it contains at least 
+			TWO boundary entries)
+	[d] parallel split for both fwd and bwd prf
+	[e] read the gen_fowrard_prf2 again
+		-> so the self.store_items ALREADY have a LOT of
+			items in its LAYER1.
+		-> and because layer2 has NEVER been reached,
+			the backward prf did NOT eliminate any of them.
+		-> but in theory, because each segment already has
+			a last ID, if one seg does NOT have any item
+			at all the min ID should be the starting ID of seg 
+			next seg. so it should actually eliminate the previous ones
+
+Goal 8. improve gen_backward_prf
+	[a] gen_fowrard_steps_queue_combo return the last_loc use this
+		as min_loc when min_loc does not exist
+	[b] in validate_forward_steps_queue_combo similarly returns
+		this last_loc
+	[c] in gen_backward_steps_queue_combo pass this default_min_loc
+	[d] in validate_backward_steps_queue_combo pass this default_min_loc
+
+-- TODO -- imporve gen_step_queue_union_prf
 
