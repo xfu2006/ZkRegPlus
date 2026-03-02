@@ -595,6 +595,8 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		fsm_id: u32) 
 	-> Result<Rc<RefCell<Container<F>>>, Error>{
 		let b_debug = false;
+		let b_perf = true;
+		let mut gt = GTimer::new();
 		let res = Container::<F>::new("fsm_acc");
 		let nlen = capacity.max_nibble_len;
 		assert!(nlen==nibbles.len(), "nlen: {}, nibbles.len: {}", nlen, nibbles.len());
@@ -768,6 +770,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		res.borrow_mut().add_col(col_locs_final);
 		res.borrow_mut().add_col(col_si_locs_final);
 
+		if b_perf{log_perf(LOG1, "-- -- fsm_gen_fsm_combo", &mut gt);}
 
 		Ok(res)
 	}
@@ -1054,6 +1057,9 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 		fsm_id: u32,
 	)->Result<Rc<RefCell<Container<F>>>, Error>{
 		let res = Container::<F>::new("packed_trace");
+		let b_perf = true;
+		let mut gt = GTimer::new();
+
 		//1. retrive (final_states, loc) from fsm_combo
 		let states_final= fsm_acc_combo.borrow()
 			.get_container("states_final").unwrap().borrow()
@@ -1217,6 +1223,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 			_ => pat_loc_tbl
 		}?;
 
+		if b_perf{log_perf(LOG1, "-- -- fsm_packed_trace", &mut gt);}
 		res.borrow_mut().add_container(pat_loc_tbl);
 		Ok( res )
 	}

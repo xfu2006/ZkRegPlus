@@ -1182,7 +1182,7 @@ pub mod tests_zkp_driver{
 		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
 		let b_read_cache = true;
 		let b_write_cache = ! b_read_cache;
-		let set1 = "data/debug/full_data_set/config/"; //for dfa
+        let set1 = "data/debug/full_data_set/config/"; //for dfa
         let max_word= 512 * 4;
         let sigs = 380;
         let subsigs = 560; //220 for prev db
@@ -1192,13 +1192,16 @@ pub mod tests_zkp_driver{
         let num_category = 1;
         let num_circs_per_category= 1;
         let basis_unique_states = 2000; //15 cpercent
-        let basis_acc_states = 1200; //9 cpercent
-        let basis_pats_in_trace = 1440; //old value 100 cur value 1/1000.
+        let basis_acc_states = 1600; //9 cpercent
+        let basis_pats_in_trace = 1920; //old value 100 cur value 1/1000.
+        let basis_acc_states_igc = basis_acc_states ; //9 cpercent
+        let basis_pats_in_trace_igc = basis_pats_in_trace;
+            //old value 100 cur value 1/1000.
         let dfa_sigs = 6;
         let dfa_subsigs= 6;
-		let pats_expansion_rate = 4;
+        let pats_expansion_rate = 4;
+        let pats_expansion_rate_igc = 1;
         //let avg_subsig_per_sig = 3;
-
 
 		let init_cp_cap= CpCapacity{
 			max_word_len: max_word, 
@@ -1219,8 +1222,7 @@ pub mod tests_zkp_driver{
 			basis_acc_states,
 		);
 		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
-	   let shrink = 8; 
-	   let init_cp_cap_igc= CpCapacity{
+ 		let init_cp_cap_igc= CpCapacity{
             max_word_len: max_word,
             basis_unique_states,
             subsigs: subsigs/2,
@@ -1231,12 +1233,12 @@ pub mod tests_zkp_driver{
             max_word, RANGE2_BIT, subsigs,
             avg_pats_per_subsig,
             avg_active_pats_per_subsig,
-            basis_pats_in_trace/shrink,
-            pats_expansion_rate,
-            sigs/shrink,
+            basis_pats_in_trace_igc,
+            pats_expansion_rate_igc,
+            sigs,
             perc_comp_subsigs,
             basis_unique_states,
-            basis_acc_states/shrink,
+            basis_acc_states_igc,
         );
 
 		//just test one at a time

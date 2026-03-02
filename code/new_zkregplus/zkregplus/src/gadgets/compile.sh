@@ -9,8 +9,8 @@ RUST_BACKTRACE=1
 # -------------
 #RUST_BACKTRACE=1 
 #cargo test -- tests_word_extract_adv --show-output --nocapture
-#cargo test -- tests_fsm_adv --show-output --nocapture
-cargo test -- tests_discharge_adv_gadget --show-output --nocapture
+cargo test -- tests_fsm_adv --show-output --nocapture
+#cargo test -- tests_discharge_adv_gadget --show-output --nocapture
 #cargo test -- test_compute_sig_adv --show-output --nocapture
 #cargo test -- test_dfa_adv --show-output --nocapture
 

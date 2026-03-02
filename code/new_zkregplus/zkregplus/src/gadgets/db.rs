@@ -1998,7 +1998,7 @@ pub fn tbl_left_join_wide<F:PrimeField>(
 	}
 	let z = F::zero();
 	key2tuple.insert(z, vec![(z,z,z)]);
-	#[cfg(test)]{
+	if b_debug{
 		let one = F::one();
 		for (_key, t) in &key2tuple{
 			assert!(t[0].1==z); //id starts from 0

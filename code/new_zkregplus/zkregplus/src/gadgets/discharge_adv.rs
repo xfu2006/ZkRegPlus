@@ -532,7 +532,7 @@ impl <F:PrimeField> StepQueue<F>{
 		let mut stores_prf = HashMap::new();
 
 		//2. process each subsig, propagating step by step
-		for subsig in &self.subsigs{
+		let tuples = self.subsigs.par_iter().map(|subsig|{ 
 			//2.1 retrieve ths subsig info
 			let u_subsig = field_to_usize(subsig);
 			let subsig_rec= info.subsig_to_steps.get(&u_subsig).expect(
@@ -595,11 +595,15 @@ impl <F:PrimeField> StepQueue<F>{
 				//otherwise push the most recent queue_item
 				vec_res.push(cur_q_item);
 			}
+			(subsig.clone(), vec_to_add, vec_res, vec_fwd_prf)
+		}).collect::<Vec<_>>();
 
-			//2.3 update the stores
-			stores_to_add.insert(*subsig, vec_to_add);
-			stores_res.insert(*subsig, vec_res);
-			stores_prf.insert(*subsig, vec_fwd_prf);
+		//2.3 update the stores
+		for t in tuples{
+			let (subsig, vec_to_add, vec_res, vec_fwd_prf) = t;
+			stores_to_add.insert(subsig, vec_to_add);
+			stores_res.insert(subsig, vec_res);
+			stores_prf.insert(subsig, vec_fwd_prf);
 		}
 
 		//3. construct the return
@@ -637,7 +641,8 @@ impl <F:PrimeField> StepQueue<F>{
 		let mut stores_prf = HashMap::new();
 
 		//2. process each subsig, propagating step by step
-		for subsig in &self.subsigs{
+		//for subsig in &self.subsigs{
+		let tuples = self.subsigs.par_iter().map(|subsig|{
 			//2.1 set up and verify data 
 			// note that "self" represent the RESULT of the fwd propgation
 			// process.
@@ -716,12 +721,16 @@ impl <F:PrimeField> StepQueue<F>{
 			let new_vec_res = [	items[0..(n-n2-1)].to_vec(), vec_res].concat();
 			assert!(new_vec_res.len()==items.len());
 
-			stores_to_del.insert(*subsig, vec_to_del);
-			stores_res.insert(*subsig, new_vec_res);
-			stores_prf.insert(*subsig, vec_bwd_prf);
-		}
+			(*subsig, vec_to_del, new_vec_res, vec_bwd_prf)
+		}).collect::<Vec<_>>();
 
 		//3. construct the return
+		for t in tuples{
+			let (subsig, vec_to_del, new_vec_res, vec_bwd_prf) = t;
+			stores_to_del.insert(subsig, vec_to_del);
+			stores_res.insert(subsig, new_vec_res);
+			stores_prf.insert(subsig, vec_bwd_prf);
+		}
 		let sq_to_del= StepQueue::new(self.subsigs.clone(),
 			stores_to_del, &self.capacity, StepQueueType::ToDel, self.b_igc);
 		let sq_res = StepQueue::new(self.subsigs.clone(),
