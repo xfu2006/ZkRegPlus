@@ -2490,8 +2490,9 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		prf_name: &str,
 		prf_bwd: &Rc<RefCell<Container<F>>>,
 		sq_res: &Rc<RefCell<Container<F>>>,
-		_default_min_loc: F, //default min_loc for pruning back
+		default_min_loc: F, //default min_loc for pruning back
 		subsig_store_info: &SubsigStepStore,
+		capacity: &DischargeAdvCapacity,
 	)->Rc<RefCell<Container<F>>>{
 		//0. data retrieval
 		let b_debug = true;
@@ -2632,15 +2633,44 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		//        has multiple steps, we need to somehow run a condition selector
 		//       to retrieve a min-loc (this is not the case for tbl2
 		//       as one subsig has only one rec).
-		// 4.1 create sql_res_tbl2
+		// 4.1 create sql_res_tbl2 (we call it rescols2 - simulating
+		// the structure of rescols
+		let mut rescols2 = vec![vec![]; 4];
+		let mut last_subsig = F::zero();
+		let mut last_step = F::zero();
+		for i in 0..rescols[3].len() {
+			let subsig = rescols[3][i];
+			let step = rescols[1][i];
+			if subsig != last_subsig {
+				if !last_subsig.is_zero() {
+					let u_subsig = field_to_usize(&last_subsig);
+					let info = subsig_store_info.subsig_to_steps.get(&u_subsig).unwrap();
+					let max_steps = info.vec_pm_bounds.len() - 1;
+					let u_last_step = field_to_usize(&last_step);
+					if u_last_step < max_steps {
+						let next_step = u_last_step + 1;
+						let item = StepQueueItem::from_subsig_store_item(info, next_step, last_subsig, vec![default_min_loc]);
+						rescols2[0].push(item.encoded);
+						rescols2[1].push(item.step);
+						rescols2[2].push(item.locs[0]);
+						rescols2[3].push(item.subsig);
+					}
+				}
+				last_subsig = subsig;
+			}
+			last_step = step;
+		}
 
-		// TASK1. do not remove this comment.
-		// for each subsig in the rescols, retrieve the information
-		// subsig_store about this subsig, check if the max step of that
-		// subsig in rescols is less than the vec_bounds length.
-		// If yes, insert a row similar to the structure of rescol.
-		// This forms a similar structure as rescol, and name it rescol2. 
+		//TASK1. Keep this task specification.
+		//insert capacity: &DischargeAdvCapacity as the last parameter
+		//of this function, and propagate changes necesarily so that
+		//it compiles.
 
+		//TASK2. based on capacity.subsigs, expand the size (each column
+		//length) to capacity.subsigs (pad with 0 entry at the BEGINNING).
+
+		//TASK3. dump the contents of rescols2, print a line
+		// "DEBUG USE 7788 ==== " before the dump
 
 
 		// 4.2 extract set_subsig1 from sql_res and provide the proof

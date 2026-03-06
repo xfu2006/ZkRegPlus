@@ -25988,7 +25988,7 @@ Goal 1. improve gen_backward_prf
 	-> still has bug
 
 Thursday 03/05/2026
-LOC (gadgets): 20728 -> 
+LOC (gadgets): 20728 -> 20785 (+60)
 Goal 1. refactor -> DONE
 Goal 2. debug
 	[a] loc is empty
