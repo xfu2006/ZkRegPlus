@@ -25932,7 +25932,86 @@ Goal 8. improve gen_backward_prf
 		-> do a data set 	
 	[f] read validate_bwdprf_valid_prf
 
--- TODO -- need to set up bwd_prf to check the validate_bwdprf_valid_prf.
+Tuesday 03/03/2026
+LOC (gadgets): 20484 -> 20664 (+180)
+Goal 1. understanding the test case of test_bwd_prf
+	[a] study the test case
+	[b] create bwdprf_valid_prf so that we can dump the 
+		contents of bwdprf_valid_prf
+		-> read how it's generated
+	[c] it can be replicated
+	[d] read gen_to_del_valid_proof
+		-> it just proves that to to_del list is
+			a subset of existing list
+	[e] gen_bwdprf_valid_prf
+		-> assert for validity of min_loc and then use min_loc to
+			discharge
+	[f] set up the additional test framework
+		-> set up the steps to store item framework
+		-> to_si
+	[g] obseve data -> OK.
 
--- TODO -- imporve gen_step_queue_union_prf
+Goal 2. new algorithm design
+	[a] for each subsig generate a last step plus last_loc
+	[b] m_tbl be generated for the concat
+		of sq_res and this subsig_special table
+	[c] (subsig, step, min_loc) is used to kill
+		the positions
+	[d] in verify function, the table can be given as a non-deterministic
+		advice and verify against sq_res
+
+Goal 3. create a new example which takes advange of last loc
+	-> check why
+	-> discharge_adv: 4228
+		-> 967
+		-> 949
+		-> commons.rs: 215
+
+Goal 4. Go over the workflow and produce the results again
+	[a] gen_backward_steps_queue_combo
+		-> gen_backward_prf
+			-> observe the codeA
+	[b] revision idea of gen_backward_prf
+		let's say max_steps is 5
+		current steps is 3, we do need an empty stack
+			of step which says step 4 the min location is
+			default_min_loc then it allows us to eliminate step 3 values.
+		But what if it's step 6 out of bound?
+		-> 
+Wed 03/04/2026
+LOC (gadgets): 20664 -> 20728 (+60)
+Goal 1. improve gen_backward_prf
+	[a] nail the steps to process
+	[b] construct the StepQueueItem
+	[c] double check if StepQueueItem is constructed right
+	[d] recover the par_iter of self.subsigs.par_iter()
+	-> still has bug
+
+Thursday 03/05/2026
+LOC (gadgets): 20728 -> 
+Goal 1. refactor -> DONE
+Goal 2. debug
+	[a] loc is empty
+	[b] fails check -> DONE
+Goal 3. planning 
+	[a] in gen_bwdvalid_prf generate a "non-deterministic" set
+		of added steps for some selected subsigs (if not added, 
+		then do not generate it)
+		-> the their validity we only have to prove that they are
+		valid steps and subsigs and set the min loc to default min_loc
+	[b] lookup each bwd_prfs src step and src loc in the
+		merged set
+	[c] we need to extract the real (subsig_max step) from the proof
+		and show that it's disjoint set. This has something
+		todo the length of the bwdprf.
+	[d] figure out who to prove that subsig-step-rg_start-rg_end-pat 
+		is a valid record.
+Goal 4. implementation in gen_bwdprf_valid_prf
+	[a] generate added_steps (take subsigs as buf) - has the same
+		structure as bwd_prf (subsig-step-pat-rg_start-rg_end-loc)
+	[b] generate subsig list1 and subsig list2 and prove
+		that they are disjoint.
+	[c] 
+
+-- TODO2 -- imporve gen_step_queue_union_prf
 

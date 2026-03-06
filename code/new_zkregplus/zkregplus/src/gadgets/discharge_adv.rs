@@ -46,7 +46,7 @@ use data_processor::{
 			ID_ENCODED_PAT, ID_ENCODED_PREV_ENCODED,
 			ID_ENCODED_RG_START, ID_ENCODED_RG_END, ID_ENCODED_SUBSIG,
 	},
-	type_def::{SubsigStepStore},
+	type_def::{SubsigStepStore,SubsigStepStoreItem},
 };
 use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef,LinearCombination,
 	Variable};
@@ -633,14 +633,15 @@ impl <F:PrimeField> StepQueue<F>{
 	///of the subsig. (Thus each subsig has at least one level 0 record
 	/// in the final step-queue after elimination even if it has no real
 	/// entries in step queue).
-	/// last_loc is used as the default value for min_loc if
+	/// default_min_loc is used as the default value for min_loc if
 	/// one step queue item does not have any locs in it at all
 	/// so that it can be used for backward elimination of locs in
 	/// prev steps that have "no possiblity" to derive next step locs.
 	///
 	/// Return: <ToRemove, Result, StepBwdPrf>
-	pub fn gen_backward_prf(&self, last_loc: F) ->(Self, Self, StepBwdPrf<F>){
+	pub fn gen_backward_prf(&self, default_min_loc: F, subsig_store_info: &SubsigStepStore) ->(Self, Self, StepBwdPrf<F>){
 		//1. init data
+		let b_debug = true;
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, _one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
 		//2. process each subsig, propagating step by step
@@ -649,34 +650,77 @@ impl <F:PrimeField> StepQueue<F>{
 			//2.1 set up and verify data 
 			// note that "self" represent the RESULT of the fwd propgation
 			// process.
+			// Our plan is to: given the sq_res from forward propagation,
+			// backward propagate from last_step + 1.
+			// E.g., assume we have
+			// step 0 (dummy) - loc: [1]
+			// step 1 (rg_start: 10, rg_end: 20): loc: [15]
+			// and step 2 has NO recorded locations (rg_end: 30)
+			// the inferred default_min_loc (current last loc of current segment
+			//		+1) is 100.
+			// We will backward infer from step 2 and set its min_loc to 100
+			// because 100 is the EARLIERST min_loc that could appear if step 2
+			// gets any match in the future.
+			// now 100 - 30 = 70 this implies that 15 should be eliminated from
+			// step 1.
+			// Summary: we always start from the current steps + 1.
+			// The ONLY exception: the current steps is EQUAL to the 
+			//   max_step of the subsig, in that case we do NOT start from
+			//   the next step (with default_min) loc, instead we just
+			//   start from the CURRENT last step and infer back.
 			let items =  self.store_items.get(subsig).unwrap();
 			let init_item = items[0].clone();
 			assert!(init_item.locs.len()==1 && init_item.step==zero
 				&& init_item.locs[0]==F::one() ); //this is what we will keep
 												  //for each subsig
-			let steps = items.len(); 
-			assert!(items[steps-1].step==F::from((steps-1) as u32));
+			let steps = items.len()-1; //REAL current number of 
+				// steps with locs, EXCLUDING step 0 (this is the LAST STEP id)
+			let real_steps = steps;
+			assert!(items[steps].step==F::from((steps) as u32));
+			let u_subsig = field_to_usize(subsig);
+			let max_steps = subsig_store_info.subsig_to_steps.get(&u_subsig).unwrap()
+				.vec_pm_bounds.len() - 1; //THEORETICAL num of steps by subsig def
+					//this counts from 0 to the LAST MAX_STEP ID
+			let b_added_step = steps<max_steps; //last STEP uses default_min_loc
+			let steps = if steps<max_steps{steps+1} else {steps};
+				//this is to ADD one EXTRA step if it EXISTS
+			//2.2. three data structures:
+			//(1) vec_to_del: for each step what to delete
+			//(2) vec_bwd_prf: the corresponding proof for the ones to be deleted
+			//(3) vec_res (backward from last step) of the result.
+			//NOTE that vec_res has two cases: (1) starting from the "next"
+			// empty step if real_steps<max_steps; (2) starting from the
+			// current last step if it is REALLY the last step of subsig.
+			let mut vec_res = if real_steps<max_steps{
+				//build a StepQueueItem for the last created step
+				//*** with the default_min_loc *** because that
+				//newly added step layer has no currently reported locs.
+				let info = subsig_store_info.subsig_to_steps.get(&u_subsig)
+					.unwrap();
+				let sqi = StepQueueItem::from_subsig_store_item(&info,
+					steps, *subsig, vec![default_min_loc]);
 
-			let mut vec_to_del= vec![];
-			let mut vec_res = vec![items[steps-1].clone()];
+				vec![sqi]
+			}else {vec![items[real_steps].clone()]}; //the saturated case
 			let mut vec_bwd_prf = vec![];
+			let mut vec_to_del= vec![];
 
-			//2.2 propgate from last step .. to 2 (included).
+			//2.3 propgate from last step .. to 2 (included).
 			// NOTE that we never produce the bwdprf from step1 -> step0
 			// because we want to keep step0 for each subsig for future use
-			// we break from the loop when there is no more proof to produce.
-			// (which implies no update of min_loc for layers, thus no more
-			//   need to explore further).
+			// we break from the loop when there is no more backward proof to produce
+			// (i.e., no more locs to delete from previous step).
 			if steps>=2{
-			  for j in 0..steps-2{
+			  for j in 0..steps-1{//number of iterations:
+			  					  //LAST_STEP_ID - 2 + 1, e.g., for steps=2
+								  //ONLY one backward deleletion is done
 				//2.2.1 retrive min loc
-				let i = steps - 1 -j; //i from steps-1 to 2 (included)
+				let i = steps -j; //i from steps to 2 (included)
+					//NOTE steps is the LAST STEP ID
 				let (_rg_start,rg_end) = (vec_res[j].rg_start, 
 					vec_res[j].rg_end); //retrieve the fresh LAST result
 				let min_loc = vec_res[j].locs.iter().map(|l| *l).min().
-					map_or(last_loc, |x| x); //note that when j=0
-						//vec_res[j] is vec![items[steps-1]].
-						//see how vec_res is initialized.
+					map_or(default_min_loc, |x| x);
 
 				//2.2.2 compute to_del
 				let mut to_del = items[i-1].locs.iter().filter(|loc|
@@ -694,12 +738,14 @@ impl <F:PrimeField> StepQueue<F>{
 					.collect::<HashSet<F>>()
 					.into_iter().map(|x| x).collect::<Vec<F>>();
 				res.sort();
-				assert!([&to_del[..],&res[..]].concat().into_iter().map(|x| x)
-							.collect::<HashSet<F>>() ==
-						set_prev);
+				if b_debug{
+					assert!([&to_del[..],&res[..]].concat().into_iter().map(|x| x)
+							.collect::<HashSet<F>>() == set_prev);
+				}
 
 				//2.2.3 compute the bwd_prf
-				let src_encoded = items[i].encoded;
+				//let src_encoded = items[i].encoded;
+				let src_encoded = vec_res[j].encoded;
 				let prev_encoded = items[i-1].encoded;
 				let bwd_prf = StepBwdPrfItem::new(src_encoded,min_loc,
 					prev_encoded, &to_del);
@@ -721,10 +767,16 @@ impl <F:PrimeField> StepQueue<F>{
 			let vec_to_del:Vec<_> = vec_to_del.into_iter().rev().collect();
 			let vec_bwd_prf:Vec<_> = vec_bwd_prf.into_iter().rev().collect();
 			assert!(vec_to_del.len()==vec_bwd_prf.len());
-			let (n,n2) = (items.len(), vec_to_del.len());
+			let n2 = vec_to_del.len();
 			assert!(vec_res.len()==n2+1);
-			let new_vec_res = [	items[0..(n-n2-1)].to_vec(), vec_res].concat();
-			assert!(new_vec_res.len()==items.len());
+			let step_id_before = field_to_usize(&vec_res[0].step) - 1;
+			let new_vec_res =if b_added_step{
+				[&items[0..(step_id_before+1)][..] , &vec_res[0..vec_res.len()-1]].concat() //excluding the LAST added fake step with default_min_loc
+			}else{
+				[&items[0..(step_id_before+1)][..] , &vec_res[..]].concat()
+			};
+			assert!(new_vec_res.len()==
+				field_to_usize(&new_vec_res[new_vec_res.len()-1].step)+1);
 
 			((subsig.clone(), vec_to_del), 
 				(subsig.clone(),new_vec_res), 
@@ -1069,6 +1121,30 @@ impl <F:PrimeField> StepQueueItem<F>{
 			.into_par_iter().map(|x| x).collect::<Vec<F>>();
 		new_locs.sort();
 		self.locs = new_locs;
+	}
+
+	pub fn from_subsig_store_item(info: &SubsigStepStoreItem, step_id: usize,
+		subsig: F, locs: Vec<F>)
+	->Self{
+		let step_info = info.vec_pm_bounds[step_id];
+		let u_pattern = step_info.0;
+		let u_start = step_info.1.0;
+		let u_end= step_info.1.1;
+		let step = F::from((step_id) as u32);
+		let pat = F::from(u_pattern as u32);
+		let rg_start = F::from(u_start as u32);
+		let rg_end = F::from(u_end as u32);
+		let encoded = encode_cols(&vec![
+			vec![subsig], vec![step], 
+			vec![pat], vec![rg_start], vec![rg_end]],
+			&vec![0,1,2,3,4])[0];
+
+		let sqi = StepQueueItem{
+			encoded, subsig, step, pat, rg_start, rg_end,
+			locs
+		};
+
+		sqi
 	}
 
 }
@@ -1635,12 +1711,13 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			subsig_store_info)?;
 		let ct_fwd_sq = forward_step_queue.borrow().get_container("sq_res")?;
 		stmt_container.borrow_mut().add_container(forward_step_queue);
+		let default_min_loc = last_loc + F::one();
 
 
 		//3. construct 2nd (backward) step-queue
 		let backward_step_queue = Self::gen_backward_steps_queue_combo(
 			b_igc,
-			&sq_fwd, &ct_fwd_sq, subsig_store_info, last_loc)?;
+			&sq_fwd, &ct_fwd_sq, subsig_store_info, default_min_loc)?;
 		stmt_container.borrow_mut().add_container(backward_step_queue);
 
 		Ok(Self{capacity: Clone::clone(capacity), fsm_id,
@@ -2271,9 +2348,9 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		input_step_queue: &StepQueue<F>,
 		ct_fwd_res: &Rc<RefCell<Container<F>>>,
 		subsig_store_info: &SubsigStepStore,
-		last_loc: F, //this is the LAST Location of the accepted pat-loc
-				//sequence, used as default min value if one step que
-				//has no error at all, for backward prune
+		default_min_loc: F, //this is the EARLIER next possible location
+			//for next rounds, used as default_min_loc if one step queue
+			//for backward pruning.
 	)->Result<Rc<RefCell<Container<F>>>, Error>{
 		//0. Generate the logical data:
 		// from inp_step_queue generate the to_del, res, bwd_prf, 
@@ -2282,7 +2359,8 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		let b_debug = false;
 		let mut t1 = GTimer::new();
 		let b_perf = true;
-		let (sq_to_del, sq_res, bwd_prf) = input_step_queue.gen_backward_prf(last_loc);
+		let (sq_to_del, sq_res, bwd_prf) = input_step_queue
+			.gen_backward_prf(default_min_loc, subsig_store_info);
 
 		if b_debug{
 			println!("========== DEBUG USE 301: igc: {}, inp_step_queue (fwd_res): ", b_igc);
@@ -2333,7 +2411,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 
 		//4. prove the validity of the bwd_prf
 		let prf_bwdprf_valid = Self::gen_bwdprf_valid_prf("prf_bwdprf_valid",
-			&prf_bwd, &ct_sq_res2, last_loc);
+			&prf_bwd, &ct_sq_res2, default_min_loc, &subsig_store_info);
 		prf.borrow_mut().add_container(prf_bwdprf_valid);
 		if b_perf{log_perf(LOG1, "-- -- gen_bwd step4", &mut t1);}
 
@@ -2351,7 +2429,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		sq_to_del: &Rc<RefCell<Container<F>>>,
 		prf_bwd: &Rc<RefCell<Container<F>>>,
 	)->Rc<RefCell<Container<F>>>{
-		//1. retrieve info from to_add
+		//1. retrieve info from to_del
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, _one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
 		let e2=sq_to_del.borrow().get_container("encoded")
@@ -2398,13 +2476,12 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 
 	/// prove the validity of prf_bwd. Mainly it shows that
 	/// (1) validity of min_loc (take the 1st 
-	///    non-dummy loc from the sq_res and show that sq_res loc is sorted
-	///    This needs that we prove that sq_res is sorted in ascending
-	///     order in its encoded key. As encoded is the encoding of
-	///     (subsig, step, ....). It implies it's also sorted by subsig.
-	///   When there is no entry for a (subsig-step), then the 
-	///   last_loc is used as the min_loc, as this is the min_loc
-	///   for future entries (to be generated in future subsegment)
+	///    non-dummy loc from the sq_res.
+	///    There are two cases: (1) sq_res really has ONE entry so that
+	///       min loc could be generated; (2) there is an ADDED step
+	///       to sq_res (which has no recorded loc), and we use the
+	///       default_min_loc as its "position" to perform prune back.
+	///     
 	/// (2) prev_loc + rg2 < min_loc (which invlidates the prev_loc),
 	///    so that there in the future there willll be no subsequent loc for
 	///    prev_loc
@@ -2413,9 +2490,8 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		prf_name: &str,
 		prf_bwd: &Rc<RefCell<Container<F>>>,
 		sq_res: &Rc<RefCell<Container<F>>>,
-		last_loc: F, //last loc in pat-loc of this batch (segment of word)
-				//this serves as the "default" min-loc when there is
-				//no min-loc for a subsig-step.
+		_default_min_loc: F, //default min_loc for pruning back
+		subsig_store_info: &SubsigStepStore,
 	)->Rc<RefCell<Container<F>>>{
 		//0. data retrieval
 		let b_debug = true;
@@ -2476,7 +2552,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		let rescols = vec!["encoded", "step", "locs", "subsig"].iter().map(|n|
 			sq_res.borrow().get_container(n).unwrap().borrow().to_vec()
 		).collect::<Vec<Vec<F>>>();
-		#[cfg(test)]{ assert!(is_sorted(&rescols[0])); }
+		if b_debug{ assert!(is_sorted(&rescols[0])); }
 		if b_debug{
 			println!("DEBUG USE 6502 --- res cos --------");
 			println!("encoded\tstep\tlocs\tsubsig");
@@ -2540,15 +2616,38 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		res.borrow_mut().add_col(Col::new_const(vec![frg;len1], 
 			"sid_diff_loc", IDX_SI_DATA));
 
-		//4. prove the min_loc is the first non-negative first loc in sq_res 
-		// for each (subsig-step); otherwise, if no such entry exists
-		// for a subsig-step, then min_loc is equal to last_loc
-		// It's basically a lkup.
-		// src_combined: (encoded-step)-min_loc
-		// dst_combined: (encoded-step)-loc and selected by if it
-		//    is the very first non-dummy entry of each encoded-step
-		//    (relying on the fact that the table
-		//    is sorted in encoded, thus (subsig-step)). 
+		//4. prove the min_loc is EITHER (1) the first loc in sq_res for
+		//   each subsig-step, OR (2) an ADDITIONAL subsig-step record
+		//   (actually the current max-step of the ones with loc records +1) 
+		//   for the subsig loaded with min-loc. NOTE the case is EXCLUSIVE
+		//   OR, that is: if we start the pruning from an EXISTING step
+		//    with locs (then we do NOT have that subsig appear in 
+		//    additional_table at all); and vice versa. We thus
+		//    need to prove the following:
+		//    (1) if we extract subsigs from sql_res_tbl2 and sql_res
+		//        they are disjoint sets.
+		//    (2) subsig-step-min-loc is contained in sql_res_tbl + sql_res_tbl2
+		//        this is essentially a lookup. Note that for sql_res_tbl
+		//        because it's a table sorted with subsig-step and one subsig
+		//        has multiple steps, we need to somehow run a condition selector
+		//       to retrieve a min-loc (this is not the case for tbl2
+		//       as one subsig has only one rec).
+		// 4.1 create sql_res_tbl2
+
+		// TASK1. do not remove this comment.
+		// for each subsig in the rescols, retrieve the information
+		// subsig_store about this subsig, check if the max step of that
+		// subsig in rescols is less than the vec_bounds length.
+		// If yes, insert a row similar to the structure of rescol.
+		// This forms a similar structure as rescol, and name it rescol2. 
+
+
+
+		// 4.2 extract set_subsig1 from sql_res and provide the proof
+		// 4.3 extract set_subsig2 from sql_res_tbl2
+		// 4.4 prove set_subsig1 and setsubsig2 are disjoint
+		// 4.5 lookup subsig-step-min-loc in the combined sql_res and
+		//    sql_res_tbl2
 		let src_combined= encode_cols(&v2d, &vec![0,1,3]);
 		let dst_combined = encode_cols(&rescols, &vec![0,1,2]);
 		let dst_sel = (0..dst_combined.len()).into_par_iter().map(|i|{
@@ -3432,7 +3531,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		r1: &FpVar<F>,
 		r2: &FpVar<F>,
 		prf_bwdprf_valid: &Rc<RefCell<Container<FpVar<F>>>>,
-		last_loc: FpVar<F>, //used as min_loc default
+		_default_min_loc: FpVar<F>, //used as min_loc default
 	)->Result<(), SynthesisError>{
 		//0. retrieve data
 		let cs = r1.cs(); 
@@ -4204,7 +4303,7 @@ pub mod tests_discharge_adv_gadget{
 				to_vf(vec![200u32, 3, 40, 10, 10]), to_vf(vec![43u32])),
 		];
 
-		//3. partial del: up to step 3
+		//example 3. partial del: up to step 3
 		//60 elims 36, 37, 47 elims none. stops there.
 		let subsig205_steps = vec![ //can't ues 300 as out of 256 bound
 			//when RANGE2 is 8 bit
@@ -4220,11 +4319,64 @@ pub mod tests_discharge_adv_gadget{
 			StepQueueItem::new2( 
 				to_vf(vec![205u32, 4, 5, 20, 22]), to_vf(vec![60u32])),
 		];
-		let subsigs = to_vf(vec![100,200,205]);
+
+		//example 4.  note ID/field range cannot exceeding 256, so cannot
+		//use 305 as subsig_id, use 206 instead.
+		let mut subsig206_steps = vec![ //last_loc is 100, this implies that
+			//33 will NOT BE ABLE to reach any new match on step 3.
+			//SO 33 will be eliminated, and then 22 will be liimnated
+			StepQueueItem::new2( 
+				// subsig, id, pat, rg_start, rg_end
+				to_vf(vec![206u32, 0, 0, 0, 0]), to_vf(vec![1u32])),
+			StepQueueItem::new2( 
+				to_vf(vec![206u32, 1, 2, 10, 30]), to_vf(vec![22])),
+			StepQueueItem::new2( 
+				to_vf(vec![206u32, 2, 3, 10, 12]), to_vf(vec![33])),
+			StepQueueItem::new2( 
+				to_vf(vec![206u32, 3, 4, 20, 30]), to_vf(vec![])),
+			StepQueueItem::new2( 
+				to_vf(vec![206u32, 4, 5, 20, 22]), to_vf(vec![])),
+		];
+
+		//2. construct other related data structures
+		use crate::gadgets::discharge_adv::field_to_usize;
+		let to_si = |s: &Vec<StepQueueItem<Fr>>|->SubsigStepStoreItem{
+			let subsig_id = field_to_usize(&s[0].subsig);
+			let igc = false;
+			let vec_pm_bounds = s.iter().enumerate().map(|(i,s)|{
+				assert!(subsig_id == field_to_usize(&s.subsig));
+				assert!(i==field_to_usize(&s.step));
+				let pat_id = field_to_usize(&s.pat);	
+				let rg_start = field_to_usize(&s.rg_start);
+				let rg_end = field_to_usize(&s.rg_end);
+				(pat_id, (rg_start, rg_end))
+			}).collect::<Vec<(usize, (usize, usize))>>();
+
+			SubsigStepStoreItem{subsig_id, igc, vec_pm_bounds}
+		};
+		let si_100 = to_si(&subsig100_steps); 
+		let si_200 = to_si(&subsig200_steps); 
+		let si_205 = to_si(&subsig205_steps); 
+		let si_206= to_si(&subsig206_steps); 
+		subsig206_steps = subsig206_steps[0..3].to_vec(); //chop OFF the last two empty
+			//steps
 		let mut store_items = HashMap::new();
 		store_items.insert(Fr::from(100u32), subsig100_steps);
 		store_items.insert(Fr::from(200u32), subsig200_steps);
 		store_items.insert(Fr::from(205u32), subsig205_steps);
+		store_items.insert(Fr::from(206u32), subsig206_steps);
+
+		let subsig_ids= vec![100usize,200,205,206];
+		let subsigs = to_vf(vec![100,200,205,206]);
+		let subsig_to_steps = vec![
+			(100usize, si_100),
+			(200usize, si_200),
+			(205usize, si_205),
+			(206usize, si_206),
+		].into_iter().map(|x| x).collect::<HashMap<usize, SubsigStepStoreItem>>();
+		let subsig_store_info = SubsigStepStore{
+			subsig_ids, subsig_to_steps, 
+		};
 		let capacity= DischargeAdvCapacity{
 			max_nibble_len: 62, 
 			subsigs: 4,
@@ -4236,9 +4388,9 @@ pub mod tests_discharge_adv_gadget{
 		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),
 			q_type: StepQueueType::Res, b_igc};
 
-		//2. test the backward proof
-		let last_loc = Fr::from(100u32); //last step's location
-		let (to_remove, res, prf) = sq.gen_backward_prf(last_loc);
+		//4. *** test the backward proof ***
+		let last_loc = Fr::from(100u32); //last step's location (default min_loc)
+		let (to_remove, res, prf) = sq.gen_backward_prf(last_loc, &subsig_store_info);
 
 		let b_details = true;
 		if b_details{
@@ -4283,6 +4435,33 @@ pub mod tests_discharge_adv_gadget{
 		let prf205 = prf.store_items.get(&Fr::from(205)).unwrap();
 		assert!(prf205[0].src_step==Fr::from(4)); 
 		assert!(prf205.len()==1);
+
+		//verif example 4: all will be removed
+		let vec206 = res.store_items.get(&Fr::from(206)).unwrap();
+		assert!(vec206.len()==3);
+		assert!(vec206[1].pat==Fr::from(2) && vec206[1].locs==to_vf(vec![]));
+		let prf206 = prf.store_items.get(&Fr::from(206)).unwrap();
+		assert!(prf206[0].src_step==Fr::from(2)); 
+		assert!(prf206[1].src_step==Fr::from(3)); 
+		assert!(prf206.len()==2);
+
+
+		//5. here we construct bwd_prf_valid_proof but not verifying it
+		//for manual debugging purpose (no verification code)
+		let _ct_sq_to_del= to_remove.to_container("sq_to_del",false,true,false,false,
+			&subsig_store_info).expect("ct_sq_to_del err");
+		let ct_sq_res2 = res.to_container("sq_res2",
+			false,//inp
+			true, //b_step (but it's saved in DATA)
+			true, //oup
+			true, //b_subsigs (saved in DATA)
+			&subsig_store_info).expect("err ct_sq_res2 error");
+		let prf_bwd = prf.to_container("prf_bwd", &subsig_store_info).unwrap();
+		let _prf_bwdprf_valid = DischargeAdvAdvice::gen_bwdprf_valid_prf(
+			"prf_bwdprf_valid",
+			&prf_bwd, &ct_sq_res2, last_loc, &subsig_store_info);
+			//NOTE that this one needs manual check of the dump
+			//we do not put insertion here. (mainly for manual debugging)
 	}
 
 
