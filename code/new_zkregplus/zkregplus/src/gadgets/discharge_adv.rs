@@ -2643,29 +2643,188 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		//   (b) set_bwd_ssm_real_min is a subset of set_sqlres_sum
 		//
 
-		let set_size = capacity.subsigs * capacity.avg_active_pats_subsig;
-		// Task1: generate set_bwdprf_ssm
-		// Hints: generate set_bwdprf_ssm as a 2d-vec like v2d, 
-		// including the following columns ["subsig", "step", "min_loc"]
-		// pad with 0 entries to "set_size". We need at least one 0 dummy
-		// entry, if not throw CapErr on avg_active_pats_per_subsig
-		// try follow the style of how CapErr is thrown in other parts of code.
+		//4.1 build set_bwdprf_ssm 
+		let set_size = capacity.subsigs * capacity.avg_active_pats_per_subsig;
+		let mut ssm_subsig = vec![];
+		let mut ssm_step = vec![];
+		let mut ssm_min_loc = vec![];
+		for i in 0..v2d[0].len() {
+			if v2d[0][i].is_zero() { continue; }
+			if i == 0 || v2d[0][i] != v2d[0][i-1] {
+				ssm_subsig.push(v2d[7][i]);
+				ssm_step.push(v2d[1][i]);
+				ssm_min_loc.push(v2d[4][i]);
+			}
+		}
+		if set_size < ssm_subsig.len() + 1 {
+			let new_val_active_pats = (ssm_subsig.len()+1)/capacity.subsigs+1;
+			return Err(Error::CapErr(vec![(format!("dis_adv::avg_active_pats_per_subsig, b_igc: {}", b_igc), new_val_active_pats)]));
+		}
+		let n_pad = set_size - ssm_subsig.len();
+		let ssm_subsig = [vec![zero; n_pad], ssm_subsig].concat();
+		let ssm_step = [vec![zero; n_pad], ssm_step].concat();
+		let ssm_min_loc = [vec![zero; n_pad], ssm_min_loc].concat();
+		let set_bwdprf_ssm = vec![ssm_subsig, ssm_step, ssm_min_loc];
+		let f_rg2 = F::from(RANGE2);
 
+		let names = ["set_bwdprf_ssm_subsig", "set_bwdprf_ssm_step",
+			"set_bwdprf_ssm_min_loc"];
+		for i in 0..3{
+			res.borrow_mut().add_col(Col::new(
+				set_bwdprf_ssm[i].clone(),
+				names[i], IDX_DATA));
+			res.borrow_mut().add_col(Col::new(vec![f_rg2; set_size],
+				&format!("sid_{}", names[i]), IDX_SI_DATA));
+		}
 
-		// Task2: split set_bwdprf_ssm into set_bwdprf_ssm_default and
+		// 4.2 split set_bwdprf_ssm into set_bwdprf_ssm_default and
 		// set_bwdprf_ssm_real. 
-		// Hints: depending on if the min_loc==default_min_loc
-		// pad each of the two resulting set with 0 entries to set_size
+		let mut ssm_def_subsig = vec![];
+		let mut ssm_def_step = vec![];
+		let mut ssm_def_min_loc = vec![];
+		let mut ssm_real_subsig = vec![];
+		let mut ssm_real_step = vec![];
+		let mut ssm_real_min_loc = vec![];
 
-		// Task 3: extract set_sqres_ssm from rescols. 
-		// Hints: It has similarly
-		// ["subsig", "step", "min_loc"] where min_loc is the min loc
-		// for each (subsig-step). Similarly pad it to "set_size".
+		for i in 0..set_bwdprf_ssm[0].len() {
+			if set_bwdprf_ssm[0][i].is_zero() { continue; }
+			if set_bwdprf_ssm[2][i] == default_min_loc {
+				ssm_def_subsig.push(set_bwdprf_ssm[0][i]);
+				ssm_def_step.push(set_bwdprf_ssm[1][i]);
+				ssm_def_min_loc.push(set_bwdprf_ssm[2][i]);
+			} else {
+				ssm_real_subsig.push(set_bwdprf_ssm[0][i]);
+				ssm_real_step.push(set_bwdprf_ssm[1][i]);
+				ssm_real_min_loc.push(set_bwdprf_ssm[2][i]);
+			}
+		}
+		let n_pad_def = set_size - ssm_def_subsig.len();
+		let ssm_def_subsig = [vec![zero; n_pad_def], ssm_def_subsig].concat();
+		let ssm_def_step = [vec![zero; n_pad_def], ssm_def_step].concat();
+		let ssm_def_min_loc = [vec![zero; n_pad_def], ssm_def_min_loc].concat();
 
-		// Task 4. print out the contents of
-		// set_bwdprf_ssm_default, set_bwdprf_ssm_real, set_sqres_ssm
-		// Hint: wrap it in if_bebug. and do similar "DEBUG USE ..."
-		// messages before dump and print title of columns.
+		let n_pad_real = set_size - ssm_real_subsig.len();
+		let ssm_real_subsig = [vec![zero; n_pad_real], ssm_real_subsig]
+			.concat();
+		let ssm_real_step = [vec![zero; n_pad_real], ssm_real_step].concat();
+		let ssm_real_min_loc = [vec![zero; n_pad_real], ssm_real_min_loc]
+			.concat();
+		let set_bwdprf_ssm_real = vec![ssm_real_subsig, ssm_real_step, 
+			ssm_real_min_loc];
+		let set_bwdprf_ssm_default = vec![ssm_def_subsig, ssm_def_step, 
+			ssm_def_min_loc];
+
+		let names = ["set_bwdprf_ssm_real_subsig", "set_bwdprf_ssm_real_step",
+			"set_bwdprf_ssm_real_min_loc"];
+		for i in 0..3{
+			res.borrow_mut().add_col(Col::new(
+				set_bwdprf_ssm_real[i].clone(),
+				names[i], IDX_DATA));
+			res.borrow_mut().add_col(Col::new(vec![f_rg2; set_size],
+				&format!("sid_{}", names[i]), IDX_SI_DATA));
+		}
+
+		let names = ["set_bwdprf_ssm_default_subsig", 
+			"set_bwdprf_ssm_default_step",
+			"set_bwdprf_ssm_default_min_loc"];
+		for i in 0..3{
+			res.borrow_mut().add_col(Col::new(
+				set_bwdprf_ssm_default[i].clone(),
+				names[i], IDX_DATA));
+			res.borrow_mut().add_col(Col::new(vec![f_rg2; set_size],
+				&format!("sid_{}", names[i]), IDX_SI_DATA));
+		}
+
+		// 4.3: extract set_sqres_ssm from rescols. 
+		let mut sq_ssm_subsig = vec![];
+		let mut sq_ssm_step = vec![];
+		let mut sq_ssm_min_loc = vec![];
+		for i in 0..rescols[0].len() {
+			if rescols[0][i].is_zero() { continue; }
+			if i == 0 || rescols[0][i] != rescols[0][i-1] {
+				sq_ssm_subsig.push(rescols[3][i]);
+				sq_ssm_step.push(rescols[1][i]);
+				sq_ssm_min_loc.push(rescols[2][i]);
+			}
+		}
+		if set_size < sq_ssm_subsig.len() + 1 {
+			let new_val_active_pats = (sq_ssm_subsig.len()+1)/
+				capacity.subsigs + 1;
+			return Err(Error::CapErr(vec![(format!("dis_adv::avg_active_pats_per_subsig, b_igc: {}", b_igc), new_val_active_pats)]));
+		}
+		let n_pad_sq = set_size - sq_ssm_subsig.len();
+		let sq_ssm_subsig = [vec![zero; n_pad_sq], sq_ssm_subsig].concat();
+		let sq_ssm_step = [vec![zero; n_pad_sq], sq_ssm_step].concat();
+		let sq_ssm_min_loc = [vec![zero; n_pad_sq], sq_ssm_min_loc].concat();
+		let set_sqres_ssm = vec![sq_ssm_subsig, sq_ssm_step, sq_ssm_min_loc];
+		let names = ["set_sqres_ssm_subsig", "set_sqres_ssm_step",
+			"set_sqres_ssm_min_loc"];
+		for i in 0..3{
+			res.borrow_mut().add_col(Col::new(
+				set_sqres_ssm[i].clone(),
+				names[i], IDX_DATA));
+			res.borrow_mut().add_col(Col::new(vec![f_rg2; set_size],
+				&format!("sid_{}", names[i]), IDX_SI_DATA));
+		}
+
+		//4.4 if debug mode print out the results
+		if b_debug {
+			println!("DEBUG USE 6504 --- set_bwdprf_ssm_default ----");
+			println!("subsig\tstep\tmin_loc");
+			for i in 0..set_size {
+				if !set_bwdprf_ssm_default[0][i].is_zero() {
+					println!("{}\t{}\t{}", set_bwdprf_ssm_default[0][i], set_bwdprf_ssm_default[1][i], set_bwdprf_ssm_default[2][i]);
+				}
+			}
+			println!("DEBUG USE 6505 --- set_bwdprf_ssm_real ----");
+			println!("subsig\tstep\tmin_loc");
+			for i in 0..set_size {
+				if !set_bwdprf_ssm_real[0][i].is_zero() {
+					println!("{}\t{}\t{}", set_bwdprf_ssm_real[0][i], set_bwdprf_ssm_real[1][i], set_bwdprf_ssm_real[2][i]);
+				}
+			}
+			println!("DEBUG USE 6506 --- set_sqres_ssm ----");
+			println!("subsig\tstep\tmin_loc");
+			for i in 0..set_size {
+				if !set_sqres_ssm[0][i].is_zero() {
+					println!("{}\t{}\t{}", set_sqres_ssm[0][i], set_sqres_ssm[1][i], set_sqres_ssm[2][i]);
+				}
+			}
+		}
+
+		//4.5 generate the related prf for 
+		// (1) set_bwdprf_ssm is the disjoint
+		//union of set_bwdprf_ssm_real and set_bwdprf_ssm_default
+		// (2) set_bwdprf_ssm_real is a subset of set_sqres_ssm
+		// (3) set_bwdprf_ssm is a set of all (subsig-step-min_loc)
+		//  in bwdprf, this is accomplished using lkup
+		// (4) set_sqres_ssm is a set of all subsig-step-min-loc
+		//  in sqres (but we do not need a proof here, in verify
+		//  function we'll directly generate the proof by walking
+		//  the sqres table.
+		//4.5.1 disjoint of two set_bwdprf_ssm_real and set_wdprf_ssm_default
+		//Task 1: finish the details below
+		let prf_disjoint_ssm = gen_disjoint_union_prf(..., "prf_disjoint_ssm");
+		res.borrow_mut().add_container(prf_disjoint_ssm);
+
+		//4.5.2 set_bwdprf_ssm_real is a subset of set_sqres_ssm
+		//Task 2: finish or fix the details below.
+		let combined_src = encode_col_better(set_bwdprf_ssm_real, [0,1,2]);
+		let combined_dst = encode_col_better(set_sqres_ssm, [0,1,2]);
+		let mtbl_bwdprf_sqres = gen_m_table(...);
+		res.borrow_mut().add mtbl
+		//also add the corresponding sid_table, all elements f_rg2
+
+		//4.5.3 set_bwdprf_ssm is a set of ALL subsig-step-min_loc
+		// in bwdprf. We only have to prove it's super-set (one
+		// direction), as more elements do not hurt soundness (only
+		// increase prover cost).
+		let combined_src = encode_cols_better(the subsig, step, min_loc from v2d);
+		let combined_dst = encode_col_better(set_bwdprf_ssm,  [0,1,2]);
+		let mtbl_bwdprf_coverage = gen_m_table(...);
+		//also add its sid table
+
+		//4.5.4 no proof needed
 
 
 		// 4.1 (case 1): for those backward proof steps has NON-default

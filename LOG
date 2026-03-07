@@ -26034,6 +26034,8 @@ Goal 3. redo the documentation
 Goal 4. implement 4.2
 	[a] collect set_encoded_default_min
 
+Saturday 03/07/2026
+LOC (gadgets): 20791
 -- TODO -- compute set_encoded_non_default.
 
 -- TODO2 -- imporve gen_step_queue_union_prf
