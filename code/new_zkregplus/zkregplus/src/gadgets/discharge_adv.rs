@@ -23,7 +23,8 @@ use crate::gadgets::{
 		new_const_var, encode_2col_var, encode_2col_var_adv,
 		check_arr_eq_arr, encode_cols_var_adv, is_sorted,
 		check_eq, encode_2col, check_rg2},
-	db::{assert_logup, verify_encoded_table, assert_well_formed_sorted},
+	db::{assert_logup, verify_encoded_table, assert_well_formed_sorted,
+		gen_disjoint_union_prf},
 	traits::{Container,
 		Col,
 		IDX_WORD, IDX_INP,IDX_DATA, 
@@ -2803,26 +2804,37 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		//  function we'll directly generate the proof by walking
 		//  the sqres table.
 		//4.5.1 disjoint of two set_bwdprf_ssm_real and set_wdprf_ssm_default
-		//Task 1: finish the details below
-		let prf_disjoint_ssm = gen_disjoint_union_prf(..., "prf_disjoint_ssm");
+		let encoded_real = encode_cols(&set_bwdprf_ssm_real, &vec![0,1,2]);
+		let encoded_def = encode_cols(&set_bwdprf_ssm_default, &vec![0,1,2]);
+		let (set_total, prf_disjoint_ssm) = gen_disjoint_union_prf(
+			&encoded_real, &encoded_def, "prf_disjoint_ssm")?;
+		//Task 1: assert that set_total is equal to set_bwdprf_ssm
+		let encoded_total = encode_cols(&set_bwdprf_ssm, &vec![0,1,2]);
+		if b_debug{ assert!(set_total == encoded_total); }
 		res.borrow_mut().add_container(prf_disjoint_ssm);
 
 		//4.5.2 set_bwdprf_ssm_real is a subset of set_sqres_ssm
-		//Task 2: finish or fix the details below.
-		let combined_src = encode_col_better(set_bwdprf_ssm_real, [0,1,2]);
-		let combined_dst = encode_col_better(set_sqres_ssm, [0,1,2]);
-		let mtbl_bwdprf_sqres = gen_m_table(...);
-		res.borrow_mut().add mtbl
-		//also add the corresponding sid_table, all elements f_rg2
+		let combined_src = encode_cols(&set_bwdprf_ssm_real, &vec![0,1,2]);
+		let combined_dst = encode_cols(&set_sqres_ssm, &vec![0,1,2]);
+		let mtbl_bwdprf_sqres = gen_m_table(&combined_src, &combined_dst);
+		let len_mtbl = mtbl_bwdprf_sqres.len();
+		res.borrow_mut().add_col(Col::new(mtbl_bwdprf_sqres, 
+			"mtbl_bwdprf_sqres", IDX_DATA));
+		res.borrow_mut().add_col(Col::new_const(vec![f_rg2; len_mtbl], 
+			"sid_mtbl_bwdprf_sqres", IDX_SI_DATA));
 
 		//4.5.3 set_bwdprf_ssm is a set of ALL subsig-step-min_loc
 		// in bwdprf. We only have to prove it's super-set (one
 		// direction), as more elements do not hurt soundness (only
 		// increase prover cost).
-		let combined_src = encode_cols_better(the subsig, step, min_loc from v2d);
-		let combined_dst = encode_col_better(set_bwdprf_ssm,  [0,1,2]);
-		let mtbl_bwdprf_coverage = gen_m_table(...);
-		//also add its sid table
+		let combined_src = encode_cols(&v2d, &vec![7,1,4]);
+		let combined_dst = encode_cols(&set_bwdprf_ssm,  &vec![0,1,2]);
+		let mtbl_bwdprf_coverage = gen_m_table(&combined_src, &combined_dst);
+		let len_mtbl_cov = mtbl_bwdprf_coverage.len();
+		res.borrow_mut().add_col(Col::new(mtbl_bwdprf_coverage, 
+			"mtbl_bwdprf_coverage", IDX_DATA));
+		res.borrow_mut().add_col(Col::new_const(vec![f_rg2; len_mtbl_cov], 
+			"sid_mtbl_bwdprf_coverage", IDX_SI_DATA));
 
 		//4.5.4 no proof needed
 
