@@ -1512,7 +1512,6 @@ impl <F:PrimeField> StepBwdPrf<F>{
 		}).flatten().collect::<Vec<(F,F,F,F,F,F,F,  F,F)>>();
 
 		let v_src_encoded = vt.par_iter().map(|t| t.0).collect::<Vec<F>>();
-		//we skipped subsig.
 		let v_src_subsigs= vt.par_iter().map(|t| t.1).collect::<Vec<F>>();
 		let v_src_step= vt.par_iter().map(|t| t.2).collect::<Vec<F>>();
 		let v_src_pat= vt.par_iter().map(|t| t.3).collect::<Vec<F>>();
@@ -1526,14 +1525,14 @@ impl <F:PrimeField> StepBwdPrf<F>{
 			"src_pat", 
 			"src_rg_end",  //id 3
 			"src_min_loc", //id 4
-			"prev_encoded", "loc_to_del",
+			"prev_encoded", "loc_to_del", "subsig",
 		];
 		let v2d = vec![
 			v_src_encoded, v_src_step,
 			v_src_pat, 
 			v_src_rg_end,  //id 3
 			v_src_min_loc, //id 4
-			v_prev_encoded, v_loc_to_del];
+			v_prev_encoded, v_loc_to_del, v_src_subsigs.clone()];
 		let n = self.vec_size();
 		if n<v2d[0].len()+1{
 			let new_val= (v2d[0].len()+1)*10000/(self.capacity.max_nibble_len*self.capacity.basis_pats_in_trace) + 1;
@@ -2510,7 +2509,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			"src_encoded", "src_step", "src_pat", 
 			"src_rg_end", //id 3 
 			"src_min_loc", //id 4 
-			"prev_encoded", "loc_to_del"
+			"prev_encoded", "loc_to_del", "subsig"
 		]; //note src_min_loc is ALREADY correctly marked as last_loc
 			//earlier in gen_backward_prf when subsig-step has no
 			//entry in sq-res
@@ -2519,16 +2518,18 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		}).collect::<Vec<Vec<F>>>();
 		if b_debug{
 			println!("DEBUG USE 6501.1 --- prf_bwd ----\n");
-			println!("senc\tsrc_step\tsrc_pat\trg_end\tsrc_min_loc\tprevenc\tloc_to_del");
+			println!("senc\tsrc_step\tsrc_pat\trg_end\tsrc_min_loc\tprevenc\tloc_to_del\tsubsig");
 			for i in 0..v2d[0].len(){
-				println!("{}\t{}\t{}\t{}\t{}\t{}\t{}",
+				println!("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
 					v2d[0][i],
 					v2d[1][i],
 					v2d[2][i],
 					v2d[3][i], //rg_end
 					v2d[4][i], //min_loc
 					v2d[5][i],
-					v2d[6][i]);
+					v2d[6][i],
+					v2d[7][i], //subsig
+				);
 			}
 		}
 		let (
@@ -2627,10 +2628,46 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		//  (1) the first loc in sq_res for each subsig-step, OR 
 		//  (2) the default_min_loc when in sq-res for the specific subsig-step
 		//       the array of locs is EMPTY.
-		// NOTE that the two cases are EXCLUSIVE. that requires that
-		// if it's default_min_loc the subsig-step in sq_res does NOT
-		// appear (i.e., its loc is empty)
-		// 
+		// We prove in the following steps.
+		// We first extract the set of (subsig-step-min_loc) from
+		//   bacward prf (v2d). Call it "set_bwdprf_ssm".
+		// We then extract the set of (subsig-step-min_loc) by
+		//   finding out the min_loc for each (subsig-step) in rescols.
+		//   Call it "set_sqres_ssm"
+		// We then need to prove:
+		//   (a) set_bwdprf_ssm can be split into two disjoit sets:
+		//      set_bwdprf_ssm_default where min_loc is the default_min_loc,
+		//		   and set_bwd_ssm_real_min. We need to show that
+		//         set_bwdprf_ssm_default is disjoint from
+		//         set_bwd_ssm_real_min.
+		//   (b) set_bwd_ssm_real_min is a subset of set_sqlres_sum
+		//
+
+		let set_size = capacity.subsigs * capacity.avg_active_pats_subsig;
+		// Task1: generate set_bwdprf_ssm
+		// Hints: generate set_bwdprf_ssm as a 2d-vec like v2d, 
+		// including the following columns ["subsig", "step", "min_loc"]
+		// pad with 0 entries to "set_size". We need at least one 0 dummy
+		// entry, if not throw CapErr on avg_active_pats_per_subsig
+		// try follow the style of how CapErr is thrown in other parts of code.
+
+
+		// Task2: split set_bwdprf_ssm into set_bwdprf_ssm_default and
+		// set_bwdprf_ssm_real. 
+		// Hints: depending on if the min_loc==default_min_loc
+		// pad each of the two resulting set with 0 entries to set_size
+
+		// Task 3: extract set_sqres_ssm from rescols. 
+		// Hints: It has similarly
+		// ["subsig", "step", "min_loc"] where min_loc is the min loc
+		// for each (subsig-step). Similarly pad it to "set_size".
+
+		// Task 4. print out the contents of
+		// set_bwdprf_ssm_default, set_bwdprf_ssm_real, set_sqres_ssm
+		// Hint: wrap it in if_bebug. and do similar "DEBUG USE ..."
+		// messages before dump and print title of columns.
+
+
 		// 4.1 (case 1): for those backward proof steps has NON-default
 		// min-locs, prove that they are indeed extracted as min-loc
 		// from sq-res
@@ -4472,7 +4509,8 @@ pub mod tests_discharge_adv_gadget{
 
 		//5. here we construct bwd_prf_valid_proof but not verifying it
 		//for manual debugging purpose (no verification code)
-		let _ct_sq_to_del= to_remove.to_container("sq_to_del",false,true,false,false,
+		let _ct_sq_to_del= to_remove.to_container(
+			"sq_to_del",false,true,false,false,
 			&subsig_store_info).expect("ct_sq_to_del err");
 		let ct_sq_res2 = res.to_container("sq_res2",
 			false,//inp
