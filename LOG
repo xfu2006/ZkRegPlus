@@ -26011,7 +26011,30 @@ Goal 4. implementation in gen_bwdprf_valid_prf
 		structure as bwd_prf (subsig-step-pat-rg_start-rg_end-loc)
 	[b] generate subsig list1 and subsig list2 and prove
 		that they are disjoint.
-	[c] 
+
+Friday 03/06/2026
+LOC (gadgets): 20785 -> 20791 (+6)  after dropping some lines
+Goal 1. continue implementation
+	[a] add capacity
+	[b] verify rescols2
+Goal 2. redesign the added buf
+	[a] problem bwd_prf might have multiple steps loaded with
+		min_loc
+	[b] read the disjoint set proof
+	[c] disjoint set proof new
+		-> set3 is a sorted set of union of set1 and set2
+		-> set3 if starting from 0 can be simply 
+			represetned as a sequence of diff
+		-> but this only applies to elements in range
+Goal 3. redo the documentation
+	[a] 4. general
+	[b] 4.1 and 4.2
+	[c] implement 4.1
+	[d] think about 4.2
+Goal 4. implement 4.2
+	[a] collect set_encoded_default_min
+
+-- TODO -- compute set_encoded_non_default.
 
 -- TODO2 -- imporve gen_step_queue_union_prf
 
