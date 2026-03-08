@@ -22,9 +22,9 @@ use crate::gadgets::{
 		var_to_lb, is_zero_better, 
 		new_const_var, encode_2col_var, encode_2col_var_adv,
 		check_arr_eq_arr, encode_cols_var_adv, is_sorted,
-		check_eq, encode_2col, check_rg2},
-	db::{assert_logup, verify_encoded_table, assert_well_formed_sorted,
-		gen_disjoint_union_prf},
+		check_eq, encode_2col, check_rg2,
+		encode_cols_var_adv_better,multiset_prod_ignore_zero},
+	db::{assert_logup, verify_encoded_table, assert_well_formed_sorted, gen_disjoint_union_prf_adv, verify_disjoint_union_prf,},
 	traits::{Container,
 		Col,
 		IDX_WORD, IDX_INP,IDX_DATA, 
@@ -2793,22 +2793,23 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			}
 		}
 
-		//4.5 generate the related prf for 
+		//4.5 generate the related prf for the argument that
+		// the min _loc are set up right (default case and real min_loc).
 		// (1) set_bwdprf_ssm is the disjoint
 		//union of set_bwdprf_ssm_real and set_bwdprf_ssm_default
 		// (2) set_bwdprf_ssm_real is a subset of set_sqres_ssm
-		// (3) set_bwdprf_ssm is a set of all (subsig-step-min_loc)
+		//    by running a conditional lookup to find out the real min_loc
+		//    in sq_res
+		// (3) set_bwdprf_ssm is THE set of all (subsig-step-min_loc)
 		//  in bwdprf, this is accomplished using lkup
-		// (4) set_sqres_ssm is a set of all subsig-step-min-loc
-		//  in sqres (but we do not need a proof here, in verify
-		//  function we'll directly generate the proof by walking
-		//  the sqres table.
+		// NOTE: using set helps to reduce the cost on (multi-set).
+
 		//4.5.1 disjoint of two set_bwdprf_ssm_real and set_wdprf_ssm_default
 		let encoded_real = encode_cols(&set_bwdprf_ssm_real, &vec![0,1,2]);
 		let encoded_def = encode_cols(&set_bwdprf_ssm_default, &vec![0,1,2]);
-		let (set_total, prf_disjoint_ssm) = gen_disjoint_union_prf(
-			&encoded_real, &encoded_def, "prf_disjoint_ssm")?;
 		let encoded_total = encode_cols(&set_bwdprf_ssm, &vec![0,1,2]);
+		let (set_total, prf_disjoint_ssm) = gen_disjoint_union_prf_adv(
+			&encoded_real, &encoded_def, &encoded_total, "prf_disjoint_ssm")?;
 		if b_debug{ 
 			let set1 = set_total.iter().map(|i| i.clone()).
 				collect::<HashSet<F>>();
@@ -2818,7 +2819,12 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		}
 		res.borrow_mut().add_container(prf_disjoint_ssm);
 
-		//4.5.2 set_bwdprf_ssm_real is a subset of set_sqres_ssm
+		//4.5.1(b) prove that set_bwdprf_ssm_default has the min-loc
+		//filled with default_min_loc (no proof generaed here)
+		//will be checked in validate_bwdprf_validity_prf().
+
+		//4.5.2 set_bwdprf_ssm_real is a subset of those min-locs
+		// in sqres 
 		let combined_src = encode_cols(&set_bwdprf_ssm_real, &vec![0,1,2]);
 		let combined_dst = encode_cols(&set_sqres_ssm, &vec![0,1,2]);
 		let mtbl_bwdprf_sqres = gen_m_table(&combined_src, &combined_dst);
@@ -2841,7 +2847,9 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		res.borrow_mut().add_col(Col::new_const(vec![f_rg2; len_mtbl_cov], 
 			"sid_mtbl_bwdprf_coverage", IDX_SI_DATA));
 
-		//4.5.4 no proof needed
+		//4.5.4 to show that set_bwdprf_ssm_real is REALLY the set
+		//of min-loc in sql-res. no proof needed (it can computed
+		//directly in the validate_bwdprf_validity_prf() function.
 
 		/* REMOVE LATER
 		// 4.1 (case 1): for those backward proof steps has NON-default
@@ -3768,9 +3776,11 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		r1: &FpVar<F>,
 		r2: &FpVar<F>,
 		prf_bwdprf_valid: &Rc<RefCell<Container<FpVar<F>>>>,
-		_default_min_loc: FpVar<F>, //used as min_loc default
+		default_min_loc: FpVar<F>, //used as min_loc default
 	)->Result<(), SynthesisError>{
 		//0. retrieve data
+		let b_debug = true;
+		let b_perf = true;
 		let cs = r1.cs(); 
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
@@ -3779,7 +3789,9 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		//let frg = new_const_var(&cs, F::from(RANGE2));
 		let names = vec![
 			"src_encoded",  "src_step", 
-			"src_pat", "src_min_loc", "src_rg_end",
+			"src_pat", 
+			"src_rg_end", //id 3
+			"src_min_loc",  //id 4
 			"prev_encoded", "loc_to_del", "subsig",
 		];
 		let v2d= names.iter().map(|n|{
@@ -3788,10 +3800,10 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		let (
 			_src_encoded, _src_step,
 			_src_pat,  src_min_loc, src_rg_end,
-			_prev_encoded, loc_to_del, subsig)
+			_prev_encoded, loc_to_del, _subsig)
 		= (
 			&v2d[0], &v2d[1], 
-			&v2d[2], &v2d[3], &v2d[4], 
+			&v2d[2], &v2d[4], &v2d[3], 
 			&v2d[5], &v2d[6], &v2d[7]
 		);
 		let sid_cols = names.iter().map(|n|{
@@ -3843,7 +3855,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		}
 
 		//1.3 check other columns
-		let ids = [2,4,5];
+		let ids = [2,3,5];
 		let cats = [ID_ENCODED_PAT, ID_ENCODED_RG_END, ID_ENCODED_PREV_ENCODED];
 		for x in 0..ids.len(){
 			let part1 = info_id*factor1*factor2 + F::from(cats[x])*factor1;
@@ -3960,72 +3972,200 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			.borrow().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
 
-		// Task 4.3: extract set_sqres_ssm from rescols. 
-		// Hints: similar call get_container to get from
-		// rescols. 
+		//4.3: extract set_sqres_ssm from rescols. 
+		let names_sqres = ["set_sqres_ssm_subsig", "set_sqres_ssm_step",
+			"set_sqres_ssm_min_loc"];
+		let _set_sqres_ssm = names_sqres.iter().map(|n|
+			prf_bwdprf_valid.borrow().get_container(n).unwrap()
+			.borrow().to_vec()
+		).collect::<Vec<Vec<FpVar<F>>>>();
 
+		// 4.4: debug dump
+		if b_debug {
+			println!("DEBUG USE 6506 --- v2d contents ----(vars)");
+			println!("senc\tsrc_step\tsrc_pat\trg_end\tsrc_min_loc\tprevenc\tloc_to_del\tsubsig");
+			for i in 0..v2d[0].len() {
+				if !v2d[7][i].value().unwrap().is_zero() {
+					for j in 0..8 {
+						print!("{}\t", v2d[j][i].value().unwrap());
+					}
+					println!("");
+				}
+			}
 
-		// Task 4.4: debug info
-		// Hints: put in if b_debug{...}
-		// dump contents of set_bwdprf_ssm, set_bwdprf_ssm_default,
-		// set_bwdprf_ssm_real, set_sqres_ssm
+			println!("DEBUG USE 6507 --- set_bwdprf_ssm (var) ----");
+			println!("subsig\tstep\tmin_loc");
+			for i in 0.._set_bwdprf_ssm[0].len() {
+				if !_set_bwdprf_ssm[0][i].value().unwrap().is_zero() {
+					println!("{}\t{}\t{}", _set_bwdprf_ssm[0][i].value().unwrap(), _set_bwdprf_ssm[1][i].value().unwrap(), _set_bwdprf_ssm[2][i].value().unwrap());
+				}
+			}
 
-		//4.5 generate the related prf for 
+			println!("DEBUG USE 6508 --- set_bwdprf_ssm_default (var) ----");			println!("subsig\tstep\tmin_loc");
+			for i in 0.._set_bwdprf_ssm_default[0].len() {
+				if !_set_bwdprf_ssm_default[0][i].value().unwrap().is_zero() {
+					println!("{}\t{}\t{}", _set_bwdprf_ssm_default[0][i].value().unwrap(), _set_bwdprf_ssm_default[1][i].value().unwrap(), _set_bwdprf_ssm_default[2][i].value().unwrap());
+				}
+			}
+			println!("DEBUG USE 6509 --- set_bwdprf_ssm_real (var) ----");
+			println!("subsig\tstep\tmin_loc");
+			for i in 0.._set_bwdprf_ssm_real[0].len() {
+				if !_set_bwdprf_ssm_real[0][i].value().unwrap().is_zero() {
+					println!("{}\t{}\t{}", _set_bwdprf_ssm_real[0][i].value().unwrap(), _set_bwdprf_ssm_real[1][i].value().unwrap(), _set_bwdprf_ssm_real[2][i].value().unwrap());
+				}
+			}
+			println!("DEBUG USE 6510 --- set_sqres_ssm (var)----");
+			println!("subsig\tstep\tmin_loc");
+			for i in 0.._set_sqres_ssm[0].len() {
+				if !_set_sqres_ssm[0][i].value().unwrap().is_zero() {
+					println!("{}\t{}\t{}", _set_sqres_ssm[0][i].value().unwrap(), _set_sqres_ssm[1][i].value().unwrap(), _set_sqres_ssm[2][i].value().unwrap());
+				}
+			}
+
+		}
+
+		//4.5 generate the related prf for the argument that
+		// the min _loc are set up right (default case and real min_loc).
 		// (1) set_bwdprf_ssm is the disjoint
 		//union of set_bwdprf_ssm_real and set_bwdprf_ssm_default
 		// (2) set_bwdprf_ssm_real is a subset of set_sqres_ssm
-		// (3) set_bwdprf_ssm is a set of all (subsig-step-min_loc)
+		//     by running lkup
+		// (3) set_bwdprf_ssm is THE set of all (subsig-step-min_loc)
 		//  in bwdprf, this is accomplished using lkup
-		// (4) set_sqres_ssm is a set of all subsig-step-min-loc
-		//  in sqres (but we do not need a proof here, in verify
-		//  function we'll directly generate the proof by walking
-		//  the sqres table.
-		//Task 4.5.1 disjoint of two set_bwdprf_ssm_real 
-		// and set_wdprf_ssm_default.  use f_rg2 
-		// as random r, because all fields are guaranteed to be
-		// small in range2, and the constant var costs nothing
-		// in weighted sum computation
-		//Hints: finish the function calls below. 
-		let f_rg2 = new_constant_var(...RANGE2);
-		let encoded_real = encode_cols_var_adv_better(...,f_rg2);
-		let encoded_def = encode_cols_adv_betterbetter(..., f_rg2);
-		verify_disjoint_union_prf(...);	
+		// (4) set_sqres_ssm IS the set of min_loc retrieved from
+		//      the sqres (rescols)
+		// NOTE: using set helps to reduce the cost on (multi-set).
 
-		//Task 4.5.2 set_bwdprf_ssm_real is a subset of set_sqres_ssm
-		//Hints: finish the code below. figure out the
-		//qry/lkup input parameters by studying section 4.5.2 of
-		//gen_bwdprf_valid_prf()
-		let mtbl_bwdprf_sqres = ...get_container()..to_vec();
-		assert_logup(...)?;
+		// 4.5.1 disjoint of two set_bwdprf_ssm_real 
+		// and set_wdprf_ssm_default.
+		let f_rg2 = new_const_var(&cs, F::from(RANGE2));
+		let cols_real = vec![&_set_bwdprf_ssm_real[0][..], 
+			&_set_bwdprf_ssm_real[1][..], &_set_bwdprf_ssm_real[2][..]];
+		let encoded_real = encode_cols_var_adv_better(
+			&cols_real, &vec![0,1,2], &f_rg2);
+		let cols_def = vec![&_set_bwdprf_ssm_default[0][..], 
+			&_set_bwdprf_ssm_default[1][..], &_set_bwdprf_ssm_default[2][..]];
+		let encoded_def = encode_cols_var_adv_better(&cols_def, 
+			&vec![0,1,2], &f_rg2);
+		let cols_total = vec![&_set_bwdprf_ssm[0][..], 
+			&_set_bwdprf_ssm[1][..], &_set_bwdprf_ssm[2][..]];
+		let encoded_total = encode_cols_var_adv_better(&cols_total, 
+			&vec![0,1,2], &f_rg2);
+		let prf_disjoint_ssm = prf_bwdprf_valid.borrow()
+			.get_container("prf_disjoint_ssm").unwrap();
+		verify_disjoint_union_prf(&encoded_real, &encoded_def, 
+			&encoded_total, &prf_disjoint_ssm, &r2)?;
+		
+		//4.5.1(b) we also need to assert that all set_bwdprf_ssm_default
+		//have min_loc equal to defalut_min_loc as long as subsig is not zero
+		let var_zero = new_const_var(&cs, F::zero());
+		for i in 0.._set_bwdprf_ssm_default[2].len(){
+			//[0] is subsig, [2] is loc
+			//so either subsig is 0 or [2]-default is 0
+			let item = &_set_bwdprf_ssm_default[0][i] * 
+				(&_set_bwdprf_ssm_default[2][i]- &default_min_loc);
+			check_eq(&item, &var_zero, "failed set_bwdprf_ssm_default check")?;
+		}
 
-		//Task 4.5.3 set_bwdprf_ssm is a set of ALL subsig-step-min_loc
-		//Hints: finish the code below. figure out the
-		//qry/lkup input parameters by studying section 4.5.3 of
-		//gen_bwdprf_valid_prf()
-		let combined_src = encode_cols_var_adv_better(&v2d, &vec![7,1,4]...);
-		let combined_dst = encode_cols_var_adv_better(&set_bwdprf_ssm,  &vec![0,1,2]...);
-		// verify mtbl_bwdprf_coverage
+		//4.5.2 set_bwdprf_ssm_real is a subset of set_sqres_ssm
+		let cols_sqres = vec![&_set_sqres_ssm[0][..], 
+			&_set_sqres_ssm[1][..], &_set_sqres_ssm[2][..]];
+		let combined_dst = encode_cols_var_adv_better(&cols_sqres, 
+			&vec![0,1,2], &f_rg2);
+		let mtbl_bwdprf_sqres = prf_bwdprf_valid.borrow()
+			.get_container("mtbl_bwdprf_sqres").unwrap().borrow().to_vec();
+		assert_logup(cs.clone(), &encoded_real, &combined_dst, 
+			&mtbl_bwdprf_sqres, &r2)?;
 
-		//Task 4.5.4 set_sqres_ssm is a set of all subsig-step-min-loc
-		//in sqres
-		//Hints: do the following
-		// (1) use random input r1 to compute the grand_product
-		//     of set_sqres_ssm (note that its combined vector is 
-		//    computed earlier. call multiset_prod_ignore_zero in db.common 
-		//    measure the time-performance, 
-		// and if b_perf is set
-		//    print out the cost
-		// (2) similarly compute the weighted sum of entries using r1
-		//      over those entries in rescols when subsig changes, and
-		//      also ignore entries. For efficiency I need to to
-		//      pre-compute related witness values (in F), and 
-		//      create variables, and then use var_to_lb(..) 
-		//      and cs.enforce_constraints() to do this efficiently.
-		//    measure the time-performance, 
-		// and if b_perf is set
-		//    print out the cost
+		//4.5.3 set_bwdprf_ssm is a set of that COVERS ALL subsig-step-min_loc
+		// in bwdprf.
+		let cols_src = vec![&v2d[7][..], &v2d[1][..], &v2d[4][..]]; 
+		let combined_src = encode_cols_var_adv_better(&cols_src, &vec![0,1,2], &f_rg2);
+		let mtbl_bwdprf_coverage = prf_bwdprf_valid
+
+			.borrow().get_container("mtbl_bwdprf_coverage")
+			.unwrap().borrow().to_vec();
+		assert_logup(cs.clone(), &combined_src, &encoded_total, &mtbl_bwdprf_coverage, &r2)?;
+
+		//4.5.4 to verify that set_bwdprf_real is THE 
+		// set of all subsig-step-min-loc
+		//in sqres. We run a grand-product on the two sizes 
+		//Basic idea: we ignore 0 items and compute the grand product
+		//of set_bwdprf_real; similarly, we compute the grand product
+		//of those items in sqres (over item trip subsig-step-loc) 
+		// when (subsig,step) changes (implying
+		//that the loc is the SMALLEST one, assuming susig-step is already
+		//proved to be in ascending order)
+		//To save cost, we first precompute the value for each
+		//intermediate sum and then use cs.enforce_constraint to directly
+		//enforce the result.
+		//4.5.4.1 compute the sq_res weighted sum
 
 		/*
+		let mut timer2 = GTimer::new(); timer2.start();
+		let r1_val = r1.value().unwrap();
+		let f_rg2_val = f_rg2.value().unwrap();
+		
+		let mut prev_prod_val = F::one();
+		let mut prev_prod_var = new_const_var(&cs, F::one());
+		let lb_minus_one = var_to_lb(&new_const_var(&cs, F::one()), -F::one());
+		let lb_r1 = var_to_lb(&r1, F::one());
+		
+		let is_zero_vars = rescols[0].iter().map(|x| is_zero_better(x, &cs).unwrap()).collect::<Vec<FpVar<F>>>();
+		let dst_sel = (0..rescols[0].len()).into_iter().map(|i|{
+			if i==0 { zero.clone() } else { &(&one - &sel[i]) * &(&one - &is_zero_vars[i]) }
+		}).collect::<Vec<FpVar<F>>>();
+
+		for i in 0..rescols[0].len() {
+			let bi_new_val = dst_sel[i].value().unwrap();
+			
+			let mut _val_f = F::zero();
+			let mut item_val = F::one();
+			
+			if bi_new_val == F::one() {
+				let subsig = rescols[3][i].value().unwrap();
+				let step = rescols[1][i].value().unwrap();
+				let min_loc = rescols[2][i].value().unwrap();
+				_val_f = subsig + step * f_rg2_val + min_loc * f_rg2_val * f_rg2_val;
+				item_val = r1_val + _val_f;
+			}
+			
+			let next_prod_val = prev_prod_val * item_val;
+			let item_var = new_var(&cs, item_val);
+			let next_prod_var = new_var(&cs, next_prod_val);
+			
+			let lb_item = var_to_lb(&item_var, F::one());
+			let lb_next = var_to_lb(&next_prod_var, F::one());
+			let lb_prev = var_to_lb(&prev_prod_var, F::one());
+			let lb_bi_new = var_to_lb(&dst_sel[i], F::one());
+			let lb_val = var_to_lb(&rescols[3][i], F::one()) 
+				+ var_to_lb(&rescols[1][i], f_rg2_val) 
+				+ var_to_lb(&rescols[2][i], f_rg2_val * f_rg2_val);
+			
+			cs.enforce_constraint(
+				lb_prev.clone(),
+				lb_item.clone(),
+				lb_next.clone()
+			).unwrap();
+			
+			cs.enforce_constraint(
+				lb_bi_new.clone(),
+				lb_r1.clone() + lb_val + lb_minus_one.clone(),
+				lb_item + lb_minus_one.clone()
+			).unwrap();
+			
+			prev_prod_val = next_prod_val;
+			prev_prod_var = next_prod_var;
+		}
+		
+		cs.enforce_constraint(
+			var_to_lb(&prod_sqres, F::one()),
+			var_to_lb(&new_const_var(&cs, F::one()), F::one()),
+			var_to_lb(&prev_prod_var, F::one())
+		).unwrap();
+
+		if b_perf { log_perf(LOG1, &format!("Time: compute rescols prod efficiently"), &mut timer2); }
+
 		let f_unit = FpVar::<F>::constant(F::from(1u32<<RANGE2_BIT));
 		let src_combined= encode_cols_var_adv(&v2d, &vec![0,1,3], &f_unit);
 		let dst_combined = encode_cols_var_adv(&rescols, &vec![0,1,2], &f_unit);
@@ -4184,6 +4324,9 @@ pub mod tests_discharge_adv_gadget{
 	use ark_ff::{Zero};
 	use std::{rc::Rc};
 	use ark_bn254::{Fr};
+	use ark_relations::r1cs::{ConstraintSystem};
+	use ark_r1cs_std::fields::fp::FpVar;
+	use crate::gadgets::commons::{new_var};
 	use utils::{data::{pack_nibbles}, os::{read_nibbles,proj_root,write_to_file}};
 	use crate::gadgets::{
 		word_extract::{
@@ -4194,9 +4337,9 @@ pub mod tests_discharge_adv_gadget{
 		word_extract_adv::{WordExtractAdvAdvice},
 		discharge_adv::{DischargeAdvAdvice,DischargeAdvGadget,
 			DischargeAdvCapacity,StepQueueItem,StepQueue,StepQueueType},
-		traits::{Container,Col,IDX_DATA},
+		traits::{Container,Col,IDX_DATA,IDX_SI_DATA},
 	};
-	use data_processor::{clam_db::{ClamavDB,RANGE2_BIT}, 
+	use data_processor::{clam_db::{ClamavDB,RANGE2_BIT,RANGE2}, 
 		type_def::{ClamavApproxConfig,SubsigStepStoreItem,SubsigStepStore},
 		clamav::{default_clamav_cfg, quick_discharge_file_by_crit_bag_pm}};
 	use folding_schemes::folding::foldpot::sigma_ir1cs::{SigmaGadget,
@@ -4793,8 +4936,7 @@ pub mod tests_discharge_adv_gadget{
 		assert!(prf206.len()==2);
 
 
-		//5. here we construct bwd_prf_valid_proof but not verifying it
-		//for manual debugging purpose (no verification code)
+		//5. here we construct bwd_prf_valid_proof 
 		let _ct_sq_to_del= to_remove.to_container(
 			"sq_to_del",false,true,false,false,
 			&subsig_store_info).expect("ct_sq_to_del err");
@@ -4810,11 +4952,85 @@ pub mod tests_discharge_adv_gadget{
 			&prf_bwd, &ct_sq_res2, last_loc, &subsig_store_info, &capacity,
 			b_igc)
 			.unwrap();
-			//NOTE that this one needs manual check of the dump
-			//we do not put insertion here. (mainly for manual debugging)
+
+		//6. verify the bwd_prf_valid_prf
+		//6.1 prep the data 
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		let r1 = new_var(&cs, Fr::from(12345u32));
+		let r2 = new_var(&cs, Fr::from(67890u32));
+
+		let prf_bwd_var = Container::<FpVar<Fr>>
+			::rc_from(&prf_bwd.borrow(), cs.clone());
+		let ct_sq_res2_var = Container::<FpVar<Fr>>
+			::rc_from(&ct_sq_res2.borrow(), cs.clone());
+		let prf_bwdprf_valid_var = Container::<FpVar<Fr>>
+			::rc_from(&_prf_bwdprf_valid.borrow(), 
+				cs.clone());
+		let last_loc_var = new_var(&cs, last_loc);
+
+		//6.2 prep the gadget to verify the proof
+		// we need to create some simple dummy statements for
+		// fsm_adv and word_extract_adv components before
+		// create the discharge_adv component
+		let sname_faa = if b_igc {"fsm_adv_stmt_igc"} else {"fsm_adv_stmt_cs"};
+		let stmt_wea = Container::<Fr>::new("word_extract_adv_stmt");
+		stmt_wea.borrow_mut().add_col(Col::<Fr>::new(vec![Fr::zero(); 62], 
+			"nibbles", IDX_DATA));
+
+		let stmt_faa = Container::<Fr>::new(sname_faa);
+		let packed_trace = Container::<Fr>::new("packed_trace");
+		let pat_loc_tbl = Container::<Fr>::new("pat_loc");
+		let sorted_tbl = Container::<Fr>::new("sorted_tbl");
+
+		let zcol = vec![Fr::zero(); 1];
+		let scol = vec![Fr::from(RANGE2); 1];
+
+		sorted_tbl.borrow_mut().add_col(Col::<Fr>::new(zcol.clone(), 
+			"sorted_key", IDX_DATA));
+		sorted_tbl.borrow_mut().add_col(Col::<Fr>::new(zcol.clone(), 
+			"sorted_id", IDX_DATA));
+		sorted_tbl.borrow_mut().add_col(Col::<Fr>::new(zcol.clone(), 
+			"sorted_val", IDX_DATA));
+		sorted_tbl.borrow_mut().add_col(Col::<Fr>::new_const(scol.clone(), 
+			"sid_sorted_key", IDX_SI_DATA));
+		sorted_tbl.borrow_mut().add_col(Col::<Fr>::new_const(scol.clone(), 
+			"sid_sorted_id", IDX_SI_DATA));
+		sorted_tbl.borrow_mut().add_col(Col::<Fr>::new_const(scol, 
+			"sid_sorted_val", IDX_SI_DATA));
+
+		pat_loc_tbl.borrow_mut().add_container(sorted_tbl);
+		packed_trace.borrow_mut().add_container(pat_loc_tbl);
+		stmt_faa.borrow_mut().add_container(packed_trace);
+
+		//6.3 create the discharge adv component
+		let cfg_wea = stmt_wea.borrow().get_cfg();
+		let cfg_faa = stmt_faa.borrow().get_cfg();
+
+		let store_id = 0;//0 for all
+		let fsm_id = ClamavDB::<Fr>::pm_acdfa_id(store_id, b_igc);
+		let gadget = DischargeAdvGadget::new(
+			b_igc,
+			1, //offset_fsm
+			&capacity, //capacity
+			fsm_id, //fsm_id
+			&vec![cfg_wea.clone(), cfg_faa.clone()], 
+				//prev cfgs, just pass an empty
+			&subsig_store_info,
+		);
+
+		gadget.validate_bwdprf_valid_prf(
+			&prf_bwd_var,
+			&ct_sq_res2_var,
+			&r1,
+			&r2,
+			&prf_bwdprf_valid_var,
+			last_loc_var
+		).unwrap();
+
+		assert!(cs.is_satisfied().unwrap());
+
+
 	}
-
-
 }
 
 

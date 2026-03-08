@@ -2274,6 +2274,7 @@ pub fn multiset_prod_ignore_zero<F:PrimeField>(
 		let val = if vec_i_val.is_zero(){ F::one() }else{
 			r_val + vec_i_val	
 		};
+		println!("DEBUG USE 6001: i: {}, item: {}", i, val);
 		let item = new_var(&cs, val);
 
 		//2. enforce the constraint on item (just need one constraint) 

@@ -26044,7 +26044,34 @@ Goal 3. now do the validate function
 	[c] 4.1
 	[d] 4.2
 	[e] 4.3
--- TODO continue with the validate function --
+
+Sunday 03/08/2026
+LOC (gadgets): 21055
+Goal 1. implement steps 4.3 to 4.5
+	[a] write spec for gemini 4.3, 4.4, 4.5 (7:56am-8:12pm)
+		21055 -> 21115 (+60)
+	[b] gemini (8:21pm-8:27pm)
+		21115 -> 21189 (+74)
+
+Goal 2. finish the test case
+	[a] generate code skeleton
+	[b] do the patch of code
+	[c] container config has a negative index
+	[d] need to provide some empty config -> this is fixed
+
+Goal 3. continue to debug the validation function
+	[a] verify_disjoint_union_prf
+	[b] print out the sets involved. -> fixed
+	[c] 4.5.3 -> DONE
+
+Goal 4. 4.5.4
+	[a] padding v2d
+	[b] compute the value array
+	[c] the original design does NOT work. Need to use lookup instead.
+
+Goal 5. redo 4.5.4
+	[a] 
+
 
 -- TODO2 -- imporve gen_step_queue_union_prf
 

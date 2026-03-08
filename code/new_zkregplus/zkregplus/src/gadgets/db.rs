@@ -2118,13 +2118,45 @@ pub fn gen_disjoint_union_prf<F:PrimeField>(
 	Ok( (res, prf) )
 }
 
+/// This time set3 is given (and we assume that it is indeed the
+/// union of set1 and set2, and note we are trying to prove that
+/// set1 and set2 are disjoint.
+pub fn gen_disjoint_union_prf_adv<F:PrimeField>(
+	set1: &Vec<F>,
+	set2: &Vec<F>,
+	set3: &Vec<F>, //target result
+	name: &str,
+) -> Result<(Vec<F>,Rc<RefCell<Container<F>>>), Error>{
+	let b_debug = true;
+	let res = vec![&set1[..], &set2[..]].concat();
+	if b_debug{
+		assert!(
+			res.iter().map(|x| x.clone()).collect::<HashSet<F>>() ==
+			set3.iter().map(|x| x.clone()).collect::<HashSet<F>>()
+		);
+	}
+	
+	let prf= Container::new(name);
+	let m_tbl = gen_m_table(&set3, &res); //m_tbl for non-entries will
+		//be all 1 
+	let n = m_tbl.len();
+	prf.borrow_mut().add_col(Col::new(m_tbl, "m_tbl", IDX_DATA));
+
+	let f_rg2= F::from(RANGE2);
+	prf.borrow_mut().add_col(Col::new_const(vec![f_rg2;n],
+		"sid_m_tbl",  IDX_SI_DATA));
+
+	Ok( (res, prf) )
+}
+
+
 /// verify if set1 and set2 are disjoint (regading their non-zero elements),
 /// and res is a union of these two sets 
 /// COST: 4*(n1+n2)
 pub fn verify_disjoint_union_prf<F:PrimeField>(
 	set1: &Vec<FpVar<F>>,
 	set2: &Vec<FpVar<F>>,
-	res: &Vec<FpVar<F>>,
+	set3: &Vec<FpVar<F>>, //the desired result
 	prf: &Rc<RefCell<Container<FpVar<F>>>>,
 	r: &FpVar<F>
 ) -> Result<(), SynthesisError>{
@@ -2135,9 +2167,9 @@ pub fn verify_disjoint_union_prf<F:PrimeField>(
 	let b_perf = false;
 	let nc = cs.num_constraints();
 	let m_tbl = prf.borrow().get_container("m_tbl")?.borrow().to_vec();
-	let set3 = vec![&set1[..], &set2[..]].concat();
-	let n = res.len();
-	assert!(set3.len()==n && res.len()==n);
+	let res = vec![&set1[..], &set2[..]].concat();
+	let n = res.len(); //note n may NOT be the sum of set1 and set2
+		//because of existence of dummy entries.
 	assert_logup(cs.clone(), &set3, &res, &m_tbl, r)?;
 
 	
