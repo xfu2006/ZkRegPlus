@@ -2808,7 +2808,6 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		let encoded_def = encode_cols(&set_bwdprf_ssm_default, &vec![0,1,2]);
 		let (set_total, prf_disjoint_ssm) = gen_disjoint_union_prf(
 			&encoded_real, &encoded_def, "prf_disjoint_ssm")?;
-		//Task 1: assert that set_total is equal to set_bwdprf_ssm
 		let encoded_total = encode_cols(&set_bwdprf_ssm, &vec![0,1,2]);
 		if b_debug{ 
 			let set1 = set_total.iter().map(|i| i.clone()).
@@ -3961,10 +3960,71 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			.borrow().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
 
+		// Task 4.3: extract set_sqres_ssm from rescols. 
+		// Hints: similar call get_container to get from
+		// rescols. 
 
-		//4. prove the min_loc is the first loc in sq_res
-		// as except for 1st column all in RANGE2
-		// we can use f_unit
+
+		// Task 4.4: debug info
+		// Hints: put in if b_debug{...}
+		// dump contents of set_bwdprf_ssm, set_bwdprf_ssm_default,
+		// set_bwdprf_ssm_real, set_sqres_ssm
+
+		//4.5 generate the related prf for 
+		// (1) set_bwdprf_ssm is the disjoint
+		//union of set_bwdprf_ssm_real and set_bwdprf_ssm_default
+		// (2) set_bwdprf_ssm_real is a subset of set_sqres_ssm
+		// (3) set_bwdprf_ssm is a set of all (subsig-step-min_loc)
+		//  in bwdprf, this is accomplished using lkup
+		// (4) set_sqres_ssm is a set of all subsig-step-min-loc
+		//  in sqres (but we do not need a proof here, in verify
+		//  function we'll directly generate the proof by walking
+		//  the sqres table.
+		//Task 4.5.1 disjoint of two set_bwdprf_ssm_real 
+		// and set_wdprf_ssm_default.  use f_rg2 
+		// as random r, because all fields are guaranteed to be
+		// small in range2, and the constant var costs nothing
+		// in weighted sum computation
+		//Hints: finish the function calls below. 
+		let f_rg2 = new_constant_var(...RANGE2);
+		let encoded_real = encode_cols_var_adv_better(...,f_rg2);
+		let encoded_def = encode_cols_adv_betterbetter(..., f_rg2);
+		verify_disjoint_union_prf(...);	
+
+		//Task 4.5.2 set_bwdprf_ssm_real is a subset of set_sqres_ssm
+		//Hints: finish the code below. figure out the
+		//qry/lkup input parameters by studying section 4.5.2 of
+		//gen_bwdprf_valid_prf()
+		let mtbl_bwdprf_sqres = ...get_container()..to_vec();
+		assert_logup(...)?;
+
+		//Task 4.5.3 set_bwdprf_ssm is a set of ALL subsig-step-min_loc
+		//Hints: finish the code below. figure out the
+		//qry/lkup input parameters by studying section 4.5.3 of
+		//gen_bwdprf_valid_prf()
+		let combined_src = encode_cols_var_adv_better(&v2d, &vec![7,1,4]...);
+		let combined_dst = encode_cols_var_adv_better(&set_bwdprf_ssm,  &vec![0,1,2]...);
+		// verify mtbl_bwdprf_coverage
+
+		//Task 4.5.4 set_sqres_ssm is a set of all subsig-step-min-loc
+		//in sqres
+		//Hints: do the following
+		// (1) use random input r1 to compute the grand_product
+		//     of set_sqres_ssm (note that its combined vector is 
+		//    computed earlier. call multiset_prod_ignore_zero in db.common 
+		//    measure the time-performance, 
+		// and if b_perf is set
+		//    print out the cost
+		// (2) similarly compute the weighted sum of entries using r1
+		//      over those entries in rescols when subsig changes, and
+		//      also ignore entries. For efficiency I need to to
+		//      pre-compute related witness values (in F), and 
+		//      create variables, and then use var_to_lb(..) 
+		//      and cs.enforce_constraints() to do this efficiently.
+		//    measure the time-performance, 
+		// and if b_perf is set
+		//    print out the cost
+
 		/*
 		let f_unit = FpVar::<F>::constant(F::from(1u32<<RANGE2_BIT));
 		let src_combined= encode_cols_var_adv(&v2d, &vec![0,1,3], &f_unit);
