@@ -3937,9 +3937,30 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		//         set_bwd_ssm_real_min.
 		//   (b) set_bwd_ssm_real_min is a subset of set_sqlres_sum
 		//
-		//4.1 build set_bwdprf_ssm 
-		//Task 1. retrieve the set_bwdprf_ssm from prf_bwdprf_valid
-		// call functions like get_container().
+		//4.1 retrieve set_bwdprf_ssm
+		let names = ["set_bwdprf_ssm_subsig", "set_bwdprf_ssm_step", 
+			"set_bwdprf_ssm_min_loc"];
+		let _set_bwdprf_ssm = names.iter().map(|n|
+			prf_bwdprf_valid.borrow().get_container(n).unwrap()
+			.borrow().to_vec()
+		).collect::<Vec<Vec<FpVar<F>>>>();
+
+		//4.2 retrieve set_bwdprf_ssm_default and set_bwdprf_ssm_real. 
+		let names_real = ["set_bwdprf_ssm_real_subsig", 
+			"set_bwdprf_ssm_real_step", "set_bwdprf_ssm_real_min_loc"];
+		let _set_bwdprf_ssm_real = names_real.iter().map(|n|
+			prf_bwdprf_valid.borrow().get_container(n).unwrap()
+			.borrow().to_vec()
+		).collect::<Vec<Vec<FpVar<F>>>>();
+
+		let names_def = ["set_bwdprf_ssm_default_subsig", 
+			"set_bwdprf_ssm_default_step", 
+			"set_bwdprf_ssm_default_min_loc"];
+		let _set_bwdprf_ssm_default = names_def.iter().map(|n|
+			prf_bwdprf_valid.borrow().get_container(n).unwrap()
+			.borrow().to_vec()
+		).collect::<Vec<Vec<FpVar<F>>>>();
+
 
 		//4. prove the min_loc is the first loc in sq_res
 		// as except for 1st column all in RANGE2
