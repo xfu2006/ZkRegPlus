@@ -928,6 +928,7 @@ impl <F:PrimeField> StepQueue<F>{
 		}
 		assert!(n>=vec_encoded.len()+1, "StepQueue type: {:?} buf too small, either adjust the compression ratio in vec_size() first, then check the pats_expansion_rate in DischargeAdvCapacity, n: {}, vec_encoded.len: {}", self.q_type, n, vec_encoded.len());
 		let n2 = n-vec_encoded.len();
+		assert!(n2>0); //the Cap guanrantees that a dummy zero entry added
 		let vec_encoded = vec![vec![zero; n2], vec_encoded].concat();
 		let vec_locs= vec![vec![zero; n2], vec_locs].concat();
 		let vec_step= vec![vec![zero; n2], vec_step].concat();
@@ -2847,8 +2848,8 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		res.borrow_mut().add_col(Col::new_const(vec![f_rg2; len_mtbl_cov], 
 			"sid_mtbl_bwdprf_coverage", IDX_SI_DATA));
 
-		//4.5.4 to show that set_bwdprf_ssm_real is REALLY the set
-		//of min-loc in sql-res. no proof needed (it can computed
+		//4.5.4 to show that set_sqres_ssm is REALLY the set
+		//of min-loc generated from in sql-res. no proof needed (it can computed
 		//directly in the validate_bwdprf_validity_prf() function.
 
 		/* REMOVE LATER
@@ -4087,19 +4088,56 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			.unwrap().borrow().to_vec();
 		assert_logup(cs.clone(), &combined_src, &encoded_total, &mtbl_bwdprf_coverage, &r2)?;
 
-		//4.5.4 to verify that set_bwdprf_real is THE 
+		//4.5.4 to verify that set_sqres_ssm is THE 
 		// set of all subsig-step-min-loc
 		//in sqres. We run a grand-product on the two sizes 
 		//Basic idea: we ignore 0 items and compute the grand product
-		//of set_bwdprf_real; similarly, we compute the grand product
-		//of those items in sqres (over item trip subsig-step-loc) 
-		// when (subsig,step) changes (implying
-		//that the loc is the SMALLEST one, assuming susig-step is already
-		//proved to be in ascending order)
+		//of set_sqres_ssm; similarly, we compute the grand product
+		//of min-locs items in sqres. This is done by walking
+		//through the list of sq_res and whenever (subsig,step) changes
+		//we count that entry (because subsig-step is proved to be sorted 
+		//earlier).
 		//To save cost, we first precompute the value for each
 		//intermediate sum and then use cs.enforce_constraint to directly
 		//enforce the result.
+
 		//4.5.4.1 compute the sq_res weighted sum
+		let left_sum = multiset_prod_ignore_zero(cs.clone(), 
+			&combined_dst,&r1);   //this is the combined result of cols_sqres
+
+		//4.5.4.2 compute the values of vec_items, vec_prod
+		//where vec_items[i] = if new encoded, the weighted sum
+		//of subsig-step-loc; otherwise 1. 
+		//vec_prod[i] = vec_prod[i-1] * vec_item[i]
+		//NOTE that StepQueue::to_container() guarantees at least
+		//one dummy item (all 0- entries at the beginning);
+		let f1 = F::from(RANGE2);
+		let f2 = f1 * f1;
+		assert!(rescols[0][0].value()?.is_zero()); //first subsig is 0
+		assert!(rescols[1][0].value()?.is_zero()); //first step is 0
+		let n = rescols[0].len();
+		let mut vec_items = vec![F::one(); n]; 
+		let mut vec_prod = vec![F::one(); n];
+		let r1_val = r1.value()?;
+		for i in 1..n{
+			vec_items[i] = if rescols[0][i].value()?!=rescols[0][i-1].value()?{
+				//new subsig-step
+				//subsig*f2 + step*f1 + loc + r1
+				rescols[3][i].value()?*f2 +  rescols[1][i].value()?*f1	+ 
+					rescols[2][i].value()? + r1_val
+			}else{F::one()};
+			println!("DEBUG USE 6202: i: {}, item: {}", i, vec_items[i]);
+			vec_prod[i] = vec_prod[i-1] * vec_items[i];
+		}
+		assert!(vec_prod[n-1] == left_sum.value()?);
+
+		//Task 4.5.4.3 create the corresponding array of vec_prod and vec_items
+		//Hints: generate vec_prod_var and vec_items_var by
+		//calling new_var on vec_prod and vec_items
+
+		//Task 4.5.4.4 check vec_prod[i] = vec_prod[i-1] * vec_items[i]
+		//Hints: use cs.enforce_constraints for each check, use
+		//functions such as var_to_lb()
 
 		/*
 		let mut timer2 = GTimer::new(); timer2.start();

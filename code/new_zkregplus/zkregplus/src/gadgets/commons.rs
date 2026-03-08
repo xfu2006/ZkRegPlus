@@ -2224,6 +2224,7 @@ pub fn multiset_prod_2col<F:PrimeField>(
 		let v1_val = v1.value().unwrap();
 		let sel_val = sel[i].value().unwrap();
 		let item_val = if sel_val.is_zero() {f_one} else {v1_val};
+		println!("DEBUG USE 6101: grand_prod: item: {}", item_val);
 		let item = new_var(&cs, item_val);
 
 		prod = &prod * &item;

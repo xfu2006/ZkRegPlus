@@ -26070,7 +26070,18 @@ Goal 4. 4.5.4
 	[c] the original design does NOT work. Need to use lookup instead.
 
 Goal 5. redo 4.5.4
-	[a] 
+	[a] add check of default_min_loc
+	[b] go over all the checks again
+
+Goal 6. implement 4.5.4
+	LOC: 21364
+	[a] check v2d is padded?
+	[b] compute grand-product of set_sqres_sms
+	[c] the pure logic for conditional walk is
+		let b_new_i = (encoded[i] - encoded[i-1]);
+		b_new_i * (item - r - subsig - step*f1 - loc*f2)
+		+ (1-b_new_i)*(item - 1)
+		prod[i] = prod[i-1] * item.
 
 
 -- TODO2 -- imporve gen_step_queue_union_prf
