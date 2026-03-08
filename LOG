@@ -26035,9 +26035,11 @@ Goal 4. implement 4.2
 	[a] collect set_encoded_default_min
 
 Saturday 03/07/2026
-LOC (gadgets): 20791->20923->20988 -> 21000
+LOC (gadgets): 20791->20923->20988 -> 21000 -> 21011 (+210)
 Goal 1. compute the sets of info to minimize cost -> DONE
 Goal 2. create proofs -> DONE 
+Goal 3. now do the validate function
+	[a] fix the error of in-compatable size
 
 -- TODO2 -- imporve gen_step_queue_union_prf
 

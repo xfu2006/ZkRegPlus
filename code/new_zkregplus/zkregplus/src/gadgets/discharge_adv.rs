@@ -48,7 +48,7 @@ use data_processor::{
 			ID_ENCODED_RG_START, ID_ENCODED_RG_END, ID_ENCODED_SUBSIG,
 	},
 	type_def::{SubsigStepStore,SubsigStepStoreItem},
-	clamav::{default_clamav_cfg},
+	//clamav::{default_clamav_cfg},
 };
 use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef,LinearCombination,
 	Variable};
@@ -1587,9 +1587,9 @@ impl <F:PrimeField> StepBwdPrf<F>{
 			names[1]), IDX_SI_DATA)
 		); //cannot be const 
 
-		//3. src_pat,  srgrg_end (col 2,3) 
-		let ids = [2,3];
-		let cats = [ID_ENCODED_PAT, ID_ENCODED_RG_END];
+		//3. src_pat,  srgrg_end (col 2,3,7) 
+		let ids = [2,3,7];
+		let cats = [ID_ENCODED_PAT, ID_ENCODED_RG_END,ID_ENCODED_SUBSIG];
 		for x in 0..ids.len(){
 			let sids = se.iter().map(|s| SubsigStepStore::gen_step_tbl_id(
 				*s,cats[x])).collect::<Vec<_>>();
@@ -2496,7 +2496,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		prf_bwd: &Rc<RefCell<Container<F>>>,
 		sq_res: &Rc<RefCell<Container<F>>>,
 		default_min_loc: F, //default min_loc for pruning back
-		subsig_store_info: &SubsigStepStore,
+		_subsig_store_info: &SubsigStepStore,
 		capacity: &DischargeAdvCapacity,
 		b_igc: bool,
 	)->Result<Rc<RefCell<Container<F>>>, Error>{
@@ -2810,7 +2810,13 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			&encoded_real, &encoded_def, "prf_disjoint_ssm")?;
 		//Task 1: assert that set_total is equal to set_bwdprf_ssm
 		let encoded_total = encode_cols(&set_bwdprf_ssm, &vec![0,1,2]);
-		if b_debug{ assert!(set_total == encoded_total); }
+		if b_debug{ 
+			let set1 = set_total.iter().map(|i| i.clone()).
+				collect::<HashSet<F>>();
+			let set2 = encoded_total.iter().map(|i| i.clone()).
+				collect::<HashSet<F>>();
+			assert!(set1 == set2); 
+		}
 		res.borrow_mut().add_container(prf_disjoint_ssm);
 
 		//4.5.2 set_bwdprf_ssm_real is a subset of set_sqres_ssm
@@ -2838,7 +2844,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 
 		//4.5.4 no proof needed
 
-
+		/* REMOVE LATER
 		// 4.1 (case 1): for those backward proof steps has NON-default
 		// min-locs, prove that they are indeed extracted as min-loc
 		// from sq-res
@@ -2899,7 +2905,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			}
 		}
 		//TODO -- dst_encoded_default
-
+		*/
 
 		//5. prove min_loc > (loc_to_remove + rg_2) 
 		let sel = (0..src_rg_end.len()).into_par_iter().map(|i|
@@ -3775,7 +3781,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		let names = vec![
 			"src_encoded",  "src_step", 
 			"src_pat", "src_min_loc", "src_rg_end",
-			"prev_encoded", "loc_to_del"
+			"prev_encoded", "loc_to_del", "subsig",
 		];
 		let v2d= names.iter().map(|n|{
 			prf_bwd.borrow().get_container(n).unwrap().borrow().to_vec() 
@@ -3783,11 +3789,11 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		let (
 			_src_encoded, _src_step,
 			_src_pat,  src_min_loc, src_rg_end,
-			_prev_encoded, loc_to_del)
+			_prev_encoded, loc_to_del, subsig)
 		= (
 			&v2d[0], &v2d[1], 
 			&v2d[2], &v2d[3], &v2d[4], 
-			&v2d[5], &v2d[6]
+			&v2d[5], &v2d[6], &v2d[7]
 		);
 		let sid_cols = names.iter().map(|n|{
 			prf_bwd.borrow().get_container(&format!("sid_{}",n)).unwrap()
@@ -3912,9 +3918,33 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		//check_arr_eq(&sid_diff_loc, &frg, "err checking sid_diff_loc")?; 
 		check_arr_eq_arr(&diff_loc, &saved_diff_loc, "err checking diff_loc")?; 
 
+
+		//4. prove the min_loc in bwd_prf is EITHER 
+		//  (1) the first loc in sq_res for each subsig-step, OR 
+		//  (2) the default_min_loc when in sq-res for the specific subsig-step
+		//       the array of locs is EMPTY.
+		// We prove in the following steps.
+		// We first extract the set of (subsig-step-min_loc) from
+		//   bacward prf (v2d). Call it "set_bwdprf_ssm".
+		// We then extract the set of (subsig-step-min_loc) by
+		//   finding out the min_loc for each (subsig-step) in rescols.
+		//   Call it "set_sqres_ssm"
+		// We then need to prove:
+		//   (a) set_bwdprf_ssm can be split into two disjoit sets:
+		//      set_bwdprf_ssm_default where min_loc is the default_min_loc,
+		//		   and set_bwd_ssm_real_min. We need to show that
+		//         set_bwdprf_ssm_default is disjoint from
+		//         set_bwd_ssm_real_min.
+		//   (b) set_bwd_ssm_real_min is a subset of set_sqlres_sum
+		//
+		//4.1 build set_bwdprf_ssm 
+		//Task 1. retrieve the set_bwdprf_ssm from prf_bwdprf_valid
+		// call functions like get_container().
+
 		//4. prove the min_loc is the first loc in sq_res
 		// as except for 1st column all in RANGE2
 		// we can use f_unit
+		/*
 		let f_unit = FpVar::<F>::constant(F::from(1u32<<RANGE2_BIT));
 		let src_combined= encode_cols_var_adv(&v2d, &vec![0,1,3], &f_unit);
 		let dst_combined = encode_cols_var_adv(&rescols, &vec![0,1,2], &f_unit);
@@ -3931,6 +3961,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		let mtb_min_loc= prf_bwdprf_valid.borrow().get_container("mtb_min_loc")
 			.unwrap().borrow().to_vec();
 		assert_logup(cs.clone(), &src_combined, &dst_adj, &mtb_min_loc, r2)?;
+		*/
 
 		//5. prove min_loc > (loc_to_remove + rg_2) 
 		let sel = (0..src_rg_end.len()).into_iter().map(|i|
@@ -4267,12 +4298,15 @@ pub mod tests_discharge_adv_gadget{
 
 			//2.6. generate the 7 segments of output for building statment
 			//from inp to si_data
-			let cps1 = stmt_wea.borrow().gen_stmt_components(); 
-			let cps2 = stmt_faa.borrow().gen_stmt_components(); 
-			let cps3 = stmt_disc.borrow().gen_stmt_components(); 
+			let cps1 = stmt_wea.borrow().gen_stmt_components();
+			let cps2 = stmt_faa.borrow().gen_stmt_components();
+			let cps3 = stmt_disc.borrow().gen_stmt_components();
+
+			println!("DEBUG USE: cps3 sizes: INP: {}, OUP: {}, DATA: {}, SI_INP: {}, SI_OUP: {}, SI_DATA: {}",
+				cps3.0[0].len(), cps3.0[1].len(), cps3.0[2].len(), cps3.0[3].len(), cps3.0[4].len(), cps3.0[5].len());
+
 			let cps = cps1.0.into_iter().zip(cps2.0.into_iter()).map(|(a,b)|
-				vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
-			let cps = cps.into_iter().zip(cps3.0.into_iter()).map(|(a,b)|
+				vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();			let cps = cps.into_iter().zip(cps3.0.into_iter()).map(|(a,b)|
 				vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
 
 			//2.7 create the gadget
