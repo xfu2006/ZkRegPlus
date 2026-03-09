@@ -26089,11 +26089,14 @@ Goal 6. implement 4.5.4
 	[f] gemini part2 (19:58pm->8:20pm +47)
 
 Monday 03/09/2026
-LOC (gadgets): 21451 cut -> 21244 -> 
+LOC (gadgets): 21451 cut -> 21222 (-200)
 Goal 1. deploy and test
 	[a] error on from_subsig_store_item
 	[b] fixed and unit testing
 	[c] regress test
 
 Goal 2. imporve gen_step_queue_union_prf
+	[a] idea: use the subsig-step-loc instead to generate disjoint union
+
+TODO: the bug is STILL not fixed.
 
