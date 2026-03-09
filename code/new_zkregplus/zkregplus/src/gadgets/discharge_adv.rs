@@ -22,7 +22,7 @@ use crate::gadgets::{
 		var_to_lb, var_to_tuple_adv, is_zero_better, 
 		new_const_var, encode_2col_var, encode_2col_var_adv,
 		check_arr_eq_arr, encode_cols_var_adv, is_sorted,
-		check_eq, encode_2col, check_rg2,
+		check_eq, encode_2col, check_rg2, 
 		encode_cols_var_adv_better,multiset_prod_ignore_zero},
 	db::{assert_logup, verify_encoded_table, assert_well_formed_sorted, gen_disjoint_union_prf_adv, verify_disjoint_union_prf,},
 	traits::{Container,
@@ -1781,34 +1781,25 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		q1: &Rc<RefCell<Container<F>>>,
 		q2: &Rc<RefCell<Container<F>>>,
 		q3: &Rc<RefCell<Container<F>>>,
-	)->Rc<RefCell<Container<F>>>{
-		let prf = Container::new(prf_name);		
+	)->Result<Rc<RefCell<Container<F>>>, Error>{
+		//1. retrieve the subsig-step-loc entries from the 3 containers
 		let e1=q1.borrow().get_container("encoded").unwrap().borrow().to_vec(); 
 		let c1=q1.borrow().get_container("locs").unwrap().borrow().to_vec(); 
+
 		let e2=q2.borrow().get_container("encoded").unwrap().borrow().to_vec(); 
 		let c2=q2.borrow().get_container("locs").unwrap().borrow().to_vec(); 
-		let e12 = vec![e1,e2].concat();
-		let c12 = vec![c1,c2].concat();
+
 		let e3=q3.borrow().get_container("encoded").unwrap().borrow().to_vec(); 
 		let c3=q3.borrow().get_container("locs").unwrap().borrow().to_vec(); 
 
-		let src = encode_cols(&vec![e12,c12], &vec![0,1]);
-		let dst = encode_cols(&vec![e3,c3], &vec![0,1]);
+		//2. build three combined columns
+		let comb1 = encode_2col(&e1, &c1);
+		let comb2 = encode_2col(&e2, &c2);
+		let comb3 = encode_2col(&e3, &c3);
+		let (_set_total, prf)  = gen_disjoint_union_prf_adv(
+			&comb1, &comb2, &comb3, prf_name)?;
 
-		let mtb1 = gen_m_table(&src, &dst);
-		let mtb2 = gen_m_table(&dst, &src);
-		let (len1,len2) = (mtb1.len(), mtb2.len());
-		//let frg = F::from(RANGE2);
-		let zero = F::zero();
-		prf.borrow_mut().add_col(Col::new(mtb1, "mtb1", IDX_DATA));
-		prf.borrow_mut().add_col(Col::new(mtb2, "mtb2", IDX_DATA));
-		prf.borrow_mut().add_col(Col::new_const(vec![zero; len1], 
-			"sid_mtb1", IDX_SI_DATA));
-		prf.borrow_mut().add_col(Col::new_const(vec![zero; len2], 
-			"sid_mtb2", IDX_SI_DATA));
-		*/
-
-		prf
+		Ok( prf )
 	}
 
 	/// prove that the queue_step to_add covers the entries 
@@ -2241,7 +2232,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		let prf = Container::new("prf");
 		//1. prove inp_queue + to_add = sq_res
 		let prf_union = Self::gen_step_queue_union_prf("prf_union",
-			&ct_sq_inp, &ct_sq_to_add, &ct_sq_res);
+			&ct_sq_inp, &ct_sq_to_add, &ct_sq_res)?;
 		prf.borrow_mut().add_container(prf_union);
 		if b_perf{log_perf(LOG1, "-- -- gen_fwd step1", &mut t1);}
 
@@ -2338,7 +2329,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		//1. prove the sq_to_del + sq_res2 = sq_res
 		let prf = Container::new("prf");
 		let prf_union = Self::gen_step_queue_union_prf("prf_union",
-			&ct_sq_res2, &ct_sq_to_del, &ct_fwd_res);
+			&ct_sq_res2, &ct_sq_to_del, &ct_fwd_res)?;
 		prf.borrow_mut().add_container(prf_union);
 		if b_perf{log_perf(LOG1, "-- -- gen_bwd step1", &mut t1);}
 
@@ -3034,32 +3025,18 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		let c1=q1.borrow().get_container("locs").unwrap().borrow().to_vec(); 
 		let e2=q2.borrow().get_container("encoded").unwrap().borrow().to_vec(); 
 		let c2=q2.borrow().get_container("locs").unwrap().borrow().to_vec(); 
-		let (n1,n2) = (e1.len(), e2.len());
-		let e12 = vec![e1,e2].concat();
-		let c12 = vec![c1,c2].concat();
 		let e3=q3.borrow().get_container("encoded").unwrap().borrow().to_vec(); 
 		let c3=q3.borrow().get_container("locs").unwrap().borrow().to_vec(); 
+		let (n1,n2) = (e1.len(), e2.len());
+		
+		//2. build three combined columns
+		let comb1 = encode_2col_var(&e1, &c1);
+		let comb2 = encode_2col_var(&e2, &c2);
+		let comb3 = encode_2col_var(&e3, &c3);
 
-		//2. retrieve sid_cols and verify that they are in range.
-		//check of sid_c2 can be skipped as to_add will be proved valid
-		//inp_queue sid will be valid based on recursion (init is guaranteed ok)
-		//can skip c3 as its range is guranteed after logup
-		//alsmot mtb count can be skipped, as logup guanratees their 
-		//correctness. So none has to be performed here
+		//3. verify disjoint relation
+		verify_disjoint_union_prf(&comb1, &comb2, &comb3, prf_union, &r1)?;
 
-		//3. do 2-direction logup check
-		// since the right col is in RANGE2, use f_unit instead
-		let f_unit = FpVar::<F>::constant(F::from(1u32<<RANGE2_BIT));
-		let src = e12.iter().zip(c12.iter()).map(|(a,b)|
-			a + (b*&f_unit)).collect::<Vec<FpVar<F>>>();
-		let dst = e3.iter().zip(c3.iter()).map(|(a,b)|
-			a + (b*&f_unit)).collect::<Vec<FpVar<F>>>();
-		let mtb1=prf_union.borrow().get_container("mtb1").unwrap().borrow()
-			.to_vec(); 
-		let mtb2=prf_union.borrow().get_container("mtb2").unwrap().borrow()
-			.to_vec(); 
-		assert_logup(cs.clone(), &src, &dst, &mtb1, r2)?;
-		assert_logup(cs.clone(), &dst, &src, &mtb2, r2)?;
 		if b_perf{
 			println!(" ### validate_unique_step_queue: n1: {}, n2: {}, cost: {}",	n1, n2, cs.num_constraints()-nc);
 		}

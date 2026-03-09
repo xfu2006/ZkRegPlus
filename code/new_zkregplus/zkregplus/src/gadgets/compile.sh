@@ -1,7 +1,7 @@
 #1. quick compile 
 #cargo check --tests 2>&1 | less
-#RUST_BACKTRACE=1 cargo test -- test_bwd_prf --show-output --nocapture
-cargo test -- tests_discharge_adv_gadget --show-output --nocapture
+#cargo test -- test_bwd_prf --show-output --nocapture
+RUST_BACKTRACE=1 cargo test -- tests_discharge_adv_gadget --show-output --nocapture
 
 #2. test each gadget
 #RUST_BACKTRACE=1 
