@@ -643,7 +643,7 @@ impl <F:PrimeField> StepQueue<F>{
 	/// Return: <ToRemove, Result, StepBwdPrf>
 	pub fn gen_backward_prf(&self, default_min_loc: F, subsig_store_info: &SubsigStepStore) ->(Self, Self, StepBwdPrf<F>){
 		//1. init data
-		let b_debug = true;
+		let b_debug = false;
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, _one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
 		//2. process each subsig, propagating step by step
@@ -875,7 +875,7 @@ impl <F:PrimeField> StepQueue<F>{
 		b_subsig: bool, 
 		subsig_store_info: &SubsigStepStore,
 	)->Result<Rc<RefCell<Container<F>>>, Error>{
-		let b_debug = true;
+		let b_debug = false;
 		#[cfg(test)] { assert!(is_sorted(&self.subsigs)); }
 		assert!(!b_inp || !b_oup); //b_inp and b_oup cannot be on the same time
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
@@ -1169,7 +1169,7 @@ impl <F:PrimeField> StepFwdPrf<F>{
 		subsig_store_info: &SubsigStepStore
 	) ->Result<Rc<RefCell<Container<F>>>, Error>{
 		//0. check data
-		let b_debug = true;
+		let b_debug = false;
 		#[cfg(test)] { assert!(is_sorted(&self.subsigs)); }
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, _one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
@@ -1485,7 +1485,7 @@ impl <F:PrimeField> StepBwdPrf<F>{
 	///    dst_rg_start, dst_rg_end, dst_loc, pat_id, diff1, diff2)
 	/// might throw CapErr("dis_adv::pats_expansion_rate")
 	pub fn to_container(&self, name: &str, subsig_store_info: &SubsigStepStore)->Result<Rc<RefCell<Container<F>>>,Error>{
-		let b_debug = true;
+		let b_debug = false;
 		//0. check data
 		#[cfg(test)] { assert!(is_sorted(&self.subsigs)); }
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
@@ -2502,7 +2502,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		b_igc: bool,
 	)->Result<Rc<RefCell<Container<F>>>, Error>{
 		//0. data retrieval
-		let b_debug = true;
+		let b_debug = false;
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, one, _max) = (F::zero(), F::one(), 
 			F::from(max_val as u32));
@@ -3780,7 +3780,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		default_min_loc: FpVar<F>, //used as min_loc default
 	)->Result<(), SynthesisError>{
 		//0. retrieve data
-		let b_debug = true;
+		let b_debug = false;
 		let b_perf = true;
 		let cs = r1.cs(); 
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
@@ -4126,7 +4126,6 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 				rescols[3][i].value()?*f2 +  rescols[1][i].value()?*f1	+ 
 					rescols[2][i].value()? + r1_val
 			}else{F::one()};
-			println!("DEBUG USE 6202: i: {}, item: {}", i, vec_items[i]);
 			vec_prod[i] = vec_prod[i-1] * vec_items[i];
 		}
 		assert!(vec_prod[n-1] == left_sum.value()?);
@@ -4617,9 +4616,6 @@ pub mod tests_discharge_adv_gadget{
 			let cps1 = stmt_wea.borrow().gen_stmt_components();
 			let cps2 = stmt_faa.borrow().gen_stmt_components();
 			let cps3 = stmt_disc.borrow().gen_stmt_components();
-
-			println!("DEBUG USE: cps3 sizes: INP: {}, OUP: {}, DATA: {}, SI_INP: {}, SI_OUP: {}, SI_DATA: {}",
-				cps3.0[0].len(), cps3.0[1].len(), cps3.0[2].len(), cps3.0[3].len(), cps3.0[4].len(), cps3.0[5].len());
 
 			let cps = cps1.0.into_iter().zip(cps2.0.into_iter()).map(|(a,b)|
 				vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();			let cps = cps.into_iter().zip(cps3.0.into_iter()).map(|(a,b)|

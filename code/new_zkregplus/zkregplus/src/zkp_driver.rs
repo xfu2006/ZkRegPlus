@@ -669,7 +669,7 @@ pub mod tests_zkp_driver{
 		//let subsigs = 6; GOOD setting
 		let subsigs = 4;  
 		let avg_pats_per_subsig = 3;  
-		let avg_active_pats_per_subsig = 0; //good value 0 (does not matter)
+		let avg_active_pats_per_subsig = 2; //good value 0 (does not matter)
 		//let avg_subsig_per_sig = 2; //NO NEED ANY MORE
 		let perc_comp_subsigs = 26;  //26 for subsigs=4, 34 for subsigs=3
 		let basis_unique_states = 23*100; 
@@ -732,7 +732,7 @@ pub mod tests_zkp_driver{
 		let sigs = 2; 
 		let subsigs = 4; 
 		let avg_pats_per_subsig = 4; 
-		let avg_active_pats_per_subsig = 0; //good value 0, actually does
+		let avg_active_pats_per_subsig = 2; //good value 0, actually does
 			//not matter?
 		let basis_pats_in_trace = 6; 
 		let perc_comp_subsigs = 26; 
@@ -890,7 +890,7 @@ pub mod tests_zkp_driver{
 		let sigs = 1;  //good value 2
 		let subsigs = 3;  //good value 4
 		let avg_pats_per_subsig = 3;  //good value 4
-		let avg_active_pats_per_subsig = 0; //good value 0, actually does
+		let avg_active_pats_per_subsig = 3; //good value 0, actually does
 			//not matter?
 		let basis_pats_in_trace = 2;  //good value 4
 		let perc_comp_subsigs = 34;  //good value 34 
