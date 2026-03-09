@@ -26088,6 +26088,12 @@ Goal 6. implement 4.5.4
 	[e] gemini part (19:35pm->19:45pm +10)
 	[f] gemini part2 (19:58pm->8:20pm +47)
 
+Monday 03/09/2026
+LOC (gadgets): 21451 cut -> 
+Goal 1. deploy and test
+	[a] error on from_subsig_store_item
+	[b] fixed and unit testing
+	[c] regress test
 
--- TODO2 -- imporve gen_step_queue_union_prf
+Goal 2. imporve gen_step_queue_union_prf
 

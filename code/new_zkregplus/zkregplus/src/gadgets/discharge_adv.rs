@@ -683,7 +683,7 @@ impl <F:PrimeField> StepQueue<F>{
 			let max_steps = subsig_store_info.subsig_to_steps.get(&u_subsig).unwrap()
 				.vec_pm_bounds.len() - 1; //THEORETICAL num of steps by subsig def
 					//this counts from 0 to the LAST MAX_STEP ID
-			let b_added_step = steps<max_steps; //last STEP uses default_min_loc
+			let b_added_step = real_steps<max_steps; //last STEP uses default_min_loc
 			let steps = if steps<max_steps{steps+1} else {steps};
 				//this is to ADD one EXTRA step if it EXISTS
 			//2.2. three data structures:
@@ -691,14 +691,16 @@ impl <F:PrimeField> StepQueue<F>{
 			//(2) vec_bwd_prf: the corresponding proof for the ones to be deleted
 			//(3) vec_res (backward from last step) of the result.
 			//NOTE that vec_res has two cases: (1) starting from the "next"
-			// empty step if real_steps<max_steps; (2) starting from the
+			// empty step if real_steps<=max_steps; (2) starting from the
 			// current last step if it is REALLY the last step of subsig.
+			println!("DEBUG USE 6101: steps: {}, max_steps: {}, subsig: {}", steps, max_steps, *subsig);
 			let mut vec_res = if real_steps<max_steps{
 				//build a StepQueueItem for the last created step
 				//*** with the default_min_loc *** because that
 				//newly added step layer has no currently reported locs.
 				let info = subsig_store_info.subsig_to_steps.get(&u_subsig)
 					.unwrap();
+				
 				let sqi = StepQueueItem::from_subsig_store_item(&info,
 					steps, *subsig, vec![default_min_loc]);
 
