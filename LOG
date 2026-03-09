@@ -26075,13 +26075,18 @@ Goal 5. redo 4.5.4
 
 Goal 6. implement 4.5.4
 	LOC: 21364
-	[a] check v2d is padded?
+	[a] check v2d is padded? -> yes
 	[b] compute grand-product of set_sqres_sms
 	[c] the pure logic for conditional walk is
 		let b_new_i = (encoded[i] - encoded[i-1]);
 		b_new_i * (item - r - subsig - step*f1 - loc*f2)
 		+ (1-b_new_i)*(item - 1)
 		prod[i] = prod[i-1] * item.
+	[d] add value part
+		19:13pm -> 19:34 (+20) 
+		21364 -> 21403 (+40) 
+	[e] gemini part (19:35pm->19:45pm +10)
+	[f] gemini part2 (19:58pm->8:20pm +47)
 
 
 -- TODO2 -- imporve gen_step_queue_union_prf

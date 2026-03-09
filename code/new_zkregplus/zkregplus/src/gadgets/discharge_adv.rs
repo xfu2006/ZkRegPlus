@@ -19,7 +19,7 @@ use utils::{logger::{log_perf, LOG1},
 	timer::Timer as GTimer};
 use crate::gadgets::{
 	commons::{gen_m_table,check_arr_eq,encode_cols,decode_cols,new_var,
-		var_to_lb, is_zero_better, 
+		var_to_lb, var_to_tuple_adv, is_zero_better, 
 		new_const_var, encode_2col_var, encode_2col_var_adv,
 		check_arr_eq_arr, encode_cols_var_adv, is_sorted,
 		check_eq, encode_2col, check_rg2,
@@ -4131,13 +4131,67 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		}
 		assert!(vec_prod[n-1] == left_sum.value()?);
 
-		//Task 4.5.4.3 create the corresponding array of vec_prod and vec_items
-		//Hints: generate vec_prod_var and vec_items_var by
-		//calling new_var on vec_prod and vec_items
+		//4.5.4.3 create the corresponding array of vec_prod and vec_items
+		let vec_prod_var = vec_prod.iter().map(|v| 
+			new_var(&cs, *v)).collect::<Vec<FpVar<F>>>();
+		let vec_items_var = vec_items.iter().map(|v| 
+			new_var(&cs, *v)).collect::<Vec<FpVar<F>>>();
 
-		//Task 4.5.4.4 check vec_prod[i] = vec_prod[i-1] * vec_items[i]
-		//Hints: use cs.enforce_constraints for each check, use
-		//functions such as var_to_lb()
+		//4.5.4.4 check vec_prod[i] = vec_prod[i-1] * vec_items[i]
+		for i in 1..n {
+			cs.enforce_constraint(
+				var_to_lb(&vec_prod_var[i-1], F::one()),
+				var_to_lb(&vec_items_var[i], F::one()),
+				var_to_lb(&vec_prod_var[i], F::one())
+			).unwrap();
+		}
+
+		//Task 4.5.4.5 create vec_b_new. so that vec_b_new[i]
+		// is true if rescols[0][i] != rescols[0][i-1]
+		let one = new_const_var(&cs, F::one());
+		let vec_b_new = (0..n).into_iter().map(|i| {
+			if i == 0 {
+				new_const_var(&cs, F::zero())
+			} else {
+				&one - &is_zero_better(&(&rescols[0][i] - &rescols[0][i-1]), 
+					&cs).unwrap()
+			}
+		}).collect::<Vec<FpVar<F>>>();
+
+		//Task 4.5.4.6 run the check for each vec_item[i] so that
+		// vec_item[i] = 1 if not b_new[i]; otherwise
+		// vec_item[i] = rescols[3][i]*f2 + rescols[1][i] *f1 + rescols[2][i] + r1.
+		// Then formula is:
+		// b_new[i]*(vec_item[i] - rescols[3][i]*f2 
+		//		- rescols[1][i]*f1 + rescols[2][i] - r1) 
+		//      + (1-b_new[i])*(vec_item[i]-1) = 0
+		// which simplifies to:
+		// **********************************
+		// b_new[i]*(rescols[3][i]*f2 + rescols[1][i]*f1 + 
+		//        rescols[2][i] + r1 -1)
+		// = vec_item[i] - 1 
+		// **********************************
+		// This can be encoded just using one constraint
+		// note that f1 and f2 here are CONSTANTs, so you can
+		// convert items like rescols[1][i]*f1 using var_to_tuple_adv.
+		for i in 1..n {
+			let lc_right = LinearCombination::<F>(vec![
+				var_to_tuple_adv(&rescols[3][i], f2),
+				var_to_tuple_adv(&rescols[1][i], f1),
+				var_to_tuple_adv(&rescols[2][i], F::one()),
+				var_to_tuple_adv(&r1, F::one()),
+				(-F::one(), Variable::One)
+			]);
+			let lc_out = LinearCombination::<F>(vec![
+				var_to_tuple_adv(&vec_items_var[i], F::one()),
+				(-F::one(), Variable::One)
+			]);
+			cs.enforce_constraint(
+				var_to_lb(&vec_b_new[i], F::one()),
+				lc_right,
+				lc_out
+			).unwrap();
+		}
 
 		/*
 		let mut timer2 = GTimer::new(); timer2.start();
