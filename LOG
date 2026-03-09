@@ -26089,7 +26089,7 @@ Goal 6. implement 4.5.4
 	[f] gemini part2 (19:58pm->8:20pm +47)
 
 Monday 03/09/2026
-LOC (gadgets): 21451 cut -> 
+LOC (gadgets): 21451 cut -> 21244 -> 
 Goal 1. deploy and test
 	[a] error on from_subsig_store_item
 	[b] fixed and unit testing

@@ -1742,70 +1742,6 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		_fsm_id: u32,
 		capacity: &DischargeAdvCapacity
 	)->StepQueue<F>{
-		/*
-		//1. generate store_combo get the REAL entries only
-		let max_val:usize = (1<<RANGE2_BIT) - 1;
-		let (_zero,_one,_max) = (F::zero(), F::one(), F::from(max_val as u32));
-		let store_combo = Self::gen_store_steps_combo(inp_subsigs,
-			store_steps, fsm_id, capacity);
-		let col_names = vec!["subsig", "id", "pat", "rg_start", "rg_end", 
-			"encoded"];
-		let cols = col_names.iter().map(|n|
-			store_combo.borrow().get_container(n).unwrap().borrow().to_vec())
-			.collect::<Vec<Vec<F>>>();
-		let n = cols[0].len();
-		for i in 0..cols.len(){assert!(cols[i].len()==n);}
-		
-		//2. generate StepQueueItem
-		let items = (0..n).collect::<Vec<_>>().into_par_iter().map(|i|{
-			let (subsig, step, pat, rg_start, rg_end, encoded) = 
-				(cols[0][i], cols[1][i], cols[2][i], cols[3][i], cols[4][i],
-					cols[5][i]);
-			let locs = if step.is_zero() && !subsig.is_zero() {vec![F::one()]} else {vec![]};
-			let item =  StepQueueItem{encoded, locs, subsig, step, pat, rg_start, rg_end};
-
-			(subsig, step, item)
-		}).collect::<Vec<(F,F,StepQueueItem<F>)>>();
-
-		//3. map/reduce to generate the StepQueue
-		let hs = items.into_par_iter()
-		.filter(|(k,_,_)| !k.is_zero())
-		.fold( || HashMap::<F,Vec<(F,StepQueueItem<F>)>>::new(),
-		  |mut acc, (subsig, step, item)|{
-		  	let mut to_add = vec![(step, item)];
-		  	acc.entry(subsig).or_insert(vec![]).append(&mut to_add);
-			acc
-		  })
-		.reduce(|| HashMap::<F,Vec<(F,StepQueueItem<F>)>>::new(),
-		  |mut acc1, acc2|{
-			for (k, mut vec) in acc2{
-				let mut vec1 = if acc1.contains_key(&k) 
-					{acc1.get(&k).unwrap().clone()} else {vec![]};
-				vec1.append(&mut vec);
-				acc1.insert(k, vec1);
-			}
-			acc1
-		  }
-		);
-
-		//4. process each key
-		let mut subsigs = hs.keys().map(|x| *x).collect::<Vec<F>>();
-		subsigs.sort();
-		let store_items = subsigs.par_iter().map(|subsig|{
-			let tuples = hs.get(subsig).unwrap();
-			let mut res = vec![tuples[0].1.clone(); tuples.len()];
-			for i in 0..tuples.len(){
-				let (step, item) = &tuples[i];
-				let idx = field_to_usize(step);
-				res[idx] = item.clone();
-			}
-			(*subsig, res)
-		}).collect::<HashMap<F, Vec<StepQueueItem<F>>>>();
-
-		let res = StepQueue::new(subsigs, store_items, &capacity);
-
-		res
-		*/
 		let mut subsigs = inp_subsigs.clone();
 		subsigs.sort();
 		let zero = F::zero();
@@ -1870,6 +1806,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			"sid_mtb1", IDX_SI_DATA));
 		prf.borrow_mut().add_col(Col::new_const(vec![zero; len2], 
 			"sid_mtb2", IDX_SI_DATA));
+		*/
 
 		prf
 	}
@@ -2854,68 +2791,6 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		//of min-loc generated from in sql-res. no proof needed (it can computed
 		//directly in the validate_bwdprf_validity_prf() function.
 
-		/* REMOVE LATER
-		// 4.1 (case 1): for those backward proof steps has NON-default
-		// min-locs, prove that they are indeed extracted as min-loc
-		// from sq-res
-		let src_combined= encode_cols(&v2d, &vec![0,4]);
-		let src_sel = (0..v2d[3].len()).into_par_iter().map(|i|{
-			if v2d[4][i]==default_min_loc ||
-				v2d[4][i]==F::zero() {F::zero()} else {F::one()}
-		}).collect::<Vec<F>>();
-		let dst_combined = encode_cols(&rescols, &vec![0,2]);
-		let dst_sel = (0..dst_combined.len()).into_par_iter().map(|i|{
-			if i==0 {//we assume there is at least one dummy entry at begin
-				assert!(rescols[0][0].is_zero(), "needs at least 1 dummy");
-				zero
-			}else{	//encoded not equal to previous 
-					//(assumption tbl already sorted) which is proved earlier
-				if rescols[0][i-1] != rescols[0][i] {one} else {zero}
-			}
-		}).collect::<Vec<F>>();
-		//dst_adj[i] is the first non-dummy entry or last loc
-		//case 1: dst_sel is 1: 
-		let dst_adj = dst_combined.par_iter().zip(dst_sel.par_iter())
-			.map(|(&x,&y)| x*y ).collect::<Vec<F>>();
-		let src_adj = src_combined.par_iter().zip(src_sel.par_iter())
-			.map(|(&x,&y)| x*y ).collect::<Vec<F>>();
-		let mtb_src = gen_m_table(&src_adj, &dst_adj);
-		let len1 = mtb_src.len();
-		res.borrow_mut().add_col(Col::new(mtb_src, "mtb_min_loc", IDX_DATA));
-		res.borrow_mut().add_col(Col::new_const(vec![zero;len1], 
-			"sid_mtb_min_loc", IDX_SI_DATA));
-
-		// 4.2 (case 2): for those has default-min-locs, prove that
-		// the corresponding subsig-src_step do not appear in sq-res
-		// we collect: 
-		// (1) src_encoded_default - the encoded work (subsig-step..etc.)
-		//    for backward_prf where it uses default_min_loc
-		// (2) dst_encoded_non_default - the encoded word
-		//   fro sq_res (which has at least one loc thus
-		//   have real min_loc)
-		// we are proving these two sets (except 0 elements)
-		// are disjoint.
-		let global_max_steps = default_clamav_cfg().max_pm_sections + 1; 
-			//usually 10, very small number, +1 for boundary safety
-		let f_gms = F::from(global_max_steps as u32);
-		let slen = capacity.subsigs;
-		let set_size = slen * global_max_steps; //max_size of buf
-		let src_encoded_default_min = (0..v2d[4].len()).into_par_iter()
-			.filter(|i| v2d[4][*i] == default_min_loc && !v2d[0][*i].is_zero()
-		).map(|i| {
-			if b_debug{
-				println!("DEBUG USE 6601: add default_min_loc for encoded: {}, src_step: {}, src_pat: {}, rg_end: {}, min_loc: {}, prev_encoded: {}, loc_to_del: {}", v2d[0][i], v2d[1][i], v2d[2][i], v2d[3][i],  v2d[4][i],  v2d[5][i], v2d[6][i], );
-			}
-			v2d[0][i]
-		}).collect::<Vec<F>>();
-		if b_debug{
-			println!("DEBUG USE 6503 ---- src_encoded_default");
-			for i in 0..src_encoded_default_min.len(){
-				println!(" --{}: {}", i, src_encoded_default_min[i]);
-			}
-		}
-		//TODO -- dst_encoded_default
-		*/
 
 		//5. prove min_loc > (loc_to_remove + rg_2) 
 		let sel = (0..src_rg_end.len()).into_par_iter().map(|i|
@@ -4193,89 +4068,6 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 				lc_out
 			).unwrap();
 		}
-
-		/*
-		let mut timer2 = GTimer::new(); timer2.start();
-		let r1_val = r1.value().unwrap();
-		let f_rg2_val = f_rg2.value().unwrap();
-		
-		let mut prev_prod_val = F::one();
-		let mut prev_prod_var = new_const_var(&cs, F::one());
-		let lb_minus_one = var_to_lb(&new_const_var(&cs, F::one()), -F::one());
-		let lb_r1 = var_to_lb(&r1, F::one());
-		
-		let is_zero_vars = rescols[0].iter().map(|x| is_zero_better(x, &cs).unwrap()).collect::<Vec<FpVar<F>>>();
-		let dst_sel = (0..rescols[0].len()).into_iter().map(|i|{
-			if i==0 { zero.clone() } else { &(&one - &sel[i]) * &(&one - &is_zero_vars[i]) }
-		}).collect::<Vec<FpVar<F>>>();
-
-		for i in 0..rescols[0].len() {
-			let bi_new_val = dst_sel[i].value().unwrap();
-			
-			let mut _val_f = F::zero();
-			let mut item_val = F::one();
-			
-			if bi_new_val == F::one() {
-				let subsig = rescols[3][i].value().unwrap();
-				let step = rescols[1][i].value().unwrap();
-				let min_loc = rescols[2][i].value().unwrap();
-				_val_f = subsig + step * f_rg2_val + min_loc * f_rg2_val * f_rg2_val;
-				item_val = r1_val + _val_f;
-			}
-			
-			let next_prod_val = prev_prod_val * item_val;
-			let item_var = new_var(&cs, item_val);
-			let next_prod_var = new_var(&cs, next_prod_val);
-			
-			let lb_item = var_to_lb(&item_var, F::one());
-			let lb_next = var_to_lb(&next_prod_var, F::one());
-			let lb_prev = var_to_lb(&prev_prod_var, F::one());
-			let lb_bi_new = var_to_lb(&dst_sel[i], F::one());
-			let lb_val = var_to_lb(&rescols[3][i], F::one()) 
-				+ var_to_lb(&rescols[1][i], f_rg2_val) 
-				+ var_to_lb(&rescols[2][i], f_rg2_val * f_rg2_val);
-			
-			cs.enforce_constraint(
-				lb_prev.clone(),
-				lb_item.clone(),
-				lb_next.clone()
-			).unwrap();
-			
-			cs.enforce_constraint(
-				lb_bi_new.clone(),
-				lb_r1.clone() + lb_val + lb_minus_one.clone(),
-				lb_item + lb_minus_one.clone()
-			).unwrap();
-			
-			prev_prod_val = next_prod_val;
-			prev_prod_var = next_prod_var;
-		}
-		
-		cs.enforce_constraint(
-			var_to_lb(&prod_sqres, F::one()),
-			var_to_lb(&new_const_var(&cs, F::one()), F::one()),
-			var_to_lb(&prev_prod_var, F::one())
-		).unwrap();
-
-		if b_perf { log_perf(LOG1, &format!("Time: compute rescols prod efficiently"), &mut timer2); }
-
-		let f_unit = FpVar::<F>::constant(F::from(1u32<<RANGE2_BIT));
-		let src_combined= encode_cols_var_adv(&v2d, &vec![0,1,3], &f_unit);
-		let dst_combined = encode_cols_var_adv(&rescols, &vec![0,1,2], &f_unit);
-		let dst_sel = (0..dst_combined.len()).into_iter().map(|i|{
-			if i==0 { zero.clone() //assuming 1st one is dummy
-			}else{//only pick the very first entry
-				//let b_first = rescols[0][i].is_neq(&rescols[0][i-1]).unwrap();
-				//b_first.into()
-				&one - &sel[i]
-			}
-		}).collect::<Vec<FpVar<F>>>();
-		let dst_adj = dst_combined.iter().zip(dst_sel.iter())
-			.map(|(x,y)| x*y).collect::<Vec<FpVar<F>>>();
-		let mtb_min_loc= prf_bwdprf_valid.borrow().get_container("mtb_min_loc")
-			.unwrap().borrow().to_vec();
-		assert_logup(cs.clone(), &src_combined, &dst_adj, &mtb_min_loc, r2)?;
-		*/
 
 		//5. prove min_loc > (loc_to_remove + rg_2) 
 		let sel = (0..src_rg_end.len()).into_iter().map(|i|
