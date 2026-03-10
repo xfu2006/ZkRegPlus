@@ -681,8 +681,11 @@ impl <F:PrimeField> StepQueue<F>{
 			assert!(items[steps].step==F::from((steps) as u32));
 			let u_subsig = field_to_usize(subsig);
 			let max_steps = subsig_store_info.subsig_to_steps.get(&u_subsig).unwrap()
-				.vec_pm_bounds.len() - 1; //THEORETICAL num of steps by subsig def
+				.vec_pm_bounds.len() ; //THEORETICAL num of steps by subsig def
 					//this counts from 0 to the LAST MAX_STEP ID
+			let max_steps = if max_steps>0 {max_steps-1} 
+				else {max_steps}; //avoid UNDERFLOW in release mode!
+
 			let b_added_step = real_steps<max_steps; //last STEP uses default_min_loc
 			let steps = if steps<max_steps{steps+1} else {steps};
 				//this is to ADD one EXTRA step if it EXISTS
@@ -1703,6 +1706,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		subsig_store_info: &SubsigStepStore,
 		capacity: &DischargeAdvCapacity, 
 		inp_step_queue: &StepQueue<F>, // the steps_queue from input
+		last_loc: F,
 	) ->Result<Self, Error>{
 		let sname = if b_igc {"discharge_adv_stmt_igc"} else 
 			{"discharge_adv_stmt_cs"};
@@ -1714,7 +1718,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		let (forward_step_queue, sq_fwd, last_loc) = Self::gen_forward_steps_queue_combo(
 			b_igc, offset_fsm,
 			&inp_subsigs, pat_loc, inp_step_queue, fsm_id, &capacity,
-			subsig_store_info)?;
+			subsig_store_info, last_loc)?;
 		let ct_fwd_sq = forward_step_queue.borrow().get_container("sq_res")?;
 		stmt_container.borrow_mut().add_container(forward_step_queue);
 		let default_min_loc = last_loc + F::one();
@@ -1891,6 +1895,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		pat_loc: &Rc<RefCell<Container<F>>>,
 		sq_res: &Rc<RefCell<Container<F>>>,
 		capacity: &DischargeAdvCapacity,
+		last_loc: F,
 	)->Result<(Rc<RefCell<Container<F>> >,F), Error>{
 		//0. data retrieval
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
@@ -2000,7 +2005,8 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			.unwrap().borrow().to_vec();
 		let loc = pat_loc.borrow().get_container("sorted_val")
 			.unwrap().borrow().to_vec();
-		let last_loc = loc[loc.len()-1];
+		println!("DEBUG USE 6901: last_loc: {}", last_loc);
+		
 		let set_pat_in_trace = pat.iter().filter(|p| !p.is_zero())
 			.map(|&p| p).collect::<HashSet<F>>();
 		let set_dst_pat = dst_pat.iter().filter(|p| !p.is_zero())
@@ -2179,6 +2185,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 		_fsm_id: u32,
 		capacity: &DischargeAdvCapacity,
 		subsig_store_info: &SubsigStepStore,
+		last_loc: F,
 	)->Result<(Rc<RefCell<Container<F>>>, StepQueue<F>, F), Error>{
 		let b_debug = false;
 		let res = Container::<F>::new("fwd_steps_queue");
@@ -2256,9 +2263,8 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 
 		//4. prove the validity of the fwd_prf
 		let (prf_fwdprf_valid, last_loc) = 
-			Self::gen_fwdprf_valid_prf("prf_fwdprf_valid",
-				&prf_fwd, &ct_pat_loc, &ct_sq_res, capacity)?;
-			//might throw CapErr on subsigs, just forward it
+			Self::gen_fwdprf_valid_prf("prf_fwdprf_valid", 
+				&prf_fwd, &ct_pat_loc, &ct_sq_res, capacity, last_loc)?;			//might throw CapErr on subsigs, just forward it
 		prf.borrow_mut().add_container(prf_fwdprf_valid);
 		if b_perf{log_perf(LOG1, "-- -- gen_fwd step4", &mut t1);}
 
@@ -2832,7 +2838,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			capacity, b_igc);
 		let dummy_adv = DischargeAdvAdvice::new(b_igc, offset_fsm,
 			&pat_loc, &sigs, fsm_id, store_steps, 
-			Clone::clone(&capacity), &inp_steps_queue_obj)
+			Clone::clone(&capacity), &inp_steps_queue_obj, zero)
 			.expect("discharge_adv advice err");
 		let mut vec_cfg = prev_cfgs.clone();
 		vec_cfg.push(dummy_adv.stmt_container.borrow().get_cfg());
@@ -2937,7 +2943,8 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		forward_step_q: &Container<FpVar<F>>, 
 		r1: FpVar<F>,
 		r2: FpVar<F>,
-		cs: ConstraintSystemRef<F>
+		cs: ConstraintSystemRef<F>,
+		last_loc: FpVar<F>,
 	) ->Result<FpVar<F>, SynthesisError>{
 		let b_perf = false;
 		let mut nc = cs.num_constraints();
@@ -2949,7 +2956,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		let ct_sq_res = forward_step_q.get_container("sq_res")?;
 		let ct_prf_fwd = forward_step_q.get_container("prf_fwd")?;
 		let ct_pat_loc = forward_step_q.get_container("pat_loc")?;//external
-		
+
 
 		//1. verify sq_inp + sq_to_add = sq_res
 		//COST: 11*n1
@@ -2992,7 +2999,8 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		let prf_fwdprf_valid = prf.borrow().get_container("prf_fwdprf_valid")?;
 		let last_loc = self.validate_fwdprf_valid_prf(&ct_prf_fwd, 
 			&ct_sq_res, &ct_pat_loc,
-			&r1, &r2, &prf_fwdprf_valid)?;
+			&r1, &r2, &prf_fwdprf_valid, last_loc)?;
+
 		if b_perf {
 			println!(" ### validate forward step 3: {}", 
 				cs.num_constraints()-nc);
@@ -3131,6 +3139,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		r1: &FpVar<F>,
 		_r2: &FpVar<F>,
 		prf_fwdprf_valid: &Rc<RefCell<Container<FpVar<F>>>>,
+		last_loc: FpVar<F>,
 	)->Result<FpVar<F>, SynthesisError>{
 		//0. retrieve data
 		let cs = r1.cs(); 
@@ -3240,7 +3249,6 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 				.unwrap().borrow().to_vec()
 			).collect::<Vec<Vec<FpVar<F>>>>();
 		let (pat, pat_id, loc) = (&pat_cols[0], &pat_cols[1], &pat_cols[2]); 
-		let last_loc = loc[loc.len()-1].clone();
 		let _nsp_names = ["nsp", "nsp_p1", "p2_nsp"];
 		//let sid_nsp_p1 = prf_fwdprf_valid.borrow().get_container("sid_nsp_p1")
 		//	.unwrap().borrow().to_vec();
@@ -3999,7 +4007,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			).unwrap();
 		}
 
-		//Task 4.5.4.5 create vec_b_new. so that vec_b_new[i]
+		//4.5.4.5 create vec_b_new. so that vec_b_new[i]
 		// is true if rescols[0][i] != rescols[0][i-1]
 		let one = new_const_var(&cs, F::one());
 		let vec_b_new = (0..n).into_iter().map(|i| {
@@ -4011,7 +4019,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 			}
 		}).collect::<Vec<FpVar<F>>>();
 
-		//Task 4.5.4.6 run the check for each vec_item[i] so that
+		//4.5.4.6 run the check for each vec_item[i] so that
 		// vec_item[i] = 1 if not b_new[i]; otherwise
 		// vec_item[i] = rescols[3][i]*f2 + rescols[1][i] *f1 + rescols[2][i] + r1.
 		// Then formula is:
@@ -4150,12 +4158,34 @@ impl <F:PrimeField> SigmaGadget<F> for DischargeAdvGadget<F>{
 		let r1 = wtns.msg2[0].clone();
 		let r2 = wtns.msg2[1].clone();
 
+		//2. retrive last_loc from the previous gadget (fsm_adv)
+		let mut t9901 = GTimer::new();
+		let prev_i = self.cfgs_context.as_ref().unwrap().len() -1 - self.offset_fsm;
+		let my_name = if self.b_igc {"discharge_adv_stmt_igc"} 
+			else {"discharge_adv_stmt_cs"};
+		let my_idx = self.cfgs_context.as_ref().unwrap().iter().enumerate()
+			.filter(|(i, cfg)| cfg.get_name() == my_name)
+			.map(|(i,cfg)| i).collect::<Vec<_>>()[0];
+		let prev_cfg = self.cfgs_context.as_ref()
+			.expect("cfgs_context not set")[my_idx - self.offset_fsm].clone();
+
+		let prev_stmt = Container::<FpVar<F>>
+			::load_from(i-self.offset_fsm, wtns_cfg, wtns, &prev_cfg)?;
+		let sname_fsm = if self.b_igc {"fsm_adv_stmt_igc"} 
+			else {"fsm_adv_stmt_cs"};
+		let locs = prev_stmt.search_container(&format!("{} fsm_acc locs", 
+			sname_fsm))?
+			.borrow().to_vec();
+		let last_loc = locs[locs.len()-1].clone();
+		t9901.stop();
+		println!("DEBUG USE 6901.5: last_loc: {}, cost: {} ms", last_loc.value().unwrap(), t9901.ms());
+
 		//3. validate the forward step queue
 		// COST: 59*n1
 		let forward_step_queue= stmt.get_container("fwd_steps_queue")?;
 		let last_loc = self.validate_forward_step_queue(
 			&forward_step_queue.borrow(), r1.clone(), r2.clone(), 
-			cs.clone())?;
+			cs.clone(), last_loc)?;
 
 		//4. validate the backward step queue
 		// COST: 24.5*n1
@@ -4368,12 +4398,16 @@ pub mod tests_discharge_adv_gadget{
 			let pat_loc = stmt_faa.borrow().search_container(
 				&format!("{} packed_trace pat_loc sorted_tbl", sname_fsm))
 				.unwrap();
+			let locs = stmt_faa.borrow()
+				.search_container(&format!("{} fsm_acc locs", sname_fsm))
+				.unwrap()
+				.borrow().to_vec();
+			let last_loc = locs[locs.len()-1];
 			let adv_disc= DischargeAdvAdvice::new(false, //case sensitive
 				1, //offset to fsm
 				&pat_loc, &input_subsigs,
-				fsm_id, steps_store, &cap_disc, &inp_steps_queue)
-					.expect("discharge_adv advice err");
-			let oup_queue = adv_disc.get_output_steps_queue();
+				fsm_id, steps_store, &cap_disc, &inp_steps_queue, last_loc)
+					.expect("discharge_adv advice err");			let oup_queue = adv_disc.get_output_steps_queue();
 			let stmt_disc= adv_disc.stmt_container;
 			let cfg_disc= stmt_disc.borrow().get_cfg(); 
 

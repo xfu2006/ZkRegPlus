@@ -2657,24 +2657,28 @@ pub mod tests_compute_sig_adv{
 
 			//2.3 the discharge_adv (2 gadgets)
 			let pat_loc_cs = stmt_faa_cs.borrow().search_container("fsm_adv_stmt_cs packed_trace pat_loc sorted_tbl").unwrap();
+			let locs_cs = stmt_faa_cs.borrow().search_container("fsm_adv_stmt_cs fsm_acc locs").unwrap().borrow().to_vec();
+			let last_loc_cs = locs_cs[locs_cs.len() - 1];
 			let adv_disc_cs= DischargeAdvAdvice::new(
 				false, //case sensitive
 				2, //dist to fsm_cs
 				&pat_loc_cs,
 				&input_subsigs_cs,
-				fsm_id_cs, steps_store_cs, &cap_disc, &inp_steps_queue_cs
+				fsm_id_cs, steps_store_cs, &cap_disc, &inp_steps_queue_cs, last_loc_cs
 			).expect("discharge_adv advice err");
 			let oup_queue_cs = adv_disc_cs.get_output_steps_queue();
 			let stmt_disc_cs= adv_disc_cs.stmt_container;
 			let cfg_disc_cs= stmt_disc_cs.borrow().get_cfg(); 
 
 			let pat_loc_igc = stmt_faa_igc.borrow().search_container("fsm_adv_stmt_igc packed_trace pat_loc sorted_tbl").unwrap();
+			let locs_igc = stmt_faa_igc.borrow().search_container("fsm_adv_stmt_igc fsm_acc locs").unwrap().borrow().to_vec();
+			let last_loc_igc = locs_igc[locs_igc.len() - 1];
 			let adv_disc_igc= DischargeAdvAdvice::new(
 				true, //igc
 				2, //dist to fsm_adv_igc
 				&pat_loc_igc,
 				&input_subsigs_igc,
-				fsm_id_igc, steps_store_igc, &cap_disc, &inp_steps_queue_igc
+				fsm_id_igc, steps_store_igc, &cap_disc, &inp_steps_queue_igc, last_loc_igc
 			).expect("discharge_adv advice err");
 			let oup_queue_igc = adv_disc_igc.get_output_steps_queue();
 			let stmt_disc_igc= adv_disc_igc.stmt_container;

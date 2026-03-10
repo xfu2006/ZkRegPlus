@@ -26098,5 +26098,23 @@ Goal 1. deploy and test
 Goal 2. imporve gen_step_queue_union_prf
 	[a] idea: use the subsig-step-loc instead to generate disjoint union
 
-TODO: the bug is STILL not fixed.
+Goal 3. try to tifx the bug
+	[a] problem max_step will underflow! fix that but we got error 
+		at 1572 (cannot replicate on small examples)
+	[b] it's apparently some min_loc generaed is GREATER than range2. 
+
+Tuesday 03/10/2026
+LOC (gadgets): 21222
+Goal 1. Should throw an error when min_loc created greater than range2.
+	[a] insert catch statement 
+	[b] DEBUG USE 690x messages
+	[c] found the problem the max_loc is 67108864 which is the max
+	[d] check the dump of gen_fwdprf_valid_prf (pat-loc) list
+		-> does it often have the last loc?
+	[e] found it: so the way that it finds the max-loc is WRONG
+		it should NOT be the last pat-loc element. It should be
+		the segment size * segment_id
+		-> note that fsm_acc combo does have oup_loc
+		-> drive gemini to fix call chain.
+	[f] to do: remove DEBUG 6901
 

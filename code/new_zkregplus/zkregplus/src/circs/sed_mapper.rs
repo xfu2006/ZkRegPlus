@@ -481,9 +481,13 @@ impl <F:PrimeField> SedAdvice<F>{
 			.unwrap();
 		let inp_steps_queue_obj_cs = StepQueue::parse_from(
 			&inp.inp_steps_queue_cs, &da_cap_cs, false);
-		let discharge_adv_advice_cs = DischargeAdvAdvice::<F>
-			::new(false, 2, &pat_loc_cs, &subsigs_inp_cs, fsm_id_cs as u32, 
-				subsig_step_store_cs, &da_cap_cs, &inp_steps_queue_obj_cs)?;
+		let locs_cs = fsm_adv_advice_cs.stmt_container.borrow()
+                        .search_container("fsm_adv_stmt_cs fsm_acc locs").unwrap()
+                        .borrow().to_vec();
+                let last_loc_cs = locs_cs[locs_cs.len()-1];
+                let discharge_adv_advice_cs = DischargeAdvAdvice::<F>
+                        ::new(false, 2, &pat_loc_cs, &subsigs_inp_cs, fsm_id_cs as u32, 
+                                subsig_step_store_cs, &da_cap_cs, &inp_steps_queue_obj_cs, last_loc_cs)?;
 		if b_perf{ log_perf(LOG1, "-- Sed advice step4: discharge_cs", &mut t1); }
 
 		//3.2 the igc version
@@ -491,9 +495,13 @@ impl <F:PrimeField> SedAdvice<F>{
 			.search_container("fsm_adv_stmt_igc packed_trace pat_loc sorted_tbl").unwrap();
 		let inp_steps_queue_obj_igc = StepQueue::parse_from(
 			&inp.inp_steps_queue_igc, &da_cap_igc, true);
-		let discharge_adv_advice_igc = DischargeAdvAdvice::<F>
-			::new(true, 2, &pat_loc_igc, &subsigs_inp_igc, fsm_id_igc as u32, 
-				subsig_step_store_igc, &da_cap_igc, &inp_steps_queue_obj_igc)?;
+		let locs_igc = fsm_adv_advice_igc.stmt_container.borrow()
+                        .search_container("fsm_adv_stmt_igc fsm_acc locs").unwrap()
+                        .borrow().to_vec();
+                let last_loc_igc = locs_igc[locs_igc.len()-1];
+                let discharge_adv_advice_igc = DischargeAdvAdvice::<F>
+                        ::new(true, 2, &pat_loc_igc, &subsigs_inp_igc, fsm_id_igc as u32, 
+                                subsig_step_store_igc, &da_cap_igc, &inp_steps_queue_obj_igc, last_loc_igc)?;
 		if b_perf{ log_perf(LOG1, "-- Sed advice step5: discharge_igc", &mut t1); }
 
 

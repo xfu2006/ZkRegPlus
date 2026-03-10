@@ -1,0 +1,23 @@
+{
+  "ui": {
+    "errorVerbosity": "full",
+    "footer": {
+      "hideContextPercentage": false,
+      "hideModelInfo": false
+    }
+  },
+  "experimental": {
+    "toolOutputMasking": {
+      "enabled": true
+    }
+  },
+  "tools": {
+    "shell": {
+      "enableShellOutputEfficiency": true
+    }
+  },
+  "model": {
+    "name": "gemini-3-flash-preview",
+    "compressionThreshold": 0.5
+  }
+}
