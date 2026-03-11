@@ -881,6 +881,7 @@ impl <F:PrimeField> StepQueue<F>{
 		subsig_store_info: &SubsigStepStore,
 	)->Result<Rc<RefCell<Container<F>>>, Error>{
 		let b_debug = false;
+		let b_debug_capacity = true;
 		#[cfg(test)] { assert!(is_sorted(&self.subsigs)); }
 		assert!(!b_inp || !b_oup); //b_inp and b_oup cannot be on the same time
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
@@ -933,6 +934,7 @@ impl <F:PrimeField> StepQueue<F>{
 		}
 		assert!(n>=vec_encoded.len()+1, "StepQueue type: {:?} buf too small, either adjust the compression ratio in vec_size() first, then check the pats_expansion_rate in DischargeAdvCapacity, n: {}, vec_encoded.len: {}", self.q_type, n, vec_encoded.len());
 		let n2 = n-vec_encoded.len();
+		println!("DEBUG USE 6901.8: step queue usage: {}", ((n-n2) as f32)/(n as f32));
 		assert!(n2>0); //the Cap guanrantees that a dummy zero entry added
 		let vec_encoded = vec![vec![zero; n2], vec_encoded].concat();
 		let vec_locs= vec![vec![zero; n2], vec_locs].concat();
@@ -1175,6 +1177,7 @@ impl <F:PrimeField> StepFwdPrf<F>{
 	) ->Result<Rc<RefCell<Container<F>>>, Error>{
 		//0. check data
 		let b_debug = false;
+		let b_debug_capacity = false;
 		#[cfg(test)] { assert!(is_sorted(&self.subsigs)); }
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, _one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
@@ -1244,7 +1247,7 @@ impl <F:PrimeField> StepFwdPrf<F>{
 		let n = self.vec_size();
 		if n<v2d[0].len()+1{
 			let new_val = (v2d[0].len()+1)*10000/(self.capacity.max_nibble_len*self.capacity.basis_pats_in_trace) + 1;
-			if b_debug{
+			if b_debug_capacity{
 				println!("DEBUG USE 9003: to throw pats_expansion_rate ERROR on StepFwdProof in discharge_adv. DUMP of data");
 				self.dump();
 			}
@@ -1491,6 +1494,7 @@ impl <F:PrimeField> StepBwdPrf<F>{
 	/// might throw CapErr("dis_adv::pats_expansion_rate")
 	pub fn to_container(&self, name: &str, subsig_store_info: &SubsigStepStore)->Result<Rc<RefCell<Container<F>>>,Error>{
 		let b_debug = false;
+		let b_debug_capacity = true;
 		//0. check data
 		#[cfg(test)] { assert!(is_sorted(&self.subsigs)); }
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
@@ -1543,7 +1547,7 @@ impl <F:PrimeField> StepBwdPrf<F>{
 		let n = self.vec_size();
 		if n<v2d[0].len()+1{
 			let new_val= (v2d[0].len()+1)*10000/(self.capacity.max_nibble_len*self.capacity.basis_pats_in_trace) + 1;
-			if b_debug{
+			if b_debug_capacity{
 				println!("DEBUG USE 9005: to throw pats_expansion_rate ERROR on StepBwdProof in discharge_adv. DUMP of data");
 				self.dump();
 			}
@@ -2215,13 +2219,17 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			fwd_prf.dump();
 		}
 
+		
+		println!("DEBUG USE 6901.7: inp_step_queue to container");
 		let ct_sq_inp = inp_step_queue.to_container("sq_inp",true,//inp
 			false,  //b_step
 			false,  //b_oup
 			false,  //b_subsig
 			&subsig_store_info).expect("err ct_sq_inp");
+		println!("DEBUG USE 6901.7: sq_to_add to container");
 		let ct_sq_to_add = sq_to_add.to_container("sq_to_add",false,
 			true, false, false, &subsig_store_info).expect("ct_sq_add err");
+		println!("DEBUG USE 6901.7: sq_res to container");
 		let ct_sq_res = sq_res.to_container("sq_res", false, 
 			true, false, false, &subsig_store_info).expect("ct_sq_res err");
 		res.borrow_mut().add_container(ct_sq_inp.clone()); //low cost, rc clone
@@ -2314,8 +2322,10 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 			bwd_prf.dump();
 		}
 
+		println!("DEBUG USE 6901.7: sq_to_del to container");
 		let ct_sq_to_del= sq_to_del.to_container("sq_to_del",false,true,false,false,
 			&subsig_store_info).expect("ct_sq_to_del err");
+		println!("DEBUG USE 6901.7: sq_res to container");
 		let ct_sq_res2 = sq_res.to_container("sq_res2",
 			false,//inp
 			true, //b_step (but it's saved in DATA)
@@ -4830,9 +4840,11 @@ pub mod tests_discharge_adv_gadget{
 
 
 		//5. here we construct bwd_prf_valid_proof 
+		println!("DEBUG USE 6901.7: to_remove to container");
 		let _ct_sq_to_del= to_remove.to_container(
 			"sq_to_del",false,true,false,false,
 			&subsig_store_info).expect("ct_sq_to_del err");
+		println!("DEBUG USE 6901.7: res to container");
 		let ct_sq_res2 = res.to_container("sq_res2",
 			false,//inp
 			true, //b_step (but it's saved in DATA)

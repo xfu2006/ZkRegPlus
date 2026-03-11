@@ -26104,7 +26104,7 @@ Goal 3. try to tifx the bug
 	[b] it's apparently some min_loc generaed is GREATER than range2. 
 
 Tuesday 03/10/2026
-LOC (gadgets): 21222
+LOC (gadgets): 21222->21261 (+40)
 Goal 1. Should throw an error when min_loc created greater than range2.
 	[a] insert catch statement 
 	[b] DEBUG USE 690x messages
@@ -26116,5 +26116,15 @@ Goal 1. Should throw an error when min_loc created greater than range2.
 		the segment size * segment_id
 		-> note that fsm_acc combo does have oup_loc
 		-> drive gemini to fix call chain.
+	[f] find the correct idx to use
+	[g] CapErr([("fsm_adv::basis_pats_in_trace from joinwide, b_igc: false", 2038)]
+
+Wed 03/11/2026
+LOC (gadgets): 21261 
+Goal 1. add the data dump usage ratio of to_container
+	[a] add preceding msg before call to_container and then
+		print out the usage of step_queue
+	[b] 
+TODO: remove DEBUG USE 6101.
 	[f] to do: remove DEBUG 6901
 
