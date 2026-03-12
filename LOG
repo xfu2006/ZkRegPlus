@@ -26124,7 +26124,12 @@ LOC (gadgets): 21261
 Goal 1. add the data dump usage ratio of to_container
 	[a] add preceding msg before call to_container and then
 		print out the usage of step_queue
-	[b] 
+	[b] all related messages are 6901
+	[c] still throwing perc_pats_in_trace by fsm_adv. May need to check
+		why it's throwing
+	[d] it's still pumping up complaints about acc_states and pat_in_trace
+		by fsm_adv.
 TODO: remove DEBUG USE 6101.
 	[f] to do: remove DEBUG 6901
+
 

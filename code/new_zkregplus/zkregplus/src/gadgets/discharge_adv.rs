@@ -696,7 +696,6 @@ impl <F:PrimeField> StepQueue<F>{
 			//NOTE that vec_res has two cases: (1) starting from the "next"
 			// empty step if real_steps<=max_steps; (2) starting from the
 			// current last step if it is REALLY the last step of subsig.
-			println!("DEBUG USE 6101: steps: {}, max_steps: {}, subsig: {}", steps, max_steps, *subsig);
 			let mut vec_res = if real_steps<max_steps{
 				//build a StepQueueItem for the last created step
 				//*** with the default_min_loc *** because that
@@ -881,7 +880,7 @@ impl <F:PrimeField> StepQueue<F>{
 		subsig_store_info: &SubsigStepStore,
 	)->Result<Rc<RefCell<Container<F>>>, Error>{
 		let b_debug = false;
-		let b_debug_capacity = true;
+		//let b_debug_capacity = true;
 		#[cfg(test)] { assert!(is_sorted(&self.subsigs)); }
 		assert!(!b_inp || !b_oup); //b_inp and b_oup cannot be on the same time
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
@@ -1176,7 +1175,7 @@ impl <F:PrimeField> StepFwdPrf<F>{
 		subsig_store_info: &SubsigStepStore
 	) ->Result<Rc<RefCell<Container<F>>>, Error>{
 		//0. check data
-		let b_debug = false;
+		//let b_debug = false;
 		let b_debug_capacity = false;
 		#[cfg(test)] { assert!(is_sorted(&self.subsigs)); }
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
@@ -1493,7 +1492,7 @@ impl <F:PrimeField> StepBwdPrf<F>{
 	///    dst_rg_start, dst_rg_end, dst_loc, pat_id, diff1, diff2)
 	/// might throw CapErr("dis_adv::pats_expansion_rate")
 	pub fn to_container(&self, name: &str, subsig_store_info: &SubsigStepStore)->Result<Rc<RefCell<Container<F>>>,Error>{
-		let b_debug = false;
+		//let b_debug = false;
 		let b_debug_capacity = true;
 		//0. check data
 		#[cfg(test)] { assert!(is_sorted(&self.subsigs)); }
@@ -3032,7 +3031,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		q2: &Rc<RefCell<Container<FpVar<F>>>>, //step_queue 2
 		q3: &Rc<RefCell<Container<FpVar<F>>>>, //step_queue result
 		r1: &FpVar<F>,
-		r2: &FpVar<F>,
+		_r2: &FpVar<F>,
 		prf_union: &Rc<RefCell<Container<FpVar<F>>>>
 	)->Result<(), SynthesisError>{
 		//1. retrieve the src and dst cols
@@ -3653,11 +3652,11 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 	)->Result<(), SynthesisError>{
 		//0. retrieve data
 		let b_debug = false;
-		let b_perf = true;
+		//let b_perf = true;
 		let cs = r1.cs(); 
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
-		let (zero, one, _max) = (new_const_var(&cs, zero), 
+		let (zero, _one, _max) = (new_const_var(&cs, zero), 
 			new_const_var(&cs, one), new_const_var(&cs, max));
 		//let frg = new_const_var(&cs, F::from(RANGE2));
 		let names = vec![
@@ -4170,12 +4169,11 @@ impl <F:PrimeField> SigmaGadget<F> for DischargeAdvGadget<F>{
 
 		//2. retrive last_loc from the previous gadget (fsm_adv)
 		let mut t9901 = GTimer::new();
-		let prev_i = self.cfgs_context.as_ref().unwrap().len() -1 - self.offset_fsm;
 		let my_name = if self.b_igc {"discharge_adv_stmt_igc"} 
 			else {"discharge_adv_stmt_cs"};
 		let my_idx = self.cfgs_context.as_ref().unwrap().iter().enumerate()
-			.filter(|(i, cfg)| cfg.get_name() == my_name)
-			.map(|(i,cfg)| i).collect::<Vec<_>>()[0];
+			.filter(|(_i, cfg)| cfg.get_name() == my_name)
+			.map(|(i,_cfg)| i).collect::<Vec<_>>()[0];
 		let prev_cfg = self.cfgs_context.as_ref()
 			.expect("cfgs_context not set")[my_idx - self.offset_fsm].clone();
 
