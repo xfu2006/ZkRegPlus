@@ -26168,8 +26168,21 @@ Goal 3. dump of the anaysis:
 Friday 03/13/2026
 LOC (gadgets): 21271 -> 
 Goal 1. debug the problem of crash
-	[a] 
+	[a] read gemini setting
+	[b] add parameter setting -> forget about it
+	[c] add extra trait Debuggable
+	[d] add the traits and implementtion
+Goal 2. now debug full_data1
+	[a] deloy as main3
+	[b] analyze data: 
+		-> the data is generated at sid_prev_encoded
+			StepBwdPrf
+	[c] try add DEBUG USE 6801 (when ID_ENCODED_PREV_ENCODED) is added
+		-> in clam_db.rs
+		-> in 6802 in the discharge_adv
 
+	-- TODO -- remove 6801 and 6802
+Goal 3. analyze why sq_res of  36556803 does not improve
 
 -- TODO -- remove DEBUG USE 6901
 

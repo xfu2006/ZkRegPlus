@@ -1536,7 +1536,9 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 			"src_pat", 
 			"src_rg_end",  //id 3
 			"src_min_loc", //id 4
-			"prev_encoded", "loc_to_del", "subsig",
+			"prev_encoded", //id 5
+			"loc_to_del",  //id 6
+			"subsig", //id 7
 		];
 		let v2d = vec![
 			v_src_encoded, v_src_step,
@@ -1617,12 +1619,12 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 
 		//3.5 prev_encoded (col 5) - using table ID_ENCODED_PREV_ENCODED
 		// so later we do not have to check their relation
-		let sids = se.iter().zip(de.iter()).map(|(s,_d)|{
+		let sids = se.iter().zip(de.iter()).map(|(_s,d)|{
 			//for "d" - prev_encoded its tag id is generated using
 			//the source_encoded under category ID_ENCODED_PREV_ENCODED
 			//so later in validate_bwrf_validate we simply check the
 			//sid for each prev_encoded.
-			SubsigStepStore::gen_step_tbl_id(*s,ID_ENCODED_PREV_ENCODED)
+			SubsigStepStore::gen_step_tbl_id(*d,ID_ENCODED_PREV_ENCODED)
 		}).collect::<Vec<_>>();
 		res.borrow_mut().add_col(Col::new(sids,
 			&format!("sid_{}",names[5]), IDX_SI_DATA)); //encoded-prev_encode
@@ -2209,7 +2211,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 
 
 		if b_debug{
-			println!("========== DEBUG USE 202: inp_step_queue: ");
+			println!("========== DEBUG USE 202: gen_fwd: inp_step_queue: ");
 			inp_step_queue.dump();
 			println!("========== DEBUG USE 203: to_add: ");
 			sq_to_add.dump();
@@ -2312,7 +2314,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 			.gen_backward_prf(default_min_loc, subsig_store_info);
 
 		if b_debug{
-			println!("========== DEBUG USE 301: igc: {}, inp_step_queue (fwd_res): ", b_igc);
+			println!("========== DEBUG USE 301: gen_bwd igc: {}, inp_step_queue (fwd_res): ", b_igc);
 			input_step_queue.dump();
 			println!("========== DEBUG USE 302: to_del: ");
 			sq_to_del.dump();
