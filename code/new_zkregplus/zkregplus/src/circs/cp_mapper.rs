@@ -222,11 +222,11 @@ impl <F:PrimeField> CpAdvice<F>{
 			Ok(adv) => Ok(adv),
 			Err(Error::CapErr(vec)) => {
 				let vec_err = vec.iter().map(|(s,val)|{
-					if s=="capacity_imm"{
+					if s.contains("capacity_imm"){
 						let basis_unique_states = val * 10000 
 							/(capacity.max_word_len * LEGS) + 1;
 						(format!("cp::basis_unique_states from pack.rs"),basis_unique_states)
-					}else if s=="capacity_out"{
+					}else if s.contains("capacity_out"){
 						let avg_pats_per_subsig = val / capacity.subsigs + 1;
 						(format!("cp::avg_pats_per_subsig from pack.rs"),avg_pats_per_subsig)
 					}else{
@@ -257,13 +257,13 @@ impl <F:PrimeField> CpAdvice<F>{
 			Ok(adv) => Ok(adv),
 			Err(Error::CapErr(vec)) => {
 				let vec_err = vec.iter().map(|(s,val)|{
-					if s=="slen"{
+					if s.contains("slen"){
 						let subsigs = val;
 						(format!("cp::subsigs"),*subsigs)
-					}else if s=="olen"{
+					}else if s.contains("olen"){
 						let avg_pats_per_subsig = val / capacity.subsigs + 1;
 						(format!("cp::avg_pats_per_subsig from sigs.rs olen"),avg_pats_per_subsig)
-					}else if s=="jlen"{
+					}else if s.contains("jlen"){
 						let avg_pats_per_subsig = val / capacity.subsigs + 1;
 						(format!("cp::avg_pats_per_subsig from sigs.rs jlen"),avg_pats_per_subsig)
 					}else{

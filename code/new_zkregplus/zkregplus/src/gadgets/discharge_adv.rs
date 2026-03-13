@@ -1176,7 +1176,7 @@ impl <F:PrimeField> StepFwdPrf<F>{
 	) ->Result<Rc<RefCell<Container<F>>>, Error>{
 		//0. check data
 		//let b_debug = false;
-		let b_debug_capacity = false;
+		let b_debug_capacity = true;
 		#[cfg(test)] { assert!(is_sorted(&self.subsigs)); }
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, _one, _max) = (F::zero(), F::one(), F::from(max_val as u32));

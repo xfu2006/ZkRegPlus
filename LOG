@@ -26120,7 +26120,7 @@ Goal 1. Should throw an error when min_loc created greater than range2.
 	[g] CapErr([("fsm_adv::basis_pats_in_trace from joinwide, b_igc: false", 2038)]
 
 Wed 03/11/2026
-LOC (gadgets): 21261 
+LOC (gadgets): 21261 -> 21271 (+100)
 Goal 1. add the data dump usage ratio of to_container
 	[a] add preceding msg before call to_container and then
 		print out the usage of step_queue
@@ -26129,7 +26129,47 @@ Goal 1. add the data dump usage ratio of to_container
 		why it's throwing
 	[d] it's still pumping up complaints about acc_states and pat_in_trace
 		by fsm_adv.
-TODO: remove DEBUG USE 6101.
-	[f] to do: remove DEBUG 6901
 
+Thursday 03/12/2026
+LOC (gadgets): 21271 
+Goal 1. clean code.
+	[a] remove DEBUG USE 6101.
+	[b] planning: first need to fix the crash issue
+	[c] check the point it throws error and find out why
+		[c1] check a small expansion rate and see what causes the
+			expansion of step queue length now, and see if
+			there is any need to improve the ratio between
+			forward and bwd proofs.
+		[c2] check fsm_adv crash why it's so many pattern matches.
+
+Goal 2. collect data on the crash
+	[a] use full_data1 instead
+	[b] fix the capacity err output
+	[c] now got the data in about 15 minutesCannot find entry for tbl_id[3196280]: (3432815461787366913564753379778019918895686068501519269894, 9758): 245713191
+		-> it's
+		0x8c004405c424001d27ac05000000801ab6d0000018000006
+		-> sigma_ir1cs.rs:223:21
+	[d] why it's not throwing error? -> need to enable b_debug_capacity.
+Goal 3. dump of the anaysis:
+	36556803': 53447, '36598786': 33981, '37897218': 13327, '36260869': 7143, '19377157': 6663, '36260865': 4941,
+	--
+	rf: src(encoded: 741460052246002196309166147654383566848, step: , loc: 1), destt(key: 741460052246002499050171823951592816639, pat: 113143, rg1: 4, rg2: 67108863). Locs: ---
+	All of them have *, but not too many locations (40), just have a LOT
+	of steps, why?.
+	--> DEBUG USE 9101: add: SIG: Win.Ransomware.Cerber-5970165-0, igc: false, subsig_id: 36556803, details:0>50
+	--> in.Ransomware.Cerber-5970165-0;Engine:51-255,Target:1;(0>50)&1;c745??97a00000;8b55??8955??8b45??8945??8b4d??894d??8b55??8955??8b45??8945??8b4d??894d??8b55??8b023345??8b4d??8901
+	==> step 0, loc1 => pat 114143 -> rg (4, *), 43 locs
+	==> step 1: 301915 => pat: 109291 -> rg (10,10),
+	So in step queue, step 1 has only 43 items,
+	but the prf from step1 has 53k items. why?
+====> because the sq_res has 53k items, step 1 is just the
+	newly generated ones. These 53k are NOT removed.
+
+Friday 03/13/2026
+LOC (gadgets): 21271 -> 
+Goal 1. debug the problem of crash
+	[a] 
+
+
+-- TODO -- remove DEBUG USE 6901
 

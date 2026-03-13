@@ -96,12 +96,20 @@ impl <F: Clone + Zero> Col<F>{
 	/// construct a regular column. idx_seg is where it is located
 	/// in statement vec. Its location will be later filled.
 	/// NOTE: the name must be one word.
-	pub fn new(data: Vec<F>, name: &str, idx_seg: usize)
+	/// debug_ele is used for debugging purpose, sometimes we need
+	/// to find out why Col contains some data.
+	//Task 1: I just introduced a new parameter debug_ele
+	//Please fix all call functions that calls it and pass a simle  None to it.
+	pub fn new(data: Vec<F>, name: &str, idx_seg: usize, debug_ele: Option<F>)
 	->Rc<RefCell<Self>>{
-		#[cfg(test)]{
+		let b_debug = true;
+		if b_debug{
 			for x in &data{
 				if idx_seg == IDX_SI_DATA{ 
 					assert!(!x.is_zero(), "We requirement that when idx_seg is IDX_SI_DATA, no elements can be zero to speed up logup check");
+				}
+				if debug_ele.is_some() && x==debug_ele.unwrap(){
+					assert!(false, "STOP HERE found: {}", debug_ele);
 				}
 			}
 		}
