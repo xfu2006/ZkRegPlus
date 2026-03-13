@@ -89,10 +89,27 @@ pub trait ComponentAdvice<F:PrimeField>: Debug{
 	fn get_container(&self)->Rc<RefCell<Container<F>>>;
 }
 
+/// Used mainly for debugging Col
+pub trait ColEle{
+	fn debug();
+}
+
+use ark_bn254::{Fr};
+impl ColEle for Fr{
+	fn debug(){
+		//todo
+	}
+}
+
+impl ColEle for FpVar<Fr>{
+	fn debug(){
+	}
+}
+
 // ---------------------------------------------
 //			Implementations
 // ---------------------------------------------
-impl <F: Clone + Zero> Col<F>{
+impl <F: Clone + Zero + ColEle> Col<F>{
 	/// construct a regular column. idx_seg is where it is located
 	/// in statement vec. Its location will be later filled.
 	/// NOTE: the name must be one word.
@@ -100,7 +117,7 @@ impl <F: Clone + Zero> Col<F>{
 	/// to find out why Col contains some data.
 	//Task 1: I just introduced a new parameter debug_ele
 	//Please fix all call functions that calls it and pass a simle  None to it.
-	pub fn new(data: Vec<F>, name: &str, idx_seg: usize, debug_ele: Option<F>)
+	pub fn new(data: Vec<F>, name: &str, idx_seg: usize)
 	->Rc<RefCell<Self>>{
 		let b_debug = true;
 		if b_debug{
@@ -108,10 +125,8 @@ impl <F: Clone + Zero> Col<F>{
 				if idx_seg == IDX_SI_DATA{ 
 					assert!(!x.is_zero(), "We requirement that when idx_seg is IDX_SI_DATA, no elements can be zero to speed up logup check");
 				}
-				if debug_ele.is_some() && x==debug_ele.unwrap(){
-					assert!(false, "STOP HERE found: {}", debug_ele);
-				}
 			}
+			x.debug();
 		}
 		//set to not resolved yet, it will be set to true in adjust_loc
 		let loc = Location{src:(0,0,0,data.len(), String::new(), false), 
