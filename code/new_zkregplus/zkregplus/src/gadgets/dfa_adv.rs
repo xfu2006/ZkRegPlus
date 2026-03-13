@@ -10,6 +10,7 @@
 //! Then it assembles subsig result and report the discharge (via DFA)
 //! result for sigs.
 
+use folding_schemes::folding::foldpot::container_config::ColEle;
 use utils::{logger::{log_perf, LOG1,LOG2}, 
 	timer::Timer as GTimer};
 use rayon::iter::{ParallelIterator,IntoParallelIterator,IntoParallelRefIterator};
@@ -93,7 +94,7 @@ pub struct DfaAdvCapacity{
 
 /// Advice for the WordExtract Gadget.
 #[derive(Clone,Debug)]
-pub struct DfaAdvAdvice<F:PrimeField>{
+pub struct DfaAdvAdvice<F:PrimeField + ColEle>{
 	/// len must match capacity.subsigs
 	pub inp_subsigs: Vec<F>,
 
@@ -121,7 +122,7 @@ pub struct DfaAdvAdvice<F:PrimeField>{
 /// This gadget is responsible for checking transitions
 /// of running a finite state machine. 
 #[derive(Clone,Debug)]
-pub struct DfaAdvGadget<F:PrimeField>{ 
+pub struct DfaAdvGadget<F:PrimeField + ColEle>{ 
 	/// the capacity
 	pub capacity: DfaAdvCapacity,
 
@@ -164,17 +165,17 @@ impl Capacity for DfaAdvCapacity{
 	fn as_any(&self) -> &dyn Any { self }
 }
 
-impl <F: PrimeField> NdAdvice for DfaAdvAdvice<F>{
+impl <F: PrimeField + ColEle> NdAdvice for DfaAdvAdvice<F>{
 	fn as_any(&self) -> &dyn Any {self}
 }
 
-impl <F: PrimeField> ComponentAdvice<F> for DfaAdvAdvice<F>{
+impl <F: PrimeField + ColEle> ComponentAdvice<F> for DfaAdvAdvice<F>{
 	fn get_container(&self)->Rc<RefCell<Container<F>>>{
 		self.stmt_container.clone()
 	}
 }
 
-impl <F: PrimeField> DfaAdvAdvice<F>{
+impl <F: PrimeField + ColEle> DfaAdvAdvice<F>{
 	/// Given nibbles and a COLLECTION of subsigs (and their DFA),
 	/// produce the state reached by each subsig (in its DFA)
 	/// Input: (v_input_states)
@@ -699,7 +700,7 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 
 }
 
-impl <F:PrimeField> DfaAdvGadget<F>{
+impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 	pub fn new(
 		capacity: &DfaAdvCapacity,
 		prev_cfgs: &Vec<ContainerConfig>,
@@ -1233,7 +1234,7 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 
 }
 
-impl <F:PrimeField> SigmaGadget<F> for DfaAdvGadget<F>{
+impl <F:PrimeField + ColEle> SigmaGadget<F> for DfaAdvGadget<F>{
 	fn get_name(&self)->&str {"DfaAdvGadget"}
 
 	/// set the container cfg. This is only needed for those gadgets
@@ -1358,7 +1359,7 @@ impl <F:PrimeField> SigmaGadget<F> for DfaAdvGadget<F>{
 /// generates the subsig_id
 #[inline(always)]
 #[allow(dead_code)]
-pub fn extract_sigid<F:PrimeField>(subsig_id: F)->(F,F){
+pub fn extract_sigid<F:PrimeField + ColEle>(subsig_id: F)->(F,F){
 	let u_subsig_id = field_to_usize(&subsig_id);
 	let bits = RANGE2_BIT; //26 bit
 	let bit_part1 = bits*2/3; //16 for accomodating 64k sigs for bits 24

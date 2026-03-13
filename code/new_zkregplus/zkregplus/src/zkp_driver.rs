@@ -18,6 +18,7 @@ use ark_crypto_primitives::sponge::{
 	poseidon::PoseidonConfig,
     Absorb,
 };
+use folding_schemes::folding::foldpot::container_config::ColEle;
 use utils::{
 	os::{proj_root, read_lines,read_nibbles,
 //		read,write_to_file
@@ -52,6 +53,7 @@ use crate::circs::{
 	sed_mapper::{SedComponentMapper,SedCapacity},
 	dfa_mapper::{DfaComponentMapper,DfaCapacity},
 };
+
 use rayon::prelude::*;
 
 
@@ -63,7 +65,7 @@ type FC<F,C,CS> = SigmaIR1CS_Inst<F,C,CS,LK<F>,GM<F>,false>;
 
 /// load the files and pack them as nibbles
 /// return (words in packed nibbles, word info, file names)
-fn load_files<F:PrimeField>(list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavApproxConfig, _b_read_cache: bool, _b_write_cache: bool, _cache_dir: &str)
+fn load_files<F:PrimeField + ColEle>(list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavApproxConfig, _b_read_cache: bool, _b_write_cache: bool, _cache_dir: &str)
 	->(Vec<Vec<F>>, Vec<WordInfo>, Vec<String>){
 	//1. read the list of files
 	let _b_debug = false;
@@ -193,7 +195,7 @@ fn build_circs_adv<F,C,CS>(
 )->Vec<Vec<FC<F,C,CS>>>
 where C: CurveGroup<ScalarField=F>,
 	  CS: CommitmentScheme<C,false>,
-	  F: PrimeField + Absorb,
+	  F: PrimeField + Absorb + ColEle + ColEle,
 {
 	//1. check the seed capacity consistency with the info
 	assert!(init_cp_capacity_cs.max_word_len == chunk_len);
@@ -300,7 +302,7 @@ fn build_circs<F,C,CS>(poseidon_config: &PoseidonConfig<F>, total_word_n: usize,
 ->Vec<Vec<FC<F,C,CS>>>
 where C: CurveGroup<ScalarField=F>,
 	  CS: CommitmentScheme<C,false>,
-	  F: PrimeField + Absorb,
+	  F: PrimeField + Absorb + ColEle + ColEle,
 {
 
 	// TEMP PLAN: remove later
@@ -499,6 +501,7 @@ where
 	C1::Affine: AffineFromField<CF2<C1>>,
 	C1::Config: SWCurveConfig,
 	C2G2::Affine: AffineFromField<CF2<C2G2>>,
+    <E as Pairing>::ScalarField: ColEle,
 {
 	// re-use the capacity for BOTH cs and ignore_case
 	// this is usaully inefficient for ignore_case (but
@@ -575,6 +578,7 @@ where
 	C1::Affine: AffineFromField<CF2<C1>>,
 	C1::Config: SWCurveConfig,
 	C2G2::Affine: AffineFromField<CF2<C2G2>>,
+    <E as Pairing>::ScalarField: ColEle,
 {
 	//1. build or load the clamdb
 	let log_level = LOG1;
@@ -629,6 +633,7 @@ where
 #[cfg(test)]
 pub mod tests_zkp_driver{
 	use ark_ff::{PrimeField};
+	use folding_schemes::folding::foldpot::container_config::ColEle;
 	use ark_bn254::{constraints::{GVar,PairingVar}, Bn254, Fr, G1Projective as Projective, G2Projective as ProjectiveG2};
 	use ark_grumpkin::{constraints::GVar as GVar2, Projective as Projective2};
 	use ark_groth16::Groth16;
@@ -659,7 +664,7 @@ pub mod tests_zkp_driver{
 	/// read the READ me in data/small_data_set/README for the design of sigs
 	/// COST: 7GB and 36 sec.
 	#[allow(dead_code)]
-	fn small_data<F:PrimeField>(b_check_lkup: bool){
+	fn small_data<F:PrimeField + ColEle>(b_check_lkup: bool){
 		assert!(RANGE2_BIT==8, "set RANGE2_BIT to 8");
 		let b_read_cache = false;
 		let b_write_cache = !b_read_cache;
@@ -723,7 +728,7 @@ pub mod tests_zkp_driver{
 	/// read the READ me in data/small_data_set2/README for the design of sigs
 	/// COST: 18GB and 160 sec
 	#[allow(dead_code)]
-	fn small_data2<F:PrimeField>(b_check_lkup: bool){
+	fn small_data2<F:PrimeField + ColEle>(b_check_lkup: bool){
 		assert!(RANGE2_BIT==18, "set RANGE2_BIT to 18");
 		let b_read_cache = false;
 		let b_write_cache = !b_read_cache;
@@ -810,7 +815,7 @@ pub mod tests_zkp_driver{
 
 	/// This function is used for debugging
 	#[allow(dead_code)]
-	fn small_data_debug<F:PrimeField>(b_check_lkup: bool){
+	fn small_data_debug<F:PrimeField + ColEle>(b_check_lkup: bool){
 		assert!(RANGE2_BIT==24, "set RANGE2_BIT to 24");
 		let b_read_cache = false;
 		let b_write_cache = !b_read_cache;
@@ -881,7 +886,7 @@ pub mod tests_zkp_driver{
 	/// Difference: 2 categories and 2 circs each (multiple circs) -> 4 circs
 	/// for testing circ selection
 	#[allow(dead_code)]
-	fn small_data3<F:PrimeField>(b_check_lkup: bool){
+	fn small_data3<F:PrimeField + ColEle>(b_check_lkup: bool){
 		assert!(RANGE2_BIT==18, "set RANGE2_BIT to 18");
 		let b_read_cache = false;
 		let b_write_cache = !b_read_cache;
@@ -947,7 +952,7 @@ pub mod tests_zkp_driver{
 	/// the sigs are the FULL SET of sigs
 	/// However, just run a small file
 	#[allow(dead_code)]
-	fn full_data1<F:PrimeField>(b_check_lkup: bool){
+	fn full_data1<F:PrimeField + ColEle>(b_check_lkup: bool){
 		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
 		let b_read_cache = true;
 		let b_write_cache = ! b_read_cache;
@@ -1012,7 +1017,7 @@ pub mod tests_zkp_driver{
 	/// the sigs are the FULL SET of sigs
 	/// It runs a small but challenging file _codecs_hk.so (158kb)
 	#[allow(dead_code)]
-	fn full_data2<F:PrimeField>(b_check_lkup: bool){
+	fn full_data2<F:PrimeField + ColEle>(b_check_lkup: bool){
 		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
 		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
         let b_read_cache = true;
@@ -1085,7 +1090,7 @@ pub mod tests_zkp_driver{
 	/// IMPROVEC COST: after applying the tricks of separating
 	///    igc and cs. stmt_len: 10M, all_w_e: 33M => circ1 72M R1CS
 	#[allow(dead_code)]
-	fn full_data3<F:PrimeField>(b_check_lkup: bool){
+	fn full_data3<F:PrimeField + ColEle>(b_check_lkup: bool){
 		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
 		let b_read_cache = true;
 		let b_write_cache = ! b_read_cache;
@@ -1178,7 +1183,7 @@ pub mod tests_zkp_driver{
 	/// -rwxrwxr-x 1 xiang xiang 20785824 Jun  8  2025 libicudata.so.50.2
 	/// -rwxrwxr-x 1 xiang xiang 15603008 Jun  8  2025 cc1plus
 	#[allow(dead_code)]
-	fn full_data4<F:PrimeField>(b_check_lkup: bool){
+	fn full_data4<F:PrimeField + ColEle>(b_check_lkup: bool){
 		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
 		let b_read_cache = true;
 		let b_write_cache = ! b_read_cache;
@@ -1271,8 +1276,8 @@ pub mod tests_zkp_driver{
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
-		//small_data::<Fr>(b_check_lkup); //small data
-		small_data2::<Fr>(b_check_lkup);  //10k data 
+		small_data::<Fr>(b_check_lkup); //small data
+		//small_data2::<Fr>(b_check_lkup);  //10k data 
 		//small_data_debug::<Fr>(b_check_lkup);  //for debug
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//full_data1::<Fr>(b_check_lkup);

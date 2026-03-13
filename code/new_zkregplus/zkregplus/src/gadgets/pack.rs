@@ -3,6 +3,7 @@
 */
 
 
+use folding_schemes::folding::foldpot::container_config::ColEle;
 use std::rc::{Rc};
 use rayon::iter::{ParallelIterator, IndexedParallelIterator,IntoParallelRefIterator};
 use data_processor::clam_db::RANGE2;
@@ -56,7 +57,7 @@ use crate::{
 ///     depending on a selector.
 #[allow(dead_code)]
 #[derive(Clone,Debug)]
-pub struct PackFinalGadget<F:PrimeField>{ 
+pub struct PackFinalGadget<F:PrimeField + ColEle>{ 
 	_f: PhantomData<F>,
 	/// should be LEGS * max_word_len + 1
 	inp_states_len: usize, 
@@ -72,7 +73,7 @@ pub struct PackFinalGadget<F:PrimeField>{
 	fsm_id: u32, 
 }
 
-impl <F:PrimeField> PackFinalGadget<F>{
+impl <F:PrimeField + ColEle> PackFinalGadget<F>{
 	pub fn new(inp_states_len: usize, imm_buf_len: usize, 
 		oup_states_len: usize, fsm_id: u32)
 	-> Self{
@@ -81,7 +82,7 @@ impl <F:PrimeField> PackFinalGadget<F>{
 	}
 }
 
-impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
+impl <F:PrimeField + ColEle> SigmaGadget<F> for PackFinalGadget<F>{
 	fn get_name(&self)->&str {"PackFinalGadget"}
 
 	/// set the container cfg. This is only needed for those gadgets
@@ -415,7 +416,7 @@ impl <F:PrimeField> SigmaGadget<F> for PackFinalGadget<F>{
 
 /// Advice for the WordExtract Gadget.
 #[derive(Debug)]
-pub struct PackFinalAdvice<F:PrimeField>{
+pub struct PackFinalAdvice<F:PrimeField + ColEle>{
 	/// unique states (padded with 0 at beginning)
 	pub unique_states: Vec<F>,
 	/// oup_states (final states ONLY, padded with 0 at beginning)
@@ -426,11 +427,11 @@ pub struct PackFinalAdvice<F:PrimeField>{
 	pub subtbl_id: Vec<F>,
 }
 
-impl <F: PrimeField> NdAdvice for PackFinalAdvice<F>{
+impl <F: PrimeField + ColEle> NdAdvice for PackFinalAdvice<F>{
 	fn as_any(&self) -> &dyn Any {self}
 }
 
-impl <F: PrimeField> PackFinalAdvice<F>{
+impl <F: PrimeField + ColEle> PackFinalAdvice<F>{
 	/// Given a sequence of states (no padding), and the their
 	/// corresponding b_final flag,identify the final states
 	/// and generate the cooresponding m_table as proof.

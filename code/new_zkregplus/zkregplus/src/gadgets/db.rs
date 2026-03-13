@@ -19,6 +19,7 @@ We have two cateogries of functions:
 	values given msg2.
 */
 
+use folding_schemes::folding::foldpot::container_config::ColEle;
 use std::{rc::{Rc}, cell::{RefCell},collections::{HashSet,HashMap}};
 use ark_ff::{PrimeField};
 use crate::gadgets::{traits::{Container,Col,IDX_DATA, IDX_SI_DATA}};
@@ -65,7 +66,7 @@ use crate::gadgets::commons::{verify_inverse,verify_logup_inverse, check_eq,
 /// COST: 2*qry_size + 3*lkup_size  (if old version of
 ///		of verify_inverse and verify_logup_inverse used)
 /// NEW COST: qry_size + 2 * lkup_size.
-pub fn assert_logup<F:PrimeField>(
+pub fn assert_logup<F:PrimeField + ColEle>(
 	cs: ConstraintSystemRef<F>,
 	qry: &[FpVar<F>], 
 	lkup: &[FpVar<F>],
@@ -111,7 +112,7 @@ pub fn assert_logup<F:PrimeField>(
 
 /// assert_logup for the selector version.
 /// COST: 2*qry_size + 3*lkup_size
-pub fn assert_logup_cond<F:PrimeField>(
+pub fn assert_logup_cond<F:PrimeField + ColEle>(
 	cs: ConstraintSystemRef<F>,
 	qry: &Vec<FpVar<F>>, 
 	sel_qry: &Vec<FpVar<F>>, 
@@ -154,7 +155,7 @@ pub fn assert_logup_cond<F:PrimeField>(
 
 /// verify that encoded col is the encoding of the columns in vec_src.
 /// the number of bits for each field (usually, pass RANGE2_BIT) 
-pub fn verify_encoded_table<F:PrimeField>(
+pub fn verify_encoded_table<F:PrimeField + ColEle>(
 	cs: ConstraintSystemRef<F>,
 	unit_bits: usize,
 	vec_src: &Vec<&Vec<FpVar<F>>>, 
@@ -202,7 +203,7 @@ pub fn verify_encoded_table<F:PrimeField>(
 /// extra check with the external lookup that encodes acdfa state-pat relation.
 ///
 /// COST: 3n
-pub fn assert_wide_wellformed<F:PrimeField>(
+pub fn assert_wide_wellformed<F:PrimeField + ColEle>(
 	tbl: &Rc<RefCell<Container<FpVar<F>>>>,
 	keycol_name: &str, //default it's "key" but can be something else
 ) ->Result<(),SynthesisError>{
@@ -335,7 +336,7 @@ pub fn assert_wide_wellformed<F:PrimeField>(
 /// NOTE: zero entries (key=0) are ignored (as they are dummy entry)
 ///
 /// COST: 5n (to 7n depending on setting)
-pub fn assert_well_formed_sorted<F:PrimeField>(
+pub fn assert_well_formed_sorted<F:PrimeField + ColEle>(
 	cs: ConstraintSystemRef<F>,
 	key: &Vec<FpVar<F>>,
 	id: &Vec<FpVar<F>>,
@@ -358,7 +359,7 @@ pub fn assert_well_formed_sorted<F:PrimeField>(
 /// When b_relaxed is set (sid_sort and sid_diff) must be off.
 /// b_relaxed means that when key is the same, the id either remains or 
 /// increase by 1. Still entries are wrapped with two dummy entries
-pub fn assert_well_formed_sorted_adv<F:PrimeField>(
+pub fn assert_well_formed_sorted_adv<F:PrimeField + ColEle>(
 	cs: ConstraintSystemRef<F>,
 	key: &Vec<FpVar<F>>,
 	id: &Vec<FpVar<F>>,
@@ -556,7 +557,7 @@ pub fn assert_well_formed_sorted_adv<F:PrimeField>(
 /// neighbor_diff: whose length is target_n-1.
 /// We simply labor each element as in RANGE2 (for positive).
 /// NOTE that zero is regarded as padding value.
-pub fn col_to_sorted_set<F:PrimeField>(
+pub fn col_to_sorted_set<F:PrimeField + ColEle>(
 	col: &Rc<RefCell<Container<F>>>,  //container to a vec
 	target_n: usize, //target set size
 	name: &str, //name of container
@@ -630,7 +631,7 @@ pub fn col_to_sorted_set<F:PrimeField>(
 ///assume col1 has the same length of col2
 /// col1[i]!=0 implies that col2[i]!=0
 /// COST: 2n
-pub fn verify_col1_nonzero_imply_col2_nonzero<F:PrimeField>(
+pub fn verify_col1_nonzero_imply_col2_nonzero<F:PrimeField + ColEle>(
 	col1: &Vec<FpVar<F>>,
 	col2: &Vec<FpVar<F>>,
 	cs: ConstraintSystemRef<F>
@@ -677,7 +678,7 @@ pub fn verify_col1_nonzero_imply_col2_nonzero<F:PrimeField>(
 /// which are fixed.
 /// COST: m + 8n (where m is the len of larger src_col, n is the size of
 ///     the compressed sorted set)
-pub fn verify_col_to_sorted_set<F:PrimeField>(
+pub fn verify_col_to_sorted_set<F:PrimeField + ColEle>(
 	r: &FpVar<F>,
 	c: &Container<FpVar<F>>, 
 	cs: ConstraintSystemRef<F>
@@ -755,7 +756,7 @@ pub fn verify_col_to_sorted_set<F:PrimeField>(
 /// where for key element 0, its tag is 0.
 ///
 /// might through CapErr("unique_key_size")
-pub fn prove_filter_tag<F:PrimeField>(
+pub fn prove_filter_tag<F:PrimeField + ColEle>(
 	key: &Vec<F>, sorted_key: &Vec<F>, tags: &Vec<F>,
 	unique_key_size: usize,
 ) -> Result<Rc<RefCell<Container<F>>>, Error>{
@@ -845,7 +846,7 @@ pub fn prove_filter_tag<F:PrimeField>(
 ///
 /// COST: 3*(m+k-1) + 2*(m+k) -1 + 2n + 2m + 5k
 /// = 2n + 7m + 10k
-pub fn verify_filter_tag<F:PrimeField>(
+pub fn verify_filter_tag<F:PrimeField + ColEle>(
 	key: &Vec<FpVar<F>>, sorted_key: &Vec<FpVar<F>>, tags: &Vec<FpVar<F>>,
 	prf: &Rc<RefCell<Container<FpVar<F>>>>,
 	r1: &FpVar<F>,
@@ -939,7 +940,7 @@ pub fn verify_filter_tag<F:PrimeField>(
 /// and the corresponding proof (key: "prf")
 ///
 /// might through CapErr("unique_key_size", "target_size")
-pub fn tbl_filtered_to_sorted_tbl<F:PrimeField>(
+pub fn tbl_filtered_to_sorted_tbl<F:PrimeField + ColEle>(
 	key: &Rc<RefCell<Container<F>>>,
 	val: &Rc<RefCell<Container<F>>>,
 	sorted_set_key: &Rc<RefCell<Container<F>>>, //the sorted_set bundle
@@ -959,7 +960,7 @@ pub fn tbl_filtered_to_sorted_tbl<F:PrimeField>(
 }
 
 // new approach: We first provie a 
-pub fn tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
+pub fn tbl_filtered_to_sorted_tbl_new<F:PrimeField + ColEle>(
 	key: &Rc<RefCell<Container<F>>>,
 	val: &Rc<RefCell<Container<F>>>,
 	sorted_set_key: &Rc<RefCell<Container<F>>>, //the sorted_set bundle
@@ -1069,7 +1070,7 @@ pub fn tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
 
 
 //old version more costly
-pub fn tbl_filtered_to_sorted_tbl_old<F:PrimeField>(
+pub fn tbl_filtered_to_sorted_tbl_old<F:PrimeField + ColEle>(
 	key: &Rc<RefCell<Container<F>>>,
 	val: &Rc<RefCell<Container<F>>>,
 	sorted_set_key: &Rc<RefCell<Container<F>>>, //the sorted_set bundle
@@ -1225,7 +1226,7 @@ pub fn tbl_filtered_to_sorted_tbl_old<F:PrimeField>(
 	Ok( res )
 }
 
-pub fn verify_tbl_filtered_to_sorted_tbl<F:PrimeField>(
+pub fn verify_tbl_filtered_to_sorted_tbl<F:PrimeField + ColEle>(
 	r1: &FpVar<F>, //random challenges from msg2
 	r2: &FpVar<F>,
 	keys: &Rc<RefCell<Container<FpVar<F>>>>,
@@ -1250,7 +1251,7 @@ pub fn verify_tbl_filtered_to_sorted_tbl<F:PrimeField>(
 /// where N: source table length, n: destination table lenth,
 ///  m: size of unique key (including keys not in filter key), 
 ///  k: sorted_set size (the key used for filtering)
-pub fn verify_tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
+pub fn verify_tbl_filtered_to_sorted_tbl_new<F:PrimeField + ColEle>(
 	r1: &FpVar<F>, //random challenges from msg2
 	r2: &FpVar<F>,
 	keys: &Rc<RefCell<Container<FpVar<F>>>>,
@@ -1427,7 +1428,7 @@ pub fn verify_tbl_filtered_to_sorted_tbl_new<F:PrimeField>(
 
 /// old version
 /// COST around 20 * max_nibble_len
-pub fn verify_tbl_filtered_to_sorted_tbl_old<F:PrimeField>(
+pub fn verify_tbl_filtered_to_sorted_tbl_old<F:PrimeField + ColEle>(
 	r1: &FpVar<F>, //random challenges from msg2
 	_r2: &FpVar<F>,
 	keys: &Rc<RefCell<Container<FpVar<F>>>>,
@@ -1601,7 +1602,7 @@ pub fn verify_tbl_filtered_to_sorted_tbl_old<F:PrimeField>(
 /// formed and key column is sorted.
 ///
 /// might throw CapErr("target_size")
-pub fn tbl_to_sorted_tbl<F:PrimeField>(
+pub fn tbl_to_sorted_tbl<F:PrimeField + ColEle>(
 	key: &Rc<RefCell<Container<F>>>,
 	val: &Rc<RefCell<Container<F>>>,
 	target_size: usize,
@@ -1677,7 +1678,7 @@ pub fn tbl_to_sorted_tbl<F:PrimeField>(
 /// verify in bundle contains a sorted table
 /// of the given columns of (keys, vals)
 /// COST: 27*n
-pub fn verify_tbl_to_sorted_tbl<F:PrimeField>(
+pub fn verify_tbl_to_sorted_tbl<F:PrimeField + ColEle>(
 	r1: &FpVar<F>, //random challenges from msg2
 	_r2: &FpVar<F>,
 	keys: &Rc<RefCell<Container<FpVar<F>>>>,
@@ -1789,7 +1790,7 @@ pub fn verify_tbl_to_sorted_tbl<F:PrimeField>(
 /// As usual prepadded by 0 entries.
 ///
 /// Might throw CapErr("target_size")
-pub fn tbl_left_join<F:PrimeField>(
+pub fn tbl_left_join<F:PrimeField + ColEle>(
 	tbl1: &Rc<RefCell<Container<F>>>, //needs to be sorted_tbl
 	tbl2: &Rc<RefCell<Container<F>>>, //needs to be sorted_tbl
 	sorted_set_key2: &Rc<RefCell<Container<F>>>, //sorted set of key2
@@ -1943,7 +1944,7 @@ pub fn tbl_left_join<F:PrimeField>(
 /// 200 2      21  0  2 (expanded into 3 entries)
 /// 200 2      22  1  2
 /// 200 2      23  2  2
-pub fn tbl_left_join_wide<F:PrimeField>(
+pub fn tbl_left_join_wide<F:PrimeField + ColEle>(
 	col1: &Vec<F>,
 	col2: &Vec<F>,
 	tbl2: &Rc<RefCell<Container<F>>>,
@@ -2099,7 +2100,7 @@ pub fn tbl_left_join_wide<F:PrimeField>(
 ///      this is because that every non-zero items of res is covered.
 /// GENERATE the proof
 /// NOTE THAT the res is simply a concat of set1 and set2
-pub fn gen_disjoint_union_prf<F:PrimeField>(
+pub fn gen_disjoint_union_prf<F:PrimeField + ColEle>(
 	set1: &Vec<F>,
 	set2: &Vec<F>,
 	name: &str,
@@ -2121,7 +2122,7 @@ pub fn gen_disjoint_union_prf<F:PrimeField>(
 /// This time set3 is given (and we assume that it is indeed the
 /// union of set1 and set2, and note we are trying to prove that
 /// set1 and set2 are disjoint.
-pub fn gen_disjoint_union_prf_adv<F:PrimeField>(
+pub fn gen_disjoint_union_prf_adv<F:PrimeField + ColEle>(
 	set1: &Vec<F>,
 	set2: &Vec<F>,
 	set3: &Vec<F>, //target result
@@ -2153,7 +2154,7 @@ pub fn gen_disjoint_union_prf_adv<F:PrimeField>(
 /// verify if set1 and set2 are disjoint (regading their non-zero elements),
 /// and res is a union of these two sets 
 /// COST: 4*(n1+n2)
-pub fn verify_disjoint_union_prf<F:PrimeField>(
+pub fn verify_disjoint_union_prf<F:PrimeField + ColEle>(
 	set1: &Vec<FpVar<F>>,
 	set2: &Vec<FpVar<F>>,
 	set3: &Vec<FpVar<F>>, //the desired result
@@ -2198,7 +2199,7 @@ pub fn verify_disjoint_union_prf<F:PrimeField>(
 
 /// verify that tbl1 left join with tbl2 results in output
 /// COST roughly: 20* src_len + 38 * dst_len
-pub fn verify_tbl_left_join<F:PrimeField>(
+pub fn verify_tbl_left_join<F:PrimeField + ColEle>(
 	r1: &FpVar<F>, //random challenges from msg2
 	r2: &FpVar<F>,
 	tbl1: &Rc<RefCell<Container<FpVar<F>>>>,
@@ -2357,7 +2358,7 @@ pub fn verify_tbl_left_join<F:PrimeField>(
 /// Compared with verify_tbl_left_join() this is MUCH LIGHTER
 ///    mainly because we have assumption on tbl2 has no non-zero duplicates.
 ///    and using wide table (so less check of border conditions).
-pub fn verify_tbl_left_join_wide<F:PrimeField>(
+pub fn verify_tbl_left_join_wide<F:PrimeField + ColEle>(
 	r1: &FpVar<F>, //random challenges from msg2
 	_r2: &FpVar<F>,
 	col1: &Vec<FpVar<F>>, //col1 of tbl1

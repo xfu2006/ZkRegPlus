@@ -47,7 +47,7 @@ use crate::{
 		foldpot::{
 			utils::{f1_to_f2_limbs, get_stack_space,check_logup, print_vec_var,
 				var_to_lb , gen_vec_inverse},
-			container_config::{ContainerConfig},
+			container_config::{ContainerConfig,ColEle},
 			circuits_super::field_to_usize,
 		},
 	}
@@ -2196,7 +2196,7 @@ impl <F:PrimeField> WitnessSigmaIR1CSVar<F>{
 pub struct SigmaIR1CS_Inst<F, C, CS, LK, GM, const H: bool = false>
 where 	C: CurveGroup<ScalarField=F>,
 		CS: CommitmentScheme<C, H>,
-		F: PrimeField + Absorb,
+		F: PrimeField + Absorb + ColEle,
 		LK: LookupTableTwoCol<F>,
 		GM: GadgetMapper<F,LK> + std::clone::Clone + Debug,
 {
@@ -2253,7 +2253,7 @@ where 	C: CurveGroup<ScalarField=F>,
 impl <F,C,CS,LK, GM, const H: bool> Debug for SigmaIR1CS_Inst<F,C,CS,LK,GM, H>
 where 	C: CurveGroup<ScalarField=F>,
 		CS: CommitmentScheme<C, H>,
-		F: PrimeField + Absorb,
+		F: PrimeField + Absorb + ColEle,
 		LK: LookupTableTwoCol<F>,
 		GM: GadgetMapper<F,LK> + std::clone::Clone + Debug,
 {
@@ -2268,7 +2268,7 @@ where 	C: CurveGroup<ScalarField=F>,
 impl <F,C,CS,LK, GM, const H: bool> Clone for SigmaIR1CS_Inst<F,C,CS,LK, GM, H>
 where 	C: CurveGroup<ScalarField=F>,
 		CS: CommitmentScheme<C, H>,
-		F: PrimeField + Absorb,
+		F: PrimeField + Absorb + ColEle,
 		LK: LookupTableTwoCol<F>,
 		GM: GadgetMapper<F,LK> + std::clone::Clone + Debug,
 {
@@ -2296,7 +2296,7 @@ impl <F,C,CS,LK, GM, const H: bool> SigmaIR1CS_Inst<F,C,CS,LK, GM, H>
 where 	C: CurveGroup<ScalarField=F>,
 		CS: CommitmentScheme<C, H>,
 		LK: LookupTableTwoCol<F>,
-		F: PrimeField + Absorb,
+		F: PrimeField + Absorb + ColEle,
 		GM: GadgetMapper<F,LK> + std::clone::Clone + Debug,
 {
 	/// Convert the witness to a vector of fp_var (call
@@ -2407,7 +2407,7 @@ impl <F,C,CS,LK, GM,const H: bool> SigmaIR1CS<H,F,LK,GM>
 for SigmaIR1CS_Inst<F,C,CS,LK, GM, H>
 where 	C: CurveGroup<ScalarField=F>,
 		CS: CommitmentScheme<C, H>,
-		F: PrimeField + Absorb,
+		F: PrimeField + Absorb + ColEle,
 		LK: LookupTableTwoCol<F>,
 		GM: GadgetMapper<F,LK> + std::clone::Clone + Debug,
 {
@@ -2998,7 +2998,7 @@ impl <F,C,CS,LK, GM, const H: bool> FCircuit<F> for SigmaIR1CS_Inst<F,C,CS,LK,GM
 where 	C: CurveGroup<ScalarField=F>,
 		CS: CommitmentScheme<C, H>,
 		LK: LookupTableTwoCol<F>,
-		F: PrimeField + Absorb,
+		F: PrimeField + Absorb + ColEle,
 		GM: GadgetMapper<F,LK> + std::clone::Clone + Debug,
 {
 	type Params = ();

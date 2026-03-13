@@ -41,6 +41,7 @@ discharge_subsig_adv (one for case sentive and one for ignore case).
 
 */
 
+use folding_schemes::folding::foldpot::container_config::ColEle;
 use utils::{logger::{log, log_perf, LOG7, LOG1, LOG_LEVEL}, timer::Timer};
 use std::{
 	marker::PhantomData,
@@ -125,7 +126,7 @@ pub struct SedCapacityCombo{
 
 /// Represent the structure of Input
 #[derive(Clone,Debug)]
-pub struct SedInput<F:PrimeField>{
+pub struct SedInput<F:PrimeField + ColEle>{
 	/// input state case sensitive
 	pub inp_state_cs: F,
 	/// input location (case sensitive version)
@@ -142,7 +143,7 @@ pub struct SedInput<F:PrimeField>{
 }
 
 #[derive(Clone,Debug)]
-pub struct SedComponentMapper<F:PrimeField, LK: LookupTableTwoCol<F>>{ 
+pub struct SedComponentMapper<F:PrimeField + ColEle, LK: LookupTableTwoCol<F>>{ 
 	pub _f: PhantomData<F>,
 	pub _lk: PhantomData<LK>,
 	pub capacity: SedCapacityCombo,
@@ -345,7 +346,7 @@ impl Capacity for SedCapacityCombo{
 
 /// The non-deterministic advice for the CP component
 #[derive(Debug)]
-pub struct SedAdvice<F:PrimeField>{
+pub struct SedAdvice<F:PrimeField + ColEle>{
 	pub wd_extract_advice: WordExtractAdvAdvice<F>,
 	pub fsm_adv_advice_cs: FsmAdvAdvice<F>,
 	pub fsm_adv_advice_igc: FsmAdvAdvice<F>,
@@ -357,11 +358,11 @@ pub struct SedAdvice<F:PrimeField>{
 
 }
 
-impl <F:PrimeField> NdAdvice for SedAdvice<F>{
+impl <F:PrimeField+ColEle> NdAdvice for SedAdvice<F>{
 	fn as_any(&self) -> &dyn Any{ self }
 }
 
-impl <F:PrimeField> SedAdvice<F>{
+impl <F:PrimeField+ColEle> SedAdvice<F>{
 	/// from a collection of signatures collect the subsigs id
 	/// return a vector of subsigs sorted.
 	/// ONLY return the subsigs that match the b_igc
@@ -550,7 +551,7 @@ impl <F:PrimeField> SedAdvice<F>{
 }
 
 
-impl <F:PrimeField,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
+impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 	/// constructor needs the max word len to handle the capacity
 	/// of PackFinal (number of final states), and reference to clamdb
 
@@ -645,7 +646,7 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 	
 }
 
-impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedComponentMapper<F,LK>{
+impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedComponentMapper<F,LK>{
 	fn set_container_config(&mut self, r_advice: &Rc<dyn NdAdvice>){ 
 		let advice = r_advice.as_any().downcast_ref::<SedAdvice<F>>()
 			.expect("downcast err!");

@@ -1,6 +1,7 @@
 /* Created 02/16/2025
 */
 
+use folding_schemes::folding::foldpot::container_config::ColEle;
 use std::rc::{Rc};
 use ark_ff::{PrimeField};
 use std::marker::{PhantomData};
@@ -23,18 +24,18 @@ use data_processor::{clam_db::CHAR};
 /// with a verified subtable_id 1. (If an element is indeed in table 1
 /// but the non-deterministic advice did not show it, it is not summmed).
 #[derive(Clone,Debug)]
-pub struct SumWordGadget<F:PrimeField>{ 
+pub struct SumWordGadget<F:PrimeField + ColEle>{ 
 	_f: PhantomData<F>,
 	max_word_len: usize,
 }
 
-impl <F:PrimeField> SumWordGadget<F>{
+impl <F:PrimeField + ColEle> SumWordGadget<F>{
 	pub fn new(max_word_len: usize) -> Self{
 		Self{_f: PhantomData, max_word_len: max_word_len}
 	}
 }
 
-impl <F:PrimeField> SigmaGadget<F> for SumWordGadget<F>{
+impl <F:PrimeField + ColEle> SigmaGadget<F> for SumWordGadget<F>{
 	fn get_name(&self)->&str {"SumWordGadget"}
 
 	/// set the container cfg. This is only needed for those gadgets
@@ -140,16 +141,16 @@ impl <F:PrimeField> SigmaGadget<F> for SumWordGadget<F>{
 /// Subtable ID: 1.
 /// For whoever the value is "3", set subtable ID to CHAR, otherwise "0"
 #[derive(Debug)]
-pub struct SumWordAdvice<F: PrimeField>{
+pub struct SumWordAdvice<F: PrimeField + ColEle>{
 	pub subtbl_id: Vec<F>,
 	pub sum: F,
 }
 
-impl <F: PrimeField> NdAdvice for SumWordAdvice<F>{
+impl <F: PrimeField + ColEle> NdAdvice for SumWordAdvice<F>{
 	fn as_any(&self) -> &dyn Any {self}
 }
 
-impl <F: PrimeField> SumWordAdvice<F>{
+impl <F: PrimeField + ColEle> SumWordAdvice<F>{
 	/// word_seg is reaching max capacity with padded elements.
 	/// actual size is the actual one to process
 	pub fn new(word_seg: &Vec<F>, actual_size: usize)->Self{

@@ -2,6 +2,7 @@
   revised 11/08/2025 -> improved the constraint cost to 1/4 * nlen
 */
 
+use folding_schemes::folding::foldpot::container_config::ColEle;
 use std::rc::{Rc};
 use ark_ff::{PrimeField};
 use std::marker::{PhantomData};
@@ -41,7 +42,7 @@ use crate::gadgets::commons::{build_pows_56_val,check_eq};
 /// CRIT_INIT (its initial state ID), and then following the
 /// subtbl_IDs defined in clam_db.rs.
 #[derive(Clone,Debug)]
-pub struct FsmGadget<F:PrimeField>{ 
+pub struct FsmGadget<F:PrimeField + ColEle>{ 
 	_f: PhantomData<F>,
 	/// should be LEGS (62) x max_word_len
 	max_nibble_len: usize, 
@@ -53,7 +54,7 @@ pub struct FsmGadget<F:PrimeField>{
 	acdfa_state_part_bits: usize,
 }
 
-impl <F:PrimeField> FsmGadget<F>{
+impl <F:PrimeField + ColEle> FsmGadget<F>{
 	pub fn new(
 		max_nibble_len: usize, 
 		fsm_id: u32, 
@@ -63,7 +64,7 @@ impl <F:PrimeField> FsmGadget<F>{
 	}
 }
 
-impl <F:PrimeField> SigmaGadget<F> for FsmGadget<F>{
+impl <F:PrimeField + ColEle> SigmaGadget<F> for FsmGadget<F>{
 	fn get_name(&self)->&str {"FsmGadget"}
 
 	/// set the container cfg. This is only needed for those gadgets
@@ -307,7 +308,7 @@ impl <F:PrimeField> SigmaGadget<F> for FsmGadget<F>{
 
 /// Advice for the WordExtract Gadget.
 #[derive(Debug)]
-pub struct FsmAdvice<F:PrimeField>{
+pub struct FsmAdvice<F:PrimeField + ColEle>{
 	/// states: length is max_nibbles + 1
 	pub states: Vec<F>,
 	/// transitions: length is max_nibbles
@@ -318,11 +319,11 @@ pub struct FsmAdvice<F:PrimeField>{
 	_fsm_id: u32, 
 }
 
-impl <F: PrimeField> NdAdvice for FsmAdvice<F>{
+impl <F: PrimeField + ColEle> NdAdvice for FsmAdvice<F>{
 	fn as_any(&self) -> &dyn Any {self}
 }
 
-impl <F: PrimeField> FsmAdvice<F>{
+impl <F: PrimeField + ColEle> FsmAdvice<F>{
 	/// word_seg is the one with max compacity, actual size
 	/// is the actual word len. We convert all remaining 
 	/// as 0.

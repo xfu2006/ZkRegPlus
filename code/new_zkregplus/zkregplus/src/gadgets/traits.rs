@@ -44,7 +44,7 @@ pub const IDX_DISCHARGED_SIGS:usize = 8;
 
 /// An allocated column.
 #[derive(Clone,Debug)]
-pub struct Col<F: Clone>{
+pub struct Col<F: Clone + ColEle>{
 	/// its data, size must match the size attribute.
 	pub data: Vec<F>, 
 	/// its location (must be Col type)
@@ -62,7 +62,7 @@ pub struct Col<F: Clone>{
 /// it as root). For Single, its (name, path) is in the corresponding
 /// Col's ContainerConfig::Column
 #[derive(Clone,Debug)]
-pub enum Container<F: Clone>{
+pub enum Container<F: Clone + ColEle>{
 	/// mode 1: single item 
 	Single(Rc<RefCell<Col<F>>>),
 	/// mode 2: a collection of containers
@@ -71,7 +71,7 @@ pub enum Container<F: Clone>{
 
 /// Represents a component's Advice (used for SED components, the other
 /// gadgets/components stay with legacy code)
-pub trait ComponentAdvice<F:PrimeField>: Debug{
+pub trait ComponentAdvice<F:PrimeField + ColEle>: Debug{
 	/// generate the <inp,oup,data,subtbl_id_inp,subtbl_id_oup,subtbl_id_data>
 	fn gen_stmt_components(&self)-> Vec<Vec<F>>{
 		self.get_container().borrow().gen_stmt_components().0
@@ -89,22 +89,8 @@ pub trait ComponentAdvice<F:PrimeField>: Debug{
 	fn get_container(&self)->Rc<RefCell<Container<F>>>;
 }
 
-/// Used mainly for debugging Col
-pub trait ColEle{
-	fn debug();
-}
+use folding_schemes::folding::foldpot::container_config::ColEle;
 
-use ark_bn254::{Fr};
-impl ColEle for Fr{
-	fn debug(){
-		//todo
-	}
-}
-
-impl ColEle for FpVar<Fr>{
-	fn debug(){
-	}
-}
 
 // ---------------------------------------------
 //			Implementations
@@ -125,8 +111,8 @@ impl <F: Clone + Zero + ColEle> Col<F>{
 				if idx_seg == IDX_SI_DATA{ 
 					assert!(!x.is_zero(), "We requirement that when idx_seg is IDX_SI_DATA, no elements can be zero to speed up logup check");
 				}
+				assert!(!x.is_debug_val(), "FOUND the DEBUG VAL in name: {}, idx_seg: {}", name, idx_seg);
 			}
-			x.debug();
 		}
 		//set to not resolved yet, it will be set to true in adjust_loc
 		let loc = Location{src:(0,0,0,data.len(), String::new(), false), 
@@ -140,11 +126,17 @@ impl <F: Clone + Zero + ColEle> Col<F>{
 	}
 }
 
-impl <F: Clone> Col<F>{
+impl <F: Clone + ColEle> Col<F>{
 	//MAKE sure data all elements are the same. We cannot 
 	//test it in the function (adding PartialEq will coz too many changes)
 	pub fn new_const(data: Vec<F>, name: &str, idx_seg: usize)
 	->Rc<RefCell<Self>>{
+		let b_debug = true;
+		if b_debug{
+			for x in &data{
+				assert!(!x.is_debug_val(), "FOUND the DEBUG VAL in name: {}, idx_seg: {}", name, idx_seg);
+			}
+		}
 		//set to not resolved yet, it will be set to true in adjust_loc
 		let loc = Location{src:(0,0,0,data.len(), String::new(), false), 
 			dest: Some((idx_seg,0,data.len()))}; //revisable later
@@ -213,7 +205,7 @@ impl <F: Clone> Col<F>{
 }
 
 
-impl <F: Clone> Container<F>{
+impl <F: Clone + ColEle> Container<F>{
 	/// get the name (same as get_name() keep it for legacy)
 	pub fn name(&self)->String{self.get_name()}
 
@@ -517,7 +509,7 @@ impl <F: Clone> Container<F>{
 }
 
 /// The following only works for loading VAR version of container
-impl <F: PrimeField> Container<FpVar<F>>{
+impl <F: PrimeField + ColEle> Container<FpVar<F>>{
 	/// It extract stat_vec
 	/// from witness given cfg. Notice that a stmt_vec
 	/// corresponds to the FULL container serialized version (even

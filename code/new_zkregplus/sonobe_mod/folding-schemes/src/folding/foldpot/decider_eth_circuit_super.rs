@@ -45,6 +45,7 @@ use crate::folding::{
 		circuits_super::{field_to_usize,CommittedInstanceVarFoldPotSuper},
 		sigma_cyclepair::{compute_hc_var, hash_var},
 		utils::{get_mem_usage,f1_limbs_to_f2, B_DEBUG, new_var},
+		container_config::ColEle,
 	},
 };
 use crate::arith::r1cs::R1CS;
@@ -1473,7 +1474,7 @@ where
 /// Represents the public i/o of the CyclePairCircInput,
 /// most elements can be retrieved from nova
 #[derive(Clone, Debug, PartialEq)]
-pub struct CircPubInput<F: PrimeField,C: CurveGroup<ScalarField=F>>{
+pub struct CircPubInput<F: PrimeField+ColEle,C: CurveGroup<ScalarField=F>>{
 	/// the ch of circ1
 	pub ch1: F,
 	/// the rc of circ1
@@ -1517,7 +1518,7 @@ pub struct CircPubInput<F: PrimeField,C: CurveGroup<ScalarField=F>>{
 	pub comF2: C,
 }
 
-impl <F: PrimeField, C: CurveGroup<ScalarField=F>> CircPubInput<F,C>
+impl <F: PrimeField+ColEle, C: CurveGroup<ScalarField=F>> CircPubInput<F,C>
 where
 C::Affine: AffineFromField<CF2<C>>,
 CF2<C>: PrimeField
@@ -1820,6 +1821,7 @@ where
     <C2 as Group>::ScalarField: Absorb,
 	C1::Config: SWCurveConfig,
 	P: Clone,
+	<C2G2 as ark_ec::Group>::ScalarField: ColEle
 {
 	/// circuit 2 for nova2
 	circ2:  Phase2Circuit<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,LK,GM2,H>,
@@ -1871,6 +1873,7 @@ where
     <C2 as Group>::ScalarField: Absorb,
 	C1::Config: SWCurveConfig,
 	P: Clone,
+	<C2G2 as ark_ec::Group>::ScalarField: ColEle
 {
 	/// Retrieve the non-deterministic advice from the nova instance
 	/// and save in its own data members. Basically,
@@ -1889,7 +1892,9 @@ where
 		r_all_w_2: C1::ScalarField,
 		mainres: Phase1CircuitRetVal<CF1<C1>, C1>, //will generate cyclepair inp
 		inp: CircPubInput<CF1<C1>,C1>, //will be verified against mainres
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, Error> 
+	where <C2G2 as ark_ec::Group>::ScalarField: ColEle
+	{
 		let circ2 = Phase2Circuit::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,LK,GM2,H>::from_nova::<SigmaIR1CS_Inst<C1::ScalarField, C1, CS1, LK, GM2, H>>(nova2, com_all_w_2, r_all_w_2, cyclepair_inputs)?;
 		Ok( Self{ circ2, inp, mainres } )
     }
@@ -1938,6 +1943,7 @@ where
     <C2 as Group>::ScalarField: Absorb,
 	C1::Config: SWCurveConfig,
 	P: Clone,
+	<C2G2 as ark_ec::Group>::ScalarField: ColEle
 {
     fn generate_constraints(self, cs: ConstraintSystemRef<CF1<C1>>) -> Result<(), SynthesisError> {
 		let mut gt1 = GTimer::new();

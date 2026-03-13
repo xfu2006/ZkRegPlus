@@ -41,6 +41,7 @@ use crate::{
 	folding::{
 		circuits::{CF1, CF2, CF3},
 		foldpot::{
+			container_config::{ColEle},
 			qa_nizk::{QaNizkProof},
 			utils::{Timer,get_mem_usage,get_mem_usage_mb,format_bytes,B_DEBUG},
 			circuits_super::{field_to_usize},
@@ -224,6 +225,7 @@ impl <'c, E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + std::fmt::Debu
 where
     //C1: CurveGroup,
     //C2: CurveGroup,
+	<E as Pairing>::ScalarField: ColEle,
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
     GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
     FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM,C=C1>,
@@ -1743,6 +1745,7 @@ pub fn foldpot_main<E:Pairing<G1=C1,G2=C2G2>,P:PairingVar<E,CF3<C2G2>>+std::fmt:
 	vec_word_fnames: Vec<String>
 ) -> Result<(), Error>
 where
+	<E as Pairing>::ScalarField: ColEle,
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
     GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
     FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM,C=C1>,

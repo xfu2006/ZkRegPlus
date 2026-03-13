@@ -13,6 +13,47 @@
 // have one storage location, but may be used ``virtually" in multiple
 // containers, so care has to be taken care of the cross references.
 
+
+/// Used mainly for debugging Col
+pub trait ColEle{
+	/// We do not pass the value here because
+	/// it could be Fr or FpVar<Fr> and it's
+	/// hard to directly create that variable if it's FpVar<Fr>.
+	/// We just hard code the debug_val in the corresponding function.
+	fn is_debug_val(&self)->bool;
+}
+
+use ark_ff::PrimeField;
+use ark_r1cs_std::fields::fp::FpVar;
+use ark_bn254::Fr;
+
+
+/// convert a bignum in string to F.
+pub fn bignum_to_f<F:PrimeField>(s: &str)->F{
+	let b_debug = false;
+	let res = F::from_str(s).map_err(|_| panic!("bignum_to_f: failed to parse {}", s)).unwrap();
+
+	if b_debug{
+		let s2 = format!("{}", res);
+		assert!(s == s2, "bignum_to_f check fail: {} != {}", s, s2);
+	}
+
+	res
+}
+
+impl ColEle for Fr{
+	fn is_debug_val(&self)->bool{
+		let res = *self == bignum_to_f::<Fr>("3432815461787366913564753379778019918895686068501519269894");
+
+		res
+	}
+}
+
+impl <F: PrimeField> ColEle for FpVar<F>{
+	fn is_debug_val(&self)->bool{ false }
+}
+
+
 #[derive(Clone,Debug)]
 pub struct Location{
 	/// Indicates the location to load when constructing
@@ -390,5 +431,7 @@ impl ContainerConfig{
 		}
 	}
 }
+
+
 
 

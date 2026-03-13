@@ -9,7 +9,7 @@ use crate::{
 		foldpot::{
 			sigma_ir1cs::{LookupTableTwoCol,SigmaIR1CS,SigmaIR1CS_Inst,SigmaGadget,WitnessSigmaIR1CSVar,WitnessSigmaIR1CSConfig,StatementInst,StatementExtraInfo,StatementConfig,DummyNdAdvice,GadgetMapper, DummyCapacity,NdAdvice,Capacity,WordInfo},
 			utils::{expand2},
-			container_config::{ContainerConfig},
+			container_config::{ContainerConfig,ColEle},
 		},
 	},
 	Error
@@ -369,7 +369,7 @@ pub fn create_sigma_fold_pair<F,C,CS,LK,const H: bool>(_k: usize, poseidon_confi
 where 	C: CurveGroup<ScalarField=F>,
 		CS: CommitmentScheme<C, H>,
 		LK: LookupTableTwoCol<F> + 'static,
-		F: PrimeField + Absorb,
+		F: PrimeField + Absorb + ColEle,
 {
 	//1. create a sigma instance
 	let mapper = FoldPairMapper::<F,LK>{_f: PhantomData, _lk: PhantomData, poseidon_config: poseidon_config.clone()};

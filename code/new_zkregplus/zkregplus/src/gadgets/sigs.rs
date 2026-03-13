@@ -1,4 +1,5 @@
 /* Created 03/06/2025, completed 03/11/2025 */
+use folding_schemes::folding::foldpot::container_config::ColEle;
 use utils::{consts::ADD_CHAIN_SIZE};
 use std::rc::{Rc};
 use rayon::iter::{
@@ -61,7 +62,7 @@ use folding_schemes::{folding::foldpot::circuits_super::{field_to_usize}};
 /// This is usually a set of up to 8k elements in the worst case.
 /// The cost of this gadget is much smaller compared with others.
 #[derive(Clone,Debug)]
-pub struct GetSigGadget<F:PrimeField>{ 
+pub struct GetSigGadget<F:PrimeField + ColEle>{ 
 	_f: PhantomData<F>,
 	/// its capacity
 	capacity: SigGadgetCapacity,
@@ -395,7 +396,7 @@ impl <F:Clone> SigGadgetMsg3<F>{
 
 /// Advice for the WordExtract Gadget.
 #[derive(Debug)]
-pub struct GetSigAdvice<F:PrimeField>{
+pub struct GetSigAdvice<F:PrimeField + ColEle>{
 	pub capacity: SigGadgetCapacity,
 
 	/// the data segment (note: subtbl_id) can be easiy
@@ -412,11 +413,11 @@ pub struct GetSigAdvice<F:PrimeField>{
 	pub vec_sig_id_no_crit_pat: Vec<usize>,
 }
 
-impl <F: PrimeField> NdAdvice for GetSigAdvice<F>{
+impl <F: PrimeField + ColEle> NdAdvice for GetSigAdvice<F>{
 	fn as_any(&self) -> &dyn Any {self}
 }
 
-impl <F: PrimeField> GetSigAdvice<F>{
+impl <F: PrimeField + ColEle> GetSigAdvice<F>{
 
 	/// Given a sequence of final_states (with padding).
 	/// Identify the data needed to build data segment and subtables.
@@ -787,7 +788,7 @@ impl <F: PrimeField> GetSigAdvice<F>{
 	}
 }
 
-impl <F:PrimeField> GetSigGadget<F>{
+impl <F:PrimeField + ColEle> GetSigGadget<F>{
 	/// constructor. Join_buf_size: the buf size needed to 
 	/// hold its join buffer, sig_buf_size: the buf needed to
 	/// hold its signature buffer. We expect inp/oup will have
@@ -800,7 +801,7 @@ impl <F:PrimeField> GetSigGadget<F>{
 	}
 }
 
-impl <F:PrimeField> SigmaGadget<F> for GetSigGadget<F>{
+impl <F:PrimeField + ColEle> SigmaGadget<F> for GetSigGadget<F>{
 	fn get_name(&self)->&str {"GetSigGadget"}
 
 	/// set the container cfg. This is only needed for those gadgets

@@ -10,6 +10,7 @@
 */
 
 //! This module generates the (pat-loc) for a nibble sequence.
+use folding_schemes::folding::foldpot::container_config::ColEle;
 use utils::{logger::{log_perf, LOG1,LOG2}, 
 	timer::Timer as GTimer, consts::ADD_CHAIN_SIZE};
 use rayon::iter::{ParallelIterator,IntoParallelRefIterator,
@@ -112,7 +113,7 @@ pub struct FsmAdvCapacity{
 
 /// Advice for the WordExtract Gadget.
 #[derive(Clone,Debug)]
-pub struct FsmAdvAdvice<F:PrimeField>{
+pub struct FsmAdvAdvice<F:PrimeField + ColEle>{
 	/// distance to the word_extract gadget (sometimes it's 2)
 	pub offset_wea: usize,
 
@@ -146,7 +147,7 @@ pub struct FsmAdvAdvice<F:PrimeField>{
 ///  (100, 201,1,3,77), (100, 201,2,3,78), (100, 201,3,3,99)
 /// All entries of such table are sorted.
 #[derive(Clone,Debug)]
-pub struct FsmAdvGadget<F:PrimeField>{ 
+pub struct FsmAdvGadget<F:PrimeField + ColEle>{ 
 	/// if this is for igc acdfa.
 	b_igc: bool, 
 
@@ -208,17 +209,17 @@ impl Capacity for FsmAdvCapacity{
 	fn as_any(&self) -> &dyn Any { self }
 }
 
-impl <F: PrimeField> NdAdvice for FsmAdvAdvice<F>{
+impl <F: PrimeField + ColEle> NdAdvice for FsmAdvAdvice<F>{
 	fn as_any(&self) -> &dyn Any {self}
 }
 
-impl <F: PrimeField> ComponentAdvice<F> for FsmAdvAdvice<F>{
+impl <F: PrimeField + ColEle> ComponentAdvice<F> for FsmAdvAdvice<F>{
 	fn get_container(&self)->Rc<RefCell<Container<F>>>{
 		self.stmt_container.clone()
 	}
 }
 
-impl <F: PrimeField> FsmAdvAdvice<F>{
+impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 	/// Given nibbles and ACDFA, produce the (state,loc) sequence, sorted
 	/// by loc.
 	/// Input: (input_state, inp_location) 
@@ -1229,7 +1230,7 @@ impl <F: PrimeField> FsmAdvAdvice<F>{
 	}
 }
 
-impl <F:PrimeField> FsmAdvGadget<F>{
+impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 	pub fn new(
 		b_igc: bool,
 		offset_wea: usize,
@@ -2098,7 +2099,7 @@ impl <F:PrimeField> FsmAdvGadget<F>{
 
 }
 
-impl <F:PrimeField> SigmaGadget<F> for FsmAdvGadget<F>{
+impl <F:PrimeField + ColEle> SigmaGadget<F> for FsmAdvGadget<F>{
 	fn get_name(&self)->&str {"FsmAdvGadget"}
 
 	/// set the container cfg. This is only needed for those gadgets

@@ -1,5 +1,6 @@
 /* Created 02/26/2025 */
 
+use folding_schemes::folding::foldpot::container_config::ColEle;
 use ark_ff::{PrimeField};
 use std::marker::{PhantomData};
 use folding_schemes::folding::foldpot::{
@@ -25,18 +26,18 @@ pub const LEGS:usize = 62;
 /// into 62 field elements. The basic idea is to simply
 /// break it using power operations and then assert the range of each
 #[derive(Clone,Debug)]
-pub struct WordExtractGadget<F:PrimeField>{ 
+pub struct WordExtractGadget<F:PrimeField + ColEle>{ 
 	_f: PhantomData<F>,
 	max_word_len: usize,
 }
 
-impl <F:PrimeField> WordExtractGadget<F>{
+impl <F:PrimeField + ColEle> WordExtractGadget<F>{
 	pub fn new(max_word_len: usize) -> Self{
 		Self{_f: PhantomData, max_word_len: max_word_len}
 	}
 }
 
-impl <F:PrimeField> SigmaGadget<F> for WordExtractGadget<F>{
+impl <F:PrimeField + ColEle> SigmaGadget<F> for WordExtractGadget<F>{
 	fn get_name(&self)->&str {"WordExtractGadget"}
 
 	/// set the container cfg. This is only needed for those gadgets
@@ -213,16 +214,16 @@ impl <F:PrimeField> SigmaGadget<F> for WordExtractGadget<F>{
 
 /// Advice for the WordExtract Gadget.
 #[derive(Debug)]
-pub struct WordExtractAdvice<F:PrimeField>{
+pub struct WordExtractAdvice<F:PrimeField + ColEle>{
 	/// consists of act_word_len and then the extracted legs
 	pub data: Vec<F>,
 }
 
-impl <F: PrimeField> NdAdvice for WordExtractAdvice<F>{
+impl <F: PrimeField + ColEle> NdAdvice for WordExtractAdvice<F>{
 	fn as_any(&self) -> &dyn Any {self}
 }
 
-impl <F: PrimeField> WordExtractAdvice<F>{
+impl <F: PrimeField + ColEle> WordExtractAdvice<F>{
 	/// word_seg is the one with max compacity, actual size
 	/// is the actual word len. We convert all remaining 
 	/// as 0.
@@ -270,12 +271,13 @@ pub mod tests_word_extract_gadget{
 			container_config::ContainerConfig,
 		},
 	};
+	use folding_schemes::folding::foldpot::container_config::ColEle;
 	use crate::gadgets::word_extract::{WordExtractGadget,WordExtractAdvice};
 	use utils::data::{rand_fe_by_bits};
 	use data_processor::clam_db::CHAR;
 	use ark_std::marker::PhantomData;
 
-	pub fn test_gadget<F:PrimeField + Absorb> (
+	pub fn test_gadget<F:PrimeField + Absorb + ColEle> (
 		g: Rc<dyn SigmaGadget<F>>, 
 		word: &Vec<F>,
 		inp: &Vec<F>,
@@ -297,7 +299,7 @@ pub mod tests_word_extract_gadget{
 	///     the LAST gadget (g) only.
 	/// For non-legacy case, word/inp/...data has the infor for 
 	/// ALL gadgets (in a CompositeComponent)
-	pub fn test_gadget_adv<F:PrimeField + Absorb> (
+	pub fn test_gadget_adv<F:PrimeField + Absorb + ColEle> (
 		g: Rc<dyn SigmaGadget<F>>, 
 		word: &Vec<F>,
 		inp: &Vec<F>,

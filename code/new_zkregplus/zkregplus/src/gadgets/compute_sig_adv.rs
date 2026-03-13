@@ -21,6 +21,7 @@
 //!     Only those with a definite "no" are labled as discharged.
 //!     -> output is the list of discharged sigs.
 
+use folding_schemes::folding::foldpot::container_config::ColEle;
 use rayon::iter::{
 	IntoParallelRefIterator,
 	ParallelIterator,IntoParallelIterator
@@ -139,7 +140,7 @@ pub struct ComputeSigAdvCapacity{
 
 /// Advice for the Compute Sig Gadget.
 #[derive(Clone,Debug)]
-pub struct ComputeSigAdvAdvice<F:PrimeField>{
+pub struct ComputeSigAdvAdvice<F:PrimeField + ColEle>{
 	/// the statement container object which is serialized to a vector
 	/// of statement
 	pub stmt_container: Rc<RefCell<Container<F>>>,
@@ -153,7 +154,7 @@ pub struct ComputeSigAdvAdvice<F:PrimeField>{
 /// SIGS from Subsigs. Note that this gadget should be ONLY included
 /// in the last step of discharging a word for saving cost.
 #[derive(Clone,Debug)]
-pub struct ComputeSigAdvGadget<F:PrimeField>{ 
+pub struct ComputeSigAdvGadget<F:PrimeField + ColEle>{ 
 	/// the capacity
 	pub capacity: ComputeSigAdvCapacity,
 
@@ -205,17 +206,17 @@ impl Capacity for ComputeSigAdvCapacity{
 	fn as_any(&self) -> &dyn Any { self }
 }
 
-impl <F: PrimeField> NdAdvice for ComputeSigAdvAdvice<F>{
+impl <F: PrimeField + ColEle> NdAdvice for ComputeSigAdvAdvice<F>{
 	fn as_any(&self) -> &dyn Any {self}
 }
 
-impl <F: PrimeField> ComponentAdvice<F> for ComputeSigAdvAdvice<F>{
+impl <F: PrimeField + ColEle> ComponentAdvice<F> for ComputeSigAdvAdvice<F>{
 	fn get_container(&self)->Rc<RefCell<Container<F>>>{
 		self.stmt_container.clone()
 	}
 }
 
-impl <F: PrimeField> ComputeSigAdvAdvice<F>{
+impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 	/// Given the StepQueue (result of bwd_prf) from the DischargeAdvGadget
 	/// Generate the list of signatures that are discharged.
 	pub fn new(
@@ -1331,7 +1332,7 @@ impl <F: PrimeField> ComputeSigAdvAdvice<F>{
 
 }
 
-impl <F:PrimeField> ComputeSigAdvGadget<F>{
+impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 	pub fn new(
 		fsm_id_cs: u32, //determines which combo to retrieve info
 		fsm_id_igc: u32, //determines which combo to retrieve info
@@ -2294,7 +2295,7 @@ impl <F:PrimeField> ComputeSigAdvGadget<F>{
 
 }
 
-impl <F:PrimeField> SigmaGadget<F> for ComputeSigAdvGadget<F>{
+impl <F:PrimeField + ColEle> SigmaGadget<F> for ComputeSigAdvGadget<F>{
 	fn get_name(&self)->&str {"ComputeSigAdvGadget"}
 
 	/// set the container cfg. This is only needed for those gadgets

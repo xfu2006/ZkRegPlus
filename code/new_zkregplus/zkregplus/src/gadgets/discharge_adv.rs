@@ -9,6 +9,7 @@
 //! This gadget is used for discharging subsigs using the streaming alg.
 //! It produces the sigs that discharged.
 
+use folding_schemes::folding::foldpot::container_config::ColEle;
 use rayon::iter::{IntoParallelRefIterator,ParallelIterator,IntoParallelIterator
 	, IndexedParallelIterator};
 use std::{rc::{Rc},cell::{RefCell},collections::{HashMap}};
@@ -90,7 +91,7 @@ pub enum StepQueueType{
 /// By default, each step queue has a step 0 - which default has location
 /// 1 (its "real steps" start at step id 1 - corresponding to its first pattern)
 #[derive(Clone,Debug,PartialEq)]
-pub struct StepQueue<F:PrimeField>{
+pub struct StepQueue<F:PrimeField + ColEle>{
 	pub b_igc: bool,
 	/// the list of subsigs (sorted)
 	pub subsigs: Vec<F>,
@@ -109,7 +110,7 @@ pub struct StepQueue<F:PrimeField>{
 /// A step queue item represents the info of step que
 /// for ONE step of ONE subsig.
 #[derive(Clone,Debug,PartialEq)]
-pub struct StepQueueItem<F: PrimeField>{
+pub struct StepQueueItem<F: PrimeField + ColEle>{
 	/// encoded version of subsig-id-pat-rg_start-rg_end
 	pub encoded: F, 
 	/// the sorted locations (does NOT HAVE DUMMY ENTRIES)
@@ -134,7 +135,7 @@ pub struct StepQueueItem<F: PrimeField>{
 /// next layer, and given the pac-loc information, retrieve the
 /// next layer locations in range. Similar to StepQueue, it has
 /// the structure of mapping from subsig to the corresponding StepFwdPrfItem
-pub struct StepFwdPrf<F:PrimeField>{
+pub struct StepFwdPrf<F:PrimeField + ColEle>{
 	pub b_igc: bool,
 	/// the list of subsigs
 	pub subsigs: Vec<F>,
@@ -157,7 +158,7 @@ pub struct StepFwdPrf<F:PrimeField>{
 ///  ** rather different number of locations screened from trace).
 ///  ** our current approach wastes constant blow up of columns (around 6).
 ///  ** comparing the two approaches, we pick up the first.
-pub struct StepFwdPrfItem<F:PrimeField>{
+pub struct StepFwdPrfItem<F:PrimeField + ColEle>{
 	// -------------- output into container info below ------
 	// diff1 and diff2 are used
 	// to verify the correctness of the query result. They have to
@@ -247,7 +248,7 @@ pub struct StepFwdPrfItem<F:PrimeField>{
 /// especially when there are multiple steps in folding for proving one
 /// long word, which accumulates intermediate locs in the StepQueue.
 /// This reduce the size and improves prover performance
-pub struct StepBwdPrf<F:PrimeField>{
+pub struct StepBwdPrf<F:PrimeField + ColEle>{
 	/// if ignore case
 	pub b_igc: bool, 
 	/// the list of subsigs
@@ -273,7 +274,7 @@ pub struct StepBwdPrf<F:PrimeField>{
 /// larger than the current locations. Thus there is NO WAY for
 /// future locations to be "linked" from the prevoius laye locatoins,
 /// thus they should be eliminated.
-pub struct StepBwdPrfItem<F:PrimeField>{
+pub struct StepBwdPrfItem<F:PrimeField + ColEle>{
 	/// the one who's generating (note its location is src_step)
 	/// it's encoding of (subsig-id/step-pat-rg_s-rg_e)
 	pub src_encoded: F,
@@ -333,7 +334,7 @@ pub struct DischargeAdvCapacity{
 
 /// Advice for the Discharge Subsig Gadget.
 #[derive(Clone,Debug)]
-pub struct DischargeAdvAdvice<F:PrimeField>{
+pub struct DischargeAdvAdvice<F:PrimeField + ColEle>{
 	/// if this is for fsm (acdfa) for ignore case
 	pub b_igc: bool,
 
@@ -364,7 +365,7 @@ pub struct DischargeAdvAdvice<F:PrimeField>{
 /// are discharged (note that: this result is only valid at the last step of
 /// a word.
 #[derive(Clone,Debug)]
-pub struct DischargeAdvGadget<F:PrimeField>{ 
+pub struct DischargeAdvGadget<F:PrimeField + ColEle>{ 
 	/// if this is for fsm (acdfa) for ignore case
 	pub b_igc: bool,
 
@@ -392,7 +393,7 @@ pub struct DischargeAdvGadget<F:PrimeField>{
 // ---------------------------------------------
 //            Implementations
 // ---------------------------------------------
-impl <F:PrimeField> StepQueue<F>{
+impl <F:PrimeField + ColEle> StepQueue<F>{
 	/// this function determine the size of the to_vec() and 
 	/// to_container() size. Note that to_vec() and to_container()
 	/// generates multiple column tables essentially, the size is
@@ -989,7 +990,7 @@ impl <F:PrimeField> StepQueue<F>{
 	}
 }
 
-impl <F:PrimeField> StepQueueItem<F>{
+impl <F:PrimeField + ColEle> StepQueueItem<F>{
 	/// return 2 vectors: encoded, loc
 	/// padded with 0 and max entry
 	pub fn to_vec(&self)->Vec<Vec<F>>{
@@ -1158,7 +1159,7 @@ impl <F:PrimeField> StepQueueItem<F>{
 
 }
 
-impl <F:PrimeField> StepFwdPrf<F>{
+impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 	/// return the estimated needed size of buf for to_container
 	pub fn vec_size(&self)->usize{
 		let res = self.capacity.basis_pats_in_trace * self.capacity.max_nibble_len/10000 * self.capacity.pats_expansion_rate;
@@ -1352,7 +1353,7 @@ impl <F:PrimeField> StepFwdPrf<F>{
 	}
 }
 
-impl <F:PrimeField> StepFwdPrfItem<F>{
+impl <F:PrimeField + ColEle> StepFwdPrfItem<F>{
 	/// src_encoded: where which to launch to the to_add,  dst_encoded:
 	/// the NEXT encoded i.e., encoding (subisg-step+1-pat-rg_s-rg_e).
 	/// when src_encoded corresponds to the LAST step, dst_encoded is max.
@@ -1430,7 +1431,7 @@ impl <F:PrimeField> StepFwdPrfItem<F>{
 	}
 }
 
-impl <F:PrimeField> StepBwdPrfItem<F>{
+impl <F:PrimeField + ColEle> StepBwdPrfItem<F>{
 	/// src_encoded: encoding of (subsig, step, loc, rg_start, rg_end)
 	/// min_loc the minimum loc of src_encoded, if no locs available, it's
 	/// the given last_loc in pat_loc. previous_encoded can be inferred.
@@ -1460,7 +1461,7 @@ impl <F:PrimeField> StepBwdPrfItem<F>{
 
 }
 
-impl <F:PrimeField> StepBwdPrf<F>{
+impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 	pub fn vec_size(&self)->usize{
 		let raw_size = self.capacity.basis_pats_in_trace 
 			* self.capacity.max_nibble_len / 10000 
@@ -1680,17 +1681,17 @@ impl Capacity for DischargeAdvCapacity{
 	fn as_any(&self) -> &dyn Any { self }
 }
 
-impl <F: PrimeField> NdAdvice for DischargeAdvAdvice<F>{
+impl <F: PrimeField + ColEle> NdAdvice for DischargeAdvAdvice<F>{
 	fn as_any(&self) -> &dyn Any {self}
 }
 
-impl <F: PrimeField> ComponentAdvice<F> for DischargeAdvAdvice<F>{
+impl <F: PrimeField + ColEle> ComponentAdvice<F> for DischargeAdvAdvice<F>{
 	fn get_container(&self)->Rc<RefCell<Container<F>>>{
 		self.stmt_container.clone()
 	}
 }
 
-impl <F: PrimeField> DischargeAdvAdvice<F>{
+impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 	/// Given the <pats,locs> from the fsm_adv gadget (note it is padded
 	/// to basis_pat_per_trace * max_nibblelen/10000), generate
 	/// the StepQueue of all related subsigs (NOTE: subsigs are provided
@@ -2816,7 +2817,7 @@ impl <F: PrimeField> DischargeAdvAdvice<F>{
 
 }
 
-impl <F:PrimeField> DischargeAdvGadget<F>{
+impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 	pub fn new(
 		b_igc: bool,
 		offset_fsm: usize,
@@ -4086,7 +4087,7 @@ impl <F:PrimeField> DischargeAdvGadget<F>{
 		
 }
 
-impl <F:PrimeField> SigmaGadget<F> for DischargeAdvGadget<F>{
+impl <F:PrimeField + ColEle> SigmaGadget<F> for DischargeAdvGadget<F>{
 	fn get_name(&self)->&str {"DischargeAdvGadget"}
 
 	/// set the container cfg. This is only needed for those gadgets
@@ -4213,7 +4214,7 @@ impl <F:PrimeField> SigmaGadget<F> for DischargeAdvGadget<F>{
 }
 
 #[allow(dead_code)]
-fn dummy_test<F:PrimeField>(){
+fn dummy_test<F:PrimeField + ColEle>(){
 	//just call it here for saving import lines 
 	let _= is_sorted(&vec![F::zero()]); 
 	check_rg2(&vec![F::zero()], &vec![F::zero()]);

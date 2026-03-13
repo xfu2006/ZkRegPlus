@@ -8,6 +8,7 @@
 // NOTE that it has two modes: char mode (for regular DFA),
 // and normal mode (for ACDFA).
 
+use folding_schemes::folding::foldpot::container_config::ColEle;
 use ark_r1cs_std::R1CSVar;
 use rayon::{ iter::{ParallelIterator,IntoParallelIterator,IntoParallelRefIterator} };
 use std::{rc::{Rc},cell::{RefCell}};
@@ -52,7 +53,7 @@ pub struct WordExtractAdvCapacity{
 
 /// Advice for the WordExtractAdv Gadget.
 #[derive(Clone,Debug)]
-pub struct WordExtractAdvAdvice<F:PrimeField>{
+pub struct WordExtractAdvAdvice<F:PrimeField + ColEle>{
 	/// the container object which is serialized to vector of stmt.
 	pub stmt_container: Rc<RefCell<Container<F>>>,
 }
@@ -61,7 +62,7 @@ pub struct WordExtractAdvAdvice<F:PrimeField>{
 /// into 62 field elements. The basic idea is to simply
 /// break it using power operations and then assert the range of each
 #[derive(Clone,Debug)]
-pub struct WordExtractAdvGadget<F:PrimeField>{ 
+pub struct WordExtractAdvGadget<F:PrimeField + ColEle>{ 
 	/// b_map_char mode: for sid of nibbles, should
 	/// their sid be char_val(v) + CHAR_MAP
 	pub b_map_char: bool,
@@ -105,11 +106,11 @@ impl Capacity for WordExtractAdvCapacity{
 	fn as_any(&self) -> &dyn Any { self }
 }
 
-impl <F: PrimeField> NdAdvice for WordExtractAdvAdvice<F>{
+impl <F: PrimeField + ColEle> NdAdvice for WordExtractAdvAdvice<F>{
 	fn as_any(&self) -> &dyn Any {self}
 }
 
-impl <F: PrimeField> WordExtractAdvAdvice<F>{
+impl <F: PrimeField + ColEle> WordExtractAdvAdvice<F>{
 	/// word_seg is the one with max compacity, actual size
 	/// is the actual word len. We convert all remaining 
 	/// as 0.
@@ -196,14 +197,14 @@ impl <F: PrimeField> WordExtractAdvAdvice<F>{
 	}
 }
 
-impl <F: PrimeField> ComponentAdvice<F> for WordExtractAdvAdvice<F>{
+impl <F: PrimeField + ColEle> ComponentAdvice<F> for WordExtractAdvAdvice<F>{
 	fn get_container(&self)->Rc<RefCell<Container<F>>>{
 		self.stmt_container.clone()
 	}
 }
 
 
-impl <F:PrimeField> WordExtractAdvGadget<F>{
+impl <F:PrimeField + ColEle> WordExtractAdvGadget<F>{
 	/// constructor
 	///
 	/// b_map_char indicates when generating sid for char, we
@@ -236,7 +237,7 @@ impl <F:PrimeField> WordExtractAdvGadget<F>{
 	}
 }
 
-impl <F:PrimeField> SigmaGadget<F> for WordExtractAdvGadget<F>{
+impl <F:PrimeField + ColEle> SigmaGadget<F> for WordExtractAdvGadget<F>{
 	fn get_name(&self)->&str {
 		if self.b_map_char{
 			"WordExtractAdvGadget(b_map_mode)"

@@ -18,6 +18,7 @@
 	where si_[seg] always match the [seg], e.g., |si_data| = |data|.
 */
 
+use folding_schemes::folding::foldpot::container_config::ColEle;
 use utils::{logger::{log,log_perf, LOG1, LOG7,LOG_LEVEL}, timer::Timer};
 use std::{
 	marker::PhantomData,
@@ -76,13 +77,13 @@ pub struct DfaCapacity{
 
 /// Represent the structure of Input
 #[derive(Clone,Debug)]
-pub struct DfaInput<F:PrimeField>{
+pub struct DfaInput<F:PrimeField + ColEle>{
 	/// input state
 	pub v_inp_state: Vec<F>,
 }
 
 #[derive(Clone,Debug)]
-pub struct DfaComponentMapper<F:PrimeField, LK: LookupTableTwoCol<F>>{ 
+pub struct DfaComponentMapper<F:PrimeField + ColEle, LK: LookupTableTwoCol<F>>{ 
 	pub _f: PhantomData<F>,
 	pub _lk: PhantomData<LK>,
 	pub capacity: DfaCapacity,
@@ -186,7 +187,7 @@ impl Capacity for DfaCapacity{
 
 /// The non-deterministic advice for the CP component
 #[derive(Debug)]
-pub struct DfaAdvice<F:PrimeField>{
+pub struct DfaAdvice<F:PrimeField + ColEle>{
 	pub wd_extract_advice: WordExtractAdvAdvice<F>,
 	pub dfa_adv_advice: DfaAdvAdvice<F>,
 
@@ -194,11 +195,11 @@ pub struct DfaAdvice<F:PrimeField>{
 
 }
 
-impl <F:PrimeField> NdAdvice for DfaAdvice<F>{
+impl <F:PrimeField+ColEle> NdAdvice for DfaAdvice<F>{
 	fn as_any(&self) -> &dyn Any{ self }
 }
 
-impl <F:PrimeField> DfaAdvice<F>{
+impl <F:PrimeField+ColEle> DfaAdvice<F>{
 	/// word seg must be full maxword len. The information:
 	/// <dfa, vec_sigs, subsig_store, map_pattern_sig> are essentially
 	/// one entry from the corresponding BundleSubsigs for one specific
@@ -313,7 +314,7 @@ impl <F:PrimeField> DfaAdvice<F>{
 	}
 }
 
-impl <F:PrimeField,LK:LookupTableTwoCol<F>> DfaComponentMapper<F,LK>{
+impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> DfaComponentMapper<F,LK>{
 	/// constructor needs the max word len to handle the capacity
 	/// of PackFinal (number of final states), and reference to clamdb
 	pub fn new(
@@ -350,7 +351,7 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> DfaComponentMapper<F,LK>{
 
 }
 
-impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaComponentMapper<F,LK>{
+impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaComponentMapper<F,LK>{
 	fn set_container_config(&mut self, r_advice: &Rc<dyn NdAdvice>){ 
 		let advice = r_advice.as_any().downcast_ref::<DfaAdvice<F>>()
 			.expect("downcast err!");

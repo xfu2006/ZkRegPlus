@@ -1,5 +1,6 @@
 /* Created 03/07/2025 */
 // common utility functions
+use folding_schemes::folding::foldpot::container_config::ColEle;
 use utils::{consts::ADD_CHAIN_SIZE,logger::{log_perf,LOG2}, timer::Timer};
 use rayon::{
 	iter::{ParallelIterator,IntoParallelIterator, 
@@ -29,13 +30,13 @@ use ark_r1cs_std::{
 };
 use data_processor::clam_db::{RANGE2_BIT,RANGE2};
 
-pub fn print_vec<F:PrimeField>(msg: &str, v: &Vec<F>){
+pub fn print_vec<F:PrimeField + ColEle>(msg: &str, v: &Vec<F>){
 	println!("=== {} ====", msg);
 	for i in 0..v.len(){ println!("  {} => {}", i, v[i]); }
 }
 
 /// quickly generate repeating of vec for n times.
-pub fn repeat_vec<F:PrimeField>(v: &[FpVar<F>], n: usize)->Vec<FpVar<F>>{
+pub fn repeat_vec<F:PrimeField + ColEle>(v: &[FpVar<F>], n: usize)->Vec<FpVar<F>>{
 	let (_vlen,total) = (v.len(), v.len()*n);
 	let zero = FpVar::<F>::zero();
     let mut result = vec![zero; total];
@@ -52,7 +53,7 @@ pub fn repeat_vec<F:PrimeField>(v: &[FpVar<F>], n: usize)->Vec<FpVar<F>>{
 
 /// takeing a vector of slices of the same size and interleaving
 /// these into one vec, e.g., [[1,2], [3,4]] ==> [1,3,2,4]
-pub fn mix_vec<F:PrimeField>(v2d: &Vec<&[F]>)->Vec<F>{
+pub fn mix_vec<F:PrimeField + ColEle>(v2d: &Vec<&[F]>)->Vec<F>{
 	let m = v2d.len();
 	let n = v2d[0].len();
 	for v in v2d {assert!(v.len()==n);}
@@ -66,20 +67,20 @@ pub fn mix_vec<F:PrimeField>(v2d: &Vec<&[F]>)->Vec<F>{
 	result
 }
 
-pub fn is_sorted<F:PrimeField>(vec: &Vec<F>)->bool{
+pub fn is_sorted<F:PrimeField + ColEle>(vec: &Vec<F>)->bool{
 	if vec.len()==0 {return true;}
 	for i in 0..vec.len()-1{ if vec[i]>vec[i+1] {return false;} }
 	true
 }
 
-pub fn is_incrementing_by_one<F:PrimeField>(vec: &Vec<F>)->bool{
+pub fn is_incrementing_by_one<F:PrimeField + ColEle>(vec: &Vec<F>)->bool{
 	if vec.len()<1 {return true;}
 	for i in 0..vec.len()-1{ if vec[i+1] != vec[i] + F::one() {return false;} }
 	true
 }
 
 /// create a vec of var
-pub fn vec_to_var<F:PrimeField>(cs: &ConstraintSystemRef<F>, v: &Vec<F>)
+pub fn vec_to_var<F:PrimeField + ColEle>(cs: &ConstraintSystemRef<F>, v: &Vec<F>)
 ->Vec<FpVar<F>>{
 	v.iter().map(|x| FpVar::new_witness(cs.clone(), 
 		|| Ok(x.clone())).unwrap() ).collect()
@@ -87,7 +88,7 @@ pub fn vec_to_var<F:PrimeField>(cs: &ConstraintSystemRef<F>, v: &Vec<F>)
 
 /// if sid[i] is rg2 check data[i] is in range2
 #[allow(dead_code)]
-pub fn check_rg2<F:PrimeField>(data: &Vec<F>,sid: &Vec<F>){
+pub fn check_rg2<F:PrimeField + ColEle>(data: &Vec<F>,sid: &Vec<F>){
 	let frg = F::from(RANGE2);
 	let max_val:usize = (1<<RANGE2_BIT) - 1;
 	let max = F::from(max_val as u64);
@@ -98,18 +99,18 @@ pub fn check_rg2<F:PrimeField>(data: &Vec<F>,sid: &Vec<F>){
 }
 
 /// create  a new var
-pub fn new_var<F:PrimeField>(cs: &ConstraintSystemRef<F>, v: F)->FpVar<F>{
+pub fn new_var<F:PrimeField + ColEle>(cs: &ConstraintSystemRef<F>, v: F)->FpVar<F>{
 	FpVar::new_witness(cs.clone(), || Ok(v)).expect("err new var")
 }
 
 /// create  a new constant var
-pub fn new_const_var<F:PrimeField>(cs: &ConstraintSystemRef<F>, v: F)
+pub fn new_const_var<F:PrimeField + ColEle>(cs: &ConstraintSystemRef<F>, v: F)
 ->FpVar<F>{
 	FpVar::new_constant(cs.clone(), v).expect("err new var")
 }
 
 /// assuming each val is within RANGE2. basically concat as bits.
-pub fn encode_2col_var<F:PrimeField>(c1: &[FpVar<F>], c2: &[FpVar<F>]
+pub fn encode_2col_var<F:PrimeField + ColEle>(c1: &[FpVar<F>], c2: &[FpVar<F>]
 )->Vec<FpVar<F>>{
 	let cs = c1[0].cs();
 	let factor = new_const_var(&cs, F::from(1u32<<RANGE2_BIT));	
@@ -121,7 +122,7 @@ pub fn encode_2col_var<F:PrimeField>(c1: &[FpVar<F>], c2: &[FpVar<F>]
 }
 
 /// use random r to combine.
-pub fn encode_2col_var_adv<F:PrimeField>(c1: &[FpVar<F>], c2: &[FpVar<F>], r: &FpVar<F>)->Vec<FpVar<F>>{
+pub fn encode_2col_var_adv<F:PrimeField + ColEle>(c1: &[FpVar<F>], c2: &[FpVar<F>], r: &FpVar<F>)->Vec<FpVar<F>>{
 	let factor = r.clone();
 	assert!(c1.len()==c2.len());
 	let res = c1.iter().zip(c2.iter()).map(|(x,y)|
@@ -131,7 +132,7 @@ pub fn encode_2col_var_adv<F:PrimeField>(c1: &[FpVar<F>], c2: &[FpVar<F>], r: &F
 }
 
 /// encode 2 column into one encoded column
-pub fn encode_2col<F:PrimeField>(c1: &[F], c2: &[F]
+pub fn encode_2col<F:PrimeField + ColEle>(c1: &[F], c2: &[F]
 )->Vec<F>{
 	let factor = F::from(1u32<<RANGE2_BIT);	
 	assert!(c1.len()==c2.len());
@@ -143,7 +144,7 @@ pub fn encode_2col<F:PrimeField>(c1: &[F], c2: &[F]
 /// encode multiple columns, this can be regarded as an
 /// extension of encode_2col. Assume each column field is within RANGE2
 /// better version take slces
-pub fn encode_cols_better<F:PrimeField>(cols: Vec<&[F]>, col_ids: Vec<usize>)
+pub fn encode_cols_better<F:PrimeField + ColEle>(cols: Vec<&[F]>, col_ids: Vec<usize>)
 	->Vec<F>{
 	//1. prepare data
 	let (num_cols, n) = (col_ids.len(), cols[col_ids[0]].len());
@@ -169,7 +170,7 @@ pub fn encode_cols_better<F:PrimeField>(cols: Vec<&[F]>, col_ids: Vec<usize>)
 
 /// encode multiple columns, this can be regarded as an
 /// extension of encode_2col. Assume each column field is within RANGE2
-pub fn encode_cols<F:PrimeField>(cols: &Vec<Vec<F>>, col_ids: &Vec<usize>)
+pub fn encode_cols<F:PrimeField + ColEle>(cols: &Vec<Vec<F>>, col_ids: &Vec<usize>)
 	->Vec<F>{
 	//1. prepare data
 	let (num_cols, n) = (col_ids.len(), cols[col_ids[0]].len());
@@ -194,7 +195,7 @@ pub fn encode_cols<F:PrimeField>(cols: &Vec<Vec<F>>, col_ids: &Vec<usize>)
 }
 
 /// reverse of encode_cols
-pub fn decode_cols<F:PrimeField>(vec: &Vec<F>, n: usize)->Vec<Vec<F>>{
+pub fn decode_cols<F:PrimeField + ColEle>(vec: &Vec<F>, n: usize)->Vec<Vec<F>>{
 	let tuples = vec.par_iter().map(|v| {
 		let bits:Vec<bool> = v.into_bigint().to_bits_le();
 		let chunks = bits.chunks(RANGE2_BIT).map(|v|{
@@ -220,7 +221,7 @@ pub fn decode_cols<F:PrimeField>(vec: &Vec<F>, n: usize)->Vec<Vec<F>>{
 
 /// encode multiple columns, this can be regarded as an
 /// extension of encode_2col. Assume each column field is within RANGE2
-pub fn encode_cols_var<F:PrimeField>(cols: &Vec<Vec<FpVar<F>>>, 
+pub fn encode_cols_var<F:PrimeField + ColEle>(cols: &Vec<Vec<FpVar<F>>>, 
 	col_ids: &Vec<usize>) ->Vec<FpVar<F>>{
 	let cs = cols[0][0].cs();
 	let factor =new_const_var(&cs,F::from(1u32<<RANGE2_BIT));	
@@ -233,7 +234,7 @@ pub fn encode_cols_var<F:PrimeField>(cols: &Vec<Vec<FpVar<F>>>,
 /// by corresponding column in IDX_SI_DATA segement).
 ///
 /// COST: n where n is the target_col_len
-pub fn verify_encode_cols_in_range<F:PrimeField>(target_col: &[FpVar<F>],
+pub fn verify_encode_cols_in_range<F:PrimeField + ColEle>(target_col: &[FpVar<F>],
 	cols: &[&[FpVar<F>]]) -> Result<(),SynthesisError>{
 	//1. build the factor array for use
 	let b_perf = false;
@@ -280,7 +281,7 @@ pub fn verify_encode_cols_in_range<F:PrimeField>(target_col: &[FpVar<F>],
 }
 /// advanced vesion using the given r as combining factor, better
 ///version that allows slice
-pub fn encode_cols_var_adv_better<F:PrimeField>(cols: &Vec<&[FpVar<F>]>, 
+pub fn encode_cols_var_adv_better<F:PrimeField + ColEle>(cols: &Vec<&[FpVar<F>]>, 
 	col_ids: &Vec<usize>, r: &FpVar<F>) ->Vec<FpVar<F>>{
 	//1. prepare data
 	let cs = cols[0][0].cs();
@@ -309,7 +310,7 @@ pub fn encode_cols_var_adv_better<F:PrimeField>(cols: &Vec<&[FpVar<F>]>,
 }
 
 /// advanced vesion using the given r as combining factor
-pub fn encode_cols_var_adv<F:PrimeField>(cols: &Vec<Vec<FpVar<F>>>, 
+pub fn encode_cols_var_adv<F:PrimeField + ColEle>(cols: &Vec<Vec<FpVar<F>>>, 
 	col_ids: &Vec<usize>, r: &FpVar<F>) ->Vec<FpVar<F>>{
 	//1. prepare data
 	let cs = cols[0][0].cs();
@@ -339,7 +340,7 @@ pub fn encode_cols_var_adv<F:PrimeField>(cols: &Vec<Vec<FpVar<F>>>,
 
 /// given n length F generating the difference col (length n-1)
 /// the diff value is the ABSOLUTE value
-pub fn gen_abs_diff_col<F:PrimeField>(col: &Vec<F>)->Vec<F>{
+pub fn gen_abs_diff_col<F:PrimeField + ColEle>(col: &Vec<F>)->Vec<F>{
 	let zero = F::zero();
 	let max_val:usize = (1<<RANGE2_BIT) - 1;
 	let max = F::from(max_val as u32);
@@ -368,7 +369,7 @@ pub fn gen_abs_diff_col<F:PrimeField>(col: &Vec<F>)->Vec<F>{
 /// Here abs_diff[i] EARLIER has been proved to be all in RANGE2.
 ///
 /// COST: 2n
-pub fn gen_assert_sidcol_for_diff<F:PrimeField>(key: &Vec<FpVar<F>>,
+pub fn gen_assert_sidcol_for_diff<F:PrimeField + ColEle>(key: &Vec<FpVar<F>>,
 	diff: &Vec<FpVar<F>>)
 -> Vec<FpVar<F>>{
 	//1. generate the return
@@ -434,7 +435,7 @@ pub fn gen_assert_sidcol_for_diff<F:PrimeField>(key: &Vec<FpVar<F>>,
 /* REMOVE LATER
 /// given n length F generating the difference col (length n-1)
 /// and its SID
-pub fn gen_diff_col<F:PrimeField>(col: &Vec<F>)->(Vec<F>,Vec<F>){
+pub fn gen_diff_col<F:PrimeField + ColEle>(col: &Vec<F>)->(Vec<F>,Vec<F>){
 	let zero = F::zero();
 	let max_val:usize = (1<<RANGE2_BIT) - 1;
 	let max = F::from(max_val as u32);
@@ -461,7 +462,7 @@ pub fn gen_diff_col<F:PrimeField>(col: &Vec<F>)->(Vec<F>,Vec<F>){
 /// given vec1 = [100, 200, 100, 300, 0, max], vec2 = [1,2,3,4, 200, 300];
 /// we return [100->[1,3], 200->[2], 300->[4]] where 0 and max do not
 /// show up in key col
-pub fn two_col_to_hashmap<F:PrimeField>(
+pub fn two_col_to_hashmap<F:PrimeField + ColEle>(
 	col1: &Vec<F>, col2: &Vec<F>
 )->HashMap<F,Vec<F>>{
 	let max_val:usize = (1<<RANGE2_BIT) - 1;
@@ -499,7 +500,7 @@ pub fn two_col_to_hashmap<F:PrimeField>(
 /// Return the key, id, val column.
 ///
 /// might throw CapErr("target_size");
-pub fn two_col_tbl_to_sorted<F: PrimeField>(col1: &Vec<F>, col2: &Vec<F>, target_size: usize)-> Result<(Vec<F>,Vec<F>,Vec<F>), Error>{
+pub fn two_col_tbl_to_sorted<F: PrimeField + ColEle>(col1: &Vec<F>, col2: &Vec<F>, target_size: usize)-> Result<(Vec<F>,Vec<F>,Vec<F>), Error>{
 	//1. collect a hash map which maps from key to a vector of vals sorted.
 	let hs = two_col_to_hashmap(col1, col2);
 
@@ -529,7 +530,7 @@ pub fn two_col_tbl_to_sorted<F: PrimeField>(col1: &Vec<F>, col2: &Vec<F>, target
 /// When we use it to construt state-pat, the "unique" key-block
 /// relation is guaranteed by the external lookup table. but here we
 /// do construct unique keys except padding 0-entries.
-pub fn two_col_to_wide_wellformed<F:PrimeField>(
+pub fn two_col_to_wide_wellformed<F:PrimeField + ColEle>(
 	col1: &Vec<F>, col2: &Vec<F>, target_size: usize, name: &str
 )->Result<Rc<RefCell<Container<F>>>,Error>{
 	//1. collect a hash map which maps from key to a vector of vals sorted.
@@ -545,7 +546,7 @@ pub fn two_col_to_wide_wellformed<F:PrimeField>(
 /// (k1, id1, k2, id2, val) where val of tbl1 serves as the forieng key.
 ///
 /// Might throw CapErr("target_size")
-pub fn two_col_tbl_left_join<F:PrimeField>(
+pub fn two_col_tbl_left_join<F:PrimeField + ColEle>(
 	tbl1: &Vec<Vec<F>>, 
 	tbl2: &Vec<Vec<F>>, 
 	target_size: usize
@@ -640,7 +641,7 @@ pub fn two_col_tbl_left_join<F:PrimeField>(
 }
 
 /// build vec of 8 elements [2^31, ... 2^248]
-pub fn build_pows_31<F:PrimeField>(cs: ConstraintSystemRef<F>)
+pub fn build_pows_31<F:PrimeField + ColEle>(cs: ConstraintSystemRef<F>)
 -> Vec<FpVar<F>>{
 	let f16 = new_const_var(&cs, F::from(1u32<<16));
 	let f15 = new_const_var(&cs, F::from(1u32<<15));
@@ -656,7 +657,7 @@ pub fn build_pows_31<F:PrimeField>(cs: ConstraintSystemRef<F>)
 }
 
 /// build vec of 8 elements [2^31, ... 2^248]
-pub fn build_pows_31_val<F:PrimeField>() -> Vec<F>{
+pub fn build_pows_31_val<F:PrimeField + ColEle>() -> Vec<F>{
 	let f16 = F::from(1u32<<16);
 	let f15 = F::from(1u32<<15);
 	let f31 = f16 * f15;
@@ -671,7 +672,7 @@ pub fn build_pows_31_val<F:PrimeField>() -> Vec<F>{
 }
 
 /// build vec of 4 elements [2^56, ... 2^(56*4)]
-pub fn build_pows_56<F:PrimeField>(cs: ConstraintSystemRef<F>)
+pub fn build_pows_56<F:PrimeField + ColEle>(cs: ConstraintSystemRef<F>)
 -> Vec<FpVar<F>>{
 	let f16 = new_const_var(&cs, F::from(1u32<<16));
 	let f6= new_const_var(&cs, F::from(1u32<<6));
@@ -687,7 +688,7 @@ pub fn build_pows_56<F:PrimeField>(cs: ConstraintSystemRef<F>)
 }
 
 /// build vec of 4 elements [2^56, ... 2^(56*4)]
-pub fn build_pows_56_val<F:PrimeField>() -> Vec<F>{
+pub fn build_pows_56_val<F:PrimeField + ColEle>() -> Vec<F>{
 	let f16 = F::from(1u32<<16);
 	let f6= F::from(1u32<<6);
 	let f56 = f16 * f16 * f16 * f16 * f6;
@@ -703,7 +704,7 @@ pub fn build_pows_56_val<F:PrimeField>() -> Vec<F>{
 
 /// FpVar to a tuple (can handle consants
 #[inline(always)]
-pub fn var_to_tuple<F:PrimeField>(v: &FpVar<F>)->(F,Variable){
+pub fn var_to_tuple<F:PrimeField + ColEle>(v: &FpVar<F>)->(F,Variable){
 	let res = match v{
 		Var(v) => (F::one(), v.variable) ,
 		Constant(val) => (*val, Variable::One)
@@ -713,7 +714,7 @@ pub fn var_to_tuple<F:PrimeField>(v: &FpVar<F>)->(F,Variable){
 }
 
 #[inline(always)]
-pub fn var_to_variable<F:PrimeField>(v: &FpVar<F>)->Variable{
+pub fn var_to_variable<F:PrimeField + ColEle>(v: &FpVar<F>)->Variable{
 	let res = match v{
 		Var(v) => v.variable,
 		Constant(_) => panic!("var is contsntat")
@@ -725,7 +726,7 @@ pub fn var_to_variable<F:PrimeField>(v: &FpVar<F>)->Variable{
 
 /// FpVar to a tuple (can handle consants
 #[inline(always)]
-pub fn var_to_tuple_adv<F:PrimeField>(v: &FpVar<F>, c: F)->(F,Variable){
+pub fn var_to_tuple_adv<F:PrimeField + ColEle>(v: &FpVar<F>, c: F)->(F,Variable){
 	let res = match v{
 		Var(v) => (c, v.variable) ,
 		Constant(val) => (*val*c, Variable::One)
@@ -739,7 +740,7 @@ pub fn var_to_tuple_adv<F:PrimeField>(v: &FpVar<F>, c: F)->(F,Variable){
 /// we assume that v and weights are small
 /// so do not use parallelism here
 #[inline(always)]
-pub fn sum_vec_vars_weighted<F:PrimeField>(v: &[FpVar<F>], weights: &[F])
+pub fn sum_vec_vars_weighted<F:PrimeField + ColEle>(v: &[FpVar<F>], weights: &[F])
 ->FpVar<F>{
 	assert!(v.len()==weights.len());
 	let vec_tuples = v.iter().zip(weights.iter()).map(|(x,&w)|
@@ -760,7 +761,7 @@ pub fn sum_vec_vars_weighted<F:PrimeField>(v: &[FpVar<F>], weights: &[F])
 /// assuming that each element of vec is ALREADY IN RANGE 31-BIT
 /// COST is vec.len()/8
 /// ASSUMING vec_pows_31 has 8 elements [2^31, 2^62, 2^93 ..., 2^248]
-pub fn packcheck_vec<F:PrimeField>(vec: &Vec<FpVar<F>>, exp_val: &FpVar<F>,
+pub fn packcheck_vec<F:PrimeField + ColEle>(vec: &Vec<FpVar<F>>, exp_val: &FpVar<F>,
 	pows_31: &Vec<F>)
 ->Result<(),SynthesisError>{
 	assert!(pows_31.len()==8);
@@ -788,12 +789,12 @@ pub fn packcheck_vec<F:PrimeField>(vec: &Vec<FpVar<F>>, exp_val: &FpVar<F>,
 
 
 /// assert that the table is sorted in keys and values (per key)
-pub fn assert_wellformed_sorted_two_col_tbl<F:PrimeField>(tbl: &Vec<Vec<F>>){
+pub fn assert_wellformed_sorted_two_col_tbl<F:PrimeField + ColEle>(tbl: &Vec<Vec<F>>){
 	assert_wellformed_sorted_two_col_tbl_adv(tbl, false);
 }
 
 /// print a two dimension table
-pub fn print_tbl<F:PrimeField>(name: &str, tbl: &Vec<Vec<F>>){
+pub fn print_tbl<F:PrimeField + ColEle>(name: &str, tbl: &Vec<Vec<F>>){
 	println!("===== {} ====", name);
 	let n = tbl[0].len();
 	for i in 0..n{
@@ -806,7 +807,7 @@ pub fn print_tbl<F:PrimeField>(name: &str, tbl: &Vec<Vec<F>>){
 /// assert that the table is sorted in keys and values (per key)
 /// (key, id, col) padded with zero and max entries. Relaxed mean that
 /// id not required to be strictly increasing
-pub fn assert_wellformed_sorted_two_col_tbl_adv<F:PrimeField>(tbl: &Vec<Vec<F>>,
+pub fn assert_wellformed_sorted_two_col_tbl_adv<F:PrimeField + ColEle>(tbl: &Vec<Vec<F>>,
 	b_relax: bool){
 	//1. quick check
 	let n = tbl[0].len();
@@ -834,7 +835,7 @@ pub fn assert_wellformed_sorted_two_col_tbl_adv<F:PrimeField>(tbl: &Vec<Vec<F>>,
 ///  key - val - id - count
 /// where id starts from 0 and count is the real count -1.
 /// it is padded with (0-0-0-0) entries.
-pub fn hashmap_to_wide_wellformed<F:PrimeField>(
+pub fn hashmap_to_wide_wellformed<F:PrimeField + ColEle>(
 	map: &HashMap<F, Vec<F>>, n: usize, name: &str) 
 -> Result<Rc<RefCell<Container<F>>>, Error>{
 	//1. collect the sorted keys first
@@ -900,7 +901,7 @@ pub fn hashmap_to_wide_wellformed<F:PrimeField>(
 /// 100 3  max # max = 2^RANGE2_BIT - 1
 ///
 /// might throw CapErr("target_size");
-pub fn hashmap_to_sorted_2col_tbl<F:PrimeField>(
+pub fn hashmap_to_sorted_2col_tbl<F:PrimeField + ColEle>(
 	map: &HashMap<F, Vec<F>>, n: usize) 
 -> Result<(Vec<F>,Vec<F>,Vec<F>),Error>{
 	//1. collect the sorted keys first
@@ -947,7 +948,7 @@ pub fn hashmap_to_sorted_2col_tbl<F:PrimeField>(
 /// verify v2 is an inverse of v1. elen is the expected length of both
 /// array. Beta is the random challenge.
 /// COST: n constraints (n = elen)
-pub fn verify_inverse<F:PrimeField>(cs: ConstraintSystemRef<F>,
+pub fn verify_inverse<F:PrimeField + ColEle>(cs: ConstraintSystemRef<F>,
 	v1: &[FpVar<F>], v2: &[FpVar<F>], 
 	beta: &FpVar<F>, elen: usize)->Result<(), SynthesisError>{
 	let b_new = true;
@@ -969,7 +970,7 @@ pub fn verify_inverse<F:PrimeField>(cs: ConstraintSystemRef<F>,
 }
 
 /// old version: cost: 2N
-pub fn verify_inverse_old<F:PrimeField>(cs: ConstraintSystemRef<F>,
+pub fn verify_inverse_old<F:PrimeField + ColEle>(cs: ConstraintSystemRef<F>,
 	v1: &[FpVar<F>], v2: &[FpVar<F>], 
 	beta: &FpVar<F>, elen: usize)->Result<(), SynthesisError>{
 	let b_debug = false;
@@ -986,7 +987,7 @@ pub fn verify_inverse_old<F:PrimeField>(cs: ConstraintSystemRef<F>,
 }
 
 /// convert a FP var to LinearCombination
-pub fn var_to_lb<F:PrimeField>(v: &FpVar<F>, coef: F)->LinearCombination<F>{
+pub fn var_to_lb<F:PrimeField + ColEle>(v: &FpVar<F>, coef: F)->LinearCombination<F>{
 	let res = match v{
 		Var(v) => LinearCombination::from( (coef, v.variable) ),
 		Constant(val) => LinearCombination::from(
@@ -998,7 +999,7 @@ pub fn var_to_lb<F:PrimeField>(v: &FpVar<F>, coef: F)->LinearCombination<F>{
 }
 
 /// convert a FP var tovar  
-pub fn fpvar_to_var<F:PrimeField>(v: &FpVar<F>)->Variable{
+pub fn fpvar_to_var<F:PrimeField + ColEle>(v: &FpVar<F>)->Variable{
 	let res = match v{
 		Var(v) => v.variable,
 		Constant(_) => panic!("expecting var!")
@@ -1009,7 +1010,7 @@ pub fn fpvar_to_var<F:PrimeField>(v: &FpVar<F>)->Variable{
 
 
 /// verify v2: cost N.
-pub fn verify_inverse_new<F:PrimeField>(cs: ConstraintSystemRef<F>,
+pub fn verify_inverse_new<F:PrimeField + ColEle>(cs: ConstraintSystemRef<F>,
 	v1: &[FpVar<F>], v2: &[FpVar<F>], 
 	beta: &FpVar<F>, elen: usize)->Result<(), SynthesisError>{
 	let b_debug = false;
@@ -1039,7 +1040,7 @@ pub fn verify_inverse_new<F:PrimeField>(cs: ConstraintSystemRef<F>,
 ///  assert that v2 is the inverse of the combined values from v1.
 /// assuming v1 all column's cell already in RANGE2.
 /// COST: n
-pub fn verify_inverse_mul_col<F:PrimeField>(
+pub fn verify_inverse_mul_col<F:PrimeField + ColEle>(
 	cs: ConstraintSystemRef<F>,
 	v1: &Vec<&[FpVar<F>]>, 
 	v2: &[FpVar<F>], 
@@ -1092,7 +1093,7 @@ pub fn verify_inverse_mul_col<F:PrimeField>(
 /// function.
 ///
 /// COST: n2 + 6
-pub fn verify_logup_inverse<F:PrimeField>(cs: ConstraintSystemRef<F>,
+pub fn verify_logup_inverse<F:PrimeField + ColEle>(cs: ConstraintSystemRef<F>,
 	v1: &[FpVar<F>], v2: &[FpVar<F>], m_tbl: &[FpVar<F>])
 	->Result<(), SynthesisError>{
 	let b_new = true;
@@ -1113,7 +1114,7 @@ pub fn verify_logup_inverse<F:PrimeField>(cs: ConstraintSystemRef<F>,
 
 /// COST: 2*n2  (n1 almost cost nothing)
 /// v1 is the query table, v2 is the lookup table.
-pub fn verify_logup_inverse_old<F:PrimeField>(cs: ConstraintSystemRef<F>,
+pub fn verify_logup_inverse_old<F:PrimeField + ColEle>(cs: ConstraintSystemRef<F>,
 	v1: &[FpVar<F>], v2: &[FpVar<F>], m_tbl: &[FpVar<F>])
 	->Result<(), SynthesisError>{
 	assert!(v2.len()==m_tbl.len());
@@ -1165,7 +1166,7 @@ pub fn verify_logup_inverse_old<F:PrimeField>(cs: ConstraintSystemRef<F>,
 }
 
 /// COST: n2 + 6 (n1 almost cost nothing)
-pub fn verify_logup_inverse_old1<F:PrimeField>(cs: ConstraintSystemRef<F>,
+pub fn verify_logup_inverse_old1<F:PrimeField + ColEle>(cs: ConstraintSystemRef<F>,
 	v1: &[FpVar<F>], v2: &[FpVar<F>], m_tbl: &[FpVar<F>])
 	->Result<(), SynthesisError>{
 	assert!(v2.len()==m_tbl.len());
@@ -1249,7 +1250,7 @@ pub fn verify_logup_inverse_old1<F:PrimeField>(cs: ConstraintSystemRef<F>,
 /// IDEA: every lblcok of ADD_CHAIN, build a huge LinearCombination 
 /// and sum it up
 /// COST: vlen/ADD_CHAIN_SIZE (64)
-pub fn sum_vec_vars<F:PrimeField>(v: &[FpVar<F>])->FpVar<F>{
+pub fn sum_vec_vars<F:PrimeField + ColEle>(v: &[FpVar<F>])->FpVar<F>{
 	let cs = v[0].cs();
 	let one_var = FpVar::<F>::new_constant(cs.clone(), F::one()).unwrap(); 
 	let one_wit_var = FpVar::<F>::new_witness(cs.clone(), 
@@ -1288,7 +1289,7 @@ pub fn sum_vec_vars<F:PrimeField>(v: &[FpVar<F>])->FpVar<F>{
 }
 
 /// COST: n2 + 6 (n1 almost cost nothing)
-pub fn verify_logup_inverse_new<F:PrimeField>(cs: ConstraintSystemRef<F>,
+pub fn verify_logup_inverse_new<F:PrimeField + ColEle>(cs: ConstraintSystemRef<F>,
 	v1: &[FpVar<F>], v2: &[FpVar<F>], m_tbl: &[FpVar<F>])
 	->Result<(), SynthesisError>{
 	assert!(v2.len()==m_tbl.len());
@@ -1319,7 +1320,7 @@ pub fn verify_logup_inverse_new<F:PrimeField>(cs: ConstraintSystemRef<F>,
 /// (the state corresponds to how many signatures)
 /// see clam_db for how it's encoded
 /// We assume v2 is structured as states concat with counts.
-pub fn verify_encoded_states_sig_count<F:PrimeField>(cs: ConstraintSystemRef<F>,
+pub fn verify_encoded_states_sig_count<F:PrimeField + ColEle>(cs: ConstraintSystemRef<F>,
 	v1: &[FpVar<F>], v2: &[FpVar<F>])
 	->Result<(), SynthesisError>{
 	let n = v1.len();
@@ -1344,7 +1345,7 @@ pub fn verify_encoded_states_sig_count<F:PrimeField>(cs: ConstraintSystemRef<F>,
 /// see clam_db for how it's encoded
 /// We assume v2 is structured as states || ids || counts
 /// NOTE: all states and ids start from 1
-pub fn verify_encoded_states_sig<F:PrimeField>(cs: ConstraintSystemRef<F>,
+pub fn verify_encoded_states_sig<F:PrimeField + ColEle>(cs: ConstraintSystemRef<F>,
 	v1: &[FpVar<F>], v2: &[FpVar<F>])
 	->Result<(), SynthesisError>{
 	let n = v1.len();
@@ -1367,7 +1368,7 @@ pub fn verify_encoded_states_sig<F:PrimeField>(cs: ConstraintSystemRef<F>,
 }
 
 /// check if array is increasing
-pub fn check_increase<F:PrimeField>(vec: &Vec<FpVar<F>>)
+pub fn check_increase<F:PrimeField + ColEle>(vec: &Vec<FpVar<F>>)
 ->Result<(),SynthesisError>{
 	let cs = vec[0].cs();
 	let one_var = FpVar::<F>::new_constant(cs.clone(), F::one())?; 
@@ -1382,7 +1383,7 @@ pub fn check_increase<F:PrimeField>(vec: &Vec<FpVar<F>>)
 /// assuming that each element of vec is ALREADY IN RANGE 31-BIT
 /// COST is vec.len()/4
 /// ASSUMING vec_pows_31 has 8 elements [2^31, 2^62, 2^93 ..., 2^248]
-pub fn packcheck_increase<F:PrimeField>(vec: &Vec<FpVar<F>>, 
+pub fn packcheck_increase<F:PrimeField + ColEle>(vec: &Vec<FpVar<F>>, 
 	pows_31: &Vec<FpVar<F>>)
 ->Result<(),SynthesisError>{
 	assert!(pows_31.len()==8);
@@ -1416,7 +1417,7 @@ pub fn packcheck_increase<F:PrimeField>(vec: &Vec<FpVar<F>>,
 
 
 /// Check two fp_var equal. Cost 1 gate.
-pub fn check_eq<F:PrimeField>(v1: &FpVar<F>, v2: &FpVar<F>, _msg: &str)
+pub fn check_eq<F:PrimeField + ColEle>(v1: &FpVar<F>, v2: &FpVar<F>, _msg: &str)
 ->Result<(),SynthesisError>{
 	v1.enforce_equal(&v2)?;
 
@@ -1429,7 +1430,7 @@ pub fn check_eq<F:PrimeField>(v1: &FpVar<F>, v2: &FpVar<F>, _msg: &str)
 }
 
 /// Check two fp_var NOT equal. Cost 4 gate.
-pub fn check_neq<F:PrimeField>(v1: &FpVar<F>, v2: &FpVar<F>, _msg: &str)
+pub fn check_neq<F:PrimeField + ColEle>(v1: &FpVar<F>, v2: &FpVar<F>, _msg: &str)
 ->Result<(),SynthesisError>{
 	#[cfg(test)]{
 		if v1.value().is_ok(){ 
@@ -1449,7 +1450,7 @@ pub fn check_neq<F:PrimeField>(v1: &FpVar<F>, v2: &FpVar<F>, _msg: &str)
 
 
 /// Check two fp_var equal or v1[i] is zero
-pub fn check_eq_nz<F:PrimeField>(v1: &FpVar<F>, v2: &FpVar<F>, z_const: &FpVar<F>,_msg: &str)
+pub fn check_eq_nz<F:PrimeField + ColEle>(v1: &FpVar<F>, v2: &FpVar<F>, z_const: &FpVar<F>,_msg: &str)
 ->Result<(),SynthesisError>{
 	let diff = v1 - v2;
 	let res = &diff * v1;
@@ -1464,7 +1465,7 @@ pub fn check_eq_nz<F:PrimeField>(v1: &FpVar<F>, v2: &FpVar<F>, z_const: &FpVar<F
 }
 
 /// Check array eq value. Cost: n gates
-pub fn check_arr_eq<F:PrimeField>(vec: &[FpVar<F>], z: &FpVar<F>, _msg: &str)
+pub fn check_arr_eq<F:PrimeField + ColEle>(vec: &[FpVar<F>], z: &FpVar<F>, _msg: &str)
 ->Result<(),SynthesisError>{
 	for i in 0..vec.len(){
 		check_eq(&vec[i], &z, &format!("check eq {} fails: {}", i, _msg))?;
@@ -1473,7 +1474,7 @@ pub fn check_arr_eq<F:PrimeField>(vec: &[FpVar<F>], z: &FpVar<F>, _msg: &str)
 }
 
 /// Check array eq value. Cost: n gates
-pub fn check_arr_eq_arr<F:PrimeField>(vec: &[FpVar<F>], vec2: &[FpVar<F>], _msg: &str)
+pub fn check_arr_eq_arr<F:PrimeField + ColEle>(vec: &[FpVar<F>], vec2: &[FpVar<F>], _msg: &str)
 ->Result<(),SynthesisError>{
 	assert!(vec.len()==vec2.len());
 	for i in 0..vec.len(){
@@ -1488,7 +1489,7 @@ pub fn check_arr_eq_arr<F:PrimeField>(vec: &[FpVar<F>], vec2: &[FpVar<F>], _msg:
 /// on vec when it is part of fixed witness (in stmt or msg1)
 /// It actually costs the same number of gates of check_arr_eq (n+1)
 #[allow(dead_code)]
-pub fn check_arr_eq_fast<F:PrimeField>(vec: &[FpVar<F>], 
+pub fn check_arr_eq_fast<F:PrimeField + ColEle>(vec: &[FpVar<F>], 
 	z: &FpVar<F>, r: &FpVar<F>, _msg: &str)
 ->Result<(),SynthesisError>{
 	let cs = r.cs();
@@ -1502,7 +1503,7 @@ pub fn check_arr_eq_fast<F:PrimeField>(vec: &[FpVar<F>],
 }
 
 /// Check array eq given value or the entro is zero
-pub fn check_arr_eq_nz<F:PrimeField>(vec: &[FpVar<F>], z: &FpVar<F>, _msg: &str)
+pub fn check_arr_eq_nz<F:PrimeField + ColEle>(vec: &[FpVar<F>], z: &FpVar<F>, _msg: &str)
 ->Result<(),SynthesisError>{
 	let fp_zero = FpVar::<F>::new_constant(z.cs().clone(), F::zero())?;
 	for i in 0..vec.len(){
@@ -1513,7 +1514,7 @@ pub fn check_arr_eq_nz<F:PrimeField>(vec: &[FpVar<F>], z: &FpVar<F>, _msg: &str)
 
 /// Check array eq or the value if rg2
 ///COST: n
-pub fn check_arr_eq_or_rg2<F:PrimeField>(vec: &[FpVar<F>], z: &FpVar<F>, _msg: &str)
+pub fn check_arr_eq_or_rg2<F:PrimeField + ColEle>(vec: &[FpVar<F>], z: &FpVar<F>, _msg: &str)
 ->Result<(),SynthesisError>{
 	let fp_zero = FpVar::<F>::new_constant(z.cs().clone(), F::zero())?;
 	let rg2 = F::from(RANGE2 as u32);
@@ -1544,7 +1545,7 @@ pub fn check_arr_eq_or_rg2<F:PrimeField>(vec: &[FpVar<F>], z: &FpVar<F>, _msg: &
 
 
 /// check two boolean var equal
-pub fn check_beq<F:PrimeField>(v1: &Boolean<F>, v2: &Boolean<F>, _msg: &str)
+pub fn check_beq<F:PrimeField + ColEle>(v1: &Boolean<F>, v2: &Boolean<F>, _msg: &str)
 ->Result<(),SynthesisError>{
 	v1.enforce_equal(&v2)?;
 	#[cfg(test)]{
@@ -1556,7 +1557,7 @@ pub fn check_beq<F:PrimeField>(v1: &Boolean<F>, v2: &Boolean<F>, _msg: &str)
 }
 
 /// check b1 implies b2, i.e., not b1 or b2 is true
-pub fn check_imply<F:PrimeField>(b1: &Boolean<F>, b2: &Boolean<F>, _msg: &str)
+pub fn check_imply<F:PrimeField + ColEle>(b1: &Boolean<F>, b2: &Boolean<F>, _msg: &str)
 -> Result<(), SynthesisError>{
 	let res = b1.not().or(b2)?;
 	check_beq(&res, &Boolean::TRUE, &format!("ERR on imply: {}", _msg))?;
@@ -1565,7 +1566,7 @@ pub fn check_imply<F:PrimeField>(b1: &Boolean<F>, b2: &Boolean<F>, _msg: &str)
 
 /// expand a vec to a given size (if the vec is greater
 /// than the vec size, panic)
-pub fn expand_vec<F:PrimeField>(vec: &mut Vec<F>, size: usize){
+pub fn expand_vec<F:PrimeField + ColEle>(vec: &mut Vec<F>, size: usize){
 	assert!(vec.len()<=size);
 	let mut rem = vec![F::zero(); size-vec.len()];
 	vec.append(&mut rem);
@@ -1576,7 +1577,7 @@ pub fn expand_vec<F:PrimeField>(vec: &mut Vec<F>, size: usize){
 /// We ALLOW lkup has duplicate non-zero elements (that is:
 /// the first entry will have non-zero m-table value and the other
 /// duplicates will have m-tbl value 0).
-pub fn gen_m_table<F:PrimeField>(qry: &Vec<F>, lkup: &Vec<F>)->Vec<F>{
+pub fn gen_m_table<F:PrimeField + ColEle>(qry: &Vec<F>, lkup: &Vec<F>)->Vec<F>{
 	let b_debug = false;
 	if b_debug{
 		for x in qry{ assert!(lkup.contains(x), "cannot find {}", x); } 
@@ -1656,7 +1657,7 @@ pub fn gen_m_table<F:PrimeField>(qry: &Vec<F>, lkup: &Vec<F>)->Vec<F>{
 /// The count difference is 1 qry table has one more (0,0) entry.
 /// The verification cost will be just one Logup check cost,
 /// because the "range check" for mtbl-vec![1; mtbl.len()] is free.
-pub fn gen_2d_lkup_prf<F:PrimeField>(
+pub fn gen_2d_lkup_prf<F:PrimeField + ColEle>(
 	qry_cols: Vec<&[F]>, 
 	lkup_cols: Vec<&[F]>, 
 	name: &str)->Rc<RefCell<Container<F>>>{
@@ -1712,7 +1713,7 @@ pub fn gen_2d_lkup_prf<F:PrimeField>(
 // NOTE that unlike the gen_2d_lkup we have NO restriction
 // on that no non-zero duplicate elemnets in lookup. This is
 // actually pretty standard 1-way lookup (Logup relation [Hab'22])
-pub fn gen_1d_lkup_prf<F:PrimeField>(
+pub fn gen_1d_lkup_prf<F:PrimeField + ColEle>(
 	qry_cols: Vec<&[F]>, 
 	lkup_cols: Vec<&[F]>, 
 	name: &str)->Rc<RefCell<Container<F>>>{
@@ -1749,7 +1750,7 @@ pub fn gen_1d_lkup_prf<F:PrimeField>(
 ///
 /// COST: let n_q and n_l be the length of qry and lkup table
 /// nq + 2*n_l + 6
-pub fn verify_2d_lkup_prf<F:PrimeField>(
+pub fn verify_2d_lkup_prf<F:PrimeField + ColEle>(
 	r: FpVar<F>,
 	qry_cols: &Vec<&[FpVar<F>]>, 
 	lkup_cols: &Vec<&[FpVar<F>]>, 
@@ -1871,7 +1872,7 @@ pub fn verify_2d_lkup_prf<F:PrimeField>(
 // (there is a small factor of
 //  extra 0.02*nq + 0.02*lkup because ADDCHAIN_SIZE is 64, it incurs
 //  0.02 factor in long chain of add constraints).
-pub fn verify_1d_lkup_prf<F:PrimeField>(
+pub fn verify_1d_lkup_prf<F:PrimeField + ColEle>(
 	r: FpVar<F>,
 	qry_cols: &Vec<&[FpVar<F>]>, 
 	lkup_cols: &Vec<&[FpVar<F>]>, 
@@ -1969,7 +1970,7 @@ pub fn verify_1d_lkup_prf<F:PrimeField>(
 /// considered. Also note that when selected, any non-zero
 /// value serves as `1`. 0 indicates not-selected. We thus,
 /// compute values different.
-pub fn gen_m_table_cond<F:PrimeField>(qry: &Vec<F>, sel_qry: &Vec<F>,
+pub fn gen_m_table_cond<F:PrimeField + ColEle>(qry: &Vec<F>, sel_qry: &Vec<F>,
 	lkup: &Vec<F>, sel_lkup: &Vec<F>)->Vec<F>{
 	#[cfg(test)]{ 
 		for i in 0..qry.len(){ 
@@ -2025,7 +2026,7 @@ pub fn gen_m_table_cond<F:PrimeField>(qry: &Vec<F>, sel_qry: &Vec<F>,
 /// the reason is that we skipped z*(1-z) = 0 check when arkworks converted
 /// to boolean. It's already guaranteed by the two constraints in the body.
 /// We output a FpVar (1/0) to avoid extra BoolVar constraint.
-pub fn is_zero_better<F:PrimeField>(x: &FpVar<F>, cs: &ConstraintSystemRef<F>)
+pub fn is_zero_better<F:PrimeField + ColEle>(x: &FpVar<F>, cs: &ConstraintSystemRef<F>)
 ->Result<FpVar<F>, SynthesisError>{
 	let lb_zero= lc!();
 	let z = FpVar::new_witness(cs.clone(), || {
@@ -2061,7 +2062,7 @@ pub fn is_zero_better<F:PrimeField>(x: &FpVar<F>, cs: &ConstraintSystemRef<F>)
 	Ok(z)
 }
 
-pub fn is_eq_adv<F:PrimeField>(x: &FpVar<F>, y: &FpVar<F>, inverse: &F, cs: &ConstraintSystemRef<F>)->FpVar<F>{
+pub fn is_eq_adv<F:PrimeField + ColEle>(x: &FpVar<F>, y: &FpVar<F>, inverse: &F, cs: &ConstraintSystemRef<F>)->FpVar<F>{
 	let lb_zero: LinearCombination<F> = lc!();
 	//let lb_one = LinearCombination::<F>(vec![(F::one(), Variable::One)]);
 	let lb_x_y = LinearCombination::<F>(vec![
@@ -2100,7 +2101,7 @@ pub fn is_eq_adv<F:PrimeField>(x: &FpVar<F>, y: &FpVar<F>, inverse: &F, cs: &Con
 }
 
 /// compared with is_zero_better, it provides a precomputed inverse value
-pub fn is_zero_better_adv<F:PrimeField>(x: &FpVar<F>, inverse: &F, cs: &ConstraintSystemRef<F>)
+pub fn is_zero_better_adv<F:PrimeField + ColEle>(x: &FpVar<F>, inverse: &F, cs: &ConstraintSystemRef<F>)
 ->Result<FpVar<F>, SynthesisError>{
 	let lb_zero= lc!();
 	let z = FpVar::new_witness(cs.clone(), || {
@@ -2138,7 +2139,7 @@ pub fn is_zero_better_adv<F:PrimeField>(x: &FpVar<F>, inverse: &F, cs: &Constrai
 /// construct a variable if bvar=1, return v1 
 /// otherwise return v2. Assumption: bvar is an int var either 1 or 0.
 /// COST:  1
-pub fn better_select<F:PrimeField>(bvar: &FpVar<F>, v1: &FpVar<F>, v2: &FpVar<F>)->FpVar<F>{
+pub fn better_select<F:PrimeField + ColEle>(bvar: &FpVar<F>, v1: &FpVar<F>, v2: &FpVar<F>)->FpVar<F>{
 	let bval = bvar.value().unwrap();
 	assert!(bval.is_zero() || bval.is_one());
 	let val = if bval.is_one(){ v1.value().unwrap()} else {v2.value().unwrap()};
@@ -2161,7 +2162,7 @@ pub fn better_select<F:PrimeField>(bvar: &FpVar<F>, v1: &FpVar<F>, v2: &FpVar<F>
 /// otherwise return v2. Assumption: bvar is an int var either 1 or 0.
 /// check that vres is the result
 /// COST:  1
-pub fn better_select_check<F:PrimeField>(bvar: &FpVar<F>, v1: &FpVar<F>, v2: &FpVar<F>, vres: &FpVar<F>)->Result<(),SynthesisError>{
+pub fn better_select_check<F:PrimeField + ColEle>(bvar: &FpVar<F>, v1: &FpVar<F>, v2: &FpVar<F>, vres: &FpVar<F>)->Result<(),SynthesisError>{
 	let bval = bvar.value().unwrap();
 	assert!(bval.is_zero() || bval.is_one());
 	let _val = if bval.is_one(){v1.value().unwrap()} else {v2.value().unwrap()};
@@ -2183,7 +2184,7 @@ pub fn better_select_check<F:PrimeField>(bvar: &FpVar<F>, v1: &FpVar<F>, v2: &Fp
 
 /// check the product of v1 and v2 is zero
 /// cost is 1
-pub fn check_prod_zero<F:PrimeField>(v1: &FpVar<F>, v2: &FpVar<F>, lb_zero: LinearCombination<F>, _msg: &str)
+pub fn check_prod_zero<F:PrimeField + ColEle>(v1: &FpVar<F>, v2: &FpVar<F>, lb_zero: LinearCombination<F>, _msg: &str)
 -> Result<(),SynthesisError>
 {
 	let cs = v1.cs();
@@ -2206,7 +2207,7 @@ pub fn check_prod_zero<F:PrimeField>(v1: &FpVar<F>, v2: &FpVar<F>, lb_zero: Line
 /// COST: 3n
 /// if unit var is a constant -> it's 2n
 #[allow(dead_code)]
-pub fn multiset_prod_2col<F:PrimeField>(
+pub fn multiset_prod_2col<F:PrimeField + ColEle>(
 	cs: ConstraintSystemRef<F>,
 	col1: &[FpVar<F>],
 	col2: &[FpVar<F>],
@@ -2255,7 +2256,7 @@ pub fn multiset_prod_2col<F:PrimeField>(
 ///
 /// COST 4*n
 #[allow(dead_code)]
-pub fn multiset_prod_ignore_zero<F:PrimeField>(
+pub fn multiset_prod_ignore_zero<F:PrimeField + ColEle>(
 	cs: ConstraintSystemRef<F>,
 	vec: &[FpVar<F>],
 	r: &FpVar<F>
@@ -2302,7 +2303,7 @@ pub fn multiset_prod_ignore_zero<F:PrimeField>(
 /// compute Prod_{i=1}^n (vec[i] + r), (including those 0 entries)
 ///
 /// COST 4*n
-pub fn multiset_prod<F:PrimeField>(
+pub fn multiset_prod<F:PrimeField + ColEle>(
 	cs: ConstraintSystemRef<F>,
 	vec: &[FpVar<F>],
 	r: &FpVar<F>
@@ -2315,7 +2316,7 @@ pub fn multiset_prod<F:PrimeField>(
 }
 
 /// compute the inverse
-pub fn gen_vec_inverse<F:PrimeField>(vec: &Vec<F>)->Vec<F>{
+pub fn gen_vec_inverse<F:PrimeField + ColEle>(vec: &Vec<F>)->Vec<F>{
 	if vec.len()<16{
 		vec.iter().map(|v| 
 			if v.is_zero() {F::zero()} else {v.inverse().unwrap()}
@@ -2334,7 +2335,7 @@ pub fn gen_vec_inverse<F:PrimeField>(vec: &Vec<F>)->Vec<F>{
 /// element vec[i], the vec_diff[i]!=0.
 ///
 /// COST: 3*n
-pub fn verify_unique_sorted_set<F:PrimeField>(vec: &[FpVar<F>],
+pub fn verify_unique_sorted_set<F:PrimeField + ColEle>(vec: &[FpVar<F>],
 	vec_diff: &[FpVar<F>])->Result<(),SynthesisError>{
 	let n = vec.len();
 	assert!(vec_diff.len()==n-1);

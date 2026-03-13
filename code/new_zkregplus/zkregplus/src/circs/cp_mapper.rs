@@ -35,6 +35,7 @@
 // discharged_sigs: size 1 (to ensure at least one dummy entry)
 
 // subtbl: follow inp/oup/data
+use folding_schemes::folding::foldpot::container_config::ColEle;
 use utils::{logger::{log, log_perf, LOG1, LOG7,LOG_LEVEL}, timer::Timer };
 use std::{
 	marker::PhantomData,
@@ -161,7 +162,7 @@ impl Capacity for CpCapacity{
 
 /// The non-deterministic advice for the CP component
 #[derive(Debug)]
-pub struct CpAdvice<F:PrimeField>{
+pub struct CpAdvice<F:PrimeField + ColEle>{
 	/// the advice needed for the word_extract gadget
 	pub wd_extract_advice: WordExtractAdvice<F>,
 
@@ -176,11 +177,11 @@ pub struct CpAdvice<F:PrimeField>{
 	pub inp_buf: Vec<F>,
 }
 
-impl <F:PrimeField> NdAdvice for CpAdvice<F>{
+impl <F:PrimeField + ColEle> NdAdvice for CpAdvice<F>{
 	fn as_any(&self) -> &dyn Any{ self }
 }
 
-impl <F:PrimeField> CpAdvice<F>{
+impl <F:PrimeField + ColEle> CpAdvice<F>{
 	/// word seg must be full maxword len
 	pub fn new(
 			word_seg: &Vec<F>, //must be full len pad with zero
@@ -289,7 +290,7 @@ impl <F:PrimeField> CpAdvice<F>{
 
 
 #[derive(Clone,Debug)]
-pub struct CpComponentMapper<F:PrimeField, LK: LookupTableTwoCol<F>>{ 
+pub struct CpComponentMapper<F:PrimeField + ColEle, LK: LookupTableTwoCol<F>>{ 
 	pub _f: PhantomData<F>,
 	pub _lk: PhantomData<LK>,
 	pub capacity: CpCapacity,
@@ -303,7 +304,7 @@ pub struct CpComponentMapper<F:PrimeField, LK: LookupTableTwoCol<F>>{
 	pub clamdb: Rc<ClamavDB<F>>,
 }
 
-impl <F:PrimeField,LK:LookupTableTwoCol<F>> CpComponentMapper<F,LK>{
+impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CpComponentMapper<F,LK>{
 	/// constructor needs the max word len to handle the capacity
 	/// of PackFinal (number of final states), and reference to clamdb
 
@@ -361,7 +362,7 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> CpComponentMapper<F,LK>{
 
 }
 
-impl <F:PrimeField, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpComponentMapper<F,LK>{
+impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpComponentMapper<F,LK>{
 	fn set_container_config(&mut self, _r_advice: &Rc<dyn NdAdvice>){ 
 		// no need to handle for legacy code.
 	}

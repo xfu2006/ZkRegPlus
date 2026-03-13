@@ -8,6 +8,7 @@ use rand::RngCore;
 use ark_ff::{PrimeField};
 use ark_poly::Polynomial;
 use crate::folding::circuits::{CF2};
+use crate::folding::foldpot::container_config::ColEle;
 use ark_relations::r1cs::ToConstraintField;
 use ark_snark::{SNARK};
 use ark_crypto_primitives::sponge::{
@@ -357,7 +358,7 @@ impl <F:PrimeField> SnarkAdvice<F>{
 impl <'a, 
 	E:Pairing<G1=C1,ScalarField=F>, 
 	C1:CurveGroup<ScalarField=F> + ToConstraintField<CF2<C1>>, 
-	F:PrimeField + Absorb, 
+	F:PrimeField + Absorb + ColEle, 
 	LK: LookupTableTwoCol<E::ScalarField>, 
 	S: SNARK<F>, 
 	CS1E,

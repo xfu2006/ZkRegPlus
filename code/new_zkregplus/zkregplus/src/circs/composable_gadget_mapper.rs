@@ -10,6 +10,7 @@ following:
   DFAGadgetMapper (optional): component mapper
 */
 
+use folding_schemes::folding::foldpot::container_config::ColEle;
 use utils::{logger::{log_perf, LOG1 }, timer::Timer};
 use std::any::{Any};
 use folding_schemes::{
@@ -23,7 +24,9 @@ use std::{
 	rc::{Rc},cell::{RefCell},
 	fmt::{Debug},
 };
-use crate::gadgets::commons::{gen_m_table};
+use crate::gadgets::{
+	commons::{gen_m_table},
+	};
 
 /// Compononent of a CompositeGadgetMapper.
 /// In general, a component mapper should be regarded as a self-contained
@@ -34,7 +37,7 @@ use crate::gadgets::commons::{gen_m_table};
 /// If there are needs to correlate its data with others, it's
 /// done through extra join constraints.
 #[allow(non_camel_case_types)]
-pub trait ComponentMapper<F:PrimeField, LK: LookupTableTwoCol<F>>: Debug{
+pub trait ComponentMapper<F:PrimeField + ColEle, LK: LookupTableTwoCol<F>>: Debug{
 	/// return an Rc dyn object of capacity
 	fn get_capacity(&self)->Rc<dyn Capacity>;
 
@@ -149,14 +152,14 @@ impl Capacity for CompositeCapacity{
 /// combination of atomic gadget mappers. (e.g., allowing
 /// free compbination of CP, SED, DFA discharging gadgets)
 #[derive(Clone,Debug)]
-pub struct CompositeGadgetMapper<F:PrimeField, LK:LookupTableTwoCol<F>>{
+pub struct CompositeGadgetMapper<F:PrimeField + ColEle, LK:LookupTableTwoCol<F>>{
 	pub _f: PhantomData<F>,
 	pub _lk: PhantomData<LK>,
 	pub vec_components: Vec<Rc<RefCell<dyn ComponentMapper<F,LK>>>>,
 	pub name: String,
 }
 
-impl <F:PrimeField,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>{
+impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>{
 	pub fn new(name: &str, vec_components: Vec<Rc<RefCell<dyn ComponentMapper<F,LK>>>>)->Self{
 		Self{
 			_f: PhantomData,
@@ -169,7 +172,7 @@ impl <F:PrimeField,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>{
 
 }
 
-impl <F:PrimeField,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadgetMapper<F,LK>{
+impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadgetMapper<F,LK>{
 	/// use advice to generate container config and set it for
 	/// each gadget (if gadgetes support container config for
 	/// deseiralization). This is only needed for those gadgets in SED
