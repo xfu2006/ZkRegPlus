@@ -26166,7 +26166,7 @@ Goal 3. dump of the anaysis:
 	newly generated ones. These 53k are NOT removed.
 
 Friday 03/13/2026
-LOC (gadgets): 21271 -> 
+LOC (gadgets): 21271 -> 21319 (+50)
 Goal 1. debug the problem of crash
 	[a] read gemini setting
 	[b] add parameter setting -> forget about it
@@ -26234,15 +26234,55 @@ DEBUG USE 6803 dump ---- src_encoded: 393015435228266796072780630029080985606 =>
 	will crash the bwd_prf unit testing.
 
 Sunday 03/15/2026
+LOC (gadgets): 21319  -> 
 Goal 1. continue to debug vec_res problem
 	[a] in discharge_adv: vec_res definition. dump
 		the contents of info when subsig == 19377157. and dump sqi.
 	[b] local debug the samething for bwdprf. 
 		-> research how vec_pm_bounds are generated (does it include
 			dummy step)?
+			-> vec_pm_bounds in type_def.rs. in SubsigStepStoreItem,
+				it's essentially from vec_subsig_pm_bounds of Sig object
+			-> in clam_db.rs: it is generated from 
+				s.vec_subsig_pm_bounds, word_id + 1 (pattern id is 
+					at least 1)
+				in generation, there is NO dummy entry added
+		-> in local test case
+			-> check how come vec_pm_bounds has (0,(0,0)) entry
+			-> the reason is that vec_pm_bounds has a StepQueueItem
+		-> so it's the problem of local test case
+			-> add check in real source code
+			-> fix local test case
+	[c] fix bug discharge_adv:3956
+		discharge_adv:3608
+		-> discharge_adv: 3949 -> 
+			in validate_bwdprf_valid_prf
+	[d] clear unit testing of all other gadgets
+	[e] fix compute_sig_adv failure.
+
+Goal 2. fix the gen_bwd_prf special case step = 0
+	[a] read the code and understand the logic 
+	[b] fix step 2.3
+	[c] but why would compute_sig fails the reverse step to 0?
+	[d] focus on subsig 67
+	[e] fixed on id problem
+Goal 3. problem again with small_data:
+	[a] can't find entries:
+		(2773006246545682347222093729294, 126)
+			--> sid_dst_subsig
+			--> gen_forward_step_combo
+		(2773006246545682353819163495950, 53)
+		(1879048194, 107391093503)
+		(2773006246545682353819163495950, 87)
+	[b] try to see subsig 126 generate encoded tag
+		-> the tag is correct, but the subsig is marked as 126
+			which should be 25.
+		-> so the bad news is that it never has 126 generated
+		-> why would it generate mismatched?
 
 
 =====================================
+--- TODO -- remove DEBUG USE 6307
 --- TODO ---
 	[b] inspect first several iterations and see how fwd prf and bwd
 		prf about 36556803

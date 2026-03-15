@@ -678,25 +678,29 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 												  //for each subsig
 			let steps = items.len()-1; //REAL current number of 
 				// steps with locs, EXCLUDING step 0 (this is the LAST STEP id)
+				// it is also the LAST STEP ID.
 			let real_steps = steps;
 			assert!(items[steps].step==F::from((steps) as u32));
 			let u_subsig = field_to_usize(subsig);
-			let max_steps = subsig_store_info.subsig_to_steps.get(&u_subsig).unwrap()
-				.vec_pm_bounds.len() ; //THEORETICAL num of steps by subsig def
-					//this counts from 0 to the LAST MAX_STEP ID
-			let max_steps = if max_steps>0 {max_steps-1} 
-				else {max_steps}; //avoid UNDERFLOW in release mode!
-
+			let info = subsig_store_info.subsig_to_steps
+				.get(&u_subsig).unwrap(); //NOTE it does NOT have dummy 0 step
+			if info.vec_pm_bounds.len()>0{
+				assert!(!info.vec_pm_bounds[0].0.is_zero()); //assert there is 
+					//NO dummy entry
+					//first item is the real pattern ID, pat ID starts from 1
+			}
+			let max_steps = info.vec_pm_bounds.len();  //max steps 
+														//allowed by subsig
 			let b_added_step = real_steps<max_steps; //last STEP uses default_min_loc
+			//this is to ADD one EXTRA step if it EXISTS
 			let steps = if steps<max_steps{steps+1} else {steps};
-			assert!(steps>=1);
-				//this is to ADD one EXTRA step if it EXISTS
+
 			//2.2. three data structures:
 			//(1) vec_to_del: for each step what to delete
 			//(2) vec_bwd_prf: the corresponding proof for the ones to be deleted
 			//(3) vec_res (backward from last step) of the result.
 			//NOTE that vec_res has two cases: (1) starting from the "next"
-			// empty step if real_steps<=max_steps; (2) starting from the
+			// empty step if real_steps<max_steps; (2) starting from the
 			// current last step if it is REALLY the last step of subsig.
 			let mut vec_res = if real_steps<max_steps{
 				//build a StepQueueItem for the last created step
@@ -710,17 +714,18 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 					//when steps is 1, the real array index in
 					//vec_bounds should be 0
 
-				//REMOVE LATER ---------------
-				println!("DEBUG USE 6804 ==== for subsig 19377157");
-				println!("--info: {:#?}", info);
-				println!("-- sqi constructed for step: {}", steps);
-				sqi.dump();
-				//REMOVE LATER --------------- ABOVE
-
 				vec![sqi]
 			}else {vec![items[real_steps].clone()]}; //the saturated case
 			let mut vec_bwd_prf = vec![];
 			let mut vec_to_del= vec![];
+
+			println!("DEBUG USE 6600 *** vec_res[0]: ===");
+			vec_res[0].dump();
+			println!("DEBUG USE 6600.5 all itms ***  ===");
+			for i in 0..items.len(){
+				println!(" -- item {}", i);
+				items[i].dump();
+			}
 
 			//2.3 propgate from last step .. to 2 (included).
 			// NOTE that we never produce the bwdprf from step1 -> step0
@@ -731,16 +736,22 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 			  for j in 0..steps-1{//number of iterations:
 			  					  //LAST_STEP_ID - 2 + 1, e.g., for steps=2
 								  //ONLY one backward deleletion is done
+				assert!(j==vec_res.len()-1); //j is the LATEST record idx
+					// of vec_res, which is in DESC order of step id
 				//2.2.1 retrive min loc
-				let i = steps -j; //i from steps to 2 (included)
+				let src_step  = steps -j; //src_step goes BACKWARD
+					// from LAST_STEP_ID (steps) to 2 (included)
 					//NOTE steps is the LAST STEP ID
+					// j represents the LATEST record in vec_res.
+				println!("DEBUG USE 6601: max_step: {}, steps: {}, real_steps: {}, j: {}, src_step: {}, subsig: {}", max_steps, steps, real_steps, j, src_step,vec_res[j].subsig );
+				assert!(src_step == field_to_usize(&vec_res[j].step));
 				let (_rg_start,rg_end) = (vec_res[j].rg_start, 
 					vec_res[j].rg_end); //retrieve the fresh LAST result
 				let min_loc = vec_res[j].locs.iter().map(|l| *l).min().
 					map_or(default_min_loc, |x| x);
 
 				//2.2.2 compute to_del
-				let mut to_del = items[i-1].locs.iter().filter(|loc|
+				let mut to_del = items[src_step-1].locs.iter().filter(|loc|
 					**loc + rg_end < min_loc).map(|loc| *loc)
 					.collect::<Vec<F>>();
 				to_del.sort();
@@ -748,7 +759,7 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 
 				let set_to_del = to_del.iter().map(|x| *x)
 					.collect::<HashSet<F>>();
-				let set_prev = items[i-1].locs.iter().map(|x| *x)
+				let set_prev = items[src_step-1].locs.iter().map(|x| *x)
 					.collect::<HashSet<F>>();
 				let mut res = set_prev.difference(&set_to_del)
 					.into_iter().map(|x| *x)
@@ -756,19 +767,20 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 					.into_iter().map(|x| x).collect::<Vec<F>>();
 				res.sort();
 				if b_debug{
-					assert!([&to_del[..],&res[..]].concat().into_iter().map(|x| x)
-							.collect::<HashSet<F>>() == set_prev);
+					assert!([&to_del[..],&res[..]].concat().into_iter().map(|x| x) .collect::<HashSet<F>>() == set_prev);
 				}
 
 				//2.2.3 compute the bwd_prf
 				//let src_encoded = items[i].encoded;
-				let src_encoded = vec_res[j].encoded;
-				let prev_encoded = items[i-1].encoded;
+				let src_encoded = vec_res[j].encoded; //this ALLOWS
+					//the case vec_res[j].step is 1 greater than available
+					//items, because we might go one step beyond.
+				let prev_encoded = items[src_step-1].encoded;
 				let bwd_prf = StepBwdPrfItem::new(src_encoded,min_loc,
 					prev_encoded, &to_del);
-				let mut item_res = items[i-1].clone();
+				let mut item_res = items[src_step-1].clone();
 				item_res.locs = res;
-				let mut item_to_del = items[i-1].clone();
+				let mut item_to_del = items[src_step-1].clone();
 				item_to_del.locs = to_del;
 
 				//2.2.4 update the vecs
@@ -780,17 +792,25 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 			}//end if
 
 			//2.3 update the stores
+			//vec_res represents the steps from the last_step to
+			//the latest one which is affected (but it's in desc order
+			//of step ID, we now reverse them)
 			let vec_res:Vec<_> = vec_res.into_iter().rev().collect();
 			let vec_to_del:Vec<_> = vec_to_del.into_iter().rev().collect();
 			let vec_bwd_prf:Vec<_> = vec_bwd_prf.into_iter().rev().collect();
 			assert!(vec_to_del.len()==vec_bwd_prf.len());
 			let n2 = vec_to_del.len();
-			assert!(vec_res.len()==n2+1);
-			let step_id_before = field_to_usize(&vec_res[0].step) - 1;
+			assert!(vec_res.len()==n2+1); //because it has an EXTRA
+					//starting layer to backward prune.
+
+			let vec_res0_step = field_to_usize(&vec_res[0].step);
 			let new_vec_res =if b_added_step{
-				[&items[0..(step_id_before+1)][..] , &vec_res[0..vec_res.len()-1]].concat() //excluding the LAST added fake step with default_min_loc
+				assert!(items[vec_res0_step-1].step + F::one()
+					==vec_res[0].step);
+				[&items[0..vec_res0_step][..] , &vec_res[0..vec_res.len()-1]].concat() //excluding the LAST added fake step with default_min_loc
 			}else{
-				[&items[0..(step_id_before+1)][..] , &vec_res[..]].concat()
+				assert!(items.len()>0);
+				[&items[0..vec_res0_step][..] , &vec_res[..]].concat()
 			};
 			assert!(new_vec_res.len()==
 				field_to_usize(&new_vec_res[new_vec_res.len()-1].step)+1);
@@ -1146,7 +1166,8 @@ impl <F:PrimeField + ColEle> StepQueueItem<F>{
 	pub fn from_subsig_store_item(info: &SubsigStepStoreItem, step_id: usize,
 		subsig: F, locs: Vec<F>)
 	->Self{
-		let step_info = info.vec_pm_bounds[step_id];
+		let step_info = info.vec_pm_bounds[step_id-1]; //because step_id
+			//starts from 1, but the vec_pm_bounds's index start from 1
 		let u_pattern = step_info.0;
 		let u_start = step_info.1.0;
 		let u_end= step_info.1.1;
@@ -1337,8 +1358,22 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 			&format!("sid_{}",names[10]), IDX_SI_DATA)); //diff2
 
 		//col11: dst_subsig
-		let sids = de.iter().map(|s| SubsigStepStore::gen_step_tbl_id(
-			*s,ID_ENCODED_SUBSIG)).collect::<Vec<_>>();
+		//REMOVE LATER --------------
+		for i in 0..v2d[0].len(){
+			if !v2d[11][i].is_zero(){
+			  println!("DEBUG USE 6307.0 dst_subsig[{}]: {}", i, v2d[11][i]);
+			}
+		}
+		//REMOVE LATER -------------- ABOVE
+		let sids = de.iter().enumerate().map(|(i,s)| {
+			let tag = SubsigStepStore::gen_step_tbl_id(*s,ID_ENCODED_SUBSIG);
+			//REMOVE LATER --------
+			if format!("{}",tag)=="2773006246545682347222093729294"{
+				println!("DEBUG USE 6307.2: ENCODED: {} => tag: {}, subsig: {}", s, tag, v2d[11][i-n2]);
+			}
+			//REMOVE LATER -------- ABOVE
+			tag
+		}).collect::<Vec<_>>();
 		res.borrow_mut().add_col(Col::new(sids,
 			&format!("sid_{}",names[11]), IDX_SI_DATA)
 		);  //this cannot be const
@@ -3950,6 +3985,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			//so either subsig is 0 or [2]-default is 0
 			let item = &_set_bwdprf_ssm_default[0][i] * 
 				(&_set_bwdprf_ssm_default[2][i]- &default_min_loc);
+			println!("DEBUG USE 6805: i: {}, subsig: {}, loc: {}, default_min_loc: {}, item: {}", i, _set_bwdprf_ssm_default[0][i].value()?, _set_bwdprf_ssm_default[2][i].value()?, default_min_loc.value()?, item.value()?);
 			check_eq(&item, &var_zero, "failed set_bwdprf_ssm_default check")?;
 		}
 
@@ -4199,22 +4235,23 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for DischargeAdvGadget<F>{
 			sname_fsm))?
 			.borrow().to_vec();
 		let last_loc = locs[locs.len()-1].clone();
+		let default_min_loc = &last_loc + &new_const_var(&cs, F::one());
 		t9901.stop();
 		println!("DEBUG USE 6901.5: last_loc: {}, cost: {} ms", last_loc.value().unwrap(), t9901.ms());
 
 		//3. validate the forward step queue
 		// COST: 59*n1
 		let forward_step_queue= stmt.get_container("fwd_steps_queue")?;
-		let last_loc = self.validate_forward_step_queue(
+		let default_min_loc= self.validate_forward_step_queue(
 			&forward_step_queue.borrow(), r1.clone(), r2.clone(), 
-			cs.clone(), last_loc)?;
+			cs.clone(), default_min_loc)?;
 
 		//4. validate the backward step queue
 		// COST: 24.5*n1
 		let backward_step_queue= stmt.get_container("bwd_steps_queue")?;
 		self.validate_backward_step_queue(&forward_step_queue.borrow(), 
 			&backward_step_queue.borrow(),
-			r1.clone(), r2.clone(), cs.clone(), last_loc)?;
+			r1.clone(), r2.clone(), cs.clone(), default_min_loc)?;
 
 		let b_perf = false;
 		if b_perf{
@@ -4756,6 +4793,13 @@ pub mod tests_discharge_adv_gadget{
 				let rg_end = field_to_usize(&s.rg_end);
 				(pat_id, (rg_start, rg_end))
 			}).collect::<Vec<(usize, (usize, usize))>>();
+
+			//DROP the 0 step queue item
+			let vec_pm_bounds = if vec_pm_bounds[0].0 == 0{
+				//pat_id is 0, drop it as this
+				//is the dummy StepQueueItem
+				vec_pm_bounds[1..].to_vec()
+			}else{vec_pm_bounds};
 
 			SubsigStepStoreItem{subsig_id, igc, vec_pm_bounds}
 		};
