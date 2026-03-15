@@ -43,9 +43,10 @@ pub fn bignum_to_f<F:PrimeField>(s: &str)->F{
 
 impl ColEle for Fr{
 	fn is_debug_val(&self)->bool{
-		let res = *self == bignum_to_f::<Fr>("2773006246545682347222093729294");
+//		let res = *self == bignum_to_f::<Fr>("2773006246545682347222093729294");
 
-		res
+//		res
+		false
 	}
 }
 

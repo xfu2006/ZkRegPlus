@@ -26282,10 +26282,8 @@ Goal 3. problem again with small_data:
 
 
 =====================================
---- TODO -- remove DEBUG USE 6307
 --- TODO ---
 	[b] inspect first several iterations and see how fwd prf and bwd
 		prf about 36556803
-
 -- TODO -- remove DEBUG USE 6901
 

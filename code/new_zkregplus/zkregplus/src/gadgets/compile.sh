@@ -1,7 +1,5 @@
 #1. quick compile 
 #cargo check --tests 2>&1 | less
-#cargo test -- test_bwd_prf --show-output --nocapture
-RUST_BACKTRACE=1 cargo test -- tests_discharge_adv_gadget --show-output --nocapture
 
 #2. test each gadget
 #RUST_BACKTRACE=1 
@@ -10,7 +8,8 @@ RUST_BACKTRACE=1 cargo test -- tests_discharge_adv_gadget --show-output --nocapt
 # -------------
 #cargo test -- tests_word_extract_adv --show-output --nocapture
 #cargo test -- tests_fsm_adv --show-output --nocapture
-RUST_BACKTRACE=1 
+#RUST_BACKTRACE=1 
+cargo test -- tests_discharge_adv_gadget --show-output --nocapture
 #cargo test -- test_compute_sig_adv --show-output --nocapture
 #cargo test -- test_dfa_adv --show-output --nocapture
 
@@ -21,6 +20,7 @@ RUST_BACKTRACE=1
 #cargo test -- tests_sigs_gadget --show-output --nocapture
 
 #3. other misc. unused scripts
+#cargo test -- test_bwd_prf --show-output --nocapture
 #cargo test -- tests_fsm_adv_gadget --show-output --nocapture
 #cargo test -- test_encode --show-output --nocapture
 #cargo test -- tests_db --show-output --nocapture

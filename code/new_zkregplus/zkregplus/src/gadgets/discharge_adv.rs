@@ -682,18 +682,15 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 			let real_steps = steps;
 			assert!(items[steps].step==F::from((steps) as u32));
 			let u_subsig = field_to_usize(subsig);
-			let info = subsig_store_info.subsig_to_steps
-				.get(&u_subsig).unwrap(); //NOTE it does NOT have dummy 0 step
-			if info.vec_pm_bounds.len()>0{
-				assert!(!info.vec_pm_bounds[0].0.is_zero()); //assert there is 
-					//NO dummy entry
-					//first item is the real pattern ID, pat ID starts from 1
-			}
-			let max_steps = info.vec_pm_bounds.len();  //max steps 
-														//allowed by subsig
+			let max_steps = subsig_store_info.subsig_to_steps.get(&u_subsig).unwrap()
+				.vec_pm_bounds.len() ; //THEORETICAL num of steps by subsig def
+					//this counts from 0 to the LAST MAX_STEP ID
+			let max_steps = if max_steps>0 {max_steps-1} 
+				else {max_steps}; //avoid UNDERFLOW in release mode!
+
 			let b_added_step = real_steps<max_steps; //last STEP uses default_min_loc
-			//this is to ADD one EXTRA step if it EXISTS
 			let steps = if steps<max_steps{steps+1} else {steps};
+				//this is to ADD one EXTRA step if it EXISTS
 
 			//2.2. three data structures:
 			//(1) vec_to_del: for each step what to delete
@@ -719,14 +716,6 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 			let mut vec_bwd_prf = vec![];
 			let mut vec_to_del= vec![];
 
-			println!("DEBUG USE 6600 *** vec_res[0]: ===");
-			vec_res[0].dump();
-			println!("DEBUG USE 6600.5 all itms ***  ===");
-			for i in 0..items.len(){
-				println!(" -- item {}", i);
-				items[i].dump();
-			}
-
 			//2.3 propgate from last step .. to 2 (included).
 			// NOTE that we never produce the bwdprf from step1 -> step0
 			// because we want to keep step0 for each subsig for future use
@@ -743,7 +732,6 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 					// from LAST_STEP_ID (steps) to 2 (included)
 					//NOTE steps is the LAST STEP ID
 					// j represents the LATEST record in vec_res.
-				println!("DEBUG USE 6601: max_step: {}, steps: {}, real_steps: {}, j: {}, src_step: {}, subsig: {}", max_steps, steps, real_steps, j, src_step,vec_res[j].subsig );
 				assert!(src_step == field_to_usize(&vec_res[j].step));
 				let (_rg_start,rg_end) = (vec_res[j].rg_start, 
 					vec_res[j].rg_end); //retrieve the fresh LAST result
@@ -1325,7 +1313,7 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 				let info = subsig_store_info.subsig_to_steps.get(&subsig)
 					.expect(&format!("cannot find subsig: {}",subsig));
 				let num_steps = info.vec_pm_bounds.len();
-				let src_step = v2d[2][i-n2];
+				let src_step = v2d[3][i-n2];
 				let b_last_step = F::from(num_steps as u32) == src_step;
 				let tag = if b_last_step {ID_ENCODED_LAST_STEP} else
 					{ID_ENCODED_NORMAL_STEP};
@@ -1358,20 +1346,8 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 			&format!("sid_{}",names[10]), IDX_SI_DATA)); //diff2
 
 		//col11: dst_subsig
-		//REMOVE LATER --------------
-		for i in 0..v2d[0].len(){
-			if !v2d[11][i].is_zero(){
-			  println!("DEBUG USE 6307.0 dst_subsig[{}]: {}", i, v2d[11][i]);
-			}
-		}
-		//REMOVE LATER -------------- ABOVE
-		let sids = de.iter().enumerate().map(|(i,s)| {
+		let sids = de.iter().enumerate().map(|(_i,s)| {
 			let tag = SubsigStepStore::gen_step_tbl_id(*s,ID_ENCODED_SUBSIG);
-			//REMOVE LATER --------
-			if format!("{}",tag)=="2773006246545682347222093729294"{
-				println!("DEBUG USE 6307.2: ENCODED: {} => tag: {}, subsig: {}", s, tag, v2d[11][i-n2]);
-			}
-			//REMOVE LATER -------- ABOVE
 			tag
 		}).collect::<Vec<_>>();
 		res.borrow_mut().add_col(Col::new(sids,
@@ -3985,7 +3961,6 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			//so either subsig is 0 or [2]-default is 0
 			let item = &_set_bwdprf_ssm_default[0][i] * 
 				(&_set_bwdprf_ssm_default[2][i]- &default_min_loc);
-			println!("DEBUG USE 6805: i: {}, subsig: {}, loc: {}, default_min_loc: {}, item: {}", i, _set_bwdprf_ssm_default[0][i].value()?, _set_bwdprf_ssm_default[2][i].value()?, default_min_loc.value()?, item.value()?);
 			check_eq(&item, &var_zero, "failed set_bwdprf_ssm_default check")?;
 		}
 
