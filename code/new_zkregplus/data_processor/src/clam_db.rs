@@ -615,7 +615,11 @@ impl SubsigStepStore{
 			  	.map(|(row_id,(&encode_word,&step))|{
 					let tbl_id = Self::gen_step_tbl_id(encode_word,*pid);
 					if !step.is_zero() { 
-						(true, tbl_id, encoded[row_id-1]) 
+						if row_id>=1{
+							(true, tbl_id, encoded[row_id-1]) 
+						}else{//dummy one, will NOT be added
+							(false, tbl_id, encoded[row_id]) 
+						}
 					} else { 
 						//if it's not dummy subsig 0, we do not include it
 						// set bInclude to False.

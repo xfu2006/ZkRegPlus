@@ -689,6 +689,7 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 
 			let b_added_step = real_steps<max_steps; //last STEP uses default_min_loc
 			let steps = if steps<max_steps{steps+1} else {steps};
+			assert!(steps>=1);
 				//this is to ADD one EXTRA step if it EXISTS
 			//2.2. three data structures:
 			//(1) vec_to_del: for each step what to delete
@@ -705,7 +706,16 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 					.unwrap();
 				
 				let sqi = StepQueueItem::from_subsig_store_item(&info,
-					steps, *subsig, vec![default_min_loc]);
+					steps, *subsig, vec![default_min_loc]); 
+					//when steps is 1, the real array index in
+					//vec_bounds should be 0
+
+				//REMOVE LATER ---------------
+				println!("DEBUG USE 6804 ==== for subsig 19377157");
+				println!("--info: {:#?}", info);
+				println!("-- sqi constructed for step: {}", steps);
+				sqi.dump();
+				//REMOVE LATER --------------- ABOVE
 
 				vec![sqi]
 			}else {vec![items[real_steps].clone()]}; //the saturated case
@@ -1532,8 +1542,9 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 		let v_prev_encoded = vt.par_iter().map(|t| t.7).collect::<Vec<F>>();
 		let v_loc_to_del = vt.par_iter().map(|t| t.8).collect::<Vec<F>>();
 		let names = vec![
-			"src_encoded", "src_step",  //note we don't need subsig
-			"src_pat", 
+			"src_encoded", 
+			"src_step",  //note we don't need subsig
+			"src_pat", //id 2 
 			"src_rg_end",  //id 3
 			"src_min_loc", //id 4
 			"prev_encoded", //id 5
@@ -1599,7 +1610,7 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 			names[1]), IDX_SI_DATA)
 		); //cannot be const 
 
-		//3. src_pat,  srgrg_end (col 2,3,7) 
+		//3. src_pat,  srg_rg_end, ID_ENCODED_SUBSIG (col 2,3,7) 
 		let ids = [2,3,7];
 		let cats = [ID_ENCODED_PAT, ID_ENCODED_RG_END,ID_ENCODED_SUBSIG];
 		for x in 0..ids.len(){
@@ -1619,12 +1630,12 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 
 		//3.5 prev_encoded (col 5) - using table ID_ENCODED_PREV_ENCODED
 		// so later we do not have to check their relation
-		let sids = se.iter().zip(de.iter()).map(|(_s,d)|{
+		let sids = se.iter().zip(de.iter()).map(|(s,_d)|{
 			//for "d" - prev_encoded its tag id is generated using
 			//the source_encoded under category ID_ENCODED_PREV_ENCODED
 			//so later in validate_bwrf_validate we simply check the
 			//sid for each prev_encoded.
-			SubsigStepStore::gen_step_tbl_id(*d,ID_ENCODED_PREV_ENCODED)
+			SubsigStepStore::gen_step_tbl_id(*s,ID_ENCODED_PREV_ENCODED)
 		}).collect::<Vec<_>>();
 		res.borrow_mut().add_col(Col::new(sids,
 			&format!("sid_{}",names[5]), IDX_SI_DATA)); //encoded-prev_encode

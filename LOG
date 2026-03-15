@@ -26180,9 +26180,72 @@ Goal 2. now debug full_data1
 	[c] try add DEBUG USE 6801 (when ID_ENCODED_PREV_ENCODED) is added
 		-> in clam_db.rs
 		-> in 6802 in the discharge_adv
+	[d] now check the fix -> strangely it still fails but on 
+		a different number:
+		3432815461787366910842494444410512211188689209047373578246
+	[e] find out which segment it is.
+		-> FOUND the DEBUG VAL in name: sid_src_rg_end, idx_seg: 6
 
-	-- TODO -- remove 6801 and 6802
 Goal 3. analyze why sq_res of  36556803 does not improve
+	[a] enable the b_debug in Bwd and Fwd proof generation
+
+Saturday 03/13/2026
+Goal 1. debug the problem of crash again (prev_encoded)
+	[a] on server print out when it's generated (6801)
+	[b] check how it crashed
+	-> complains aobut
+	"3432815461787366913564753379778019918895686068501519269894"
+	[c] when the discharge generates it:
+	gen previd: subsig: 19377157, srcencoded: 393015435228266796072780630029080985606, dst_encoded: 393015435228266493359674753425311006719=> tag: 3432815461787366913564753379778019918895686068501519269894
+	[d] details:
+DEBUG USE 9101: add: SIG: Win.Trojan.Agent-1388728, igc: false, subsig_id: 19377157, details:.*e8........8b..e8........0faf..e8........0faf..9933..2b..33..f7..8b..5.e8.*
+	[e] in db generation:
+EBUG USE 6801: add prev_enc: subsig: 19377157, srcenc: 393015435228266493359674753425311006719, dstenc: 393015435228266191117082447887583936512 => tag: 3432815461787366913564753379778019616182580191897749291007
+DEBUG USE 6801: add prev_enc: subsig: 19377157, srcenc: 393015435228266795591129657081732268048, dstenc: 393015435228266493359674753425311006719 => tag: 3432815461787366913564753379778019918414035095554170552336
+DEBUG USE 6801: add prev_enc: subsig: 19377157, srcenc: 393015435228267098304235533686374662150, dstenc: 393015435228266795591129657081732268048 => tag: 3432815461787366913564753379778020221127140972158812946438
+DEBUG USE 6801: add prev_enc: subsig: 19377157, srcenc: 393015435228267702274356966174052319231, dstenc: 393015435228267098304235533686374662150 => tag: 3432815461787366913564753379778020825097262404646490603519
+DEBUG USE 6801: add prev_enc: subsig: 19378177, srcenc: 393036123286062218583501799795464339455, dstenc: 393036123286061915820914874083895672832 => tag: 3432815461787366913564774067835815341406407238267902623743
+DEBUG USE 6801: add prev_enc: subsig: 19378177, srcenc: 393036123286062520663820403558435520526, dstenc: 393036123286062218583501799795464339455 => tag: 3432815461787366913564774067835815643486725842030873804814
+DEBUG USE 6801: add prev_enc: subsig: 19378177, srcenc: 393036123286062822895144702830159331398, dstenc: 393036123286062520663820403558435520526 => tag: 3432815461787366913564774067835815945718050141302597615686
+DEBUG USE 6801: add prev_enc: subsig: 19378177, srcenc: 393036123286063426978189392370364055551, dstenc: 393036123286062822895144702830159331398 => tag: 3432815461787366913564774067835816549801094830842802339839
+  => so the prev_en exists but the src_encoded
+  => is NOT right? it never appears.
+
+Goal 2.  in DEBUG USE 6801, need to print MORE info, in gen_bwd_prf
+needs to print out how src_enc is generated, or dump the subsig_store.
+	Analysis: [6801] 3432815461787366913564753379778019918895686068501519269894 
+	there is no 6801 message for it
+		gen previd: subsig: 19377157, srcencoded: 393015435228266796072780630029080985606, dst_encoded: 393015435228266493359674753425311006719=> tag: 3432815461787366913564753379778019918895686068501519269894
+----------- dump in db
+DEBUG USE 6801: add prev_enc: subsig: 19377157, step: 1, pat: 2473, rg1: 28, rg2: 67108863, srcenc: 393015435228266493359674753425311006719, dstenc: 393015435228266191117082447887583936512 => tag: 3432815461787366913564753379778019616182580191897749291007
+DEBUG USE 6801: add prev_enc: subsig: 19377157, step: 2, pat: 2473, rg1: 16, rg2: 16, srcenc: 393015435228266795591129657081732268048, dstenc: 393015435228266493359674753425311006719 => tag: 3432815461787366913564753379778019918414035095554170552336
+------------
+DEBUG USE 6803 dump ---- src_encoded: 393015435228266796072780630029080985606 => prev_encoded: 393015435228266493359674753425311006719, i: 2, j: 0, real_steps: 1, steps: 2, max_steps: 2, items.len: 2
+-- items [i-1] dump --
+  encoded: 393015435228266493359674753425311006719, subsig: 19377157, step: 1, pat: 2473, rg_start: 28, rg_end: 67108863, # of locs: 1
+        loc 0: 9758
+---- rev_res[j] dump --
+  encoded: 393015435228266796072780630029080985606, subsig: 19377157, step: 2, pat: 109421, rg_start: 6, rg_end: 6, # of locs: 1
+        loc 0: 126978
+---------
+------------
+
+== Problem: in discharge_adv.rs if adjust steps to steps -1 it
+	will crash the bwd_prf unit testing.
+
+Sunday 03/15/2026
+Goal 1. continue to debug vec_res problem
+	[a] in discharge_adv: vec_res definition. dump
+		the contents of info when subsig == 19377157. and dump sqi.
+	[b] local debug the samething for bwdprf. 
+		-> research how vec_pm_bounds are generated (does it include
+			dummy step)?
+
+
+=====================================
+--- TODO ---
+	[b] inspect first several iterations and see how fwd prf and bwd
+		prf about 36556803
 
 -- TODO -- remove DEBUG USE 6901
 
