@@ -11,7 +11,14 @@
 
 - **Code Insertion:** Whenever inserting or modifying code, ensure the line width does not exceed 80 characters. Maintain consistency with the project's existing coding style and formatting.
 
-## Task Management
+## Task Management & Cost Accounting
 - **Task Identification:** When asked to "complete Task" in a file, focus solely on the specified tasks, which are typically accompanied by an ID (e.g., Task 1, Task 3.2.5).
-- **Task Completion & Cancellation:** If the "Esc" option is chosen from a menu, regard it as task completion.
-- **Cost Estimation:** Upon completing a task (or when "Esc" is chosen), output the number of tokens used and provide an estimated cost for executing the tasks.
+- **Custom Commands:**
+    - `/mytask <ID>: <description>`: Starts a specific task. You MUST include the internal slash command `/stats model` as plain text in your response immediately to record the current cumulative token counts as a baseline.
+    - `/done <ID>`: Marks the completion of a task. You MUST include the internal slash command `/stats model` again as plain text in your response to calculate the final difference.
+- **Critical Requirement for `/stats model`**: This is an **internal CLI slash command**, not a system executable. You MUST NOT execute it using the `run_shell_command` tool. Simply type the command (e.g., `/stats model`) directly into your text response.
+- **Task Completion & Cancellation:** If the "Esc" option is chosen from a menu, or `/done <ID>` is issued, regard it as task completion.
+- **Cost Estimation Logic:**
+    - **Accuracy:** Calculate incremental usage as `Current Cumulative - Baseline` for both input and output tokens, ensuring alignment with the `/stats` command.
+    - **Granularity:** Breakdown usage and costs by model (e.g., `gemini-3-flash-preview`).
+    - **Reporting:** Upon completion, output a summary showing incremental tokens used and the estimated cost for the specific task ID. Always include a `/compress` internal command immediately after reporting the token usage.

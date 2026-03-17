@@ -26234,7 +26234,6 @@ DEBUG USE 6803 dump ---- src_encoded: 393015435228266796072780630029080985606 =>
 	will crash the bwd_prf unit testing.
 
 Sunday 03/15/2026
-LOC (gadgets): 21319  -> 
 Goal 1. continue to debug vec_res problem
 	[a] in discharge_adv: vec_res definition. dump
 		the contents of info when subsig == 19377157. and dump sqi.
@@ -26279,6 +26278,107 @@ Goal 3. problem again with small_data:
 			which should be 25.
 		-> so the bad news is that it never has 126 generated
 		-> why would it generate mismatched?
+	[c] it's proably some accidental drop of one line which
+		changes the result (max_steps?) but reload the git version
+		seems working (not sure what the cli agent did it claims 
+		to be max_steps but I don't buy it) - but anyway the bug is 
+		fixed by reloading an ealier commit.
+Goal 4. observe data on full_data1
+	[a]  still fails!
+	(3432815461787366913564753379778019918414035095554170552336, 9758)
+	(1879048194, 393015435228266493359674753425311006719) -> this is concerning
+	(3432815461787366905397976573675496795293044517191733477392, 126978)
+Plan -> debug and spot how are these numbers generated.
+
+Monday 03/16/2026
+LOC (circ): 3018 -> 3300 (+300)
+Goal 1. continue to debug
+	[a] detect why some values are generated and if it matches the
+		segment
+	(1879048194, 393015435228266493359674753425311006719) -> this is concerning
+		-> check when "39...719" is created
+	[b] It is encoded which should not have RANGE2 as SID. So there
+		is a mismatch.
+
+Goal 2. we should have a container self check function.
+	[a] check if it's already there -> no nothing there but in
+		sigma_ir1cs it does check the subtbl length is equal to 
+		the data length, so there is no need to check here.
+	[b] but how is StatementInst constructed?
+		-> it's calling circ::build_statement
+		-> but how do I know something wrong? 
+
+Goal 3. read code
+	[a] build_statement: it basically calls build_statement_comp
+		which generates all segments from inp, data to si_data,
+		the data is actually from advice
+	[b] gen_statement_structure -> essentially calls get_sizes()
+		of all components
+	[c] build_statement_componnet -> essentially calls
+			advice.gen_stmt_components()
+			-> component_advice has container which generates
+				stmt_components
+			-> cp mapper has only one approach
+	[d] read the gemini generated code
+
+Goal 4. plan:
+	[a] function self_check(advice, data, sid_table)
+		for each col piece of data -> generate 
+			(id, col_path)
+		for each seg -> find its location size
+			sample points.
+	[b] retrieve_data(data, col_path, idx, num_sample_points)
+	[c] compare with its data segement size
+
+Goal 5. Implementation
+	[a] before: token 1.4M
+	[b] search_index returns the name of Col
+	[c] -> 1.54 M
+	[d] now refine the two functions -> 1.80M
+	[a] function 
+
+Goal 6. think about enumerate columns
+	[a] before 1.8M
+	[b]  -> 2.0M
+
+Goal 7. enumerate col info
+	[a] -> 2.4M -> 2.6M
+	[b] get the value -> 2.9M -> 3.1M
+
+
+Tuesday 03/17/2026
+LOC (circs) 3335 -> 
+Goal 1. implement the get_value() function
+	[a] layout the get_value() framework.
+	[b] token cost: 556k 
+	[c] fix syntax err: 629k
+Goal 2. implement the self_check()
+	[a] plan: 8:53am
+	[b] ai coding: 895k (+350k) -> 8:57am
+	[c] review and change code: 9:07am
+	[d] another round of quix fix by ai: 9:11am (4 min)
+		1.17M now (+200k)
+	[e] change config about model token usage calculation
+		1.22M now (+40k)
+	[f] call self_check 9:16am->9:29am (slow butnot sure why)
+		-> 1.5M (+300k) but only reported 100k, why?
+	[g] 3474 lines now: 9:45am
+Goal 3. debug
+	[a] get_container_config call.
+		-> one line syntax fix: 9:48am->9:52am
+			2.14M
+	[b] id_mismatch problem
+		-> inspect get_col_info
+	[c] check the values
+Goal 4. need to clarify the semantics, what is the idx passed
+	to find idx
+	[a] global_off is its location in the statement
+	[b] inspect the logic of find_idx -> fixed
+	[c] new issue with cp_oup
+	[d] find_idx none for cp_oup
+	-> it looks like there is a shift of 1 in computing index.
+
+
 
 
 =====================================

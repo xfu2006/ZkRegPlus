@@ -10,7 +10,7 @@ following:
   DFAGadgetMapper (optional): component mapper
 */
 
-use folding_schemes::folding::foldpot::container_config::ColEle;
+use folding_schemes::folding::foldpot::container_config::{ColEle, ContainerConfig};
 use utils::{logger::{log_perf, LOG1 }, timer::Timer};
 use std::any::{Any};
 use folding_schemes::{
@@ -26,7 +26,14 @@ use std::{
 };
 use crate::gadgets::{
 	commons::{gen_m_table},
-	};
+	traits::{
+		IDX_INP, IDX_OUP, IDX_DATA, IDX_SI_INP, IDX_SI_OUP, IDX_SI_DATA,
+	},
+};
+use crate::circs::{
+	sed_mapper::SedAdvice,
+	dfa_mapper::DfaAdvice,
+};
 
 /// Compononent of a CompositeGadgetMapper.
 /// In general, a component mapper should be regarded as a self-contained
@@ -38,6 +45,9 @@ use crate::gadgets::{
 /// done through extra join constraints.
 #[allow(non_camel_case_types)]
 pub trait ComponentMapper<F:PrimeField + ColEle, LK: LookupTableTwoCol<F>>: Debug{
+	/// get its own name
+	fn get_name(&self)->String;
+
 	/// return an Rc dyn object of capacity
 	fn get_capacity(&self)->Rc<dyn Capacity>;
 
@@ -169,6 +179,420 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>
 		}
 	}
 	pub fn set_name(&mut self, name: &str){ self.name = format!("{}", name); }
+
+	/// Given a subtbl_idx, find out its corresponding vec_component
+	/// ID and the column path (of the data, not SI column)
+	/// NOTE: slow, for debugging only
+	pub fn find_idx(
+		&self, 
+		subtbl_idx: usize,  //this is also the offset in
+			//StmtInst::inp || oup || data if b_report_data is true
+			//NOTE that it is NOT the global offset in StatementInst.to_vec()
+		lkup_share_size: usize, 
+		b_report_data: bool, //true for report col in inp/oup/data
+			//false for report si_inp/si_oup/si_data
+	) -> Option<(usize, String)> {
+		// 1. Recreate the statement structure to get segment sizes
+		println!("DEBUG USE 7301: find_idx: {}, b_report_data: {}", subtbl_idx, b_report_data);
+		let (_, cfg, _, _, _) = self.gen_statement_structure(lkup_share_size);
+
+		// 2. Estimate the segemnet (one of inp/oup/data/si_inp/si_oup/si_data)
+		// and convert subtbl_idx to offset in StmtInst::to_vec()
+		let seg_id = if subtbl_idx<cfg.input_size{
+			IDX_INP
+		} else if subtbl_idx< cfg.input_size + cfg.output_size{
+			IDX_OUP
+		} else if subtbl_idx < cfg.input_size + cfg.output_size + cfg.data_size{
+			IDX_DATA
+		} else{
+			panic!("cannot handle subtbl_idx: {}", subtbl_idx)
+		};
+		let seg_id = if b_report_data {seg_id} else {seg_id + 3};
+		let offset_in_stmt = if b_report_data { subtbl_idx +cfg.idx_inp }
+		else { subtbl_idx + cfg.idx_subtable_id };
+		println!("DEBUG USE 7302: seg_id: {}, offset_in_stmt_seg: {}", seg_id, offset_in_stmt);
+
+		// 3. Find which component owns this offset. 
+		//note: seg_id starts from 1 (INP)
+		// and SI_INP (4)
+		let size_idx = if b_report_data{seg_id-1} else
+			{seg_id- 4}; // Map 4->0, 5->1, 6->2
+		let mut current_comp_base = if b_report_data {
+			match seg_id{
+				IDX_INP=> cfg.idx_inp,
+				IDX_OUP=> cfg.idx_oup,
+				IDX_DATA=> cfg.idx_data,
+				_ => panic!("cannot handle seg_id: {}", seg_id)
+			}
+		} else {
+				cfg.idx_subtable_id //because no distinction of 3 
+		}; //when the seg is fixed
+			//it stands for the base for the corresponding inp/si
+			//for the component (two cases one for inp/oup/data
+			// and the 2nd case is for si_inp/si_oup/si_data
+			// this variable is only used for CP components only.
+			// the others just directly use the offset_in_stmt to search.
+
+		for (i, comp_rc) in self.vec_components.iter().enumerate() {
+			let comp = comp_rc.borrow();
+			let comp_sizes = comp.get_sizes();
+			let comp_seg_size = if seg_id<=3 {comp_sizes[size_idx]}
+				else{//sum of si_inp, si_oup, si_oup
+					comp_sizes[0..3].iter().map(|&x| x).sum()
+				};
+			println!("-- DEBUG USE 7303: comp: {}, comp_seg_size: {}, current_comp_base: {}, offset_in_stmt: {}", i, comp_seg_size, current_comp_base, offset_in_stmt);
+			if offset_in_stmt >= current_comp_base && 
+			   offset_in_stmt < current_comp_base + comp_seg_size {
+				
+				if comp_rc.borrow().get_name().contains("Cp"){
+					let name = match seg_id {
+						IDX_INP => "cp_inp",
+						IDX_OUP => "cp_oup",
+						IDX_DATA => "cp_data",
+						IDX_SI_INP => "cp_si_inp",
+						IDX_SI_OUP => "cp_si_oup",
+						IDX_SI_DATA => "cp_si_data",
+						_ => "unknown",
+					};
+					return Some((i, name.to_string()));
+				}
+
+				for gadget_rc in comp.create_gadgets() {
+					let g_cfg = gadget_rc.borrow().get_container_config();
+					if let Some(path) = self.search_by_dest(
+						&g_cfg, seg_id, offset_in_stmt
+					) {
+						return Some((i, path));
+					}
+				}
+			}
+			current_comp_base += comp_seg_size;
+		}
+		None
+	}
+
+	/// Enumerate all column paths in all components and their gadgets.
+	/// This is for debugging purposes to trace the global statement order.
+	/// Returns a list of (component_idx, column_path).
+	/// NOTE: slow for debugging only
+	pub fn enumerate_col_paths(&self) -> Vec<(usize, String)> {
+		let mut res = Vec::new();
+		for (i, comp_rc) in self.vec_components.iter().enumerate() {
+			let comp = comp_rc.borrow();
+
+			// Special handling for component 0 (cp_mapper)
+			if comp.get_name().contains("Cp") {
+				res.push((i, "cp_inp".to_string()));
+				res.push((i, "cp_si_inp".to_string()));
+				res.push((i, "cp_oup".to_string()));
+				res.push((i, "cp_si_oup".to_string()));
+				res.push((i, "cp_data".to_string()));
+				res.push((i, "cp_si_data".to_string()));
+			}else{
+				for gadget_rc in comp.create_gadgets() {
+					let g_cfg = gadget_rc.borrow().get_container_config();
+					self.collect_paths_recursive(&g_cfg, i, &mut res);
+				}
+			}
+		}
+		res
+	}
+
+	/// Retrieve the destination location and size of a column.
+	/// Return (segment_id, global_offset, length).
+	/// - segment_id: e.g., IDX_INP, IDX_SI_DATA.
+	/// - global_offset: Absolute index in the StatementInst vector. 
+	///   It correctly accounts for the accumulated sizes of all 
+	///   prior segments (e.g., word segment size).
+	pub fn get_col_info(&self, component_id: usize, path: &str,
+		lkup_share_size: usize) -> Option<(usize, usize, usize)> {
+		if component_id >= self.vec_components.len() { return None; }
+
+		// 1. Recreate structure to get segment sizes and bases
+		let (_, cfg, _, _, _) = self.gen_statement_structure(lkup_share_size);
+		let comp = self.vec_components[component_id].borrow();
+
+		// Case 1: cp_mapper (component 0)
+		if comp.get_name().contains("Cp") {
+			let (seg_id, size_idx) = match path {
+				"cp_inp" => (IDX_INP, 0),
+				"cp_si_inp" => (IDX_SI_INP, 0),
+				"cp_oup" => (IDX_OUP, 1),
+				"cp_si_oup" => (IDX_SI_OUP, 1),
+				"cp_data" => (IDX_DATA, 2),
+				"cp_si_data" => (IDX_SI_DATA, 2),
+				_ => return None,
+			};
+			let len = self.vec_components[0].borrow().get_sizes()[size_idx];
+
+			let start = match seg_id {
+				IDX_INP => cfg.idx_inp,
+				IDX_OUP => cfg.idx_oup,
+				IDX_DATA => cfg.idx_data,
+				IDX_SI_INP => cfg.idx_subtable_id,
+				IDX_SI_OUP => cfg.idx_subtable_id + cfg.input_size,
+				IDX_SI_DATA => cfg.idx_subtable_id + cfg.input_size + 
+					cfg.output_size,
+				_ => panic!("can't handle seg_id: {}", seg_id),
+			};
+			return Some((seg_id, start, len));
+		}
+
+		// Case 2: Other mappers
+		for gadget_rc in comp.create_gadgets() {
+			let g_cfg = gadget_rc.borrow().get_container_config();
+			if let Some((seg_id, r_start, len)) = self.find_info_recursive(
+				&g_cfg, path
+			) {
+				return Some((seg_id, r_start, len));
+			}
+		}
+		None
+	}
+
+	/// Recursive helper for get_col_info to search ContainerConfig for a path.
+	fn find_info_recursive(&self, cfg: &ContainerConfig, target_path: &str) 
+	-> Option<(usize, usize, usize)> {
+		match cfg {
+			ContainerConfig::Column(loc, _name, path, _b_const) => {
+				if path == target_path { return loc.dest; }
+				None
+			}
+			ContainerConfig::Complex(children, _name, _path) => {
+				for child in children {
+					if let Some(res) = self.find_info_recursive(child, 
+						target_path) { return Some(res); }
+				}
+				None
+			}
+		}
+	}
+
+	/// Recursive helper for enumerate_paths to traverse the 
+	/// ContainerConfig tree and collect column paths.
+	fn collect_paths_recursive(&self, cfg: &ContainerConfig, 
+		comp_idx: usize, res: &mut Vec<(usize, String)>) {
+		match cfg {
+			ContainerConfig::Column(_loc, _name, path, _b_const) => {
+				res.push((comp_idx, path.clone()));
+			}
+			ContainerConfig::Complex(children, _name, _path) => {
+				for child in children {
+					self.collect_paths_recursive(child, comp_idx, res);
+				}
+			}
+		}
+	}
+
+	/// Helper function to find a Column path by matching the 'dest' field
+	/// NOTE: slow. for debugging only.
+	fn search_by_dest(&self, cfg: &ContainerConfig, target_seg: usize, 
+		target_off: usize) -> Option<String> {
+		match cfg {
+			ContainerConfig::Column(loc, _name, path, _b_const) => {
+				// Use the pre-calculated 'dest' from adjust_locations
+				if let Some((d_seg, d_start, d_len)) = loc.dest {
+					if d_seg == target_seg && target_off >= d_start && 
+						target_off < d_start + d_len {
+						return Some(path.clone());
+					}
+				}
+				None
+			}
+			ContainerConfig::Complex(children, _name, _path) => {
+				for child in children {
+					if let Some(path) = self.search_by_dest(
+						child, target_seg, target_off
+					) {
+						return Some(path);
+					}
+				}
+				None
+			}
+		}
+	}
+
+	/// Retrieve the value of a column at a specific row from the advice.
+	/// - word: The word input.
+	/// - lkup: The lookup table.
+	/// - ea: The statement extra info.
+	/// - advice: The global CompositeAdvice object.
+	/// - lkup_share_size: Required for statement reconstruction.
+	/// - comp_idx: The index of the component (0 for cp_mapper).
+	/// - path: The column path (as returned by enumerate_col_paths).
+	/// - row: The row index within the column. (which element to retrieve
+	pub fn get_value(&self, 
+		word: &Vec<F>, 
+		lkup: Rc<RefCell<LK>>, 
+		ea: &StatementExtraInfo<F>, 
+		advice: &Rc<dyn NdAdvice>, 
+		lkup_share_size: usize,
+		comp_idx: usize, 
+		path: &str, 
+		row: usize) -> F {
+		let advices = advice.as_any().downcast_ref::<CompositeAdvice>()
+			.expect("downcast CompositeAdvice err!");
+		let inner_adv = &advices.vec_adv[comp_idx];
+		let comp = self.vec_components[comp_idx].borrow();
+
+		if comp.get_name().contains("Cp"){
+			// Case 1: cp_mapper (Component 0 or maybe 1)
+			let (_, cfg, stmt_map, _, _) = 
+				self.gen_statement_structure(lkup_share_size);
+			let mut rem_word = vec![F::zero(); 
+				self.max_word_len() - word.len()];
+			let mut word_seg = word.clone();
+			word_seg.append(&mut rem_word);
+			let actual_word_len = word.len();
+
+			let vecs = comp.build_statement_comp(
+				0, 0, &word_seg, actual_word_len, &lkup,
+				ea, inner_adv, &cfg, &stmt_map
+			).expect("build_statement_comp err for CP");
+
+			// 2. Map path to segment index (0-7)
+			let seg_idx = match path {
+				"cp_inp" => 0, "cp_oup" => 1, "cp_data" => 2,
+				"cp_si_inp" => 3, "cp_si_oup" => 4, "cp_si_data" => 5,
+				"cp_failed_sigs" => 6, "cp_discharged_sigs" => 7,
+				_ => panic!("unknown cp path: {}", path),
+			};
+			let res = vecs[seg_idx][row].clone();
+			println!("-- DEBUG USE 7104.1 retrieve value from comp_idx: {}, return seg_idx: {}, row: {}, val: {}",comp_idx,seg_idx, row, res); 
+
+			res
+		} else {
+			// Case 2: SED/DFA mappers (Component > 0)
+			// Both SedAdvice and DfaAdvice provide vec_advices
+
+			let vec_comp_adv = if let Some(sed_adv) = inner_adv.as_any()
+				.downcast_ref::<SedAdvice<F>>() {
+				&sed_adv.vec_advices
+			} else if let Some(dfa_adv) = inner_adv.as_any()
+				.downcast_ref::<DfaAdvice<F>>() {
+				&dfa_adv.vec_advices
+			} else {
+				panic!("unknown component advice type")
+			};
+			let gadgets = comp.create_gadgets();
+			for (i, gadget_rc) in gadgets.iter().enumerate() {
+				let g_cfg = gadget_rc.borrow().get_container_config();
+				if self.find_info_recursive(&g_cfg, path).is_some() {
+					let container = vec_comp_adv[i].get_container();
+					let g_name = container.borrow().get_name();
+					let words: Vec<&str> = path.split_whitespace().collect();
+					let pos = words.iter().position(|&w| w == g_name)
+						.expect("gadget name not found in path");
+					let rel_path = words[pos..].join(" ");
+
+					let col_cont = container.borrow()
+						.search_container(&rel_path)
+						.expect("search_container err");
+					let res = col_cont.borrow().to_vec();
+					assert!(res.len() > row);
+					return res[row].clone();
+				}
+			}
+			panic!("path {} not found in component {}", path, comp_idx);
+		}
+	}
+
+	/// Used for debugging. Slow. 
+	/// most of parameters are the same as build_statement(), because
+	/// this function is used in build_statement() to debug.
+	pub fn self_check(&self, 
+		word: &Vec<F>, 
+		_prev_stmt: &Option<StatementInst<F,LK>>, 
+		lkup: Rc<RefCell<LK>>, 
+		ea: &StatementExtraInfo<F>, 
+		r_advice: Rc<dyn NdAdvice>, 
+		lkup_share_size: usize, 
+		_b_dummy: bool, 
+		num_extra_sample_points: usize, //extra index to sample for testing
+		inp_oup_data: &Vec<F>, //the concat of inp/oup/data
+		subtbl_id: &Vec<F>, //the subtbl_id of StatementInstance.
+	) {
+		//1. enumerate all col paths of Vec<(comp_id, col_path)
+		let (_, cfg, _ , _, _) = 
+			self.gen_statement_structure(lkup_share_size);
+		let paths = self.enumerate_col_paths();
+
+		//2. for each <comp_id, col_path>
+		for (comp_idx, path) in paths {
+			//2.1 get its information such as start and length
+			println!("DEBUG USE 7100: word_len: {}", word.len());
+			println!("DEBUG USE 7101: self_check: comp_idx: {}, path: {}",
+				comp_idx, path);
+			let info = self.get_col_info(
+				comp_idx, &path, lkup_share_size
+			);
+			if info.is_none() {
+				panic!("Cannot find col info for comp: {}, col: {}", 
+					comp_idx, path);
+			}
+			let (seg_id, global_off, len) = info.unwrap();
+			println!("DEBUG USE 7102: seg_id: {}, global_off: {}, len: {}",
+				seg_id, global_off, len);
+
+			//2.2. construct list of sample points
+			let mut sample_points = vec![0];
+			assert!(len>=1);
+			sample_points.push(len - 1);
+			for i in 1..num_extra_sample_points + 1 {
+				sample_points.push(i*(len-1)/(num_extra_sample_points+1));
+			}
+			sample_points.sort();
+			sample_points.dedup();
+
+			//2.3 for each sample index in the list constructed above:
+			for rel_idx in sample_points {
+				//2.3.2 its index is start_idx + itself
+				let abs_idx = global_off + rel_idx;
+
+				//2.3.2 call find_idx(index) twice
+				let b_data_col = !path.contains("_si");
+				let offset= if b_data_col {abs_idx - cfg.idx_inp}
+					else {abs_idx-cfg.idx_subtable_id};
+				println!("-- DEBUG USE 7103: test abs_idx: {} => offset: {}", abs_idx, offset);
+				let info_data = self.find_idx(offset, lkup_share_size, true);
+				let info_si = self.find_idx(offset, lkup_share_size, false);
+				
+				let (cid1, path_data) = info_data
+					.expect(&format!(
+						"info_data none for comp: {}, col_path: {} ", 
+						comp_idx, path));
+				let (cid2, path_si) = info_si
+					.expect(&format!(
+						"info_sid none for comp: {}, col_path: {} ", 
+						comp_idx, path));
+				assert!(cid1 == comp_idx && cid2 == comp_idx,
+					"cid mismatch: {} vs cid1: {} vs cid2: {}, path: {}", 
+					comp_idx, cid1, cid2, path);
+
+				//2.3.3 now retrieve the (si_idx, value) by calling
+				//get_value() using the sample index and the col path
+				let val = self.get_value(
+					word, lkup.clone(), ea, &r_advice, lkup_share_size,
+					comp_idx, &path_data, rel_idx
+				);
+				let sid = self.get_value(
+					word, lkup.clone(), ea, &r_advice, lkup_share_size,
+					comp_idx, &path_si, rel_idx
+				);
+
+				//2.3.4 retrieve the comparion pair (si_idx2, value2)
+				//from inp_oup_data, subtbl_id
+				println!("DEBUG USE 7104.5: offset: {}, idx_inp: {}, idx_oup: {}, idx_data: {}, idx_si: {}", offset, cfg.idx_inp, cfg.idx_oup, cfg.idx_data, cfg.idx_subtable_id);
+				let sid2 = subtbl_id[offset];
+				let val2 = inp_oup_data[offset];
+				assert!(sid2==sid && val2==val, 
+					"ERROR in self check: comp_id: {}, path: {}, \
+					rel_idx: {}, (sid: {}, val: {}), \
+					(sid2: {}, val2: {}), seg_id: {}", 
+					comp_idx, path, rel_idx, sid, val, sid2, val2, seg_id);
+			}
+		}
+	}
 
 }
 
@@ -317,12 +741,14 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 		(cfg.total_size(), cfg, vec_maps, opt_joins, cyclepair_map)
 	}
 
+
 	/// given word input, previous witness, try to construct
 	/// the full problem statement (including non-deterministic witness). 
 	/// NOTE that the real i/o has only two elements in z_i array.
 	fn build_statement(&self, word: &Vec<F>, _prev_stmt: &Option<StatementInst<F,LK>>, lkup: Rc<RefCell<LK>>, ea: &StatementExtraInfo<F>, r_advice: Rc<dyn NdAdvice>, lkup_share_size: usize, b_dummy: bool) 
 	-> Result<StatementInst<F,LK>, Error>{
 		//1. expand word_seg to max capacity.
+		let b_debug = true;
 		let mut rem_word = vec![F::zero(); self.max_word_len() - word.len()];
 		let mut word_seg = word.clone();
 		word_seg.append(&mut rem_word); //always guarnatee max len
@@ -352,6 +778,11 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 					&word_seg, actual_word_len, &lkup,
 					ea, &advices.vec_adv[i], &cfg, &stmt_map
 				)?;
+			//REMOVE LATER -----------
+			if i==0{
+				println!("DEBUG USE 7500: data[0]: {}, data[1]: {}, si_data[0]: {}, si_data[1]: {}", vecs[2][0], vecs[2][1], vecs[5][0], vecs[5][1]);
+			}
+			//REMOVE LATER ----------- LATER
 			#[cfg(test)]{
 				let sizes = comp.borrow().get_sizes();
 				for i in 0..3{
@@ -375,6 +806,7 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 		let oup = vec_oup.concat();
 		assert!(inp.len()==oup.len());
 		let data = vec_data.concat();
+		println!("DEBUG USE 7500: inp.len: {}, oup.len: {}, data.len: {}", inp.len(), oup.len(), data.len());
 		let failed_sigs = vec_failed_sigs.concat();
 		let failed_sigs = if b_dummy {vec![F::zero(); failed_sigs.len()]}
 			else {failed_sigs};
@@ -388,7 +820,6 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 		let subtbl_data = vec_st_data.concat();
 		let subtbl_id = vec![subtbl_inp, subtbl_oup, subtbl_data]
 			.concat();
-
 		#[cfg(test)]{
 			assert!(inp.len()==cfg.input_size);
 			assert!(oup.len()==cfg.output_size);
@@ -463,6 +894,27 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 
 			_lk: PhantomData,
 		};
+
+		if b_debug{
+			let inp_oup_data = [
+				stmt.inp_buf.clone(),
+				stmt.oup_buf.clone(),
+				stmt.data.clone(),
+			].concat();
+
+			self.self_check(
+				word,
+				_prev_stmt,
+				lkup.clone(),
+				ea,
+				r_advice.clone(),
+				lkup_share_size,
+				b_dummy,
+				5, // num_extra_sample_points
+				&inp_oup_data,
+				&stmt.subtable_id
+			);
+		}
 
 		#[cfg(test)]{
 			let stmt_vec = stmt.to_vec();

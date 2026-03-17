@@ -367,6 +367,8 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 		// no need to handle for legacy code.
 	}
 
+	fn get_name(&self)->String{format!("CpMapper")}
+
 	fn get_capacity(&self)->Rc<dyn Capacity>{
 		Rc::new( Clone::clone(&self.capacity) )
 	}

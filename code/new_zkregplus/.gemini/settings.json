@@ -9,6 +9,10 @@
   "experimental": {
     "toolOutputMasking": {
       "enabled": true
+    },
+    "enableAgents": true,
+    "codebaseInvestigatorSettings": {
+      "model": "gemini-3-flash-preview"
     }
   },
   "tools": {
@@ -19,5 +23,19 @@
   "model": {
     "name": "gemini-3-flash-preview",
     "compressionThreshold": 0.5
+  },
+  "agents": {
+    "overrides": {
+      "generalist_agent": {
+        "modelConfig": {
+          "model": "gemini-3-flash-preview"
+        }
+      },
+      "codebase_investigator": {
+        "modelConfig": {
+          "model": "gemini-3-flash-preview"
+        }
+      }
+    }
   }
 }

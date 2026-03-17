@@ -368,6 +368,8 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 		}
 	}
 
+	fn get_name(&self)->String {format!("DfaMapper")}
+
 	fn get_capacity(&self)->Rc<dyn Capacity>{
 		Rc::new( Clone::clone(&self.capacity) )
 	}

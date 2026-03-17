@@ -367,9 +367,9 @@ impl <F: PrimeField + ColEle> DfaAdvAdvice<F>{
 		let v_raw_subsig = inp_subsigs.iter().map(|&ssid| 
 			extract_sigid(ssid).1
 		).collect::<Vec<F>>();
+		res.borrow_mut().add_col(Col::<F>::new(v_sig, "v_sig",IDX_DATA)); 
 		res.borrow_mut().add_col(Col::<F>::new(inp_subsigs.to_vec(),
 			"v_subsig",IDX_DATA)); 
-		res.borrow_mut().add_col(Col::<F>::new(v_sig, "v_sig",IDX_DATA)); 
 		res.borrow_mut().add_col(Col::<F>::new(v_raw_subsig, "v_raw_subsig",
 			IDX_DATA)); 
 		res.borrow_mut().add_col(Col::<F>::new(v_dfa_id.to_vec(), "v_dfa_id",
