@@ -27,7 +27,9 @@ use std::{
 use crate::gadgets::{
 	commons::{gen_m_table},
 	traits::{
-		IDX_INP, IDX_OUP, IDX_DATA, IDX_SI_INP, IDX_SI_OUP, IDX_SI_DATA,
+		IDX_WORD, IDX_INP, IDX_OUP, IDX_DATA, 
+		IDX_SI_INP, IDX_SI_OUP, IDX_SI_DATA,
+		IDX_FAILED_SIGS, IDX_DISCHARGED_SIGS,
 	},
 };
 use crate::circs::{
@@ -271,7 +273,7 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>
 				for gadget_rc in comp.create_gadgets() {
 					let g_cfg = gadget_rc.borrow().get_container_config();
 					if let Some(path) = self.search_by_dest(
-						&g_cfg, seg_id, offset_in_stmt
+						&g_cfg, seg_id, offset_in_stmt - current_comp_base
 					) {
 						return Some((i, path));
 					}
@@ -321,6 +323,14 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>
 
 		// 1. Recreate structure to get segment sizes and bases
 		let (_, cfg, _, _, _) = self.gen_statement_structure(lkup_share_size);
+
+		// 2. Calculate the accumulated offset for this component
+		let mut my_offset = vec![0, 0, 0, 0, 0]; // [inp, oup, data, failed, discharged]
+		for i in 0..component_id {
+			let sizes = self.vec_components[i].borrow().get_sizes();
+			for j in 0..5 { my_offset[j] += sizes[j]; }
+		}
+
 		let comp = self.vec_components[component_id].borrow();
 
 		// Case 1: cp_mapper (component 0)
@@ -338,13 +348,15 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>
 				.borrow().get_sizes()[size_idx];
 
 			let start = match seg_id {
-				IDX_INP => cfg.idx_inp,
-				IDX_OUP => cfg.idx_oup,
-				IDX_DATA => cfg.idx_data,
-				IDX_SI_INP => cfg.idx_subtable_id,
-				IDX_SI_OUP => cfg.idx_subtable_id + cfg.input_size,
+				IDX_INP => cfg.idx_inp + my_offset[0],
+				IDX_OUP => cfg.idx_oup + my_offset[1],
+				IDX_DATA => cfg.idx_data + my_offset[2],
+				IDX_SI_INP => cfg.idx_subtable_id + my_offset[0],
+				IDX_SI_OUP => cfg.idx_subtable_id + cfg.input_size 
+					+ my_offset[1],
 				IDX_SI_DATA => cfg.idx_subtable_id + cfg.input_size + 
-					cfg.output_size,
+					cfg.output_size + my_offset[2],
+				IDX_WORD  => cfg.idx_word_subseg,
 				_ => panic!("can't handle seg_id: {}", seg_id),
 			};
 			return Some((seg_id, start, len));
@@ -356,7 +368,21 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>
 			if let Some((seg_id, r_start, len)) = self.find_info_recursive(
 				&g_cfg, path
 			) {
-				return Some((seg_id, r_start, len));
+				let start = match seg_id {
+					IDX_INP => cfg.idx_inp + my_offset[0] + r_start,
+					IDX_OUP => cfg.idx_oup + my_offset[1] + r_start,
+					IDX_DATA => cfg.idx_data + my_offset[2] + r_start,
+					IDX_SI_INP => cfg.idx_subtable_id + my_offset[0] + r_start,
+					IDX_SI_OUP => cfg.idx_subtable_id + cfg.input_size + my_offset[1] + r_start,
+					IDX_SI_DATA => cfg.idx_subtable_id + cfg.input_size + 
+						cfg.output_size + my_offset[2] + r_start,
+					IDX_FAILED_SIGS => cfg.idx_failed_sigs + my_offset[3] + r_start,
+					IDX_DISCHARGED_SIGS => cfg.idx_discharged_sigs + my_offset[4] + r_start,
+					IDX_WORD => cfg.idx_word_subseg + r_start, //will be skipped
+						//in self_check()
+					_ => panic!("can't handle seg_id: {}", seg_id),
+				};
+				return Some((seg_id, start, len));
 			}
 		}
 		None
@@ -544,6 +570,10 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>
 			let (seg_id, global_off, len) = info.unwrap();
 			println!("DEBUG USE 7102: seg_id: {}, global_off: {}, len: {}",
 				seg_id, global_off, len);
+			if seg_id == 0{
+				println!("DEBUG USE 7102.5: SKIP word seg: seg_id: {}, global_off: {}, len: {}", seg_id, global_off, len);
+				continue;
+			}
 
 			//2.2. construct list of sample points
 			let mut sample_points = vec![0];
@@ -564,7 +594,9 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>
 				println!("DEBUG USE 7103: test sample pt: {}, seg_len: {}, global_offset: {} => abs_idx: {}", rel_idx, len, global_off, abs_idx);
 
 				//2.3.2 call find_idx(index) twice
-				let b_data_col = !path.contains("_si");
+				let b_data_col = !path.contains("si_") && 
+					!path.contains("sid_");
+				println!("DEBUG USE 7777: abs_idx: {}, cfg.idx_subtbl_id: {}, b_data_col: {}", abs_idx, cfg.idx_subtable_id, b_data_col);
 				let offset= if b_data_col {
 					//NOTE that abs_pos in word, has an additional component
 					// of word_seg, but inp_oup_data does not have word
@@ -582,6 +614,7 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>
 					.expect(&format!(
 						"info_data none for comp: {}, col_path: {} ", 
 						comp_idx, path));
+				println!("DEBUG USE 6999: cid1: {}, path_data: {}", cid1, path_data);
 				let (cid2, path_si) = info_si
 					.expect(&format!(
 						"info_sid none for comp: {}, col_path: {} ", 

@@ -26399,8 +26399,16 @@ Goal 1. Debug 1. cp_data
 		is greater than the idx_data to minus the word length
 	[d] fix the find_idx corresondingly
 
-Goal 2. Debug 2. cp_si_data
-	[a] 
+Goal 2. Debug 2. cp_si_data -> DONE
+Goal 3. Debug 3. failed one sample point -> DONE
+Goal 4. Debug 4. cp_inp comp_idx:1 seg_id global offset wrong
+	[a] use gemini to analyze. before anlaysis 411k -> 568k
+	-> 591k
+Goal 5. Debug 5. can't handle word_extract_stmt word
+	-> this should not be handled
+Goal 6. Deug 6. crash on subtraction
+	-> tried to fix stats -> 732k
+	-> good analysis actually -> 18k
 
 =====================================
 --- TODO ---
