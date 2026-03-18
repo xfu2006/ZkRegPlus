@@ -26347,7 +26347,7 @@ Goal 7. enumerate col info
 
 
 Tuesday 03/17/2026
-LOC (circs) 3335 -> 
+LOC (circs) 3335 -> 3515 (+180) 
 Goal 1. implement the get_value() function
 	[a] layout the get_value() framework.
 	[b] token cost: 556k 
@@ -26363,7 +26363,8 @@ Goal 2. implement the self_check()
 	[f] call self_check 9:16am->9:29am (slow butnot sure why)
 		-> 1.5M (+300k) but only reported 100k, why?
 	[g] 3474 lines now: 9:45am
-Goal 3. debug
+Goal 3. debug (9:45am-12:37pm) - debug vs coding: 3:1  (code generated
+	has many bugs!)
 	[a] get_container_config call.
 		-> one line syntax fix: 9:48am->9:52am
 			2.14M
@@ -26377,9 +26378,29 @@ Goal 4. need to clarify the semantics, what is the idx passed
 	[c] new issue with cp_oup
 	[d] find_idx none for cp_oup
 	-> it looks like there is a shift of 1 in computing index.
+Total Token: 2.15M 
 
+Wed 03/18/2026
+LOC (circs): 3515
+Goal 1. Debug 1. cp_data
+	[a] position 125, word_len 1, inp/oup are both 50.
+		idx_inp: 23, global_off should be 123
+		-> but in DEBUG USE 7500 it's inp.len: 50, oup.len: 50,
+			data.len: 3210
+		-> so offset should be 100, global pos should be  
+		-> why is idx_inp = 23, idx_oup = 73, idx_data = 124?
+		-> so the config is wrong, gen_statement_structure is
+			wrong
+		-> FOUND IT: idx_data is beginning has an extra word_size
+	[b] so inp/oup/word/data should be concatenated as 
+		inp_oup_word_data. But it does not corresonds to the 
+		subtbl_id. so better to move the word subseg
+	[c] the correct way is to make adjustment for any index which
+		is greater than the idx_data to minus the word length
+	[d] fix the find_idx corresondingly
 
-
+Goal 2. Debug 2. cp_si_data
+	[a] 
 
 =====================================
 --- TODO ---

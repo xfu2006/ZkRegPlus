@@ -188,12 +188,12 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>
 		subtbl_idx: usize,  //this is also the offset in
 			//StmtInst::inp || oup || data if b_report_data is true
 			//NOTE that it is NOT the global offset in StatementInst.to_vec()
+			//NOTE this index does NOT account for the word_subseg elements.
 		lkup_share_size: usize, 
 		b_report_data: bool, //true for report col in inp/oup/data
 			//false for report si_inp/si_oup/si_data
 	) -> Option<(usize, String)> {
 		// 1. Recreate the statement structure to get segment sizes
-		println!("DEBUG USE 7301: find_idx: {}, b_report_data: {}", subtbl_idx, b_report_data);
 		let (_, cfg, _, _, _) = self.gen_statement_structure(lkup_share_size);
 
 		// 2. Estimate the segemnet (one of inp/oup/data/si_inp/si_oup/si_data)
@@ -210,7 +210,14 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>
 		let seg_id = if b_report_data {seg_id} else {seg_id + 3};
 		let offset_in_stmt = if b_report_data { subtbl_idx +cfg.idx_inp }
 		else { subtbl_idx + cfg.idx_subtable_id };
-		println!("DEBUG USE 7302: seg_id: {}, offset_in_stmt_seg: {}", seg_id, offset_in_stmt);
+		println!("*** DEBUG USE 7104.1: b_report_data: {}, subtbl_idx: {}, cfg.idx_oup: {}, cfg.output_size: {}", b_report_data, subtbl_idx, cfg.idx_oup, cfg.output_size);
+		let offset_in_stmt = if b_report_data && 
+			subtbl_idx>=cfg.input_size + cfg.output_size{
+			println!(" *** xxx add {}", cfg.word_subseg_size);
+			offset_in_stmt + cfg.word_subseg_size //need to accomodate
+				// the to wordsubseg which is included in between the
+				// oup and data section in StatementInstance.
+		}else{ offset_in_stmt };
 
 		// 3. Find which component owns this offset. 
 		//note: seg_id starts from 1 (INP)
@@ -225,7 +232,13 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>
 				_ => panic!("cannot handle seg_id: {}", seg_id)
 			}
 		} else {
-				cfg.idx_subtable_id //because no distinction of 3 
+			match seg_id{
+				IDX_SI_INP=> cfg.idx_subtable_id,
+				IDX_SI_OUP=> cfg.idx_subtable_id + cfg.input_size,
+				IDX_SI_DATA=> cfg.idx_subtable_id + cfg.input_size
+					+ cfg.output_size,
+				_ => panic!("cannot handle seg_id: {}", seg_id)
+			}
 		}; //when the seg is fixed
 			//it stands for the base for the corresponding inp/si
 			//for the component (two cases one for inp/oup/data
@@ -236,11 +249,8 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>
 		for (i, comp_rc) in self.vec_components.iter().enumerate() {
 			let comp = comp_rc.borrow();
 			let comp_sizes = comp.get_sizes();
-			let comp_seg_size = if seg_id<=3 {comp_sizes[size_idx]}
-				else{//sum of si_inp, si_oup, si_oup
-					comp_sizes[0..3].iter().map(|&x| x).sum()
-				};
-			println!("-- DEBUG USE 7303: comp: {}, comp_seg_size: {}, current_comp_base: {}, offset_in_stmt: {}", i, comp_seg_size, current_comp_base, offset_in_stmt);
+			let comp_seg_size = comp_sizes[size_idx];
+			println!(" *** DEBUG USE 7304: subtbl_idx: {}, offset_in_stmt: {}, current_comp_base: {}, comp_seg_size: {}, seg_id: {}", subtbl_idx, offset_in_stmt, current_comp_base, comp_seg_size, seg_id); 
 			if offset_in_stmt >= current_comp_base && 
 			   offset_in_stmt < current_comp_base + comp_seg_size {
 				
@@ -254,6 +264,7 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>
 						IDX_SI_DATA => "cp_si_data",
 						_ => "unknown",
 					};
+					println!("DEBUG USE *** 7305 -- return i: {}, name: {}", i, name);
 					return Some((i, name.to_string()));
 				}
 
@@ -323,7 +334,8 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>
 				"cp_si_data" => (IDX_SI_DATA, 2),
 				_ => return None,
 			};
-			let len = self.vec_components[0].borrow().get_sizes()[size_idx];
+			let len = self.vec_components[component_id]
+				.borrow().get_sizes()[size_idx];
 
 			let start = match seg_id {
 				IDX_INP => cfg.idx_inp,
@@ -458,7 +470,6 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>
 				_ => panic!("unknown cp path: {}", path),
 			};
 			let res = vecs[seg_idx][row].clone();
-			println!("-- DEBUG USE 7104.1 retrieve value from comp_idx: {}, return seg_idx: {}, row: {}, val: {}",comp_idx,seg_idx, row, res); 
 
 			res
 		} else {
@@ -509,7 +520,7 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>
 		lkup_share_size: usize, 
 		_b_dummy: bool, 
 		num_extra_sample_points: usize, //extra index to sample for testing
-		inp_oup_data: &Vec<F>, //the concat of inp/oup/data
+		inp_oup_wd_data: &Vec<F>, //the concat of inp/oup/wd_seg/data
 		subtbl_id: &Vec<F>, //the subtbl_id of StatementInstance.
 	) {
 		//1. enumerate all col paths of Vec<(comp_id, col_path)
@@ -520,7 +531,7 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>
 		//2. for each <comp_id, col_path>
 		for (comp_idx, path) in paths {
 			//2.1 get its information such as start and length
-			println!("DEBUG USE 7100: word_len: {}", word.len());
+			println!("\n** DEBUG USE 7100: word_len: {}", word.len());
 			println!("DEBUG USE 7101: self_check: comp_idx: {}, path: {}",
 				comp_idx, path);
 			let info = self.get_col_info(
@@ -539,7 +550,9 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>
 			assert!(len>=1);
 			sample_points.push(len - 1);
 			for i in 1..num_extra_sample_points + 1 {
-				sample_points.push(i*(len-1)/(num_extra_sample_points+1));
+				let new_pt = i*(len-1)/(num_extra_sample_points+1);
+				assert!(new_pt + 1 <= len);
+				sample_points.push(new_pt);
 			}
 			sample_points.sort();
 			sample_points.dedup();
@@ -548,12 +561,20 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>
 			for rel_idx in sample_points {
 				//2.3.2 its index is start_idx + itself
 				let abs_idx = global_off + rel_idx;
+				println!("DEBUG USE 7103: test sample pt: {}, seg_len: {}, global_offset: {} => abs_idx: {}", rel_idx, len, global_off, abs_idx);
 
 				//2.3.2 call find_idx(index) twice
 				let b_data_col = !path.contains("_si");
-				let offset= if b_data_col {abs_idx - cfg.idx_inp}
-					else {abs_idx-cfg.idx_subtable_id};
-				println!("-- DEBUG USE 7103: test abs_idx: {} => offset: {}", abs_idx, offset);
+				let offset= if b_data_col {
+					//NOTE that abs_pos in word, has an additional component
+					// of word_seg, but inp_oup_data does not have word
+					// it should be adjusted.
+					if abs_idx>=cfg.idx_data{
+						abs_idx - cfg.idx_inp - cfg.word_subseg_size
+					}else{//if it's in inp/oup it's fine
+						abs_idx - cfg.idx_inp
+					}
+				} else {abs_idx-cfg.idx_subtable_id};
 				let info_data = self.find_idx(offset, lkup_share_size, true);
 				let info_si = self.find_idx(offset, lkup_share_size, false);
 				
@@ -582,9 +603,8 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>
 
 				//2.3.4 retrieve the comparion pair (si_idx2, value2)
 				//from inp_oup_data, subtbl_id
-				println!("DEBUG USE 7104.5: offset: {}, idx_inp: {}, idx_oup: {}, idx_data: {}, idx_si: {}", offset, cfg.idx_inp, cfg.idx_oup, cfg.idx_data, cfg.idx_subtable_id);
 				let sid2 = subtbl_id[offset];
-				let val2 = inp_oup_data[offset];
+				let val2 = inp_oup_wd_data[offset];
 				assert!(sid2==sid && val2==val, 
 					"ERROR in self check: comp_id: {}, path: {}, \
 					rel_idx: {}, (sid: {}, val: {}), \
@@ -665,6 +685,7 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 		let (input_size, output_size, data_size, failed_sigs_size,
 			discharged_sigs_size) = (sum_sizes[0], sum_sizes[1], 
 				sum_sizes[2], sum_sizes[3], sum_sizes[4]);
+		assert!(input_size == output_size);
 		let word_subseg_size = self.max_word_len(); 
 		let b_cyclepair = false;
 		let mut cfg = StatementConfig::new(
@@ -901,6 +922,7 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 				stmt.oup_buf.clone(),
 				stmt.data.clone(),
 			].concat();
+			assert!(inp_oup_data.len()==stmt.subtable_id.len());
 
 			self.self_check(
 				word,

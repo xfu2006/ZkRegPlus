@@ -11,14 +11,30 @@
 
 - **Code Insertion:** Whenever inserting or modifying code, ensure the line width does not exceed 80 characters. Maintain consistency with the project's existing coding style and formatting.
 
-## Task Management & Cost Accounting
-- **Task Identification:** When asked to "complete Task" in a file, focus solely on the specified tasks, which are typically accompanied by an ID (e.g., Task 1, Task 3.2.5).
-- **Custom Commands:**
-    - `/mytask <ID>: <description>`: Starts a specific task. You MUST include the internal slash command `/stats model` as plain text in your response immediately to record the current cumulative token counts as a baseline.
-    - `/done <ID>`: Marks the completion of a task. You MUST include the internal slash command `/stats model` again as plain text in your response to calculate the final difference.
-- **Critical Requirement for `/stats model`**: This is an **internal CLI slash command**, not a system executable. You MUST NOT execute it using the `run_shell_command` tool. Simply type the command (e.g., `/stats model`) directly into your text response.
-- **Task Completion & Cancellation:** If the "Esc" option is chosen from a menu, or `/done <ID>` is issued, regard it as task completion.
-- **Cost Estimation Logic:**
-    - **Accuracy:** Calculate incremental usage as `Current Cumulative - Baseline` for both input and output tokens, ensuring alignment with the `/stats` command.
-    - **Granularity:** Breakdown usage and costs by model (e.g., `gemini-3-flash-preview`).
-    - **Reporting:** Upon completion, output a summary showing incremental tokens used and the estimated cost for the specific task ID. Always include a `/compress` internal command immediately after reporting the token usage.
+# Task Tracking & Cost Estimation Rules
+When I run `/mytask <id>`, you must remember the current token counts.
+When I run `/done <id>`, you must perform the following calculation:
+- **Input Cost:** (Current Input - Baseline Input) * Price per 1k
+- **Output Cost:** (Current Output - Baseline Output) * Price per 1k
+
+### Pricing Reference (USD per 1M tokens)
+| Model              | Input ($) | Output ($) |
+|--------------------|-----------|------------|
+| Gemini 1.5 Pro     | 1.25      | 5.00       |
+| Gemini 1.5 Flash   | 0.075     | 0.30       |
+| Gemini 2.0 Flash   | 0.10      | 0.40       |
+| Gemini 3.1 Pro	 | 2.00		 | 12.00      |
+| Gemini 3.1 Flash	 |0.50		 | 3.00       |
+| Gemini 3.0 Pro	 |1.25		 | 10.00      |
+| Gemini 3.0 Flash	 |0.30		 | 2.50       |
+| Gemini 2.5 Pro	 |1.00		 | 8.00       |
+| Gemini 2.5 Flash	 |0.15		 | 0.60		  |
+| Gemini 2.5 Flash-Lite	| 0.10	 | 0.40       |
+| Gemini 2.0 Flash	| 0.10		 | 0.40       |
+| Gemini 2.0 Flash-Lite	| 0.075	 | 0.30       |
+
+### Output Format for /done:
+**Task:** <id>
+**Summary:** <brief_description>
+**Usage Delta:** <input_tokens> input / <output_tokens> output
+**Estimated Cost:** $<total_cost>

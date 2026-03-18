@@ -10,10 +10,7 @@
     "toolOutputMasking": {
       "enabled": true
     },
-    "enableAgents": true,
-    "codebaseInvestigatorSettings": {
-      "model": "gemini-3-flash-preview"
-    }
+    "enableAgents": true
   },
   "tools": {
     "shell": {
