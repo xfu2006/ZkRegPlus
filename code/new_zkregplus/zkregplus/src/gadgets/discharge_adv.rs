@@ -1621,9 +1621,9 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 			names[1]), IDX_SI_DATA)
 		); //cannot be const 
 
-		//3. src_pat,  srg_rg_end, ID_ENCODED_SUBSIG (col 2,3,7) 
-		let ids = [2,3,7];
-		let cats = [ID_ENCODED_PAT, ID_ENCODED_RG_END,ID_ENCODED_SUBSIG];
+		//3. src_pat,  srg_rg_end (col 2,3) 
+		let ids = [2,3];
+		let cats = [ID_ENCODED_PAT, ID_ENCODED_RG_END];
 		for x in 0..ids.len(){
 			let sids = se.iter().map(|s| SubsigStepStore::gen_step_tbl_id(
 				*s,cats[x])).collect::<Vec<_>>();
@@ -1654,6 +1654,16 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 		//3.6 loc_to_del (col 6) - just in RANGE2
 		res.borrow_mut().add_col(Col::new_const(vec![frg; n], 
 			&format!("sid_{}",names[6]), IDX_SI_DATA)); //dst_loc
+
+		//3.7 subsig (col 7). NOTE THAT it is very important
+		//to KEEP THE SAME ORDER of sid_columns added as the same
+		//order of the corresponding data columns are ADDED.
+		//Otherwise we get mismatched (sid, val) in sigma_ir1cs::223
+		//for building lookups.
+		let sids = se.iter().map(|s| SubsigStepStore::gen_step_tbl_id(
+				*s,ID_ENCODED_SUBSIG)).collect::<Vec<_>>();
+		res.borrow_mut().add_col(Col::new(sids,
+				&format!("sid_{}",names[7]), IDX_SI_DATA)); 
 
 		//3.7 add real data cols
 		v2d.into_iter().enumerate().for_each(|(i,vec)|{

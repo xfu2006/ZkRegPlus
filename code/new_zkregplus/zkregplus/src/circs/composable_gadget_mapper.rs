@@ -623,6 +623,15 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>
 					"cid mismatch: {} vs cid1: {} vs cid2: {}, path: {}", 
 					comp_idx, cid1, cid2, path);
 
+				let org_name = path.split_whitespace().last().unwrap()
+					.split("_").last().unwrap();
+                let datacol_name = path_data.split_whitespace().last()
+					.unwrap().split("_").last().unwrap();
+                let sicol_name = path_si.split_whitespace().last()
+					.unwrap().split("_").last().unwrap();
+                assert!(sicol_name.contains(&datacol_name) && 
+					sicol_name.contains(&org_name), "ERROR: for path: {} we LOCATE that the data and sid columns MISMATCH! org_name: {}, datacol_name: {}, sicol_name: {}", path, org_name, datacol_name, sicol_name);
+
 				//2.3.3 now retrieve the (si_idx, value) by calling
 				//get_value() using the sample index and the col path
 				let val = self.get_value(
