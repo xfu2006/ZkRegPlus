@@ -26414,6 +26414,35 @@ Goal 7. Debug 7. cannot find sid for act_idx
 Goal 8. problem with fsm_acc nibbles
 	-> token: 1.27M seems to be solved
 
+Thursday 03/19/2026
+LOC (circs): 3573
+Goal 1. run data on server: 
+	[a] strangely the self_check did not discover anything
+		Cannot find entry for 
+	tbl_id[3165786]: (3432815461787366905397976573675496795293044517191733477392, 126978): 244386301
+		Cannot find entry for tbl_id[3196260]: (3432815461787366913564753379778019918414035095554170552336, 9758): 245861524
+	[b] 2nd run:
+		Cannot find entry for tbl_id[3196260]: (3432815461787366913564753379778019918414035095554170552336, 9758): 245861524
+		Cannot find entry for tbl_id[3181023]: (1879048194, 393015435228266493359674753425311006719): 242674926
+
+
+Goal 2. check tags 3181023 and 3196260
+	[a] add special prints for 9999 for these two table id and identify
+		the segment they are generated
+	[b] --- dump be low ---
+	DEBUG USE 9999: SPECIAL CHECK ==== for offset: 3165786
+	--- cid1: 2 path_data: discharge_adv_stmt_cs bwd_steps_queue prf_bwd src_min_loc, cid2: 2, path_si: discharge_adv_stmt_cs bwd_steps_queue prf_bwd sid_subsig
+	--- seg_id: 3, global_off: 3152621
+	--- FROM table: sid2: 3432815461787366905397976573675496795293044517191733477392, val2: 126978
+	--- FROM cols: sid: 3432815461787366905004961138447229999701914860110001209344, val:
+	DEBUG USE 9999: SPECIAL CHECK ==== for offset: 3181023
+	--- cid1: 2 path_data: discharge_adv_stmt_cs bwd_steps_queue prf_bwd prev_encoded, cid2: 2, path_si: discharge_adv_stmt_cs bwd_steps_queue prf_bwd sid_src_min_loc
+	--- seg_id: 3, global_off: 3167858
+	--- FROM table: sid2: 1879048194, val2: 393015435228266493359674753425311006719
+	--- FROM cols: sid: 1879048194, val:
+	LOG1:  DEBUG USE 9999: CompositeGadgetMapper: self_check 7247 ms
+	
+
 =====================================
 --- TODO ---
 	[b] inspect first several iterations and see how fwd prf and bwd
