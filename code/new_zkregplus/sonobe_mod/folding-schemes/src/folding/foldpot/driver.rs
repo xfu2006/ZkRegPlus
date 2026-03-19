@@ -1663,7 +1663,7 @@ where
         assert_eq!(C1::ScalarField::from(num_steps as u32), nova.i);
 		let m8 = get_mem_usage_mb();
 		log_perf(log_level, &format!(
-			"{} step 6: PROVE STEPS done for n_steps: {}. total_word_len: {}. RAM increased: {} MB. Total RAM: {} GB.", phase_name,  n_steps, total_wd_len, m8-m7, m8/1024) , &mut gt1);
+			"{} step 6: PROVE STEPS done for n_steps: {}. total_word_len: {}. RAM increased: {} MB. Total RAM: {} GB.", phase_name,  n_steps, total_wd_len, if m8>m7 {m8-m7} else {0}, m8/1024) , &mut gt1);
 
 		//4. generate the output
 		let _verifier_param = self.nova_param.1.clone();

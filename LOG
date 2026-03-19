@@ -26409,6 +26409,10 @@ Goal 5. Debug 5. can't handle word_extract_stmt word
 Goal 6. Deug 6. crash on subtraction
 	-> tried to fix stats -> 732k
 	-> good analysis actually -> 18k
+Goal 7. Debug 7. cannot find sid for act_idx
+	-> token: 524k
+Goal 8. problem with fsm_acc nibbles
+	-> token: 1.27M seems to be solved
 
 =====================================
 --- TODO ---
