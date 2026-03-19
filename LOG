@@ -26453,7 +26453,14 @@ Goal 2. check tags 3181023 and 3196260
 		different from sid_src_min_loc and sid_subsig
 	-> this causes mismatch.
 	-> but strangely they PASSED the check!
-	-> fix self-check.
+	-> fix self-check. > yes, now detects the problem!
+	[e] it did find the out of order sid column correctly.
+		112k -> 1.4m tokens
+	[f] regression testing.
+	[g] regression testing on server
+	[h] todo: wait for regression testing on srever
+
+
 	
 
 =====================================

@@ -650,7 +650,7 @@ impl<F: Field> ConstraintSystem<F> {
         //1. init data structures
 		//1.1 num times
 		let mut timer = Instant::now();
-		let b_debug = true;
+		let b_debug = false;
 		let t1 = Arc::new(Mutex::new(Instant::now()));
         let transformed_lc_map = 
 			Arc::new(Mutex::new(

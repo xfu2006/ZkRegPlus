@@ -2128,7 +2128,7 @@ pub fn gen_disjoint_union_prf_adv<F:PrimeField + ColEle>(
 	set3: &Vec<F>, //target result
 	name: &str,
 ) -> Result<(Vec<F>,Rc<RefCell<Container<F>>>), Error>{
-	let b_debug = true;
+	let b_debug = false;
 	let res = vec![&set1[..], &set2[..]].concat();
 	if b_debug{
 		assert!(

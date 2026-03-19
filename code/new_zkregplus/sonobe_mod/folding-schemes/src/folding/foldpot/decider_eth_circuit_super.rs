@@ -374,7 +374,7 @@ where C::BaseField: PrimeField,
 
 	pub fn from(val: &Phase1CircuitRetVal<F,C>, cs: &ConstraintSystemRef<F>)
 	->Self{
-		let b_debug = true;
+		let b_debug = false;
 		let res = Self{
 			ch: new_var(cs, val.ch),
 			rc: new_var(cs, val.rc),

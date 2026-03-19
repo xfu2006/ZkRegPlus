@@ -363,7 +363,7 @@ impl SubSigObj{
 	}
 
 	pub fn get_patterns_old(&self, vec_sub_sigs: &Vec<SubSigObj>) ->Vec<String>{
-		let b_debug = true;
+		let b_debug = false;
 		match self.subsig_type{
 			SubSigType::GeneralRegex => {
 				if b_debug{ validate_ra_regex(&self.value, "unknown"); }
