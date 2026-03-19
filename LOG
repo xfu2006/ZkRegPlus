@@ -26381,7 +26381,7 @@ Goal 4. need to clarify the semantics, what is the idx passed
 Total Token: 2.15M 
 
 Wed 03/18/2026
-LOC (circs): 3515
+LOC (circs): 3515 -> 3573 (+60)
 Goal 1. Debug 1. cp_data
 	[a] position 125, word_len 1, inp/oup are both 50.
 		idx_inp: 23, global_off should be 123

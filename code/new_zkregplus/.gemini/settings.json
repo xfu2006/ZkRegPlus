@@ -19,7 +19,7 @@
   },
   "model": {
     "name": "gemini-3-flash-preview",
-    "compressionThreshold": 0.5
+    "compressionThreshold": 0.2
   },
   "agents": {
     "overrides": {
