@@ -1745,6 +1745,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		capacity: &DischargeAdvCapacity, 
 		inp_step_queue: &StepQueue<F>, // the steps_queue from input
 		last_loc: F,
+		seg_id: usize,
 	) ->Result<Self, Error>{
 		let sname = if b_igc {"discharge_adv_stmt_igc"} else 
 			{"discharge_adv_stmt_cs"};
@@ -1765,7 +1766,8 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		//3. construct 2nd (backward) step-queue
 		let backward_step_queue = Self::gen_backward_steps_queue_combo(
 			b_igc,
-			&sq_fwd, &ct_fwd_sq, subsig_store_info, default_min_loc, capacity)?;
+			&sq_fwd, &ct_fwd_sq, subsig_store_info, default_min_loc, capacity,
+			seg_id)?;
 		stmt_container.borrow_mut().add_container(backward_step_queue);
 
 		Ok(Self{capacity: Clone::clone(capacity), fsm_id,
@@ -2225,7 +2227,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		subsig_store_info: &SubsigStepStore,
 		last_loc: F,
 	)->Result<(Rc<RefCell<Container<F>>>, StepQueue<F>, F), Error>{
-		let b_debug = false;
+		let b_debug = true;
 		let res = Container::<F>::new("fwd_steps_queue");
 		let mut t1 = GTimer::new();
 		let b_perf = true;
@@ -2334,19 +2336,22 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 			//for next rounds, used as default_min_loc if one step queue
 			//for backward pruning.
 		capacity: &DischargeAdvCapacity,
+		seg_id: usize,
 	)->Result<Rc<RefCell<Container<F>>>, Error>{
 		//0. Generate the logical data:
 		// from inp_step_queue generate the to_del, res, bwd_prf, 
 		// Add them to container
-		let res = Container::<F>::new("bwd_steps_queue");
-		let b_debug = false;
-		let mut t1 = GTimer::new();
+		let b_debug = true;
 		let b_perf = true;
+
+		let res = Container::<F>::new("bwd_steps_queue");
+		let mut t1 = GTimer::new();
 		let (sq_to_del, sq_res, bwd_prf) = input_step_queue
 			.gen_backward_prf(default_min_loc, subsig_store_info);
 
+
 		if b_debug{
-			println!("========== DEBUG USE 301: gen_bwd igc: {}, inp_step_queue (fwd_res): ", b_igc);
+			println!("========== DEBUG USE 301: seg_id: {}, gen_bwd igc: {}, inp_step_queue (fwd_res): ", seg_id, b_igc);
 			input_step_queue.dump();
 			println!("========== DEBUG USE 302: to_del: ");
 			sq_to_del.dump();
@@ -2356,10 +2361,9 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 			bwd_prf.dump();
 		}
 
-		println!("DEBUG USE 6901.7: sq_to_del to container");
-		let ct_sq_to_del= sq_to_del.to_container("sq_to_del",false,true,false,false,
+		let ct_sq_to_del= sq_to_del.to_container(
+			"sq_to_del",false,true,false,false,
 			&subsig_store_info).expect("ct_sq_to_del err");
-		println!("DEBUG USE 6901.7: sq_res to container");
 		let ct_sq_res2 = sq_res.to_container("sq_res2",
 			false,//inp
 			true, //b_step (but it's saved in DATA)
@@ -2882,7 +2886,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			capacity, b_igc);
 		let dummy_adv = DischargeAdvAdvice::new(b_igc, offset_fsm,
 			&pat_loc, &sigs, fsm_id, store_steps, 
-			Clone::clone(&capacity), &inp_steps_queue_obj, zero)
+			Clone::clone(&capacity), &inp_steps_queue_obj, zero, 0)
 			.expect("discharge_adv advice err");
 		let mut vec_cfg = prev_cfgs.clone();
 		vec_cfg.push(dummy_adv.stmt_container.borrow().get_cfg());
@@ -4450,7 +4454,8 @@ pub mod tests_discharge_adv_gadget{
 			let adv_disc= DischargeAdvAdvice::new(false, //case sensitive
 				1, //offset to fsm
 				&pat_loc, &input_subsigs,
-				fsm_id, steps_store, &cap_disc, &inp_steps_queue, last_loc)
+				fsm_id, steps_store, &cap_disc, &inp_steps_queue, last_loc,
+				i)
 					.expect("discharge_adv advice err");			let oup_queue = adv_disc.get_output_steps_queue();
 			let stmt_disc= adv_disc.stmt_container;
 			let cfg_disc= stmt_disc.borrow().get_cfg(); 

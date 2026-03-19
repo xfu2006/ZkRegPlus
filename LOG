@@ -26460,7 +26460,26 @@ Goal 2. check tags 3181023 and 3196260
 	[g] regression testing on server
 	[h] todo: wait for regression testing on srever
 
+Goal 3. planning for improving performance
+	[a] 1.49M token before
+	[b] ask gemini to analyze sed.rs for if sq_res is read correctly
+	[c] plan of debugging:
+		initial answer -> 3.35M
+	[d] follow up how SedInput gets the output of the previous word segment?
+		-> 3.54M
+	[e] ask suestions about inserting dump.-> 3.55M
+	[f] -> 4.1M for all code changes.
+	[g] -> 4.5M for fixing syntax errors
+	[h] regression testing
+		->field to usize err
+	[i] refine 6507.1 
+	[j] manual refine
+		tokens -> 4.5M now
+	[k] debug use messages are 202 and 303
+	[l] deploy to server: and stop iteration at maybe 10 and then observe.
 
+Goal 4. deploy to server and obsreve full_data4
+	[a] afer check out code put a loop limit on seg_id<10
 	
 
 =====================================

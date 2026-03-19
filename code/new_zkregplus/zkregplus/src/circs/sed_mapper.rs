@@ -55,7 +55,7 @@ use folding_schemes::{
 	Error,
 	folding::foldpot::{
 		sigma_ir1cs::{ Capacity,  SigmaGadget, StatementConfig, NdAdvice,WordInfo,LookupTableTwoCol,StatementExtraInfo,DischargeSigInfo},
-		//circuits_super::field_to_usize,
+		circuits_super::field_to_usize,
 		container_config::{ContainerConfig},
 	}
 };
@@ -434,6 +434,8 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 		)->Result<Self, Error>{
 		let mut t1 = Timer::new();
 		let b_perf = true;
+		let max_wlen = cs_capacity.wea_capacity().max_word_len;
+		let seg_id = (field_to_usize(&inp.inp_loc_cs) - 1) / max_wlen;
 
 		//1. build the word extraction gadget's advice
 		let wd_extract_advice = WordExtractAdvAdvice::<F>
@@ -488,7 +490,8 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
                 let last_loc_cs = locs_cs[locs_cs.len()-1];
                 let discharge_adv_advice_cs = DischargeAdvAdvice::<F>
                         ::new(false, 2, &pat_loc_cs, &subsigs_inp_cs, fsm_id_cs as u32, 
-                                subsig_step_store_cs, &da_cap_cs, &inp_steps_queue_obj_cs, last_loc_cs)?;
+                                subsig_step_store_cs, &da_cap_cs, &inp_steps_queue_obj_cs, last_loc_cs,
+				seg_id)?;
 		if b_perf{ log_perf(LOG1, "-- Sed advice step4: discharge_cs", &mut t1); }
 
 		//3.2 the igc version
@@ -502,7 +505,8 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
                 let last_loc_igc = locs_igc[locs_igc.len()-1];
                 let discharge_adv_advice_igc = DischargeAdvAdvice::<F>
                         ::new(true, 2, &pat_loc_igc, &subsigs_inp_igc, fsm_id_igc as u32, 
-                                subsig_step_store_igc, &da_cap_igc, &inp_steps_queue_obj_igc, last_loc_igc)?;
+                                subsig_step_store_igc, &da_cap_igc, &inp_steps_queue_obj_igc, last_loc_igc,
+				seg_id)?;
 		if b_perf{ log_perf(LOG1, "-- Sed advice step5: discharge_igc", &mut t1); }
 
 
@@ -802,6 +806,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 		//3. build the advice
 		let inp = SedInput{inp_state_cs, inp_loc_cs, inp_steps_queue_cs,
 			inp_state_igc, inp_loc_igc, inp_steps_queue_igc};
+
 
 		let advice = SedAdvice::<F>::new(
 			&word_seg, 

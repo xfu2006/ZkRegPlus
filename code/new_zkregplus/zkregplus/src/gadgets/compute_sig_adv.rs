@@ -2665,7 +2665,8 @@ pub mod tests_compute_sig_adv{
 				2, //dist to fsm_cs
 				&pat_loc_cs,
 				&input_subsigs_cs,
-				fsm_id_cs, steps_store_cs, &cap_disc, &inp_steps_queue_cs, last_loc_cs
+				fsm_id_cs, steps_store_cs, &cap_disc, &inp_steps_queue_cs, last_loc_cs,
+				i
 			).expect("discharge_adv advice err");
 			let oup_queue_cs = adv_disc_cs.get_output_steps_queue();
 			let stmt_disc_cs= adv_disc_cs.stmt_container;
@@ -2679,7 +2680,8 @@ pub mod tests_compute_sig_adv{
 				2, //dist to fsm_adv_igc
 				&pat_loc_igc,
 				&input_subsigs_igc,
-				fsm_id_igc, steps_store_igc, &cap_disc, &inp_steps_queue_igc, last_loc_igc
+				fsm_id_igc, steps_store_igc, &cap_disc, &inp_steps_queue_igc, last_loc_igc,
+				i
 			).expect("discharge_adv advice err");
 			let oup_queue_igc = adv_disc_igc.get_output_steps_queue();
 			let stmt_disc_igc= adv_disc_igc.stmt_container;
