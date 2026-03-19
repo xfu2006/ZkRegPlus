@@ -26480,11 +26480,12 @@ Goal 3. planning for improving performance
 
 Goal 4. deploy to server and obsreve full_data4
 	[a] afer check out code put a loop limit on seg_id<10
-	
+	[b] obsreve dump.txt for subsig 36556803
+
+Goal 5. analyze data
+	[a] token now: 4.5M
+	[b] start a new session -> 111k -> 124k -> 161k-> 225k
 
 =====================================
---- TODO ---
-	[b] inspect first several iterations and see how fwd prf and bwd
-		prf about 36556803
 -- TODO -- remove DEBUG USE 6901
 

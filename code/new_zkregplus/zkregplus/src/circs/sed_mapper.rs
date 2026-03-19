@@ -435,7 +435,7 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 		let mut t1 = Timer::new();
 		let b_perf = true;
 		let max_wlen = cs_capacity.wea_capacity().max_word_len;
-		let seg_id = (field_to_usize(&inp.inp_loc_cs) - 1) / max_wlen;
+		let seg_id = (field_to_usize(&inp.inp_loc_cs) - 1) / (max_wlen*62);
 
 		//1. build the word extraction gadget's advice
 		let wd_extract_advice = WordExtractAdvAdvice::<F>
