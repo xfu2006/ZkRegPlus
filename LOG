@@ -26415,7 +26415,7 @@ Goal 8. problem with fsm_acc nibbles
 	-> token: 1.27M seems to be solved
 
 Thursday 03/19/2026
-LOC (circs): 3573
+LOC (circs): 3573 -> 3587 (+15)
 Goal 1. run data on server: 
 	[a] strangely the self_check did not discover anything
 		Cannot find entry for 
@@ -26485,6 +26485,42 @@ Goal 4. deploy to server and obsreve full_data4
 Goal 5. analyze data
 	[a] token now: 4.5M
 	[b] start a new session -> 111k -> 124k -> 161k-> 225k
+	[c] now full4 can work, probably parameters can be adjusted
+		-> 38M witness
+		-> ana3.py -> 
+		[{'36551681': 601, '36556803': 167, '36552705': 122, '36553731': 15, '37218306': 13, '37218307': 13, '37218308': 13, '37218309': 13, '37218310': 13, '37218311': 13, '37214209': 12, '37897218': 9, '19382275': 5, '39676930': 5, '68609': 1, '71681': 1, '106504': 1, '111617': 1, '184321': 1, '201729': 1, '207873': 1, '357380': 1, '3101697': 1, '3102721': 1, '3110915': 1, '1]
+		So all looks verygood
+		-> max usage: 0.34
+		-> for 38M witness, it's about 1 minute of proving one step
+			of 2k words -> 64k bytes. -> 3.6M per hour.
+
+Friday 03/20/2026
+Goal 1. continue to analyze. It looks like if adjuxting params smaller
+	we do can observe greater values for subsig 36656803.
+	[a] observe the data 36556803 and see if sq_res is right.
+	[b] it looks like the 2nd round it is reading from previous 
+		advice or previous piece of trace.
+		in seg_id:
+		741460052246002196309166147654383566848, it's adding
+			22094405
+		-> search 22094405 in original text
+		-> couln'd locate 2nd time and 3rd time seg_id is 0
+			but with large numbers.
+	[c] observe the data: at the end see why the entry has 20k lines
+	[d] no 20k lines AT ALL!
+		the code is wrong in analysis
+		-> gemini produces entirely wrong sort by value code
+	[e] the NEW ONE is 36598786 it looks like gen_fwd is 
+		that its inp_step_queue is ALWAYS increasing.
+	[f] display subsig 36598786 
+
+Goal 2. Plan
+	[a] there are two problems here: 
+		(1) carry over of the advice
+		from the previuos cycle to next (36556803), which is not that serious
+		waste
+		(2) more seriously, it accumulates inp_step_q result
+			for 36598786 which does not backward prune.
 
 =====================================
 -- TODO -- remove DEBUG USE 6901
