@@ -562,8 +562,9 @@ pub trait GadgetMapper<F:PrimeField, LK: LookupTableTwoCol<F>>{
 
 	/// Generate the advice using its own capacity.
 	/// If return nil, it means it cannot handle it
+	/// seg_id is used for debugging purpose usually.
 	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
-		prev_adv: Option<Rc<dyn NdAdvice>>) 
+		prev_adv: Option<Rc<dyn NdAdvice>>, seg_id: usize) 
 		->Result<Rc<dyn NdAdvice>, Error>;
 }
 
@@ -4257,7 +4258,7 @@ pub mod tests_sigma_ir1cs{
 
 
 		fn gen_nd_advice(&self, word: &Vec<F>, _wi: &WordInfo,
-			_prv_adv: Option<Rc<dyn NdAdvice>>) 
+			_prv_adv: Option<Rc<dyn NdAdvice>>, _seg_id: usize) 
 		-> Result<Rc<dyn NdAdvice>, Error>{
 			if word.len()<=self.max_word_len(){
 				Ok( Rc::new(DummyNdAdvice{}))

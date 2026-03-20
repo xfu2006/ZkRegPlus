@@ -90,9 +90,10 @@ pub trait ComponentMapper<F:PrimeField + ColEle, LK: LookupTableTwoCol<F>>: Debu
 	/// cmp_cfgs: each tuple is (idx_inp, idx_oup, idx_data) for each component.
 	fn get_joins(&self, i: usize, stmt_cfg: &StatementConfig, comp_cfgs: &Vec<Vec<usize>>)->Vec<( (usize,usize), (usize,usize) )>;
 
-	/// Also responsible for generating nd_advice with its own capacity
+	/// Also responsible for generating nd_advice with its own capacity.
+	/// seg_id is for debugging purpose only.
 	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
-		prev_adv: Option<Rc<dyn NdAdvice>>)
+		prev_adv: Option<Rc<dyn NdAdvice>>, seg_id: usize)
 		->Result<Rc<dyn NdAdvice>, Error>;
 
 
@@ -1003,10 +1004,13 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 	}
 
 	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
-		r_prev_adv: Option<Rc<dyn NdAdvice>>)
+		r_prev_adv: Option<Rc<dyn NdAdvice>>, seg_id: usize)
 		->Result<Rc<dyn NdAdvice>, Error>{
 		let b_perf = true;
 		let mut t1 = Timer::new();
+		println!("DEBUG USE 6999: seg_id: {}", seg_id);
+		if seg_id==0 {assert!(r_prev_adv.is_none());}
+
 		let vec_prev_adv = if r_prev_adv.is_some(){
 			r_prev_adv.unwrap().as_any().downcast_ref
 				::<CompositeAdvice>().expect("downcast err")
@@ -1018,7 +1022,7 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 
 		let res= self.vec_components.iter().zip(vec_prev_adv.into_iter()).
 			map(|(c,a)|{
-				c.borrow().gen_nd_advice(&word, &word_info, a)
+				c.borrow().gen_nd_advice(&word, &word_info, a, seg_id)
 			}
 		).collect::<Vec<Result<Rc<dyn NdAdvice>, Error>>>();
 

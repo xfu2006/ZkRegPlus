@@ -214,7 +214,7 @@ GadgetMapper<F,LK> for FoldPairMapper<F, LK>{
 	}
 
 	fn gen_nd_advice(&self, word: &Vec<F>, _wi: &WordInfo,
-		_prev_adv: Option<Rc<dyn NdAdvice>>) 
+		_prev_adv: Option<Rc<dyn NdAdvice>>, _seg_id: usize) 
 		-> Result<Rc<dyn NdAdvice>, Error>{
 		if word.len()<=self.max_word_len(){
 			Ok( Rc::new(DummyNdAdvice{}) )

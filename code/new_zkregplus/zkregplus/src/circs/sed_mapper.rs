@@ -55,7 +55,7 @@ use folding_schemes::{
 	Error,
 	folding::foldpot::{
 		sigma_ir1cs::{ Capacity,  SigmaGadget, StatementConfig, NdAdvice,WordInfo,LookupTableTwoCol,StatementExtraInfo,DischargeSigInfo},
-		circuits_super::field_to_usize,
+		//circuits_super::field_to_usize,
 		container_config::{ContainerConfig},
 	}
 };
@@ -431,11 +431,10 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 			subsig_info_store_igc: &SubsigInfoStore,//steps extra_info store
 			sig_to_id: &HashMap<String,usize>, //map from sig to id (common)
 			discharge_info: &Vec<DischargeSigInfo>, //info: (common)
+			seg_id: usize,
 		)->Result<Self, Error>{
 		let mut t1 = Timer::new();
 		let b_perf = true;
-		let max_wlen = cs_capacity.wea_capacity().max_word_len;
-		let seg_id = (field_to_usize(&inp.inp_loc_cs) - 1) / (max_wlen*62);
 
 		//1. build the word extraction gadget's advice
 		let wd_extract_advice = WordExtractAdvAdvice::<F>
@@ -559,11 +558,32 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 	/// constructor needs the max word len to handle the capacity
 	/// of PackFinal (number of final states), and reference to clamdb
 
+	/// print details for a subsig step store
+	fn print_subsig_details(subsig_id: usize, b_igc: bool, 
+		store: &SubsigStepStore, acdfa: &HexACDFA){
+		if let Some(item) = store.subsig_to_steps.get(&subsig_id){
+			println!("--- DEBUG USE 6621: Subsig Details for ID: {}, IGC: {} ---", 
+				subsig_id, b_igc);
+			for (i, step) in item.vec_pm_bounds.iter().enumerate(){
+				let pat_id = step.0;
+				let (a, b) = step.1;
+				let word = if pat_id < acdfa.patterns.len(){
+					&acdfa.patterns[pat_id]
+				} else {
+					"UNKNOWN_PAT_ID"
+				};
+				println!("  Step {}: PatID: {}, Word: {}, Range: ({}, {})", 
+					i + 1, pat_id, word, a, b);
+			}
+		}
+	}
+
 	pub fn new(
 		cs_capacity: SedCapacity,
 		igc_capacity: SedCapacity,
 		clamdb: Rc<ClamavDB<F>>,
 	) ->Self{
+		let b_debug = true;
 		let mut cfgs = vec![];
 		//1. build the gadgets
 		//1.1 the word extract gadget
@@ -579,6 +599,13 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 		let subsig_pat_store_igc= &bundle_igc.vec_subsig_stores[0];
 		let subsig_step_store_cs = &bundle_cs.vec_subsig_step_stores[0];
 		let subsig_step_store_igc = &bundle_igc.vec_subsig_step_stores[0];
+
+		//DEBUG: print details for target subsig
+		if b_debug{
+			let target_id = 36598786;
+			Self::print_subsig_details(target_id, false, subsig_step_store_cs, acdfa_cs);
+			Self::print_subsig_details(target_id, true, subsig_step_store_igc, acdfa_igc);
+		}
 		let subsig_info_store_cs = &bundle_cs.vec_subsig_info_stores[0];
 		let subsig_info_store_igc = &bundle_igc.vec_subsig_info_stores[0];
 		let sig_id = 0; //for all
@@ -692,12 +719,13 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 
 	/// genera the avice using its own capacity
 	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
-		r_prev_adv: Option<Rc<dyn NdAdvice>>)
+		r_prev_adv: Option<Rc<dyn NdAdvice>>, seg_id: usize)
 		->Result<Rc<dyn NdAdvice>, Error>{
 		//1. expand word to full length
 		let mut rem_word = vec![F::zero(); self.max_word_len() - word.len()];
 		let mut word_seg = word.clone();
 		word_seg.append(&mut rem_word);
+		if seg_id==0 {assert!(r_prev_adv.is_none());}
 
 		//2. collect the data for building advice.
 		//most vars have two versions: cs and igc
@@ -827,7 +855,8 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 			subsig_info_store_cs,
 			subsig_info_store_igc,
 			&self.clamdb.sig_to_id,
-			&discharge_info
+			&discharge_info,
+			seg_id
 		)?;
 
 		Ok( Rc::new(advice) )

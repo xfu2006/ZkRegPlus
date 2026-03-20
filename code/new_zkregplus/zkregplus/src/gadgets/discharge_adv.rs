@@ -1757,7 +1757,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let (forward_step_queue, sq_fwd, last_loc) = Self::gen_forward_steps_queue_combo(
 			b_igc, offset_fsm,
 			&inp_subsigs, pat_loc, inp_step_queue, fsm_id, &capacity,
-			subsig_store_info, last_loc)?;
+			subsig_store_info, last_loc, seg_id)?;
 		let ct_fwd_sq = forward_step_queue.borrow().get_container("sq_res")?;
 		stmt_container.borrow_mut().add_container(forward_step_queue);
 		let default_min_loc = last_loc + F::one();
@@ -2226,6 +2226,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		capacity: &DischargeAdvCapacity,
 		subsig_store_info: &SubsigStepStore,
 		last_loc: F,
+		seg_id: usize, //the word segment id (starting 0)
 	)->Result<(Rc<RefCell<Container<F>>>, StepQueue<F>, F), Error>{
 		let b_debug = true;
 		let res = Container::<F>::new("fwd_steps_queue");
@@ -2234,6 +2235,17 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		//0. Generate the logical data:
 		// from inp_step_queue generate the to_add, merged_result, 
 		// and the fwd prf. Add them to container
+		if b_debug{
+			if seg_id==0{
+				for subsig in &inp_step_queue.subsigs{
+					let vec_items = inp_step_queue.store_items.get(&subsig)
+						.expect(&format!(
+							"Cannot locate subsig: {}", subsig));
+					assert!(vec_items.len()<=1); //cause
+						//this should be fresh start.
+				}
+			}
+		}
 		let (sq_to_add, sq_res, fwd_prf) = inp_step_queue
 			.gen_forward_prf(pat_loc, subsig_store_info);
 		let sname_fsm = if b_igc {"fsm_adv_stmt_igc"} else {"fsm_adv_stmt_cs"};
@@ -2245,7 +2257,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 
 
 		if b_debug{
-			println!("========== DEBUG USE 202: gen_fwd: inp_step_queue: ");
+			println!("========== DEBUG USE 202: gen_fwd: inp_step_queue: for segid: {}", seg_id);
 			inp_step_queue.dump();
 			println!("========== DEBUG USE 203: to_add: ");
 			sq_to_add.dump();

@@ -431,7 +431,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 
 
 	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
-		prev_adv: Option<Rc<dyn NdAdvice>>)
+		prev_adv: Option<Rc<dyn NdAdvice>>, _seg_id: usize)
 		->Result<Rc<dyn NdAdvice>, Error>{
 		//1. expand word to full length
 		let mut rem_word = vec![F::zero(); self.max_word_len() - word.len()];

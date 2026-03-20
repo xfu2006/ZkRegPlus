@@ -200,9 +200,10 @@ GadgetMapper<F,LK> for SumMapper<F, LK>{
 
 	/// given a vector of circuits' gadget mapper, given a word
 	/// return the (steps, Vec<pci>, ND_Advice object)
-	fn gen_nd_advice(&self, word: &Vec<F>, _wi: &WordInfo,
-		_prev_advice: Option<Rc<dyn NdAdvice>>)
+	fn gen_nd_advice(&self, word: &Vec<F>, _word_info: &WordInfo,
+		_prev_adv: Option<Rc<dyn NdAdvice>>, _seg_id: usize) 
 		-> Result<Rc<dyn NdAdvice>, Error>{
+
 			if word.len()<=self.max_word_len(){
 				let w0_val = field_to_usize(&word[0]);
 				if (w0_val%2==1) != self.b_odd { 

@@ -412,7 +412,7 @@ where
 			let end = if (i+1)*max_wlen>wlen {wlen} else {(i+1)*max_wlen};
 			let seg = word[start..end].to_vec();
 			let advice = circ.get_mapper().borrow()
-				.gen_nd_advice(&seg, &word_info, prev_adv)?;
+				.gen_nd_advice(&seg, &word_info, prev_adv, i)?;
 			vec_pci.push(pci);
 			vec_size.push(end-start);
 			vec_cap.push(cap.clone());
@@ -676,8 +676,10 @@ where
 				}
 				let prev_adv = if vec_adv.len()==0 {None}
 					else {Some(vec_adv[vec_adv.len()-1].clone())};
+				//PASS 0 as seg_id just to make syntax ok
+				if 1>0 {panic!("should not call this function");}
 				let res = circ1.get_mapper().borrow()
-					.gen_nd_advice(&word, &word_info, prev_adv);
+					.gen_nd_advice(&word, &word_info, prev_adv, 0);
 				if !res.is_ok() {
 					//quick elimination of apparent non-working layer
 					//this is usually quickly decided by looking at
@@ -759,9 +761,13 @@ where
 					let prev_adv = if vec_adv.len()==0 {None}
 						else {Some(vec_adv[vec_adv.len()-1].clone())};
 					if last_word_len!=word_len {
+						//NOTE: the seg_id passed is not correct
+						//but since this is an OLD-deprecated function
+						//we just fix syntax here.
+						if 1>0 {panic!("this function should not be called");}
 						last_word_len = word_len;
 						_last_res = Some(circ.get_mapper().borrow()
-						  .gen_nd_advice(&word, &word_info, prev_adv)
+						  .gen_nd_advice(&word, &word_info, prev_adv, 0)
 						  .unwrap());
 					}
 				
@@ -1379,7 +1385,7 @@ where
 				//2.3 generate the advice and statement
 				//need to build the statement to fill the m_map
 				let res = circ.get_mapper().borrow()
-					.gen_nd_advice(&frag, word_info, prev_adv);
+					.gen_nd_advice(&frag, word_info, prev_adv, subseg_id - 1);
 				assert!(res.is_ok(), "\n\n===== **** =====\nUNABLE to generate advice for word: {}, segment_id: {}, ERROR: {:#?}\n==============\n", word_fname, subseg_id, res); 
 				let cur_adv = res.unwrap();
 
@@ -1464,7 +1470,7 @@ where
 
 				//3.2 generate the adice again
 				let res = circ.get_mapper().borrow()
-					.gen_nd_advice(&frag, word_info, prev_adv);
+					.gen_nd_advice(&frag, word_info, prev_adv, subseg_id - 1);
 				assert!(res.is_ok(), "UNABLE to generate advice for word id: {}, segment_id: {}", word_id, subseg_id); 
 				let cur_adv = res.unwrap();
 				log_perf(log_level+2, &format!("-- Pass2. gen advice. sugseg_id: {}", subseg_id), &mut gtw2);
@@ -1622,7 +1628,7 @@ where
 				remaining = remaining[act_len..].to_vec();
 
 				let res = circ.get_mapper().borrow()
-					.gen_nd_advice(&frag, word_info, prev_adv);
+					.gen_nd_advice(&frag, word_info, prev_adv, subseg_id - 1);
 				assert!(res.is_ok(), "UNABLE to generate advice for word id: {}, segment_id: {}", word_id, subseg_id); 
 				let cur_adv = res.unwrap();
 				log_perf(log_level+1, &format!("-- Pass 3. gen advice for word_id: {}, seg_id: {}", word_id, subseg_id), &mut gtw2);
@@ -1811,7 +1817,7 @@ where
 			let frag = vec![zero; wlen];
 			let prev_adv: Option<Rc<dyn NdAdvice>> = None; //fine to set None
 			let r_advice= circ.get_mapper().borrow()
-					.gen_nd_advice(&frag, &word_info,prev_adv); //use its own capacity
+					.gen_nd_advice(&frag, &word_info,prev_adv, 0); //use its own capacity
 			assert!(r_advice.is_ok(), "\n\n===== **** ====== \nUNABLE to generate advice for circ at layer {} for full 0-word. This is a system-wide change needed. Needs to adjust capacity: {:#?}", i, r_advice);
 
 			let advice = r_advice.unwrap();
@@ -2306,8 +2312,9 @@ pub mod tests_driver{
 		}
 
 		fn gen_nd_advice(&self, word: &Vec<F>, _word_info: &WordInfo,
-			_prev_adv: Option<Rc<dyn NdAdvice>>) 
-		-> Result<Rc<dyn NdAdvice>, Error>{
+			_prev_adv: Option<Rc<dyn NdAdvice>>, _seg_id: usize)
+			-> Result<Rc<dyn NdAdvice>, Error>{
+
 			if word.len()<=self.max_word_len(){
 				let w0_val = field_to_usize(&word[0]);
 				if (w0_val%2==1) != self.b_odd { 

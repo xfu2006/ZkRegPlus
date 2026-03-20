@@ -470,7 +470,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 	}
 
 	fn gen_nd_advice(&self, word: &Vec<F>, _word_info: &WordInfo,
-		prev_adv: Option<Rc<dyn NdAdvice>>)
+		prev_adv: Option<Rc<dyn NdAdvice>>, _seg_id: usize)
 		->Result<Rc<dyn NdAdvice>, Error>{
 		//1. expand to full length
 		let (zero,one) = (F::zero(),F::one());
