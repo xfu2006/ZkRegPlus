@@ -664,7 +664,7 @@ pub mod tests_zkp_driver{
 	/// read the READ me in data/small_data_set/README for the design of sigs
 	/// COST: 7GB and 36 sec.
 	#[allow(dead_code)]
-	fn small_data<F:PrimeField + ColEle>(b_check_lkup: bool){
+	fn small_data<F:PrimeField>(b_check_lkup: bool){
 		assert!(RANGE2_BIT==8, "set RANGE2_BIT to 8");
 		let b_read_cache = false;
 		let b_write_cache = !b_read_cache;
@@ -728,7 +728,7 @@ pub mod tests_zkp_driver{
 	/// read the READ me in data/small_data_set2/README for the design of sigs
 	/// COST: 18GB and 160 sec
 	#[allow(dead_code)]
-	fn small_data2<F:PrimeField + ColEle>(b_check_lkup: bool){
+	fn small_data2<F:PrimeField>(b_check_lkup: bool){
 		assert!(RANGE2_BIT==18, "set RANGE2_BIT to 18");
 		let b_read_cache = false;
 		let b_write_cache = !b_read_cache;
@@ -737,7 +737,7 @@ pub mod tests_zkp_driver{
 		let sigs = 2; 
 		let subsigs = 4; 
 		let avg_pats_per_subsig = 4; 
-		let avg_active_pats_per_subsig = 2; //good value 0, actually does
+		let avg_active_pats_per_subsig = 0; //good value 0, actually does
 			//not matter?
 		let basis_pats_in_trace = 6; 
 		let perc_comp_subsigs = 26; 
@@ -815,7 +815,7 @@ pub mod tests_zkp_driver{
 
 	/// This function is used for debugging
 	#[allow(dead_code)]
-	fn small_data_debug<F:PrimeField + ColEle>(b_check_lkup: bool){
+	fn small_data_debug<F:PrimeField>(b_check_lkup: bool){
 		assert!(RANGE2_BIT==24, "set RANGE2_BIT to 24");
 		let b_read_cache = false;
 		let b_write_cache = !b_read_cache;
@@ -886,7 +886,7 @@ pub mod tests_zkp_driver{
 	/// Difference: 2 categories and 2 circs each (multiple circs) -> 4 circs
 	/// for testing circ selection
 	#[allow(dead_code)]
-	fn small_data3<F:PrimeField + ColEle>(b_check_lkup: bool){
+	fn small_data3<F:PrimeField>(b_check_lkup: bool){
 		assert!(RANGE2_BIT==18, "set RANGE2_BIT to 18");
 		let b_read_cache = false;
 		let b_write_cache = !b_read_cache;
@@ -895,7 +895,7 @@ pub mod tests_zkp_driver{
 		let sigs = 1;  //good value 2
 		let subsigs = 3;  //good value 4
 		let avg_pats_per_subsig = 3;  //good value 4
-		let avg_active_pats_per_subsig = 3; //good value 0, actually does
+		let avg_active_pats_per_subsig = 0; //good value 0, actually does
 			//not matter?
 		let basis_pats_in_trace = 2;  //good value 4
 		let perc_comp_subsigs = 34;  //good value 34 
@@ -952,7 +952,7 @@ pub mod tests_zkp_driver{
 	/// the sigs are the FULL SET of sigs
 	/// However, just run a small file
 	#[allow(dead_code)]
-	fn full_data1<F:PrimeField + ColEle>(b_check_lkup: bool){
+	fn full_data1<F:PrimeField>(b_check_lkup: bool){
 		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
 		let b_read_cache = true;
 		let b_write_cache = ! b_read_cache;
@@ -966,10 +966,10 @@ pub mod tests_zkp_driver{
 		let perc_comp_subsigs = 20;
 		let num_category = 1;
 		let num_circs_per_category= 1;
-		let basis_unique_states = 250; //last known good vlaue: 1900
-		let basis_acc_states = 900; //9 cpercent
-		let basis_pats_in_trace = 1000; //10 percent
-		let pats_expansion_rate = 1;
+		let basis_unique_states = 500; //last known good vlaue: 1900
+		let basis_acc_states = 1000; //9 cpercent
+		let basis_pats_in_trace = 1200; //10 percent
+		let pats_expansion_rate = 2;
 		//let avg_subsig_per_sig = 3;
 
 		let init_cp_cap= CpCapacity{
@@ -1017,7 +1017,7 @@ pub mod tests_zkp_driver{
 	/// the sigs are the FULL SET of sigs
 	/// It runs a small but challenging file _codecs_hk.so (158kb)
 	#[allow(dead_code)]
-	fn full_data2<F:PrimeField + ColEle>(b_check_lkup: bool){
+	fn full_data2<F:PrimeField>(b_check_lkup: bool){
 		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
 		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
         let b_read_cache = true;
@@ -1090,7 +1090,7 @@ pub mod tests_zkp_driver{
 	/// IMPROVEC COST: after applying the tricks of separating
 	///    igc and cs. stmt_len: 10M, all_w_e: 33M => circ1 72M R1CS
 	#[allow(dead_code)]
-	fn full_data3<F:PrimeField + ColEle>(b_check_lkup: bool){
+	fn full_data3<F:PrimeField>(b_check_lkup: bool){
 		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
 		let b_read_cache = true;
 		let b_write_cache = ! b_read_cache;
@@ -1183,7 +1183,7 @@ pub mod tests_zkp_driver{
 	/// -rwxrwxr-x 1 xiang xiang 20785824 Jun  8  2025 libicudata.so.50.2
 	/// -rwxrwxr-x 1 xiang xiang 15603008 Jun  8  2025 cc1plus
 	#[allow(dead_code)]
-	fn full_data4<F:PrimeField + ColEle>(b_check_lkup: bool){
+	fn full_data4<F:PrimeField>(b_check_lkup: bool){
 		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
 		let b_read_cache = true;
 		let b_write_cache = ! b_read_cache;
@@ -1192,19 +1192,19 @@ pub mod tests_zkp_driver{
         let sigs = 380;
         let subsigs = 560; //220 for prev db
         let avg_pats_per_subsig = 8; //old value 8
-        let avg_active_pats_per_subsig = 3;
+        let avg_active_pats_per_subsig = 2;
         let perc_comp_subsigs = 20;
         let num_category = 1;
         let num_circs_per_category= 1;
         let basis_unique_states = 2000; //15 cpercent
-        let basis_acc_states = 1600; //9 cpercent
-        let basis_pats_in_trace = 1920; //old value 100 cur value 1/1000.
+        let basis_acc_states = 1800; //9 cpercent
+        let basis_pats_in_trace = 3000; //old value 100 cur value 1/1000.
         let basis_acc_states_igc = basis_acc_states ; //9 cpercent
         let basis_pats_in_trace_igc = basis_pats_in_trace;
             //old value 100 cur value 1/1000.
         let dfa_sigs = 6;
         let dfa_subsigs= 6;
-        let pats_expansion_rate = 4;
+        let pats_expansion_rate = 1; //old good value 2
         let pats_expansion_rate_igc = 1;
         //let avg_subsig_per_sig = 3;
 
@@ -1273,11 +1273,12 @@ pub mod tests_zkp_driver{
 		}
 	}
 
+
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
-		//small_data::<Fr>(b_check_lkup); //small data
-		small_data2::<Fr>(b_check_lkup);  //10k data 
+		small_data::<Fr>(b_check_lkup); //small data
+		//small_data2::<Fr>(b_check_lkup);  //10k data 
 		//small_data_debug::<Fr>(b_check_lkup);  //for debug
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//full_data1::<Fr>(b_check_lkup);

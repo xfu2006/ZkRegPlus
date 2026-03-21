@@ -537,7 +537,7 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 			let u_subsig = field_to_usize(subsig);
 			let subsig_rec= info.subsig_to_steps.get(&u_subsig).expect(
 				&format!("cannot find step info for subsig: {}", subsig));
-			let max_steps= subsig_rec.vec_pm_bounds.len();
+			let max_steps = subsig_rec.vec_pm_bounds.len();
 			let pm_bounds = &subsig_rec.vec_pm_bounds;
 			let items =  self.store_items.get(subsig).unwrap();
 			assert!(max_steps+1>=items.len()); //this is not capacity err
@@ -682,11 +682,10 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 			let real_steps = steps;
 			assert!(items[steps].step==F::from((steps) as u32));
 			let u_subsig = field_to_usize(subsig);
-			let max_steps = subsig_store_info.subsig_to_steps.get(&u_subsig).unwrap()
+			let max_steps = subsig_store_info.subsig_to_steps
+				.get(&u_subsig).unwrap()
 				.vec_pm_bounds.len() ; //THEORETICAL num of steps by subsig def
 					//this counts from 1 to the LAST MAX_STEP ID
-			//let max_steps = if max_steps>0 {max_steps-1} 
-			//	else {max_steps}; //avoid UNDERFLOW in release mode!
 
 			let b_added_step = real_steps<max_steps; //last STEP uses default_min_loc
 			let steps = if steps<max_steps{steps+1} else {steps};
