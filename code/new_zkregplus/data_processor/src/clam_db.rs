@@ -52,8 +52,8 @@ pub const STATE_BIT:usize =  24;
 /// The bit-width of RANGE2 table 
 /// IN PRODUCTION NEEDS TO CHANGE THE SAME SIZE OF STATE_BIT
 //pub const RANGE2_BIT: usize = 10;
-pub const RANGE2_BIT: usize = 8;
-//pub const RANGE2_BIT: usize = 18;
+//pub const RANGE2_BIT: usize = 8;
+pub const RANGE2_BIT: usize = 18;
 //pub const RANGE2_BIT: usize = 24; //good for small size 16M nibbles = 8MB
 //pub const RANGE2_BIT: usize = 26; //(allowing 64M nibbles = 32MB)
 

@@ -26540,9 +26540,37 @@ Goal 4. try another trick
 	[g] 1.9 million now. 
 
 Goal 5. observe data.
+	[a] strange compiling error -> FIXED. this is because
+		there's a same name function in GadgetMapper (vs. CompooinentGadgetMapper)
+	[b] DEBUG USE 6621 dump of subsig
+	-----------
+	--- DEBUG USE 6621: Subsig Details for ID: 36598786, IGC: false ---
+  Step 1: PatID: 1627, Word: 070000008b75 (0700000?), Range: (34, 67108863)
+  Step 2: PatID: 7643, Word: 20847d3b0100000063686b64736b2e70646200008b81c800000083f80c740883f80b7403b001c332c0c3568bf18d4e10ff152c1100018bce5eff2534110001e9 
+  (2083b8ed83?? -- there seems pat_id needs -1), Range: (24, 174)	
+  -----------------------
+  ==> It's supposed to screen from step 2 but it did not. why?
+	[b] does it crash? -> it did not crash on the check
+		looks like passing over is ok, id err in analysis code.
+		so there is no problem of passing over stale sq_res.
+
+Sat 03/21/2026
+LOC (circs): 3620 
+Goal 1.  TODO try to see WHY for subsig 36598786 it does NOT start from Step 2 
+and prune back?
+	[a] use DEBUG 202
+	[b] found potentila issues (max_steps value)
+		-> regression testing
+	[c] check data: excellent it's working!
+	[d] but there is still one which causes the raise to 0.35
+		-> '36551681': 713, '36556803': 267, '36552705': 77, '37214209': 24,
+		But this doesnot look like a profile which can reach 0.35
+	==== DATA =============
+
+Goal 2. 
 
 
 =====================================
 -- TODO -- remove DEBUG USE 6901, 6999
-		-- disable debug in sed_mapper
+		-- disable debug in sed_mapper (6621)
 

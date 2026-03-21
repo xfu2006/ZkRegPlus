@@ -684,9 +684,9 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 			let u_subsig = field_to_usize(subsig);
 			let max_steps = subsig_store_info.subsig_to_steps.get(&u_subsig).unwrap()
 				.vec_pm_bounds.len() ; //THEORETICAL num of steps by subsig def
-					//this counts from 0 to the LAST MAX_STEP ID
-			let max_steps = if max_steps>0 {max_steps-1} 
-				else {max_steps}; //avoid UNDERFLOW in release mode!
+					//this counts from 1 to the LAST MAX_STEP ID
+			//let max_steps = if max_steps>0 {max_steps-1} 
+			//	else {max_steps}; //avoid UNDERFLOW in release mode!
 
 			let b_added_step = real_steps<max_steps; //last STEP uses default_min_loc
 			let steps = if steps<max_steps{steps+1} else {steps};
