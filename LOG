@@ -26565,9 +26565,17 @@ and prune back?
 	[d] but there is still one which causes the raise to 0.35
 		-> '36551681': 713, '36556803': 267, '36552705': 77, '37214209': 24,
 		But this doesnot look like a profile which can reach 0.35
-	==== DATA =============
+	==== DATA ============= (full data4: perc_pats_expansion_ratio: 100)
+	FsmAdv: 1864096
+	DischargeAdvGadget: 3025313
+	LOG3: -- --  preprocess() Step 2: setup circ params. circs: 1, max_circ_pp: 31945138, total_w: 31945135, total_e: 23261039, increased RAM: 31 GB.  83412 ms
+	===================
 
-Goal 2. 
+
+Goal 2. Now imporve the cost
+	[a] download the zkp_driver. 
+	[b] change the property name expansion_rate to perc_expansion_rate.
+		and ask gemini to perform the change
 
 
 =====================================

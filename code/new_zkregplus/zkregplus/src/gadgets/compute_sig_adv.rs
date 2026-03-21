@@ -116,13 +116,13 @@ pub struct ComputeSigAdvCapacity{
 	/// NOTE that pats_pasis_in_trace tells the ratio of pats
 	/// in trace (regarding the currection section size).
 	/// However, some positions may stay LONGER than than the current
-	/// section. Pats_expansion_rate measures in average how many
+	/// section. perc_pats_expansion_rate measures in average how many
 	/// more patterns (from the previous sections) we need to hold
-	/// in step queue. So basis_pats_in_trace * pats_expansion_rate
+	/// in step queue. So basis_pats_in_trace * perc_pats_expansion_rate / 100
 	/// decides the step queue
-	pub pats_expansion_rate_cs: usize,
-	/// pats_expansion_rate for igc case
-	pub pats_expansion_rate_igc: usize,
+	pub perc_pats_expansion_rate_cs: usize,
+	/// perc_pats_expansion_rate for igc case
+	pub perc_pats_expansion_rate_igc: usize,
 
 	/// percentage of subsigs that are components of SubsigCounterConstraint
 	/// e.g. (1|2|3)>4,2 requires that there are at least 5 matches
@@ -181,8 +181,8 @@ impl Capacity for ComputeSigAdvCapacity{
 		self.max_nibble_len>= other.max_nibble_len &&
 		self.basis_pats_in_trace_cs>= other.basis_pats_in_trace_cs &&
 		self.basis_pats_in_trace_igc>= other.basis_pats_in_trace_igc &&
-		self.pats_expansion_rate_cs >= other.pats_expansion_rate_cs &&
-		self.pats_expansion_rate_igc >= other.pats_expansion_rate_igc &&
+		self.perc_pats_expansion_rate_cs >= other.perc_pats_expansion_rate_cs &&
+		self.perc_pats_expansion_rate_igc >= other.perc_pats_expansion_rate_igc &&
 		self.perc_comp_subsigs >= other.perc_comp_subsigs
 	}
 
@@ -195,8 +195,8 @@ impl Capacity for ComputeSigAdvCapacity{
 			sigs: self.sigs,
 			basis_pats_in_trace_cs: self.basis_pats_in_trace_cs,
 			basis_pats_in_trace_igc: self.basis_pats_in_trace_igc,
-			pats_expansion_rate_cs: self.pats_expansion_rate_cs,
-			pats_expansion_rate_igc: self.pats_expansion_rate_igc,
+			perc_pats_expansion_rate_cs: self.perc_pats_expansion_rate_cs,
+			perc_pats_expansion_rate_igc: self.perc_pats_expansion_rate_igc,
 			max_nibble_len: self.max_nibble_len,
 			perc_comp_subsigs: self.perc_comp_subsigs,
 		})
@@ -1368,7 +1368,7 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 			avg_active_pats_per_subsig: 2, //it's ok, coz it's not affecting
 										  //parse_from
 			basis_pats_in_trace: capacity.basis_pats_in_trace_cs,
-			pats_expansion_rate: 1,
+			perc_pats_expansion_rate: 100,
 		};
 		let dis_cap_igc= DischargeAdvCapacity{
 			max_nibble_len: capacity.max_nibble_len,
@@ -1376,7 +1376,7 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 			avg_active_pats_per_subsig: 2, //it's ok, coz it's not affecting
 										  //parse_from
 			basis_pats_in_trace: capacity.basis_pats_in_trace_igc,
-			pats_expansion_rate: 1,
+			perc_pats_expansion_rate: 100,
 		};
 		let step_q_size_cs = StepQueue::<F>::vec_size(&StepQueueType::Res,
 			&dis_cap_cs).0;
@@ -1445,11 +1445,11 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 	/// validate raw_eval result based on step queue is correct for
 	/// each subsig.
 	/// n2 is the StepQueue::vec_size() - max of subsig * avg_active_pat_subsig
-	///     and basis_pats_in_trace/10000 * pats_expansion_rate * nlen (see validate_forward_step_queue for
+	///     and basis_pats_in_trace/10000 * perc_pats_expansion_rate/100 * nlen (see validate_forward_step_queue for
 	///     real data for n1)
 	/// COST: 6n1 + 5n2 (n1: num of subsigs, n2: sq_res len which
 	///    is determined by discharge_adv::StepQueue::vec_size 
-	/// (perc_pat_in_trace * pats_expansion_rate)
+	/// (perc_pat_in_trace * perc_pats_expansion_rate / 100)
 	fn validate_eval_subsig_by_sq_combo(&self, 
 		eval_res_combo: &Container<FpVar<F>>, 
 		r1: FpVar<F>,
@@ -2426,9 +2426,9 @@ impl ComputeSigAdvCapacity{
 	pub fn get_pat_loc_len(&self, b_igc: bool)->usize{
 		let basis_pats_in_trace = if b_igc {self.basis_pats_in_trace_igc}
 			else {self.basis_pats_in_trace_cs};
-		let pats_expansion_rate = if b_igc {self.pats_expansion_rate_igc}
-			else {self.pats_expansion_rate_cs};
-		let pats_len = basis_pats_in_trace * pats_expansion_rate
+		let perc_pats_expansion_rate = if b_igc {self.perc_pats_expansion_rate_igc}
+			else {self.perc_pats_expansion_rate_cs};
+		let pats_len = basis_pats_in_trace * perc_pats_expansion_rate / 100
 			* self.max_nibble_len/10000;
 
 		pats_len
@@ -2573,7 +2573,7 @@ pub mod tests_compute_sig_adv{
 
 		//1.4 capacilities of fsm and discharge components
 		let wlen = 2usize;
-		let pats_expansion_rate = 1;
+		let perc_pats_expansion_rate = 100;
 		let (nibble_len, state_bits) = (wlen*LEGS, acdfa_cs.state_part_bits);
 		let cap = FsmAdvCapacity{
 			max_nibble_len: nibble_len, 
@@ -2589,7 +2589,7 @@ pub mod tests_compute_sig_adv{
 			subsigs: cap.subsigs,
 			avg_active_pats_per_subsig: 2,
 			basis_pats_in_trace: cap.basis_pats_in_trace,
-			pats_expansion_rate: 1,
+			perc_pats_expansion_rate: 100,
 		};
 		let cap_sig= ComputeSigAdvCapacity{//capaciity of compute sig adv comp 
 			max_nibble_len: nibble_len, 
@@ -2599,8 +2599,8 @@ pub mod tests_compute_sig_adv{
 			basis_pats_in_trace_cs: cap.basis_pats_in_trace,
 			basis_pats_in_trace_igc: cap.basis_pats_in_trace,
 			perc_comp_subsigs: 20, //real data will be much lower like 17 at most
-			pats_expansion_rate_cs: pats_expansion_rate,
-			pats_expansion_rate_igc: pats_expansion_rate,
+			perc_pats_expansion_rate_cs: perc_pats_expansion_rate,
+			perc_pats_expansion_rate_igc: perc_pats_expansion_rate,
 		};
 
 		//2. create advice for word_extract_adv, fsm_adv, and discharge_adv
@@ -2927,7 +2927,7 @@ pub mod tests_compute_sig_adv{
 			subsigs: 4,
 			avg_active_pats_per_subsig: 2,
 			basis_pats_in_trace: 48*100, //48 percent
-			pats_expansion_rate: 1,
+			perc_pats_expansion_rate: 100,
 		};
 		let b_igc = false;
 		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),

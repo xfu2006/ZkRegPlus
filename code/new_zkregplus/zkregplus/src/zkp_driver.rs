@@ -323,7 +323,8 @@ where C: CurveGroup<ScalarField=F>,
 	let perc_comp_subsigs = 50;
 	let basis_unique_states = 100; //1 percent
 	let basis_acc_states = 500; //5 percent
-	let pats_expansion_rate = 1; 
+	let perc_pats_expansion_rate = 100;
+ 
 	//let avg_subsig_per_sig = 2;
 	let cap1 = CpCapacity{
 		max_word_len: max_word, 
@@ -354,7 +355,7 @@ where C: CurveGroup<ScalarField=F>,
 
 	//2. create sed components
 	let scap1= SedCapacity::new(max_word, db.dfa_crit.state_part_bits, subsigs, 
-		avg_pats_per_subsig, avg_active_pats_per_subsig, basis_pats_in_trace, pats_expansion_rate, sigs, perc_comp_subsigs, basis_unique_states, basis_acc_states);
+		avg_pats_per_subsig, avg_active_pats_per_subsig, basis_pats_in_trace, perc_pats_expansion_rate, sigs, perc_comp_subsigs, basis_unique_states, basis_acc_states);
 	let scomp1 = SedComponentMapper::<F,LK<F>>::new(scap1.clone(), scap1, db.clone());
 	//let scg1 = CompositeGadgetMapper::<F,LK<F>>::new("sed1",vec![Rc::new(RefCell::new(scomp1))]); 
 
@@ -633,7 +634,7 @@ where
 #[cfg(test)]
 pub mod tests_zkp_driver{
 	use ark_ff::{PrimeField};
-	use folding_schemes::folding::foldpot::container_config::ColEle;
+	//use folding_schemes::folding::foldpot::container_config::ColEle;
 	use ark_bn254::{constraints::{GVar,PairingVar}, Bn254, Fr, G1Projective as Projective, G2Projective as ProjectiveG2};
 	use ark_grumpkin::{constraints::GVar as GVar2, Projective as Projective2};
 	use ark_groth16::Groth16;
@@ -680,7 +681,7 @@ pub mod tests_zkp_driver{
 		let basis_unique_states = 23*100; 
 		let basis_acc_states = 646;  //6.46 percent
 		let basis_pats_in_trace = 1291;   //(at most twice of basis_acc_states)
-		let pats_expansion_rate = 1;
+		let perc_pats_expansion_rate = 100;
 
 		let num_category = 1;
 		let num_circs_per_category= 1;
@@ -696,7 +697,7 @@ pub mod tests_zkp_driver{
 			max_word, RANGE2_BIT, subsigs, 
 			avg_pats_per_subsig, avg_active_pats_per_subsig, 
 			basis_pats_in_trace, 
-			pats_expansion_rate,
+			perc_pats_expansion_rate,
 			sigs, perc_comp_subsigs,
 			basis_unique_states, basis_acc_states
 		);
@@ -743,7 +744,7 @@ pub mod tests_zkp_driver{
 		let perc_comp_subsigs = 26; 
 		let basis_unique_states = 5; 
 		let basis_acc_states = 2; 
-		let pats_expansion_rate = 1;
+		let perc_pats_expansion_rate = 100;
 
 		let num_category = 1;
 		let num_circs_per_category= 1;
@@ -760,7 +761,7 @@ pub mod tests_zkp_driver{
 			avg_pats_per_subsig, 
 			avg_active_pats_per_subsig, 
 			basis_pats_in_trace, 
-			pats_expansion_rate,
+			perc_pats_expansion_rate,
 			sigs, 
 			perc_comp_subsigs,
 			basis_unique_states,
@@ -783,7 +784,8 @@ pub mod tests_zkp_driver{
 			 avg_pats_per_subsig, 
 			 avg_active_pats_per_subsig, 
 			 basis_pats_in_trace-1, 
-			 pats_expansion_rate,
+			 perc_pats_expansion_rate,
+
 			 sigs, 
 			 perc_comp_subsigs,
 			 basis_unique_states,
@@ -830,7 +832,7 @@ pub mod tests_zkp_driver{
 		let basis_unique_states = 5; 
 		let basis_acc_states = 400; 
 		let basis_pats_in_trace = 450; 
-		let pats_expansion_rate = 1;
+		let perc_pats_expansion_rate = 100;
 
 		let num_category = 1;
 		let num_circs_per_category= 1;
@@ -847,7 +849,7 @@ pub mod tests_zkp_driver{
 			avg_pats_per_subsig, 
 			avg_active_pats_per_subsig, 
 			basis_pats_in_trace, 
-			pats_expansion_rate,
+			perc_pats_expansion_rate,
 			sigs, 
 			perc_comp_subsigs,
 			basis_unique_states,
@@ -903,7 +905,7 @@ pub mod tests_zkp_driver{
 		let basis_acc_states = 1;  //good value 2
 		let dfa_sigs = 1;
 		let dfa_subsigs= 2*dfa_sigs;
-		let pats_expansion_rate = 1;
+		let perc_pats_expansion_rate = 100;
 
 		let num_category = 2;
 		let num_circs_per_category= 2;
@@ -920,7 +922,7 @@ pub mod tests_zkp_driver{
 			avg_pats_per_subsig, 
 			avg_active_pats_per_subsig, 
 			basis_pats_in_trace, 
-			pats_expansion_rate,
+			perc_pats_expansion_rate,
 			sigs, 
 			perc_comp_subsigs,
 			basis_unique_states,
@@ -969,7 +971,7 @@ pub mod tests_zkp_driver{
 		let basis_unique_states = 500; //last known good vlaue: 1900
 		let basis_acc_states = 1000; //9 cpercent
 		let basis_pats_in_trace = 1200; //10 percent
-		let pats_expansion_rate = 2;
+		let perc_pats_expansion_rate = 200;
 		//let avg_subsig_per_sig = 3;
 
 		let init_cp_cap= CpCapacity{
@@ -984,7 +986,7 @@ pub mod tests_zkp_driver{
 			avg_pats_per_subsig, 
 			avg_active_pats_per_subsig, 
 			basis_pats_in_trace, 
-			pats_expansion_rate,
+			perc_pats_expansion_rate,
 			sigs, 
 			perc_comp_subsigs,
 			basis_unique_states,
@@ -1037,7 +1039,7 @@ pub mod tests_zkp_driver{
      //   let basis_pats_in_trace = 250 ; //1.2 * basis_acc_states
         let basis_acc_states = 1200; //old value 9 cpercent --> GOOD setting
         let basis_pats_in_trace = 1440 ; //1.2 * basis_acc_states
-		let pats_expansion_rate = 1;
+		let perc_pats_expansion_rate = 100;
 
 		let init_cp_cap= CpCapacity{
 			max_word_len: max_word, 
@@ -1051,7 +1053,7 @@ pub mod tests_zkp_driver{
 			avg_pats_per_subsig, 
 			avg_active_pats_per_subsig, 
 			basis_pats_in_trace, 
-			pats_expansion_rate,
+			perc_pats_expansion_rate,
 			sigs, 
 			perc_comp_subsigs,
 			basis_unique_states,
@@ -1108,7 +1110,7 @@ pub mod tests_zkp_driver{
         let basis_pats_in_trace = 2200; //old value 100 cur value 1/1000.
         let dfa_sigs = 3;
         let dfa_subsigs= 4;
-		let pats_expansion_rate = 1;
+		let perc_pats_expansion_rate = 100;
         //let avg_subsig_per_sig = 3;
 
 		let shrink=8;
@@ -1124,7 +1126,7 @@ pub mod tests_zkp_driver{
 			avg_pats_per_subsig, 
 			avg_active_pats_per_subsig, 
 			basis_pats_in_trace, 
-			pats_expansion_rate,
+			perc_pats_expansion_rate,
 			sigs, 
 			perc_comp_subsigs,
 			basis_unique_states,
@@ -1143,7 +1145,8 @@ pub mod tests_zkp_driver{
             avg_pats_per_subsig,
             avg_active_pats_per_subsig,
             basis_pats_in_trace/shrink,
-            pats_expansion_rate,
+            perc_pats_expansion_rate,
+
             sigs/shrink,
             perc_comp_subsigs,
             basis_unique_states,
@@ -1204,8 +1207,8 @@ pub mod tests_zkp_driver{
             //old value 100 cur value 1/1000.
         let dfa_sigs = 6;
         let dfa_subsigs= 6;
-        let pats_expansion_rate = 1; //old good value 2
-        let pats_expansion_rate_igc = 1;
+        let perc_pats_expansion_rate = 100; //old good value 2
+        let perc_pats_expansion_rate_igc = 100;
         //let avg_subsig_per_sig = 3;
 
 		let init_cp_cap= CpCapacity{
@@ -1220,7 +1223,7 @@ pub mod tests_zkp_driver{
 			avg_pats_per_subsig, 
 			avg_active_pats_per_subsig, 
 			basis_pats_in_trace, 
-			pats_expansion_rate,
+			perc_pats_expansion_rate,
 			sigs, 
 			perc_comp_subsigs,
 			basis_unique_states,
@@ -1239,7 +1242,7 @@ pub mod tests_zkp_driver{
             avg_pats_per_subsig,
             avg_active_pats_per_subsig,
             basis_pats_in_trace_igc,
-            pats_expansion_rate_igc,
+            perc_pats_expansion_rate_igc,
             sigs,
             perc_comp_subsigs,
             basis_unique_states,

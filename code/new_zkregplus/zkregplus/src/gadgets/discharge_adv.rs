@@ -325,11 +325,11 @@ pub struct DischargeAdvCapacity{
 	/// NOTE that pats_pasis_in_trace tells the ratio of pats
 	/// in trace (regarding the currection section size).
 	/// However, some positions may stay LONGER than than the current
-	/// section. Pats_expansion_rate measures in average how many
+	/// section. perc_pats_expansion_rate measures in average how many
 	/// more patterns (from the previous sections) we need to hold
-	/// in step queue. So basis_pats_in_trace * pats_expansion_rate
+	/// in step queue. So basis_pats_in_trace * perc_pats_expansion_rate/100
 	/// decides the step queue
-	pub pats_expansion_rate: usize,
+	pub perc_pats_expansion_rate: usize,
 }
 
 /// Advice for the Discharge Subsig Gadget.
@@ -417,7 +417,7 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 		let size_trace =  capacity.max_nibble_len 
 			* capacity.basis_pats_in_trace/10000
 			* compress_ratio/100 
-			* capacity.pats_expansion_rate;
+			* capacity.perc_pats_expansion_rate/100;
 		//adjust both to even
 		let size_pat = if size_pat%2==1 {size_pat+1} else {size_pat};
 		let size_trace = if size_trace%2==1 {size_trace+1} else {size_trace};
@@ -939,19 +939,19 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 			}else{
 				//basis_pats_in_trace is fixed in fsm_adv (don't float it
 				//to avoid increasing cost in fsm_adv. Insead, increase
-				//pats_expansion_rate.
+				//perc_pats_expansion_rate.
 				//scale up due to vec_size() adjustment
-				let new_pats_expansion_rate= (( ((vec_encoded.len()+1) as f32)/(n as f32) * (self.capacity.pats_expansion_rate as f32)) as usize) + 1;
+				let new_perc_pats_expansion_rate= (( ((vec_encoded.len()+1) as f32)/(n as f32) * (self.capacity.perc_pats_expansion_rate as f32)) as usize) + 1;
 				if b_debug{
-					println!("DEBUG USE 9002: to throw pats_expansion_rate ERROR on Step_Queue in discharge_adv. DUMP of data");
+					println!("DEBUG USE 9002: to throw perc_pats_expansion_rate ERROR on Step_Queue in discharge_adv. DUMP of data");
 					self.dump();
 				}
-				return Err(Error::CapErr(vec![(format!("dis_adv::pats_expansion_rate, b_igc: {}", self.b_igc), new_pats_expansion_rate)]));
+				return Err(Error::CapErr(vec![(format!("dis_adv::perc_pats_expansion_rate, b_igc: {}", self.b_igc), new_perc_pats_expansion_rate)]));
 			}
 		}
-		assert!(n>=vec_encoded.len()+1, "StepQueue type: {:?} buf too small, either adjust the compression ratio in vec_size() first, then check the pats_expansion_rate in DischargeAdvCapacity, n: {}, vec_encoded.len: {}", self.q_type, n, vec_encoded.len());
+		assert!(n>=vec_encoded.len()+1, "StepQueue type: {:?} buf too small, either adjust the compression ratio in vec_size() first, then check the perc_pats_expansion_rate in DischargeAdvCapacity, n: {}, vec_encoded.len: {}", self.q_type, n, vec_encoded.len());
 		let n2 = n-vec_encoded.len();
-		println!("DEBUG USE 6901.8: step queue usage: {}", ((n-n2) as f32)/(n as f32));
+		println!("DEBUG USE 6901.8: step queue: {}, b_igc: {} usage: {}", name, self.b_igc, ((n-n2) as f32)/(n as f32));
 		assert!(n2>0); //the Cap guanrantees that a dummy zero entry added
 		let vec_encoded = vec![vec![zero; n2], vec_encoded].concat();
 		let vec_locs= vec![vec![zero; n2], vec_locs].concat();
@@ -1180,7 +1180,7 @@ impl <F:PrimeField + ColEle> StepQueueItem<F>{
 impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 	/// return the estimated needed size of buf for to_container
 	pub fn vec_size(&self)->usize{
-		let res = self.capacity.basis_pats_in_trace * self.capacity.max_nibble_len/10000 * self.capacity.pats_expansion_rate;
+		let res = self.capacity.basis_pats_in_trace * self.capacity.max_nibble_len/10000 * self.capacity.perc_pats_expansion_rate/100;
 
 		res
 	}
@@ -1188,7 +1188,7 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 	/// generate the container (including the si cols)
 	/// Will output (src_encoded, src_step, src_loc, dst_encoded, dst_pat,
 	///    dst_rg_start, dst_rg_end, dst_loc, pat_id, diff1, diff2)
-	/// might throw CapErr("dis_adv::pats_expansion_rate")
+	/// might throw CapErr("dis_adv::perc_pats_expansion_rate")
 	pub fn to_container(&self, 
 		name: &str, 
 		subsig_store_info: &SubsigStepStore
@@ -1264,14 +1264,14 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 			v_dst_subsig];
 		let n = self.vec_size();
 		if n<v2d[0].len()+1{
-			let new_val = (v2d[0].len()+1)*10000/(self.capacity.max_nibble_len*self.capacity.basis_pats_in_trace) + 1;
+			let new_val = (v2d[0].len()+1)*10000 * 100 /(self.capacity.max_nibble_len*self.capacity.basis_pats_in_trace) + 1;
 			if b_debug_capacity{
-				println!("DEBUG USE 9003: to throw pats_expansion_rate ERROR on StepFwdProof in discharge_adv. DUMP of data");
+				println!("DEBUG USE 9003: to throw perc_pats_expansion_rate ERROR on StepFwdProof in discharge_adv. DUMP of data");
 				self.dump();
 			}
-			return Err(Error::CapErr(vec![(format!("dis_adv::pats_expansion_rate, b_igc: {}", self.b_igc), new_val)]));
+			return Err(Error::CapErr(vec![(format!("dis_adv::perc_pats_expansion_rate, b_igc: {}", self.b_igc), new_val)]));
 		}
-		assert!(n>=v2d[0].len()+1, "buf too small, adjust pats_expansion_rate. n: {}, v2dlen: {}", n, v2d[0].len());
+		assert!(n>=v2d[0].len()+1, "buf too small, adjust perc_pats_expansion_rate. n: {}, v2dlen: {}", n, v2d[0].len());
 		let n2 = n-v2d[0].len();
 		let pad = vec![zero; n2];
 		#[cfg(test)]{
@@ -1485,7 +1485,7 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 	pub fn vec_size(&self)->usize{
 		let raw_size = self.capacity.basis_pats_in_trace 
 			* self.capacity.max_nibble_len / 10000 
-			* self.capacity.pats_expansion_rate;
+			* self.capacity.perc_pats_expansion_rate / 100;
 		//given that StepBwdPrf is usually much smaller 
 		//we give it some fraction of the size of StepFwdPrf
 		//adjust in practice
@@ -1511,7 +1511,7 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 	/// generate the container (including the si cols)
 	/// Will output (src_encoded, src_step, src_loc, dst_encoded, dst_pat,
 	///    dst_rg_start, dst_rg_end, dst_loc, pat_id, diff1, diff2)
-	/// might throw CapErr("dis_adv::pats_expansion_rate")
+	/// might throw CapErr("dis_adv::perc_pats_expansion_rate")
 	pub fn to_container(&self, name: &str, subsig_store_info: &SubsigStepStore)->Result<Rc<RefCell<Container<F>>>,Error>{
 		//let b_debug = false;
 		let b_debug_capacity = true;
@@ -1569,14 +1569,14 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 			v_prev_encoded, v_loc_to_del, v_src_subsigs.clone()];
 		let n = self.vec_size();
 		if n<v2d[0].len()+1{
-			let new_val= (v2d[0].len()+1)*10000/(self.capacity.max_nibble_len*self.capacity.basis_pats_in_trace) + 1;
+			let new_val= (v2d[0].len()+1)*10000 * 100 * 100 / (self.capacity.max_nibble_len*self.capacity.basis_pats_in_trace * 50) + 1;
 			if b_debug_capacity{
-				println!("DEBUG USE 9005: to throw pats_expansion_rate ERROR on StepBwdProof in discharge_adv. DUMP of data");
+				println!("DEBUG USE 9005: to throw perc_pats_expansion_rate ERROR on StepBwdProof in discharge_adv. DUMP of data");
 				self.dump();
 			}
-			return Err(Error::CapErr(vec![(format!("dis_adv::pats_expansion_rate, b_igc: {}", self.b_igc), new_val)]));
+			return Err(Error::CapErr(vec![(format!("dis_adv::perc_pats_expansion_rate, b_igc: {}", self.b_igc), new_val)]));
 		}
-		assert!(n>=v2d[0].len()+1, "buf too small for StepBwdPrf, adjust compress_ratio in vec_size() first, and then the pats_expansion_rate in capacity");
+		assert!(n>=v2d[0].len()+1, "buf too small for StepBwdPrf, adjust compress_ratio in vec_size() first, and then the perc_pats_expansion_rate in capacity");
 		let n2 = n-v2d[0].len();
 		let pad = vec![zero; n2];
 		let se = vec![pad.clone(), v2d[0].clone()].concat();//src_encoded
@@ -1677,7 +1677,8 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 impl DischargeAdvCapacity{
 	/// this determines the pat_loc 2-col table len, it's NOT 
 	/// the length of step_queue (which has an additional factor
-	/// of pats_expansion_rate).  
+	/// of perc_pats_expansion_rate).
+  
 	pub fn get_pat_loc_len(&self)->usize{
 		let pats_len = self.basis_pats_in_trace 
 			* self.max_nibble_len/10000;
@@ -1694,7 +1695,7 @@ impl Capacity for DischargeAdvCapacity{
 		self.subsigs >= other.subsigs &&
 		self.avg_active_pats_per_subsig >= other.avg_active_pats_per_subsig &&
 		self.basis_pats_in_trace >= other.basis_pats_in_trace &&
-		self.pats_expansion_rate >= other.pats_expansion_rate
+		self.perc_pats_expansion_rate >= other.perc_pats_expansion_rate
 
 	}
 
@@ -1706,7 +1707,7 @@ impl Capacity for DischargeAdvCapacity{
 			subsigs: self.subsigs,
 			avg_active_pats_per_subsig: self.avg_active_pats_per_subsig,
 			basis_pats_in_trace: self.basis_pats_in_trace,
-			pats_expansion_rate: self.pats_expansion_rate,
+			perc_pats_expansion_rate: self.perc_pats_expansion_rate,
 		})
 	}
 
@@ -1731,7 +1732,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 	/// as non-deterministic advice)
 	///
 	/// Might throw CapErr on "dis_adv: "(
-	///  "subsigs", "pats_expansion_rate", "avg_active_pats_per_subsig"
+	///  "subsigs", "perc_pats_expansion_rate", "avg_active_pats_per_subsig"
 	/// )
 	///
 	pub fn new(
@@ -2267,16 +2268,13 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		}
 
 		
-		println!("DEBUG USE 6901.7: inp_step_queue to container");
 		let ct_sq_inp = inp_step_queue.to_container("sq_inp",true,//inp
 			false,  //b_step
 			false,  //b_oup
 			false,  //b_subsig
 			&subsig_store_info).expect("err ct_sq_inp");
-		println!("DEBUG USE 6901.7: sq_to_add to container");
 		let ct_sq_to_add = sq_to_add.to_container("sq_to_add",false,
 			true, false, false, &subsig_store_info).expect("ct_sq_add err");
-		println!("DEBUG USE 6901.7: sq_res to container");
 		let ct_sq_res = sq_res.to_container("sq_res", false, 
 			true, false, false, &subsig_store_info).expect("ct_sq_res err");
 		res.borrow_mut().add_container(ct_sq_inp.clone()); //low cost, rc clone
@@ -2336,7 +2334,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 	/// via rg_end.
 	/// Like the fwd proof, the length the the backward prf does not
 	/// necessarily have to cover the total number of steps for a subsignature
-	/// might throw CapErr("dis_adv::pats_expansion_rate");
+	/// might throw CapErr("dis_adv::perc_pats_expansion_rate");
 	#[allow(dead_code)]
 	fn gen_backward_steps_queue_combo(
 		b_igc: bool,
@@ -3025,7 +3023,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			&ct_sq_res, &r1, &r2, &prf_union)?;
 		if b_perf {
 			let cap = &self.capacity;
-			println!(" ### validate forward: nlen: {}, subsigs: {}, avg_active_pat_per_sig: {}, basis_pats_per_ptrace: {}, pats_expansion_rate: {}, vec_size: {}", cap.max_nibble_len, cap.subsigs, cap.avg_active_pats_per_subsig, cap.basis_pats_in_trace, cap.pats_expansion_rate, StepQueue::<F>::vec_size(&StepQueueType::Res, &cap).0);
+			println!(" ### validate forward: nlen: {}, subsigs: {}, avg_active_pat_per_sig: {}, basis_pats_per_ptrace: {}, perc_pats_expansion_rate: {}, vec_size: {}", cap.max_nibble_len, cap.subsigs, cap.avg_active_pats_per_subsig, cap.basis_pats_in_trace, cap.perc_pats_expansion_rate, StepQueue::<F>::vec_size(&StepQueueType::Res, &cap).0);
 			println!(" ### validate forward step 1: {}", cs.num_constraints()-nc);
 			nc = cs.num_constraints();
 		}
@@ -3621,7 +3619,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			&ct_sq_res1, &r1, &r2, &prf_union)?;
 		if b_perf {
 			let cap = &self.capacity;
-			println!(" ### validate backward: nlen: {}, subsigs: {}, avg_active_pat_per_sig: {}, basis_pats_per_ptrace: {}, pats_expansion_rate: {}, vec_size: {}", cap.max_nibble_len, cap.subsigs, cap.avg_active_pats_per_subsig, cap.basis_pats_in_trace, cap.pats_expansion_rate, StepQueue::<F>::vec_size(&StepQueueType::Res, &cap).0);
+			println!(" ### validate backward: nlen: {}, subsigs: {}, avg_active_pat_per_sig: {}, basis_pats_per_ptrace: {}, perc_pats_expansion_rate: {}, vec_size: {}", cap.max_nibble_len, cap.subsigs, cap.avg_active_pats_per_subsig, cap.basis_pats_in_trace, cap.perc_pats_expansion_rate, StepQueue::<F>::vec_size(&StepQueueType::Res, &cap).0);
 			println!(" ### validate backward step 1: {}", cs.num_constraints()-nc);
 			nc = cs.num_constraints();
 		}
@@ -4175,7 +4173,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for DischargeAdvGadget<F>{
 		//TODO: refine formula in real data later
 		let est1 = self.capacity.subsigs * 
 			self.capacity.avg_active_pats_per_subsig * 1000;
-		let est2 = self.capacity.get_pat_loc_len() * self.capacity.pats_expansion_rate;
+		let est2 = self.capacity.get_pat_loc_len() * self.capacity.perc_pats_expansion_rate / 100;
 		if est1>est2 {est1} else {est2}
 	}
 
@@ -4410,7 +4408,7 @@ pub mod tests_discharge_adv_gadget{
 			subsigs: cap.subsigs,
 			avg_active_pats_per_subsig: 1,
 			basis_pats_in_trace: cap.basis_pats_in_trace,
-			pats_expansion_rate: 1,
+			perc_pats_expansion_rate: 100,
 		};
 
 		//2. create advice for word_extract_adv, fsm_adv, and discharge_adv
@@ -4625,7 +4623,7 @@ pub mod tests_discharge_adv_gadget{
 			subsigs: 4,
 			avg_active_pats_per_subsig: 4,
 			basis_pats_in_trace: 48*100,
-			pats_expansion_rate: 1,
+			perc_pats_expansion_rate: 100,
 		};
 		let b_igc = false;
 		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),
@@ -4832,7 +4830,7 @@ pub mod tests_discharge_adv_gadget{
 			subsigs: 4,
 			avg_active_pats_per_subsig: 4,
 			basis_pats_in_trace: 48*100,
-			pats_expansion_rate: 1,
+			perc_pats_expansion_rate: 100,
 		};
 		let b_igc = false;
 		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),
@@ -4897,11 +4895,9 @@ pub mod tests_discharge_adv_gadget{
 
 
 		//5. here we construct bwd_prf_valid_proof 
-		println!("DEBUG USE 6901.7: to_remove to container");
 		let _ct_sq_to_del= to_remove.to_container(
 			"sq_to_del",false,true,false,false,
 			&subsig_store_info).expect("ct_sq_to_del err");
-		println!("DEBUG USE 6901.7: res to container");
 		let ct_sq_res2 = res.to_container("sq_res2",
 			false,//inp
 			true, //b_step (but it's saved in DATA)
