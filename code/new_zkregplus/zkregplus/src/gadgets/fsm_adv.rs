@@ -219,6 +219,39 @@ impl <F: PrimeField + ColEle> ComponentAdvice<F> for FsmAdvAdvice<F>{
 	}
 }
 
+/// Helper function to report states with high appearance frequencies and their patterns.
+fn report_top_states<F: ark_ff::PrimeField + ColEle>(
+	states: &[F], 
+	acdfa: &HexACDFA, 
+	top_n: usize,
+	label: &str
+) {
+	let mut counts = HashMap::<usize, usize>::new();
+	for f in states.iter() {
+		if f.is_zero() { continue; }
+		let real_id = folding_schemes::folding::foldpot::circuits_super::field_to_usize(f) - 1;
+		*counts.entry(real_id).or_insert(0) += 1;
+	}
+
+	let mut sorted: Vec<_> = counts.into_iter().collect();
+	sorted.sort_by(|a, b| b.1.cmp(&a.1));
+
+	println!("\n --- [DEBUG USE 6703] Top {} High Frequency States for {} ---", top_n, label);
+	for (state_id, freq) in sorted.into_iter().take(top_n) {
+		if acdfa.is_final(state_id) {
+			let patterns = acdfa.final_to_patterns(state_id);
+			println!("State Index: {}, Freq: {}, Patterns ({}):", 
+					 state_id, freq, patterns.len());
+			for (i, pat) in patterns.iter().enumerate() {
+				println!("  [{}] {}", i + 1, pat);
+			}
+		} else {
+			 println!("State Index: {} (Non-final), Freq: {}", state_id, freq);
+		}
+	}
+	println!(" ----------------------------------------------------------- \n");
+}
+
 impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 	/// Given nibbles and ACDFA, produce the (state,loc) sequence, sorted
 	/// by loc.
@@ -419,7 +452,7 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 
 		//3. construct the packed tracie
 		let packed_trace_combo = Self::gen_packed_trace_combo(b_igc, &fsm_acc2,
-			&proj_store_combo2, capacity)?;
+			&proj_store_combo2, capacity, acdfa)?;
 		stmt_container.borrow_mut().add_container(packed_trace_combo);
 
 
@@ -661,6 +694,7 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		let target_size = nlen*capacity.basis_acc_states/10000;
 		let target_size = if target_size < 2 {2} else {target_size};
 		if states_final.len() + 1>target_size{
+			report_top_states(&states_final, acdfa, 10, "basis_acc_states overflow");
 			//needs at least one padding entry
 			let target_basis_acc_states = (states_final.len()+1) * 10000/nlen 
 				+ 1;
@@ -882,6 +916,7 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		fs_acc_combo: &Rc<RefCell<Container<F>>>,
 		proj_store_combo: &Rc<RefCell<Container<F>>>,
 		capacity: &FsmAdvCapacity,
+		acdfa: &HexACDFA,
 	)->Result<Rc<RefCell<Container<F>>>, Error>{
 		let res = Container::<F>::new("packed_trace");
 		//1. extract proj_store_combo column "states" to a sorted set
@@ -928,6 +963,8 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		let state_loc_tbl = match state_loc_tbl{
 			Ok(adv) => Ok(adv),
 			Err(Error::CapErr(vec)) => {
+				let states_final = fs_acc_combo.borrow().get_container("states_final").unwrap().borrow().to_vec();
+				report_top_states(&states_final, acdfa, 10, "basis_pats_in_trace (state_loc_tbl)");
 				let vec_err = vec.iter().map(|(s,val)|{
 					if s=="target_size"{
 						let t_val= val * 10000/capacity.max_nibble_len + 1;
@@ -988,6 +1025,8 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		let pat_state_loc_tbl = match pat_state_loc_tbl{
 			Ok(adv) => Ok(adv),
 			Err(Error::CapErr(vec)) => {
+				let states_final = fs_acc_combo.borrow().get_container("states_final").unwrap().borrow().to_vec();
+				report_top_states(&states_final, acdfa, 10, "basis_pats_in_trace (pat_state_loc_tbl)");
 				let vec_err = vec.iter().map(|(s,val)|{
 					if s=="target_size::2col_left_join"{
 						let t_val= val*10000 /capacity.max_nibble_len+ 1;
@@ -1175,6 +1214,7 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 						  val 
 						)
 					}else if s=="target_size"{
+						report_top_states(&states_final.to_vec(), acdfa, 10, "basis_pats_in_trace (joinwide)");
 						let t_val= val*10000 /capacity.max_nibble_len+ 1;
 						( format!(
 						   "fsm_adv::basis_pats_in_trace from joinwide, b_igc: {}", b_igc),t_val
@@ -1208,6 +1248,8 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		let pat_loc_tbl = match pat_loc_tbl	{
 			Ok(adv) => Ok(adv),
 			Err(Error::CapErr(vec)) => {
+				let states_final = fsm_acc_combo.borrow().get_container("states_final").unwrap().borrow().to_vec();
+				report_top_states(&states_final, acdfa, 10, "basis_pats_in_trace (tbl_to_sorted)");
 				let vec_err = vec.iter().map(|(s,val)|{
 					if s=="target_size::hashmap_2col"{
 						let t_val= val*10000 /capacity.max_nibble_len+ 1;

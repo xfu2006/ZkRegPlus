@@ -66,7 +66,7 @@ use crate::{
 	gadgets::word_extract_adv::{WordExtractAdvCapacity, WordExtractAdvGadget, WordExtractAdvAdvice },
 	gadgets::word_extract::{LEGS},
 	gadgets::fsm_adv::{FsmAdvGadget,FsmAdvAdvice,FsmAdvCapacity},
-	gadgets::discharge_adv::{DischargeAdvGadget,DischargeAdvAdvice,DischargeAdvCapacity,StepQueue},
+	gadgets::discharge_adv::{DischargeAdvGadget,DischargeAdvAdvice,DischargeAdvCapacity,StepQueue, StepQueueType},
 	gadgets::compute_sig_adv::{ComputeSigAdvCapacity,ComputeSigAdvAdvice,
 		ComputeSigAdvGadget},
 	gadgets::traits::{ComponentAdvice},
@@ -482,7 +482,8 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 			.search_container("fsm_adv_stmt_cs packed_trace pat_loc sorted_tbl")
 			.unwrap();
 		let inp_steps_queue_obj_cs = StepQueue::parse_from(
-			&inp.inp_steps_queue_cs, &da_cap_cs, false);
+			&inp.inp_steps_queue_cs, StepQueueType::ResSmall, 
+			&da_cap_cs, false);
 		let locs_cs = fsm_adv_advice_cs.stmt_container.borrow()
                         .search_container("fsm_adv_stmt_cs fsm_acc locs").unwrap()
                         .borrow().to_vec();
@@ -497,7 +498,8 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 		let pat_loc_igc = fsm_adv_advice_igc.stmt_container.borrow()
 			.search_container("fsm_adv_stmt_igc packed_trace pat_loc sorted_tbl").unwrap();
 		let inp_steps_queue_obj_igc = StepQueue::parse_from(
-			&inp.inp_steps_queue_igc, &da_cap_igc, true);
+			&inp.inp_steps_queue_igc, StepQueueType::ResSmall,
+			&da_cap_igc, true);
 		let locs_igc = fsm_adv_advice_igc.stmt_container.borrow()
                         .search_container("fsm_adv_stmt_igc fsm_acc locs").unwrap()
                         .borrow().to_vec();

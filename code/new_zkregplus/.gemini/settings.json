@@ -34,5 +34,11 @@
         }
       }
     }
+  },
+  "telemetry": {
+    "enabled": false
+  },
+  "privacy": {
+    "usageStatisticsEnabled": false
   }
 }

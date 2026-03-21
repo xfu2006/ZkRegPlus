@@ -1,3 +1,8 @@
+## Custom Command Workflow
+- **PLAN:** When `/plan` is called, perform research and strategy. Do NOT modify workspace files. Provide a clear plan and wait for feedback.
+- **WRITE_PLAN:** When `/write_plan` is called, stage proposed changes in temporary files and initiate a `vimdiff` for each file. Wait for approval.
+- **EXECUTE:** When `/execute` is called, apply the approved changes to the workspace and validate with `cargo check`.
+
 ## Context Management & Token Optimization
 - **Model Choice:** Always use `gemini-3-flash-preview` as the primary model. You MUST ask for user permission before switching to or using any `gemini-pro` models.
 - **Token Efficiency:** Keep tool outputs minimal. When editing code, provide only targeted, surgical code edits. Avoid rewriting entire files or printing out unmodified code.

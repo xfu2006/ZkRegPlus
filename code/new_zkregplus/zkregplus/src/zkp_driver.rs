@@ -738,7 +738,7 @@ pub mod tests_zkp_driver{
 		let sigs = 2; 
 		let subsigs = 4; 
 		let avg_pats_per_subsig = 4; 
-		let avg_active_pats_per_subsig = 0; //good value 0, actually does
+		let avg_active_pats_per_subsig = 1; //good value 0, actually does
 			//not matter?
 		let basis_pats_in_trace = 6; 
 		let perc_comp_subsigs = 26; 
@@ -1280,8 +1280,8 @@ pub mod tests_zkp_driver{
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
-		small_data::<Fr>(b_check_lkup); //small data
-		//small_data2::<Fr>(b_check_lkup);  //10k data 
+		//small_data::<Fr>(b_check_lkup); //small data
+		small_data2::<Fr>(b_check_lkup);  //10k data 
 		//small_data_debug::<Fr>(b_check_lkup);  //for debug
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//full_data1::<Fr>(b_check_lkup);

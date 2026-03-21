@@ -26568,14 +26568,47 @@ and prune back?
 	==== DATA ============= (full data4: perc_pats_expansion_ratio: 100)
 	FsmAdv: 1864096
 	DischargeAdvGadget: 3025313
+	ComputeSigAdvGadget: 446471
 	LOG3: -- --  preprocess() Step 2: setup circ params. circs: 1, max_circ_pp: 31945138, total_w: 31945135, total_e: 23261039, increased RAM: 31 GB.  83412 ms
 	===================
+	[d] token usage: 1M 
 
 
 Goal 2. Now imporve the cost
 	[a] download the zkp_driver. 
 	[b] change the property name expansion_rate to perc_expansion_rate.
 		and ask gemini to perform the change
+	[c] now put the new debug stmt in and change perc_pats_expansioN_rate
+		from 100 to 30. check what's there.
+	[d] observation:
+		UBSIG 36598786:  2686
+{'36598786': 2686, '39676930': 33, '37690369': 7, '37897218': 5, '36164609': 3, '36533252': 3, '36554756': 3, '37218306': 3, '37218307': 3, '37218308': 3, '37218309': 3, '37218310': 3, '37218311': 3, '68609': 1, '71681': 1, '106504': 1, '111617': 1, '184321': 1, '201729': 1, '207873': 1, '357380': 1, '3101697': 1, '3102721': 1, '3110915': 1, '13075457': 1, '18563073': 1, '18619395': 1, '18836482': 1, '18836483': 1, '18836484': 1, '18836486': 1, '18971650': 1, '19072001': 1, '19189762': 1, '19190786': 1, '19191811': 1, '19373057': 1, '19373058': 1, '19373059': 1, '19373060': 1, '19373061': 1, '19377153': 1, '19377156': 1, 
+	-> it has about 2k entries to add and delete.
+		apparently this 07000000 occurs very often, and out of
+		64k byte it has frequency of over 2k/64k = 1/30.
+	-> it fails on ct_sql_del -> needs to adjust ratio.
+	=== dump of data below ===
+	DEBUG USE 6901.8: step queue: sq_inp, b_igc: true usage: 0.00017500875
+DEBUG USE 6901.8: step queue: sq_to_add, b_igc: true usage: 0
+DEBUG USE 6901.8: step queue: sq_res, b_igc: true usage: 0.00017500875
+DEBUG USE 6901.8: step queue: sq_to_del, b_igc: true usage: 0
+DEBUG USE 6901.8: step queue: sq_res2, b_igc: true usage: 0.00017500875
+DEBUG USE 6901.8: step queue: temp, b_igc: false usage: 0.04637732
+DEBUG USE 6901.8: step queue: temp, b_igc: true usage: 0.00017500875
+DEBUG USE 6901.8: step queue: sq_inp, b_igc: false usage: 0.06099055
+DEBUG USE 6901.8: step queue: sq_to_add, b_igc: false usage: 0.3181659
+DEBUG USE 6901.8: step queue: sq_res, b_igc: false usage: 0.2200735
+DEBUG USE 6901.8: step queue: sq_to_del, b_igc: false usage: 0.79265094
+DEBUG USE 6901.8: step queue: sq_res2, b_igc: false usage: 0.061515577
+
+Goal 3. add debug code for fsm_adv  => DONE
+Goal 4. modify the discharge_adv to adjust ratio of sq_res2
+	[a] sq_inp = sq_res2
+	[b] sq_add = sq_del
+	[c] sq_res in prf_fwd is the largest.
+	[d] use macro to determine and change the type correpsondingly.
+	[e] deploy to server and get the best. 
+
 
 
 =====================================

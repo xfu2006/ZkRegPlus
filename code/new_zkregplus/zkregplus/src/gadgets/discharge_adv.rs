@@ -73,13 +73,16 @@ use std::any::Any;
 /// type of stepqueue decides its to_container() size
 #[derive(Clone,Debug,PartialEq)]
 pub enum StepQueueType{
-	/// representing the items to add for each step
-	ToAdd,
-	/// represent the itmes to delete
-	ToDel,
-	/// represent the result of forward propagation or backward pruning
-	Res,
+	/// representing the items to add for each step or delete
+	ToAddDel,
+	/// represent the result of backward pruning or sq_inp
+	ResSmall,
+	/// represent the result of forward propagation
+	ResLarge,
 }
+pub const ADD_DEL_COST:usize =  95;  //old values 100, 50, 20
+pub const RES_SMALL_COST:usize =  20; 
+pub const RES_LARGE_COST:usize =  100; 
 
 /// A step queue represents the state of the SED processing algorithm.
 /// For each (subsig-id-pat) it includes the list of current "valid"
@@ -410,9 +413,9 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 		// adjust by the type of the StepQueue.
 		let size_pat = capacity.subsigs*capacity.avg_active_pats_per_subsig;
 		let compress_ratio = match q_type{
-			StepQueueType::Res => 100, //100%
-			StepQueueType::ToAdd => 50, //50% (in practice maybe smaller)
-			StepQueueType::ToDel => 20, //10% 
+			StepQueueType::ResLarge=> RES_LARGE_COST,
+			StepQueueType::ToAddDel => ADD_DEL_COST, 
+			StepQueueType::ResSmall=> RES_SMALL_COST, 
 		};
 		let size_trace =  capacity.max_nibble_len 
 			* capacity.basis_pats_in_trace/10000
@@ -452,9 +455,9 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 
 	/// as parse_from is called by the sed_component in reconstruct object
 	/// as the result queue. its type is set to Res
-	pub fn parse_from(vec: &Vec<F>, capacity: &DischargeAdvCapacity, b_igc: bool)->Self{
+	pub fn parse_from(vec: &Vec<F>, step_queue_type: StepQueueType, capacity: &DischargeAdvCapacity, b_igc: bool)->Self{
 		//1. split vec 2 cols: <encoded, loc>
-		let (tn,_,_) = Self::vec_size(&StepQueueType::Res, capacity);
+		let (tn,_,_) = Self::vec_size(&step_queue_type, capacity);
 		assert!(vec.len()%2==0);
 		assert!(vec.len()<=tn*2);
 		let n = vec.len()/2;
@@ -515,7 +518,7 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 		subsigs.sort();
 
 		//4. construct StepQueue
-		let q_type = StepQueueType::Res;
+		let q_type = step_queue_type;
 		Self{subsigs, store_items, capacity: Clone::clone(capacity), q_type, b_igc}
 	}
 
@@ -614,9 +617,9 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 
 		//3. construct the return
 		let sq_to_add = StepQueue::new(self.subsigs.clone(),
-			stores_to_add, &self.capacity, StepQueueType::ToAdd, self.b_igc);
+			stores_to_add, &self.capacity, StepQueueType::ToAddDel, self.b_igc);
 		let sq_res = StepQueue::new(self.subsigs.clone(),
-			stores_res, &self.capacity, StepQueueType::Res, self.b_igc);
+			stores_res, &self.capacity, StepQueueType::ResLarge, self.b_igc);
 		let sfp = StepFwdPrf::new(self.subsigs.clone(),
 			stores_prf, &self.capacity, self.b_igc);
 
@@ -818,9 +821,9 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 
 		//3. construct the return
 		let sq_to_del= StepQueue::new(self.subsigs.clone(),
-			stores_to_del, &self.capacity, StepQueueType::ToDel, self.b_igc);
+			stores_to_del, &self.capacity, StepQueueType::ToAddDel, self.b_igc);
 		let sq_res = StepQueue::new(self.subsigs.clone(),
-			stores_res, &self.capacity, StepQueueType::Res, self.b_igc);
+			stores_res, &self.capacity, StepQueueType::ResSmall, self.b_igc);
 		let sfp = StepBwdPrf::new(self.subsigs.clone(),
 			stores_prf, &self.capacity, self.b_igc);
 
@@ -927,6 +930,7 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 
 		//3. consruct container
 		let (n, n_pat,_n_trace) = Self::vec_size(&self.q_type, &self.capacity);
+		println!("DEBUG USE 6901.8: step queue: {}, b_igc: {} usage: {}", name, self.b_igc, (vec_encoded.len() as f32)/(n as f32));
 		if n<vec_encoded.len()+1{
 			let n = if n==0 {1} else {n};
 			if n_pat==n{
@@ -951,7 +955,6 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 		}
 		assert!(n>=vec_encoded.len()+1, "StepQueue type: {:?} buf too small, either adjust the compression ratio in vec_size() first, then check the perc_pats_expansion_rate in DischargeAdvCapacity, n: {}, vec_encoded.len: {}", self.q_type, n, vec_encoded.len());
 		let n2 = n-vec_encoded.len();
-		println!("DEBUG USE 6901.8: step queue: {}, b_igc: {} usage: {}", name, self.b_igc, ((n-n2) as f32)/(n as f32));
 		assert!(n2>0); //the Cap guanrantees that a dummy zero entry added
 		let vec_encoded = vec![vec![zero; n2], vec_encoded].concat();
 		let vec_locs= vec![vec![zero; n2], vec_locs].concat();
@@ -1263,6 +1266,7 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 			v_dst_loc, v_dst_pat_id, v_dst_pat_diff1, v_dst_pat_diff2,
 			v_dst_subsig];
 		let n = self.vec_size();
+		println!("DEBUG USE 6901.8: StepFwdPrf: {}, b_igc: {} usage: {}", name, self.b_igc, (v2d[0].len() as f32)/(n as f32));
 		if n<v2d[0].len()+1{
 			let new_val = (v2d[0].len()+1)*10000 * 100 /(self.capacity.max_nibble_len*self.capacity.basis_pats_in_trace) + 1;
 			if b_debug_capacity{
@@ -1486,10 +1490,7 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 		let raw_size = self.capacity.basis_pats_in_trace 
 			* self.capacity.max_nibble_len / 10000 
 			* self.capacity.perc_pats_expansion_rate / 100;
-		//given that StepBwdPrf is usually much smaller 
-		//we give it some fraction of the size of StepFwdPrf
-		//adjust in practice
-		let compress_ratio = 50;
+		let compress_ratio = ADD_DEL_COST;
 		let size = raw_size * compress_ratio/100;
 		size
 	}
@@ -1568,8 +1569,9 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 			v_src_min_loc, //id 4
 			v_prev_encoded, v_loc_to_del, v_src_subsigs.clone()];
 		let n = self.vec_size();
+		println!("DEBUG USE 6901.8: StepBwdPrf: {}, b_igc: {} usage: {}", name, self.b_igc, (v2d[0].len() as f32)/(n as f32));
 		if n<v2d[0].len()+1{
-			let new_val= (v2d[0].len()+1)*10000 * 100 * 100 / (self.capacity.max_nibble_len*self.capacity.basis_pats_in_trace * 50) + 1;
+			let new_val= (v2d[0].len()+1)*10000 * 100 * 100 / (self.capacity.max_nibble_len*self.capacity.basis_pats_in_trace * ADD_DEL_COST) + 1;
 			if b_debug_capacity{
 				println!("DEBUG USE 9005: to throw perc_pats_expansion_rate ERROR on StepBwdProof in discharge_adv. DUMP of data");
 				self.dump();
@@ -1801,7 +1803,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 			(subsig, vec![item]) //empty StepQueueItems for each
 		}).collect::<HashMap<F,Vec<StepQueueItem<F>>>>();
 
-		StepQueue::new(subsigs, store_items, &capacity, StepQueueType::Res,
+		StepQueue::new(subsigs, store_items, &capacity, StepQueueType::ResSmall,
 			b_igc)
 	}
 
@@ -2888,10 +2890,12 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		pat_loc.borrow_mut()
 			.add_col(Col::<F>::new(locs, "sorted_val", IDX_DATA));
 		let sigs = vec![zero; capacity.subsigs];
-		let (step_q_size,_,_) = StepQueue::<F>::vec_size(&StepQueueType::Res,
+		let (step_q_size,_,_) = StepQueue::<F>
+			::vec_size(&StepQueueType::ResSmall,
 			capacity);
 		let inp_steps_queue = vec![zero; step_q_size*2];
 		let inp_steps_queue_obj = StepQueue::parse_from(&inp_steps_queue,
+			StepQueueType::ResSmall,
 			capacity, b_igc);
 		let dummy_adv = DischargeAdvAdvice::new(b_igc, offset_fsm,
 			&pat_loc, &sigs, fsm_id, store_steps, 
@@ -3023,7 +3027,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			&ct_sq_res, &r1, &r2, &prf_union)?;
 		if b_perf {
 			let cap = &self.capacity;
-			println!(" ### validate forward: nlen: {}, subsigs: {}, avg_active_pat_per_sig: {}, basis_pats_per_ptrace: {}, perc_pats_expansion_rate: {}, vec_size: {}", cap.max_nibble_len, cap.subsigs, cap.avg_active_pats_per_subsig, cap.basis_pats_in_trace, cap.perc_pats_expansion_rate, StepQueue::<F>::vec_size(&StepQueueType::Res, &cap).0);
+			println!(" ### validate forward: nlen: {}, subsigs: {}, avg_active_pat_per_sig: {}, basis_pats_per_ptrace: {}, perc_pats_expansion_rate: {}, sq_inp/res: vec_size: {}, sq_forward_res size: {}", cap.max_nibble_len, cap.subsigs, cap.avg_active_pats_per_subsig, cap.basis_pats_in_trace, cap.perc_pats_expansion_rate, StepQueue::<F>::vec_size(&StepQueueType::ResSmall, &cap).0, StepQueue::<F>::vec_size(&StepQueueType::ResLarge, &cap).0);
 			println!(" ### validate forward step 1: {}", cs.num_constraints()-nc);
 			nc = cs.num_constraints();
 		}
@@ -3619,7 +3623,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			&ct_sq_res1, &r1, &r2, &prf_union)?;
 		if b_perf {
 			let cap = &self.capacity;
-			println!(" ### validate backward: nlen: {}, subsigs: {}, avg_active_pat_per_sig: {}, basis_pats_per_ptrace: {}, perc_pats_expansion_rate: {}, vec_size: {}", cap.max_nibble_len, cap.subsigs, cap.avg_active_pats_per_subsig, cap.basis_pats_in_trace, cap.perc_pats_expansion_rate, StepQueue::<F>::vec_size(&StepQueueType::Res, &cap).0);
+			println!(" ### validate backward: nlen: {}, subsigs: {}, avg_active_pat_per_sig: {}, basis_pats_per_ptrace: {}, perc_pats_expansion_rate: {}, small vec_size: {}, large sq_res: {}", cap.max_nibble_len, cap.subsigs, cap.avg_active_pats_per_subsig, cap.basis_pats_in_trace, cap.perc_pats_expansion_rate, StepQueue::<F>::vec_size(&StepQueueType::ResSmall, &cap).0, StepQueue::<F>::vec_size(&StepQueueType::ResLarge, &cap).0);
 			println!(" ### validate backward step 1: {}", cs.num_constraints()-nc);
 			nc = cs.num_constraints();
 		}
@@ -4520,7 +4524,9 @@ pub mod tests_discharge_adv_gadget{
 				.expect("no locs")
 				.borrow().to_vec();
 			inp_loc = locs[locs.len()-1];
-			inp_steps_queue = StepQueue::parse_from(&oup_queue, &cap_disc, b_igc);
+			inp_steps_queue = StepQueue::parse_from(&oup_queue, 
+				StepQueueType::ResSmall,
+				&cap_disc, b_igc);
 		}
 
 
@@ -4627,14 +4633,15 @@ pub mod tests_discharge_adv_gadget{
 		};
 		let b_igc = false;
 		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),
-			q_type: StepQueueType::Res, b_igc};
+			q_type: StepQueueType::ResSmall, b_igc};
 		let ct = sq.to_container("ct", true, false, false, true, &steps_info)
 			.expect("ct err");
 		let pat = ct.borrow().get_container("encoded")
 			.unwrap().borrow().to_vec();
 		let loc = ct.borrow().get_container("locs").unwrap().borrow().to_vec();
 		let vec = vec![pat, loc].concat();
-		let sq2 = StepQueue::parse_from(&vec, &capacity, b_igc);
+		let sq2 = StepQueue::parse_from(&vec, StepQueueType::ResSmall,
+			&capacity, b_igc);
 		assert!(sq == sq2);
 
 		//2. test the forward proof
@@ -4828,13 +4835,13 @@ pub mod tests_discharge_adv_gadget{
 		let capacity= DischargeAdvCapacity{
 			max_nibble_len: 62, 
 			subsigs: 4,
-			avg_active_pats_per_subsig: 4,
+			avg_active_pats_per_subsig: 5,
 			basis_pats_in_trace: 48*100,
 			perc_pats_expansion_rate: 100,
 		};
 		let b_igc = false;
 		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),
-			q_type: StepQueueType::Res, b_igc};
+			q_type: StepQueueType::ResSmall, b_igc};
 
 		//4. *** test the backward proof ***
 		let last_loc = Fr::from(100u32); //last step's location (default min_loc)
