@@ -904,6 +904,207 @@ impl ClamavSig{
 			Regex::new(r"^00.0$").unwrap(),
 			Regex::new(r"^0.0000$").unwrap(),
 			Regex::new(r"^202020$").unwrap(),
+			Regex::new(r"^909090$").unwrap(),
+
+	// the following section cuts 
+	// acc_states/path_len: avg: 2.644863392127692%, max: 4.188081767927191%
+    // pat ratio: avg: 5.9035273%, max: 14.321802%
+	Regex::new(r"^fffe+$").unwrap(), //max acc_rate: 16%, pat_rate: 16%
+	Regex::new(r"^80000000+$").unwrap(), //max acc_rate: 6%, pat_rate: 6%
+	Regex::new(r"^003000+$").unwrap(), //max acc_rate: 3%, pat_rate: 6%
+	Regex::new(r"^30003000+$").unwrap(), //max acc_rate: 3%, pat_rate: 6%
+	Regex::new(r"^00005+$").unwrap(), //max acc_rate: 6%, pat_rate: 6%
+	Regex::new(r"^20202020+$").unwrap(), //max acc_rate: 6%, pat_rate: 6%
+	Regex::new(r"^0001000000+$").unwrap(), //max acc_rate: 2%, pat_rate: 5%
+	Regex::new(r"^01000000+$").unwrap(), //max acc_rate: 4%, pat_rate: 5%
+	Regex::new(r"^000000be+$").unwrap(), //max acc_rate: 1%, pat_rate: 4%
+	Regex::new(r"^00be+$").unwrap(), //max acc_rate: 1%, pat_rate: 4%
+	Regex::new(r"^0000be+$").unwrap(), //max acc_rate: 1%, pat_rate: 4%
+
+	//the following section further cuts to:
+	//acc_states/path_len: avg: 2.4027024486509037%, max: 4.035532885396304%
+	//pat ratio: avg: 5.424644%, max: 13.7453165%
+	Regex::new(r"^03000000+$").unwrap(), //max acc_rate: 3%, pat_rate: 3%
+	Regex::new(r"^ffff8b85+$").unwrap(), //max acc_rate: 2%, pat_rate: 3%
+	Regex::new(r"^8b85+$").unwrap(), //max acc_rate: 2%, pat_rate: 3%
+	Regex::new(r"^3c00000000+$").unwrap(), //max acc_rate: 3%, pat_rate: 3%
+	Regex::new(r"^3c0000+$").unwrap(), //max acc_rate: 3%, pat_rate: 3%
+	Regex::new(r"^00e9+$").unwrap(), //max acc_rate: 3%, pat_rate: 3%
+	Regex::new(r"^ff25+$").unwrap(), //max acc_rate: 3%, pat_rate: 3%
+	Regex::new(r"^34343434343434343434343434343434+$").unwrap(), //max acc_rate: 3%, pat_rate: 3%
+	Regex::new(r"^02000000+$").unwrap(), //max acc_rate: 3%, pat_rate: 3%
+	Regex::new(r"^0c000000+$").unwrap(), //max acc_rate: 3%, pat_rate: 3%
+	Regex::new(r"^000006+$").unwrap(), //max acc_rate: 3%, pat_rate: 3%
+	Regex::new(r"^3d3078+$").unwrap(), //max acc_rate: 1%, pat_rate: 3%
+	Regex::new(r"^3078+$").unwrap(), //max acc_rate: 1%, pat_rate: 3%
+	Regex::new(r"^0fb6+$").unwrap(), //max acc_rate: 3%, pat_rate: 3%
+	Regex::new(r"^24000000+$").unwrap(), //max acc_rate: 3%, pat_rate: 3%
+	Regex::new(r"^ffff00+$").unwrap(), //max acc_rate: 3%, pat_rate: 3%
+
+	//the following section further cuts to:
+	//acc_states/path_len: avg: 1.6504275105446908%, max: 2.526902270768031% 
+	//pat ratio: avg: 3.9314427%, max: 13.319191%
+	Regex::new(r"^0068+$").unwrap(), //max acc_rate: 1%, pat_rate: 2%
+	Regex::new(r"^000068+$").unwrap(), //max acc_rate: 1%, pat_rate: 2%
+	Regex::new(r"^5050505050505050+$").unwrap(), //max acc_rate: 2%, pat_rate: 2%
+	Regex::new(r"^00010000+$").unwrap(), //max acc_rate: 2%, pat_rate: 2%
+	Regex::new(r"^00000a+$").unwrap(), //max acc_rate: 2%, pat_rate: 2%
+	Regex::new(r"^28000000+$").unwrap(), //max acc_rate: 2%, pat_rate: 2%
+	Regex::new(r"^3001+$").unwrap(), //max acc_rate: 2%, pat_rate: 2%
+	Regex::new(r"^c78424+$").unwrap(), //max acc_rate: 2%, pat_rate: 2%
+	Regex::new(r"^000002000000+$").unwrap(), //max acc_rate: 1%, pat_rate: 2%
+	Regex::new(r"^1500+$").unwrap(), //max acc_rate: 2%, pat_rate: 2%
+	Regex::new(r"^46000000+$").unwrap(), //max acc_rate: 2%, pat_rate: 2%
+	Regex::new(r"^0000000e+$").unwrap(), //max acc_rate: 2%, pat_rate: 2%
+	Regex::new(r"^07000000+$").unwrap(), //max acc_rate: 2%, pat_rate: 2%
+	Regex::new(r"^4100+$").unwrap(), //max acc_rate: 2%, pat_rate: 2%
+	Regex::new(r"^8b45+$").unwrap(), //max acc_rate: 2%, pat_rate: 2%
+	Regex::new(r"^5420+$").unwrap(), //max acc_rate: 2%, pat_rate: 2%
+	Regex::new(r"^726d+$").unwrap(), //max acc_rate: 1%, pat_rate: 2%
+	Regex::new(r"^666f726d+$").unwrap(), //max acc_rate: 1%, pat_rate: 2%
+	Regex::new(r"^303030+$").unwrap(), //max acc_rate: 1%, pat_rate: 2%
+	Regex::new(r"^3030+$").unwrap(), //max acc_rate: 2%, pat_rate: 2%
+	Regex::new(r"^0069+$").unwrap(), //max acc_rate: 1%, pat_rate: 2%
+	Regex::new(r"^000069+$").unwrap(), //max acc_rate: 1%, pat_rate: 2%
+	Regex::new(r"^00e8+$").unwrap(), //max acc_rate: 1%, pat_rate: 2%
+	Regex::new(r"^0000e8+$").unwrap(), //max acc_rate: 1%, pat_rate: 2%
+	Regex::new(r"^13000000+$").unwrap(), //max acc_rate: 2%, pat_rate: 2%
+	Regex::new(r"^00000040+$").unwrap(), //max acc_rate: 2%, pat_rate: 2%
+	Regex::new(r"^676574+$").unwrap(), //max acc_rate: 1%, pat_rate: 2%
+	Regex::new(r"^5f676574+$").unwrap(), //max acc_rate: 1%, pat_rate: 2%
+	Regex::new(r"^2c20+$").unwrap(), //max acc_rate: 2%, pat_rate: 2%
+	Regex::new(r"^894424+$").unwrap(), //max acc_rate: 1%, pat_rate: 2%
+	Regex::new(r"^48894424+$").unwrap(), //max acc_rate: 1%, pat_rate: 2%
+	Regex::new(r"^4885c0+$").unwrap(), //max acc_rate: 1%, pat_rate: 2%
+	Regex::new(r"^85c0+$").unwrap(), //max acc_rate: 1%, pat_rate: 2%
+	Regex::new(r"^faff+$").unwrap(), //max acc_rate: 2%, pat_rate: 2%
+	Regex::new(r"^180000+$").unwrap(), //max acc_rate: 2%, pat_rate: 2%
+	Regex::new(r"^8d05+$").unwrap(), //max acc_rate: 1%, pat_rate: 2%
+	Regex::new(r"^488d05+$").unwrap(), //max acc_rate: 1%, pat_rate: 2%
+	Regex::new(r"^646d696e+$").unwrap(), //max acc_rate: 1%, pat_rate: 2%
+	Regex::new(r"^61646d696e+$").unwrap(), //max acc_rate: 1%, pat_rate: 2%
+	Regex::new(r"^696e+$").unwrap(), //max acc_rate: 1%, pat_rate: 2%
+	Regex::new(r"^5bc3+$").unwrap(), //max acc_rate: 2%, pat_rate: 2%
+	Regex::new(r"^0401+$").unwrap(), //max acc_rate: 2%, pat_rate: 2%
+	Regex::new(r"^4c000000+$").unwrap(), //max acc_rate: 2%, pat_rate: 2%
+	Regex::new(r"^000041+$").unwrap(), //max acc_rate: 2%, pat_rate: 2%
+	Regex::new(r"^1c00+$").unwrap(), //max acc_rate: 2%, pat_rate: 2%
+	Regex::new(r"^8985+$").unwrap(), //max acc_rate: 2%, pat_rate: 2%
+	Regex::new(r"^51515151515151+$").unwrap(), //max acc_rate: 2%, pat_rate: 2%
+	Regex::new(r"^01000000000000000000+$").unwrap(), //max acc_rate: 2%, pat_rate: 2%
+	Regex::new(r"^0074+$").unwrap(), //max acc_rate: 1%, pat_rate: 2%
+	Regex::new(r"^000074+$").unwrap(), //max acc_rate: 1%, pat_rate: 2%
+
+	//the following section further cuts to:
+	//acc_states/path_len: avg: 0.991%, max: 1.67%
+	//pat ratio: avg: 2.4242725%, max: 13.2924%
+	Regex::new(r"^006f+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^0f85+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^466f726d+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^488b15+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^8b15+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^002600+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^89c7e8+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^b8000000+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^00010000000100000001000000+$").unwrap(), //max acc_rate: 0%, pat_rate: 1%
+	Regex::new(r"^b800+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^c70424+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^000000ba+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^8b0d+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^488b0d+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^31c0+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^786d6c+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^8d7c24+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^6973+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^70726f746f+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^4883c4+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^83c4+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^68747470+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^83c0+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^8b95+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^83ec+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^4883ec+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^8dbc24+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^51000000+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^2f6170692f+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^7100+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^8d15+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^000000000002+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^8b4424+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^292e+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^616e+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^4f000000+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^2e676f+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^ff15+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^6c616e67+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^8b1d+$").unwrap(), //max acc_rate: 0%, pat_rate: 1%
+	Regex::new(r"^488b1d+$").unwrap(), //max acc_rate: 0%, pat_rate: 1%
+	Regex::new(r"^c1e8+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^8b35+$").unwrap(), //max acc_rate: 0%, pat_rate: 1%
+	Regex::new(r"^488b35+$").unwrap(), //max acc_rate: 0%, pat_rate: 1%
+	Regex::new(r"^2028+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^0280+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^0345+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^488944+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^302e+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^00040000+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^482d+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^4944+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^5049+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^895c24+$").unwrap(), //max acc_rate: 0%, pat_rate: 1%
+	Regex::new(r"^5c24+$").unwrap(), //max acc_rate: 0%, pat_rate: 1%
+	Regex::new(r"^00000000ff+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^2e2e+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^85c074+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^488d35+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^c744+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^8bb424+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^5068+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^004d+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^616d+$").unwrap(), //max acc_rate: 0%, pat_rate: 1%
+	Regex::new(r"^73747265616d+$").unwrap(), //max acc_rate: 0%, pat_rate: 1%
+	Regex::new(r"^6f6e+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^272c27+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^7468+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^1700+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^c74424+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^88d9+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^2746+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^0355+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^ff05+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^0fbd+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^7405+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^736574+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^6060+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^488b3d+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^696e6b+$").unwrap(), //max acc_rate: 0%, pat_rate: 1%
+	Regex::new(r"^6c696e6b+$").unwrap(), //max acc_rate: 0%, pat_rate: 1%
+	Regex::new(r"^4e4f+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^6c73+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^5442+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^01000000e8+$").unwrap(), //max acc_rate: 0%, pat_rate: 1%
+	Regex::new(r"^666f72+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^696e707574+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^85c00f85+$").unwrap(), //max acc_rate: 0%, pat_rate: 1%
+	Regex::new(r"^800f+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^895424+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^6d61746368+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^0065+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^488d3d+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^2623+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^005079+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^6600+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^8d0d+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^ffe0+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+	Regex::new(r"^0175+$").unwrap(), //max acc_rate: 1%, pat_rate: 1%
+
+	// The following CANNOT BE INCLUDED because they are too long
+	// and mostly are the "ONLY" anchor word in subsigs, dropping them will
+	// lead to failure to discharge signatures. 
+	//Regex::new(r"^20202020$").unwrap(), -> longer will be worst
+	//Regex::new(r"^0100010001000100+$").unwrap(), //max acc_rate: 11%, pat_rate: 11%
+	//Regex::new(r"^55555555+$").unwrap(), //max acc_rate: 13%, pat_rate: 13%
+
 		];
 		let is_special = |s: &String,vec_r: &Vec<Regex>| -> bool{
 			for r1 in vec_r{
@@ -2449,6 +2650,11 @@ pub fn quick_discharge_file_by_crit_bag_pm_old(fname: &str,
 		ind_pm_reg: set_ind_pm_reg,
 		total_unique_states: total_unique_states,
 		most_freq_sed_cs_pats: None,
+
+		seg_size:0, //this function is not used, just to satisfy syntax req.
+		max_seg_acc_rate:0.0,
+		max_seg_pat_rate:0.0,
+		most_freq_seg_cs_pats: None,
 	};
 
 	panic!("should call quick_discharge_file_by_crit_bag_new")
@@ -2593,6 +2799,12 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 	}else{
 		Some(dfa_bag.get_most_freq_patterns(&dfa_acc_path))
 	};
+	let top_n = 10;
+	let seg_size = 62 * 512 * 4;
+	let (most_freq_seg_cs_pats, max_seg_acc_rate, max_seg_pat_rate) =
+		dfa_bag.get_most_freq_seg_patterns(&dfa_acc_path,
+			top_n, seg_size);
+	let most_freq_seg_cs_pats = Some(most_freq_seg_cs_pats);
 
 	//6. compute stats 
 	let file_len = ((nibbles.len()/2).ilog2() + 1) as usize;
@@ -2610,6 +2822,11 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		ind_pm_reg: set_ind_pm_reg,
 		total_unique_states: total_unique_states,
 		most_freq_sed_cs_pats,
+
+		seg_size,
+		max_seg_acc_rate,
+		max_seg_pat_rate,
+		most_freq_seg_cs_pats,
 	};
 
 	let vec_sed_sigs = set_sigs_crit.difference(&set_sigs_pm).map(|s|

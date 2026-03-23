@@ -1179,12 +1179,14 @@ pub mod tests_zkp_driver{
 	/// This runs the full signature set on the most difficult files
 	/// each is 15-32MB file
 	/// details:
-	/// -rw-rw-r-- 1 xiang xiang 33554416 Jun  8  2025 anthoscli__00
-	/// -rw-rw-r-- 1 xiang xiang 33554416 Jun  8  2025 anthoscli__01
-	/// -rwxrwxr-x 1 xiang xiang 22720144 Jun  8  2025 libpython3.9.so
-	/// -rwxrwxr-x 1 xiang xiang 22720144 Jun  8  2025 libpython3.9.so.1.0
-	/// -rwxrwxr-x 1 xiang xiang 20785824 Jun  8  2025 libicudata.so.50.2
-	/// -rwxrwxr-x 1 xiang xiang 15603008 Jun  8  2025 cc1plus
+	/// 1: -rw-rw-r-- 1 xiang xiang 33554416 Jun  8  2025 anthoscli__00
+	/// 2: -rw-rw-r-- 1 xiang xiang 33554416 Jun  8  2025 anthoscli__01
+	/// 3: -rwxrwxr-x 1 xiang xiang 22720144 Jun  8  2025 libpython3.9.so (Max Acc Rate: 11.37%, Max Pat Rate: 11.37%)
+	/// 4: -rwxrwxr-x 1 xiang xiang 22720144 Jun  8  2025 libpython3.9.so.1.0 (Max Acc Rate: 11.37%, Max Pat Rate: 11.37%)
+	/// 5: -rwxrwxr-x 1 xiang xiang 20785824 Jun  8  2025 libicudata.so.50.2 (Max Acc Rate: 5.32%, Max Pat Rate: 5.38%)
+	/// 6: -rwxrwxr-x 1 xiang xiang 15603008 Jun  8  2025 cc1plus (Max Acc Rate: 12.33%, Max Pat Rate: 12.36%)
+	/// 7: -rwxrwxr-x 1 xiang xiang 15022144 Jun  8  2025 data/samples/binexec_merged128k/f951 (Max Acc Rate: 12.42%, Max Pat Rate: 12.45%)
+	/// 8: -rwxrwxr-x 1 xiang xiang 13676928 Jun  8  2025 data/samples/binexec_merged128k/lto1 (Max Acc Rate: 11.57%, Max Pat Rate: 11.63%)
 	#[allow(dead_code)]
 	fn full_data4<F:PrimeField>(b_check_lkup: bool){
 		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
@@ -1207,8 +1209,8 @@ pub mod tests_zkp_driver{
             //old value 100 cur value 1/1000.
         let dfa_sigs = 6;
         let dfa_subsigs= 6;
-        let perc_pats_expansion_rate = 100; //old good value 2
-        let perc_pats_expansion_rate_igc = 100;
+        let perc_pats_expansion_rate = 30; //old good value 2
+        let perc_pats_expansion_rate_igc = 30;
         //let avg_subsig_per_sig = 3;
 
 		let init_cp_cap= CpCapacity{
@@ -1250,8 +1252,8 @@ pub mod tests_zkp_driver{
         );
 
 		//just test one at a time
-		let min = 2; //0
-		let max = 3; //6
+		let min = 2; //starting: 0
+		let max = 3; //max possible: 8
 		for id in min..max{
 			zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
 				&format!("{}/main.dat",set1), //src sig
@@ -1280,8 +1282,8 @@ pub mod tests_zkp_driver{
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
-		//small_data::<Fr>(b_check_lkup); //small data
-		small_data2::<Fr>(b_check_lkup);  //10k data 
+		small_data::<Fr>(b_check_lkup); //small data
+		//small_data2::<Fr>(b_check_lkup);  //10k data 
 		//small_data_debug::<Fr>(b_check_lkup);  //for debug
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//full_data1::<Fr>(b_check_lkup);

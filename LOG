@@ -26608,10 +26608,134 @@ Goal 4. modify the discharge_adv to adjust ratio of sq_res2
 	[c] sq_res in prf_fwd is the largest.
 	[d] use macro to determine and change the type correpsondingly.
 	[e] deploy to server and get the best. 
-
-
+	[f] check why bwd_prf fails -> check capacity
+	[g] regression 2
+Goal 5. on server collect data again
+	[a] now adjust sq_res to about 10 or 20%.
+	======= DATA ==========
+	FsmAdv: 1.86M (same, as expected)
+	DischargeSigAdv: 1.038M (improved from 3.0M) 
+	ComputeAdv: 86k (improved from 446k)
+	OG3: -- --  preprocess() Step 2: setup circ params. circs: 1, max_circ_pp: 21638674, total_w: 21638671 (improved from 31M), total_e: 14907969, increased RAM: 22 GB.  60177 ms
+	====
+	[b] now try cut the rate of igc (set from 30% to 2%)
+	FsmAdv: 1.86M (same)
+	Discharge: 1.038M and 299k (improved for igc true case)
+	ComputeSig: 80k (improved 86k)
+	 preprocess() Step 2: setup circ params. circs: 1, max_circ_pp: 19952569, total_w: 19952566 (improved from 21.M), total_e: 13700600, increased RAM: 20 GB.  56820 ms
+	 [c] check what's causing the high acc_state rate.
+	 -> looks like the reported highest frequency patterns are far from
+	 	30% pats rate or 20% acc_states rate.
+		----- Details -------
+		 ==== **** =====
+Planning advice fails for data/samples/binexec_merged128k/libpython3.9.so! Could not find a circuit satisfying the following:
+ ==============
+: CapErr([("fsm_adv::basis_pats_in_trace from joinwide, b_igc: false", 2689)])
+stack backtrace:
+===========
+	--- [DEBUG USE 6703] Top 10 High Frequency States for basis_pats_in_trace (joinwide) ---
+State Index: 546114, Freq: 7630, Patterns (2):
+  [1] 909090
+  [2] 909090909090
+State Index: 18182, Freq: 7369, Patterns (1):
+  [1] 20202020
+State Index: 546069, Freq: 360, Patterns (1):
+  [1] 909090
+State Index: 546077, Freq: 346, Patterns (2):
+  [1] 909090
+  [2] 909090909090
+State Index: 546102, Freq: 331, Patterns (2):
+  [1] 909090
+  [2] 909090909090
+State Index: 415, Freq: 323, Patterns (1):
+  [1] 909090
+State Index: 546103, Freq: 303, Patterns (2):
+  [1] 909090
+  [2] 909090909090
+State Index: 416, Freq: 301, Patterns (2):
+  [1] 000090909090
+  [2] 909090
+State Index: 546104, Freq: 292, Patterns (2):
+  [1] 909090
+  [2] 909090909090
+State Index: 546105, Freq: 281, Patterns (2):
+  [1] 909090
+  [2] 909090909090
 
 =====================================
+
+Sunday 03/22/2022
+LOC (data_processor): 10014->10124 (+110)
+LOC (paper_data_gen): 1325->1397(+70)
+Goal 1. test remove 909090 and 000090909090 in remove_speical_pats
+	and see if it passes data generation.
+	[a] interestingly if ONLY disable 909090 it's fine but
+	if disable longer "container" it will fail.
+Goal 2. try to understand
+	[a] : CapErr([("fsm_adv::basis_pats_in_trace from joinwide, b_igc: false", 2689)])
+	[b] it does explain - because it's not the average but
+		sum up the apparence of all patterns.
+
+Goal 3. plan
+	[a] general idea: remove more frequent patterns to reduce 
+		acc_rate and pattern_rate.
+		But also the data report should be on 64kb segments
+	[b] in FailDischargeRecord add
+		seg64kb_acc_rate, seg
+
+Goal 4. implementation
+	[a] add hex_dfa collect patterns
+	[b] define new data members in FailDischargeRecord
+	[c] define the task of cargo check
+	[d] outlined the blow: lines
+	[e] now token before gemini finish details: 448k
+	[f] -> idea: 647k (+200k)
+	[g] -> show code: 747k (+100k)
+	[h] -> implement code: 980k (+200k)  but with syntax error
+		=> 2.5M tokens! (it went back and forth and stuck
+			on syntax errors. It's easier if I manually cleared it)
+	[g] total cost: $1.70. (for 250 lines of code) well not that
+		bad.
+	[h] regression test.
+
+Monday 03/23/2026
+Goal 1. collect data
+	[a] raw data befrore removing patterns
+	--------
+	acc_states/path_len: avg: 3.066205271069609%, max: 4.87878027585359%
+	pat ratio: avg: 6.768644%, max: 16.363869%
+	---------
+	[b] including all will cause failing sigs, try include them batch by batch
+	[c] try above 4%, but exclude the long 90909090 and also 101011010
+		which might cause problem
+	----- (acc ratio improved 0.7%, pat improved 2%)
+	LOG1:  acc_states/path_len: avg: 2.644863392127692%, max: 4.188081767927191%
+	LOG1:  pat ratio: avg: 5.9035273%, max: 14.321802%
+	[d] now try remove %3 ones
+	----- (acc ax improved 0.2 perc, pat improved 0.5 perc)
+		acc_states/path_len: avg: 2.4027024486509037%, max: 4.035532885396304%
+		pat ratio: avg: 5.424644%, max: 13.7453165%
+	----
+	[e] now try to remove %2 ones
+	----- (acc max improved 1.5 perc, pat improved 0.4 perc)
+	  acc_states/path_len: avg: 1.6504275105446908%, max: 2.526902270768031%			pat ratio: avg: 3.9314427%, max: 13.319191%
+ 
+	----
+	[f] now try to remove %1 ones
+	---- (acc max improved 0.5 perc, pat max improved 0.03%)
+		acc_states/path_len: avg: 0.991%, max: 1.67%
+		pat ratio: avg: 2.4242725%, max: 13.2924%
+	---
+
+Goal 2. enter data into clamav.rs remove_special_patterns.
+	[a] update clamav.rs
+	[b] update the data section
+	[c] update the full_data4
+
+Goal 3. deploy to server and check if we can adjust acc and pat rate
+	[a] download from server all pythons cripts
+
+
 -- TODO -- remove DEBUG USE 6901, 6999
 		-- disable debug in sed_mapper (6621)
 

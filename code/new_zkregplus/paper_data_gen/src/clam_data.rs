@@ -5,7 +5,7 @@
 extern crate rayon;
 
 use rayon::prelude::*;
-use std::collections::{HashSet};
+use std::collections::{HashSet, HashMap};
 use ark_ff::PrimeField;
 use utils::{
 	data::{ceil_log2},
@@ -69,6 +69,24 @@ vdata: &Vec<FailDischargeRecord>, db: ClamavDB<F>, vlog: &mut Vec<String>){
 	println!("-- set_sed: {}, set_ised: {}", set_sed.len(), set_ised.len());
 }
 
+/// display file size nicely
+fn format_size(bytes: usize) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut size = bytes as f64;
+    let mut unit = 0;
+
+    while size >= 1000.0 && unit < UNITS.len() - 1 {
+        size /= 1000.0;
+        unit += 1;
+    }
+
+    if unit == 0 {
+        format!("{}{}", bytes, UNITS[unit])
+    } else {
+        format!("{:.0}{}", size, UNITS[unit])
+    }
+}
+
 /// Display the discharge stats and write the results into vlog
 pub fn print_discharge_stats(vdata: &Vec<FailDischargeRecord>,
 	vlog: &mut Vec<String>){
@@ -78,6 +96,7 @@ pub fn print_discharge_stats(vdata: &Vec<FailDischargeRecord>,
 	let b_more_details = false;
 	let b_include_bs = false;
 	let b_show_high_acc = true; //show most_freq patterns
+	let b_show_high_pat = true; //show most freq pattersns by pat_ratio
 
 	//2. print details
 	if b_more_details{
@@ -254,20 +273,11 @@ pub fn print_discharge_stats(vdata: &Vec<FailDischargeRecord>,
 	flog(LOG1, &format!("acc_states/path_len: avg: {}%, max: {}%",
 		avg_f64(&acc_ratio),
 		max_f64(&acc_ratio)), vlog);
-	if b_show_high_acc{
-		for i in 0..vdata.len(){
-			if acc_ratio[i]>=5.0{
-				println!("HIGH acc_states cost files: i: {}, acc_ratio: {}%, flen: {}, fname: {}, patterns: {:#?}", i, 
-					acc_ratio[i], vdata[i].total_acc_path_len,
-					vdata[i].fname, vdata[i].most_freq_sed_cs_pats);
-			}
-		}
-	}
+
 	let vec_unique_state_ratio = vdata.iter().map(|v|
-		//because it includes two automata's data (case sentive and igc)
-		(v.total_unique_states as f64)*100.0/(2.0*accpath_len as f64)
-	).collect::<Vec<f64>>();
-	flog(LOG1, &format!("unique states ratio: avg: {}%, max: {}%, min: {}%",
+	    //because it includes two automata's data (case sentive and igc)
+	    (v.total_unique_states as f64)*100.0/(2.0*accpath_len as f64)
+	).collect::<Vec<f64>>();	flog(LOG1, &format!("unique states ratio: avg: {}%, max: {}%, min: {}%",
 		avg_f64(&vec_unique_state_ratio),	
 		max_f64(&vec_unique_state_ratio),	
 		min_f64(&vec_unique_state_ratio)
@@ -287,6 +297,79 @@ pub fn print_discharge_stats(vdata: &Vec<FailDischargeRecord>,
 	flog(LOG1, &format!("pm_reg (sde) total witness_len/file_size: (avg: max): ({}%,{}%). This indicates total cost of discharging one file against ALL bag left sigs", w_avg*100.0, w_max*100.0), vlog);
 
 	let fail_count = vdata.iter().filter(|rec| rec.is_fail()).count();
+
+	// ---- Details --------------
+	if b_show_high_acc{
+		for i in 0..vdata.len(){
+			if acc_ratio[i]>=5.0{
+				println!("HIGH acc_states cost files: i: {}, acc_ratio: {}%, flen: {}, fname: {}, patterns: {:#?}", i, 
+					acc_ratio[i], vdata[i].total_acc_path_len,
+					vdata[i].fname, vdata[i].most_freq_sed_cs_pats);
+			}
+		}
+	}
+	let mut total_pat_rate = 0.0;
+	let mut max_pat_rate = 0.0;
+	for v in vdata{
+		if v.max_seg_pat_rate>max_pat_rate{max_pat_rate=v.max_seg_pat_rate;}
+		total_pat_rate += v.max_seg_pat_rate;
+	}
+	flog(LOG1, &format!("pat ratio: avg: {}%, max: {}%",
+		total_pat_rate/(vdata.len() as f32)*100.0,
+		max_pat_rate*100.0), vlog);
+
+
+	if b_show_high_pat {
+	    let bar: f32 = 0.05; // 5% threshold
+		let bar_pat: f32 = 0.00000000; //0.5% percent
+
+	    println!("=== High Segment Pattern and Acc States Files ===");
+	    let mut high_pat_files: Vec<&FailDischargeRecord> = vdata
+	        .iter()
+	        .filter(|rec| rec.max_seg_pat_rate >= bar)
+	        .collect();
+
+	    high_pat_files.sort_by(|a, b| b.max_seg_pat_rate.partial_cmp(&a.max_seg_pat_rate).unwrap_or(std::cmp::Ordering::Equal));
+
+	    for rec in high_pat_files {
+	        println!("File: {}, Size: {}, Max Acc Rate: {:.2}%, Max Pat Rate: {:.2}%",
+	            rec.fname,
+				format_size(rec.total_acc_path_len/2), //nibble to bytes: /2
+	            rec.max_seg_acc_rate * 100.0,
+	            rec.max_seg_pat_rate * 100.0
+	        );
+	    }
+
+	    println!("=== Patterns That Cause High Acc Ratios ===");
+	    let mut aggregated_patterns: HashMap<String, (f32, f32)> = HashMap::new(); // (pattern, (max_acc_rate, max_pat_rate))
+
+	    for rec in vdata.iter().filter(|rec| rec.max_seg_pat_rate >= bar_pat) {
+			if rec.most_freq_seg_cs_pats.is_none() {continue;}
+			let cs_pats = rec.most_freq_seg_cs_pats.clone().unwrap().clone();
+	        for (pattern, acc_rate, pat_rate) in &cs_pats{
+	            aggregated_patterns
+	                .entry(pattern.clone())
+	                .and_modify(|(current_acc, current_pat)| {
+	                    *current_acc = current_acc.max(*acc_rate);
+	                    *current_pat = current_pat.max(*pat_rate);
+	                })
+	                .or_insert((*acc_rate, *pat_rate));
+	        }
+	    }
+
+	    let mut sorted_patterns: Vec<(String, f32, f32)> = aggregated_patterns
+	        .into_iter()
+	        .map(|(pat, (acc_r, pat_r))| (pat, acc_r, pat_r))
+	        .collect();
+
+	    sorted_patterns.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+
+	    for (pattern, acc_rate, pat_rate) in sorted_patterns {
+	        println!("\tRegex::new(r\"^{}+$\").unwrap(), //max acc_rate: {:.0}%, pat_rate: {:.0}%",
+	                 pattern, acc_rate * 100.0, pat_rate * 100.0);
+	    }
+	}
+	
 	println!(" === failed files: {} =====", fail_count); 
 	for rec in vdata{
 		if rec.is_fail(){

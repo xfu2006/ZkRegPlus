@@ -18,19 +18,27 @@
     }
   },
   "model": {
-    "name": "gemini-3-flash-preview",
-    "compressionThreshold": 0.2
+    "name": "gemini-2.5-flash",
+    "enableTieredRouting": true,
+    "fallbackModel": "gemini-2.5-pro"
   },
   "agents": {
+    "useDynamicModelSelection": true,
     "overrides": {
       "generalist_agent": {
         "modelConfig": {
-          "model": "gemini-3-flash-preview"
+          "model": "gemini-2.5-flash",
+		  "fallbackModel": {
+            "model": "gemini-2.5-pro"
+          }
         }
       },
       "codebase_investigator": {
         "modelConfig": {
-          "model": "gemini-3-flash-preview"
+          "model": "gemini-2.5-flash",
+		  "fallbackModel": {
+            "model": "gemini-2.5-pro"
+          }
         }
       }
     }

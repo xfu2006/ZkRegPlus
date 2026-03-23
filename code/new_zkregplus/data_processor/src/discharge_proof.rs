@@ -39,6 +39,13 @@ pub struct FailDischargeRecord{
 		//available for those accept states ratio >10%
 		//these are most frequent patterns
 		//context sensitve only as igc is usually must lower
+
+	pub seg_size: usize, //the seg_size for the following analysis
+	pub max_seg_acc_rate: f32, //the max ratio of accept rate in a segment
+	pub max_seg_pat_rate: f32, //the max ratio of pat ratio in a segment
+	pub most_freq_seg_cs_pats: Option<Vec<(String,f32,f32)>>,// optiona,
+		//the set of frequent pattersn using segment eval approach
+		//and the corresponding acc_rate and pat_rate
 }
 
 impl FailDischargeRecord{

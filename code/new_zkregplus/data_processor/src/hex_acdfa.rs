@@ -5,6 +5,7 @@
  	Revised: 06/08/2024. Added serde serialization
  	Revised: 06/10/2024. Added handling of case-insensitivity
 	Refactored: 07/24/2024
+	Refined: 03/22/2026 -> added freqency analysis function for section.
 */
 
 extern crate aho_corasick;
@@ -737,6 +738,102 @@ impl HexACDFA{
 		res
 	}
 
+
+	/// get the set of patterns which are of the MOST FREQUENTLY visited 
+	/// state, now the difference from get_most_freq_patterns is that
+	/// we measure the frequency of states for every segment. 
+	/// We count the frequency of states by the number of
+	/// patterns by its frequency. We keep the top_n states
+	/// for each segment, and update these top_n states when
+	/// we process segements. 
+	/// Return a sorted list of patterns, in descending order,
+	/// by their frequency.
+	/// Vec<(pattern, acc_rate, pat_rate), acc_rate, pat_rate>
+	pub fn get_most_freq_seg_patterns(&self, 
+		acc_path: &Vec<usize>, 
+		top_n: usize, 
+		segment_size: usize
+		)-> (Vec<(String,f32,f32)>, f32, f32){
+		let mut overall_max_acc_rate = 0.0f32;
+		let mut overall_max_pat_rate = 0.0f32;
+		let mut overall_top_states: Vec<(usize, f32, f32)> = Vec::new(); // (state_id, acc_rate, pat_rate)
+
+		for chunk in acc_path.chunks(segment_size) {
+			let mut state_freq = HashMap::<usize, usize>::new();
+			let mut segment_acc_states_count = 0;
+
+			for &state in chunk {
+				if self.is_accept(state) {
+					*state_freq.entry(state).or_insert(0) += 1;
+					segment_acc_states_count += 1;
+				}
+			}
+
+			let mut local_states_with_rates: Vec<(usize, f32, f32)> = state_freq
+				.into_iter()
+				.filter_map(|(state, freq)| {
+					let num_patterns = self.outputs.get(&state).map_or(0, |p| p.len());
+					if num_patterns == 0 {
+						None // Ignore states with no associated patterns
+					} else {
+						let acc_rate = freq as f32 / segment_size as f32;
+						let pat_rate = (freq * num_patterns) as f32 / segment_size as f32;
+						Some((state, acc_rate, pat_rate))
+					}
+				})
+				.collect();
+
+			// Sort local states by pat_rate descending
+			local_states_with_rates.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+
+			// Merge local top_n states into overall_top_states
+			for &(state, acc_rate, pat_rate) in local_states_with_rates.iter().take(top_n) {
+				if let Some(idx) = overall_top_states.iter().position(|&(s, _, _)| s == state) {
+					// Update if new rates are higher
+					overall_top_states[idx].1 = overall_top_states[idx].1.max(acc_rate);
+					overall_top_states[idx].2 = overall_top_states[idx].2.max(pat_rate);
+				} else {
+					overall_top_states.push((state, acc_rate, pat_rate));
+				}
+			}
+			// Keep overall_top_states sorted and limited to top_n
+			overall_top_states.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+			overall_top_states.truncate(top_n);
+
+			// Update overall max rates if current segment's rates are higher
+			let segment_overall_acc_rate = segment_acc_states_count as f32 / chunk.len() as f32;
+			let segment_overall_pat_rate: f32 = local_states_with_rates.iter().map(|&(_, _, pat_r)| pat_r).sum();
+
+			overall_max_acc_rate = overall_max_acc_rate.max(segment_overall_acc_rate);
+			overall_max_pat_rate = overall_max_pat_rate.max(segment_overall_pat_rate);
+		}
+
+		let mut final_patterns_with_rates: HashMap<String, (f32, f32)> = HashMap::new();
+
+		for &(state, acc_r, pat_r) in &overall_top_states {
+			if let Some(pattern_ids) = self.outputs.get(&state) {
+				for &pat_id in pattern_ids {
+					let pattern_string = self.patterns[pat_id].clone();
+					final_patterns_with_rates
+						.entry(pattern_string)
+						.and_modify(|(current_acc, current_pat)| {
+							*current_acc = current_acc.max(acc_r);
+							*current_pat = current_pat.max(pat_r);
+						})
+						.or_insert((acc_r, pat_r));
+				}
+			}
+		}
+
+		let mut result_vec: Vec<(String, f32, f32)> = final_patterns_with_rates
+			.into_iter()
+			.map(|(pat, (acc_r, pat_r))| (pat, acc_r, pat_r))
+			.collect();
+
+		result_vec.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+
+		(result_vec, overall_max_acc_rate, overall_max_pat_rate)
+	}
 
 	/// for each string show the vector of positions
 	pub fn get_pattern_pos(&self, acc_path: &Vec<usize>)->HashMap<String,Vec<usize>>{

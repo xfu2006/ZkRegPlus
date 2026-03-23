@@ -6,7 +6,7 @@ def analyze_subsig(file_path, target_subsig):
         lines = f.readlines()
 
     # Patterns to identify blocks and sections
-    block_pattern = re.compile(r'^========== DEBUG USE (202|203|204|205|301|302|303|304)')
+    block_pattern = re.compile(r'^========== DEBUG USE (202|203|204|205|300|301|302|303|304)')
     seg_id_pattern = re.compile(r'seg_id:\s*(\d+)')
     subsig_header_pattern = re.compile(r'^\s*---- subsig: (\d+)')
     # Handles "loc 0: 123" and "i: 0, loc: 123"
