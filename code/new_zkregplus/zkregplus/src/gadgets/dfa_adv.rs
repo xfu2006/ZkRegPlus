@@ -297,12 +297,6 @@ impl <F: PrimeField + ColEle> DfaAdvAdvice<F>{
 		let (_one,zero) = (F::one(),F::zero());
 		assert!(v_dfa_id.len()==m && v_dfa.len()==m && inp_subsigs.len()==m);
 		assert!(nibbles.len()==nlen, "nibbles: {}, nlen: {}", nibbles.len(), nlen);
-		if b_debug{
-			println!("==DEBUG USE 6735.2 in dfa gadgets. Last 10 nibbles");
-			for i in nlen-10..nlen{
-				println!("  nibble[{}]: {}", i, nibbles[i]);
-			}
-		}
 		//1. walk nibbles through transition of each DFA
 		//this will be sequential, in practice, it's ok
 		// NOTE: saved_states are adjused (by +1)
@@ -332,6 +326,11 @@ impl <F: PrimeField + ColEle> DfaAdvAdvice<F>{
 				let dst = dfa.transitions[src].get(&ch);
 				assert!(dst.is_some());
 				let dst = dst.unwrap();
+				if b_debug{
+					if dfa.finals.contains(dst){
+						println!("DEBUG USE 6735.9: FOUND final state: {} at idx: {}", dst, i);
+					}
+				}
 				let ch_usize = ch as usize;
 				let trans = ch_usize +
 					 ((src+1)<<4) + ((dst+1)<<(4+RANGE2_BIT));

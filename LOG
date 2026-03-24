@@ -26767,7 +26767,60 @@ Goal 1. debug dfa issue
 	[d] also need to print last 10 elements of the nibbles in dfa	
 
 Goal 2. collect the failed subsig info:
+	==DEBUG USE 6735.2 in dfa gadgets. Last 10 nibbles
+	  nibble[126966]: 6
+	  nibble[126967]: 7
+	  nibble[126968]: 7
+	  nibble[126969]: 1
+	  nibble[126970]: 7
+	  nibble[126971]: 5
+	  nibble[126972]: 6
+	  nibble[126973]: 5
+	  nibble[126974]: 7
+	  nibble[126975]: 2
+	thread 'zkp_driver::tests_zkp_driver::test_zkreg_main' panicked at zkregplus/src/gadgets/dfa_adv.rs:624:13:
+	ERR dfa_adv: for subsig: 35235842, it's result is 2
 
+Goal 3. collect the subsig info
+	[a] in clamav.rs, put b_debug_subsig
+	[b] run the generation alg again.
+	[c] info:  DEBUG USE 9101: add: SIG: Win.Trojan.Emotet-6397178-0, igc: true, subsig_id: 35235842, details:.*706f7765727368656c6c((09|0a|0b|0c|0d|20))((09|0a|0b|0c|0d|20))*2d65((09|0a|0b|0c|0d|20))((09|0a|0b|0c|0d|20))*((2b|2f|30|31|32|33|34|35|36|37|38|39|3d|41|42|43|44|45|46|47|48|49|4a|4b|4c|4d|4e|4f|50|51|52|53|54|55|56|57|58|59|5a|61|62|63|64|65|66|67|68|69|6a|6b|6c|6d|6e|6f|70|71|72|73|74|75|76|77|78|79|7a)).......................................*
+	[d] Details: just need to discharge one:
+	Win.Trojan.Emotet-6397178-0;Engine:81-255,Target:2;0&1;706f7765727368656c6c::i;0/powershell\s+?-e\s+?[A-Za-z0-9+\/=]{20}/i
+
+	[d] it return
+	----
+	EBUG USE 6735.0: str_src[66904054]: 0
+DEBUG USE 6735.0: str_src[66904055]: 0
+DEBUG USE 6735.0: str_src[66904056]: 1
+DEBUG USE 6735.0: str_src[66904057]: 2
+DEBUG USE 6735.0: str_src[66904058]: 0
+DEBUG USE 6735.0: str_src[66904059]: 0
+DEBUG USE 6735.0: str_src[66904060]: 0
+DEBUG USE 6735.0: str_src[66904061]: 1
+DEBUG USE 6735.0: str_src[66904062]: 0
+DEBUG USE 6735.0: str_src[66904063]: 0
+DEBUG USE 6735.1 discharge sig: Win.Trojan.Emotet-6397178-0 subsig: 35235841 by dfa: true
+DEBUG USE 6735.1 discharge sig: Win.Trojan.Emotet-6397178-0 subsig: 35235842 by dfa: false
+DEBUG USE 6735.0 == discharge sig: Doc.Dropper.Emotet-6769504-0
+DEBUG USE 6735.0: str_src[66904054]: 0
+DEBUG USE 6735.0: str_src[66904055]: 0
+DEBUG USE 6735.0: str_src[66904056]: 1
+DEBUG USE 6735.0: str_src[66904057]: 2
+DEBUG USE 6735.0: str_src[66904058]: 0
+DEBUG USE 6735.0: str_src[66904059]: 0
+DEBUG USE 6735.0: str_src[66904060]: 0
+DEBUG USE 6735.0: str_src[66904061]: 1
+DEBUG USE 6735.0: str_src[66904062]: 0
+DEBUG USE 6735.0: str_src[66904063]: 0
+DEBUG USE 6735.1 discharge sig: Doc.Dropper.Emotet-6769504-0 subsig: 35784705 by dfa: true
+	-----------------------
+
+Goal 4. analysis of sig:
+Win.Trojan.Emotet-6397178-0;Engine:81-255,Target:2;0&1;706f7765727368656c6c::i;0/powershell\s+?-e\s+?[A-Za-z0-9+\/=]{20}/i
+	==> apparently it's trying to use subsig 1, breaking this would
+		allow discharge the sig
+	==> check the logic of quick_discharge (the logic is right)
 =============
 -- TODO -- remove DEBUG USE 6901, 6999
 		-- disable debug in sed_mapper (6621),

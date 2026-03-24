@@ -707,14 +707,6 @@ impl ClamavSig{
 		assert!(self.vec_subsig_obj.len() == self.vec_subsig_automaton.len(),
 			"sig: {}, vec_subsig.len(): {} != vec_subsig_automaton.len(): {}, call set_vec_automaton",
 			self.to_str(), self.vec_subsig_obj.len(), self.vec_subsig_automaton.len());
-		if b_debug{
-			let len = str_src.len();
-			println!("DEBUG USE 6735.0 == discharge sig: {}", self.name);
-			for i in len-10..len{
-				println!("DEBUG USE 6735.0: str_src[{}]: {}",
-					i, str_src[i]);
-			}
-		}
 
 		let mut bres = true;
 		let mut min_dnf_id = 0usize;
