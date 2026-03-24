@@ -26762,8 +26762,11 @@ Goal 1. debug dfa issue
 	[b] where where to print the subsig,
 		in build_store, there is a b_debug_subsig which allows
 			to rpint subsig info
-	[b] when discharge in quick_discharge print 	
+	[c] when discharge in quick_discharge print 	
 		DEBUG USE 6735.1 and 6735.0
+	[d] also need to print last 10 elements of the nibbles in dfa	
+
+Goal 2. collect the failed subsig info:
 
 =============
 -- TODO -- remove DEBUG USE 6901, 6999

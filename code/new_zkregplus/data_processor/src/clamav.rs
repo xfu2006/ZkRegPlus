@@ -761,7 +761,6 @@ impl ClamavSig{
 						sig_id, *id + 1); 
 					println!("DEBUG USE 6735.1 discharge sig: {} subsig: {} by dfa: {}", self.name, subsig_id, res);
 				}
-				if 1>0 {panic!("STOP HERE 200");}
 				item_res = item_res || res;
 			}
 			bres = bres && item_res;
