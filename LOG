@@ -26734,8 +26734,39 @@ Goal 2. enter data into clamav.rs remove_special_patterns.
 
 Goal 3. deploy to server and check if we can adjust acc and pat rate
 	[a] download from server all pythons cripts
+	[b] it complains about 200 basis for acc_states, and asked for 311 basis
+		points. We adjust to 340 (which needs to be TWICE as much large?)
+	[c] strangely it needs 1138 (why??) -> looks like acc computation is
+		not right in its original form. May need to simply extract again
+			just like pm rte.
+		=== DATA === (full_data: circ 3 (from 0: it's2)
+		FsmAdv: 1.13M (improved 700k)
+		DischargeSigAdv: 881k (improved 200k)
+		ComputeSigAdv: 79k (improved 7k)
+		preprocess() Step 2: setup circ params. circs: 1, max_circ_pp: 16960689, total_w: 16960686 (improved from 21M), total_e: 11384418, increased RAM: 18 GB.  50563 ms
+	[d] try circ 4. -> ok
+	[e] try circ 5. -> ok
+	[f] try circ 6. -> ok
+	[g] try circ 7 -> ok (that's the max one)
+	[h] try circ 1 which used to throw error on dfa. 
+	==> DFA still fails:
+	thread 'zkp_driver::tests_zkp_driver::test_zkreg_main' panicked at zkregplus/src/gadgets/dfa_adv.rs:618:13:
+assertion failed: *res == f_false
 
+====
 
+Tuesday 03/24/2026
+LOC (gadgets): 21411
+Goal 1. debug dfa issue
+	[a] add debugging statement
+	[b] where where to print the subsig,
+		in build_store, there is a b_debug_subsig which allows
+			to rpint subsig info
+	[b] when discharge in quick_discharge print 	
+		DEBUG USE 6735.1 and 6735.0
+
+=============
 -- TODO -- remove DEBUG USE 6901, 6999
-		-- disable debug in sed_mapper (6621)
+		-- disable debug in sed_mapper (6621),
+		-- 6735.x
 

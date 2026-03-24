@@ -697,8 +697,9 @@ impl ClamavSig{
 	/// returns true if the string is accepted by the signature (match)
 	/// i.e., it is a virus. Returh the discharge info with the minimum
 	/// cost that returns false.
-	pub fn accepts_by_automaton(&self, str_src: &Vec<u8>) 
+	pub fn accepts_by_automaton(&self, sig_id: usize, str_src: &Vec<u8>) 
 	-> (bool,Option<DischargeSigInfo>){
+		let b_debug = true;
 		if self.vec_subsig_obj.len() != self.vec_subsig_automaton.len(){
 			//println!("NEEDS to build automaton for {}", self.to_str());
 			return (true,None); //default conservative value
@@ -706,6 +707,15 @@ impl ClamavSig{
 		assert!(self.vec_subsig_obj.len() == self.vec_subsig_automaton.len(),
 			"sig: {}, vec_subsig.len(): {} != vec_subsig_automaton.len(): {}, call set_vec_automaton",
 			self.to_str(), self.vec_subsig_obj.len(), self.vec_subsig_automaton.len());
+		if b_debug{
+			let len = str_src.len();
+			println!("DEBUG USE 6735.0 == discharge sig: {}", self.name);
+			for i in len-10..len{
+				println!("DEBUG USE 6735.0: str_src[{}]: {}",
+					i, str_src[i]);
+			}
+		}
+
 		let mut bres = true;
 		let mut min_dnf_id = 0usize;
 		let mut min_cost = 1usize<<30;
@@ -746,6 +756,12 @@ impl ClamavSig{
 					}
 				};
 				//let res2 = if self.vec_bneg[*id] {!res} else {res};
+				if b_debug{
+					let subsig_id= HexACDFA::gen_subsig_id_worker(
+						sig_id, *id + 1); 
+					println!("DEBUG USE 6735.1 discharge sig: {} subsig: {} by dfa: {}", self.name, subsig_id, res);
+				}
+				if 1>0 {panic!("STOP HERE 200");}
 				item_res = item_res || res;
 			}
 			bres = bres && item_res;
@@ -2600,7 +2616,9 @@ pub fn quick_discharge_file_by_crit_bag_pm_old(fname: &str,
 	let dfa_sigs = v_sigs.iter().filter(|s| set_sigs.contains(&s.name)).
 		map(|s| s.clone()).collect::<Vec<Arc<ClamavSig>>>();
 	let set_dfa = dfa_sigs.iter().filter(|s| {
-		let (res, _discharge_info) = s.accepts_by_automaton(nibbles);
+		let sig_id = 0; //just pass a fake value as this function
+			//is not used.
+		let (res, _discharge_info) = s.accepts_by_automaton(sig_id, nibbles);
 		res
 	}).map(|s| s.name.clone()).collect::<HashSet<String>>();
 
@@ -2783,7 +2801,9 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 	let mut set_sigs_dfa = HashSet::<String>::new();
 	let mut vec_dfa_sigs_info = vec![];
 	for s in dfa_sigs{
-		let (res, info) = s.accepts_by_automaton(nibbles);
+		let sig_id = sig_to_id.get(&s.name).expect(
+			&format!("cannot find id for {}", s.name));
+		let (res, info) = s.accepts_by_automaton(*sig_id, nibbles);
 		if res==true{
 			set_sigs_dfa.insert(s.name.clone()); //failed to discharge via dfa
 		}else{
@@ -2958,7 +2978,9 @@ pub fn deprecated_quick_discharge_file_adv(
 	let mut set_sigs_dfa = HashSet::<String>::new();
 	let mut vec_dfa_sigs_info = vec![];
 	for s in dfa_sigs{
-		let (res, info) = s.accepts_by_automaton(nibbles);
+		let sig_id = sig_to_id.get(&s.name).expect(
+			&format!("cannot find id for {}", s.name));
+		let (res, info) = s.accepts_by_automaton(*sig_id, nibbles);
 		if res==true{
 			set_sigs_dfa.insert(s.name.clone()); //failed to discharge via dfa
 		}else{
@@ -3108,7 +3130,8 @@ mod tests_clamav{
 		for (desc, s_test, b_exp) in &c.arr_cases{
 			let res = if use_eval{
 				// !sig.accepts_by_automaton(&s_test.as_bytes().to_vec())
-				!sig.accepts_by_automaton(&hex_to_u8(&s_test)).0
+				let fake_sigid = 0;
+				!sig.accepts_by_automaton(fake_sigid,&hex_to_u8(&s_test)).0
 			}else{
 				let (_, _, v_nfa, _name) = sig.to_neg_automaton(100);
 				let nfa = &v_nfa[0][0];

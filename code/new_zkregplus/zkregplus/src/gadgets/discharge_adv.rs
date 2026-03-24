@@ -2230,7 +2230,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		last_loc: F,
 		seg_id: usize, //the word segment id (starting 0)
 	)->Result<(Rc<RefCell<Container<F>>>, StepQueue<F>, F), Error>{
-		let b_debug = true;
+		let b_debug = false;
 		let res = Container::<F>::new("fwd_steps_queue");
 		let mut t1 = GTimer::new();
 		let b_perf = true;
@@ -2352,7 +2352,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		//0. Generate the logical data:
 		// from inp_step_queue generate the to_del, res, bwd_prf, 
 		// Add them to container
-		let b_debug = true;
+		let b_debug = false;
 		let b_perf = true;
 
 		let res = Container::<F>::new("bwd_steps_queue");
