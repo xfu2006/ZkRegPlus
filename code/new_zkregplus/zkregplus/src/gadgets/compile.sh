@@ -1,5 +1,5 @@
 #1. quick compile 
-cargo check --tests 2>&1 | less
+#cargo check --tests 2>&1 | less
 
 #2. test each gadget
 #RUST_BACKTRACE=1 

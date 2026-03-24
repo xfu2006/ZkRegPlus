@@ -218,6 +218,7 @@ impl <F:PrimeField+ColEle> DfaAdvice<F>{
 			vec_sigs_to_discharge: &Vec<Arc<ClamavSig>>, //the sigs to 
 			sig_to_id: &HashMap<String,usize>, //map from sig to id
 			discharge_info: &Vec<DischargeSigInfo>, //info: subsigs to process
+			seg_id: F,
 		)->Result<Self, Error>{
 		let mut t1 = Timer::new();
 		let b_perf = true;
@@ -300,7 +301,7 @@ impl <F:PrimeField+ColEle> DfaAdvice<F>{
 			::new( 
 				&nibbles, &v_subsig_ids, &v_fsm_id,
 				&v_dfa, &v_inp_state, &dfa_cap,
-				&inp_sigs, &discharge_info, &v_sigs, &sig_to_id,
+				&inp_sigs, &discharge_info, &v_sigs, &sig_to_id, seg_id,
 			)?;
 
 		//3. assemble all advices
@@ -327,7 +328,7 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> DfaComponentMapper<F,LK>{
 		//1.1 the word extract gadget
 		let g_wea = WordExtractAdvGadget::<F>::new(capacity
 			.wea_capacity().max_word_len, true); //use the char_map as
-												//sid for nibbles
+											//sid for nibbles
 		cfgs.push( g_wea.dummy_cfg.clone() );
 
 		//1.2 the dfm_adv gadget
@@ -431,7 +432,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 
 
 	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
-		prev_adv: Option<Rc<dyn NdAdvice>>, _seg_id: usize)
+		prev_adv: Option<Rc<dyn NdAdvice>>, seg_id: usize)
 		->Result<Rc<dyn NdAdvice>, Error>{
 		//1. expand word to full length
 		let mut rem_word = vec![F::zero(); self.max_word_len() - word.len()];
@@ -451,7 +452,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 		let n = self.capacity.subsigs;
 		let inp = DfaInput{v_inp_state: vec![F::one(); n]};
 		let dummy_adv = DfaAdvice::new(&word_seg, word.len(), &self.capacity,
-			&inp, &v_sigs, &sig_to_id, &discharge_info)?;
+			&inp, &v_sigs, &sig_to_id, &discharge_info, F::from(seg_id as u64))?;
 		let v_dfa = &dummy_adv.dfa_adv_advice.v_dfa;
 		assert!(v_dfa.len()==n);
 		let init_states = v_dfa.iter().map(|dfa| 
@@ -479,7 +480,8 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 			&word_seg, 
 			word.len(), 
 			&self.capacity, &inp, 
-			&v_sigs, &sig_to_id, &discharge_info //keep the v_sigs earlier
+			&v_sigs, &sig_to_id, &discharge_info, //keep the v_sigs earlier
+			F::from(seg_id as u64)
 		)?;
 
 		Ok( Rc::new(advice) )

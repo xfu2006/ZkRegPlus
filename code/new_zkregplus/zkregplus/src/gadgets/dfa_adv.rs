@@ -191,8 +191,8 @@ impl <F: PrimeField + ColEle> DfaAdvAdvice<F>{
 					//extracting the dnf to the concat of inp_subsigs
 		v_sig_obj: &Vec<Arc<ClamavSig>>, //needs to cover all inp_sigs
 		sig_to_id: &HashMap<String,usize>,
-	) ->Result<Self,Error>{
-
+		seg_id: F,
+		) ->Result<Self,Error>{
 		let stmt_container = Container::<F>::new("dfa_adv_stmt");
 		//1. padding the input when necessary
 		let dummy_fsm_id = F::from(ClamavDB::<F>::dfa_id(0, 0));
@@ -245,7 +245,7 @@ impl <F: PrimeField + ColEle> DfaAdvAdvice<F>{
 		// depending on the state reached by the nibbles in
 		// each DFA.
 		let (mul_fsm_acc, subsig_res) = Self::gen_mul_fsm_acc_combo(
-			nibbles, &inp_subsigs, &v_dfa_id, &v_dfa, &inp_states, capacity
+			nibbles, &inp_subsigs, &v_dfa_id, &v_dfa, &inp_states, capacity, seg_id
 		)?;
 		stmt_container.borrow_mut().add_container(mul_fsm_acc);
 
@@ -288,7 +288,8 @@ impl <F: PrimeField + ColEle> DfaAdvAdvice<F>{
 		v_dfa_id: &Vec<F>, //the ids generaed by gen_dfa_id in clamdb
 		v_dfa: &Vec<Arc<DFA<char>>>, //1-1 corresponding to inp_subsigs
 		inp_states: &Vec<F>,
-		capacity: &DfaAdvCapacity) 
+		capacity: &DfaAdvCapacity,
+		seg_id: F) 
 	-> Result<(Rc<RefCell<Container<F>>>,Vec<F>),Error>{
 		//0. set up data
 		let b_debug = true;
@@ -328,7 +329,9 @@ impl <F: PrimeField + ColEle> DfaAdvAdvice<F>{
 				let dst = dst.unwrap();
 				if b_debug{
 					if dfa.finals.contains(dst){
-						println!("DEBUG USE 6735.9: FOUND final state: {} at idx: {}", dst, i);
+						let u_segid = field_to_usize(&seg_id);
+						let start_idx = u_segid * capacity.max_nibble_len;
+						println!("DEBUG USE 6735.9: FOUND final state: {} at idx: {} (start_idx: {}, seg_id: {})", dst, i+start_idx, start_idx, seg_id);
 					}
 				}
 				let ch_usize = ch as usize;
@@ -734,9 +737,10 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 		let inp_sigs = vec![F::zero(); capacity.sigs];
 
 		//2. create the dummy advice and cfg
+		let seg_id = F::zero();
 		let dummy_adv = DfaAdvAdvice::new(&nibbles, &dummy_inp_subsigs,
 			&dummy_v_dfa_id, &dummy_v_dfa, &dummy_inp_states, capacity,
-				&inp_sigs, &discharge_infos, &v_sig_obj, &sigs_to_id
+				&inp_sigs, &discharge_infos, &v_sig_obj, &sigs_to_id, seg_id
 			).expect("dummy dfa_adv advice err");
 		let mut vec_cfg = prev_cfgs.clone();
 		vec_cfg.push(dummy_adv.stmt_container.borrow().get_cfg());
@@ -1510,10 +1514,11 @@ pub mod tests_dfa_adv_gadget{
 			.collect::<Vec<Fr>>();
 		let v_dfa= v_dfa.into_iter().map(|s| s).flatten()
 			.collect::<Vec<Arc<DFA<char>>>>();
+		let seg_id = Fr::zero();
 		let adv_faa = DfaAdvAdvice::new(
 			&nibbles, &v_subsig_ids, &v_fsm_id, 
 			&v_dfa, &v_inp_state, &cap,
-			&inp_sigs, &discharge_infos, &v_sigs, &db.sig_to_id
+			&inp_sigs, &discharge_infos, &v_sigs, &db.sig_to_id, seg_id
 		).expect("adv_dfa advice err");
 		let stmt_faa = adv_faa.stmt_container;
 		let cfg_faa = stmt_faa.borrow().get_cfg(); 

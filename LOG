@@ -26821,6 +26821,12 @@ Win.Trojan.Emotet-6397178-0;Engine:81-255,Target:2;0&1;706f7765727368656c6c::i;0
 	==> apparently it's trying to use subsig 1, breaking this would
 		allow discharge the sig
 	==> check the logic of quick_discharge (the logic is right)
+
+Goal 5. update the code to identify when it is accepting
+	[a] update chain
+	[b] spent 1 million token.
+	[c] regression testing
+	[d] commit code and try to find 6735.9.
 =============
 -- TODO -- remove DEBUG USE 6901, 6999
 		-- disable debug in sed_mapper (6621),
