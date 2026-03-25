@@ -248,15 +248,19 @@ impl <F:PrimeField+ColEle> DfaAdvice<F>{
 				F::from(HexACDFA::gen_subsig_id_worker(*sig_id, *i+1) as u32)
 			).collect::<Vec<F>>()
 		}).collect::<Vec<Vec<F>>>();
-		let inp_raw_subsigs = v_sigs.iter().map(|sig| sig.
-			eval_dnf.vec_disjunc[0].iter().map(|i| F::from(*i as u64))
-			.collect::<Vec<F>>()
-		).collect::<Vec<Vec<F>>>();
-		let v_dfa= v_sigs.iter().map(|sig| sig.
-			eval_dnf.vec_disjunc[0].iter().map(|i| 
+		let inp_raw_subsigs = v_sigs.iter().zip(discharge_info.iter())
+			.map(|(sig,info)| {
+				sig.eval_dnf.vec_disjunc[info.min_dnf_id]
+				.iter().map(|i| F::from(*i as u64))
+				.collect::<Vec<F>>()
+		}).collect::<Vec<Vec<F>>>();
+		let v_dfa= v_sigs.iter().zip(discharge_info.iter())
+		.map(|(sig,info)| 
+			sig.eval_dnf.vec_disjunc[info.min_dnf_id].iter().map(|i| 
 				sig.vec_subsig_automaton[*i].clone()) //clone of Arc low cost
 			.collect::<Vec<Arc<DFA<char>>>>()
 		).collect::<Vec<Vec<Arc<DFA<char>>>>>();
+		assert!(v_sigs.len()==inp_raw_subsigs.len());
 		let v_fsm_id = v_sigs.iter().zip(inp_raw_subsigs.iter())
 			.map(|(sig, v_subsig)|{
 				let sig_id = *(sig_to_id.get(&sig.name).unwrap()) as u32;

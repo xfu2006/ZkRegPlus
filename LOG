@@ -26837,6 +26837,24 @@ Wed 03/25/2026
 Goal 1. check why DFA is not printing name
 	[a] do a small example -> it does work
 	[b] add a screening filter to print valid non empty DFA only.
+	[c] try directly attach name when build vec_automataon
+Goal 2. read the trace
+	[a] it looks like the dnf_id has 1 but it does a different DFA?
+	[b] read the code
+		-> dfa_mapper::gen_nd_advice
+			-> the discharge_info has the min_dnf_id
+			-> then it calls DfaAdvice::new
+			-> looks like fixed
+		-> regression testin on gadget
+		-> regression testing on two small examples
+	[d] deploy to server and capture if it throw errors on
+		6735.9.
+
+Goal 3. Plan next step
+	[a] run experiment to go through all 
+	[b] a full cycle with full memory
+	[c] go through small experiment with two circs
+	[d] run two circs for full_data4
 
 =============
 -- TODO -- remove DEBUG USE 6901, 6999
