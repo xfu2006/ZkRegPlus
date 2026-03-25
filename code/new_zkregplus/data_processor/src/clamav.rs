@@ -575,7 +575,7 @@ impl ClamavSig{
 		let mut vec_subsig_automaton = vec![];
 		for (id, subsig) in self.vec_subsig_obj.iter().enumerate(){
 			let mut timer = Timer::new();
-			let dfa = if self.vec_subsig_obj[id].subsig_type==SubSigType::SubsigCountConstraint{
+			let mut dfa = if self.vec_subsig_obj[id].subsig_type==SubSigType::SubsigCountConstraint{
 				//just build a dummy one
 				build_dfa("", false)
 			} else if self.vec_subsig_obj[id].subsig_type==SubSigType::CounterConstraint{
@@ -632,6 +632,7 @@ impl ClamavSig{
 			};
 			log(log_level, &format!(" gen_vec_automaton build dfa size: {:?}", size_dfa(&dfa)));
 			log_perf(log_level, " gen_vec_automaton build dfa: ", &mut timer);
+			dfa.raw_str = subsig.value.clone();
 			vec_subsig_automaton.push( Arc::new(dfa) );
 		}
 		vec_subsig_automaton
