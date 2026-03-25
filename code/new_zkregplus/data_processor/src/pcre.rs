@@ -356,7 +356,7 @@ pub fn pcre_to_dfa(s: &str, combination_limit: usize, repeat_limit: usize)->DFA<
 	if !pi.b_begin{ s = ".*".to_string() + &s; }
 	if !pi.b_end{ s = s + ".*"; }
 	let hir  = to_hir(&s);
-	let dfa = hex_hir_to_dfa(&hir, b_ignore_case, true);
+	let dfa = hex_hir_to_dfa(&s, &hir, b_ignore_case, true);
 
 	dfa
 }
@@ -379,7 +379,7 @@ pub fn clamav_genregex_to_dfa(s: &str) -> DFA<char>{
 
 	//2. conversion
 	let hir  = to_hir(&s);
-	let dfa = hex_hir_to_dfa(&hir, b_ignore_case, false);
+	let dfa = hex_hir_to_dfa(&s, &hir, b_ignore_case, false);
 	dfa
 }
 
@@ -415,7 +415,7 @@ fn class_to_arr(v: &Class, _limit: &mut usize)->Vec<u8>{
 /// encoded string is in hex,
 /// b_process_literal is set then convert every char e.g., 'a' to '61'
 /// IT IS USED when in hex mode
-fn hex_hir_to_dfa(hir: &Hir, b_ignore_case: bool, b_process_literal: bool)
+fn hex_hir_to_dfa(s: &str, hir: &Hir, b_ignore_case: bool, b_process_literal: bool)
 	-> DFA<char>{
 	let mut res = match hir.kind(){
 		Empty => build_dfa("", false),
@@ -427,7 +427,7 @@ fn hex_hir_to_dfa(hir: &Hir, b_ignore_case: bool, b_process_literal: bool)
 			let mut b_initialized = false;
 			for i in 0..v.len(){
 				let x = &v[i];
-				let cur_dfa = hex_hir_to_dfa(x, b_ignore_case, b_process_literal);
+				let cur_dfa = hex_hir_to_dfa("",x, b_ignore_case, b_process_literal);
 				let cur_dfa = cur_dfa.minimize();
 				if !b_initialized && (cur_dfa.transitions.len()>1
 					|| cur_dfa != dummy_fa){ 
@@ -460,7 +460,7 @@ fn hex_hir_to_dfa(hir: &Hir, b_ignore_case: bool, b_process_literal: bool)
 			if max==Some(999777979){ max = None;}  //deal with preproces logic
 			//1. deal with the [0, min] case
 			let empty_dfa = build_dfa("", false);
-			let unit_dfa = hex_hir_to_dfa(&v.sub, b_ignore_case, b_process_literal);
+			let unit_dfa = hex_hir_to_dfa("",&v.sub, b_ignore_case, b_process_literal);
 			let dfa_res = if max.is_none(){ unit_dfa.at_least(min) }
 			else{ unit_dfa.repeat( min..(max.unwrap() as usize + 1) ) };
 			//somehow cannot handle .* well, union with empty dfa if
@@ -533,7 +533,7 @@ fn hex_hir_to_dfa(hir: &Hir, b_ignore_case: bool, b_process_literal: bool)
 			let mut b_initialized = false;
 			for i in 0..v.len(){
 				let x = &v[i];
-				let cur_dfa = hex_hir_to_dfa(x, b_ignore_case, b_process_literal);
+				let cur_dfa = hex_hir_to_dfa("",x, b_ignore_case, b_process_literal);
 				if !b_initialized && (cur_dfa.transitions.len()>1
 					|| cur_dfa != dummy_fa){ 
 					//if never initialized and cur_dfa is NOT empty
@@ -548,11 +548,12 @@ fn hex_hir_to_dfa(hir: &Hir, b_ignore_case: bool, b_process_literal: bool)
 			}
 			dfa_res
 		},
-		HirKind::Capture(v) => hex_hir_to_dfa(&v.sub, b_ignore_case, b_process_literal) 
+		HirKind::Capture(v) => hex_hir_to_dfa("", &v.sub, b_ignore_case, b_process_literal) 
 	};
 
 	let min_bar = 256;
 	if res.transitions.len()<min_bar{ res = res.minimize();} 
+	res.raw_str = format!("{}", s);
 
 	res
 }

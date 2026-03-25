@@ -26830,7 +26830,10 @@ Goal 5. update the code to identify when it is accepting
 
 Goal 6. check out how to instrument DFA.
 	[a] in rustomata -> run (DEBUG USE 6735.8)
-	[b] similar for tracing using 6735.9.1 
+	[b] similar for tracing using 6735.9.1
+	DEBUG USE 6735.9: FOUND final state: 20 at idx: 748447 (start_idx: 634880, seg_id: 5)
+
+=== TODO ===: need to ass an ID to DFA.
 =============
 -- TODO -- remove DEBUG USE 6901, 6999
 		-- disable debug in sed_mapper (6621),

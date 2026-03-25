@@ -43,6 +43,7 @@ pub struct DFA<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> {
     pub initial: usize,
     pub finals: HashSet<usize>,
     pub transitions: Vec<HashMap<V, usize>>,
+	pub raw_str: String,
 }
 
 /// An interface for structs that can be converted into a DFA.
@@ -174,7 +175,8 @@ impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> DFA<V> {
 			alphabet: self.alphabet.clone(),
 			initial: 0,
 			finals: finals,
-			transitions: trans
+			transitions: trans,
+			raw_str: format!("{} and {}", self.raw_str, b.raw_str),
 		}
 	}
 
@@ -359,7 +361,8 @@ impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> DFA<V> {
 			alphabet: self.alphabet.clone(),
 			initial: new_init,
 			finals: new_finals,
-			transitions: new_trans
+			transitions: new_trans,
+			raw_str: self.raw_str.clone(),
 		}
 	}
 
@@ -380,6 +383,7 @@ impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> DFA<V> {
             initial: 0,
             finals: HashSet::new(),
             transitions: vec![HashMap::new()],
+			raw_str: format!(""),
         }
     }
 
@@ -417,6 +421,7 @@ impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> DFA<V> {
             initial,
             finals,
             transitions,
+			raw_str: format!("unknown"),
         })
     }
 }
@@ -431,8 +436,8 @@ impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> Automata<V> for DFA<V>
             if let Some(t) = self.transitions[actual].get(l) {
                 actual = *t;
 				if b_debug{
-					if id>=10 && id<=20{
-						println!("DEBUG USE 6735.8: id: {}, letter: {}, state: {}", id, l, actual);
+					if id>=748447-100 && id<=748447+10{
+						println!("DEBUG USE 6735.8: DFA {}:, id: {}, letter: {}, state: {}", self.raw_str, id, l, actual);
 					}
 				}
             } else {
