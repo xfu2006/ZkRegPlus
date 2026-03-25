@@ -26827,6 +26827,10 @@ Goal 5. update the code to identify when it is accepting
 	[b] spent 1 million token.
 	[c] regression testing
 	[d] commit code and try to find 6735.9.
+
+Goal 6. check out how to instrument DFA.
+	[a] in rustomata -> run (DEBUG USE 6735.8)
+	[b] similar for tracing using 6735.9.1 
 =============
 -- TODO -- remove DEBUG USE 6901, 6999
 		-- disable debug in sed_mapper (6621),

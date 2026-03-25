@@ -424,13 +424,21 @@ impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> DFA<V> {
 
 impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> Automata<V> for DFA<V> {
     fn run(&self, v: &[V]) -> bool {
+		let b_debug = true;
         let mut actual = self.initial;
+		let mut id = 0;
         for l in v {
             if let Some(t) = self.transitions[actual].get(l) {
                 actual = *t;
+				if b_debug{
+					if id>=10 && id<=20{
+						println!("DEBUG USE 6735.8: id: {}, letter: {}, state: {}", id, l, actual);
+					}
+				}
             } else {
                 return false;
             }
+			id += 1;
         }
         self.finals.contains(&actual)
     }

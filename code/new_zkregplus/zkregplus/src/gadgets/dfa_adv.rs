@@ -328,10 +328,15 @@ impl <F: PrimeField + ColEle> DfaAdvAdvice<F>{
 				assert!(dst.is_some());
 				let dst = dst.unwrap();
 				if b_debug{
+					let u_segid = field_to_usize(&seg_id);
+					let start_idx = u_segid * capacity.max_nibble_len;
+					let u_idx = i + start_idx;
+					if u_idx>=100{
+						println!("DEBUG USE 6735.9.1: idx: {}, ch: {}, dst: {}",u_idx, ch, dst);
+					}
+					
 					if dfa.finals.contains(dst){
-						let u_segid = field_to_usize(&seg_id);
-						let start_idx = u_segid * capacity.max_nibble_len;
-						println!("DEBUG USE 6735.9: FOUND final state: {} at idx: {} (start_idx: {}, seg_id: {})", dst, i+start_idx, start_idx, seg_id);
+						println!("DEBUG USE 6735.9: FOUND final state: {} at idx: {} (start_idx: {}, seg_id: {})", dst, u_idx, start_idx, seg_id);
 					}
 				}
 				let ch_usize = ch as usize;
