@@ -331,7 +331,8 @@ impl <F: PrimeField + ColEle> DfaAdvAdvice<F>{
 					let u_segid = field_to_usize(&seg_id);
 					let start_idx = u_segid * capacity.max_nibble_len;
 					let u_idx = i + start_idx;
-					if u_idx>=748447-100 && u_idx<=748447+10{
+					//if u_idx>=748447-100 && u_idx<=748447+10{
+					if u_idx>=1 && u_idx<=10 && dfa.raw_str.len()>2{
 						println!("DEBUG USE 6735.9.1: DFA: {}, idx: {}, ch: {}, dst: {}",dfa.raw_str, u_idx, ch, dst);
 					}
 					

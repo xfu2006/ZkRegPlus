@@ -415,8 +415,7 @@ fn class_to_arr(v: &Class, _limit: &mut usize)->Vec<u8>{
 /// encoded string is in hex,
 /// b_process_literal is set then convert every char e.g., 'a' to '61'
 /// IT IS USED when in hex mode
-fn hex_hir_to_dfa(s: &str, hir: &Hir, b_ignore_case: bool, b_process_literal: bool)
-	-> DFA<char>{
+fn hex_hir_to_dfa(s: &str, hir: &Hir, b_ignore_case: bool, b_process_literal: bool) -> DFA<char>{
 	let mut res = match hir.kind(){
 		Empty => build_dfa("", false),
 		HirKind::Concat(v) => {
@@ -554,6 +553,7 @@ fn hex_hir_to_dfa(s: &str, hir: &Hir, b_ignore_case: bool, b_process_literal: bo
 	let min_bar = 256;
 	if res.transitions.len()<min_bar{ res = res.minimize();} 
 	res.raw_str = format!("{}", s);
+	println!("DEUG USE 6735.0.0: build DFA for {}", res.raw_str);
 
 	res
 }

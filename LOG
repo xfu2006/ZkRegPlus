@@ -26833,7 +26833,11 @@ Goal 6. check out how to instrument DFA.
 	[b] similar for tracing using 6735.9.1
 	DEBUG USE 6735.9: FOUND final state: 20 at idx: 748447 (start_idx: 634880, seg_id: 5)
 
-=== TODO ===: need to ass an ID to DFA.
+Wed 03/25/2026
+Goal 1. check why DFA is not printing name
+	[a] do a small example -> it does work
+	[b] add a screening filter to print valid non empty DFA only.
+
 =============
 -- TODO -- remove DEBUG USE 6901, 6999
 		-- disable debug in sed_mapper (6621),
