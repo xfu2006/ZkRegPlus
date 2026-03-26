@@ -177,6 +177,11 @@ impl SedCapacity{
 		basis_unique_states: usize,
 		basis_acc_states: usize,
 	)->Self{
+		//REMOVE LATER ---------
+		if basis_pats_in_trace==822{
+			panic!("STOP HERE 100: basis pats is 822!");
+		}
+		//REMOVE LATER --------- ABOVE
 		let wea_capacity = WordExtractAdvCapacity{max_word_len};
 		let max_nibble_len = max_word_len * LEGS;
 		let faa_capacity = FsmAdvCapacity{max_nibble_len, acdfa_state_part_bits,			subsigs, avg_pats_per_subsig, basis_pats_in_trace,
@@ -233,7 +238,7 @@ impl SedCapacity{
 				self.subsigs,
 				self.avg_pats_per_subsig*2,
 				self.avg_active_pats_per_subsig*2,
-				self.basis_pats_in_trace + 800,//add 8 percent
+				self.basis_pats_in_trace*2,
 				self.perc_pats_expansion_rate*2,
 				self.sigs_sed,
 				self.perc_comp_subsigs*2,
@@ -585,7 +590,7 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 		igc_capacity: SedCapacity,
 		clamdb: Rc<ClamavDB<F>>,
 	) ->Self{
-		let b_debug = true;
+		let b_debug = false;
 		let mut cfgs = vec![];
 		//1. build the gadgets
 		//1.1 the word extract gadget

@@ -700,7 +700,7 @@ impl ClamavSig{
 	/// cost that returns false.
 	pub fn accepts_by_automaton(&self, sig_id: usize, str_src: &Vec<u8>) 
 	-> (bool,Option<DischargeSigInfo>){
-		let b_debug = true;
+		let b_debug = false;
 		if self.vec_subsig_obj.len() != self.vec_subsig_automaton.len(){
 			//println!("NEEDS to build automaton for {}", self.to_str());
 			return (true,None); //default conservative value

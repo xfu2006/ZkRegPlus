@@ -26866,11 +26866,14 @@ Goal 1. debug again
 	stack backtrace:
 	[b] check the other samples if see similar example
 
-Goal 2. 
+Goal 2. remove debugging info
+Goal 3. in driver add the perf counter info
+	[a] done
+Goal 4. put debugging statement into discharge_adv.rs -> DONE
+Goal 5. run multiple circuits and debug
+	[a] adjust parameters
+	[b] basis pats increased TOO FAST problem.
+-- TODO -- find out which circuit is used. 
 
-=============
--- TODO -- remove DEBUG USE 6901, 6999
-		-- disable debug in sed_mapper (6621),
-		-- 6735.x
-		-- disable all debug.
+== TODO == remove debug code 6671.x later
 

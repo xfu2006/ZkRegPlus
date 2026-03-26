@@ -1516,7 +1516,7 @@ impl <F:PrimeField> ClamavDB<F>{
 	{
 		//1. generate tuples to insert for each sig, and subsig object
 		let b_debug = false;
-		let b_debug_subsig = true;
+		let b_debug_subsig = false;
 		let set_subsig_to_debug = vec![
 			"36551681", "36598786", "36556803", "37690369", "36552705", 
 			"37897218", "19382275", "36260869", "19377157", "36260865", 

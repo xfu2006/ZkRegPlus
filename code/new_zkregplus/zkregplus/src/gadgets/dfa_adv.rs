@@ -292,7 +292,7 @@ impl <F: PrimeField + ColEle> DfaAdvAdvice<F>{
 		seg_id: F) 
 	-> Result<(Rc<RefCell<Container<F>>>,Vec<F>),Error>{
 		//0. set up data
-		let b_debug = true;
+		let b_debug = false;
 		let res = Container::<F>::new("mul_fsm_acc");
 		let (m, nlen) = (capacity.subsigs, capacity.max_nibble_len);
 		let (_one,zero) = (F::one(),F::zero());

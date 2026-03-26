@@ -1008,7 +1008,6 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 		->Result<Rc<dyn NdAdvice>, Error>{
 		let b_perf = true;
 		let mut t1 = Timer::new();
-		println!("DEBUG USE 6999: seg_id: {}", seg_id);
 		if seg_id==0 {assert!(r_prev_adv.is_none());}
 
 		let vec_prev_adv = if r_prev_adv.is_some(){

@@ -2233,7 +2233,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let b_debug = false;
 		let res = Container::<F>::new("fwd_steps_queue");
 		let mut t1 = GTimer::new();
-		let b_perf = true;
+		let b_perf = false;
 		//0. Generate the logical data:
 		// from inp_step_queue generate the to_add, merged_result, 
 		// and the fwd prf. Add them to container
@@ -2353,7 +2353,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		// from inp_step_queue generate the to_del, res, bwd_prf, 
 		// Add them to container
 		let b_debug = false;
-		let b_perf = true;
+		let b_perf = false;
 
 		let res = Container::<F>::new("bwd_steps_queue");
 		let mut t1 = GTimer::new();
@@ -3555,6 +3555,31 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			let lb_subsig = var_to_lb(&dst_subsig[i], F::one());
 			let lb_mul_item = var_to_lb(&mul_item, F::one());
 			#[cfg(test)]{
+				// REMOVE LATER ---	
+				if mul_item.value()?*dst_subsig[i].value()? != F::zero(){
+					println!("DEBUG USE 6671.1: fails mul_item check: i: {}, mul_item: {}, dst_subsig[i]: {}", i, mul_item.value()?, dst_subsig[i].value()?);
+					println!("DEBUG USE 6671.2: b_begin: {}, b_end: {}, b_middle: {}, diff1[i]: {}, rg1: {}, dst_loc[i]: {}", b_begin.value()?, b_end.value()?, b_middle.value()?, diff1[i].value()?, rg1.value()?, dst_loc[i].value()?);
+					let bidx = if i<5 {0} else {i-5};
+					let eidx = if i<vec_b_begin.len()-5 {vec_b_begin.len()} else {i+5};
+					for j in bidx..eidx{
+						println!("i: {}, src: {}, dst: {}, src_loc: {}, src_step: {}, dst_pat: {}, dst_rg1: {}, dst_rg2: {}, dst_loc: {}, dst_pat: {}, diff1: {}, diff2: {}, dst_subsig: {}",
+							i,
+							v2d[0][j].value()?,
+							v2d[1][j].value()?,
+							v2d[2][j].value()?,
+							v2d[3][j].value()?,
+							v2d[4][j].value()?,
+							v2d[5][j].value()?,
+							v2d[6][j].value()?,
+							v2d[7][j].value()?,
+							v2d[8][j].value()?,
+							v2d[9][j].value()?,
+							v2d[10][j].value()?,
+							v2d[11][j].value()?
+						);
+					}
+				}
+				// REMOVE LATER above
 				assert!(mul_item.value()?*dst_subsig[i].value()? == F::zero());
 			}
 			cs.enforce_constraint(
@@ -3704,7 +3729,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 	)->Result<(), SynthesisError>{
 		//0. retrieve data
 		let b_debug = false;
-		//let b_perf = true;
+		//let b_perf = false;
 		let cs = r1.cs(); 
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));

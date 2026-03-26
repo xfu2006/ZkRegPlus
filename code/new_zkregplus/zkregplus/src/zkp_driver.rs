@@ -895,20 +895,23 @@ pub mod tests_zkp_driver{
 		let set1 = "data/debug/small_data_set2/config_dfa"; //for dfa 
 		let max_word= 512; 
 		let sigs = 1;  //good value 2
-		let subsigs = 3;  //good value 4
+		let subsigs = 6;  //good value 4
 		let avg_pats_per_subsig = 3;  //good value 4
-		let avg_active_pats_per_subsig = 0; //good value 0, actually does
+		let avg_active_pats_per_subsig = 1; //good value 0, actually does
 			//not matter?
-		let basis_pats_in_trace = 2;  //good value 4
+		let basis_acc_states = 10;  //good value 2
+		let basis_pats_in_trace = 22;  //good value 4
 		let perc_comp_subsigs = 34;  //good value 34 
 		let basis_unique_states = 2;  //good value 5
-		let basis_acc_states = 1;  //good value 2
 		let dfa_sigs = 1;
 		let dfa_subsigs= 2*dfa_sigs;
 		let perc_pats_expansion_rate = 100;
 
 		let num_category = 2;
 		let num_circs_per_category= 2;
+        let basis_acc_states_igc = basis_acc_states ; //9 cpercent
+        let perc_pats_expansion_rate_igc = 20;
+        let basis_pats_in_trace_igc = 10;
 
 		let init_cp_cap= CpCapacity{
 			max_word_len: max_word, 
@@ -929,9 +932,27 @@ pub mod tests_zkp_driver{
 			basis_acc_states,
 		);
 		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
+ 		let init_cp_cap_igc= CpCapacity{
+            max_word_len: max_word,
+            basis_unique_states,
+            subsigs: subsigs/2,
+            avg_pats_per_subsig,
+            //avg_subsig_per_sig,
+        };
+        let init_sed_cap_igc= SedCapacity::new(
+            max_word, RANGE2_BIT, subsigs,
+            avg_pats_per_subsig,
+            avg_active_pats_per_subsig,
+            basis_pats_in_trace_igc,
+            perc_pats_expansion_rate_igc,
+            sigs,
+            perc_comp_subsigs,
+            basis_unique_states,
+            basis_acc_states_igc,
+        );
 
 
-		zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
 			&format!("{}/sigs.dat",set1), //src sig
 			&format!("{}/binexec2.dat",set1), //list of files to discharge
 			"data/small_data_set/reports/small_data3.dat", //report
@@ -945,6 +966,8 @@ pub mod tests_zkp_driver{
 			&init_cp_cap,
 			&init_sed_cap,
 			&init_dfa_cap,
+			&init_cp_cap_igc,
+			&init_sed_cap_igc,
 			num_category,
 			num_circs_per_category,
 			b_check_lkup
@@ -1202,8 +1225,8 @@ pub mod tests_zkp_driver{
         let num_category = 1;
         let num_circs_per_category= 1;
         let basis_unique_states = 2000; //15 cpercent
-        let basis_acc_states = 1260; //9 cpercent
-        let basis_pats_in_trace = 1400; //old value 100 cur value 1/1000.
+        let basis_acc_states = 1260; //last good value 1800
+        let basis_pats_in_trace = 1400; //last good value 3000
         let basis_acc_states_igc = basis_acc_states ; //9 cpercent
         let basis_pats_in_trace_igc = basis_pats_in_trace;
             //old value 100 cur value 1/1000.
@@ -1251,16 +1274,17 @@ pub mod tests_zkp_driver{
             basis_acc_states_igc,
         );
 
-		//just ranges allowed 0 to 8test one at a time
-		//APPROACH 1:
-		//let min = 2; //starting: 0
-		//let max = 3; //max possible: 8
+        //just ranges allowed 0 to 8test one at a time
+        //APPROACH 1:
+        let min = 1; //starting: 0
+        let max = 2; //max possible: 8
 
-		//APPROACH 2:
-		//IF using min = 8, max=9 it uses binexec_4_9.dat (which
-		//has ALL the files listed (about 87MB)
-		let min = 8;
-		let max = 9;
+        //APPROACH 2:
+        //IF using min = 8, max=9 it uses binexec_4_9.dat (which
+        //has ALL the files listed (about 87MB)
+        //let min = 8;
+        //let max = 9;
+
 		for id in min..max{
 			zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
 				&format!("{}/main.dat",set1), //src sig
@@ -1290,9 +1314,9 @@ pub mod tests_zkp_driver{
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
 		//small_data::<Fr>(b_check_lkup); //small data
-		small_data2::<Fr>(b_check_lkup);  //10k data 
+		//small_data2::<Fr>(b_check_lkup);  //10k data 
 		//small_data_debug::<Fr>(b_check_lkup);  //for debug
-		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
+		small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//full_data1::<Fr>(b_check_lkup);
 		//full_data2::<Fr>(b_check_lkup); //full data high acc state 
 		//full_data3::<Fr>(b_check_lkup); //full data large file

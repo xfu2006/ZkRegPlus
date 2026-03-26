@@ -2052,7 +2052,6 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 	fn assert_msg3_v1(&self, i: usize, cs: ConstraintSystemRef<F>, 
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
 		-> Result<(), SynthesisError>{
-		println!("DEBUG USE 6901.0000 fsm_adv: id: {}, igc: {}", i, self.b_igc);
 		let b_perf = false;
 		let log_level = LOG1;
 		let mut gt = GTimer::new();

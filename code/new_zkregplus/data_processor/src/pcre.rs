@@ -553,7 +553,6 @@ fn hex_hir_to_dfa(s: &str, hir: &Hir, b_ignore_case: bool, b_process_literal: bo
 	let min_bar = 256;
 	if res.transitions.len()<min_bar{ res = res.minimize();} 
 	res.raw_str = format!("{}", s);
-	println!("DEUG USE 6735.0.0: build DFA for {}", res.raw_str);
 
 	res
 }

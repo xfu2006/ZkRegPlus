@@ -589,7 +589,7 @@ fn load_discharge_data(sig_file: &str, sigtype: ClamSigType,
 	-> (Vec<ClamavSig>, HashMap<String,Vec<String>>, HashMap<String,Vec<String>>, HexACDFA, HexACDFA, HexACDFA, HexACDFA){
 	let mut vlog = vec![];
 	let b_perf = true;
-	let b_debug = true;
+	let b_debug = false;
 	let mut timer = Timer::new();
 	flog(LOG1, &format!("==================\nREPORT All Discharge Stats\n==================\nnpreprocess subsignatures: {}, type: {:?}, exec_list: {}", sig_file, sigtype, exec_list_file), &mut vlog);
 

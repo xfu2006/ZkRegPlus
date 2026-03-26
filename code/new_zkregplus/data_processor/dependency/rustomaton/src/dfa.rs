@@ -257,7 +257,6 @@ impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> DFA<V> {
 	/// see wiki: <https://en.wikipedia.org/wiki/DFA_minimization>
 	pub fn minimize_hop(self) -> DFA<V>{
 		//1. build the equivalent classes
-		println!("DEBUG USE 401: minimize_hop");
 		let mut p = HashSet::<MyHashSet>::new();
 		let mut w = HashSet::<MyHashSet>::new();
 		let mut q = HashSet::new();
@@ -429,7 +428,7 @@ impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> DFA<V> {
 
 impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> Automata<V> for DFA<V> {
     fn run(&self, v: &[V]) -> bool {
-		let b_debug = true;
+		let b_debug = false;
         let mut actual = self.initial;
 		let mut id = 0;
         for l in v {

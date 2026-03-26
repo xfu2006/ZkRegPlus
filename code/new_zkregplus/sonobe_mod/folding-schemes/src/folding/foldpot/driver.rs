@@ -1339,7 +1339,7 @@ where
 			let word_info = &vec_word_info[word_id-1];
 			let (steps, vec_len, vec_pci, _vec_cap_req, _advice) = self.plan_nd_advice(log_level+2, false, &word, word_info)
 				.expect(&format!("\n\n ==== **** ===== \nPlanning advice fails for {}! Could not find a circuit satisfying the following: \n ==============\n", word_fname)); //note: empty advice will be returned
-			log_perf(log_level+2, &format!("{} - Pass 1: decide circ alloc for word_id: {}, fname: {}, word_len: {}. ", phase_name, word_id, word_fname, format_bytes(total_word_len*31)), &mut gt2);
+			log_perf(log_level+2, &format!("{} - Pass 1: START decide circ alloc for word_id: {}, fname: {}, word_len: {}. ", phase_name, word_id, word_fname, format_bytes(total_word_len*31)), &mut gt2);
 			for i in 0..steps{
 				//2.1 set up params
 				let pc_i = if i==0 {0} else {vec_pci[i-1]};
@@ -1414,8 +1414,7 @@ where
 				log_perf(log_level+2, &format!("-- Pass 1. update. "), &mut gt2);
 			}
 
-			log_perf(log_level+1, &format!("{} Pass 1. generate advice word: {} of size: {}.", phase_name, word_id, format_bytes(total_word_len*31)), 
-				&mut gtw);
+			log_perf(log_level+1, &format!("{} Pass 1. END generate advice word: fname: {} of size: {}.", phase_name, word_fname, format_bytes(total_word_len*31)), &mut gtw);
 			word_id +=1;
 		}
 		let m4 = get_mem_usage_mb();
@@ -1457,7 +1456,7 @@ where
 			let mut subseg_id = 1;
 			let word_info = &vec_word_info[word_id-1];
 			let word_fname = &vec_word_fnames[word_id-1];
-			log_perf(log_level+2, &format!("{} - Pass 2. to generate cmF for word_id: {}, fname: {}, word_len: {}. ", phase_name, word_id, word_fname, format_bytes(word.len()*31)), &mut gtw2); 
+			log_perf(log_level+2, &format!("{} - Pass 2. START generate cmF for word_id: {}, fname: {}, word_len: {}. ", phase_name, word_id, word_fname, format_bytes(word.len()*31)), &mut gtw2); 
 			while remaining.len()>0{
 				//3.1 compute the problem statement instance 
 				let j = field_to_usize(&vea[idx].pc_i1);
@@ -1509,6 +1508,7 @@ where
 				subseg_id += 1;
 				log_perf(log_level+2, &format!("-- Pass 2. update extra info. "), &mut gtw2);
 			}//end for while remaining word 
+			log_perf(log_level+2, &format!("{} - Pass 2. END generate cmF for word_id: {}, fname: {}, word_len: {}. ", phase_name, word_id, word_fname, format_bytes(word.len()*31)), &mut gtw2); 
 			word_id += 1;
 		} //for each word
 		assert!(num_steps==vea.len(), "num_steps: {}, vea.len: {}", num_steps, vea.len());
@@ -1615,7 +1615,7 @@ where
 			let mut subseg_id = 1;
 			let word_info = &vec_word_info[word_id-1];
 			let word_fname = &vec_word_fnames[word_id-1];
-			log_perf(log_level+2, &format!("{} - Pass 3. to prove steps for word_id: {}, fname: {}, word_len: {}. ", phase_name, word_id, word_fname, format_bytes(word.len()*31)), &mut gtw2); 
+			log_perf(log_level+2, &format!("{} - Pass 3. START prove steps for word_id: {}, fname: {}, word_len: {}. ", phase_name, word_id, word_fname, format_bytes(word.len()*31)), &mut gtw2); 
 			while remaining.len()>0{
 				//6.1 compute the problem statement instance again
 				// with the correct cmF
@@ -1664,6 +1664,7 @@ where
 				subseg_id += 1;
 			}//end for while remaining word 
 			word_id += 1;
+			log_perf(log_level+2, &format!("{} - Pass 3. END prove steps for word_id: {}, fname: {}, word_len: {}. ", phase_name, word_id, word_fname, format_bytes(word.len()*31)), &mut gtw2); 
 		} //for each word
 		assert!(num_steps==vea.len(), "num_steps: {}, vea.len: {}", num_steps, vea.len());
         assert_eq!(C1::ScalarField::from(num_steps as u32), nova.i);
