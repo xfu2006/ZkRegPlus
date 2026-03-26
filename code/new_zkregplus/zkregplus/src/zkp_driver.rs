@@ -1194,23 +1194,23 @@ pub mod tests_zkp_driver{
 		let b_write_cache = ! b_read_cache;
         let set1 = "data/debug/full_data_set/config/"; //for dfa
         let max_word= 512 * 4;
-        let sigs = 380;
-        let subsigs = 560; //220 for prev db
+        let sigs = 400;
+        let subsigs = 562; //220 for prev db
         let avg_pats_per_subsig = 8; //old value 8
         let avg_active_pats_per_subsig = 2;
         let perc_comp_subsigs = 20;
         let num_category = 1;
         let num_circs_per_category= 1;
         let basis_unique_states = 2000; //15 cpercent
-        let basis_acc_states = 1800; //9 cpercent
-        let basis_pats_in_trace = 3000; //old value 100 cur value 1/1000.
+        let basis_acc_states = 1260; //9 cpercent
+        let basis_pats_in_trace = 1400; //old value 100 cur value 1/1000.
         let basis_acc_states_igc = basis_acc_states ; //9 cpercent
         let basis_pats_in_trace_igc = basis_pats_in_trace;
             //old value 100 cur value 1/1000.
         let dfa_sigs = 6;
         let dfa_subsigs= 6;
-        let perc_pats_expansion_rate = 30; //old good value 2
-        let perc_pats_expansion_rate_igc = 30;
+        let perc_pats_expansion_rate = 104; //old good value 2
+        let perc_pats_expansion_rate_igc = 2;
         //let avg_subsig_per_sig = 3;
 
 		let init_cp_cap= CpCapacity{
@@ -1251,9 +1251,16 @@ pub mod tests_zkp_driver{
             basis_acc_states_igc,
         );
 
-		//just test one at a time
-		let min = 2; //starting: 0
-		let max = 3; //max possible: 8
+		//just ranges allowed 0 to 8test one at a time
+		//APPROACH 1:
+		//let min = 2; //starting: 0
+		//let max = 3; //max possible: 8
+
+		//APPROACH 2:
+		//IF using min = 8, max=9 it uses binexec_4_9.dat (which
+		//has ALL the files listed (about 87MB)
+		let min = 8;
+		let max = 9;
 		for id in min..max{
 			zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
 				&format!("{}/main.dat",set1), //src sig

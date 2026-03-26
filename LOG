@@ -26856,8 +26856,21 @@ Goal 3. Plan next step
 	[c] go through small experiment with two circs
 	[d] run two circs for full_data4
 
+Thursday 03/26/2026
+Goal 1. debug again
+	[a] info: 
+	DEBUG USE 6901.5: last_loc: 35045377, cost: 85 ms
+	thread 'zkp_driver::tests_zkp_driver::test_zkreg_main' panicked at zkregplus/src/gadgets/discharge_adv.rs:3558:17:
+	assertion failed: mul_item.value()? * dst_subsig[i].value()? == F::zero()
+	--> replicated once.
+	stack backtrace:
+	[b] check the other samples if see similar example
+
+Goal 2. 
+
 =============
 -- TODO -- remove DEBUG USE 6901, 6999
 		-- disable debug in sed_mapper (6621),
 		-- 6735.x
+		-- disable all debug.
 
