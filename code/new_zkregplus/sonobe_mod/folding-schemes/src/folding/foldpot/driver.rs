@@ -878,6 +878,7 @@ where
 		let mut prev_stmt = None;
 		let lkup_len= self.lkup.borrow().get_size();
 		let mut total_lkup_covered = 0;
+		let mut last_pc_i1 = 0;
 		for word in iter_words{
 			//2.1 first try out and determine the length info for each
 			let mut remaining = word.clone();
@@ -887,8 +888,9 @@ where
 			let _mapper = self.circuits[0].get_mapper();
 			let (steps, vec_len, vec_pci, _vec_cap_req, advice) = self.plan_nd_advice(log_level+1, true, &word, &vec_word_info[word_id-1]).expect("Planning advice fails!"); 
 			for i in 0..steps{
-				let pc_i = if i==0 {0} else {vec_pci[i-1]};
+				let pc_i = if i==0 {last_pc_i1} else {vec_pci[i-1]};
 				let pc_i1 = vec_pci[i]; //this is actually pc_i1 for this circ
+				last_pc_i1 = pc_i1; // save for next word
 				let circ = &self.circuits[pc_i1];
 				let _max_len = circ.max_word_len();
 				let act_len = vec_len[i];
@@ -1325,6 +1327,7 @@ where
 		let mut total_lkup_covered = 0;
 		let m3 = get_mem_usage_mb();
 		let mut gtw = GTimer::new();
+		let mut last_pc_i1 = 0;
 		for (word, word_fname) in iter_words.zip(vec_word_fnames.iter()){
 			let mut prev_stmt = None;
 			let mut prev_adv = None;
@@ -1342,8 +1345,9 @@ where
 			log_perf(log_level+2, &format!("{} - Pass 1: START decide circ alloc for word_id: {}, fname: {}, word_len: {}. ", phase_name, word_id, word_fname, format_bytes(total_word_len*31)), &mut gt2);
 			for i in 0..steps{
 				//2.1 set up params
-				let pc_i = if i==0 {0} else {vec_pci[i-1]};
+				let pc_i = if i==0 {last_pc_i1} else {vec_pci[i-1]};
 				let pc_i1 = vec_pci[i]; //this is actually pc_i1 for this circ
+				last_pc_i1 = pc_i1; // save for next word
 				let circ = &self.circuits[pc_i1];
 				let _max_len = circ.max_word_len();
 				let act_len = vec_len[i];

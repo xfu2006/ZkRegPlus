@@ -53,6 +53,7 @@ where
 		let arr1 = [A,B,C,A,B,C];
 		let arr2 = [z1,z1,z1,z2,z2,z2];
 		let vec_res = arr1.par_iter().zip(arr2.par_iter()).map(|(&a,&b)|{
+            println!("DEBUG NIFS: a.n_cols: {}, b.len(): {}", a.n_cols, b.len());
 			mat_vec_mul(a,b).expect("mat_vec_mul err")
 		}).collect::<Vec<Vec<_>>>();
 		let Az1 = &vec_res[0];

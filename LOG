@@ -26873,6 +26873,14 @@ Goal 4. put debugging statement into discharge_adv.rs -> DONE
 Goal 5. run multiple circuits and debug
 	[a] adjust parameters
 	[b] basis pats increased TOO FAST problem.
+	[c] use gemini to fnd the bug, seems to be the right bug
+		flash-3: 580k
+		pro-3: 225k
+		=> solved, but building SNARKs failed
+Goal 6. data collection
+	[a] circ2 did not exihibit the error
+	[b] now testing 3 to 8
+
 -- TODO -- find out which circuit is used. 
 
 == TODO == remove debug code 6671.x later

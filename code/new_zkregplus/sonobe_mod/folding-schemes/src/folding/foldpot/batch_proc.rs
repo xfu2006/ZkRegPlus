@@ -635,7 +635,7 @@ where
 		let newcm = batch_proof.vcom_vec_r + batch_proof.vcom_vec_v.mul(ch);
 		let bres = VecCom::<'a,E>::verify_with_challenge(&vkey.vec, ch, 
 			&newcm, &ind_proof.vcom_prf);
-		if !bres.is_ok() {return false;}
+		if !bres.is_ok() {println!("failed at line {}", line!()); return false;}
 
 		//3. verify the kzg commitment
 		let bres = KZG::<'a,E>::verify_with_challenge(&vkey.kzg, r_i,
@@ -817,7 +817,7 @@ where
 		let bres = verify_qa_nizk::<E>(&x, &prf.prf_qa_nizk, 
 			&vkey.vk_qa_nizk);	
 		if !bres {
-			return false;
+			println!("failed at line {}", line!()); return false;
 		}
 
 		//2. verify the aggregated kzg proof 
@@ -830,7 +830,7 @@ where
 				prf.kzg_vec_v.clone()
 		];
 		let (ch, rc) = rand_inp.gen_challenge();
-		if ch!=prf.ch || rc!=prf.rc {return false;}
+		if ch!=prf.ch || rc!=prf.rc {println!("failed at line {}", line!()); return false;}
 		let mut com_all = E::G1::zero();
 		let mut factor = E::ScalarField::one();
 		for i in 0..coms.len(){
@@ -840,7 +840,7 @@ where
 		let res = KZG::<E>::verify_with_challenge(&vkey.kzg,
 			ch, &com_all, &prf.agg_kzg_prf);
 		if !res.is_ok() {
-			return false;
+			println!("failed at line {}", line!()); return false;
 		}
 
 		if b_check_part2{//check the rest part
@@ -852,7 +852,7 @@ where
 				&prf.kzg_all_com1.expect("kzg1 empty"),
 				&prf.kzg_all_com_prf1.as_ref().expect("prf1 empty"));	
 			if !res1.is_ok() {
-				return false;
+				println!("failed at line {}", line!()); return false;
 			}
 
 			//2. check kzg_all_com2
@@ -862,7 +862,7 @@ where
 				&prf.kzg_all_com2.expect("kzg2 empty"),
 				&prf.kzg_all_com_prf2.as_ref().expect("prf2 empty"));	
 			if !res2.is_ok() {
-				return false;
+				println!("failed at line {}", line!()); return false;
 			}
 
 			//3. check qa_nizk_prf2
@@ -877,7 +877,7 @@ where
 				&nova2_qa_nizk_vkey.expect("qanizk vkey empty")
 			);	
 			if !bres {
-				return false;
+				println!("failed at line {}", line!()); return false;
 			}
 
 			//4. check the snark proof
@@ -897,7 +897,7 @@ where
 					.expect("snark main empty")
 			);
 			if !snark_v_main.is_ok() || !snark_v_main.unwrap().clone() {
-				return false;
+				println!("failed at line {}", line!()); return false;
 			}
 
 			//4.2 verify te cpcirc snark proof
@@ -931,7 +931,7 @@ where
 				&prf.snark_proof_cp.as_ref().clone().expect("snark pf empty"));
 					//.map_err(|e| Error::Other(e.to_string())).unwrap();
 			if !snark_v_cp.is_ok() || !snark_v_cp.unwrap().clone() {
-				return false;
+				println!("failed at line {}", line!()); return false;
 			}
 		}
 
