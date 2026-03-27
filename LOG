@@ -26880,8 +26880,31 @@ Goal 5. run multiple circuits and debug
 Goal 6. data collection
 	[a] circ2 did not exihibit the error
 	[b] now testing 3 to 8
+Goal 3. fails the snark proof
+	[a] ask gemini again
+	-> not finding anything
+
+Friday 03/27/2026
+Goal 1. debug 
+	[a] using standard (non-release_ mode found integer underflow
+		[1] driver:1429 -> fixed simple memory report negative number
+	[b] trace
+		dirver: 1895 (pass_all)
+		-> driver: 1660 (call prove_step)
+		-> mod_super: 1714 (call aug_f.generate_constraints)
+		-> circuit_super.rs: 800 (expect_x ==x_value) 
+Goal 2. try to analyze the crash problem small_data3
+	[a] commit the debug code
+	[b] run on server (enable the debug mode) in sonobe
+		and see if it fails constraints
+	[c] it does fails expect_x == x_value
+		-> print out pc_i, pc_i1, b1, x1, x_base 6601.5.1
+	[d] think why step 2 (i=1), non-base case the x value is NOT right?
+
+Goal 3. 
 
 -- TODO -- find out which circuit is used. 
 
 == TODO == remove debug code 6671.x later
+	REMOVE 6601.5.1
 

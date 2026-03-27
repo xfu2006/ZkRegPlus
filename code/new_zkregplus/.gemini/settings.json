@@ -17,36 +17,4 @@
       "enableShellOutputEfficiency": true
     }
   },
-  "model": {
-    "name": "gemini-2.5-flash",
-    "enableTieredRouting": true,
-    "fallbackModel": "gemini-2.5-pro"
-  },
-  "agents": {
-    "useDynamicModelSelection": true,
-    "overrides": {
-      "generalist_agent": {
-        "modelConfig": {
-          "model": "gemini-2.5-flash",
-		  "fallbackModel": {
-            "model": "gemini-2.5-pro"
-          }
-        }
-      },
-      "codebase_investigator": {
-        "modelConfig": {
-          "model": "gemini-2.5-flash",
-		  "fallbackModel": {
-            "model": "gemini-2.5-pro"
-          }
-        }
-      }
-    }
-  },
-  "telemetry": {
-    "enabled": false
-  },
-  "privacy": {
-    "usageStatisticsEnabled": false
-  }
 }

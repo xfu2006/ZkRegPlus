@@ -797,6 +797,9 @@ where
 			let x1_base = u_i1_x_base.value()?;
 			let expect_x = if b1 {x1_base} else {x1};
 			let x_value = x.value()?;
+			//REMOVE LATER -----------------
+			println!("DEBUG USE 6601.5.1: i: {}, pc_i: {}, pc_i1: {}, b1: {}, x1:{}, x1_base: {}, expect_x: {}, x_value: {}", i.value()?, pc_i.value()?, pc_i1.value()?, b1, x1, x1_base, expect_x, x_value);
+			//REMOVE LATER ----------------- ABOVE
 			assert!(expect_x == x_value);
 		}
 		log_perf(log_level, &format!(
