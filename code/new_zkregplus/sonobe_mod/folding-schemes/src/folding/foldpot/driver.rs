@@ -824,6 +824,7 @@ where
 		 Option<(BatchClaim<E>, IndividualClaim<E>, SnarkAdvice<E::ScalarField>
 		)>){
 		//0. generate the claim first
+		if 1>0 {panic!("do not call pass_one - call pass_all.");}
 		let log_level = LOG2;
 		let mut t2 = Timer::new("PassOne", 1);
 		let words = {
@@ -878,7 +879,6 @@ where
 		let mut prev_stmt = None;
 		let lkup_len= self.lkup.borrow().get_size();
 		let mut total_lkup_covered = 0;
-		let mut last_pc_i1 = 0;
 		for word in iter_words{
 			//2.1 first try out and determine the length info for each
 			let mut remaining = word.clone();
@@ -888,9 +888,8 @@ where
 			let _mapper = self.circuits[0].get_mapper();
 			let (steps, vec_len, vec_pci, _vec_cap_req, advice) = self.plan_nd_advice(log_level+1, true, &word, &vec_word_info[word_id-1]).expect("Planning advice fails!"); 
 			for i in 0..steps{
-				let pc_i = if i==0 {last_pc_i1} else {vec_pci[i-1]};
+				let pc_i = if i==0 {0} else {vec_pci[i-1]};
 				let pc_i1 = vec_pci[i]; //this is actually pc_i1 for this circ
-				last_pc_i1 = pc_i1; // save for next word
 				let circ = &self.circuits[pc_i1];
 				let _max_len = circ.max_word_len();
 				let act_len = vec_len[i];
@@ -1305,7 +1304,8 @@ where
 		let pc_0_val = 0;
 		let _pc_0 = C1::ScalarField::from(pc_0_val as u32);
 		log_perf(log_level, &format!(
-			"{} step 1: generate batch/ind claims. mem: {} GB, increased mem: {} MB, for words: {}, total_word_len: {} packed fields.", phase_name, m2/1024, m2-m1, total_words, total_wd_len), 
+			"{} step 1: generate batch/ind claims. mem: {} GB, increased mem: {} MB, for words: {}, total_word_len: {} packed fields.", phase_name, m2/1024, 
+				if m2>m1 {m2-m1} else {0}, total_words, total_wd_len), 
 			&mut gt1);
 
 
@@ -1327,7 +1327,7 @@ where
 		let mut total_lkup_covered = 0;
 		let m3 = get_mem_usage_mb();
 		let mut gtw = GTimer::new();
-		let mut last_pc_i1 = 0;
+		let mut last_pci1 = 0;
 		for (word, word_fname) in iter_words.zip(vec_word_fnames.iter()){
 			let mut prev_stmt = None;
 			let mut prev_adv = None;
@@ -1345,9 +1345,9 @@ where
 			log_perf(log_level+2, &format!("{} - Pass 1: START decide circ alloc for word_id: {}, fname: {}, word_len: {}. ", phase_name, word_id, word_fname, format_bytes(total_word_len*31)), &mut gt2);
 			for i in 0..steps{
 				//2.1 set up params
-				let pc_i = if i==0 {last_pc_i1} else {vec_pci[i-1]};
+				let pc_i = if i==0 {last_pci1} else {vec_pci[i-1]};
 				let pc_i1 = vec_pci[i]; //this is actually pc_i1 for this circ
-				last_pc_i1 = pc_i1; // save for next word
+				last_pci1 = pc_i1;
 				let circ = &self.circuits[pc_i1];
 				let _max_len = circ.max_word_len();
 				let act_len = vec_len[i];
@@ -1428,7 +1428,7 @@ where
 			assert!(total_lkup_covered >= lkup_len, "total: {}, lkup_len: {}", total_lkup_covered, lkup_len);
 		}
 		log_perf(log_level, &format!(
-			"{} step 2: dispatch w into steps. mem: {} MB for total_word_len: {}: ", phase_name, m4-m3, format_bytes(total_wd_len*31))
+			"{} step 2: dispatch w into steps. mem: {} MB for total_word_len: {}: ", phase_name, if m4>m3 {m4-m3} else {0}, format_bytes(total_wd_len*31))
 			, &mut gt1);
 
 		
@@ -1520,7 +1520,7 @@ where
 
 		let m_pass2_2 = get_mem_usage_mb();
 		log_perf(log_level, &format!(
-			"{} step 3: generate cmF, mem: {} MB for total_word_len: {}: ", phase_name, m_pass2_2-m_pass2_1, format_bytes(total_wd_len*31)) , &mut gt1);
+			"{} step 3: generate cmF, mem: {} MB for total_word_len: {}: ", phase_name, if m_pass2_2>m_pass2_1 {m_pass2_2-m_pass2_1} else {0}, format_bytes(total_wd_len*31)) , &mut gt1);
 
 		//------------------------------------------
 		//4. PASS-3: now do the prove_step
@@ -1564,7 +1564,7 @@ where
 		self.batch_pk = None; //clear the RAM
 		let m6 = get_mem_usage_mb();
 		log_perf(log_level, &format!(
-			"{} step 4: generate batch prf, mem: {} MB for words: {}, n_steps: {}: ", phase_name, m6-m5, words.len(), n_steps) , &mut gt1);
+			"{} step 4: generate batch prf, mem: {} MB for words: {}, n_steps: {}: ", phase_name, if m6-m5>0 {m6-m5} else {0}, words.len(), n_steps) , &mut gt1);
 
 		//5. re-intialize with the newly computed ch and rc (challenges)
 		let (ch,rc) = if !self.b_full_mode{
