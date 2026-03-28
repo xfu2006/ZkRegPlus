@@ -3465,13 +3465,19 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		//cost: 4n -> improved to 2n
 		let vec_b_begin = (0..diff1.len()).into_iter().map(|i|{
 			let b_begin = if i==0 {one.clone()} else {
-		//		(&dst_subsig[i]*r1+&src_loc[i]).is_neq(
-		//			&(&dst_subsig[i-1]*r1 + &src_loc[i-1])
-		//		).unwrap().into()
-				//optimized version: using f_unit to replace r1 as
-				//loc and subsig are already proved in RANGE2
-				let res = &(&dst_subsig[i] * &f_unit) + &src_loc[i]
-					- &(&dst_subsig[i-1] * &f_unit) - &src_loc[i-1];
+				//NOTE: should NOT use (dst_subsig, loc) pair
+				//to tell BECAUSE A SAME DST_SUBSIG chould be
+				//used to two consecutive steps (for different patterns)
+				//which causes wrong jugdement of the start of a new
+				//proof for (src_pat, src_step, id). Use dst_encoded
+				//instead.
+				//i.e., (dst_encoded, src_loc) encodes a REAL segment.
+				//since src_loc[i] has already been proved in range,
+				//dst_encoded has bit-limit to RANGE2^5<200 bit.
+				//it's SAFE to encode the pair (dst_encoded, src_loc)
+				//as dst_encoded[i] * f_unit + src_loc[i]
+				let res = &(&dst_encoded[i] * &f_unit) + &src_loc[i]
+					- &(&dst_encoded[i-1] * &f_unit) - &src_loc[i-1];
 				let b_res = &one - &is_zero_better(&res, &cs).unwrap();
 
 				b_res
@@ -3562,8 +3568,8 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 					let bidx = if i<5 {0} else {i-5};
 					let eidx = if i<vec_b_begin.len()-5 {vec_b_begin.len()} else {i+5};
 					for j in bidx..eidx{
-						println!("i: {}, src: {}, dst: {}, src_loc: {}, src_step: {}, dst_pat: {}, dst_rg1: {}, dst_rg2: {}, dst_loc: {}, dst_pat: {}, diff1: {}, diff2: {}, dst_subsig: {}",
-							i,
+						println!("j: {}, src: {}, dst: {}, src_loc: {}, src_step: {}, dst_pat: {}, dst_rg1: {}, dst_rg2: {}, dst_loc: {}, dst_pat: {}, diff1: {}, diff2: {}, dst_subsig: {}",
+							j,
 							v2d[0][j].value()?,
 							v2d[1][j].value()?,
 							v2d[2][j].value()?,

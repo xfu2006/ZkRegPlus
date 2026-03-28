@@ -1564,7 +1564,7 @@ where
 		self.batch_pk = None; //clear the RAM
 		let m6 = get_mem_usage_mb();
 		log_perf(log_level, &format!(
-			"{} step 4: generate batch prf, mem: {} MB for words: {}, n_steps: {}: ", phase_name, if m6-m5>0 {m6-m5} else {0}, words.len(), n_steps) , &mut gt1);
+			"{} step 4: generate batch prf, mem: {} MB for words: {}, n_steps: {}: ", phase_name, if m6>m5 {m6-m5} else {0}, words.len(), n_steps) , &mut gt1);
 
 		//5. re-intialize with the newly computed ch and rc (challenges)
 		let (ch,rc) = if !self.b_full_mode{

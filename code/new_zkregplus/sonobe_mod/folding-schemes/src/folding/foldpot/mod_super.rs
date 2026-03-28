@@ -333,6 +333,7 @@ where
         z_0: Vec<C::ScalarField>,
         z_i: Vec<C::ScalarField>,
     ) -> C::ScalarField {
+		let b_debug = false;
 		let zero = C::BaseField::zero();
 		let _tp = (&zero, &zero);
         let mut sponge = sponge.clone();
@@ -346,6 +347,11 @@ where
 		let _elements = self.to_sponge_field_elements::<C::ScalarField>(&mut U_vec);
         sponge.absorb(&U_vec);
         let res: C::ScalarField = sponge.squeeze_field_elements(1)[0];
+
+
+		if b_debug{
+			println!("DEBUG USE 6671.1.13 *** hash: i: {}, pc_i: {}, z_0: {}, z_i: {}, U_vec[0]: {}, U_vec[1]: {}, U_vec[2]: {}, U_vec[-2]: {}, U_vec[-1]: {} => res: {}", i, pc_i, z_0[0], z_i[0], U_vec[0], U_vec[1], U_vec[2], U_vec[U_vec.len()-2], U_vec[U_vec.len()-1], res);
+		}
 		
 		res
     }
@@ -1334,6 +1340,11 @@ where
 
         //2. build  `sponge` is for digest computation.
         let sponge = PoseidonSponge::<C1::ScalarField>::new(&self.poseidon_config);
+		if b_debug {
+			println!("DEBUG USE 6601.6.3: prover u_i.x[0]: {}", self.u_i.x[0]);
+			let u_i_x_recomputed = self.U_i.hash(&sponge, self.pp_hash, self.i, self.pc_i, self.z_0.clone(), self.z_i.clone());
+			println!("DEBUG USE 6601.6.4: prover U_i hash: {}", u_i_x_recomputed);
+		}
         // `transcript` is for challenge generation.
         let mut transcript = sponge.clone();
         let augmented_F_circuit: AugmentedFCircuitFoldPotSuper<C1,C2,GC2,LK,FC,GM,H>;
@@ -1444,6 +1455,41 @@ where
             self.z_0.clone(),
             z_i1.clone(),
         );
+
+		//Task 1. in the following, print out all attributes of
+		//U_i1, and print out all values of the parameters to U_i1.clone().hash() above. When you print out field elements, I want the ENTIRE big num, not a tuple of mutiple numbers. Print with prefix "DEBUG USE 6671.1.x".
+		let b_debug_special = false;
+		if b_debug_special {
+		println!("DEBUG USE 6671.1 === i: {}, pc_i1: {}, pc_i: {}",
+			self.i, self.pc_i1, self.pc_i); 
+		println!("DEBUG USE 6671.1.0: U_i1.x_1: {}", U_i1.x_1);
+		if let Some(x2) = &U_i1.x_2 {
+			println!("DEBUG USE 6671.1.1: U_i1.x_2: Some({})", x2);
+		} else {
+			println!("DEBUG USE 6671.1.1: U_i1.x_2: None");
+		}
+		println!("DEBUG USE 6671.1.2: U_i1.pc_i: {}", U_i1.pc_i);
+		for (idx, inst) in U_i1.vec_inst.iter().enumerate() {
+			let cmE_xy = crate::utils::get_cm_coordinates(&inst.cmE);
+			println!("DEBUG USE 6671.1.3.{}: inst.cmE: ({}, {})", idx, cmE_xy[0], cmE_xy[1]);
+			println!("DEBUG USE 6671.1.4.{}: inst.u: {}", idx, inst.u);
+			let cmW_xy = crate::utils::get_cm_coordinates(&inst.cmW);
+			println!("DEBUG USE 6671.1.5.{}: inst.cmW: ({}, {})", idx, cmW_xy[0], cmW_xy[1]);
+			for (j, x_val) in inst.x.iter().enumerate() {
+				println!("DEBUG USE 6671.1.6.{}.{}: inst.x: {}", idx, j, x_val);
+			}
+			let cmF_xy = crate::utils::get_cm_coordinates(&inst.cmF);
+			println!("DEBUG USE 6671.1.7.{}: inst.cmF: ({}, {})", idx, cmF_xy[0], cmF_xy[1]);
+		}
+		println!("DEBUG USE 6671.1.8: i+1: {}", self.i + C1::ScalarField::one());
+		println!("DEBUG USE 6671.1.9: pc_i1: {}", self.pc_i1);
+		for (idx, z) in self.z_0.iter().enumerate() {
+			println!("DEBUG USE 6671.1.10.{}: z_0: {}", idx, z);
+		}
+		for (idx, z) in z_i1.iter().enumerate() {
+			println!("DEBUG USE 6671.1.11.{}: z_i1: {}", idx, z);
+		}
+		}
 
 		let x_size = if self.b_full_mode {3} else {2};
 		let u_dummy1 = CommittedInstanceFoldPotSuper::<C1>::
@@ -1762,12 +1808,12 @@ where
 		self.pc_i = C1::ScalarField::from(j_pci1 as u32);
 
 		if b_debug{
-
 			self.r1cs[j_pci1].check_instance_relation(&self.w_i.clone().into(), &self.u_i.clone().into())?;
 
             self.r1cs[j_pci1]
                 .check_relaxed_instance_relation(&self.W_i.vec_wit[j_pci1].clone().into(), &self.U_i.vec_inst[j_pci1].clone().into())?;
         }
+
 		log_perf(log_level, &format!("prove_step: Step 5. commit to instance: wit len: {}", self.w_i.W.len()), &mut gt2);
 		log_perf(log_level-1, &format!("-- prove_step cost: i: {}, circ_id: {}, stmt_len: {}, wtns size: {}", self.i, j_pci1, wtns.statement.len(), wtns_config.get_total_size()), &mut gt1);
 

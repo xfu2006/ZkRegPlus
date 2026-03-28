@@ -181,6 +181,7 @@ where
         z_0: Vec<FpVar<CF1<C>>>,
         z_i: Vec<FpVar<CF1<C>>>,
     ) -> Result<(FpVar<CF1<C>>, Vec<FpVar<CF1<C>>>), SynthesisError> {
+		let b_debug = false;
         let mut sponge = sponge.clone();
         let U_vec = self.to_sponge_field_elements()?;
 
@@ -192,9 +193,16 @@ where
         sponge.absorb(&z_i)?;
         sponge.absorb(&U_vec)?;
 
-
+		//REMOVE LATER ---------
+		//REMOVE the U_vec.clone() below, to use U_vec
+		//REMOVE LATER --------- ABOVE
         let res =  
-			Ok((sponge.squeeze_field_elements(1)?.pop().unwrap(), U_vec));
+			Ok((sponge.squeeze_field_elements(1)?.pop().unwrap(), U_vec.clone()));
+	
+		if b_debug && i.value().is_ok(){
+			println!("DEBUG USE 6671.2.13 *** hash: i: {}, pc_i: {}, z_0: {}, z_i: {}, U_vec[0]: {}, U_vec[1]: {}, U_vec[2]: {}, U_vec[-2]: {}, U_vec[-1]: {} ==> res: {}", 
+			i.value()?, pc_i.value()?, z_0[0].value()?, z_i[0].value()?, U_vec[0].value()?, U_vec[1].value()?, U_vec[2].value()?, U_vec[U_vec.len()-2].value()?, U_vec[U_vec.len()-1].value()?, res.clone().unwrap().0.value()?);
+		}
 
 		res
     }
@@ -617,6 +625,11 @@ where
             z_0.clone(),
             z_i.clone(),
         )?;
+
+		if b_debug {
+			println!("DEBUG USE 6601.6.1: circuit u_i_x: {}", u_i_x.value()?);
+		}
+
         // u_i.x[1] = H(cf_U_i)
         let (cf_u_i_x, cf_U_i_vec) = cf_U_i.clone().hash(&sponge, pp_hash.clone())?;
 		let (cp_u_i_x, cp_U_i_vec, cp_U_i) = if self.b_full_mode{
@@ -775,6 +788,37 @@ where
             z_0.clone(),
             z_i1.clone(),
         )?;
+		//Task 2. in the following, print out all attributes of
+		//U_i1, and print out all values of the parameters to U_i1.clone().hash() above. When you print out field elements, I want the ENTIRE big num, not a tuple of mutiple numbers. Print with prefix "DEBUG USE 6671.2.x". Carefully match the output following the TASK 1 in mod_super.rs (line 1453). so that I can later compare.
+		let b_debug_special = false;
+		if b_debug_special{
+			println!("DEBUG USE 6671.2 === i: {}, pc_i1: {}, pc_i: {}",
+				i.value()?, pc_i1.value()?, pc_i.value()?);
+			println!("DEBUG USE 6671.2.0: U_i1.x_1: {}", U_i1.x_1.value()?);
+			if let Some(x2) = &U_i1.x_2 {
+				println!("DEBUG USE 6671.2.1: U_i1.x_2: Some({})", x2.value()?);
+			} else {
+				println!("DEBUG USE 6671.2.1: U_i1.x_2: None");
+			}
+			println!("DEBUG USE 6671.2.2: U_i1.pc_i: {}", U_i1.pc_i.value()?);
+			for (idx, inst) in U_i1.vec_inst.iter().enumerate() {
+				println!("DEBUG USE 6671.2.3.{}: inst.cmE: ({}, {})", idx, inst.cmE.x.value()?, inst.cmE.y.value()?);
+				println!("DEBUG USE 6671.2.4.{}: inst.u: {}", idx, inst.u.value()?);
+				println!("DEBUG USE 6671.2.5.{}: inst.cmW: ({}, {})", idx, inst.cmW.x.value()?, inst.cmW.y.value()?);
+				for (j, x_val) in inst.x.iter().enumerate() {
+					println!("DEBUG USE 6671.2.6.{}.{}: inst.x: {}", idx, j, x_val.value()?);
+				}
+				println!("DEBUG USE 6671.2.7.{}: inst.cmF: ({}, {})", idx, inst.cmF.x.value()?, inst.cmF.y.value()?);
+			}
+			println!("DEBUG USE 6671.2.8: i+1: {}", (i.clone() + FpVar::<CF1<C1>>::one()).value()?);
+			println!("DEBUG USE 6671.2.9: pc_i1: {}", pc_i1.value()?);
+			for (idx, z) in z_0.iter().enumerate() {
+				println!("DEBUG USE 6671.2.10.{}: z_0: {}", idx, z.value()?);
+			}
+			for (idx, z) in z_i1.iter().enumerate() {
+				println!("DEBUG USE 6671.2.11.{}: z_i1: {}", idx, z.value()?);
+			}
+		}
 
         let (u_i1_x_base, _) = CommittedInstanceVarFoldPotSuper::
 				new_constant(cs.clone(), u_dummy)?.hash(

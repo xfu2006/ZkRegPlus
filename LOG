@@ -26893,6 +26893,7 @@ Goal 1. debug
 		-> driver: 1660 (call prove_step)
 		-> mod_super: 1714 (call aug_f.generate_constraints)
 		-> circuit_super.rs: 800 (expect_x ==x_value) 
+
 Goal 2. try to analyze the crash problem small_data3
 	[a] commit the debug code
 	[b] run on server (enable the debug mode) in sonobe
@@ -26900,11 +26901,41 @@ Goal 2. try to analyze the crash problem small_data3
 	[c] it does fails expect_x == x_value
 		-> print out pc_i, pc_i1, b1, x1, x_base 6601.5.1
 	[d] think why step 2 (i=1), non-base case the x value is NOT right?
+		-> the reason the computed U_i1.hash() does not
+			match the value of self.x of AugmentedFCircuitFoldPotSuper
+		-> DEBUG USE 
 
-Goal 3. 
+Goal 3. Planning of circuit selection
+	[a] simply start multiple threads and collect the max id.
+
+Goal 4. analyze the discharge_adv issue
+	[a] it breaks on overflow stack, increase stacks size
+	[b] now give bigger stack size and run in release mode, but
+		enable the debug mode when generation constraints.
+
+Saturday 03/28/2026
+Goal 1. analyze failed data
+	[a] the problem is that dst_loc column has MAX value 2^26-1
+		why?
+	[b] need to read the logic 
+		-> the error is that dst_loc: is MAX, which is not likely
+			to be the case
+		-> read gen_f
+		-> generate a sample forward proof to 
+		-> looks like the PROOF generated is FINE
+	[c] need to research how b_begin and b_end is evaluated.
+	[d] found the problem using (subsig,loc) to tell if that
+		is a unique entry is WRONG, should
+			use because the SAME subsig could be used for 
+			different PATTERNS!
+			should actually use the DESTINATION ENCODED
+	[e] regression testing all gadgets
+		-> done
+	[f] regression testing on small 1 and 2.
+
 
 -- TODO -- find out which circuit is used. 
 
 == TODO == remove debug code 6671.x later
-	REMOVE 6601.5.1
+	REMOVE 6601.5.1, 6601.6.x, 6601.7.x
 
