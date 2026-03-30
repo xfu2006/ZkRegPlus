@@ -3952,7 +3952,7 @@ pub mod tests_sigma_ir1cs{
 			sigma_ir1cs::{GadgetMapper,SigmaIR1CS,SigmaIR1CS_Inst,WitnessSigmaIR1CSVar,SigmaGadget,StatementInst, StatementConfig,LookupTableTwoCol_Inst,ZiPartTwoInst,LookupTableTwoCol,StatementExtraInfo,CyclePairInput,CyclePairInputVar, WitnessSigmaIR1CSConfig,DummyNdAdvice, DummyCapacity,NdAdvice,Capacity,WordInfo},
 			circuits_super::{field_to_usize},
 			utils::{f1_to_f2_limbs, f1_limbs_to_f2,expand2},
-			container_config::{ContainerConfig},
+			container_config::{ContainerConfig,ColEle},
 		}
 	};
 
@@ -4434,7 +4434,7 @@ pub mod tests_sigma_ir1cs{
 		(Rc<RefCell<LK>>, SigmaIR1CS_Inst<F,C,CS,LK,SixRootMapper<F,LK>,H>, Vec<StatementInst<F,LK>>)
 	where 	C: CurveGroup<ScalarField=F>,
 		CS: CommitmentScheme<C, H>,
-		F: PrimeField + Absorb,
+		F: PrimeField + Absorb +ColEle,
 		LK: LookupTableTwoCol<F> + 'static,
 	{
 		//1. create the lookup, and relation object

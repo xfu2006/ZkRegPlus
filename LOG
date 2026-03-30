@@ -26933,9 +26933,153 @@ Goal 1. analyze failed data
 		-> done
 	[f] regression testing on small 1 and 2.
 
+Goal 2. check small_data3 bug
+	[a] chekc 6671.1 against 6671.2
+		[a] i=0, prover version U_i1.x_1 is 0, but verifier U_i1.x_1
+			is NOT. 
+		[b] print array for both.
+		[c] it looks like U_vec is exactly the same, why?
+		[d] why x_1 when exported as U_vec is 0 but when printed it's not?
+			-> now adjust order
+	-- why 6671.2.13 is called twice? in circiut_super? check later.
 
--- TODO -- find out which circuit is used. 
+Sunday 03/29/2026
+Goal 0. collect data
+	[a] snark proof failed for the full_data4, why?
+		-> this is going to be expensive though.
+	[b] think about creating some other data files and test.
+	[c] run out of memory
+	[d] expand to 496GB and run fulldata2 -> it passed
+	[e] check full-data4 again on file0 (32MB)
+		-> run it again
+		-> it fails on building constraint system for 
+		the 1st seg. Maybe should turn on the debug
+		for the discharge_adv.rs and see in which step it breaks.
+	[f] it even breaks even before 1001
+	[g] do more dumps and see where it exactly breaks.
+	[h] it looks like it breaks immediately in the first segment
+		of assert_msg3 of discharge_adv. Also insert statement
+		in the assert_msg3 of fsm_adv and word_extract_adv.
 
+Goal 1. check the debug statements 6671.1 and 6671.2
+	[a] why hash is called 2 times?
+		-because 2nd time is for the cyclepair and cyclefold instances
+		-> use inst 2 instead
+	[b] need to read mod_super::prove_step()
+		-> generate witness and compute cmF
+		-> compute cross term T and fold to generate W_i1 and U_i1
+	[c] need to go over the prove_step dumps().
+Goal 2. read the prove_step implementation
+	[a] workflow
+		(1) from external_inputs: statement_vec generate
+			the witness
+		(2) it then has 2 branches to compute aug_fa
+		(3) use aug_f to generate onstraints
+		(4) extract (w_i1, u_i1) from the constraints
+		(5) now assign U_i1 as U_i, 
+	[b] read the generate_step_constraints workflow
+		it's genereally folding U_i1
+	[c] compare data i = 0
+		on circuit side, hash is called twice 1st one is NOT matching
+			but 2nd one is matching why?
+			It computes the base hash
+		-> so there are two hashes.
+	[d] So for step 0, it needs match base (2nd hash)
+		but then from step 1, it should match every one
+	[e] observe small_3 for 6671.1 and 6671.2
+	=> problem the first prover U_i1.hash in prover should match
+		the 2nd U_i1_base.hash in verifier which does NOT. 
+	*** observation: U_i1.pc_i is 2 but u_dumm's pc_i is 0.
+Goal 3. make the change and assign u_dummy's pci
+	--> still not working because the pci or pc_i1 value not matching!
+    ==> so the problem is that ther external_inputs[0]
+        and external_inputs[1] should be pci and pc_i1
+        why they are NOT matching?
+
+Monday 03/30/2026
+Goal 1. add debug code on server
+	[a] do a small file as it breaks on first circ
+	[b] add all debug mode on cs
+	[c] debug message 9001 and 9002
+	[d] it looks like breaking on the very first gadget.
+		try full1
+	[e] even small will crash on constraing testing, so server
+		ocde has some problem.
+
+Goal 2. try to figure out pc_i and pc_i1 inconsistency problem
+	code comprehension
+	[a] How does driver.rs::pass_all() pass the pc_i and pc_i1
+		to FoldPotSuper? How are the pc_i and pc_i1 value 
+		assigned? Show me the line numbers.
+	[b] When prove_step() is called, an external_input
+		is passed. Is it a vector of StatementInstance?
+		Is its first two elements pc_i and pc_i1?
+		Show how pc_i and pc_i1 of StatementInstance are set
+		and are they consistent with the pc_i and pc_i1 passed to
+		prove_step?
+			check msg 6666.1 and see what is passed to statement pc_i and
+				pc_i1 are they valid?
+			-> it looks like they ARE consistent. what's the problem?
+	[c] read the relation between correct output:
+		the 1st 6671.1 === hash result should match the
+		1st - REMOVE LATER 7016.2.0: PRINT u_dummy.
+	[d] strangely the x_value in the assert in circ_super matches
+		u_i1_x. check why? 
+		-> read circuits_super.rs
+		x_value from self.x which is from u_i1_x
+	[e] print message 6606.5 check the following is valid
+		(1) REMOVE LATER 6006.5 (before), after REMOVEL ATER 6006
+		(2) REMOVE LATER 7016.2.0: PRINT u_dummy 
+		-> verified
+	[f] now read dump3 and figure what is the problem
+		-> actually for dummy NO need to set u_dummy.pc_i to pc_i1.
+		-> compare two msgs again.
+
+Goal 3. it passes step 0, however for step 1. It's entirely 
+	different
+	[a] prover's U_i1.x_1 source
+	[b] circuit U_i1.x_1 source
+		use prtmsg DEBUG USE 6607.1, do it AFTER step i=1
+	[c] improve prints
+	[d] Observation:
+		We have a crash at circuits_super.rs:913, on
+	assertion: "assertion failed: expect_x == x_value".
+	Here the expect_x (at step i=1) is taken from u_i1_x
+	in circuits_super.rs, which is the hash of variable U_i1 (see line 864
+	of circuits_super.rs). The x_value is from self.x
+	which is computed from the hash of the U_i1 in mod_super.rs (see line 1499). 
+	  We noticed that the U_i1 in mod_super.rs has a different
+	  value x than than the U_i1 in the circuits_super.rs.
+	  See details of dump: "DEBUG USE 6607.1 in prover U_i.x_1: , u_i.x[1]: 9673397089264584554871108987483438591391933759979685506224017351240392541896, r_Fr: 143606536126397495730855241690671728273 => U_i1.x_1: 13693926207686349715382582928935898474283654026443149344944173438397123424142" (generated in mod_super.rs::1451),
+     
+	 and "DEBUG USE 6607.2 in circ: global U_i_x1: , u_i.x1: 9673397089264584554871108987483438591391933759979685506224017351240392541896, r: 183296335338350353827146801711004754229 ==> U_i1.x_1: 6693304217392251700865858958776180993641351112122188749812431420911312136970" (GENERATED IN circuits_super.rs::787". You might notice that the reason that U_i1.x_1 do not match each other is that the f_Fr used in 6607.1 is DIFFERENT FROM the r used in 6607.2.
+
+	  Now read the related source code in mod_super.rs and circuits_super.rs, and find out why these two r values are different?
+	 => IT FIXED! (bloody one line fix of error)
+	 => last step found by AIin 15 minute, but I could do it myself
+	 	in 30 seconds. about 757k pro -> that's 1 dollar!
+	=>  Unfortunately it's stlil not working, I'm suspecting that
+	the input data to "let r_bits = ChallengeGadgetFoldPotSuper::<C1>::get_challenge_native(
+            &mut transcript,
+            self.pp_hash,
+            self.U_i.clone(),
+            self.u_i.clone(),
+            cmT,
+        );
+  " (mod_super.rs::1415) and the input data to "let r_bits = ChallengeGadgetFoldPotSuper::<C1>::get_challenge_gadget(
+            &mut transcript,
+            pp_hash.clone(),
+            U_i_vec,
+            u_i.clone(), //note that only pass u_i
+            cmT.clone(),
+        )?;
+  " are somehow DIFFERENT. You can insert DEBUG USE 68071 and 68072 separately into ChallengeGadgetFoldPotSupper::get_challenge_native and ChallengeGadgeFoldSuper::get_challenge_gadget() to print out the inputs to the hash function. You wan to make sure that these messages can be compared with each other easyly.
+
+
+	
+
+== TODO ==: put constraint tesitng code there for small example
+== TODO -- find out which circuit is used. 
 == TODO == remove debug code 6671.x later
-	REMOVE 6601.5.1, 6601.6.x, 6601.7.x
+	REMOVE 6601.5.1, 6601.6.x, 6601.7.x, 6666.1
 

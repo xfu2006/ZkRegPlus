@@ -1657,6 +1657,7 @@ where
 				let other_inst = None;
 				nova.pc_i = vea[idx].pc_i;
 				nova.pc_i1 = vea[idx].pc_i1;
+				println!("DEBUG USE 6666.1: before prove_step: i: {}, pc_i: {}, pc_i1: {}, stmt.pc_i: {}, stmt.pc_i1: {}", idx, nova.pc_i, nova.pc_i1, stmt.pc_i, stmt.pc_i1);
             	nova.prove_step(&mut rng, v_stmt, other_inst)
 					.expect("prove step error");
 				log_perf(log_level+1, &format!("-- Pass 3. prove_step cost for word_id: {}, seg_id: {}, stmt_len: {}", word_id, subseg_id, stmt_len), &mut gtw2);
