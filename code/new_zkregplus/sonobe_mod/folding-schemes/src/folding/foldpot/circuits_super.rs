@@ -13,6 +13,7 @@ use ark_crypto_primitives::sponge::{
 };
 use ark_ec::{CurveGroup, Group};
 use ark_ff::{Field,PrimeField,BigInteger};
+use crate::transcript::AbsorbNonNative;
 use ark_r1cs_std::{
     alloc::{AllocVar, AllocationMode},
     boolean::Boolean,
@@ -237,6 +238,66 @@ where
         u_i: CommittedInstanceFoldPot<C>,
         cmT: C,
     ) -> Vec<bool> {
+        let mut index = 0;
+        println!("DEBUG USE 68091.{}: pp_hash = {}", index, pp_hash);
+        index += 1;
+
+        // Manually trace serialization of U_i
+        for (i, inst) in U_i.vec_inst.iter().enumerate() {
+            println!("DEBUG USE 68091.{}: U_i.vec_inst[{}].u = {}", index, i, inst.u);
+            index += 1;
+            for (j, val) in inst.x.iter().enumerate() {
+                println!("DEBUG USE 68091.{}: U_i.vec_inst[{}].x[{}] = {}", index, i, j, val);
+                index += 1;
+            }
+            for (j, val) in inst.cmE.to_native_sponge_field_elements_as_vec().iter().enumerate() {
+                println!("DEBUG USE 68091.{}: U_i.vec_inst[{}].cmE[{}] = {}", index, i, j, val);
+                index += 1;
+            }
+            for (j, val) in inst.cmW.to_native_sponge_field_elements_as_vec().iter().enumerate() {
+                println!("DEBUG USE 68091.{}: U_i.vec_inst[{}].cmW[{}] = {}", index, i, j, val);
+                index += 1;
+            }
+            for (j, val) in inst.cmF.to_native_sponge_field_elements_as_vec().iter().enumerate() {
+                println!("DEBUG USE 68091.{}: U_i.vec_inst[{}].cmF[{}] = {}", index, i, j, val);
+                index += 1;
+            }
+        }
+        println!("DEBUG USE 68091.{}: U_i.x_1 = {}", index, U_i.x_1);
+        index += 1;
+        if let Some(x_2) = U_i.x_2 {
+            println!("DEBUG USE 68091.{}: U_i.x_2 = {}", index, x_2);
+            index += 1;
+        }
+        println!("DEBUG USE 68091.{}: U_i.pc_i = {}", index, U_i.pc_i);
+        index += 1;
+
+        // Manually trace serialization of u_i
+        println!("DEBUG USE 68091.{}: u_i.u = {}", index, u_i.u);
+        index += 1;
+        for (j, val) in u_i.x.iter().enumerate() {
+            println!("DEBUG USE 68091.{}: u_i.x[{}] = {}", index, j, val);
+            index += 1;
+        }
+        for (j, val) in u_i.cmE.to_native_sponge_field_elements_as_vec().iter().enumerate() {
+            println!("DEBUG USE 68091.{}: u_i.cmE[{}] = {}", index, j, val);
+            index += 1;
+        }
+        for (j, val) in u_i.cmW.to_native_sponge_field_elements_as_vec().iter().enumerate() {
+            println!("DEBUG USE 68091.{}: u_i.cmW[{}] = {}", index, j, val);
+            index += 1;
+        }
+        for (j, val) in u_i.cmF.to_native_sponge_field_elements_as_vec().iter().enumerate() {
+            println!("DEBUG USE 68091.{}: u_i.cmF[{}] = {}", index, j, val);
+            index += 1;
+        }
+
+        // Manually trace serialization of cmT
+        for (j, val) in cmT.to_native_sponge_field_elements_as_vec().iter().enumerate() {
+            println!("DEBUG USE 68091.{}: cmT[{}] = {}", index, j, val);
+            index += 1;
+        }
+
         transcript.absorb(&pp_hash);
         transcript.absorb(&U_i);
         transcript.absorb(&u_i);
@@ -252,6 +313,23 @@ where
         u_i: CommittedInstanceVarFoldPot<C>,
         cmT: NonNativeAffineVar<C>,
     ) -> Result<Vec<Boolean<C::ScalarField>>, SynthesisError> {
+		//REMOVE LATER --------
+        println!("DEBUG USE 68072: get_challenge_gadget transcript inputs");
+        let mut circuit_inputs = vec![];
+        circuit_inputs.push(pp_hash.clone());
+        circuit_inputs.extend_from_slice(&U_i_vec);
+        
+        let u_i_fields = u_i.to_sponge_field_elements()?;
+        circuit_inputs.extend_from_slice(&u_i_fields);
+
+        let cmT_coords = cmT.to_native_sponge_field_elements()?;
+        circuit_inputs.extend_from_slice(&cmT_coords);
+        
+        for (i, val) in circuit_inputs.iter().enumerate() {
+            println!("DEBUG USE 68072.{}: {}", i, val.value().unwrap_or_default());
+        }
+		//REMOVE LATER -------- ABOVE
+
         transcript.absorb(&pp_hash)?;
         transcript.absorb(&U_i_vec)?;
         transcript.absorb(&u_i)?;
@@ -677,7 +755,7 @@ where
 		nc = cs.num_constraints();
 		nv = cs.num_witness_variables();
 
-		println!("-- REMOVE LATER 7011: compute u_i"); 
+		println!("-- REMOVE LATER 7011: compute u_i, its x0 is set to: {}", u_i_x.value()?); 
         //6. Construct u_i Var from hints
         let u_i = CommittedInstanceVarFoldPot {
             // u_i.cmE = cm(0)
@@ -707,6 +785,8 @@ where
         //7. compute the Fiat-shamir challenge
         // compute r = H(u_i, U_i, cmT)
 		// since this is fed to cyclepair, convert to NonNativeUintVar
+		println!("DEBUG USE 6006.5.4: u_i.x[0]: {}, x[1]: {} for i: {}", 
+			u_i.x[0].value()?, u_i.x[1].value()?, i.value()?);
         let r_bits = ChallengeGadgetFoldPotSuper::<C1>::get_challenge_gadget(
             &mut transcript,
             pp_hash.clone(),
@@ -1408,6 +1488,7 @@ pub mod tests_circuits_super {
         let U_iVar =
             CommittedInstanceVarFoldPotSuper::<Projective>::new_witness(cs.clone(), || Ok(U_i.clone()))
                 .unwrap();
+        U_iVar.dump("DEBUG USE 68082 CIRCUIT U_i");
         let cmTVar = NonNativeAffineVar::<Projective>::new_witness(cs.clone(), || Ok(cmT)).unwrap();
         let mut transcriptVar = PoseidonSpongeVar::<Fr>::new(cs.clone(), &poseidon_config);
 

@@ -27059,27 +27059,48 @@ Goal 3. it passes step 0, however for step 1. It's entirely
 	 => last step found by AIin 15 minute, but I could do it myself
 	 	in 30 seconds. about 757k pro -> that's 1 dollar!
 	=>  Unfortunately it's stlil not working, I'm suspecting that
-	the input data to "let r_bits = ChallengeGadgetFoldPotSuper::<C1>::get_challenge_native(
-            &mut transcript,
-            self.pp_hash,
-            self.U_i.clone(),
-            self.u_i.clone(),
-            cmT,
-        );
-  " (mod_super.rs::1415) and the input data to "let r_bits = ChallengeGadgetFoldPotSuper::<C1>::get_challenge_gadget(
-            &mut transcript,
-            pp_hash.clone(),
-            U_i_vec,
-            u_i.clone(), //note that only pass u_i
-            cmT.clone(),
-        )?;
-  " are somehow DIFFERENT. You can insert DEBUG USE 68071 and 68072 separately into ChallengeGadgetFoldPotSupper::get_challenge_native and ChallengeGadgeFoldSuper::get_challenge_gadget() to print out the inputs to the hash function. You wan to make sure that these messages can be compared with each other easyly.
+	the ChallengeDgateFoldSuper::get_challenge_native
+	and get_challenge_gadget works differently. So print out
+	the internal data to compare.
 
+Goal 4. find why u_i.x[0] is different
+	[a] print it using DEBUG USE 6751 and 6752
+	[b] confirmed u_i.x[0] is DIFFERENT, but we'll need to find out
+		why it's DIFFERENT?
+
+Tuesday 03/31/2026
+Goal 1 read code and understand how u_i.x[0] is passed to prover
+	and circuit.
+	[a] prover u_i (i=1) is from i=1 final stage,
+		where self.u_i is from self.w_i commit,
+			where it takes x_i1 as input to set as x
+		x_i1 is from u_i1_xi is indeed chosen from u_i1_x computed
+			for u_i1_x_base (in case of i=0), it should be the base
+		related message: REMOVE LATER 6006.5 and 6006.5.2
+		i=1: 6751: 178262786
+		--> trace in i=0 it's the hash of the u_dummy_base.
+		===> this corresponds to mod_super u_dummy_base.hash()
+	[b] circuit u_i.x. step i=1. u_i.x[0] is 193624...
+		6006.5.4 before calling challenge,
+		REMOVE LATER 7011: it's computed from the hash of U_i,
+			U_i is from self.U_i passed from construction of
+			aug_circ
+			it's from U_i1 computed in step i=0, which is folded from its
+				U_i and u_i.
+			This is the U_i1 computed in step i=0, it maches
+				the hash computed "REMOVE LATER 6004".
+		==> this corresponds to the mod_super U_i1.hash.hash()
+		when circ is different U_i1 is different from u_dummy
+	[c] what about circ is the SAME? in mod_super::prove_step
+		what about U_i1 and u_dummy computed?
+		-> improve 6671 and 7671, 7671.9 (u_i1x vs u_i1x_base)
+		-> dump.txt
 
 	
 
 == TODO ==: put constraint tesitng code there for small example
 == TODO -- find out which circuit is used. 
 == TODO == remove debug code 6671.x later
-	REMOVE 6601.5.1, 6601.6.x, 6601.7.x, 6666.1
+	REMOVE 6601.5.1, 6601.6.x, 6601.7.x, 6666.1, 6809X,
+		6751, 6752
 
