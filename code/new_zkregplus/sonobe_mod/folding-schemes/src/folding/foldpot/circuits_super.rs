@@ -883,8 +883,6 @@ where
 		}
 
 		println!("-- REMOVE LATER 7015: PRINT U_i1");
-		//Task 2. in the following, print out all attributes of
-		//U_i1, and print out all values of the parameters to U_i1.clone().hash() above. When you print out field elements, I want the ENTIRE big num, not a tuple of mutiple numbers. Print with prefix "DEBUG USE 6671.2.x". Carefully match the output following the TASK 1 in mod_super.rs (line 1453). so that I can later compare.
 		let b_debug_special = true;
 		if b_debug_special{
 			println!("DEBUG USE 6671.2 === i: {}, pc_i1: {}, pc_i: {}",
@@ -962,8 +960,9 @@ where
 		let mut c_ui1_base = CommittedInstanceVarFoldPotSuper::
 				new_constant(cs.clone(), u_dummy)?;
 		println!("-- REMOVE LATER 7016.3: pc_i: {}, pc_i1: {}, pc_i_val: {}, pc_i1_val: {}", pc_i.value()?, pc_i1.value()?, pc_i_val, pc_i1_val);
-		//c_ui1_base.pc_i = pc_i1.clone(); //to be consistent with
+		c_ui1_base.pc_i = pc_i1.clone(); //to be consistent with
 			//U_i1 in mod_super.rs::U_i1 for the base case
+			//and also u_dumm1.pc_i in mod_super.rs
         let (u_i1_x_base, _) = c_ui1_base.hash(
             &sponge,
             pp_hash.clone(),

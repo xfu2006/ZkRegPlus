@@ -27095,7 +27095,25 @@ Goal 1 read code and understand how u_i.x[0] is passed to prover
 		what about U_i1 and u_dummy computed?
 		-> improve 6671 and 7671, 7671.9 (u_i1x vs u_i1x_base)
 		-> dump.txt
+		=> now set the pc_i for dummy.pc_i to pc_i1 in both mod_super
+			and circuits_super.rs and see if it fixed the problem
 
+Goal 2. planning
+	[a] support concurrent running of multiple pass_all().
+	[b] fix the running
+	[c] file application to filecoin
+	"Motivatoin"
+	-- "Proof of Integrity" Strategic Goal
+
+The Filecoin 2026 Network Strategy specifically highlights moving beyond simple storage to "Programmable Cloud Services."
+The Source: In their February 2026 Strategy update, Filecoin leadership noted a shift toward "Filecoin Onchain Cloud."
+The Connection: They want to enable "new classes of applications where verifiable storage creates differentiated value." Proving a file is malware-free via ZK-SNARKs is exactly the kind of "differentiated value" that would allow a high-security client (like a government agency or a bank) to trust decentralized storage.
+	Contact the Foundation: Before submitting the formal GitHub issue, send a brief email to grants@fil.org or impact@ffdw.org.
+
+The Hook: Tell them: "I have a 70% completed ZK-SNARK project for malware-free verification. I want to apply for a <$50k grant, but my university requires USD. Can we route this through FFDW or a fiscal sponsor?"
+
+Goal 3. remove EXTRA debug messages
+	[a] 
 	
 
 == TODO ==: put constraint tesitng code there for small example

@@ -1514,6 +1514,7 @@ where
 		let x_size = if self.b_full_mode {3} else {2};
 		let mut u_dummy1 = CommittedInstanceFoldPotSuper::<C1>::
 			dummy(x_size, field_to_usize(&self.n_circ), self.b_full_mode);
+		u_dummy1.pc_i = self.pc_i1; //to match the U_i1
 		println!("DEBUG USE 7671.1 === i: {}, pc_i1: {}, pc_i: {} for u_dummy1 in mod_super", self.i, self.pc_i1, self.pc_i); 
 		println!("DEBUG USE 7671.1.0: u_dummy1.x_1: {}", u_dummy1.x_1);
 		if let Some(x2) = &u_dummy1.x_2 {
