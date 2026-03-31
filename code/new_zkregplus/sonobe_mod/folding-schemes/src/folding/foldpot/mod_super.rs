@@ -333,7 +333,6 @@ where
         z_0: Vec<C::ScalarField>,
         z_i: Vec<C::ScalarField>,
     ) -> C::ScalarField {
-		let b_debug = true;
 		let zero = C::BaseField::zero();
 		let _tp = (&zero, &zero);
         let mut sponge = sponge.clone();
@@ -349,15 +348,6 @@ where
         let res: C::ScalarField = sponge.squeeze_field_elements(1)[0];
 
 
-		if b_debug{
-			println!("DEBUG USE 6671.1.13 *** hash: i: {}, pc_i: {}, z_0: {}, z_i: {}, U_vec[0]: {}, U_vec[1]: {}, U_vec[2]: {}, U_vec[-2]: {}, U_vec[-1]: {} => res: {}", i, pc_i, z_0[0], z_i[0], U_vec[0], U_vec[1], U_vec[2], U_vec[U_vec.len()-2], U_vec[U_vec.len()-1], res);
-			println!("======================size: {} =", U_vec.len());
-			for i in 0..U_vec.len(){
-				println!("-- U_vec[{}]: {}", i, U_vec[i]);
-			}
-			println!("=====DONE with UVen Var==================");
-		}
-		
 		res
     }
 }
@@ -1316,7 +1306,6 @@ where
         // Nova does not support multi-instances folding
         _other_instances: Option<Self::MultiCommittedInstanceWithWitness>,
     ) -> Result<(), Error> {
-		println!("REMOVE LATER 6000 **** ENTERING prove_step");
 		let b_debug = B_DEBUG; // should be the same as
 			//circuit_super.generate_constraints.b_debug!
 			//as the CS is set up with no matrix mode when not b_debug
@@ -1346,11 +1335,6 @@ where
 
         //2. build  `sponge` is for digest computation.
         let sponge = PoseidonSponge::<C1::ScalarField>::new(&self.poseidon_config);
-		if b_debug {
-			println!("DEBUG USE 6601.6.3: prover u_i.x[0]: {}", self.u_i.x[0]);
-			let u_i_x_recomputed = self.U_i.hash(&sponge, self.pp_hash, self.i, self.pc_i, self.z_0.clone(), self.z_i.clone());
-			println!("DEBUG USE 6601.6.4: prover U_i hash: {}", u_i_x_recomputed);
-		}
         // `transcript` is for challenge generation.
         let mut transcript = sponge.clone();
         let augmented_F_circuit: AugmentedFCircuitFoldPotSuper<C1,C2,GC2,LK,FC,GM,H>;
@@ -1408,12 +1392,9 @@ where
 		let z_i1 = vec![new_hc_cmF, z_i1_part2.hash(&self.poseidon_config)];
 		log_perf(log_level, &format!("prove_step: Step 1. gen_witness: stmt_len: {}, wtns size: {}", wtns.statement.len(), wtns_config.get_total_size()), &mut gt2);
 
-		println!("REMOVE LATER 6001: before compute T");
         //5. compute cross terms T and cmT for AugmentedFCircuit (active at j)
         // r_bits is the r used to the RLC of the F' instances
         let (T, cmT) = self.compute_cmT(j_pci)?;
-		println!("DEBUG USE 6751: u_i.x[0]: {}, x[1]: {}", 
-			self.u_i.x[0], self.u_i.x[1]);
         let r_bits = ChallengeGadgetFoldPotSuper::<C1>::get_challenge_native(
             &mut transcript,
             self.pp_hash,
@@ -1426,7 +1407,6 @@ where
         let r_Fq = C1::BaseField::from_bigint(BigInteger::from_bits_le(&r_bits))
             .ok_or(Error::OutOfBounds)?;
 
-		println!("REMOVE LATER 6002: before NIFSFoldPot fold instances");
         //5. fold SuperNova instances (on active circuit j)
 		// note (w_i, u_i) is one instance but W_i and U_i are vectors
         let (W_i1_j, U_i1_j): 
@@ -1437,7 +1417,6 @@ where
 				&T, cmT,
             )?;
 
-		println!("REMOVE LATER 6003: before setting U_i1.pc_i and x_1");
 		let mut W_i1 = self.W_i.clone();
 		let mut U_i1 = self.U_i.clone();
 		W_i1.vec_wit[j_pci] = W_i1_j;
@@ -1450,52 +1429,12 @@ where
 		//U_i1.x_1 = global_U_i1_x1; //coz we only do one copy of Hash(cf_Ui)
 		U_i1.x_1 = self.U_i.x_1 + r_Fr * self.u_i.x[1].clone();
 
-		println!("DEBUG USE 6607.1 in prover U_i.x_1: {}, u_i.x[1]: {}, r_Fr: {} => U_i1.x_1: {}", self.U_i.x_1, self.u_i.x[1], r_Fr, U_i1.x_1);
 
 		U_i1.x_2 = if !self.b_full_mode {None} else{
 			Some(self.U_i.x_2.unwrap() + r_Fr * self.u_i.x[2])
 		};
 		log_perf(log_level, &format!("prove_step: Step 2. fold_inst. inst size: {}", self.W_i.vec_wit[j_pci].W.len()), &mut gt2);
 			
-		println!("REMOVE LATER 6004: before printing U_i1 contents");
-		//Task 1. in the following, print out all attributes of
-		//U_i1, and print out all values of the parameters to U_i1.clone().hash() above. When you print out field elements, I want the ENTIRE big num, not a tuple of mutiple numbers. Print with prefix "DEBUG USE 6671.1.x".
-		let b_debug_special = true;
-		if b_debug_special {
-		println!("DEBUG USE 6671.1 === i: {}, pc_i1: {}, pc_i: {} for U_i1 in mod_super",
-			self.i, self.pc_i1, self.pc_i); 
-		println!("DEBUG USE 6671.1.0: U_i1.x_1: {}", U_i1.x_1);
-		if let Some(x2) = &U_i1.x_2 {
-			println!("DEBUG USE 6671.1.1: U_i1.x_2: Some({})", x2);
-		} else {
-			println!("DEBUG USE 6671.1.1: U_i1.x_2: None");
-		}
-		println!("DEBUG USE 6671.1.2: U_i1.pc_i: {}", U_i1.pc_i);
-		for (idx, inst) in U_i1.vec_inst.iter().enumerate() {
-			let cmE_xy = crate::utils::get_cm_coordinates(&inst.cmE);
-			println!("DEBUG USE 6671.1.3.{}: inst.cmE: ({}, {})", idx, cmE_xy[0], cmE_xy[1]);
-			println!("DEBUG USE 6671.1.4.{}: inst.u: {}", idx, inst.u);
-			let cmW_xy = crate::utils::get_cm_coordinates(&inst.cmW);
-			println!("DEBUG USE 6671.1.5.{}: inst.cmW: ({}, {})", idx, cmW_xy[0], cmW_xy[1]);
-			for (j, x_val) in inst.x.iter().enumerate() {
-				println!("DEBUG USE 6671.1.6.{}.{}: inst.x: {}", idx, j, x_val);
-			}
-			let cmF_xy = crate::utils::get_cm_coordinates(&inst.cmF);
-			println!("DEBUG USE 6671.1.7.{}: inst.cmF: ({}, {})", idx, cmF_xy[0], cmF_xy[1]);
-		}
-		println!("DEBUG USE 6671.1 === DONE for U_i1 in mod_super");
-
-		println!("DEBUG USE 7771.1.8: i+1: {}", self.i + C1::ScalarField::one());
-		println!("DEBUG USE 7771.1.9: pc_i1: {}", self.pc_i1);
-		for (idx, z) in self.z_0.iter().enumerate() {
-			println!("DEBUG USE 7771.1.10.{}: z_0: {}", idx, z);
-		}
-		for (idx, z) in z_i1.iter().enumerate() {
-			println!("DEBUG USE 7771.1.11.{}: z_i1: {}", idx, z);
-		}
-		}
-
-		println!("REMOVE LATER 6005: before computing U_i1.hash");
         //6. folded instance output (public input, x) for generating
 		// r1cs of the augmented F circuit.
 		// Different from Nova, we add pc_i
@@ -1510,32 +1449,10 @@ where
         );
 
 
-		println!("REMOVE LATER 6006: before compute u_i1_x");
 		let x_size = if self.b_full_mode {3} else {2};
 		let mut u_dummy1 = CommittedInstanceFoldPotSuper::<C1>::
 			dummy(x_size, field_to_usize(&self.n_circ), self.b_full_mode);
 		u_dummy1.pc_i = self.pc_i1; //to match the U_i1
-		println!("DEBUG USE 7671.1 === i: {}, pc_i1: {}, pc_i: {} for u_dummy1 in mod_super", self.i, self.pc_i1, self.pc_i); 
-		println!("DEBUG USE 7671.1.0: u_dummy1.x_1: {}", u_dummy1.x_1);
-		if let Some(x2) = &u_dummy1.x_2 {
-			println!("DEBUG USE 7671.1.1: u_dummy1.x_2: Some({})", x2);
-		} else {
-			println!("DEBUG USE 7671.1.1: u_dummy1.x_2: None");
-		}
-		println!("DEBUG USE 7671.1.2: u_dummy1.pc_i: {}", u_dummy1.pc_i);
-		for (idx, inst) in u_dummy1.vec_inst.iter().enumerate() {
-			let cmE_xy = crate::utils::get_cm_coordinates(&inst.cmE);
-			println!("DEBUG USE 7671.1.3.{}: inst.cmE: ({}, {})", idx, cmE_xy[0], cmE_xy[1]);
-			println!("DEBUG USE 7671.1.4.{}: inst.u: {}", idx, inst.u);
-			let cmW_xy = crate::utils::get_cm_coordinates(&inst.cmW);
-			println!("DEBUG USE 7671.1.5.{}: inst.cmW: ({}, {})", idx, cmW_xy[0], cmW_xy[1]);
-			for (j, x_val) in inst.x.iter().enumerate() {
-				println!("DEBUG USE 7671.1.6.{}.{}: inst.x: {}", idx, j, x_val);
-			}
-			let cmF_xy = crate::utils::get_cm_coordinates(&inst.cmF);
-			println!("DEBUG USE 7671.1.7.{}: inst.cmF: ({}, {})", idx, cmF_xy[0], cmF_xy[1]);
-		}
-		println!("DEBUG USE 7671.1 === DONE for u_dummy1 in mod_super");
 
 		//u_dummy1.pc_i = pc_i1; //to be consistent with u_dummy in circ_super.
         let u_i1_x_base = u_dummy1.hash(
@@ -1547,16 +1464,13 @@ where
             z_i1.clone(),
         );
 		let u_i1_x = if self.i.is_zero() {u_i1_x_base} else {u_i1_x};
-		println!("DEBUG USE 8671.9 *** u_i1_x: {}, u_i1_x_base: {}", u_i1_x, u_i1_x_base);
 
-		println!("REMOVE LATER 6006.5: AFTER: compute u_i1_x: {} for i:{}", u_i1_x, self.i);
 
         // u_{i+1}.x[1] = H(cf_U_{i+1})
         let cf_u_i1_x: C1::ScalarField;
 		let _zero = C1::ScalarField::zero();
 		let mut cp_u_i1_x: Option<C1::ScalarField> = None;
 
-		println!("REMOVE LATER 6008: two branches to create aug_F on i");
         if self.i == C1::ScalarField::zero() {
 			cp_u_i1_x = if self.b_full_mode {Some(self.cp_U_i.as_ref().expect("cp_U_i null").hash_cyclefold(&sponge, self.pp_hash)) } else {None};
             cf_u_i1_x = self.cf_U_i.hash_cyclefold(&sponge, self.pp_hash);
@@ -1794,7 +1708,6 @@ where
             }
         }
 
-		println!("REMOVE LATER 6009: BEFORE calling aug_f.gen_constraints");
 		//println!(">*>*>* prove_step step 1, augment circ: j: {}, pc_i: {}", &augmented_F_circuit.j, &self.pc_i);
         let cs = ConstraintSystem::<C1::ScalarField>::new_ref();
 		if !b_debug{//NOTE: b_debug of mod_super:generate_constraints
@@ -1808,7 +1721,6 @@ where
 		let c1 = cs.num_constraints();
         augmented_F_circuit.generate_constraints(cs.clone())?;
 
-		println!("REMOVE LATER 6010: BEFORE extract_w_x for x_i1 and w_i1");
 		if b_debug{
         	assert!(cs.is_satisfied().unwrap());
 		}
@@ -1845,7 +1757,6 @@ where
 		}
 		log_perf(log_level, &format!("prove_step: Step 4. generate augmented F.cs: {}", c2-c1), &mut gt2);
 
-		println!("REMOVE LATER 6011: BEFORE final polish.");
         // set values for next iteration
         self.i += C1::ScalarField::one();
         self.z_i = z_i1;
@@ -1853,7 +1764,6 @@ where
         self.w_i = WitnessFoldPot::<C1>::
 			new::<H>(w_i1, self.r1cs[j_pci1].A.n_rows, &mut rng, 
 			self.size_F[j_pci1], self.start_F[j_pci1]); //j1 is `pc_{i+1}`
-		println!("REMOVE LATER 6005.2 in prover: pass x_i1[0]: {} for i: {}", x_i1[0], self.i);
 
         self.u_i = self.w_i.commit::<CS1, H>(&self.cs_pp[j_pci1], x_i1)?;
         self.W_i = W_i1;

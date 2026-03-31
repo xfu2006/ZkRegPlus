@@ -12,7 +12,7 @@
 		are discharged).
 */
 use utils::{consts::ADD_CHAIN_SIZE, logger::{log, log_perf, LOG6,LOG7}, timer::Timer as GTimer};
-use crate::folding::foldpot::utils::{sum3,alloc_fpvar_mul,sub2,var_to_tuple, var_to_tuple_adv, B_DEBUG};
+use crate::folding::foldpot::utils::{sum3,alloc_fpvar_mul,sub2,var_to_tuple, var_to_tuple_adv, B_DEBUG, check_cs};
 use serde::{Serialize,Deserialize};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use crate::commitment::CommitmentScheme;
@@ -3118,6 +3118,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		for (i,g) in self.gadgets.iter().enumerate(){
 			let (nc, ni, nv) = (cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables());
 			g.borrow().assert_msg3(i, cs.clone(), &wtns_var, &cfg)?;
+			check_cs(&cs, &format!("After gadget: {}", g.borrow().get_name()));
 			let stmt_len = g.borrow().get_msg_size().0;
 			log_perf(log_level, &format!("-- -- after msg3 of module {}: {}:\n\tINCREASED: constraints: {}, const vars: {}, wit vars: {} \n\t==> NOW: CS:{}, const: {}, witness: {}\n\t ==> stmt_size: {}. ", i, g.borrow().get_name(), cs.num_constraints()-nc, cs.num_instance_variables()-ni, cs.num_witness_variables()-nv, cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables(), stmt_len), &mut gt3);						
 		}

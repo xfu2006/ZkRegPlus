@@ -42,6 +42,19 @@ pub const LOG2:usize = 1;
 pub const LOG1:usize = 0;
 pub const B_DEBUG:bool = false;
 
+/// NOTE it has an internal bug, manually turn it on 
+/// if you need it.
+pub fn check_cs<F:PrimeField>(cs: &ConstraintSystemRef<F>, info: &str){
+	let b_debug = true;
+	if b_debug{
+		let csat = cs.is_satisfied();
+		if csat.is_ok(){ assert!(csat.unwrap(), "ERROR: not satisfiable: {}",
+			info);}else{
+			println!("-- DEBUG USE 1001: CHECK cs passing: {}", info);
+		}
+	}
+}
+
 pub fn format_bytes(bytes: usize) -> String {
     const KB: f64 = 1024.0;
     const MB: f64 = 1024.0 * 1024.0;

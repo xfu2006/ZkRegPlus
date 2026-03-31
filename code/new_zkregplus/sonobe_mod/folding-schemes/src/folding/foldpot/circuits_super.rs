@@ -13,7 +13,7 @@ use ark_crypto_primitives::sponge::{
 };
 use ark_ec::{CurveGroup, Group};
 use ark_ff::{Field,PrimeField,BigInteger};
-use crate::transcript::AbsorbNonNative;
+//use crate::transcript::AbsorbNonNative;
 use ark_r1cs_std::{
     alloc::{AllocVar, AllocationMode},
     boolean::Boolean,
@@ -30,7 +30,9 @@ use core::{borrow::Borrow, marker::PhantomData};
 
 use crate::folding::foldpot::{
 	CommittedInstance, 
-	circuits::{CommittedInstanceVarFoldPot, ChallengeGadgetFoldPot},
+	circuits::{CommittedInstanceVarFoldPot, 
+//		ChallengeGadgetFoldPot
+	},
 	sigma_ir1cs::{SigmaIR1CS,ZiPartTwoInst,LookupTableTwoCol,CyclePairInput,CyclePairInputVar,GadgetMapper},
 	mod_super::{CommittedInstanceFoldPotSuper},
 	cyclepair::{CyclePairCommittedInstanceVar,CyclePairChallengeGadget, NIFSFullGadgetCyclePair,cp_io_len},
@@ -182,7 +184,6 @@ where
         z_0: Vec<FpVar<CF1<C>>>,
         z_i: Vec<FpVar<CF1<C>>>,
     ) -> Result<(FpVar<CF1<C>>, Vec<FpVar<CF1<C>>>), SynthesisError> {
-		let b_debug = true;
         let mut sponge = sponge.clone();
         let U_vec = self.to_sponge_field_elements()?;
 
@@ -194,25 +195,9 @@ where
         sponge.absorb(&z_i)?;
         sponge.absorb(&U_vec)?;
 
-		//REMOVE LATER ---------
-		//REMOVE the U_vec.clone() below, to use U_vec
-		//REMOVE LATER --------- ABOVE
         let res =  
-			Ok((sponge.squeeze_field_elements(1)?.pop().unwrap(), U_vec.clone()));
+			Ok((sponge.squeeze_field_elements(1)?.pop().unwrap(), U_vec));
 	
-		if b_debug && i.value().is_ok(){
-			println!("DEBUG USE 6671.2.13 *** hash: i: {}, pc_i: {}, z_0: {}, z_i: {}, U_vec[0]: {}, U_vec[1]: {}, U_vec[2]: {}, U_vec[-2]: {}, U_vec[-1]: {} ==> res: {}", 
-			i.value()?, pc_i.value()?, z_0[0].value()?, z_i[0].value()?, U_vec[0].value()?, U_vec[1].value()?, U_vec[2].value()?, U_vec[U_vec.len()-2].value()?, U_vec[U_vec.len()-1].value()?, res.clone().unwrap().0.value()?);
-			println!("======================size: {} =", U_vec.len());
-			for i in 0..U_vec.len(){
-				println!("-- U_vec[{}]: {}", i, U_vec[i].value()?);
-			}
-			println!("=====DONE with UVen Var==================");
-
-
-		}
-
-
 		res
     }
 }
@@ -238,66 +223,6 @@ where
         u_i: CommittedInstanceFoldPot<C>,
         cmT: C,
     ) -> Vec<bool> {
-        let mut index = 0;
-        println!("DEBUG USE 68091.{}: pp_hash = {}", index, pp_hash);
-        index += 1;
-
-        // Manually trace serialization of U_i
-        for (i, inst) in U_i.vec_inst.iter().enumerate() {
-            println!("DEBUG USE 68091.{}: U_i.vec_inst[{}].u = {}", index, i, inst.u);
-            index += 1;
-            for (j, val) in inst.x.iter().enumerate() {
-                println!("DEBUG USE 68091.{}: U_i.vec_inst[{}].x[{}] = {}", index, i, j, val);
-                index += 1;
-            }
-            for (j, val) in inst.cmE.to_native_sponge_field_elements_as_vec().iter().enumerate() {
-                println!("DEBUG USE 68091.{}: U_i.vec_inst[{}].cmE[{}] = {}", index, i, j, val);
-                index += 1;
-            }
-            for (j, val) in inst.cmW.to_native_sponge_field_elements_as_vec().iter().enumerate() {
-                println!("DEBUG USE 68091.{}: U_i.vec_inst[{}].cmW[{}] = {}", index, i, j, val);
-                index += 1;
-            }
-            for (j, val) in inst.cmF.to_native_sponge_field_elements_as_vec().iter().enumerate() {
-                println!("DEBUG USE 68091.{}: U_i.vec_inst[{}].cmF[{}] = {}", index, i, j, val);
-                index += 1;
-            }
-        }
-        println!("DEBUG USE 68091.{}: U_i.x_1 = {}", index, U_i.x_1);
-        index += 1;
-        if let Some(x_2) = U_i.x_2 {
-            println!("DEBUG USE 68091.{}: U_i.x_2 = {}", index, x_2);
-            index += 1;
-        }
-        println!("DEBUG USE 68091.{}: U_i.pc_i = {}", index, U_i.pc_i);
-        index += 1;
-
-        // Manually trace serialization of u_i
-        println!("DEBUG USE 68091.{}: u_i.u = {}", index, u_i.u);
-        index += 1;
-        for (j, val) in u_i.x.iter().enumerate() {
-            println!("DEBUG USE 68091.{}: u_i.x[{}] = {}", index, j, val);
-            index += 1;
-        }
-        for (j, val) in u_i.cmE.to_native_sponge_field_elements_as_vec().iter().enumerate() {
-            println!("DEBUG USE 68091.{}: u_i.cmE[{}] = {}", index, j, val);
-            index += 1;
-        }
-        for (j, val) in u_i.cmW.to_native_sponge_field_elements_as_vec().iter().enumerate() {
-            println!("DEBUG USE 68091.{}: u_i.cmW[{}] = {}", index, j, val);
-            index += 1;
-        }
-        for (j, val) in u_i.cmF.to_native_sponge_field_elements_as_vec().iter().enumerate() {
-            println!("DEBUG USE 68091.{}: u_i.cmF[{}] = {}", index, j, val);
-            index += 1;
-        }
-
-        // Manually trace serialization of cmT
-        for (j, val) in cmT.to_native_sponge_field_elements_as_vec().iter().enumerate() {
-            println!("DEBUG USE 68091.{}: cmT[{}] = {}", index, j, val);
-            index += 1;
-        }
-
         transcript.absorb(&pp_hash);
         transcript.absorb(&U_i);
         transcript.absorb(&u_i);
@@ -313,22 +238,6 @@ where
         u_i: CommittedInstanceVarFoldPot<C>,
         cmT: NonNativeAffineVar<C>,
     ) -> Result<Vec<Boolean<C::ScalarField>>, SynthesisError> {
-		//REMOVE LATER --------
-        println!("DEBUG USE 68072: get_challenge_gadget transcript inputs");
-        let mut circuit_inputs = vec![];
-        circuit_inputs.push(pp_hash.clone());
-        circuit_inputs.extend_from_slice(&U_i_vec);
-        
-        let u_i_fields = u_i.to_sponge_field_elements()?;
-        circuit_inputs.extend_from_slice(&u_i_fields);
-
-        let cmT_coords = cmT.to_native_sponge_field_elements()?;
-        circuit_inputs.extend_from_slice(&cmT_coords);
-        
-        for (i, val) in circuit_inputs.iter().enumerate() {
-            println!("DEBUG USE 68072.{}: {}", i, val.value().unwrap_or_default());
-        }
-		//REMOVE LATER -------- ABOVE
 
         transcript.absorb(&pp_hash)?;
         transcript.absorb(&U_i_vec)?;
@@ -495,7 +404,6 @@ where
     for<'a> &'a GC2: GroupOpsBounds<'a, C2, GC2>,
 {
     fn generate_constraints(self, cs: ConstraintSystemRef<CF1<C1>>) -> Result<(), SynthesisError> {
-		println!("-- REMOVE LATER 7000: **** ENTERINING aug_f gen_constraints ***");
 		let b_debug = B_DEBUG; //should be the same as
 			//mod_super.generate_constraints.b_debug
 			//as the CS is set up with no matrix mode when not b_debug
@@ -508,7 +416,6 @@ where
 				cs.num_witness_variables()), 
 		&mut gt1);
 
-		println!("-- REMOVE LATER 7001: build stmt z_i");
 		//1. retrieve pp_hash, i, z_0, and z_i as Var (witness)
 		let stmt = self.external_inputs.clone().expect("stmt empty"); 
         let pp_hash = FpVar::<CF1<C1>>::new_witness(cs.clone(), || {
@@ -535,7 +442,6 @@ where
 		nv = cs.num_witness_variables();
 
 
-		println!("-- REMOVE LATER 7002: build pc_i and pc_i1");
 		//2. retrieve pc_i and pc_i1 (j) from the statement instance
 		// verify the validity of pc_i1. Note that they are ALL
 		// field elements.
@@ -559,7 +465,6 @@ where
 		nc = cs.num_constraints();
 		nv = cs.num_witness_variables();
 
-		println!("-- REMOVE LATER 7003: compute z_i1");
 		//3. Compute z_{i+1} from the F circuit and use it as Witness to
 		// construct Var
 		let pre_cmF = self.precomputed_cmF;
@@ -575,7 +480,6 @@ where
 		nc = cs.num_constraints();
 		nv = cs.num_witness_variables();
 
-		println!("-- REMOVE LATER 7004: build wtns as nd advice");
   		let wtns_vec = witness.to_vec_fp_var(cs.clone(), &wit_cfg);
 		log_perf(log_level, &format!(
 			"-- circuit_super gen_cs step 3.1: to_vec_fp_var: cs: {}, vars: {}, wtns_vec: {}",
@@ -594,7 +498,6 @@ where
 			}
 		}
 
-		println!("-- REMOVE LATER 7005: call F.gen_constraints");
         let z_i1 = self.F
                  .generate_step_constraints(cs.clone(), i_usize, z_i.clone(), wtns_vec)?;
 
@@ -614,7 +517,6 @@ where
 			}
 		}
 
-		println!("-- REMOVE LATER 7006: compute z_i1_part2");
 		if b_debug{
 			let zi1_part2_hash = z_i1_part2.hash(&self.poseidon_config);
 			assert!(z_i1[1].value()? == zi1_part2_hash);
@@ -628,7 +530,6 @@ where
 			}
 		}
 
-		println!("-- REMOVE LATER 7007: build U_i"); 
         let u_dummy = if self.b_full_mode {//x has 3 elements for full version
 		 CommittedInstanceFoldPotSuper::dummy(3, self.n_circ, self.b_full_mode)
 		}else{
@@ -654,7 +555,6 @@ where
 		nc = cs.num_constraints();
 		nv = cs.num_witness_variables();
 
-		println!("-- REMOVE LATER 7008: build U_i1_cmE,cmF,cmF"); 
 		//4. Construct U_i1_cmE, cmW, cmF from the hints
 		// and cyclefold related variables from hints
 		// they will be verified by cyclefold circuit.
@@ -705,7 +605,6 @@ where
 		nc = cs.num_constraints();
 		nv = cs.num_witness_variables();
 
-		println!("-- REMOVE LATER 7009: compute U_i.hash()"); 
 		//5. compute u_i.x as Var
         // u_i.x[0] = H(i, pc_i, z_0, z_i, U_i) (as Supernova)
 		// note U_i is already a vector of folded instances
@@ -722,11 +621,6 @@ where
             z_i.clone(),
         )?;
 
-		if b_debug {
-			println!("DEBUG USE 6601.6.1: circuit u_i_x: {}", u_i_x.value()?);
-		}
-
-		println!("-- REMOVE LATER 7010: compute cp_U_i"); 
         // u_i.x[1] = H(cf_U_i)
         let (cf_u_i_x, cf_U_i_vec) = cf_U_i.clone().hash(&sponge, pp_hash.clone())?;
 		let (cp_u_i_x, cp_U_i_vec, cp_U_i) = if self.b_full_mode{
@@ -755,7 +649,6 @@ where
 		nc = cs.num_constraints();
 		nv = cs.num_witness_variables();
 
-		println!("-- REMOVE LATER 7011: compute u_i, its x0 is set to: {}", u_i_x.value()?); 
         //6. Construct u_i Var from hints
         let u_i = CommittedInstanceVarFoldPot {
             // u_i.cmE = cm(0)
@@ -781,12 +674,9 @@ where
 		nv = cs.num_witness_variables();
 
 
-		println!("-- REMOVE LATER 7012: build chllange"); 
         //7. compute the Fiat-shamir challenge
         // compute r = H(u_i, U_i, cmT)
 		// since this is fed to cyclepair, convert to NonNativeUintVar
-		println!("DEBUG USE 6006.5.4: u_i.x[0]: {}, x[1]: {} for i: {}", 
-			u_i.x[0].value()?, u_i.x[1].value()?, i.value()?);
         let r_bits = ChallengeGadgetFoldPotSuper::<C1>::get_challenge_gadget(
             &mut transcript,
             pp_hash.clone(),
@@ -807,7 +697,6 @@ where
 		nc = cs.num_constraints();
 		nv = cs.num_witness_variables();
 
-		println!("-- REMOVE LATER 7013: build U_i1_pci"); 
 		//8. using the hints/advice (in Augmented structure) construct
 		// the Var instance of U_i1[pc_i]. Note that its
 		// x and u and directly computed using r nonce in circuit,
@@ -849,7 +738,6 @@ where
 		nc = cs.num_constraints();
 		nv = cs.num_witness_variables();
 
-		println!("-- REMOVE LATER 7014: build U_i1 by selecting U_i1pci"); 
 		//9. build the U_i1 var version. Note that to amke sure that
 		// r1cs is generated for all possible pc_i values, we cannot
 		// directly set U_i1[pc_i] = Ui1_pci. Instead, we have to do
@@ -864,8 +752,6 @@ where
 		let global_u_i_x2 = if self.b_full_mode {Some(u_i.x[2].clone())}
 			else {None}; 
 		let global_U_i1_x1 = &global_U_i_x1 + &r * &global_u_i_x1; 
-		println!("DEBUG USE 6607.2 in circ: global U_i_x1: {}, u_i.x1: {}, r: {} ==> U_i1.x_1: {}", global_U_i_x1.value()?, global_u_i_x1.value()?, r.value()?, global_U_i1_x1.value()?);
-
 		let global_U_i1_x2 = if self.b_full_mode{
 			Some(global_U_i_x2.unwrap() + &r * &global_u_i_x2.unwrap())
 		}else{None};
@@ -882,42 +768,6 @@ where
 			U_i1.vec_inst[i] = b_eq.select(&Ui1_pci, &U_i1.vec_inst[i])?;
 		}
 
-		println!("-- REMOVE LATER 7015: PRINT U_i1");
-		let b_debug_special = true;
-		if b_debug_special{
-			println!("DEBUG USE 6671.2 === i: {}, pc_i1: {}, pc_i: {}",
-				i.value()?, pc_i1.value()?, pc_i.value()?);
-			println!("DEBUG USE 6671.2.0: U_i1.x_1: {}", U_i1.x_1.value()?);
-			if let Some(x2) = &U_i1.x_2 {
-				println!("DEBUG USE 6671.2.1: U_i1.x_2: Some({})", x2.value()?);
-			} else {
-				println!("DEBUG USE 6671.2.1: U_i1.x_2: None");
-			}
-			println!("DEBUG USE 6671.2.2: U_i1.pc_i: {}", U_i1.pc_i.value()?);
-			for (idx, inst) in U_i1.vec_inst.iter().enumerate() {
-				println!("DEBUG USE 6671.2.3.{}: inst.cmE: ({}, {})", idx, inst.cmE.x.value()?, inst.cmE.y.value()?);
-				println!("DEBUG USE 6671.2.4.{}: inst.u: {}", idx, inst.u.value()?);
-				println!("DEBUG USE 6671.2.5.{}: inst.cmW: ({}, {})", idx, inst.cmW.x.value()?, inst.cmW.y.value()?);
-				for (j, x_val) in inst.x.iter().enumerate() {
-					println!("DEBUG USE 6671.2.6.{}.{}: inst.x: {}", idx, j, x_val.value()?);
-				}
-				println!("DEBUG USE 6671.2.7.{}: inst.cmF: ({}, {})", idx, inst.cmF.x.value()?, inst.cmF.y.value()?);
-			}
-			println!("DEBUG USE 6671.2.8: i+1: {}", (i.clone() + FpVar::<CF1<C1>>::one()).value()?);
-			println!("DEBUG USE 6671.2.9: pc_i1: {}", pc_i1.value()?);
-			for (idx, z) in z_0.iter().enumerate() {
-				println!("DEBUG USE 6671.2.10.{}: z_0: {}", idx, z.value()?);
-			}
-			for (idx, z) in z_i1.iter().enumerate() {
-				println!("DEBUG USE 6671.2.11.{}: z_i1: {}", idx, z.value()?);
-			}
-		}
-
-		if U_i1.x_1.value().is_ok(){
-			println!("DEBUG USE 6671.2.*** U_i1.x_1: {}", U_i1.x_1.value()?);
-		}
-
-		println!("-- REMOVE LATER 7016: PRINT U_i1.hash()");
 		//10.  compute and check the first output of F'
         // Base case: u_{i+1}.x[0] == H((i+1, pc_i+1, z_0, z_{i+1}, U_{\bot})
         // Non-base case: u_{i+1}.x[0] == H((i+1, pc_i+1, z_0, z_{i+1}, U_{i+1})
@@ -929,37 +779,8 @@ where
             z_0.clone(),
             z_i1.clone(),
         )?;
-		if U_i1.x_1.value().is_ok(){
-			println!("DEBUG USE 6671.2.***.5 U_i1.x_1: {}", U_i1.x_1.value()?);
-		}
-
-		println!("-- REMOVE LATER 7016.2.0: PRINT u_dummy.");
-		if b_debug_special{
-			println!("DEBUG USE 6671.2.0: u_dummy.x_1: {}", u_dummy.x_1);
-			if let Some(x2) = &u_dummy.x_2 {
-				println!("DEBUG USE 6671.2.1: u_dummy.x_2: Some({})", x2);
-			} else {
-				println!("DEBUG USE 6671.2.1: u_dummy.x_2: None");
-			}
-			println!("DEBUG USE 6671.2.2: u_dummy.pc_i: {}", u_dummy.pc_i);
-			for (idx, inst) in u_dummy.vec_inst.iter().enumerate() {
-				let cmE_xy = crate::utils::get_cm_coordinates(&inst.cmE);
-				println!("DEBUG USE 6671.2.3.{}: inst.cmE: ({}, {})", idx, cmE_xy[0], cmE_xy[1]);
-				println!("DEBUG USE 6671.2.4.{}: inst.u: {}", idx, inst.u);
-				let cmW_xy = crate::utils::get_cm_coordinates(&inst.cmW);
-				println!("DEBUG USE 6671.2.5.{}: inst.cmW: ({}, {})", idx, cmW_xy[0], cmW_xy[1]);
-				for (j, x_val) in inst.x.iter().enumerate() {
-					println!("DEBUG USE 6671.2.6.{}.{}: inst.x: {}", idx, j, x_val);
-				}
-				let cmF_xy = crate::utils::get_cm_coordinates(&inst.cmF);
-				println!("DEBUG USE 6671.2.7.{}: inst.cmF: ({}, {})", idx, cmF_xy[0], cmF_xy[1]);
-			}
-		}
-
-		println!("-- REMOVE LATER 7016.2: compute base hash.");
 		let mut c_ui1_base = CommittedInstanceVarFoldPotSuper::
 				new_constant(cs.clone(), u_dummy)?;
-		println!("-- REMOVE LATER 7016.3: pc_i: {}, pc_i1: {}, pc_i_val: {}, pc_i1_val: {}", pc_i.value()?, pc_i1.value()?, pc_i_val, pc_i1_val);
 		c_ui1_base.pc_i = pc_i1.clone(); //to be consistent with
 			//U_i1 in mod_super.rs::U_i1 for the base case
 			//and also u_dumm1.pc_i in mod_super.rs
@@ -978,17 +799,12 @@ where
 		//REMOVE LATER ----------- RECOVER BELOW
 		//if b_debug{
 		//REMOVE LATER ----------- BELOW
-		if true{
-			println!("DEBUG USE 7707: aug_f::gen_csr: {}", 
-				cs.num_constraints());
+		if b_debug{
 			let b1 = is_basecase.value()?;
 			let x1 = u_i1_x.value()?;
 			let x1_base = u_i1_x_base.value()?;
 			let expect_x = if b1 {x1_base} else {x1};
 			let x_value = x.value()?;
-			//REMOVE LATER -----------------
-			println!("DEBUG USE 6601.5.1: i: {}, pc_i: {}, pc_i1: {}, b1: {}, x1:{}, x1_base: {}, expect_x: {}, x_value: {}", i.value()?, pc_i.value()?, pc_i1.value()?, b1, x1, x1_base, expect_x, x_value);
-			//REMOVE LATER ----------------- ABOVE
 			assert!(expect_x == x_value);
 		}
 		log_perf(log_level, &format!(
@@ -998,7 +814,6 @@ where
 		nc = cs.num_constraints();
 		nv = cs.num_witness_variables();
 
-		println!("-- REMOVE LATER 7017: handle the cyclefold part END.");
         //11. CycleFold part
         // C.1. Compute cf1_u_i.x and cf2_u_i.x
 		// Note the base value are retrieved from the pc_i's element of U_i

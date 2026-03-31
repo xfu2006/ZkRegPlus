@@ -27113,12 +27113,14 @@ The Connection: They want to enable "new classes of applications where verifiabl
 The Hook: Tell them: "I have a 70% completed ZK-SNARK project for malware-free verification. I want to apply for a <$50k grant, but my university requires USD. Can we route this through FFDW or a fiscal sponsor?"
 
 Goal 3. remove EXTRA debug messages
-	[a] 
+	[a] remove
+	[b] review code
+
+Goal 4. add debug code check cs_satisfied
+	[a] cs_satified take a string input
+	[b] prepare to push to server.
 	
 
 == TODO ==: put constraint tesitng code there for small example
 == TODO -- find out which circuit is used. 
-== TODO == remove debug code 6671.x later
-	REMOVE 6601.5.1, 6601.6.x, 6601.7.x, 6666.1, 6809X,
-		6751, 6752
 
