@@ -46,11 +46,15 @@ pub const B_DEBUG:bool = false;
 /// if you need it.
 pub fn check_cs<F:PrimeField>(cs: &ConstraintSystemRef<F>, info: &str){
 	let b_debug = true;
-	if b_debug{
+	if b_debug && cs.should_construct_matrices(){
 		let csat = cs.is_satisfied();
-		if csat.is_ok(){ assert!(csat.unwrap(), "ERROR: not satisfiable: {}",
-			info);}else{
-			println!("-- DEBUG USE 1001: CHECK cs passing: {}", info);
+		if csat.is_ok(){ 
+			let res = csat.unwrap();
+			if res{
+				println!("-- DEBUG USE 1001: CHECK cs passing: {}", info);
+			}else{
+				assert!(csat.unwrap(), "ERROR: not satisfiable: {}", info);
+			}
 		}
 	}
 }
