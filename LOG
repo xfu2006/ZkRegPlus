@@ -27114,8 +27114,17 @@ Goal 4. add debug code check cs_satisfied
 Goal 5. check the constraints problem.
 	[a] interestingly afer we fix the circ
 	[b] it never shows up again.
-	[c] 
-	
+
+Wed 04/01/2026
+Goal 1. continue to fix the problem
+	[a] add debug statement to batch verifier
+	[b] deploy to server and run it again and analyze the problem
+Goal 2. create a Python file which generates mixed folder
+	[a] just generate in full and then create a 
+	[b] a function named full_5 will be created to address
+		the needs
+	[c] instead of doing increase_by should do decrease_by.
+		
 
 == TODO ==: put constraint tesitng code there for small example
 == TODO -- find out which circuit is used. 
