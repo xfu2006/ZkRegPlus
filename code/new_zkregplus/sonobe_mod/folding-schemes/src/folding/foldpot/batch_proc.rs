@@ -799,6 +799,7 @@ where
 		opt_kzg_sum1: Option<F>, //optional kzg_sum1
 		)->bool{
 		//0. build rand input for generate Fiat-Shamir randoms
+		let b_debug = true;
 		let rand_inp = SnarkRandInput::<E>{
 			kzg_all_words: claim.kzg_all_words.clone(),
 			kzg_length: claim.kzg_length.clone(),
@@ -817,6 +818,7 @@ where
 		let bres = verify_qa_nizk::<E>(&x, &prf.prf_qa_nizk, 
 			&vkey.vk_qa_nizk);	
 		if !bres {
+			if b_debug {println!("qa_nizk verif fails");}
 			return false;
 		}
 
@@ -840,6 +842,7 @@ where
 		let res = KZG::<E>::verify_with_challenge(&vkey.kzg,
 			ch, &com_all, &prf.agg_kzg_prf);
 		if !res.is_ok() {
+			if b_debug {println!("kzg verif fails");}
 			return false;
 		}
 
@@ -852,6 +855,7 @@ where
 				&prf.kzg_all_com1.expect("kzg1 empty"),
 				&prf.kzg_all_com_prf1.as_ref().expect("prf1 empty"));	
 			if !res1.is_ok() {
+				if b_debug {println!("cs1e kzg_all_ocm1 verif fails");}
 				return false;
 			}
 
@@ -862,6 +866,7 @@ where
 				&prf.kzg_all_com2.expect("kzg2 empty"),
 				&prf.kzg_all_com_prf2.as_ref().expect("prf2 empty"));	
 			if !res2.is_ok() {
+				if b_debug {println!("cs1e kzg_all_com2 res2 fails");}
 				return false;
 			}
 
@@ -877,6 +882,7 @@ where
 				&nova2_qa_nizk_vkey.expect("qanizk vkey empty")
 			);	
 			if !bres {
+				if b_debug {println!("qanizk2 fails");}
 				return false;
 			}
 
@@ -896,7 +902,9 @@ where
 				&prf.snark_proof_main.as_ref().clone()
 					.expect("snark main empty")
 			);
+			if b_debug{ println!("snark main details: {:?}", snark_v_main); }
 			if !snark_v_main.is_ok() || !snark_v_main.unwrap().clone() {
+				if b_debug { println!("snark main fails."); }
 				return false;
 			}
 
@@ -930,7 +938,9 @@ where
 				&public_input, 
 				&prf.snark_proof_cp.as_ref().clone().expect("snark pf empty"));
 					//.map_err(|e| Error::Other(e.to_string())).unwrap();
+			if b_debug{println!("snark_v_cp details: {:?}", snark_v_cp);}
 			if !snark_v_cp.is_ok() || !snark_v_cp.unwrap().clone() {
+				if b_debug {println!("snark_v_cp fails.");}
 				return false;
 			}
 		}

@@ -27102,16 +27102,6 @@ Goal 2. planning
 	[a] support concurrent running of multiple pass_all().
 	[b] fix the running
 	[c] file application to filecoin
-	"Motivatoin"
-	-- "Proof of Integrity" Strategic Goal
-
-The Filecoin 2026 Network Strategy specifically highlights moving beyond simple storage to "Programmable Cloud Services."
-The Source: In their February 2026 Strategy update, Filecoin leadership noted a shift toward "Filecoin Onchain Cloud."
-The Connection: They want to enable "new classes of applications where verifiable storage creates differentiated value." Proving a file is malware-free via ZK-SNARKs is exactly the kind of "differentiated value" that would allow a high-security client (like a government agency or a bank) to trust decentralized storage.
-	Contact the Foundation: Before submitting the formal GitHub issue, send a brief email to grants@fil.org or impact@ffdw.org.
-
-The Hook: Tell them: "I have a 70% completed ZK-SNARK project for malware-free verification. I want to apply for a <$50k grant, but my university requires USD. Can we route this through FFDW or a fiscal sponsor?"
-
 Goal 3. remove EXTRA debug messages
 	[a] remove
 	[b] review code
@@ -27119,6 +27109,12 @@ Goal 3. remove EXTRA debug messages
 Goal 4. add debug code check cs_satisfied
 	[a] cs_satified take a string input
 	[b] prepare to push to server.
+	[c] problem: cs check would fail even for single circuit. why?
+
+Goal 5. check the constraints problem.
+	[a] interestingly afer we fix the circ
+	[b] it never shows up again.
+	[c] 
 	
 
 == TODO ==: put constraint tesitng code there for small example
