@@ -910,7 +910,7 @@ pub mod tests_zkp_driver{
 			//not matter?
 		let basis_acc_states = 10;  //good value 2
 		let basis_pats_in_trace = 22;  //good value 4
-		let perc_comp_subsigs = 64;  //good value 34 
+		let perc_comp_subsigs = 104;  //good value 34 
 		let basis_unique_states = 20;  //good value 5 * 4 and similar for all others
 		let dfa_sigs = 4;
 		let dfa_subsigs= 2*dfa_sigs;
@@ -919,7 +919,7 @@ pub mod tests_zkp_driver{
 		let num_category = 2;
 		let num_circs_per_category= 2;
         let basis_acc_states_igc = basis_acc_states ; //9 cpercent
-        let perc_pats_expansion_rate_igc = 80;
+        let perc_pats_expansion_rate_igc = 136 ;
         let basis_pats_in_trace_igc = 20;
 
 		let init_cp_cap= CpCapacity{

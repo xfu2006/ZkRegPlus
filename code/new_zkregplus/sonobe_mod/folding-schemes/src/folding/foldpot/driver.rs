@@ -493,13 +493,13 @@ where
 	/// TO save memomry, b_save_nd_adivce indicates whether
 	/// to push advice into vec<nd_advice>
 	pub fn plan_nd_advice(&self, log_level: usize, b_save_advice: bool,
-		word: &Vec<CF1<C1>>, word_info: &WordInfo)
+		word: &Vec<CF1<C1>>, word_info: &WordInfo, word_fname: &str)
 		-> Result<(usize, Vec<usize>, Vec<usize>, Vec<Rc<dyn Capacity>>, Vec<Rc<dyn NdAdvice>>),Error>{
 		let b_new = true;
 		if b_new{
-			self.plan_nd_advice_new(log_level, b_save_advice, word, word_info)
+			self.plan_nd_advice_new(log_level, b_save_advice, word, word_info, word_fname)
 		}else{
-			self.plan_nd_advice_old(log_level, b_save_advice, word, word_info)
+			self.plan_nd_advice_old(log_level, b_save_advice, word, word_info, word_fname)
 		}
 	}
 
@@ -553,6 +553,43 @@ where
 
 		(best_layer, num_segs, vec_seg_size, vec_pci, vec_cap, vec_adv)	
 	}
+
+	/// Almost the same of bin_search_best_layer, the difference
+	/// is that we run all circuits in parallel, and pick
+	/// the minimum one
+	fn par_search_best_layer(&self, log_level: usize, b_save_advice: bool,
+		word: &Vec<CF1<C1>>, word_info: &WordInfo, 
+		min_layer: usize, 
+		max_layer: usize,
+	) -> (usize, usize, Vec<usize>, Vec<usize>, Vec<Rc<dyn Capacity>>, Vec<Rc<dyn NdAdvice>>){
+
+		use rayon::prelude::*;
+
+		let results: Vec<_> = (min_layer..=max_layer)
+				.into_par_iter().map(|layer_id| (
+				layer_id, 
+				self.gen_nd_advice_at_layer(layer_id, log_level, 
+					b_save_advice, word, word_info)))
+				.collect();
+
+		let best_result = results
+				.into_iter()
+				.filter_map(|(layer_id, res)| res.ok().map(|val| 
+					(layer_id, val)))
+					.min_by_key(|(layer_id, _)| *layer_id);
+
+		match best_result {
+			Some((best_layer, (num_segs, vec_seg_size, vec_pci, 
+					vec_cap, vec_adv))) => { 
+						(best_layer, num_segs, vec_seg_size, 
+							vec_pci, vec_cap, vec_adv)
+			},
+			None => {
+				panic!("par_search_best_layer: No suitable layer found in range [{}, {}] for the given word.", min_layer, max_layer);
+			}
+		}
+	}
+
 	/// generate the nd_advice by picking up the circ.
 	/// Here we assume that layer of circs are sorted by the cost (increasing).
 	/// and each layer has ONLY ONE circ (so we do not have to worry about
@@ -564,8 +601,9 @@ where
 	/// of circ that is needed (and call gen_nd_advice) to verify it works
 	/// for ALL segements of a word.
 	pub fn plan_nd_advice_new(&self, log_level: usize, b_save_advice: bool,
-		word: &Vec<CF1<C1>>, word_info: &WordInfo)
+		word: &Vec<CF1<C1>>, word_info: &WordInfo, word_fname: &str)
 		-> Result<(usize, Vec<usize>, Vec<usize>, Vec<Rc<dyn Capacity>>, Vec<Rc<dyn NdAdvice>>),Error>{
+		let b_fast = true; 
 		//0. verify each layer has only one circ
 		let mut gt1 = GTimer::new();
 		let mut gt2 = GTimer::new();
@@ -578,29 +616,38 @@ where
 				//all circ should support same max word len
 		}
 
-		//1. quickly identify the MAX working layer needed 
-		let res = self.find_working_layer_for_wd(log_level, b_save_advice,
-			word, word_info)?;
-		let (max_layer_id, num_segs, vec_seg_size, vec_pci,
-			vec_cap, vec_adv) = res;
-		log_perf(log_level+1, &format!("plan_nd_advice, step 1: find_working_layer. "), &mut gt1);
-
-		//2. binary search to identify the MINIMUM layer that works 
-		let min_layer = 0;
+		//1. depending on the b_fast mode, call bin_search or parallel search
 		let (_best_layer, num_segs, vec_seg_size, vec_pci, vec_cap, vec_adv) = 
-			self.bin_search_best_layer(log_level+2, b_save_advice,
-				word, word_info, min_layer, max_layer_id,
-				num_segs, vec_seg_size, vec_pci, vec_cap, vec_adv);
+		   if !b_fast{//using binary search, slow but low RAM cost
+			//1. quickly identify the MAX working layer needed 
+			let res = self.find_working_layer_for_wd(log_level, b_save_advice,
+				word, word_info)?;
+			let (max_layer_id, num_segs, vec_seg_size, vec_pci,
+				vec_cap, vec_adv) = res;
 
-		log_perf(log_level+1, &format!("plan_nd_advice, step 2: bin_search."), &mut gt1);
-		log_perf(log_level, &format!("plan_nd_advice. Total:  best_layer: {}, word.len(): {}.", _best_layer, word.len()), &mut gt2);
+			//2. binary search to identify the MINIMUM layer that works 
+			let min_layer = 0;
+			self.bin_search_best_layer(log_level+2, b_save_advice,
+					word, word_info, min_layer, max_layer_id,
+					num_segs, vec_seg_size, vec_pci, vec_cap, vec_adv)
+		}else{
+			let min_layer = 0;
+			let max_layer = self.circuits.len(); 
+			self.par_search_best_layer(log_level+2, b_save_advice,
+					word, word_info, min_layer, max_layer)
+		};
+
+		//2. double check and return
+		let pci = vec_pci[0];
+		for x in &vec_pci{assert!(*x==pci);} //should all be same
+		log_perf(log_level, &format!("PERF 1001: plan_nd_advice for {}, search_mode (fast): {}, Total:  best_layer: {}, pci: {}, word.len(): {}.", word_fname, b_fast,  _best_layer, pci, word.len()), &mut gt2);
 
 		Ok( (num_segs, vec_seg_size, vec_pci, vec_cap, vec_adv ) )
 	}
 
 	/// old version: it assues multiple circs in one layer
 	pub fn plan_nd_advice_old(&self, log_level: usize, _b_save_advice: bool,
-		word: &Vec<CF1<C1>>, word_info: &WordInfo)
+		word: &Vec<CF1<C1>>, word_info: &WordInfo, _word_fname: &str)
 		-> Result<(usize, Vec<usize>, Vec<usize>, Vec<Rc<dyn Capacity>>, Vec<Rc<dyn NdAdvice>>),Error>{
 			if 1>0 {panic!("should not call this function. It is invalid. Keep the legacy code for future improvement.");}
 			let mut gt1 = GTimer::new();
@@ -886,7 +933,8 @@ where
 			let total_word_len = word.len();
 			let mut acc_wd_len = 0;
 			let _mapper = self.circuits[0].get_mapper();
-			let (steps, vec_len, vec_pci, _vec_cap_req, advice) = self.plan_nd_advice(log_level+1, true, &word, &vec_word_info[word_id-1]).expect("Planning advice fails!"); 
+			let (steps, vec_len, vec_pci, _vec_cap_req, advice) = self.plan_nd_advice(log_level+1, true, &word, &vec_word_info[word_id-1],
+				&format!("word_{}", word_id)).expect("Planning advice fails!"); 
 			for i in 0..steps{
 				let pc_i = if i==0 {0} else {vec_pci[i-1]};
 				let pc_i1 = vec_pci[i]; //this is actually pc_i1 for this circ
@@ -1340,7 +1388,7 @@ where
 			let mut acc_wd_len = 0;
 			let _mapper = self.circuits[0].get_mapper();
 			let word_info = &vec_word_info[word_id-1];
-			let (steps, vec_len, vec_pci, _vec_cap_req, _advice) = self.plan_nd_advice(log_level+2, false, &word, word_info)
+			let (steps, vec_len, vec_pci, _vec_cap_req, _advice) = self.plan_nd_advice(log_level+2, false, &word, word_info, word_fname)
 				.expect(&format!("\n\n ==== **** ===== \nPlanning advice fails for {}! Could not find a circuit satisfying the following: \n ==============\n", word_fname)); //note: empty advice will be returned
 			log_perf(log_level+2, &format!("{} - Pass 1: START decide circ alloc for word_id: {}, fname: {}, word_len: {}. ", phase_name, word_id, word_fname, format_bytes(total_word_len*31)), &mut gt2);
 			for i in 0..steps{

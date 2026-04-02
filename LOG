@@ -27126,11 +27126,19 @@ Goal 2. create a Python file which generates mixed folder
 	[c] instead of doing increase_by should do decrease_by.
 
 Thursday 04/02/2026
-Goal 1. adjust small data3
-	[a] current data: TwoPhaseCirc build circ1: 49747372 cs. 32354 ms
+Goal 1. collect server data
+	[a] read server msg
 	[b] add debugging message to dump the public input of the main circuit
 		and the verifier.
-	[c] retrieve the version and enable the debug
+	[c] retrieve the version and enable the debug -> to show the public input
+
+Goal 1. adjust small data3
+	[a] current data: TwoPhaseCirc build circ1: 49747372 cs. 32354 ms
+		-> fails on main circ
+	[b] adjust hte params
+	[c] should print the circuit chosen
+
+Goal 3. do parallel circ selection.
 
 -- TODO -- remove DEBUG USE 6901.1.x and 6901.2.x
 
