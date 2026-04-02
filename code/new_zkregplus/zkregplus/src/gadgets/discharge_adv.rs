@@ -418,9 +418,10 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 			StepQueueType::ResSmall=> RES_SMALL_COST, 
 		};
 		let size_trace =  capacity.max_nibble_len 
-			* capacity.basis_pats_in_trace/10000
-			* compress_ratio/100 
-			* capacity.perc_pats_expansion_rate/100;
+			* capacity.basis_pats_in_trace
+			* compress_ratio
+			* capacity.perc_pats_expansion_rate
+			/ (10000 * 100 * 100);
 		//adjust both to even
 		let size_pat = if size_pat%2==1 {size_pat+1} else {size_pat};
 		let size_trace = if size_trace%2==1 {size_trace+1} else {size_trace};
@@ -950,7 +951,7 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 					println!("DEBUG USE 9002: to throw perc_pats_expansion_rate ERROR on Step_Queue in discharge_adv. DUMP of data");
 					self.dump();
 				}
-				return Err(Error::CapErr(vec![(format!("dis_adv::perc_pats_expansion_rate, b_igc: {}", self.b_igc), new_perc_pats_expansion_rate)]));
+				return Err(Error::CapErr(vec![(format!("dis_adv::perc_pats_expansion_rate, StepQueue b_igc: {}", self.b_igc), new_perc_pats_expansion_rate)]));
 			}
 		}
 		assert!(n>=vec_encoded.len()+1, "StepQueue type: {:?} buf too small, either adjust the compression ratio in vec_size() first, then check the perc_pats_expansion_rate in DischargeAdvCapacity, n: {}, vec_encoded.len: {}", self.q_type, n, vec_encoded.len());
@@ -1183,7 +1184,7 @@ impl <F:PrimeField + ColEle> StepQueueItem<F>{
 impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 	/// return the estimated needed size of buf for to_container
 	pub fn vec_size(&self)->usize{
-		let res = self.capacity.basis_pats_in_trace * self.capacity.max_nibble_len/10000 * self.capacity.perc_pats_expansion_rate/100;
+		let res = self.capacity.basis_pats_in_trace * self.capacity.max_nibble_len * self.capacity.perc_pats_expansion_rate/(100*10000);
 
 		res
 	}
@@ -1272,8 +1273,10 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 			if b_debug_capacity{
 				println!("DEBUG USE 9003: to throw perc_pats_expansion_rate ERROR on StepFwdProof in discharge_adv. DUMP of data");
 				self.dump();
+				println!("DEBUG USE 9003: v2d[0].len: {}, basis_pats_in_trace: {}, max_nibble_len: {}, perc_pats_expansion_rate: {}",
+					v2d[0].len(), self.capacity.basis_pats_in_trace, self.capacity.max_nibble_len, self.capacity.perc_pats_expansion_rate);
 			}
-			return Err(Error::CapErr(vec![(format!("dis_adv::perc_pats_expansion_rate, b_igc: {}", self.b_igc), new_val)]));
+			return Err(Error::CapErr(vec![(format!("dis_adv::perc_pats_expansion_rate, StepFwdPrf b_igc: {}", self.b_igc), new_val)]));
 		}
 		assert!(n>=v2d[0].len()+1, "buf too small, adjust perc_pats_expansion_rate. n: {}, v2dlen: {}", n, v2d[0].len());
 		let n2 = n-v2d[0].len();
@@ -1487,11 +1490,12 @@ impl <F:PrimeField + ColEle> StepBwdPrfItem<F>{
 
 impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 	pub fn vec_size(&self)->usize{
-		let raw_size = self.capacity.basis_pats_in_trace 
-			* self.capacity.max_nibble_len / 10000 
-			* self.capacity.perc_pats_expansion_rate / 100;
 		let compress_ratio = ADD_DEL_COST;
-		let size = raw_size * compress_ratio/100;
+		let size = self.capacity.basis_pats_in_trace 
+			* self.capacity.max_nibble_len 
+			* self.capacity.perc_pats_expansion_rate 
+			* compress_ratio
+			/ (10000  * 100 * 100);
 		size
 	}
 	pub fn dump(&self){
@@ -1575,8 +1579,11 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 			if b_debug_capacity{
 				println!("DEBUG USE 9005: to throw perc_pats_expansion_rate ERROR on StepBwdProof in discharge_adv. DUMP of data");
 				self.dump();
+				println!("v2d[0].len: {}, miax_nibble: {}, basis_pats_in_trace: {}, ADD_DEL_COST: {}, current perc_pats_expansion_rate: {}", 
+					v2d[0].len(), self.capacity.max_nibble_len, 
+					self.capacity.basis_pats_in_trace, ADD_DEL_COST, self.capacity.perc_pats_expansion_rate);
 			}
-			return Err(Error::CapErr(vec![(format!("dis_adv::perc_pats_expansion_rate, b_igc: {}", self.b_igc), new_val)]));
+			return Err(Error::CapErr(vec![(format!("dis_adv::perc_pats_expansion_rate, StepBwdPrf b_igc: {}", self.b_igc), new_val)]));
 		}
 		assert!(n>=v2d[0].len()+1, "buf too small for StepBwdPrf, adjust compress_ratio in vec_size() first, and then the perc_pats_expansion_rate in capacity");
 		let n2 = n-v2d[0].len();

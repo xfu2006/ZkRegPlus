@@ -44,7 +44,7 @@ use crate::folding::{
 		mod_super::{WitnessFoldPotSuper,CommittedInstanceFoldPotSuper, FoldPotSuper},
 		circuits_super::{field_to_usize,CommittedInstanceVarFoldPotSuper},
 		sigma_cyclepair::{compute_hc_var, hash_var},
-		utils::{get_mem_usage,f1_limbs_to_f2, B_DEBUG, new_var},
+		utils::{get_mem_usage,f1_limbs_to_f2, B_DEBUG, new_var, check_cs},
 		container_config::ColEle,
 	},
 };
@@ -887,10 +887,7 @@ where
 		}
 		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 7: check {} circs. INCREASED r1cs: {}", self.n_circ, cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
-		if b_debug{
-			let csat = cs.is_satisfied();
-			if csat.is_ok(){ assert!(csat.unwrap(), "step 7 decidercirc1"); }
-		}
+		if b_debug{check_cs(&cs, "phase1 step 7");}
 
         //#[cfg(feature = "light-test")]
         //println!("[WARNING]: Running with the 'light-test' feature, skipping the big part of the DeciderEthCircuit.\n           Only for testing purposes.");
@@ -997,10 +994,7 @@ where
 			log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 10: check cf_W_i satisfies cyclefold instance. INCREASED r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
         }
 
-		if b_debug{
-			let csat = cs.is_satisfied();
-			if csat.is_ok(){ assert!(csat.unwrap(), "step 10 decidercirc1"); }
-		}
+		if b_debug{check_cs(&cs, "phase1 step 10");}
 
 		let mut vec_coms_part2 = U_i1.vec_inst.iter().map(|inst|
 			vec![inst.cmW.clone(), inst.cmE.clone(), inst.cmF.clone()]
@@ -1769,10 +1763,7 @@ where
 		log_perf(log_level, &format!("TwoPhaseCirc build circ1: {} cs.",
 			cs.num_constraints()-c0), &mut gt2);
 
-		if b_debug{
-			let cs_ok = cs.is_satisfied();
-			if cs_ok.is_ok(){ assert!(cs_ok.unwrap()); }
-		}
+		if b_debug{check_cs(&cs, "TwoPhaseCirc build circ1");}
 
 		log_perf(log_level-1, &format!("*** MainDeciderCirtuit TOTAL constraints: {} ***. ", cs.num_constraints()), &mut gt1);
 
@@ -2023,10 +2014,7 @@ where
 		let c3 = cs.num_constraints();
 		log_perf(log_level, &format!("CyclePairCirc Step 2: validate all other data: {} cs.", c3-c2), &mut gt2);
 
-		if b_debug{
-			let cs_ok = cs.is_satisfied();
-			if cs_ok.is_ok(){ assert!(cs_ok.unwrap()); }
-		}
+		if b_debug{check_cs(&cs, "CyclcePairCirc Step 2");}
 
 		log_perf(log_level-1, &format!("*** CyclePairCirc TOTAL constraints: {} ***.", cs.num_constraints()), &mut gt1);
 		Ok( () )

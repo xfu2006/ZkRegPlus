@@ -45,7 +45,7 @@ pub const B_DEBUG:bool = false;
 /// NOTE it has an internal bug, manually turn it on 
 /// if you need it.
 pub fn check_cs<F:PrimeField>(cs: &ConstraintSystemRef<F>, info: &str){
-	let b_debug = true;
+	let b_debug = false;
 	if b_debug && cs.should_construct_matrices(){
 		let csat = cs.is_satisfied();
 		if csat.is_ok(){ 

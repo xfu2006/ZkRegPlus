@@ -122,6 +122,23 @@ impl DfaCapacity{
 		}
 	}
 
+	pub fn decreased_copy(&self, level: usize)->Self{
+		assert!(level==1 || level==2);
+		if level==1{
+			Self::new(
+				self.max_word_len,
+				(self.sigs/2).max(1),
+				(self.subsigs/2).max(1),
+			)
+		}else{
+			Self::new(
+				self.max_word_len,
+				self.sigs,
+				self.subsigs
+			)
+		}
+	}
+
 	pub fn new(
 		max_word_len: usize, 
 		sigs: usize, 

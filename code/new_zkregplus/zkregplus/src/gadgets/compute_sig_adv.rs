@@ -844,6 +844,12 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		let n2 = capacity.get_scc_prf_size();
 		if scc_prf_subsig.len()+1>n2{
 			let new_val = (scc_prf_subsig.len()+1)*100/(capacity.subsigs_cs + capacity.subsigs_igc) + 1;
+			println!("DEBUG USE 9003: perc_comp_subsigs: {}, subsigs_cs: {}, subsigs_igc: {}, scc_prf_subsig.len: {}, get_scc_prf_size: {}",
+				capacity.perc_comp_subsigs,
+				capacity.subsigs_cs,
+				capacity.subsigs_igc,
+				scc_prf_subsig.len(),
+				n2);
 			return Err(Error::CapErr(vec![(format!("comp_sig::perc_comp_subsigs"), new_val)]));
 
 		}

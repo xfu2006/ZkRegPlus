@@ -248,6 +248,39 @@ impl SedCapacity{
 		}
 	}
 
+	pub fn decreased_copy(&self, level: usize)->Self{
+		assert!(level==1 || level==2);
+		if level==1{//incrase subsigs and sigs
+			Self::new(
+				self.max_word_len,
+				self.acdfa_state_part_bits,
+				(self.subsigs/2).max(1),
+				self.avg_pats_per_subsig,
+				self.avg_active_pats_per_subsig,
+				self.basis_pats_in_trace,
+				self.perc_pats_expansion_rate,
+				(self.sigs_sed/2).max(1),
+				self.perc_comp_subsigs,
+				self.basis_unique_states,
+				self.basis_acc_states,
+			)
+		}else{
+			Self::new(
+				self.max_word_len,
+				self.acdfa_state_part_bits,
+				self.subsigs,
+				(self.avg_pats_per_subsig/2).max(1),
+				(self.avg_active_pats_per_subsig/2).max(1),
+				(self.basis_pats_in_trace/2).max(1),
+				(self.perc_pats_expansion_rate/2).max(1),
+				self.sigs_sed,
+				(self.perc_comp_subsigs/2).max(1),
+				(self.basis_unique_states/2).max(1),
+				(self.basis_acc_states/2).max(1),
+			)
+		}
+	}
+
 	/// syntax sugar for returning a reference to its wea_capacity
 	pub fn wea_capacity(&self)->&WordExtractAdvCapacity{
 		self.comp_capacities[0].as_any()

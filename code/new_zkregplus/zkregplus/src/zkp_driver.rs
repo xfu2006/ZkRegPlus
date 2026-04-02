@@ -275,21 +275,30 @@ where C: CurveGroup<ScalarField=F>,
 			layer_circs.push( vec![circ] ); //legacy to keep 2d layer
 
 			//3.5 update the capacities.
-			cp_cap_cs = cp_cap_cs.increased_copy(2); //increase by level 2
-			sed_cap_cs = sed_cap_cs.increased_copy(2); 
-			cp_cap_igc = cp_cap_igc.increased_copy(2); //increase by level 2
-			sed_cap_igc = sed_cap_igc.increased_copy(2); 
-			dfa_cap= dfa_cap.increased_copy(2); 
+			cp_cap_cs = cp_cap_cs.decreased_copy(2); //increase by level 2
+			sed_cap_cs = sed_cap_cs.decreased_copy(2); 
+			cp_cap_igc = cp_cap_igc.decreased_copy(2); //increase by level 2
+			sed_cap_igc = sed_cap_igc.decreased_copy(2); 
+			dfa_cap= dfa_cap.decreased_copy(2); 
 		}//for loop level2
 		//update level 1 capacity
-		cp_cap_cs = cp_cap_cs.increased_copy(1); //increase by level 1
-		sed_cap_cs = sed_cap_cs.increased_copy(1); 
-		cp_cap_igc = cp_cap_igc.increased_copy(1); //increase by level 1
-		sed_cap_igc = sed_cap_igc.increased_copy(1); 
-		dfa_cap= dfa_cap.increased_copy(1); 
+		cp_cap_cs = cp_cap_cs.decreased_copy(1); //increase by level 1
+		sed_cap_cs = sed_cap_cs.decreased_copy(1); 
+		cp_cap_igc = cp_cap_igc.decreased_copy(1); //increase by level 1
+		sed_cap_igc = sed_cap_igc.decreased_copy(1); 
+		dfa_cap= dfa_cap.decreased_copy(1); 
 	}//for category
 
 	//return
+	layer_circs.reverse();
+
+	// DEBUG MESSAGE 1001: Print config of each circ before returning
+	println!("DEBUG USE 1001 ========================= build_circs_adv generates =================");
+	for (l1_idx, layer) in layer_circs.iter().enumerate() {
+		for (l2_idx, circ) in layer.iter().enumerate() {
+			println!("DEBUG MESSAGE 1001: Category {} Layer {} Circuit Name: {}\nCapacity: {:#?}", l1_idx, l2_idx, circ.get_name(), circ);
+		}
+	}
 	layer_circs
 }
 
@@ -894,24 +903,24 @@ pub mod tests_zkp_driver{
 		let b_write_cache = !b_read_cache;
 		let set1 = "data/debug/small_data_set2/config_dfa"; //for dfa 
 		let max_word= 512; 
-		let sigs = 1;  //good value 2
-		let subsigs = 6;  //good value 4
+		let sigs = 8;  //good value 2
+		let subsigs = 8;  //good value 4
 		let avg_pats_per_subsig = 3;  //good value 4
 		let avg_active_pats_per_subsig = 1; //good value 0, actually does
 			//not matter?
 		let basis_acc_states = 10;  //good value 2
 		let basis_pats_in_trace = 22;  //good value 4
-		let perc_comp_subsigs = 34;  //good value 34 
-		let basis_unique_states = 2;  //good value 5
-		let dfa_sigs = 1;
+		let perc_comp_subsigs = 64;  //good value 34 
+		let basis_unique_states = 20;  //good value 5 * 4 and similar for all others
+		let dfa_sigs = 4;
 		let dfa_subsigs= 2*dfa_sigs;
-		let perc_pats_expansion_rate = 100;
+		let perc_pats_expansion_rate = 160;
 
 		let num_category = 2;
 		let num_circs_per_category= 2;
         let basis_acc_states_igc = basis_acc_states ; //9 cpercent
-        let perc_pats_expansion_rate_igc = 20;
-        let basis_pats_in_trace_igc = 10;
+        let perc_pats_expansion_rate_igc = 80;
+        let basis_pats_in_trace_igc = 20;
 
 		let init_cp_cap= CpCapacity{
 			max_word_len: max_word, 
@@ -935,7 +944,7 @@ pub mod tests_zkp_driver{
  		let init_cp_cap_igc= CpCapacity{
             max_word_len: max_word,
             basis_unique_states,
-            subsigs: subsigs/2,
+            subsigs: subsigs,
             avg_pats_per_subsig,
             //avg_subsig_per_sig,
         };
@@ -1313,10 +1322,10 @@ pub mod tests_zkp_driver{
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
-		small_data::<Fr>(b_check_lkup); //small data
+		//small_data::<Fr>(b_check_lkup); //small data
 		//small_data2::<Fr>(b_check_lkup);  //10k data 
 		//small_data_debug::<Fr>(b_check_lkup);  //for debug
-		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
+		small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//full_data1::<Fr>(b_check_lkup);
 		//full_data2::<Fr>(b_check_lkup); //full data high acc state 
 		//full_data3::<Fr>(b_check_lkup); //full data large file

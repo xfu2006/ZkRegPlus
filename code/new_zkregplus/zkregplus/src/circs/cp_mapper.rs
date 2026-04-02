@@ -127,6 +127,25 @@ impl CpCapacity{
 			}
 		}
 	}
+
+	pub fn decreased_copy(&self, level: usize)->Self{
+		assert!(level==1 || level==2);
+		if level==1{
+			Self{
+				max_word_len: self.max_word_len,
+				basis_unique_states: self.basis_unique_states,
+				subsigs: (self.subsigs/2).max(1),
+				avg_pats_per_subsig: self.avg_pats_per_subsig,
+			}
+		}else{
+			Self{
+				max_word_len: self.max_word_len,
+				basis_unique_states: (self.basis_unique_states/2).max(1),
+				subsigs: self.subsigs,
+				avg_pats_per_subsig: (self.avg_pats_per_subsig/2).max(1),
+			}
+		}
+	}
 }
 
 impl Capacity for CpCapacity{
