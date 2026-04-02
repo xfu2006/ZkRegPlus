@@ -3118,7 +3118,9 @@ where 	C: CurveGroup<ScalarField=F>,
 		for (i,g) in self.gadgets.iter().enumerate(){
 			let (nc, ni, nv) = (cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables());
 			g.borrow().assert_msg3(i, cs.clone(), &wtns_var, &cfg)?;
-			check_cs(&cs, &format!("After gadget: {}", g.borrow().get_name()));
+			if b_debug{
+				check_cs(&cs, &format!("After gadget: {}", g.borrow().get_name()));
+			}
 			let stmt_len = g.borrow().get_msg_size().0;
 			log_perf(log_level, &format!("-- -- after msg3 of module {}: {}:\n\tINCREASED: constraints: {}, const vars: {}, wit vars: {} \n\t==> NOW: CS:{}, const: {}, witness: {}\n\t ==> stmt_size: {}. ", i, g.borrow().get_name(), cs.num_constraints()-nc, cs.num_instance_variables()-ni, cs.num_witness_variables()-nv, cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables(), stmt_len), &mut gt3);						
 		}

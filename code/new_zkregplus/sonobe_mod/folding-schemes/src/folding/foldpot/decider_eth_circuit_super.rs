@@ -1753,6 +1753,7 @@ where
 		}else{C1::ScalarField::zero()};
 		let mainres_pub = FpVar::<C1::ScalarField>::new_input(cs.clone(),
 			|| Ok(mainres_hash_val) )?; //it is the ONLY PUBLIC VAR of circ!!! 
+                if b_debug { println!("DEBUG USE 6901.1.0 public input: {:?}", mainres_hash_val); }
 		mainres_hash.enforce_equal(&mainres_pub)?;
 		#[cfg(test)]{
 			if phase1_ret.ch.value().is_ok(){
