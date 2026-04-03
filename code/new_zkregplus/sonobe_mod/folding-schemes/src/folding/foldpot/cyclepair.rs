@@ -516,7 +516,7 @@ pub fn fold_cyclepair_circuit<E:Pairing<G1=C1,G2=C2G2>,
 	P: PairingVar<E,CF3<C2G2>>,
 	C1, GC1, C2G2, C2, GC2, FC, CS1, CS2, const H: bool>(
     transcript: &mut impl Transcript<C1::ScalarField>,
-    cf_r1cs: R1CS<C2::ScalarField>, //C1::BaseField
+    cf_r1cs: &R1CS<C2::ScalarField>, //C1::BaseField
     cf_cs_params: CS2::ProverParams,
     pp_hash: C1::ScalarField,      // public params hash
     cf_W_i: Witness<C2>,           // witness of the running instance

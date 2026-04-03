@@ -537,7 +537,7 @@ where
     CS1E: CommitmentScheme<C1, H>, //should actually be KZG
 {
 	pub vec_vp: Vec<VerifierParamsFoldPot<C1, C2, CS1, CS2, H>>,
-	pub cp_r1cs: Option<R1CS<C2::ScalarField>>,
+	pub cp_r1cs: Option<Arc<R1CS<C2::ScalarField>>>,
 	pub qa_vp: Option<QaNizkVerifierParams<E>>,
 	pub cs1e_vp: CS1E::VerifierParams
 }
@@ -613,11 +613,11 @@ where
 	_cs1: PhantomData<CS1>,
 
     /// R1CS of the Augmented Function circuit
-    pub r1cs: Vec<R1CS<C1::ScalarField>>,
+    pub r1cs: Vec<Arc<R1CS<C1::ScalarField>>>,
     /// R1CS of the CycleFold circuit
-    pub cf_r1cs: R1CS<C2::ScalarField>,
+    pub cf_r1cs: Arc<R1CS<C2::ScalarField>>,
 	/// R1CS of the CyclePair circuit
-	pub cp_r1cs: R1CS<C2::ScalarField>,
+	pub cp_r1cs: Arc<R1CS<C2::ScalarField>>,
     pub poseidon_config: PoseidonConfig<C1::ScalarField>,
 
     /// CommitmentScheme::ProverParams over C11E (commits
@@ -860,9 +860,9 @@ where
             _c2: PhantomData,
             _gc2: PhantomData,
             _cs1: PhantomData,
-            r1cs,
-            cf_r1cs,
-			cp_r1cs,
+            r1cs: r1cs.into_iter().map(Arc::new).collect(),
+            cf_r1cs: Arc::new(cf_r1cs),
+			cp_r1cs: Arc::new(cp_r1cs),
             poseidon_config: poseidon_config.clone(),
             cs1e_pp: cs1e_pp, 
             cs_pp: cs_pp, 
@@ -978,7 +978,7 @@ where
         fold_cyclefold_circuit::<C1, GC1, C2, GC2, FC, CS1, CS2, H>(
             FOLDPOT_CF_N_POINTS,
             transcript,
-            self.cf_r1cs.clone(),
+            &*self.cf_r1cs,
             (*self.cf_cs_pp).clone(),
             self.pp_hash,
             cf_W_i,
@@ -1172,8 +1172,8 @@ where
 
 			let verifier_params = VerifierParamsFoldPot::<C1, C2, CS1, CS2, H> {
 				poseidon_config: prep_param.poseidon_config.clone(),
-				r1cs,
-				cf_r1cs,
+				r1cs: Arc::new(r1cs),
+				cf_r1cs: Arc::new(cf_r1cs),
 				cs_vp,
 				cf_cs_vp,
 				cp_cs_vp,
@@ -1269,7 +1269,7 @@ where
 		//println!("DEBUG USE 1709.1: cp_r1cs: {}", (&cp_r1cs).is_some());
 		let prover_params = ProverParamsFoldPotSuper{vec_pp, qa_pp, cs1e_pp: Arc::new(cs1e_pp)};
 		let verifier_params = VerifierParamsFoldPotSuper{
-			vec_vp, cp_r1cs, qa_vp, cs1e_vp};
+			vec_vp, cp_r1cs: cp_r1cs.map(Arc::new), qa_vp, cs1e_vp};
 		let m2 = get_mem_usage_mb();
 		log(log_level-1, &format!("- KEYS info: n_circs: {}, total_w: {}, total_e: {}, cs1e: {}, max_pp: {}, INCREASED RAM: {}, TOTAL RAM: {}.", n_circ, total_w_len, total_e_len, new_total_cs_pp_len, max_circ_pp_size, mb2s(m2-m0), mb2s(m2)) ); 
 
@@ -1630,7 +1630,7 @@ where
 					fold_cyclepair_circuit
 						::<E,P,C1,GC1,C2G2,C2,GC2,FC,CS1,CS2,H>(
 						&mut transcript,
-						self.cp_r1cs.clone(),
+						&*self.cp_r1cs,
 						(*self.cp_cs_pp).clone(),
 						self.pp_hash,
 						self.cp_W_i.as_ref().clone().unwrap().clone(),

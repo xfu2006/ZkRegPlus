@@ -337,9 +337,9 @@ where
     /// E vector's length of the CycleFold instance witness
     pub cf_E_len: usize,
     /// R1CS of the Augmented Function circuit (each)
-    pub r1cs: Vec<R1CS<C1::ScalarField>>,
+    pub r1cs: Vec<Arc<R1CS<C1::ScalarField>>>,
     /// R1CS of the CycleFold circuit
-    pub cf_r1cs: R1CS<C2::ScalarField>,
+    pub cf_r1cs: Arc<R1CS<C2::ScalarField>>,
     /// CycleFold PedersenParams over C2
     pub cf_pedersen_params: PedersenParams<C2>,
     pub poseidon_config: PoseidonConfig<CF1<C1>>,
@@ -619,9 +619,9 @@ where
     /// E vector's length of the CycleFold instance witness
     pub cf_E_len: usize,
     /// R1CS of the Augmented Function circuit (each)
-    pub r1cs: Vec<R1CS<C1::ScalarField>>,
+    pub r1cs: Vec<Arc<R1CS<C1::ScalarField>>>,
     /// R1CS of the CycleFold circuit
-    pub cf_r1cs: R1CS<C2::ScalarField>,
+    pub cf_r1cs: Arc<R1CS<C2::ScalarField>>,
     /// CycleFold PedersenParams over C2
     pub cf_pedersen_params: PedersenParams<C2>,
     pub poseidon_config: PoseidonConfig<CF1<C1>>,

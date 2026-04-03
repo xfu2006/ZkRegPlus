@@ -879,7 +879,7 @@ where
         fold_cyclefold_circuit::<C1, GC1, C2, GC2, FC, CS1, CS2, H>(
             NOVA_CF_N_POINTS,
             transcript,
-            self.cf_r1cs.clone(),
+            &self.cf_r1cs,
             self.cf_cs_pp.clone(),
             self.pp_hash,
             cf_W_i,

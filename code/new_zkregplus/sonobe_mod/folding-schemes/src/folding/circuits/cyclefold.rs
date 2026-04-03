@@ -387,7 +387,7 @@ where
 pub fn fold_cyclefold_circuit<C1, GC1, C2, GC2, FC, CS1, CS2, const H: bool>(
     _n_points: usize,
     transcript: &mut impl Transcript<C1::ScalarField>,
-    cf_r1cs: R1CS<C2::ScalarField>,
+    cf_r1cs: &R1CS<C2::ScalarField>,
     cf_cs_params: CS2::ProverParams,
     pp_hash: C1::ScalarField,      // public params hash
     cf_W_i: Witness<C2>,           // witness of the running instance

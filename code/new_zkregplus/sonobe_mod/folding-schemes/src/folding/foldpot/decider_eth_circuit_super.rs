@@ -1,3 +1,4 @@
+use std::sync::Arc;
 /* Created 09/15/2024. Adaptation for super_nova 
    Changed 01/09/2025. Add TwoPhaseDeciderCircuit to accomodate to
    	the two phase cyclepair strategy.
@@ -559,11 +560,11 @@ where
     /// E vector's length of the CyclePair instance witness
     pub cp_E_len: usize,
     /// R1CS of the Augmented Function circuit (each)
-    pub r1cs: Vec<R1CS<C1::ScalarField>>,
+    pub r1cs: Vec<Arc<R1CS<C1::ScalarField>>>,
     /// R1CS of the CycleFold circuit
-    pub cf_r1cs: R1CS<C2::ScalarField>,
+    pub cf_r1cs: Arc<R1CS<C2::ScalarField>>,
 	/// R1CS of the CyclePair circuit
-	pub cp_r1cs: R1CS<C2::ScalarField>,
+	pub cp_r1cs: Arc<R1CS<C2::ScalarField>>,
     /// CycleFold PedersenParams over C2
     pub cf_pedersen_params: PedersenParams<C2>,
     pub cp_pedersen_params: PedersenParams<C2>,

@@ -396,8 +396,8 @@ where
     CS2: CommitmentScheme<C2, H>,
 {
     pub poseidon_config: PoseidonConfig<C1::ScalarField>,
-    pub r1cs: R1CS<C1::ScalarField>,
-    pub cf_r1cs: R1CS<C2::ScalarField>,
+    pub r1cs: Arc<R1CS<C1::ScalarField>>,
+    pub cf_r1cs: Arc<R1CS<C2::ScalarField>>,
     pub cs_vp: CS1::VerifierParams,
     pub cf_cs_vp: CS2::VerifierParams,
     pub cp_cs_vp: CS2::VerifierParams,
@@ -418,8 +418,8 @@ where
     /// returns the hash of the public parameters of Nova
     pub fn pp_hash(&self) -> Result<C1::ScalarField, Error> {
         pp_hash::<C1, C2, CS1, CS2, H>(
-            &self.r1cs,
-            &self.cf_r1cs,
+            &*self.r1cs,
+            &*self.cf_r1cs,
             &self.cs_vp,
             &self.cf_cs_vp,
             &self.poseidon_config,
@@ -455,9 +455,9 @@ where
     _gc2: PhantomData<GC2>,
 	_gm: PhantomData<GM>,
     /// R1CS of the Augmented Function circuit
-    pub r1cs: R1CS<C1::ScalarField>,
+    pub r1cs: Arc<R1CS<C1::ScalarField>>,
     /// R1CS of the CycleFold circuit
-    pub cf_r1cs: R1CS<C2::ScalarField>,
+    pub cf_r1cs: Arc<R1CS<C2::ScalarField>>,
     pub poseidon_config: PoseidonConfig<C1::ScalarField>,
     /// CommitmentScheme::ProverParams over C1
     pub cs_pp: Arc<CS1::ProverParams>,
@@ -612,8 +612,8 @@ where
         };
         let verifier_params = VerifierParamsFoldPot::<C1, C2, CS1, CS2, H> {
             poseidon_config: prep_param.poseidon_config.clone(),
-            r1cs,
-            cf_r1cs,
+            r1cs: Arc::new(r1cs),
+            cf_r1cs: Arc::new(cf_r1cs),
             cs_vp,
             cf_cs_vp,
             cp_cs_vp,
@@ -1144,7 +1144,7 @@ where
     fn compute_cmT(&self) -> Result<(Vec<C1::ScalarField>, C1), Error> {
         NIFSFoldPot::<C1, CS1, H>::compute_cmT(
             &self.cs_pp,
-            &self.r1cs,
+            &*self.r1cs,
             &self.w_i,
             &self.u_i,
             &self.W_i,
@@ -1229,7 +1229,7 @@ where
         fold_cyclefold_circuit::<C1, GC1, C2, GC2, FC, CS1, CS2, H>(
             FOLDPOT_CF_N_POINTS,
             transcript,
-            self.cf_r1cs.clone(),
+            &*self.cf_r1cs,
             (*self.cf_cs_pp).clone(),
             self.pp_hash,
             cf_W_i,
