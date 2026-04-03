@@ -3972,10 +3972,12 @@ pub mod tests_sigma_ir1cs{
 	};
 	use std::collections::HashMap;
 	use ark_ec::{CurveGroup,pairing::Pairing};
+	use ark_std::sync::Arc;
 	use crate::commitment::{
 		CommitmentScheme,
 		kzg::KZG,
 	};
+	use std::{sync::Mutex};
 
 	/// a gadget verifies an input number has a cubic root. 
 	/// Statement (x;w): where x is the number to verify and w is
@@ -4254,7 +4256,7 @@ pub mod tests_sigma_ir1cs{
 		/// the circuit
 		fn get_capacity(&self)->Arc<dyn Capacity + Send + Sync>{
 			let word_seg_len = self.max_word_len();
-			Rc::new( DummyCapacity{word_seg_len} )
+			Arc::new( DummyCapacity{word_seg_len} )
 		}
 
 
@@ -4262,7 +4264,7 @@ pub mod tests_sigma_ir1cs{
 			_prv_adv: Option<Arc<dyn NdAdvice + Send + Sync>>, _seg_id: usize) 
 		-> Result<Arc<dyn NdAdvice + Send + Sync>, Error>{
 			if word.len()<=self.max_word_len(){
-				Ok( Rc::new(DummyNdAdvice{}))
+				Ok( Arc::new(DummyNdAdvice{}))
 			}else{
 				Err(
 					Error::CapErr(vec![(format!("max_word_len"), word.len())])
@@ -4513,7 +4515,7 @@ pub mod tests_sigma_ir1cs{
 				r_word_i: F::zero(),
 				accumulated_word_len: F::one(),
 			};
-			let dummy_adv = Rc::new(DummyNdAdvice{});
+			let dummy_adv = Arc::new(DummyNdAdvice{});
 			let stmt = mapper.lock().unwrap()
 				.build_statement(&inp, &None, lkup.clone(), 
 					&ea, dummy_adv, 4, false).expect("build stmt fails"); 

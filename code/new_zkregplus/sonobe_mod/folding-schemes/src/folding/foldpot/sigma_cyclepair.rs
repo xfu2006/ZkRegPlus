@@ -427,6 +427,7 @@ where 	C: CurveGroup<ScalarField=F>,
 
 #[cfg(test)]
 pub mod tests_sigma_cyclepair{
+	use std::sync::Arc;
 	use crate::{
 		folding::{
 			foldpot::{
@@ -446,7 +447,7 @@ pub mod tests_sigma_cyclepair{
 	};
 	use ark_std::{UniformRand,test_rng,One,Zero};
 	use ark_ff::{PrimeField,ToConstraintField};
-	use std::{rc::{Rc}, cell::{RefCell}};
+	//use std::{rc::{Rc}, cell::{RefCell}};
 	use ark_relations::r1cs::{ConstraintSystem};
 	use ark_r1cs_std::{
 		R1CSVar,

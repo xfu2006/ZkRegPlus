@@ -2210,6 +2210,8 @@ pub mod tests_driver{
 		fields::{fp::FpVar},
 		R1CSVar, 
 	};
+	use std::{sync::Arc};
+
 
     use ark_bn254::{constraints::{GVar,PairingVar}, Bn254, Fr, G1Projective as Projective, G2Projective as ProjectiveG2};
     use ark_grumpkin::{constraints::GVar as GVar2, Projective as Projective2};
@@ -2263,7 +2265,7 @@ pub mod tests_driver{
 
 		/// set the container cfg. This is only needed for those gadgets
 		/// in SED approach
-		fn set_container_cfg(&mut self, _cfgs_context: Rc<Vec<ContainerConfig>>, _idx: usize){
+		fn set_container_cfg(&mut self, _cfgs_context: Arc<Vec<ContainerConfig>>, _idx: usize){
 			unimplemented!("not needed. handled by legacy code");
 		}
 
@@ -2382,7 +2384,7 @@ pub mod tests_driver{
 		/// the circuit
 		fn get_capacity(&self)->Arc<dyn Capacity + Send + Sync>{
 			let word_seg_len = self.max_word_len();
-			Rc::new(DummyCapacity{word_seg_len})
+			Arc::new(DummyCapacity{word_seg_len})
 		}
 
 		fn gen_nd_advice(&self, word: &Vec<F>, _word_info: &WordInfo,
@@ -2397,7 +2399,7 @@ pub mod tests_driver{
 							vec![(format!("w0_val%2==1 != b_odd"), word.len())])
 					)
 				}else{
-					Ok( Rc::new(DummyNdAdvice{}))
+					Ok( Arc::new(DummyNdAdvice{}))
 				}
 			}else{ 
 				Err( Error::CapErr(vec![(format!("max_word_len"), word.len())]))

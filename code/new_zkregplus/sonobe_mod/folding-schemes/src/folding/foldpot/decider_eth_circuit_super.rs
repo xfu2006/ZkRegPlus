@@ -747,6 +747,7 @@ where
 			>>();
 		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 1: generae r1cs_var. INCREASSED {} constraints", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
+		if b_debug{check_cs(&cs, "phase1 step 1.0");}
 
 		//2. generate Var version of pp_hash, z_0, z_i
 		// U_i, u_i, U_i1, given the advice from nova instance
@@ -777,6 +778,7 @@ where
         })?;
 		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 2: igen Ui, Wi, Ui1, Wi1 witness: INCREASED {} constraints", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
+		if b_debug{check_cs(&cs, "phase1 step 2.0");}
 
 		//3. compute the KZG challenge in circuit
 		let com_all_w = NonNativeAffineVar::<C1>::new_witness(cs.clone(),
@@ -799,12 +801,14 @@ where
 		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 3: collect all_w_e. len: {}, : INCREASED: {} constraints.", 
 			all_w.len(), cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
+		if b_debug{check_cs(&cs, "phase1 step 2");}
 
 		let one= FpVar::<C1::ScalarField>::new_witness(cs.clone(),  || 
 			Ok(C1::ScalarField::from(1u32)) ).unwrap();
         let eval_w_e= evaluate_gadget::<CF1<C1>>(all_w, kzg_all_com_ch, one)?;
 		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 4: eval all_w_e. INCREASED {} constrains.", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
+		if b_debug{check_cs(&cs, "phase1 step 3");}
 
         //4. u_i.cmE==cm(0), u_i.u==1
         // Here zero is the x & y coordinates of the 
@@ -814,6 +818,7 @@ where
         u_i.cmE.x.enforce_equal_unaligned(&zero)?;
         u_i.cmE.y.enforce_equal_unaligned(&zero)?;
         (u_i.u.is_one()?).enforce_equal(&Boolean::TRUE)?;
+		if b_debug{check_cs(&cs, "phase1 step 4");}
 
 
         //5. a u_i.x[0] == H(i, z_0, z_i, pc_i, U_i)
@@ -856,6 +861,7 @@ where
         (u_i.x[0]).enforce_equal(&is_basecase.select(&u_i1_x_base, &u_i_x)?)?;
 		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 5: Enforce u_i standard and hash. INCREASED r1cs: {}.", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
+		if b_debug{check_cs(&cs, "phase1 step 5");}
 
 		//6. Added check z_i is well-formed (and in-particular) its
 		//r matches kzg_c_lkup, and its sum_lk_col1, sum_lk_col2 matches
@@ -872,6 +878,7 @@ where
 		zi_p2.enforce_equal(&z_i[1])?;
 		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 6: verify zi_part2. INCREASED r1cs: {}, memory usage: {}.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 		c1 = cs.num_constraints();
+		if b_debug{check_cs(&cs, "phase1 step 6");}
 
 
         //7. check RelaxedR1CS of U_{i+1} for each circuit

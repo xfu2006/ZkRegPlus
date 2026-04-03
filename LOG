@@ -27223,9 +27223,7 @@ Goal 2. plan to parallel processing
 
 	===> AI tool with human assisting did the job (a lot of labor work
 		saved for propagating trait bounds etc)
-	===> COST: 1.7M pro model tokens.
-
--- TODO -- remove DEBUG USE 6901.1.x and 6901.2.x
+	===> COST: 1.7M pro model tokenslow rslow ruslow run
 
 == TODO ==: put constraint tesitng code there for small example
 == TODO -- find out which circuit is used. 

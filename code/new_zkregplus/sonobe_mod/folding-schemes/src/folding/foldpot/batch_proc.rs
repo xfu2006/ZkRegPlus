@@ -971,8 +971,9 @@ mod tests_batch_proc {
 
   //  use super::*;
    use crate::transcript::poseidon::poseidon_canonical_config;
-   use std::{rc::{Rc},cell::{RefCell}};
    use crate::folding::foldpot::{batch_proc::KZG};
+   use std::sync::Arc;
+
 
    #[test]
    fn batch_proc(){

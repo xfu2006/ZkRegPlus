@@ -1117,13 +1117,17 @@ impl<F: Field> ConstraintSystem<F> {
                     let trace;
                     #[cfg(feature = "std")]
                     {
-                        trace = self.constraint_traces[i].as_ref().map_or_else(
-                            || {
-                                eprintln!("Constraint trace requires enabling `ConstraintLayer`");
-                                format!("{}", i)
-                            },
-                            |t| format!("{}", t),
-                        );
+                        trace = if self.constraint_traces.len() > i {
+                            self.constraint_traces[i].as_ref().map_or_else(
+                                || {
+                                    eprintln!("Constraint trace requires enabling `ConstraintLayer` (or it was disabled by Xiang Fu)");
+                                    format!("{}", i)
+                                },
+                                |t| format!("{}", t),
+                            )
+                        } else {
+                            format!("{}", i)
+                        };
                     }
                     #[cfg(not(feature = "std"))]
                     {
