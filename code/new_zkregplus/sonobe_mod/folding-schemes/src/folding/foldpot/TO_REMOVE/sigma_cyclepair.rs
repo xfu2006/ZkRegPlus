@@ -2,7 +2,7 @@ use std::sync::Arc;
 /* Created 10/02/2024 */
 
 
-use std::{rc::Rc, cell::RefCell};
+use std::sync::{Arc, Mutex};
 use core::marker::PhantomData;
 use crate::commitment::CommitmentScheme;
 use crate::{
@@ -268,7 +268,7 @@ GadgetMapper<F,LK> for FoldPairMapper<F, LK>{
 	/// total: 12 + 3 + 5 + 12 + 2 + 2 + 2 + 2 = 40 field elements
 	fn max_word_len(&self)->usize{ 40 }
 
-	fn create_gadgets(&self) -> Vec<Rc<dyn SigmaGadget<F>>>{ 
+	fn create_gadgets(&self) -> Vec<Rc<dyn SigmaGadget<F> + Send + Sync>>{ 
 		let f_gadget= FoldPairGadget::<F>{_f:PhantomData};
 		vec![Rc::new(f_gadget)]
 	}

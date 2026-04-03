@@ -42,11 +42,11 @@ use folding_schemes::{
 		foldpot::{
 			sigma_ir1cs::{LookupTableTwoCol_Inst,SigmaIR1CS_Inst,WordInfo,SigmaIR1CS,LookupTableTwoCol},
 			from_field::{AffineFromField},
-			driver::{foldpot_main},
+			driver::{foldpot_main, FoldPotJob},
 		}
 	}
 };
-use std::{sync::Arc, rc::Rc, cell::RefCell};
+use std::sync::{Arc, Mutex};
 use crate::circs::{
 	composable_gadget_mapper::{CompositeGadgetMapper},
 	cp_mapper::{CpComponentMapper,CpCapacity},
@@ -183,7 +183,7 @@ fn build_circs_adv<F,C,CS>(
 					  //e.g., chunk_len:1024 means 31kb actual chunk length.
 					  //for 128kb chunk length it's chunk_len is 4130.
 	lkup_len: usize,
-	db: Rc<ClamavDB<F>>,
+	db: Arc<ClamavDB<F>>,
 	init_cp_capacity_cs: &CpCapacity,
 	init_sed_capacity_cs: &SedCapacity,
 	init_dfa_capacity: &DfaCapacity, //no cs/igc distinction
@@ -246,18 +246,18 @@ where C: CurveGroup<ScalarField=F>,
 			let hybrid_cgm1 =if dfa_cap.subsigs==0{
 				CompositeGadgetMapper::<F,LK<F>>::new("hybrid_cgm1",
 					vec![
-						Rc::new(RefCell::new(cp_cs)),
-						Rc::new(RefCell::new(cp_igc)),
-						Rc::new(RefCell::new(sed)),
+						Arc::new(Mutex::new(cp_cs)),
+						Arc::new(Mutex::new(cp_igc)),
+						Arc::new(Mutex::new(sed)),
 					]
 				)
 			}else{//including the dfa
 				CompositeGadgetMapper::<F,LK<F>>::new("hybrid_cgm1",
 					vec![
-						Rc::new(RefCell::new(cp_cs)),
-						Rc::new(RefCell::new(cp_igc)),
-						Rc::new(RefCell::new(sed)),
-						Rc::new(RefCell::new(dfa.unwrap())),
+						Arc::new(Mutex::new(cp_cs)),
+						Arc::new(Mutex::new(cp_igc)),
+						Arc::new(Mutex::new(sed)),
+						Arc::new(Mutex::new(dfa.unwrap())),
 					]
 				)
 			};
@@ -266,7 +266,7 @@ where C: CurveGroup<ScalarField=F>,
 			CompositeGadgetMapper<F,LK<F>> ,false> ::new_adv(
 				format!("circ_cat_{}_circ_{}", l1, l2), 
 				poseidon_config.clone(), 
-				Rc::new(RefCell::new(hybrid_cgm1)), 
+				Arc::new(Mutex::new(hybrid_cgm1)), 
 				false, //b_full_mode (whether supporting cyclepair - no for 
 						//regular circuit) 
 				lk_share,
@@ -307,7 +307,7 @@ where C: CurveGroup<ScalarField=F>,
 /// config, modify the local variables at the beginning of this function.
 /// DEPRECATED
 #[allow(dead_code)]
-fn build_circs<F,C,CS>(poseidon_config: &PoseidonConfig<F>, total_word_n: usize, lkup_len: usize, db: Rc<ClamavDB<F>>, b_check_lkup: bool ) 
+fn build_circs<F,C,CS>(poseidon_config: &PoseidonConfig<F>, total_word_n: usize, lkup_len: usize, db: Arc<ClamavDB<F>>, b_check_lkup: bool ) 
 ->Vec<Vec<FC<F,C,CS>>>
 where C: CurveGroup<ScalarField=F>,
 	  CS: CommitmentScheme<C,false>,
@@ -352,13 +352,13 @@ where C: CurveGroup<ScalarField=F>,
 	let comp2 = CpComponentMapper::<F,LK<F>>::new(cap2, db.clone(), b_igc);
 	let comp3 = CpComponentMapper::<F,LK<F>>::new(cap3, db.clone(), b_igc);
 	let comp4 = CpComponentMapper::<F,LK<F>>::new(cap4, db.clone(), b_igc);
-	let _cg4 = CompositeGadgetMapper::<F,LK<F>>::new("w4",vec![Rc::new(RefCell::new(comp4))]); 
-	let _cg3 = CompositeGadgetMapper::<F,LK<F>>::new("w3",vec![Rc::new(RefCell::new(comp3))]); 
-	let _cg2 = CompositeGadgetMapper::<F,LK<F>>::new("w2",vec![Rc::new(RefCell::new(comp2))]); 
+	let _cg4 = CompositeGadgetMapper::<F,LK<F>>::new("w4",vec![Arc::new(Mutex::new(comp4))]); 
+	let _cg3 = CompositeGadgetMapper::<F,LK<F>>::new("w3",vec![Arc::new(Mutex::new(comp3))]); 
+	let _cg2 = CompositeGadgetMapper::<F,LK<F>>::new("w2",vec![Arc::new(Mutex::new(comp2))]); 
 	*/
 	let cg1 = CompositeGadgetMapper::<F,LK<F>>::new("cp1",vec![
-		Rc::new(RefCell::new(comp1.clone())), 
-		Rc::new(RefCell::new(comp1_igc.clone())), 
+		Arc::new(Mutex::new(comp1.clone())), 
+		Arc::new(Mutex::new(comp1_igc.clone())), 
 	]); 
 	//println!("DEBUG USE 1001: lkup_len: {}, avg_lk_wd: {}, comp1 share size: {}", lkup_len, avg_lk_wd, cg1.max_word_len()*avg_lk_wd);
 
@@ -366,7 +366,7 @@ where C: CurveGroup<ScalarField=F>,
 	let scap1= SedCapacity::new(max_word, db.dfa_crit.state_part_bits, subsigs, 
 		avg_pats_per_subsig, avg_active_pats_per_subsig, basis_pats_in_trace, perc_pats_expansion_rate, sigs, perc_comp_subsigs, basis_unique_states, basis_acc_states);
 	let scomp1 = SedComponentMapper::<F,LK<F>>::new(scap1.clone(), scap1, db.clone());
-	//let scg1 = CompositeGadgetMapper::<F,LK<F>>::new("sed1",vec![Rc::new(RefCell::new(scomp1))]); 
+	//let scg1 = CompositeGadgetMapper::<F,LK<F>>::new("sed1",vec![Arc::new(Mutex::new(scomp1))]); 
 
 
 	let lk_share1 = max_word*avg_lk_wd;
@@ -376,24 +376,24 @@ where C: CurveGroup<ScalarField=F>,
 		CompositeGadgetMapper<F,LK<F>>
 		,false>
 		::new_adv(format!("c1"), poseidon_config.clone(), 
-			Rc::new(RefCell::new(cg1)), false, lk_share1,
+			Arc::new(Mutex::new(cg1)), false, lk_share1,
 			b_cyclepair, b_check_lkup).expect("c1");
 	/*
 	let _c2 = SigmaIR1CS_Inst::<F,C,CS,LK<F>,
 		CompositeGadgetMapper<F,LK<F>>
 		,false>
 		::new_adv(format!("c2"), poseidon_config.clone(), 
-			Rc::new(RefCell::new(_cg2)), false, lk_share2).expect("c2");
+			Arc::new(Mutex::new(_cg2)), false, lk_share2).expect("c2");
 	let _c3 = SigmaIR1CS_Inst::<F,C,CS,LK<F>,
 		CompositeGadgetMapper<F,LK<F>>
 		,false>
 		::new_adv(format!("c3"), poseidon_config.clone(), 
-			Rc::new(RefCell::new(_cg3)), false, lk_share2).expect("c3");
+			Arc::new(Mutex::new(_cg3)), false, lk_share2).expect("c3");
 	let _c4 = SigmaIR1CS_Inst::<F,C,CS,LK<F>,
 		CompositeGadgetMapper<F,LK<F>>
 		,false>
 		::new_adv(format!("c4"), poseidon_config.clone(), 
-			Rc::new(RefCell::new(_cg4)), false, lk_share2).expect("c4");
+			Arc::new(Mutex::new(_cg4)), false, lk_share2).expect("c4");
 	*/
 
 	//4. create sed instances
@@ -401,7 +401,7 @@ where C: CurveGroup<ScalarField=F>,
 	//	CompositeGadgetMapper<F,LK<F>>
 	//	,false>
 	//	::new_adv(format!("sc1"), poseidon_config.clone(), 
-	//		Rc::new(RefCell::new(scg1)), false, lk_share1).expect("sc1");
+	//		Arc::new(Mutex::new(scg1)), false, lk_share1).expect("sc1");
 
 	//5. create dfa components and instances
 	let sigs=3;
@@ -409,25 +409,25 @@ where C: CurveGroup<ScalarField=F>,
 	let d_cap1 = DfaCapacity::new(max_word, sigs, subsigs);
 	let dcomp1 = DfaComponentMapper::<F,LK<F>>::new(d_cap1, db.clone());
 	//let dcg1 = CompositeGadgetMapper::<F,LK<F>>::new("d1",
-	//	vec![Rc::new(RefCell::new(dcomp1))]);
+	//	vec![Arc::new(Mutex::new(dcomp1))]);
 	//let dc1 = SigmaIR1CS_Inst::<F,C,CS,LK<F>,
 	//	CompositeGadgetMapper<F,LK<F>>
 	//	,false>
 	//	::new_adv(format!("dfa1"), poseidon_config.clone(), 
-	//		Rc::new(RefCell::new(dcg1)), false, lk_share1).expect("dc1");
+	//		Arc::new(Mutex::new(dcg1)), false, lk_share1).expect("dc1");
 
 	let hybrid_cgm1 = CompositeGadgetMapper::<F,LK<F>>::new("hybrid_cgm1",
 		vec![
-			Rc::new(RefCell::new(comp1)),
-			Rc::new(RefCell::new(comp1_igc)),
-			Rc::new(RefCell::new(scomp1)),
-			Rc::new(RefCell::new(dcomp1)),
+			Arc::new(Mutex::new(comp1)),
+			Arc::new(Mutex::new(comp1_igc)),
+			Arc::new(Mutex::new(scomp1)),
+			Arc::new(Mutex::new(dcomp1)),
 		]);
 	let _hc1= SigmaIR1CS_Inst::<F,C,CS,LK<F>,
 		CompositeGadgetMapper<F,LK<F>>
 		,false>
 		::new_adv(format!("hc1"), poseidon_config.clone(), 
-			Rc::new(RefCell::new(hybrid_cgm1)), false, lk_share1,
+			Arc::new(Mutex::new(hybrid_cgm1)), false, lk_share1,
 			b_cyclepair, b_check_lkup).expect("hc1");
 
 	//vec![ vec![c4,c3], vec![c2,c1] ]
@@ -516,7 +516,7 @@ where
 	// re-use the capacity for BOTH cs and ignore_case
 	// this is usaully inefficient for ignore_case (but
 	// we do this for small samples for convenience)
-	zkp_driver_adv::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(sig_file, list_file_to_scan, _logfile,
+	zkp_driver_adv::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(sig_file, vec![list_file_to_scan.to_string()], _logfile,
 		b_read_cache, b_write_cache, cache_dir,
 		list_of_dfa_sigs, list_of_ised_sigs, list_of_ised_igc_sigs,
 		chunk_len,
@@ -528,7 +528,7 @@ where
 pub fn zkp_driver_adv<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + std::fmt::Debug + Clone, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, S> 
 (
 	sig_file: &str, 
-	list_file_to_scan: &str, 
+	list_files_to_scan: Vec<String>, 
 	_logfile: &str, 
 	b_read_cache: bool, 
 	b_write_cache: bool, 
@@ -607,16 +607,29 @@ where
 	log_perf(log_level, &format!("ZIP driver step 1: build DB."), &mut gt1);
 	
 	//2. load the files as vec of words
-	let (vec_words, vec_word_info, vec_word_fnames) = load_files::<CF1<C1>>(list_file_to_scan, &db, &cfg, b_read_cache, b_write_cache, cache_dir);
-	let total_word_len:usize = vec_words.iter().map(|w| w.len()).sum();
+	let mut max_total_word_len = 0;
+	let mut jobs = vec![];
+	for list_file_to_scan in list_files_to_scan{
+		let (vec_words, vec_word_info, vec_word_fnames) = load_files::<CF1<C1>>(&list_file_to_scan, &db, &cfg, b_read_cache, b_write_cache, cache_dir);
+		let total_word_len:usize = vec_words.iter().map(|w| w.len()).sum();
+		if total_word_len > max_total_word_len{
+			max_total_word_len = total_word_len;
+		}
+		jobs.push(FoldPotJob{
+			vec_words,
+			vec_word_info,
+			vec_word_fnames,
+			idx_individual_prf: 0,
+		});
+	}
 	let lkup_len = db.lkup.get_size();
-	log_perf(log_level, &format!("ZIP driver step 2: load words."), &mut gt1);
+	log_perf(log_level, &format!("ZIP driver step 2: load words and prepare {} jobs.", jobs.len()), &mut gt1);
 
 	//3. build the circuits
-	let rc_db = Rc::new(db.clone());
+	let rc_db = Arc::new(db.clone());
 	let vec_circs = build_circs_adv::<CF1<C1>,C1,CS1>(
 		&poseidon_config, 
-		total_word_len, 
+		max_total_word_len, 
 		chunk_len,
 		lkup_len, 
 		rc_db,
@@ -632,11 +645,10 @@ where
 	log_perf(log_level, &format!("ZIP driver step 2: build circs."), &mut gt1);
 
 	//4. run the foldpot_main
-	let sample_individual_prf = 0; //generate individual proof 1 (idx is 0)
 	let lkup = Arc::new(db.lkup);
 	foldpot_main::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,FC<CF1<C1>,C1,CS1>,
 		S,LK<CF1<C1>>,GM<CF1<C1>>, false>(
-		lkup, vec_circs, vec_words, vec_word_info, sample_individual_prf,vec_word_fnames).expect("main err");
+		lkup, vec_circs, jobs).expect("main err");
 
 }
 
@@ -804,7 +816,7 @@ pub mod tests_zkp_driver{
 
 		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
 			&format!("{}/sigs.dat",set1), //src sig
-			&format!("{}/binexec.dat",set1), //list of files to discharge
+			vec![format!("{}/binexec.dat",set1)], //list of files to discharge
 			"data/small_data_set/reports/report.dat", //report
 			b_read_cache,
 			b_write_cache,
@@ -963,7 +975,7 @@ pub mod tests_zkp_driver{
 
 		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
 			&format!("{}/sigs.dat",set1), //src sig
-			&format!("{}/binexec2.dat",set1), //list of files to discharge
+			vec![format!("{}/binexec2.dat",set1)], //list of files to discharge
 			"data/small_data_set/reports/small_data3.dat", //report
 			b_read_cache,
 			b_write_cache,
@@ -1188,7 +1200,7 @@ pub mod tests_zkp_driver{
 
 		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
 			&format!("{}/main.dat",set1), //src sig
-			&format!("{}/binexec_3.dat",set1), //list of files to discharge
+			vec![format!("{}/binexec_3.dat",set1)], //list of files to discharge
 			"data/debug/full_data_set/reports/report2.dat", //report
 			b_read_cache,
 			b_write_cache,
@@ -1285,8 +1297,8 @@ pub mod tests_zkp_driver{
 
         //just ranges allowed 0 to 8test one at a time
         //APPROACH 1:
-        let min = 1; //starting: 0
-        let max = 2; //max possible: 8
+        let min = 0; //starting: 0
+        let max = 1; //max possible: 8
 
         //APPROACH 2:
         //IF using min = 8, max=9 it uses binexec_4_9.dat (which
@@ -1297,7 +1309,7 @@ pub mod tests_zkp_driver{
 		for id in min..max{
 			zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
 				&format!("{}/main.dat",set1), //src sig
-				&format!("{}/binexec_4_{}.dat",set1, id+1), //list of files to discharge
+				vec![format!("{}/binexec_4_{}.dat",set1, id+1)], //list of files to discharge
 				"data/debug/full_data_set/reports/report2.dat", //report
 				b_read_cache,
 				b_write_cache,
@@ -1322,8 +1334,8 @@ pub mod tests_zkp_driver{
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
-		//small_data::<Fr>(b_check_lkup); //small data
-		small_data2::<Fr>(b_check_lkup);  //10k data 
+		small_data::<Fr>(b_check_lkup); //small data
+		//small_data2::<Fr>(b_check_lkup);  //10k data 
 		//small_data_debug::<Fr>(b_check_lkup);  //for debug
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//full_data1::<Fr>(b_check_lkup);

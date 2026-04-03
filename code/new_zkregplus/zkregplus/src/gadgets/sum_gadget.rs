@@ -2,7 +2,6 @@
 */
 
 use folding_schemes::folding::foldpot::container_config::ColEle;
-use std::rc::{Rc};
 use ark_ff::{PrimeField};
 use std::marker::{PhantomData};
 use folding_schemes::folding::foldpot::{
@@ -40,7 +39,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for SumWordGadget<F>{
 
 	/// set the container cfg. This is only needed for those gadgets
 	/// in SED approach
-	fn set_container_cfg(&mut self, _cfgs_context: Rc<Vec<ContainerConfig>>, _idx: usize){
+	fn set_container_cfg(&mut self, _cfgs_context: std::sync::Arc<Vec<ContainerConfig>>, _idx: usize){
 		unimplemented!("not needed. handled by legacy code");
 	}
 

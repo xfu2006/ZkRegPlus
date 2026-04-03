@@ -122,9 +122,9 @@ where
         f().and_then(|val| {
             let cs = cs.into();
 
-            let A = SparseMatrixVar::<F, CF, FV>::new_constant(cs.clone(), &val.borrow().A)?;
-            let B = SparseMatrixVar::<F, CF, FV>::new_constant(cs.clone(), &val.borrow().B)?;
-            let C = SparseMatrixVar::<F, CF, FV>::new_constant(cs.clone(), &val.borrow().C)?;
+            let A = SparseMatrixVar::<F, CF, FV>::new_constant(cs.clone(), &val.lock().unwrap().A)?;
+            let B = SparseMatrixVar::<F, CF, FV>::new_constant(cs.clone(), &val.lock().unwrap().B)?;
+            let C = SparseMatrixVar::<F, CF, FV>::new_constant(cs.clone(), &val.lock().unwrap().C)?;
 
             Ok(Self {
                 _f: PhantomData,
@@ -164,17 +164,17 @@ where
             let cs = cs.into();
 
             let E: Vec<FpVar<C::ScalarField>> =
-                Vec::new_variable(cs.clone(), || Ok(val.borrow().E.clone()), mode)?;
+                Vec::new_variable(cs.clone(), || Ok(val.lock().unwrap().E.clone()), mode)?;
             let rE =
-                FpVar::<C::ScalarField>::new_variable(cs.clone(), || Ok(val.borrow().rE), mode)?;
+                FpVar::<C::ScalarField>::new_variable(cs.clone(), || Ok(val.lock().unwrap().rE), mode)?;
 
             let W: Vec<FpVar<C::ScalarField>> =
-                Vec::new_variable(cs.clone(), || Ok(val.borrow().W.clone()), mode)?;
+                Vec::new_variable(cs.clone(), || Ok(val.lock().unwrap().W.clone()), mode)?;
             let rW =
-                FpVar::<C::ScalarField>::new_variable(cs.clone(), || Ok(val.borrow().rW), mode)?;
+                FpVar::<C::ScalarField>::new_variable(cs.clone(), || Ok(val.lock().unwrap().rW), mode)?;
             let rF =
-                FpVar::<C::ScalarField>::new_variable(cs.clone(), || Ok(val.borrow().rF), mode)?;
-			let size_F = val.borrow().size_F;
+                FpVar::<C::ScalarField>::new_variable(cs.clone(), || Ok(val.lock().unwrap().rF), mode)?;
+			let size_F = val.lock().unwrap().size_F;
 
             Ok(Self {E, rE, W, rW, size_F, rF})
         })
@@ -209,11 +209,11 @@ where
         f().and_then(|val| {
             let cs = cs.into();
 
-            let E = Vec::new_variable(cs.clone(), || Ok(val.borrow().E.clone()), mode)?;
-            let rE = NonNativeUintVar::new_variable(cs.clone(), || Ok(val.borrow().rE), mode)?;
+            let E = Vec::new_variable(cs.clone(), || Ok(val.lock().unwrap().E.clone()), mode)?;
+            let rE = NonNativeUintVar::new_variable(cs.clone(), || Ok(val.lock().unwrap().rE), mode)?;
 
-            let W = Vec::new_variable(cs.clone(), || Ok(val.borrow().W.clone()), mode)?;
-            let rW = NonNativeUintVar::new_variable(cs.clone(), || Ok(val.borrow().rW), mode)?;
+            let W = Vec::new_variable(cs.clone(), || Ok(val.lock().unwrap().W.clone()), mode)?;
+            let rW = NonNativeUintVar::new_variable(cs.clone(), || Ok(val.lock().unwrap().rW), mode)?;
 
             Ok(Self { E, rE, W, rW })
         })
@@ -375,7 +375,7 @@ where
 		let kzg_challenge_lkup = nova.z0_part2_inst.r;
 		println!("DEBUG USE 707: nova.z0Part2.r: {}, zi_part2.r: {}", nova.z0_part2_inst.r, nova.zi_part2_inst.r);
 		let (col1_raw, col2_raw) = nova.lk_tbl.expect("lookup table null!")
-			.as_ref().borrow().get_cols();
+			.as_ref().lock().unwrap().get_cols();
 		let (lkup_col1_rev,lkup_col2_rev)
 			: (Vec<C1::ScalarField>, Vec<C1::ScalarField>) 
 			= (col1_raw.iter().rev().map(|x| *x).collect(), 
@@ -786,7 +786,7 @@ pub mod tests {
 		sigma_ir1cs::{SigmaIR1CS_Inst,StatementInst,ZiPartTwoInst},
 		sigma_ir1cs::tests::{SixRootMapper, gen_six_root},
 	};
-	use std::{rc::Rc, cell::RefCell};
+	use std::sync::{Arc, Mutex};
 
 
     #[test]

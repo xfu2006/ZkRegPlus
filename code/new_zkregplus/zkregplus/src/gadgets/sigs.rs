@@ -1,7 +1,6 @@
 /* Created 03/06/2025, completed 03/11/2025 */
 use folding_schemes::folding::foldpot::container_config::ColEle;
 use utils::{consts::ADD_CHAIN_SIZE};
-use std::rc::{Rc};
 use rayon::iter::{
 	ParallelIterator,
 	IntoParallelIterator,
@@ -806,7 +805,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for GetSigGadget<F>{
 
 	/// set the container cfg. This is only needed for those gadgets
 	/// in SED approach
-	fn set_container_cfg(&mut self, _cfgs_context: Rc<Vec<ContainerConfig>>, _idx: usize){
+	fn set_container_cfg(&mut self, _cfgs_context: std::sync::Arc<Vec<ContainerConfig>>, _idx: usize){
 		unimplemented!("not needed. handled by legacy code");
 	}
 
@@ -1245,7 +1244,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for GetSigGadget<F>{
 
 #[cfg(test)]
 pub mod tests_sigs_gadget{
-	use std::{rc::Rc};
+	use std::{sync::Arc};
 	use std::collections::{HashMap,HashSet};
 	use ark_bn254::{Fr};
 	use ark_std::{Zero,One};
@@ -1282,7 +1281,7 @@ pub mod tests_sigs_gadget{
 		};
 			
 		let gadget= GetSigGadget::<Fr>::new(&capacity, fsm_id);
-		let rg = Rc::new(gadget);
+		let rg = Arc::new(gadget);
 
 		//2. build the advice
 		let inp= vec![ //sigs

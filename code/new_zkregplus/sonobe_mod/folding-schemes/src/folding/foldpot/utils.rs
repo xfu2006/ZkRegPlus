@@ -591,7 +591,7 @@ pub fn check_logup<F:PrimeField>(
 		(r_val+x).inverse().expect("inv err")
 	).collect::<Vec<F>>();
 	// unfortunately ConstraintSystemRef can't be sent to Rayon threads safely
-	// because it uses Rc<RefCell<ConstraintSystem>>. We have to use
+	// because it uses Arc<Mutex<ConstraintSystem>>. We have to use
 	// iter() here. Cost is about 500ms for 2^20 variables in testing mode
 	// probably in release mode for 50ms.
 	let qry_inv = qry_inv_val.iter().map(|x| FpVar::new_witness(

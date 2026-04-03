@@ -17,7 +17,7 @@
 // ---------------------------------------------
 use ark_ff::{PrimeField,Zero};
 use ark_relations::r1cs::SynthesisError;
-use std::{rc::Rc,cell::RefCell,fmt::Debug};
+use std::{sync::{Arc, Mutex}, fmt::Debug};
 use std::collections::{HashMap};
 use folding_schemes::{
 	folding::foldpot::{
@@ -64,17 +64,17 @@ pub struct Col<F: Clone + ColEle>{
 #[derive(Clone,Debug)]
 pub enum Container<F: Clone + ColEle>{
 	/// mode 1: single item 
-	Single(Rc<RefCell<Col<F>>>),
+	Single(std::sync::Arc<std::sync::Mutex<Col<F>>>),
 	/// mode 2: a collection of containers
-	Complex(Vec<Rc<RefCell<Container<F>>>>, HashMap<String,usize>, String, String),
+	Complex(Vec<std::sync::Arc<std::sync::Mutex<Container<F>>>>, HashMap<String,usize>, String, String),
 }
 
 /// Represents a component's Advice (used for SED components, the other
 /// gadgets/components stay with legacy code)
-pub trait ComponentAdvice<F:PrimeField + ColEle>: Debug{
+pub trait ComponentAdvice<F:PrimeField + ColEle>: Debug + Send + Sync{
 	/// generate the <inp,oup,data,subtbl_id_inp,subtbl_id_oup,subtbl_id_data>
 	fn gen_stmt_components(&self)-> Vec<Vec<F>>{
-		self.get_container().borrow().gen_stmt_components().0
+		self.get_container().lock().unwrap().gen_stmt_components().0
 	}
 
 
@@ -83,10 +83,10 @@ pub trait ComponentAdvice<F:PrimeField + ColEle>: Debug{
 	/// NOTE that the config has relative references (qry strings).
 	/// component mapper will run another round to resolve query strings.
 	fn gen_raw_container_config(&self)->ContainerConfig{
-		self.get_container().borrow().get_cfg()
+		self.get_container().lock().unwrap().get_cfg()
 	}
 
-	fn get_container(&self)->Rc<RefCell<Container<F>>>;
+	fn get_container(&self)->std::sync::Arc<std::sync::Mutex<Container<F>>>;
 }
 
 use folding_schemes::folding::foldpot::container_config::ColEle;
@@ -104,7 +104,7 @@ impl <F: Clone + Zero + ColEle> Col<F>{
 	//Task 1: I just introduced a new parameter debug_ele
 	//Please fix all call functions that calls it and pass a simle  None to it.
 	pub fn new(data: Vec<F>, name: &str, idx_seg: usize)
-	->Rc<RefCell<Self>>{
+	->std::sync::Arc<std::sync::Mutex<Self>>{
 		let b_debug = false;
 		if b_debug{
 			for x in &data{
@@ -122,7 +122,7 @@ impl <F: Clone + Zero + ColEle> Col<F>{
 		let cfg = ContainerConfig::Column(loc, name.to_string(), 
 			format!("{} {}", name.clone(), name), b_const); 
 			//path can be later updated
-		Rc::new(RefCell::new(Self{data, cfg, b_const: b_const}))
+		Arc::new(Mutex::new(Self{data, cfg, b_const: b_const}))
 	}
 }
 
@@ -130,7 +130,7 @@ impl <F: Clone + ColEle> Col<F>{
 	//MAKE sure data all elements are the same. We cannot 
 	//test it in the function (adding PartialEq will coz too many changes)
 	pub fn new_const(data: Vec<F>, name: &str, idx_seg: usize)
-	->Rc<RefCell<Self>>{
+	->std::sync::Arc<std::sync::Mutex<Self>>{
 		let b_debug = false;
 		if b_debug{
 			for x in &data{
@@ -146,7 +146,7 @@ impl <F: Clone + ColEle> Col<F>{
 		let cfg = ContainerConfig::Column(loc, name.to_string(), 
 			format!("{} {}", name.clone(), name), b_const ); 
 				//path can be later updated
-		Rc::new(RefCell::new(Self{data, cfg, b_const}))
+		Arc::new(Mutex::new(Self{data, cfg, b_const}))
 	}
 
 	/// construct a foreign column. Still provides the data,
@@ -156,7 +156,7 @@ impl <F: Clone + ColEle> Col<F>{
 	/// column's location should be FIXED (cannot be later added to another
 	/// container) when this function is called.
 	pub fn new_external(data: Vec<F>, name: &str, idx_seg: usize,
-		gadget_offset: i32, qry_str: &str)->Rc<RefCell<Self>>{
+		gadget_offset: i32, qry_str: &str)->std::sync::Arc<std::sync::Mutex<Self>>{
 		let loc = Location{src:(gadget_offset,idx_seg,0,data.len(), 
 			qry_str.to_string(), false), 
 			dest: None};
@@ -165,7 +165,7 @@ impl <F: Clone + ColEle> Col<F>{
 		let cfg = ContainerConfig::Column(loc, name.to_string(),
 			format!("{} {}", name.clone(), name), b_const); 
 				//path later to be updated
-		Rc::new(RefCell::new(Self{data, cfg, b_const}))
+		Arc::new(Mutex::new(Self{data, cfg, b_const}))
 	}
 
 	/// generate the <inp,oup,data,subtbl_id_inp,subtbl_id_oup,subtbl_id_data,
@@ -210,11 +210,11 @@ impl <F: Clone + ColEle> Container<F>{
 	pub fn name(&self)->String{self.get_name()}
 
 	/// returning the  i'th layer1 element of complex, or itself for Single
-	pub fn get_container_by_idx(&self, i: usize)->Rc<RefCell<Container<F>>>{
+	pub fn get_container_by_idx(&self, i: usize)->std::sync::Arc<std::sync::Mutex<Container<F>>>{
 		match self{
 			Container::Single(_) =>{
 				assert!(i==0, "single only supports i=0");
-				Rc::new(RefCell::new(self.clone()))
+				Arc::new(Mutex::new(self.clone()))
 			},
 			Container::Complex(vec,_,_,_)=>{
 				assert!(i<vec.len());
@@ -224,20 +224,20 @@ impl <F: Clone + ColEle> Container<F>{
 	}
 
 	/// constructor. The name must be one word. Path will be determined later.
-	pub fn new(name: &str)->Rc<RefCell<Self>>{
-		Rc::new(RefCell::new(Container::Complex(vec![], HashMap::new(), 
+	pub fn new(name: &str)->std::sync::Arc<std::sync::Mutex<Self>>{
+		Arc::new(Mutex::new(Container::Complex(vec![], HashMap::new(), 
 			name.to_string(), name.to_string())))
 	}
 
-	pub fn new_single(col: Rc<RefCell<Col<F>>>)
-	->Rc<RefCell<Self>>{
-		Rc::new(RefCell::new(Container::Single(col)))
+	pub fn new_single(col: std::sync::Arc<std::sync::Mutex<Col<F>>>)
+	->std::sync::Arc<std::sync::Mutex<Self>>{
+		Arc::new(Mutex::new(Container::Single(col)))
 	}
 
 	/// return its name 
 	pub fn get_name(&self)->String{
 		match self{
-			Container::Single(rc_col)=>rc_col.borrow().cfg.get_name(),
+			Container::Single(rc_col)=>rc_col.lock().unwrap().cfg.get_name(),
 			Container::Complex(_,_,name,_)=>name.to_string()
 		}
 	}
@@ -247,14 +247,14 @@ impl <F: Clone + ColEle> Container<F>{
 	/// replaced as a child of another container.
 	pub fn get_path(&self)->String{
 		match self{
-			Container::Single(rc_col)=>rc_col.borrow().cfg.get_path(),
+			Container::Single(rc_col)=>rc_col.lock().unwrap().cfg.get_path(),
 			Container::Complex(_,_,_,path)=>path.to_string()
 		}
 	}
 
 	/// insert the column (assumption no conflicts of names)
-	pub fn add_col(&mut self, rc_col: Rc<RefCell<Col<F>>>){
-		let single = Rc::new(RefCell::new(Container::Single(rc_col)));
+	pub fn add_col(&mut self, rc_col: std::sync::Arc<std::sync::Mutex<Col<F>>>){
+		let single = Arc::new(Mutex::new(Container::Single(rc_col)));
 		self.add_container(single);
 	}
 
@@ -262,21 +262,21 @@ impl <F: Clone + ColEle> Container<F>{
 	pub fn to_vec(&self)->Vec<F>{
 		match self{
 			Container::Complex(vec,_map,_,_)=>{
-				vec.iter().map(|x| x.borrow().to_vec()).flatten()
+				vec.iter().map(|x| x.lock().unwrap().to_vec()).flatten()
 					.collect::<Vec<F>>()
 			},
 			Container::Single(col) =>{
-				col.borrow().data.clone()
+				col.lock().unwrap().data.clone()
 			}
 		}
 	}
 
 	/// add a collection of cols
-	pub fn concat_cols(cols: Vec<Rc<RefCell<Col<F>>>>, name: &str)
-	->Rc<RefCell<Self>>{
+	pub fn concat_cols(cols: Vec<std::sync::Arc<std::sync::Mutex<Col<F>>>>, name: &str)
+	->std::sync::Arc<std::sync::Mutex<Self>>{
 		let res = Self::new(name);
 		//not costing as clone Rc
-		for x in cols {res.borrow_mut().add_col(x.clone());} 
+		for x in cols {res.lock().unwrap().add_col(x.clone());} 
 	
 		res
 	}
@@ -287,24 +287,24 @@ impl <F: Clone + ColEle> Container<F>{
 	pub fn reset_path(&mut self, parent_path: &String){
 		match self{
 			Container::Single(ref mut col)=>{
-				col.borrow_mut().cfg.reset_path(parent_path);
+				col.lock().unwrap().cfg.reset_path(parent_path);
 			},
 			Container::Complex(ref mut vec, _, name, ref mut path)=>{
 				let new_path = format!("{} {}", parent_path, name);
 				*path = new_path.clone();
 				vec.iter().for_each(|v| 
-					v.borrow_mut().reset_path(&new_path));
+					v.lock().unwrap().reset_path(&new_path));
 			}
 		}
 	}
 
 	/// add a given container
-	pub fn add_container(&mut self, cont: Rc<RefCell<Container<F>>>){
+	pub fn add_container(&mut self, cont: std::sync::Arc<std::sync::Mutex<Container<F>>>){
 		let my_path = self.get_path();
-		cont.borrow_mut().reset_path(&my_path);
+		cont.lock().unwrap().reset_path(&my_path);
 		match self{
 			Container::Complex(vec, map, _, _)=>{
-				let name = cont.borrow().get_name();
+				let name = cont.lock().unwrap().get_name();
 				assert!(!map.contains_key(&name), "name: {} exists!", name);
 				vec.push(cont);
 				let id = vec.len()-1;
@@ -339,10 +339,10 @@ impl <F: Clone + ColEle> Container<F>{
 				let new_map = map.clone();
 				for ele in vec{
 					let path = format!("{} {}", 
-						exist_qry, ele.borrow().get_name());
-					let new_ele = ele.borrow().duplicate_as_external(
+						exist_qry, ele.lock().unwrap().get_name());
+					let new_ele = ele.lock().unwrap().duplicate_as_external(
 						gid_offset, Some(path));
-					new_vec.push(Rc::new(RefCell::new(new_ele)));
+					new_vec.push(Arc::new(Mutex::new(new_ele)));
 				}
 				let name2=if new_name.is_some(){new_name.unwrap()} 
 					else {name.to_string()};
@@ -350,7 +350,7 @@ impl <F: Clone + ColEle> Container<F>{
 			},
 			Container::Single(rc_col)=>{
 				//make it an EXTERNAL column
-				let new_cfg= match &rc_col.borrow().cfg{
+				let new_cfg= match &rc_col.lock().unwrap().cfg{
 					ContainerConfig::Column(loc, name, _, b_const)=> {
 						//two cases to handle: (1) it's ALREADY an external col,
 						//(2) it's a real DATA col.
@@ -382,10 +382,10 @@ impl <F: Clone + ColEle> Container<F>{
 					},
 					_ => panic!("cannot handle complex")
 				};
-				let new_rc_col = Rc::new(RefCell::new(Col{
-					data: rc_col.borrow().data.clone(),
+				let new_rc_col = Arc::new(Mutex::new(Col{
+					data: rc_col.lock().unwrap().data.clone(),
 					cfg: new_cfg,
-					b_const: rc_col.borrow().b_const,
+					b_const: rc_col.lock().unwrap().b_const,
 				}));
 				Container::Single(new_rc_col)
 			}
@@ -394,9 +394,9 @@ impl <F: Clone + ColEle> Container<F>{
 
 
 	/// return the column by name, only do one level search.
-	pub fn get_col(&self, name: &str)->Result<Rc<RefCell<Col<F>>>, 
+	pub fn get_col(&self, name: &str)->Result<std::sync::Arc<std::sync::Mutex<Col<F>>>, 
 		SynthesisError>{
-		match *self.get_container(name)?.borrow(){
+		match *self.get_container(name)?.lock().unwrap(){
 			Container::Single(ref col) => Ok( col.clone() ),
 			_ => panic!("expecting single col")
 		}
@@ -404,7 +404,7 @@ impl <F: Clone + ColEle> Container<F>{
 	}
 
 	/// return the container by name, only do one level search.
-	pub fn get_container(&self, name: &str)->Result<Rc<RefCell<Container<F>>>, SynthesisError>{
+	pub fn get_container(&self, name: &str)->Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, SynthesisError>{
 		let name = format!("{}", name);
 		match self{
 			Container::Complex(vec, map, _, _)=>{
@@ -425,14 +425,14 @@ impl <F: Clone + ColEle> Container<F>{
 	pub fn search_container(
 		&self, 
 		qry: &str //absolute path separated by space
-	)->Result<Rc<RefCell<Container<F>>>, SynthesisError>{
+	)->Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, SynthesisError>{
 		let vec_names = qry.split_whitespace().map(|x|
             x.to_string()).collect::<Vec<String>>();
 		Ok( self.search_container_worker(&vec_names[0..])? )
 	}
 
 	fn search_container_worker(&self, qry_words: &[String])
-	->Result<Rc<RefCell<Container<F>>>, SynthesisError>{
+	->Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, SynthesisError>{
 		
 		assert!(&qry_words[0] == &self.get_name(), "search_container fails: cannot find qry_wd[0]: {}, self: {}", qry_words[0], self.get_name());
 		match self{
@@ -444,7 +444,7 @@ impl <F: Clone + ColEle> Container<F>{
 				if qry_words.len()==2{
 					Ok(vec[*id].clone()) //does not cost anything for Rc clone
 				}else{
-					Ok(	vec[*id].borrow().search_container_worker(&new_qry)? )
+					Ok(	vec[*id].lock().unwrap().search_container_worker(&new_qry)? )
 				}
 			}
 		}
@@ -455,11 +455,11 @@ impl <F: Clone + ColEle> Container<F>{
 	/// on b_rec is true)
 	pub fn get_cfg(&self)->ContainerConfig{
 		match self{
-			Container::Single(rc_col)=>{rc_col.borrow().cfg.clone()},
+			Container::Single(rc_col)=>{rc_col.lock().unwrap().cfg.clone()},
 			Container::Complex(vec_con, _map, _, _)=>{
 				let name = self.get_name();
 				let path = self.get_path();
-				let vec_cfg = vec_con.iter().map(|x| x.borrow().get_cfg())
+				let vec_cfg = vec_con.iter().map(|x| x.lock().unwrap().get_cfg())
 					.collect::<Vec<ContainerConfig>>();
 				ContainerConfig::Complex(vec_cfg, name, path)
 			}
@@ -471,13 +471,13 @@ impl <F: Clone + ColEle> Container<F>{
 	pub fn gen_stmt_components(&self)->(Vec<Vec<F>>, Vec<(usize,bool)>){
 		match self{
 			Container::Single(rc_col) => {
-				rc_col.borrow().gen_stmt_components()
+				rc_col.lock().unwrap().gen_stmt_components()
 			},
 			Container::Complex(vec_container,_,_,_) =>  {
 				vec_container.iter().fold(
 					(vec![vec![]; 8], vec![]),
 					|sum, adv|{
-						let (cps, sid_info)=adv.borrow().gen_stmt_components();
+						let (cps, sid_info)=adv.lock().unwrap().gen_stmt_components();
 						assert!(cps.len()==8);
 						let new_cps = sum.0.into_iter().zip(
 							cps.into_iter()).map(|(a,b)|{
@@ -501,7 +501,7 @@ impl <F: Clone + ColEle> Container<F>{
 			Container::Single(_)=> println!("{}{}",indent_str,self.get_name()),
 			Container::Complex(vec,_,_,_)=>{
 				println!("{}{}",indent_str,self.get_name());
-				for x in vec{x.borrow().dump_structure(indent+1);}
+				for x in vec{x.lock().unwrap().dump_structure(indent+1);}
 			}
 		}
 	}
@@ -527,8 +527,8 @@ impl <F: PrimeField + ColEle> Container<FpVar<F>>{
 
 	/// return Rc<RefCell> version of from()
 	pub fn rc_from(src: &Container<F>, cs:ConstraintSystemRef<F>)
-	-> Rc<RefCell<Self>>{
-		Rc::new(RefCell::new(Self::from(src, cs)))
+	-> std::sync::Arc<std::sync::Mutex<Self>>{
+		Arc::new(Mutex::new(Self::from(src, cs)))
 	}
 
 	/// convert the var version from the field version of the container
@@ -537,15 +537,15 @@ impl <F: PrimeField + ColEle> Container<FpVar<F>>{
 		match src{
 			Container::Single(rc_col) => {
 				let col = Col::<FpVar<F>>{
-					data: vec_to_var(&cs, &rc_col.borrow().data),
-					cfg: rc_col.borrow().cfg.clone(),
-					b_const: rc_col.borrow().b_const,
+					data: vec_to_var(&cs, &rc_col.lock().unwrap().data),
+					cfg: rc_col.lock().unwrap().cfg.clone(),
+					b_const: rc_col.lock().unwrap().b_const,
 				};
-				Container::Single(Rc::new(RefCell::new(col)))
+				Container::Single(Arc::new(Mutex::new(col)))
 			},
 			Container::Complex(vec, map, name, path)=>{
 				let new_vec = vec.iter().map(|c|
-					Rc::new(RefCell::new(Self::from(&c.borrow(), cs.clone())))
+					Arc::new(Mutex::new(Self::from(&c.lock().unwrap(), cs.clone())))
 				).collect();
 				Container::Complex(new_vec, map.clone(),
 					name.clone(), path.clone())
@@ -568,7 +568,7 @@ impl <F: PrimeField + ColEle> Container<FpVar<F>>{
 					b_const: *b_const
 				};
 				Ok( 
-				 (Container::Single(Rc::new(RefCell::new(col))),start_pos+len) 
+				 (Container::Single(Arc::new(Mutex::new(col))),start_pos+len) 
 				)
 			},
 			ContainerConfig::Complex(vloc,myname,mypath)=>{
@@ -579,7 +579,7 @@ impl <F: PrimeField + ColEle> Container<FpVar<F>>{
 					let (comp, new_pos) = Self
 						::load_from_worker(stmt_vec, &vloc[i], pos)?;
 					pos = new_pos;
-					vec_comp.push(Rc::new(RefCell::new(comp)));
+					vec_comp.push(Arc::new(Mutex::new(comp)));
 					let comp_name = vloc[i].get_name();
 					assert!(!hs.contains_key(&comp_name), 
 						"component name {} already exists", comp_name);
@@ -621,27 +621,27 @@ pub mod tests_traits{
 		let col1 = Col::<Fr>::new(vec![Fr::from(2u32);10], "col1", IDX_DATA); 
 		let sid_col1 = Col::<Fr>::new_const(vec![Fr::from(20u32);10], "scol1", IDX_SI_DATA);
 		let c1 = Container::<Fr>::new("c1");
-		c1.borrow_mut().add_col(col1);
-		c1.borrow_mut().add_col(sid_col1);
+		c1.lock().unwrap().add_col(col1);
+		c1.lock().unwrap().add_col(sid_col1);
 
 		let col21 = Col::<Fr>::new(vec![Fr::from(3u32);10], "col21", IDX_DATA); 
 		let sid_col21 = Col::<Fr>::new(vec![Fr::from(30u32);20], "scol21", IDX_SI_DATA);
 		let c2 = Container::<Fr>::new("c2");
-		c2.borrow_mut().add_col(col21);
-		c2.borrow_mut().add_col(sid_col21);
+		c2.lock().unwrap().add_col(col21);
+		c2.lock().unwrap().add_col(sid_col21);
 
 		let col31 = Col::<Fr>::new_const(vec![Fr::from(4u32);10], "col21", IDX_INP); 
 		let sid_col31 = Col::<Fr>::new(vec![Fr::from(40u32);10], "scol21", IDX_SI_INP);
 		let c3 = Container::<Fr>::new("c3");
-		c3.borrow_mut().add_col(col31);
-		c3.borrow_mut().add_col(sid_col31);
+		c3.lock().unwrap().add_col(col31);
+		c3.lock().unwrap().add_col(sid_col31);
 
 		let all = Container::<Fr>::new("all");
-		all.borrow_mut().add_container(c1);
-		all.borrow_mut().add_container(c2);
-		all.borrow_mut().add_container(c3);
+		all.lock().unwrap().add_container(c1);
+		all.lock().unwrap().add_container(c2);
+		all.lock().unwrap().add_container(c3);
 
-		let (_cps, sinfo) = all.borrow().gen_stmt_components();
+		let (_cps, sinfo) = all.lock().unwrap().gen_stmt_components();
 		assert!(sinfo==vec![(10, true), (20, false)]);
 	}
 }

@@ -27170,6 +27170,39 @@ stack backtrace:
 note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
 test zkp_driver::tests_zkp_driver::test_zkreg_main ... FAILED
 	[b] they are equal!
+------------------
+OG4: -- -- --  Phase 1 - Pass 3. END prove steps for word_id: 2, fname: data/samples/binexec_merged128k/anthoscli__00, word_len: 31.90 MB.  29 ms
+LOG2: --  Phase 1 step 6: PROVE STEPS done for n_steps: 527. total_word_len: 1079098. RAM increased: 0 MB. Total RAM: 79 GB. 17763929 ms
+LOG2: --  Phase 1 step 7: verify.  2685 ms
+LOG1:  FoldPot: Step 3: Phase 1: main circuits IVC PROVE STEPS (Folding) DONE. total_word_len: 31.90 MB, steps: 527. 23292434 ms
+LOG3: -- --  Phase1 Circ gen_cs: Step 1: generae r1cs_var. INCREASSED 0 constraints 8989 ms
+LOG3: -- --  Phase1 Circ gen_cs: Step 2: igen Ui, Wi, Ui1, Wi1 witness: INCREASED 4698 constraints 4225 ms
+LOG3: -- --  Phase1 Circ gen_cs: Step 3: collect all_w_e. len: 30634007, : INCREASED: 3285 constraints. 2518 ms
+LOG3: -- --  Phase1 Circ gen_cs: Step 4: eval all_w_e. INCREASED 30663923 constrains. 16243 ms
+LOG3: -- --  Phase1 Circ gen_cs: Step 5: Enforce u_i standard and hash. INCREASED r1cs: 5179. 3451 ms
+LOG3: -- --  Phase1 Circ gen_cs: Step 6: verify zi_part2. INCREASED r1cs: 1498, memory usage: 108. 1034 ms
+LOG3: -- --  Phase1 Circ gen_cs: Step 7: check 1 circs. INCREASED r1cs: 35634713 45428 ms
+thread 'zkp_driver::tests_zkp_driver::test_zkreg_main' panicked at /home/xiang/Desktop/NewResearch/Projects/ZkRegPlus/code/new_zkregplus/dependency/ark-relations/src/r1cs/constraint_system.rs:1120:55:
+index out of bounds: the len is 0 but the index is 57497481
+tack backtrace:
+   0: rust_begin_unwind
+             at /rustc/07dca489ac2d933c78d3c5158e3f43beefeb02ce/library/std/src/panicking.rs:645:5
+   1: core::panicking::panic_fmt
+             at /rustc/07dca489ac2d933c78d3c5158e3f43beefeb02ce/library/core/src/panicking.rs:72:14
+   2: core::panicking::panic_bounds_check
+             at /rustc/07dca489ac2d933c78d3c5158e3f43beefeb02ce/library/core/src/panicking.rs:208:5
+   3: ark_relations::r1cs::constraint_system::ConstraintSystemRef<F>::is_satisfied
+   4: folding_schemes::folding::foldpot::utils::check_cs
+   5: folding_schemes::folding::foldpot::decider_eth_circuit_super::Phase1Circuit<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,LK,GM,_>::generate_constraints_adv
+   6: folding_schemes::folding::foldpot::decider_eth_circuit_super::MainDeciderCircuit<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,LK,GM,_>::from_nova
+   7: folding_schemes::folding::foldpot::driver::foldpot_main
+   8: zkregplus::zkp_driver::zkp_driver_adv
+   9: core::ops::function::FnOnce::call_once
+  10: core::ops::function::FnOnce::call_once
+             at /rustc/07dca489ac2d933c78d3c5158e3f43beefeb02ce/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+test zkp_driver::tests_zkp_driver::test_zkreg_main ... FAILED
+------------------
 
 Goal 2. plan to parallel processing
 	Plan below

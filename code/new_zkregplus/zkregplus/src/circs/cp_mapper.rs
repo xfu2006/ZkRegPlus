@@ -39,8 +39,8 @@ use folding_schemes::folding::foldpot::container_config::ColEle;
 use utils::{logger::{log, log_perf, LOG1, LOG7,LOG_LEVEL}, timer::Timer };
 use std::{
 	marker::PhantomData,
-	rc::{Rc}, sync::{Arc},
-	cell::{RefCell},
+	sync::{Arc, Mutex},
+	
 	fmt::{Debug},
 	collections::{HashMap},
 };
@@ -152,7 +152,7 @@ impl Capacity for CpCapacity{
 	/// Self represents the capacity of the circuit, other
 	/// represents the capacity requirement of a discharge proof (NdAdvice)
 	/// It is essentially a comparison operation.
-	fn can_satisfy(&self, r_other: &Rc<dyn Capacity>) -> bool{
+	fn can_satisfy(&self, r_other: &Arc<dyn Capacity + Send + Sync>) -> bool{
 		let other = r_other.as_any().downcast_ref::<CpCapacity>()
 			.expect("downcast err"); 
 
@@ -164,9 +164,9 @@ impl Capacity for CpCapacity{
 	}
 
 	/// to get around the requirement on Clone trait which require Sized
-	/// (which cause trouble why use dyn Capacity in Rc),
-	fn clone(&self) -> Rc<dyn Capacity>{
-		Rc::new(CpCapacity{
+	/// (which cause trouble why use dyn Capacity + Send + Sync in Rc),
+	fn clone(&self) -> Arc<dyn Capacity + Send + Sync>{
+		Arc::new(CpCapacity{
 			max_word_len: self.max_word_len,
 			basis_unique_states: self.basis_unique_states,
 			subsigs: self.subsigs,
@@ -317,10 +317,10 @@ pub struct CpComponentMapper<F:PrimeField + ColEle, LK: LookupTableTwoCol<F>>{
 	pub b_igc: bool,
 
 	/// its own gadgets 
-	pub gadgets: Vec<Rc<RefCell<dyn SigmaGadget<F>>>>,
+	pub gadgets: Vec<std::sync::Arc<std::sync::Mutex<dyn SigmaGadget<F> + Send + Sync>>>,
 
 	/// clamdb
-	pub clamdb: Rc<ClamavDB<F>>,
+	pub clamdb: Arc<ClamavDB<F>>,
 }
 
 impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CpComponentMapper<F,LK>{
@@ -329,7 +329,7 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CpComponentMapper<F,LK>{
 
 	pub fn new(
 		cp_capacity: CpCapacity,
-		clamdb: Rc<ClamavDB<F>>,
+		clamdb: Arc<ClamavDB<F>>,
 		b_igc: bool //whether it's for ignore case ACDFA
 	) ->Self{
 		//1. build the gadgets
@@ -352,11 +352,11 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CpComponentMapper<F,LK>{
 			count_sig_no_crit_pat: clamdb.vec_sigs_no_critical_pat.len(),  
 		};
 		let sig_gadget= GetSigGadget::<F>::new(&sig_cap, fsm_id);
-		let gadgets: Vec<Rc<RefCell<dyn SigmaGadget<F>>>> = vec![ 
-			Rc::new(RefCell::new(g_extract)), //word -> nibbles
-			Rc::new(RefCell::new(dfa_crit)), //run through dfa_crit
-			Rc::new(RefCell::new(pack_crit)), //pack trace to final states
-			Rc::new(RefCell::new(sig_gadget)), //generate signatures
+		let gadgets: Vec<std::sync::Arc<std::sync::Mutex<dyn SigmaGadget<F> + Send + Sync>>> = vec![ 
+			Arc::new(Mutex::new(g_extract)), //word -> nibbles
+			Arc::new(Mutex::new(dfa_crit)), //run through dfa_crit
+			Arc::new(Mutex::new(pack_crit)), //pack trace to final states
+			Arc::new(Mutex::new(sig_gadget)), //generate signatures
 		];
 		assert!(clamdb.as_ref().vec_sigs_no_critical_pat.len()
 			<sig_buf_capacity,
@@ -381,18 +381,18 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CpComponentMapper<F,LK>{
 
 }
 
-impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for CpComponentMapper<F,LK>{
-	fn set_container_config(&mut self, _r_advice: &Rc<dyn NdAdvice>){ 
+impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F> + Send + Sync> ComponentMapper<F,LK> for CpComponentMapper<F,LK>{
+	fn set_container_config(&mut self, _r_advice: &Arc<dyn NdAdvice + Send + Sync>){ 
 		// no need to handle for legacy code.
 	}
 
 	fn get_name(&self)->String{format!("CpMapper")}
 
-	fn get_capacity(&self)->Rc<dyn Capacity>{
-		Rc::new( Clone::clone(&self.capacity) )
+	fn get_capacity(&self)->Arc<dyn Capacity + Send + Sync>{
+		Arc::new( Clone::clone(&self.capacity) )
 	}
 
-	fn create_gadgets(&self) -> Vec<Rc<RefCell<dyn SigmaGadget<F>>>>{  
+	fn create_gadgets(&self) -> Vec<std::sync::Arc<std::sync::Mutex<dyn SigmaGadget<F> + Send + Sync>>>{  
 		self.gadgets.clone()
 	}
 
@@ -489,8 +489,8 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 	}
 
 	fn gen_nd_advice(&self, word: &Vec<F>, _word_info: &WordInfo,
-		prev_adv: Option<Rc<dyn NdAdvice>>, _seg_id: usize)
-		->Result<Rc<dyn NdAdvice>, Error>{
+		prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>>, _seg_id: usize)
+		->Result<Arc<dyn NdAdvice + Send + Sync>, Error>{
 		//1. expand to full length
 		let (zero,one) = (F::zero(),F::one());
 		let mut rem_word = vec![F::zero(); self.max_word_len() - word.len()];
@@ -558,7 +558,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 			&vec_sig_id_no_crit_pat,
 		)?;
 
-		Ok( Rc::new(advice) )
+		Ok( Arc::new(advice) )
 	}
 
 
@@ -598,7 +598,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 		let we = vec![(s_wd, e_wd), (s_data, s_data + wlen*LEGS),
 			(s_subtbl_data, s_subtbl_data + wlen*LEGS)];
 		let we_len = we.iter().map(|x| x.1-x.0+1).sum::<usize>();
-		assert!(we_len==self.gadgets[0].borrow().get_msg_size().0);
+		assert!(we_len==self.gadgets[0].lock().unwrap().get_msg_size().0);
 		vec_res.push(we);
 
 
@@ -672,7 +672,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 		let sig_st_oup_len = slen;
 		#[cfg(test)]{
 			let sig_gadget = &self.gadgets[3];
-			let (stmt_len,_,_,_) = sig_gadget.borrow().get_msg_size();
+			let (stmt_len,_,_,_) = sig_gadget.lock().unwrap().get_msg_size();
 			assert!( stmt_len == 
 				slen + slen + 
 				sig_data_len+olen + 
@@ -763,7 +763,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 	/// the the comp_id for the 2nd is 1, and its stmt_map_id is 2. (idx
 	/// starting from 0). For conveneince, we sometimes use
 	/// the prev_stmt or the vector of its prev_stmt.
-	fn build_statement_comp(&self, _comp_id: usize, _stmt_map_id: usize, word_seg: &Vec<F>, actual_word_len: usize, _lkup: &Arc<LK>, _extra_info: &StatementExtraInfo<F>, advice: &Rc<dyn NdAdvice>, _cfg: &StatementConfig, _stmt_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>{
+	fn build_statement_comp(&self, _comp_id: usize, _stmt_map_id: usize, word_seg: &Vec<F>, actual_word_len: usize, _lkup: &Arc<LK>, _extra_info: &StatementExtraInfo<F>, advice: &Arc<dyn NdAdvice + Send + Sync>, _cfg: &StatementConfig, _stmt_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>{
 		let log_level = LOG7;
 		let b_perf = log_level >= LOG_LEVEL;
 

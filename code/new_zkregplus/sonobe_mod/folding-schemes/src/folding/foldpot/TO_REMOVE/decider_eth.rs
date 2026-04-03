@@ -422,7 +422,7 @@ pub mod tests {
     use ark_bn254::{constraints::GVar, Fr, G1Projective as Projective};
     use ark_grumpkin::{constraints::GVar as GVar2, Projective as Projective2};
     use std::time::Instant;
-	use std::{rc::Rc, cell::RefCell};
+	use std::sync::{Arc, Mutex};
 
     use super::*;
     use crate::commitment::pedersen::Pedersen;

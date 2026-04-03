@@ -4,7 +4,6 @@
 
 
 use folding_schemes::folding::foldpot::container_config::ColEle;
-use std::rc::{Rc};
 use rayon::iter::{ParallelIterator, IndexedParallelIterator,IntoParallelRefIterator};
 use data_processor::clam_db::RANGE2;
 use ark_ff::{PrimeField};
@@ -87,7 +86,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for PackFinalGadget<F>{
 
 	/// set the container cfg. This is only needed for those gadgets
 	/// in SED approach
-	fn set_container_cfg(&mut self, _cfgs_context: Rc<Vec<ContainerConfig>>, _idx: usize){
+	fn set_container_cfg(&mut self, _cfgs_context: std::sync::Arc<Vec<ContainerConfig>>, _idx: usize){
 		unimplemented!("not needed. handled by legacy code");
 	}
 
@@ -540,7 +539,7 @@ impl <F: PrimeField + ColEle> PackFinalAdvice<F>{
 
 #[cfg(test)]
 pub mod tests_pack_gadget{
-	use std::{rc::Rc};
+	use std::{sync::Arc};
 	use ark_bn254::{Fr};
 	use crate::gadgets::pack::{PackFinalGadget,PackFinalAdvice};
 	use crate::gadgets::word_extract::tests_word_extract_gadget::test_gadget;
@@ -569,7 +568,7 @@ pub mod tests_pack_gadget{
 		}
 		let gadget= PackFinalGadget::<Fr>
 			::new(inp_states.len(), imm_buf_len, capacity, msf_id);
-		let rg = Rc::new(gadget);
+		let rg = Arc::new(gadget);
 
 		//2. build the advice
 		let mut adv = 

@@ -1,6 +1,6 @@
 /* Created 04/10/2025 */
 
-/*! The module provides a number of structs and functions
+/*  The module provides a number of structs and functions
 related to relational database (mostly join, projection operations).
 We have two cateogries of functions:
 (1) create_prf(claim)->Container. Which generates proof for some claim.
@@ -20,7 +20,7 @@ We have two cateogries of functions:
 */
 
 use folding_schemes::folding::foldpot::container_config::ColEle;
-use std::{rc::{Rc}, cell::{RefCell},collections::{HashSet,HashMap}};
+use std::{collections::{HashSet,HashMap}};
 use ark_ff::{PrimeField};
 use crate::gadgets::{traits::{Container,Col,IDX_DATA, IDX_SI_DATA}};
 use ark_r1cs_std::{R1CSVar,alloc::AllocVar, eq::EqGadget,fields::FieldVar};
@@ -86,7 +86,7 @@ pub fn assert_logup<F:PrimeField + ColEle>(
 		(r_val+x).inverse().expect("inv err")
 	).collect::<Vec<F>>();
 	// unfortunately ConstraintSystemRef can't be sent to Rayon threads safely
-	// because it uses Rc<RefCell<ConstraintSystem>>. We have to use
+	// because it uses std::sync::Arc<std::sync::Mutex<ConstraintSystem>>. We have to use
 	// iter() here. Cost is about 500ms for 2^20 variables in testing mode
 	// probably in release mode for 50ms.
 	let qry_inv = qry_inv_val.iter().map(|x| FpVar::new_witness(
@@ -132,7 +132,7 @@ pub fn assert_logup_cond<F:PrimeField + ColEle>(
 		(r_val+x).inverse().expect("inv err")
 	).collect::<Vec<F>>();
 	// unfortunately ConstraintSystemRef can't be sent to Rayon threads safely
-	// because it uses Rc<RefCell<ConstraintSystem>>. We have to use
+	// because it uses std::sync::Arc<std::sync::Mutex<ConstraintSystem>>. We have to use
 	// iter() here. Cost is about 500ms for 2^20 variables in testing mode
 	// probably in release mode for 50ms.
 	let qry_inv_raw = qry_inv_val.iter().map(|x| FpVar::new_witness(
@@ -204,7 +204,7 @@ pub fn verify_encoded_table<F:PrimeField + ColEle>(
 ///
 /// COST: 3n
 pub fn assert_wide_wellformed<F:PrimeField + ColEle>(
-	tbl: &Rc<RefCell<Container<FpVar<F>>>>,
+	tbl: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
 	keycol_name: &str, //default it's "key" but can be something else
 ) ->Result<(),SynthesisError>{
 	let b_perf = false;
@@ -213,14 +213,14 @@ pub fn assert_wide_wellformed<F:PrimeField + ColEle>(
 	let mut gt = Timer::new();
 
 	//1. get the key, val, diff_val col
-	let key = tbl.borrow().get_container(keycol_name)
-		.unwrap().borrow().to_vec();
+	let key = tbl.lock().unwrap().get_container(keycol_name)
+		.unwrap().lock().unwrap().to_vec();
 	let n = key.len();
 	assert!(n>0);
 	let cs = key[0].cs();
-	let val = tbl.borrow().get_container("val").unwrap().borrow().to_vec();
-	let id = tbl.borrow().get_container("id").unwrap().borrow().to_vec();
-	let count = tbl.borrow().get_container("count").unwrap().borrow().to_vec();
+	let val = tbl.lock().unwrap().get_container("val").unwrap().lock().unwrap().to_vec();
+	let id = tbl.lock().unwrap().get_container("id").unwrap().lock().unwrap().to_vec();
+	let count = tbl.lock().unwrap().get_container("count").unwrap().lock().unwrap().to_vec();
 	assert!(n>0 && val.len()==n && id.len()==n && count.len()==n);
 	let nc = cs.num_constraints();
 
@@ -558,13 +558,13 @@ pub fn assert_well_formed_sorted_adv<F:PrimeField + ColEle>(
 /// We simply labor each element as in RANGE2 (for positive).
 /// NOTE that zero is regarded as padding value.
 pub fn col_to_sorted_set<F:PrimeField + ColEle>(
-	col: &Rc<RefCell<Container<F>>>,  //container to a vec
+	col: &std::sync::Arc<std::sync::Mutex<Container<F>>>,  //container to a vec
 	target_n: usize, //target set size
 	name: &str, //name of container
-) ->Rc<RefCell<Container<F>>>{
+) ->std::sync::Arc<std::sync::Mutex<Container<F>>>{
 	//0. prepare data
 	let res = Container::new(name);
-	res.borrow_mut().add_container(col.clone());
+	res.lock().unwrap().add_container(col.clone());
 	let max_val:usize = (1<<RANGE2_BIT) - 1; //state_part_bit is RANGE2_BIT
 	let max = F::from(max_val as u32);
 	let zero = F::zero();
@@ -573,7 +573,7 @@ pub fn col_to_sorted_set<F:PrimeField + ColEle>(
 	// the sorted_src which is zero padded at the beginning
 	let max_val:usize = (1<<RANGE2_BIT) - 1;
 	let max2 = F::from(max_val as u32);
-	let src = col.borrow().to_vec();
+	let src = col.lock().unwrap().to_vec();
 	let mut set_src = src.par_iter().filter(|x| !x.is_zero() && **x!=max2)
 		.map(|x| x.clone()).collect::<HashSet<F>>()
 		.par_iter().map(|x| x.clone()).collect::<Vec<F>>();
@@ -607,7 +607,7 @@ pub fn col_to_sorted_set<F:PrimeField + ColEle>(
 	let names = vec!["id", "sorted_val", "diff", "mtbl_1"];
 	let lens = vec![target_n, target_n, target_n-1, target_n, src_len+2];
 	let cols = vec2d.into_iter().zip(names.clone().into_iter()).map(|(c,n)|
-		Col::new(c, n, IDX_DATA)).collect::<Vec<Rc<RefCell<Col<F>>>>>();
+		Col::new(c, n, IDX_DATA)).collect::<Vec<std::sync::Arc<std::sync::Mutex<Col<F>>>>>();
 	let f_rg2= F::from(RANGE2);
 	let vec2d_sid = vec![ 
 		vec![f_rg2; target_n],  //sid
@@ -617,14 +617,14 @@ pub fn col_to_sorted_set<F:PrimeField + ColEle>(
 	];
 	let cols_sid = vec2d_sid.into_iter().zip(names.into_iter()).map(|(c,n)|
 		Col::new(c, &format!("sid_{}",n), IDX_SI_DATA))
-		.collect::<Vec<Rc<RefCell<Col<F>>>>>();
+		.collect::<Vec<std::sync::Arc<std::sync::Mutex<Col<F>>>>>();
 	for i in 0..cols.len(){
-		assert!(cols[i].borrow().data.len()==lens[i]);
-		assert!(cols_sid[i].borrow().data.len()==lens[i]);
+		assert!(cols[i].lock().unwrap().data.len()==lens[i]);
+		assert!(cols_sid[i].lock().unwrap().data.len()==lens[i]);
 	}
 	let to_add = vec![cols, cols_sid].concat();
 	//adding clone of Rc does not cost much
-	for i in 0..to_add.len() {res.borrow_mut().add_col(to_add[i].clone());}
+	for i in 0..to_add.len() {res.lock().unwrap().add_col(to_add[i].clone());}
 
 	res
 }
@@ -685,16 +685,16 @@ pub fn verify_col_to_sorted_set<F:PrimeField + ColEle>(
 ) -> Result<(), SynthesisError>{
 	//1. retrieve the src data colomn and other cols
 	let src_data = c.get_container_by_idx(0); 
-	let src_col = src_data.borrow().to_vec();
-	let id = c.get_container("id")?.borrow().to_vec();
-	let sorted_val = c.get_container("sorted_val")?.borrow().to_vec();
-	let diff = c.get_container("diff")?.borrow().to_vec();
-	let mtbl_1= c.get_container("mtbl_1")?.borrow().to_vec();
-	//let sid_id = c.get_container("sid_id")?.borrow().to_vec();
-	//let sid_sorted_val = c.get_container("sid_sorted_val")?.borrow().to_vec();
-	//let sid_diff = c.get_container("sid_diff")?.borrow().to_vec();
-	//let sid_mtbl_1= c.get_container("sid_mtbl_1")?.borrow().to_vec();
-	//let sid_mtbl_2= c.get_container("sid_mtbl_2")?.borrow().to_vec();
+	let src_col = src_data.lock().unwrap().to_vec();
+	let id = c.get_container("id")?.lock().unwrap().to_vec();
+	let sorted_val = c.get_container("sorted_val")?.lock().unwrap().to_vec();
+	let diff = c.get_container("diff")?.lock().unwrap().to_vec();
+	let mtbl_1= c.get_container("mtbl_1")?.lock().unwrap().to_vec();
+	//let sid_id = c.get_container("sid_id")?.lock().unwrap().to_vec();
+	//let sid_sorted_val = c.get_container("sid_sorted_val")?.lock().unwrap().to_vec();
+	//let sid_diff = c.get_container("sid_diff")?.lock().unwrap().to_vec();
+	//let sid_mtbl_1= c.get_container("sid_mtbl_1")?.lock().unwrap().to_vec();
+	//let sid_mtbl_2= c.get_container("sid_mtbl_2")?.lock().unwrap().to_vec();
 
 	//2. check the sid columns (all in RANGE2): cost 4m+n
 	//NO need to check as these are constants
@@ -759,7 +759,7 @@ pub fn verify_col_to_sorted_set<F:PrimeField + ColEle>(
 pub fn prove_filter_tag<F:PrimeField + ColEle>(
 	key: &Vec<F>, sorted_key: &Vec<F>, tags: &Vec<F>,
 	unique_key_size: usize,
-) -> Result<Rc<RefCell<Container<F>>>, Error>{
+) -> Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 	//0. check data
 	let (_n, m, k) = (key.len(), unique_key_size, sorted_key.len());
 	#[cfg(test)]{
@@ -824,18 +824,18 @@ pub fn prove_filter_tag<F:PrimeField + ColEle>(
 	let (zero,rg2) = (F::zero(), F::from(RANGE2));
 	assert!(no_key.len()==m && union_key.len()==m+k 
 		&& union_key_diff.len()==m+k-1);
-	prf.borrow_mut().add_col(Col::new(no_key, "no_key", IDX_DATA));
-	prf.borrow_mut().add_col(Col::new_const(
+	prf.lock().unwrap().add_col(Col::new(no_key, "no_key", IDX_DATA));
+	prf.lock().unwrap().add_col(Col::new_const(
 		vec![rg2;m], "si_no_key", IDX_SI_DATA));
-	prf.borrow_mut().add_col(Col::new(union_key, "union_key", IDX_DATA));
-	prf.borrow_mut().add_col(Col::new_const(vec![rg2;m+k], 
+	prf.lock().unwrap().add_col(Col::new(union_key, "union_key", IDX_DATA));
+	prf.lock().unwrap().add_col(Col::new_const(vec![rg2;m+k], 
 		"si_union_key", IDX_SI_DATA));
-	prf.borrow_mut().add_col(Col::new(union_key_diff, 
+	prf.lock().unwrap().add_col(Col::new(union_key_diff, 
 		"union_key_diff", IDX_DATA));
-	prf.borrow_mut().add_col(Col::new_const(vec![rg2;m+k-1], 
+	prf.lock().unwrap().add_col(Col::new_const(vec![rg2;m+k-1], 
 		"si_union_key_diff", IDX_SI_DATA));
-	prf.borrow_mut().add_col(Col::new(m_tbl, "m_tbl", IDX_DATA));
-	prf.borrow_mut().add_col(Col::new_const(vec![zero;m+k], 
+	prf.lock().unwrap().add_col(Col::new(m_tbl, "m_tbl", IDX_DATA));
+	prf.lock().unwrap().add_col(Col::new_const(vec![zero;m+k], 
 		"si_m_tbl", IDX_SI_DATA));
 
 	Ok(prf)
@@ -848,7 +848,7 @@ pub fn prove_filter_tag<F:PrimeField + ColEle>(
 /// = 2n + 7m + 10k
 pub fn verify_filter_tag<F:PrimeField + ColEle>(
 	key: &Vec<FpVar<F>>, sorted_key: &Vec<FpVar<F>>, tags: &Vec<FpVar<F>>,
-	prf: &Rc<RefCell<Container<FpVar<F>>>>,
+	prf: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
 	r1: &FpVar<F>,
 	r2: &FpVar<F>
 )->Result<(), SynthesisError>{
@@ -858,7 +858,7 @@ pub fn verify_filter_tag<F:PrimeField + ColEle>(
 
 	//1-2. retrieve neg_key and union key
 	let cols = ["no_key", "union_key", "union_key_diff", "m_tbl"].iter().map(|n|
-		prf.borrow().get_container(n).unwrap().borrow().to_vec())
+		prf.lock().unwrap().get_container(n).unwrap().lock().unwrap().to_vec())
 		.collect::<Vec<_>>();
 	let (no_key, union_key, union_key_diff, m_tbl) = (&cols[0],
 		&cols[1], &cols[2], &cols[3]);
@@ -941,15 +941,15 @@ pub fn verify_filter_tag<F:PrimeField + ColEle>(
 ///
 /// might through CapErr("unique_key_size", "target_size")
 pub fn tbl_filtered_to_sorted_tbl<F:PrimeField + ColEle>(
-	key: &Rc<RefCell<Container<F>>>,
-	val: &Rc<RefCell<Container<F>>>,
-	sorted_set_key: &Rc<RefCell<Container<F>>>, //the sorted_set bundle
+	key: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
+	val: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
+	sorted_set_key: &std::sync::Arc<std::sync::Mutex<Container<F>>>, //the sorted_set bundle
 		//this is used to FILTER the (key,val) pair, e.g., key has
 		//states, but sorted_set_key has FINAL STATES only.
 	target_size: usize,
 	name: &str, //the name of the new container bundle
 	unique_key_size: usize, //when pack key to unique set, what's the size
-) -> Result<Rc<RefCell<Container<F>>>, Error>{
+) -> Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 	let b_new = true;
 	if b_new{
 		tbl_filtered_to_sorted_tbl_new(key,val,sorted_set_key,target_size,name,
@@ -961,25 +961,25 @@ pub fn tbl_filtered_to_sorted_tbl<F:PrimeField + ColEle>(
 
 // new approach: We first provie a 
 pub fn tbl_filtered_to_sorted_tbl_new<F:PrimeField + ColEle>(
-	key: &Rc<RefCell<Container<F>>>,
-	val: &Rc<RefCell<Container<F>>>,
-	sorted_set_key: &Rc<RefCell<Container<F>>>, //the sorted_set bundle
+	key: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
+	val: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
+	sorted_set_key: &std::sync::Arc<std::sync::Mutex<Container<F>>>, //the sorted_set bundle
 		//this is used to FILTER the (key,val) pair, e.g., key has
 		//states, but sorted_set_key has FINAL STATES only.
 	target_size: usize,
 	name: &str, //the name of the new container bundle
 	unique_key_size: usize, //when pack key to unique set, what's the size
-) -> Result<Rc<RefCell<Container<F>>>, Error>{
+) -> Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 	let res = Container::<F>::new(name);
 	let sorted_tbl = Container::new("sorted_tbl");
 
 	//Part I. establish the tag column to indicate
 	//whether the key is in sorted_key_set (filter)
 	//1.1 extract the data columns
-	let keys = key.borrow().to_vec(); 
-	let vals = val.borrow().to_vec(); 
-	let proj_keys = sorted_set_key.borrow().get_container(
-		"sorted_val")?.borrow().to_vec();
+	let keys = key.lock().unwrap().to_vec(); 
+	let vals = val.lock().unwrap().to_vec(); 
+	let proj_keys = sorted_set_key.lock().unwrap().get_container(
+		"sorted_val")?.lock().unwrap().to_vec();
 
 	let (m,n,_k) = (keys.len(), target_size, proj_keys.len());
 	assert!(vals.len()==m);
@@ -1044,26 +1044,26 @@ pub fn tbl_filtered_to_sorted_tbl_new<F:PrimeField + ColEle>(
 
 	//5. return (make sure data col and its sid col are added in
 	// the right order).
-	res.borrow_mut().add_col(Col::new(tags, "tags", IDX_DATA));
-	res.borrow_mut().add_col(Col::new_const(si_tags, "si_tags", IDX_SI_DATA));
-	res.borrow_mut().add_container(prf_tag);
+	res.lock().unwrap().add_col(Col::new(tags, "tags", IDX_DATA));
+	res.lock().unwrap().add_col(Col::new_const(si_tags, "si_tags", IDX_SI_DATA));
+	res.lock().unwrap().add_container(prf_tag);
 
-	sorted_tbl.borrow_mut().add_col(Col::new(packed_key,"packed_key",IDX_DATA));
-	sorted_tbl.borrow_mut().add_col(Col::new(packed_id,"packed_id",IDX_DATA));
-	sorted_tbl.borrow_mut().add_col(Col::new(packed_val,"packed_val",IDX_DATA));
+	sorted_tbl.lock().unwrap().add_col(Col::new(packed_key,"packed_key",IDX_DATA));
+	sorted_tbl.lock().unwrap().add_col(Col::new(packed_id,"packed_id",IDX_DATA));
+	sorted_tbl.lock().unwrap().add_col(Col::new(packed_val,"packed_val",IDX_DATA));
 	assert!(tbl_names.len()==3);
 	for i in 0..tbl_names.len(){
-		sorted_tbl.borrow_mut().add_col(Col::new_const(vec![f_rg; n],
+		sorted_tbl.lock().unwrap().add_col(Col::new_const(vec![f_rg; n],
 			&format!("sid_{}", tbl_names[i]), IDX_SI_DATA));
 	}
 
 
-	sorted_tbl.borrow_mut().add_col(Col::new(diff_key,"diff_key",IDX_DATA));
-	sorted_tbl.borrow_mut().add_col(Col::new_const(sid_diff_key, "sid_diff_key", IDX_SI_DATA));
-	sorted_tbl.borrow_mut().add_col(Col::new(packed_diff,"packed_diff"
+	sorted_tbl.lock().unwrap().add_col(Col::new(diff_key,"diff_key",IDX_DATA));
+	sorted_tbl.lock().unwrap().add_col(Col::new_const(sid_diff_key, "sid_diff_key", IDX_SI_DATA));
+	sorted_tbl.lock().unwrap().add_col(Col::new(packed_diff,"packed_diff"
 		,IDX_DATA));
-	sorted_tbl.borrow_mut().add_col(Col::new_const(sid_packed_diff, "sid_packed_diff", IDX_SI_DATA));//this one is not const
-	res.borrow_mut().add_container(sorted_tbl);
+	sorted_tbl.lock().unwrap().add_col(Col::new_const(sid_packed_diff, "sid_packed_diff", IDX_SI_DATA));//this one is not const
+	res.lock().unwrap().add_container(sorted_tbl);
 
 	Ok(res)
 }
@@ -1071,25 +1071,25 @@ pub fn tbl_filtered_to_sorted_tbl_new<F:PrimeField + ColEle>(
 
 //old version more costly
 pub fn tbl_filtered_to_sorted_tbl_old<F:PrimeField + ColEle>(
-	key: &Rc<RefCell<Container<F>>>,
-	val: &Rc<RefCell<Container<F>>>,
-	sorted_set_key: &Rc<RefCell<Container<F>>>, //the sorted_set bundle
+	key: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
+	val: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
+	sorted_set_key: &std::sync::Arc<std::sync::Mutex<Container<F>>>, //the sorted_set bundle
 		//this is used to FILTER the (key,val) pair, e.g., key has
 		//states, but sorted_set_key has FINAL STATES only.
 	target_size: usize,
 	name: &str, //the name of the new container bundle
-) -> Result<Rc<RefCell<Container<F>>>, Error>{
+) -> Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 	let res = Container::new(name);
 	let sorted_tbl = Container::new("sorted_tbl");
 	let prf = Container::new("prf");
 
 	//1. extract the data columns
-	let keys = key.borrow().to_vec(); 
-	let vals = val.borrow().to_vec(); 
-	let proj_ids = sorted_set_key.borrow().get_container(
-		"id")?.borrow().to_vec();
-	let proj_keys = sorted_set_key.borrow().get_container(
-		"sorted_val")?.borrow().to_vec();
+	let keys = key.lock().unwrap().to_vec(); 
+	let vals = val.lock().unwrap().to_vec(); 
+	let proj_ids = sorted_set_key.lock().unwrap().get_container(
+		"id")?.lock().unwrap().to_vec();
+	let proj_keys = sorted_set_key.lock().unwrap().get_container(
+		"sorted_val")?.lock().unwrap().to_vec();
 
 	let (m,n,k) = (keys.len(), target_size, proj_keys.len());
 	assert!(vals.len()==m);
@@ -1183,19 +1183,19 @@ pub fn tbl_filtered_to_sorted_tbl_old<F:PrimeField + ColEle>(
 	assert!(packed_diff.len()==sid_packed_diff.len());
 	assert!(diff_key.len()==sid_diff_key.len());
 
-	sorted_tbl.borrow_mut().add_col(Col::new(packed_key,"packed_key",IDX_DATA));
-	sorted_tbl.borrow_mut().add_col(Col::new(packed_id,"packed_id",IDX_DATA));
-	sorted_tbl.borrow_mut().add_col(Col::new(packed_val,"packed_val",IDX_DATA));
+	sorted_tbl.lock().unwrap().add_col(Col::new(packed_key,"packed_key",IDX_DATA));
+	sorted_tbl.lock().unwrap().add_col(Col::new(packed_id,"packed_id",IDX_DATA));
+	sorted_tbl.lock().unwrap().add_col(Col::new(packed_val,"packed_val",IDX_DATA));
 	assert!(tbl_names.len()==3);
 	for i in 0..tbl_names.len(){
-		prf.borrow_mut().add_col(Col::new(vec![f_rg; n],
+		prf.lock().unwrap().add_col(Col::new(vec![f_rg; n],
 			&format!("sid_{}", tbl_names[i]), IDX_SI_DATA));
 	}
-	sorted_tbl.borrow_mut().add_col(Col::new(packed_diff,"packed_diff"
+	sorted_tbl.lock().unwrap().add_col(Col::new(packed_diff,"packed_diff"
 		,IDX_DATA));
-	sorted_tbl.borrow_mut().add_col(Col::new(diff_key,"diff_key",IDX_DATA));
-	prf.borrow_mut().add_col(Col::new(sid_packed_diff, "sid_packed_diff", IDX_SI_DATA));
-	prf.borrow_mut().add_col(Col::new(sid_diff_key, "sid_diff_key", IDX_SI_DATA));
+	sorted_tbl.lock().unwrap().add_col(Col::new(diff_key,"diff_key",IDX_DATA));
+	prf.lock().unwrap().add_col(Col::new(sid_packed_diff, "sid_packed_diff", IDX_SI_DATA));
+	prf.lock().unwrap().add_col(Col::new(sid_diff_key, "sid_diff_key", IDX_SI_DATA));
 
 	//4. build the prf part for filtering
 	let cols = cols_prf_src.into_iter().zip(names.iter()).map(|(c,n)|{
@@ -1204,8 +1204,8 @@ pub fn tbl_filtered_to_sorted_tbl_old<F:PrimeField + ColEle>(
 		(Col::new(c, n, IDX_DATA), Col::new(sid_vec, &sid_name, IDX_SI_DATA))
 	}).collect::<Vec<_>>();
 	for i in 0..cols.len(){
-		prf.borrow_mut().add_col(cols[i].0.clone()); //clone rc low cost
-		prf.borrow_mut().add_col(cols[i].1.clone());
+		prf.lock().unwrap().add_col(cols[i].0.clone()); //clone rc low cost
+		prf.lock().unwrap().add_col(cols[i].1.clone());
 	}
 
 	//5. build the prf part for the sorted_tabble
@@ -1214,25 +1214,25 @@ pub fn tbl_filtered_to_sorted_tbl_old<F:PrimeField + ColEle>(
 	let mtbl_dst_src = gen_m_table_cond(&encoded_dst, &sel_dst, 
 		&encoded_src, &sel_src);
 
-	prf.borrow_mut().add_col(Col::new(vec![zero; mtbl_src_dst.len()],
+	prf.lock().unwrap().add_col(Col::new(vec![zero; mtbl_src_dst.len()],
 		"sid_mtbl_src_dst", IDX_SI_DATA));
-	prf.borrow_mut().add_col(Col::new(vec![zero; mtbl_dst_src.len()],
+	prf.lock().unwrap().add_col(Col::new(vec![zero; mtbl_dst_src.len()],
 		"sid_mtbl_dst_src", IDX_SI_DATA));
-	prf.borrow_mut().add_col(Col::new(mtbl_src_dst,"mtbl_src_dst",IDX_DATA));
-	prf.borrow_mut().add_col(Col::new(mtbl_dst_src, "mtbl_dst_src",IDX_DATA));
+	prf.lock().unwrap().add_col(Col::new(mtbl_src_dst,"mtbl_src_dst",IDX_DATA));
+	prf.lock().unwrap().add_col(Col::new(mtbl_dst_src, "mtbl_dst_src",IDX_DATA));
 
-	res.borrow_mut().add_container(sorted_tbl);
-	res.borrow_mut().add_container(prf);
+	res.lock().unwrap().add_container(sorted_tbl);
+	res.lock().unwrap().add_container(prf);
 	Ok( res )
 }
 
 pub fn verify_tbl_filtered_to_sorted_tbl<F:PrimeField + ColEle>(
 	r1: &FpVar<F>, //random challenges from msg2
 	r2: &FpVar<F>,
-	keys: &Rc<RefCell<Container<FpVar<F>>>>,
-	vals: &Rc<RefCell<Container<FpVar<F>>>>,
-	sorted_set_key: &Rc<RefCell<Container<FpVar<F>>>>, //the sorted_set bundle
-	bundle: &Rc<RefCell<Container<FpVar<F>>>>, //result of tbl_filtered_to_sorted_tbl
+	keys: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
+	vals: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
+	sorted_set_key: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>, //the sorted_set bundle
+	bundle: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>, //result of tbl_filtered_to_sorted_tbl
 	cs: ConstraintSystemRef<F>
 ) -> Result<(), SynthesisError>{
 	let b_new = true;
@@ -1254,27 +1254,27 @@ pub fn verify_tbl_filtered_to_sorted_tbl<F:PrimeField + ColEle>(
 pub fn verify_tbl_filtered_to_sorted_tbl_new<F:PrimeField + ColEle>(
 	r1: &FpVar<F>, //random challenges from msg2
 	r2: &FpVar<F>,
-	keys: &Rc<RefCell<Container<FpVar<F>>>>,
-	vals: &Rc<RefCell<Container<FpVar<F>>>>,
-	sorted_set_key: &Rc<RefCell<Container<FpVar<F>>>>, //the sorted_set bundle
+	keys: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
+	vals: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
+	sorted_set_key: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>, //the sorted_set bundle
 		// the key used for filtering
-	bundle: &Rc<RefCell<Container<FpVar<F>>>>, //result of tbl_filtered_to_sorted_tbl
+	bundle: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>, //result of tbl_filtered_to_sorted_tbl
 	cs: ConstraintSystemRef<F>
 ) -> Result<(), SynthesisError>{
 	let b_perf = false;
 	let mut nc = cs.num_constraints();
 	let nc0 = nc;
-	let sorted_tbl= bundle.borrow().get_container("sorted_tbl")?;
+	let sorted_tbl= bundle.lock().unwrap().get_container("sorted_tbl")?;
 	if b_perf{
 		println!(" --- verify_tbl_filtered_new N: {}, n: {}, m: {}, k: {}", 
-			keys.borrow().to_vec().len(), 
-			sorted_tbl.borrow().
-				get_container("packed_key")?.borrow().to_vec().len(),
-			bundle.borrow().
-				get_container("prf_tag")?.borrow().
-				get_container("no_key")?.borrow().to_vec().len(),
-			sorted_set_key.borrow().get_container("sorted_val")?.
-				borrow().to_vec().len());
+			keys.lock().unwrap().to_vec().len(), 
+			sorted_tbl.lock().unwrap().
+				get_container("packed_key")?.lock().unwrap().to_vec().len(),
+			bundle.lock().unwrap().
+				get_container("prf_tag")?.lock().unwrap().
+				get_container("no_key")?.lock().unwrap().to_vec().len(),
+			sorted_set_key.lock().unwrap().get_container("sorted_val")?.
+				lock().unwrap().to_vec().len());
 	}
 
 	//Part I. establish the tag column to indicate
@@ -1284,12 +1284,12 @@ pub fn verify_tbl_filtered_to_sorted_tbl_new<F:PrimeField + ColEle>(
 	// n = sorted_table.packed_key.len (determined by basis_pats_in_trace)
 	// m = unique_key_size (detremined by basis_unique_states)
 	// k = sorted_set_key.len (determined by pat_per_subsig * subsigs)
-	let keys = keys.borrow().to_vec();
-	let vals= vals.borrow().to_vec();
-	let sorted_keys = sorted_set_key.borrow().get_container("sorted_val")?
-		.borrow().to_vec(); 
-	let tags = bundle.borrow().get_container("tags")?.borrow().to_vec();
-	let prf_tag = bundle.borrow().get_container("prf_tag")?;
+	let keys = keys.lock().unwrap().to_vec();
+	let vals= vals.lock().unwrap().to_vec();
+	let sorted_keys = sorted_set_key.lock().unwrap().get_container("sorted_val")?
+		.lock().unwrap().to_vec(); 
+	let tags = bundle.lock().unwrap().get_container("tags")?.lock().unwrap().to_vec();
+	let prf_tag = bundle.lock().unwrap().get_container("prf_tag")?;
 	verify_filter_tag(&keys, &sorted_keys, &tags, &prf_tag, r1, r2)?;
 	if b_perf{
 		println!(" --- verify_tbl_filtered_new keys step 1: {}: ",
@@ -1304,14 +1304,14 @@ pub fn verify_tbl_filtered_to_sorted_tbl_new<F:PrimeField + ColEle>(
 	let _rg = new_const_var(&cs, F::from(RANGE2));
 	let names = vec!["packed_key", "packed_id", "packed_val", "packed_diff", "diff_key"];
 	//no need to check constant
-	//for vs in &sids1{check_arr_eq(&vs.borrow().to_vec(), &rg, "err sid")?; }
+	//for vs in &sids1{check_arr_eq(&vs.lock().unwrap().to_vec(), &rg, "err sid")?; }
 	let tblcols = names.iter().map(|n|
-		sorted_tbl.borrow().get_container(n).expect("err get tbl"))
+		sorted_tbl.lock().unwrap().get_container(n).expect("err get tbl"))
 		.collect::<Vec<_>>();
-	//let sid_sorted_diff = sorted_tbl.borrow_mut().get_container("sid_packed_diff")?
-	//	.borrow().to_vec();
-	//let sid_diff_key= sorted_tbl.borrow_mut().get_container("sid_diff_key")?
-	//	.borrow().to_vec();
+	//let sid_sorted_diff = sorted_tbl.lock().unwrap().get_container("sid_packed_diff")?
+	//	.lock().unwrap().to_vec();
+	//let sid_diff_key= sorted_tbl.lock().unwrap().get_container("sid_diff_key")?
+	//	.lock().unwrap().to_vec();
 	if b_perf{
 		println!("  --- verify_tbl_filtered_new keys: step 2.1  cs: {}", 
 			cs.num_constraints() - nc);
@@ -1320,8 +1320,8 @@ pub fn verify_tbl_filtered_to_sorted_tbl_new<F:PrimeField + ColEle>(
 
 	//2.2 check sorted_tbl is well_formed and sorted
 	//COST: 11n
-	let packed_vals = tblcols[2].borrow().to_vec();
-	let packed_keys= tblcols[0].borrow().to_vec();
+	let packed_vals = tblcols[2].lock().unwrap().to_vec();
+	let packed_keys= tblcols[0].lock().unwrap().to_vec();
 	//let diff_val = (1..packed_vals.len()).collect::<Vec<_>>()
 	//	.into_iter().map(|i|{
 	//		&packed_vals[i] - &packed_vals[i-1]
@@ -1330,14 +1330,14 @@ pub fn verify_tbl_filtered_to_sorted_tbl_new<F:PrimeField + ColEle>(
 	//	.into_iter().map(|i|{
 	//		&packed_keys[i] - &packed_keys[i-1]
 	//	}).collect::<Vec<_>>();
-	let diff_val = tblcols[3].borrow().to_vec();
-	let diff_key= tblcols[4].borrow().to_vec();
+	let diff_val = tblcols[3].lock().unwrap().to_vec();
+	let diff_key= tblcols[4].lock().unwrap().to_vec();
 	let sid_sorted_diff = gen_assert_sidcol_for_diff(&packed_vals, &diff_val);
 	let sid_diff_key= gen_assert_sidcol_for_diff(&packed_keys, &diff_key);
 
 	assert_well_formed_sorted(cs.clone(),
-		&tblcols[0].borrow().to_vec(), //packed_key
-		&tblcols[1].borrow().to_vec(), //id
+		&tblcols[0].lock().unwrap().to_vec(), //packed_key
+		&tblcols[1].lock().unwrap().to_vec(), //id
 		&packed_vals, //val
 		Some(&diff_val),
 		Some(&sid_sorted_diff), //sid of diff col
@@ -1431,10 +1431,10 @@ pub fn verify_tbl_filtered_to_sorted_tbl_new<F:PrimeField + ColEle>(
 pub fn verify_tbl_filtered_to_sorted_tbl_old<F:PrimeField + ColEle>(
 	r1: &FpVar<F>, //random challenges from msg2
 	_r2: &FpVar<F>,
-	keys: &Rc<RefCell<Container<FpVar<F>>>>,
-	vals: &Rc<RefCell<Container<FpVar<F>>>>,
-	sorted_set_key: &Rc<RefCell<Container<FpVar<F>>>>, //the sorted_set bundle
-	bundle: &Rc<RefCell<Container<FpVar<F>>>>, //result of tbl_filtered_to_sorted_tbl
+	keys: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
+	vals: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
+	sorted_set_key: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>, //the sorted_set bundle
+	bundle: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>, //result of tbl_filtered_to_sorted_tbl
 	cs: ConstraintSystemRef<F>
 ) -> Result<(), SynthesisError>{
 	let b_perf = false;
@@ -1442,29 +1442,29 @@ pub fn verify_tbl_filtered_to_sorted_tbl_old<F:PrimeField + ColEle>(
 	let nc0 = nc;
 	if b_perf{
 		println!(" --- verify_tbl_filtered_old keys: {}, sorted_keys: {}", 
-			keys.borrow().to_vec().len(), 
-			sorted_set_key.borrow().to_vec().len());
+			keys.lock().unwrap().to_vec().len(), 
+			sorted_set_key.lock().unwrap().to_vec().len());
 	}
 
 	// ----- Part 1: verify the filtering of src (key,val) ---
 	//1.1 get all data to verify
-	let keys = keys.borrow().to_vec();
-	let vals = vals.borrow().to_vec();
+	let keys = keys.lock().unwrap().to_vec();
+	let vals = vals.lock().unwrap().to_vec();
 	let names = vec!["id","val1","val2","diff1","diff2","m_tbl_sorted_set"];
-	let proj_ids = sorted_set_key.borrow().get_container(
-		"id")?.borrow().to_vec();
-	let proj_keys = sorted_set_key.borrow().get_container(
-		"sorted_val")?.borrow().to_vec();
-	let prf = bundle.borrow().get_container("prf")?;
-	let sorted_tbl= bundle.borrow().get_container("sorted_tbl")?;
+	let proj_ids = sorted_set_key.lock().unwrap().get_container(
+		"id")?.lock().unwrap().to_vec();
+	let proj_keys = sorted_set_key.lock().unwrap().get_container(
+		"sorted_val")?.lock().unwrap().to_vec();
+	let prf = bundle.lock().unwrap().get_container("prf")?;
+	let sorted_tbl= bundle.lock().unwrap().get_container("sorted_tbl")?;
 	let ct = names.iter().map(|n| 
-		prf.borrow().get_container(n).expect(&format!("err get {}", n))
-		.borrow().to_vec()).collect::<Vec<_>>();
+		prf.lock().unwrap().get_container(n).expect(&format!("err get {}", n))
+		.lock().unwrap().to_vec()).collect::<Vec<_>>();
 	let (id,val1,val2,diff1,diff2,m_tbl_sorted_set) = (ct[0].clone(), 
 		ct[1].clone(), ct[2].clone(), ct[3].clone(), ct[4].clone(),
 		ct[5].clone()); //rc clone low cost
 	let sids = names.iter().map(|n| 
-		prf.borrow().get_container(&format!("sid_{}",n))
+		prf.lock().unwrap().get_container(&format!("sid_{}",n))
 		.expect(&format!("err get {}", n))).collect::<Vec<_>>();
 
 	if b_perf{
@@ -1476,7 +1476,7 @@ pub fn verify_tbl_filtered_to_sorted_tbl_old<F:PrimeField + ColEle>(
 	//1.2 check sids
 	let rg = new_const_var(&cs, F::from(RANGE2));
 	let zero= new_const_var(&cs, F::zero());
-	for vs in &sids{ check_arr_eq(&vs.borrow().to_vec(), &rg, "err sid")?; }
+	for vs in &sids{ check_arr_eq(&vs.lock().unwrap().to_vec(), &rg, "err sid")?; }
 	if b_perf{
 		println!("  --- verify_tbl_filtered_old keys: step 1.2  cs: {}", 
 			cs.num_constraints() - nc);
@@ -1515,20 +1515,20 @@ pub fn verify_tbl_filtered_to_sorted_tbl_old<F:PrimeField + ColEle>(
 	//2.1 check sids 
 	let names = vec!["packed_key", "packed_id", "packed_val"];
 	let sids1 = names.iter().map(|n| 
-		prf.borrow().get_container(&format!("sid_{}",n))
+		prf.lock().unwrap().get_container(&format!("sid_{}",n))
 		.expect(&format!("err get {}", n))).collect::<Vec<_>>();
 	let sids2 = vec!["mtbl_src_dst", "mtbl_dst_src"].iter().map(|n|
-		prf.borrow().get_container(&format!("sid_{}",n))
+		prf.lock().unwrap().get_container(&format!("sid_{}",n))
 		.expect(&format!("err get {}", n))).collect::<Vec<_>>();
-	for vs in &sids1{check_arr_eq(&vs.borrow().to_vec(), &rg, "err sid")?; }
-	for vs in &sids2{check_arr_eq(&vs.borrow().to_vec(), &zero, "err sid")?; }
+	for vs in &sids1{check_arr_eq(&vs.lock().unwrap().to_vec(), &rg, "err sid")?; }
+	for vs in &sids2{check_arr_eq(&vs.lock().unwrap().to_vec(), &zero, "err sid")?; }
 	let tblcols = names.iter().map(|n|
-		sorted_tbl.borrow().get_container(n).expect("err get tbl"))
+		sorted_tbl.lock().unwrap().get_container(n).expect("err get tbl"))
 		.collect::<Vec<_>>();
-	let sid_sorted_diff = prf.borrow_mut().get_container("sid_packed_diff")?
-		.borrow().to_vec();
-	let sid_diff_key= prf.borrow_mut().get_container("sid_diff_key")?
-		.borrow().to_vec();
+	let sid_sorted_diff = prf.lock().unwrap().get_container("sid_packed_diff")?
+		.lock().unwrap().to_vec();
+	let sid_diff_key= prf.lock().unwrap().get_container("sid_diff_key")?
+		.lock().unwrap().to_vec();
 	if b_perf{
 		println!("  --- verify_tbl_filtered_old keys: step 2.1  cs: {}", 
 			cs.num_constraints() - nc);
@@ -1536,8 +1536,8 @@ pub fn verify_tbl_filtered_to_sorted_tbl_old<F:PrimeField + ColEle>(
 	}
 
 	//2.2 check the sorted_tbl is well formed and sorted
-	let packed_vals = tblcols[2].borrow().to_vec();
-	let packed_keys= tblcols[0].borrow().to_vec();
+	let packed_vals = tblcols[2].lock().unwrap().to_vec();
+	let packed_keys= tblcols[0].lock().unwrap().to_vec();
 	let diff_val = (1..packed_vals.len()).collect::<Vec<_>>()
 		.into_iter().map(|i|{
 			&packed_vals[i] - &packed_vals[i-1]
@@ -1548,8 +1548,8 @@ pub fn verify_tbl_filtered_to_sorted_tbl_old<F:PrimeField + ColEle>(
 		}).collect::<Vec<_>>();
 
 	assert_well_formed_sorted(cs.clone(),
-		&tblcols[0].borrow().to_vec(), //packed_key
-		&tblcols[1].borrow().to_vec(), //id
+		&tblcols[0].lock().unwrap().to_vec(), //packed_key
+		&tblcols[1].lock().unwrap().to_vec(), //id
 		&packed_vals, //val
 		Some(&diff_val),
 		Some(&sid_sorted_diff), //sid of diff col
@@ -1574,10 +1574,10 @@ pub fn verify_tbl_filtered_to_sorted_tbl_old<F:PrimeField + ColEle>(
 		x.is_zero().unwrap().into() }).collect::<Vec<FpVar<F>>>(); 
 	let sel_dst = packed_vals.iter().map(|v|
 		v * &(&max - v)).collect::<Vec<FpVar<F>>>();
-	let mtbl_src_dst = prf.borrow().get_container("mtbl_src_dst")?
-		.borrow().to_vec();
-	let mtbl_dst_src= prf.borrow().get_container("mtbl_dst_src")?
-		.borrow().to_vec();
+	let mtbl_src_dst = prf.lock().unwrap().get_container("mtbl_src_dst")?
+		.lock().unwrap().to_vec();
+	let mtbl_dst_src= prf.lock().unwrap().get_container("mtbl_dst_src")?
+		.lock().unwrap().to_vec();
 
 	assert_logup_cond(cs.clone(), &encoded_src, &sel_src, &encoded_dst, &sel_dst, &mtbl_src_dst, r1)?;
 	if b_perf{
@@ -1603,11 +1603,11 @@ pub fn verify_tbl_filtered_to_sorted_tbl_old<F:PrimeField + ColEle>(
 ///
 /// might throw CapErr("target_size")
 pub fn tbl_to_sorted_tbl<F:PrimeField + ColEle>(
-	key: &Rc<RefCell<Container<F>>>,
-	val: &Rc<RefCell<Container<F>>>,
+	key: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
+	val: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
 	target_size: usize,
 	name: &str, //the name of the new container bundle
-) -> Result<Rc<RefCell<Container<F>>>, Error>{
+) -> Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 	//1. generating the resulting table (data column and sid columns)
 	let (zero,_one) = (F::zero(), F::one());
 	let max_val:usize = (1<<RANGE2_BIT) - 1;
@@ -1615,8 +1615,8 @@ pub fn tbl_to_sorted_tbl<F:PrimeField + ColEle>(
 	let res = Container::<F>::new(name);
 	let sorted_tbl = Container::<F>::new("sorted_tbl");
 	let prf = Container::<F>::new("prf");
-	let keys = key.borrow().to_vec();
-	let vals = val.borrow().to_vec();
+	let keys = key.lock().unwrap().to_vec();
+	let vals = val.lock().unwrap().to_vec();
 	let f_rg = F::from(RANGE2); 
 	let (sorted_key, sorted_id, sorted_val)
 		=two_col_tbl_to_sorted(&keys, &vals, target_size)?;
@@ -1635,19 +1635,19 @@ pub fn tbl_to_sorted_tbl<F:PrimeField + ColEle>(
 	let d_names = vec!["diff_key", "diff_val"];
 	vec![sorted_key, sorted_id, sorted_val].into_iter().zip(s_names.iter())
 	.for_each(|(c,n)| {
-		sorted_tbl.borrow_mut() .add_col(Col::new(c, n, IDX_DATA));
+		sorted_tbl.lock().unwrap() .add_col(Col::new(c, n, IDX_DATA));
 	});
 	vec![sid_sorted_key, sid_sorted_id, sid_sorted_val].into_iter()
 	.zip(s_names.iter()).for_each(|(c,n)|{
-		prf.borrow_mut().add_col(Col::new_const(c, &format!("sid_{}",n),IDX_SI_DATA));
+		prf.lock().unwrap().add_col(Col::new_const(c, &format!("sid_{}",n),IDX_SI_DATA));
 	});
 	let (d1,d2) = (diff_key.len(), diff_val.len());
 	vec![diff_key, diff_val].into_iter().zip(d_names.iter()).for_each(|(c,n)|{
-		prf.borrow_mut().add_col(Col::new(c, &format!("{}",n),IDX_DATA));
+		prf.lock().unwrap().add_col(Col::new(c, &format!("{}",n),IDX_DATA));
 	}); 
 	vec![vec![f_rg; d1], vec![f_rg; d2]].into_iter().zip(d_names.iter())
 	.for_each(|(c,n)|{
-		prf.borrow_mut().add_col(Col::new_const(c, &format!("sid_{}",n),IDX_SI_DATA));
+		prf.lock().unwrap().add_col(Col::new_const(c, &format!("sid_{}",n),IDX_SI_DATA));
 	}); //this one is not const
 
 	//3. lkup in both directions (ignore 0 entries).
@@ -1661,16 +1661,16 @@ pub fn tbl_to_sorted_tbl<F:PrimeField + ColEle>(
 	let mtbl_dst_src = gen_m_table_cond(&encoded_dst, &sel_dst, 
 		&encoded_src, &sel_src);
 
-	prf.borrow_mut().add_col(Col::new_const(vec![zero; mtbl_src_dst.len()],
+	prf.lock().unwrap().add_col(Col::new_const(vec![zero; mtbl_src_dst.len()],
 		"sid_mtbl_src_dst", IDX_SI_DATA));
-	prf.borrow_mut().add_col(Col::new_const(vec![zero; mtbl_dst_src.len()],
+	prf.lock().unwrap().add_col(Col::new_const(vec![zero; mtbl_dst_src.len()],
 		"sid_mtbl_dst_src", IDX_SI_DATA));
-	prf.borrow_mut().add_col(Col::new(mtbl_src_dst,"mtbl_src_dst",IDX_DATA));
-	prf.borrow_mut().add_col(Col::new(mtbl_dst_src, "mtbl_dst_src",IDX_DATA));
+	prf.lock().unwrap().add_col(Col::new(mtbl_src_dst,"mtbl_src_dst",IDX_DATA));
+	prf.lock().unwrap().add_col(Col::new(mtbl_dst_src, "mtbl_dst_src",IDX_DATA));
 
 	//4. return
-	res.borrow_mut().add_container(sorted_tbl);
-	res.borrow_mut().add_container(prf);
+	res.lock().unwrap().add_container(sorted_tbl);
+	res.lock().unwrap().add_container(prf);
 
 	Ok(res)
 }
@@ -1681,24 +1681,24 @@ pub fn tbl_to_sorted_tbl<F:PrimeField + ColEle>(
 pub fn verify_tbl_to_sorted_tbl<F:PrimeField + ColEle>(
 	r1: &FpVar<F>, //random challenges from msg2
 	_r2: &FpVar<F>,
-	keys: &Rc<RefCell<Container<FpVar<F>>>>,
-	vals: &Rc<RefCell<Container<FpVar<F>>>>,
-	bundle: &Rc<RefCell<Container<FpVar<F>>>>, //result of tbl_to_sorted_tbl_
+	keys: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
+	vals: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
+	bundle: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>, //result of tbl_to_sorted_tbl_
 	cs: ConstraintSystemRef<F>
 ) -> Result<(), SynthesisError>{
 	//1. prove that the resulting table is well formed 
-	let keys = keys.borrow().to_vec();
-	let vals = vals.borrow().to_vec();
-	let prf = bundle.borrow().get_container("prf")?;
-	let sorted_tbl = bundle.borrow().get_container("sorted_tbl")?;
+	let keys = keys.lock().unwrap().to_vec();
+	let vals = vals.lock().unwrap().to_vec();
+	let prf = bundle.lock().unwrap().get_container("prf")?;
+	let sorted_tbl = bundle.lock().unwrap().get_container("sorted_tbl")?;
 	let cols_prf = vec!["diff_val","sid_diff_val","diff_key","sid_diff_key"]
-		.iter().map(|n| prf.borrow().get_container(n)
-			.expect(&format!("can't find {}",n)).borrow().to_vec())
+		.iter().map(|n| prf.lock().unwrap().get_container(n)
+			.expect(&format!("can't find {}",n)).lock().unwrap().to_vec())
 		.collect::<Vec<Vec<FpVar<F>>>>();
 
-	let sel_keys=sorted_tbl.borrow().get_container_by_idx(0).borrow().to_vec();
-	let sel_ids=sorted_tbl.borrow().get_container_by_idx(1).borrow().to_vec();
-	let sel_vals=sorted_tbl.borrow().get_container_by_idx(2).borrow().to_vec();
+	let sel_keys=sorted_tbl.lock().unwrap().get_container_by_idx(0).lock().unwrap().to_vec();
+	let sel_ids=sorted_tbl.lock().unwrap().get_container_by_idx(1).lock().unwrap().to_vec();
+	let sel_vals=sorted_tbl.lock().unwrap().get_container_by_idx(2).lock().unwrap().to_vec();
 	let sid_diff_val = gen_assert_sidcol_for_diff(&sel_vals, &cols_prf[0]);
 	let sid_diff_key= gen_assert_sidcol_for_diff(&sel_keys, &cols_prf[2]);
 	assert_well_formed_sorted(cs.clone(),
@@ -1723,8 +1723,8 @@ pub fn verify_tbl_to_sorted_tbl<F:PrimeField + ColEle>(
 	//let f_rg = new_var(&cs, F::from(RANGE2)); 
 	//let sid_names = vec!["sorted_key", "sorted_id", "sorted_val"];
 	//let scols= sid_names.iter().map(|n|
-	//		prf.borrow().get_container(&format!("sid_{}",n))
-	//		.unwrap().borrow().to_vec()
+	//		prf.lock().unwrap().get_container(&format!("sid_{}",n))
+	//		.unwrap().lock().unwrap().to_vec()
 	//	).collect::<Vec<Vec<FpVar<F>>>>();
 	//for i in 0..scols.len(){
 	//	check_arr_eq(&scols[i], &f_rg,&format!("sid err: {}", sid_names[i]))?;
@@ -1738,10 +1738,10 @@ pub fn verify_tbl_to_sorted_tbl<F:PrimeField + ColEle>(
 	let encoded_src = encode_2col_var(&keys, &vals);
 	let encoded_dst = encode_2col_var(&sel_keys, &sel_vals);
 
-	let mtbl_src_dst = prf.borrow().get_container("mtbl_src_dst")?
-		.borrow().to_vec();
-	let mtbl_dst_src= prf.borrow().get_container("mtbl_dst_src")?
-		.borrow().to_vec();
+	let mtbl_src_dst = prf.lock().unwrap().get_container("mtbl_src_dst")?
+		.lock().unwrap().to_vec();
+	let mtbl_dst_src= prf.lock().unwrap().get_container("mtbl_dst_src")?
+		.lock().unwrap().to_vec();
 	let sel_src = keys.iter().zip(vals.iter()).map(|(x,y)| {
 		x * &(&max-x) * &(y * &(&max-y))
 	}).collect::<Vec<FpVar<F>>>(); 
@@ -1791,14 +1791,14 @@ pub fn verify_tbl_to_sorted_tbl<F:PrimeField + ColEle>(
 ///
 /// Might throw CapErr("target_size")
 pub fn tbl_left_join<F:PrimeField + ColEle>(
-	tbl1: &Rc<RefCell<Container<F>>>, //needs to be sorted_tbl
-	tbl2: &Rc<RefCell<Container<F>>>, //needs to be sorted_tbl
-	sorted_set_key2: &Rc<RefCell<Container<F>>>, //sorted set of key2
+	tbl1: &std::sync::Arc<std::sync::Mutex<Container<F>>>, //needs to be sorted_tbl
+	tbl2: &std::sync::Arc<std::sync::Mutex<Container<F>>>, //needs to be sorted_tbl
+	sorted_set_key2: &std::sync::Arc<std::sync::Mutex<Container<F>>>, //sorted set of key2
 			//in our scenario, it's already computed in caller.
 			//otherwise, it can be generated in the function
 	target_size: usize,
 	name: &str, //the name of the new container bundle
-) -> Result<Rc<RefCell<Container<F>>>, Error>{
+) -> Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 	//1. generate the resulting table
 	let (zero, one) = (F::zero(), F::one());
 	let max_val:usize = (1<<RANGE2_BIT) - 1;
@@ -1807,12 +1807,12 @@ pub fn tbl_left_join<F:PrimeField + ColEle>(
 	let f_rg = F::from(RANGE2); 
 	let join_tbl= Container::<F>::new("join_tbl");
 	let prf = Container::<F>::new("prf");
-	let tbl1_cols = (0..3).into_iter().map(|i| tbl1.borrow()
-		.get_container("sorted_tbl").expect("err get sort_tbl").borrow()
-		.get_container_by_idx(i).borrow().to_vec()).collect::<Vec<Vec<F>>>();
-	let tbl2_cols = (0..3).into_iter().map(|i| tbl2.borrow()
-		.get_container("sorted_tbl").expect("err get sort_tbl").borrow()
-		.get_container_by_idx(i).borrow().to_vec()).collect::<Vec<Vec<F>>>();
+	let tbl1_cols = (0..3).into_iter().map(|i| tbl1.lock().unwrap()
+		.get_container("sorted_tbl").expect("err get sort_tbl").lock().unwrap()
+		.get_container_by_idx(i).lock().unwrap().to_vec()).collect::<Vec<Vec<F>>>();
+	let tbl2_cols = (0..3).into_iter().map(|i| tbl2.lock().unwrap()
+		.get_container("sorted_tbl").expect("err get sort_tbl").lock().unwrap()
+		.get_container_by_idx(i).lock().unwrap().to_vec()).collect::<Vec<Vec<F>>>();
 
 
 	let tbl_res = two_col_tbl_left_join(&tbl1_cols, &tbl2_cols, target_size);
@@ -1831,16 +1831,16 @@ pub fn tbl_left_join<F:PrimeField + ColEle>(
 		if x.is_zero() {zero} else {one}).collect::<Vec<F>>();
 	let mtbl_tbl1_res = gen_m_table_cond(&tbl1_encoded, &tbl1_sel,
 		&res_firsthalf_encoded, &res_firsthalf_sel);
-	prf.borrow_mut().add_col(Col::new_const(vec![zero; mtbl_tbl1_res.len()],
+	prf.lock().unwrap().add_col(Col::new_const(vec![zero; mtbl_tbl1_res.len()],
 		"sid_mtbl_tbl1_res", IDX_SI_DATA));
-	prf.borrow_mut().add_col(Col::new(mtbl_tbl1_res,"mtbl_tbl1_res",IDX_DATA));
+	prf.lock().unwrap().add_col(Col::new(mtbl_tbl1_res,"mtbl_tbl1_res",IDX_DATA));
 
 	//3. lkup first 3 column in tbl1 (guarnatee no extra) 
 	let mtbl_res_tbl1= gen_m_table_cond( 
 		&res_firsthalf_encoded, &res_firsthalf_sel, &tbl1_encoded, &tbl1_sel);
-	prf.borrow_mut().add_col(Col::new_const(vec![f_rg; mtbl_res_tbl1.len()],
+	prf.lock().unwrap().add_col(Col::new_const(vec![f_rg; mtbl_res_tbl1.len()],
 		"sid_mtbl_res_tbl1", IDX_SI_DATA));
-	prf.borrow_mut().add_col(Col::new(mtbl_res_tbl1,"mtbl_res_tbl1",IDX_DATA));
+	prf.lock().unwrap().add_col(Col::new(mtbl_res_tbl1,"mtbl_res_tbl1",IDX_DATA));
 
 	//4. relaxed well formed check of first 3 column (combining with 2)
 	// needed for making sure expanding value column is correct
@@ -1861,8 +1861,8 @@ pub fn tbl_left_join<F:PrimeField + ColEle>(
 	//5. lkup last 3 columns in tbl2 (one direction only)
 	//NOTE: tbl2 need to be PADDED with sorted_set_key2 dummy entries
 	//for left-join of those who do not appear in tbl2.
-	let sorted_set_key2 = sorted_set_key2.borrow().get_container_by_idx(2)
-		.borrow().to_vec();//note col #2 is the val of sorted set
+	let sorted_set_key2 = sorted_set_key2.lock().unwrap().get_container_by_idx(2)
+		.lock().unwrap().to_vec();//note col #2 is the val of sorted set
 	let sn = sorted_set_key2.len();
 	let tbl2_pad = vec![
 		sorted_set_key2.par_iter().map(
@@ -1886,9 +1886,9 @@ pub fn tbl_left_join<F:PrimeField + ColEle>(
 	let mtbl_sechalf_tbl2= gen_m_table_cond(
 		&res_sechalf_encoded, &res_sechalf_sel, &tbl2_encoded, &tbl2_sel);
 
-	prf.borrow_mut().add_col(Col::new_const(vec![f_rg; mtbl_sechalf_tbl2.len()],
+	prf.lock().unwrap().add_col(Col::new_const(vec![f_rg; mtbl_sechalf_tbl2.len()],
 		"sid_mtbl_sechalf_tbl2", IDX_SI_DATA));
-	prf.borrow_mut().add_col(Col::new(mtbl_sechalf_tbl2,"mtbl_sechalf_tbl2"
+	prf.lock().unwrap().add_col(Col::new(mtbl_sechalf_tbl2,"mtbl_sechalf_tbl2"
 		,IDX_DATA));
 
 	//6. check last3 column is of res_tbl well formed (
@@ -1896,24 +1896,24 @@ pub fn tbl_left_join<F:PrimeField + ColEle>(
 	// that the expansion of (k1,k2) is complete. because the two dummy
 	// entries are verified to be in tbl2. Note: no need on key
 	let diff_val = gen_abs_diff_col(&tbl_res[4]);
-	prf.borrow_mut().add_col(Col::new(vec![f_rg; diff_val.len()],
+	prf.lock().unwrap().add_col(Col::new(vec![f_rg; diff_val.len()],
 		"sid_diff_val",IDX_SI_DATA));
-	prf.borrow_mut().add_col(Col::new(diff_val,"diff_val",IDX_DATA));
+	prf.lock().unwrap().add_col(Col::new(diff_val,"diff_val",IDX_DATA));
 
 
 	//7. build the join_tbl and its sids
 	let join_tbl_names = vec!["key", "id1", "key2", "id2", "val"];
 	let vec_c_len = tbl_res.iter().map(|c| c.len()).collect::<Vec<usize>>();
 	tbl_res.into_iter().zip(join_tbl_names.iter()).for_each(|(c,n)|{
-		join_tbl.borrow_mut().add_col(Col::new(c, n, IDX_DATA));
+		join_tbl.lock().unwrap().add_col(Col::new(c, n, IDX_DATA));
 	});
 	vec_c_len.iter().zip(join_tbl_names.iter()).for_each(|(l,n)|{
-		join_tbl.borrow_mut().add_col(Col::new_const(vec![f_rg;*l],
+		join_tbl.lock().unwrap().add_col(Col::new_const(vec![f_rg;*l],
 			&format!("sid_{}",n), IDX_SI_DATA));
 	});
 
-	res.borrow_mut().add_container(join_tbl);
-	res.borrow_mut().add_container(prf);
+	res.lock().unwrap().add_container(join_tbl);
+	res.lock().unwrap().add_container(prf);
 	Ok(res)
 }
 
@@ -1947,10 +1947,10 @@ pub fn tbl_left_join<F:PrimeField + ColEle>(
 pub fn tbl_left_join_wide<F:PrimeField + ColEle>(
 	col1: &Vec<F>,
 	col2: &Vec<F>,
-	tbl2: &Rc<RefCell<Container<F>>>,
+	tbl2: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
 	target_size: usize,
 	name: &str, //the name of the new container bundle
-) -> Result<Rc<RefCell<Container<F>>>, Error>{
+) -> Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 	//1. data verify and capacity check
 	let b_debug = false;
 	let res = Container::<F>::new(name);
@@ -1959,7 +1959,7 @@ pub fn tbl_left_join_wide<F:PrimeField + ColEle>(
 	let n1 = col1.len();
 	assert!(col2.len()==n1);
 	let t2cols= vec!["key", "val", "id", "count"].into_iter().map(|n| 
-		tbl2.borrow().get_container(n).expect("errcol").borrow().to_vec()
+		tbl2.lock().unwrap().get_container(n).expect("errcol").lock().unwrap().to_vec()
 	).collect::<Vec<Vec<F>>>();
 	let n2 = t2cols[0].len();
 	for col in &t2cols{assert!(col.len()==n2);}
@@ -2040,8 +2040,8 @@ pub fn tbl_left_join_wide<F:PrimeField + ColEle>(
 	
 	// ---- Construct Proof ----------------
 	//1. construct the encoded column of <c1,c2>
-	prf.borrow_mut().add_col(Col::new(enc_c12, "enc_c12", IDX_DATA));
-	prf.borrow_mut().add_col(
+	prf.lock().unwrap().add_col(Col::new(enc_c12, "enc_c12", IDX_DATA));
+	prf.lock().unwrap().add_col(
 		Col::new_const(vec![z;target_size], "sid_enc_c12", IDX_SI_DATA));
 
 
@@ -2055,7 +2055,7 @@ pub fn tbl_left_join_wide<F:PrimeField + ColEle>(
 		vec![&col1[..], &col2[..]],
 		"lkupprf_c1c2"
 	);
-	prf.borrow_mut().add_container(lkupprf_c1c2);
+	prf.lock().unwrap().add_container(lkupprf_c1c2);
 
 	//3. prove that the <c2,val,id,count> has a 1-way lookup relation
 	//with tbl2, i.e., every <c2,val,id,count> entry can be found in
@@ -2065,24 +2065,24 @@ pub fn tbl_left_join_wide<F:PrimeField + ColEle>(
 		vec![ &t2cols[0][..], &t2cols[1][..], &t2cols[2][..], &t2cols[3][..]],
 		"lkupprf_tbl2",
 	);
-	prf.borrow_mut().add_container(lkupprf_tbl2);
+	prf.lock().unwrap().add_container(lkupprf_tbl2);
 
 	//4. assemble the container using the data above
 	let f_rg2= F::from(RANGE2);
 	let names = vec!["c1","c2","val","id","count"];
 	let join_cols = jcols.into_iter().zip(names.iter()).map(|(c,n)|
-		Col::new(c, n, IDX_DATA)).collect::<Vec<Rc<RefCell<Col<F>>>>>();
+		Col::new(c, n, IDX_DATA)).collect::<Vec<std::sync::Arc<std::sync::Mutex<Col<F>>>>>();
 	let join_sid_cols = names.iter().map(|n| Col::new_const(
 		vec![f_rg2;target_size], &format!("sid_{}", n), IDX_SI_DATA)
-	).collect::<Vec<Rc<RefCell<Col<F>>>>>();
+	).collect::<Vec<std::sync::Arc<std::sync::Mutex<Col<F>>>>>();
 	for i in 0..5{
-		join_tbl.borrow_mut().add_col(join_cols[i].clone());
-		join_tbl.borrow_mut().add_col(join_sid_cols[i].clone()); //low cost
+		join_tbl.lock().unwrap().add_col(join_cols[i].clone());
+		join_tbl.lock().unwrap().add_col(join_sid_cols[i].clone()); //low cost
 			//clone of Rc
 	}
 
-	res.borrow_mut().add_container(join_tbl.clone());
-	res.borrow_mut().add_container(prf);
+	res.lock().unwrap().add_container(join_tbl.clone());
+	res.lock().unwrap().add_container(prf);
 
 	Ok( res )
 }
@@ -2104,16 +2104,16 @@ pub fn gen_disjoint_union_prf<F:PrimeField + ColEle>(
 	set1: &Vec<F>,
 	set2: &Vec<F>,
 	name: &str,
-) -> Result<(Vec<F>,Rc<RefCell<Container<F>>>), Error>{
+) -> Result<(Vec<F>,std::sync::Arc<std::sync::Mutex<Container<F>>>), Error>{
 	let set3 = vec![&set1[..], &set2[..]].concat();
 	let res = set3.clone();
 	let prf= Container::new(name);
 	let m_tbl = gen_m_table(&set3, &res);
 	let n = m_tbl.len();
-	prf.borrow_mut().add_col(Col::new(m_tbl, "m_tbl", IDX_DATA));
+	prf.lock().unwrap().add_col(Col::new(m_tbl, "m_tbl", IDX_DATA));
 
 	let f_rg2= F::from(RANGE2);
-	prf.borrow_mut().add_col(Col::new_const(vec![f_rg2;n],
+	prf.lock().unwrap().add_col(Col::new_const(vec![f_rg2;n],
 		"sid_m_tbl",  IDX_SI_DATA));
 
 	Ok( (res, prf) )
@@ -2127,7 +2127,7 @@ pub fn gen_disjoint_union_prf_adv<F:PrimeField + ColEle>(
 	set2: &Vec<F>,
 	set3: &Vec<F>, //target result
 	name: &str,
-) -> Result<(Vec<F>,Rc<RefCell<Container<F>>>), Error>{
+) -> Result<(Vec<F>,std::sync::Arc<std::sync::Mutex<Container<F>>>), Error>{
 	let b_debug = false;
 	let res = vec![&set1[..], &set2[..]].concat();
 	if b_debug{
@@ -2141,10 +2141,10 @@ pub fn gen_disjoint_union_prf_adv<F:PrimeField + ColEle>(
 	let m_tbl = gen_m_table(&set3, &res); //m_tbl for non-entries will
 		//be all 1 
 	let n = m_tbl.len();
-	prf.borrow_mut().add_col(Col::new(m_tbl, "m_tbl", IDX_DATA));
+	prf.lock().unwrap().add_col(Col::new(m_tbl, "m_tbl", IDX_DATA));
 
 	let f_rg2= F::from(RANGE2);
-	prf.borrow_mut().add_col(Col::new_const(vec![f_rg2;n],
+	prf.lock().unwrap().add_col(Col::new_const(vec![f_rg2;n],
 		"sid_m_tbl",  IDX_SI_DATA));
 
 	Ok( (res, prf) )
@@ -2158,7 +2158,7 @@ pub fn verify_disjoint_union_prf<F:PrimeField + ColEle>(
 	set1: &Vec<FpVar<F>>,
 	set2: &Vec<FpVar<F>>,
 	set3: &Vec<FpVar<F>>, //the desired result
-	prf: &Rc<RefCell<Container<FpVar<F>>>>,
+	prf: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
 	r: &FpVar<F>
 ) -> Result<(), SynthesisError>{
 	//1. verify the m_tbl works for set3 vs res
@@ -2167,7 +2167,7 @@ pub fn verify_disjoint_union_prf<F:PrimeField + ColEle>(
 	let cs = set1[0].cs();
 	let b_perf = false;
 	let nc = cs.num_constraints();
-	let m_tbl = prf.borrow().get_container("m_tbl")?.borrow().to_vec();
+	let m_tbl = prf.lock().unwrap().get_container("m_tbl")?.lock().unwrap().to_vec();
 	let res = vec![&set1[..], &set2[..]].concat();
 	let n = res.len(); //note n may NOT be the sum of set1 and set2
 		//because of existence of dummy entries.
@@ -2202,30 +2202,30 @@ pub fn verify_disjoint_union_prf<F:PrimeField + ColEle>(
 pub fn verify_tbl_left_join<F:PrimeField + ColEle>(
 	r1: &FpVar<F>, //random challenges from msg2
 	r2: &FpVar<F>,
-	tbl1: &Rc<RefCell<Container<FpVar<F>>>>,
-	tbl2: &Rc<RefCell<Container<FpVar<F>>>>,
-	sorted_set_key2: &Rc<RefCell<Container<FpVar<F>>>>, //sorted set of key2
-	output: &Rc<RefCell<Container<FpVar<F>>>>,  //the output table
+	tbl1: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
+	tbl2: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
+	sorted_set_key2: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>, //sorted set of key2
+	output: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,  //the output table
 	cs: ConstraintSystemRef<F>
 ) -> Result<(), SynthesisError>{
 	//1. retrieve data
 	let max_val:usize = (1<<RANGE2_BIT) - 1;
 	let max = new_const_var(&cs, F::from(max_val as u32));
 	let (zero,one)=(new_const_var(&cs,F::zero()),new_const_var(&cs,F::one()));
-	let join_tbl= output.borrow().get_container("join_tbl")?;
-	let prf = output.borrow().get_container("prf")?;
-	let tbl1_cols = (0..3).into_iter().map(|i| tbl1.borrow()
-		.get_container("sorted_tbl").expect("err get sort_tbl").borrow()
-		.get_container_by_idx(i).borrow().to_vec())
+	let join_tbl= output.lock().unwrap().get_container("join_tbl")?;
+	let prf = output.lock().unwrap().get_container("prf")?;
+	let tbl1_cols = (0..3).into_iter().map(|i| tbl1.lock().unwrap()
+		.get_container("sorted_tbl").expect("err get sort_tbl").lock().unwrap()
+		.get_container_by_idx(i).lock().unwrap().to_vec())
 		.collect::<Vec<Vec<FpVar<F>>>>();
-	let tbl2_cols = (0..3).into_iter().map(|i| tbl2.borrow()
-		.get_container("sorted_tbl").expect("err get sort_tbl").borrow()
-		.get_container_by_idx(i).borrow().to_vec())
+	let tbl2_cols = (0..3).into_iter().map(|i| tbl2.lock().unwrap()
+		.get_container("sorted_tbl").expect("err get sort_tbl").lock().unwrap()
+		.get_container_by_idx(i).lock().unwrap().to_vec())
 		.collect::<Vec<Vec<FpVar<F>>>>();
 	let names = vec!["key", "id1", "key2", "id2", "val"];
 	let tbl_res = names.iter().map(|n|
-		join_tbl.borrow().get_container(n).unwrap()
-		.borrow().to_vec()).collect::<Vec<Vec<FpVar<F>>>>();
+		join_tbl.lock().unwrap().get_container(n).unwrap()
+		.lock().unwrap().to_vec()).collect::<Vec<Vec<FpVar<F>>>>();
 
 	//2. verify tbl1 in first 3 columns 
 	let one_var = FpVar::<F>::constant(F::one());
@@ -2237,14 +2237,14 @@ pub fn verify_tbl_left_join<F:PrimeField + ColEle>(
 	//	x.is_zero().unwrap().not().into() ).collect::<Vec<FpVar<F>>>();
 	let res_firsthalf_sel = tbl_res[0].iter().map(|x|
 		&one_var - is_zero_better(x, &cs).unwrap() ).collect::<Vec<FpVar<F>>>();
-	let mtbl_tbl1_res= prf.borrow().get_container("mtbl_tbl1_res")?
-		.borrow().to_vec();
+	let mtbl_tbl1_res= prf.lock().unwrap().get_container("mtbl_tbl1_res")?
+		.lock().unwrap().to_vec();
 	assert_logup_cond(cs.clone(), &tbl1_encoded, &tbl1_sel, 
 		&res_firsthalf_encoded, &res_firsthalf_sel, &mtbl_tbl1_res, r1)?;
 
 	//3. verify lkup first 3 column in tbl1 (guarnatee no extra) 
-	let mtbl_res_tbl1= prf.borrow().get_container("mtbl_res_tbl1")?
-		.borrow().to_vec();
+	let mtbl_res_tbl1= prf.lock().unwrap().get_container("mtbl_res_tbl1")?
+		.lock().unwrap().to_vec();
 	assert_logup_cond(cs.clone(), &res_firsthalf_encoded, &res_firsthalf_sel, 
 		&tbl1_encoded, &tbl1_sel, &mtbl_res_tbl1, r2)?;
 
@@ -2277,8 +2277,8 @@ pub fn verify_tbl_left_join<F:PrimeField + ColEle>(
 	//5. lkup last 3 columns in tbl2 (one direction only)
 	// NOTE that tbl2 is padded with dummy entries for all keys to deal with
 	// left-join semantics (for those non-appearing foreign keys)
-	let sorted_set_key2 = sorted_set_key2.borrow().get_container_by_idx(2)
-		.borrow().to_vec();//note col #2 is the val of sorted set
+	let sorted_set_key2 = sorted_set_key2.lock().unwrap().get_container_by_idx(2)
+		.lock().unwrap().to_vec();//note col #2 is the val of sorted set
 	let sn = sorted_set_key2.len();
 	let tbl2_pad = vec![
 		sorted_set_key2.iter().map(
@@ -2304,8 +2304,8 @@ pub fn verify_tbl_left_join<F:PrimeField + ColEle>(
 	let vec_inv = gen_vec_inverse(&col2_val);
 	let res_sechalf_sel = tbl_res[2].iter().enumerate().map(|(i,x)|
 		&one_var - is_zero_better_adv(x,&vec_inv[i],&cs).unwrap() ).collect::<Vec<FpVar<F>>>();
-	let mtbl_sechalf_tbl2= prf.borrow().get_container("mtbl_sechalf_tbl2")?
-		.borrow().to_vec();
+	let mtbl_sechalf_tbl2= prf.lock().unwrap().get_container("mtbl_sechalf_tbl2")?
+		.lock().unwrap().to_vec();
 	assert_logup_cond(cs.clone(), &res_sechalf_encoded, &res_sechalf_sel, 
 		&tbl2_encoded, &tbl2_sel, &mtbl_sechalf_tbl2, r2)?;
 	
@@ -2313,9 +2313,9 @@ pub fn verify_tbl_left_join<F:PrimeField + ColEle>(
 	// combined with 5 makes sure
 	// that the expansion of (k1,k2) is complete. because the two dummy
 	// entries are verified to be in tbl2. Note: no need on key
-	let diff_val = prf.borrow().get_container("diff_val")?.borrow().to_vec();
-	//let sid_diff_val = prf.borrow().get_container("sid_diff_val")?
-	//	.borrow().to_vec();
+	let diff_val = prf.lock().unwrap().get_container("diff_val")?.lock().unwrap().to_vec();
+	//let sid_diff_val = prf.lock().unwrap().get_container("sid_diff_val")?
+	//	.lock().unwrap().to_vec();
 	let sid_diff_val = gen_assert_sidcol_for_diff(&tbl_res[4], &diff_val);
 	assert!(sid_diff_val.len()==tbl_res[4].len()-1);
 	assert_well_formed_sorted(cs.clone(),
@@ -2363,8 +2363,8 @@ pub fn verify_tbl_left_join_wide<F:PrimeField + ColEle>(
 	_r2: &FpVar<F>,
 	col1: &Vec<FpVar<F>>, //col1 of tbl1
 	col2: &Vec<FpVar<F>>, //col2 of tbl2
-	tbl2: &Rc<RefCell<Container<FpVar<F>>>>, //2nd tbl
-	output: &Rc<RefCell<Container<FpVar<F>>>>,  //the output table
+	tbl2: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>, //2nd tbl
+	output: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,  //the output table
 	cs: ConstraintSystemRef<F>
 ) -> Result<(), SynthesisError>{
 	//0. retrieve data
@@ -2376,25 +2376,25 @@ pub fn verify_tbl_left_join_wide<F:PrimeField + ColEle>(
 	let mut gt = Timer::new();
 
 	//let (zero,one)=(new_const_var(&cs,F::zero()),new_const_var(&cs,F::one()));
-	let join_tbl= output.borrow().get_container("join_tbl")?;
-	let prf = output.borrow().get_container("prf")?;
+	let join_tbl= output.lock().unwrap().get_container("join_tbl")?;
+	let prf = output.lock().unwrap().get_container("prf")?;
 	let names = vec!["c1","c2","val","id","count"];
 	let ct_jcols = names.iter().map(|n|
-		join_tbl.borrow().get_container(n).unwrap()
-	).collect::<Vec<Rc<RefCell<Container<FpVar<F>>>>>>();
-	let ct_enc_c12 = prf.borrow().get_container("enc_c12").unwrap(); 
-	let enc_c12 = ct_enc_c12.borrow().to_vec();
-	let c1 = ct_jcols[0].borrow().to_vec(); //c1
-	let c2 = ct_jcols[1].borrow().to_vec(); //c2
-	let c_val = ct_jcols[2].borrow().to_vec(); 
-	let c_id = ct_jcols[3].borrow().to_vec(); 
-	let c_count = ct_jcols[4].borrow().to_vec(); 
+		join_tbl.lock().unwrap().get_container(n).unwrap()
+	).collect::<Vec<std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>>>();
+	let ct_enc_c12 = prf.lock().unwrap().get_container("enc_c12").unwrap(); 
+	let enc_c12 = ct_enc_c12.lock().unwrap().to_vec();
+	let c1 = ct_jcols[0].lock().unwrap().to_vec(); //c1
+	let c2 = ct_jcols[1].lock().unwrap().to_vec(); //c2
+	let c_val = ct_jcols[2].lock().unwrap().to_vec(); 
+	let c_id = ct_jcols[3].lock().unwrap().to_vec(); 
+	let c_count = ct_jcols[4].lock().unwrap().to_vec(); 
 	let n = enc_c12.len();
 	assert!(c1.len()==n && c2.len()==n);
 
 	let tbl2_names = vec!["key", "val", "id", "count"];
 	let t2cols = tbl2_names.iter().map(|name|
-		tbl2.borrow().get_container(name).unwrap().borrow().to_vec()
+		tbl2.lock().unwrap().get_container(name).unwrap().lock().unwrap().to_vec()
 	).collect::<Vec<Vec<FpVar<F>>>>();
 
 	//1. verify the validity of ct_enc_c12
@@ -2402,10 +2402,10 @@ pub fn verify_tbl_left_join_wide<F:PrimeField + ColEle>(
 	//assert its well-formedness
 	//COST: 3n
 	let tbl_tmp = Container::new("tmp_tbl");
-	tbl_tmp.borrow_mut().add_container(ct_enc_c12.clone());
-	tbl_tmp.borrow_mut().add_container(ct_jcols[2].clone());//low cost clone
-	tbl_tmp.borrow_mut().add_container(ct_jcols[3].clone());//low cost clone
-	tbl_tmp.borrow_mut().add_container(ct_jcols[4].clone());//low cost clone
+	tbl_tmp.lock().unwrap().add_container(ct_enc_c12.clone());
+	tbl_tmp.lock().unwrap().add_container(ct_jcols[2].clone());//low cost clone
+	tbl_tmp.lock().unwrap().add_container(ct_jcols[3].clone());//low cost clone
+	tbl_tmp.lock().unwrap().add_container(ct_jcols[4].clone());//low cost clone
 	assert_wide_wellformed(&tbl_tmp, "enc_c12")?;
 	if b_perf{
 		log_perf(logl, &format!("verify_join_wide. step 1.1: assert wide wellformed: n: {}, cs: {}", n, cs.num_constraints()-nc), &mut gt);
@@ -2425,7 +2425,7 @@ pub fn verify_tbl_left_join_wide<F:PrimeField + ColEle>(
 	//2. verify that the join table <c1,c2> has a 2-direction
 	// lookup into tbl1 e.g., <proj_states, proj_loc>
 	//COST: n + 2*n1
-	let lkupprf_c1c2 = prf.borrow().get_container("lkupprf_c1c2").expect(
+	let lkupprf_c1c2 = prf.lock().unwrap().get_container("lkupprf_c1c2").expect(
 		"can't find lkupprf_c1c2"); 
 	let n1 = col1.len();
 	verify_2d_lkup_prf(
@@ -2444,7 +2444,7 @@ pub fn verify_tbl_left_join_wide<F:PrimeField + ColEle>(
 	//tabl2 (note that one way is good enough)
 	//COST: n + 2*n2
 	let n2 = t2cols[0].len();
-	let lkupprf_tbl2 = prf.borrow().get_container("lkupprf_tbl2").expect(
+	let lkupprf_tbl2 = prf.lock().unwrap().get_container("lkupprf_tbl2").expect(
 		"can't find lkupprf_tbl2");
 	verify_1d_lkup_prf(
 		r1.clone(),
@@ -2582,13 +2582,13 @@ pub mod tests_db{
 		let col_1 = Col::new(data, "data", IDX_DATA);
 		let col_2 = Col::new(data2, "data2", IDX_DATA);
 		let col_ctn = Container::new("data");
-		col_ctn.borrow_mut().add_col(col_1);
-		col_ctn.borrow_mut().add_col(col_2);
+		col_ctn.lock().unwrap().add_col(col_1);
+		col_ctn.lock().unwrap().add_col(col_2);
 		let n = 16;
 		let f_ctn = col_to_sorted_set(&col_ctn, n, "sorted_set");
 		let r = FpVar::new_witness(cs.clone(), 
 			|| Ok(Fr::rand(&mut rng))).unwrap();
-		let var_ctn= Container::<FpVar<Fr>>::from(&f_ctn.borrow(),cs.clone()); 
+		let var_ctn= Container::<FpVar<Fr>>::from(&f_ctn.lock().unwrap(),cs.clone()); 
 		assert!(verify_col_to_sorted_set(&r,&var_ctn,cs.clone()).is_ok());
 		assert!(cs.is_satisfied().unwrap());
 
@@ -2644,10 +2644,10 @@ pub mod tests_db{
 			&locs, &sorted_set, n2, "sorted tbl", unique_key_size).unwrap();
 
 		//3. construct claim/proof bundle and verify
-		let states = Container::rc_from(&states.borrow(), cs.clone());
-		let locs = Container::rc_from(&locs.borrow(), cs.clone());
-		let sorted_tbl = Container::rc_from(&sorted_tbl.borrow(), cs.clone());
-		let sorted_set = Container::rc_from(&sorted_set.borrow(), cs.clone());
+		let states = Container::rc_from(&states.lock().unwrap(), cs.clone());
+		let locs = Container::rc_from(&locs.lock().unwrap(), cs.clone());
+		let sorted_tbl = Container::rc_from(&sorted_tbl.lock().unwrap(), cs.clone());
+		let sorted_set = Container::rc_from(&sorted_set.lock().unwrap(), cs.clone());
 		assert!( 
 			verify_tbl_filtered_to_sorted_tbl(
 				&r1, &r2, &states, &locs, &sorted_set, &sorted_tbl, 
@@ -2680,9 +2680,9 @@ pub mod tests_db{
 			&locs, n2, "sorted tbl").unwrap();
 
 		//3. construct claim/proof bundle and verify
-		let states = Container::rc_from(&states.borrow(), cs.clone());
-		let locs = Container::rc_from(&locs.borrow(), cs.clone());
-		let sorted_tbl = Container::rc_from(&sorted_tbl.borrow(), cs.clone());
+		let states = Container::rc_from(&states.lock().unwrap(), cs.clone());
+		let locs = Container::rc_from(&locs.lock().unwrap(), cs.clone());
+		let sorted_tbl = Container::rc_from(&sorted_tbl.lock().unwrap(), cs.clone());
 		assert!( 
 			verify_tbl_to_sorted_tbl(
 				&r1, &r2, &states, &locs, &sorted_tbl, cs.clone()).is_ok());
@@ -2732,13 +2732,13 @@ pub mod tests_db{
 			n, "pat_state_loc_tbl").unwrap();
 
 		let pat_state_tbl= Container::rc_from(
-			&pat_state_tbl.borrow(), cs.clone());
+			&pat_state_tbl.lock().unwrap(), cs.clone());
 		let state_loc_tbl= Container::rc_from(
-			&state_loc_tbl.borrow(), cs.clone());
+			&state_loc_tbl.lock().unwrap(), cs.clone());
 		let pat_state_loc_tbl= Container::rc_from(
-			&pat_state_loc_tbl.borrow(), cs.clone());
+			&pat_state_loc_tbl.lock().unwrap(), cs.clone());
 		let sorted_set_states= Container::rc_from(
-			&sorted_set_states.borrow(), cs.clone());
+			&sorted_set_states.lock().unwrap(), cs.clone());
 
 		assert!( 
 			verify_tbl_left_join(
@@ -2786,7 +2786,7 @@ pub mod tests_db{
 			.collect::<Vec<FpVar<Fr>>>();
 		let var_tag= tag.iter().map(|x| new_var(&cs, *x))
 			.collect::<Vec<FpVar<Fr>>>();
-		let var_prf_tag = Container::rc_from(&prf_tag.borrow(), cs.clone());
+		let var_prf_tag = Container::rc_from(&prf_tag.lock().unwrap(), cs.clone());
 		assert!(
 			verify_filter_tag(&var_key, &var_sorted_key, &var_tag,
 				&var_prf_tag, &r1, &r2).is_ok()
@@ -2825,7 +2825,7 @@ pub mod tests_db{
 			
 		let res= res_val.iter().map(|x| new_var(&cs, *x))
 			.collect::<Vec<FpVar<Fr>>>();
-		let prf = Container::rc_from(&prf_val.borrow(), cs.clone());
+		let prf = Container::rc_from(&prf_val.lock().unwrap(), cs.clone());
 		assert!(verify_disjoint_union_prf(&set1, &set2, &res, &prf,
 			&r1).is_ok());
 		assert!(cs.is_satisfied().unwrap());
@@ -2871,9 +2871,9 @@ pub mod tests_db{
 		let col_locs = locs.iter().map(|s| new_var(&cs, *s))
 			.collect::<Vec<FpVar<Fr>>>();
 		let loc_state_pat_tbl= Container::rc_from(
-			&loc_state_pat_tbl.borrow(), cs.clone());
+			&loc_state_pat_tbl.lock().unwrap(), cs.clone());
 		let proj_states_pats = Container::rc_from(
-			&proj_states_pats.borrow(), cs.clone());
+			&proj_states_pats.lock().unwrap(), cs.clone());
 
 		assert!( 
 			verify_tbl_left_join_wide(

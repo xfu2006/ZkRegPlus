@@ -3,7 +3,7 @@
 		and ignore case
 */
 
-/*!
+/* 
  A SED component mapper handles the SED approach. Later if ISED
  needs to be supported, its gadget mapper is essentially 1/2 of
  SED (as SED needs to support both igc and non-igc cases).
@@ -45,9 +45,8 @@ use folding_schemes::folding::foldpot::container_config::ColEle;
 use utils::{logger::{log, log_perf, LOG7, LOG1, LOG_LEVEL}, timer::Timer};
 use std::{
 	marker::PhantomData,
-	rc::{Rc},
-	sync::{Arc},
-	cell::{RefCell},
+	sync::{Arc, Mutex},
+	
 	fmt::{Debug},
 	collections::{HashMap,HashSet},
 };
@@ -94,7 +93,7 @@ use std::any::Any;
 #[derive(Clone,Debug)]
 pub struct SedCapacity{
 	// will contain capacities for word_extract_adv, fsm_adv ...
-	pub comp_capacities: Vec<Rc<dyn Capacity>>,
+	pub comp_capacities: Vec<Arc<dyn Capacity + Send + Sync>>,
 
 	pub	max_word_len: usize, 
 	pub	acdfa_state_part_bits: usize, 
@@ -116,7 +115,7 @@ pub struct SedCapacity{
 #[derive(Clone,Debug)]
 pub struct SedCapacityCombo{
 	// will contain capacities cs and igc
-	pub comp_capacities: Vec<Rc<dyn Capacity>>,
+	pub comp_capacities: Vec<Arc<dyn Capacity + Send + Sync>>,
 
 	/// the capacity for components for the case sensitive part
 	pub cs: SedCapacity,
@@ -149,11 +148,11 @@ pub struct SedComponentMapper<F:PrimeField + ColEle, LK: LookupTableTwoCol<F>>{
 	pub capacity: SedCapacityCombo,
 
 	/// its own gadgets 
-	///pub gadgets: Vec<Rc<dyn SigmaGadget<F> + ContainerCompatible>>,
-	pub gadgets: Vec<Rc<RefCell<dyn SigmaGadget<F>>>>,
+	///pub gadgets: Vec<Rc<dyn SigmaGadget<F> + Send + Sync + ContainerCompatible>>,
+	pub gadgets: Vec<std::sync::Arc<std::sync::Mutex<dyn SigmaGadget<F> + Send + Sync>>>,
 
 	/// clamdb
-	pub clamdb: Rc<ClamavDB<F>>,
+	pub clamdb: Arc<ClamavDB<F>>,
 }
 
 
@@ -200,11 +199,11 @@ impl SedCapacity{
 			perc_pats_expansion_rate_igc: perc_pats_expansion_rate,
 			perc_comp_subsigs};
 			
-		let comp_capacities: Vec<Rc<dyn Capacity>> = vec![
-			Rc::new(wea_capacity),
-			Rc::new(faa_capacity),
-			Rc::new(da_capacity),
-			Rc::new(csa_capacity),
+		let comp_capacities: Vec<Arc<dyn Capacity + Send + Sync>> = vec![
+			Arc::new(wea_capacity),
+			Arc::new(faa_capacity),
+			Arc::new(da_capacity),
+			Arc::new(csa_capacity),
 		];
 
 		Self{comp_capacities, max_word_len, acdfa_state_part_bits,
@@ -307,7 +306,7 @@ impl Capacity for SedCapacity{
 	/// Self represents the capacity of the circuit, other
 	/// represents the capacity requirement of a discharge proof (NdAdvice)
 	/// It is essentially a comparison operation.
-	fn can_satisfy(&self, r_other: &Rc<dyn Capacity>) -> bool{
+	fn can_satisfy(&self, r_other: &Arc<dyn Capacity + Send + Sync>) -> bool{
 		
 		let other = r_other.as_any().downcast_ref::<SedCapacity>()
 			.expect("downcast err"); 
@@ -322,9 +321,9 @@ impl Capacity for SedCapacity{
 	}
 
 	/// to get around the requirement on Clone trait which require Sized
-	/// (which cause trouble why use dyn Capacity in Rc),
-	fn clone(&self) -> Rc<dyn Capacity>{
-		Rc::new(SedCapacity{
+	/// (which cause trouble why use dyn Capacity + Send + Sync in Rc),
+	fn clone(&self) -> Arc<dyn Capacity + Send + Sync>{
+		Arc::new(SedCapacity{
 			comp_capacities: self.comp_capacities.clone(),
 			max_word_len: self.max_word_len,
 			acdfa_state_part_bits: self.acdfa_state_part_bits,
@@ -345,9 +344,9 @@ impl Capacity for SedCapacity{
 }
 impl SedCapacityCombo{
 	pub fn new(cs: &SedCapacity, igc: &SedCapacity)->Self{
-		let comp_capacities: Vec<Rc<dyn Capacity>> = vec![
-			Rc::new(Clone::clone(cs)),
-			Rc::new(Clone::clone(igc)),
+		let comp_capacities: Vec<Arc<dyn Capacity + Send + Sync>> = vec![
+			Arc::new(Clone::clone(cs)),
+			Arc::new(Clone::clone(igc)),
 		];
 		Self{comp_capacities, cs: Clone::clone(cs), igc: Clone::clone(igc)}
 	}
@@ -357,7 +356,7 @@ impl Capacity for SedCapacityCombo{
 	/// Self represents the capacity of the circuit, other
 	/// represents the capacity requirement of a discharge proof (NdAdvice)
 	/// It is essentially a comparison operation.
-	fn can_satisfy(&self, r_other: &Rc<dyn Capacity>) -> bool{
+	fn can_satisfy(&self, r_other: &Arc<dyn Capacity + Send + Sync>) -> bool{
 		
 		let other = r_other.as_any().downcast_ref::<SedCapacityCombo>()
 			.expect("downcast err"); 
@@ -372,9 +371,9 @@ impl Capacity for SedCapacityCombo{
 	}
 
 	/// to get around the requirement on Clone trait which require Sized
-	/// (which cause trouble why use dyn Capacity in Rc),
-	fn clone(&self) -> Rc<dyn Capacity>{
-		Rc::new(SedCapacityCombo::new(&self.cs, &self.igc))
+	/// (which cause trouble why use dyn Capacity + Send + Sync in Rc),
+	fn clone(&self) -> Arc<dyn Capacity + Send + Sync>{
+		Arc::new(SedCapacityCombo::new(&self.cs, &self.igc))
 	}
 
 	/// needed for downcasting for composite gadget mapper
@@ -392,7 +391,7 @@ pub struct SedAdvice<F:PrimeField + ColEle>{
 	pub discharge_adv_advice_igc: DischargeAdvAdvice<F>,
 	pub compute_sig_adv_advice: ComputeSigAdvAdvice<F>,
 
-	pub vec_advices: Vec<Rc<dyn ComponentAdvice<F>>>,
+	pub vec_advices: Vec<Arc<dyn ComponentAdvice<F> + Send + Sync>>,
 
 }
 
@@ -481,8 +480,8 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 
 		//2. build the fsm_adv advice (cs and igc)
 		assert!(vec_sigs_to_discharge.len()==discharge_info.len());
-		let nibbles = wd_extract_advice.stmt_container.borrow().
-			get_container("nibbles").expect("no nibbles").borrow().to_vec();
+		let nibbles = wd_extract_advice.stmt_container.lock().unwrap().
+			get_container("nibbles").expect("no nibbles").lock().unwrap().to_vec();
 		let inp_sigs = vec_sigs_to_discharge.iter().map(|sig|{
 			let sig_id = sig_to_id.get(&sig.name)
 				.expect(&format!("can't find sig: {}", sig.name));
@@ -516,15 +515,15 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 		let da_cap_cs = &cs_capacity.da_capacity();
 		let da_cap_igc = &igc_capacity.da_capacity();
 		//3.1 the cs version
-		let pat_loc_cs = fsm_adv_advice_cs.stmt_container.borrow()
+		let pat_loc_cs = fsm_adv_advice_cs.stmt_container.lock().unwrap()
 			.search_container("fsm_adv_stmt_cs packed_trace pat_loc sorted_tbl")
 			.unwrap();
 		let inp_steps_queue_obj_cs = StepQueue::parse_from(
 			&inp.inp_steps_queue_cs, StepQueueType::ResSmall, 
 			&da_cap_cs, false);
-		let locs_cs = fsm_adv_advice_cs.stmt_container.borrow()
+		let locs_cs = fsm_adv_advice_cs.stmt_container.lock().unwrap()
                         .search_container("fsm_adv_stmt_cs fsm_acc locs").unwrap()
-                        .borrow().to_vec();
+                        .lock().unwrap().to_vec();
                 let last_loc_cs = locs_cs[locs_cs.len()-1];
                 let discharge_adv_advice_cs = DischargeAdvAdvice::<F>
                         ::new(false, 2, &pat_loc_cs, &subsigs_inp_cs, fsm_id_cs as u32, 
@@ -533,14 +532,14 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 		if b_perf{ log_perf(LOG1, "-- Sed advice step4: discharge_cs", &mut t1); }
 
 		//3.2 the igc version
-		let pat_loc_igc = fsm_adv_advice_igc.stmt_container.borrow()
+		let pat_loc_igc = fsm_adv_advice_igc.stmt_container.lock().unwrap()
 			.search_container("fsm_adv_stmt_igc packed_trace pat_loc sorted_tbl").unwrap();
 		let inp_steps_queue_obj_igc = StepQueue::parse_from(
 			&inp.inp_steps_queue_igc, StepQueueType::ResSmall,
 			&da_cap_igc, true);
-		let locs_igc = fsm_adv_advice_igc.stmt_container.borrow()
+		let locs_igc = fsm_adv_advice_igc.stmt_container.lock().unwrap()
                         .search_container("fsm_adv_stmt_igc fsm_acc locs").unwrap()
-                        .borrow().to_vec();
+                        .lock().unwrap().to_vec();
                 let last_loc_igc = locs_igc[locs_igc.len()-1];
                 let discharge_adv_advice_igc = DischargeAdvAdvice::<F>
                         ::new(true, 2, &pat_loc_igc, &subsigs_inp_igc, fsm_id_igc as u32, 
@@ -558,9 +557,9 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 		csa_cap.perc_pats_expansion_rate_igc= csa_cap_igc.perc_pats_expansion_rate_igc;
 		csa_cap.subsigs_igc = csa_cap_igc.subsigs_igc;
 		let stmt_disc_cs = &discharge_adv_advice_cs.stmt_container;
-		let sq_res_cs = stmt_disc_cs.borrow().search_container("discharge_adv_stmt_cs bwd_steps_queue sq_res2").expect("sq_res err");
+		let sq_res_cs = stmt_disc_cs.lock().unwrap().search_container("discharge_adv_stmt_cs bwd_steps_queue sq_res2").expect("sq_res err");
 		let stmt_disc_igc = &discharge_adv_advice_igc.stmt_container;
-		let sq_res_igc = stmt_disc_igc.borrow().search_container("discharge_adv_stmt_igc bwd_steps_queue sq_res2").expect("sq_res err");
+		let sq_res_igc = stmt_disc_igc.lock().unwrap().search_container("discharge_adv_stmt_igc bwd_steps_queue sq_res2").expect("sq_res err");
 		let compute_sig_adv_advice = ComputeSigAdvAdvice::<F>::new(
 			fsm_id_cs as u32, fsm_id_igc as u32,
 			&inp_sigs, 
@@ -573,13 +572,13 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 			vec_sigs_to_discharge, sig_to_id)?;
 
 		//3. assemble all advices
-		let vec_advices:Vec<Rc<dyn ComponentAdvice<F>>> = vec![
-			Rc::new(wd_extract_advice.clone()),
-			Rc::new(fsm_adv_advice_cs.clone()),
-			Rc::new(fsm_adv_advice_igc.clone()),
-			Rc::new(discharge_adv_advice_cs.clone()),
-			Rc::new(discharge_adv_advice_igc.clone()),
-			Rc::new(compute_sig_adv_advice.clone()),
+		let vec_advices:Vec<Arc<dyn ComponentAdvice<F> + Send + Sync>> = vec![
+			Arc::new(wd_extract_advice.clone()),
+			Arc::new(fsm_adv_advice_cs.clone()),
+			Arc::new(fsm_adv_advice_igc.clone()),
+			Arc::new(discharge_adv_advice_cs.clone()),
+			Arc::new(discharge_adv_advice_igc.clone()),
+			Arc::new(compute_sig_adv_advice.clone()),
 		];
 		if b_perf{ log_perf(LOG1, "-- Sed advice step6: compute_sig", &mut t1); }
 
@@ -621,7 +620,7 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 	pub fn new(
 		cs_capacity: SedCapacity,
 		igc_capacity: SedCapacity,
-		clamdb: Rc<ClamavDB<F>>,
+		clamdb: Arc<ClamavDB<F>>,
 	) ->Self{
 		let b_debug = false;
 		let mut cfgs = vec![];
@@ -696,13 +695,13 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 		cfgs.push( g_csa.dummy_cfg.clone() );
 
 		//2. build the gadgets
-		let gadgets: Vec<Rc<RefCell<dyn SigmaGadget<F>>>> = vec![ 
-			Rc::new(RefCell::new(g_wea)), //word_extract_adv gadget
-			Rc::new(RefCell::new(g_faa_cs)), //fsm_adv gadget
-			Rc::new(RefCell::new(g_faa_igc)), //fsm_adv gadget
-			Rc::new(RefCell::new(g_da_cs)), //discharge subsigs via SED
-			Rc::new(RefCell::new(g_da_igc)), //discharge subsigs via SED
-			Rc::new(RefCell::new(g_csa)), //compute_sig_gadget 
+		let gadgets: Vec<std::sync::Arc<std::sync::Mutex<dyn SigmaGadget<F> + Send + Sync>>> = vec![ 
+			Arc::new(Mutex::new(g_wea)), //word_extract_adv gadget
+			Arc::new(Mutex::new(g_faa_cs)), //fsm_adv gadget
+			Arc::new(Mutex::new(g_faa_igc)), //fsm_adv gadget
+			Arc::new(Mutex::new(g_da_cs)), //discharge subsigs via SED
+			Arc::new(Mutex::new(g_da_igc)), //discharge subsigs via SED
+			Arc::new(Mutex::new(g_csa)), //compute_sig_gadget 
 		];
 
 		Self{
@@ -717,8 +716,8 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 	
 }
 
-impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for SedComponentMapper<F,LK>{
-	fn set_container_config(&mut self, r_advice: &Rc<dyn NdAdvice>){ 
+impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F> + Send + Sync> ComponentMapper<F,LK> for SedComponentMapper<F,LK>{
+	fn set_container_config(&mut self, r_advice: &Arc<dyn NdAdvice + Send + Sync>){ 
 		let advice = r_advice.as_any().downcast_ref::<SedAdvice<F>>()
 			.expect("downcast err!");
 		assert!(self.gadgets.len()==advice.vec_advices.len());
@@ -728,19 +727,19 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 			vec_cfgs.push(cta_cfg);
 		}
 		ContainerConfig::adjust_locations(&mut vec_cfgs);
-		let rc_cfgs = Rc::new(vec_cfgs);
+		let rc_cfgs = Arc::new(vec_cfgs);
 		for i in 0..self.gadgets.len(){
-			self.gadgets[i].borrow_mut().set_container_cfg(rc_cfgs.clone(), i);
+			self.gadgets[i].lock().unwrap().set_container_cfg(rc_cfgs.clone(), i);
 		}
 	}
 
 	fn get_name(&self)->String {format!("SedMapper")}
 
-	fn get_capacity(&self)->Rc<dyn Capacity>{
-		Rc::new( Clone::clone(&self.capacity) )
+	fn get_capacity(&self)->Arc<dyn Capacity + Send + Sync>{
+		Arc::new( Clone::clone(&self.capacity) )
 	}
 
-	fn create_gadgets(&self) -> Vec<Rc<RefCell<dyn SigmaGadget<F>>>>{  
+	fn create_gadgets(&self) -> Vec<std::sync::Arc<std::sync::Mutex<dyn SigmaGadget<F> + Send + Sync>>>{  
 		self.gadgets.clone()
 	}
 
@@ -759,8 +758,8 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 
 	/// genera the avice using its own capacity
 	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
-		r_prev_adv: Option<Rc<dyn NdAdvice>>, seg_id: usize)
-		->Result<Rc<dyn NdAdvice>, Error>{
+		r_prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>>, seg_id: usize)
+		->Result<Arc<dyn NdAdvice + Send + Sync>, Error>{
 		//1. expand word to full length
 		let mut rem_word = vec![F::zero(); self.max_word_len() - word.len()];
 		let mut word_seg = word.clone();
@@ -823,13 +822,13 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 			(init_state_cs, init_loc_cs, init_steps_queue_cs), |adv|{
 				let adv= adv.as_any().downcast_ref::<SedAdvice<F>>(); 
 				let fsm_adv_advice_cs= &adv.unwrap().fsm_adv_advice_cs;
-				let states_cs = fsm_adv_advice_cs.stmt_container.borrow()
+				let states_cs = fsm_adv_advice_cs.stmt_container.lock().unwrap()
 					.search_container("fsm_adv_stmt_cs fsm_acc states").unwrap()
-					.borrow().to_vec();
+					.lock().unwrap().to_vec();
 				let last_oup_state_cs = states_cs[states_cs.len()-1]; //adjusted
-				let locs_cs = fsm_adv_advice_cs.stmt_container.borrow()
+				let locs_cs = fsm_adv_advice_cs.stmt_container.lock().unwrap()
 					.search_container("fsm_adv_stmt_cs fsm_acc locs").unwrap()
-					.borrow().to_vec();
+					.lock().unwrap().to_vec();
 				let last_loc_cs = locs_cs[locs_cs.len()-1];
 				let da_adv_cs = &adv.unwrap().discharge_adv_advice_cs;
 				let last_steps_queue_cs = da_adv_cs.get_output_steps_queue();
@@ -857,13 +856,13 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 			(init_state_igc, init_loc_igc, init_steps_queue_igc), |adv|{
 				let adv= adv.as_any().downcast_ref::<SedAdvice<F>>(); 
 				let fsm_adv_advice_igc= &adv.unwrap().fsm_adv_advice_igc;
-				let states_igc = fsm_adv_advice_igc.stmt_container.borrow()
+				let states_igc = fsm_adv_advice_igc.stmt_container.lock().unwrap()
 					.search_container("fsm_adv_stmt_igc fsm_acc states")
-					.unwrap().borrow().to_vec();
+					.unwrap().lock().unwrap().to_vec();
 				let last_oup_state_igc = states_igc[states_igc.len()-1]; 
-				let locs_igc = fsm_adv_advice_igc.stmt_container.borrow()
+				let locs_igc = fsm_adv_advice_igc.stmt_container.lock().unwrap()
 					.search_container("fsm_adv_stmt_igc fsm_acc locs").unwrap()
-					.borrow().to_vec();
+					.lock().unwrap().to_vec();
 				let last_loc_igc = locs_igc[locs_igc.len()-1];
 				let da_adv_igc = &adv.unwrap().discharge_adv_advice_igc;
 				let last_steps_queue_igc = da_adv_igc.get_output_steps_queue();
@@ -899,7 +898,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 			seg_id
 		)?;
 
-		Ok( Rc::new(advice) )
+		Ok( Arc::new(advice) )
 
 	}
 
@@ -910,12 +909,12 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 		if b_perf{
 			log(log_level, &format!(" ## sed gadgets data len: ==="));
 			for i in 0..self.gadgets.len(){
-				let vs = self.gadgets[i].borrow().get_to_add_size();
+				let vs = self.gadgets[i].lock().unwrap().get_to_add_size();
 				log(log_level, &format!("  --  {}: {}",
-					self.gadgets[i].borrow().get_name(), vs.2));
+					self.gadgets[i].lock().unwrap().get_name(), vs.2));
 			}
 		}
-		let sizes = self.gadgets.iter().map(|g| g.borrow().get_to_add_size())
+		let sizes = self.gadgets.iter().map(|g| g.lock().unwrap().get_to_add_size())
 			.collect::<Vec<(usize, usize, usize, usize, usize)>>();
 		let total = sizes.into_iter().fold((0,0,0,0,0), |x,y|
 			(x.0+y.0, x.1+y.1, x.2+y.2, x.3+y.3, x.4+y.4));
@@ -992,7 +991,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 		let mut vec_si_oup_info = vec![];
 		for i in 0..self.gadgets.len(){
 			//2.1. collect maps
-			let instructions = self.gadgets[i].borrow()
+			let instructions = self.gadgets[i].lock().unwrap()
 				.get_stmt_map_instructions();
 			let my_maps = instructions.into_iter().map(|instruction|{
 				let (_gadget_offset, seg_id, start, len) = instruction;
@@ -1004,7 +1003,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 
 				res
 			}).collect::<Vec<(usize,usize)>>();
-			let ns = self.gadgets[i].borrow().get_to_add_size();
+			let ns = self.gadgets[i].lock().unwrap().get_to_add_size();
 			// ns corresponds to 9 elements in sequence below:
 			// word, inp, oup, data
 			// sid_inp, sid_opu, sid_data
@@ -1017,7 +1016,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 			vec_res.push(my_maps);
 
 			let (si_data_info, si_inp_info, si_oup_info) = 
-				self.gadgets[i].borrow()
+				self.gadgets[i].lock().unwrap()
 				.get_container_config().gen_si_info();
 			vec_si_data_info.push(si_data_info);
 			vec_si_inp_info.push(si_inp_info);
@@ -1057,7 +1056,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 	/// the the comp_id for the 2nd is 1, and its stmt_map_id is 2. (idx
 	/// starting from 0). For conveneince, we sometimes use
 	/// the prev_stmt or the vector of its prev_stmt.
-	fn build_statement_comp(&self, _comp_id: usize, _stmt_map_id: usize, _word_seg: &Vec<F>, _actual_word_len: usize, _lkup: &Arc<LK>, _extra_info: &StatementExtraInfo<F>, advice: &Rc<dyn NdAdvice>, _cfg: &StatementConfig, _stmt_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>{
+	fn build_statement_comp(&self, _comp_id: usize, _stmt_map_id: usize, _word_seg: &Vec<F>, _actual_word_len: usize, _lkup: &Arc<LK>, _extra_info: &StatementExtraInfo<F>, advice: &Arc<dyn NdAdvice + Send + Sync>, _cfg: &StatementConfig, _stmt_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>{
 		let log_level = LOG7;
 		let b_perf = log_level >= LOG_LEVEL;
 		//1. take the advice

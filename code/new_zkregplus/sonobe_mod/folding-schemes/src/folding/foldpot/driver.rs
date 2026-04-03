@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::{Arc, Mutex}, fmt::{Debug,Formatter}};
 /* 
 	Created 08/27/2024 
 	Modified 12/25/2024: added snark_rand_input structure
@@ -18,7 +18,6 @@ use std::{
 	collections::{HashMap},
 	time::Instant,
 };
-use std::{rc::Rc, cell::RefCell, fmt::{Debug,Formatter}};
 use ark_std::{Zero,One,UniformRand};
 use ark_std::{rand};
 use ark_std::{rand::{RngCore,CryptoRng}};
@@ -59,6 +58,16 @@ use crate::{
 use core::marker::PhantomData;
 use crate::frontend::FCircuit;
 use crate::{FoldingScheme};
+use rayon::prelude::*;
+
+/// Struct to encapsulate a folding job (one list-file)
+pub struct FoldPotJob<F: PrimeField> {
+	pub vec_words: Vec<Vec<F>>,
+	pub vec_word_info: Vec<WordInfo>,
+	pub vec_word_fnames: Vec<String>,
+	pub idx_individual_prf: usize,
+}
+
 //pub use super::decider_eth_circuit::{DeciderEthCircuit, KZGChallengesGadget};
 use ark_snark::SNARK;
 use crate::commitment::{
@@ -393,26 +402,26 @@ where
 	fn gen_nd_advice_at_layer(&self, layer_i: usize,
 		_log_level: usize, b_save_advice: bool,
 		word: &Vec<CF1<C1>>, word_info: &WordInfo)
-		-> Result<(usize, Vec<usize>, Vec<usize>, Vec<Rc<dyn Capacity>>, Vec<Rc<dyn NdAdvice>>),Error>{
+		-> Result<(usize, Vec<usize>, Vec<usize>, Vec<Arc<dyn Capacity + Send + Sync>>, Vec<Arc<dyn NdAdvice + Send + Sync>>),Error>{
 		//let mut gt1 = GTimer::new();
 		let mut vec_pci = vec![];
 		let mut vec_size = vec![];
 		let mut vec_cap = vec![];
-		let mut vec_adv:Vec<Rc<dyn NdAdvice>> = vec![];
+		let mut vec_adv:Vec<Arc<dyn NdAdvice + Send + Sync>> = vec![];
 		let layer = &self.layered_circs[layer_i]; 
 		let circ = &layer[0];
-		let max_wlen = circ.get_mapper().borrow().max_word_len();
+		let max_wlen = circ.get_mapper().lock().unwrap().max_word_len();
 		let wlen = word.len();
 		let num_segs = if wlen % max_wlen==0{wlen/max_wlen} 
 			else {wlen/max_wlen+1};
 		let pci = layer_i; //because every layer has only one circ
-		let cap = circ.get_mapper().borrow().get_capacity();
+		let cap = circ.get_mapper().lock().unwrap().get_capacity();
 		let mut prev_adv = None;
 		for i in 0..num_segs{
 			let start = i*max_wlen;
 			let end = if (i+1)*max_wlen>wlen {wlen} else {(i+1)*max_wlen};
 			let seg = word[start..end].to_vec();
-			let advice = circ.get_mapper().borrow()
+			let advice = circ.get_mapper().lock().unwrap()
 				.gen_nd_advice(&seg, &word_info, prev_adv, i)?;
 			vec_pci.push(pci);
 			vec_size.push(end-start);
@@ -433,9 +442,9 @@ where
 	/// if the word itself is very short or very long, just 
 	/// return the max ID (as this fiding_working_layer step is
 	/// not going to save much anyway)
-	fn find_working_layer_for_wd(&self, log_level: usize, b_save_advice: bool, word: &Vec<CF1<C1>>, word_info: &WordInfo)-> Result<(usize, usize, Vec<usize>, Vec<usize>, Vec<Rc<dyn Capacity>>, Vec<Rc<dyn NdAdvice>>),Error>{
+	fn find_working_layer_for_wd(&self, log_level: usize, b_save_advice: bool, word: &Vec<CF1<C1>>, word_info: &WordInfo)-> Result<(usize, usize, Vec<usize>, Vec<usize>, Vec<Arc<dyn Capacity + Send + Sync>>, Vec<Arc<dyn NdAdvice + Send + Sync>>),Error>{
 		let full_len = word.len();
-		let max_wlen = self.layered_circs[0][0].get_mapper().borrow()
+		let max_wlen = self.layered_circs[0][0].get_mapper().lock().unwrap()
 			.max_word_len();
 		let long_bar = 1024 * 1024 / 31 * 4; //4MB of data
 		let max_layer_id = self.layered_circs.len()-1;
@@ -495,7 +504,7 @@ where
 	/// to push advice into vec<nd_advice>
 	pub fn plan_nd_advice(&self, log_level: usize, b_save_advice: bool,
 		word: &Vec<CF1<C1>>, word_info: &WordInfo, word_fname: &str)
-		-> Result<(usize, Vec<usize>, Vec<usize>, Vec<Rc<dyn Capacity>>, Vec<Rc<dyn NdAdvice>>),Error>{
+		-> Result<(usize, Vec<usize>, Vec<usize>, Vec<Arc<dyn Capacity + Send + Sync>>, Vec<Arc<dyn NdAdvice + Send + Sync>>),Error>{
 		let b_new = true;
 		if b_new{
 			self.plan_nd_advice_new(log_level, b_save_advice, word, word_info, word_fname)
@@ -527,9 +536,9 @@ where
 		max_layer_num_segs: usize,
 		max_layer_vec_seg_size: Vec<usize>,
 		max_layer_vec_pci: Vec<usize>,
-		max_layer_vec_cap: Vec<Rc<dyn Capacity>>,
-		max_layer_vec_adv: Vec<Rc<dyn NdAdvice>>)
-		-> (usize, usize, Vec<usize>, Vec<usize>, Vec<Rc<dyn Capacity>>, Vec<Rc<dyn NdAdvice>>){
+		max_layer_vec_cap: Vec<Arc<dyn Capacity + Send + Sync>>,
+		max_layer_vec_adv: Vec<Arc<dyn NdAdvice + Send + Sync>>)
+		-> (usize, usize, Vec<usize>, Vec<usize>, Vec<Arc<dyn Capacity + Send + Sync>>, Vec<Arc<dyn NdAdvice + Send + Sync>>){
 		let mut gt1 = GTimer::new();
 		let mut min_layer_id = min_layer;
 		let (mut best_layer,mut max_layer_id) = (max_layer, max_layer);
@@ -558,11 +567,12 @@ where
 	/// Almost the same of bin_search_best_layer, the difference
 	/// is that we run all circuits in parallel, and pick
 	/// the minimum one
-	fn par_search_best_layer(&self, log_level: usize, b_save_advice: bool,
-		word: &Vec<CF1<C1>>, word_info: &WordInfo, 
-		min_layer: usize, 
-		max_layer: usize,
-	) -> (usize, usize, Vec<usize>, Vec<usize>, Vec<Rc<dyn Capacity>>, Vec<Rc<dyn NdAdvice>>){
+	fn par_search_best_layer(&self, _log_level: usize, _b_save_advice: bool,
+	    _word: &Vec<CF1<C1>>, _word_info: &WordInfo, 
+	    _min_layer: usize, 
+	    _max_layer: usize,
+
+	) -> (usize, usize, Vec<usize>, Vec<usize>, Vec<Arc<dyn Capacity + Send + Sync>>, Vec<Arc<dyn NdAdvice + Send + Sync>>){
 	/*
 		use rayon::prelude::*;
 
@@ -605,17 +615,17 @@ where
 	/// for ALL segements of a word.
 	pub fn plan_nd_advice_new(&self, log_level: usize, b_save_advice: bool,
 		word: &Vec<CF1<C1>>, word_info: &WordInfo, word_fname: &str)
-		-> Result<(usize, Vec<usize>, Vec<usize>, Vec<Rc<dyn Capacity>>, Vec<Rc<dyn NdAdvice>>),Error>{
+		-> Result<(usize, Vec<usize>, Vec<usize>, Vec<Arc<dyn Capacity + Send + Sync>>, Vec<Arc<dyn NdAdvice + Send + Sync>>),Error>{
 		let b_fast = false; 
 		//0. verify each layer has only one circ
 		let mut gt1 = GTimer::new();
 		let mut gt2 = GTimer::new();
 		log_perf(log_level, &format!("plan_nd_advice step 0. layers: {}, word.len(): {}, b_save_adivce: {}", self.layered_circs.len(), word.len(), b_save_advice), &mut gt1);
-		let mwl = self.layered_circs[0][0].get_mapper().borrow().max_word_len();
+		let mwl = self.layered_circs[0][0].get_mapper().lock().unwrap().max_word_len();
 		for i in 0..self.layered_circs.len(){
 			assert!(self.layered_circs[i].len()==1, "only 1 circ per layer!");
 			assert!(self.layered_circs[i][0]
-				.get_mapper().borrow().max_word_len() == mwl); 
+				.get_mapper().lock().unwrap().max_word_len() == mwl); 
 				//all circ should support same max word len
 		}
 
@@ -651,7 +661,7 @@ where
 	/// old version: it assues multiple circs in one layer
 	pub fn plan_nd_advice_old(&self, log_level: usize, _b_save_advice: bool,
 		word: &Vec<CF1<C1>>, word_info: &WordInfo, _word_fname: &str)
-		-> Result<(usize, Vec<usize>, Vec<usize>, Vec<Rc<dyn Capacity>>, Vec<Rc<dyn NdAdvice>>),Error>{
+		-> Result<(usize, Vec<usize>, Vec<usize>, Vec<Arc<dyn Capacity + Send + Sync>>, Vec<Arc<dyn NdAdvice + Send + Sync>>),Error>{
 			if 1>0 {panic!("should not call this function. It is invalid. Keep the legacy code for future improvement.");}
 			let mut gt1 = GTimer::new();
 			log_perf(log_level, &format!("Entering plan_nd_advice, layers: {}, word.len(): {}.", self.layered_circs.len(), word.len()), &mut gt1);
@@ -687,7 +697,7 @@ where
 			let vec_pci = vec![];
 			let vec_size = vec![];
 			let vec_cap = vec![];
-			let vec_adv:Vec<Rc<dyn NdAdvice>> = vec![];
+			let vec_adv:Vec<Arc<dyn NdAdvice + Send + Sync>> = vec![];
 			log_perf(log_level, &format!("plan_nd_advice step 1: check circs."),
 				&mut gt1);
 
@@ -715,12 +725,12 @@ where
 				let layer = &self.layered_circs[layer_id];
 				let circ1 = &layer[layer.len()-1];
 				//we assume all circs have the same max_word_len
-				let max_word_len = circ1.get_mapper().borrow().max_word_len();
+				let max_word_len = circ1.get_mapper().lock().unwrap().max_word_len();
 				let word_len = if max_word_len>remaining.len(){
 					remaining.len()}else {max_word_len};
 				let word = remaining[0..word_len].to_vec();
 				#[cfg(test)]{
-					for circ in layer{assert!(circ.get_mapper().borrow().
+					for circ in layer{assert!(circ.get_mapper().lock().unwrap().
 						max_word_len()==max_word_len);
 					}
 				}
@@ -728,7 +738,7 @@ where
 					else {Some(vec_adv[vec_adv.len()-1].clone())};
 				//PASS 0 as seg_id just to make syntax ok
 				if 1>0 {panic!("should not call this function");}
-				let res = circ1.get_mapper().borrow()
+				let res = circ1.get_mapper().lock().unwrap()
 					.gen_nd_advice(&word, &word_info, prev_adv, 0);
 				if !res.is_ok() {
 					//quick elimination of apparent non-working layer
@@ -742,14 +752,14 @@ where
 				//instance of capacity check
 				//let (cap, _advice) = res.unwrap();
 				//let circ = &layer[0];
-				//if circ.get_mapper().borrow()
+				//if circ.get_mapper().lock().unwrap()
 				//	.get_capacity().can_satisfy(&cap){
 				//	b_found = true;
 				//	selected_layer = layer_id;
 				//	break;
 				//}else{
 				//	if layer_id == self.layered_circs.len()-1{
-				//		println!("UNABLE to find circ: cap needed: {:#?} and last circ capacility: {:#?}", cap, circ.get_mapper().borrow().get_capacity());
+				//		println!("UNABLE to find circ: cap needed: {:#?} and last circ capacility: {:#?}", cap, circ.get_mapper().lock().unwrap().get_capacity());
 				//	}
 				//}
 			}
@@ -783,7 +793,7 @@ where
 				let mut min_avg_cost = layer[0].est_cost(); 
 				for id in 0..layer.len(){
 					let circ = &layer[id];
-					let max_word_len = circ.get_mapper().borrow()
+					let max_word_len = circ.get_mapper().lock().unwrap()
 						.max_word_len();
 					let word_len = if max_word_len>remaining.len(){
 						remaining.len()}else {max_word_len};
@@ -803,7 +813,7 @@ where
 					//for every word_len try generating the unlimited resource
 					//request
 					let circ = &layer[idx];
-					let max_word_len = circ.get_mapper().borrow()
+					let max_word_len = circ.get_mapper().lock().unwrap()
 						.max_word_len();
 					let word_len = if max_word_len>remaining.len(){
 						remaining.len()}else {max_word_len};
@@ -816,13 +826,13 @@ where
 						//we just fix syntax here.
 						if 1>0 {panic!("this function should not be called");}
 						last_word_len = word_len;
-						_last_res = Some(circ.get_mapper().borrow()
+						_last_res = Some(circ.get_mapper().lock().unwrap()
 						  .gen_nd_advice(&word, &word_info, prev_adv, 0)
 						  .unwrap());
 					}
 				
 					//verify the circ does can satisfy the request
- // 					if circ.get_mapper().borrow().get_capacity()
+ // 					if circ.get_mapper().lock().unwrap().get_capacity()
  // 						.can_satisfy(&last_res.as_ref().unwrap().0){
  // 						let (cap, advice) = last_res.unwrap();
  // 						let pci = vec_start[selected_layer] + idx;
@@ -870,7 +880,7 @@ where
 	  	mut rng: impl RngCore +  CryptoRng,
 		vec_word_info: &Vec<WordInfo>) ->
 		(Vec<StatementExtraInfo<C1::ScalarField>>, HashMap<usize,usize>,
-		 Vec<Vec<Rc<dyn NdAdvice>>>,
+		 Vec<Vec<Arc<dyn NdAdvice + Send + Sync>>>,
 		 Option<(BatchClaim<E>, IndividualClaim<E>, SnarkAdvice<E::ScalarField>
 		)>){
 		//0. generate the claim first
@@ -924,7 +934,7 @@ where
 		let mut word_id = 1;
 		let n_circ = self.circuits.len();
 		let _vec_mapper= self.circuits.iter().map(|c| c.get_mapper()).
-			collect::<Vec<Rc<RefCell<GM>>>>();
+			collect::<Vec<Arc<Mutex<GM>>>>();
 		let mut vec_advice = vec![];
 		let mut prev_stmt = None;
 		let lkup_len= self.lkup.get_size();
@@ -951,7 +961,7 @@ where
 					//use crate::folding::foldpot::sigma_ir1cs::{Capacity};
 					assert!(act_len<=_max_len);
 					let rc_cap = _vec_cap_req[i].clone();
-					assert!(circ.get_mapper().borrow().get_capacity()
+					assert!(circ.get_mapper().lock().unwrap().get_capacity()
 						.can_satisfy(&rc_cap));
 					if i==steps-1 {assert!(remaining.len()==0);}
 				}
@@ -978,7 +988,7 @@ where
 				};//end constructor StatementExtraInfo
 
 				//need to build the statement to fill the m_map
-				let stmt_res = circ.get_mapper().borrow().build_statement(
+				let stmt_res = circ.get_mapper().lock().unwrap().build_statement(
 					&frag, &prev_stmt, self.lkup.clone(), &ei,
 						advice[subseg_id-1].clone(), lk_share_size, false);
 				assert!(stmt_res.is_ok());
@@ -1017,7 +1027,7 @@ where
 		total_words: usize,
 		vea: &Vec<StatementExtraInfo<C1::ScalarField>>,
 		m_map: &HashMap<usize,usize>,
-		vec_advice: &Vec<Vec<Rc<dyn NdAdvice>>>)
+		vec_advice: &Vec<Vec<Arc<dyn NdAdvice + Send + Sync>>>)
 	-> (Vec<StatementExtraInfo<C1::ScalarField>>, C1::ScalarField){
 		//1. prep the data
 		let mut timer = Timer::new("pass_two", 0);
@@ -1078,7 +1088,7 @@ where
 				let act_len = field_to_usize(&vea[idx].act_word_subseg_size);
 				let share_size= circ.get_lkup_share_size();
 				let frag = remaining[0..act_len].to_vec();
-				let stmt_res = circ.get_mapper().borrow().build_statement(
+				let stmt_res = circ.get_mapper().lock().unwrap().build_statement(
 					&frag, &prev_stmt, self.lkup.clone(), ei, 
 					vec_advice[wi][subseg_id-1].clone(),
 					share_size, false);
@@ -1137,7 +1147,7 @@ where
 	  	mut _rng: impl RngCore +  CryptoRng, 
 		hash_cmF: C1::ScalarField,
 		claim_pack: &Option<(BatchClaim<E>, IndividualClaim<E>, SnarkAdvice<E::ScalarField>)>,
-		vec_advice: &Vec<Vec<Rc<dyn NdAdvice>>>)
+		vec_advice: &Vec<Vec<Arc<dyn NdAdvice + Send + Sync>>>)
 	-> (FoldPotSuper<E,P,C2G2,C1,GC1,C2,GC2,FC,CS1,CS2,CS1E, LK, GM, H>,
 		usize, Option<(BatchProof<E,S>,IndividualProof<E>)>
 			)
@@ -1243,7 +1253,7 @@ where
 				let act_len = field_to_usize(&vea[idx].act_word_subseg_size);
 				let frag = remaining[0..act_len].to_vec();
 				remaining = remaining[act_len..].to_vec();
-				let stmt_res = circ.get_mapper().borrow().build_statement(
+				let stmt_res = circ.get_mapper().lock().unwrap().build_statement(
 						&frag, &prev_stmt, self.lkup.clone(), 
 						ei, vec_advice[wi][subseg_id].clone(), share_size,
 						false);
@@ -1373,7 +1383,7 @@ where
 
 		let n_circ = self.circuits.len();
 		let _vec_mapper= self.circuits.iter().map(|c| c.get_mapper()).
-			collect::<Vec<Rc<RefCell<GM>>>>();
+			collect::<Vec<Arc<Mutex<GM>>>>();
 		let lkup_len= self.lkup.get_size();
 		let mut total_lkup_covered = 0;
 		let m3 = get_mem_usage_mb();
@@ -1409,7 +1419,7 @@ where
 					//use crate::folding::foldpot::sigma_ir1cs::{Capacity};
 					assert!(act_len<=_max_len);
 					let rc_cap = _vec_cap_req[i].clone();
-					assert!(circ.get_mapper().borrow().get_capacity()
+					assert!(circ.get_mapper().lock().unwrap().get_capacity()
 						.can_satisfy(&rc_cap));
 					if i==steps-1 {assert!(remaining.len()==0);}
 				}
@@ -1439,13 +1449,13 @@ where
 
 				//2.3 generate the advice and statement
 				//need to build the statement to fill the m_map
-				let res = circ.get_mapper().borrow()
+				let res = circ.get_mapper().lock().unwrap()
 					.gen_nd_advice(&frag, word_info, prev_adv, subseg_id - 1);
 				assert!(res.is_ok(), "\n\n===== **** =====\nUNABLE to generate advice for word: {}, segment_id: {}, ERROR: {:#?}\n==============\n", word_fname, subseg_id, res); 
 				let cur_adv = res.unwrap();
 
 				log_perf(log_level+2, &format!("-- Pass 1. gen_advice."), &mut gt2);
-				let stmt_res = circ.get_mapper().borrow().build_statement(
+				let stmt_res = circ.get_mapper().lock().unwrap().build_statement(
 					&frag, &prev_stmt, self.lkup.clone(), &ei,
 					//	advice[subseg_id-1].clone(), 
 						cur_adv.clone(),
@@ -1523,14 +1533,14 @@ where
 				remaining = remaining[act_len..].to_vec();
 
 				//3.2 generate the adice again
-				let res = circ.get_mapper().borrow()
+				let res = circ.get_mapper().lock().unwrap()
 					.gen_nd_advice(&frag, word_info, prev_adv, subseg_id - 1);
 				assert!(res.is_ok(), "UNABLE to generate advice for word id: {}, segment_id: {}", word_id, subseg_id); 
 				let cur_adv = res.unwrap();
 				log_perf(log_level+2, &format!("-- Pass2. gen advice. sugseg_id: {}", subseg_id), &mut gtw2);
 
 				//3.3 generate the statement again
-				let stmt_res = circ.get_mapper().borrow().build_statement(
+				let stmt_res = circ.get_mapper().lock().unwrap().build_statement(
 						&frag, &prev_stmt, self.lkup.clone(), 
 						ei, cur_adv.clone(), share_size,
 						false);
@@ -1682,13 +1692,13 @@ where
 				let frag = remaining[0..act_len].to_vec();
 				remaining = remaining[act_len..].to_vec();
 
-				let res = circ.get_mapper().borrow()
+				let res = circ.get_mapper().lock().unwrap()
 					.gen_nd_advice(&frag, word_info, prev_adv, subseg_id - 1);
 				assert!(res.is_ok(), "UNABLE to generate advice for word id: {}, segment_id: {}", word_id, subseg_id); 
 				let cur_adv = res.unwrap();
 				log_perf(log_level+1, &format!("-- Pass 3. gen advice for word_id: {}, seg_id: {}", word_id, subseg_id), &mut gtw2);
 
-				let stmt_res = circ.get_mapper().borrow().build_statement(
+				let stmt_res = circ.get_mapper().lock().unwrap().build_statement(
 						&frag, &prev_stmt, self.lkup.clone(), 
 						ei, cur_adv.clone(), share_size,
 						false);
@@ -1801,18 +1811,15 @@ pub fn write_to_file(fname: &str, line: &str){
 pub fn foldpot_main<E:Pairing<G1=C1,G2=C2G2>,P:PairingVar<E,CF3<C2G2>>+std::fmt::Debug+Clone,C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, FC, S, LK, GM, const H: bool>(
 	lkup: Arc<LK>, //the lookup table defines the regex automatas
 	vec_circ: Vec<Vec<FC>>,
-	vec_words: Vec<Vec<E::ScalarField>>,
-	vec_words_info: Vec<WordInfo>,
-	idx_individual_prf: usize, 
-	vec_word_fnames: Vec<String>
+	jobs: Vec<FoldPotJob<E::ScalarField>>,
 ) -> Result<(), Error>
 where
 	<E as Pairing>::ScalarField: ColEle,
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
     GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
-    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM,C=C1>,
+    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM,C=C1> + Clone + Send + Sync,
     //FC: SigmaIR1CS_Inst<C1::ScalarField, C1, CS1, LK, false>,
-	LK: LookupTableTwoCol<C1::ScalarField> + 'static,
+	LK: LookupTableTwoCol<C1::ScalarField> + 'static + Send + Sync,
     CS1: CommitmentScheme<C1, H, ProverParams = PedersenParams<C1>> +
 		CommitmentScheme<C1, ProverParams=PedersenParams<C1>>,
     CS1E: CommitmentScheme<
@@ -1848,18 +1855,26 @@ where
 	C1::Affine: AffineFromField<CF2<C1>>,
 	C2G2::Affine: AffineFromField<CF2<C2G2>>,
 	C1::Config: SWCurveConfig,
-	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug,
+	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug + Send + Sync,
 {
-	//0. Fix the circuit swith dummy statements
+	//0. Fix the circuit with dummy statements
 	// here we assume that each circuit can always handle
 	// words of zeros, and set its dummy_statement for preprocess()
 	// to build keys.
 	let log_level: usize = LOG1;
-	assert!(vec_word_fnames.len()==vec_words.len());
-	let mut gt1 = GTimer::new();
 	let mut gt_all = GTimer::new();
-	log(log_level, &format!("===== fold_pot starts ====="));
-	let mut vec_circ = vec_circ.clone();
+	log(log_level, &format!("===== fold_pot starts with {} jobs =====", jobs.len()));
+
+	jobs.into_par_iter().enumerate().try_for_each(|(job_id, job)| {
+		log(log_level, &format!("--- Job {} starts ---", job_id));
+		let mut gt1 = GTimer::new();
+		let vec_words = job.vec_words;
+		let vec_words_info = job.vec_word_info;
+		let idx_individual_prf = job.idx_individual_prf;
+		let vec_word_fnames = job.vec_word_fnames;
+
+		assert!(vec_word_fnames.len()==vec_words.len());
+		let mut vec_circ = vec_circ.clone();
 	let n_circ = vec_circ.iter().map(|row| row.len()).sum::<usize>();
 	let mut id = 0;
 	let (zero, one) = (C1::ScalarField::zero(), C1::ScalarField::one());
@@ -1869,10 +1884,10 @@ where
 			let circ = &mut vec_circ[i][j];
 			let lk_share_size = circ.get_lkup_share_size();
 			let prev_stmt = None;
-			let wlen = circ.get_mapper().borrow().max_word_len();
+			let wlen = circ.get_mapper().lock().unwrap().max_word_len();
 			let frag = vec![zero; wlen];
-			let prev_adv: Option<Rc<dyn NdAdvice>> = None; //fine to set None
-			let r_advice= circ.get_mapper().borrow()
+			let prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>> = None; //fine to set None
+			let r_advice= circ.get_mapper().lock().unwrap()
 					.gen_nd_advice(&frag, &word_info,prev_adv, 0); //use its own capacity
 			assert!(r_advice.is_ok(), "\n\n===== **** ====== \nUNABLE to generate advice for circ at layer {} for full 0-word. This is a system-wide change needed. Needs to adjust capacity: {:#?}", i, r_advice);
 
@@ -1897,7 +1912,7 @@ where
 				accumulated_word_len: C1::ScalarField::from(wlen as u32),
 			};//end constructor StatementExtraInfo
 			circ.set_container_config(&advice);
-			let stmt_res = circ.get_mapper().borrow().build_statement(
+			let stmt_res = circ.get_mapper().lock().unwrap().build_statement(
 				&frag, 
 				&prev_stmt, 
 				lkup.clone(), 
@@ -1933,8 +1948,8 @@ where
 			driver1_poseidon_config, ind_prf
 		) 
 	= {
-		let mut driver1 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,FC,S,LK,GM,H> ::new(poseidon_config.clone(), 
-				lkup, vec_circ, rng, b_full, max_total_n, n_words);
+		let driver1 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,FC,S,LK,GM,H> ::new(poseidon_config.clone(), 
+				lkup.clone(), vec_circ, rng, b_full, max_total_n, n_words);
 		log_perf(log_level, &format!("FoldPot: Step 2: set up driver 1"),
 			&mut gt1);
 	
@@ -2039,10 +2054,9 @@ where
 	let _n_circs = vec_circ.len();
 	let b_full = true;
 	let lk = LK::new(vec![]);
-	let lkup = Arc::new(lk);
-	//let driver2 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,FC,S,LK>
-	let mut driver2 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,SigmaIR1CS_Inst<C1::ScalarField, C1, CS1, LK, FoldPairMapper<CF1<C1>,LK>,H>,S,LK,FoldPairMapper<CF1<C1>,LK>,H>
-		::new(poseidon_config.clone(), lkup, vec_circ, rng, b_full, max_total_n, n_words);
+	let lkup_p2 = Arc::new(lk);
+	let driver2 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,SigmaIR1CS_Inst<C1::ScalarField, C1, CS1, LK, FoldPairMapper<CF1<C1>,LK>,H>,S,LK,FoldPairMapper<CF1<C1>,LK>,H>
+		::new(poseidon_config.clone(), lkup_p2, vec_circ, rng, b_full, max_total_n, n_words);
 	let vec_word_info = vec![WordInfo::dummy(); vec_words.len()];
 	let (nova2, _num_steps, _batch_prfs, _bt_claims) = driver2.pass_all(
 		"Phase 2",
@@ -2163,9 +2177,13 @@ where
 	);
 	log_perf(log_level, &format!("FOLDPOT Step 12. Verify Individual Proof."), 
 		&mut gt1);
-	log_perf(log_level, &format!("**** FOLDPOT Now Complete ***** MEM: {} GB.",  get_mem_usage()), &mut gt_all);
+	log_perf(log_level, &format!("**** Job {} Complete ***** MEM: {} GB.", job_id, get_mem_usage()), &mut gt1);
 
-	Ok( () )
+	Ok::<(), Error>(())
+	})?;
+
+	log_perf(log_level, "===== all fold_pot jobs finished =====", &mut gt_all);
+	Ok(())
 }
 
 
@@ -2356,20 +2374,20 @@ pub mod tests_driver{
 		/// each gadget (if gadgetes support container config for
 		/// deseiralization). This is only needed for those gadgets in SED
 		/// approach.
-		fn set_container_config(&mut self, _advice: &Rc<dyn NdAdvice>){ 
+		fn set_container_config(&mut self, _advice: &Arc<dyn NdAdvice + Send + Sync>){ 
 			//not needed, handled by legacy code
 		}
 
 		/// the capacity is the word length that can be handled by
 		/// the circuit
-		fn get_capacity(&self)->Rc<dyn Capacity>{
+		fn get_capacity(&self)->Arc<dyn Capacity + Send + Sync>{
 			let word_seg_len = self.max_word_len();
 			Rc::new(DummyCapacity{word_seg_len})
 		}
 
 		fn gen_nd_advice(&self, word: &Vec<F>, _word_info: &WordInfo,
-			_prev_adv: Option<Rc<dyn NdAdvice>>, _seg_id: usize)
-			-> Result<Rc<dyn NdAdvice>, Error>{
+			_prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>>, _seg_id: usize)
+			-> Result<Arc<dyn NdAdvice + Send + Sync>, Error>{
 
 			if word.len()<=self.max_word_len(){
 				let w0_val = field_to_usize(&word[0]);
@@ -2395,10 +2413,10 @@ pub mod tests_driver{
 			if self.b_odd {1} else {2} 
 		}
 
-		fn get_gadgets(&self) -> Vec<Rc<RefCell<dyn SigmaGadget<F>>>>{ 
+		fn get_gadgets(&self) -> Vec<Arc<Mutex<dyn SigmaGadget<F> + Send + Sync>>>{ 
 			let gadget = if self.b_odd {SumGadget::<F>{_f: PhantomData, n: 1}}
 				else {SumGadget::<F>{_f: PhantomData, n:2}};
-			vec![Rc::new(RefCell::new(gadget))]
+			vec![Arc::new(Mutex::new(gadget))]
 		}
 
 		/// expecting [x_1] or [x_1, x_2], depending on if
@@ -2406,7 +2424,7 @@ pub mod tests_driver{
 		/// similarly throw error for odd circ if x_1 is not odd.
 		/// This is for testing the "best fit" circ in multiple non-uniform
 		/// circ environment in supernova.
-		fn build_statement(&self, word: &Vec<F>, prev_wit: &Option<StatementInst<F,LK>>, lkup: Arc<LK>, ea: &StatementExtraInfo<F>, _advice: Rc<dyn NdAdvice>, _lkup_share_size: usize, _b_dummy: bool) 
+		fn build_statement(&self, word: &Vec<F>, prev_wit: &Option<StatementInst<F,LK>>, lkup: Arc<LK>, ea: &StatementExtraInfo<F>, _advice: Arc<dyn NdAdvice + Send + Sync>, _lkup_share_size: usize, _b_dummy: bool) 
 		-> Result<StatementInst<F,LK>, Error>{
 			//1. making check on odd/even case
 			assert!(word.len()>=1);
@@ -2583,10 +2601,10 @@ pub mod tests_driver{
 		let b_check_lkup = true;
 		let vec_circ = vec![
 			vec![
-				SigmaIR1CS_Inst::<Fr,C1,CS1,LK,SumMapper<Fr,LK>,H>::new_adv("oddsum".to_string(), poseidon_config.clone(), Rc::new(RefCell::new(odd_mapper)), false, lkup_share_size, true, b_check_lkup).unwrap(),
+				SigmaIR1CS_Inst::<Fr,C1,CS1,LK,SumMapper<Fr,LK>,H>::new_adv("oddsum".to_string(), poseidon_config.clone(), Arc::new(Mutex::new(odd_mapper)), false, lkup_share_size, true, b_check_lkup).unwrap(),
 			],
 			vec![
-				SigmaIR1CS_Inst::<Fr,C1,CS1,LK,SumMapper<Fr,LK>,H>::new_adv("evensum".to_string(), poseidon_config.clone(), Rc::new(RefCell::new(even_mapper)), false, lkup_share_size, true, b_check_lkup)
+				SigmaIR1CS_Inst::<Fr,C1,CS1,LK,SumMapper<Fr,LK>,H>::new_adv("evensum".to_string(), poseidon_config.clone(), Arc::new(Mutex::new(even_mapper)), false, lkup_share_size, true, b_check_lkup)
 			.unwrap()]
 		];
 		t1.prt("Step 0. setup sigma_ir1cs odd/eve sum instance");
@@ -2605,7 +2623,13 @@ pub mod tests_driver{
 		];
 		let sample_individual_prf = 1; //generate individual proof 1
 		let vec_word_info = vec![WordInfo::dummy(); vec_words.len()];
-		let _prf = foldpot_main::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,SigmaIR1CS_Inst<Fr,C1,CS1,LK,SumMapper<Fr,LK>,H>,S,LK,SumMapper<Fr,LK>, false>(lkup, vec_circ, vec_words, vec_word_info, sample_individual_prf, vec_word_fnames);
+		let jobs = vec![FoldPotJob{
+			vec_words,
+			vec_word_info,
+			vec_word_fnames,
+			idx_individual_prf: sample_individual_prf,
+		}];
+		let _prf = foldpot_main::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,SigmaIR1CS_Inst<Fr,C1,CS1,LK,SumMapper<Fr,LK>,H>,S,LK,SumMapper<Fr,LK>, false>(lkup, vec_circ, jobs);
 	}
 
 }

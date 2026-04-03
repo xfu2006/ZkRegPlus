@@ -1,6 +1,6 @@
 /* Created 07/17/2025 */
 
-/*!
+/* 
  A DFA component mapper handles the dfa approach.
  Its goal is to discharge a collection of signatures by DFA.
  It operarates several gadgets for:
@@ -22,9 +22,8 @@ use folding_schemes::folding::foldpot::container_config::ColEle;
 use utils::{logger::{log,log_perf, LOG1, LOG7,LOG_LEVEL}, timer::Timer};
 use std::{
 	marker::PhantomData,
-	rc::{Rc},
-	sync::{Arc},
-	cell::{RefCell},
+	sync::{Arc, Mutex},
+	
 	fmt::{Debug},
 	collections::{HashMap},
 };
@@ -72,7 +71,7 @@ pub struct DfaCapacity{
 	pub max_word_len: usize,
 
 	// will contain capacities for word_extract_adv, fsm_adv ...
-	pub comp_capacities: Vec<Rc<dyn Capacity>>,
+	pub comp_capacities: Vec<Arc<dyn Capacity + Send + Sync>>,
 }
 
 /// Represent the structure of Input
@@ -89,11 +88,11 @@ pub struct DfaComponentMapper<F:PrimeField + ColEle, LK: LookupTableTwoCol<F>>{
 	pub capacity: DfaCapacity,
 
 	/// its own gadgets 
-	///pub gadgets: Vec<Rc<dyn SigmaGadget<F> + ContainerCompatible>>,
-	pub gadgets: Vec<Rc<RefCell<dyn SigmaGadget<F>>>>,
+	///pub gadgets: Vec<Rc<dyn SigmaGadget<F> + Send + Sync + ContainerCompatible>>,
+	pub gadgets: Vec<std::sync::Arc<std::sync::Mutex<dyn SigmaGadget<F> + Send + Sync>>>,
 
 	/// clamdb
-	pub clamdb: Rc<ClamavDB<F>>,
+	pub clamdb: Arc<ClamavDB<F>>,
 }
 
 
@@ -148,9 +147,9 @@ impl DfaCapacity{
 		let max_nibble_len = max_word_len * LEGS;
 		let dfa_capacity = DfaAdvCapacity{max_nibble_len, subsigs, sigs};
 			
-		let comp_capacities: Vec<Rc<dyn Capacity>> = vec![
-			Rc::new(wea_capacity),
-			Rc::new(dfa_capacity),
+		let comp_capacities: Vec<Arc<dyn Capacity + Send + Sync>> = vec![
+			Arc::new(wea_capacity),
+			Arc::new(dfa_capacity),
 		];
 
 		Self{max_word_len, sigs, subsigs, comp_capacities}
@@ -173,7 +172,7 @@ impl Capacity for DfaCapacity{
 	/// Self represents the capacity of the circuit, other
 	/// represents the capacity requirement of a discharge proof (NdAdvice)
 	/// It is essentially a comparison operation.
-	fn can_satisfy(&self, r_other: &Rc<dyn Capacity>) -> bool{
+	fn can_satisfy(&self, r_other: &Arc<dyn Capacity + Send + Sync>) -> bool{
 		
 		let other = r_other.as_any().downcast_ref::<DfaCapacity>()
 			.expect("downcast err"); 
@@ -188,9 +187,9 @@ impl Capacity for DfaCapacity{
 	}
 
 	/// to get around the requirement on Clone trait which require Sized
-	/// (which cause trouble why use dyn Capacity in Rc),
-	fn clone(&self) -> Rc<dyn Capacity>{
-		Rc::new(DfaCapacity{
+	/// (which cause trouble why use dyn Capacity + Send + Sync in Rc),
+	fn clone(&self) -> Arc<dyn Capacity + Send + Sync>{
+		Arc::new(DfaCapacity{
 			sigs: self.sigs,
 			subsigs: self.subsigs,
 			max_word_len: self.max_word_len,
@@ -208,7 +207,7 @@ pub struct DfaAdvice<F:PrimeField + ColEle>{
 	pub wd_extract_advice: WordExtractAdvAdvice<F>,
 	pub dfa_adv_advice: DfaAdvAdvice<F>,
 
-	pub vec_advices: Vec<Rc<dyn ComponentAdvice<F>>>,
+	pub vec_advices: Vec<Arc<dyn ComponentAdvice<F> + Send + Sync>>,
 
 }
 
@@ -250,8 +249,8 @@ impl <F:PrimeField+ColEle> DfaAdvice<F>{
 		//flatten them out to the info needed. This is
 		//similar to the unit test code in dfa_adv.rs
 		//2.1 create the 2-d version of the information
-		let nibbles = wd_extract_advice.stmt_container.borrow().
-			get_container("nibbles").expect("no nibbles").borrow().to_vec();
+		let nibbles = wd_extract_advice.stmt_container.lock().unwrap().
+			get_container("nibbles").expect("no nibbles").lock().unwrap().to_vec();
 		let v_sigs = vec_sigs_to_discharge;
 		assert!(v_sigs.len()==discharge_info.len());
 		let inp_sigs = vec_sigs_to_discharge.iter().map(|sig|{
@@ -326,9 +325,9 @@ impl <F:PrimeField+ColEle> DfaAdvice<F>{
 			)?;
 
 		//3. assemble all advices
-		let vec_advices:Vec<Rc<dyn ComponentAdvice<F>>> = vec![
-			Rc::new(wd_extract_advice.clone()),
-			Rc::new(dfa_adv_advice.clone()),
+		let vec_advices:Vec<Arc<dyn ComponentAdvice<F> + Send + Sync>> = vec![
+			Arc::new(wd_extract_advice.clone()),
+			Arc::new(dfa_adv_advice.clone()),
 		];
 		if b_perf{ log_perf(LOG1, "-- DFA advice step2: dfa", &mut t1); }
 
@@ -341,7 +340,7 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> DfaComponentMapper<F,LK>{
 	/// of PackFinal (number of final states), and reference to clamdb
 	pub fn new(
 		capacity: DfaCapacity,
-		clamdb: Rc<ClamavDB<F>>,
+		clamdb: Arc<ClamavDB<F>>,
 	) ->Self{
 		let mut cfgs = vec![];
 
@@ -357,9 +356,9 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> DfaComponentMapper<F,LK>{
 		let g_dfa = DfaAdvGadget::<F>::new(&dfa_cap, &cfgs);
 		cfgs.push( g_dfa.dummy_cfg.clone() );
 
-		let gadgets: Vec<Rc<RefCell<dyn SigmaGadget<F>>>> = vec![ 
-			Rc::new(RefCell::new(g_wea)), //word_extract_adv gadget
-			Rc::new(RefCell::new(g_dfa)), //DFA gadget
+		let gadgets: Vec<std::sync::Arc<std::sync::Mutex<dyn SigmaGadget<F> + Send + Sync>>> = vec![ 
+			Arc::new(Mutex::new(g_wea)), //word_extract_adv gadget
+			Arc::new(Mutex::new(g_dfa)), //DFA gadget
 		];
 
 		Self{
@@ -373,8 +372,8 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> DfaComponentMapper<F,LK>{
 
 }
 
-impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for DfaComponentMapper<F,LK>{
-	fn set_container_config(&mut self, r_advice: &Rc<dyn NdAdvice>){ 
+impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F> + Send + Sync> ComponentMapper<F,LK> for DfaComponentMapper<F,LK>{
+	fn set_container_config(&mut self, r_advice: &Arc<dyn NdAdvice + Send + Sync>){ 
 		let advice = r_advice.as_any().downcast_ref::<DfaAdvice<F>>()
 			.expect("downcast err!");
 		assert!(self.gadgets.len()==advice.vec_advices.len());
@@ -384,19 +383,19 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 			vec_cfgs.push(cta_cfg);
 		}
 		ContainerConfig::adjust_locations(&mut vec_cfgs);
-		let rc_cfgs = Rc::new(vec_cfgs);
+		let rc_cfgs = Arc::new(vec_cfgs);
 		for i in 0..self.gadgets.len(){
-			self.gadgets[i].borrow_mut().set_container_cfg(rc_cfgs.clone(), i);
+			self.gadgets[i].lock().unwrap().set_container_cfg(rc_cfgs.clone(), i);
 		}
 	}
 
 	fn get_name(&self)->String {format!("DfaMapper")}
 
-	fn get_capacity(&self)->Rc<dyn Capacity>{
-		Rc::new( Clone::clone(&self.capacity) )
+	fn get_capacity(&self)->Arc<dyn Capacity + Send + Sync>{
+		Arc::new( Clone::clone(&self.capacity) )
 	}
 
-	fn create_gadgets(&self) -> Vec<Rc<RefCell<dyn SigmaGadget<F>>>>{  
+	fn create_gadgets(&self) -> Vec<std::sync::Arc<std::sync::Mutex<dyn SigmaGadget<F> + Send + Sync>>>{  
 		self.gadgets.clone()
 	}
 
@@ -415,13 +414,13 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 		if b_perf{
 			log(log_level, &format!(" ## dfa gadgets data len: ==="));
 			for i in 0..self.gadgets.len(){
-				let vs = self.gadgets[i].borrow().get_to_add_size();
+				let vs = self.gadgets[i].lock().unwrap().get_to_add_size();
 				log(log_level, &format!("  -- {}: {}", 
-					self.gadgets[i].borrow().get_name(),
+					self.gadgets[i].lock().unwrap().get_name(),
 					vs.2));
 			}
 		}
-		let sizes = self.gadgets.iter().map(|g| g.borrow().get_to_add_size())
+		let sizes = self.gadgets.iter().map(|g| g.lock().unwrap().get_to_add_size())
 			.collect::<Vec<(usize, usize, usize, usize, usize)>>();
 		let total = sizes.into_iter().fold((0,0,0,0,0), |x,y|
 			(x.0+y.0, x.1+y.1, x.2+y.2, x.3+y.3, x.4+y.4));
@@ -453,8 +452,8 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 
 
 	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
-		prev_adv: Option<Rc<dyn NdAdvice>>, seg_id: usize)
-		->Result<Rc<dyn NdAdvice>, Error>{
+		prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>>, seg_id: usize)
+		->Result<Arc<dyn NdAdvice + Send + Sync>, Error>{
 		//1. expand word to full length
 		let mut rem_word = vec![F::zero(); self.max_word_len() - word.len()];
 		let mut word_seg = word.clone();
@@ -484,9 +483,9 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 			init_states, |adv|{
 				let adv= adv.as_any().downcast_ref::<DfaAdvice<F>>(); 
 				let dfa_adv_advice= &adv.unwrap().dfa_adv_advice;
-				let states = dfa_adv_advice.stmt_container.borrow()
+				let states = dfa_adv_advice.stmt_container.lock().unwrap()
 					.search_container("dfa_adv_stmt mul_fsm_acc states").expect("no states")
-					.borrow().to_vec();
+					.lock().unwrap().to_vec();
 				let states_len = states.len();  //nibbles * subsigs
 				let last_oup_states = states[states_len-n..states_len]
 					.to_vec();
@@ -505,7 +504,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 			F::from(seg_id as u64)
 		)?;
 
-		Ok( Rc::new(advice) )
+		Ok( Arc::new(advice) )
 	}
 
 	/// Given its own gadget stmt_map: 9 range entries for:
@@ -552,7 +551,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 		let mut vec_si_oup_info = vec![];
 		for i in 0..self.gadgets.len(){
 			//2.1. collect maps
-			let instructions = self.gadgets[i].borrow()
+			let instructions = self.gadgets[i].lock().unwrap()
 				.get_stmt_map_instructions();
 			let my_maps = instructions.into_iter().map(|instruction|{
 				let (_gadget_offset, seg_id, start, len) = instruction;
@@ -564,7 +563,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 
 				res
 			}).collect::<Vec<(usize,usize)>>();
-			let ns = self.gadgets[i].borrow().get_to_add_size();
+			let ns = self.gadgets[i].lock().unwrap().get_to_add_size();
 			// ns corresponds to 9 elements in sequence below:
 			// word, inp, oup, data
 			// failed_sigs, discharged_sigs
@@ -577,7 +576,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 			vec_res.push(my_maps);
 
 			let (si_data_info, si_inp_info, si_oup_info) = 
-				self.gadgets[i].borrow()
+				self.gadgets[i].lock().unwrap()
 				.get_container_config().gen_si_info();
 			vec_si_data_info.push(si_data_info);
 			vec_si_inp_info.push(si_inp_info);
@@ -617,7 +616,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 	/// the the comp_id for the 2nd is 1, and its stmt_map_id is 2. (idx
 	/// starting from 0). For conveneince, we sometimes use
 	/// the prev_stmt or the vector of its prev_stmt.
-	fn build_statement_comp(&self, _comp_id: usize, _stmt_map_id: usize, _word_seg: &Vec<F>, _actual_word_len: usize, _lkup: &Arc<LK>, _extra_info: &StatementExtraInfo<F>, advice: &Rc<dyn NdAdvice>, _cfg: &StatementConfig, _stmt_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>{
+	fn build_statement_comp(&self, _comp_id: usize, _stmt_map_id: usize, _word_seg: &Vec<F>, _actual_word_len: usize, _lkup: &Arc<LK>, _extra_info: &StatementExtraInfo<F>, advice: &Arc<dyn NdAdvice + Send + Sync>, _cfg: &StatementConfig, _stmt_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>{
 		let log_level = LOG7;
 		let b_perf = LOG_LEVEL >= log_level;
 		//1. take the advice

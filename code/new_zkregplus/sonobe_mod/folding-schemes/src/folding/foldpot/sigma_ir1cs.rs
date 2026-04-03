@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 /// Sigma-I-R1CS is a 3-move restricted fragment of the
 /// I-R1CS model. See our paper Section 6.
 /* Created 08/05/2024 
@@ -55,7 +55,6 @@ use crate::{
 };
 use std::{fmt,fmt::{Debug,Formatter}};
 use rayon::prelude::*;
-use std::{rc::Rc, cell::RefCell};
 use ark_ff::{One};
 use std::fs::File;
 use std::io::prelude::*;
@@ -127,7 +126,7 @@ impl WordInfo{
 /// (0,0). All entries are sorted in ascending order
 /// Col1 is serving as sub-table ID, Col2 serves as entry
 /// No duplicate entries. Two columns always have the same length.
-pub trait LookupTableTwoCol<F:PrimeField>: Debug +Clone{
+pub trait LookupTableTwoCol<F:PrimeField>: Debug +Clone + Send + Sync{
 	/// constructor
 	fn new(vals: Vec<(F,F)>) -> Self;
 
@@ -288,7 +287,7 @@ pub trait SigmaIR1CS<const H: bool, F: PrimeField, LK: LookupTableTwoCol<F>, GM:
 	fn get_name(&self) -> String; 
 
 	/// return the mapper
-	fn get_mapper(&self) -> Rc<RefCell<GM>>;
+	fn get_mapper(&self) -> Arc<Mutex<GM>>;
 
 	/// Create a new instance (need to pass a gadget mapper
 	/// which is responsible for managing all relations, e..g,
@@ -296,7 +295,7 @@ pub trait SigmaIR1CS<const H: bool, F: PrimeField, LK: LookupTableTwoCol<F>, GM:
 	/// fq_bits is the bit width of base prime field, it is
 	/// needed for calculating limbs of NonNativeUint,
 	fn new_adv(name: String, poseidon_config: PoseidonConfig<F>, 
-		g_mapper: Rc<RefCell<GM>>, b_full_mode: bool, lkup_share_size: usize,
+		g_mapper: Arc<Mutex<GM>>, b_full_mode: bool, lkup_share_size: usize,
 		b_cyclepair: bool, b_check_lkup: bool)
 		->Result<Self,Error> where Self: Sized;
 
@@ -324,7 +323,7 @@ pub trait SigmaIR1CS<const H: bool, F: PrimeField, LK: LookupTableTwoCol<F>, GM:
 	/// each gadget (if gadgetes support container config for
 	/// deseiralization). This is only needed for those gadgets in SED
 	/// approach.
-	fn set_container_config(&mut self, advice: &Rc<dyn NdAdvice>); 
+	fn set_container_config(&mut self, advice: &Arc<dyn NdAdvice + Send + Sync>); 
 
 
 	/// Given the  problem statement (actually non-determisnitc advice
@@ -360,7 +359,7 @@ pub trait SigmaIR1CS<const H: bool, F: PrimeField, LK: LookupTableTwoCol<F>, GM:
 
 /// Components of SigmaIR1CS (their 3-messages are integrated
 /// to cut the recursion overhead)
-pub trait SigmaGadget<F:PrimeField>: Debug{
+pub trait SigmaGadget<F:PrimeField>: Debug + Send + Sync{
 	/// return a name
 	fn get_name(&self)->&str;
 
@@ -374,7 +373,7 @@ pub trait SigmaGadget<F:PrimeField>: Debug{
 	/// this `idx` is context dependent (it may refer to its index
 	/// in the SED component or circuit, take caution when interpreting
 	/// its semantics).
-	fn set_container_cfg(&mut self, cfgs_context: Rc<Vec<ContainerConfig>>, idx: usize);
+	fn set_container_cfg(&mut self, cfgs_context: Arc<Vec<ContainerConfig>>, idx: usize);
 
 	/// retrieve its conainer config
 	fn get_container_config(&self)->ContainerConfig;
@@ -465,15 +464,15 @@ impl NdAdvice for DummyNdAdvice {
 /// of a discharge proof, or the circuit can handle. 
 /// Later, in composite gadget mapper, it may have to be caseted.
 /// So require Any here.
-pub trait Capacity: Debug{
+pub trait Capacity: Debug + Send + Sync{
 	/// Self represents the capacity of the circuit, other
 	/// represents the capacity requirement of a discharge proof (NdAdvice)
 	/// It is essentially a comparison operation.
-	fn can_satisfy(&self, other: &Rc<dyn Capacity>) -> bool;
+	fn can_satisfy(&self, other: &Arc<dyn Capacity + Send + Sync>) -> bool;
 
 	/// to get around the requirement on Clone trait which require Sized
-	/// (which cause trouble why use dyn Capacity in Rc),
-	fn clone(&self) -> Rc<dyn Capacity>;
+	/// (which cause trouble why use dyn Capacity + Send + Sync in Rc),
+	fn clone(&self) -> Arc<dyn Capacity + Send + Sync>;
 
 	/// needed for downcasting for composite gadget mapper
 	fn as_any(&self) -> &dyn Any;
@@ -488,12 +487,12 @@ pub struct DummyCapacity{
 }
 
 impl Capacity for DummyCapacity{
-	fn can_satisfy(&self, r_other: &Rc<dyn Capacity>)->bool{
+	fn can_satisfy(&self, r_other: &Arc<dyn Capacity + Send + Sync>)->bool{
 		let other = r_other.as_any().downcast_ref::<DummyCapacity>(); 
 		self.word_seg_len >= other.expect("downcast err").word_seg_len
 	}
-	fn clone(&self) -> Rc<dyn Capacity>{
-		Rc::new(DummyCapacity{word_seg_len: self.word_seg_len})
+	fn clone(&self) -> Arc<dyn Capacity + Send + Sync>{
+		Arc::new(DummyCapacity{word_seg_len: self.word_seg_len})
 	}
 	fn as_any(&self) -> &dyn Any{ self }
 }
@@ -505,15 +504,15 @@ impl Capacity for DummyCapacity{
 /// It is mainly responsible for defining the logic and
 /// SigmaIR1CS_Inst just executes gadgets one by one (without
 /// knowing their details)
-pub trait GadgetMapper<F:PrimeField, LK: LookupTableTwoCol<F>>{
+pub trait GadgetMapper<F:PrimeField, LK: LookupTableTwoCol<F>>: Send + Sync{
 	/// use advice to generate container config and set it for
 	/// each gadget (if gadgetes support container config for
 	/// deseiralization). This is only needed for those gadgets in SED
 	/// approach.
-	fn set_container_config(&mut self, advice: &Rc<dyn NdAdvice>); 
+	fn set_container_config(&mut self, advice: &Arc<dyn NdAdvice + Send + Sync>); 
 
 	/// return the capacity of this circuit
-	fn get_capacity(&self) -> Rc<dyn Capacity>;
+	fn get_capacity(&self) -> Arc<dyn Capacity + Send + Sync>;
 
 	/// return the name
 	fn get_name(&self) -> String;
@@ -521,7 +520,7 @@ pub trait GadgetMapper<F:PrimeField, LK: LookupTableTwoCol<F>>{
 	/// Return the components. The config is contained
 	/// in the relation mapper object, and should be passed
 	/// by the corresonding constructor. 
-	fn get_gadgets(&self) -> Vec<Rc<RefCell<dyn SigmaGadget<F>>>>;  
+	fn get_gadgets(&self) -> Vec<Arc<Mutex<dyn SigmaGadget<F> + Send + Sync>>>;  
 
 	/// generate the structure of statment (total len, structure of statement,
 	/// and statement mapping, extra_join_constraints, map of 
@@ -556,7 +555,7 @@ pub trait GadgetMapper<F:PrimeField, LK: LookupTableTwoCol<F>>{
 	///
 	/// b_dummy_mode is added specifically for composable_gadget_mapper
 	/// the other legacy code can ignore it.
-	fn build_statement(&self, word: &Vec<F>, prev_stmt: &Option<StatementInst<F,LK>>, lkup: Arc<LK>, extra_info: &StatementExtraInfo<F>, advice: Rc<dyn NdAdvice>, lkup_size: usize, b_dummy_mode: bool) -> Result<StatementInst<F,LK>, Error>;
+	fn build_statement(&self, word: &Vec<F>, prev_stmt: &Option<StatementInst<F,LK>>, lkup: Arc<LK>, extra_info: &StatementExtraInfo<F>, advice: Arc<dyn NdAdvice + Send + Sync>, lkup_size: usize, b_dummy_mode: bool) -> Result<StatementInst<F,LK>, Error>;
 
 	/// return the max word length that can be processed
 	fn max_word_len(&self) -> usize;
@@ -565,8 +564,8 @@ pub trait GadgetMapper<F:PrimeField, LK: LookupTableTwoCol<F>>{
 	/// If return nil, it means it cannot handle it
 	/// seg_id is used for debugging purpose usually.
 	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
-		prev_adv: Option<Rc<dyn NdAdvice>>, seg_id: usize) 
-		->Result<Rc<dyn NdAdvice>, Error>;
+		prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>>, seg_id: usize) 
+		->Result<Arc<dyn NdAdvice + Send + Sync>, Error>;
 }
 
 /// Extra (mostly sequence) info for build statement
@@ -2200,7 +2199,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		CS: CommitmentScheme<C, H>,
 		F: PrimeField + Absorb + ColEle,
 		LK: LookupTableTwoCol<F>,
-		GM: GadgetMapper<F,LK> + std::clone::Clone + Debug,
+		GM: GadgetMapper<F,LK> + std::clone::Clone + Debug + Send + Sync,
 {
 	_lk: PhantomData<LK>,
 
@@ -2227,11 +2226,11 @@ where 	C: CurveGroup<ScalarField=F>,
 	/// It manages all sub-components and perform the
 	/// check of their ``join relation" among the statements
 	/// of each sigma-protcol gadgets. 
-	pub gadget_mapper: Rc<RefCell<GM>>,
+	pub gadget_mapper: Arc<Mutex<GM>>,
 
 	/// All the witnesses (sturctured), generate by gadget_mapper
 	/// Only set up when calling set_native.
-	pub witness: Option<Rc<WitnessSigmaIR1CS<F>>>,
+	pub witness: Option<Arc<WitnessSigmaIR1CS<F>>>,
 
 	/// Config of WitnessSigmaIR1CS for deseirliazation 
 	pub witness_config: WitnessSigmaIR1CSConfig,
@@ -2240,7 +2239,7 @@ where 	C: CurveGroup<ScalarField=F>,
 	pub stmt_config: StatementConfig,
 
 	/// the list of gadgets
-	pub gadgets: Vec<Rc<RefCell<dyn SigmaGadget<F>>>>,
+	pub gadgets: Vec<Arc<Mutex<dyn SigmaGadget<F> + Send + Sync>>>,
 
 	/// parameters of the commitment scheme
 	pub params: CS::ProverParams,
@@ -2257,7 +2256,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		CS: CommitmentScheme<C, H>,
 		F: PrimeField + Absorb + ColEle,
 		LK: LookupTableTwoCol<F>,
-		GM: GadgetMapper<F,LK> + std::clone::Clone + Debug,
+		GM: GadgetMapper<F,LK> + std::clone::Clone + Debug + Send + Sync,
 {
 	fn fmt(&self, f: &mut Formatter<'_>)-> fmt::Result{
 		f.debug_struct("SigmaRICS_Inst")
@@ -2272,7 +2271,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		CS: CommitmentScheme<C, H>,
 		F: PrimeField + Absorb + ColEle,
 		LK: LookupTableTwoCol<F>,
-		GM: GadgetMapper<F,LK> + std::clone::Clone + Debug,
+		GM: GadgetMapper<F,LK> + std::clone::Clone + Debug + Send + Sync,
 {
 	fn clone(&self) -> Self{
 		Self{
@@ -2299,7 +2298,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		CS: CommitmentScheme<C, H>,
 		LK: LookupTableTwoCol<F>,
 		F: PrimeField + Absorb + ColEle,
-		GM: GadgetMapper<F,LK> + std::clone::Clone + Debug,
+		GM: GadgetMapper<F,LK> + std::clone::Clone + Debug + Send + Sync,
 {
 	/// Convert the witness to a vector of fp_var (call
 	/// step_native_mut first
@@ -2309,19 +2308,19 @@ where 	C: CurveGroup<ScalarField=F>,
 		wit.expect("wit is null").to_vec_fp_var(cs, &self.witness_config)
 	}
 
-	pub fn get_mapper(&self) -> Rc<RefCell<GM>>{
+	pub fn get_mapper(&self) -> Arc<Mutex<GM>>{
 		self.gadget_mapper.clone()
 	}
 
 	/// provide the information of poseidon config, mapper,
 	/// whether full mode (supporting cyclepair), and
 	/// bits of Fq (base prime field)
-	pub fn gen_configs(g_mapper: Rc<RefCell<GM>>, b_full_mode: bool, lkup_share_size: usize)
+	pub fn gen_configs(g_mapper: Arc<Mutex<GM>>, b_full_mode: bool, lkup_share_size: usize)
 		-> Result<(WitnessSigmaIR1CSConfig,StatementConfig),Error>{
-		let gadgets = g_mapper.borrow().get_gadgets();
+		let gadgets = g_mapper.lock().unwrap().get_gadgets();
 		let (stmt_len, stmt_cfg, v_idx, _extra_joins, _ci_inp) = g_mapper
-			.borrow().gen_statement_structure(lkup_share_size);
-		let vec_msg_sizes = gadgets.iter().map(|g| g.borrow().get_msg_size())
+			.lock().unwrap().gen_statement_structure(lkup_share_size);
+		let vec_msg_sizes = gadgets.iter().map(|g| g.lock().unwrap().get_msg_size())
 			.collect::<Vec<(usize, usize, usize, usize)>>();
 		let mut m1_len = 0usize;
 		let mut m2_len = 0usize;
@@ -2363,11 +2362,11 @@ where 	C: CurveGroup<ScalarField=F>,
 	/// generate the witness structure
 	pub fn gen_witness_structure(&self, lkup_share_size: usize) 
 		-> WitnessSigmaIR1CSConfig{
-		let gadgets = self.gadget_mapper.borrow().get_gadgets();
+		let gadgets = self.gadget_mapper.lock().unwrap().get_gadgets();
 		//generate witness config, no need of info such as
 		//extra join constraints and map to cyclepair
-		let (stmt_len, stmt_cfg, v_idx, _, _) = self.gadget_mapper.borrow().gen_statement_structure(lkup_share_size);
-		let vec_msg_sizes = gadgets.iter().map(|g| g.borrow().get_msg_size())
+		let (stmt_len, stmt_cfg, v_idx, _, _) = self.gadget_mapper.lock().unwrap().gen_statement_structure(lkup_share_size);
+		let vec_msg_sizes = gadgets.iter().map(|g| g.lock().unwrap().get_msg_size())
 			.collect::<Vec<(usize, usize, usize, usize)>>();
 		let mut m1_len = 0usize;
 		let mut m2_len = 0usize;
@@ -2411,7 +2410,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		CS: CommitmentScheme<C, H>,
 		F: PrimeField + Absorb + ColEle,
 		LK: LookupTableTwoCol<F>,
-		GM: GadgetMapper<F,LK> + std::clone::Clone + Debug,
+		GM: GadgetMapper<F,LK> + std::clone::Clone + Debug + Send + Sync,
 {
 	type C = C;
 	type CS = CS;
@@ -2420,8 +2419,8 @@ where 	C: CurveGroup<ScalarField=F>,
 	/// each gadget (if gadgetes support container config for
 	/// deseiralization). This is only needed for those gadgets in SED
 	/// approach.
-	fn set_container_config(&mut self, advice: &Rc<dyn NdAdvice>){ 
-		self.gadget_mapper.borrow_mut().set_container_config(advice);
+	fn set_container_config(&mut self, advice: &Arc<dyn NdAdvice + Send + Sync>){ 
+		self.gadget_mapper.lock().unwrap().set_container_config(advice);
 		assert!(self.stmt_config== self.witness_config.stmt_cfg);
 		let (wtns_cfg, stmt_cfg) = Self::gen_configs(self.gadget_mapper.clone(),
 			self.b_full_mode, self.witness_config.stmt_cfg.lookup_share_size)
@@ -2448,8 +2447,8 @@ where 	C: CurveGroup<ScalarField=F>,
 		let (ilen,olen,wlen,dlen,lklen) =  (scfg.input_size, scfg.output_size, scfg.word_subseg_size, scfg.data_size, scfg.lookup_share_size);
 		let (_m1len, m2len, _m3len) = (wcfg.msg1_size, wcfg.msg2_size, wcfg.msg3_size);
 		//2. compute gadgets and step cost for each step
-		let gadgets = self.get_mapper().borrow().get_gadgets();
-		let gadgets_cost:usize = gadgets.iter().map(|g| g.borrow().est_cost()).sum();
+		let gadgets = self.get_mapper().lock().unwrap().get_gadgets();
+		let gadgets_cost:usize = gadgets.iter().map(|g| g.lock().unwrap().est_cost()).sum();
 
 		let subtbl_id_len = ilen + olen + wlen + dlen; 
 		let (llen,rlen) = (subtbl_id_len+14, lklen); //inv_hab_left and right
@@ -2488,15 +2487,15 @@ where 	C: CurveGroup<ScalarField=F>,
 	fn is_full_mode(&self) -> bool {self.b_full_mode}
 
 	/// return the name	
-	fn get_name(&self) -> String {self.gadget_mapper.borrow().get_name()}
+	fn get_name(&self) -> String {self.gadget_mapper.lock().unwrap().get_name()}
 
 	/// return the max word length it can process
 	fn max_word_len(&self)-> usize{
-		self.gadget_mapper.borrow().max_word_len()
+		self.gadget_mapper.lock().unwrap().max_word_len()
 	}
 
 	/// return the clone of Rc pointer
-	fn get_mapper(&self)->Rc<RefCell<GM>>{
+	fn get_mapper(&self)->Arc<Mutex<GM>>{
 		self.gadget_mapper.clone()
 	}
 
@@ -2507,19 +2506,19 @@ where 	C: CurveGroup<ScalarField=F>,
 		// will be enforced somewhere else, but need
 		// the cyclepair input
 		let lkup_share_size = self.stmt_config.lookup_share_size;
-		let (stmt_len, _stmt_cfg, v_idx, _, _cp_inp) = self.gadget_mapper.borrow().gen_statement_structure(lkup_share_size); 
+		let (stmt_len, _stmt_cfg, v_idx, _, _cp_inp) = self.gadget_mapper.lock().unwrap().gen_statement_structure(lkup_share_size); 
 		assert!(stmt_len==stmt.len(), "stmt.len(): {} != stmt_len: {}",
 			stmt.len(), stmt_len);
 		let v_stmt = stmt.clone();
 		assert!(v_idx.len()==self.gadgets.len(), "v_idx.len(): {} != gadgets.len: {}", v_idx.len(), self.gadgets.len());
-		let vec_msg_sizes = self.gadgets.iter().map(|g| g.borrow()
+		let vec_msg_sizes = self.gadgets.iter().map(|g| g.lock().unwrap()
 			.get_msg_size())
 			.collect::<Vec<(usize, usize, usize, usize)>>();
 		let mut v_msg1:Vec<F> = vec![];
 
 		//1. generate message1
 		for (i,g) in self.gadgets.iter().enumerate(){
-			let mut msg1 = g.borrow().gen_msg1(&v_stmt, &v_idx[i]) ;
+			let mut msg1 = g.lock().unwrap().gen_msg1(&v_stmt, &v_idx[i]) ;
 			assert!(vec_msg_sizes[i].1==msg1.len(), 
 				"ERROR: mistaching msg1 size for i: {}", i);
 			v_msg1.append(&mut msg1); 
@@ -2557,7 +2556,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		let mut gt1 = GTimer::new();
 		let lkup_share_size = self.stmt_config.lookup_share_size;
 		let (stmt_len, stmt_cfg, v_idx, _, cp_inp) = self.gadget_mapper
-			.borrow()
+			.lock().unwrap()
 			.gen_statement_structure(lkup_share_size); 
 		assert!(stmt_len==stmt.len(), "stmt.len(): {} != stmt_len: {}",
 			stmt.len(), stmt_len);
@@ -2565,7 +2564,7 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		assert!(v_idx.len()==self.gadgets.len(), "v_idx.len(): {} != gadgets.len: {}", v_idx.len(), self.gadgets.len());
 		let vec_msg_sizes = self.gadgets.iter().map(|g| 
-			g.borrow().get_msg_size())
+			g.lock().unwrap().get_msg_size())
 			.collect::<Vec<(usize, usize, usize, usize)>>();
 		let mut v_msg1:Vec<F> = vec![];
 		let mut v_msg2:Vec<F> = vec![];
@@ -2576,7 +2575,7 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		//1. generate message1
 		for (i,g) in self.gadgets.iter().enumerate(){
-			let mut msg1 = g.borrow().gen_msg1(&v_stmt, &v_idx[i]) ;
+			let mut msg1 = g.lock().unwrap().gen_msg1(&v_stmt, &v_idx[i]) ;
 			assert!(vec_msg_sizes[i].1==msg1.len(), 
 				"ERROR: mistaching msg1 size for i: {}", i);
 			v_msg1.append(&mut msg1); 
@@ -2630,7 +2629,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		let mut msg1_start = 0;
 		let mut msg2_start = 0;
 		for (i,g) in self.gadgets.iter().enumerate(){
-			let mut msg3 = g.borrow().gen_msg3(&v_stmt, &v_idx[i], 
+			let mut msg3 = g.lock().unwrap().gen_msg3(&v_stmt, &v_idx[i], 
 				&v_msg1, msg1_start, vec_msg_sizes[i].1, 
 				&v_msg2, msg2_start, vec_msg_sizes[i].2);
 			assert!(msg3.len()==vec_msg_sizes[i].3, 
@@ -2918,10 +2917,10 @@ where 	C: CurveGroup<ScalarField=F>,
 	/// whether full mode (supporting cyclepair), and
 	/// bits of Fq (base prime field)
 	fn new_adv(name: String, poseidon_config: PoseidonConfig<F>, 
-		g_mapper: Rc<RefCell<GM>>, b_full_mode: bool, lkup_share_size: usize,
+		g_mapper: Arc<Mutex<GM>>, b_full_mode: bool, lkup_share_size: usize,
 		b_cyclepair: bool, b_check_lkup: bool)
 		-> Result<Self,Error>{
-		let gadgets = g_mapper.borrow().get_gadgets().clone();
+		let gadgets = g_mapper.lock().unwrap().get_gadgets().clone();
 		let (wtns_cfg, stmt_cfg) = Self::gen_configs(g_mapper.clone(), 
 			b_full_mode, lkup_share_size)?;
 		let stmt_len = wtns_cfg.statement_size;
@@ -2954,7 +2953,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		//here since step_native_mut is not called by other parts
 		//we do not optimize to provide precomputed cmF
 		let res = self.gen_witness(&external_inputs, &z_i, None);
-		self.witness = Some(Rc::new(res.0));
+		self.witness = Some(Arc::new(res.0));
 		self.witness_config = res.1;
 		//2. return the next global state (part 2)
 		let z_i1 = res.2;
@@ -3001,7 +3000,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		CS: CommitmentScheme<C, H>,
 		LK: LookupTableTwoCol<F>,
 		F: PrimeField + Absorb + ColEle,
-		GM: GadgetMapper<F,LK> + std::clone::Clone + Debug,
+		GM: GadgetMapper<F,LK> + std::clone::Clone + Debug + Send + Sync,
 {
 	type Params = ();
 
@@ -3018,7 +3017,7 @@ where 	C: CurveGroup<ScalarField=F>,
 	/// length of secret witness vector (
 	fn external_inputs_len(&self) -> usize {
 		//return the total len of problem statement
-		self.gadget_mapper.borrow().gen_statement_structure(
+		self.gadget_mapper.lock().unwrap().gen_statement_structure(
 			self.stmt_config.lookup_share_size).0
 	}
 
@@ -3061,7 +3060,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			cs.num_witness_variables()
 		), &mut gt);
 		assert!(z_i.len()==2);
-		let configs = self.gadgets.iter().map(|g| g.borrow().get_msg_size())
+		let configs = self.gadgets.iter().map(|g| g.lock().unwrap().get_msg_size())
 			.collect::<Vec<(usize, usize, usize, usize)>>();
 		let cfg = &self.witness_config;
 		assert!(cfg.get_total_size()==external_inputs.len(), "external_inputs.len: {} != cfg.total_size: {}", external_inputs.len(), cfg.get_total_size());
@@ -3118,12 +3117,12 @@ where 	C: CurveGroup<ScalarField=F>,
 		let mut gt3 = GTimer::new();
 		for (i,g) in self.gadgets.iter().enumerate(){
 			let (nc, ni, nv) = (cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables());
-			g.borrow().assert_msg3(i, cs.clone(), &wtns_var, &cfg)?;
+			g.lock().unwrap().assert_msg3(i, cs.clone(), &wtns_var, &cfg)?;
 			if b_debug{
-				check_cs(&cs, &format!("After gadget: {}", g.borrow().get_name()));
+				check_cs(&cs, &format!("After gadget: {}", g.lock().unwrap().get_name()));
 			}
-			let stmt_len = g.borrow().get_msg_size().0;
-			log_perf(log_level, &format!("-- -- after msg3 of module {}: {}:\n\tINCREASED: constraints: {}, const vars: {}, wit vars: {} \n\t==> NOW: CS:{}, const: {}, witness: {}\n\t ==> stmt_size: {}. ", i, g.borrow().get_name(), cs.num_constraints()-nc, cs.num_instance_variables()-ni, cs.num_witness_variables()-nv, cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables(), stmt_len), &mut gt3);						
+			let stmt_len = g.lock().unwrap().get_msg_size().0;
+			log_perf(log_level, &format!("-- -- after msg3 of module {}: {}:\n\tINCREASED: constraints: {}, const vars: {}, wit vars: {} \n\t==> NOW: CS:{}, const: {}, witness: {}\n\t ==> stmt_size: {}. ", i, g.lock().unwrap().get_name(), cs.num_constraints()-nc, cs.num_instance_variables()-ni, cs.num_witness_variables()-nv, cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables(), stmt_len), &mut gt3);						
 		}
 		if b_debug{
 			let csat = cs.is_satisfied();
@@ -3424,11 +3423,10 @@ where 	C: CurveGroup<ScalarField=F>,
 
 			}
 	}
-		//log(log_level, &format!("gen_step_cs step 5: BEFORE inv_hab22: {}, cs.lc_size: {}, cons: {}", inv_hab22_left_size, cs.inner().unwrap().borrow().lc_map.len(), cs.num_constraints()));
+		//log(log_level, &format!("gen_step_cs step 5: BEFORE inv_hab22: {}, cs.lc_size: {}, cons: {}", inv_hab22_left_size, cs.inner().lc_map.len(), cs.num_constraints()));
 		let n_total = n_case1 + n_case2 + n_case3;
 		log_perf(log_level, &format!("gen_step_cs step 5: AFTER inv_hab22: {}, INCREASED cs.lc_size: {}, cons: {}, vars: {} -- Breakdown of logup cases: n_case1: ({}, {:.2}%), n_case2: ({}, {:.2}%), n_case3: ({}, {:.2}%)"
-		, inv_hab22_left_size, cs.inner().unwrap().borrow().lc_map.len() - nl, cs.num_constraints()-nc, cs.num_witness_variables()-nv,
-		n_case1, 100.0*(n_case1 as f64)/(n_total as f64), n_case2, 100.0*(n_case2 as f64)/(n_total as f64), n_case3, 100.0*(n_case3 as f64)/(n_total as f64)
+		, inv_hab22_left_size, cs.inner().unwrap().borrow().lc_map.len() - nl, cs.num_constraints()-nc, cs.num_witness_variables()-nv, n_case1, 100.0*(n_case1 as f64)/(n_total as f64), n_case2, 100.0*(n_case2 as f64)/(n_total as f64), n_case3, 100.0*(n_case3 as f64)/(n_total as f64)
 		), &mut gt);
 		//log(log_level, &format!("-- Breakdown of logup cases: n_case1: ({}, {:.2}%), n_case2: ({}, {:.2}%), n_case3: ({}, {:.2}%)", 
 		//n_case1, 100.0*(n_case1 as f64)/(n_total as f64), n_case2, 100.0*(n_case2 as f64)/(n_total as f64), n_case3, 100.0*(n_case3 as f64)/(n_total as f64)
@@ -3756,7 +3754,7 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		//8. VERIFY join constraints
 		let (_stmt_len, _stmt_cfg, _v_idx, extra_join_constraints, vec_idx_cpi) 
-			= self.gadget_mapper.borrow().gen_statement_structure(self.stmt_config.lookup_share_size);
+			= self.gadget_mapper.lock().unwrap().gen_statement_structure(self.stmt_config.lookup_share_size);
 		let v_stmt = wtns_var.statement;
 		if extra_join_constraints.len()>0{
 			for (rg1,rg2) in extra_join_constraints{
@@ -3978,7 +3976,6 @@ pub mod tests_sigma_ir1cs{
 		CommitmentScheme,
 		kzg::KZG,
 	};
-	use std::{rc::Rc, cell::RefCell};
 
 	/// a gadget verifies an input number has a cubic root. 
 	/// Statement (x;w): where x is the number to verify and w is
@@ -4001,7 +3998,7 @@ pub mod tests_sigma_ir1cs{
 
 		/// set the container cfg. This is only needed for those gadgets
 		/// in SED approach
-		fn set_container_cfg(&mut self, _cfgs_context: Rc<Vec<ContainerConfig>>, _idx: usize){
+		fn set_container_cfg(&mut self, _cfgs_context: Arc<Vec<ContainerConfig>>, _idx: usize){
 			unimplemented!("not needed. handled by legacy code");
 		}
 
@@ -4080,7 +4077,7 @@ pub mod tests_sigma_ir1cs{
 
 		/// set the container cfg. This is only needed for those gadgets
 		/// in SED approach
-		fn set_container_cfg(&mut self, _cfgs_context: Rc<Vec<ContainerConfig>>, _idx: usize){
+		fn set_container_cfg(&mut self, _cfgs_context: Arc<Vec<ContainerConfig>>, _idx: usize){
 			unimplemented!("not needed. handled by legacy code");
 		}
 
@@ -4157,7 +4154,7 @@ pub mod tests_sigma_ir1cs{
 
 		/// set the container cfg. This is only needed for those gadgets
 		/// in SED approach
-		fn set_container_cfg(&mut self, _cfgs_context: Rc<Vec<ContainerConfig>>, _idx: usize){
+		fn set_container_cfg(&mut self, _cfgs_context: Arc<Vec<ContainerConfig>>, _idx: usize){
 			unimplemented!("not needed. handled by legacy code");
 		}
 
@@ -4249,21 +4246,21 @@ pub mod tests_sigma_ir1cs{
 		/// each gadget (if gadgetes support container config for
 		/// deseiralization). This is only needed for those gadgets in SED
 		/// approach.
-		fn set_container_config(&mut self, _advice: &Rc<dyn NdAdvice>){ 
+		fn set_container_config(&mut self, _advice: &Arc<dyn NdAdvice + Send + Sync>){ 
 			//not needed, handled by legacy code
 		}
 
 		/// the capacity is the word length that can be handled by
 		/// the circuit
-		fn get_capacity(&self)->Rc<dyn Capacity>{
+		fn get_capacity(&self)->Arc<dyn Capacity + Send + Sync>{
 			let word_seg_len = self.max_word_len();
 			Rc::new( DummyCapacity{word_seg_len} )
 		}
 
 
 		fn gen_nd_advice(&self, word: &Vec<F>, _wi: &WordInfo,
-			_prv_adv: Option<Rc<dyn NdAdvice>>, _seg_id: usize) 
-		-> Result<Rc<dyn NdAdvice>, Error>{
+			_prv_adv: Option<Arc<dyn NdAdvice + Send + Sync>>, _seg_id: usize) 
+		-> Result<Arc<dyn NdAdvice + Send + Sync>, Error>{
 			if word.len()<=self.max_word_len(){
 				Ok( Rc::new(DummyNdAdvice{}))
 			}else{
@@ -4277,19 +4274,19 @@ pub mod tests_sigma_ir1cs{
 
 		fn max_word_len(&self)->usize{ 1 }
 
-		fn get_gadgets(&self) -> Vec<Rc<RefCell<dyn SigmaGadget<F>>>>{ 
+		fn get_gadgets(&self) -> Vec<Arc<Mutex<dyn SigmaGadget<F> + Send + Sync>>>{ 
 			let cubic = VerCubicGadget::<F>{_f:PhantomData};
 			let sq = VerSquareGadget::<F>{_f:PhantomData};
 			let counter = CounterIOGadget::<F>{_f:PhantomData};
 			vec![
-				Rc::new(RefCell::new(cubic)), 
-				Rc::new(RefCell::new(sq)), 
-				Rc::new(RefCell::new(counter))
+				Arc::new(Mutex::new(cubic)), 
+				Arc::new(Mutex::new(sq)), 
+				Arc::new(Mutex::new(counter))
 			]
 		}
 
 		/// expecting [n], and build the rest of problem statement instance.
-		fn build_statement(&self, word: &Vec<F>, prev_stmt: &Option<StatementInst<F,LK>>, lkup: Arc<LK>, ea: &StatementExtraInfo<F>, _advice: Rc<dyn NdAdvice>, _lkup_size: usize, _b_dummy: bool) -> Result<StatementInst<F,LK>, Error>{
+		fn build_statement(&self, word: &Vec<F>, prev_stmt: &Option<StatementInst<F,LK>>, lkup: Arc<LK>, ea: &StatementExtraInfo<F>, _advice: Arc<dyn NdAdvice + Send + Sync>, _lkup_size: usize, _b_dummy: bool) -> Result<StatementInst<F,LK>, Error>{
 			//1. compute the cube_root, sq_root, tbl_id
 			assert!(word.len()==1);
 			let n = word[0]; 
@@ -4458,9 +4455,9 @@ pub mod tests_sigma_ir1cs{
 		]);
 		let mapper_raw = SixRootMapper::<F,LK>{_f: PhantomData, 
 			_lk: PhantomData};
-		let mapper = Rc::new(RefCell::new(mapper_raw));
+		let mapper = Arc::new(Mutex::new(mapper_raw));
 		let lk_len = lk.get_size();
-		let share_size = mapper.borrow().gen_statement_structure(lk_len/n_steps)
+		let share_size = mapper.lock().unwrap().gen_statement_structure(lk_len/n_steps)
 			.1.lookup_share_size;
 		assert!(share_size * n_steps >= lk_len, "ERROR: share_size * n_step < lookup table size, increase number of steps!");
         let poseidon_config = poseidon_canonical_config::<F>();
@@ -4474,7 +4471,7 @@ pub mod tests_sigma_ir1cs{
 		//2. create the inputs and then statements
 		//let mut counter = 0;
 		let mut vec_stmt = vec![];
-		let (_, _stmt_cfg,_, _, _) = mapper.borrow()
+		let (_, _stmt_cfg,_, _, _) = mapper.lock().unwrap()
 			.gen_statement_structure(share_size);
 		let _wtns_cfg = six_ir1cs.gen_witness_structure(share_size);
 		let lkup = Arc::new(lk);
@@ -4517,7 +4514,7 @@ pub mod tests_sigma_ir1cs{
 				accumulated_word_len: F::one(),
 			};
 			let dummy_adv = Rc::new(DummyNdAdvice{});
-			let stmt = mapper.borrow()
+			let stmt = mapper.lock().unwrap()
 				.build_statement(&inp, &None, lkup.clone(), 
 					&ea, dummy_adv, 4, false).expect("build stmt fails"); 
 			//if tbl_id!=F::zero() {counter += 1;}

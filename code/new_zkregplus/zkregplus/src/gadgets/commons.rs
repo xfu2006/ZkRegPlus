@@ -9,7 +9,7 @@ use rayon::{
 };
 use folding_schemes::{Error};
 use crate::gadgets::traits::{Container,Col,IDX_DATA,IDX_SI_DATA};
-use std::{collections::{HashMap,HashSet}, rc::{Rc}, cell::{RefCell}};
+use std::{collections::{HashMap,HashSet}};
 use ark_ff::{PrimeField,BigInteger};
 use ark_relations::{
 	lc, 
@@ -532,7 +532,7 @@ pub fn two_col_tbl_to_sorted<F: PrimeField + ColEle>(col1: &Vec<F>, col2: &Vec<F
 /// do construct unique keys except padding 0-entries.
 pub fn two_col_to_wide_wellformed<F:PrimeField + ColEle>(
 	col1: &Vec<F>, col2: &Vec<F>, target_size: usize, name: &str
-)->Result<Rc<RefCell<Container<F>>>,Error>{
+)->Result<std::sync::Arc<std::sync::Mutex<Container<F>>>,Error>{
 	//1. collect a hash map which maps from key to a vector of vals sorted.
 	let hs = two_col_to_hashmap(col1, col2);
 
@@ -837,7 +837,7 @@ pub fn assert_wellformed_sorted_two_col_tbl_adv<F:PrimeField + ColEle>(tbl: &Vec
 /// it is padded with (0-0-0-0) entries.
 pub fn hashmap_to_wide_wellformed<F:PrimeField + ColEle>(
 	map: &HashMap<F, Vec<F>>, n: usize, name: &str) 
--> Result<Rc<RefCell<Container<F>>>, Error>{
+-> Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 	//1. collect the sorted keys first
 	let res = Container::<F>::new(name);
 	let mut sorted_keys = map.keys().map(|x| x.clone())
@@ -875,14 +875,14 @@ pub fn hashmap_to_wide_wellformed<F:PrimeField + ColEle>(
 	let c4 = all_tuples.par_iter().map(|t| t[3]).collect::<Vec<F>>();
 	let f_rg= F::from(RANGE2);
 	let s = vec![f_rg; n];
-	res.borrow_mut().add_col(Col::new(c1, "key", IDX_DATA));
-	res.borrow_mut().add_col(Col::new(s.clone(), "si_key", IDX_SI_DATA));
-	res.borrow_mut().add_col(Col::new(c2, "val", IDX_DATA));
-	res.borrow_mut().add_col(Col::new(s.clone(), "si_val", IDX_SI_DATA));
-	res.borrow_mut().add_col(Col::new(c3, "id", IDX_DATA));
-	res.borrow_mut().add_col(Col::new(s.clone(), "si_id", IDX_SI_DATA));
-	res.borrow_mut().add_col(Col::new(c4, "count", IDX_DATA));
-	res.borrow_mut().add_col(Col::new(s, "si_count", IDX_SI_DATA));
+	res.lock().unwrap().add_col(Col::new(c1, "key", IDX_DATA));
+	res.lock().unwrap().add_col(Col::new(s.clone(), "si_key", IDX_SI_DATA));
+	res.lock().unwrap().add_col(Col::new(c2, "val", IDX_DATA));
+	res.lock().unwrap().add_col(Col::new(s.clone(), "si_val", IDX_SI_DATA));
+	res.lock().unwrap().add_col(Col::new(c3, "id", IDX_DATA));
+	res.lock().unwrap().add_col(Col::new(s.clone(), "si_id", IDX_SI_DATA));
+	res.lock().unwrap().add_col(Col::new(c4, "count", IDX_DATA));
+	res.lock().unwrap().add_col(Col::new(s, "si_count", IDX_SI_DATA));
 
 	Ok( res )
 }
@@ -1660,7 +1660,7 @@ pub fn gen_m_table<F:PrimeField + ColEle>(qry: &Vec<F>, lkup: &Vec<F>)->Vec<F>{
 pub fn gen_2d_lkup_prf<F:PrimeField + ColEle>(
 	qry_cols: Vec<&[F]>, 
 	lkup_cols: Vec<&[F]>, 
-	name: &str)->Rc<RefCell<Container<F>>>{
+	name: &str)->std::sync::Arc<std::sync::Mutex<Container<F>>>{
 	//1. compute the combined cell values
 	let res = Container::<F>::new(name);
 	assert!(qry_cols.len()==lkup_cols.len());
@@ -1694,15 +1694,15 @@ pub fn gen_2d_lkup_prf<F:PrimeField + ColEle>(
 		.collect::<Vec<F>>();
 	let f_rg= F::from(RANGE2);
 	let sid_m_tbl_1 = vec![f_rg; m_tbl_1.len()];
-	res.borrow_mut().add_col(Col::new(m_tbl_1, "m_tbl_1", IDX_DATA));
-	res.borrow_mut().add_col(
+	res.lock().unwrap().add_col(Col::new(m_tbl_1, "m_tbl_1", IDX_DATA));
+	res.lock().unwrap().add_col(
 		Col::new_const(sid_m_tbl_1, "sid_m_tbl_1", IDX_SI_DATA));
 
 	//4. compute the difference in 0 entries
 	let f_zero_diff = F::from(count0_qry as u32) - F::from(count0_lkup as u32);
-	res.borrow_mut().add_col(
+	res.lock().unwrap().add_col(
 		Col::new(vec![f_zero_diff], "zero_diff", IDX_DATA));
-	res.borrow_mut().add_col(Col::new_const(
+	res.lock().unwrap().add_col(Col::new_const(
 		vec![F::zero()], "sid_zero_diff", IDX_SI_DATA));
 
 	res
@@ -1716,7 +1716,7 @@ pub fn gen_2d_lkup_prf<F:PrimeField + ColEle>(
 pub fn gen_1d_lkup_prf<F:PrimeField + ColEle>(
 	qry_cols: Vec<&[F]>, 
 	lkup_cols: Vec<&[F]>, 
-	name: &str)->Rc<RefCell<Container<F>>>{
+	name: &str)->std::sync::Arc<std::sync::Mutex<Container<F>>>{
 	//1. compute the combined cell values
 	let res = Container::<F>::new(name);
 	assert!(qry_cols.len()==lkup_cols.len());
@@ -1733,8 +1733,8 @@ pub fn gen_1d_lkup_prf<F:PrimeField + ColEle>(
 	let f_rg= F::from(RANGE2);
 	let m_tbl = gen_m_table(&qry, &lkup);
 	let sid_m_tbl_1 = vec![f_rg; m_tbl.len()];
-	res.borrow_mut().add_col(Col::new(m_tbl, "m_tbl", IDX_DATA));
-	res.borrow_mut().add_col(Col::new_const(sid_m_tbl_1, "sid_m_tbl", 
+	res.lock().unwrap().add_col(Col::new(m_tbl, "m_tbl", IDX_DATA));
+	res.lock().unwrap().add_col(Col::new_const(sid_m_tbl_1, "sid_m_tbl", 
 		IDX_SI_DATA));
 
 	res
@@ -1754,7 +1754,7 @@ pub fn verify_2d_lkup_prf<F:PrimeField + ColEle>(
 	r: FpVar<F>,
 	qry_cols: &Vec<&[FpVar<F>]>, 
 	lkup_cols: &Vec<&[FpVar<F>]>, 
-	prf: &Rc<RefCell<Container<FpVar<F>>>>	
+	prf: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>	
 )-> Result<(), SynthesisError>{
 	//1. retrieve data
 	let b_perf = false;
@@ -1764,10 +1764,10 @@ pub fn verify_2d_lkup_prf<F:PrimeField + ColEle>(
 	let mut gt = Timer::new();
 	let mut nc = cs.num_constraints();
 	let nc0 = nc;
-	let m_tbl_1 = prf.borrow().get_container("m_tbl_1").unwrap()
-		.borrow().to_vec();
-	let zero_diff = prf.borrow().get_container("zero_diff").unwrap()
-		.borrow().to_vec()[0].clone();
+	let m_tbl_1 = prf.lock().unwrap().get_container("m_tbl_1").unwrap()
+		.lock().unwrap().to_vec();
+	let zero_diff = prf.lock().unwrap().get_container("zero_diff").unwrap()
+		.lock().unwrap().to_vec()[0].clone();
 	let r_val = r.value().expect("error get val of r");
 	let n_cols = qry_cols.len();
 	assert!(lkup_cols.len() == n_cols);
@@ -1876,7 +1876,7 @@ pub fn verify_1d_lkup_prf<F:PrimeField + ColEle>(
 	r: FpVar<F>,
 	qry_cols: &Vec<&[FpVar<F>]>, 
 	lkup_cols: &Vec<&[FpVar<F>]>, 
-	prf: &Rc<RefCell<Container<FpVar<F>>>>	
+	prf: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>	
 )-> Result<(), SynthesisError>{
 	//1. retrieve data
 	let b_perf = false;
@@ -1886,8 +1886,8 @@ pub fn verify_1d_lkup_prf<F:PrimeField + ColEle>(
 	let mut gt = Timer::new();
 	let mut nc = cs.num_constraints();
 	let nc0 = nc;
-	let m_tbl = prf.borrow().get_container("m_tbl").unwrap()
-		.borrow().to_vec();
+	let m_tbl = prf.lock().unwrap().get_container("m_tbl").unwrap()
+		.lock().unwrap().to_vec();
 	let r_val = r.value().expect("error get val of r");
 	let n_cols = qry_cols.len();
 	assert!(lkup_cols.len() == n_cols);

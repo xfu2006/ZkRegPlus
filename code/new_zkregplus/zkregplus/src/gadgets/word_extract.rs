@@ -1,5 +1,6 @@
 /* Created 02/26/2025 */
 
+//use std::sync::{Arc, Mutex};
 use folding_schemes::folding::foldpot::container_config::ColEle;
 use ark_ff::{PrimeField};
 use std::marker::{PhantomData};
@@ -18,7 +19,6 @@ use ark_r1cs_std::{
 };
 use std::any::Any;
 use utils::{data::{packed_to_nibbles}};
-use std::rc::{Rc};
 use folding_schemes::{Error};
 
 pub const LEGS:usize = 62;
@@ -42,7 +42,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for WordExtractGadget<F>{
 
 	/// set the container cfg. This is only needed for those gadgets
 	/// in SED approach
-	fn set_container_cfg(&mut self, _cfgs_context: Rc<Vec<ContainerConfig>>, _idx: usize){
+	fn set_container_cfg(&mut self, _cfgs_context: std::sync::Arc<Vec<ContainerConfig>>, _idx: usize){
 		unimplemented!("not needed. handled by legacy code");
 	}
 
@@ -256,7 +256,7 @@ pub mod tests_word_extract_gadget{
 	use ark_crypto_primitives::sponge::Absorb;
 	use ark_ff::{PrimeField,Zero};
 	use ark_relations::r1cs::ConstraintSystem;
-	use std::{rc::Rc};
+	use std::{sync::Arc};
 	use ark_bn254::{Fr};
 	use crate::gadgets::commons::{gen_m_table};
 	use folding_schemes::{
@@ -278,7 +278,7 @@ pub mod tests_word_extract_gadget{
 	use ark_std::marker::PhantomData;
 
 	pub fn test_gadget<F:PrimeField + Absorb + ColEle> (
-		g: Rc<dyn SigmaGadget<F>>, 
+		g: Arc<dyn SigmaGadget<F> + Send + Sync>, 
 		word: &Vec<F>,
 		inp: &Vec<F>,
 		oup: &Vec<F>,
@@ -300,7 +300,7 @@ pub mod tests_word_extract_gadget{
 	/// For non-legacy case, word/inp/...data has the infor for 
 	/// ALL gadgets (in a CompositeComponent)
 	pub fn test_gadget_adv<F:PrimeField + Absorb + ColEle> (
-		g: Rc<dyn SigmaGadget<F>>, 
+		g: Arc<dyn SigmaGadget<F> + Send + Sync>, 
 		word: &Vec<F>,
 		inp: &Vec<F>,
 		oup: &Vec<F>,
@@ -539,7 +539,7 @@ pub mod tests_word_extract_gadget{
 		let (wlen, act_size) = (8usize, 6usize);
 		let word = vec![rand_fe_by_bits(248, &mut rng); wlen];
 		let weg = WordExtractGadget::<Fr>::new(wlen);
-		let rg = Rc::new(weg);
+		let rg = Arc::new(weg);
 		let adv = WordExtractAdvice::new(&word, act_size);
 		let inp = vec![];
 		let oup = vec![];

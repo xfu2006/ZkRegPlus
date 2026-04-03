@@ -631,7 +631,7 @@ pub mod tests_decider_super {
 		constraints::PairingVar as PairingVar, G2Projective as ProjectiveG2};
     use ark_grumpkin::{constraints::GVar as GVar2, Projective as Projective2};
     use std::time::Instant;
-	use std::{rc::Rc, cell::RefCell};
+	use std::sync::{Arc, Mutex};
 
     use super::*;
     use crate::commitment::pedersen::Pedersen;

@@ -1,3 +1,4 @@
+use std::sync::{Arc, Mutex};
 /* Recreated 04/03/2025, Completed: 05/04/2025 
 	Revise started: 10/30/2025
 	Revised 2: 11/11/2025 (cut loc from data)
@@ -9,13 +10,13 @@
 		size of states from projected subsig store (started 01/17/2026)
 */
 
-//! This module generates the (pat-loc) for a nibble sequence.
+// This module generates the (pat-loc) for a nibble sequence.
 use folding_schemes::folding::foldpot::container_config::ColEle;
 use utils::{logger::{log_perf, LOG1,LOG2}, 
 	timer::Timer as GTimer, consts::ADD_CHAIN_SIZE};
 use rayon::iter::{ParallelIterator,IntoParallelRefIterator,
 	IndexedParallelIterator, IntoParallelIterator};
-use std::{rc::{Rc},cell::{RefCell}, collections::{HashSet,HashMap}};
+use std::{collections::{HashSet,HashMap}};
 use ark_ff::{PrimeField};
 use std::marker::{PhantomData};
 use folding_schemes::{
@@ -124,7 +125,7 @@ pub struct FsmAdvAdvice<F:PrimeField + ColEle>{
 
 	/// the statement container object which is serialized to a vector
 	/// of statement
-	pub stmt_container: Rc<RefCell<Container<F>>>,
+	pub stmt_container: std::sync::Arc<std::sync::Mutex<Container<F>>>,
 
 	/// capacity
 	pub capacity: FsmAdvCapacity,
@@ -161,7 +162,7 @@ pub struct FsmAdvGadget<F:PrimeField + ColEle>{
 	pub capacity: FsmAdvCapacity,
 
 	// will be set when set_container_cfg is called
-	pub cfgs_context: Option<Rc<Vec<ContainerConfig>>>,
+	pub cfgs_context: Option<std::sync::Arc<Vec<ContainerConfig>>>,
 	// dummy_cfg is used when cfgs_context is not ready yet
 	pub dummy_cfg: ContainerConfig,
 	pub my_idx_in_context: Option<usize>,
@@ -177,7 +178,7 @@ impl Capacity for FsmAdvCapacity{
 	/// Self represents the capacity of the circuit, other
 	/// represents the capacity requirement of a discharge proof (NdAdvice)
 	/// It is essentially a comparison operation.
-	fn can_satisfy(&self, r_other: &Rc<dyn Capacity>) -> bool{
+	fn can_satisfy(&self, r_other: &Arc<dyn Capacity + Send + Sync>) -> bool{
 		let other = r_other.as_any().downcast_ref::<FsmAdvCapacity>()
 			.expect("downcast err"); 
 		assert!(self.acdfa_state_part_bits == other.acdfa_state_part_bits);
@@ -192,9 +193,9 @@ impl Capacity for FsmAdvCapacity{
 	}
 
 	/// to get around the requirement on Clone trait which require Sized
-	/// (which cause trouble why use dyn Capacity in Rc),
-	fn clone(&self) -> Rc<dyn Capacity>{
-		Rc::new(FsmAdvCapacity{
+	/// (which cause trouble why use dyn Capacity + Send + Sync in Rc),
+	fn clone(&self) -> Arc<dyn Capacity + Send + Sync>{
+		Arc::new(FsmAdvCapacity{
 			max_nibble_len: self.max_nibble_len,
 			acdfa_state_part_bits: self.acdfa_state_part_bits,
 			subsigs: self.subsigs,
@@ -214,7 +215,7 @@ impl <F: PrimeField + ColEle> NdAdvice for FsmAdvAdvice<F>{
 }
 
 impl <F: PrimeField + ColEle> ComponentAdvice<F> for FsmAdvAdvice<F>{
-	fn get_container(&self)->Rc<RefCell<Container<F>>>{
+	fn get_container(&self)->std::sync::Arc<std::sync::Mutex<Container<F>>>{
 		self.stmt_container.clone()
 	}
 }
@@ -289,16 +290,16 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 	/// used for debugging purpose.
 	/// dump the pat loc table generated
 	pub fn dump_pat_loc(&self){
-		let packed_combo = self.stmt_container.borrow().
+		let packed_combo = self.stmt_container.lock().unwrap().
 			get_container("packed_trace").unwrap();
-		let pat_loc_tbl = packed_combo.borrow().get_container("pat_loc")
+		let pat_loc_tbl = packed_combo.lock().unwrap().get_container("pat_loc")
 			.unwrap();
-		let pats = pat_loc_tbl.borrow().
+		let pats = pat_loc_tbl.lock().unwrap().
 			search_container("pat_loc sorted_tbl sorted_key").
-			unwrap().borrow().to_vec();
-		let locs= pat_loc_tbl.borrow().
+			unwrap().lock().unwrap().to_vec();
+		let locs= pat_loc_tbl.lock().unwrap().
 			search_container("pat_loc sorted_tbl sorted_val").
-			unwrap().borrow().to_vec();
+			unwrap().lock().unwrap().to_vec();
 		assert!(pats.len()==locs.len());
 		println!("--- pat-loc table, len: {}---", pats.len());
 		for i in 0..pats.len(){
@@ -335,13 +336,13 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 			inp_state, inp_loc, capacity, fsm_id)?;
 		let fsm_acc2 = fsm_acc.clone(); //low cost, need to add
 		//fsm_acc to fix location first before we build exteranl cols from it.
-		stmt_container.borrow_mut().add_container(fsm_acc);
+		stmt_container.lock().unwrap().add_container(fsm_acc);
 
 		//2. generate the packed trace_combo
 		//which eventually returns (pat-loc) table 
 		let packed_trace_combo = Self::gen_packed_trace_combo_v2(b_igc,
 			&fsm_acc2, capacity, acdfa, fsm_id)?;
-		stmt_container.borrow_mut().add_container(packed_trace_combo);
+		stmt_container.lock().unwrap().add_container(packed_trace_combo);
 
 		Ok(Self{capacity: Clone::clone(capacity), fsm_id,
 			stmt_container, offset_wea})
@@ -379,23 +380,23 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 				let scol = vec![F::from(RANGE2); packed_trace_size];
 				let pat_loc_tbl = Container::<F>::new("pat_loc");
 				let sorted_tbl = Container::<F>::new("sorted_tbl");
-				sorted_tbl.borrow_mut().add_col(Col::<F>::new(zcol.clone(), 
+				sorted_tbl.lock().unwrap().add_col(Col::<F>::new(zcol.clone(), 
 					"sorted_key", IDX_DATA));
-				sorted_tbl.borrow_mut().add_col(Col::<F>::new(zcol.clone(), 
+				sorted_tbl.lock().unwrap().add_col(Col::<F>::new(zcol.clone(), 
 					"sorted_id", IDX_DATA));
-				sorted_tbl.borrow_mut().add_col(Col::<F>::new(zcol.clone(), 
+				sorted_tbl.lock().unwrap().add_col(Col::<F>::new(zcol.clone(), 
 					"sorted_val", IDX_DATA));
-				sorted_tbl.borrow_mut()
+				sorted_tbl.lock().unwrap()
 					.add_col(Col::<F>::new(scol.clone(), 
 						"sid_sorted_key", IDX_SI_DATA));
-				sorted_tbl.borrow_mut()
+				sorted_tbl.lock().unwrap()
 					.add_col(Col::<F>::new(scol.clone(), 
 						"sid_sorted_id", IDX_SI_DATA));
-				sorted_tbl.borrow_mut()
+				sorted_tbl.lock().unwrap()
 					.add_col(Col::<F>::new(scol, "sid_sorted_val", IDX_SI_DATA));
-				pat_loc_tbl.borrow_mut().add_container(sorted_tbl);
-				packed_trace.borrow_mut().add_container(pat_loc_tbl);
-				stmt_container.borrow_mut().add_container(packed_trace);
+				pat_loc_tbl.lock().unwrap().add_container(sorted_tbl);
+				packed_trace.lock().unwrap().add_container(pat_loc_tbl);
+				stmt_container.lock().unwrap().add_container(packed_trace);
 
 				//just fake 1 inp state 1 oupstate
 				//needed by discharge_test to build inp/oup state
@@ -410,11 +411,11 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 				let sid_cols = Col::<F>::new(vec![f_rg2], 
 					"oup_state",IDX_SI_DATA);
 				let fsm_acc = Container::new("fsm_acc");
-				fsm_acc.borrow_mut().add_col(col_states);
-				fsm_acc.borrow_mut().add_col(col_locs);
-				fsm_acc.borrow_mut().add_col(sid_states);
-				fsm_acc.borrow_mut().add_col(sid_cols);
-				stmt_container.borrow_mut().add_container(fsm_acc);
+				fsm_acc.lock().unwrap().add_col(col_states);
+				fsm_acc.lock().unwrap().add_col(col_locs);
+				fsm_acc.lock().unwrap().add_col(sid_states);
+				fsm_acc.lock().unwrap().add_col(sid_cols);
+				stmt_container.lock().unwrap().add_container(fsm_acc);
 
 				return Ok(Self{ 
 					offset_wea, fsm_id, stmt_container, 
@@ -435,7 +436,7 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 			inp_state, inp_loc, capacity, fsm_id)?;
 		let fsm_acc2 = fsm_acc.clone(); //low cost, need to add
 		//fsm_acc to fix location first before we build exteranl cols from it.
-		stmt_container.borrow_mut().add_container(fsm_acc);
+		stmt_container.lock().unwrap().add_container(fsm_acc);
 
 		//2. construct the projected subsig-state-pattern store and the proof
 		//for it
@@ -448,12 +449,12 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		let proj_store_combo = Self::gen_proj_store_combo(&inp_subsigs, 
 			store_subsig_pat,fsm_id, capacity)?;
 		let proj_store_combo2 = proj_store_combo.clone(); //rc clone low cost
-		stmt_container.borrow_mut().add_container(proj_store_combo);
+		stmt_container.lock().unwrap().add_container(proj_store_combo);
 
 		//3. construct the packed tracie
 		let packed_trace_combo = Self::gen_packed_trace_combo(b_igc, &fsm_acc2,
 			&proj_store_combo2, capacity, acdfa)?;
-		stmt_container.borrow_mut().add_container(packed_trace_combo);
+		stmt_container.lock().unwrap().add_container(packed_trace_combo);
 
 
 		Ok(Self{capacity: Clone::clone(capacity), fsm_id,
@@ -627,7 +628,7 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		inp_loc: F, //starting from 1. 
 		capacity: &FsmAdvCapacity, 
 		fsm_id: u32) 
-	-> Result<Rc<RefCell<Container<F>>>, Error>{
+	-> Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 		let b_debug = false;
 		let b_perf = true;
 		let mut gt = GTimer::new();
@@ -736,10 +737,10 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 			vec![col_inp_state, col_mid_states, col_oup_state], "states");
 		let si_states = Container::concat_cols(vec![col_si_inp_state, 
 			col_si_mid_states, col_si_oup_state], "si_states");
-		#[cfg(test)]{assert!(states.borrow().to_vec().len()==nlen+1);}
-		#[cfg(test)]{assert!(si_states.borrow().to_vec().len()==nlen+1);}
-		res.borrow_mut().add_container(states.clone()); //remove clone later
-		res.borrow_mut().add_container(si_states);
+		#[cfg(test)]{assert!(states.lock().unwrap().to_vec().len()==nlen+1);}
+		#[cfg(test)]{assert!(si_states.lock().unwrap().to_vec().len()==nlen+1);}
+		res.lock().unwrap().add_container(states.clone()); //remove clone later
+		res.lock().unwrap().add_container(si_states);
 
 		//3.2 the inp/mid/oup locations
 		let col_inp_loc = Col::<F>::new(vec![raw_locs[0]],
@@ -762,20 +763,20 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 			vec![col_inp_loc, col_oup_loc], "locs");
 		let si_locs = Container::concat_cols(vec![col_si_inp_loc, 
 			 col_si_oup_loc], "si_locs");
-		#[cfg(test)]{assert!(locs.borrow().to_vec().len()==2);}
-		#[cfg(test)]{assert!(si_locs.borrow().to_vec().len()==2);}
-		res.borrow_mut().add_container(locs);
-		res.borrow_mut().add_container(si_locs);
+		#[cfg(test)]{assert!(locs.lock().unwrap().to_vec().len()==2);}
+		#[cfg(test)]{assert!(si_locs.lock().unwrap().to_vec().len()==2);}
+		res.lock().unwrap().add_container(locs);
+		res.lock().unwrap().add_container(si_locs);
 
 		//3.3. the transitions
 		let col_trans = Col::<F>::new(trans, 
 			"trans", IDX_DATA);
 		let col_si_trans = Col::<F>::new_const(vec![f_id_trans; nlen],
 			"si_trans", IDX_SI_DATA);
-		#[cfg(test)]{assert!(col_trans.borrow().data.len()==nlen);}
-		#[cfg(test)]{assert!(col_si_trans.borrow().data.len()==nlen);}
-		res.borrow_mut().add_col(col_trans);
-		res.borrow_mut().add_col(col_si_trans);
+		#[cfg(test)]{assert!(col_trans.lock().unwrap().data.len()==nlen);}
+		#[cfg(test)]{assert!(col_si_trans.lock().unwrap().data.len()==nlen);}
+		res.lock().unwrap().add_col(col_trans);
+		res.lock().unwrap().add_col(col_si_trans);
 
 		//3.4 the nibbles (LATER when reconstructed, it is 
 		// retrieved from previous word_extract_adv gadget
@@ -785,11 +786,11 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		let col_si_nibbles = Col::<F>::new_external(vec![f_char; nlen], 
 			"si_nibbles", IDX_SI_DATA, shift, 
 			"word_extract_stmt si_nibbles");
-		#[cfg(test)]{assert!(col_nibbles.borrow().data.len()==nlen);}
-		#[cfg(test)]{assert!(col_si_nibbles.borrow().data.len()==nlen);}
+		#[cfg(test)]{assert!(col_nibbles.lock().unwrap().data.len()==nlen);}
+		#[cfg(test)]{assert!(col_si_nibbles.lock().unwrap().data.len()==nlen);}
 
-		res.borrow_mut().add_col(col_nibbles);
-		res.borrow_mut().add_col(col_si_nibbles);
+		res.lock().unwrap().add_col(col_nibbles);
+		res.lock().unwrap().add_col(col_si_nibbles);
 
 		//3.5 the state columns
 		let col_states_final = Col::<F>::new(states_final,
@@ -800,10 +801,10 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 			"locs_final", IDX_DATA);
 		let col_si_locs_final = Col::<F>::new(si_locs_final,
 			"si_locs_final", IDX_SI_DATA);
-		res.borrow_mut().add_col(col_states_final);
-		res.borrow_mut().add_col(col_si_states_final);
-		res.borrow_mut().add_col(col_locs_final);
-		res.borrow_mut().add_col(col_si_locs_final);
+		res.lock().unwrap().add_col(col_states_final);
+		res.lock().unwrap().add_col(col_si_states_final);
+		res.lock().unwrap().add_col(col_locs_final);
+		res.lock().unwrap().add_col(col_si_locs_final);
 
 		if b_perf{log_perf(LOG1, "-- -- fsm_gen_fsm_combo", &mut gt);}
 
@@ -823,7 +824,7 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		store_subsig_pat: &SubsigPatternStore,
 		fsm_id: u32,
 		capacity: &FsmAdvCapacity,
-	)->Result<Rc<RefCell<Container<F>>>, Error>{
+	)->Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 		//1. generate the projected store
 		let state_part_bits = capacity.acdfa_state_part_bits;
 		assert!(state_part_bits == RANGE2_BIT);
@@ -886,8 +887,8 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 			.collect();
 
 		//note not much cost as it's rc
-		for i in 0..cols.len(){ res.borrow_mut().add_col(cols[i].clone()); }
-		for i in 0..sid_cols.len(){res.borrow_mut().add_col(sid_cols[i].clone());}
+		for i in 0..cols.len(){ res.lock().unwrap().add_col(cols[i].clone()); }
+		for i in 0..sid_cols.len(){res.lock().unwrap().add_col(sid_cols[i].clone());}
 
 		Ok(res)
 	}
@@ -913,17 +914,17 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 	#[allow(dead_code)]
 	fn gen_packed_trace_combo(
 		b_igc: bool,
-		fs_acc_combo: &Rc<RefCell<Container<F>>>,
-		proj_store_combo: &Rc<RefCell<Container<F>>>,
+		fs_acc_combo: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
+		proj_store_combo: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
 		capacity: &FsmAdvCapacity,
 		acdfa: &HexACDFA,
-	)->Result<Rc<RefCell<Container<F>>>, Error>{
+	)->Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 		let res = Container::<F>::new("packed_trace");
 		//1. extract proj_store_combo column "states" to a sorted set
-		let ext_state= proj_store_combo.borrow()
-			.get_container("state").unwrap().borrow()
+		let ext_state= proj_store_combo.lock().unwrap()
+			.get_container("state").unwrap().lock().unwrap()
 			.duplicate_as_external(0,None);
-		let ext_state = Rc::new(RefCell::new(ext_state));
+		let ext_state = Arc::new(Mutex::new(ext_state));
 		let sorted_set_size = capacity.avg_pats_per_subsig 
 			* capacity.subsigs;
 		let _final_states_len= capacity.basis_acc_states *
@@ -932,19 +933,19 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		let sorted_states = col_to_sorted_set(&ext_state, sorted_set_size, 
 			"sorted_states");
 		let sorted_states2 = sorted_states.clone(); //low cost rc clone
-		res.borrow_mut().add_container(sorted_states); //once created, add it.
+		res.lock().unwrap().add_container(sorted_states); //once created, add it.
 
 		//2. (state,loc) filtered by sorted_states 
 		// --> sorted_and well formed table (state, id, loc)
-		let state_col = Rc::new(RefCell::new(
-			fs_acc_combo.borrow().get_container("states_final")
-			.unwrap().borrow()
+		let state_col = Arc::new(Mutex::new(
+			fs_acc_combo.lock().unwrap().get_container("states_final")
+			.unwrap().lock().unwrap()
 			.duplicate_as_external(0, None)));
-		let loc_col = Rc::new(RefCell::new(
-			fs_acc_combo.borrow().get_container("locs_final").unwrap().borrow()
+		let loc_col = Arc::new(Mutex::new(
+			fs_acc_combo.lock().unwrap().get_container("locs_final").unwrap().lock().unwrap()
 			.duplicate_as_external(0, None)));
 		#[cfg(test)]{
-			assert!(state_col.borrow().to_vec().len()==_final_states_len);
+			assert!(state_col.lock().unwrap().to_vec().len()==_final_states_len);
 		}
 
 		let packed_trace_size = capacity.basis_pats_in_trace * 
@@ -963,7 +964,7 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		let state_loc_tbl = match state_loc_tbl{
 			Ok(adv) => Ok(adv),
 			Err(Error::CapErr(vec)) => {
-				let states_final = fs_acc_combo.borrow().get_container("states_final").unwrap().borrow().to_vec();
+				let states_final = fs_acc_combo.lock().unwrap().get_container("states_final").unwrap().lock().unwrap().to_vec();
 				report_top_states(&states_final, acdfa, 10, "basis_pats_in_trace (state_loc_tbl)");
 				let vec_err = vec.iter().map(|(s,val)|{
 					if s=="target_size"{
@@ -984,17 +985,17 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 			_ => state_loc_tbl 
 		}?;
 		let state_loc_tbl2 = state_loc_tbl.clone(); //low cost clone rc
-		res.borrow_mut().add_container(state_loc_tbl);
+		res.lock().unwrap().add_container(state_loc_tbl);
 
 		//3. projecting the (subsig-state-pat) sorted set further
 		// to (pat-state) sorted table for further tbl join.
 		// Adjust avg_pats_per_subsig if too small.
 		let pat_state_set_size = capacity.avg_pats_per_subsig 
 			* capacity.subsigs;
-		let ext_pat= proj_store_combo.borrow()
-			.get_container("pat").unwrap().borrow()
+		let ext_pat= proj_store_combo.lock().unwrap()
+			.get_container("pat").unwrap().lock().unwrap()
 			.duplicate_as_external(0,None);
-		let ext_pat= Rc::new(RefCell::new(ext_pat));
+		let ext_pat= Arc::new(Mutex::new(ext_pat));
 		let pat_state_tbl = tbl_to_sorted_tbl( 
 			&ext_pat, &ext_state, pat_state_set_size, "pat_state_tbl");
 		let pat_state_tbl = match pat_state_tbl{
@@ -1014,7 +1015,7 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		}?;
 
 		let pat_state_tbl2 = pat_state_tbl.clone(); //clone rc low cost
-		res.borrow_mut().add_container(pat_state_tbl);
+		res.lock().unwrap().add_container(pat_state_tbl);
 
 		//4. left join (pat-state) and (state-loc) both are sorted table.
 		let packed_trace_size = capacity.basis_pats_in_trace * 
@@ -1025,7 +1026,7 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		let pat_state_loc_tbl = match pat_state_loc_tbl{
 			Ok(adv) => Ok(adv),
 			Err(Error::CapErr(vec)) => {
-				let states_final = fs_acc_combo.borrow().get_container("states_final").unwrap().borrow().to_vec();
+				let states_final = fs_acc_combo.lock().unwrap().get_container("states_final").unwrap().lock().unwrap().to_vec();
 				report_top_states(&states_final, acdfa, 10, "basis_pats_in_trace (pat_state_loc_tbl)");
 				let vec_err = vec.iter().map(|(s,val)|{
 					if s=="target_size::2col_left_join"{
@@ -1047,21 +1048,21 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 			_ => pat_state_loc_tbl 
 		}?;
 
-		let pat_col = pat_state_loc_tbl.borrow()
-			.get_container("join_tbl").expect("err get join_tbl").borrow()
-			.get_container_by_idx(0).borrow().duplicate_as_external(0,None);
-		let loc_col = pat_state_loc_tbl.borrow()
-			.get_container("join_tbl").expect("err get join_tbl").borrow()
-			.get_container_by_idx(4).borrow().duplicate_as_external(0,None);
+		let pat_col = pat_state_loc_tbl.lock().unwrap()
+			.get_container("join_tbl").expect("err get join_tbl").lock().unwrap()
+			.get_container_by_idx(0).lock().unwrap().duplicate_as_external(0,None);
+		let loc_col = pat_state_loc_tbl.lock().unwrap()
+			.get_container("join_tbl").expect("err get join_tbl").lock().unwrap()
+			.get_container_by_idx(4).lock().unwrap().duplicate_as_external(0,None);
 
-		res.borrow_mut().add_container(pat_state_loc_tbl);
+		res.lock().unwrap().add_container(pat_state_loc_tbl);
 
 		//5. compress pat_state_loc_tbl to pat_loc_tbl
 		let pat_loc_tbl = tbl_to_sorted_tbl(
-			&Rc::new(RefCell::new(pat_col)), 
-			&Rc::new(RefCell::new(loc_col)), 
+			&Arc::new(Mutex::new(pat_col)), 
+			&Arc::new(Mutex::new(loc_col)), 
 			packed_trace_size, "pat_loc").expect("err pat_loc"); 
-		res.borrow_mut().add_container(pat_loc_tbl);
+		res.lock().unwrap().add_container(pat_loc_tbl);
 
 		//6. return
 		Ok( res )
@@ -1091,21 +1092,21 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 	#[allow(dead_code)]
 	fn gen_packed_trace_combo_v2(
 		b_igc: bool,
-		fsm_acc_combo: &Rc<RefCell<Container<F>>>,
+		fsm_acc_combo: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
 		capacity: &FsmAdvCapacity,
 		acdfa: &HexACDFA,
 		fsm_id: u32,
-	)->Result<Rc<RefCell<Container<F>>>, Error>{
+	)->Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 		let res = Container::<F>::new("packed_trace");
 		let b_perf = true;
 		let mut gt = GTimer::new();
 
 		//1. retrive (final_states, loc) from fsm_combo
-		let states_final= fsm_acc_combo.borrow()
-			.get_container("states_final").unwrap().borrow()
+		let states_final= fsm_acc_combo.lock().unwrap()
+			.get_container("states_final").unwrap().lock().unwrap()
 			.duplicate_as_external(0,None);
-		let locs_final= fsm_acc_combo.borrow()
-			.get_container("locs_final").unwrap().borrow()
+		let locs_final= fsm_acc_combo.lock().unwrap()
+			.get_container("locs_final").unwrap().lock().unwrap()
 			.duplicate_as_external(0,None);
 
 		//2. non-deterministically build the projection from
@@ -1170,10 +1171,10 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 			.expect("We expect length err already handled above already");
 
 		//2.3 constuct the encoded col
-		let c1 = ct_stat_pat.borrow().get_container("key")?.borrow().to_vec();
-		let c2 = ct_stat_pat.borrow().get_container("val")?.borrow().to_vec();
-		let c3 = ct_stat_pat.borrow().get_container("id")?.borrow().to_vec();
-		let c4 = ct_stat_pat.borrow().get_container("count")?.borrow().to_vec();
+		let c1 = ct_stat_pat.lock().unwrap().get_container("key")?.lock().unwrap().to_vec();
+		let c2 = ct_stat_pat.lock().unwrap().get_container("val")?.lock().unwrap().to_vec();
+		let c3 = ct_stat_pat.lock().unwrap().get_container("id")?.lock().unwrap().to_vec();
+		let c4 = ct_stat_pat.lock().unwrap().get_container("count")?.lock().unwrap().to_vec();
 		let cols =  vec![&c1[..],&c2[..],&c3[..],&c4[..]];
 		let encoded = encode_cols_better(cols,vec![0,1,2,3]);
 		assert!(encoded.len()==ulen);
@@ -1182,9 +1183,9 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		let tbl_id = F::from((fsm_id + 7) as u32);
 		let col_sid_encoded= Col::new_const(vec![tbl_id; ulen],
 			"si_encoded_proj_stat_pat", IDX_SI_DATA);
-		res.borrow_mut().add_container(ct_stat_pat.clone()); //low cost clone
-		res.borrow_mut().add_col(col_encoded);
-		res.borrow_mut().add_col(col_sid_encoded);
+		res.lock().unwrap().add_container(ct_stat_pat.clone()); //low cost clone
+		res.lock().unwrap().add_col(col_encoded);
+		res.lock().unwrap().add_col(col_sid_encoded);
 
 		//3. left join loc-state and pat-state table
 		//here only need pat-state to be wide-wellfomed
@@ -1227,28 +1228,28 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 			},
 			_ => loc_state_pat_tbl 
 		}?;
-		let pat_col = loc_state_pat_tbl.borrow()
-			.get_container("join_tbl").expect("err get join_tbl").borrow()
-			.get_container("val").unwrap().borrow()
+		let pat_col = loc_state_pat_tbl.lock().unwrap()
+			.get_container("join_tbl").expect("err get join_tbl").lock().unwrap()
+			.get_container("val").unwrap().lock().unwrap()
 			.duplicate_as_external(0,None);
-		let loc_col = loc_state_pat_tbl.borrow()
-			.get_container("join_tbl").expect("err get join_tbl").borrow()
-			.get_container("c1").unwrap().borrow()
+		let loc_col = loc_state_pat_tbl.lock().unwrap()
+			.get_container("join_tbl").expect("err get join_tbl").lock().unwrap()
+			.get_container("c1").unwrap().lock().unwrap()
 			.duplicate_as_external(0,None);
 		#[cfg(test)]{
 			assert!(pat_col.to_vec().len()==loc_col.to_vec().len());
 		}
-		res.borrow_mut().add_container(loc_state_pat_tbl);
+		res.lock().unwrap().add_container(loc_state_pat_tbl);
 
 		//5. compress pat_state_loc_tbl to pat_loc_tbl
 		let pat_loc_tbl = tbl_to_sorted_tbl(
-			&Rc::new(RefCell::new(pat_col)), 
-			&Rc::new(RefCell::new(loc_col)), 
+			&Arc::new(Mutex::new(pat_col)), 
+			&Arc::new(Mutex::new(loc_col)), 
 			packed_trace_size, "pat_loc");
 		let pat_loc_tbl = match pat_loc_tbl	{
 			Ok(adv) => Ok(adv),
 			Err(Error::CapErr(vec)) => {
-				let states_final = fsm_acc_combo.borrow().get_container("states_final").unwrap().borrow().to_vec();
+				let states_final = fsm_acc_combo.lock().unwrap().get_container("states_final").unwrap().lock().unwrap().to_vec();
 				report_top_states(&states_final, acdfa, 10, "basis_pats_in_trace (tbl_to_sorted)");
 				let vec_err = vec.iter().map(|(s,val)|{
 					if s=="target_size::hashmap_2col"{
@@ -1267,7 +1268,7 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		}?;
 
 		if b_perf{log_perf(LOG1, "-- -- fsm_packed_trace", &mut gt);}
-		res.borrow_mut().add_container(pat_loc_tbl);
+		res.lock().unwrap().add_container(pat_loc_tbl);
 		Ok( res )
 	}
 }
@@ -1295,7 +1296,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 			dummy_inp_loc, &dummy_inp_subsigs, capacity, 
 			fsm_id, store_subsig_pat).expect("\n\n ==== **** =====\nCannot handle dummy advice generation for fsm_adv. Needs to raise the following for at least one circ. ");
 		let mut vec_cfg = prev_cfgs.clone();
-		vec_cfg.push(dummy_adv.stmt_container.borrow().get_cfg());
+		vec_cfg.push(dummy_adv.stmt_container.lock().unwrap().get_cfg());
 		ContainerConfig::adjust_locations(&mut vec_cfg);
 		//even it's false, it's good enough for generating statement_structure
 		let dummy_cfg = vec_cfg[vec_cfg.len()-1].clone();
@@ -1339,8 +1340,8 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 			F::from(self.fsm_id+6))?;
 		let _tblid_trans= FpVar::<F>::new_constant(cs.clone(), 
 			F::from(self.fsm_id + 3))?;
-		let si_states = fsm_acc.get_container("si_states")?.borrow().to_vec();
-		let si_trans= fsm_acc.get_container("si_trans")?.borrow().to_vec();
+		let si_states = fsm_acc.get_container("si_states")?.lock().unwrap().to_vec();
+		let si_trans= fsm_acc.get_container("si_trans")?.lock().unwrap().to_vec();
 		assert!(si_states.len()==nlen+1 && si_trans.len()==nlen);
 		if b_perf{
 			log_perf(log_level, "validate_fsm_acc_container step 1", &mut gt);
@@ -1375,9 +1376,9 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 			F::from((1<<(self.capacity.acdfa_state_part_bits+4)) as u32))?;
 		let hex_var = FpVar::<F>::new_constant(cs.clone(),
 			F::from(16 as u32))?;
-		let chars = fsm_acc.get_container("nibbles")?.borrow().to_vec();
-		let states = fsm_acc.get_container("states")?.borrow().to_vec();
-		let trans = fsm_acc.get_container("trans")?.borrow().to_vec();
+		let chars = fsm_acc.get_container("nibbles")?.lock().unwrap().to_vec();
+		let states = fsm_acc.get_container("states")?.lock().unwrap().to_vec();
+		let trans = fsm_acc.get_container("trans")?.lock().unwrap().to_vec();
 		assert!(chars.len()==nlen && states.len()==nlen+1 && trans.len()==nlen);
 		let pows_51 = build_pows_56_val();
 		//constants for the states. Note that
@@ -1473,7 +1474,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		}
 
 
-		let locs = fsm_acc.get_container("locs")?.borrow().to_vec();
+		let locs = fsm_acc.get_container("locs")?.lock().unwrap().to_vec();
 		let inp_loc = &locs[0];
 		let _oup_loc = &locs[1];
 		#[cfg(test)]{
@@ -1503,13 +1504,13 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		let f_id_final = new_const_var(&cs, F::from(self.fsm_id+2));
 		let f_range = new_const_var(&cs, F::from(RANGE2 as u32));
 		let si_states_final= fsm_acc.get_container("si_states_final")?
-			.borrow().to_vec();
+			.lock().unwrap().to_vec();
 		//let si_locs_final= fsm_acc.get_container("si_locs_final")?
-		//	.borrow().to_vec();
+		//	.lock().unwrap().to_vec();
 		let states_final= fsm_acc.get_container("states_final")?
-			.borrow().to_vec();
+			.lock().unwrap().to_vec();
 		let locs_final= fsm_acc.get_container("locs_final")?
-			.borrow().to_vec();
+			.lock().unwrap().to_vec();
 		let vec_not_dummy = states_final.iter().map(|s|
 			&one_var - &is_zero_better(s, &cs).unwrap()
 		).collect::<Vec<FpVar<F>>>();
@@ -1723,7 +1724,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 			.collect::<Vec<_>>();
 		let sid_cols = col_names.iter().map(|name|
 			proj_store.get_container(&format!("sid_{}", name)).unwrap()
-				.borrow().to_vec()
+				.lock().unwrap().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
 		assert!(sid_cols.len()==vals.len());
 		if b_perf{
@@ -1739,7 +1740,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		//2. check the m_tbl proof
 		//COST: subsigs + 2*subsigs*avg_pat*subsig 
 		let cols = col_names.iter().map(|name| proj_store.get_container(&name).
-			unwrap().borrow().to_vec()
+			unwrap().lock().unwrap().to_vec()
 			).collect::<Vec<Vec<FpVar<F>>>>();
 		let (subsig, id1, state, id2, pat, encoded, inp_subsigs, m_tbl) = 
 		  (&cols[0],&cols[1],&cols[2],&cols[3],&cols[4],&cols[5],&cols[6],&cols[7]);
@@ -1804,18 +1805,18 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 			{"fsm_adv_stmt_cs"};
 		let col_to_sorted_combo = all.search_container(
 			&format!("{} packed_trace sorted_states", sname))?;
-		verify_col_to_sorted_set(r1, &col_to_sorted_combo.borrow(), cs.clone())?;
+		verify_col_to_sorted_set(r1, &col_to_sorted_combo.lock().unwrap(), cs.clone())?;
 		if b_perf{
 			log_perf(log_level, "valid_packed_trace step 1", &mut gt);
 		}
 
 		#[cfg(test)]{
-			assert!(_plen==col_to_sorted_combo.borrow().get_container("id")
-				.unwrap().borrow().to_vec().len());
-			assert!(_plen==col_to_sorted_combo.borrow().get_container("sorted_val").unwrap().borrow().to_vec().len());
+			assert!(_plen==col_to_sorted_combo.lock().unwrap().get_container("id")
+				.unwrap().lock().unwrap().to_vec().len());
+			assert!(_plen==col_to_sorted_combo.lock().unwrap().get_container("sorted_val").unwrap().lock().unwrap().to_vec().len());
 		}
 		if b_perf{
-			println!(" --- validate_packed_trace step 1: -- col len: {}, sorted_val: {}, cs: {}", col_to_sorted_combo.borrow().get_container("id").unwrap().borrow().to_vec().len(), col_to_sorted_combo.borrow().get_container("sorted_val").unwrap().borrow().to_vec().len(), cs.num_constraints()-nc);
+			println!(" --- validate_packed_trace step 1: -- col len: {}, sorted_val: {}, cs: {}", col_to_sorted_combo.lock().unwrap().get_container("id").unwrap().lock().unwrap().to_vec().len(), col_to_sorted_combo.lock().unwrap().get_container("sorted_val").unwrap().lock().unwrap().to_vec().len(), cs.num_constraints()-nc);
 			nc = cs.num_constraints();
 		}
 
@@ -1859,7 +1860,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 			&proj_pats_col, &proj_states_col, &pat_state_tbl, cs.clone())?;
 		if b_perf{
 			print!(" --- verify_packed trace step 3: verify pattern-state: {}", 
-				proj_states_col.borrow().to_vec().len());
+				proj_states_col.lock().unwrap().to_vec().len());
 			println!("--- cs: {}", cs.num_constraints()-nc);
 			nc = cs.num_constraints();
 		}
@@ -1920,10 +1921,10 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		//no cost
 		let states_final= 
 			all.search_container(
-			&format!("{} fsm_acc states_final", sname))?.borrow().to_vec();
+			&format!("{} fsm_acc states_final", sname))?.lock().unwrap().to_vec();
 		let locs_final= 
 			all.search_container(
-			&format!("{} fsm_acc locs_final", sname))?.borrow().to_vec();
+			&format!("{} fsm_acc locs_final", sname))?.lock().unwrap().to_vec();
 		if b_perf{
 			log_perf(log_level, &format!(
 				"valid_packed_trace step 1. cs: {}", cs.num_constraints()-nc),
@@ -1967,15 +1968,15 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		let col_encoded = 
 			all.search_container(
 			&format!("{} packed_trace encoded_proj_state_pat", sname))?
-			.borrow().to_vec();
-		let c1 = tbl_proj_states_pats.borrow().get_container("key")
-			.unwrap().borrow().to_vec();
-		let c2 = tbl_proj_states_pats.borrow().get_container("val")
-			.unwrap().borrow().to_vec();
-		let c3 = tbl_proj_states_pats.borrow().get_container("id")
-			.unwrap().borrow().to_vec();
-		let c4 = tbl_proj_states_pats.borrow().get_container("count")
-			.unwrap().borrow().to_vec();
+			.lock().unwrap().to_vec();
+		let c1 = tbl_proj_states_pats.lock().unwrap().get_container("key")
+			.unwrap().lock().unwrap().to_vec();
+		let c2 = tbl_proj_states_pats.lock().unwrap().get_container("val")
+			.unwrap().lock().unwrap().to_vec();
+		let c3 = tbl_proj_states_pats.lock().unwrap().get_container("id")
+			.unwrap().lock().unwrap().to_vec();
+		let c4 = tbl_proj_states_pats.lock().unwrap().get_container("count")
+			.unwrap().lock().unwrap().to_vec();
 		let vec_cols = [&c1[..], &c2[..], &c3[..], &c4[..]];
 		verify_encode_cols_in_range(&col_encoded[..], &vec_cols)?;
 
@@ -2005,16 +2006,16 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 
 		//4. verify the pat-loc table is projected from the pat_state_loc_tbl 
 		//COST: 27*plen 
-		let pat_col= loc_state_pat_tbl.borrow()
-			.get_container("join_tbl")?.borrow()
+		let pat_col= loc_state_pat_tbl.lock().unwrap()
+			.get_container("join_tbl")?.lock().unwrap()
 			.get_container("val")?;
-		let loc_col= loc_state_pat_tbl.borrow()
-			.get_container("join_tbl")?.borrow()
+		let loc_col= loc_state_pat_tbl.lock().unwrap()
+			.get_container("join_tbl")?.lock().unwrap()
 			.get_container("c1")?;
 		let pat_loc_tbl = all.search_container( 
 			&format!("{} packed_trace pat_loc", sname))?;
 		#[cfg(test)]{
-			assert!(pat_col.borrow().to_vec().len()==plen);
+			assert!(pat_col.lock().unwrap().to_vec().len()==plen);
 		}
 		verify_tbl_to_sorted_tbl(&r1, &r2,
 			&pat_col, &loc_col, &pat_loc_tbl, cs.clone())?;
@@ -2067,7 +2068,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		//2. validate the fsm_acc combo 
 		// nlen*(3+ 5*ratio_acc_states_per_trace)
 		let fsm_acc = stmt.get_container("fsm_acc")?;
-		self.validate_fsm_acc_container(&fsm_acc.borrow(), r1.clone(),
+		self.validate_fsm_acc_container(&fsm_acc.lock().unwrap(), r1.clone(),
 			r2.clone(), cs.clone())?;
 		if b_perf{
 			log_perf(log_level, &format!(
@@ -2077,7 +2078,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 
 		//3. validate the proj_subsig_store
 		// COST: subsig*(1 + 11*avg_pat_subsig)
-		self.validate_proj_subsig_store(&pss.borrow(),r1.clone(),cs.clone())?;
+		self.validate_proj_subsig_store(&pss.lock().unwrap(),r1.clone(),cs.clone())?;
 		if b_perf{
 			log_perf(log_level, &format!(
 				" ##fsm_adv step2: {}", cs.num_constraints()-nc), &mut gt);
@@ -2117,7 +2118,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		//2. validate the fsm_acc combo 
 		// nlen*(3+ 5*ratio_acc_states_per_trace)
 		let fsm_acc = stmt.get_container("fsm_acc")?;
-		self.validate_fsm_acc_container(&fsm_acc.borrow(), r1.clone(),
+		self.validate_fsm_acc_container(&fsm_acc.lock().unwrap(), r1.clone(),
 			r2.clone(), cs.clone())?;
 		if b_perf{
 			log_perf(log_level, &format!(
@@ -2145,7 +2146,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for FsmAdvGadget<F>{
 
 	/// set the container cfg. This is only needed for those gadgets
 	/// in SED approach
-	fn set_container_cfg(&mut self, cfgs_context: Rc<Vec<ContainerConfig>>, idx: usize){
+	fn set_container_cfg(&mut self, cfgs_context: std::sync::Arc<Vec<ContainerConfig>>, idx: usize){
 		self.cfgs_context = Some(cfgs_context);
 		self.my_idx_in_context = Some(idx);
 	}
@@ -2228,7 +2229,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for FsmAdvGadget<F>{
 #[cfg(test)]
 pub mod tests_fsm_adv_gadget{
 	use ark_ff::{Zero};
-	use std::{rc::Rc};
+	use std::{sync::Arc};
 	use ark_bn254::{Fr};
 	use utils::{data::{pack_nibbles}, os::{read_nibbles,proj_root}};
 	use crate::gadgets::{
@@ -2268,7 +2269,7 @@ pub mod tests_fsm_adv_gadget{
 		let adv_wea = WordExtractAdvAdvice::new(&word, act_size, false)
 			.expect("word_extract_adv err");
 		let stmt_wea = adv_wea.stmt_container;
-		let cfg_wea = stmt_wea.borrow().get_cfg(); 
+		let cfg_wea = stmt_wea.lock().unwrap().get_cfg(); 
 
 		//2.2 the fsm_adv (regular case, and SED approach)
 		let b_igc = false;
@@ -2288,8 +2289,8 @@ pub mod tests_fsm_adv_gadget{
 			basis_acc_states: 10*100,
 		};
 
-		let nibbles = stmt_wea.borrow().get_container("nibbles").unwrap()
-			.borrow().to_vec();
+		let nibbles = stmt_wea.lock().unwrap().get_container("nibbles").unwrap()
+			.lock().unwrap().to_vec();
 		let f_nibbles = vec![f_nibbles.clone(), vec![Fr::zero(); 
 			nibbles.len()-f_nibbles.len()]].concat();
 			
@@ -2307,7 +2308,7 @@ pub mod tests_fsm_adv_gadget{
 			inp_loc, &input_subsigs, &cap, fsm_id, 
 			&bundle.vec_subsig_stores[0]).unwrap(); //for SED
 		let stmt_faa = adv_faa.stmt_container;
-		let cfg_faa = stmt_faa.borrow().get_cfg(); 
+		let cfg_faa = stmt_faa.lock().unwrap().get_cfg(); 
 
 
 		//2.3 given cfgs, set up the positions
@@ -2316,8 +2317,8 @@ pub mod tests_fsm_adv_gadget{
 
 
 		//3. generate the 7 segments of output for building statment
-		let cps1 = stmt_wea.borrow().gen_stmt_components(); //from inp to si_data
-		let cps2 = stmt_faa.borrow().gen_stmt_components(); //from inp to si_data
+		let cps1 = stmt_wea.lock().unwrap().gen_stmt_components(); //from inp to si_data
+		let cps2 = stmt_faa.lock().unwrap().gen_stmt_components(); //from inp to si_data
 
 		let cps = cps1.0.into_iter().zip(cps2.0.into_iter()).map(|(a,b)|
 			vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
@@ -2329,7 +2330,7 @@ pub mod tests_fsm_adv_gadget{
 			&vec![cfg_wea.clone()], &bundle.vec_subsig_stores[0]);
 		fag.set_container_cfg(vec_cfg.clone().into(), 1);  //it's the 2nd cfg
 		let _sizes = fag.get_to_add_size(); //test if sizes are ok
-		let rg = Rc::new(fag);
+		let rg = Arc::new(fag);
 
 		//3. test it
 		test_gadget_adv::<Fr>(rg, &word, &cps[0], &cps[1], &cps[2],

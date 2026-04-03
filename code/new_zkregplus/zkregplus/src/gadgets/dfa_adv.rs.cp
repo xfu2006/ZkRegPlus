@@ -1,3 +1,4 @@
+use std::sync::{Arc, Mutex};
 /* Created 07/16/2025, Completed: 07/27/2025
 	Revised 11/06/2025: improve efficiency*/
 
@@ -103,7 +104,7 @@ pub struct DfaAdvAdvice<F:PrimeField>{
 
 	/// the statement container object which is serialized to a vector
 	/// of statement
-	pub stmt_container: Rc<RefCell<Container<F>>>,
+	pub stmt_container: Arc<Mutex<Container<F>>>,
 
 	/// capacity
 	pub capacity: DfaAdvCapacity,
@@ -118,7 +119,7 @@ pub struct DfaAdvGadget<F:PrimeField>{
 	pub capacity: DfaAdvCapacity,
 
 	// will be set when set_container_cfg is called
-	pub cfgs_context: Option<Rc<Vec<ContainerConfig>>>,
+	pub cfgs_context: Option<Arc<Vec<ContainerConfig>>>,
 	// dummy_cfg is used when cfgs_context is not ready yet
 	pub dummy_cfg: ContainerConfig,
 	pub my_idx_in_context: Option<usize>,
@@ -134,7 +135,7 @@ impl Capacity for DfaAdvCapacity{
 	/// Self represents the capacity of the circuit, other
 	/// represents the capacity requirement of a discharge proof (NdAdvice)
 	/// It is essentially a comparison operation.
-	fn can_satisfy(&self, r_other: &Rc<dyn Capacity>) -> bool{
+	fn can_satisfy(&self, r_other: &Arc<dyn Capacity + Send + Sync>) -> bool{
 		let other = r_other.as_any().downcast_ref::<DfaAdvCapacity>()
 			.expect("downcast err"); 
 		self.max_nibble_len >= other.max_nibble_len &&
@@ -143,9 +144,9 @@ impl Capacity for DfaAdvCapacity{
 	}
 
 	/// to get around the requirement on Clone trait which require Sized
-	/// (which cause trouble why use dyn Capacity in Rc),
-	fn clone(&self) -> Rc<dyn Capacity>{
-		Rc::new(DfaAdvCapacity{
+	/// (which cause trouble why use dyn Capacity + Send + Sync in Rc),
+	fn clone(&self) -> Arc<dyn Capacity + Send + Sync>{
+		Arc::new(DfaAdvCapacity{
 			max_nibble_len: self.max_nibble_len,
 			subsigs: self.subsigs,
 			sigs: self.sigs,
@@ -161,7 +162,7 @@ impl <F: PrimeField> NdAdvice for DfaAdvAdvice<F>{
 }
 
 impl <F: PrimeField> ComponentAdvice<F> for DfaAdvAdvice<F>{
-	fn get_container(&self)->Rc<RefCell<Container<F>>>{
+	fn get_container(&self)->Arc<Mutex<Container<F>>>{
 		self.stmt_container.clone()
 	}
 }
@@ -227,7 +228,7 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		let (mul_fsm_acc, subsig_res) = Self::gen_mul_fsm_acc_combo(
 			nibbles, &inp_subsigs, &v_dfa_id, &v_dfa, &inp_states, capacity
 		);
-		stmt_container.borrow_mut().add_container(mul_fsm_acc);
+		stmt_container.lock().unwrap().add_container(mul_fsm_acc);
 
 		//3. construct the sig_res_combo
 		let sig_res_combo = Self::gen_discharge_sig_combo(
@@ -239,7 +240,7 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 			&discharge_infos,
 			&sig_to_id
 		);
-		stmt_container.borrow_mut().add_container(sig_res_combo);
+		stmt_container.lock().unwrap().add_container(sig_res_combo);
 
 		Self{
 			capacity: Clone::clone(capacity), 
@@ -268,7 +269,7 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		v_dfa: &Vec<Arc<DFA<char>>>, //1-1 corresponding to inp_subsigs
 		inp_states: &Vec<F>,
 		capacity: &DfaAdvCapacity) 
-	-> (Rc<RefCell<Container<F>>>,Vec<F>){
+	-> (Arc<Mutex<Container<F>>>,Vec<F>){
 		//0. set up data
 		let res = Container::<F>::new("mul_fsm_acc");
 		let (m, nlen) = (capacity.subsigs, capacity.max_nibble_len);
@@ -346,20 +347,20 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		let v_raw_subsig = inp_subsigs.iter().map(|&ssid| 
 			extract_sigid(ssid).1
 		).collect::<Vec<F>>();
-		res.borrow_mut().add_col(Col::<F>::new(inp_subsigs.to_vec(),
+		res.lock().unwrap().add_col(Col::<F>::new(inp_subsigs.to_vec(),
 			"v_subsig",IDX_DATA)); 
-		res.borrow_mut().add_col(Col::<F>::new(v_sig, "v_sig",IDX_DATA)); 
-		res.borrow_mut().add_col(Col::<F>::new(v_raw_subsig, "v_raw_subsig",
+		res.lock().unwrap().add_col(Col::<F>::new(v_sig, "v_sig",IDX_DATA)); 
+		res.lock().unwrap().add_col(Col::<F>::new(v_raw_subsig, "v_raw_subsig",
 			IDX_DATA)); 
-		res.borrow_mut().add_col(Col::<F>::new(v_dfa_id.to_vec(), "v_dfa_id",
+		res.lock().unwrap().add_col(Col::<F>::new(v_dfa_id.to_vec(), "v_dfa_id",
 			IDX_DATA)); 
 
-		res.borrow_mut().add_col(Col::<F>::new_const(vec![frg;n], "sid_v_sig",
+		res.lock().unwrap().add_col(Col::<F>::new_const(vec![frg;n], "sid_v_sig",
 			IDX_SI_DATA)); 
-		res.borrow_mut().add_col(Col::<F>::new_const(vec![frg;n], "sid_v_subsig",
+		res.lock().unwrap().add_col(Col::<F>::new_const(vec![frg;n], "sid_v_subsig",
 			IDX_SI_DATA)); 
-		res.borrow_mut().add_col(Col::<F>::new_const(vec![frg;n], "sid_v_raw_subsig", IDX_SI_DATA)); 
-		res.borrow_mut().add_col(Col::<F>::new_const(vec![zero;n], 
+		res.lock().unwrap().add_col(Col::<F>::new_const(vec![frg;n], "sid_v_raw_subsig", IDX_SI_DATA)); 
+		res.lock().unwrap().add_col(Col::<F>::new_const(vec![zero;n], 
 			"sid_v_dfa_id", IDX_SI_DATA)); 
 
 		//1.4 add columns related to inp/mid/oup states
@@ -382,16 +383,16 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 			vec![col_inp_state, col_mid_states, col_oup_state], "states");
 		let si_states = Container::concat_cols(vec![col_si_inp_state, 
 			col_si_mid_states, col_si_oup_state], "si_states");
-		res.borrow_mut().add_container(states); //remove clone later
-		res.borrow_mut().add_container(si_states);
+		res.lock().unwrap().add_container(states); //remove clone later
+		res.lock().unwrap().add_container(si_states);
 
 
 		//1.3. the transitions
 		let col_trans = Col::<F>::new(trans, "trans", IDX_DATA);
 		let col_si_trans = Col::<F>::new_const(
 			sid_trans, "si_trans", IDX_SI_DATA);
-		res.borrow_mut().add_col(col_trans);
-		res.borrow_mut().add_col(col_si_trans);
+		res.lock().unwrap().add_col(col_trans);
+		res.lock().unwrap().add_col(col_si_trans);
 
 		//1.4 the nibbles (LATER when reconstructed, it is 
 		// retrieved from previous word_extract_adv gadget
@@ -400,12 +401,12 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		let col_si_nibbles = Col::<F>::new_external(sid_nibbles.to_vec(),
 			"si_nibbles", IDX_SI_DATA, -1, 
 			"word_extract_stmt si_nibbles");
-		#[cfg(test)]{assert!(col_nibbles.borrow().data.len()==nlen);}
-		#[cfg(test)]{assert!(col_si_nibbles.borrow().data.len()==nlen);}
+		#[cfg(test)]{assert!(col_nibbles.lock().unwrap().data.len()==nlen);}
+		#[cfg(test)]{assert!(col_si_nibbles.lock().unwrap().data.len()==nlen);}
 
 
-		res.borrow_mut().add_col(col_nibbles);
-		res.borrow_mut().add_col(col_si_nibbles);
+		res.lock().unwrap().add_col(col_nibbles);
+		res.lock().unwrap().add_col(col_si_nibbles);
 
 		//1.4 add the 3 columns: subsig_res, oup_states_copy, si_opu_states_copy
 		// here subsig_res is TriVal::False if oup_state is non-final state
@@ -432,13 +433,13 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 			if *res==f_true {final_tbl_id} else {nonfinal_tbl_id} 
 		}).collect::<Vec<F>>();
 
-		res.borrow_mut().add_col(Col::<F>::new(raw_states[m*nlen..m*(nlen+1)]
+		res.lock().unwrap().add_col(Col::<F>::new(raw_states[m*nlen..m*(nlen+1)]
 			.to_vec(), "oup_state_copy",IDX_DATA));
-		res.borrow_mut().add_col(Col::<F>::new(sid_oup_state_copy,
+		res.lock().unwrap().add_col(Col::<F>::new(sid_oup_state_copy,
 			"si_oup_state_copy",IDX_SI_DATA));
-		res.borrow_mut().add_col(Col::<F>::new(subsig_res.clone(),
+		res.lock().unwrap().add_col(Col::<F>::new(subsig_res.clone(),
 			"subsig_res",IDX_DATA));
-		res.borrow_mut().add_col(Col::<F>::new_const(vec![zero;m],
+		res.lock().unwrap().add_col(Col::<F>::new_const(vec![zero;m],
 			"si_subsig_res",IDX_SI_DATA)); //don't care as they'll be TriVal
 
 
@@ -471,7 +472,7 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		discharge_infos: &Vec<DischargeSigInfo>, //must match inp_sigs
 					//extracting the dnf to the concat of inp_subsigs
 		sig_to_id: &HashMap<String,usize>,
-	)->Rc<RefCell<Container<F>>>{
+	)->Arc<Mutex<Container<F>>>{
 		let zero = F::zero();
 		let frg = F::from(RANGE2);
 		let res = Container::<F>::new("sig_res_combo");
@@ -627,7 +628,7 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 			v_real_subsigs
 		];
 		col2d.into_iter().zip(names.iter()).for_each(|(c, n)|{
-			res.borrow_mut().add_col(Col::new(c, n, IDX_DATA));
+			res.lock().unwrap().add_col(Col::new(c, n, IDX_DATA));
 		});
 		let col2d_sid = vec![
 			v_sid_sigs, 
@@ -640,25 +641,25 @@ impl <F: PrimeField> DfaAdvAdvice<F>{
 		col2d_sid.into_iter().zip(names.iter().zip(b_sid_const))
 		.for_each(|(c, (n,b_const))|{
 	//		if b_const{
-	//			res.borrow_mut().add_col(Col::new_const(c, &format!("sid_{}",n),
+	//			res.lock().unwrap().add_col(Col::new_const(c, &format!("sid_{}",n),
 	//				IDX_SI_DATA));
 	//		}else{
-				res.borrow_mut().add_col(Col::new(c, &format!("sid_{}",n),
+				res.lock().unwrap().add_col(Col::new(c, &format!("sid_{}",n),
 					IDX_SI_DATA));
 //			}
 		});
 		assert!(mtbl_lk_res.len()==n+1);
-		res.borrow_mut().add_col(Col::new(mtbl_lk_res,"mtbl_lk_res",IDX_DATA));
-		res.borrow_mut().add_col(Col::new_const(vec![zero;n+1],
+		res.lock().unwrap().add_col(Col::new(mtbl_lk_res,"mtbl_lk_res",IDX_DATA));
+		res.lock().unwrap().add_col(Col::new_const(vec![zero;n+1],
 			"sid_mtbl_lk_res", IDX_SI_DATA));
 		
 		assert!(mtbl_sigs.len()==n);
-		res.borrow_mut().add_col(Col::new(mtbl_sigs,"mtbl_sigs",IDX_DATA));
-		res.borrow_mut().add_col(Col::new_const(vec![zero;n],"sid_mtbl_sigs",
+		res.lock().unwrap().add_col(Col::new(mtbl_sigs,"mtbl_sigs",IDX_DATA));
+		res.lock().unwrap().add_col(Col::new_const(vec![zero;n],"sid_mtbl_sigs",
 			IDX_SI_DATA));
-		res.borrow_mut().add_col(Col::new(inp_sigs.clone(),
+		res.lock().unwrap().add_col(Col::new(inp_sigs.clone(),
 			"discharged_sigs",IDX_DISCHARGED_SIGS));
-		//res.borrow_mut().add_col(Col::new(vec![frg;capacity.sigs],
+		//res.lock().unwrap().add_col(Col::new(vec![frg;capacity.sigs],
 		//	"sid_discharged_sigs", IDX_SI_DATA));
 
 
@@ -701,7 +702,7 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 				&inp_sigs, &discharge_infos, &v_sig_obj, &sigs_to_id
 			);
 		let mut vec_cfg = prev_cfgs.clone();
-		vec_cfg.push(dummy_adv.stmt_container.borrow().get_cfg());
+		vec_cfg.push(dummy_adv.stmt_container.lock().unwrap().get_cfg());
 		ContainerConfig::adjust_locations(&mut vec_cfg);
 		//even it's false, it's good enough for generating statement_structure
 		let dummy_cfg = vec_cfg[1].clone();
@@ -751,12 +752,12 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 
 		let names = vec!["v_sig", "v_subsig", "v_raw_subsig", "v_dfa_id"];
 		let cols = names.iter().map(|n| fsm_acc.get_container(n)
-			.unwrap().borrow().to_vec()).collect::<Vec<Vec<FpVar<F>>>>();
+			.unwrap().lock().unwrap().to_vec()).collect::<Vec<Vec<FpVar<F>>>>();
 		let (v_sig, v_subsig, v_raw_subsig, v_dfa_id) = (&cols[0],
 			&cols[1], &cols[2], &cols[3]);
 		for col in &cols {assert!(col.len()==n);}
 		//let sids = names.iter().map(|n| fsm_acc.get_container(
-		//	&format!("sid_{}",n)).unwrap().borrow().to_vec())
+		//	&format!("sid_{}",n)).unwrap().lock().unwrap().to_vec())
 		//	.collect::<Vec<Vec<FpVar<F>>>>();
 		for i in 0..n{
 			//1. ensure v_sig, subsig, raw_subsig in range
@@ -793,9 +794,9 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		// m * n * 3/8
 		let names = vec!["states", "trans"];
 		let cols = names.iter().map(|n| fsm_acc.get_container(n)
-			.unwrap().borrow().to_vec()).collect::<Vec<Vec<FpVar<F>>>>();
+			.unwrap().lock().unwrap().to_vec()).collect::<Vec<Vec<FpVar<F>>>>();
 		let sids = names.iter().map(|n| fsm_acc.get_container(
-			&format!("si_{}",n)).unwrap().borrow().to_vec())
+			&format!("si_{}",n)).unwrap().lock().unwrap().to_vec())
 			.collect::<Vec<Vec<FpVar<F>>>>();
 		let (states,trans)=(&cols[0], &cols[1]);
 		let (si_states,si_trans)=(&sids[0],&sids[1]);
@@ -871,7 +872,7 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 			F::from(16 as u32))?;
 			//note here: si_nibble = CHAR_MAP + ch
 		let f_map = new_const_var(&cs, F::from(CHAR_MAP as u32));
-		let chars = fsm_acc.get_container("si_nibbles")?.borrow().to_vec();
+		let chars = fsm_acc.get_container("si_nibbles")?.lock().unwrap().to_vec();
 		let chars = chars.iter().map(|ch| ch-&f_map)
 			.collect::<Vec<FpVar<F>>>(); 
 
@@ -920,7 +921,7 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		//COST: 4m
 		let names = vec!["subsig_res", "si_oup_state_copy"]; 
 		let cols = names.iter().map(|n| fsm_acc.get_container(n)
-			.unwrap().borrow().to_vec()).collect::<Vec<Vec<FpVar<F>>>>();
+			.unwrap().lock().unwrap().to_vec()).collect::<Vec<Vec<FpVar<F>>>>();
 		let (subsig_res,si_oup_state_copy) = (&cols[0], &cols[1]);
 		let two = new_const_var(&cs, F::from(2u32));
 		let f_true = new_const_var(&cs, F::from(TriVal::True as u8)); //2
@@ -952,8 +953,8 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 	/// layer to turn extra layer of counter constraints. We 
 	/// discharge sig from the eval_res_combo directly
 	fn validate_discharge_sig_combo(&self, 
-		eval_res_combo: &Rc<RefCell<Container<FpVar<F>>>>, 
-		discharge_sig_combo: &Rc<RefCell<Container<FpVar<F>>>>, 
+		eval_res_combo: &Arc<Mutex<Container<FpVar<F>>>>, 
+		discharge_sig_combo: &Arc<Mutex<Container<FpVar<F>>>>, 
 		r1: FpVar<F>,
 		_r2: FpVar<F>,
 		cs: ConstraintSystemRef<F>
@@ -970,14 +971,14 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		let names = vec![ "v_sigs", "v_dnf_id", "v_dnf_step", 
 			"v_dnf_count", "v_real_subsigs"];
 		let cols = names.iter().map(|n|
-			discharge_sig_combo.borrow()
-				.get_container(n).unwrap().borrow().to_vec()
+			discharge_sig_combo.lock().unwrap()
+				.get_container(n).unwrap().lock().unwrap().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
 		let (v_sigs, v_dnf_id, v_dnf_step, v_dnf_count, v_real_subsigs) = (
 			&cols[0], &cols[1], &cols[2], &cols[3], &cols[4]);
 		let sid_cols = names.iter().map(|n|
-			discharge_sig_combo.borrow()
-				.get_container(&format!("sid_{}",n)).unwrap().borrow().to_vec()
+			discharge_sig_combo.lock().unwrap()
+				.get_container(&format!("sid_{}",n)).unwrap().lock().unwrap().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
 		let (_v_sid_sigs, _v_sid_dnf_id, _v_sid_dnf_step, v_sid_dnf_count, 
 			v_sid_real_subsigs) = (&sid_cols[0], &sid_cols[1], &sid_cols[2], 
@@ -1081,19 +1082,19 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		//pad (0,1) for dummy entry
 		//NOTE that here we assume that there are no SubsigCounterConstriant
 		//they have two layers of synthesis.
-		let inp_subsigs = eval_res_combo.borrow()
-			.get_container("v_subsig").unwrap().borrow().to_vec();
-		let subsig_result = eval_res_combo.borrow()
+		let inp_subsigs = eval_res_combo.lock().unwrap()
+			.get_container("v_subsig").unwrap().lock().unwrap().to_vec();
+		let subsig_result = eval_res_combo.lock().unwrap()
 			.get_container("subsig_res").unwrap()
-			.borrow().to_vec();
+			.lock().unwrap().to_vec();
 		let pad_subsigs = [&inp_subsigs[..], &vec![zero][..]].concat();
 		let pad_res = [&subsig_result[..], &vec![f_false][..]].concat();
 		let dst = encode_cols_var_adv_better(
 			&vec![&pad_subsigs[..], &pad_res[..]],
 			&vec![0,1], &f_unit
 		);
-		let mtbl_lkup_res = discharge_sig_combo.borrow()
-			.get_container("mtbl_lk_res").unwrap().borrow().to_vec();
+		let mtbl_lkup_res = discharge_sig_combo.lock().unwrap()
+			.get_container("mtbl_lk_res").unwrap().lock().unwrap().to_vec();
 		assert_logup(cs.clone(), &src, &dst, &mtbl_lkup_res, &r1)?;
 
 		//3. show that inp_sigs is a subset of v_sigs (covered)
@@ -1104,10 +1105,10 @@ impl <F:PrimeField> DfaAdvGadget<F>{
 		//
 		//COST: let n1 = num of sigs, n = num of subsigs
 		// 2n1 + 3n
-		let discharged_sigs = discharge_sig_combo.borrow()
-			.get_container("discharged_sigs").unwrap().borrow().to_vec();
-		let mtbl_sigs= discharge_sig_combo.borrow()
-			.get_container("mtbl_sigs").unwrap().borrow().to_vec();
+		let discharged_sigs = discharge_sig_combo.lock().unwrap()
+			.get_container("discharged_sigs").unwrap().lock().unwrap().to_vec();
+		let mtbl_sigs= discharge_sig_combo.lock().unwrap()
+			.get_container("mtbl_sigs").unwrap().lock().unwrap().to_vec();
 		assert_logup(cs.clone(), &discharged_sigs, &v_sigs, &mtbl_sigs, &r1)?;
 
 		if b_debug{
@@ -1132,7 +1133,7 @@ impl <F:PrimeField> SigmaGadget<F> for DfaAdvGadget<F>{
 
 	/// set the container cfg. This is only needed for those gadgets
 	/// in SED approach
-	fn set_container_cfg(&mut self, cfgs_context: Rc<Vec<ContainerConfig>>, idx: usize){
+	fn set_container_cfg(&mut self, cfgs_context: Arc<Vec<ContainerConfig>>, idx: usize){
 		self.cfgs_context = Some(cfgs_context);
 		self.my_idx_in_context = Some(idx);
 	}
@@ -1212,7 +1213,7 @@ impl <F:PrimeField> SigmaGadget<F> for DfaAdvGadget<F>{
 
 		//2. validate the fsm_acc combo 
 		let mul_fsm_acc = stmt.get_container("mul_fsm_acc")?;
-		self.validate_mul_fsm_acc_container(&mul_fsm_acc.borrow(), cs.clone())?;
+		self.validate_mul_fsm_acc_container(&mul_fsm_acc.lock().unwrap(), cs.clone())?;
 
 		//2. validate the discharging of sig.
 		let sig_res_combo= stmt.get_container("sig_res_combo")?;
@@ -1258,7 +1259,7 @@ pub fn extract_sigid<F:PrimeField>(subsig_id: F)->(F,F){
 pub mod tests_dfa_adv_gadget{
 	extern crate rustomaton;
 	use ark_ff::{Zero};
-	use std::{rc::Rc, sync::{Arc}};
+	use std::{sync::Arc, sync::{Arc}};
 	use ark_bn254::{Fr};
 	use utils::{data::{pack_nibbles}, os::{read_nibbles,proj_root}};
 	use crate::gadgets::{
@@ -1321,7 +1322,7 @@ pub mod tests_dfa_adv_gadget{
 		//note: set true to use char map for nibbles.
 		let adv_wea = WordExtractAdvAdvice::new(&word, act_size, true);
 		let stmt_wea = adv_wea.stmt_container;
-		let cfg_wea = stmt_wea.borrow().get_cfg(); 
+		let cfg_wea = stmt_wea.lock().unwrap().get_cfg(); 
 
 		//2.2 the dfa_adv 
 		let sig = &db.vec_sigs.iter().filter(|sig| sig.name=="sig1")
@@ -1355,8 +1356,8 @@ pub mod tests_dfa_adv_gadget{
 		let cap = DfaAdvCapacity{max_nibble_len: nibble_len, subsigs: 2,
 			sigs: 1};
 
-		let nibbles = stmt_wea.borrow().get_container("nibbles").unwrap()
-			.borrow().to_vec();
+		let nibbles = stmt_wea.lock().unwrap().get_container("nibbles").unwrap()
+			.lock().unwrap().to_vec();
 		let f_nibbles = vec![f_nibbles.clone(), vec![Fr::zero(); 
 			nibbles.len()-f_nibbles.len()]].concat();
 		assert!(nibbles==f_nibbles);
@@ -1391,15 +1392,15 @@ pub mod tests_dfa_adv_gadget{
 			&inp_sigs, &discharge_infos, &v_sigs, &db.sig_to_id
 		);
 		let stmt_faa = adv_faa.stmt_container;
-		let cfg_faa = stmt_faa.borrow().get_cfg(); 
+		let cfg_faa = stmt_faa.lock().unwrap().get_cfg(); 
 
 		//2.3 given cfgs, set up the positions
 		let mut vec_cfg = vec![cfg_wea.clone(), cfg_faa];
 		ContainerConfig::adjust_locations(&mut vec_cfg); //resolve
 
 		//3. generate the 7 segments of output for building statment
-		let cps1 = stmt_wea.borrow().gen_stmt_components(); 
-		let cps2 = stmt_faa.borrow().gen_stmt_components(); 
+		let cps1 = stmt_wea.lock().unwrap().gen_stmt_components(); 
+		let cps2 = stmt_faa.lock().unwrap().gen_stmt_components(); 
 		let cps = cps1.0.into_iter().zip(cps2.0.into_iter()).map(|(a,b)|
 			vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
 
@@ -1411,7 +1412,7 @@ pub mod tests_dfa_adv_gadget{
 		);
 		fag.set_container_cfg(vec_cfg.clone().into(), 1);  //it's the 2nd cfg
 		let _sizes = fag.get_to_add_size(); //test if sizes are ok
-		let rg = Rc::new(fag);
+		let rg = Arc::new(fag);
 
 		//5. test it
 		test_gadget_adv::<Fr>(rg, &word, &cps[0], &cps[1], &cps[2],

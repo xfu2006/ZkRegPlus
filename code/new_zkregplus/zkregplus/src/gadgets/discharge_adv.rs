@@ -1,3 +1,4 @@
+use std::sync::{Arc, Mutex};
 /* Created 05/06/2025
    Implementation initially completed 06/11/2025
    Further improvement to cut cost and completed: 06/26/2025
@@ -6,13 +7,13 @@
    Revision: 03/01/2026. improve advice generation and
    	performance.
 */
-//! This gadget is used for discharging subsigs using the streaming alg.
-//! It produces the sigs that discharged.
+// This gadget is used for discharging subsigs using the streaming alg.
+// It produces the sigs that discharged.
 
 use folding_schemes::folding::foldpot::container_config::ColEle;
 use rayon::iter::{IntoParallelRefIterator,ParallelIterator,IntoParallelIterator
 	, IndexedParallelIterator};
-use std::{rc::{Rc},cell::{RefCell},collections::{HashMap}};
+use std::{collections::{HashMap}};
 use ark_ff::{PrimeField,Zero};
 use std::{marker::{PhantomData},collections::{HashSet}};
 
@@ -353,7 +354,7 @@ pub struct DischargeAdvAdvice<F:PrimeField + ColEle>{
 
 	/// the statement container object which is serialized to a vector
 	/// of statement
-	pub stmt_container: Rc<RefCell<Container<F>>>,
+	pub stmt_container: std::sync::Arc<std::sync::Mutex<Container<F>>>,
 
 	/// capacity
 	pub capacity: DischargeAdvCapacity,
@@ -385,7 +386,7 @@ pub struct DischargeAdvGadget<F:PrimeField + ColEle>{
 	pub capacity: DischargeAdvCapacity,
 
 	// will be set when set_container_cfg is called
-	pub cfgs_context: Option<Rc<Vec<ContainerConfig>>>,
+	pub cfgs_context: Option<std::sync::Arc<Vec<ContainerConfig>>>,
 	// dummy_cfg is used when cfgs_context is not ready yet
 	pub dummy_cfg: ContainerConfig,
 	pub my_idx_in_context: Option<usize>,
@@ -435,10 +436,10 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 	pub fn to_vec(&self, subsig_store_info: &SubsigStepStore)
 	->Result<Vec<F>,Error>{
 		let ct = self.to_container("temp", false, false, false, false, subsig_store_info)?;
-		let encoded = ct.borrow().get_container("encoded").unwrap()
-			.borrow().to_vec();
-		let locs = ct.borrow().get_container("locs").unwrap()
-			.borrow().to_vec();
+		let encoded = ct.lock().unwrap().get_container("encoded").unwrap()
+			.lock().unwrap().to_vec();
+		let locs = ct.lock().unwrap().get_container("locs").unwrap()
+			.lock().unwrap().to_vec();
 		let (n, _n_pat, _n_trace) = 
 			Self::vec_size(&self.q_type, &self.capacity);
 		assert!(encoded.len()==n && locs.len()==n);
@@ -527,7 +528,7 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 	/// <ToAdd, Result, StepFwdPrf>
 	pub fn gen_forward_prf(
 		&self, 
-		pat_loc: &Rc<RefCell<Container<F>>>,
+		pat_loc: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
 		info: &SubsigStepStore)
 	->(Self, Self, StepFwdPrf<F>){
 		//1. pat_loc to hash table for easy processing
@@ -835,17 +836,17 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 
 	/// generate hashmap which maps from pat_id to a vector
 	/// of locs which is wrapped with 0 and max entries
-	fn pat_loc_to_hm(pat_loc: &Rc<RefCell<Container<F>>>)
+	fn pat_loc_to_hm(pat_loc: &std::sync::Arc<std::sync::Mutex<Container<F>>>)
 	->HashMap<F, Vec<(F,F)>>{
 		//1. retrieve cols
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, _one, max) = (F::zero(), F::one(), F::from(max_val as u32));
-		let pats = pat_loc.borrow().get_container("sorted_key")
-			.unwrap().borrow().to_vec();
-		let ids = pat_loc.borrow().get_container("sorted_id")
-			.unwrap().borrow().to_vec();
-		let locs = pat_loc.borrow().get_container("sorted_val")
-			.unwrap().borrow().to_vec();
+		let pats = pat_loc.lock().unwrap().get_container("sorted_key")
+			.unwrap().lock().unwrap().to_vec();
+		let ids = pat_loc.lock().unwrap().get_container("sorted_id")
+			.unwrap().lock().unwrap().to_vec();
+		let locs = pat_loc.lock().unwrap().get_container("sorted_val")
+			.unwrap().lock().unwrap().to_vec();
 		let n = pats.len();
 		assert!(ids.len()==n && locs.len()==n);
 
@@ -900,7 +901,7 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 		b_oup: bool,
 		b_subsig: bool, 
 		subsig_store_info: &SubsigStepStore,
-	)->Result<Rc<RefCell<Container<F>>>, Error>{
+	)->Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 		let b_debug = false;
 		//let b_debug_capacity = true;
 		#[cfg(test)] { assert!(is_sorted(&self.subsigs)); }
@@ -984,25 +985,25 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 		let si_seg = if b_inp {IDX_SI_INP} else if b_oup {IDX_SI_OUP} else {IDX_SI_DATA};
 		
 		assert!(vec_encoded.len()==n && vec_locs.len()==n);
-		res.borrow_mut().add_col(Col::new(vec_encoded,"encoded",seg));
-		res.borrow_mut().add_col(Col::new(vec_locs, "locs", seg));
-		res.borrow_mut().add_col(Col::new_const(vec![F::zero();n],
+		res.lock().unwrap().add_col(Col::new(vec_encoded,"encoded",seg));
+		res.lock().unwrap().add_col(Col::new(vec_locs, "locs", seg));
+		res.lock().unwrap().add_col(Col::new_const(vec![F::zero();n],
 			"si_encoded",si_seg));
-		res.borrow_mut().add_col(Col::new_const(vec![F::from(RANGE2);n],
+		res.lock().unwrap().add_col(Col::new_const(vec![F::from(RANGE2);n],
 			"si_locs",si_seg));
 
 		if b_step{//regardless of inp/oup, they are always in DATA
 			assert!(vec_step.len()==n && vec_sid_step.len()==n);
-			res.borrow_mut().add_col(Col::new(vec_step,"step",IDX_DATA));
-			res.borrow_mut().add_col(Col::new(vec_sid_step, "si_step",IDX_SI_DATA));//can't be const
+			res.lock().unwrap().add_col(Col::new(vec_step,"step",IDX_DATA));
+			res.lock().unwrap().add_col(Col::new(vec_sid_step, "si_step",IDX_SI_DATA));//can't be const
 		}
 
 		if b_subsig{
 			let vec_sid_subsig = vec![F::from(RANGE2); n];
 			assert!(vec_subsigs.len()==n && vec_sid_subsig.len()==n);
-			res.borrow_mut().add_col(Col::new(vec_subsigs,"subsig",
+			res.lock().unwrap().add_col(Col::new(vec_subsigs,"subsig",
 				IDX_DATA));
-			res.borrow_mut().add_col(Col::new_const(vec_sid_subsig, "si_subsig",
+			res.lock().unwrap().add_col(Col::new_const(vec_sid_subsig, "si_subsig",
 				IDX_SI_DATA));
 		}
 
@@ -1196,7 +1197,7 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 	pub fn to_container(&self, 
 		name: &str, 
 		subsig_store_info: &SubsigStepStore
-	) ->Result<Rc<RefCell<Container<F>>>, Error>{
+	) ->Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 		//0. check data
 		//let b_debug = false;
 		let b_debug_capacity = true;
@@ -1295,16 +1296,16 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 		let de = vec![pad.clone(), v2d[1].clone()].concat();//dst_encoded
 		v2d.iter().enumerate().for_each(|(i,vec)|{
 			let name = names[i];
-			res.borrow_mut().add_col(Col::new(vec![pad.clone(),vec.clone()]
+			res.lock().unwrap().add_col(Col::new(vec![pad.clone(),vec.clone()]
 				.concat(), name, IDX_DATA));
 		});
 
 		//3.2 sids (note should be added by the right order.
-		res.borrow_mut().add_col(Col::new_const(vec![zero; n], 
+		res.lock().unwrap().add_col(Col::new_const(vec![zero; n], 
 			&format!("sid_{}",names[0]), IDX_SI_DATA)); //src_encoded
-		res.borrow_mut().add_col(Col::new_const(vec![zero; n], 
+		res.lock().unwrap().add_col(Col::new_const(vec![zero; n], 
 			&format!("sid_{}",names[1]), IDX_SI_DATA)); //dst_encoded
-		res.borrow_mut().add_col(Col::new_const(vec![frg; n], 
+		res.lock().unwrap().add_col(Col::new_const(vec![frg; n], 
 			&format!("sid_{}",names[2]), IDX_SI_DATA)); //src_loc
 
 		//src_step
@@ -1326,7 +1327,7 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 				SubsigStepStore::gen_step_tbl_id( *s,tag)
 			}
 		}).collect::<Vec<_>>();
-		res.borrow_mut().add_col(Col::new(sids,
+		res.lock().unwrap().add_col(Col::new(sids,
 			&format!("sid_{}",names[3]), IDX_SI_DATA)
 		);  //this cannot be const
 
@@ -1337,18 +1338,18 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 		for x in 0..ids.len(){
 			let sids = de.iter().map(|s| SubsigStepStore::gen_step_tbl_id(
 				*s,cats[x])).collect::<Vec<_>>();
-			res.borrow_mut().add_col(Col::new(sids,
+			res.lock().unwrap().add_col(Col::new(sids,
 				&format!("sid_{}",names[ids[x]]), IDX_SI_DATA)
 			); 
 		}//this cannot be const
 
-		res.borrow_mut().add_col(Col::new_const(vec![frg; n], 
+		res.lock().unwrap().add_col(Col::new_const(vec![frg; n], 
 			&format!("sid_{}",names[7]), IDX_SI_DATA)); //dst_loc
-		res.borrow_mut().add_col(Col::new_const(vec![frg; n], 
+		res.lock().unwrap().add_col(Col::new_const(vec![frg; n], 
 			&format!("sid_{}",names[8]), IDX_SI_DATA)); //dst_loc
-		res.borrow_mut().add_col(Col::new_const(vec![frg; n], 
+		res.lock().unwrap().add_col(Col::new_const(vec![frg; n], 
 			&format!("sid_{}",names[9]), IDX_SI_DATA)); //diff1
-		res.borrow_mut().add_col(Col::new_const(vec![frg; n], 
+		res.lock().unwrap().add_col(Col::new_const(vec![frg; n], 
 			&format!("sid_{}",names[10]), IDX_SI_DATA)); //diff2
 
 		//col11: dst_subsig
@@ -1356,7 +1357,7 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 			let tag = SubsigStepStore::gen_step_tbl_id(*s,ID_ENCODED_SUBSIG);
 			tag
 		}).collect::<Vec<_>>();
-		res.borrow_mut().add_col(Col::new(sids,
+		res.lock().unwrap().add_col(Col::new(sids,
 			&format!("sid_{}",names[11]), IDX_SI_DATA)
 		);  //this cannot be const
 
@@ -1517,7 +1518,7 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 	/// Will output (src_encoded, src_step, src_loc, dst_encoded, dst_pat,
 	///    dst_rg_start, dst_rg_end, dst_loc, pat_id, diff1, diff2)
 	/// might throw CapErr("dis_adv::perc_pats_expansion_rate")
-	pub fn to_container(&self, name: &str, subsig_store_info: &SubsigStepStore)->Result<Rc<RefCell<Container<F>>>,Error>{
+	pub fn to_container(&self, name: &str, subsig_store_info: &SubsigStepStore)->Result<std::sync::Arc<std::sync::Mutex<Container<F>>>,Error>{
 		//let b_debug = false;
 		let b_debug_capacity = true;
 		//0. check data
@@ -1606,7 +1607,7 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 		let frg = F::from(RANGE2);
 
 		//3.0 src_encoded (col 0)
-		res.borrow_mut().add_col(Col::new_const(vec![zero; n], 
+		res.lock().unwrap().add_col(Col::new_const(vec![zero; n], 
 			&format!("sid_{}",names[0]), IDX_SI_DATA)); //src_encoded
 
 		//3.1 src_step (col 1)
@@ -1625,7 +1626,7 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 				SubsigStepStore::gen_step_tbl_id( *s,tag)
 			}
 		}).collect::<Vec<_>>();
-		res.borrow_mut().add_col(Col::new(sids, &format!("sid_{}",
+		res.lock().unwrap().add_col(Col::new(sids, &format!("sid_{}",
 			names[1]), IDX_SI_DATA)
 		); //cannot be const 
 
@@ -1635,7 +1636,7 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 		for x in 0..ids.len(){
 			let sids = se.iter().map(|s| SubsigStepStore::gen_step_tbl_id(
 				*s,cats[x])).collect::<Vec<_>>();
-			res.borrow_mut().add_col(Col::new(sids,
+			res.lock().unwrap().add_col(Col::new(sids,
 				&format!("sid_{}",names[ids[x]]), IDX_SI_DATA)
 			); 
 		}//cannot be const
@@ -1644,7 +1645,7 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 		// it will be proved to be the min of the loc
 		//of locs in sq_res, which is already proved in range.
 		//so no need to prove here (can even assign 0)
-		res.borrow_mut().add_col(Col::new_const(vec![frg; n], 
+		res.lock().unwrap().add_col(Col::new_const(vec![frg; n], 
 			&format!("sid_{}",names[4]), IDX_SI_DATA)); //dst_loc
 
 		//3.5 prev_encoded (col 5) - using table ID_ENCODED_PREV_ENCODED
@@ -1656,11 +1657,11 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 			//sid for each prev_encoded.
 			SubsigStepStore::gen_step_tbl_id(*s,ID_ENCODED_PREV_ENCODED)
 		}).collect::<Vec<_>>();
-		res.borrow_mut().add_col(Col::new(sids,
+		res.lock().unwrap().add_col(Col::new(sids,
 			&format!("sid_{}",names[5]), IDX_SI_DATA)); //encoded-prev_encode
 
 		//3.6 loc_to_del (col 6) - just in RANGE2
-		res.borrow_mut().add_col(Col::new_const(vec![frg; n], 
+		res.lock().unwrap().add_col(Col::new_const(vec![frg; n], 
 			&format!("sid_{}",names[6]), IDX_SI_DATA)); //dst_loc
 
 		//3.7 subsig (col 7). NOTE THAT it is very important
@@ -1670,13 +1671,13 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 		//for building lookups.
 		let sids = se.iter().map(|s| SubsigStepStore::gen_step_tbl_id(
 				*s,ID_ENCODED_SUBSIG)).collect::<Vec<_>>();
-		res.borrow_mut().add_col(Col::new(sids,
+		res.lock().unwrap().add_col(Col::new(sids,
 				&format!("sid_{}",names[7]), IDX_SI_DATA)); 
 
 		//3.7 add real data cols
 		v2d.into_iter().enumerate().for_each(|(i,vec)|{
 			let name = names[i];
-			res.borrow_mut().add_col(Col::new(vec![pad.clone(),vec].concat(), 
+			res.lock().unwrap().add_col(Col::new(vec![pad.clone(),vec].concat(), 
 				name, IDX_DATA));
 		});
 
@@ -1696,7 +1697,7 @@ impl DischargeAdvCapacity{
 }
 
 impl Capacity for DischargeAdvCapacity{
-	fn can_satisfy(&self, r_other: &Rc<dyn Capacity>) -> bool{
+	fn can_satisfy(&self, r_other: &Arc<dyn Capacity + Send + Sync>) -> bool{
 		let other = r_other.as_any().downcast_ref::<DischargeAdvCapacity>()
 			.expect("downcast err"); 
 
@@ -1709,9 +1710,9 @@ impl Capacity for DischargeAdvCapacity{
 	}
 
 	/// to get around the requirement on Clone trait which require Sized
-	/// (which cause trouble why use dyn Capacity in Rc),
-	fn clone(&self) -> Rc<dyn Capacity>{
-		Rc::new(DischargeAdvCapacity{
+	/// (which cause trouble why use dyn Capacity + Send + Sync in Rc),
+	fn clone(&self) -> Arc<dyn Capacity + Send + Sync>{
+		Arc::new(DischargeAdvCapacity{
 			max_nibble_len: self.max_nibble_len,
 			subsigs: self.subsigs,
 			avg_active_pats_per_subsig: self.avg_active_pats_per_subsig,
@@ -1729,7 +1730,7 @@ impl <F: PrimeField + ColEle> NdAdvice for DischargeAdvAdvice<F>{
 }
 
 impl <F: PrimeField + ColEle> ComponentAdvice<F> for DischargeAdvAdvice<F>{
-	fn get_container(&self)->Rc<RefCell<Container<F>>>{
+	fn get_container(&self)->std::sync::Arc<std::sync::Mutex<Container<F>>>{
 		self.stmt_container.clone()
 	}
 }
@@ -1747,7 +1748,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 	pub fn new(
 		b_igc: bool,
 		offset_fsm: usize,
-		pat_loc: &Rc<RefCell<Container<F>>>,
+		pat_loc: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
 		inp_subsigs: &Vec<F>,
 		fsm_id: u32,
 		subsig_store_info: &SubsigStepStore,
@@ -1767,8 +1768,8 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 			b_igc, offset_fsm,
 			&inp_subsigs, pat_loc, inp_step_queue, fsm_id, &capacity,
 			subsig_store_info, last_loc, seg_id)?;
-		let ct_fwd_sq = forward_step_queue.borrow().get_container("sq_res")?;
-		stmt_container.borrow_mut().add_container(forward_step_queue);
+		let ct_fwd_sq = forward_step_queue.lock().unwrap().get_container("sq_res")?;
+		stmt_container.lock().unwrap().add_container(forward_step_queue);
 		let default_min_loc = last_loc + F::one();
 
 
@@ -1777,7 +1778,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 			b_igc,
 			&sq_fwd, &ct_fwd_sq, subsig_store_info, default_min_loc, capacity,
 			seg_id)?;
-		stmt_container.borrow_mut().add_container(backward_step_queue);
+		stmt_container.lock().unwrap().add_container(backward_step_queue);
 
 		Ok(Self{capacity: Clone::clone(capacity), fsm_id,
 			stmt_container, b_igc, offset_fsm})
@@ -1818,12 +1819,12 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 	pub fn get_output_steps_queue(&self)->Vec<F>{
 		let sname = if self.b_igc {"discharge_adv_stmt_igc"} 
 			else {"discharge_adv_stmt_cs"};
-		let res = self.stmt_container.borrow().search_container(
+		let res = self.stmt_container.lock().unwrap().search_container(
 			&format!("{} bwd_steps_queue sq_res2", sname)).unwrap();
-		let encoded = res.borrow().get_container("encoded").unwrap().
-			borrow().to_vec();
-		let locs = res.borrow().get_container("locs").unwrap().
-			borrow().to_vec();
+		let encoded = res.lock().unwrap().get_container("encoded").unwrap().
+			lock().unwrap().to_vec();
+		let locs = res.lock().unwrap().get_container("locs").unwrap().
+			lock().unwrap().to_vec();
 		vec![encoded, locs].concat()
 	}
 
@@ -1831,19 +1832,19 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 	#[allow(dead_code)]
 	fn gen_step_queue_union_prf(
 		prf_name: &str,
-		q1: &Rc<RefCell<Container<F>>>,
-		q2: &Rc<RefCell<Container<F>>>,
-		q3: &Rc<RefCell<Container<F>>>,
-	)->Result<Rc<RefCell<Container<F>>>, Error>{
+		q1: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
+		q2: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
+		q3: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
+	)->Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 		//1. retrieve the subsig-step-loc entries from the 3 containers
-		let e1=q1.borrow().get_container("encoded").unwrap().borrow().to_vec(); 
-		let c1=q1.borrow().get_container("locs").unwrap().borrow().to_vec(); 
+		let e1=q1.lock().unwrap().get_container("encoded").unwrap().lock().unwrap().to_vec(); 
+		let c1=q1.lock().unwrap().get_container("locs").unwrap().lock().unwrap().to_vec(); 
 
-		let e2=q2.borrow().get_container("encoded").unwrap().borrow().to_vec(); 
-		let c2=q2.borrow().get_container("locs").unwrap().borrow().to_vec(); 
+		let e2=q2.lock().unwrap().get_container("encoded").unwrap().lock().unwrap().to_vec(); 
+		let c2=q2.lock().unwrap().get_container("locs").unwrap().lock().unwrap().to_vec(); 
 
-		let e3=q3.borrow().get_container("encoded").unwrap().borrow().to_vec(); 
-		let c3=q3.borrow().get_container("locs").unwrap().borrow().to_vec(); 
+		let e3=q3.lock().unwrap().get_container("encoded").unwrap().lock().unwrap().to_vec(); 
+		let c3=q3.lock().unwrap().get_container("locs").unwrap().lock().unwrap().to_vec(); 
 
 		//2. build three combined columns
 		let comb1 = encode_2col(&e1, &c1);
@@ -1860,18 +1861,18 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 	#[allow(dead_code)]
 	fn gen_to_add_valid_prf(
 		prf_name: &str,
-		sq_to_add: &Rc<RefCell<Container<F>>>,
-		prf_fwd: &Rc<RefCell<Container<F>>>,
-	)->Rc<RefCell<Container<F>>>{
+		sq_to_add: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
+		prf_fwd: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
+	)->std::sync::Arc<std::sync::Mutex<Container<F>>>{
 		//1. retrieve info from to_add
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
-		let e2=sq_to_add.borrow().get_container("encoded")
-			.unwrap().borrow().to_vec(); 
-		let c2=sq_to_add.borrow().get_container("locs").unwrap()
-			.borrow().to_vec(); 
-		let s2=sq_to_add.borrow().get_container("step")
-			.unwrap().borrow().to_vec(); 
+		let e2=sq_to_add.lock().unwrap().get_container("encoded")
+			.unwrap().lock().unwrap().to_vec(); 
+		let c2=sq_to_add.lock().unwrap().get_container("locs").unwrap()
+			.lock().unwrap().to_vec(); 
+		let s2=sq_to_add.lock().unwrap().get_container("step")
+			.unwrap().lock().unwrap().to_vec(); 
 		assert!(e2.len()==c2.len() && s2.len()==c2.len());
 		let dst = encode_cols(&vec![e2.clone(),c2.clone()], 
 			&vec![0,1]);
@@ -1884,12 +1885,12 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		//2. retrieve info from prf_forward:
 		// encoded, loc (note that encoded has the info of step and pat)
 		// ignore the dummy entries at the beginning for each
-		let e1=prf_fwd.borrow().get_container("dst_encoded")
-			.unwrap().borrow().to_vec(); 
-		let c1=prf_fwd.borrow().get_container("dst_loc").unwrap()
-			.borrow().to_vec(); 
-		let c3=prf_fwd.borrow().get_container("src_loc").unwrap()
-			.borrow().to_vec(); 
+		let e1=prf_fwd.lock().unwrap().get_container("dst_encoded")
+			.unwrap().lock().unwrap().to_vec(); 
+		let c1=prf_fwd.lock().unwrap().get_container("dst_loc").unwrap()
+			.lock().unwrap().to_vec(); 
+		let c3=prf_fwd.lock().unwrap().get_container("src_loc").unwrap()
+			.lock().unwrap().to_vec(); 
 		assert!(e1.len()==c1.len());
 		let src = encode_cols(&vec![e1.clone(),c1.clone()], &vec![0,1]);
 		let src_sel = (0..e1.len()).into_par_iter().map(|i|{
@@ -1916,11 +1917,11 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let mtb2 = gen_m_table(&dst_adj, &src_adj);
 		let len1 = mtb1.len();
 		let len2 = mtb2.len();
-		prf.borrow_mut().add_col(Col::new(mtb1, "mtb1", IDX_DATA));
-		prf.borrow_mut().add_col(Col::new_const(vec![zero;len1], "sid_mtb1", 
+		prf.lock().unwrap().add_col(Col::new(mtb1, "mtb1", IDX_DATA));
+		prf.lock().unwrap().add_col(Col::new_const(vec![zero;len1], "sid_mtb1", 
 			IDX_SI_DATA));
-		prf.borrow_mut().add_col(Col::new(mtb2, "mtb2", IDX_DATA));
-		prf.borrow_mut().add_col(Col::new_const(vec![zero;len2], "sid_mtb2", 
+		prf.lock().unwrap().add_col(Col::new(mtb2, "mtb2", IDX_DATA));
+		prf.lock().unwrap().add_col(Col::new_const(vec![zero;len2], "sid_mtb2", 
 			IDX_SI_DATA));
 
 		prf
@@ -1940,12 +1941,12 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 	#[allow(dead_code)]
 	fn gen_fwdprf_valid_prf(
 		prf_name: &str,
-		prf_fwd: &Rc<RefCell<Container<F>>>,
-		pat_loc: &Rc<RefCell<Container<F>>>,
-		sq_res: &Rc<RefCell<Container<F>>>,
+		prf_fwd: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
+		pat_loc: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
+		sq_res: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
 		capacity: &DischargeAdvCapacity,
 		last_loc: F,
-	)->Result<(Rc<RefCell<Container<F>> >,F), Error>{
+	)->Result<(std::sync::Arc<std::sync::Mutex<Container<F>> >,F), Error>{
 		//0. data retrieval
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
@@ -1955,7 +1956,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 			"dst_pat", "dst_rg_start", "dst_rg_end",
 			"dst_loc", "dst_pat_id", "diff1", "diff2", "dst_subsig"];
 		let v2d= names.iter().map(|n|{
-			prf_fwd.borrow().get_container(n).unwrap().borrow().to_vec() 
+			prf_fwd.lock().unwrap().get_container(n).unwrap().lock().unwrap().to_vec() 
 		}).collect::<Vec<Vec<F>>>();
 		let (src_encoded, _dst_encoded,
 			src_loc, _src_step, 
@@ -2044,16 +2045,16 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		// compute p2 = nsp + 1 + p2_nsp 
 		// we can do dynamic logup to prove that (p1,p2) are neighboring
 		// entries of pat-loc table.
-		let pat= pat_loc.borrow().get_container("sorted_key")
-			.unwrap().borrow().to_vec();
+		let pat= pat_loc.lock().unwrap().get_container("sorted_key")
+			.unwrap().lock().unwrap().to_vec();
 		#[cfg(test)]{ 
 			assert!(is_sorted(&pat)); 
 			assert!(pat[0].is_zero(), "pat has no padding zero at beginning!");
 		}
-		let pat_id= pat_loc.borrow().get_container("sorted_id")
-			.unwrap().borrow().to_vec();
-		let loc = pat_loc.borrow().get_container("sorted_val")
-			.unwrap().borrow().to_vec();
+		let pat_id= pat_loc.lock().unwrap().get_container("sorted_id")
+			.unwrap().lock().unwrap().to_vec();
+		let loc = pat_loc.lock().unwrap().get_container("sorted_val")
+			.unwrap().lock().unwrap().to_vec();
 		println!("DEBUG USE 6901: last_loc: {}", last_loc);
 		
 		let set_pat_in_trace = pat.iter().filter(|p| !p.is_zero())
@@ -2134,19 +2135,19 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 
 		let mtb_pat = gen_m_table(&src_combined, &dst_combined);
 		let len1 = mtb_pat.len();
-		res.borrow_mut().add_col(Col::new(mtb_pat, "mtb_pat", IDX_DATA));
-		res.borrow_mut().add_col(Col::new_const(vec![zero;len1], 
+		res.lock().unwrap().add_col(Col::new(mtb_pat, "mtb_pat", IDX_DATA));
+		res.lock().unwrap().add_col(Col::new_const(vec![zero;len1], 
 			"sid_mtb_pat", IDX_SI_DATA));
 
 		let nsp_names = ["nsp", "nsp_p1", "p2_nsp"];
 		let nsp_cols = [nsp, nsp_p1, p2_nsp];
 		nsp_cols.into_iter().zip(nsp_names.iter()).for_each(|(c,n)|{
-			res.borrow_mut().add_col(Col::new(c, n, IDX_DATA));
-			res.borrow_mut().add_col(Col::new_const(vec![frg; n_s], 
+			res.lock().unwrap().add_col(Col::new(c, n, IDX_DATA));
+			res.lock().unwrap().add_col(Col::new_const(vec![frg; n_s], 
 				&format!("sid_{}",n),IDX_SI_DATA));
 		});
-		res.borrow_mut().add_col(Col::new(m_tbl_pairs,"m_tbl_pairs",IDX_DATA));
-		res.borrow_mut().add_col(Col::new_const(sid_m_tbl_pairs,
+		res.lock().unwrap().add_col(Col::new(m_tbl_pairs,"m_tbl_pairs",IDX_DATA));
+		res.lock().unwrap().add_col(Col::new_const(sid_m_tbl_pairs,
 				"sid_m_tbl_pairs", IDX_SI_DATA));
 
 
@@ -2154,14 +2155,14 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		//4. prove encoded-loc corresponds to result_queue (note:
 		// where result is inp + to_add. the prf works on the "dynamic"
 		// result from last step which includes new entries from to_add).
-		let res_encoded= sq_res.borrow().get_container("encoded")
-			.unwrap().borrow().to_vec();
-		let _res_step= sq_res.borrow().get_container("step")
-			.unwrap().borrow().to_vec();
-		let res_loc = sq_res.borrow().get_container("locs")
-			.unwrap().borrow().to_vec();
-		let sid_res_step= sq_res.borrow().get_container("si_step")
-			.unwrap().borrow().to_vec();
+		let res_encoded= sq_res.lock().unwrap().get_container("encoded")
+			.unwrap().lock().unwrap().to_vec();
+		let _res_step= sq_res.lock().unwrap().get_container("step")
+			.unwrap().lock().unwrap().to_vec();
+		let res_loc = sq_res.lock().unwrap().get_container("locs")
+			.unwrap().lock().unwrap().to_vec();
+		let sid_res_step= sq_res.lock().unwrap().get_container("si_step")
+			.unwrap().lock().unwrap().to_vec();
 
 		let src_combined = encode_cols(&vec![res_encoded.clone(), res_loc.clone()], &vec![0,1]);
 		let dst_adj= encode_cols(&vec![src_encoded.to_vec(), src_loc.to_vec()], 
@@ -2184,11 +2185,11 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let mtb_res2= gen_m_table(&dst_adj, &src_adj);
 		let len1 = mtb_res1.len();
 		let len2 = mtb_res2.len();
-		res.borrow_mut().add_col(Col::new(mtb_res1, "mtb_res1", IDX_DATA));
-		res.borrow_mut().add_col(Col::new_const(vec![zero;len1], 
+		res.lock().unwrap().add_col(Col::new(mtb_res1, "mtb_res1", IDX_DATA));
+		res.lock().unwrap().add_col(Col::new_const(vec![zero;len1], 
 			"sid_mtb_res1", IDX_SI_DATA));
-		res.borrow_mut().add_col(Col::new(mtb_res2, "mtb_res2", IDX_DATA));
-		res.borrow_mut().add_col(Col::new_const(vec![zero;len2], 
+		res.lock().unwrap().add_col(Col::new(mtb_res2, "mtb_res2", IDX_DATA));
+		res.lock().unwrap().add_col(Col::new_const(vec![zero;len2], 
 			"sid_mtb_res2", IDX_SI_DATA));
 
 		//5. prove the ascending order of pat_id column (no need
@@ -2203,9 +2204,9 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let abs_rg2_max = rg2.par_iter().map(|rg2|
 			if *rg2>=max {*rg2-max} else {max-*rg2}).collect::<Vec<F>>();
 		let len1 = abs_rg2_max.len();
-		res.borrow_mut().add_col(Col::new(abs_rg2_max, 
+		res.lock().unwrap().add_col(Col::new(abs_rg2_max, 
 			"abs_rg2_max", IDX_DATA));
-		res.borrow_mut().add_col(Col::new_const(vec![frg;len1],
+		res.lock().unwrap().add_col(Col::new_const(vec![frg;len1],
 			"sid_abs_rg2_max", IDX_SI_DATA));
 
 		Ok( (res, last_loc) )
@@ -2229,14 +2230,14 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		b_igc: bool,
 		offset_fsm: usize,
 		_inp_subsigs: &Vec<F>,
-		pat_loc: &Rc<RefCell<Container<F>>>,
+		pat_loc: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
 		inp_step_queue: &StepQueue<F>, 
 		_fsm_id: u32,
 		capacity: &DischargeAdvCapacity,
 		subsig_store_info: &SubsigStepStore,
 		last_loc: F,
 		seg_id: usize, //the word segment id (starting 0)
-	)->Result<(Rc<RefCell<Container<F>>>, StepQueue<F>, F), Error>{
+	)->Result<(std::sync::Arc<std::sync::Mutex<Container<F>>>, StepQueue<F>, F), Error>{
 		let b_debug = false;
 		let res = Container::<F>::new("fwd_steps_queue");
 		let mut t1 = GTimer::new();
@@ -2259,10 +2260,10 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 			.gen_forward_prf(pat_loc, subsig_store_info);
 		let sname_fsm = if b_igc {"fsm_adv_stmt_igc"} else {"fsm_adv_stmt_cs"};
 		let shift = 0-(offset_fsm as i32);
-		let pat_loc = pat_loc.borrow().duplicate_as_external_adv(shift,
+		let pat_loc = pat_loc.lock().unwrap().duplicate_as_external_adv(shift,
 			Some(format!("{} packed_trace pat_loc sorted_tbl", sname_fsm)),
 			Some("pat_loc".to_string()));
-		let ct_pat_loc = Rc::new(RefCell::new(pat_loc));
+		let ct_pat_loc = Arc::new(Mutex::new(pat_loc));
 
 
 		if b_debug{
@@ -2286,12 +2287,12 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 			true, false, false, &subsig_store_info).expect("ct_sq_add err");
 		let ct_sq_res = sq_res.to_container("sq_res", false, 
 			true, false, false, &subsig_store_info).expect("ct_sq_res err");
-		res.borrow_mut().add_container(ct_sq_inp.clone()); //low cost, rc clone
-		res.borrow_mut().add_container(ct_sq_to_add.clone());
-		res.borrow_mut().add_container(ct_sq_res.clone());
-		res.borrow_mut().add_container(fwd_prf.to_container("prf_fwd", 
+		res.lock().unwrap().add_container(ct_sq_inp.clone()); //low cost, rc clone
+		res.lock().unwrap().add_container(ct_sq_to_add.clone());
+		res.lock().unwrap().add_container(ct_sq_res.clone());
+		res.lock().unwrap().add_container(fwd_prf.to_container("prf_fwd", 
 			subsig_store_info)?);
-		res.borrow_mut().add_container(ct_pat_loc.clone());
+		res.lock().unwrap().add_container(ct_pat_loc.clone());
 
 		//------------------------------------------------------------------
 		//--- now argue that the generated step_queue and fwd_prf are correct
@@ -2302,7 +2303,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		//1. prove inp_queue + to_add = sq_res
 		let prf_union = Self::gen_step_queue_union_prf("prf_union",
 			&ct_sq_inp, &ct_sq_to_add, &ct_sq_res)?;
-		prf.borrow_mut().add_container(prf_union);
+		prf.lock().unwrap().add_container(prf_union);
 		if b_perf{log_perf(LOG1, "-- -- gen_fwd step1", &mut t1);}
 
 		//2. prove that sq_inp has the same structure of the store_steps.
@@ -2317,21 +2318,21 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 
 		//3. prove that sq_to_add is valid (covering all new entries
 		// that are produced in fwd proof
-		let prf_fwd = res.borrow().get_container("prf_fwd").unwrap(); 
+		let prf_fwd = res.lock().unwrap().get_container("prf_fwd").unwrap(); 
 		let prf_to_add_valid = Self::gen_to_add_valid_prf("prf_to_add",
 			&ct_sq_to_add, &prf_fwd);
-		prf.borrow_mut().add_container(prf_to_add_valid);
+		prf.lock().unwrap().add_container(prf_to_add_valid);
 		if b_perf{log_perf(LOG1, "-- -- gen_fwd step2-3", &mut t1);}
 
 		//4. prove the validity of the fwd_prf
 		let (prf_fwdprf_valid, last_loc) = 
 			Self::gen_fwdprf_valid_prf("prf_fwdprf_valid", 
 				&prf_fwd, &ct_pat_loc, &ct_sq_res, capacity, last_loc)?;			//might throw CapErr on subsigs, just forward it
-		prf.borrow_mut().add_container(prf_fwdprf_valid);
+		prf.lock().unwrap().add_container(prf_fwdprf_valid);
 		if b_perf{log_perf(LOG1, "-- -- gen_fwd step4", &mut t1);}
 
 		// --- now return 
-		res.borrow_mut().add_container(prf);
+		res.lock().unwrap().add_container(prf);
 		Ok( (res, sq_res, last_loc) )
 	}
 
@@ -2348,14 +2349,14 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 	fn gen_backward_steps_queue_combo(
 		b_igc: bool,
 		input_step_queue: &StepQueue<F>,
-		ct_fwd_res: &Rc<RefCell<Container<F>>>,
+		ct_fwd_res: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
 		subsig_store_info: &SubsigStepStore,
 		default_min_loc: F, //this is the EARLIER next possible location
 			//for next rounds, used as default_min_loc if one step queue
 			//for backward pruning.
 		capacity: &DischargeAdvCapacity,
 		seg_id: usize,
-	)->Result<Rc<RefCell<Container<F>>>, Error>{
+	)->Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 		//0. Generate the logical data:
 		// from inp_step_queue generate the to_del, res, bwd_prf, 
 		// Add them to container
@@ -2388,9 +2389,9 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 			true, //oup
 			true, //b_subsigs (saved in DATA)
 			&subsig_store_info).expect("err ct_sq_res2 error");
-		res.borrow_mut().add_container(ct_sq_to_del.clone());
-		res.borrow_mut().add_container(ct_sq_res2.clone());
-		res.borrow_mut().add_container(bwd_prf.to_container("prf_bwd", 
+		res.lock().unwrap().add_container(ct_sq_to_del.clone());
+		res.lock().unwrap().add_container(ct_sq_res2.clone());
+		res.lock().unwrap().add_container(bwd_prf.to_container("prf_bwd", 
 			subsig_store_info)?);
 		if b_perf{log_perf(LOG1, "-- -- gen_bwd step0", &mut t1);}
 
@@ -2402,7 +2403,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let prf = Container::new("prf");
 		let prf_union = Self::gen_step_queue_union_prf("prf_union",
 			&ct_sq_res2, &ct_sq_to_del, &ct_fwd_res)?;
-		prf.borrow_mut().add_container(prf_union);
+		prf.lock().unwrap().add_container(prf_union);
 		if b_perf{log_perf(LOG1, "-- -- gen_bwd step1", &mut t1);}
 
 		//2. no need to argume for the sq_inp conforms to store_steps
@@ -2410,21 +2411,21 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 
 		//3. prove that sq_to_del is valid (covering all new entries
 		// that are produced in bwd proof
-		let prf_bwd = res.borrow().get_container("prf_bwd").unwrap(); 
+		let prf_bwd = res.lock().unwrap().get_container("prf_bwd").unwrap(); 
 		let prf_to_del_valid = Self::gen_to_del_valid_prf("prf_to_del",
 			&ct_sq_to_del, &prf_bwd);
-		prf.borrow_mut().add_container(prf_to_del_valid);
+		prf.lock().unwrap().add_container(prf_to_del_valid);
 		if b_perf{log_perf(LOG1, "-- -- gen_bwd step2-3", &mut t1);}
 
 		//4. prove the validity of the bwd_prf
 		let prf_bwdprf_valid = Self::gen_bwdprf_valid_prf("prf_bwdprf_valid",
 			&prf_bwd, &ct_sq_res2, default_min_loc, &subsig_store_info, 
 			&capacity, b_igc)?;
-		prf.borrow_mut().add_container(prf_bwdprf_valid);
+		prf.lock().unwrap().add_container(prf_bwdprf_valid);
 		if b_perf{log_perf(LOG1, "-- -- gen_bwd step4", &mut t1);}
 
 		// --- now return 
-		res.borrow_mut().add_container(prf);
+		res.lock().unwrap().add_container(prf);
 		Ok(res)
 	}
 
@@ -2434,16 +2435,16 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 	#[allow(dead_code)]
 	fn gen_to_del_valid_prf(
 		prf_name: &str,
-		sq_to_del: &Rc<RefCell<Container<F>>>,
-		prf_bwd: &Rc<RefCell<Container<F>>>,
-	)->Rc<RefCell<Container<F>>>{
+		sq_to_del: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
+		prf_bwd: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
+	)->std::sync::Arc<std::sync::Mutex<Container<F>>>{
 		//1. retrieve info from to_del
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, _one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
-		let e2=sq_to_del.borrow().get_container("encoded")
-			.unwrap().borrow().to_vec(); 
-		let c2=sq_to_del.borrow().get_container("locs").unwrap()
-			.borrow().to_vec(); 
+		let e2=sq_to_del.lock().unwrap().get_container("encoded")
+			.unwrap().lock().unwrap().to_vec(); 
+		let c2=sq_to_del.lock().unwrap().get_container("locs").unwrap()
+			.lock().unwrap().to_vec(); 
 		assert!(e2.len()==c2.len());
 		let dst = encode_cols(&vec![e2.clone(),c2.clone()], 
 			&vec![0,1]);
@@ -2455,10 +2456,10 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		// note that no need for selector as encoded=0 have all 0 entries
 		// and bwd_prf does not have boundary entries for sorting needs
 		// (which was used in range-query in fwd prf but not needed here)
-		let e1=prf_bwd.borrow().get_container("prev_encoded")
-			.unwrap().borrow().to_vec(); 
-		let c1=prf_bwd.borrow().get_container("loc_to_del").unwrap()
-			.borrow().to_vec(); 
+		let e1=prf_bwd.lock().unwrap().get_container("prev_encoded")
+			.unwrap().lock().unwrap().to_vec(); 
+		let c1=prf_bwd.lock().unwrap().get_container("loc_to_del").unwrap()
+			.lock().unwrap().to_vec(); 
 		assert!(e1.len()==c1.len());
 		assert!(e1[0]==zero, "increase length to ensure at least one pad 0");
 
@@ -2475,8 +2476,8 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let mtb2 = gen_m_table(&dst, &src); //note: we lkup up dst
 													//in src_adj
 		let len1 = mtb2.len();
-		prf.borrow_mut().add_col(Col::new(mtb2, "mtb2", IDX_DATA));
-		prf.borrow_mut().add_col(Col::new_const(vec![zero;len1], "sid_mtb2", 
+		prf.lock().unwrap().add_col(Col::new(mtb2, "mtb2", IDX_DATA));
+		prf.lock().unwrap().add_col(Col::new_const(vec![zero;len1], "sid_mtb2", 
 			IDX_SI_DATA));
 
 		prf
@@ -2496,13 +2497,13 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 	#[allow(dead_code)]
 	fn gen_bwdprf_valid_prf(
 		prf_name: &str,
-		prf_bwd: &Rc<RefCell<Container<F>>>,
-		sq_res: &Rc<RefCell<Container<F>>>,
+		prf_bwd: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
+		sq_res: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
 		default_min_loc: F, //default min_loc for pruning back
 		_subsig_store_info: &SubsigStepStore,
 		capacity: &DischargeAdvCapacity,
 		b_igc: bool,
-	)->Result<Rc<RefCell<Container<F>>>, Error>{
+	)->Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 		//0. data retrieval
 		let b_debug = false;
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
@@ -2518,7 +2519,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 			//earlier in gen_backward_prf when subsig-step has no
 			//entry in sq-res
 		let v2d = names.iter().map(|n|{
-			prf_bwd.borrow().get_container(n).unwrap().borrow().to_vec() 
+			prf_bwd.lock().unwrap().get_container(n).unwrap().lock().unwrap().to_vec() 
 		}).collect::<Vec<Vec<F>>>();
 		if b_debug{
 			println!("DEBUG USE 6501.1 --- prf_bwd ----\n");
@@ -2565,7 +2566,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		// minimum loc for a step.
 		// We need to prove that subsig-step itself is sorted first.
 		let rescols = vec!["encoded", "step", "locs", "subsig"].iter().map(|n|
-			sq_res.borrow().get_container(n).unwrap().borrow().to_vec()
+			sq_res.lock().unwrap().get_container(n).unwrap().lock().unwrap().to_vec()
 		).collect::<Vec<Vec<F>>>();
 		if b_debug{ assert!(is_sorted(&rescols[0])); }
 		if b_debug{
@@ -2587,9 +2588,9 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		}).collect::<Vec<F>>();
 		let len2 = diff_subsig.len();
 		#[cfg(test)]{ check_rg2(&diff_subsig, &vec![frg;diff_subsig.len()]); }
-		res.borrow_mut().add_col(Col::new(diff_subsig, 
+		res.lock().unwrap().add_col(Col::new(diff_subsig, 
 			"diff_subsig", IDX_DATA));
-		res.borrow_mut().add_col(Col::new_const(vec![frg;len2], 
+		res.lock().unwrap().add_col(Col::new_const(vec![frg;len2], 
 			"sid_diff_subsig", IDX_SI_DATA));
 
 		//3.2 prove that step is sorted per subsig
@@ -2607,8 +2608,8 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		}).collect::<Vec<F>>();
 		let len1 = diff_step.len();
 		#[cfg(test)]{ check_rg2(&diff_step, &vec![frg;diff_step.len()]); }
-		res.borrow_mut().add_col(Col::new(diff_step, "diff_step", IDX_DATA));
-		res.borrow_mut().add_col(Col::new_const(vec![frg;len1], 
+		res.lock().unwrap().add_col(Col::new(diff_step, "diff_step", IDX_DATA));
+		res.lock().unwrap().add_col(Col::new_const(vec![frg;len1], 
 			"sid_diff_step", IDX_SI_DATA));
 
 		//3.3 prove that loc is sorted per subsig-step (encoded)
@@ -2624,8 +2625,8 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		}).collect::<Vec<F>>();
 		let len1 = diff_loc.len();
 		#[cfg(test)]{ check_rg2(&diff_loc, &vec![frg;diff_loc.len()]); }
-		res.borrow_mut().add_col(Col::new(diff_loc, "diff_loc", IDX_DATA));
-		res.borrow_mut().add_col(Col::new_const(vec![frg;len1], 
+		res.lock().unwrap().add_col(Col::new(diff_loc, "diff_loc", IDX_DATA));
+		res.lock().unwrap().add_col(Col::new_const(vec![frg;len1], 
 			"sid_diff_loc", IDX_SI_DATA));
 
 		//4. prove the min_loc in bwd_prf is EITHER 
@@ -2674,10 +2675,10 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let names = ["set_bwdprf_ssm_subsig", "set_bwdprf_ssm_step",
 			"set_bwdprf_ssm_min_loc"];
 		for i in 0..3{
-			res.borrow_mut().add_col(Col::new(
+			res.lock().unwrap().add_col(Col::new(
 				set_bwdprf_ssm[i].clone(),
 				names[i], IDX_DATA));
-			res.borrow_mut().add_col(Col::new(vec![f_rg2; set_size],
+			res.lock().unwrap().add_col(Col::new(vec![f_rg2; set_size],
 				&format!("sid_{}", names[i]), IDX_SI_DATA));
 		}
 
@@ -2721,10 +2722,10 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let names = ["set_bwdprf_ssm_real_subsig", "set_bwdprf_ssm_real_step",
 			"set_bwdprf_ssm_real_min_loc"];
 		for i in 0..3{
-			res.borrow_mut().add_col(Col::new(
+			res.lock().unwrap().add_col(Col::new(
 				set_bwdprf_ssm_real[i].clone(),
 				names[i], IDX_DATA));
-			res.borrow_mut().add_col(Col::new(vec![f_rg2; set_size],
+			res.lock().unwrap().add_col(Col::new(vec![f_rg2; set_size],
 				&format!("sid_{}", names[i]), IDX_SI_DATA));
 		}
 
@@ -2732,10 +2733,10 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 			"set_bwdprf_ssm_default_step",
 			"set_bwdprf_ssm_default_min_loc"];
 		for i in 0..3{
-			res.borrow_mut().add_col(Col::new(
+			res.lock().unwrap().add_col(Col::new(
 				set_bwdprf_ssm_default[i].clone(),
 				names[i], IDX_DATA));
-			res.borrow_mut().add_col(Col::new(vec![f_rg2; set_size],
+			res.lock().unwrap().add_col(Col::new(vec![f_rg2; set_size],
 				&format!("sid_{}", names[i]), IDX_SI_DATA));
 		}
 
@@ -2764,10 +2765,10 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let names = ["set_sqres_ssm_subsig", "set_sqres_ssm_step",
 			"set_sqres_ssm_min_loc"];
 		for i in 0..3{
-			res.borrow_mut().add_col(Col::new(
+			res.lock().unwrap().add_col(Col::new(
 				set_sqres_ssm[i].clone(),
 				names[i], IDX_DATA));
-			res.borrow_mut().add_col(Col::new(vec![f_rg2; set_size],
+			res.lock().unwrap().add_col(Col::new(vec![f_rg2; set_size],
 				&format!("sid_{}", names[i]), IDX_SI_DATA));
 		}
 
@@ -2820,7 +2821,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 				collect::<HashSet<F>>();
 			assert!(set1 == set2); 
 		}
-		res.borrow_mut().add_container(prf_disjoint_ssm);
+		res.lock().unwrap().add_container(prf_disjoint_ssm);
 
 		//4.5.1(b) prove that set_bwdprf_ssm_default has the min-loc
 		//filled with default_min_loc (no proof generaed here)
@@ -2832,9 +2833,9 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let combined_dst = encode_cols(&set_sqres_ssm, &vec![0,1,2]);
 		let mtbl_bwdprf_sqres = gen_m_table(&combined_src, &combined_dst);
 		let len_mtbl = mtbl_bwdprf_sqres.len();
-		res.borrow_mut().add_col(Col::new(mtbl_bwdprf_sqres, 
+		res.lock().unwrap().add_col(Col::new(mtbl_bwdprf_sqres, 
 			"mtbl_bwdprf_sqres", IDX_DATA));
-		res.borrow_mut().add_col(Col::new_const(vec![f_rg2; len_mtbl], 
+		res.lock().unwrap().add_col(Col::new_const(vec![f_rg2; len_mtbl], 
 			"sid_mtbl_bwdprf_sqres", IDX_SI_DATA));
 
 		//4.5.3 set_bwdprf_ssm is a set of ALL subsig-step-min_loc
@@ -2845,9 +2846,9 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let combined_dst = encode_cols(&set_bwdprf_ssm,  &vec![0,1,2]);
 		let mtbl_bwdprf_coverage = gen_m_table(&combined_src, &combined_dst);
 		let len_mtbl_cov = mtbl_bwdprf_coverage.len();
-		res.borrow_mut().add_col(Col::new(mtbl_bwdprf_coverage, 
+		res.lock().unwrap().add_col(Col::new(mtbl_bwdprf_coverage, 
 			"mtbl_bwdprf_coverage", IDX_DATA));
-		res.borrow_mut().add_col(Col::new_const(vec![f_rg2; len_mtbl_cov], 
+		res.lock().unwrap().add_col(Col::new_const(vec![f_rg2; len_mtbl_cov], 
 			"sid_mtbl_bwdprf_coverage", IDX_SI_DATA));
 
 		//4.5.4 to show that set_sqres_ssm is REALLY the set
@@ -2863,8 +2864,8 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 			sel[i]*(src_min_loc[i] - (loc_to_del[i] + src_rg_end[i] + one))
 		).collect::<Vec<F>>();
 		let len1 = sel.len();
-		res.borrow_mut().add_col(Col::new(diff_min, "diff_min", IDX_DATA));
-		res.borrow_mut().add_col(Col::new_const(vec![frg;len1], 
+		res.lock().unwrap().add_col(Col::new(diff_min, "diff_min", IDX_DATA));
+		res.lock().unwrap().add_col(Col::new_const(vec![frg;len1], 
 			"sid_diff_min", IDX_SI_DATA));
 
 		Ok(res)
@@ -2890,11 +2891,11 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		let ids = vec![zero; pats_len];
 		let locs = vec![zero; pats_len];
 		let pat_loc = Container::<F>::new("pat_loc");
-		pat_loc.borrow_mut()
+		pat_loc.lock().unwrap()
 			.add_col(Col::<F>::new(pats, "sorted_key", IDX_DATA));
-		pat_loc.borrow_mut()
+		pat_loc.lock().unwrap()
 			.add_col(Col::<F>::new(ids, "sorted_id", IDX_DATA));
-		pat_loc.borrow_mut()
+		pat_loc.lock().unwrap()
 			.add_col(Col::<F>::new(locs, "sorted_val", IDX_DATA));
 		let sigs = vec![zero; capacity.subsigs];
 		let (step_q_size,_,_) = StepQueue::<F>
@@ -2909,7 +2910,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			Clone::clone(&capacity), &inp_steps_queue_obj, zero, 0)
 			.expect("discharge_adv advice err");
 		let mut vec_cfg = prev_cfgs.clone();
-		vec_cfg.push(dummy_adv.stmt_container.borrow().get_cfg());
+		vec_cfg.push(dummy_adv.stmt_container.lock().unwrap().get_cfg());
 		ContainerConfig::adjust_locations(&mut vec_cfg);
 		//even it's false, it's good enough for generating statement_structure
 		let dummy_cfg = vec_cfg[vec_cfg.len()-1].clone(); //it's the last one
@@ -2965,7 +2966,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			.collect::<Vec<_>>();
 		let sid_cols = col_names.iter().map(|name|
 			store_steps.get_container(&format!("sid_{}", name)).unwrap()
-				.borrow().to_vec()
+				.lock().unwrap().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
 		assert!(sid_cols.len()==vals.len());
 
@@ -2977,7 +2978,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 
 		//2. check the m_tbl proof
 		let cols = col_names.iter().map(|name| store_steps.get_container(&name).
-			unwrap().borrow().to_vec()
+			unwrap().lock().unwrap().to_vec()
 			).collect::<Vec<Vec<FpVar<F>>>>();
 		let (subsig, id, pat, rg_start, rg_end, encoded, inp_subsigs, m_tbl) = 
 		  (&cols[0],&cols[1],&cols[2],&cols[3],&cols[4],&cols[5],&cols[6],&cols[7]);
@@ -3029,7 +3030,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		//1. verify sq_inp + sq_to_add = sq_res
 		//COST: 11*n1
 		let prf = forward_step_q.get_container("prf")?;
-		let prf_union = prf.borrow().get_container("prf_union")?;
+		let prf_union = prf.lock().unwrap().get_container("prf_union")?;
 		self.validate_step_queue_union_prf(&ct_sq_inp, &ct_sq_to_add,
 			&ct_sq_res, &r1, &r2, &prf_union)?;
 		if b_perf {
@@ -3052,7 +3053,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 
 		//3. validate the sq_to_add covers the entries in prf_fwd
 		//COST: 12.5 * n1
-		let prf_to_add = prf.borrow().get_container("prf_to_add")?;
+		let prf_to_add = prf.lock().unwrap().get_container("prf_to_add")?;
 		self.validate_to_add(&ct_sq_to_add, &ct_prf_fwd, 
 			&r1, &prf_to_add)?;
 		if b_perf {
@@ -3064,7 +3065,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 
 		//4. validate the prf_fwd
 		//COST: 37*n1 
-		let prf_fwdprf_valid = prf.borrow().get_container("prf_fwdprf_valid")?;
+		let prf_fwdprf_valid = prf.lock().unwrap().get_container("prf_fwdprf_valid")?;
 		let last_loc = self.validate_fwdprf_valid_prf(&ct_prf_fwd, 
 			&ct_sq_res, &ct_pat_loc,
 			&r1, &r2, &prf_fwdprf_valid, last_loc)?;
@@ -3086,23 +3087,23 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 	/// = 8n1 + 4n2
 	#[allow(dead_code)]
 	fn validate_step_queue_union_prf(&self,
-		q1: &Rc<RefCell<Container<FpVar<F>>>>, //step_queue 1
-		q2: &Rc<RefCell<Container<FpVar<F>>>>, //step_queue 2
-		q3: &Rc<RefCell<Container<FpVar<F>>>>, //step_queue result
+		q1: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>, //step_queue 1
+		q2: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>, //step_queue 2
+		q3: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>, //step_queue result
 		r1: &FpVar<F>,
 		_r2: &FpVar<F>,
-		prf_union: &Rc<RefCell<Container<FpVar<F>>>>
+		prf_union: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>
 	)->Result<(), SynthesisError>{
 		//1. retrieve the src and dst cols
 		let b_perf = false;
 		let cs = r1.cs();
 		let nc = cs.num_constraints();
-		let e1=q1.borrow().get_container("encoded").unwrap().borrow().to_vec(); 
-		let c1=q1.borrow().get_container("locs").unwrap().borrow().to_vec(); 
-		let e2=q2.borrow().get_container("encoded").unwrap().borrow().to_vec(); 
-		let c2=q2.borrow().get_container("locs").unwrap().borrow().to_vec(); 
-		let e3=q3.borrow().get_container("encoded").unwrap().borrow().to_vec(); 
-		let c3=q3.borrow().get_container("locs").unwrap().borrow().to_vec(); 
+		let e1=q1.lock().unwrap().get_container("encoded").unwrap().lock().unwrap().to_vec(); 
+		let c1=q1.lock().unwrap().get_container("locs").unwrap().lock().unwrap().to_vec(); 
+		let e2=q2.lock().unwrap().get_container("encoded").unwrap().lock().unwrap().to_vec(); 
+		let c2=q2.lock().unwrap().get_container("locs").unwrap().lock().unwrap().to_vec(); 
+		let e3=q3.lock().unwrap().get_container("encoded").unwrap().lock().unwrap().to_vec(); 
+		let c3=q3.lock().unwrap().get_container("locs").unwrap().lock().unwrap().to_vec(); 
 		let (n1,n2) = (e1.len(), e2.len());
 		
 		//2. build three combined columns
@@ -3123,20 +3124,20 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 	/// validate the to_add covers what are produced in the forward prf
 	#[allow(dead_code)]
 	fn validate_to_add(&self,
-		sq_to_add: &Rc<RefCell<Container<FpVar<F>>>>,
-		prf_fwd: &Rc<RefCell<Container<FpVar<F>>>>,
+		sq_to_add: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
+		prf_fwd: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
 		r1: &FpVar<F>,
-		prf_to_add_valid: &Rc<RefCell<Container<FpVar<F>>>>
+		prf_to_add_valid: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>
 	)->Result<(), SynthesisError>{
 		//1. retrieve info from to_add
 		let one = FpVar::<F>::constant(F::one());
 		let cs = r1.cs();
-		let encoded = sq_to_add.borrow().get_container("encoded")
-			.unwrap().borrow().to_vec(); 
-		let step = sq_to_add.borrow().get_container("step")
-			.unwrap().borrow().to_vec(); 
-		let locs = sq_to_add.borrow().get_container("locs")
-			.unwrap().borrow().to_vec(); 
+		let encoded = sq_to_add.lock().unwrap().get_container("encoded")
+			.unwrap().lock().unwrap().to_vec(); 
+		let step = sq_to_add.lock().unwrap().get_container("step")
+			.unwrap().lock().unwrap().to_vec(); 
+		let locs = sq_to_add.lock().unwrap().get_container("locs")
+			.unwrap().lock().unwrap().to_vec(); 
 		let dst = encode_2col_var(&encoded, &locs);
 		//let dst_sel = step.iter().zip(locs.iter()).map(|(loc,step)|
 		//	loc.is_zero().unwrap().not()
@@ -3150,12 +3151,12 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			a * b ).collect::<Vec<FpVar<F>>>();
 
 		//2. retrieve info from prf_fwd
-		let e1 = prf_fwd.borrow().get_container("dst_encoded")
-			.unwrap().borrow().to_vec(); 
-		let c1= prf_fwd.borrow().get_container("dst_loc")
-			.unwrap().borrow().to_vec(); 
-		let c3= prf_fwd.borrow().get_container("src_loc")
-			.unwrap().borrow().to_vec(); 
+		let e1 = prf_fwd.lock().unwrap().get_container("dst_encoded")
+			.unwrap().lock().unwrap().to_vec(); 
+		let c1= prf_fwd.lock().unwrap().get_container("dst_loc")
+			.unwrap().lock().unwrap().to_vec(); 
+		let c3= prf_fwd.lock().unwrap().get_container("src_loc")
+			.unwrap().lock().unwrap().to_vec(); 
 		let src= encode_2col_var(&e1, &c1);
 		let cs = locs[0].cs();
 		let zero = new_const_var(&cs, F::zero());
@@ -3183,10 +3184,10 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			a * b ).collect::<Vec<FpVar<F>>>();
 
 		//4. verify the two lookups
-		let mtb1=prf_to_add_valid.borrow()
-			.get_container("mtb1").unwrap().borrow().to_vec(); 
-		let mtb2=prf_to_add_valid.borrow()
-			.get_container("mtb2").unwrap().borrow().to_vec(); 
+		let mtb1=prf_to_add_valid.lock().unwrap()
+			.get_container("mtb1").unwrap().lock().unwrap().to_vec(); 
+		let mtb2=prf_to_add_valid.lock().unwrap()
+			.get_container("mtb2").unwrap().lock().unwrap().to_vec(); 
 		assert_logup(cs.clone(), &src_adj, &dst_adj, &mtb1, r1)?;
 		assert_logup(cs.clone(), &dst_adj, &src_adj, &mtb2, r1)?;
 		//no need to check mtb the log up ensures values ok.
@@ -3201,12 +3202,12 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 	/// returns last_loc
 	#[allow(dead_code)]
 	fn validate_fwdprf_valid_prf(&self,
-		prf_fwd: &Rc<RefCell<Container<FpVar<F>>>>,
-		sq_res: &Rc<RefCell<Container<FpVar<F>>>>,
-		pat_loc: &Rc<RefCell<Container<FpVar<F>>>>,
+		prf_fwd: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
+		sq_res: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
+		pat_loc: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
 		r1: &FpVar<F>,
 		_r2: &FpVar<F>,
-		prf_fwdprf_valid: &Rc<RefCell<Container<FpVar<F>>>>,
+		prf_fwdprf_valid: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
 		last_loc: FpVar<F>,
 	)->Result<FpVar<F>, SynthesisError>{
 		//0. retrieve data
@@ -3222,7 +3223,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			"dst_pat", "dst_rg_start", "dst_rg_end",
 			"dst_loc", "dst_pat_id", "diff1", "diff2", "dst_subsig"];
 		let v2d= names.iter().map(|n|{
-			prf_fwd.borrow().get_container(n).unwrap().borrow().to_vec() 
+			prf_fwd.lock().unwrap().get_container(n).unwrap().lock().unwrap().to_vec() 
 		}).collect::<Vec<Vec<FpVar<F>>>>();
 		let (src_encoded, dst_encoded,
 			src_loc, _src_step, 
@@ -3233,8 +3234,8 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 				&v2d[4], &v2d[5], &v2d[6],
 				&v2d[7], &v2d[8], &v2d[9], &v2d[10], &v2d[11]);
 		let sid_cols = names.iter().map(|n|{
-			prf_fwd.borrow().get_container(&format!("sid_{}",n)).unwrap()
-				.borrow().to_vec()
+			prf_fwd.lock().unwrap().get_container(&format!("sid_{}",n)).unwrap()
+				.lock().unwrap().to_vec()
 		}).collect::<Vec<Vec<FpVar<F>>>>();
 		//let frg = new_const_var(&cs, F::from(RANGE2));
 
@@ -3313,15 +3314,15 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		//we just need to validate nsp_p1 and p2_nsp in range
 		//nsp itself is not needed as later it's verified the lookup
 		let pat_cols = ["sorted_key", "sorted_id", "sorted_val"].iter()
-			.map(|n| pat_loc.borrow().get_container(n)
-				.unwrap().borrow().to_vec()
+			.map(|n| pat_loc.lock().unwrap().get_container(n)
+				.unwrap().lock().unwrap().to_vec()
 			).collect::<Vec<Vec<FpVar<F>>>>();
 		let (pat, pat_id, loc) = (&pat_cols[0], &pat_cols[1], &pat_cols[2]); 
 		let _nsp_names = ["nsp", "nsp_p1", "p2_nsp"];
-		//let sid_nsp_p1 = prf_fwdprf_valid.borrow().get_container("sid_nsp_p1")
-		//	.unwrap().borrow().to_vec();
-		//let sid_p2_nsp= prf_fwdprf_valid.borrow().get_container("sid_p2_nsp")
-		//	.unwrap().borrow().to_vec();
+		//let sid_nsp_p1 = prf_fwdprf_valid.lock().unwrap().get_container("sid_nsp_p1")
+		//	.unwrap().lock().unwrap().to_vec();
+		//let sid_p2_nsp= prf_fwdprf_valid.lock().unwrap().get_container("sid_p2_nsp")
+		//	.unwrap().lock().unwrap().to_vec();
 		//CONST can be skipped
 		//check_arr_eq(&sid_nsp_p1, &frg, "err checking sid_nsp_p1")?; 
 		//check_arr_eq(&sid_p2_nsp, &frg, "err checking sid_p2_nsp")?; 
@@ -3329,8 +3330,8 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		//3.2 prove that p1 and p2 are valid pairs in pat_loc
 		let nsp_names = ["nsp", "nsp_p1", "p2_nsp"];
 		let nsp_cols = nsp_names.iter().map(|n|
-				prf_fwdprf_valid.borrow().get_container(n)
-					.unwrap().borrow().to_vec())
+				prf_fwdprf_valid.lock().unwrap().get_container(n)
+					.unwrap().lock().unwrap().to_vec())
 				.collect::<Vec<Vec<FpVar<F>>>>();
 		let (nsp, nsp_p1, p2_nsp) = (&nsp_cols[0], &nsp_cols[1], &nsp_cols[2]);
 		let p1_p2= nsp.iter().zip(nsp_p1.iter().zip(p2_nsp.iter()))
@@ -3348,8 +3349,8 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			],
 			all_pairs
 		].concat();
-		let m_tbl_pair = prf_fwdprf_valid.borrow().get_container("m_tbl_pairs")
-			.unwrap().borrow().to_vec();//no need to check its sid
+		let m_tbl_pair = prf_fwdprf_valid.lock().unwrap().get_container("m_tbl_pairs")
+			.unwrap().lock().unwrap().to_vec();//no need to check its sid
 		assert_logup(cs.clone(), &p1_p2, &all_pairs, &m_tbl_pair, r1)?;
 
 		//3.3. now prove that (dst_loc, dst_pat_id, dst_loc)
@@ -3377,22 +3378,22 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			)
 		}).flatten().collect::<Vec<FpVar<F>>>();
 		let dst_combined = [ dst_combined_1, dst_combined_2 ].concat();
-		let mtb_pat = prf_fwdprf_valid.borrow().get_container("mtb_pat")
-			.unwrap().borrow().to_vec();
+		let mtb_pat = prf_fwdprf_valid.lock().unwrap().get_container("mtb_pat")
+			.unwrap().lock().unwrap().to_vec();
 		//no need to check sid, just check logup
 		assert_logup(cs.clone(), &src_combined, &dst_combined, &mtb_pat, r1)?;
 
 		//4. prove encoded-loc corresponds to res_queue
 		//because ONLY encoded is not RANGE2, the others 
 		//can be combined using f_unit
-		let res_encoded= sq_res.borrow().get_container("encoded")
-			.unwrap().borrow().to_vec();
-		let _res_step= sq_res.borrow().get_container("step")
-			.unwrap().borrow().to_vec();
-		let res_loc = sq_res.borrow().get_container("locs")
-			.unwrap().borrow().to_vec();
-		let sid_res_step= sq_res.borrow().get_container("si_step")
-			.unwrap().borrow().to_vec();
+		let res_encoded= sq_res.lock().unwrap().get_container("encoded")
+			.unwrap().lock().unwrap().to_vec();
+		let _res_step= sq_res.lock().unwrap().get_container("step")
+			.unwrap().lock().unwrap().to_vec();
+		let res_loc = sq_res.lock().unwrap().get_container("locs")
+			.unwrap().lock().unwrap().to_vec();
+		let sid_res_step= sq_res.lock().unwrap().get_container("si_step")
+			.unwrap().lock().unwrap().to_vec();
 
 		let dst_adj= encode_cols_var_adv(&vec![src_encoded.to_vec(), 
 			src_loc.to_vec()], &vec![0,1], &f_unit);
@@ -3414,10 +3415,10 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		let src_adj = src_combined.iter().zip(src_sel.iter()).map(|(a,b)|
 			a * b).collect::<Vec<FpVar<F>>>();
 
-		let mtb_res1 = prf_fwdprf_valid.borrow()
-			.get_container("mtb_res1").unwrap().borrow().to_vec();
-		let mtb_res2 = prf_fwdprf_valid.borrow()
-			.get_container("mtb_res2").unwrap().borrow().to_vec();
+		let mtb_res1 = prf_fwdprf_valid.lock().unwrap()
+			.get_container("mtb_res1").unwrap().lock().unwrap().to_vec();
+		let mtb_res2 = prf_fwdprf_valid.lock().unwrap()
+			.get_container("mtb_res2").unwrap().lock().unwrap().to_vec();
 		//no need to check sid of mtbs.
 		assert_logup(cs.clone(), &src_adj, &dst_adj, &mtb_res1, r1)?;
 		assert_logup(cs.clone(), &dst_adj, &src_adj, &mtb_res2, r1)?;
@@ -3461,12 +3462,12 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 
 		//6. prove the validity of diff1/diff2
 		//6.1 retrieve the data (cost: n)
-		//let sid_abs_rg2_max = prf_fwdprf_valid.borrow()
-		//	.get_container("sid_abs_rg2_max").unwrap().borrow().to_vec();
+		//let sid_abs_rg2_max = prf_fwdprf_valid.lock().unwrap()
+		//	.get_container("sid_abs_rg2_max").unwrap().lock().unwrap().to_vec();
 		//CONST ne noeed to check
 		//check_arr_eq(&sid_abs_rg2_max,&frg,&format!("err abs_sid_rg2_max"))?; 
-		let abs_rg2_max = prf_fwdprf_valid.borrow().get_container("abs_rg2_max")
-				.unwrap().borrow().to_vec();
+		let abs_rg2_max = prf_fwdprf_valid.lock().unwrap().get_container("abs_rg2_max")
+				.unwrap().lock().unwrap().to_vec();
 
 		//6.2 compute the border cases
 		//cost: 4n -> improved to 2n
@@ -3656,7 +3657,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		//1. verify sq_del + sq_res2 = sq_res1
 		//COST: 7*n1
 		let prf = backward_step_q.get_container("prf")?;
-		let prf_union = prf.borrow().get_container("prf_union")?;
+		let prf_union = prf.lock().unwrap().get_container("prf_union")?;
 		self.validate_step_queue_union_prf(&ct_sq_res2, &ct_sq_to_del,
 			&ct_sq_res1, &r1, &r2, &prf_union)?;
 		if b_perf {
@@ -3674,7 +3675,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 
 		//3. validate the sq_to_del covers the entries in prf_bwd
 		// COST: 1.3*n1
-		let prf_to_del= prf.borrow().get_container("prf_to_del")?;
+		let prf_to_del= prf.lock().unwrap().get_container("prf_to_del")?;
 		self.validate_to_del(&ct_sq_to_del, &ct_prf_bwd, 
 			&r1, &prf_to_del)?;
 		if b_perf {
@@ -3684,7 +3685,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 
 		//4. validate the prf_bwd is valid
 		// COST: 16.3*n1 
-		let prf_bwdprf_valid = prf.borrow().get_container("prf_bwdprf_valid")?;
+		let prf_bwdprf_valid = prf.lock().unwrap().get_container("prf_bwdprf_valid")?;
 		self.validate_bwdprf_valid_prf(&ct_prf_bwd, 
 			&ct_sq_res2, &r1, &r2, &prf_bwdprf_valid, last_loc)?;
 		if b_perf {
@@ -3700,32 +3701,32 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 	/// prf (because if there are items missing it only increases prover's cost
 	/// but not affecting soundness).
 	fn validate_to_del(&self,
-		sq_to_del: &Rc<RefCell<Container<FpVar<F>>>>,
-		prf_bwd: &Rc<RefCell<Container<FpVar<F>>>>,
+		sq_to_del: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
+		prf_bwd: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
 		r1: &FpVar<F>,
-		prf_to_del_valid: &Rc<RefCell<Container<FpVar<F>>>>
+		prf_to_del_valid: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>
 	)->Result<(), SynthesisError>{
 		//1. retrieve info from to_del
 		let f_unit = FpVar::<F>::constant(F::from(1u32<<RANGE2_BIT));
-		let encoded = sq_to_del.borrow().get_container("encoded")
-			.unwrap().borrow().to_vec(); 
-		let locs = sq_to_del.borrow().get_container("locs")
-			.unwrap().borrow().to_vec(); 
+		let encoded = sq_to_del.lock().unwrap().get_container("encoded")
+			.unwrap().lock().unwrap().to_vec(); 
+		let locs = sq_to_del.lock().unwrap().get_container("locs")
+			.unwrap().lock().unwrap().to_vec(); 
 		let dst = encode_2col_var_adv(&encoded, &locs, &f_unit); //as loc in rg
 
 		//2. no need to check default loc1 for step 0 (unlike prf_to_add)
 
 		//3. retrieve info from prf_bwd
-		let e1 = prf_bwd.borrow().get_container("prev_encoded")
-			.unwrap().borrow().to_vec(); 
-		let c1= prf_bwd.borrow().get_container("loc_to_del")
-			.unwrap().borrow().to_vec(); 
+		let e1 = prf_bwd.lock().unwrap().get_container("prev_encoded")
+			.unwrap().lock().unwrap().to_vec(); 
+		let c1= prf_bwd.lock().unwrap().get_container("loc_to_del")
+			.unwrap().lock().unwrap().to_vec(); 
 		let cs = locs[0].cs();
 		let src = encode_2col_var_adv(&e1, &c1, &f_unit);
 
 		//4. verify the one-direction lookup
-		let mtb2=prf_to_del_valid.borrow()
-			.get_container("mtb2").unwrap().borrow().to_vec(); 
+		let mtb2=prf_to_del_valid.lock().unwrap()
+			.get_container("mtb2").unwrap().lock().unwrap().to_vec(); 
 		assert_logup(cs.clone(), &dst, &src, &mtb2, r1)?;
 		Ok( () )
 	}
@@ -3733,11 +3734,11 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 	/// Validate that the prf_bwd is wellformed.
 	#[allow(dead_code)]
 	fn validate_bwdprf_valid_prf(&self,
-		prf_bwd: &Rc<RefCell<Container<FpVar<F>>>>,
-		sq_res: &Rc<RefCell<Container<FpVar<F>>>>, //the final sq_res
+		prf_bwd: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
+		sq_res: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>, //the final sq_res
 		r1: &FpVar<F>,
 		r2: &FpVar<F>,
-		prf_bwdprf_valid: &Rc<RefCell<Container<FpVar<F>>>>,
+		prf_bwdprf_valid: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
 		default_min_loc: FpVar<F>, //used as min_loc default
 	)->Result<(), SynthesisError>{
 		//0. retrieve data
@@ -3757,7 +3758,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			"prev_encoded", "loc_to_del", "subsig",
 		];
 		let v2d= names.iter().map(|n|{
-			prf_bwd.borrow().get_container(n).unwrap().borrow().to_vec() 
+			prf_bwd.lock().unwrap().get_container(n).unwrap().lock().unwrap().to_vec() 
 		}).collect::<Vec<Vec<FpVar<F>>>>();
 		let (
 			_src_encoded, _src_step,
@@ -3769,8 +3770,8 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			&v2d[5], &v2d[6], &v2d[7]
 		);
 		let sid_cols = names.iter().map(|n|{
-			prf_bwd.borrow().get_container(&format!("sid_{}",n)).unwrap()
-				.borrow().to_vec()
+			prf_bwd.lock().unwrap().get_container(&format!("sid_{}",n)).unwrap()
+				.lock().unwrap().to_vec()
 		}).collect::<Vec<Vec<FpVar<F>>>>();
 
 		//1.1. check the validity of diff1, diff2 in range
@@ -3837,16 +3838,16 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		// we prove that first the subsig is sorted and then
 		// the step is sorted per subsig.
 		let rescols = vec!["encoded", "step", "locs", "subsig"].iter().map(|n|
-			sq_res.borrow().get_container(n).unwrap().borrow().to_vec()
+			sq_res.lock().unwrap().get_container(n).unwrap().lock().unwrap().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
 		//3.1 prove subsig
 		let diffsubsig = (0..rescols[3].len()-1).into_iter().map(|i|{
 			&rescols[3][i+1] - &rescols[3][i] 
 		}).collect::<Vec<FpVar<F>>>();
-		let saved_diffsubsig = prf_bwdprf_valid.borrow()
-			.get_container("diff_subsig").unwrap().borrow().to_vec();
-		//let sid_diffsubsig= prf_bwdprf_valid.borrow()
-		//	.get_container("sid_diff_subsig").unwrap().borrow().to_vec();
+		let saved_diffsubsig = prf_bwdprf_valid.lock().unwrap()
+			.get_container("diff_subsig").unwrap().lock().unwrap().to_vec();
+		//let sid_diffsubsig= prf_bwdprf_valid.lock().unwrap()
+		//	.get_container("sid_diff_subsig").unwrap().lock().unwrap().to_vec();
 		//constant check can be skipped
 		//check_arr_eq(&sid_diffsubsig, &frg, "err checking sid_diffsubsig")?; 
 		check_arr_eq_arr(&diffsubsig, &saved_diffsubsig, "err checking diffsubsig")?; 
@@ -3863,10 +3864,10 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 				&(&rescols[1][i] - &rescols[1][i-1]) * &sel[i]
 			}
 		}).collect::<Vec<FpVar<F>>>();
-		let saved_diff_step = prf_bwdprf_valid.borrow().get_container("diff_step")
-			.unwrap().borrow().to_vec();
-		//let sid_diff_step= prf_bwdprf_valid.borrow()
-		//	.get_container("sid_diff_step").unwrap().borrow().to_vec();
+		let saved_diff_step = prf_bwdprf_valid.lock().unwrap().get_container("diff_step")
+			.unwrap().lock().unwrap().to_vec();
+		//let sid_diff_step= prf_bwdprf_valid.lock().unwrap()
+		//	.get_container("sid_diff_step").unwrap().lock().unwrap().to_vec();
 		//no need to check constant
 		//check_arr_eq(&sid_diff_step, &frg, "err checking sid_diff_step")?; 
 		check_arr_eq_arr(&diff_step, &saved_diff_step, "err checking diff_step")?; 
@@ -3883,10 +3884,10 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 				&(&rescols[2][i] - &rescols[2][i-1]) * &sel[i]
 			}
 		}).collect::<Vec<FpVar<F>>>();
-		let saved_diff_loc = prf_bwdprf_valid.borrow().get_container("diff_loc")
-			.unwrap().borrow().to_vec();
-		//let sid_diff_loc= prf_bwdprf_valid.borrow()
-		//	.get_container("sid_diff_loc").unwrap().borrow().to_vec();
+		let saved_diff_loc = prf_bwdprf_valid.lock().unwrap().get_container("diff_loc")
+			.unwrap().lock().unwrap().to_vec();
+		//let sid_diff_loc= prf_bwdprf_valid.lock().unwrap()
+		//	.get_container("sid_diff_loc").unwrap().lock().unwrap().to_vec();
 		//no need to check constant
 		//check_arr_eq(&sid_diff_loc, &frg, "err checking sid_diff_loc")?; 
 		check_arr_eq_arr(&diff_loc, &saved_diff_loc, "err checking diff_loc")?; 
@@ -3914,32 +3915,32 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		let names = ["set_bwdprf_ssm_subsig", "set_bwdprf_ssm_step", 
 			"set_bwdprf_ssm_min_loc"];
 		let _set_bwdprf_ssm = names.iter().map(|n|
-			prf_bwdprf_valid.borrow().get_container(n).unwrap()
-			.borrow().to_vec()
+			prf_bwdprf_valid.lock().unwrap().get_container(n).unwrap()
+			.lock().unwrap().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
 
 		//4.2 retrieve set_bwdprf_ssm_default and set_bwdprf_ssm_real. 
 		let names_real = ["set_bwdprf_ssm_real_subsig", 
 			"set_bwdprf_ssm_real_step", "set_bwdprf_ssm_real_min_loc"];
 		let _set_bwdprf_ssm_real = names_real.iter().map(|n|
-			prf_bwdprf_valid.borrow().get_container(n).unwrap()
-			.borrow().to_vec()
+			prf_bwdprf_valid.lock().unwrap().get_container(n).unwrap()
+			.lock().unwrap().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
 
 		let names_def = ["set_bwdprf_ssm_default_subsig", 
 			"set_bwdprf_ssm_default_step", 
 			"set_bwdprf_ssm_default_min_loc"];
 		let _set_bwdprf_ssm_default = names_def.iter().map(|n|
-			prf_bwdprf_valid.borrow().get_container(n).unwrap()
-			.borrow().to_vec()
+			prf_bwdprf_valid.lock().unwrap().get_container(n).unwrap()
+			.lock().unwrap().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
 
 		//4.3: extract set_sqres_ssm from rescols. 
 		let names_sqres = ["set_sqres_ssm_subsig", "set_sqres_ssm_step",
 			"set_sqres_ssm_min_loc"];
 		let _set_sqres_ssm = names_sqres.iter().map(|n|
-			prf_bwdprf_valid.borrow().get_container(n).unwrap()
-			.borrow().to_vec()
+			prf_bwdprf_valid.lock().unwrap().get_container(n).unwrap()
+			.lock().unwrap().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
 
 		// 4.4: debug dump
@@ -4013,7 +4014,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			&_set_bwdprf_ssm[1][..], &_set_bwdprf_ssm[2][..]];
 		let encoded_total = encode_cols_var_adv_better(&cols_total, 
 			&vec![0,1,2], &f_rg2);
-		let prf_disjoint_ssm = prf_bwdprf_valid.borrow()
+		let prf_disjoint_ssm = prf_bwdprf_valid.lock().unwrap()
 			.get_container("prf_disjoint_ssm").unwrap();
 		verify_disjoint_union_prf(&encoded_real, &encoded_def, 
 			&encoded_total, &prf_disjoint_ssm, &r2)?;
@@ -4034,8 +4035,8 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			&_set_sqres_ssm[1][..], &_set_sqres_ssm[2][..]];
 		let combined_dst = encode_cols_var_adv_better(&cols_sqres, 
 			&vec![0,1,2], &f_rg2);
-		let mtbl_bwdprf_sqres = prf_bwdprf_valid.borrow()
-			.get_container("mtbl_bwdprf_sqres").unwrap().borrow().to_vec();
+		let mtbl_bwdprf_sqres = prf_bwdprf_valid.lock().unwrap()
+			.get_container("mtbl_bwdprf_sqres").unwrap().lock().unwrap().to_vec();
 		assert_logup(cs.clone(), &encoded_real, &combined_dst, 
 			&mtbl_bwdprf_sqres, &r2)?;
 
@@ -4045,8 +4046,8 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		let combined_src = encode_cols_var_adv_better(&cols_src, &vec![0,1,2], &f_rg2);
 		let mtbl_bwdprf_coverage = prf_bwdprf_valid
 
-			.borrow().get_container("mtbl_bwdprf_coverage")
-			.unwrap().borrow().to_vec();
+			.lock().unwrap().get_container("mtbl_bwdprf_coverage")
+			.unwrap().lock().unwrap().to_vec();
 		assert_logup(cs.clone(), &combined_src, &encoded_total, &mtbl_bwdprf_coverage, &r2)?;
 
 		//4.5.4 to verify that set_sqres_ssm is THE 
@@ -4158,10 +4159,10 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			//&one - & src_min_loc[i].is_zero().unwrap().into()
 			&one - &is_zero_better(&src_min_loc[i], &cs).unwrap()
 		).collect::<Vec<FpVar<F>>>();
-		let saved_diff_loc = prf_bwdprf_valid.borrow().get_container("diff_min")
-			.unwrap().borrow().to_vec();
-		//let sid_saved_diff_loc = prf_bwdprf_valid.borrow()
-		//	.get_container("sid_diff_min").unwrap().borrow().to_vec();
+		let saved_diff_loc = prf_bwdprf_valid.lock().unwrap().get_container("diff_min")
+			.unwrap().lock().unwrap().to_vec();
+		//let sid_saved_diff_loc = prf_bwdprf_valid.lock().unwrap()
+		//	.get_container("sid_diff_min").unwrap().lock().unwrap().to_vec();
 		let sum= (0..src_rg_end.len()).into_iter().map(|i|
 			&sel[i]*(&saved_diff_loc[i] + 
 				(&loc_to_del[i] + &src_rg_end[i] + &one) - &src_min_loc[i])
@@ -4181,7 +4182,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for DischargeAdvGadget<F>{
 
 	/// set the container cfg. This is only needed for those gadgets
 	/// in SED approach
-	fn set_container_cfg(&mut self, cfgs_context: Rc<Vec<ContainerConfig>>, idx: usize){
+	fn set_container_cfg(&mut self, cfgs_context: std::sync::Arc<Vec<ContainerConfig>>, idx: usize){
 		self.cfgs_context = Some(cfgs_context);
 		self.my_idx_in_context = Some(idx);
 	}
@@ -4273,7 +4274,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for DischargeAdvGadget<F>{
 			else {"fsm_adv_stmt_cs"};
 		let locs = prev_stmt.search_container(&format!("{} fsm_acc locs", 
 			sname_fsm))?
-			.borrow().to_vec();
+			.lock().unwrap().to_vec();
 		let last_loc = locs[locs.len()-1].clone();
 		let default_min_loc = &last_loc + &new_const_var(&cs, F::one());
 		t9901.stop();
@@ -4283,14 +4284,14 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for DischargeAdvGadget<F>{
 		// COST: 59*n1
 		let forward_step_queue= stmt.get_container("fwd_steps_queue")?;
 		let default_min_loc= self.validate_forward_step_queue(
-			&forward_step_queue.borrow(), r1.clone(), r2.clone(), 
+			&forward_step_queue.lock().unwrap(), r1.clone(), r2.clone(), 
 			cs.clone(), default_min_loc)?;
 
 		//4. validate the backward step queue
 		// COST: 24.5*n1
 		let backward_step_queue= stmt.get_container("bwd_steps_queue")?;
-		self.validate_backward_step_queue(&forward_step_queue.borrow(), 
-			&backward_step_queue.borrow(),
+		self.validate_backward_step_queue(&forward_step_queue.lock().unwrap(), 
+			&backward_step_queue.lock().unwrap(),
 			r1.clone(), r2.clone(), cs.clone(), default_min_loc)?;
 
 		let b_perf = false;
@@ -4313,7 +4314,7 @@ fn dummy_test<F:PrimeField + ColEle>(){
 #[cfg(test)]
 pub mod tests_discharge_adv_gadget{
 	use ark_ff::{Zero};
-	use std::{rc::Rc};
+	use std::{sync::Arc};
 	use ark_bn254::{Fr};
 	use ark_relations::r1cs::{ConstraintSystem};
 	use ark_r1cs_std::fields::fp::FpVar;
@@ -4475,11 +4476,11 @@ pub mod tests_discharge_adv_gadget{
 			let adv_wea = WordExtractAdvAdvice::new(&word, act_size,false)
 				.expect("word_extract_adv err");
 			let stmt_wea = adv_wea.stmt_container;
-			let cfg_wea = stmt_wea.borrow().get_cfg(); 
+			let cfg_wea = stmt_wea.lock().unwrap().get_cfg(); 
 
 			//2.2 the fsm_adv (SED approach)
-			let nibbles = stmt_wea.borrow().get_container("nibbles").unwrap()
-				.borrow().to_vec();
+			let nibbles = stmt_wea.lock().unwrap().get_container("nibbles").unwrap()
+				.lock().unwrap().to_vec();
 			assert!(nibbles.len()==nibble_len);
 
 			let adv_faa = FsmAdvAdvice::new(b_igc, //case sensitive,
@@ -4489,18 +4490,18 @@ pub mod tests_discharge_adv_gadget{
 				&bundle.vec_subsig_stores[store_id])
 					.expect("fsm_adv advice err"); 
 			let stmt_faa = adv_faa.stmt_container;
-			let cfg_faa = stmt_faa.borrow().get_cfg(); 
+			let cfg_faa = stmt_faa.lock().unwrap().get_cfg(); 
 
 			//2.3 the discharge_adv
 			let sname_fsm = if b_igc {"fsm_adv_stmt_igc"} 
 				else {"fsm_adv_stmt_cs"};
-			let pat_loc = stmt_faa.borrow().search_container(
+			let pat_loc = stmt_faa.lock().unwrap().search_container(
 				&format!("{} packed_trace pat_loc sorted_tbl", sname_fsm))
 				.unwrap();
-			let locs = stmt_faa.borrow()
+			let locs = stmt_faa.lock().unwrap()
 				.search_container(&format!("{} fsm_acc locs", sname_fsm))
 				.unwrap()
-				.borrow().to_vec();
+				.lock().unwrap().to_vec();
 			let last_loc = locs[locs.len()-1];
 			let adv_disc= DischargeAdvAdvice::new(false, //case sensitive
 				1, //offset to fsm
@@ -4509,7 +4510,7 @@ pub mod tests_discharge_adv_gadget{
 				i)
 					.expect("discharge_adv advice err");			let oup_queue = adv_disc.get_output_steps_queue();
 			let stmt_disc= adv_disc.stmt_container;
-			let cfg_disc= stmt_disc.borrow().get_cfg(); 
+			let cfg_disc= stmt_disc.lock().unwrap().get_cfg(); 
 
 
 			//2.4 given cfgs, set up the positions
@@ -4518,9 +4519,9 @@ pub mod tests_discharge_adv_gadget{
 
 			//2.6. generate the 7 segments of output for building statment
 			//from inp to si_data
-			let cps1 = stmt_wea.borrow().gen_stmt_components();
-			let cps2 = stmt_faa.borrow().gen_stmt_components();
-			let cps3 = stmt_disc.borrow().gen_stmt_components();
+			let cps1 = stmt_wea.lock().unwrap().gen_stmt_components();
+			let cps2 = stmt_faa.lock().unwrap().gen_stmt_components();
+			let cps3 = stmt_disc.lock().unwrap().gen_stmt_components();
 
 			let cps = cps1.0.into_iter().zip(cps2.0.into_iter()).map(|(a,b)|
 				vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();			let cps = cps.into_iter().zip(cps3.0.into_iter()).map(|(a,b)|
@@ -4536,7 +4537,7 @@ pub mod tests_discharge_adv_gadget{
 			);
 			dcg.set_container_cfg(vec_cfg.clone().into(),2);  //2 for
 															// it's the 3rd cfg
-			let rg = Rc::new(dcg);
+			let rg = Arc::new(dcg);
 
 			//3. test it
 			test_gadget_adv::<Fr>(rg, &word, &cps[0], &cps[1], &cps[2],
@@ -4551,16 +4552,16 @@ pub mod tests_discharge_adv_gadget{
 			);
 
 			//4. reset the inputs for the next cycle
-			let states = stmt_faa.borrow()
+			let states = stmt_faa.lock().unwrap()
 				.search_container(&format!("{} fsm_acc states", sname_fsm))
 				.expect("no states")
-				.borrow().to_vec();
+				.lock().unwrap().to_vec();
 			inp_state = states[states.len()-1];
-			let locs = stmt_faa.borrow()
+			let locs = stmt_faa.lock().unwrap()
 				.search_container(&format!("{} fsm_acc locs", 
 					sname_fsm))
 				.expect("no locs")
-				.borrow().to_vec();
+				.lock().unwrap().to_vec();
 			inp_loc = locs[locs.len()-1];
 			inp_steps_queue = StepQueue::parse_from(&oup_queue, 
 				StepQueueType::ResSmall,
@@ -4674,9 +4675,9 @@ pub mod tests_discharge_adv_gadget{
 			q_type: StepQueueType::ResSmall, b_igc};
 		let ct = sq.to_container("ct", true, false, false, true, &steps_info)
 			.expect("ct err");
-		let pat = ct.borrow().get_container("encoded")
-			.unwrap().borrow().to_vec();
-		let loc = ct.borrow().get_container("locs").unwrap().borrow().to_vec();
+		let pat = ct.lock().unwrap().get_container("encoded")
+			.unwrap().lock().unwrap().to_vec();
+		let loc = ct.lock().unwrap().get_container("locs").unwrap().lock().unwrap().to_vec();
 		let vec = vec![pat, loc].concat();
 		let sq2 = StepQueue::parse_from(&vec, StepQueueType::ResSmall,
 			&capacity, b_igc);
@@ -4711,13 +4712,13 @@ pub mod tests_discharge_adv_gadget{
 			(40,2,73),
 			(40,3,max),
 		];
-		pat_loc.borrow_mut().add_col(Col::new(
+		pat_loc.lock().unwrap().add_col(Col::new(
 			to_vf(pat_tuples.iter().map(|t| t.0).collect::<Vec<_>>()),
 				"sorted_key", IDX_DATA)); 
-		pat_loc.borrow_mut().add_col(Col::new(
+		pat_loc.lock().unwrap().add_col(Col::new(
 			to_vf(pat_tuples.iter().map(|t| t.1).collect::<Vec<_>>()),
 				"sorted_id", IDX_DATA)); 
-		pat_loc.borrow_mut().add_col(Col::new(
+		pat_loc.lock().unwrap().add_col(Col::new(
 			to_vf(pat_tuples.iter().map(|t| t.2).collect::<Vec<_>>()),
 		   		 "sorted_val", IDX_DATA)); 
 		let (to_add, res, prf) = sq.gen_forward_prf(&pat_loc, &steps_info);
@@ -4963,11 +4964,11 @@ pub mod tests_discharge_adv_gadget{
 		let r2 = new_var(&cs, Fr::from(67890u32));
 
 		let prf_bwd_var = Container::<FpVar<Fr>>
-			::rc_from(&prf_bwd.borrow(), cs.clone());
+			::rc_from(&prf_bwd.lock().unwrap(), cs.clone());
 		let ct_sq_res2_var = Container::<FpVar<Fr>>
-			::rc_from(&ct_sq_res2.borrow(), cs.clone());
+			::rc_from(&ct_sq_res2.lock().unwrap(), cs.clone());
 		let prf_bwdprf_valid_var = Container::<FpVar<Fr>>
-			::rc_from(&_prf_bwdprf_valid.borrow(), 
+			::rc_from(&_prf_bwdprf_valid.lock().unwrap(), 
 				cs.clone());
 		let last_loc_var = new_var(&cs, last_loc);
 
@@ -4977,7 +4978,7 @@ pub mod tests_discharge_adv_gadget{
 		// create the discharge_adv component
 		let sname_faa = if b_igc {"fsm_adv_stmt_igc"} else {"fsm_adv_stmt_cs"};
 		let stmt_wea = Container::<Fr>::new("word_extract_adv_stmt");
-		stmt_wea.borrow_mut().add_col(Col::<Fr>::new(vec![Fr::zero(); 62], 
+		stmt_wea.lock().unwrap().add_col(Col::<Fr>::new(vec![Fr::zero(); 62], 
 			"nibbles", IDX_DATA));
 
 		let stmt_faa = Container::<Fr>::new(sname_faa);
@@ -4988,26 +4989,26 @@ pub mod tests_discharge_adv_gadget{
 		let zcol = vec![Fr::zero(); 1];
 		let scol = vec![Fr::from(RANGE2); 1];
 
-		sorted_tbl.borrow_mut().add_col(Col::<Fr>::new(zcol.clone(), 
+		sorted_tbl.lock().unwrap().add_col(Col::<Fr>::new(zcol.clone(), 
 			"sorted_key", IDX_DATA));
-		sorted_tbl.borrow_mut().add_col(Col::<Fr>::new(zcol.clone(), 
+		sorted_tbl.lock().unwrap().add_col(Col::<Fr>::new(zcol.clone(), 
 			"sorted_id", IDX_DATA));
-		sorted_tbl.borrow_mut().add_col(Col::<Fr>::new(zcol.clone(), 
+		sorted_tbl.lock().unwrap().add_col(Col::<Fr>::new(zcol.clone(), 
 			"sorted_val", IDX_DATA));
-		sorted_tbl.borrow_mut().add_col(Col::<Fr>::new_const(scol.clone(), 
+		sorted_tbl.lock().unwrap().add_col(Col::<Fr>::new_const(scol.clone(), 
 			"sid_sorted_key", IDX_SI_DATA));
-		sorted_tbl.borrow_mut().add_col(Col::<Fr>::new_const(scol.clone(), 
+		sorted_tbl.lock().unwrap().add_col(Col::<Fr>::new_const(scol.clone(), 
 			"sid_sorted_id", IDX_SI_DATA));
-		sorted_tbl.borrow_mut().add_col(Col::<Fr>::new_const(scol, 
+		sorted_tbl.lock().unwrap().add_col(Col::<Fr>::new_const(scol, 
 			"sid_sorted_val", IDX_SI_DATA));
 
-		pat_loc_tbl.borrow_mut().add_container(sorted_tbl);
-		packed_trace.borrow_mut().add_container(pat_loc_tbl);
-		stmt_faa.borrow_mut().add_container(packed_trace);
+		pat_loc_tbl.lock().unwrap().add_container(sorted_tbl);
+		packed_trace.lock().unwrap().add_container(pat_loc_tbl);
+		stmt_faa.lock().unwrap().add_container(packed_trace);
 
 		//6.3 create the discharge adv component
-		let cfg_wea = stmt_wea.borrow().get_cfg();
-		let cfg_faa = stmt_faa.borrow().get_cfg();
+		let cfg_wea = stmt_wea.lock().unwrap().get_cfg();
+		let cfg_faa = stmt_faa.lock().unwrap().get_cfg();
 
 		let store_id = 0;//0 for all
 		let fsm_id = ClamavDB::<Fr>::pm_acdfa_id(store_id, b_igc);

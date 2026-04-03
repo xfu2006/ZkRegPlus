@@ -3,7 +3,6 @@
 */
 
 use folding_schemes::folding::foldpot::container_config::ColEle;
-use std::rc::{Rc};
 use ark_ff::{PrimeField};
 use std::marker::{PhantomData};
 use folding_schemes::{
@@ -69,7 +68,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for FsmGadget<F>{
 
 	/// set the container cfg. This is only needed for those gadgets
 	/// in SED approach
-	fn set_container_cfg(&mut self, _cfgs_context: Rc<Vec<ContainerConfig>>, _idx: usize){
+	fn set_container_cfg(&mut self, _cfgs_context: std::sync::Arc<Vec<ContainerConfig>>, _idx: usize){
 		unimplemented!("not needed. handled by legacy code");
 	}
 
@@ -361,7 +360,7 @@ impl <F: PrimeField + ColEle> FsmAdvice<F>{
 
 #[cfg(test)]
 pub mod tests_fsm_gadget{
-	use std::{rc::Rc};
+	use std::{sync::Arc};
 	use ark_bn254::{Fr};
 	use crate::gadgets::fsm::{FsmGadget,FsmAdvice};
 	use utils::data::{rand_fe_by_bits};
@@ -382,7 +381,7 @@ pub mod tests_fsm_gadget{
 		let f_states_id = Fr::from(msf_id + 6);
 		let f_trans_id = Fr::from(msf_id + 3);
 		let gadget= FsmGadget::<Fr>::new(nibble_len, msf_id, state_bits);
-		let rg = Rc::new(gadget);
+		let rg = Arc::new(gadget);
 
 		let patterns = vec!["abc", "cba", "1234567890abcdef"].
 			iter().map(|s| {String::from(*s)}).collect();

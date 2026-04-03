@@ -1,3 +1,4 @@
+use std::sync::{Arc, Mutex};
 /* Created 01/23/2025
    Show an example how foldpot framework works
 */
@@ -13,10 +14,9 @@ use folding_schemes::folding::foldpot::{
 	},
 	container_config::ContainerConfig,
 	utils::{Timer,expand2},
-	driver::{foldpot_main},
+	driver::{foldpot_main, FoldPotJob},
 	circuits_super::{field_to_usize},
 };
-use std::{rc::Rc, cell::RefCell, sync::Arc};
 use ark_groth16::Groth16;
 use ark_ff::{PrimeField};
 use ark_std::marker::PhantomData;
@@ -76,7 +76,7 @@ impl <F:PrimeField> SigmaGadget<F> for SumGadget<F>{
 
 	/// set the container cfg. This is only needed for those gadgets
 	/// in SED approach
-	fn set_container_cfg(&mut self,_cfg: Rc<Vec<ContainerConfig>>,_idx: usize){
+	fn set_container_cfg(&mut self,_cfg: Arc<Vec<ContainerConfig>>,_idx: usize){
 		unimplemented!("not needed. handled by legacy code");
 	}
 
@@ -187,29 +187,29 @@ GadgetMapper<F,LK> for SumMapper<F, LK>{
 	/// each gadget (if gadgetes support container config for
 	/// deseiralization). This is only needed for those gadgets in SED
 	/// approach.
-	fn set_container_config(&mut self, _advice: &Rc<dyn NdAdvice>){ 
+	fn set_container_config(&mut self, _advice: &Arc<dyn NdAdvice + Send + Sync>){ 
 		//not needed, handled by legacy code
 	}
 
 	/// the capacity is the word length that can be handled by
 	/// the circuit
-	fn get_capacity(&self)->Rc<dyn Capacity>{
+	fn get_capacity(&self)->Arc<dyn Capacity + Send + Sync>{
 		let word_seg_len = self.max_word_len();
-		Rc::new(DummyCapacity{word_seg_len})
+		Arc::new(DummyCapacity{word_seg_len})
 	}
 
 	/// given a vector of circuits' gadget mapper, given a word
 	/// return the (steps, Vec<pci>, ND_Advice object)
 	fn gen_nd_advice(&self, word: &Vec<F>, _word_info: &WordInfo,
-		_prev_adv: Option<Rc<dyn NdAdvice>>, _seg_id: usize) 
-		-> Result<Rc<dyn NdAdvice>, Error>{
+		_prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>>, _seg_id: usize) 
+		-> Result<Arc<dyn NdAdvice + Send + Sync>, Error>{
 
 			if word.len()<=self.max_word_len(){
 				let w0_val = field_to_usize(&word[0]);
 				if (w0_val%2==1) != self.b_odd { 
 					Err(Error::CapErr(vec![(format!("odderr"),word.len())]))
 				}else{
-					Ok( Rc::new(DummyNdAdvice{}))
+					Ok( Arc::new(DummyNdAdvice{}))
 				}
 			}else{
 				Err(Error::CapErr(vec![(format!("wlen"),word.len())]))
@@ -224,10 +224,10 @@ GadgetMapper<F,LK> for SumMapper<F, LK>{
 		if self.b_odd {1} else {2} 
 	}
 
-	fn get_gadgets(&self) -> Vec<Rc<RefCell<dyn SigmaGadget<F>>>>{ 
+	fn get_gadgets(&self) -> Vec<Arc<Mutex<dyn SigmaGadget<F> + Send + Sync>>>{ 
 		let gadget = if self.b_odd {SumGadget::<F>{_f: PhantomData, n: 1}}
 			else {SumGadget::<F>{_f: PhantomData, n:2}};
-		vec![Rc::new(RefCell::new(gadget))]
+		vec![Arc::new(Mutex::new(gadget))]
 	}
 
 	/// expecting [x_1] or [x_1, x_2], depending on if
@@ -236,7 +236,7 @@ GadgetMapper<F,LK> for SumMapper<F, LK>{
 	/// This is for testing the "best fit" circ in multiple non-uniform
 	/// circ environment in supernova.
 	fn build_statement(&self, word: &Vec<F>, prev_wit: &Option<StatementInst<F,LK>>, lkup: Arc<LK>, ea: &StatementExtraInfo<F>, 
-	_adv: Rc<dyn NdAdvice>, _lkup_share_size: usize, _b_dummy: bool) 
+	_adv: Arc<dyn NdAdvice + Send + Sync>, _lkup_share_size: usize, _b_dummy: bool) 
 	-> Result<StatementInst<F,LK>, Error>{
 		//1. making check on odd/even case
 		assert!(word.len()>=1);
@@ -404,8 +404,8 @@ fn main(){
 	let poseidon_config = poseidon_canonical_config::<Fr>();
 	let lk_share_size = 4; //does not matter, will be adjusted in driver 
 	let vec_circ = vec![
-		vec![	SigmaIR1CS_Inst::<Fr,C1,CS1,LK,GM,H>::new_adv("oddsum".to_string(), poseidon_config.clone(), Rc::new(RefCell::new(odd_mapper)), false, lk_share_size, false, true).unwrap()],
-		vec![SigmaIR1CS_Inst::<Fr,C1,CS1,LK,GM,H>::new_adv("evensum".to_string(), poseidon_config.clone(), Rc::new(RefCell::new(even_mapper)), false, lk_share_size, false, true).unwrap()]];
+		vec![	SigmaIR1CS_Inst::<Fr,C1,CS1,LK,GM,H>::new_adv("oddsum".to_string(), poseidon_config.clone(), Arc::new(Mutex::new(odd_mapper)), false, lk_share_size, false, true).unwrap()],
+		vec![SigmaIR1CS_Inst::<Fr,C1,CS1,LK,GM,H>::new_adv("evensum".to_string(), poseidon_config.clone(), Arc::new(Mutex::new(even_mapper)), false, lk_share_size, false, true).unwrap()]];
 	let _n_circs = vec_circ.len();
 	t1.prt("Step 0. setup sigma_ir1cs odd/eve sum instance");
 
@@ -416,7 +416,7 @@ fn main(){
 	let _num_steps = 2; //will change
 	let vec_words= vec![
 		vec![Fr::from(1), Fr::from(2), Fr::from(100)],
-		vec![Fr::from(4), Fr::from(2), From::from(2)]
+		vec![Fr::from(4), Fr::from(2), Fr::from(2)]
 	];
 	let vec_word_fnames = vec![
 		format!("a1.txt"),
@@ -424,5 +424,11 @@ fn main(){
 	];
 	let vec_word_info = vec![WordInfo::dummy(); vec_words.len()];
 	let sample_individual_prf = 1; //generate individual proof 1
-	foldpot_main::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,FC,S,LK,GM,false>(lkup, vec_circ, vec_words, vec_word_info, sample_individual_prf, vec_word_fnames).expect("err foldpot");
+	let jobs = vec![FoldPotJob{
+		vec_words,
+		vec_word_info,
+		vec_word_fnames,
+		idx_individual_prf: sample_individual_prf,
+	}];
+	foldpot_main::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,FC,S,LK,GM,false>(lkup, vec_circ, jobs).expect("err foldpot");
 }

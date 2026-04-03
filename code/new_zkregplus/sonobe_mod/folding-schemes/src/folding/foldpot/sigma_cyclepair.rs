@@ -1,8 +1,7 @@
-use std::sync::Arc;
+use std::{sync::{Arc, Mutex}, fmt::Debug};
 /* Created 10/02/2024, Revised 10/15/2024 */
 
 
-use std::{rc::Rc, cell::RefCell,fmt::Debug};
 use core::marker::PhantomData;
 use crate::commitment::CommitmentScheme;
 use crate::{
@@ -105,7 +104,7 @@ impl <F:PrimeField + Absorb> SigmaGadget<F> for FoldPairGadget<F>{
 
 	/// set the container cfg. This is only needed for those gadgets
 	/// in SED approach
-	fn set_container_cfg(&mut self, _cfgs_context: Rc<Vec<ContainerConfig>>, _idx: usize){
+	fn set_container_cfg(&mut self, _cfgs_context: Arc<Vec<ContainerConfig>>, _idx: usize){
 		unimplemented!("not needed. handled by legacy code");
 	}
 
@@ -206,19 +205,19 @@ GadgetMapper<F,LK> for FoldPairMapper<F, LK>{
 	/// each gadget (if gadgetes support container config for
 	/// deseiralization). This is only needed for those gadgets in SED
 	/// approach.
-	fn set_container_config(&mut self, _advice: &Rc<dyn NdAdvice>){ 
+	fn set_container_config(&mut self, _advice: &Arc<dyn NdAdvice + Send + Sync>){ 
 		//not needed, handled by legacy code
 	}
 
-	fn get_capacity(&self) -> Rc<dyn Capacity>{
-		Rc::new(DummyCapacity{word_seg_len: self.max_word_len()})
+	fn get_capacity(&self) -> Arc<dyn Capacity + Send + Sync>{
+		Arc::new(DummyCapacity{word_seg_len: self.max_word_len()})
 	}
 
 	fn gen_nd_advice(&self, word: &Vec<F>, _wi: &WordInfo,
-		_prev_adv: Option<Rc<dyn NdAdvice>>, _seg_id: usize) 
-		-> Result<Rc<dyn NdAdvice>, Error>{
+		_prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>>, _seg_id: usize) 
+		-> Result<Arc<dyn NdAdvice + Send + Sync>, Error>{
 		if word.len()<=self.max_word_len(){
-			Ok( Rc::new(DummyNdAdvice{}) )
+			Ok( Arc::new(DummyNdAdvice{}) )
 		}else{
 			Err(Error::CapErr(vec![(format!("max_word_len"), word.len())]))
 		}
@@ -231,12 +230,12 @@ GadgetMapper<F,LK> for FoldPairMapper<F, LK>{
 	/// total: 164 Fr elements
 	fn max_word_len(&self)->usize{ 164 }
 
-	fn get_gadgets(&self) -> Vec<Rc<RefCell<dyn SigmaGadget<F>>>>{ 
+	fn get_gadgets(&self) -> Vec<Arc<Mutex<dyn SigmaGadget<F> + Send + Sync>>>{ 
 		let f_gadget= FoldPairGadget::<F>{
 			_f:PhantomData, 
 			poseidon_config: self.poseidon_config.clone()
 		};
-		vec![Rc::new(RefCell::new(f_gadget))]
+		vec![Arc::new(Mutex::new(f_gadget))]
 	}
 
 	/// expecting full statement (constructed by the caller):
@@ -247,7 +246,7 @@ GadgetMapper<F,LK> for FoldPairMapper<F, LK>{
 	/// word: a and b (size 8*5 = 40 Fr)
 	/// [gt1, a, b, gt2] 160Fr maps to zi_inp.cyclepair_input
 	/// We do not rely on prev_stmt
-	fn build_statement(&self, word: &Vec<F>, _prev_stmt: &Option<StatementInst<F,LK>>, _lkup: Arc<LK>, ea: &StatementExtraInfo<F>, _advice: Rc<dyn NdAdvice>, _lkup_size: usize, _b_dummy: bool) -> Result<StatementInst<F,LK>, Error>{
+	fn build_statement(&self, word: &Vec<F>, _prev_stmt: &Option<StatementInst<F,LK>>, _lkup: Arc<LK>, ea: &StatementExtraInfo<F>, _advice: Arc<dyn NdAdvice + Send + Sync>, _lkup_size: usize, _b_dummy: bool) -> Result<StatementInst<F,LK>, Error>{
 		//1. retrieve the information
 		assert!(word.len()==164);
 		let gt1 = word[0..12*5].to_vec();
@@ -376,7 +375,7 @@ where 	C: CurveGroup<ScalarField=F>,
 	let mapper = FoldPairMapper::<F,LK>{_f: PhantomData, _lk: PhantomData, poseidon_config: poseidon_config.clone()};
 	let lkup_share_size = 0;
 	let b_check_lkup = true;
-	let mut sigma = SigmaIR1CS_Inst::<F, C, CS, LK, FoldPairMapper<F,LK>, H>::new_adv("paircycle".to_string(), poseidon_config.clone(), Rc::new(RefCell::new(mapper)), true, lkup_share_size, true, b_check_lkup).expect("error new sigma"); 
+	let mut sigma = SigmaIR1CS_Inst::<F, C, CS, LK, FoldPairMapper<F,LK>, H>::new_adv("paircycle".to_string(), poseidon_config.clone(), Arc::new(Mutex::new(mapper)), true, lkup_share_size, true, b_check_lkup).expect("error new sigma"); 
 	//set true for b_cyclepair 
 
 	//2. set up a dummy external input (witness) 
@@ -416,9 +415,9 @@ where 	C: CurveGroup<ScalarField=F>,
 	]);
 	let lkup = Arc::new(lk);
 
-	let dummy_adv = Rc::new(DummyNdAdvice{});
+	let dummy_adv = Arc::new(DummyNdAdvice{});
 	let lkup_share_size = 4;
-	let stmt_vec =sigma.get_mapper().borrow()
+	let stmt_vec =sigma.get_mapper().lock().unwrap()
 		.build_statement(&dummy_input, &None, lkup, &ea, dummy_adv, lkup_share_size, false).unwrap().to_vec();
 	sigma.dummy_stmt = Some(stmt_vec);
 
@@ -546,9 +545,9 @@ pub mod tests_sigma_cyclepair{
 
 		let inp = vec![vec_gt1, vec_a, vec_b, vec_gt2, 
 			vec![hc_a_in, hc_b_in, hc_a_out, hc_b_out]].concat();
-		let dummy_adv = Rc::new(DummyNdAdvice{});
+		let dummy_adv = Arc::new(DummyNdAdvice{});
 		let lkup_share_size = 4;
-		let stmt = mapper.borrow().build_statement(&inp, &None, lkup,&ea, dummy_adv, lkup_share_size, false).unwrap();
+		let stmt = mapper.lock().unwrap().build_statement(&inp, &None, lkup,&ea, dummy_adv, lkup_share_size, false).unwrap();
 
 		let fq_bits = Fq::MODULUS_BIT_SIZE as usize;
 		let b_full = true;

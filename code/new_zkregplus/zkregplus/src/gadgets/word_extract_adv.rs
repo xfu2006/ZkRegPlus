@@ -1,3 +1,4 @@
+use std::sync::{Arc};
 /* Created 03/26/2025, 
    Completed: 04/02/2025 
 	Revised 4: 01/09/2026 (improve exception handling for capacity)
@@ -11,7 +12,6 @@
 use folding_schemes::folding::foldpot::container_config::ColEle;
 use ark_r1cs_std::R1CSVar;
 use rayon::{ iter::{ParallelIterator,IntoParallelIterator,IntoParallelRefIterator} };
-use std::{rc::{Rc},cell::{RefCell}};
 use ark_ff::{PrimeField};
 use std::marker::{PhantomData};
 use folding_schemes::{
@@ -55,7 +55,7 @@ pub struct WordExtractAdvCapacity{
 #[derive(Clone,Debug)]
 pub struct WordExtractAdvAdvice<F:PrimeField + ColEle>{
 	/// the container object which is serialized to vector of stmt.
-	pub stmt_container: Rc<RefCell<Container<F>>>,
+	pub stmt_container: std::sync::Arc<std::sync::Mutex<Container<F>>>,
 }
 
 /// This gadget is responsible for extract a word (248-bit)
@@ -70,7 +70,7 @@ pub struct WordExtractAdvGadget<F:PrimeField + ColEle>{
 	pub capacity: WordExtractAdvCapacity,
 	
 	// will be set when set_container_cfg is called
-	pub cfgs_context: Option<Rc<Vec<ContainerConfig>>>,
+	pub cfgs_context: Option<std::sync::Arc<Vec<ContainerConfig>>>,
 	// dummy_cfg is used when cfgs_context is not ready yet
 	pub dummy_cfg: ContainerConfig,
 	pub my_idx_in_context: Option<usize>,
@@ -86,7 +86,7 @@ impl Capacity for WordExtractAdvCapacity{
 	/// Self represents the capacity of the circuit, other
 	/// represents the capacity requirement of a discharge proof (NdAdvice)
 	/// It is essentially a comparison operation.
-	fn can_satisfy(&self, r_other: &Rc<dyn Capacity>) -> bool{
+	fn can_satisfy(&self, r_other: &Arc<dyn Capacity + Send + Sync>) -> bool{
 		let other = r_other.as_any().downcast_ref::<WordExtractAdvCapacity>()
 			.expect("downcast err"); 
 
@@ -95,9 +95,9 @@ impl Capacity for WordExtractAdvCapacity{
 	}
 
 	/// to get around the requirement on Clone trait which require Sized
-	/// (which cause trouble why use dyn Capacity in Rc),
-	fn clone(&self) -> Rc<dyn Capacity>{
-		Rc::new(WordExtractAdvCapacity{
+	/// (which cause trouble why use dyn Capacity + Send + Sync in Rc),
+	fn clone(&self) -> Arc<dyn Capacity + Send + Sync>{
+		Arc::new(WordExtractAdvCapacity{
 			max_word_len: self.max_word_len,
 		})
 	}
@@ -139,9 +139,9 @@ impl <F: PrimeField + ColEle> WordExtractAdvAdvice<F>{
 			vec![F::zero()], "si_act_size",
 			IDX_SI_DATA
 		); //as it's zero no need to check actually
-		stmt_container.borrow_mut().add_col(col_word);
-		stmt_container.borrow_mut().add_col(col_act_size);
-		stmt_container.borrow_mut().add_col(col_si_act_size);
+		stmt_container.lock().unwrap().add_col(col_word);
+		stmt_container.lock().unwrap().add_col(col_act_size);
+		stmt_container.lock().unwrap().add_col(col_si_act_size);
 
 		//2. do the conversion
 		let nibbles = packed_to_nibbles(&word);
@@ -176,10 +176,10 @@ impl <F: PrimeField + ColEle> WordExtractAdvAdvice<F>{
 		};
 		//conditional add two extra columns only when in b_map_char
 		if b_map_char{
-			stmt_container.borrow_mut().add_col(
+			stmt_container.lock().unwrap().add_col(
 				Col::<F>::new(nibbles.clone(), "nibbles_copy", IDX_DATA)
 			);
-			stmt_container.borrow_mut().add_col(
+			stmt_container.lock().unwrap().add_col(
 				Col::<F>::new_const(
 					vec![F::from(CHAR);nlen],"si_nibbles_copy",
 					IDX_SI_DATA)
@@ -189,8 +189,8 @@ impl <F: PrimeField + ColEle> WordExtractAdvAdvice<F>{
 		let col_nibbles= Col::<F>::new(nibbles, "nibbles", IDX_DATA);
 
 		//the following are regular columns	
-		stmt_container.borrow_mut().add_col(col_nibbles);
-		stmt_container.borrow_mut().add_col(col_si_nibbles);
+		stmt_container.lock().unwrap().add_col(col_nibbles);
+		stmt_container.lock().unwrap().add_col(col_si_nibbles);
 
 		//will always be successful no resource issue
 		Ok(Self{stmt_container})
@@ -198,7 +198,7 @@ impl <F: PrimeField + ColEle> WordExtractAdvAdvice<F>{
 }
 
 impl <F: PrimeField + ColEle> ComponentAdvice<F> for WordExtractAdvAdvice<F>{
-	fn get_container(&self)->Rc<RefCell<Container<F>>>{
+	fn get_container(&self)->std::sync::Arc<std::sync::Mutex<Container<F>>>{
 		self.stmt_container.clone()
 	}
 }
@@ -216,7 +216,7 @@ impl <F:PrimeField + ColEle> WordExtractAdvGadget<F>{
 		let dummy_wd = vec![F::zero(); max_word_len];
 		let dummy_adv = WordExtractAdvAdvice::new(&dummy_wd, max_word_len,
 			b_map_char).unwrap();
-		let mut vec_cfg = vec![dummy_adv.stmt_container.borrow().get_cfg()];
+		let mut vec_cfg = vec![dummy_adv.stmt_container.lock().unwrap().get_cfg()];
 		ContainerConfig::adjust_locations(&mut vec_cfg);
 		//even it's false, it's good enough for generating statement_structure
 		let dummy_cfg = vec_cfg[vec_cfg.len()-1].clone();
@@ -248,7 +248,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for WordExtractAdvGadget<F>{
 
 	/// set the container cfg. This is only needed for those gadgets
 	/// in SED approach
-	fn set_container_cfg(&mut self, cfgs_context: Rc<Vec<ContainerConfig>>, idx: usize){
+	fn set_container_cfg(&mut self, cfgs_context: std::sync::Arc<Vec<ContainerConfig>>, idx: usize){
 		self.cfgs_context = Some(cfgs_context);
 		self.my_idx_in_context = Some(idx);
 	}
@@ -326,15 +326,15 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for WordExtractAdvGadget<F>{
 		//2. get the parts of the statement
 		//COST: 0
 		let col_word = stmt.get_col("word")?;
-		let word_seg= &col_word.borrow().data;
+		let word_seg= &col_word.lock().unwrap().data;
 		assert!(word_seg.len()==self.capacity.max_word_len);
 		let col_nibble = stmt.get_col("nibbles")?;
-		let nibbles = &col_nibble.borrow().data;
-		let act_seg_len= stmt.get_col("act_size")?.borrow().data[0].clone();
+		let nibbles = &col_nibble.lock().unwrap().data;
+		let act_seg_len= stmt.get_col("act_size")?.lock().unwrap().data[0].clone();
 		//let col_si_nibbles = stmt.get_col("si_nibbles")?;
-		//let si_nibbles= &col_si_nibbles.borrow().data;
+		//let si_nibbles= &col_si_nibbles.lock().unwrap().data;
 		//actually no need to check si_act_size (it's tagged with 0 don't care)
-		let _si_act_size= stmt.get_col("si_act_size")?.borrow()
+		let _si_act_size= stmt.get_col("si_act_size")?.lock().unwrap()
 			.data[0].clone(); 
 		let mut remain =  act_seg_len.clone();
 		let nlen = nibbles.len();
@@ -387,9 +387,9 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for WordExtractAdvGadget<F>{
 			//check_arr_eq(&si_nibbles,&char_tbl,"failing check of si_nibbles")?;
 		}else{
 			//let si_nibbles_copy = stmt.get_container("si_nibbles_copy")
-			//	.unwrap().borrow().to_vec();
+			//	.unwrap().lock().unwrap().to_vec();
 			let nibbles_copy = stmt.get_container("nibbles_copy").unwrap().
-				borrow().to_vec();
+				lock().unwrap().to_vec();
 			// this is a CONSTANT table, no need to check
 			//check_arr_eq(&si_nibbles_copy, &char_tbl, "failing si_ni copy")?;
 			for i in 0..nibbles.len(){
@@ -411,7 +411,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for WordExtractAdvGadget<F>{
 pub mod tests_word_extract_adv_gadget{
 	//use ark_crypto_primitives::sponge::Absorb;
 	//use ark_relations::r1cs::ConstraintSystem;
-	use std::{rc::Rc};
+	use std::{sync::Arc};
 	use ark_bn254::{Fr};
 	use folding_schemes::{
 		folding::foldpot::sigma_ir1cs::{
@@ -440,14 +440,14 @@ pub mod tests_word_extract_adv_gadget{
 		let stmt_cont = adv.stmt_container; 
 
 		//2. create gadget
-		let cfg = stmt_cont.borrow().get_cfg();
+		let cfg = stmt_cont.lock().unwrap().get_cfg();
 		let mut vec_cfg =vec![cfg];
 		ContainerConfig::adjust_locations(&mut vec_cfg); //resolve
-		let cps = stmt_cont.borrow().gen_stmt_components().0; //from inp to si_data
+		let cps = stmt_cont.lock().unwrap().gen_stmt_components().0; //from inp to si_data
 		let lkup_share_size = 4usize;
 		let mut weg = WordExtractAdvGadget::<Fr>::new(wlen, b_map_char);
 		weg.set_container_cfg(vec_cfg.clone().into(), 0); 
-		let rg = Rc::new(weg);
+		let rg = Arc::new(weg);
 
 		//3. test it
 		test_gadget_adv::<Fr>(rg, &word, &cps[0], &cps[1], &cps[2],
