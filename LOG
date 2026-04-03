@@ -27221,10 +27221,9 @@ Goal 2. plan to parallel processing
    6. Top-Level Integration: Update zkp_driver.rs to initialize the Arc lookup table and pass the 3D data
       structure to the new foldpot_main.
 
-
-
-	-------------------------
-
+	===> AI tool with human assisting did the job (a lot of labor work
+		saved for propagating trait bounds etc)
+	===> COST: 1.7M pro model tokens.
 
 -- TODO -- remove DEBUG USE 6901.1.x and 6901.2.x
 

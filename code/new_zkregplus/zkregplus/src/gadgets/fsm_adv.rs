@@ -1102,10 +1102,10 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		let mut gt = GTimer::new();
 
 		//1. retrive (final_states, loc) from fsm_combo
-		let states_final= fsm_acc_combo.lock().unwrap()
+		let states_final = fsm_acc_combo.lock().unwrap()
 			.get_container("states_final").unwrap().lock().unwrap()
 			.duplicate_as_external(0,None);
-		let locs_final= fsm_acc_combo.lock().unwrap()
+		let locs_final = fsm_acc_combo.lock().unwrap()
 			.get_container("locs_final").unwrap().lock().unwrap()
 			.duplicate_as_external(0,None);
 

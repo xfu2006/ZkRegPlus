@@ -287,21 +287,26 @@ impl <F: Clone + ColEle> Container<F>{
 	pub fn reset_path(&mut self, parent_path: &String){
 		match self{
 			Container::Single(ref mut col)=>{
-				col.lock().unwrap().cfg.reset_path(parent_path);
+				let mut col_guard = col.lock().unwrap();
+				col_guard.cfg.reset_path(parent_path);
 			},
 			Container::Complex(ref mut vec, _, name, ref mut path)=>{
 				let new_path = format!("{} {}", parent_path, name);
 				*path = new_path.clone();
-				vec.iter().for_each(|v| 
-					v.lock().unwrap().reset_path(&new_path));
+				vec.iter().for_each(|v| {
+					let mut v_guard = v.lock().unwrap();
+					v_guard.reset_path(&new_path)
+				});
 			}
 		}
 	}
 
-	/// add a given container
 	pub fn add_container(&mut self, cont: std::sync::Arc<std::sync::Mutex<Container<F>>>){
 		let my_path = self.get_path();
-		cont.lock().unwrap().reset_path(&my_path);
+		{
+			let mut child_guard = cont.lock().unwrap();
+			child_guard.reset_path(&my_path);
+		}
 		match self{
 			Container::Complex(vec, map, _, _)=>{
 				let name = cont.lock().unwrap().get_name();
@@ -333,13 +338,16 @@ impl <F: Clone + ColEle> Container<F>{
 		let exist_qry = if src_path.is_some() {src_path.unwrap()}
 			else {self.get_path()}; //src one.
 
-		match self{
+		let res = match self{
 			Container::Complex(vec, map, name, _)=>{
 				let mut new_vec = vec![];
 				let new_map = map.clone();
 				for ele in vec{
-					let path = format!("{} {}", 
-						exist_qry, ele.lock().unwrap().get_name());
+					let child_name = {
+						let guard = ele.lock().unwrap();
+						guard.get_name()
+					};
+					let path = format!("{} {}", exist_qry, child_name);
 					let new_ele = ele.lock().unwrap().duplicate_as_external(
 						gid_offset, Some(path));
 					new_vec.push(Arc::new(Mutex::new(new_ele)));
@@ -349,8 +357,13 @@ impl <F: Clone + ColEle> Container<F>{
 				Container::Complex(new_vec,new_map,name2.to_string(),exist_qry)
 			},
 			Container::Single(rc_col)=>{
+				let (old_data, old_b_const, old_cfg) = {
+					let guard = rc_col.lock().unwrap();
+					(guard.data.clone(), guard.b_const, guard.cfg.clone())
+				};
+
 				//make it an EXTERNAL column
-				let new_cfg= match &rc_col.lock().unwrap().cfg{
+				let new_cfg= match &old_cfg{
 					ContainerConfig::Column(loc, name, _, b_const)=> {
 						//two cases to handle: (1) it's ALREADY an external col,
 						//(2) it's a real DATA col.
@@ -383,13 +396,14 @@ impl <F: Clone + ColEle> Container<F>{
 					_ => panic!("cannot handle complex")
 				};
 				let new_rc_col = Arc::new(Mutex::new(Col{
-					data: rc_col.lock().unwrap().data.clone(),
+					data: old_data,
 					cfg: new_cfg,
-					b_const: rc_col.lock().unwrap().b_const,
+					b_const: old_b_const,
 				}));
 				Container::Single(new_rc_col)
 			}
-		}
+		};
+		res
 	}
 
 

@@ -470,7 +470,6 @@ where
 		lkup: Arc<LK>)
 	-> Result<(BatchClaim<E>, Vec<IndividualClaim<E>>, 
 		SnarkAdvice<F>), Error>{
-		//println!("STEP 1 here");
 		//1. generate the global claim
 		let n_words = words.len();
 		let (mut lk1, mut lk2) = lkup.get_cols();
@@ -502,7 +501,7 @@ where
 		};
 		let kzg_lk_col1 = KZG::<E>::commit(&pkey.kzg, &lk1, &zero)?;
 		let kzg_lk_col2 = KZG::<E>::commit(&pkey.kzg, &lk2, &zero)?;
-		let batch_claim = BatchClaim::<E>{kzg_all_words, kzg_length, kzg_lk_col1, kzg_lk_col2}; 
+		let batch_claim = BatchClaim::<E>{kzg_all_words, kzg_length, kzg_lk_col1, kzg_lk_col2};
 
 		//2. generate the individual claim
 		let vec_idx = (0..n_words).collect::<Vec<usize>>();
@@ -515,7 +514,6 @@ where
 				KZG::<E>::commit(&pkey.kzg, &w2, &zero)
 					.expect("kzg fails")
 			}).collect::<Vec<E::G1>>();
-
 		let rc = Arc::new(Mutex::new(batch_claim.clone()));
 		let vec_ind_claims = vec_kzg_words.iter().zip(vec_idx.iter())
 			.map(|(kzg_word,i)| 
@@ -530,9 +528,12 @@ where
         		let mut sponge= PoseidonSponge::<F>
 					::new(&pkey.poseidon_config);
 				let mut arr_fe:Vec<F> = vec![];
-				let arr_c1 = vec![rc.lock().unwrap().kzg_all_words.clone(),
-					rc.lock().unwrap().kzg_length.clone(),
-					kzg_word.clone()];
+				let arr_c1 = {
+					let guard = rc.lock().unwrap();
+					vec![guard.kzg_all_words.clone(),
+						guard.kzg_length.clone(),
+						kzg_word.clone()]
+				};
 				for c in arr_c1{
 					c.to_native_sponge_field_elements_as_vec()
 						.to_sponge_field_elements(&mut arr_fe);
@@ -615,9 +616,11 @@ where
 			::new(&vkey.poseidon_config);
 		let mut arr_fe:Vec<F> = vec![];
 		let rc = &claim.ref_batch_claim;
-		let arr_c1 = vec![rc.lock().unwrap().kzg_all_words.clone(),
-					rc.lock().unwrap().kzg_length.clone(),
-					claim.kzg_word.clone()];
+		let (kzg_all_words, kzg_length) = {
+			let guard = rc.lock().unwrap();
+			(guard.kzg_all_words.clone(), guard.kzg_length.clone())
+		};
+		let arr_c1 = vec![kzg_all_words, kzg_length, claim.kzg_word.clone()];
 		for c in arr_c1{
 				c.to_native_sponge_field_elements_as_vec()
 					.to_sponge_field_elements(&mut arr_fe);
@@ -635,7 +638,9 @@ where
 		let newcm = batch_proof.vcom_vec_r + batch_proof.vcom_vec_v.mul(ch);
 		let bres = VecCom::<'a,E>::verify_with_challenge(&vkey.vec, ch, 
 			&newcm, &ind_proof.vcom_prf);
-		if !bres.is_ok() {return false;}
+		if !bres.is_ok() {
+			return false;
+		}
 
 		//3. verify the kzg commitment
 		let bres = KZG::<'a,E>::verify_with_challenge(&vkey.kzg, r_i,
@@ -739,8 +744,9 @@ where
 		
 
 
-			KZG::<E>::batch_prove_with_challenge(&pkey.kzg, ch, &vec2d, rc)
-				.expect("kzg batch prove error")
+			let res = KZG::<E>::batch_prove_with_challenge(&pkey.kzg, ch, &vec2d, rc)
+				.expect("kzg batch prove error");
+			res
 		};
 			
 
