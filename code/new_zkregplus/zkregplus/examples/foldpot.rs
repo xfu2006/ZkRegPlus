@@ -16,7 +16,7 @@ use folding_schemes::folding::foldpot::{
 	driver::{foldpot_main},
 	circuits_super::{field_to_usize},
 };
-use std::{rc::Rc, cell::RefCell};
+use std::{rc::Rc, cell::RefCell, sync::Arc};
 use ark_groth16::Groth16;
 use ark_ff::{PrimeField};
 use ark_std::marker::PhantomData;

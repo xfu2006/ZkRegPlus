@@ -1294,7 +1294,7 @@ where
 
 	/// integrates all three passes together so that
 	/// we do not have to generate all advices all at one time.
-	pub fn pass_all(&mut self, 
+	pub fn pass_all(&self, 
 		phase_name: &str, //below 3 copies of the same iterator
 		iter_words: &mut dyn Iterator<Item = &Vec<C1::ScalarField>>,
 		iter_words2: &mut dyn Iterator<Item = &Vec<C1::ScalarField>>,
@@ -1612,7 +1612,7 @@ where
 		}else{
 			None
 		};
-		self.batch_pk = None; //clear the RAM
+		//self.batch_pk = None; //clear the RAM removed because &self is used and Arc handles cleanup
 		let m6 = get_mem_usage_mb();
 		log_perf(log_level, &format!(
 			"{} step 4: generate batch prf, mem: {} MB for words: {}, n_steps: {}: ", phase_name, if m6>m5 {m6-m5} else {0}, words.len(), n_steps) , &mut gt1);
