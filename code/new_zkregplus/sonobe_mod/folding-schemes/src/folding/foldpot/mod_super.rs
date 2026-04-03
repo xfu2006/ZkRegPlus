@@ -524,7 +524,7 @@ where
 {
 	pub vec_pp: Vec<ProverParamsFoldPot<C1, C2, CS1, CS2, LK, H>>,
 	pub qa_pp: Option<QaNizkProverParams<E>>,
-	pub cs1e_pp: CS1E::ProverParams,
+	pub cs1e_pp: Arc<CS1E::ProverParams>,
 }
 
 #[derive(Debug, Clone)]
@@ -622,14 +622,14 @@ where
 
     /// CommitmentScheme::ProverParams over C11E (commits
 	/// to the combined W for all subcircuits)
-    pub cs1e_pp: CS1E::ProverParams,
+    pub cs1e_pp: Arc<CS1E::ProverParams>,
 	/// vector of commitment schemes for cmW, cmE, cmF for each
 	/// subcircuit
-    pub cs_pp: Vec<CS1::ProverParams>,
+    pub cs_pp: Vec<Arc<CS1::ProverParams>>,
     /// CycleFold CommitmentScheme::ProverParams, over C2
-    pub cf_cs_pp: CS2::ProverParams, //just one copy
+    pub cf_cs_pp: Arc<CS2::ProverParams>, //just one copy
     /// CyclePair CommitmentScheme::ProverParams, over C2
-    pub cp_cs_pp: CS2::ProverParams, //just one copy
+    pub cp_cs_pp: Arc<CS2::ProverParams>, //just one copy
 
     /// All F circuits, the circuit that is being folded
     pub F: Vec<FC>,
@@ -849,7 +849,7 @@ where
 		let _lktbl = LookupTableTwoCol_Inst::<C1::ScalarField>::dummy();
 		let cs1e_pp = pp.cs1e_pp.clone();
 		let cs_pp = pp.vec_pp.iter().map(|pp| pp.cs_pp.clone()).
-			collect::<Vec<CS1::ProverParams>>();
+			collect::<Vec<Arc<CS1::ProverParams>>>();
 
         Ok(Self {
 			_gm: PhantomData,
@@ -979,7 +979,7 @@ where
             FOLDPOT_CF_N_POINTS,
             transcript,
             self.cf_r1cs.clone(),
-            self.cf_cs_pp.clone(),
+            (*self.cf_cs_pp).clone(),
             self.pp_hash,
             cf_W_i,
             cf_U_i,
@@ -1139,11 +1139,11 @@ where
 				&& prep_param.cf_cs_vp.is_some()
 			{
 				assert!(false, "unable to set elen here!");
-				cs_pp = prep_param.clone().cs_pp.unwrap();
+				cs_pp = (*prep_param.clone().cs_pp.unwrap()).clone();
 				cs_vp = prep_param.clone().cs_vp.unwrap();
-				cf_cs_pp = prep_param.clone().cf_cs_pp.unwrap();
+				cf_cs_pp = (*prep_param.clone().cf_cs_pp.unwrap()).clone();
 				cf_cs_vp = prep_param.clone().cf_cs_vp.unwrap();
-				cp_cs_pp = prep_param.clone().cp_cs_pp.unwrap();
+				cp_cs_pp = (*prep_param.clone().cp_cs_pp.unwrap()).clone();
 				cp_cs_vp = prep_param.clone().cp_cs_vp.unwrap();
 			} else {
 				let max_row_col = if r1cs.A.n_cols>r1cs.A.n_rows {r1cs.A.n_cols}
@@ -1161,9 +1161,9 @@ where
 
 			let prover_params = ProverParamsFoldPot::<C1, C2, CS1, CS2, LK, H> {
 				poseidon_config: prep_param.poseidon_config.clone(),
-				cs_pp: cs_pp.clone(),
-				cf_cs_pp: cf_cs_pp.clone(),
-				cp_cs_pp: cp_cs_pp.clone(),
+				cs_pp: Arc::new(cs_pp),
+				cf_cs_pp: Arc::new(cf_cs_pp),
+				cp_cs_pp: Arc::new(cp_cs_pp),
 				size_F: prep_param.size_F,
 				start_F: prep_param.start_F,
 				lk_tbl: prep_param.lk_tbl.clone(),
@@ -1267,7 +1267,7 @@ where
 
 
 		//println!("DEBUG USE 1709.1: cp_r1cs: {}", (&cp_r1cs).is_some());
-		let prover_params = ProverParamsFoldPotSuper{vec_pp, qa_pp, cs1e_pp};
+		let prover_params = ProverParamsFoldPotSuper{vec_pp, qa_pp, cs1e_pp: Arc::new(cs1e_pp)};
 		let verifier_params = VerifierParamsFoldPotSuper{
 			vec_vp, cp_r1cs, qa_vp, cs1e_vp};
 		let m2 = get_mem_usage_mb();
@@ -1631,7 +1631,7 @@ where
 						::<E,P,C1,GC1,C2G2,C2,GC2,FC,CS1,CS2,H>(
 						&mut transcript,
 						self.cp_r1cs.clone(),
-						self.cp_cs_pp.clone(),
+						(*self.cp_cs_pp).clone(),
 						self.pp_hash,
 						self.cp_W_i.as_ref().clone().unwrap().clone(),
 						self.cp_U_i.as_ref().clone().unwrap().clone(),

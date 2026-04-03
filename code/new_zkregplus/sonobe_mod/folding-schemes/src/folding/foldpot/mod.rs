@@ -313,11 +313,11 @@ where
     pub poseidon_config: PoseidonConfig<C1::ScalarField>,
     pub F: FC,
     // cs params if not provided, will be generated at the preprocess method
-    pub cs_pp: Option<CS1::ProverParams>,
+    pub cs_pp: Option<Arc<CS1::ProverParams>>,
     pub cs_vp: Option<CS1::VerifierParams>,
-    pub cf_cs_pp: Option<CS2::ProverParams>, //cyclefold
+    pub cf_cs_pp: Option<Arc<CS2::ProverParams>>, //cyclefold
     pub cf_cs_vp: Option<CS2::VerifierParams>,
-    pub cp_cs_pp: Option<CS2::ProverParams>, //cyclepair
+    pub cp_cs_pp: Option<Arc<CS2::ProverParams>>, //cyclepair
     pub cp_cs_vp: Option<CS2::VerifierParams>,
 	/// lookup table. We require ALL points to the same lookup table
 	/// for non-uniform circuits in the supernova system.
@@ -374,9 +374,9 @@ where
     CS2: CommitmentScheme<C2, H>,
 {
     pub poseidon_config: PoseidonConfig<C1::ScalarField>,
-    pub cs_pp: CS1::ProverParams,
-    pub cf_cs_pp: CS2::ProverParams,
-    pub cp_cs_pp: CS2::ProverParams,
+    pub cs_pp: Arc<CS1::ProverParams>,
+    pub cf_cs_pp: Arc<CS2::ProverParams>,
+    pub cp_cs_pp: Arc<CS2::ProverParams>,
 	/// size of Fixed Memory segment in Witness
 	pub size_F: usize,
 	/// index of F in the AugmentedFCircuit (4 + external_inp.len)
@@ -460,9 +460,9 @@ where
     pub cf_r1cs: R1CS<C2::ScalarField>,
     pub poseidon_config: PoseidonConfig<C1::ScalarField>,
     /// CommitmentScheme::ProverParams over C1
-    pub cs_pp: CS1::ProverParams,
+    pub cs_pp: Arc<CS1::ProverParams>,
     /// CycleFold CommitmentScheme::ProverParams, over C2
-    pub cf_cs_pp: CS2::ProverParams,
+    pub cf_cs_pp: Arc<CS2::ProverParams>,
     /// F circuit, the circuit that is being folded
     pub F: FC,
 	/// the lookup table (not: shared among all circuits) 
@@ -574,11 +574,11 @@ where
             && prep_param.cs_vp.is_some()
             && prep_param.cf_cs_vp.is_some()
         {
-            cs_pp = prep_param.clone().cs_pp.unwrap();
+            cs_pp = (*prep_param.clone().cs_pp.unwrap()).clone();
             cs_vp = prep_param.clone().cs_vp.unwrap();
-            cf_cs_pp = prep_param.clone().cf_cs_pp.unwrap();
+            cf_cs_pp = (*prep_param.clone().cf_cs_pp.unwrap()).clone();
             cf_cs_vp = prep_param.clone().cf_cs_vp.unwrap();
-            cp_cs_pp = prep_param.clone().cp_cs_pp.unwrap();
+            cp_cs_pp = (*prep_param.clone().cp_cs_pp.unwrap()).clone();
             cp_cs_vp = prep_param.clone().cp_cs_vp.unwrap();
         } else {
 			//UPDATED (now the cs_pp is used to prove r1cs
@@ -602,9 +602,9 @@ where
 
         let prover_params = ProverParamsFoldPot::<C1, C2, CS1, CS2, LK, H> {
             poseidon_config: prep_param.poseidon_config.clone(),
-            cs_pp: cs_pp.clone(),
-            cf_cs_pp: cf_cs_pp.clone(),
-            cp_cs_pp: cp_cs_pp.clone(),
+            cs_pp: Arc::new(cs_pp),
+            cf_cs_pp: Arc::new(cf_cs_pp),
+            cp_cs_pp: Arc::new(cp_cs_pp),
 			size_F: prep_param.size_F,
 			start_F: prep_param.start_F,
 			lk_tbl: prep_param.lk_tbl.clone(),
@@ -1230,7 +1230,7 @@ where
             FOLDPOT_CF_N_POINTS,
             transcript,
             self.cf_r1cs.clone(),
-            self.cf_cs_pp.clone(),
+            (*self.cf_cs_pp).clone(),
             self.pp_hash,
             cf_W_i,
             cf_U_i,
