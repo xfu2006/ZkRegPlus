@@ -1,3 +1,4 @@
+use std::sync::Arc;
 /* 
 	Created 08/27/2024 
 	Modified 12/25/2024: added snark_rand_input structure
@@ -131,7 +132,7 @@ where
 	/// flattened circuits
 	circuits: Vec<FC>,
 	/// lookup table
-	lkup: Rc<RefCell<LK>>,
+	lkup: Arc<LK>,
 	/// the prover/verifier parameters
 	pub nova_param: (<FoldPotSuper<E,P,C2G2, C1, GC1, C2, GC2, FC, CS1, CS2, CS1E, LK, GM, H> as FoldingScheme<C1,C2,FC>>::ProverParam, <FoldPotSuper<E,P,C2G2,C1, GC1, C2, GC2, FC, CS1, CS2, CS1E, LK,GM, H> as FoldingScheme<C1,C2,FC>>::VerifierParam),
 
@@ -281,7 +282,7 @@ where
 	/// EXACTLY the same max_word_len, also ordered with preferred first (
 	///  low cost)
 	pub fn new(poseidon_config: PoseidonConfig<C1::ScalarField>,
-	  lkup_inp: Rc<RefCell<LK>>,
+	  lkup_inp: Arc<LK>,
 	  F_circuits: Vec<Vec<FC>>, 
 	  mut rng: impl RngCore +  CryptoRng, 
 	  b_full_mode: bool,
@@ -356,8 +357,8 @@ where
 			&mut gt1);
 
 		//4. set up the batch processor if it is NOT full mode (1st stage)
-		let max_w_lk = if max_total_n > lkup_inp.borrow().get_size() 
-			{max_total_n+1} else {lkup_inp.borrow().get_size()+1};
+		let max_w_lk = if max_total_n > lkup_inp.get_size() 
+			{max_total_n+1} else {lkup_inp.get_size()+1};
 		let batch_param = BatchProcessor::<E,LK,S,CS1E,H>
 				::setup(&mut rng, max_w_lk, n_words,
 				poseidon_config.clone());
@@ -926,7 +927,7 @@ where
 			collect::<Vec<Rc<RefCell<GM>>>>();
 		let mut vec_advice = vec![];
 		let mut prev_stmt = None;
-		let lkup_len= self.lkup.borrow().get_size();
+		let lkup_len= self.lkup.get_size();
 		let mut total_lkup_covered = 0;
 		for word in iter_words{
 			//2.1 first try out and determine the length info for each
@@ -1063,7 +1064,7 @@ where
 		let mut num_steps = 0;
 		let mut wi = 0;
 		let mut start = 0;
-		let lk_len = self.lkup.borrow().get_size();
+		let lk_len = self.lkup.get_size();
 		for word in iter_words{
 			let mut remaining = word.clone();
 			let mut subseg_id = 0;
@@ -1226,7 +1227,7 @@ where
 		let mut idx = 0;
 		let mut prev_stmt = None;
 		let mut num_steps = 0;
-		let _lk_len = self.lkup.borrow().get_size();
+		let _lk_len = self.lkup.get_size();
 		let mut wi = 0;
 		let mut start = 0;
 		for word in iter_words{
@@ -1373,7 +1374,7 @@ where
 		let n_circ = self.circuits.len();
 		let _vec_mapper= self.circuits.iter().map(|c| c.get_mapper()).
 			collect::<Vec<Rc<RefCell<GM>>>>();
-		let lkup_len= self.lkup.borrow().get_size();
+		let lkup_len= self.lkup.get_size();
 		let mut total_lkup_covered = 0;
 		let m3 = get_mem_usage_mb();
 		let mut gtw = GTimer::new();
@@ -1492,7 +1493,7 @@ where
 		let mut vea = vec_res; //just rename var for the code from pass_three
 		let mut idx = 0;
 		let mut num_steps = 0;
-		let _lk_len = self.lkup.borrow().get_size();
+		let _lk_len = self.lkup.get_size();
 		let mut gtw2 = GTimer::new();
 		let mut word_id = 1;
 		let mut start = 0; //global position in ENTIRE sequence for update lkup
@@ -1655,7 +1656,7 @@ where
         let mut rng = ark_std::test_rng();
 		let mut idx = 0;
 		let mut num_steps = 0;
-		let _lk_len = self.lkup.borrow().get_size();
+		let _lk_len = self.lkup.get_size();
 		//let mut wi = 0;
 		let mut gtw2 = GTimer::new();
 		let m7 = get_mem_usage_mb();
@@ -1798,7 +1799,7 @@ pub fn write_to_file(fname: &str, line: &str){
 ///
 /// NOTE: vec_circ should be ordered as required by Driver (see its doc)
 pub fn foldpot_main<E:Pairing<G1=C1,G2=C2G2>,P:PairingVar<E,CF3<C2G2>>+std::fmt::Debug+Clone,C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, FC, S, LK, GM, const H: bool>(
-	lkup: Rc<RefCell<LK>>, //the lookup table defines the regex automatas
+	lkup: Arc<LK>, //the lookup table defines the regex automatas
 	vec_circ: Vec<Vec<FC>>,
 	vec_words: Vec<Vec<E::ScalarField>>,
 	vec_words_info: Vec<WordInfo>,
@@ -2038,7 +2039,7 @@ where
 	let _n_circs = vec_circ.len();
 	let b_full = true;
 	let lk = LK::new(vec![]);
-	let lkup = Rc::new(RefCell::new(lk));
+	let lkup = Arc::new(lk);
 	//let driver2 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,FC,S,LK>
 	let mut driver2 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,SigmaIR1CS_Inst<C1::ScalarField, C1, CS1, LK, FoldPairMapper<CF1<C1>,LK>,H>,S,LK,FoldPairMapper<CF1<C1>,LK>,H>
 		::new(poseidon_config.clone(), lkup, vec_circ, rng, b_full, max_total_n, n_words);
@@ -2405,7 +2406,7 @@ pub mod tests_driver{
 		/// similarly throw error for odd circ if x_1 is not odd.
 		/// This is for testing the "best fit" circ in multiple non-uniform
 		/// circ environment in supernova.
-		fn build_statement(&self, word: &Vec<F>, prev_wit: &Option<StatementInst<F,LK>>, lkup: Rc<RefCell<LK>>, ea: &StatementExtraInfo<F>, _advice: Rc<dyn NdAdvice>, _lkup_share_size: usize, _b_dummy: bool) 
+		fn build_statement(&self, word: &Vec<F>, prev_wit: &Option<StatementInst<F,LK>>, lkup: Arc<LK>, ea: &StatementExtraInfo<F>, _advice: Rc<dyn NdAdvice>, _lkup_share_size: usize, _b_dummy: bool) 
 		-> Result<StatementInst<F,LK>, Error>{
 			//1. making check on odd/even case
 			assert!(word.len()>=1);
@@ -2425,7 +2426,7 @@ pub mod tests_driver{
 			let mut subtbl_id = vec![];
 			let (zero, two) = (F::zero(), F::from(2u32));
 			for i in 0..n{
-				let res = lkup.borrow().find(two, word[i]);
+				let res = lkup.find(two, word[i]);
 				let sid = if res.is_ok() {two} else {zero};
 				subtbl_id.push(sid);
 			}
@@ -2574,7 +2575,7 @@ pub mod tests_driver{
 			(F::from(2u32), F::from(3u32)), 
 			(F::from(2u32), F::from(4u32)), 
 		]);
-		let lkup = Rc::new(RefCell::new(lk.clone()));
+		let lkup = Arc::new(lk.clone());
 		let (odd_mapper, even_mapper) =  
 			(SumMapper::<Fr,LK>::new(true), SumMapper::<Fr,LK>::new(false));
         let poseidon_config = poseidon_canonical_config::<Fr>();

@@ -1,3 +1,4 @@
+use std::sync::Arc;
 /* Created 10/02/2024, Revised 10/15/2024 */
 
 
@@ -246,7 +247,7 @@ GadgetMapper<F,LK> for FoldPairMapper<F, LK>{
 	/// word: a and b (size 8*5 = 40 Fr)
 	/// [gt1, a, b, gt2] 160Fr maps to zi_inp.cyclepair_input
 	/// We do not rely on prev_stmt
-	fn build_statement(&self, word: &Vec<F>, _prev_stmt: &Option<StatementInst<F,LK>>, _lkup: Rc<RefCell<LK>>, ea: &StatementExtraInfo<F>, _advice: Rc<dyn NdAdvice>, _lkup_size: usize, _b_dummy: bool) -> Result<StatementInst<F,LK>, Error>{
+	fn build_statement(&self, word: &Vec<F>, _prev_stmt: &Option<StatementInst<F,LK>>, _lkup: Arc<LK>, ea: &StatementExtraInfo<F>, _advice: Rc<dyn NdAdvice>, _lkup_size: usize, _b_dummy: bool) -> Result<StatementInst<F,LK>, Error>{
 		//1. retrieve the information
 		assert!(word.len()==164);
 		let gt1 = word[0..12*5].to_vec();
@@ -413,7 +414,7 @@ where 	C: CurveGroup<ScalarField=F>,
 	let lk = LK::new(vec![
 		(F::from(0u32), F::from(0u32)), //0, null entry
 	]);
-	let lkup = Rc::new(RefCell::new(lk));
+	let lkup = Arc::new(lk);
 
 	let dummy_adv = Rc::new(DummyNdAdvice{});
 	let lkup_share_size = 4;
@@ -485,7 +486,7 @@ pub mod tests_sigma_cyclepair{
 		let lk = LK::new(vec![
 			(F::from(0u32), F::from(0u32)), //0, null entry
 		]);
-		let lkup = Rc::new(RefCell::new(lk));
+		let lkup = Arc::new(lk);
 		let ea = StatementExtraInfo::<F>{
 				total_words: F::one(),
 				word_id: F::one(),

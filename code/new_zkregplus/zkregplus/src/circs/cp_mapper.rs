@@ -39,7 +39,7 @@ use folding_schemes::folding::foldpot::container_config::ColEle;
 use utils::{logger::{log, log_perf, LOG1, LOG7,LOG_LEVEL}, timer::Timer };
 use std::{
 	marker::PhantomData,
-	rc::{Rc},
+	rc::{Rc}, sync::{Arc},
 	cell::{RefCell},
 	fmt::{Debug},
 	collections::{HashMap},
@@ -763,7 +763,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F>> ComponentMapper<F,LK> for
 	/// the the comp_id for the 2nd is 1, and its stmt_map_id is 2. (idx
 	/// starting from 0). For conveneince, we sometimes use
 	/// the prev_stmt or the vector of its prev_stmt.
-	fn build_statement_comp(&self, _comp_id: usize, _stmt_map_id: usize, word_seg: &Vec<F>, actual_word_len: usize, _lkup: &Rc<RefCell<LK>>, _extra_info: &StatementExtraInfo<F>, advice: &Rc<dyn NdAdvice>, _cfg: &StatementConfig, _stmt_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>{
+	fn build_statement_comp(&self, _comp_id: usize, _stmt_map_id: usize, word_seg: &Vec<F>, actual_word_len: usize, _lkup: &Arc<LK>, _extra_info: &StatementExtraInfo<F>, advice: &Rc<dyn NdAdvice>, _cfg: &StatementConfig, _stmt_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>{
 		let log_level = LOG7;
 		let b_perf = log_level >= LOG_LEVEL;
 

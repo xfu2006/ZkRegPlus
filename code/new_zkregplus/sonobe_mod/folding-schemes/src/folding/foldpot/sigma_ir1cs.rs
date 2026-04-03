@@ -1,3 +1,4 @@
+use std::sync::Arc;
 /// Sigma-I-R1CS is a 3-move restricted fragment of the
 /// I-R1CS model. See our paper Section 6.
 /* Created 08/05/2024 
@@ -555,7 +556,7 @@ pub trait GadgetMapper<F:PrimeField, LK: LookupTableTwoCol<F>>{
 	///
 	/// b_dummy_mode is added specifically for composable_gadget_mapper
 	/// the other legacy code can ignore it.
-	fn build_statement(&self, word: &Vec<F>, prev_stmt: &Option<StatementInst<F,LK>>, lkup: Rc<RefCell<LK>>, extra_info: &StatementExtraInfo<F>, advice: Rc<dyn NdAdvice>, lkup_size: usize, b_dummy_mode: bool) -> Result<StatementInst<F,LK>, Error>;
+	fn build_statement(&self, word: &Vec<F>, prev_stmt: &Option<StatementInst<F,LK>>, lkup: Arc<LK>, extra_info: &StatementExtraInfo<F>, advice: Rc<dyn NdAdvice>, lkup_size: usize, b_dummy_mode: bool) -> Result<StatementInst<F,LK>, Error>;
 
 	/// return the max word length that can be processed
 	fn max_word_len(&self) -> usize;
@@ -1004,7 +1005,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 	/// static function: update a vector of statments using lookup,
 	/// return the HashMap of the m_vector for Hab'22 function
 	/// Call this function when the RAM can store all statements.
-	pub fn update_with_lkup(lk: &Rc<RefCell<LK>>, vec_stmt: &mut Vec<StatementInst<F,LK>>){
+	pub fn update_with_lkup(lk: &Arc<LK>, vec_stmt: &mut Vec<StatementInst<F,LK>>){
 		//1. build the m_vec hash based on existing statements
 		let n_steps = vec_stmt.len();
 		let mut m_map = HashMap::<usize,usize>::new();
@@ -1014,8 +1015,8 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 		}
 
 		//2. update the statements for m_vec and share
-		let lk_len = lk.borrow().get_size();
-		let share_size = if lk_len>n_steps {lk_len/n_steps} else {1};
+		let lk_len = lk.get_size();
+		let share_size = if lk_len>n_steps {lk_len/n_steps} else {1usize};
 		for i in 0..n_steps{
 			//update_lookup will auto-correct index
 			let start = i*share_size;
@@ -1222,9 +1223,9 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 	/// statements to compute m_vec. Then distribute the shares again).
 	/// The end_idx is not included.
 	/// will auto-correct start and end_idx if out of bound
-	pub fn update_lookup(&mut self, start_idx: usize, end_idx: usize, lk: &Rc<RefCell<LK>>, map_m: &HashMap<usize, usize>){
+	pub fn update_lookup(&mut self, start_idx: usize, end_idx: usize, lk: &Arc<LK>, map_m: &HashMap<usize, usize>){
 		//1. from lkup table retrieve col1, col2
-		let lk = lk.borrow();
+		let lk = lk;
 		if start_idx>=lk.get_size() {
 			self.act_lookup_share_size = F::zero();
 			return;
@@ -1254,9 +1255,9 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 	/// word_seg, data, and also also the info for unused_inp_buf
 	/// etc which are in the witness before the statement.
 	pub fn fill_lkup_mvec(&self, m_map: &mut HashMap<usize, usize>, 
-		lk: &Rc<RefCell<LK>>){
+		lk: &Arc<LK>){
 		//1. fill in the data using problem statement data
-		let lk_ref = lk.borrow();
+		let lk_ref = lk;
 		let tbl_ids = self.subtable_id.clone();
 		let mut vec_val  = vec![self.inp_buf.clone(), self.oup_buf.clone(), 
 			self.data.clone()].concat();
@@ -4288,7 +4289,7 @@ pub mod tests_sigma_ir1cs{
 		}
 
 		/// expecting [n], and build the rest of problem statement instance.
-		fn build_statement(&self, word: &Vec<F>, prev_stmt: &Option<StatementInst<F,LK>>, lkup: Rc<RefCell<LK>>, ea: &StatementExtraInfo<F>, _advice: Rc<dyn NdAdvice>, _lkup_size: usize, _b_dummy: bool) -> Result<StatementInst<F,LK>, Error>{
+		fn build_statement(&self, word: &Vec<F>, prev_stmt: &Option<StatementInst<F,LK>>, lkup: Arc<LK>, ea: &StatementExtraInfo<F>, _advice: Rc<dyn NdAdvice>, _lkup_size: usize, _b_dummy: bool) -> Result<StatementInst<F,LK>, Error>{
 			//1. compute the cube_root, sq_root, tbl_id
 			assert!(word.len()==1);
 			let n = word[0]; 
@@ -4302,7 +4303,7 @@ pub mod tests_sigma_ir1cs{
 			let _f_word_id = ea.word_id;
 			let _f_total_words = ea.total_words;
 			let (zero, one,two) = (F::zero(), F::one(),F::from(2u32));
-			let find_res = lkup.borrow().find(two, F::from(n));
+			let find_res = lkup.find(two, F::from(n));
 			let tbl_id = match find_res{
 				Ok(_id) => two,
 				Err(_id) =>  F::zero(), //null entry
@@ -4434,7 +4435,7 @@ pub mod tests_sigma_ir1cs{
 	/// return (a lookup table, SixRoot instance, and 
 	/// the corresponding statements with lookup shares set)
 	pub fn gen_six_root<F,C,CS,LK,const H:bool>(n_steps: usize)->
-		(Rc<RefCell<LK>>, SigmaIR1CS_Inst<F,C,CS,LK,SixRootMapper<F,LK>,H>, Vec<StatementInst<F,LK>>)
+		(Arc<LK>, SigmaIR1CS_Inst<F,C,CS,LK,SixRootMapper<F,LK>,H>, Vec<StatementInst<F,LK>>)
 	where 	C: CurveGroup<ScalarField=F>,
 		CS: CommitmentScheme<C, H>,
 		F: PrimeField + Absorb +ColEle,
@@ -4476,7 +4477,7 @@ pub mod tests_sigma_ir1cs{
 		let (_, _stmt_cfg,_, _, _) = mapper.borrow()
 			.gen_statement_structure(share_size);
 		let _wtns_cfg = six_ir1cs.gen_witness_structure(share_size);
-		let lkup = Rc::new(RefCell::new(lk));
+		let lkup = Arc::new(lk);
 		for i in 0..n_steps{
 			//inp: [n, cubic_root, square_root, subtable_id, inp_counter, step_id starting from 0, n_steps]
 			let word_id = i+1;
@@ -4485,7 +4486,7 @@ pub mod tests_sigma_ir1cs{
 			let sq_root = u_root * u_root * u_root;
 			let _cb_root = u_root * u_root;
 			let n = sq_root*sq_root;
-			let find_res = lkup.borrow().find(F::from(2u32), F::from(n));
+			let find_res = lkup.find(F::from(2u32), F::from(n));
 			let _tbl_id = match find_res{
 				Ok(_id) => F::from(2u32),
 				Err(_id) =>  F::zero(), //null entry

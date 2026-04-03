@@ -27171,6 +27171,27 @@ note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose bac
 test zkp_driver::tests_zkp_driver::test_zkreg_main ... FAILED
 	[b] they are equal!
 
+Goal 2. plan to parallel processing
+	Plan below
+	-------------------------
+	Here is the brief 6-step order for the revision plan to enable parallel multi-job processing:
+
+   1. Data Migration: Convert all Rc<RefCell<LK>> to thread-safe Arc<LK> project-wide (Sonobe and ZkregPlus).
+   2. Memory Optimization: Wrap heavy setup parameters (SRS, R1CS matrices) in Arc within FoldPotSuper to
+      prevent redundant memory allocation across parallel threads.
+   3. Thread-Safety Refactor: Change pass_all from &mut self to &self and remove the manual self.batch_pk = None
+      logic, allowing Arc to handle memory cleanup automatically.
+   4. Global Setup Consolidation: Update Driver::new to calculate global maxima across all jobs (total length,
+      word counts) and generate one shared set of keys.
+   5. Parallel Dispatch: Update foldpot_main to accept 3D job batches (Vec<Vec<Vec<F>>>) and use Rayon par_iter
+      to call pass_all concurrently for each job.
+   6. Top-Level Integration: Update zkp_driver.rs to initialize the Arc lookup table and pass the 3D data
+      structure to the new foldpot_main.
+
+
+
+	-------------------------
+
 
 -- TODO -- remove DEBUG USE 6901.1.x and 6901.2.x
 

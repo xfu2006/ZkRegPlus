@@ -46,7 +46,7 @@ use folding_schemes::{
 		}
 	}
 };
-use std::{rc::Rc, cell::RefCell};
+use std::{sync::Arc, rc::Rc, cell::RefCell};
 use crate::circs::{
 	composable_gadget_mapper::{CompositeGadgetMapper},
 	cp_mapper::{CpComponentMapper,CpCapacity},
@@ -633,7 +633,7 @@ where
 
 	//4. run the foldpot_main
 	let sample_individual_prf = 0; //generate individual proof 1 (idx is 0)
-	let lkup = Rc::new(RefCell::new(db.lkup));
+	let lkup = Arc::new(db.lkup);
 	foldpot_main::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,FC<CF1<C1>,C1,CS1>,
 		S,LK<CF1<C1>>,GM<CF1<C1>>, false>(
 		lkup, vec_circs, vec_words, vec_word_info, sample_individual_prf,vec_word_fnames).expect("main err");
@@ -1322,10 +1322,10 @@ pub mod tests_zkp_driver{
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
-		//small_data::<Fr>(b_check_lkup); //small data
+		small_data::<Fr>(b_check_lkup); //small data
 		//small_data2::<Fr>(b_check_lkup);  //10k data 
 		//small_data_debug::<Fr>(b_check_lkup);  //for debug
-		small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
+		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//full_data1::<Fr>(b_check_lkup);
 		//full_data2::<Fr>(b_check_lkup); //full data high acc state 
 		//full_data3::<Fr>(b_check_lkup); //full data large file

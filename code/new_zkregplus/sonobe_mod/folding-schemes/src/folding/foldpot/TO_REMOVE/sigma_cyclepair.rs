@@ -1,3 +1,4 @@
+use std::sync::Arc;
 /* Created 10/02/2024 */
 
 
@@ -279,7 +280,7 @@ GadgetMapper<F,LK> for FoldPairMapper<F, LK>{
 	/// oup: gt2, hc_a_out, hc_b_out (size 16)
 	/// data: a and b (size 8)
 	/// We do not rely on prev_stmt
-	fn build_statement(&self, word: &Vec<F>, prev_stmt: &Option<StatementInst<F,LK>>, lkup: Rc<RefCell<LK>>, ea: &StatementExtraInfo<F>) -> Result<StatementInst<F,LK>, Error>{
+	fn build_statement(&self, word: &Vec<F>, prev_stmt: &Option<StatementInst<F,LK>>, lkup: Arc<LK>, ea: &StatementExtraInfo<F>) -> Result<StatementInst<F,LK>, Error>{
 		//1. retrieve the information
 		assert!(word.len()==36);
 		let gt1 = word[0..12].to_vec();
@@ -462,7 +463,7 @@ pub mod tests_sigma_cyclepair{
 		let lk = LK::new(vec![
 			(F::from(0u32), F::from(0u32)), //0, null entry
 		]);
-		let lkup = Rc::new(RefCell::new(lk));
+		let lkup = Arc::new(lk);
 		let ea = StatementExtraInfo::<F>{
 				total_words: F::one(),
 				word_id: F::one(),

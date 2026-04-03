@@ -1,3 +1,4 @@
+use std::sync::Arc;
 /// Implements the scheme described in [Nova](https://eprint.iacr.org/2021/370.pdf) and
 /// [CycleFold](https://eprint.iacr.org/2023/1192.pdf).
 /// Modified from the NOVA scheme: by adding ONE Pedersen commitment to the
@@ -6,7 +7,7 @@
 
 /* Modified 08/09/2024 */
 
-use std::{rc::Rc, cell::RefCell};
+
 //use crate::folding::foldpot::utils::Timer;
 use ark_crypto_primitives::sponge::{
     poseidon::{PoseidonConfig, PoseidonSponge},
@@ -321,7 +322,7 @@ where
 	/// lookup table. We require ALL points to the same lookup table
 	/// for non-uniform circuits in the supernova system.
 	/// shoudl call setup_lookup RIGHT AFTER init
-	pub lk_tbl: Rc<RefCell<LK>>,
+	pub lk_tbl: Arc<LK>,
 	pub size_F: usize,
 	/// index of F in the AugmentedFCircuit (4 + external_inp.len)
 	pub start_F: usize,
@@ -338,7 +339,7 @@ where
     CS2: CommitmentScheme<C2, H>,
 	GM: GadgetMapper<C1::ScalarField,LK> + std::clone::Clone + Debug,
 {
-    pub fn new(poseidon_config: PoseidonConfig<C1::ScalarField>, F: FC, lk: Rc<RefCell<LK>>, size_F: usize) -> Self {
+    pub fn new(poseidon_config: PoseidonConfig<C1::ScalarField>, F: FC, lk: Arc<LK>, size_F: usize) -> Self {
 		let start_F = 12;
 							//because there are 6 vars (pp_hash, i,z_0 (2 ele), 
 							//z_i (2 ele) - see gen_constraints of circuit.rs)
@@ -381,7 +382,7 @@ where
 	/// index of F in the AugmentedFCircuit (4 + external_inp.len)
 	pub start_F: usize,
 	/// reference to lookup table
-	pub lk_tbl: Rc<RefCell<LK>>,
+	pub lk_tbl: Arc<LK>,
 	/// the size of cs_pp
 	pub cs_pp_len: usize,
 }
@@ -465,7 +466,7 @@ where
     /// F circuit, the circuit that is being folded
     pub F: FC,
 	/// the lookup table (not: shared among all circuits) 
-	pub lk_tbl: Option<Rc<RefCell<LK>>>,
+	pub lk_tbl: Option<Arc<LK>>,
     /// public params hash
     pub pp_hash: C1::ScalarField,
     pub i: C1::ScalarField,
@@ -566,7 +567,7 @@ where
         let cf_cs_vp: CS2::VerifierParams;
         let cp_cs_pp: CS2::ProverParams;
         let cp_cs_vp: CS2::VerifierParams;
-		let vec_sizes = vec![ r1cs.A.n_cols, prep_param.lk_tbl.borrow().get_size() + 1];
+		let vec_sizes = vec![ r1cs.A.n_cols, prep_param.lk_tbl.get_size() + 1];
 		let max_size:usize = *vec_sizes.iter().max().unwrap();
         if prep_param.cs_pp.is_some()
             && prep_param.cf_cs_pp.is_some()
@@ -588,7 +589,7 @@ where
             (cp_cs_pp, cp_cs_vp) = CS2::setup(&mut rng, cp_r1cs.A.n_rows)?;
         }
 
-		let lookup = prep_param.lk_tbl.borrow();
+		let lookup = &prep_param.lk_tbl;
 		let (col1_raw, col2_raw) = lookup.get_cols();
 		let (lkup_col1_rev,lkup_col2_rev)
 			: (Vec<C1::ScalarField>, Vec<C1::ScalarField>) 
@@ -1373,7 +1374,7 @@ pub mod tests_mod_basic {
         const H: bool,
     >(
         poseidon_config: PoseidonConfig<Fr>,
-		lkup_inp: Rc<RefCell<LK>>,
+		lkup_inp: Arc<LK>,
         F_circuit: SigmaIR1CS_Inst<Fr,Projective,CS1,LK,GM,H>,
 		vec_stmts: &Vec<StatementInst<Fr,LK>>,
 		num_steps: usize,

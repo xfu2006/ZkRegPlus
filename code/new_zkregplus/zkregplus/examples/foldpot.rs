@@ -235,7 +235,7 @@ GadgetMapper<F,LK> for SumMapper<F, LK>{
 	/// similarly throw error for odd circ if x_1 is not odd.
 	/// This is for testing the "best fit" circ in multiple non-uniform
 	/// circ environment in supernova.
-	fn build_statement(&self, word: &Vec<F>, prev_wit: &Option<StatementInst<F,LK>>, lkup: Rc<RefCell<LK>>, ea: &StatementExtraInfo<F>, 
+	fn build_statement(&self, word: &Vec<F>, prev_wit: &Option<StatementInst<F,LK>>, lkup: Arc<LK>, ea: &StatementExtraInfo<F>, 
 	_adv: Rc<dyn NdAdvice>, _lkup_share_size: usize, _b_dummy: bool) 
 	-> Result<StatementInst<F,LK>, Error>{
 		//1. making check on odd/even case
@@ -256,7 +256,7 @@ GadgetMapper<F,LK> for SumMapper<F, LK>{
 		let mut subtbl_id = vec![];
 		let (zero, two) = (F::zero(), F::from(2u32));
 		for i in 0..n{
-			let res = lkup.borrow().find(two, word[i]);
+			let res = lkup.find(two, word[i]);
 			let sid = if res.is_ok() {two} else {zero};
 			subtbl_id.push(sid);
 		}
@@ -397,7 +397,7 @@ fn main(){
 		(F::from(2u32), F::from(3u32)), 
 		(F::from(2u32), F::from(4u32)), 
 	]);
-	let lkup = Rc::new(RefCell::new(lk.clone()));
+	let lkup = Arc::new(lk.clone());
 	let (odd_mapper, even_mapper) =  
 		(SumMapper::<Fr,LK>::new(true), SumMapper::<Fr,LK>::new(false));
 	let _rng = rand::rngs::OsRng;

@@ -1,3 +1,4 @@
+use std::sync::Arc;
 /// Replication of the mod.rs, which defines the data structures
 /// such as committed instance and witness for the supernova version.
 /// <https://eprint.iacr.org/2022/1758.pdf>
@@ -6,7 +7,7 @@
 */
 
 use utils::{logger::{log, log_perf, LOG3,LOG4}, timer::Timer as GTimer};
-use std::{rc::Rc, cell::RefCell};
+
 use ark_crypto_primitives::sponge::{
     poseidon::{PoseidonConfig, PoseidonSponge},
     Absorb, CryptographicSponge,
@@ -494,7 +495,7 @@ where
     CS2: CommitmentScheme<C2, H>,
 	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug,
 {
-    pub fn new(poseidon_config: PoseidonConfig<C1::ScalarField>, vec_F: Vec<FC>,lk: Rc<RefCell<LK>>, vec_size_F: Vec<usize>, b_full_mode: bool) -> Self {
+    pub fn new(poseidon_config: PoseidonConfig<C1::ScalarField>, vec_F: Vec<FC>,lk: Arc<LK>, vec_size_F: Vec<usize>, b_full_mode: bool) -> Self {
 		let vec_F = vec_F.clone();
 		let vec_size_F = vec_size_F.clone();
 		
@@ -633,7 +634,7 @@ where
     /// All F circuits, the circuit that is being folded
     pub F: Vec<FC>,
 	/// the lookup table SHARED with all instances
-	pub lk_tbl: Option<Rc<RefCell<LK>>>,
+	pub lk_tbl: Option<Arc<LK>>,
     /// public params hash
     pub pp_hash: C1::ScalarField,
     pub i: C1::ScalarField,
@@ -1093,7 +1094,7 @@ where
 		let log_level = LOG3;
 		let mut gt1 = GTimer::new();
 		//0. process lookup globally
-		let lookup = prep_param_src.vec_pp[0].lk_tbl.borrow();
+		let lookup = &prep_param_src.vec_pp[0].lk_tbl;
 		let (_col1_raw, _col2_raw) = lookup.get_cols();
 		let lkup_len = _col1_raw.len();
 		let mut m1 = get_mem_usage_mb();
@@ -2011,7 +2012,7 @@ pub mod tests_mod_super {
         const H: bool,
     >(
         poseidon_config: PoseidonConfig<Fr>,
-		lkup_inp: Rc<RefCell<LK>>,
+		lkup_inp: Arc<LK>,
         F_circuit: SigmaIR1CS_Inst<Fr,Projective,CS1,LK,GM,H>,
 		vec_stmts: &Vec<StatementInst<Fr,LK>>,
 		num_steps: usize,

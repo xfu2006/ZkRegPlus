@@ -1,3 +1,4 @@
+use std::sync::Arc;
 /* Created 02/12/2025
 
 Composite gadget mapper: that can be consisting of
@@ -114,7 +115,7 @@ pub trait ComponentMapper<F:PrimeField + ColEle, LK: LookupTableTwoCol<F>>: Debu
 	/// NOTE: we dropped stmt and stmt_vec from the parameters, so at this
 	/// moment stmt_map_id and comp_id are actually not useful anymore 
 	/// (deprecated). 
-	fn build_statement_comp(&self, comp_id: usize, stmt_map_id: usize, word_seg: &Vec<F>, actual_word_len: usize, lkup: &Rc<RefCell<LK>>, extra_info: &StatementExtraInfo<F>, _advice: &Rc<dyn NdAdvice>, cfg: &StatementConfig, comp_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>;
+	fn build_statement_comp(&self, comp_id: usize, stmt_map_id: usize, word_seg: &Vec<F>, actual_word_len: usize, lkup: &Arc<LK>, extra_info: &StatementExtraInfo<F>, _advice: &Rc<dyn NdAdvice>, cfg: &StatementConfig, comp_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>;
 
 	/// This is not required for those non-SED gadgets, they are handled
 	/// by legacy gode.
@@ -469,7 +470,7 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>
 	/// - row: The row index within the column. (which element to retrieve
 	pub fn get_value(&self, 
 		word: &Vec<F>, 
-		lkup: Rc<RefCell<LK>>, 
+		lkup: Arc<LK>, 
 		ea: &StatementExtraInfo<F>, 
 		advice: &Rc<dyn NdAdvice>, 
 		lkup_share_size: usize,
@@ -548,7 +549,7 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>
 	pub fn self_check(&self, 
 		word: &Vec<F>, 
 		_prev_stmt: &Option<StatementInst<F,LK>>, 
-		lkup: Rc<RefCell<LK>>, 
+		lkup: Arc<LK>, 
 		ea: &StatementExtraInfo<F>, 
 		r_advice: Rc<dyn NdAdvice>, 
 		lkup_share_size: usize, 
@@ -812,7 +813,7 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 	/// given word input, previous witness, try to construct
 	/// the full problem statement (including non-deterministic witness). 
 	/// NOTE that the real i/o has only two elements in z_i array.
-	fn build_statement(&self, word: &Vec<F>, _prev_stmt: &Option<StatementInst<F,LK>>, lkup: Rc<RefCell<LK>>, ea: &StatementExtraInfo<F>, r_advice: Rc<dyn NdAdvice>, lkup_share_size: usize, b_dummy: bool) 
+	fn build_statement(&self, word: &Vec<F>, _prev_stmt: &Option<StatementInst<F,LK>>, lkup: Arc<LK>, ea: &StatementExtraInfo<F>, r_advice: Rc<dyn NdAdvice>, lkup_share_size: usize, b_dummy: bool) 
 	-> Result<StatementInst<F,LK>, Error>{
 		//1. expand word_seg to max capacity.
 		let b_debug = false;

@@ -1,3 +1,4 @@
+use std::sync::Arc;
 /// Implements the batch processing scheme.
 /// Mainly this is about proving a word belongs to concatenation
 /// of a collection of words. Check Section 6.5 of our paper.
@@ -467,13 +468,13 @@ where
 		pkey: &BatchProcessorProverParams<'a,E>,
 		rng: &mut impl RngCore,
 		words: &Vec<Vec<F>>,
-		lkup: Rc<RefCell<LK>>)
+		lkup: Arc<LK>)
 	-> Result<(BatchClaim<E>, Vec<IndividualClaim<E>>, 
 		SnarkAdvice<F>), Error>{
 		//println!("STEP 1 here");
 		//1. generate the global claim
 		let n_words = words.len();
-		let (mut lk1, mut lk2) = lkup.borrow().get_cols();
+		let (mut lk1, mut lk2) = lkup.get_cols();
 		lk1.reverse();
 		lk2.reverse();
 
@@ -655,7 +656,7 @@ where
 	pub fn prove_batch(pkey: &BatchProcessorProverParams<'a,E>,
 		snark_input: &SnarkAdvice<E::ScalarField>,
 		words: &Vec<Vec<E::ScalarField>>,
-		lkup: Rc<RefCell<LK>>,
+		lkup: Arc<LK>,
 		partial_rand_inp: &SnarkRandInput<E>) -> (BatchProof<E,S>, SnarkRandInput<E>){
 		let mut rand_inp = partial_rand_inp.clone();
 
@@ -712,7 +713,7 @@ where
 
 
 		let agg_kzg_prf = {
-			let (mut lk1, mut lk2) = lkup.borrow().get_cols();
+			let (mut lk1, mut lk2) = lkup.get_cols();
 			lk1.reverse();
 			lk2.reverse();
 
@@ -984,7 +985,7 @@ mod tests_batch_proc {
 			(Fr::from(0u32), Fr::from(0u32)), //0, null entry
 			(Fr::from(1u32), Fr::from(0u32)), 
 			(Fr::from(1u32), Fr::from(1u32))]);
-		let lkup = Rc::new(RefCell::new(lk));
+		let lkup = Arc::new(lk);
 
 		let keysize = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>, CS1E, false>::key_size(&words);
 		let (pk,vk) = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>, CS1E, false>::setup(&mut rng,keysize,n_words,

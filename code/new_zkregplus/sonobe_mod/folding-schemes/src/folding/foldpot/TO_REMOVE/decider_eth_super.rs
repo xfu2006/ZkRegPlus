@@ -1,3 +1,4 @@
+use std::sync::Arc;
 /* Created 09/16/2024 */
 // OUTDATED -> will be replaced by driver.
 /// This file implements the onchain (Ethereum's EVM) decider. (SuperNova)
@@ -233,7 +234,7 @@ where
 	
 		let sum_n = nova_pp.vec_pp.iter().map(|p| p.cs_pp_len).sum();
 		let max_size = max(sum_n, 
-			nova_pp.vec_pp[0].lk_tbl.borrow().get_size()+1);
+			nova_pp.vec_pp[0].lk_tbl.get_size()+1);
 
 		panic!("CHECK if needs to keep both cs_pp and cs1e_pp");
 		let (cs_pp, cs_vp) = CS1::setup(&mut rng, max_size)?;
@@ -691,7 +692,7 @@ pub mod tests_decider_super {
 			(F::from(2u32), F::from(3u32)), 
 			(F::from(2u32), F::from(4u32)), 
 		]);
-		let lkup = Rc::new(RefCell::new(lk));
+		let lkup = Arc::new(lk);
 		let (odd_mapper, even_mapper) =  
 			(SumMapper::<Fr,LK>::new(true), SumMapper::<Fr,LK>::new(false));
         let mut rng = rand::rngs::OsRng;
