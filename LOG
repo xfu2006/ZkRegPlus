@@ -27138,7 +27138,39 @@ Goal 1. adjust small data3
 	[b] adjust hte params
 	[c] should print the circuit chosen
 
-Goal 3. do parallel circ selection.
+Goal 3. do parallel circ selection. -> it's much harder and involves
+	a lot of mods. -> push it to later
+Goal 4. observation of the crash reports.
+
+Friday 04/03/2026
+Goal 1. collect data from server
+	[a] collected data
+	DEBUG USE 6901.1.0 public input: BigInt([14030138793776855087, 452998689608655877, 12017412033120412886, 1480949769533238039])
+	DEBUG USE 6901.2.0 public input: 9296072368357593426949759868353236720345544652567631969221367209181348575279
+	snark main details: Ok(false)
+snark main fails.
+thread 'zkp_driver::tests_zkp_driver::test_zkreg_main' panicked at /home/xiang/Desktop/NewResearch/Projects/ZkRegPlus/code/new_zkregplus/sonobe_mod/folding-schemes/src/folding/foldpot/driver.rs:2089:5:
+assertion failed: BatchProcessor::<E, LK, S, CS1E,
+        H>::verify_batch(&batch_ver_param, Some(qa_nizk_vkey_hash1),
+    Some(qa_nizk_vkey2.clone()), Some(g16_vk_main), Some(g16_vk_cp),
+    &batch_claim, &batch_prf, &driver1_poseidon_config, true, opt_kzg_sum1)
+stack backtrace:
+   0: rust_begin_unwind
+             at /rustc/07dca489ac2d933c78d3c5158e3f43beefeb02ce/library/std/src/panicking.rs:645:5
+   1: core::panicking::panic_fmt
+             at /rustc/07dca489ac2d933c78d3c5158e3f43beefeb02ce/library/core/src/panicking.rs:72:14
+   2: core::panicking::panic
+             at /rustc/07dca489ac2d933c78d3c5158e3f43beefeb02ce/library/core/src/panicking.rs:144:5
+   3: folding_schemes::folding::foldpot::driver::foldpot_main
+   4: zkregplus::zkp_driver::zkp_driver_adv
+   5: zkregplus::zkp_driver::tests_zkp_driver::test_zkreg_main
+   6: core::ops::function::FnOnce::call_once
+   7: core::ops::function::FnOnce::call_once
+             at /rustc/07dca489ac2d933c78d3c5158e3f43beefeb02ce/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+test zkp_driver::tests_zkp_driver::test_zkreg_main ... FAILED
+	[b] they are equal!
+
 
 -- TODO -- remove DEBUG USE 6901.1.x and 6901.2.x
 

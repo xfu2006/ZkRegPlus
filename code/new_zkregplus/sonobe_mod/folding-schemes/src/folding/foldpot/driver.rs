@@ -562,7 +562,7 @@ where
 		min_layer: usize, 
 		max_layer: usize,
 	) -> (usize, usize, Vec<usize>, Vec<usize>, Vec<Rc<dyn Capacity>>, Vec<Rc<dyn NdAdvice>>){
-
+	/*
 		use rayon::prelude::*;
 
 		let results: Vec<_> = (min_layer..=max_layer)
@@ -588,6 +588,8 @@ where
 				panic!("par_search_best_layer: No suitable layer found in range [{}, {}] for the given word.", min_layer, max_layer);
 			}
 		}
+		*/
+		todo!()
 	}
 
 	/// generate the nd_advice by picking up the circ.
@@ -603,7 +605,7 @@ where
 	pub fn plan_nd_advice_new(&self, log_level: usize, b_save_advice: bool,
 		word: &Vec<CF1<C1>>, word_info: &WordInfo, word_fname: &str)
 		-> Result<(usize, Vec<usize>, Vec<usize>, Vec<Rc<dyn Capacity>>, Vec<Rc<dyn NdAdvice>>),Error>{
-		let b_fast = true; 
+		let b_fast = false; 
 		//0. verify each layer has only one circ
 		let mut gt1 = GTimer::new();
 		let mut gt2 = GTimer::new();

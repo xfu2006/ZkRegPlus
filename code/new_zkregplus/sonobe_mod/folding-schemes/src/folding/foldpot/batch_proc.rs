@@ -897,7 +897,7 @@ where
 			//4.1 verify the maincirc snark proof
 			let pub_inp = vec![prf.mainres_hash.unwrap()];
 			if b_debug { 
-				println!("DEBUG USE 6901.2.0 public input: {:?}", pub_inp); 			}
+				println!("DEBUG USE 6901.2.0 public input: {}", pub_inp[0]); 				}
 			let snark_v_main = S::verify(
 				&snark_vk_main.expect("snark vkey_main empty"),
 				&pub_inp,
