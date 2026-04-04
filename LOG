@@ -27225,6 +27225,107 @@ Goal 2. plan to parallel processing
 		saved for propagating trait bounds etc)
 	===> COST: 1.7M pro model tokenslow rslow ruslow run
 
-== TODO ==: put constraint tesitng code there for small example
-== TODO -- find out which circuit is used. 
+Goal 3. debug the large sample
+=> enable more debugging info
+=> deploy on server 8:00pm
+=> run again: may need 6 to 7 hours. 
 
+Sat 04/04/2026
+Goal 1. analayze full_data4
+	[a] data
+	===
+	OG3: -- --  Phase1 Circ gen_cs: Step 6: verify zi_part2. INCREASED r1cs: 1498, memory usage: 121. 5013 ms
+-- DEBUG USE 1001: entering CHECK: phase1 step 6
+-- DEBUG USE 1001.2: CHECK cs passing: phase1 step 6
+LOG3: -- --  Phase1 Circ gen_cs: Step 7: check 1 circs. INCREASED r1cs: 35634713 48914 ms
+-- DEBUG USE 1001: entering CHECK: phase1 step 7
+thread 'zkp_driver::tests_zkp_driver::test_zkreg_main' panicked at /home/xiang/Desktop/NewResearch/Projects/ZkRegPlus/code/new_zkregplus/sonobe_mod/folding-schemes/src/folding/foldpot/utils.rs:57:17:
+ERROR: not satisfiable: phase1 step 7
+stack backtrace:
+   0: rust_begin_unwind
+             at /rustc/07dca489ac2d933c78d3c5158e3f43beefeb02ce/library/std/src/panicking.rs:645:5
+   1: core::panicking::panic_fmt
+             at /rustc/07dca489ac2d933c78d3c5158e3f43beefeb02ce/library/core/src/panicking.rs:72:14
+   2: folding_schemes::folding::foldpot::utils::check_cs
+   3: folding_schemes::folding::foldpot::decider_eth_circuit_super::Phase1Circuit<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,LK,GM,_>::generate_constraints_adv
+   4: folding_schemes::folding::foldpot::decider_eth_circuit_super::MainDeciderCircuit<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,LK,GM,_>::from_nova
+   5: folding_schemes::folding::foldpot::driver::foldpot_main::{{closure}}
+   6: rayon::iter::plumbing::Folder::consume_iter
+   7: rayon::iter::plumbing::bridge_producer_consumer::helper
+   8: <rayon::iter::plumbing::bridge::Callback<C> as rayon::iter::plumbing::ProducerCallback<I>>::callback
+   9: <rayon::vec::IntoIter<T> as rayon::iter::IndexedParallelIterator>::with_producer
+  10: folding_schemes::folding::foldpot::driver::foldpot_main
+  11: zkregplus::zkp_driver::zkp_driver_adv
+  12: zkregplus::zkp_driver::tests_zkp_driver::test_zkreg_main
+  13: core::ops::function::FnOnce::call_once
+  14: core::ops::function::FnOnce::call_once
+             at /rustc/07dca489ac2d933c78d3c5158e3f43beefeb02ce/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+test zkp_driver::tests_zkp_driver::test_zkreg_main ... FAILED
+	===
+
+Goal 2. add more checks
+	[a] in prove_step at the end check the constraints
+
+Goal 3. add more boundary checks
+	[a] fsm_adv: 711 and 1515
+	[b] AI spotted problem
+	------------
+2. Pattern Trace Capacity (basis_pats_in_trace)
+  The number of (location, state, pattern) triples in a chunk is limited by
+  plen.
+   * File: zkregplus/src/gadgets/fsm_adv.rs
+       * Line 1206-1215: let plen = nlen * capacity.basis_pats_in_trace / 10000;
+         if plen < tuples2.len() + 1 { ... return Err(Error::CapErr(...)); }
+   * Issue: Although this returns CapErr, if the check is somehow bypassed or if
+     tuples2.len() is inconsistent between prover and circuit (unlikely but
+     possible if acdfa.outputs is dynamic), it would fail Step 7.
+
+  3. Unique States Capacity (basis_unique_states)
+  The number of unique states in a chunk is limited by ulen.
+   * File: zkregplus/src/gadgets/fsm_adv.rs
+       * Line 1160-1168: let ulen = nlen * capacity.basis_unique_states/10000;
+         if ulen < proj_states.len() + 1 { ... return Err(Error::CapErr(...)); }
+   * Issue: Similar to point 2, if the number of unique final states in a chunk
+     exceeds 20% of the trace (for basis_unique_states = 2000), it hits this
+     limit.
+
+  4. Accepted States Capacity (basis_acc_states)
+  The total number of accepted states (including duplicates) in a chunk is
+  limited by alen.
+   * File: zkregplus/src/gadgets/fsm_adv.rs
+       * Line 698-703: let target_size = nlen*capacity.basis_acc_states/10000;
+         if states_final.len() + 1 > target_size { ... return
+         Err(Error::CapErr(...)); }
+   * Issue: libpython3.9.so has a match rate of 11.37%, which is very close to
+     the 12.6% capacity (basis_acc_states = 1260).
+
+  5. Transition Packing Field Wrap-around
+  Transitions are packed 4-at-a-time into a single field element.
+   * File: zkregplus/src/gadgets/commons.rs
+       * Line 694: let f56 = f16 * f16 * f16 * f16 * f6; (calculates 2^70)
+   * Issue: The packed sum tr0 + tr1*2^70 + tr2*2^140 + tr3*2^210 can exceed the
+     Bn254 field modulus (~2^254) because 4 * 70 = 280. While the circuit and
+     prover both wrap, this is a potential source of inconsistency if any
+     intermediate value is used for a range check.
+
+  6. Subsignature Capacity Check Missing in new_v2
+   * File: zkregplus/src/gadgets/fsm_adv.rs
+       * Line 1130: pub fn new_v2( ... _inp_subsigs: &Vec<F>, ... )
+   * Issue: The new_v2 implementation ignores the _inp_subsigs parameter and
+     does not check its length against capacity.subsigs, unlike new_v1. If the
+     SED gadget passes too many subsigs, it might not be caught here.
+
+  7. Dummy Entry Panic (to_pad == 0)
+   * File: zkregplus/src/gadgets/fsm_adv.rs
+       * Line 708 and 1222: assert!(to_pad>0, "to_add needs >0 to leave one
+         dummy entry");
+   * Issue: If the number of actual entries exactly matches the capacity, to_pad
+     will be 0, and the code will panic. This would stop the prover, but if
+     expect is used poorly, it might manifest as a failure.
+	--------------------
+
+Goal 3. improve debug system in sonobe
+	[a] define B_DEBUG2,3 for different categories
+	[b] then plug in the debug statement in sigma_ir1cs
+	pc[ plug B_DEBUG3 in different steps

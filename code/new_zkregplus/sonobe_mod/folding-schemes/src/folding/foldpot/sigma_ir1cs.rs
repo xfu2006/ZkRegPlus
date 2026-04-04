@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 		are discharged).
 */
 use utils::{consts::ADD_CHAIN_SIZE, logger::{log, log_perf, LOG6,LOG7}, timer::Timer as GTimer};
-use crate::folding::foldpot::utils::{sum3,alloc_fpvar_mul,sub2,var_to_tuple, var_to_tuple_adv, B_DEBUG, check_cs};
+use crate::folding::foldpot::utils::{sum3,alloc_fpvar_mul,sub2,var_to_tuple, var_to_tuple_adv, B_DEBUG3, B_DEBUG2, check_cs};
 use serde::{Serialize,Deserialize};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use crate::commitment::CommitmentScheme;
@@ -2551,6 +2551,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		// will be enforced somewhere else, but need
 		// the cyclepair input
 		let log_level = LOG7;
+		use crate::folding::foldpot::utils::B_DEBUG;
 		let b_debug = B_DEBUG;
 
 		let mut gt1 = GTimer::new();
@@ -3043,6 +3044,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		z_i: Vec<FpVar<F>>,
 		external_inputs: Vec<FpVar<F>>,
 	) -> Result<Vec<FpVar<F>>, SynthesisError> {
+		use crate::folding::foldpot::utils::B_DEBUG;
 		let b_debug = B_DEBUG; //set to false in production mode
 		let b_show_sigs = false; //set to false in production mode
 		let log_level = LOG6;
@@ -3085,7 +3087,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		while gi<self.gadgets.len(){
 			for _i in 0..configs[gi].2{
 				let ch = transcript.get_challenge()?;
-
 				#[cfg(test)]{
 					assert!(ch.value().unwrap()==v_msg2[idx].value().unwrap(),
 						"ERROR ch does not match v_msg2");
@@ -3096,9 +3097,8 @@ where 	C: CurveGroup<ScalarField=F>,
 			}
 			gi += 1;
 		}
-		if b_debug{
-			let csat = cs.is_satisfied();
-			if csat.is_ok(){ assert!(csat.unwrap(), "step 2"); }
+		if B_DEBUG3{
+			check_cs(&cs, "gen_step_cs 1");
 			println!(concat!(
 				"--- DEBUG USE 7601: gen_step_constraints step 1. ",
 				"cs: {}, stack  =======, stack: {}"), 
@@ -3118,15 +3118,14 @@ where 	C: CurveGroup<ScalarField=F>,
 		for (i,g) in self.gadgets.iter().enumerate(){
 			let (nc, ni, nv) = (cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables());
 			g.lock().unwrap().assert_msg3(i, cs.clone(), &wtns_var, &cfg)?;
-			if b_debug{
+			if B_DEBUG3{
 				check_cs(&cs, &format!("After gadget: {}", g.lock().unwrap().get_name()));
 			}
 			let stmt_len = g.lock().unwrap().get_msg_size().0;
 			log_perf(log_level, &format!("-- -- after msg3 of module {}: {}:\n\tINCREASED: constraints: {}, const vars: {}, wit vars: {} \n\t==> NOW: CS:{}, const: {}, witness: {}\n\t ==> stmt_size: {}. ", i, g.lock().unwrap().get_name(), cs.num_constraints()-nc, cs.num_instance_variables()-ni, cs.num_witness_variables()-nv, cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables(), stmt_len), &mut gt3);						
 		}
-		if b_debug{
-			let csat = cs.is_satisfied();
-			if csat.is_ok(){ assert!(csat.unwrap(), "step 2"); }
+		if B_DEBUG3{
+			check_cs(&cs, "gen_step_cs 3");
 			println!(concat!(
 				"--- DEBUG USE 7601: gen_step_constraints step 3. ",
 				"cs: {}, stack  =======, stack: {}"), 
@@ -3233,9 +3232,8 @@ where 	C: CurveGroup<ScalarField=F>,
 			assert!(io_res.value()?, "io not match at final step!");
 		}
 		io_res.enforce_equal(&Boolean::TRUE)?;
-		if b_debug{
-			let csat = cs.is_satisfied();
-			if csat.is_ok(){ assert!(csat.unwrap(), "step 4"); }
+		if B_DEBUG3{
+			check_cs(&cs, "gen_step_cs 4");
 			println!(concat!(
 				"--- DEBUG USE 7601: gen_step_constraints step 4. ",
 				"cs: {}, stack  =======, stack: {}"), 
@@ -3435,9 +3433,8 @@ where 	C: CurveGroup<ScalarField=F>,
 		nv = cs.num_witness_variables();
 		nl = cs.num_lc();
 
-		if b_debug{
-			let csat = cs.is_satisfied();
-			if csat.is_ok(){ assert!(csat.unwrap(), "step 5.1"); }
+		if B_DEBUG3{
+			check_cs(&cs, "gen_step_cs 5.1");
 			println!(concat!(
 				"--- DEBUG USE 7601: gen_step_constraints step 5.1 ",
 				"cs: {}, stack  =======, stack: {}"), 
@@ -3561,9 +3558,8 @@ where 	C: CurveGroup<ScalarField=F>,
 			}
 			b_hab_res.enforce_equal(&Boolean::TRUE)?;
 		}
-		if b_debug{
-			let csat = cs.is_satisfied();
-			if csat.is_ok(){ assert!(csat.unwrap(), "step 5.2"); }
+		if B_DEBUG3{
+			check_cs(&cs, "gen_step_cs 5.2");
 			println!(concat!(
 				"--- DEBUG USE 7601: gen_step_constraints step 5.2",
 				"cs: {}, stack  =======, stack: {}"), 
@@ -3597,9 +3593,8 @@ where 	C: CurveGroup<ScalarField=F>,
 			&zi_part2.total_word_segs)?).expect("is eq err");
 		assert_imply(&b_last_full, &si.subseg_id.is_eq(&one_var)?).expect("eq");
 
-		if b_debug{
-			let csat = cs.is_satisfied();
-			if csat.is_ok(){ assert!(csat.unwrap(), "step 6"); }
+		if B_DEBUG3{
+			check_cs(&cs, "gen_step_cs 6");
 			println!(concat!(
 				"--- DEBUG USE 7601: gen_step_constraints step 6",
 				"cs: {}, stack  =======, stack: {}"), 
@@ -3732,9 +3727,8 @@ where 	C: CurveGroup<ScalarField=F>,
 				&sum_kzg_eval_word + &sum_kzg_eval_others;
 			//println!("DEBUG USE 501.9: sum_kzg_eval: {}, sum_vec_v_i: {}", sum_kzg_eval.value()?, sum_vec_v_i.value()?);
 		}
-		if b_debug{
-			let csat = cs.is_satisfied();
-			if csat.is_ok(){ assert!(csat.unwrap(), "step 7"); }
+		if B_DEBUG3{
+			check_cs(&cs, "gen_step_cs 7");
 			println!(concat!(
 				"--- DEBUG USE 7601: gen_step_constraints step 7",
 				"cs: {}, stack  =======, stack: {}"), 
@@ -3770,9 +3764,8 @@ where 	C: CurveGroup<ScalarField=F>,
 			}
 		}
 
-		if b_debug{
-			let csat = cs.is_satisfied();
-			if csat.is_ok(){ assert!(csat.unwrap(), "step 8"); }
+		if B_DEBUG3{
+			check_cs(&cs, "gen_step_cs 8");
 			println!(concat!(
 				"--- DEBUG USE 7601: gen_step_constraints step 8",
 				"cs: {}, stack  =======, stack: {}"), 
@@ -3835,9 +3828,8 @@ where 	C: CurveGroup<ScalarField=F>,
 			cyclepair_input: cp_inp,
 		};
 
-		if b_debug{
-			let csat = cs.is_satisfied();
-			if csat.is_ok(){ assert!(csat.unwrap(), "step 9"); }
+		if B_DEBUG3{
+			check_cs(&cs, "gen_step_cs 9");
 			println!(concat!(
 				"--- DEBUG USE 7601: gen_step_constraints step 9",
 				"cs: {}, stack  =======, stack: {}"), 
@@ -3871,9 +3863,8 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		let hash_zi_part2= zi1_part2.hash(&self.poseidon_config, cs.clone());
 
-		if b_debug{
-			let csat = cs.is_satisfied();
-			if csat.is_ok(){ assert!(csat.unwrap(), "step 9.1"); }
+		if B_DEBUG3{
+			check_cs(&cs, "gen_step_cs 9.1");
 			println!(concat!(
 				"--- DEBUG USE 7601: gen_step_constraints step 9.1",
 				"cs: {}, stack  =======, stack: {}"), 
@@ -3895,9 +3886,8 @@ where 	C: CurveGroup<ScalarField=F>,
 		let b_correct = not_final_step.or(&b_sigs)?; //require b_sigs true at
 			//at last step
 
-		if b_debug{
-			let csat = cs.is_satisfied();
-			if csat.is_ok(){ assert!(csat.unwrap(), "step 9.2"); }
+		if B_DEBUG3{
+			check_cs(&cs, "gen_step_cs 9.2");
 			println!(concat!(
 				"--- DEBUG USE 7601: gen_step_constraints step 9.2",
 				"cs: {}, stack  =======, stack: {}"), 
@@ -3919,9 +3909,8 @@ where 	C: CurveGroup<ScalarField=F>,
 			}
 		}
 
-		if b_debug{
-			let csat = cs.is_satisfied();
-			if csat.is_ok(){ assert!(csat.unwrap(), "step 10"); }
+		if B_DEBUG2{
+			check_cs(&cs, "gen_step_cs FINAL");
 			println!(concat!(
 				"--- DEBUG USE 7601: gen_step_constraints step 10. RETURN!",
 				"cs: {}, stack  =======, stack: {}"), 

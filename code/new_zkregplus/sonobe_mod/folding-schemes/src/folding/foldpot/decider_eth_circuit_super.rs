@@ -45,7 +45,7 @@ use crate::folding::{
 		mod_super::{WitnessFoldPotSuper,CommittedInstanceFoldPotSuper, FoldPotSuper},
 		circuits_super::{field_to_usize,CommittedInstanceVarFoldPotSuper},
 		sigma_cyclepair::{compute_hc_var, hash_var},
-		utils::{get_mem_usage,f1_limbs_to_f2, B_DEBUG, new_var, check_cs},
+		utils::{get_mem_usage,f1_limbs_to_f2, B_DEBUG2, B_DEBUG3, new_var, check_cs},
 		container_config::ColEle,
 	},
 };
@@ -731,7 +731,6 @@ where
     pub fn generate_constraints_adv(&self, _dump_level: usize, cs: ConstraintSystemRef<CF1<C1>>, _randf: CF1<C1>) -> Result<Phase1CircuitRet<CF1<C1>,C1>, Error> {
 		//1. generate Vector the R1CS var (one for each circuit)
 		let log_level = LOG3;
-		let b_debug = B_DEBUG;
 		let mut t1 = GTimer::new();
 		let c0 = cs.num_constraints();
 		let mut c1 = cs.num_constraints();
@@ -747,7 +746,7 @@ where
 			>>();
 		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 1: generae r1cs_var. INCREASSED {} constraints", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
-		if b_debug{check_cs(&cs, "phase1 step 1.0");}
+		if B_DEBUG3 {check_cs(&cs, "phase1 step 1.0");}
 
 		//2. generate Var version of pp_hash, z_0, z_i
 		// U_i, u_i, U_i1, given the advice from nova instance
@@ -778,7 +777,7 @@ where
         })?;
 		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 2: igen Ui, Wi, Ui1, Wi1 witness: INCREASED {} constraints", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
-		if b_debug{check_cs(&cs, "phase1 step 2.0");}
+		if B_DEBUG3{check_cs(&cs, "phase1 step 2.0");}
 
 		//3. compute the KZG challenge in circuit
 		let com_all_w = NonNativeAffineVar::<C1>::new_witness(cs.clone(),
@@ -801,14 +800,14 @@ where
 		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 3: collect all_w_e. len: {}, : INCREASED: {} constraints.", 
 			all_w.len(), cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
-		if b_debug{check_cs(&cs, "phase1 step 2");}
+		if B_DEBUG3{check_cs(&cs, "phase1 step 2");}
 
 		let one= FpVar::<C1::ScalarField>::new_witness(cs.clone(),  || 
 			Ok(C1::ScalarField::from(1u32)) ).unwrap();
         let eval_w_e= evaluate_gadget::<CF1<C1>>(all_w, kzg_all_com_ch, one)?;
 		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 4: eval all_w_e. INCREASED {} constrains.", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
-		if b_debug{check_cs(&cs, "phase1 step 3");}
+		if B_DEBUG3{check_cs(&cs, "phase1 step 3");}
 
         //4. u_i.cmE==cm(0), u_i.u==1
         // Here zero is the x & y coordinates of the 
@@ -818,7 +817,7 @@ where
         u_i.cmE.x.enforce_equal_unaligned(&zero)?;
         u_i.cmE.y.enforce_equal_unaligned(&zero)?;
         (u_i.u.is_one()?).enforce_equal(&Boolean::TRUE)?;
-		if b_debug{check_cs(&cs, "phase1 step 4");}
+		if B_DEBUG3{check_cs(&cs, "phase1 step 4");}
 
 
         //5. a u_i.x[0] == H(i, z_0, z_i, pc_i, U_i)
@@ -861,7 +860,7 @@ where
         (u_i.x[0]).enforce_equal(&is_basecase.select(&u_i1_x_base, &u_i_x)?)?;
 		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 5: Enforce u_i standard and hash. INCREASED r1cs: {}.", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
-		if b_debug{check_cs(&cs, "phase1 step 5");}
+		if B_DEBUG3{check_cs(&cs, "phase1 step 5");}
 
 		//6. Added check z_i is well-formed (and in-particular) its
 		//r matches kzg_c_lkup, and its sum_lk_col1, sum_lk_col2 matches
@@ -878,7 +877,7 @@ where
 		zi_p2.enforce_equal(&z_i[1])?;
 		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 6: verify zi_part2. INCREASED r1cs: {}, memory usage: {}.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 		c1 = cs.num_constraints();
-		if b_debug{check_cs(&cs, "phase1 step 6");}
+		if B_DEBUG3{check_cs(&cs, "phase1 step 6");}
 
 
         //7. check RelaxedR1CS of U_{i+1} for each circuit
@@ -895,7 +894,7 @@ where
 		}
 		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 7: check {} circs. INCREASED r1cs: {}", self.n_circ, cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
-		if b_debug{check_cs(&cs, "phase1 step 7");}
+		if B_DEBUG3{check_cs(&cs, "phase1 step 7");}
 
         //#[cfg(feature = "light-test")]
         //println!("[WARNING]: Running with the 'light-test' feature, skipping the big part of the DeciderEthCircuit.\n           Only for testing purposes.");
@@ -1002,7 +1001,7 @@ where
 			log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 10: check cf_W_i satisfies cyclefold instance. INCREASED r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
         }
 
-		if b_debug{check_cs(&cs, "phase1 step 10");}
+		if B_DEBUG3{check_cs(&cs, "phase1 step 10");}
 
 		let mut vec_coms_part2 = U_i1.vec_inst.iter().map(|inst|
 			vec![inst.cmW.clone(), inst.cmE.clone(), inst.cmF.clone()]
@@ -1230,7 +1229,7 @@ where
 		let mut c1 = cs.num_constraints();
 		let mut t1 = GTimer::new();
 		let log_level = LOG3;
-		let b_debug = B_DEBUG;
+		let b_debug = true;
 		let (cyclepair_inputs_var, expected_final_result, hashchain_b) = 
 			self.process_cyclepair_inp(cs.clone());
 		log_perf(log_level, &format!("Phase2 Circ gen_cs: Step 1: gen_expected_final_result. r1cs: {}", cs.num_constraints()-c1), &mut t1);
@@ -1744,7 +1743,7 @@ where
     fn generate_constraints(self, cs: ConstraintSystemRef<CF1<C1>>) -> Result<(), SynthesisError> {
 		let mut gt1 = GTimer::new();
 		let mut gt2 = GTimer::new();
-		let b_debug = B_DEBUG;
+		let b_debug = true;
 		let log_level = LOG2;
 
 		//1. let the two circuits generate constraints first
@@ -1772,7 +1771,7 @@ where
 		log_perf(log_level, &format!("TwoPhaseCirc build circ1: {} cs.",
 			cs.num_constraints()-c0), &mut gt2);
 
-		if b_debug{check_cs(&cs, "TwoPhaseCirc build circ1");}
+		if B_DEBUG2{check_cs(&cs, "TwoPhaseCirc build circ1");}
 
 		log_perf(log_level-1, &format!("*** MainDeciderCirtuit TOTAL constraints: {} ***. ", cs.num_constraints()), &mut gt1);
 
@@ -1949,7 +1948,7 @@ where
 		let mut gt1 = GTimer::new();
 		let mut gt2 = GTimer::new();
 		let log_level = LOG2;
-		let b_debug = B_DEBUG;
+		let b_debug = true;
 		let c0 = cs.num_constraints();
 
 		//1. create circ2 (cyclepair circ generate constraints)
@@ -2023,7 +2022,7 @@ where
 		let c3 = cs.num_constraints();
 		log_perf(log_level, &format!("CyclePairCirc Step 2: validate all other data: {} cs.", c3-c2), &mut gt2);
 
-		if b_debug{check_cs(&cs, "CyclcePairCirc Step 2");}
+		if B_DEBUG2{check_cs(&cs, "CyclcePairCirc Step 2");}
 
 		log_perf(log_level-1, &format!("*** CyclePairCirc TOTAL constraints: {} ***.", cs.num_constraints()), &mut gt1);
 		Ok( () )

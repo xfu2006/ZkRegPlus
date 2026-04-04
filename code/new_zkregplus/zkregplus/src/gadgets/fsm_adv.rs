@@ -326,6 +326,10 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 	) ->Result<Self, Error>{
 		let sname = if b_igc {"fsm_adv_stmt_igc"} else {"fsm_adv_stmt_cs"};
 		let stmt_container = Container::<F>::new(sname);
+		if _inp_subsigs.len()>capacity.subsigs{
+			return Err(Error::CapErr(vec![(format!("fsm_adv::subsigs b_igc: {}", b_igc), _inp_subsigs.len())]));
+		}
+		assert!(_inp_subsigs.len()<=capacity.subsigs);
 
 		//1. construct the fsm_acc combo which has the transition
 		// info and results in (state, loc) columns
@@ -701,7 +705,7 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 				+ 1;
 			return Err(Error::CapErr(vec![(format!("fsm_adv::basis_acc_states, b_igc: {}", b_igc), target_basis_acc_states)]));
 		}
-		//assert!(states_final.len()<=target_size, "basis_acc_states too small: target_size: {} < states_final.len {}", target_size, states_final.len());
+		assert!(states_final.len()<=target_size-1, "basis_acc_states too small: target_size: {} < states_final.len {}", target_size, states_final.len());
 		let (oflen,to_pad) = (states_final.len(), 
 			target_size - states_final.len());
 		assert!(to_pad>0, "to_add needs >0 to leave one dummy entry");
@@ -709,6 +713,12 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		let f_range2 = F::from(RANGE2 as u32);
 		let states_final = vec![ vec![zero; to_pad], states_final].concat();
 		let locs_final = vec![ vec![zero; to_pad], locs_final].concat();
+		if b_debug{
+			let max_loc = F::from( (1u64<<RANGE2_BIT) - 1);
+			locs_final.par_iter().for_each(|x| {
+				assert!(*x<max_loc); 
+			});
+		}
 		let si_states_final = vec![
 			vec![f_range2; to_pad],vec![f_id_final; oflen]
 		].concat();
@@ -1175,6 +1185,14 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		let c2 = ct_stat_pat.lock().unwrap().get_container("val")?.lock().unwrap().to_vec();
 		let c3 = ct_stat_pat.lock().unwrap().get_container("id")?.lock().unwrap().to_vec();
 		let c4 = ct_stat_pat.lock().unwrap().get_container("count")?.lock().unwrap().to_vec();
+		if c1.len()>ulen{
+			let new_val = (c1.len()+1) * 10000/nlen + 1;
+			return Err(Error::CapErr(
+				vec![(format!(
+					"fsm_adv::basis_unique_states cs_stat_pat, b_igc: {}", b_igc), new_val) ]
+			));
+		}
+		assert!(c1.len()<=ulen);
 		let cols =  vec![&c1[..],&c2[..],&c3[..],&c4[..]];
 		let encoded = encode_cols_better(cols,vec![0,1,2,3]);
 		assert!(encoded.len()==ulen);
@@ -1228,6 +1246,14 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 			},
 			_ => loc_state_pat_tbl 
 		}?;
+		let loc_state_pat_tbl_len = loc_state_pat_tbl.lock().unwrap()
+			.get_container("join_tbl").unwrap().lock().unwrap()
+			.get_container("val").unwrap().lock().unwrap().to_vec().len();
+
+		if loc_state_pat_tbl_len>packed_trace_size{
+			let new_val = (loc_state_pat_tbl_len+1)*10000/capacity.max_nibble_len + 1;
+			return Err(Error::CapErr(vec![(format!("fsm_adv::basis_pats_in_trace for loc_state_pat_tbl, b_igc: {}", b_igc), new_val)]));
+		}
 		let pat_col = loc_state_pat_tbl.lock().unwrap()
 			.get_container("join_tbl").expect("err get join_tbl").lock().unwrap()
 			.get_container("val").unwrap().lock().unwrap()
@@ -1329,6 +1355,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		// NOTE: we do not have to assert in range for nibbles they
 		// are done already in word_extract_adv gadget
 		let b_perf = false;
+		let b_debug = false;
 		let log_level = LOG2;
 		let mut gt = GTimer::new();
 		let (nc, nv) = (cs.num_constraints(), cs.num_witness_variables());
@@ -1511,6 +1538,12 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 			.lock().unwrap().to_vec();
 		let locs_final= fsm_acc.get_container("locs_final")?
 			.lock().unwrap().to_vec();
+		if b_debug{
+			let max_loc = F::from( (1u64<<RANGE2_BIT) - 1);
+			locs_final.iter().for_each(|x| {
+				assert!(x.value().unwrap()<max_loc); 
+			});
+		}
 		let vec_not_dummy = states_final.iter().map(|s|
 			&one_var - &is_zero_better(s, &cs).unwrap()
 		).collect::<Vec<FpVar<F>>>();
