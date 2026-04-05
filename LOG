@@ -27325,7 +27325,56 @@ Goal 3. add more boundary checks
      expect is used poorly, it might manifest as a failure.
 	--------------------
 
+Goal 2.5 debug 
+	[a] breaks on OG4: -- -- --  prove_step: Step 2. fold_inst. inst size: 18289133 4837 ms
+LOG5: -- -- -- --  -- circuit_super gen_cs: START: cs: 0, vars: 0 1 us
+LOG5: -- -- -- --  -- circuit_super gen_cs step 1: cs: 0, vars: 6 143 ms
+LOG5: -- -- -- --  -- circuit_super gen_cs step 2: cs: 0, vars: 0 800 ns
+LOG5: -- -- -- --  -- circuit_super gen_cs step 3.0 generate wit: cs: 0, vars: 0 1861 ms
+LOG5: -- -- -- --  -- circuit_super gen_cs step 3.1: to_vec_fp_var: cs: 0, vars: 12009073, wtns_vec: 15348202 2122 ms
+LOG6: -- -- -- -- --  ### gen_step_cs START: cs: 0, vars: 12009079 710 ns
+LOG6: -- -- -- -- --  gen_step_cs step 1: cs: 0, vars: 0 436 ms
+LOG6: -- -- -- -- --  -- witness: stmt: 10217424, msg1: 0, msg2: 24, msg3: 23888
+thread 'zkp_driver::tests_zkp_driver::test_zkreg_main' panicked at /home/xiang/Desktop/NewResearch/Projects/ZkRegPlus/code/new_zkregplus/dependency/ark-relations/src/r1cs/constraint_system.rs:1108:48:
+index out of bounds: the len is 0 but the index is 0
+
 Goal 3. improve debug system in sonobe
 	[a] define B_DEBUG2,3 for different categories
 	[b] then plug in the debug statement in sigma_ir1cs
 	pc[ plug B_DEBUG3 in different steps
+
+Goal 4. check new data collected.
+	[a] -----------------
+LOG2: --  Phase 1 step 6: PROVE STEPS done for n_steps: 527. total_word_len: 1079098. RAM increased: 24 MB. Total RAM: 105 GB. 17765473 ms
+LOG2: --  Phase 1 step 7: verify.  1206 ms
+LOG1:  FoldPot: Step 3: Phase 1: main circuits IVC PROVE STEPS (Folding) DONE. total_word_len: 31.90 MB, steps: 527. 23324697 ms
+LOG3: -- --  Phase1 Circ gen_cs: Step 1: generae r1cs_var. INCREASSED 0 constraints 5289 ms
+-- DEBUG USE 1001: entering CHECK: phase1 step 1.0
+-- DEBUG USE 1001.2: CHECK cs passing: phase1 step 1.0
+LOG3: -- --  Phase1 Circ gen_cs: Step 2: igen Ui, Wi, Ui1, Wi1 witness: INCREASED 4698 constraints 3486 ms
+-- DEBUG USE 1001: entering CHECK: phase1 step 2.0
+-- DEBUG USE 1001.2: CHECK cs passing: phase1 step 2.0
+LOG3: -- --  Phase1 Circ gen_cs: Step 3: collect all_w_e. len: 30634043, : INCREASED: 3285 constraints. 2382 ms
+-- DEBUG USE 1001: entering CHECK: phase1 step 2
+-- DEBUG USE 1001.2: CHECK cs passing: phase1 step 2
+LOG3: -- --  Phase1 Circ gen_cs: Step 4: eval all_w_e. INCREASED 30663959 constrains. 17702 ms
+-- DEBUG USE 1001: entering CHECK: phase1 step 3
+-- DEBUG USE 1001.2: CHECK cs passing: phase1 step 3
+-- DEBUG USE 1001: entering CHECK: phase1 step 4
+-- DEBUG USE 1001.2: CHECK cs passing: phase1 step 4
+LOG3: -- --  Phase1 Circ gen_cs: Step 5: Enforce u_i standard and hash. INCREASED r1cs: 5179. 12615 ms
+-- DEBUG USE 1001: entering CHECK: phase1 step 5
+-- DEBUG USE 1001.2: CHECK cs passing: phase1 step 5
+LOG3: -- --  Phase1 Circ gen_cs: Step 6: verify zi_part2. INCREASED r1cs: 1498, memory usage: 133. 5268 ms
+-- DEBUG USE 1001: entering CHECK: phase1 step 6
+-- DEBUG USE 1001.2: CHECK cs passing: phase1 step 6
+LOG3: -- --  Phase1 Circ gen_cs: Step 7: check 1 circs. INCREASED r1cs: 35634757 49206 ms
+-- DEBUG USE 1001: entering CHECK: phase1 step 7
+thread 'zkp_driver::tests_zkp_driver::test_zkreg_main' panicked at /home/xiang/Desktop/NewResearch/Projects/ZkRegPlus/code/new_zkregplus/sonobe_mod/folding-schemes/src/folding/foldpot/utils.rs:59:17:
+ERROR: not satisfiable: phase1 step 7
+stack backtrace:
+  --------------------------
+
+
+== TODO == somehow check_cs is not working properly (only work in final circ), need to fix.
+
