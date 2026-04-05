@@ -27380,6 +27380,19 @@ Goal 1. improve the check_cs function
 	[a] improve check_cs
 	[b] check in prove-step the constraint system is disabled.
 
+Goal 2. implement the par_search_best_layer
+	[a] read code
+	[b] ask AI to fix Send + Sync
+
+Goal 3. small_mult_circ
+	[a] note the RAM usage for small_data3()
+	[b] create small_data4() -> test the variety of circs
+Goal 4. start improve parallel framework
+	[a] read code
+	[b] max_total_n 
+Goal 5. test small2 with 2 jobs
+	[a] 1 job 4GB - 27 sec
+
 
 == TODO == somehow check_cs is not working properly (only work in final circ), need to fix.
 

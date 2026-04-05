@@ -753,6 +753,78 @@ pub mod tests_zkp_driver{
 		);
 	}
 
+	/// small data: multiple parallel jobs.
+	/// COST: 1job: 4GB and 28 sec.
+	///       2jobs: 5GB and 28sec.
+	///       4 jobs: 11GB and 44sec (reason: folding doesn't take much time)
+	#[allow(dead_code)]
+	fn small_data_par<F:PrimeField>(b_check_lkup: bool){
+		assert!(RANGE2_BIT==8, "set RANGE2_BIT to 8");
+		let b_read_cache = false;
+		let b_write_cache = !b_read_cache;
+		let set1 = "data/debug/small_data_set/config_dfa"; //for dfa 
+		let max_word= 1; //this is chunk_len
+		let sigs = 2; //good setting: 2
+		//let subsigs = 6; GOOD setting
+		let subsigs = 4;  
+		let avg_pats_per_subsig = 3;  
+		let avg_active_pats_per_subsig = 2; //good value 0 (does not matter)
+		//let avg_subsig_per_sig = 2; //NO NEED ANY MORE
+		let perc_comp_subsigs = 26;  //26 for subsigs=4, 34 for subsigs=3
+		let basis_unique_states = 23*100; 
+		let basis_acc_states = 646;  //6.46 percent
+		let basis_pats_in_trace = 1291;   //(at most twice of basis_acc_states)
+		let perc_pats_expansion_rate = 100;
+
+		let num_category = 1;
+		let num_circs_per_category= 1;
+
+		let init_cp_cap= CpCapacity{
+			max_word_len: max_word, 
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+			//avg_subsig_per_sig
+		};
+		let init_sed_cap= SedCapacity::new(
+			max_word, RANGE2_BIT, subsigs, 
+			avg_pats_per_subsig, avg_active_pats_per_subsig, 
+			basis_pats_in_trace, 
+			perc_pats_expansion_rate,
+			sigs, perc_comp_subsigs,
+			basis_unique_states, basis_acc_states
+		);
+		let init_dfa_cap= DfaCapacity::new(max_word, sigs, subsigs);
+
+
+		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+			&format!("{}/sigs.dat",set1), //src sig
+			vec![
+				format!("{}/binexec.dat",set1),
+				format!("{}/binexec.dat",set1),
+				format!("{}/binexec.dat",set1),
+				format!("{}/binexec.dat",set1)
+			], //list of files to discharge
+			"data/small_data_set/reports/report.dat", //report
+			b_read_cache,
+			b_write_cache,
+			"small_20", //cache name
+			&format!("{}/dfa.dat", set1), //signs that need dfa
+			&format!("{}/ised.dat", set1), //signs that need ised 
+			&format!("{}/ised_igc.dat",set1), //sigs that need ised igc
+			max_word, //this is the chunk len
+			&init_cp_cap,
+			&init_sed_cap,
+			&init_dfa_cap,
+			&init_cp_cap, //as igc
+			&init_sed_cap, //as igc
+			num_category,
+			num_circs_per_category,
+			b_check_lkup
+		);
+	}
+
+
 	/// the sigs are the same as small data
 	/// has 1 long words (1k-packed nibbles - around 31kb)
 	/// read the READ me in data/small_data_set2/README for the design of sigs
@@ -1438,7 +1510,8 @@ pub mod tests_zkp_driver{
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
-		small_data::<Fr>(b_check_lkup); //small data
+		//small_data::<Fr>(b_check_lkup); //small data
+		small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)
 		//small_data2::<Fr>(b_check_lkup);  //10k data 
 		//small_data_debug::<Fr>(b_check_lkup);  //for debug
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails

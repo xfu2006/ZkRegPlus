@@ -1869,12 +1869,13 @@ where
 	// to build keys.
 	let log_level: usize = LOG1;
 	let mut gt_all = GTimer::new();
-	log(log_level, &format!("===== fold_pot starts with {} jobs =====", jobs.len()));
+	log(log_level, &format!("===== fold_pot starts with {} jobs =====", 
+		jobs.len()));
+	let global_max_words = jobs.iter().map(|job| job.vec_words.len())
+		.max().unwrap_or(0);
+	let global_max_total_n = jobs.iter().map(|job| job.vec_words.iter()
+		.map(|x| x.len()).sum::<usize>()).max().unwrap_or(0);
 
-	let global_max_words = jobs.iter().map(|job| job.vec_words.len()).max().unwrap_or(0);
-	let global_max_total_n = jobs.iter().map(|job| job.vec_words.iter().map(|x| x.len()).sum::<usize>()).max().unwrap_or(0);
-
-	//1. decide circuit
 	let mut vec_circ = vec_circ.clone();
 	let n_circ = vec_circ.iter().map(|row| row.len()).sum::<usize>();
 	let mut id = 0;
@@ -1928,20 +1929,22 @@ where
 		}
 	}
 	log_perf(log_level, 
-		&format!("FoldPot Step 1: build dummy stmt for all circs"),
-		&mut gt_all
+		&format!("FoldPot Step 1: build dummy stmt for all circs"), &mut gt_all
 	);
 
-	let poseidon_config_global = poseidon_canonical_config::<C1::ScalarField>();
 
-	// create the driver1 for the 1st phase
+	//2. create the driver1 for the 1st phase
+	let poseidon_config_global = poseidon_canonical_config::<C1::ScalarField>();
 	let b_full1 = false;
-	let driver1 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,FC,S,LK,GM,H> ::new(poseidon_config_global.clone(), 
-			lkup.clone(), vec_circ.clone(), rand::rngs::OsRng, b_full1, global_max_total_n, global_max_words);
+	let driver1 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,FC,S,LK,GM,H> 
+	::new(poseidon_config_global.clone(), lkup.clone(), 
+		vec_circ.clone(), rand::rngs::OsRng, b_full1, 
+		global_max_total_n, global_max_words
+	);
 	log_perf(log_level, &format!("FoldPot: Step 2: set up driver 1"),
 		&mut gt_all);
 
-	// create the driver2 for Phase2 CyclePair Circ
+	//3. create the driver2 for Phase2 CyclePair Circ
 	let n_circs_cp = 1;
 	let circ_cyclepair = create_sigma_fold_pair::<C1::ScalarField, C1, CS1, LK, H>(n_circs_cp, poseidon_config_global.clone());
 	let vec_circ_cp = vec![vec![ circ_cyclepair] ];
@@ -1950,8 +1953,7 @@ where
 	let lkup_p2 = Arc::new(lk_p2);
 	let driver2 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,SigmaIR1CS_Inst<C1::ScalarField, C1, CS1, LK, FoldPairMapper<CF1<C1>,LK>,H>,S,LK,FoldPairMapper<CF1<C1>,LK>,H>
 		::new(poseidon_config_global.clone(), lkup_p2, vec_circ_cp, rand::rngs::OsRng, b_full2, global_max_total_n, global_max_words);
-	log_perf(log_level, &format!("FoldPot: Step 2.5: set up driver 2"),
-		&mut gt_all);
+	log_perf(log_level, &format!("FoldPot: Step 3: set up driver 2.\n=== Now Execute All Jobs =====\n"), &mut gt_all);
 
 	jobs.into_par_iter().enumerate().try_for_each(|(job_id, job)| {
 		//0. retrieve the words and word_info
@@ -1962,14 +1964,14 @@ where
 	  	let idx_individual_prf = job.idx_individual_prf;
 	  	let vec_word_fnames = job.vec_word_fnames;
 	  	assert!(vec_word_fnames.len()==vec_words.len());
-
 	  	let mut rng = rand::rngs::OsRng;
 	  	let poseidon_config = poseidon_canonical_config::<C1::ScalarField>();
 	  	let max_total_n:usize = vec_words.iter().map(|x| x.len()).sum();
 
 	  	//put in one block to avoid do two snarks at the same time to
 	  	//save RAM.
-	  	let (snark_proof_main,mainres,mainres_hash, g16_vk_main, cyclepair_inputs,
+	  	let (snark_proof_main,mainres,mainres_hash, g16_vk_main, 
+				cyclepair_inputs,
 	  			kzg_sum1, ch1, rc1, _randf,
 	  			prf_kzg, kzg_all_com_ch, qa_nizk_vkey_hash1,
 	  			com_all_w, r_all_w, mut batch_prf,
@@ -1999,12 +2001,19 @@ where
 	  			&mut gt1);
 	  	
 	  		//5. generate the inputs for cyclepair
-	  		let qa_nizk_pkey = driver1.nova_param.0.qa_pp.as_ref().expect("qa_pp null!"); 
-	  		let qa_nizk_vkey = driver1.nova_param.1.qa_vp.as_ref().expect("qa_vp null!"); 
+	  		let qa_nizk_pkey = driver1.nova_param.0
+				.qa_pp.as_ref().expect("qa_pp null!"); 
+	  		let qa_nizk_vkey = driver1.nova_param.1
+				.qa_vp.as_ref().expect("qa_vp null!"); 
 	  		let qa_nizk_vkey_hash = qa_nizk_vkey.hash(&driver1.poseidon_config);
 	  		let qa_nizk_vkey_hash1 = qa_nizk_vkey_hash.clone();
 	  		let (U_i1, W_i1, _r_Fr, _cmT)= nova1.gen_next_folded()?;
-	  		let (com_all_w, prf_qa_nizk, r_all_w, prf_kzg, kzg_all_com_ch) = W_i1.gen_com_all_w_and_qa_nizk_prf::<E, CS1E, H>(&qa_nizk_pkey, &driver1.nova_param.0.cs1e_pp, &qa_nizk_vkey, &U_i1, &driver1.poseidon_config);
+	  		let (com_all_w, prf_qa_nizk, r_all_w, prf_kzg, kzg_all_com_ch) = 
+				W_i1.gen_com_all_w_and_qa_nizk_prf::<E, CS1E, H>(
+					&qa_nizk_pkey, 
+					&driver1.nova_param.0.cs1e_pp, 
+					&qa_nizk_vkey, &U_i1, &driver1.poseidon_config
+			);
 	  		let cyclepair_inputs = U_i1
 	  			.generate_cyclepair_inputs::<E>(qa_nizk_pkey, qa_nizk_vkey,
 	  				&com_all_w, &prf_qa_nizk, &poseidon_config); 
