@@ -910,6 +910,8 @@ pub mod tests_zkp_driver{
 	/// read the READ me in data/small_data_set2/README for the design of sigs
 	/// Difference: 2 categories and 2 circs each (multiple circs) -> 4 circs
 	/// for testing circ selection
+	/// WARNING: you need 128GB RAM for small_data3 as it has 4 circs
+	/// at the last stage of snark generation it's costly.
 	#[allow(dead_code)]
 	fn small_data3<F:PrimeField>(b_check_lkup: bool){
 		assert!(RANGE2_BIT==18, "set RANGE2_BIT to 18");
@@ -979,6 +981,100 @@ pub mod tests_zkp_driver{
 			&format!("{}/sigs.dat",set1), //src sig
 			vec![format!("{}/binexec2.dat",set1)], //list of files to discharge
 			"data/small_data_set/reports/small_data3.dat", //report
+			b_read_cache,
+			b_write_cache,
+			"small_20", //cache name
+			&format!("{}/dfa.dat", set1), //signs that need dfa
+			&format!("{}/ised.dat", set1), //signs that need ised 
+			&format!("{}/ised_igc.dat",set1), //sigs that need ised igc
+			max_word, //this is the chunk len
+			&init_cp_cap,
+			&init_sed_cap,
+			&init_dfa_cap,
+			&init_cp_cap_igc,
+			&init_sed_cap_igc,
+			num_category,
+			num_circs_per_category,
+			b_check_lkup
+		);
+	}
+
+	/// This allows to try 4 circ on variety of small files
+	/// setting min_idx and max_idx to try 1M, 2M, 4M files.
+	#[allow(dead_code)]
+	fn small_data4<F:PrimeField>(b_check_lkup: bool){
+		assert!(RANGE2_BIT==18, "set RANGE2_BIT to 18");
+		let b_read_cache = false;
+		let b_write_cache = !b_read_cache;
+		let set1 = "data/debug/small_data_set2/config_dfa"; //for dfa 
+		let max_word= 512; 
+		let sigs = 4;  //good value 2
+		let subsigs = 4;  //good value 4
+		let avg_pats_per_subsig = 3;  //good value 4
+		let avg_active_pats_per_subsig = 1; //good value 0, actually does
+			//not matter?
+		let basis_acc_states = 5;  //good value 10 
+		let basis_pats_in_trace = 11;  //good value 22 
+		let perc_comp_subsigs = 40;  //good value 104 
+		let basis_unique_states = 16;  //good value 20
+		let dfa_sigs = 2;
+		let dfa_subsigs= 2*dfa_sigs;
+		let perc_pats_expansion_rate = 40; //good value 160
+
+		let num_category = 1;
+		let num_circs_per_category= 2;
+        let basis_acc_states_igc = basis_acc_states ; //9 cpercent
+        let perc_pats_expansion_rate_igc = 78; //good value 136
+        let basis_pats_in_trace_igc = 30; //good value 20
+
+		let init_cp_cap= CpCapacity{
+			max_word_len: max_word, 
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+			//avg_subsig_per_sig,
+		};
+		let init_sed_cap= SedCapacity::new(
+			max_word, RANGE2_BIT, subsigs, 
+			avg_pats_per_subsig, 
+			avg_active_pats_per_subsig, 
+			basis_pats_in_trace, 
+			perc_pats_expansion_rate,
+			sigs, 
+			perc_comp_subsigs,
+			basis_unique_states,
+			basis_acc_states,
+		);
+		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
+ 		let init_cp_cap_igc= CpCapacity{
+            max_word_len: max_word,
+            basis_unique_states,
+            subsigs: subsigs,
+            avg_pats_per_subsig,
+            //avg_subsig_per_sig,
+        };
+        let init_sed_cap_igc= SedCapacity::new(
+            max_word, RANGE2_BIT, subsigs,
+            avg_pats_per_subsig,
+            avg_active_pats_per_subsig,
+            basis_pats_in_trace_igc,
+            perc_pats_expansion_rate_igc,
+            sigs,
+            perc_comp_subsigs,
+            basis_unique_states,
+            basis_acc_states_igc,
+        );
+
+		let files = vec![
+			vec![format!("{}/sample_1M.dat",set1)], 
+			vec![format!("{}/sample_2M.dat",set1)], 
+			vec![format!("{}/sample_4M.dat",set1)], 
+		];
+		let idx = 1; //max 2
+		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+			&format!("{}/sigs2.dat",set1), //src sig
+			files[idx].clone(),
+			"data/small_data_set/reports/small_data4.dat", //report
 			b_read_cache,
 			b_write_cache,
 			"small_20", //cache name
@@ -1339,7 +1435,8 @@ pub mod tests_zkp_driver{
 		//small_data::<Fr>(b_check_lkup); //small data
 		//small_data2::<Fr>(b_check_lkup);  //10k data 
 		//small_data_debug::<Fr>(b_check_lkup);  //for debug
-		small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
+		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
+		small_data4::<Fr>(b_check_lkup); //multi circ of 1M, 2M, 4M data
 		//full_data1::<Fr>(b_check_lkup);
 		//full_data2::<Fr>(b_check_lkup); //full data high acc state 
 		//full_data3::<Fr>(b_check_lkup); //full data large file
