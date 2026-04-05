@@ -91,8 +91,9 @@ where
  //   C2: CurveGroup,
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
     GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
-    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM,C=C1>,
-	LK: LookupTableTwoCol<C1::ScalarField>,
+    FC: FCircuit<C1::ScalarField>
+		+ SigmaIR1CS<H, C1::ScalarField, LK, GM,C=C1> + Send + Sync,
+	LK: LookupTableTwoCol<C1::ScalarField> + Send + Sync,
     // CS1E is a KZG commitment, where challenge is C1::Fr elem
     CS1E: CommitmentScheme<
         C1, H,
@@ -100,6 +101,7 @@ where
         Challenge = C1::ScalarField,
         Proof = KZGProof<C1>,
     >,
+	<CS1E as CommitmentScheme<C1, H>>::ProverParams: Send + Sync,
     CS1: CommitmentScheme<C1,H, ProverParams = PedersenParams<C1>>,
     // enforce that the CS2 is Pedersen commitment scheme, since we're at Ethereum's EVM decider
     CS2: CommitmentScheme<C2,H, ProverParams = PedersenParams<C2>>,
@@ -159,11 +161,11 @@ where
 	pub b_full_mode: bool,
 
 	/// phantom data
-    _gc1: PhantomData<GC1>,
-    _c2: PhantomData<C2>,
-    _gc2: PhantomData<GC2>,
-    _cs2: PhantomData<CS2>,
-    _s: PhantomData<S>,
+    _gc1: PhantomData<fn() -> GC1>,
+    _c2: PhantomData<fn() -> C2>,
+    _gc2: PhantomData<fn() -> GC2>,
+    _cs2: PhantomData<fn() -> CS2>,
+    _s: PhantomData<fn() -> S>,
 }
 
 
@@ -175,8 +177,9 @@ where
  //   C2: CurveGroup,
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
     GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
-    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM,C=C1>,
-	LK: LookupTableTwoCol<C1::ScalarField>,
+    FC: FCircuit<C1::ScalarField>
+		+ SigmaIR1CS<H, C1::ScalarField, LK, GM,C=C1> + Send + Sync,
+	LK: LookupTableTwoCol<C1::ScalarField> + Send + Sync,
     // CS1 is a KZG commitment, where challenge is C1::Fr elem
 	/*
     CS1: CommitmentScheme<
@@ -185,6 +188,7 @@ where
         Challenge = C1::ScalarField,
         Proof = KZGProof<C1>,
     >,
+	<CS1E as CommitmentScheme<C1, H>>::ProverParams: Send + Sync,
 	*/
     // enforce that the CS2 is Pedersen commitment scheme, since we're at Ethereum's EVM decider
     CS1: CommitmentScheme<C1, H, ProverParams = PedersenParams<C1>>,
@@ -194,6 +198,7 @@ where
         Challenge = C1::ScalarField,
         Proof = KZGProof<C1>,
     >,
+	<CS1E as CommitmentScheme<C1, H>>::ProverParams: Send + Sync,
     CS2: CommitmentScheme<C2, H, ProverParams = PedersenParams<C2>>,
     S: SNARK<C1::ScalarField>,
     <C1 as CurveGroup>::BaseField: PrimeField,
@@ -238,8 +243,9 @@ where
 	<E as Pairing>::ScalarField: ColEle,
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
     GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
-    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM,C=C1>,
-	LK: LookupTableTwoCol<C1::ScalarField>,
+    FC: FCircuit<C1::ScalarField>
+		+ SigmaIR1CS<H, C1::ScalarField, LK, GM,C=C1> + Send + Sync,
+	LK: LookupTableTwoCol<C1::ScalarField> + Send + Sync,
     CS1: CommitmentScheme<C1,H, ProverParams = PedersenParams<C1>>,
     CS1E: CommitmentScheme<
         C1,H,
@@ -247,6 +253,7 @@ where
         Challenge = C1::ScalarField,
         Proof = KZGProof<C1>,
     >,
+	<CS1E as CommitmentScheme<C1, H>>::ProverParams: Send + Sync,
     // enforce that the CS2 is Pedersen commitment scheme, since we're at Ethereum's EVM decider
     CS2: CommitmentScheme<C2, H, ProverParams = PedersenParams<C2>>,
     S: SNARK<C1::ScalarField>,
@@ -538,7 +545,8 @@ where
 		max_layer_vec_pci: Vec<usize>,
 		max_layer_vec_cap: Vec<Arc<dyn Capacity + Send + Sync>>,
 		max_layer_vec_adv: Vec<Arc<dyn NdAdvice + Send + Sync>>)
-		-> (usize, usize, Vec<usize>, Vec<usize>, Vec<Arc<dyn Capacity + Send + Sync>>, Vec<Arc<dyn NdAdvice + Send + Sync>>){
+		-> (usize, usize, Vec<usize>, Vec<usize>, Vec<Arc<dyn Capacity + Send + Sync>>, Vec<Arc<dyn NdAdvice + Send + Sync>>)
+		where <CS1E as CommitmentScheme<C1, H>>::ProverParams: Send + Sync {
 		let mut gt1 = GTimer::new();
 		let mut min_layer_id = min_layer;
 		let (mut best_layer,mut max_layer_id) = (max_layer, max_layer);
@@ -567,13 +575,13 @@ where
 	/// Almost the same of bin_search_best_layer, the difference
 	/// is that we run all circuits in parallel, and pick
 	/// the minimum one
-	fn par_search_best_layer(&self, _log_level: usize, _b_save_advice: bool,
-	    _word: &Vec<CF1<C1>>, _word_info: &WordInfo, 
-	    _min_layer: usize, 
-	    _max_layer: usize,
+	fn par_search_best_layer(&self, log_level: usize, b_save_advice: bool,
+	    word: &Vec<CF1<C1>>, word_info: &WordInfo, 
+	    min_layer: usize, 
+	    max_layer: usize,
 
-	) -> (usize, usize, Vec<usize>, Vec<usize>, Vec<Arc<dyn Capacity + Send + Sync>>, Vec<Arc<dyn NdAdvice + Send + Sync>>){
-	/*
+	) -> (usize, usize, Vec<usize>, Vec<usize>, Vec<Arc<dyn Capacity + Send + Sync>>, Vec<Arc<dyn NdAdvice + Send + Sync>>)
+		where <CS1E as CommitmentScheme<C1, H>>::ProverParams: Send + Sync {
 		use rayon::prelude::*;
 
 		let results: Vec<_> = (min_layer..=max_layer)
@@ -599,8 +607,6 @@ where
 				panic!("par_search_best_layer: No suitable layer found in range [{}, {}] for the given word.", min_layer, max_layer);
 			}
 		}
-		*/
-		todo!()
 	}
 
 	/// generate the nd_advice by picking up the circ.
@@ -616,7 +622,7 @@ where
 	pub fn plan_nd_advice_new(&self, log_level: usize, b_save_advice: bool,
 		word: &Vec<CF1<C1>>, word_info: &WordInfo, word_fname: &str)
 		-> Result<(usize, Vec<usize>, Vec<usize>, Vec<Arc<dyn Capacity + Send + Sync>>, Vec<Arc<dyn NdAdvice + Send + Sync>>),Error>{
-		let b_fast = false; 
+		let b_fast = true; 
 		//0. verify each layer has only one circ
 		let mut gt1 = GTimer::new();
 		let mut gt2 = GTimer::new();
@@ -645,7 +651,7 @@ where
 					num_segs, vec_seg_size, vec_pci, vec_cap, vec_adv)
 		}else{
 			let min_layer = 0;
-			let max_layer = self.circuits.len(); 
+			let max_layer = self.circuits.len()-1; 
 			self.par_search_best_layer(log_level+2, b_save_advice,
 					word, word_info, min_layer, max_layer)
 		};
@@ -1828,6 +1834,7 @@ where
         Challenge = C1::ScalarField,
         Proof = KZGProof<C1>,
     >,
+	<CS1E as CommitmentScheme<C1, H>>::ProverParams: Send + Sync,
     CS2: CommitmentScheme<C2, H, ProverParams = PedersenParams<C2>>,
     S: SNARK<C1::ScalarField>,
     <C1 as CurveGroup>::BaseField: PrimeField,

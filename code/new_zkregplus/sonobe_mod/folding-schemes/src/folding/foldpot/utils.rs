@@ -41,8 +41,8 @@ pub const LOG3:usize = 0;
 pub const LOG2:usize = 1;
 pub const LOG1:usize = 0;
 pub const B_DEBUG:bool = false; //category 1
-pub const B_DEBUG2:bool = true; //cateogry 2
-pub const B_DEBUG3:bool = true; //category 3 (higher ID the higher cost)
+pub const B_DEBUG2:bool = false; //cateogry 2
+pub const B_DEBUG3:bool = false; //category 3 (higher ID the higher cost)
 
 /// NOTE it has an internal bug, manually turn it on 
 /// if you need it.

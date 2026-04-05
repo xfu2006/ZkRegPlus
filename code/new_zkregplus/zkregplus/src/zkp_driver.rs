@@ -479,6 +479,7 @@ where
         Challenge = C1::ScalarField,
         Proof = KZGProof<C1>,
     >,
+	<CS1E as CommitmentScheme<C1>>::ProverParams: Send + Sync,
     CS1: CommitmentScheme<C1, ProverParams = PedersenParams<C1>>,
     // enforce that the CS2 is Pedersen commitment scheme, since we're at Ethereum's EVM decider
     CS2: CommitmentScheme<C2, ProverParams = PedersenParams<C2>>,
@@ -556,6 +557,7 @@ where
         Challenge = C1::ScalarField,
         Proof = KZGProof<C1>,
     >,
+	<CS1E as CommitmentScheme<C1>>::ProverParams: Send + Sync,
     CS1: CommitmentScheme<C1, ProverParams = PedersenParams<C1>>,
     // enforce that the CS2 is Pedersen commitment scheme, since we're at Ethereum's EVM decider
     CS2: CommitmentScheme<C2, ProverParams = PedersenParams<C2>>,
@@ -1334,10 +1336,10 @@ pub mod tests_zkp_driver{
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
-		small_data::<Fr>(b_check_lkup); //small data
+		//small_data::<Fr>(b_check_lkup); //small data
 		//small_data2::<Fr>(b_check_lkup);  //10k data 
 		//small_data_debug::<Fr>(b_check_lkup);  //for debug
-		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
+		small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//full_data1::<Fr>(b_check_lkup);
 		//full_data2::<Fr>(b_check_lkup); //full data high acc state 
 		//full_data3::<Fr>(b_check_lkup); //full data large file
