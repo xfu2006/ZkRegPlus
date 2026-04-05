@@ -57,7 +57,7 @@ use crate::{
 		qa_nizk::{QaNizkProverParams,QaNizkVerifierParams,SparseMatrix,setup_qa_nizk,prove_qa_nizk_fast},
 		sigma_cyclepair::{compute_hc},
 		decider_eth_circuit_super::{KZGChallengesGadgetSuper},
-		utils::{B_DEBUG}
+		utils::{B_DEBUG, B_DEBUG2, B_DEBUG3}
 	}
 };
 // utility function for compute step cmF
@@ -1711,7 +1711,7 @@ where
 
 		//println!(">*>*>* prove_step step 1, augment circ: j: {}, pc_i: {}", &augmented_F_circuit.j, &self.pc_i);
         let cs = ConstraintSystem::<C1::ScalarField>::new_ref();
-		if !b_debug{//NOTE: b_debug of mod_super:generate_constraints
+		if !b_debug && !B_DEBUG2 && !B_DEBUG3{//NOTE: b_debug of mod_super:generate_constraints
 			//should be set to the same as this function.
 			//OTHERWISE, it will have issues with witness assignment in
 			//debug mode
