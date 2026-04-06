@@ -96,7 +96,8 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for SumWordGadget<F>{
 	}
 
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
-		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig) 
+		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig, 
+		_word_id: FpVar<F>, _subseg_id: FpVar<F>) 
 		-> Result<(), SynthesisError>{
 		//1. retrive the statement instance and get all parts
 		let (stmt_idx, _, _, _) = cfg.get_gadget_indices(i);

@@ -64,6 +64,7 @@ use folding_schemes::{
 		},
 		container_config::{ContainerConfig},
 		circuits_super::field_to_usize,
+		utils::{check_cs},
 	}
 };
 use std::any::Any;
@@ -2949,13 +2950,17 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 	fn validate_store_steps_combo(&self, 
 		store_steps: &Container<FpVar<F>>, 
 		r1: FpVar<F>,
-		cs: ConstraintSystemRef<F>
+		cs: ConstraintSystemRef<F>,
+		_word_id: FpVar<F>,
+		subseg_id: FpVar<F>,
 	) ->Result<(), SynthesisError>{
 
 		//1. check all subtable IDs are correct.
 		// This includes the check that the encoded column is
 		// indeed in the external lookup table.
 		// COST: 0
+		let b_debug = subseg_id.value().unwrap()>=F::from(260u32);
+
 		let col_names = vec!["subsig", "id", "pat", "rg_start", "rg_end", 
 			"encoded", "inp_subsigs", "m_tbl"];
 		let f_substore_id = F::from((self.fsm_id + STORE_SUBSIG_STEP) as u32);
@@ -2969,6 +2974,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 				.lock().unwrap().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
 		assert!(sid_cols.len()==vals.len());
+		if b_debug {check_cs(&cs, "val_store_steps step 1");}
 
 		//NO need as all are constants.
 		//for i in 0..vals.len(){
@@ -2983,17 +2989,20 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		let (subsig, id, pat, rg_start, rg_end, encoded, inp_subsigs, m_tbl) = 
 		  (&cols[0],&cols[1],&cols[2],&cols[3],&cols[4],&cols[5],&cols[6],&cols[7]);
 		assert_logup(cs.clone(), &inp_subsigs, &subsig, &m_tbl, &r1)?; 
+		if b_debug {check_cs(&cs, "val_store_steps step 2");}
 
 		//3. check the validity of encoding
 		let unit_bits = RANGE2_BIT;
 		verify_encoded_table(cs.clone(),
 			unit_bits, &vec![subsig,id,pat,rg_start,rg_end], encoded)?;
+		if b_debug {check_cs(&cs, "val_store_steps step 3");}
 
 		//4. check the table is wellformed 
 		//note: no sorted proof is needed as it's proved to be part of
 		//external table, thus guarantee completeness of vals for a key.
 		assert_well_formed_sorted(cs.clone(),subsig,id,pat,None,None,None,
 			None, r1,unit_bits)?;
+		if b_debug {check_cs(&cs, "val_store_steps step 4");}
 
 
 		Ok( () )
@@ -3014,10 +3023,13 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		r2: FpVar<F>,
 		cs: ConstraintSystemRef<F>,
 		last_loc: FpVar<F>,
+		word_id: FpVar<F>,
+		subseg_id: FpVar<F>,
 	) ->Result<FpVar<F>, SynthesisError>{
 		let b_perf = false;
 		let mut nc = cs.num_constraints();
 		let nc0 = cs.num_constraints();
+		let b_debug = subseg_id.value().unwrap()>=F::from(260u32);
 
 		//0. retrieve the data
 		let ct_sq_inp = forward_step_q.get_container("sq_inp")?;
@@ -3032,13 +3044,14 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		let prf = forward_step_q.get_container("prf")?;
 		let prf_union = prf.lock().unwrap().get_container("prf_union")?;
 		self.validate_step_queue_union_prf(&ct_sq_inp, &ct_sq_to_add,
-			&ct_sq_res, &r1, &r2, &prf_union)?;
+			&ct_sq_res, &r1, &r2, &prf_union, word_id.clone(), subseg_id.clone())?;
 		if b_perf {
 			let cap = &self.capacity;
 			println!(" ### validate forward: nlen: {}, subsigs: {}, avg_active_pat_per_sig: {}, basis_pats_per_ptrace: {}, perc_pats_expansion_rate: {}, sq_inp/res: vec_size: {}, sq_forward_res size: {}", cap.max_nibble_len, cap.subsigs, cap.avg_active_pats_per_subsig, cap.basis_pats_in_trace, cap.perc_pats_expansion_rate, StepQueue::<F>::vec_size(&StepQueueType::ResSmall, &cap).0, StepQueue::<F>::vec_size(&StepQueueType::ResLarge, &cap).0);
 			println!(" ### validate forward step 1: {}", cs.num_constraints()-nc);
 			nc = cs.num_constraints();
 		}
+		if b_debug {check_cs(&cs, "val_fwd_step_q step 1");}
 
 		//2. validate sq_inp covers the structure required by step_store.
 		// This part is SKIPPED, as we have the new DB to bind
@@ -3061,6 +3074,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 				cs.num_constraints()-nc);
 			nc = cs.num_constraints();
 		}
+		if b_debug {check_cs(&cs, "val_fwd_step_q step 3");}
 
 
 		//4. validate the prf_fwd
@@ -3068,7 +3082,8 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		let prf_fwdprf_valid = prf.lock().unwrap().get_container("prf_fwdprf_valid")?;
 		let last_loc = self.validate_fwdprf_valid_prf(&ct_prf_fwd, 
 			&ct_sq_res, &ct_pat_loc,
-			&r1, &r2, &prf_fwdprf_valid, last_loc)?;
+			&r1, &r2, &prf_fwdprf_valid, last_loc,
+			word_id.clone(), subseg_id.clone())?;
 
 		if b_perf {
 			println!(" ### validate forward step 3: {}", 
@@ -3076,6 +3091,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			println!(" ### TOTAL validate forward: {}", 
 				cs.num_constraints()-nc0);
 		}
+		if b_debug {check_cs(&cs, "val_fwd_step_q step 4");}
 
 		Ok( last_loc )
 	}
@@ -3092,10 +3108,13 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		q3: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>, //step_queue result
 		r1: &FpVar<F>,
 		_r2: &FpVar<F>,
-		prf_union: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>
+		prf_union: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
+		_word_id: FpVar<F>,
+		subseg_id: FpVar<F>
 	)->Result<(), SynthesisError>{
 		//1. retrieve the src and dst cols
 		let b_perf = false;
+		let b_debug = subseg_id.value().unwrap()>=F::from(260u32);
 		let cs = r1.cs();
 		let nc = cs.num_constraints();
 		let e1=q1.lock().unwrap().get_container("encoded").unwrap().lock().unwrap().to_vec(); 
@@ -3117,6 +3136,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		if b_perf{
 			println!(" ### validate_unique_step_queue: n1: {}, n2: {}, cost: {}",	n1, n2, cs.num_constraints()-nc);
 		}
+		if b_debug {check_cs(&cs, "val_union step 1");}
 
 		Ok( () )
 	}
@@ -3209,9 +3229,12 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		_r2: &FpVar<F>,
 		prf_fwdprf_valid: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
 		last_loc: FpVar<F>,
+		_word_id: FpVar<F>,
+		subseg_id: FpVar<F>,
 	)->Result<FpVar<F>, SynthesisError>{
 		//0. retrieve data
 		let cs = r1.cs(); 
+		let b_debug = subseg_id.value().unwrap()>=F::from(260u32);
 
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let f_max = F::from(max_val as u32);
@@ -3238,6 +3261,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 				.lock().unwrap().to_vec()
 		}).collect::<Vec<Vec<FpVar<F>>>>();
 		//let frg = new_const_var(&cs, F::from(RANGE2));
+		if b_debug {check_cs(&cs, "val_fwd_prf_valid step 0");}
 
 		//1. check sid ranges. This basically chencks the binding
 		//between each col with their corresponding encoded column.
@@ -3287,6 +3311,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 				lb_zero.clone()
 			)?;
 		}
+		if b_debug {check_cs(&cs, "val_fwd_prf_valid step 1.2");}
 
 		//1.3 check other columns
 		let ids = [4,5,6,11];
@@ -3300,6 +3325,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 				check_eq(&sid_cols[ids[x]][i], &subtbl_id, "fail dst check")?;
 			}
 		}
+		if b_debug {check_cs(&cs, "val_fwd_prf_valid step 1.3");}
 
 
 		//1. correctness of src_encoded (no proof needed). DEPRECATED
@@ -3352,6 +3378,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		let m_tbl_pair = prf_fwdprf_valid.lock().unwrap().get_container("m_tbl_pairs")
 			.unwrap().lock().unwrap().to_vec();//no need to check its sid
 		assert_logup(cs.clone(), &p1_p2, &all_pairs, &m_tbl_pair, r1)?;
+		if b_debug {check_cs(&cs, "val_fwd_prf_valid step 3.2");}
 
 		//3.3. now prove that (dst_loc, dst_pat_id, dst_loc)
 		//are valid (they can be found in the concat of
@@ -3382,6 +3409,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			.unwrap().lock().unwrap().to_vec();
 		//no need to check sid, just check logup
 		assert_logup(cs.clone(), &src_combined, &dst_combined, &mtb_pat, r1)?;
+		if b_debug {check_cs(&cs, "val_fwd_prf_valid step 3.3");}
 
 		//4. prove encoded-loc corresponds to res_queue
 		//because ONLY encoded is not RANGE2, the others 
@@ -3422,6 +3450,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		//no need to check sid of mtbs.
 		assert_logup(cs.clone(), &src_adj, &dst_adj, &mtb_res1, r1)?;
 		assert_logup(cs.clone(), &dst_adj, &src_adj, &mtb_res2, r1)?;
+		if b_debug {check_cs(&cs, "val_fwd_prf_valid step 4");}
 
 		//5. prove the ascending order of pat_id column.
 		// Check: when (dst_encoded, src_loc) 
@@ -3459,6 +3488,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			)?;
 
 		}
+		if b_debug {check_cs(&cs, "val_fwd_prf_valid step 5");}
 
 		//6. prove the validity of diff1/diff2
 		//6.1 retrieve the data (cost: n)
@@ -3497,6 +3527,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			if i==diff1.len()-1{one.clone()} else{vec_b_begin[i+1].clone()}
 			//will not cost anything
 		}).collect::<Vec<FpVar<F>>>();
+		if b_debug {check_cs(&cs, "val_fwd_prf_valid step 6");}
 
 		let lb_max = var_to_lb(&max, F::one());
 		let lb_neg1 = var_to_lb(&one, -F::one());
@@ -3625,6 +3656,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 
 
 		}
+		if b_debug {check_cs(&cs, "val_fwd_prf_valid step 6.5");}
 
 		Ok( last_loc )
 	}
@@ -3642,9 +3674,12 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		r1: FpVar<F>,
 		r2: FpVar<F>,
 		cs: ConstraintSystemRef<F>,
-		last_loc: FpVar<F>, //used as the default min_loc
+		last_loc: FpVar<F>, //used as the default min_loc,
+		word_id: FpVar<F>,
+		subseg_id: FpVar<F>,
 	) ->Result<(), SynthesisError>{
 		let b_perf = false;
+		let b_debug = subseg_id.value().unwrap()>=F::from(260u32);
 		let mut nc = cs.num_constraints();
 		let nc0 = cs.num_constraints();
 
@@ -3659,13 +3694,14 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		let prf = backward_step_q.get_container("prf")?;
 		let prf_union = prf.lock().unwrap().get_container("prf_union")?;
 		self.validate_step_queue_union_prf(&ct_sq_res2, &ct_sq_to_del,
-			&ct_sq_res1, &r1, &r2, &prf_union)?;
+			&ct_sq_res1, &r1, &r2, &prf_union, word_id.clone(), subseg_id.clone())?;
 		if b_perf {
 			let cap = &self.capacity;
 			println!(" ### validate backward: nlen: {}, subsigs: {}, avg_active_pat_per_sig: {}, basis_pats_per_ptrace: {}, perc_pats_expansion_rate: {}, small vec_size: {}, large sq_res: {}", cap.max_nibble_len, cap.subsigs, cap.avg_active_pats_per_subsig, cap.basis_pats_in_trace, cap.perc_pats_expansion_rate, StepQueue::<F>::vec_size(&StepQueueType::ResSmall, &cap).0, StepQueue::<F>::vec_size(&StepQueueType::ResLarge, &cap).0);
 			println!(" ### validate backward step 1: {}", cs.num_constraints()-nc);
 			nc = cs.num_constraints();
 		}
+		if b_debug {check_cs(&cs, "val_back_step_queue step 1");}
 
 
 
@@ -3677,7 +3713,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		// COST: 1.3*n1
 		let prf_to_del= prf.lock().unwrap().get_container("prf_to_del")?;
 		self.validate_to_del(&ct_sq_to_del, &ct_prf_bwd, 
-			&r1, &prf_to_del)?;
+			&r1, &prf_to_del, word_id.clone(), subseg_id.clone())?;
 		if b_perf {
 			println!(" ### validate backward step 2: {}", cs.num_constraints()-nc);
 			nc = cs.num_constraints();
@@ -3687,11 +3723,13 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		// COST: 16.3*n1 
 		let prf_bwdprf_valid = prf.lock().unwrap().get_container("prf_bwdprf_valid")?;
 		self.validate_bwdprf_valid_prf(&ct_prf_bwd, 
-			&ct_sq_res2, &r1, &r2, &prf_bwdprf_valid, last_loc)?;
+			&ct_sq_res2, &r1, &r2, &prf_bwdprf_valid, last_loc,
+			word_id.clone(), subseg_id.clone())?;
 		if b_perf {
 			println!(" ### validate backward step 3: {}", cs.num_constraints()-nc);
 			println!(" ### TOTAL validate backward: {}", cs.num_constraints()-nc0);
 		}
+		if b_debug {check_cs(&cs, "val_back_step_queue step 4");}
 
 		Ok( () )
 	}
@@ -3704,9 +3742,13 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		sq_to_del: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
 		prf_bwd: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
 		r1: &FpVar<F>,
-		prf_to_del_valid: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>
+		prf_to_del_valid: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
+			
+		_word_id: FpVar<F>,
+		subseg_id: FpVar<F>,
 	)->Result<(), SynthesisError>{
 		//1. retrieve info from to_del
+		let b_debug = subseg_id.value().unwrap()>=F::from(260u32);
 		let f_unit = FpVar::<F>::constant(F::from(1u32<<RANGE2_BIT));
 		let encoded = sq_to_del.lock().unwrap().get_container("encoded")
 			.unwrap().lock().unwrap().to_vec(); 
@@ -3723,11 +3765,13 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			.unwrap().lock().unwrap().to_vec(); 
 		let cs = locs[0].cs();
 		let src = encode_2col_var_adv(&e1, &c1, &f_unit);
+		if b_debug {check_cs(&cs, "val_to_del step 1");}
 
 		//4. verify the one-direction lookup
 		let mtb2=prf_to_del_valid.lock().unwrap()
 			.get_container("mtb2").unwrap().lock().unwrap().to_vec(); 
 		assert_logup(cs.clone(), &dst, &src, &mtb2, r1)?;
+		if b_debug {check_cs(&cs, "val_to_del step 4");}
 		Ok( () )
 	}
 
@@ -3739,10 +3783,13 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		r1: &FpVar<F>,
 		r2: &FpVar<F>,
 		prf_bwdprf_valid: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
-		default_min_loc: FpVar<F>, //used as min_loc default
+		default_min_loc: FpVar<F>, //used as min_loc default,
+
+		_word_id: FpVar<F>,
+		subseg_id: FpVar<F>,
 	)->Result<(), SynthesisError>{
 		//0. retrieve data
-		let b_debug = false;
+		let b_debug = subseg_id.value().unwrap()>=F::from(260u32);
 		//let b_perf = false;
 		let cs = r1.cs(); 
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
@@ -3773,6 +3820,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			prf_bwd.lock().unwrap().get_container(&format!("sid_{}",n)).unwrap()
 				.lock().unwrap().to_vec()
 		}).collect::<Vec<Vec<FpVar<F>>>>();
+		if b_debug {check_cs(&cs, "val_bwd_prf valid step 1");}
 
 		//1.1. check the validity of diff1, diff2 in range
 		// no need to check src_encoded and prev_encoded as later
@@ -3816,6 +3864,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 				lb_zero.clone()
 			)?;
 		}
+		if b_debug {check_cs(&cs, "val_bwd_prf valid step 1.2");}
 
 		//1.3 check other columns
 		let ids = [2,3,5];
@@ -3828,6 +3877,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 				check_eq(&sid_cols[ids[x]][i], &subtbl_id, "fail dst check")?;
 			}//this is not constant has to be checked.
 		}
+		if b_debug {check_cs(&cs, "val_bwd_prf valid step 1.3");}
 
 
 		//1 and 2. DEPRECATED - correctness of src_encoded-step-rg_end 
@@ -3851,6 +3901,8 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		//constant check can be skipped
 		//check_arr_eq(&sid_diffsubsig, &frg, "err checking sid_diffsubsig")?; 
 		check_arr_eq_arr(&diffsubsig, &saved_diffsubsig, "err checking diffsubsig")?; 
+
+		if b_debug {check_cs(&cs, "val_bwd_prf valid step 3.1");}
 
 		//3.2 prove step is sored per subsig
 		let sel = (0..rescols[3].len()).into_iter().map(|i|{
@@ -3891,6 +3943,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		//no need to check constant
 		//check_arr_eq(&sid_diff_loc, &frg, "err checking sid_diff_loc")?; 
 		check_arr_eq_arr(&diff_loc, &saved_diff_loc, "err checking diff_loc")?; 
+		if b_debug {check_cs(&cs, "val_bwd_prf valid step 3.3");}
 
 
 		//4. prove the min_loc in bwd_prf is EITHER 
@@ -3942,6 +3995,8 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			prf_bwdprf_valid.lock().unwrap().get_container(n).unwrap()
 			.lock().unwrap().to_vec()
 		).collect::<Vec<Vec<FpVar<F>>>>();
+
+		if b_debug {check_cs(&cs, "val_bwd_prf valid step 4.3");}
 
 		// 4.4: debug dump
 		if b_debug {
@@ -4039,6 +4094,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			.get_container("mtbl_bwdprf_sqres").unwrap().lock().unwrap().to_vec();
 		assert_logup(cs.clone(), &encoded_real, &combined_dst, 
 			&mtbl_bwdprf_sqres, &r2)?;
+		if b_debug {check_cs(&cs, "val_bwd_prf valid step 4.5");}
 
 		//4.5.3 set_bwdprf_ssm is a set of that COVERS ALL subsig-step-min_loc
 		// in bwdprf.
@@ -4066,6 +4122,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		//4.5.4.1 compute the sq_res weighted sum
 		let left_sum = multiset_prod_ignore_zero(cs.clone(), 
 			&combined_dst,&r1);   //this is the combined result of cols_sqres
+		if b_debug {check_cs(&cs, "val_bwd_prf valid step 4.5.4.1");}
 
 		//4.5.4.2 compute the values of vec_items, vec_prod
 		//where vec_items[i] = if new encoded, the weighted sum
@@ -4153,6 +4210,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 				lc_out
 			).unwrap();
 		}
+		if b_debug {check_cs(&cs, "val_bwd_prf valid step 4.5");}
 
 		//5. prove min_loc > (loc_to_remove + rg_2) 
 		let sel = (0..src_rg_end.len()).into_iter().map(|i|
@@ -4171,6 +4229,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		//check_arr_eq(&sid_saved_diff_loc, &frg, 
 		//  "err checking sid_diff_loc")?; 
 		check_arr_eq(&sum, &zero, "err checking expected sum for diff")?; 
+		if b_debug {check_cs(&cs, "val_bwd_prf valid step 4.6");}
 
 		Ok( () )
 	}
@@ -4248,7 +4307,8 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for DischargeAdvGadget<F>{
 	///               should take max=>subsigs * avg_pat_subsig = 8k
 	/// COST: 59*n1  + 24.5*n1 = 84.5*n1  (in real: max 560k)
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
-		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
+		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig,
+		word_id: FpVar<F>, subseg_id: FpVar<F>) 
 		-> Result<(), SynthesisError>{
 		let n1 = cs.num_constraints(); 
 
@@ -4285,14 +4345,15 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for DischargeAdvGadget<F>{
 		let forward_step_queue= stmt.get_container("fwd_steps_queue")?;
 		let default_min_loc= self.validate_forward_step_queue(
 			&forward_step_queue.lock().unwrap(), r1.clone(), r2.clone(), 
-			cs.clone(), default_min_loc)?;
+			cs.clone(), default_min_loc, word_id.clone(), subseg_id.clone())?;
 
 		//4. validate the backward step queue
 		// COST: 24.5*n1
 		let backward_step_queue= stmt.get_container("bwd_steps_queue")?;
 		self.validate_backward_step_queue(&forward_step_queue.lock().unwrap(), 
 			&backward_step_queue.lock().unwrap(),
-			r1.clone(), r2.clone(), cs.clone(), default_min_loc)?;
+			r1.clone(), r2.clone(), cs.clone(), default_min_loc,
+			word_id.clone(), subseg_id.clone())?;
 
 		let b_perf = false;
 		if b_perf{
@@ -5022,13 +5083,16 @@ pub mod tests_discharge_adv_gadget{
 			&subsig_store_info,
 		);
 
+		use crate::gadgets::discharge_adv::new_const_var;
+		let w_id = new_const_var(&cs, Fr::zero());
+		let s_id = new_const_var(&cs, Fr::zero());
 		gadget.validate_bwdprf_valid_prf(
 			&prf_bwd_var,
 			&ct_sq_res2_var,
 			&r1,
 			&r2,
 			&prf_bwdprf_valid_var,
-			last_loc_var
+			last_loc_var, w_id, s_id
 		).unwrap();
 
 		assert!(cs.is_satisfied().unwrap());

@@ -2084,7 +2084,8 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 	/// so this function is deprecated.
 	#[allow(dead_code)]
 	fn assert_msg3_v1(&self, i: usize, cs: ConstraintSystemRef<F>, 
-		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
+		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig,
+		_word_id: FpVar<F>, _subseg_id: FpVar<F>) 
 		-> Result<(), SynthesisError>{
 		let b_perf = false;
 		let log_level = LOG1;
@@ -2134,7 +2135,8 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 
 	#[allow(dead_code)]
 	fn assert_msg3_v2(&self, i: usize, cs: ConstraintSystemRef<F>, 
-		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
+		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig, 
+		_word_id: FpVar<F>, _subseg_id: FpVar<F>) 
 		-> Result<(), SynthesisError>{
 		let b_perf = false;
 		let log_level = LOG1;
@@ -2243,12 +2245,15 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for FsmAdvGadget<F>{
 	}
 
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
-		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
+		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig, 
+		_word_id: FpVar<F>, _subseg_id: FpVar<F>) 
 		-> Result<(), SynthesisError>{
+		let w_id = FpVar::new_constant(cs.clone(), F::zero())?;
+		let s_id = FpVar::new_constant(cs.clone(), F::zero())?;
 		if B_FSM_ADV_NEW{
-			self.assert_msg3_v2(i, cs, wtns, wtns_cfg)
+			self.assert_msg3_v2(i, cs, wtns, wtns_cfg, w_id, s_id)
 		}else{
-			self.assert_msg3_v1(i, cs, wtns, wtns_cfg)
+			self.assert_msg3_v1(i, cs, wtns, wtns_cfg, w_id, s_id)
 		}
 	}
 

@@ -2379,7 +2379,8 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for ComputeSigAdvGadget<F>{
 	/// = 2*n0 + 57*n1 + 5n2
 	/// roughly 58 * subsigs (usually subsigs <2k) => <100k
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
-		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig) 
+		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig, 
+		_word_id: FpVar<F>, _subseg_id: FpVar<F>) 
 		-> Result<(), SynthesisError>{
 		//1. retrive the statement instance and get all parts
 		let cfg = self.get_container_cfg().expect("container cfg not set!");

@@ -967,7 +967,8 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for GetSigGadget<F>{
 	///    those no_cp_pattern which are automatically included
 	///   in practice this could be less than 10k total cost]
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
-		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig) 
+		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig, 
+		_word_id: FpVar<F>, _subseg_id: FpVar<F>) 
 		-> Result<(), SynthesisError>{
 		let b_perf = false;
 		let (nc,nv) = (cs.num_constraints(), cs.num_witness_variables());

@@ -197,7 +197,8 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for PackFinalGadget<F>{
 	/// fixed at lower than several thousand 
 	/// (number of subsigs * pattern/subsig)
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
-		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig) 
+		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig, 
+		_word_id: FpVar<F>, _subseg_id: FpVar<F>) 
 		-> Result<(), SynthesisError>{
 		let b_debug = false;
 		let nc = cs.num_constraints();

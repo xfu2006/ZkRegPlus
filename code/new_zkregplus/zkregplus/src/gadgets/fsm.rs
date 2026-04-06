@@ -143,7 +143,8 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for FsmGadget<F>{
 	//COST: r1cs: 1/4 * nlen, vars: 0
 	// nlen = nibble len -> improved to nlen/4
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
-		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig) 
+		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig, 
+		_word_id: FpVar<F>, _subseg_id: FpVar<F>) 
 		-> Result<(), SynthesisError>{
 		let b_debug = false;
 		let nc = cs.num_constraints();

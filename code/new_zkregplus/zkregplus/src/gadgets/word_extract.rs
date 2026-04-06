@@ -119,7 +119,8 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for WordExtractGadget<F>{
 	/// COST:
 	/// r1cs: 6*word_len (note: not nibbles), vasr: 4*word_len
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
-		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig) 
+		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig, 
+		_word_id: FpVar<F>, _subseg_id: FpVar<F>) 
 		-> Result<(), SynthesisError>{
 		let b_debug = false;
 		let nc = cs.num_constraints();
@@ -276,6 +277,7 @@ pub mod tests_word_extract_gadget{
 	use utils::data::{rand_fe_by_bits};
 	use data_processor::clam_db::CHAR;
 	use ark_std::marker::PhantomData;
+	use ark_r1cs_std::{fields::fp::FpVar,alloc::AllocVar};
 
 	pub fn test_gadget<F:PrimeField + Absorb + ColEle> (
 		g: Arc<dyn SigmaGadget<F> + Send + Sync>, 
@@ -528,7 +530,9 @@ pub mod tests_word_extract_gadget{
 		let vec_var = wit.to_vec_fp_var(cs.clone(), &cfg);
 		let witvar = WitnessSigmaIR1CSVar::from_vec(&cfg, &vec_var);
 		let last_idx = cfg.stmt_map.len()-1;
-		g.assert_msg3(last_idx, cs.clone(), &witvar, &cfg).expect("assert m3 fail");
+		let w_id = FpVar::new_constant(cs.clone(), F::zero()).unwrap();
+		let s_id = FpVar::new_constant(cs.clone(), F::zero()).unwrap();
+		g.assert_msg3(last_idx, cs.clone(), &witvar, &cfg, w_id, s_id).expect("assert m3 fail");
 		assert!(cs.is_satisfied().unwrap());
 	}
 

@@ -441,7 +441,8 @@ pub trait SigmaGadget<F:PrimeField>: Debug + Send + Sync{
 	/// Note that this function might add additional
 	/// constraints. 
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
-		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig) 
+		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig,
+		word_id: FpVar<F>, subsig_id: FpVar<F>) 
 		-> Result<(), SynthesisError>;
 }
 
@@ -3115,9 +3116,11 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		//3. add all constraints by components
 		let mut gt3 = GTimer::new();
+		let si = StatementInstVar::<F>::from_vec(&self.stmt_config, &wtns_var.statement);
 		for (i,g) in self.gadgets.iter().enumerate(){
 			let (nc, ni, nv) = (cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables());
-			g.lock().unwrap().assert_msg3(i, cs.clone(), &wtns_var, &cfg)?;
+			g.lock().unwrap().assert_msg3(i, cs.clone(), &wtns_var, &cfg,
+				si.word_id.clone(), si.subseg_id.clone())?;
 			if B_DEBUG3{
 				check_cs(&cs, &format!("After gadget: {}", g.lock().unwrap().get_name()));
 			}
@@ -3147,7 +3150,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		let (zero_var, one_var) =  (
 			FpVar::<F>::new_constant(cs.clone(), zero)?, 
 			FpVar::<F>::new_constant(cs.clone(), one)?);
-		let si = StatementInstVar::<F>::from_vec(&self.stmt_config, &wtns_var.statement);
 		let b_first = si.word_id.is_eq(&one_var)?
 			.and(&si.subseg_id.is_eq(&one_var)?)?;
 		let b_first_seg = si.subseg_id.is_eq(&one_var)?;

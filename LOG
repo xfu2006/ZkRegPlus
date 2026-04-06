@@ -27392,7 +27392,13 @@ Goal 4. start improve parallel framework
 	[b] max_total_n 
 Goal 5. test small2 with 2 jobs
 	[a] 1 job 4GB - 27 sec
+Goal 6. find it sig_id: 264 or 265
+	=> not satisfiable discharge_adv.
 
+Monday 04/06/2026
+Goal 1. insert debug code into discharge adv
+	[a] modify interface to add assert_msg3
+	[b] pass the two params to related functions.
 
-== TODO == somehow check_cs is not working properly (only work in final circ), need to fix.
+=== TODO == check data and further test the multi-job.
 

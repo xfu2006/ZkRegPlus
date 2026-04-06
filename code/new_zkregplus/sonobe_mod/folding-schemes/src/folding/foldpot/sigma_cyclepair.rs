@@ -150,7 +150,8 @@ impl <F:PrimeField + Absorb> SigmaGadget<F> for FoldPairGadget<F>{
 	/// compute hc(a)_out = hash(hc(a)_in, a), and
 	/// hc(b)_out = hash(hc(b)_in, b)
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
-		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig) 
+		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig,
+		_word_id: FpVar<F>, _subsig_id: FpVar<F>) 
 		-> Result<(), SynthesisError>{
 		let (stmt_idx, _, _, _) = cfg.get_gadget_indices(i);
 		//Given: statement [gt1,a,b,gt2,hc(a)_in,hc(b)_in,hc(a)_out,hc(b)_out].
