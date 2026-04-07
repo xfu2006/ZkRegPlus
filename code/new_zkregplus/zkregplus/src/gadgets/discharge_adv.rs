@@ -3116,6 +3116,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		let b_perf = false;
 		let b_debug = subseg_id.value().unwrap()>=F::from(260u32);
 		let cs = r1.cs();
+		if b_debug {check_cs(&cs, "val_union ENTERING ... ");}
 		let nc = cs.num_constraints();
 		let e1=q1.lock().unwrap().get_container("encoded").unwrap().lock().unwrap().to_vec(); 
 		let c1=q1.lock().unwrap().get_container("locs").unwrap().lock().unwrap().to_vec(); 
@@ -3129,6 +3130,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		let comb1 = encode_2col_var(&e1, &c1);
 		let comb2 = encode_2col_var(&e2, &c2);
 		let comb3 = encode_2col_var(&e3, &c3);
+		if b_debug {check_cs(&cs, "val_union step 0");}
 
 		//3. verify disjoint relation
 		verify_disjoint_union_prf(&comb1, &comb2, &comb3, prf_union, &r1)?;

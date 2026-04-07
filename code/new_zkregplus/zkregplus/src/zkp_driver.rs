@@ -800,10 +800,10 @@ pub mod tests_zkp_driver{
 		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
 			&format!("{}/sigs.dat",set1), //src sig
 			vec![
-				format!("{}/binexec.dat",set1),
-				format!("{}/binexec.dat",set1),
-				format!("{}/binexec.dat",set1),
-				format!("{}/binexec.dat",set1)
+				format!("{}/binexec_p1.dat",set1),
+				format!("{}/binexec_p2.dat",set1),
+				//format!("{}/binexec_p3.dat",set1),
+				//format!("{}/binexec_p4.dat",set1)
 			], //list of files to discharge
 			"data/small_data_set/reports/report.dat", //report
 			b_read_cache,

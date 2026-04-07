@@ -27399,6 +27399,28 @@ Monday 04/06/2026
 Goal 1. insert debug code into discharge adv
 	[a] modify interface to add assert_msg3
 	[b] pass the two params to related functions.
+	[c] deploy to server
 
+Goal 2. improve small_case with different file size and length
+
+Goal 3. Proposal -> DONE
+
+Goal 4. debug small_par function
+	[a] need to carefully design the binexec
+	[b] 1 set two separate
+	[c] mainly two test two sets with two different max words len
+		and two different total len.
+	[b] 2 sets
+
+Goal 5. collected data.
+  DEBUG USE 6901.5: last_loc: 33648641, cost: 89 ms
+-- DEBUG USE 1001: entering CHECK: val_union step 1
+thread 'zkp_driver::tests_zkp_driver::test_zkreg_main' panicked at /home/xiang/Desktop/NewResearch/Projects/ZkRegPlus/code/new_zkregplus/sonobe_mod/folding-schemes/src/folding/foldpot/utils.rs:59:17:
+ERROR: not satisfiable: val_union step 1
+stack backtrace:
+
+Tuesday 04/07/2026
+Goal 1. insert more debugging statesments
+	[a] read verify_disjoint_prf
 === TODO == check data and further test the multi-job.
 

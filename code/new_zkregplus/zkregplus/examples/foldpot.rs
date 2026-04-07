@@ -125,7 +125,9 @@ impl <F:PrimeField> SigmaGadget<F> for SumGadget<F>{
 	}
 
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
-		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig) 
+		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig,
+		_word_id: FpVar<F>,
+		_subseg_id: FpVar<F>) 
 		-> Result<(), SynthesisError>{
 		let (stmt_idx, _m1_idx, _m2_idx, _m3_idx) = cfg.get_gadget_indices(i);
 		let n = self.n;

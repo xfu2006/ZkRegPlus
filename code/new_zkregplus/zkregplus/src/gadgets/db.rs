@@ -35,6 +35,7 @@ use rayon::iter::{
 	IntoParallelRefIterator,
 	IndexedParallelIterator
 };
+use folding_schemes::folding::foldpot::utils::check_cs;
 use data_processor::clam_db::{RANGE2,RANGE2_BIT,check_pad_ratio};
 use crate::gadgets::commons::{verify_inverse,verify_logup_inverse, check_eq, 
 	check_arr_eq, check_arr_eq_arr, gen_m_table, new_const_var,
@@ -2163,6 +2164,7 @@ pub fn verify_disjoint_union_prf<F:PrimeField + ColEle>(
 ) -> Result<(), SynthesisError>{
 	//1. verify the m_tbl works for set3 vs res
 	//COST: 3 * (n1 + n2)
+	let b_debug = true;
 	assert!(set1.len()>0, "input len must >0");
 	let cs = set1[0].cs();
 	let b_perf = false;
@@ -2171,7 +2173,48 @@ pub fn verify_disjoint_union_prf<F:PrimeField + ColEle>(
 	let res = vec![&set1[..], &set2[..]].concat();
 	let n = res.len(); //note n may NOT be the sum of set1 and set2
 		//because of existence of dummy entries.
+	if b_debug{
+		let set1_val = set1.iter().map(|x| x.value().unwrap())
+			.collect::<HashSet<F>>();
+		let set2_val = set2.iter().map(|x| x.value().unwrap())
+			.collect::<HashSet<F>>();
+		let set3_val = set3.iter().map(|x| x.value().unwrap())
+			.collect::<HashSet<F>>();
+		let setres_val = res.iter().map(|x| x.value().unwrap())
+			.collect::<HashSet<F>>();
+		let set12 = set1_val.union(&set2_val).cloned().collect::<HashSet<F>>();
+		let set1_no_zero = set1_val.into_iter().filter(|x| !x.is_zero())
+			.collect::<HashSet<F>>();
+		let set2_no_zero = set2_val.into_iter().filter(|x| !x.is_zero())
+			.collect::<HashSet<F>>();
+		if !set1_no_zero.is_disjoint(&set2_no_zero){
+			println!("ERROR disjoint of two sets failed. set1: ---");
+			for x in &set1_no_zero{
+				println!("{}", x);
+			}
+			println!("--- set 2 ---");
+			for x in &set2_no_zero{
+				println!("{}", x);
+			}
+			
+		}
+		assert!(set1_no_zero.is_disjoint(&set2_no_zero));
+		if setres_val!=set3_val{
+			println!("ERROR failed check of set_res == set3. Set_res below");
+			for x in &setres_val{
+				println!("{}", x);
+			}
+			println!("--- set 3 ---");
+			for x in &set3_val{
+				println!("{}", x);
+			}
+		}
+		assert!(setres_val==set3_val);
+		assert!(set3_val == set12);
+	}
 	assert_logup(cs.clone(), &set3, &res, &m_tbl, r)?;
+	if b_debug{ check_cs(&cs, "verify_union step 1"); }
+
 
 	
 	//2. verify that if res[i]!=0 then m_tbl[i]=1
@@ -2187,6 +2230,13 @@ pub fn verify_disjoint_union_prf<F:PrimeField + ColEle>(
 			]
 		);
 		let lb3 = lb_zero.clone(); 
+		if b_debug{
+			let res_i_val = res[i].value().unwrap();
+			let mtb_i_val = m_tbl[i].value().unwrap();
+			assert!(res_i_val * (mtb_i_val-F::one())==F::zero(),
+				"ERR in verif_join at i: {}, res_val: {}, tbl_i_val: {}",
+				i, res_i_val, mtb_i_val);
+		}
 
 		cs.enforce_constraint(lb1, lb2, lb3)?;
 	}
@@ -2194,6 +2244,7 @@ pub fn verify_disjoint_union_prf<F:PrimeField + ColEle>(
 		println!("-- verify_disjoint_union_prf: n1: {}, n2: {}, cost: {} R1CS",
 			set1.len(), set2.len(), cs.num_constraints()- nc);
 	}
+	if b_debug{ check_cs(&cs, "verify_union step 1"); }
 	Ok( () )
 }
 
