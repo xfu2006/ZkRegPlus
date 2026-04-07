@@ -1955,7 +1955,7 @@ where
 		::new(poseidon_config_global.clone(), lkup_p2, vec_circ_cp, rand::rngs::OsRng, b_full2, global_max_total_n, global_max_words);
 	log_perf(log_level, &format!("FoldPot: Step 3: set up driver 2.\n=== Now Execute All Jobs =====\n"), &mut gt_all);
 
-	jobs.into_par_iter().enumerate().try_for_each(|(job_id, job)| {
+	jobs.into_par_iter().enumerate().for_each(|(job_id, job)| {
 		//0. retrieve the words and word_info
 	  	log(log_level, &format!("--- Job {} starts ---", job_id));
 	  	let mut gt1 = GTimer::new();
@@ -2007,7 +2007,7 @@ where
 				.qa_vp.as_ref().expect("qa_vp null!"); 
 	  		let qa_nizk_vkey_hash = qa_nizk_vkey.hash(&driver1.poseidon_config);
 	  		let qa_nizk_vkey_hash1 = qa_nizk_vkey_hash.clone();
-	  		let (U_i1, W_i1, _r_Fr, _cmT)= nova1.gen_next_folded()?;
+	  		let (U_i1, W_i1, _r_Fr, _cmT)= nova1.gen_next_folded().unwrap();
 	  		let (com_all_w, prf_qa_nizk, r_all_w, prf_kzg, kzg_all_com_ch) = 
 				W_i1.gen_com_all_w_and_qa_nizk_prf::<E, CS1E, H>(
 					&qa_nizk_pkey, 
@@ -2033,7 +2033,7 @@ where
 	  	
 	  		let (snark_proof_main,mainres,mainres_hash, g16_vk_main) = {
 	  			let main_circ = MainDeciderCircuit::from_nova::<FC>(nova1,
-	  				com_all_w.clone(), r_all_w.clone(), randf)?;
+	  				com_all_w.clone(), r_all_w.clone(), randf).unwrap();
 	  			let mainres = main_circ.res.clone();
 	  			let mainres_hash = main_circ.res_hash.clone(); 
 	  			log_perf(log_level, &format!("FoldPot Step 4: build MAIN decider circuit. MEM: {} GB", get_mem_usage()), &mut gt1);
@@ -2048,7 +2048,7 @@ where
 	  	
 	  			let snark_proof_main: S::Proof = S::prove(&g16_pk, 
 	  				main_circ, &mut rng)
-	  				.map_err(|e| Error::Other(e.to_string()))?;
+	  				.map_err(|e| Error::Other(e.to_string())).unwrap();
 	  			log_perf(log_level, &format!("FoldPot Step 6: Gen Groth16 Proof for MainCirc. MEM: {} GB.",  get_mem_usage()), &mut gt1);
 	  	
 	  			(snark_proof_main, mainres, mainres_hash, g16_vk)
@@ -2098,7 +2098,7 @@ where
 		.expect("qa_vp null!").clone();
 	let qa_nizk_vkey_hash = qa_nizk_vkey.hash(&driver2.poseidon_config);
 	let (nova2_U_i1, nova2_W_i1, _nova2_r_Fr, _nova2__cmT)= 
-		nova2.gen_next_folded()?;
+		nova2.gen_next_folded().unwrap();
 	let (nova2_com_all_w, nova2_prf_qa_nizk, nova2_r_all_w, nova2_prf_kzg, nova2_kzg_all_com_ch) = nova2_W_i1.gen_com_all_w_and_qa_nizk_prf::<E, CS1E, H>( &qa_nizk_pkey, &driver2.nova_param.0.cs1e_pp, &qa_nizk_vkey, &nova2_U_i1, &driver2.poseidon_config);
 	log_perf(log_level, &format!("FoldPot: Step 7: Phase 2: cyclefold and cyclepair IVC PROVE STEPS (folding) DONE. num_steps: {}", _num_steps), &mut gt1);
 
@@ -2130,7 +2130,7 @@ where
 				cyclepair_inputs, qa_nizk_vkey_hash.clone(), 
 				driver2.poseidon_config.clone(),
 				com_all_w, r_all_w, nova2_com_all_w, nova2_r_all_w, mainres,
-				inp)?; 
+				inp).unwrap(); 
 		log_perf(log_level, &format!("FoldPot Step 8: build CyclePair circuit. MEM: {} GB", get_mem_usage()), &mut gt1);
 
 		//9. set up the keys (maybe later can be cached)
@@ -2144,7 +2144,8 @@ where
 
 		//10. produce the groth16 snark
 		let snark_proof_cp: S::Proof = S::prove(&g16_pk, cp_circuit, &mut rng)
-			.map_err(|e| Error::Other(e.to_string()))?;
+			.map_err(|e| Error::Other(e.to_string())).unwrap();
+		log_perf(log_level, &format!("FoldPot Step 10: Generate Groth16 proof. MEM: {} GB.",  get_mem_usage()), &mut gt1);
 
 		(snark_proof_cp, g16_vk)
 	};
@@ -2167,7 +2168,7 @@ where
 		snark_proof_cp,
 		mainres_hash,
 	);
-	log_perf(log_level, &format!("FoldPot Step 10: Gen Groth16 Proof for CpCircuit. MEM: {} GB.",  get_mem_usage()), &mut gt1);
+	log_perf(log_level, &format!("FoldPot Step 11: Assmeble Batch Proof for CpCircuit. MEM: {} GB.",  get_mem_usage()), &mut gt1);
 
 	//11. verify the batch proof
 	let qa_nizk_vkey2 = driver2.nova_param.1.qa_vp.as_ref().expect("qa_vp null!").clone(); 
@@ -2186,7 +2187,7 @@ where
 		true, //now full verification
 		opt_kzg_sum1
 	)); //note
-	log_perf(log_level, &format!("FoldPot Step 11: Verify Batch Proof."), 
+	log_perf(log_level, &format!("FoldPot Step 12: Verify Batch Proof."), 
 		&mut gt1);
 
 	//12. verify the individual proof
@@ -2198,12 +2199,12 @@ where
 		&batch_prf, 
 		&ind_prf)
 	);
-	log_perf(log_level, &format!("FOLDPOT Step 12. Verify Individual Proof."), 
+	log_perf(log_level, &format!("FOLDPOT Step 13. Verify Individual Proof."), 
 		&mut gt1);
 	log_perf(log_level, &format!("**** Job {} Complete ***** MEM: {} GB.", job_id, get_mem_usage()), &mut gt1);
 
-	Ok::<(), Error>(())
-	})?;
+	//Ok::<(), Error>(())
+	});
 
 	log_perf(log_level, "===== all fold_pot jobs finished =====", &mut gt_all);
 	Ok(())

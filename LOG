@@ -27422,5 +27422,13 @@ stack backtrace:
 Tuesday 04/07/2026
 Goal 1. insert more debugging statesments
 	[a] read verify_disjoint_prf
+	[b] put in debugging statement
+Goal 2. Looks like two paralle job has one failed
+	[a] check logA
+Goal 3. improve the log system
+	[a] add log_perf and log a job_id
+	[b] each message preceeds with job_id
+	[c] write to a file suffixed with job_id
+	[d] use AI to do it
 === TODO == check data and further test the multi-job.
 
