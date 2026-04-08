@@ -27492,4 +27492,6 @@ Goal 3. deploy to server
 	[c] check discharge b_debug setting
 Goal 4.  fix the Nosuitable layer found in range[0,0] and 
 	need to give the failure message for the last circ.
+	[a] replicate the testing
+	[b] fixed
 

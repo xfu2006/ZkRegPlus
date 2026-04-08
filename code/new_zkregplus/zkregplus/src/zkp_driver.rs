@@ -779,7 +779,7 @@ pub mod tests_zkp_driver{
 		let basis_unique_states = 23*100; 
 		let basis_acc_states = 646;  //6.46 percent
 		let basis_pats_in_trace = 1291;   //(at most twice of basis_acc_states)
-		let perc_pats_expansion_rate = 100;
+		let perc_pats_expansion_rate = 114;
 
 		let num_category = 1;
 		let num_circs_per_category= 1;
