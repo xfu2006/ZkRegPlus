@@ -2102,8 +2102,7 @@ pub fn tbl_left_join_wide<F:PrimeField + ColEle>(
 ///      it also proves that non-zero-items of set3 = non-zero-items res
 ///      this is because that every non-zero items of res is covered.
 /// GENERATE the proof
-/// NOTE THAT the res is simply a concat of set1 and set2, with
-/// ZERO elements moved at the beginning
+/// NOTE THAT the res is simply a concat of set1 and set2.
 pub fn gen_disjoint_union_prf<F:PrimeField + ColEle>(
 	set1: &Vec<F>,
 	set2: &Vec<F>,
@@ -2120,10 +2119,10 @@ pub fn gen_disjoint_union_prf<F:PrimeField + ColEle>(
 		assert!(nz_set1.is_disjoint(&nz_set2));
 	}
 	let set3 = vec![&set1[..],&set2[..]].concat();
-	let res = set3.iter().filter(|x| !x.is_zero())
-		.map(|x| x.clone()).collect::<Vec<F>>();
-	let n_pad = set3.len()-res.len();
-	let res = vec![&vec![F::zero(); n_pad], &res[..]].concat();
+	//let res = set3.iter().filter(|x| !x.is_zero())
+	//	.map(|x| x.clone()).collect::<Vec<F>>();
+	//let n_pad = set3.len()-res.len();
+	let res = set3.clone();
 	let prf= Container::new(name);
 	let m_tbl = gen_m_table(&set3, &res);
 	let n = m_tbl.len();
@@ -2876,8 +2875,8 @@ pub mod tests_db{
         let cs = ConstraintSystem::<Fr>::new_ref();
 		let r1 = FpVar::new_witness(cs.clone(),|| 
 			Ok(Fr::rand(&mut rng))).unwrap();
-		let n1 = 1;
-		let n2 = 1;
+		let n1 = 10;
+		let n2 = 30;
 		let set1 = (0..n1).into_iter().map(|_|{
 			FpVar::new_witness(cs.clone(),|| Ok(Fr::rand(&mut rng))).unwrap()
 		}).collect::<Vec<FpVar<Fr>>>();
@@ -2885,7 +2884,7 @@ pub mod tests_db{
 			FpVar::new_witness(cs.clone(),|| Ok(Fr::rand(&mut rng))).unwrap()
 		}).collect::<Vec<FpVar<Fr>>>();
 		let zvar = FpVar::new_witness(cs.clone(), || Ok(Fr::zero())).unwrap();
-		let set1 = vec![ vec![zvar.clone()], set1].concat();
+		let set1 = vec![ vec![zvar.clone(), zvar.clone()], set1].concat();
 		let set2 = vec![ vec![zvar.clone()], set2].concat();
 		let set1_val = set1.iter().map(|x| x.value().unwrap())
 			.collect::<Vec<Fr>>();

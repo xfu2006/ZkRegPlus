@@ -27480,6 +27480,16 @@ Goal 2. debug compute_sig_adv failure
 			(it fails for subsig 17)
 	[b] read the test case
 		required case only shows 1 time.
+	[c] found it's caused by gen_disjoint_prf it scrambles the order
+		-> reverse it back.
+	[d] test db again
+	[e] regression testing zkp_driver
+	[f] check before deployment:
+		create cs in mod_super
+Goal 3. deploy to server
+	[a] need to checkout all
+	[b] change cs in mod_super
+	[c] check discharge b_debug setting
 === TODO == fix the Nosuitable layer found in range[0,0] and 
 	need to give the failure message for the last circ.
 
