@@ -469,7 +469,7 @@ where
 				_vec_pci, _vec_cap, _vec_adv) = self.bin_search_best_layer(
 					log_level, b_save_advice, &seg, word_info, 
 					min_layer, max_layer_id,
-					num_segs, vec_seg_size, vec_pci, vec_cap, vec_adv);
+					num_segs, vec_seg_size, vec_pci, vec_cap, vec_adv)?;
 
 			best_layer
 		};
@@ -544,7 +544,7 @@ where
 		max_layer_vec_pci: Vec<usize>,
 		max_layer_vec_cap: Vec<Arc<dyn Capacity + Send + Sync>>,
 		max_layer_vec_adv: Vec<Arc<dyn NdAdvice + Send + Sync>>)
-		-> (usize, usize, Vec<usize>, Vec<usize>, Vec<Arc<dyn Capacity + Send + Sync>>, Vec<Arc<dyn NdAdvice + Send + Sync>>)
+		-> Result<(usize, usize, Vec<usize>, Vec<usize>, Vec<Arc<dyn Capacity + Send + Sync>>, Vec<Arc<dyn NdAdvice + Send + Sync>>), Error>
 		where <CS1E as CommitmentScheme<C1, H>>::ProverParams: Send + Sync {
 		let mut gt1 = GTimer::new();
 		let mut min_layer_id = min_layer;
@@ -568,7 +568,7 @@ where
 			log_perf(0, log_level, &format!("bin_search: min_id: {}, max_id: {}, mid_id: {}.  word.len(): {}.", min_layer_id, max_layer_id, mid_id, word.len()), &mut gt1);
 		}
 
-		(best_layer, num_segs, vec_seg_size, vec_pci, vec_cap, vec_adv)	
+		Ok((best_layer, num_segs, vec_seg_size, vec_pci, vec_cap, vec_adv))
 	}
 
 	/// Almost the same of bin_search_best_layer, the difference
@@ -581,7 +581,7 @@ where
 	    max_layer: usize,
 		_job_id: usize
 
-	) -> (usize, usize, Vec<usize>, Vec<usize>, Vec<Arc<dyn Capacity + Send + Sync>>, Vec<Arc<dyn NdAdvice + Send + Sync>>)
+	) -> Result<(usize, usize, Vec<usize>, Vec<usize>, Vec<Arc<dyn Capacity + Send + Sync>>, Vec<Arc<dyn NdAdvice + Send + Sync>>), Error>
 		where <CS1E as CommitmentScheme<C1, H>>::ProverParams: Send + Sync {
 		use rayon::prelude::*;
 
@@ -593,19 +593,27 @@ where
 				.collect();
 
 		let best_result = results
-				.into_iter()
-				.filter_map(|(layer_id, res)| res.ok().map(|val| 
-					(layer_id, val)))
+				.iter()
+				.filter_map(|(layer_id, res)| res.as_ref().ok().map(|val| 
+					(*layer_id, val)))
 					.min_by_key(|(layer_id, _)| *layer_id);
 
 		match best_result {
 			Some((best_layer, (num_segs, vec_seg_size, vec_pci, 
 					vec_cap, vec_adv))) => { 
-						(best_layer, num_segs, vec_seg_size, 
-							vec_pci, vec_cap, vec_adv)
+						Ok((best_layer, *num_segs, vec_seg_size.clone(), 
+							vec_pci.clone(), vec_cap.clone(), vec_adv.clone()))
 			},
 			None => {
-				panic!("par_search_best_layer: No suitable layer found in range [{}, {}] for the given word.", min_layer, max_layer);
+				//return the error of the VERY last circuit (max_layer)
+				let mut err = Error::NotSupported("No suitable layer found".to_string()); //default
+				for (layer_id, res) in results.into_iter(){
+					if layer_id == max_layer {
+						err = res.err().unwrap();
+						break;
+					}
+				}
+				Err(err)
 			}
 		}
 	}
@@ -655,7 +663,7 @@ where
 			let max_layer = self.circuits.len()-1; 
 			self.par_search_best_layer(log_level+2, b_save_advice,
 					word, word_info, min_layer, max_layer, 0)
-		};
+		}?;
 
 		//2. double check and return
 		let pci = vec_pci[0];

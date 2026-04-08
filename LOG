@@ -27490,6 +27490,6 @@ Goal 3. deploy to server
 	[a] need to checkout all
 	[b] change cs in mod_super
 	[c] check discharge b_debug setting
-=== TODO == fix the Nosuitable layer found in range[0,0] and 
+Goal 4.  fix the Nosuitable layer found in range[0,0] and 
 	need to give the failure message for the last circ.
 
