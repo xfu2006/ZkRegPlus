@@ -273,7 +273,7 @@ pub fn verify_encode_cols_in_range<F:PrimeField + ColEle>(target_col: &[FpVar<F>
 	}
 	if b_debug{ assert!(cs.is_satisfied().unwrap()); }
 	if b_perf {
-		log_perf(logl, &format!("assert_encode_cols_in_range. n: {}, cs: {}",
+		log_perf(0, logl, &format!("assert_encode_cols_in_range. n: {}, cs: {}",
 			n, cs.num_constraints()-nc), &mut gt);
 	}
 
@@ -1292,7 +1292,8 @@ pub fn sum_vec_vars<F:PrimeField + ColEle>(v: &[FpVar<F>])->FpVar<F>{
 pub fn verify_logup_inverse_new<F:PrimeField + ColEle>(cs: ConstraintSystemRef<F>,
 	v1: &[FpVar<F>], v2: &[FpVar<F>], m_tbl: &[FpVar<F>])
 	->Result<(), SynthesisError>{
-	assert!(v2.len()==m_tbl.len());
+	assert!(v2.len()==m_tbl.len(), "v2.len: {}, m_tbl.len: {}", 
+		v2.len(), m_tbl.len());
 	let one_var = FpVar::<F>::new_constant(cs.clone(), F::one())?; 
 	let one_wit_var = FpVar::<F>::new_witness(cs.clone(), 
 		||Ok(F::one())).unwrap();
@@ -1797,7 +1798,7 @@ pub fn verify_2d_lkup_prf<F:PrimeField + ColEle>(
 	let inv_lkup = inv_lkup_val.iter().map(|&v| new_var(&cs, v))
 		.collect::<Vec<FpVar<F>>>();
 	if b_perf {
-		log_perf(logl, &format!("verif_2dlkup step 0. build witness. n_q: {}, n_l: {}, cs: {}", n_q, n_l, cs.num_constraints()-nc), &mut gt);
+		log_perf(0, logl, &format!("verif_2dlkup step 0. build witness. n_q: {}, n_l: {}, cs: {}", n_q, n_l, cs.num_constraints()-nc), &mut gt);
 		nc = cs.num_constraints();
 	}
 
@@ -1807,7 +1808,7 @@ pub fn verify_2d_lkup_prf<F:PrimeField + ColEle>(
 	verify_inverse_mul_col(cs.clone(),&lkup_cols, &inv_lkup, &r)?;
 	if b_debug{ assert!(cs.is_satisfied().unwrap()); }
 	if b_perf {
-		log_perf(logl, &format!("verif_2dlkup step 1. build witness. n_q: {}, n_l: {}, cs: {}", n_q, n_l, cs.num_constraints()-nc), &mut gt);
+		log_perf(0, logl, &format!("verif_2dlkup step 1. build witness. n_q: {}, n_l: {}, cs: {}", n_q, n_l, cs.num_constraints()-nc), &mut gt);
 		nc = cs.num_constraints();
 	}
 
@@ -1830,7 +1831,7 @@ pub fn verify_2d_lkup_prf<F:PrimeField + ColEle>(
 	let adj = &zero_inv * &zero_diff;
 	sum_left -= adj;
 	if b_perf {
-		log_perf(logl, &format!("verif_2dlkup step 3.1 logup_check. n_q: {}, n_l: {}, cs: {}", n_q, n_l, cs.num_constraints()-nc), &mut gt);
+		log_perf(0, logl, &format!("verif_2dlkup step 3.1 logup_check. n_q: {}, n_l: {}, cs: {}", n_q, n_l, cs.num_constraints()-nc), &mut gt);
 		nc = cs.num_constraints();
 	}
 
@@ -1856,10 +1857,10 @@ pub fn verify_2d_lkup_prf<F:PrimeField + ColEle>(
 	check_eq(&sum_left, &sum_right, "logup check fails")?;
 	if b_debug{ assert!(cs.is_satisfied().unwrap()); }
 	if b_perf {
-		log_perf(logl, &format!("verif_2dlkup step 3.2 logup_check. n_q: {}, n_l: {}, cs: {}", n_q, n_l, cs.num_constraints()-nc), &mut gt);
+		log_perf(0, logl, &format!("verif_2dlkup step 3.2 logup_check. n_q: {}, n_l: {}, cs: {}", n_q, n_l, cs.num_constraints()-nc), &mut gt);
 	}
 	if b_perf {
-		log_perf(logl, &format!("verif_2dlkup TOTAL . n_q: {}, n_l: {}, cs: {}",
+		log_perf(0, logl, &format!("verif_2dlkup TOTAL . n_q: {}, n_l: {}, cs: {}",
 			n_q, n_l, cs.num_constraints()-nc0), &mut gt);
 	}
 
@@ -1917,7 +1918,7 @@ pub fn verify_1d_lkup_prf<F:PrimeField + ColEle>(
 	let inv_lkup = inv_lkup_val.iter().map(|&v| new_var(&cs, v))
 		.collect::<Vec<FpVar<F>>>();
 	if b_perf {
-		log_perf(logl, &format!("verif_1dlkup step 0. build witness. n_q: {}, n_l: {}, cs: {}", n_q, n_l, cs.num_constraints()-nc), &mut gt);
+		log_perf(0, logl, &format!("verif_1dlkup step 0. build witness. n_q: {}, n_l: {}, cs: {}", n_q, n_l, cs.num_constraints()-nc), &mut gt);
 		nc = cs.num_constraints();
 	}
 
@@ -1927,7 +1928,7 @@ pub fn verify_1d_lkup_prf<F:PrimeField + ColEle>(
 	verify_inverse_mul_col(cs.clone(),&lkup_cols, &inv_lkup, &r)?;
 	if b_debug{ assert!(cs.is_satisfied().unwrap()); }
 	if b_perf {
-		log_perf(logl, &format!("verif_1dlkup step 1. build witness. n_q: {}, n_l: {}, cs: {}", n_q, n_l, cs.num_constraints()-nc), &mut gt);
+		log_perf(0, logl, &format!("verif_1dlkup step 1. build witness. n_q: {}, n_l: {}, cs: {}", n_q, n_l, cs.num_constraints()-nc), &mut gt);
 		nc = cs.num_constraints();
 	}
 
@@ -1954,10 +1955,10 @@ pub fn verify_1d_lkup_prf<F:PrimeField + ColEle>(
 	check_eq(&sum_left, &sum_right, "logup check fails")?;
 	if b_debug{ assert!(cs.is_satisfied().unwrap()); }
 	if b_perf {
-		log_perf(logl, &format!("verif_1dlkup step 3.2 logup_check. n_q: {}, n_l: {}, cs: {}", n_q, n_l, cs.num_constraints()-nc), &mut gt);
+		log_perf(0, logl, &format!("verif_1dlkup step 3.2 logup_check. n_q: {}, n_l: {}, cs: {}", n_q, n_l, cs.num_constraints()-nc), &mut gt);
 	}
 	if b_perf {
-		log_perf(logl, &format!("verif_1dlkup TOTAL . n_q: {}, n_l: {}, cs: {}",
+		log_perf(0, logl, &format!("verif_1dlkup TOTAL . n_q: {}, n_l: {}, cs: {}",
 			n_q, n_l, cs.num_constraints()-nc0), &mut gt);
 	}
 

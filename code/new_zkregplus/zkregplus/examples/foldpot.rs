@@ -203,9 +203,8 @@ GadgetMapper<F,LK> for SumMapper<F, LK>{
 	/// given a vector of circuits' gadget mapper, given a word
 	/// return the (steps, Vec<pci>, ND_Advice object)
 	fn gen_nd_advice(&self, word: &Vec<F>, _word_info: &WordInfo,
-		_prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>>, _seg_id: usize) 
+		_prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>>, _seg_id: usize, _job_id: usize)
 		-> Result<Arc<dyn NdAdvice + Send + Sync>, Error>{
-
 			if word.len()<=self.max_word_len(){
 				let w0_val = field_to_usize(&word[0]);
 				if (w0_val%2==1) != self.b_odd { 
@@ -238,7 +237,7 @@ GadgetMapper<F,LK> for SumMapper<F, LK>{
 	/// This is for testing the "best fit" circ in multiple non-uniform
 	/// circ environment in supernova.
 	fn build_statement(&self, word: &Vec<F>, prev_wit: &Option<StatementInst<F,LK>>, lkup: Arc<LK>, ea: &StatementExtraInfo<F>, 
-	_adv: Arc<dyn NdAdvice + Send + Sync>, _lkup_share_size: usize, _b_dummy: bool) 
+	_adv: Arc<dyn NdAdvice + Send + Sync>, _lkup_share_size: usize, _b_dummy: bool, _job_id: usize) 
 	-> Result<StatementInst<F,LK>, Error>{
 		//1. making check on odd/even case
 		assert!(word.len()>=1);

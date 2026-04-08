@@ -27429,6 +27429,57 @@ Goal 3. improve the log system
 	[a] add log_perf and log a job_id
 	[b] each message preceeds with job_id
 	[c] write to a file suffixed with job_id
-	[d] use AI to do it
-=== TODO == check data and further test the multi-job.
+	[d] use AI to do it: changes 500 lines of propgation of
+		function calls. 
+		-> costs 3.5 million tokens!!!
+
+Goal 4. collect and analyze data.
+	----
+	thread 'zkp_driver::tests_zkp_driver::test_zkreg_main' panicked at zkregplus/src/gadgets/db.rs:2236:13:
+ERR in verif_join at i: 21259, res_val: 754066908453706154961681093604841357476, tbl_i_val:
+stack backtrace:
+   0: rust_begin_unwind
+   -----
+
+Goal 5. refine unit testing
+	[a] it looks like adding two zero elements is going to break it.
+	[b] but it breaks at a different place.
+
+Wed 04/08/2026
+LOC (gadgets): 21655
+Goal 1. fix joint proof testing
+	[a] read gen_join_prf again
+	[b] found the ERROR! the reason is the order swapped.
+	[c] remove debug statements
+	[d] but running ERROR on small data
+	trace: 
+		verify_disjoint_union_prf
+		-> assert_logup
+		-> verify_logup_inverse
+		-> common.rs: 1295
+	[e] run unit testing on gadgets all files
+		-> fails length test the same
+		trace: 
+		discharge: 4348 (validate_forward_step)
+		discharge:3046 (val_step_queue_union)
+		discharge:3136 call verify_disjoint_uinon_prf on comb3
+		db:2232
+		db:105
+		common:1103
+		common:1295
+		-> the problem is that the size of the union set MIGHT BE smaller
+	[f] it is calling gen_disjoint_uinion_prf_adv -> fixed
+	[g] more regression test
+Goal 2. debug compute_sig_adv failure 
+	[a] trace:
+		compute: 2821 -> test
+		compute: 2883 -> discharge_test_case
+		compute_2705: ComputeSigAdv new
+		cmpute: 302: gen_synthesis_subsig_combo
+		compute: 634: subsi_to_rec.get subsig
+			(it fails for subsig 17)
+	[b] read the test case
+		required case only shows 1 time.
+=== TODO == fix the Nosuitable layer found in range[0,0] and 
+	need to give the failure message for the last circ.
 

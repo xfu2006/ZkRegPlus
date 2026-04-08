@@ -310,7 +310,7 @@ pub fn assert_wide_wellformed<F:PrimeField + ColEle>(
 		assert!(cs.is_satisfied().unwrap());
 	}
 	if b_perf {
-		log_perf(logl, &format!("assert_light_well. n: {}, cs: {}",
+		log_perf(0, logl, &format!("assert_light_well. n: {}, cs: {}",
 			n, cs.num_constraints()-nc), &mut gt);
 	}
 
@@ -2091,23 +2091,39 @@ pub fn tbl_left_join_wide<F:PrimeField + ColEle>(
 /// assert that res is a union of set1 and set2 (regarding non-zero values)
 /// and for set1 and set2 except for 0 elements, all elements
 /// are unique (appear once), i.e., (non-zero items in set1 and set2 
-/// are disjoint).
+/// are disjoint). res is padded to the sum of length of set1 and set2.
+/// We assume that in circuit, set1 and set2 are 0 padded vector with 
+/// fixed size.
 /// Basic idea: 
 /// (1) generate concat set3 = set1 + set2 
 /// (2) we run a lookup from set3 (as qury table) to res (as lkup)
 ///      we just need to justify that each entry of m_tbl is exactly 1
 ///      except for 0 entries (this proves that set1 and set2 are disjoint).
-///      it also improves that non-zero-items of set3 = non-zero-items res
+///      it also proves that non-zero-items of set3 = non-zero-items res
 ///      this is because that every non-zero items of res is covered.
 /// GENERATE the proof
-/// NOTE THAT the res is simply a concat of set1 and set2
+/// NOTE THAT the res is simply a concat of set1 and set2, with
+/// ZERO elements moved at the beginning
 pub fn gen_disjoint_union_prf<F:PrimeField + ColEle>(
 	set1: &Vec<F>,
 	set2: &Vec<F>,
 	name: &str,
 ) -> Result<(Vec<F>,std::sync::Arc<std::sync::Mutex<Container<F>>>), Error>{
-	let set3 = vec![&set1[..], &set2[..]].concat();
-	let res = set3.clone();
+	let b_debug = true;
+	if b_debug{//verify that set1 and set2 are disjoint over non-zero elements
+		let nz_set1 = set1.iter().filter(|x| !x.is_zero())
+			.map(|x| x.clone())
+			.collect::<HashSet<F>>();
+		let nz_set2 = set2.iter().filter(|x| !x.is_zero())
+			.map(|x| x.clone())
+			.collect::<HashSet<F>>();
+		assert!(nz_set1.is_disjoint(&nz_set2));
+	}
+	let set3 = vec![&set1[..],&set2[..]].concat();
+	let res = set3.iter().filter(|x| !x.is_zero())
+		.map(|x| x.clone()).collect::<Vec<F>>();
+	let n_pad = set3.len()-res.len();
+	let res = vec![&vec![F::zero(); n_pad], &res[..]].concat();
 	let prf= Container::new(name);
 	let m_tbl = gen_m_table(&set3, &res);
 	let n = m_tbl.len();
@@ -2139,7 +2155,7 @@ pub fn gen_disjoint_union_prf_adv<F:PrimeField + ColEle>(
 	}
 	
 	let prf= Container::new(name);
-	let m_tbl = gen_m_table(&set3, &res); //m_tbl for non-entries will
+	let m_tbl = gen_m_table(&res, &set3); //m_tbl for non-entries will
 		//be all 1 
 	let n = m_tbl.len();
 	prf.lock().unwrap().add_col(Col::new(m_tbl, "m_tbl", IDX_DATA));
@@ -2158,19 +2174,20 @@ pub fn gen_disjoint_union_prf_adv<F:PrimeField + ColEle>(
 pub fn verify_disjoint_union_prf<F:PrimeField + ColEle>(
 	set1: &Vec<FpVar<F>>,
 	set2: &Vec<FpVar<F>>,
-	set3: &Vec<FpVar<F>>, //the desired result
+	res: &Vec<FpVar<F>>, //the desired result
 	prf: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
 	r: &FpVar<F>
 ) -> Result<(), SynthesisError>{
 	//1. verify the m_tbl works for set3 vs res
 	//COST: 3 * (n1 + n2)
-	let b_debug = true;
+	let b_debug = false;
 	assert!(set1.len()>0, "input len must >0");
 	let cs = set1[0].cs();
 	let b_perf = false;
 	let nc = cs.num_constraints();
-	let m_tbl = prf.lock().unwrap().get_container("m_tbl")?.lock().unwrap().to_vec();
-	let res = vec![&set1[..], &set2[..]].concat();
+	let m_tbl = prf.lock().unwrap().get_container("m_tbl")?
+		.lock().unwrap().to_vec();
+	let set3= vec![&set1[..], &set2[..]].concat();
 	let n = res.len(); //note n may NOT be the sum of set1 and set2
 		//because of existence of dummy entries.
 	if b_debug{
@@ -2179,10 +2196,11 @@ pub fn verify_disjoint_union_prf<F:PrimeField + ColEle>(
 		let set2_val = set2.iter().map(|x| x.value().unwrap())
 			.collect::<HashSet<F>>();
 		let set3_val = set3.iter().map(|x| x.value().unwrap())
+			.collect::<HashSet<F>>().into_iter().filter(|x| !x.is_zero())
 			.collect::<HashSet<F>>();
-		let setres_val = res.iter().map(|x| x.value().unwrap())
+		let setres_val = res.iter().filter(|x| !x.value().unwrap().is_zero())
+			.map(|x| x.value().unwrap())
 			.collect::<HashSet<F>>();
-		let set12 = set1_val.union(&set2_val).cloned().collect::<HashSet<F>>();
 		let set1_no_zero = set1_val.into_iter().filter(|x| !x.is_zero())
 			.collect::<HashSet<F>>();
 		let set2_no_zero = set2_val.into_iter().filter(|x| !x.is_zero())
@@ -2210,17 +2228,15 @@ pub fn verify_disjoint_union_prf<F:PrimeField + ColEle>(
 			}
 		}
 		assert!(setres_val==set3_val);
-		assert!(set3_val == set12);
 	}
 	assert_logup(cs.clone(), &set3, &res, &m_tbl, r)?;
 	if b_debug{ check_cs(&cs, "verify_union step 1"); }
-
-
 	
 	//2. verify that if res[i]!=0 then m_tbl[i]=1
 	// this is: res[i] * (m_tbl[i] - 1) = 0 for each i
 	//COST: (n1+n2)
 	let lb_zero = LinearCombination::from((F::zero(),Variable::One));
+
 	for i in 0..n{
 		let lb1 = var_to_lb(&res[i], F::one());
 		let lb2 = LinearCombination(
@@ -2459,7 +2475,7 @@ pub fn verify_tbl_left_join_wide<F:PrimeField + ColEle>(
 	tbl_tmp.lock().unwrap().add_container(ct_jcols[4].clone());//low cost clone
 	assert_wide_wellformed(&tbl_tmp, "enc_c12")?;
 	if b_perf{
-		log_perf(logl, &format!("verify_join_wide. step 1.1: assert wide wellformed: n: {}, cs: {}", n, cs.num_constraints()-nc), &mut gt);
+		log_perf(0, logl, &format!("verify_join_wide. step 1.1: assert wide wellformed: n: {}, cs: {}", n, cs.num_constraints()-nc), &mut gt);
 		nc = cs.num_constraints();
 	}
 
@@ -2469,7 +2485,7 @@ pub fn verify_tbl_left_join_wide<F:PrimeField + ColEle>(
 	verify_encode_cols_in_range(&enc_c12[..],
 		&vec![&c1[..], &c2[..]])?;
 	if b_perf{
-		log_perf(logl, &format!("verify_join_wide. step 1.2: assert encoding. n: {}, cs: {}", n, cs.num_constraints()-nc), &mut gt);
+		log_perf(0, logl, &format!("verify_join_wide. step 1.2: assert encoding. n: {}, cs: {}", n, cs.num_constraints()-nc), &mut gt);
 		nc = cs.num_constraints();
 	}
 
@@ -2486,7 +2502,7 @@ pub fn verify_tbl_left_join_wide<F:PrimeField + ColEle>(
 		&lkupprf_c1c2
 	)?;
 	if b_perf{
-		log_perf(logl, &format!("verify_join_wide. step 2: 2d lkup. n1: {}, n: {}, cs: {}", n1, n, cs.num_constraints()-nc), &mut gt);
+		log_perf(0, logl, &format!("verify_join_wide. step 2: 2d lkup. n1: {}, n: {}, cs: {}", n1, n, cs.num_constraints()-nc), &mut gt);
 		nc = cs.num_constraints();
 	}
 
@@ -2505,10 +2521,10 @@ pub fn verify_tbl_left_join_wide<F:PrimeField + ColEle>(
 	)?;
 	if b_debug{ assert!(cs.is_satisfied().unwrap()); }
 	if b_perf{
-		log_perf(logl, &format!("verify_join_wide. step 3: 1d lkup: n2: {}, n: {}, cs: {}", n2, n, cs.num_constraints()-nc), &mut gt);
+		log_perf(0, logl, &format!("verify_join_wide. step 3: 1d lkup: n2: {}, n: {}, cs: {}", n2, n, cs.num_constraints()-nc), &mut gt);
 	}
 	if b_perf{
-		log_perf(logl, &format!("verify_join_wide. TOTAL: n1: {}, n2: {}, n: {}, cs: {}", n1, n2, n, cs.num_constraints()-nc0), &mut gt);
+		log_perf(0, logl, &format!("verify_join_wide. TOTAL: n1: {}, n2: {}, n: {}, cs: {}", n1, n2, n, cs.num_constraints()-nc0), &mut gt);
 	}
 	
 	Ok( () )
@@ -2519,6 +2535,7 @@ pub mod tests_db{
 	use ark_relations::r1cs::{ConstraintSystem,ConstraintSystemRef};
 	use ark_r1cs_std::{fields::fp::FpVar, alloc::AllocVar};
 	use ark_bn254::{Fr};
+	use ark_std::Zero;
 	use crate::gadgets::{
 		db::{assert_logup, assert_well_formed_sorted,col_to_sorted_set,verify_col_to_sorted_set,Container,verify_tbl_filtered_to_sorted_tbl, tbl_filtered_to_sorted_tbl,assert_logup_cond, tbl_to_sorted_tbl, verify_tbl_to_sorted_tbl, tbl_left_join, verify_tbl_left_join},
 		traits::{Col, IDX_DATA},
@@ -2859,21 +2876,23 @@ pub mod tests_db{
         let cs = ConstraintSystem::<Fr>::new_ref();
 		let r1 = FpVar::new_witness(cs.clone(),|| 
 			Ok(Fr::rand(&mut rng))).unwrap();
-		let n1 = 100;
-		let n2 = 200;
+		let n1 = 1;
+		let n2 = 1;
 		let set1 = (0..n1).into_iter().map(|_|{
 			FpVar::new_witness(cs.clone(),|| Ok(Fr::rand(&mut rng))).unwrap()
 		}).collect::<Vec<FpVar<Fr>>>();
 		let set2 = (0..n2).into_iter().map(|_|{
 			FpVar::new_witness(cs.clone(),|| Ok(Fr::rand(&mut rng))).unwrap()
 		}).collect::<Vec<FpVar<Fr>>>();
+		let zvar = FpVar::new_witness(cs.clone(), || Ok(Fr::zero())).unwrap();
+		let set1 = vec![ vec![zvar.clone()], set1].concat();
+		let set2 = vec![ vec![zvar.clone()], set2].concat();
 		let set1_val = set1.iter().map(|x| x.value().unwrap())
 			.collect::<Vec<Fr>>();
 		let set2_val = set2.iter().map(|x| x.value().unwrap())
 			.collect::<Vec<Fr>>();
 		let (res_val, prf_val) = 
 			gen_disjoint_union_prf(&set1_val, &set2_val, "uprf").unwrap();
-			
 		let res= res_val.iter().map(|x| new_var(&cs, *x))
 			.collect::<Vec<FpVar<Fr>>>();
 		let prf = Container::rc_from(&prf_val.lock().unwrap(), cs.clone());

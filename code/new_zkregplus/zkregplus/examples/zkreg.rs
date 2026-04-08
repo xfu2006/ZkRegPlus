@@ -71,6 +71,7 @@ fn small_data<F:PrimeField>(){
 
 
 	zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+		0, //job_id
 		&format!("{}/sigs.dat",set1), //src sig
 		&format!("{}/binexec.dat",set1), //list of files to discharge
 		"data/small_data_set/reports/report.dat", //report

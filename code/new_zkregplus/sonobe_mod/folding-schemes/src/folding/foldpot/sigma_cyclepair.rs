@@ -215,7 +215,7 @@ GadgetMapper<F,LK> for FoldPairMapper<F, LK>{
 	}
 
 	fn gen_nd_advice(&self, word: &Vec<F>, _wi: &WordInfo,
-		_prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>>, _seg_id: usize) 
+		_prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>>, _seg_id: usize, _job_id: usize) 
 		-> Result<Arc<dyn NdAdvice + Send + Sync>, Error>{
 		if word.len()<=self.max_word_len(){
 			Ok( Arc::new(DummyNdAdvice{}) )
@@ -247,7 +247,7 @@ GadgetMapper<F,LK> for FoldPairMapper<F, LK>{
 	/// word: a and b (size 8*5 = 40 Fr)
 	/// [gt1, a, b, gt2] 160Fr maps to zi_inp.cyclepair_input
 	/// We do not rely on prev_stmt
-	fn build_statement(&self, word: &Vec<F>, _prev_stmt: &Option<StatementInst<F,LK>>, _lkup: Arc<LK>, ea: &StatementExtraInfo<F>, _advice: Arc<dyn NdAdvice + Send + Sync>, _lkup_size: usize, _b_dummy: bool) -> Result<StatementInst<F,LK>, Error>{
+	fn build_statement(&self, word: &Vec<F>, _prev_stmt: &Option<StatementInst<F,LK>>, _lkup: Arc<LK>, ea: &StatementExtraInfo<F>, _advice: Arc<dyn NdAdvice + Send + Sync>, _lkup_size: usize, _b_dummy: bool, _job_id: usize) -> Result<StatementInst<F,LK>, Error>{
 		//1. retrieve the information
 		assert!(word.len()==164);
 		let gt1 = word[0..12*5].to_vec();
@@ -419,7 +419,7 @@ where 	C: CurveGroup<ScalarField=F>,
 	let dummy_adv = Arc::new(DummyNdAdvice{});
 	let lkup_share_size = 4;
 	let stmt_vec =sigma.get_mapper().lock().unwrap()
-		.build_statement(&dummy_input, &None, lkup, &ea, dummy_adv, lkup_share_size, false).unwrap().to_vec();
+		.build_statement(&dummy_input, &None, lkup, &ea, dummy_adv, lkup_share_size, false, 0).unwrap().to_vec();
 	sigma.dummy_stmt = Some(stmt_vec);
 
 	sigma
@@ -549,7 +549,7 @@ pub mod tests_sigma_cyclepair{
 			vec![hc_a_in, hc_b_in, hc_a_out, hc_b_out]].concat();
 		let dummy_adv = Arc::new(DummyNdAdvice{});
 		let lkup_share_size = 4;
-		let stmt = mapper.lock().unwrap().build_statement(&inp, &None, lkup,&ea, dummy_adv, lkup_share_size, false).unwrap();
+		let stmt = mapper.lock().unwrap().build_statement(&inp, &None, lkup,&ea, dummy_adv, lkup_share_size, false, 0).unwrap();
 
 		let fq_bits = Fq::MODULUS_BIT_SIZE as usize;
 		let b_full = true;

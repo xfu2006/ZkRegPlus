@@ -94,7 +94,7 @@ pub trait ComponentMapper<F:PrimeField + ColEle, LK: LookupTableTwoCol<F>>: Debu
 	/// Also responsible for generating nd_advice with its own capacity.
 	/// seg_id is for debugging purpose only.
 	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
-		prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>>, seg_id: usize)
+		prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>>, seg_id: usize, job_id: usize)
 		->Result<Arc<dyn NdAdvice + Send + Sync>, Error>;
 
 
@@ -658,7 +658,7 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>
 					comp_idx, path);
 			}
 		}
-		log_perf(LOG1, "DEBUG USE 9999: CompositeGadgetMapper: self_check", &mut timer);
+		log_perf(0, LOG1, "DEBUG USE 9999: CompositeGadgetMapper: self_check", &mut timer);
 	}
 
 }
@@ -813,8 +813,7 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 	/// given word input, previous witness, try to construct
 	/// the full problem statement (including non-deterministic witness). 
 	/// NOTE that the real i/o has only two elements in z_i array.
-	fn build_statement(&self, word: &Vec<F>, _prev_stmt: &Option<StatementInst<F,LK>>, lkup: Arc<LK>, ea: &StatementExtraInfo<F>, r_advice: Arc<dyn NdAdvice + Send + Sync>, lkup_share_size: usize, b_dummy: bool) 
-	-> Result<StatementInst<F,LK>, Error>{
+	fn build_statement(&self, word: &Vec<F>, _prev_stmt: &Option<StatementInst<F,LK>>, lkup: Arc<LK>, ea: &StatementExtraInfo<F>, r_advice: Arc<dyn NdAdvice + Send + Sync>, lkup_share_size: usize, b_dummy: bool, _job_id: usize) -> Result<StatementInst<F,LK>, Error>{
 		//1. expand word_seg to max capacity.
 		let b_debug = false;
 		let mut rem_word = vec![F::zero(); self.max_word_len() - word.len()];
@@ -1005,7 +1004,7 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 	}
 
 	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
-		r_prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>>, seg_id: usize)
+		r_prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>>, seg_id: usize, job_id: usize)
 		->Result<Arc<dyn NdAdvice + Send + Sync>, Error>{
 		let b_perf = true;
 		let mut t1 = Timer::new();
@@ -1022,7 +1021,7 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 
 		let res= self.vec_components.iter().zip(vec_prev_adv.into_iter()).
 			map(|(c,a)|{
-				c.lock().unwrap().gen_nd_advice(&word, &word_info, a, seg_id)
+				c.lock().unwrap().gen_nd_advice(&word, &word_info, a, seg_id, job_id)
 			}
 		).collect::<Vec<Result<Arc<dyn NdAdvice + Send + Sync>, Error>>>();
 
@@ -1042,7 +1041,7 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 		).collect::<Vec<Vec<Arc<dyn NdAdvice + Send + Sync>>>>().concat();
 		assert!(vec_errs.len() + vec_adv.len() == res.len());
 
-		if b_perf{ log_perf(LOG1, "Generate Advice", &mut t1); }
+		if b_perf{ log_perf(0, LOG1, "Generate Advice", &mut t1); }
 	
 		if vec_errs.len()>0{ Err(Error::CapErr(vec_errs)) } else{
 			Ok(Arc::new(CompositeAdvice{vec_adv}))

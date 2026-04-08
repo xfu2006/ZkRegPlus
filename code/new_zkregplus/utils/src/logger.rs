@@ -35,51 +35,55 @@ pub fn name_log_level(i: usize)->String{
 		_ => String::from("UNKNOWN")
 	}
 }
-/// log function worker only if log_level is greater than or equal to LOG_LEVEL
-pub fn log(log_level: usize, msg: &String){
+/// log function worker only if log_level is greater than or equal to LOG_LEVEL.
+/// `job_id` is the id of the current job for parallel execution.
+pub fn log(job_id: usize, log_level: usize, msg: &String){
 	let b_write = false;
-	let fpath = "./log.txt";
+	let fpath = format!("./log_job_{}.txt", job_id);
 	if log_level<=LOG_LEVEL{ 
 		let indent_level = if log_level<2 {0} else {log_level-2};
 		let indent_str = "-- ".repeat(indent_level);
-		println!("{}: {} {}", name_log_level(log_level), indent_str, msg); 
+		println!("[job {}] {}: {} {}", job_id, name_log_level(log_level), indent_str, msg); 
 		if b_write{
-			append_to_file(fpath, &format!("{}: {}\n", 
+			append_to_file(&fpath, &format!("{}: {}\n", 
 				name_log_level(log_level), msg));
 		}
 	}
 }
 
-/// write all messages into an accumulator (acc)
-pub fn flog(log_level: usize, msg: &String, acc: &mut Vec<String>){
+/// write all messages into an accumulator (acc).
+/// `job_id` is the id of the current job for parallel execution.
+pub fn flog(job_id: usize, log_level: usize, msg: &String, acc: &mut Vec<String>){
 	if log_level<=LOG_LEVEL{ 
 		let indent_level = if log_level<2 {0} else {log_level-2};
 		let indent_str = "-- ".repeat(indent_level);
-		println!("{}: {} {}", name_log_level(log_level), indent_str, msg); 
+		println!("[job {}] {}: {} {}", job_id, name_log_level(log_level), indent_str, msg); 
 		acc.push(msg.clone());
 	}
 }
 
 /// log the performance.
-pub fn log_perf(log_level: usize, log_title: &str, timer: &mut Timer){
+/// `job_id` is the id of the current job for parallel execution.
+pub fn log_perf(job_id: usize, log_level: usize, log_title: &str, timer: &mut Timer){
 	timer.stop();
 	if timer.time_ns()<1000{
-		log(log_level, &format!("{} {} ns", log_title, timer.time_ns()));
+		log(job_id, log_level, &format!("{} {} ns", log_title, timer.time_ns()));
 	}else if timer.time_us()<1000{
-		log(log_level, &format!("{} {} us", log_title, timer.time_us()));
+		log(job_id, log_level, &format!("{} {} us", log_title, timer.time_us()));
 	}else{
-		log(log_level, &format!("{} {} ms", log_title, timer.time_us()/1000));
+		log(job_id, log_level, &format!("{} {} ms", log_title, timer.time_us()/1000));
 	}
 	timer.clear_start();
 }
 
-/// log the performance into acc (vector of strings)
-pub fn flog_perf(log_level: usize, log_title: &str, timer: &mut Timer, acc: &mut Vec<String>){
+/// log the performance into acc (vector of strings).
+/// `job_id` is the id of the current job for parallel execution.
+pub fn flog_perf(job_id: usize, log_level: usize, log_title: &str, timer: &mut Timer, acc: &mut Vec<String>){
 	timer.stop();
 	if timer.time_us()<1000{
-		flog(log_level, &format!("{} {} us", log_title, timer.time_us()), acc);
+		flog(job_id, log_level, &format!("{} {} us", log_title, timer.time_us()), acc);
 	}else{
-		flog(log_level, &format!("{} {} ms", log_title, timer.time_us()/1000), acc);
+		flog(job_id, log_level, &format!("{} {} ms", log_title, timer.time_us()/1000), acc);
 	}
 	timer.clear_start();
 }

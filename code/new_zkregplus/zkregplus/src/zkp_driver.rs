@@ -65,7 +65,7 @@ type FC<F,C,CS> = SigmaIR1CS_Inst<F,C,CS,LK<F>,GM<F>,false>;
 
 /// load the files and pack them as nibbles
 /// return (words in packed nibbles, word info, file names)
-fn load_files<F:PrimeField + ColEle>(list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavApproxConfig, _b_read_cache: bool, _b_write_cache: bool, _cache_dir: &str)
+fn load_files<F:PrimeField + ColEle>(_job_id: usize, list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavApproxConfig, _b_read_cache: bool, _b_write_cache: bool, _cache_dir: &str)
 	->(Vec<Vec<F>>, Vec<WordInfo>, Vec<String>){
 	//1. read the list of files
 	let _b_debug = false;
@@ -450,8 +450,10 @@ where C: CurveGroup<ScalarField=F>,
 /// * `cache_prefix`: the cache file prefix to determine which cache to read or write
 /// * `list_of_dfa_sigs`: the file contains the list of signatures that to build into DFA
 /// * `list_of_ised:`: the list of signatures that need ISED ACDFA to be constructed
+/// * `job_id`: The ID of the job being processed.
 pub fn zkp_driver<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + std::fmt::Debug + Clone, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, S> 
 (
+	job_id: usize,
 	sig_file: &str, 
 	list_file_to_scan: &str, 
 	_logfile: &str, 
@@ -520,7 +522,7 @@ where
 	// re-use the capacity for BOTH cs and ignore_case
 	// this is usaully inefficient for ignore_case (but
 	// we do this for small samples for convenience)
-	zkp_driver_adv::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(sig_file, vec![list_file_to_scan.to_string()], _logfile,
+	zkp_driver_adv::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(job_id, sig_file, vec![list_file_to_scan.to_string()], _logfile,
 		b_read_cache, b_write_cache, cache_dir,
 		list_of_dfa_sigs, list_of_ised_sigs, list_of_ised_igc_sigs,
 		chunk_len,
@@ -529,8 +531,10 @@ where
 		num_category, num_circs_per_category, b_check_lkup
 	);
 }
+/// `job_id`: The ID of the job being processed.
 pub fn zkp_driver_adv<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + std::fmt::Debug + Clone, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, S> 
 (
+	job_id: usize,
 	sig_file: &str, 
 	list_files_to_scan: Vec<String>, 
 	_logfile: &str, 
@@ -601,24 +605,24 @@ where
 	//1. build or load the clamdb
 	let log_level = LOG1;
 	let mut gt1 = GTimer::new();
-	log(log_level, &format!("=== ZKP driver starts ===="));
+	log(0, log_level, &format!("=== ZKP driver starts ===="));
 	let poseidon_config = poseidon_canonical_config::<CF1<C1>>();
 	let mut vlog = vec![];
     let cfg = default_clamav_cfg();
     let db = ClamavDB::<CF1<C1>>::build_or_load(&cfg, sig_file, 
-		list_of_dfa_sigs, list_of_ised_sigs, list_of_ised_igc_sigs,
-		&mut vlog, cache_dir, b_read_cache, b_write_cache)
-		.expect("db creation error");
+    	list_of_dfa_sigs, list_of_ised_sigs, list_of_ised_igc_sigs,
+    	&mut vlog, cache_dir, b_read_cache, b_write_cache)
+    	.expect("build db err");
 	if log_level>=LOG1+1{
     	db.print_summary(&mut vlog);
 	}
-	log_perf(log_level, &format!("ZIP driver step 1: build DB."), &mut gt1);
+	log_perf(0, log_level, &format!("ZIP driver step 1: build DB."), &mut gt1);
 	
 	//2. load the files as vec of words
 	let mut max_total_word_len = 0;
 	let mut jobs = vec![];
 	for list_file_to_scan in list_files_to_scan{
-		let (vec_words, vec_word_info, vec_word_fnames) = load_files::<CF1<C1>>(&list_file_to_scan, &db, &cfg, b_read_cache, b_write_cache, cache_dir);
+		let (vec_words, vec_word_info, vec_word_fnames) = load_files::<CF1<C1>>(job_id, &list_file_to_scan, &db, &cfg, b_read_cache, b_write_cache, cache_dir);
 		let total_word_len:usize = vec_words.iter().map(|w| w.len()).sum();
 		if total_word_len > max_total_word_len{
 			max_total_word_len = total_word_len;
@@ -631,7 +635,7 @@ where
 		});
 	}
 	let lkup_len = db.lkup.get_size();
-	log_perf(log_level, &format!("ZIP driver step 2: load words and prepare {} jobs.", jobs.len()), &mut gt1);
+	log_perf(0, log_level, &format!("ZIP driver step 2: load words and prepare {} jobs.", jobs.len()), &mut gt1);
 
 	//3. build the circuits
 	let rc_db = Arc::new(db.clone());
@@ -650,7 +654,7 @@ where
 		num_circs_per_category,
 		b_check_lkup
 	);
-	log_perf(log_level, &format!("ZIP driver step 2: build circs."), &mut gt1);
+	log_perf(0, log_level, &format!("ZIP driver step 2: build circs."), &mut gt1);
 
 	//4. run the foldpot_main
 	let lkup = Arc::new(db.lkup);
@@ -734,6 +738,7 @@ pub mod tests_zkp_driver{
 
 
 		zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+   0, 
 			&format!("{}/sigs.dat",set1), //src sig
 			&format!("{}/binexec.dat",set1), //list of files to discharge
 			"data/small_data_set/reports/report.dat", //report
@@ -759,7 +764,7 @@ pub mod tests_zkp_driver{
 	///       4 jobs: 11GB and 44sec (reason: folding doesn't take much time)
 	#[allow(dead_code)]
 	fn small_data_par<F:PrimeField>(b_check_lkup: bool){
-		assert!(RANGE2_BIT==8, "set RANGE2_BIT to 8");
+		assert!(RANGE2_BIT==18, "set RANGE2_BIT to 8");
 		let b_read_cache = false;
 		let b_write_cache = !b_read_cache;
 		let set1 = "data/debug/small_data_set/config_dfa"; //for dfa 
@@ -798,10 +803,10 @@ pub mod tests_zkp_driver{
 
 
 		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
-			&format!("{}/sigs.dat",set1), //src sig
+   0, 		&format!("{}/sigs.dat",set1), //src sig
 			vec![
-				format!("{}/binexec_p1.dat",set1),
 				format!("{}/binexec_p2.dat",set1),
+				format!("{}/binexec_p1.dat",set1),
 				//format!("{}/binexec_p3.dat",set1),
 				//format!("{}/binexec_p4.dat",set1)
 			], //list of files to discharge
@@ -895,6 +900,7 @@ pub mod tests_zkp_driver{
 
 
 		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+   0, 
 			&format!("{}/sigs.dat",set1), //src sig
 			vec![format!("{}/binexec.dat",set1)], //list of files to discharge
 			"data/small_data_set/reports/report.dat", //report
@@ -962,6 +968,7 @@ pub mod tests_zkp_driver{
 
 
 		zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+   0, 
 			&format!("{}/sigs_debug2.dat",set1), //src sig
 			&format!("{}/binexec_debug2.dat",set1), //list of files to discharge
 			"data/small_data_set/reports/report.dat", //report
@@ -1056,6 +1063,7 @@ pub mod tests_zkp_driver{
 
 
 		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+   0, 
 			&format!("{}/sigs.dat",set1), //src sig
 			vec![format!("{}/binexec2.dat",set1)], //list of files to discharge
 			"data/small_data_set/reports/small_data3.dat", //report
@@ -1150,6 +1158,7 @@ pub mod tests_zkp_driver{
 		];
 		let idx = 1; //max 2
 		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+   0, 
 			&format!("{}/sigs2.dat",set1), //src sig
 			files[idx].clone(),
 			"data/small_data_set/reports/small_data4.dat", //report
@@ -1218,6 +1227,7 @@ pub mod tests_zkp_driver{
 
 
 		zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+   0, 
 			&format!("{}/main.dat",set1), //src sig
 			&format!("{}/binexec_1.dat",set1), //list of files to discharge
 			"data/debug/full_data_set/reports/report.dat", //report
@@ -1285,6 +1295,7 @@ pub mod tests_zkp_driver{
 
 
 		zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+   0, 
 			&format!("{}/main.dat",set1), //src sig
 			&format!("{}/binexec_2.dat",set1), //list of files to discharge
 			"data/debug/full_data_set/reports/report2.dat", //report
@@ -1375,6 +1386,7 @@ pub mod tests_zkp_driver{
 
 
 		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+   0, 
 			&format!("{}/main.dat",set1), //src sig
 			vec![format!("{}/binexec_3.dat",set1)], //list of files to discharge
 			"data/debug/full_data_set/reports/report2.dat", //report
@@ -1484,6 +1496,7 @@ pub mod tests_zkp_driver{
 
 		for id in min..max{
 			zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+    0, 
 				&format!("{}/main.dat",set1), //src sig
 				vec![format!("{}/binexec_4_{}.dat",set1, id+1)], //list of files to discharge
 				"data/debug/full_data_set/reports/report2.dat", //report
@@ -1510,8 +1523,8 @@ pub mod tests_zkp_driver{
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
-		//small_data::<Fr>(b_check_lkup); //small data
-		small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)
+		small_data::<Fr>(b_check_lkup); //small data
+		//small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)
 		//small_data2::<Fr>(b_check_lkup);  //10k data 
 		//small_data_debug::<Fr>(b_check_lkup);  //for debug
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails

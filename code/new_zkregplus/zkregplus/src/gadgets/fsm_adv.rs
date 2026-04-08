@@ -816,7 +816,7 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		res.lock().unwrap().add_col(col_locs_final);
 		res.lock().unwrap().add_col(col_si_locs_final);
 
-		if b_perf{log_perf(LOG1, "-- -- fsm_gen_fsm_combo", &mut gt);}
+		if b_perf{log_perf(0, LOG1, "-- -- fsm_gen_fsm_combo", &mut gt);}
 
 		Ok(res)
 	}
@@ -1293,7 +1293,7 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 			_ => pat_loc_tbl
 		}?;
 
-		if b_perf{log_perf(LOG1, "-- -- fsm_packed_trace", &mut gt);}
+		if b_perf{log_perf(0, LOG1, "-- -- fsm_packed_trace", &mut gt);}
 		res.lock().unwrap().add_container(pat_loc_tbl);
 		Ok( res )
 	}
@@ -1371,7 +1371,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		let si_trans= fsm_acc.get_container("si_trans")?.lock().unwrap().to_vec();
 		assert!(si_states.len()==nlen+1 && si_trans.len()==nlen);
 		if b_perf{
-			log_perf(log_level, "validate_fsm_acc_container step 1", &mut gt);
+			log_perf(0, log_level, "validate_fsm_acc_container step 1", &mut gt);
 		}
 
 		//2. NO need to check transition id because its constant.
@@ -1422,7 +1422,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 
 		let lb_one = LinearCombination::<F>(vec![(F::one(), Variable::One)]);
 		if b_perf{
-			log_perf(log_level, "validate_fsm_acc_container step 2.1", &mut gt);
+			log_perf(0, log_level, "validate_fsm_acc_container step 2.1", &mut gt);
 		}
 		//IDEA: since char, st1, st2 are all already proved in range.
 		//It can be proved that transition is no more than 52-bit
@@ -1482,7 +1482,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 
 		}
 		if b_perf{
-			log_perf(log_level, "validate_fsm_acc_container step 2.2", &mut gt);
+			log_perf(0, log_level, "validate_fsm_acc_container step 2.2", &mut gt);
 		}
 
 		//IF nlen is not multiple of 4
@@ -1497,7 +1497,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 			check_eq(&exp_trans, &trans, "ERROR checking trans part2")?;
 		}
 		if b_perf{
-			log_perf(log_level, "validate_fsm_acc_container step 3", &mut gt);
+			log_perf(0, log_level, "validate_fsm_acc_container step 3", &mut gt);
 		}
 
 
@@ -1516,7 +1516,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		//packcheck_increase(&locs, &pows_31)?;
 		// --> no need anymore as locs are directly computed
 		if b_perf{
-			log_perf(log_level, "validate_fsm_acc_container step 4", &mut gt);
+			log_perf(0, log_level, "validate_fsm_acc_container step 4", &mut gt);
 		}
 
 
@@ -1548,7 +1548,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 			&one_var - &is_zero_better(s, &cs).unwrap()
 		).collect::<Vec<FpVar<F>>>();
 		if b_perf{
-			log_perf(log_level, "validate_fsm_acc_container step 5", &mut gt);
+			log_perf(0, log_level, "validate_fsm_acc_container step 5", &mut gt);
 		}
 
 		//3.1 check the validity of sid_states_final 
@@ -1569,7 +1569,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 			// NO Need as locs are computed correctly always
 		}
 		if b_perf{
-			log_perf(log_level, "validate_fsm_acc_container step 6", &mut gt);
+			log_perf(0, log_level, "validate_fsm_acc_container step 6", &mut gt);
 		}
 
 		//3.2 use sid_states_final to sum up the logup equation LHS
@@ -1662,7 +1662,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		}
 		let lhs_sum = exp_lhs_sum[nlen].clone(); //take the last one
 		if b_perf{
-			log_perf(log_level, "validate_fsm_acc_container step 7", &mut gt);
+			log_perf(0, log_level, "validate_fsm_acc_container step 7", &mut gt);
 		}
 
 		//3.3 use vec_not_dummy[i] to sum up the Logup RHS 
@@ -1710,7 +1710,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		}
 		check_eq(&lhs_sum, &rhs_sum, "logup check fails")?;
 		if b_perf{
-			log_perf(log_level, "validate_fsm_acc_container step 8", &mut gt);
+			log_perf(0, log_level, "validate_fsm_acc_container step 8", &mut gt);
 		}
 
 
@@ -1761,7 +1761,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		).collect::<Vec<Vec<FpVar<F>>>>();
 		assert!(sid_cols.len()==vals.len());
 		if b_perf{
-			log_perf(log_level, "valid_proj_subsig_store step 1", &mut gt);
+			log_perf(0, log_level, "valid_proj_subsig_store step 1", &mut gt);
 		}
 
 		//NOT needed anymore
@@ -1786,7 +1786,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		verify_encoded_table(cs.clone(),
 			unit_bits, &vec![subsig,id1,state,id2,pat], encoded)?;
 		if b_perf{
-			log_perf(log_level, "valid_proj_subsig_store step 2", &mut gt);
+			log_perf(0, log_level, "valid_proj_subsig_store step 2", &mut gt);
 		}
 
 		//4. check the table is wellformed 
@@ -1797,7 +1797,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		assert_well_formed_sorted(cs.clone(),subsig,id1,state,None,None,None,
 			None, r1,unit_bits)?;
 		if b_perf{
-			log_perf(log_level, "valid_proj_subsig_store step 3", &mut gt);
+			log_perf(0, log_level, "valid_proj_subsig_store step 3", &mut gt);
 		}
 
 		if b_perf{
@@ -1840,7 +1840,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 			&format!("{} packed_trace sorted_states", sname))?;
 		verify_col_to_sorted_set(r1, &col_to_sorted_combo.lock().unwrap(), cs.clone())?;
 		if b_perf{
-			log_perf(log_level, "valid_packed_trace step 1", &mut gt);
+			log_perf(0, log_level, "valid_packed_trace step 1", &mut gt);
 		}
 
 		#[cfg(test)]{
@@ -1878,7 +1878,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 			nc = cs.num_constraints();
 		}
 		if b_perf{
-			log_perf(log_level, "valid_packed_trace step 2", &mut gt);
+			log_perf(0, log_level, "valid_packed_trace step 2", &mut gt);
 		}
 
 		//3. check the pattern_state_tbl
@@ -1898,7 +1898,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 			nc = cs.num_constraints();
 		}
 		if b_perf{
-			log_perf(log_level, "valid_packed_trace step 3", &mut gt);
+			log_perf(0, log_level, "valid_packed_trace step 3", &mut gt);
 		}
 
 		//4. check the pat_state_loc
@@ -1915,7 +1915,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 				cs.num_constraints()-nc);
 		}
 		if b_perf{
-			log_perf(log_level, "valid_packed_trace step 4", &mut gt);
+			log_perf(0, log_level, "valid_packed_trace step 4", &mut gt);
 		}
 
 		Ok( () )
@@ -1959,7 +1959,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 			all.search_container(
 			&format!("{} fsm_acc locs_final", sname))?.lock().unwrap().to_vec();
 		if b_perf{
-			log_perf(log_level, &format!(
+			log_perf(0, log_level, &format!(
 				"valid_packed_trace step 1. cs: {}", cs.num_constraints()-nc),
 				&mut gt);
 			nc = cs.num_constraints();
@@ -1977,7 +1977,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 			&format!("{} packed_trace tbl_proj_states_pats", sname))?;
 		assert_wide_wellformed(&tbl_proj_states_pats, "key")?;
 		if b_perf{
-			log_perf(log_level, &format!(
+			log_perf(0, log_level, &format!(
 				"valid_packed_trace step 2.1, ulen: {} cs: {}", 
 					ulen, cs.num_constraints()-nc), &mut gt);
 			nc = cs.num_constraints();
@@ -2014,7 +2014,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		verify_encode_cols_in_range(&col_encoded[..], &vec_cols)?;
 
 		if b_perf{
-			log_perf(log_level, &format!(
+			log_perf(0, log_level, &format!(
 				"valid_packed_trace step 2.2. ulen: {}, cs: {}", 
 				ulen,cs.num_constraints()-nc), &mut gt);
 			nc = cs.num_constraints();
@@ -2032,7 +2032,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 			cs.clone()
 		)?;
 		if b_perf{
-			log_perf(log_level, &format!(
+			log_perf(0, log_level, &format!(
 				"valid_packed_trace step 3. ulen: {}, alen: {}, plen: {}, cs: {}", ulen, alen, plen, cs.num_constraints()-nc), &mut gt);
 			nc = cs.num_constraints();
 		}
@@ -2053,8 +2053,8 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		verify_tbl_to_sorted_tbl(&r1, &r2,
 			&pat_col, &loc_col, &pat_loc_tbl, cs.clone())?;
 		if b_perf{
-			log_perf(log_level, &format!("validate_packed trace trace step 4: verify pat_loc tbl (len: {})  is sorted: {}. ", plen, cs.num_constraints()-nc), &mut gt);
-			log_perf(log_level, &format!("valid_packed_trace TOTAL: ulen: {}, alen: {}, plen: {}, nlen: {}, COST: {} cs. ", ulen, alen, plen, nlen, cs.num_constraints()-nc0), &mut gt0);
+			log_perf(0, log_level, &format!("validate_packed trace trace step 4: verify pat_loc tbl (len: {})  is sorted: {}. ", plen, cs.num_constraints()-nc), &mut gt);
+			log_perf(0, log_level, &format!("valid_packed_trace TOTAL: ulen: {}, alen: {}, plen: {}, nlen: {}, COST: {} cs. ", ulen, alen, plen, nlen, cs.num_constraints()-nc0), &mut gt0);
 		}
 
 
@@ -2105,7 +2105,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		self.validate_fsm_acc_container(&fsm_acc.lock().unwrap(), r1.clone(),
 			r2.clone(), cs.clone())?;
 		if b_perf{
-			log_perf(log_level, &format!(
+			log_perf(0, log_level, &format!(
 				" ## fsm_adv step1: {}", cs.num_constraints()-nc), &mut gt);
 			nc = cs.num_constraints();
 		}
@@ -2114,7 +2114,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		// COST: subsig*(1 + 11*avg_pat_subsig)
 		self.validate_proj_subsig_store(&pss.lock().unwrap(),r1.clone(),cs.clone())?;
 		if b_perf{
-			log_perf(log_level, &format!(
+			log_perf(0, log_level, &format!(
 				" ##fsm_adv step2: {}", cs.num_constraints()-nc), &mut gt);
 			nc = cs.num_constraints();
 		}
@@ -2124,7 +2124,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		// + 44 * subsigs * avg_pats_per_subsig
 		self.validate_packed_trace(&r1, &r2, &stmt, cs.clone())?;
 		if b_perf{
-			log_perf(log_level, &format!(" ## fsm_adv step3: {}, total: {}", 
+			log_perf(0, log_level, &format!(" ## fsm_adv step3: {}, total: {}", 
 				cs.num_constraints()-nc,
 				cs.num_constraints()-nc0
 			), &mut gt);
@@ -2156,7 +2156,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		self.validate_fsm_acc_container(&fsm_acc.lock().unwrap(), r1.clone(),
 			r2.clone(), cs.clone())?;
 		if b_perf{
-			log_perf(log_level, &format!(
+			log_perf(0, log_level, &format!(
 				" ## fsm_adv step1: {}", cs.num_constraints()-nc), &mut gt);
 			nc = cs.num_constraints();
 		}
@@ -2165,7 +2165,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		//3. validate the packed trace
 		self.validate_packed_trace_v2(&r1, &r2, &stmt, cs.clone())?;
 		if b_perf{
-			log_perf(log_level, &format!(" ## fsm_adv step3: {}, total: {}", 
+			log_perf(0, log_level, &format!(" ## fsm_adv step3: {}, total: {}", 
 				cs.num_constraints()-nc,
 				cs.num_constraints()-nc0
 			), &mut gt);

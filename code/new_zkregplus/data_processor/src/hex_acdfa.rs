@@ -355,7 +355,7 @@ impl HexACDFA{
 		hash_trans.insert(state0, vec![state0; 16]); //loop to dead state itself
 		let total_trans = hash_trans.par_iter().map(|(_k,v)| v.len())
 			.sum::<usize>();
-		log_perf(log_level, 
+		log_perf(0, log_level, 
 			&format!("PERF 2001.1 build trans time for states:: {}, trans: {}",
 			num_states, total_trans), &mut timer
 		);
@@ -581,7 +581,7 @@ impl HexACDFA{
 
 	/// print stats
 	pub fn log_stats(&self, prefix: &str, vlog: &mut Vec<String>){
-		flog(LOG1, &format!("==== Status of ACDFA {} =====\n HEX-AC-DFA id: {}, num_states: {}, patterns: {}, accept_states: {}, init_state: {}", prefix, self.id, self.num_states, self.patterns.len(), self.outputs.keys().len(), self.init_state), vlog);
+		flog(0, LOG1, &format!("==== Status of ACDFA {} =====\n HEX-AC-DFA id: {}, num_states: {}, patterns: {}, accept_states: {}, init_state: {}", prefix, self.id, self.num_states, self.patterns.len(), self.outputs.keys().len(), self.init_state), vlog);
 		let mut max_output_size = 0;
 		let mut total_output_size = 0;
 		for i in 0..self.num_acc_states{
@@ -590,7 +590,7 @@ impl HexACDFA{
 			if ilen>max_output_size{max_output_size = ilen;}
 			total_output_size += ilen;
 		}
-		flog(LOG1, &format!("MAX output words for a final state: {}, avg: {}", 
+		flog(0, LOG1, &format!("MAX output words for a final state: {}, avg: {}", 
 			max_output_size, total_output_size/self.num_acc_states), vlog);
 	}
 
@@ -619,8 +619,8 @@ impl HexACDFA{
 
 	/// print stats
 	pub fn log_stats_adv(&self, prefix: &str, map_crit_pat: &HashMap<String,Vec<String>>, sig_to_id: &HashMap<String, usize>, vlog: &mut Vec<String>){
-		flog(LOG1, &format!("==========Adv Stats of ACDFA {} ==========================", prefix), vlog);
-		flog(LOG1, &format!("HEX-AC-DFA id: {}, num_states: {}, patterns: {}, accept_states: {}, init_state: {}", self.id, self.num_states, self.patterns.len(), self.outputs.keys().len(), self.init_state), vlog);
+		flog(0, LOG1, &format!("==========Adv Stats of ACDFA {} ==========================", prefix), vlog);
+		flog(0, LOG1, &format!("HEX-AC-DFA id: {}, num_states: {}, patterns: {}, accept_states: {}, init_state: {}", self.id, self.num_states, self.patterns.len(), self.outputs.keys().len(), self.init_state), vlog);
 		let mut max_output_size = 0;
 		let mut total_output_size = 0;
 		let states_to_sigs = self.state_to_sig_ids(map_crit_pat, sig_to_id);
@@ -631,8 +631,8 @@ impl HexACDFA{
 			max_output_size = if max_output_size>vec.len() {max_output_size}
 				else {vec.len()};
 		}
-		flog(LOG1, &format!("  MAX output sig: {}, avg sigs/acc state: {}", max_output_size, total_output_size/states_to_sigs.len()), vlog);
-		flog(LOG1, &format!("=================================="), vlog);
+		flog(0, LOG1, &format!("  MAX output sig: {}, avg sigs/acc state: {}", max_output_size, total_output_size/states_to_sigs.len()), vlog);
+		flog(0, LOG1, &format!("=================================="), vlog);
 	}
 
 	/// generate the acceptance path for a vector of nibbles
@@ -647,9 +647,9 @@ impl HexACDFA{
 			dst = self.trans.get(&src).unwrap()[usize::from(ch)];
 			if B_DEBUG{
 				if self.is_accept(dst){
-					log(LOG1, &format!("{} - {} -> {}: {:?}", src, ch, dst, &self.outputs.get(&dst).unwrap()));
+					log(0, LOG1, &format!("{} - {} -> {}: {:?}", src, ch, dst, &self.outputs.get(&dst).unwrap()));
 				}else{
-					log(LOG1, &format!("{} -{} -> {}", src, ch, dst));
+					log(0, LOG1, &format!("{} -{} -> {}", src, ch, dst));
 				}
 			}
 			vec.push(dst);

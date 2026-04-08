@@ -972,7 +972,7 @@ impl<F: PrimeField>  FpVar<F> {
 				#[cfg(test)]{
 					let my_val = v.value().unwrap();
 					if !my_val.is_zero(){ 
-						assert!(f_multiplier * my_val == F::one()); 
+						assert!(*f_multiplier * my_val == F::one()); 
 					}
 				}
 				let cs_clone = cs.clone();

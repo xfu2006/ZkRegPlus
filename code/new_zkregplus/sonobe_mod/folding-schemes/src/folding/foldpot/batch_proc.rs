@@ -393,8 +393,9 @@ where
 	/// set up the prover and verifier params
 	/// max_total_n should be greater than the combined length of all words,
 	/// and the lookup table size
+	/// `job_id`: The ID of the job being processed.
 	pub fn setup(mut rng: impl RngCore, max_total_n: usize, n_words: usize,
-		poseidon_config: PoseidonConfig<F>) 
+		poseidon_config: PoseidonConfig<F>, job_id: usize) 
 	-> (BatchProcessorProverParams<'a, E>, BatchProcessorVerifierParams<'a,E,CS1E,H>){
 		let b_debug = B_DEBUG;
 		let logl = LOG1;
@@ -402,13 +403,13 @@ where
 		let mut gt2 = Timer::new();
 		let mut m1 = get_mem_usage_mb();
 		let m0 = m1;
-		log_perf(logl, &format!("BatchProcessor step 1. BEFOFORE setting up kzg: {}, RAM NOW: {}", max_total_n, mb2s(get_mem_usage_mb())), &mut gt);
+		log_perf(job_id, logl, &format!("BatchProcessor step 1. BEFOFORE setting up kzg: {}, RAM NOW: {}", max_total_n, mb2s(get_mem_usage_mb())), &mut gt);
 		m1 = get_mem_usage_mb();
 	
 		let kzg =  KZG::<E>::setup(&mut rng, max_total_n+2)
 			.expect("kzg key fail");
 		let m2 = get_mem_usage_mb();
-		log_perf(logl, &format!("BatchProcessor step 2. setting up kzg: {}, INCREASED RAM now: {}. ", max_total_n, mb2s(m2-m1)), &mut gt);
+		log_perf(job_id, logl, &format!("BatchProcessor step 2. setting up kzg: {}, INCREASED RAM now: {}. ", max_total_n, mb2s(m2-m1)), &mut gt);
 		m1 = m2;
 
 		let kzg_frag = KZG::<E>::pkey_in_affine(&kzg.0, n_words+1);
@@ -419,7 +420,7 @@ where
 		let mut vec_frag = VecCom::<E>::pkey_in_affine(&vec.0, n_words+1);
 		vec_frag.reverse(); //because it's order is the REVERSE
 		let m2 = get_mem_usage_mb();
-		log_perf(logl, &format!("BatchProcessor step 3. setting up veccom: {}, INCREASED RAM: {} ", n_words, mb2s(m2-m1)), &mut gt);
+		log_perf(job_id, logl, &format!("BatchProcessor step 3. setting up veccom: {}, INCREASED RAM: {} ", n_words, mb2s(m2-m1)), &mut gt);
 		m1 = m2;
 
 		//of the vector which generates kzg
@@ -432,13 +433,13 @@ where
 			vec![vz.clone(), vec_frag.clone(),vec![lg]].concat(), // -> vecom_vec_v
 		];
 		let m2 = get_mem_usage_mb();
-		log_perf(logl, &format!("BatchProcessor step 4. setting up matrix: {}, INCREASED RAM now: {}", (&matrix[0]).len(), mb2s(m2-m1)), &mut gt);
+		log_perf(job_id, logl, &format!("BatchProcessor step 4. setting up matrix: {}, INCREASED RAM now: {}", (&matrix[0]).len(), mb2s(m2-m1)), &mut gt);
 		m1 = m2;
 		let mat = Matrix::<E::G1>{rows: matrix.len(), cols: matrix[0].len(), 
 			matrix};
 		let (pkey_qanizk, vkey_qanizk) = setup_qa_nizk_standard::<E>(&mat, b_debug);
 		let m2 = get_mem_usage_mb();
-		log_perf(logl, &format!("BatchProcessor step 5. setting up qa_nizk, INCREASED RAM: {}. ", mb2s(m2-m1)), &mut gt);
+		log_perf(job_id, logl, &format!("BatchProcessor step 5. setting up qa_nizk, INCREASED RAM: {}. ", mb2s(m2-m1)), &mut gt);
 
 		let pkey = BatchProcessorProverParams::<'a, E>{
 			kzg: kzg.0, vec: vec.0, 
@@ -456,7 +457,7 @@ where
 			qa_nizk_vkey_hash: qa_nizk_vkey_hash, 
 		};
 		let m2 = get_mem_usage_mb();
-		log_perf(logl, &format!("BatchProcessor step 5. setting up qa_nizk, INCREASED RAM: {}, TOTAL RAM now: {}. ", mb2s(m2-m0), mb2s(m2)), &mut gt2);
+		log_perf(job_id, logl, &format!("BatchProcessor step 5. setting up qa_nizk, INCREASED RAM: {}, TOTAL RAM now: {}. ", mb2s(m2-m0), mb2s(m2)), &mut gt2);
 		(pkey, vkey)
 	}
 
@@ -995,7 +996,7 @@ mod tests_batch_proc {
 
 		let keysize = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>, CS1E, false>::key_size(&words);
 		let (pk,vk) = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>, CS1E, false>::setup(&mut rng,keysize,n_words,
-			poseidon_canonical_config::<Fr>());
+			poseidon_canonical_config::<Fr>(), 0);
 		let (global_claim, ind_claims, snark_inp) = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>, Groth16<Bn254>, CS1E, false>::gen_claims(&pk, &mut rng, &words, lkup.clone()).unwrap();
 
 		let i = 2;

@@ -744,7 +744,7 @@ where
             }).unwrap()).collect::<Vec<
 				R1CSVar::<C1::ScalarField,CF1<C1>,FpVar<CF1<C1>>>
 			>>();
-		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 1: generae r1cs_var. INCREASSED {} constraints", cs.num_constraints()-c1), &mut t1);
+		log_perf(0, log_level, &format!("Phase1 Circ gen_cs: Step 1: generae r1cs_var. INCREASSED {} constraints", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
 		if B_DEBUG3 {check_cs(&cs, "phase1 step 1.0");}
 
@@ -775,7 +775,7 @@ where
         let W_i1 = WitnessVarFoldPotSuper::<C1>::new_witness(cs.clone(), || {
             Ok(self.W_i1.clone().unwrap())
         })?;
-		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 2: igen Ui, Wi, Ui1, Wi1 witness: INCREASED {} constraints", cs.num_constraints()-c1), &mut t1);
+		log_perf(0, log_level, &format!("Phase1 Circ gen_cs: Step 2: igen Ui, Wi, Ui1, Wi1 witness: INCREASED {} constraints", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
 		if B_DEBUG3{check_cs(&cs, "phase1 step 2.0");}
 
@@ -797,7 +797,7 @@ where
 		all_w.append(&mut all_e);
 		all_w.push(r_all_w);
 		let len_all_w_e = all_w.len();
-		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 3: collect all_w_e. len: {}, : INCREASED: {} constraints.", 
+		log_perf(0, log_level, &format!("Phase1 Circ gen_cs: Step 3: collect all_w_e. len: {}, : INCREASED: {} constraints.", 
 			all_w.len(), cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
 		if B_DEBUG3{check_cs(&cs, "phase1 step 2");}
@@ -805,7 +805,7 @@ where
 		let one= FpVar::<C1::ScalarField>::new_witness(cs.clone(),  || 
 			Ok(C1::ScalarField::from(1u32)) ).unwrap();
         let eval_w_e= evaluate_gadget::<CF1<C1>>(all_w, kzg_all_com_ch, one)?;
-		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 4: eval all_w_e. INCREASED {} constrains.", cs.num_constraints()-c1), &mut t1);
+		log_perf(0, log_level, &format!("Phase1 Circ gen_cs: Step 4: eval all_w_e. INCREASED {} constrains.", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
 		if B_DEBUG3{check_cs(&cs, "phase1 step 3");}
 
@@ -858,7 +858,7 @@ where
 		// u_1.x = hash(U_1, ...) where U_1 is really from the dummy case.
         let is_basecase = i_minus_one.is_zero()?;
         (u_i.x[0]).enforce_equal(&is_basecase.select(&u_i1_x_base, &u_i_x)?)?;
-		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 5: Enforce u_i standard and hash. INCREASED r1cs: {}.", cs.num_constraints()-c1), &mut t1);
+		log_perf(0, log_level, &format!("Phase1 Circ gen_cs: Step 5: Enforce u_i standard and hash. INCREASED r1cs: {}.", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
 		if B_DEBUG3{check_cs(&cs, "phase1 step 5");}
 
@@ -875,7 +875,7 @@ where
 			assert!(zi_p2.value().unwrap()==z_i[1].value().unwrap());
 		}}
 		zi_p2.enforce_equal(&z_i[1])?;
-		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 6: verify zi_part2. INCREASED r1cs: {}, memory usage: {}.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
+		log_perf(0, log_level, &format!("Phase1 Circ gen_cs: Step 6: verify zi_part2. INCREASED r1cs: {}, memory usage: {}.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 		c1 = cs.num_constraints();
 		if B_DEBUG3{check_cs(&cs, "phase1 step 6");}
 
@@ -892,7 +892,7 @@ where
 				U_i1.vec_inst[i].u.clone(), 
 				z_U1)?;
 		}
-		log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 7: check {} circs. INCREASED r1cs: {}", self.n_circ, cs.num_constraints()-c1), &mut t1);
+		log_perf(0, log_level, &format!("Phase1 Circ gen_cs: Step 7: check {} circs. INCREASED r1cs: {}", self.n_circ, cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
 		if B_DEBUG3{check_cs(&cs, "phase1 step 7");}
 
@@ -949,7 +949,7 @@ where
 				cmT
 			)?;
 			Ui1_pci.enforce_equal(&expected_Ui1_pci)?;
-			log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 8: Verify U_i1 is folded U_i and u_i. INCREASED r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
+			log_perf(0, log_level, &format!("Phase1 Circ gen_cs: Step 8: Verify U_i1 is folded U_i and u_i. INCREASED r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 			c1 = cs.num_constraints();
 
 			//8. Verify cyclefold instance
@@ -988,7 +988,7 @@ where
             let computed_cmW =
                 PedersenGadget::<C2, GC2>::commit(H2, G, cf_W_i_W_bits?, cf_W_i.rW.to_bits_le()?)?;
             cf_U_i.cmW.enforce_equal(&computed_cmW)?;
-			log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 9: check cf_W_i commits to cf_U_i. INCREASED r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
+			log_perf(0, log_level, &format!("Phase1 Circ gen_cs: Step 9: check cf_W_i commits to cf_U_i. INCREASED r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 			c1 = cs.num_constraints();
 
 			//10. check cyclefold witness satisfy its r1cs
@@ -998,7 +998,7 @@ where
 				cf_W_i.W.to_vec()].concat();
             RelaxedR1CSGadget::check_nonnative(cf_r1cs, 
 				cf_W_i.E, cf_U_i.u.clone(), cf_z_U)?;
-			log_perf(log_level, &format!("Phase1 Circ gen_cs: Step 10: check cf_W_i satisfies cyclefold instance. INCREASED r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
+			log_perf(0, log_level, &format!("Phase1 Circ gen_cs: Step 10: check cf_W_i satisfies cyclefold instance. INCREASED r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
         }
 
 		if B_DEBUG3{check_cs(&cs, "phase1 step 10");}
@@ -1034,7 +1034,7 @@ where
 		};
 
 		let _last_c1 = c1; //just to disable the warning on c1.
-		log_perf(log_level, &format!("Phase1 Circ gen_cs: COMPLETED. TOTAL all_w_e: {}, r1cs: {}, RAM: {} GB.", len_all_w_e, cs.num_constraints()-c0, get_mem_usage()), &mut t1); 
+		log_perf(0, log_level, &format!("Phase1 Circ gen_cs: COMPLETED. TOTAL all_w_e: {}, r1cs: {}, RAM: {} GB.", len_all_w_e, cs.num_constraints()-c0, get_mem_usage()), &mut t1); 
 			Ok( res )
 	}
 }
@@ -1232,7 +1232,7 @@ where
 		let b_debug = true;
 		let (cyclepair_inputs_var, expected_final_result, hashchain_b) = 
 			self.process_cyclepair_inp(cs.clone());
-		log_perf(log_level, &format!("Phase2 Circ gen_cs: Step 1: gen_expected_final_result. r1cs: {}", cs.num_constraints()-c1), &mut t1);
+		log_perf(0, log_level, &format!("Phase2 Circ gen_cs: Step 1: gen_expected_final_result. r1cs: {}", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
 
 		//2. perform consistency check (perform 0 to k-2 -> com_all_w,
@@ -1258,7 +1258,7 @@ where
 				vres[j-12*5].enforce_equal(&cyclepair_inputs_var[i][j])?;
 			}
 		}
-		log_perf(log_level, &format!("Phase2 Circ gen_cs: Step 2: check cyclepair consistency. r1cs: {}", cs.num_constraints()-c1), &mut t1);
+		log_perf(0, log_level, &format!("Phase2 Circ gen_cs: Step 2: check cyclepair consistency. r1cs: {}", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
 
 		//3. perform the main circuit to check its own validity
@@ -1268,7 +1268,7 @@ where
 			let randf = CF1::<C1>::zero();
 			main_circ2.generate_constraints_adv(3,cs.clone(),randf).unwrap()
 		};
-		log_perf(log_level, &format!("Phase2 Circ gen_cs: Step 3: Main circ construction. r1cs: {}", cs.num_constraints()-c1), &mut t1);
+		log_perf(0, log_level, &format!("Phase2 Circ gen_cs: Step 3: Main circ construction. r1cs: {}", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
 
 		//4. validate the final_result
@@ -1318,7 +1318,7 @@ where
 				if my_phase1_ret.u_i.x[2].value().is_ok(){
 				assert!(my_phase1_ret.u_i.x[2].value()?==cp_u_i_x.value()?);
 			} }
-			log_perf(log_level, &format!("Phase2 Circ gen_cs: Step 5: check u_i.x[2]=cp_U_i.hash(). r1cs: {}", cs.num_constraints()-c1), &mut t1);
+			log_perf(0, log_level, &format!("Phase2 Circ gen_cs: Step 5: check u_i.x[2]=cp_U_i.hash(). r1cs: {}", cs.num_constraints()-c1), &mut t1);
 			c1 = cs.num_constraints();
 
             //9. check Pedersen commitments of cp_U_i.{cmE, cmW}
@@ -1344,7 +1344,7 @@ where
 					assert!(cp_U_i.cmE.value()?== computed_cmE.value()?);
 				} }
 			}
-			log_perf(log_level, &format!("Phase2 Circ gen_cs: Step 6.1: check cp_W_i commits to cp_U_i. r1cs: {}, RAM: {} GB", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
+			log_perf(0, log_level, &format!("Phase2 Circ gen_cs: Step 6.1: check cp_W_i commits to cp_U_i. r1cs: {}, RAM: {} GB", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 			c1 = cs.num_constraints();
 
 			if part2_enable{
@@ -1356,7 +1356,7 @@ where
 					assert!(cp_U_i.cmW.value()?== computed_cmW.value()?);
 				} }
 			}
-			log_perf(log_level, &format!("Phase2 Circ gen_cs: Step 6.2: check cp_E_i commits to cp_U_i. r1cs: {}, RAM: {} GB", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
+			log_perf(0, log_level, &format!("Phase2 Circ gen_cs: Step 6.2: check cp_E_i commits to cp_U_i. r1cs: {}, RAM: {} GB", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 			c1 = cs.num_constraints();
 
 			//10. check cyclepair witness satisfy its r1cs
@@ -1366,7 +1366,7 @@ where
 				cp_W_i.W.to_vec()].concat();
             RelaxedR1CSGadget::check_nonnative(cp_r1cs, 
 				cp_W_i.E, cp_U_i.u.clone(), cp_z_U)?;
-			log_perf(log_level, &format!("Phase2 Circ gen_cs: Step 7: check cp_W_i satisfies cyclepair instance. r1cs: {}, RAM: {} GB", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
+			log_perf(0, log_level, &format!("Phase2 Circ gen_cs: Step 7: check cp_W_i satisfies cyclepair instance. r1cs: {}, RAM: {} GB", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 			c1 = cs.num_constraints();
 		}
 
@@ -1376,7 +1376,7 @@ where
 		};
 
 		let _c1 = c1; //to disable warning
-		log_perf(log_level, &format!("Phase2 Circ gen_cs: COMPLETE. TOTAL r1cs: {}, RAM: {} GB", cs.num_constraints()-c0, get_mem_usage()), &mut t1);
+		log_perf(0, log_level, &format!("Phase2 Circ gen_cs: COMPLETE. TOTAL r1cs: {}, RAM: {} GB", cs.num_constraints()-c0, get_mem_usage()), &mut t1);
 
 		Ok( res )
 	}
@@ -1768,12 +1768,12 @@ where
 				assert!(phase1_ret_val == self.res);
 			}
 		}
-		log_perf(log_level, &format!("TwoPhaseCirc build circ1: {} cs.",
+		log_perf(0, log_level, &format!("TwoPhaseCirc build circ1: {} cs.",
 			cs.num_constraints()-c0), &mut gt2);
 
 		if B_DEBUG2{check_cs(&cs, "TwoPhaseCirc build circ1");}
 
-		log_perf(log_level-1, &format!("*** MainDeciderCirtuit TOTAL constraints: {} ***. ", cs.num_constraints()), &mut gt1);
+		log_perf(0, log_level-1, &format!("*** MainDeciderCirtuit TOTAL constraints: {} ***. ", cs.num_constraints()), &mut gt1);
 
 		Ok( () )
 
@@ -1964,7 +1964,7 @@ where
 			&phase1_ret, 
 			cs.clone()).unwrap();
 		let c2 = cs.num_constraints();
-		log_perf(log_level, &format!("CyclePairCirc step 1. build circ: {} cs.",
+		log_perf(0, log_level, &format!("CyclePairCirc step 1. build circ: {} cs.",
 			c2-c0), &mut gt2);
 
 		//2. establish the public inputs and check the consistency
@@ -2020,11 +2020,11 @@ where
 			vec_ret[i].enforce_equal(&vec_inp[i])?;
 		}
 		let c3 = cs.num_constraints();
-		log_perf(log_level, &format!("CyclePairCirc Step 2: validate all other data: {} cs.", c3-c2), &mut gt2);
+		log_perf(0, log_level, &format!("CyclePairCirc Step 2: validate all other data: {} cs.", c3-c2), &mut gt2);
 
 		if B_DEBUG2{check_cs(&cs, "CyclcePairCirc Step 2");}
 
-		log_perf(log_level-1, &format!("*** CyclePairCirc TOTAL constraints: {} ***.", cs.num_constraints()), &mut gt1);
+		log_perf(0, log_level-1, &format!("*** CyclePairCirc TOTAL constraints: {} ***.", cs.num_constraints()), &mut gt1);
 		Ok( () )
 
 	}

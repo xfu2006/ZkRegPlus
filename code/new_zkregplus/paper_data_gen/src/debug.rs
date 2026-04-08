@@ -13,7 +13,7 @@ use ark_ff::{PrimeField};
 
 /// debug use
 pub fn debug<F:PrimeField>(){
-	log(LOG1, &format!("DEBUG CLAMAV data ..."));
+	log(0, LOG1, &format!("DEBUG CLAMAV data ..."));
 	let mut timer = Timer::new();
 	//1. Generate clamav related data
 	let b_cache = false;
@@ -29,5 +29,5 @@ pub fn debug<F:PrimeField>(){
 		b_cache, //read cache
 		"debug", //cache name
 		b_quick);
-	log_perf(LOG1, "CLAMAV Data Generation", &mut timer);
+	log_perf(0, LOG1, "CLAMAV Data Generation", &mut timer);
 }

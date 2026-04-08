@@ -238,7 +238,7 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		sig_to_id: &HashMap<String,usize>,
 	) ->Result<Self, Error>{
 		let stmt_container = Container::<F>::new("compute_sig_adv_stmt");
-		let b_debug = false;
+		let b_debug = true;
 		if b_debug{
 			println!("DEBUG USE 6700.0: inp_sigs.len: {}, discharge_info: {}, v_sig_obj.len: {}", inp_sigs.len(), discharge_infos.len(), v_sig_obj.len());
 			for i in 0..inp_sigs.len(){
@@ -345,7 +345,7 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		subsig_store_info: &SubsigStepStore,
 	)->Result<(std::sync::Arc<std::sync::Mutex<Container<F>>>,Vec<F>), Error>{
 		//0. init data
-		let b_debug = false;
+		let b_debug = true;
 		if b_debug{
 			println!("DEBUG USE 6701 -- list of inp_subsigs, b_igc: {}", b_igc);
 			for i in 0..inp_subsigs.len(){
@@ -553,7 +553,7 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		subsig_store_extra_info_igc: &SubsigInfoStore,
 	)->Result<(std::sync::Arc<std::sync::Mutex<Container<F>>>,Vec<F>),Error>{
 		//0. retrieve data 
-		let b_debug = false;
+		let b_debug = true;
 		let n1_cs = inp_subsigs_cs.len(); //capacity num_subsigs
 		let n1_igc = inp_subsigs_igc.len(); //capacity num_subsigs
 		assert!(n1_cs==capacity.subsigs_cs);
@@ -1091,7 +1091,7 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 					//extracting the dnf to the concat of inp_subsigs
 		sig_to_id: &HashMap<String,usize>,
 	)->Result<std::sync::Arc<std::sync::Mutex<Container<F>>>,Error>{
-		let b_debug = false;
+		let b_debug = true;
 		let zero = F::zero();
 		let frg = F::from(RANGE2);
 		let res = Container::<F>::new("sig_res_combo");
@@ -1620,7 +1620,7 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
 		//0. retrieve data from combo
-		let b_debug = false;
+		let b_debug = true;
 		let b_perf = false;
 		let nc = cs.num_constraints();
 		let (zero,one)=(new_const_var(&cs,F::zero()),new_const_var(&cs,F::one()));
@@ -2144,7 +2144,7 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		//0. retrieve data from combo
 		let b_perf = false;
 		let nc = cs.num_constraints();
-		let b_debug = false;
+		let b_debug = true;
 		let (zero,one)=(new_const_var(&cs,F::zero()),
 			new_const_var(&cs,F::one()));
         let max_val:usize = (1<<RANGE2_BIT) - 1;
@@ -2541,7 +2541,7 @@ pub mod tests_compute_sig_adv{
 			&db.bundle_subsig_igc.vec_acdfa[0], //dfa_patterns_igc,
 			true, cfg, 
 			&db.sig_to_id
-		).1; //use optimize mode
+        ).1; //use optimize mode
 
 		//1.2 verify the sig_to_discharge is in the word info.
 		// NOTE that here we essentially require that sig_to_discharge

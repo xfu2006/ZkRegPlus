@@ -5,12 +5,12 @@
 #RUST_BACKTRACE=1 
 #cargo test -- test_const_cols --show-output --nocapture
 
+
 # -------------
 #cargo test -- tests_word_extract_adv --show-output --nocapture
 #cargo test -- tests_fsm_adv --show-output --nocapture
-#RUST_BACKTRACE=1 
-cargo test -- tests_discharge_adv_gadget --show-output --nocapture
-#cargo test -- test_compute_sig_adv --show-output --nocapture
+#RUST_BACKTRACE=1 cargo test -- tests_discharge_adv_gadget --show-output --nocapture
+RUST_BACKTRACE=1 cargo test -- test_compute_sig_adv --show-output --nocapture
 #cargo test -- test_dfa_adv --show-output --nocapture
 
 RUST_BACKTRACE=1 
@@ -29,3 +29,4 @@ RUST_BACKTRACE=1
 # cargo test -- test_assert_wellformed_sorted --show-output --nocapture
 # cargo test -- test_sorted_set --show-output --nocapture
 #cargo test -- test_gen_m_tbl --show-output --nocapture
+#RUST_BACKTRACE=1 cargo test -- test_disjoint_union --show-output --nocapture

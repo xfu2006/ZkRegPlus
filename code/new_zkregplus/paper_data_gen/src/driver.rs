@@ -24,7 +24,7 @@ use std::collections::hash_map::Entry;
 /// generate the critical and all patterns
 /// src is the source of signatures, critical and all patterns
 /// will be saved to the specified destination files
-pub fn gen_patterns(src:&str, sigtype: ClamSigType, dest_crit_file: &str, dest_all_pat_file: &str, dest_sig_file: &str) -> HashMap<String,Vec<usize>>{
+pub fn gen_patterns(job_id: usize, src:&str, sigtype: ClamSigType, dest_crit_file: &str, dest_all_pat_file: &str, dest_sig_file: &str) -> HashMap<String,Vec<usize>>{
 	if 2>1 {panic!("THIS FUNCTION IS OUTDATED. Do not call.");}
 	log(LOG1, &format!("generate patterns . \nsrc: {}", src));
 
@@ -106,7 +106,7 @@ pub fn gen_patterns(src:&str, sigtype: ClamSigType, dest_crit_file: &str, dest_a
 /// via critical pattern near miss. That is: check
 /// how many critical patterns are contained along the
 /// acceptance path.
-pub fn report_exec_critical_pat_stats(crit_pat_file: &str){
+pub fn report_exec_critical_pat_stats(job_id: usize, crit_pat_file: &str){
 	//1. read the info needed
 	log(LOG1, &format!("--- REPORT of Number of Critical Patterns by All Bin Execs ---"));
 	log(LOG1, &format!("read info from files ..."));
@@ -162,7 +162,7 @@ fn print_stats_vec(vec_stats: &Vec<Vec<usize>>){
 /// set a bag of required words (missing any of them leads to failure)
 /// generate all executable file. This applies to 
 /// both the GeneralRegex type and PM-REG
-pub fn report_bag_approach_stats(sig_file: &str, exec_list_file: &str){
+pub fn report_bag_approach_stats(job_id: usize, sig_file: &str, exec_list_file: &str){
 	//1. generate all signatures and their approximate patterns
 	log(LOG1, &format!("preprocess subsignatures. THIS METHOD IS DEPRECATED. Only handles case-sensitive signatures"));
 	let subset_lines = &read_lines(sig_file)[1..].to_vec();
@@ -201,7 +201,7 @@ pub fn report_bag_approach_stats(sig_file: &str, exec_list_file: &str){
 }
 
 /// report the pm-reg approach.
-pub fn report_pm_reg_approach_stats(sig_file: &str, sigtype: ClamSigType, 
+pub fn report_pm_reg_approach_stats(job_id: usize, sig_file: &str, sigtype: ClamSigType, 
 	exec_list_file: &str){
 	//1. generate all signatures and their approximate patterns
 	log(LOG1, &format!("preprocess subsignatures. This method is DEPRECATED. Only handle case-sensitive signatures"));
@@ -242,7 +242,7 @@ pub fn report_pm_reg_approach_stats(sig_file: &str, sigtype: ClamSigType,
 
 /// check all executable and examing the acceptance path
 /// of patterns, report the ratio of acc_path/file_size
-pub fn report_exec_path_stats(all_pattern_file: &str, pat2sig: &HashMap<String,Vec<usize>>){
+pub fn report_exec_path_stats(job_id: usize, all_pattern_file: &str, pat2sig: &HashMap<String,Vec<usize>>){
 	//1. read the info needed
 	log(LOG1, &format!("--- REPORT of Length of Acc Path by All Bin Execs ---"));
 	log(LOG1, &format!("read info from files ..."));
@@ -305,7 +305,7 @@ pub fn report_dfa_size(sig_file:&str, idx: usize, timeout: usize){
 
 /// report the dfa size of all sigs for every nth file
 /// when nth is 1, it reports all stats
-pub fn report_dfa_stats(sig_file: &str, timeout_sec: usize, 
+pub fn report_dfa_stats(job_id: usize, sig_file: &str, timeout_sec: usize, 
 nth: usize, logfile: &str){
 	let mut vlog = vec![];
 	let mut timer = Timer::new();
@@ -351,7 +351,7 @@ nth: usize, logfile: &str){
 }
 
 /// collect the generation automata time
-pub fn report_automaton_gentime_general_regex(ser_file: &str, timeout_sec: usize, start_idx: usize){
+pub fn report_automaton_gentime_general_regex(job_id: usize, ser_file: &str, timeout_sec: usize, start_idx: usize){
 	//1. collect data
 	let s_sigs = read_lines(ser_file)[0].clone();
 	let vec_sigs:Vec<ClamavSig> = serde_json::from_str(&s_sigs).unwrap();
@@ -400,7 +400,7 @@ pub fn report_automaton_gentime_general_regex(ser_file: &str, timeout_sec: usize
 }
 
 /// report all three approaches stats
-pub fn report_all_discharge_approach_stats(sig_file: &str, 
+pub fn report_all_discharge_approach_stats(job_id: usize, sig_file: &str, 
 	sigtype: ClamSigType, exec_list_file: &str, logfile: &str, 
 	b_read_cache: bool, cache_prefix: &str, set_needs_dfa: &HashSet<String>){
 	let vdata = gen_report_all_discharge_approach_stats(sig_file,
@@ -409,7 +409,7 @@ pub fn report_all_discharge_approach_stats(sig_file: &str,
 	print_discharge_stats(&vdata, logfile);
 }
 
-pub fn print_discharge_stats(vdata: &Vec<FailDischargeRecord>,
+pub fn print_discharge_stats(job_id: usize, vdata: &Vec<FailDischargeRecord>,
 	logfile: &str){
 	//1. first sort out all by len
 	let mut vlog = vec![];
@@ -583,7 +583,7 @@ pub fn print_discharge_stats(vdata: &Vec<FailDischargeRecord>,
 /// return: vector of signatures, map of critical patterns to signatures,
 ///  acdfa of critical pattern,
 ///  dfa for all patterns
-fn load_discharge_data(sig_file: &str, sigtype: ClamSigType,
+fn load_discharge_data(job_id: usize, sig_file: &str, sigtype: ClamSigType,
 	exec_list_file:&str, logfile:&str, b_read_cache: bool,
 	fname_prefix: &str, set_need_dfa: &HashSet<String>) 
 	-> (Vec<ClamavSig>, HashMap<String,Vec<String>>, HashMap<String,Vec<String>>, HexACDFA, HexACDFA, HexACDFA, HexACDFA){
@@ -788,7 +788,7 @@ fn load_discharge_data(sig_file: &str, sigtype: ClamSigType,
 
 
 /// report all three approaches stats
-pub fn gen_report_all_discharge_approach_stats(sig_file: &str, 
+pub fn gen_report_all_discharge_approach_stats(job_id: usize, sig_file: &str, 
 	sigtype: ClamSigType, exec_list_file: &str, logfile: &str,
 	b_read_cache: bool, cache_prefix: &str, setsigs_needs_dfa: &HashSet<String>) 
 -> Vec<FailDischargeRecord>{

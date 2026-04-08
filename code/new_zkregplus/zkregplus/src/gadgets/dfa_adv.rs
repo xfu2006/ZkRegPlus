@@ -818,7 +818,7 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 			check_eq(&(&v_sig[i]*&diff), &zero, "fail dfa_id")?;
 		}
 		if b_perf{
-			log_perf(log_level, "validate_mul_fsm step 1", &mut gt);
+			log_perf(0, log_level, "validate_mul_fsm step 1", &mut gt);
 		}
 
 		//2. asserts all states and transitions must be in range
@@ -891,7 +891,7 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 			packcheck_vec(&vec_si_trans[i], &exp_val, &pows_31)?;
 		}
 		if b_perf{
-			log_perf(log_level, "validate_mul_fsm step 2", &mut gt);
+			log_perf(0, log_level, "validate_mul_fsm step 2", &mut gt);
 		}
 
 		//3. assert correctness of building transition as weighted sum
@@ -990,7 +990,7 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 			}
 		}
 		if b_perf{
-			log_perf(log_level, "validate_mul_fsm step 3", &mut gt);
+			log_perf(0, log_level, "validate_mul_fsm step 3", &mut gt);
 		}
 
 		//4. check the validity of subsig_res
@@ -1025,7 +1025,7 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 			println!(" ### validate_mul_fsm_acc_container: m: {}, nlen: {}. cost: {}", m, nlen, cs.num_constraints()-nc); 
 		}
 		if b_perf{
-			log_perf(log_level, "validate_mul_fsm step 4", &mut gt);
+			log_perf(0, log_level, "validate_mul_fsm step 4", &mut gt);
 		}
 
 		Ok( () )
@@ -1077,7 +1077,7 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 		for i in 0..cols.len(){assert!(cols[i].len()==n);}
 		for i in 0..cols.len(){assert!(sid_cols[i].len()==n);}
 		if b_perf{
-			log_perf(log_level, "validate_discharge_sig step 0", &mut gt);
+			log_perf(0, log_level, "validate_discharge_sig step 0", &mut gt);
 		}
 
 		//1. check the validity of sid cols (sequential as circ does not
@@ -1115,7 +1115,7 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 				"err sid_real_subsig")?;
 		}
 		if b_perf{
-			log_perf(log_level, "validate_discharge_sig step 1", &mut gt);
+			log_perf(0, log_level, "validate_discharge_sig step 1", &mut gt);
 		}
 
 		//2. Now prove that each sig in v_sigs is discharged as false
@@ -1151,7 +1151,7 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 			)?;
 		}
 		if b_perf{
-			log_perf(log_level, "validate_discharge_sig step 2.1", &mut gt);
+			log_perf(0, log_level, "validate_discharge_sig step 2.1", &mut gt);
 		}
 
 
@@ -1197,7 +1197,7 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 			.get_container("mtbl_lk_res").unwrap().lock().unwrap().to_vec();
 		assert_logup(cs.clone(), &src, &dst, &mtbl_lkup_res, &r1)?;
 		if b_perf{
-			log_perf(log_level, "validate_discharge_sig step 2.2", &mut gt);
+			log_perf(0, log_level, "validate_discharge_sig step 2.2", &mut gt);
 		}
 
 		//3. show that inp_sigs is a subset of v_sigs (covered)
@@ -1221,7 +1221,7 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 			}
 		}
 		if b_perf{
-			log_perf(log_level, "validate_discharge_sig step 3", &mut gt);
+			log_perf(0, log_level, "validate_discharge_sig step 3", &mut gt);
 		}
 
 		if b_perf{
@@ -1318,7 +1318,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for DfaAdvGadget<F>{
 		let cfg = self.get_container_cfg().expect("container cfg not set!");
 		let stmt = Container::<FpVar<F>>::load_from(i, wtns_cfg, wtns, &cfg)?;
 		if b_perf{
-			log_perf(log_level, "dfa: step 0. load stmt", &mut gt);
+			log_perf(0, log_level, "dfa: step 0. load stmt", &mut gt);
 		}
 		let r1 = wtns.msg2[0].clone();
 		let r2 = wtns.msg2[1].clone();
@@ -1327,7 +1327,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for DfaAdvGadget<F>{
 		let mul_fsm_acc = stmt.get_container("mul_fsm_acc")?;
 		self.validate_mul_fsm_acc_container(&mul_fsm_acc.lock().unwrap(), cs.clone())?;
 		if b_perf{
-			log_perf(log_level, "dfa: step 1. validate_mul_fsm ", &mut gt);
+			log_perf(0, log_level, "dfa: step 1. validate_mul_fsm ", &mut gt);
 		}
 
 		//2. validate the discharging of sig.
@@ -1335,7 +1335,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for DfaAdvGadget<F>{
 		self.validate_discharge_sig_combo(&mul_fsm_acc,
 			&sig_res_combo, r1.clone(), r2.clone(), cs.clone())?;
 		if b_perf{
-			log_perf(log_level, "dfa: step 2. validate_discharge_sig_combo", &mut gt);
+			log_perf(0, log_level, "dfa: step 2. validate_discharge_sig_combo", &mut gt);
 		}
 
 		if b_perf{
@@ -1436,7 +1436,7 @@ pub mod tests_dfa_adv_gadget{
 			&db.bundle_subsig_igc.vec_acdfa[0], //dfa_patterns_igc,
 			true, &cfg, 
 			&db.sig_to_id
-		).1; //use optimize mode
+        ).1; //use optimize mode
 
 		//note: set true to use char map for nibbles.
 		let adv_wea = WordExtractAdvAdvice::new(&word, act_size, true)

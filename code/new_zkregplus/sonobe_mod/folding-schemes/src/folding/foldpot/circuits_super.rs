@@ -410,7 +410,7 @@ where
 		let log_level = LOG5;
 		let mut gt1 = GTimer::new();
 		let (mut nc, mut nv) = (cs.num_constraints(), cs.num_witness_variables());
-		log_perf(log_level, &format!(
+		log_perf(0, log_level, &format!(
 			"-- circuit_super gen_cs: START: cs: {}, vars: {}",
 				cs.num_constraints(),
 				cs.num_witness_variables()), 
@@ -434,7 +434,7 @@ where
                 .z_i
                 .unwrap_or(vec![CF1::<C1>::zero(); self.F.state_len()]))
         })?;
-		log_perf(log_level, &format!(
+		log_perf(0, log_level, &format!(
 				"-- circuit_super gen_cs step 1: cs: {}, vars: {}",
 				cs.num_constraints() - nc,
 				cs.num_witness_variables() - nv), &mut gt1);
@@ -458,7 +458,7 @@ where
 			let csat = cs.is_satisfied();
 			if csat.is_ok(){ assert!(csat.unwrap(), "step 2 of circuitsuper"); }
 		}
-		log_perf(log_level,&format!(
+		log_perf(0, log_level,&format!(
 				"-- circuit_super gen_cs step 2: cs: {}, vars: {}",
 				cs.num_constraints() - nc,
 				cs.num_witness_variables() - nv), &mut gt1);
@@ -472,7 +472,7 @@ where
  		let (witness, wit_cfg, z_i1_part2) = 
   			self.F.gen_witness(&stmt, &self.zi_part2_inst.clone().unwrap(),
 				pre_cmF);
-		log_perf(log_level, &format!(
+		log_perf(0, log_level, &format!(
 			"-- circuit_super gen_cs step 3.0 generate wit: cs: {}, vars: {}",
 			cs.num_constraints() - nc,
 			cs.num_witness_variables() - nv,
@@ -481,7 +481,7 @@ where
 		nv = cs.num_witness_variables();
 
   		let wtns_vec = witness.to_vec_fp_var(cs.clone(), &wit_cfg);
-		log_perf(log_level, &format!(
+		log_perf(0, log_level, &format!(
 			"-- circuit_super gen_cs step 3.1: to_vec_fp_var: cs: {}, vars: {}, wtns_vec: {}",
 			cs.num_constraints() - nc,
 			cs.num_witness_variables() - nv,
@@ -501,7 +501,7 @@ where
         let z_i1 = self.F
                  .generate_step_constraints(cs.clone(), i_usize, z_i.clone(), wtns_vec)?;
 
-		log_perf(log_level,&format!( 
+		log_perf(0, log_level,&format!( 
 			"-- circuit_super gen_cs step 3.2: gen_step_cs cs: {}, vars: {}",
 				cs.num_constraints() - nc,
 				cs.num_witness_variables() - nv), &mut gt1);
@@ -548,7 +548,7 @@ where
 			}
 		}
 
-		log_perf(log_level,&format!( 
+		log_perf(0, log_level,&format!( 
 			"-- circuit_super gen_cs step 3.4 others: cs: {}, vars: {}",
 				cs.num_constraints() - nc,
 				cs.num_witness_variables() - nv), &mut gt1);
@@ -598,7 +598,7 @@ where
 				assert!(csat.unwrap(), "step 4 of circuitsuper"); 
 			}
 		}
-		log_perf(log_level, &format!(
+		log_perf(0, log_level, &format!(
 			"-- circuit_super gen_cs step 4: cs: {}, vars: {}",
 				cs.num_constraints() - nc,
 				cs.num_witness_variables() - nv), &mut gt1);
@@ -642,7 +642,7 @@ where
 				assert!(csat.unwrap(), "step 6 of circuitsuper"); 
 			}
 		}
-		log_perf(log_level, &format!(
+		log_perf(0, log_level, &format!(
 			"-- circuit_super gen_cs step 5: cs: {}, vars: {}",
 				cs.num_constraints() - nc,
 				cs.num_witness_variables() - nv), &mut gt1);
@@ -666,7 +666,7 @@ where
                 Ok(self.u_i_cmF.unwrap_or(C1::zero()))
             })?,
         };
-		log_perf(log_level, &format!(
+		log_perf(0, log_level, &format!(
 			"-- circuit_super gen_cs step 6: cs: {}, vars: {}",
 				cs.num_constraints() - nc,
 				cs.num_witness_variables() - nv), &mut gt1);
@@ -690,7 +690,7 @@ where
             bits.resize(C1::BaseField::MODULUS_BIT_SIZE as usize, Boolean::FALSE);
             NonNativeUintVar::from(&bits)
         };
-		log_perf(log_level, &format!(
+		log_perf(0, log_level, &format!(
 			"-- circuit_super gen_cs step 7: cs: {}, vars: {}",
 				cs.num_constraints() - nc,
 				cs.num_witness_variables() - nv), &mut gt1);
@@ -731,7 +731,7 @@ where
 				else{ vec![new_x_0, new_x_1]},
 			cmE: U_i1_cmE.clone(), cmW: U_i1_cmW.clone(), cmF: U_i1_cmF.clone()
 		};
-		log_perf(log_level, &format!(
+		log_perf(0, log_level, &format!(
 			"-- circuit_super gen_cs step 8: cs: {}, vars: {}",
 				cs.num_constraints() - nc,
 				cs.num_witness_variables() - nv), &mut gt1);
@@ -807,7 +807,7 @@ where
 			let x_value = x.value()?;
 			assert!(expect_x == x_value);
 		}
-		log_perf(log_level, &format!(
+		log_perf(0, log_level, &format!(
 			"-- circuit_super gen_cs step 9: cs: {}, vars: {}",
 				cs.num_constraints() - nc,
 				cs.num_witness_variables() - nv), &mut gt1);
@@ -1018,7 +1018,7 @@ where
 		#[cfg(test)]{
 			assert!(exp_cf_x.value()?==cf_x.value()?, "exp_cf_x error");
 		}
-		log_perf(log_level, &format!(
+		log_perf(0, log_level, &format!(
 			"-- circuit_super gen_cs step 11: cs: {}, vars: {}",
 				cs.num_constraints() - nc,
 				cs.num_witness_variables() - nv), &mut gt1);
@@ -1103,7 +1103,7 @@ where
 				assert!(cs.is_satisfied().unwrap());
 			}
 		}
-		log_perf(log_level, &format!(
+		log_perf(0, log_level, &format!(
 			"-- circuit_super gen_cs step 12: cs: {}, vars: {}",
 				cs.num_constraints() - nc,
 				cs.num_witness_variables() - nv), &mut gt1);

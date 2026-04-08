@@ -56,11 +56,11 @@ vdata: &Vec<FailDischargeRecord>, db: ClamavDB<F>, vlog: &mut Vec<String>){
 				total_steps += subsig_pm.len();
 			}
 		}
-		flog(LOG1, &format!("=== {} Stats =====", set_name), vlog);
+		flog(0, LOG1, &format!("=== {} Stats =====", set_name), vlog);
 		if set.len()==0{
-			flog(LOG1, &format!("   sigs: {}, subsigs: {}, total_steps: {}, avg_steps: {}", set.len(), total_subsigs, total_steps, total_steps/set.len()), vlog);
+			flog(0, LOG1, &format!("   sigs: {}, subsigs: {}, total_steps: {}, avg_steps: {}", set.len(), total_subsigs, total_steps, total_steps/set.len()), vlog);
 		}else{
-			flog(LOG1, &format!("   sigs: {}, subsigs: {}, total_steps: {}, avg_steps: {}", set.len(), total_subsigs, total_steps, "N/A"), vlog);
+			flog(0, LOG1, &format!("   sigs: {}, subsigs: {}, total_steps: {}, avg_steps: {}", set.len(), total_subsigs, total_steps, "N/A"), vlog);
 		}
 	};
 
@@ -100,10 +100,10 @@ pub fn print_discharge_stats(vdata: &Vec<FailDischargeRecord>,
 
 	//2. print details
 	if b_more_details{
-		flog(LOG3, &format!("==== STATS DETAILS ====="), vlog);
+		flog(0, LOG3, &format!("==== STATS DETAILS ====="), vlog);
 		for i in 0..vec_stats.len(){
 			for rec in &vec_stats[i]{
-				flog(LOG3, &format!("{}: \ncrit: {:?}, bag: {:?}, pm: {:?}, after_dfa: {:?}", rec.fname, rec.crit, rec.bag, rec.pm, rec.all_dfa), vlog);
+				flog(0, LOG3, &format!("{}: \ncrit: {:?}, bag: {:?}, pm: {:?}, after_dfa: {:?}", rec.fname, rec.crit, rec.bag, rec.pm, rec.all_dfa), vlog);
 			}
 		}
 	}
@@ -134,7 +134,7 @@ pub fn print_discharge_stats(vdata: &Vec<FailDischargeRecord>,
 		let imin:f64 = v.iter().copied().reduce(f64::min).unwrap();
 		imin
 	};
-	flog(LOG1, &format!("==== WARNING: UNABLE TO DISCHARGE by crit_gab_pm which needs DFA discharge ====="), vlog);
+	flog(0, LOG1, &format!("==== WARNING: UNABLE TO DISCHARGE by crit_gab_pm which needs DFA discharge ====="), vlog);
 	let mut all_cbp = HashSet::<String>::new();
 	for rec in vdata{
 		let crit_bag:HashSet<String> = rec.crit.clone().intersection(
@@ -142,31 +142,31 @@ pub fn print_discharge_stats(vdata: &Vec<FailDischargeRecord>,
 		let crit_bag_pm:HashSet<String> = crit_bag.clone().intersection(
 			&rec.pm).cloned().collect();
 		if crit_bag_pm.len()>0{
-			flog(LOG1, &format!("fname: {}, sigs: {:?}", rec.fname, &crit_bag_pm), vlog);
+			flog(0, LOG1, &format!("fname: {}, sigs: {:?}", rec.fname, &crit_bag_pm), vlog);
 			for x in crit_bag_pm {all_cbp.insert( x.clone() );}
 		}
 	}
-	flog(LOG1, &format!("==== Needs to build DFA for the following ===========\n{:?}=========================\n", all_cbp), vlog);
-	flog(LOG1, &format!("==== WARNING: DFA could also not discharge the following ====="), vlog);
+	flog(0, LOG1, &format!("==== Needs to build DFA for the following ===========\n{:?}=========================\n", all_cbp), vlog);
+	flog(0, LOG1, &format!("==== WARNING: DFA could also not discharge the following ====="), vlog);
 	for rec in vdata{
 		if rec.all_dfa.len()>0{
-			flog(LOG1, &format!("fname: {}, sigs: {:?}", rec.fname, &rec.all_dfa), vlog);
+			flog(0, LOG1, &format!("fname: {}, sigs: {:?}", rec.fname, &rec.all_dfa), vlog);
 		}
 	}
-	flog(LOG1, &format!("==== WARNING: ISED could not discharge the following ====="), vlog);
+	flog(0, LOG1, &format!("==== WARNING: ISED could not discharge the following ====="), vlog);
 	for rec in vdata{
 		if rec.ind_pm_reg.len()>0{
-			flog(LOG1, &format!("fname: {}, filesize: {}, sigs: {:?}", rec.fname, ceil_log2(rec.flen), &rec.ind_pm_reg), vlog);
+			flog(0, LOG1, &format!("fname: {}, filesize: {}, sigs: {:?}", rec.fname, ceil_log2(rec.flen), &rec.ind_pm_reg), vlog);
 		}
 	}
 
-	flog(LOG1, &format!("==== STATS SUMMARY (avg, max, count_non_zero) ========="), vlog);
-	flog(LOG1, &format!("Note: set b_optimize_pm to false in \ngen_report_all_discharge_approach_stats\n for accurate PM-REG data, otherwise it's filtered by prevoius step \n"), vlog);
-	flog(LOG1, &format!("-b_include_bs: {}------------------------------------------------------", b_include_bs), vlog);
+	flog(0, LOG1, &format!("==== STATS SUMMARY (avg, max, count_non_zero) ========="), vlog);
+	flog(0, LOG1, &format!("Note: set b_optimize_pm to false in \ngen_report_all_discharge_approach_stats\n for accurate PM-REG data, otherwise it's filtered by prevoius step \n"), vlog);
+	flog(0, LOG1, &format!("-b_include_bs: {}------------------------------------------------------", b_include_bs), vlog);
 	if b_include_bs{
-		flog(LOG1, &format!("log(f)\tfiles\tcrit\tbag\tpm\tc_bag\tc_pm\tc_b_p\tdfa\tind_pm"), vlog);
+		flog(0, LOG1, &format!("log(f)\tfiles\tcrit\tbag\tpm\tc_bag\tc_pm\tc_b_p\tdfa\tind_pm"), vlog);
 	}else{
-		flog(LOG1, &format!("log(f)\tfiles\tcrit\tpm\tc_pm\tdfa\tind_pm"), vlog);
+		flog(0, LOG1, &format!("log(f)\tfiles\tcrit\tpm\tc_pm\tdfa\tind_pm"), vlog);
 	}
 	for i in 0..vec_stats.len(){
 		let mut vec_crit:Vec<usize> = vec![];
@@ -194,7 +194,7 @@ pub fn print_discharge_stats(vdata: &Vec<FailDischargeRecord>,
 			vec_ind_pm.push( rec.ind_pm_reg.len() );
 		}
 		if b_include_bs{
-			flog(LOG1, &format!("{} \t {} \t({},{},{})\t({},{},{})\t({},{},{})\t({},{},{})\t({},{},{})\t({},{},{})\t({},{},{}\t({},{},{}))", 
+			flog(0, LOG1, &format!("{} \t {} \t({},{},{})\t({},{},{})\t({},{},{})\t({},{},{})\t({},{},{})\t({},{},{})\t({},{},{}\t({},{},{}))", 
 				i, 
 				vec_stats[i].len(),
 				avg(&vec_crit),  max(&vec_crit), ct(&vec_crit), 
@@ -207,7 +207,7 @@ pub fn print_discharge_stats(vdata: &Vec<FailDischargeRecord>,
 				avg(&vec_ind_pm) , max(&vec_ind_pm), ct(&vec_ind_pm) ), 
 				vlog);
 		}else{
-			flog(LOG1, &format!("{} \t {} \t({},{},{})\t({},{},{})\t({},{},{})\t({},{},{})\t({},{},{})))", 
+			flog(0, LOG1, &format!("{} \t {} \t({},{},{})\t({},{},{})\t({},{},{})\t({},{},{})\t({},{},{})))", 
 				i, 
 				vec_stats[i].len(),
 				avg(&vec_crit),  max(&vec_crit), ct(&vec_crit), 
@@ -263,21 +263,21 @@ pub fn print_discharge_stats(vdata: &Vec<FailDischargeRecord>,
 	}
 */
 
-	flog(LOG1, &format!("====  Accepthance Path Stats ======="), vlog);
+	flog(0, LOG1, &format!("====  Accepthance Path Stats ======="), vlog);
 	let accpath_len:usize=vdata.iter().map(|v| v.total_acc_path_len).sum();
 	let hs_len:usize=vdata.iter().map(|v| v.total_hs_size).sum();
 	let acc_states:usize=vdata.iter().map(|v| v.total_accepted).sum();
 	let acc_ratio = vdata.iter().map(|v| (v.total_accepted as f64)/(v.total_acc_path_len as f64)*100.0).collect::<Vec<f64>>();
-	flog(LOG1, &format!("hs_len (number of accepted patterns but only counting position once)/acc_path: {}%, hs_len: {}, accpath_len: {}", (hs_len as f64)*100.0/(accpath_len as f64), hs_len, accpath_len), vlog);
-	flog(LOG1, &format!("accepted states (counting multiple pos for one state, and ALL sigs)/acc_path: {}%, accepted_states: {}, accpath_len: {}", (acc_states as f64)*100.0/(accpath_len as f64), acc_states, accpath_len), vlog);
-	flog(LOG1, &format!("acc_states/path_len: avg: {}%, max: {}%",
+	flog(0, LOG1, &format!("hs_len (number of accepted patterns but only counting position once)/acc_path: {}%, hs_len: {}, accpath_len: {}", (hs_len as f64)*100.0/(accpath_len as f64), hs_len, accpath_len), vlog);
+	flog(0, LOG1, &format!("accepted states (counting multiple pos for one state, and ALL sigs)/acc_path: {}%, accepted_states: {}, accpath_len: {}", (acc_states as f64)*100.0/(accpath_len as f64), acc_states, accpath_len), vlog);
+	flog(0, LOG1, &format!("acc_states/path_len: avg: {}%, max: {}%",
 		avg_f64(&acc_ratio),
 		max_f64(&acc_ratio)), vlog);
 
 	let vec_unique_state_ratio = vdata.iter().map(|v|
 	    //because it includes two automata's data (case sentive and igc)
 	    (v.total_unique_states as f64)*100.0/(2.0*accpath_len as f64)
-	).collect::<Vec<f64>>();	flog(LOG1, &format!("unique states ratio: avg: {}%, max: {}%, min: {}%",
+	).collect::<Vec<f64>>();	flog(0, LOG1, &format!("unique states ratio: avg: {}%, max: {}%, min: {}%",
 		avg_f64(&vec_unique_state_ratio),	
 		max_f64(&vec_unique_state_ratio),	
 		min_f64(&vec_unique_state_ratio)
@@ -289,12 +289,12 @@ pub fn print_discharge_stats(vdata: &Vec<FailDischargeRecord>,
 	let r_max: f64 = pm_proj_ratios.clone().into_iter().max_by(|a,b| a.total_cmp(b)).unwrap();
 	let r_sum: f64 = pm_proj_ratios.iter().sum::<f64>();
 	let r_avg = r_sum/(pm_proj_ratios.len() as f64);
-	flog(LOG1, &format!("*** pm_reg pm_witness/total_accepted: (avg: max) -> appearahce of each acpeted states: ({:.2}%,{:.2}%). ", r_avg*100.0, r_max*100.0), vlog);
+	flog(0, LOG1, &format!("*** pm_reg pm_witness/total_accepted: (avg: max) -> appearahce of each acpeted states: ({:.2}%,{:.2}%). ", r_avg*100.0, r_max*100.0), vlog);
 	let pm_witness_ratio = vdata.iter().map(|v|
 		(v.total_pm_witness_len as f64)/(v.total_acc_path_len as f64)).collect::<Vec<f64>>();
 	let w_max: f64 = pm_witness_ratio.clone().into_iter().max_by(|a,b| a.total_cmp(b)).unwrap();
 	let w_avg: f64 = pm_witness_ratio.iter().sum::<f64>()/(pm_proj_ratios.len() as f64);
-	flog(LOG1, &format!("pm_reg (sde) total witness_len/file_size: (avg: max): ({}%,{}%). This indicates total cost of discharging one file against ALL bag left sigs", w_avg*100.0, w_max*100.0), vlog);
+	flog(0, LOG1, &format!("pm_reg (sde) total witness_len/file_size: (avg: max): ({}%,{}%). This indicates total cost of discharging one file against ALL bag left sigs", w_avg*100.0, w_max*100.0), vlog);
 
 	let fail_count = vdata.iter().filter(|rec| rec.is_fail()).count();
 
@@ -314,7 +314,7 @@ pub fn print_discharge_stats(vdata: &Vec<FailDischargeRecord>,
 		if v.max_seg_pat_rate>max_pat_rate{max_pat_rate=v.max_seg_pat_rate;}
 		total_pat_rate += v.max_seg_pat_rate;
 	}
-	flog(LOG1, &format!("pat ratio: avg: {}%, max: {}%",
+	flog(0, LOG1, &format!("pat ratio: avg: {}%, max: {}%",
 		total_pat_rate/(vdata.len() as f32)*100.0,
 		max_pat_rate*100.0), vlog);
 

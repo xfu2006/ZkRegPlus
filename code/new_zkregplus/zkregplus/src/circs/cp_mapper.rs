@@ -227,7 +227,7 @@ impl <F:PrimeField + ColEle> CpAdvice<F>{
 		let nibbles = wd_extract_advice.data[1..].to_vec();
 		let dfa_crit_advice = FsmAdvice::<F>
 			::new(&nibbles, dfa_crit, inp_state, fsm_id as u32)?;
-		if b_perf{ log_perf(LOG1, "-- CpMapper gen_adv step1", &mut t1); }
+		if b_perf{ log_perf(0, LOG1, "-- CpMapper gen_adv step1", &mut t1); }
 
 
 		//2. build the packing final states gadget's advice
@@ -257,7 +257,7 @@ impl <F:PrimeField + ColEle> CpAdvice<F>{
 			},
 			_ => pack_res 
 		}?;
-		if b_perf{ log_perf(LOG1, "-- CpMapper gen_adv step2: pack_res", &mut t1); }
+		if b_perf{ log_perf(0, LOG1, "-- CpMapper gen_adv step2: pack_res", &mut t1); }
 
 		//3. build the advice for the sigs gadget
 		let sig_cap = SigGadgetCapacity{
@@ -267,7 +267,7 @@ impl <F:PrimeField + ColEle> CpAdvice<F>{
 			count_sig_no_crit_pat: vec_sig_id_no_crit_pat.len(),
 		};
 		let inp_sigs = inp_buf[1..sig_buf_capacity+1].to_vec();
-		if b_perf{ log_perf(LOG1, "-- CpMapper gen_adv step3: sig", &mut t1); }
+		if b_perf{ log_perf(0, LOG1, "-- CpMapper gen_adv step3: sig", &mut t1); }
 
 		
 		let sigs_res = GetSigAdvice::<F>::new(
@@ -294,7 +294,7 @@ impl <F:PrimeField + ColEle> CpAdvice<F>{
 			},
 			_ => sigs_res 
 		}?;
-		if b_perf{ log_perf(LOG1, "-- CpMapper gen_adv step4: assemble", &mut t1); }
+		if b_perf{ log_perf(0, LOG1, "-- CpMapper gen_adv step4: assemble", &mut t1); }
 
 		Ok(Self{
 			wd_extract_advice,
@@ -443,11 +443,11 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F> + Send + Sync> ComponentMa
 
 		//2. collect all data
 		if b_perf{
-			log(log_level, &format!(" ## CP mapper data len, nlen: {} ###", nlen));
-			log(log_level, &format!("  -- word_extract: {}", data_g_ext));
-			log(log_level, &format!("  -- word_fsm: {}", data_dfa));
-			log(log_level, &format!("  -- pack: {}", data_pack));
-			log(log_level, &format!( "  -- sigs: {}", data_sigs));
+			log(0, log_level, &format!(" ## CP mapper data len, nlen: {} ###", nlen));
+			log(0, log_level, &format!("  -- word_extract: {}", data_g_ext));
+			log(0, log_level, &format!("  -- word_fsm: {}", data_dfa));
+			log(0, log_level, &format!("  -- pack: {}", data_pack));
+			log(0, log_level, &format!( "  -- sigs: {}", data_sigs));
 		}
 		let vec_inp_len = vec![inp_g_ext, inp_dfa, inp_sigs];
 		let vec_oup_len = vec![oup_g_ext,  oup_dfa, oup_sigs];
@@ -489,7 +489,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F> + Send + Sync> ComponentMa
 	}
 
 	fn gen_nd_advice(&self, word: &Vec<F>, _word_info: &WordInfo,
-		prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>>, _seg_id: usize)
+		prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>>, _seg_id: usize, _job_id: usize)
 		->Result<Arc<dyn NdAdvice + Send + Sync>, Error>{
 		//1. expand to full length
 		let (zero,one) = (F::zero(),F::one());
@@ -874,10 +874,10 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F> + Send + Sync> ComponentMa
 		let discharged_sigs = vec![F::zero()]; //dummy entry
 		
 		if b_perf{
-			log(log_level, &format!("## build_stmt: CP b_igc: {}. Failed sigs:",
+			log(0, log_level, &format!("## build_stmt: CP b_igc: {}. Failed sigs:",
 				self.b_igc));
 			for i in 0..failed_sigs.len(){
-				log(log_level, &format!(" -- {} => {}",
+				log(0, log_level, &format!(" -- {} => {}",
 					i, failed_sigs[i]));
 			}
 		}

@@ -14,7 +14,7 @@ use paper_data_gen::{
 use ark_ff::{PrimeField};
 
 fn gen_clamav_data<F:PrimeField>(){
-	log(LOG1, &format!("Generating CLAMAV data ..."));
+	log(0, LOG1, &format!("Generating CLAMAV data ..."));
 	//let mut timer = Timer::new();
 	//1. Generate clamav related data
 	let b_cache = false;
@@ -61,7 +61,7 @@ fn gen_clamav_data<F:PrimeField>(){
 fn generate_data<F:PrimeField>(){
 	let mut timer = Timer::new();
 	gen_clamav_data::<F>();
-	log_perf(LOG1, "Total Reporting Time", &mut timer);
+	log_perf(0, LOG1, "Total Reporting Time", &mut timer);
 }
 
 fn main() {

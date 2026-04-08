@@ -185,7 +185,7 @@ pub fn setup_qa_nizk<E:Pairing>(mat: &SparseMatrix<E::G1>, b_debug: bool)
 	assert!(mat.cols == mat.kzg_row.len());
 	assert!(mat.cols == mat.ped_row.len());
 	assert!(mat.rows == mat.vec_rows.len());
-	log_perf(log_level, &format!("setup_qa cols: {}, rows: {}",
+	log_perf(0, log_level, &format!("setup_qa cols: {}, rows: {}",
 		mat.cols, mat.rows), &mut gt);
 
 	let p = (0..mat.cols).into_par_iter().map(|i| {
@@ -197,19 +197,19 @@ pub fn setup_qa_nizk<E:Pairing>(mat: &SparseMatrix<E::G1>, b_debug: bool)
 		}
 		p_i
 	}).collect::<Vec<E::G1>>();
-	log_perf(log_level, &format!("setup_qa step 1. build p: {}.", 
+	log_perf(0, log_level, &format!("setup_qa step 1. build p: {}.", 
 		p.len()), &mut gt);
 
 	let g2 = <E::G2 as Group>::generator();
 	let a_2 = g2 * a;
 	let c_2 = c.into_par_iter().map(|c| g2*c).collect::<Vec<E::G2>>();
 	let p_affine = E::G1::normalize_batch(&p);
-	log_perf(log_level, &format!("setup_qa step 2. build c2: {}.", 
+	log_perf(0, log_level, &format!("setup_qa step 2. build c2: {}.", 
 		c_2.len()), &mut gt);
 
 	let smatrix = if b_debug {Some(mat.clone())} else {None};
 	let vk = QaNizkVerifierParams{c: c_2, a:a_2};
-	log_perf(log_level, &format!("setup_qa step 2. build vk"), &mut gt);
+	log_perf(0, log_level, &format!("setup_qa step 2. build vk"), &mut gt);
 	(QaNizkProverParams{p: p_affine, smatrix, matrix: None}, vk)
 }
 

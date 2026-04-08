@@ -1914,9 +1914,9 @@ impl <F:PrimeField> ClamavDB<F>{
 			}
 			s
 		}).collect::<Vec<ClamavSig>>();
-		if b_perf {flog_perf(log_level, &format!("Build_DB: Step 1: Generate signatures"), &mut timer,
+		if b_perf {flog_perf(0, log_level, &format!("Build_DB: Step 1: Generate signatures"), &mut timer,
 			vlog);}
-		if b_perf {flog_perf(log_level, &format!("Bluld_DB: Step 2: Writing signatures"), &mut timer,
+		if b_perf {flog_perf(0, log_level, &format!("Bluld_DB: Step 2: Writing signatures"), &mut timer,
 			vlog);}
 
 		//2. collect critical pattern
@@ -1933,7 +1933,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		let v_sigs_no_critical_pat = v_sigs.iter().filter(|s| s.b_no_crit_pat)
 			.map(|s| s.clone()).collect::<Vec<Arc<ClamavSig>>>();
 
-		if b_perf {flog_perf(log_level, &format!("Build_DB: Step 3: Extract Critial Patterns."), 
+		if b_perf {flog_perf(0, log_level, &format!("Build_DB: Step 3: Extract Critial Patterns."), 
 				&mut timer, vlog);}
 		if b_debug{
 			//check if each signature is contained in map_crit_pat
@@ -1970,7 +1970,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		//RECOVER LATER: we changed false to true. Keep it
 		//if data is correct.
 		let dfa_crit_igc = HexACDFA::new_adv(0, &vec_crit_pat_igc, true);
-		if b_perf {flog_perf(log_level, 
+		if b_perf {flog_perf(0, log_level, 
 			&format!("Build_DB: Step 4: Build ACDFA of Critial Patterns."),&mut timer,vlog);
 		}
 		if b_debug{
@@ -1987,7 +1987,7 @@ impl <F:PrimeField> ClamavDB<F>{
 			s.collect_bagwords_from_pmreg(true)).flat_map(|s| s).
 			collect::<HashSet<String>>().into_iter().map(|s| s)
 			.collect::<Vec<String>>();
-		if b_perf {flog_perf(log_level, &format!("Build_DB: Step 5: Build Bag-of-Words."), &mut timer, vlog);}
+		if b_perf {flog_perf(0, log_level, &format!("Build_DB: Step 5: Build Bag-of-Words."), &mut timer, vlog);}
 
 		if b_debug{
 			println!("DEBUG USE 6101: BAGWORDS pats: {:#?}\n -- pats_igc: {:#?}", pats, pats_igc);
@@ -2009,7 +2009,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		let bundle_subsig_igc=
 			Self::build_ised_bundle(&v_sigs, &sig_to_id, 
 				needs_ised_igc_list_file, true, cfg); 
-		if b_perf {flog_perf(log_level, &format!("Build_DB: Step 6: Build SED bundles."), &mut timer, vlog);}
+		if b_perf {flog_perf(0, log_level, &format!("Build_DB: Step 6: Build SED bundles."), &mut timer, vlog);}
 
 		//8. build lkup
 		let mut lkup = LookupTableTwoCol_Inst::<F>::dummy();
@@ -2026,7 +2026,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		Self::add_sig_no_crit_pat(&mut lkup, &v_sigs_no_critical_pat, 
 			&sig_to_id);
 		lkup.vals.sort();
-		if b_perf {flog_perf(log_level, &format!("Build_DB: Step 7: ADD all to lkup. Lkup size: {}", lkup.vals.len()), &mut timer, vlog);}
+		if b_perf {flog_perf(0, log_level, &format!("Build_DB: Step 7: ADD all to lkup. Lkup size: {}", lkup.vals.len()), &mut timer, vlog);}
 
 		//9. build the object
 		let res = Self{
@@ -2053,10 +2053,10 @@ impl <F:PrimeField> ClamavDB<F>{
 	
 	/// print summary in console, and append to vlog
 	pub fn print_summary(&self, vlog: &mut Vec<String>){
-		flog(LOG1, &format!("==== Summary of ClamavSig Database ===="), vlog);
-		flog(LOG1, &format!("#critical patterns: {} (CS) {} (IGC), #sigs: {}, ACDFA for Critical Pattenrs State: {} (CS) {} (IGC)", self.map_crit_pat.len(), self.map_crit_pat_igc.len(), self.vec_sigs.len(), self.dfa_crit.num_states, self.dfa_crit_igc.num_states), vlog);
-		flog(LOG1, &format!("Signatures:{}, Fixed Patterns: {}, Pattners IGC: {}", self.vec_sigs.len(), self.vec_bag_words.len(), self.vec_bag_words_igc.len()), vlog);
-		flog(LOG1, &format!("ACDFA for BagWords: states (cs): {}, states (igc): {}", self.bundle_subsig.vec_acdfa[0].num_states, self.bundle_subsig_igc.vec_acdfa[0].num_states), vlog);
+		flog(0, LOG1, &format!("==== Summary of ClamavSig Database ===="), vlog);
+		flog(0, LOG1, &format!("#critical patterns: {} (CS) {} (IGC), #sigs: {}, ACDFA for Critical Pattenrs State: {} (CS) {} (IGC)", self.map_crit_pat.len(), self.map_crit_pat_igc.len(), self.vec_sigs.len(), self.dfa_crit.num_states, self.dfa_crit_igc.num_states), vlog);
+		flog(0, LOG1, &format!("Signatures:{}, Fixed Patterns: {}, Pattners IGC: {}", self.vec_sigs.len(), self.vec_bag_words.len(), self.vec_bag_words_igc.len()), vlog);
+		flog(0, LOG1, &format!("ACDFA for BagWords: states (cs): {}, states (igc): {}", self.bundle_subsig.vec_acdfa[0].num_states, self.bundle_subsig_igc.vec_acdfa[0].num_states), vlog);
 		self.dfa_crit.log_stats_adv("dfa_crit", &self.map_crit_pat, &self.sig_to_id, vlog);
 		self.dfa_crit_igc.log_stats_adv("dfa_crit_igc", &self.map_crit_pat_igc, &self.sig_to_id, vlog);
 		self.bundle_subsig.vec_acdfa[0].log_stats("dfa_patterns", vlog);
@@ -2197,7 +2197,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		b_write_cache: bool)->Result<Self, Error>{
 			let proot = proj_root();
 			let db = if b_read_cache{
-				flog(LOG1, &format!("loadClamDB from: {}", cache_dir),vlog);
+				flog(0, LOG1, &format!("loadClamDB from: {}", cache_dir),vlog);
 				Self::load(cache_dir)
 			}else{
 				let db = Self::build_db(

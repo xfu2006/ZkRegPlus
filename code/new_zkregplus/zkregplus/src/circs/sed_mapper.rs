@@ -476,7 +476,7 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 		//1. build the word extraction gadget's advice
 		let wd_extract_advice = WordExtractAdvAdvice::<F>
 			::new(word_seg, actual_size, false)?; //default mode for char sid
-		if b_perf{ log_perf(LOG1, "-- Sed advice step1: word_extract", &mut t1); }
+		if b_perf{ log_perf(0, LOG1, "-- Sed advice step1: word_extract", &mut t1); }
 
 		//2. build the fsm_adv advice (cs and igc)
 		assert!(vec_sigs_to_discharge.len()==discharge_info.len());
@@ -498,7 +498,7 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 				&nibbles,dfa_cs, inp.inp_state_cs,inp.inp_loc_cs,
 				&subsigs_inp_cs, &fsm_cap_cs,fsm_id_cs as u32,
 				subsig_pat_store_cs)?;
-		if b_perf{ log_perf(LOG1, "-- Sed advice step2: fsm_cs", &mut t1); }
+		if b_perf{ log_perf(0, LOG1, "-- Sed advice step2: fsm_cs", &mut t1); }
 
 		//2.2 the igc version
 		let subsigs_inp_igc= Self::collect_subsig_ids(vec_sigs_to_discharge,
@@ -509,7 +509,7 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 				&nibbles,dfa_igc, inp.inp_state_igc,inp.inp_loc_igc,
 				&subsigs_inp_igc, &fsm_cap_igc, fsm_id_igc as u32,
 				subsig_pat_store_igc)?;
-		if b_perf{ log_perf(LOG1, "-- Sed advice step3: fsm_igc", &mut t1); }
+		if b_perf{ log_perf(0, LOG1, "-- Sed advice step3: fsm_igc", &mut t1); }
 
 		//3. build the discharge_adv advice (cs and igc)
 		let da_cap_cs = &cs_capacity.da_capacity();
@@ -529,7 +529,7 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
                         ::new(false, 2, &pat_loc_cs, &subsigs_inp_cs, fsm_id_cs as u32, 
                                 subsig_step_store_cs, &da_cap_cs, &inp_steps_queue_obj_cs, last_loc_cs,
 				seg_id)?;
-		if b_perf{ log_perf(LOG1, "-- Sed advice step4: discharge_cs", &mut t1); }
+		if b_perf{ log_perf(0, LOG1, "-- Sed advice step4: discharge_cs", &mut t1); }
 
 		//3.2 the igc version
 		let pat_loc_igc = fsm_adv_advice_igc.stmt_container.lock().unwrap()
@@ -545,7 +545,7 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
                         ::new(true, 2, &pat_loc_igc, &subsigs_inp_igc, fsm_id_igc as u32, 
                                 subsig_step_store_igc, &da_cap_igc, &inp_steps_queue_obj_igc, last_loc_igc,
 				seg_id)?;
-		if b_perf{ log_perf(LOG1, "-- Sed advice step5: discharge_igc", &mut t1); }
+		if b_perf{ log_perf(0, LOG1, "-- Sed advice step5: discharge_igc", &mut t1); }
 
 
 		//4. build the compute_sig advice  (note: just one copy)
@@ -580,7 +580,7 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 			Arc::new(discharge_adv_advice_igc.clone()),
 			Arc::new(compute_sig_adv_advice.clone()),
 		];
-		if b_perf{ log_perf(LOG1, "-- Sed advice step6: compute_sig", &mut t1); }
+		if b_perf{ log_perf(0, LOG1, "-- Sed advice step6: compute_sig", &mut t1); }
 
 		Ok(Self{
 			wd_extract_advice, 
@@ -758,7 +758,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F> + Send + Sync> ComponentMa
 
 	/// genera the avice using its own capacity
 	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
-		r_prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>>, seg_id: usize)
+		r_prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>>, seg_id: usize, _job_id: usize)
 		->Result<Arc<dyn NdAdvice + Send + Sync>, Error>{
 		//1. expand word to full length
 		let mut rem_word = vec![F::zero(); self.max_word_len() - word.len()];
@@ -907,10 +907,10 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F> + Send + Sync> ComponentMa
 		let log_level = LOG7;
 		let b_perf = true && log_level>=LOG_LEVEL;
 		if b_perf{
-			log(log_level, &format!(" ## sed gadgets data len: ==="));
+			log(0, log_level, &format!(" ## sed gadgets data len: ==="));
 			for i in 0..self.gadgets.len(){
 				let vs = self.gadgets[i].lock().unwrap().get_to_add_size();
-				log(log_level, &format!("  --  {}: {}",
+				log(0, log_level, &format!("  --  {}: {}",
 					self.gadgets[i].lock().unwrap().get_name(), vs.2));
 			}
 		}
@@ -1076,14 +1076,14 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F> + Send + Sync> ComponentMa
 		);
 
 		if b_perf{
-			log(log_level, &format!("## build_stmt: SED failed sigs"));
+			log(0, log_level, &format!("## build_stmt: SED failed sigs"));
 			for i in 0..res[6].len(){
-				log(log_level, &format!(" -- {} => {}",
+				log(0, log_level, &format!(" -- {} => {}",
 					i, &res[6][i]));
 			}
-			log(log_level, &format!("## build_stmt: SED discharged sigs"));
+			log(0, log_level, &format!("## build_stmt: SED discharged sigs"));
 			for i in 0..res[7].len(){
-				log(log_level, &format!(" -- {} => {}",
+				log(0, log_level, &format!(" -- {} => {}",
 					i, &res[7][i]));
 			}
 		}

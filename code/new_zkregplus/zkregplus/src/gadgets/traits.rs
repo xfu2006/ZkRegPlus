@@ -550,10 +550,11 @@ impl <F: PrimeField + ColEle> Container<FpVar<F>>{
 	pub fn from(src: &Container<F>, cs: ConstraintSystemRef<F>)->Self{
 		match src{
 			Container::Single(rc_col) => {
+				let guard = rc_col.lock().unwrap();
 				let col = Col::<FpVar<F>>{
-					data: vec_to_var(&cs, &rc_col.lock().unwrap().data),
-					cfg: rc_col.lock().unwrap().cfg.clone(),
-					b_const: rc_col.lock().unwrap().b_const,
+					data: vec_to_var(&cs, &guard.data),
+					cfg: guard.cfg.clone(),
+					b_const: guard.b_const,
 				};
 				Container::Single(Arc::new(Mutex::new(col)))
 			},
