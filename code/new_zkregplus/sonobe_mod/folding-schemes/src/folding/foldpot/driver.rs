@@ -428,7 +428,7 @@ where
 			let end = if (i+1)*max_wlen>wlen {wlen} else {(i+1)*max_wlen};
 			let seg = word[start..end].to_vec();
 			let advice = circ.get_mapper().lock().unwrap()
-				.gen_nd_advice(&seg, &word_info, prev_adv, job_id, i)?;
+				.gen_nd_advice(&seg, &word_info, prev_adv, i, job_id)?;
 			vec_pci.push(pci);
 			vec_size.push(end-start);
 			vec_cap.push(cap.clone());

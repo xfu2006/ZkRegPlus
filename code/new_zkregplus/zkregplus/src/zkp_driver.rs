@@ -776,9 +776,9 @@ pub mod tests_zkp_driver{
 		let avg_active_pats_per_subsig = 2; //good value 0 (does not matter)
 		//let avg_subsig_per_sig = 2; //NO NEED ANY MORE
 		let perc_comp_subsigs = 26;  //26 for subsigs=4, 34 for subsigs=3
-		let basis_unique_states = 23*100; 
-		let basis_acc_states = 646;  //6.46 percent
-		let basis_pats_in_trace = 1291;   //(at most twice of basis_acc_states)
+		let basis_unique_states = 25*100; 
+		let basis_acc_states = 807;  //6.46 percent
+		let basis_pats_in_trace = 1500;   //(at most twice of basis_acc_states)
 		let perc_pats_expansion_rate = 114;
 
 		let num_category = 1;

@@ -27565,4 +27565,7 @@ Goal 7. try to debug the case of multiple files
 	[a] adjust write behavior
 	[b] write new instead of append
 	[c] write same number of file but diffrent file length.
+	[d] same file number but differeng length can cause problem
+	[e] fix the panic problem -> it looks like different total
+		len is not a problem, but different number of words is a problem.
                                                                         1
