@@ -802,11 +802,11 @@ pub mod tests_zkp_driver{
 		let init_dfa_cap= DfaCapacity::new(max_word, sigs, subsigs);
 
 
-		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
-   0, 		&format!("{}/sigs.dat",set1), //src sig
+		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(0, 		
+			&format!("{}/sigs.dat",set1), //src sig
 			vec![
-				format!("{}/binexec_p2.dat",set1),
 				format!("{}/binexec_p1.dat",set1),
+				//format!("{}/binexec_p2.dat",set1),
 				//format!("{}/binexec_p3.dat",set1),
 				//format!("{}/binexec_p4.dat",set1)
 			], //list of files to discharge
