@@ -26,7 +26,7 @@ use crate::gadgets::{
 		check_arr_eq_arr, encode_cols_var_adv, is_sorted,
 		check_eq, encode_2col, check_rg2, 
 		encode_cols_var_adv_better,multiset_prod_ignore_zero},
-	db::{assert_logup, verify_encoded_table, assert_well_formed_sorted, gen_disjoint_union_prf_adv, verify_disjoint_union_prf,},
+	db::{assert_logup, verify_encoded_table, assert_well_formed_sorted, gen_union_prf, verify_union_prf,},
 	traits::{Container,
 		Col,
 		IDX_WORD, IDX_INP,IDX_DATA, 
@@ -1851,7 +1851,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let comb1 = encode_2col(&e1, &c1);
 		let comb2 = encode_2col(&e2, &c2);
 		let comb3 = encode_2col(&e3, &c3);
-		let (_set_total, prf)  = gen_disjoint_union_prf_adv(
+		let (_set_total, prf)  = gen_union_prf(
 			&comb1, &comb2, &comb3, prf_name)?;
 
 		Ok( prf )
@@ -2813,7 +2813,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let encoded_real = encode_cols(&set_bwdprf_ssm_real, &vec![0,1,2]);
 		let encoded_def = encode_cols(&set_bwdprf_ssm_default, &vec![0,1,2]);
 		let encoded_total = encode_cols(&set_bwdprf_ssm, &vec![0,1,2]);
-		let (set_total, prf_disjoint_ssm) = gen_disjoint_union_prf_adv(
+		let (set_total, prf_disjoint_ssm) = gen_union_prf(
 			&encoded_real, &encoded_def, &encoded_total, "prf_disjoint_ssm")?;
 		if b_debug{ 
 			let set1 = set_total.iter().map(|i| i.clone()).
@@ -3133,7 +3133,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		if b_debug {check_cs(&cs, "val_union step 0");}
 
 		//3. verify disjoint relation
-		verify_disjoint_union_prf(&comb1, &comb2, &comb3, prf_union, &r1)?;
+		verify_union_prf(&comb1, &comb2, &comb3, prf_union, &r1)?;
 
 		if b_perf{
 			println!(" ### validate_unique_step_queue: n1: {}, n2: {}, cost: {}",	n1, n2, cs.num_constraints()-nc);
@@ -4073,9 +4073,8 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			&vec![0,1,2], &f_rg2);
 		let prf_disjoint_ssm = prf_bwdprf_valid.lock().unwrap()
 			.get_container("prf_disjoint_ssm").unwrap();
-		verify_disjoint_union_prf(&encoded_real, &encoded_def, 
-			&encoded_total, &prf_disjoint_ssm, &r2)?;
-		
+		verify_union_prf(&encoded_real, &encoded_def,
+			&encoded_total, &prf_disjoint_ssm, &r2)?;		
 		//4.5.1(b) we also need to assert that all set_bwdprf_ssm_default
 		//have min_loc equal to defalut_min_loc as long as subsig is not zero
 		let var_zero = new_const_var(&cs, F::zero());

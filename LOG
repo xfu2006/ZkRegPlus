@@ -27546,4 +27546,23 @@ Goal 3. new plan
 		do the product of r and then
 		use the inverse
 		sum1 + sum2 + more * 1/(0+r) = sum3
+
+Goal 4. lay out the spec and ask gemini to generate the general framework
+	[a] hints for gemini
+	[b] gemini running: good only burned 600k tokens, the code
+		generation is ok but code review of changing existing code
+		killed a lot of tokens.
+
+Goal 5. deploy to server
+	[b] change cs in mod_super
+
+Goal 6. fix the log and log_perf and find out why they are NOT appending
+	to the log files
+	[a] check log file creation
+	[b] check messages in log_file
+
+Goal 7. try to debug the case of multiple files
+	[a] adjust write behavior
+	[b] write new instead of append
+	[c] write same number of file but diffrent file length.
                                                                         1

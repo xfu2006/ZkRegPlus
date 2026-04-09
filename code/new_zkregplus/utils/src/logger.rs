@@ -4,9 +4,10 @@
 */
 
 use crate::timer::Timer;
-use crate::os::{append_to_file};
-
-
+use crate::os::{append_to_file, file_exists};
+use std::fs::File;
+use std::sync::{OnceLock, Mutex};
+use std::collections::HashSet;
 
 pub const ERR:usize = 0;
 pub const WARN:usize = 1;
@@ -19,6 +20,11 @@ pub const LOG6:usize = 7;
 pub const LOG7:usize = 8;
 /// current default log level for entire system
 pub const LOG_LEVEL:usize = LOG6;
+
+pub fn initialized_jobs() -> &'static Mutex<HashSet<usize>> {
+    static INITIALIZED_JOBS: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
+    INITIALIZED_JOBS.get_or_init(|| Mutex::new(HashSet::new()))
+}
 
 /// convert from log level to its name
 pub fn name_log_level(i: usize)->String{
@@ -35,18 +41,34 @@ pub fn name_log_level(i: usize)->String{
 		_ => String::from("UNKNOWN")
 	}
 }
+
+/// ensure the log file exists. If it's the first time for the job, overwrite it.
+pub fn ensure_log_file(job_id: usize, fpath: &str){
+    let mut init_jobs = initialized_jobs().lock().unwrap();
+    if !init_jobs.contains(&job_id) {
+        if file_exists(fpath) {
+            std::fs::remove_file(fpath).unwrap_or_else(|_| ());
+        }
+        File::create(fpath).expect(&format!("Unable to create log file: {}", fpath));
+        init_jobs.insert(job_id);
+    } else if !file_exists(fpath) {
+        File::create(fpath).expect(&format!("Unable to create log file: {}", fpath));
+    }
+}
+
 /// log function worker only if log_level is greater than or equal to LOG_LEVEL.
 /// `job_id` is the id of the current job for parallel execution.
 pub fn log(job_id: usize, log_level: usize, msg: &String){
-	let b_write = false;
-	let fpath = format!("./log_job_{}.txt", job_id);
+	let b_write = true;
+	let fpath = format!("/tmp/log_job_{}.txt", job_id);
 	if log_level<=LOG_LEVEL{ 
 		let indent_level = if log_level<2 {0} else {log_level-2};
 		let indent_str = "-- ".repeat(indent_level);
 		println!("[job {}] {}: {} {}", job_id, name_log_level(log_level), indent_str, msg); 
 		if b_write{
-			append_to_file(&fpath, &format!("{}: {}\n", 
-				name_log_level(log_level), msg));
+			ensure_log_file(job_id, &fpath);
+			append_to_file(&fpath, &format!("[job {}] {}: {} {}\n", 
+				job_id, name_log_level(log_level), indent_str, msg));
 		}
 	}
 }
@@ -58,7 +80,7 @@ pub fn flog(job_id: usize, log_level: usize, msg: &String, acc: &mut Vec<String>
 		let indent_level = if log_level<2 {0} else {log_level-2};
 		let indent_str = "-- ".repeat(indent_level);
 		println!("[job {}] {}: {} {}", job_id, name_log_level(log_level), indent_str, msg); 
-		acc.push(msg.clone());
+		acc.push(format!("[job {}] {}: {} {}", job_id, name_log_level(log_level), indent_str, msg));
 	}
 }
 

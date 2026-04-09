@@ -38,7 +38,7 @@ use crate::gadgets::{
 	commons::{encode_cols_better, gen_m_table, encode_cols_var_adv_better,
 		new_const_var, check_eq, new_var, is_zero_better, var_to_lb,
 		check_prod_zero, better_select},
-	db::{assert_logup,  gen_disjoint_union_prf, verify_disjoint_union_prf,
+	db::{assert_logup,  gen_union_prf, verify_union_prf,
 		//verify_encoded_table, assert_well_formed_sorted
 	},
 	traits::{
@@ -580,8 +580,10 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 			assert!(set1.is_disjoint(&set2));
 
 		}
-		let (inp_subsigs, prf_inp_subsigs) = gen_disjoint_union_prf(
-			&inp_subsigs_cs, &inp_subsigs_igc, "prf_inp_subsigs").unwrap();
+		let (inp_subsigs, prf_inp_subsigs) = gen_union_prf(
+			&inp_subsigs_cs, &inp_subsigs_igc, 
+			&vec![&inp_subsigs_cs[..], &inp_subsigs_igc[..]].concat(),
+			"prf_inp_subsigs").unwrap();
 		let raw_result = vec![&raw_result_cs[..], &raw_result_igc[..]]
 			.concat();
 		let n1 = n1_cs + n1_igc;
@@ -1650,7 +1652,7 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		//1. verify the correctness of inp_subsigs with gen_regex_res
 		//NOTE that we simply retrieve from the eval_res_combo of
 		//cs version and igc version.
-		// Here for the valididty: we call verify_disjoint_union_prf
+		// Here for the valididty: we call verify_union_prf
 		// to make sure the subsigs in cs and igc parts are DISJIONT (regarding
 		//   non-zero) values. This ensures that for any-subsig involved later
 		//  there is NO DUPLICATES that affect valididity.
@@ -1677,7 +1679,7 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		}
 		assert!(inp_subsigs.len()==gen_regex_res.len());
 		assert!(inp_subsigs.len() == n);
-		verify_disjoint_union_prf(&input_subsigs_cs, &input_subsigs_igc,
+		verify_union_prf(&input_subsigs_cs, &input_subsigs_igc,
 			&inp_subsigs, &prf_inp_subsigs, &r1)?;
 
 
