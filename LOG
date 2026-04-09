@@ -27495,3 +27495,36 @@ Goal 4.  fix the Nosuitable layer found in range[0,0] and
 	[a] replicate the testing
 	[b] fixed
 
+Wed 04/09/2026
+Goal 1. collect running data. still not solved
+----
+hread 'zkp_driver::tests_zkp_driver::test_zkreg_main' panicked at zkregplus/src/gadgets/db.rs:2251:13:
+ERR in verif_join at i: 18482, res_val: 754066908453706154961681093604841357476, tbl_i_val: 4
+stack backtrace:
+   0: rust_begin_unwind
+             at /rustc/07dca489ac2d933c78d3c5158e3f43beefeb02ce/library/std/src/panicking.rs:645:5
+   1: core::panicking::panic_fmt
+             at /rustc/07dca489ac2d933c78d3c5158e3f43beefeb02ce/library/core/src/panicking.rs:72:14
+   2: zkregplus::gadgets::db::verify_disjoint_union_prf
+   3: zkregplus::gadgets::discharge_adv::DischargeAdvGadget<F>::validate_step_queue_union_prf
+   4: <zkregplus::gadgets::discharge_adv::DischargeAdvGadget<F> as folding_schemes::folding::foldpot::sigma_ir1cs::SigmaGadget<F>>::assert_msg3
+   5: <folding_schemes::folding::foldpot::sigma_ir1cs::SigmaIR1CS_Inst<F,C,CS,LK,GM,_> as folding_schemes::frontend::FCircuit<F>>::generate_step_constraints
+   6: <folding_schemes::folding::foldpot::circuits_super::AugmentedFCircuitFoldPotSuper<C1,C2,GC2,LK,FC,GM,_> as ark_relations::r1cs::constraint_system::ConstraintSynthesizer<<<C1 as ark_ec::CurveGroup>::Affine as ark_ec::AffineRepr>::ScalarField>>::generate_constraints
+   7: <folding_schemes::folding::foldpot::mod_super::FoldPotSuper<E,P,C2G2,C1,GC1,C2,GC2,FC,CS1,CS2,CS1E,LK,GM,_> as folding_schemes::FoldingScheme<C1,C2,FC>>::prove_step
+   8: folding_schemes::folding::foldpot::driver::Driver<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,FC,S,LK,GM,_>::pass_all
+   9: folding_schemes::folding::foldpot::driver::foldpot_main::{{closure}}
+  10: <rayon::iter::for_each::ForEachConsumer<F> as rayon::iter::plumbing::Folder<T>>::consume_iter
+  11: <rayon::iter::plumbing::bridge::Callback<C> as rayon::iter::plumbing::ProducerCallback<I>>::callback
+  12: <rayon::vec::IntoIter<T> as rayon::iter::IndexedParallelIterator>::with_producer
+  13: folding_schemes::folding::foldpot::driver::foldpot_main
+  14: zkregplus::zkp_driver::zkp_driver_adv
+  15: zkregplus::zkp_driver::tests_zkp_driver::test_zkreg_main
+  16: core::ops::function::FnOnce::call_once
+  17: core::ops::function::FnOnce::call_once
+             at /rustc/07dca489ac2d933c78d3c5158e3f43beefeb02ce/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+test zkp_driver::tests_zkp_driver::test_zkreg_main ... FAILED
+
+Thursday 04/09/2026
+Goal 1. try to figure out the error again.
+                                                                        1
