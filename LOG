@@ -27526,5 +27526,24 @@ note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose bac
 test zkp_driver::tests_zkp_driver::test_zkreg_main ... FAILED
 
 Thursday 04/09/2026
+LOC (gadgets): 21654 -> 
 Goal 1. try to figure out the error again.
+	[a] read discharge_adv and see how gen_disjoint_proof is applied
+	[b] so the problem is that gen_m_table might see duplicated elements
+		and give result to NONE 1.
+
+Goal 2. do gen_m_table_distributed()
+	[a] for non-zero element we assume that each element in qury
+		can find a ONE to ONE mapping to some elements in lookup
+
+Goal 3. new plan
+	[a] gen_non_zero_union_prf(vec1, vec2, vec3)
+		prove that vec3 is the concat of vec1 and vec2's
+		non-zero elements.
+		proof is the how many more zero elements vec3 has than
+		the number of zero elements in vec1 and vec2
+	[b] verify_non_zero_union_prf(vec,vec3,vec3,r)
+		do the product of r and then
+		use the inverse
+		sum1 + sum2 + more * 1/(0+r) = sum3
                                                                         1

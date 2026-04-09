@@ -2166,6 +2166,129 @@ pub fn gen_disjoint_union_prf_adv<F:PrimeField + ColEle>(
 	Ok( (res, prf) )
 }
 
+/// prove that regarding non-zero elements vec3 is a direct UNION
+/// of vec1 and vec2, note that non-zero elements might appear
+/// MULTIPLE times in any input vectors
+pub fn gen_union_prf<F:PrimeField + ColEle>(
+	vec1: &Vec<F>,
+	vec2: &Vec<F>,
+	vec3: &Vec<F>,
+	name: &str,
+) -> Result<(Vec<F>,std::sync::Arc<std::sync::Mutex<Container<F>>>), Error>{
+	//1. collect the zero elements in vec1, vec2, vec3
+	//let it be nz1, nz2, nz3
+	let nz1 = vec1.iter().filter(|x| x.is_zero()).count();
+	let nz2 = vec2.iter().filter(|x| x.is_zero()).count();
+	let nz3 = vec3.iter().filter(|x| x.is_zero()).count();
+
+	//2. produce a proof of the given name, which consits of
+	//b_left_more_zero  (nz1+nz2>=nz3). value is either 1 or 0
+	//diff_zero (nz1+nz2-nz3) or (nz3-(nz1+nz2))
+	let (b_left_more_zero, diff_zero) = if nz1 + nz2 >= nz3 {
+		(F::one(), F::from((nz1 + nz2 - nz3) as u32))
+	} else {
+		(F::zero(), F::from((nz3 - (nz1 + nz2)) as u32))
+	};
+
+	//3. construct the proof
+	let prf = Container::new(name);
+	prf.lock().unwrap().add_col(Col::new(vec![b_left_more_zero], 
+		"b_left_more_zero", IDX_DATA));
+	prf.lock().unwrap().add_col(Col::new(vec![diff_zero], 
+		"diff_zero", IDX_DATA));
+
+	let f_rg2 = F::from(RANGE2);
+	prf.lock().unwrap().add_col(Col::new_const(vec![f_rg2; 1], 
+		"sid_b_left_more_zero", IDX_SI_DATA));
+	prf.lock().unwrap().add_col(Col::new_const(vec![f_rg2; 1], 
+		"sid_diff_zero", IDX_SI_DATA));
+
+	Ok((vec3.clone(), prf))
+}
+
+/// verify that vec3 is a UNION of vec1 and vec2 regarding NON-zero
+/// elements, each is allowed to be multi-set
+pub fn verify_union_prf<F:PrimeField + ColEle>(
+	vec1: &Vec<FpVar<F>>,
+	vec2: &Vec<FpVar<F>>,
+	vec3: &Vec<FpVar<F>>, //the desired result
+	prf: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
+	r: &FpVar<F>
+) -> Result<(), SynthesisError>{
+	let cs = vec1[0].cs();
+	let r_val = r.value().unwrap_or(F::zero());
+
+	//1. for each vector, generate the inverse in batch
+	//e.g., for vec1 we have vec_inv1 s.t.
+	// for each i (vec1[i] + r) * vec_inv1[i] = 1
+	// based on the inverse value generates the corresponding FpVar vector
+	let mut combined_vals = Vec::new();
+	for v in vec![vec1, vec2, vec3] {
+		for x in v {
+			combined_vals.push(x.value().unwrap_or(F::zero()) + r_val);
+		}
+	}
+	let mut combined_invs = combined_vals;
+	ark_ff::batch_inversion(&mut combined_invs);
+
+	let mut it = combined_invs.into_iter();
+	let mut vec_inv1 = Vec::with_capacity(vec1.len());
+	for _ in 0..vec1.len() {
+		vec_inv1.push(FpVar::new_witness(cs.clone(), 
+			|| Ok(it.next().unwrap()))?);
+	}
+	let mut vec_inv2 = Vec::with_capacity(vec2.len());
+	for _ in 0..vec2.len() {
+		vec_inv2.push(FpVar::new_witness(cs.clone(), 
+			|| Ok(it.next().unwrap()))?);
+	}
+	let mut vec_inv3 = Vec::with_capacity(vec3.len());
+	for _ in 0..vec3.len() {
+		vec_inv3.push(FpVar::new_witness(cs.clone(), 
+			|| Ok(it.next().unwrap()))?);
+	}
+
+	//2. for each of vec1, vec2, vec3, verify the correctness of
+	//such inverse vector
+	verify_inverse(cs.clone(), vec1, &vec_inv1, r, vec1.len())?;
+	verify_inverse(cs.clone(), vec2, &vec_inv2, r, vec2.len())?;
+	verify_inverse(cs.clone(), vec3, &vec_inv3, r, vec3.len())?;
+
+	//3. compute sum1 as the sum of inverse vector 1, and similarly
+	//et sum2 and sum3
+	let sum1: FpVar<F> = vec_inv1.iter().sum();
+	let sum2: FpVar<F> = vec_inv2.iter().sum();
+	let sum3: FpVar<F> = vec_inv3.iter().sum();
+
+	//4. verify b_left_more_zero is either 1 or 0
+	let b_left_more_zero = prf.lock().unwrap()
+		.get_container("b_left_more_zero")?.lock().unwrap().to_vec()[0].clone();
+	b_left_more_zero.enforce_equal(&(&b_left_more_zero * &b_left_more_zero))?;
+
+	let diff_zero = prf.lock().unwrap().get_container("diff_zero")?
+		.lock().unwrap().to_vec()[0].clone();
+
+	//5. compute inv_0 = 1/(zero + r).
+	let inv_0 = r.inverse()?;
+
+	//6. now based on the b_left_more_zero and diff_zero value
+	// perform the following:
+	// when b_left_more_zero is 1
+	// sum1 + sum2 = sum3 + inv_0 * diff_zero
+	// when b_left_more_zero is 0
+	// sum1 + sum2 + inv_0 * diff_zero = sum3
+	let left = &sum1 + &sum2;
+	let right = &sum3;
+	let term = &inv_0 * &diff_zero;
+
+	let case1 = &left - right - &term;
+	let case2 = &left + &term - right;
+
+	let res = &b_left_more_zero * &(&case1 - &case2) + &case2;
+	check_eq(&res, &FpVar::zero(), "union check failed")?;
+
+	Ok( () )
+}
 
 /// verify if set1 and set2 are disjoint (regading their non-zero elements),
 /// and res is a union of these two sets 
@@ -2861,6 +2984,83 @@ pub mod tests_db{
 		assert!(cs.is_satisfied().unwrap());
 
 
+	}
+
+	#[test]
+	fn test_union(){
+		use crate::gadgets::db::{
+			gen_union_prf, 
+			verify_union_prf
+		};
+		use ark_std::rand::seq::SliceRandom;
+		use ark_std::rand::Rng;
+
+		let mut rng = test_rng();
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		let r1 = FpVar::new_witness(cs.clone(),|| 
+			Ok(Fr::rand(&mut rng))).unwrap();
+		
+		let n1 = 20;
+		let n2 = 30;
+		let nz3 = 10;
+
+		let val_a = Fr::rand(&mut rng);
+		let val_b = Fr::rand(&mut rng);
+		let val_c = Fr::rand(&mut rng);
+		
+		let mut set1_val = Vec::with_capacity(n1);
+		let mut set2_val = Vec::with_capacity(n2);
+
+		// Internal duplicates in set1
+		set1_val.push(val_a);
+		set1_val.push(val_a);
+		set1_val.push(val_b);
+		// Shared duplicate
+		set1_val.push(val_c);
+		set2_val.push(val_c);
+
+		// Fill remaining with random elements or zeros
+		while set1_val.len() < n1 {
+			if rng.gen_bool(0.2) {
+				set1_val.push(Fr::zero());
+			} else {
+				set1_val.push(Fr::rand(&mut rng));
+			}
+		}
+		while set2_val.len() < n2 {
+			if rng.gen_bool(0.2) {
+				set2_val.push(Fr::zero());
+			} else {
+				set2_val.push(Fr::rand(&mut rng));
+			}
+		}
+
+		// Randomly place zeros
+		set1_val.shuffle(&mut rng);
+		set2_val.shuffle(&mut rng);
+
+		// set3 is the union of non-zero elements
+		let mut set3_val: Vec<Fr> = set1_val.iter().chain(set2_val.iter())
+			.filter(|x| !x.is_zero())
+			.cloned()
+			.collect();
+		
+		// add nz3 zeros
+		for _ in 0..nz3 {
+			set3_val.push(Fr::zero());
+		}
+		set3_val.shuffle(&mut rng);
+
+		let (res_val, prf_val) = 
+			gen_union_prf(&set1_val, &set2_val, &set3_val, "uprf").unwrap();
+		
+		let set1 = set1_val.iter().map(|x| new_var(&cs, *x)).collect::<Vec<_>>();
+		let set2 = set2_val.iter().map(|x| new_var(&cs, *x)).collect::<Vec<_>>();
+		let res = res_val.iter().map(|x| new_var(&cs, *x)).collect::<Vec<_>>();
+		let prf = Container::rc_from(&prf_val.lock().unwrap(), cs.clone());
+		
+		assert!(verify_union_prf(&set1, &set2, &res, &prf, &r1).is_ok());
+		assert!(cs.is_satisfied().unwrap());
 	}
 
 	#[test]

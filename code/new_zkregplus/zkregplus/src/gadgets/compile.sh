@@ -29,4 +29,4 @@ RUST_BACKTRACE=1
 # cargo test -- test_assert_wellformed_sorted --show-output --nocapture
 # cargo test -- test_sorted_set --show-output --nocapture
 #cargo test -- test_gen_m_tbl --show-output --nocapture
-#RUST_BACKTRACE=1 cargo test -- test_disjoint_union --show-output --nocapture
+RUST_BACKTRACE=1 cargo test -- test_union --show-output --nocapture
