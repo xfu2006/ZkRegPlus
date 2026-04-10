@@ -349,7 +349,7 @@ where
 			LK,
 			GM,
             H,
-        >::preprocess(&mut rng, &prep_param)
+        >::preprocess(&mut rng, &prep_param, 0)
         .unwrap();
 		log_perf(0, log_level, &format!(
 			"Driver New: Step 3: preprocess keys"), 
@@ -1077,7 +1077,8 @@ where
 				ch, 
 				rc,
 				total_words,
-				precomputed_cmF
+				precomputed_cmF,
+				job_id
             )
             .unwrap();
 		timer.prt("pass_two: step 2: init nova1");
@@ -1238,7 +1239,8 @@ where
 				ch,
 				rc,
 				total_words,
-				precomputed_cmF
+				precomputed_cmF,
+				job_id
             )
             .unwrap();
 		t1.prt("Step 3: build nova");
@@ -1659,7 +1661,8 @@ where
 				ch,
 				rc,
 				total_words,
-				Some(vec_grp_cmF)
+				Some(vec_grp_cmF),
+				job_id
 				//None,
             )
             .unwrap();

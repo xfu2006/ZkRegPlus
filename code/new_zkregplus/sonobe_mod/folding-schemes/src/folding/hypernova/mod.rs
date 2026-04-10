@@ -367,6 +367,7 @@ where
     fn preprocess(
         mut rng: impl RngCore,
         prep_param: &Self::PreprocessorParam,
+        _job_id: usize,
     ) -> Result<(Self::ProverParam, Self::VerifierParam), Error> {
         let (prep_param, mu, nu) = prep_param;
         if *mu < 1 || *nu < 1 {

@@ -132,6 +132,7 @@ where
     fn preprocess(
         rng: impl RngCore,
         prep_param: &Self::PreprocessorParam,
+		job_id: usize,
     ) -> Result<(Self::ProverParam, Self::VerifierParam), Error>;
 
     fn init(

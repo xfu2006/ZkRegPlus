@@ -678,13 +678,17 @@ where
 	pub pc_0: C1::ScalarField,
 	/// the current pc (must be less than the number of circuits)
 	pub pc_i: C1::ScalarField,
+
 	/// the circuit ID to perform the next step computation
 	pub pc_i1: C1::ScalarField,
 
 	/// number of words
 	pub n_words: usize,
 
+	pub job_id: usize,
+
 	/// cached (pre-computed) commitment to Fixed segments
+
 	/// usually from pass1 of driver
 	pub vec_precomputed_group_cmF: Option<Vec<C1>>,
 }
@@ -779,6 +783,7 @@ where
 		rc: C1::ScalarField,
 		n_words: usize,
 		vec_precomputed_group_cmF: Option<Vec<C1>>,
+		job_id: usize,
     ) -> Result<Self, Error> {
         let (pp, vp) = params;
 		let size_F = pp.vec_pp.iter().map(|p| p.size_F)
@@ -811,7 +816,7 @@ where
         	let cs = ConstraintSystem::<C1::ScalarField>::new_ref();
         	let augmented_F_circuit =
             	AugmentedFCircuitFoldPotSuper::<C1, C2, GC2, LK, FC, GM, H>
-					::empty(&poseidon_config, circ.clone(), n_circs, j);
+					::empty(&poseidon_config, circ.clone(), n_circs, j, job_id);
         	augmented_F_circuit.generate_constraints(cs.clone()).expect("gen constraints failure");
         	cs.finalize();
         	let cs = cs.into_inner().ok_or(Error::NoInnerConstraintSystem).expect("cs gen failure");
@@ -899,6 +904,7 @@ where
 			pc_i1: pc_0.clone(),
 
 			n_words: n_words,
+			job_id,
 			vec_precomputed_group_cmF,
         })
     }
@@ -1092,6 +1098,7 @@ where
     fn preprocess(
         mut rng: impl RngCore,
         prep_param_src: &Self::PreprocessorParam,
+		job_id: usize,
     ) -> Result<(Self::ProverParam, Self::VerifierParam), Error> {
 		let log_level = LOG3;
 		let mut gt1 = GTimer::new();
@@ -1101,12 +1108,12 @@ where
 		let lkup_len = _col1_raw.len();
 		let mut m1 = get_mem_usage_mb();
 		let m0 = m1;
-		log_perf(0, log_level, &format!("preprocess() START: lkup size: {}, RAM: {} ", lkup_len, mb2s(m1)), &mut gt1);
+		log_perf(job_id, log_level, &format!("preprocess() START: lkup size: {}, RAM: {} ", lkup_len, mb2s(m1)), &mut gt1);
 		let mut _cp_r1cs: Option<R1CS<C2::ScalarField>> = None;
 		let mut vec_pp = vec![];
 		let mut vec_vp = vec![];
 		let m2 = get_mem_usage_mb();
-		log_perf(0, log_level, &format!("preprocess() Step 1: INCREASED RAM: {}. ", mb2s(m2-m1)), &mut gt1);
+		log_perf(job_id, log_level, &format!("preprocess() Step 1: INCREASED RAM: {}. ", mb2s(m2-m1)), &mut gt1);
 		m1 = m2;
 
 		//TO IMPROVE: can be distributed. However, it's not trivial.
@@ -1186,7 +1193,7 @@ where
 			vec_vp.push(verifier_params);
 		}
 		let m2 = get_mem_usage_mb();
-		log_perf(0, log_level, &format!("preprocess() Step 2: setup circ params. circs: {}, max_circ_pp: {}, total_w: {}, total_e: {}, increased RAM: {}. ", vec_pp.len(), max_circ_pp_size, total_w_len, total_e_len, mb2s(m2-m1)), &mut gt1);
+		log_perf(job_id, log_level, &format!("preprocess() Step 2: setup circ params. circs: {}, max_circ_pp: {}, total_w: {}, total_e: {}, increased RAM: {}. ", vec_pp.len(), max_circ_pp_size, total_w_len, total_e_len, mb2s(m2-m1)), &mut gt1);
 		m1 = m2;
 
 		let b_full_mode = prep_param_src.b_full_mode;
@@ -1199,7 +1206,7 @@ where
 			else {panic!("cs1e setup failed");};
 		if b_full_mode {assert!(n_circ==1);}
 		let m2 = get_mem_usage_mb();
-		log_perf(0, log_level, &format!("preprocess() Step 3: cs1e_pp: {}, INCREASED RAM: {}. ", new_total_cs_pp_len, mb2s(m2-m1)), &mut gt1);
+		log_perf(job_id, log_level, &format!("preprocess() Step 3: cs1e_pp: {}, INCREASED RAM: {}. ", new_total_cs_pp_len, mb2s(m2-m1)), &mut gt1);
 		m1 = m2;
 
 		let (qa_pp, qa_vp, cols_len) = {
@@ -1252,7 +1259,7 @@ where
 			(Some(pkey), Some(vkey), cols_len)
 		};
 		let m2 = get_mem_usage_mb();
-		log_perf(0, log_level, &format!("preprocess() Step 4 qa_nizk: rows: {}, cols: {}, INCREASED RAM: {}. ", 3*n_circ+1, cols_len, mb2s(m2-m1)), &mut gt1);
+		log_perf(job_id, log_level, &format!("preprocess() Step 4 qa_nizk: rows: {}, cols: {}, INCREASED RAM: {}. ", 3*n_circ+1, cols_len, mb2s(m2-m1)), &mut gt1);
 
 		//5. build up the cp_r1cs if needed
 		let cp_r1cs = if !b_full_mode{
@@ -1393,7 +1400,7 @@ where
 		sponge_cmf.absorb(&to_hash);
 		let new_hc_cmF:C1::ScalarField=sponge_cmf.squeeze_field_elements(1)[0];
 		let z_i1 = vec![new_hc_cmF, z_i1_part2.hash(&self.poseidon_config)];
-		log_perf(0, log_level, &format!("prove_step: Step 1. gen_witness: stmt_len: {}, wtns size: {}", wtns.statement.len(), wtns_config.get_total_size()), &mut gt2);
+		log_perf(self.job_id, log_level, &format!("prove_step: Step 1. gen_witness: stmt_len: {}, wtns size: {}", wtns.statement.len(), wtns_config.get_total_size()), &mut gt2);
 
         //5. compute cross terms T and cmT for AugmentedFCircuit (active at j)
         // r_bits is the r used to the RLC of the F' instances
@@ -1436,7 +1443,7 @@ where
 		U_i1.x_2 = if !self.b_full_mode {None} else{
 			Some(self.U_i.x_2.unwrap() + r_Fr * self.u_i.x[2])
 		};
-		log_perf(0, log_level, &format!("prove_step: Step 2. fold_inst. inst size: {}", self.W_i.vec_wit[j_pci].W.len()), &mut gt2);
+		log_perf(self.job_id, log_level, &format!("prove_step: Step 2. fold_inst. inst size: {}", self.W_i.vec_wit[j_pci].W.len()), &mut gt2);
 			
         //6. folded instance output (public input, x) for generating
 		// r1cs of the augmented F circuit.
@@ -1520,8 +1527,9 @@ where
 				n_circ: field_to_usize(&self.n_circ), 
 				j: self.pc_i1.clone(), //this is the j for Fj(z0)-> z1
 									//its value should be pc_i1
-				precomputed_cmF: pre_cmF
-            };
+				precomputed_cmF: pre_cmF,
+    			job_id: self.job_id,
+        };
 
             #[cfg(test)]
             NIFSFoldPot::<C1, CS1, H>::verify_folded_instance(r_Fr, &self.U_i.vec_inst[j_pci], &self.u_i, &U_i1.vec_inst[j_pci], &cmT)?;
@@ -1559,14 +1567,14 @@ where
                 points: Some(vec![self.U_i.vec_inst[j_pci].clone().cmW, 
 					self.u_i.clone().cmW]),
                 x: Some(cfW_u_i_x.clone()),
-            };
+        };
             let cfE_circuit = CycleFoldCircuit::<C1, GC1> {
                 _gc: PhantomData,
                 n_points: FOLDPOT_CF_N_POINTS,
                 r_bits: Some(vec![r_bits.clone()]),
                 points: Some(vec![self.U_i.vec_inst[j_pci].clone().cmE, cmT]),
                 x: Some(cfE_u_i_x.clone()),
-            };
+        };
             let cfF_circuit = CycleFoldCircuit::<C1, GC1> {
                 _gc: PhantomData,
                 n_points: FOLDPOT_CF_N_POINTS,
@@ -1574,7 +1582,7 @@ where
                 points: Some(vec![self.U_i.vec_inst[j_pci].clone().cmF, 
 					self.u_i.clone().cmF]),
                 x: Some(cfF_u_i_x.clone()),
-            };
+        };
 
             // fold self.cf_U_i + cfW_U -> folded running with cfW
             let (_cfW_w_i, cfW_u_i, cfW_W_i1, cfW_U_i1, cfW_cmT, _) = self.fold_cyclefold_circuit(
@@ -1646,7 +1654,7 @@ where
 
 				(Some(cp_u_i.cmW), Some(self.cp_U_i.as_ref().clone().unwrap().clone()), Some(cp_cmT), cp_u_i1_x, Some(cp_W_i1), Some(cp_U_i1), Some(cp_w_i), Some(cp_u_i))
 			}else{ (None, None, None, None, None, None, None, None) };
-			log_perf(0, log_level, &format!("prove_step: Step 3. fold cyclefold and cyclepair circuits."), &mut gt2);
+			log_perf(self.job_id, log_level, &format!("prove_step: Step 3. fold cyclefold and cyclepair circuits."), &mut gt2);
 
             augmented_F_circuit = AugmentedFCircuitFoldPotSuper
 			::<C1, C2, GC2, LK, FC, GM, H> {
@@ -1690,8 +1698,9 @@ where
 
 				n_circ: field_to_usize(&self.n_circ), 
 				j: self.pc_i1.clone(), //this is the pc for Fj(zi) -> z_i1
-				precomputed_cmF: pre_cmF
-            };
+				precomputed_cmF: pre_cmF,
+    			job_id: self.job_id,
+        };
 
             self.cf_W_i = cfF_W_i1;
             self.cf_U_i = cfF_U_i1;
@@ -1758,7 +1767,7 @@ where
 				}
 			}
 		}
-		log_perf(0, log_level, &format!("prove_step: Step 4. generate augmented F.cs: {}", c2-c1), &mut gt2);
+		log_perf(self.job_id, log_level, &format!("prove_step: Step 4. generate augmented F.cs: {}", c2-c1), &mut gt2);
 
         // set values for next iteration
         self.i += C1::ScalarField::one();
@@ -1780,8 +1789,8 @@ where
                 .check_relaxed_instance_relation(&self.W_i.vec_wit[j_pci1].clone().into(), &self.U_i.vec_inst[j_pci1].clone().into())?;
         }
 
-		log_perf(0, log_level, &format!("prove_step: Step 5. commit to instance: wit len: {}", self.w_i.W.len()), &mut gt2);
-		log_perf(0, log_level-1, &format!("-- prove_step cost: i: {}, circ_id: {}, stmt_len: {}, wtns size: {}", self.i, j_pci1, wtns.statement.len(), wtns_config.get_total_size()), &mut gt1);
+		log_perf(self.job_id, log_level, &format!("prove_step: Step 5. commit to instance: wit len: {}", self.w_i.W.len()), &mut gt2);
+		log_perf(self.job_id, log_level-1, &format!("-- prove_step cost: i: {}, circ_id: {}, stmt_len: {}, wtns size: {}", self.i, j_pci1, wtns.statement.len(), wtns_config.get_total_size()), &mut gt1);
 
         Ok(())
     }
@@ -1949,7 +1958,7 @@ where
 	C2G2::Affine: AffineFromField<CF2<C2G2>>,
 {
     let augmented_F_circuit =
-        AugmentedFCircuitFoldPotSuper::<C1, C2, GC2, LK, FC, GM, H>::empty(poseidon_config, F_circuit,n_circ, j);
+        AugmentedFCircuitFoldPotSuper::<C1, C2, GC2, LK, FC, GM, H>::empty(poseidon_config, F_circuit,n_circ, j, 0);
     let cf_circuit = CycleFoldCircuit::<C1, GC1>::empty(FOLDPOT_CF_N_POINTS);
     let cp_circuit = CyclePairCircuit::<E,P,C1, C2G2>::empty();
     //let cp_circuit = CycleFoldCircuit::<C1, GC1>::empty(FOLDPOT_CF_N_POINTS);

@@ -377,6 +377,7 @@ where
     fn preprocess(
         mut rng: impl RngCore,
         prep_param: &Self::PreprocessorParam,
+        _job_id: usize,
     ) -> Result<(Self::ProverParam, Self::VerifierParam), Error> {
         let (r1cs, cf_r1cs) =
             get_r1cs::<C1, GC1, C2, GC2, FC>(&prep_param.poseidon_config, prep_param.F.clone())?;

@@ -27571,4 +27571,8 @@ Goal 7. try to debug the case of multiple files
 
 Friday 04/10/2026
 Goal 1.  continue to fix the max word problem
+	[a] read the code and understand why max num words is a problem
+	[b] do an experiment of max_words
+		[b1] read where is it used
+	[c] improve the err msg -> interesting it shows that basic_unique_states is NOT enough.
                                                                         1
