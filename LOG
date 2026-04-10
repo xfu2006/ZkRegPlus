@@ -27569,5 +27569,6 @@ Goal 7. try to debug the case of multiple files
 	[e] fix the panic problem -> it looks like different total
 		len is not a problem, but different number of words is a problem.
 
--- TODO -- continue to fix the max word problem
+Friday 04/10/2026
+Goal 1.  continue to fix the max word problem
                                                                         1

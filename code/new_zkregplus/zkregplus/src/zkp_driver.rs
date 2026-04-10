@@ -806,7 +806,7 @@ pub mod tests_zkp_driver{
 			&format!("{}/sigs.dat",set1), //src sig
 			vec![
 				format!("{}/binexec_p1.dat",set1),
-				//format!("{}/binexec_p2.dat",set1),
+				format!("{}/binexec_p2.dat",set1),
 				//format!("{}/binexec_p3.dat",set1),
 				//format!("{}/binexec_p4.dat",set1)
 			], //list of files to discharge
