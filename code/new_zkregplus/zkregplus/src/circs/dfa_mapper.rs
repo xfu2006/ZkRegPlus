@@ -93,6 +93,8 @@ pub struct DfaComponentMapper<F:PrimeField + ColEle, LK: LookupTableTwoCol<F>>{
 
 	/// clamdb
 	pub clamdb: Arc<ClamavDB<F>>,
+
+	pub job_id: usize,
 }
 
 
@@ -235,6 +237,7 @@ impl <F:PrimeField+ColEle> DfaAdvice<F>{
 			sig_to_id: &HashMap<String,usize>, //map from sig to id
 			discharge_info: &Vec<DischargeSigInfo>, //info: subsigs to process
 			seg_id: F,
+			job_id: usize,
 		)->Result<Self, Error>{
 		let mut t1 = Timer::new();
 		let b_perf = true;
@@ -242,7 +245,7 @@ impl <F:PrimeField+ColEle> DfaAdvice<F>{
 		//1. build the word extraction gadget's advice
 		let wd_extract_advice = WordExtractAdvAdvice::<F>
 			::new(word_seg, actual_size, true)?; //use char map mode for sid
-		if b_perf{ log_perf(0, LOG1, "-- DFA advice step1: word_extract", &mut t1); }
+		if b_perf{ log_perf(job_id, LOG1, "-- DFA advice step1: word_extract", &mut t1); }
 
 		//2. build dfa_adv advice
 		//we build a 2-d structure of info first and then
@@ -329,7 +332,7 @@ impl <F:PrimeField+ColEle> DfaAdvice<F>{
 			Arc::new(wd_extract_advice.clone()),
 			Arc::new(dfa_adv_advice.clone()),
 		];
-		if b_perf{ log_perf(0, LOG1, "-- DFA advice step2: dfa", &mut t1); }
+		if b_perf{ log_perf(job_id, LOG1, "-- DFA advice step2: dfa", &mut t1); }
 
 		Ok(Self{wd_extract_advice, dfa_adv_advice, vec_advices})
 	}
@@ -367,6 +370,7 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> DfaComponentMapper<F,LK>{
 			capacity,
 			gadgets,
 			clamdb,
+			job_id: 0,
 		}
 	}
 
@@ -395,7 +399,19 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F> + Send + Sync> ComponentMa
 		Arc::new( Clone::clone(&self.capacity) )
 	}
 
-	fn create_gadgets(&self) -> Vec<std::sync::Arc<std::sync::Mutex<dyn SigmaGadget<F> + Send + Sync>>>{  
+	fn set_job_id(&mut self, job_id: usize){
+		self.job_id = job_id;
+		for g in self.gadgets.iter(){
+			g.lock().unwrap().set_job_id(job_id);
+		}
+	}
+
+	fn get_job_id(&self)->usize{
+		self.job_id
+	}
+
+	fn create_gadgets(&self) -> Vec<std::sync::Arc<std::sync::Mutex<dyn SigmaGadget<F> + Send + Sync>>>{
+  
 		self.gadgets.clone()
 	}
 
@@ -472,7 +488,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F> + Send + Sync> ComponentMa
 		let n = self.capacity.subsigs;
 		let inp = DfaInput{v_inp_state: vec![F::one(); n]};
 		let dummy_adv = DfaAdvice::new(&word_seg, word.len(), &self.capacity,
-			&inp, &v_sigs, &sig_to_id, &discharge_info, F::from(seg_id as u64))?;
+			&inp, &v_sigs, &sig_to_id, &discharge_info, F::from(seg_id as u64), _job_id)?;
 		let v_dfa = &dummy_adv.dfa_adv_advice.v_dfa;
 		assert!(v_dfa.len()==n);
 		let init_states = v_dfa.iter().map(|dfa| 
@@ -501,7 +517,8 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F> + Send + Sync> ComponentMa
 			word.len(), 
 			&self.capacity, &inp, 
 			&v_sigs, &sig_to_id, &discharge_info, //keep the v_sigs earlier
-			F::from(seg_id as u64)
+			F::from(seg_id as u64),
+			_job_id
 		)?;
 
 		Ok( Arc::new(advice) )

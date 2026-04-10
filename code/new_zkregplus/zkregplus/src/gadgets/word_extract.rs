@@ -29,16 +29,24 @@ pub const LEGS:usize = 62;
 pub struct WordExtractGadget<F:PrimeField + ColEle>{ 
 	_f: PhantomData<F>,
 	max_word_len: usize,
+	pub job_id: usize,
 }
 
 impl <F:PrimeField + ColEle> WordExtractGadget<F>{
 	pub fn new(max_word_len: usize) -> Self{
-		Self{_f: PhantomData, max_word_len: max_word_len}
+		Self{_f: PhantomData, max_word_len: max_word_len, job_id: 0}
 	}
 }
 
 impl <F:PrimeField + ColEle> SigmaGadget<F> for WordExtractGadget<F>{
 	fn get_name(&self)->&str {"WordExtractGadget"}
+
+	fn set_job_id(&mut self, job_id: usize){
+		self.job_id = job_id;
+	}
+	fn get_job_id(&self)->usize{
+		self.job_id
+	}
 
 	/// set the container cfg. This is only needed for those gadgets
 	/// in SED approach

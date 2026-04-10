@@ -70,6 +70,7 @@ pub struct PackFinalGadget<F:PrimeField + ColEle>{
 	/// IN circuit, this is HARD CODED, either the ACDFA for the
 	/// IGC case or case sensitive case.
 	fsm_id: u32, 
+	pub job_id: usize,
 }
 
 impl <F:PrimeField + ColEle> PackFinalGadget<F>{
@@ -77,12 +78,19 @@ impl <F:PrimeField + ColEle> PackFinalGadget<F>{
 		oup_states_len: usize, fsm_id: u32)
 	-> Self{
 		Self{_f: PhantomData, inp_states_len, imm_buf_len,
-			oup_states_len, fsm_id}
+			oup_states_len, fsm_id, job_id: 0}
 	}
 }
 
 impl <F:PrimeField + ColEle> SigmaGadget<F> for PackFinalGadget<F>{
 	fn get_name(&self)->&str {"PackFinalGadget"}
+
+	fn set_job_id(&mut self, job_id: usize){
+		self.job_id = job_id;
+	}
+	fn get_job_id(&self)->usize{
+		self.job_id
+	}
 
 	/// set the container cfg. This is only needed for those gadgets
 	/// in SED approach

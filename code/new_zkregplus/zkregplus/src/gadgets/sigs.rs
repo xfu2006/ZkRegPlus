@@ -67,6 +67,7 @@ pub struct GetSigGadget<F:PrimeField + ColEle>{
 	capacity: SigGadgetCapacity,
 	/// e.g., CRIT_INIT for the ACDFA of critical table in clam_db.rs
 	fsm_id: u32, 
+	pub job_id: usize,
 }
 
 /// Capacity of SigGadget
@@ -796,12 +797,19 @@ impl <F:PrimeField + ColEle> GetSigGadget<F>{
 		capacity: &SigGadgetCapacity,
 		fsm_id: u32
 	) -> Self{
-		Self{ _f: PhantomData, capacity: capacity.clone(), fsm_id }
+		Self{ _f: PhantomData, capacity: capacity.clone(), fsm_id, job_id: 0 }
 	}
 }
 
 impl <F:PrimeField + ColEle> SigmaGadget<F> for GetSigGadget<F>{
 	fn get_name(&self)->&str {"GetSigGadget"}
+
+	fn set_job_id(&mut self, job_id: usize){
+		self.job_id = job_id;
+	}
+	fn get_job_id(&self)->usize{
+		self.job_id
+	}
 
 	/// set the container cfg. This is only needed for those gadgets
 	/// in SED approach

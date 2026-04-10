@@ -27574,5 +27574,38 @@ Goal 1.  continue to fix the max word problem
 	[a] read the code and understand why max num words is a problem
 	[b] do an experiment of max_words
 		[b1] read where is it used
-	[c] improve the err msg -> interesting it shows that basic_unique_states is NOT enough.
+	[c] improve the err msg -> interesting it shows that basic_unique_states is NOT enough. -> this is wrong.
+	[d] give more detailed info on the discrepancy of info
+		do a correct running and some messages are NOT there.
+	[e] give the info on th emessages that are NOT printed and ask gemini
+		to check
+	[f] only halfly fix, still messages not showing up
+
+Goal 2. try to figure out why max_num_words inconsistent can cause trouble
+	[a] further improve report exception
+	[b] consider insert some print statements into batch processor
+		to check if max_num_words affecting
+
+Goal 3. plan what to do with groth16 key generation
+	[a] estimate: key and circuit each can cost around 50GB.
+	[b] setup and prover time each needs 1 hr
+	[c] if we run 8 concurent jobs, the zksnark time needs 8 hours at least.			moving setup out will be helpful.
+	[d] but groth16 key generation need a sample circuit unless we have
+		the circuit already cached.
+	[e] another approach is to allow MULTIPLE instances running at 
+		the same time given that it needs 100GB in total.
+		could use semaphore to limit access
+	[f] check decider circuit memory consumption: 1M is almost
+		1GRAM. So 256M is 256GB RAM. plus key: it's 300GB RAM.
+		looks m3-ultra-memory64 is the best option around $2 per hour for
+			2TB with 64-vCPU.
+		or m3-megamem-128 for 2TB with 128-vCPU.
+	[g] discussion: cache a prior computed is not a good idea as
+		it's going to consume a lot of disk space and also not easy
+		to deploy. 
+		==> should use high RAM machine (128-vCPU with m3-megamem-128) 2.3 
+			dollars
+		==> allos 2TB RAM should support 4 zksnark at the same time.
+	[h] implement using semaphore.1
+	Token usage: 7M flash and 200k pro.
                                                                         1

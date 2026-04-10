@@ -68,9 +68,17 @@ pub struct SumGadget<F:PrimeField>{
 	_f: PhantomData<F>,
 	/// the number of elements to handle
 	n: usize,
+	job_id: usize,
 }
 
 impl <F:PrimeField> SigmaGadget<F> for SumGadget<F>{
+	fn set_job_id(&mut self, job_id: usize){
+		self.job_id = job_id;
+	}
+
+	fn get_job_id(&self) -> usize{
+		self.job_id
+	}
 	/// return its name
 	fn get_name(&self)->&str {"SumGadget"}
 
@@ -169,11 +177,12 @@ pub struct SumMapper<F:PrimeField, LK: LookupTableTwoCol<F>>{
 	pub _f: PhantomData<F>,
 	pub _lk: PhantomData<LK>,
 	pub b_odd: bool,
+	pub job_id: usize,
 }
 
 impl <F:PrimeField, LK:LookupTableTwoCol<F>> SumMapper<F,LK>{
 	pub fn new(b_odd: bool)->Self{
-		Self{_f: PhantomData, _lk: PhantomData, b_odd: b_odd }
+		Self{_f: PhantomData, _lk: PhantomData, b_odd: b_odd, job_id: 0 }
 	}
 	pub fn can_handle(&self, w0: F)->bool{
 		let w0_val = field_to_usize(&w0);
@@ -185,6 +194,13 @@ impl <F:PrimeField, LK:LookupTableTwoCol<F>> SumMapper<F,LK>{
 
 impl <F:PrimeField, LK: LookupTableTwoCol<F>> 
 GadgetMapper<F,LK> for SumMapper<F, LK>{
+	fn set_job_id(&mut self, job_id: usize){
+		self.job_id = job_id;
+	}
+	fn get_job_id(&self)->usize{
+		self.job_id
+	}
+
 	/// use advice to generate container config and set it for
 	/// each gadget (if gadgetes support container config for
 	/// deseiralization). This is only needed for those gadgets in SED
@@ -226,8 +242,9 @@ GadgetMapper<F,LK> for SumMapper<F, LK>{
 	}
 
 	fn get_gadgets(&self) -> Vec<Arc<Mutex<dyn SigmaGadget<F> + Send + Sync>>>{ 
-		let gadget = if self.b_odd {SumGadget::<F>{_f: PhantomData, n: 1}}
-			else {SumGadget::<F>{_f: PhantomData, n:2}};
+		let gadget = if self.b_odd {SumGadget::<F>{_f: PhantomData, n: 1,
+			job_id: 0}}
+			else {SumGadget::<F>{_f: PhantomData, n:2, job_id: 0}};
 		vec![Arc::new(Mutex::new(gadget))]
 	}
 

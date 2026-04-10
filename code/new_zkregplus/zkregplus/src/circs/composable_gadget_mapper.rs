@@ -54,6 +54,12 @@ pub trait ComponentMapper<F:PrimeField + ColEle, LK: LookupTableTwoCol<F>>: Debu
 	/// return an Rc dyn object of capacity
 	fn get_capacity(&self)->Arc<dyn Capacity + Send + Sync>;
 
+	/// set job_id
+	fn set_job_id(&mut self, job_id: usize);
+
+	/// get job_id
+	fn get_job_id(&self)->usize;
+
 	/// create a vector of gadgets
 	fn create_gadgets(&self) -> Vec<std::sync::Arc<std::sync::Mutex<dyn SigmaGadget<F> + Send + Sync>>>;  
 
@@ -171,17 +177,20 @@ pub struct CompositeGadgetMapper<F:PrimeField + ColEle, LK:LookupTableTwoCol<F>>
 	pub _lk: PhantomData<LK>,
 	pub vec_components: Vec<std::sync::Arc<std::sync::Mutex<dyn ComponentMapper<F,LK> + Send + Sync + Send + Sync>>>,
 	pub name: String,
-}
+	pub job_id: usize,
+	}
 
-impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>{
+	impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>{
 	pub fn new(name: &str, vec_components: Vec<std::sync::Arc<std::sync::Mutex<dyn ComponentMapper<F,LK> + Send + Sync + Send + Sync>>>)->Self{
 		Self{
 			_f: PhantomData,
 			_lk: PhantomData,
 			vec_components,
-			name: format!("{}", name)
+			name: name.to_string(),
+			job_id: 0,
 		}
 	}
+
 	pub fn set_name(&mut self, name: &str){ self.name = format!("{}", name); }
 
 	/// Given a subtbl_idx, find out its corresponding vec_component
@@ -658,7 +667,7 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CompositeGadgetMapper<F,LK>
 					comp_idx, path);
 			}
 		}
-		log_perf(0, LOG1, "DEBUG USE 9999: CompositeGadgetMapper: self_check", &mut timer);
+		log_perf(self.job_id, LOG1, "DEBUG USE 9999: CompositeGadgetMapper: self_check", &mut timer);
 	}
 
 }
@@ -683,6 +692,17 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 		let vec_cap = self.vec_components.iter().map(|x|
 			x.lock().unwrap().get_capacity()).collect::<Vec<Arc<dyn Capacity + Send + Sync>>>();
 		Arc::new(CompositeCapacity{vec_cap})
+	}
+
+	fn set_job_id(&mut self, job_id: usize){
+		self.job_id = job_id;
+		for c in self.vec_components.iter(){
+			c.lock().unwrap().set_job_id(job_id);
+		}
+	}
+
+	fn get_job_id(&self)->usize{
+		self.job_id
 	}
 
 	/// return the name
@@ -1041,7 +1061,7 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 		).collect::<Vec<Vec<Arc<dyn NdAdvice + Send + Sync>>>>().concat();
 		assert!(vec_errs.len() + vec_adv.len() == res.len());
 
-		if b_perf{ log_perf(0, LOG1, "Generate Advice", &mut t1); }
+		if b_perf{ log_perf(self.job_id, LOG1, "Generate Advice", &mut t1); }
 	
 		if vec_errs.len()>0{ Err(Error::CapErr(vec_errs)) } else{
 			Ok(Arc::new(CompositeAdvice{vec_adv}))

@@ -213,6 +213,7 @@ impl <F:PrimeField + ColEle> CpAdvice<F>{
 			fsm_id: usize, //e.g., CRIT_INIT or CRIT_IGC_INIT
 			vec_sig_id_no_crit_pat: &Vec<usize>, //the pats to include 
 					//in failed_sigs by default
+			job_id: usize,
 		)->Result<Self, Error>{
 		//0. construct the capacity fields needed by sub-components
 		let mut t1 = Timer::new();
@@ -227,7 +228,7 @@ impl <F:PrimeField + ColEle> CpAdvice<F>{
 		let nibbles = wd_extract_advice.data[1..].to_vec();
 		let dfa_crit_advice = FsmAdvice::<F>
 			::new(&nibbles, dfa_crit, inp_state, fsm_id as u32)?;
-		if b_perf{ log_perf(0, LOG1, "-- CpMapper gen_adv step1", &mut t1); }
+		if b_perf{ log_perf(job_id, LOG1, "-- CpMapper gen_adv step1", &mut t1); }
 
 
 		//2. build the packing final states gadget's advice
@@ -257,7 +258,7 @@ impl <F:PrimeField + ColEle> CpAdvice<F>{
 			},
 			_ => pack_res 
 		}?;
-		if b_perf{ log_perf(0, LOG1, "-- CpMapper gen_adv step2: pack_res", &mut t1); }
+		if b_perf{ log_perf(job_id, LOG1, "-- CpMapper gen_adv step2: pack_res", &mut t1); }
 
 		//3. build the advice for the sigs gadget
 		let sig_cap = SigGadgetCapacity{
@@ -267,7 +268,7 @@ impl <F:PrimeField + ColEle> CpAdvice<F>{
 			count_sig_no_crit_pat: vec_sig_id_no_crit_pat.len(),
 		};
 		let inp_sigs = inp_buf[1..sig_buf_capacity+1].to_vec();
-		if b_perf{ log_perf(0, LOG1, "-- CpMapper gen_adv step3: sig", &mut t1); }
+		if b_perf{ log_perf(job_id, LOG1, "-- CpMapper gen_adv step3: sig", &mut t1); }
 
 		
 		let sigs_res = GetSigAdvice::<F>::new(
@@ -294,7 +295,7 @@ impl <F:PrimeField + ColEle> CpAdvice<F>{
 			},
 			_ => sigs_res 
 		}?;
-		if b_perf{ log_perf(0, LOG1, "-- CpMapper gen_adv step4: assemble", &mut t1); }
+		if b_perf{ log_perf(job_id, LOG1, "-- CpMapper gen_adv step4: assemble", &mut t1); }
 
 		Ok(Self{
 			wd_extract_advice,
@@ -321,6 +322,8 @@ pub struct CpComponentMapper<F:PrimeField + ColEle, LK: LookupTableTwoCol<F>>{
 
 	/// clamdb
 	pub clamdb: Arc<ClamavDB<F>>,
+
+	pub job_id: usize,
 }
 
 impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CpComponentMapper<F,LK>{
@@ -375,7 +378,8 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CpComponentMapper<F,LK>{
 			capacity: cp_capacity,
 			gadgets,
 			b_igc,
-			clamdb
+			clamdb,
+			job_id: 0,
 		}
 	}
 
@@ -392,7 +396,19 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F> + Send + Sync> ComponentMa
 		Arc::new( Clone::clone(&self.capacity) )
 	}
 
-	fn create_gadgets(&self) -> Vec<std::sync::Arc<std::sync::Mutex<dyn SigmaGadget<F> + Send + Sync>>>{  
+	fn set_job_id(&mut self, job_id: usize){
+		self.job_id = job_id;
+		for g in self.gadgets.iter(){
+			g.lock().unwrap().set_job_id(job_id);
+		}
+	}
+
+	fn get_job_id(&self)->usize{
+		self.job_id
+	}
+
+	fn create_gadgets(&self) -> Vec<std::sync::Arc<std::sync::Mutex<dyn SigmaGadget<F> + Send + Sync>>>{
+  
 		self.gadgets.clone()
 	}
 
@@ -556,6 +572,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F> + Send + Sync> ComponentMa
 			sigs_to_id,
 			fsm_id as usize,
 			&vec_sig_id_no_crit_pat,
+			_job_id,
 		)?;
 
 		Ok( Arc::new(advice) )

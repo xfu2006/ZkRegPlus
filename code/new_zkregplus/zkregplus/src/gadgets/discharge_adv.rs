@@ -393,6 +393,7 @@ pub struct DischargeAdvGadget<F:PrimeField + ColEle>{
 	pub my_idx_in_context: Option<usize>,
 	_f: PhantomData<F>,
 
+	pub job_id: usize,
 }
 
 // ---------------------------------------------
@@ -1757,6 +1758,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		inp_step_queue: &StepQueue<F>, // the steps_queue from input
 		last_loc: F,
 		seg_id: usize,
+		job_id: usize,
 	) ->Result<Self, Error>{
 		let sname = if b_igc {"discharge_adv_stmt_igc"} else 
 			{"discharge_adv_stmt_cs"};
@@ -1768,7 +1770,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let (forward_step_queue, sq_fwd, last_loc) = Self::gen_forward_steps_queue_combo(
 			b_igc, offset_fsm,
 			&inp_subsigs, pat_loc, inp_step_queue, fsm_id, &capacity,
-			subsig_store_info, last_loc, seg_id)?;
+			subsig_store_info, last_loc, seg_id, job_id)?;
 		let ct_fwd_sq = forward_step_queue.lock().unwrap().get_container("sq_res")?;
 		stmt_container.lock().unwrap().add_container(forward_step_queue);
 		let default_min_loc = last_loc + F::one();
@@ -1778,7 +1780,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let backward_step_queue = Self::gen_backward_steps_queue_combo(
 			b_igc,
 			&sq_fwd, &ct_fwd_sq, subsig_store_info, default_min_loc, capacity,
-			seg_id)?;
+			seg_id, job_id)?;
 		stmt_container.lock().unwrap().add_container(backward_step_queue);
 
 		Ok(Self{capacity: Clone::clone(capacity), fsm_id,
@@ -1851,8 +1853,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let comb1 = encode_2col(&e1, &c1);
 		let comb2 = encode_2col(&e2, &c2);
 		let comb3 = encode_2col(&e3, &c3);
-		let (_set_total, prf)  = gen_union_prf(
-			&comb1, &comb2, &comb3, prf_name)?;
+		let prf  = gen_union_prf(&comb1, &comb2, &comb3, prf_name)?;
 
 		Ok( prf )
 	}
@@ -2238,6 +2239,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		subsig_store_info: &SubsigStepStore,
 		last_loc: F,
 		seg_id: usize, //the word segment id (starting 0)
+		job_id: usize,
 	)->Result<(std::sync::Arc<std::sync::Mutex<Container<F>>>, StepQueue<F>, F), Error>{
 		let b_debug = false;
 		let res = Container::<F>::new("fwd_steps_queue");
@@ -2298,14 +2300,14 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		//------------------------------------------------------------------
 		//--- now argue that the generated step_queue and fwd_prf are correct
 		//------------------------------------------------------------------
-		if b_perf{log_perf(0, LOG1, "-- -- gen_fwd step0", &mut t1);}
+		if b_perf{log_perf(job_id, LOG1, "-- -- gen_fwd step0", &mut t1);}
 		//1. prove the sq_inp + sq_to_add = sq_res
 		let prf = Container::new("prf");
 		//1. prove inp_queue + to_add = sq_res
 		let prf_union = Self::gen_step_queue_union_prf("prf_union",
 			&ct_sq_inp, &ct_sq_to_add, &ct_sq_res)?;
 		prf.lock().unwrap().add_container(prf_union);
-		if b_perf{log_perf(0, LOG1, "-- -- gen_fwd step1", &mut t1);}
+		if b_perf{log_perf(job_id, LOG1, "-- -- gen_fwd step1", &mut t1);}
 
 		//2. prove that sq_inp has the same structure of the store_steps.
 		// This part is SKIPPED, as we have the new DB to bind
@@ -2323,14 +2325,14 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let prf_to_add_valid = Self::gen_to_add_valid_prf("prf_to_add",
 			&ct_sq_to_add, &prf_fwd);
 		prf.lock().unwrap().add_container(prf_to_add_valid);
-		if b_perf{log_perf(0, LOG1, "-- -- gen_fwd step2-3", &mut t1);}
+		if b_perf{log_perf(job_id, LOG1, "-- -- gen_fwd step2-3", &mut t1);}
 
 		//4. prove the validity of the fwd_prf
 		let (prf_fwdprf_valid, last_loc) = 
 			Self::gen_fwdprf_valid_prf("prf_fwdprf_valid", 
 				&prf_fwd, &ct_pat_loc, &ct_sq_res, capacity, last_loc)?;			//might throw CapErr on subsigs, just forward it
 		prf.lock().unwrap().add_container(prf_fwdprf_valid);
-		if b_perf{log_perf(0, LOG1, "-- -- gen_fwd step4", &mut t1);}
+		if b_perf{log_perf(job_id, LOG1, "-- -- gen_fwd step4", &mut t1);}
 
 		// --- now return 
 		res.lock().unwrap().add_container(prf);
@@ -2349,7 +2351,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 	#[allow(dead_code)]
 	fn gen_backward_steps_queue_combo(
 		b_igc: bool,
-		input_step_queue: &StepQueue<F>,
+		input_step_queue: &StepQueue<F>, //corresponds to ct_fwd_res
 		ct_fwd_res: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
 		subsig_store_info: &SubsigStepStore,
 		default_min_loc: F, //this is the EARLIER next possible location
@@ -2357,6 +2359,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 			//for backward pruning.
 		capacity: &DischargeAdvCapacity,
 		seg_id: usize,
+		job_id: usize,
 	)->Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 		//0. Generate the logical data:
 		// from inp_step_queue generate the to_del, res, bwd_prf, 
@@ -2394,7 +2397,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		res.lock().unwrap().add_container(ct_sq_res2.clone());
 		res.lock().unwrap().add_container(bwd_prf.to_container("prf_bwd", 
 			subsig_store_info)?);
-		if b_perf{log_perf(0, LOG1, "-- -- gen_bwd step0", &mut t1);}
+		if b_perf{log_perf(job_id, LOG1, "-- -- gen_bwd step0", &mut t1);}
 
 
 		//------------------------------------------------------------------
@@ -2405,7 +2408,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let prf_union = Self::gen_step_queue_union_prf("prf_union",
 			&ct_sq_res2, &ct_sq_to_del, &ct_fwd_res)?;
 		prf.lock().unwrap().add_container(prf_union);
-		if b_perf{log_perf(0, LOG1, "-- -- gen_bwd step1", &mut t1);}
+		if b_perf{log_perf(job_id, LOG1, "-- -- gen_bwd step1", &mut t1);}
 
 		//2. no need to argume for the sq_inp conforms to store_steps
 		//as we are working on existing fwd prfs
@@ -2416,14 +2419,14 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let prf_to_del_valid = Self::gen_to_del_valid_prf("prf_to_del",
 			&ct_sq_to_del, &prf_bwd);
 		prf.lock().unwrap().add_container(prf_to_del_valid);
-		if b_perf{log_perf(0, LOG1, "-- -- gen_bwd step2-3", &mut t1);}
+		if b_perf{log_perf(job_id, LOG1, "-- -- gen_bwd step2-3", &mut t1);}
 
 		//4. prove the validity of the bwd_prf
 		let prf_bwdprf_valid = Self::gen_bwdprf_valid_prf("prf_bwdprf_valid",
 			&prf_bwd, &ct_sq_res2, default_min_loc, &subsig_store_info, 
 			&capacity, b_igc)?;
 		prf.lock().unwrap().add_container(prf_bwdprf_valid);
-		if b_perf{log_perf(0, LOG1, "-- -- gen_bwd step4", &mut t1);}
+		if b_perf{log_perf(job_id, LOG1, "-- -- gen_bwd step4", &mut t1);}
 
 		// --- now return 
 		res.lock().unwrap().add_container(prf);
@@ -2813,15 +2816,8 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let encoded_real = encode_cols(&set_bwdprf_ssm_real, &vec![0,1,2]);
 		let encoded_def = encode_cols(&set_bwdprf_ssm_default, &vec![0,1,2]);
 		let encoded_total = encode_cols(&set_bwdprf_ssm, &vec![0,1,2]);
-		let (set_total, prf_disjoint_ssm) = gen_union_prf(
+		let prf_disjoint_ssm = gen_union_prf(
 			&encoded_real, &encoded_def, &encoded_total, "prf_disjoint_ssm")?;
-		if b_debug{ 
-			let set1 = set_total.iter().map(|i| i.clone()).
-				collect::<HashSet<F>>();
-			let set2 = encoded_total.iter().map(|i| i.clone()).
-				collect::<HashSet<F>>();
-			assert!(set1 == set2); 
-		}
 		res.lock().unwrap().add_container(prf_disjoint_ssm);
 
 		//4.5.1(b) prove that set_bwdprf_ssm_default has the min-loc
@@ -2908,7 +2904,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			capacity, b_igc);
 		let dummy_adv = DischargeAdvAdvice::new(b_igc, offset_fsm,
 			&pat_loc, &sigs, fsm_id, store_steps, 
-			Clone::clone(&capacity), &inp_steps_queue_obj, zero, 0)
+			Clone::clone(&capacity), &inp_steps_queue_obj, zero, 0, 0)
 			.expect("discharge_adv advice err");
 		let mut vec_cfg = prev_cfgs.clone();
 		vec_cfg.push(dummy_adv.stmt_container.lock().unwrap().get_cfg());
@@ -2919,7 +2915,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		Self{_f: PhantomData, capacity: Clone::clone(capacity), 
 			cfgs_context: None,
 			my_idx_in_context: None, dummy_cfg, fsm_id,
-			b_igc, offset_fsm}
+			b_igc, offset_fsm, job_id: 0}
 	}
 
 	/// return None if not set yet.
@@ -4240,6 +4236,14 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 impl <F:PrimeField + ColEle> SigmaGadget<F> for DischargeAdvGadget<F>{
 	fn get_name(&self)->&str {"DischargeAdvGadget"}
 
+	fn set_job_id(&mut self, job_id: usize){
+		self.job_id = job_id;
+	}
+
+	fn get_job_id(&self)->usize{
+		self.job_id
+	}
+
 	/// set the container cfg. This is only needed for those gadgets
 	/// in SED approach
 	fn set_container_cfg(&mut self, cfgs_context: std::sync::Arc<Vec<ContainerConfig>>, idx: usize){
@@ -4549,7 +4553,7 @@ pub mod tests_discharge_adv_gadget{
 				1, //dist to wea gadget
 				&nibbles, &acdfa, inp_state, 
 				inp_loc, &input_subsigs, &cap, fsm_id, 
-				&bundle.vec_subsig_stores[store_id])
+				&bundle.vec_subsig_stores[store_id], 0)
 					.expect("fsm_adv advice err"); 
 			let stmt_faa = adv_faa.stmt_container;
 			let cfg_faa = stmt_faa.lock().unwrap().get_cfg(); 
@@ -4569,8 +4573,9 @@ pub mod tests_discharge_adv_gadget{
 				1, //offset to fsm
 				&pat_loc, &input_subsigs,
 				fsm_id, steps_store, &cap_disc, &inp_steps_queue, last_loc,
-				i)
-					.expect("discharge_adv advice err");			let oup_queue = adv_disc.get_output_steps_queue();
+				i, 0)
+					.expect("discharge_adv advice err");
+			let oup_queue = adv_disc.get_output_steps_queue();
 			let stmt_disc= adv_disc.stmt_container;
 			let cfg_disc= stmt_disc.lock().unwrap().get_cfg(); 
 

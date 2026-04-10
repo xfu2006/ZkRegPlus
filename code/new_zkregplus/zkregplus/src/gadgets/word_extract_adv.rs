@@ -68,15 +68,16 @@ pub struct WordExtractAdvGadget<F:PrimeField + ColEle>{
 	pub b_map_char: bool,
 
 	pub capacity: WordExtractAdvCapacity,
-	
+
 	// will be set when set_container_cfg is called
 	pub cfgs_context: Option<std::sync::Arc<Vec<ContainerConfig>>>,
 	// dummy_cfg is used when cfgs_context is not ready yet
 	pub dummy_cfg: ContainerConfig,
 	pub my_idx_in_context: Option<usize>,
 	_f: PhantomData<F>,
-}
 
+	pub job_id: usize,
+}
 
 
 // -----------------------------------------------
@@ -222,7 +223,7 @@ impl <F:PrimeField + ColEle> WordExtractAdvGadget<F>{
 		let dummy_cfg = vec_cfg[vec_cfg.len()-1].clone();
 
 		Self{_f: PhantomData, capacity: capacity, cfgs_context: None,
-			my_idx_in_context: None, dummy_cfg, b_map_char}
+			my_idx_in_context: None, dummy_cfg, b_map_char, job_id: 0}
 	}
 
 	/// return None if not set yet.
@@ -244,6 +245,13 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for WordExtractAdvGadget<F>{
 		}else{
 			"WordExtractAdvGadget"
 		}
+	}
+
+	fn set_job_id(&mut self, job_id: usize){
+		self.job_id = job_id;
+	}
+	fn get_job_id(&self)->usize{
+		self.job_id
 	}
 
 	/// set the container cfg. This is only needed for those gadgets

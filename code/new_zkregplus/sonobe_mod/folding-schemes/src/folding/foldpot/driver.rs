@@ -1,4 +1,4 @@
-use std::{sync::{Arc, Mutex}, fmt::{Debug,Formatter}};
+use std::{sync::{Arc, Mutex, Condvar}, fmt::{Debug,Formatter}};
 /* 
 	Created 08/27/2024 
 	Modified 12/25/2024: added snark_rand_input structure
@@ -1948,6 +1948,20 @@ where
 		::new(poseidon_config_global.clone(), lkup_p2, vec_circ_cp, rand::rngs::OsRng, b_full2, global_max_total_n, global_max_words);
 	log_perf(0, log_level, &format!("FoldPot: Step 3: set up driver 2.\n=== Now Execute All Jobs =====\n"), &mut gt_all);
 
+	//4. set up mutex semaphore of size n_par_snark
+	let n_par_snark = 1;
+	let semaphore = Arc::new((Mutex::new(n_par_snark), Condvar::new()));
+	struct SemaphoreGuard { lock: Arc<(Mutex<usize>, Condvar)> }
+	impl Drop for SemaphoreGuard {
+		fn drop(&mut self) {
+			let (mutex, cvar) = &*self.lock;
+			let mut count = mutex.lock().unwrap();
+			*count += 1;
+			cvar.notify_one();
+		}
+	}
+
+
 	jobs.into_par_iter().enumerate().for_each(|(job_id, job)| {
 		let res = (|| -> Result<(), Error> {
 		//0. retrieve the words and word_info
@@ -2012,7 +2026,18 @@ where
 	  		let cyclepair_inputs = U_i1
 	  			.generate_cyclepair_inputs::<E>(qa_nizk_pkey, qa_nizk_vkey,
 	  				&com_all_w, &prf_qa_nizk, &poseidon_config); 
-	  	
+	  
+	  		// ------------- The following is the CRITICAL SECTION -------
+			let _guard = {
+				let (lock, cvar) = &*semaphore;
+				let mut count = lock.lock().unwrap();
+				while *count == 0 {
+					count = cvar.wait(count).unwrap();
+				}
+				*count -= 1;
+				SemaphoreGuard { lock: semaphore.clone() }
+			};
+
 	  		//6. now bulid the main circuit, which execues
 	  		//the main logic: verifies the ZkregPlus relation
 	  		//and verifies the all witness + e_vec evaluates to a value
@@ -2376,16 +2401,18 @@ pub mod tests_driver{
 	/// it will not generate the StaementInstance; in even mode,
 	/// it checks if the first element is even.
 	#[derive(Clone,Debug)]
-	pub struct SumMapper<F:PrimeField, LK: LookupTableTwoCol<F>>{
+	pub struct SumMapper<F:PrimeField, LK:LookupTableTwoCol<F>>{
 		pub _f: PhantomData<F>,
 		pub _lk: PhantomData<LK>,
 		pub b_odd: bool,
+		pub job_id: usize,
 	}
 
 	impl <F:PrimeField, LK:LookupTableTwoCol<F>> SumMapper<F,LK>{
 		pub fn new(b_odd: bool)->Self{
-			Self{_f: PhantomData, _lk: PhantomData, b_odd: b_odd }
+			Self{_f: PhantomData, _lk: PhantomData, b_odd: b_odd, job_id: 0 }
 		}
+
 
 		pub fn can_handle(&self, w0: F)->bool{
 			let w0_val = field_to_usize(&w0);
@@ -2397,6 +2424,13 @@ pub mod tests_driver{
 
 	impl <F:PrimeField, LK: LookupTableTwoCol<F>> 
 	GadgetMapper<F,LK> for SumMapper<F, LK>{
+		fn set_job_id(&mut self, job_id: usize){
+			self.job_id = job_id;
+		}
+		fn get_job_id(&self)->usize{
+			self.job_id
+		}
+
 		/// use advice to generate container config and set it for
 		/// each gadget (if gadgetes support container config for
 		/// deseiralization). This is only needed for those gadgets in SED

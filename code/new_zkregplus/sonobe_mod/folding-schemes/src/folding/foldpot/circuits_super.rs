@@ -342,7 +342,7 @@ where
 		let zero = C1::ScalarField::zero();
 		let b_full = F_circuit.is_full_mode();
 		let fq_bits = <<C1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as usize;
-		let zi_dummy= ZiPartTwoInst::new(zero, zero, poseidon_config, b_full, fq_bits, 0);
+		let zi_dummy= ZiPartTwoInst::new(zero, zero, poseidon_config, b_full, fq_bits, job_id);
         Self {
 			_gm: PhantomData,
             _lk: PhantomData,

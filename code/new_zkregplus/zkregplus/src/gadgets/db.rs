@@ -207,6 +207,7 @@ pub fn verify_encoded_table<F:PrimeField + ColEle>(
 pub fn assert_wide_wellformed<F:PrimeField + ColEle>(
 	tbl: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
 	keycol_name: &str, //default it's "key" but can be something else
+	job_id: usize,
 ) ->Result<(),SynthesisError>{
 	let b_perf = false;
 	let b_debug = false;
@@ -310,7 +311,7 @@ pub fn assert_wide_wellformed<F:PrimeField + ColEle>(
 		assert!(cs.is_satisfied().unwrap());
 	}
 	if b_perf {
-		log_perf(0, logl, &format!("assert_light_well. n: {}, cs: {}",
+		log_perf(job_id, logl, &format!("assert_light_well. n: {}, cs: {}",
 			n, cs.num_constraints()-nc), &mut gt);
 	}
 
@@ -2166,6 +2167,36 @@ pub fn gen_disjoint_union_prf_adv<F:PrimeField + ColEle>(
 	Ok( (res, prf) )
 }
 
+/// return a hashmap which given a vector computes the
+/// counters (occurence) of each non-zero element. Return the hashmap 
+/// the occ.
+pub fn get_nz_occ<F:PrimeField>(v: &Vec<F>)->HashMap<F,usize>{
+	let mut res = HashMap::new();
+	for x in v{
+		if !x.is_zero(){
+			*res.entry(x.clone()).or_insert(0) += 1;
+		}
+	}
+	res
+}
+
+/// print out the difference between hs1 and hs2
+/// into the string returned
+pub fn get_hs_diff<F:PrimeField>(hs: &HashMap<F,usize>, 
+hs2: &HashMap<F,usize>)->String{
+	let mut res = String::new();
+	let mut keys: HashSet<F> = hs.keys().cloned().collect();
+	keys.extend(hs2.keys().cloned());
+	for k in keys{
+		let v1 = hs.get(&k).unwrap_or(&0);
+		let v2 = hs2.get(&k).unwrap_or(&0);
+		if v1 != v2{
+			res.push_str(&format!("val: {:?}, count1: {}, count2: {}\n", k, v1, v2));
+		}
+	}
+	res
+}
+
 /// prove that regarding non-zero elements vec3 is a direct UNION
 /// of vec1 and vec2, note that non-zero elements might appear
 /// MULTIPLE times in any input vectors
@@ -2174,7 +2205,24 @@ pub fn gen_union_prf<F:PrimeField + ColEle>(
 	vec2: &Vec<F>,
 	vec3: &Vec<F>,
 	name: &str,
-) -> Result<(Vec<F>,std::sync::Arc<std::sync::Mutex<Container<F>>>), Error>{
+) -> Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
+	//0. check
+	let b_debug = true;
+	if b_debug{
+		use crate::gadgets::commons::print_vec;
+		let vec_3_2 = vec![&vec1[..], &vec2[..]].concat();
+		let hs1 = get_nz_occ(&vec_3_2);
+		let hs2 = get_nz_occ(&vec3);
+		if hs1!=hs2{
+			println!("== gen_union_prf failed ===");
+			print_vec("vec1", vec1);
+			print_vec("vec2", vec1);
+			print_vec("vec3", vec1);
+		}
+		assert!(hs1==hs2, "vec3 multiplicity != vec1||vec2. Details: {}",
+			get_hs_diff(&hs1, &hs2));
+	}
+
 	//1. collect the zero elements in vec1, vec2, vec3
 	//let it be nz1, nz2, nz3
 	let nz1 = vec1.iter().filter(|x| x.is_zero()).count();
@@ -2203,7 +2251,7 @@ pub fn gen_union_prf<F:PrimeField + ColEle>(
 	prf.lock().unwrap().add_col(Col::new_const(vec![f_rg2; 1], 
 		"sid_diff_zero", IDX_SI_DATA));
 
-	Ok((vec3.clone(), prf))
+	Ok(prf)
 }
 
 /// verify that vec3 is a UNION of vec1 and vec2 regarding NON-zero
@@ -2554,7 +2602,8 @@ pub fn verify_tbl_left_join_wide<F:PrimeField + ColEle>(
 	col2: &Vec<FpVar<F>>, //col2 of tbl2
 	tbl2: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>, //2nd tbl
 	output: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,  //the output table
-	cs: ConstraintSystemRef<F>
+	cs: ConstraintSystemRef<F>,
+	job_id: usize,
 ) -> Result<(), SynthesisError>{
 	//0. retrieve data
 	let b_perf = false;
@@ -2595,9 +2644,9 @@ pub fn verify_tbl_left_join_wide<F:PrimeField + ColEle>(
 	tbl_tmp.lock().unwrap().add_container(ct_jcols[2].clone());//low cost clone
 	tbl_tmp.lock().unwrap().add_container(ct_jcols[3].clone());//low cost clone
 	tbl_tmp.lock().unwrap().add_container(ct_jcols[4].clone());//low cost clone
-	assert_wide_wellformed(&tbl_tmp, "enc_c12")?;
+	assert_wide_wellformed(&tbl_tmp, "enc_c12", job_id)?;
 	if b_perf{
-		log_perf(0, logl, &format!("verify_join_wide. step 1.1: assert wide wellformed: n: {}, cs: {}", n, cs.num_constraints()-nc), &mut gt);
+		log_perf(job_id, logl, &format!("verify_join_wide. step 1.1: assert wide wellformed: n: {}, cs: {}", n, cs.num_constraints()-nc), &mut gt);
 		nc = cs.num_constraints();
 	}
 
@@ -2605,9 +2654,9 @@ pub fn verify_tbl_left_join_wide<F:PrimeField + ColEle>(
 	//of c1 and c2
 	//COST: n
 	verify_encode_cols_in_range(&enc_c12[..],
-		&vec![&c1[..], &c2[..]])?;
+		&vec![&c1[..], &c2[..]], job_id)?;
 	if b_perf{
-		log_perf(0, logl, &format!("verify_join_wide. step 1.2: assert encoding. n: {}, cs: {}", n, cs.num_constraints()-nc), &mut gt);
+		log_perf(job_id, logl, &format!("verify_join_wide. step 1.2: assert encoding. n: {}, cs: {}", n, cs.num_constraints()-nc), &mut gt);
 		nc = cs.num_constraints();
 	}
 
@@ -2621,10 +2670,11 @@ pub fn verify_tbl_left_join_wide<F:PrimeField + ColEle>(
 		r1.clone(),
 		&vec![&c1[..], &c2[..]],
 		&vec![&col1[..], &col2[..]],
-		&lkupprf_c1c2
+		&lkupprf_c1c2,
+		job_id
 	)?;
 	if b_perf{
-		log_perf(0, logl, &format!("verify_join_wide. step 2: 2d lkup. n1: {}, n: {}, cs: {}", n1, n, cs.num_constraints()-nc), &mut gt);
+		log_perf(job_id, logl, &format!("verify_join_wide. step 2: 2d lkup. n1: {}, n: {}, cs: {}", n1, n, cs.num_constraints()-nc), &mut gt);
 		nc = cs.num_constraints();
 	}
 
@@ -2639,14 +2689,15 @@ pub fn verify_tbl_left_join_wide<F:PrimeField + ColEle>(
 		r1.clone(),
 		&vec![&c2[..], &c_val[..], &c_id[..], &c_count[..]], 
 		&vec![&t2cols[0][..], &t2cols[1][..], &t2cols[2][..], &t2cols[3][..]],
-		&lkupprf_tbl2
+		&lkupprf_tbl2,
+		job_id
 	)?;
 	if b_debug{ assert!(cs.is_satisfied().unwrap()); }
 	if b_perf{
-		log_perf(0, logl, &format!("verify_join_wide. step 3: 1d lkup: n2: {}, n: {}, cs: {}", n2, n, cs.num_constraints()-nc), &mut gt);
+		log_perf(job_id, logl, &format!("verify_join_wide. step 3: 1d lkup: n2: {}, n: {}, cs: {}", n2, n, cs.num_constraints()-nc), &mut gt);
 	}
 	if b_perf{
-		log_perf(0, logl, &format!("verify_join_wide. TOTAL: n1: {}, n2: {}, n: {}, cs: {}", n1, n2, n, cs.num_constraints()-nc0), &mut gt);
+		log_perf(job_id, logl, &format!("verify_join_wide. TOTAL: n1: {}, n2: {}, n: {}, cs: {}", n1, n2, n, cs.num_constraints()-nc0), &mut gt);
 	}
 	
 	Ok( () )
@@ -3051,12 +3102,12 @@ pub mod tests_db{
 		}
 		set3_val.shuffle(&mut rng);
 
-		let (res_val, prf_val) = 
-			gen_union_prf(&set1_val, &set2_val, &set3_val, "uprf").unwrap();
+		let prf_val = gen_union_prf(&set1_val, &set2_val, &set3_val, 
+			"uprf").unwrap();
 		
 		let set1 = set1_val.iter().map(|x| new_var(&cs, *x)).collect::<Vec<_>>();
 		let set2 = set2_val.iter().map(|x| new_var(&cs, *x)).collect::<Vec<_>>();
-		let res = res_val.iter().map(|x| new_var(&cs, *x)).collect::<Vec<_>>();
+		let res = set3_val.iter().map(|x| new_var(&cs, *x)).collect::<Vec<_>>();
 		let prf = Container::rc_from(&prf_val.lock().unwrap(), cs.clone());
 		
 		assert!(verify_union_prf(&set1, &set2, &res, &prf, &r1).is_ok());
@@ -3151,7 +3202,8 @@ pub mod tests_db{
 				&col_states,
 				&proj_states_pats, //2nd tbl
 				&loc_state_pat_tbl, //output tbl 
-				cs.clone()
+				cs.clone(),
+				0
 			).is_ok());
 		assert!(cs.is_satisfied().unwrap());
 	}

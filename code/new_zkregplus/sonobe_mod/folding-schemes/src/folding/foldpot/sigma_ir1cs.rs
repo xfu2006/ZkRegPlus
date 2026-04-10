@@ -319,6 +319,12 @@ pub trait SigmaIR1CS<const H: bool, F: PrimeField, LK: LookupTableTwoCol<F>, GM:
 	/// set its own dummy statement
 	fn set_dummy_stmt(&mut self, stmt: StatementInst<F,LK>);
 
+	/// set job_id for logging isolation
+	fn set_job_id(&mut self, job_id: usize);
+
+	/// get job_id
+	fn get_job_id(&self) -> usize;
+
 	/// use advice to generate container config and set it for
 	/// each gadget (if gadgetes support container config for
 	/// deseiralization). This is only needed for those gadgets in SED
@@ -362,6 +368,12 @@ pub trait SigmaIR1CS<const H: bool, F: PrimeField, LK: LookupTableTwoCol<F>, GM:
 pub trait SigmaGadget<F:PrimeField>: Debug + Send + Sync{
 	/// return a name
 	fn get_name(&self)->&str;
+
+	/// set job_id
+	fn set_job_id(&mut self, job_id: usize);
+
+	/// get job_id
+	fn get_job_id(&self)->usize;
 
 	/// set the container cfg. This is only needed for those gadgets
 	/// in SED approach. Pass a sharee copy of all ContainerConfigs
@@ -506,6 +518,12 @@ impl Capacity for DummyCapacity{
 /// SigmaIR1CS_Inst just executes gadgets one by one (without
 /// knowing their details)
 pub trait GadgetMapper<F:PrimeField, LK: LookupTableTwoCol<F>>: Send + Sync{
+	/// set job_id
+	fn set_job_id(&mut self, job_id: usize);
+
+	/// get job_id
+	fn get_job_id(&self) -> usize;
+
 	/// use advice to generate container config and set it for
 	/// each gadget (if gadgetes support container config for
 	/// deseiralization). This is only needed for those gadgets in SED
@@ -2252,6 +2270,8 @@ where 	C: CurveGroup<ScalarField=F>,
 
 	/// the value for dummy stmt
 	pub dummy_stmt: Option<Vec<F>>,
+
+	pub job_id: usize,
 }
 
 impl <F,C,CS,LK, GM, const H: bool> Debug for SigmaIR1CS_Inst<F,C,CS,LK,GM, H>
@@ -2291,7 +2311,8 @@ where 	C: CurveGroup<ScalarField=F>,
 			dummy_stmt: self.dummy_stmt.clone(),
 			_lk: PhantomData,
 			b_cyclepair: self.b_cyclepair,
-			b_check_lkup: self.b_check_lkup
+			b_check_lkup: self.b_check_lkup,
+			job_id: self.job_id,
 		}
 	}
 }
@@ -2573,20 +2594,19 @@ where 	C: CurveGroup<ScalarField=F>,
 		let mut v_msg1:Vec<F> = vec![];
 		let mut v_msg2:Vec<F> = vec![];
 		let mut v_msg3:Vec<F> = vec![];
-		log_perf(0, log_level, &format!("gen_witness step 1: gen stmt structure"),
+		log_perf(self.job_id, log_level, &format!("gen_witness step 1: gen stmt structure"),
 			&mut gt1);
-		
+
 
 		//1. generate message1
 		for (i,g) in self.gadgets.iter().enumerate(){
 			let mut msg1 = g.lock().unwrap().gen_msg1(&v_stmt, &v_idx[i]) ;
-			assert!(vec_msg_sizes[i].1==msg1.len(), 
+			assert!(vec_msg_sizes[i].1==msg1.len(),
 				"ERROR: mistaching msg1 size for i: {}", i);
-			v_msg1.append(&mut msg1); 
+			v_msg1.append(&mut msg1);
 		}
-		log_perf(0, log_level, &format!("gen_witness step 2: gen msg1"),
+		log_perf(self.job_id, log_level, &format!("gen_witness step 2: gen msg1"),
 			&mut gt1);
-
 		//2. generate cmF
 		// note that r_F is in statement. No need for extra blinding factor
 		let vec = vec![
@@ -2944,7 +2964,8 @@ where 	C: CurveGroup<ScalarField=F>,
 			params: cs_pp, b_full_mode: b_full_mode, fq_bits: fq_bits,
 			dummy_stmt: None,
 			_lk: PhantomData, b_cyclepair,
-			b_check_lkup})
+			b_check_lkup,
+			job_id: 0})
 	}
 
 	fn step_native_mut(
@@ -2970,6 +2991,14 @@ where 	C: CurveGroup<ScalarField=F>,
 	fn set_dummy_stmt(&mut self, stmt: StatementInst<F,LK>){
 		let vec = stmt.to_vec();
 		self.dummy_stmt = Some(vec);
+	}
+
+	fn set_job_id(&mut self, job_id: usize){
+		self.job_id = job_id;
+	}
+
+	fn get_job_id(&self) -> usize{
+		self.job_id
 	}
 
 	/// generate a dummy statement that could pass the check of
@@ -3060,7 +3089,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		//1. converts witness from extrenal_inputs to structured version
 		let (mut nc, mut nv) = (cs.num_constraints(), cs.num_witness_variables());
 		let mut gt = GTimer::new();
-		log_perf(0, log_level, &format!("### gen_step_cs START: cs: {}, vars: {}",
+		log_perf(self.job_id, log_level, &format!("### gen_step_cs START: cs: {}, vars: {}",
 			cs.num_constraints(),
 			cs.num_witness_variables()
 		), &mut gt);
@@ -3071,13 +3100,13 @@ where 	C: CurveGroup<ScalarField=F>,
 		assert!(cfg.get_total_size()==external_inputs.len(), "external_inputs.len: {} != cfg.total_size: {}", external_inputs.len(), cfg.get_total_size());
 		let wtns_var =  WitnessSigmaIR1CSVar::from_vec(&cfg, &external_inputs);
 		//println!("DEBUG USE 101: AFTER msg1: constraints: {}", cs.num_constraints());
-		log_perf(0, log_level, &format!(
+		log_perf(self.job_id, log_level, &format!(
 			"gen_step_cs step 1: cs: {}, vars: {}",
 			cs.num_constraints() - nc,
 			cs.num_witness_variables() - nv), &mut gt);
 			nc = cs.num_constraints();
 			nv = cs.num_witness_variables();
-		log(0, log_level, &format!("-- witness: stmt: {}, msg1: {}, msg2: {}, msg3: {}", wtns_var.statement.len(), wtns_var.msg1.len(), wtns_var.msg2.len(), wtns_var.msg3.len()));
+		log(self.job_id, log_level, &format!("-- witness: stmt: {}, msg1: {}, msg2: {}, msg3: {}", wtns_var.statement.len(), wtns_var.msg1.len(), wtns_var.msg2.len(), wtns_var.msg3.len()));
 
 		//2. check message2 (ro over stmt and msg1)
 		let mut gi = 0;
@@ -3108,7 +3137,7 @@ where 	C: CurveGroup<ScalarField=F>,
 				cs.num_constraints(), get_stack_space()
 			);
 		}
-		log_perf(0, log_level,&format!("gen_step_cs step 2: cs: {}, vars: {}",
+		log_perf(self.job_id, log_level,&format!("gen_step_cs step 2: cs: {}, vars: {}",
 			cs.num_constraints() - nc,
 			cs.num_witness_variables() - nv), &mut gt);
 		nc = cs.num_constraints();
@@ -3127,7 +3156,7 @@ where 	C: CurveGroup<ScalarField=F>,
 				check_cs(&cs, &format!("After gadget: {}", g.lock().unwrap().get_name()));
 			}
 			let stmt_len = g.lock().unwrap().get_msg_size().0;
-			log_perf(0, log_level, &format!("-- -- after msg3 of module {}: {}:\n\tINCREASED: constraints: {}, const vars: {}, wit vars: {} \n\t==> NOW: CS:{}, const: {}, witness: {}\n\t ==> stmt_size: {}. ", i, g.lock().unwrap().get_name(), cs.num_constraints()-nc, cs.num_instance_variables()-ni, cs.num_witness_variables()-nv, cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables(), stmt_len), &mut gt3);						
+			log_perf(self.job_id, log_level, &format!("-- -- after msg3 of module {}: {}:\n\tINCREASED: constraints: {}, const vars: {}, wit vars: {} \n\t==> NOW: CS:{}, const: {}, witness: {}\n\t ==> stmt_size: {}. ", i, g.lock().unwrap().get_name(), cs.num_constraints()-nc, cs.num_instance_variables()-ni, cs.num_witness_variables()-nv, cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables(), stmt_len), &mut gt3);						
 		}
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 3");
@@ -3137,7 +3166,7 @@ where 	C: CurveGroup<ScalarField=F>,
 				cs.num_constraints(), get_stack_space()
 			);
 		}
-		log_perf(0, log_level, &format!(
+		log_perf(self.job_id, log_level, &format!(
 			"gen_step_cs step 3: cs: {}, vars: {}, lc: {}",
 			cs.num_constraints() - nc,
 			cs.num_witness_variables() - nv,
@@ -3244,7 +3273,7 @@ where 	C: CurveGroup<ScalarField=F>,
 				cs.num_constraints(), get_stack_space()
 			);
 		}
-		log_perf(0, log_level, &format!(
+		log_perf(self.job_id, log_level, &format!(
 			"gen_step_cs step 4: cs: {}, vars: {}, lc: {}, output_size: {}",
 			cs.num_constraints() - nc,
 			cs.num_witness_variables() - nv,
@@ -3427,7 +3456,7 @@ where 	C: CurveGroup<ScalarField=F>,
 	}
 		//log(job_id, log_level, &format!("gen_step_cs step 5: BEFORE inv_hab22: {}, cs.lc_size: {}, cons: {}", inv_hab22_left_size, cs.inner().lc_map.len(), cs.num_constraints()));
 		let n_total = n_case1 + n_case2 + n_case3;
-		log_perf(0, log_level, &format!("gen_step_cs step 5: AFTER inv_hab22: {}, INCREASED cs.lc_size: {}, cons: {}, vars: {} -- Breakdown of logup cases: n_case1: ({}, {:.2}%), n_case2: ({}, {:.2}%), n_case3: ({}, {:.2}%)"
+		log_perf(self.job_id, log_level, &format!("gen_step_cs step 5: AFTER inv_hab22: {}, INCREASED cs.lc_size: {}, cons: {}, vars: {} -- Breakdown of logup cases: n_case1: ({}, {:.2}%), n_case2: ({}, {:.2}%), n_case3: ({}, {:.2}%)"
 		, inv_hab22_left_size, cs.inner().unwrap().borrow().lc_map.len() - nl, cs.num_constraints()-nc, cs.num_witness_variables()-nv, n_case1, 100.0*(n_case1 as f64)/(n_total as f64), n_case2, 100.0*(n_case2 as f64)/(n_total as f64), n_case3, 100.0*(n_case3 as f64)/(n_total as f64)
 		), &mut gt);
 		//log(job_id, log_level, &format!("-- Breakdown of logup cases: n_case1: ({}, {:.2}%), n_case2: ({}, {:.2}%), n_case3: ({}, {:.2}%)", 
@@ -3447,7 +3476,7 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		}
 		//log(job_id, log_level, &format!("-- lkup_size: {}, inv_hab22_right_size: {}", si.act_lookup_share_size.value()?, inv_hab22_right_size));
-		log_perf(0, log_level, &format!(
+		log_perf(self.job_id, log_level, &format!(
 				"-- -- gen_step_cs step 5.1: cs: {}, vars: {}: lc: {}",
 				cs.num_constraints() - nc,
 				cs.num_witness_variables() - nv,
@@ -3570,7 +3599,7 @@ where 	C: CurveGroup<ScalarField=F>,
 				cs.num_constraints(), get_stack_space()
 			);
 		}
-		log_perf(0, log_level, &format!(
+		log_perf(self.job_id, log_level, &format!(
 				"-- -- gen_step_cs step 5.2: cs: {}, vars: {}: lc: {}",
 				cs.num_constraints() - nc,
 				cs.num_witness_variables() - nv,
@@ -3605,7 +3634,7 @@ where 	C: CurveGroup<ScalarField=F>,
 				cs.num_constraints(), get_stack_space()
 			);
 		}
-		log_perf(0, log_level, &format!(
+		log_perf(self.job_id, log_level, &format!(
 			"gen_step_cs step 6: cs: {}, vars: {}, lc: {}",
 			cs.num_constraints() - nc,
 			cs.num_witness_variables() - nv,
@@ -3739,7 +3768,7 @@ where 	C: CurveGroup<ScalarField=F>,
 				cs.num_constraints(), get_stack_space()
 			);
 		}
-		log_perf(0, log_level, &format!("gen_step_cs step 7: cs: {}, vars: {}, lc: {}",
+		log_perf(self.job_id, log_level, &format!("gen_step_cs step 7: cs: {}, vars: {}, lc: {}",
 			cs.num_constraints() - nc,
 			cs.num_witness_variables() - nv,
 			cs.num_lc() - nl
@@ -3776,7 +3805,7 @@ where 	C: CurveGroup<ScalarField=F>,
 				cs.num_constraints(), get_stack_space()
 			);
 		}
-		log_perf(0, log_level, &format!(
+		log_perf(self.job_id, log_level, &format!(
 			"gen_step_cs step 8: cs: {}, vars: {}, lc: {}",
 			cs.num_constraints() - nc,
 			cs.num_witness_variables() - nv,
@@ -3840,7 +3869,7 @@ where 	C: CurveGroup<ScalarField=F>,
 				cs.num_constraints(), get_stack_space()
 			);
 		}
-		log_perf(0, log_level, &format!(
+		log_perf(self.job_id, log_level, &format!(
 			"gen_step_cs step 9: cs: {}, vars: {}, lc: {}, TOTAL: cs: {}, vars: {}",
 			cs.num_constraints() - nc,
 			cs.num_witness_variables() - nv,
@@ -3921,7 +3950,7 @@ where 	C: CurveGroup<ScalarField=F>,
 				cs.num_constraints(), get_stack_space()
 			);
 		}
-		log_perf(0, log_level, &format!(
+		log_perf(self.job_id, log_level, &format!(
 			"gen_step_cs step 10: cs: {}, vars: {}, lc: {}",
 			cs.num_constraints() - nc,
 			cs.num_witness_variables() - nv,
@@ -4221,6 +4250,7 @@ pub mod tests_sigma_ir1cs{
 	pub struct SixRootMapper<F:PrimeField, LK: LookupTableTwoCol<F>>{
 		pub _f: PhantomData<F>,
 		pub _lk: PhantomData<LK>,
+		pub job_id: usize,
 	}
 
 	/// get the cubic root of v (assuming its cubic root is
@@ -4240,6 +4270,13 @@ pub mod tests_sigma_ir1cs{
 
 	impl <F:PrimeField, LK: LookupTableTwoCol<F>> 
 	GadgetMapper<F,LK> for SixRootMapper<F, LK>{
+		fn set_job_id(&mut self, job_id: usize){
+			self.job_id = job_id;
+		}
+		fn get_job_id(&self)->usize{
+			self.job_id
+		}
+
 		/// use advice to generate container config and set it for
 		/// each gadget (if gadgetes support container config for
 		/// deseiralization). This is only needed for those gadgets in SED
@@ -4452,7 +4489,7 @@ pub mod tests_sigma_ir1cs{
 			(F::from(2u32), F::from(400u32)),
 		]);
 		let mapper_raw = SixRootMapper::<F,LK>{_f: PhantomData, 
-			_lk: PhantomData};
+			_lk: PhantomData, job_id: 0};
 		let mapper = Arc::new(Mutex::new(mapper_raw));
 		let lk_len = lk.get_size();
 		let share_size = mapper.lock().unwrap().gen_statement_structure(lk_len/n_steps)

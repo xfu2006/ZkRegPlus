@@ -94,13 +94,21 @@ pub fn compute_hc_var<F:PrimeField>(
 #[derive(Clone,Debug)]
 pub struct FoldPairGadget<F:PrimeField>{ 
 	_f: PhantomData<F>,
-	pub poseidon_config: PoseidonConfig<F>
+	pub poseidon_config: PoseidonConfig<F>,
+	pub job_id: usize,
 }
 
 impl <F:PrimeField + Absorb> SigmaGadget<F> for FoldPairGadget<F>{
 		fn get_name(&self)->&str{
 			"FoldPairGadget"
 		}
+
+	fn set_job_id(&mut self, job_id: usize){
+		self.job_id = job_id;
+	}
+	fn get_job_id(&self)->usize{
+		self.job_id
+	}
 
 	/// set the container cfg. This is only needed for those gadgets
 	/// in SED approach
@@ -197,12 +205,21 @@ impl <F:PrimeField + Absorb> SigmaGadget<F> for FoldPairGadget<F>{
 pub struct FoldPairMapper<F:PrimeField, LK:LookupTableTwoCol<F>>{
 	pub _f: PhantomData<F>,
 	pub _lk: PhantomData<LK>,
-	pub poseidon_config: PoseidonConfig<F>
+	pub poseidon_config: PoseidonConfig<F>,
+	pub job_id: usize,
 }
 
-impl <F:PrimeField + Absorb, LK: LookupTableTwoCol<F>> 
+impl <F:PrimeField + Absorb, LK: LookupTableTwoCol<F>>
 GadgetMapper<F,LK> for FoldPairMapper<F, LK>{
+	fn set_job_id(&mut self, job_id: usize){
+		self.job_id = job_id;
+	}
+	fn get_job_id(&self)->usize{
+		self.job_id
+	}
+
 	/// use advice to generate container config and set it for
+
 	/// each gadget (if gadgetes support container config for
 	/// deseiralization). This is only needed for those gadgets in SED
 	/// approach.
@@ -234,7 +251,8 @@ GadgetMapper<F,LK> for FoldPairMapper<F, LK>{
 	fn get_gadgets(&self) -> Vec<Arc<Mutex<dyn SigmaGadget<F> + Send + Sync>>>{ 
 		let f_gadget= FoldPairGadget::<F>{
 			_f:PhantomData, 
-			poseidon_config: self.poseidon_config.clone()
+			poseidon_config: self.poseidon_config.clone(),
+			job_id: self.job_id
 		};
 		vec![Arc::new(Mutex::new(f_gadget))]
 	}
@@ -373,7 +391,8 @@ where 	C: CurveGroup<ScalarField=F>,
 		F: PrimeField + Absorb + ColEle,
 {
 	//1. create a sigma instance
-	let mapper = FoldPairMapper::<F,LK>{_f: PhantomData, _lk: PhantomData, poseidon_config: poseidon_config.clone()};
+	let mapper = FoldPairMapper::<F,LK>{_f: PhantomData, _lk: PhantomData, 
+		poseidon_config: poseidon_config.clone(), job_id: 0};
 	let lkup_share_size = 0;
 	let b_check_lkup = true;
 	let mut sigma = SigmaIR1CS_Inst::<F, C, CS, LK, FoldPairMapper<F,LK>, H>::new_adv("paircycle".to_string(), poseidon_config.clone(), Arc::new(Mutex::new(mapper)), true, lkup_share_size, true, b_check_lkup).expect("error new sigma"); 

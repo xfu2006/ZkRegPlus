@@ -51,6 +51,7 @@ pub struct FsmGadget<F:PrimeField + ColEle>{
 
 	/// how many bits are used to represent a state
 	acdfa_state_part_bits: usize,
+	pub job_id: usize,
 }
 
 impl <F:PrimeField + ColEle> FsmGadget<F>{
@@ -59,12 +60,19 @@ impl <F:PrimeField + ColEle> FsmGadget<F>{
 		fsm_id: u32, 
 		acdfa_state_part_bits: usize) 
 	-> Self{
-		Self{_f: PhantomData, max_nibble_len, fsm_id, acdfa_state_part_bits}
+		Self{_f: PhantomData, max_nibble_len, fsm_id, acdfa_state_part_bits, job_id: 0}
 	}
 }
 
 impl <F:PrimeField + ColEle> SigmaGadget<F> for FsmGadget<F>{
 	fn get_name(&self)->&str {"FsmGadget"}
+
+	fn set_job_id(&mut self, job_id: usize){
+		self.job_id = job_id;
+	}
+	fn get_job_id(&self)->usize{
+		self.job_id
+	}
 
 	/// set the container cfg. This is only needed for those gadgets
 	/// in SED approach

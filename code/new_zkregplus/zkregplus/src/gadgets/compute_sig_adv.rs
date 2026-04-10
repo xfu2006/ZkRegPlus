@@ -164,6 +164,8 @@ pub struct ComputeSigAdvGadget<F:PrimeField + ColEle>{
 	pub dummy_cfg: ContainerConfig,
 	pub my_idx_in_context: Option<usize>,
 	_f: PhantomData<F>,
+
+	pub job_id: usize,
 }
 
 // ---------------------------------------------
@@ -236,6 +238,7 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		subsig_extra_info_igc: &SubsigInfoStore,
 		v_sig_obj: &Vec<Arc<ClamavSig>>, //needs to cover all inp_sigs
 		sig_to_id: &HashMap<String,usize>,
+		_job_id: usize,
 	) ->Result<Self, Error>{
 		let stmt_container = Container::<F>::new("compute_sig_adv_stmt");
 		let b_debug = false;
@@ -580,10 +583,12 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 			assert!(set1.is_disjoint(&set2));
 
 		}
-		let (inp_subsigs, prf_inp_subsigs) = gen_union_prf(
-			&inp_subsigs_cs, &inp_subsigs_igc, 
-			&vec![&inp_subsigs_cs[..], &inp_subsigs_igc[..]].concat(),
-			"prf_inp_subsigs").unwrap();
+		let inp_subsigs = vec![&inp_subsigs_cs[..], &inp_subsigs_igc[..]]
+			.concat();
+		let prf_inp_subsigs = gen_union_prf(
+			&inp_subsigs_cs, &inp_subsigs_igc, &inp_subsigs,
+			"prf_inp_subsigs"
+		).unwrap();
 		let raw_result = vec![&raw_result_cs[..], &raw_result_igc[..]]
 			.concat();
 		let n1 = n1_cs + n1_igc;
@@ -1424,7 +1429,8 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 			store_extra_info_cs, 
 			store_extra_info_igc, 
 			&v_sig_obj, 
-			&sigs_to_id 
+			&sigs_to_id,
+			0 
 		).expect("\n\n===== ***** =======Create dummy advice err. This is system-wide, unable to create circ. Needs to increase capacity as suggested.\n===============\n");
 		let mut vec_cfg = prev_cfgs.clone();
 		vec_cfg.push(dummy_adv.stmt_container.lock().unwrap().get_cfg());
@@ -1438,7 +1444,8 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 			_f: PhantomData, 
 			capacity: Clone::clone(capacity), 
 			cfgs_context: None,
-			my_idx_in_context: None, dummy_cfg
+			my_idx_in_context: None, dummy_cfg,
+			job_id: 0
 		}
 	}
 
@@ -2309,6 +2316,13 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 impl <F:PrimeField + ColEle> SigmaGadget<F> for ComputeSigAdvGadget<F>{
 	fn get_name(&self)->&str {"ComputeSigAdvGadget"}
 
+	fn set_job_id(&mut self, job_id: usize){
+		self.job_id = job_id;
+	}
+	fn get_job_id(&self)->usize{
+		self.job_id
+	}
+
 	/// set the container cfg. This is only needed for those gadgets
 	/// in SED approach
 	fn set_container_cfg(&mut self, cfgs_context: std::sync::Arc<Vec<ContainerConfig>>, idx: usize){
@@ -2653,7 +2667,7 @@ pub mod tests_compute_sig_adv{
 				1, //dist to wea 
 				&nibbles, &acdfa_cs, inp_state_cs, 
 				inp_loc_cs, &input_subsigs_cs, &cap, fsm_id_cs, 
-				&bundle_cs.vec_subsig_stores[store_id])
+				&bundle_cs.vec_subsig_stores[store_id], 0)
 					.expect("fsm_adv advice err"); 
 			let stmt_faa_cs = adv_faa_cs.stmt_container;
 			let cfg_faa_cs = stmt_faa_cs.lock().unwrap().get_cfg(); 
@@ -2663,7 +2677,7 @@ pub mod tests_compute_sig_adv{
 				2, //dist to wea
 				&nibbles, &acdfa_igc, inp_state_igc, 
 				inp_loc_igc, &input_subsigs_igc, &cap, fsm_id_igc, 
-				&bundle_igc.vec_subsig_stores[store_id])
+				&bundle_igc.vec_subsig_stores[store_id], 0)
 					.expect("fsm_adv advice err"); 
 			let stmt_faa_igc = adv_faa_igc.stmt_container;
 			let cfg_faa_igc = stmt_faa_igc.lock().unwrap().get_cfg(); 
@@ -2678,7 +2692,7 @@ pub mod tests_compute_sig_adv{
 				&pat_loc_cs,
 				&input_subsigs_cs,
 				fsm_id_cs, steps_store_cs, &cap_disc, &inp_steps_queue_cs, last_loc_cs,
-				i
+				i, 0
 			).expect("discharge_adv advice err");
 			let oup_queue_cs = adv_disc_cs.get_output_steps_queue();
 			let stmt_disc_cs= adv_disc_cs.stmt_container;
@@ -2693,7 +2707,7 @@ pub mod tests_compute_sig_adv{
 				&pat_loc_igc,
 				&input_subsigs_igc,
 				fsm_id_igc, steps_store_igc, &cap_disc, &inp_steps_queue_igc, last_loc_igc,
-				i
+				i, 0
 			).expect("discharge_adv advice err");
 			let oup_queue_igc = adv_disc_igc.get_output_steps_queue();
 			let stmt_disc_igc= adv_disc_igc.stmt_container;
@@ -2719,7 +2733,8 @@ pub mod tests_compute_sig_adv{
 					steps_extra_store_cs, 
 					steps_extra_store_igc, 
 					&v_sig_obj, 
-					&db.sig_to_id
+					&db.sig_to_id,
+					0
 				).expect("comp advice err");
 				let stmt_sig = adv_sig.stmt_container;
 				let cfg_sig = stmt_sig.lock().unwrap().get_cfg();
