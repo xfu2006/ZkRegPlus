@@ -2144,7 +2144,7 @@ pub fn gen_disjoint_union_prf_adv<F:PrimeField + ColEle>(
 	set2: &Vec<F>,
 	set3: &Vec<F>, //target result
 	name: &str,
-) -> Result<(Vec<F>,std::sync::Arc<std::sync::Mutex<Container<F>>>), Error>{
+) -> Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 	let b_debug = false;
 	let res = vec![&set1[..], &set2[..]].concat();
 	if b_debug{
@@ -2164,7 +2164,7 @@ pub fn gen_disjoint_union_prf_adv<F:PrimeField + ColEle>(
 	prf.lock().unwrap().add_col(Col::new_const(vec![f_rg2;n],
 		"sid_m_tbl",  IDX_SI_DATA));
 
-	Ok( (res, prf) )
+	Ok( prf )
 }
 
 /// return a hashmap which given a vector computes the

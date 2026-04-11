@@ -114,7 +114,7 @@ pub struct StepQueue<F:PrimeField + ColEle>{
 
 /// A step queue item represents the info of step que
 /// for ONE step of ONE subsig.
-#[derive(Clone,Debug,PartialEq)]
+#[derive(Clone,Debug,PartialEq,Eq,Hash)]
 pub struct StepQueueItem<F: PrimeField + ColEle>{
 	/// encoded version of subsig-id-pat-rg_start-rg_end
 	pub encoded: F, 
@@ -882,6 +882,30 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 	pub fn new(subsigs: Vec<F>, store_items: HashMap<F,Vec<StepQueueItem<F>>>, capacity: &DischargeAdvCapacity, q_type: StepQueueType, b_igc: bool)->Self{
 		assert!(!subsigs.contains(&F::zero()));
 		assert!(!store_items.contains_key(&F::zero()));
+		let b_debug = true;
+		//assert alidity of store_items
+		if b_debug{
+			for subsig in &subsigs{
+				let vec_items = store_items.get(subsig).expect(&format!(
+					"cannot find subsig: {}", subsig));
+				let set_items = vec_items.iter().map(|x| x.clone())
+					.collect::<HashSet<StepQueueItem<F>>>();
+				if set_items.len()<vec_items.len(){
+					println!("ERROR: for subsig: {} there are duplicated step queue items", subsig);
+					for i in 0..vec_items.len(){
+						if vec_items[i].step != F::from(i as u32){
+							println!("CONSTRUCTION of store items ERROR!");
+							for j in 0..vec_items.len(){
+								println!(" -- item -- {}", j);
+								vec_items[i].dump();
+							}	
+						}
+						assert!(vec_items[i].step == F::from(i as u32));
+					}
+					assert!(set_items.len()<vec_items.len(), "set size: {}, vec size: {}", set_items.len(), vec_items.len());
+				}
+			}
+		}
 		Self{subsigs, store_items, capacity: Clone::clone(capacity),q_type,
 			b_igc}
 	}
