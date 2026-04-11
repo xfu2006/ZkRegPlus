@@ -27621,4 +27621,10 @@ Goal 4. continue to fix the problem of uinion proof
 	[d] still could not understand where it goes wrong. May need further
 		debug info.
 	[e] push the current and deploy.
-                                                                        1
+                                                                        
+Sat 04/11/2026
+Goal 1. continue to debug
+	[a] make sure that there are no duplicates in sq_item, so collect
+		locs separately
+	[b] add an additoinal checka
+	[c] go over the code again

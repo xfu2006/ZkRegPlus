@@ -30,9 +30,26 @@ use ark_r1cs_std::{
 };
 use data_processor::clam_db::{RANGE2_BIT,RANGE2};
 
+pub fn print_set<F:PrimeField>(msg: &str, set: &HashSet<F>){
+	println!("=== {} ====", msg);
+	for x in set{ println!("  {} ", x);}
+}
+
 pub fn print_vec<F:PrimeField + ColEle>(msg: &str, v: &Vec<F>){
 	println!("=== {} ====", msg);
 	for i in 0..v.len(){ println!("  {} => {}", i, v[i]); }
+}
+
+pub fn check_disjoint<F:PrimeField>(msg: &str, v1: &Vec<F>, v2: &Vec<F>){
+	let set1 = v1.iter().map(|x| *x).collect::<HashSet<F>>();		
+	let set2 = v2.iter().map(|x| *x).collect::<HashSet<F>>();		
+	if !set1.is_disjoint(&set2){
+		println!("ERROR: failed checkdisjoint for {}", msg);
+		let interset = set1.intersection(&set2)
+			.cloned().collect::<HashSet<F>>();
+		print_set("DETAILS: ", &interset);
+	}
+	assert!(set1.is_disjoint(&set2));
 }
 
 /// quickly generate repeating of vec for n times.

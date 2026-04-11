@@ -21,7 +21,9 @@ use utils::{logger::{log_perf, LOG1},
 	timer::Timer as GTimer};
 use crate::gadgets::{
 	commons::{gen_m_table,check_arr_eq,encode_cols,decode_cols,new_var,
+		//print_set, 
 		var_to_lb, var_to_tuple_adv, is_zero_better, 
+		check_disjoint,
 		new_const_var, encode_2col_var, encode_2col_var_adv,
 		check_arr_eq_arr, encode_cols_var_adv, is_sorted,
 		check_eq, encode_2col, check_rg2, 
@@ -534,6 +536,7 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 		info: &SubsigStepStore)
 	->(Self, Self, StepFwdPrf<F>){
 		//1. pat_loc to hash table for easy processing
+		let b_debug = true;
 		let hm_loc = Self::pat_loc_to_hm(pat_loc);
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
@@ -582,24 +585,53 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 					else {StepQueueItem::new(*subsig, F::from(i as u32),
 							dst_pat, f_rg_start, f_rg_end, vec![])};
 				let mut total_added = 0;
+
+				//collect the locs to add and the corresponding
+				//prf (note that we MERGE all locs to add and
+				//eventually generate ONE to_add_item (but it
+				//may correspond to MULTIPLE fwd_prfs, which
+				//is later shown the correlation using lkups)
+				let mut next_locs:Vec<F> = vec![];
+				let mut to_add_item = None;
 				for j in 0..vec_res[i-1].locs.len(){//each encoded-loc
-					let (to_add_item, fwd_prf_item) = vec_res[i-1].
+					let (new_to_add_item, fwd_prf_item) = vec_res[i-1].
 						gen_forward_prf(dst_pat, f_rg_start, f_rg_end, 
 							j, &locs_available);
-					cur_q_item.add(&to_add_item);
-					total_added += to_add_item.locs.len();
-					if to_add_item.locs.len()>0{
-						vec_to_add.push(to_add_item);
-					}
+					total_added += new_to_add_item.locs.len();
+					let mut new_locs = new_to_add_item.locs.clone();
+					to_add_item = if to_add_item.is_none(){
+						Some(new_to_add_item)
+					}else{to_add_item}; //this is just to get a template
+										//for to_add_item
+					next_locs.append(&mut new_locs);
 					vec_fwd_prf.push(fwd_prf_item);
 				}
 				//we will stop if results in 0 items added
 				//when it has explored ALL existing items in the
-				//current sq_res. Note that when total_added is 0
-				//there might be other pac_loc that fits further steps
-				//not processed in items yet.
+				//current sq_res. 
 				if total_added==0 && i>=items.len() {break};
-				//otherwise push the most recent queue_item
+
+				let mut next_locs = next_locs.into_iter()
+					.collect::<HashSet<F>>()
+					.into_iter().collect::<Vec<F>>();
+				next_locs.sort();
+				assert!(to_add_item.is_some());
+				let mut to_add_item = to_add_item.unwrap();
+				if b_debug{
+					check_disjoint("cur_q_item.locs disjoint next_locs",
+						&cur_q_item.locs, &next_locs);
+				}
+				to_add_item.locs = next_locs.clone();
+				vec_to_add.push(to_add_item);
+				
+				let mut cur_q_locs = vec![
+					&cur_q_item.locs[..],	
+					&next_locs[..]
+				].concat().into_iter().map(|x| x)
+				.collect::<HashSet<F>>().into_iter()
+				.collect::<Vec<F>>();
+				cur_q_locs.sort();
+				cur_q_item.locs = cur_q_locs;
 				vec_res.push(cur_q_item);
 			}
 			
@@ -886,6 +918,7 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 		//assert alidity of store_items
 		if b_debug{
 			for subsig in &subsigs{
+				//1. check there are no duplicated items.
 				let vec_items = store_items.get(subsig).expect(&format!(
 					"cannot find subsig: {}", subsig));
 				let set_items = vec_items.iter().map(|x| x.clone())

@@ -1524,10 +1524,10 @@ pub mod tests_zkp_driver{
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
 		//small_data::<Fr>(b_check_lkup); //small data
-		small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)
 		//small_data2::<Fr>(b_check_lkup);  //10k data 
+		small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
+		//small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)
 		//small_data_debug::<Fr>(b_check_lkup);  //for debug
-		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//small_data4::<Fr>(b_check_lkup); //multi circ of 1M, 2M, 4M data
 		//full_data1::<Fr>(b_check_lkup);
 		//full_data2::<Fr>(b_check_lkup); //full data high acc state 
