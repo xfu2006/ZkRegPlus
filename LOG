@@ -27623,8 +27623,24 @@ Goal 4. continue to fix the problem of uinion proof
 	[e] push the current and deploy.
                                                                         
 Sat 04/11/2026
+LOC (gadgets): 21654 -> 22080 (+400) accumulated several days
 Goal 1. continue to debug
 	[a] make sure that there are no duplicates in sq_item, so collect
 		locs separately
 	[b] add an additoinal checka
 	[c] go over the code again
+	[d] unit test
+	[e] regression test
+	[f] deploy to server and test. Now the idea is to constraint
+		the construction so that there are no duplicates of locs.
+Goal 2. full_data4() set 0 works!
+
+Sunday 04/12/2026
+LOC (gadgets): 22080
+Goal 1. keep track of all full_data4
+	[a] 9:36am prove_3: seg_id: 396
+	[b] 10:06am 445
+	[c] 10:54 word_id: 2, seg_id: 6 (already passed word_id: 1)
+	[d] 11:33 word)id: seg_id: 78 
+	[e] 11:52 word_id: 2, seg_id: 113
+	[f] 2:07pm word_id: 2, seg_id: 356
