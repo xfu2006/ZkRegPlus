@@ -660,7 +660,7 @@ where
 	let lkup = Arc::new(db.lkup);
 	foldpot_main::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,FC<CF1<C1>,C1,CS1>,
 		S,LK<CF1<C1>>,GM<CF1<C1>>, false>(
-		lkup, vec_circs, jobs).expect("main err");
+		lkup, vec_circs, &mut jobs).expect("main err");
 
 }
 
@@ -807,8 +807,8 @@ pub mod tests_zkp_driver{
 			vec![
 				format!("{}/binexec_p1.dat",set1),
 				format!("{}/binexec_p2.dat",set1),
-				//format!("{}/binexec_p3.dat",set1),
-				//format!("{}/binexec_p4.dat",set1)
+				format!("{}/binexec_p3.dat",set1),
+				format!("{}/binexec_p4.dat",set1)
 			], //list of files to discharge
 			"data/small_data_set/reports/report.dat", //report
 			b_read_cache,

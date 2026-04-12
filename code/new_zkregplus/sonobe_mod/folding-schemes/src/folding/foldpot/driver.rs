@@ -1809,10 +1809,12 @@ pub fn write_to_file(fname: &str, line: &str){
 /// (3) the corresponding word_info for each word in vec_words.
 ///
 /// NOTE: vec_circ should be ordered as required by Driver (see its doc)
+/// NOTE: jobs is mut because we might PAD all jobs so that they have
+/// the same number of words.
 pub fn foldpot_main<E:Pairing<G1=C1,G2=C2G2>,P:PairingVar<E,CF3<C2G2>>+std::fmt::Debug+Clone,C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, FC, S, LK, GM, const H: bool>(
 	lkup: Arc<LK>, //the lookup table defines the regex automatas
 	vec_circ: Vec<Vec<FC>>,
-	jobs: Vec<FoldPotJob<E::ScalarField>>,
+	jobs: &mut Vec<FoldPotJob<E::ScalarField>>,
 ) -> Result<(), Error>
 where
 	<E as Pairing>::ScalarField: ColEle,
@@ -1862,19 +1864,39 @@ where
 	C1::Config: SWCurveConfig,
 	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug + Send + Sync,
 {
-	//0. Fix the circuit with dummy statements
-	// here we assume that each circuit can always handle
-	// words of zeros, and set its dummy_statement for preprocess()
-	// to build keys.
 	let log_level: usize = LOG1;
 	let mut gt_all = GTimer::new();
 	log(0, log_level, &format!("===== fold_pot starts with {} jobs =====", 
 		jobs.len()));
+
+	//0. preprpcessing jobs to make sure that all have the
+	//same number of words
 	let global_max_words = jobs.iter().map(|job| job.vec_words.len())
 		.max().unwrap_or(0);
+
+	let (min_word, min_word_info, min_word_fname) = jobs.iter()
+		.flat_map(|j| j.vec_words.iter()
+			.zip(j.vec_word_info.iter())
+			.zip(j.vec_word_fnames.iter()))
+		.min_by_key(|((w, _), _)| w.len())
+		.map(|((w, info), fname)| (w.clone(), info.clone(), fname.clone()))
+		.unwrap_or((vec![], WordInfo::dummy(), "dummy".to_string()));
+
+	for job in jobs.iter_mut() {
+		while job.vec_words.len() < global_max_words {
+			job.vec_words.push(min_word.clone());
+			job.vec_word_info.push(min_word_info.clone());
+			job.vec_word_fnames.push(min_word_fname.clone());
+		}
+	}
+
 	let global_max_total_n = jobs.iter().map(|job| job.vec_words.iter()
 		.map(|x| x.len()).sum::<usize>()).max().unwrap_or(0);
 
+	//1. Fix the circuit with dummy statements
+	// here we assume that each circuit can always handle
+	// words of zeros, and set its dummy_statement for preprocess()
+	// to build keys.
 	let mut vec_circ = vec_circ.clone();
 	let n_circ = vec_circ.iter().map(|row| row.len()).sum::<usize>();
 	let mut id = 0;
@@ -1967,10 +1989,10 @@ where
 		//0. retrieve the words and word_info
 	  	log(job_id, log_level, &format!("--- Job {} starts ---", job_id));
 	  	let mut gt1 = GTimer::new();
-	  	let vec_words = job.vec_words;
-	  	let vec_words_info = job.vec_word_info;
+	  	let vec_words = &job.vec_words;
+	  	let vec_words_info = &job.vec_word_info;
 	  	let idx_individual_prf = job.idx_individual_prf;
-	  	let vec_word_fnames = job.vec_word_fnames;
+	  	let vec_word_fnames = &job.vec_word_fnames;
 	  	assert!(vec_word_fnames.len()==vec_words.len());
 	  	let mut rng = rand::rngs::OsRng;
 	  	let poseidon_config = poseidon_canonical_config::<C1::ScalarField>();
