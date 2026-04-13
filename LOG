@@ -27677,6 +27677,7 @@ Goal 2. observe full_clamav in server.
 	[b] need to revise ALL decrease_copy
 		-> change and introduce vars
 		-> regression testing on local server
+		-> deploy server should manually adjust settings.
 	[b] 8 jobs parallelsim 
 		cpu:
 		ram
