@@ -355,7 +355,7 @@ impl ContainerConfig{
 				cfg = res; 
 			}
 		}
-		assert!(cfg.is_some());
+		assert!(cfg.is_some(), "cfg is None! root_idx: {}, path: {}, context_path: {}", root_idx, path, context[root_idx].get_path());
 		let cfg = cfg.unwrap();
 
 		match cfg{//note cfg is just a copy

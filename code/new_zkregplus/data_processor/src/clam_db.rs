@@ -30,7 +30,8 @@ use rustomaton::dfa::DFA;
 use utils::{
 	os::{read_lines,create_new_cache_dir,write_to_file,proj_root,read,write_sigs_to_dir},
 	timer::{Timer},
-	logger::{flog,flog_perf,LOG2,LOG1,LOG_LEVEL},
+	logger::{flog,flog_perf,LOG2,LOG1},
+	consts::read_global_config,
 };
 use folding_schemes::{
 	Error,
@@ -51,11 +52,6 @@ pub const STATE_BIT:usize =  24;
 
 /// The bit-width of RANGE2 table 
 /// IN PRODUCTION NEEDS TO CHANGE THE SAME SIZE OF STATE_BIT
-//pub const RANGE2_BIT: usize = 10;
-//pub const RANGE2_BIT: usize = 8;
-pub const RANGE2_BIT: usize = 18;
-//pub const RANGE2_BIT: usize = 24; //good for small size 16M nibbles = 8MB
-//pub const RANGE2_BIT: usize = 26; //(allowing 64M nibbles = 32MB)
 
 // the following are trival related sub-table ids
 // they are located at the very beginning of the entire lkup
@@ -245,7 +241,7 @@ impl SubsigPatternStore{
 	/// <subsig_id, id1, state_id, id2, pat_id>
 	/// where state_id and pat_id are adjusted values (+1).
 	/// For each entry, its wrapped by 2 dummy entries (0 entry and
-	/// max entry), where `max = 2^RANGE2_BITS-1`. All fields 
+	/// max entry), where `max = 2^read_global_config().range2_bitS-1`. All fields 
 	/// in range value RANGE2. In each `atomic table` values
 	/// are all sorted in ascending order.
 	/// Example.
@@ -286,7 +282,7 @@ impl SubsigPatternStore{
 	/// NOTE: a dummy 0 entry is added at the beginning if inp_subsigs_id
 	/// contains dummy 0's as padding values.
 	pub fn project_by(&self, inp_subsigs_id: &Vec<usize>)->Self{
-		let max_val:usize = (1<<RANGE2_BIT) - 1;
+		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let mut new_map = inp_subsigs_id.par_iter().filter(|id|
 			**id!=0usize && **id!=max_val
 		).map(|id|
@@ -503,7 +499,7 @@ impl SubsigStepStore{
 	/// following fields:
 	/// <subsig_id, id1, pat_id, range_start, range_end>
 	/// All "value" fields have range in RANGE2 (note: may include max =
-	///  `2^RANGE2_BIT-1`).
+	///  `2^read_global_config().range2_bit-1`).
 	/// Dummy entries are marked as 0 and max in patid_field.
 	/// Example.
 	/// subsig_id    id    pat_id 		rg_stt	rg_endpat_id
@@ -520,7 +516,7 @@ impl SubsigStepStore{
 		acdfa_id: u32,
 		state_part_bits: usize,
 	) {
-		let max_val:usize = (1<<RANGE2_BIT) - 1;
+		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let max = F::from(max_val as u32);
 		let cols = self.gen_cols(state_part_bits, None);
 		let _tbl_id = F::from(acdfa_id + STORE_SUBSIG_STEP);
@@ -683,7 +679,7 @@ impl SubsigStepStore{
 		//we set f1 to f4 order so that the entries when added
 		//are easily sorted.
 		let info_id= F::from(0x23001101u32); //tag to avoid collision
-		let f1 = F::from(1u64<<RANGE2_BIT);
+		let f1 = F::from(1u64<<read_global_config().range2_bit);
 		let factor1 = f1*f1*f1*f1*f1; //models encoded
 		let factor2 = F::from(1u64<<32); //32-bit 
 
@@ -701,7 +697,7 @@ impl SubsigStepStore{
 	///   NOTE: a dummy 0 entry is added at the beginning if inp_subsigs_id
 	/// contains dummy 0's as padding values.
 	pub fn project_by(&self, inp_subsigs_id: &Vec<usize>)->Self{
-		let max_val:usize = (1<<RANGE2_BIT) - 1;
+		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let mut new_map = inp_subsigs_id.par_iter().filter(|id|
 			**id!=0usize && **id!=max_val
 		).map(|id| (*id,  self.subsig_to_steps.get(id).expect(
@@ -731,7 +727,7 @@ impl SubsigStepStore{
 		//NOTE: entry format
 		// (subsig_id, id1, pat_id, rg_start, rg_end)
 		//1. define the encode function
-		assert!(state_part_bits == RANGE2_BIT); //for legacy code
+		assert!(state_part_bits == read_global_config().range2_bit); //for legacy code
 		let factor = F::from(1u32<<state_part_bits);
 		let encode_vec = |vec: &Vec<usize>| -> F{
 			#[cfg(test)] {assert!(vec.len()==5);}
@@ -871,7 +867,7 @@ impl SubsigInfoStore{
 	/// NOTE that this is a static function. It generates the table id
 	/// given the acdfa_id and piece id (such as subsig_type, comp_op, ...).
 	/// It generates a 128-bit table_id which is unique for each subsig.
-	/// Note that subsig_id is actually RANGE2_BIT (26), which can
+	/// Note that subsig_id is actually read_global_config().range2_bit (26), which can
 	/// fit in u32.
 	#[inline(always)]
 	pub fn gen_info_tbl_id<F:PrimeField>(
@@ -908,10 +904,10 @@ impl SubsigInfoStore{
 	pub fn add_store_to_lkup<F:PrimeField>(&self, 
 		lkup: &mut LookupTableTwoCol_Inst<F>, 
 		acdfa_id: u32,
-		_state_part_bits: usize, //deprecated. use RANGE2_BIT directly
+		_state_part_bits: usize, //deprecated. use read_global_config().range2_bit directly
 	) {
-		let factor = F::from(1u32 << RANGE2_BIT);
-		let max_val:usize = (1<<RANGE2_BIT) - 1;
+		let factor = F::from(1u32 << read_global_config().range2_bit);
+		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let max = F::from(max_val as u64);
 
 		assert!(!self.subsig_ids.contains(&0), 
@@ -1017,7 +1013,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		lk.vals.append(&mut tuples);
 
 		//3. add the BitNot
-		let factor = F::from(1u32 << RANGE2_BIT);
+		let factor = F::from(1u32 << read_global_config().range2_bit);
 		let tbl_id = F::from(TRI_TRUTH_TBL);
 		let vals = [
 			(TriOp::Not, TriVal::False, TriVal::True),
@@ -1148,7 +1144,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		//5. encode the finals to sigs
 		let f_final_2_sig = F::from(state_2_sig_id);
 		let f_final_sig_count = F::from(state_sig_count_id);
-		let sigbit_factor = F::from(1u32 << RANGE2_BIT);
+		let sigbit_factor = F::from(1u32 << read_global_config().range2_bit);
 		let sigbit_fac2 = sigbit_factor * sigbit_factor;
 		let sigbit_fac3 = sigbit_fac2 * sigbit_factor;
 
@@ -1179,7 +1175,7 @@ impl <F:PrimeField> ClamavDB<F>{
 
 		let vec_final2sig_count = vec_temp.par_iter().map(|(fid, vec)|{
 			let f_count = F::from(vec.len() as u32);
-			assert!(vec.len()< (1<<RANGE2_BIT));
+			assert!(vec.len()< (1<<read_global_config().range2_bit));
 			// encoded as final_state_idx || sig_count
 			let encoded = F::from(*fid as u32) * sigbit_factor + f_count;
 			(f_final_sig_count, encoded)
@@ -1366,7 +1362,7 @@ impl <F:PrimeField> ClamavDB<F>{
 
 		//4. transitions
 		let f_trans_id = F::from(trans_tbl_id);
-		let unit = RANGE2_BIT;
+		let unit = read_global_config().range2_bit;
 		#[cfg(test)]{
 			assert!(unit*2 + 4 < 64);
 			assert!( (1<<unit) > num_states );
@@ -1581,7 +1577,7 @@ impl <F:PrimeField> ClamavDB<F>{
 				store_items.push(item);
 
 				//4. build the store_items for step item 
-				let max:usize = (1<<RANGE2_BIT) - 1;
+				let max:usize = (1<<read_global_config().range2_bit) - 1;
 				let vec_bounds = if b_igc!=s.vec_subsig_obj[i].b_ignore_case{
 					vec![]
 				}else{//process it
@@ -1892,7 +1888,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		needs_ised_igc_list_file: &str,
 		cfg: &ClamavApproxConfig, vlog: &mut Vec<String>)->Result<Self, Error>{
 		let log_level = LOG2;
-		let b_perf = true && log_level>=LOG_LEVEL;
+		let b_perf = true && log_level>=read_global_config().log_level;
 		let b_debug = false;
 		let mut timer = Timer::new();
 		//1. generate all signatures
@@ -2018,7 +2014,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		Self::add_acdfa_to_lkup(&mut lkup, &dfa_crit, CRIT_INIT, &map_crit_pat, &sig_to_id);
 		Self::add_acdfa_to_lkup(&mut lkup, &dfa_crit_igc, CRIT_IGC_INIT, &map_crit_pat_igc, &sig_to_id);
 		Self::add_range_to_lkup(&mut lkup, F::from(CHAR), (0,16));
-		Self::add_range_to_lkup(&mut lkup, F::from(RANGE2), (0,1<<RANGE2_BIT));
+		Self::add_range_to_lkup(&mut lkup, F::from(RANGE2), (0,1<<read_global_config().range2_bit));
 		Self::add_bundle_subsig_to_lkup(&mut lkup, &sig_to_id, &bundle_subsig, false)?;
 		Self::add_bundle_subsig_to_lkup(&mut lkup, &sig_to_id, &bundle_subsig_igc, true)?;
 		Self::add_sig_evaldnf_to_lkup(&mut lkup, &v_sigs, &sig_to_id); 

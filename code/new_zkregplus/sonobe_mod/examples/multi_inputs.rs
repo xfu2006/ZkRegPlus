@@ -142,7 +142,7 @@ fn main() {
 
     println!("Prepare Nova ProverParams & VerifierParams");
     let nova_preprocess_params = PreprocessorParam::new(poseidon_config, F_circuit);
-    let nova_params = N::preprocess(&mut rng, &nova_preprocess_params).unwrap();
+    let nova_params = N::preprocess(&mut rng, &nova_preprocess_params, 0).unwrap();
 
     println!("Initialize FoldingScheme");
     let mut folding_scheme = N::init(&nova_params, F_circuit, initial_state.clone()).unwrap();

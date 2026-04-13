@@ -1,3 +1,4 @@
+use utils::consts::read_global_config;
 /* Created 03/04/2025 
 	Revised: 10/13/2025 -> improved m_table performance to 1 x nlen
 */

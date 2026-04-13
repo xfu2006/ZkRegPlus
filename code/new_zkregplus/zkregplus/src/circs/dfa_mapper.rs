@@ -19,7 +19,7 @@
 */
 
 use folding_schemes::folding::foldpot::container_config::ColEle;
-use utils::{logger::{log,log_perf, LOG1, LOG7,LOG_LEVEL}, timer::Timer};
+use utils::{logger::{log,log_perf, LOG1, LOG7}, timer::Timer, consts::read_global_config};
 use std::{
 	marker::PhantomData,
 	sync::{Arc, Mutex},
@@ -39,7 +39,6 @@ use folding_schemes::{
 use ark_ff::{PrimeField};
 use crate::{
 	circs::composable_gadget_mapper::ComponentMapper,
-	circs::{MIN_SIGS, MIN_SUBSIGS},
 	gadgets::word_extract_adv::{WordExtractAdvCapacity, WordExtractAdvGadget, WordExtractAdvAdvice },
 	gadgets::word_extract::{LEGS},
 	gadgets::dfa_adv::{DfaAdvCapacity,DfaAdvAdvice,DfaAdvGadget},
@@ -129,14 +128,14 @@ impl DfaCapacity{
 		if level==1{
 			Self::new(
 				self.max_word_len,
-				(self.sigs*4/5).max(MIN_SIGS),
-				(self.subsigs*4/5).max(MIN_SUBSIGS),
+				(self.sigs*4/5).max(read_global_config().min_sigs),
+				(self.subsigs*4/5).max(read_global_config().min_subsigs),
 			)
 		}else{
 			Self::new(
 				self.max_word_len,
-				(self.sigs/2).max(MIN_SIGS),
-				(self.subsigs/2).max(MIN_SUBSIGS),
+				(self.sigs/2).max(read_global_config().min_sigs),
+				(self.subsigs/2).max(read_global_config().min_subsigs),
 			)
 		}
 	}
@@ -427,7 +426,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F> + Send + Sync> ComponentMa
 	/// return the sizes of inp, oup, data buffer
 	fn get_sizes(&self)->Vec<usize>{
 		let log_level = LOG7;
-		let b_perf = true && log_level>=LOG_LEVEL;
+		let b_perf = true && log_level>=read_global_config().log_level;
 		if b_perf{
 			log(0, log_level, &format!(" ## dfa gadgets data len: ==="));
 			for i in 0..self.gadgets.len(){
@@ -636,7 +635,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F> + Send + Sync> ComponentMa
 	/// the prev_stmt or the vector of its prev_stmt.
 	fn build_statement_comp(&self, _comp_id: usize, _stmt_map_id: usize, _word_seg: &Vec<F>, _actual_word_len: usize, _lkup: &Arc<LK>, _extra_info: &StatementExtraInfo<F>, advice: &Arc<dyn NdAdvice + Send + Sync>, _cfg: &StatementConfig, _stmt_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>{
 		let log_level = LOG7;
-		let b_perf = LOG_LEVEL >= log_level;
+		let b_perf = read_global_config().log_level >= log_level;
 		//1. take the advice
 		let advice = advice.as_any().downcast_ref::<DfaAdvice<F>>()
 			.expect("downcast err!");

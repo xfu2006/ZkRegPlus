@@ -42,7 +42,8 @@ discharge_subsig_adv (one for case sentive and one for ignore case).
 */
 
 use folding_schemes::folding::foldpot::container_config::ColEle;
-use utils::{logger::{log, log_perf, LOG7, LOG1, LOG_LEVEL}, timer::Timer};
+use utils::{logger::{log, log_perf, LOG7, LOG1}, timer::Timer, consts::read_global_config };
+
 use std::{
 	marker::PhantomData,
 	sync::{Arc, Mutex},
@@ -61,13 +62,7 @@ use folding_schemes::{
 //use crate::{composable_gadget_mapper::{ComponentGadgetMapper}};
 use ark_ff::{PrimeField};
 use crate::{
-	circs::composable_gadget_mapper::ComponentMapper,
-	circs::{
-		MIN_BASIS_UNIQUE_STATES, MIN_SUBSIGS, MIN_AVG_PATS_PER_SUBSIG,
-		MIN_BASIS_PATS_IN_TRACE, MIN_PERC_PATS_EXPANSION_RATE,
-		MIN_SIGS_SED, MIN_PERC_COMP_SUBSIGS, MIN_BASIS_ACC_STATES,
-		MIN_AVG_ACTIVE_PATS_PER_SUBSIG, 
-	},
+	circs::{composable_gadget_mapper::ComponentMapper},
 	gadgets::word_extract_adv::{WordExtractAdvCapacity, WordExtractAdvGadget, WordExtractAdvAdvice },
 	gadgets::word_extract::{LEGS},
 	gadgets::fsm_adv::{FsmAdvGadget,FsmAdvAdvice,FsmAdvCapacity},
@@ -261,29 +256,29 @@ impl SedCapacity{
 			Self::new(
 				self.max_word_len,
 				self.acdfa_state_part_bits,
-				(self.subsigs*3/4).max(MIN_SUBSIGS),
-				(self.avg_pats_per_subsig*3/4).max(MIN_AVG_PATS_PER_SUBSIG),
-				(self.avg_active_pats_per_subsig*3/4).max(MIN_AVG_ACTIVE_PATS_PER_SUBSIG),
-				(self.basis_pats_in_trace/2).max(MIN_BASIS_PATS_IN_TRACE),
-				(self.perc_pats_expansion_rate*3/4).max(MIN_PERC_PATS_EXPANSION_RATE),
-				(self.sigs_sed*4/5).max(MIN_SIGS_SED),
-				(self.perc_comp_subsigs*3/4).max(MIN_PERC_COMP_SUBSIGS),
-				(self.basis_unique_states*3/4).max(MIN_BASIS_UNIQUE_STATES),
-				(self.basis_acc_states/2).max(MIN_BASIS_ACC_STATES),
+				(self.subsigs*3/4).max(read_global_config().min_subsigs),
+				(self.avg_pats_per_subsig*3/4).max(read_global_config().min_avg_pats_per_subsig),
+				(self.avg_active_pats_per_subsig*3/4).max(read_global_config().min_avg_active_pats_per_subsig),
+				(self.basis_pats_in_trace/2).max(read_global_config().min_basis_pats_in_trace),
+				(self.perc_pats_expansion_rate*3/4).max(read_global_config().min_perc_pats_expansion_rate),
+				(self.sigs_sed*4/5).max(read_global_config().min_sigs_sed),
+				(self.perc_comp_subsigs*3/4).max(read_global_config().min_perc_comp_subsigs),
+				(self.basis_unique_states*3/4).max(read_global_config().min_basis_unique_states),
+				(self.basis_acc_states/2).max(read_global_config().min_basis_acc_states),
 			)
 		}else{
 			Self::new(
 				self.max_word_len,
 				self.acdfa_state_part_bits,
-				(self.subsigs*3/4).max(MIN_SUBSIGS),
-				(self.avg_pats_per_subsig*3/4).max(MIN_AVG_PATS_PER_SUBSIG),
-				(self.avg_active_pats_per_subsig*3/4).max(MIN_AVG_ACTIVE_PATS_PER_SUBSIG),
-				(self.basis_pats_in_trace/4).max(MIN_BASIS_PATS_IN_TRACE),
-				(self.perc_pats_expansion_rate*3/4).max(MIN_PERC_PATS_EXPANSION_RATE),
-				(self.sigs_sed*4/5).max(MIN_SIGS_SED),
-				(self.perc_comp_subsigs*3/4).max(MIN_PERC_COMP_SUBSIGS),
-				(self.basis_unique_states*3/4).max(MIN_BASIS_UNIQUE_STATES),
-				(self.basis_acc_states/4).max(MIN_BASIS_ACC_STATES),
+				(self.subsigs*3/4).max(read_global_config().min_subsigs),
+				(self.avg_pats_per_subsig*3/4).max(read_global_config().min_avg_pats_per_subsig),
+				(self.avg_active_pats_per_subsig*3/4).max(read_global_config().min_avg_active_pats_per_subsig),
+				(self.basis_pats_in_trace/4).max(read_global_config().min_basis_pats_in_trace),
+				(self.perc_pats_expansion_rate*3/4).max(read_global_config().min_perc_pats_expansion_rate),
+				(self.sigs_sed*4/5).max(read_global_config().min_sigs_sed),
+				(self.perc_comp_subsigs*3/4).max(read_global_config().min_perc_comp_subsigs),
+				(self.basis_unique_states*3/4).max(read_global_config().min_basis_unique_states),
+				(self.basis_acc_states/4).max(read_global_config().min_basis_acc_states),
 			)
 		}
 	}
@@ -928,7 +923,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F> + Send + Sync> ComponentMa
 	/// return the sizes of inp, oup, data buffer, failed_sigs, discharged_sigs
 	fn get_sizes(&self)->Vec<usize>{
 		let log_level = LOG7;
-		let b_perf = true && log_level>=LOG_LEVEL;
+		let b_perf = true && log_level>=read_global_config().log_level;
 		if b_perf{
 			log(self.job_id, log_level, &format!(" ## sed gadgets data len: ==="));
 			for i in 0..self.gadgets.len(){
@@ -1081,7 +1076,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F> + Send + Sync> ComponentMa
 	/// the prev_stmt or the vector of its prev_stmt.
 	fn build_statement_comp(&self, _comp_id: usize, _stmt_map_id: usize, _word_seg: &Vec<F>, _actual_word_len: usize, _lkup: &Arc<LK>, _extra_info: &StatementExtraInfo<F>, advice: &Arc<dyn NdAdvice + Send + Sync>, _cfg: &StatementConfig, _stmt_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>{
 		let log_level = LOG7;
-		let b_perf = log_level >= LOG_LEVEL;
+		let b_perf = log_level >= read_global_config().log_level;
 		//1. take the advice
 		let advice = advice.as_any().downcast_ref::<SedAdvice<F>>()
 			.expect("downcast err!");

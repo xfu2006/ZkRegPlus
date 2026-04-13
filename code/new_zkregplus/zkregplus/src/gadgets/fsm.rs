@@ -1,3 +1,4 @@
+use utils::consts::read_global_config;
 /* Created 03/03/2025 
   revised 11/08/2025 -> improved the constraint cost to 1/4 * nlen
 */
@@ -369,12 +370,13 @@ impl <F: PrimeField + ColEle> FsmAdvice<F>{
 
 #[cfg(test)]
 pub mod tests_fsm_gadget{
+use utils::consts::read_global_config;
 	use std::{sync::Arc};
 	use ark_bn254::{Fr};
 	use crate::gadgets::fsm::{FsmGadget,FsmAdvice};
 	use utils::data::{rand_fe_by_bits};
 	use crate::gadgets::word_extract::tests_word_extract_gadget::test_gadget;
-	use data_processor::{hex_acdfa::HexACDFA, clam_db::RANGE2_BIT};
+	use data_processor::{hex_acdfa::HexACDFA, };
 	use ark_ff::{Zero};
 
 
@@ -382,7 +384,7 @@ pub mod tests_fsm_gadget{
 	#[test]
 	fn test_fsm(){
 		let mut rng = ark_std::test_rng();
-		let (nibble_len, state_bits) = (124, RANGE2_BIT);
+		let (nibble_len, state_bits) = (124, read_global_config().range2_bit);
 		let mut nibbles:Vec<Fr> = vec![];
 		for _i in 0..nibble_len{ nibbles.push(rand_fe_by_bits(4, &mut rng));}
 

@@ -1,3 +1,4 @@
+use utils::consts::read_global_config;
 /* Created 03/06/2025, completed 03/11/2025 */
 use folding_schemes::folding::foldpot::container_config::ColEle;
 use utils::{consts::ADD_CHAIN_SIZE};
@@ -34,7 +35,7 @@ use std::any::Any;
 use crate::gadgets::commons::{verify_logup_inverse, verify_inverse, verify_encoded_states_sig_count, verify_encoded_states_sig, check_imply, check_eq, check_arr_eq, check_arr_eq_or_rg2, expand_vec,gen_m_table,new_const_var,check_arr_eq_arr,
 new_var};
 use data_processor::{
-	clam_db::{RANGE2,RANGE2_BIT,ID_SIG_NO_CRIT_COUNT,ID_SIG_NO_CRIT}, 
+	clam_db::{RANGE2,ID_SIG_NO_CRIT_COUNT,ID_SIG_NO_CRIT}, 
 	hex_acdfa::HexACDFA
 };
 use folding_schemes::{folding::foldpot::circuits_super::{field_to_usize}};
@@ -445,7 +446,7 @@ impl <F: PrimeField + ColEle> GetSigAdvice<F>{
 			);
 		}
 		expand_vec(&mut final_states, olen); //the input
-		let sigbit_factor = F::from(1u32 << RANGE2_BIT);
+		let sigbit_factor = F::from(1u32 << read_global_config().range2_bit);
 		let sigbit_fac2 = sigbit_factor * sigbit_factor;
 		assert!(final_states.len() == olen);
 		if inp_sigs.len()>slen{
@@ -628,7 +629,7 @@ impl <F: PrimeField + ColEle> GetSigAdvice<F>{
 		let mut final_states_sigs_count = vec![];
 		let mut hashset_sigs_to_merge = HashSet::<F>::new(); 
 		let mut decoded_final_states_sigs_sigs = vec![];
-		let sigbit_factor = F::from(1u32 << RANGE2_BIT);
+		let sigbit_factor = F::from(1u32 << read_global_config().range2_bit);
 		for s1 in final_states{
 			let s = s1.clone();
 			if s.is_zero() {continue;}

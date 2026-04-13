@@ -9,6 +9,8 @@ use std::fs::File;
 use std::sync::{OnceLock, Mutex};
 use std::collections::HashSet;
 
+use crate::consts::read_global_config;
+
 pub const ERR:usize = 0;
 pub const WARN:usize = 1;
 pub const LOG1:usize = 2;
@@ -18,8 +20,6 @@ pub const LOG4:usize = 5;
 pub const LOG5:usize = 6;
 pub const LOG6:usize = 7;
 pub const LOG7:usize = 8;
-/// current default log level for entire system
-pub const LOG_LEVEL:usize = LOG6;
 
 pub fn initialized_jobs() -> &'static Mutex<HashSet<usize>> {
     static INITIALIZED_JOBS: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
@@ -61,7 +61,7 @@ pub fn ensure_log_file(job_id: usize, fpath: &str){
 pub fn log(job_id: usize, log_level: usize, msg: &String){
 	let b_write = true;
 	let fpath = format!("/tmp/log_job_{}.txt", job_id);
-	if log_level<=LOG_LEVEL{ 
+	if log_level<=read_global_config().log_level{ 
 		let indent_level = if log_level<2 {0} else {log_level-2};
 		let indent_str = "-- ".repeat(indent_level);
 		println!("[job {}] {}: {} {}", job_id, name_log_level(log_level), indent_str, msg); 
@@ -76,7 +76,7 @@ pub fn log(job_id: usize, log_level: usize, msg: &String){
 /// write all messages into an accumulator (acc).
 /// `job_id` is the id of the current job for parallel execution.
 pub fn flog(job_id: usize, log_level: usize, msg: &String, acc: &mut Vec<String>){
-	if log_level<=LOG_LEVEL{ 
+	if log_level<=read_global_config().log_level{ 
 		let indent_level = if log_level<2 {0} else {log_level-2};
 		let indent_str = "-- ".repeat(indent_level);
 		println!("[job {}] {}: {} {}", job_id, name_log_level(log_level), indent_str, msg); 

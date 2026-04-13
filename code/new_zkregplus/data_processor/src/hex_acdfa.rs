@@ -20,7 +20,7 @@ use utils::{logger::{flog,log,LOG6,LOG1,log_perf},
 	data::{hex_to_u8, hex_to_str},
 	timer::Timer
 };
-use crate::{clam_db::{RANGE2_BIT}};
+use utils::consts::read_global_config;
 
 
 pub const DEFAULT_ACDFA_DA_BITS:usize = 2; //bits to represent id
@@ -71,7 +71,7 @@ impl HexACDFA{
 	/// We generate subsig_id combined within state_part_bits
 	/// NOTE: subsig_id should be ADJUSTED value (+1).
 	pub fn gen_subsig_id_worker(sig_id: usize, subsig_id: usize)->usize{
-		let bits = RANGE2_BIT;
+		let bits = read_global_config().range2_bit;
 		let bit_part1 = bits*2/3; //16 for accomodating 64k sigs for bits 24
 		let bit_part1 = if bits>19 {16} else {bit_part1};
 		let bit_part2 = bits - bit_part1;
@@ -190,8 +190,8 @@ impl HexACDFA{
 		let dfa_init = state_id_to_usize(
 			dfa.start_state(Anchored::No).unwrap()
 		)/alpha_size2;
-		assert!(num_states<(1<<RANGE2_BIT), 
-			"num_states: {}> 1<<RANGE2_BIT", num_states);
+		assert!(num_states<(1<<read_global_config().range2_bit), 
+			"num_states: {}> 1<<read_global_config().range2_bit", num_states);
 
 		//2.2 build the information of intermediate state for each state
 		//(1) each state has a mapping from 16 chars to intermediate states
@@ -379,13 +379,13 @@ impl HexACDFA{
 			(p.to_string(), i)).collect::<HashMap<String,usize>>();
 
 		let init_state =  Self::state_id(dfa_id, map_states[&dfa_init]);
-		assert!(num_states<(1<<RANGE2_BIT), "RANGE2_BITS too small, reset!");
+		assert!(num_states<(1<<read_global_config().range2_bit), "read_global_config().range2_bitS too small, reset!");
 
 		HexACDFA{
 			id: dfa_id,
 			id_bits: DEFAULT_ACDFA_DA_BITS,
 			num_states: num_states,
-			state_part_bits: RANGE2_BIT,
+			state_part_bits: read_global_config().range2_bit,
 			patterns: patterns.clone(),
 			num_acc_states: hash_outputs.keys().len(),
 			outputs: hash_outputs,
@@ -427,7 +427,7 @@ impl HexACDFA{
 		let dfa_outputs = &dfa.matches;
 		let acc_states = dfa.get_max_match_id()/32-1;
 		assert!(acc_states==dfa_outputs.len(), "acc_states!=dfa_outputs.len()");
-		assert!(num_states<(1<<RANGE2_BIT), "num_states: {}> 1<<RANGE2_BIT", num_states);
+		assert!(num_states<(1<<read_global_config().range2_bit), "num_states: {}> 1<<read_global_config().range2_bit", num_states);
 
 		//1.5 build a state map which maps from original ACDFA states to
 		//new state. In the original ACDFA state [0,1] are NOT final
@@ -551,14 +551,14 @@ impl HexACDFA{
 		//4. build the pattern to IDs
 		let pattern_to_id = patterns.iter().enumerate().map(|(i,p)|
 			(p.to_string(), i)).collect::<HashMap<String,usize>>();
-		assert!(num_states<(1<<RANGE2_BIT), "RANGE2_BITS too small, reset!");
+		assert!(num_states<(1<<read_global_config().range2_bit), "read_global_config().range2_bitS too small, reset!");
 
 		//4. return
 		HexACDFA{
 			id: dfa_id,
 			id_bits: DEFAULT_ACDFA_DA_BITS,
 			num_states: num_states,
-			state_part_bits: RANGE2_BIT,
+			state_part_bits: read_global_config().range2_bit,
 			patterns: patterns.clone(),
 			num_acc_states: hash_outputs.keys().len(),
 			outputs: hash_outputs,
@@ -875,12 +875,12 @@ impl HexACDFA{
 	fn state_id(_dfa_id: usize, state_id: usize)->usize{
 		let dfa_id = 0; //Since lookup table is 2D in proof, we do not build it
 						//in state any more.
-		(dfa_id<<RANGE2_BIT) + state_id
+		(dfa_id<<read_global_config().range2_bit) + state_id
 	}
 
 	/// get the LONG VERSION of state id given dfa_id
 	fn long_state_id(&self, state_id: usize)->usize{
-		(self.id <<RANGE2_BIT) + state_id
+		(self.id <<read_global_config().range2_bit) + state_id
 	}
 
 	/// map from state id to index in transition

@@ -4013,6 +4013,8 @@ pub mod tests_sigma_ir1cs{
 	}
 
 	impl <F:PrimeField> SigmaGadget<F> for VerCubicGadget<F>{
+		fn set_job_id(&mut self, _job_id: usize){}
+		fn get_job_id(&self)->usize{0}
 		fn get_container_config(&self)->ContainerConfig{
 			unimplemented!("not needed. legacy code")
 		}
@@ -4093,6 +4095,8 @@ pub mod tests_sigma_ir1cs{
 	}
 
 	impl <F:PrimeField> SigmaGadget<F> for VerSquareGadget<F>{
+		fn set_job_id(&mut self, _job_id: usize){}
+		fn get_job_id(&self)->usize{0}
 		fn get_container_config(&self)->ContainerConfig{
 			unimplemented!("not needed. legacy code")
 		}
@@ -4169,6 +4173,8 @@ pub mod tests_sigma_ir1cs{
 	}
 
 	impl <F:PrimeField> SigmaGadget<F> for CounterIOGadget<F>{
+		fn set_job_id(&mut self, _job_id: usize){}
+		fn get_job_id(&self)->usize{0}
 
 		fn get_container_config(&self)->ContainerConfig{
 			unimplemented!("not needed. legacy code")

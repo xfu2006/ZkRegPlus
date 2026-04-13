@@ -1019,7 +1019,7 @@ pub mod tests {
             CS1,
             CS2,
             H,
-        >::preprocess(&mut rng, &prep_param)
+        >::preprocess(&mut rng, &prep_param, 0)
         .unwrap();
 
         let z_0 = vec![Fr::from(3_u32)];

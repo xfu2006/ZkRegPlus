@@ -27682,7 +27682,22 @@ Goal 2. observe full_clamav in server.
 		cpu:
 		ram
 	[c] circ size
+		[job 0] LOG2: --   -- circ 0 size: 59280415
+		[job 0] LOG2: --   -- circ 1 size: 59333171
+		[job 0] LOG2: --   -- circ 2 size: 59847600
+		[job 0] LOG2: --   -- circ 3 size: 6832567
+		==> why is it so big? => check full_data4() circsize: 6826677
+		---> why is circ 0 size greater than circ3?
+	[d] todo: need to fix the size problem
+	[e] check price tag: 1.01$ per hour (however c2d 256gb not available
+		any more had to use m1 instance)
 Goal 3. Planning
 	[a] move config data to global var
 	[b] transition to background also ok
-		
+Goal 4. Move config data to global var
+	[a] simple task for gemini (initially) but it takes a lot of
+		time for gemini to fix the syntax errors it introduced (or
+		changes it forgot to make). 
+	[b] also move the light testing 
+Goal 5. think about example
+	[a] 

@@ -1,3 +1,4 @@
+use utils::consts::read_global_config;
 /* Created 06/11/2025. 
    Implementation resumed 06/27/2025.
    Complete: 07/16/2025
@@ -55,7 +56,7 @@ use crate::gadgets::{
 use data_processor::{
 	type_def::{SubsigStepStore,TriVal,SubsigInfoStore,CompOp,SubSigType,
 		ClamavSig},
-	clam_db::{RANGE2,ID_ENCODED_NORMAL_STEP, ID_ENCODED_LAST_STEP,RANGE2_BIT,
+	clam_db::{RANGE2,ID_ENCODED_NORMAL_STEP, ID_ENCODED_LAST_STEP,
 		ID_COMP_OP, ID_COMP_NUM, ID_COMP_SUBSIG,ID_MIN_REQUIRED,
 		ID_SUBSIG_TYPE, 
 //		ID_SUBSIG_IGC
@@ -562,7 +563,7 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		assert!(n1_cs==capacity.subsigs_cs);
 		assert!(n1_igc==capacity.subsigs_igc);
 		let (zero,one) = (F::zero(), F::one());
-        let max_val:usize = (1<<RANGE2_BIT) - 1;
+        let max_val:usize = (1<<read_global_config().range2_bit) - 1;
         let max = F::from(max_val as u64);
 		let res = Container::<F>::new("synthesis_res_combo");
 		let frg = F::from(RANGE2);
@@ -706,8 +707,8 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		// otherwise, we lookup the ssc_es in the ssc_prf_tbl
 
 		// 3.1 construct the ssc_prf_tbl (for SubsigCounterConstraint ONLY!) 
-		let factor = F::from(1u32 << RANGE2_BIT);
-        let max_val:usize = (1<<RANGE2_BIT) - 1;
+		let factor = F::from(1u32 << read_global_config().range2_bit);
+        let max_val:usize = (1<<read_global_config().range2_bit) - 1;
         let _max = F::from(max_val as u64);
 
 		let mut scc_prf_subsig = vec![]; //scc_prf stands for subsig_count_constraint
@@ -1515,7 +1516,7 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		// --> cost improved by using f_unit (we didn't change formula here)
 		//TODO: can be improved by calling combined_logup function
 		// and just add padding zero.
-		let f_unit = FpVar::<F>::constant(F::from(1u32<<RANGE2_BIT));
+		let f_unit = FpVar::<F>::constant(F::from(1u32<<read_global_config().range2_bit));
 		let src= encode_cols_var_adv_better(&vec![&inp_subsig_encoded[..],
 			&inp_subsig[..], &last_step[..], &sid_last_step], &vec![0,1,2,3], 
 				&f_unit);
@@ -1540,7 +1541,7 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		//and then use it to enforce sid_last_step == sid for MAX_STEP
 		//COST: 5n1  where n1 is the number of subsigs
 		let info_id= F::from(0x23001101u32); //tag to avoid collision
-		let f1 = F::from(1u64<<RANGE2_BIT);
+		let f1 = F::from(1u64<<read_global_config().range2_bit);
         let factor1 = f1*f1*f1*f1*f1; //models encoded
         let factor2 = F::from(1u64<<32); //32-bit
 		let part1 = info_id*factor1*factor2 + 
@@ -1633,7 +1634,7 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		let b_perf = false;
 		let nc = cs.num_constraints();
 		let (zero,one)=(new_const_var(&cs,F::zero()),new_const_var(&cs,F::one()));
-        let max_val:usize = (1<<RANGE2_BIT) - 1;
+        let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let max=new_const_var(&cs,F::from(max_val as u64));
 		let frg = new_const_var(&cs, F::from(RANGE2));
 		let names = ["vec_op", "vec_num", "vec_counter_res", "vec_type"];
@@ -1873,7 +1874,7 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		// that the vec_comp are FULLY coverd in scc_prf
 		//
 		// COST: 15*n2
-		let fa_var = new_const_var(&cs, F::from(1u32 << RANGE2_BIT));
+		let fa_var = new_const_var(&cs, F::from(1u32 << read_global_config().range2_bit));
 		let vec_cnt = col2d[1].iter().zip(col2d[2].iter()).map(|(c1,c2)|{
 			c1 - &(c2 * &fa_var)
 		}).collect::<Vec<FpVar<F>>>();
@@ -1962,7 +1963,7 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		// in practice n2 is at most 20% of n1.
 		// as cols are all in RANGE2, just use f_unit to do combination
 		// improved to 5*n2 + 4*n
-		let f_unit = FpVar::<F>::constant(F::from(1u32<<RANGE2_BIT));
+		let f_unit = FpVar::<F>::constant(F::from(1u32<<read_global_config().range2_bit));
 		let src_s_r = encode_cols_var_adv_better(
 			&vec![&col2d[2][..],&col2d[4][..]], //comp_subsig and raw
 			&vec![0,1],
@@ -2156,7 +2157,7 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		let b_debug = false;
 		let (zero,one)=(new_const_var(&cs,F::zero()),
 			new_const_var(&cs,F::one()));
-        let max_val:usize = (1<<RANGE2_BIT) - 1;
+        let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let _max=new_const_var(&cs,F::from(max_val as u64));
 		let _frg = new_const_var(&cs, F::from(RANGE2));
 		let names = vec![ "v_sigs", "v_dnf_id", "v_dnf_step", 
@@ -2248,14 +2249,14 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		// two components.
 		//
 		// COST: 8n 
-		let bits = RANGE2_BIT;
+		let bits = read_global_config().range2_bit;
 		let bit_part1 = bits*2/3; //16 for accomodating 64k sigs for bits 24
 		let bit_part1 = if bits>19 {16} else {bit_part1};
 		let bit_part2 = bits - bit_part1;
 		let fac2 = new_const_var(&cs, F::from(1u64<<bit_part2) );
 		let f_false = new_const_var(&cs, F::from(TriVal::False as u8));
 
-		let f_unit = FpVar::<F>::constant(F::from(1u32<<RANGE2_BIT));
+		let f_unit = FpVar::<F>::constant(F::from(1u32<<read_global_config().range2_bit));
 		let v_computed_subsig = v_sigs.iter().zip(v_real_subsigs.iter())
 			.map(|(sig_id, real_subsig_id)| {
 				sig_id*&fac2 + real_subsig_id
@@ -2472,6 +2473,7 @@ impl ComputeSigAdvCapacity{
 
 #[cfg(test)]
 pub mod tests_compute_sig_adv{
+use utils::consts::read_global_config;
 	use ark_ff::{Zero};
 	use std::{sync::Arc};
 	use ark_bn254::{Fr};
@@ -2489,7 +2491,7 @@ pub mod tests_compute_sig_adv{
 			ComputeSigAdvCapacity},
 		traits::{Container,Col,IDX_DATA},
 	};
-	use data_processor::{clam_db::{ClamavDB,RANGE2_BIT}, 
+	use data_processor::{clam_db::{ClamavDB}, 
 		type_def::{ClamavApproxConfig,SubsigStepStore,SubsigStepStoreItem,
 			ClamavSig},
 		clamav::{default_clamav_cfg, quick_discharge_file_by_crit_bag_pm}};
@@ -2926,7 +2928,7 @@ pub mod tests_compute_sig_adv{
 		steps_info.finalize();
 
 		//1. test the serialization
-		let max :u32= (1<<RANGE2_BIT) - 1;
+		let max :u32= (1<<read_global_config().range2_bit) - 1;
 		let subsig100_steps = vec![
 			StepQueueItem::new2( 
 				// subsig, id, pat, rg_start, rg_end

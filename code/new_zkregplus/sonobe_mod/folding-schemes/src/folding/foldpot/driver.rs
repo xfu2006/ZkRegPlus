@@ -8,7 +8,7 @@ use std::{sync::{Arc, Mutex, Condvar}, fmt::{Debug,Formatter}};
 */
 
 extern crate utils;
-use utils::{logger::{log, log_perf, ERR, LOG1,LOG_LEVEL,LOG2}, timer::Timer as GTimer};
+use utils::{logger::{log, log_perf, ERR, LOG1,LOG2}, timer::Timer as GTimer, consts::read_global_config};
 use std::{
     //process::{Stdio,Command},
     //fs::{read_to_string,OpenOptions,remove_file,File,metadata},
@@ -306,7 +306,7 @@ where
 	  n_words: usize,
 	  )->Self{
 		let log_level = LOG2;
-		let b_perf = LOG_LEVEL >= log_level;
+		let b_perf = read_global_config().log_level >= log_level;
 		let mut gt1 = GTimer::new();
 	  	//1. set up the parameters
         let _start = Instant::now();
@@ -2328,6 +2328,8 @@ pub mod tests_driver{
 	}
 
 	impl <F:PrimeField> SigmaGadget<F> for SumGadget<F>{
+		fn set_job_id(&mut self, _job_id: usize){}
+		fn get_job_id(&self)->usize{0}
 		fn get_container_config(&self)->ContainerConfig{
 			unimplemented!("not needed. legacy code")
 		}
@@ -2707,13 +2709,13 @@ pub mod tests_driver{
 		];
 		let sample_individual_prf = 1; //generate individual proof 1
 		let vec_word_info = vec![WordInfo::dummy(); vec_words.len()];
-		let jobs = vec![FoldPotJob{
+		let mut jobs = vec![FoldPotJob{
 			vec_words,
 			vec_word_info,
 			vec_word_fnames,
 			idx_individual_prf: sample_individual_prf,
 		}];
-		let _prf = foldpot_main::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,SigmaIR1CS_Inst<Fr,C1,CS1,LK,SumMapper<Fr,LK>,H>,S,LK,SumMapper<Fr,LK>, false>(lkup, vec_circ, jobs);
+		let _prf = foldpot_main::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,SigmaIR1CS_Inst<Fr,C1,CS1,LK,SumMapper<Fr,LK>,H>,S,LK,SumMapper<Fr,LK>, false>(lkup, vec_circ, &mut jobs);
 	}
 
 }

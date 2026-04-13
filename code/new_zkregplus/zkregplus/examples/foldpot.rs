@@ -442,11 +442,10 @@ fn main(){
 	];
 	let vec_word_info = vec![WordInfo::dummy(); vec_words.len()];
 	let sample_individual_prf = 1; //generate individual proof 1
-	let jobs = vec![FoldPotJob{
+	let mut jobs = vec![FoldPotJob{
 		vec_words,
 		vec_word_info,
 		vec_word_fnames,
 		idx_individual_prf: sample_individual_prf,
 	}];
-	foldpot_main::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,FC,S,LK,GM,false>(lkup, vec_circ, jobs).expect("err foldpot");
-}
+	foldpot_main::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,FC,S,LK,GM,false>(lkup, vec_circ, &mut jobs).expect("err foldpot");}

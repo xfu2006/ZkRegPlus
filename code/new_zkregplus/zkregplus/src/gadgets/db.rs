@@ -1,3 +1,4 @@
+use utils::consts::read_global_config;
 /* Created 04/10/2025 */
 
 /*  The module provides a number of structs and functions
@@ -36,7 +37,7 @@ use rayon::iter::{
 	IndexedParallelIterator
 };
 use folding_schemes::folding::foldpot::utils::check_cs;
-use data_processor::clam_db::{RANGE2,RANGE2_BIT,check_pad_ratio};
+use data_processor::clam_db::{RANGE2,check_pad_ratio};
 use crate::gadgets::commons::{verify_inverse,verify_logup_inverse, check_eq, 
 	check_arr_eq, check_arr_eq_arr, gen_m_table, new_const_var,
 	encode_2col, encode_2col_var, gen_m_table_cond,
@@ -155,7 +156,7 @@ pub fn assert_logup_cond<F:PrimeField + ColEle>(
 }
 
 /// verify that encoded col is the encoding of the columns in vec_src.
-/// the number of bits for each field (usually, pass RANGE2_BIT) 
+/// the number of bits for each field (usually, pass read_global_config().range2_bit) 
 pub fn verify_encoded_table<F:PrimeField + ColEle>(
 	cs: ConstraintSystemRef<F>,
 	unit_bits: usize,
@@ -567,13 +568,13 @@ pub fn col_to_sorted_set<F:PrimeField + ColEle>(
 	//0. prepare data
 	let res = Container::new(name);
 	res.lock().unwrap().add_container(col.clone());
-	let max_val:usize = (1<<RANGE2_BIT) - 1; //state_part_bit is RANGE2_BIT
+	let max_val:usize = (1<<read_global_config().range2_bit) - 1; //state_part_bit is read_global_config().range2_bit
 	let max = F::from(max_val as u32);
 	let zero = F::zero();
 
 	//1. extract the set of non-zero values and non-max values generate
 	// the sorted_src which is zero padded at the beginning
-	let max_val:usize = (1<<RANGE2_BIT) - 1;
+	let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 	let max2 = F::from(max_val as u32);
 	let src = col.lock().unwrap().to_vec();
 	let mut set_src = src.par_iter().filter(|x| !x.is_zero() && **x!=max2)
@@ -715,7 +716,7 @@ pub fn verify_col_to_sorted_set<F:PrimeField + ColEle>(
 	check_arr_eq_arr(&vec_sum, &sorted_val[1..n], "failed diff check")?;
 
 	//4. lookup: cost m+4n: m: source data, n: target_set_size
-	let max_val:usize = (1<<RANGE2_BIT) - 1;
+	let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 	let zero = FpVar::<F>::new_constant(cs.clone(), F::zero())?;
 	let max = FpVar::<F>::new_constant(cs.clone(), F::from(max_val as u32))?;
 	let extended_src = vec![src_col, vec![zero.clone(),max]].concat();
@@ -1016,7 +1017,7 @@ pub fn tbl_filtered_to_sorted_tbl_new<F:PrimeField + ColEle>(
 		two_col_tbl_to_sorted(&fil1,&fil2,n)?;
 
 	let f_rg = F::from(RANGE2);
-	let max_val:usize = (1<<RANGE2_BIT) - 1;
+	let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 	let _max = F::from(max_val as u32);
 	let tbl_names = vec!["packed_key", "packed_id", "packed_val"];
 	let _zero = F::zero();
@@ -1160,7 +1161,7 @@ pub fn tbl_filtered_to_sorted_tbl_old<F:PrimeField + ColEle>(
 	let fil2 = filtered_tuples.par_iter().map(|x| x.1).collect::<Vec<F>>();
 	let (packed_key,packed_id,packed_val) =
 		two_col_tbl_to_sorted(&fil1,&fil2,n)?;
-	let max_val:usize = (1<<RANGE2_BIT) - 1;
+	let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 	let max = F::from(max_val as u32);
 	let sel_dst = packed_val.iter().map(|v|
 		*v * (max-v) //when v is 0 or max, it disables selection
@@ -1346,7 +1347,7 @@ pub fn verify_tbl_filtered_to_sorted_tbl_new<F:PrimeField + ColEle>(
 		Some(&diff_key),
 		Some(&sid_diff_key),
 		r1.clone(), 
-		RANGE2_BIT)?;
+                read_global_config().range2_bit)?;
 	if b_perf{
 		println!("  --- verify_tbl_filtered_new keys: step 2.2  cs: {}", 
 			cs.num_constraints() - nc);
@@ -1382,7 +1383,7 @@ pub fn verify_tbl_filtered_to_sorted_tbl_new<F:PrimeField + ColEle>(
 	// is small, this is acceptable.
 	// COST: 5n + 2N
 
-	let max_val:usize = (1<<RANGE2_BIT) - 1;
+	let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 	let max = F::from(max_val as u32);
 	let (vone, vmax) = (new_const_var(&cs, F::one()), new_const_var(&cs, max)); 
 	let vmax_val = vmax.value().unwrap();
@@ -1401,7 +1402,7 @@ pub fn verify_tbl_filtered_to_sorted_tbl_new<F:PrimeField + ColEle>(
 		nc = cs.num_constraints();
 	}
 
-	let unit_var = new_const_var(&cs, F::from(1u32<<RANGE2_BIT));
+	let unit_var = new_const_var(&cs, F::from(1u32<<read_global_config().range2_bit));
 	//as all fields are already proved to be in RANGE2, use unit_var (const)
 	//instead of r2 as random combin operator (this is like doing
 	//bitwise concat of two fields).
@@ -1558,7 +1559,7 @@ pub fn verify_tbl_filtered_to_sorted_tbl_old<F:PrimeField + ColEle>(
 		Some(&diff_key),
 		Some(&sid_diff_key),
 		r1.clone(), 
-		RANGE2_BIT)?;
+                read_global_config().range2_bit)?;
 	if b_perf{
 		println!("  --- verify_tbl_filtered_old keys: step 2.2  cs: {}", 
 			cs.num_constraints() - nc);
@@ -1568,7 +1569,7 @@ pub fn verify_tbl_filtered_to_sorted_tbl_old<F:PrimeField + ColEle>(
 	//2.3 do the double direction lookup to assert all (state,loc)
 	//appears appropraitely in the sorted table (state, id, loc)
 	//and vice versa.
-	let max_val:usize = (1<<RANGE2_BIT) - 1;
+	let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 	let max = new_var(&cs, F::from(max_val as u32));
 	let encoded_src = encode_2col_var(&keys, &vals);
 	let encoded_dst = encode_2col_var(&packed_keys, &packed_vals);
@@ -1612,7 +1613,7 @@ pub fn tbl_to_sorted_tbl<F:PrimeField + ColEle>(
 ) -> Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 	//1. generating the resulting table (data column and sid columns)
 	let (zero,_one) = (F::zero(), F::one());
-	let max_val:usize = (1<<RANGE2_BIT) - 1;
+	let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 	let max = F::from(max_val as u32);
 	let res = Container::<F>::new(name);
 	let sorted_tbl = Container::<F>::new("sorted_tbl");
@@ -1714,7 +1715,7 @@ pub fn verify_tbl_to_sorted_tbl<F:PrimeField + ColEle>(
 		//Some(&cols_prf[3]), //sid_diff_key
 		Some(&sid_diff_key),
 		r1.clone(), 
-		RANGE2_BIT)?;
+                read_global_config().range2_bit)?;
 
 	//2. check sid columns (f_rg) but don't have to check those zeros,
 	// e.g., those m_tbl values' sid
@@ -1735,7 +1736,7 @@ pub fn verify_tbl_to_sorted_tbl<F:PrimeField + ColEle>(
 
 	//3. check logups (bi-directional) - conditional means
 	// to ignore zero entries
-	let max_val:usize = (1<<RANGE2_BIT) - 1;
+	let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 	let max = new_const_var(&cs, F::from(max_val as u32));
 	let encoded_src = encode_2col_var(&keys, &vals);
 	let encoded_dst = encode_2col_var(&sel_keys, &sel_vals);
@@ -1803,7 +1804,7 @@ pub fn tbl_left_join<F:PrimeField + ColEle>(
 ) -> Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 	//1. generate the resulting table
 	let (zero, one) = (F::zero(), F::one());
-	let max_val:usize = (1<<RANGE2_BIT) - 1;
+	let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 	let max = F::from(max_val as u32);
 	let res = Container::<F>::new(name);
 	let f_rg = F::from(RANGE2); 
@@ -2446,7 +2447,7 @@ pub fn verify_tbl_left_join<F:PrimeField + ColEle>(
 	cs: ConstraintSystemRef<F>
 ) -> Result<(), SynthesisError>{
 	//1. retrieve data
-	let max_val:usize = (1<<RANGE2_BIT) - 1;
+	let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 	let max = new_const_var(&cs, F::from(max_val as u32));
 	let (zero,one)=(new_const_var(&cs,F::zero()),new_const_var(&cs,F::one()));
 	let join_tbl= output.lock().unwrap().get_container("join_tbl")?;
@@ -2507,7 +2508,8 @@ pub fn verify_tbl_left_join<F:PrimeField + ColEle>(
 		None, //no need for checking sort key
 		None, 
 		r1.clone(), 
-		RANGE2_BIT,
+                read_global_config().range2_bit, 
+		
 		true, //relaxed
 		)?;
 	
@@ -2564,7 +2566,7 @@ pub fn verify_tbl_left_join<F:PrimeField + ColEle>(
 		None, //diff_key (no need to check sort)
 		None, //sid_diff_key
 		r1.clone(), 
-		RANGE2_BIT)?;
+                read_global_config().range2_bit)?;
 
 	Ok( () )
 }
@@ -2705,6 +2707,7 @@ pub fn verify_tbl_left_join_wide<F:PrimeField + ColEle>(
 
 #[cfg(test)]
 pub mod tests_db{
+use utils::consts::read_global_config;
 	use ark_relations::r1cs::{ConstraintSystem,ConstraintSystemRef};
 	use ark_r1cs_std::{fields::fp::FpVar, alloc::AllocVar};
 	use ark_bn254::{Fr};
@@ -2714,7 +2717,7 @@ pub mod tests_db{
 		traits::{Col, IDX_DATA},
 		commons::{gen_m_table_cond,new_var},
 	};
-	use data_processor::clam_db::{RANGE2,RANGE2_BIT};
+	use data_processor::clam_db::{RANGE2};
 	use ark_ff::UniformRand;
 	use ark_std::{test_rng};
 
@@ -2788,7 +2791,7 @@ pub mod tests_db{
 
 	#[test]
 	fn test_assert_wellformed_sorted(){
-		let bits = RANGE2_BIT;
+		let bits = read_global_config().range2_bit;
 		let max:usize = (1<<bits) - 1;
 		let rg2 = RANGE2 as usize;
         let cs = ConstraintSystem::<Fr>::new_ref();

@@ -1,3 +1,4 @@
+use utils::consts::read_global_config;
 use std::sync::{Arc, Mutex};
 /* Created 05/06/2025
    Implementation initially completed 06/11/2025
@@ -47,7 +48,7 @@ use data_processor::{
 		RANGE2,
 		//CHAR, 
 		STORE_SUBSIG_STEP,
-		RANGE2_BIT, ID_ENCODED_NORMAL_STEP, ID_ENCODED_LAST_STEP,
+		 ID_ENCODED_NORMAL_STEP, ID_ENCODED_LAST_STEP,
 			ID_ENCODED_PAT, ID_ENCODED_PREV_ENCODED,
 			ID_ENCODED_RG_START, ID_ENCODED_RG_END, ID_ENCODED_SUBSIG,
 	},
@@ -538,7 +539,7 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 		//1. pat_loc to hash table for easy processing
 		let b_debug = false;
 		let hm_loc = Self::pat_loc_to_hm(pat_loc);
-		let max_val:usize = (1<<RANGE2_BIT) - 1;
+		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
 
 		//2. process each subsig, propagating step by step
@@ -684,7 +685,7 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 	pub fn gen_backward_prf(&self, default_min_loc: F, subsig_store_info: &SubsigStepStore) ->(Self, Self, StepBwdPrf<F>){
 		//1. init data
 		let b_debug = false;
-		let max_val:usize = (1<<RANGE2_BIT) - 1;
+		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let (zero, _one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
 		//2. process each subsig, propagating step by step
 		//for subsig in &self.subsigs{
@@ -873,7 +874,7 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 	fn pat_loc_to_hm(pat_loc: &std::sync::Arc<std::sync::Mutex<Container<F>>>)
 	->HashMap<F, Vec<(F,F)>>{
 		//1. retrieve cols
-		let max_val:usize = (1<<RANGE2_BIT) - 1;
+		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let (zero, _one, max) = (F::zero(), F::one(), F::from(max_val as u32));
 		let pats = pat_loc.lock().unwrap().get_container("sorted_key")
 			.unwrap().lock().unwrap().to_vec();
@@ -965,7 +966,7 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 		//let b_debug_capacity = true;
 		#[cfg(test)] { assert!(is_sorted(&self.subsigs)); }
 		assert!(!b_inp || !b_oup); //b_inp and b_oup cannot be on the same time
-		let max_val:usize = (1<<RANGE2_BIT) - 1;
+		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let (zero, _one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
 		let vec_tuples = self.subsigs.par_iter().map(|subsig|{
 			let items = self.store_items.get(subsig).unwrap();
@@ -1125,7 +1126,7 @@ impl <F:PrimeField + ColEle> StepQueueItem<F>{
 		let locs = loc_tuples.clone();
 		#[cfg(test)] {
 			assert!(is_sorted(&locs));
-			let max_val:usize = (1<<RANGE2_BIT) - 1;
+			let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 			let (zero,_one,max) = (F::zero(),F::one(),F::from(max_val as u32));
 			for i in 0..loc_tuples.len(){assert!(locs[i]!=zero&&locs[i]!=max);}
 		}
@@ -1150,7 +1151,7 @@ impl <F:PrimeField + ColEle> StepQueueItem<F>{
 	)->(StepQueueItem<F>, StepFwdPrfItem<F>){
 		//0. initial data
 		let b_debug = false;
-		let max_val:usize = (1<<RANGE2_BIT) - 1;
+		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let (_zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
 
 		let vec_pat_id = locs_available
@@ -1261,7 +1262,7 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 		//let b_debug = false;
 		let b_debug_capacity = true;
 		#[cfg(test)] { assert!(is_sorted(&self.subsigs)); }
-		let max_val:usize = (1<<RANGE2_BIT) - 1;
+		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let (zero, _one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
 
 		//1. build the columns
@@ -1452,7 +1453,7 @@ impl <F:PrimeField + ColEle> StepFwdPrfItem<F>{
 	/// where loc1 is the loc embedded in src_encoded_step_loc.
 	pub fn new(src_encoded: F, src_loc: F,
 		dst_encoded:F, pat_loc_qry: Vec<(F,F)>)->Self{
-		let max_val:usize = (1<<RANGE2_BIT) - 1;
+		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
 		let dec = &decode_cols(&vec![src_encoded], 5);
 		let (src_subsig, src_step, _pat, _rg_s, _rg_e) 
@@ -1527,7 +1528,7 @@ impl <F:PrimeField + ColEle> StepBwdPrfItem<F>{
 	pub fn new(src_encoded: F, src_min_loc: F, prev_encoded: F,
 		locs_to_del: &Vec<F>)
 	->Self{
-		let max_val:usize = (1<<RANGE2_BIT) - 1;
+		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let (_zero,_one,_max) = (F::zero(), F::one(), F::from(max_val as u32));
 		let dec = &decode_cols(&vec![src_encoded], 5);
 		let (src_subsig, src_step, src_pat, src_rg_start, src_rg_end) 
@@ -1582,7 +1583,7 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 		let b_debug_capacity = true;
 		//0. check data
 		#[cfg(test)] { assert!(is_sorted(&self.subsigs)); }
-		let max_val:usize = (1<<RANGE2_BIT) - 1;
+		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let (zero, _one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
 		//1. build the columns
 		let vt = self.subsigs.par_iter().map(|subsig|{
@@ -1924,7 +1925,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		prf_fwd: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
 	)->std::sync::Arc<std::sync::Mutex<Container<F>>>{
 		//1. retrieve info from to_add
-		let max_val:usize = (1<<RANGE2_BIT) - 1;
+		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let (zero, one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
 		let e2=sq_to_add.lock().unwrap().get_container("encoded")
 			.unwrap().lock().unwrap().to_vec(); 
@@ -2007,7 +2008,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		last_loc: F,
 	)->Result<(std::sync::Arc<std::sync::Mutex<Container<F>> >,F), Error>{
 		//0. data retrieval
-		let max_val:usize = (1<<RANGE2_BIT) - 1;
+		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
 		let res = Container::new(prf_name);
 		let names = vec!["src_encoded", "dst_encoded", 
@@ -2227,7 +2228,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let dst_adj= encode_cols(&vec![src_encoded.to_vec(), src_loc.to_vec()], 
 			&vec![0,1]);
 		let info_id= F::from(0x23001101u32); //tag to avoid collision
-		let f1 = F::from(1u64<<RANGE2_BIT);
+		let f1 = F::from(1u64<<read_global_config().range2_bit);
         let factor1 = f1*f1*f1*f1*f1; //models encoded
         let factor2 = F::from(1u64<<32); //32-bit
 		let part1_alt = info_id*factor1*factor2 + 
@@ -2500,7 +2501,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		prf_bwd: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
 	)->std::sync::Arc<std::sync::Mutex<Container<F>>>{
 		//1. retrieve info from to_del
-		let max_val:usize = (1<<RANGE2_BIT) - 1;
+		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let (zero, _one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
 		let e2=sq_to_del.lock().unwrap().get_container("encoded")
 			.unwrap().lock().unwrap().to_vec(); 
@@ -2567,7 +2568,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 	)->Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 		//0. data retrieval
 		let b_debug = false;
-		let max_val:usize = (1<<RANGE2_BIT) - 1;
+		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let (zero, one, _max) = (F::zero(), F::one(), 
 			F::from(max_val as u32));
 		let res = Container::new(prf_name);
@@ -3045,7 +3046,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		if b_debug {check_cs(&cs, "val_store_steps step 2");}
 
 		//3. check the validity of encoding
-		let unit_bits = RANGE2_BIT;
+		let unit_bits = read_global_config().range2_bit;
 		verify_encoded_table(cs.clone(),
 			unit_bits, &vec![subsig,id,pat,rg_start,rg_end], encoded)?;
 		if b_debug {check_cs(&cs, "val_store_steps step 3");}
@@ -3291,7 +3292,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		let cs = r1.cs(); 
 		let b_debug = false;
 
-		let max_val:usize = (1<<RANGE2_BIT) - 1;
+		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let f_max = F::from(max_val as u32);
 		let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
 		let (zero, one, max) = (new_const_var(&cs, zero), 
@@ -3331,7 +3332,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 
 		//1.2 check src_step
 		let info_id= F::from(0x23001101u32); //tag to avoid collision
-		let f1 = F::from(1u64<<RANGE2_BIT);
+		let f1 = F::from(1u64<<read_global_config().range2_bit);
         let factor1 = f1*f1*f1*f1*f1; //models encoded
         let factor2 = F::from(1u64<<32); //32-bit
 		let part1 = info_id*factor1*factor2 + 
@@ -3440,7 +3441,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		//    pat-loc table  || now_show_loc table
 		// because all subcols are already proved in RANGE2
 		// factor can be just bits
-		let f_unit = FpVar::<F>::constant(F::from(1u32<<RANGE2_BIT));
+		let f_unit = FpVar::<F>::constant(F::from(1u32<<read_global_config().range2_bit));
 		let src_combined = encode_cols_var_adv(
 			&vec![dst_pat.to_vec(), dst_pat_id.to_vec(), dst_loc.to_vec()], 
 			&vec![0,1,2], &f_unit);	
@@ -3482,7 +3483,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			src_loc.to_vec()], &vec![0,1], &f_unit);
 		let src_combined = encode_cols_var_adv(&vec![res_encoded.clone(), res_loc.clone()], &vec![0,1], &f_unit);
 		let info_id= new_const_var(&cs,F::from(0x23001101u32)); 
-		let f1 = new_const_var(&cs,F::from(1u64<<RANGE2_BIT));
+		let f1 = new_const_var(&cs,F::from(1u64<<read_global_config().range2_bit));
         let factor1 = &f1*&f1*&f1*&f1*&f1; //models encoded
         let factor2 = new_const_var(&cs,F::from(1u64<<32)); //32-bit
 		let part1_alt = &(&info_id*&factor1*&factor2) + 
@@ -3804,7 +3805,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 	)->Result<(), SynthesisError>{
 		//1. retrieve info from to_del
 		let b_debug = false;
-		let f_unit = FpVar::<F>::constant(F::from(1u32<<RANGE2_BIT));
+		let f_unit = FpVar::<F>::constant(F::from(1u32<<read_global_config().range2_bit));
 		let encoded = sq_to_del.lock().unwrap().get_container("encoded")
 			.unwrap().lock().unwrap().to_vec(); 
 		let locs = sq_to_del.lock().unwrap().get_container("locs")
@@ -3847,7 +3848,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		let b_debug = false;
 		//let b_perf = false;
 		let cs = r1.cs(); 
-		let max_val:usize = (1<<RANGE2_BIT) - 1;
+		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
 		let (zero, _one, _max) = (new_const_var(&cs, zero), 
 			new_const_var(&cs, one), new_const_var(&cs, max));
@@ -3885,7 +3886,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 
 		//1.2 check src_step
 		let info_id= F::from(0x23001101u32); //tag to avoid collision
-		let f1 = F::from(1u64<<RANGE2_BIT);
+		let f1 = F::from(1u64<<read_global_config().range2_bit);
         let factor1 = f1*f1*f1*f1*f1; //models encoded
         let factor2 = F::from(1u64<<32); //32-bit
 		let part1 = info_id*factor1*factor2 + 
@@ -4436,6 +4437,7 @@ fn dummy_test<F:PrimeField + ColEle>(){
 
 #[cfg(test)]
 pub mod tests_discharge_adv_gadget{
+use utils::consts::read_global_config;
 	use ark_ff::{Zero};
 	use std::{sync::Arc};
 	use ark_bn254::{Fr};
@@ -4454,7 +4456,7 @@ pub mod tests_discharge_adv_gadget{
 			DischargeAdvCapacity,StepQueueItem,StepQueue,StepQueueType},
 		traits::{Container,Col,IDX_DATA,IDX_SI_DATA},
 	};
-	use data_processor::{clam_db::{ClamavDB,RANGE2_BIT,RANGE2}, 
+	use data_processor::{clam_db::{ClamavDB,RANGE2}, 
 		type_def::{ClamavApproxConfig,SubsigStepStoreItem,SubsigStepStore},
 		clamav::{default_clamav_cfg, quick_discharge_file_by_crit_bag_pm}};
 	use folding_schemes::folding::foldpot::sigma_ir1cs::{SigmaGadget,
@@ -4767,7 +4769,7 @@ pub mod tests_discharge_adv_gadget{
 		steps_info.finalize();
 
 		//1. test the serialization
-		let max :u32= (1<<RANGE2_BIT) - 1;
+		let max :u32= (1<<read_global_config().range2_bit) - 1;
 		let subsig100_steps = vec![
 			StepQueueItem::new2( 
 				// subsig, id, pat, rg_start, rg_end

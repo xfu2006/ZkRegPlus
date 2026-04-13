@@ -1,3 +1,4 @@
+use utils::consts::read_global_config;
 /* Created 02/16/2025
    Modified: 07/30/2025 to incororate the failed_sig and discharged_sig 
    sections.
@@ -36,7 +37,7 @@
 
 // subtbl: follow inp/oup/data
 use folding_schemes::folding::foldpot::container_config::ColEle;
-use utils::{logger::{log, log_perf, LOG1, LOG7,LOG_LEVEL}, timer::Timer };
+use utils::{logger::{log, log_perf, LOG1, LOG7}, timer::Timer };
 use std::{
 	marker::PhantomData,
 	sync::{Arc, Mutex},
@@ -56,7 +57,7 @@ use folding_schemes::{
 use ark_ff::{PrimeField};
 use crate::{
 	circs::{composable_gadget_mapper::ComponentMapper,
-		MIN_BASIS_UNIQUE_STATES, MIN_SUBSIGS, MIN_AVG_PATS_PER_SUBSIG},
+		  },
 	gadgets::word_extract::{WordExtractGadget,LEGS,WordExtractAdvice},
 	gadgets::fsm::{FsmGadget,FsmAdvice},
 	gadgets::pack::{PackFinalGadget,PackFinalAdvice},
@@ -135,17 +136,17 @@ impl CpCapacity{
 			Self{
 				max_word_len: self.max_word_len,
 				basis_unique_states: (self.basis_unique_states*3/4)
-					.max(MIN_BASIS_UNIQUE_STATES),
-				subsigs: (self.subsigs*3/4).max(MIN_SUBSIGS),
+					.max(read_global_config().min_basis_unique_states),
+				subsigs: (self.subsigs*3/4).max(read_global_config().min_subsigs),
 				avg_pats_per_subsig: (self.avg_pats_per_subsig*3/4)
-					.max(MIN_AVG_PATS_PER_SUBSIG),
+					.max(read_global_config().min_avg_pats_per_subsig),
 			}
 		}else{
 			Self{
 				max_word_len: self.max_word_len,
-				basis_unique_states: (self.basis_unique_states/2).max(MIN_BASIS_UNIQUE_STATES),
-				subsigs: (self.subsigs/2).max(MIN_SUBSIGS),
-				avg_pats_per_subsig: (self.avg_pats_per_subsig/2).max(MIN_AVG_PATS_PER_SUBSIG),
+				basis_unique_states: (self.basis_unique_states/2).max(read_global_config().min_basis_unique_states),
+				subsigs: (self.subsigs/2).max(read_global_config().min_subsigs),
+				avg_pats_per_subsig: (self.avg_pats_per_subsig/2).max(read_global_config().min_avg_pats_per_subsig),
 			}
 		}
 	}
@@ -425,7 +426,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F> + Send + Sync> ComponentMa
 	fn get_sizes(&self)->Vec<usize>{
 		//1. gadget of word extension
 		let log_level = LOG7;
-		let b_perf = true && log_level >=LOG_LEVEL;
+		let b_perf = true && log_level >=read_global_config().log_level;
 		let (final_states_len,join_buf_capacity,sig_buf_capacity,mlen) = 
 			self.capacity.get_old_stats();
 
@@ -785,7 +786,7 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F> + Send + Sync> ComponentMa
 	/// the prev_stmt or the vector of its prev_stmt.
 	fn build_statement_comp(&self, _comp_id: usize, _stmt_map_id: usize, word_seg: &Vec<F>, actual_word_len: usize, _lkup: &Arc<LK>, _extra_info: &StatementExtraInfo<F>, advice: &Arc<dyn NdAdvice + Send + Sync>, _cfg: &StatementConfig, _stmt_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>{
 		let log_level = LOG7;
-		let b_perf = log_level >= LOG_LEVEL;
+		let b_perf = log_level >= read_global_config().log_level;
 
 		//1. take the advice
 		let (final_states_len,join_buf_capacity,sig_buf_capacity,mlen)

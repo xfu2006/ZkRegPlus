@@ -1,3 +1,4 @@
+use utils::consts::read_global_config;
 use std::sync::{Arc, Mutex};
 /* Recreated 04/03/2025, Completed: 05/04/2025 
 	Revise started: 10/30/2025
@@ -42,7 +43,7 @@ use ark_r1cs_std::{
 use std::any::Any;
 use data_processor::{
 	hex_acdfa::HexACDFA,
-	clam_db::{RANGE2,CHAR, STORE_SUBSIG,RANGE2_BIT},
+	clam_db::{RANGE2,CHAR, STORE_SUBSIG},
 	type_def::{SubsigPatternStore},
 };
 use crate::gadgets::{
@@ -719,7 +720,7 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		let states_final = vec![ vec![zero; to_pad], states_final].concat();
 		let locs_final = vec![ vec![zero; to_pad], locs_final].concat();
 		if b_debug{
-			let max_loc = F::from( (1u64<<RANGE2_BIT) - 1);
+			let max_loc = F::from( (1u64<<read_global_config().range2_bit) - 1);
 			locs_final.par_iter().for_each(|x| {
 				assert!(*x<max_loc); 
 			});
@@ -842,7 +843,7 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 	)->Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 		//1. generate the projected store
 		let state_part_bits = capacity.acdfa_state_part_bits;
-		assert!(state_part_bits == RANGE2_BIT);
+		assert!(state_part_bits == read_global_config().range2_bit);
 		let subsig_ids = inp_subsigs.iter().map(|f| field_to_usize(f))
 			.collect::<Vec<usize>>();
 		assert!(subsig_ids.len()==capacity.subsigs);
@@ -1546,7 +1547,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		let locs_final= fsm_acc.get_container("locs_final")?
 			.lock().unwrap().to_vec();
 		if b_debug{
-			let max_loc = F::from( (1u64<<RANGE2_BIT) - 1);
+			let max_loc = F::from( (1u64<<read_global_config().range2_bit) - 1);
 			locs_final.iter().for_each(|x| {
 				assert!(x.value().unwrap()<max_loc); 
 			});
@@ -1582,7 +1583,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		//3.2 use sid_states_final to sum up the logup equation LHS
 		//COST: 2*nlen
 		assert!(states.len()==nlen+1);
-		let unit_cvar = new_const_var(&cs, F::from(1u32<<RANGE2_BIT));
+		let unit_cvar = new_const_var(&cs, F::from(1u32<<read_global_config().range2_bit));
 		let f_id_non_final = F::from(self.fsm_id+1);
 		let non_final_cvar = new_const_var(&cs, f_id_non_final); 
 		let lb_one= LinearCombination::from((F::one(),Variable::One));
@@ -1789,7 +1790,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		//3. check the validity of encoding
 		//COST: avg_pat_subsig * subsig
 		let unit_bits = self.capacity.acdfa_state_part_bits;
-		assert!(unit_bits==RANGE2_BIT, "reset HexACDFA state part bits or RANGE2_BIT so that they are aligned");
+		assert!(unit_bits == read_global_config().range2_bit, "reset HexACDFA state part bits or read_global_config().range2_bit so that they are aligned");
 		verify_encoded_table(cs.clone(),
 			unit_bits, &vec![subsig,id1,state,id2,pat], encoded)?;
 		if b_perf{

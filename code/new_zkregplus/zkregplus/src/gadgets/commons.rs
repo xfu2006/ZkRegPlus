@@ -1,3 +1,4 @@
+use utils::consts::read_global_config;
 /* Created 03/07/2025 */
 // common utility functions
 use folding_schemes::folding::foldpot::container_config::ColEle;
@@ -28,7 +29,7 @@ use ark_r1cs_std::{
 	eq::EqGadget,
 	R1CSVar,
 };
-use data_processor::clam_db::{RANGE2_BIT,RANGE2};
+use data_processor::clam_db::{RANGE2};
 
 pub fn print_set<F:PrimeField>(msg: &str, set: &HashSet<F>){
 	println!("=== {} ====", msg);
@@ -107,7 +108,7 @@ pub fn vec_to_var<F:PrimeField + ColEle>(cs: &ConstraintSystemRef<F>, v: &Vec<F>
 #[allow(dead_code)]
 pub fn check_rg2<F:PrimeField + ColEle>(data: &Vec<F>,sid: &Vec<F>){
 	let frg = F::from(RANGE2);
-	let max_val:usize = (1<<RANGE2_BIT) - 1;
+	let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 	let max = F::from(max_val as u64);
 	assert!(data.len()==sid.len());
 	for i in 0..data.len(){
@@ -130,7 +131,7 @@ pub fn new_const_var<F:PrimeField + ColEle>(cs: &ConstraintSystemRef<F>, v: F)
 pub fn encode_2col_var<F:PrimeField + ColEle>(c1: &[FpVar<F>], c2: &[FpVar<F>]
 )->Vec<FpVar<F>>{
 	let cs = c1[0].cs();
-	let factor = new_const_var(&cs, F::from(1u32<<RANGE2_BIT));	
+	let factor = new_const_var(&cs, F::from(1u32<<read_global_config().range2_bit));	
 	assert!(c1.len()==c2.len());
 	let res = c1.iter().zip(c2.iter()).map(|(x,y)|
 		x + (y*&factor)).collect::<Vec<FpVar<F>>>();
@@ -151,7 +152,7 @@ pub fn encode_2col_var_adv<F:PrimeField + ColEle>(c1: &[FpVar<F>], c2: &[FpVar<F
 /// encode 2 column into one encoded column
 pub fn encode_2col<F:PrimeField + ColEle>(c1: &[F], c2: &[F]
 )->Vec<F>{
-	let factor = F::from(1u32<<RANGE2_BIT);	
+	let factor = F::from(1u32<<read_global_config().range2_bit);	
 	assert!(c1.len()==c2.len());
 	let res = c1.par_iter().zip(c2.par_iter()).map(|(x,y)|
 		*x + (*y*factor)).collect::<Vec<F>>();
@@ -165,7 +166,7 @@ pub fn encode_cols_better<F:PrimeField + ColEle>(cols: Vec<&[F]>, col_ids: Vec<u
 	->Vec<F>{
 	//1. prepare data
 	let (num_cols, n) = (col_ids.len(), cols[col_ids[0]].len());
-	let factor = F::from(1u32<<RANGE2_BIT);	
+	let factor = F::from(1u32<<read_global_config().range2_bit);	
 	let mut coefs = vec![F::one(); num_cols];
 	for i in 1..coefs.len() {coefs[i] = coefs[i-1] * factor;}
 	coefs.reverse();
@@ -191,7 +192,7 @@ pub fn encode_cols<F:PrimeField + ColEle>(cols: &Vec<Vec<F>>, col_ids: &Vec<usiz
 	->Vec<F>{
 	//1. prepare data
 	let (num_cols, n) = (col_ids.len(), cols[col_ids[0]].len());
-	let factor = F::from(1u32<<RANGE2_BIT);	
+	let factor = F::from(1u32<<read_global_config().range2_bit);	
 	let mut coefs = vec![F::one(); num_cols];
 	for i in 1..coefs.len() {coefs[i] = coefs[i-1] * factor;}
 	coefs.reverse();
@@ -215,7 +216,7 @@ pub fn encode_cols<F:PrimeField + ColEle>(cols: &Vec<Vec<F>>, col_ids: &Vec<usiz
 pub fn decode_cols<F:PrimeField + ColEle>(vec: &Vec<F>, n: usize)->Vec<Vec<F>>{
 	let tuples = vec.par_iter().map(|v| {
 		let bits:Vec<bool> = v.into_bigint().to_bits_le();
-		let chunks = bits.chunks(RANGE2_BIT).map(|v|{
+		let chunks = bits.chunks(read_global_config().range2_bit).map(|v|{
 			let bi: F::BigInt= BigInteger::from_bits_le(v);
 			F::from(bi)
 		}).collect::<Vec<F>>();
@@ -241,7 +242,7 @@ pub fn decode_cols<F:PrimeField + ColEle>(vec: &Vec<F>, n: usize)->Vec<Vec<F>>{
 pub fn encode_cols_var<F:PrimeField + ColEle>(cols: &Vec<Vec<FpVar<F>>>, 
 	col_ids: &Vec<usize>) ->Vec<FpVar<F>>{
 	let cs = cols[0][0].cs();
-	let factor =new_const_var(&cs,F::from(1u32<<RANGE2_BIT));	
+	let factor =new_const_var(&cs,F::from(1u32<<read_global_config().range2_bit));	
 	encode_cols_var_adv(cols, col_ids, &factor)
 }
 
@@ -262,7 +263,7 @@ pub fn verify_encode_cols_in_range<F:PrimeField + ColEle>(target_col: &[FpVar<F>
 	assert!(target_col.len()>0);
 	let cs = target_col[0].cs();
 	let nc = cs.num_constraints();
-	let factor = F::from(1u32<<RANGE2_BIT);	
+	let factor = F::from(1u32<<read_global_config().range2_bit);	
 	let logl = LOG2;
 	let num_cols = cols.len();
 	let mut coefs = vec![F::one(); num_cols];
@@ -361,7 +362,7 @@ pub fn encode_cols_var_adv<F:PrimeField + ColEle>(cols: &Vec<Vec<FpVar<F>>>,
 /// the diff value is the ABSOLUTE value
 pub fn gen_abs_diff_col<F:PrimeField + ColEle>(col: &Vec<F>)->Vec<F>{
 	let zero = F::zero();
-	let max_val:usize = (1<<RANGE2_BIT) - 1;
+	let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 	let max = F::from(max_val as u32);
 	//let f_rg= F::from(RANGE2);
 	let col = (1..col.len()).collect::<Vec<usize>>().into_par_iter().map(|i|{
@@ -456,7 +457,7 @@ pub fn gen_assert_sidcol_for_diff<F:PrimeField + ColEle>(key: &Vec<FpVar<F>>,
 /// and its SID
 pub fn gen_diff_col<F:PrimeField + ColEle>(col: &Vec<F>)->(Vec<F>,Vec<F>){
 	let zero = F::zero();
-	let max_val:usize = (1<<RANGE2_BIT) - 1;
+	let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 	let max = F::from(max_val as u32);
 	let f_rg= F::from(RANGE2);
 	let tuples = (1..col.len()).collect::<Vec<usize>>().into_par_iter().map(|i|{
@@ -484,7 +485,7 @@ pub fn gen_diff_col<F:PrimeField + ColEle>(col: &Vec<F>)->(Vec<F>,Vec<F>){
 pub fn two_col_to_hashmap<F:PrimeField + ColEle>(
 	col1: &Vec<F>, col2: &Vec<F>
 )->HashMap<F,Vec<F>>{
-	let max_val:usize = (1<<RANGE2_BIT) - 1;
+	let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 	let max = F::from(max_val as u32);
 	assert!(col1.len()==col2.len());
 	let hs:HashMap<F, Vec<F>> = col1.par_iter().zip(col2.par_iter())
@@ -575,7 +576,7 @@ pub fn two_col_tbl_left_join<F:PrimeField + ColEle>(
 		assert_wellformed_sorted_two_col_tbl(tbl1);
 		assert_wellformed_sorted_two_col_tbl(tbl2);
 	}
-	let max_val:usize = (1<<RANGE2_BIT) - 1;
+	let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 	let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
 
 	//2. build a hashmap of tbl2. map from real key to (begin,end) included
@@ -830,7 +831,7 @@ pub fn assert_wellformed_sorted_two_col_tbl_adv<F:PrimeField + ColEle>(tbl: &Vec
 	b_relax: bool){
 	//1. quick check
 	let n = tbl[0].len();
-	let max_val:usize = (1<<RANGE2_BIT) - 1;
+	let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 	let (zero, max, one) = (F::zero(), F::from(max_val as u32), F::one());
 	assert!(tbl[1].len()==n && tbl[2].len()==n);
 
@@ -844,7 +845,7 @@ pub fn assert_wellformed_sorted_two_col_tbl_adv<F:PrimeField + ColEle>(tbl: &Vec
 			assert!(tbl[2][i-1]==max || (tbl[0][i-1]==zero && tbl[2][i-1]==zero));
 		}else{//same key
 			assert!(tbl[0][i]==zero || tbl[1][i] == tbl[1][i-1] + one || (b_relax && tbl[1][i]==tbl[1][i-1]));
-			assert!(tbl[0][i]==zero || tbl[2][i] > tbl[2][i-1], "tbl[0][i]: {}, tbl[2][i]: {}, tbl2[i][i-1]: {}. Not satisfy tbl[0][i]==zero or tbl[2][i]>tbl[2][i-1]. FAILURE usual cause: RANGE2_BIT not sufficient", tbl[0][i], tbl[2][i], tbl[2][i-1]);
+			assert!(tbl[0][i]==zero || tbl[2][i] > tbl[2][i-1], "tbl[0][i]: {}, tbl[2][i]: {}, tbl2[i][i-1]: {}. Not satisfy tbl[0][i]==zero or tbl[2][i]>tbl[2][i-1]. FAILURE usual cause: read_global_config().range2_bit not sufficient", tbl[0][i], tbl[2][i], tbl[2][i-1]);
 		}
 		if i==n-1{ assert!(tbl[2][i]==max || tbl[0][i]==zero); }
 	}
@@ -917,7 +918,7 @@ pub fn hashmap_to_wide_wellformed<F:PrimeField + ColEle>(
 /// 100 0  0    
 /// 100 1  2   
 /// 100 2  50  
-/// 100 3  max # max = 2^RANGE2_BIT - 1
+/// 100 3  max # max = 2^read_global_config().range2_bit - 1
 ///
 /// might throw CapErr("target_size");
 pub fn hashmap_to_sorted_2col_tbl<F:PrimeField + ColEle>(
@@ -930,7 +931,7 @@ pub fn hashmap_to_sorted_2col_tbl<F:PrimeField + ColEle>(
 
 	//2. construct tuples
 	let zero = F::zero();
-	let max_val:usize = (1<<RANGE2_BIT) - 1;
+	let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 	let max = F::from(max_val as u32);
 	let tuples = sorted_keys.par_iter().map(|k|{
 		let v = map.get(k).unwrap();
@@ -1070,7 +1071,7 @@ pub fn verify_inverse_mul_col<F:PrimeField + ColEle>(
 	let num_cols = v1.len();
 	let n = v1[0].len();
 	for c in v1 {assert!(c.len()==n);}
-	let factor = F::from(1u32<<RANGE2_BIT);	
+	let factor = F::from(1u32<<read_global_config().range2_bit);	
 	let mut coefs = vec![F::one(); num_cols];
 	for i in 1..coefs.len() {coefs[i] = coefs[i-1] * factor;}
 	coefs.reverse();
@@ -1346,7 +1347,7 @@ pub fn verify_encoded_states_sig_count<F:PrimeField + ColEle>(cs: ConstraintSyst
 	let n = v1.len();
 	assert!(v2.len()==2*n);
 	let sigbit_factor = FpVar::<F>::new_constant(cs.clone(),
-		F::from(1u32 << RANGE2_BIT))?;
+		F::from(1u32 << read_global_config().range2_bit))?;
 	for i in 0..n{
 		let (s, v) = (&v2[i], &v2[n+i]); //assume s is already +1
 		let encoded = s*&sigbit_factor + v; 
@@ -1371,7 +1372,7 @@ pub fn verify_encoded_states_sig<F:PrimeField + ColEle>(cs: ConstraintSystemRef<
 	let n = v1.len();
 	assert!(v2.len()==3*n);
 	let sigbit_factor = FpVar::<F>::new_constant(cs.clone(),
-		F::from(1u32 << RANGE2_BIT))?;
+		F::from(1u32 << read_global_config().range2_bit))?;
 	let sigbit_fac2 = &sigbit_factor * &sigbit_factor;
 	for i in 0..n{
 		let (s, id, v) = (&v2[i], &v2[n+i], &v2[2*n+i]); 

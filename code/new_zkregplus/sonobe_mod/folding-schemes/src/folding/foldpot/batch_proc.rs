@@ -31,8 +31,7 @@ use crate::commitment::{
 use rayon::prelude::*;
 use utils::{
 	timer::Timer,
-	logger::{log_perf},
-	consts::LOG1,
+	logger::{log_perf, LOG1},
 };
 use core::marker::PhantomData;
 use crate::folding::foldpot::{

@@ -801,7 +801,7 @@ pub mod tests {
             Pedersen<Projective2>,
             false,
         >::new(poseidon_config, F_circuit);
-        let nova_params = N::preprocess(&mut rng, &prep_param).unwrap();
+        let nova_params = N::preprocess(&mut rng, &prep_param, 0).unwrap();
 
         // generate a Nova instance and do a step of it
         let mut nova = N::init(&nova_params, F_circuit, z_0.clone()).unwrap();

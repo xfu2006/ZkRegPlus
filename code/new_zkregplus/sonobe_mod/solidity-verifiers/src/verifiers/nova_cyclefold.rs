@@ -323,7 +323,7 @@ mod tests {
                 poseidon_config,
                 f_circuit.clone(),
             );
-        let nova_params = NOVA::preprocess(&mut rng, &prep_param).unwrap();
+        let nova_params = NOVA::preprocess(&mut rng, &prep_param, 0).unwrap();
         let nova = NOVA::init(
             &nova_params,
             f_circuit.clone(),

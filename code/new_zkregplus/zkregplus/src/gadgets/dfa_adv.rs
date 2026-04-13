@@ -1,3 +1,4 @@
+use utils::consts::read_global_config;
 /* Created 07/16/2025, Completed: 07/27/2025
 	Revised 11/06/2025: improve efficiency
 	Revised 01/10/2026: improve capaicity err exception
@@ -36,7 +37,7 @@ use ark_r1cs_std::{
 	R1CSVar,
 };
 use data_processor::{
-	clam_db::{ClamavDB, RANGE2_BIT, RANGE2,CHAR_MAP,
+	clam_db::{ClamavDB,  RANGE2,CHAR_MAP,
 		//STORE_SUBSIG,
 	},
 	type_def::{TriVal,ClamavSig},
@@ -329,7 +330,7 @@ impl <F: PrimeField + ColEle> DfaAdvAdvice<F>{
 				}
 				let ch_usize = ch as usize;
 				let trans = ch_usize +
-					 ((src+1)<<4) + ((dst+1)<<(4+RANGE2_BIT));
+					 ((src+1)<<4) + ((dst+1)<<(4+read_global_config().range2_bit));
 				v_states[i+1] = F::from((dst+1) as u32);
 				v_trans[i] = F::from(trans as u64);
 				src = *dst;
@@ -779,7 +780,7 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 		let (zero,one) = (new_const_var(&cs, F::zero()), 
 			new_const_var(&cs, F::one()));
 		//let fr = new_const_var(&cs, F::from(RANGE2));
-		let bits = RANGE2_BIT; //26 bit
+		let bits = read_global_config().range2_bit; //26 bit
 		let bit_part1 = bits*2/3; //16 for accomodating 64k sigs for bits 24
 		let bit_part1 = if bits>19 {16} else {bit_part1};
 		let bit_part2 = bits - bit_part1;
@@ -911,7 +912,7 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 		// To compare the TWO arrays are essentially the same
 		// we can simply pack 4 element's check INTO one!
 		let unit_var = FpVar::<F>::new_constant(cs.clone(),
-			F::from((1<<(RANGE2_BIT+4)) as u32))?;
+			F::from((1<<(read_global_config().range2_bit+4)) as u32))?;
 		let hex_var = FpVar::<F>::new_constant(cs.clone(),
 			F::from(16 as u32))?;
 			//note here: si_nibble = CHAR_MAP + ch
@@ -1058,7 +1059,7 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 		let nc = cs.num_constraints();
 		let (zero,one)=(new_const_var(&cs,F::zero()),
 			new_const_var(&cs,F::one()));
-        let max_val:usize = (1<<RANGE2_BIT) - 1;
+        let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let _max=new_const_var(&cs,F::from(max_val as u64));
 		let _frg = new_const_var(&cs, F::from(RANGE2));
 		let names = vec![ "v_sigs", "v_dnf_id", "v_dnf_step", 
@@ -1165,7 +1166,7 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 		// two components.
 		//
 		// COST: 4n 
-		let bits = RANGE2_BIT;
+		let bits = read_global_config().range2_bit;
 		let bit_part1 = bits*2/3; //16 for accomodating 64k sigs for bits 24
 		let bit_part1 = if bits>19 {16} else {bit_part1};
 		let bit_part2 = bits - bit_part1;
@@ -1177,7 +1178,7 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 				sig_id*&fac2 + real_subsig_id
 		}).collect::<Vec<FpVar<F>>>();
 
-		let f_unit = FpVar::<F>::constant(F::from(1u32<<RANGE2_BIT));
+		let f_unit = FpVar::<F>::constant(F::from(1u32<<read_global_config().range2_bit));
 		let src = encode_cols_var_adv_better(
 			&vec![&v_computed_subsig[..], &vec![f_false.clone(); n][..]],
 			&vec![0,1], &f_unit
@@ -1373,7 +1374,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for DfaAdvGadget<F>{
 #[allow(dead_code)]
 pub fn extract_sigid<F:PrimeField + ColEle>(subsig_id: F)->(F,F){
 	let u_subsig_id = field_to_usize(&subsig_id);
-	let bits = RANGE2_BIT; //26 bit
+	let bits = read_global_config().range2_bit; //26 bit
 	let bit_part1 = bits*2/3; //16 for accomodating 64k sigs for bits 24
 	let bit_part1 = if bits>19 {16} else {bit_part1};
 	let bit_part2 = bits - bit_part1;

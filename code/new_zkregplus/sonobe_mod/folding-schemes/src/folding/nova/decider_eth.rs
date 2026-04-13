@@ -362,7 +362,7 @@ pub mod tests {
         let z_0 = vec![Fr::from(3_u32)];
 
         let prep_param = PreprocessorParam::new(poseidon_config, F_circuit);
-        let nova_params = N::preprocess(&mut rng, &prep_param).unwrap();
+        let nova_params = N::preprocess(&mut rng, &prep_param, 0).unwrap();
 
         let start = Instant::now();
         let mut nova = N::init(&nova_params, F_circuit, z_0.clone()).unwrap();

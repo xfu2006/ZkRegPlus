@@ -1401,7 +1401,7 @@ pub mod tests_mod_basic {
 			LK,
 			GM,
             H,
-        >::preprocess(&mut rng, &prep_param)
+        >::preprocess(&mut rng, &prep_param, 0)
         .unwrap();
 
 

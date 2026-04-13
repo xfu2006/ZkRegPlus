@@ -30,15 +30,64 @@ pub const ALWAYS_INIT:bool = true;
 
 pub const ADD_CHAIN_SIZE: usize = 64;
 
-pub const ERR:usize = 0;
-pub const WARN:usize = 1;
-pub const LOG1:usize = 2;
-pub const LOG2:usize = 3;
-pub const LOG3:usize = 4;
-pub const LOG4:usize = 5;
-pub const LOG5:usize = 6;
-pub const LOG6:usize = 7;
-pub const LOG_LEVEL:usize = LOG1;
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+
+pub struct GlobalConfig {
+    pub log_level: usize,
+    pub range2_bit: usize,
+    pub min_basis_unique_states: usize,
+    pub min_subsigs: usize,
+    pub min_sigs: usize,
+    pub min_avg_pats_per_subsig: usize,
+    pub min_avg_active_pats_per_subsig: usize,
+    pub min_basis_pats_in_trace: usize,
+    pub min_perc_pats_expansion_rate: usize,
+    pub min_sigs_sed: usize,
+    pub min_perc_comp_subsigs: usize,
+    pub min_basis_acc_states: usize,
+}
+
+impl Default for GlobalConfig {
+    fn default() -> Self {
+        Self {
+            log_level: crate::logger::LOG6,
+            range2_bit: 18,
+            min_basis_unique_states: 2,
+            min_subsigs: 145,
+            min_sigs: 2,
+            min_avg_pats_per_subsig: 2,
+            min_avg_active_pats_per_subsig: 2,
+            min_basis_pats_in_trace: 2,
+            min_perc_pats_expansion_rate: 1,
+            min_sigs_sed: 2,
+            min_perc_comp_subsigs: 10,
+            min_basis_acc_states: 2,
+        }
+    }
+}
+
+static GLOBAL_CONFIG: RwLock<GlobalConfig> = RwLock::new(GlobalConfig {
+    log_level: crate::logger::LOG6,
+    range2_bit: 18,
+    min_basis_unique_states: 2,
+    min_subsigs: 145,
+    min_sigs: 2,
+    min_avg_pats_per_subsig: 2,
+    min_avg_active_pats_per_subsig: 2,
+    min_basis_pats_in_trace: 2,
+    min_perc_pats_expansion_rate: 1,
+    min_sigs_sed: 2,
+    min_perc_comp_subsigs: 10,
+    min_basis_acc_states: 2,
+});
+
+pub fn read_global_config() -> RwLockReadGuard<'static, GlobalConfig> {
+    GLOBAL_CONFIG.read().unwrap()
+}
+
+pub fn get_global_config() -> RwLockWriteGuard<'static, GlobalConfig> {
+    GLOBAL_CONFIG.write().unwrap()
+}
 
 pub const DEFAULT_ACDFA_DA_BITS:usize = 2;
 pub const DEFAULT_ACDFA_STATE_PART_BITS:usize=24;

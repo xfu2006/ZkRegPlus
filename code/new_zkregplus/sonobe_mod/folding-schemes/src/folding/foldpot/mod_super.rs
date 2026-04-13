@@ -2057,7 +2057,7 @@ pub mod tests_mod_super {
 			LK,
 			GM,
             H,
-        >::preprocess(&mut rng, &prep_param)
+        >::preprocess(&mut rng, &prep_param, 0)
         .unwrap();
 
 
@@ -2086,7 +2086,8 @@ pub mod tests_mod_super {
 				ch,
 				rc,
 				num_steps,
-				precomputed_cmF
+				precomputed_cmF,
+				0
             )
             .unwrap();
 
@@ -2119,6 +2120,7 @@ pub mod tests_mod_super {
 				rc,
 				num_steps,
 				precomputed_cmF,
+				0
             )
             .unwrap();
 

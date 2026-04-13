@@ -18,7 +18,7 @@ use zkregplus::circs::{
 	sed_mapper::{SedCapacity},
 	dfa_mapper::{DfaCapacity},
 };
-use data_processor::clam_db::RANGE2_BIT;
+use utils::consts::{read_global_config, get_global_config};
 
 type CS1 = Pedersen<Projective>;
 //EXTERNAL commitment KZG for decider
@@ -34,6 +34,8 @@ type C2G2 = ProjectiveG2;
 
 
 fn small_data<F:PrimeField>(){
+	get_global_config().range2_bit = 18;
+	let range2_bit = read_global_config().range2_bit;
 	let b_read_cache = false;
 	let b_write_cache = true;
 	let set1 = "data/debug/small_data_set/config_dfa"; //for dfa 
@@ -59,7 +61,7 @@ fn small_data<F:PrimeField>(){
 		avg_pats_per_subsig
 	};
 	let init_sed_cap= SedCapacity::new(
-		max_word, RANGE2_BIT, subsigs, 
+		max_word, range2_bit, subsigs, 
 		avg_pats_per_subsig, avg_active_pat_per_sig, 
 		basis_pats_in_trace, 
 		perc_pats_expansion_rate,

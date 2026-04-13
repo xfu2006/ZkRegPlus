@@ -667,6 +667,7 @@ where
 #[cfg(test)]
 pub mod tests_zkp_driver{
 	use ark_ff::{PrimeField};
+	use utils::consts::{read_global_config, get_global_config};
 	//use folding_schemes::folding::foldpot::container_config::ColEle;
 	use ark_bn254::{constraints::{GVar,PairingVar}, Bn254, Fr, G1Projective as Projective, G2Projective as ProjectiveG2};
 	use ark_grumpkin::{constraints::GVar as GVar2, Projective as Projective2};
@@ -677,9 +678,6 @@ pub mod tests_zkp_driver{
 		cp_mapper::{CpCapacity},
 		sed_mapper::{SedCapacity},
 		dfa_mapper::{DfaCapacity},
-	};
-	use data_processor::{
-		clam_db::{RANGE2_BIT},
 	};
 
 	type CS1 = Pedersen<Projective>;
@@ -699,7 +697,7 @@ pub mod tests_zkp_driver{
 	/// COST: 7GB and 36 sec.
 	#[allow(dead_code)]
 	fn small_data<F:PrimeField>(b_check_lkup: bool){
-		assert!(RANGE2_BIT==8, "set RANGE2_BIT to 8");
+		get_global_config().range2_bit = 8;
 		let b_read_cache = false;
 		let b_write_cache = !b_read_cache;
 		let set1 = "data/debug/small_data_set/config_dfa"; //for dfa 
@@ -727,7 +725,7 @@ pub mod tests_zkp_driver{
 			//avg_subsig_per_sig
 		};
 		let init_sed_cap= SedCapacity::new(
-			max_word, RANGE2_BIT, subsigs, 
+			max_word, read_global_config().range2_bit, subsigs, 
 			avg_pats_per_subsig, avg_active_pats_per_subsig, 
 			basis_pats_in_trace, 
 			perc_pats_expansion_rate,
@@ -764,7 +762,7 @@ pub mod tests_zkp_driver{
 	///       4 jobs: 11GB and 44sec (reason: folding doesn't take much time)
 	#[allow(dead_code)]
 	fn small_data_par<F:PrimeField>(b_check_lkup: bool){
-		assert!(RANGE2_BIT==18, "set RANGE2_BIT to 8");
+		get_global_config().range2_bit = 18;
 		let b_read_cache = false;
 		let b_write_cache = !b_read_cache;
 		let set1 = "data/debug/small_data_set/config_dfa"; //for dfa 
@@ -792,7 +790,7 @@ pub mod tests_zkp_driver{
 			//avg_subsig_per_sig
 		};
 		let init_sed_cap= SedCapacity::new(
-			max_word, RANGE2_BIT, subsigs, 
+			max_word, read_global_config().range2_bit, subsigs, 
 			avg_pats_per_subsig, avg_active_pats_per_subsig, 
 			basis_pats_in_trace, 
 			perc_pats_expansion_rate,
@@ -836,7 +834,7 @@ pub mod tests_zkp_driver{
 	/// COST: 18GB and 160 sec
 	#[allow(dead_code)]
 	fn small_data2<F:PrimeField>(b_check_lkup: bool){
-		assert!(RANGE2_BIT==18, "set RANGE2_BIT to 18");
+		get_global_config().range2_bit = 18;
 		let b_read_cache = false;
 		let b_write_cache = !b_read_cache;
 		let set1 = "data/debug/small_data_set2/config_dfa"; //for dfa 
@@ -863,7 +861,7 @@ pub mod tests_zkp_driver{
 			//avg_subsig_per_sig,
 		};
 		let init_sed_cap= SedCapacity::new(
-			max_word, RANGE2_BIT, subsigs, 
+			max_word, read_global_config().range2_bit, subsigs, 
 			avg_pats_per_subsig, 
 			avg_active_pats_per_subsig, 
 			basis_pats_in_trace, 
@@ -885,7 +883,7 @@ pub mod tests_zkp_driver{
 			//avg_subsig_per_sig,
 		};
 		let init_sed_cap_igc= SedCapacity::new(
-			max_word, RANGE2_BIT, 
+			max_word, read_global_config().range2_bit, 
 			subsigs, 
 			 avg_pats_per_subsig, 
 			 avg_active_pats_per_subsig, 
@@ -925,7 +923,7 @@ pub mod tests_zkp_driver{
 	/// This function is used for debugging
 	#[allow(dead_code)]
 	fn small_data_debug<F:PrimeField>(b_check_lkup: bool){
-		assert!(RANGE2_BIT==24, "set RANGE2_BIT to 24");
+		get_global_config().range2_bit = 24;
 		let b_read_cache = false;
 		let b_write_cache = !b_read_cache;
 		let set1 = "data/debug/small_data_set2/config_dfa"; //for dfa 
@@ -952,7 +950,7 @@ pub mod tests_zkp_driver{
 			//avg_subsig_per_sig,
 		};
 		let init_sed_cap= SedCapacity::new(
-			max_word, RANGE2_BIT, subsigs, 
+			max_word, read_global_config().range2_bit, subsigs, 
 			avg_pats_per_subsig, 
 			avg_active_pats_per_subsig, 
 			basis_pats_in_trace, 
@@ -999,7 +997,7 @@ pub mod tests_zkp_driver{
 	/// at the last stage of snark generation it's costly.
 	#[allow(dead_code)]
 	fn small_data3<F:PrimeField>(b_check_lkup: bool){
-		assert!(RANGE2_BIT==18, "set RANGE2_BIT to 18");
+		get_global_config().range2_bit = 18;
 		let b_read_cache = false;
 		let b_write_cache = !b_read_cache;
 		let set1 = "data/debug/small_data_set2/config_dfa"; //for dfa 
@@ -1031,7 +1029,7 @@ pub mod tests_zkp_driver{
 			//avg_subsig_per_sig,
 		};
 		let init_sed_cap= SedCapacity::new(
-			max_word, RANGE2_BIT, subsigs, 
+			max_word, read_global_config().range2_bit, subsigs, 
 			avg_pats_per_subsig, 
 			avg_active_pats_per_subsig, 
 			basis_pats_in_trace, 
@@ -1050,7 +1048,7 @@ pub mod tests_zkp_driver{
             //avg_subsig_per_sig,
         };
         let init_sed_cap_igc= SedCapacity::new(
-            max_word, RANGE2_BIT, subsigs,
+            max_word, read_global_config().range2_bit, subsigs,
             avg_pats_per_subsig,
             avg_active_pats_per_subsig,
             basis_pats_in_trace_igc,
@@ -1089,7 +1087,7 @@ pub mod tests_zkp_driver{
 	/// setting min_idx and max_idx to try 1M, 2M, 4M files.
 	#[allow(dead_code)]
 	fn small_data4<F:PrimeField>(b_check_lkup: bool){
-		assert!(RANGE2_BIT==18, "set RANGE2_BIT to 18");
+		get_global_config().range2_bit = 18;
 		let b_read_cache = false;
 		let b_write_cache = !b_read_cache;
 		let set1 = "data/debug/small_data_set2/config_dfa"; //for dfa 
@@ -1121,7 +1119,7 @@ pub mod tests_zkp_driver{
 			//avg_subsig_per_sig,
 		};
 		let init_sed_cap= SedCapacity::new(
-			max_word, RANGE2_BIT, subsigs, 
+			max_word, read_global_config().range2_bit, subsigs, 
 			avg_pats_per_subsig, 
 			avg_active_pats_per_subsig, 
 			basis_pats_in_trace, 
@@ -1140,7 +1138,7 @@ pub mod tests_zkp_driver{
             //avg_subsig_per_sig,
         };
         let init_sed_cap_igc= SedCapacity::new(
-            max_word, RANGE2_BIT, subsigs,
+            max_word, read_global_config().range2_bit, subsigs,
             avg_pats_per_subsig,
             avg_active_pats_per_subsig,
             basis_pats_in_trace_igc,
@@ -1184,7 +1182,7 @@ pub mod tests_zkp_driver{
 	/// However, just run a small file
 	#[allow(dead_code)]
 	fn full_data1<F:PrimeField>(b_check_lkup: bool){
-		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
+		get_global_config().range2_bit = 26;
 		let b_read_cache = true;
 		let b_write_cache = ! b_read_cache;
 		let set1 = "data/debug/full_data_set/config/"; //for dfa 
@@ -1211,7 +1209,7 @@ pub mod tests_zkp_driver{
 			//avg_subsig_per_sig,
 		};
 		let init_sed_cap= SedCapacity::new(
-			max_word, RANGE2_BIT, subsigs, 
+			max_word, read_global_config().range2_bit, subsigs, 
 			avg_pats_per_subsig, 
 			avg_active_pats_per_subsig, 
 			basis_pats_in_trace, 
@@ -1250,8 +1248,8 @@ pub mod tests_zkp_driver{
 	/// It runs a small but challenging file _codecs_hk.so (158kb)
 	#[allow(dead_code)]
 	fn full_data2<F:PrimeField>(b_check_lkup: bool){
-		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
-		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
+		get_global_config().range2_bit = 26;
+		get_global_config().range2_bit = 26;
         let b_read_cache = true;
         let b_write_cache = ! b_read_cache;
         let set1 = "data/debug/full_data_set/config/"; //for dfa
@@ -1279,7 +1277,7 @@ pub mod tests_zkp_driver{
 			//avg_subsig_per_sig,
 		};
 		let init_sed_cap= SedCapacity::new(
-			max_word, RANGE2_BIT, subsigs, 
+			max_word, read_global_config().range2_bit, subsigs, 
 			avg_pats_per_subsig, 
 			avg_active_pats_per_subsig, 
 			basis_pats_in_trace, 
@@ -1324,7 +1322,7 @@ pub mod tests_zkp_driver{
 	///    igc and cs. stmt_len: 10M, all_w_e: 33M => circ1 72M R1CS
 	#[allow(dead_code)]
 	fn full_data3<F:PrimeField>(b_check_lkup: bool){
-		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
+		get_global_config().range2_bit = 26;
 		let b_read_cache = true;
 		let b_write_cache = ! b_read_cache;
 		let set1 = "data/debug/full_data_set/config/"; //for dfa
@@ -1353,7 +1351,7 @@ pub mod tests_zkp_driver{
 			//avg_subsig_per_sig,
 		};
 		let init_sed_cap= SedCapacity::new(
-			max_word, RANGE2_BIT, subsigs, 
+			max_word, read_global_config().range2_bit, subsigs, 
 			avg_pats_per_subsig, 
 			avg_active_pats_per_subsig, 
 			basis_pats_in_trace, 
@@ -1372,7 +1370,7 @@ pub mod tests_zkp_driver{
             //avg_subsig_per_sig,
         };
         let init_sed_cap_igc= SedCapacity::new(
-            max_word, RANGE2_BIT, subsigs,
+            max_word, read_global_config().range2_bit, subsigs,
             avg_pats_per_subsig,
             avg_active_pats_per_subsig,
             basis_pats_in_trace/shrink,
@@ -1422,7 +1420,7 @@ pub mod tests_zkp_driver{
 	/// Total: 173MB. 
 	#[allow(dead_code)]
 	fn full_data4<F:PrimeField>(b_check_lkup: bool){
-		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
+		get_global_config().range2_bit = 26;
 		let b_read_cache = true;
 		let b_write_cache = ! b_read_cache;
         let set1 = "data/debug/full_data_set/config/"; //for dfa
@@ -1454,7 +1452,7 @@ pub mod tests_zkp_driver{
 			//avg_subsig_per_sig,
 		};
 		let init_sed_cap= SedCapacity::new(
-			max_word, RANGE2_BIT, subsigs, 
+			max_word, read_global_config().range2_bit, subsigs, 
 			avg_pats_per_subsig, 
 			avg_active_pats_per_subsig, 
 			basis_pats_in_trace, 
@@ -1473,7 +1471,7 @@ pub mod tests_zkp_driver{
             //avg_subsig_per_sig,
         };
         let init_sed_cap_igc= SedCapacity::new(
-            max_word, RANGE2_BIT, subsigs,
+            max_word, read_global_config().range2_bit, subsigs,
             avg_pats_per_subsig,
             avg_active_pats_per_subsig,
             basis_pats_in_trace_igc,
@@ -1527,7 +1525,7 @@ pub mod tests_zkp_driver{
 	/// Can finish in xxx hrs.
 	#[allow(dead_code)]
 	fn full_clamav<F:PrimeField>(b_check_lkup: bool){
-		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
+		get_global_config().range2_bit = 26;
 		let b_read_cache = true;
 		let b_write_cache = ! b_read_cache;
         let set1 = "data/debug/full_clamav/config/"; //for dfa
@@ -1559,7 +1557,7 @@ pub mod tests_zkp_driver{
 			//avg_subsig_per_sig,
 		};
 		let init_sed_cap= SedCapacity::new(
-			max_word, RANGE2_BIT, subsigs, 
+			max_word, read_global_config().range2_bit, subsigs, 
 			avg_pats_per_subsig, 
 			avg_active_pats_per_subsig, 
 			basis_pats_in_trace, 
@@ -1578,7 +1576,7 @@ pub mod tests_zkp_driver{
             //avg_subsig_per_sig,
         };
         let init_sed_cap_igc= SedCapacity::new(
-            max_word, RANGE2_BIT, subsigs,
+            max_word, read_global_config().range2_bit, subsigs,
             avg_pats_per_subsig,
             avg_active_pats_per_subsig,
             basis_pats_in_trace_igc,
@@ -1627,9 +1625,9 @@ pub mod tests_zkp_driver{
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
-		//small_data::<Fr>(b_check_lkup); //small data
+		small_data::<Fr>(b_check_lkup); //small data
 		//small_data2::<Fr>(b_check_lkup);  //10k data 
-		small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
+		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)
 		//small_data_debug::<Fr>(b_check_lkup);  //for debug
 		//small_data4::<Fr>(b_check_lkup); //multi circ of 1M, 2M, 4M data
