@@ -55,7 +55,8 @@ use folding_schemes::{
 //use crate::{composable_gadget_mapper::{ComponentGadgetMapper}};
 use ark_ff::{PrimeField};
 use crate::{
-	circs::composable_gadget_mapper::ComponentMapper,
+	circs::{composable_gadget_mapper::ComponentMapper,
+		MIN_BASIS_UNIQUE_STATES, MIN_SUBSIGS, MIN_AVG_PATS_PER_SUBSIG},
 	gadgets::word_extract::{WordExtractGadget,LEGS,WordExtractAdvice},
 	gadgets::fsm::{FsmGadget,FsmAdvice},
 	gadgets::pack::{PackFinalGadget,PackFinalAdvice},
@@ -133,16 +134,18 @@ impl CpCapacity{
 		if level==1{
 			Self{
 				max_word_len: self.max_word_len,
-				basis_unique_states: self.basis_unique_states,
-				subsigs: (self.subsigs/2).max(1),
-				avg_pats_per_subsig: self.avg_pats_per_subsig,
+				basis_unique_states: (self.basis_unique_states*3/4)
+					.max(MIN_BASIS_UNIQUE_STATES),
+				subsigs: (self.subsigs*3/4).max(MIN_SUBSIGS),
+				avg_pats_per_subsig: (self.avg_pats_per_subsig*3/4)
+					.max(MIN_AVG_PATS_PER_SUBSIG),
 			}
 		}else{
 			Self{
 				max_word_len: self.max_word_len,
-				basis_unique_states: (self.basis_unique_states/2).max(1),
-				subsigs: self.subsigs,
-				avg_pats_per_subsig: (self.avg_pats_per_subsig/2).max(1),
+				basis_unique_states: (self.basis_unique_states/2).max(MIN_BASIS_UNIQUE_STATES),
+				subsigs: (self.subsigs/2).max(MIN_SUBSIGS),
+				avg_pats_per_subsig: (self.avg_pats_per_subsig/2).max(MIN_AVG_PATS_PER_SUBSIG),
 			}
 		}
 	}

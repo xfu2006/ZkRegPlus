@@ -39,6 +39,7 @@ use folding_schemes::{
 use ark_ff::{PrimeField};
 use crate::{
 	circs::composable_gadget_mapper::ComponentMapper,
+	circs::{MIN_SIGS, MIN_SUBSIGS},
 	gadgets::word_extract_adv::{WordExtractAdvCapacity, WordExtractAdvGadget, WordExtractAdvAdvice },
 	gadgets::word_extract::{LEGS},
 	gadgets::dfa_adv::{DfaAdvCapacity,DfaAdvAdvice,DfaAdvGadget},
@@ -128,14 +129,14 @@ impl DfaCapacity{
 		if level==1{
 			Self::new(
 				self.max_word_len,
-				(self.sigs/2).max(1),
-				(self.subsigs/2).max(1),
+				(self.sigs*4/5).max(MIN_SIGS),
+				(self.subsigs*4/5).max(MIN_SUBSIGS),
 			)
 		}else{
 			Self::new(
 				self.max_word_len,
-				self.sigs,
-				self.subsigs
+				(self.sigs/2).max(MIN_SIGS),
+				(self.subsigs/2).max(MIN_SUBSIGS),
 			)
 		}
 	}

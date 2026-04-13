@@ -83,7 +83,7 @@ def write_partition(partition, id, prefix):
 					print(f"ERROR: Could not find prefix '{prefix}' in path '{file_item[0]}'")
 					sys.exit(1)
 				path = path[idx + 1:]
-			f.write(path + "\n")
+			f.write("data/samples/" + path + "\n")
 
 # given the relative path (to the current directory)
 # compute the total size of all files in that rel_path

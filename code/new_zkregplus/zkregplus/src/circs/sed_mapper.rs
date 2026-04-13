@@ -62,6 +62,12 @@ use folding_schemes::{
 use ark_ff::{PrimeField};
 use crate::{
 	circs::composable_gadget_mapper::ComponentMapper,
+	circs::{
+		MIN_BASIS_UNIQUE_STATES, MIN_SUBSIGS, MIN_AVG_PATS_PER_SUBSIG,
+		MIN_BASIS_PATS_IN_TRACE, MIN_PERC_PATS_EXPANSION_RATE,
+		MIN_SIGS_SED, MIN_PERC_COMP_SUBSIGS, MIN_BASIS_ACC_STATES,
+		MIN_AVG_ACTIVE_PATS_PER_SUBSIG, 
+	},
 	gadgets::word_extract_adv::{WordExtractAdvCapacity, WordExtractAdvGadget, WordExtractAdvAdvice },
 	gadgets::word_extract::{LEGS},
 	gadgets::fsm_adv::{FsmAdvGadget,FsmAdvAdvice,FsmAdvCapacity},
@@ -255,29 +261,29 @@ impl SedCapacity{
 			Self::new(
 				self.max_word_len,
 				self.acdfa_state_part_bits,
-				(self.subsigs/2).max(1),
-				self.avg_pats_per_subsig,
-				self.avg_active_pats_per_subsig,
-				self.basis_pats_in_trace,
-				self.perc_pats_expansion_rate,
-				(self.sigs_sed/2).max(1),
-				self.perc_comp_subsigs,
-				self.basis_unique_states,
-				self.basis_acc_states,
+				(self.subsigs*3/4).max(MIN_SUBSIGS),
+				(self.avg_pats_per_subsig*3/4).max(MIN_AVG_PATS_PER_SUBSIG),
+				(self.avg_active_pats_per_subsig*3/4).max(MIN_AVG_ACTIVE_PATS_PER_SUBSIG),
+				(self.basis_pats_in_trace/2).max(MIN_BASIS_PATS_IN_TRACE),
+				(self.perc_pats_expansion_rate*3/4).max(MIN_PERC_PATS_EXPANSION_RATE),
+				(self.sigs_sed*4/5).max(MIN_SIGS_SED),
+				(self.perc_comp_subsigs*3/4).max(MIN_PERC_COMP_SUBSIGS),
+				(self.basis_unique_states*3/4).max(MIN_BASIS_UNIQUE_STATES),
+				(self.basis_acc_states/2).max(MIN_BASIS_ACC_STATES),
 			)
 		}else{
 			Self::new(
 				self.max_word_len,
 				self.acdfa_state_part_bits,
-				self.subsigs,
-				(self.avg_pats_per_subsig/2).max(1),
-				(self.avg_active_pats_per_subsig/2).max(1),
-				(self.basis_pats_in_trace/2).max(1),
-				(self.perc_pats_expansion_rate/2).max(1),
-				self.sigs_sed,
-				(self.perc_comp_subsigs/2).max(1),
-				(self.basis_unique_states/2).max(1),
-				(self.basis_acc_states/2).max(1),
+				(self.subsigs*3/4).max(MIN_SUBSIGS),
+				(self.avg_pats_per_subsig*3/4).max(MIN_AVG_PATS_PER_SUBSIG),
+				(self.avg_active_pats_per_subsig*3/4).max(MIN_AVG_ACTIVE_PATS_PER_SUBSIG),
+				(self.basis_pats_in_trace/4).max(MIN_BASIS_PATS_IN_TRACE),
+				(self.perc_pats_expansion_rate*3/4).max(MIN_PERC_PATS_EXPANSION_RATE),
+				(self.sigs_sed*4/5).max(MIN_SIGS_SED),
+				(self.perc_comp_subsigs*3/4).max(MIN_PERC_COMP_SUBSIGS),
+				(self.basis_unique_states*3/4).max(MIN_BASIS_UNIQUE_STATES),
+				(self.basis_acc_states/4).max(MIN_BASIS_ACC_STATES),
 			)
 		}
 	}

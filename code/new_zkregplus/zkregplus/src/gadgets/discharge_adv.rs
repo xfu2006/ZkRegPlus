@@ -536,7 +536,7 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 		info: &SubsigStepStore)
 	->(Self, Self, StepFwdPrf<F>){
 		//1. pat_loc to hash table for easy processing
-		let b_debug = true;
+		let b_debug = false;
 		let hm_loc = Self::pat_loc_to_hm(pat_loc);
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
@@ -914,7 +914,7 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 	pub fn new(subsigs: Vec<F>, store_items: HashMap<F,Vec<StepQueueItem<F>>>, capacity: &DischargeAdvCapacity, q_type: StepQueueType, b_igc: bool)->Self{
 		assert!(!subsigs.contains(&F::zero()));
 		assert!(!store_items.contains_key(&F::zero()));
-		let b_debug = true;
+		let b_debug = false;
 		//assert alidity of store_items
 		if b_debug{
 			for subsig in &subsigs{
@@ -3005,14 +3005,14 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		r1: FpVar<F>,
 		cs: ConstraintSystemRef<F>,
 		_word_id: FpVar<F>,
-		subseg_id: FpVar<F>,
+		_subseg_id: FpVar<F>,
 	) ->Result<(), SynthesisError>{
 
 		//1. check all subtable IDs are correct.
 		// This includes the check that the encoded column is
 		// indeed in the external lookup table.
 		// COST: 0
-		let b_debug = subseg_id.value().unwrap()>=F::from(260u32);
+		let b_debug = false;
 
 		let col_names = vec!["subsig", "id", "pat", "rg_start", "rg_end", 
 			"encoded", "inp_subsigs", "m_tbl"];
@@ -3082,7 +3082,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		let b_perf = false;
 		let mut nc = cs.num_constraints();
 		let nc0 = cs.num_constraints();
-		let b_debug = subseg_id.value().unwrap()>=F::from(260u32);
+		let b_debug = false;
 
 		//0. retrieve the data
 		let ct_sq_inp = forward_step_q.get_container("sq_inp")?;
@@ -3163,11 +3163,11 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		_r2: &FpVar<F>,
 		prf_union: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
 		_word_id: FpVar<F>,
-		subseg_id: FpVar<F>
+		_subseg_id: FpVar<F>
 	)->Result<(), SynthesisError>{
 		//1. retrieve the src and dst cols
 		let b_perf = false;
-		let b_debug = subseg_id.value().unwrap()>=F::from(260u32);
+		let b_debug = false;
 		let cs = r1.cs();
 		if b_debug {check_cs(&cs, "val_union ENTERING ... ");}
 		let nc = cs.num_constraints();
@@ -3285,11 +3285,11 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		prf_fwdprf_valid: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
 		last_loc: FpVar<F>,
 		_word_id: FpVar<F>,
-		subseg_id: FpVar<F>,
+		_subseg_id: FpVar<F>,
 	)->Result<FpVar<F>, SynthesisError>{
 		//0. retrieve data
 		let cs = r1.cs(); 
-		let b_debug = subseg_id.value().unwrap()>=F::from(260u32);
+		let b_debug = false;
 
 		let max_val:usize = (1<<RANGE2_BIT) - 1;
 		let f_max = F::from(max_val as u32);
@@ -3734,7 +3734,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		subseg_id: FpVar<F>,
 	) ->Result<(), SynthesisError>{
 		let b_perf = false;
-		let b_debug = subseg_id.value().unwrap()>=F::from(260u32);
+		let b_debug = false;
 		let mut nc = cs.num_constraints();
 		let nc0 = cs.num_constraints();
 
@@ -3800,10 +3800,10 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		prf_to_del_valid: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
 			
 		_word_id: FpVar<F>,
-		subseg_id: FpVar<F>,
+		_subseg_id: FpVar<F>,
 	)->Result<(), SynthesisError>{
 		//1. retrieve info from to_del
-		let b_debug = subseg_id.value().unwrap()>=F::from(260u32);
+		let b_debug = false;
 		let f_unit = FpVar::<F>::constant(F::from(1u32<<RANGE2_BIT));
 		let encoded = sq_to_del.lock().unwrap().get_container("encoded")
 			.unwrap().lock().unwrap().to_vec(); 
@@ -3841,10 +3841,10 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		default_min_loc: FpVar<F>, //used as min_loc default,
 
 		_word_id: FpVar<F>,
-		subseg_id: FpVar<F>,
+		_subseg_id: FpVar<F>,
 	)->Result<(), SynthesisError>{
 		//0. retrieve data
-		let b_debug = subseg_id.value().unwrap()>=F::from(260u32);
+		let b_debug = false;
 		//let b_perf = false;
 		let cs = r1.cs(); 
 		let max_val:usize = (1<<RANGE2_BIT) - 1;

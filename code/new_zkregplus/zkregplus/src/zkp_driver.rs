@@ -1018,7 +1018,7 @@ pub mod tests_zkp_driver{
 		let perc_pats_expansion_rate = 160;
 
 		let num_category = 2;
-		let num_circs_per_category= 2;
+		let num_circs_per_category= 1;
         let basis_acc_states_igc = basis_acc_states ; //9 cpercent
         let perc_pats_expansion_rate_igc = 136 ;
         let basis_pats_in_trace_igc = 20;
@@ -1533,12 +1533,12 @@ pub mod tests_zkp_driver{
         let set1 = "data/debug/full_clamav/config/"; //for dfa
         let max_word= 512 * 4;
         let sigs = 400;
-        let subsigs = 562; //220 for prev db
+        let subsigs = 580; //220 for prev db
         let avg_pats_per_subsig = 8; //old value 8
         let avg_active_pats_per_subsig = 2;
         let perc_comp_subsigs = 20;
-        let num_category = 1;
-        let num_circs_per_category= 1;
+        let num_category = 2;
+        let num_circs_per_category= 2;
         let basis_unique_states = 2000; //15 cpercent
         let basis_acc_states = 1260; //last good value 1800
         let basis_pats_in_trace = 1400; //last good value 3000

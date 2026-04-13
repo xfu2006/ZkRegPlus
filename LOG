@@ -27649,6 +27649,7 @@ Goal 1. keep track of all full_data4
 	[j] 5:45pm word_id: 3, seg_id: 221
 	[k] 7:25pm word_id: 4: 39 (word_3: 358 already passed)
 	[j] 7:57pm word_id: 4: 95 
+	[k] 8:23pm word_id: 4, seg_id: 147
 
 Goal 2. update source so that it handles different file size
 	[a] cut one file
@@ -27664,5 +27665,23 @@ Goal 3. plan the new testing
 	[f] check circuit size
 		-.> CHECK preprocess Step. Now in PERF2.
 
--- TODO -- deploy full_clamav to server and research efficiency of circ.
+Monday 04/13/2026
+Goal 1. collect fulldata4 data
+	[a] 173MB in 121660 sec - 33.8 hours (not bad)
+	[b] current light test 65M R1CS for only 63 sec	
+		key buildup 188GB (287 sec)
+			expect 256M R1CS for 240 sec and key: 100 sec
+		one circ: 18M gates. Almost 4x relation in light-test.
+Goal 2. observe full_clamav in server.
+	[a] on local disable test flag
+	[b] need to revise ALL decrease_copy
+		-> change and introduce vars
+		-> regression testing on local server
+	[b] 8 jobs parallelsim 
+		cpu:
+		ram
+	[c] circ size
+Goal 3. Planning
+	[a] move config data to global var
+	[b] transition to background also ok
 		
