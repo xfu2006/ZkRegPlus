@@ -27691,6 +27691,7 @@ Goal 2. observe full_clamav in server.
 	[d] todo: need to fix the size problem
 	[e] check price tag: 1.01$ per hour (however c2d 256gb not available
 		any more had to use m1 instance)
+			-> migrated to M1 instance now.
 Goal 3. Planning
 	[a] move config data to global var
 	[b] transition to background also ok
@@ -27699,5 +27700,3 @@ Goal 4. Move config data to global var
 		time for gemini to fix the syntax errors it introduced (or
 		changes it forgot to make). 
 	[b] also move the light testing 
-Goal 5. think about example
-	[a] 

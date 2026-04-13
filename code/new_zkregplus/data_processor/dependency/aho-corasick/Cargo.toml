@@ -67,8 +67,3 @@ all-features = true
 #     RUSTDOCFLAGS="--cfg docsrs" cargo +nightly doc --all-features
 rustdoc-args = ["--cfg", "docsrs", "--generate-link-to-definition"]
 
-[profile.release]
-debug = true
-
-[profile.bench]
-debug = true

@@ -3,13 +3,6 @@ name = "solidity-verifiers"
 version = "0.1.0"
 edition = "2021"
 
-[profile.release]
-# or "z"
-opt-level = 1
-debug = 1 # the following enables 'hot' incremental bulid
-incremental = true
-
-
 [dependencies]
 ark-ec = "0.4"
 ark-ff = "0.4"

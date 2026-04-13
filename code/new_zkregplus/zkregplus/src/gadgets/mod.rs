@@ -1,4 +1,3 @@
-use utils::consts::read_global_config;
 /// common functions
 pub mod commons;
 /// small common traits and structs to build proofs
