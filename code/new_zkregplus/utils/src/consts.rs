@@ -45,6 +45,7 @@ pub struct GlobalConfig {
     pub min_sigs_sed: usize,
     pub min_perc_comp_subsigs: usize,
     pub min_basis_acc_states: usize,
+    pub b_light_test: bool,
 }
 
 impl Default for GlobalConfig {
@@ -62,6 +63,7 @@ impl Default for GlobalConfig {
             min_sigs_sed: 2,
             min_perc_comp_subsigs: 10,
             min_basis_acc_states: 2,
+            b_light_test: true,
         }
     }
 }
@@ -79,6 +81,7 @@ static GLOBAL_CONFIG: RwLock<GlobalConfig> = RwLock::new(GlobalConfig {
     min_sigs_sed: 2,
     min_perc_comp_subsigs: 10,
     min_basis_acc_states: 2,
+    b_light_test: true,
 });
 
 pub fn read_global_config() -> RwLockReadGuard<'static, GlobalConfig> {

@@ -1524,8 +1524,9 @@ pub mod tests_zkp_driver{
 	/// E.g., run on m3m machine with 2TB (xx cpu)
 	/// Can finish in xxx hrs.
 	#[allow(dead_code)]
-	fn full_clamav<F:PrimeField>(b_check_lkup: bool){
+	fn full_clamav<F:PrimeField>(b_check_lkup: bool, b_light_test: bool){
 		get_global_config().range2_bit = 26;
+		get_global_config().b_light_test = b_light_test;
 		let b_read_cache = true;
 		let b_write_cache = ! b_read_cache;
         let set1 = "data/debug/full_clamav/config/"; //for dfa
@@ -1625,6 +1626,7 @@ pub mod tests_zkp_driver{
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
+		let _b_light_test = true;
 		small_data::<Fr>(b_check_lkup); //small data
 		//small_data2::<Fr>(b_check_lkup);  //10k data 
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
@@ -1635,5 +1637,6 @@ pub mod tests_zkp_driver{
 		//full_data2::<Fr>(b_check_lkup); //full data high acc state 
 		//full_data3::<Fr>(b_check_lkup); //full data large file
 		//full_data4::<Fr>(b_check_lkup); //full data large file
+		//full_clamav::<Fr>(b_check_lkup, _b_light_test); //full data large file
 	}
 }

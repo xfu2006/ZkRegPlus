@@ -907,7 +907,7 @@ where
         // (and RAM) to run the test. It is active by default, and not active only when
         // 'light-test' feature is used.
         //#[cfg(not(feature = "light-test"))]
-		let b_light_test = true;
+		let b_light_test = utils::consts::read_global_config().b_light_test;
 		if !b_light_test
         {
             use super::FOLDPOT_CF_N_POINTS;
@@ -1291,7 +1291,7 @@ where
         //#[cfg(feature = "light-test")]
         //println!("[WARNING]: Running with the 'light-test' feature, skipping the cyclepair part of the DeciderEthCircuit.\n Only for testing purposes.");
         //#[cfg(not(feature = "light-test"))]
-		let b_light_test = true;
+		let b_light_test = utils::consts::read_global_config().b_light_test;
 		let part1_enable = false;
 		let part2_enable = false;
 		if !b_light_test

@@ -27700,3 +27700,11 @@ Goal 4. Move config data to global var
 		time for gemini to fix the syntax errors it introduced (or
 		changes it forgot to make). 
 	[b] also move the light testing 
+	[c] cost: ---
+	gemini-2.5-flash-lite    108        275,846        75,776          2,575    │
+│  gemini-3-flash-preview   215      1,722,455     9,751,242         40,285    │
+│  gemini-3.1-pro-preview   274      2,662,491    21,393,507         52,862    │
+│  gemini-3.1-pro-preview     5        161,112       146,098          4,599
+-----
+Problem: going over and over of syntax error kills most of the tokens,
+which should be actually solved one by one?
