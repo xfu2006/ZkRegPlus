@@ -667,7 +667,8 @@ where
 		//2. double check and return
 		let pci = vec_pci[0];
 		for x in &vec_pci{assert!(*x==pci);} //should all be same
-		log_perf(job_id, log_level, &format!("PERF 1001: plan_nd_advice for {}, search_mode (fast): {}, Total:  best_layer: {}, pci: {}, word.len(): {}.", word_fname, b_fast,  _best_layer, pci, word.len()), &mut gt2);
+		log_perf(job_id, log_level, &format!("PERF 1001: plan_nd_advice for {}, search_mode (fast): {}, best_layer: {}, pci: {}, word.len in rounded bytes: {}.", word_fname, b_fast,  _best_layer, pci, word.len() * 63/2), &mut gt2); //file size
+			//is ROUNDED to 63 nibbles/2  * word.len() bytes.
 
 		Ok( (num_segs, vec_seg_size, vec_pci, vec_cap, vec_adv ) )
 	}

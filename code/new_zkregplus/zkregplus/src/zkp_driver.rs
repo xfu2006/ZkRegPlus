@@ -781,8 +781,8 @@ pub mod tests_zkp_driver{
 		let basis_pats_in_trace = 1500;   //(at most twice of basis_acc_states)
 		let perc_pats_expansion_rate = 114;
 
-		let num_category = 1;
-		let num_circs_per_category= 1;
+		let num_category = 2;
+		let num_circs_per_category= 2;
 
 		let init_cp_cap= CpCapacity{
 			max_word_len: max_word, 
@@ -807,8 +807,8 @@ pub mod tests_zkp_driver{
 			vec![
 				format!("{}/binexec_p1.dat",set1),
 				format!("{}/binexec_p2.dat",set1),
-				format!("{}/binexec_p3.dat",set1),
-				format!("{}/binexec_p4.dat",set1)
+	//			format!("{}/binexec_p3.dat",set1),
+	//			format!("{}/binexec_p4.dat",set1)
 			], //list of files to discharge
 			"data/small_data_set/reports/report.dat", //report
 			b_read_cache,
@@ -1419,6 +1419,7 @@ pub mod tests_zkp_driver{
 	/// 6: -rwxrwxr-x 1 xiang xiang 15603008 Jun  8  2025 cc1plus (Max Acc Rate: 12.33%, Max Pat Rate: 12.36%)
 	/// 7: -rwxrwxr-x 1 xiang xiang 15022144 Jun  8  2025 data/samples/binexec_merged128k/f951 (Max Acc Rate: 12.42%, Max Pat Rate: 12.45%)
 	/// 8: -rwxrwxr-x 1 xiang xiang 13676928 Jun  8  2025 data/samples/binexec_merged128k/lto1 (Max Acc Rate: 11.57%, Max Pat Rate: 11.63%)
+	/// Total: 173MB. 
 	#[allow(dead_code)]
 	fn full_data4<F:PrimeField>(b_check_lkup: bool){
 		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
@@ -1519,14 +1520,117 @@ pub mod tests_zkp_driver{
 		}
 	}
 
+	/// This tests the full clamav signatures against linux executables
+	/// There are 756MB Linux binary executable
+	/// We split them into 8 jobs.
+	/// E.g., run on m3m machine with 2TB (xx cpu)
+	/// Can finish in xxx hrs.
+	#[allow(dead_code)]
+	fn full_clamav<F:PrimeField>(b_check_lkup: bool){
+		assert!(RANGE2_BIT==26, "set RANGE2_BIT to 26");
+		let b_read_cache = true;
+		let b_write_cache = ! b_read_cache;
+        let set1 = "data/debug/full_clamav/config/"; //for dfa
+        let max_word= 512 * 4;
+        let sigs = 400;
+        let subsigs = 562; //220 for prev db
+        let avg_pats_per_subsig = 8; //old value 8
+        let avg_active_pats_per_subsig = 2;
+        let perc_comp_subsigs = 20;
+        let num_category = 1;
+        let num_circs_per_category= 1;
+        let basis_unique_states = 2000; //15 cpercent
+        let basis_acc_states = 1260; //last good value 1800
+        let basis_pats_in_trace = 1400; //last good value 3000
+        let basis_acc_states_igc = basis_acc_states ; //9 cpercent
+        let basis_pats_in_trace_igc = basis_pats_in_trace;
+            //old value 100 cur value 1/1000.
+        let dfa_sigs = 6;
+        let dfa_subsigs= 6;
+        let perc_pats_expansion_rate = 104; //old good value 2
+        let perc_pats_expansion_rate_igc = 2;
+        //let avg_subsig_per_sig = 3;
+
+		let init_cp_cap= CpCapacity{
+			max_word_len: max_word, 
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+			//avg_subsig_per_sig,
+		};
+		let init_sed_cap= SedCapacity::new(
+			max_word, RANGE2_BIT, subsigs, 
+			avg_pats_per_subsig, 
+			avg_active_pats_per_subsig, 
+			basis_pats_in_trace, 
+			perc_pats_expansion_rate,
+			sigs, 
+			perc_comp_subsigs,
+			basis_unique_states,
+			basis_acc_states,
+		);
+		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
+ 		let init_cp_cap_igc= CpCapacity{
+            max_word_len: max_word,
+            basis_unique_states,
+            subsigs: subsigs/2,
+            avg_pats_per_subsig,
+            //avg_subsig_per_sig,
+        };
+        let init_sed_cap_igc= SedCapacity::new(
+            max_word, RANGE2_BIT, subsigs,
+            avg_pats_per_subsig,
+            avg_active_pats_per_subsig,
+            basis_pats_in_trace_igc,
+            perc_pats_expansion_rate_igc,
+            sigs,
+            perc_comp_subsigs,
+            basis_unique_states,
+            basis_acc_states_igc,
+        );
+
+		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+    		0, 
+			&format!("{}/main.dat",set1), //src sig
+			vec![
+				format!("{}/binexec_p0.dat",set1),
+				format!("{}/binexec_p1.dat",set1),
+				format!("{}/binexec_p2.dat",set1),
+				format!("{}/binexec_p3.dat",set1),
+				format!("{}/binexec_p4.dat",set1),
+				format!("{}/binexec_p5.dat",set1),
+				format!("{}/binexec_p6.dat",set1),
+				format!("{}/binexec_p7.dat",set1),
+			], //list of files to discharge
+			"data/debug/full_clamav/reports/report2.dat", //report
+			b_read_cache,
+			b_write_cache,
+			"full_data", //cache name
+			&format!("{}/main_dfa.dat", set1), //signs that need dfa
+			&format!("{}/needs_ised.dat", set1), //signs that need ised 
+					//actually not used
+			&format!("{}/needs_ised_igc.dat",set1), //sigs that need ised igc
+					//actually not used
+			max_word, //this is the chunk len
+			&init_cp_cap,
+			&init_sed_cap,
+			&init_dfa_cap,
+			&init_cp_cap_igc,
+			&init_sed_cap_igc,
+			num_category,
+			num_circs_per_category,
+			b_check_lkup
+		);
+	}
+
 
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
 		//small_data::<Fr>(b_check_lkup); //small data
 		//small_data2::<Fr>(b_check_lkup);  //10k data 
-		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
-		small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)
+		small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
+		//small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)
 		//small_data_debug::<Fr>(b_check_lkup);  //for debug
 		//small_data4::<Fr>(b_check_lkup); //multi circ of 1M, 2M, 4M data
 		//full_data1::<Fr>(b_check_lkup);

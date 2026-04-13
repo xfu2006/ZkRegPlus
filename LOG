@@ -27636,8 +27636,6 @@ Goal 1. continue to debug
 Goal 2. full_data4() set 0 works!
 
 Sunday 04/12/2026
-LOC (gadgets): 22080
-LOC (sonobe): 21487
 Goal 1. keep track of all full_data4
 	[a] 9:36am prove_3: seg_id: 396
 	[b] 10:06am 445
@@ -27646,3 +27644,25 @@ Goal 1. keep track of all full_data4
 	[e] 11:52 word_id: 2, seg_id: 113
 	[f] 2:07pm word_id: 2, seg_id: 356
 	[g] 3:39pm word_id: 2, seg_id: 529
+	[h] 4:02pm word_id: 3: seg_id: 37
+	[i] 4:58pm word_id: 3, seg_id: 136
+	[j] 5:45pm word_id: 3, seg_id: 221
+	[k] 7:25pm word_id: 4: 39 (word_3: 358 already passed)
+	[j] 7:57pm word_id: 4: 95 
+
+Goal 2. update source so that it handles different file size
+	[a] cut one file
+	[b] regression testing -> DONE
+
+Goal 3. plan the new testing
+	[a] create the folder
+	[b] set up python gen_data.py and ask gemini to go over design
+	[c] generate data
+	[d] set up full_clamav function
+	[e] check the PERF 1001 dump does it include file size and name?
+		-> improve word size estimate
+	[f] check circuit size
+		-.> CHECK preprocess Step. Now in PERF2.
+
+-- TODO -- deploy full_clamav to server and research efficiency of circ.
+		
