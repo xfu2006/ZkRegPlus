@@ -27708,3 +27708,18 @@ Goal 4. Move config data to global var
 -----
 Problem: going over and over of syntax error kills most of the tokens,
 which should be actually solved one by one?
+
+Goal 5. implement the main file in examples
+	[a] outline spec.
+	[b] generate file
+	[c] unit regression test
+	[d] test main
+
+Tuesday 04/14/2026
+Goal 1. fix the circ size problem
+	[a] run small par and read the circ size
+	[b] check two circ vs 1 circ. appraently
+		it enlarges the circuit size INSTEAD of reduces ciruit size.
+
+
+-- TODO -- (1) fix the circ size problem, and (2) improve the main.

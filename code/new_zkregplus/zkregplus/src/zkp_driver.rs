@@ -275,9 +275,9 @@ where C: CurveGroup<ScalarField=F>,
 			layer_circs.push( vec![circ] ); //legacy to keep 2d layer
 
 			//3.5 update the capacities.
-			cp_cap_cs = cp_cap_cs.decreased_copy(2); //increase by level 2
+			cp_cap_cs = cp_cap_cs.decreased_copy(2); //decrease by level 2
 			sed_cap_cs = sed_cap_cs.decreased_copy(2); 
-			cp_cap_igc = cp_cap_igc.decreased_copy(2); //increase by level 2
+			cp_cap_igc = cp_cap_igc.decreased_copy(2); //decrease by level 2
 			sed_cap_igc = sed_cap_igc.decreased_copy(2); 
 			dfa_cap= dfa_cap.decreased_copy(2); 
 		}//for loop level2
@@ -1627,9 +1627,9 @@ pub mod tests_zkp_driver{
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
 		let _b_light_test = true;
-		small_data::<Fr>(b_check_lkup); //small data
+		//small_data::<Fr>(b_check_lkup); //small data
 		//small_data2::<Fr>(b_check_lkup);  //10k data 
-		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
+		small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)
 		//small_data_debug::<Fr>(b_check_lkup);  //for debug
 		//small_data4::<Fr>(b_check_lkup); //multi circ of 1M, 2M, 4M data
