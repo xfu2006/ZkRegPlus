@@ -11,6 +11,7 @@ use std::fs::File;
 use utils::{
     consts::{get_global_config, read_global_config},
     logger::{ERR, LOG1, LOG2, LOG3, LOG4, LOG5, LOG6, LOG7, WARN},
+    os::proj_root,
 };
 
 use zkregplus::{
@@ -90,7 +91,7 @@ const LOG_LEVELS: [(&str, usize); 9] = [
 
 fn small_data<F: PrimeField>(b_check_lkup: bool) {
     get_global_config().range2_bit = 8;
-    get_global_config().b_light_test = false; // Setting b_light_test as requested
+    get_global_config().b_light_test = true; // Setting b_light_test as requested
     let b_read_cache = false;
     let b_write_cache = !b_read_cache;
     let set1 = "data/debug/small_data_set/config_dfa";
@@ -152,7 +153,7 @@ fn small_data<F: PrimeField>(b_check_lkup: bool) {
 
 fn small_data_par<F: PrimeField>(b_check_lkup: bool) {
     get_global_config().range2_bit = 18;
-    get_global_config().b_light_test = false;
+    get_global_config().b_light_test = true;
     let b_read_cache = false;
     let b_write_cache = !b_read_cache;
     let set1 = "data/debug/small_data_set/config_dfa";
@@ -229,6 +230,7 @@ fn full_clamav_full<F:PrimeField>(b_check_lkup: bool){
 fn full_clamav<F: PrimeField>(b_check_lkup: bool, b_light_test: bool) {
     get_global_config().range2_bit = 26;
     get_global_config().b_light_test = b_light_test;
+    get_global_config().min_subsigs = 145;
     let b_read_cache = true;
     let b_write_cache = !b_read_cache;
     let set1 = "data/debug/full_clamav/config/";
@@ -400,7 +402,9 @@ fn main() {
     let log_file = File::create("/tmp/zkregplus.log").unwrap();
     let log_file_err = log_file.try_clone().unwrap();
 
+    let project_root = proj_root();
     let daemonize = Daemonize::new()
+        .working_directory(project_root)
         .stdout(log_file)
         .stderr(log_file_err);
 

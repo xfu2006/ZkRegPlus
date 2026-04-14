@@ -1421,6 +1421,7 @@ pub mod tests_zkp_driver{
 	#[allow(dead_code)]
 	fn full_data4<F:PrimeField>(b_check_lkup: bool){
 		get_global_config().range2_bit = 26;
+		get_global_config().min_subsigs = 145;
 		let b_read_cache = true;
 		let b_write_cache = ! b_read_cache;
         let set1 = "data/debug/full_data_set/config/"; //for dfa
@@ -1525,8 +1526,13 @@ pub mod tests_zkp_driver{
 	/// Can finish in xxx hrs.
 	#[allow(dead_code)]
 	fn full_clamav<F:PrimeField>(b_check_lkup: bool, b_light_test: bool){
+		//extra setting
 		get_global_config().range2_bit = 26;
 		get_global_config().b_light_test = b_light_test;
+		get_global_config().min_subsigs = 150;
+		get_global_config().min_basis_unique_states= 32;
+		get_global_config().min_avg_pats_per_subsig= 6;
+
 		let b_read_cache = true;
 		let b_write_cache = ! b_read_cache;
         let set1 = "data/debug/full_clamav/config/"; //for dfa
@@ -1627,9 +1633,9 @@ pub mod tests_zkp_driver{
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
 		let _b_light_test = true;
-		//small_data::<Fr>(b_check_lkup); //small data
+		small_data::<Fr>(b_check_lkup); //small data
 		//small_data2::<Fr>(b_check_lkup);  //10k data 
-		small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
+		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)
 		//small_data_debug::<Fr>(b_check_lkup);  //for debug
 		//small_data4::<Fr>(b_check_lkup); //multi circ of 1M, 2M, 4M data

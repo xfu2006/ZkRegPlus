@@ -27721,5 +27721,11 @@ Goal 1. fix the circ size problem
 	[b] check two circ vs 1 circ. appraently
 		it enlarges the circuit size INSTEAD of reduces ciruit size.
 
-
--- TODO -- (1) fix the circ size problem, and (2) improve the main.
+	[c] fixed
+Goal 2. fix the example problem 
+Goal 3. deploy to server
+	Server time: 6:50pm - 
+	[a] collect the config from server
+	[b] set up the server 
+	[c] run 1 circ version
+	[d] run 2 circ version and check circ size
