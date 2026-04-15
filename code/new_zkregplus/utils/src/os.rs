@@ -60,7 +60,7 @@ pub fn create_new_cache_dir(dir: &str){
 		fs::remove_dir_all(&abspath).
 			expect(&format!("remove dir fails: {}", dir));
 	}
-	fs::create_dir(&abspath).expect(&format!("create dir fails: {}", abspath));
+	fs::create_dir_all(&abspath).expect(&format!("create dir fails: {}", abspath));
 }
 
 /// true if file exists

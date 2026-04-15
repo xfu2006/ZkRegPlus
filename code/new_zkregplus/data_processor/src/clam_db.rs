@@ -28,7 +28,7 @@ use crate::{
 };
 use rustomaton::dfa::DFA;
 use utils::{
-	os::{read_lines,create_new_cache_dir,write_to_file,proj_root,read,write_sigs_to_dir},
+	os::{read_lines,create_new_cache_dir,write_to_file,proj_root,read,write_sigs_to_dir,file_exists},
 	timer::{Timer},
 	logger::{flog,flog_perf,LOG2,LOG1},
 	consts::read_global_config,
@@ -2179,6 +2179,23 @@ impl <F:PrimeField> ClamavDB<F>{
 		res
 	}
 
+	/// Check if all required cache files exist
+	pub fn cache_exists(dir_name: &str) -> bool {
+		let sdir = format!("{}/data/cache/{}/", &proj_root(), dir_name);
+		let files = vec![
+			"vec_sigs.txt", "vec_crit_pat.txt", "vec_crit_pat_igc.txt",
+			"vec_bag_words.txt", "vec_bag_words_igc.txt", "map_crit_pat.txt",
+			"map_crit_pat_igc.txt", "dfa_crit.txt", "dfa_crit_igc.txt",
+			"sig_to_id.txt", "lkup.txt", "bundle_subsig.txt", "bundle_subsig_igc.txt"
+		];
+		for f in files {
+			if !file_exists(&format!("{}{}", sdir, f)) {
+				return false;
+			}
+		}
+		true
+	}
+
 	/// build or load db based on b_read_cache. Note 
 	/// all file path are relative to the project root.
 	pub fn build_or_load(
@@ -2192,7 +2209,21 @@ impl <F:PrimeField> ClamavDB<F>{
 		b_read_cache: bool,
 		b_write_cache: bool)->Result<Self, Error>{
 			let proot = proj_root();
-			let db = if b_read_cache{
+			
+			let mut effective_write_cache = b_write_cache;
+			let effective_read_cache = if b_read_cache {
+				if Self::cache_exists(cache_dir) {
+					true
+				} else {
+					flog(0, LOG1, &format!("cache {} not found or incomplete, will rebuild and save.", cache_dir), vlog);
+					effective_write_cache = true;
+					false
+				}
+			} else {
+				false
+			};
+
+			let db = if effective_read_cache{
 				flog(0, LOG1, &format!("loadClamDB from: {}", cache_dir),vlog);
 				Self::load(cache_dir)
 			}else{
@@ -2202,7 +2233,7 @@ impl <F:PrimeField> ClamavDB<F>{
 					&format!("{}/{}", proot, needs_ised_list_file), 
 					&format!("{}/{}", proot, needs_ised_igc_list_file), 
 					&cfg, vlog)?;
-				if b_write_cache {db.save(cache_dir);}
+				if effective_write_cache {db.save(cache_dir);}
 				db	
 			};
 			Ok(db)

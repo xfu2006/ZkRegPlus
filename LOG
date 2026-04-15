@@ -27839,4 +27839,5 @@ Goal 8. improve the read_cache and add option, create a case it
 	[b] refine the logic that if the cache file is not there,
 		even though the b_read_cache is set to true, should be
 		the generating mode.
+	[c] done.
 
