@@ -1974,6 +1974,7 @@ where
 	//4. set up mutex semaphore of size n_par_snark
 	let n_par_snark = 1;
 	let semaphore = Arc::new((Mutex::new(n_par_snark), Condvar::new()));
+	let n_par_batchclaim = 1;
 	struct SemaphoreGuard { lock: Arc<(Mutex<usize>, Condvar)> }
 	impl Drop for SemaphoreGuard {
 		fn drop(&mut self) {
