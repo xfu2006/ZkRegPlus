@@ -1292,8 +1292,8 @@ where
         //println!("[WARNING]: Running with the 'light-test' feature, skipping the cyclepair part of the DeciderEthCircuit.\n Only for testing purposes.");
         //#[cfg(not(feature = "light-test"))]
 		let b_light_test = utils::consts::read_global_config().b_light_test;
-		let part1_enable = false;
-		let part2_enable = false;
+		//let part1_enable = false;
+		//let part2_enable = false;
 		if !b_light_test
         {
             use crate::commitment::pedersen::PedersenGadget;
@@ -1337,7 +1337,7 @@ where
 				self.main_circ.cp_pedersen_params.h)?;
             let G = Vec::<GC2>::new_constant(cs.clone(), 
 				self.main_circ.cp_pedersen_params.generators)?;
-			if part1_enable{
+			//if part1_enable{
 				let cp_W_i_E_bits: Result<Vec<Vec<Boolean<CF1<C1>>>>, SynthesisError> = cp_W_i.E.iter().map(|E_i| E_i.to_bits_le()).collect();
 				let computed_cmE = PedersenGadget::<C2, GC2>::commit(
 					H2.clone(),
@@ -1349,11 +1349,11 @@ where
 				#[cfg(test)]{if cp_U_i.cmE.value().is_ok(){
 					assert!(cp_U_i.cmE.value()?== computed_cmE.value()?);
 				} }
-			}
+			//}
 			log_perf(self.job_id, log_level, &format!("Phase2 Circ gen_cs: Step 6.1: check cp_W_i commits to cp_U_i. r1cs: {}, RAM: {} GB", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 			c1 = cs.num_constraints();
 
-			if part2_enable{
+			//if part2_enable{
 				let cp_W_i_W_bits: Result<Vec<Vec<Boolean<CF1<C1>>>>, SynthesisError> = cp_W_i.W.iter().map(|W_i| W_i.to_bits_le()).collect();
 				let computed_cmW =
 					PedersenGadget::<C2, GC2>::commit(H2, G, cp_W_i_W_bits?, cp_W_i.rW.to_bits_le()?)?;
@@ -1361,7 +1361,7 @@ where
 				#[cfg(test)]{ if cp_U_i.cmW.value().is_ok(){
 					assert!(cp_U_i.cmW.value()?== computed_cmW.value()?);
 				} }
-			}
+			//}
 			log_perf(self.job_id, log_level, &format!("Phase2 Circ gen_cs: Step 6.2: check cp_E_i commits to cp_U_i. r1cs: {}, RAM: {} GB", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 			c1 = cs.num_constraints();
 

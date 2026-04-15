@@ -27727,5 +27727,17 @@ Goal 3. deploy to server
 	Server time: 6:50pm - 
 	[a] collect the config from server
 	[b] set up the server 
-	[c] run 1 circ version
+	[c] run 1 circ version	
+		-> [job 0] LOG3: -- --  PERF 1002 circ 1, r1cs cols: 18152680, rows: 12204068
+		8 jobs -> still not saturated (Phase 1 step 1 gen batch clams) 20% cpu
+			92GB
 	[d] run 2 circ version and check circ size
+		[job 0] LOG2: --   -- circ 0 size: 59431088
+		[job 0] LOG2: --   -- circ 1 size: 59538405
+		[job 0] LOG2: --   -- circ 2 size: 60114794
+		[job 0] LOG2: --   -- circ 3 size: 6832567 (why small?)
+		---> FOUND IT it's the min_dfa_subsigs (needs a SEPARATE ATTRIBUTE)
+	[e] 
+	
+-- TODO -- run full_data1 in full mode and see what is the cost.
+

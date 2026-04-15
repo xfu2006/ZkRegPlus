@@ -128,14 +128,14 @@ impl DfaCapacity{
 		if level==1{
 			Self::new(
 				self.max_word_len,
-				(self.sigs*4/5).max(read_global_config().min_sigs),
-				(self.subsigs*4/5).max(read_global_config().min_subsigs),
+				(self.sigs*4/5).max(read_global_config().min_dfa_sigs),
+				(self.subsigs*4/5).max(read_global_config().min_dfa_subsigs),
 			)
 		}else{
 			Self::new(
 				self.max_word_len,
-				(self.sigs/2).max(read_global_config().min_sigs),
-				(self.subsigs/2).max(read_global_config().min_subsigs),
+				(self.sigs/2).max(read_global_config().min_dfa_sigs),
+				(self.subsigs/2).max(read_global_config().min_dfa_subsigs),
 			)
 		}
 	}
