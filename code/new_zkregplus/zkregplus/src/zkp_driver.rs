@@ -696,7 +696,7 @@ pub mod tests_zkp_driver{
 	#[allow(dead_code)]
 	fn small_data<F:PrimeField>(b_check_lkup: bool){
 		get_global_config().range2_bit = 8;
-		get_global_config().b_read_cache = false;
+		get_global_config().b_read_cache = true;
 		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/small_data_set/config_dfa"; //for dfa 
 		let max_word= 1; //this is chunk_len
@@ -993,6 +993,7 @@ pub mod tests_zkp_driver{
 	fn small_data3<F:PrimeField>(b_check_lkup: bool){
 		get_global_config().range2_bit = 18;
 		get_global_config().b_read_cache = false;
+		get_global_config().min_subsigs = 3;
 		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/small_data_set2/config_dfa"; //for dfa 
 		let max_word= 512; 
@@ -1010,7 +1011,7 @@ pub mod tests_zkp_driver{
 		let perc_pats_expansion_rate = 160;
 
 		let num_category = 2;
-		let num_circs_per_category= 2;
+		let num_circs_per_category= 1;
         let basis_acc_states_igc = basis_acc_states ; //9 cpercent
         let perc_pats_expansion_rate_igc = 136 ;
         let basis_pats_in_trace_igc = 20;
@@ -1620,9 +1621,9 @@ pub mod tests_zkp_driver{
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
 		let _b_light_test = true;
-		//small_data::<Fr>(b_check_lkup); //small data
+		small_data::<Fr>(b_check_lkup); //small data
 		//small_data2::<Fr>(b_check_lkup);  //10k data 
-		small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
+		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)
 		//small_data_debug::<Fr>(b_check_lkup);  //for debug
 		//small_data4::<Fr>(b_check_lkup); //multi circ of 1M, 2M, 4M data

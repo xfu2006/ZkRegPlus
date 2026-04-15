@@ -27815,7 +27815,9 @@ Goal 1. investigate the decider circuit size and see what's the impact
 	Peak RAM: 402GB -> 10755 seconds (almost 3 hrs)
 	===== DATA 2. 1 circ: 
 	circ size: 13.4M,
+	Groth16: 968 sec
 	*** MainDeciderCirtuit TOTAL constraints: 143741046 ***.  329377 ms
+	Proof time for Main: 1722 sec (twice the size, reasonable)
 	circ 1, r1cs cols: 35399837, rows: 23642117 
 		==> So r1cs cols is about 3 times of circ size
 		==> final Main decider circ is about 11 times of the original circ size 
@@ -27824,16 +27826,17 @@ Goal 1. investigate the decider circuit size and see what's the impact
 Goal 2. improve error reporting on PoisenError -> DONE
 Goal 3. change all #[cfg(test] to if B_DEBUG2 in decider_circuit -> DONE
 Goal 4. Check snark prover CPU usage => DONE, but not improving much
-Goal 5. improve the read_cache and add option, create a case it
+Goal 6. check why multi-circ decide it is so slow
+	-> it is indeed using into_par_iter.
+	-> test par_3 and check the results
+		[a] 1-circ version, 1056 and 1112ms
+		[b] 2-circ version, 1056 and 1112ms (there's no difference)
+			so parallelism is working properly.
+Goal 7. insert a lock to control the build of batch clam -> DONE
+Goal 8. improve the read_cache and add option, create a case it
 	crashes to detect where it fails.
 	[a] put it as an attribute
 	[b] refine the logic that if the cache file is not there,
 		even though the b_read_cache is set to true, should be
 		the generating mode.
-Goal 6. check why multi-circ decide it is so slow
-	-> it is indeed using into_par_iter.
-	-> test par_3 and check the results
-		[a] 1-circ version, 1056 and 1112ms
-		[b] 4-circ version,
-Goal 7. insert a lock to control the build of batch clam
 

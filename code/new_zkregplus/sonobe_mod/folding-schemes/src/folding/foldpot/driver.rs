@@ -68,6 +68,18 @@ use crate::frontend::FCircuit;
 use crate::{FoldingScheme};
 use rayon::prelude::*;
 
+pub type Semaphore = Arc<(Mutex<usize>, Condvar)>;
+
+pub struct SemaphoreGuard { pub lock: Semaphore }
+impl Drop for SemaphoreGuard {
+	fn drop(&mut self) {
+		let (mutex, cvar) = &*self.lock;
+		let mut count = lock_unwrap!(mutex);
+		*count += 1;
+		cvar.notify_one();
+	}
+}
+
 /// Struct to encapsulate a folding job (one list-file)
 pub struct FoldPotJob<F: PrimeField> {
 	pub vec_words: Vec<Vec<F>>,
@@ -1343,7 +1355,8 @@ where
 	  	mut rng: impl RngCore +  CryptoRng,
 		vec_word_info: &Vec<WordInfo>,
 		vec_word_fnames: &Vec<String>,
-		job_id: usize
+		job_id: usize,
+		semaphore_batch_claim: Semaphore
 	) -> Result<(
 		FoldPotSuper<E,P,C2G2,C1,GC1,C2,GC2,FC,CS1,CS2,CS1E, LK, GM, H>,
 		usize,
@@ -1371,11 +1384,21 @@ where
 		let claim_pack = if !self.b_full_mode{
 			assert!(self.batch_pk.is_some());
 			let pk = &self.batch_pk.as_ref().unwrap();
-			let (global_claim, ind_claims, snark_inp) = 
+
+			let _guard = {
+				let (lock, cvar) = &*semaphore_batch_claim;
+				let mut count = lock_unwrap!(lock);
+				while *count == 0 {
+					count = cvar.wait(count).unwrap();
+				}
+				*count -= 1;
+				SemaphoreGuard { lock: semaphore_batch_claim.clone() }
+			};
+
+			let (global_claim, ind_claims, snark_inp) =
 				BatchProcessor::<E,LK,S,CS1E,H>::gen_claims(pk, &mut rng, &words, self.lkup.clone()).unwrap();
 			Some( (global_claim, ind_claims[idx_ind_proof].clone(), snark_inp) )
-		}else{
-			None
+		}else{			None
 		};
 		let snark_inp = if !self.b_full_mode
 			{claim_pack.as_ref().unwrap().2.clone()}
@@ -1992,16 +2015,8 @@ where
 	//4. set up mutex semaphore of size n_par_snark
 	let n_par_snark = 1;
 	let semaphore = Arc::new((Mutex::new(n_par_snark), Condvar::new()));
-	let n_par_batchclaim = 1;
-	struct SemaphoreGuard { lock: Arc<(Mutex<usize>, Condvar)> }
-	impl Drop for SemaphoreGuard {
-		fn drop(&mut self) {
-			let (mutex, cvar) = &*self.lock;
-			let mut count = lock_unwrap!(mutex);
-			*count += 1;
-			cvar.notify_one();
-		}
-	}
+	let n_par_batch_claim = 1;
+	let semaphore_batch_claim: Semaphore = Arc::new((Mutex::new(n_par_batch_claim), Condvar::new()));
 
 
 	jobs.into_par_iter().enumerate().for_each(|(job_id, job)| {
@@ -2044,7 +2059,8 @@ where
 	  			&mut rng, 
 	  			&vec_words_info,
 	  			&vec_word_fnames,
-				job_id
+				job_id,
+				semaphore_batch_claim.clone()
 	  		)?;
 	  		let Some((batch_prf, ind_prf)) = batch_ind_prfs.map(|x| (x.0, x.1))
 	  			else {return Err(Error::Other("batch proof is none!".to_string()));};
@@ -2153,7 +2169,8 @@ where
 		&mut rng, 
 		&vec_word_info,
 		&vec_word_fnames2, 
-		job_id
+		job_id,
+		semaphore_batch_claim.clone()
 	)?;
 
 	let qa_nizk_pkey = driver2.nova_param.0.qa_pp.as_ref().expect("qa_pp null!"); 
