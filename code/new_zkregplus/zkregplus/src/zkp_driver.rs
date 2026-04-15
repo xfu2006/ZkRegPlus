@@ -3,7 +3,7 @@
 */
 
 //use std::collections::{HashSet};
-use utils::{logger::{log,LOG1,log_perf}, timer::Timer as GTimer};
+use utils::{logger::{log,LOG1,log_perf}, timer::Timer as GTimer, consts::read_global_config};
 use ark_ff::{Field,PrimeField,ToConstraintField};
 use ark_ec::{Group, CurveGroup,
 	pairing::{Pairing},
@@ -65,7 +65,7 @@ type FC<F,C,CS> = SigmaIR1CS_Inst<F,C,CS,LK<F>,GM<F>,false>;
 
 /// load the files and pack them as nibbles
 /// return (words in packed nibbles, word info, file names)
-fn load_files<F:PrimeField + ColEle>(_job_id: usize, list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavApproxConfig, _b_read_cache: bool, _b_write_cache: bool, _cache_dir: &str)
+fn load_files<F:PrimeField + ColEle>(_job_id: usize, list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavApproxConfig, _b_write_cache: bool, _cache_dir: &str)
 	->(Vec<Vec<F>>, Vec<WordInfo>, Vec<String>){
 	//1. read the list of files
 	let _b_debug = false;
@@ -457,7 +457,6 @@ pub fn zkp_driver<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + std::f
 	sig_file: &str, 
 	list_file_to_scan: &str, 
 	_logfile: &str, 
-	b_read_cache: bool, 
 	b_write_cache: bool, 
 	cache_dir: &str, 
 	list_of_dfa_sigs: &str,
@@ -523,7 +522,7 @@ where
 	// this is usaully inefficient for ignore_case (but
 	// we do this for small samples for convenience)
 	zkp_driver_adv::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(job_id, sig_file, vec![list_file_to_scan.to_string()], _logfile,
-		b_read_cache, b_write_cache, cache_dir,
+		b_write_cache, cache_dir,
 		list_of_dfa_sigs, list_of_ised_sigs, list_of_ised_igc_sigs,
 		chunk_len,
 		init_cp_capacity, init_sed_capacity, init_dfa_capacity,
@@ -538,7 +537,6 @@ pub fn zkp_driver_adv<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + st
 	sig_file: &str, 
 	list_files_to_scan: Vec<String>, 
 	_logfile: &str, 
-	b_read_cache: bool, 
 	b_write_cache: bool, 
 	cache_dir: &str, 
 	list_of_dfa_sigs: &str,
@@ -611,7 +609,7 @@ where
     let cfg = default_clamav_cfg();
     let db = ClamavDB::<CF1<C1>>::build_or_load(&cfg, sig_file, 
     	list_of_dfa_sigs, list_of_ised_sigs, list_of_ised_igc_sigs,
-    	&mut vlog, cache_dir, b_read_cache, b_write_cache)
+    	&mut vlog, cache_dir, read_global_config().b_read_cache, b_write_cache)
     	.expect("build db err");
 	if log_level>=LOG1+1{
     	db.print_summary(&mut vlog);
@@ -622,7 +620,7 @@ where
 	let mut max_total_word_len = 0;
 	let mut jobs = vec![];
 	for list_file_to_scan in list_files_to_scan{
-		let (vec_words, vec_word_info, vec_word_fnames) = load_files::<CF1<C1>>(job_id, &list_file_to_scan, &db, &cfg, b_read_cache, b_write_cache, cache_dir);
+		let (vec_words, vec_word_info, vec_word_fnames) = load_files::<CF1<C1>>(job_id, &list_file_to_scan, &db, &cfg, b_write_cache, cache_dir);
 		let total_word_len:usize = vec_words.iter().map(|w| w.len()).sum();
 		if total_word_len > max_total_word_len{
 			max_total_word_len = total_word_len;
@@ -698,8 +696,8 @@ pub mod tests_zkp_driver{
 	#[allow(dead_code)]
 	fn small_data<F:PrimeField>(b_check_lkup: bool){
 		get_global_config().range2_bit = 8;
-		let b_read_cache = false;
-		let b_write_cache = !b_read_cache;
+		get_global_config().b_read_cache = false;
+		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/small_data_set/config_dfa"; //for dfa 
 		let max_word= 1; //this is chunk_len
 		let sigs = 2; //good setting: 2
@@ -740,7 +738,6 @@ pub mod tests_zkp_driver{
 			&format!("{}/sigs.dat",set1), //src sig
 			&format!("{}/binexec.dat",set1), //list of files to discharge
 			"data/small_data_set/reports/report.dat", //report
-			b_read_cache,
 			b_write_cache,
 			"small_20", //cache name
 			&format!("{}/dfa.dat", set1), //signs that need dfa
@@ -763,8 +760,8 @@ pub mod tests_zkp_driver{
 	#[allow(dead_code)]
 	fn small_data_par<F:PrimeField>(b_check_lkup: bool){
 		get_global_config().range2_bit = 18;
-		let b_read_cache = false;
-		let b_write_cache = !b_read_cache;
+		get_global_config().b_read_cache = false;
+		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/small_data_set/config_dfa"; //for dfa 
 		let max_word= 1; //this is chunk_len
 		let sigs = 2; //good setting: 2
@@ -809,7 +806,6 @@ pub mod tests_zkp_driver{
 	//			format!("{}/binexec_p4.dat",set1)
 			], //list of files to discharge
 			"data/small_data_set/reports/report.dat", //report
-			b_read_cache,
 			b_write_cache,
 			"small_20", //cache name
 			&format!("{}/dfa.dat", set1), //signs that need dfa
@@ -835,8 +831,8 @@ pub mod tests_zkp_driver{
 	#[allow(dead_code)]
 	fn small_data2<F:PrimeField>(b_check_lkup: bool){
 		get_global_config().range2_bit = 18;
-		let b_read_cache = false;
-		let b_write_cache = !b_read_cache;
+		get_global_config().b_read_cache = false;
+		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/small_data_set2/config_dfa"; //for dfa 
 		let max_word= 512; 
 		let sigs = 2; 
@@ -902,7 +898,6 @@ pub mod tests_zkp_driver{
 			&format!("{}/sigs.dat",set1), //src sig
 			vec![format!("{}/binexec.dat",set1)], //list of files to discharge
 			"data/small_data_set/reports/report.dat", //report
-			b_read_cache,
 			b_write_cache,
 			"small_20", //cache name
 			&format!("{}/dfa.dat", set1), //signs that need dfa
@@ -924,8 +919,8 @@ pub mod tests_zkp_driver{
 	#[allow(dead_code)]
 	fn small_data_debug<F:PrimeField>(b_check_lkup: bool){
 		get_global_config().range2_bit = 24;
-		let b_read_cache = false;
-		let b_write_cache = !b_read_cache;
+		get_global_config().b_read_cache = false;
+		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/small_data_set2/config_dfa"; //for dfa 
 		let max_word= 512*4; 
 		let sigs = 2; 
@@ -970,7 +965,6 @@ pub mod tests_zkp_driver{
 			&format!("{}/sigs_debug2.dat",set1), //src sig
 			&format!("{}/binexec_debug2.dat",set1), //list of files to discharge
 			"data/small_data_set/reports/report.dat", //report
-			b_read_cache,
 			b_write_cache,
 			"small_20", //cache name
 			&format!("{}/dfa.dat", set1), //signs that need dfa
@@ -998,8 +992,8 @@ pub mod tests_zkp_driver{
 	#[allow(dead_code)]
 	fn small_data3<F:PrimeField>(b_check_lkup: bool){
 		get_global_config().range2_bit = 18;
-		let b_read_cache = false;
-		let b_write_cache = !b_read_cache;
+		get_global_config().b_read_cache = false;
+		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/small_data_set2/config_dfa"; //for dfa 
 		let max_word= 512; 
 		let sigs = 8;  //good value 2
@@ -1016,7 +1010,7 @@ pub mod tests_zkp_driver{
 		let perc_pats_expansion_rate = 160;
 
 		let num_category = 2;
-		let num_circs_per_category= 1;
+		let num_circs_per_category= 2;
         let basis_acc_states_igc = basis_acc_states ; //9 cpercent
         let perc_pats_expansion_rate_igc = 136 ;
         let basis_pats_in_trace_igc = 20;
@@ -1065,7 +1059,6 @@ pub mod tests_zkp_driver{
 			&format!("{}/sigs.dat",set1), //src sig
 			vec![format!("{}/binexec2.dat",set1)], //list of files to discharge
 			"data/small_data_set/reports/small_data3.dat", //report
-			b_read_cache,
 			b_write_cache,
 			"small_20", //cache name
 			&format!("{}/dfa.dat", set1), //signs that need dfa
@@ -1088,8 +1081,8 @@ pub mod tests_zkp_driver{
 	#[allow(dead_code)]
 	fn small_data4<F:PrimeField>(b_check_lkup: bool){
 		get_global_config().range2_bit = 18;
-		let b_read_cache = false;
-		let b_write_cache = !b_read_cache;
+		get_global_config().b_read_cache = false;
+		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/small_data_set2/config_dfa"; //for dfa 
 		let max_word= 512; 
 		let sigs = 4;  //good value 2
@@ -1160,7 +1153,6 @@ pub mod tests_zkp_driver{
 			&format!("{}/sigs2.dat",set1), //src sig
 			files[idx].clone(),
 			"data/small_data_set/reports/small_data4.dat", //report
-			b_read_cache,
 			b_write_cache,
 			"small_20", //cache name
 			&format!("{}/dfa.dat", set1), //signs that need dfa
@@ -1183,8 +1175,8 @@ pub mod tests_zkp_driver{
 	#[allow(dead_code)]
 	fn full_data1<F:PrimeField>(b_check_lkup: bool){
 		get_global_config().range2_bit = 26;
-		let b_read_cache = true;
-		let b_write_cache = ! b_read_cache;
+		get_global_config().b_read_cache = true;
+		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/full_data_set/config/"; //for dfa 
 		//let max_word= 512; 
 		let max_word= 512 * 4; 
@@ -1229,7 +1221,6 @@ pub mod tests_zkp_driver{
 			&format!("{}/main.dat",set1), //src sig
 			&format!("{}/binexec_1.dat",set1), //list of files to discharge
 			"data/debug/full_data_set/reports/report.dat", //report
-			b_read_cache,
 			b_write_cache,
 			"full_data", //cache name
 			&format!("{}/main_dfa.dat", set1), //signs that need dfa
@@ -1250,8 +1241,8 @@ pub mod tests_zkp_driver{
 	fn full_data2<F:PrimeField>(b_check_lkup: bool){
 		get_global_config().range2_bit = 26;
 		get_global_config().range2_bit = 26;
-        let b_read_cache = true;
-        let b_write_cache = ! b_read_cache;
+        get_global_config().b_read_cache = true;
+        let b_write_cache = !read_global_config().b_read_cache;
         let set1 = "data/debug/full_data_set/config/"; //for dfa
         //let max_word= 512;
         let max_word= 512 * 4;
@@ -1297,7 +1288,6 @@ pub mod tests_zkp_driver{
 			&format!("{}/main.dat",set1), //src sig
 			&format!("{}/binexec_2.dat",set1), //list of files to discharge
 			"data/debug/full_data_set/reports/report2.dat", //report
-			b_read_cache,
 			b_write_cache,
 			"full_data", //cache name
 			&format!("{}/main_dfa.dat", set1), //signs that need dfa
@@ -1323,8 +1313,8 @@ pub mod tests_zkp_driver{
 	#[allow(dead_code)]
 	fn full_data3<F:PrimeField>(b_check_lkup: bool){
 		get_global_config().range2_bit = 26;
-		let b_read_cache = true;
-		let b_write_cache = ! b_read_cache;
+		get_global_config().b_read_cache = true;
+		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/full_data_set/config/"; //for dfa
         let max_word= 512 * 4;
         let sigs = 350;
@@ -1388,7 +1378,6 @@ pub mod tests_zkp_driver{
 			&format!("{}/main.dat",set1), //src sig
 			vec![format!("{}/binexec_3.dat",set1)], //list of files to discharge
 			"data/debug/full_data_set/reports/report2.dat", //report
-			b_read_cache,
 			b_write_cache,
 			"full_data", //cache name
 			&format!("{}/main_dfa.dat", set1), //signs that need dfa
@@ -1422,8 +1411,8 @@ pub mod tests_zkp_driver{
 	fn full_data4<F:PrimeField>(b_check_lkup: bool){
 		get_global_config().range2_bit = 26;
 		get_global_config().min_subsigs = 145;
-		let b_read_cache = true;
-		let b_write_cache = ! b_read_cache;
+		get_global_config().b_read_cache = true;
+		let b_write_cache = !read_global_config().b_read_cache;
         let set1 = "data/debug/full_data_set/config/"; //for dfa
         let max_word= 512 * 4;
         let sigs = 400;
@@ -1500,7 +1489,6 @@ pub mod tests_zkp_driver{
 				&format!("{}/main.dat",set1), //src sig
 				vec![format!("{}/binexec_4_{}.dat",set1, id+1)], //list of files to discharge
 				"data/debug/full_data_set/reports/report2.dat", //report
-				b_read_cache,
 				b_write_cache,
 				"full_data", //cache name
 				&format!("{}/main_dfa.dat", set1), //signs that need dfa
@@ -1533,8 +1521,8 @@ pub mod tests_zkp_driver{
 		get_global_config().min_basis_unique_states= 32;
 		get_global_config().min_avg_pats_per_subsig= 6;
 
-		let b_read_cache = true;
-		let b_write_cache = ! b_read_cache;
+		get_global_config().b_read_cache = true;
+		let b_write_cache = !read_global_config().b_read_cache;
         let set1 = "data/debug/full_clamav/config/"; //for dfa
         let max_word= 512 * 4;
         let sigs = 400;
@@ -1608,7 +1596,6 @@ pub mod tests_zkp_driver{
 				format!("{}/binexec_p7.dat",set1),
 			], //list of files to discharge
 			"data/debug/full_clamav/reports/report2.dat", //report
-			b_read_cache,
 			b_write_cache,
 			"full_data", //cache name
 			&format!("{}/main_dfa.dat", set1), //signs that need dfa
@@ -1633,9 +1620,9 @@ pub mod tests_zkp_driver{
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
 		let _b_light_test = true;
-		small_data::<Fr>(b_check_lkup); //small data
+		//small_data::<Fr>(b_check_lkup); //small data
 		//small_data2::<Fr>(b_check_lkup);  //10k data 
-		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
+		small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)
 		//small_data_debug::<Fr>(b_check_lkup);  //for debug
 		//small_data4::<Fr>(b_check_lkup); //multi circ of 1M, 2M, 4M data

@@ -92,8 +92,8 @@ const LOG_LEVELS: [(&str, usize); 9] = [
 fn small_data<F: PrimeField>(b_check_lkup: bool) {
     get_global_config().range2_bit = 8;
     get_global_config().b_light_test = true; // Setting b_light_test as requested
-    let b_read_cache = false;
-    let b_write_cache = !b_read_cache;
+    get_global_config().b_read_cache = false;
+    let b_write_cache = !read_global_config().b_read_cache;
     let set1 = "data/debug/small_data_set/config_dfa";
     let max_word = 1;
     let sigs = 2;
@@ -135,7 +135,6 @@ fn small_data<F: PrimeField>(b_check_lkup: bool) {
         &format!("{}/sigs.dat", set1),
         &format!("{}/binexec.dat", set1),
         "data/small_data_set/reports/report.dat",
-        b_read_cache,
         b_write_cache,
         "small_20",
         &format!("{}/dfa.dat", set1),
@@ -154,8 +153,8 @@ fn small_data<F: PrimeField>(b_check_lkup: bool) {
 fn small_data_par<F: PrimeField>(b_check_lkup: bool) {
     get_global_config().range2_bit = 18;
     get_global_config().b_light_test = true;
-    let b_read_cache = false;
-    let b_write_cache = !b_read_cache;
+    get_global_config().b_read_cache = false;
+    let b_write_cache = !read_global_config().b_read_cache;
     let set1 = "data/debug/small_data_set/config_dfa";
     let max_word = 1;
     let sigs = 2;
@@ -200,7 +199,6 @@ fn small_data_par<F: PrimeField>(b_check_lkup: bool) {
             format!("{}/binexec_p2.dat", set1),
         ],
         "data/small_data_set/reports/report.dat",
-        b_read_cache,
         b_write_cache,
         "small_20",
         &format!("{}/dfa.dat", set1),
@@ -231,8 +229,8 @@ fn full_clamav<F: PrimeField>(b_check_lkup: bool, b_light_test: bool) {
     get_global_config().range2_bit = 26;
     get_global_config().b_light_test = b_light_test;
     get_global_config().min_subsigs = 145;
-    let b_read_cache = true;
-    let b_write_cache = !b_read_cache;
+    get_global_config().b_read_cache = true;
+    let b_write_cache = !read_global_config().b_read_cache;
     let set1 = "data/debug/full_clamav/config/";
     let max_word = 512 * 4;
     let sigs = 400;
@@ -306,7 +304,6 @@ fn full_clamav<F: PrimeField>(b_check_lkup: bool, b_light_test: bool) {
             format!("{}/binexec_p7.dat", set1),
         ],
         "data/debug/full_clamav/reports/report2.dat",
-        b_read_cache,
         b_write_cache,
         "full_data",
         &format!("{}/main_dfa.dat", set1),

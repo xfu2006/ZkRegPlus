@@ -27826,6 +27826,14 @@ Goal 3. change all #[cfg(test] to if B_DEBUG2 in decider_circuit -> DONE
 Goal 4. Check snark prover CPU usage => DONE, but not improving much
 Goal 5. improve the read_cache and add option, create a case it
 	crashes to detect where it fails.
-Goal 5. insert a lock to control the build of batch clam
+	[a] put it as an attribute
+	[b] refine the logic that if the cache file is not there,
+		even though the b_read_cache is set to true, should be
+		the generating mode.
 Goal 6. check why multi-circ decide it is so slow
+	-> it is indeed using into_par_iter.
+	-> test par_3 and check the results
+		[a] 1-circ version, 1056 and 1112ms
+		[b] 4-circ version,
+Goal 7. insert a lock to control the build of batch clam
 
