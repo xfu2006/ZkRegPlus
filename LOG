@@ -27814,11 +27814,17 @@ Goal 1. investigate the decider circuit size and see what's the impact
 	Proof time: 4141 seconds
 	Peak RAM: 402GB -> 10755 seconds (almost 3 hrs)
 	===== DATA 2. 1 circ: 
+	circ size: 13.4M,
+	*** MainDeciderCirtuit TOTAL constraints: 143741046 ***.  329377 ms
+	circ 1, r1cs cols: 35399837, rows: 23642117 
+		==> So r1cs cols is about 3 times of circ size
+		==> final Main decider circ is about 11 times of the original circ size 
+		===> MAX combined circ size should be around 25M (the init circ size)
 
 Goal 2. improve error reporting on PoisenError -> DONE
 Goal 3. change all #[cfg(test] to if B_DEBUG2 in decider_circuit -> DONE
-Goal 4. Check snark prover CPU usage
-Goal 4. improve the read_cache and add option, create a case it
+Goal 4. Check snark prover CPU usage => DONE, but not improving much
+Goal 5. improve the read_cache and add option, create a case it
 	crashes to detect where it fails.
 Goal 5. insert a lock to control the build of batch clam
 Goal 6. check why multi-circ decide it is so slow

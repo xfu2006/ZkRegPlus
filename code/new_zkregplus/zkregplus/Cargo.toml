@@ -52,6 +52,20 @@ daemonize = "0.5.0"
 dialoguer = "0.12.0"
 cli-table = "0.4.7"
 
+[features]
+default = ["parallel"]
+parallel = [
+    "ark-std/parallel",
+    "ark-ff/parallel",
+    "ark-ec/parallel",
+    "ark-poly/parallel",
+    "ark-crypto-primitives/parallel",
+    "ark-r1cs-std/parallel",
+    "ark-groth16/parallel",
+    "ark-poly-commit/parallel",
+    "folding-schemes/parallel",
+]
+
 
 [dev-dependencies]
 ark-pallas = {version="0.4.0", features=["r1cs"]}

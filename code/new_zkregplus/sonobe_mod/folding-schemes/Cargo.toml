@@ -64,7 +64,9 @@ parallel = [
     "ark-ec/parallel",  
     "ark-poly/parallel", 
     "ark-crypto-primitives/parallel",  
-    "ark-r1cs-std/parallel",  
+    "ark-r1cs-std/parallel",
+    "ark-groth16/parallel",
+    "ark-poly-commit/parallel",
     ]
 
 
