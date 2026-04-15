@@ -146,27 +146,15 @@ fn load_files<F:PrimeField + ColEle>(_job_id: usize, list_file_path: &str, db: &
 /// model (see driver.rs in foldpot module). However, we make the
 /// simplication that 
 /// *** EACH LAYER has ONE CIRC ***
-/// The reason is that we need to avoid complex calculation of capacity
-///   to satisfy the requirement that inp_buf = oup_buf for each circuit.
-/// The layers of circuit as onstructed as following: each layer
-/// has 1 circuit. These layers are organized as several
-///    categories, and each category has a group of circuits
-///    with different capacities.
-/// e.g., the following is a structure of 3 categories where category 
-/// (1) [cp, sed] and (2) [cp, sed, dfa_1], (3) [cp, sed, dfa_4]
-/// where for (3), the number of DFAs is 4.
-/// To reduce the number of circs needed which impacts final decider
-/// circuit, we assume the SAME word chunk length for all the
-/// circuits. Thus for circs in the SAME category, they differ
-/// in the capacity of internal buffer.
 ///
-/// When we increase capacities, we do this in two levels:
-/// level1 (between category) : increase subsigs, sigs supported, and DFAs.
-/// level2 (inside each category): increase the internal buffer.
-///
-/// Return: 2d layer of circs, but each layer has 1 circ.
+/// Return: 2d layer of circs, but each layer has 1 circ. (2d is just
+///  for legacy reason)
 /// It's arranged from low cost to high cost so that the first
 /// circ satisfying a certain capacity will be the best one.
+/// vec_decrease_level allows 1, or 2, to be passed,
+/// its length should be num_circs - 1 (we use these levels)
+/// to call decrease_copy of capacity for the next circ
+/// Eventually list of circs will be sorted in ascending order
 #[allow(dead_code)]
 fn build_circs_adv<F,C,CS>(
 	poseidon_config: &PoseidonConfig<F>,
@@ -189,8 +177,8 @@ fn build_circs_adv<F,C,CS>(
 	init_dfa_capacity: &DfaCapacity, //no cs/igc distinction
 	init_cp_capacity_igc: &CpCapacity,
 	init_sed_capacity_igc: &SedCapacity,
-	num_category: usize, 
-	num_circs_per_category: usize,
+	vec_decrease_level: &Vec<usize>, //decrease levels
+	n_circs: usize,
 	b_check_lkup: bool
 )->Vec<Vec<FC<F,C,CS>>>
 where C: CurveGroup<ScalarField=F>,
@@ -219,74 +207,70 @@ where C: CurveGroup<ScalarField=F>,
 	let mut sed_cap_igc = init_sed_capacity_igc.clone();
 	let mut dfa_cap= init_dfa_capacity.clone();
 
-	for l1 in 0..num_category{
-		for l2 in 0..num_circs_per_category{
-			//3.1 create cp (cs and igc)
-			let cp_cs = CpComponentMapper::<F,LK<F>>::new(
-				cp_cap_cs.clone(), db.clone(), false);
-			let cp_igc = CpComponentMapper::<F,LK<F>>::new(
-				cp_cap_igc.clone(), db.clone(), true);
 
-			//3.2 create sed (it has both cs and igc built in)
-			let sed = SedComponentMapper::<F,LK<F>>::new(
-				sed_cap_cs.clone(), 
-				sed_cap_igc.clone(), 
-				db.clone());
+	//3.4 build the circs
+	for i in 0..n_circs{
+		//3.4.1 create cp (cs and igc)
+		let cp_cs = CpComponentMapper::<F,LK<F>>::new(
+			cp_cap_cs.clone(), db.clone(), false);
+		let cp_igc = CpComponentMapper::<F,LK<F>>::new(
+			cp_cap_igc.clone(), db.clone(), true);
 
-			//3.3 dfa is optional depending if config supports 0 subsigs
-			//which enforces dfa to be nil.
-			let dfa = if dfa_cap.subsigs==0{ None }else{
-				Some(
-					DfaComponentMapper::<F,LK<F>>::new(dfa_cap.clone(), 
-						db.clone())
-				)
-			};
+		//3.4.2 create sed (it has both cs and igc built in)
+		let sed = SedComponentMapper::<F,LK<F>>::new(
+			sed_cap_cs.clone(), 
+			sed_cap_igc.clone(), 
+			db.clone());
 
-			//3.4 construct the circuit
-			let hybrid_cgm1 =if dfa_cap.subsigs==0{
-				CompositeGadgetMapper::<F,LK<F>>::new("hybrid_cgm1",
-					vec![
-						Arc::new(Mutex::new(cp_cs)),
-						Arc::new(Mutex::new(cp_igc)),
-						Arc::new(Mutex::new(sed)),
-					]
-				)
-			}else{//including the dfa
-				CompositeGadgetMapper::<F,LK<F>>::new("hybrid_cgm1",
-					vec![
-						Arc::new(Mutex::new(cp_cs)),
-						Arc::new(Mutex::new(cp_igc)),
-						Arc::new(Mutex::new(sed)),
-						Arc::new(Mutex::new(dfa.unwrap())),
-					]
-				)
-			};
-			let b_cyclepair = false;	
-			let circ= SigmaIR1CS_Inst::<F,C,CS,LK<F>,
-			CompositeGadgetMapper<F,LK<F>> ,false> ::new_adv(
-				format!("circ_cat_{}_circ_{}", l1, l2), 
-				poseidon_config.clone(), 
-				Arc::new(Mutex::new(hybrid_cgm1)), 
-				false, //b_full_mode (whether supporting cyclepair - no for 
-						//regular circuit) 
-				lk_share,
-				b_cyclepair, b_check_lkup
-			).expect("error building circ");
-			layer_circs.push( vec![circ] ); //legacy to keep 2d layer
+		//3.4.3 dfa is optional depending if config supports 0 subsigs
+		//which enforces dfa to be nil.
+		let dfa = if dfa_cap.subsigs==0{ None }else{
+			Some(
+				DfaComponentMapper::<F,LK<F>>::new(dfa_cap.clone(), 
+					db.clone())
+			)
+		};
+		//3.4.4 construct the circuit
+		let hybrid_cgm1 =if dfa_cap.subsigs==0{
+			CompositeGadgetMapper::<F,LK<F>>::new("hybrid_cgm1",
+				vec![
+					Arc::new(Mutex::new(cp_cs)),
+					Arc::new(Mutex::new(cp_igc)),
+					Arc::new(Mutex::new(sed)),
+				]
+			)
+		}else{//including the dfa
+			CompositeGadgetMapper::<F,LK<F>>::new("hybrid_cgm1",
+				vec![
+					Arc::new(Mutex::new(cp_cs)),
+					Arc::new(Mutex::new(cp_igc)),
+					Arc::new(Mutex::new(sed)),
+					Arc::new(Mutex::new(dfa.unwrap())),
+				]
+			)
+		};
+		let b_cyclepair = false;	
+		let circ= SigmaIR1CS_Inst::<F,C,CS,LK<F>,
+		CompositeGadgetMapper<F,LK<F>> ,false> ::new_adv(
+			format!("circ_cat_{}_circ_{}", i, 0), 
+			poseidon_config.clone(), 
+			Arc::new(Mutex::new(hybrid_cgm1)), 
+			false, //b_full_mode (whether supporting cyclepair - no for 
+					//regular circuit) 
+			lk_share,
+			b_cyclepair, b_check_lkup
+		).expect("error building circ");
+		layer_circs.push( vec![circ] ); //legacy to keep 2d layer
 
-			//3.5 update the capacities.
-			cp_cap_cs = cp_cap_cs.decreased_copy(2); //decrease by level 2
-			sed_cap_cs = sed_cap_cs.decreased_copy(2); 
-			cp_cap_igc = cp_cap_igc.decreased_copy(2); //decrease by level 2
-			sed_cap_igc = sed_cap_igc.decreased_copy(2); 
-			dfa_cap= dfa_cap.decreased_copy(2); 
-		}//for loop level2
-		//update level 1 capacity
-		cp_cap_cs = cp_cap_cs.decreased_copy(1); //increase by level 1
-		sed_cap_cs = sed_cap_cs.decreased_copy(1); 
-		cp_cap_igc = cp_cap_igc.decreased_copy(1); //increase by level 1
-		sed_cap_igc = sed_cap_igc.decreased_copy(1); 
-		dfa_cap= dfa_cap.decreased_copy(1); 
+		//3.4.5 update the capacities.
+		if i<vec_decrease_level.len(){
+			let level = vec_decrease_level[i];
+			cp_cap_cs = cp_cap_cs.decreased_copy(level); 
+			sed_cap_cs = sed_cap_cs.decreased_copy(level); 
+			cp_cap_igc = cp_cap_igc.decreased_copy(level); 
+			sed_cap_igc = sed_cap_igc.decreased_copy(level); 
+			dfa_cap= dfa_cap.decreased_copy(level); 
+		}
 	}//for category
 
 	//return
@@ -466,8 +450,8 @@ pub fn zkp_driver<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + std::f
 	init_cp_capacity: &CpCapacity, 
 	init_sed_capacity: &SedCapacity,
 	init_dfa_capacity: &DfaCapacity,
-	num_category: usize,
-	num_circs_per_category: usize,
+	vec_decrease_levels: &Vec<usize>,
+	num_circs: usize,
 	b_check_lkup: bool,
 )
 where
@@ -527,7 +511,7 @@ where
 		chunk_len,
 		init_cp_capacity, init_sed_capacity, init_dfa_capacity,
 		init_cp_capacity, init_sed_capacity, 
-		num_category, num_circs_per_category, b_check_lkup
+		vec_decrease_levels, num_circs, b_check_lkup
 	);
 }
 /// `job_id`: The ID of the job being processed.
@@ -548,8 +532,8 @@ pub fn zkp_driver_adv<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + st
 	init_dfa_capacity: &DfaCapacity, //only one DFA (no cs/igc distinction)
 	init_cp_capacity_igc: &CpCapacity, 
 	init_sed_capacity_igc: &SedCapacity,
-	num_category: usize,
-	num_circs_per_category: usize,
+	vec_decrease_level: &Vec<usize>,
+	num_circs: usize, 
 	b_check_lkup: bool,
 )
 where
@@ -648,8 +632,8 @@ where
 		init_dfa_capacity,
 		init_cp_capacity_igc,
 		init_sed_capacity_igc,
-		num_category,
-		num_circs_per_category,
+		vec_decrease_level,
+		num_circs,
 		b_check_lkup
 	);
 	log_perf(0, log_level, &format!("ZIP driver step 2: build circs."), &mut gt1);
@@ -712,8 +696,8 @@ pub mod tests_zkp_driver{
 		let basis_pats_in_trace = 1291;   //(at most twice of basis_acc_states)
 		let perc_pats_expansion_rate = 100;
 
-		let num_category = 1;
-		let num_circs_per_category= 1;
+		let vec_decrease_level = vec![];
+		let num_circs = 1; 
 
 		let init_cp_cap= CpCapacity{
 			max_word_len: max_word, 
@@ -747,8 +731,8 @@ pub mod tests_zkp_driver{
 			&init_cp_cap,
 			&init_sed_cap,
 			&init_dfa_cap,
-			num_category,
-			num_circs_per_category,
+			&vec_decrease_level,
+			num_circs,
 			b_check_lkup
 		);
 	}
@@ -775,9 +759,6 @@ pub mod tests_zkp_driver{
 		let basis_acc_states = 807;  //6.46 percent
 		let basis_pats_in_trace = 1500;   //(at most twice of basis_acc_states)
 		let perc_pats_expansion_rate = 114;
-
-		let num_category = 2;
-		let num_circs_per_category= 2;
 
 		let init_cp_cap= CpCapacity{
 			max_word_len: max_word, 
@@ -817,8 +798,8 @@ pub mod tests_zkp_driver{
 			&init_dfa_cap,
 			&init_cp_cap, //as igc
 			&init_sed_cap, //as igc
-			num_category,
-			num_circs_per_category,
+			&vec![1],
+			2,
 			b_check_lkup
 		);
 	}
@@ -845,9 +826,6 @@ pub mod tests_zkp_driver{
 		let basis_unique_states = 5; 
 		let basis_acc_states = 2; 
 		let perc_pats_expansion_rate = 100;
-
-		let num_category = 1;
-		let num_circs_per_category= 1;
 
 		let init_cp_cap= CpCapacity{
 			max_word_len: max_word, 
@@ -909,8 +887,8 @@ pub mod tests_zkp_driver{
 			&init_dfa_cap,
 			&init_cp_cap_igc,
 			&init_sed_cap_igc,
-			num_category,
-			num_circs_per_category,
+			&vec![],
+			1,
 			b_check_lkup
 		);
 	}
@@ -933,9 +911,6 @@ pub mod tests_zkp_driver{
 		let basis_acc_states = 400; 
 		let basis_pats_in_trace = 450; 
 		let perc_pats_expansion_rate = 100;
-
-		let num_category = 1;
-		let num_circs_per_category= 1;
 
 		let init_cp_cap= CpCapacity{
 			max_word_len: max_word, 
@@ -974,8 +949,8 @@ pub mod tests_zkp_driver{
 			&init_cp_cap,
 			&init_sed_cap,
 			&init_dfa_cap,
-			num_category,
-			num_circs_per_category,
+			&vec![],
+			1,
 			b_check_lkup
 		);
 	}
@@ -1010,8 +985,8 @@ pub mod tests_zkp_driver{
 		let dfa_subsigs= 2*dfa_sigs;
 		let perc_pats_expansion_rate = 160;
 
-		let num_category = 2;
-		let num_circs_per_category= 1;
+		let vec_decrease_level = vec![];
+		let num_circs = 1; 
         let basis_acc_states_igc = basis_acc_states ; //9 cpercent
         let perc_pats_expansion_rate_igc = 136 ;
         let basis_pats_in_trace_igc = 20;
@@ -1071,8 +1046,8 @@ pub mod tests_zkp_driver{
 			&init_dfa_cap,
 			&init_cp_cap_igc,
 			&init_sed_cap_igc,
-			num_category,
-			num_circs_per_category,
+			&vec_decrease_level,
+			num_circs,
 			b_check_lkup
 		);
 	}
@@ -1099,8 +1074,8 @@ pub mod tests_zkp_driver{
 		let dfa_subsigs= 2*dfa_sigs;
 		let perc_pats_expansion_rate = 40; //good value 160
 
-		let num_category = 1;
-		let num_circs_per_category= 2;
+		let vec_decrease_level = vec![];
+		let num_circs = 1; 
         let basis_acc_states_igc = basis_acc_states ; //9 cpercent
         let perc_pats_expansion_rate_igc = 78; //good value 136
         let basis_pats_in_trace_igc = 30; //good value 20
@@ -1165,8 +1140,8 @@ pub mod tests_zkp_driver{
 			&init_dfa_cap,
 			&init_cp_cap_igc,
 			&init_sed_cap_igc,
-			num_category,
-			num_circs_per_category,
+			&vec_decrease_level,
+			num_circs,
 			b_check_lkup
 		);
 	}
@@ -1186,8 +1161,8 @@ pub mod tests_zkp_driver{
 		let avg_pats_per_subsig = 8; //old value 8
 		let avg_active_pats_per_subsig = 3;
 		let perc_comp_subsigs = 20;
-		let num_category = 1;
-		let num_circs_per_category= 1;
+		let vec_decrease_level = vec![];
+		let num_circs = 1; 
 		let basis_unique_states = 500; //last known good vlaue: 1900
 		let basis_acc_states = 1000; //9 cpercent
 		let basis_pats_in_trace = 1200; //10 percent
@@ -1231,8 +1206,8 @@ pub mod tests_zkp_driver{
 			&init_cp_cap,
 			&init_sed_cap,
 			&init_dfa_cap,
-			num_category,
-			num_circs_per_category,
+			&vec_decrease_level,
+			num_circs,
 			b_check_lkup
 		);
 	}
@@ -1252,8 +1227,8 @@ pub mod tests_zkp_driver{
         let avg_pats_per_subsig = 8; //old value 8
         let avg_active_pats_per_subsig = 3;
         let perc_comp_subsigs = 20;
-        let num_category = 1;
-        let num_circs_per_category= 1;
+		let vec_decrease_level = vec![];
+		let num_circs = 1; 
         let basis_unique_states = 1000; //ld vlaue 19 cpercent
     //    let basis_acc_states = 200; //old value 9 cpercent --> GOOD setting
      //   let basis_pats_in_trace = 250 ; //1.2 * basis_acc_states
@@ -1298,8 +1273,8 @@ pub mod tests_zkp_driver{
 			&init_cp_cap,
 			&init_sed_cap,
 			&init_dfa_cap,
-			num_category,
-			num_circs_per_category,
+			&vec_decrease_level,
+			num_circs,
 			b_check_lkup
 		);
 	}
@@ -1323,8 +1298,8 @@ pub mod tests_zkp_driver{
         let avg_pats_per_subsig = 8; //old value 8
         let avg_active_pats_per_subsig = 3;
         let perc_comp_subsigs = 20;
-        let num_category = 1;
-        let num_circs_per_category= 1;
+		let vec_decrease_level = vec![];
+		let num_circs = 1; 
         let basis_unique_states = 1600; //15 cpercent
         let basis_acc_states = 1200; //9 cpercent
         let basis_pats_in_trace = 2200; //old value 100 cur value 1/1000.
@@ -1390,8 +1365,8 @@ pub mod tests_zkp_driver{
 			&init_dfa_cap,
 			&init_cp_cap_igc,
 			&init_sed_cap_igc,
-			num_category,
-			num_circs_per_category,
+			&vec_decrease_level,
+			num_circs,
 			b_check_lkup
 		);
 	}
@@ -1421,9 +1396,9 @@ pub mod tests_zkp_driver{
         let avg_pats_per_subsig = 8; //old value 8
         let avg_active_pats_per_subsig = 2;
         let perc_comp_subsigs = 20;
-        let num_category = 1;
-        let num_circs_per_category= 1;
         let basis_unique_states = 2000; //15 cpercent
+		let vec_decrease_level = vec![];
+		let num_circs = 1; 
         let basis_acc_states = 1260; //last good value 1800
         let basis_pats_in_trace = 1400; //last good value 3000
         let basis_acc_states_igc = basis_acc_states ; //9 cpercent
@@ -1501,8 +1476,8 @@ pub mod tests_zkp_driver{
 				&init_dfa_cap,
 				&init_cp_cap_igc,
 				&init_sed_cap_igc,
-				num_category,
-				num_circs_per_category,
+				&vec_decrease_level,
+				num_circs,
 				b_check_lkup
 			);
 		}
@@ -1531,8 +1506,8 @@ pub mod tests_zkp_driver{
         let avg_pats_per_subsig = 8; //old value 8
         let avg_active_pats_per_subsig = 2;
         let perc_comp_subsigs = 20;
-        let num_category = 2;
-        let num_circs_per_category= 2;
+		let vec_decrease_level = vec![2,1];
+		let num_circs = 3; 
         let basis_unique_states = 2000; //15 cpercent
         let basis_acc_states = 1260; //last good value 1800
         let basis_pats_in_trace = 1400; //last good value 3000
@@ -1610,8 +1585,8 @@ pub mod tests_zkp_driver{
 			&init_dfa_cap,
 			&init_cp_cap_igc,
 			&init_sed_cap_igc,
-			num_category,
-			num_circs_per_category,
+			&vec_decrease_level,
+			num_circs,
 			b_check_lkup
 		);
 	}
@@ -1621,10 +1596,10 @@ pub mod tests_zkp_driver{
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
 		let _b_light_test = true;
-		small_data::<Fr>(b_check_lkup); //small data
+		//small_data::<Fr>(b_check_lkup); //small data
 		//small_data2::<Fr>(b_check_lkup);  //10k data 
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
-		//small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)
+		small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)
 		//small_data_debug::<Fr>(b_check_lkup);  //for debug
 		//small_data4::<Fr>(b_check_lkup); //multi circ of 1M, 2M, 4M data
 		//full_data1::<Fr>(b_check_lkup);

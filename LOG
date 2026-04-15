@@ -27814,14 +27814,17 @@ Goal 1. investigate the decider circuit size and see what's the impact
 	Proof time: 4141 seconds
 	Peak RAM: 402GB -> 10755 seconds (almost 3 hrs)
 	===== DATA 2. 1 circ: 
-	circ size: 13.4M,
-	Groth16: 968 sec
-	*** MainDeciderCirtuit TOTAL constraints: 143741046 ***.  329377 ms
-	Proof time for Main: 1722 sec (twice the size, reasonable)
 	circ 1, r1cs cols: 35399837, rows: 23642117 
 		==> So r1cs cols is about 3 times of circ size
 		==> final Main decider circ is about 11 times of the original circ size 
 		===> MAX combined circ size should be around 25M (the init circ size)
+	circ size: 13.4M,
+	Groth16: 968 sec
+	*** MainDeciderCirtuit TOTAL constraints: 143741046 ***.  329377 ms
+	Proof time for Main: 1722 sec (twice the size, reasonable)
+	Cyclepair: 2290 sec (exactly 200M) ---> *** SAME. good
+	Proof time: 4141 seconds
+	Peak RAM: 480GB.
 
 Goal 2. improve error reporting on PoisenError -> DONE
 Goal 3. change all #[cfg(test] to if B_DEBUG2 in decider_circuit -> DONE
@@ -27840,4 +27843,9 @@ Goal 8. improve the read_cache and add option, create a case it
 		even though the b_read_cache is set to true, should be
 		the generating mode.
 	[c] done.
+Goal 9. refine build_circs_adv
+	[a] refine build_circs_adv
+	[b] refine the calls
+	[c] fixed 
+	[d] regression testing, small 1, 2, 3, par
 
