@@ -27806,9 +27806,20 @@ Goal 1. investigate the decider circuit size and see what's the impact
 	1 circ case
 	circ size: 6832567
 	PERF 1002 circ 1, r1cs cols: 18152680, rows: 12204068
+	=== DATA 1. 1 circ 6.8M circ size, r1cs: 18M ===
+	Groth16: 542 sec
+	Main build time: 231 sec (81M)
+	Proof time for Main: 849 sec
+	Cycpair: 2105 sec (200M)
+	Proof time: 4141 seconds
+	Peak RAM: 402GB -> 10755 seconds (almost 3 hrs)
+	===== DATA 2. 1 circ: 
+
 Goal 2. improve error reporting on PoisenError -> DONE
-Goal 3. insert a lock to control the build of batch clam
-Goal 3. improve the read_cache and add option, create a case it
+Goal 3. change all #[cfg(test] to if B_DEBUG2 in decider_circuit -> DONE
+Goal 4. Check snark prover CPU usage
+Goal 4. improve the read_cache and add option, create a case it
 	crashes to detect where it fails.
-Goal 4. check why multi-circ decide it is so slow
+Goal 5. insert a lock to control the build of batch clam
+Goal 6. check why multi-circ decide it is so slow
 

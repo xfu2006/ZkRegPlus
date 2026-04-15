@@ -872,7 +872,7 @@ where
 		let zi_part2_inst_var = ZiPartTwoInstVar::from::<C1>(
 			&self.zi_part2_inst.clone().expect("zi_part null"), cs.clone());
 		let zi_p2 = zi_part2_inst_var.hash(&self.poseidon_config, cs.clone());
-		#[cfg(test)]{
+		if B_DEBUG2{
 			use ark_r1cs_std::R1CSVar;
 			if zi_p2.value().is_ok(){//incase circ setup no value
 			assert!(zi_p2.value().unwrap()==z_i[1].value().unwrap());
@@ -1255,7 +1255,7 @@ where
 				.concat();
 			assert!(vres.len()==10); //5 limbs each
 			for j in 12*5..12*5+2*5{//ignore z coordinate which is 0
-				#[cfg(test)]{ 
+				if B_DEBUG2{
 					use ark_r1cs_std::R1CSVar;
 					if vres[j-12*5].value().is_ok(){
 					assert!(vres[j-12*5].value()?==
@@ -1319,7 +1319,7 @@ where
             })?;
             let (cp_u_i_x, _) = cp_U_i.clone().hash(&sponge, pp_hash.clone())?;
             (my_phase1_ret.u_i.x[2]).enforce_equal(&cp_u_i_x)?;
-			#[cfg(test)]{
+			if B_DEBUG2{
 				use ark_r1cs_std::R1CSVar;
 				if my_phase1_ret.u_i.x[2].value().is_ok(){
 				assert!(my_phase1_ret.u_i.x[2].value()?==cp_u_i_x.value()?);
@@ -1346,7 +1346,8 @@ where
 					cp_W_i.rE.to_bits_le()?,
 				)?;
 				cp_U_i.cmE.enforce_equal(&computed_cmE)?;
-				#[cfg(test)]{if cp_U_i.cmE.value().is_ok(){
+				if B_DEBUG2{
+					if cp_U_i.cmE.value().is_ok(){
 					assert!(cp_U_i.cmE.value()?== computed_cmE.value()?);
 				} }
 			//}
@@ -1358,7 +1359,8 @@ where
 				let computed_cmW =
 					PedersenGadget::<C2, GC2>::commit(H2, G, cp_W_i_W_bits?, cp_W_i.rW.to_bits_le()?)?;
 				cp_U_i.cmW.enforce_equal(&computed_cmW)?;
-				#[cfg(test)]{ if cp_U_i.cmW.value().is_ok(){
+				if B_DEBUG2{
+					if cp_U_i.cmW.value().is_ok(){
 					assert!(cp_U_i.cmW.value()?== computed_cmW.value()?);
 				} }
 			//}
@@ -1770,7 +1772,7 @@ where
 			|| Ok(mainres_hash_val) )?; //it is the ONLY PUBLIC VAR of circ!!! 
 		if b_debug { println!("DEBUG USE 6901.1.0 public input: {}", mainres_hash_val); }
 		mainres_hash.enforce_equal(&mainres_pub)?;
-		#[cfg(test)]{
+		if B_DEBUG2{
 			if phase1_ret.ch.value().is_ok(){
 				let phase1_ret_val = phase1_ret.val();
 				assert!(phase1_ret_val == self.res);

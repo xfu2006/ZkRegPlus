@@ -55,6 +55,14 @@ use crate::{
 		}
 	},
 };
+
+
+macro_rules! lock_unwrap {
+    ($mutex:expr) => {
+        $mutex.lock().unwrap_or_else(|e| panic!("Mutex poisoned at {}:{}: {}", file!(), line!(), e))
+    };
+}
+
 use core::marker::PhantomData;
 use crate::frontend::FCircuit;
 use crate::{FoldingScheme};
@@ -416,18 +424,18 @@ where
 		let mut vec_adv:Vec<Arc<dyn NdAdvice + Send + Sync>> = vec![];
 		let layer = &self.layered_circs[layer_i]; 
 		let circ = &layer[0];
-		let max_wlen = circ.get_mapper().lock().unwrap().max_word_len();
+		let max_wlen = lock_unwrap!(circ.get_mapper()).max_word_len();
 		let wlen = word.len();
 		let num_segs = if wlen % max_wlen==0{wlen/max_wlen} 
 			else {wlen/max_wlen+1};
 		let pci = layer_i; //because every layer has only one circ
-		let cap = circ.get_mapper().lock().unwrap().get_capacity();
+		let cap = lock_unwrap!(circ.get_mapper()).get_capacity();
 		let mut prev_adv = None;
 		for i in 0..num_segs{
 			let start = i*max_wlen;
 			let end = if (i+1)*max_wlen>wlen {wlen} else {(i+1)*max_wlen};
 			let seg = word[start..end].to_vec();
-			let advice = circ.get_mapper().lock().unwrap()
+			let advice = lock_unwrap!(circ.get_mapper())
 				.gen_nd_advice(&seg, &word_info, prev_adv, i, job_id)?;
 			vec_pci.push(pci);
 			vec_size.push(end-start);
@@ -450,7 +458,7 @@ where
 	/// not going to save much anyway)
 	fn find_working_layer_for_wd(&self, job_id: usize, log_level: usize, b_save_advice: bool, word: &Vec<CF1<C1>>, word_info: &WordInfo)-> Result<(usize, usize, Vec<usize>, Vec<usize>, Vec<Arc<dyn Capacity + Send + Sync>>, Vec<Arc<dyn NdAdvice + Send + Sync>>),Error>{
 		let full_len = word.len();
-		let max_wlen = self.layered_circs[0][0].get_mapper().lock().unwrap()
+		let max_wlen = lock_unwrap!(self.layered_circs[0][0].get_mapper())
 			.max_word_len();
 		let long_bar = 1024 * 1024 / 31 * 4; //4MB of data
 		let max_layer_id = self.layered_circs.len()-1;
@@ -587,11 +595,21 @@ where
 
 		let results: Vec<_> = (min_layer..=max_layer)
 				.into_par_iter().map(|layer_id| (
-				layer_id, 
-				self.gen_nd_advice_at_layer(job_id, layer_id, log_level, 
-					b_save_advice, word, word_info)))
+				layer_id,
+				std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+					self.gen_nd_advice_at_layer(job_id, layer_id, log_level,
+						b_save_advice, word, word_info)
+				})).unwrap_or_else(|e| {
+					let msg = if let Some(s) = e.downcast_ref::<&str>() {
+						s.to_string()
+					} else if let Some(s) = e.downcast_ref::<String>() {
+						s.clone()
+					} else {
+						"Unknown panic".to_string()
+					};
+					Err(Error::Other(format!("Thread panicked in gen_nd_advice_at_layer for layer {}: {}", layer_id, msg)))
+				})))
 				.collect();
-
 		let best_result = results
 				.iter()
 				.filter_map(|(layer_id, res)| res.as_ref().ok().map(|val| 
@@ -636,11 +654,11 @@ where
 		let mut gt1 = GTimer::new();
 		let mut gt2 = GTimer::new();
 		log_perf(job_id, log_level, &format!("plan_nd_advice step 0. layers: {}, word.len(): {}, b_save_adivce: {}", self.layered_circs.len(), word.len(), b_save_advice), &mut gt1);
-		let mwl = self.layered_circs[0][0].get_mapper().lock().unwrap().max_word_len();
+		let mwl = lock_unwrap!(self.layered_circs[0][0].get_mapper()).max_word_len();
 		for i in 0..self.layered_circs.len(){
 			assert!(self.layered_circs[i].len()==1, "only 1 circ per layer!");
-			assert!(self.layered_circs[i][0]
-				.get_mapper().lock().unwrap().max_word_len() == mwl); 
+			assert!(lock_unwrap!(self.layered_circs[i][0]
+				.get_mapper()).max_word_len() == mwl); 
 				//all circ should support same max word len
 		}
 
@@ -740,12 +758,12 @@ where
 				let layer = &self.layered_circs[layer_id];
 				let circ1 = &layer[layer.len()-1];
 				//we assume all circs have the same max_word_len
-				let max_word_len = circ1.get_mapper().lock().unwrap().max_word_len();
+				let max_word_len = lock_unwrap!(circ1.get_mapper()).max_word_len();
 				let word_len = if max_word_len>remaining.len(){
 					remaining.len()}else {max_word_len};
 				let word = remaining[0..word_len].to_vec();
 				#[cfg(test)]{
-					for circ in layer{assert!(circ.get_mapper().lock().unwrap().
+					for circ in layer{assert!(lock_unwrap!(circ.get_mapper()).
 						max_word_len()==max_word_len);
 					}
 				}
@@ -753,7 +771,7 @@ where
 					else {Some(vec_adv[vec_adv.len()-1].clone())};
 				//PASS 0 as seg_id just to make syntax ok
 				if 1>0 {panic!("should not call this function");}
-				let res = circ1.get_mapper().lock().unwrap()
+				let res = lock_unwrap!(circ1.get_mapper())
 					.gen_nd_advice(&word, &word_info, prev_adv, 0, 0);
 				if !res.is_ok() {
 					//quick elimination of apparent non-working layer
@@ -767,14 +785,14 @@ where
 				//instance of capacity check
 				//let (cap, _advice) = res.unwrap();
 				//let circ = &layer[0];
-				//if circ.get_mapper().lock().unwrap()
+				//if lock_unwrap!(circ.get_mapper())
 				//	.get_capacity().can_satisfy(&cap){
 				//	b_found = true;
 				//	selected_layer = layer_id;
 				//	break;
 				//}else{
 				//	if layer_id == self.layered_circs.len()-1{
-				//		println!("UNABLE to find circ: cap needed: {:#?} and last circ capacility: {:#?}", cap, circ.get_mapper().lock().unwrap().get_capacity());
+				//		println!("UNABLE to find circ: cap needed: {:#?} and last circ capacility: {:#?}", cap, lock_unwrap!(circ.get_mapper()).get_capacity());
 				//	}
 				//}
 			}
@@ -808,7 +826,7 @@ where
 				let mut min_avg_cost = layer[0].est_cost(); 
 				for id in 0..layer.len(){
 					let circ = &layer[id];
-					let max_word_len = circ.get_mapper().lock().unwrap()
+					let max_word_len = lock_unwrap!(circ.get_mapper())
 						.max_word_len();
 					let word_len = if max_word_len>remaining.len(){
 						remaining.len()}else {max_word_len};
@@ -828,7 +846,7 @@ where
 					//for every word_len try generating the unlimited resource
 					//request
 					let circ = &layer[idx];
-					let max_word_len = circ.get_mapper().lock().unwrap()
+					let max_word_len = lock_unwrap!(circ.get_mapper())
 						.max_word_len();
 					let word_len = if max_word_len>remaining.len(){
 						remaining.len()}else {max_word_len};
@@ -841,13 +859,13 @@ where
 						//we just fix syntax here.
 						if 1>0 {panic!("this function should not be called");}
 						last_word_len = word_len;
-						_last_res = Some(circ.get_mapper().lock().unwrap()
+						_last_res = Some(lock_unwrap!(circ.get_mapper())
 						  .gen_nd_advice(&word, &word_info, prev_adv, 0, 0)
 						  .unwrap());
 					}
 				
 					//verify the circ does can satisfy the request
- // 					if circ.get_mapper().lock().unwrap().get_capacity()
+ // 					if lock_unwrap!(circ.get_mapper()).get_capacity()
  // 						.can_satisfy(&last_res.as_ref().unwrap().0){
  // 						let (cap, advice) = last_res.unwrap();
  // 						let pci = vec_start[selected_layer] + idx;
@@ -977,7 +995,7 @@ where
 					//use crate::folding::foldpot::sigma_ir1cs::{Capacity};
 					assert!(act_len<=_max_len);
 					let rc_cap = _vec_cap_req[i].clone();
-					assert!(circ.get_mapper().lock().unwrap().get_capacity()
+					assert!(lock_unwrap!(circ.get_mapper()).get_capacity()
 						.can_satisfy(&rc_cap));
 					if i==steps-1 {assert!(remaining.len()==0);}
 				}
@@ -1004,7 +1022,7 @@ where
 				};//end constructor StatementExtraInfo
 
 				//need to build the statement to fill the m_map
-				let stmt_res = circ.get_mapper().lock().unwrap().build_statement(&frag, &prev_stmt, self.lkup.clone(), &ei, advice[subseg_id-1].clone(), lk_share_size, false, job_id);
+				let stmt_res = lock_unwrap!(circ.get_mapper()).build_statement(&frag, &prev_stmt, self.lkup.clone(), &ei, advice[subseg_id-1].clone(), lk_share_size, false, job_id);
 				assert!(stmt_res.is_ok());
 				let stmt = stmt_res.unwrap();
 				stmt.fill_lkup_mvec(&mut m_map, &self.lkup); //needed here!
@@ -1104,7 +1122,7 @@ where
 				let act_len = field_to_usize(&vea[idx].act_word_subseg_size);
 				let share_size= circ.get_lkup_share_size();
 				let frag = remaining[0..act_len].to_vec();
-				let stmt_res = circ.get_mapper().lock().unwrap().build_statement(&frag, &prev_stmt, self.lkup.clone(), ei, vec_advice[wi][subseg_id-1].clone(), share_size, false, job_id);
+				let stmt_res = lock_unwrap!(circ.get_mapper()).build_statement(&frag, &prev_stmt, self.lkup.clone(), ei, vec_advice[wi][subseg_id-1].clone(), share_size, false, job_id);
 				assert!(stmt_res.is_ok());
 				let mut stmt = stmt_res.unwrap();
 
@@ -1267,7 +1285,7 @@ where
 				let act_len = field_to_usize(&vea[idx].act_word_subseg_size);
 				let frag = remaining[0..act_len].to_vec();
 				remaining = remaining[act_len..].to_vec();
-				let stmt_res = circ.get_mapper().lock().unwrap().build_statement(&frag, &prev_stmt, self.lkup.clone(), ei, vec_advice[wi][subseg_id].clone(), share_size, false, job_id);
+				let stmt_res = lock_unwrap!(circ.get_mapper()).build_statement(&frag, &prev_stmt, self.lkup.clone(), ei, vec_advice[wi][subseg_id].clone(), share_size, false, job_id);
 				assert!(stmt_res.is_ok());
 				let mut stmt = stmt_res.unwrap();
 				stmt.update_lookup(start, start+share_size, &self.lkup, m_map);
@@ -1430,7 +1448,7 @@ where
 					//use crate::folding::foldpot::sigma_ir1cs::{Capacity};
 					assert!(act_len<=_max_len);
 					let rc_cap = _vec_cap_req[i].clone();
-					assert!(circ.get_mapper().lock().unwrap().get_capacity()
+					assert!(lock_unwrap!(circ.get_mapper()).get_capacity()
 						.can_satisfy(&rc_cap));
 					if i==steps-1 {assert!(remaining.len()==0);}
 				}
@@ -1460,13 +1478,13 @@ where
 
 				//2.3 generate the advice and statement
 				//need to build the statement to fill the m_map
-				let res = circ.get_mapper().lock().unwrap()
+				let res = lock_unwrap!(circ.get_mapper())
 					.gen_nd_advice(&frag, word_info, prev_adv, subseg_id - 1, job_id);
 				assert!(res.is_ok(), "\n\n===== **** =====\nUNABLE to generate advice for word: {}, segment_id: {}, ERROR: {:#?}\n==============\n", word_fname, subseg_id, res); 
 				let cur_adv = res.unwrap();
 
 				log_perf(job_id, log_level+2, &format!("-- Pass 1. gen_advice."), &mut gt2);
-				let stmt_res = circ.get_mapper().lock().unwrap().build_statement(
+				let stmt_res = lock_unwrap!(circ.get_mapper()).build_statement(
 					&frag, &prev_stmt, self.lkup.clone(), &ei,
 					//	advice[subseg_id-1].clone(), 
 						cur_adv.clone(),
@@ -1544,14 +1562,14 @@ where
 				remaining = remaining[act_len..].to_vec();
 
 				//3.2 generate the adice again
-				let res = circ.get_mapper().lock().unwrap()
+				let res = lock_unwrap!(circ.get_mapper())
 					.gen_nd_advice(&frag, word_info, prev_adv, subseg_id - 1, job_id);
 				assert!(res.is_ok(), "UNABLE to generate advice for word id: {}, segment_id: {}", word_id, subseg_id); 
 				let cur_adv = res.unwrap();
 				log_perf(job_id, log_level+2, &format!("-- Pass2. gen advice. sugseg_id: {}", subseg_id), &mut gtw2);
 
 				//3.3 generate the statement again
-				let stmt_res = circ.get_mapper().lock().unwrap().build_statement(&frag, &prev_stmt, self.lkup.clone(), ei, cur_adv.clone(), share_size, false, job_id);
+				let stmt_res = lock_unwrap!(circ.get_mapper()).build_statement(&frag, &prev_stmt, self.lkup.clone(), ei, cur_adv.clone(), share_size, false, job_id);
 				assert!(stmt_res.is_ok());
 				prev_adv = Some(cur_adv);
 				let mut stmt = stmt_res.unwrap();
@@ -1701,13 +1719,13 @@ where
 				let frag = remaining[0..act_len].to_vec();
 				remaining = remaining[act_len..].to_vec();
 
-				let res = circ.get_mapper().lock().unwrap()
+				let res = lock_unwrap!(circ.get_mapper())
 					.gen_nd_advice(&frag, word_info, prev_adv, subseg_id - 1, job_id);
 				assert!(res.is_ok(), "UNABLE to generate advice for word id: {}, segment_id: {}", word_id, subseg_id); 
 				let cur_adv = res.unwrap();
 				log_perf(job_id, log_level+1, &format!("-- Pass 3. gen advice for word_id: {}, seg_id: {}", word_id, subseg_id), &mut gtw2);
 
-				let stmt_res = circ.get_mapper().lock().unwrap().build_statement(&frag, &prev_stmt, self.lkup.clone(), ei, cur_adv.clone(), share_size, false, job_id);
+				let stmt_res = lock_unwrap!(circ.get_mapper()).build_statement(&frag, &prev_stmt, self.lkup.clone(), ei, cur_adv.clone(), share_size, false, job_id);
 				assert!(stmt_res.is_ok());
 				prev_adv = Some(cur_adv);
 				let mut stmt = stmt_res.unwrap();
@@ -1908,10 +1926,10 @@ where
 			let circ = &mut vec_circ[i][j];
 			let lk_share_size = circ.get_lkup_share_size();
 			let prev_stmt = None;
-			let wlen = circ.get_mapper().lock().unwrap().max_word_len();
+			let wlen = lock_unwrap!(circ.get_mapper()).max_word_len();
 			let frag = vec![zero; wlen];
 			let prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>> = None; //fine to set None
-			let r_advice= circ.get_mapper().lock().unwrap()
+			let r_advice= lock_unwrap!(circ.get_mapper())
 					.gen_nd_advice(&frag, &word_info, prev_adv, 0, 0); //use its own capacity
 			assert!(r_advice.is_ok(), "\n\n===== **** ====== \nUNABLE to generate advice for circ at layer {} for full 0-word. This is a system-wide change needed. Needs to adjust capacity: {:#?}", i, r_advice);
 
@@ -1936,7 +1954,7 @@ where
 				accumulated_word_len: C1::ScalarField::from(wlen as u32),
 			};//end constructor StatementExtraInfo
 			circ.set_container_config(&advice);
-			let stmt_res = circ.get_mapper().lock().unwrap()
+			let stmt_res = lock_unwrap!(circ.get_mapper())
 				.build_statement(&frag, &prev_stmt, lkup.clone(), &ei, advice, //REMOVE LATER clone()
 				lk_share_size, true, 0); //dummy mode
 			assert!(stmt_res.is_ok());
@@ -1979,7 +1997,7 @@ where
 	impl Drop for SemaphoreGuard {
 		fn drop(&mut self) {
 			let (mutex, cvar) = &*self.lock;
-			let mut count = mutex.lock().unwrap();
+			let mut count = lock_unwrap!(mutex);
 			*count += 1;
 			cvar.notify_one();
 		}
@@ -2054,7 +2072,7 @@ where
 	  		// ------------- The following is the CRITICAL SECTION -------
 			let _guard = {
 				let (lock, cvar) = &*semaphore;
-				let mut count = lock.lock().unwrap();
+				let mut count = lock_unwrap!(lock);
 				while *count == 0 {
 					count = cvar.wait(count).unwrap();
 				}

@@ -1,4 +1,12 @@
 use std::sync::{Arc, Mutex};
+
+
+macro_rules! lock_unwrap {
+    ($mutex:expr) => {
+        $mutex.lock().unwrap_or_else(|e| panic!("Mutex poisoned at {}:{}: {}", file!(), line!(), e))
+    };
+}
+
 /// Sigma-I-R1CS is a 3-move restricted fragment of the
 /// I-R1CS model. See our paper Section 6.
 /* Created 08/05/2024 
@@ -2341,10 +2349,9 @@ where 	C: CurveGroup<ScalarField=F>,
 	/// bits of Fq (base prime field)
 	pub fn gen_configs(g_mapper: Arc<Mutex<GM>>, b_full_mode: bool, lkup_share_size: usize)
 		-> Result<(WitnessSigmaIR1CSConfig,StatementConfig),Error>{
-		let gadgets = g_mapper.lock().unwrap().get_gadgets();
-		let (stmt_len, stmt_cfg, v_idx, _extra_joins, _ci_inp) = g_mapper
-			.lock().unwrap().gen_statement_structure(lkup_share_size);
-		let vec_msg_sizes = gadgets.iter().map(|g| g.lock().unwrap().get_msg_size())
+		let gadgets = lock_unwrap!(g_mapper).get_gadgets();
+		let (stmt_len, stmt_cfg, v_idx, _extra_joins, _ci_inp) = lock_unwrap!(g_mapper).gen_statement_structure(lkup_share_size);
+		let vec_msg_sizes = gadgets.iter().map(|g| lock_unwrap!(g).get_msg_size())
 			.collect::<Vec<(usize, usize, usize, usize)>>();
 		let mut m1_len = 0usize;
 		let mut m2_len = 0usize;
@@ -2386,11 +2393,11 @@ where 	C: CurveGroup<ScalarField=F>,
 	/// generate the witness structure
 	pub fn gen_witness_structure(&self, lkup_share_size: usize) 
 		-> WitnessSigmaIR1CSConfig{
-		let gadgets = self.gadget_mapper.lock().unwrap().get_gadgets();
+		let gadgets = lock_unwrap!(self.gadget_mapper).get_gadgets();
 		//generate witness config, no need of info such as
 		//extra join constraints and map to cyclepair
-		let (stmt_len, stmt_cfg, v_idx, _, _) = self.gadget_mapper.lock().unwrap().gen_statement_structure(lkup_share_size);
-		let vec_msg_sizes = gadgets.iter().map(|g| g.lock().unwrap().get_msg_size())
+		let (stmt_len, stmt_cfg, v_idx, _, _) = lock_unwrap!(self.gadget_mapper).gen_statement_structure(lkup_share_size);
+		let vec_msg_sizes = gadgets.iter().map(|g| lock_unwrap!(g).get_msg_size())
 			.collect::<Vec<(usize, usize, usize, usize)>>();
 		let mut m1_len = 0usize;
 		let mut m2_len = 0usize;
@@ -2444,7 +2451,7 @@ where 	C: CurveGroup<ScalarField=F>,
 	/// deseiralization). This is only needed for those gadgets in SED
 	/// approach.
 	fn set_container_config(&mut self, advice: &Arc<dyn NdAdvice + Send + Sync>){ 
-		self.gadget_mapper.lock().unwrap().set_container_config(advice);
+		lock_unwrap!(self.gadget_mapper).set_container_config(advice);
 		assert!(self.stmt_config== self.witness_config.stmt_cfg);
 		let (wtns_cfg, stmt_cfg) = Self::gen_configs(self.gadget_mapper.clone(),
 			self.b_full_mode, self.witness_config.stmt_cfg.lookup_share_size)
@@ -2471,8 +2478,8 @@ where 	C: CurveGroup<ScalarField=F>,
 		let (ilen,olen,wlen,dlen,lklen) =  (scfg.input_size, scfg.output_size, scfg.word_subseg_size, scfg.data_size, scfg.lookup_share_size);
 		let (_m1len, m2len, _m3len) = (wcfg.msg1_size, wcfg.msg2_size, wcfg.msg3_size);
 		//2. compute gadgets and step cost for each step
-		let gadgets = self.get_mapper().lock().unwrap().get_gadgets();
-		let gadgets_cost:usize = gadgets.iter().map(|g| g.lock().unwrap().est_cost()).sum();
+		let gadgets = lock_unwrap!(self.get_mapper()).get_gadgets();
+		let gadgets_cost:usize = gadgets.iter().map(|g| lock_unwrap!(g).est_cost()).sum();
 
 		let subtbl_id_len = ilen + olen + wlen + dlen; 
 		let (llen,rlen) = (subtbl_id_len+14, lklen); //inv_hab_left and right
@@ -2511,11 +2518,11 @@ where 	C: CurveGroup<ScalarField=F>,
 	fn is_full_mode(&self) -> bool {self.b_full_mode}
 
 	/// return the name	
-	fn get_name(&self) -> String {self.gadget_mapper.lock().unwrap().get_name()}
+	fn get_name(&self) -> String {lock_unwrap!(self.gadget_mapper).get_name()}
 
 	/// return the max word length it can process
 	fn max_word_len(&self)-> usize{
-		self.gadget_mapper.lock().unwrap().max_word_len()
+		lock_unwrap!(self.gadget_mapper).max_word_len()
 	}
 
 	/// return the clone of Rc pointer
@@ -2530,19 +2537,19 @@ where 	C: CurveGroup<ScalarField=F>,
 		// will be enforced somewhere else, but need
 		// the cyclepair input
 		let lkup_share_size = self.stmt_config.lookup_share_size;
-		let (stmt_len, _stmt_cfg, v_idx, _, _cp_inp) = self.gadget_mapper.lock().unwrap().gen_statement_structure(lkup_share_size); 
+		let (stmt_len, _stmt_cfg, v_idx, _, _cp_inp) = lock_unwrap!(self.gadget_mapper).gen_statement_structure(lkup_share_size); 
 		assert!(stmt_len==stmt.len(), "stmt.len(): {} != stmt_len: {}",
 			stmt.len(), stmt_len);
 		let v_stmt = stmt.clone();
 		assert!(v_idx.len()==self.gadgets.len(), "v_idx.len(): {} != gadgets.len: {}", v_idx.len(), self.gadgets.len());
-		let vec_msg_sizes = self.gadgets.iter().map(|g| g.lock().unwrap()
+		let vec_msg_sizes = self.gadgets.iter().map(|g| lock_unwrap!(g)
 			.get_msg_size())
 			.collect::<Vec<(usize, usize, usize, usize)>>();
 		let mut v_msg1:Vec<F> = vec![];
 
 		//1. generate message1
 		for (i,g) in self.gadgets.iter().enumerate(){
-			let mut msg1 = g.lock().unwrap().gen_msg1(&v_stmt, &v_idx[i]) ;
+			let mut msg1 = lock_unwrap!(g).gen_msg1(&v_stmt, &v_idx[i]) ;
 			assert!(vec_msg_sizes[i].1==msg1.len(), 
 				"ERROR: mistaching msg1 size for i: {}", i);
 			v_msg1.append(&mut msg1); 
@@ -2580,8 +2587,7 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		let mut gt1 = GTimer::new();
 		let lkup_share_size = self.stmt_config.lookup_share_size;
-		let (stmt_len, stmt_cfg, v_idx, _, cp_inp) = self.gadget_mapper
-			.lock().unwrap()
+		let (stmt_len, stmt_cfg, v_idx, _, cp_inp) = lock_unwrap!(self.gadget_mapper)
 			.gen_statement_structure(lkup_share_size); 
 		assert!(stmt_len==stmt.len(), "stmt.len(): {} != stmt_len: {}",
 			stmt.len(), stmt_len);
@@ -2589,7 +2595,7 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		assert!(v_idx.len()==self.gadgets.len(), "v_idx.len(): {} != gadgets.len: {}", v_idx.len(), self.gadgets.len());
 		let vec_msg_sizes = self.gadgets.iter().map(|g| 
-			g.lock().unwrap().get_msg_size())
+			lock_unwrap!(g).get_msg_size())
 			.collect::<Vec<(usize, usize, usize, usize)>>();
 		let mut v_msg1:Vec<F> = vec![];
 		let mut v_msg2:Vec<F> = vec![];
@@ -2600,7 +2606,7 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		//1. generate message1
 		for (i,g) in self.gadgets.iter().enumerate(){
-			let mut msg1 = g.lock().unwrap().gen_msg1(&v_stmt, &v_idx[i]) ;
+			let mut msg1 = lock_unwrap!(g).gen_msg1(&v_stmt, &v_idx[i]) ;
 			assert!(vec_msg_sizes[i].1==msg1.len(),
 				"ERROR: mistaching msg1 size for i: {}", i);
 			v_msg1.append(&mut msg1);
@@ -2653,7 +2659,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		let mut msg1_start = 0;
 		let mut msg2_start = 0;
 		for (i,g) in self.gadgets.iter().enumerate(){
-			let mut msg3 = g.lock().unwrap().gen_msg3(&v_stmt, &v_idx[i], 
+			let mut msg3 = lock_unwrap!(g).gen_msg3(&v_stmt, &v_idx[i], 
 				&v_msg1, msg1_start, vec_msg_sizes[i].1, 
 				&v_msg2, msg2_start, vec_msg_sizes[i].2);
 			assert!(msg3.len()==vec_msg_sizes[i].3, 
@@ -2944,7 +2950,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		g_mapper: Arc<Mutex<GM>>, b_full_mode: bool, lkup_share_size: usize,
 		b_cyclepair: bool, b_check_lkup: bool)
 		-> Result<Self,Error>{
-		let gadgets = g_mapper.lock().unwrap().get_gadgets().clone();
+		let gadgets = lock_unwrap!(g_mapper).get_gadgets().clone();
 		let (wtns_cfg, stmt_cfg) = Self::gen_configs(g_mapper.clone(), 
 			b_full_mode, lkup_share_size)?;
 		let stmt_len = wtns_cfg.statement_size;
@@ -3050,7 +3056,7 @@ where 	C: CurveGroup<ScalarField=F>,
 	/// length of secret witness vector (
 	fn external_inputs_len(&self) -> usize {
 		//return the total len of problem statement
-		self.gadget_mapper.lock().unwrap().gen_statement_structure(
+		lock_unwrap!(self.gadget_mapper).gen_statement_structure(
 			self.stmt_config.lookup_share_size).0
 	}
 
@@ -3094,7 +3100,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			cs.num_witness_variables()
 		), &mut gt);
 		assert!(z_i.len()==2);
-		let configs = self.gadgets.iter().map(|g| g.lock().unwrap().get_msg_size())
+		let configs = self.gadgets.iter().map(|g| lock_unwrap!(g).get_msg_size())
 			.collect::<Vec<(usize, usize, usize, usize)>>();
 		let cfg = &self.witness_config;
 		assert!(cfg.get_total_size()==external_inputs.len(), "external_inputs.len: {} != cfg.total_size: {}", external_inputs.len(), cfg.get_total_size());
@@ -3150,13 +3156,13 @@ where 	C: CurveGroup<ScalarField=F>,
 		let si = StatementInstVar::<F>::from_vec(&self.stmt_config, &wtns_var.statement);
 		for (i,g) in self.gadgets.iter().enumerate(){
 			let (nc, ni, nv) = (cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables());
-			g.lock().unwrap().assert_msg3(i, cs.clone(), &wtns_var, &cfg,
+			lock_unwrap!(g).assert_msg3(i, cs.clone(), &wtns_var, &cfg,
 				si.word_id.clone(), si.subseg_id.clone())?;
 			if B_DEBUG3{
-				check_cs(&cs, &format!("After gadget: {}", g.lock().unwrap().get_name()));
+				check_cs(&cs, &format!("After gadget: {}", lock_unwrap!(g).get_name()));
 			}
-			let stmt_len = g.lock().unwrap().get_msg_size().0;
-			log_perf(self.job_id, log_level, &format!("-- -- after msg3 of module {}: {}:\n\tINCREASED: constraints: {}, const vars: {}, wit vars: {} \n\t==> NOW: CS:{}, const: {}, witness: {}\n\t ==> stmt_size: {}. ", i, g.lock().unwrap().get_name(), cs.num_constraints()-nc, cs.num_instance_variables()-ni, cs.num_witness_variables()-nv, cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables(), stmt_len), &mut gt3);						
+			let stmt_len = lock_unwrap!(g).get_msg_size().0;
+			log_perf(self.job_id, log_level, &format!("-- -- after msg3 of module {}: {}:\n\tINCREASED: constraints: {}, const vars: {}, wit vars: {} \n\t==> NOW: CS:{}, const: {}, witness: {}\n\t ==> stmt_size: {}. ", i, lock_unwrap!(g).get_name(), cs.num_constraints()-nc, cs.num_instance_variables()-ni, cs.num_witness_variables()-nv, cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables(), stmt_len), &mut gt3);						
 		}
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 3");
@@ -3781,7 +3787,7 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		//8. VERIFY join constraints
 		let (_stmt_len, _stmt_cfg, _v_idx, extra_join_constraints, vec_idx_cpi) 
-			= self.gadget_mapper.lock().unwrap().gen_statement_structure(self.stmt_config.lookup_share_size);
+			= lock_unwrap!(self.gadget_mapper).gen_statement_structure(self.stmt_config.lookup_share_size);
 		let v_stmt = wtns_var.statement;
 		if extra_join_constraints.len()>0{
 			for (rg1,rg2) in extra_join_constraints{
@@ -4498,7 +4504,7 @@ pub mod tests_sigma_ir1cs{
 			_lk: PhantomData, job_id: 0};
 		let mapper = Arc::new(Mutex::new(mapper_raw));
 		let lk_len = lk.get_size();
-		let share_size = mapper.lock().unwrap().gen_statement_structure(lk_len/n_steps)
+		let share_size = lock_unwrap!(mapper).gen_statement_structure(lk_len/n_steps)
 			.1.lookup_share_size;
 		assert!(share_size * n_steps >= lk_len, "ERROR: share_size * n_step < lookup table size, increase number of steps!");
         let poseidon_config = poseidon_canonical_config::<F>();
@@ -4512,7 +4518,7 @@ pub mod tests_sigma_ir1cs{
 		//2. create the inputs and then statements
 		//let mut counter = 0;
 		let mut vec_stmt = vec![];
-		let (_, _stmt_cfg,_, _, _) = mapper.lock().unwrap()
+		let (_, _stmt_cfg,_, _, _) = lock_unwrap!(mapper)
 			.gen_statement_structure(share_size);
 		let _wtns_cfg = six_ir1cs.gen_witness_structure(share_size);
 		let lkup = Arc::new(lk);
@@ -4555,7 +4561,7 @@ pub mod tests_sigma_ir1cs{
 				accumulated_word_len: F::one(),
 			};
 			let dummy_adv = Arc::new(DummyNdAdvice{});
-			let stmt = mapper.lock().unwrap()
+			let stmt = lock_unwrap!(mapper)
 				.build_statement(&inp, &None, lkup.clone(), 
 					&ea, dummy_adv, 4, false, 0).expect("build stmt fails"); 
 			//if tbl_id!=F::zero() {counter += 1;}
