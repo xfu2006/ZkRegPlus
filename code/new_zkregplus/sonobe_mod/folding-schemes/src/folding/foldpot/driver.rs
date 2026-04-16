@@ -2013,9 +2013,11 @@ where
 	log_perf(0, log_level, &format!("FoldPot: Step 3: set up driver 2.\n=== Now Execute All Jobs =====\n"), &mut gt_all);
 
 	//4. set up mutex semaphore of size n_par_snark
-	let n_par_snark = 1;
+	let n_par_snark = read_global_config().n_par_snark;
 	let semaphore = Arc::new((Mutex::new(n_par_snark), Condvar::new()));
-	let n_par_batch_claim = 1;
+	let n_par_snark_cp = read_global_config().n_par_snark_cp;
+	let semaphore_cp: Semaphore = Arc::new((Mutex::new(n_par_snark_cp), Condvar::new()));
+	let n_par_batch_claim = read_global_config().n_par_batch_claim;
 	let semaphore_batch_claim: Semaphore = Arc::new((Mutex::new(n_par_batch_claim), Condvar::new()));
 
 
@@ -2212,6 +2214,18 @@ where
 				com_all_w, r_all_w, nova2_com_all_w, nova2_r_all_w, mainres,
 				inp).unwrap(); 
 		log_perf(job_id, log_level, &format!("FoldPot Step 8: build CyclePair circuit. MEM: {} GB", get_mem_usage()), &mut gt1);
+
+		// ------------- The following is the CRITICAL SECTION -------
+		let _guard_cp = {
+			let (lock, cvar) = &*semaphore_cp;
+			let mut count = lock_unwrap!(lock);
+			while *count == 0 {
+				count = cvar.wait(count).unwrap();
+			}
+			*count -= 1;
+			SemaphoreGuard { lock: semaphore_cp.clone() }
+		};
+
 
 		//9. set up the keys (maybe later can be cached)
 		let (g16_pk, g16_vk) = {//to save ram, clone will be freed

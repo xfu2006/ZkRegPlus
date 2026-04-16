@@ -27848,4 +27848,28 @@ Goal 9. refine build_circs_adv
 	[b] refine the calls
 	[c] fixed 
 	[d] regression testing, small 1, 2, 3, par
+Goal 10. migrated to uscentral1 again and use c3d 448gb model
+	which costs 0.58 per hour. Compare with M1 
+	[a] CyclePair circ 200M 
+		M1: 2105 sec, proof time: 4141 sec
+		c3d: 1597 sec, proof time
 
+Thursday 04/16/2026
+Goal 1. test on server
+	[a] raise request to bump cpus from 60 to 90
+	-> declined (c3d)
+	-> had to use c2d 112-cpu 894GB ram
+	-> in deciding circ stage it's 20% cpu usage 
+	[b] 1 circ version and see how much time does it take to generate advice
+		"PERF 1001" records
+Goal 2. perf evaluation full_data1 (small file) but runs with full proof 
+	generation. started 1pm
+	[a] compared with M1, c3d
+		CyclePair circ 200M 
+		M1: 2105 sec, proof time: 4141 sec
+		c3d: 1597 sec, proof time (didn't collect)
+		c2d: 1693 sec, proof time
+Goal 3. code improvement
+	[a] add n_par_ vars into GlobalConfig
+	[b] set n_par_ vars to 8 and 1 in full_calm
+Goal 4. analayze why phase1 circ generation takes so much time?
