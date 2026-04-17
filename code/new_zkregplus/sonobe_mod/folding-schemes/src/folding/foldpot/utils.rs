@@ -1,7 +1,7 @@
 /* Created 01/07/2025
 Utility classes/functions
 */
-use utils::{consts::ADD_CHAIN_SIZE};
+use utils::{consts::ADD_CHAIN_SIZE, logger::{log_perf, LOG2 as LOGL2}, timer::Timer as GTimer};
 use rayon::iter::{ParallelIterator,IntoParallelIterator,IntoParallelRefIterator};
 use std::time::{Instant};
 use ark_ff::{PrimeField,BigInteger};
@@ -777,7 +777,7 @@ pub fn deserialize_affines_raw<P: SWCurveConfig>(path_prefix: &str) -> Vec<Affin
 }
 
 pub fn write_g16_optimized_bn254(path: &Path, pk: &ark_groth16::ProvingKey<Bn254>, vk: &ark_groth16::VerifyingKey<Bn254>) {
-    let start_time = std::time::Instant::now();
+	let mut gt1 = GTimer::new();
     let b_debug = false;
     let path_str = path.to_str().unwrap();
 
@@ -815,7 +815,8 @@ pub fn write_g16_optimized_bn254(path: &Path, pk: &ark_groth16::ProvingKey<Bn254
     for prefix in prefixes {
         total_size += metadata(&format!("{}_compressed.data", prefix)).map(|m| m.len()).unwrap_or(0);
     }
-    println!("PERF 1003: [write_g16_optimized_bn254] path: {:?}, elements: {}, size: {} bytes, time: {:?}", path, pk.a_query.len(), total_size, start_time.elapsed());
+	let job_id = 0;
+    log_perf(job_id, LOGL2, &format!("PERF 1003: [write_g16_optimized_bn254] path: {:?}, elements: {}, size: {} bytes", path, pk.a_query.len(), total_size),&mut gt1);
 
     if b_debug {
         let (pk_read, vk_read) = read_g16_optimized_bn254(path);
@@ -826,7 +827,7 @@ pub fn write_g16_optimized_bn254(path: &Path, pk: &ark_groth16::ProvingKey<Bn254
 }
 
 pub fn read_g16_optimized_bn254(path: &Path) -> (ark_groth16::ProvingKey<Bn254>, ark_groth16::VerifyingKey<Bn254>) {
-    let start_time = std::time::Instant::now();
+	let mut gt1 = GTimer::new();
     let path_str = path.to_str().unwrap();
 
     let meta_path = format!("{}.meta", path_str);
@@ -881,7 +882,9 @@ pub fn read_g16_optimized_bn254(path: &Path) -> (ark_groth16::ProvingKey<Bn254>,
     for prefix in prefixes {
         total_size += metadata(&format!("{}_compressed.data", prefix)).map(|m| m.len()).unwrap_or(0);
     }
-    println!("PERF 1003: [read_g16_optimized_bn254] path: {:?}, elements: {}, size: {} bytes, time: {:?}", path, pk.a_query.len(), total_size, start_time.elapsed());
+	let job_id = 0;
+    log_perf(job_id, LOGL2, &format!("PERF 1003: [read_g16_optimized_bn254] path: {:?}, elements: {}, size: {} bytes", path, pk.a_query.len(), total_size, 
+	), &mut gt1);
 
     (pk, vk)
 }
