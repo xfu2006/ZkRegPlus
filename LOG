@@ -27902,6 +27902,23 @@ Goal 5. Analyze of performance:
 	==> But if we can retrieve key (instead of generating key)
 		could save 3000 sec, this is likely to save to 1 hr.
 
+Friday 04/17/2026
+Goal 1. add serialization
+	[a] gemini implementation
+	[b] testing
+		small,  -> ok 
+		par_circ
+	[c] data:
+		0.5M key -> 112M file size, 164 sec (write), 164 sec (read) 
+		later: 512M key -> 112G file size, 164000 sec (write), 164000 sec (read).
+		But on small_par, 
+		1.23M key -> 273M file size, 11 sec (write) why?
+			read key is slow: 1.27M r1cs takes 422 seconds!
+			-> so 512M key will need 2,000,000 seconds!
+
+Goal 2. think about how to improve it
+	[a] 
+
 == TODO == cache the groth16 key.
 			
 		

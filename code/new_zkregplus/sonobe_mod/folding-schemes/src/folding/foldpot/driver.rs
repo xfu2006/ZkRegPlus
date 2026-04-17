@@ -1,3 +1,6 @@
+use std::any::Any;
+use ark_bn254::Bn254;
+use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
 use std::{sync::{Arc, Mutex, Condvar}, fmt::{Debug,Formatter}};
 /* 
 	Created 08/27/2024 
@@ -62,6 +65,46 @@ macro_rules! lock_unwrap {
         $mutex.lock().unwrap_or_else(|e| panic!("Mutex poisoned at {}:{}: {}", file!(), line!(), e))
     };
 }
+
+
+fn get_a_query_len<PK: Any>(pk: &PK) -> String {
+    if let Some(pk_g16) = (pk as &dyn Any).downcast_ref::<ark_groth16::ProvingKey<Bn254>>() {
+        pk_g16.a_query.len().to_string()
+    } else {
+        "N/A".to_string()
+    }
+}
+
+fn write_g16key<F: PrimeField, S: SNARK<F>>(path: &Path, pk: &S::ProvingKey, vk: &S::VerifyingKey, job_id: usize) 
+where S::ProvingKey: CanonicalSerialize + 'static, S::VerifyingKey: CanonicalSerialize 
+{
+    let mut timer = GTimer::new();
+    let start = Instant::now();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).expect("failed to create cache dir");
+    }
+    let mut f = File::create(path).expect(&format!("Failed to create key file at {:?}", path));
+    pk.serialize_compressed(&mut f).expect("pk ser err");
+    vk.serialize_compressed(&mut f).expect("vk ser err");
+    let size = metadata(path).map(|m| m.len()).unwrap_or(0);
+    log_perf(job_id, 1, &format!("PERF 1003: [write_g16key] path: {:?}, elements: {}, size: {} bytes, time: {:?}", path, get_a_query_len(pk), size, start.elapsed()), &mut timer);
+}
+
+fn read_g16key<F: PrimeField, S: SNARK<F>>(path: &Path, job_id: usize) -> Result<(S::ProvingKey, S::VerifyingKey), Error>
+where S::ProvingKey: CanonicalSerialize + 'static, S::VerifyingKey: CanonicalSerialize 
+{
+    let mut timer = GTimer::new();
+    let start = Instant::now();
+    let mut f = File::open(path).map_err(|e| Error::Other(format!("Failed to open key file at {:?}: {}", path, e)))?;
+    let pk = S::ProvingKey::deserialize_compressed(&mut f).map_err(|e| Error::Other(format!("pk deserr: {}", e)))?;
+    let vk = S::VerifyingKey::deserialize_compressed(&mut f).map_err(|e| Error::Other(format!("vk deserr: {}", e)))?;
+    let size = metadata(path).map(|m| m.len()).unwrap_or(0);
+    log_perf(job_id, 1, &format!("PERF 1003: [read_g16key] path: {:?}, elements: {}, size: {} bytes, time: {:?}", path, get_a_query_len(&pk), size, start.elapsed()), &mut timer);
+    Ok((pk, vk))
+}
+
+
+
 
 use core::marker::PhantomData;
 use crate::frontend::FCircuit;
@@ -1854,9 +1897,10 @@ pub fn write_to_file(fname: &str, line: &str){
 /// NOTE: jobs is mut because we might PAD all jobs so that they have
 /// the same number of words.
 pub fn foldpot_main<E:Pairing<G1=C1,G2=C2G2>,P:PairingVar<E,CF3<C2G2>>+std::fmt::Debug+Clone,C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, FC, S, LK, GM, const H: bool>(
-	lkup: Arc<LK>, //the lookup table defines the regex automatas
-	vec_circ: Vec<Vec<FC>>,
-	jobs: &mut Vec<FoldPotJob<E::ScalarField>>,
+        lkup: Arc<LK>, //the lookup table defines the regex automatas
+        vec_circ: Vec<Vec<FC>>,
+        jobs: &mut Vec<FoldPotJob<E::ScalarField>>,
+        cache_dir: &str,
 ) -> Result<(), Error>
 where
 	<E as Pairing>::ScalarField: ColEle,
@@ -1904,8 +1948,28 @@ where
 	C1::Affine: AffineFromField<CF2<C1>>,
 	C2G2::Affine: AffineFromField<CF2<C2G2>>,
 	C1::Config: SWCurveConfig,
-	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug + Send + Sync,
+	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug + Send + Sync, S::ProvingKey: 'static,
 {
+        let b_read_snark_cache = read_global_config().b_read_snark_cache;
+            let _b_write_snark_cache = read_global_config().b_write_snark_cache;
+        let mut cached_main_keys: Option<(S::ProvingKey, S::VerifyingKey)> = None;
+        let mut cached_cp_keys: Option<(S::ProvingKey, S::VerifyingKey)> = None;
+
+        if b_read_snark_cache {
+                let main_path = Path::new(cache_dir).join("g16_main.key");
+                let cp_path = Path::new(cache_dir).join("g16_cp.key");
+                if main_path.exists() {
+                        if let Ok(keys) = read_g16key::<C1::ScalarField, S>(&main_path, 0) {
+                                cached_main_keys = Some(keys);
+                        }
+                }
+                if cp_path.exists() {
+                        if let Ok(keys) = read_g16key::<C1::ScalarField, S>(&cp_path, 0) {
+                                cached_cp_keys = Some(keys);
+                        }
+                }
+        }
+    
 	let log_level: usize = LOG1;
 	let mut gt_all = GTimer::new();
 	log(0, log_level, &format!("===== fold_pot starts with {} jobs =====", 
@@ -2022,7 +2086,10 @@ where
 
 
 	jobs.into_par_iter().enumerate().for_each(|(job_id, job)| {
+                    
 		let res = (|| -> Result<(), Error> {
+                        let (pk_main_owned, vk_main_owned);
+                        let (pk_cp_owned, vk_cp_owned);
 		//0. retrieve the words and word_info
 	  	log(job_id, log_level, &format!("--- Job {} starts ---", job_id));
 	  	let mut gt1 = GTimer::new();
@@ -2111,19 +2178,30 @@ where
 	  		let rc1 = nova1.zi_part2_inst.rc.clone();
 	  		let randf = C1::ScalarField::rand(&mut rng);
 	  	
-	  		let (snark_proof_main,mainres,mainres_hash, g16_vk_main) = {
+			let (snark_proof_main,mainres,mainres_hash, g16_vk_main) = {
 	  			let main_circ = MainDeciderCircuit::from_nova::<FC>(nova1,
 	  				com_all_w.clone(), r_all_w.clone(), randf).unwrap();
 	  			let mainres = main_circ.res.clone();
 	  			let mainres_hash = main_circ.res_hash.clone(); 
 	  			log_perf(job_id, log_level, &format!("FoldPot Step 4: build MAIN decider circuit. MEM: {} GB", get_mem_usage()), &mut gt1);
 	  	
-	  			let (g16_pk, g16_vk) = {//to save ram, clone will be freed
-	  				let (g16_pk, g16_vk) = S::circuit_specific_setup(
-	  					main_circ.clone(), 
-	  					&mut rng).unwrap();
-	  				(g16_pk, g16_vk)
-	  			};
+				let (g16_pk, g16_vk) = if let Some(keys) = &cached_main_keys {
+						(&keys.0, &keys.1)
+				} else {
+						let (pk, vk) = S::circuit_specific_setup(
+								main_circ.clone(), 
+								&mut rng).unwrap();
+						if job_id == 0 && read_global_config()
+						.b_write_snark_cache {
+							let main_path = Path::new(cache_dir)
+								.join("g16_main.key");
+							write_g16key::<C1::ScalarField, S>(&main_path, 
+								&pk, &vk, job_id);
+						}
+						pk_main_owned = pk;
+						vk_main_owned = vk;
+						(&pk_main_owned, &vk_main_owned)
+				};
 	  			log_perf(job_id, log_level, &format!("FoldPot Step 5: setup Groth16. MEM: {} GB.",  get_mem_usage()), &mut gt1);
 	  	
 	  			let snark_proof_main: S::Proof = S::prove(&g16_pk, 
@@ -2206,7 +2284,7 @@ where
 
 			qa_nizk_vkey_hash: qa_nizk_vkey_hash1, 
 	};
-	let (snark_proof_cp, g16_vk_cp) = {
+	                    let (snark_proof_cp, g16_vk_cp) = {
 		let cp_circuit = CyclePairCircuit
 			::from_nova(nova2, 
 				cyclepair_inputs, qa_nizk_vkey_hash.clone(), 
@@ -2228,11 +2306,20 @@ where
 
 
 		//9. set up the keys (maybe later can be cached)
-		let (g16_pk, g16_vk) = {//to save ram, clone will be freed
-			let (g16_pk, g16_vk) = S::circuit_specific_setup(
-				cp_circuit.clone(), 
-				&mut rng).unwrap();
-			(g16_pk, g16_vk)
+		let (g16_pk, g16_vk) = if let Some(keys) = &cached_cp_keys {
+			(&keys.0, &keys.1)
+		} else {
+				let (pk, vk) = S::circuit_specific_setup(
+						cp_circuit.clone(), 
+						&mut rng).unwrap();
+				if job_id == 0 && read_global_config().b_write_snark_cache {
+						let cp_path = Path::new(cache_dir).join("g16_cp.key");
+						write_g16key::<C1::ScalarField, S>(
+							&cp_path, &pk, &vk, job_id);
+				}
+				pk_cp_owned = pk;
+				vk_cp_owned = vk;
+				(&pk_cp_owned, &vk_cp_owned)
 		};
 		log_perf(job_id, log_level, &format!("FoldPot Step 9: setup Groth16 for CpCircuit. MEM: {} GB.",  get_mem_usage()), &mut gt1);
 
@@ -2273,8 +2360,8 @@ where
 		&batch_ver_param,
 		Some(qa_nizk_vkey_hash1),
 		Some(qa_nizk_vkey2.clone()), //needs to be from nova qa_nizk
-		Some(g16_vk_main),
-		Some(g16_vk_cp),
+		Some(g16_vk_main.clone()),
+		Some(g16_vk_cp.clone()),
 		&batch_claim,
 		&batch_prf, 
 		&driver1_poseidon_config,

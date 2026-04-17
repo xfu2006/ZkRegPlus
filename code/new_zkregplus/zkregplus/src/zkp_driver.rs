@@ -500,7 +500,7 @@ where
 	C1::Affine: AffineFromField<CF2<C1>>,
 	C1::Config: SWCurveConfig,
 	C2G2::Affine: AffineFromField<CF2<C2G2>>,
-    <E as Pairing>::ScalarField: ColEle,
+    <E as Pairing>::ScalarField: ColEle, S::ProvingKey: 'static,
 {
 	// re-use the capacity for BOTH cs and ignore_case
 	// this is usaully inefficient for ignore_case (but
@@ -582,7 +582,7 @@ where
 	C1::Affine: AffineFromField<CF2<C1>>,
 	C1::Config: SWCurveConfig,
 	C2G2::Affine: AffineFromField<CF2<C2G2>>,
-    <E as Pairing>::ScalarField: ColEle,
+    <E as Pairing>::ScalarField: ColEle, S::ProvingKey: 'static,
 {
 	//1. build or load the clamdb
 	let log_level = LOG1;
@@ -642,7 +642,7 @@ where
 	let lkup = Arc::new(db.lkup);
 	foldpot_main::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,FC<CF1<C1>,C1,CS1>,
 		S,LK<CF1<C1>>,GM<CF1<C1>>, false>(
-		lkup, vec_circs, &mut jobs).expect("main err");
+		lkup, vec_circs, &mut jobs, cache_dir).expect("main err");
 
 }
 
@@ -679,6 +679,8 @@ pub mod tests_zkp_driver{
 	/// COST: 7GB and 36 sec.
 	#[allow(dead_code)]
 	fn small_data<F:PrimeField>(b_check_lkup: bool){
+        get_global_config().b_read_snark_cache = false;
+        get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 8;
 		get_global_config().b_read_cache = true;
 		let b_write_cache = !read_global_config().b_read_cache;
@@ -743,6 +745,8 @@ pub mod tests_zkp_driver{
 	///       4 jobs: 11GB and 44sec (reason: folding doesn't take much time)
 	#[allow(dead_code)]
 	fn small_data_par<F:PrimeField>(b_check_lkup: bool){
+        get_global_config().b_read_snark_cache = true;
+        get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 18;
 		get_global_config().b_read_cache = false;
 		let b_write_cache = !read_global_config().b_read_cache;
@@ -811,6 +815,8 @@ pub mod tests_zkp_driver{
 	/// COST: 18GB and 160 sec
 	#[allow(dead_code)]
 	fn small_data2<F:PrimeField>(b_check_lkup: bool){
+        get_global_config().b_read_snark_cache = false;
+        get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 18;
 		get_global_config().b_read_cache = false;
 		let b_write_cache = !read_global_config().b_read_cache;
@@ -896,6 +902,8 @@ pub mod tests_zkp_driver{
 	/// This function is used for debugging
 	#[allow(dead_code)]
 	fn small_data_debug<F:PrimeField>(b_check_lkup: bool){
+        get_global_config().b_read_snark_cache = false;
+        get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 24;
 		get_global_config().b_read_cache = false;
 		let b_write_cache = !read_global_config().b_read_cache;
@@ -966,6 +974,8 @@ pub mod tests_zkp_driver{
 	/// at the last stage of snark generation it's costly.
 	#[allow(dead_code)]
 	fn small_data3<F:PrimeField>(b_check_lkup: bool){
+        get_global_config().b_read_snark_cache = false;
+        get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 18;
 		get_global_config().b_read_cache = false;
 		get_global_config().min_subsigs = 3;
@@ -1056,6 +1066,8 @@ pub mod tests_zkp_driver{
 	/// setting min_idx and max_idx to try 1M, 2M, 4M files.
 	#[allow(dead_code)]
 	fn small_data4<F:PrimeField>(b_check_lkup: bool){
+        get_global_config().b_read_snark_cache = false;
+        get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 18;
 		get_global_config().b_read_cache = false;
 		let b_write_cache = !read_global_config().b_read_cache;
@@ -1150,6 +1162,8 @@ pub mod tests_zkp_driver{
 	/// However, just run a small file
 	#[allow(dead_code)]
 	fn full_data1<F:PrimeField>(b_check_lkup: bool){
+        get_global_config().b_read_snark_cache = false;
+        get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 26;
 		get_global_config().b_read_cache = true;
 		let b_write_cache = !read_global_config().b_read_cache;
@@ -1215,6 +1229,8 @@ pub mod tests_zkp_driver{
 	/// It runs a small but challenging file _codecs_hk.so (158kb)
 	#[allow(dead_code)]
 	fn full_data2<F:PrimeField>(b_check_lkup: bool){
+        get_global_config().b_read_snark_cache = false;
+        get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 26;
 		get_global_config().range2_bit = 26;
         get_global_config().b_read_cache = true;
@@ -1288,6 +1304,8 @@ pub mod tests_zkp_driver{
 	///    igc and cs. stmt_len: 10M, all_w_e: 33M => circ1 72M R1CS
 	#[allow(dead_code)]
 	fn full_data3<F:PrimeField>(b_check_lkup: bool){
+        get_global_config().b_read_snark_cache = false;
+        get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 26;
 		get_global_config().b_read_cache = true;
 		let b_write_cache = !read_global_config().b_read_cache;
@@ -1385,6 +1403,8 @@ pub mod tests_zkp_driver{
 	/// Total: 173MB. 
 	#[allow(dead_code)]
 	fn full_data4<F:PrimeField>(b_check_lkup: bool){
+        get_global_config().b_read_snark_cache = false;
+        get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 26;
 		get_global_config().min_subsigs = 145;
 		get_global_config().b_read_cache = true;
@@ -1491,6 +1511,8 @@ pub mod tests_zkp_driver{
 	#[allow(dead_code)]
 	fn full_clamav<F:PrimeField>(b_check_lkup: bool, b_light_test: bool){
 		//extra setting
+        get_global_config().b_read_snark_cache = true;
+        get_global_config().b_write_snark_cache = true;
 		get_global_config().range2_bit = 26;
 		get_global_config().b_light_test = b_light_test;
 		get_global_config().min_subsigs = 150;
@@ -1599,10 +1621,10 @@ pub mod tests_zkp_driver{
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
 		let _b_light_test = true;
-		small_data::<Fr>(b_check_lkup); //small data
+		//small_data::<Fr>(b_check_lkup); //small data
 		//small_data2::<Fr>(b_check_lkup);  //10k data 
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
-		//small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)
+		small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)
 		//small_data_debug::<Fr>(b_check_lkup);  //for debug
 		//small_data4::<Fr>(b_check_lkup); //multi circ of 1M, 2M, 4M data
 		//full_data1::<Fr>(b_check_lkup);
