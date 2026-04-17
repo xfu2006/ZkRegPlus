@@ -75,7 +75,7 @@ fn get_a_query_len<PK: Any>(pk: &PK) -> String {
     }
 }
 
-fn write_g16key<F: PrimeField, S: SNARK<F>>(path: &Path, pk: &S::ProvingKey, vk: &S::VerifyingKey, job_id: usize) 
+fn old_write_g16key<F: PrimeField, S: SNARK<F>>(path: &Path, pk: &S::ProvingKey, vk: &S::VerifyingKey, job_id: usize) 
 where S::ProvingKey: CanonicalSerialize + 'static, S::VerifyingKey: CanonicalSerialize 
 {
     let mut timer = GTimer::new();
@@ -90,7 +90,7 @@ where S::ProvingKey: CanonicalSerialize + 'static, S::VerifyingKey: CanonicalSer
     log_perf(job_id, 1, &format!("PERF 1003: [write_g16key] path: {:?}, elements: {}, size: {} bytes, time: {:?}", path, get_a_query_len(pk), size, start.elapsed()), &mut timer);
 }
 
-fn read_g16key<F: PrimeField, S: SNARK<F>>(path: &Path, job_id: usize) -> Result<(S::ProvingKey, S::VerifyingKey), Error>
+fn old_read_g16key<F: PrimeField, S: SNARK<F>>(path: &Path, job_id: usize) -> Result<(S::ProvingKey, S::VerifyingKey), Error>
 where S::ProvingKey: CanonicalSerialize + 'static, S::VerifyingKey: CanonicalSerialize 
 {
     let mut timer = GTimer::new();
@@ -104,6 +104,33 @@ where S::ProvingKey: CanonicalSerialize + 'static, S::VerifyingKey: CanonicalSer
 }
 
 
+
+fn write_g16key<F: PrimeField, S: SNARK<F>>(path: &Path, pk: &S::ProvingKey, vk: &S::VerifyingKey, job_id: usize) 
+where S::ProvingKey: CanonicalSerialize + 'static, S::VerifyingKey: CanonicalSerialize + 'static
+{
+    if let (Some(pk_g16), Some(vk_g16)) = ((pk as &dyn Any).downcast_ref::<ark_groth16::ProvingKey<Bn254>>(), (vk as &dyn Any).downcast_ref::<ark_groth16::VerifyingKey<Bn254>>()) {
+        crate::folding::foldpot::utils::write_g16_optimized_bn254(path, pk_g16, vk_g16);
+    } else {
+        old_write_g16key::<F, S>(path, pk, vk, job_id);
+    }
+}
+
+fn read_g16key<F: PrimeField, S: SNARK<F>>(path: &Path, job_id: usize) -> Result<(S::ProvingKey, S::VerifyingKey), Error>
+where S::ProvingKey: CanonicalSerialize + 'static, S::VerifyingKey: CanonicalSerialize + 'static
+{
+    if std::any::TypeId::of::<S::ProvingKey>() == std::any::TypeId::of::<ark_groth16::ProvingKey<Bn254>>() {
+        let (pk_g16, vk_g16) = crate::folding::foldpot::utils::read_g16_optimized_bn254(path);
+        let pk_any: Box<dyn Any> = Box::new(pk_g16);
+        let vk_any: Box<dyn Any> = Box::new(vk_g16);
+        
+        let pk_s = *pk_any.downcast::<S::ProvingKey>().expect("downcast pk error");
+        let vk_s = *vk_any.downcast::<S::VerifyingKey>().expect("downcast vk error");
+        
+        Ok((pk_s, vk_s))
+    } else {
+        old_read_g16key::<F, S>(path, job_id)
+    }
+}
 
 
 use core::marker::PhantomData;
@@ -1948,7 +1975,7 @@ where
 	C1::Affine: AffineFromField<CF2<C1>>,
 	C2G2::Affine: AffineFromField<CF2<C2G2>>,
 	C1::Config: SWCurveConfig,
-	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug + Send + Sync, S::ProvingKey: 'static,
+	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug + Send + Sync, S::ProvingKey: 'static, S::VerifyingKey: 'static, S::VerifyingKey: 'static,
 {
         let b_read_snark_cache = read_global_config().b_read_snark_cache;
             let _b_write_snark_cache = read_global_config().b_write_snark_cache;
@@ -2852,7 +2879,7 @@ pub mod tests_driver{
 			vec_word_fnames,
 			idx_individual_prf: sample_individual_prf,
 		}];
-		let _prf = foldpot_main::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,SigmaIR1CS_Inst<Fr,C1,CS1,LK,SumMapper<Fr,LK>,H>,S,LK,SumMapper<Fr,LK>, false>(lkup, vec_circ, &mut jobs);
+		let _prf = foldpot_main::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,SigmaIR1CS_Inst<Fr,C1,CS1,LK,SumMapper<Fr,LK>,H>,S,LK,SumMapper<Fr,LK>, false>(lkup, vec_circ, &mut jobs, "cache");
 	}
 
 }

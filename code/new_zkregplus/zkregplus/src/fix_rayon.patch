@@ -1,0 +1,6 @@
+--- ../sonobe_mod/folding-schemes/src/folding/foldpot/utils.rs
++++ ../sonobe_mod/folding-schemes/src/folding/foldpot/utils.rs
+@@ -659,2 +659,3 @@
+ use ark_ec::{AffineRepr, CurveGroup, short_weierstrass::{Affine, SWCurveConfig}};
++use rayon::prelude::*;
+ use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};

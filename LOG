@@ -27917,7 +27917,12 @@ Goal 1. add serialization
 			-> so 512M key will need 2,000,000 seconds!
 
 Goal 2. think about how to improve it
-	[a] 
+	[a] use the new serialization method
+	[b] new data
+		write 1.2M -> 550M data (0.6 sec)
+		read 1.2M (1 sec)
+		so estimate read/write 500M key needs (250GB data on disk)
+		time: 500 sec.
 
 == TODO == cache the groth16 key.
 			

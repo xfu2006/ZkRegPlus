@@ -500,7 +500,7 @@ where
 	C1::Affine: AffineFromField<CF2<C1>>,
 	C1::Config: SWCurveConfig,
 	C2G2::Affine: AffineFromField<CF2<C2G2>>,
-    <E as Pairing>::ScalarField: ColEle, S::ProvingKey: 'static,
+    <E as Pairing>::ScalarField: ColEle, S::ProvingKey: 'static, S::VerifyingKey: 'static,
 {
 	// re-use the capacity for BOTH cs and ignore_case
 	// this is usaully inefficient for ignore_case (but
@@ -582,7 +582,7 @@ where
 	C1::Affine: AffineFromField<CF2<C1>>,
 	C1::Config: SWCurveConfig,
 	C2G2::Affine: AffineFromField<CF2<C2G2>>,
-    <E as Pairing>::ScalarField: ColEle, S::ProvingKey: 'static,
+    <E as Pairing>::ScalarField: ColEle, S::ProvingKey: 'static, S::VerifyingKey: 'static,
 {
 	//1. build or load the clamdb
 	let log_level = LOG1;
@@ -745,8 +745,8 @@ pub mod tests_zkp_driver{
 	///       4 jobs: 11GB and 44sec (reason: folding doesn't take much time)
 	#[allow(dead_code)]
 	fn small_data_par<F:PrimeField>(b_check_lkup: bool){
-        get_global_config().b_read_snark_cache = true;
-        get_global_config().b_write_snark_cache = false;
+        get_global_config().b_read_snark_cache = false;
+        get_global_config().b_write_snark_cache = true;
 		get_global_config().range2_bit = 18;
 		get_global_config().b_read_cache = false;
 		let b_write_cache = !read_global_config().b_read_cache;
