@@ -27868,8 +27868,40 @@ Goal 2. perf evaluation full_data1 (small file) but runs with full proof
 		CyclePair circ 200M 
 		M1: 2105 sec, proof time: 4141 sec
 		c3d: 1597 sec, proof time (didn't collect)
-		c2d: 1693 sec, proof time
+		c2d: 1693 sec, proof time  2998 sec (25% faster)
 Goal 3. code improvement
 	[a] add n_par_ vars into GlobalConfig
 	[b] set n_par_ vars to 8 and 1 in full_calm
 Goal 4. analayze why phase1 circ generation takes so much time?
+	-> it looks like 170MB needs 32 hrs but maybe less because
+		smaller circuit are used
+	-> one single pass of full snark proof -> 2.5 hrs
+	=== 8 jobs ==
+	-> if one single thread: (8 thread)
+		32 * 8 + 2.5 = 258 hrs
+	-> parallel
+		32 + 2.5*8 = 50 hrs 
+		if allow two snark jobs 32 + 2.5 * 4 =  40 hrs
+	=== 16 jobs ==
+		20 + 2.5 * 16 = 55 hrs. (but if allowing 2 jobs)
+		(2 jobs snark) 20 + 2.5*8 = 40 hrs
+Goal 5. Analyze of performance:
+	[a] major stesps: 
+		1. main circ 90M r1cs: 288 sec 152GB (+50GB)
+		2. buid it again: 158 sec (175GB) (+25GB)
+		3. setup groth: 403 sec (244GB) (+70GB)
+			4. TwoPhaseCirc1 build circ 1 (+sec): 
+		5. Gen groth16 proof for main circ 630 sec
+		6. CyclePair build circ: 200M, 1665 sec
+		7. gen groth key: 380GB (+160GB), 2427 sec
+			8. during proof it generate the circ again: 1834 sec
+		9. gen proof: 380GB (same RAM consumption), 2998 sec. (includes 
+			the ealier 1834 sec) - actual spent 1000 sec.
+		Somehow this is doubly counted. Total takes 7454 sec
+	==> This is likely 2 hrs
+	==> But if we can retrieve key (instead of generating key)
+		could save 3000 sec, this is likely to save to 1 hr.
+
+== TODO == cache the groth16 key.
+			
+		
