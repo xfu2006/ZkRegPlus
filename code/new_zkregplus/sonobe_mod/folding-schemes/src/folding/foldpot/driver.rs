@@ -1978,27 +1978,29 @@ where
 	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug + Send + Sync, S::ProvingKey: 'static, S::VerifyingKey: 'static, S::VerifyingKey: 'static,
 {
         let cache_base = std::path::Path::new(&utils::os::proj_root()).join("data/cache").join(cache_dir);
-        if read_global_config().b_write_snark_cache {
-            std::fs::create_dir_all(&cache_base).expect("create cache dir err");
+        if read_global_config().b_write_snark_cache && !cache_base.exists(){
+           std::fs::create_dir_all(&cache_base).expect("create cache dir err");
         }
         let b_read_snark_cache = read_global_config().b_read_snark_cache;
-            let _b_write_snark_cache = read_global_config().b_write_snark_cache;
+		let _b_write_snark_cache = read_global_config().b_write_snark_cache;
         let mut cached_main_keys: Option<(S::ProvingKey, S::VerifyingKey)> = None;
         let mut cached_cp_keys: Option<(S::ProvingKey, S::VerifyingKey)> = None;
 
         if b_read_snark_cache {
-                let main_path = cache_base.join("g16_main.key");
-                let cp_path = cache_base.join("g16_cp.key");
-                if main_path.exists() {
-                        if let Ok(keys) = read_g16key::<C1::ScalarField, S>(&main_path, 0) {
-                                cached_main_keys = Some(keys);
-                        }
-                }
-                if cp_path.exists() {
-                        if let Ok(keys) = read_g16key::<C1::ScalarField, S>(&cp_path, 0) {
-                                cached_cp_keys = Some(keys);
-                        }
-                }
+			let main_path = cache_base.join("g16_main.key");
+			let cp_path = cache_base.join("g16_cp.key");
+			let main_path_meta = cache_base.join("g16_main.key.meta");
+			let cp_path_meta = cache_base.join("g16_cp.key.meta");
+			assert!(main_path_meta.exists(), 
+				"main: {:?} not exist", main_path_meta);
+			if let Ok(keys) = read_g16key::<C1::ScalarField, S>(&main_path, 0) {
+				cached_main_keys = Some(keys);
+			}
+			assert!(cp_path_meta.exists(), "cp_path: {:?} not exist", 
+				cp_path_meta);
+			if let Ok(keys) = read_g16key::<C1::ScalarField, S>(&cp_path, 0) {
+				cached_cp_keys = Some(keys);
+			}
         }
     
 	let log_level: usize = LOG1;

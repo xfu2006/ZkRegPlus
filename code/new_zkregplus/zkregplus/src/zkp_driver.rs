@@ -679,7 +679,7 @@ pub mod tests_zkp_driver{
 	/// COST: 7GB and 36 sec.
 	#[allow(dead_code)]
 	fn small_data<F:PrimeField>(b_check_lkup: bool){
-        get_global_config().b_read_snark_cache = false;
+        get_global_config().b_read_snark_cache = true;
         get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 8;
 		get_global_config().b_read_cache = true;
@@ -1621,10 +1621,10 @@ pub mod tests_zkp_driver{
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
 		let _b_light_test = true;
-		//small_data::<Fr>(b_check_lkup); //small data
+		small_data::<Fr>(b_check_lkup); //small data
 		//small_data2::<Fr>(b_check_lkup);  //10k data 
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
-		small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)
+		//small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)
 		//small_data_debug::<Fr>(b_check_lkup);  //for debug
 		//small_data4::<Fr>(b_check_lkup); //multi circ of 1M, 2M, 4M data
 		//full_data1::<Fr>(b_check_lkup);

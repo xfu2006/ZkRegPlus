@@ -27929,6 +27929,12 @@ Goal 2. think about how to improve it
 		write 1.2M -> 270M data (0.01 sec), read 2 sec
 	[e] deploy to server
 		500M key needs 100GB. So need 180GB disk
+	[f] deploy to server
+	[g] server started: 11:23am -> 
+
+Goal 3. collect full_data1() stats on server
+	[a] create key total time: 
+	[b] read key total time: 
 				
 
 == TODO == cache the groth16 key.
