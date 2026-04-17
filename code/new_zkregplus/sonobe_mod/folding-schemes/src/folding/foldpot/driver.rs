@@ -1977,14 +1977,18 @@ where
 	C1::Config: SWCurveConfig,
 	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug + Send + Sync, S::ProvingKey: 'static, S::VerifyingKey: 'static, S::VerifyingKey: 'static,
 {
+        let cache_base = std::path::Path::new(&utils::os::proj_root()).join("data/cache").join(cache_dir);
+        if read_global_config().b_write_snark_cache {
+            std::fs::create_dir_all(&cache_base).expect("create cache dir err");
+        }
         let b_read_snark_cache = read_global_config().b_read_snark_cache;
             let _b_write_snark_cache = read_global_config().b_write_snark_cache;
         let mut cached_main_keys: Option<(S::ProvingKey, S::VerifyingKey)> = None;
         let mut cached_cp_keys: Option<(S::ProvingKey, S::VerifyingKey)> = None;
 
         if b_read_snark_cache {
-                let main_path = Path::new(cache_dir).join("g16_main.key");
-                let cp_path = Path::new(cache_dir).join("g16_cp.key");
+                let main_path = cache_base.join("g16_main.key");
+                let cp_path = cache_base.join("g16_cp.key");
                 if main_path.exists() {
                         if let Ok(keys) = read_g16key::<C1::ScalarField, S>(&main_path, 0) {
                                 cached_main_keys = Some(keys);
@@ -2220,7 +2224,7 @@ where
 								&mut rng).unwrap();
 						if job_id == 0 && read_global_config()
 						.b_write_snark_cache {
-							let main_path = Path::new(cache_dir)
+							let main_path = cache_base
 								.join("g16_main.key");
 							write_g16key::<C1::ScalarField, S>(&main_path, 
 								&pk, &vk, job_id);
@@ -2340,7 +2344,7 @@ where
 						cp_circuit.clone(), 
 						&mut rng).unwrap();
 				if job_id == 0 && read_global_config().b_write_snark_cache {
-						let cp_path = Path::new(cache_dir).join("g16_cp.key");
+						let cp_path = cache_base.join("g16_cp.key");
 						write_g16key::<C1::ScalarField, S>(
 							&cp_path, &pk, &vk, job_id);
 				}
