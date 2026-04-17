@@ -665,6 +665,49 @@ use std::path::Path;
 //use ark_groth16::{ProvingKey, VerifyingKey};
 use ark_bn254::Bn254;
 
+use std::io::{Read, Write};
+use ark_serialize::Compress;
+
+pub fn serialize_affines_compressed_raw<P: SWCurveConfig>(v: &[Affine<P>], path_prefix: &str) {
+    let path = format!("{}_compressed.data", path_prefix);
+    if v.is_empty() {
+        File::create(&path).expect("create file err");
+        return;
+    }
+    let dummy = Affine::<P>::zero();
+    let point_size = dummy.serialized_size(Compress::Yes);
+    let total_size = point_size * v.len();
+    let mut buffer = vec![0u8; total_size];
+    buffer.par_chunks_mut(point_size).zip(v.par_iter()).for_each(|(chunk, pt)| {
+        let mut slice: &mut [u8] = chunk;
+        pt.serialize_compressed(&mut slice).expect("serialize pt err");
+    });
+    let file = File::create(&path).expect("create file err");
+    let mut writer = BufWriter::new(file);
+    writer.write_all(&buffer).expect("write buffer err");
+    std::io::Write::flush(&mut writer).expect("flush err");
+}
+
+pub fn deserialize_affines_compressed_raw<P: SWCurveConfig>(path_prefix: &str) -> Vec<Affine<P>> {
+    let path = format!("{}_compressed.data", path_prefix);
+    let file = File::open(&path).expect("open file err");
+    let file_size = file.metadata().expect("metadata err").len() as usize;
+    if file_size == 0 { return vec![]; }
+    let mut reader = BufReader::new(file);
+    let mut buffer = vec![0u8; file_size];
+    reader.read_exact(&mut buffer).expect("read file err");
+    let dummy = Affine::<P>::zero();
+    let point_size = dummy.serialized_size(Compress::Yes);
+    assert_eq!(file_size % point_size, 0);
+    let n = file_size / point_size;
+    let mut v = vec![Affine::<P>::zero(); n];
+    v.par_iter_mut().zip(buffer.par_chunks(point_size)).for_each(|(pt, chunk)| {
+        let mut slice: &[u8] = chunk;
+        *pt = Affine::<P>::deserialize_compressed_unchecked(&mut slice).expect("deserialize pt err");
+    });
+    v
+}
+
 pub fn serialize_affines_raw<P: SWCurveConfig>(v: &[Affine<P>], path_prefix: &str) {
     let zero = P::BaseField::zero();
     let n = v.len();
@@ -735,7 +778,7 @@ pub fn deserialize_affines_raw<P: SWCurveConfig>(path_prefix: &str) -> Vec<Affin
 
 pub fn write_g16_optimized_bn254(path: &Path, pk: &ark_groth16::ProvingKey<Bn254>, vk: &ark_groth16::VerifyingKey<Bn254>) {
     let start_time = std::time::Instant::now();
-    let b_debug = true;
+    let b_debug = false;
     let path_str = path.to_str().unwrap();
 
     let meta_path = format!("{}.meta", path_str);
@@ -752,12 +795,12 @@ pub fn write_g16_optimized_bn254(path: &Path, pk: &ark_groth16::ProvingKey<Bn254
     std::io::Write::flush(&mut writer).expect("flush err");
 
     drop(writer);
-    serialize_affines_raw(&vk.gamma_abc_g1, &format!("{}_vk_gamma_abc_g1", path_str));
-    serialize_affines_raw(&pk.a_query, &format!("{}_pk_a_query", path_str));
-    serialize_affines_raw(&pk.b_g1_query, &format!("{}_pk_b_g1_query", path_str));
-    serialize_affines_raw(&pk.b_g2_query, &format!("{}_pk_b_g2_query", path_str));
-    serialize_affines_raw(&pk.h_query, &format!("{}_pk_h_query", path_str));
-    serialize_affines_raw(&pk.l_query, &format!("{}_pk_l_query", path_str));
+    serialize_affines_compressed_raw(&vk.gamma_abc_g1, &format!("{}_vk_gamma_abc_g1", path_str));
+    serialize_affines_compressed_raw(&pk.a_query, &format!("{}_pk_a_query", path_str));
+    serialize_affines_compressed_raw(&pk.b_g1_query, &format!("{}_pk_b_g1_query", path_str));
+    serialize_affines_compressed_raw(&pk.b_g2_query, &format!("{}_pk_b_g2_query", path_str));
+    serialize_affines_compressed_raw(&pk.h_query, &format!("{}_pk_h_query", path_str));
+    serialize_affines_compressed_raw(&pk.l_query, &format!("{}_pk_l_query", path_str));
 
     // Calculate total size
     let mut total_size = metadata(&meta_path).map(|m| m.len()).unwrap_or(0);
@@ -770,9 +813,7 @@ pub fn write_g16_optimized_bn254(path: &Path, pk: &ark_groth16::ProvingKey<Bn254
         format!("{}_pk_l_query", path_str),
     ];
     for prefix in prefixes {
-        total_size += metadata(&format!("{}_vx.data", prefix)).map(|m| m.len()).unwrap_or(0);
-        total_size += metadata(&format!("{}_vy.data", prefix)).map(|m| m.len()).unwrap_or(0);
-        total_size += metadata(&format!("{}_vb.data", prefix)).map(|m| m.len()).unwrap_or(0);
+        total_size += metadata(&format!("{}_compressed.data", prefix)).map(|m| m.len()).unwrap_or(0);
     }
     println!("PERF 1003: [write_g16_optimized_bn254] path: {:?}, elements: {}, size: {} bytes, time: {:?}", path, pk.a_query.len(), total_size, start_time.elapsed());
 
@@ -801,12 +842,12 @@ pub fn read_g16_optimized_bn254(path: &Path) -> (ark_groth16::ProvingKey<Bn254>,
     let pk_beta_g1 = <ark_ec::short_weierstrass::Affine<ark_bn254::g1::Config>>::deserialize_compressed(&mut reader).expect("deser pk.beta_g1");
     let pk_delta_g1 = <ark_ec::short_weierstrass::Affine<ark_bn254::g1::Config>>::deserialize_compressed(&mut reader).expect("deser pk.delta_g1");
 
-    let vk_gamma_abc_g1 = deserialize_affines_raw(&format!("{}_vk_gamma_abc_g1", path_str));
-    let pk_a_query = deserialize_affines_raw(&format!("{}_pk_a_query", path_str));
-    let pk_b_g1_query = deserialize_affines_raw(&format!("{}_pk_b_g1_query", path_str));
-    let pk_b_g2_query = deserialize_affines_raw(&format!("{}_pk_b_g2_query", path_str));
-    let pk_h_query = deserialize_affines_raw(&format!("{}_pk_h_query", path_str));
-    let pk_l_query = deserialize_affines_raw(&format!("{}_pk_l_query", path_str));
+    let vk_gamma_abc_g1 = deserialize_affines_compressed_raw(&format!("{}_vk_gamma_abc_g1", path_str));
+    let pk_a_query = deserialize_affines_compressed_raw(&format!("{}_pk_a_query", path_str));
+    let pk_b_g1_query = deserialize_affines_compressed_raw(&format!("{}_pk_b_g1_query", path_str));
+    let pk_b_g2_query = deserialize_affines_compressed_raw(&format!("{}_pk_b_g2_query", path_str));
+    let pk_h_query = deserialize_affines_compressed_raw(&format!("{}_pk_h_query", path_str));
+    let pk_l_query = deserialize_affines_compressed_raw(&format!("{}_pk_l_query", path_str));
 
     let vk = ark_groth16::VerifyingKey {
         alpha_g1: vk_alpha_g1,
@@ -838,9 +879,7 @@ pub fn read_g16_optimized_bn254(path: &Path) -> (ark_groth16::ProvingKey<Bn254>,
         format!("{}_pk_l_query", path_str),
     ];
     for prefix in prefixes {
-        total_size += metadata(&format!("{}_vx.data", prefix)).map(|m| m.len()).unwrap_or(0);
-        total_size += metadata(&format!("{}_vy.data", prefix)).map(|m| m.len()).unwrap_or(0);
-        total_size += metadata(&format!("{}_vb.data", prefix)).map(|m| m.len()).unwrap_or(0);
+        total_size += metadata(&format!("{}_compressed.data", prefix)).map(|m| m.len()).unwrap_or(0);
     }
     println!("PERF 1003: [read_g16_optimized_bn254] path: {:?}, elements: {}, size: {} bytes, time: {:?}", path, pk.a_query.len(), total_size, start_time.elapsed());
 
