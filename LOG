@@ -27945,8 +27945,8 @@ Goal 1. check the cache key crash problem
 	[b] starting time: 8:07am -> stop at 11:35am
 	[c] read crash log
 		[c1] now comment out all heavy test part of phase1circ and see
-			if it works
-		[c2] pass1: 
+			if it works -> use binary search
+		[c2] pass1:  (up to step 8)
 			-> genkey
 			-> read key
 			
