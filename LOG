@@ -27933,10 +27933,21 @@ Goal 2. think about how to improve it
 	[g] server started: 11:23am -> 
 
 Goal 3. collect full_data1() stats on server
-	[a] create key total time: 
-	[b] read key total time: 
+	[a] create key total time: 8075 sec (including (184+345 = 529 sec writing)
+		-> actual 7400 sec
+	[b] read key total time:  5800 sec (saves about 1600 sec) per round
+		problem: it fails!
+		(but still with keys it still needs 1.5 hrs)
 				
-
-== TODO == cache the groth16 key.
+Saturday 04/18/2026
+Goal 1. check the cache key crash problem
+	[a] study the logical bug
+	[b] starting time: 8:07am -> stop at 11:35am
+	[c] read crash log
+		[c1] now comment out all heavy test part of phase1circ and see
+			if it works
+		[c2] pass1: 
+			-> genkey
+			-> read key
 			
 		
