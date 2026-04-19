@@ -42,7 +42,7 @@ pub const LOG2:usize = 1;
 pub const LOG1:usize = 0;
 pub const B_DEBUG:bool = false; //category 1
 pub const B_DEBUG2:bool = false; //cateogry 2
-pub const B_DEBUG3:bool = false; //category 3 (higher ID the higher cost)
+pub const B_DEBUG3:bool = true; //category 3 (higher ID the higher cost)
 
 /// NOTE it has an internal bug, manually turn it on 
 /// if you need it.
@@ -802,6 +802,11 @@ pub fn write_g16_optimized_bn254(path: &Path, pk: &ark_groth16::ProvingKey<Bn254
     serialize_affines_compressed_raw(&pk.h_query, &format!("{}_pk_h_query", path_str));
     serialize_affines_compressed_raw(&pk.l_query, &format!("{}_pk_l_query", path_str));
 
+    println!("DEBUG USE 65432.11 Main PK Write Checksum A[0]: {:?}", pk.a_query[0]);
+    println!("DEBUG USE 65432.11 Main PK Write Checksum A[last]: {:?}", pk.a_query.last().unwrap());
+    println!("DEBUG USE 65432.11 Main PK Write Checksum L[0]: {:?}", pk.l_query[0]);
+    println!("DEBUG USE 65432.11 Main PK Write Checksum L[last]: {:?}", pk.l_query.last().unwrap());
+
     // Calculate total size
     let mut total_size = metadata(&meta_path).map(|m| m.len()).unwrap_or(0);
     let prefixes = vec![
@@ -850,6 +855,15 @@ pub fn read_g16_optimized_bn254(path: &Path) -> (ark_groth16::ProvingKey<Bn254>,
     let pk_h_query = deserialize_affines_compressed_raw(&format!("{}_pk_h_query", path_str));
     let pk_l_query = deserialize_affines_compressed_raw(&format!("{}_pk_l_query", path_str));
 
+    if !pk_a_query.is_empty() {
+        println!("DEBUG USE 65432.11 Main PK Checksum A[0]: {:?}", pk_a_query[0]);
+        println!("DEBUG USE 65432.11 Main PK Checksum A[last]: {:?}", pk_a_query.last().unwrap());
+    }
+    if !pk_l_query.is_empty() {
+        println!("DEBUG USE 65432.11 Main PK Checksum L[0]: {:?}", pk_l_query[0]);
+        println!("DEBUG USE 65432.11 Main PK Checksum L[last]: {:?}", pk_l_query.last().unwrap());
+    }
+
     let vk = ark_groth16::VerifyingKey {
         alpha_g1: vk_alpha_g1,
         beta_g2: vk_beta_g2,
@@ -891,10 +905,49 @@ pub fn read_g16_optimized_bn254(path: &Path) -> (ark_groth16::ProvingKey<Bn254>,
 
 // --- Added for R1CS serialization and diagnostics ---
 use crate::arith::r1cs::R1CS;
+use crate::folding::foldpot::decider_eth_circuit_super::R1CSVar as FoldPotR1CSVar;
+
+/// Fingerprints the topology of an R1CSVar to check for structural drift
+pub fn fingerprint_r1cs_var<F, CF, FV>(name: &str, r1cs_var: &FoldPotR1CSVar<F, CF, FV>) 
+where 
+    F: PrimeField, CF: PrimeField, FV: AllocVar<F, CF> 
+{
+    println!("[DEBUG USE 65431.3] Fingerprint Gadget: {}", name);
+    // We only check Matrix A for brevity
+    for i in 0..std::cmp::min(5, r1cs_var.A.coeffs.len()) {
+        let row = &r1cs_var.A.coeffs[i];
+        println!("  Row {}: entries={}", i, row.len());
+    }
+}
 use crate::utils::vec::SparseMatrix;
-use ark_serialize::Write as ArkWrite;
 
 /// Serializes an R1CS instance to a binary file
+use ark_r1cs_std::R1CSVar as ArkR1CSVar;
+use crate::folding::foldpot::decider_eth_circuit_super::R1CSVar as FoldpotR1CSVar;
+
+pub fn dump_r1cs_var<F: PrimeField, CF: PrimeField, FV: AllocVar<F, CF> + ArkR1CSVar<CF>>(
+    name: &str,
+    r1cs_var: &FoldpotR1CSVar<F, CF, FV>,
+) -> Result<(), SynthesisError> {
+    println!("DEBUG USE 65431.6 DUMPING R1CSVar: {}", name);
+    println!("DEBUG USE 65431.6   n_rows: {}, n_cols: {}", r1cs_var.A.n_rows, r1cs_var.A.n_cols);
+    
+    let matrices = [(&r1cs_var.A, "A"), (&r1cs_var.B, "B"), (&r1cs_var.C, "C")];
+    
+    for (matrix, m_name) in matrices {
+        println!("DEBUG USE 65431.6 Matrix {}", m_name);
+        for (row_idx, row) in matrix.coeffs.iter().enumerate() {
+            if !row.is_empty() {
+                for (val_var, col_idx) in row {
+                    let val = val_var.value().ok();
+                    println!("DEBUG USE 65431.6   [{}][{}] = {:?}", row_idx, col_idx, val);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn save_r1cs<F: PrimeField>(r1cs: &R1CS<F>, filepath: &str) -> Result<(), std::io::Error> {
 	let path = Path::new(filepath);
 	if let Some(parent) = path.parent() {

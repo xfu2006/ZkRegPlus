@@ -770,7 +770,16 @@ impl<F: PrimeField> NonNativeUintVar<F> {
             AllocationMode::Witness
         };
         let m: BigUint = M::MODULUS.into();
-        let bits = (max(self.ubound(), other.ubound()) / &m).bits() as usize;
+        let bits_raw = (max(self.ubound(), other.ubound()) / &m).bits() as usize;
+        // Round up to the next multiple of bits_per_limb to ensure topological stability
+        let bpl = Self::bits_per_limb();
+        let bits = ((bits_raw + bpl - 1) / bpl) * bpl;
+
+        // DEBUG INSTRUMENTATION
+        if !cs.is_none() {
+            println!("[DEBUG USE 65431.1] enforce_congruent: self_ubound={} bits, other_ubound={} bits, bits_raw={}, stable_bits={}",
+                self.ubound().bits(), other.ubound().bits(), bits_raw, bits);
+        }
         // Provide the quotient `|x - y| / m` and a boolean indicating if `x > y`
         // as hints.
         let (q, is_ge) = {

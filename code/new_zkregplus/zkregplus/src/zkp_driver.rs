@@ -71,6 +71,10 @@ fn load_files<F:PrimeField + ColEle>(_job_id: usize, list_file_path: &str, db: &
 	let _b_debug = false;
 	let proot = proj_root();
 	let file_names = &read_lines(&format!("{}/{}", proot, list_file_path));
+	println!("[DEBUG USE 65432.3] Loading {} files from {}", file_names.len(), list_file_path);
+	if file_names.len() > 0 {
+		println!("  First file: {}", file_names[0]);
+	}
 
 	//2. parallel for each file read its nibbles and convert
     let final_data = file_names.into_par_iter().map(|fpath|
@@ -680,8 +684,8 @@ pub mod tests_zkp_driver{
 	#[allow(dead_code)]
 	fn small_data<F:PrimeField>(b_check_lkup: bool){
         get_global_config().snark_cache_dir = "small_20".to_string();
-        get_global_config().b_read_snark_cache = true;
-        get_global_config().b_write_snark_cache = false;
+        get_global_config().b_read_snark_cache = false;
+        get_global_config().b_write_snark_cache = true;
         get_global_config().b_light_test = false;
 		get_global_config().range2_bit = 8;
 		get_global_config().b_read_cache = true;
