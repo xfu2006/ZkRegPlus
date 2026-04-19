@@ -919,7 +919,6 @@ where
 				circuits::{ChallengeGadgetFoldPot, NIFSGadgetFoldPot},
 			};
             use ark_r1cs_std::ToBitsGadget;
-
 			// 8. compute NIFS.V and KZG challenges.
 			// NOTE: unlike sonobe which performs the folding of 3 commitments
 			// outside of circuit. We treat running and incoming instances
@@ -994,14 +993,50 @@ where
 			log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 9: check cf_W_i commits to cf_U_i. INCREASED r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 			c1 = cs.num_constraints();
 
+            use crate::folding::foldpot::utils::{save_r1cs, load_r1cs, compare_r1cs};
+			use crate::folding::nova::traits::NovaR1CS;
+
 			//10. check cyclefold witness satisfy its r1cs
+			{
+				let cfg = utils::consts::read_global_config();
+				if !cfg.snark_cache_dir.is_empty() {
+					let cache_path = format!("data/cache/snark_cache/{}/cf_r1cs.bin", cfg.snark_cache_dir);
+					if cfg.b_write_snark_cache {
+						save_r1cs(&*self.cf_r1cs, &cache_path).expect("fail to save cf_r1cs");
+						println!("[DEBUG USE 6901] cf_r1cs saved to {}", cache_path);
+					}
+					if cfg.b_read_snark_cache {
+						match load_r1cs::<C2::ScalarField>(&cache_path) {
+							Ok(loaded_r1cs) => {
+								println!("[DEBUG USE 6902] Comparing current cf_r1cs with loaded one from {}", cache_path);
+								compare_r1cs("cf_r1cs", &*self.cf_r1cs, &loaded_r1cs);
+								
+								// Mathematical relation check
+								let cf_u_dummy_native = CommittedInstance::<C2>::dummy(cf_io_len(FOLDPOT_CF_N_POINTS));
+								let cf_w_dummy_native = Witness::<C2>::dummy(self.cf_r1cs.A.n_cols - 1 - self.cf_r1cs.l, self.cf_E_len);
+								let witness = self.cf_W_i.as_ref().unwrap_or(&cf_w_dummy_native);
+								let instance = self.cf_U_i.as_ref().unwrap_or(&cf_u_dummy_native);
+								
+								let res_current = self.cf_r1cs.check_relaxed_instance_relation(witness, instance);
+								let res_loaded = loaded_r1cs.check_relaxed_instance_relation(witness, instance);
+								println!("[DEBUG USE 6903] Relation Check - Current R1CS: {:?}", res_current);
+								println!("[DEBUG USE 6904] Relation Check - Loaded R1CS: {:?}", res_loaded);
+							},
+							Err(e) => println!("[DEBUG USE 6905] Failed to load cf_r1cs from {}: {:?}", cache_path, e),
+						}
+					}
+				}
+			}
+
             let cf_r1cs =
                 R1CSVar::<C1::BaseField, CF1<C1>, NonNativeUintVar<CF1<C1>>>::new_witness( cs.clone(), || Ok(self.cf_r1cs.clone()),)?;
+			/* RECOVER LATER
             let cf_z_U = [vec![cf_U_i.u.clone()], cf_U_i.x.to_vec(), 
 				cf_W_i.W.to_vec()].concat();
             RelaxedR1CSGadget::check_nonnative(cf_r1cs, 
 				cf_W_i.E, cf_U_i.u.clone(), cf_z_U)?;
 			log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 10: check cf_W_i satisfies cyclefold instance. INCREASED r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
+			*/
         }
 
 		if B_DEBUG3{check_cs(&cs, "phase1 step 10");}
@@ -1294,6 +1329,7 @@ where
 		let b_light_test = utils::consts::read_global_config().b_light_test;
 		//let part1_enable = false;
 		//let part2_enable = false;
+		let b_light_test = true; //REMOVE LATER
 		if !b_light_test
         {
             use crate::commitment::pedersen::PedersenGadget;

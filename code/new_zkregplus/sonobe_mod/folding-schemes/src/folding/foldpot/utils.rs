@@ -888,3 +888,93 @@ pub fn read_g16_optimized_bn254(path: &Path) -> (ark_groth16::ProvingKey<Bn254>,
 
     (pk, vk)
 }
+
+// --- Added for R1CS serialization and diagnostics ---
+use crate::arith::r1cs::R1CS;
+use crate::utils::vec::SparseMatrix;
+use ark_serialize::Write as ArkWrite;
+
+/// Serializes an R1CS instance to a binary file
+pub fn save_r1cs<F: PrimeField>(r1cs: &R1CS<F>, filepath: &str) -> Result<(), std::io::Error> {
+	let path = Path::new(filepath);
+	if let Some(parent) = path.parent() {
+		std::fs::create_dir_all(parent)?;
+	}
+    let mut file = File::create(path)?;
+    r1cs.serialize_uncompressed(&mut file)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+    Ok(())
+}
+
+/// Deserializes an R1CS instance from a binary file
+pub fn load_r1cs<F: PrimeField>(filepath: &str) -> Result<R1CS<F>, std::io::Error> {
+    let mut file = File::open(Path::new(filepath))?;
+    let r1cs = R1CS::<F>::deserialize_uncompressed(&mut file)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+    Ok(r1cs)
+}
+
+/// Compares two R1CS instances and prints the differences
+pub fn compare_r1cs<F: PrimeField>(name: &str, current: &R1CS<F>, loaded: &R1CS<F>) -> bool {
+    if current == loaded {
+        println!("[SUCCESS] {} R1CS instances are EXACTLY identical!", name);
+        return true;
+    }
+    
+    println!("[WARNING] {} R1CS instances DIFFER. Finding mismatch...", name);
+    
+    if current.l != loaded.l {
+        println!("  -> 'l' (io len) differs: current={} vs loaded={}", current.l, loaded.l);
+    }
+    
+    let mut diff_found = false;
+    diff_found |= !compare_sparse_matrices(format!("{}-A", name), &current.A, &loaded.A);
+    diff_found |= !compare_sparse_matrices(format!("{}-B", name), &current.B, &loaded.B);
+    diff_found |= !compare_sparse_matrices(format!("{}-C", name), &current.C, &loaded.C);
+	
+	!diff_found
+}
+
+fn compare_sparse_matrices<F: PrimeField>(mat_name: String, m1: &SparseMatrix<F>, m2: &SparseMatrix<F>) -> bool {
+    if m1.n_rows != m2.n_rows || m1.n_cols != m2.n_cols {
+        println!("  -> Matrix {} dimensions differ: current({}x{}) vs loaded({}x{})", 
+                 mat_name, m1.n_rows, m1.n_cols, m2.n_rows, m2.n_cols);
+		return false;
+    }
+    
+	let mut diff_count = 0;
+    for row_idx in 0..m1.n_rows {
+        let row1 = &m1.coeffs[row_idx];
+        let row2 = &m2.coeffs[row_idx];
+        
+        if row1 != row2 {
+			diff_count += 1;
+			if diff_count > 10 {
+				println!("  -> Matrix {}: ... more than 10 rows differ, stopping report.", mat_name);
+				return false;
+			}
+
+            if row1.len() != row2.len() {
+                println!("  -> Matrix {} Row {} length differs: current({}) vs loaded({})", 
+                         mat_name, row_idx, row1.len(), row2.len());
+            } else {
+                println!("  -> Matrix {} Row {} contents differ!", mat_name, row_idx);
+                
+                // Check if it's just an ordering issue
+                let mut row1_sorted = row1.clone();
+                let mut row2_sorted = row2.clone();
+                row1_sorted.sort_by(|a, b| a.1.cmp(&b.1)); // Sort by column index
+                row2_sorted.sort_by(|a, b| a.1.cmp(&b.1));
+                
+                if row1_sorted == row2_sorted {
+                    println!("     Note: Row {} elements are mathematically SAME, but physical ORDER shifted.", row_idx);
+                } else {
+					println!("     Note: Row {} is mathematically DIFFERENT.", row_idx);
+					println!("     Current (first 5): {:?}", &row1[..std::cmp::min(5, row1.len())]);
+					println!("     Loaded  (first 5): {:?}", &row2[..std::cmp::min(5, row2.len())]);
+				}
+            }
+        }
+    }
+    diff_count == 0
+}
