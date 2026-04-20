@@ -42,13 +42,13 @@ pub const LOG2:usize = 1;
 pub const LOG1:usize = 0;
 pub const B_DEBUG:bool = false; //category 1
 pub const B_DEBUG2:bool = false; //cateogry 2
-pub const B_DEBUG3:bool = true; //category 3 (higher ID the higher cost)
+pub const B_DEBUG3:bool = false; //category 3 (higher ID the higher cost)
 
 /// NOTE it has an internal bug, manually turn it on 
 /// if you need it.
 pub fn check_cs<F:PrimeField>(cs: &ConstraintSystemRef<F>, info: &str){
-	let b_debug = true;
-	println!("-- DEBUG USE 1001: entering CHECK: {}", info);
+	let b_debug = false;
+	if b_debug{ println!("-- DEBUG USE 1001: entering CHECK: {}", info);}
 	if b_debug && cs.should_construct_matrices(){
 		let csat = cs.is_satisfied();
 		if csat.is_ok(){ 
