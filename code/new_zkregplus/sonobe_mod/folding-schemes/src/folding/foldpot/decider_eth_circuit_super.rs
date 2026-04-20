@@ -737,7 +737,6 @@ where
     	let mut t1 = GTimer::new();
     	let mut c1 = cs.num_constraints();
 
-    println!("[DEBUG USE 65431.2] Phase1Circuit::generate_constraints_adv - START. Num constraints: {}, Num variables: {}", cs.num_constraints(), cs.num_witness_variables());
 		let mut c1 = cs.num_constraints();
 		let mut c0 = cs.num_constraints();
 		let _pc_i_val = field_to_usize(&self.pc_i); //for fold
@@ -1000,18 +999,14 @@ where
 
 
 			//10. check cyclefold witness satisfy its r1cs
-			println!("[DEBUG USE 65431.2] Before R1CSVar::new_witness: {} constraints, {} variables", cs.num_constraints(), cs.num_witness_variables());
             let cf_r1cs =
                 R1CSVar::<C1::BaseField, CF1<C1>, NonNativeUintVar<CF1<C1>>>::new_witness( cs.clone(), || Ok(self.cf_r1cs.clone()),)?;
 
-            crate::folding::foldpot::utils::dump_r1cs_var("cf_r1cs", &cf_r1cs).unwrap();
-            println!("[DEBUG USE 65431.2] After R1CSVar::new_witness: {} constraints, {} variables", cs.num_constraints(), cs.num_witness_variables());
-            let cf_z_U = [vec![cf_U_i.u.clone()], cf_U_i.x.to_vec(), 
+            let cf_z_U = [vec![cf_U_i.u.clone()], cf_U_i.x.to_vec(),
 				cf_W_i.W.to_vec()].concat();
-            RelaxedR1CSGadget::check_nonnative(cf_r1cs, 
+            RelaxedR1CSGadget::check_nonnative(cf_r1cs,
 				cf_W_i.E, cf_U_i.u.clone(), cf_z_U)?;
-            
-            println!("[DEBUG USE 65431.2] After check_nonnative: {} constraints, {} variables", cs.num_constraints(), cs.num_witness_variables());
+
 			log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 10: check cp_W_i satisfies cyclefold instance. INCREASED r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
         }
 
@@ -1022,10 +1017,9 @@ where
 		).flatten().collect::<Vec<NonNativeAffineVar<C1>>>();
 		let mut vec_coms = vec![com_all_w_clone];
 		vec_coms.append(&mut vec_coms_part2);
-        // RECOVER LATER
-        // let mut rng = ark_std::test_rng();
-		// let randf_val = C1::ScalarField::rand(&mut rng);
-		let randf_val = C1::ScalarField::from(100u32);
+        let mut rng = ark_std::test_rng();
+		let randf_val = C1::ScalarField::rand(&mut rng);
+		//let randf_val = C1::ScalarField::from(100u32);
 		let randf = FpVar::<CF1<C1>>::new_witness(cs.clone(), ||{
 			Ok(randf_val)
 		})?;
@@ -1308,7 +1302,6 @@ where
 		let b_light_test = utils::consts::read_global_config().b_light_test;
 		//let part1_enable = false;
 		//let part2_enable = false;
-		let b_light_test = true; //REMOVE LATER
 		if !b_light_test
         {
             use crate::commitment::pedersen::PedersenGadget;

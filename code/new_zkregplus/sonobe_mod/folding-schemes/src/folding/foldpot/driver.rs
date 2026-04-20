@@ -2331,11 +2331,10 @@ where
 	  					+ nova1.zi_part2_inst.sum_kzg_eval_others;
 	  		let ch1 = nova1.zi_part2_inst.ch.clone();
 	  		let rc1 = nova1.zi_part2_inst.rc.clone();
-	  		// RECOVER LATER
-	  		// let randf = C1::ScalarField::rand(&mut rng);
-	  		let randf = C1::ScalarField::from(100u32);
+	  		let randf = C1::ScalarField::rand(&mut rng);
 
-	  		let (snark_proof_main,mainres,mainres_hash, g16_vk_main) = {	  			let main_circ = MainDeciderCircuit::from_nova::<FC>(nova1,
+	  		let (snark_proof_main,mainres,mainres_hash, g16_vk_main) = {	  			
+				let main_circ = MainDeciderCircuit::from_nova::<FC>(nova1,
 	  				com_all_w.clone(), r_all_w.clone(), randf).unwrap();
 	  			let mainres = main_circ.res.clone();
 	  			let mainres_hash = main_circ.res_hash.clone(); 

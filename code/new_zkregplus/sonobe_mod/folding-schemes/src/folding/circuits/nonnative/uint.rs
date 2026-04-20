@@ -775,11 +775,6 @@ impl<F: PrimeField> NonNativeUintVar<F> {
         let bpl = Self::bits_per_limb();
         let bits = ((bits_raw + bpl - 1) / bpl) * bpl;
 
-        // DEBUG INSTRUMENTATION
-        if !cs.is_none() {
-            println!("[DEBUG USE 65431.1] enforce_congruent: self_ubound={} bits, other_ubound={} bits, bits_raw={}, stable_bits={}",
-                self.ubound().bits(), other.ubound().bits(), bits_raw, bits);
-        }
         // Provide the quotient `|x - y| / m` and a boolean indicating if `x > y`
         // as hints.
         let (q, is_ge) = {

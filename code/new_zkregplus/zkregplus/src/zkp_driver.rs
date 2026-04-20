@@ -71,7 +71,6 @@ fn load_files<F:PrimeField + ColEle>(_job_id: usize, list_file_path: &str, db: &
 	let _b_debug = false;
 	let proot = proj_root();
 	let file_names = &read_lines(&format!("{}/{}", proot, list_file_path));
-	println!("[DEBUG USE 65432.3] Loading {} files from {}", file_names.len(), list_file_path);
 	if file_names.len() > 0 {
 		println!("  First file: {}", file_names[0]);
 	}
