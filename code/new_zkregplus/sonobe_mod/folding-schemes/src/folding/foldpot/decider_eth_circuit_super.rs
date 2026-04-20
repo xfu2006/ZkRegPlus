@@ -984,7 +984,6 @@ where
             let cf_W_i_E_bits: Result<Vec<Vec<Boolean<CF1<C1>>>>, SynthesisError> = cf_W_i.E.iter().map(|E_i| E_i.to_bits_le()).collect();
             let cf_W_i_W_bits: Result<Vec<Vec<Boolean<CF1<C1>>>>, SynthesisError> = cf_W_i.W.iter().map(|W_i| W_i.to_bits_le()).collect();
 			println!("DEBUG USE 66901: H2: {}", self.cf_pedersen_params.h);
-			/* RECOVER LATER
             let computed_cmE = PedersenGadget::<C2, GC2>::commit(
                 H2.clone(),
                 G.clone(),
@@ -1014,7 +1013,6 @@ where
             
             println!("[DEBUG USE 65431.2] After check_nonnative: {} constraints, {} variables", cs.num_constraints(), cs.num_witness_variables());
 			log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 10: check cp_W_i satisfies cyclefold instance. INCREASED r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
-			*/
         }
 
 		if B_DEBUG3{check_cs(&cs, "phase1 step 10");}

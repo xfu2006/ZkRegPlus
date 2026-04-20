@@ -105,7 +105,39 @@ where S::ProvingKey: CanonicalSerialize + 'static, S::VerifyingKey: CanonicalSer
 
 
 
-fn write_g16key<F: PrimeField, S: SNARK<F>>(path: &Path, pk: &S::ProvingKey, vk: &S::VerifyingKey, job_id: usize) 
+/// Sidecar-meta binary layout: write a list of 32-byte r1cs hashes
+/// plus a single 32-byte cf_r1cs hash. Used together with the
+/// Pedersen-param sidecar files to keep circuit constants stable
+/// across snark-cache runs.
+fn write_sidecar_meta(path: &Path, r1cs_hashes: &[[u8; 32]], cf_r1cs_hash: [u8; 32]) {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).expect("create sidecar dir err");
+    }
+    let mut f = File::create(path).expect("create sidecar meta err");
+    let n = r1cs_hashes.len() as u32;
+    f.write_all(&n.to_le_bytes()).expect("write n err");
+    for h in r1cs_hashes {
+        f.write_all(h).expect("write hash err");
+    }
+    f.write_all(&cf_r1cs_hash).expect("write cf hash err");
+}
+
+fn read_sidecar_meta(path: &Path) -> (Vec<[u8; 32]>, [u8; 32]) {
+    let mut f = File::open(path)
+        .unwrap_or_else(|e| panic!("open sidecar meta {:?}: {}", path, e));
+    let mut n_buf = [0u8; 4];
+    f.read_exact(&mut n_buf).expect("read n err");
+    let n = u32::from_le_bytes(n_buf) as usize;
+    let mut hashes = vec![[0u8; 32]; n];
+    for h in hashes.iter_mut() {
+        f.read_exact(h).expect("read hash err");
+    }
+    let mut cf = [0u8; 32];
+    f.read_exact(&mut cf).expect("read cf hash err");
+    (hashes, cf)
+}
+
+fn write_g16key<F: PrimeField, S: SNARK<F>>(path: &Path, pk: &S::ProvingKey, vk: &S::VerifyingKey, job_id: usize)
 where S::ProvingKey: CanonicalSerialize + 'static, S::VerifyingKey: CanonicalSerialize + 'static
 {
     if let (Some(pk_g16), Some(vk_g16)) = ((pk as &dyn Any).downcast_ref::<ark_groth16::ProvingKey<Bn254>>(), (vk as &dyn Any).downcast_ref::<ark_groth16::VerifyingKey<Bn254>>()) {
@@ -1947,7 +1979,7 @@ where
     >,
 	<CS1E as CommitmentScheme<C1, H>>::ProverParams: Send + Sync,
 	<CS1E as CommitmentScheme<C1, H>>::VerifierParams: Send + Sync,
-    CS2: CommitmentScheme<C2, H, ProverParams = PedersenParams<C2>>,
+    CS2: CommitmentScheme<C2, H, ProverParams = PedersenParams<C2>, VerifierParams = PedersenParams<C2>>,
 	<CS2 as CommitmentScheme<C2, H>>::VerifierParams: Send + Sync,
     S: SNARK<C1::ScalarField>,
     <C1 as CurveGroup>::BaseField: PrimeField,
@@ -1968,13 +2000,15 @@ where
 	<E as Pairing>::ScalarField: Absorb,
     C1: CurveGroup<BaseField = <C2G2::BaseField as Field>::BasePrimeField, ScalarField=E::ScalarField>,
 	C2G2: CurveGroup<ScalarField=E::ScalarField>,
-	C2: CurveGroup<BaseField = C1::ScalarField, ScalarField=C1::BaseField>,
+	C2: CurveGroup<BaseField = C1::ScalarField, ScalarField=C1::BaseField,
+		Affine = ark_ec::short_weierstrass::Affine<<C2 as CurveGroup>::Config>>,
 	E::G1: ToConstraintField<CF2<C1>>,
 	E::G2: ToConstraintField<CF2<C1>>,
 	E::TargetField: ToConstraintField<CF2<C1>> + Field<BasePrimeField=CF3<C1>>,
 	C1::Affine: AffineFromField<CF2<C1>>,
 	C2G2::Affine: AffineFromField<CF2<C2G2>>,
 	C1::Config: SWCurveConfig,
+	C2::Config: SWCurveConfig,
 	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug + Send + Sync, S::ProvingKey: 'static, S::VerifyingKey: 'static, S::VerifyingKey: 'static,
 {
         let cache_base = std::path::Path::new(&utils::os::proj_root()).join("data/cache").join(cache_dir);
@@ -2090,9 +2124,9 @@ where
 	//2. create the driver1 for the 1st phase
 	let poseidon_config_global = poseidon_canonical_config::<C1::ScalarField>();
 	let b_full1 = false;
-	let driver1 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,FC,S,LK,GM,H> 
-	::new(poseidon_config_global.clone(), lkup.clone(), 
-		vec_circ.clone(), rand::rngs::OsRng, b_full1, 
+	let mut driver1 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,FC,S,LK,GM,H>
+	::new(poseidon_config_global.clone(), lkup.clone(),
+		vec_circ.clone(), rand::rngs::OsRng, b_full1,
 		global_max_total_n, global_max_words
 	);
 	log_perf(0, log_level, &format!("FoldPot: Step 2: set up driver 1"),
@@ -2105,9 +2139,97 @@ where
 	let b_full2 = true;
 	let lk_p2 = LK::new(vec![]);
 	let lkup_p2 = Arc::new(lk_p2);
-	let driver2 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,SigmaIR1CS_Inst<C1::ScalarField, C1, CS1, LK, FoldPairMapper<CF1<C1>,LK>,H>,S,LK,FoldPairMapper<CF1<C1>,LK>,H>
+	let mut driver2 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,SigmaIR1CS_Inst<C1::ScalarField, C1, CS1, LK, FoldPairMapper<CF1<C1>,LK>,H>,S,LK,FoldPairMapper<CF1<C1>,LK>,H>
 		::new(poseidon_config_global.clone(), lkup_p2, vec_circ_cp, rand::rngs::OsRng, b_full2, global_max_total_n, global_max_words);
 	log_perf(0, log_level, &format!("FoldPot: Step 3: set up driver 2.\n=== Now Execute All Jobs =====\n"), &mut gt_all);
+
+	//3.5 Sidecar: save/load Pedersen params + R1CS hashes to keep
+	// circuit-constant data stable across snark-cache runs.
+	// See decider_eth_circuit_super.rs lines 980-983, 1353-1356.
+	{
+		use crate::folding::foldpot::utils::{hash_r1cs,
+			read_pedersen_params, write_pedersen_params};
+		let mut gt_sc = GTimer::new();
+		let main_sc_meta = cache_base.join("g16_main.sidecar.meta");
+		let cp_sc_meta = cache_base.join("g16_cp.sidecar.meta");
+		let main_sc_cf = cache_base.join("g16_main.sidecar.cf");
+		let cp_sc_cf = cache_base.join("g16_cp.sidecar.cf");
+		let cp_sc_cp = cache_base.join("g16_cp.sidecar.cp");
+
+		let d1_r1cs_hashes: Vec<[u8;32]> = driver1.nova_param.1.vec_vp
+			.iter().map(|vp| hash_r1cs(&*vp.r1cs)).collect();
+		let d1_cf_r1cs_hash = hash_r1cs(&*driver1.nova_param.1
+			.vec_vp[0].cf_r1cs);
+		let d2_r1cs_hashes: Vec<[u8;32]> = driver2.nova_param.1.vec_vp
+			.iter().map(|vp| hash_r1cs(&*vp.r1cs)).collect();
+		let d2_cf_r1cs_hash = hash_r1cs(&*driver2.nova_param.1
+			.vec_vp[0].cf_r1cs);
+		log_perf(0, LOG2, &format!(
+			"PERF 1004: sidecar hash_r1cs done. d1 circs: {}, d2 circs: {}",
+			d1_r1cs_hashes.len(), d2_r1cs_hashes.len()), &mut gt_sc);
+
+		if read_global_config().b_write_snark_cache {
+			write_pedersen_params::<C2>(&main_sc_cf,
+				&*driver1.nova_param.0.vec_pp[0].cf_cs_pp);
+			write_pedersen_params::<C2>(&cp_sc_cf,
+				&*driver2.nova_param.0.vec_pp[0].cf_cs_pp);
+			write_pedersen_params::<C2>(&cp_sc_cp,
+				&*driver2.nova_param.0.vec_pp[0].cp_cs_pp);
+			write_sidecar_meta(&main_sc_meta,
+				&d1_r1cs_hashes, d1_cf_r1cs_hash);
+			write_sidecar_meta(&cp_sc_meta,
+				&d2_r1cs_hashes, d2_cf_r1cs_hash);
+			log_perf(0, LOG2, &format!(
+				"PERF 1004: sidecar WRITE done. main={:?}, cp={:?}",
+				main_sc_meta, cp_sc_meta), &mut gt_sc);
+		}
+
+		if b_read_snark_cache {
+			let (m_r1cs_hashes, m_cf_hash) = read_sidecar_meta(
+				&main_sc_meta);
+			assert_eq!(m_r1cs_hashes, d1_r1cs_hashes,
+				"MainDeciderCircuit r1cs hashes mismatch (R1CS drifted across runs)");
+			assert_eq!(m_cf_hash, d1_cf_r1cs_hash,
+				"MainDeciderCircuit cf_r1cs hash mismatch");
+			let (c_r1cs_hashes, c_cf_hash) = read_sidecar_meta(
+				&cp_sc_meta);
+			assert_eq!(c_r1cs_hashes, d2_r1cs_hashes,
+				"CyclePairCircuit r1cs hashes mismatch");
+			assert_eq!(c_cf_hash, d2_cf_r1cs_hash,
+				"CyclePairCircuit cf_r1cs hash mismatch");
+			log_perf(0, LOG2, &format!(
+				"PERF 1004: sidecar READ r1cs-hash verify passed"),
+				&mut gt_sc);
+
+			let d1_cf: PedersenParams<C2> = read_pedersen_params(
+				&main_sc_cf);
+			let d2_cf: PedersenParams<C2> = read_pedersen_params(
+				&cp_sc_cf);
+			let d2_cp: PedersenParams<C2> = read_pedersen_params(
+				&cp_sc_cp);
+
+			let d1_cf_arc = Arc::new(d1_cf.clone());
+			for pp in driver1.nova_param.0.vec_pp.iter_mut() {
+				pp.cf_cs_pp = d1_cf_arc.clone();
+			}
+			for vp in driver1.nova_param.1.vec_vp.iter_mut() {
+				vp.cf_cs_vp = d1_cf.clone();
+			}
+			let d2_cf_arc = Arc::new(d2_cf.clone());
+			let d2_cp_arc = Arc::new(d2_cp.clone());
+			for pp in driver2.nova_param.0.vec_pp.iter_mut() {
+				pp.cf_cs_pp = d2_cf_arc.clone();
+				pp.cp_cs_pp = d2_cp_arc.clone();
+			}
+			for vp in driver2.nova_param.1.vec_vp.iter_mut() {
+				vp.cf_cs_vp = d2_cf.clone();
+				vp.cp_cs_vp = d2_cp.clone();
+			}
+			log_perf(0, LOG2, &format!(
+				"PERF 1004: sidecar READ override of Pedersen params done"),
+				&mut gt_sc);
+		}
+	}
 
 	//4. set up mutex semaphore of size n_par_snark
 	let n_par_snark = read_global_config().n_par_snark;

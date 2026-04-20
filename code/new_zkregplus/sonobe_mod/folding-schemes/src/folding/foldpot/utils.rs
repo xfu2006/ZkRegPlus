@@ -1031,3 +1031,65 @@ fn compare_sparse_matrices<F: PrimeField>(mat_name: String, m1: &SparseMatrix<F>
     }
     diff_count == 0
 }
+
+// --- Added: sidecar save/load for circuit-constant data
+// (Pedersen params + R1CS topology hash) ---
+use ark_ec::CurveGroup;
+use crate::commitment::pedersen::Params as PedersenParams;
+
+/// SHA-256 of the canonical-uncompressed R1CS serialization.
+/// Used to verify that a freshly-built R1CS matches the one that
+/// produced a saved Groth16 key.
+pub fn hash_r1cs<F: PrimeField>(r1cs: &R1CS<F>) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut bytes = Vec::new();
+    r1cs.serialize_uncompressed(&mut bytes)
+        .expect("ser r1cs for hash");
+    let digest = Sha256::digest(&bytes);
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&digest);
+    out
+}
+
+/// Write a PedersenParams<C> to disk at `prefix`:
+///   <prefix>_h.meta             — single affine (compressed CanonicalSerialize)
+///   <prefix>_generators_compressed.data — via serialize_affines_compressed_raw
+pub fn write_pedersen_params<C>(prefix: &Path, pp: &PedersenParams<C>)
+where
+    C: CurveGroup<Affine = Affine<<C as CurveGroup>::Config>>,
+    C::Config: SWCurveConfig,
+{
+    let prefix_str = prefix.to_str().expect("prefix str");
+    let h_path = format!("{}_h.meta", prefix_str);
+    let file = File::create(&h_path).expect("create h meta err");
+    let mut writer = BufWriter::new(file);
+    let h_aff: Affine<C::Config> = pp.h.into_affine();
+    h_aff.serialize_compressed(&mut writer).expect("ser h err");
+    std::io::Write::flush(&mut writer).expect("flush h err");
+    drop(writer);
+
+    serialize_affines_compressed_raw::<C::Config>(
+        &pp.generators,
+        &format!("{}_generators", prefix_str),
+    );
+}
+
+/// Inverse of write_pedersen_params.
+pub fn read_pedersen_params<C>(prefix: &Path) -> PedersenParams<C>
+where
+    C: CurveGroup<Affine = Affine<<C as CurveGroup>::Config>>,
+    C::Config: SWCurveConfig,
+{
+    let prefix_str = prefix.to_str().expect("prefix str");
+    let h_path = format!("{}_h.meta", prefix_str);
+    let file = File::open(&h_path).expect("open h meta err");
+    let mut reader = BufReader::new(file);
+    let h_aff = Affine::<C::Config>::deserialize_compressed(&mut reader)
+        .expect("deser h err");
+    let h: C = h_aff.into();
+
+    let generators = deserialize_affines_compressed_raw::<C::Config>(
+        &format!("{}_generators", prefix_str),
+    );
+    PedersenParams { h, generators }
+}
