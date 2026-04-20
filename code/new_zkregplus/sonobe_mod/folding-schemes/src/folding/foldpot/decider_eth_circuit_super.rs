@@ -983,12 +983,15 @@ where
 				self.cf_pedersen_params.generators.clone())?;
             let cf_W_i_E_bits: Result<Vec<Vec<Boolean<CF1<C1>>>>, SynthesisError> = cf_W_i.E.iter().map(|E_i| E_i.to_bits_le()).collect();
             let cf_W_i_W_bits: Result<Vec<Vec<Boolean<CF1<C1>>>>, SynthesisError> = cf_W_i.W.iter().map(|W_i| W_i.to_bits_le()).collect();
+			println!("DEBUG USE 66901: H2: {}", self.cf_pedersen_params.h);
+			/* RECOVER LATER
             let computed_cmE = PedersenGadget::<C2, GC2>::commit(
                 H2.clone(),
                 G.clone(),
                 cf_W_i_E_bits?,
                 cf_W_i.rE.to_bits_le()?,
             )?;
+			
             cf_U_i.cmE.enforce_equal(&computed_cmE)?;
             let computed_cmW =
                 PedersenGadget::<C2, GC2>::commit(H2, G, cf_W_i_W_bits?, cf_W_i.rW.to_bits_le()?)?;
@@ -996,47 +999,14 @@ where
 			log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 9: check cf_W_i commits to cf_U_i. INCREASED r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 			c1 = cs.num_constraints();
 
-            use crate::folding::foldpot::utils::{save_r1cs, load_r1cs, compare_r1cs};
-			use crate::folding::nova::traits::NovaR1CS;
 
 			//10. check cyclefold witness satisfy its r1cs
-			{
-				let cfg = utils::consts::read_global_config();
-				if !cfg.snark_cache_dir.is_empty() {
-					let cache_path = format!("data/cache/snark_cache/{}/cf_r1cs.bin", cfg.snark_cache_dir);
-					if cfg.b_write_snark_cache {
-						save_r1cs(&*self.cf_r1cs, &cache_path).expect("fail to save cf_r1cs");
-						println!("[DEBUG USE 6901] cf_r1cs saved to {}", cache_path);
-					}
-					if cfg.b_read_snark_cache {
-						match load_r1cs::<C2::ScalarField>(&cache_path) {
-							Ok(loaded_r1cs) => {
-								println!("[DEBUG USE 6902] Comparing current cf_r1cs with loaded one from {}", cache_path);
-								compare_r1cs("cf_r1cs", &*self.cf_r1cs, &loaded_r1cs);
-								
-								// Mathematical relation check
-								let cf_u_dummy_native = CommittedInstance::<C2>::dummy(cf_io_len(FOLDPOT_CF_N_POINTS));
-								let cf_w_dummy_native = Witness::<C2>::dummy(self.cf_r1cs.A.n_cols - 1 - self.cf_r1cs.l, self.cf_E_len);
-								let witness = self.cf_W_i.as_ref().unwrap_or(&cf_w_dummy_native);
-								let instance = self.cf_U_i.as_ref().unwrap_or(&cf_u_dummy_native);
-								
-								let res_current = self.cf_r1cs.check_relaxed_instance_relation(witness, instance);
-								let res_loaded = loaded_r1cs.check_relaxed_instance_relation(witness, instance);
-								println!("[DEBUG USE 6903] Relation Check - Current R1CS: {:?}", res_current);
-								println!("[DEBUG USE 6904] Relation Check - Loaded R1CS: {:?}", res_loaded);
-							},
-							Err(e) => println!("[DEBUG USE 6905] Failed to load cf_r1cs from {}: {:?}", cache_path, e),
-						}
-					}
-				}
-			} 
 			println!("[DEBUG USE 65431.2] Before R1CSVar::new_witness: {} constraints, {} variables", cs.num_constraints(), cs.num_witness_variables());
             let cf_r1cs =
                 R1CSVar::<C1::BaseField, CF1<C1>, NonNativeUintVar<CF1<C1>>>::new_witness( cs.clone(), || Ok(self.cf_r1cs.clone()),)?;
 
             crate::folding::foldpot::utils::dump_r1cs_var("cf_r1cs", &cf_r1cs).unwrap();
             println!("[DEBUG USE 65431.2] After R1CSVar::new_witness: {} constraints, {} variables", cs.num_constraints(), cs.num_witness_variables());
-			/* RECOVER LATER
             let cf_z_U = [vec![cf_U_i.u.clone()], cf_U_i.x.to_vec(), 
 				cf_W_i.W.to_vec()].concat();
             RelaxedR1CSGadget::check_nonnative(cf_r1cs, 
