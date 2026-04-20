@@ -27958,7 +27958,17 @@ Goal 1. check the r1cs_native problem
 	[a] test build r1cs only
 	[b] it's the non-native loading r1cs var causing the problem.
 	[c] debug message 65431.x , 65432.x
-Goal 2. 
+Goal 2. read the logic of UInt handling.
+	[a] ubound is for each segment leg
+	[b] didn't find anything special
+Goal 3. dump the r1cs_var
+	[a] the r1cs var is ALSO identical
+	[b] also try to change the rand_f to a fixed number temporarily
+	[c] now use claude code and see if it can repeatedly fix
+		without token limit. (looks like it's saving a lot of tokens
+			compared with gemini, but its reasoning capability
+			seems not as good).
+		let it run overnight.
 
 -- TODO -- remove DEBUG USE 654311
 			

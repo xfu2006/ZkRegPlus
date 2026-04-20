@@ -684,8 +684,8 @@ pub mod tests_zkp_driver{
 	#[allow(dead_code)]
 	fn small_data<F:PrimeField>(b_check_lkup: bool){
         get_global_config().snark_cache_dir = "small_20".to_string();
-        get_global_config().b_read_snark_cache = false;
-        get_global_config().b_write_snark_cache = true;
+        get_global_config().b_read_snark_cache = true;
+        get_global_config().b_write_snark_cache = false;
         get_global_config().b_light_test = false;
 		get_global_config().range2_bit = 8;
 		get_global_config().b_read_cache = true;
@@ -823,7 +823,7 @@ pub mod tests_zkp_driver{
 	#[allow(dead_code)]
 	fn small_data2<F:PrimeField>(b_check_lkup: bool){
         get_global_config().snark_cache_dir = "small_20".to_string();
-        get_global_config().b_read_snark_cache = false;
+        get_global_config().b_read_snark_cache = true;
         get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 18;
 		get_global_config().b_read_cache = false;
@@ -911,7 +911,7 @@ pub mod tests_zkp_driver{
 	#[allow(dead_code)]
 	fn small_data_debug<F:PrimeField>(b_check_lkup: bool){
         get_global_config().snark_cache_dir = "small_20".to_string();
-        get_global_config().b_read_snark_cache = false;
+        get_global_config().b_read_snark_cache = true;
         get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 24;
 		get_global_config().b_read_cache = false;
@@ -984,7 +984,7 @@ pub mod tests_zkp_driver{
 	#[allow(dead_code)]
 	fn small_data3<F:PrimeField>(b_check_lkup: bool){
         get_global_config().snark_cache_dir = "small_20".to_string();
-        get_global_config().b_read_snark_cache = false;
+        get_global_config().b_read_snark_cache = true;
         get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 18;
 		get_global_config().b_read_cache = false;
@@ -1077,7 +1077,7 @@ pub mod tests_zkp_driver{
 	#[allow(dead_code)]
 	fn small_data4<F:PrimeField>(b_check_lkup: bool){
         get_global_config().snark_cache_dir = "small_20".to_string();
-        get_global_config().b_read_snark_cache = false;
+        get_global_config().b_read_snark_cache = true;
         get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 18;
 		get_global_config().b_read_cache = false;
@@ -1174,8 +1174,8 @@ pub mod tests_zkp_driver{
 	#[allow(dead_code)]
 	fn full_data1<F:PrimeField>(b_check_lkup: bool){
         get_global_config().snark_cache_dir = "full_data".to_string();
-        get_global_config().b_read_snark_cache = false;
-        get_global_config().b_write_snark_cache = true;
+        get_global_config().b_read_snark_cache = true;
+        get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 26;
 		get_global_config().b_read_cache = true;
 		let b_write_cache = !read_global_config().b_read_cache;
@@ -1242,7 +1242,7 @@ pub mod tests_zkp_driver{
 	#[allow(dead_code)]
 	fn full_data2<F:PrimeField>(b_check_lkup: bool){
         get_global_config().snark_cache_dir = "full_data".to_string();
-        get_global_config().b_read_snark_cache = false;
+        get_global_config().b_read_snark_cache = true;
         get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 26;
 		get_global_config().range2_bit = 26;
@@ -1317,7 +1317,7 @@ pub mod tests_zkp_driver{
 	///    igc and cs. stmt_len: 10M, all_w_e: 33M => circ1 72M R1CS
 	#[allow(dead_code)]
 	fn full_data3<F:PrimeField>(b_check_lkup: bool){
-        get_global_config().b_read_snark_cache = false;
+        get_global_config().b_read_snark_cache = true;
         get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 26;
 		get_global_config().b_read_cache = true;
@@ -1416,7 +1416,7 @@ pub mod tests_zkp_driver{
 	/// Total: 173MB. 
 	#[allow(dead_code)]
 	fn full_data4<F:PrimeField>(b_check_lkup: bool){
-        get_global_config().b_read_snark_cache = false;
+        get_global_config().b_read_snark_cache = true;
         get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 26;
 		get_global_config().min_subsigs = 145;
@@ -1526,7 +1526,7 @@ pub mod tests_zkp_driver{
 		//extra setting
         get_global_config().snark_cache_dir = "full_clamav".to_string();
         get_global_config().b_read_snark_cache = true;
-        get_global_config().b_write_snark_cache = true;
+        get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 26;
 		get_global_config().b_light_test = b_light_test;
 		get_global_config().min_subsigs = 150;
