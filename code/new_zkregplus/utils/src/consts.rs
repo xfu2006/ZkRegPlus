@@ -49,7 +49,7 @@ pub struct GlobalConfig {
     pub min_basis_acc_states: usize,
     pub b_light_test: bool,
     pub b_read_cache: bool,
-    pub b_write_snark_cache: bool,
+    pub b_write_snark_cache: bool, //write the generated snark key to cache
     pub b_read_snark_cache: bool,
     pub snark_cache_dir: String,
     pub n_par_snark: usize,
