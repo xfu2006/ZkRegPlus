@@ -687,9 +687,9 @@ pub mod tests_zkp_driver{
 	#[allow(dead_code)]
 	fn small_data<F:PrimeField>(b_check_lkup: bool){
         get_global_config().snark_cache_dir = "small_20".to_string();
-        get_global_config().b_read_snark_cache = true;
+        get_global_config().b_read_snark_cache = false;
         get_global_config().b_write_snark_cache = false;
-        get_global_config().b_light_test = false;
+        get_global_config().b_light_test = true;
 		get_global_config().range2_bit = 8;
 		get_global_config().b_read_cache = true;
 		let b_write_cache = !read_global_config().b_read_cache;
@@ -1518,6 +1518,108 @@ pub mod tests_zkp_driver{
 			);
 		}
 	}
+	
+	/// Used for explorting parallel execution efficiency.
+	/// Has two modes: 8 jobs and 16 jobs (need 894GB RAM like c2d-112-highmem)
+	/// Conclusion:
+	#[allow(dead_code)]
+	fn full_par<F:PrimeField>(b_check_lkup: bool){
+        get_global_config().b_read_snark_cache = false;
+        get_global_config().b_write_snark_cache = false;
+		get_global_config().range2_bit = 26;
+		get_global_config().min_subsigs = 145;
+		get_global_config().b_read_cache = true;
+		get_global_config().b_light_test = true;
+
+		let b_write_cache = !read_global_config().b_read_cache;
+        let set1 = "data/debug/full_par_set/config/"; //for dfa
+        let max_word= 512 * 4;
+        let sigs = 400;
+        let subsigs = 562; //220 for prev db
+        let avg_pats_per_subsig = 8; //old value 8
+        let avg_active_pats_per_subsig = 2;
+        let perc_comp_subsigs = 20;
+        let basis_unique_states = 2000; //15 cpercent
+		let vec_decrease_level = vec![];
+		let num_circs = 1; 
+        let basis_acc_states = 1260; //last good value 1800
+        let basis_pats_in_trace = 1400; //last good value 3000
+        let basis_acc_states_igc = basis_acc_states ; //9 cpercent
+        let basis_pats_in_trace_igc = basis_pats_in_trace;
+            //old value 100 cur value 1/1000.
+        let dfa_sigs = 6;
+        let dfa_subsigs= 6;
+        let perc_pats_expansion_rate = 104; //old good value 2
+        let perc_pats_expansion_rate_igc = 2;
+        //let avg_subsig_per_sig = 3;
+
+		let init_cp_cap= CpCapacity{
+			max_word_len: max_word, 
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+			//avg_subsig_per_sig,
+		};
+		let init_sed_cap= SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs, 
+			avg_pats_per_subsig, 
+			avg_active_pats_per_subsig, 
+			basis_pats_in_trace, 
+			perc_pats_expansion_rate,
+			sigs, 
+			perc_comp_subsigs,
+			basis_unique_states,
+			basis_acc_states,
+		);
+		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
+ 		let init_cp_cap_igc= CpCapacity{
+            max_word_len: max_word,
+            basis_unique_states,
+            subsigs: subsigs/2,
+            avg_pats_per_subsig,
+            //avg_subsig_per_sig,
+        };
+        let init_sed_cap_igc= SedCapacity::new(
+            max_word, read_global_config().range2_bit, subsigs,
+            avg_pats_per_subsig,
+            avg_active_pats_per_subsig,
+            basis_pats_in_trace_igc,
+            perc_pats_expansion_rate_igc,
+            sigs,
+            perc_comp_subsigs,
+            basis_unique_states,
+            basis_acc_states_igc,
+        );
+
+		let num_jobs:usize = 8;
+		//let num_jobs:usize = 16;
+
+		let data_files = (0..num_jobs).map(|i|
+			format!("{}/sample_4M_{}.dat",set1,i)
+		).collect::<Vec<String>>();
+
+		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+    		0, 
+			&format!("{}/main.dat",set1), //src sig
+			data_files,
+			"data/debug/full_par_set/reports/report2.dat", //report
+			b_write_cache,
+			"full_data", //cache name
+			&format!("{}/main_dfa.dat", set1), //signs that need dfa
+			&format!("{}/needs_ised.dat", set1), //signs that need ised 
+			&format!("{}/needs_ised_igc.dat",set1), //sigs that need ised igc
+			max_word, //this is the chunk len
+			&init_cp_cap,
+			&init_sed_cap,
+			&init_dfa_cap,
+			&init_cp_cap_igc,
+			&init_sed_cap_igc,
+			&vec_decrease_level,
+			num_circs,
+			b_check_lkup
+		);
+	}
+
 
 	/// This tests the full clamav signatures against linux executables
 	/// There are 756MB Linux binary executable

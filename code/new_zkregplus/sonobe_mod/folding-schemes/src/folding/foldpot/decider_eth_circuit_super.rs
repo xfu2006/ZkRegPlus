@@ -735,10 +735,8 @@ where
     	//1. generate Vector the R1CS var (one for each circuit)
     	let log_level = LOG3;
     	let mut t1 = GTimer::new();
-    	let mut c1 = cs.num_constraints();
-
 		let mut c1 = cs.num_constraints();
-		let mut c0 = cs.num_constraints();
+		let c0 = cs.num_constraints();
 		let _pc_i_val = field_to_usize(&self.pc_i); //for fold
 		let _pc_i1_val = field_to_usize(&self.pc_i1); //for compute next (j)
 		let pc_i_var = FpVar::new_witness(cs.clone(),  || Ok(self.pc_i))?;

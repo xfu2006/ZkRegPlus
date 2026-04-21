@@ -27973,9 +27973,21 @@ Goal 3. dump the r1cs_var
 Monday 04/20/2026
 Goal 1. use claud to analyze.
 	[a] re-check the code blocks commented out
-	[b] 
+	[b] 36% session and %2 weekly (coz it's mainly code generation)
 
 Goal 2. separate paper folder
--- TODO -- remove DEBUG USE 654311
-			
-		
+Goal 3. deploy to server
+	[a] 10:52am - 3:36pm (4:45 hr)
+		wasted about 2 hrs in computing
+		try later night.
+		5:09pm-9:50pm - 4:45 hr
+		==> 9.5 hr
+	[b] test full_data1()
+
+Tuesday 04/21/2026
+Goal 1. create full_par create 8 jobs and 16 jobs. and reuse small
+	folder we just need to see which job is better.
+	[a] create data 8 jobs of 5MB file or 16 jobs of 5MB files
+		but we do need the full data.
+	[b] create the running folder with light testing to true
+	[c] run it on server.
