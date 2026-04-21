@@ -2147,7 +2147,7 @@ where
 	// circuit-constant data stable across snark-cache runs.
 	// See decider_eth_circuit_super.rs lines 980-983, 1353-1356.
 	{
-		use crate::folding::foldpot::utils::{hash_r1cs,
+		use crate::folding::foldpot::utils::{B_DEBUG3,
 			read_pedersen_params, write_pedersen_params};
 		let mut gt_sc = GTimer::new();
 		let main_sc_meta = cache_base.join("g16_main.sidecar.meta");
@@ -2156,17 +2156,31 @@ where
 		let cp_sc_cf = cache_base.join("g16_cp.sidecar.cf");
 		let cp_sc_cp = cache_base.join("g16_cp.sidecar.cp");
 
-		let d1_r1cs_hashes: Vec<[u8;32]> = driver1.nova_param.1.vec_vp
-			.iter().map(|vp| hash_r1cs(&*vp.r1cs)).collect();
-		let d1_cf_r1cs_hash = hash_r1cs(&*driver1.nova_param.1
-			.vec_vp[0].cf_r1cs);
-		let d2_r1cs_hashes: Vec<[u8;32]> = driver2.nova_param.1.vec_vp
-			.iter().map(|vp| hash_r1cs(&*vp.r1cs)).collect();
-		let d2_cf_r1cs_hash = hash_r1cs(&*driver2.nova_param.1
-			.vec_vp[0].cf_r1cs);
-		log_perf(0, LOG2, &format!(
-			"PERF 1004: sidecar hash_r1cs done. d1 circs: {}, d2 circs: {}",
-			d1_r1cs_hashes.len(), d2_r1cs_hashes.len()), &mut gt_sc);
+		// R1CS drift-check hashes are only computed under B_DEBUG3.
+		let (d1_r1cs_hashes, d1_cf_r1cs_hash,
+			d2_r1cs_hashes, d2_cf_r1cs_hash):
+			(Option<Vec<[u8;32]>>, Option<[u8;32]>,
+			 Option<Vec<[u8;32]>>, Option<[u8;32]>) = if B_DEBUG3 {
+			use crate::folding::foldpot::utils::hash_r1cs;
+			let d1_r1cs_hashes: Vec<[u8;32]> = driver1.nova_param.1
+				.vec_vp.iter().map(|vp| hash_r1cs(&*vp.r1cs))
+				.collect();
+			let d1_cf_r1cs_hash = hash_r1cs(&*driver1.nova_param.1
+				.vec_vp[0].cf_r1cs);
+			let d2_r1cs_hashes: Vec<[u8;32]> = driver2.nova_param.1
+				.vec_vp.iter().map(|vp| hash_r1cs(&*vp.r1cs))
+				.collect();
+			let d2_cf_r1cs_hash = hash_r1cs(&*driver2.nova_param.1
+				.vec_vp[0].cf_r1cs);
+			log_perf(0, LOG2, &format!(
+				"PERF 1004: sidecar hash_r1cs done. d1 circs: {}, d2 circs: {}",
+				d1_r1cs_hashes.len(), d2_r1cs_hashes.len()),
+				&mut gt_sc);
+			(Some(d1_r1cs_hashes), Some(d1_cf_r1cs_hash),
+			 Some(d2_r1cs_hashes), Some(d2_cf_r1cs_hash))
+		} else {
+			(None, None, None, None)
+		};
 
 		if read_global_config().b_write_snark_cache {
 			write_pedersen_params::<C2>(&main_sc_cf,
@@ -2175,31 +2189,42 @@ where
 				&*driver2.nova_param.0.vec_pp[0].cf_cs_pp);
 			write_pedersen_params::<C2>(&cp_sc_cp,
 				&*driver2.nova_param.0.vec_pp[0].cp_cs_pp);
-			write_sidecar_meta(&main_sc_meta,
-				&d1_r1cs_hashes, d1_cf_r1cs_hash);
-			write_sidecar_meta(&cp_sc_meta,
-				&d2_r1cs_hashes, d2_cf_r1cs_hash);
 			log_perf(0, LOG2, &format!(
-				"PERF 1004: sidecar WRITE done. main={:?}, cp={:?}",
-				main_sc_meta, cp_sc_meta), &mut gt_sc);
+				"PERF 1004: sidecar WRITE pedersen done"),
+				&mut gt_sc);
+			if B_DEBUG3 {
+				write_sidecar_meta(&main_sc_meta,
+					d1_r1cs_hashes.as_ref().unwrap(),
+					d1_cf_r1cs_hash.unwrap());
+				write_sidecar_meta(&cp_sc_meta,
+					d2_r1cs_hashes.as_ref().unwrap(),
+					d2_cf_r1cs_hash.unwrap());
+				log_perf(0, LOG2, &format!(
+					"PERF 1004: sidecar WRITE meta done. main={:?}, cp={:?}",
+					main_sc_meta, cp_sc_meta), &mut gt_sc);
+			}
 		}
 
 		if b_read_snark_cache {
-			let (m_r1cs_hashes, m_cf_hash) = read_sidecar_meta(
-				&main_sc_meta);
-			assert_eq!(m_r1cs_hashes, d1_r1cs_hashes,
-				"MainDeciderCircuit r1cs hashes mismatch (R1CS drifted across runs)");
-			assert_eq!(m_cf_hash, d1_cf_r1cs_hash,
-				"MainDeciderCircuit cf_r1cs hash mismatch");
-			let (c_r1cs_hashes, c_cf_hash) = read_sidecar_meta(
-				&cp_sc_meta);
-			assert_eq!(c_r1cs_hashes, d2_r1cs_hashes,
-				"CyclePairCircuit r1cs hashes mismatch");
-			assert_eq!(c_cf_hash, d2_cf_r1cs_hash,
-				"CyclePairCircuit cf_r1cs hash mismatch");
-			log_perf(0, LOG2, &format!(
-				"PERF 1004: sidecar READ r1cs-hash verify passed"),
-				&mut gt_sc);
+			if B_DEBUG3 {
+				let (m_r1cs_hashes, m_cf_hash) = read_sidecar_meta(
+					&main_sc_meta);
+				assert_eq!(&m_r1cs_hashes,
+					d1_r1cs_hashes.as_ref().unwrap(),
+					"MainDeciderCircuit r1cs hashes mismatch (R1CS drifted across runs)");
+				assert_eq!(m_cf_hash, d1_cf_r1cs_hash.unwrap(),
+					"MainDeciderCircuit cf_r1cs hash mismatch");
+				let (c_r1cs_hashes, c_cf_hash) = read_sidecar_meta(
+					&cp_sc_meta);
+				assert_eq!(&c_r1cs_hashes,
+					d2_r1cs_hashes.as_ref().unwrap(),
+					"CyclePairCircuit r1cs hashes mismatch");
+				assert_eq!(c_cf_hash, d2_cf_r1cs_hash.unwrap(),
+					"CyclePairCircuit cf_r1cs hash mismatch");
+				log_perf(0, LOG2, &format!(
+					"PERF 1004: sidecar READ r1cs-hash verify passed"),
+					&mut gt_sc);
+			}
 
 			let d1_cf: PedersenParams<C2> = read_pedersen_params(
 				&main_sc_cf);
