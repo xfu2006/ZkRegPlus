@@ -1750,6 +1750,7 @@ pub mod tests_zkp_driver{
 		//full_data2::<Fr>(b_check_lkup); //full data high acc state 
 		//full_data3::<Fr>(b_check_lkup); //full data large file
 		//full_data4::<Fr>(b_check_lkup); //full data large file
+		//full_par::<Fr>(b_check_lkup); //full data large file
 		//full_clamav::<Fr>(b_check_lkup, _b_light_test); //full data large file
 	}
 }

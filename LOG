@@ -27991,3 +27991,7 @@ Goal 1. create full_par create 8 jobs and 16 jobs. and reuse small
 		but we do need the full data.
 	[b] create the running folder with light testing to true
 	[c] run it on server.
+
+Goal 2. data
+	[a] server started
+		1:30pm- 
