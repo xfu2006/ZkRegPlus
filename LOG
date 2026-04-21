@@ -27993,8 +27993,12 @@ Goal 1. create full_par create 8 jobs and 16 jobs. and reuse small
 	[c] run it on server.
 
 Goal 2. improve the r1cw check make it optional under DEBUG3
+Goal 3. try to improve parallelism by replicating the circuits.
+	[a] main idea: replication of circuits.
 
-Goal 2. data
+Goal 4. data
 	[a] server started
-		1:30pm- 
+		1:30pm-4:30pm 3 hrs 
+		cpu-usage is not high always below 30%
+		constantly between 10 to 40%.
 

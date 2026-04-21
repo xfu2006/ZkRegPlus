@@ -1530,6 +1530,9 @@ pub mod tests_zkp_driver{
 		get_global_config().min_subsigs = 145;
 		get_global_config().b_read_cache = true;
 		get_global_config().b_light_test = true;
+		get_global_config().n_par_snark = 2;
+		get_global_config().n_par_snark_cp = 2;
+		get_global_config().n_par_batch_claim = 8;
 
 		let b_write_cache = !read_global_config().b_read_cache;
         let set1 = "data/debug/full_par_set/config/"; //for dfa

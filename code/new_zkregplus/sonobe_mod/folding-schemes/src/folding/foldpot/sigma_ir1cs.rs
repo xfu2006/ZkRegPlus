@@ -371,9 +371,30 @@ pub trait SigmaIR1CS<const H: bool, F: PrimeField, LK: LookupTableTwoCol<F>, GM:
 	fn est_cost(&self)->usize;
 }
 
+/// Helper supertrait that lets us deep-clone a `dyn SigmaGadget`
+/// through a trait object. The blanket impl below fires for every
+/// concrete gadget that is `Clone + 'static`, so adding this
+/// supertrait does not force new code in each gadget impl.
+/// Returns `Arc<Mutex<...>>` directly so callers get an independent
+/// lock on the cloned gadget.
+pub trait SigmaGadgetCloneBox<F:PrimeField>: Send + Sync {
+	fn clone_arc_sigma_gadget(&self)
+		-> Arc<Mutex<dyn SigmaGadget<F> + Send + Sync>>;
+}
+
+impl<F:PrimeField, T> SigmaGadgetCloneBox<F> for T
+where T: 'static + SigmaGadget<F> + Clone,
+{
+	fn clone_arc_sigma_gadget(&self)
+		-> Arc<Mutex<dyn SigmaGadget<F> + Send + Sync>> {
+		Arc::new(Mutex::new(self.clone()))
+	}
+}
+
 /// Components of SigmaIR1CS (their 3-messages are integrated
 /// to cut the recursion overhead)
-pub trait SigmaGadget<F:PrimeField>: Debug + Send + Sync{
+pub trait SigmaGadget<F:PrimeField>: Debug + Send + Sync
+	+ SigmaGadgetCloneBox<F> {
 	/// return a name
 	fn get_name(&self)->&str;
 
@@ -521,6 +542,23 @@ impl Capacity for DummyCapacity{
 
 
 /// A trait for modeling the join relation that maps 
+/// Optional deep-clone trait for a GadgetMapper. Concrete mappers
+/// that want per-job replication with independent locks (e.g.
+/// `CompositeGadgetMapper`) implement this. Mappers that don't
+/// (e.g. test-only `SumMapper`) simply omit it; callers that
+/// rely on deep cloning must add this bound.
+pub trait GadgetMapperDeepClone {
+	fn clone_deep_mapper(&self) -> Self where Self: Sized;
+}
+
+/// Trait to let callers deep-clone a circuit through a generic
+/// type parameter. Implemented on `SigmaIR1CS_Inst` when its `GM`
+/// supports deep cloning via `GadgetMapperDeepClone` (see the
+/// impl block just after `SigmaIR1CS_Inst::clone_deep`).
+pub trait CloneDeep {
+	fn clone_deep_self(&self) -> Self where Self: Sized;
+}
+
 /// a SigmaIR1CS_Inst object to its components, and map the I/O
 /// It is mainly responsible for defining the logic and
 /// SigmaIR1CS_Inst just executes gadgets one by one (without
@@ -2295,6 +2333,56 @@ where 	C: CurveGroup<ScalarField=F>,
 			.finish()
 	}
 
+}
+
+impl <F,C,CS,LK, GM, const H: bool> SigmaIR1CS_Inst<F,C,CS,LK, GM, H>
+where 	C: CurveGroup<ScalarField=F>,
+		CS: CommitmentScheme<C, H>,
+		F: PrimeField + Absorb + ColEle,
+		LK: LookupTableTwoCol<F>,
+		GM: GadgetMapper<F,LK> + std::clone::Clone + Debug + Send + Sync
+			+ GadgetMapperDeepClone,
+{
+	/// Build an independent copy of this circuit instance for a
+	/// single job: the `gadget_mapper` and `gadgets` are rebuilt
+	/// with fresh `Arc<Mutex<>>` wrappers so no locking is shared
+	/// with the original. Heavy immutable data inside the mapper
+	/// (ClamavDB, etc.) remains shared via `Arc::clone`.
+	pub fn clone_deep(&self) -> Self {
+		let new_mapper_val: GM = self.gadget_mapper.lock().unwrap()
+			.clone_deep_mapper();
+		let new_mapper_arc = Arc::new(Mutex::new(new_mapper_val));
+		let new_gadgets = lock_unwrap!(new_mapper_arc).get_gadgets();
+		Self{
+			name: self.name.clone(),
+			poseidon_config: self.poseidon_config.clone(),
+			gadget_mapper: new_mapper_arc,
+			witness: self.witness.clone(),
+			witness_config: self.witness_config.clone(),
+			gadgets: new_gadgets,
+			stmt_config: self.stmt_config.clone(),
+			params: self.params.clone(),
+			b_full_mode: self.b_full_mode,
+			fq_bits: self.fq_bits,
+			dummy_stmt: self.dummy_stmt.clone(),
+			_lk: PhantomData,
+			b_cyclepair: self.b_cyclepair,
+			b_check_lkup: self.b_check_lkup,
+			job_id: self.job_id,
+		}
+	}
+}
+
+impl <F,C,CS,LK, GM, const H: bool> CloneDeep
+	for SigmaIR1CS_Inst<F,C,CS,LK, GM, H>
+where 	C: CurveGroup<ScalarField=F>,
+		CS: CommitmentScheme<C, H>,
+		F: PrimeField + Absorb + ColEle,
+		LK: LookupTableTwoCol<F>,
+		GM: GadgetMapper<F,LK> + std::clone::Clone + Debug + Send + Sync
+			+ GadgetMapperDeepClone,
+{
+	fn clone_deep_self(&self) -> Self { self.clone_deep() }
 }
 
 impl <F,C,CS,LK, GM, const H: bool> Clone for SigmaIR1CS_Inst<F,C,CS,LK, GM, H>

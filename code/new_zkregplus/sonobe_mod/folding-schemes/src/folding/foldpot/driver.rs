@@ -50,7 +50,7 @@ use crate::{
 			circuits_super::{field_to_usize},
 			mod_super::{PreprocessorParamFoldPotSuper,FoldPotSuper,
 				compute_step_hc_cmF_adv},
-			sigma_ir1cs::{SigmaIR1CS,LookupTableTwoCol,SigmaIR1CS_Inst,ZiPartTwoInst,StatementExtraInfo,GadgetMapper,Capacity,NdAdvice,WordInfo},
+			sigma_ir1cs::{SigmaIR1CS,LookupTableTwoCol,SigmaIR1CS_Inst,ZiPartTwoInst,StatementExtraInfo,GadgetMapper,Capacity,NdAdvice,WordInfo,CloneDeep},
 			sigma_cyclepair::{create_sigma_fold_pair,FoldPairMapper},
 			//decider_eth_super::{DeciderFoldPotSuper},
 			decider_eth_circuit_super::{CyclePairCircuit, CircPubInput, MainDeciderCircuit},
@@ -1458,7 +1458,13 @@ where
 		vec_word_info: &Vec<WordInfo>,
 		vec_word_fnames: &Vec<String>,
 		job_id: usize,
-		semaphore_batch_claim: Semaphore
+		semaphore_batch_claim: Semaphore,
+		// Per-job circuits override. Callers in the single-job code
+		// paths pass `&self.layered_circs, &self.circuits`. The
+		// parallel `foldpot_main` closure passes per-job deep-cloned
+		// vectors so each job has its own mapper locks.
+		p_layered: &Vec<Vec<FC>>,
+		p_circuits: &Vec<FC>,
 	) -> Result<(
 		FoldPotSuper<E,P,C2G2,C1,GC1,C2,GC2,FC,CS1,CS2,CS1E, LK, GM, H>,
 		usize,
@@ -1536,8 +1542,8 @@ where
 		//------------------------------------------
 		let mut word_id = 1;
 
-		let n_circ = self.circuits.len();
-		let _vec_mapper= self.circuits.iter().map(|c| c.get_mapper()).
+		let n_circ = p_circuits.len();
+		let _vec_mapper= p_circuits.iter().map(|c| c.get_mapper()).
 			collect::<Vec<Arc<Mutex<GM>>>>();
 		let lkup_len= self.lkup.get_size();
 		let mut total_lkup_covered = 0;
@@ -1554,7 +1560,7 @@ where
 			let mut subseg_id = 1;
 			let total_word_len = word.len();
 			let mut acc_wd_len = 0;
-			let _mapper = self.circuits[0].get_mapper();
+			let _mapper = p_circuits[0].get_mapper();
 			let word_info = &vec_word_info[word_id-1];
 			let (steps, vec_len, vec_pci, _vec_cap_req, _advice) = self.plan_nd_advice(job_id, log_level+2, false, &word, word_info, word_fname)?;
 			log_perf(job_id, log_level+2, &format!("{} - Pass 1: START decide circ alloc for word_id: {}, fname: {}, word_len: {}. ", phase_name, word_id, word_fname, format_bytes(total_word_len*31)), &mut gt2);
@@ -1563,7 +1569,7 @@ where
 				let pc_i = if i==0 {last_pci1} else {vec_pci[i-1]};
 				let pc_i1 = vec_pci[i]; //this is actually pc_i1 for this circ
 				last_pci1 = pc_i1;
-				let circ = &self.circuits[pc_i1];
+				let circ = &p_circuits[pc_i1];
 				let _max_len = circ.max_word_len();
 				let act_len = vec_len[i];
 				acc_wd_len += act_len;
@@ -1637,7 +1643,7 @@ where
 			word_id +=1;
 		}
 		let m4 = get_mem_usage_mb();
-		let b_check_lkup = self.layered_circs[0][0].is_check_lkup(); //assume
+		let b_check_lkup = p_layered[0][0].is_check_lkup(); //assume
 			//all circ have the same
 		if b_check_lkup{
 			assert!(total_lkup_covered >= lkup_len, "total: {}, lkup_len: {}", total_lkup_covered, lkup_len);
@@ -1677,9 +1683,9 @@ where
 			let word_fname = &vec_word_fnames[word_id-1];
 			log_perf(job_id, log_level+2, &format!("{} - Pass 2. START generate cmF for word_id: {}, fname: {}, word_len: {}. ", phase_name, word_id, word_fname, format_bytes(word.len()*31)), &mut gtw2); 
 			while remaining.len()>0{
-				//3.1 compute the problem statement instance 
+				//3.1 compute the problem statement instance
 				let j = field_to_usize(&vea[idx].pc_i1);
-				let circ = &self.circuits[j];
+				let circ = &p_circuits[j];
 				let share_size = circ.get_stmt_config().lookup_share_size;
 				let ei = &vea[idx];
 				let act_len = field_to_usize(&vea[idx].act_word_subseg_size);
@@ -1797,9 +1803,9 @@ where
             FoldPotSuper::<E,P, C2G2, C1, GC1, C2, GC2, FC,
 			CS1, CS2, CS1E, LK, GM, H>::init_adv(
                 &self.nova_param,
-				self.circuits.clone(),
+				p_circuits.clone(),
                 z_0.clone(),
-				self.circuits.len(), 
+				p_circuits.len(),
 				pc_0_val,
 				self.b_full_mode,
 				ch,
@@ -1837,7 +1843,7 @@ where
 				//6.1 compute the problem statement instance again
 				// with the correct cmF
 				let j = field_to_usize(&vea[idx].pc_i1);
-				let circ = &self.circuits[j];
+				let circ = &p_circuits[j];
 				let share_size = circ.get_stmt_config().lookup_share_size;
 				let ei = &vea[idx];
 				let act_len = field_to_usize(&vea[idx].act_word_subseg_size);
@@ -1965,7 +1971,7 @@ where
 	<E as Pairing>::ScalarField: ColEle,
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
     GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
-    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM,C=C1> + Clone + Send + Sync,
+    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM,C=C1> + Clone + Send + Sync + CloneDeep,
     //FC: SigmaIR1CS_Inst<C1::ScalarField, C1, CS1, LK, false>,
 	LK: LookupTableTwoCol<C1::ScalarField> + 'static + Send + Sync,
     CS1: CommitmentScheme<C1, H, ProverParams = PedersenParams<C1>> +
@@ -2297,19 +2303,34 @@ where
 	  		let mut iter = vec_words.iter();
 	  		let mut iter_2 = vec_words.iter();
 	  		let mut iter_3 = vec_words.iter();
-	  		let (nova1, _num_steps, batch_ind_prfs, batch_claims) 
+	  		// Deep-clone this driver's circuits so that the mapper
+	  		// `Arc<Mutex<>>` locks touched inside `pass_all`'s
+	  		// per-subseg loop are independent across the 8 jobs
+	  		// running in parallel here. Heavy immutable data
+	  		// (ClamavDB, etc.) remains shared via `Arc::clone`
+	  		// inside each component's manual clone impl.
+	  		let per_job_layered: Vec<Vec<FC>> = driver1.layered_circs
+	  			.iter().map(|layer|
+	  				layer.iter().map(|c| c.clone_deep_self()).collect()
+	  			).collect();
+	  		let per_job_circuits: Vec<FC> =
+	  			per_job_layered.iter().flat_map(|l| l.iter().cloned())
+	  			.collect();
+	  		let (nova1, _num_steps, batch_ind_prfs, batch_claims)
 	  		  = driver1.pass_all(
 	  			"Phase 1",
 	  			&mut iter,
-	  			&mut iter_2, 
-	  			&mut iter_3, 
-	  			vec_words.len(), 
-	  			idx_individual_prf, 
-	  			&mut rng, 
+	  			&mut iter_2,
+	  			&mut iter_3,
+	  			vec_words.len(),
+	  			idx_individual_prf,
+	  			&mut rng,
 	  			&vec_words_info,
 	  			&vec_word_fnames,
 				job_id,
-				semaphore_batch_claim.clone()
+				semaphore_batch_claim.clone(),
+				&per_job_layered,
+				&per_job_circuits,
 	  		)?;
 	  		let Some((batch_prf, ind_prf)) = batch_ind_prfs.map(|x| (x.0, x.1))
 	  			else {return Err(Error::Other("batch proof is none!".to_string()));};
@@ -2422,15 +2443,17 @@ where
 	let (nova2, _num_steps, _batch_prfs, _bt_claims) = driver2.pass_all(
 		"Phase 2",
 		&mut iter,
-		&mut iter_2, 
-		&mut iter_3, 
-		vec_words.len(), 
-		idx_individual_prf, 
-		&mut rng, 
+		&mut iter_2,
+		&mut iter_3,
+		vec_words.len(),
+		idx_individual_prf,
+		&mut rng,
 		&vec_word_info,
-		&vec_word_fnames2, 
+		&vec_word_fnames2,
 		job_id,
-		semaphore_batch_claim.clone()
+		semaphore_batch_claim.clone(),
+		&driver2.layered_circs,
+		&driver2.circuits
 	)?;
 
 	let qa_nizk_pkey = driver2.nova_param.0.qa_pp.as_ref().expect("qa_pp null!"); 
@@ -2761,6 +2784,15 @@ pub mod tests_driver{
 			let b_odd_w = w0_val%2==1;
 			b_odd_w == self.b_odd
 		}
+	}
+
+	// Test-only mapper: no internal `Arc<Mutex<>>` state to split
+	// across jobs, so shallow clone via derived Clone is fine.
+	impl <F:PrimeField, LK:LookupTableTwoCol<F>>
+		crate::folding::foldpot::sigma_ir1cs::GadgetMapperDeepClone
+		for SumMapper<F, LK>
+	{
+		fn clone_deep_mapper(&self) -> Self { self.clone() }
 	}
 
 

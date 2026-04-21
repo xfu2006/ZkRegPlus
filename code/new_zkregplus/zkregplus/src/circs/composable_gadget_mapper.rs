@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 /* Created 02/12/2025
 
 Composite gadget mapper: that can be consisting of
@@ -17,7 +17,7 @@ use std::any::{Any};
 use folding_schemes::{
 	Error,
 	folding::foldpot::{
-		sigma_ir1cs::{LookupTableTwoCol,GadgetMapper,SigmaGadget,StatementConfig,StatementInst,StatementExtraInfo,NdAdvice,Capacity,WordInfo} 	}
+		sigma_ir1cs::{LookupTableTwoCol,GadgetMapper,GadgetMapperDeepClone,SigmaGadget,StatementConfig,StatementInst,StatementExtraInfo,NdAdvice,Capacity,WordInfo} 	}
 };
 use ark_ff::{PrimeField};
 use std::{
@@ -46,8 +46,21 @@ use crate::circs::{
 /// where the subtable_id size is the sum of inp/oup/data
 /// If there are needs to correlate its data with others, it's
 /// done through extra join constraints.
+/// Helper supertrait so `dyn ComponentMapper` can produce an
+/// independent (deep) copy through the trait object. Each concrete
+/// component mapper must implement this manually so it can rebuild
+/// fresh `Arc<Mutex<>>` wrappers around its internal gadgets (the
+/// default `#[derive(Clone)]` only clones Arcs shallowly, which
+/// would leave all replicas sharing the same gadget mutexes).
+pub trait ComponentMapperCloneBox<F:PrimeField + ColEle,
+	LK: LookupTableTwoCol<F>>: Send + Sync {
+	fn clone_arc_component_mapper(&self)
+		-> Arc<Mutex<dyn ComponentMapper<F,LK> + Send + Sync>>;
+}
+
 #[allow(non_camel_case_types)]
-pub trait ComponentMapper<F:PrimeField + ColEle, LK: LookupTableTwoCol<F>>: Debug + Send + Sync{
+pub trait ComponentMapper<F:PrimeField + ColEle, LK: LookupTableTwoCol<F>>:
+	Debug + Send + Sync + ComponentMapperCloneBox<F,LK> {
 	/// get its own name
 	fn get_name(&self)->String;
 
@@ -670,6 +683,27 @@ pub struct CompositeGadgetMapper<F:PrimeField + ColEle, LK:LookupTableTwoCol<F>>
 		log_perf(self.job_id, LOG1, "DEBUG USE 9999: CompositeGadgetMapper: self_check", &mut timer);
 	}
 
+	/// Deep-clone this mapper: rebuild fresh `Arc<Mutex<>>` around
+	/// each component so a per-job clone has its own locks and
+	/// does not share contention with other jobs. The heavy data
+	/// on each component (e.g. `Arc<ClamavDB>`) remains shared via
+	/// `Arc::clone` inside each component's manual clone impl.
+	pub fn clone_deep(&self) -> Self
+	where F: 'static, LK: 'static + Send + Sync,
+	{
+		let new_comps: Vec<Arc<Mutex<
+			dyn ComponentMapper<F,LK> + Send + Sync>>> =
+			self.vec_components.iter().map(|c|
+				c.lock().unwrap().clone_arc_component_mapper()
+			).collect();
+		Self{
+			_f: PhantomData,
+			_lk: PhantomData,
+			vec_components: new_comps,
+			name: self.name.clone(),
+			job_id: self.job_id,
+		}
+	}
 }
 
 impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for CompositeGadgetMapper<F,LK>{
@@ -1067,4 +1101,11 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 			Ok(Arc::new(CompositeAdvice{vec_adv}))
 		}
 	}
+}
+
+impl <F:PrimeField + ColEle + 'static,
+	LK:LookupTableTwoCol<F> + 'static + Send + Sync>
+	GadgetMapperDeepClone for CompositeGadgetMapper<F,LK>
+{
+	fn clone_deep_mapper(&self) -> Self { self.clone_deep() }
 }

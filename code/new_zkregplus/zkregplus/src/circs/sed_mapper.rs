@@ -62,7 +62,8 @@ use folding_schemes::{
 //use crate::{composable_gadget_mapper::{ComponentGadgetMapper}};
 use ark_ff::{PrimeField};
 use crate::{
-	circs::{composable_gadget_mapper::ComponentMapper},
+	circs::{composable_gadget_mapper::{ComponentMapper,
+			ComponentMapperCloneBox}},
 	gadgets::word_extract_adv::{WordExtractAdvCapacity, WordExtractAdvGadget, WordExtractAdvAdvice },
 	gadgets::word_extract::{LEGS},
 	gadgets::fsm_adv::{FsmAdvGadget,FsmAdvAdvice,FsmAdvCapacity},
@@ -721,7 +722,7 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 	
 }
 
-impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F> + Send + Sync> ComponentMapper<F,LK> for SedComponentMapper<F,LK>{
+impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 'static> ComponentMapper<F,LK> for SedComponentMapper<F,LK>{
 	fn set_container_config(&mut self, r_advice: &Arc<dyn NdAdvice + Send + Sync>){ 
 		let advice = r_advice.as_any().downcast_ref::<SedAdvice<F>>()
 			.expect("downcast err!");
@@ -1108,5 +1109,27 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F> + Send + Sync> ComponentMa
 
 		assert!(res.len()==8);
 		Ok( res )
+	}
+}
+
+impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F> + Send + Sync + 'static>
+	ComponentMapperCloneBox<F,LK> for SedComponentMapper<F,LK>
+where F: 'static,
+{
+	fn clone_arc_component_mapper(&self)
+		-> Arc<Mutex<dyn ComponentMapper<F,LK> + Send + Sync>> {
+		let new_gadgets: Vec<Arc<Mutex<
+			dyn SigmaGadget<F> + Send + Sync>>> =
+			self.gadgets.iter().map(|g|
+				g.lock().unwrap().clone_arc_sigma_gadget()
+			).collect();
+		Arc::new(Mutex::new(SedComponentMapper::<F,LK>{
+			_f: PhantomData,
+			_lk: PhantomData,
+			capacity: Clone::clone(&self.capacity),
+			gadgets: new_gadgets,
+			clamdb: self.clamdb.clone(),
+			job_id: self.job_id,
+		}))
 	}
 }

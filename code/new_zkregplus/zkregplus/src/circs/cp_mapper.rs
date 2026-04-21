@@ -56,7 +56,8 @@ use folding_schemes::{
 //use crate::{composable_gadget_mapper::{ComponentGadgetMapper}};
 use ark_ff::{PrimeField};
 use crate::{
-	circs::{composable_gadget_mapper::ComponentMapper,
+	circs::{composable_gadget_mapper::{ComponentMapper,
+			ComponentMapperCloneBox},
 		  },
 	gadgets::word_extract::{WordExtractGadget,LEGS,WordExtractAdvice},
 	gadgets::fsm::{FsmGadget,FsmAdvice},
@@ -389,7 +390,7 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CpComponentMapper<F,LK>{
 
 }
 
-impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F> + Send + Sync> ComponentMapper<F,LK> for CpComponentMapper<F,LK>{
+impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 'static> ComponentMapper<F,LK> for CpComponentMapper<F,LK>{
 	fn set_container_config(&mut self, _r_advice: &Arc<dyn NdAdvice + Send + Sync>){ 
 		// no need to handle for legacy code.
 	}
@@ -903,7 +904,30 @@ impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F> + Send + Sync> ComponentMa
 			}
 		}
 
-		Ok(	vec![inp, oup, data, subtbl_inp, subtbl_oup, subtbl_data, 
+		Ok(	vec![inp, oup, data, subtbl_inp, subtbl_oup, subtbl_data,
 			failed_sigs, discharged_sigs] )
+	}
+}
+
+impl <F:PrimeField + ColEle, LK: LookupTableTwoCol<F> + Send + Sync + 'static>
+	ComponentMapperCloneBox<F,LK> for CpComponentMapper<F,LK>
+where F: 'static,
+{
+	fn clone_arc_component_mapper(&self)
+		-> Arc<Mutex<dyn ComponentMapper<F,LK> + Send + Sync>> {
+		let new_gadgets: Vec<Arc<Mutex<
+			dyn SigmaGadget<F> + Send + Sync>>> =
+			self.gadgets.iter().map(|g|
+				g.lock().unwrap().clone_arc_sigma_gadget()
+			).collect();
+		Arc::new(Mutex::new(CpComponentMapper::<F,LK>{
+			_f: PhantomData,
+			_lk: PhantomData,
+			capacity: Clone::clone(&self.capacity),
+			b_igc: self.b_igc,
+			gadgets: new_gadgets,
+			clamdb: self.clamdb.clone(),
+			job_id: self.job_id,
+		}))
 	}
 }
