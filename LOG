@@ -27999,6 +27999,14 @@ Goal 3. try to improve parallelism by replicating the circuits.
 Goal 4. data
 	[a] server started
 		1:30pm-4:30pm 3 hrs 
-		cpu-usage is not high always below 30%
-		constantly between 10 to 40%.
+		4:45pm -  
+		Restarted 6:15pm just ssh stopped and process terminated not sure why
+		-> preempted again. Should try afer 8pm night time.
+	[b] obsrevation
+		8 job - when before prove step (gen batch claim) can reach about
+			50% to 60%. 585GB
+			-> but get to prove stpe, it's not saturated: only <20%
+
+Wed 04/22/2026
+Goal 1. should add a feature to early stop before generating snark keys.
 
