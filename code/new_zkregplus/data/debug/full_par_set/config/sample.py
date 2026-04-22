@@ -66,6 +66,6 @@ def sample(size_mb: int, id):
 
 if __name__ == "__main__":
 	# Example usage: create a 1MB sample
-	size = 4;
+	size = 1;
 	for i in range(16):
 		sample(size, i);

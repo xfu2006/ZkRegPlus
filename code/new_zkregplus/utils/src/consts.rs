@@ -48,6 +48,7 @@ pub struct GlobalConfig {
     pub min_perc_comp_subsigs: usize,
     pub min_basis_acc_states: usize,
     pub b_light_test: bool,
+    pub b_folding_only: bool,
     pub b_read_cache: bool,
     pub b_write_snark_cache: bool, //write the generated snark key to cache
     pub b_read_snark_cache: bool,
@@ -75,6 +76,7 @@ impl Default for GlobalConfig {
             min_perc_comp_subsigs: 10,
             min_basis_acc_states: 2,
             b_light_test: true,
+            b_folding_only: false,
             b_read_cache: false,
             b_write_snark_cache: false,
             b_read_snark_cache: false,
@@ -83,7 +85,7 @@ impl Default for GlobalConfig {
             n_par_snark_cp: 1,
             n_par_batch_claim: 1,
         }
-    }   
+    }
 }
 
 static GLOBAL_CONFIG: RwLock<GlobalConfig> = RwLock::new(GlobalConfig {
@@ -102,6 +104,7 @@ static GLOBAL_CONFIG: RwLock<GlobalConfig> = RwLock::new(GlobalConfig {
     min_perc_comp_subsigs: 10,
     min_basis_acc_states: 2,
     b_light_test: true,
+    b_folding_only: false,
     b_read_cache: false,
     b_write_snark_cache: false,
     b_read_snark_cache: false,

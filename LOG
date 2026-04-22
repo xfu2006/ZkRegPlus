@@ -28009,4 +28009,10 @@ Goal 4. data
 
 Wed 04/22/2026
 Goal 1. should add a feature to early stop before generating snark keys.
+	[a] add a small signature file to full_par test so that I can run it
+		locally.
+	[b] still bugs
+	[c] fixed.
+	[d] data;
+	4 jobs of 1M file finished in 779 seconds (folding only).
 

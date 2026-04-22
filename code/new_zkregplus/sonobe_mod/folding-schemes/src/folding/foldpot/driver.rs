@@ -2353,8 +2353,15 @@ where
 			);
 	  		let cyclepair_inputs = U_i1
 	  			.generate_cyclepair_inputs::<E>(qa_nizk_pkey, qa_nizk_vkey,
-	  				&com_all_w, &prf_qa_nizk, &poseidon_config); 
-	  
+	  				&com_all_w, &prf_qa_nizk, &poseidon_config);
+
+	  		if read_global_config().b_folding_only {
+	  			log(job_id, log_level, &format!(
+	  				"Job {}: b_folding_only set, no snark generated",
+	  				job_id));
+	  			return Ok(());
+	  		}
+
 	  		// ------------- The following is the CRITICAL SECTION -------
 			let _guard = {
 				let (lock, cvar) = &*semaphore;

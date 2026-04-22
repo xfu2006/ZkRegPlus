@@ -1522,36 +1522,41 @@ pub mod tests_zkp_driver{
 	/// Used for explorting parallel execution efficiency.
 	/// Has two modes: 8 jobs and 16 jobs (need 894GB RAM like c2d-112-highmem)
 	/// Conclusion:
+	/// For b_small = true, needs 128GB. 4 jobs fills 50% cpu.
 	#[allow(dead_code)]
 	fn full_par<F:PrimeField>(b_check_lkup: bool){
+		let b_small = true;
+		get_global_config().b_read_cache = false;
+
         get_global_config().b_read_snark_cache = false;
         get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 26;
 		get_global_config().min_subsigs = 145;
-		get_global_config().b_read_cache = true;
 		get_global_config().b_light_test = true;
 		get_global_config().n_par_snark = 2;
 		get_global_config().n_par_snark_cp = 2;
 		get_global_config().n_par_batch_claim = 8;
-
+		get_global_config().b_folding_only = true;
 		let b_write_cache = !read_global_config().b_read_cache;
+
+
         let set1 = "data/debug/full_par_set/config/"; //for dfa
-        let max_word= 512 * 4;
-        let sigs = 400;
-        let subsigs = 562; //220 for prev db
+        let max_word= if b_small {512} else {512 * 4};
+        let sigs = if b_small {50} else {400};
+        let subsigs = if b_small {50} else {562}; 
         let avg_pats_per_subsig = 8; //old value 8
         let avg_active_pats_per_subsig = 2;
         let perc_comp_subsigs = 20;
-        let basis_unique_states = 2000; //15 cpercent
+        let basis_unique_states = if b_small {500} else {2000}; //15 cpercent
 		let vec_decrease_level = vec![];
 		let num_circs = 1; 
-        let basis_acc_states = 1260; //last good value 1800
-        let basis_pats_in_trace = 1400; //last good value 3000
+        let basis_acc_states = if b_small {200} else {1260}; 
+        let basis_pats_in_trace = if b_small {220} else {1400}; 
         let basis_acc_states_igc = basis_acc_states ; //9 cpercent
         let basis_pats_in_trace_igc = basis_pats_in_trace;
             //old value 100 cur value 1/1000.
-        let dfa_sigs = 6;
-        let dfa_subsigs= 6;
+        let dfa_sigs = if b_small {1} else {6};
+        let dfa_subsigs= if b_small {1} else {6};
         let perc_pats_expansion_rate = 104; //old good value 2
         let perc_pats_expansion_rate_igc = 2;
         //let avg_subsig_per_sig = 3;
@@ -1594,23 +1599,29 @@ pub mod tests_zkp_driver{
             basis_acc_states_igc,
         );
 
-		let num_jobs:usize = 8;
+		let num_jobs:usize = 4;
 		//let num_jobs:usize = 16;
 
 		let data_files = (0..num_jobs).map(|i|
-			format!("{}/sample_4M_{}.dat",set1,i)
+			format!("{}/sample_1M_{}.dat",set1,i)
 		).collect::<Vec<String>>();
 
+		let suffix = if b_small { "_small" } else { "" };
+		let [main_file, main_dfa_file, needs_ised_file,
+			needs_ised_igc_file] =
+			["main", "main_dfa", "needs_ised", "needs_ised_igc"]
+			.map(|n| format!("{}/{}{}.dat", set1, n, suffix));
+
 		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
-    		0, 
-			&format!("{}/main.dat",set1), //src sig
+    		0,
+			&main_file,
 			data_files,
 			"data/debug/full_par_set/reports/report2.dat", //report
 			b_write_cache,
 			"full_data", //cache name
-			&format!("{}/main_dfa.dat", set1), //signs that need dfa
-			&format!("{}/needs_ised.dat", set1), //signs that need ised 
-			&format!("{}/needs_ised_igc.dat",set1), //sigs that need ised igc
+			&main_dfa_file, //signs that need dfa
+			&needs_ised_file, //signs that need ised
+			&needs_ised_igc_file, //sigs that need ised igc
 			max_word, //this is the chunk len
 			&init_cp_cap,
 			&init_sed_cap,
@@ -1743,7 +1754,7 @@ pub mod tests_zkp_driver{
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
 		let _b_light_test = true;
-		small_data::<Fr>(b_check_lkup); //small data
+		//small_data::<Fr>(b_check_lkup); //small data
 		//small_data2::<Fr>(b_check_lkup);  //10k data 
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)
@@ -1753,7 +1764,7 @@ pub mod tests_zkp_driver{
 		//full_data2::<Fr>(b_check_lkup); //full data high acc state 
 		//full_data3::<Fr>(b_check_lkup); //full data large file
 		//full_data4::<Fr>(b_check_lkup); //full data large file
-		//full_par::<Fr>(b_check_lkup); //full data large file
+		full_par::<Fr>(b_check_lkup); //full data large file
 		//full_clamav::<Fr>(b_check_lkup, _b_light_test); //full data large file
 	}
 }
