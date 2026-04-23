@@ -691,7 +691,7 @@ pub mod tests_zkp_driver{
         get_global_config().b_write_snark_cache = false;
         get_global_config().b_light_test = true;
 		get_global_config().range2_bit = 8;
-		get_global_config().b_read_cache = true;
+		get_global_config().b_read_cache = false;
 		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/small_data_set/config_dfa"; //for dfa 
 		let max_word= 1; //this is chunk_len
@@ -749,13 +749,11 @@ pub mod tests_zkp_driver{
 	}
 
 	/// small data: multiple parallel jobs.
-	/// COST: 1job: 4GB and 28 sec.
-	///       2jobs: 5GB and 28sec.
-	///       4 jobs: 11GB and 44sec (reason: folding doesn't take much time)
+	/// COST  4 jobs: 14 GB and 228 sec (reason: folding doesn't take much time)
 	#[allow(dead_code)]
 	fn small_data_par<F:PrimeField>(b_check_lkup: bool){
         get_global_config().snark_cache_dir = "small_20".to_string();
-        get_global_config().b_read_snark_cache = true;
+        get_global_config().b_read_snark_cache = false;
         get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 18;
 		get_global_config().b_read_cache = false;
@@ -792,14 +790,11 @@ pub mod tests_zkp_driver{
 		let init_dfa_cap= DfaCapacity::new(max_word, sigs, subsigs);
 
 
-		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(0, 		
+		let scan_files: Vec<String> = (1..=4).map(|i|
+			format!("{}/binexec_p{}.dat", set1, i)).collect();
+		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(0,
 			&format!("{}/sigs.dat",set1), //src sig
-			vec![
-				format!("{}/binexec_p1.dat",set1),
-				format!("{}/binexec_p2.dat",set1),
-	//			format!("{}/binexec_p3.dat",set1),
-	//			format!("{}/binexec_p4.dat",set1)
-			], //list of files to discharge
+			scan_files, //list of files to discharge
 			"data/small_data_set/reports/report.dat", //report
 			b_write_cache,
 			"small_20", //cache name
@@ -1641,11 +1636,12 @@ pub mod tests_zkp_driver{
 	/// E.g., run on m3m machine with 2TB (xx cpu)
 	/// Can finish in xxx hrs.
 	#[allow(dead_code)]
-	fn full_clamav<F:PrimeField>(b_check_lkup: bool, b_light_test: bool){
+	fn full_clamav<F:PrimeField>(b_check_lkup: bool, b_light_test: bool,
+		b_setup: bool){
 		//extra setting
         get_global_config().snark_cache_dir = "full_clamav".to_string();
-        get_global_config().b_read_snark_cache = true;
-        get_global_config().b_write_snark_cache = false;
+        get_global_config().b_write_snark_cache = b_setup;
+        get_global_config().b_read_snark_cache = !b_setup;
 		get_global_config().range2_bit = 26;
 		get_global_config().b_light_test = b_light_test;
 		get_global_config().min_subsigs = 150;
@@ -1716,19 +1712,18 @@ pub mod tests_zkp_driver{
             basis_acc_states_igc,
         );
 
+		let num_jobs = 8;
+		let scan_files: Vec<String> = if b_setup {
+			(0..num_jobs).map(|i|
+				format!("{}/sample_1M_{}.dat", set1, i)).collect()
+		} else {
+			(0..num_jobs).map(|i|
+				format!("{}/binexec_p{}.dat", set1, i)).collect()
+		};
 		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
-    		0, 
+    		0,
 			&format!("{}/main.dat",set1), //src sig
-			vec![
-				format!("{}/binexec_p0.dat",set1),
-				format!("{}/binexec_p1.dat",set1),
-				format!("{}/binexec_p2.dat",set1),
-				format!("{}/binexec_p3.dat",set1),
-				format!("{}/binexec_p4.dat",set1),
-				format!("{}/binexec_p5.dat",set1),
-				format!("{}/binexec_p6.dat",set1),
-				format!("{}/binexec_p7.dat",set1),
-			], //list of files to discharge
+			scan_files, //list of files to discharge
 			"data/debug/full_clamav/reports/report2.dat", //report
 			b_write_cache,
 			"full_data", //cache name
@@ -1754,7 +1749,8 @@ pub mod tests_zkp_driver{
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = false;
 		let _b_light_test = true;
-		//small_data::<Fr>(b_check_lkup); //small data
+		let _b_setup = false;
+		small_data::<Fr>(b_check_lkup); //small data
 		//small_data2::<Fr>(b_check_lkup);  //10k data 
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)
@@ -1764,7 +1760,7 @@ pub mod tests_zkp_driver{
 		//full_data2::<Fr>(b_check_lkup); //full data high acc state 
 		//full_data3::<Fr>(b_check_lkup); //full data large file
 		//full_data4::<Fr>(b_check_lkup); //full data large file
-		full_par::<Fr>(b_check_lkup); //full data large file
-		//full_clamav::<Fr>(b_check_lkup, _b_light_test); //full data large file
+		//full_par::<Fr>(b_check_lkup); //full data large file
+		//full_clamav::<Fr>(b_check_lkup, _b_light_test, _b_setup); //full data large file
 	}
 }

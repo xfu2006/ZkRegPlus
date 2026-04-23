@@ -28016,3 +28016,32 @@ Goal 1. should add a feature to early stop before generating snark keys.
 	[d] data;
 	4 jobs of 1M file finished in 779 seconds (folding only).
 
+Goal 2. server data
+	[a] started: 6:52pm
+		8 jobs saturated RAM at around 76% when generating cmF
+		-> when prove step it's only 30% cpu and 33% of RAM.
+		total 335GB RAM
+		-> cost of a segment (64kb) ranges between 44 to 48 seconds. (avg 45)
+		==> 8 jobs: 3109 sec (1 M)
+	[b] 16 jobs: prove_step 20 to 70% cpu.
+		-> but constly the tasks range between 60 to 70 sec
+		--> but cpu is NOT sturated 50%. why? 
+		===> 169 jobs: 4939 sec (1 M)
+	[c] 8 jobs 4M -> ALWAYS stop. 
+		===> finally 9704 sec (1.5M per job per hr)
+	[d] 8 jobs 4M -> SOMEHOW signal 9. adjust batch claim limit to 8.
+		====> 
+
+Thursday 04/23/2026
+Goal 1. add performance data
+	[a] main stages, PERF message 1005.x
+	[b] job level message PERF 1006
+	[c] now detail the folding speed.
+	[d] pass_all: PERF 1007
+	[e]    - pass1: gen advice: PERF 1008
+				--  PERF 1009 for each step
+Goal 2. determine paper submission deadline
+	[a] usenix sec'27 - late auust
+	[b] ccs'27 Jan
+Goal 3. refine the example main and refine the data set.
+

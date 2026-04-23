@@ -1,5 +1,14 @@
 import os
+import random
 import sys
+
+# in-place Fisher-Yates shuffle: randomly reorders items in `arr`
+# without adding or dropping any element.
+def shuffle_array(arr):
+	n = len(arr)
+	for i in range(n - 1, 0, -1):
+		j = random.randint(0, i)
+		arr[i], arr[j] = arr[j], arr[i]
 
 # given the rel_path, list all files and their file length in bytes
 # arrange all records in descending order.
@@ -42,6 +51,9 @@ def partition_file_list(file_list, n):
 		min_index = min(range(n), key=lambda i: partition_sizes[i])
 		partitions[min_index].append(file_item)
 		partition_sizes[min_index] += file_item[1]
+	random.seed(0)
+	for i in range(n):
+		shuffle_array(partitions[i])
 	return partitions
 
 # verify the computed partitions are ok.
