@@ -1515,9 +1515,8 @@ pub mod tests_zkp_driver{
 	}
 	
 	/// Used for explorting parallel execution efficiency.
-	/// Has two modes: 8 jobs and 16 jobs (need 894GB RAM like c2d-112-highmem)
-	/// Conclusion:
-	/// For b_small = true, needs 128GB. 4 jobs fills 50% cpu.
+	/// For b_small = true, can run with 16 GB
+	/// For b_small = false,needs 128GB. 4 jobs fills 50% cpu.
 	#[allow(dead_code)]
 	fn full_par<F:PrimeField>(b_check_lkup: bool){
 		let b_small = true;
@@ -1526,7 +1525,7 @@ pub mod tests_zkp_driver{
         get_global_config().b_read_snark_cache = false;
         get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 26;
-		get_global_config().min_subsigs = 145;
+		get_global_config().min_subsigs = 148;
 		get_global_config().b_light_test = true;
 		get_global_config().n_par_snark = 2;
 		get_global_config().n_par_snark_cp = 2;
@@ -1537,8 +1536,8 @@ pub mod tests_zkp_driver{
 
         let set1 = "data/debug/full_par_set/config/"; //for dfa
         let max_word= if b_small {512} else {512 * 4};
-        let sigs = if b_small {50} else {400};
-        let subsigs = if b_small {50} else {562}; 
+        let sigs = if b_small {20} else {400};
+        let subsigs = if b_small {20} else {562}; 
         let avg_pats_per_subsig = 8; //old value 8
         let avg_active_pats_per_subsig = 2;
         let perc_comp_subsigs = 20;
@@ -1578,7 +1577,7 @@ pub mod tests_zkp_driver{
  		let init_cp_cap_igc= CpCapacity{
             max_word_len: max_word,
             basis_unique_states,
-            subsigs: subsigs/2,
+            subsigs: subsigs,
             avg_pats_per_subsig,
             //avg_subsig_per_sig,
         };
@@ -1750,7 +1749,7 @@ pub mod tests_zkp_driver{
 		let b_check_lkup = false;
 		let _b_light_test = true;
 		let _b_setup = false;
-		small_data::<Fr>(b_check_lkup); //small data
+		//small_data::<Fr>(b_check_lkup); //small data
 		//small_data2::<Fr>(b_check_lkup);  //10k data 
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)
@@ -1760,7 +1759,7 @@ pub mod tests_zkp_driver{
 		//full_data2::<Fr>(b_check_lkup); //full data high acc state 
 		//full_data3::<Fr>(b_check_lkup); //full data large file
 		//full_data4::<Fr>(b_check_lkup); //full data large file
-		//full_par::<Fr>(b_check_lkup); //full data large file
+		full_par::<Fr>(b_check_lkup); //full data large file
 		//full_clamav::<Fr>(b_check_lkup, _b_light_test, _b_setup); //full data large file
 	}
 }
