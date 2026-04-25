@@ -56,6 +56,7 @@ pub struct GlobalConfig {
     pub n_par_snark: usize,
     pub n_par_snark_cp: usize,
     pub n_par_batch_claim: usize,
+    pub b_resume: bool,
 }
 
 impl Default for GlobalConfig {
@@ -84,6 +85,7 @@ impl Default for GlobalConfig {
             n_par_snark: 1,
             n_par_snark_cp: 1,
             n_par_batch_claim: 1,
+            b_resume: false,
         }
     }
 }
@@ -112,6 +114,7 @@ static GLOBAL_CONFIG: RwLock<GlobalConfig> = RwLock::new(GlobalConfig {
     n_par_snark: 1,
     n_par_snark_cp: 1,
     n_par_batch_claim: 1,
+    b_resume: false,
 });
 
 pub fn read_global_config() -> RwLockReadGuard<'static, GlobalConfig> {

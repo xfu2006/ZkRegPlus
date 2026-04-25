@@ -1593,7 +1593,7 @@ pub mod tests_zkp_driver{
             basis_acc_states_igc,
         );
 
-		let num_jobs:usize = 4;
+		let num_jobs:usize = 1;
 		//let num_jobs:usize = 16;
 
 		let data_files = (0..num_jobs).map(|i|
@@ -1750,16 +1750,23 @@ pub mod tests_zkp_driver{
 		let _b_light_test = true;
 		let _b_setup = false;
 		//small_data::<Fr>(b_check_lkup); //small data
-		//small_data2::<Fr>(b_check_lkup);  //10k data 
+		//small_data2::<Fr>(b_check_lkup);  //10k data
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)
 		//small_data_debug::<Fr>(b_check_lkup);  //for debug
 		//small_data4::<Fr>(b_check_lkup); //multi circ of 1M, 2M, 4M data
 		//full_data1::<Fr>(b_check_lkup);
-		//full_data2::<Fr>(b_check_lkup); //full data high acc state 
+		//full_data2::<Fr>(b_check_lkup); //full data high acc state
 		//full_data3::<Fr>(b_check_lkup); //full data large file
 		//full_data4::<Fr>(b_check_lkup); //full data large file
 		full_par::<Fr>(b_check_lkup); //full data large file
 		//full_clamav::<Fr>(b_check_lkup, _b_light_test, _b_setup); //full data large file
+
+		// Completion sentinel for run_checkpoints.py. Not reached if
+		// full_par panics -- panic aborts the test, no sentinel written.
+		let sentinel = format!(
+			"{}/data/cache/run_complete.sentinel",
+			utils::os::proj_root());
+		let _ = std::fs::write(&sentinel, "ok\n");
 	}
 }

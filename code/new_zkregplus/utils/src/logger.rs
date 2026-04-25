@@ -4,8 +4,9 @@
 */
 
 use crate::timer::Timer;
-use crate::os::{append_to_file, file_exists};
-use std::fs::File;
+use crate::os::{append_to_file, file_exists, proj_root};
+use std::fs::{self, File};
+use std::path::Path;
 use std::sync::{OnceLock, Mutex};
 use std::collections::HashSet;
 
@@ -42,17 +43,29 @@ pub fn name_log_level(i: usize)->String{
 	}
 }
 
-/// ensure the log file exists. If it's the first time for the job, overwrite it.
+/// ensure the log file exists. First-touch behavior depends on b_resume:
+/// - b_resume == false: overwrite (remove + recreate blank) on first touch.
+/// - b_resume == true : preserve existing contents; only create if missing.
+/// Also ensures the parent directory exists.
 pub fn ensure_log_file(job_id: usize, fpath: &str){
+    if let Some(parent) = Path::new(fpath).parent() {
+        fs::create_dir_all(parent).expect(&format!(
+            "Unable to create log dir: {}", parent.display()));
+    }
+    let b_resume = read_global_config().b_resume;
     let mut init_jobs = initialized_jobs().lock().unwrap();
     if !init_jobs.contains(&job_id) {
-        if file_exists(fpath) {
+        if !b_resume && file_exists(fpath) {
             std::fs::remove_file(fpath).unwrap_or_else(|_| ());
         }
-        File::create(fpath).expect(&format!("Unable to create log file: {}", fpath));
+        if !file_exists(fpath) {
+            File::create(fpath).expect(&format!(
+                "Unable to create log file: {}", fpath));
+        }
         init_jobs.insert(job_id);
     } else if !file_exists(fpath) {
-        File::create(fpath).expect(&format!("Unable to create log file: {}", fpath));
+        File::create(fpath).expect(&format!(
+            "Unable to create log file: {}", fpath));
     }
 }
 
@@ -60,7 +73,8 @@ pub fn ensure_log_file(job_id: usize, fpath: &str){
 /// `job_id` is the id of the current job for parallel execution.
 pub fn log(job_id: usize, log_level: usize, msg: &String){
 	let b_write = true;
-	let fpath = format!("/tmp/log_job_{}.txt", job_id);
+	let fpath = format!("{}/data/cache/logs/log_job_{}.txt",
+		proj_root(), job_id);
 	if log_level<=read_global_config().log_level{ 
 		let indent_level = if log_level<2 {0} else {log_level-2};
 		let indent_str = "-- ".repeat(indent_level);

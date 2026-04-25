@@ -6,7 +6,7 @@ use cli_table::{format::Justify, Cell, Style, Table};
 use daemonize::Daemonize;
 use dialoguer::{Select, theme::ColorfulTheme};
 use folding_schemes::commitment::{kzg::KZG, pedersen::Pedersen};
-use std::fs::File;
+use std::fs::{self, File, OpenOptions};
 use std::path::PathBuf;
 
 use utils::{
@@ -453,21 +453,33 @@ fn main() {
         preflight_full_clamav_cache_or_exit();
     }
 
+    let project_root = proj_root();
+    let log_dir = format!("{}/data/cache/logs", project_root);
+    fs::create_dir_all(&log_dir)
+        .expect(&format!("Unable to create log dir: {}", log_dir));
+    let daemon_log_path = format!("{}/zkregplus.log", log_dir);
+    let job_log_pattern = format!("{}/log_job_<id>.txt", log_dir);
+
     println!("\nRunning configuration:");
     println!("  Option: {}", opt.name);
     println!("  Log Level: {}", LOG_LEVELS.iter().find(|(_, val)| *val == selected_log_level).unwrap().0);
     println!("\nExecution is switching to the background.");
-    println!("All stdout and stderr will be redirected to /tmp/zkregplus.log");
-    println!("Check the job execution logs at /tmp/log_job_<id>.txt.");
+    println!("All stdout and stderr will be redirected to {}", daemon_log_path);
+    println!("Check the job execution logs at {}.", job_log_pattern);
     println!("Config files for the jobs are available in their respective directories.");
     println!("Exiting main process...\n");
 
-    let log_file = File::create("/tmp/zkregplus.log").unwrap();
+    let b_resume = read_global_config().b_resume;
+    let log_file = if b_resume {
+        OpenOptions::new().create(true).append(true)
+            .open(&daemon_log_path).unwrap()
+    } else {
+        File::create(&daemon_log_path).unwrap()
+    };
     let log_file_err = log_file.try_clone().unwrap();
 
-    let project_root = proj_root();
     let daemonize = Daemonize::new()
-        .working_directory(project_root)
+        .working_directory(&project_root)
         .stdout(log_file)
         .stderr(log_file_err);
 
@@ -477,6 +489,14 @@ fn main() {
             println!("Background process started. Running option: {}", opt.name);
             (opt.func)(false); // Calling the function with b_check_lkup = false
             println!("Background process finished successfully.");
+
+            // Completion sentinel for run_checkpoints.py. Written ONLY on
+            // the normal-return path (not reached if (opt.func) panics).
+            // Presence of this file tells the Python orchestrator the run
+            // finished cleanly and checkpoint storage can be wiped.
+            let sentinel = format!(
+                "{}/data/cache/run_complete.sentinel", proj_root());
+            let _ = std::fs::write(&sentinel, "ok\n");
         }
         Err(e) => {
             eprintln!("Error starting daemon: {}", e);

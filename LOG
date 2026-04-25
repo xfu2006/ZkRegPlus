@@ -28046,4 +28046,9 @@ Goal 2. determine paper submission deadline
 Goal 3. refine the example main and refine the data set.
 
 Firday 04/24/2026
-Goal 1. fix the small mode of full_par
+Goal 1. fix the small mode of full_par -> DONE 886 sec
+Goal 2. think about crid -> plan DONE
+Goal 3. improve the log functions first.
+Goal 4. par_data.py to collect
+Goal 5. test the checkpoint.
+
