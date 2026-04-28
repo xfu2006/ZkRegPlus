@@ -1880,61 +1880,7 @@ where
 					.expect("prove step error");
 				log_perf(job_id, log_level+1, &format!("PERF 1009: -- Pass 3. prove_step cost for word_id: {}, seg_id: {}, stmt_len: {}", word_id, subseg_id, stmt_len), &mut gt_fold);
 
-				// DEBUG USE 87201.x: contention probes (rwlock / mem-bw / ctxt-sw)
-				{
-					use std::hint::black_box;
-					use std::cell::RefCell;
-					let _tid = std::thread::current().id();
-					// 87201.1 -- RwLock cost: 10k read_global_config().range2_bit
-					{
-						let t0 = std::time::Instant::now();
-						let mut acc: usize = 0;
-						for _ in 0..10000usize {
-							acc = acc.wrapping_add(read_global_config().range2_bit);
-						}
-						let _ = black_box(acc);
-						log(job_id, log_level+1, &format!(
-							"DEBUG USE 87201.1: word_id={} seg_id={} thread={:?} rwlock_10k_read_ns={}",
-							word_id, subseg_id, _tid, t0.elapsed().as_nanos()));
-					}
-					// 87201.2 -- mem bandwidth: stream-sum a 32 MB thread-local buf
-					thread_local! {
-						static MEM_PROBE_BUF: RefCell<Vec<u64>> =
-							RefCell::new(vec![0u64; 4_000_000]);
-					}
-					MEM_PROBE_BUF.with(|cell| {
-						let buf = cell.borrow();
-						let t0 = std::time::Instant::now();
-						let mut s: u64 = 0;
-						for &v in buf.iter() {
-							s = s.wrapping_add(v);
-						}
-						let _ = black_box(s);
-						log(job_id, log_level+1, &format!(
-							"DEBUG USE 87201.2: word_id={} seg_id={} thread={:?} stream_32mb_ns={}",
-							word_id, subseg_id, _tid, t0.elapsed().as_nanos()));
-					});
-					// 87201.3 -- process-wide ctxt-switch counters (deltas in post)
-					{
-						let s = std::fs::read_to_string("/proc/self/status")
-							.unwrap_or_default();
-						let mut vol: u64 = 0;
-						let mut nvol: u64 = 0;
-						for line in s.lines() {
-							if let Some(rest) = line.strip_prefix("voluntary_ctxt_switches:") {
-								vol = rest.trim().parse().unwrap_or(0);
-							}
-							if let Some(rest) = line.strip_prefix("nonvoluntary_ctxt_switches:") {
-								nvol = rest.trim().parse().unwrap_or(0);
-							}
-						}
-						log(job_id, log_level+1, &format!(
-							"DEBUG USE 87201.3: word_id={} seg_id={} thread={:?} proc_ctxt_vol={} proc_ctxt_nvol={}",
-							word_id, subseg_id, _tid, vol, nvol));
-					}
-				}
-
-				//2.3 update
+				//2.3 update 
 				prev_stmt = Some(stmt);
 				idx += 1;
 				num_steps +=1;
@@ -2346,51 +2292,7 @@ where
 	let semaphore_batch_claim: Semaphore = Arc::new((Mutex::new(n_par_batch_claim), Condvar::new()));
 	log_perf(0, log_level, &format!("PERF 1005: FoldPot: Step 3: set up driver 2.\n=== Now Execute All Jobs =====\n"), &mut gt_all);
 
-	// LEVER 3: per-job rayon pool with core-affinity pinning.
-	// Each job gets its own rayon ThreadPool with a contiguous slice
-	// of CPU cores. All `par_iter` calls inside that job's body are
-	// install()'d onto this pool so they stay on the pinned cores,
-	// keeping per-job working sets warm in those cores' L1/L2 and
-	// avoiding cross-job task migration in the global pool.
-	let total_cores_for_pin = std::thread::available_parallelism()
-		.map(|n| n.get())
-		.unwrap_or_else(|_| jobs.len().max(1));
-	let num_jobs_for_pin = jobs.len();
-	let threads_per_job = (total_cores_for_pin / num_jobs_for_pin).max(1);
-	let core_offsets: Vec<usize> = (0..num_jobs_for_pin)
-		.map(|j| (j * threads_per_job) % total_cores_for_pin)
-		.collect();
-	log_perf(0, log_level, &format!(
-		"PERF 1005: per-job rayon pools: {} jobs x {} threads/job, total_cores={}, core_offsets={:?}",
-		num_jobs_for_pin, threads_per_job, total_cores_for_pin, core_offsets), &mut gt_all);
-
 	jobs.into_par_iter().enumerate().for_each(|(job_id, job)| {
-		let core_start = core_offsets[job_id];
-		let total_cores_capt = total_cores_for_pin;
-		let pool = rayon::ThreadPoolBuilder::new()
-			.num_threads(threads_per_job)
-			.thread_name(move |i| format!("zkr-j{}-w{}", job_id, i))
-			.start_handler(move |i| {
-				// Pin this rayon worker to a specific core.
-				// SAFETY: sched_setaffinity is a syscall; passing 0
-				// targets the current thread, the cpu_set_t is
-				// initialized via CPU_ZERO before CPU_SET. No safe
-				// Rust API exists for this without adding a new dep
-				// (nix or core_affinity); libc is already in deps.
-				unsafe {
-					let mut set: libc::cpu_set_t = std::mem::zeroed();
-					libc::CPU_ZERO(&mut set);
-					let cpu = (core_start + i) % total_cores_capt;
-					libc::CPU_SET(cpu, &mut set);
-					let _ = libc::sched_setaffinity(
-						0,
-						std::mem::size_of::<libc::cpu_set_t>(),
-						&set);
-				}
-			})
-			.build()
-			.expect("failed to build per-job rayon pool");
-		pool.install(|| {
 		let res = (|| -> Result<(), Error> {
                         let (pk_main_owned, vk_main_owned);
                         let (pk_cp_owned, vk_cp_owned);
@@ -2719,7 +2621,6 @@ where
 	if let Err(e) = res {
 		log(job_id, ERR, &format!("Job {} FAILED with error: {:?}", job_id, e));
 	}
-	}); // end pool.install
 	});
 
 	log_perf(0, log_level, "PERF 1005: FoldPot Step 4: parallel jobs of folding + nark generation", &mut gt_all);

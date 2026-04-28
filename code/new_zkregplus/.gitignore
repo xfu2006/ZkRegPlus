@@ -4,3 +4,4 @@ log.txt
 .gemini/
 session.log
 *.md
+.claude/*

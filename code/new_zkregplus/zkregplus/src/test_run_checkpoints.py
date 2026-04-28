@@ -36,6 +36,7 @@ Requirements: root; criu / criu-image-streamer / zstd on PATH for phases
 import atexit
 import json
 import os
+import pwd
 import re
 import shutil
 import signal
@@ -222,18 +223,25 @@ def warn_if_tmp_is_tmpfs() -> None:
 # State reset (between phases / scenarios)
 # ============================================================================
 
-def wipe_run_state(wipe_logs: bool = True) -> None:
+def wipe_run_state(
+    wipe_logs: bool = True, wipe_checkpoints: bool = True,
+) -> None:
     """Reset checkpoint dir, sentinel, and (optionally) logs.
 
     wipe_logs=False is required between phase [a] and phase [b] of a
     resume scenario: run_checkpoints.py rolls the existing logs back to
     checkpoint-time line counts at restore, and our wiping would defeat
     that.
+
+    wipe_checkpoints=False is also required for phase [b]: phase [a]
+    leaves slot_{a,b}/ + latest.txt on disk for resume to consume; if
+    we wipe them here, run_checkpoints.py exits with "no latest.txt".
     """
-    if checkpoints_dir().exists():
-        shutil.rmtree(checkpoints_dir())
-    if sentinel_path().exists():
-        sentinel_path().unlink()
+    if wipe_checkpoints:
+        if checkpoints_dir().exists():
+            shutil.rmtree(checkpoints_dir())
+        if sentinel_path().exists():
+            sentinel_path().unlink()
     if wipe_logs:
         if logs_dir().exists():
             shutil.rmtree(logs_dir())
@@ -387,6 +395,30 @@ def kill_worker_then_script(
 # Cargo pre-warm
 # ============================================================================
 
+def _build_user_env() -> dict:
+    """Restore SUDO_USER's ~/.cargo/bin onto PATH.
+
+    Sudo's secure_path strips PATH, so without this the system 'cargo'
+    (e.g. Debian's at rustc 1.75) wins over the rustup proxy that honors
+    this project's pinned rust-toolchain (1.76.0). Mirrors the helper in
+    run_checkpoints.py.
+    """
+    env = os.environ.copy()
+    sudo_user = env.get("SUDO_USER")
+    if sudo_user:
+        try:
+            home = pwd.getpwnam(sudo_user).pw_dir
+        except KeyError:
+            home = env.get("HOME", "/root")
+    else:
+        home = env.get("HOME", "/root")
+    cargo_bin = os.path.join(home, ".cargo", "bin")
+    path = env.get("PATH", "")
+    if cargo_bin not in path.split(":"):
+        env["PATH"] = f"{cargo_bin}:{path}" if path else cargo_bin
+    return env
+
+
 def prewarm_cargo() -> None:
     """Build the test binary so the timed phases don't include compile."""
     log("pre-warming cargo build (cargo test --no-run; can take minutes)")
@@ -395,6 +427,7 @@ def prewarm_cargo() -> None:
     res = subprocess.run(
         ["cargo", "test", "--lib", "--release", "--no-run"],
         cwd=str(cargo_dir),
+        env=_build_user_env(),
     )
     if res.returncode != 0:
         sys.exit("ERROR: cargo --no-run build failed")
@@ -423,6 +456,7 @@ def phase_baseline(vcpus: int) -> Path:
     res = subprocess.run(
         ["bash", "./compile.sh"],
         cwd=str(src_dir()),
+        env=_build_user_env(),
     )
     T = time.time() - t0
     log(f"baseline finished in {T:.1f}s ({T/60:.2f} min) rc={res.returncode}")
@@ -481,7 +515,7 @@ def phase_simple(
 
     # ---- phase [b] -------------------------------------------------
     log("--- phase [b]: resume mode (logs NOT wiped; script rolls back) ---")
-    wipe_run_state(wipe_logs=False)  # keep logs; keep checkpoints
+    wipe_run_state(wipe_logs=False, wipe_checkpoints=False)
     proc_b = spawn_run_checkpoints("resume", out_dir / "phase_b", vcpus)
     watcher_b = ScriptWatcher(proc_b, tag="resume")
     watcher_b.start()
@@ -564,7 +598,7 @@ def phase_full(
 
         # phase [b]
         log("phase [b]: resume mode")
-        wipe_run_state(wipe_logs=False)
+        wipe_run_state(wipe_logs=False, wipe_checkpoints=False)
         proc_b = spawn_run_checkpoints("resume", sdir / "phase_b", vcpus)
         watcher_b = ScriptWatcher(proc_b, tag=f"resume-k{k}")
         watcher_b.start()

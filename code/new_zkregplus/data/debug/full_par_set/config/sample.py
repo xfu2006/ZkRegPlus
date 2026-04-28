@@ -33,23 +33,37 @@ def sample(size_mb: int, id):
 		return
 
 	# 2. Sort files by size to better fit the target total size, then sample
-	all_files.sort(key=lambda x: x[1])  # Sort by file_size (x[1]) ascending
+	all_files.sort(key=lambda x: x[1], reverse=True)  # largest first
 
 	sampled_file_paths = []
 	current_size = 0
-	id = 0;
-	for file_path, file_size in all_files:
-		rand_offset = random.randint(0,5);
-		if id + rand_offset < len(all_files):
-			idx = id + rand_offset;
-		else:
-			idx = id;
-		file_path = all_files[idx][0];
-		file_size = all_files[idx][1]
-		if current_size >= target_bytes:
+	# Best-fit-decreasing: at each step pick the largest file whose size
+	# fits in the remaining budget. all_files is sorted descending, so the
+	# first index with size <= remaining is the max-fit candidate; a small
+	# random offset within the fitting region adds cross-call variety.
+	remaining_files = list(all_files)
+	while True:
+		remaining = target_bytes - current_size
+		if remaining <= 0:
 			break
+		fit_start = None
+		for i, (_, sz) in enumerate(remaining_files):
+			if sz <= remaining:
+				fit_start = i
+				break
+		if fit_start is None:
+			break
+		rand_offset = random.randint(0, 5)
+		idx = fit_start + rand_offset
+		if idx >= len(remaining_files):
+			idx = fit_start
+		file_path, file_size = remaining_files[idx]
 		sampled_file_paths.append(file_path)
 		current_size += file_size
+		del remaining_files[idx]
+
+	# Shuffle so the picking order isn't reflected in output
+	random.shuffle(sampled_file_paths)
 
 	# 3. Write the output file
 	with open(output_filename, 'w') as f:
@@ -66,6 +80,6 @@ def sample(size_mb: int, id):
 
 if __name__ == "__main__":
 	# Example usage: create a 1MB sample
-	size = 1;
+	size = 2;
 	for i in range(16):
 		sample(size, i);

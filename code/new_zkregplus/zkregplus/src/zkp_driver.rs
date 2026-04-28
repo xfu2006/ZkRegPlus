@@ -1537,13 +1537,14 @@ pub mod tests_zkp_driver{
         let set1 = "data/debug/full_par_set/config/"; //for dfa
         let max_word= if b_small {512} else {512 * 4};
         let sigs = if b_small {20} else {400};
-        let subsigs = if b_small {20} else {562}; 
+        let subsigs = if b_small {20} else {580}; 
         let avg_pats_per_subsig = 8; //old value 8
         let avg_active_pats_per_subsig = 2;
         let perc_comp_subsigs = 20;
         let basis_unique_states = if b_small {500} else {2000}; //15 cpercent
-		let vec_decrease_level = vec![];
-		let num_circs = 1; 
+		let vec_decrease_level = if b_small {vec![]}
+			else { vec![2,1] };
+		let num_circs = if b_small {1} else {3}; 
         let basis_acc_states = if b_small {200} else {1260}; 
         let basis_pats_in_trace = if b_small {220} else {1400}; 
         let basis_acc_states_igc = basis_acc_states ; //9 cpercent

@@ -28055,3 +28055,36 @@ Goal 5. test the checkpoint.
 Saturday 04/25/2026
 Goal 1. collect par_data on server
 	4:47am - 6:42am (2 hrs)
+	1:08pm - 3:31pm (2.5 hrs)
+	3:46pm - 5:31pm (1.75 hrs)
+	=> total: 5.25 hrs
+	==> COST: 10.62 (it's greater than 2 dollars per hour!)
+
+Sunday 04/26/2026
+Goal 1. set up usenix27 template
+Goal 2. data analysis
+=> the app is natively memory bound. So at laptop, 4 jobs is
+	the max reaching the peak.
+=> all other improvements such as NUMA, pin core and improvement
+	of MSM helps very little.
+=> revert implementation to Sat morning version.
+
+Monday 04/27/2026
+Goal 1. debug the checkpoint script
+	-> fix bugs (run_checkpoint.py works_
+Goal 2. debug the test checkpoint py
+	-> fixed 
+Goal 2. writing introduction. Planning
+	-> pargraph1
+
+Tuesday 04/28/2026
+Goal 1. refine ideas of paragraph1 and paragraph2 
+Goal 2. refine paragraph 1
+Goal 3. deply par_data to server
+	[a] add circs
+	[b] for full mode use 2M instead
+	[c] then download the perf files
+
+
+
+-- TODO -- continue with the checkpoint implementation
