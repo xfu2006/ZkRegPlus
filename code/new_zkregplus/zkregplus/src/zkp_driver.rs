@@ -10,13 +10,13 @@ use ark_ec::{Group, CurveGroup,
 	short_weierstrass::SWCurveConfig
 };
 use ark_r1cs_std::{
-    prelude::{CurveVar,PairingVar,FieldOpsBounds,GroupOpsBounds},
-    ToConstraintFieldGadget,
+	prelude::{CurveVar,PairingVar,FieldOpsBounds,GroupOpsBounds},
+	ToConstraintFieldGadget,
 };
 use ark_snark::SNARK;
 use ark_crypto_primitives::sponge::{
 	poseidon::PoseidonConfig,
-    Absorb,
+	Absorb,
 };
 use folding_schemes::folding::foldpot::container_config::ColEle;
 use utils::{
@@ -33,9 +33,9 @@ use data_processor::{
 use folding_schemes::{
 	transcript::poseidon::poseidon_canonical_config,
 	commitment::{
-    	kzg::{Proof as KZGProof },
-    	pedersen::Params as PedersenParams,
-    	CommitmentScheme,
+		kzg::{Proof as KZGProof },
+		pedersen::Params as PedersenParams,
+		CommitmentScheme,
 	},
 	folding::{
 		circuits::{CF1, CF2, CF3},
@@ -76,18 +76,18 @@ fn load_files<F:PrimeField + ColEle>(_job_id: usize, list_file_path: &str, db: &
 	}
 
 	//2. parallel for each file read its nibbles and convert
-    let final_data = file_names.into_par_iter().map(|fpath|
-    {
+	let final_data = file_names.into_par_iter().map(|fpath|
+	{
 		let nibbles = read_nibbles(&format!("{}/{}", proot, fpath));
 		let f_nibbles = nibbles.into_iter().map(|x| F::from(x as u32))
 			.collect::<Vec<F>>();
 		let packed = pack_nibbles(&f_nibbles);
 		packed
-    }).collect::<Vec<Vec<F>>>();
+	}).collect::<Vec<Vec<F>>>();
 
 	//let sdir = format!("{}/data/cache/{}/", &proj_root(), cache_dir);
 	/* DON'T - as each new bin-exec pack will cause loading outdated
-    let vec_word_info= 
+	let vec_word_info= 
 		cache
 		if b_read_cache{
 		let s_wi= read(&format!("{}/vec_word_info.txt", sdir));
@@ -458,30 +458,30 @@ pub fn zkp_driver<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + std::f
 	b_check_lkup: bool,
 )
 where
-    GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
-    GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
-    // CS1E is a KZG commitment, where challenge is C1::Fr elem
-    CS1E: CommitmentScheme<
-        C1,
-        ProverChallenge = C1::ScalarField,
-        Challenge = C1::ScalarField,
-        Proof = KZGProof<C1>,
-    >,
+	GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
+	GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
+	// CS1E is a KZG commitment, where challenge is C1::Fr elem
+	CS1E: CommitmentScheme<
+		C1,
+		ProverChallenge = C1::ScalarField,
+		Challenge = C1::ScalarField,
+		Proof = KZGProof<C1>,
+	>,
 	<CS1E as CommitmentScheme<C1>>::ProverParams: Send + Sync,
 	<CS1E as CommitmentScheme<C1>>::VerifierParams: Send + Sync,
-    CS1: CommitmentScheme<C1, ProverParams = PedersenParams<C1>>,
+	CS1: CommitmentScheme<C1, ProverParams = PedersenParams<C1>>,
 	<CS1 as CommitmentScheme<C1>>::VerifierParams: Send + Sync,
-    // enforce that the CS2 is Pedersen commitment scheme, since we're at Ethereum's EVM decider
-    CS2: CommitmentScheme<C2, ProverParams = PedersenParams<C2>, VerifierParams = PedersenParams<C2>>,
+	// enforce that the CS2 is Pedersen commitment scheme, since we're at Ethereum's EVM decider
+	CS2: CommitmentScheme<C2, ProverParams = PedersenParams<C2>, VerifierParams = PedersenParams<C2>>,
 	<CS2 as CommitmentScheme<C2>>::VerifierParams: Send + Sync,
-    S: SNARK<C1::ScalarField>,
-    <C1 as CurveGroup>::BaseField: PrimeField,
-    <C2 as CurveGroup>::BaseField: PrimeField,
-    <C1 as Group>::ScalarField: Absorb,
-    <C2 as Group>::ScalarField: Absorb,
+	S: SNARK<C1::ScalarField>,
+	<C1 as CurveGroup>::BaseField: PrimeField,
+	<C2 as CurveGroup>::BaseField: PrimeField,
+	<C1 as Group>::ScalarField: Absorb,
+	<C2 as Group>::ScalarField: Absorb,
   //  C1: CurveGroup<BaseField = C2::ScalarField, ScalarField = C2::BaseField>,
-    for<'b> &'b GC1: GroupOpsBounds<'b, C1, GC1>,
-    for<'b> &'b GC2: GroupOpsBounds<'b, C2, GC2>,
+	for<'b> &'b GC1: GroupOpsBounds<'b, C1, GC1>,
+	for<'b> &'b GC2: GroupOpsBounds<'b, C2, GC2>,
 	//New for cyclepair
 	for<'a> &'a P::G1Var: GroupOpsBounds<'a, E::G1, P::G1Var>,
 	for<'a> &'a P::G2Var: GroupOpsBounds<'a, E::G2, P::G2Var>,
@@ -491,10 +491,10 @@ where
 	P::G2Var: ToConstraintFieldGadget<CF3<E::G2>>,
 	P::GTVar: ToConstraintFieldGadget<CF2<E::G1>>,
 	CF3<E::G2>: PrimeField,
-    //C1: CurveGroup<BaseField = <C2G2::BaseField as Field>::BasePrimeField, ScalarField=C2G2::ScalarField>,
+	//C1: CurveGroup<BaseField = <C2G2::BaseField as Field>::BasePrimeField, ScalarField=C2G2::ScalarField>,
 	//C2G2: CurveGroup,
 	<E as Pairing>::ScalarField: Absorb,
-    C1: CurveGroup<BaseField = <C2G2::BaseField as Field>::BasePrimeField, ScalarField=E::ScalarField>,
+	C1: CurveGroup<BaseField = <C2G2::BaseField as Field>::BasePrimeField, ScalarField=E::ScalarField>,
 	C2G2: CurveGroup<ScalarField=E::ScalarField>,
 	C2: CurveGroup<BaseField = C1::ScalarField, ScalarField=C1::BaseField,
 		Affine = ark_ec::short_weierstrass::Affine<<C2 as CurveGroup>::Config>>,
@@ -505,7 +505,7 @@ where
 	C1::Config: SWCurveConfig,
 	<C2 as CurveGroup>::Config: SWCurveConfig,
 	C2G2::Affine: AffineFromField<CF2<C2G2>>,
-    <E as Pairing>::ScalarField: ColEle, S::ProvingKey: 'static, S::VerifyingKey: 'static,
+	<E as Pairing>::ScalarField: ColEle, S::ProvingKey: 'static, S::VerifyingKey: 'static,
 {
 	// re-use the capacity for BOTH cs and ignore_case
 	// this is usaully inefficient for ignore_case (but
@@ -542,30 +542,30 @@ pub fn zkp_driver_adv<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + st
 	b_check_lkup: bool,
 )
 where
-    GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
-    GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
-    // CS1E is a KZG commitment, where challenge is C1::Fr elem
-    CS1E: CommitmentScheme<
-        C1,
-        ProverChallenge = C1::ScalarField,
-        Challenge = C1::ScalarField,
-        Proof = KZGProof<C1>,
-    >,
+	GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
+	GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
+	// CS1E is a KZG commitment, where challenge is C1::Fr elem
+	CS1E: CommitmentScheme<
+		C1,
+		ProverChallenge = C1::ScalarField,
+		Challenge = C1::ScalarField,
+		Proof = KZGProof<C1>,
+	>,
 	<CS1E as CommitmentScheme<C1>>::ProverParams: Send + Sync,
 	<CS1E as CommitmentScheme<C1>>::VerifierParams: Send + Sync,
-    CS1: CommitmentScheme<C1, ProverParams = PedersenParams<C1>>,
+	CS1: CommitmentScheme<C1, ProverParams = PedersenParams<C1>>,
 	<CS1 as CommitmentScheme<C1>>::VerifierParams: Send + Sync,
-    // enforce that the CS2 is Pedersen commitment scheme, since we're at Ethereum's EVM decider
-    CS2: CommitmentScheme<C2, ProverParams = PedersenParams<C2>, VerifierParams = PedersenParams<C2>>,
+	// enforce that the CS2 is Pedersen commitment scheme, since we're at Ethereum's EVM decider
+	CS2: CommitmentScheme<C2, ProverParams = PedersenParams<C2>, VerifierParams = PedersenParams<C2>>,
 	<CS2 as CommitmentScheme<C2>>::VerifierParams: Send + Sync,
-    S: SNARK<C1::ScalarField>,
-    <C1 as CurveGroup>::BaseField: PrimeField,
-    <C2 as CurveGroup>::BaseField: PrimeField,
-    <C1 as Group>::ScalarField: Absorb,
-    <C2 as Group>::ScalarField: Absorb,
+	S: SNARK<C1::ScalarField>,
+	<C1 as CurveGroup>::BaseField: PrimeField,
+	<C2 as CurveGroup>::BaseField: PrimeField,
+	<C1 as Group>::ScalarField: Absorb,
+	<C2 as Group>::ScalarField: Absorb,
   //  C1: CurveGroup<BaseField = C2::ScalarField, ScalarField = C2::BaseField>,
-    for<'b> &'b GC1: GroupOpsBounds<'b, C1, GC1>,
-    for<'b> &'b GC2: GroupOpsBounds<'b, C2, GC2>,
+	for<'b> &'b GC1: GroupOpsBounds<'b, C1, GC1>,
+	for<'b> &'b GC2: GroupOpsBounds<'b, C2, GC2>,
 	//New for cyclepair
 	for<'a> &'a P::G1Var: GroupOpsBounds<'a, E::G1, P::G1Var>,
 	for<'a> &'a P::G2Var: GroupOpsBounds<'a, E::G2, P::G2Var>,
@@ -575,10 +575,10 @@ where
 	P::G2Var: ToConstraintFieldGadget<CF3<E::G2>>,
 	P::GTVar: ToConstraintFieldGadget<CF2<E::G1>>,
 	CF3<E::G2>: PrimeField,
-    //C1: CurveGroup<BaseField = <C2G2::BaseField as Field>::BasePrimeField, ScalarField=C2G2::ScalarField>,
+	//C1: CurveGroup<BaseField = <C2G2::BaseField as Field>::BasePrimeField, ScalarField=C2G2::ScalarField>,
 	//C2G2: CurveGroup,
 	<E as Pairing>::ScalarField: Absorb,
-    C1: CurveGroup<BaseField = <C2G2::BaseField as Field>::BasePrimeField, ScalarField=E::ScalarField>,
+	C1: CurveGroup<BaseField = <C2G2::BaseField as Field>::BasePrimeField, ScalarField=E::ScalarField>,
 	C2G2: CurveGroup<ScalarField=E::ScalarField>,
 	C2: CurveGroup<BaseField = C1::ScalarField, ScalarField=C1::BaseField,
 		Affine = ark_ec::short_weierstrass::Affine<<C2 as CurveGroup>::Config>>,
@@ -589,7 +589,7 @@ where
 	C1::Config: SWCurveConfig,
 	<C2 as CurveGroup>::Config: SWCurveConfig,
 	C2G2::Affine: AffineFromField<CF2<C2G2>>,
-    <E as Pairing>::ScalarField: ColEle, S::ProvingKey: 'static, S::VerifyingKey: 'static,
+	<E as Pairing>::ScalarField: ColEle, S::ProvingKey: 'static, S::VerifyingKey: 'static,
 {
 	//1. build or load the clamdb
 	let log_level = LOG1;
@@ -597,13 +597,13 @@ where
 	log(0, log_level, &format!("=== ZKP driver starts ===="));
 	let poseidon_config = poseidon_canonical_config::<CF1<C1>>();
 	let mut vlog = vec![];
-    let cfg = default_clamav_cfg();
-    let db = ClamavDB::<CF1<C1>>::build_or_load(&cfg, sig_file, 
-    	list_of_dfa_sigs, list_of_ised_sigs, list_of_ised_igc_sigs,
-    	&mut vlog, cache_dir, read_global_config().b_read_cache, b_write_cache)
-    	.expect("build db err");
+	let cfg = default_clamav_cfg();
+	let db = ClamavDB::<CF1<C1>>::build_or_load(&cfg, sig_file, 
+		list_of_dfa_sigs, list_of_ised_sigs, list_of_ised_igc_sigs,
+		&mut vlog, cache_dir, read_global_config().b_read_cache, b_write_cache)
+		.expect("build db err");
 	if log_level>=LOG1+1{
-    	db.print_summary(&mut vlog);
+		db.print_summary(&mut vlog);
 	}
 	log_perf(0, log_level, &format!("ZIP driver step 1: build DB."), &mut gt1);
 	
@@ -686,10 +686,10 @@ pub mod tests_zkp_driver{
 	/// COST: 7GB and 36 sec.
 	#[allow(dead_code)]
 	fn small_data<F:PrimeField>(b_check_lkup: bool){
-        get_global_config().snark_cache_dir = "small_20".to_string();
-        get_global_config().b_read_snark_cache = false;
-        get_global_config().b_write_snark_cache = false;
-        get_global_config().b_light_test = true;
+		get_global_config().snark_cache_dir = "small_20".to_string();
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_write_snark_cache = false;
+		get_global_config().b_light_test = true;
 		get_global_config().range2_bit = 8;
 		get_global_config().b_read_cache = false;
 		let b_write_cache = !read_global_config().b_read_cache;
@@ -752,9 +752,9 @@ pub mod tests_zkp_driver{
 	/// COST  4 jobs: 14 GB and 228 sec (reason: folding doesn't take much time)
 	#[allow(dead_code)]
 	fn small_data_par<F:PrimeField>(b_check_lkup: bool){
-        get_global_config().snark_cache_dir = "small_20".to_string();
-        get_global_config().b_read_snark_cache = false;
-        get_global_config().b_write_snark_cache = false;
+		get_global_config().snark_cache_dir = "small_20".to_string();
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 18;
 		get_global_config().b_read_cache = false;
 		let b_write_cache = !read_global_config().b_read_cache;
@@ -820,9 +820,9 @@ pub mod tests_zkp_driver{
 	/// COST: 18GB and 160 sec
 	#[allow(dead_code)]
 	fn small_data2<F:PrimeField>(b_check_lkup: bool){
-        get_global_config().snark_cache_dir = "small_20".to_string();
-        get_global_config().b_read_snark_cache = true;
-        get_global_config().b_write_snark_cache = false;
+		get_global_config().snark_cache_dir = "small_20".to_string();
+		get_global_config().b_read_snark_cache = true;
+		get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 18;
 		get_global_config().b_read_cache = false;
 		let b_write_cache = !read_global_config().b_read_cache;
@@ -908,9 +908,9 @@ pub mod tests_zkp_driver{
 	/// This function is used for debugging
 	#[allow(dead_code)]
 	fn small_data_debug<F:PrimeField>(b_check_lkup: bool){
-        get_global_config().snark_cache_dir = "small_20".to_string();
-        get_global_config().b_read_snark_cache = true;
-        get_global_config().b_write_snark_cache = false;
+		get_global_config().snark_cache_dir = "small_20".to_string();
+		get_global_config().b_read_snark_cache = true;
+		get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 24;
 		get_global_config().b_read_cache = false;
 		let b_write_cache = !read_global_config().b_read_cache;
@@ -981,9 +981,9 @@ pub mod tests_zkp_driver{
 	/// at the last stage of snark generation it's costly.
 	#[allow(dead_code)]
 	fn small_data3<F:PrimeField>(b_check_lkup: bool){
-        get_global_config().snark_cache_dir = "small_20".to_string();
-        get_global_config().b_read_snark_cache = true;
-        get_global_config().b_write_snark_cache = false;
+		get_global_config().snark_cache_dir = "small_20".to_string();
+		get_global_config().b_read_snark_cache = true;
+		get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 18;
 		get_global_config().b_read_cache = false;
 		get_global_config().min_subsigs = 3;
@@ -1005,9 +1005,9 @@ pub mod tests_zkp_driver{
 
 		let vec_decrease_level = vec![];
 		let num_circs = 1; 
-        let basis_acc_states_igc = basis_acc_states ; //9 cpercent
-        let perc_pats_expansion_rate_igc = 136 ;
-        let basis_pats_in_trace_igc = 20;
+		let basis_acc_states_igc = basis_acc_states ; //9 cpercent
+		let perc_pats_expansion_rate_igc = 136 ;
+		let basis_pats_in_trace_igc = 20;
 
 		let init_cp_cap= CpCapacity{
 			max_word_len: max_word, 
@@ -1029,23 +1029,23 @@ pub mod tests_zkp_driver{
 		);
 		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
  		let init_cp_cap_igc= CpCapacity{
-            max_word_len: max_word,
-            basis_unique_states,
-            subsigs: subsigs,
-            avg_pats_per_subsig,
-            //avg_subsig_per_sig,
-        };
-        let init_sed_cap_igc= SedCapacity::new(
-            max_word, read_global_config().range2_bit, subsigs,
-            avg_pats_per_subsig,
-            avg_active_pats_per_subsig,
-            basis_pats_in_trace_igc,
-            perc_pats_expansion_rate_igc,
-            sigs,
-            perc_comp_subsigs,
-            basis_unique_states,
-            basis_acc_states_igc,
-        );
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs: subsigs,
+			avg_pats_per_subsig,
+			//avg_subsig_per_sig,
+		};
+		let init_sed_cap_igc= SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig,
+			avg_active_pats_per_subsig,
+			basis_pats_in_trace_igc,
+			perc_pats_expansion_rate_igc,
+			sigs,
+			perc_comp_subsigs,
+			basis_unique_states,
+			basis_acc_states_igc,
+		);
 
 
 		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
@@ -1074,9 +1074,9 @@ pub mod tests_zkp_driver{
 	/// setting min_idx and max_idx to try 1M, 2M, 4M files.
 	#[allow(dead_code)]
 	fn small_data4<F:PrimeField>(b_check_lkup: bool){
-        get_global_config().snark_cache_dir = "small_20".to_string();
-        get_global_config().b_read_snark_cache = true;
-        get_global_config().b_write_snark_cache = false;
+		get_global_config().snark_cache_dir = "small_20".to_string();
+		get_global_config().b_read_snark_cache = true;
+		get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 18;
 		get_global_config().b_read_cache = false;
 		let b_write_cache = !read_global_config().b_read_cache;
@@ -1097,9 +1097,9 @@ pub mod tests_zkp_driver{
 
 		let vec_decrease_level = vec![];
 		let num_circs = 1; 
-        let basis_acc_states_igc = basis_acc_states ; //9 cpercent
-        let perc_pats_expansion_rate_igc = 78; //good value 136
-        let basis_pats_in_trace_igc = 30; //good value 20
+		let basis_acc_states_igc = basis_acc_states ; //9 cpercent
+		let perc_pats_expansion_rate_igc = 78; //good value 136
+		let basis_pats_in_trace_igc = 30; //good value 20
 
 		let init_cp_cap= CpCapacity{
 			max_word_len: max_word, 
@@ -1121,23 +1121,23 @@ pub mod tests_zkp_driver{
 		);
 		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
  		let init_cp_cap_igc= CpCapacity{
-            max_word_len: max_word,
-            basis_unique_states,
-            subsigs: subsigs,
-            avg_pats_per_subsig,
-            //avg_subsig_per_sig,
-        };
-        let init_sed_cap_igc= SedCapacity::new(
-            max_word, read_global_config().range2_bit, subsigs,
-            avg_pats_per_subsig,
-            avg_active_pats_per_subsig,
-            basis_pats_in_trace_igc,
-            perc_pats_expansion_rate_igc,
-            sigs,
-            perc_comp_subsigs,
-            basis_unique_states,
-            basis_acc_states_igc,
-        );
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs: subsigs,
+			avg_pats_per_subsig,
+			//avg_subsig_per_sig,
+		};
+		let init_sed_cap_igc= SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig,
+			avg_active_pats_per_subsig,
+			basis_pats_in_trace_igc,
+			perc_pats_expansion_rate_igc,
+			sigs,
+			perc_comp_subsigs,
+			basis_unique_states,
+			basis_acc_states_igc,
+		);
 
 		let files = vec![
 			vec![format!("{}/sample_1M.dat",set1)], 
@@ -1171,9 +1171,9 @@ pub mod tests_zkp_driver{
 	/// However, just run a small file
 	#[allow(dead_code)]
 	fn full_data1<F:PrimeField>(b_check_lkup: bool){
-        get_global_config().snark_cache_dir = "full_data".to_string();
-        get_global_config().b_read_snark_cache = true;
-        get_global_config().b_write_snark_cache = false;
+		get_global_config().snark_cache_dir = "full_data".to_string();
+		get_global_config().b_read_snark_cache = true;
+		get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 26;
 		get_global_config().b_read_cache = true;
 		let b_write_cache = !read_global_config().b_read_cache;
@@ -1239,28 +1239,28 @@ pub mod tests_zkp_driver{
 	/// It runs a small but challenging file _codecs_hk.so (158kb)
 	#[allow(dead_code)]
 	fn full_data2<F:PrimeField>(b_check_lkup: bool){
-        get_global_config().snark_cache_dir = "full_data".to_string();
-        get_global_config().b_read_snark_cache = true;
-        get_global_config().b_write_snark_cache = false;
+		get_global_config().snark_cache_dir = "full_data".to_string();
+		get_global_config().b_read_snark_cache = true;
+		get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 26;
 		get_global_config().range2_bit = 26;
-        get_global_config().b_read_cache = true;
-        let b_write_cache = !read_global_config().b_read_cache;
-        let set1 = "data/debug/full_data_set/config/"; //for dfa
-        //let max_word= 512;
-        let max_word= 512 * 4;
-        let sigs = 320;
-        let subsigs = 500; //220 for prev db
-        let avg_pats_per_subsig = 8; //old value 8
-        let avg_active_pats_per_subsig = 3;
-        let perc_comp_subsigs = 20;
+		get_global_config().b_read_cache = true;
+		let b_write_cache = !read_global_config().b_read_cache;
+		let set1 = "data/debug/full_data_set/config/"; //for dfa
+		//let max_word= 512;
+		let max_word= 512 * 4;
+		let sigs = 320;
+		let subsigs = 500; //220 for prev db
+		let avg_pats_per_subsig = 8; //old value 8
+		let avg_active_pats_per_subsig = 3;
+		let perc_comp_subsigs = 20;
 		let vec_decrease_level = vec![];
 		let num_circs = 1; 
-        let basis_unique_states = 1000; //ld vlaue 19 cpercent
-    //    let basis_acc_states = 200; //old value 9 cpercent --> GOOD setting
-     //   let basis_pats_in_trace = 250 ; //1.2 * basis_acc_states
-        let basis_acc_states = 1200; //old value 9 cpercent --> GOOD setting
-        let basis_pats_in_trace = 1440 ; //1.2 * basis_acc_states
+		let basis_unique_states = 1000; //ld vlaue 19 cpercent
+	//	let basis_acc_states = 200; //old value 9 cpercent --> GOOD setting
+	 //   let basis_pats_in_trace = 250 ; //1.2 * basis_acc_states
+		let basis_acc_states = 1200; //old value 9 cpercent --> GOOD setting
+		let basis_pats_in_trace = 1440 ; //1.2 * basis_acc_states
 		let perc_pats_expansion_rate = 100;
 
 		let init_cp_cap= CpCapacity{
@@ -1312,30 +1312,30 @@ pub mod tests_zkp_driver{
 	/// prove_step: 39 sec
 	/// if using max_word 512 *8 (128kb) => it's 21M. prove_step: 60 sec
 	/// IMPROVEC COST: after applying the tricks of separating
-	///    igc and cs. stmt_len: 10M, all_w_e: 33M => circ1 72M R1CS
+	///	igc and cs. stmt_len: 10M, all_w_e: 33M => circ1 72M R1CS
 	#[allow(dead_code)]
 	fn full_data3<F:PrimeField>(b_check_lkup: bool){
-        get_global_config().b_read_snark_cache = true;
-        get_global_config().b_write_snark_cache = false;
+		get_global_config().b_read_snark_cache = true;
+		get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 26;
 		get_global_config().b_read_cache = true;
 		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/full_data_set/config/"; //for dfa
-        let max_word= 512 * 4;
-        let sigs = 350;
-        let subsigs = 500; //220 for prev db
-        let avg_pats_per_subsig = 8; //old value 8
-        let avg_active_pats_per_subsig = 3;
-        let perc_comp_subsigs = 20;
+		let max_word= 512 * 4;
+		let sigs = 350;
+		let subsigs = 500; //220 for prev db
+		let avg_pats_per_subsig = 8; //old value 8
+		let avg_active_pats_per_subsig = 3;
+		let perc_comp_subsigs = 20;
 		let vec_decrease_level = vec![];
 		let num_circs = 1; 
-        let basis_unique_states = 1600; //15 cpercent
-        let basis_acc_states = 1200; //9 cpercent
-        let basis_pats_in_trace = 2200; //old value 100 cur value 1/1000.
-        let dfa_sigs = 3;
-        let dfa_subsigs= 4;
+		let basis_unique_states = 1600; //15 cpercent
+		let basis_acc_states = 1200; //9 cpercent
+		let basis_pats_in_trace = 2200; //old value 100 cur value 1/1000.
+		let dfa_sigs = 3;
+		let dfa_subsigs= 4;
 		let perc_pats_expansion_rate = 100;
-        //let avg_subsig_per_sig = 3;
+		//let avg_subsig_per_sig = 3;
 
 		let shrink=8;
 		let init_cp_cap= CpCapacity{
@@ -1358,24 +1358,24 @@ pub mod tests_zkp_driver{
 		);
 		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
 	   let init_cp_cap_igc= CpCapacity{
-            max_word_len: max_word,
-            basis_unique_states,
-            subsigs: subsigs/2,
-            avg_pats_per_subsig,
-            //avg_subsig_per_sig,
-        };
-        let init_sed_cap_igc= SedCapacity::new(
-            max_word, read_global_config().range2_bit, subsigs,
-            avg_pats_per_subsig,
-            avg_active_pats_per_subsig,
-            basis_pats_in_trace/shrink,
-            perc_pats_expansion_rate,
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs: subsigs/2,
+			avg_pats_per_subsig,
+			//avg_subsig_per_sig,
+		};
+		let init_sed_cap_igc= SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig,
+			avg_active_pats_per_subsig,
+			basis_pats_in_trace/shrink,
+			perc_pats_expansion_rate,
 
-            sigs/shrink,
-            perc_comp_subsigs,
-            basis_unique_states,
-            basis_acc_states/shrink,
-        );
+			sigs/shrink,
+			perc_comp_subsigs,
+			basis_unique_states,
+			basis_acc_states/shrink,
+		);
 
 
 		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
@@ -1414,32 +1414,32 @@ pub mod tests_zkp_driver{
 	/// Total: 173MB. 
 	#[allow(dead_code)]
 	fn full_data4<F:PrimeField>(b_check_lkup: bool){
-        get_global_config().b_read_snark_cache = true;
-        get_global_config().b_write_snark_cache = false;
+		get_global_config().b_read_snark_cache = true;
+		get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 26;
 		get_global_config().min_subsigs = 145;
 		get_global_config().b_read_cache = true;
 		let b_write_cache = !read_global_config().b_read_cache;
-        let set1 = "data/debug/full_data_set/config/"; //for dfa
-        let max_word= 512 * 4;
-        let sigs = 400;
-        let subsigs = 562; //220 for prev db
-        let avg_pats_per_subsig = 8; //old value 8
-        let avg_active_pats_per_subsig = 2;
-        let perc_comp_subsigs = 20;
-        let basis_unique_states = 2000; //15 cpercent
+		let set1 = "data/debug/full_data_set/config/"; //for dfa
+		let max_word= 512 * 4;
+		let sigs = 400;
+		let subsigs = 562; //220 for prev db
+		let avg_pats_per_subsig = 8; //old value 8
+		let avg_active_pats_per_subsig = 2;
+		let perc_comp_subsigs = 20;
+		let basis_unique_states = 2000; //15 cpercent
 		let vec_decrease_level = vec![];
 		let num_circs = 1; 
-        let basis_acc_states = 1260; //last good value 1800
-        let basis_pats_in_trace = 1400; //last good value 3000
-        let basis_acc_states_igc = basis_acc_states ; //9 cpercent
-        let basis_pats_in_trace_igc = basis_pats_in_trace;
-            //old value 100 cur value 1/1000.
-        let dfa_sigs = 6;
-        let dfa_subsigs= 6;
-        let perc_pats_expansion_rate = 104; //old good value 2
-        let perc_pats_expansion_rate_igc = 2;
-        //let avg_subsig_per_sig = 3;
+		let basis_acc_states = 1260; //last good value 1800
+		let basis_pats_in_trace = 1400; //last good value 3000
+		let basis_acc_states_igc = basis_acc_states ; //9 cpercent
+		let basis_pats_in_trace_igc = basis_pats_in_trace;
+			//old value 100 cur value 1/1000.
+		let dfa_sigs = 6;
+		let dfa_subsigs= 6;
+		let perc_pats_expansion_rate = 104; //old good value 2
+		let perc_pats_expansion_rate_igc = 2;
+		//let avg_subsig_per_sig = 3;
 
 		let init_cp_cap= CpCapacity{
 			max_word_len: max_word, 
@@ -1461,38 +1461,38 @@ pub mod tests_zkp_driver{
 		);
 		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
  		let init_cp_cap_igc= CpCapacity{
-            max_word_len: max_word,
-            basis_unique_states,
-            subsigs: subsigs/2,
-            avg_pats_per_subsig,
-            //avg_subsig_per_sig,
-        };
-        let init_sed_cap_igc= SedCapacity::new(
-            max_word, read_global_config().range2_bit, subsigs,
-            avg_pats_per_subsig,
-            avg_active_pats_per_subsig,
-            basis_pats_in_trace_igc,
-            perc_pats_expansion_rate_igc,
-            sigs,
-            perc_comp_subsigs,
-            basis_unique_states,
-            basis_acc_states_igc,
-        );
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs: subsigs/2,
+			avg_pats_per_subsig,
+			//avg_subsig_per_sig,
+		};
+		let init_sed_cap_igc= SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig,
+			avg_active_pats_per_subsig,
+			basis_pats_in_trace_igc,
+			perc_pats_expansion_rate_igc,
+			sigs,
+			perc_comp_subsigs,
+			basis_unique_states,
+			basis_acc_states_igc,
+		);
 
-        //just ranges allowed 0 to 8test one at a time
-        //APPROACH 1:
-        let min = 0; //starting: 0
-        let max = 1; //max possible: 8
+		//just ranges allowed 0 to 8test one at a time
+		//APPROACH 1:
+		let min = 0; //starting: 0
+		let max = 1; //max possible: 8
 
-        //APPROACH 2:
-        //IF using min = 8, max=9 it uses binexec_4_9.dat (which
-        //has ALL the files listed (about 87MB)
-        //let min = 8;
-        //let max = 9;
+		//APPROACH 2:
+		//IF using min = 8, max=9 it uses binexec_4_9.dat (which
+		//has ALL the files listed (about 87MB)
+		//let min = 8;
+		//let max = 9;
 
 		for id in min..max{
 			zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
-    0, 
+	0, 
 				&format!("{}/main.dat",set1), //src sig
 				vec![format!("{}/binexec_4_{}.dat",set1, id+1)], //list of files to discharge
 				"data/debug/full_data_set/reports/report2.dat", //report
@@ -1520,41 +1520,42 @@ pub mod tests_zkp_driver{
 	#[allow(dead_code)]
 	fn full_par<F:PrimeField>(b_check_lkup: bool){
 		let b_small = true;
-		get_global_config().b_read_cache = false;
+		get_global_config().b_read_cache = true;
 
-        get_global_config().b_read_snark_cache = false;
-        get_global_config().b_write_snark_cache = false;
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 26;
 		get_global_config().min_subsigs = 148;
 		get_global_config().b_light_test = true;
 		get_global_config().n_par_snark = 2;
 		get_global_config().n_par_snark_cp = 2;
 		get_global_config().n_par_batch_claim = 8;
+		get_global_config().min_avg_pats_per_subsig = 4;
 		get_global_config().b_folding_only = true;
 		let b_write_cache = !read_global_config().b_read_cache;
 
 
-        let set1 = "data/debug/full_par_set/config/"; //for dfa
-        let max_word= if b_small {512} else {512 * 4};
-        let sigs = if b_small {20} else {400};
-        let subsigs = if b_small {20} else {580}; 
-        let avg_pats_per_subsig = 8; //old value 8
-        let avg_active_pats_per_subsig = 2;
-        let perc_comp_subsigs = 20;
-        let basis_unique_states = if b_small {500} else {2000}; //15 cpercent
+		let set1 = "data/debug/full_par_set/config/"; //for dfa
+		let max_word= if b_small {512} else {512 * 4};
+		let sigs = if b_small {20} else {400};
+		let subsigs = if b_small {20} else {580}; 
+		let avg_pats_per_subsig = 8; //old value 8
+		let avg_active_pats_per_subsig = 2;
+		let perc_comp_subsigs = 20;
+		let basis_unique_states = if b_small {500} else {2000}; //15 cpercent
 		let vec_decrease_level = if b_small {vec![]}
 			else { vec![2,1] };
 		let num_circs = if b_small {1} else {3}; 
-        let basis_acc_states = if b_small {200} else {1260}; 
-        let basis_pats_in_trace = if b_small {220} else {1400}; 
-        let basis_acc_states_igc = basis_acc_states ; //9 cpercent
-        let basis_pats_in_trace_igc = basis_pats_in_trace;
-            //old value 100 cur value 1/1000.
-        let dfa_sigs = if b_small {1} else {6};
-        let dfa_subsigs= if b_small {1} else {6};
-        let perc_pats_expansion_rate = 104; //old good value 2
-        let perc_pats_expansion_rate_igc = 2;
-        //let avg_subsig_per_sig = 3;
+		let basis_acc_states = if b_small {200} else {1260}; 
+		let basis_pats_in_trace = if b_small {220} else {1400}; 
+		let basis_acc_states_igc = basis_acc_states ; //9 cpercent
+		let basis_pats_in_trace_igc = basis_pats_in_trace;
+			//old value 100 cur value 1/1000.
+		let dfa_sigs = if b_small {1} else {6};
+		let dfa_subsigs= if b_small {1} else {6};
+		let perc_pats_expansion_rate = 104; //old good value 2
+		let perc_pats_expansion_rate_igc = 2;
+		//let avg_subsig_per_sig = 3;
 
 		let init_cp_cap= CpCapacity{
 			max_word_len: max_word, 
@@ -1576,23 +1577,23 @@ pub mod tests_zkp_driver{
 		);
 		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
  		let init_cp_cap_igc= CpCapacity{
-            max_word_len: max_word,
-            basis_unique_states,
-            subsigs: subsigs,
-            avg_pats_per_subsig,
-            //avg_subsig_per_sig,
-        };
-        let init_sed_cap_igc= SedCapacity::new(
-            max_word, read_global_config().range2_bit, subsigs,
-            avg_pats_per_subsig,
-            avg_active_pats_per_subsig,
-            basis_pats_in_trace_igc,
-            perc_pats_expansion_rate_igc,
-            sigs,
-            perc_comp_subsigs,
-            basis_unique_states,
-            basis_acc_states_igc,
-        );
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs: subsigs,
+			avg_pats_per_subsig,
+			//avg_subsig_per_sig,
+		};
+		let init_sed_cap_igc= SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig,
+			avg_active_pats_per_subsig,
+			basis_pats_in_trace_igc,
+			perc_pats_expansion_rate_igc,
+			sigs,
+			perc_comp_subsigs,
+			basis_unique_states,
+			basis_acc_states_igc,
+		);
 
 		let num_jobs:usize = 1;
 		//let num_jobs:usize = 16;
@@ -1608,7 +1609,7 @@ pub mod tests_zkp_driver{
 			.map(|n| format!("{}/{}{}.dat", set1, n, suffix));
 
 		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
-    		0,
+			0,
 			&main_file,
 			data_files,
 			"data/debug/full_par_set/reports/report2.dat", //report
@@ -1639,9 +1640,9 @@ pub mod tests_zkp_driver{
 	fn full_clamav<F:PrimeField>(b_check_lkup: bool, b_light_test: bool,
 		b_setup: bool){
 		//extra setting
-        get_global_config().snark_cache_dir = "full_clamav".to_string();
-        get_global_config().b_write_snark_cache = b_setup;
-        get_global_config().b_read_snark_cache = !b_setup;
+		get_global_config().snark_cache_dir = "full_clamav".to_string();
+		get_global_config().b_write_snark_cache = b_setup;
+		get_global_config().b_read_snark_cache = !b_setup;
 		get_global_config().range2_bit = 26;
 		get_global_config().b_light_test = b_light_test;
 		get_global_config().min_subsigs = 150;
@@ -1653,26 +1654,26 @@ pub mod tests_zkp_driver{
 
 		get_global_config().b_read_cache = true;
 		let b_write_cache = !read_global_config().b_read_cache;
-        let set1 = "data/debug/full_clamav/config/"; //for dfa
-        let max_word= 512 * 4;
-        let sigs = 400;
-        let subsigs = 580; //220 for prev db
-        let avg_pats_per_subsig = 8; //old value 8
-        let avg_active_pats_per_subsig = 2;
-        let perc_comp_subsigs = 20;
+		let set1 = "data/debug/full_clamav/config/"; //for dfa
+		let max_word= 512 * 4;
+		let sigs = 400;
+		let subsigs = 580; //220 for prev db
+		let avg_pats_per_subsig = 8; //old value 8
+		let avg_active_pats_per_subsig = 2;
+		let perc_comp_subsigs = 20;
 		let vec_decrease_level = vec![2,1];
 		let num_circs = 3; 
-        let basis_unique_states = 2000; //15 cpercent
-        let basis_acc_states = 1260; //last good value 1800
-        let basis_pats_in_trace = 1400; //last good value 3000
-        let basis_acc_states_igc = basis_acc_states ; //9 cpercent
-        let basis_pats_in_trace_igc = basis_pats_in_trace;
-            //old value 100 cur value 1/1000.
-        let dfa_sigs = 6;
-        let dfa_subsigs= 6;
-        let perc_pats_expansion_rate = 104; //old good value 2
-        let perc_pats_expansion_rate_igc = 2;
-        //let avg_subsig_per_sig = 3;
+		let basis_unique_states = 2000; //15 cpercent
+		let basis_acc_states = 1260; //last good value 1800
+		let basis_pats_in_trace = 1400; //last good value 3000
+		let basis_acc_states_igc = basis_acc_states ; //9 cpercent
+		let basis_pats_in_trace_igc = basis_pats_in_trace;
+			//old value 100 cur value 1/1000.
+		let dfa_sigs = 6;
+		let dfa_subsigs= 6;
+		let perc_pats_expansion_rate = 104; //old good value 2
+		let perc_pats_expansion_rate_igc = 2;
+		//let avg_subsig_per_sig = 3;
 
 		let init_cp_cap= CpCapacity{
 			max_word_len: max_word, 
@@ -1694,23 +1695,23 @@ pub mod tests_zkp_driver{
 		);
 		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
  		let init_cp_cap_igc= CpCapacity{
-            max_word_len: max_word,
-            basis_unique_states,
-            subsigs: subsigs/2,
-            avg_pats_per_subsig,
-            //avg_subsig_per_sig,
-        };
-        let init_sed_cap_igc= SedCapacity::new(
-            max_word, read_global_config().range2_bit, subsigs,
-            avg_pats_per_subsig,
-            avg_active_pats_per_subsig,
-            basis_pats_in_trace_igc,
-            perc_pats_expansion_rate_igc,
-            sigs,
-            perc_comp_subsigs,
-            basis_unique_states,
-            basis_acc_states_igc,
-        );
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs: subsigs/2,
+			avg_pats_per_subsig,
+			//avg_subsig_per_sig,
+		};
+		let init_sed_cap_igc= SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig,
+			avg_active_pats_per_subsig,
+			basis_pats_in_trace_igc,
+			perc_pats_expansion_rate_igc,
+			sigs,
+			perc_comp_subsigs,
+			basis_unique_states,
+			basis_acc_states_igc,
+		);
 
 		let num_jobs = 8;
 		let scan_files: Vec<String> = if b_setup {
@@ -1721,7 +1722,7 @@ pub mod tests_zkp_driver{
 				format!("{}/binexec_p{}.dat", set1, i)).collect()
 		};
 		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
-    		0,
+			0,
 			&format!("{}/main.dat",set1), //src sig
 			scan_files, //list of files to discharge
 			"data/debug/full_clamav/reports/report2.dat", //report
