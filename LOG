@@ -28090,6 +28090,16 @@ Goal 3. deply par_data to server
 	Try later at night time. (probably needs 4 hrs).
 	--> but why only 2.5M/hr? The past full4 is faster.
 
+Wed 04/29/2026
+Goal 1. use m1-ultramem-96 model in northeastern (1.1/hr) 
+	[a] *** 6:40AM --> 
+	[b] performance: prove step speed compared with c2d
+	numjobs: 	1		2		4		6		8
+	c2d:		2.6		2.42 	2.27	2.02	1.74	
+	m1-96:      1.7     1.63    1.50    1.38	-- missing --
+	c2d is 1.5x faster!
+	[c] speed of full4: 1 job: 3.13MB/sec 
 
+Goal 2. writing concrete example 1
+	[a] restructure
 
--- TODO -- continue with the checkpoint implementation
