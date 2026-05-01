@@ -1418,6 +1418,7 @@ pub mod tests_zkp_driver{
 		get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 26;
 		get_global_config().min_subsigs = 145;
+		get_global_config().min_avg_pats_per_subsig = 4;
 		get_global_config().b_read_cache = true;
 		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/full_data_set/config/"; //for dfa
@@ -1648,8 +1649,8 @@ pub mod tests_zkp_driver{
 		get_global_config().min_subsigs = 150;
 		get_global_config().min_basis_unique_states= 32;
 		get_global_config().min_avg_pats_per_subsig= 6;
-		get_global_config().n_par_snark = 2;
-		get_global_config().n_par_snark_cp = 2;
+		get_global_config().n_par_snark = if b_setup {1} else {2};
+		get_global_config().n_par_snark_cp = if b_setup {1} else {2};
 		get_global_config().n_par_batch_claim = 8;
 
 		get_global_config().b_read_cache = true;
@@ -1713,7 +1714,7 @@ pub mod tests_zkp_driver{
 			basis_acc_states_igc,
 		);
 
-		let num_jobs = 8;
+		let num_jobs = if b_setup {1} else {8};
 		let scan_files: Vec<String> = if b_setup {
 			(0..num_jobs).map(|i|
 				format!("{}/sample_1M_{}.dat", set1, i)).collect()

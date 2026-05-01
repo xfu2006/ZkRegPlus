@@ -706,6 +706,7 @@ where
 	) -> Result<(usize, usize, Vec<usize>, Vec<usize>, Vec<Arc<dyn Capacity + Send + Sync>>, Vec<Arc<dyn NdAdvice + Send + Sync>>), Error>
 		where <CS1E as CommitmentScheme<C1, H>>::ProverParams: Send + Sync {
 		use rayon::prelude::*;
+		let b_debug = true;
 
 		let results: Vec<_> = (min_layer..=max_layer)
 				.into_par_iter().map(|layer_id| (
@@ -724,6 +725,26 @@ where
 					Err(Error::Other(format!("Thread panicked in gen_nd_advice_at_layer for layer {}: {}", layer_id, msg)))
 				})))
 				.collect();
+		// DEBUG USE 73821: when file < 200 KB, report whether layer 0
+		// (smallest circ) was selectable. Byte estimate matches the
+		// PERF 1001 convention (word.len * 63/2).
+		let approx_bytes = word.len() * 63 / 2;
+		if approx_bytes < 200 * 1024 {
+			for (layer_id, res) in results.iter() {
+				if *layer_id == 0 && b_debug{
+					match res {
+						Ok(_) => println!(
+							"DEBUG USE 73821.1: layer 0 OK for ~{} B \
+							 (job {}, word.len {})",
+							approx_bytes, job_id, word.len()),
+						Err(e) => println!(
+							"DEBUG USE 73821.2: layer 0 REJECTED for \
+							 ~{} B (job {}, word.len {}): {:?}",
+							approx_bytes, job_id, word.len(), e),
+					}
+				}
+			}
+		}
 		let best_result = results
 				.iter()
 				.filter_map(|(layer_id, res)| res.as_ref().ok().map(|val| 

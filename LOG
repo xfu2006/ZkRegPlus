@@ -28099,7 +28099,29 @@ Goal 1. use m1-ultramem-96 model in northeastern (1.1/hr)
 	m1-96:      1.7     1.63    1.50    1.38	-- missing --
 	c2d is 1.5x faster!
 	[c] speed of full4: 1 job: 3.13MB/sec 
+	Note the batch claim generation actually screws the data.
+	the degration is only about 1->1.2x slower from 1 to 6.
 
 Goal 2. writing concrete example 1
 	[a] restructure
+
+Thursday 04/30/2026
+Goal 1. start data collection of 3 circ version of full_datav4 and
+	later do a comparison
+	[a] collect the full4-3circs and then compare.
+
+Goal 2. writing paragraph 3 comparison (justification of problem) -> DONE
+
+Friday 05/01/2026
+Goal 1. start full_clamav collection on server expected (70 hrs)
+	started: 8:03am
+	[a] check setting -> is the file mixed in list
+	[b] check upper bounds
+	[c] generate the setup info first -> OUT OF RAM! after 3 hrs
+
+Goal 2. analyze data
+	[a] compare 3circ and 1 circ version of full4 -> mainly
+		gen_nd_advice select circ cost
+	[b] analyze the clam file, why it fails.
+	[c] deploy to set up.
 
