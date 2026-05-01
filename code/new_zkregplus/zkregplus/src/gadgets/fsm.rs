@@ -3,6 +3,7 @@
 */
 
 use folding_schemes::folding::foldpot::container_config::ColEle;
+use utils::consts::B_DEBUG;
 use ark_ff::{PrimeField};
 use std::marker::{PhantomData};
 use folding_schemes::{
@@ -154,7 +155,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for FsmGadget<F>{
 		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig, 
 		_word_id: FpVar<F>, _subseg_id: FpVar<F>) 
 		-> Result<(), SynthesisError>{
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let nc = cs.num_constraints();
 		let nv = cs.num_witness_variables();
 		//let one = new_const_var(&cs, F::one());

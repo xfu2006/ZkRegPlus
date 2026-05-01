@@ -1,5 +1,5 @@
-use utils::consts::read_global_config;
-/* Created 06/11/2025. 
+use utils::consts::{read_global_config, B_DEBUG};
+/* Created 06/11/2025.
    Implementation resumed 06/27/2025.
    Complete: 07/16/2025
    Revised: 08/11/2025 to take two subsig list from prior gadgets
@@ -242,7 +242,7 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		_job_id: usize,
 	) ->Result<Self, Error>{
 		let stmt_container = Container::<F>::new("compute_sig_adv_stmt");
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		if b_debug{
 			println!("DEBUG USE 6700.0: inp_sigs.len: {}, discharge_info: {}, v_sig_obj.len: {}", inp_sigs.len(), discharge_infos.len(), v_sig_obj.len());
 			for i in 0..inp_sigs.len(){
@@ -349,7 +349,7 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		subsig_store_info: &SubsigStepStore,
 	)->Result<(std::sync::Arc<std::sync::Mutex<Container<F>>>,Vec<F>), Error>{
 		//0. init data
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		if b_debug{
 			println!("DEBUG USE 6701 -- list of inp_subsigs, b_igc: {}", b_igc);
 			for i in 0..inp_subsigs.len(){
@@ -557,7 +557,7 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		subsig_store_extra_info_igc: &SubsigInfoStore,
 	)->Result<(std::sync::Arc<std::sync::Mutex<Container<F>>>,Vec<F>),Error>{
 		//0. retrieve data 
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let n1_cs = inp_subsigs_cs.len(); //capacity num_subsigs
 		let n1_igc = inp_subsigs_igc.len(); //capacity num_subsigs
 		assert!(n1_cs==capacity.subsigs_cs);
@@ -1099,7 +1099,7 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 					//extracting the dnf to the concat of inp_subsigs
 		sig_to_id: &HashMap<String,usize>,
 	)->Result<std::sync::Arc<std::sync::Mutex<Container<F>>>,Error>{
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let zero = F::zero();
 		let frg = F::from(RANGE2);
 		let res = Container::<F>::new("sig_res_combo");
@@ -1630,7 +1630,7 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
 		//0. retrieve data from combo
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let b_perf = false;
 		let nc = cs.num_constraints();
 		let (zero,one)=(new_const_var(&cs,F::zero()),new_const_var(&cs,F::one()));
@@ -2154,7 +2154,7 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		//0. retrieve data from combo
 		let b_perf = false;
 		let nc = cs.num_constraints();
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let (zero,one)=(new_const_var(&cs,F::zero()),
 			new_const_var(&cs,F::one()));
         let max_val:usize = (1<<read_global_config().range2_bit) - 1;

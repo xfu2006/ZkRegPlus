@@ -1,4 +1,4 @@
-use utils::consts::read_global_config;
+use utils::consts::{read_global_config, B_DEBUG};
 /* Created 07/16/2025, Completed: 07/27/2025
 	Revised 11/06/2025: improve efficiency
 	Revised 01/10/2026: improve capaicity err exception
@@ -280,7 +280,7 @@ impl <F: PrimeField + ColEle> DfaAdvAdvice<F>{
 		seg_id: F) 
 	-> Result<(std::sync::Arc<std::sync::Mutex<Container<F>>>,Vec<F>),Error>{
 		//0. set up data
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let res = Container::<F>::new("mul_fsm_acc");
 		let (m, nlen) = (capacity.subsigs, capacity.max_nibble_len);
 		let (_one,zero) = (F::one(),F::zero());
@@ -1052,7 +1052,7 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
 		//0. retrieve data from combo
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let b_perf = false;
 		let log_level = LOG2;
 		let mut gt = GTimer::new();

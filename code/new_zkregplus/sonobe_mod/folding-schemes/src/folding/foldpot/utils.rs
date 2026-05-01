@@ -47,7 +47,7 @@ pub const B_DEBUG3:bool = false; //category 3 (higher ID the higher cost)
 /// NOTE it has an internal bug, manually turn it on 
 /// if you need it.
 pub fn check_cs<F:PrimeField>(cs: &ConstraintSystemRef<F>, info: &str){
-	let b_debug = false;
+	let b_debug = B_DEBUG;
 	if b_debug{ println!("-- DEBUG USE 1001: entering CHECK: {}", info);}
 	if b_debug && cs.should_construct_matrices(){
 		let csat = cs.is_satisfied();
@@ -778,7 +778,7 @@ pub fn deserialize_affines_raw<P: SWCurveConfig>(path_prefix: &str) -> Vec<Affin
 
 pub fn write_g16_optimized_bn254(path: &Path, pk: &ark_groth16::ProvingKey<Bn254>, vk: &ark_groth16::VerifyingKey<Bn254>) {
 	let mut gt1 = GTimer::new();
-    let b_debug = false;
+    let b_debug = B_DEBUG;
     let path_str = path.to_str().unwrap();
 
     let meta_path = format!("{}.meta", path_str);

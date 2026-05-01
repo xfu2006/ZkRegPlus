@@ -1854,7 +1854,7 @@ pub mod tests_zkp_driver{
 		let b_check_lkup = false;
 		let _b_light_test = true;
 		let _b_setup = false;
-		//small_data::<Fr>(b_check_lkup); //small data
+		small_data::<Fr>(b_check_lkup); //small data
 		//small_data2::<Fr>(b_check_lkup);  //10k data
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)
@@ -1865,7 +1865,7 @@ pub mod tests_zkp_driver{
 		//full_data3::<Fr>(b_check_lkup); //full data large file
 		//full_data4::<Fr>(b_check_lkup); //full data large file
 		//full_par::<Fr>(b_check_lkup); //full data large file
-		full_par2::<Fr>(b_check_lkup); //full_data4 files, 8 parallel jobs
+		//full_par2::<Fr>(b_check_lkup); //full_data4 files, 8 parallel jobs
 		//full_clamav::<Fr>(b_check_lkup, _b_light_test, _b_setup); //full data large file
 
 		// Completion sentinel for run_checkpoints.py. Not reached if

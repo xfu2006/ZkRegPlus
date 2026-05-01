@@ -45,7 +45,7 @@ use crate::folding::{
 		mod_super::{WitnessFoldPotSuper,CommittedInstanceFoldPotSuper, FoldPotSuper},
 		circuits_super::{field_to_usize,CommittedInstanceVarFoldPotSuper},
 		sigma_cyclepair::{compute_hc_var, hash_var},
-		utils::{get_mem_usage,f1_limbs_to_f2, B_DEBUG2, B_DEBUG3, new_var, check_cs},
+		utils::{get_mem_usage,f1_limbs_to_f2, B_DEBUG, B_DEBUG2, B_DEBUG3, new_var, check_cs},
 		container_config::ColEle,
 	},
 };
@@ -375,7 +375,7 @@ where C::BaseField: PrimeField,
 
 	pub fn from(val: &Phase1CircuitRetVal<F,C>, cs: &ConstraintSystemRef<F>)
 	->Self{
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let res = Self{
 			ch: new_var(cs, val.ch),
 			rc: new_var(cs, val.rc),
@@ -1241,7 +1241,7 @@ where
 		let mut c1 = cs.num_constraints();
 		let mut t1 = GTimer::new();
 		let log_level = LOG3;
-		let b_debug = true;
+		let b_debug = B_DEBUG;
 		let (cyclepair_inputs_var, expected_final_result, hashchain_b) = 
 			self.process_cyclepair_inp(cs.clone());
 		log_perf(self.job_id, log_level, &format!("Phase2 Circ gen_cs: Step 1: gen_expected_final_result. r1cs: {}", cs.num_constraints()-c1), &mut t1);
@@ -1759,7 +1759,7 @@ where
     fn generate_constraints(self, cs: ConstraintSystemRef<CF1<C1>>) -> Result<(), SynthesisError> {
 		let mut gt1 = GTimer::new();
 		let mut gt2 = GTimer::new();
-		let b_debug = true;
+		let b_debug = B_DEBUG;
 		let log_level = LOG2;
 
 		//1. let the two circuits generate constraints first
@@ -1966,7 +1966,7 @@ where
 		let mut gt1 = GTimer::new();
 		let mut gt2 = GTimer::new();
 		let log_level = LOG2;
-		let b_debug = true;
+		let b_debug = B_DEBUG;
 		let c0 = cs.num_constraints();
 
 		//1. create circ2 (cyclepair circ generate constraints)

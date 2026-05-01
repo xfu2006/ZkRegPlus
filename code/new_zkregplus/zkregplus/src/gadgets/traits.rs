@@ -16,6 +16,7 @@
 //			Trait and Struct Declarations
 // ---------------------------------------------
 use ark_ff::{PrimeField,Zero};
+use utils::consts::B_DEBUG;
 use ark_relations::r1cs::SynthesisError;
 use std::{sync::{Arc, Mutex}, fmt::Debug};
 use std::collections::{HashMap};
@@ -105,7 +106,7 @@ impl <F: Clone + Zero + ColEle> Col<F>{
 	//Please fix all call functions that calls it and pass a simle  None to it.
 	pub fn new(data: Vec<F>, name: &str, idx_seg: usize)
 	->std::sync::Arc<std::sync::Mutex<Self>>{
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		if b_debug{
 			for x in &data{
 				if idx_seg == IDX_SI_DATA{ 
@@ -131,7 +132,7 @@ impl <F: Clone + ColEle> Col<F>{
 	//test it in the function (adding PartialEq will coz too many changes)
 	pub fn new_const(data: Vec<F>, name: &str, idx_seg: usize)
 	->std::sync::Arc<std::sync::Mutex<Self>>{
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		if b_debug{
 			for x in &data{
 				assert!(!x.is_debug_val(), "FOUND the DEBUG VAL in name: {}, idx_seg: {}", name, idx_seg);

@@ -40,7 +40,7 @@ use self::rustomaton::{
 //use utils::consts::{WARN,LOG1,LOG2,LOG3, B_SINGLE_JOB_MODE,COMBINATION_LIMIT,RANGE_MAX,MAX_PM_SECTIONS, REPEAT_LEN_LIMIT, MIN_BAG_WORD_LEN, TEST_MODE};
 use utils::{
 	logger::{log, log_perf,LOG1,LOG2,LOG4,LOG6},
-	consts::read_global_config,
+	consts::{read_global_config, B_DEBUG},
 	os::{read_lines},
 	timer::{Timer},
 	data::{u8_to_hex}
@@ -364,7 +364,7 @@ impl SubSigObj{
 	}
 
 	pub fn get_patterns_old(&self, vec_sub_sigs: &Vec<SubSigObj>) ->Vec<String>{
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		match self.subsig_type{
 			SubSigType::GeneralRegex => {
 				if b_debug{ validate_ra_regex(&self.value, "unknown"); }
@@ -701,7 +701,7 @@ impl ClamavSig{
 	/// cost that returns false.
 	pub fn accepts_by_automaton(&self, sig_id: usize, str_src: &Vec<u8>) 
 	-> (bool,Option<DischargeSigInfo>){
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		if self.vec_subsig_obj.len() != self.vec_subsig_automaton.len(){
 			//println!("NEEDS to build automaton for {}", self.to_str());
 			return (true,None); //default conservative value
@@ -1203,13 +1203,16 @@ impl ClamavSig{
 	pub fn accepts_approx_pm_bounds(&self, hs: &HashMap<String, Vec<usize>>,
 		hs_igc: &HashMap<String, Vec<usize>>, fname: &str)
 	-> (TriVal, Option<DischargeSigInfo>){
-		let mut b_debug = false;
-		let debug_sig = "Win.Packed.Gandcrab-6911085-1";
-		b_debug = b_debug && format!("{}",debug_sig) == self.name;
+		let mut b_debug = B_DEBUG;
 		if b_debug {
-			println!("DEBUG USE 6999.1: sig: {}", self.name);
-			for i in 0..self.vec_subsig_obj.len(){
-				println!(" -- subsig[{}]: {}", i, self.vec_subsig_obj[i].value);
+			let debug_sig = "Win.Packed.Gandcrab-6911085-1";
+			b_debug = b_debug && format!("{}",debug_sig) == self.name;
+			if b_debug{
+				println!("DEBUG USE 6999.1: sig: {}", self.name);
+				for i in 0..self.vec_subsig_obj.len(){
+					println!(" -- subsig[{}]: {}", 
+						i, self.vec_subsig_obj[i].value);
+				}
 			}
 		}
 

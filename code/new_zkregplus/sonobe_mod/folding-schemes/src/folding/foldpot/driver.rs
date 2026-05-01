@@ -706,7 +706,7 @@ where
 	) -> Result<(usize, usize, Vec<usize>, Vec<usize>, Vec<Arc<dyn Capacity + Send + Sync>>, Vec<Arc<dyn NdAdvice + Send + Sync>>), Error>
 		where <CS1E as CommitmentScheme<C1, H>>::ProverParams: Send + Sync {
 		use rayon::prelude::*;
-		let b_debug = true;
+		let b_debug = B_DEBUG;
 
 		let results: Vec<_> = (min_layer..=max_layer)
 				.into_par_iter().map(|layer_id| (

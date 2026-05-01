@@ -20,6 +20,8 @@ use ark_std::{
 };
 use rayon::iter::{ParallelIterator,IntoParallelRefIterator,IntoParallelIterator};
 
+const B_DEBUG: bool = false;
+
 /// Computations are expressed in terms of rank-1 constraint systems (R1CS).
 /// The `generate_constraints` method is called to generate constraints for
 /// both CRS generation and for proving.
@@ -650,7 +652,7 @@ impl<F: Field> ConstraintSystem<F> {
         //1. init data structures
 		//1.1 num times
 		let mut timer = Instant::now();
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let t1 = Arc::new(Mutex::new(Instant::now()));
         let transformed_lc_map = 
 			Arc::new(Mutex::new(

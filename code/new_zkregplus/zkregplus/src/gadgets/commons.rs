@@ -1,4 +1,4 @@
-use utils::consts::read_global_config;
+use utils::consts::{read_global_config, B_DEBUG};
 /* Created 03/07/2025 */
 // common utility functions
 use folding_schemes::folding::foldpot::container_config::ColEle;
@@ -258,7 +258,7 @@ pub fn verify_encode_cols_in_range<F:PrimeField + ColEle>(target_col: &[FpVar<F>
 ) -> Result<(),SynthesisError>{
 	//1. build the factor array for use
 	let b_perf = false;
-	let b_debug = false;
+	let b_debug = B_DEBUG;
 	let mut gt = Timer::new();
 	assert!(target_col.len()>0);
 	let cs = target_col[0].cs();
@@ -993,7 +993,7 @@ pub fn verify_inverse<F:PrimeField + ColEle>(cs: ConstraintSystemRef<F>,
 pub fn verify_inverse_old<F:PrimeField + ColEle>(cs: ConstraintSystemRef<F>,
 	v1: &[FpVar<F>], v2: &[FpVar<F>], 
 	beta: &FpVar<F>, elen: usize)->Result<(), SynthesisError>{
-	let b_debug = false;
+	let b_debug = B_DEBUG;
 
 	let one_var= FpVar::<F>::new_constant(cs.clone(), F::one())?;
 	for i in 0..elen{
@@ -1033,7 +1033,7 @@ pub fn fpvar_to_var<F:PrimeField + ColEle>(v: &FpVar<F>)->Variable{
 pub fn verify_inverse_new<F:PrimeField + ColEle>(cs: ConstraintSystemRef<F>,
 	v1: &[FpVar<F>], v2: &[FpVar<F>], 
 	beta: &FpVar<F>, elen: usize)->Result<(), SynthesisError>{
-	let b_debug = false;
+	let b_debug = B_DEBUG;
 
 	let beta_tuple= var_to_tuple(&beta);
 	let lb_one = LinearCombination::from((F::one(),Variable::One));
@@ -1067,7 +1067,7 @@ pub fn verify_inverse_mul_col<F:PrimeField + ColEle>(
 	beta: &FpVar<F>
 )->Result<(), SynthesisError>{
 	//1. preprare the factors
-	let b_debug = false;
+	let b_debug = B_DEBUG;
 	let num_cols = v1.len();
 	let n = v1[0].len();
 	for c in v1 {assert!(c.len()==n);}
@@ -1599,7 +1599,7 @@ pub fn expand_vec<F:PrimeField + ColEle>(vec: &mut Vec<F>, size: usize){
 /// the first entry will have non-zero m-table value and the other
 /// duplicates will have m-tbl value 0).
 pub fn gen_m_table<F:PrimeField + ColEle>(qry: &Vec<F>, lkup: &Vec<F>)->Vec<F>{
-	let b_debug = false;
+	let b_debug = B_DEBUG;
 	if b_debug{
 		for x in qry{ assert!(lkup.contains(x), "cannot find {}", x); } 
 	}
@@ -1780,7 +1780,7 @@ pub fn verify_2d_lkup_prf<F:PrimeField + ColEle>(
 )-> Result<(), SynthesisError>{
 	//1. retrieve data
 	let b_perf = false;
-	let b_debug = false;
+	let b_debug = B_DEBUG;
 	let cs = r.cs();
 	let logl = LOG2;
 	let mut gt = Timer::new();
@@ -1903,7 +1903,7 @@ pub fn verify_1d_lkup_prf<F:PrimeField + ColEle>(
 )-> Result<(), SynthesisError>{
 	//1. retrieve data
 	let b_perf = false;
-	let b_debug = false;
+	let b_debug = B_DEBUG;
 	let cs = r.cs();
 	let logl = LOG2;
 	let mut gt = Timer::new();

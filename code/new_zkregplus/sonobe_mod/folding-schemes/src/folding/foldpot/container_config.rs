@@ -26,11 +26,12 @@ pub trait ColEle{
 use ark_ff::PrimeField;
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_bn254::Fr;
+use super::utils::B_DEBUG;
 
 
 /// convert a bignum in string to F.
 pub fn bignum_to_f<F:PrimeField>(s: &str)->F{
-	let b_debug = false;
+	let b_debug = B_DEBUG;
 	let res = F::from_str(s).map_err(|_| panic!("bignum_to_f: failed to parse {}", s)).unwrap();
 
 	if b_debug{

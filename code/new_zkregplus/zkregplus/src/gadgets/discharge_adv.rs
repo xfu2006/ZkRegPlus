@@ -1,4 +1,4 @@
-use utils::consts::read_global_config;
+use utils::consts::{read_global_config, B_DEBUG};
 use std::sync::{Arc, Mutex};
 /* Created 05/06/2025
    Implementation initially completed 06/11/2025
@@ -537,7 +537,7 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 		info: &SubsigStepStore)
 	->(Self, Self, StepFwdPrf<F>){
 		//1. pat_loc to hash table for easy processing
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let hm_loc = Self::pat_loc_to_hm(pat_loc);
 		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
@@ -684,7 +684,7 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 	/// Return: <ToRemove, Result, StepBwdPrf>
 	pub fn gen_backward_prf(&self, default_min_loc: F, subsig_store_info: &SubsigStepStore) ->(Self, Self, StepBwdPrf<F>){
 		//1. init data
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let (zero, _one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
 		//2. process each subsig, propagating step by step
@@ -915,7 +915,7 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 	pub fn new(subsigs: Vec<F>, store_items: HashMap<F,Vec<StepQueueItem<F>>>, capacity: &DischargeAdvCapacity, q_type: StepQueueType, b_igc: bool)->Self{
 		assert!(!subsigs.contains(&F::zero()));
 		assert!(!store_items.contains_key(&F::zero()));
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		//assert alidity of store_items
 		if b_debug{
 			for subsig in &subsigs{
@@ -962,7 +962,7 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 		b_subsig: bool, 
 		subsig_store_info: &SubsigStepStore,
 	)->Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		//let b_debug_capacity = true;
 		#[cfg(test)] { assert!(is_sorted(&self.subsigs)); }
 		assert!(!b_inp || !b_oup); //b_inp and b_oup cannot be on the same time
@@ -1150,7 +1150,7 @@ impl <F:PrimeField + ColEle> StepQueueItem<F>{
 		locs_available: &Vec<(F,F)>, //query res for available locs for nxt pat 
 	)->(StepQueueItem<F>, StepFwdPrfItem<F>){
 		//0. initial data
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let (_zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
 
@@ -2299,7 +2299,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		seg_id: usize, //the word segment id (starting 0)
 		job_id: usize,
 	)->Result<(std::sync::Arc<std::sync::Mutex<Container<F>>>, StepQueue<F>, F), Error>{
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let res = Container::<F>::new("fwd_steps_queue");
 		let mut t1 = GTimer::new();
 		let b_perf = false;
@@ -2422,7 +2422,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		//0. Generate the logical data:
 		// from inp_step_queue generate the to_del, res, bwd_prf, 
 		// Add them to container
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let b_perf = false;
 
 		let res = Container::<F>::new("bwd_steps_queue");
@@ -2567,7 +2567,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		b_igc: bool,
 	)->Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 		//0. data retrieval
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let (zero, one, _max) = (F::zero(), F::one(), 
 			F::from(max_val as u32));
@@ -3013,7 +3013,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		// This includes the check that the encoded column is
 		// indeed in the external lookup table.
 		// COST: 0
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 
 		let col_names = vec!["subsig", "id", "pat", "rg_start", "rg_end", 
 			"encoded", "inp_subsigs", "m_tbl"];
@@ -3083,7 +3083,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		let b_perf = false;
 		let mut nc = cs.num_constraints();
 		let nc0 = cs.num_constraints();
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 
 		//0. retrieve the data
 		let ct_sq_inp = forward_step_q.get_container("sq_inp")?;
@@ -3168,7 +3168,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 	)->Result<(), SynthesisError>{
 		//1. retrieve the src and dst cols
 		let b_perf = false;
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let cs = r1.cs();
 		if b_debug {check_cs(&cs, "val_union ENTERING ... ");}
 		let nc = cs.num_constraints();
@@ -3290,7 +3290,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 	)->Result<FpVar<F>, SynthesisError>{
 		//0. retrieve data
 		let cs = r1.cs(); 
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 
 		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let f_max = F::from(max_val as u32);
@@ -3735,7 +3735,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		subseg_id: FpVar<F>,
 	) ->Result<(), SynthesisError>{
 		let b_perf = false;
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let mut nc = cs.num_constraints();
 		let nc0 = cs.num_constraints();
 
@@ -3804,7 +3804,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		_subseg_id: FpVar<F>,
 	)->Result<(), SynthesisError>{
 		//1. retrieve info from to_del
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let f_unit = FpVar::<F>::constant(F::from(1u32<<read_global_config().range2_bit));
 		let encoded = sq_to_del.lock().unwrap().get_container("encoded")
 			.unwrap().lock().unwrap().to_vec(); 
@@ -3845,7 +3845,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		_subseg_id: FpVar<F>,
 	)->Result<(), SynthesisError>{
 		//0. retrieve data
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		//let b_perf = false;
 		let cs = r1.cs(); 
 		let max_val:usize = (1<<read_global_config().range2_bit) - 1;

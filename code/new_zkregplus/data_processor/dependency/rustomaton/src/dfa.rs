@@ -16,6 +16,8 @@ use std::{
 use fast_paths::*;
 use serde::{Serialize,Deserialize};
 
+const B_DEBUG: bool = false;
+
 // Added by Xiang Fu
 #[derive(Eq, PartialEq,Clone,Debug)]
 struct MyHashSet(HashSet<usize>);
@@ -428,7 +430,7 @@ impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> DFA<V> {
 
 impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> Automata<V> for DFA<V> {
     fn run(&self, v: &[V]) -> bool {
-		let b_debug = false;
+		let b_debug = B_DEBUG;
         let mut actual = self.initial;
 		let mut id = 0;
         for l in v {

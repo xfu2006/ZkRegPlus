@@ -42,7 +42,7 @@ discharge_subsig_adv (one for case sentive and one for ignore case).
 */
 
 use folding_schemes::folding::foldpot::container_config::ColEle;
-use utils::{logger::{log, log_perf, LOG7, LOG1}, timer::Timer, consts::read_global_config };
+use utils::{logger::{log, log_perf, LOG7, LOG1}, timer::Timer, consts::{read_global_config, B_DEBUG} };
 
 use std::{
 	marker::PhantomData,
@@ -627,7 +627,7 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 		igc_capacity: SedCapacity,
 		clamdb: Arc<ClamavDB<F>>,
 	) ->Self{
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let mut cfgs = vec![];
 		//1. build the gadgets
 		//1.1 the word extract gadget

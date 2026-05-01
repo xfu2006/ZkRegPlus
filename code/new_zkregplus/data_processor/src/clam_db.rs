@@ -31,7 +31,7 @@ use utils::{
 	os::{read_lines,create_new_cache_dir,write_to_file,proj_root,read,write_sigs_to_dir,file_exists},
 	timer::{Timer},
 	logger::{flog,flog_perf,LOG2,LOG1},
-	consts::read_global_config,
+	consts::{read_global_config, B_DEBUG},
 };
 use folding_schemes::{
 	Error,
@@ -1391,7 +1391,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		vec_sig_obj: &Vec<Arc<ClamavSig>>,
 		sig_to_id: &HashMap<String,usize>
 	) {
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 	
 		//1. generate (sig, eval_dnf_id) -> count
 		let tuples_all = vec_sig_obj.par_iter()
@@ -1511,7 +1511,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		HashMap<String, Vec<String>>)
 	{
 		//1. generate tuples to insert for each sig, and subsig object
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let b_debug_subsig = false;
 		let set_subsig_to_debug = vec![
 			"36551681", "36598786", "36556803", "37690369", "36552705", 
@@ -1714,7 +1714,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		b_igc: bool,  //whether it's ignore cases
 		cfg: &ClamavApproxConfig,  //cfg used by build_db
 	) -> BundleSubsigStore{
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		//1. read the signatures
 		let sig_names_need_ised
 			=read_lines(needs_ised_list_file).iter().filter(|s|
@@ -1889,7 +1889,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		cfg: &ClamavApproxConfig, vlog: &mut Vec<String>)->Result<Self, Error>{
 		let log_level = LOG2;
 		let b_perf = true && log_level>=read_global_config().log_level;
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let mut timer = Timer::new();
 		//1. generate all signatures
 		let set_need_dfa = read_lines(needs_dfa_list_file).iter().filter(|s|

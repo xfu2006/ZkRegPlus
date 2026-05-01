@@ -6,6 +6,7 @@
 use utils::{
 	logger::{log, log_perf, LOG1},
 	timer::{Timer},
+	consts::B_DEBUG,
 };
 use paper_data_gen::{
 	clam_data::{report_all_discharge_approach_stats},
@@ -67,7 +68,7 @@ fn generate_data<F:PrimeField>(){
 fn main() {
 	use ark_bn254::{Fr};
 	println!("VERSOIN 1.0");
-	let b_debug = false;
+	let b_debug = B_DEBUG;
 	if b_debug {
 		debug::<Fr>();
 	}else{

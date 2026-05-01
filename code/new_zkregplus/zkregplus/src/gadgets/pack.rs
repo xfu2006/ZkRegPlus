@@ -4,6 +4,7 @@
 
 
 use folding_schemes::folding::foldpot::container_config::ColEle;
+use utils::consts::B_DEBUG;
 use rayon::iter::{ParallelIterator, IndexedParallelIterator,IntoParallelRefIterator};
 use data_processor::clam_db::RANGE2;
 use ark_ff::{PrimeField};
@@ -208,10 +209,10 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for PackFinalGadget<F>{
 		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig, 
 		_word_id: FpVar<F>, _subseg_id: FpVar<F>) 
 		-> Result<(), SynthesisError>{
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let nc = cs.num_constraints();
 		let nv = cs.num_witness_variables();
-		//1. retrive the statement instance 
+		//1. retrive the statement instance
 		//COST: 0 n1rs, 0 var
 		let (stmt_idx, _msg1_idx, msg2_idx, _msg3_idx) = 
 			cfg.get_gadget_indices(i);

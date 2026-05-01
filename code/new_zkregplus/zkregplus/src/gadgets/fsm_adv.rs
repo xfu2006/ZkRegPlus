@@ -1,4 +1,4 @@
-use utils::consts::read_global_config;
+use utils::consts::{read_global_config, B_DEBUG};
 use std::sync::{Arc, Mutex};
 /* Recreated 04/03/2025, Completed: 05/04/2025 
 	Revise started: 10/30/2025
@@ -275,7 +275,7 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		store_subsig_pat: &SubsigPatternStore,
 		job_id: usize,
 	) ->Result<Self, Error>{
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let res = if B_FSM_ADV_NEW{
 			Self::new_v2(b_igc, offset_wea, nibbles, acdfa, inp_state,
 				inp_loc, inp_subsigs, capacity, fsm_id, store_subsig_pat, job_id)
@@ -639,7 +639,7 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		fsm_id: u32,
 		job_id: usize) 
 	-> Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let b_perf = true;
 		let mut gt = GTimer::new();
 		let res = Container::<F>::new("fsm_acc");
@@ -1363,7 +1363,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		// NOTE: we do not have to assert in range for nibbles they
 		// are done already in word_extract_adv gadget
 		let b_perf = false;
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let log_level = LOG2;
 		let mut gt = GTimer::new();
 		let (nc, nv) = (cs.num_constraints(), cs.num_witness_variables());

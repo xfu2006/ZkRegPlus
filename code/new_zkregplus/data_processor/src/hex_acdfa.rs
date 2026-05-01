@@ -137,7 +137,7 @@ impl HexACDFA{
 	///
 	/// Assumption: patterns have even len (hex_nibbles)
 	pub fn new_adv_new(dfa_id: usize, patterns: &Vec<String>, b_case_ignore: bool)->HexACDFA{
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let log_level = LOG6;
 		assert!(b_case_ignore, concat!("This function for ignore case only. ",
 			"Running time is slow for case sensitive DFA,",
@@ -401,7 +401,7 @@ impl HexACDFA{
 	/// OLD version (not quite reliable in handling ignore case), assuming
 	/// even id state number for handling chars.
 	pub fn new_adv_old(dfa_id: usize, patterns: &Vec<String>, b_case_ignore: bool)->HexACDFA{
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		if b_debug{
 			println!("DEBUG USE 6200: HexACDFA::new_adv b_igc: {}, patterns: {:#?}", b_case_ignore, patterns);
 		}

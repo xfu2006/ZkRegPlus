@@ -18,7 +18,7 @@ use ark_r1cs_std::{
 	eq::EqGadget,
 };
 use std::any::Any;
-use utils::{data::{packed_to_nibbles}};
+use utils::{data::{packed_to_nibbles}, consts::B_DEBUG};
 use folding_schemes::{Error};
 
 pub const LEGS:usize = 62;
@@ -130,7 +130,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for WordExtractGadget<F>{
 		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig, 
 		_word_id: FpVar<F>, _subseg_id: FpVar<F>) 
 		-> Result<(), SynthesisError>{
-		let b_debug = false;
+		let b_debug = B_DEBUG;
 		let nc = cs.num_constraints();
 		let nv = cs.num_witness_variables();
 

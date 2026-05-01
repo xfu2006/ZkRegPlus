@@ -1,4 +1,4 @@
-use utils::consts::read_global_config;
+use utils::consts::{read_global_config, B_DEBUG};
 /* Created 04/10/2025 */
 
 /*  The module provides a number of structs and functions
@@ -211,7 +211,7 @@ pub fn assert_wide_wellformed<F:PrimeField + ColEle>(
 	job_id: usize,
 ) ->Result<(),SynthesisError>{
 	let b_perf = false;
-	let b_debug = false;
+	let b_debug = B_DEBUG;
 	let logl = LOG2;
 	let mut gt = Timer::new();
 
@@ -1955,7 +1955,7 @@ pub fn tbl_left_join_wide<F:PrimeField + ColEle>(
 	name: &str, //the name of the new container bundle
 ) -> Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 	//1. data verify and capacity check
-	let b_debug = false;
+	let b_debug = B_DEBUG;
 	let res = Container::<F>::new(name);
 	let join_tbl= Container::<F>::new("join_tbl");
 	let prf = Container::<F>::new("prf");
@@ -2110,7 +2110,7 @@ pub fn gen_disjoint_union_prf<F:PrimeField + ColEle>(
 	set2: &Vec<F>,
 	name: &str,
 ) -> Result<(Vec<F>,std::sync::Arc<std::sync::Mutex<Container<F>>>), Error>{
-	let b_debug = true;
+	let b_debug = B_DEBUG;
 	if b_debug{//verify that set1 and set2 are disjoint over non-zero elements
 		let nz_set1 = set1.iter().filter(|x| !x.is_zero())
 			.map(|x| x.clone())
@@ -2146,7 +2146,7 @@ pub fn gen_disjoint_union_prf_adv<F:PrimeField + ColEle>(
 	set3: &Vec<F>, //target result
 	name: &str,
 ) -> Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
-	let b_debug = false;
+	let b_debug = B_DEBUG;
 	let res = vec![&set1[..], &set2[..]].concat();
 	if b_debug{
 		assert!(
@@ -2208,7 +2208,7 @@ pub fn gen_union_prf<F:PrimeField + ColEle>(
 	name: &str,
 ) -> Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 	//0. check
-	let b_debug = true;
+	let b_debug = B_DEBUG;
 	if b_debug{
 		use crate::gadgets::commons::print_vec;
 		let vec_3_2 = vec![&vec1[..], &vec2[..]].concat();
@@ -2351,7 +2351,7 @@ pub fn verify_disjoint_union_prf<F:PrimeField + ColEle>(
 ) -> Result<(), SynthesisError>{
 	//1. verify the m_tbl works for set3 vs res
 	//COST: 3 * (n1 + n2)
-	let b_debug = false;
+	let b_debug = B_DEBUG;
 	assert!(set1.len()>0, "input len must >0");
 	let cs = set1[0].cs();
 	let b_perf = false;
@@ -2609,7 +2609,7 @@ pub fn verify_tbl_left_join_wide<F:PrimeField + ColEle>(
 ) -> Result<(), SynthesisError>{
 	//0. retrieve data
 	let b_perf = false;
-	let b_debug = false;
+	let b_debug = B_DEBUG;
 	let logl = LOG2;
 	let mut nc = cs.num_constraints();
 	let nc0 = nc;
