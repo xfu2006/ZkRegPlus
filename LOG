@@ -28114,7 +28114,9 @@ Goal 2. writing paragraph 3 comparison (justification of problem) -> DONE
 
 Friday 05/01/2026
 Goal 1. start full_clamav collection on server expected (70 hrs)
-	started: 8:03am
+	started: 8:03am -> 11:30am (3.5 hrs)
+			4:25pm -> 5:45pm (1.5 hrs)
+			=> total 5 hrs.
 	[a] check setting -> is the file mixed in list
 	[b] check upper bounds
 	[c] generate the setup info first -> OUT OF RAM! after 3 hrs
@@ -28123,5 +28125,9 @@ Goal 2. analyze data
 	[a] compare 3circ and 1 circ version of full4 -> mainly
 		gen_nd_advice select circ cost
 	[b] analyze the clam file, why it fails.
+	[c] add debug statement for why circ1 fails 73821.2
 	[c] deploy to set up.
+
+Goal 3. create a full_par2, it takes all jobs of full4
+	run in parallel.
 

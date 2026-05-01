@@ -1539,7 +1539,7 @@ pub mod tests_zkp_driver{
 		let set1 = "data/debug/full_par_set/config/"; //for dfa
 		let max_word= if b_small {512} else {512 * 4};
 		let sigs = if b_small {20} else {400};
-		let subsigs = if b_small {20} else {580}; 
+		let subsigs = if b_small {142} else {580}; 
 		let avg_pats_per_subsig = 8; //old value 8
 		let avg_active_pats_per_subsig = 2;
 		let perc_comp_subsigs = 20;
@@ -1631,6 +1631,108 @@ pub mod tests_zkp_driver{
 		);
 	}
 
+	/// Like `full_data4`, but feeds binexec_4_1..binexec_4_8 (8 files,
+	/// excluding the merged binexec_4_9) into a single `zkp_driver_adv`
+	/// call so foldpot runs them as parallel jobs. Capacities and the
+	/// config dir are taken from `full_data4`; parallel/snark knobs
+	/// come from `full_par`. Total 173MB. do not generate snark proof.
+	/// This function is used to figure out the optimized circ setting
+	/// for clamav data (with the most difficult files).
+	#[allow(dead_code)]
+	fn full_par2<F:PrimeField>(b_check_lkup: bool){
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_write_snark_cache = true;
+		get_global_config().range2_bit = 26;
+		get_global_config().min_subsigs = 148;
+		get_global_config().min_avg_pats_per_subsig = 4;
+		get_global_config().b_light_test = true;
+		get_global_config().n_par_snark = 2;
+		get_global_config().n_par_snark_cp = 2;
+		get_global_config().n_par_batch_claim = 8;
+		get_global_config().b_folding_only = true;
+		get_global_config().b_read_cache = true;
+		let b_write_cache = !read_global_config().b_read_cache;
+		let set1 = "data/debug/full_data_set/config/"; //for dfa
+		let max_word= 512 * 8; //compared with full4, we are doing 128k seg 
+		let sigs = 400;
+		let subsigs = 562;
+		let avg_pats_per_subsig = 8;
+		let avg_active_pats_per_subsig = 2;
+		let perc_comp_subsigs = 20;
+		let basis_unique_states = 2000;
+		let vec_decrease_level = vec![];
+		let num_circs = 1;
+		let basis_acc_states = 1260;
+		let basis_pats_in_trace = 1400;
+		let basis_acc_states_igc = basis_acc_states;
+		let basis_pats_in_trace_igc = basis_pats_in_trace;
+		let dfa_sigs = 6;
+		let dfa_subsigs= 6;
+		let perc_pats_expansion_rate = 104;
+		let perc_pats_expansion_rate_igc = 2;
+
+		let init_cp_cap= CpCapacity{
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+		};
+		let init_sed_cap= SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig,
+			avg_active_pats_per_subsig,
+			basis_pats_in_trace,
+			perc_pats_expansion_rate,
+			sigs,
+			perc_comp_subsigs,
+			basis_unique_states,
+			basis_acc_states,
+		);
+		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
+		let init_cp_cap_igc= CpCapacity{
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs: subsigs/2,
+			avg_pats_per_subsig,
+		};
+		let init_sed_cap_igc= SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig,
+			avg_active_pats_per_subsig,
+			basis_pats_in_trace_igc,
+			perc_pats_expansion_rate_igc,
+			sigs,
+			perc_comp_subsigs,
+			basis_unique_states,
+			basis_acc_states_igc,
+		);
+
+		let data_files = (1..=8).map(|i|
+			format!("{}/binexec_4_{}.dat", set1, i)
+		).collect::<Vec<String>>();
+
+		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+			0,
+			&format!("{}/main.dat",set1),
+			data_files,
+			"data/debug/full_data_set/reports/report2.dat",
+			b_write_cache,
+			"full_data",
+			&format!("{}/main_dfa.dat", set1),
+			&format!("{}/needs_ised.dat", set1),
+			&format!("{}/needs_ised_igc.dat",set1),
+			max_word,
+			&init_cp_cap,
+			&init_sed_cap,
+			&init_dfa_cap,
+			&init_cp_cap_igc,
+			&init_sed_cap_igc,
+			&vec_decrease_level,
+			num_circs,
+			b_check_lkup
+		);
+	}
+
 
 	/// This tests the full clamav signatures against linux executables
 	/// There are 756MB Linux binary executable
@@ -1698,7 +1800,7 @@ pub mod tests_zkp_driver{
  		let init_cp_cap_igc= CpCapacity{
 			max_word_len: max_word,
 			basis_unique_states,
-			subsigs: subsigs/2,
+			subsigs: subsigs,
 			avg_pats_per_subsig,
 			//avg_subsig_per_sig,
 		};
@@ -1762,7 +1864,8 @@ pub mod tests_zkp_driver{
 		//full_data2::<Fr>(b_check_lkup); //full data high acc state
 		//full_data3::<Fr>(b_check_lkup); //full data large file
 		//full_data4::<Fr>(b_check_lkup); //full data large file
-		full_par::<Fr>(b_check_lkup); //full data large file
+		//full_par::<Fr>(b_check_lkup); //full data large file
+		full_par2::<Fr>(b_check_lkup); //full_data4 files, 8 parallel jobs
 		//full_clamav::<Fr>(b_check_lkup, _b_light_test, _b_setup); //full data large file
 
 		// Completion sentinel for run_checkpoints.py. Not reached if
