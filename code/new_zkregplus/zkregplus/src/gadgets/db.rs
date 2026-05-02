@@ -491,7 +491,7 @@ pub fn assert_well_formed_sorted_adv<F:PrimeField + ColEle>(
 				let part2 = &val_diff + &(&r * &val1[i]); //val1[i-1]=max and
 						//va1[i]=0
 				let res = &bk * &(part1-&part2) + &part2;
-				#[cfg(test)]{
+				if B_DEBUG {
 					assert!(key[i-1].value()? * res.value()? == F::zero());
 				}
 				let lb_res= var_to_lb(&res, F::one());
@@ -506,7 +506,7 @@ pub fn assert_well_formed_sorted_adv<F:PrimeField + ColEle>(
 				let part1 = &id_diff * &(&id[i]-&id[i-1]);
 				let part2 = &val_diff + &(&r * &val1[i]);
 				let res = &bk * &(&part1-&part2) + &part2;
-				#[cfg(test)]{
+				if B_DEBUG {
 					assert!(key[i-1].value()? * res.value()? == F::zero());
 				}
 				let lb_res= var_to_lb(&res, F::one());
@@ -518,7 +518,7 @@ pub fn assert_well_formed_sorted_adv<F:PrimeField + ColEle>(
 				)?;
 			}
 		} else {//this is only checked when b_relaxed is false
-			#[cfg(test)] {assert!(!b_relaxed);}
+			if B_DEBUG {assert!(!b_relaxed);}
 			/* OLD version
 			let part1 = &id_diff + &(sid_diff* &r);
 			let part2 = &val_diff + &(&r * &val1[i]);
@@ -532,7 +532,7 @@ pub fn assert_well_formed_sorted_adv<F:PrimeField + ColEle>(
 			let part2 = &val_diff + &(&r * &val1[i]);
 			let res = &(&bk * &(part1-&part2)) + &part2;
 			//check res is 0
-			#[cfg(test)]{
+			if B_DEBUG {
 				assert!(key[i-1].value()? * res.value()? == F::zero());
 			}
 			let lb_res= var_to_lb(&res, F::one());
@@ -765,7 +765,7 @@ pub fn prove_filter_tag<F:PrimeField + ColEle>(
 ) -> Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 	//0. check data
 	let (_n, m, k) = (key.len(), unique_key_size, sorted_key.len());
-	#[cfg(test)]{
+	if B_DEBUG {
 		assert!(tags.len()==_n);
 		for i in 0.._n{
 			assert!(tags[i].is_zero() || tags[i].is_one());

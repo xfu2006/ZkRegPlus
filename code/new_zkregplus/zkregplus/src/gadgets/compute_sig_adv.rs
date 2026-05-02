@@ -1550,7 +1550,7 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 			F::from(ID_ENCODED_LAST_STEP)*factor1;
 		let part1_normal_var = new_const_var(&cs, part1);
 		let part1_last_var = new_const_var(&cs, part1_alt);
-		#[cfg(test)]{ assert!(TriVal::False as u8==1u8 && TriVal::Maybe as u8==3);}
+		if B_DEBUG { assert!(TriVal::False as u8==1u8 && TriVal::Maybe as u8==3);}
 
 		let lb_zero= LinearCombination::from((F::zero(),Variable::One));
 		for i in 0..subsig_raw_eval.len(){
@@ -1595,7 +1595,7 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 			let lb_sid_act = var_to_lb(&sid_act, F::one());
 			let lb_neg_valid_sid = var_to_lb(&valid_sid, -F::one());
 			let lb_inp_subsig = var_to_lb(&inp_subsig[i], F::one());
-			#[cfg(test)]{
+			if B_DEBUG {
 				assert!(inp_subsig[i].value()? * (sid_act.value()?-
 					valid_sid.value()?)==F::zero());
 			}
@@ -1786,8 +1786,8 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 				raw_res.value()?
 			};
 			let exp_res = new_var(&cs, exp_res_val);
-			#[cfg(test)]{
-				assert!(inp_subsigs[i].value()? * 
+			if B_DEBUG {
+				assert!(inp_subsigs[i].value()? *
 					(exp_res.value()? - vec_counter_res[i].value()?)
 				==F::zero());
 			}

@@ -9,6 +9,7 @@ use std::sync::{Arc};
 // NOTE that it has two modes: char mode (for regular DFA),
 // and normal mode (for ACDFA).
 
+use utils::consts::B_DEBUG;
 use folding_schemes::folding::foldpot::container_config::ColEle;
 use ark_r1cs_std::R1CSVar;
 use rayon::{ iter::{ParallelIterator,IntoParallelIterator,IntoParallelRefIterator} };
@@ -147,7 +148,7 @@ impl <F: PrimeField + ColEle> WordExtractAdvAdvice<F>{
 		//2. do the conversion
 		let nibbles = packed_to_nibbles(&word);
 		assert!(nibbles.len() == LEGS * word.len());
-		#[cfg(test)]{ 
+		if B_DEBUG {
 			use utils::data::{pack_nibbles};
 			let packed = pack_nibbles(&nibbles);
 			assert!(packed.len() == word.len());
@@ -380,7 +381,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for WordExtractAdvGadget<F>{
 			let wsum = sum_vec_vars_weighted(
 				&nibbles[i*LEGS..(i+1)*LEGS], &vec_pows);
 			wsum.enforce_equal(&wd)?;
-			#[cfg(test)]{
+			if B_DEBUG {
 				if wsum.value().is_ok(){
 					assert!(wsum.value()?==wd.value()?);
 				}

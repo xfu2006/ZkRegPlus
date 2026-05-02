@@ -23,6 +23,7 @@ use ark_std::rand::RngCore;
 use ark_std::{One, UniformRand, Zero};
 use core::marker::PhantomData;
 
+use crate::folding::foldpot::utils::B_DEBUG;
 use crate::commitment::CommitmentScheme;
 use crate::folding::circuits::cyclefold::{fold_cyclefold_circuit, CycleFoldCircuit};
 use crate::folding::circuits::CF2;
@@ -866,8 +867,7 @@ where
                 cf_x: Some(cf_u_i1_x),
             };
 
-            #[cfg(test)]
-            NIFSFoldPot::<C1, CS1, H>::verify_folded_instance(r_Fr, &self.U_i, &self.u_i, &U_i1, &cmT)?;
+            if B_DEBUG { NIFSFoldPot::<C1, CS1, H>::verify_folded_instance(r_Fr, &self.U_i, &self.u_i, &U_i1, &cmT)?; }
         } else {
             // CycleFold part:
             // get the vector used as public inputs 'x' in the CycleFold circuit
@@ -986,8 +986,7 @@ where
             self.cf_W_i = cfF_W_i1;
             self.cf_U_i = cfF_U_i1;
 
-            #[cfg(test)]
-            {
+            if B_DEBUG {
                 self.cf_r1cs.check_instance_relation(&_cfW_w_i, &cfW_u_i)?;
                 self.cf_r1cs.check_instance_relation(&_cfE_w_i, &cfE_u_i)?;
                 self.cf_r1cs
@@ -1002,8 +1001,7 @@ where
 
 		//println!(">*>*>* prove_step step 2");
 
-        #[cfg(test)]
-        assert!(cs.is_satisfied().unwrap());
+        if B_DEBUG { assert!(cs.is_satisfied().unwrap()); }
 
         let cs = cs.into_inner().ok_or(Error::NoInnerConstraintSystem)?;
         let (w_i1, x_i1) = extract_w_x::<C1::ScalarField>(&cs);
@@ -1013,9 +1011,10 @@ where
 
 		//println!(">*>*>* prove_step step 3");
 
-        #[cfg(test)]
-        if x_i1.len() != 2 {
-            return Err(Error::NotExpectedLength(x_i1.len(), 2));
+        if B_DEBUG {
+            if x_i1.len() != 2 {
+                return Err(Error::NotExpectedLength(x_i1.len(), 2));
+            }
         }
 
         // set values for next iteration
@@ -1029,8 +1028,7 @@ where
         self.U_i = U_i1;
 
 
-        #[cfg(test)]
-        {
+        if B_DEBUG {
             self.r1cs.check_instance_relation(&self.w_i.clone().into(), &self.u_i.clone().into())?;
             self.r1cs
                 .check_relaxed_instance_relation(&self.W_i.clone().into(), &self.U_i.clone().into())?;

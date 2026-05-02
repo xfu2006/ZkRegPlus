@@ -186,7 +186,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for WordExtractGadget<F>{
 			let wsum = sum_vec_vars_weighted(
 				&extracted_word[i*LEGS..(i+1)*LEGS], &vec_pows);
 			wsum.enforce_equal(&wd)?;
-			#[cfg(test)]{
+			if B_DEBUG {
 				if wsum.value().is_ok(){
 					assert!(wsum.value()?==wd.value()?);
 				}
@@ -244,7 +244,7 @@ impl <F: PrimeField + ColEle> WordExtractAdvice<F>{
 		//2. do the conversion
 		let mut nibbles = packed_to_nibbles(&word);
 		assert!(nibbles.len() == LEGS * word.len());
-		#[cfg(test)]{ 
+		if B_DEBUG {
 			use utils::data::{pack_nibbles};
 			let packed = pack_nibbles(&nibbles);
 			assert!(packed.len() == word.len());

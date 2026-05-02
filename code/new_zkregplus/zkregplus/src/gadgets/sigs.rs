@@ -1,4 +1,4 @@
-use utils::consts::read_global_config;
+use utils::consts::{read_global_config, B_DEBUG};
 /* Created 03/06/2025, completed 03/11/2025 */
 use folding_schemes::folding::foldpot::container_config::ColEle;
 use utils::{consts::ADD_CHAIN_SIZE};
@@ -509,7 +509,7 @@ impl <F: PrimeField + ColEle> GetSigAdvice<F>{
 
 		let vec_sigs_to_include = vec_sig_id_no_crit_pat.iter().map(|x|
 			F::from(*x as u64)).collect::<Vec<F>>(); 
-		#[cfg(test)]{ 
+		if B_DEBUG {
 			use crate::gadgets::commons::is_sorted;
 			assert!(is_sorted(&vec_sigs_to_include));
 		}
@@ -599,10 +599,10 @@ impl <F: PrimeField + ColEle> GetSigAdvice<F>{
 		};
 
 
-		#[cfg(test)]{ data.self_check(); }
+		if B_DEBUG { data.self_check(); }
 		let capacity = data.capacity.clone();
 
-		#[cfg(test)]{
+		if B_DEBUG {
 			let data2 = data.clone();
 			let vec2 = data2.to_vec();
 			let data3 = SigGadgetData::from_vec(&data.capacity, &vec2);
@@ -771,7 +771,7 @@ impl <F: PrimeField + ColEle> GetSigAdvice<F>{
 			vec![F::from(ID_SIG_NO_CRIT_COUNT)],
 
 		];
-		#[cfg(test)]{
+		if B_DEBUG {
 			let desc1 = SigGadgetData::<F>::gen_desc(&self.capacity)
 				.iter().map(|(_,s)| *s)
 				.collect::<Vec<usize>>();
@@ -780,7 +780,7 @@ impl <F: PrimeField + ColEle> GetSigAdvice<F>{
 			assert!(desc1[1..].to_vec()==desc2);
 		}
 		let res = vec_subtbl_ids.concat();
-		#[cfg(test)]{
+		if B_DEBUG {
 			let data_len = SigGadgetData::<F>::get_len(&self.capacity);
 			assert!(data_len - olen == res.len());
 		}
@@ -916,7 +916,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for GetSigGadget<F>{
 		let data_len = SigGadgetData::<F>::get_len(&self.capacity);
 		let data_vec = my_stmt[2*slen..2*slen+data_len].to_vec();
 		let data = SigGadgetData::from_vec(&self.capacity, &data_vec);
-		#[cfg(test)]{
+		if B_DEBUG {
 			let data_vec2 = data.clone().to_vec();
 			assert!(data_vec2==data_vec);
 		}
@@ -953,9 +953,9 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for GetSigGadget<F>{
 		};
 
 		let msg3_vec = msg3.to_vec();
-		#[cfg(test)]{ 
-		  	let msg3_2 = SigGadgetMsg3::<F>::from_vec(&self.capacity, 
-		  		&msg3_vec.clone()); 
+		if B_DEBUG {
+		  	let msg3_2 = SigGadgetMsg3::<F>::from_vec(&self.capacity,
+		  		&msg3_vec.clone());
 			let msg3_vec2 = msg3_2.to_vec();
 			assert!(msg3_vec2==msg3_vec);
 		}
@@ -999,7 +999,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for GetSigGadget<F>{
 		let data_len = SigGadgetData::<F>::get_len(&self.capacity);
 		let data_vec = my_stmt[2*slen..2*slen+data_len].to_vec();
 		let data = SigGadgetData::from_vec(&self.capacity, &data_vec);
-		#[cfg(test)] data.self_check();
+		if B_DEBUG { data.self_check(); }
 
 		//subtbl_id: only the data (excluding final_states_inp) and then oup
 		let subtbl_len = data_len -olen + slen; 
@@ -1009,7 +1009,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for GetSigGadget<F>{
 		let msg3_len = SigGadgetMsg3::<F>::get_len(&self.capacity);
 		let msg3_vec = wtns.msg3[msg3_idx..msg3_idx+ msg3_len].to_vec();
 		let msg3 = SigGadgetMsg3::from_vec(&self.capacity, &msg3_vec);
-		#[cfg(test)] msg3.self_check();
+		if B_DEBUG { msg3.self_check(); }
 
 		//1. check validity msg3 (Logup Inverse and Logup Relations)
 		verify_inverse(cs.clone(), &data.decoded_final_states_sigs_sigs,

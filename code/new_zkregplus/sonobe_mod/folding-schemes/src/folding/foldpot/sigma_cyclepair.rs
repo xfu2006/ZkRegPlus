@@ -8,7 +8,7 @@ use crate::{
 	folding::{
 		foldpot::{
 			sigma_ir1cs::{LookupTableTwoCol,SigmaIR1CS,SigmaIR1CS_Inst,SigmaGadget,WitnessSigmaIR1CSVar,WitnessSigmaIR1CSConfig,StatementInst,StatementExtraInfo,StatementConfig,DummyNdAdvice,GadgetMapper, DummyCapacity,NdAdvice,Capacity,WordInfo},
-			utils::{expand2},
+			utils::{expand2, B_DEBUG},
 			container_config::{ContainerConfig,ColEle},
 		},
 	},
@@ -183,7 +183,7 @@ impl <F:PrimeField + Absorb> SigmaGadget<F> for FoldPairGadget<F>{
 			&hc_a_in, &a, cs.clone());
 		let computed_hb_out = compute_hc_var(&self.poseidon_config,
 			&hc_b_in, &b, cs.clone());
-		#[cfg(test)]{
+		if B_DEBUG {
 		 use ark_r1cs_std::R1CSVar;
 		 assert!(computed_ha_out.value().unwrap()==
 		 	hc_a_out.value().unwrap());

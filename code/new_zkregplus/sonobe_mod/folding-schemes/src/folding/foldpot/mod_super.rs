@@ -170,7 +170,7 @@ impl<C: CurveGroup> CommittedInstanceFoldPotSuper<C> {
 			vec_x.push(self.vec_inst[i].cmF);
 		}
 		let minus_prf = C::zero() - prf_qa_nizk;
-		#[cfg(test)]{//check if it works
+		if B_DEBUG {//check if it works
 			use crate::folding::foldpot::qa_nizk::{QaNizkProof,verify_qa_nizk};
 			let prf:QaNizkProof<E> = QaNizkProof{prf:prf_qa_nizk.clone()};
 			assert!(verify_qa_nizk(&vec_x, &prf, vkey), "qanizk failed");
@@ -199,7 +199,7 @@ impl<C: CurveGroup> CommittedInstanceFoldPotSuper<C> {
 			let gt2 = gt1 * prod; 
 			vec_tuples.push( (gt1.clone(), a, b, gt2.clone()) );
 
-			#[cfg(test)]{
+			if B_DEBUG {
 				if i==vec_x.len()-1{
 					assert!(gt2.is_one()); // it's to assert that as a
 					//group element it's zero
@@ -423,8 +423,8 @@ where
 			::get_challenge_native(poseidon_config, Ui1.clone(), com_all);
 
 
-		#[cfg(test)]{
-			use crate::folding::foldpot::qa_nizk::verify_qa_nizk;	
+		if B_DEBUG {
+			use crate::folding::foldpot::qa_nizk::verify_qa_nizk;
 			let k = Ui1.vec_inst.len();
 			let mut vec_x = vec![];
 			vec_x.push(com_all.clone());
@@ -1533,8 +1533,7 @@ where
     			job_id: self.job_id,
         };
 
-            #[cfg(test)]
-            NIFSFoldPot::<C1, CS1, H>::verify_folded_instance(r_Fr, &self.U_i.vec_inst[j_pci], &self.u_i, &U_i1.vec_inst[j_pci], &cmT)?;
+            if B_DEBUG { NIFSFoldPot::<C1, CS1, H>::verify_folded_instance(r_Fr, &self.U_i.vec_inst[j_pci], &self.u_i, &U_i1.vec_inst[j_pci], &cmT)?; }
         } else {
             // CycleFold part:
             // get the vector used as public inputs 'x' in the CycleFold circuit
@@ -1709,8 +1708,7 @@ where
 			self.cp_W_i = cp_W_i1.clone();
 			self.cp_U_i = cp_U_i1.clone();
 
-            #[cfg(test)]
-            {
+            if B_DEBUG {
                 self.cf_r1cs.check_instance_relation(&_cfW_w_i, &cfW_u_i)?;
                 self.cf_r1cs.check_instance_relation(&_cfE_w_i, &cfE_u_i)?;
                 self.cf_r1cs

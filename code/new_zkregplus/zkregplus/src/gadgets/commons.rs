@@ -172,7 +172,7 @@ pub fn encode_cols_better<F:PrimeField + ColEle>(cols: Vec<&[F]>, col_ids: Vec<u
 	coefs.reverse();
 
 	//2. generate the data
-	#[cfg(test)] { for i in 0..num_cols {assert!(cols[col_ids[i]].len()==n);} }
+	if B_DEBUG { for i in 0..num_cols {assert!(cols[col_ids[i]].len()==n);} }
 	let zero = F::zero();
 	let res = (0..n).into_par_iter().map(|i|{
 		let mut res = zero;
@@ -198,7 +198,7 @@ pub fn encode_cols<F:PrimeField + ColEle>(cols: &Vec<Vec<F>>, col_ids: &Vec<usiz
 	coefs.reverse();
 
 	//2. generate the data
-	#[cfg(test)] { for i in 0..num_cols {assert!(cols[col_ids[i]].len()==n);} }
+	if B_DEBUG { for i in 0..num_cols {assert!(cols[col_ids[i]].len()==n);} }
 	let zero = F::zero();
 	let res = (0..n).into_par_iter().map(|i|{
 		let mut res = zero;
@@ -228,7 +228,7 @@ pub fn decode_cols<F:PrimeField + ColEle>(vec: &Vec<F>, n: usize)->Vec<Vec<F>>{
 		tuples.par_iter().map(|t| t[n-1-i]).collect::<Vec<F>>()
 	}).collect::<Vec<Vec<F>>>();
 
-	#[cfg(test)]{
+	if B_DEBUG {
 		let ids = (0..n).collect::<Vec<usize>>();
 		let encoded = encode_cols(&res, &ids);
 		assert!(encoded == *vec);
@@ -313,7 +313,7 @@ pub fn encode_cols_var_adv_better<F:PrimeField + ColEle>(cols: &Vec<&[FpVar<F>]>
 	coefs.reverse();
 
 	//2. generate the data
-	#[cfg(test)] { for i in 0..num_cols {assert!(cols[col_ids[i]].len()==n);} }
+	if B_DEBUG { for i in 0..num_cols {assert!(cols[col_ids[i]].len()==n);} }
 	let zero = new_var(&cs, F::zero());
 	let res = (0..n).into_iter().map(|i|{
 		let mut res = zero.clone();
@@ -342,7 +342,7 @@ pub fn encode_cols_var_adv<F:PrimeField + ColEle>(cols: &Vec<Vec<FpVar<F>>>,
 	coefs.reverse();
 
 	//2. generate the data
-	#[cfg(test)] { for i in 0..num_cols {assert!(cols[col_ids[i]].len()==n);} }
+	if B_DEBUG { for i in 0..num_cols {assert!(cols[col_ids[i]].len()==n);} }
 	let zero = new_var(&cs, F::zero());
 	let res = (0..n).into_iter().map(|i|{
 		let mut res = zero.clone();
@@ -572,7 +572,7 @@ pub fn two_col_tbl_left_join<F:PrimeField + ColEle>(
 	target_size: usize
 ) -> Result<Vec<Vec<F>>,Error>{
 	//1. data check
-	#[cfg(test)]{
+	if B_DEBUG {
 		assert_wellformed_sorted_two_col_tbl(tbl1);
 		assert_wellformed_sorted_two_col_tbl(tbl2);
 	}
@@ -1176,9 +1176,9 @@ pub fn verify_logup_inverse_old<F:PrimeField + ColEle>(cs: ConstraintSystemRef<F
 
 	sum_left.enforce_equal(&sum_right)?;
 		
-	#[cfg(test)]{
-		if sum_left.value().is_ok(){ 
-			assert!(sum_left.value().unwrap()==sum_right.value().unwrap()); 
+	if B_DEBUG {
+		if sum_left.value().is_ok(){
+			assert!(sum_left.value().unwrap()==sum_right.value().unwrap());
 		}
 	}
 
@@ -1258,9 +1258,9 @@ pub fn verify_logup_inverse_old1<F:PrimeField + ColEle>(cs: ConstraintSystemRef<
 
 	sum_left.enforce_equal(&sum_right)?;
 		
-	#[cfg(test)]{
-		if sum_left.value().is_ok(){ 
-			assert!(sum_left.value().unwrap()==sum_right.value().unwrap()); 
+	if B_DEBUG {
+		if sum_left.value().is_ok(){
+			assert!(sum_left.value().unwrap()==sum_right.value().unwrap());
 		}
 	}
 
@@ -1328,9 +1328,9 @@ pub fn verify_logup_inverse_new<F:PrimeField + ColEle>(cs: ConstraintSystemRef<F
 
 	sum_left.enforce_equal(&sum_right)?;
 		
-	#[cfg(test)]{
-		if sum_left.value().is_ok(){ 
-			assert!(sum_left.value().unwrap()==sum_right.value().unwrap()); 
+	if B_DEBUG {
+		if sum_left.value().is_ok(){
+			assert!(sum_left.value().unwrap()==sum_right.value().unwrap());
 		}
 	}
 
@@ -1352,9 +1352,9 @@ pub fn verify_encoded_states_sig_count<F:PrimeField + ColEle>(cs: ConstraintSyst
 		let (s, v) = (&v2[i], &v2[n+i]); //assume s is already +1
 		let encoded = s*&sigbit_factor + v; 
 		encoded.enforce_equal(&v1[i])?;
-		#[cfg(test)]{
-			if encoded.value().is_ok(){ 
-				assert!(encoded.value()?==v1[i].value()?); 
+		if B_DEBUG {
+			if encoded.value().is_ok(){
+				assert!(encoded.value()?==v1[i].value()?);
 			}
 		}
 	}
@@ -1378,9 +1378,9 @@ pub fn verify_encoded_states_sig<F:PrimeField + ColEle>(cs: ConstraintSystemRef<
 		let (s, id, v) = (&v2[i], &v2[n+i], &v2[2*n+i]); 
 		let encoded = s*&sigbit_fac2 + id*&sigbit_factor + v; 
 		encoded.enforce_equal(&v1[i])?;
-		#[cfg(test)]{
-			if encoded.value().is_ok(){ 
-				assert!(encoded.value()?==v1[i].value()?); 
+		if B_DEBUG {
+			if encoded.value().is_ok(){
+				assert!(encoded.value()?==v1[i].value()?);
 			}
 		}
 	}
@@ -1442,8 +1442,8 @@ pub fn check_eq<F:PrimeField + ColEle>(v1: &FpVar<F>, v2: &FpVar<F>, _msg: &str)
 ->Result<(),SynthesisError>{
 	v1.enforce_equal(&v2)?;
 
-	#[cfg(test)]{
-		if v1.value().is_ok(){ 
+	if B_DEBUG {
+		if v1.value().is_ok(){
 			assert!(v1.value()?==v2.value()?, "ERROR on {}. v1: {}, v2: {}", _msg, v1.value()?, v2.value()?);
 		}
 	}
@@ -1453,8 +1453,8 @@ pub fn check_eq<F:PrimeField + ColEle>(v1: &FpVar<F>, v2: &FpVar<F>, _msg: &str)
 /// Check two fp_var NOT equal. Cost 4 gate.
 pub fn check_neq<F:PrimeField + ColEle>(v1: &FpVar<F>, v2: &FpVar<F>, _msg: &str)
 ->Result<(),SynthesisError>{
-	#[cfg(test)]{
-		if v1.value().is_ok(){ 
+	if B_DEBUG {
+		if v1.value().is_ok(){
 			assert!(v1.value()?!=v2.value()?, "ERROR on check_neq: {}. v1: {}, v2: {}", _msg, v1.value()?, v2.value()?);
 		}
 	}
@@ -1477,8 +1477,8 @@ pub fn check_eq_nz<F:PrimeField + ColEle>(v1: &FpVar<F>, v2: &FpVar<F>, z_const:
 	let res = &diff * v1;
 	res.enforce_equal(z_const)?;
 
-	#[cfg(test)]{
-		if v1.value().is_ok(){ 
+	if B_DEBUG {
+		if v1.value().is_ok(){
 			assert!(v1.value()?==v2.value()? || v1.value()?.is_zero(), "ERROR on check eq_nz: {}.", _msg);
 		}
 	}
@@ -1547,8 +1547,8 @@ pub fn check_arr_eq_or_rg2<F:PrimeField + ColEle>(vec: &[FpVar<F>], z: &FpVar<F>
 	for i in 0..vec.len(){
 		let lb_v1 = var_to_lb(&vec[i], F::one());
 		//check_eq_nz(&vec[i], &z, &fp_zero, &format!("check eq {} fails: {}", i, _msg))?;
-		#[cfg(test)]{
-			let z_val = z.value().unwrap(); 
+		if B_DEBUG {
+			let z_val = z.value().unwrap();
 			let v1 = vec[i].value().unwrap();
 			assert!(v1==z_val || v1==rg2);
 		}
@@ -1569,8 +1569,8 @@ pub fn check_arr_eq_or_rg2<F:PrimeField + ColEle>(vec: &[FpVar<F>], z: &FpVar<F>
 pub fn check_beq<F:PrimeField + ColEle>(v1: &Boolean<F>, v2: &Boolean<F>, _msg: &str)
 ->Result<(),SynthesisError>{
 	v1.enforce_equal(&v2)?;
-	#[cfg(test)]{
-		if v1.value().is_ok(){ 
+	if B_DEBUG {
+		if v1.value().is_ok(){
 			assert!(v1.value()?==v2.value()?, "ERROR on {}.", _msg);
 		}
 	}
@@ -1995,13 +1995,13 @@ pub fn verify_1d_lkup_prf<F:PrimeField + ColEle>(
 /// compute values different.
 pub fn gen_m_table_cond<F:PrimeField + ColEle>(qry: &Vec<F>, sel_qry: &Vec<F>,
 	lkup: &Vec<F>, sel_lkup: &Vec<F>)->Vec<F>{
-	#[cfg(test)]{ 
-		for i in 0..qry.len(){ 
-			if !sel_qry[i].is_zero() { 
-				assert!(lkup.contains(&qry[i]), 
-					"cannot find qry[{}]: {}", i, qry[i]); 
-			}; 
-		} 
+	if B_DEBUG {
+		for i in 0..qry.len(){
+			if !sel_qry[i].is_zero() {
+				assert!(lkup.contains(&qry[i]),
+					"cannot find qry[{}]: {}", i, qry[i]);
+			};
+		}
 	}
 	assert!(qry.len()==sel_qry.len());
 	assert!(lkup.len()==sel_lkup.len());
@@ -2189,7 +2189,7 @@ pub fn better_select_check<F:PrimeField + ColEle>(bvar: &FpVar<F>, v1: &FpVar<F>
 	let bval = bvar.value().unwrap();
 	assert!(bval.is_zero() || bval.is_one());
 	let _val = if bval.is_one(){v1.value().unwrap()} else {v2.value().unwrap()};
-	#[cfg(test)]{ assert!(_val==vres.value()?, "failed better select check"); }
+	if B_DEBUG { assert!(_val==vres.value()?, "failed better select check"); }
 	let cs = bvar.cs();
 	//enforce bvar*(v1-v2) = v-v2;
 	let lb_bvar = var_to_lb(bvar, F::one());
@@ -2213,8 +2213,8 @@ pub fn check_prod_zero<F:PrimeField + ColEle>(v1: &FpVar<F>, v2: &FpVar<F>, lb_z
 	let cs = v1.cs();
 	let lb_v1 = var_to_lb(v1, F::one());
 	let lb_v2 = var_to_lb(v2, F::one());
-	#[cfg(test)]{
-		assert!(v1.value()? * v2.value()? == F::zero(), "ERR on check prod zero: {}", _msg); 
+	if B_DEBUG {
+		assert!(v1.value()? * v2.value()? == F::zero(), "ERR on check prod zero: {}", _msg);
 	}
 	cs.enforce_constraint(
 		lb_v1,

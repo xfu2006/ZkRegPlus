@@ -7,6 +7,7 @@
   But since it's used in decider (only 3 times), we leave it for future work.
 */
 
+use crate::folding::foldpot::utils::B_DEBUG;
 use std::{cmp::{max,min}};
 use std::ops::{Mul};
 use ark_std::{Zero,One};
@@ -41,7 +42,7 @@ impl <F:PrimeField> EqGadget<F> for NonNativeUintVar<F>
 {
 	fn enforce_equal(&self, other: &Self)->Result<(), SynthesisError>{
 		let bres = self.is_eq(other)?;
-		#[cfg(test)]{ if bres.value().is_ok(){assert!(bres.value().unwrap());} }
+		if B_DEBUG { if bres.value().is_ok(){assert!(bres.value().unwrap());} }
 		Ok( bres.enforce_equal(&Boolean::<F>::TRUE)? )
 	}
 
@@ -123,7 +124,7 @@ impl <F:PrimeField> EqGadget<F> for NonNativeUintVar<F>
                     .unwrap()
                     .v;
 				sum_remain.enforce_equal(&FpVar::zero())?;
-				#[cfg(test)]{if sum_remain.value().is_ok(){
+				if B_DEBUG {if sum_remain.value().is_ok(){
 						assert!(sum_remain.value()?.is_zero());
 				} }
                 remaining_limbs[0].v.clone()
@@ -318,7 +319,7 @@ impl <F:PrimeField> NonNativeUintVar<F>{
 
 		let sum1 = res.add_no_align(&other);
 		sum1.enforce_congruent::<F2>(&self)?;
-		#[cfg(test)]{sum1.assert_congruent::<F2>(&&self);}
+		if B_DEBUG {sum1.assert_congruent::<F2>(&&self);}
 
 		Ok(res)
 	}
@@ -328,7 +329,7 @@ impl <F:PrimeField> NonNativeUintVar<F>{
 		assert!(self.0.len()==other.0.len());
 		for i in 0..self.0.len(){
 			self.0[i].v.enforce_equal(&other.0[i].v)?;
-			#[cfg(test)]{
+			if B_DEBUG {
 				assert!(self.0[i].v.value().unwrap_or_default()==other.0[i].value().unwrap_or_default());
 			}
 		}
@@ -365,7 +366,7 @@ where CF2<C>: PrimeField,
 impl <C: CurveGroup> EqGadget<C::ScalarField> for NonNativeAffineVar<C>{
 	fn enforce_equal(&self, other: &Self)->Result<(), SynthesisError>{
 		let bres = self.is_eq(other)?;
-		#[cfg(test)]{ assert!(bres.value().unwrap_or_default()); }
+		if B_DEBUG { assert!(bres.value().unwrap_or_default()); }
 		Ok( bres.enforce_equal(&Boolean::<>::TRUE)? )
 	}
 
@@ -494,14 +495,14 @@ where CF2<C>: PrimeField,
 		// as 1/lambda * numerator = denom
 		let tmp1 = lambda_inv_var.mul_no_align(&numerator_var)?;
 		denom_var.enforce_congruent::<CF3<C>>(&tmp1)?;
-		#[cfg(test)]{denom_var.assert_congruent::<CF3<C>>(&tmp1);}
+		if B_DEBUG {denom_var.assert_congruent::<CF3<C>>(&tmp1);}
 
 		//2.5 verify lambda * lamda_inv = 1
 		let tmp2 = lambda_inv_var.mul_no_align(&lambda_var)?;
 		let b1 = tmp2.is_congruent::<CF3<C>>(&one_var)?;
 		let b2 = b1.or(&b_same_var)?; //if b same var skip the test
 		b2.enforce_equal(&Boolean::<CF1<C>>::TRUE)?; 
-		#[cfg(test)]{ if b2.value().is_ok(){assert!(b2.value().unwrap());}}
+		if B_DEBUG { if b2.value().is_ok(){assert!(b2.value().unwrap());}}
 
 		//2.6 enfoce x3 = lambda * lambda - x1 - x2 
 		// as x3 * 1/lambda + x1 * 1/lambda + x2 * 1/lambda
@@ -509,7 +510,7 @@ where CF2<C>: PrimeField,
 			.mul_no_align(&lambda_inv_var)?;
 		let b1 = sum1.is_congruent::<CF3<C>>(&lambda_var)?;
 		let _b2 = b1.or(&b_same_var)?; //if b same var skip the test
-		#[cfg(test)]{if _b2.value().is_ok(){assert!(b2.value().unwrap());}}
+		if B_DEBUG {if _b2.value().is_ok(){assert!(b2.value().unwrap());}}
 
 		//2.7 enforce y3 = lambda * (x1- x3) - y1
 		// as (y3 + y1) * 1/lbamda + x3 = x1
@@ -517,7 +518,7 @@ where CF2<C>: PrimeField,
 			.add_no_align(&x3_var);
 		let b1 = sum2.is_congruent::<CF3<C>>(&x1_var)?;
 		let _b2 = b1.or(&b_same_var)?; //if b same var skip the test
-		#[cfg(test)]{ if _b2.value().is_ok(){assert!(b2.value().unwrap());}}
+		if B_DEBUG { if _b2.value().is_ok(){assert!(b2.value().unwrap());}}
 
 		let reg_var= Self{x: x3_var, y: y3_var};
 		let mut res = b_self_zero_var.select(other, &reg_var)?;
@@ -567,7 +568,7 @@ where CF2<C>: PrimeField,
 			cs.clone(), || Ok( numerator ))?;
 		//2.1 verified numerator
 		numerator_var.enforce_congruent::<CF2<C>>(&right_num_var)?;
-		#[cfg(test)]{numerator_var.assert_congruent::<CF2<C>>(&right_num_var);}
+		if B_DEBUG {numerator_var.assert_congruent::<CF2<C>>(&right_num_var);}
 
 
 		//2.2 verified denom = y1 + y1 regarding Fq
@@ -576,7 +577,7 @@ where CF2<C>: PrimeField,
 		let denom_var = b_zero_var.select(&fq_zero_var, &denom_var)?;
 		let tmp1 = y1_var.add_no_align(&y1_var);
 		denom_var.enforce_congruent::<CF2<C>>(&tmp1)?;
-		#[cfg(test)]{denom_var.assert_congruent::<CF2<C>>(&tmp1);}
+		if B_DEBUG {denom_var.assert_congruent::<CF2<C>>(&tmp1);}
 
 
 		//2.3 just build values and then later verify their relation
@@ -584,7 +585,7 @@ where CF2<C>: PrimeField,
 			cs.clone(), || Ok(lambda) )?; 
 		let tmp2 = lambda_var.mul_no_align(&denom_var)?;
 		numerator_var.enforce_congruent::<CF2<C>>(&tmp2)?;
-		#[cfg(test)]{numerator_var.assert_congruent::<CF2<C>>(&tmp2);}
+		if B_DEBUG {numerator_var.assert_congruent::<CF2<C>>(&tmp2);}
 
 
 		//2.4 verify x3 and v3
@@ -593,7 +594,7 @@ where CF2<C>: PrimeField,
 		let tmp3 = x3_var.add_no_align(&x1_var).add_no_align(&x1_var);
 		let tmp4 = lambda_var.mul_no_align(&lambda_var)?;
 		tmp3.enforce_congruent::<CF2<C>>(&tmp4)?;
-		#[cfg(test)]{tmp3.assert_congruent::<CF2<C>>(&tmp4);}
+		if B_DEBUG {tmp3.assert_congruent::<CF2<C>>(&tmp4);}
 
 		let y3_var= NonNativeUintVar::<C::ScalarField>::new_witness(
 			cs.clone(), || Ok(y3) )?; 
@@ -601,7 +602,7 @@ where CF2<C>: PrimeField,
 			&(lambda_var.mul_no_align(&x3_var))?);
 		let tmp7 = lambda_var.mul_no_align(&x1_var)?;
 		tmp6.enforce_congruent::<CF2<C>>(&tmp7)?;
-		#[cfg(test)]{tmp6.assert_congruent::<CF2<C>>(&tmp7);}
+		if B_DEBUG {tmp6.assert_congruent::<CF2<C>>(&tmp7);}
 
 		let res = Self{x: x3_var, y: y3_var};
 		Ok( res )

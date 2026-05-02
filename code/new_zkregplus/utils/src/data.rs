@@ -18,6 +18,7 @@ use ark_std::rand::Rng;
 use std::collections::HashMap;
 
 use crate::timer::{Timer};
+use crate::consts::B_DEBUG;
 use rayon::prelude::*;
 
 
@@ -84,7 +85,7 @@ pub fn char_arr_to_u8(arr: &Vec<u8>) -> Vec<u8>{
 
 /// 62 nibbles to f. each nibble 4 bit. Assume f width at least 248 bits.
 pub fn nibbles_to_one_packed<F:PrimeField>(nibbles: &Vec<F>)->F{
-	#[cfg(test)] assert!(nibbles.len()==62);
+	if B_DEBUG { assert!(nibbles.len()==62); }
 	let unit = F::from(16u32);
 	let mut factor = F::from(1u32);
 	let mut res = F::zero();
@@ -100,7 +101,7 @@ pub fn nibbles_to_one_packed<F:PrimeField>(nibbles: &Vec<F>)->F{
 pub fn one_packed_to_nibbles<F:PrimeField>(f: &F)->Vec<F>{
 	let bits = f.into_bigint().to_bits_le();
 	let factors = vec![F::from(1u32), F::from(2u32), F::from(4u32), F::from(8u32)];
-	#[cfg(test)] assert!(bits.len()>=248);
+	if B_DEBUG { assert!(bits.len()>=248); }
 	let bits = bits[0..248].to_vec();
 	let zero = F::zero();
 	let res = bits.chunks(4).map(|v|{

@@ -753,8 +753,8 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 			vec![col_inp_state, col_mid_states, col_oup_state], "states");
 		let si_states = Container::concat_cols(vec![col_si_inp_state, 
 			col_si_mid_states, col_si_oup_state], "si_states");
-		#[cfg(test)]{assert!(states.lock().unwrap().to_vec().len()==nlen+1);}
-		#[cfg(test)]{assert!(si_states.lock().unwrap().to_vec().len()==nlen+1);}
+		if B_DEBUG {assert!(states.lock().unwrap().to_vec().len()==nlen+1);}
+		if B_DEBUG {assert!(si_states.lock().unwrap().to_vec().len()==nlen+1);}
 		res.lock().unwrap().add_container(states.clone()); //remove clone later
 		res.lock().unwrap().add_container(si_states);
 
@@ -779,8 +779,8 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 			vec![col_inp_loc, col_oup_loc], "locs");
 		let si_locs = Container::concat_cols(vec![col_si_inp_loc, 
 			 col_si_oup_loc], "si_locs");
-		#[cfg(test)]{assert!(locs.lock().unwrap().to_vec().len()==2);}
-		#[cfg(test)]{assert!(si_locs.lock().unwrap().to_vec().len()==2);}
+		if B_DEBUG {assert!(locs.lock().unwrap().to_vec().len()==2);}
+		if B_DEBUG {assert!(si_locs.lock().unwrap().to_vec().len()==2);}
 		res.lock().unwrap().add_container(locs);
 		res.lock().unwrap().add_container(si_locs);
 
@@ -789,8 +789,8 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 			"trans", IDX_DATA);
 		let col_si_trans = Col::<F>::new_const(vec![f_id_trans; nlen],
 			"si_trans", IDX_SI_DATA);
-		#[cfg(test)]{assert!(col_trans.lock().unwrap().data.len()==nlen);}
-		#[cfg(test)]{assert!(col_si_trans.lock().unwrap().data.len()==nlen);}
+		if B_DEBUG {assert!(col_trans.lock().unwrap().data.len()==nlen);}
+		if B_DEBUG {assert!(col_si_trans.lock().unwrap().data.len()==nlen);}
 		res.lock().unwrap().add_col(col_trans);
 		res.lock().unwrap().add_col(col_si_trans);
 
@@ -802,8 +802,8 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		let col_si_nibbles = Col::<F>::new_external(vec![f_char; nlen], 
 			"si_nibbles", IDX_SI_DATA, shift, 
 			"word_extract_stmt si_nibbles");
-		#[cfg(test)]{assert!(col_nibbles.lock().unwrap().data.len()==nlen);}
-		#[cfg(test)]{assert!(col_si_nibbles.lock().unwrap().data.len()==nlen);}
+		if B_DEBUG {assert!(col_nibbles.lock().unwrap().data.len()==nlen);}
+		if B_DEBUG {assert!(col_si_nibbles.lock().unwrap().data.len()==nlen);}
 
 		res.lock().unwrap().add_col(col_nibbles);
 		res.lock().unwrap().add_col(col_si_nibbles);
@@ -960,7 +960,7 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		let loc_col = Arc::new(Mutex::new(
 			fs_acc_combo.lock().unwrap().get_container("locs_final").unwrap().lock().unwrap()
 			.duplicate_as_external(0, None)));
-		#[cfg(test)]{
+		if B_DEBUG {
 			assert!(state_col.lock().unwrap().to_vec().len()==_final_states_len);
 		}
 
@@ -1269,7 +1269,7 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 			.get_container("join_tbl").expect("err get join_tbl").lock().unwrap()
 			.get_container("c1").unwrap().lock().unwrap()
 			.duplicate_as_external(0,None);
-		#[cfg(test)]{
+		if B_DEBUG {
 			assert!(pat_col.to_vec().len()==loc_col.to_vec().len());
 		}
 		res.lock().unwrap().add_container(loc_state_pat_tbl);
@@ -1512,8 +1512,8 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		let locs = fsm_acc.get_container("locs")?.lock().unwrap().to_vec();
 		let inp_loc = &locs[0];
 		let _oup_loc = &locs[1];
-		#[cfg(test)]{
-			assert!(inp_loc.value()? 
+		if B_DEBUG {
+			assert!(inp_loc.value()?
 				+ F::from(nlen as u32) == _oup_loc.value()?);
 		}
 		//check_increase(&locs)?;
@@ -1851,7 +1851,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 			log_perf(self.job_id, log_level, "valid_packed_trace step 1", &mut gt);
 		}
 
-		#[cfg(test)]{
+		if B_DEBUG {
 			assert!(_plen==col_to_sorted_combo.lock().unwrap().get_container("id")
 				.unwrap().lock().unwrap().to_vec().len());
 			assert!(_plen==col_to_sorted_combo.lock().unwrap().get_container("sorted_val").unwrap().lock().unwrap().to_vec().len());
@@ -2056,7 +2056,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 			.get_container("c1")?;
 		let pat_loc_tbl = all.search_container( 
 			&format!("{} packed_trace pat_loc", sname))?;
-		#[cfg(test)]{
+		if B_DEBUG {
 			assert!(pat_col.lock().unwrap().to_vec().len()==plen);
 		}
 		verify_tbl_to_sorted_tbl(&r1, &r2,

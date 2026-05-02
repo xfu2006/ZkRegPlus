@@ -27,6 +27,7 @@ use ark_r1cs_std::{
 	ToBitsGadget,
 };
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, Namespace, SynthesisError};
+use crate::folding::foldpot::utils::B_DEBUG;
 use crate::Error;
 use ark_std::{fmt::Debug, One, Zero};
 use core::{borrow::Borrow, marker::PhantomData};
@@ -208,7 +209,7 @@ where
 
 	/// enforce equal to the other
 	pub fn enforce_equal(&self, other: &Self)->Result<(),SynthesisError>{
-		#[cfg(test)]{
+		if B_DEBUG {
 			assert!(self.u.value().unwrap_or_default()==other.u.value().unwrap_or_default());
 			assert!(self.x.value().unwrap_or_default()==other.x.value().unwrap_or_default());
 			assert!(self.cmE.x.value().unwrap_or_default()==other.cmE.x.value().unwrap_or_default());
@@ -513,7 +514,7 @@ where
         let z_i1 =
             self.F
                 .generate_step_constraints(cs.clone(), i_usize, z_i.clone(), wtns_vec)?;
-		#[cfg(test)]{
+		if B_DEBUG {
 			let zi1_part2_hash = _z_i1_part2.hash(&self.poseidon_config);
 			assert!(z_i1[1].value()? == zi1_part2_hash);
 		}

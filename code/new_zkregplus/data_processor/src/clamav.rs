@@ -1396,7 +1396,7 @@ impl ClamavSig{
 				}
 				let res = *x>=allowed[idx].0 && *x<=allowed[idx].1;
 				//SLOW VERSION
-				#[cfg(test)]{
+				if B_DEBUG {
 					let res2 = allowed.iter().map(|y| *x>=y.0 && *x<=y.1)
 						.collect::<Vec<bool>>().into_iter()
 						.fold(false, |acc, val| acc || val);

@@ -422,8 +422,8 @@ impl <F: PrimeField + ColEle> DfaAdvAdvice<F>{
 		let col_si_nibbles = Col::<F>::new_external(sid_nibbles.to_vec(),
 			"si_nibbles", IDX_SI_DATA, -1, 
 			"word_extract_stmt si_nibbles");
-		#[cfg(test)]{assert!(col_nibbles.lock().unwrap().data.len()==nlen);}
-		#[cfg(test)]{assert!(col_si_nibbles.lock().unwrap().data.len()==nlen);}
+		if B_DEBUG {assert!(col_nibbles.lock().unwrap().data.len()==nlen);}
+		if B_DEBUG {assert!(col_si_nibbles.lock().unwrap().data.len()==nlen);}
 
 
 		res.lock().unwrap().add_col(col_nibbles);

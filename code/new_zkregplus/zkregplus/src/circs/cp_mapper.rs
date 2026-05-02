@@ -1,4 +1,4 @@
-use utils::consts::read_global_config;
+use utils::consts::{read_global_config, B_DEBUG};
 /* Created 02/16/2025
    Modified: 07/30/2025 to incororate the failed_sig and discharged_sig 
    sections.
@@ -692,7 +692,7 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 		let sig_st_len = sig_data_len;  //data (excluding fs input)
 		let sig_st_oup_start = s_subtbl_oup +  1;
 		let sig_st_oup_len = slen;
-		#[cfg(test)]{
+		if B_DEBUG {
 			let sig_gadget = &self.gadgets[3];
 			let (stmt_len,_,_,_) = sig_gadget.lock().unwrap().get_msg_size();
 			assert!( stmt_len == 

@@ -316,9 +316,9 @@ impl SubsigPatternStore{
 		//1. define the encode function
 		let factor = F::from(1u32<<state_part_bits);
 		let encode_vec = |vec: &Vec<usize>| -> F{
-			#[cfg(test)] {assert!(vec.len()==5);}
+			if B_DEBUG {assert!(vec.len()==5);}
 			vec.iter().fold(F::zero(), |s,v| {
-				#[cfg(test)] {assert!(*v<(1<<state_part_bits));}
+				if B_DEBUG {assert!(*v<(1<<state_part_bits));}
 				s*factor + F::from(*v as u32)
 			})
 		};
@@ -326,14 +326,14 @@ impl SubsigPatternStore{
 		let new_subsig_ids = if self.subsig_ids.contains(&0) {
 			self.subsig_ids.clone()
 		}else{ vec![ vec![0], self.subsig_ids.clone() ].concat() };
-		#[cfg(test)]{//assert sorted
+		if B_DEBUG {//assert sorted
 			for i in 0..new_subsig_ids.len()-1{
 				assert!(new_subsig_ids[i]<=new_subsig_ids[i+1]);
 			}
 		}
 
 		//2. a sanitty check of its own subsigs
-		#[cfg(test)]{//no duplicate non-zero items
+		if B_DEBUG {//no duplicate non-zero items
 			let mut hs = HashSet::new();
 			for i in 0..new_subsig_ids.len(){
 				if new_subsig_ids[i]!=0{
@@ -531,7 +531,7 @@ impl SubsigStepStore{
 		lkup.vals.append(&mut tuples);
 		// DEPRECATED, REMOVE LATER -------------- ABOVE
 	
-		#[cfg(test)]{//encoded part be sorted to speed up insertion
+		if B_DEBUG {//encoded part be sorted to speed up insertion
 			//becaues when encoded col is sorted, the gen_step_tbl_id()
 			//will generated sorted sub-table ID given piece id is sorted
 			let encoded = &cols[5];
@@ -649,7 +649,7 @@ impl SubsigStepStore{
 		all_tuples = [&all_tuples[..], &tuples2[..]].concat();
 		all_tuples.sort();
 
-		#[cfg(test)]{//key of all_tuples should be sorted
+		if B_DEBUG {//key of all_tuples should be sorted
 			for i in 0..all_tuples.len(){
 				assert!(all_tuples[i].0<=all_tuples[i].1);
 			}
@@ -730,9 +730,9 @@ impl SubsigStepStore{
 		assert!(state_part_bits == read_global_config().range2_bit); //for legacy code
 		let factor = F::from(1u32<<state_part_bits);
 		let encode_vec = |vec: &Vec<usize>| -> F{
-			#[cfg(test)] {assert!(vec.len()==5);}
+			if B_DEBUG {assert!(vec.len()==5);}
 			vec.iter().fold(F::zero(), |s,v| {
-				#[cfg(test)] {assert!(*v<(1<<state_part_bits));}
+				if B_DEBUG {assert!(*v<(1<<state_part_bits));}
 				s*factor + F::from(*v as u32)
 			})
 		};
@@ -740,7 +740,7 @@ impl SubsigStepStore{
 		let new_subsig_ids = if self.subsig_ids.contains(&0) {
 			self.subsig_ids.clone()
 		}else{ vec![ vec![0], self.subsig_ids.clone() ].concat() };
-		#[cfg(test)]{//assert sorted
+		if B_DEBUG {//assert sorted
 			for i in 0..new_subsig_ids.len()-1{
 				assert!(new_subsig_ids[i]<=new_subsig_ids[i+1]);
 			}
@@ -1119,7 +1119,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		let f_trans_id = F::from(trans_tbl_id);
 		let unit = acdfa.state_part_bits;
 		let _num_states = acdfa.num_states;
-		#[cfg(test)]{
+		if B_DEBUG {
 			assert!(unit*2 + 4 < 64);
 			assert!( (1<<unit) > _num_states );
 		}
@@ -1132,7 +1132,7 @@ impl <F:PrimeField> ClamavDB<F>{
 					let idx_src = acdfa.state_to_idx(*src);
 					let idx_dst = acdfa.state_to_idx(dst);
 					let trans = c + ((idx_src+1)<<4) + ((idx_dst+1)<<(4+unit));
-					#[cfg(test)]{
+					if B_DEBUG {
 						assert!(idx_src<_num_states && idx_dst<_num_states);
 					}
 
@@ -1363,7 +1363,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		//4. transitions
 		let f_trans_id = F::from(trans_tbl_id);
 		let unit = read_global_config().range2_bit;
-		#[cfg(test)]{
+		if B_DEBUG {
 			assert!(unit*2 + 4 < 64);
 			assert!( (1<<unit) > num_states );
 		}

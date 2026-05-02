@@ -1018,7 +1018,7 @@ where
         })?;
 		let exp_cf_x = is_basecase.select(&cf_u_i1_x_base, &cf_u_i1_x)?;
         cf_x.enforce_equal(&exp_cf_x)?;
-		#[cfg(test)]{
+		if B_DEBUG {
 			assert!(exp_cf_x.value()?==cf_x.value()?, "exp_cf_x error");
 		}
 		log_perf(self.job_id, log_level, &format!(
@@ -1092,7 +1092,7 @@ where
 			let exp_cp_x = is_basecase.select(&cp_u_i1_x_base, &cp_u_i1_x)?;
         	cp_x.enforce_equal(&exp_cp_x)?;
 
-			#[cfg(test)]{
+			if B_DEBUG {
 				assert!(exp_cp_x.value()?==cp_x.value()?, "exp_cp_x error");
 			}
 

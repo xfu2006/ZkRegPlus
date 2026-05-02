@@ -21,6 +21,7 @@
 /// pairing operations.
 /// NTOE that the public x[] length is 32 (2 gt points, 1 g1 and 1 g2)
 
+use crate::folding::foldpot::utils::B_DEBUG;
 use ark_crypto_primitives::sponge::{Absorb, CryptographicSponge};
 use ark_ec::{Group, CurveGroup,
 	pairing::{Pairing},
@@ -364,7 +365,7 @@ CyclePairCircuit<E,P, C1, C2G2>
 			g2_zero.to_field_elements().unwrap(),
 			gt_zero.to_field_elements().unwrap()].concat();
 		assert!(x.len()==cp_io_len());
-		#[cfg(test)]{
+		if B_DEBUG {
 			let gt3 = E::pairing(&g1_zero, &g2_zero).0;
 			let gt4 = gt_zero * gt3;
 			assert!(gt4==gt_zero);
@@ -405,7 +406,7 @@ CyclePairCircuit<E,P, C1, C2G2>
 		let b: E::G2 = curve_from_field_elements::<E::G2>(&vec_b);
 		let gt2 = E::TargetField::from_base_prime_field_elems(&vec_gt2[..]).unwrap();
 
-		#[cfg(test)]{
+		if B_DEBUG {
 			let gt3 = E::pairing(&a, &b).0;
 			let gt4 = gt1 * gt3;
 			assert!(gt4==gt2);
@@ -462,7 +463,7 @@ ConstraintSynthesizer<CF2<C1>> for CyclePairCircuit<E,P, C1, C2G2>
 		let gt3 = P::final_exponentiation(&m1)?;
 		let lhs = &gt1_var * &gt3;
 		let rhs = gt2_var.clone();
-		#[cfg(test)]{
+		if B_DEBUG {
 			assert!(lhs.value()?==rhs.value()?, "gt1 * e(a+b) != gt2");
 		}
 		lhs.enforce_equal(&rhs)?;
@@ -471,8 +472,7 @@ ConstraintSynthesizer<CF2<C1>> for CyclePairCircuit<E,P, C1, C2G2>
         let x = Vec::<FpVar<CF2<E::G1>>>::new_input(cs.clone(), || {
             Ok(self.x)
         })?;
-        #[cfg(test)]
-        assert_eq!(x.len(), cp_io_len()); // non-constrained sanity check
+        if B_DEBUG { assert_eq!(x.len(), cp_io_len()); } // non-constrained sanity check
         
 		//3. Check that the points coordinates are placed as the public 
 		// input x:  [gt1, a, b, gt2]
@@ -493,7 +493,7 @@ ConstraintSynthesizer<CF2<C1>> for CyclePairCircuit<E,P, C1, C2G2>
         .concat();
 		assert!(computed_x.len()==x.len());
 
-		#[cfg(test)]{
+		if B_DEBUG {
 			assert!(computed_x.value()?==x.value()?);
 			//println!("DEBUG USE 9301.3 verify computed_x = x");
 		}
@@ -574,8 +574,7 @@ where
     if cf_x_i != cf_u_i_x {
         return Err(Error::NotEqual);
     }
-    #[cfg(test)]
-    assert_eq!(cf_x_i.len(), cp_io_len());
+    if B_DEBUG { assert_eq!(cf_x_i.len(), cp_io_len()); }
 
 	//println!("DEBUG USE 911.2 BEFORE checking");
     //2. compute the committed instance 

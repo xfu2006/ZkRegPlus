@@ -21,7 +21,7 @@ macro_rules! lock_unwrap {
 		are discharged).
 */
 use utils::{consts::ADD_CHAIN_SIZE, logger::{log, log_perf, LOG6,LOG7}, timer::Timer as GTimer};
-use crate::folding::foldpot::utils::{sum3,alloc_fpvar_mul,sub2,var_to_tuple, var_to_tuple_adv, B_DEBUG3, B_DEBUG2, check_cs};
+use crate::folding::foldpot::utils::{sum3,alloc_fpvar_mul,sub2,var_to_tuple, var_to_tuple_adv, B_DEBUG, B_DEBUG3, B_DEBUG2, check_cs};
 use serde::{Serialize,Deserialize};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use crate::commitment::CommitmentScheme;
@@ -161,7 +161,7 @@ pub fn assert_imply<F:PrimeField>(b1: &Boolean<F>,  b2: &Boolean<F>)
 ->Result<(), Error>{
 	let b3 = b1.not().or(&b2)?;
 	b3.enforce_equal(&Boolean::TRUE)?;
-	#[cfg(test)]{assert!(b3.value()?);}
+	if B_DEBUG {assert!(b3.value()?);}
 	Ok( () )
 }
 
@@ -2044,7 +2044,7 @@ impl <F:PrimeField> WitnessSigmaIR1CS<F>{
 				let start = vec_starts[i];
 				let frag = &vals[start..start+ulen];
 				if b_const{
-					#[cfg(test)]{
+					if B_DEBUG {
 						let ele1 = frag[0];
 						for i in 0..frag.len(){
 							assert!(frag[i]==ele1);
@@ -2670,7 +2670,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		// will be enforced somewhere else, but need
 		// the cyclepair input
 		let log_level = LOG7;
-		use crate::folding::foldpot::utils::B_DEBUG;
 		let b_debug = B_DEBUG;
 
 		let mut gt1 = GTimer::new();
@@ -2916,10 +2915,11 @@ where 	C: CurveGroup<ScalarField=F>,
 				{old_sum_vec_v_i} else {sum_vec_v_i};
 			sum_vec_v_i = if b_last_seg
 				{sum_vec_v_i*si.batch_r + si.r_word_i} else {sum_vec_v_i};
-			#[cfg(test)]
-			if b_last_seg {
-			//	println!("DEBUG USE 500.0.1: sum_vec_v_i: {}, batch_v: {}, act_word_sub_size: {}, batch_r: {}", sum_vec_v_i, si.batch_v, si.act_word_subseg_size, si.batch_r);
-				assert!(sum_vec_v_i == si.batch_v);
+			if B_DEBUG {
+				if b_last_seg {
+				//	println!("DEBUG USE 500.0.1: sum_vec_v_i: {}, batch_v: {}, act_word_sub_size: {}, batch_r: {}", sum_vec_v_i, si.batch_v, si.act_word_subseg_size, si.batch_r);
+					assert!(sum_vec_v_i == si.batch_v);
+				}
 			}
 
 			//6.4 update the sum_kzg_eval_others
@@ -3170,7 +3170,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		z_i: Vec<FpVar<F>>,
 		external_inputs: Vec<FpVar<F>>,
 	) -> Result<Vec<FpVar<F>>, SynthesisError> {
-		use crate::folding::foldpot::utils::B_DEBUG;
 		let b_debug = B_DEBUG; //set to false in production mode
 		let b_show_sigs = false; //set to false in production mode
 		let log_level = LOG6;
@@ -3213,7 +3212,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		while gi<self.gadgets.len(){
 			for _i in 0..configs[gi].2{
 				let ch = transcript.get_challenge()?;
-				#[cfg(test)]{
+				if B_DEBUG {
 					assert!(ch.value().unwrap()==v_msg2[idx].value().unwrap(),
 						"ERROR ch does not match v_msg2");
 				}
@@ -3291,7 +3290,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			F::from(self.stmt_config.output_size as u32))?;
 		let diff2 = cfg_output_size - &si.act_output_size;
  		diff2.enforce_equal(&wtns_var.unused_output_size)?;
-		#[cfg(test)]{
+		if B_DEBUG {
 			assert!(diff1.value().unwrap()
 				==wtns_var.unused_input_size.value().unwrap());
 			assert!(diff2.value().unwrap()
@@ -3355,7 +3354,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		let not_final_step = final_step.not();
 		let io_res = not_final_step.or(&eq_inp_oup)?;
 		//println!("DEBUG USE 201: b_last: {}, not_final_step: {}, word_id: {}, total_words: {}, eq_inp_oup: {}, sum_inp: {}, sum_oup: {}", b_last.value()?, not_final_step.value()?, si.word_id.value()?, si.total_words.value()?, eq_inp_oup.value()?, sum_inp.value()?, sum_oup.value()?);
-		#[cfg(test)]{
+		if B_DEBUG {
 			assert!(io_res.value()?, "io not match at final step!");
 		}
 		io_res.enforce_equal(&Boolean::TRUE)?;
@@ -3831,9 +3830,10 @@ where 	C: CurveGroup<ScalarField=F>,
 			sum_vec_v_i = b_last_seg.select(
 				&(&(&sum_vec_v_i*&si.batch_r) + &si.r_word_i), 
 				&sum_vec_v_i)?;
-			#[cfg(test)]
-			if b_last_seg.value()? {assert!(sum_vec_v_i.value()?
-				== si.batch_v.value()?);}
+			if B_DEBUG {
+				if b_last_seg.value()? {assert!(sum_vec_v_i.value()?
+					== si.batch_v.value()?);}
+			}
 
 			//6.4 update the sum_kzg_eval_others
 			sum_kzg_eval_others = b_first_seg.select(&( 
@@ -3884,7 +3884,7 @@ where 	C: CurveGroup<ScalarField=F>,
 				assert!(b-a == d-c);
 				for j in a..b+1{
 					v_stmt[j].enforce_equal(&v_stmt[c+j-a])?;
-					#[cfg(test)]{
+					if B_DEBUG {
 						assert!(v_stmt[j].value()==v_stmt[c+j-a].value());
 					}
 				}
@@ -4030,7 +4030,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		}
 
 		b_correct.enforce_equal(&Boolean::TRUE)?;
-		#[cfg(test)]{
+		if B_DEBUG {
 			if b_correct.value().is_ok(){
 				assert!(b_correct.value()?, "failed b_correct");
 			}

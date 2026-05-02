@@ -218,7 +218,7 @@ impl HexACDFA{
 				for ch2 in 0..16u8{
 					let ch = ch1*16 + ch2;
 					let equiv = dfa.byte_classes.get(ch) as usize;
-					#[cfg(test)]{ assert!(equiv<alpha_size2);}
+					if B_DEBUG { assert!(equiv<alpha_size2);}
 					let dest = state_id_to_usize(dfa_trans[idx+equiv])
 						/alpha_size2;
 					trans2[ch2 as usize] = dest;

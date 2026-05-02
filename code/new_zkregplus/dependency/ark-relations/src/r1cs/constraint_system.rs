@@ -256,7 +256,7 @@ impl<F: Field> ConstraintSystem<F> {
 		//1. create the lc
         let index = LcIndex(self.num_linear_combinations);
         let var = Variable::SymbolicLc(index);
-		#[cfg(test)]{
+		if B_DEBUG {
 			assert!(index.0==self.lc_map.len());
 		}
 		self.lc_map.push(Some(lc));

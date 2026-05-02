@@ -693,8 +693,8 @@ where
 		//3. build the qa_nizk for eqvauilence of vecom_vec_r and kzg_vec_r
 		// and the same for vec_v
 		let w = vec![vec_r, vec_v].concat();
-		let prf_qa_nizk = prove_qa_nizk_fast(&w, zero, &pkey.pk_qa_nizk); 
-		#[cfg(test)]{
+		let prf_qa_nizk = prove_qa_nizk_fast(&w, zero, &pkey.pk_qa_nizk);
+		if B_DEBUG {
 			use crate::folding::foldpot::qa_nizk::compute_x;
 			if pkey.pk_qa_nizk.matrix.is_some(){
 				let matrix = pkey.pk_qa_nizk.matrix.as_ref();

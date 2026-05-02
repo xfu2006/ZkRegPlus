@@ -904,7 +904,7 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 				println!("DEBUG USE 7500: data[0]: {}, data[1]: {}, si_data[0]: {}, si_data[1]: {}", vecs[2][0], vecs[2][1], vecs[5][0], vecs[5][1]);
 			}
 			//REMOVE LATER ----------- LATER
-			#[cfg(test)]{
+			if B_DEBUG {
 				let sizes = comp.lock().unwrap().get_sizes();
 				for i in 0..3{
 					assert!(sizes[i]==vecs[i].len());
@@ -941,7 +941,7 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 		let subtbl_data = vec_st_data.concat();
 		let subtbl_id = vec![subtbl_inp, subtbl_oup, subtbl_data]
 			.concat();
-		#[cfg(test)]{
+		if B_DEBUG {
 			assert!(inp.len()==cfg.input_size);
 			assert!(oup.len()==cfg.output_size);
 			assert!(word_seg.len()==cfg.word_subseg_size);
@@ -1038,7 +1038,7 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 			);
 		}
 
-		#[cfg(test)]{
+		if B_DEBUG {
 			let stmt_vec = stmt.to_vec();
 			assert!(stmt_vec.len()==cfg.total_size());
 		}
@@ -1049,7 +1049,7 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 	/// that all component gadget mapper handle the same length of word.
 	fn max_word_len(&self) -> usize{
 		let max_len = self.vec_components[0].lock().unwrap().max_word_len();
-		#[cfg(test)]{
+		if B_DEBUG {
 			for i in 0..self.vec_components.len(){
 				assert!(self.vec_components[i].lock().unwrap().max_word_len()==max_len);
 			}

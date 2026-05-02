@@ -834,7 +834,7 @@ where
 			let mut gt1 = GTimer::new();
 			log_perf(job_id, log_level, &format!("Entering plan_nd_advice, layers: {}, word.len(): {}.", self.layered_circs.len(), word.len()), &mut gt1);
 			let remaining = word.clone();
-			#[cfg(test)]{//check if all circs have the same inp/oup
+			if B_DEBUG {//check if all circs have the same inp/oup
 				// check the max_word_len is decreasing (thus avg cost
 				//increasing
 				for i in 0..self.layered_circs.len(){
@@ -897,7 +897,7 @@ where
 				let word_len = if max_word_len>remaining.len(){
 					remaining.len()}else {max_word_len};
 				let word = remaining[0..word_len].to_vec();
-				#[cfg(test)]{
+				if B_DEBUG {
 					for circ in layer{assert!(lock_unwrap!(circ.get_mapper()).
 						max_word_len()==max_word_len);
 					}
@@ -1126,7 +1126,7 @@ where
 				acc_wd_len += act_len;
 				let frag = remaining[0..act_len].to_vec();
 				remaining = remaining[act_len..].to_vec();
-				#[cfg(test)]{
+				if B_DEBUG {
 					//use crate::folding::foldpot::sigma_ir1cs::{Capacity};
 					assert!(act_len<=_max_len);
 					let rc_cap = _vec_cap_req[i].clone();
@@ -1354,7 +1354,7 @@ where
 				&snark_inp, &words, &ind_claim,
 				idx_individual_prf);
 			let _res = BatchProcessor::<E,LK,S,CS1E,H>::verify_individual(vk, idx_individual_prf, &ind_claim, &batch_proof, &ind_prf);
-			#[cfg(test)] {assert!(_res);}
+			if B_DEBUG { assert!(_res); }
 			Some((batch_proof, ind_prf))
 		}else{
 			None
@@ -1450,7 +1450,7 @@ where
 		let _verifier_param = self.nova_param.1.clone();
 
 		//5. test and verify
-		#[cfg(test)]{
+		if B_DEBUG {
         	let (r1, r2, r3, r4) = nova.instances();
         	FoldPotSuper::<E,P,C2G2, C1, GC1, C2, GC2, FC, CS1, CS2, CS1E, LK, GM, H>::verify(
 				_verifier_param,
@@ -1597,7 +1597,7 @@ where
 				acc_wd_len += act_len;
 				let frag = remaining[0..act_len].to_vec();
 				remaining = remaining[act_len..].to_vec();
-				#[cfg(test)]{
+				if B_DEBUG {
 					//use crate::folding::foldpot::sigma_ir1cs::{Capacity};
 					assert!(act_len<=_max_len);
 					let rc_cap = _vec_cap_req[i].clone();
@@ -1796,7 +1796,7 @@ where
 				&snark_inp, &words, &ind_claim,
 				idx_ind_proof);
 			let _res = BatchProcessor::<E,LK,S,CS1E,H>::verify_individual(vk, idx_ind_proof, &ind_claim, &batch_proof, &ind_prf);
-			#[cfg(test)] {assert!(_res);}
+			if B_DEBUG { assert!(_res); }
 			Some((batch_proof, ind_prf))
 		}else{
 			None

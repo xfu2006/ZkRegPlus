@@ -464,9 +464,9 @@ pub fn get_limb_size<F1:PrimeField, F2:PrimeField>()->usize{
 /// Both should be base prime field elements (extension degree 1).
 pub fn f1_to_f2_limbs<F1: PrimeField, F2: PrimeField>(v: &F1)->Vec<F2>{
 	let bits_per_limb = NonNativeUintVar::<F2>::bits_per_limb();
-	#[cfg(test)]{
+	if B_DEBUG {
 		assert_eq!(F1::extension_degree(), 1); //both should be base prime field
-		assert_eq!(F2::extension_degree(), 1); 
+		assert_eq!(F2::extension_degree(), 1);
 		assert_eq!(NonNativeUintVar::<F1>::bits_per_limb(),bits_per_limb);
 	}
 

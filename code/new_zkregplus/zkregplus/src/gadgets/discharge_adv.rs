@@ -964,7 +964,7 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 	)->Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 		let b_debug = B_DEBUG;
 		//let b_debug_capacity = true;
-		#[cfg(test)] { assert!(is_sorted(&self.subsigs)); }
+		if B_DEBUG { assert!(is_sorted(&self.subsigs)); }
 		assert!(!b_inp || !b_oup); //b_inp and b_oup cannot be on the same time
 		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let (zero, _one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
@@ -1039,7 +1039,7 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 			}
 		}).collect::<Vec<F>>();
 
-		#[cfg(test)]{ for i in 0..vec_locs.len(){assert!(vec_locs[i]<_max);} }
+		if B_DEBUG { for i in 0..vec_locs.len(){assert!(vec_locs[i]<_max);} }
 		let res = Container::new(name); 
 		let seg = if b_inp {IDX_INP} else if b_oup {IDX_OUP} else {IDX_DATA};
 		let si_seg = if b_inp {IDX_SI_INP} else if b_oup {IDX_SI_OUP} else {IDX_SI_DATA};
@@ -1089,7 +1089,7 @@ impl <F:PrimeField + ColEle> StepQueueItem<F>{
 		locs: Vec<F>)->Self{
 		let encoded = encode_cols(&vec![vec![subsig], vec![step], 
 			vec![pat], vec![rg_start], vec![rg_end]], &vec![0,1,2,3,4])[0];
-		#[cfg(test)]{
+		if B_DEBUG {
 			let dvec = decode_cols(&vec![encoded], 5);
 			assert!(subsig==dvec[0][0], "subsig: {}, dev0: {}", subsig, dvec[0][0]);
 			assert!(step==dvec[1][0], "step: {}, dev1: {}", step, dvec[1][0]);
@@ -1124,7 +1124,7 @@ impl <F:PrimeField + ColEle> StepQueueItem<F>{
 	pub fn parse_from(encoded: F, loc_tuples: &Vec<F>)->Self{
 		//1. sort out the locations
 		let locs = loc_tuples.clone();
-		#[cfg(test)] {
+		if B_DEBUG {
 			assert!(is_sorted(&locs));
 			let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 			let (zero,_one,max) = (F::zero(),F::one(),F::from(max_val as u32));
@@ -1261,7 +1261,7 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 		//0. check data
 		//let b_debug = false;
 		let b_debug_capacity = true;
-		#[cfg(test)] { assert!(is_sorted(&self.subsigs)); }
+		if B_DEBUG { assert!(is_sorted(&self.subsigs)); }
 		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let (zero, _one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
 
@@ -1342,7 +1342,7 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 		assert!(n>=v2d[0].len()+1, "buf too small, adjust perc_pats_expansion_rate. n: {}, v2dlen: {}", n, v2d[0].len());
 		let n2 = n-v2d[0].len();
 		let pad = vec![zero; n2];
-		#[cfg(test)]{
+		if B_DEBUG {
 			for i in 2..v2d.len(){
 				for j in 0..v2d[i].len(){ assert!(v2d[i][j] <= _max); }
 			}
@@ -1582,7 +1582,7 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 		//let b_debug = false;
 		let b_debug_capacity = true;
 		//0. check data
-		#[cfg(test)] { assert!(is_sorted(&self.subsigs)); }
+		if B_DEBUG { assert!(is_sorted(&self.subsigs)); }
 		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let (zero, _one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
 		//1. build the columns
@@ -1651,12 +1651,12 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 		let pad = vec![zero; n2];
 		let se = vec![pad.clone(), v2d[0].clone()].concat();//src_encoded
 		let de = vec![pad.clone(), v2d[5].clone()].concat();//prev_encoded
-		#[cfg(test)]{
+		if B_DEBUG {
 			for i in 0..v2d.len(){
 				assert!(v2d[i].len()==v2d[0].len());
-				for j in 0..v2d[i].len(){ 
+				for j in 0..v2d[i].len(){
 					if i!=0 && i!=5{//not src_encoded, prev_encoded
-						assert!(v2d[i][j] <= _max); 
+						assert!(v2d[i][j] <= _max);
 					}
 				}
 			}
@@ -2107,8 +2107,8 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		// entries of pat-loc table.
 		let pat= pat_loc.lock().unwrap().get_container("sorted_key")
 			.unwrap().lock().unwrap().to_vec();
-		#[cfg(test)]{ 
-			assert!(is_sorted(&pat)); 
+		if B_DEBUG {
+			assert!(is_sorted(&pat));
 			assert!(pat[0].is_zero(), "pat has no padding zero at beginning!");
 		}
 		let pat_id= pat_loc.lock().unwrap().get_container("sorted_id")
@@ -2649,7 +2649,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 			rescols[3][i+1] - rescols[3][i] 
 		}).collect::<Vec<F>>();
 		let len2 = diff_subsig.len();
-		#[cfg(test)]{ check_rg2(&diff_subsig, &vec![frg;diff_subsig.len()]); }
+		if B_DEBUG { check_rg2(&diff_subsig, &vec![frg;diff_subsig.len()]); }
 		res.lock().unwrap().add_col(Col::new(diff_subsig, 
 			"diff_subsig", IDX_DATA));
 		res.lock().unwrap().add_col(Col::new_const(vec![frg;len2], 
@@ -2669,7 +2669,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 			}
 		}).collect::<Vec<F>>();
 		let len1 = diff_step.len();
-		#[cfg(test)]{ check_rg2(&diff_step, &vec![frg;diff_step.len()]); }
+		if B_DEBUG { check_rg2(&diff_step, &vec![frg;diff_step.len()]); }
 		res.lock().unwrap().add_col(Col::new(diff_step, "diff_step", IDX_DATA));
 		res.lock().unwrap().add_col(Col::new_const(vec![frg;len1], 
 			"sid_diff_step", IDX_SI_DATA));
@@ -2686,7 +2686,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 			}
 		}).collect::<Vec<F>>();
 		let len1 = diff_loc.len();
-		#[cfg(test)]{ check_rg2(&diff_loc, &vec![frg;diff_loc.len()]); }
+		if B_DEBUG { check_rg2(&diff_loc, &vec![frg;diff_loc.len()]); }
 		res.lock().unwrap().add_col(Col::new(diff_loc, "diff_loc", IDX_DATA));
 		res.lock().unwrap().add_col(Col::new_const(vec![frg;len1], 
 			"sid_diff_loc", IDX_SI_DATA));
@@ -3355,8 +3355,8 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			//optimized version below
 			let lb_sid = var_to_lb(&subtbl_id, -F::one());
 			let lb_sid_alt = var_to_lb(&subtbl_id_alt, -F::one());
-			let lb_col3 = var_to_lb(&sid_cols[3][i], F::one()); 
-			#[cfg(test)]{
+			let lb_col3 = var_to_lb(&sid_cols[3][i], F::one());
+			if B_DEBUG {
 				let res1 = sid_cols[3][i].value()? - subtbl_id.value()?;
 				let res2 = sid_cols[3][i].value()? - subtbl_id_alt.value()?;
 				assert!(res1*res2==F::zero());
@@ -3534,7 +3534,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			let item1 = &b_same * (&dst_pat_id[i]-&dst_pat_id[i-1]-&one);
 			let lb_item1 = var_to_lb(&item1, F::one());
 			let lb_dst = var_to_lb(&dst_encoded[i], F::one());
-			#[cfg(test)]{
+			if B_DEBUG {
 				assert!(item1.value()? * dst_encoded[i].value()? == F::zero());
 			}
 			cs.enforce_constraint(
@@ -3602,7 +3602,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			// -- optimized version
 			let lb_21 = var_to_lb(&item21, F::one());
 			let lb_22 = var_to_lb(&item22, F::one());
-			#[cfg(test)]{
+			if B_DEBUG {
 				assert!(item21.value()? * item22.value()? == F::zero());
 			}
 			cs.enforce_constraint(
@@ -3655,8 +3655,8 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 				//	 //b_end is don't care so no need to list
 			let lb_subsig = var_to_lb(&dst_subsig[i], F::one());
 			let lb_mul_item = var_to_lb(&mul_item, F::one());
-			#[cfg(test)]{
-				// REMOVE LATER ---	
+			if B_DEBUG {
+				// REMOVE LATER ---
 				if mul_item.value()?*dst_subsig[i].value()? != F::zero(){
 					println!("DEBUG USE 6671.1: fails mul_item check: i: {}, mul_item: {}, dst_subsig[i]: {}", i, mul_item.value()?, dst_subsig[i].value()?);
 					println!("DEBUG USE 6671.2: b_begin: {}, b_end: {}, b_middle: {}, diff1[i]: {}, rg1: {}, dst_loc[i]: {}", b_begin.value()?, b_end.value()?, b_middle.value()?, diff1[i].value()?, rg1.value()?, dst_loc[i].value()?);
@@ -3701,7 +3701,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 				b_end * &(&diff2[i] + &one + &rg2 - &dst_loc[i])
 				+ &b_middle * &(&diff2[i] - &rg2 + &dst_loc[i]);
 			let lb_mul_item2 = var_to_lb(&mul_item2, F::one());
-			#[cfg(test)]{
+			if B_DEBUG {
 				assert!(mul_item2.value()?*dst_subsig[i].value()? == F::zero());
 			}
 			cs.enforce_constraint(
@@ -3907,7 +3907,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			//		(&sid_cols[1][i]-&subtbl_id_alt);	 //either case is ok
 			//check_eq(&res, &zero, "fail src_step check")?;
 			// optimized version ---
-			#[cfg(test)]{
+			if B_DEBUG {
 				assert!(subtbl_id.value()?==sid_cols[1][i].value()?
 					|| subtbl_id_alt.value()?==sid_cols[1][i].value()?);
 			}

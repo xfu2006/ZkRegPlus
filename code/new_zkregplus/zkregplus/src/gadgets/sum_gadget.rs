@@ -1,6 +1,7 @@
 /* Created 02/16/2025
 */
 
+use utils::consts::B_DEBUG;
 use folding_schemes::folding::foldpot::container_config::ColEle;
 use ark_ff::{PrimeField};
 use std::marker::{PhantomData};
@@ -134,8 +135,8 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for SumWordGadget<F>{
 			remain = &remain - &one;
 		}
 		acc_sum.enforce_equal(&oup_sum)?;
-		#[cfg(test)]{
-			use ark_r1cs_std::{R1CSVar}; 
+		if B_DEBUG {
+			use ark_r1cs_std::{R1CSVar};
 			if acc_sum.value().is_ok(){
 				assert!(acc_sum.value()?==oup_sum.value()?);
 			}
