@@ -257,29 +257,29 @@ impl SedCapacity{
 			Self::new(
 				self.max_word_len,
 				self.acdfa_state_part_bits,
-				(self.subsigs*3/4).max(read_global_config().min_subsigs),
-				(self.avg_pats_per_subsig*3/4).max(read_global_config().min_avg_pats_per_subsig),
-				(self.avg_active_pats_per_subsig*3/4).max(read_global_config().min_avg_active_pats_per_subsig),
-				(self.basis_pats_in_trace/2).max(read_global_config().min_basis_pats_in_trace),
-				(self.perc_pats_expansion_rate*3/4).max(read_global_config().min_perc_pats_expansion_rate),
-				(self.sigs_sed*4/5).max(read_global_config().min_sigs_sed),
-				(self.perc_comp_subsigs*3/4).max(read_global_config().min_perc_comp_subsigs),
-				(self.basis_unique_states*3/4).max(read_global_config().min_basis_unique_states),
-				(self.basis_acc_states/2).max(read_global_config().min_basis_acc_states),
+				(self.subsigs*9/16).max(read_global_config().min_subsigs), // OLD: *3/4
+				(self.avg_pats_per_subsig*9/16).max(read_global_config().min_avg_pats_per_subsig), // OLD: *3/4
+				(self.avg_active_pats_per_subsig*9/16).max(read_global_config().min_avg_active_pats_per_subsig), // OLD: *3/4
+				(self.basis_pats_in_trace/4).max(read_global_config().min_basis_pats_in_trace), // OLD: /2
+				(self.perc_pats_expansion_rate*9/16).max(read_global_config().min_perc_pats_expansion_rate), // OLD: *3/4
+				(self.sigs_sed*16/25).max(read_global_config().min_sigs_sed), // OLD: *4/5
+				(self.perc_comp_subsigs*9/16).max(read_global_config().min_perc_comp_subsigs), // OLD: *3/4
+				(self.basis_unique_states*9/16).max(read_global_config().min_basis_unique_states), // OLD: *3/4
+				(self.basis_acc_states/4).max(read_global_config().min_basis_acc_states), // OLD: /2
 			)
 		}else{
 			Self::new(
 				self.max_word_len,
 				self.acdfa_state_part_bits,
-				(self.subsigs*3/4).max(read_global_config().min_subsigs),
-				(self.avg_pats_per_subsig*3/4).max(read_global_config().min_avg_pats_per_subsig),
-				(self.avg_active_pats_per_subsig*3/4).max(read_global_config().min_avg_active_pats_per_subsig),
-				(self.basis_pats_in_trace/4).max(read_global_config().min_basis_pats_in_trace),
-				(self.perc_pats_expansion_rate*3/4).max(read_global_config().min_perc_pats_expansion_rate),
-				(self.sigs_sed*4/5).max(read_global_config().min_sigs_sed),
-				(self.perc_comp_subsigs*3/4).max(read_global_config().min_perc_comp_subsigs),
-				(self.basis_unique_states*3/4).max(read_global_config().min_basis_unique_states),
-				(self.basis_acc_states/4).max(read_global_config().min_basis_acc_states),
+				(self.subsigs*9/16).max(read_global_config().min_subsigs), // OLD: *3/4
+				(self.avg_pats_per_subsig*9/16).max(read_global_config().min_avg_pats_per_subsig), // OLD: *3/4
+				(self.avg_active_pats_per_subsig*9/16).max(read_global_config().min_avg_active_pats_per_subsig), // OLD: *3/4
+				(self.basis_pats_in_trace/16).max(read_global_config().min_basis_pats_in_trace), // OLD: /4
+				(self.perc_pats_expansion_rate*9/16).max(read_global_config().min_perc_pats_expansion_rate), // OLD: *3/4
+				(self.sigs_sed*16/25).max(read_global_config().min_sigs_sed), // OLD: *4/5
+				(self.perc_comp_subsigs*9/16).max(read_global_config().min_perc_comp_subsigs), // OLD: *3/4
+				(self.basis_unique_states*9/16).max(read_global_config().min_basis_unique_states), // OLD: *3/4
+				(self.basis_acc_states/16).max(read_global_config().min_basis_acc_states), // OLD: /4
 			)
 		}
 	}

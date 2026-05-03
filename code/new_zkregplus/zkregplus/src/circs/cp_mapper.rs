@@ -136,18 +136,18 @@ impl CpCapacity{
 		if level==1{
 			Self{
 				max_word_len: self.max_word_len,
-				basis_unique_states: (self.basis_unique_states*3/4)
+				basis_unique_states: (self.basis_unique_states*9/16) // OLD: *3/4
 					.max(read_global_config().min_basis_unique_states),
-				subsigs: (self.subsigs*3/4).max(read_global_config().min_subsigs),
-				avg_pats_per_subsig: (self.avg_pats_per_subsig*3/4)
+				subsigs: (self.subsigs*9/16).max(read_global_config().min_subsigs), // OLD: *3/4
+				avg_pats_per_subsig: (self.avg_pats_per_subsig*9/16) // OLD: *3/4
 					.max(read_global_config().min_avg_pats_per_subsig),
 			}
 		}else{
 			Self{
 				max_word_len: self.max_word_len,
-				basis_unique_states: (self.basis_unique_states/2).max(read_global_config().min_basis_unique_states),
-				subsigs: (self.subsigs/2).max(read_global_config().min_subsigs),
-				avg_pats_per_subsig: (self.avg_pats_per_subsig/2).max(read_global_config().min_avg_pats_per_subsig),
+				basis_unique_states: (self.basis_unique_states/4).max(read_global_config().min_basis_unique_states), // OLD: /2
+				subsigs: (self.subsigs/4).max(read_global_config().min_subsigs), // OLD: /2
+				avg_pats_per_subsig: (self.avg_pats_per_subsig/4).max(read_global_config().min_avg_pats_per_subsig), // OLD: /2
 			}
 		}
 	}
