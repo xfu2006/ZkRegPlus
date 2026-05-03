@@ -28132,3 +28132,26 @@ Goal 2. analyze data
 Goal 3. create a full_par2, it takes all jobs of full4
 	run in parallel.
 
+Saturday 05/01/2026
+Goal 1. collect and analyze dat
+	[a] get data
+	[b] done with 14 hours, the 6901.8 message supports custting
+		pat_in_trace and acc_states_in_trace in half, which is great!
+		This mean cutting avg cost a lot for 128kb circ. Let's experiment
+		with new config
+	[c]
+Goal 2. paragraph 3 -> DONE
+Goal 3. adjust the new circ
+	[a] fixed one issue
+	[b] started another one: 3:35pm
+	[c] started another one: 5:03pm
+
+Sunday 05/02/2026
+Goal 1. collect data: new 128k block
+	[a] total time reduced 13.5
+	[b] circ size 13M to 11M which reduced 13.5%
+		total_W 35M to 29M which reduces 17.4
+	[c] chane the file size cap for failing circ 0
+	[d] take the new circ config 
+	[e] update full_4 so that it also takes the new circ config
+		then run full_4

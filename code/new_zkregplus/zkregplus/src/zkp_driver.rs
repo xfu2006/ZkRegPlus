@@ -1414,25 +1414,28 @@ pub mod tests_zkp_driver{
 	/// Total: 173MB. 
 	#[allow(dead_code)]
 	fn full_data4<F:PrimeField>(b_check_lkup: bool){
-		get_global_config().b_read_snark_cache = true;
-		get_global_config().b_write_snark_cache = false;
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_write_snark_cache = true;
+		get_global_config().b_light_test = false;
 		get_global_config().range2_bit = 26;
-		get_global_config().min_subsigs = 145;
+		get_global_config().min_subsigs = 150;
 		get_global_config().min_avg_pats_per_subsig = 4;
+		get_global_config().min_basis_unique_states= 32;
+		get_global_config().min_avg_pats_per_subsig= 6;
 		get_global_config().b_read_cache = true;
 		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/full_data_set/config/"; //for dfa
-		let max_word= 512 * 4;
+		let max_word= 512 * 8;
 		let sigs = 400;
-		let subsigs = 562; //220 for prev db
+		let subsigs = 580; //220 for prev db
 		let avg_pats_per_subsig = 8; //old value 8
 		let avg_active_pats_per_subsig = 2;
 		let perc_comp_subsigs = 20;
-		let basis_unique_states = 2000; //15 cpercent
+		let basis_unique_states = 1300; //15 cpercent
 		let vec_decrease_level = vec![];
 		let num_circs = 1; 
-		let basis_acc_states = 1260; //last good value 1800
-		let basis_pats_in_trace = 1400; //last good value 3000
+		let basis_acc_states = 750; // 1260; //last good value 1800
+		let basis_pats_in_trace = 820; //1400; //last good value 3000
 		let basis_acc_states_igc = basis_acc_states ; //9 cpercent
 		let basis_pats_in_trace_igc = basis_pats_in_trace;
 			//old value 100 cur value 1/1000.
@@ -1659,11 +1662,11 @@ pub mod tests_zkp_driver{
 		let avg_pats_per_subsig = 8;
 		let avg_active_pats_per_subsig = 2;
 		let perc_comp_subsigs = 20;
-		let basis_unique_states = 2000;
+		let basis_unique_states = 1300; //OLD VLAUE: 2000
 		let vec_decrease_level = vec![];
 		let num_circs = 1;
-		let basis_acc_states = 1260;
-		let basis_pats_in_trace = 1400;
+		let basis_acc_states = 750; //OLD VALUE: 1260;
+		let basis_pats_in_trace = 820; //OLD VALUE: 1400;
 		let basis_acc_states_igc = basis_acc_states;
 		let basis_pats_in_trace_igc = basis_pats_in_trace;
 		let dfa_sigs = 6;
@@ -1854,7 +1857,7 @@ pub mod tests_zkp_driver{
 		let b_check_lkup = false;
 		let _b_light_test = true;
 		let _b_setup = false;
-		small_data::<Fr>(b_check_lkup); //small data
+		//small_data::<Fr>(b_check_lkup); //small data
 		//small_data2::<Fr>(b_check_lkup);  //10k data
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)
@@ -1863,7 +1866,7 @@ pub mod tests_zkp_driver{
 		//full_data1::<Fr>(b_check_lkup);
 		//full_data2::<Fr>(b_check_lkup); //full data high acc state
 		//full_data3::<Fr>(b_check_lkup); //full data large file
-		//full_data4::<Fr>(b_check_lkup); //full data large file
+		full_data4::<Fr>(b_check_lkup); //full data large file
 		//full_par::<Fr>(b_check_lkup); //full data large file
 		//full_par2::<Fr>(b_check_lkup); //full_data4 files, 8 parallel jobs
 		//full_clamav::<Fr>(b_check_lkup, _b_light_test, _b_setup); //full data large file
