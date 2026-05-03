@@ -1416,12 +1416,16 @@ pub mod tests_zkp_driver{
 	fn full_data4<F:PrimeField>(b_check_lkup: bool){
 		get_global_config().b_read_snark_cache = false;
 		get_global_config().b_write_snark_cache = true;
-		get_global_config().b_light_test = false;
+		get_global_config().b_light_test = true;
 		get_global_config().range2_bit = 26;
-		get_global_config().min_subsigs = 150;
+		get_global_config().min_subsigs = 361; // OLD value: 150
 		get_global_config().min_avg_pats_per_subsig = 4;
-		get_global_config().min_basis_unique_states= 32;
-		get_global_config().min_avg_pats_per_subsig= 6;
+		get_global_config().min_basis_unique_states= 600; //OLD value 20
+		get_global_config().min_basis_acc_states =  113; // OLD value: 100
+		get_global_config().min_basis_pats_in_trace=  134; // OLD value: 110
+		get_global_config().min_dfa_subsigs =  3; //OLD val 2
+		get_global_config().min_avg_pats_per_subsig= 8; // OLD value: 6
+		get_global_config().min_dfa_sigs = 2; // OLD value: 0 (default)
 		get_global_config().b_read_cache = true;
 		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/full_data_set/config/"; //for dfa
@@ -1432,8 +1436,8 @@ pub mod tests_zkp_driver{
 		let avg_active_pats_per_subsig = 2;
 		let perc_comp_subsigs = 20;
 		let basis_unique_states = 1300; //15 cpercent
-		let vec_decrease_level = vec![];
-		let num_circs = 1; 
+		let vec_decrease_level = vec![2,2];
+		let num_circs = 3; 
 		let basis_acc_states = 750; // 1260; //last good value 1800
 		let basis_pats_in_trace = 820; //1400; //last good value 3000
 		let basis_acc_states_igc = basis_acc_states ; //9 cpercent
@@ -1467,7 +1471,7 @@ pub mod tests_zkp_driver{
  		let init_cp_cap_igc= CpCapacity{
 			max_word_len: max_word,
 			basis_unique_states,
-			subsigs: subsigs/2,
+			subsigs: subsigs,
 			avg_pats_per_subsig,
 			//avg_subsig_per_sig,
 		};
@@ -1493,12 +1497,18 @@ pub mod tests_zkp_driver{
 		//has ALL the files listed (about 87MB)
 		//let min = 8;
 		//let max = 9;
+				//
+		let set1 = "data/debug/full_data_set/config/"; //for dfa
+		let num_jobs:usize = 1;
+		//let num_jobs:usize = 16;
+				let data_files = vec![format!("{}/sample_1M.dat",set1)];
 
 		for id in min..max{
 			zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
 	0, 
 				&format!("{}/main.dat",set1), //src sig
-				vec![format!("{}/binexec_4_{}.dat",set1, id+1)], //list of files to discharge
+				//vec![format!("{}/binexec_4_{}.dat",set1, id+1)], //list of files to discharge
+								data_files.clone(),
 				"data/debug/full_data_set/reports/report2.dat", //report
 				b_write_cache,
 				"full_data", //cache name
@@ -1517,6 +1527,7 @@ pub mod tests_zkp_driver{
 			);
 		}
 	}
+	
 	
 	/// Used for explorting parallel execution efficiency.
 	/// For b_small = true, can run with 16 GB
