@@ -57,6 +57,12 @@ pub struct GlobalConfig {
     pub n_par_snark_cp: usize,
     pub n_par_batch_claim: usize,
     pub b_resume: bool,
+	pub perc_lkup_share: usize, //percentae of the lkup share
+					//compared with nibble length of a segment
+					//e.g., for 700MB linux data (8 jobs) with 256M lkup table
+					//each job (in total) has 90MB data = 180M nibbes
+					//and share of 32M lkup entries. Then.
+					// the perc_lkup_share = 32/180 * 100 = 18 percent 
 }
 
 impl Default for GlobalConfig {
@@ -86,6 +92,7 @@ impl Default for GlobalConfig {
             n_par_snark_cp: 1,
             n_par_batch_claim: 1,
             b_resume: false,
+			perc_lkup_share: 1,
         }
     }
 }
@@ -115,6 +122,7 @@ static GLOBAL_CONFIG: RwLock<GlobalConfig> = RwLock::new(GlobalConfig {
     n_par_snark_cp: 1,
     n_par_batch_claim: 1,
     b_resume: false,
+	perc_lkup_share: 1,
 });
 
 pub fn read_global_config() -> RwLockReadGuard<'static, GlobalConfig> {

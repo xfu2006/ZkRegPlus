@@ -53,6 +53,7 @@ use crate::circs::{
 	sed_mapper::{SedComponentMapper,SedCapacity},
 	dfa_mapper::{DfaComponentMapper,DfaCapacity},
 };
+use crate::gadgets::word_extract::LEGS;
 
 use rayon::prelude::*;
 
@@ -197,10 +198,21 @@ where C: CurveGroup<ScalarField=F>,
 
 	//2. given fixed chunk_len and total_word_len computes the
 	//lkup_share needed to build up circuit
-	let avg_lk_wd = lkup_len/total_word_n + 1;
-	let avg_lk_wd = if avg_lk_wd<1 {1} else {avg_lk_wd};
-	let lk_share = if b_check_lkup {chunk_len*avg_lk_wd} else{
-		16 }; //give a SMALLER lkup_share if we do not check lkup
+	//HERE: we use the global_config.perc_share_size to determine
+	//the lkup size. if b_check_lkup is true, we make sure that it's large
+	//enough (and later in circuit, it WILL perform the check in circ,
+	//if malicious prover fake here, it will fail the circ eventually).
+	let max_nibble_len = chunk_len * LEGS; //31 nibbles per 
+	let total_nibbles = total_word_n * LEGS;
+	let chunks = total_nibbles/max_nibble_len;
+	let lk_share = read_global_config().perc_lkup_share* max_nibble_len/100;
+	let lk_share = if lk_share == 0 {1} else {lk_share};
+	println!("DEBUG USE 68911: lkup_len: {}, max_nibble_len: {}, total_nibble_len: {}, lk_share: {}, config.perc_lkup_share: {}, chunks: {}", lkup_len, max_nibble_len, total_nibbles, lk_share, read_global_config().perc_lkup_share, chunks);
+	if b_check_lkup && lk_share*chunks < lkup_len{
+		panic!("ERROR: lk_share: {} *chunks: {}  < lkup_len: {}",
+			lk_share, chunks, lkup_len);
+
+	}
 
 	//3. build up each category
 	let mut layer_circs = vec![];
@@ -1427,8 +1439,10 @@ pub mod tests_zkp_driver{
 		get_global_config().min_avg_pats_per_subsig= 8; // OLD value: 6
 		get_global_config().min_dfa_sigs = 2; // OLD value: 0 (default)
 		get_global_config().b_read_cache = true;
+		get_global_config().perc_lkup_share = 18; //this is for
+			//full_clam() setting (700MB linux data for 38k clamav) in 8 jobs
+
 		let b_write_cache = !read_global_config().b_read_cache;
-		let set1 = "data/debug/full_data_set/config/"; //for dfa
 		let max_word= 512 * 8;
 		let sigs = 400;
 		let subsigs = 580; //220 for prev db
@@ -1436,8 +1450,8 @@ pub mod tests_zkp_driver{
 		let avg_active_pats_per_subsig = 2;
 		let perc_comp_subsigs = 20;
 		let basis_unique_states = 1300; //15 cpercent
-		let vec_decrease_level = vec![2,2];
-		let num_circs = 3; 
+		let vec_decrease_level = vec![2];
+		let num_circs = 2; 
 		let basis_acc_states = 750; // 1260; //last good value 1800
 		let basis_pats_in_trace = 820; //1400; //last good value 3000
 		let basis_acc_states_igc = basis_acc_states ; //9 cpercent
@@ -1499,11 +1513,11 @@ pub mod tests_zkp_driver{
 		//let max = 9;
 				//
 		let set1 = "data/debug/full_data_set/config/"; //for dfa
-		let num_jobs:usize = 1;
+		//let num_jobs:usize = 1;
 		//let num_jobs:usize = 16;
-				let data_files = vec![format!("{}/sample_1M.dat",set1)];
+		let data_files = vec![format!("{}/sample_1M.dat",set1)];
 
-		for id in min..max{
+		for _id in min..max{
 			zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
 	0, 
 				&format!("{}/main.dat",set1), //src sig
@@ -1768,6 +1782,11 @@ pub mod tests_zkp_driver{
 		get_global_config().n_par_snark = if b_setup {1} else {2};
 		get_global_config().n_par_snark_cp = if b_setup {1} else {2};
 		get_global_config().n_par_batch_claim = 8;
+		get_global_config().perc_lkup_share = 18; //this is for
+			//700MB data in 8 jobs and 256M lkup entries
+			//so we have per job: 90MB data = 180M nibbles
+			// share of 32M lkup entries
+			// then: 32/180 * 100 = 17.7% that's 18 percent
 
 		get_global_config().b_read_cache = true;
 		let b_write_cache = !read_global_config().b_read_cache;
@@ -1868,7 +1887,7 @@ pub mod tests_zkp_driver{
 		let b_check_lkup = false;
 		let _b_light_test = true;
 		let _b_setup = false;
-		//small_data::<Fr>(b_check_lkup); //small data
+		small_data::<Fr>(b_check_lkup); //small data
 		//small_data2::<Fr>(b_check_lkup);  //10k data
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)
@@ -1877,7 +1896,7 @@ pub mod tests_zkp_driver{
 		//full_data1::<Fr>(b_check_lkup);
 		//full_data2::<Fr>(b_check_lkup); //full data high acc state
 		//full_data3::<Fr>(b_check_lkup); //full data large file
-		full_data4::<Fr>(b_check_lkup); //full data large file
+		//full_data4::<Fr>(b_check_lkup); //full data large file
 		//full_par::<Fr>(b_check_lkup); //full data large file
 		//full_par2::<Fr>(b_check_lkup); //full_data4 files, 8 parallel jobs
 		//full_clamav::<Fr>(b_check_lkup, _b_light_test, _b_setup); //full data large file
