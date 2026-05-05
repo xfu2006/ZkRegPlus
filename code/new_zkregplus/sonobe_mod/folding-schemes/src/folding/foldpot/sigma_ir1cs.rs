@@ -2814,14 +2814,11 @@ where 	C: CurveGroup<ScalarField=F>,
 			let v = alpha + si.col1_share[i]*beta + si.col2_share[i];
 			v.inverse().unwrap()
 		}).collect::<Vec<F>>();
-		let mut lookup_share_size_left = si.act_lookup_share_size.clone();
+		// Dummies have m=0, so inv*m = 0 either way -- no need to
+		// branch on col1.is_zero(). Mirrors the constraint side.
 		let sum_hab22_right = (0..right_size).into_par_iter().map(|i|{
-			if si.col1_share[i].is_zero() {zero} 
-			else{ inv_hab22_right[i] * si.m_share[i]}
+			inv_hab22_right[i] * si.m_share[i]
 		}).sum::<F>() + zi_part2.sum_hab22_right;
-		let cnt_zero = si.col1_share.par_iter().filter(|x|
-			x.is_zero()).count();
-		lookup_share_size_left -= F::from(cnt_zero as u64);
 
 		// this is disabled because fill_lkup is not called during
 		// preprocess mode
@@ -3584,30 +3581,8 @@ where 	C: CurveGroup<ScalarField=F>,
 		if b_debug{
 			println!("DEBUG USE 6651.RIGHT: i: {}, alpha: {}, beta: {}, inv_hab22_right_size: {}", _i, alpha.value()?, beta.value()?, inv_hab22_right_size);
 		}
-		let mut lookup_share_size_left = si.act_lookup_share_size.clone();
-		//5.2.1 compute the inverse first to speed up is_zero()? call
-		let val_lkup_left = lookup_share_size_left.value()?;
-		let vec_left = (0..inv_hab22_right_size).collect::<Vec<_>>().
-			into_par_iter().map(|i|{
-				let u_left = field_to_usize(&val_lkup_left);
-				if u_left>=i {
-					val_lkup_left - F::from(i as u64)
-				}else{
-					F::zero()
-				}
-			}).collect::<Vec<F>>();
-		let v_inv_lzero = gen_vec_inverse(&vec_left);
-		let v_col1_share = si.col1_share.iter().map(|v| v.value().unwrap())
-			.collect::<Vec<F>>();
-		let v_val_not_add = v_col1_share.par_iter().zip(
-			vec_left.par_iter()
-		).map(|(&a,&b)| a*b).collect::<Vec<F>>();
-		let v_inv_not_add = gen_vec_inverse(&v_val_not_add);
-		assert!(v_inv_lzero.len()==inv_hab22_right_size);
-		assert!(v_val_not_add.len()==inv_hab22_right_size);
-
 		//5.2.2 now process the inv_hab22_right
-		println!("DEBUG USE 9998: inv_hab22_right_size: {}, lkup_share_size_left: {}", inv_hab22_right_size, lookup_share_size_left.value()?);
+		println!("DEBUG USE 9998: inv_hab22_right_size: {}", inv_hab22_right_size);
 		for i in 0usize..inv_hab22_right_size{
 			//let v_temp = &beta * &si.col1_share[i]; //cost 271ns
 			let v_temp = alloc_fpvar_mul(&beta, &si.col1_share[i]); //231ns
@@ -3617,58 +3592,23 @@ where 	C: CurveGroup<ScalarField=F>,
 			//let prod = &v * &wtns_var.inv_hab22_right[i];
 			let prod = alloc_fpvar_mul(&v,  &wtns_var.inv_hab22_right[i]);
 			prod.enforce_equal(&one_var)?;
-			let b_left_zero = lookup_share_size_left.is_zero_adv(
-				&v_inv_lzero[i]
-			)?;
-			//let e3 = start.elapsed().as_nanos();
-			//let item_prod = &si.col1_share[i] * &lookup_share_size_left;
-			let item_prod = alloc_fpvar_mul(&si.col1_share[i], &lookup_share_size_left);
-			let b_not_add = item_prod.is_zero_adv(&v_inv_not_add[i])?;
-			//let e4 = start.elapsed().as_nanos();
-			//let val2 = &lookup_share_size_left - &one_var;
-			let val2 = sub2(&lookup_share_size_left, &one_var);
-			lookup_share_size_left = b_left_zero.select(&zero_var, &val2)?;
-			//let e5 = start.elapsed().as_nanos();
 
-			//if col1_share[i]==0, to disable the add
-			//because it's no care (actually this step is not needed
-			//because we assume lkup[1] will not be zero.
-			//put it here for consistency.
-			//if b_debug{
-			/*
-				//assert!(!si.col1_share[i].value().unwrap().is_zero());
-			//}
-			let to_add = if !self.b_cyclepair{
-				//&wtns_var.inv_hab22_right[i]*m_i //because col1_share
-				//is guaranteed to be not zero
-				&(&wtns_var.inv_hab22_right[i]*m_i)*&si.col1_share[i]
-			}else{
-				if b_debug{
-					assert!(!si.col1_share[i].value().unwrap().is_zero());
-				}
-				&(&wtns_var.inv_hab22_right[i]*m_i)*&si.col1_share[i]
-			};	
-			*/
-			let to_add = &wtns_var.inv_hab22_right[i]*m_i;
+			// Dummies (i >= act_lookup_share_size) have col1=col2=m=0
+			// per update_lookup() at sigma_ir1cs.rs:1304-1316, so their
+			// contribution to sum_hab22_right is (1/alpha)*0 = 0.
+			// Verified empirically (DEBUG USE 77231 + test_zkreg_main).
+			// We can therefore drop both the lookup_share_size_left
+			// decrement and the b_not_add gate -- always add.
+			let to_add = &wtns_var.inv_hab22_right[i] * m_i;
 			if b_debug{
 				if si.col1_share[i].value()?.is_zero(){
 					assert!(m_i.value()?.is_zero());
 				}
 			}
-			//let to_add = &(&wtns_var.inv_hab22_right[i]*m_i)*&col1_nz;
-			//let to_add = &wtns_var.inv_hab22_right[i]*m_i;
-			sum_hab22_right = b_not_add.select(&sum_hab22_right, 
-				&(&sum_hab22_right + &to_add))?;
-			//let e6 = start.elapsed().as_nanos();
+			sum_hab22_right = &sum_hab22_right + &to_add;
+
 			if i%ADD_CHAIN_SIZE==0{//avoid too long chain in later
-				//cs.satisfied()	
-				//sum_hab22_right = &sum_hab22_right + &zero_var;
-				//lookup_share_size_left= &lookup_share_size_left + &zero_var;
-				//COMMENT OUT LATER IF DOES NOT HELP
-				//let _v1 = sum_hab22_right.value()?;
-				//let _v2 = lookup_share_size_left.value()?;
 				sum_hab22_right = &sum_hab22_right * &one_wit_var;
-				lookup_share_size_left = &lookup_share_size_left * &one_wit_var;
 			}
 		}
 

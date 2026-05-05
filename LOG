@@ -28194,4 +28194,5 @@ Goal 2. set up
 				4th: 5158, 0
 				total lkup: 14624 
 		=> step 5.2: cs 67225, vars: 51748
+		==> IMPROVE to: cs: 20,722, vars: 15,561
 	[c] implement the improvement and check the new cs
