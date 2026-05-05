@@ -28195,4 +28195,6 @@ Goal 2. set up
 				total lkup: 14624 
 		=> step 5.2: cs 67225, vars: 51748
 		==> IMPROVE to: cs: 20,722, vars: 15,561
-	[c] implement the improvement and check the new cs
+	[c] implement the improvement and check the new cs -> good
+	[d] further improve the kzg sum
+		36k -> 10k good.

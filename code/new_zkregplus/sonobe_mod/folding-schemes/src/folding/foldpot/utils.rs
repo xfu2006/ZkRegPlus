@@ -89,6 +89,57 @@ pub fn gen_vec_inverse<F:PrimeField>(vec: &Vec<F>)->Vec<F>{
 	}).collect::<Vec<F>>()
 }
 
+/// Bit-width assumed for runtime exponents in `alloc_le_bits` /
+/// `pow_le`-style usage in this crate.  Any FpVar value fed into
+/// `alloc_le_bits` MUST fit in this many bits or the recomposition
+/// equality fails (and the proof is rejected).
+pub const POW_LE_BITS: usize = 32;
+
+/// Allocate `POW_LE_BITS` little-endian Boolean witnesses for `v`
+/// and enforce  Σ b_i · 2^i  ==  v.  Implicitly bounds  v < 2^32.
+///
+/// Cost: POW_LE_BITS r1cs (booleanity) + 1 r1cs (the recomposition
+/// equality).  Designed to be paired with `FieldVar::pow_le` for
+/// runtime-exponent powers where the exponent is known to fit in
+/// 32 bits.
+pub fn alloc_le_bits<F:PrimeField>(
+	cs: ConstraintSystemRef<F>,
+	v: &FpVar<F>,
+) -> Result<Vec<Boolean<F>>, SynthesisError> {
+	let val_bits: Vec<bool> = match v.value() {
+		Ok(f) => {
+			let full = f.into_bigint().to_bits_le();
+			// sanity: high bits should all be zero in production
+			debug_assert!(
+				full.iter().skip(POW_LE_BITS).all(|b| !b),
+				"alloc_le_bits: value exceeds 2^{} bound",
+				POW_LE_BITS
+			);
+			let mut bs = full;
+			bs.resize(POW_LE_BITS, false);
+			bs
+		}
+		Err(_) => vec![false; POW_LE_BITS], //synthesis-mode
+	};
+
+	let bits: Vec<Boolean<F>> = (0..POW_LE_BITS)
+		.map(|i| Boolean::new_witness(cs.clone(), || Ok(val_bits[i])))
+		.collect::<Result<Vec<_>,_>>()?;
+
+	// recompose: Σ bits[i]·2^i  ==  v
+	let mut acc = FpVar::<F>::Constant(F::zero());
+	let mut pow = F::one();
+	let two = F::from(2u64);
+	for b in &bits {
+		let b_fp: FpVar<F> = FpVar::from(b.clone());
+		acc = acc + b_fp * FpVar::<F>::Constant(pow);
+		pow *= two;
+	}
+	acc.enforce_equal(v)?;
+
+	Ok(bits)
+}
+
 /// it is cheapter than standard arkworks is_zero(), which costs 3 constraints.
 /// it returns 1 when v is zero and 0 when v is not zero.
 /// It's guaranteed to be boolean. COST: (2 constraints).

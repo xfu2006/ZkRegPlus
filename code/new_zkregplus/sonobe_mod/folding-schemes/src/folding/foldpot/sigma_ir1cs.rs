@@ -21,7 +21,7 @@ macro_rules! lock_unwrap {
 		are discharged).
 */
 use utils::{consts::ADD_CHAIN_SIZE, logger::{log, log_perf, LOG6,LOG7}, timer::Timer as GTimer};
-use crate::folding::foldpot::utils::{sum3,alloc_fpvar_mul,sub2,var_to_tuple, var_to_tuple_adv, B_DEBUG, B_DEBUG3, B_DEBUG2, check_cs};
+use crate::folding::foldpot::utils::{sum3,alloc_fpvar_mul,var_to_tuple, var_to_tuple_adv, B_DEBUG, B_DEBUG3, B_DEBUG2, check_cs, POW_LE_BITS, alloc_le_bits};
 use serde::{Serialize,Deserialize};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use crate::commitment::CommitmentScheme;
@@ -3700,31 +3700,57 @@ where 	C: CurveGroup<ScalarField=F>,
 
 			//6.2 update sum_kzg_eval_lk
 			let old_sum_kzg_eval_lk = sum_kzg_eval_lk.clone();
-			let mut lookup_share_size_left = si.act_lookup_share_size.clone();
-			let val_lkup_left = lookup_share_size_left.value()?;
-			let vec_left = (0..self.stmt_config.lookup_share_size)
-			.collect::<Vec<_>>(). into_par_iter().map(|i|{
-					let u_left = field_to_usize(&val_lkup_left);
-					if u_left>=i { val_lkup_left - F::from(i as u64) }
-						else{ F::zero()}
-				}).collect::<Vec<F>>();
-			let v_inv_lzero = gen_vec_inverse(&vec_left);
-			assert!(v_inv_lzero.len()==self.stmt_config.lookup_share_size);
-			for i in 0..self.stmt_config.lookup_share_size{
-				//let b_lk_left_zero = lookup_share_size_left.is_zero()?;
-				let b_lk_left_zero = lookup_share_size_left.is_zero_adv(&v_inv_lzero[i])?;
-				sum_kzg_eval_lk= b_lk_left_zero.select(&sum_kzg_eval_lk,
-					&(&(&sum_kzg_eval_lk* &ch)
-					+ &(&si.col1_share[i] * &rcs[0])
-					+ &(&si.col2_share[i] * &rcs[1]))
-				)?;
+			let cfg_lk = self.stmt_config.lookup_share_size;
 
-				let val2_lk = &lookup_share_size_left - &one_var;
-				lookup_share_size_left= b_lk_left_zero.select(&zero_var,
-					&val2_lk)?;
+			// ASSUMPTION: cfg_lk < 2^POW_LE_BITS  (= 2^32).
+			assert!(
+				(cfg_lk as u64) < (1u64 << POW_LE_BITS),
+				"step 6.2: lookup_share_size {} exceeds 2^{} bound",
+				cfg_lk, POW_LE_BITS
+			);
+
+
+			// (a) UNCONDITIONAL Horner over all cfg slots.  
+			//   NOTE: Dummies
+			//     (i >= act_lookup_share_size) have col1=col2=0 (see
+			//     update_lookup at sigma_ir1cs.rs:~1304-1316), so they
+			//     only push *ch through.  We compensate for the extra
+			//     ch^(cfg-act) factor in step (c).
+			let mut sum_padded = sum_kzg_eval_lk.clone();
+			for i in 0..cfg_lk {
+				sum_padded = &(&sum_padded * &ch)
+					+ &(&si.col1_share[i] * &rcs[0])
+					+ &(&si.col2_share[i] * &rcs[1]);
 			}
-			sum_kzg_eval_lk = si.act_lookup_share_size.is_zero()?.select(
-				&old_sum_kzg_eval_lk, &sum_kzg_eval_lk)?;
+
+			// (b) ch_pow = ch^(cfg - act) via existing pow_le.
+			let cfg_const = FpVar::<F>::new_constant(
+				cs.clone(), F::from(cfg_lk as u64))?;
+			let n_dummy = &cfg_const - &si.act_lookup_share_size;
+			let nd_bits = alloc_le_bits(cs.clone(), &n_dummy)?;
+			let ch_pow = ch.pow_le(&nd_bits)?;
+
+			// (c) recover sum_target by enforcing
+			//     sum_target * ch_pow == sum_padded.
+			let sum_target = FpVar::<F>::new_witness(cs.clone(), || {
+				let pad = sum_padded.value()?;
+				let pow = ch_pow.value()?;
+				// In setup-mode placeholder (ch=0, n_dummy>0), ch_pow=0
+				// and inverse is undefined.  Default to zero; the
+				// resulting unsat is benign (matrices are still correct
+				// for the real-witness path).
+				Ok(pad * pow.inverse().unwrap_or(F::zero()))
+			})?;
+			cs.enforce_constraint(
+				var_to_lb(&sum_target, F::one()),
+				var_to_lb(&ch_pow,     F::one()),
+				var_to_lb(&sum_padded, F::one()),
+			)?;
+
+			// (d) preserve original act=0 gate (redundant under (c)
+			//     but kept for parity with the previous code).
+			sum_kzg_eval_lk = si.act_lookup_share_size.is_zero()?
+				.select(&old_sum_kzg_eval_lk, &sum_target)?;
 
 			//6.3 update sum_kzg_eval_word and also sum_vec_v_i
 			let old_sum_kzg_eval_word = sum_kzg_eval_word.clone();
