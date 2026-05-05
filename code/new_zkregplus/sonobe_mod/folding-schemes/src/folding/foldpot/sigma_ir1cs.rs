@@ -3596,9 +3596,6 @@ where 	C: CurveGroup<ScalarField=F>,
 			// Dummies (i >= act_lookup_share_size) have col1=col2=m=0
 			// per update_lookup() at sigma_ir1cs.rs:1304-1316, so their
 			// contribution to sum_hab22_right is (1/alpha)*0 = 0.
-			// Verified empirically (DEBUG USE 77231 + test_zkreg_main).
-			// We can therefore drop both the lookup_share_size_left
-			// decrement and the b_not_add gate -- always add.
 			let to_add = &wtns_var.inv_hab22_right[i] * m_i;
 			if b_debug{
 				if si.col1_share[i].value()?.is_zero(){
