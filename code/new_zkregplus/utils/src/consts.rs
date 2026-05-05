@@ -61,8 +61,7 @@ pub struct GlobalConfig {
 					//compared with nibble length of a segment
 					//e.g., for 700MB linux data (8 jobs) with 256M lkup table
 					//each job (in total) has 90MB data = 180M nibbes
-					//and share of 32M lkup entries. Then.
-					// the perc_lkup_share = 32/180 * 100 = 18 percent 
+					// the perc_lkup_share = 256/180 * 100 = 143 percent 
 }
 
 impl Default for GlobalConfig {

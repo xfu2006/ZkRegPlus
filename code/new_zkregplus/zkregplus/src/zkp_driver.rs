@@ -1439,8 +1439,9 @@ pub mod tests_zkp_driver{
 		get_global_config().min_avg_pats_per_subsig= 8; // OLD value: 6
 		get_global_config().min_dfa_sigs = 2; // OLD value: 0 (default)
 		get_global_config().b_read_cache = true;
-		get_global_config().perc_lkup_share = 18; //this is for
+		get_global_config().perc_lkup_share = 143; //this is for
 			//full_clam() setting (700MB linux data for 38k clamav) in 8 jobs
+			//see full_clam
 
 		let b_write_cache = !read_global_config().b_read_cache;
 		let max_word= 512 * 8;
@@ -1782,11 +1783,10 @@ pub mod tests_zkp_driver{
 		get_global_config().n_par_snark = if b_setup {1} else {2};
 		get_global_config().n_par_snark_cp = if b_setup {1} else {2};
 		get_global_config().n_par_batch_claim = 8;
-		get_global_config().perc_lkup_share = 18; //this is for
+		get_global_config().perc_lkup_share = 142; //this is for
 			//700MB data in 8 jobs and 256M lkup entries
 			//so we have per job: 90MB data = 180M nibbles
-			// share of 32M lkup entries
-			// then: 32/180 * 100 = 17.7% that's 18 percent
+			// then: 256/180 * 100 = 142.2% that's 142
 
 		get_global_config().b_read_cache = true;
 		let b_write_cache = !read_global_config().b_read_cache;
