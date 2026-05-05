@@ -704,6 +704,10 @@ pub mod tests_zkp_driver{
 		get_global_config().b_light_test = true;
 		get_global_config().range2_bit = 8;
 		get_global_config().b_read_cache = false;
+		get_global_config().perc_lkup_share = if !b_check_lkup {1} 
+			else {8320}; //needed for 96k lkup entries for 4 chunks
+					//twice larger than what's really needed to
+					//leave out room to test the empty entries
 		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/small_data_set/config_dfa"; //for dfa 
 		let max_word= 1; //this is chunk_len
@@ -1884,7 +1888,7 @@ pub mod tests_zkp_driver{
 
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
-		let b_check_lkup = false;
+		let b_check_lkup = true;
 		let _b_light_test = true;
 		let _b_setup = false;
 		small_data::<Fr>(b_check_lkup); //small data

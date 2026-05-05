@@ -28180,4 +28180,18 @@ Goal 1. Implement lkup
 	This adds 7M to 29M circ3 (circ2) size: which is 30% cost!
 
 Tuesday 05/05/2026
-Goal 1.
+Goal 1. Improve lkup
+	[a] read code
+Goal 2. set up
+	[a] change small_setup based on the b_check_lkup determine
+		the proper ratio
+	[b] document the initial cost of step 5.2 cs
+		-> lkup_share_size: 5158 
+			4 chunks 
+				first: 5158, 5158
+				second: 5158, 5158
+				3rd: 5158, 4308
+				4th: 5158, 0
+				total lkup: 14624 
+		=> step 5.2: cs 67225, vars: 51748
+	[c] implement the improvement and check the new cs

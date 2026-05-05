@@ -3607,6 +3607,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		assert!(v_val_not_add.len()==inv_hab22_right_size);
 
 		//5.2.2 now process the inv_hab22_right
+		println!("DEBUG USE 9998: inv_hab22_right_size: {}, lkup_share_size_left: {}", inv_hab22_right_size, lookup_share_size_left.value()?);
 		for i in 0usize..inv_hab22_right_size{
 			//let v_temp = &beta * &si.col1_share[i]; //cost 271ns
 			let v_temp = alloc_fpvar_mul(&beta, &si.col1_share[i]); //231ns
