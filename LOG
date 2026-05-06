@@ -28198,3 +28198,20 @@ Goal 2. set up
 	[c] implement the improvement and check the new cs -> good
 	[d] further improve the kzg sum
 		36k -> 10k good.
+
+Wed 05/06/2026
+Goal 1. test the improved lookup using full_data4.
+	[a] started 6:34am
+	[b] new circ size:
+	[job 0] LOG3: -- --  PERF 1002 circ 1, r1cs cols: 20592923, rows: 13290177
+[job 0] LOG3: -- --  PERF 1002 circ 2, r1cs cols: 32666374, rows: 21435479A
+(this is down from 24M and 36M), each cut 4M. (but added 3M compared
+	with before, the orignal no lkup share is 29M->32M (added 10%).
+	[c] veriication of full circuit
+
+Goal 2. check the circ distribution - can we make circ1 smaller?
+	[a] cutting subsigs from 361 to 1015 => 20371015 (not much) 
+	[b] make unique_states => 20160618 (not much)
+
+Goal 3. writing
+	[a] impl and eval
