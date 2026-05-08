@@ -28212,6 +28212,40 @@ Goal 1. test the improved lookup using full_data4.
 Goal 2. check the circ distribution - can we make circ1 smaller?
 	[a] cutting subsigs from 361 to 1015 => 20371015 (not much) 
 	[b] make unique_states => 20160618 (not much)
+	[c] decision -> keep ALL current setting to get more
+		in layer 0, because that's cheaper. 205->201 only saves 2%.
 
 Goal 3. writing
-	[a] impl and eval
+	[a] impl and eval -> DONE
+
+Thursday 05/07/2026
+Goal 1. run the set up mode of full_clam
+	[a] started 1:30pm -> 6:40pm
+		1659 sec
+	[b] full round started 7:43(Thursday 05/07) -> 
+	[c] had to regenerate: 8:50pm -> 
+		estimate: 11:50pm
+		==> done
+	[d] new full started 1:45am (05/08) => failed at 8:44am (still in
+		deciding stae)
+Goal 2. Writing
+	[a] planning for section 2 
+
+Friday 05/08/2026
+Goal 1. writing
+	[a] planning of structure
+	[b] plan section 2.1
+
+Goal 2. debug failure
+	[a] added more CappErr debug message
+	[b] new run 9:21am -> 
+		(estimated crash before 5pm)
+
+Goal 3. Writing
+	[a] read current 2.2
+	[b] planning for 2.1 regex.
+
+-- TODO -- check if the extraction merged 128k is working.
+-- TODO -- check what DEBUG USE 6703
+-- TODO -- cancel 128k, it saves about 3 hours, which is less than 10%
+	of total computing time.

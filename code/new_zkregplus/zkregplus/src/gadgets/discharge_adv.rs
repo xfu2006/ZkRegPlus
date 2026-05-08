@@ -2343,11 +2343,11 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 			false,  //b_step
 			false,  //b_oup
 			false,  //b_subsig
-			&subsig_store_info).expect("err ct_sq_inp");
+			&subsig_store_info)?;
 		let ct_sq_to_add = sq_to_add.to_container("sq_to_add",false,
-			true, false, false, &subsig_store_info).expect("ct_sq_add err");
+			true, false, false, &subsig_store_info)?;
 		let ct_sq_res = sq_res.to_container("sq_res", false, 
-			true, false, false, &subsig_store_info).expect("ct_sq_res err");
+			true, false, false, &subsig_store_info)?;
 		res.lock().unwrap().add_container(ct_sq_inp.clone()); //low cost, rc clone
 		res.lock().unwrap().add_container(ct_sq_to_add.clone());
 		res.lock().unwrap().add_container(ct_sq_res.clone());
@@ -2444,13 +2444,13 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 
 		let ct_sq_to_del= sq_to_del.to_container(
 			"sq_to_del",false,true,false,false,
-			&subsig_store_info).expect("ct_sq_to_del err");
+			&subsig_store_info)?;
 		let ct_sq_res2 = sq_res.to_container("sq_res2",
 			false,//inp
 			true, //b_step (but it's saved in DATA)
 			true, //oup
 			true, //b_subsigs (saved in DATA)
-			&subsig_store_info).expect("err ct_sq_res2 error");
+			&subsig_store_info)?;
 		res.lock().unwrap().add_container(ct_sq_to_del.clone());
 		res.lock().unwrap().add_container(ct_sq_res2.clone());
 		res.lock().unwrap().add_container(bwd_prf.to_container("prf_bwd", 

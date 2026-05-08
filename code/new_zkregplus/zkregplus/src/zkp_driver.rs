@@ -1781,31 +1781,36 @@ pub mod tests_zkp_driver{
 		get_global_config().b_read_snark_cache = !b_setup;
 		get_global_config().range2_bit = 26;
 		get_global_config().b_light_test = b_light_test;
-		get_global_config().min_subsigs = 150;
-		get_global_config().min_basis_unique_states= 32;
-		get_global_config().min_avg_pats_per_subsig= 6;
+		get_global_config().min_subsigs = 361;
+		get_global_config().min_basis_unique_states= 600;
+		get_global_config().min_basis_acc_states =  113; // OLD value: 100
+		get_global_config().min_basis_pats_in_trace=  134; // OLD value: 110
+		get_global_config().min_avg_pats_per_subsig= 8; // OLD value: 6
+		get_global_config().min_dfa_sigs = 2; // OLD value: 0 (default)
+		get_global_config().min_dfa_subsigs =  3; //OLD val 2
 		get_global_config().n_par_snark = if b_setup {1} else {2};
 		get_global_config().n_par_snark_cp = if b_setup {1} else {2};
 		get_global_config().n_par_batch_claim = 8;
-		get_global_config().perc_lkup_share = 142; //this is for
+		get_global_config().perc_lkup_share = 143; //this is for
 			//700MB data in 8 jobs and 256M lkup entries
 			//so we have per job: 90MB data = 180M nibbles
 			// then: 256/180 * 100 = 142.2% that's 142
 
+
 		get_global_config().b_read_cache = true;
 		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/full_clamav/config/"; //for dfa
-		let max_word= 512 * 4;
+		let max_word= 512 * 8;
 		let sigs = 400;
 		let subsigs = 580; //220 for prev db
 		let avg_pats_per_subsig = 8; //old value 8
 		let avg_active_pats_per_subsig = 2;
 		let perc_comp_subsigs = 20;
-		let vec_decrease_level = vec![2,1];
-		let num_circs = 3; 
-		let basis_unique_states = 2000; //15 cpercent
-		let basis_acc_states = 1260; //last good value 1800
-		let basis_pats_in_trace = 1400; //last good value 3000
+		let vec_decrease_level = vec![2];
+		let num_circs = 2; 
+		let basis_unique_states = 1300; //2000; //15 cpercent
+		let basis_acc_states = 750; //1260; //last good value 1800
+		let basis_pats_in_trace = 820; //last good value 3000
 		let basis_acc_states_igc = basis_acc_states ; //9 cpercent
 		let basis_pats_in_trace_igc = basis_pats_in_trace;
 			//old value 100 cur value 1/1000.
@@ -1889,7 +1894,7 @@ pub mod tests_zkp_driver{
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = true;
-		let _b_light_test = true;
+		let _b_light_test = false;
 		let _b_setup = false;
 		small_data::<Fr>(b_check_lkup); //small data
 		//small_data2::<Fr>(b_check_lkup);  //10k data
