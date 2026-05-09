@@ -28273,6 +28273,8 @@ Goal 1. fix the crash issue
 Goal 2. update loads
 	[a] dfa_subsigs and sigs
 	[b] analyze the bar
+	[c] also improved prf_fwd and prf_bwd size
+	[d] regression testing -> passed
 
 Goal 2. Writing
 	[a] clear section 1

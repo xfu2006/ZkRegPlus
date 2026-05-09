@@ -2601,7 +2601,7 @@ use utils::consts::read_global_config;
 
 		//1.4 capacilities of fsm and discharge components
 		let wlen = 2usize;
-		let perc_pats_expansion_rate = 100;
+		let perc_pats_expansion_rate = 150;
 		let (nibble_len, state_bits) = (wlen*LEGS, acdfa_cs.state_part_bits);
 		let cap = FsmAdvCapacity{
 			max_nibble_len: nibble_len, 
@@ -2617,7 +2617,7 @@ use utils::consts::read_global_config;
 			subsigs: cap.subsigs,
 			avg_active_pats_per_subsig: 2,
 			basis_pats_in_trace: cap.basis_pats_in_trace,
-			perc_pats_expansion_rate: 100,
+			perc_pats_expansion_rate: 150,
 		};
 		let cap_sig= ComputeSigAdvCapacity{//capaciity of compute sig adv comp 
 			max_nibble_len: nibble_len, 
@@ -2959,7 +2959,7 @@ use utils::consts::read_global_config;
 			subsigs: 4,
 			avg_active_pats_per_subsig: 2,
 			basis_pats_in_trace: 48*100, //48 percent
-			perc_pats_expansion_rate: 100,
+			perc_pats_expansion_rate: 150,
 		};
 		let b_igc = false;
 		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),

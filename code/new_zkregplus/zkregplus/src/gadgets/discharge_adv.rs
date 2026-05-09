@@ -85,9 +85,17 @@ pub enum StepQueueType{
 	/// represent the result of forward propagation
 	ResLarge,
 }
-pub const ADD_DEL_COST:usize =  95;  //old values 100, 50, 20
-pub const RES_SMALL_COST:usize =  20; 
-pub const RES_LARGE_COST:usize =  100; 
+pub const ADD_DEL_COST:usize =  22;  //old values 100, 95, 50, 20
+	//tuned 2026-05-09: 95 -> 21, lifts prf_bwd usage to ~0.82
+	//(matches cs ceiling). Also shrinks size_trace branch of
+	//sq_to_add/sq_to_del; safe while size_pat dominates them.
+pub const RES_SMALL_COST:usize =  20;
+pub const RES_LARGE_COST:usize =  100;
+pub const FWD_COST:usize     =  68;  //compress ratio for StepFwdPrf
+	//(parallels ADD_DEL_COST). 100 = no compression (legacy
+	//behavior). Tuned 2026-05-09: 100 -> 67, lifts prf_fwd usage
+	//from ~0.56 to ~0.84. Used by StepFwdPrf::vec_size and the
+	//perc_pats_expansion_rate back-solve in StepFwdPrf::to_container.
 
 /// A step queue represents the state of the SED processing algorithm.
 /// For each (subsig-id-pat) it includes the list of current "valid"
@@ -1245,8 +1253,12 @@ impl <F:PrimeField + ColEle> StepQueueItem<F>{
 impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 	/// return the estimated needed size of buf for to_container
 	pub fn vec_size(&self)->usize{
-		let res = self.capacity.basis_pats_in_trace * self.capacity.max_nibble_len * self.capacity.perc_pats_expansion_rate/(100*10000);
-
+		let compress_ratio = FWD_COST;
+		let res = self.capacity.basis_pats_in_trace
+			* self.capacity.max_nibble_len
+			* self.capacity.perc_pats_expansion_rate
+			* compress_ratio
+			/ (10000 * 100 * 100);
 		res
 	}
 
@@ -1330,12 +1342,18 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 		let n = self.vec_size();
 		println!("DEBUG USE 6901.8: StepFwdPrf: {}, b_igc: {} usage: {}", name, self.b_igc, (v2d[0].len() as f32)/(n as f32));
 		if n<v2d[0].len()+1{
-			let new_val = (v2d[0].len()+1)*10000 * 100 /(self.capacity.max_nibble_len*self.capacity.basis_pats_in_trace) + 1;
+			//back-solve perc_pats_expansion_rate from new vec_size():
+			//  n = basis_pats * max_nibble * perc * FWD_COST / 1e8
+			//=> perc >= (len+1)*1e8 / (basis_pats*max_nibble*FWD_COST)
+			let new_val = (v2d[0].len()+1) * 10000 * 100 * 100
+				/ (self.capacity.max_nibble_len
+					* self.capacity.basis_pats_in_trace
+					* FWD_COST) + 1;
 			if b_debug_capacity{
 				println!("DEBUG USE 9003: to throw perc_pats_expansion_rate ERROR on StepFwdProof in discharge_adv. DUMP of data");
 				self.dump();
-				println!("DEBUG USE 9003: v2d[0].len: {}, basis_pats_in_trace: {}, max_nibble_len: {}, perc_pats_expansion_rate: {}",
-					v2d[0].len(), self.capacity.basis_pats_in_trace, self.capacity.max_nibble_len, self.capacity.perc_pats_expansion_rate);
+				println!("DEBUG USE 9003: v2d[0].len: {}, basis_pats_in_trace: {}, max_nibble_len: {}, perc_pats_expansion_rate: {}, FWD_COST: {}",
+					v2d[0].len(), self.capacity.basis_pats_in_trace, self.capacity.max_nibble_len, self.capacity.perc_pats_expansion_rate, FWD_COST);
 			}
 			return Err(Error::CapErr(vec![(format!("dis_adv::perc_pats_expansion_rate, StepFwdPrf b_igc: {}", self.b_igc), new_val)]));
 		}
@@ -4794,7 +4812,7 @@ use utils::consts::read_global_config;
 			subsigs: 4,
 			avg_active_pats_per_subsig: 4,
 			basis_pats_in_trace: 48*100,
-			perc_pats_expansion_rate: 100,
+			perc_pats_expansion_rate: 132,
 		};
 		let b_igc = false;
 		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),
@@ -5002,7 +5020,7 @@ use utils::consts::read_global_config;
 			subsigs: 4,
 			avg_active_pats_per_subsig: 5,
 			basis_pats_in_trace: 48*100,
-			perc_pats_expansion_rate: 100,
+			perc_pats_expansion_rate: 132,
 		};
 		let b_igc = false;
 		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),
