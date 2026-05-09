@@ -28265,8 +28265,16 @@ Goal 1. fix the crash issue
 		=> but consider two files >60k but smaller than 128k,
 			they might still generate a residue which is less than 12k
 		=> so just leaving them their is ok.
--- TODO -- change dfa_subsig to 8
+	[c] change dfa_subsig to 7
+	[d] now next job collect data and find out circ size to change
+		8:30am -> expect 5pm to collect CapErr messages.
+			3:42pm (+7 hrs)
+
+Goal 2. update loads
+	[a] dfa_subsigs and sigs
+	[b] analyze the bar
+
+Goal 2. Writing
+	[a] clear section 1
 
 -- TODO -- check what DEBUG USE 6703
--- TODO -- cancel 128k, it saves about 3 hours, which is less than 10%
-	of total computing time.
