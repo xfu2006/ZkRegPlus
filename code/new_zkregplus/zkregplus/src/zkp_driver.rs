@@ -1814,8 +1814,8 @@ pub mod tests_zkp_driver{
 		let basis_acc_states_igc = basis_acc_states ; //9 cpercent
 		let basis_pats_in_trace_igc = basis_pats_in_trace;
 			//old value 100 cur value 1/1000.
-		let dfa_sigs = 6;
-		let dfa_subsigs= 6;
+		let dfa_sigs = 7;
+		let dfa_subsigs= 7;
 		let perc_pats_expansion_rate = 104; //old good value 2
 		let perc_pats_expansion_rate_igc = 2;
 		//let avg_subsig_per_sig = 3;

@@ -2641,6 +2641,9 @@ where
 	})();
 	if let Err(e) = res {
 		log(job_id, ERR, &format!("Job {} FAILED with error: {:?}", job_id, e));
+		use std::io::Write;
+		let _ = std::io::stdout().flush();
+		std::process::exit(1);
 	}
 	});
 

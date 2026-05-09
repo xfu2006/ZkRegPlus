@@ -28240,12 +28240,33 @@ Goal 2. debug failure
 	[a] added more CappErr debug message
 	[b] new run 9:21am -> 
 		(estimated crash before 5pm)
+	[c] restarted 10:35am -> estimated crash before 6pm
+		strangely it does not crash
 
 Goal 3. Writing
 	[a] read current 2.2
 	[b] planning for 2.1 regex.
 
--- TODO -- check if the extraction merged 128k is working.
+Goal 4. there are rooms for step 3 improvement, but leave it later
+	-> restarted server and changed config dfa_subsig to 8
+	-> restarted 8pm -> expected error 
+		4am or 6am
+		search PERF 1007 and make sure all are there.
+		or search Job 0 to 8 and check.
+		restarted 11:37pm to change the sig as well. check 8am tomorrow.
+		Somehow it's stopped at 6:12am and stopped looks right after
+			11:37pm.
+
+Saturday 05/09/2026
+Goal 1. fix the crash issue
+	[a] it didn't report job err
+	[b] check if the extraction merged 128k is working.
+		=> it does have some >60k file that cannot be merged
+		=> but consider two files >60k but smaller than 128k,
+			they might still generate a residue which is less than 12k
+		=> so just leaving them their is ok.
+-- TODO -- change dfa_subsig to 8
+
 -- TODO -- check what DEBUG USE 6703
 -- TODO -- cancel 128k, it saves about 3 hours, which is less than 10%
 	of total computing time.
