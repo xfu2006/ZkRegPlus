@@ -124,3 +124,32 @@ pub fn flog_perf(job_id: usize, log_level: usize, log_title: &str, timer: &mut T
 	timer.clear_start();
 }
 
+//===== REMOVE LATER 900001.0 =====
+// Periodic RSS / MemAvailable probe. Reads /proc/self/status and
+// /proc/meminfo (each ~4 KB), prints one line. Cheap enough to
+// call per-word. Output is tagged so it can be grepped/removed
+// cleanly afterwards.
+pub fn rss_probe(sub: &str, where_: &str, job_id: usize,
+                 word_id: usize){
+	let pick = |s: &str, key: &str| -> String {
+		s.lines()
+			.find(|l| l.starts_with(key))
+			.and_then(|l|
+				l.split_whitespace().nth(1).map(String::from))
+			.unwrap_or_else(|| String::from("?"))
+	};
+	let st = std::fs::read_to_string("/proc/self/status")
+		.unwrap_or_default();
+	let mi = std::fs::read_to_string("/proc/meminfo")
+		.unwrap_or_default();
+	println!("REMOVE LATER 900001.{} {} job={} word={} \
+VmRSS={}kB VmHWM={}kB MemAvail={}kB MemFree={}kB Cached={}kB",
+		sub, where_, job_id, word_id,
+		pick(&st, "VmRSS:"),
+		pick(&st, "VmHWM:"),
+		pick(&mi, "MemAvailable:"),
+		pick(&mi, "MemFree:"),
+		pick(&mi, "Cached:"));
+}
+//===== END REMOVE LATER 900001.0 =====
+

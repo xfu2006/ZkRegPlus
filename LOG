@@ -28276,7 +28276,26 @@ Goal 2. update loads
 	[c] also improved prf_fwd and prf_bwd size
 	[d] regression testing -> passed
 
-Goal 2. Writing
+Goal 3. Writing
 	[a] clear section 1
+	[b] start framework of 2.1
 
+Goal 3. data collection again
+	6:15pm -> fix small values
+	8:20pm -> 
+		=> not much big change 34M vs 20M
+		=> still fail on dfa_subsigs: 3
+	10:18pm -> 6:08am (8 hrs)
+		stopped AGAIN!
+
+Sunday 05/10/2026
+Goal 1. fix server err
+	[a] improve scirpts
+	[b] research improvement of circ size and counts
+	[c] research the crash reason
+	[d] redeploy
+Goal 2. continue writing
+	[a] draft 1
+	[b] go over structure
+	[c] 
 -- TODO -- check what DEBUG USE 6703

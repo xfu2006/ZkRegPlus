@@ -1784,10 +1784,10 @@ pub mod tests_zkp_driver{
 		get_global_config().min_subsigs = 368; // OLD value: 361
 		get_global_config().min_basis_unique_states= 1054; // OLD value: 600
 		get_global_config().min_basis_acc_states =  268; // OLD value: 113
-		get_global_config().min_basis_pats_in_trace=  153; // OLD value: 134
+		get_global_config().min_basis_pats_in_trace=  295; // OLD value: 134
 		get_global_config().min_avg_pats_per_subsig= 8; // OLD value: 6
-		get_global_config().min_dfa_sigs = 2; // OLD value: 2
-		get_global_config().min_dfa_subsigs =  2; //OLD val 2
+		get_global_config().min_dfa_sigs = 3; // OLD value: 2
+		get_global_config().min_dfa_subsigs =  3; //OLD val 2
 		get_global_config().n_par_snark = if b_setup {1} else {2};
 		get_global_config().n_par_snark_cp = if b_setup {1} else {2};
 		get_global_config().n_par_batch_claim = 8;
