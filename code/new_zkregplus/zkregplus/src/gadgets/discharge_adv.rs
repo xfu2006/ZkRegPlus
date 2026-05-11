@@ -85,7 +85,7 @@ pub enum StepQueueType{
 	/// represent the result of forward propagation
 	ResLarge,
 }
-pub const ADD_DEL_COST:usize = 68;  //old values 100, 95, 50, 20
+pub const ADD_DEL_COST:usize = 68;  //old values68, 100, 95, 50, 20
 	//tuned 2026-05-09: 95 -> 21, lifts prf_bwd usage to ~0.82
 	//(matches cs ceiling). Also shrinks size_trace branch of
 	//sq_to_add/sq_to_del; safe while size_pat dominates them.

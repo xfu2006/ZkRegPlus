@@ -27,6 +27,7 @@ use ark_ff::PrimeField;
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_bn254::Fr;
 use super::utils::B_DEBUG;
+use utils::logger::{emit_stdout, flush_logger};
 
 
 /// convert a bignum in string to F.
@@ -386,10 +387,23 @@ impl ContainerConfig{
 					let src_container = context[srcidx]
 						.search_by_path(&qry_str);
 					if !src_container.is_some(){
-						println!("Destination Column to adjust: name: {}, absolute_path: {}, loc: {:#?}", name, p2, loc);
-						println!("ERROR: cannot find container by  query string: {} in context [{}]: {}, offset: {}, my_idx: {}", qry_str, srcidx, context[srcidx].get_name(), offset, root_idx);
-						println!("Srccontext dump -----");
+						emit_stdout(format!(
+							"Destination Column to adjust: \
+							name: {}, absolute_path: {}, loc: {:#?}",
+							name, p2, loc));
+						emit_stdout(format!(
+							"ERROR: cannot find container by  \
+							query string: {} in context [{}]: {}, \
+							offset: {}, my_idx: {}",
+							qry_str, srcidx,
+							context[srcidx].get_name(),
+							offset, root_idx));
+						emit_stdout(
+							"Srccontext dump -----".to_string());
 						context[srcidx].dump(0);
+						// Make sure the error and dump land on
+						// stdout before we unwind.
+						flush_logger();
 						panic!("STOP HERE. check details above");
 					}
 					let src_container = src_container.unwrap();
@@ -424,10 +438,11 @@ impl ContainerConfig{
 	pub fn dump(&self, step: usize){
 		let indent_str = std::iter::repeat(" ").take(step).collect::<String>();
 		match self{
-			ContainerConfig::Column(loc,s,_,_) 
-				=> println!("{}{}(seg: {})", indent_str, s, loc.src.1),
+			ContainerConfig::Column(loc,s,_,_)
+				=> emit_stdout(format!(
+					"{}{}(seg: {})", indent_str, s, loc.src.1)),
 			ContainerConfig::Complex(vec, name, _)=>{
-				println!("{}{}", indent_str, name);
+				emit_stdout(format!("{}{}", indent_str, name));
 				for x in vec{ x.dump(step+1); }
 			}
 		}

@@ -31,7 +31,7 @@ use crate::commitment::{
 use rayon::prelude::*;
 use utils::{
 	timer::Timer,
-	logger::{log_perf, LOG1},
+	logger::{log_perf, emit_stdout, LOG1},
 };
 use core::marker::PhantomData;
 use crate::folding::foldpot::{
@@ -824,7 +824,8 @@ where
 		let bres = verify_qa_nizk::<E>(&x, &prf.prf_qa_nizk, 
 			&vkey.vk_qa_nizk);	
 		if !bres {
-			if b_debug {println!("qa_nizk verif fails");}
+			if b_debug {emit_stdout(
+				"qa_nizk verif fails".to_string());}
 			return false;
 		}
 
@@ -848,7 +849,8 @@ where
 		let res = KZG::<E>::verify_with_challenge(&vkey.kzg,
 			ch, &com_all, &prf.agg_kzg_prf);
 		if !res.is_ok() {
-			if b_debug {println!("kzg verif fails");}
+			if b_debug {emit_stdout(
+				"kzg verif fails".to_string());}
 			return false;
 		}
 
@@ -861,7 +863,8 @@ where
 				&prf.kzg_all_com1.expect("kzg1 empty"),
 				&prf.kzg_all_com_prf1.as_ref().expect("prf1 empty"));	
 			if !res1.is_ok() {
-				if b_debug {println!("cs1e kzg_all_ocm1 verif fails");}
+				if b_debug {emit_stdout(
+					"cs1e kzg_all_ocm1 verif fails".to_string());}
 				return false;
 			}
 
@@ -872,7 +875,8 @@ where
 				&prf.kzg_all_com2.expect("kzg2 empty"),
 				&prf.kzg_all_com_prf2.as_ref().expect("prf2 empty"));	
 			if !res2.is_ok() {
-				if b_debug {println!("cs1e kzg_all_com2 res2 fails");}
+				if b_debug {emit_stdout(
+					"cs1e kzg_all_com2 res2 fails".to_string());}
 				return false;
 			}
 
@@ -888,7 +892,8 @@ where
 				&nova2_qa_nizk_vkey.expect("qanizk vkey empty")
 			);	
 			if !bres {
-				if b_debug {println!("qanizk2 fails");}
+				if b_debug {emit_stdout(
+					"qanizk2 fails".to_string());}
 				return false;
 			}
 
@@ -902,17 +907,22 @@ where
 			};
 			//4.1 verify the maincirc snark proof
 			let pub_inp = vec![prf.mainres_hash.unwrap()];
-			if b_debug { 
-				println!("DEBUG USE 6901.2.0 public input: {}", pub_inp[0]); 				}
+			if b_debug {
+				emit_stdout(format!(
+					"DEBUG USE 6901.2.0 public input: {}",
+					pub_inp[0]));
+			}
 			let snark_v_main = S::verify(
 				&snark_vk_main.expect("snark vkey_main empty"),
 				&pub_inp,
 				&prf.snark_proof_main.as_ref().clone()
 					.expect("snark main empty")
 			);
-			if b_debug{ println!("snark main details: {:?}", snark_v_main); }
+			if b_debug{ emit_stdout(format!(
+				"snark main details: {:?}", snark_v_main)); }
 			if !snark_v_main.is_ok() || !snark_v_main.unwrap().clone() {
-				if b_debug { println!("snark main fails."); }
+				if b_debug { emit_stdout(
+					"snark main fails.".to_string()); }
 				return false;
 			}
 
@@ -946,9 +956,11 @@ where
 				&public_input, 
 				&prf.snark_proof_cp.as_ref().clone().expect("snark pf empty"));
 					//.map_err(|e| Error::Other(e.to_string())).unwrap();
-			if b_debug{println!("snark_v_cp details: {:?}", snark_v_cp);}
+			if b_debug{emit_stdout(format!(
+				"snark_v_cp details: {:?}", snark_v_cp));}
 			if !snark_v_cp.is_ok() || !snark_v_cp.unwrap().clone() {
-				if b_debug {println!("snark_v_cp fails.");}
+				if b_debug {emit_stdout(
+					"snark_v_cp fails.".to_string());}
 				return false;
 			}
 		}

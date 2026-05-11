@@ -11,7 +11,7 @@ use std::{sync::{Arc, Mutex, Condvar}, fmt::{Debug,Formatter}};
 */
 
 extern crate utils;
-use utils::{logger::{log, log_perf, rss_probe, ERR, LOG1,LOG2}, timer::Timer as GTimer, consts::read_global_config};
+use utils::{logger::{log, log_perf, rss_probe, emit_stdout, ERR, LOG1,LOG2}, timer::Timer as GTimer, consts::read_global_config};
 use std::{
     //process::{Stdio,Command},
     //fs::{read_to_string,OpenOptions,remove_file,File,metadata},
@@ -733,14 +733,14 @@ where
 			for (layer_id, res) in results.iter() {
 				if *layer_id == 0 && b_debug{
 					match res {
-						Ok(_) => println!(
+						Ok(_) => emit_stdout(format!(
 							"DEBUG USE 73821.1: layer 0 OK for ~{} B \
 							 (job {}, word.len {})",
-							approx_bytes, job_id, word.len()),
-						Err(e) => println!(
+							approx_bytes, job_id, word.len())),
+						Err(e) => emit_stdout(format!(
 							"DEBUG USE 73821.2: layer 0 REJECTED for \
 							 ~{} B (job {}, word.len {}): {:?}",
-							approx_bytes, job_id, word.len(), e),
+							approx_bytes, job_id, word.len(), e)),
 					}
 				}
 			}
@@ -839,7 +839,9 @@ where
 				//increasing
 				for i in 0..self.layered_circs.len(){
 					let layer = &self.layered_circs[i];
-					println!("DEBUG USE 311: layer i: {}, len: {}", i, layer.len());
+					emit_stdout(format!(
+						"DEBUG USE 311: layer i: {}, len: {}",
+						i, layer.len()));
 					for j in 1..layer.len(){
 						let circ1 = &layer[j-1];	
 						let circ2 = &layer[j];	
@@ -1215,7 +1217,8 @@ where
 		timer.prt("pass_two: step 0: init");
 
 		//2. create nova1
-		println!("DEBUG USE 5017.1:  n_steps: {}", n_steps);
+		emit_stdout(format!(
+			"DEBUG USE 5017.1:  n_steps: {}", n_steps));
 		let pc_0 = zero;
 		let pc_0_val = field_to_usize(&pc_0);
 		let precomputed_cmF = None;
@@ -1288,7 +1291,9 @@ where
 			wi += 1;
 		}
 
-		println!("DEBUG USE 402.5 num_steps: {}, vea.len: {}", num_steps, vea.len());
+		emit_stdout(format!(
+			"DEBUG USE 402.5 num_steps: {}, vea.len: {}",
+			num_steps, vea.len()));
 		assert!(num_steps==vea.len(), "ERROR: pass2 num_steps incorrect, num_steps: {}, vea.len: {}", num_steps, vea.len());
 
 	

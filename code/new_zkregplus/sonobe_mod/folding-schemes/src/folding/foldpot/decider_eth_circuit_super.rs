@@ -9,7 +9,7 @@ use std::sync::Arc;
 /// This file implements the onchain (Ethereum's EVM) decider circuit. 
 /// For non-ethereum use cases,
 /// other more efficient approaches can be used.
-use utils::{logger::{log_perf, LOG2, LOG3}, timer::Timer as GTimer};
+use utils::{logger::{log_perf, emit_stdout, LOG2, LOG3}, timer::Timer as GTimer};
 use std::fmt::{Debug};
 use itertools::Itertools;
 //use ark_ec::AffineRepr;
@@ -980,7 +980,9 @@ where
 				self.cf_pedersen_params.generators.clone())?;
             let cf_W_i_E_bits: Result<Vec<Vec<Boolean<CF1<C1>>>>, SynthesisError> = cf_W_i.E.iter().map(|E_i| E_i.to_bits_le()).collect();
             let cf_W_i_W_bits: Result<Vec<Vec<Boolean<CF1<C1>>>>, SynthesisError> = cf_W_i.W.iter().map(|W_i| W_i.to_bits_le()).collect();
-			println!("DEBUG USE 66901: H2: {}", self.cf_pedersen_params.h);
+			emit_stdout(format!(
+				"DEBUG USE 66901: H2: {}",
+				self.cf_pedersen_params.h));
             let computed_cmE = PedersenGadget::<C2, GC2>::commit(
                 H2.clone(),
                 G.clone(),
@@ -1776,7 +1778,9 @@ where
 		}else{C1::ScalarField::zero()};
 		let mainres_pub = FpVar::<C1::ScalarField>::new_input(cs.clone(),
 			|| Ok(mainres_hash_val) )?; //it is the ONLY PUBLIC VAR of circ!!! 
-		if b_debug { println!("DEBUG USE 6901.1.0 public input: {}", mainres_hash_val); }
+		if b_debug { emit_stdout(format!(
+			"DEBUG USE 6901.1.0 public input: {}",
+			mainres_hash_val)); }
 		mainres_hash.enforce_equal(&mainres_pub)?;
 		if B_DEBUG2{
 			if phase1_ret.ch.value().is_ok(){

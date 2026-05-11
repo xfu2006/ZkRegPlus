@@ -28306,4 +28306,7 @@ Goal 2. continue writing
 Monday 05/11/2026
 Goal 1. refine the log mechanism (maybe cache block of write)
 Goal 2. continue to refine the size of discharge_adv.rs
+	-> change discharge_adv.rs ADD_TO_DEL and  to 30
+	-> no need already at 85% level leave some room
+Goal 3. commit and run.
 -- TODO -- check what DEBUG USE 6703

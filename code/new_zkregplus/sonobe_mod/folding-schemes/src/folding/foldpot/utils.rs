@@ -1,7 +1,7 @@
 /* Created 01/07/2025
 Utility classes/functions
 */
-use utils::{consts::ADD_CHAIN_SIZE, logger::{log_perf, LOG2 as LOGL2}, timer::Timer as GTimer};
+use utils::{consts::ADD_CHAIN_SIZE, logger::{log_perf, emit_stdout, LOG2 as LOGL2}, timer::Timer as GTimer};
 use rayon::iter::{ParallelIterator,IntoParallelIterator,IntoParallelRefIterator};
 use std::time::{Instant};
 use ark_ff::{PrimeField,BigInteger};
@@ -48,13 +48,16 @@ pub const B_DEBUG3:bool = false; //category 3 (higher ID the higher cost)
 /// if you need it.
 pub fn check_cs<F:PrimeField>(cs: &ConstraintSystemRef<F>, info: &str){
 	let b_debug = B_DEBUG;
-	if b_debug{ println!("-- DEBUG USE 1001: entering CHECK: {}", info);}
+	if b_debug{ emit_stdout(format!(
+		"-- DEBUG USE 1001: entering CHECK: {}", info));}
 	if b_debug && cs.should_construct_matrices(){
 		let csat = cs.is_satisfied();
-		if csat.is_ok(){ 
+		if csat.is_ok(){
 			let res = csat.unwrap();
 			if res{
-				println!("-- DEBUG USE 1001.2: CHECK cs passing: {}", info);
+				emit_stdout(format!(
+					"-- DEBUG USE 1001.2: CHECK cs passing: {}",
+					info));
 			}else{
 				assert!(csat.unwrap(), "ERROR: not satisfiable: {}", info);
 			}
@@ -278,9 +281,10 @@ pub fn fpvar_to_var<F:PrimeField>(v: &FpVar<F>)->Variable{
 
 /// print a vector
 pub fn print_vec_var<F:PrimeField>(msg: &str, v: &Vec<FpVar<F>>){
-	println!("=== {} ===", msg);
+	emit_stdout(format!("=== {} ===", msg));
 	for i in 0..v.len(){
-		println!("  i: {} => {}", i, v[i].value().unwrap());
+		emit_stdout(format!(
+			"  i: {} => {}", i, v[i].value().unwrap()));
 	}
 }
 
@@ -405,10 +409,12 @@ impl Timer{
 	pub fn prt(&mut self, msg: &str){
 		self.stop(vec![]);
 		if LOG_LEVEL>=self.level {
-			print!("");
-			for _i in 0..self.level{print!("-");}
-			print!(" {}: {}: {:?}", self.name, msg, self.inst.elapsed());
-			println!("");
+			// Build the whole line as a single String so the
+			// drainer emits it atomically (one line per send).
+			let dashes = "-".repeat(self.level);
+			emit_stdout(format!(
+				"{} {}: {}: {:?}",
+				dashes, self.name, msg, self.inst.elapsed()));
 		}
 		self.start();
 	}
@@ -418,10 +424,10 @@ impl Timer{
 	pub fn prt_adv(&mut self, msg: &str, data_row: Vec<usize>, b_start: bool){
 		self.stop(data_row);
 		if LOG_LEVEL>=self.level {
-			print!("");
-			for _i in 0..self.level{print!("-");}
-			print!(" {}: {}: {:?}", self.name, msg, self.inst.elapsed());
-			println!("");
+			let dashes = "-".repeat(self.level);
+			emit_stdout(format!(
+				"{} {}: {}: {:?}",
+				dashes, self.name, msg, self.inst.elapsed()));
 		}
 		if b_start{ self.start();}
 	}

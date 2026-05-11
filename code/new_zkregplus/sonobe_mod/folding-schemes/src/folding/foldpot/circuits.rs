@@ -29,6 +29,7 @@ use ark_r1cs_std::{
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, Namespace, SynthesisError};
 use crate::folding::foldpot::utils::B_DEBUG;
 use crate::Error;
+use utils::logger::emit_stdout;
 use ark_std::{fmt::Debug, One, Zero};
 use core::{borrow::Borrow, marker::PhantomData};
 
@@ -218,7 +219,9 @@ where
 			assert!(self.cmW.y.value().unwrap_or_default()==other.cmW.y.value().unwrap_or_default());
 			assert!(self.cmF.x.value().unwrap_or_default()==other.cmF.x.value().unwrap_or_default());
 			assert!(self.cmF.y.value().unwrap_or_default()==other.cmF.y.value().unwrap_or_default());
-			println!("DEBUG USE 601: passing enforce_equal internally");
+			emit_stdout(
+				"DEBUG USE 601: passing enforce_equal internally"
+					.to_string());
 		}
 		self.u.enforce_equal(&other.u)?;
 		self.x.enforce_equal(&other.x)?;

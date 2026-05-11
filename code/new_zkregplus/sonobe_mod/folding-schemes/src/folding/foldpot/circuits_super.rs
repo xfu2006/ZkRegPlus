@@ -5,7 +5,7 @@
 */
 
 /// contains [Nova](https://eprint.iacr.org/2021/370.pdf) related circuits
-use utils::{logger::{log_perf,LOG5}, timer::Timer as GTimer};
+use utils::{logger::{log_perf, emit_stdout, LOG5}, timer::Timer as GTimer};
 use ark_crypto_primitives::sponge::{
     constraints::{AbsorbGadget, CryptographicSpongeVar},
     poseidon::{constraints::PoseidonSpongeVar, PoseidonConfig},
@@ -101,9 +101,23 @@ where <C as ark_ec::CurveGroup>::BaseField: ark_ff::PrimeField{
 	pub fn dump(&self, msg: &str){
 		for i in 0..self.vec_inst.len(){
 			let inst = &self.vec_inst[i];
-			println!("{}:   {}: cmE: ({}, {}), u: ({:?}), cmW: ({},{}), x: ({:?},{:?}), cmF: ({}, {})", msg, i, inst.cmE.x.value().unwrap(), inst.cmE.y.value().unwrap(), inst.u.value().unwrap(), inst.cmW.x.value().unwrap(), inst.cmW.y.value().unwrap(), inst.x[0].value().unwrap(), inst.x[1].value().unwrap(), inst.cmF.x.value().unwrap(), inst.cmF.y.value().unwrap());
+			emit_stdout(format!(
+				"{}:   {}: cmE: ({}, {}), u: ({:?}), \
+				cmW: ({},{}), x: ({:?},{:?}), cmF: ({}, {})",
+				msg, i,
+				inst.cmE.x.value().unwrap(),
+				inst.cmE.y.value().unwrap(),
+				inst.u.value().unwrap(),
+				inst.cmW.x.value().unwrap(),
+				inst.cmW.y.value().unwrap(),
+				inst.x[0].value().unwrap(),
+				inst.x[1].value().unwrap(),
+				inst.cmF.x.value().unwrap(),
+				inst.cmF.y.value().unwrap()));
 		}
-		println!("{}:  x_1: {:?}, x_2: {:?}, pc_i: {:?}", msg, self.x_1, self.x_2, self.pc_i);
+		emit_stdout(format!(
+			"{}:  x_1: {:?}, x_2: {:?}, pc_i: {:?}",
+			msg, self.x_1, self.x_2, self.pc_i));
 	}
 }
 
@@ -456,8 +470,9 @@ where
 			pc_i1_val, self.j);
 
 		if b_debug{
-			println!("DEBUG USE 7701: aug_f::gen_csr: {}", 
-				cs.num_constraints());
+			emit_stdout(format!(
+				"DEBUG USE 7701: aug_f::gen_csr: {}",
+				cs.num_constraints()));
 			let csat = cs.is_satisfied();
 			if csat.is_ok(){ assert!(csat.unwrap(), "step 2 of circuitsuper"); }
 		}
@@ -493,8 +508,9 @@ where
 		nv = cs.num_witness_variables();
 
 		if b_debug{
-			println!("DEBUG USE 7702: aug_f::gen_csr: {}", 
-				cs.num_constraints());
+			emit_stdout(format!(
+				"DEBUG USE 7702: aug_f::gen_csr: {}",
+				cs.num_constraints()));
 			let csat = cs.is_satisfied();
 			if csat.is_ok(){ 
 				assert!(csat.unwrap(), "step 2.5 of circuitsuper"); 
@@ -512,8 +528,9 @@ where
 		nv = cs.num_witness_variables();
 
 		if b_debug{
-			println!("DEBUG USE 7703: aug_f::gen_csr: {}", 
-				cs.num_constraints());
+			emit_stdout(format!(
+				"DEBUG USE 7703: aug_f::gen_csr: {}",
+				cs.num_constraints()));
 			let csat = cs.is_satisfied();
 			if csat.is_ok(){ 
 				assert!(csat.unwrap(), "step 2.6 of circuitsuper"); 
@@ -543,8 +560,9 @@ where
         })?;
 
 		if b_debug{
-			println!("DEBUG USE 7704: aug_f::gen_csr: {}", 
-				cs.num_constraints());
+			emit_stdout(format!(
+				"DEBUG USE 7704: aug_f::gen_csr: {}",
+				cs.num_constraints()));
 			let csat = cs.is_satisfied();
 			if csat.is_ok(){ 
 				assert!(csat.unwrap(), "step 3 of circuitsuper"); 
@@ -594,8 +612,9 @@ where
         let mut transcript = sponge.clone();
 
 		if b_debug{
-			println!("DEBUG USE 7705: aug_f::gen_csr: {}", 
-				cs.num_constraints());
+			emit_stdout(format!(
+				"DEBUG USE 7705: aug_f::gen_csr: {}",
+				cs.num_constraints()));
 			let csat = cs.is_satisfied();
 			if csat.is_ok(){ 
 				assert!(csat.unwrap(), "step 4 of circuitsuper"); 
@@ -638,8 +657,9 @@ where
 		}else {(None,None,None)};
 
 		if b_debug{
-			println!("DEBUG USE 7706: aug_f::gen_csr: {}", 
-				cs.num_constraints());
+			emit_stdout(format!(
+				"DEBUG USE 7706: aug_f::gen_csr: {}",
+				cs.num_constraints()));
 			let csat = cs.is_satisfied();
 			if csat.is_ok(){ 
 				assert!(csat.unwrap(), "step 6 of circuitsuper"); 
@@ -1100,8 +1120,9 @@ where
 
 
 		if b_debug{
-			println!("DEBUG USE 7708: aug_f::gen_csr: {}", 
-				cs.num_constraints());
+			emit_stdout(format!(
+				"DEBUG USE 7708: aug_f::gen_csr: {}",
+				cs.num_constraints()));
 			if cs.is_satisfied().is_ok(){ 
 				assert!(cs.is_satisfied().unwrap());
 			}

@@ -9,6 +9,7 @@
 
 extern crate regex;
 use regex::Regex;
+use utils::logger::emit_stdout;
 
 /// count how many times need appears in haystack
 pub fn count_occ(needle: &str, haystack: &str)->usize{
@@ -20,7 +21,9 @@ pub fn count_occ(needle: &str, haystack: &str)->usize{
 pub  fn validate_pm_regex(s: &str, pattern_name: &str){
 	let r1 = Regex::new(r"^[abcdef0123456789().*?]+$").unwrap();
 	let bres = r1.is_match(s);
-	if !bres {println!("ERROR: not matching rustomaton for pm-regex: {}, signame: {}", s, pattern_name);}
+	if !bres {emit_stdout(format!(
+		"ERROR: not matching rustomaton for pm-regex: {}, signame: {}",
+		s, pattern_name));}
 	assert!(bres);
 }
 
@@ -28,7 +31,9 @@ pub  fn validate_pm_regex(s: &str, pattern_name: &str){
 pub  fn validate_counter_constraint(s: &str, pattern_name: &str){
 	let r1 = Regex::new(r"^\d+(>|=|<|==)\d+$").unwrap();
 	let bres = r1.is_match(s);
-	if !bres {println!("ERROR: not matching counter constraint: {}, signame: {}", s, pattern_name);}
+	if !bres {emit_stdout(format!(
+		"ERROR: not matching counter constraint: {}, signame: {}",
+		s, pattern_name));}
 	assert!(bres);
 }
 
@@ -36,7 +41,9 @@ pub  fn validate_counter_constraint(s: &str, pattern_name: &str){
 pub  fn validate_ra_regex(s: &str, pattern_name: &str){
 	let r1 = Regex::new(r"^[abcdef0123456789().|*?]+$").unwrap();
 	let bres = r1.is_match(s);
-	if !bres {println!("ERROR: not matching rustomaton regex: {}, signame: {}", s, pattern_name);}
+	if !bres {emit_stdout(format!(
+		"ERROR: not matching rustomaton regex: {}, signame: {}",
+		s, pattern_name));}
 	//assert!(bres);
 }
 
@@ -45,7 +52,9 @@ pub  fn validate_ra_regex(s: &str, pattern_name: &str){
 pub  fn validate_ra_regex_relaxed(s: &str, pattern_name: &str){
 	let r1 = Regex::new(r"^[abcdef0123456789().|*!?]+$").unwrap();
 	let bres = r1.is_match(s);
-	if !bres {println!("ERROR: not matching rustomaton regex: {}, signame: {}", s, pattern_name);}
+	if !bres {emit_stdout(format!(
+		"ERROR: not matching rustomaton regex: {}, signame: {}",
+		s, pattern_name));}
 	//assert!(bres);
 }
 

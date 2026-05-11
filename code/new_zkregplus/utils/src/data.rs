@@ -19,6 +19,7 @@ use std::collections::HashMap;
 
 use crate::timer::{Timer};
 use crate::consts::B_DEBUG;
+use crate::logger::emit_stdout;
 use rayon::prelude::*;
 
 
@@ -198,7 +199,10 @@ pub fn str_to_fe<F:PrimeField>(v: &String) -> F {
 	let res = F::from_str(s);
 	match res{
 		Ok(res_f) => return res_f,
-		Err(_e) => {println!("ERROR parsing v: {}", v); return F::zero();}
+		Err(_e) => {
+			emit_stdout(format!("ERROR parsing v: {}", v));
+			return F::zero();
+		}
 	}
 }
 

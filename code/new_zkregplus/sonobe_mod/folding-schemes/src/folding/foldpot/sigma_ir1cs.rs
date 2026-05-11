@@ -20,7 +20,7 @@ macro_rules! lock_unwrap {
 		that failed_sigs is a subset of discharged_sigs (or the samples
 		are discharged).
 */
-use utils::{consts::ADD_CHAIN_SIZE, logger::{log, log_perf, LOG6,LOG7}, timer::Timer as GTimer};
+use utils::{consts::ADD_CHAIN_SIZE, logger::{log, log_perf, emit_stdout, LOG6,LOG7}, timer::Timer as GTimer};
 use crate::folding::foldpot::utils::{sum3,alloc_fpvar_mul,var_to_tuple, var_to_tuple_adv, B_DEBUG, B_DEBUG3, B_DEBUG2, check_cs, POW_LE_BITS, alloc_le_bits};
 use serde::{Serialize,Deserialize};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -681,7 +681,15 @@ pub struct StatementExtraInfo<F:PrimeField>{
 
 impl <F:PrimeField> StatementExtraInfo<F>{
 	pub fn dump(&self){
-		println!("StmtExtra: pc_i: {}, pc_i1: {}, total_words: {}, subseg_id: {}, total_word_len: {}, word_id: {}, n_circ: {}, total_word_segs: {}, act_word_subseg_size: {}", self.pc_i, self.pc_i1, self.total_words, self.subseg_id, self.total_word_len, self.word_id, self.n_circ, self.total_word_segs, self.act_word_subseg_size ); 
+		emit_stdout(format!(
+			"StmtExtra: pc_i: {}, pc_i1: {}, total_words: {}, \
+			subseg_id: {}, total_word_len: {}, word_id: {}, \
+			n_circ: {}, total_word_segs: {}, \
+			act_word_subseg_size: {}",
+			self.pc_i, self.pc_i1, self.total_words,
+			self.subseg_id, self.total_word_len, self.word_id,
+			self.n_circ, self.total_word_segs,
+			self.act_word_subseg_size));
 	}
 
 	pub fn dummy(n_circ: F, _ch: F) -> Self{
@@ -1137,33 +1145,48 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 	fn print_vec(v: &Vec<F>, name: &str){
 		let max_n = 165;
 		assert!(v.len()<max_n);
-		let n = if v.len()<max_n {v.len()} else {max_n};	
-		print!("{}: ", name);
+		let n = if v.len()<max_n {v.len()} else {max_n};
+		// Build the full line in one String so the drainer emits
+		// it atomically (one `send` per logical output line).
+		let mut line = format!("{}: ", name);
 		for i in 0..n{
-			print!("{}, ", v[i]);
+			line.push_str(&format!("{}, ", v[i]));
 		}
-		println!("");
+		emit_stdout(line);
 	}
 	/// mainly for printing purpose
 	pub fn dump(&self){
-		println!("--- DUMP of Statement Instance ---");
-		println!("word_id: {}", self.word_id);
-		println!("subseg_id: {}", self.subseg_id);
+		emit_stdout(
+			"--- DUMP of Statement Instance ---".to_string());
+		emit_stdout(format!("word_id: {}", self.word_id));
+		emit_stdout(format!("subseg_id: {}", self.subseg_id));
 		Self::print_vec(&self.word_subseg, "subseg");
-		println!("pc_i: {}", self.pc_i);
-		println!("pc_i1: {}", self.pc_i1);
-		println!("n_circ: {}", self.n_circ);
-		println!("n_circ_minus_pc: {}", self.n_circ_minus_pc);
-		println!("act_input_size: {}", self.act_input_size);
-		println!("act_output_size: {}", self.act_output_size);
-		println!("act_lookup_share_size: {}", self.act_lookup_share_size);
-		println!("act_word_subseg_size: {}", self.act_word_subseg_size);
-		println!("total_word_len: {}", self.total_word_len);
-		println!("total_word_segs: {}", self.total_word_segs);
-		println!("total_words: {}", self.total_words);
-		println!("r_F: {}", self.r_F);
-		println!("failed_sigs len: {}", self.failed_sigs.len());
-		println!("discharged_sigs len: {}", self.discharged_sigs.len());
+		emit_stdout(format!("pc_i: {}", self.pc_i));
+		emit_stdout(format!("pc_i1: {}", self.pc_i1));
+		emit_stdout(format!("n_circ: {}", self.n_circ));
+		emit_stdout(format!(
+			"n_circ_minus_pc: {}", self.n_circ_minus_pc));
+		emit_stdout(format!(
+			"act_input_size: {}", self.act_input_size));
+		emit_stdout(format!(
+			"act_output_size: {}", self.act_output_size));
+		emit_stdout(format!(
+			"act_lookup_share_size: {}",
+			self.act_lookup_share_size));
+		emit_stdout(format!(
+			"act_word_subseg_size: {}",
+			self.act_word_subseg_size));
+		emit_stdout(format!(
+			"total_word_len: {}", self.total_word_len));
+		emit_stdout(format!(
+			"total_word_segs: {}", self.total_word_segs));
+		emit_stdout(format!("total_words: {}", self.total_words));
+		emit_stdout(format!("r_F: {}", self.r_F));
+		emit_stdout(format!(
+			"failed_sigs len: {}", self.failed_sigs.len()));
+		emit_stdout(format!(
+			"discharged_sigs len: {}",
+			self.discharged_sigs.len()));
 		Self::print_vec(&self.inp_buf, "inp_buf");
 		Self::print_vec(&self.oup_buf, "oup_buf");
 		Self::print_vec(&self.word_subseg, "word_subseg");
@@ -1175,7 +1198,8 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 		Self::print_vec(&self.failed_sigs, "failed_sigs");
 		Self::print_vec(&self.discharged_sigs, "discharged_sigs");
 		Self::print_vec(&self.mtbl_sigs, "mtbl_sigs");
-		println!("---- DUMP COMPLETED ---------\n");
+		emit_stdout(
+			"---- DUMP COMPLETED ---------\n".to_string());
 	}
 
 	/// serialize into one vector
@@ -3221,11 +3245,11 @@ where 	C: CurveGroup<ScalarField=F>,
 		}
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 1");
-			println!(concat!(
+			emit_stdout(format!(concat!(
 				"--- DEBUG USE 7601: gen_step_constraints step 1. ",
-				"cs: {}, stack  =======, stack: {}"), 
+				"cs: {}, stack  =======, stack: {}"),
 				cs.num_constraints(), get_stack_space()
-			);
+			));
 		}
 		log_perf(self.job_id, log_level,&format!("gen_step_cs step 2: cs: {}, vars: {}",
 			cs.num_constraints() - nc,
@@ -3250,11 +3274,11 @@ where 	C: CurveGroup<ScalarField=F>,
 		}
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 3");
-			println!(concat!(
+			emit_stdout(format!(concat!(
 				"--- DEBUG USE 7601: gen_step_constraints step 3. ",
-				"cs: {}, stack  =======, stack: {}"), 
+				"cs: {}, stack  =======, stack: {}"),
 				cs.num_constraints(), get_stack_space()
-			);
+			));
 		}
 		log_perf(self.job_id, log_level, &format!(
 			"gen_step_cs step 3: cs: {}, vars: {}, lc: {}",
@@ -3357,11 +3381,11 @@ where 	C: CurveGroup<ScalarField=F>,
 		io_res.enforce_equal(&Boolean::TRUE)?;
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 4");
-			println!(concat!(
+			emit_stdout(format!(concat!(
 				"--- DEBUG USE 7601: gen_step_constraints step 4. ",
-				"cs: {}, stack  =======, stack: {}"), 
+				"cs: {}, stack  =======, stack: {}"),
 				cs.num_constraints(), get_stack_space()
-			);
+			));
 		}
 		log_perf(self.job_id, log_level, &format!(
 			"gen_step_cs step 4: cs: {}, vars: {}, lc: {}, output_size: {}",
@@ -3558,11 +3582,11 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 5.1");
-			println!(concat!(
+			emit_stdout(format!(concat!(
 				"--- DEBUG USE 7601: gen_step_constraints step 5.1 ",
-				"cs: {}, stack  =======, stack: {}"), 
+				"cs: {}, stack  =======, stack: {}"),
 				cs.num_constraints(), get_stack_space()
-			);
+			));
 
 		}
 		//log(job_id, log_level, &format!("-- lkup_size: {}, inv_hab22_right_size: {}", si.act_lookup_share_size.value()?, inv_hab22_right_size));
@@ -3579,10 +3603,16 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		//5.2 check the right side
 		if b_debug{
-			println!("DEBUG USE 6651.RIGHT: i: {}, alpha: {}, beta: {}, inv_hab22_right_size: {}", _i, alpha.value()?, beta.value()?, inv_hab22_right_size);
+			emit_stdout(format!(
+				"DEBUG USE 6651.RIGHT: i: {}, alpha: {}, beta: {}, \
+				inv_hab22_right_size: {}",
+				_i, alpha.value()?, beta.value()?,
+				inv_hab22_right_size));
 		}
 		//5.2.2 now process the inv_hab22_right
-		println!("DEBUG USE 9998: inv_hab22_right_size: {}", inv_hab22_right_size);
+		emit_stdout(format!(
+			"DEBUG USE 9998: inv_hab22_right_size: {}",
+			inv_hab22_right_size));
 		for i in 0usize..inv_hab22_right_size{
 			//let v_temp = &beta * &si.col1_share[i]; //cost 271ns
 			let v_temp = alloc_fpvar_mul(&beta, &si.col1_share[i]); //231ns
@@ -3624,11 +3654,11 @@ where 	C: CurveGroup<ScalarField=F>,
 		}
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 5.2");
-			println!(concat!(
+			emit_stdout(format!(concat!(
 				"--- DEBUG USE 7601: gen_step_constraints step 5.2",
-				"cs: {}, stack  =======, stack: {}"), 
+				"cs: {}, stack  =======, stack: {}"),
 				cs.num_constraints(), get_stack_space()
-			);
+			));
 		}
 		log_perf(self.job_id, log_level, &format!(
 				"-- -- gen_step_cs step 5.2: cs: {}, vars: {}: lc: {}",
@@ -3659,11 +3689,11 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 6");
-			println!(concat!(
+			emit_stdout(format!(concat!(
 				"--- DEBUG USE 7601: gen_step_constraints step 6",
-				"cs: {}, stack  =======, stack: {}"), 
+				"cs: {}, stack  =======, stack: {}"),
 				cs.num_constraints(), get_stack_space()
-			);
+			));
 		}
 		log_perf(self.job_id, log_level, &format!(
 			"gen_step_cs step 6: cs: {}, vars: {}, lc: {}",
@@ -3820,11 +3850,11 @@ where 	C: CurveGroup<ScalarField=F>,
 		}
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 7");
-			println!(concat!(
+			emit_stdout(format!(concat!(
 				"--- DEBUG USE 7601: gen_step_constraints step 7",
-				"cs: {}, stack  =======, stack: {}"), 
+				"cs: {}, stack  =======, stack: {}"),
 				cs.num_constraints(), get_stack_space()
-			);
+			));
 		}
 		log_perf(self.job_id, log_level, &format!("gen_step_cs step 7: cs: {}, vars: {}, lc: {}",
 			cs.num_constraints() - nc,
@@ -3857,11 +3887,11 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 8");
-			println!(concat!(
+			emit_stdout(format!(concat!(
 				"--- DEBUG USE 7601: gen_step_constraints step 8",
-				"cs: {}, stack  =======, stack: {}"), 
+				"cs: {}, stack  =======, stack: {}"),
 				cs.num_constraints(), get_stack_space()
-			);
+			));
 		}
 		log_perf(self.job_id, log_level, &format!(
 			"gen_step_cs step 8: cs: {}, vars: {}, lc: {}",
@@ -3921,11 +3951,11 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 9");
-			println!(concat!(
+			emit_stdout(format!(concat!(
 				"--- DEBUG USE 7601: gen_step_constraints step 9",
-				"cs: {}, stack  =======, stack: {}"), 
+				"cs: {}, stack  =======, stack: {}"),
 				cs.num_constraints(), get_stack_space()
-			);
+			));
 		}
 		log_perf(self.job_id, log_level, &format!(
 			"gen_step_cs step 9: cs: {}, vars: {}, lc: {}, TOTAL: cs: {}, vars: {}",
@@ -3956,11 +3986,11 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 9.1");
-			println!(concat!(
+			emit_stdout(format!(concat!(
 				"--- DEBUG USE 7601: gen_step_constraints step 9.1",
-				"cs: {}, stack  =======, stack: {}"), 
+				"cs: {}, stack  =======, stack: {}"),
 				cs.num_constraints(), get_stack_space()
-			);
+			));
 		}
 
 		//10.5 check the failed_sigs are covered by discharged sigs
@@ -3979,18 +4009,20 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 9.2");
-			println!(concat!(
+			emit_stdout(format!(concat!(
 				"--- DEBUG USE 7601: gen_step_constraints step 9.2",
-				"cs: {}, stack  =======, stack: {}"), 
+				"cs: {}, stack  =======, stack: {}"),
 				cs.num_constraints(), get_stack_space()
-			);
+			));
 		}
 
 		if b_show_sigs{
 			print_vec_var("DEBUG USE 7801: sigma_ir1cs: failed_sigs", &si.failed_sigs);
 			print_vec_var("DEBUG USE 7802: sigma_ir1cs: : discharged_sigs",
 				&si.discharged_sigs);
-			println!("DEBUG USE 7803 sigma_ir1cs: b_correct: {}", b_correct.value()?);
+			emit_stdout(format!(
+				"DEBUG USE 7803 sigma_ir1cs: b_correct: {}",
+				b_correct.value()?));
 		}
 
 		b_correct.enforce_equal(&Boolean::TRUE)?;
@@ -4002,11 +4034,11 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		if B_DEBUG2{
 			check_cs(&cs, "gen_step_cs FINAL");
-			println!(concat!(
+			emit_stdout(format!(concat!(
 				"--- DEBUG USE 7601: gen_step_constraints step 10. RETURN!",
-				"cs: {}, stack  =======, stack: {}"), 
+				"cs: {}, stack  =======, stack: {}"),
 				cs.num_constraints(), get_stack_space()
-			);
+			));
 		}
 		log_perf(self.job_id, log_level, &format!(
 			"gen_step_cs step 10: cs: {}, vars: {}, lc: {}",

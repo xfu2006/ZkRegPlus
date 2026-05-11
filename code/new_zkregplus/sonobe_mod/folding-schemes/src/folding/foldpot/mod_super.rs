@@ -6,7 +6,7 @@ use std::sync::Arc;
 	Revised: 10/07/2024 -> Added x2 (support of FoldPair)
 */
 
-use utils::{logger::{log, log_perf, LOG3,LOG4}, timer::Timer as GTimer};
+use utils::{logger::{log, log_perf, emit_stdout, LOG3,LOG4}, timer::Timer as GTimer};
 
 use ark_crypto_primitives::sponge::{
     poseidon::{PoseidonConfig, PoseidonSponge},
@@ -265,10 +265,15 @@ impl<C: CurveGroup> CommittedInstanceFoldPotSuper<C> {
 	pub fn dump(&self, msg: &str){
 		for i in 0..self.vec_inst.len(){
 			let inst = &self.vec_inst[i];
-			println!("{}:   {}: cmE: {:?}, u: {}, cmW: {:?}, x: {:?}, cmF: {:?}", msg, i, inst.cmE, inst.u, inst.cmW, inst.x, inst.cmF);
+			emit_stdout(format!(
+				"{}:   {}: cmE: {:?}, u: {}, cmW: {:?}, \
+				x: {:?}, cmF: {:?}",
+				msg, i, inst.cmE, inst.u, inst.cmW,
+				inst.x, inst.cmF));
 		}
-		println!("{}:  x_1: {}, pc_i: {}", msg, self.x_1, self.pc_i);
-		
+		emit_stdout(format!(
+			"{}:  x_1: {}, pc_i: {}", msg, self.x_1, self.pc_i));
+
 	}
 }
 
@@ -1853,7 +1858,10 @@ where
 		let b_full_mode = U_i.x_2.is_some(); //if yes, full mode
 		let expected_x_len = if b_full_mode {3} else {2};
         if u_i.x.len() != expected_x_len || U_i.vec_inst[j_pci].x.len() != expected_x_len {
-			println!("ERROR: u_ix or U_i.x.len()!=2 or 3 (bFull), u_ix: {}, U_i.x: {}", u_i.x.len(), U_i.vec_inst[j_pci].x.len());
+			emit_stdout(format!(
+				"ERROR: u_ix or U_i.x.len()!=2 or 3 (bFull), \
+				u_ix: {}, U_i.x: {}",
+				u_i.x.len(), U_i.vec_inst[j_pci].x.len()));
             return Err(Error::IVCVerificationFail);
         }
         let pp_hash = vp.pp_hash()?;
@@ -1863,20 +1871,23 @@ where
         let expected_u_i_x = U_i.hash(&sponge, pp_hash, num_steps, 
 			pc_i.clone(), z_0.clone(), z_i.clone());
         if expected_u_i_x != u_i.x[0] {
-			println!("u_i.x[0] error, u_i.x[0]: {}, expected_u_i_x: {}, U_i: {:?}\nz_0: {:?}\nz_i1:{:?}", u_i.x[0], expected_u_i_x, U_i, z_0, z_i);
+			emit_stdout(format!(
+				"u_i.x[0] error, u_i.x[0]: {}, expected_u_i_x: {}, \
+				U_i: {:?}\nz_0: {:?}\nz_i1:{:?}",
+				u_i.x[0], expected_u_i_x, U_i, z_0, z_i));
             return Err(Error::IVCVerificationFail);
         }
 
         //2. u_i.X[1] == H(cf_U_i)
         let expected_cf_u_i_x = cf_U_i.hash_cyclefold(&sponge, pp_hash);
         if expected_cf_u_i_x != u_i.x[1] {
-			println!("u_i.X[1] check fails");
+			emit_stdout("u_i.X[1] check fails".to_string());
             return Err(Error::IVCVerificationFail);
         }
 
         //3.3.3. check u_i.cmE==0, u_i.u==1 (=u_i is a un-relaxed instance)
         if !u_i.cmE.is_zero() || !u_i.u.is_one() {
-			println!("cmE error");
+			emit_stdout("cmE error".to_string());
             return Err(Error::IVCVerificationFail);
         }
 
@@ -1905,7 +1916,7 @@ where
         	let (cp_U_i, cp_W_i) = cyclepair_instance.unwrap();
 			let expected_cp_u_i_x = cp_U_i.hash_cyclefold(&sponge, pp_hash);
 			if expected_cp_u_i_x != u_i_x[2] {
-				println!("u_i.x[2] check fails");
+				emit_stdout("u_i.x[2] check fails".to_string());
 				return Err(Error::IVCVerificationFail);
 			}
 			//7.check CycleFold RelaxedR1CS satisfiability

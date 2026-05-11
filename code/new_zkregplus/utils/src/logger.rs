@@ -79,7 +79,9 @@ fn stdout_tx() -> &'static Sender<LogMsg> {
 
 /// Hand a line to the background drainer. Move-by-value, no clone.
 /// If the drainer thread is gone the line is dropped silently.
-fn emit_stdout(line: String) {
+/// Public so callers across the workspace can replace raw `println!`
+/// in prover-path code without taking the global `Stdout` mutex.
+pub fn emit_stdout(line: String) {
 	let _ = stdout_tx().send(LogMsg::Line(line));
 }
 

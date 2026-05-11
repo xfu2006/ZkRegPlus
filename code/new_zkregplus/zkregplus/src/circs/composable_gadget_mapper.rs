@@ -12,7 +12,7 @@ following:
 */
 
 use folding_schemes::folding::foldpot::container_config::{ColEle, ContainerConfig};
-use utils::{logger::{log_perf, LOG1 }, timer::Timer, consts::B_DEBUG};
+use utils::{logger::{log_perf, emit_stdout, LOG1 }, timer::Timer, consts::B_DEBUG};
 use std::any::{Any};
 use folding_schemes::{
 	Error,
@@ -598,7 +598,10 @@ pub struct CompositeGadgetMapper<F:PrimeField + ColEle, LK:LookupTableTwoCol<F>>
 			}
 			let (seg_id, global_off, len) = info.unwrap();
 			if seg_id == 0 || seg_id>6{
-				println!("DEBUG USE 7102.5: SKIP word seg: seg_id: {}, global_off: {}, len: {}", seg_id, global_off, len);
+				emit_stdout(format!(
+					"DEBUG USE 7102.5: SKIP word seg: \
+					seg_id: {}, global_off: {}, len: {}",
+					seg_id, global_off, len));
 				continue;
 			}
 
@@ -676,8 +679,9 @@ pub struct CompositeGadgetMapper<F:PrimeField + ColEle, LK:LookupTableTwoCol<F>>
 					rel_idx: {}, (sid: {}, val: {}), \
 					(sid2: {}, val2: {}), seg_id: {}", 
 					comp_idx, path, rel_idx, sid, val, sid2, val2, seg_id);
-				println!("DEBUG USE 6801: self-checked comp_idx: {}, path: {}", 
-					comp_idx, path);
+				emit_stdout(format!(
+					"DEBUG USE 6801: self-checked comp_idx: {}, path: {}",
+					comp_idx, path));
 			}
 		}
 		log_perf(self.job_id, LOG1, "DEBUG USE 9999: CompositeGadgetMapper: self_check", &mut timer);
@@ -901,7 +905,11 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 				)?;
 			//REMOVE LATER -----------
 			if i==0{
-				println!("DEBUG USE 7500: data[0]: {}, data[1]: {}, si_data[0]: {}, si_data[1]: {}", vecs[2][0], vecs[2][1], vecs[5][0], vecs[5][1]);
+				emit_stdout(format!(
+					"DEBUG USE 7500: data[0]: {}, data[1]: {}, \
+					si_data[0]: {}, si_data[1]: {}",
+					vecs[2][0], vecs[2][1],
+					vecs[5][0], vecs[5][1]));
 			}
 			//REMOVE LATER ----------- LATER
 			if B_DEBUG {
@@ -927,7 +935,9 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 		let oup = vec_oup.concat();
 		assert!(inp.len()==oup.len());
 		let data = vec_data.concat();
-		println!("DEBUG USE 7500: inp.len: {}, oup.len: {}, data.len: {}", inp.len(), oup.len(), data.len());
+		emit_stdout(format!(
+			"DEBUG USE 7500: inp.len: {}, oup.len: {}, data.len: {}",
+			inp.len(), oup.len(), data.len()));
 		let failed_sigs = vec_failed_sigs.concat();
 		let failed_sigs = if b_dummy {vec![F::zero(); failed_sigs.len()]}
 			else {failed_sigs};

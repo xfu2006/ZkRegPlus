@@ -42,7 +42,7 @@ discharge_subsig_adv (one for case sentive and one for ignore case).
 */
 
 use folding_schemes::folding::foldpot::container_config::ColEle;
-use utils::{logger::{log, log_perf, LOG7, LOG1}, timer::Timer, consts::{read_global_config, B_DEBUG} };
+use utils::{logger::{log, log_perf, emit_stdout, LOG7, LOG1}, timer::Timer, consts::{read_global_config, B_DEBUG} };
 
 use std::{
 	marker::PhantomData,
@@ -606,8 +606,10 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 	fn print_subsig_details(subsig_id: usize, b_igc: bool, 
 		store: &SubsigStepStore, acdfa: &HexACDFA){
 		if let Some(item) = store.subsig_to_steps.get(&subsig_id){
-			println!("--- DEBUG USE 6621: Subsig Details for ID: {}, IGC: {} ---", 
-				subsig_id, b_igc);
+			emit_stdout(format!(
+				"--- DEBUG USE 6621: Subsig Details for ID: {}, \
+				IGC: {} ---",
+				subsig_id, b_igc));
 			for (i, step) in item.vec_pm_bounds.iter().enumerate(){
 				let pat_id = step.0;
 				let (a, b) = step.1;
@@ -616,8 +618,9 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 				} else {
 					"UNKNOWN_PAT_ID"
 				};
-				println!("  Step {}: PatID: {}, Word: {}, Range: ({}, {})", 
-					i + 1, pat_id, word, a, b);
+				emit_stdout(format!(
+					"  Step {}: PatID: {}, Word: {}, Range: ({}, {})",
+					i + 1, pat_id, word, a, b));
 			}
 		}
 	}

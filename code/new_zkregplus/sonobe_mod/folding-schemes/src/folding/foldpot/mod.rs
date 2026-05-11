@@ -24,6 +24,11 @@ use ark_std::{One, UniformRand, Zero};
 use core::marker::PhantomData;
 
 use crate::folding::foldpot::utils::B_DEBUG;
+// `utils` in this scope refers to the sibling `foldpot::utils`
+// module (declared as `pub mod utils;` below), so the extern crate
+// `utils` is shadowed. Bring it in under an alias to disambiguate.
+extern crate utils as logger_crate;
+use logger_crate::logger::emit_stdout;
 use crate::commitment::CommitmentScheme;
 use crate::folding::circuits::cyclefold::{fold_cyclefold_circuit, CycleFoldCircuit};
 use crate::folding::circuits::CF2;
@@ -1083,7 +1088,7 @@ where
         let (cf_U_i, cf_W_i) = cyclefold_instance;
 
         if u_i.x.len() != 2 || U_i.x.len() != 2 {
-			println!("ERROR: u_ix or U_i.x.len()!=2");
+			emit_stdout("ERROR: u_ix or U_i.x.len()!=2".to_string());
             return Err(Error::IVCVerificationFail);
         }
         let pp_hash = vp.pp_hash()?;
@@ -1092,20 +1097,23 @@ where
         // u_i.X[0] == H(i, z_0, z_i, U_i)
         let expected_u_i_x = U_i.hash(&sponge, pp_hash, num_steps, z_0.clone(), z_i.clone());
         if expected_u_i_x != u_i.x[0] {
-			println!("u_i.x[0] error, u_i.x[0]: {}, expected_u_i_x: {}, U_i: {:?}\nz_0: {:?}\nz_i1:{:?}", u_i.x[0], expected_u_i_x, U_i, z_0, z_i);
+			emit_stdout(format!(
+				"u_i.x[0] error, u_i.x[0]: {}, expected_u_i_x: {}, \
+				U_i: {:?}\nz_0: {:?}\nz_i1:{:?}",
+				u_i.x[0], expected_u_i_x, U_i, z_0, z_i));
             return Err(Error::IVCVerificationFail);
         }
 
         // u_i.X[1] == H(cf_U_i)
         let expected_cf_u_i_x = cf_U_i.hash_cyclefold(&sponge, pp_hash);
         if expected_cf_u_i_x != u_i.x[1] {
-			println!("u_i.X[1] check fails");
+			emit_stdout("u_i.X[1] check fails".to_string());
             return Err(Error::IVCVerificationFail);
         }
 
         // check u_i.cmE==0, u_i.u==1 (=u_i is a un-relaxed instance)
         if !u_i.cmE.is_zero() || !u_i.u.is_one() {
-			println!("cmE error");
+			emit_stdout("cmE error".to_string());
             return Err(Error::IVCVerificationFail);
         }
 

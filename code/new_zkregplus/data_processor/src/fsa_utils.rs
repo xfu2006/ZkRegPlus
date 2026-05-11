@@ -20,6 +20,7 @@ use rustomaton::{
 };
 use std::collections::HashMap;
 use crate::strings::{find_first_match, is_sequential_regex};
+use utils::logger::emit_stdout;
 
 /// return the clamav alphabet
 pub fn clamav_alphabet()->HashSet<char>{
@@ -155,7 +156,8 @@ pub fn build_nfa(s_reg: &str, b_neg: bool) -> NFA<char>{
 		build_nfa_slow(s_reg)
 	};
 	if b_test{
-		println!(" DEBUG USE 102: test_build_nfa ... s: {}", s_reg);
+		emit_stdout(format!(
+			" DEBUG USE 102: test_build_nfa ... s: {}", s_reg));
 		let nfa2 = build_nfa_slow(s_reg);
 		assert!(nfa==nfa2, "incorrect build_nfa");
 	}

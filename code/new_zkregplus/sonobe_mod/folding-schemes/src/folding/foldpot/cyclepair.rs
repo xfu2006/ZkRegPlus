@@ -22,6 +22,7 @@
 /// NTOE that the public x[] length is 32 (2 gt points, 1 g1 and 1 g2)
 
 use crate::folding::foldpot::utils::B_DEBUG;
+use utils::logger::emit_stdout;
 use ark_crypto_primitives::sponge::{Absorb, CryptographicSponge};
 use ark_ec::{Group, CurveGroup,
 	pairing::{Pairing},
@@ -318,9 +319,9 @@ pub fn projective_from_field_elements<F:PrimeField,
 	F2: Field<BasePrimeField=F>, 
 	Cfg: SWCurveConfig<BaseField=F2> >(v: &Vec<F>) ->  Projective<Cfg>{
 		let n = v.len();
-		println!("--- DUMP v: ---");
+		emit_stdout("--- DUMP v: ---".to_string());
 		for x in v{
-			println!("-- {} --", x);
+			emit_stdout(format!("-- {} --", x));
 		}
 		assert!(n%3==0);
 		let (c0, c1, c2) = (v[0..n/3].to_vec(), v[n/3..2*n/3].to_vec(),
