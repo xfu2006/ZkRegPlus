@@ -28293,9 +28293,17 @@ Goal 1. fix server err
 	[a] improve scirpts
 	[b] research improvement of circ size and counts
 	[c] research the crash reason
+		=> the crash maybe it's not able to DUMP the error quickly enough.
 	[d] redeploy
+		10:35am -> 4:47pm (7 hours)
+		4:48pm->
 Goal 2. continue writing
 	[a] draft 1
 	[b] go over structure
-	[c] 
+	[c] paragraph 1
+	[d] paragraph 2 
+
+Monday 05/11/2026
+Goal 1. refine the log mechanism (maybe cache block of write)
+Goal 2. continue to refine the size of discharge_adv.rs
 -- TODO -- check what DEBUG USE 6703

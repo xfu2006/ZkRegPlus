@@ -1814,8 +1814,8 @@ pub mod tests_zkp_driver{
 		let basis_acc_states_igc = basis_acc_states ; //9 cpercent
 		let basis_pats_in_trace_igc = basis_pats_in_trace;
 			//old value 100 cur value 1/1000.
-		let dfa_sigs = 7;
-		let dfa_subsigs= 7;
+		let dfa_sigs = 8;
+		let dfa_subsigs= 8;
 		let perc_pats_expansion_rate = 104; //old good value 2
 		let perc_pats_expansion_rate_igc = 2;
 		//let avg_subsig_per_sig = 3;
@@ -1909,6 +1909,11 @@ pub mod tests_zkp_driver{
 		//full_par::<Fr>(b_check_lkup); //full data large file
 		//full_par2::<Fr>(b_check_lkup); //full_data4 files, 8 parallel jobs
 		//full_clamav::<Fr>(b_check_lkup, _b_light_test, _b_setup); //full data large file
+
+		// Drain any in-flight log lines on the stdout drainer before
+		// declaring success, so the sentinel is never written ahead of
+		// the final lines that prove "ok".
+		utils::logger::flush_logger();
 
 		// Completion sentinel for run_checkpoints.py. Not reached if
 		// full_par panics -- panic aborts the test, no sentinel written.

@@ -490,6 +490,11 @@ fn main() {
             (opt.func)(false); // Calling the function with b_check_lkup = false
             println!("Background process finished successfully.");
 
+            // Drain any in-flight log lines on the stdout drainer before
+            // declaring success, so the sentinel is never written ahead
+            // of the final lines that prove "ok".
+            utils::logger::flush_logger();
+
             // Completion sentinel for run_checkpoints.py. Written ONLY on
             // the normal-return path (not reached if (opt.func) panics).
             // Presence of this file tells the Python orchestrator the run
