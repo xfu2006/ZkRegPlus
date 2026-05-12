@@ -28309,4 +28309,14 @@ Goal 2. continue to refine the size of discharge_adv.rs
 	-> change discharge_adv.rs ADD_TO_DEL and  to 30
 	-> no need already at 85% level leave some room
 Goal 3. commit and run.
+	3:40pm => 11:00AM (19 hrs)
+
+Tuesday 05/12/2026
+Goal 1. writing. section 2.1 done
+Goal 2. implementation and debugging
+	still some jobs are dead for now reason. try to analyze.
+
+-- TODO -- check is counting of Phase 1 step 3 correct?
+	couned roughly the same value for phase 1 step 1 and 2
+	at 4:50am (about 12 hours)
 -- TODO -- check what DEBUG USE 6703

@@ -3203,6 +3203,10 @@ where 	C: CurveGroup<ScalarField=F>,
 		//1. converts witness from extrenal_inputs to structured version
 		let (mut nc, mut nv) = (cs.num_constraints(), cs.num_witness_variables());
 		let mut gt = GTimer::new();
+		emit_stdout(format!(
+			"DEBUG USE 73111.0: gen_step_cs ENTER job={} cs={} vars={}",
+			self.job_id, cs.num_constraints(),
+			cs.num_witness_variables()));
 		log_perf(self.job_id, log_level, &format!("### gen_step_cs START: cs: {}, vars: {}",
 			cs.num_constraints(),
 			cs.num_witness_variables()
@@ -3264,13 +3268,20 @@ where 	C: CurveGroup<ScalarField=F>,
 		let si = StatementInstVar::<F>::from_vec(&self.stmt_config, &wtns_var.statement);
 		for (i,g) in self.gadgets.iter().enumerate(){
 			let (nc, ni, nv) = (cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables());
+			let g_name: String = lock_unwrap!(g).get_name().to_string();
+			emit_stdout(format!(
+				"DEBUG USE 73111.1: gadget BEFORE job={} gi={} name={}",
+				self.job_id, i, g_name));
 			lock_unwrap!(g).assert_msg3(i, cs.clone(), &wtns_var, &cfg,
 				si.word_id.clone(), si.subseg_id.clone())?;
+			emit_stdout(format!(
+				"DEBUG USE 73111.2: gadget AFTER  job={} gi={} name={} d_cs={}",
+				self.job_id, i, g_name, cs.num_constraints()-nc));
 			if B_DEBUG3{
 				check_cs(&cs, &format!("After gadget: {}", lock_unwrap!(g).get_name()));
 			}
 			let stmt_len = lock_unwrap!(g).get_msg_size().0;
-			log_perf(self.job_id, log_level, &format!("-- -- after msg3 of module {}: {}:\n\tINCREASED: constraints: {}, const vars: {}, wit vars: {} \n\t==> NOW: CS:{}, const: {}, witness: {}\n\t ==> stmt_size: {}. ", i, lock_unwrap!(g).get_name(), cs.num_constraints()-nc, cs.num_instance_variables()-ni, cs.num_witness_variables()-nv, cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables(), stmt_len), &mut gt3);						
+			log_perf(self.job_id, log_level, &format!("-- -- after msg3 of module {}: {}:\n\tINCREASED: constraints: {}, const vars: {}, wit vars: {} \n\t==> NOW: CS:{}, const: {}, witness: {}\n\t ==> stmt_size: {}. ", i, lock_unwrap!(g).get_name(), cs.num_constraints()-nc, cs.num_instance_variables()-ni, cs.num_witness_variables()-nv, cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables(), stmt_len), &mut gt3);
 		}
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 3");
@@ -3338,6 +3349,11 @@ where 	C: CurveGroup<ScalarField=F>,
 		let v_inv_lzero = gen_vec_inverse(&vec_left);
 		assert!(v_inv_lzero.len()==self.stmt_config.input_size);
 		for i in 0..self.stmt_config.input_size{
+			if i % 1_000_000 == 0 {
+				emit_stdout(format!(
+					"DEBUG USE 73111.3: inp_loop job={} i={}/{}",
+					self.job_id, i, self.stmt_config.input_size));
+			}
 			//simulate the gen_witness:
 			//sum_inp = if b_first || inp_left.is_zero() {sum_inp}
 			//else{ sum_inp * r + si.inp_buf[i] };
@@ -3345,7 +3361,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			let is_inp_left_zero = inp_left.is_zero_adv(&v_inv_lzero[i])?;
 			let cond = b_first_seg.or(&is_inp_left_zero)?;
 			let new_val = sum_inp.clone() * ch.clone() + si.inp_buf[i].clone();
-			sum_inp = cond.select(&sum_inp, &new_val)?; 
+			sum_inp = cond.select(&sum_inp, &new_val)?;
 			let new_inp_left  = inp_left.clone() - &one_var;
 			inp_left = is_inp_left_zero.select(&zero_var, &new_inp_left)?;
 		}
@@ -3359,6 +3375,11 @@ where 	C: CurveGroup<ScalarField=F>,
 		let v_inv_lzero = gen_vec_inverse(&vec_left);
 		assert!(v_inv_lzero.len()==self.stmt_config.output_size);
 		for i in 0..self.stmt_config.output_size{
+			if i % 1_000_000 == 0 {
+				emit_stdout(format!(
+					"DEBUG USE 73111.4: oup_loop job={} i={}/{}",
+					self.job_id, i, self.stmt_config.output_size));
+			}
 			//sum_oup = if b_last || oup_left.is_zero() {sum_oup}
 			//else{ sum_oup * r + si.oup_buf[i] };
 			//oup_left = if oup_left.is_zero() {zero} else {oup_left - one};
@@ -3504,6 +3525,11 @@ where 	C: CurveGroup<ScalarField=F>,
 		let lb_one = LinearCombination::from((F::one(),Variable::One));
 		let (mut n_case1, mut n_case2, mut n_case3) = (0,0,0);
 		for i in 0..inv_hab22_left_size{
+			if i % 1_000_000 == 0 {
+				emit_stdout(format!(
+					"DEBUG USE 73111.5: hab22_left job={} i={}/{}",
+					self.job_id, i, inv_hab22_left_size));
+			}
 			let tb_id = qry_tbl1[i].value()?;
 			if qry_tbl1[i].is_constant(){ 
 				if tb_id.is_zero(){//case 1 do nothing, 0 r1cs
@@ -3614,6 +3640,11 @@ where 	C: CurveGroup<ScalarField=F>,
 			"DEBUG USE 9998: inv_hab22_right_size: {}",
 			inv_hab22_right_size));
 		for i in 0usize..inv_hab22_right_size{
+			if i % 1_000_000 == 0 {
+				emit_stdout(format!(
+					"DEBUG USE 73111.6: hab22_right job={} i={}/{}",
+					self.job_id, i, inv_hab22_right_size));
+			}
 			//let v_temp = &beta * &si.col1_share[i]; //cost 271ns
 			let v_temp = alloc_fpvar_mul(&beta, &si.col1_share[i]); //231ns
 			//let v = &alpha + &v_temp + &si.col2_share[i]; //255ns
@@ -4048,7 +4079,10 @@ where 	C: CurveGroup<ScalarField=F>,
 			), &mut gt
 		);
 
-
+		emit_stdout(format!(
+			"DEBUG USE 73111.7: gen_step_cs RETURN job={} cs={} vars={}",
+			self.job_id, cs.num_constraints(),
+			cs.num_witness_variables()));
 		Ok(vec![new_cur_hc_cmF, hash_zi_part2])
 	}
 }
