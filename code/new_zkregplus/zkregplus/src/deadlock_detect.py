@@ -48,15 +48,17 @@ FINISH_FILE = SRC_DIR / "FINISH"
 PKG_PARENT = SRC_DIR / "deadlock_detect"  # per-rung pkg dirs go here
 
 # 4 rungs. Cheap → expensive. Stop ladder at first failure.
+# Runtime caps sized for a server with ~50GB g16 keys to disk-load and
+# a 245M-entry lookup table. v1 caps were ~4-8x too small.
 RUNGS = [
     {"name": "A", "n_jobs": 2, "word_cap": 10,
-     "watchdog_secs": 600,  "max_runtime_min": 30},
+     "watchdog_secs": 1200, "max_runtime_min": 180},
     {"name": "B", "n_jobs": 4, "word_cap": 20,
-     "watchdog_secs": 1200, "max_runtime_min": 60},
+     "watchdog_secs": 1800, "max_runtime_min": 240},
     {"name": "C", "n_jobs": 8, "word_cap": 20,
-     "watchdog_secs": 1800, "max_runtime_min": 90},
+     "watchdog_secs": 2400, "max_runtime_min": 360},
     {"name": "D", "n_jobs": 8, "word_cap": 0,
-     "watchdog_secs": 3600, "max_runtime_min": 1440},
+     "watchdog_secs": 3600, "max_runtime_min": 2880},
 ]
 
 TICK_INTERVAL_S = 60
@@ -67,21 +69,30 @@ TICK_INTERVAL_S = 60
 def _ts():
     return datetime.now().isoformat(timespec="seconds")
 
+_DAEMONIZED = False  # flipped in daemonize(); avoids duplicate writes
+
 def log(level, msg, **kv):
     extras = " ".join(f"{k}={v}" for k, v in kv.items())
     line = f"{_ts()} {level} {msg}"
     if extras:
         line += " " + extras
-    try:
-        with open(ANALYZE_LOG, "a") as f:
-            f.write(line + "\n")
-    except Exception:
-        pass
-    # Mirror to stdout (which is also analyze_log.txt after daemonize)
-    try:
-        print(line, flush=True)
-    except Exception:
-        pass
+    if _DAEMONIZED:
+        # stdout is already analyze_log.txt after dup2; print once.
+        try:
+            print(line, flush=True)
+        except Exception:
+            pass
+    else:
+        # Pre-daemonize: write to file AND print to original stdout.
+        try:
+            with open(ANALYZE_LOG, "a") as f:
+                f.write(line + "\n")
+        except Exception:
+            pass
+        try:
+            print(line, flush=True)
+        except Exception:
+            pass
 
 # ============================================================
 # Daemonize (double-fork)
@@ -105,6 +116,8 @@ def daemonize():
     os.dup2(log_fd.fileno(), 1)
     os.dup2(log_fd.fileno(), 2)
     PID_FILE.write_text(f"{os.getpid()}\n")
+    global _DAEMONIZED
+    _DAEMONIZED = True
 
 # ============================================================
 # Source patching (full_clamav num_jobs only; call site stays as-is
@@ -578,6 +591,36 @@ def main():
                 continue
             # Failure: package and stop.
             log("ERROR", f"RUNG {rung['name']} FAILED outcome={outcome}")
+            # Inline the last 60 lines of dump.txt + last 20 lines of
+            # any per-job log into analyze_log so you can diagnose
+            # without unpacking the tarball.
+            try:
+                if ctx and "dump_path" in ctx:
+                    dp = Path(ctx["dump_path"])
+                    if dp.exists():
+                        log("INFO", "---- dump.txt tail (last 60 lines) ----")
+                        for ln in dp.read_text(errors="replace")\
+                                    .splitlines()[-60:]:
+                            print(f"DUMP> {ln}", flush=True)
+                        log("INFO", "---- end dump.txt tail ----")
+                for p in sorted(Path("/tmp").glob("log_job_*.txt")):
+                    log("INFO", f"---- {p.name} tail (last 20) ----")
+                    try:
+                        for ln in p.read_text(errors="replace")\
+                                    .splitlines()[-20:]:
+                            print(f"{p.stem}> {ln}", flush=True)
+                    except Exception:
+                        pass
+                for p in sorted(Path("/tmp").glob("stall_dump_*.txt")):
+                    log("INFO", f"---- {p.name} (first 120) ----")
+                    try:
+                        for ln in p.read_text(errors="replace")\
+                                    .splitlines()[:120]:
+                            print(f"STALL> {ln}", flush=True)
+                    except Exception:
+                        pass
+            except Exception as e:
+                log("WARN", f"inline-tail dump fail: {e}")
             try:
                 package(rung, outcome, ctx)
             except Exception as e:
