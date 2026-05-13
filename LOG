@@ -28315,6 +28315,15 @@ Tuesday 05/12/2026
 Goal 1. writing. section 2.1 done
 Goal 2. implementation and debugging
 	still some jobs are dead for now reason. try to analyze.
+	=> started server again: 11:51am -> estimated stall at
+		15 hours. So 3 or 4 am.
+		But we can check 6:00am tomorrow (19 hrs).
+
+Wed 05/13/2026
+Goal 1. analyze the deadlock
+	[a] 
+	[b] started: 7:00am:w
+
 
 -- TODO -- check is counting of Phase 1 step 3 correct?
 	couned roughly the same value for phase 1 step 1 and 2
