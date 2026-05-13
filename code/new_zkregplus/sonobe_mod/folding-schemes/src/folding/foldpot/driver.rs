@@ -1861,8 +1861,17 @@ where
 		let m4 = get_mem_usage_mb();
 		let b_check_lkup = p_layered[0][0].is_check_lkup(); //assume
 			//all circ have the same
-		if b_check_lkup{
+		// DEBUG USE 73112.lkup_cap: when word_cap_per_job is active we
+		// intentionally truncate Pass 1 so total_lkup_covered cannot
+		// reach the full lkup_len. Skip the coverage assert in that case.
+		if b_check_lkup && _word_cap == 0 {
 			assert!(total_lkup_covered >= lkup_len, "total: {}, lkup_len: {}", total_lkup_covered, lkup_len);
+		} else if b_check_lkup && _word_cap > 0 {
+			emit_stdout(format!(
+				"DEBUG USE 73112.lkup_cap: job={} skipped \
+				 b_check_lkup assert (covered={} lkup_len={} \
+				 cap={})", job_id, total_lkup_covered,
+				lkup_len, _word_cap));
 		}
 		log_perf(job_id, log_level, &format!(
 			"PERF 1007: {} step 2: dispatch w into steps. mem: {} MB for total_word_len: {}: ", phase_name, if m4>m3 {m4-m3} else {0}, format_bytes(total_wd_len*31)) , &mut gt1);

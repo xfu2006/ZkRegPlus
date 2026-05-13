@@ -28322,7 +28322,11 @@ Goal 2. implementation and debugging
 Wed 05/13/2026
 Goal 1. analyze the deadlock
 	[a] run analysis 
-	[b] server started 11:00am:w
+	[b] the new idea is to deep clone circ among the jobs.
+		to reduce contention.
+	[c] add a script to try to capture mutex waiting status.
+	[c] server started 11:00am
+	=> 
 
 
 
