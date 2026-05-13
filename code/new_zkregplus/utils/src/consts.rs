@@ -61,7 +61,14 @@ pub struct GlobalConfig {
 					//compared with nibble length of a segment
 					//e.g., for 700MB linux data (8 jobs) with 256M lkup table
 					//each job (in total) has 90MB data = 180M nibbes
-					// the perc_lkup_share = 256/180 * 100 = 143 percent 
+					// the perc_lkup_share = 256/180 * 100 = 143 percent
+	/// Optional cap on number of words processed per job (per Pass).
+	/// 0 = unlimited. Used for fast diagnostic runs that reproduce the
+	/// stall without burning hours. See driver.rs pass_all word loops.
+	pub word_cap_per_job: usize,
+	/// Stall watchdog: if all per-job logs are silent this many seconds,
+	/// foldpot_main dumps thread state and aborts. 0 = disabled.
+	pub stall_watchdog_secs: usize,
 }
 
 impl Default for GlobalConfig {
@@ -92,6 +99,8 @@ impl Default for GlobalConfig {
             n_par_batch_claim: 1,
             b_resume: false,
 			perc_lkup_share: 1,
+			word_cap_per_job: 0,
+			stall_watchdog_secs: 0,
         }
     }
 }
@@ -122,6 +131,8 @@ static GLOBAL_CONFIG: RwLock<GlobalConfig> = RwLock::new(GlobalConfig {
     n_par_batch_claim: 1,
     b_resume: false,
 	perc_lkup_share: 1,
+	word_cap_per_job: 0,
+	stall_watchdog_secs: 0,
 });
 
 pub fn read_global_config() -> RwLockReadGuard<'static, GlobalConfig> {

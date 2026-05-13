@@ -11,7 +11,7 @@ use std::{sync::{Arc, Mutex, Condvar}, fmt::{Debug,Formatter}};
 */
 
 extern crate utils;
-use utils::{logger::{log, log_perf, rss_probe, emit_stdout, ERR, LOG1,LOG2}, timer::Timer as GTimer, consts::read_global_config};
+use utils::{logger::{log, log_perf, rss_probe, emit_stdout, ERR, LOG1,LOG2}, timer::Timer as GTimer, consts::{read_global_config, get_global_config}};
 use std::{
     //process::{Stdio,Command},
     //fs::{read_to_string,OpenOptions,remove_file,File,metadata},
@@ -826,6 +826,174 @@ where
 		Ok( (num_segs, vec_seg_size, vec_pci, vec_cap, vec_adv ) )
 	}
 
+	// ============================================================
+	// `_pll` variants: same logic but read `p_layered` (per-job
+	// deep-cloned circuits passed by `pass_all`) instead of the
+	// shared `self.layered_circs`. This eliminates the Mutex
+	// contention on `Arc<Mutex<GM>>` mappers across the 8 outer
+	// jobs that share `&driver1`. See driver.rs:2372 for the clone
+	// and pass_all:1594 for the call site.
+	// All three are near-copies of the originals with `self.*` →
+	// `p_layered.*`. Kept separate so non-parallel callers (e.g.
+	// driver.rs:1120 `gen_advice`) keep their existing behavior.
+	// DEBUG USE 73112.x heartbeat probes are added in each.
+	// ============================================================
+
+	fn gen_nd_advice_at_layer_pll(
+		p_layered: &Vec<Vec<FC>>,
+		job_id: usize, layer_i: usize,
+		_log_level: usize, b_save_advice: bool,
+		word: &Vec<CF1<C1>>, word_info: &WordInfo)
+		-> Result<(usize, Vec<usize>, Vec<usize>,
+			Vec<Arc<dyn Capacity + Send + Sync>>,
+			Vec<Arc<dyn NdAdvice + Send + Sync>>),Error>
+	{
+		let mut vec_pci = vec![];
+		let mut vec_size = vec![];
+		let mut vec_cap = vec![];
+		let mut vec_adv:Vec<Arc<dyn NdAdvice + Send + Sync>> = vec![];
+		let layer = &p_layered[layer_i];
+		let circ = &layer[0];
+		let max_wlen = lock_unwrap!(circ.get_mapper()).max_word_len();
+		let wlen = word.len();
+		let num_segs = if wlen % max_wlen==0{wlen/max_wlen}
+			else {wlen/max_wlen+1};
+		let pci = layer_i;
+		let cap = lock_unwrap!(circ.get_mapper()).get_capacity();
+		let mut prev_adv = None;
+		for i in 0..num_segs{
+			let start = i*max_wlen;
+			let end = if (i+1)*max_wlen>wlen {wlen} else {(i+1)*max_wlen};
+			let seg = word[start..end].to_vec();
+			let advice = lock_unwrap!(circ.get_mapper())
+				.gen_nd_advice(&seg, &word_info, prev_adv, i, job_id)?;
+			vec_pci.push(pci);
+			vec_size.push(end-start);
+			vec_cap.push(cap.clone());
+			prev_adv = Some(advice.clone());
+			if b_save_advice{ vec_adv.push(advice); }
+		}
+		Ok((num_segs, vec_size, vec_pci, vec_cap, vec_adv))
+	}
+
+	fn par_search_best_layer_pll(
+		p_layered: &Vec<Vec<FC>>,
+		job_id: usize, log_level: usize, b_save_advice: bool,
+		word: &Vec<CF1<C1>>, word_info: &WordInfo,
+		min_layer: usize, max_layer: usize)
+		-> Result<(usize, usize, Vec<usize>, Vec<usize>,
+			Vec<Arc<dyn Capacity + Send + Sync>>,
+			Vec<Arc<dyn NdAdvice + Send + Sync>>), Error>
+		where <CS1E as CommitmentScheme<C1, H>>::ProverParams: Send + Sync
+	{
+		use rayon::prelude::*;
+		let results: Vec<_> = (min_layer..=max_layer)
+			.into_par_iter().map(|layer_id| {
+				emit_stdout(format!(
+					"DEBUG USE 73112.5: gen_adv BEFORE \
+					 job={} layer={}", job_id, layer_id));
+				let r = std::panic::catch_unwind(
+					std::panic::AssertUnwindSafe(|| {
+					Self::gen_nd_advice_at_layer_pll(
+						p_layered, job_id, layer_id, log_level,
+						b_save_advice, word, word_info)
+				})).unwrap_or_else(|e| {
+					let msg = if let Some(s) = e.downcast_ref::<&str>() {
+						s.to_string()
+					} else if let Some(s) = e.downcast_ref::<String>() {
+						s.clone()
+					} else {
+						"Unknown panic".to_string()
+					};
+					Err(Error::Other(format!(
+						"Thread panicked in gen_nd_advice_at_layer_pll \
+						 for layer {}: {}", layer_id, msg)))
+				});
+				emit_stdout(format!(
+					"DEBUG USE 73112.6: gen_adv AFTER  \
+					 job={} layer={} ok={}",
+					job_id, layer_id, r.is_ok()));
+				(layer_id, r)
+			})
+			.collect();
+		let best_result = results.iter()
+			.filter_map(|(layer_id, res)| res.as_ref().ok()
+				.map(|val| (*layer_id, val)))
+			.min_by_key(|(layer_id, _)| *layer_id);
+		match best_result {
+			Some((best_layer, (num_segs, vec_seg_size, vec_pci,
+					vec_cap, vec_adv))) => {
+				Ok((best_layer, *num_segs, vec_seg_size.clone(),
+					vec_pci.clone(), vec_cap.clone(), vec_adv.clone()))
+			},
+			None => {
+				let mut err = Error::NotSupported(
+					"No suitable layer found".to_string());
+				for (layer_id, res) in results.into_iter(){
+					if layer_id == max_layer {
+						err = res.err().unwrap();
+						break;
+					}
+				}
+				Err(err)
+			}
+		}
+	}
+
+	pub fn plan_nd_advice_new_pll(
+		p_layered: &Vec<Vec<FC>>,
+		job_id: usize, log_level: usize, b_save_advice: bool,
+		word: &Vec<CF1<C1>>, word_info: &WordInfo,
+		word_fname: &str)
+		-> Result<(usize, Vec<usize>, Vec<usize>,
+			Vec<Arc<dyn Capacity + Send + Sync>>,
+			Vec<Arc<dyn NdAdvice + Send + Sync>>),Error>
+		where <CS1E as CommitmentScheme<C1, H>>::ProverParams: Send + Sync
+	{
+		let b_fast = true;
+		let mut gt1 = GTimer::new();
+		let mut gt2 = GTimer::new();
+		emit_stdout(format!(
+			"DEBUG USE 73112.0: plan_pll ENTER job={} word.len={} \
+			 layers={}",
+			job_id, word.len(), p_layered.len()));
+		log_perf(job_id, log_level, &format!(
+			"plan_nd_advice_pll step 0. layers: {}, word.len(): {}, \
+			 b_save_adivce: {}",
+			p_layered.len(), word.len(), b_save_advice), &mut gt1);
+		let mwl = lock_unwrap!(p_layered[0][0].get_mapper())
+			.max_word_len();
+		for i in 0..p_layered.len(){
+			assert!(p_layered[i].len()==1, "only 1 circ per layer!");
+			assert!(lock_unwrap!(p_layered[i][0]
+				.get_mapper()).max_word_len() == mwl);
+		}
+		emit_stdout(format!(
+			"DEBUG USE 73112.3: plan_pll BEFORE par_search \
+			 job={} max_layer={}",
+			job_id, p_layered.len()-1));
+		let (_best_layer, num_segs, vec_seg_size, vec_pci,
+				vec_cap, vec_adv) = {
+			let min_layer = 0;
+			let max_layer = p_layered.len()-1;
+			Self::par_search_best_layer_pll(
+				p_layered, job_id, log_level+2, b_save_advice,
+				word, word_info, min_layer, max_layer)
+		}?;
+		emit_stdout(format!(
+			"DEBUG USE 73112.4: plan_pll AFTER  par_search \
+			 job={} best={}",
+			job_id, _best_layer));
+		let pci = vec_pci[0];
+		for x in &vec_pci{assert!(*x==pci);}
+		log_perf(job_id, log_level, &format!(
+			"PERF 1001: plan_nd_advice_pll for {}, fast: {}, \
+			 best_layer: {}, pci: {}, word.len: {} bytes.",
+			word_fname, b_fast, _best_layer, pci,
+			word.len() * 63/2), &mut gt2);
+		Ok((num_segs, vec_seg_size, vec_pci, vec_cap, vec_adv))
+	}
+
 	/// old version: it assues multiple circs in one layer
 	pub fn plan_nd_advice_old(&self, job_id: usize, log_level: usize, _b_save_advice: bool,
 		word: &Vec<CF1<C1>>, word_info: &WordInfo, _word_fname: &str)
@@ -1579,7 +1747,16 @@ where
 		let mut gtw = GTimer::new();
 		let mut last_pci1 = 0;
 		let num_words = vec_word_fnames.len();
+		// DEBUG/diagnostic: optional per-job word cap. 0 = unlimited.
+		let _word_cap = read_global_config().word_cap_per_job;
 		for (word, word_fname) in iter_words.zip(vec_word_fnames.iter()){
+			if _word_cap > 0 && word_id > _word_cap {
+				emit_stdout(format!(
+					"DEBUG USE 73112.cap: Pass1 job={} stop at \
+					 word_id={} (word_cap_per_job={})",
+					job_id, word_id, _word_cap));
+				break;
+			}
 			let mut prev_stmt = None;
 			let mut prev_adv = None;
 			let mut gt2 = GTimer::new();
@@ -1591,7 +1768,13 @@ where
 			let mut acc_wd_len = 0;
 			let _mapper = p_circuits[0].get_mapper();
 			let word_info = &vec_word_info[word_id-1];
-			let (steps, vec_len, vec_pci, _vec_cap_req, _advice) = self.plan_nd_advice(job_id, log_level+2, false, &word, word_info, word_fname)?;
+			// Route through per-job-cloned `p_layered` to avoid
+			// shared mapper Mutex contention (was driver1.layered_circs
+			// before). See plan_nd_advice_new_pll above.
+			let (steps, vec_len, vec_pci, _vec_cap_req, _advice) =
+				Self::plan_nd_advice_new_pll(
+					p_layered, job_id, log_level+2, false,
+					&word, word_info, word_fname)?;
 			log_perf(job_id, log_level+2, &format!("PERF 1008: {} - Pass 1: START decide circ alloc for word_id: {}, fname: {}, word_len: {}. ", phase_name, word_id, word_fname, format_bytes(total_word_len*31)), &mut gt2);
 			for i in 0..steps{
 				//2.1 set up params
@@ -1707,13 +1890,20 @@ where
 		let mut hash_cmF= C1::ScalarField::zero();
 
 		for word in &words{
+			if _word_cap > 0 && word_id > _word_cap {
+				emit_stdout(format!(
+					"DEBUG USE 73112.cap: Pass2 job={} stop at \
+					 word_id={} (word_cap_per_job={})",
+					job_id, word_id, _word_cap));
+				break;
+			}
 			let mut prev_adv = None;
 			let mut prev_stmt = None;
 			let mut remaining = word.clone();
 			let mut subseg_id = 1;
 			let word_info = &vec_word_info[word_id-1];
 			let word_fname = &vec_word_fnames[word_id-1];
-			log_perf(job_id, log_level+2, &format!("PERF 1009: {} - Pass 2. START generate cmF for word_id: {}, fname: {}, word_len: {}. ", phase_name, word_id, word_fname, format_bytes(word.len()*31)), &mut gtw2); 
+			log_perf(job_id, log_level+2, &format!("PERF 1009: {} - Pass 2. START generate cmF for word_id: {}, fname: {}, word_len: {}. ", phase_name, word_id, word_fname, format_bytes(word.len()*31)), &mut gtw2);
 			while remaining.len()>0{
 				//3.1 compute the problem statement instance
 				let mut gt_p2 = GTimer::new();
@@ -1868,6 +2058,13 @@ where
 		let mut _start = 0; //global position in ENTIRE sequence for update lkup
 							//share in each statement
 		for word in iter_words3{
+			if _word_cap > 0 && word_id > _word_cap {
+				emit_stdout(format!(
+					"DEBUG USE 73112.cap: Pass3 job={} stop at \
+					 word_id={} (word_cap_per_job={})",
+					job_id, word_id, _word_cap));
+				break;
+			}
 			let mut gtw_word = GTimer::new();
 			let mut gtw_word0 = GTimer::new();
 			let mut prev_adv = None;
@@ -1876,7 +2073,7 @@ where
 			let mut subseg_id = 1;
 			let word_info = &vec_word_info[word_id-1];
 			let word_fname = &vec_word_fnames[word_id-1];
-			log_perf(job_id, log_level+2, &format!("PERF 1008: {} - Pass 3. START prove steps for word_id: {}, fname: {}, word_len: {}. ", phase_name, word_id, word_fname, format_bytes(word.len()*31)), &mut gtw_word); 
+			log_perf(job_id, log_level+2, &format!("PERF 1008: {} - Pass 3. START prove steps for word_id: {}, fname: {}, word_len: {}. ", phase_name, word_id, word_fname, format_bytes(word.len()*31)), &mut gtw_word);
 			while remaining.len()>0{
 				let mut gt_fold = GTimer::new();
 				//6.1 compute the problem statement instance again
@@ -2075,8 +2272,123 @@ where
 		let mut gt_all = GTimer::new();
 		let mut gt_all_0 = GTimer::new();
 		let log_level = LOG1;
-		log(0, log_level, &format!("===== fold_pot starts with {} jobs =====", 
+		log(0, log_level, &format!("===== fold_pot starts with {} jobs =====",
 			jobs.len()));
+
+		// === env-var hook for diagnostic knobs (no-op when unset). ===
+		// Set in deadlock_detect.py; defaults preserve regular runs.
+		if let Ok(s) = std::env::var("ZKR_STALL_WATCHDOG_SECS") {
+			if let Ok(n) = s.parse::<usize>() {
+				get_global_config().stall_watchdog_secs = n;
+			}
+		}
+		if let Ok(s) = std::env::var("ZKR_WORD_CAP_PER_JOB") {
+			if let Ok(n) = s.parse::<usize>() {
+				get_global_config().word_cap_per_job = n;
+			}
+		}
+
+		// === stall watchdog (diagnostic). Off when secs == 0. ===
+		// Spawns a background thread that polls every 30s and checks
+		// the mtimes of /tmp/log_job_<id>.txt for every job. If ALL
+		// per-job logs have been silent for >= stall_watchdog_secs,
+		// dumps per-thread kernel state to /tmp/stall_dump_<pid>.txt
+		// and aborts the process. Saves hours of silent server burn.
+		{
+			let secs = read_global_config().stall_watchdog_secs;
+			let n_jobs = jobs.len();
+			if secs > 0 && n_jobs > 0 {
+				let pid = std::process::id();
+				emit_stdout(format!(
+					"DEBUG USE 73112.wd: watchdog ON pid={} \
+					 n_jobs={} threshold_s={}",
+					pid, n_jobs, secs));
+				std::thread::spawn(move || {
+					use std::time::{Duration, SystemTime};
+					use std::fs;
+					// Wait one threshold before first check so early
+					// startup (key load, etc.) is not flagged.
+					std::thread::sleep(Duration::from_secs(
+						secs as u64));
+					loop {
+						std::thread::sleep(Duration::from_secs(30));
+						let now = SystemTime::now();
+						let mut min_silence_s: u64 = u64::MAX;
+						let mut any_missing = false;
+						for j in 0..n_jobs {
+							let p = format!(
+								"/tmp/log_job_{}.txt", j);
+							match fs::metadata(&p)
+								.and_then(|m| m.modified()) {
+								Ok(t) => {
+									let d = now.duration_since(t)
+										.unwrap_or(Duration::ZERO)
+										.as_secs();
+									if d < min_silence_s {
+										min_silence_s = d;
+									}
+								},
+								Err(_) => { any_missing = true; }
+							}
+						}
+						if any_missing { continue; }
+						if min_silence_s as usize >= secs {
+							let dump = format!(
+								"/tmp/stall_dump_{}.txt", pid);
+							let mut s = String::new();
+							s.push_str(&format!(
+								"=== watchdog fire pid={} min_silence={}s \
+								 threshold={}s n_jobs={} ===\n",
+								pid, min_silence_s, secs, n_jobs));
+							let task_dir = format!(
+								"/proc/{}/task", pid);
+							if let Ok(rd) = fs::read_dir(&task_dir) {
+								for ent in rd.flatten() {
+									let p = ent.path();
+									let tid = ent.file_name()
+										.into_string()
+										.unwrap_or_default();
+									s.push_str(&format!(
+										"\n=== tid={} ===\n", tid));
+									if let Ok(w) = fs::read_to_string(
+										p.join("wchan")) {
+										s.push_str(&format!(
+											"wchan: {}\n", w.trim()));
+									}
+									if let Ok(st) =
+										fs::read_to_string(
+											p.join("status")) {
+										for ln in st.lines().take(3){
+											s.push_str(&format!(
+												"  {}\n", ln));
+										}
+									}
+									if let Ok(stk) =
+										fs::read_to_string(
+											p.join("stack")) {
+										s.push_str("stack:\n");
+										for ln in stk.lines()
+											.take(12) {
+											s.push_str(&format!(
+												"  {}\n", ln));
+										}
+									}
+								}
+							}
+							let _ = fs::write(&dump, &s);
+							emit_stdout(format!(
+								"DEBUG USE 73112.wd: STALL DETECTED \
+								 dump={} min_silence={}s",
+								dump, min_silence_s));
+							// Best-effort flush of the stdout drainer.
+							std::thread::sleep(Duration::from_secs(2));
+							std::process::exit(1);
+						}
+					}
+				});
+			}
+		}
+		// === end stall watchdog ===
         let cache_base = std::path::Path::new(&utils::os::proj_root()).join("data/cache").join(cache_dir);
         if read_global_config().b_write_snark_cache && !cache_base.exists(){
            std::fs::create_dir_all(&cache_base).expect("create cache dir err");
@@ -2373,6 +2685,15 @@ where
 	  			.iter().map(|layer|
 	  				layer.iter().map(|c| c.clone_deep_self()).collect()
 	  			).collect();
+	  		// Stamp each cloned mapper with this job's id so the
+	  		// `log_perf(self.job_id, ...)` calls inside the mapper
+	  		// route to the correct per-job log file. This also
+	  		// verifies the deep-clone is what is in use here.
+	  		for layer in per_job_layered.iter() {
+	  			for c in layer.iter() {
+	  				lock_unwrap!(c.get_mapper()).set_job_id(job_id);
+	  			}
+	  		}
 	  		let per_job_circuits: Vec<FC> =
 	  			per_job_layered.iter().flat_map(|l| l.iter().cloned())
 	  			.collect();
