@@ -2299,10 +2299,12 @@ where
 
 		// === stall watchdog (diagnostic). Off when secs == 0. ===
 		// Spawns a background thread that polls every 30s and checks
-		// the mtimes of /tmp/log_job_<id>.txt for every job. If ALL
-		// per-job logs have been silent for >= stall_watchdog_secs,
-		// dumps per-thread kernel state to /tmp/stall_dump_<pid>.txt
-		// and aborts the process. Saves hours of silent server burn.
+		// the mtimes of /tmp/log_job_<id>.txt for every job. If AT
+		// LEAST 3 per-job logs have each been silent for
+		// >= stall_watchdog_secs, dumps per-thread kernel state to
+		// /tmp/stall_dump_<pid>.txt and aborts the process. Catches
+		// partial wedges (e.g., 3 of 8 jobs stuck) without waiting
+		// for all-jobs silence.
 		{
 			let secs = read_global_config().stall_watchdog_secs;
 			let n_jobs = jobs.len();
@@ -2322,7 +2324,8 @@ where
 					loop {
 						std::thread::sleep(Duration::from_secs(30));
 						let now = SystemTime::now();
-						let mut min_silence_s: u64 = u64::MAX;
+						let mut silences: Vec<(usize, u64)> =
+							Vec::with_capacity(n_jobs);
 						let mut any_missing = false;
 						for j in 0..n_jobs {
 							let p = format!(
@@ -2333,22 +2336,31 @@ where
 									let d = now.duration_since(t)
 										.unwrap_or(Duration::ZERO)
 										.as_secs();
-									if d < min_silence_s {
-										min_silence_s = d;
-									}
+									silences.push((j, d));
 								},
 								Err(_) => { any_missing = true; }
 							}
 						}
 						if any_missing { continue; }
-						if min_silence_s as usize >= secs {
+						let stalled: Vec<&(usize, u64)> = silences
+							.iter()
+							.filter(|(_, d)| (*d as usize) >= secs)
+							.collect();
+						if stalled.len() >= 3 {
 							let dump = format!(
 								"/tmp/stall_dump_{}.txt", pid);
 							let mut s = String::new();
 							s.push_str(&format!(
-								"=== watchdog fire pid={} min_silence={}s \
-								 threshold={}s n_jobs={} ===\n",
-								pid, min_silence_s, secs, n_jobs));
+								"=== watchdog fire pid={} \
+								 stalled={}/{} threshold={}s \
+								 ===\n",
+								pid, stalled.len(), n_jobs, secs));
+							s.push_str("per-job silence(s): ");
+							for (j, d) in &silences {
+								s.push_str(&format!(
+									"[j{}={}s]", j, d));
+							}
+							s.push('\n');
 							let task_dir = format!(
 								"/proc/{}/task", pid);
 							if let Ok(rd) = fs::read_dir(&task_dir) {
@@ -2387,8 +2399,8 @@ where
 							let _ = fs::write(&dump, &s);
 							emit_stdout(format!(
 								"DEBUG USE 73112.wd: STALL DETECTED \
-								 dump={} min_silence={}s",
-								dump, min_silence_s));
+								 stalled={}/{} dump={}",
+								stalled.len(), n_jobs, dump));
 							// Best-effort flush of the stdout drainer.
 							std::thread::sleep(Duration::from_secs(2));
 							std::process::exit(1);

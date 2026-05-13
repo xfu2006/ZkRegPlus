@@ -47,16 +47,12 @@ PID_FILE = SRC_DIR / ".deadlock_detect.pid"
 FINISH_FILE = SRC_DIR / "FINISH"
 PKG_PARENT = SRC_DIR / "deadlock_detect"  # per-rung pkg dirs go here
 
-# 4 rungs. Cheap → expensive. Stop ladder at first failure.
-# Runtime caps sized for a server with ~50GB g16 keys to disk-load and
-# a 245M-entry lookup table. v1 caps were ~4-8x too small.
+# 2026-05-13: _pll deadlock fix validated on prior Rung A run
+# (pass_all reached MainDeciderCircuit cleanly with no stall). Dropped
+# the diagnostic ladder A/B/C since word_cap_per_job doesn't shrink
+# the dominant cost (200M-cs decider build). Running D alone with 48h
+# budget and 1h watchdog window — full data, full job count.
 RUNGS = [
-    {"name": "A", "n_jobs": 2, "word_cap": 10,
-     "watchdog_secs": 1200, "max_runtime_min": 180},
-    {"name": "B", "n_jobs": 4, "word_cap": 20,
-     "watchdog_secs": 1800, "max_runtime_min": 240},
-    {"name": "C", "n_jobs": 8, "word_cap": 20,
-     "watchdog_secs": 2400, "max_runtime_min": 360},
     {"name": "D", "n_jobs": 8, "word_cap": 0,
      "watchdog_secs": 3600, "max_runtime_min": 2880},
 ]
