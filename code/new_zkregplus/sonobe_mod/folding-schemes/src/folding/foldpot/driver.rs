@@ -2299,12 +2299,12 @@ where
 
 		// === stall watchdog (diagnostic). Off when secs == 0. ===
 		// Spawns a background thread that polls every 30s and checks
-		// the mtimes of /tmp/log_job_<id>.txt for every job. If AT
-		// LEAST 3 per-job logs have each been silent for
-		// >= stall_watchdog_secs, dumps per-thread kernel state to
-		// /tmp/stall_dump_<pid>.txt and aborts the process. Catches
-		// partial wedges (e.g., 3 of 8 jobs stuck) without waiting
-		// for all-jobs silence.
+		// the mtimes of {proj_root}/data/cache/logs/log_job_<id>.txt
+		// for every job. If AT LEAST 3 per-job logs have each been
+		// silent for >= stall_watchdog_secs, dumps per-thread kernel
+		// state to /tmp/stall_dump_<pid>.txt and aborts the process.
+		// Catches partial wedges (e.g., 3 of 8 jobs stuck) without
+		// waiting for all-jobs silence.
 		{
 			let secs = read_global_config().stall_watchdog_secs;
 			let n_jobs = jobs.len();
@@ -2314,6 +2314,11 @@ where
 					"DEBUG USE 73112.wd: watchdog ON pid={} \
 					 n_jobs={} threshold_s={}",
 					pid, n_jobs, secs));
+				// Resolve project root ONCE on this thread, before the
+				// initial sleep; proj_root() canonicalizes the CWD-based
+				// path, so we capture it while the process CWD is the
+				// known-good launch dir.
+				let log_root = utils::os::proj_root();
 				std::thread::spawn(move || {
 					use std::time::{Duration, SystemTime};
 					use std::fs;
@@ -2329,7 +2334,8 @@ where
 						let mut any_missing = false;
 						for j in 0..n_jobs {
 							let p = format!(
-								"/tmp/log_job_{}.txt", j);
+								"{}/data/cache/logs/log_job_{}.txt",
+								log_root, j);
 							match fs::metadata(&p)
 								.and_then(|m| m.modified()) {
 								Ok(t) => {
