@@ -46,12 +46,18 @@ ANALYZE_LOG = SRC_DIR / "analyze_log.txt"
 PID_FILE = SRC_DIR / ".deadlock_detect.pid"
 FINISH_FILE = SRC_DIR / "FINISH"
 PKG_PARENT = SRC_DIR / "deadlock_detect"  # per-rung pkg dirs go here
+# 2026-05-14: per-job log files live under
+# {repo_root}/data/cache/logs/log_job_<id>.txt (logger.rs:126), NOT
+# /tmp/. The Rust watchdog now polls there too (driver.rs ~L2331); the
+# package() helper below tails / tarballs from this dir as well.
+PER_JOB_LOG_DIR = REPO_ROOT / "data/cache/logs"
 
-# 2026-05-13: _pll deadlock fix validated on prior Rung A run
-# (pass_all reached MainDeciderCircuit cleanly with no stall). Dropped
-# the diagnostic ladder A/B/C since word_cap_per_job doesn't shrink
-# the dominant cost (200M-cs decider build). Running D alone with 48h
-# budget and 1h watchdog window — full data, full job count.
+# 2026-05-14: gadget-Mutex contention fix (Option A) — every per-job
+# `clone_deep` now produces fresh `Arc<Mutex<dyn SigmaGadget>>` shells
+# via `clone_arc_sigma_gadget()`, so `assert_msg3` no longer serializes
+# across jobs in the gen_step_cs hot loop. Verified `cargo check`
+# clean. Single Rung D run with full data, 48h budget, 1h watchdog.
+# Earlier _pll fix (2026-05-13) is also live.
 RUNGS = [
     {"name": "D", "n_jobs": 8, "word_cap": 0,
      "watchdog_secs": 3600, "max_runtime_min": 2880},
@@ -255,7 +261,13 @@ def run_rung(rung):
     dump_path.write_text("")  # truncate
 
     try:
-        # 2. Clean per-job log files
+        # 2. Clean per-job log files (real path is data/cache/logs/,
+        # not /tmp/ — see logger.rs:126). We still sweep /tmp for any
+        # stragglers from older builds.
+        if PER_JOB_LOG_DIR.exists():
+            for p in PER_JOB_LOG_DIR.glob("log_job_*.txt"):
+                try: p.unlink()
+                except OSError: pass
         for p in Path("/tmp").glob("log_job_*.txt"):
             try: p.unlink()
             except OSError: pass
@@ -345,10 +357,10 @@ def run_rung(rung):
                     p_4 = text.count("DEBUG USE 73112.4:")
                     p_wd = text.count("DEBUG USE 73112.wd:")
                     perf1008 = text.count("Pass 1. END")
-                    # log-file silence
+                    # log-file silence (real path: data/cache/logs/)
                     mtimes = []
                     for i in range(n_jobs):
-                        p = Path(f"/tmp/log_job_{i}.txt")
+                        p = PER_JOB_LOG_DIR / f"log_job_{i}.txt"
                         if p.exists():
                             mtimes.append(int(now - p.stat().st_mtime))
                         else:
@@ -391,7 +403,14 @@ def package(rung, outcome, ctx):
             except Exception as e:
                 log("WARN", f"dump copy fail: {e}")
 
-    # per-job logs
+    # per-job logs (real path: data/cache/logs/)
+    if PER_JOB_LOG_DIR.exists():
+        for p in PER_JOB_LOG_DIR.glob("log_job_*.txt"):
+            try:
+                shutil.copy(p, pkg_dir / p.name)
+            except Exception:
+                pass
+    # also sweep /tmp in case of legacy paths
     for p in Path("/tmp").glob("log_job_*.txt"):
         try:
             shutil.copy(p, pkg_dir / p.name)
@@ -599,7 +618,13 @@ def main():
                                     .splitlines()[-60:]:
                             print(f"DUMP> {ln}", flush=True)
                         log("INFO", "---- end dump.txt tail ----")
-                for p in sorted(Path("/tmp").glob("log_job_*.txt")):
+                log_sources = []
+                if PER_JOB_LOG_DIR.exists():
+                    log_sources += sorted(
+                        PER_JOB_LOG_DIR.glob("log_job_*.txt"))
+                log_sources += sorted(
+                    Path("/tmp").glob("log_job_*.txt"))
+                for p in log_sources:
                     log("INFO", f"---- {p.name} tail (last 20) ----")
                     try:
                         for ln in p.read_text(errors="replace")\

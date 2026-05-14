@@ -28331,6 +28331,14 @@ Goal 1. analyze the deadlock
 Goal 2. writing
 	[a] 2.2 paragraph 1 DONE
 
+Thursday 05/14/2026
+Goal 1. writing
+	[a] 2.2 paragraph 2 -> DONE
+	[b] 2.3 planning
+
+Goal 2. analyze the stall issue
+	[a] now identify the lock issue of gadgets, and remove such gadget locks.
+	[b] deploy to server
 
 
 -- TODO -- check is counting of Phase 1 step 3 correct?

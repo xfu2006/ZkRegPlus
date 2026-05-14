@@ -2372,11 +2372,28 @@ where 	C: CurveGroup<ScalarField=F>,
 	/// with fresh `Arc<Mutex<>>` wrappers so no locking is shared
 	/// with the original. Heavy immutable data inside the mapper
 	/// (ClamavDB, etc.) remains shared via `Arc::clone`.
+	///
+	/// 2026-05-14: also re-wrap each gadget through
+	/// `clone_arc_sigma_gadget()` so the per-job clone gets fresh
+	/// `Arc<Mutex<dyn SigmaGadget>>` shells. Without this, the
+	/// gadget Mutexes are Arc-shared across jobs and `assert_msg3`
+	/// serializes all jobs in the gen_step_cs hot loop (see
+	/// stall_fix_2026-05-13 + manual_stall analysis 2026-05-14).
 	pub fn clone_deep(&self) -> Self {
 		let new_mapper_val: GM = self.gadget_mapper.lock().unwrap()
 			.clone_deep_mapper();
 		let new_mapper_arc = Arc::new(Mutex::new(new_mapper_val));
-		let new_gadgets = lock_unwrap!(new_mapper_arc).get_gadgets();
+		let raw_gadgets = lock_unwrap!(new_mapper_arc).get_gadgets();
+		// Per-job lock independence: rebuild each gadget's
+		// Arc<Mutex<>> via the SigmaGadgetCloneBox blanket impl
+		// (sigma_ir1cs.rs:380-392) which does
+		// `Arc::new(Mutex::new(self.clone()))`. Gadget structs are
+		// tiny (~150 B); heavy state is behind Arcs and stays
+		// shared via the inner `.clone()`.
+		let new_gadgets: Vec<Arc<Mutex<dyn SigmaGadget<F>
+			+ Send + Sync>>> = raw_gadgets.iter()
+			.map(|g| lock_unwrap!(g).clone_arc_sigma_gadget())
+			.collect();
 		Self{
 			name: self.name.clone(),
 			poseidon_config: self.poseidon_config.clone(),
