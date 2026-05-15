@@ -2761,11 +2761,14 @@ where 	C: CurveGroup<ScalarField=F>,
 				&vec, &zero).expect("commit fails");
 			res
 		};
-		log_perf(0, log_level, &format!("gen_witness step 3.1: gen cmF, for vec.len: {}", vec.len()), &mut gt1);
+		// 2026-05-15: was log_perf(0,..) — routed every job's
+		// gen_witness step 3.x-11 logs into log_job_0.txt. Fixed
+		// here and at sibling sites below.
+		log_perf(self.job_id, log_level, &format!("gen_witness step 3.1: gen cmF, for vec.len: {}", vec.len()), &mut gt1);
 		let mut cmF = vec![];
 		grp_cmF.to_native_sponge_field_elements_as_vec()
 			.to_sponge_field_elements(&mut cmF);
-		log_perf(0, log_level, &format!("gen_witness step 3.2: cmF to native field, "), &mut gt1);
+		log_perf(self.job_id, log_level, &format!("gen_witness step 3.2: cmF to native field, "), &mut gt1);
 
 		//3. generate message2
 		let mut gi = 0;
@@ -2780,7 +2783,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			}
 			gi += 1;
 		}
-		log_perf(0, log_level, &format!("gen_witness step 4: gen msg2"),
+		log_perf(self.job_id, log_level, &format!("gen_witness step 4: gen msg2"),
 			&mut gt1);
 
 		//4. generate message3
@@ -2797,7 +2800,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			v_msg3.append(&mut msg3); 
 
 		}
-		log_perf(0, log_level, &format!("gen_witness step 5: gen msg3"),
+		log_perf(self.job_id, log_level, &format!("gen_witness step 5: gen msg3"),
 			&mut gt1);
 
 		//5. build the Lookup related witnesses:
@@ -2832,7 +2835,7 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		let _b_last = si.word_id==si.total_words
 			&& si.subseg_id==si.total_word_segs;
-		log_perf(0, log_level, &format!("gen_witness step 6: gen qry tbl"),
+		log_perf(self.job_id, log_level, &format!("gen_witness step 6: gen qry tbl"),
 			&mut gt1);
 
 		let inv_hab22_left = (0..inv_hab22_left_size).into_par_iter().map(|i|{
@@ -2840,14 +2843,14 @@ where 	C: CurveGroup<ScalarField=F>,
 			let v = alpha + qry_tbl1[i]*beta + v2 ;
 			v.inverse().expect("inv failed")
 		}).collect::<Vec<F>>();
-		log_perf(0, log_level, &format!("gen_witness step 7.1: hab22 inverse, hab2 len: {}", inv_hab22_left.len()),
+		log_perf(self.job_id, log_level, &format!("gen_witness step 7.1: hab22 inverse, hab2 len: {}", inv_hab22_left.len()),
 			&mut gt1);
 		let sum_hab22_left = qry_tbl1.par_iter().zip(inv_hab22_left.par_iter())
 		.map(|(&a,&b)|{
 				if a.is_zero() {zero}
 				else {b}
 		}).sum::<F>() + zi_part2.sum_hab22_left;
-		log_perf(0, log_level, &format!("gen_witness step 7.2: gen hab22 left, hab2 len: {}", inv_hab22_left.len()),
+		log_perf(self.job_id, log_level, &format!("gen_witness step 7.2: gen hab22 left, hab2 len: {}", inv_hab22_left.len()),
 			&mut gt1);
 
 		let right_size = inv_hab22_right_size;
@@ -2881,7 +2884,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			inv_hab22_right_size: inv_hab22_right_size,
 			stmt_cfg: stmt_cfg,
 		};
-		log_perf(0, log_level, &format!("gen_witness step 8: gen hab22 right"),
+		log_perf(self.job_id, log_level, &format!("gen_witness step 8: gen hab22 right"),
 			&mut gt1);
 
 		//6. compute the KZG evaluation of :
@@ -2976,7 +2979,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			let _sum_kzg_eval = sum_kzg_eval_lk + 
 				sum_kzg_eval_word + sum_kzg_eval_others;
 				//println!("DEBUG USE 500.9: sum_kzg_eval: {}, sum_vec_v_i: {}", sum_kzg_eval, sum_vec_v_i);
-			log_perf(0, log_level, &format!("gen_witness step 9: gen kzg sum"),
+			log_perf(self.job_id, log_level, &format!("gen_witness step 9: gen kzg sum"),
 			&mut gt1);
 		}
 
@@ -3011,7 +3014,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			else{ sum_oup * ch + si.oup_buf[i] };
 			oup_left = if oup_left.is_zero() {zero} else {oup_left - one};
 		}
-		log_perf(0, log_level, &format!("gen_witness step 10: gen inp/oup"),
+		log_perf(self.job_id, log_level, &format!("gen_witness step 10: gen inp/oup"),
 			&mut gt1);
 
 		let fq_bits = <<C as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as usize;
@@ -3049,7 +3052,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			
 			cyclepair_input: cp,
 		};
-		log_perf(0, log_level, &format!("gen_witness step 11: assemble ret"),
+		log_perf(self.job_id, log_level, &format!("gen_witness step 11: assemble ret"),
 			&mut gt1);
 
 		(WitnessSigmaIR1CS::<F>{
@@ -3125,8 +3128,26 @@ where 	C: CurveGroup<ScalarField=F>,
 		self.dummy_stmt = Some(vec);
 	}
 
+	// 2026-05-15: propagate job_id to ALL per-job state, not just
+	// `self.job_id`. Setting only the inst's own field (previous
+	// behaviour) left:
+	//   (a) the inner `gadget_mapper` Mutex carrying job_id=0
+	//       (inherited from the template through `clone_deep`),
+	//       which routed mapper-side `log_perf(self.job_id,..)`
+	//       calls into log_job_0.txt for every job, and
+	//   (b) the inst's own `self.gadgets` vec (independent
+	//       Arcs produced by Option A in `clone_deep`) carrying
+	//       job_id=0, which routed every `assert_msg3` /
+	//       `gen_step_cs` per-gadget log line into log_job_0.txt.
+	// As a result the per-job logs of stalled jobs looked frozen
+	// while their gen_step_cs traces were actually being written
+	// into log_job_0.txt. See stall analysis 2026-05-15.
 	fn set_job_id(&mut self, job_id: usize){
 		self.job_id = job_id;
+		lock_unwrap!(self.gadget_mapper).set_job_id(job_id);
+		for g in self.gadgets.iter() {
+			lock_unwrap!(g).set_job_id(job_id);
+		}
 	}
 
 	fn get_job_id(&self) -> usize{

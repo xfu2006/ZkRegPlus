@@ -1097,15 +1097,16 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 			}
 		);
 
+		// 2026-05-15: was log(0,..) — see cp_mapper note.
 		if b_perf{
-			log(0, log_level, &format!("## build_stmt: SED failed sigs"));
+			log(self.job_id, log_level, &format!("## build_stmt: SED failed sigs"));
 			for i in 0..res[6].len(){
-				log(0, log_level, &format!(" -- {} => {}",
+				log(self.job_id, log_level, &format!(" -- {} => {}",
 					i, &res[6][i]));
 			}
-			log(0, log_level, &format!("## build_stmt: SED discharged sigs"));
+			log(self.job_id, log_level, &format!("## build_stmt: SED discharged sigs"));
 			for i in 0..res[7].len(){
-				log(0, log_level, &format!(" -- {} => {}",
+				log(self.job_id, log_level, &format!(" -- {} => {}",
 					i, &res[7][i]));
 			}
 		}

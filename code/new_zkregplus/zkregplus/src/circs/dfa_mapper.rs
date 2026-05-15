@@ -428,11 +428,12 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 	fn get_sizes(&self)->Vec<usize>{
 		let log_level = LOG7;
 		let b_perf = true && log_level>=read_global_config().log_level;
+		// 2026-05-15: was log(0,..) — see cp_mapper note.
 		if b_perf{
-			log(0, log_level, &format!(" ## dfa gadgets data len: ==="));
+			log(self.job_id, log_level, &format!(" ## dfa gadgets data len: ==="));
 			for i in 0..self.gadgets.len(){
 				let vs = self.gadgets[i].lock().unwrap().get_to_add_size();
-				log(0, log_level, &format!("  -- {}: {}", 
+				log(self.job_id, log_level, &format!("  -- {}: {}",
 					self.gadgets[i].lock().unwrap().get_name(),
 					vs.2));
 			}
@@ -654,14 +655,14 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 		);
 
 		if b_perf{
-			log(0, log_level, &format!("## build_stmt: DFA failed sigs"));
+			log(self.job_id, log_level, &format!("## build_stmt: DFA failed sigs"));
 			for i in 0..res[6].len(){
-				log(0, log_level, &format!(" -- {} => {}",
+				log(self.job_id, log_level, &format!(" -- {} => {}",
 					i, &res[6][i]));
 			}
-			log(0, log_level, &format!("## build_stmt: DFA discharged sigs"));
+			log(self.job_id, log_level, &format!("## build_stmt: DFA discharged sigs"));
 			for i in 0..res[7].len(){
-				log(0, log_level, &format!(" -- {} => {}",
+				log(self.job_id, log_level, &format!(" -- {} => {}",
 					i, &res[7][i]));
 			}
 		}

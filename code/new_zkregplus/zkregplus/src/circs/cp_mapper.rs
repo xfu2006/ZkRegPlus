@@ -463,12 +463,15 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 			- final_states_len);
 
 		//2. collect all data
+		// 2026-05-15: was log(0,..) — routed every job's
+		// CP-mapper data-len traces into log_job_0.txt. Same
+		// family of bug as the gen_witness step-3.x sites.
 		if b_perf{
-			log(0, log_level, &format!(" ## CP mapper data len, nlen: {} ###", nlen));
-			log(0, log_level, &format!("  -- word_extract: {}", data_g_ext));
-			log(0, log_level, &format!("  -- word_fsm: {}", data_dfa));
-			log(0, log_level, &format!("  -- pack: {}", data_pack));
-			log(0, log_level, &format!( "  -- sigs: {}", data_sigs));
+			log(self.job_id, log_level, &format!(" ## CP mapper data len, nlen: {} ###", nlen));
+			log(self.job_id, log_level, &format!("  -- word_extract: {}", data_g_ext));
+			log(self.job_id, log_level, &format!("  -- word_fsm: {}", data_dfa));
+			log(self.job_id, log_level, &format!("  -- pack: {}", data_pack));
+			log(self.job_id, log_level, &format!( "  -- sigs: {}", data_sigs));
 		}
 		let vec_inp_len = vec![inp_g_ext, inp_dfa, inp_sigs];
 		let vec_oup_len = vec![oup_g_ext,  oup_dfa, oup_sigs];
@@ -896,10 +899,10 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 		let discharged_sigs = vec![F::zero()]; //dummy entry
 		
 		if b_perf{
-			log(0, log_level, &format!("## build_stmt: CP b_igc: {}. Failed sigs:",
+			log(self.job_id, log_level, &format!("## build_stmt: CP b_igc: {}. Failed sigs:",
 				self.b_igc));
 			for i in 0..failed_sigs.len(){
-				log(0, log_level, &format!(" -- {} => {}",
+				log(self.job_id, log_level, &format!(" -- {} => {}",
 					i, failed_sigs[i]));
 			}
 		}

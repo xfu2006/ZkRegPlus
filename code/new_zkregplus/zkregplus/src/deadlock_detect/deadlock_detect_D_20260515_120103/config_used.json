@@ -1,0 +1,16 @@
+{
+  "rung": {
+    "name": "D",
+    "n_jobs": 8,
+    "word_cap": 0,
+    "watchdog_secs": 3600,
+    "max_runtime_min": 2880
+  },
+  "outcome": "PANIC",
+  "context": {
+    "dump_path": "/tmp/deadlock_detect_D/dump.txt",
+    "runtime_s": 135,
+    "compile_pid": 68917
+  },
+  "timestamp": "2026-05-15T12:01:03"
+}

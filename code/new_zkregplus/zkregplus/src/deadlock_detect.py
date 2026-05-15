@@ -32,6 +32,32 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+# ---- dependency check -------------------------------------------
+# Python stdlib only (no pip deps). External CLI tools at runtime:
+#
+#   REQUIRED at launch (hard-fail with install hint if missing):
+#     cargo  -- to build/run the prover (preflight enforces)
+#     gdb    -- userspace bt of every thread at stall time, via
+#               `gdb -batch thread apply all bt 20`. Hard-checked
+#               in check_gdb_or_die() before daemonize so the
+#               install hint lands on the terminal.
+#
+# gdb FREQUENCY / IMPACT (important):
+#   - gdb is invoked at most ONCE per ladder execution -- only when
+#     `run_rung()` returns a non-OK outcome (STALL / PANIC / ...).
+#     A healthy run never invokes it.
+#   - The brief ptrace-stop happens on a process that is already
+#     stalled, so the ~1-2s pause is harmless. Hard timeout 30s
+#     (GDB_TIMEOUT_S) ensures a wedged gdb cannot block the bundler.
+#
+#   SOFT (absence warned but ladder proceeds):
+#     pgrep, ps, tar -- bundle assembly (coreutils on any Linux)
+#     git            -- bundle includes git diff/log if present
+_PY_MIN = (3, 6)
+if sys.version_info < _PY_MIN:
+    sys.exit(f"ERR: deadlock_detect.py needs Python >= {_PY_MIN[0]}."
+             f"{_PY_MIN[1]}; got {sys.version_info[:3]}")
+
 # ============================================================
 # Paths and constants
 # ============================================================
@@ -51,6 +77,16 @@ PKG_PARENT = SRC_DIR / "deadlock_detect"  # per-rung pkg dirs go here
 # /tmp/. The Rust watchdog now polls there too (driver.rs ~L2331); the
 # package() helper below tails / tarballs from this dir as well.
 PER_JOB_LOG_DIR = REPO_ROOT / "data/cache/logs"
+# 2026-05-15: sister verification scripts auto-invoked by package().
+# Output goes into the bundle as log_routing_check.txt and
+# stall_classify.txt. See their own docstrings for details.
+VERIFY_LOGS_PY    = SRC_DIR / "verify_logs.py"
+STALL_CLASSIFY_PY = SRC_DIR / "stall_classify.py"
+# Hard cap on gdb attach. The prover is already stalled by the
+# time package() runs, so a ptrace-stop costs nothing -- but a
+# hung gdb that fails to detach would. SIGKILL it after this many
+# seconds. Typical successful attach is <2s.
+GDB_TIMEOUT_S = 30
 
 # 2026-05-14: gadget-Mutex contention fix (Option A) — every per-job
 # `clone_deep` now produces fresh `Arc<Mutex<dyn SigmaGadget>>` shells
@@ -191,6 +227,43 @@ def revert_patch(backup_text):
 # ============================================================
 # Preflight
 # ============================================================
+def check_gdb_or_die():
+    """2026-05-15: gdb is REQUIRED for the userspace-bt capture
+    invoked from package() on STALL. We hard-fail here at launch
+    rather than discover the missing tool 15h into a run.
+
+    Notes:
+      - gdb runs at MOST once per ladder execution (current RUNGS
+        has 1 entry; package() is called only on a failed rung).
+      - The ptrace stop happens on an already-STALLED prover, so
+        the ~1-2s pause is harmless -- nothing was progressing.
+      - No sysctl knob to worry about (unlike perf): same-uid
+        ptrace works under the default kernel.yama.ptrace_scope=1.
+    """
+    gdb = shutil.which("gdb")
+    if not gdb:
+        msg = (
+            "ERROR: `gdb` not found on PATH.\n"
+            "deadlock_detect.py uses gdb at stall time to capture\n"
+            "userspace stack traces of every prover thread. Without\n"
+            "it, stall_classify will likely say INCONCLUSIVE and you\n"
+            "won't see which Rust line a thread is stuck at.\n"
+            "\n"
+            "Install:\n"
+            "  Debian/Ubuntu     : sudo apt install gdb\n"
+            "  RHEL/Fedora/Rocky : sudo dnf install gdb\n"
+            "  Arch              : sudo pacman -S gdb\n"
+            "Verify with:  gdb --version\n"
+            "\n"
+            "Frequency reminder: gdb is invoked ONLY when a rung\n"
+            "fails (STALL / PANIC / ...), and at most once per\n"
+            "ladder run. Healthy runs never invoke it.\n"
+        )
+        sys.stderr.write(msg)
+        sys.exit(2)
+    log("INFO", "gdb check OK", gdb_path=gdb)
+
+
 def preflight():
     checks = {}
     checks["cwd_is_src"] = (Path.cwd() == SRC_DIR) or True  # tolerated
@@ -205,10 +278,24 @@ def preflight():
     # if b_read_cache is false).
     cache = REPO_ROOT / "data/cache/full_clamav"
     checks["cache_full_clamav"] = cache.exists()
+    # 2026-05-15: gdb moved to a hard launch-time check
+    # (check_gdb_or_die). Remaining soft deps are still warned.
+    soft = {
+        "pgrep_on_path":     shutil.which("pgrep") is not None,
+        "git_on_path":       shutil.which("git") is not None,
+        "verify_logs.py":    VERIFY_LOGS_PY.exists(),
+        "stall_classify.py": STALL_CLASSIFY_PY.exists(),
+    }
     ok = all(v for k, v in checks.items()
              if k not in ("cache_full_clamav",))
     log("INFO", "preflight " + ("OK" if ok else "FAIL"),
         details=json.dumps(checks))
+    log("INFO", "preflight (soft, non-fatal)",
+        details=json.dumps(soft))
+    for k, v in soft.items():
+        if not v:
+            log("WARN", f"soft dep missing: {k} -- bundle quality "
+                        f"will degrade if STALL fires")
     return ok
 
 # ============================================================
@@ -458,9 +545,16 @@ def package(rung, outcome, ctx):
             with open(f"/proc/{snap_target}/status") as f:
                 out_lines.append(f.read())
             out_lines.append("\n=== /proc/.../task/*/ ===\n")
+            # 2026-05-15: also build proc_extra_<pid>.txt with the
+            # richer per-thread snapshot stall_classify.py needs:
+            # comm, stat (CPU times + state), and syscall (futex
+            # address if parked). These complement the wchan + kernel
+            # stack already in proc_task_dump.txt.
+            extra_lines = []
             for ent in Path(f"/proc/{snap_target}/task").iterdir():
                 tid = ent.name
                 out_lines.append(f"\n--- tid={tid} ---\n")
+                extra_lines.append(f"\n--- tid={tid} ---\n")
                 try:
                     with open(ent / "wchan") as f:
                         out_lines.append("wchan: " + f.read().strip() +
@@ -471,6 +565,7 @@ def package(rung, outcome, ctx):
                     with open(ent / "status") as f:
                         for ln in f.read().splitlines()[:3]:
                             out_lines.append("  " + ln + "\n")
+                            extra_lines.append("  " + ln + "\n")
                 except Exception:
                     pass
                 try:
@@ -480,9 +575,67 @@ def package(rung, outcome, ctx):
                             out_lines.append("  " + ln + "\n")
                 except Exception:
                     pass
-            (pkg_dir / "proc_task_dump.txt").write_text("".join(out_lines))
+                # extra: comm + stat + syscall (best-effort, no fail)
+                try:
+                    with open(ent / "comm") as f:
+                        extra_lines.append("comm: " + f.read().strip() +
+                                           "\n")
+                except Exception:
+                    pass
+                try:
+                    with open(ent / "stat") as f:
+                        extra_lines.append("stat: " + f.read().strip() +
+                                           "\n")
+                except Exception:
+                    pass
+                try:
+                    with open(ent / "syscall") as f:
+                        extra_lines.append("syscall: " +
+                                           f.read().strip() + "\n")
+                except Exception:
+                    pass
+            (pkg_dir / "proc_task_dump.txt").write_text(
+                "".join(out_lines))
+            (pkg_dir / f"proc_extra_{snap_target}.txt").write_text(
+                "".join(extra_lines))
         except Exception as e:
             log("WARN", f"proc snapshot fail: {e}")
+        # 2026-05-15: userspace bt via gdb. The prover is already
+        # stalled by the time we get here, so the ptrace-stop is
+        # essentially free (it isn't making progress anyway). gdb
+        # walks parked-thread stacks reliably -- which is exactly
+        # the worst case for true deadlocks where perf record would
+        # produce zero samples. Hard timeout via subprocess.run so
+        # a hung gdb cannot wedge the bundler.
+        gdb_path = shutil.which("gdb")
+        if gdb_path:
+            us_out = pkg_dir / f"userspace_stacks_{snap_target}.txt"
+            try:
+                r = subprocess.run(
+                    [gdb_path, "-p", str(snap_target),
+                     "-batch", "-nx",
+                     "-ex", "set pagination off",
+                     "-ex", "set confirm off",
+                     "-ex", "thread apply all bt 20",
+                     "-ex", "detach",
+                     "-ex", "quit"],
+                    capture_output=True, text=True,
+                    timeout=GDB_TIMEOUT_S)
+                us_out.write_text(
+                    f"## gdb returncode={r.returncode} ##\n" +
+                    r.stdout + "\n## stderr ##\n" + r.stderr)
+                log("INFO", "gdb userspace bt captured "
+                            f"pid={snap_target}",
+                    rc=r.returncode, size=us_out.stat().st_size)
+            except subprocess.TimeoutExpired:
+                us_out.write_text(
+                    f"## gdb TIMED OUT after {GDB_TIMEOUT_S}s ##\n")
+                log("WARN", f"gdb timed out on pid={snap_target}")
+            except Exception as e:
+                log("WARN", f"gdb capture fail: {e}")
+        else:
+            log("INFO", "gdb not on PATH; skipping userspace bt "
+                        "(stall_classify will degrade to wchan-only)")
 
     # git diff / log
     try:
@@ -521,6 +674,36 @@ def package(rung, outcome, ctx):
     except Exception:
         pass
 
+    # 2026-05-15: run the two bundle-analysis scripts so the bundle
+    # ships with a pre-baked routing-health report and a triage
+    # verdict among the three stall hypotheses (rayon starvation /
+    # malloc arena / undiscovered user Mutex). Both are subprocess
+    # calls so a bad script can never break the bundler.
+    if VERIFY_LOGS_PY.exists():
+        try:
+            r = subprocess.run(
+                ["python3", str(VERIFY_LOGS_PY),
+                 "--logs-dir", str(pkg_dir)],
+                capture_output=True, text=True, timeout=60)
+            (pkg_dir / "log_routing_check.txt").write_text(
+                f"## verify_logs.py rc={r.returncode} ##\n" +
+                r.stdout + "\n## stderr ##\n" + r.stderr)
+            log("INFO", "verify_logs.py done", rc=r.returncode)
+        except Exception as e:
+            log("WARN", f"verify_logs.py fail: {e}")
+    if STALL_CLASSIFY_PY.exists():
+        try:
+            r = subprocess.run(
+                ["python3", str(STALL_CLASSIFY_PY),
+                 "--bundle-dir", str(pkg_dir)],
+                capture_output=True, text=True, timeout=60)
+            (pkg_dir / "stall_classify.txt").write_text(
+                f"## stall_classify.py rc={r.returncode} ##\n" +
+                r.stdout + "\n## stderr ##\n" + r.stderr)
+            log("INFO", "stall_classify.py done", rc=r.returncode)
+        except Exception as e:
+            log("WARN", f"stall_classify.py fail: {e}")
+
     # summary
     (pkg_dir / "summary.txt").write_text(
         f"rung   : {name}\n"
@@ -556,6 +739,11 @@ def main():
     parser.add_argument("--no-daemon", action="store_true",
                         help="Run in foreground (for debugging).")
     args = parser.parse_args()
+
+    # 2026-05-15: gdb is required for the stall-time userspace bt
+    # capture. We fail FAST (before daemonize) so the install hint
+    # lands on the user's terminal, not buried in analyze_log.txt.
+    check_gdb_or_die()
 
     # If a previous daemon is alive, refuse to start a second.
     if PID_FILE.exists():

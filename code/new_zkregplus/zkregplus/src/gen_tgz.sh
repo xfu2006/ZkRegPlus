@@ -113,7 +113,7 @@ for pid in $PIDS; do
             for t in "$tdir"/*; do
                 tid="$(basename "$t")"
                 echo
-                echo "[tid=$tid]"
+                echo "=== tid=$tid ==="
                 printf '  wchan : '
                 cat "$t/wchan" 2>/dev/null; echo
                 printf '  state : '
@@ -128,6 +128,40 @@ for pid in $PIDS; do
         fi
         echo
     } >> "$PROC_DUMP"
+    # 2026-05-15: stall_classify.py wants comm/stat/syscall and a
+    # gdb-bt per pid. Best-effort; permission failures are fine.
+    EXTRA="$PKG_DIR/proc_extra_${pid}.txt"
+    : > "$EXTRA"
+    tdir="/proc/$pid/task"
+    if [ -d "$tdir" ]; then
+        for t in "$tdir"/*; do
+            tid="$(basename "$t")"
+            {
+                echo
+                echo "--- tid=$tid ---"
+                grep -E '^(State|Name):' "$t/status" 2>/dev/null \
+                    | sed 's/^/  /'
+                printf '  comm: '; cat "$t/comm" 2>/dev/null
+                printf '  stat: '; cat "$t/stat" 2>/dev/null
+                printf '  syscall: '; cat "$t/syscall" 2>/dev/null
+                echo
+            } >> "$EXTRA"
+        done
+    fi
+    # 2026-05-15: userspace bt via gdb (30s hard timeout). gdb is
+    # the best fit at stall time -- it walks parked-thread stacks
+    # directly, which is what fails under perf record. The prover
+    # is already stuck so the brief ptrace-stop is free.
+    if command -v gdb >/dev/null 2>&1; then
+        USOUT="$PKG_DIR/userspace_stacks_${pid}.txt"
+        timeout 30 gdb -p "$pid" -batch -nx \
+            -ex "set pagination off" \
+            -ex "set confirm off" \
+            -ex "thread apply all bt 20" \
+            -ex "detach" -ex "quit" \
+            > "$USOUT" 2>&1 || \
+            echo "(gdb attach failed or timed out)" >> "$USOUT"
+    fi
 done
 
 # ---- ps & meminfo -------------------------------------------------
@@ -172,6 +206,21 @@ if [ -d "$LOGS_DIR" ]; then
             echo "$(basename "$f"): mtime=$m silence_s=$((now - m))"
         done
     } > "$PKG_DIR/log_silence.txt"
+fi
+
+# ---- run analyzer scripts (2026-05-15) ----------------------------
+# verify_logs.py: routing-health check on the per-job logs we copied.
+# stall_classify.py: triage among the three stall hypotheses using
+# the proc_extra_*.txt and userspace_stacks_*.txt captured above.
+if [ -f "$SRC_DIR/verify_logs.py" ]; then
+    python3 "$SRC_DIR/verify_logs.py" --logs-dir "$PKG_DIR" \
+        > "$PKG_DIR/log_routing_check.txt" 2>&1 \
+        || echo "(verify_logs.py rc=$?)" >> "$PKG_DIR/log_routing_check.txt"
+fi
+if [ -f "$SRC_DIR/stall_classify.py" ]; then
+    python3 "$SRC_DIR/stall_classify.py" --bundle-dir "$PKG_DIR" \
+        > "$PKG_DIR/stall_classify.txt" 2>&1 \
+        || echo "(stall_classify.py rc=$?)" >> "$PKG_DIR/stall_classify.txt"
 fi
 
 # ---- finalize tarball ---------------------------------------------

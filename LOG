@@ -28340,6 +28340,10 @@ Goal 2. analyze the stall issue
 	[a] now identify the lock issue of gadgets, and remove such gadget locks.
 	[b] deploy to server
 
+Friday 05/15/2026
+Goal 1. analyze stall
+	[a] stalled again after 15 hours.
+	[b] 
 
 -- TODO -- check is counting of Phase 1 step 3 correct?
 	couned roughly the same value for phase 1 step 1 and 2

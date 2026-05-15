@@ -2708,17 +2708,26 @@ where
 	  		// (ClamavDB, etc.) remains shared via `Arc::clone`
 	  		// inside each component's manual clone impl.
 			let mut gt_prove_steps = GTimer::new();
-	  		let per_job_layered: Vec<Vec<FC>> = driver1.layered_circs
+	  		let mut per_job_layered: Vec<Vec<FC>> = driver1.layered_circs
 	  			.iter().map(|layer|
 	  				layer.iter().map(|c| c.clone_deep_self()).collect()
 	  			).collect();
-	  		// Stamp each cloned mapper with this job's id so the
-	  		// `log_perf(self.job_id, ...)` calls inside the mapper
-	  		// route to the correct per-job log file. This also
-	  		// verifies the deep-clone is what is in use here.
-	  		for layer in per_job_layered.iter() {
-	  			for c in layer.iter() {
-	  				lock_unwrap!(c.get_mapper()).set_job_id(job_id);
+	  		// 2026-05-15: stamp every per-job clone with this job's
+	  		// id through the SigmaIR1CS::set_job_id impl on
+	  		// SigmaIR1CS_Inst (sigma_ir1cs.rs), which fans out to
+	  		//   (1) the inst's own `job_id` field,
+	  		//   (2) the inner `gadget_mapper` (and recursively each
+	  		//       sub-mapper and its gadgets), and
+	  		//   (3) the inst's own per-job `gadgets` vec (the fresh
+	  		//       Arcs produced by Option A in `clone_deep`).
+	  		// Routing all three is required so per-gadget
+	  		// `log_perf(self.job_id,..)` and the inner
+	  		// `generate_step_constraints` log lines land in the
+	  		// right log_job_<id>.txt instead of all collapsing
+	  		// onto log_job_0.txt.
+	  		for layer in per_job_layered.iter_mut() {
+	  			for c in layer.iter_mut() {
+	  				c.set_job_id(job_id);
 	  			}
 	  		}
 	  		let per_job_circuits: Vec<FC> =
