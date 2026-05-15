@@ -2213,7 +2213,26 @@ pub fn write_to_file(fname: &str, line: &str){
 /// This function is the main workflow of foldpot.
 /// It takes a sequence of circuits, and a sequence of words.
 /// Run driver in two phases, builds the DeciderProof and verifies it.
-/// Inputs: lkup which encodes the regex automata, 
+/// 2026-05-15: opt-in PR_SET_PTRACER_ANY so deadlock_detect.py
+/// (a grandparent of the prover process) can gdb-attach despite
+/// YAMA ptrace_scope=1 (Ubuntu default). No-op when env var is
+/// unset, so production runs are unaffected. The unsafe block is
+/// confined to one prctl call; the kernel has no safe Rust wrapper
+/// in std, the call is bounded (sets one process flag), and failure
+/// silently returns -1.
+fn enable_ptrace_any() {
+	if std::env::var("ZKR_ALLOW_PTRACE_ANY").is_err() {
+		return;
+	}
+	extern "C" {
+		fn prctl(opt: i32, a2: u64, a3: u64,
+				 a4: u64, a5: u64) -> i32;
+	}
+	const PR_SET_PTRACER: i32 = 0x59616d61;
+	unsafe { prctl(PR_SET_PTRACER, u64::MAX, 0, 0, 0); }
+}
+
+/// Inputs: lkup which encodes the regex automata,
 /// jobs: a collection of jobs where each job has:
 /// (1) vec_words: the vector of words to process,
 /// (2) idx_individual_prf: the index of the SAMPLE individual proof to produce.
@@ -2278,6 +2297,11 @@ where
 	C2::Config: SWCurveConfig,
 	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug + Send + Sync, S::ProvingKey: 'static, S::VerifyingKey: 'static, S::VerifyingKey: 'static,
 {
+		// 2026-05-15: allow gdb attach from non-parent same-uid procs
+		// (e.g. deadlock_detect.py). No-op unless ZKR_ALLOW_PTRACE_ANY
+		// is set in env. See enable_ptrace_any() above.
+		enable_ptrace_any();
+
 		let mut gt_all = GTimer::new();
 		let mut gt_all_0 = GTimer::new();
 		let log_level = LOG1;

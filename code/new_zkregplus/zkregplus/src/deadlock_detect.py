@@ -368,8 +368,16 @@ def run_rung(rung):
 
         # 3. Env vars
         env = os.environ.copy()
-        env["ZKR_STALL_WATCHDOG_SECS"] = str(watchdog_secs)
+        # 2026-05-15: external silence-based detection (in tick loop)
+        # uses `watchdog_secs`. To ensure deadlock_detect.py wins
+        # the race, raise the prover's INTERNAL watchdog 10x higher
+        # so its abort() doesn't fire before our gdb attaches.
+        env["ZKR_STALL_WATCHDOG_SECS"] = str(watchdog_secs * 10)
         env["ZKR_WORD_CAP_PER_JOB"] = str(word_cap)
+        # 2026-05-15: allow gdb attach from non-parent grandparent
+        # (deadlock_detect.py). Triggers enable_ptrace_any() at the
+        # top of foldpot_main() in sonobe_mod/.../driver.rs.
+        env["ZKR_ALLOW_PTRACE_ANY"] = "1"
         env["RUSTFLAGS"] = "-C link-args=-fuse-ld=lld -Awarnings"
         env["RUST_BACKTRACE"] = "1"
 
@@ -392,6 +400,10 @@ def run_rung(rung):
         deadline = start + max_runtime_min * 60
         outcome = None
         last_tick = 0.0
+        # 2026-05-15: holds the path of the early userspace stack
+        # capture (gdb on live prover, before kill) so package()
+        # can pick it up.
+        early_userspace_path = None
         while True:
             rc = proc.poll()
             if rc is not None:
@@ -457,6 +469,86 @@ def run_rung(rung):
                         plan_pll=p_0, par_after=p_4, wd_evt=p_wd,
                         perf1008=perf1008,
                         log_silence_s=str(mtimes))
+                    # 2026-05-15: external silence-based stall trigger.
+                    # If >=3 per-job logs have been silent >=
+                    # watchdog_secs, the prover is stalled. Internal
+                    # watchdog is raised 10x so we win the race.
+                    # Fire gdb on live PID, save bt, then kill compile2.
+                    n_silent = sum(1 for s in mtimes
+                                   if s >= 0 and s >= watchdog_secs)
+                    if n_silent >= 3:
+                        outcome = "STALL"
+                        log("WARN", f"RUNG {name} external STALL "
+                            f"trigger n_silent={n_silent}/{n_jobs} "
+                            f"threshold={watchdog_secs}s "
+                            f"mtimes={mtimes}")
+                        # locate live prover PID
+                        live_pid = None
+                        try:
+                            pg = subprocess.run(
+                                ["pgrep", "-f",
+                                 "zkregplus.*test_zkreg_main"],
+                                capture_output=True, text=True)
+                            pids = [p for p in
+                                    pg.stdout.strip().splitlines()
+                                    if p]
+                            if pids:
+                                live_pid = pids[0]
+                        except Exception as e:
+                            log("WARN", f"pgrep fail: {e}")
+                        # gdb capture BEFORE kill
+                        if live_pid:
+                            gdb_path = shutil.which("gdb")
+                            tmp_us = Path(
+                                f"/tmp/userspace_stacks_early_"
+                                f"{live_pid}.txt")
+                            try:
+                                r = subprocess.run(
+                                    [gdb_path, "-p", str(live_pid),
+                                     "-batch", "-nx",
+                                     "-ex", "set pagination off",
+                                     "-ex", "set confirm off",
+                                     "-ex",
+                                     "thread apply all bt 20",
+                                     "-ex", "detach",
+                                     "-ex", "quit"],
+                                    capture_output=True, text=True,
+                                    timeout=GDB_TIMEOUT_S)
+                                tmp_us.write_text(
+                                    f"## gdb pid={live_pid} "
+                                    f"rc={r.returncode} ##\n"
+                                    + r.stdout
+                                    + "\n## stderr ##\n" + r.stderr)
+                                early_userspace_path = tmp_us
+                                log("INFO", "early gdb captured "
+                                    f"pid={live_pid} "
+                                    f"path={tmp_us}")
+                            except subprocess.TimeoutExpired:
+                                tmp_us.write_text(
+                                    f"## gdb TIMED OUT "
+                                    f"after {GDB_TIMEOUT_S}s ##\n")
+                                early_userspace_path = tmp_us
+                                log("WARN", "early gdb timeout "
+                                    f"pid={live_pid}")
+                            except Exception as e:
+                                log("WARN", f"early gdb fail: {e}")
+                        else:
+                            log("WARN", "no live prover PID for gdb")
+                        # kill compile2 process group
+                        try:
+                            os.killpg(os.getpgid(proc.pid),
+                                      signal.SIGTERM)
+                        except ProcessLookupError:
+                            pass
+                        try:
+                            proc.wait(timeout=30)
+                        except subprocess.TimeoutExpired:
+                            try:
+                                os.killpg(os.getpgid(proc.pid),
+                                          signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                        break
                 except Exception as e:
                     log("WARN", f"RUNG {name} tick error: {e}")
             time.sleep(5)
@@ -464,7 +556,10 @@ def run_rung(rung):
         runtime_s = int(time.time() - start)
         return outcome, {"dump_path": str(dump_path),
                           "runtime_s": runtime_s,
-                          "compile_pid": proc.pid}
+                          "compile_pid": proc.pid,
+                          "early_userspace_path":
+                              str(early_userspace_path)
+                              if early_userspace_path else None}
     finally:
         # Always revert
         revert_patch(backup)
@@ -523,6 +618,20 @@ def package(rung, outcome, ctx):
         shutil.copy("/proc/meminfo", pkg_dir / "meminfo.txt")
     except Exception:
         pass
+
+    # 2026-05-15: pick up the early userspace_stacks file captured by
+    # run_rung's silence-based trigger (gdb on LIVE prover before kill).
+    # If present, this is the authoritative bt for the stall.
+    early_us = ctx.get("early_userspace_path") if ctx else None
+    if early_us and Path(early_us).exists():
+        try:
+            pid_str = Path(early_us).stem.rsplit("_", 1)[-1]
+            shutil.copy(early_us,
+                pkg_dir / f"userspace_stacks_{pid_str}.txt")
+            log("INFO", "bundled early userspace stacks",
+                src=early_us)
+        except Exception as e:
+            log("WARN", f"failed to bundle early gdb output: {e}")
 
     # /proc/<compile_pid>/{status,task/*/{wchan,status,stack}}
     # The compile2.sh wrapper PID may have exited by now, but if the
