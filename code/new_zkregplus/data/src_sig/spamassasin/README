@@ -3,4 +3,5 @@
   cd new_zkregplus/data/
   sa-update --nogpg --updatedir src_sig/spamassasin
   ls data/src_sig/spamassasin/updates_spamassassin_org/
+(2) 
 

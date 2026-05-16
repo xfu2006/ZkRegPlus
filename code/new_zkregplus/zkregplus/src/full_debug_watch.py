@@ -227,7 +227,7 @@ def wait_for_exit(proc: subprocess.Popen) -> int:
 PANIC_RE      = re.compile(r"^FAIL-FAST: prover panic", re.M)
 PANIC_AT_RE   = re.compile(
     r"panicked at ([^\n]+):\s*\n([^\n]+)", re.M)
-PROBE_LINE_RE = re.compile(r"^DEBUG USE 77317\.[\w.]+:?", re.M)
+PROBE_LINE_RE = re.compile(r"^DEBUG USE 7731[78]\.[\w.]+:?", re.M)
 
 def classify(rc: int, dump_path: Path) -> str:
     text = ""
@@ -407,7 +407,15 @@ def write_summary(bundle_dir, outcome, rc, panic_site,
         "",
         "interpretation hints:",
         "  77317.6 mismatch -> bug in build_statement / gen_m_table",
-        "                      (host-side construction is wrong)",
+        "                      (host-side construction is wrong);",
+        "                      then check 77318.1.c<i> per-component",
+        "                      diffs to name the responsible mapper.",
+        "  77318.1.c<i> MULTISET_MISMATCH -> component i contributes",
+        "                      failed_sigs entries not covered on its",
+        "                      own discharged side (CP is allowed; the",
+        "                      coverage should come from SED/DFA).",
+        "  77318.3.sed.a<j>.* / 77318.4.dfa.a<j>.* -> per-advice",
+        "                      breakdown inside SED/DFA components.",
         "  77317.5 mismatch -> bug in stmt vector layout indices",
         "                      between StatementInst and stmt vec",
         "  77317.4/3 mismatch -> bug in to_vec_fp_var / from_vec",

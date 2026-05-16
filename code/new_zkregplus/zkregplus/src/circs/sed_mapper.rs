@@ -1096,6 +1096,34 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 				}).collect::<Vec<Vec<F>>>()
 			}
 		);
+		// 2026-05-16: probe 77318.3 — per-advice breakdown inside
+		// SedComponentMapper. Each entry in `vec_advices` is one
+		// signature's contribution; we re-call gen_stmt_components
+		// (cheap) to print [adv_id, failed.len, discharged.len,
+		// failed_pow, discharged_pow]. Catches the case where a
+		// specific signature's discharged_sigs is short.
+		if std::env::var("ZKR_PROBE_77317").is_ok() {
+			use folding_schemes::folding::foldpot::utils::
+				probe_77317_dump_f_vec;
+			emit_stdout(format!(
+				"DEBUG USE 77318.3: SedComponentMapper \
+				 vec_advices.len={} total_failed.len={} \
+				 total_discharged.len={}",
+				advice.vec_advices.len(),
+				res[6].len(), res[7].len()));
+			for (adv_id, adv) in advice.vec_advices.iter()
+				.enumerate() {
+				let cps = adv.gen_stmt_components();
+				let f_tag = format!("3.sed.a{}.failed", adv_id);
+				let d_tag = format!("3.sed.a{}.disch", adv_id);
+				probe_77317_dump_f_vec(&f_tag,
+					&format!("sed.adv{}.failed", adv_id),
+					&cps[6]);
+				probe_77317_dump_f_vec(&d_tag,
+					&format!("sed.adv{}.discharged", adv_id),
+					&cps[7]);
+			}
+		}
 
 		// 2026-05-15: was log(0,..) — see cp_mapper note.
 		if b_perf{

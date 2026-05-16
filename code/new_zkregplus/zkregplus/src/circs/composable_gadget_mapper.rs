@@ -898,11 +898,52 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 		let mut stmt_map_id = 0;
 		for i in 0..self.vec_components.len(){
 			let comp = &self.vec_components[i];
+			let comp_name = comp.lock().unwrap().get_name();
 			let vecs = comp.lock().unwrap()
-				.build_statement_comp(i, stmt_map_id, 
+				.build_statement_comp(i, stmt_map_id,
 					&word_seg, actual_word_len, &lkup,
 					ea, &advices.vec_adv[i], &cfg, &stmt_map
 				)?;
+			// 2026-05-16: probe 77318.1 — per-component output
+			// of build_statement_comp. Prints the failed_sigs
+			// (vecs[6]) and discharged_sigs (vecs[7]) contributed
+			// by THIS component, plus a multiset-diff that flags
+			// any uncovered F values immediately. Whichever
+			// component shows a non-empty diff is the culprit
+			// behind the host-side bug 77317.6 surfaced.
+			if std::env::var("ZKR_PROBE_77317").is_ok() {
+				use folding_schemes::folding::foldpot::utils::{
+					probe_77317_dump_f_vec,
+					probe_77317_multiset_diff};
+				let comp_failed = &vecs[6];
+				let comp_disch = &vecs[7];
+				// Construct a dummy mtbl of 1s the same length
+				// as the discharged side, so the diff helper
+				// counts each discharged entry once. (The real
+				// mtbl is computed only LATER by gen_m_table on
+				// the CONCATENATED vectors; here we just want to
+				// know per-component which failed entries lack
+				// a discharged counterpart entirely.)
+				let dummy_mtbl: Vec<F> = (0..comp_disch.len())
+					.map(|_| F::one()).collect();
+				emit_stdout(format!(
+					"DEBUG USE 77318.1: comp i={} name={} \
+					 failed.len={} discharged.len={}",
+					i, comp_name,
+					comp_failed.len(), comp_disch.len()));
+				let tag_f = format!("1.c{}.failed", i);
+				let tag_d = format!("1.c{}.discharged", i);
+				let tag_diff = format!("1.c{}", i);
+				probe_77317_dump_f_vec(&tag_f,
+					&format!("c{}.failed[{}]", i, comp_name),
+					comp_failed);
+				probe_77317_dump_f_vec(&tag_d,
+					&format!("c{}.discharged[{}]",
+						i, comp_name),
+					comp_disch);
+				probe_77317_multiset_diff(&tag_diff,
+					comp_failed, comp_disch, &dummy_mtbl);
+			}
 			//REMOVE LATER -----------
 			if i==0{
 				emit_stdout(format!(

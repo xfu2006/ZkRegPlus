@@ -37,7 +37,7 @@ use utils::consts::{read_global_config, B_DEBUG};
 
 // subtbl: follow inp/oup/data
 use folding_schemes::folding::foldpot::container_config::ColEle;
-use utils::{logger::{log, log_perf, LOG1, LOG7}, timer::Timer };
+use utils::{logger::{log, log_perf, emit_stdout, LOG1, LOG7}, timer::Timer };
 use std::{
 	marker::PhantomData,
 	sync::{Arc, Mutex},
@@ -890,13 +890,33 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 		assert!(subtbl_oup.len()==oup.len());
 
 		//4. the failed sigs and discharged sigs
-		let failed_sigs = advice.sigs_advice.oup.clone(); 
+		let failed_sigs = advice.sigs_advice.oup.clone();
 		assert!(failed_sigs.len()==sig_buf_capacity);
 		if !failed_sigs.contains(&F::zero()){
 			return Err(Error::CapErr(vec![(format!("cp::sigs to accomodate one dummy entry: "), failed_sigs.len() + 1
 			)]));
 		}
 		let discharged_sigs = vec![F::zero()]; //dummy entry
+		// 2026-05-16: probe 77318.2 — CpComponentMapper output.
+		// CP returns a real failed_sigs (from sigs_advice.oup) but a
+		// DUMMY single-zero discharged_sigs. Any non-zero entry in
+		// failed_sigs is therefore expected to be covered by a
+		// SED/DFA component's discharged_sigs downstream. If
+		// 77318.1.c<i>.MULTISET_MISMATCH fires on the CP component
+		// it just means CP-side failed entries weren't covered —
+		// the bug is then in whichever later component should have
+		// covered them.
+		if std::env::var("ZKR_PROBE_77317").is_ok() {
+			use folding_schemes::folding::foldpot::utils::
+				probe_77317_dump_f_vec;
+			emit_stdout(format!(
+				"DEBUG USE 77318.2: CpComponentMapper b_igc={} \
+				 failed.len={} discharged.len={} (dummy [0])",
+				self.b_igc, failed_sigs.len(),
+				discharged_sigs.len()));
+			probe_77317_dump_f_vec("2.cp.failed",
+				"cp.failed_sigs", &failed_sigs);
+		}
 		
 		if b_perf{
 			log(self.job_id, log_level, &format!("## build_stmt: CP b_igc: {}. Failed sigs:",

@@ -28359,7 +28359,8 @@ Goal 2. analyze data
 Goal 3. planning enron set
 	[a] read exmaples SpamSim, TruffleHog, gitleaks
 	[b] nail down approximation 
-Goal 4. 
+Goal 4. download spamassasin rule set
+	[a] flagged 2249 out of 517401
 
 
 -- TODO -- check is counting of Phase 1 step 3 correct?
