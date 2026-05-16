@@ -386,18 +386,20 @@ fn full_clamav<F: PrimeField>(b_check_lkup: bool, b_light_test: bool,
 }
 
 fn full_debug<F: PrimeField>(b_check_lkup: bool) {
-    preflight_full_clamav_cache_or_exit();
-    // 2026-05-16: mirrors full_clamav_light's globals/capacities so
-    // the snark keys at data/cache/full_clamav and DB cache at
-    // data/cache/full_data are reused unmodified. Differences vs
-    // full_clamav_light: (a) single list file binexec_debug.dat
-    // (n_jobs = 1), (b) report path under data/debug/full_debug.
+    // 2026-05-16: full_debug intentionally skips the Groth16 key
+    // load/setup. The check_logup panic we want to reproduce fires
+    // in pass_all/gen_step_cs, which runs BEFORE the SNARK keys are
+    // ever consumed. Combined with b_folding_only=true, the prover
+    // returns Ok(()) right after pass_all and never touches
+    // g16_main.key / g16_cp.key. So we do NOT call
+    // preflight_full_clamav_cache_or_exit() here (intentional).
     // .dat config files (main.dat / main_dfa.dat / needs_ised*.dat)
     // are reused from data/debug/full_clamav/config/ — they are
-    // never opened when b_read_cache=true and the cache exists.
+    // never opened when b_read_cache=true and the DB cache exists.
     get_global_config().snark_cache_dir = "full_clamav".to_string();
     get_global_config().b_write_snark_cache = false;
-    get_global_config().b_read_snark_cache = true;
+    get_global_config().b_read_snark_cache = false;
+    get_global_config().b_folding_only = true;
     get_global_config().range2_bit = 26;
     get_global_config().b_light_test = true;
     get_global_config().min_subsigs = 150;

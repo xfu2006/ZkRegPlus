@@ -1900,8 +1900,18 @@ pub mod tests_zkp_driver{
 	/// sync if you tune full_clamav.
 	fn full_debug<F:PrimeField>(b_check_lkup: bool){
 		get_global_config().snark_cache_dir = "full_clamav".to_string();
+		// 2026-05-16: full_debug intentionally does NOT load or
+		// generate Groth16 keys. The check_logup panic we're trying
+		// to reproduce fires inside pass_all/gen_step_cs, which is
+		// reached before the post-pass_all SNARK step. Combined
+		// with b_folding_only=true (which returns Ok(()) right
+		// after pass_all), the prover never touches g16_main.key /
+		// g16_cp.key — so the user doesn't need to have run
+		// full_clamav_setup. See driver.rs:2497 (key load) and
+		// driver.rs:2845 (b_folding_only early return).
 		get_global_config().b_write_snark_cache = false;
-		get_global_config().b_read_snark_cache = true;
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_folding_only = true;
 		get_global_config().range2_bit = 26;
 		get_global_config().b_light_test = true;
 		get_global_config().min_subsigs = 368;

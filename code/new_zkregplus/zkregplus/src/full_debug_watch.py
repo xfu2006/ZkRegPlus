@@ -79,9 +79,11 @@ def log(level, msg, **kw):
 # Preflight
 # ============================================================
 REQUIRED_CACHE = [
+    # full_debug runs with b_folding_only=true + b_read_snark_cache
+    # =false, so the Groth16 keys (g16_main.key, g16_cp.key) are
+    # NEVER loaded or generated — the check_logup panic fires
+    # before that step. Only the DB cache (vec_sigs.txt) is needed.
     "data/cache/full_data/vec_sigs.txt",
-    "data/cache/full_clamav/g16_main.key",
-    "data/cache/full_clamav/g16_cp.key",
 ]
 REQUIRED_DATA = [
     "data/debug/full_debug/config/binexec_debug.dat",
@@ -115,14 +117,18 @@ def preflight():
 # ============================================================
 # Launch
 # ============================================================
-def launch_prover(dump_path: Path) -> subprocess.Popen:
-    """Run cargo test test_full_debug_main, tee stdout/stderr to
-    dump_path. Returns the Popen handle.
+COMPILE_SH = SRC_DIR / "compile2.sh"
 
-    We do NOT use compile2.sh — that wrapper is for the multi-rung
-    deadlock_detect.py flow. Here, plain cargo + fail-fast abort is
-    enough; if the prover panics check_logup, abort() fires within
-    milliseconds and cargo test exits non-zero.
+def launch_prover(dump_path: Path) -> subprocess.Popen:
+    """Run compile2.sh (which wraps compile.sh -> cargo test
+    test_full_debug_main with the preflight + dmesg watcher + signal
+    capture). Stdout/stderr is teed into dump_path. Returns the
+    Popen handle.
+
+    Mirrors deadlock_detect.py's launch pattern so behavior is
+    consistent across both watchers. compile.sh's active line must
+    point at `test_full_debug_main` (set on 2026-05-16; see
+    compile.sh comment).
     """
     env = os.environ.copy()
     env["ZKR_PROBE_77317"]      = "1"
@@ -131,8 +137,9 @@ def launch_prover(dump_path: Path) -> subprocess.Popen:
     # leave it in case a non-panic stall ever sneaks back.
     env["ZKR_ALLOW_PTRACE_ANY"] = "1"
     # Allow core dumps from the abort()-style fail-fast path. We can
-    # only ulimit -c the parent we exec; the cargo child inherits.
-    # If the user already has a higher limit set, this is a no-op.
+    # only ulimit -c the parent we exec; compile2.sh -> cargo
+    # children inherit. If the user already has a higher limit set,
+    # this is a no-op.
     try:
         import resource
         resource.setrlimit(resource.RLIMIT_CORE,
@@ -140,19 +147,19 @@ def launch_prover(dump_path: Path) -> subprocess.Popen:
                             resource.RLIM_INFINITY))
     except (ImportError, ValueError, OSError) as e:
         log("WARN", f"could not raise core dump limit: {e}")
-    cmd = [
-        "cargo", "test", "--lib", "--release", "--",
-        "test_full_debug_main",
-        "--show-output", "--nocapture",
-    ]
-    log("INFO", "launching prover",
+    if not COMPILE_SH.exists() or not os.access(COMPILE_SH, os.X_OK):
+        log("ERROR", f"compile2.sh missing or not executable: "
+                     f"{COMPILE_SH}")
+        sys.exit(1)
+    cmd = ["bash", str(COMPILE_SH)]
+    log("INFO", "launching prover via compile2.sh",
         cmd=" ".join(cmd), dump=str(dump_path))
     with open(dump_path, "wb") as f:
         proc = subprocess.Popen(
             cmd, cwd=str(SRC_DIR), env=env,
             stdout=f, stderr=subprocess.STDOUT,
             start_new_session=True)
-    log("INFO", f"prover pid={proc.pid}")
+    log("INFO", f"compile2.sh pid={proc.pid}")
     return proc
 
 def wait_for_exit(proc: subprocess.Popen) -> int:
