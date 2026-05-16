@@ -16,8 +16,13 @@ test function.
 
 Usage:
     cd zkregplus/src
-    python3 full_debug_watch.py              # foreground (default)
-    python3 full_debug_watch.py --daemon     # detach, log to file
+    python3 full_debug_watch.py              # foreground
+    python3 full_debug_watch.py --daemon     # detach, then logout
+    tail -f full_debug_watch_log.txt         # follow daemon output
+    cat .full_debug_watch.pid                # pid of the daemon
+    cat FULL_DEBUG_FINISH                    # appears on completion;
+                                             # contains tgz path
+    kill $(cat .full_debug_watch.pid)        # stop early
 
 Env passthrough (set in the parent shell or by this script):
     ZKR_PROBE_77317=1       enable the 77317.x probes (set by us)
@@ -52,11 +57,36 @@ PER_JOB_LOG_DIR = REPO_ROOT / "data/cache/logs"
 DAEMON_LOG_DEST = PER_JOB_LOG_DIR / "zkregplus.log"
 SENTINEL = REPO_ROOT / "data/cache/run_complete.sentinel"
 ANALYZE_LOG = SRC_DIR / "full_debug_watch_log.txt"
+PID_FILE    = SRC_DIR / ".full_debug_watch.pid"
+FINISH_FILE = SRC_DIR / "FULL_DEBUG_FINISH"
 
 # Hard cap so a runaway prover doesn't hold the bundler forever.
 # full_debug is single-job, 4 small files; even a clean success
 # should fit well under this. fail-fast abort fires in ms.
 MAX_RUNTIME_S = 4 * 3600  # 4 hours
+
+# ============================================================
+# Daemonize (double-fork) — lets you `python3 full_debug_watch.py
+# --daemon` and walk away. Mirrors deadlock_detect.py's pattern so
+# behavior is the same: stdio detached, output appended to
+# full_debug_watch_log.txt, pid in .full_debug_watch.pid, sentinel
+# FULL_DEBUG_FINISH written on completion (with the tgz path).
+# ============================================================
+def daemonize():
+    if os.fork() > 0:
+        sys.exit(0)
+    os.setsid()
+    os.umask(0)
+    if os.fork() > 0:
+        sys.exit(0)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    with open(os.devnull, "r") as f0:
+        os.dup2(f0.fileno(), 0)
+    log_fd = open(ANALYZE_LOG, "a")
+    os.dup2(log_fd.fileno(), 1)
+    os.dup2(log_fd.fileno(), 2)
+    PID_FILE.write_text(f"{os.getpid()}\n")
 
 # ============================================================
 # Logging
@@ -402,12 +432,38 @@ def write_summary(bundle_dir, outcome, rc, panic_site,
 def main():
     ap = argparse.ArgumentParser(
         description="full_debug watcher")
+    ap.add_argument("--daemon", action="store_true",
+                    help="detach (double-fork) so you can log out "
+                         "of the server; output goes to "
+                         "full_debug_watch_log.txt; pid in "
+                         ".full_debug_watch.pid; sentinel "
+                         "FULL_DEBUG_FINISH written on completion")
     ap.add_argument("--no-clear-sentinel", action="store_true",
                     help="don't remove run_complete.sentinel "
                          "before launch")
     args = ap.parse_args()
 
-    # Sentinel reset so SUCCESS detection isn't a stale signal.
+    # 1. Stale pid/finish cleanup (so we can re-run cleanly).
+    if PID_FILE.exists():
+        try:
+            old = int(PID_FILE.read_text().strip())
+            if os.path.exists(f"/proc/{old}"):
+                log("ERROR", f"another full_debug_watch is "
+                             f"already running pid={old}")
+                sys.exit(1)
+        except (ValueError, OSError):
+            pass
+        try:
+            PID_FILE.unlink()
+        except OSError:
+            pass
+    if FINISH_FILE.exists():
+        try:
+            FINISH_FILE.unlink()
+        except OSError:
+            pass
+
+    # 2. Sentinel reset so SUCCESS detection isn't a stale signal.
     if not args.no_clear_sentinel and SENTINEL.exists():
         try:
             SENTINEL.unlink()
@@ -415,18 +471,37 @@ def main():
         except OSError as e:
             log("WARN", f"could not clear sentinel: {e}")
 
+    # 3. Preflight (before daemonize so install hints land on
+    # the terminal, not a log file you forgot exists).
     preflight()
-    bundle_dir = setup_bundle_dir()
-    dump_path = bundle_dir / "dump.txt.live"
-    proc = launch_prover(dump_path)
-    rc = wait_for_exit(proc)
-    package(bundle_dir, rc, dump_path)
-    # The live dump was copied into the bundle; remove the work
-    # file so the next invocation starts clean.
+
+    # 4. Optionally detach.
+    if args.daemon:
+        print(f"detaching; tail with: tail -f {ANALYZE_LOG}")
+        print(f"pid will be in:       {PID_FILE}")
+        print(f"completion sentinel:  {FINISH_FILE}")
+        daemonize()
+    else:
+        PID_FILE.write_text(f"{os.getpid()}\n")
+
+    # 5. Run.
     try:
-        dump_path.unlink()
-    except OSError:
-        pass
+        bundle_dir = setup_bundle_dir()
+        dump_path = bundle_dir / "dump.txt.live"
+        proc = launch_prover(dump_path)
+        rc = wait_for_exit(proc)
+        tgz_path = package(bundle_dir, rc, dump_path)
+        try:
+            dump_path.unlink()
+        except OSError:
+            pass
+        FINISH_FILE.write_text(
+            f"{_ts()}\ntgz={tgz_path}\nrc={rc}\n")
+    finally:
+        try:
+            PID_FILE.unlink()
+        except OSError:
+            pass
 
 if __name__ == "__main__":
     main()
