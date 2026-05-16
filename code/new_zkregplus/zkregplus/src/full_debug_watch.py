@@ -227,7 +227,7 @@ def wait_for_exit(proc: subprocess.Popen) -> int:
 PANIC_RE      = re.compile(r"^FAIL-FAST: prover panic", re.M)
 PANIC_AT_RE   = re.compile(
     r"panicked at ([^\n]+):\s*\n([^\n]+)", re.M)
-PROBE_LINE_RE = re.compile(r"^DEBUG USE 7731[78]\.[\w.]+:?", re.M)
+PROBE_LINE_RE = re.compile(r"^DEBUG USE 7731[789]\.[\w.]+:?", re.M)
 
 def classify(rc: int, dump_path: Path) -> str:
     text = ""
@@ -333,6 +333,15 @@ def package(bundle_dir: Path, rc: int, dump_path: Path):
         except OSError:
             pass
 
+    # 6.5. sig_to_id.txt so the user can reverse-lookup probe IDs
+    sig_to_id_src = REPO_ROOT / "data/cache/full_data/sig_to_id.txt"
+    if sig_to_id_src.exists():
+        try:
+            shutil.copy(sig_to_id_src,
+                        bundle_dir / "sig_to_id.txt")
+        except OSError as e:
+            log("WARN", f"copy sig_to_id.txt failed: {e}")
+
     # 7. summary.txt — the headline you read first
     write_summary(bundle_dir, outcome, rc, panic_site,
                   first_mismatch)
@@ -416,6 +425,15 @@ def write_summary(bundle_dir, outcome, rc, panic_site,
         "                      coverage should come from SED/DFA).",
         "  77318.3.sed.a<j>.* / 77318.4.dfa.a<j>.* -> per-advice",
         "                      breakdown inside SED/DFA components.",
+        "  77319.1.sed[k] / dfa[k] / ised -> what discharge_prover",
+        "                      output for the file (ground truth).",
+        "                      Names + subsig_ids[0..16].",
+        "  77319.2.{sig,cs,igc} -> what SED::gen_nd_advice put INTO",
+        "                      SedAdvice (decoded (sig_id, subsig_id))",
+        "  77319.4 uncovered F=... sig_id=... subsig_id_0idx=...",
+        "                      -> per-mismatch decoded names at the",
+        "                      77317.6 site. Look these IDs up in",
+        "                      sig_to_id.txt (bundled).",
         "  77317.5 mismatch -> bug in stmt vector layout indices",
         "                      between StatementInst and stmt vec",
         "  77317.4/3 mismatch -> bug in to_vec_fp_var / from_vec",

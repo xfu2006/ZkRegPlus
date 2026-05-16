@@ -28361,6 +28361,10 @@ Goal 3. planning enron set
 	[b] nail down approximation 
 Goal 4. download spamassasin rule set
 	[a] flagged 2249 out of 517401
+Goal 5. narrowed down to check_logup call.
+	[a] add more probes and run
+	[b] add more probes to find out if it si the gen_advice problem
+		and why it is inconsistent with word info.
 
 
 -- TODO -- check is counting of Phase 1 step 3 correct?

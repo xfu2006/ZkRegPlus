@@ -2860,10 +2860,62 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 	assert!(vec_dfa_sigs_info.len()==vec_dfa_sigs.len());
 
 
-	let wi = WordInfo{ 
-		vec_sed_sigs, vec_dfa_sigs, vec_ised_sigs, 
+	let wi = WordInfo{
+		vec_sed_sigs, vec_dfa_sigs, vec_ised_sigs,
 		vec_sed_sigs_info, vec_ised_sigs_info, vec_dfa_sigs_info};
-	
+
+	// 2026-05-16: probe 77319.1 — dump the raw discharge-prover
+	// output for this file. This is the GROUND TRUTH from
+	// quick_discharge_file_by_crit_bag_pm_new, BEFORE any advice
+	// construction in the ZK side. If the offending subsigs are
+	// missing from wi.vec_sed_sigs_info[i].subsig_ids HERE, the
+	// bug is in discharge_prover (this function or its callees).
+	// Reverse sig_id -> sig_name via the sig_to_id map passed in.
+	if std::env::var("ZKR_PROBE_77317").is_ok() {
+		let id_to_name: std::collections::HashMap<usize, &String>
+			= sig_to_id.iter().map(|(n, id)| (*id, n)).collect();
+		println!(
+			"DEBUG USE 77319.1: discharge_prover OUT fname={} \
+			 vec_sed_sigs.len={} vec_dfa_sigs.len={} \
+			 vec_ised_sigs.len={}",
+			fname,
+			wi.vec_sed_sigs.len(),
+			wi.vec_dfa_sigs.len(),
+			wi.vec_ised_sigs.len());
+		let dump_sigs = |label: &str, ids: &Vec<usize>,
+			infos: &Vec<DischargeSigInfo>|
+		{
+			for k in 0..ids.len() {
+				let sid = ids[k];
+				let name = id_to_name.get(&sid)
+					.map(|s| s.as_str()).unwrap_or("?");
+				let n_sub = infos.get(k)
+					.map(|i| i.subsig_ids.len()).unwrap_or(0);
+				let subs: Vec<usize> = infos.get(k)
+					.map(|i| i.subsig_ids.iter().copied()
+						.take(16).collect())
+					.unwrap_or_default();
+				println!(
+					"DEBUG USE 77319.1.{}: sig_id={} name={} \
+					 n_subsigs={} subsig_ids[0..16]={:?}",
+					label, sid, name, n_sub, subs);
+			}
+		};
+		dump_sigs("sed", &wi.vec_sed_sigs,
+			&wi.vec_sed_sigs_info);
+		dump_sigs("dfa", &wi.vec_dfa_sigs,
+			&wi.vec_dfa_sigs_info);
+		// ised has no info vec (always empty)
+		for sid in &wi.vec_ised_sigs {
+			let name = id_to_name.get(sid)
+				.map(|s| s.as_str()).unwrap_or("?");
+			println!(
+				"DEBUG USE 77319.1.ised: sig_id={} name={} \
+				 (final-failed, no discharge evidence)",
+				sid, name);
+		}
+	}
+
 	(fdr, wi)
 }
 

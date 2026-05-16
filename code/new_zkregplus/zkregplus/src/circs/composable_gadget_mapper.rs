@@ -19,7 +19,7 @@ use folding_schemes::{
 	folding::foldpot::{
 		sigma_ir1cs::{LookupTableTwoCol,GadgetMapper,GadgetMapperDeepClone,SigmaGadget,StatementConfig,StatementInst,StatementExtraInfo,NdAdvice,Capacity,WordInfo} 	}
 };
-use ark_ff::{PrimeField};
+use ark_ff::{PrimeField, BigInteger};
 use std::{
 	marker::PhantomData,
 	
@@ -1031,7 +1031,8 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 		if std::env::var("ZKR_PROBE_77317").is_ok() {
 			use folding_schemes::folding::foldpot::utils::{
 				probe_77317_dump_f_vec,
-				probe_77317_multiset_diff};
+				probe_77317_multiset_diff,
+				probe_77319_decode_subsig};
 			emit_stdout(format!(
 				"DEBUG USE 77317.6: build_statement AFTER \
 				 gen_m_table failed.len={} discharged.len={} \
@@ -1046,6 +1047,50 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 				"mtbl_sigs", &mtbl_sigs);
 			probe_77317_multiset_diff("6",
 				&failed_sigs, &discharged_sigs, &mtbl_sigs);
+			// 77319.4 — decode each uncovered F value back to
+			// (sig_id, subsig_id_0_indexed) so the bundle names
+			// the missing entries without manual arithmetic.
+			use std::collections::HashMap;
+			let mut counts: HashMap<Vec<u8>, (F, i64)>
+				= HashMap::new();
+			for x in &failed_sigs {
+				let key = x.into_bigint().to_bytes_le();
+				counts.entry(key).or_insert((*x, 0)).1 += 1;
+			}
+			for i in 0..discharged_sigs.len() {
+				let w_bytes = mtbl_sigs[i].into_bigint()
+					.to_bytes_le();
+				let mut w_u64: u64 = 0;
+				for j in 0..w_bytes.len().min(8) {
+					w_u64 |= (w_bytes[j] as u64) << (8*j);
+				}
+				let key = discharged_sigs[i].into_bigint()
+					.to_bytes_le();
+				counts.entry(key)
+					.or_insert((discharged_sigs[i], 0)).1
+					-= w_u64 as i64;
+			}
+			let mut diffs: Vec<(F, i64)> = counts.into_iter()
+				.filter(|(_, (_, c))| *c != 0)
+				.map(|(_, (v, c))| (v, c))
+				.collect();
+			diffs.sort_by(|a, b| b.1.abs().cmp(&a.1.abs()));
+			for (val, cnt) in diffs.iter().take(20) {
+				let (sig_id, subsig_id)
+					= probe_77319_decode_subsig(val);
+				emit_stdout(format!(
+					"DEBUG USE 77319.4: uncovered F={} \
+					 sig_id={} subsig_id_0idx={} delta={} \
+					 (+ = uncovered in failed)",
+					{
+						let b = val.into_bigint().to_bytes_le();
+						let mut acc:u64=0;
+						for j in 0..b.len().min(8){
+							acc |= (b[j] as u64)<<(8*j);}
+						acc
+					},
+					sig_id, subsig_id, cnt));
+			}
 		}
 		let stmt = StatementInst{
 			pc_i: ea.pc_i,

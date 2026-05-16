@@ -1,7 +1,7 @@
 /* Created 01/07/2025
 Utility classes/functions
 */
-use utils::{consts::ADD_CHAIN_SIZE, logger::{log_perf, emit_stdout, LOG2 as LOGL2}, timer::Timer as GTimer};
+use utils::{consts::{ADD_CHAIN_SIZE, read_global_config}, logger::{log_perf, emit_stdout, LOG2 as LOGL2}, timer::Timer as GTimer};
 use rayon::iter::{ParallelIterator,IntoParallelIterator,IntoParallelRefIterator};
 use std::time::{Instant};
 use ark_ff::{PrimeField,BigInteger};
@@ -176,6 +176,30 @@ pub fn probe_77317_multiset_diff<F: PrimeField>(
 				tag, probe_77317_f_as_u64_lossy(val), cnt));
 		}
 	}
+}
+
+/// Decode the subsig F encoding used by CP/SED:
+///   bits         = read_global_config().range2_bit (typically 26)
+///   bit_part1    = if bits > 19 { 16 } else { bits*2/3 }
+///   bit_part2    = bits - bit_part1
+///   encoded      = (sig_id << bit_part2) + (subsig_id_0idx + 1)
+/// Inverse:
+///   sig_id       = encoded >> bit_part2
+///   subsig_id    = (encoded & mask) - 1     (0-indexed)
+/// See data_processor/src/hex_acdfa.rs::gen_subsig_id_worker.
+pub fn probe_77319_decode_subsig<F: PrimeField>(x: &F)
+    -> (u64, u64)
+{
+    let raw = probe_77317_f_as_u64_lossy(x);
+    let bits = read_global_config().range2_bit;
+    let bit_part1: usize = if bits > 19 { 16 } else { bits*2/3 };
+    let bit_part2: usize = bits.saturating_sub(bit_part1);
+    let mask: u64 = if bit_part2 >= 64 { u64::MAX }
+                    else { (1u64 << bit_part2) - 1 };
+    let sig_id = raw >> bit_part2;
+    let subsig_adj = raw & mask;
+    let subsig_id_0 = if subsig_adj > 0 { subsig_adj - 1 } else { 0 };
+    (sig_id, subsig_id_0)
 }
 
 /// Same as above but for FpVar inputs.

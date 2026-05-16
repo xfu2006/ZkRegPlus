@@ -861,8 +861,47 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 		let init_state_igc = F::from((pm_acdfa_igc.init_state+1) as u32);//adj+1
 		let init_loc_igc = F::one();
 		let inp_subsigs_igc: Vec<F>= SedAdvice
-			::collect_subsig_ids(&vec_sigs_to_discharge, 
+			::collect_subsig_ids(&vec_sigs_to_discharge,
 				&discharge_info, sig_to_id, true, &pm_acdfa_igc);
+		// 2026-05-16: probe 77319.2 — what SED's gen_nd_advice
+		// is putting INTO the SedAdvice for this segment. These
+		// inp_subsigs_cs / inp_subsigs_igc values are the F-encoded
+		// subsig IDs that gen_stmt_components()[7] will later emit
+		// as discharged_sigs. If a value is missing here that was
+		// present in the upstream WordInfo (77319.1 sed entries),
+		// the bug is in SedAdvice::collect_subsig_ids OR in this
+		// per-sig filter on b_ignore_case.
+		if std::env::var("ZKR_PROBE_77317").is_ok() {
+			use folding_schemes::folding::foldpot::utils::
+				probe_77319_decode_subsig;
+			emit_stdout(format!(
+				"DEBUG USE 77319.2: SED gen_nd_advice seg_id={} \
+				 vec_sigs_to_discharge.len={} \
+				 inp_subsigs_cs.len={} inp_subsigs_igc.len={}",
+				seg_id, vec_sigs_to_discharge.len(),
+				inp_subsigs_cs.len(), inp_subsigs_igc.len()));
+			for s in &vec_sigs_to_discharge {
+				let sid = sig_to_id.get(&s.name).copied()
+					.unwrap_or(0);
+				emit_stdout(format!(
+					"DEBUG USE 77319.2.sig: sig_id={} name={}",
+					sid, s.name));
+			}
+			for (k, f) in inp_subsigs_cs.iter().enumerate() {
+				let (sid, ssid) = probe_77319_decode_subsig(f);
+				emit_stdout(format!(
+					"DEBUG USE 77319.2.cs[{}]: sig_id={} \
+					 subsig_id_0idx={}",
+					k, sid, ssid));
+			}
+			for (k, f) in inp_subsigs_igc.iter().enumerate() {
+				let (sid, ssid) = probe_77319_decode_subsig(f);
+				emit_stdout(format!(
+					"DEBUG USE 77319.2.igc[{}]: sig_id={} \
+					 subsig_id_0idx={}",
+					k, sid, ssid));
+			}
+		}
 		let init_steps_queue_igc = DischargeAdvAdvice
 			::gen_empty_steps_queue_serialized(
 				true, //b_igc
