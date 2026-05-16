@@ -2232,6 +2232,46 @@ fn enable_ptrace_any() {
 	unsafe { prctl(PR_SET_PTRACER, u64::MAX, 0, 0, 0); }
 }
 
+/// 2026-05-16: install a process-wide panic hook so any panic in any
+/// rayon worker (e.g. check_logup assertion in utils.rs:619 / the
+/// `gen_step_cs step 10.5` sigs-discharge check in sigma_ir1cs.rs)
+/// prints file:line + message + thread name and then aborts the
+/// WHOLE prover process. Without this, rayon's `for_each` in
+/// foldpot_main buffers panics until all surviving job closures
+/// drain, which can hang the process for hours behind the stall
+/// watchdog. Default behavior is fail-fast; set ZKR_NO_FAIL_FAST=1
+/// to opt out and restore rayon's buffered-panic behavior.
+fn install_fail_fast_panic_hook() {
+	if std::env::var("ZKR_NO_FAIL_FAST").is_ok() {
+		return;
+	}
+	let default_hook = std::panic::take_hook();
+	std::panic::set_hook(Box::new(move |info| {
+		default_hook(info);
+		let loc = info.location()
+			.map(|l| format!("{}:{}:{}",
+				l.file(), l.line(), l.column()))
+			.unwrap_or_else(|| "<unknown>".to_string());
+		let msg = info.payload()
+			.downcast_ref::<&str>()
+			.map(|s| s.to_string())
+			.or_else(|| info.payload()
+				.downcast_ref::<String>().cloned())
+			.unwrap_or_else(||
+				"<non-string panic payload>".to_string());
+		let tname = std::thread::current().name()
+			.unwrap_or("<unnamed>").to_string();
+		eprintln!(
+			"FAIL-FAST: prover panic in thread '{}' \
+			 at {}: {}",
+			tname, loc, msg);
+		use std::io::Write;
+		let _ = std::io::stderr().flush();
+		let _ = std::io::stdout().flush();
+		std::process::abort();
+	}));
+}
+
 /// Inputs: lkup which encodes the regex automata,
 /// jobs: a collection of jobs where each job has:
 /// (1) vec_words: the vector of words to process,
@@ -2301,6 +2341,11 @@ where
 		// (e.g. deadlock_detect.py). No-op unless ZKR_ALLOW_PTRACE_ANY
 		// is set in env. See enable_ptrace_any() above.
 		enable_ptrace_any();
+
+		// 2026-05-16: abort the whole prover on any rayon-worker panic
+		// (e.g. check_logup sums mismatch). Default ON; opt out with
+		// env ZKR_NO_FAIL_FAST=1. See install_fail_fast_panic_hook().
+		install_fail_fast_panic_hook();
 
 		let mut gt_all = GTimer::new();
 		let mut gt_all_0 = GTimer::new();

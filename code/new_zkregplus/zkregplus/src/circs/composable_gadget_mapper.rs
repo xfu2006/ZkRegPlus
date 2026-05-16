@@ -982,6 +982,30 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 			"Increase failed sig buf. needs at least one 0 dummy entry");
 
 		let mtbl_sigs = gen_m_table(&failed_sigs, &discharged_sigs);
+		// 2026-05-16: probe 77317.6 — earliest construction site of
+		// (failed_sigs, discharged_sigs, mtbl_sigs) on the host
+		// side. If the multiset diff fails HERE, the bug is in
+		// build_statement_comp's per-component logic or in
+		// gen_m_table, not in any downstream slicing.
+		if std::env::var("ZKR_PROBE_77317").is_ok() {
+			use folding_schemes::folding::foldpot::utils::{
+				probe_77317_dump_f_vec,
+				probe_77317_multiset_diff};
+			emit_stdout(format!(
+				"DEBUG USE 77317.6: build_statement AFTER \
+				 gen_m_table failed.len={} discharged.len={} \
+				 mtbl.len={} b_dummy={}",
+				failed_sigs.len(), discharged_sigs.len(),
+				mtbl_sigs.len(), b_dummy));
+			probe_77317_dump_f_vec("6.failed",
+				"failed_sigs", &failed_sigs);
+			probe_77317_dump_f_vec("6.discharged",
+				"discharged_sigs", &discharged_sigs);
+			probe_77317_dump_f_vec("6.mtbl",
+				"mtbl_sigs", &mtbl_sigs);
+			probe_77317_multiset_diff("6",
+				&failed_sigs, &discharged_sigs, &mtbl_sigs);
+		}
 		let stmt = StatementInst{
 			pc_i: ea.pc_i,
 			pc_i1: ea.pc_i1, //will be reset later

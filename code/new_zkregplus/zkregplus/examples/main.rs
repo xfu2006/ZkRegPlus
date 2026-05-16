@@ -41,7 +41,7 @@ struct RunOption {
     func: fn(bool),
 }
 
-const OPTIONS: [RunOption; 5] = [
+const OPTIONS: [RunOption; 6] = [
     RunOption {
         name: "small_data",
         desc: "Each cat of signatures got one sample, one 2-Fr word.",
@@ -81,6 +81,14 @@ const OPTIONS: [RunOption; 5] = [
         time: "Est. Hours",
         jobs: 8,
         func: full_clamav_full::<Fr>,
+    },
+    RunOption {
+        name: "full_debug",
+        desc: "Repro check_logup panic on 4 failing samples (n_jobs=1). Needs #3.",
+        ram: "128 GB",
+        time: "Est. ~hr",
+        jobs: 1,
+        func: full_debug::<Fr>,
     },
 ];
 
@@ -365,6 +373,117 @@ fn full_clamav<F: PrimeField>(b_check_lkup: bool, b_light_test: bool,
         &format!("{}/main_dfa.dat", set1),
         &format!("{}/needs_ised.dat", set1),
         &format!("{}/needs_ised_igc.dat", set1),
+        max_word,
+        &init_cp_cap,
+        &init_sed_cap,
+        &init_dfa_cap,
+        &init_cp_cap_igc,
+        &init_sed_cap_igc,
+        &vec_decrease_level,
+        num_circs,
+        b_check_lkup,
+    );
+}
+
+fn full_debug<F: PrimeField>(b_check_lkup: bool) {
+    preflight_full_clamav_cache_or_exit();
+    // 2026-05-16: mirrors full_clamav_light's globals/capacities so
+    // the snark keys at data/cache/full_clamav and DB cache at
+    // data/cache/full_data are reused unmodified. Differences vs
+    // full_clamav_light: (a) single list file binexec_debug.dat
+    // (n_jobs = 1), (b) report path under data/debug/full_debug.
+    // .dat config files (main.dat / main_dfa.dat / needs_ised*.dat)
+    // are reused from data/debug/full_clamav/config/ — they are
+    // never opened when b_read_cache=true and the cache exists.
+    get_global_config().snark_cache_dir = "full_clamav".to_string();
+    get_global_config().b_write_snark_cache = false;
+    get_global_config().b_read_snark_cache = true;
+    get_global_config().range2_bit = 26;
+    get_global_config().b_light_test = true;
+    get_global_config().min_subsigs = 150;
+    get_global_config().min_basis_unique_states = 32;
+    get_global_config().min_avg_pats_per_subsig = 6;
+    get_global_config().n_par_snark = 2;
+    get_global_config().n_par_snark_cp = 2;
+    get_global_config().n_par_batch_claim = 8;
+
+    get_global_config().b_read_cache = true;
+    let b_write_cache = !read_global_config().b_read_cache;
+    let set1_cfg = "data/debug/full_clamav/config/";
+    let set1_scan = "data/debug/full_debug/config/";
+    let max_word = 512 * 4;
+    let sigs = 400;
+    let subsigs = 580;
+    let avg_pats_per_subsig = 8;
+    let avg_active_pats_per_subsig = 2;
+    let perc_comp_subsigs = 20;
+    let vec_decrease_level = vec![2, 1];
+    let num_circs = 3;
+    let basis_unique_states = 2000;
+    let basis_acc_states = 1260;
+    let basis_pats_in_trace = 1400;
+    let basis_acc_states_igc = basis_acc_states;
+    let basis_pats_in_trace_igc = basis_pats_in_trace;
+    let dfa_sigs = 6;
+    let dfa_subsigs = 6;
+    let perc_pats_expansion_rate = 104;
+    let perc_pats_expansion_rate_igc = 2;
+
+    let init_cp_cap = CpCapacity {
+        max_word_len: max_word,
+        basis_unique_states,
+        subsigs,
+        avg_pats_per_subsig,
+    };
+    let init_sed_cap = SedCapacity::new(
+        max_word,
+        read_global_config().range2_bit,
+        subsigs,
+        avg_pats_per_subsig,
+        avg_active_pats_per_subsig,
+        basis_pats_in_trace,
+        perc_pats_expansion_rate,
+        sigs,
+        perc_comp_subsigs,
+        basis_unique_states,
+        basis_acc_states,
+    );
+    let init_dfa_cap = DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
+    let init_cp_cap_igc = CpCapacity {
+        max_word_len: max_word,
+        basis_unique_states,
+        subsigs: subsigs / 2,
+        avg_pats_per_subsig,
+    };
+    let init_sed_cap_igc = SedCapacity::new(
+        max_word,
+        read_global_config().range2_bit,
+        subsigs,
+        avg_pats_per_subsig,
+        avg_active_pats_per_subsig,
+        basis_pats_in_trace_igc,
+        perc_pats_expansion_rate_igc,
+        sigs,
+        perc_comp_subsigs,
+        basis_unique_states,
+        basis_acc_states_igc,
+    );
+
+    // Single list file => n_jobs = 1, 4 words inside.
+    let scan_files: Vec<String> = vec![
+        format!("{}/binexec_debug.dat", set1_scan),
+    ];
+
+    zkp_driver_adv::<Bn254, PairingVar, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, S>(
+        0,
+        &format!("{}/main.dat", set1_cfg),
+        scan_files,
+        "data/debug/full_debug/reports/report.dat",
+        b_write_cache,
+        "full_data",
+        &format!("{}/main_dfa.dat", set1_cfg),
+        &format!("{}/needs_ised.dat", set1_cfg),
+        &format!("{}/needs_ised_igc.dat", set1_cfg),
         max_word,
         &init_cp_cap,
         &init_sed_cap,

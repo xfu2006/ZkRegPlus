@@ -1,0 +1,41 @@
+#HOW TO UPDATE
+#
+# SOURCE: https://svn.apache.org/repos/asf/spamassassin/site/updates/
+#
+# 'svn checkout' the repo, update this file, and commit it
+#
+# A svnpubsub update on spamassassin.apache.org will instantly pull
+# from SVN after the commit.
+#
+# A cron'd update on sa-vm.apache.org will also automatically pull
+# from SVN to /www/spamassassin.apache.org/updates which is also the
+# [updates] rsync module path the mirrors are syncing from.
+
+#CONTACT: Matthias Leisi
+http://sa-update.dnswl.org/ weight=3
+
+#CONTACT: Kevin A. McGrail
+https://www.sa-update.pccc.com/ weight=5
+
+#CONTACT: Rene Schwarz
+https://sa-update.space-pro.be/ weight=1
+
+#CONTACT: Dave Jones
+http://sa-update.ena.com/ weight=5
+
+#CONTACT: Dave Warren
+#https://sa-update.razx.cloud/ weight=5
+
+#CONTACT: Jens Schleusener
+# Removed per list reqest 27.7.2022
+#http://sa-update.fossies.org/ weight=1
+
+#CONTACT: tobisworld gmail
+#http://sa-update.verein-clean.net/ weight=10
+
+#CONTACT: Giovanni Bechis
+https://sa-update-asf.snb.it/ weight=5
+
+#CONTACT: Giovanni Bechis
+https://sa-update.spamassassin.org/ weight=10
+

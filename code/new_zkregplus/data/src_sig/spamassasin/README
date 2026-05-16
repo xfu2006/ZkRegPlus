@@ -1,0 +1,6 @@
+(1) Dataset retrieved using the following approach (05/16/2026):
+  sudo apt install spamassassin
+  cd new_zkregplus/data/
+  sa-update --nogpg --updatedir src_sig/spamassasin
+  ls data/src_sig/spamassasin/updates_spamassassin_org/
+

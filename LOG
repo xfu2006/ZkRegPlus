@@ -28350,6 +28350,18 @@ Goal 2. writing -> DONE
 Goal 3. planning of snort processing
 	[a] should consider some other sets.
 
+Saturday 05/16/2026
+Goal 1. writing. Section 2.4 -> done
+Goal 2. analyze data
+	[a] found the reason check_logup
+	[b] fix the code so that it forces process terminate -> DONE
+	[c] create a full test example
+Goal 3. planning enron set
+	[a] read exmaples SpamSim, TruffleHog, gitleaks
+	[b] nail down approximation 
+Goal 4. 
+
+
 -- TODO -- check is counting of Phase 1 step 3 correct?
 	couned roughly the same value for phase 1 step 1 and 2
 	at 4:50am (about 12 hours)

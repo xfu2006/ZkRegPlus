@@ -38,6 +38,162 @@ use ark_relations::r1cs::{Variable,LinearCombination};
 // determines if timer prints (but will not block recording)
 pub const LOG_LEVEL:usize = 2;
 pub const LOG3:usize = 0;
+
+// === 2026-05-16: DEBUG USE 77317.x probes ===========================
+// Gated on env ZKR_PROBE_77317. Inserted to diagnose the
+// check_logup assertion failure. See sigma_ir1cs.rs:~4070 (the
+// sigs-discharge call site). All probes are no-ops when the env
+// var is unset, so production runs are unaffected.
+
+#[inline]
+pub fn probe_77317_enabled() -> bool {
+	std::env::var("ZKR_PROBE_77317").is_ok()
+}
+
+/// 3-term Newton power-sum fingerprint of a multiset of F values.
+/// Two multisets agree on (s1, s2, s3) iff they almost certainly
+/// match (false-positive prob ~ 1/|F|^3 for random-looking inputs).
+pub fn probe_77317_power_sum<F: PrimeField>(xs: &[F]) -> (F, F, F) {
+	let mut s1 = F::zero();
+	let mut s2 = F::zero();
+	let mut s3 = F::zero();
+	for x in xs {
+		let v = *x;
+		s1 += v;
+		let v2 = v * v;
+		s2 += v2;
+		s3 += v2 * v;
+	}
+	(s1, s2, s3)
+}
+
+/// Same as above but each xs[i] is counted ws[i] times (weighted
+/// multiset). Used for (discharged_sigs, mtbl_sigs).
+pub fn probe_77317_weighted_power_sum<F: PrimeField>(
+	xs: &[F], ws: &[F]
+) -> (F, F, F) {
+	assert!(xs.len() == ws.len());
+	let mut s1 = F::zero();
+	let mut s2 = F::zero();
+	let mut s3 = F::zero();
+	for i in 0..xs.len() {
+		let v = xs[i];
+		let w = ws[i];
+		let v2 = v * v;
+		s1 += w * v;
+		s2 += w * v2;
+		s3 += w * v2 * v;
+	}
+	(s1, s2, s3)
+}
+
+/// Best-effort lossy projection of a field element to u64 — for
+/// printing sig_id-like small integer values. If the F doesn't fit
+/// in u64 the upper bytes are silently truncated; the printed value
+/// is still useful as a probe fingerprint.
+pub fn probe_77317_f_as_u64_lossy<F: PrimeField>(x: &F) -> u64 {
+	let bytes = x.into_bigint().to_bytes_le();
+	let mut acc: u64 = 0;
+	for j in 0..bytes.len().min(8) {
+		acc |= (bytes[j] as u64) << (8 * j);
+	}
+	acc
+}
+
+/// Compact summary of an F-vector for probe output: len, first 4
+/// values (as u64-lossy), last 4 values, and the 3-term power sum.
+pub fn probe_77317_dump_f_vec<F: PrimeField>(
+	tag: &str, label: &str, xs: &[F]
+) {
+	if !probe_77317_enabled() { return; }
+	let head: Vec<u64> = xs.iter().take(4)
+		.map(probe_77317_f_as_u64_lossy).collect();
+	let tail: Vec<u64> = xs.iter().rev().take(4)
+		.map(probe_77317_f_as_u64_lossy)
+		.collect::<Vec<u64>>()
+		.into_iter().rev().collect();
+	let (s1, s2, s3) = probe_77317_power_sum(xs);
+	emit_stdout(format!(
+		"DEBUG USE 77317.{}: label={} len={} head={:?} \
+		 tail={:?} pow=(0x{:x},0x{:x},0x{:x})",
+		tag, label, xs.len(), head, tail,
+		probe_77317_f_as_u64_lossy(&s1),
+		probe_77317_f_as_u64_lossy(&s2),
+		probe_77317_f_as_u64_lossy(&s3)));
+}
+
+/// Same as probe_77317_dump_f_vec but for FpVar (extracts .value()).
+pub fn probe_77317_dump_fpvar_vec<F: PrimeField>(
+	tag: &str, label: &str, xs: &[FpVar<F>]
+) {
+	if !probe_77317_enabled() { return; }
+	let vals: Vec<F> = xs.iter()
+		.map(|x| x.value().unwrap_or(F::zero())).collect();
+	probe_77317_dump_f_vec(tag, label, &vals);
+}
+
+/// Compute the multiset symmetric difference between failed_sigs and
+/// (discharged_sigs weighted by mtbl_sigs), and emit one log line
+/// per non-zero bucket (up to 20). Positive delta = element appears
+/// MORE in failed_sigs than is accounted for on the discharged side
+/// (a "uncovered" signature); negative delta = surplus on discharged
+/// side. If empty, emits MULTISET_OK.
+pub fn probe_77317_multiset_diff<F: PrimeField>(
+	tag: &str,
+	failed: &[F], discharged: &[F], mtbl: &[F],
+) {
+	if !probe_77317_enabled() { return; }
+	use std::collections::HashMap;
+	assert!(discharged.len() == mtbl.len());
+	let mut counts: HashMap<Vec<u8>, (F, i64)> = HashMap::new();
+	for x in failed {
+		let key = x.into_bigint().to_bytes_le();
+		let e = counts.entry(key).or_insert((*x, 0));
+		e.1 += 1;
+	}
+	for i in 0..discharged.len() {
+		let w = probe_77317_f_as_u64_lossy(&mtbl[i]) as i64;
+		let key = discharged[i].into_bigint().to_bytes_le();
+		let e = counts.entry(key).or_insert((discharged[i], 0));
+		e.1 -= w;
+	}
+	let mut diff: Vec<(F, i64)> = counts.into_iter()
+		.filter(|(_, (_, c))| *c != 0)
+		.map(|(_, (v, c))| (v, c))
+		.collect();
+	if diff.is_empty() {
+		emit_stdout(format!(
+			"DEBUG USE 77317.{}.MULTISET_OK", tag));
+	} else {
+		diff.sort_by(|a, b| b.1.abs().cmp(&a.1.abs()));
+		emit_stdout(format!(
+			"DEBUG USE 77317.{}.MULTISET_MISMATCH count={}",
+			tag, diff.len()));
+		for (val, cnt) in diff.iter().take(20) {
+			emit_stdout(format!(
+				"DEBUG USE 77317.{}.diff val_u64={} delta={} \
+				 (+ = uncovered in failed, - = surplus in dischrg)",
+				tag, probe_77317_f_as_u64_lossy(val), cnt));
+		}
+	}
+}
+
+/// Same as above but for FpVar inputs.
+pub fn probe_77317_multiset_diff_fpvar<F: PrimeField>(
+	tag: &str,
+	failed: &[FpVar<F>], discharged: &[FpVar<F>], mtbl: &[FpVar<F>],
+) {
+	if !probe_77317_enabled() { return; }
+	let f_vals: Vec<F> = failed.iter()
+		.map(|x| x.value().unwrap_or(F::zero())).collect();
+	let d_vals: Vec<F> = discharged.iter()
+		.map(|x| x.value().unwrap_or(F::zero())).collect();
+	let m_vals: Vec<F> = mtbl.iter()
+		.map(|x| x.value().unwrap_or(F::zero())).collect();
+	probe_77317_multiset_diff(tag, &f_vals, &d_vals, &m_vals);
+}
+// === end DEBUG USE 77317.x =========================================
+
 pub const LOG2:usize = 1;
 pub const LOG1:usize = 0;
 pub const B_DEBUG:bool = false; //category 1
@@ -610,11 +766,27 @@ pub fn is_logup_inverse_correct<F:PrimeField>(cs: ConstraintSystemRef<F>,
 		sum_right+= &(&v2[i] * &m_tbl[i]);
 		//COMMENT OUT LATER IF DOES NOT HELP
 		//if i%128==0{//this is to prevent the cfg(test) code calling value
-			//for chain too long, which overflows stack when it's doing 
+			//for chain too long, which overflows stack when it's doing
 			//recursion.
 			 //let value= sum_right.value();
 			 //assert!(value.is_ok());
 		//}
+	}
+	// 2026-05-16: probe 77317.1 — at the failing assert site.
+	if probe_77317_enabled() {
+		let s_l = sum_left.value().unwrap_or(F::zero());
+		let s_r = sum_right.value().unwrap_or(F::zero());
+		emit_stdout(format!(
+			"DEBUG USE 77317.1: ASSERT site is_logup_inverse \
+			 v1.len={} v2.len={} m_tbl.len={} \
+			 sum_left_u64={} sum_right_u64={} equal={}",
+			v1.len(), v2.len(), m_tbl.len(),
+			probe_77317_f_as_u64_lossy(&s_l),
+			probe_77317_f_as_u64_lossy(&s_r),
+			s_l == s_r));
+		probe_77317_dump_fpvar_vec("1.v1", "qry_inv", v1);
+		probe_77317_dump_fpvar_vec("1.v2", "lkup_inv", v2);
+		probe_77317_dump_fpvar_vec("1.m_tbl", "m_tbl", m_tbl);
 	}
 	assert!(sum_left.value()? == sum_right.value()?);
 	let res = sum_left.is_eq(&sum_right)?;
@@ -644,6 +816,27 @@ pub fn check_logup<F:PrimeField>(
 	let r_val = r.value().expect("error get val of r");
 	let qry_val = qry.iter().map(|x| x.value().unwrap()).collect::<Vec<F>>();
 	let lkup_val = lkup.iter().map(|x| x.value().unwrap()).collect::<Vec<F>>();
+	// 2026-05-16: probe 77317.2 — entry of check_logup.
+	if probe_77317_enabled() {
+		let mtbl_val: Vec<F> = m_tbl.iter()
+			.map(|x| x.value().unwrap_or(F::zero())).collect();
+		let sum_qry: F = qry_val.iter().copied()
+			.fold(F::zero(), |acc, x| acc + x);
+		let sum_lkup_w: F = lkup_val.iter().zip(mtbl_val.iter())
+			.map(|(x, w)| (*x) * w)
+			.fold(F::zero(), |acc, x| acc + x);
+		emit_stdout(format!(
+			"DEBUG USE 77317.2: check_logup ENTRY qry.len={} \
+			 lkup.len={} mtbl.len={} r_u64={} \
+			 sum_qry_raw_u64={} sum_lkup_weighted_u64={}",
+			qry.len(), lkup.len(), m_tbl.len(),
+			probe_77317_f_as_u64_lossy(&r_val),
+			probe_77317_f_as_u64_lossy(&sum_qry),
+			probe_77317_f_as_u64_lossy(&sum_lkup_w)));
+		// Raw multiset agreement check (no inverses involved).
+		probe_77317_multiset_diff("2.raw",
+			&qry_val, &lkup_val, &mtbl_val);
+	}
 	let qry_inv_val = qry_val.into_par_iter().map(|x| 
 		(r_val+x).inverse().expect("inv err")
 	).collect::<Vec<F>>();
