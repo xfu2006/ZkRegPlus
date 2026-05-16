@@ -28345,6 +28345,10 @@ Goal 1. analyze stall
 	[a] stalled again after 15 hours.
 	[b] improve using gdb dump stack
 	[c] test if the new gdb trick is working.
+	[d] server deplyment 3:35pm
+Goal 2. writing -> DONE
+Goal 3. planning of snort processing
+	[a] should consider some other sets.
 
 -- TODO -- check is counting of Phase 1 step 3 correct?
 	couned roughly the same value for phase 1 step 1 and 2
