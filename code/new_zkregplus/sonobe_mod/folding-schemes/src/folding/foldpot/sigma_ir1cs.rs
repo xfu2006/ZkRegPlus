@@ -110,18 +110,27 @@ pub struct WordInfo{
 
 	/// one to one corresponds to vec_dfa_sigs
 	pub vec_dfa_sigs_info: Vec<DischargeSigInfo>,
+
+	/// Raw file nibble count (length of `nibbles` passed to
+	/// discharge_prover). Mappers use this to compute the
+	/// starting offset `A = (62 - file_nibble_len % 62) % 62`
+	/// for the F-level pad (so within-F pad from pack_nibbles
+	/// and F-level pad from the mapper share one contiguous
+	/// slice of the canonical pad stream).
+	pub file_nibble_len: usize,
 }
 
 impl WordInfo{
-	pub fn dummy()->Self{ 
+	pub fn dummy()->Self{
 		Self{
-			vec_sed_sigs: vec![], 
-			vec_dfa_sigs: vec![], 
-			vec_ised_sigs: vec![], 
+			vec_sed_sigs: vec![],
+			vec_dfa_sigs: vec![],
+			vec_ised_sigs: vec![],
 			vec_sed_sigs_info: vec![],
 			vec_ised_sigs_info: vec![],
 			vec_dfa_sigs_info: vec![],
-		} 
+			file_nibble_len: 0,
+		}
 	}
 
 	pub fn is_success(&self)->bool{

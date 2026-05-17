@@ -12,7 +12,9 @@ following:
 */
 
 use folding_schemes::folding::foldpot::container_config::{ColEle, ContainerConfig};
-use utils::{logger::{log_perf, emit_stdout, LOG1 }, timer::Timer, consts::B_DEBUG};
+use utils::{logger::{log_perf, emit_stdout, LOG1 },
+	timer::Timer, consts::B_DEBUG,
+	data::{gen_pad_nibbles_fe, pack_nibbles}};
 use std::any::{Any};
 use folding_schemes::{
 	Error,
@@ -148,6 +150,9 @@ pub trait ComponentMapper<F:PrimeField + ColEle, LK: LookupTableTwoCol<F>>:
 #[derive(Debug)]
 pub struct CompositeAdvice{
 	pub vec_adv: Vec<Arc<dyn NdAdvice + Send + Sync>>,
+	/// Carried from WordInfo so build_statement / get_value can
+	/// reproduce the same F-level pad as gen_nd_advice did.
+	pub file_nibble_len: usize,
 }
 
 impl NdAdvice for CompositeAdvice{
@@ -506,12 +511,17 @@ pub struct CompositeGadgetMapper<F:PrimeField + ColEle, LK:LookupTableTwoCol<F>>
 
 		if comp.get_name().contains("Cp"){
 			// Case 1: cp_mapper (Component 0 or maybe 1)
-			let (_, cfg, stmt_map, _, _) = 
+			let (_, cfg, stmt_map, _, _) =
 				self.gen_statement_structure(lkup_share_size);
-			let mut rem_word = vec![F::zero(); 
-				self.max_word_len() - word.len()];
+			// F-level pad: same pseudo-random stream as
+			// gen_nd_advice (offset A derived from file_nibble_len
+			// stashed in CompositeAdvice).
+			let a = (62 - advices.file_nibble_len % 62) % 62;
+			let b = (self.max_word_len() - word.len()) * 62;
+			let pad_nibs = gen_pad_nibbles_fe::<F>(a, b);
+			let rem_word = pack_nibbles(&pad_nibs);
 			let mut word_seg = word.clone();
-			word_seg.append(&mut rem_word);
+			word_seg.extend(rem_word);
 			let actual_word_len = word.len();
 
 			let vecs = comp.build_statement_comp(
@@ -872,11 +882,19 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 	/// the full problem statement (including non-deterministic witness). 
 	/// NOTE that the real i/o has only two elements in z_i array.
 	fn build_statement(&self, word: &Vec<F>, _prev_stmt: &Option<StatementInst<F,LK>>, lkup: Arc<LK>, ea: &StatementExtraInfo<F>, r_advice: Arc<dyn NdAdvice + Send + Sync>, lkup_share_size: usize, b_dummy: bool, _job_id: usize) -> Result<StatementInst<F,LK>, Error>{
-		//1. expand word_seg to max capacity.
+		//1. expand word_seg to max capacity. F-level pad uses the
+		// canonical pad stream at offset A; advices.file_nibble_len
+		// carries the original file size so this stays in sync
+		// with gen_nd_advice and discharge_prover.
 		let b_debug = B_DEBUG;
-		let mut rem_word = vec![F::zero(); self.max_word_len() - word.len()];
+		let advices = r_advice.as_any().downcast_ref::<CompositeAdvice>()
+			.expect("downcast err!");
+		let a = (62 - advices.file_nibble_len % 62) % 62;
+		let b = (self.max_word_len() - word.len()) * 62;
+		let pad_nibs = gen_pad_nibbles_fe::<F>(a, b);
+		let rem_word = pack_nibbles(&pad_nibs);
 		let mut word_seg = word.clone();
-		word_seg.append(&mut rem_word); //always guarnatee max len
+		word_seg.extend(rem_word); //always guarnatee max len
 		let actual_word_len = word.len();
 
 		//2. collect inp/oup/data/subtbl_id/failed_sig/discharged_sig
@@ -890,9 +908,6 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 		let mut vec_st_inp = vec![]; //subtable_id inp part
 		let mut vec_st_oup = vec![]; //subtable_id oup part
 		let mut vec_st_data = vec![];
-
-		let advices = r_advice.as_any().downcast_ref::<CompositeAdvice>()
-			.expect("downcast err!");
 		let (_, cfg, stmt_map, _, _) = 
 			self.gen_statement_structure(lkup_share_size);
 		let mut stmt_map_id = 0;
@@ -1218,7 +1233,10 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 		if b_perf{ log_perf(self.job_id, LOG1, "Generate Advice", &mut t1); }
 	
 		if vec_errs.len()>0{ Err(Error::CapErr(vec_errs)) } else{
-			Ok(Arc::new(CompositeAdvice{vec_adv}))
+			Ok(Arc::new(CompositeAdvice{
+				vec_adv,
+				file_nibble_len: word_info.file_nibble_len,
+			}))
 		}
 	}
 }

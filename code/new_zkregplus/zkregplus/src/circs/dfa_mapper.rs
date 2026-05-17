@@ -19,7 +19,9 @@
 */
 
 use folding_schemes::folding::foldpot::container_config::ColEle;
-use utils::{logger::{log,log_perf, emit_stdout, LOG1, LOG7}, timer::Timer, consts::read_global_config};
+use utils::{logger::{log,log_perf, emit_stdout, LOG1, LOG7},
+	timer::Timer, consts::read_global_config,
+	data::{gen_pad_nibbles_fe, pack_nibbles}};
 use std::{
 	marker::PhantomData,
 	sync::{Arc, Mutex},
@@ -472,10 +474,15 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
 		prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>>, seg_id: usize, _job_id: usize)
 		->Result<Arc<dyn NdAdvice + Send + Sync>, Error>{
-		//1. expand word to full length
-		let mut rem_word = vec![F::zero(); self.max_word_len() - word.len()];
+		//1. expand word to full length. F-level pad uses the
+		// canonical pad stream from utils::data::gen_pad_nibbles
+		// starting at offset A within the file's pad region.
+		let a = (62 - word_info.file_nibble_len % 62) % 62;
+		let b = (self.max_word_len() - word.len()) * 62;
+		let pad_nibs = gen_pad_nibbles_fe::<F>(a, b);
+		let rem_word = pack_nibbles(&pad_nibs);
 		let mut word_seg = word.clone();
-		word_seg.append(&mut rem_word);
+		word_seg.extend(rem_word);
 
 		//2. collect the data for building advice.
 		let sig_to_id = &self.clamdb.sig_to_id;

@@ -43,7 +43,7 @@ use utils::{
 	consts::{read_global_config, B_DEBUG},
 	os::{read_lines},
 	timer::{Timer},
-	data::{u8_to_hex}
+	data::{u8_to_hex, gen_pad_nibbles}
 };
 use crate::{
 	strings::{find_all,extract_nums,validate_counter_constraint,validate_ra_regex,validate_ra_regex_relaxed,validate_pm_regex,is_match,find_only,count_occ,drop_last_dotstar,split,validate_expr},
@@ -2735,9 +2735,26 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 	}
 
 	//1. process by critical pattern
-	let pats_crit = dfa_crit.get_patterns(&dfa_crit.acc_path(&nibbles));
+	// 2026-05-17: CP_cs in the gadget scans the circuit's pad-filled
+	// word buffer (real nibbles + pseudo-random pad from
+	// utils::data::gen_pad_nibbles). Patterns with all-zero (or
+	// zero-suffix) nibble strings used to fire in the gadget's
+	// zero pad while discharge_prover (scanning raw file) missed
+	// them — causing check_logup MULTISET_MISMATCH. We now extend
+	// nibbles by max_pat_len bytes of the same pad stream so this
+	// side sees what CP_cs sees in the tail.
+	let max_pat_len = dfa_crit.patterns.iter().map(|p| p.len())
+		.max().unwrap_or(0)
+		.max(dfa_crit_igc.patterns.iter().map(|p| p.len())
+			.max().unwrap_or(0));
+	let mut padded_nibbles: Vec<u8> =
+		Vec::with_capacity(nibbles.len() + max_pat_len);
+	padded_nibbles.extend_from_slice(nibbles);
+	padded_nibbles.extend(gen_pad_nibbles(0, max_pat_len));
+	let pats_crit = dfa_crit.get_patterns(
+		&dfa_crit.acc_path(&padded_nibbles));
 	let pats_crit_igc = dfa_crit_igc.get_patterns(
-		&dfa_crit_igc.acc_path(&nibbles));
+		&dfa_crit_igc.acc_path(&padded_nibbles));
 	let mut set_sigs_crit = HashSet::<String>::new();
 
 	for pat in &pats_crit{
@@ -2838,6 +2855,45 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 				hcs.len(), hicg.len(),
 				hcs_head, hicg_head);
 		}
+	}
+	// 2026-05-17: probe 77320.5 — diagnostic for bag DFA. If the
+	// bag-side scan also suffers a pad-padding bug, we want
+	// evidence before extending the fix there. Compares the
+	// pattern set from dfa_bag.acc_path on raw vs pad-extended
+	// nibbles. Non-empty pad-only sets => bag DFA needs the same
+	// extension as dfa_crit.
+	if std::env::var("ZKR_PROBE_77317").is_ok() {
+		let max_bag_pat = dfa_bag.patterns.iter().map(|p| p.len())
+			.max().unwrap_or(0)
+			.max(dfa_bag_igc.patterns.iter().map(|p| p.len())
+				.max().unwrap_or(0));
+		let mut bag_padded: Vec<u8> =
+			Vec::with_capacity(nibbles.len() + max_bag_pat);
+		bag_padded.extend_from_slice(nibbles);
+		bag_padded.extend(gen_pad_nibbles(0, max_bag_pat));
+		let bag_raw_cs = dfa_bag.get_patterns(
+			&dfa_bag.acc_path(nibbles));
+		let bag_pad_cs = dfa_bag.get_patterns(
+			&dfa_bag.acc_path(&bag_padded));
+		let bag_raw_igc = dfa_bag_igc.get_patterns(
+			&dfa_bag_igc.acc_path(nibbles));
+		let bag_pad_igc = dfa_bag_igc.get_patterns(
+			&dfa_bag_igc.acc_path(&bag_padded));
+		let pad_only_cs: Vec<&String> = bag_pad_cs
+			.difference(&bag_raw_cs).collect();
+		let pad_only_igc: Vec<&String> = bag_pad_igc
+			.difference(&bag_raw_igc).collect();
+		let cs_head: Vec<&String> =
+			pad_only_cs.iter().copied().take(20).collect();
+		let igc_head: Vec<&String> =
+			pad_only_igc.iter().copied().take(20).collect();
+		println!(
+			"DEBUG USE 77320.5: fname={} max_bag_pat={} \
+			 bag.pad_only.cs.len={} bag.pad_only.igc.len={} \
+			 cs.first20={:?} igc.first20={:?}",
+			fname, max_bag_pat,
+			pad_only_cs.len(), pad_only_igc.len(),
+			cs_head, igc_head);
 	}
 	let set_sigs_bag = set_sigs_crit.clone(); //skipping bag so take all from cirt
 			//directly and pass it to pm (SED approach).
@@ -2990,7 +3046,8 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 
 	let wi = WordInfo{
 		vec_sed_sigs, vec_dfa_sigs, vec_ised_sigs,
-		vec_sed_sigs_info, vec_ised_sigs_info, vec_dfa_sigs_info};
+		vec_sed_sigs_info, vec_ised_sigs_info, vec_dfa_sigs_info,
+		file_nibble_len: nibbles.len()};
 
 	// 2026-05-16: probe 77319.1 — dump the raw discharge-prover
 	// output for this file. This is the GROUND TRUTH from
@@ -3226,7 +3283,8 @@ pub fn deprecated_quick_discharge_file_adv(
 	let vec_ised_sigs_info = vec![];
 
 	WordInfo{ vec_sed_sigs, vec_dfa_sigs, vec_ised_sigs, vec_sed_sigs_info,
-		vec_ised_sigs_info, vec_dfa_sigs_info}
+		vec_ised_sigs_info, vec_dfa_sigs_info,
+		file_nibble_len: nibbles.len()}
 }
 
 

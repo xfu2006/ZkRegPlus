@@ -11,7 +11,10 @@ use std::{sync::{Arc, Mutex, Condvar}, fmt::{Debug,Formatter}};
 */
 
 extern crate utils;
-use utils::{logger::{log, log_perf, rss_probe, emit_stdout, ERR, LOG1,LOG2}, timer::Timer as GTimer, consts::{read_global_config, get_global_config}};
+use utils::{logger::{log, log_perf, rss_probe, emit_stdout, ERR, LOG1,LOG2},
+	timer::Timer as GTimer,
+	consts::{read_global_config, get_global_config},
+	data::{gen_pad_nibbles_fe, pack_nibbles}};
 use std::{
     //process::{Stdio,Command},
     //fs::{read_to_string,OpenOptions,remove_file,File,metadata},
@@ -2541,10 +2544,14 @@ where
 			&mut gt_all
 	);
 
-	//1. Fix the circuit with dummy statements
-	// here we assume that each circuit can always handle
-	// words of zeros, and set its dummy_statement for preprocess()
-	// to build keys.
+	//1. Fix the circuit with dummy statements.
+	// Each circuit is preprocessed against a deterministic
+	// pseudo-random word (utils::data::gen_pad_nibbles_fe). An
+	// all-zero word would fire every zero-suffix critical pattern
+	// in dfa_crit at every position, inflating acc_states_ratio
+	// and breaking capacity calibration. The pad content is
+	// length-prefix consistent across runs so the keys built here
+	// stay stable.
 	let mut vec_circ = vec_circ.clone();
 	let n_circ = vec_circ.iter().map(|row| row.len()).sum::<usize>();
 	let mut id = 0;
@@ -2556,7 +2563,9 @@ where
 			let lk_share_size = circ.get_lkup_share_size();
 			let prev_stmt = None;
 			let wlen = lock_unwrap!(circ.get_mapper()).max_word_len();
-			let frag = vec![zero; wlen];
+			let pad_nibs = gen_pad_nibbles_fe::<C1::ScalarField>(
+				0, wlen * 62);
+			let frag = pack_nibbles(&pad_nibs);
 			let prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>> = None; //fine to set None
 			let r_advice= lock_unwrap!(circ.get_mapper())
 					.gen_nd_advice(&frag, &word_info, prev_adv, 0, 0); //use its own capacity
