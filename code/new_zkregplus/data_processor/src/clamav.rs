@@ -2694,9 +2694,49 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		hs.into_iter().map(|(_,v)| v.len()).sum::<usize>()
 	};
 
+	// 2026-05-16: probe 77320.3 — one-shot CP-pattern dump for the
+	// three known suspect sig_ids (34602/35386/35701). If their
+	// patterns are heavy in "00" nibbles, pack-padding becomes the
+	// likely culprit for the multiset divergence; otherwise less so.
+	if std::env::var("ZKR_PROBE_77317").is_ok() {
+		static DUMP_77320_3: std::sync::Once = std::sync::Once::new();
+		DUMP_77320_3.call_once(|| {
+			let id_to_name: HashMap<usize, &String> = sig_to_id
+				.iter().map(|(n, id)| (*id, n)).collect();
+			let suspects: [usize; 3] = [34602, 35386, 35701];
+			for sid in &suspects {
+				let name = id_to_name.get(sid)
+					.map(|s| s.as_str()).unwrap_or("?");
+				let pats_cs: Vec<&String> = map_crit_pat.iter()
+					.filter(|(_, sigs)| sigs.iter()
+						.any(|n| n == name))
+					.map(|(p, _)| p).collect();
+				let pats_igc: Vec<&String> = map_crit_pat_igc
+					.iter()
+					.filter(|(_, sigs)| sigs.iter()
+						.any(|n| n == name))
+					.map(|(p, _)| p).collect();
+				println!(
+					"DEBUG USE 77320.3: sig_id={} name={} \
+					 cp_cs.len={} cp_igc.len={}",
+					sid, name, pats_cs.len(), pats_igc.len());
+				for p in &pats_cs {
+					println!(
+						"DEBUG USE 77320.3.cp_cs: \
+						 sig_id={} pat=\"{}\"", sid, p);
+				}
+				for p in &pats_igc {
+					println!(
+						"DEBUG USE 77320.3.cp_igc: \
+						 sig_id={} pat=\"{}\"", sid, p);
+				}
+			}
+		});
+	}
+
 	//1. process by critical pattern
 	let pats_crit = dfa_crit.get_patterns(&dfa_crit.acc_path(&nibbles));
-	let pats_crit_igc = dfa_crit_igc.get_patterns( 
+	let pats_crit_igc = dfa_crit_igc.get_patterns(
 		&dfa_crit_igc.acc_path(&nibbles));
 	let mut set_sigs_crit = HashSet::<String>::new();
 
@@ -2708,8 +2748,96 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		let vec1 = map_crit_pat_igc.get(pat).unwrap();	
 		for x in vec1{ set_sigs_crit.insert(String::from(x)); }
 	}
-	for s in vec_sigs_no_crit_pat{ 
+	for s in vec_sigs_no_crit_pat{
 		set_sigs_crit.insert(s.as_ref().name.clone());
+	}
+	// 2026-05-16: probe 77320.2 — dump set_sigs_crit per file
+	// (discharge_prover's ground truth for "sigs needing handling").
+	// Compare against the union of per-segment 77320.1.sigs_to_merge
+	// in CP_cs. Symmetric difference pinpoints which sigs CP sees
+	// that discharge_prover doesn't (or vice versa).
+	if std::env::var("ZKR_PROBE_77317").is_ok() {
+		let from_cs: HashSet<String> = pats_crit.iter()
+			.filter_map(|p| map_crit_pat.get(p))
+			.flatten().cloned().collect();
+		let from_igc: HashSet<String> = pats_crit_igc.iter()
+			.filter_map(|p| map_crit_pat_igc.get(p))
+			.flatten().cloned().collect();
+		let from_no_crit_n = vec_sigs_no_crit_pat.len();
+		let mut crit_ids: Vec<usize> = set_sigs_crit.iter()
+			.filter_map(|n| sig_to_id.get(n)).copied().collect();
+		crit_ids.sort();
+		println!(
+			"DEBUG USE 77320.2: discharge_prover set_sigs_crit \
+			 fname={} nibbles.len={} set_sigs_crit.len={} \
+			 from_cs.len={} from_igc.len={} from_no_crit.len={}",
+			fname, nibbles.len(), crit_ids.len(),
+			from_cs.len(), from_igc.len(), from_no_crit_n);
+		println!(
+			"DEBUG USE 77320.2.ids fname={} ids={:?}",
+			fname, crit_ids);
+
+		// 2026-05-16: probe 77320.4 — for each suspect sig
+		// (34602/35386/35701), walk dfa_crit and dfa_crit_igc
+		// acc_paths over the FULL file nibbles and list the byte
+		// positions where any of that sig's CP final-states fire.
+		// 0 hits in both CS and IGC means discharge_prover's
+		// CP-scan didn't see this sig; if CP_cs nonetheless emits
+		// it in 77320.1, the divergence is in the scan/state path,
+		// not in set_sigs_crit's downstream filtering.
+		let id_to_name: HashMap<usize, &String> = sig_to_id
+			.iter().map(|(n, id)| (*id, n)).collect();
+		let suspects: [usize; 3] = [34602, 35386, 35701];
+		let walk = |path: &Vec<usize>, dfa: &HexACDFA,
+			map: &HashMap<String, Vec<String>>|
+			-> HashMap<usize, Vec<usize>>
+		{
+			let mut hits: HashMap<usize, Vec<usize>> = HashMap::new();
+			for (pos, &st) in path.iter().enumerate() {
+				if dfa.is_accept(st) {
+					let pats = dfa.final_to_patterns(st);
+					for pat in &pats {
+						if let Some(sigs) = map.get(pat) {
+							for s in sigs {
+								if let Some(sid) =
+									sig_to_id.get(s)
+								{
+									if suspects.contains(sid) {
+										hits.entry(*sid)
+										.or_default()
+										.push(pos);
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			hits
+		};
+		let path_cs = dfa_crit.acc_path(&nibbles);
+		let path_igc = dfa_crit_igc.acc_path(&nibbles);
+		let hits_cs = walk(&path_cs, dfa_crit, map_crit_pat);
+		let hits_igc = walk(&path_igc, dfa_crit_igc,
+			map_crit_pat_igc);
+		for sid in &suspects {
+			let name = id_to_name.get(sid)
+				.map(|s| s.as_str()).unwrap_or("?");
+			let empty = vec![];
+			let hcs = hits_cs.get(sid).unwrap_or(&empty);
+			let hicg = hits_igc.get(sid).unwrap_or(&empty);
+			let hcs_head: Vec<usize> = hcs.iter().copied()
+				.take(20).collect();
+			let hicg_head: Vec<usize> = hicg.iter().copied()
+				.take(20).collect();
+			println!(
+				"DEBUG USE 77320.4: fname={} sig_id={} name={} \
+				 cs.hits={} igc.hits={} cs.first20={:?} \
+				 igc.first20={:?}",
+				fname, sid, name,
+				hcs.len(), hicg.len(),
+				hcs_head, hicg_head);
+		}
 	}
 	let set_sigs_bag = set_sigs_crit.clone(); //skipping bag so take all from cirt
 			//directly and pass it to pm (SED approach).

@@ -571,10 +571,10 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 		});
 		let inp_buf = vec![ vec![inp_state], inp_sigs].concat();
 		let advice = CpAdvice::<F>::new(
-			&word_seg, 
-			word.len(), 
-			&self.capacity, 
-			&inp_buf, 
+			&word_seg,
+			word.len(),
+			&self.capacity,
+			&inp_buf,
 			acdfa,
 			map_crit,
 			sigs_to_id,
@@ -582,6 +582,113 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 			&vec_sig_id_no_crit_pat,
 			_job_id,
 		)?;
+
+		// 2026-05-16: probe 77320.1 — per-segment dump of what CP
+		// sees. Together with 77320.2 (discharge_prover set_sigs_crit
+		// per file) this isolates where CP and discharge_prover
+		// diverge: if added_this_seg includes 34602/35386/35701 in
+		// the last segment only, pack-padding zeros are the culprit;
+		// if at segment boundaries (inp_state != init), the prev_adv
+		// DFA-state carry-over diverges from acc_path's single pass.
+		if std::env::var("ZKR_PROBE_77317").is_ok() {
+			use folding_schemes::folding::foldpot::utils::
+				probe_77317_f_as_u64_lossy;
+			use std::collections::BTreeSet;
+			let inp_unique: BTreeSet<u64> = inp_buf[1..]
+				.iter().filter(|f| !f.is_zero())
+				.map(|f| probe_77317_f_as_u64_lossy(f))
+				.collect();
+			let oup_unique: BTreeSet<u64> = advice
+				.sigs_advice.oup.iter()
+				.filter(|f| !f.is_zero())
+				.map(|f| probe_77317_f_as_u64_lossy(f))
+				.collect();
+			let no_crit_set: BTreeSet<u64> = vec_sig_id_no_crit_pat
+				.iter().map(|x| *x as u64).collect();
+			let added_this_seg: Vec<u64> = oup_unique.iter()
+				.filter(|x| !inp_unique.contains(x))
+				.filter(|x| !no_crit_set.contains(x))
+				.copied().collect();
+			let last_state = advice.dfa_crit_advice.states.last()
+				.copied().unwrap_or(F::zero());
+			emit_stdout(format!(
+				"DEBUG USE 77320.1: CP b_igc={} seg_id={} \
+				 actual_size={} inp_state_u64={} \
+				 last_state_u64={} no_crit.len={} \
+				 inp.unique.len={} oup.unique.len={} \
+				 added_this_seg.len={}",
+				self.b_igc, _seg_id, word.len(),
+				probe_77317_f_as_u64_lossy(&inp_state),
+				probe_77317_f_as_u64_lossy(&last_state),
+				vec_sig_id_no_crit_pat.len(),
+				inp_unique.len(), oup_unique.len(),
+				added_this_seg.len()));
+			emit_stdout(format!(
+				"DEBUG USE 77320.1.added_this_seg b_igc={} \
+				 seg_id={} ids={:?}",
+				self.b_igc, _seg_id, added_this_seg));
+			let oup_list: Vec<u64> = oup_unique.iter().copied()
+				.collect();
+			emit_stdout(format!(
+				"DEBUG USE 77320.1.oup b_igc={} seg_id={} \
+				 ids={:?}",
+				self.b_igc, _seg_id, oup_list));
+
+			// Probe B: partition final-state hits into real vs pad
+			// region. real_nib = word.len() * LEGS;  unpacked_nib =
+			// states.len() - 1. Anything at position > real_nib is
+			// scanned over F::zero() padding inserted to fill the
+			// segment to max_word_len. If 34602/35386/35701 show up
+			// in pad_only_ids, pack-padding is the culprit.
+			use crate::gadgets::word_extract::LEGS;
+			let states = &advice.dfa_crit_advice.states;
+			let real_nib = word.len() * LEGS;
+			let unpacked_nib = states.len().saturating_sub(1);
+			let pad_nib = unpacked_nib.saturating_sub(real_nib);
+			let mut hits_real = 0usize;
+			let mut hits_pad = 0usize;
+			let mut sigs_real = BTreeSet::<u64>::new();
+			let mut sigs_pad = BTreeSet::<u64>::new();
+			for i in 0..states.len() {
+				let st = field_to_usize(&states[i]);
+				if st == 0 { continue; }
+				let raw_st = st - 1;
+				if !acdfa.is_final(raw_st) { continue; }
+				let in_real = i <= real_nib;
+				if in_real { hits_real += 1; }
+				else { hits_pad += 1; }
+				let pats = acdfa.final_to_patterns(raw_st);
+				for pat in &pats {
+					if let Some(sigs) = map_crit.get(pat) {
+						for s in sigs {
+							if let Some(sid) =
+								sigs_to_id.get(s)
+							{
+								let v = *sid as u64;
+								if in_real {
+									sigs_real.insert(v);
+								} else {
+									sigs_pad.insert(v);
+								}
+							}
+						}
+					}
+				}
+			}
+			let pad_only: Vec<u64> = sigs_pad.iter()
+				.filter(|x| !sigs_real.contains(x))
+				.copied().collect();
+			emit_stdout(format!(
+				"DEBUG USE 77320.1.pad b_igc={} seg_id={} \
+				 real_nib={} pad_nib={} hits_real={} \
+				 hits_pad={} pad_only_sigs.len={}",
+				self.b_igc, _seg_id, real_nib, pad_nib,
+				hits_real, hits_pad, pad_only.len()));
+			emit_stdout(format!(
+				"DEBUG USE 77320.1.pad_only_ids b_igc={} \
+				 seg_id={} ids={:?}",
+				self.b_igc, _seg_id, pad_only));
+		}
 
 		Ok( Arc::new(advice) )
 	}

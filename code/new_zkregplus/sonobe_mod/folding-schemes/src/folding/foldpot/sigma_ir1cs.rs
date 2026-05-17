@@ -4183,7 +4183,8 @@ where 	C: CurveGroup<ScalarField=F>,
 			&si.mtbl_sigs,
 			&rc2,
 		)?;
-		let b_correct = not_final_step.or(&b_sigs)?; //require b_sigs true at
+		let b_correct = not_final_step.or(&b_sigs)?; 
+			//require b_sigs true at
 			//at last step
 
 		if B_DEBUG3{
@@ -4205,10 +4206,8 @@ where 	C: CurveGroup<ScalarField=F>,
 		}
 
 		b_correct.enforce_equal(&Boolean::TRUE)?;
-		if B_DEBUG {
-			if b_correct.value().is_ok(){
-				assert!(b_correct.value()?, "failed b_correct");
-			}
+		if b_correct.value().is_ok(){
+			assert!(b_correct.value()?, "failed b_correct");
 		}
 
 		if B_DEBUG2{

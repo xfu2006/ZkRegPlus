@@ -812,7 +812,6 @@ pub fn is_logup_inverse_correct<F:PrimeField>(cs: ConstraintSystemRef<F>,
 		probe_77317_dump_fpvar_vec("1.v2", "lkup_inv", v2);
 		probe_77317_dump_fpvar_vec("1.m_tbl", "m_tbl", m_tbl);
 	}
-	assert!(sum_left.value()? == sum_right.value()?);
 	let res = sum_left.is_eq(&sum_right)?;
 
 	Ok( res )

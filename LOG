@@ -28365,6 +28365,9 @@ Goal 5. narrowed down to check_logup call.
 	[a] add more probes and run
 	[b] add more probes to find out if it si the gen_advice problem
 		and why it is inconsistent with word info.
+	[c] more instrumented
+		6:20pm start => 1 hr gets the error.
+		manually fixed one bug.
 
 
 -- TODO -- check is counting of Phase 1 step 3 correct?
