@@ -10,6 +10,7 @@
 # needed). Swap back to test_zkreg_main for deadlock_detect.py or
 # other flows.
 RUST_BACKTRACE=1 cargo test --lib --release -- test_full_debug_main --show-output --nocapture
+
 #RUST_BACKTRACE=1 cargo test --lib --release -- test_zkreg_main --show-output --nocapture
 #RUST_BACKTRACE=1 cargo test --lib -- test_zkreg_main --show-output --nocapture
 #RUST_BACKTRACE=1 cargo test --lib -- test_zkreg_main --show-output --nocapture
