@@ -28369,6 +28369,12 @@ Goal 5. narrowed down to check_logup call.
 		6:20pm start => 1 hr gets the error.
 		manually fixed one bug.
 
+Sunday 05/17/2026
+Goal 1. debug
+	[a] deploy the fixed version on check_logup
+		-> run out of space
+	[b] restarted 8:30am 
+
 
 -- TODO -- check is counting of Phase 1 step 3 correct?
 	couned roughly the same value for phase 1 step 1 and 2
