@@ -170,16 +170,21 @@ pub fn gen_pad_bytes(start: usize, len: usize) -> Vec<u8> {
 
 /// read nibbles in the form of chunked nibbles (each nibble is 4-bit
 /// assuming F is at least 248 bit, we encode 62 units per field
-/// elements, rounding pseudo-random pad nibbles are appended at end
+/// elements, rounding 0-bits are padded at the end.
+///
+/// NOTE 2026-05-17: kept at zero pad. WordExtractGadget's in-circuit
+/// constraint hard-forces extracted_word[i] = 0 for i >= actual_size,
+/// so any non-zero pad in word_seg would fail R1CS. discharge_prover
+/// matches this view by extending its scan with zeros.
 pub fn pack_nibbles<F:PrimeField>(nibbles: &Vec<F>) -> Vec<F>{
-	//1. expand vres and pad pseudo-random nibbles (offset 0)
+	//1. expand vres and pad zeros
 	let mut vres = nibbles.clone();
 	let unit = 62;
 	let chunks = if vres.len()%unit==0 {vres.len()/unit}
 		else {vres.len()/unit+1};
 	let vnew_len = chunks * unit;
 	let more_len = vnew_len - vres.len();
-	let mut vec_more = gen_pad_nibbles_fe::<F>(0, more_len);
+	let mut vec_more = vec![F::zero(); more_len];
 	vres.append(&mut vec_more);
 	assert!(vres.len()==vnew_len);
 
@@ -270,10 +275,10 @@ pub fn rand_fe_by_bits<R: Rng + ?Sized, F: PrimeField>(bits: usize, rng: &mut R)
 
 #[cfg(test)]
 pub mod tests_data_utils{
+	use ark_std::Zero;
 	use ark_bn254::{Fr};
 	use crate::data::{rand_fe_by_bits, nibbles_to_one_packed,
-		one_packed_to_nibbles, pack_nibbles, packed_to_nibbles,
-		gen_pad_nibbles_fe};
+		one_packed_to_nibbles, pack_nibbles, packed_to_nibbles};
 
 	#[test]
 	pub fn test_one_pack(){
@@ -297,10 +302,7 @@ pub mod tests_data_utils{
 		assert!(packed.len()==3);
 		let nibbles2 = packed_to_nibbles(&packed);
 		for i in 0..n{ assert!(nibbles[i] == nibbles2[i]);}
-		let pad_expected = gen_pad_nibbles_fe::<Fr>(0, n2 - n);
-		for i in n..n2 {
-			assert!(nibbles2[i] == pad_expected[i - n]);
-		}
+		for i in n..n2 { assert!(nibbles2[i].is_zero()); }
 	}
 
 }

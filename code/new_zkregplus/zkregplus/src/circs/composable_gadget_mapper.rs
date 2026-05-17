@@ -12,9 +12,7 @@ following:
 */
 
 use folding_schemes::folding::foldpot::container_config::{ColEle, ContainerConfig};
-use utils::{logger::{log_perf, emit_stdout, LOG1 },
-	timer::Timer, consts::B_DEBUG,
-	data::{gen_pad_nibbles_fe, pack_nibbles}};
+use utils::{logger::{log_perf, emit_stdout, LOG1 }, timer::Timer, consts::B_DEBUG};
 use std::any::{Any};
 use folding_schemes::{
 	Error,
@@ -513,15 +511,10 @@ pub struct CompositeGadgetMapper<F:PrimeField + ColEle, LK:LookupTableTwoCol<F>>
 			// Case 1: cp_mapper (Component 0 or maybe 1)
 			let (_, cfg, stmt_map, _, _) =
 				self.gen_statement_structure(lkup_share_size);
-			// F-level pad: same pseudo-random stream as
-			// gen_nd_advice (offset A derived from file_nibble_len
-			// stashed in CompositeAdvice).
-			let a = (62 - advices.file_nibble_len % 62) % 62;
-			let b = (self.max_word_len() - word.len()) * 62;
-			let pad_nibs = gen_pad_nibbles_fe::<F>(a, b);
-			let rem_word = pack_nibbles(&pad_nibs);
+			let mut rem_word = vec![F::zero();
+				self.max_word_len() - word.len()];
 			let mut word_seg = word.clone();
-			word_seg.extend(rem_word);
+			word_seg.append(&mut rem_word);
 			let actual_word_len = word.len();
 
 			let vecs = comp.build_statement_comp(
@@ -882,19 +875,13 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 	/// the full problem statement (including non-deterministic witness). 
 	/// NOTE that the real i/o has only two elements in z_i array.
 	fn build_statement(&self, word: &Vec<F>, _prev_stmt: &Option<StatementInst<F,LK>>, lkup: Arc<LK>, ea: &StatementExtraInfo<F>, r_advice: Arc<dyn NdAdvice + Send + Sync>, lkup_share_size: usize, b_dummy: bool, _job_id: usize) -> Result<StatementInst<F,LK>, Error>{
-		//1. expand word_seg to max capacity. F-level pad uses the
-		// canonical pad stream at offset A; advices.file_nibble_len
-		// carries the original file size so this stays in sync
-		// with gen_nd_advice and discharge_prover.
+		//1. expand word_seg to max capacity. Pad MUST be zero F's:
+		// WordExtractGadget hard-constrains extracted pad nibbles
+		// to zero in R1CS.
 		let b_debug = B_DEBUG;
-		let advices = r_advice.as_any().downcast_ref::<CompositeAdvice>()
-			.expect("downcast err!");
-		let a = (62 - advices.file_nibble_len % 62) % 62;
-		let b = (self.max_word_len() - word.len()) * 62;
-		let pad_nibs = gen_pad_nibbles_fe::<F>(a, b);
-		let rem_word = pack_nibbles(&pad_nibs);
+		let mut rem_word = vec![F::zero(); self.max_word_len() - word.len()];
 		let mut word_seg = word.clone();
-		word_seg.extend(rem_word); //always guarnatee max len
+		word_seg.append(&mut rem_word); //always guarnatee max len
 		let actual_word_len = word.len();
 
 		//2. collect inp/oup/data/subtbl_id/failed_sig/discharged_sig
@@ -908,6 +895,9 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 		let mut vec_st_inp = vec![]; //subtable_id inp part
 		let mut vec_st_oup = vec![]; //subtable_id oup part
 		let mut vec_st_data = vec![];
+
+		let advices = r_advice.as_any().downcast_ref::<CompositeAdvice>()
+			.expect("downcast err!");
 		let (_, cfg, stmt_map, _, _) = 
 			self.gen_statement_structure(lkup_share_size);
 		let mut stmt_map_id = 0;
