@@ -767,68 +767,115 @@ pub mod tests_zkp_driver{
 		);
 	}
 
-	/// small_debug: clone of small_data() with max_word=2 to exercise
-	/// BOTH pad levels — sub-F pad (inside pack_nibbles) and F-level
-	/// pad (added in foldpot_main). Uses its own data folder
-	/// data/debug/small_debug_set/config_dfa/ with a 70-byte test
-	/// binary so the file's nibble count produces an odd F-element
-	/// count (3 F-elements), forcing F-level pad of 1 F-element.
+	/// small_debug (Plan D): single-job local reproducer for the
+	/// compute_sig_adv.rs:1269 panic. Uses the CACHED full_clamav DFA
+	/// (data/cache/full_data/, ~4.1GB) so the AC-DFA over-approximation
+	/// is identical to the server's; scans ONE file (merged_217); sets
+	/// b_folding_only=true so the heavy SNARK preprocess is skipped
+	/// (bug fires during gen_nd_advice / pass_all anyway). Capacities
+	/// mirror full_debug — already validated. Prerequisite: a prior
+	/// full_clamav run must have populated data/cache/full_data/.
 	#[allow(dead_code)]
 	fn small_debug<F:PrimeField>(b_check_lkup: bool){
-		get_global_config().snark_cache_dir = "small_debug".to_string();
-		get_global_config().b_read_snark_cache = false;
+		get_global_config().snark_cache_dir = "full_clamav".to_string();
 		get_global_config().b_write_snark_cache = false;
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_folding_only = true;
+		get_global_config().range2_bit = 26;
 		get_global_config().b_light_test = true;
-		get_global_config().range2_bit = 8;
-		get_global_config().b_read_cache = false;
-		get_global_config().perc_lkup_share = if !b_check_lkup {1}
-			else {8320};
+		get_global_config().min_subsigs = 368;
+		get_global_config().min_basis_unique_states = 1054;
+		get_global_config().min_basis_acc_states = 268;
+		get_global_config().min_basis_pats_in_trace = 295;
+		get_global_config().min_avg_pats_per_subsig = 8;
+		get_global_config().min_dfa_sigs = 3;
+		get_global_config().min_dfa_subsigs = 3;
+		get_global_config().n_par_snark = 2;
+		get_global_config().n_par_snark_cp = 2;
+		get_global_config().n_par_batch_claim = 8;
+		get_global_config().perc_lkup_share = 143;
+
+		get_global_config().b_read_cache = true;
 		let b_write_cache = !read_global_config().b_read_cache;
-		let set1 = "data/debug/small_debug_set/config_dfa";
-		let max_word = 2; //exercises F-level pad
-		let sigs = 2;
-		let subsigs = 4;
-		let avg_pats_per_subsig = 3;
+		let set1_cfg  = "data/debug/full_clamav/config/";
+		// All 4 files — matches server's binexec_debug.dat exactly.
+		let set1_scan = "data/debug/full_debug/config";
+		let max_word = 512 * 8;
+		let sigs = 400;
+		let subsigs = 580;
+		let avg_pats_per_subsig = 8;
 		let avg_active_pats_per_subsig = 2;
-		let perc_comp_subsigs = 26;
-		let basis_unique_states = 23*100;
-		let basis_acc_states = 646;
-		let basis_pats_in_trace = 1291;
-		let perc_pats_expansion_rate = 171;
+		let perc_comp_subsigs = 20;
+		let vec_decrease_level = vec![2];
+		let num_circs = 2;
+		let basis_unique_states = 1300;
+		let basis_acc_states = 750;
+		let basis_pats_in_trace = 820;
+		let basis_acc_states_igc = basis_acc_states;
+		let basis_pats_in_trace_igc = basis_pats_in_trace;
+		let dfa_sigs = 8;
+		let dfa_subsigs = 8;
+		let perc_pats_expansion_rate = 104;
+		let perc_pats_expansion_rate_igc = 2;
 
-		let vec_decrease_level = vec![];
-		let num_circs = 1;
-
-		let init_cp_cap= CpCapacity{
+		let init_cp_cap = CpCapacity{
 			max_word_len: max_word,
 			basis_unique_states,
 			subsigs,
 			avg_pats_per_subsig,
 		};
-		let init_sed_cap= SedCapacity::new(
+		let init_sed_cap = SedCapacity::new(
 			max_word, read_global_config().range2_bit, subsigs,
-			avg_pats_per_subsig, avg_active_pats_per_subsig,
+			avg_pats_per_subsig,
+			avg_active_pats_per_subsig,
 			basis_pats_in_trace,
 			perc_pats_expansion_rate,
-			sigs, perc_comp_subsigs,
-			basis_unique_states, basis_acc_states
+			sigs,
+			perc_comp_subsigs,
+			basis_unique_states,
+			basis_acc_states,
 		);
-		let init_dfa_cap= DfaCapacity::new(max_word, sigs, subsigs);
+		let init_dfa_cap = DfaCapacity::new(
+			max_word, dfa_sigs, dfa_subsigs);
+		let init_cp_cap_igc = CpCapacity{
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs: subsigs,
+			avg_pats_per_subsig,
+		};
+		let init_sed_cap_igc = SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig,
+			avg_active_pats_per_subsig,
+			basis_pats_in_trace_igc,
+			perc_pats_expansion_rate_igc,
+			sigs,
+			perc_comp_subsigs,
+			basis_unique_states,
+			basis_acc_states_igc,
+		);
 
-		zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+		let scan_files: Vec<String> = vec![
+			format!("{}/binexec_debug.dat", set1_scan),
+		];
+
+		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,
+			CS2,CS1E,S>(
 			0,
-			&format!("{}/sigs.dat",set1), //src sig
-			&format!("{}/binexec.dat",set1), //list of files
-			"data/small_data_set/reports/report.dat", //report
+			&format!("{}/main.dat", set1_cfg),
+			scan_files,
+			"data/debug/full_debug/reports/report.dat",
 			b_write_cache,
-			"small_debug", //cache name
-			&format!("{}/dfa.dat", set1),
-			&format!("{}/ised.dat", set1),
-			&format!("{}/ised_igc.dat",set1),
+			"full_data",
+			&format!("{}/main_dfa.dat", set1_cfg),
+			&format!("{}/needs_ised.dat", set1_cfg),
+			&format!("{}/needs_ised_igc.dat", set1_cfg),
 			max_word,
 			&init_cp_cap,
 			&init_sed_cap,
 			&init_dfa_cap,
+			&init_cp_cap_igc,
+			&init_sed_cap_igc,
 			&vec_decrease_level,
 			num_circs,
 			b_check_lkup
@@ -2096,13 +2143,15 @@ pub mod tests_zkp_driver{
 		let _ = std::fs::write(&sentinel, "ok\n");
 	}
 
-	/// 2026-05-18: dedicated test entry for the pad-invariant
-	/// rework. small_debug uses max_word=2 with a 70-byte test
-	/// binary (3 F-elements) so both sub-F pad and F-level pad
-	/// fire — covering paths small_data (max_word=1) cannot reach.
+	/// 2026-05-18 (Plan D): test entry for the compute_sig_adv:1269
+	/// repro via cached full_clamav DFA + single-file scan. Passes
+	/// b_check_lkup=false (matching test_full_debug_main) so the
+	/// pre-check_logup lk_share*chunks>=lkup_len guard doesn't fire
+	/// — the panic we're chasing is host-side in gen_nd_advice,
+	/// well before check_logup gets to run.
 	#[test]
 	pub fn test_small_debug_main(){
-		let b_check_lkup = true;
+		let b_check_lkup = false;
 		small_debug::<Fr>(b_check_lkup);
 	}
 

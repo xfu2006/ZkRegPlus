@@ -28387,6 +28387,7 @@ Goal 1. debug the padding issue
 	[b] done with local testing
 	[c] server started 9:15am => wrong run
 		10:15am =>  11:15am (still fails now a new problem)
+	[d] make a small local model
 Goal 2. writing 3.1
 	[a] read Reef and related papers
 	[b] definition 1. => DONE

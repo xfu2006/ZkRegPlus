@@ -1063,11 +1063,38 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 			"vec_sid_scc_res", IDX_SI_DATA)); //const zero
 
 		//5.3 add the final result
-		res.lock().unwrap().add_col(Col::new(vec_subsig_final_res.clone(), 
+		res.lock().unwrap().add_col(Col::new(vec_subsig_final_res.clone(),
 			"vec_subsig_final_res", IDX_DATA));
-		res.lock().unwrap().add_col(Col::new_const(vec_sid_subsig_final_res, 
+		res.lock().unwrap().add_col(Col::new_const(vec_sid_subsig_final_res,
 			"vec_sid_subsig_final_res", IDX_SI_DATA)); //zero
 
+		// DEBUG USE 67120.1: dump every non-False (sig_id, subsig_idx,
+		// raw_res, final TriVal) coming out of synthesis_combo. Pairs
+		// with the assertion at compute_sig_adv.rs:1269 — anything
+		// printed here that discharge_prover later asks to be False
+		// is the source of the panic. Gated on ZKR_PROBE_77317 to
+		// match the 77317.x probe family (set by full_debug_watch.py).
+		if std::env::var("ZKR_PROBE_77317").is_ok() {
+			let bits = read_global_config().range2_bit;
+			let bit_part1 = bits*2/3;
+			let bit_part1 = if bits>19 {16} else {bit_part1};
+			let bit_part2 = bits - bit_part1;
+			let mask2: u64 = (1u64 << bit_part2) - 1;
+			let f_false = F::from(TriVal::False as u8);
+			for i in 0..inp_subsigs.len() {
+				let sid = inp_subsigs[i];
+				if sid.is_zero() { continue; }
+				let final_r = vec_subsig_final_res[i];
+				if final_r == f_false { continue; }
+				let raw_r = gen_regex_res[i];
+				let u = field_to_usize(&sid) as u64;
+				let sig_id = u >> bit_part2;
+				let subsig_idx = u & mask2;
+				println!("DEBUG USE 67120.1: sid={} sig_id={} \
+					subsig_idx_1based={} raw_res={} final={}",
+					u, sig_id, subsig_idx, raw_r, final_r);
+			}
+		}
 
 		Ok( (res, vec_subsig_final_res) )
 	}
