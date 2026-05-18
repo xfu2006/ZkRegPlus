@@ -511,10 +511,13 @@ pub struct CompositeGadgetMapper<F:PrimeField + ColEle, LK:LookupTableTwoCol<F>>
 			// Case 1: cp_mapper (Component 0 or maybe 1)
 			let (_, cfg, stmt_map, _, _) =
 				self.gen_statement_structure(lkup_share_size);
-			let mut rem_word = vec![F::zero();
-				self.max_word_len() - word.len()];
-			let mut word_seg = word.clone();
-			word_seg.append(&mut rem_word);
+			// Step 3 of pad-invariant rework: word is already
+			// padded to max_word_len upstream.
+			assert!(word.len() == self.max_word_len(),
+				"composable_gadget_mapper get_value: \
+				 word.len()={} != max_word_len={}",
+				word.len(), self.max_word_len());
+			let word_seg = word.clone();
 			let actual_word_len = word.len();
 
 			let vecs = comp.build_statement_comp(
@@ -875,13 +878,14 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 	/// the full problem statement (including non-deterministic witness). 
 	/// NOTE that the real i/o has only two elements in z_i array.
 	fn build_statement(&self, word: &Vec<F>, _prev_stmt: &Option<StatementInst<F,LK>>, lkup: Arc<LK>, ea: &StatementExtraInfo<F>, r_advice: Arc<dyn NdAdvice + Send + Sync>, lkup_share_size: usize, b_dummy: bool, _job_id: usize) -> Result<StatementInst<F,LK>, Error>{
-		//1. expand word_seg to max capacity. Pad MUST be zero F's:
-		// WordExtractGadget hard-constrains extracted pad nibbles
-		// to zero in R1CS.
+		//1. Step 3 of pad-invariant rework: word is already padded
+		// to max_word_len upstream — no rem_word concat needed.
 		let b_debug = B_DEBUG;
-		let mut rem_word = vec![F::zero(); self.max_word_len() - word.len()];
-		let mut word_seg = word.clone();
-		word_seg.append(&mut rem_word); //always guarnatee max len
+		assert!(word.len() == self.max_word_len(),
+			"composable_gadget_mapper build_statement: \
+			 word.len()={} != max_word_len={}",
+			word.len(), self.max_word_len());
+		let word_seg = word.clone();
 		let actual_word_len = word.len();
 
 		//2. collect inp/oup/data/subtbl_id/failed_sig/discharged_sig

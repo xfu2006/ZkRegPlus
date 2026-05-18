@@ -4,12 +4,15 @@
 
 # test zkpsmall example
 #RUST_MIN_STACK=8388608
-# 2026-05-16: switched the active line from test_zkreg_main to
-# test_full_debug_main for full_debug_watch.py (single job, 4
-# server-failing samples, b_folding_only=true so no g16 keys
-# needed). Swap back to test_zkreg_main for deadlock_detect.py or
-# other flows.
+# 2026-05-18: active line is test_full_debug_main for
+# full_debug_watch.py (4-file binexec_debug.dat scan exercising the
+# original MULTISET_MISMATCH scenario with suspect sigs
+# 34602/35386/35701, now under the pad-invariant rework). Swap to
+# test_small_debug_main for the small_data + max_word=2 pad
+# validation, or test_zkreg_main for the original small_data
+# (max_word=1, sub-F pad only).
 RUST_BACKTRACE=1 cargo test --lib --release -- test_full_debug_main --show-output --nocapture
+#RUST_BACKTRACE=1 cargo test --lib --release -- test_small_debug_main --show-output --nocapture
 #RUST_BACKTRACE=1 cargo test --lib --release -- test_zkreg_main --show-output --nocapture
 #RUST_BACKTRACE=1 cargo test --lib -- test_zkreg_main --show-output --nocapture
 #RUST_BACKTRACE=1 cargo test --lib -- test_zkreg_main --show-output --nocapture

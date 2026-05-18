@@ -43,7 +43,7 @@ use utils::{
 	consts::{read_global_config, B_DEBUG},
 	os::{read_lines},
 	timer::{Timer},
-	data::{u8_to_hex}
+	data::{u8_to_hex, gen_pad_nibbles}
 };
 use crate::{
 	strings::{find_all,extract_nums,validate_counter_constraint,validate_ra_regex,validate_ra_regex_relaxed,validate_pm_regex,is_match,find_only,count_occ,drop_last_dotstar,split,validate_expr},
@@ -2679,7 +2679,7 @@ pub fn quick_discharge_file_by_crit_bag_pm_old(fname: &str,
 ///Now to be more consistent with quick_discharge_file_adv
 #[allow(dead_code)]
 pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
-	nibbles: &Vec<u8>, 
+	nibbles: &Vec<u8>,
 	v_sigs: &Vec<Arc<ClamavSig>>,
 	vec_sigs_no_crit_pat: &Vec<Arc<ClamavSig>>,
 	map_crit_pat: &HashMap<String, Vec<String>>,
@@ -2687,7 +2687,8 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 	dfa_crit: &HexACDFA, dfa_bag: &HexACDFA,
 	dfa_crit_igc: &HexACDFA, dfa_bag_igc: &HexACDFA,
 	_b_optimize_pm: bool, _cfg: &ClamavApproxConfig,
-	sig_to_id: &HashMap<String,usize>)
+	sig_to_id: &HashMap<String,usize>,
+	max_word_len: usize)
 ->(FailDischargeRecord, WordInfo){
 	//0. internal function closure
 	let sum_vec_size = |hs: &HashMap<String,Vec<usize>>| -> usize{
@@ -2735,22 +2736,35 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 	}
 
 	//1. process by critical pattern
-	// 2026-05-17: CP_cs in the gadget scans the circuit's
-	// zero-padded word buffer (WordExtractGadget hard-constrains
-	// extracted pad nibbles to zero). Patterns with all-zero
-	// nibble strings fire in that pad and end up in failed_sigs
-	// — discharge_prover used to miss them, causing check_logup
-	// MULTISET_MISMATCH. We extend nibbles by max_pat_len ZEROS
-	// (matching the gadget's view) so set_sigs_crit includes any
-	// zero-suffix pattern of length <= max_pat_len.
-	let max_pat_len = dfa_crit.patterns.iter().map(|p| p.len())
-		.max().unwrap_or(0)
-		.max(dfa_crit_igc.patterns.iter().map(|p| p.len())
-			.max().unwrap_or(0));
+	// 2026-05-18 (pad-invariant rework, Step 4): the gadget's DFA
+	// scans the file's nibble stream extended by:
+	//   (a) sub-F pad — gen_pad_nibbles(0, m1) where
+	//       m1 = (62 - (N % 62)) % 62 — inserted by pack_nibbles
+	//       inside the last real F-element, and
+	//   (b) F-level pad — packed `gen_pad_nibbles(0, m2*62)`
+	//       where m2 = (max_word_len - (M % max_word_len)) % max_word_len,
+	//       M = ceil(N / 62), inserted by foldpot_main initial stage.
+	// discharge_prover here mirrors that by extending its scan
+	// stream the same way, so dfa_crit.acc_path sees identical
+	// bytes and set_sigs_crit matches the gadget's failed_sigs
+	// multiset by construction.
+	let n = nibbles.len();
+	let m1 = if n % 62 == 0 { 0 } else { 62 - (n % 62) };
+	let big_m = (n + 61) / 62;
+	let m2 = if max_word_len == 0 || big_m % max_word_len == 0 {
+		0
+	} else {
+		max_word_len - (big_m % max_word_len)
+	};
 	let mut padded_nibbles: Vec<u8> =
-		Vec::with_capacity(nibbles.len() + max_pat_len);
+		Vec::with_capacity(n + m1 + m2 * 62);
 	padded_nibbles.extend_from_slice(nibbles);
-	padded_nibbles.extend(std::iter::repeat(0u8).take(max_pat_len));
+	if m1 > 0 {
+		padded_nibbles.extend(gen_pad_nibbles(0, m1));
+	}
+	if m2 > 0 {
+		padded_nibbles.extend(gen_pad_nibbles(0, m2 * 62));
+	}
 	let pats_crit = dfa_crit.get_patterns(
 		&dfa_crit.acc_path(&padded_nibbles));
 	let pats_crit_igc = dfa_crit_igc.get_patterns(
@@ -3110,25 +3124,26 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 /// to discharge)
 pub fn quick_discharge_file_by_crit_bag_pm(
 	fname: &str,
-	nibbles: &Vec<u8>, 
+	nibbles: &Vec<u8>,
 	v_sigs: &Vec<Arc<ClamavSig>>,
 	vec_sigs_no_crit_pat: &Vec<Arc<ClamavSig>>,
 	map_crit_pat: &HashMap<String, Vec<String>>,
 	map_crit_pat_igc: &HashMap<String, Vec<String>>,
-	dfa_crit: &HexACDFA, 
+	dfa_crit: &HexACDFA,
 	dfa_bag: &HexACDFA,
-	dfa_crit_igc: &HexACDFA, 
+	dfa_crit_igc: &HexACDFA,
 	dfa_bag_igc: &HexACDFA,
-	b_optimize_pm: bool, 
+	b_optimize_pm: bool,
 	cfg: &ClamavApproxConfig,
-	sig_to_id: &HashMap<String,usize>)
+	sig_to_id: &HashMap<String,usize>,
+	max_word_len: usize)
 ->(FailDischargeRecord,WordInfo){
 	quick_discharge_file_by_crit_bag_pm_new(
 		fname,
 		nibbles, v_sigs, vec_sigs_no_crit_pat,
 		map_crit_pat, map_crit_pat_igc,
 		dfa_crit, dfa_bag, dfa_crit_igc, dfa_bag_igc,
-		b_optimize_pm, cfg, sig_to_id)
+		b_optimize_pm, cfg, sig_to_id, max_word_len)
 }
 
 /// This one works by cp -> sed -> dfa and return the WordInfo
@@ -4046,12 +4061,15 @@ mod tests_clamav{
 			let set_dfa= tc.4.into_iter().map(|s:&str| s.to_string())
 				.collect::<HashSet<String>>();
 			let nibbles = hex_to_u8(s);
+			// max_word_len=1 in this self-test (no F-level pad);
+			// quick_discharge still adds the sub-F pad to match the
+			// gadget's view (Step 4 of pad-invariant rework).
 			let act = quick_discharge_file_by_crit_bag_pm("tc", &nibbles,
 				&v_sigs, &v_sigs_no_crit_pat,
 				&map_crit_pat, &map_crit_pat_igc,
 					&dfa_crit, &dfa_bag, &dfa_crit_igc,
 					&dfa_bag_igc, false, &cfg,
-					&sig_to_id).0;
+					&sig_to_id, 1).0;
 			assert!(act.crit==set_crit, "ERROR: s: {}. act.crit: {:?} != set_crit: {:?}", s, act.crit, set_crit);
 			assert!(act.bag==set_bag, "ERROR: s: {}. act.bag: {:?} != set_bag: {:?}", s, act.bag, set_bag);
 			assert!(act.pm==set_pm, "ERROR: s: {}. act.pm: {:?} != set_pm: {:?}", s, act.pm, set_pm);

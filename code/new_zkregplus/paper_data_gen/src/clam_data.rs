@@ -408,8 +408,12 @@ pub fn report_all_discharge_approach_stats<F:PrimeField>(sig_file: &str, needs_d
 	let file_names = &read_lines(&format!("{}/{}", proot, discharge_list_file));
 	let final_data = file_names.into_par_iter().map(|fpath|
 	{
-		if b_quick{ 
-			quick_discharge_file(fpath, &db, &cfg) 
+		if b_quick{
+			// paper_data_gen runs the discharge classifier
+			// only — not the ZK circuit — so the F-level pad
+			// doesn't affect reported stats. Pass 1 to mean
+			// "no F-level pad"; sub-F pad is still applied.
+			quick_discharge_file(fpath, &db, &cfg, 1)
 		} else {
 			discharge_file(fpath, &db, &cfg)
 		}

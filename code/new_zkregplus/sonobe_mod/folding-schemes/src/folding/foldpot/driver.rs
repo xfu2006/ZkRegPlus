@@ -11,7 +11,7 @@ use std::{sync::{Arc, Mutex, Condvar}, fmt::{Debug,Formatter}};
 */
 
 extern crate utils;
-use utils::{logger::{log, log_perf, rss_probe, emit_stdout, ERR, LOG1,LOG2}, timer::Timer as GTimer, consts::{read_global_config, get_global_config}};
+use utils::{logger::{log, log_perf, rss_probe, emit_stdout, ERR, LOG1,LOG2}, timer::Timer as GTimer, consts::{read_global_config, get_global_config}, data::{pad_word_to_multiple, gen_pad_nibbles_fe, pack_nibbles}};
 use std::{
     //process::{Stdio,Command},
     //fs::{read_to_string,OpenOptions,remove_file,File,metadata},
@@ -2533,19 +2533,42 @@ where
 		}
 	}
 
+	// 0b. F-level pad: pad each word to a multiple of max_word_len
+	// so every frag fed downstream has frag.len() == max_word_len,
+	// i.e. act_seg_len == word_seg.len() always. The pad F-elements
+	// come from the canonical pseudo-random stream so the gadget DFA
+	// and discharge_prover see identical pad nibbles. NOTE the per
+	// -word reported `total_word_len` and `accumulated_word_len` in
+	// StatementExtraInfo still refer to the REAL (pre-pad) content
+	// size — see Step 3 of the pad-invariant rework — so downstream
+	// sig-position math is unaffected. For max_word_len == 1 this
+	// loop is a no-op (sub-F pad already handled by pack_nibbles).
+	let max_wlen_pad = lock_unwrap!(vec_circ[0][0].get_mapper())
+		.max_word_len();
+	for job in jobs.iter_mut() {
+		for w in job.vec_words.iter_mut() {
+			let padded = pad_word_to_multiple::<C1::ScalarField>(
+				w, max_wlen_pad);
+			*w = padded;
+		}
+	}
+
 	let global_max_total_n = jobs.iter().map(|job| job.vec_words.iter()
 		.map(|x| x.len()).sum::<usize>()).max().unwrap_or(0);
 
-	log_perf(0, log_level, 
-		&format!("PERF 1005: FoldPot Step 0: Load Keys and Pad Jobs"), 
+	log_perf(0, log_level,
+		&format!("PERF 1005: FoldPot Step 0: Load Keys and Pad Jobs"),
 			&mut gt_all
 	);
 
 	//1. Fix the circuit with dummy statements
-	// here we assume that each circuit can always handle
-	// words of zeros, and set its dummy_statement for preprocess()
-	// to build keys. WordExtractGadget hard-constrains pad nibbles
-	// to zero, so an all-zero dummy word satisfies R1CS trivially.
+	// We build a dummy word of max_word_len F-elements filled with
+	// the canonical pseudo-random pad stream. Under the
+	// pad-invariant rework the gadget no longer forces extracted
+	// pad nibbles to zero, and an all-zero dummy would leave the
+	// DFA in a degenerate state during preprocess (capacity
+	// profile under-shoots). Pseudo-random pad exercises the
+	// gadgets like a typical pad region in a real run.
 	let mut vec_circ = vec_circ.clone();
 	let n_circ = vec_circ.iter().map(|row| row.len()).sum::<usize>();
 	let mut id = 0;
@@ -2557,7 +2580,13 @@ where
 			let lk_share_size = circ.get_lkup_share_size();
 			let prev_stmt = None;
 			let wlen = lock_unwrap!(circ.get_mapper()).max_word_len();
-			let frag = vec![zero; wlen];
+			// Generate exactly wlen F-elements packed from
+			// gen_pad_nibbles_fe(0, wlen*62) — full pseudo-random
+			// pad word for preprocess (pad_word_to_multiple([],
+			// wlen) would return empty since 0 is already a
+			// multiple of anything).
+			let frag = pack_nibbles(
+				&gen_pad_nibbles_fe::<C1::ScalarField>(0, wlen * 62));
 			let prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>> = None; //fine to set None
 			let r_advice= lock_unwrap!(circ.get_mapper())
 					.gen_nd_advice(&frag, &word_info, prev_adv, 0, 0); //use its own capacity

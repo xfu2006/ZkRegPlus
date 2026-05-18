@@ -1392,7 +1392,8 @@ pub mod tests_dfa_adv_gadget{
 	use ark_ff::{Zero};
     use std::{sync::Arc};
 	use ark_bn254::{Fr};
-	use utils::{data::{pack_nibbles}, os::{read_nibbles,proj_root}};
+	use utils::{data::{pack_nibbles, pad_word_to_multiple,
+		gen_pad_nibbles_fe}, os::{read_nibbles,proj_root}};
 	use crate::gadgets::{
 		word_extract::{
 			LEGS,
@@ -1427,27 +1428,32 @@ pub mod tests_dfa_adv_gadget{
 		//2. create advice for word_extract_adv and dfa_adv
 		// both advices are needed for producing related container_config
 		// with external col referece.
-		//2.1 the word_extract_adv
-		let (wlen, act_size) = (2usize, 1usize);
+		//2.1 the word_extract_adv. Pad-invariant rework (Step 5):
+		// act_size MUST equal word.len(); pad word to wlen using
+		// the canonical pseudo-random stream so the gadget DFA and
+		// discharge_prover see identical pad nibbles.
+		let wlen = 2usize;
 		let nibbles_raw = read_nibbles(
 			&format!("{}/data/{}/word2.txt",proj_root() , path));
 		let f_nibbles = nibbles_raw.iter().map(|x| Fr::from(*x as u32))
 			.collect::<Vec<Fr>>();
-		let word = vec![pack_nibbles(&f_nibbles), vec![Fr::zero()]].concat();
+		let word = pad_word_to_multiple::<Fr>(
+			&pack_nibbles(&f_nibbles), wlen);
+		let act_size = word.len();
 		let cfg = default_clamav_cfg();
 		let wi: WordInfo = quick_discharge_file_by_crit_bag_pm(
-			"word2.txt", 
+			"word2.txt",
 			&nibbles_raw,
 			&db.vec_sigs,
 			&db.vec_sigs_no_critical_pat,
-			&db.map_crit_pat, 
-			&db.map_crit_pat_igc, 
-			&db.dfa_crit, 
-			&db.bundle_subsig.vec_acdfa[0], //dfa_patterns, 
+			&db.map_crit_pat,
+			&db.map_crit_pat_igc,
+			&db.dfa_crit,
+			&db.bundle_subsig.vec_acdfa[0], //dfa_patterns,
 			&db.dfa_crit_igc,
 			&db.bundle_subsig_igc.vec_acdfa[0], //dfa_patterns_igc,
-			true, &cfg, 
-			&db.sig_to_id
+			true, &cfg,
+			&db.sig_to_id, wlen
         ).1; //use optimize mode
 
 		//note: set true to use char map for nibbles.
@@ -1490,9 +1496,28 @@ pub mod tests_dfa_adv_gadget{
 
 		let nibbles = stmt_wea.lock().unwrap().get_container("nibbles").unwrap()
 			.lock().unwrap().to_vec();
-		let f_nibbles = vec![f_nibbles.clone(), vec![Fr::zero(); 
-			nibbles.len()-f_nibbles.len()]].concat();
-		assert!(nibbles==f_nibbles);
+		// Under the pad-invariant rework, nibbles past the raw
+		// f_nibbles tail are:
+		//   (1) gen_pad_nibbles_fe(0, m1) — sub-F pad inside the
+		//       last real F-element (pack_nibbles).
+		//   (2) gen_pad_nibbles_fe(0, (wlen-big_m)*62) — F-level
+		//       pad, packed contiguously into the trailing
+		//       F-elements (pad_word_to_multiple).
+		let total_n = nibbles.len();
+		let raw_n = f_nibbles.len();
+		let m1 = if raw_n % 62 == 0 {0} else {62 - (raw_n % 62)};
+		let big_m = (raw_n + 61) / 62;
+		let mut expected = f_nibbles.clone();
+		if m1 > 0 {
+			expected.extend(gen_pad_nibbles_fe::<Fr>(0, m1));
+		}
+		let f_pad_nibs = (wlen - big_m) * 62;
+		if f_pad_nibs > 0 {
+			expected.extend(
+				gen_pad_nibbles_fe::<Fr>(0, f_pad_nibs));
+		}
+		assert!(expected.len() == total_n);
+		assert!(nibbles == expected);
 
 		let v_inp_state = v_dfa.iter().map(|vec|
 			vec.iter().map(|dfa| Fr::from((dfa.initial + 1) as u32))

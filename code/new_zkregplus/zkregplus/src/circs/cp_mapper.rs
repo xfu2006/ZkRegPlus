@@ -515,13 +515,15 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 	fn gen_nd_advice(&self, word: &Vec<F>, _word_info: &WordInfo,
 		prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>>, _seg_id: usize, _job_id: usize)
 		->Result<Arc<dyn NdAdvice + Send + Sync>, Error>{
-		//1. expand to full length. WordExtractGadget enforces
-		// extracted_word[i]=0 for i >= actual_size, so the pad
-		// F-elements MUST be zero to satisfy R1CS.
+		//1. invariant (Step 3 of pad-invariant rework): frag is
+		// already padded to max_word_len upstream — both sub-F
+		// (pack_nibbles) and F-level (foldpot_main) — so no extra
+		// rem_word concat is needed here.
+		assert!(word.len() == self.max_word_len(),
+			"cp_mapper::gen_nd_advice: word.len()={} != \
+			 max_word_len={}", word.len(), self.max_word_len());
 		let (zero,one) = (F::zero(),F::one());
-		let mut rem_word = vec![F::zero(); self.max_word_len() - word.len()];
-		let mut word_seg = word.clone();
-		word_seg.append(&mut rem_word);
+		let word_seg = word.clone();
 
 		//2. build the input for computing advice 
 		let capacity = &self.capacity;

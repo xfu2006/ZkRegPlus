@@ -443,7 +443,9 @@ pub mod tests_word_extract_adv_gadget{
 		//1. create adivce and input container
 		let b_map_char = true;
 		let mut rng = ark_std::test_rng();
-		let (wlen, act_size) = (8usize, 6usize);
+		// Pad-invariant rework (Step 5): act_size MUST equal wlen.
+		let wlen = 8usize;
+		let act_size = wlen;
 		let word = vec![rand_fe_by_bits(248, &mut rng); wlen];
 		let adv = WordExtractAdvAdvice::new(&word, act_size, b_map_char)
 			.expect("word_extract_adv advice err");

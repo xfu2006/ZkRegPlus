@@ -781,12 +781,13 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
 		r_prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>>, seg_id: usize, _job_id: usize)
 		->Result<Arc<dyn NdAdvice + Send + Sync>, Error>{
-		//1. expand word to full length. Pad MUST be zero F's:
-		// WordExtractGadget hard-constrains extracted pad nibbles
-		// to zero in R1CS.
-		let mut rem_word = vec![F::zero(); self.max_word_len() - word.len()];
-		let mut word_seg = word.clone();
-		word_seg.append(&mut rem_word);
+		//1. invariant (Step 3 of pad-invariant rework): frag is
+		// already padded to max_word_len upstream — no rem_word
+		// concat needed.
+		assert!(word.len() == self.max_word_len(),
+			"sed_mapper::gen_nd_advice: word.len()={} != \
+			 max_word_len={}", word.len(), self.max_word_len());
+		let word_seg = word.clone();
 		if seg_id==0 {assert!(r_prev_adv.is_none());}
 
 		//2. collect the data for building advice.

@@ -4462,7 +4462,8 @@ use utils::consts::read_global_config;
 	use ark_relations::r1cs::{ConstraintSystem};
 	use ark_r1cs_std::fields::fp::FpVar;
 	use crate::gadgets::commons::{new_var};
-	use utils::{data::{pack_nibbles}, os::{read_nibbles,proj_root,write_to_file}};
+	use utils::{data::{pack_nibbles, pad_word_to_multiple},
+		os::{read_nibbles,proj_root,write_to_file}};
 	use crate::gadgets::{
 		word_extract::{
 			LEGS,
@@ -4521,6 +4522,9 @@ use utils::consts::read_global_config;
 		//1 data preparation
 		//1.1. write the tcase file contents to the file
 		//then do a quick discharge to retrieve the discharge info.
+		// wlen pulled up so the discharge call can pad to match the
+		// gadget's view (Step 4 of pad-invariant rework).
+		let test_wlen = 2usize;
 		let zero = Fr::zero();
 		let path = format!("{}/data/{}/word.txt", proj_root(), word_dir);
 		write_to_file(&path, &tcase.file_content);
@@ -4529,18 +4533,18 @@ use utils::consts::read_global_config;
 			.collect::<Vec<Fr>>();
 		let sig_to_discharge = tcase.sig_to_discharge.clone();
 		let wi: WordInfo = quick_discharge_file_by_crit_bag_pm(
-			"word.txt", 
+			"word.txt",
 			&nibbles_raw,
 			&db.vec_sigs,
 			&db.vec_sigs_no_critical_pat,
-			&db.map_crit_pat, 
-			&db.map_crit_pat_igc, 
-			&db.dfa_crit, 
-			&db.bundle_subsig.vec_acdfa[0], //dfa_patterns, 
+			&db.map_crit_pat,
+			&db.map_crit_pat_igc,
+			&db.dfa_crit,
+			&db.bundle_subsig.vec_acdfa[0], //dfa_patterns,
 			&db.dfa_crit_igc,
 			&db.bundle_subsig_igc.vec_acdfa[0], //dfa_patterns_igc,
-			true, cfg, 
-			&db.sig_to_id
+			true, cfg,
+			&db.sig_to_id, test_wlen
         ).1; //use optimize mode
 
 		//1.2 verify the sig_to_discharge is in the word info.
@@ -4599,22 +4603,23 @@ use utils::consts::read_global_config;
 
 		//2. create advice for word_extract_adv, fsm_adv, and discharge_adv
 		// both advices are needed for producing related container_config
-		// with external col referece.
-		let all_word = pack_nibbles(&f_nibbles);
+		// with external col referece. Pad-invariant rework (Step 5):
+		// pad all_word to a multiple of wlen so each cycle's frag
+		// is exactly wlen.
+		let all_word = pad_word_to_multiple::<Fr>(
+			&pack_nibbles(&f_nibbles), wlen);
 		let alen = all_word.len();
-		let n_cycles = if alen%wlen==0 {alen/wlen} else {alen/wlen+1};
+		let n_cycles = alen / wlen; //alen is a multiple of wlen
 
 		//2.0 input that needs to be fed to advice. update it at end of loop
 		let mut inp_state = Fr::from((acdfa.init_state + 1) as u32);
 		let mut inp_loc = Fr::from(1u32);
-		let mut inp_steps_queue = DischargeAdvAdvice::gen_empty_steps_queue_serialized(b_igc, &input_subsigs, &steps_store, fsm_id, &cap_disc);  
+		let mut inp_steps_queue = DischargeAdvAdvice::gen_empty_steps_queue_serialized(b_igc, &input_subsigs, &steps_store, fsm_id, &cap_disc);
 
 		for i in 0..n_cycles{
-			//2.1 the word_extract_adv
-			let end = if wlen*(i+1)>alen {alen} else {wlen*(i+1)};
-			let word = all_word[wlen*i..end].to_vec();
-			let word = if word.len()==wlen {word} else
-				{vec![word.clone(), vec![zero; wlen-word.len()]].concat()};	
+			//2.1 the word_extract_adv. all_word pre-padded, so each
+			// frag is exactly wlen with no in-loop pad.
+			let word = all_word[wlen*i..wlen*(i+1)].to_vec();
 			let act_size = word.len();
 			let adv_wea = WordExtractAdvAdvice::new(&word, act_size,false)
 				.expect("word_extract_adv err");

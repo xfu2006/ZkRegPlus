@@ -2286,7 +2286,8 @@ pub mod tests_fsm_adv_gadget{
 	use ark_ff::{Zero};
 	use std::{sync::Arc};
 	use ark_bn254::{Fr};
-	use utils::{data::{pack_nibbles}, os::{read_nibbles,proj_root}};
+	use utils::{data::{pack_nibbles, pad_word_to_multiple},
+		os::{read_nibbles,proj_root}};
 	use crate::gadgets::{
 		word_extract::{
 			LEGS,
@@ -2314,13 +2315,17 @@ pub mod tests_fsm_adv_gadget{
 		//2. create advice for word_extract_adv and fsm_adv
 		// both advices are needed for producing related container_config
 		// with external col referece.
-		//2.1 the word_extract_adv
-		let (wlen, act_size) = (2usize, 1usize);
+		//2.1 the word_extract_adv. Pad-invariant rework (Step 5):
+		// act_size MUST equal word.len(); pad to wlen using the
+		// canonical pseudo-random stream.
+		let wlen = 2usize;
 		let nibbles_raw = read_nibbles(
 			&format!("{}/data/{}/word.txt",proj_root() , path));
 		let f_nibbles = nibbles_raw.iter().map(|x| Fr::from(*x as u32))
 			.collect::<Vec<Fr>>();
-		let word = vec![pack_nibbles(&f_nibbles), vec![Fr::zero()]].concat();
+		let word = pad_word_to_multiple::<Fr>(
+			&pack_nibbles(&f_nibbles), wlen);
+		let act_size = word.len();
 		let adv_wea = WordExtractAdvAdvice::new(&word, act_size, false)
 			.expect("word_extract_adv err");
 		let stmt_wea = adv_wea.stmt_container;

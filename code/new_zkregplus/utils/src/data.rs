@@ -168,23 +168,53 @@ pub fn gen_pad_bytes(start: usize, len: usize) -> Vec<u8> {
 	nibs.chunks_exact(2).map(|c| (c[0] << 4) | c[1]).collect()
 }
 
+/// Pad a word (Vec of F-elements, each holding 62 nibbles) so its
+/// length is a multiple of `multiple`. The appended F-elements are
+/// packed from the canonical pseudo-random pad stream
+/// (`gen_pad_nibbles_fe(0, need * 62)`).
+///
+/// This is the F-level pad — applied at `foldpot_main` initial stage
+/// after `pack_nibbles` has already handled the sub-F pad inside the
+/// last real F-element. Together the two pads enforce the invariant
+/// `act_seg_len == word_seg.len()` for every frag downstream.
+pub fn pad_word_to_multiple<F:PrimeField>(word: &[F], multiple: usize)
+	-> Vec<F>
+{
+	let n = word.len();
+	let rem = n % multiple;
+	let mut out = word.to_vec();
+	if rem != 0 {
+		let need = multiple - rem;
+		let nib = gen_pad_nibbles_fe::<F>(0, need * 62);
+		let mut packed = pack_nibbles(&nib);
+		assert!(packed.len() == need);
+		out.append(&mut packed);
+	}
+	out
+}
+
 /// read nibbles in the form of chunked nibbles (each nibble is 4-bit
 /// assuming F is at least 248 bit, we encode 62 units per field
-/// elements, rounding 0-bits are padded at the end.
+/// elements, rounding pad nibbles are appended at the end.
 ///
-/// NOTE 2026-05-17: kept at zero pad. WordExtractGadget's in-circuit
-/// constraint hard-forces extracted_word[i] = 0 for i >= actual_size,
-/// so any non-zero pad in word_seg would fail R1CS. discharge_prover
-/// matches this view by extending its scan with zeros.
+/// NOTE 2026-05-18: sub-F pad (≤61 trailing nibbles inside the last
+/// F-element) is filled with the canonical pseudo-random pad stream
+/// `gen_pad_nibbles_fe(0, more_len)`. Both gadget side (via this
+/// function) and discharge_prover (extending its scan with the same
+/// `gen_pad_nibbles(0, more_len)`) see identical bytes by
+/// construction, so the DFA on extracted_word never diverges from
+/// the discharge_prover's view. The WordExtractGadget no longer
+/// hard-forces pad nibbles to zero — see Step 2 of the pad-invariant
+/// rework — so non-zero pad is now R1CS-satisfiable.
 pub fn pack_nibbles<F:PrimeField>(nibbles: &Vec<F>) -> Vec<F>{
-	//1. expand vres and pad zeros
+	//1. expand vres and pad with the canonical pseudo-random stream
 	let mut vres = nibbles.clone();
 	let unit = 62;
 	let chunks = if vres.len()%unit==0 {vres.len()/unit}
 		else {vres.len()/unit+1};
 	let vnew_len = chunks * unit;
 	let more_len = vnew_len - vres.len();
-	let mut vec_more = vec![F::zero(); more_len];
+	let mut vec_more = gen_pad_nibbles_fe::<F>(0, more_len);
 	vres.append(&mut vec_more);
 	assert!(vres.len()==vnew_len);
 
@@ -275,10 +305,10 @@ pub fn rand_fe_by_bits<R: Rng + ?Sized, F: PrimeField>(bits: usize, rng: &mut R)
 
 #[cfg(test)]
 pub mod tests_data_utils{
-	use ark_std::Zero;
 	use ark_bn254::{Fr};
 	use crate::data::{rand_fe_by_bits, nibbles_to_one_packed,
-		one_packed_to_nibbles, pack_nibbles, packed_to_nibbles};
+		one_packed_to_nibbles, pack_nibbles, packed_to_nibbles,
+		gen_pad_nibbles_fe};
 
 	#[test]
 	pub fn test_one_pack(){
@@ -302,7 +332,11 @@ pub mod tests_data_utils{
 		assert!(packed.len()==3);
 		let nibbles2 = packed_to_nibbles(&packed);
 		for i in 0..n{ assert!(nibbles[i] == nibbles2[i]);}
-		for i in n..n2 { assert!(nibbles2[i].is_zero()); }
+		// sub-F pad now matches the canonical pseudo-random stream
+		let exp_pad = gen_pad_nibbles_fe::<Fr>(0, n2 - n);
+		for i in n..n2 {
+			assert!(nibbles2[i] == exp_pad[i - n]);
+		}
 	}
 
 }

@@ -66,7 +66,10 @@ type FC<F,C,CS> = SigmaIR1CS_Inst<F,C,CS,LK<F>,GM<F>,false>;
 
 /// load the files and pack them as nibbles
 /// return (words in packed nibbles, word info, file names)
-fn load_files<F:PrimeField + ColEle>(_job_id: usize, list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavApproxConfig, _b_write_cache: bool, _cache_dir: &str)
+/// max_word_len is forwarded into the discharge_prover so it can
+/// extend its nibble scan to match the circuit's padded view
+/// (Step 4 of the pad-invariant rework).
+fn load_files<F:PrimeField + ColEle>(_job_id: usize, list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavApproxConfig, _b_write_cache: bool, _cache_dir: &str, max_word_len: usize)
 	->(Vec<Vec<F>>, Vec<WordInfo>, Vec<String>){
 	//1. read the list of files
 	let _b_debug = false;
@@ -106,18 +109,18 @@ fn load_files<F:PrimeField + ColEle>(_job_id: usize, list_file_path: &str, db: &
 			let abspath = format!("{}/{}", &proj_root(), fpath);
 			let nibbles = read_nibbles(&abspath);
 			let (fail_info, rec) = quick_discharge_file_by_crit_bag_pm(
-				fpath, 
+				fpath,
 				&nibbles,
 				&db.vec_sigs,
 				&db.vec_sigs_no_critical_pat,
-				&db.map_crit_pat, 
-				&db.map_crit_pat_igc, 
-				&db.dfa_crit, 
-				&db.bundle_subsig.vec_acdfa[0], //dfa_patterns, 
+				&db.map_crit_pat,
+				&db.map_crit_pat_igc,
+				&db.dfa_crit,
+				&db.bundle_subsig.vec_acdfa[0], //dfa_patterns,
 				&db.dfa_crit_igc,
 				&db.bundle_subsig_igc.vec_acdfa[0], //dfa_patterns_igc,
-				true, cfg, 
-				&db.sig_to_id); //use optimize mode
+				true, cfg,
+				&db.sig_to_id, max_word_len); //use optimize mode
 			if !rec.is_success(){
 				println!("FAILED discharging file: {} on sigs: {:?}",
 					fail_info.fname,
@@ -623,7 +626,7 @@ where
 	let mut max_total_word_len = 0;
 	let mut jobs = vec![];
 	for list_file_to_scan in list_files_to_scan{
-		let (vec_words, vec_word_info, vec_word_fnames) = load_files::<CF1<C1>>(job_id, &list_file_to_scan, &db, &cfg, b_write_cache, cache_dir);
+		let (vec_words, vec_word_info, vec_word_fnames) = load_files::<CF1<C1>>(job_id, &list_file_to_scan, &db, &cfg, b_write_cache, cache_dir, chunk_len);
 		let total_word_len:usize = vec_words.iter().map(|w| w.len()).sum();
 		if total_word_len > max_total_word_len{
 			max_total_word_len = total_word_len;
@@ -755,6 +758,74 @@ pub mod tests_zkp_driver{
 			&format!("{}/ised.dat", set1), //signs that need ised 
 			&format!("{}/ised_igc.dat",set1), //sigs that need ised igc
 			max_word, //this is the chunk len
+			&init_cp_cap,
+			&init_sed_cap,
+			&init_dfa_cap,
+			&vec_decrease_level,
+			num_circs,
+			b_check_lkup
+		);
+	}
+
+	/// small_debug: clone of small_data() with max_word=2 to exercise
+	/// BOTH pad levels — sub-F pad (inside pack_nibbles) and F-level
+	/// pad (added in foldpot_main). Uses its own data folder
+	/// data/debug/small_debug_set/config_dfa/ with a 70-byte test
+	/// binary so the file's nibble count produces an odd F-element
+	/// count (3 F-elements), forcing F-level pad of 1 F-element.
+	#[allow(dead_code)]
+	fn small_debug<F:PrimeField>(b_check_lkup: bool){
+		get_global_config().snark_cache_dir = "small_debug".to_string();
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_write_snark_cache = false;
+		get_global_config().b_light_test = true;
+		get_global_config().range2_bit = 8;
+		get_global_config().b_read_cache = false;
+		get_global_config().perc_lkup_share = if !b_check_lkup {1}
+			else {8320};
+		let b_write_cache = !read_global_config().b_read_cache;
+		let set1 = "data/debug/small_debug_set/config_dfa";
+		let max_word = 2; //exercises F-level pad
+		let sigs = 2;
+		let subsigs = 4;
+		let avg_pats_per_subsig = 3;
+		let avg_active_pats_per_subsig = 2;
+		let perc_comp_subsigs = 26;
+		let basis_unique_states = 23*100;
+		let basis_acc_states = 646;
+		let basis_pats_in_trace = 1291;
+		let perc_pats_expansion_rate = 171;
+
+		let vec_decrease_level = vec![];
+		let num_circs = 1;
+
+		let init_cp_cap= CpCapacity{
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+		};
+		let init_sed_cap= SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig, avg_active_pats_per_subsig,
+			basis_pats_in_trace,
+			perc_pats_expansion_rate,
+			sigs, perc_comp_subsigs,
+			basis_unique_states, basis_acc_states
+		);
+		let init_dfa_cap= DfaCapacity::new(max_word, sigs, subsigs);
+
+		zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+			0,
+			&format!("{}/sigs.dat",set1), //src sig
+			&format!("{}/binexec.dat",set1), //list of files
+			"data/small_data_set/reports/report.dat", //report
+			b_write_cache,
+			"small_debug", //cache name
+			&format!("{}/dfa.dat", set1),
+			&format!("{}/ised.dat", set1),
+			&format!("{}/ised_igc.dat",set1),
+			max_word,
 			&init_cp_cap,
 			&init_sed_cap,
 			&init_dfa_cap,
@@ -2025,6 +2096,16 @@ pub mod tests_zkp_driver{
 		let _ = std::fs::write(&sentinel, "ok\n");
 	}
 
+	/// 2026-05-18: dedicated test entry for the pad-invariant
+	/// rework. small_debug uses max_word=2 with a 70-byte test
+	/// binary (3 F-elements) so both sub-F pad and F-level pad
+	/// fire — covering paths small_data (max_word=1) cannot reach.
+	#[test]
+	pub fn test_small_debug_main(){
+		let b_check_lkup = true;
+		small_debug::<Fr>(b_check_lkup);
+	}
+
 
 	#[test]
 	pub fn test_zkreg_main(){//test zkreg.main
@@ -2032,6 +2113,7 @@ pub mod tests_zkp_driver{
 		let _b_light_test = false;
 		let _b_setup = false;
 		small_data::<Fr>(b_check_lkup); //small data
+		//small_debug::<Fr>(b_check_lkup); //small_data + max_word=2
 		//small_data2::<Fr>(b_check_lkup);  //10k data
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
 		//small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)

@@ -156,42 +156,34 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for WordExtractGadget<F>{
 		let extracted_word = my_stmt[wlen+1..wlen+1+LEGS*wlen].to_vec();
 		let _subtbl_id = my_stmt[wlen+1+LEGS*wlen..
 			wlen+1+LEGS*wlen+ _subtbl_id_len].to_vec();
-		let mut remain =  act_seg_len.clone();
 
 		//3. build the power of 4's
-		//let f4 = FpVar::<F>::new_constant(cs.clone(), F::from(16u32))?;
-		//let f1 = FpVar::<F>::new_constant(cs.clone(), F::from(1u32))?;
 		let f4 = F::from(16u32);
 		let f1 = F::one();
 		let mut vec_pows = vec![f1; LEGS];
 		for i in 1..LEGS{ vec_pows[i]	 = vec_pows[i-1] * f4; }
 
-		//4. assert the validity of extracted word
-		let zero_var = FpVar::<F>::new_constant(cs.clone(), F::zero())?;
-		let one_var = FpVar::<F>::new_constant(cs.clone(), F::one())?;
-		let remain_val = remain.value()?;
-		let vec_inv= (0..wlen).into_par_iter().map(|i|{
-			let res = remain_val - F::from(i as u32);
-			if res.is_zero() {F::zero()} else {res.inverse().unwrap()}
-		}).collect::<Vec<F>>();
+		//4. New invariant (Step 2 of pad-invariant rework):
+		// every frag is padded to max_word_len so act_seg_len ==
+		// word_seg.len() == wlen always. We enforce this in-circuit
+		// and drop the per-position conditional select that used to
+		// mask out the pad region. The pad nibbles (when present at
+		// the tail of the last real F-element or in fully-padded
+		// F-elements) are now bound to whatever pseudo-random value
+		// the prover supplied in word_seg — same as on the
+		// discharge_prover side — so the DFA's view is consistent.
+		let wlen_const = FpVar::<F>::new_constant(cs.clone(),
+			F::from(wlen as u32))?;
+		act_seg_len.enforce_equal(&wlen_const)?;
 		for i in 0..wlen{
-			let b_remain_zero = remain.is_zero_adv(&vec_inv[i])?;
-			let wd = b_remain_zero.select(&zero_var, &word_seg[i])?;
-			// LOGICAL 
-			//let mut wsum = zero_var.clone();
-			//for j in 0..LEGS{
-			//	let idx = i*LEGS + j;
-			//	wsum += &vec_pows[j] * &extracted_word[idx];
-			//}
 			let wsum = sum_vec_vars_weighted(
 				&extracted_word[i*LEGS..(i+1)*LEGS], &vec_pows);
-			wsum.enforce_equal(&wd)?;
+			wsum.enforce_equal(&word_seg[i])?;
 			if B_DEBUG {
 				if wsum.value().is_ok(){
-					assert!(wsum.value()?==wd.value()?);
+					assert!(wsum.value()?==word_seg[i].value()?);
 				}
 			}
-			remain = b_remain_zero.select(&zero_var, &(&remain - &one_var))?;
 		}
 
 		//5. assert the range of all chars should be CHAR range
@@ -233,13 +225,18 @@ impl <F: PrimeField + ColEle> NdAdvice for WordExtractAdvice<F>{
 }
 
 impl <F: PrimeField + ColEle> WordExtractAdvice<F>{
-	/// word_seg is the one with max compacity, actual size
-	/// is the actual word len. We convert all remaining 
-	/// as 0.
+	/// word_seg has length == max_word_len; actual_size MUST equal
+	/// word_seg.len() under the pad-invariant rework (Step 2). Every
+	/// frag is padded to max_word_len by `pad_word_to_multiple` (and
+	/// `pack_nibbles` for the sub-F tail) before reaching the
+	/// mapper, so there is no longer a "trim then zero-fill" step.
 	pub fn new(word_seg: &Vec<F>, actual_size: usize)->Result<Self, Error>{
 		//1. normalize the input
-		let mut word = word_seg.clone();
-		for i in actual_size..word_seg.len(){ word[i] = F::zero(); }
+		assert!(actual_size == word_seg.len(),
+			"WordExtractAdvice::new: actual_size ({}) must equal \
+			 word_seg.len() ({}) under the pad-invariant rework",
+			actual_size, word_seg.len());
+		let word = word_seg.clone();
 
 		//2. do the conversion
 		let mut nibbles = packed_to_nibbles(&word);
@@ -548,7 +545,12 @@ pub mod tests_word_extract_gadget{
 	fn test_word_extract(){
 		println!("OK");
 		let mut rng = ark_std::test_rng();
-		let (wlen, act_size) = (8usize, 6usize);
+		// Pad-invariant rework (Step 5): actual_size MUST equal wlen
+		// now. Tests construct full-length random words; pad slots
+		// (when present) would carry pseudo-random bytes from the
+		// canonical pad stream, but we just fill everything random.
+		let wlen = 8usize;
+		let act_size = wlen;
 		let word = vec![rand_fe_by_bits(248, &mut rng); wlen];
 		let weg = WordExtractGadget::<Fr>::new(wlen);
 		let rg = Arc::new(weg);
@@ -556,11 +558,11 @@ pub mod tests_word_extract_gadget{
 		let inp = vec![];
 		let oup = vec![];
 		let data = adv.unwrap().data.clone();
-		let mut subtbl_id = vec![Fr::from(CHAR); 
+		let mut subtbl_id = vec![Fr::from(CHAR);
 			inp.len() + oup.len() + data.len()];
 		subtbl_id[0] = Fr::zero(); //don't care for act_word_len
 		let lkup_share_size = 4usize;
-		test_gadget::<Fr>(rg, &word, &inp, &oup, &data, &subtbl_id, 
+		test_gadget::<Fr>(rg, &word, &inp, &oup, &data, &subtbl_id,
 			lkup_share_size);
 	}
 }

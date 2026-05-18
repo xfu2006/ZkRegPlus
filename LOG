@@ -28381,6 +28381,14 @@ Goal 3. current data debug:
 		work there is some check zero out there. I need to understand
 		the logic why it's there.
 
+Monday 05/18/2026
+Goal 1. debug the padding issue
+	[a] consider 0 padding vs random padding
+	[b]
+Goal 2. writing 3.1
+	[a] read Reef and related papers
+	[b] definition 1.
+
 -- TODO -- check is counting of Phase 1 step 3 correct?
 	couned roughly the same value for phase 1 step 1 and 2
 	at 4:50am (about 12 hours)
