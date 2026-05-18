@@ -28374,7 +28374,12 @@ Goal 1. debug
 	[a] deploy the fixed version on check_logup
 		-> run out of space
 	[b] restarted 8:30am 
-
+Goal 2. writing.
+	[a] read the current available sections
+Goal 3. current data debug:
+	still padding issue, somehow, the pseudo-random padding does not
+		work there is some check zero out there. I need to understand
+		the logic why it's there.
 
 -- TODO -- check is counting of Phase 1 step 3 correct?
 	couned roughly the same value for phase 1 step 1 and 2
