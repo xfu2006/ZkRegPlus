@@ -186,15 +186,28 @@ ACTIVE_CALL_RE = re.compile(
 TARGET_CALL = ("\\1full_clamav::<Fr>(b_check_lkup, true, false); "
                "// deadlock_detect")
 
+# Matches an ACTIVE `cargo test --lib --release -- <fn> ...` line
+# in compile.sh. "Active" = the cargo invocation is not preceded by
+# `#`. We require `--release` to avoid catching slow debug-build
+# variants the file also contains (commented or not).
+_ACTIVE_CARGO_RE = re.compile(
+    r"^(?P<lead>\s*)(?P<env>(?:[A-Z_]+=\S+\s+)*)"
+    r"cargo\s+test\s+--lib\s+--release\s+--\s+"
+    r"(?P<fn>\w+)"
+    r"(?P<tail>[^\n]*)$",
+    re.MULTILINE,
+)
+
 def patch_for_rung(n_jobs):
-    """Edit driver.rs / zkp_driver.rs in place. Return (backup_driver,
-    backup_zkp_driver) tuples for revert."""
+    """Edit zkp_driver.rs + compile.sh in place so the next
+    `cargo test` invocation runs test_zkreg_main, which after the
+    edits below calls full_clamav with n_jobs=<rung>. Returns a
+    tuple (driver_backup, compile_backup) on success, or None if
+    either edit could not be applied (caller aborts the rung)."""
+    # ----- prepare zkp_driver.rs edit in memory -----
     driver_backup = ZKP_DRIVER_RS.read_text()
     text = driver_backup
-    # 1. Make sure test_zkreg_main calls full_clamav (light=true, setup=false)
     if "full_clamav::<Fr>(b_check_lkup, true, false);" not in text:
-        # Find the FIRST active (non-commented) entry call. Active means
-        # the line does NOT start with //.
         lines = text.splitlines(keepends=True)
         new_lines = []
         replaced = False
@@ -202,7 +215,6 @@ def patch_for_rung(n_jobs):
             stripped = ln.lstrip()
             if (not replaced) and (not stripped.startswith("//")) and \
                     "::<Fr>(b_check_lkup" in ln and "_data" in ln:
-                # comment it out and inject our target call
                 indent = ln[: len(ln) - len(stripped)]
                 new_lines.append("//" + ln)
                 new_lines.append(
@@ -221,17 +233,66 @@ def patch_for_rung(n_jobs):
                 new_lines.append(ln)
         text = "".join(new_lines)
         if not replaced:
-            return None  # could not find a call site to replace
-    # 2. Patch num_jobs in full_clamav
+            return None
     if not NUM_JOBS_RE.search(text):
         return None
     text = NUM_JOBS_RE.sub(rf"\g<1>{n_jobs}\g<3>", text)
-    ZKP_DRIVER_RS.write_text(text)
-    return driver_backup
 
-def revert_patch(backup_text):
-    if backup_text is not None:
-        ZKP_DRIVER_RS.write_text(backup_text)
+    # ----- prepare compile.sh edit in memory -----
+    compile_backup = COMPILE_SH_INNER.read_text()
+    new_compile, ok = _swap_test_filter(
+        compile_backup, "test_zkreg_main")
+    if not ok:
+        return None
+
+    # ----- commit both writes (only after both transforms ok) -----
+    ZKP_DRIVER_RS.write_text(text)
+    if new_compile != compile_backup:
+        COMPILE_SH_INNER.write_text(new_compile)
+    return (driver_backup, compile_backup)
+
+
+def _swap_test_filter(text, target_fn):
+    """Return (new_text, ok). `ok` is True iff there is at least one
+    active `cargo test --lib --release -- <fn> ...` line in `text`.
+    If an active line already targets target_fn, every OTHER active
+    line is commented out (no injection -- avoid duplicate runs).
+    Otherwise the first active line is commented out and replaced by
+    a canonical invocation targeting target_fn that keeps its env
+    vars and tail flags intact."""
+    lines = text.splitlines(keepends=True)
+    active = []
+    for i, ln in enumerate(lines):
+        m = _ACTIVE_CARGO_RE.match(ln)
+        if m is not None:
+            active.append((i, m))
+    if not active:
+        return (text, False)
+    if any(m.group("fn") == target_fn for _, m in active):
+        for i, m in active:
+            if m.group("fn") != target_fn:
+                lines[i] = "#" + lines[i]
+        return ("".join(lines), True)
+    inject_after = active[0][0]
+    m0 = active[0][1]
+    canonical = (f"{m0.group('lead')}{m0.group('env')}cargo test "
+                 f"--lib --release -- {target_fn}"
+                 f"{m0.group('tail')}\n")
+    for i, _ in active:
+        lines[i] = "#" + lines[i]
+    lines.insert(inject_after + 1, canonical)
+    return ("".join(lines), True)
+
+
+def revert_patch(backups):
+    """backups is the tuple returned by patch_for_rung (or None)."""
+    if not backups:
+        return
+    driver_backup, compile_backup = backups
+    if driver_backup is not None:
+        ZKP_DRIVER_RS.write_text(driver_backup)
+    if compile_backup is not None:
+        COMPILE_SH_INNER.write_text(compile_backup)
 
 # ============================================================
 # Preflight
