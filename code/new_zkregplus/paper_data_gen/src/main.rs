@@ -72,6 +72,8 @@ fn main() {
 	if b_debug {
 		debug::<Fr>();
 	}else{
+		use utils::consts::get_global_config;
+		get_global_config().range2_bit = 26;
 		generate_data::<Fr>();
 	}
 	println!("**** COMPLETED for mode: {} ****", b_debug);	

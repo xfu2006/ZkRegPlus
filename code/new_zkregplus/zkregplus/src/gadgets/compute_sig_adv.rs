@@ -656,6 +656,30 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 				CompOp::EQ => if num!=0 {raw_res} else {!raw_res},
 				CompOp::GT => raw_res,
 			};
+			// DEBUG USE 69200.c.raw_res: dump (gen_regex_res,
+			// raw_res, count_res) for the two known-failing
+			// subsigs so the verifier can correlate with
+			// 69200.c.step / .bounds.
+			if std::env::var("ZKR_PROBE_69200").is_ok()
+				&& !subsig.is_zero() {
+				let u = field_to_usize(&subsig) as u64;
+				let bits = read_global_config().range2_bit;
+				let p1 = if bits > 19 {16}
+					else { bits * 2 / 3 };
+				let p2 = bits - p1;
+				let sig_id_69200 = u >> p2;
+				if sig_id_69200 == 34555
+					|| sig_id_69200 == 35355 {
+					let ss_idx = u & ((1u64<<p2)-1);
+					println!("DEBUG USE 69200.c.raw_res: \
+						sid={} sig_id={} ss_idx={} \
+						gen_regex_res={} raw_res={:?} \
+						count_res={:?}",
+						u, sig_id_69200, ss_idx,
+						gen_regex_res[i], raw_res,
+						count_res);
+				}
+			}
 			let sid_op: F = SubsigInfoStore::gen_info_tbl_id(acdfa_id, 
 				f_subsig, ID_COMP_OP);  
 			let sid_num: F = SubsigInfoStore::gen_info_tbl_id(acdfa_id, 

@@ -162,6 +162,7 @@ def launch_prover(dump_path: Path) -> subprocess.Popen:
     """
     env = os.environ.copy()
     env["ZKR_PROBE_77317"]      = "1"
+    env["ZKR_PROBE_69200"]      = "1"
     env["RUST_BACKTRACE"]       = "1"
     # Belt-and-suspenders: ptrace-any is harmless under fail-fast,
     # leave it in case a non-panic stall ever sneaks back.
@@ -228,6 +229,7 @@ PANIC_RE      = re.compile(r"^FAIL-FAST: prover panic", re.M)
 PANIC_AT_RE   = re.compile(
     r"panicked at ([^\n]+):\s*\n([^\n]+)", re.M)
 PROBE_LINE_RE = re.compile(r"^DEBUG USE 7731[789]\.[\w.]+:?", re.M)
+PROBE_69200_RE = re.compile(r"^DEBUG USE 69200\.[\w.]+:?", re.M)
 
 def classify(rc: int, dump_path: Path) -> str:
     text = ""
@@ -305,11 +307,13 @@ def package(bundle_dir: Path, rc: int, dump_path: Path):
 
     # 4. probe extraction
     probes_path = bundle_dir / "probes_77317.txt"
+    probes_69200_path = bundle_dir / "probes_69200.txt"
     sources = [bundle_dir / "dump.txt"]
     sources += sorted(bundle_dir.glob("log_job_*.txt"))
     if (bundle_dir / "zkregplus.log").exists():
         sources.append(bundle_dir / "zkregplus.log")
-    with open(probes_path, "w") as out:
+    with open(probes_path, "w") as out77317, \
+         open(probes_69200_path, "w") as out69200:
         for src in sources:
             try:
                 txt = src.read_text(errors="replace")
@@ -317,7 +321,9 @@ def package(bundle_dir: Path, rc: int, dump_path: Path):
                 continue
             for line in txt.splitlines():
                 if PROBE_LINE_RE.match(line):
-                    out.write(f"[{src.name}] {line}\n")
+                    out77317.write(f"[{src.name}] {line}\n")
+                elif PROBE_69200_RE.match(line):
+                    out69200.write(f"[{src.name}] {line}\n")
     probe_text = probes_path.read_text(errors="replace")
     first_mismatch = first_probe_mismatch(probe_text)
 

@@ -1597,6 +1597,37 @@ impl <F:PrimeField> ClamavDB<F>{
 					
 					}).collect::<Vec<(usize,(usize,usize))>>()
 				};
+				// DEBUG USE 69200.c.patmap: circuit-side
+				// (pat_id <-> word) for the two known-failing
+				// sig_ids. Emitted once per (sig, subsig, igc)
+				// at SubsigStepStore construction time. Pairs
+				// with 69200.h.bounds (host side) and lets the
+				// offline verifier resolve circuit pat_ids back
+				// to the original byte/hex words.
+				if std::env::var("ZKR_PROBE_69200").is_ok()
+					&& (*sig_id == 34555usize
+						|| *sig_id == 35355usize) {
+					for (j, x) in s.vec_subsig_pm_bounds[i]
+						.iter().enumerate() {
+						let word = &x.0;
+						let wid_raw = *acdfa.pattern_to_id
+							.get(word).unwrap();
+						let wid_circ = wid_raw + 1;
+						println!("DEBUG USE \
+							69200.c.patmap: \
+							sig_id={} subsig_idx={} \
+							subsig_id={} igc={} \
+							chain_idx={} \
+							pat_id_raw={} \
+							pat_id_circ={} \
+							word=\"{}\" \
+							orig_rg=({},{})",
+							sig_id, i, subsig_id,
+							b_igc, j, wid_raw,
+							wid_circ, word,
+							x.1.0, x.1.1);
+					}
+				}
 				let item = SubsigStepStoreItem{subsig_id: subsig_id,
 					igc: s.vec_subsig_obj[i].b_ignore_case,
 					vec_pm_bounds: vec_bounds};

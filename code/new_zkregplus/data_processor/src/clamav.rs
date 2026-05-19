@@ -1331,19 +1331,29 @@ impl ClamavSig{
 	/// if the subsig is satisfied by the string or not).
 	/// NOTE2: for "regular" case there is always two outcomes:
 	///   Maybe and False (because you can NEVER assuure that it's a True).
-	fn approx_eval_pm_bounds_subsig(&self, subsig_id: usize,  
+	fn approx_eval_pm_bounds_subsig(&self, subsig_id: usize,
 		hs:&HashMap<String,Vec<usize>>, hs_igc: &HashMap<String,Vec<usize>>,
-		_fname: &str) 
+		_fname: &str)
 		->(TriVal, usize, usize){
 		let pat = &self.vec_subsig_pm_bounds[subsig_id];
 		let mut cost = 0;
 		let mut cost2 = 0;
 		//if pat.len()==0{
-			//println!("WARN: pm bounds empty for sig: {}, subsig_id: {}", 
+			//println!("WARN: pm bounds empty for sig: {}, subsig_id: {}",
 			//	self.to_str(), subsig_id);
 			//NO need to return Maybe as it will skip the loop and
 			//arr_pos decides the return value
 		//}
+		// DEBUG USE 69200.h.* gate: host-side trace for the two
+		// known-failing subsigs (sig_id 34555 ss#2, 35355 ss#0).
+		let probe_69200 = std::env::var("ZKR_PROBE_69200").is_ok()
+			&& (self.name == "Email.Phishing.VOF1-6295244-1"
+				|| self.name == "Win.Virus.Hematite-6232506-0");
+		if probe_69200 {
+			println!("DEBUG USE 69200.h.bounds: sig=\"{}\" \
+				ssid={} pat_len={} pm_bounds={:?}",
+				self.name, subsig_id, pat.len(), pat);
+		}
 		let mut arr_pos = vec![0];
 		for id in 0..pat.len(){
 			let word = &pat[id].0;
@@ -1363,6 +1373,15 @@ impl ClamavSig{
 				hs.get(word).map_or(vec![], |v| v.to_vec())
 			};
 			cost2+= arr_cur_pos.len();
+			// DEBUG USE 69200.h.step capture (pre-consume) — keep
+			// short head for log size; gated via probe_69200.
+			let _69200_cur_n = if probe_69200 {arr_cur_pos.len()}
+				else {0usize};
+			let _69200_cur_head: Vec<usize> = if probe_69200 {
+				arr_cur_pos.iter().take(8).copied().collect()
+			} else { vec![] };
+			let _69200_prev_n = if probe_69200 {arr_pos.len()}
+				else {0usize};
 
 			let allowed_pos = arr_cur_pos.into_iter().filter(|x|{
 				if allowed.len()==0 {return false;}
@@ -1408,8 +1427,30 @@ impl ClamavSig{
 			).collect::<Vec<usize>>();
 			cost += allowed_pos.len();
 			arr_pos = allowed_pos;
+			// DEBUG USE 69200.h.step post-iteration trace.
+			if probe_69200 {
+				let head: Vec<usize> = arr_pos.iter().take(8)
+					.copied().collect();
+				println!("DEBUG USE 69200.h.step: \
+					sig=\"{}\" ssid={} step={} \
+					word=\"{}\" rg=({},{}) \
+					prev.n={} cur.n={} cur.head={:?} \
+					next.n={} next.head={:?}",
+					self.name, subsig_id, id, word,
+					rg.0, rg.1,
+					_69200_prev_n, _69200_cur_n,
+					_69200_cur_head,
+					arr_pos.len(), head);
+			}
 		}
 		let res = if arr_pos.len()>0 {TriVal::Maybe} else {TriVal::False};
+		if probe_69200 {
+			println!("DEBUG USE 69200.h.final: sig=\"{}\" \
+				ssid={} arr_pos.n={} cost={} cost2={} \
+				res={:?}",
+				self.name, subsig_id, arr_pos.len(),
+				cost, cost2, res);
+		}
 		(res, cost, cost2)
 	}
 
@@ -2958,14 +2999,28 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		}
 		(res, sig.name.clone(), Some(info), new_pm_witness_len, (max_pat, max_occ))
 	}).collect::<Vec<(TriVal,String, Option<DischargeSigInfo>,usize, (String,usize))>>();
-	let mut vec_sed_sigs_info = vec![]; 
-	let mut total_pm_witness_len = 0; 
+	let mut vec_sed_sigs_info = vec![];
+	let mut total_pm_witness_len = 0;
 	for pres in &pm_res{
 		let (res, name, info, wit_len, _) = pres;
 		total_pm_witness_len += wit_len;
 		if *res==TriVal::Maybe || *res==TriVal::True{
 			set_sigs_pm.insert( name.clone() );
 		}else{//for discharged ones, push info
+			// DEBUG USE 69200.h.sed: confirm subsig is in
+			// vec_sed_sigs_info (i.e., host claims sig
+			// can be discharged at SED level).
+			if std::env::var("ZKR_PROBE_69200").is_ok()
+				&& (name == "Email.Phishing.VOF1-6295244-1"
+					|| name ==
+					"Win.Virus.Hematite-6232506-0") {
+				let inf = info.as_ref().unwrap();
+				println!("DEBUG USE 69200.h.sed: \
+					sig=\"{}\" res=False wit_len={} \
+					min_dnf_id={} subsig_ids={:?}",
+					name, wit_len, inf.min_dnf_id,
+					inf.subsig_ids);
+			}
 			vec_sed_sigs_info.push(info.clone().unwrap());
 		}
 	}
@@ -3212,12 +3267,25 @@ pub fn deprecated_quick_discharge_file_adv(
 			sig.accepts_approx_pm_bounds(&hs_occ_new, &hs_occ_igc_new,fname);
 		(res, sig.name.clone(), info)
 	}).collect::<Vec<(TriVal,String, Option<DischargeSigInfo>)>>();
-	let mut vec_sed_sigs_info = vec![]; 
+	let mut vec_sed_sigs_info = vec![];
 	for pres in pm_res{
 		let (res, name, info) = pres;
 		if res==TriVal::Maybe || res==TriVal::True{
 			set_sigs_pm.insert( name.clone() );
 		}else{//for discharged ones, push info
+			// DEBUG USE 69200.h.sed (legacy path) — mirror of
+			// the same probe in quick_discharge_file_by_crit_bag_pm.
+			if std::env::var("ZKR_PROBE_69200").is_ok()
+				&& (name == "Email.Phishing.VOF1-6295244-1"
+					|| name ==
+					"Win.Virus.Hematite-6232506-0") {
+				let inf = info.as_ref().unwrap();
+				println!("DEBUG USE 69200.h.sed.legacy: \
+					sig=\"{}\" res=False min_dnf_id={} \
+					subsig_ids={:?}",
+					name, inf.min_dnf_id,
+					inf.subsig_ids);
+			}
 			vec_sed_sigs_info.push(info.unwrap());
 		}
 	}

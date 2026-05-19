@@ -551,7 +551,7 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 		let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
 
 		//2. process each subsig, propagating step by step
-		let tuples = self.subsigs.par_iter().map(|subsig|{ 
+		let tuples = self.subsigs.par_iter().map(|subsig|{
 			//2.1 retrieve ths subsig info
 			let u_subsig = field_to_usize(subsig);
 			let subsig_rec= info.subsig_to_steps.get(&u_subsig).expect(
@@ -559,6 +559,31 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 			let max_steps = subsig_rec.vec_pm_bounds.len();
 			let pm_bounds = &subsig_rec.vec_pm_bounds;
 			let items =  self.store_items.get(subsig).unwrap();
+			// DEBUG USE 69200.c.* gate (circuit side). Decodes
+			// sig_id via the same bit-shift used by 67120.1.
+			let _69200_bits =
+				read_global_config().range2_bit;
+			let _69200_p1 = if _69200_bits > 19 {16}
+				else { _69200_bits * 2 / 3 };
+			let _69200_p2 = _69200_bits - _69200_p1;
+			let _69200_sig_id =
+				(u_subsig as u64) >> _69200_p2;
+			let _69200_ss_idx =
+				(u_subsig as u64) & ((1u64<<_69200_p2)-1);
+			let probe_69200 =
+				std::env::var("ZKR_PROBE_69200").is_ok()
+				&& (_69200_sig_id == 34555
+					|| _69200_sig_id == 35355);
+			if probe_69200 {
+				println!("DEBUG USE 69200.c.bounds: \
+					subsig={} sig_id={} ss_idx={} \
+					igc={} max_steps={} items.len={} \
+					pm_bounds={:?}",
+					u_subsig, _69200_sig_id,
+					_69200_ss_idx, self.b_igc,
+					max_steps, items.len(),
+					&subsig_rec.vec_pm_bounds);
+			}
 			assert!(max_steps+1>=items.len()); //this is not capacity err
 							//just check validity of subsig_store
 			let init_item = items[0].clone();
@@ -615,10 +640,49 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 					next_locs.append(&mut new_locs);
 					vec_fwd_prf.push(fwd_prf_item);
 				}
+				// DEBUG USE 69200.c.step: per-iteration trace
+				// of locs_available (witness positions) and
+				// next_locs (what advanced forward).
+				if probe_69200 {
+					let avail_n = locs_available.len();
+					let avail_head: Vec<(usize,usize)> =
+						locs_available.iter().take(8)
+						.map(|(a,b)| (
+							field_to_usize(a),
+							field_to_usize(b)))
+						.collect();
+					let next_head: Vec<usize> =
+						next_locs.iter().take(8)
+						.map(|x| field_to_usize(x))
+						.collect();
+					println!("DEBUG USE 69200.c.step: \
+						subsig={} step={} dst_pat={} \
+						rg=({},{}) prev.n={} \
+						avail.n={} avail.head={:?} \
+						added={} next.n={} \
+						next.head={:?}",
+						u_subsig, i,
+						field_to_usize(&dst_pat),
+						rg_start, rg_end,
+						vec_res[i-1].locs.len(),
+						avail_n, avail_head,
+						total_added,
+						next_locs.len(), next_head);
+				}
 				//we will stop if results in 0 items added
 				//when it has explored ALL existing items in the
-				//current sq_res. 
-				if total_added==0 && i>=items.len() {break};
+				//current sq_res.
+				if total_added==0 && i>=items.len() {
+					if probe_69200 {
+						println!("DEBUG USE \
+							69200.c.break: subsig={} \
+							step={} items.len={} \
+							reason=added0_and_past_items",
+							u_subsig, i,
+							items.len());
+					}
+					break;
+				};
 
 				let mut next_locs = next_locs.into_iter()
 					.collect::<HashSet<F>>()
