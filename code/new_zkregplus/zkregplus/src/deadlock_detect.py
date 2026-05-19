@@ -68,6 +68,15 @@ DRIVER_RS = (REPO_ROOT / "sonobe_mod/folding-schemes/"
              "src/folding/foldpot/driver.rs")
 ZKP_DRIVER_RS = SRC_DIR / "zkp_driver.rs"
 COMPILE_SH = SRC_DIR / "compile2.sh"
+# 2026-05-19: compile.sh (NOT compile2.sh -- that's the wrapper) is
+# where the `cargo test ... -- <FILTER>` line lives. patch_for_rung
+# swaps <FILTER> to `test_zkreg_main` per rung so the test that
+# actually runs is the one whose body the zkp_driver.rs patch below
+# rewrites to call full_clamav with n_jobs=<rung>. Without this,
+# compile.sh's default filter `test_full_debug_main` dispatches to
+# full_debug() -- a single-job reproducer that bypasses the n_jobs
+# literal entirely.
+COMPILE_SH_INNER = SRC_DIR / "compile.sh"
 ANALYZE_LOG = SRC_DIR / "analyze_log.txt"
 PID_FILE = SRC_DIR / ".deadlock_detect.pid"
 FINISH_FILE = SRC_DIR / "FINISH"
