@@ -198,6 +198,18 @@ _ACTIVE_CARGO_RE = re.compile(
     re.MULTILINE,
 )
 
+# Same as above but with a leading `#` (allowing whitespace before/
+# after). Used to RE-activate a previously-commented line when the
+# whole file is currently all-commented (a common state after the
+# user manually disables compile.sh for direct invocation).
+_COMMENTED_CARGO_RE = re.compile(
+    r"^(?P<lead>\s*)#\s*(?P<env>(?:[A-Z_]+=\S+\s+)*)"
+    r"cargo\s+test\s+--lib\s+--release\s+--\s+"
+    r"(?P<fn>\w+)"
+    r"(?P<tail>[^\n]*)$",
+    re.MULTILINE,
+)
+
 def patch_for_rung(n_jobs):
     """Edit zkp_driver.rs + compile.sh in place so the next
     `cargo test` invocation runs test_zkreg_main, which after the
@@ -253,34 +265,51 @@ def patch_for_rung(n_jobs):
 
 
 def _swap_test_filter(text, target_fn):
-    """Return (new_text, ok). `ok` is True iff there is at least one
-    active `cargo test --lib --release -- <fn> ...` line in `text`.
-    If an active line already targets target_fn, every OTHER active
-    line is commented out (no injection -- avoid duplicate runs).
-    Otherwise the first active line is commented out and replaced by
-    a canonical invocation targeting target_fn that keeps its env
-    vars and tail flags intact."""
+    """Return (new_text, ok). After execution there is exactly one
+    active `cargo test --lib --release -- <target_fn> ...` line
+    and every other cargo-test active line is commented out.
+    Three input cases handled:
+    1. >=1 active line, one targets target_fn -> comment out others.
+    2. >=1 active line, none target target_fn -> comment out all,
+       inject canonical target_fn line preserving env+tail of first.
+    3. 0 active lines -> uncomment the first commented
+       `cargo test --lib --release -- <target_fn> ...` line; if no
+       such commented line exists, synthesize and append a fresh
+       canonical one. (2026-05-19: the user sometimes disables
+       compile.sh by commenting every cargo invocation; this case
+       keeps the patcher robust to that.)"""
     lines = text.splitlines(keepends=True)
     active = []
     for i, ln in enumerate(lines):
         m = _ACTIVE_CARGO_RE.match(ln)
         if m is not None:
             active.append((i, m))
-    if not active:
-        return (text, False)
-    if any(m.group("fn") == target_fn for _, m in active):
-        for i, m in active:
-            if m.group("fn") != target_fn:
-                lines[i] = "#" + lines[i]
+    if active:
+        if any(m.group("fn") == target_fn for _, m in active):
+            for i, m in active:
+                if m.group("fn") != target_fn:
+                    lines[i] = "#" + lines[i]
+            return ("".join(lines), True)
+        inject_after = active[0][0]
+        m0 = active[0][1]
+        canonical = (f"{m0.group('lead')}{m0.group('env')}cargo test "
+                     f"--lib --release -- {target_fn}"
+                     f"{m0.group('tail')}\n")
+        for i, _ in active:
+            lines[i] = "#" + lines[i]
+        lines.insert(inject_after + 1, canonical)
         return ("".join(lines), True)
-    inject_after = active[0][0]
-    m0 = active[0][1]
-    canonical = (f"{m0.group('lead')}{m0.group('env')}cargo test "
-                 f"--lib --release -- {target_fn}"
-                 f"{m0.group('tail')}\n")
-    for i, _ in active:
-        lines[i] = "#" + lines[i]
-    lines.insert(inject_after + 1, canonical)
+    # Case 3: no active cargo-test line at all.
+    for i, ln in enumerate(lines):
+        m = _COMMENTED_CARGO_RE.match(ln)
+        if m is not None and m.group("fn") == target_fn:
+            lines[i] = re.sub(r"^(\s*)#\s?", r"\1", ln)
+            return ("".join(lines), True)
+    if lines and not lines[-1].endswith("\n"):
+        lines.append("\n")
+    lines.append(
+        f"RUST_BACKTRACE=1 cargo test --lib --release -- "
+        f"{target_fn} --show-output --nocapture\n")
     return ("".join(lines), True)
 
 

@@ -11,8 +11,9 @@
 # test_small_debug_main for the small_data + max_word=2 pad
 # validation, or test_zkreg_main for the original small_data
 # (max_word=1, sub-F pad only).
-RUST_BACKTRACE=1 cargo test --lib --release -- test_full_debug_main --show-output --nocapture
+#RUST_BACKTRACE=1 cargo test --lib --release -- test_full_debug_main --show-output --nocapture
 #RUST_BACKTRACE=1 cargo test --lib --release -- test_small_debug_main --show-output --nocapture
+
 #RUST_BACKTRACE=1 cargo test --lib --release -- test_zkreg_main --show-output --nocapture
 #RUST_BACKTRACE=1 cargo test --lib -- test_zkreg_main --show-output --nocapture
 #RUST_BACKTRACE=1 cargo test --lib -- test_zkreg_main --show-output --nocapture
