@@ -2954,10 +2954,15 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 	}
 	let set_sigs_bag = set_sigs_crit.clone(); //skipping bag so take all from cirt
 			//directly and pass it to pm (SED approach).
-	
+
 	//2. process by pm bounds
-	let dfa_acc_path = dfa_bag.acc_path(&nibbles);
-	let dfa_acc_path_igc = dfa_bag_igc.acc_path(&nibbles);
+	// 2026-05-19: must scan padded_nibbles (same stream the
+	// circuit's FSM/pat_loc covers) — scanning raw nibbles
+	// here lets the deterministic F-level pad spell out short
+	// bag-words (e.g. "6a73") that the circuit sees as real
+	// occurrences, causing False-vs-Maybe SED mismatches.
+	let dfa_acc_path = dfa_bag.acc_path(&padded_nibbles);
+	let dfa_acc_path_igc = dfa_bag_igc.acc_path(&padded_nibbles);
 	let total_unique_states = dfa_acc_path.par_iter().map(|&s|
 		s).collect::<HashSet<usize>>().len()
 			+ dfa_acc_path_igc.par_iter().map(|&s| s)
