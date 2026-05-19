@@ -566,12 +566,13 @@ def run_rung(rung):
         log("INFO", f"RUNG {name} source reverted")
 
 # ============================================================
-# Package on failure
+# Package — used on both failure and success. Outcome is embedded
+# in pkg_name so OK bundles are visually distinct from PANIC/STALL.
 # ============================================================
 def package(rung, outcome, ctx):
     name = rung["name"]
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    pkg_name = f"deadlock_detect_{name}_{ts}"
+    pkg_name = f"deadlock_detect_{name}_{outcome}_{ts}"
     pkg_dir = PKG_PARENT / pkg_name
     pkg_dir.mkdir(parents=True, exist_ok=True)
     log("INFO", "packaging", dir=str(pkg_dir))
@@ -900,6 +901,13 @@ def main():
             if outcome == "OK":
                 log("INFO", f"RUNG {rung['name']} PASSED",
                     runtime_s=ctx.get("runtime_s", "?") if ctx else "?")
+                # 2026-05-19: bundle on success too — same artifacts
+                # (dump.txt + all per-job logs + env/git/ps snapshots)
+                # so post-run analysis has parity with the failure path.
+                try:
+                    package(rung, outcome, ctx)
+                except Exception as e:
+                    log("WARN", f"success packaging exception: {e}")
                 continue
             # Failure: package and stop.
             log("ERROR", f"RUNG {rung['name']} FAILED outcome={outcome}")

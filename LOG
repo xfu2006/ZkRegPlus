@@ -28391,8 +28391,17 @@ Goal 1. debug the padding issue
 Goal 2. writing 3.1
 	[a] read Reef and related papers
 	[b] definition 1. => DONE
+Goal 3. test again.
+	[c] another tet
+		2:22pm-> crashed no disk space
+		3:15pm-> still fail
+Goal 4. looks like quick_discharge has error
+	[a] run main.rs again and see what's the result at this moment.
 
--- TODO -- check is counting of Phase 1 step 3 correct?
-	couned roughly the same value for phase 1 step 1 and 2
-	at 4:50am (about 12 hours)
+Tuesday 05/19/2026
+Goal 1. deploy a new version with more probes
+	[a] deploy 8:01am => 9:30am
+	[b] second run: 10:40am => 
+
+
 -- TODO -- check what DEBUG USE 6703
