@@ -66,16 +66,14 @@ ZKREGPLUS_DIR = SRC_DIR.parent                          # zkregplus
 REPO_ROOT = ZKREGPLUS_DIR.parent                        # new_zkregplus
 DRIVER_RS = (REPO_ROOT / "sonobe_mod/folding-schemes/"
              "src/folding/foldpot/driver.rs")
-ZKP_DRIVER_RS = SRC_DIR / "zkp_driver.rs"
 COMPILE_SH = SRC_DIR / "compile2.sh"
 # 2026-05-19: compile.sh (NOT compile2.sh -- that's the wrapper) is
 # where the `cargo test ... -- <FILTER>` line lives. patch_for_rung
-# swaps <FILTER> to `test_zkreg_main` per rung so the test that
-# actually runs is the one whose body the zkp_driver.rs patch below
-# rewrites to call full_clamav with n_jobs=<rung>. Without this,
-# compile.sh's default filter `test_full_debug_main` dispatches to
-# full_debug() -- a single-job reproducer that bypasses the n_jobs
-# literal entirely.
+# swaps <FILTER> to `test_zkreg_main` per rung. The body of
+# test_zkreg_main itself (what fn it calls and with what args, plus
+# full_clamav's `num_jobs` literal) is the user's responsibility --
+# pre-configure zkp_driver.rs before launching deadlock_detect.py.
+# This script does NOT edit zkp_driver.rs.
 COMPILE_SH_INNER = SRC_DIR / "compile.sh"
 ANALYZE_LOG = SRC_DIR / "analyze_log.txt"
 PID_FILE = SRC_DIR / ".deadlock_detect.pid"
@@ -167,24 +165,14 @@ def daemonize():
     _DAEMONIZED = True
 
 # ============================================================
-# Source patching (full_clamav num_jobs only; call site stays as-is
-# if already set, otherwise we install a default call)
+# Source patching: compile.sh test-filter swap.
+# 2026-05-19: zkp_driver.rs is NO LONGER touched. The user
+# pre-configures test_zkreg_main's body (call site + args) and
+# full_clamav's `num_jobs` literal in zkp_driver.rs themselves
+# before launching this script. patch_for_rung only flips
+# compile.sh so cargo runs test_zkreg_main, and revert_patch puts
+# compile.sh back at rung exit.
 # ============================================================
-NUM_JOBS_RE = re.compile(
-    r"(let num_jobs = if b_setup \{1\} else \{)(\d+)(\};)")
-
-# In test_zkreg_main, we want full_clamav called. We replace the
-# currently-active line with our canonical call, and back up the file
-# for full revert.
-ACTIVE_CALL_RE = re.compile(
-    r"^(\s*)(small_data|small_data2|small_data3|small_data_par|"
-    r"small_data_debug|small_data4|full_data1|full_data2|full_data3|"
-    r"full_data4|full_par|full_par2|full_clamav)::<Fr>\(([^)]*)\);\s*"
-    r"//[^\n]*$",
-    re.MULTILINE,
-)
-TARGET_CALL = ("\\1full_clamav::<Fr>(b_check_lkup, true, false); "
-               "// deadlock_detect")
 
 # Matches an ACTIVE `cargo test --lib --release -- <fn> ...` line
 # in compile.sh. "Active" = the cargo invocation is not preceded by
@@ -210,58 +198,21 @@ _COMMENTED_CARGO_RE = re.compile(
     re.MULTILINE,
 )
 
-def patch_for_rung(n_jobs):
-    """Edit zkp_driver.rs + compile.sh in place so the next
-    `cargo test` invocation runs test_zkreg_main, which after the
-    edits below calls full_clamav with n_jobs=<rung>. Returns a
-    tuple (driver_backup, compile_backup) on success, or None if
-    either edit could not be applied (caller aborts the rung)."""
-    # ----- prepare zkp_driver.rs edit in memory -----
-    driver_backup = ZKP_DRIVER_RS.read_text()
-    text = driver_backup
-    if "full_clamav::<Fr>(b_check_lkup, true, false);" not in text:
-        lines = text.splitlines(keepends=True)
-        new_lines = []
-        replaced = False
-        for ln in lines:
-            stripped = ln.lstrip()
-            if (not replaced) and (not stripped.startswith("//")) and \
-                    "::<Fr>(b_check_lkup" in ln and "_data" in ln:
-                indent = ln[: len(ln) - len(stripped)]
-                new_lines.append("//" + ln)
-                new_lines.append(
-                    f"{indent}full_clamav::<Fr>(b_check_lkup, true, "
-                    f"false); // deadlock_detect\n")
-                replaced = True
-            elif (not replaced) and (not stripped.startswith("//")) and \
-                    "full_par::<Fr>(b_check_lkup)" in ln:
-                indent = ln[: len(ln) - len(stripped)]
-                new_lines.append("//" + ln)
-                new_lines.append(
-                    f"{indent}full_clamav::<Fr>(b_check_lkup, true, "
-                    f"false); // deadlock_detect\n")
-                replaced = True
-            else:
-                new_lines.append(ln)
-        text = "".join(new_lines)
-        if not replaced:
-            return None
-    if not NUM_JOBS_RE.search(text):
-        return None
-    text = NUM_JOBS_RE.sub(rf"\g<1>{n_jobs}\g<3>", text)
-
-    # ----- prepare compile.sh edit in memory -----
+def patch_for_rung():
+    """Edit compile.sh in place so its active cargo-test filter is
+    `test_zkreg_main`. Returns the file's original bytes for
+    revert_patch, or None if no rewrite could be applied (caller
+    aborts the rung). zkp_driver.rs is NOT touched -- the user
+    pre-configures test_zkreg_main and the num_jobs literal before
+    launching."""
     compile_backup = COMPILE_SH_INNER.read_text()
     new_compile, ok = _swap_test_filter(
         compile_backup, "test_zkreg_main")
     if not ok:
         return None
-
-    # ----- commit both writes (only after both transforms ok) -----
-    ZKP_DRIVER_RS.write_text(text)
     if new_compile != compile_backup:
         COMPILE_SH_INNER.write_text(new_compile)
-    return (driver_backup, compile_backup)
+    return compile_backup
 
 
 def _swap_test_filter(text, target_fn):
@@ -313,15 +264,12 @@ def _swap_test_filter(text, target_fn):
     return ("".join(lines), True)
 
 
-def revert_patch(backups):
-    """backups is the tuple returned by patch_for_rung (or None)."""
-    if not backups:
+def revert_patch(compile_backup):
+    """Restore compile.sh from the bytes returned by patch_for_rung.
+    No-op if the patch step failed (compile_backup is None)."""
+    if compile_backup is None:
         return
-    driver_backup, compile_backup = backups
-    if driver_backup is not None:
-        ZKP_DRIVER_RS.write_text(driver_backup)
-    if compile_backup is not None:
-        COMPILE_SH_INNER.write_text(compile_backup)
+    COMPILE_SH_INNER.write_text(compile_backup)
 
 # ============================================================
 # Preflight
@@ -369,7 +317,7 @@ def preflight():
     checks["cargo_on_path"] = shutil.which("cargo") is not None
     checks["compile2.sh"] = COMPILE_SH.exists() and os.access(
         COMPILE_SH, os.X_OK)
-    checks["zkp_driver_writable"] = os.access(ZKP_DRIVER_RS, os.W_OK)
+    checks["compile_sh_writable"] = os.access(COMPILE_SH_INNER, os.W_OK)
     checks["driver_rs_exists"] = DRIVER_RS.exists()
     checks["tmp_writable"] = os.access("/tmp", os.W_OK)
     # cache dir may or may not exist; full_clamav uses snark_cache_dir
@@ -435,8 +383,8 @@ def run_rung(rung):
         watchdog_secs=watchdog_secs,
         max_runtime_min=max_runtime_min)
 
-    # 1. Patch source
-    backup = patch_for_rung(n_jobs)
+    # 1. Patch compile.sh (zkp_driver.rs is the user's responsibility)
+    backup = patch_for_rung()
     if backup is None:
         log("ERROR", f"RUNG {name} patch_for_rung failed")
         return "BUILD_FAIL", None
