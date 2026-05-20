@@ -28401,7 +28401,32 @@ Goal 4. looks like quick_discharge has error
 Tuesday 05/19/2026
 Goal 1. deploy a new version with more probes
 	[a] deploy 8:01am => 9:30am
-	[b] second run: 10:40am => 
+	[b] second run: 10:40am => 11:45am -> success
+	[c] another start: 12:14pm =>2:03pm finishes too early
+	[d] restarted 2:30pm => 7:30pm (5 hrs)
+		setup (1 small file for full circuit) => 
+		peak 660GB
+	[e] deploy deadlock_detect.py
+		7:30pm => 
+Goal 2. writing
+	[a] 3.2 draft
+	[b] paragraph 1
+	[c] paragraph 2
+
+Wed 05/202/2026
+Goal 1. data check
+	[a] run 12 hours now, still ok, all jobs progressing currently
+		in pass2
+	[b] 13 hrs now into pass3. RAM is about 880GB.
+Goal 2. writing
+	[a] paragraph 2
+	[b] paragraph 3
+Goal 3. prepare the enron email data
+	[a] a python file that merges into 128k
+	[b] run spamassin scan to generate the list (or use the existing list)
+		make using existing list an option
+	[c] remove those files flagged.
+	[d] figure 1.
 
 
 -- TODO -- check what DEBUG USE 6703
