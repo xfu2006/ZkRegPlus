@@ -28418,6 +28418,8 @@ Goal 1. data check
 	[a] run 12 hours now, still ok, all jobs progressing currently
 		in pass2
 	[b] 13 hrs now into pass3. RAM is about 880GB.
+	[c] 14 hrs, ok pass3. still 880GB
+	[d] 15 hrs, still ok pass3, still 880GB. one step costs 77 sec.
 Goal 2. writing
 	[a] paragraph 2
 	[b] paragraph 3
@@ -28427,6 +28429,16 @@ Goal 3. prepare the enron email data
 		make using existing list an option
 	[c] remove those files flagged.
 	[d] figure 1.
+Goal 4. enron email set processing
+	[a] do a python file which merges records, run spamassin to generate
+		to remove list
+	[b] defined the plan for gen_email_merged128k.py
+		detailed plan of each function and unit test and integration test
+	[c] execute the plan
+Goal 5. plan section 7. implementation and evaluation
+	[a] outlined the structure
+	[b] several questions, and get claude code to search
+		related work and think about data comparison.
 
 
 -- TODO -- check what DEBUG USE 6703
