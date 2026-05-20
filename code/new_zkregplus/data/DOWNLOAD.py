@@ -18,7 +18,9 @@ print("extraction completed. SRC DATA => src_sig/ and samples/");
 # (its SPLIT_SIZE leaves only 16 bytes of margin under 32 MiB,
 # which makes loc values overflow range2_bit=26 in full_data4).
 os.system("cp gen_data.py samples/gen_data.py");
+os.system("cp gen_merged128k_email.py samples/");
 os.system("cd samples; python3 gen_data.py");
+os.system("cd samples; python3 gen_merged128k_email.py");
 
 #3. verify split files leave >=100 KiB headroom under 32 MiB
 #   (full_data4 uses range2_bit=26; loc encoding overshoots the
