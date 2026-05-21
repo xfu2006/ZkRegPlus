@@ -28420,6 +28420,7 @@ Goal 1. data check
 	[b] 13 hrs now into pass3. RAM is about 880GB.
 	[c] 14 hrs, ok pass3. still 880GB
 	[d] 15 hrs, still ok pass3, still 880GB. one step costs 77 sec.
+	[e] 16 hrs, still ok pass3, 890GB. 
 Goal 2. writing
 	[a] paragraph 2
 	[b] paragraph 3
@@ -28434,11 +28435,27 @@ Goal 4. enron email set processing
 		to remove list
 	[b] defined the plan for gen_email_merged128k.py
 		detailed plan of each function and unit test and integration test
-	[c] execute the plan
+	[c] execute the plan -> DONE
+	[d] generated about 1.2G enron data (dropped about 200MB).
 Goal 5. plan section 7. implementation and evaluation
 	[a] outlined the structure
 	[b] several questions, and get claude code to search
+	[c] done with structure.
 		related work and think about data comparison.
+
+Thursday 05/21/2026
+Goal 1. continue to collect data
+	[a] 36 hrs, still ok pass 3, 890GB
+	[b] 39 hrs, still ok, most on word_id 127, some on 106. 880GB
+	[c] 44 hrs (at around 3:00pm), first thread 4 enters snark proof
+		and thread 7 enters snark proof
+	[d] memory out at 45th hour.
+Goal 2. writing section 4
+Goal 3. Implementation
+	[a] recall the implementation plan to set up the framework
+	[b] deal with stage 1 and 2.
+	[c] read current setting
+	[d] planning 4.1
 
 
 -- TODO -- check what DEBUG USE 6703
