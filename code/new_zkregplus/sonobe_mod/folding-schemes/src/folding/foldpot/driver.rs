@@ -46,7 +46,7 @@ use crate::{
 		circuits::{CF1, CF2, CF3},
 		foldpot::{
 			container_config::{ColEle},
-			qa_nizk::{QaNizkProof},
+			qa_nizk::{QaNizkProof,QaNizkProverParams},
 			utils::{Timer,get_mem_usage,get_mem_usage_mb,format_bytes,B_DEBUG},
 			circuits_super::{field_to_usize},
 			mod_super::{PreprocessorParamFoldPotSuper,FoldPotSuper,
@@ -2528,7 +2528,7 @@ where
             S::VerifyingKey)>>> = Arc::new(RwLock::new(None));
         let phase1_snark_done = Arc::new(AtomicUsize::new(0));
         let phase2_snark_done = Arc::new(AtomicUsize::new(0));
-    
+
 
 	//0. preprpcessing jobs to make sure that all have the
 	//same number of words
@@ -2784,6 +2784,11 @@ where
 	let semaphore_cp: Semaphore = Arc::new((Mutex::new(n_par_snark_cp), Condvar::new()));
 	let n_par_batch_claim = read_global_config().n_par_batch_claim;
 	let semaphore_batch_claim: Semaphore = Arc::new((Mutex::new(n_par_batch_claim), Condvar::new()));
+	// qa_pp lifted out so last finisher of each phase can drop it.
+	let qa_pp_d1: Arc<RwLock<Option<QaNizkProverParams<E>>>> =
+		Arc::new(RwLock::new(driver1.nova_param.0.qa_pp.take()));
+	let qa_pp_d2: Arc<RwLock<Option<QaNizkProverParams<E>>>> =
+		Arc::new(RwLock::new(driver2.nova_param.0.qa_pp.take()));
 	log_perf(0, log_level, &format!("PERF 1005: FoldPot: Step 3: set up driver 2.\n=== Now Execute All Jobs =====\n"), &mut gt_all);
 
 	// 2026-05-21 (Lever 2+3): captured before into_par_iter consumes jobs.
@@ -2886,22 +2891,27 @@ where
 	  			&mut gt1);
 	  	
 	  		//5. generate the inputs for cyclepair
-	  		let qa_nizk_pkey = driver1.nova_param.0
-				.qa_pp.as_ref().expect("qa_pp null!"); 
+	  		let qa_pp_d1_guard = qa_pp_d1.read().unwrap();
+	  		let qa_nizk_pkey = qa_pp_d1_guard.as_ref()
+				.expect("qa_pp_d1 null!");
 	  		let qa_nizk_vkey = driver1.nova_param.1
 				.qa_vp.as_ref().expect("qa_vp null!"); 
 	  		let qa_nizk_vkey_hash = qa_nizk_vkey.hash(&driver1.poseidon_config);
 	  		let qa_nizk_vkey_hash1 = qa_nizk_vkey_hash.clone();
 	  		let (U_i1, W_i1, _r_Fr, _cmT)= nova1.gen_next_folded().unwrap();
-	  		let (com_all_w, prf_qa_nizk, r_all_w, prf_kzg, kzg_all_com_ch) = 
+	  		let (com_all_w, prf_qa_nizk, r_all_w, prf_kzg, kzg_all_com_ch) =
 				W_i1.gen_com_all_w_and_qa_nizk_prf::<E, CS1E, H>(
-					&qa_nizk_pkey, 
-					&driver1.nova_param.0.cs1e_pp, 
+					&qa_nizk_pkey,
+					&driver1.nova_param.0.cs1e_pp,
 					&qa_nizk_vkey, &U_i1, &driver1.poseidon_config
 			);
+	  		drop(W_i1);
 	  		let cyclepair_inputs = U_i1
 	  			.generate_cyclepair_inputs::<E>(qa_nizk_pkey, qa_nizk_vkey,
 	  				&com_all_w, &prf_qa_nizk, &poseidon_config);
+	  		drop(prf_qa_nizk);
+	  		drop(U_i1);
+	  		drop(qa_pp_d1_guard);
 
 	  		if read_global_config().b_folding_only {
 	  			log(job_id, log_level, &format!(
@@ -2978,9 +2988,10 @@ where
 	  				.fetch_add(1, Ordering::SeqCst);
 	  			if prev_p1 + 1 == n_jobs_total {
 	  				let _ = cached_main_keys.write().unwrap().take();
+	  				let _ = qa_pp_d1.write().unwrap().take();
 	  				log_perf(job_id, LOG2, &format!(
-	  					"DEBUG USE 60001.4: MEM after drop main_pk: \
-	  					{} GB", get_mem_usage()), &mut gt1);
+	  					"DEBUG USE 60001.4: MEM after drop main_pk + \
+	  					qa_pp_d1: {} GB", get_mem_usage()), &mut gt1);
 	  			}
 
 	  			(snark_proof_main, mainres, mainres_hash, g16_vk_owned)
@@ -3030,13 +3041,16 @@ where
 		&driver2.circuits
 	)?;
 
-	let qa_nizk_pkey = driver2.nova_param.0.qa_pp.as_ref().expect("qa_pp null!"); 
+	let qa_pp_d2_guard = qa_pp_d2.read().unwrap();
+	let qa_nizk_pkey = qa_pp_d2_guard.as_ref().expect("qa_pp_d2 null!");
 	let qa_nizk_vkey = driver2.nova_param.1.qa_vp.as_ref()
 		.expect("qa_vp null!").clone();
 	let qa_nizk_vkey_hash = qa_nizk_vkey.hash(&driver2.poseidon_config);
 	let (nova2_U_i1, nova2_W_i1, _nova2_r_Fr, _nova2__cmT)= 
 		nova2.gen_next_folded().unwrap();
 	let (nova2_com_all_w, nova2_prf_qa_nizk, nova2_r_all_w, nova2_prf_kzg, nova2_kzg_all_com_ch) = nova2_W_i1.gen_com_all_w_and_qa_nizk_prf::<E, CS1E, H>( &qa_nizk_pkey, &driver2.nova_param.0.cs1e_pp, &qa_nizk_vkey, &nova2_U_i1, &driver2.poseidon_config);
+	drop(nova2_W_i1);
+	drop(qa_pp_d2_guard);
 	log_perf(job_id, log_level, &format!("PERF 1006: Job Step 4: cyclefold and cyclepair IVC PROVE STEPS (folding) DONE. num_steps: {}", _num_steps), &mut gt1);
 
 
@@ -3140,9 +3154,10 @@ where
 			.fetch_add(1, Ordering::SeqCst);
 		if prev_p2 + 1 == n_jobs_total {
 			let _ = cached_cp_keys.write().unwrap().take();
+			let _ = qa_pp_d2.write().unwrap().take();
 			log_perf(job_id, LOG2, &format!(
-				"DEBUG USE 60001.5: MEM after drop cp_pk: {} GB",
-				get_mem_usage()), &mut gt1);
+				"DEBUG USE 60001.5: MEM after drop cp_pk + qa_pp_d2: \
+				{} GB", get_mem_usage()), &mut gt1);
 		}
 
 		(snark_proof_cp, g16_vk_cp_owned)
