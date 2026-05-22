@@ -1,7 +1,8 @@
 use std::any::Any;
 use ark_bn254::Bn254;
 use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
-use std::{sync::{Arc, Mutex, Condvar}, fmt::{Debug,Formatter}};
+use std::{sync::{Arc, Mutex, Condvar, RwLock,
+    atomic::{AtomicUsize, Ordering}}, fmt::{Debug,Formatter}};
 /* 
 	Created 08/27/2024 
 	Modified 12/25/2024: added snark_rand_input structure
@@ -2307,7 +2308,7 @@ where
 	<CS1E as CommitmentScheme<C1, H>>::VerifierParams: Send + Sync,
     CS2: CommitmentScheme<C2, H, ProverParams = PedersenParams<C2>, VerifierParams = PedersenParams<C2>>,
 	<CS2 as CommitmentScheme<C2, H>>::VerifierParams: Send + Sync,
-    S: SNARK<C1::ScalarField>,
+    S: SNARK<C1::ScalarField> + SNARK<<E as Pairing>::ScalarField>,
     <C1 as CurveGroup>::BaseField: PrimeField,
     <C2 as CurveGroup>::BaseField: PrimeField,
     <C1 as Group>::ScalarField: Absorb,
@@ -2335,7 +2336,16 @@ where
 	C2G2::Affine: AffineFromField<CF2<C2G2>>,
 	C1::Config: SWCurveConfig,
 	C2::Config: SWCurveConfig,
-	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug + Send + Sync, S::ProvingKey: 'static, S::VerifyingKey: 'static, S::VerifyingKey: 'static,
+	GM: GadgetMapper<CF1<C1>,LK> + std::clone::Clone + Debug + Send + Sync,
+	<S as SNARK<C1::ScalarField>>::ProvingKey: 'static,
+	<S as SNARK<C1::ScalarField>>::VerifyingKey: 'static,
+	// 2026-05-21 (Lever 2+3): Send needed so Arc<RwLock<Option<keys>>>
+	// is Sync across the rayon for_each. The bound is expressed via
+	// E::ScalarField because that is how rustc projects S::ProvingKey
+	// at the use site (C1::ScalarField is provably equal but not
+	// automatically unified through the projection).
+	<S as SNARK<<E as Pairing>::ScalarField>>::ProvingKey: Send,
+	<S as SNARK<<E as Pairing>::ScalarField>>::VerifyingKey: Send,
 {
 		// 2026-05-15: allow gdb attach from non-parent same-uid procs
 		// (e.g. deadlock_detect.py). No-op unless ZKR_ALLOW_PTRACE_ANY
@@ -2491,25 +2501,34 @@ where
         }
         let b_read_snark_cache = read_global_config().b_read_snark_cache;
 		let _b_write_snark_cache = read_global_config().b_write_snark_cache;
-        let mut cached_main_keys: Option<(S::ProvingKey, S::VerifyingKey)> = None;
-        let mut cached_cp_keys: Option<(S::ProvingKey, S::VerifyingKey)> = None;
+        // 2026-05-21 (Lever 2A): defer cp_key load until Phase 2 to free
+        // ~77 GiB of RAM during all of Phase 1. cp_key meta existence is
+        // still asserted upfront so a missing cache fails fast.
+        let mut cached_main_keys_init: Option<(S::ProvingKey,
+            S::VerifyingKey)> = None;
 
         if b_read_snark_cache {
 			let main_path = cache_base.join("g16_main.key");
-			let cp_path = cache_base.join("g16_cp.key");
 			let main_path_meta = cache_base.join("g16_main.key.meta");
 			let cp_path_meta = cache_base.join("g16_cp.key.meta");
-			assert!(main_path_meta.exists(), 
+			assert!(main_path_meta.exists(),
 				"main: {:?} not exist", main_path_meta);
-			if let Ok(keys) = read_g16key::<C1::ScalarField, S>(&main_path, 0) {
-				cached_main_keys = Some(keys);
-			}
-			assert!(cp_path_meta.exists(), "cp_path: {:?} not exist", 
+			assert!(cp_path_meta.exists(), "cp_path: {:?} not exist",
 				cp_path_meta);
-			if let Ok(keys) = read_g16key::<C1::ScalarField, S>(&cp_path, 0) {
-				cached_cp_keys = Some(keys);
+			if let Ok(keys) = read_g16key::<C1::ScalarField, S>(&main_path, 0) {
+				cached_main_keys_init = Some(keys);
 			}
         }
+        // 2026-05-21 (Lever 2+3): wrap both keys in Arc<RwLock> so the
+        // last finisher of each phase can drop them in place. cp_key is
+        // lazily loaded by the first job that reaches Phase 2.
+        let cached_main_keys: Arc<RwLock<Option<(S::ProvingKey,
+            S::VerifyingKey)>>> =
+            Arc::new(RwLock::new(cached_main_keys_init));
+        let cached_cp_keys: Arc<RwLock<Option<(S::ProvingKey,
+            S::VerifyingKey)>>> = Arc::new(RwLock::new(None));
+        let phase1_snark_done = Arc::new(AtomicUsize::new(0));
+        let phase2_snark_done = Arc::new(AtomicUsize::new(0));
     
 
 	//0. preprpcessing jobs to make sure that all have the
@@ -2768,6 +2787,10 @@ where
 	let semaphore_batch_claim: Semaphore = Arc::new((Mutex::new(n_par_batch_claim), Condvar::new()));
 	log_perf(0, log_level, &format!("PERF 1005: FoldPot: Step 3: set up driver 2.\n=== Now Execute All Jobs =====\n"), &mut gt_all);
 
+	// 2026-05-21 (Lever 2+3): captured before into_par_iter consumes jobs.
+	// Used by last-finisher logic for main_key and cp_key drops.
+	let n_jobs_total = jobs.len();
+
 	jobs.into_par_iter().enumerate().for_each(|(job_id, job)| {
 		let res = (|| -> Result<(), Error> {
                         let (pk_main_owned, vk_main_owned);
@@ -2848,6 +2871,15 @@ where
 				&per_job_layered,
 				&per_job_circuits,
 	  		)?;
+	  		// 2026-05-21 (Lever 1): per_job_layered/per_job_circuits are
+	  		// not used after pass_all returns. Drop them now to free
+	  		// per-job gadget clones BEFORE the Phase 1 snark critical
+	  		// section, where all 8 jobs would otherwise hold them.
+	  		drop(per_job_layered);
+	  		drop(per_job_circuits);
+	  		log_perf(job_id, LOG2, &format!(
+	  			"DEBUG USE 60001.1: MEM after drop per_job_*: {} GB",
+	  			get_mem_usage()), &mut gt1);
 	  		let Some((batch_prf, ind_prf)) = batch_ind_prfs.map(|x| (x.0, x.1))
 	  			else {return Err(Error::Other("batch proof is none!".to_string()));};
 			let mb_speed = get_speed(max_total_n, &mut gt_prove_steps);
@@ -2910,30 +2942,49 @@ where
 	  			let mainres_hash = main_circ.res_hash.clone(); 
 	  			log_perf(job_id, log_level, &format!("FoldPot Step 4: build MAIN decider circuit. MEM: {} GB", get_mem_usage()), &mut gt1);
 	  	
-				let (g16_pk, g16_vk) = if let Some(keys) = &cached_main_keys {
+				// 2026-05-21 (Lever 3): read main_pk under RwLock so the
+				// last finisher can drop it after Phase 1 snark ends.
+				// VK is cloned owned before releasing the guard so
+				// downstream code does not borrow from the lock.
+				let main_read_guard = cached_main_keys.read().unwrap();
+				let (g16_pk, g16_vk): (&S::ProvingKey, &S::VerifyingKey) =
+					if let Some(keys) = main_read_guard.as_ref() {
 						(&keys.0, &keys.1)
-				} else {
+					} else {
 						let (pk, vk) = S::circuit_specific_setup(
-								main_circ.clone(), 
+								main_circ.clone(),
 								&mut rng).unwrap();
 						if job_id == 0 && read_global_config()
 						.b_write_snark_cache {
 							let main_path = cache_base
 								.join("g16_main.key");
-							write_g16key::<C1::ScalarField, S>(&main_path, 
+							write_g16key::<C1::ScalarField, S>(&main_path,
 								&pk, &vk, job_id);
 						}
 						pk_main_owned = pk;
 						vk_main_owned = vk;
 						(&pk_main_owned, &vk_main_owned)
-				};
+					};
 	  			log_perf(job_id, log_level, &format!("PERF 1006: Job Step 2: setup Groth16. MEM: {} GB.",  get_mem_usage()), &mut gt1);
-	  	
-	  			let snark_proof_main: S::Proof = S::prove(&g16_pk, 
+
+	  			let snark_proof_main: S::Proof = S::prove(&g16_pk,
 	  				main_circ, &mut rng)
 	  				.map_err(|e| Error::Other(e.to_string())).unwrap();
-	  	
-	  			(snark_proof_main, mainres, mainres_hash, g16_vk)
+
+	  			let g16_vk_owned: S::VerifyingKey = g16_vk.clone();
+	  			drop(main_read_guard);
+
+	  			// Lever 3: last-finisher drops main_pk in place.
+	  			let prev_p1 = phase1_snark_done
+	  				.fetch_add(1, Ordering::SeqCst);
+	  			if prev_p1 + 1 == n_jobs_total {
+	  				let _ = cached_main_keys.write().unwrap().take();
+	  				log_perf(job_id, LOG2, &format!(
+	  					"DEBUG USE 60001.4: MEM after drop main_pk: \
+	  					{} GB", get_mem_usage()), &mut gt1);
+	  			}
+
+	  			(snark_proof_main, mainres, mainres_hash, g16_vk_owned)
 	  		};
 	  
 	  		//7. prepare the other data.
@@ -3013,11 +3064,11 @@ where
 	};
 	                    let (snark_proof_cp, g16_vk_cp) = {
 		let cp_circuit = CyclePairCircuit
-			::from_nova(nova2, 
-				cyclepair_inputs, qa_nizk_vkey_hash.clone(), 
+			::from_nova(nova2,
+				cyclepair_inputs, qa_nizk_vkey_hash.clone(),
 				driver2.poseidon_config.clone(),
 				com_all_w, r_all_w, nova2_com_all_w, nova2_r_all_w, mainres,
-				inp).unwrap(); 
+				inp).unwrap();
 		log_perf(job_id, log_level, &format!("PERF 1006: Job Step 5: build CyclePair circuit. MEM: {} GB", get_mem_usage()), &mut gt1);
 
 		// ------------- The following is the CRITICAL SECTION -------
@@ -3032,12 +3083,38 @@ where
 		};
 
 
+		// 2026-05-21 (Lever 2B): lazy-load cp_key the first time any
+		// job reaches Phase 2 snark. Double-checked under the write
+		// lock so only one job pays the disk + deserialize cost; all
+		// others see Some after the first finisher's write.
+		log_perf(job_id, LOG2, &format!(
+			"DEBUG USE 60001.2: MEM before cp_key load: {} GB",
+			get_mem_usage()), &mut gt1);
+		{
+			let already = cached_cp_keys.read().unwrap().is_some();
+			if !already && read_global_config().b_read_snark_cache {
+				let mut w = cached_cp_keys.write().unwrap();
+				if w.is_none() {
+					let cp_path = cache_base.join("g16_cp.key");
+					if let Ok(keys) =
+						read_g16key::<C1::ScalarField, S>(&cp_path, 0) {
+						*w = Some(keys);
+					}
+				}
+			}
+		}
+		log_perf(job_id, LOG2, &format!(
+			"DEBUG USE 60001.3: MEM after cp_key load: {} GB",
+			get_mem_usage()), &mut gt1);
+
 		//9. set up the keys (maybe later can be cached)
-		let (g16_pk, g16_vk) = if let Some(keys) = &cached_cp_keys {
-			(&keys.0, &keys.1)
-		} else {
+		let cp_read_guard = cached_cp_keys.read().unwrap();
+		let (g16_pk, g16_vk): (&S::ProvingKey, &S::VerifyingKey) =
+			if let Some(keys) = cp_read_guard.as_ref() {
+				(&keys.0, &keys.1)
+			} else {
 				let (pk, vk) = S::circuit_specific_setup(
-						cp_circuit.clone(), 
+						cp_circuit.clone(),
 						&mut rng).unwrap();
 				if job_id == 0 && read_global_config().b_write_snark_cache {
 						let cp_path = cache_base.join("g16_cp.key");
@@ -3047,14 +3124,28 @@ where
 				pk_cp_owned = pk;
 				vk_cp_owned = vk;
 				(&pk_cp_owned, &vk_cp_owned)
-		};
+			};
 		log_perf(job_id, log_level, &format!("PERF 1006: Job Step 6: setup Groth16 for CpCircuit. MEM: {} GB.",  get_mem_usage()), &mut gt1);
 
 		//10. produce the groth16 snark
 		let snark_proof_cp: S::Proof = S::prove(&g16_pk, cp_circuit, &mut rng)
 			.map_err(|e| Error::Other(e.to_string())).unwrap();
 		log_perf(job_id, log_level, &format!("PERF 1006: Job Step 7: Generate Groth16 proof. MEM: {} GB.",  get_mem_usage()), &mut gt1);
-		(snark_proof_cp, g16_vk)
+
+		let g16_vk_cp_owned: S::VerifyingKey = g16_vk.clone();
+		drop(cp_read_guard);
+
+		// Lever 2 finisher: last job drops cp_pk in place.
+		let prev_p2 = phase2_snark_done
+			.fetch_add(1, Ordering::SeqCst);
+		if prev_p2 + 1 == n_jobs_total {
+			let _ = cached_cp_keys.write().unwrap().take();
+			log_perf(job_id, LOG2, &format!(
+				"DEBUG USE 60001.5: MEM after drop cp_pk: {} GB",
+				get_mem_usage()), &mut gt1);
+		}
+
+		(snark_proof_cp, g16_vk_cp_owned)
 	};
 
 	batch_prf.add_part2(

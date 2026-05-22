@@ -489,7 +489,7 @@ where
 	// enforce that the CS2 is Pedersen commitment scheme, since we're at Ethereum's EVM decider
 	CS2: CommitmentScheme<C2, ProverParams = PedersenParams<C2>, VerifierParams = PedersenParams<C2>>,
 	<CS2 as CommitmentScheme<C2>>::VerifierParams: Send + Sync,
-	S: SNARK<C1::ScalarField>,
+	S: SNARK<C1::ScalarField> + SNARK<<E as Pairing>::ScalarField>,
 	<C1 as CurveGroup>::BaseField: PrimeField,
 	<C2 as CurveGroup>::BaseField: PrimeField,
 	<C1 as Group>::ScalarField: Absorb,
@@ -520,7 +520,11 @@ where
 	C1::Config: SWCurveConfig,
 	<C2 as CurveGroup>::Config: SWCurveConfig,
 	C2G2::Affine: AffineFromField<CF2<C2G2>>,
-	<E as Pairing>::ScalarField: ColEle, S::ProvingKey: 'static, S::VerifyingKey: 'static,
+	<E as Pairing>::ScalarField: ColEle,
+	<S as SNARK<C1::ScalarField>>::ProvingKey: 'static,
+	<S as SNARK<C1::ScalarField>>::VerifyingKey: 'static,
+	<S as SNARK<<E as Pairing>::ScalarField>>::ProvingKey: Send,
+	<S as SNARK<<E as Pairing>::ScalarField>>::VerifyingKey: Send,
 {
 	// re-use the capacity for BOTH cs and ignore_case
 	// this is usaully inefficient for ignore_case (but
@@ -573,7 +577,7 @@ where
 	// enforce that the CS2 is Pedersen commitment scheme, since we're at Ethereum's EVM decider
 	CS2: CommitmentScheme<C2, ProverParams = PedersenParams<C2>, VerifierParams = PedersenParams<C2>>,
 	<CS2 as CommitmentScheme<C2>>::VerifierParams: Send + Sync,
-	S: SNARK<C1::ScalarField>,
+	S: SNARK<C1::ScalarField> + SNARK<<E as Pairing>::ScalarField>,
 	<C1 as CurveGroup>::BaseField: PrimeField,
 	<C2 as CurveGroup>::BaseField: PrimeField,
 	<C1 as Group>::ScalarField: Absorb,
@@ -604,7 +608,11 @@ where
 	C1::Config: SWCurveConfig,
 	<C2 as CurveGroup>::Config: SWCurveConfig,
 	C2G2::Affine: AffineFromField<CF2<C2G2>>,
-	<E as Pairing>::ScalarField: ColEle, S::ProvingKey: 'static, S::VerifyingKey: 'static,
+	<E as Pairing>::ScalarField: ColEle,
+	<S as SNARK<C1::ScalarField>>::ProvingKey: 'static,
+	<S as SNARK<C1::ScalarField>>::VerifyingKey: 'static,
+	<S as SNARK<<E as Pairing>::ScalarField>>::ProvingKey: Send,
+	<S as SNARK<<E as Pairing>::ScalarField>>::VerifyingKey: Send,
 {
 	//1. build or load the clamdb
 	let log_level = LOG1;
@@ -2008,6 +2016,117 @@ pub mod tests_zkp_driver{
 		);
 	}
 
+	/// 2026-05-21: full_clam_short_file — mirrors full_clamav with
+	/// b_light_test=false and b_setup=false hardcoded, and scan
+	/// targets swapped to 8x ~1MB sample_1M_*.dat files. Goal:
+	/// measure SNARK time (Phase 1 main + Phase 2 cp) in isolation
+	/// from folding cost. Snark keys are READ from cache; setup is
+	/// skipped. All other config knobs (capacities, range2_bit,
+	/// n_par_snark*, min_*) are byte-identical to full_clamav —
+	/// keep them in sync if you tune full_clamav.
+	#[allow(dead_code)]
+	fn full_clam_short_file<F:PrimeField>(){
+		//extra setting
+		let b_check_lkup = false;
+		get_global_config().snark_cache_dir = "full_clamav".to_string();
+		get_global_config().b_write_snark_cache = false;
+		get_global_config().b_read_snark_cache = true;
+		get_global_config().range2_bit = 26;
+		get_global_config().b_light_test = false;
+		get_global_config().min_subsigs = 368;
+		get_global_config().min_basis_unique_states= 1054;
+		get_global_config().min_basis_acc_states =  268;
+		get_global_config().min_basis_pats_in_trace=  295;
+		get_global_config().min_avg_pats_per_subsig= 8;
+		get_global_config().min_dfa_sigs = 3;
+		get_global_config().min_dfa_subsigs =  3;
+		get_global_config().n_par_snark = 2;
+		get_global_config().n_par_snark_cp = 2;
+		get_global_config().n_par_batch_claim = 8;
+		get_global_config().perc_lkup_share = 143;
+
+		get_global_config().b_read_cache = true;
+		let b_write_cache = !read_global_config().b_read_cache;
+		let set1 = "data/debug/full_clamav/config/";
+		let max_word= 512 * 8;
+		let sigs = 400;
+		let subsigs = 580;
+		let avg_pats_per_subsig = 8;
+		let avg_active_pats_per_subsig = 2;
+		let perc_comp_subsigs = 20;
+		let vec_decrease_level = vec![2];
+		let num_circs = 2;
+		let basis_unique_states = 1300;
+		let basis_acc_states = 750;
+		let basis_pats_in_trace = 820;
+		let basis_acc_states_igc = basis_acc_states;
+		let basis_pats_in_trace_igc = basis_pats_in_trace;
+		let dfa_sigs = 8;
+		let dfa_subsigs= 8;
+		let perc_pats_expansion_rate = 104;
+		let perc_pats_expansion_rate_igc = 2;
+
+		let init_cp_cap= CpCapacity{
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+		};
+		let init_sed_cap= SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig,
+			avg_active_pats_per_subsig,
+			basis_pats_in_trace,
+			perc_pats_expansion_rate,
+			sigs,
+			perc_comp_subsigs,
+			basis_unique_states,
+			basis_acc_states,
+		);
+		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
+		let init_cp_cap_igc= CpCapacity{
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs: subsigs,
+			avg_pats_per_subsig,
+		};
+		let init_sed_cap_igc= SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig,
+			avg_active_pats_per_subsig,
+			basis_pats_in_trace_igc,
+			perc_pats_expansion_rate_igc,
+			sigs,
+			perc_comp_subsigs,
+			basis_unique_states,
+			basis_acc_states_igc,
+		);
+
+		let num_jobs = 8;
+		let scan_files: Vec<String> = (0..num_jobs).map(|i|
+			format!("{}/sample_1M_{}.dat", set1, i)).collect();
+		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+			0,
+			&format!("{}/main.dat",set1),
+			scan_files,
+			"data/debug/full_clamav/reports/report2.dat",
+			b_write_cache,
+			"full_data",
+			&format!("{}/main_dfa.dat", set1),
+			&format!("{}/needs_ised.dat", set1),
+			&format!("{}/needs_ised_igc.dat",set1),
+			max_word,
+			&init_cp_cap,
+			&init_sed_cap,
+			&init_dfa_cap,
+			&init_cp_cap_igc,
+			&init_sed_cap_igc,
+			&vec_decrease_level,
+			num_circs,
+			b_check_lkup
+		);
+	}
+
 	/// 2026-05-16: full_debug — mirrors full_clamav (test-mod
 	/// capacities) but with a SINGLE list file (n_jobs=1) of 4
 	/// server-failing samples. Reuses data/cache/full_clamav snark
@@ -2175,6 +2294,7 @@ pub mod tests_zkp_driver{
 		//full_par::<Fr>(b_check_lkup); //full data large file
 		//full_par2::<Fr>(b_check_lkup); //full_data4 files, 8 parallel jobs
 		//full_clamav::<Fr>(b_check_lkup, _b_light_test, _b_setup); //full data large file
+		full_clam_short_file::<Fr>();
 
 		// Drain any in-flight log lines on the stdout drainer before
 		// declaring success, so the sentinel is never written ahead of
