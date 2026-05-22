@@ -2587,7 +2587,6 @@ use utils::consts::read_global_config;
 		//1 data preparation
 		//1.1. write the tcase file contents to the file
 		//then do a quick discharge to retrieve the discharge info.
-		let zero = Fr::zero();
 		let path = format!("{}/data/{}/word.txt", proj_root(), word_dir);
 		write_to_file(&path, &tcase.file_content);
 		let nibbles_raw = read_nibbles(&path);

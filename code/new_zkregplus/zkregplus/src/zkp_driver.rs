@@ -2293,8 +2293,8 @@ pub mod tests_zkp_driver{
 		//full_data4::<Fr>(b_check_lkup); //full data large file
 		//full_par::<Fr>(b_check_lkup); //full data large file
 		//full_par2::<Fr>(b_check_lkup); //full_data4 files, 8 parallel jobs
+		//full_clam_short_file::<Fr>();
 		//full_clamav::<Fr>(b_check_lkup, _b_light_test, _b_setup); //full data large file
-		full_clam_short_file::<Fr>();
 
 		// Drain any in-flight log lines on the stdout drainer before
 		// declaring success, so the sentinel is never written ahead of

@@ -2266,7 +2266,6 @@ fn install_fail_fast_panic_hook() {
 			"FAIL-FAST: prover panic in thread '{}' \
 			 at {}: {}",
 			tname, loc, msg);
-		use std::io::Write;
 		let _ = std::io::stderr().flush();
 		let _ = std::io::stdout().flush();
 		std::process::abort();

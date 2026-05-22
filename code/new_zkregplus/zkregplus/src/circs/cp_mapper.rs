@@ -644,7 +644,6 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 			// scanned over F::zero() padding inserted to fill the
 			// segment to max_word_len. If 34602/35386/35701 show up
 			// in pad_only_ids, pack-padding is the culprit.
-			use crate::gadgets::word_extract::LEGS;
 			let states = &advice.dfa_crit_advice.states;
 			let real_nib = word.len() * LEGS;
 			let unpacked_nib = states.len().saturating_sub(1);

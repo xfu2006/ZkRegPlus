@@ -4589,7 +4589,6 @@ use utils::consts::read_global_config;
 		// wlen pulled up so the discharge call can pad to match the
 		// gadget's view (Step 4 of pad-invariant rework).
 		let test_wlen = 2usize;
-		let zero = Fr::zero();
 		let path = format!("{}/data/{}/word.txt", proj_root(), word_dir);
 		write_to_file(&path, &tcase.file_content);
 		let nibbles_raw = read_nibbles(&path);

@@ -8,7 +8,6 @@ use folding_schemes::folding::foldpot::{
 	sigma_ir1cs::{SigmaGadget,WitnessSigmaIR1CSVar,WitnessSigmaIR1CSConfig, NdAdvice},
 	container_config::{ContainerConfig},
 };
-use rayon::iter::{ParallelIterator,IntoParallelIterator};
 use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef};
 use ark_r1cs_std::R1CSVar;
 use crate::gadgets::commons::{sum_vec_vars_weighted};
