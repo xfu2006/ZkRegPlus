@@ -3061,15 +3061,7 @@ where
 
 			qa_nizk_vkey_hash: qa_nizk_vkey_hash1, 
 	};
-	                    let (snark_proof_cp, g16_vk_cp) = {
-		let cp_circuit = CyclePairCircuit
-			::from_nova(nova2,
-				cyclepair_inputs, qa_nizk_vkey_hash.clone(),
-				driver2.poseidon_config.clone(),
-				com_all_w, r_all_w, nova2_com_all_w, nova2_r_all_w, mainres,
-				inp).unwrap();
-		log_perf(job_id, log_level, &format!("PERF 1006: Job Step 5: build CyclePair circuit. MEM: {} GB", get_mem_usage()), &mut gt1);
-
+	let (snark_proof_cp, g16_vk_cp) = {
 		// ------------- The following is the CRITICAL SECTION -------
 		let _guard_cp = {
 			let (lock, cvar) = &*semaphore_cp;
@@ -3080,6 +3072,15 @@ where
 			*count -= 1;
 			SemaphoreGuard { lock: semaphore_cp.clone() }
 		};
+
+		let cp_circuit = CyclePairCircuit
+			::from_nova(nova2,
+				cyclepair_inputs, qa_nizk_vkey_hash.clone(),
+				driver2.poseidon_config.clone(),
+				com_all_w, r_all_w, nova2_com_all_w, nova2_r_all_w, mainres,
+				inp).unwrap();
+		log_perf(job_id, log_level, &format!("PERF 1006: Job Step 5: build CyclePair circuit. MEM: {} GB", get_mem_usage()), &mut gt1);
+
 
 
 		// 2026-05-21 (Lever 2B): lazy-load cp_key the first time any

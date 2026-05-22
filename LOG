@@ -28457,5 +28457,11 @@ Goal 3. Implementation
 	[c] read current setting
 	[d] planning 4.1
 
+Friday 05/22/2026
+Goal 1. writing to respond to ESP -> DONE
+Goal 2. upload and connect to server:
+	-> looks like it's going to be out of RAM again. why?
+	-> fixed on segmaphore error
+
 
 -- TODO -- check what DEBUG USE 6703

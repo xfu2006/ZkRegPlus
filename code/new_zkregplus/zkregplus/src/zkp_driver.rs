@@ -2040,8 +2040,8 @@ pub mod tests_zkp_driver{
 		get_global_config().min_avg_pats_per_subsig= 8;
 		get_global_config().min_dfa_sigs = 3;
 		get_global_config().min_dfa_subsigs =  3;
-		get_global_config().n_par_snark = 2;
-		get_global_config().n_par_snark_cp = 2;
+		get_global_config().n_par_snark = 1;
+		get_global_config().n_par_snark_cp = 1;
 		get_global_config().n_par_batch_claim = 8;
 		get_global_config().perc_lkup_share = 143;
 
