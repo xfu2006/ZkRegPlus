@@ -4,9 +4,11 @@ run_measure_mem.py -- start ./compile.sh in background and periodically
 sample the zkregplus binary's RAM usage. Exit when that binary is gone.
 
 Outputs (cwd):
-  dump.txt        compile.sh stdout+stderr
-  mem_log.txt     timestamp pid vmrss_gb vmhwm_gb (one line per sample)
+  dump.txt             everything: compile.sh stdout+stderr AND memory
+                       samples (prefixed with '[mem]') interleaved.
   .run_measure_mem.pid
+
+Filter just the memory samples:  grep '^\\[mem\\]' dump.txt
 
 Usage:
   python3 run_measure_mem.py                # daemonize, 30s sampling
@@ -28,7 +30,6 @@ from pathlib import Path
 CWD = Path.cwd()
 COMPILE_SH = CWD / "compile.sh"
 DUMP_FILE  = CWD / "dump.txt"
-MEM_LOG    = CWD / "mem_log.txt"
 PID_FILE   = CWD / ".run_measure_mem.pid"
 DEFAULT_PATTERN = "target/release/deps/zkregplus"
 FIND_TIMEOUT_S = 7200   # allow up to 2h for cargo to finish building
@@ -37,8 +38,8 @@ def ts():
     return datetime.now().isoformat(timespec="seconds")
 
 def mlog(line):
-    with open(MEM_LOG, "a") as f:
-        f.write(line + "\n")
+    with open(DUMP_FILE, "a") as f:
+        f.write(f"[mem] {line}\n")
 
 def daemonize():
     if os.fork() > 0: sys.exit(0)
@@ -47,7 +48,7 @@ def daemonize():
     sys.stdout.flush(); sys.stderr.flush()
     with open(os.devnull, "r") as f0:
         os.dup2(f0.fileno(), 0)
-    log_fd = open(MEM_LOG, "a")
+    log_fd = open(DUMP_FILE, "a")
     os.dup2(log_fd.fileno(), 1)
     os.dup2(log_fd.fileno(), 2)
     PID_FILE.write_text(f"{os.getpid()}\n")
@@ -96,13 +97,14 @@ def main():
         except (ProcessLookupError, ValueError):
             PID_FILE.unlink()
 
-    DUMP_FILE.write_text("")
-    MEM_LOG.write_text(
-        f"# run_measure_mem.py started {ts()}\n"
-        f"# pattern={args.pattern!r} interval={args.interval}s\n"
-        f"# columns: timestamp pid vmrss_gb vmhwm_gb\n")
-    print(f"compile.sh stdout/stderr -> {DUMP_FILE}", file=sys.stderr)
-    print(f"memory samples           -> {MEM_LOG}",   file=sys.stderr)
+    DUMP_FILE.write_text(
+        f"[mem] # run_measure_mem.py started {ts()}\n"
+        f"[mem] # pattern={args.pattern!r} interval={args.interval}s\n"
+        f"[mem] # columns: timestamp pid vmrss_gb vmhwm_gb\n"
+        f"[mem] # (compile.sh stdout/stderr follows, interleaved)\n")
+    print(f"all output -> {DUMP_FILE}", file=sys.stderr)
+    print(f"  grep '^\\[mem\\]' {DUMP_FILE.name}  "
+          f"# to see only mem samples", file=sys.stderr)
 
     if not args.no_daemon:
         print(f"daemonizing. stop: kill $(cat {PID_FILE})",
@@ -112,7 +114,7 @@ def main():
         PID_FILE.write_text(f"{os.getpid()}\n")
 
     try:
-        out_fd = open(DUMP_FILE, "w")
+        out_fd = open(DUMP_FILE, "a")
         proc = subprocess.Popen(
             ["bash", str(COMPILE_SH)],
             cwd=str(CWD),
