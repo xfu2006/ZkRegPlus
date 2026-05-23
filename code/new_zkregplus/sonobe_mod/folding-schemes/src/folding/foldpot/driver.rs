@@ -2782,6 +2782,10 @@ where
 	let semaphore = Arc::new((Mutex::new(n_par_snark), Condvar::new()));
 	let n_par_snark_cp = read_global_config().n_par_snark_cp;
 	let semaphore_cp: Semaphore = Arc::new((Mutex::new(n_par_snark_cp), Condvar::new()));
+	// outer sema caps total snark-region occupancy at the sum of inner caps.
+	let n_par_snark_total = n_par_snark + n_par_snark_cp;
+	let semaphore_outer: Semaphore =
+		Arc::new((Mutex::new(n_par_snark_total), Condvar::new()));
 	let n_par_batch_claim = read_global_config().n_par_batch_claim;
 	let semaphore_batch_claim: Semaphore = Arc::new((Mutex::new(n_par_batch_claim), Condvar::new()));
 	// qa_pp lifted out so last finisher of each phase can drop it.
@@ -2811,6 +2815,8 @@ where
 	  	let mut rng = rand::rngs::OsRng;
 	  	let poseidon_config = poseidon_canonical_config::<C1::ScalarField>();
 	  	let max_total_n:usize = vec_words.iter().map(|x| x.len()).sum();
+
+	  	let mut guard_outer: Option<SemaphoreGuard> = None;
 
 	  	//put in one block to avoid do two snarks at the same time to
 	  	//save RAM.
@@ -2921,6 +2927,15 @@ where
 	  		}
 
 	  		// ------------- The following is the CRITICAL SECTION -------
+	  		guard_outer = Some({
+	  			let (lock, cvar) = &*semaphore_outer;
+	  			let mut count = lock_unwrap!(lock);
+	  			while *count == 0 {
+	  				count = cvar.wait(count).unwrap();
+	  			}
+	  			*count -= 1;
+	  			SemaphoreGuard { lock: semaphore_outer.clone() }
+	  		});
 			let _guard = {
 				let (lock, cvar) = &*semaphore;
 				let mut count = lock_unwrap!(lock);
@@ -3162,6 +3177,7 @@ where
 
 		(snark_proof_cp, g16_vk_cp_owned)
 	};
+	drop(guard_outer);
 
 	batch_prf.add_part2(
 		com_all_w.clone(),
