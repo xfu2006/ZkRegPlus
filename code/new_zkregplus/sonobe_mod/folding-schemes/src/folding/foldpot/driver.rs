@@ -2807,6 +2807,9 @@ where
 	  	log(job_id, log_level, &format!("--- Job {} starts ---", job_id));
 	  	let mut gt1_0 = GTimer::new();
 	  	let mut gt1 = GTimer::new();
+	  	log_perf(job_id, LOG2, &format!(
+	  		"DEBUG USE 60002.0: MEM at job entry: {} GB",
+	  		get_mem_usage()), &mut gt1);
 	  	let vec_words = &job.vec_words;
 	  	let vec_words_info = &job.vec_word_info;
 	  	let idx_individual_prf = job.idx_individual_prf;
@@ -2881,6 +2884,10 @@ where
 				&per_job_layered,
 				&per_job_circuits,
 	  		)?;
+	  		log_perf(job_id, LOG2, &format!(
+	  			"DEBUG USE 60002.05: MEM after Phase 1 pass_all \
+	  			(before drop per_job_*): {} GB",
+	  			get_mem_usage()), &mut gt1);
 	  		// 2026-05-21 (Lever 1): per_job_layered/per_job_circuits are
 	  		// not used after pass_all returns. Drop them now to free
 	  		// per-job gadget clones BEFORE the Phase 1 snark critical
@@ -2945,6 +2952,10 @@ where
 				*count -= 1;
 				SemaphoreGuard { lock: semaphore.clone() }
 			};
+	  		log_perf(job_id, LOG2, &format!(
+	  			"DEBUG USE 60002.06: MEM after acquire guard_outer \
+	  			+ _guard (crit section entry): {} GB",
+	  			get_mem_usage()), &mut gt1);
 
 	  		//6. now bulid the main circuit, which execues
 	  		//the main logic: verifies the ZkregPlus relation
@@ -2965,6 +2976,10 @@ where
 	  			let mainres = main_circ.res.clone();
 	  			let mainres_hash = main_circ.res_hash.clone(); 
 	  			log_perf(job_id, log_level, &format!("FoldPot Step 4: build MAIN decider circuit. MEM: {} GB", get_mem_usage()), &mut gt1);
+	  			log_perf(job_id, LOG2, &format!(
+	  				"DEBUG USE 60002.07: MEM after MAIN circuit built \
+	  				(nova1 consumed): {} GB",
+	  				get_mem_usage()), &mut gt1);
 	  	
 				// 2026-05-21 (Lever 3): read main_pk under RwLock so the
 				// last finisher can drop it after Phase 1 snark ends.
@@ -2990,6 +3005,10 @@ where
 						(&pk_main_owned, &vk_main_owned)
 					};
 	  			log_perf(job_id, log_level, &format!("PERF 1006: Job Step 2: setup Groth16. MEM: {} GB.",  get_mem_usage()), &mut gt1);
+	  			log_perf(job_id, LOG2, &format!(
+	  				"DEBUG USE 60002.08: MEM after main_pk read \
+	  				(before Phase 1 S::prove): {} GB",
+	  				get_mem_usage()), &mut gt1);
 
 	  			let snark_proof_main: S::Proof = S::prove(&g16_pk,
 	  				main_circ, &mut rng)
@@ -3011,7 +3030,11 @@ where
 
 	  			(snark_proof_main, mainres, mainres_hash, g16_vk_owned)
 	  		};
-	  
+	  		log_perf(job_id, LOG2, &format!(
+	  			"DEBUG USE 60002.1: MEM after Phase 1 snark block \
+	  			(main_circ dropped, before batch_ver_param): {} GB",
+	  			get_mem_usage()), &mut gt1);
+
 	  		//7. prepare the other data.
 	  		let mut batch_ver_param = driver1.batch_vk.clone().unwrap().clone();
 	  		batch_ver_param.kzg_driver1 = Some(
@@ -3028,6 +3051,10 @@ where
 	  			driver1_poseidon_config, ind_prf
 	  		)
 	};
+	log_perf(job_id, LOG2, &format!(
+		"DEBUG USE 60002.15: MEM after outer let-binding \
+		(batch_ver_param built, before Phase 2 IVC): {} GB",
+		get_mem_usage()), &mut gt1);
 
 
 	//6. another three rounds for Phase2 CyclePair Circ its proof
@@ -3067,6 +3094,10 @@ where
 	drop(nova2_W_i1);
 	drop(qa_pp_d2_guard);
 	log_perf(job_id, log_level, &format!("PERF 1006: Job Step 4: cyclefold and cyclepair IVC PROVE STEPS (folding) DONE. num_steps: {}", _num_steps), &mut gt1);
+	log_perf(job_id, LOG2, &format!(
+		"DEBUG USE 60002.2: MEM after Phase 2 IVC \
+		(nova2 in scope, W_i1 dropped): {} GB",
+		get_mem_usage()), &mut gt1);
 
 
 	//8. now build up the CyclePair circuit which processes
@@ -3101,6 +3132,10 @@ where
 			*count -= 1;
 			SemaphoreGuard { lock: semaphore_cp.clone() }
 		};
+		log_perf(job_id, LOG2, &format!(
+			"DEBUG USE 60002.25: MEM after acquire _guard_cp \
+			(before cp_circuit build): {} GB",
+			get_mem_usage()), &mut gt1);
 
 		let cp_circuit = CyclePairCircuit
 			::from_nova(nova2,
@@ -3109,6 +3144,10 @@ where
 				com_all_w, r_all_w, nova2_com_all_w, nova2_r_all_w, mainres,
 				inp).unwrap();
 		log_perf(job_id, log_level, &format!("PERF 1006: Job Step 5: build CyclePair circuit. MEM: {} GB", get_mem_usage()), &mut gt1);
+		log_perf(job_id, LOG2, &format!(
+			"DEBUG USE 60002.27: MEM after cp_circuit built \
+			(nova2 consumed): {} GB",
+			get_mem_usage()), &mut gt1);
 
 
 
@@ -3178,6 +3217,10 @@ where
 		(snark_proof_cp, g16_vk_cp_owned)
 	};
 	drop(guard_outer);
+	log_perf(job_id, LOG2, &format!(
+		"DEBUG USE 60002.3: MEM after drop guard_outer \
+		(end of crit section, cp_circuit dropped): {} GB",
+		get_mem_usage()), &mut gt1);
 
 	batch_prf.add_part2(
 		com_all_w.clone(),
@@ -3198,6 +3241,9 @@ where
 		mainres_hash,
 	);
 	log_perf(job_id, log_level, &format!("FoldPot Step 11: Assmeble Batch Proof for CpCircuit. MEM: {} GB.",  get_mem_usage()), &mut gt1);
+	log_perf(job_id, LOG2, &format!(
+		"DEBUG USE 60002.35: MEM after batch_prf.add_part2: {} GB",
+		get_mem_usage()), &mut gt1);
 
 	//11. verify the batch proof
 	let qa_nizk_vkey2 = driver2.nova_param.1.qa_vp.as_ref().expect("qa_vp null!").clone(); 
@@ -3216,8 +3262,11 @@ where
 		true, //now full verification
 		opt_kzg_sum1
 	)); //note
-	log_perf(job_id, log_level, &format!("FoldPot Step 12: Verify Batch Proof."), 
+	log_perf(job_id, log_level, &format!("FoldPot Step 12: Verify Batch Proof."),
 		&mut gt1);
+	log_perf(job_id, LOG2, &format!(
+		"DEBUG USE 60002.37: MEM after verify_batch: {} GB",
+		get_mem_usage()), &mut gt1);
 
 	//12. verify the individual proof
 	assert!(BatchProcessor::<E,LK,S,CS1E,H>::verify_individual(
@@ -3228,9 +3277,16 @@ where
 		&batch_prf, 
 		&ind_prf)
 	);
-	log_perf(job_id, log_level, &format!("FOLDPOT Step 13. Verify Individual Proof."), 
+	log_perf(job_id, log_level, &format!("FOLDPOT Step 13. Verify Individual Proof."),
 		&mut gt1);
+	log_perf(job_id, LOG2, &format!(
+		"DEBUG USE 60002.39: MEM after verify_individual: {} GB",
+		get_mem_usage()), &mut gt1);
 	log_perf(job_id, log_level, &format!("**** Job {} Complete ***** MEM: {} GB.", job_id, get_mem_usage()), &mut gt1_0);
+	log_perf(job_id, LOG2, &format!(
+		"DEBUG USE 60002.4: MEM at closure exit \
+		(before all per-job locals drop): {} GB",
+		get_mem_usage()), &mut gt1);
 
 	Ok(())
 	})();
