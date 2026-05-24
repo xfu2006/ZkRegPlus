@@ -28496,6 +28496,7 @@ Goal 2. collect data
 	[b] but RAM consumption seems to be increasing 200GB every sample
 	[c] only 4 snark proofs are generated, it OOM on 1.94TB server,
 		there must be some leaks out there.
+	[d] plug more probes to detect dealk
 Goal 3. plan how to get the nbia data
 	[a] figure the comparison plan
 	[b] planning about zombie data set
@@ -28503,6 +28504,8 @@ Goal 3. plan how to get the nbia data
 		=> identify them in code (not in zombie code)
 		=> find non-match examples only -> it's only 5 regex
 			for ssn, driver license, credit card number ...
-	[a] understand how the regex are generated 
+	[c] understand how the regex are generated 
+	[d] regex of zombie itslef is ok but the procCheck (proximity check)
+		blows up.
 
 -- TODO -- check what DEBUG USE 6703
