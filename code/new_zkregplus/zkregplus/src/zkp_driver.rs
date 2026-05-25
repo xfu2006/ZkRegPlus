@@ -899,20 +899,22 @@ pub mod tests_zkp_driver{
 		get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 18;
 		get_global_config().b_read_cache = false;
+		get_global_config().perc_lkup_share = if !b_check_lkup {1}
+			else {10000}; //enough lkup coverage for binexec_p* (4 files)
 		let b_write_cache = !read_global_config().b_read_cache;
-		let set1 = "data/debug/small_data_set/config_dfa"; //for dfa 
+		let set1 = "data/debug/small_data_set/config_dfa"; //for dfa
 		let max_word= 1; //this is chunk_len
 		let sigs = 2; //good setting: 2
 		//let subsigs = 6; GOOD setting
-		let subsigs = 4;  
-		let avg_pats_per_subsig = 3;  
+		let subsigs = 4;
+		let avg_pats_per_subsig = 3;
 		let avg_active_pats_per_subsig = 2; //good value 0 (does not matter)
 		//let avg_subsig_per_sig = 2; //NO NEED ANY MORE
 		let perc_comp_subsigs = 26;  //26 for subsigs=4, 34 for subsigs=3
-		let basis_unique_states = 25*100; 
+		let basis_unique_states = 25*100;
 		let basis_acc_states = 807;  //6.46 percent
 		let basis_pats_in_trace = 1500;   //(at most twice of basis_acc_states)
-		let perc_pats_expansion_rate = 114;
+		let perc_pats_expansion_rate = 200;
 
 		let init_cp_cap= CpCapacity{
 			max_word_len: max_word, 
@@ -949,8 +951,8 @@ pub mod tests_zkp_driver{
 			&init_dfa_cap,
 			&init_cp_cap, //as igc
 			&init_sed_cap, //as igc
-			&vec![1],
-			2,
+			&vec![],
+			1,
 			b_check_lkup
 		);
 	}

@@ -28507,5 +28507,20 @@ Goal 3. plan how to get the nbia data
 	[c] understand how the regex are generated 
 	[d] regex of zombie itslef is ok but the procCheck (proximity check)
 		blows up.
+	[e] check the regex approximation results over Enron set.
+	[f] need to re-read Zombie paper.
+	[g] but for next week, should start collect data for Reef.
+Goal 4. Planning for Reef Data
+	[a] write a Python script which pulls data from database,
+		run existing tool to generate regex, pull some sample data.
+	[b] then run Reef over the pool of regex one by one
+		we only need to sample 100.
+	[c] then convert to regex in BORA format and run bora
+		estimate: amortized cost of Reef is only 2 seconds per pair.
+		assuming regex and file and both be pre-processed.
+		if we have 50k rules
+		2*50k = 100k seconds = 30 hours
+	[d] BORA: try to take advantage of CP only -> could be
+		just maybe 5 hours?
 
 -- TODO -- check what DEBUG USE 6703
