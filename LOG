@@ -28529,5 +28529,12 @@ Goal 1. Writing.
 Goal 2. start to build the sig data
 	[a] read and understand document sample and sig
 	[b] read about regex generation algorithm
-	[c] 
+Goal 3. check RAM problem
+	[a] identified to be multi-thread pool not release
+	[b] add minmalloc lib
+	[c] crahsed, adjust and add warning about system limit
+	[d] 
+Goal 4. develop script to run and filter. retrieved 27.5k variants
+Goal 5. now develop a script to generate regex for reef
+
 -- TODO -- check what DEBUG USE 6703
