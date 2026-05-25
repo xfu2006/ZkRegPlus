@@ -2272,6 +2272,67 @@ fn install_fail_fast_panic_hook() {
 	}));
 }
 
+/// Preflight: a low vm.max_map_count makes mimalloc abort on a tiny
+/// mmap once its purge fragments the address space. Seen on the
+/// server: SIGABRT on a 192-byte alloc at 525 GB RSS with 8 parallel
+/// provers and the kernel default 65530 (glibc never hit this: few
+/// large arenas). Estimate the floor from job size: a small process
+/// baseline plus a per-prover budget proportional to the largest
+/// job's packed-field count, times the job count. Stop early with
+/// the exact sysctl fix instead of dying hours in. Bypass with
+/// ZKR_SKIP_MAP_COUNT_CHECK=1.
+fn preflight_check_map_count(n_jobs: usize, max_job_fields: usize)
+	-> Result<(), Error>
+{
+	if std::env::var("ZKR_SKIP_MAP_COUNT_CHECK").is_ok() {
+		return Ok(());
+	}
+	#[cfg(not(target_os = "linux"))]
+	let _ = (n_jobs, max_job_fields);
+	#[cfg(target_os = "linux")]
+	{
+		let cur = match std::fs::read_to_string(
+			"/proc/sys/vm/max_map_count")
+			.ok()
+			.and_then(|s| s.trim().parse::<usize>().ok()) {
+			Some(v) => v,
+			None => return Ok(()), // can't read: don't block
+		};
+		// Calibrated from the server crash: 65536 packed fields per
+		// job, 8 jobs, default 65530 insufficient, ~1M known good.
+		// Small base so tiny jobs (small_data) pass on a default
+		// kernel. Biased high: a false pass crashes hours in, a
+		// false fail just asks for a free sysctl bump.
+		const VMA_BASE: usize = 32_768;
+		const VMA_PER_FIELD: usize = 2;
+		let needed = VMA_BASE
+			+ n_jobs.max(1) * max_job_fields * VMA_PER_FIELD;
+		if cur < needed {
+			let want = needed.next_power_of_two();
+			let msg = format!(
+				"PREFLIGHT ABORT: vm.max_map_count={} < est need \
+				 {} ({} job(s), {} packed fields each). mimalloc \
+				 aborts mid-run on a tiny mmap once purge \
+				 fragments the address space. Fix on the server \
+				 (free, no memory cost):\n  \
+				 sudo sysctl -w vm.max_map_count={}\n  \
+				 # persist:\n  echo 'vm.max_map_count={}' | sudo \
+				 tee /etc/sysctl.d/99-zkregplus.conf && sudo \
+				 sysctl --system\n  \
+				 # or bypass: export ZKR_SKIP_MAP_COUNT_CHECK=1",
+				cur, needed, n_jobs, max_job_fields, want, want);
+			emit_stdout(msg.clone());
+			log(0, ERR, &msg);
+			return Err(Error::Other(msg));
+		}
+		emit_stdout(format!(
+			"PREFLIGHT ok: vm.max_map_count={} >= need {} ({} \
+			 job(s), {} fields each)",
+			cur, needed, n_jobs, max_job_fields));
+	}
+	Ok(())
+}
+
 /// Inputs: lkup which encodes the regex automata,
 /// jobs: a collection of jobs where each job has:
 /// (1) vec_words: the vector of words to process,
@@ -2373,6 +2434,16 @@ where
 			if let Ok(n) = s.parse::<usize>() {
 				get_global_config().word_cap_per_job = n;
 			}
+		}
+
+		// === preflight: vm.max_map_count vs mimalloc purge ===
+		{
+			let max_job_fields = jobs.iter()
+				.map(|j| j.vec_words.iter()
+					.map(|w| w.len()).sum::<usize>())
+				.max().unwrap_or(0);
+			preflight_check_map_count(
+				jobs.len(), max_job_fields)?;
 		}
 
 		// === stall watchdog (diagnostic). Off when secs == 0. ===
