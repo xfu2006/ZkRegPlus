@@ -2298,13 +2298,17 @@ fn preflight_check_map_count(n_jobs: usize, max_job_fields: usize)
 			Some(v) => v,
 			None => return Ok(()), // can't read: don't block
 		};
-		// Calibrated from the server crash: 65536 packed fields per
-		// job, 8 jobs, default 65530 insufficient, ~1M known good.
-		// Small base so tiny jobs (small_data) pass on a default
-		// kernel. Biased high: a false pass crashes hours in, a
-		// false fail just asks for a free sysctl bump.
+		// Recalibrated from the 2026-05-25 server crash: 8 jobs of
+		// 34071 fields each exhausted vm.max_map_count=1048576
+		// (mimalloc ENOMEM on free/alloc OS memory -- a munmap/mmap
+		// that splits/adds a VMA fails once the count hits the
+		// ceiling, even with ~1 TB free). That run needed >1.05M
+		// VMAs, i.e. >~4 per job*field; bias well above it (a false
+		// abort just asks for a free sysctl bump, a false pass
+		// crashes hours in). Small base so tiny jobs (small_data)
+		// still pass on a default-65530 kernel.
 		const VMA_BASE: usize = 32_768;
-		const VMA_PER_FIELD: usize = 2;
+		const VMA_PER_FIELD: usize = 16;
 		let needed = VMA_BASE
 			+ n_jobs.max(1) * max_job_fields * VMA_PER_FIELD;
 		if cur < needed {
@@ -2312,8 +2316,9 @@ fn preflight_check_map_count(n_jobs: usize, max_job_fields: usize)
 			let msg = format!(
 				"PREFLIGHT ABORT: vm.max_map_count={} < est need \
 				 {} ({} job(s), {} packed fields each). mimalloc \
-				 aborts mid-run on a tiny mmap once purge \
-				 fragments the address space. Fix on the server \
+				 hits ENOMEM on mmap/munmap once the VMA count \
+				 reaches vm.max_map_count (even with free RAM), \
+				 aborting the run. Fix on the server \
 				 (free, no memory cost):\n  \
 				 sudo sysctl -w vm.max_map_count={}\n  \
 				 # persist:\n  echo 'vm.max_map_count={}' | sudo \
@@ -2329,6 +2334,27 @@ fn preflight_check_map_count(n_jobs: usize, max_job_fields: usize)
 			"PREFLIGHT ok: vm.max_map_count={} >= need {} ({} \
 			 job(s), {} fields each)",
 			cur, needed, n_jobs, max_job_fields));
+		// Big-job breadcrumb: the estimate is a heuristic floor, so
+		// a pass is not a guarantee. mimalloc frees RAM via many
+		// small OS mappings and can still exhaust max_map_count;
+		// leave a pointer so a later SIGABRT is diagnosed in seconds.
+		const BIG_JOB_VMAS: usize = 524_288;
+		if needed > BIG_JOB_VMAS {
+			let mut rec = needed.next_power_of_two();
+			if rec <= cur { rec = (cur + 1).next_power_of_two(); }
+			let warn = format!(
+				"WARN big job ({} job(s), {} fields, ~{} VMAs est): \
+				 we use mimalloc, which frees RAM via many small OS \
+				 mappings and can still exhaust vm.max_map_count \
+				 (now {}). If this run aborts with 'memory \
+				 allocation of N bytes failed' / SIGABRT while RAM \
+				 is free, that's the VMA ceiling -- raise it and \
+				 rerun:\n  \
+				 sudo sysctl -w vm.max_map_count={}",
+				n_jobs, max_job_fields, needed, cur, rec);
+			emit_stdout(warn.clone());
+			log(0, LOG1, &warn);
+		}
 	}
 	Ok(())
 }

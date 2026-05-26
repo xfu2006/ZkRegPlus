@@ -57,13 +57,23 @@ def daemonize():
     PID_FILE.write_text(f"{os.getpid()}\n")
 
 def find_pid(pattern):
+    """Return the matching pid with the largest RSS (the real heavy
+    prover), or None. Picking max-RSS instead of the first match keeps
+    us from locking onto a transient helper that also matches the
+    pattern (e.g. a short-lived cargo/test spawn that dies in seconds)."""
     try:
         r = subprocess.run(["pgrep", "-f", pattern],
                            capture_output=True, text=True)
-        pids = [int(p) for p in r.stdout.strip().splitlines() if p.strip()]
-        return pids[0] if pids else None
+        pids = [int(p) for p in r.stdout.split() if p.strip()]
     except Exception:
         return None
+    best, best_rss = None, -1
+    for p in pids:
+        st = read_mem_kb(p)
+        rss = st.get("VmRSS", 0) if st else -1
+        if rss > best_rss:
+            best, best_rss = p, rss
+    return best
 
 def read_mem_kb(pid):
     """Returns {VmRSS, VmHWM} kB or None if pid gone."""
@@ -262,18 +272,33 @@ def main():
                  f"within {FIND_TIMEOUT_S}s; exiting")
             return 1
 
-        mlog(f"{ts()} sampling pid={target_pid} every {args.interval}s")
-        log_proc_limits(target_pid)   # DEBUG USE 60010.4
+        mlog(f"{ts()} sampling largest match of {args.pattern!r} "
+             f"every {args.interval}s")
         peak_rss = 0.0
         peak_hwm = 0.0
         maps_dumped = False           # DEBUG USE 60010.5 one-shot
+        limits_logged = False         # DEBUG USE 60010.4 one-shot
         while True:
+            # Re-acquire the largest-RSS match each tick: follow the
+            # real prover, ignore transient matches; stop only once
+            # nothing matches and compile.sh has exited.
+            target_pid = find_pid(args.pattern)
+            if target_pid is None:
+                if proc.poll() is not None:
+                    mlog(f"{ts()} no match for {args.pattern!r} and "
+                         f"compile.sh exited rc={proc.returncode}. "
+                         f"peak_rss_gb={peak_rss:.2f} "
+                         f"peak_hwm_gb={peak_hwm:.2f}")
+                    break
+                time.sleep(args.interval)
+                continue
             st = read_mem_kb(target_pid)
-            if st is None:
-                mlog(f"{ts()} pid={target_pid} gone. "
-                     f"peak_rss_gb={peak_rss:.2f} "
-                     f"peak_hwm_gb={peak_hwm:.2f}")
-                break
+            if st is None:        # raced with exit; retry next tick
+                time.sleep(args.interval)
+                continue
+            if not limits_logged:
+                log_proc_limits(target_pid)   # DEBUG USE 60010.4
+                limits_logged = True
             rss = st.get("VmRSS", 0) / (1024 * 1024)
             hwm = st.get("VmHWM", 0) / (1024 * 1024)
             peak_rss = max(peak_rss, rss)

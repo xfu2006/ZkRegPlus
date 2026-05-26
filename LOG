@@ -28536,5 +28536,8 @@ Goal 3. check RAM problem
 	[d] 
 Goal 4. develop script to run and filter. retrieved 27.5k variants
 Goal 5. now develop a script to generate regex for reef
+Goal 6. download the sample, and write script to convert sample
+	into format accepted by Reef.
 
 -- TODO -- check what DEBUG USE 6703
+al
