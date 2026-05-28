@@ -465,7 +465,16 @@ pub fn gen_clamav_sig(s: &str, sigtype: ClamSigType, cfg: &ClamavApproxConfig)
 		vec_pcre_info: vec![],
 		b_no_crit_pat: false,
 	};
+	let raw_subsigs: Vec<String> = parts[3..].to_vec();
 	sig.preprocess(cfg);
+	println!("DEBUG USE 60123.1: name={} raw_subsigs={:?}",
+		sig.name, raw_subsigs);
+	println!("DEBUG USE 60123.2: name={} post-preprocess \
+		vec_subsigs={:?} vec_bcase_sensitive={:?} vec_bneg={:?}",
+		sig.name, sig.vec_subsigs, sig.vec_bcase_sensitive,
+		sig.vec_bneg);
+	println!("DEBUG USE 60123.3: name={} vec_pcre_info={:?}",
+		sig.name, sig.vec_pcre_info);
 
 	sig
 }

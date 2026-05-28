@@ -774,6 +774,78 @@ pub mod tests_zkp_driver{
 			b_check_lkup
 		);
 	}
+	/// small dna: used for debugging the comparison set with reef on
+	/// Chromosome 17 dna set. 
+	/// COST: 7GB and 34 sec.
+	#[allow(dead_code)]
+	fn small_dna<F:PrimeField>(){
+		let b_check_lkup = false;
+		get_global_config().snark_cache_dir = "small_20".to_string();
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_write_snark_cache = false;
+		get_global_config().b_light_test = true;
+		get_global_config().range2_bit = 8;
+		get_global_config().b_read_cache = false;
+		get_global_config().perc_lkup_share = if !b_check_lkup {1}
+			else {8320}; //needed for 96k lkup entries for 4 chunks
+					//twice larger than what's really needed to
+					//leave out room to test the empty entries
+		let b_write_cache = !read_global_config().b_read_cache;
+		let set1 = "data/debug/small_dna/config"; //for dfa 
+		let max_word= 1; //this is chunk_len
+		let sigs = 2; //good setting: 2
+		//let subsigs = 6; GOOD setting
+		let subsigs = 4;  
+		let avg_pats_per_subsig = 3;  
+		let avg_active_pats_per_subsig = 2; //good value 0 (does not matter)
+		//let avg_subsig_per_sig = 2; //NO NEED ANY MORE
+		let perc_comp_subsigs = 26;  //26 for subsigs=4, 34 for subsigs=3
+		let basis_unique_states = 33*100; //needs >=3226 for this dataset
+		let basis_acc_states = 646;  //6.46 percent
+		let basis_pats_in_trace = 1291;   //(at most twice of basis_acc_states)
+		let perc_pats_expansion_rate = 171;
+
+		let vec_decrease_level = vec![];
+		let num_circs = 1;
+
+		let init_cp_cap= CpCapacity{
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+			//avg_subsig_per_sig
+		};
+		let init_sed_cap= SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig, avg_active_pats_per_subsig,
+			basis_pats_in_trace,
+			perc_pats_expansion_rate,
+			sigs, perc_comp_subsigs,
+			basis_unique_states, basis_acc_states
+		);
+		let init_dfa_cap= DfaCapacity::new(max_word, sigs, subsigs);
+
+
+		zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+   0,
+			&format!("{}/sigs.dat",set1), //src sig
+			&format!("{}/binexec.dat",set1), //list of files to discharge
+			"data/small_nda/reports/report.dat", //report
+			b_write_cache,
+			"small_20", //cache name
+			&format!("{}/dfa.dat", set1), //signs that need dfa
+			&format!("{}/ised.dat", set1), //signs that need ised 
+			&format!("{}/ised_igc.dat",set1), //sigs that need ised igc
+			max_word, //this is the chunk len
+			&init_cp_cap,
+			&init_sed_cap,
+			&init_dfa_cap,
+			&vec_decrease_level,
+			num_circs,
+			b_check_lkup
+		);
+	}
+
 
 	/// small_debug (Plan D): single-job local reproducer for the
 	/// compute_sig_adv.rs:1269 panic. Uses the CACHED full_clamav DFA
@@ -2282,7 +2354,8 @@ pub mod tests_zkp_driver{
 		let b_check_lkup = true;
 		let _b_light_test = false;
 		let _b_setup = false;
-		small_data::<Fr>(b_check_lkup); //small data
+		//small_data::<Fr>(b_check_lkup); //small data
+		small_dna::<Fr>(); //small data dna set
 		//small_debug::<Fr>(b_check_lkup); //small_data + max_word=2
 		//small_data2::<Fr>(b_check_lkup);  //10k data
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails

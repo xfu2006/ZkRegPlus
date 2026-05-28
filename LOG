@@ -28539,5 +28539,90 @@ Goal 5. now develop a script to generate regex for reef
 Goal 6. download the sample, and write script to convert sample
 	into format accepted by Reef.
 
+Tuesday 05/26/2026
+Goal 1. check RAM issue again
+	[a] deploy new analysis pythong file
+	[b] warning does work change limit to 8M
+	[c] 
+Goal 2. read Reef
+Goal 3. converter from variant spec to document
+	[a] planning
+	[b] generate vcf.gz files for variants
+	[c] structure of to_reef_regex file
+	[d] measure performance and estimate running time.
+	[e] refine files, correct timing
+	[f] review the fix of bcf
+	[g] there are still few examples failed.
+		-> fixed. the reason is window size too small.
+Goal 4. Writing
+	[a] read SDE
+	[b] paragraph 1
+	[c] paragraph 2.
+Goal 5. experiment with running Reef with some examples
+	-> mixed results
+	-> there are specific requirements on the anchor position.
+	-> to be determined
+	[g] further refine code
+Goal 6. think about what might be the variant that covers Reef nicely.
+	[a] still use the larger set
+
+Wed 05/27/2026
+Goal 1. now dump success analyze performance
+	[a] check if two in pipeline
+	[b] why slow down about 10%
+	[c] can run two pipelines?
+Goal 2. planning for developing scripts
+	[a] q1: witness generation -> it's actually nlog(n), 
+		prove multilinear inner product for log(n) rounds, this
+		is a lot of time for big doc.
+	[b] q2. why it does not work for most samples.
+Goal 3. experiment with m1 server again
+	[a] try 2-pipelines
+	[b] started 8:05am => breaks at 11:53am (almost 4 hours)
+		run out of RAM
+	[c] 11:53am => 
+		cap at 2 stage 1 and 1 stage 2,
+		gurantees that at any time, three or two are running in parallel.
+		estimated crash time (if any) -> 5:00pm
+		5:00pm 1st proof already produced.
+
+Goal 4. implement the eval results
+	[a] set up the framework
+	[b] double check design
+Goal 5. writing
+	[a] set up the algorithm
+	[b] set up the framework
+	[c] paragraphs 1 and 2.
+	[d] reason about the witness generation time
+	[e] revisit the negation of SAFA again. -> later need to refine
+		intro1 about .*p.* discussion. (still it's 
+			worst complexity O(D\times |q|)).
+
+Thursday 05/28/2026
+Goal 1. Writing
+	[a] paragraph 4
+Goal 2. gen_bora_reex
+	[a] planning: the py file generates the list and put in docs
+		-> develop gen_bora_regex.py framework 
+		-> set up atomic functions
+	[b] review code
+	[c] review the docs generated
+	[d] change code
+	[e] run with 1000 samples -> DONE
+Goal 3. create a small_dna folder and test it
+	[a] create the debug/small_dna folder
+	[b] run and fix a number of errors
+	[c] check sig object constructed manually.
+	[d] takes too much ram and time to run, check why
+
+Goal 3. todos
+	[b] establish a debug small_dna folder which
+		sets up the other config files
+	[c] do a small_dna (like small_data and see if it works first)
+	[d] merge paper_data to zip_driver
+	[e] set up the data (and download script)
+	[f] create another run_samples_logical data and build db
+		to check if mutant dna constains variant.
+	[g] run full discharge and see the cost
 -- TODO -- check what DEBUG USE 6703
 al

@@ -1927,7 +1927,8 @@ impl <F:PrimeField> ClamavDB<F>{
 			!s.starts_with("#")).map(|s| s.trim().to_string())
 			.collect::<HashSet<String>>();
 		let subset_lines = read_lines(sig_file).iter().filter(|s|
-			!s.starts_with("#")).map(|s| s.to_string())
+			!s.starts_with("#") && !s.trim().is_empty())
+			.map(|s| s.to_string())
 			.collect::<Vec<String>>();
 		let v_sigs:Vec<Arc<ClamavSig>> = subset_lines.iter().map(
 			|s| Arc::new(gen_clamav_sig(s, ClamSigType::General,cfg)) )
