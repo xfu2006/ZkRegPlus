@@ -28645,6 +28645,8 @@ Goal 5. now build the rea dna data
 	[d] run test_data -> good
 
 Goal 6. now build the real data.
+	[a] set up git -> DONE
+	[b] test the data (false set first).
 
 
 === TODOs ====

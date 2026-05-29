@@ -2413,9 +2413,15 @@ pub mod tests_zkp_driver{
 		let b_cache = false;
 		let b_quick = true;
 		let range_bits = 26;
+		/*
 		super::run_db_bundle::<Fr>(
 			"data/paper_data/debug_config", //config dir
 			"data/paper_data/reports", //report dir
+			b_cache, b_quick, range_bits);
+		*/
+		super::run_db_bundle::<Fr>(
+			"data/paper_data/dna/config", //config dir
+			"data/paper_data/dna/reports", //report dir
 			b_cache, b_quick, range_bits);
 	}
 }

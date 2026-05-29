@@ -590,8 +590,10 @@ impl HexACDFA{
 			if ilen>max_output_size{max_output_size = ilen;}
 			total_output_size += ilen;
 		}
-		flog(0, LOG1, &format!("MAX output words for a final state: {}, avg: {}", 
-			max_output_size, total_output_size/self.num_acc_states), vlog);
+		let avg_output = if self.num_acc_states==0 {0}
+			else {total_output_size/self.num_acc_states};
+		flog(0, LOG1, &format!("MAX output words for a final state: {}, avg: {}",
+			max_output_size, avg_output), vlog);
 	}
 
 	/// return a hashset, which given a critical pattern map (to sigs),
@@ -631,7 +633,9 @@ impl HexACDFA{
 			max_output_size = if max_output_size>vec.len() {max_output_size}
 				else {vec.len()};
 		}
-		flog(0, LOG1, &format!("  MAX output sig: {}, avg sigs/acc state: {}", max_output_size, total_output_size/states_to_sigs.len()), vlog);
+		let avg_sigs = if states_to_sigs.is_empty() {0}
+			else {total_output_size/states_to_sigs.len()};
+		flog(0, LOG1, &format!("  MAX output sig: {}, avg sigs/acc state: {}", max_output_size, avg_sigs), vlog);
 		flog(0, LOG1, &format!("=================================="), vlog);
 	}
 

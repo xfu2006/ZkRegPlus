@@ -61,9 +61,9 @@ vdata: &Vec<FailDischargeRecord>, db: ClamavDB<F>, vlog: &mut Vec<String>){
 		}
 		flog(0, LOG1, &format!("=== {} Stats =====", set_name), vlog);
 		if set.len()==0{
-			flog(0, LOG1, &format!("   sigs: {}, subsigs: {}, total_steps: {}, avg_steps: {}", set.len(), total_subsigs, total_steps, total_steps/set.len()), vlog);
-		}else{
 			flog(0, LOG1, &format!("   sigs: {}, subsigs: {}, total_steps: {}, avg_steps: {}", set.len(), total_subsigs, total_steps, "N/A"), vlog);
+		}else{
+			flog(0, LOG1, &format!("   sigs: {}, subsigs: {}, total_steps: {}, avg_steps: {}", set.len(), total_subsigs, total_steps, total_steps/set.len()), vlog);
 		}
 	};
 
