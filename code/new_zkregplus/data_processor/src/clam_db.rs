@@ -1628,6 +1628,20 @@ impl <F:PrimeField> ClamavDB<F>{
 							x.1.0, x.1.1);
 					}
 				}
+				// DEBUG USE 60824.1: dump the 2nd small_dna sig's
+				// subsig vec_pm_bounds. `vec_bounds` here = original
+				// pm_bounds (a,b) PLUS each pattern's word length.
+				// Shown alongside the original ranges so the `4:`
+				// beginning-anchor offset is visible end-to-end.
+				if s.name == "Bora.Chr17.VCV000000274" {
+					println!("DEBUG USE 60824.1: sig=\"{}\" sig_id={} \
+						subsig_idx={} subsig_id={} b_igc(store)={} \
+						subsig_igc={} orig_pm_bounds={:?} \
+						computed_vec_pm_bounds={:?}",
+						s.name, sig_id, i, subsig_id, b_igc,
+						s.vec_subsig_obj[i].b_ignore_case,
+						s.vec_subsig_pm_bounds[i], vec_bounds);
+				}
 				let item = SubsigStepStoreItem{subsig_id: subsig_id,
 					igc: s.vec_subsig_obj[i].b_ignore_case,
 					vec_pm_bounds: vec_bounds};
@@ -1992,12 +2006,24 @@ impl <F:PrimeField> ClamavDB<F>{
 		//3. build dfas for critical pattern	
 		let vec_crit_pat = map_crit_pat.keys().cloned()
 			.collect::<Vec<String>>();
+		println!("DEBUG USE 60777.1: vec_crit_pat (CS) len={} \
+			pats={:?}", vec_crit_pat.len(), vec_crit_pat);
 		let dfa_crit = HexACDFA::new(0, &vec_crit_pat);
+		println!("DEBUG USE 60777.2: dfa_crit num_states={} \
+			num_acc_states={} outputs.len={}",
+			dfa_crit.num_states, dfa_crit.num_acc_states,
+			dfa_crit.outputs.len());
 		let vec_crit_pat_igc = map_crit_pat_igc.keys().cloned()
 				.collect::<Vec<String>>();
 		//RECOVER LATER: we changed false to true. Keep it
 		//if data is correct.
+		println!("DEBUG USE 60777.3: vec_crit_pat_igc len={} \
+			pats={:?}", vec_crit_pat_igc.len(), vec_crit_pat_igc);
 		let dfa_crit_igc = HexACDFA::new_adv(0, &vec_crit_pat_igc, true);
+		println!("DEBUG USE 60777.4: dfa_crit_igc num_states={} \
+			num_acc_states={} outputs.len={}",
+			dfa_crit_igc.num_states, dfa_crit_igc.num_acc_states,
+			dfa_crit_igc.outputs.len());
 		if b_perf {flog_perf(0, log_level, 
 			&format!("Build_DB: Step 4: Build ACDFA of Critial Patterns."),&mut timer,vlog);
 		}

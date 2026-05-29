@@ -28614,6 +28614,10 @@ Goal 3. create a small_dna folder and test it
 	[b] run and fix a number of errors
 	[c] check sig object constructed manually.
 	[d] takes too much ram and time to run, check why
+Goal 4: consider preprocess.rs: 347-350
+
+Friday 05/29/2026
+Goal 1. enhance preprocess.rs: 347-350
 
 Goal 3. todos
 	[b] establish a debug small_dna folder which

@@ -896,7 +896,10 @@ impl HexACDFA{
 		// from state [2, 2+num_accept_states-1]
 		// self.state_to_idx(state_idx) <= self.num_acc_states+1
 		// from state [0, 0+num_accept_states-1]
-		self.state_to_idx(state_idx) <= self.num_acc_states-1
+		// NOTE: strict less-than avoids usize underflow when
+		// num_acc_states == 0 (empty pattern set, e.g. IGC DFA when
+		// no sig has the ::i modifier).
+		self.state_to_idx(state_idx) < self.num_acc_states
 	}
 }
 
