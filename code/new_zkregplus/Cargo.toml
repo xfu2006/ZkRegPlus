@@ -1,9 +1,7 @@
 [workspace]
 members = [ 
-	# processes clamav sigs 
-	"data_processor", 
-	# generates the data set for the paper
-	"paper_data_gen", 
+	# processes clamav sigs
+	"data_processor",
 	# common utils
 	"utils", 
 	# main zkregplus framework

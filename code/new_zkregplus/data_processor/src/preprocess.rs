@@ -346,7 +346,10 @@ pub fn handle_location(s:&str)->String{
 	let loc = &parts[0].to_lowercase();
 	if Regex::new(r"^[0-9]+$").unwrap().is_match(loc){
 		let num = loc.parse::<usize>().unwrap();
-		res = ".".repeat(num) + pattern + ".*";
+		//offset is in nibble units -> emit symbolic `.{num,num}`
+		//(NOT num*2) so it stays a single Repetition node. Avoids
+		//materializing `num` literal dots (O(num) host cost).
+		res = rng_str(num, num, true) + pattern + ".*";
 	}
 	//2.5 format "num1,num2"
 	else if Regex::new(r"^[0-9]+,[0-9]+$").unwrap().is_match(loc){
@@ -354,7 +357,8 @@ pub fn handle_location(s:&str)->String{
 		let min = arr[0].parse::<usize>().unwrap();
 		let max = arr[1].parse::<usize>().unwrap();
 		let (min,max) = if min<max {(min,max)} else {(max,min)};
-		res = dot_str(min,max) + pattern + ".*";
+		//nibble units -> symbolic `.{min,max}` (NOT *2), see above.
+		res = rng_str(min, max, true) + pattern + ".*";
 	}
 	//3. "*"
 	else if loc.contains("*"){
@@ -408,7 +412,9 @@ pub fn handle_location_for_pm(s:&str)->String{
 	let loc = &parts[0].to_lowercase();
 	if Regex::new(r"^[0-9]+$").unwrap().is_match(loc){
 		let num = loc.parse::<usize>().unwrap();
-		res = ".".repeat(num) + pattern + ".*";
+		//nibble units -> symbolic `.{num,num}` (NOT num*2), see
+		//handle_location: avoids materializing `num` literal dots.
+		res = rng_str(num, num, true) + pattern + ".*";
 	}
 	//2.5 format "num1,num2"
 	else if Regex::new(r"^[0-9]+,[0-9]+$").unwrap().is_match(loc){
@@ -416,7 +422,8 @@ pub fn handle_location_for_pm(s:&str)->String{
 		let min = arr[0].parse::<usize>().unwrap();
 		let max = arr[1].parse::<usize>().unwrap();
 		let (min,max) = if min<max {(min,max)} else {(max,min)};
-		res = dot_str(min,max) + pattern + ".*";
+		//nibble units -> symbolic `.{min,max}` (NOT *2), see above.
+		res = rng_str(min, max, true) + pattern + ".*";
 	}
 	//3. "*"
 	else if loc.contains("*"){
@@ -424,7 +431,7 @@ pub fn handle_location_for_pm(s:&str)->String{
 	}else{
 		panic!("Unhandled case: s: {}", s);
 		//res = String::from("ERROR");
-	}	
+	}
 
 	res
 }

@@ -28618,11 +28618,37 @@ Goal 4: consider preprocess.rs: 347-350
 
 Friday 05/29/2026
 Goal 1. enhance preprocess.rs: 347-350
+	[a] go over the plan of modeling the doc offset
+	[b] make a plan and add test cases
+	[c] clear semantics of 2*num for pm_bounds
+	[d] unit test
+	[e] review code
 
+Goal 2. writing
+	[a] intro the eval_sde algorithm
+	[b] fig 4
+	[c] algorithm explaination.
+	[d] Example 2
+
+Goal 3. another unit testing
+	[a] good-test and small test for small offset 4.
+	[b] good and bad-test for larger offset 1000.
+		from 128 ... 32256 (offset)
+	[c] cleared -> low cost. Both cases for all distances passed
+
+Goal 4. merge paper_data to zip_driver -> good
+
+Goal 5. now build the rea dna data
+	[a] update .gitignore
+	[b] create folders
+	[c] move the data
+	[d] run test_data -> good
+
+Goal 6. now build the real data.
+
+
+=== TODOs ====
 Goal 3. todos
-	[b] establish a debug small_dna folder which
-		sets up the other config files
-	[c] do a small_dna (like small_data and see if it works first)
 	[d] merge paper_data to zip_driver
 	[e] set up the data (and download script)
 	[f] create another run_samples_logical data and build db

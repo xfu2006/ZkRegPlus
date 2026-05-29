@@ -676,6 +676,27 @@ where
 
 }
 
+/// Discharge a bundle of files against a ClamavDB and report the
+/// per-approach (CP/SED/ISED/DFA) stats. Ported from the old
+/// paper_data_gen main (gen_clamav_data). Standard file names are
+/// assumed under config_dir (main.dat, main_dfa.dat, needs_ised.dat,
+/// needs_ised_igc.dat, binexec.dat); the report is written under
+/// report_dir as discharge_main_binexec.dat.
+pub fn run_db_bundle<F:PrimeField>(config_dir: &str, report_dir: &str,
+	b_cache: bool, b_quick: bool, range_bits: usize){
+	utils::consts::get_global_config().range2_bit = range_bits;
+	crate::stats_helper::report_all_discharge_approach_stats::<F>(
+		&format!("{}/main.dat", config_dir), //src sig
+		&format!("{}/main_dfa.dat", config_dir), //need_dfa
+		&format!("{}/needs_ised.dat", config_dir), //need_ised
+		&format!("{}/needs_ised_igc.dat", config_dir), //ised_igc
+		&format!("{}/binexec.dat", config_dir), //files to discharge
+		&format!("{}/discharge_main_binexec.dat", report_dir), //report
+		b_cache, //read cache
+		"main", //cache name
+		b_quick);
+}
+
 #[cfg(test)]
 pub mod tests_zkp_driver{
 	use ark_ff::{PrimeField};
@@ -2382,5 +2403,19 @@ pub mod tests_zkp_driver{
 			"{}/data/cache/run_complete.sentinel",
 			utils::os::proj_root());
 		let _ = std::fs::write(&sentinel, "ok\n");
+	}
+
+	/// Discharge-approach stats over the paper_data debug bundle.
+	/// Invoke via:
+	/// `cargo test -p zkregplus -- test_db_bundle --show-output --nocapture`
+	#[test]
+	pub fn test_db_bundle(){
+		let b_cache = false;
+		let b_quick = true;
+		let range_bits = 26;
+		super::run_db_bundle::<Fr>(
+			"data/paper_data/debug_config", //config dir
+			"data/paper_data/reports", //report dir
+			b_cache, b_quick, range_bits);
 	}
 }

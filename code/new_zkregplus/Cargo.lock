@@ -3340,18 +3340,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1b04fb49957986fdce4d6ee7a65027d55d4b6d2265e5848bbb507b58ccfdb6f"
 
 [[package]]
-name = "paper_data_gen"
-version = "0.1.0"
-dependencies = [
- "ark-bn254 0.4.0",
- "ark-ff 0.4.1",
- "data_processor",
- "rayon",
- "regex",
- "utils",
-]
-
-[[package]]
 name = "parity-scale-codec"
 version = "3.6.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"

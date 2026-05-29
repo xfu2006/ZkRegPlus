@@ -1628,20 +1628,6 @@ impl <F:PrimeField> ClamavDB<F>{
 							x.1.0, x.1.1);
 					}
 				}
-				// DEBUG USE 60824.1: dump the 2nd small_dna sig's
-				// subsig vec_pm_bounds. `vec_bounds` here = original
-				// pm_bounds (a,b) PLUS each pattern's word length.
-				// Shown alongside the original ranges so the `4:`
-				// beginning-anchor offset is visible end-to-end.
-				if s.name == "Bora.Chr17.VCV000000274" {
-					println!("DEBUG USE 60824.1: sig=\"{}\" sig_id={} \
-						subsig_idx={} subsig_id={} b_igc(store)={} \
-						subsig_igc={} orig_pm_bounds={:?} \
-						computed_vec_pm_bounds={:?}",
-						s.name, sig_id, i, subsig_id, b_igc,
-						s.vec_subsig_obj[i].b_ignore_case,
-						s.vec_subsig_pm_bounds[i], vec_bounds);
-				}
 				let item = SubsigStepStoreItem{subsig_id: subsig_id,
 					igc: s.vec_subsig_obj[i].b_ignore_case,
 					vec_pm_bounds: vec_bounds};

@@ -1316,7 +1316,18 @@ pub fn collect_pm_reg_from_rustomaton_regex_worker(hir: &Hir,
 			let vec = collect_pm_reg_from_rustomaton_regex_worker(&v.sub, min_pm_word_len);
 			let (min, max) = (v.min, v.max);
 			let mut res = vec![];
-			for _i in 0..min {res.append(&mut vec.clone());}
+			//mandatory `min` copies. When the sub collapses to exactly
+			//one wildcard (e.g. `.` -> W(1,1), as for begin-offset
+			//`.{n,m}`), fold in O(1) instead of cloning `min` times;
+			//this matches what normalize() would sum from min copies.
+			//Single-literal / multi-item subs keep the loop (their
+			//segments must survive), so output is unchanged for them.
+			match vec.as_slice() {
+				[PMRegItem::Wildcard((a, b))] if min > 0 =>
+					res.push(PMRegItem::Wildcard((min as usize * *a,
+						min as usize * *b))),
+				_ => for _i in 0..min {res.append(&mut vec.clone());},
+			}
 			if max.is_none(){//unlimited case
 				res.push(PMRegItem::Wildcard( (0, usize::MAX) ) );
 			}else{
@@ -1430,9 +1441,10 @@ mod tests_pcre{
 	extern crate rustomaton;
 	extern crate utils;
 
-	use crate::{ 
-		pcre::{pcre_to_rustomaton_regex, rustomaton_regex_to_ignore_case, pcre_to_dfa, clamav_genregex_to_dfa}
+	use crate::{
+		pcre::{pcre_to_rustomaton_regex, rustomaton_regex_to_ignore_case, pcre_to_dfa, clamav_genregex_to_dfa, collect_pm_reg_from_rustomaton_regex}
 	};
+	use crate::preprocess::handle_location_for_pm;
 	use utils::{data::{str_to_hex}, os::{perl_is_match}};
 	use self::rustomaton::automaton::{Automata};
 
@@ -1661,6 +1673,10 @@ mod tests_pcre{
 			("(11|22)(33|44)aa", vec!["1133aa", "2244aa"], vec!["1234aa"]),
 			//sipmle negation
 			("!(00|12)aa", vec!["3344aa"], vec!["12aa", "3300aa"]),
+			//begin-offset: exactly 4 leading nibbles, anchored at start
+			("4:61626364",
+			 vec!["aaaa61626364", "000061626364"],
+			 vec!["aa61626364", "aaaaa61626364", "61626364"]),
 		];
 		for tc in testcases{
 			let yes_strs = tc.1;
@@ -1678,6 +1694,45 @@ mod tests_pcre{
 					s, src);
 			}
 		}
+	}
+
+	#[test]
+	pub fn test_pm_reg_offset_fold(){
+		//equivalence guard for the single-wildcard Repetition fold.
+		//m=2 keeps "616263" (6 chars) a Literal.
+		let m = 2;
+		//fixed begin-offset .{4,4} -> bound (4,4)
+		let r = collect_pm_reg_from_rustomaton_regex(".{4,4}616263.*", m);
+		assert!(r.iter().any(|(s,b)| s=="616263" && *b==(4,4)), "{:?}", r);
+		//range begin-offset .{10,20} -> (10,20)
+		let r = collect_pm_reg_from_rustomaton_regex(".{10,20}616263.*", m);
+		assert!(r.iter().any(|(s,b)| s=="616263" && *b==(10,20)), "{:?}", r);
+		//optional .? (min==0): fold guard skips -> loop, bound (0,1)
+		let r = collect_pm_reg_from_rustomaton_regex(".?616263.*", m);
+		assert!(r.iter().any(|(s,b)| s=="616263" && *b==(0,1)), "{:?}", r);
+		//unbounded .+ (min==1): fast path fires, lower bound stays 1
+		let r = collect_pm_reg_from_rustomaton_regex(".+616263.*", m);
+		assert!(r.iter().any(|(s,b)| s=="616263" && b.0==1), "{:?}", r);
+		//single-Literal repetition must NOT fold: 3 copies expand
+		//(normalize merges the adjacent literals into one).
+		let r = collect_pm_reg_from_rustomaton_regex("(616263){3,3}", m);
+		let want = "616263".repeat(3);
+		assert!(r.iter().any(|(s,b)| *s==want && *b==(0,0)),
+			"literal rep must expand to 3 copies: {:?}", r);
+		//large offset must be O(1) (folded, not 1e6 clones) and exact
+		let r = collect_pm_reg_from_rustomaton_regex(
+			".{1000000,1000000}616263.*", m);
+		assert!(r.iter().any(|(s,b)| s=="616263" && *b==(1000000,1000000)),
+			"{:?}", r);
+	}
+
+	#[test]
+	pub fn test_pm_reg_offset_pm_path(){
+		//covers handle_location_for_pm (not exercised by small_dna gate)
+		let s = handle_location_for_pm("4:616263");
+		let r = collect_pm_reg_from_rustomaton_regex(&s, 2);
+		assert!(r.iter().any(|(t,b)| t=="616263" && *b==(4,4)),
+			"pm-path: {:?} (from {})", r, s);
 	}
 
 }
