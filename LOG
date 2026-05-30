@@ -28647,14 +28647,20 @@ Goal 5. now build the rea dna data
 Goal 6. now build the real data.
 	[a] set up git -> DONE
 	[b] test the data (false set first).
+		-> error: the file passed
+	[c] regular set ->  good, only 17 goes to SDE
 
+Goal 7. full_dna()
+	[a] design 
+	[b] implement
+	[c] cycle run to adjust params
+	[d] fix parameters minor
+	[e] run with up to 30 steps.
+	[f] still turning the config.
 
 === TODOs ====
 Goal 3. todos
-	[d] merge paper_data to zip_driver
 	[e] set up the data (and download script)
-	[f] create another run_samples_logical data and build db
-		to check if mutant dna constains variant.
 	[g] run full discharge and see the cost
 -- TODO -- check what DEBUG USE 6703
 al

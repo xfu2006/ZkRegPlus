@@ -20,6 +20,9 @@
 # gen paper discharge-approach stats (was paper_data_gen)
 #RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" RUST_TEST_TIME_INTEGRATION=3600000,36000000 RUST_BACKTRACE=1 cargo test --release -p zkregplus -- test_db_bundle --show-output --nocapture
 
+# ZK discharge of the full clean chr17 DNA sample (heavy)
+#RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" RUST_TEST_TIME_INTEGRATION=3600000,36000000 RUST_BACKTRACE=1 cargo test --release -p zkregplus -- test_full_dna --show-output --nocapture
+
 # run zkreg example small
 RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" RUST_TEST_TIME_INTEGRATION=3600000,36000000 RUST_BACKTRACE=1 RUSTFLAGS="-Awarnings" time cargo run --release --example zkreg small
 #2>&1 | less

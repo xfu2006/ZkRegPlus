@@ -2111,6 +2111,114 @@ pub mod tests_zkp_driver{
 		);
 	}
 
+	/// full_dna: ZK discharge of the full clean chr17 sample
+	/// (NC_000017.11.reef.bin, 41.6MB) against the 27,501-sig DNA DB.
+	/// Light-test, no prior snark setup. Single job (the file is
+	/// offset-anchored, so it can't be split across jobs). Capacities
+	/// inferred from test_db_bundle's discharge stats on the same
+	/// sample; basis_unique_states and perc_pats_expansion_rate are
+	/// starting values that the capacity self-check (CapErr back-solve
+	/// in discharge_adv / fsm_adv) refines on the first run.
+	#[allow(dead_code)]
+	fn full_dna<F:PrimeField>(b_check_lkup: bool){
+		get_global_config().snark_cache_dir = "dna_clamav".to_string();
+		get_global_config().b_write_snark_cache = false;
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_light_test = true;
+		get_global_config().range2_bit = 27; //80.09M-nibble max offset
+		//min_* floors set LOW (DNA workload is tiny vs clamav)
+		get_global_config().min_subsigs = 64;
+		get_global_config().min_basis_unique_states = 100;
+		get_global_config().min_basis_acc_states = 2;
+		get_global_config().min_basis_pats_in_trace = 4;
+		get_global_config().min_avg_pats_per_subsig = 1;
+		get_global_config().min_dfa_sigs = 2;
+		get_global_config().min_dfa_subsigs = 2;
+		get_global_config().n_par_snark = 2;
+		get_global_config().n_par_snark_cp = 2;
+		get_global_config().n_par_batch_claim = 8;
+		//~200 needed when b_check_lkup (164M lkup / ~328 chunks);
+		//1 when not checking (panic guard is gated on b_check_lkup).
+		get_global_config().perc_lkup_share = if !b_check_lkup {1}
+			else {200};
+
+		get_global_config().b_read_cache = true; //reuse cached DNA DB
+		let b_write_cache = !read_global_config().b_read_cache;
+		let set1 = "data/paper_data/dna/config";
+		let max_word = 512 * 4; //4096 -> ~328 folding steps
+		let sigs = 20; //crit/SED peak = 17 (clean sample) + headroom
+		let subsigs = 20; //1 subsig/sig
+		let avg_pats_per_subsig = 1; //single literal pattern
+		let avg_active_pats_per_subsig = 1;
+		let perc_comp_subsigs = 20;
+		let basis_unique_states = 6500; //CapErr crept 1837->1906; +hdrm
+		let basis_acc_states = 2; //max_seg acc rate ~0.39 bp
+		let basis_pats_in_trace = 4; //max_seg_pat_rate ~0.39 bp +hdrm
+		let perc_pats_expansion_rate = 200; //START; CapErr back-solves
+		let dfa_sigs = 0; //0 reached DFA + margin
+		let dfa_subsigs = 0;
+		let vec_decrease_level = vec![];
+		let num_circs = 1;
+
+		let init_cp_cap = CpCapacity{
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+		};
+		let init_sed_cap = SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig, avg_active_pats_per_subsig,
+			basis_pats_in_trace, perc_pats_expansion_rate,
+			sigs, perc_comp_subsigs,
+			basis_unique_states, basis_acc_states);
+		let init_dfa_cap = DfaCapacity::new(max_word, dfa_sigs,
+			dfa_subsigs);
+
+		//IGC: 0 ignore-case patterns, BUT compute_sig_adv merges cs+igc
+		//and asserts subsigs_cs==subsigs_igc and inp_sigs==capacity.sigs
+		//(compute_sig_adv.rs:368,1160), so IGC must mirror CS on
+		//subsigs/sigs. Only perc_pats_expansion_rate_igc is shrunk (igc
+		//trace is empty). Mirrors full_clamav's cs/igc symmetry.
+		let init_cp_cap_igc = CpCapacity{
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+		};
+		let init_sed_cap_igc = SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig, avg_active_pats_per_subsig,
+			basis_pats_in_trace, 4, //perc_pats_expansion_rate_igc small
+			sigs, perc_comp_subsigs,
+			basis_unique_states, basis_acc_states);
+
+		let scan_files: Vec<String> = vec![
+			format!("{}/binexec.dat", set1)]; //single job
+
+		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,
+			CS1E,S>(
+			0,
+			&format!("{}/main.dat", set1), //src sig
+			scan_files, //list of files to discharge
+			"data/paper_data/dna/reports/report_zk.dat", //report
+			b_write_cache,
+			"dna_data", //cache name
+			&format!("{}/main_dfa.dat", set1), //sigs needing dfa
+			&format!("{}/needs_ised.dat", set1), //ised (empty)
+			&format!("{}/needs_ised_igc.dat", set1), //ised_igc (empty)
+			max_word, //chunk len
+			&init_cp_cap,
+			&init_sed_cap,
+			&init_dfa_cap,
+			&init_cp_cap_igc,
+			&init_sed_cap_igc,
+			&vec_decrease_level,
+			num_circs,
+			b_check_lkup
+		);
+	}
+
 	/// 2026-05-21: full_clam_short_file — mirrors full_clamav with
 	/// b_light_test=false and b_setup=false hardcoded, and scan
 	/// targets swapped to 8x ~1MB sample_1M_*.dat files. Goal:
@@ -2376,7 +2484,8 @@ pub mod tests_zkp_driver{
 		let _b_light_test = false;
 		let _b_setup = false;
 		//small_data::<Fr>(b_check_lkup); //small data
-		small_dna::<Fr>(); //small data dna set
+		//small_dna::<Fr>(); //small data dna set
+		full_dna::<Fr>(b_check_lkup);
 		//small_debug::<Fr>(b_check_lkup); //small_data + max_word=2
 		//small_data2::<Fr>(b_check_lkup);  //10k data
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
@@ -2412,16 +2521,25 @@ pub mod tests_zkp_driver{
 	pub fn test_db_bundle(){
 		let b_cache = false;
 		let b_quick = true;
-		let range_bits = 26;
 		/*
+		let range_bits = 26;
 		super::run_db_bundle::<Fr>(
 			"data/paper_data/debug_config", //config dir
 			"data/paper_data/reports", //report dir
 			b_cache, b_quick, range_bits);
 		*/
+		let range_bits = 27; 
 		super::run_db_bundle::<Fr>(
 			"data/paper_data/dna/config", //config dir
 			"data/paper_data/dna/reports", //report dir
 			b_cache, b_quick, range_bits);
+	}
+
+	/// ZK discharge of the full clean chr17 sample (light-test,
+	/// single job). HEAVY — expect hours / large RAM. Invoke via:
+	/// `cargo test -p zkregplus -- test_full_dna --show-output --nocapture`
+	#[test]
+	pub fn test_full_dna(){
+		full_dna::<Fr>(false);
 	}
 }

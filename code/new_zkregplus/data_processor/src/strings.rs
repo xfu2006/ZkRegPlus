@@ -19,7 +19,7 @@ pub fn count_occ(needle: &str, haystack: &str)->usize{
 /// validate if the given string follows rustomaton regex syntax
 /// for the PM-reg
 pub  fn validate_pm_regex(s: &str, pattern_name: &str){
-	let r1 = Regex::new(r"^[abcdef0123456789().*?]+$").unwrap();
+	let r1 = Regex::new(r"^[abcdef0123456789().*?{},]+$").unwrap();
 	let bres = r1.is_match(s);
 	if !bres {emit_stdout(format!(
 		"ERROR: not matching rustomaton for pm-regex: {}, signame: {}",
@@ -39,7 +39,7 @@ pub  fn validate_counter_constraint(s: &str, pattern_name: &str){
 
 /// validate if the given string follows rustomaton regex syntax
 pub  fn validate_ra_regex(s: &str, pattern_name: &str){
-	let r1 = Regex::new(r"^[abcdef0123456789().|*?]+$").unwrap();
+	let r1 = Regex::new(r"^[abcdef0123456789().|*?{},]+$").unwrap();
 	let bres = r1.is_match(s);
 	if !bres {emit_stdout(format!(
 		"ERROR: not matching rustomaton regex: {}, signame: {}",
@@ -50,7 +50,7 @@ pub  fn validate_ra_regex(s: &str, pattern_name: &str){
 /// validate if the given string follows rustomaton regex syntax
 /// allow ! symbol it will be processed when generating automataon
 pub  fn validate_ra_regex_relaxed(s: &str, pattern_name: &str){
-	let r1 = Regex::new(r"^[abcdef0123456789().|*!?]+$").unwrap();
+	let r1 = Regex::new(r"^[abcdef0123456789().|*!?{},]+$").unwrap();
 	let bres = r1.is_match(s);
 	if !bres {emit_stdout(format!(
 		"ERROR: not matching rustomaton regex: {}, signame: {}",
