@@ -2145,7 +2145,7 @@ pub mod tests_zkp_driver{
 		get_global_config().b_read_cache = true; //reuse cached DNA DB
 		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/paper_data/dna/config";
-		let max_word = 512 * 4; //4096 -> ~328 folding steps
+		let max_word = 512 * 8; //4096 -> ~328 folding steps
 		let sigs = 20; //crit/SED peak = 17 (clean sample) + headroom
 		let subsigs = 20; //1 subsig/sig
 		let avg_pats_per_subsig = 1; //single literal pattern
