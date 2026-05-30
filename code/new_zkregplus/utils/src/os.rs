@@ -138,6 +138,96 @@ pub fn read_nibbles(fpath: &str) -> Vec<u8>{
 
 
 
+/// Print a one-shot machine + task banner to stdout. `s_task_desc`
+/// names the computing task; when None, the launching command line
+/// (/proc/self/cmdline) is used. Reports datetime, logical CPUs,
+/// total/available RAM, CPU model + speed, and OS version. Linux
+/// oriented (reads /proc, /etc/os-release); unreadable fields
+/// degrade to "unknown".
+pub fn print_computer_config(s_task_desc: Option<&str>){
+	//1. task desc (fall back to the launching command line)
+	let task = match s_task_desc{
+		Some(s) => s.to_string(),
+		None => {
+			let raw = read_to_string("/proc/self/cmdline")
+				.unwrap_or_default();
+			let cmd = raw.split('\0')
+				.filter(|s| !s.is_empty())
+				.collect::<Vec<_>>().join(" ");
+			if cmd.is_empty(){"unknown".to_string()} else {cmd}
+		}
+	};
+
+	//2. date-time (shell `date`; epoch fallback)
+	let now = Command::new("date")
+		.arg("+%Y-%m-%d %H:%M:%S %Z")
+		.output().ok()
+		.and_then(|o| String::from_utf8(o.stdout).ok())
+		.map(|s| s.trim().to_string())
+		.filter(|s| !s.is_empty())
+		.unwrap_or_else(|| {
+			let secs = std::time::SystemTime::now()
+				.duration_since(std::time::UNIX_EPOCH)
+				.map(|d| d.as_secs()).unwrap_or(0);
+			format!("epoch+{}s", secs)
+		});
+
+	//3. logical CPUs
+	let cpus = std::thread::available_parallelism()
+		.map(|n| n.get().to_string())
+		.unwrap_or_else(|_| "unknown".to_string());
+
+	//4. RAM from /proc/meminfo (kB -> GiB)
+	let mi = read_to_string("/proc/meminfo").unwrap_or_default();
+	let pick_kb = |key: &str| -> Option<f64> {
+		mi.lines().find(|l| l.starts_with(key))
+			.and_then(|l| l.split_whitespace().nth(1))
+			.and_then(|v| v.parse::<f64>().ok())
+	};
+	let gib = |kb: Option<f64>| match kb{
+		Some(v) => format!("{:.1} GiB", v/1024.0/1024.0),
+		None => "unknown".to_string(),
+	};
+	let ram_total = gib(pick_kb("MemTotal:"));
+	let ram_avail = gib(pick_kb("MemAvailable:"));
+
+	//5. CPU model + speed from /proc/cpuinfo
+	let ci = read_to_string("/proc/cpuinfo").unwrap_or_default();
+	let pick_ci = |key: &str| -> String {
+		ci.lines().find(|l| l.starts_with(key))
+			.and_then(|l| l.split(':').nth(1))
+			.map(|s| s.trim().to_string())
+			.unwrap_or_else(|| "unknown".to_string())
+	};
+	let cpu_model = pick_ci("model name");
+	let cpu_mhz = pick_ci("cpu MHz");
+
+	//6. OS version: /etc/os-release + kernel release
+	let osr = read_to_string("/etc/os-release").unwrap_or_default();
+	let os_name = osr.lines()
+		.find(|l| l.starts_with("PRETTY_NAME="))
+		.and_then(|l| l.split('=').nth(1))
+		.map(|s| s.trim_matches('"').to_string())
+		.unwrap_or_else(|| "unknown".to_string());
+	let kernel = read_to_string("/proc/sys/kernel/osrelease")
+		.map(|s| s.trim().to_string())
+		.unwrap_or_else(|_| "unknown".to_string());
+
+	//7. emit one block (always printed, like rss_probe)
+	let block = format!(
+"========== computer config ==========\n\
+task     : {}\n\
+datetime : {}\n\
+cpus     : {} logical\n\
+ram      : {} total, {} available\n\
+cpu      : {} @ {} MHz\n\
+os       : {} (kernel {})\n\
+=====================================",
+		task, now, cpus, ram_total, ram_avail,
+		cpu_model, cpu_mhz, os_name, kernel);
+	crate::logger::emit_stdout(block);
+}
+
 /// check if s is a match of r by running perl.
 /// NOTE: requires PERL installed
 pub fn perl_is_match(r: &str, s: &str) -> bool{

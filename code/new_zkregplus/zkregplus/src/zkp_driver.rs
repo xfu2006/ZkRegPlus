@@ -684,6 +684,7 @@ where
 /// report_dir as discharge_main_binexec.dat.
 pub fn run_db_bundle<F:PrimeField>(config_dir: &str, report_dir: &str,
 	b_cache: bool, b_quick: bool, range_bits: usize){
+	utils::os::print_computer_config(Some("run_db_bundle"));
 	utils::consts::get_global_config().range2_bit = range_bits;
 	crate::stats_helper::report_all_discharge_approach_stats::<F>(
 		&format!("{}/main.dat", config_dir), //src sig
@@ -730,6 +731,7 @@ pub mod tests_zkp_driver{
 	/// COST: 7GB and 36 sec.
 	#[allow(dead_code)]
 	fn small_data<F:PrimeField>(b_check_lkup: bool){
+		utils::os::print_computer_config(Some("small_data"));
 		get_global_config().snark_cache_dir = "small_20".to_string();
 		get_global_config().b_read_snark_cache = false;
 		get_global_config().b_write_snark_cache = false;
@@ -800,6 +802,7 @@ pub mod tests_zkp_driver{
 	/// COST: 7GB and 34 sec.
 	#[allow(dead_code)]
 	fn small_dna<F:PrimeField>(){
+		utils::os::print_computer_config(Some("small_dna"));
 		let b_check_lkup = false;
 		get_global_config().snark_cache_dir = "small_20".to_string();
 		get_global_config().b_read_snark_cache = false;
@@ -878,6 +881,7 @@ pub mod tests_zkp_driver{
 	/// full_clamav run must have populated data/cache/full_data/.
 	#[allow(dead_code)]
 	fn small_debug<F:PrimeField>(b_check_lkup: bool){
+		utils::os::print_computer_config(Some("small_debug"));
 		get_global_config().snark_cache_dir = "full_clamav".to_string();
 		get_global_config().b_write_snark_cache = false;
 		get_global_config().b_read_snark_cache = false;
@@ -987,6 +991,7 @@ pub mod tests_zkp_driver{
 	/// COST  4 jobs: 14 GB and 228 sec (reason: folding doesn't take much time)
 	#[allow(dead_code)]
 	fn small_data_par<F:PrimeField>(b_check_lkup: bool){
+		utils::os::print_computer_config(Some("small_data_par"));
 		get_global_config().snark_cache_dir = "small_20".to_string();
 		get_global_config().b_read_snark_cache = false;
 		get_global_config().b_write_snark_cache = false;
@@ -1057,6 +1062,7 @@ pub mod tests_zkp_driver{
 	/// COST: 18GB and 160 sec
 	#[allow(dead_code)]
 	fn small_data2<F:PrimeField>(b_check_lkup: bool){
+		utils::os::print_computer_config(Some("small_data2"));
 		get_global_config().snark_cache_dir = "small_20".to_string();
 		get_global_config().b_read_snark_cache = true;
 		get_global_config().b_write_snark_cache = false;
@@ -1145,6 +1151,7 @@ pub mod tests_zkp_driver{
 	/// This function is used for debugging
 	#[allow(dead_code)]
 	fn small_data_debug<F:PrimeField>(b_check_lkup: bool){
+		utils::os::print_computer_config(Some("small_data_debug"));
 		get_global_config().snark_cache_dir = "small_20".to_string();
 		get_global_config().b_read_snark_cache = true;
 		get_global_config().b_write_snark_cache = false;
@@ -1218,6 +1225,7 @@ pub mod tests_zkp_driver{
 	/// at the last stage of snark generation it's costly.
 	#[allow(dead_code)]
 	fn small_data3<F:PrimeField>(b_check_lkup: bool){
+		utils::os::print_computer_config(Some("small_data3"));
 		get_global_config().snark_cache_dir = "small_20".to_string();
 		get_global_config().b_read_snark_cache = true;
 		get_global_config().b_write_snark_cache = false;
@@ -1311,6 +1319,7 @@ pub mod tests_zkp_driver{
 	/// setting min_idx and max_idx to try 1M, 2M, 4M files.
 	#[allow(dead_code)]
 	fn small_data4<F:PrimeField>(b_check_lkup: bool){
+		utils::os::print_computer_config(Some("small_data4"));
 		get_global_config().snark_cache_dir = "small_20".to_string();
 		get_global_config().b_read_snark_cache = true;
 		get_global_config().b_write_snark_cache = false;
@@ -1408,6 +1417,7 @@ pub mod tests_zkp_driver{
 	/// However, just run a small file
 	#[allow(dead_code)]
 	fn full_data1<F:PrimeField>(b_check_lkup: bool){
+		utils::os::print_computer_config(Some("full_data1"));
 		get_global_config().snark_cache_dir = "full_data".to_string();
 		get_global_config().b_read_snark_cache = true;
 		get_global_config().b_write_snark_cache = false;
@@ -1476,6 +1486,7 @@ pub mod tests_zkp_driver{
 	/// It runs a small but challenging file _codecs_hk.so (158kb)
 	#[allow(dead_code)]
 	fn full_data2<F:PrimeField>(b_check_lkup: bool){
+		utils::os::print_computer_config(Some("full_data2"));
 		get_global_config().snark_cache_dir = "full_data".to_string();
 		get_global_config().b_read_snark_cache = true;
 		get_global_config().b_write_snark_cache = false;
@@ -1552,6 +1563,7 @@ pub mod tests_zkp_driver{
 	///	igc and cs. stmt_len: 10M, all_w_e: 33M => circ1 72M R1CS
 	#[allow(dead_code)]
 	fn full_data3<F:PrimeField>(b_check_lkup: bool){
+		utils::os::print_computer_config(Some("full_data3"));
 		get_global_config().b_read_snark_cache = true;
 		get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 26;
@@ -1651,6 +1663,7 @@ pub mod tests_zkp_driver{
 	/// Total: 173MB. 
 	#[allow(dead_code)]
 	fn full_data4<F:PrimeField>(b_check_lkup: bool){
+		utils::os::print_computer_config(Some("full_data4"));
 		get_global_config().b_read_snark_cache = false;
 		get_global_config().b_write_snark_cache = true;
 		get_global_config().b_light_test = true;
@@ -1774,6 +1787,7 @@ pub mod tests_zkp_driver{
 	/// For b_small = false,needs 128GB. 4 jobs fills 50% cpu.
 	#[allow(dead_code)]
 	fn full_par<F:PrimeField>(b_check_lkup: bool){
+		utils::os::print_computer_config(Some("full_par"));
 		let b_small = true;
 		get_global_config().b_read_cache = true;
 
@@ -1894,6 +1908,7 @@ pub mod tests_zkp_driver{
 	/// for clamav data (with the most difficult files).
 	#[allow(dead_code)]
 	fn full_par2<F:PrimeField>(b_check_lkup: bool){
+		utils::os::print_computer_config(Some("full_par2"));
 		get_global_config().b_read_snark_cache = false;
 		get_global_config().b_write_snark_cache = true;
 		get_global_config().range2_bit = 26;
@@ -1996,6 +2011,7 @@ pub mod tests_zkp_driver{
 	#[allow(dead_code)]
 	fn full_clamav<F:PrimeField>(b_check_lkup: bool, b_light_test: bool,
 		b_setup: bool){
+		utils::os::print_computer_config(Some("full_clamav"));
 		//extra setting
 		get_global_config().snark_cache_dir = "full_clamav".to_string();
 		get_global_config().b_write_snark_cache = b_setup;
@@ -2121,6 +2137,7 @@ pub mod tests_zkp_driver{
 	/// in discharge_adv / fsm_adv) refines on the first run.
 	#[allow(dead_code)]
 	fn full_dna<F:PrimeField>(b_check_lkup: bool){
+		utils::os::print_computer_config(Some("full_dna"));
 		get_global_config().snark_cache_dir = "dna_clamav".to_string();
 		get_global_config().b_write_snark_cache = false;
 		get_global_config().b_read_snark_cache = false;
@@ -2229,6 +2246,7 @@ pub mod tests_zkp_driver{
 	/// keep them in sync if you tune full_clamav.
 	#[allow(dead_code)]
 	fn full_clam_short_file<F:PrimeField>(){
+		utils::os::print_computer_config(Some("full_clam_short_file"));
 		//extra setting
 		let b_check_lkup = false;
 		get_global_config().snark_cache_dir = "full_clamav".to_string();
@@ -2339,6 +2357,7 @@ pub mod tests_zkp_driver{
 	/// byte-identical to the full_clamav() above — keep them in
 	/// sync if you tune full_clamav.
 	fn full_debug<F:PrimeField>(b_check_lkup: bool){
+		utils::os::print_computer_config(Some("full_debug"));
 		get_global_config().snark_cache_dir = "full_clamav".to_string();
 		// 2026-05-16: full_debug intentionally does NOT load or
 		// generate Groth16 keys. The check_logup panic we're trying
@@ -2483,9 +2502,9 @@ pub mod tests_zkp_driver{
 		let b_check_lkup = true;
 		let _b_light_test = false;
 		let _b_setup = false;
-		//small_data::<Fr>(b_check_lkup); //small data
+		small_data::<Fr>(b_check_lkup); //small data
 		//small_dna::<Fr>(); //small data dna set
-		full_dna::<Fr>(b_check_lkup);
+		//full_dna::<Fr>(b_check_lkup);
 		//small_debug::<Fr>(b_check_lkup); //small_data + max_word=2
 		//small_data2::<Fr>(b_check_lkup);  //10k data
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails

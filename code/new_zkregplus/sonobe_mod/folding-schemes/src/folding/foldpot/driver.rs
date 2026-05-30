@@ -2448,6 +2448,7 @@ where
 		let log_level = LOG1;
 		log(0, log_level, &format!("===== fold_pot starts with {} jobs =====",
 			jobs.len()));
+		utils::os::print_computer_config(Some("foldpot_main"));
 
 		// === env-var hook for diagnostic knobs (no-op when unset). ===
 		// Set in deadlock_detect.py; defaults preserve regular runs.
