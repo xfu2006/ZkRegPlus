@@ -729,6 +729,8 @@ pub mod tests_zkp_driver{
 	/// small data: each cat of signatures got one sample, one 2-Fr word
 	/// read the READ me in data/small_data_set/README for the design of sigs
 	/// COST: 7GB and 36 sec.
+	/// BASELINE 2026-05-31: wall=39.5s, RAM_peak=4.27GB
+	///   (pre-ApproxConfig->GlobalConfig refactor; warm cache, test bin)
 	#[allow(dead_code)]
 	fn small_data<F:PrimeField>(b_check_lkup: bool){
 		utils::os::print_computer_config(Some("small_data"));
@@ -798,8 +800,10 @@ pub mod tests_zkp_driver{
 		);
 	}
 	/// small dna: used for debugging the comparison set with reef on
-	/// Chromosome 17 dna set. 
+	/// Chromosome 17 dna set.
 	/// COST: 7GB and 34 sec.
+	/// BASELINE 2026-05-31: wall=35.2s, RAM_peak=4.22GB
+	///   (pre-ApproxConfig->GlobalConfig refactor; warm cache, test bin)
 	#[allow(dead_code)]
 	fn small_dna<F:PrimeField>(){
 		utils::os::print_computer_config(Some("small_dna"));
@@ -989,6 +993,8 @@ pub mod tests_zkp_driver{
 
 	/// small data: multiple parallel jobs.
 	/// COST  4 jobs: 14 GB and 228 sec (reason: folding doesn't take much time)
+	/// BASELINE 2026-05-31: wall=200.6s, RAM_peak=6.25GB (4 jobs)
+	///   (pre-ApproxConfig->GlobalConfig refactor; warm cache, test bin)
 	#[allow(dead_code)]
 	fn small_data_par<F:PrimeField>(b_check_lkup: bool){
 		utils::os::print_computer_config(Some("small_data_par"));
@@ -1060,26 +1066,34 @@ pub mod tests_zkp_driver{
 	/// has 1 long words (1k-packed nibbles - around 31kb)
 	/// read the READ me in data/small_data_set2/README for the design of sigs
 	/// COST: 18GB and 160 sec
+	/// BASELINE 2026-05-31: wall=207.5s, RAM_peak=25.1GB
+	///   (pre-ApproxConfig->GlobalConfig refactor; warm DB cache, test bin)
+	///   ADJUSTED to run green: b_read_snark_cache true->false (no key
+	///   cache present, so regen -> higher RAM/time vs old note);
+	///   added perc_lkup_share=200 (lk_share*chunks must cover
+	///   lkup_len 271354); basis_unique_states 5->6 (CapErr pack.rs).
 	#[allow(dead_code)]
 	fn small_data2<F:PrimeField>(b_check_lkup: bool){
 		utils::os::print_computer_config(Some("small_data2"));
 		get_global_config().snark_cache_dir = "small_20".to_string();
-		get_global_config().b_read_snark_cache = true;
+		get_global_config().b_read_snark_cache = false; //baseline: regen keys
 		get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 18;
 		get_global_config().b_read_cache = false;
+		get_global_config().perc_lkup_share = if !b_check_lkup {1}
+			else {200}; //lk_share*chunks must cover lkup_len(271354)
 		let b_write_cache = !read_global_config().b_read_cache;
-		let set1 = "data/debug/small_data_set2/config_dfa"; //for dfa 
+		let set1 = "data/debug/small_data_set2/config_dfa"; //for dfa
 		let max_word= 512; 
 		let sigs = 2; 
 		let subsigs = 4; 
 		let avg_pats_per_subsig = 4; 
 		let avg_active_pats_per_subsig = 1; //good value 0, actually does
 			//not matter?
-		let basis_pats_in_trace = 6; 
-		let perc_comp_subsigs = 26; 
-		let basis_unique_states = 5; 
-		let basis_acc_states = 2; 
+		let basis_pats_in_trace = 6;
+		let perc_comp_subsigs = 26;
+		let basis_unique_states = 6; //CapErr: pack.rs needs >=6
+		let basis_acc_states = 2;
 		let perc_pats_expansion_rate = 100;
 
 		let init_cp_cap= CpCapacity{
@@ -1317,14 +1331,21 @@ pub mod tests_zkp_driver{
 
 	/// This allows to try 4 circ on variety of small files
 	/// setting min_idx and max_idx to try 1M, 2M, 4M files.
+	/// BASELINE 2026-05-31: wall=969s(16:09), RAM_peak=27.3GB (idx=1,2M)
+	///   (pre-ApproxConfig->GlobalConfig refactor; warm DB cache, test bin)
+	///   ADJUSTED to run green: b_read_snark_cache true->false (no key
+	///   cache present -> regen); added perc_lkup_share=200
+	///   (lk_share 63488 * chunks 135 >> lkup_len 313433).
 	#[allow(dead_code)]
 	fn small_data4<F:PrimeField>(b_check_lkup: bool){
 		utils::os::print_computer_config(Some("small_data4"));
 		get_global_config().snark_cache_dir = "small_20".to_string();
-		get_global_config().b_read_snark_cache = true;
+		get_global_config().b_read_snark_cache = false; //baseline: regen keys
 		get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 18;
 		get_global_config().b_read_cache = false;
+		get_global_config().perc_lkup_share = if !b_check_lkup {1}
+			else {200}; //tune from lk_share*chunks>=lkup_len guard
 		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/small_data_set2/config_dfa"; //for dfa 
 		let max_word= 512; 
@@ -2651,6 +2672,10 @@ pub mod tests_zkp_driver{
 	/// Discharge-approach stats over the paper_data debug bundle.
 	/// Invoke via:
 	/// `cargo test -p zkregplus -- test_db_bundle --show-output --nocapture`
+	/// BASELINE 2026-05-31 (b_cache=false, b_quick=true; pre-ApproxConfig
+	///   ->GlobalConfig refactor; test bin):
+	///   debug_config (range_bits=26): wall=577s(9:36), RAM_peak=46.1GB
+	///   dna/config   (range_bits=27): wall=112s(1:52), RAM_peak=26.3GB
 	#[test]
 	pub fn test_db_bundle(){
 		let b_cache = false;
@@ -2662,7 +2687,7 @@ pub mod tests_zkp_driver{
 			"data/paper_data/reports", //report dir
 			b_cache, b_quick, range_bits);
 		*/
-		let range_bits = 27; 
+		let range_bits = 27;
 		super::run_db_bundle::<Fr>(
 			"data/paper_data/dna/config", //config dir
 			"data/paper_data/dna/reports", //report dir

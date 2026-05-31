@@ -244,19 +244,27 @@ def deploy_samples(extract_root):
                     ignore=shutil.ignore_patterns(".gitignore"))
 
 
-# Deploy the chr17 (sig_c21) payload: chr17_samples -> data/samples/,
-# the remaining top folder -> data/src_sig/chr17_variants (item 3).
-# Each destination keeps its dir name; contents are replaced.
+# Deploy the chr17 (sig_c21) payload: the whole top folder (INCLUDING
+# chr17_samples) -> data/src_sig/chr17_variants (item 3).  chr17_samples
+# is NOT moved out; instead data/samples/chr17_samples is a symlink into
+# chr17_variants/chr17_samples, so the corpus lives in one place only.
+# The link target is relative, so it survives a repo relocation.
 def deploy_chr17(extract_root):
     top = os.path.join(extract_root, SIG_C21_TOP)
-    samp = os.path.join(top, "chr17_samples")
-    dst_samp = os.path.join(SAMPLES_DIR, "chr17_samples")
-    empty_dir(dst_samp)
-    move_children(samp, dst_samp)
-    os.rmdir(samp)
     dst_var = os.path.join(SRC_SIG_DIR, "chr17_variants")
     empty_dir(dst_var)
     move_children(top, dst_var)
+    # expose chr17_variants/chr17_samples under data/samples/ via symlink.
+    link_target = os.path.join(dst_var, "chr17_samples")
+    link_path   = os.path.join(SAMPLES_DIR, "chr17_samples")
+    os.makedirs(SAMPLES_DIR, exist_ok=True)
+    if os.path.islink(link_path):          # stale link: unlink only
+        os.remove(link_path)
+    elif os.path.isdir(link_path):         # legacy real dir: drop it
+        shutil.rmtree(link_path)
+    elif os.path.exists(link_path):
+        os.remove(link_path)
+    os.symlink(os.path.relpath(link_target, SAMPLES_DIR), link_path)
 
 
 # =====================================================================
@@ -1645,9 +1653,18 @@ def install_dataset_email():
 
 # ---- dna (chr17 / sig_c21 variants) --------------------------------
 
-# Empty the dna target dirs (kept).
+# Empty the dna target dirs (kept).  chr17_samples under samples/ is a
+# symlink into chr17_variants; UNLINK it (never empty_dir -- that would
+# follow the link and delete the real payload).  chr17_variants holds
+# the real chr17_samples, so emptying it wipes the corpus.
 def clean_dna():
-    empty_dir(os.path.join(SAMPLES_DIR, "chr17_samples"))
+    link = os.path.join(SAMPLES_DIR, "chr17_samples")
+    if os.path.islink(link):
+        os.remove(link)
+    elif os.path.isdir(link):              # legacy real dir from old layout
+        shutil.rmtree(link)
+    elif os.path.exists(link):
+        os.remove(link)
     empty_dir(os.path.join(SRC_SIG_DIR, "chr17_variants"))
 
 
