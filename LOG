@@ -28689,9 +28689,12 @@ Goal 1. design of improvement of repetition
 	[b] design
 	[c] plan 
 	[d] baseline collection first
-	[e] 
+	[e] research trick [0-9]{3} break into nibbles
+		like (303|313|...|393)?[0-9]{2}
 
 Goal 2. writing planning section 7.
+	[a] take the memory from the other session
+	[b] review sectoin 7 structure
 -- TODO -- remove the project backup
 
 === TODOs ====
