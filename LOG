@@ -28669,10 +28669,22 @@ Goal 2. test the dna full data set on server
 	[a] deploy to server
 	[b] run the full_dna test
 	[c] 1:40pm at pass 2 segid: 212 
+	[d] 2:04pm step 4 of pass 3
+		cost: 45 sec per step
+		45 sec * 300
+		-> estimate 4.5 hrs
+		===> estimated completion: 6:30pm
 
-Goal 3. Wriring
+Goal 3. Writing
 	[a] read DFA existing manuscript
+	[b] DFA section done
 
+Goal 4. small_email
+	[a] try to replicate Zombie email
+	[b] find out the config to change to enlarge SDE capture
+
+Sunday 05/31/2026
+Goal 1. 
 -- TODO -- remove the project backup
 
 === TODOs ====

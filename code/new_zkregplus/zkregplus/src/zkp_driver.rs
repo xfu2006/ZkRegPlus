@@ -2236,6 +2236,121 @@ pub mod tests_zkp_driver{
 		);
 	}
 
+	/// small_email (2026-05-30): Zombie-style proximity demo on one
+	/// Enron email blob. Faithful to Zombie (NSDI'24) §6.3: keyword R1
+	/// within 100 chars of R2, case-sensitive, dot-all, both
+	/// directions. R1 = {driving license, driver's license, DL}. R2 =
+	/// Zombie's 5-arm Microsoft-Purview DLP union, SPLIT into 5 sigs
+	/// (Passport/SSN/License/Bank/ITIN) in main.dat -- one PCRE subsig
+	/// each (no trigger, logic "0"), all routed through SED/pm-bounds
+	/// (NOT the DFA list -- only the cheap Win.Alphabet seed sig is in
+	/// main_dfa.dat, to seed the nibble alphabet). Scan target
+	/// merged_000020 contains keyword + the License "ddd ddd ddd" arm
+	/// but no arm-number within 100 of a keyword -> clean non-match
+	/// under all 5 arms -> discharges green while exercising the
+	/// proximity prune.
+	/// NOTE: capacities below are an initial estimate mirrored from
+	/// full_dna (generous); a CapErr-driven tuning pass may be needed
+	/// for a minimal circuit. Invoke via test_small_email.
+	#[allow(dead_code)]
+	fn small_email<F:PrimeField>(b_check_lkup: bool){
+		utils::os::print_computer_config(Some("small_email"));
+		get_global_config().snark_cache_dir = "email_dlp".to_string();
+		get_global_config().b_write_snark_cache = false;
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_light_test = true;
+		//merged_000001 ~131KB -> ~262K nibbles; 2^19 leaves headroom
+		get_global_config().range2_bit = 19;
+		//min_* floors set LOW (single tiny regex sig)
+		get_global_config().min_subsigs = 64;
+		get_global_config().min_basis_unique_states = 100;
+		get_global_config().min_basis_acc_states = 2;
+		get_global_config().min_basis_pats_in_trace = 4;
+		get_global_config().min_avg_pats_per_subsig = 1;
+		get_global_config().min_dfa_sigs = 2;
+		get_global_config().min_dfa_subsigs = 2;
+		get_global_config().n_par_snark = 2;
+		get_global_config().n_par_snark_cp = 2;
+		get_global_config().n_par_batch_claim = 8;
+		get_global_config().perc_lkup_share = if !b_check_lkup {1}
+			else {200};
+
+		//no cached email DB -> build fresh from main.dat
+		get_global_config().b_read_cache = false;
+		let b_write_cache = !read_global_config().b_read_cache;
+		let set1 = "data/debug/small_email/config";
+		let max_word = 512 * 8; //4096 nibbles/chunk -> ~64 fold steps
+		let sigs = 20; //generous (1 real sig); mirrors full_dna
+		let subsigs = 20;
+		let avg_pats_per_subsig = 1;
+		let avg_active_pats_per_subsig = 1;
+		let perc_comp_subsigs = 20;
+		let basis_unique_states = 6500;
+		let basis_acc_states = 2;
+		let basis_pats_in_trace = 4;
+		let perc_pats_expansion_rate = 200; //START; CapErr back-solves
+		let dfa_sigs = 0; //min_dfa_sigs floor (2) covers the DFA sig
+		let dfa_subsigs = 0;
+		let vec_decrease_level = vec![];
+		let num_circs = 1;
+
+		let init_cp_cap = CpCapacity{
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+		};
+		let init_sed_cap = SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig, avg_active_pats_per_subsig,
+			basis_pats_in_trace, perc_pats_expansion_rate,
+			sigs, perc_comp_subsigs,
+			basis_unique_states, basis_acc_states);
+		let init_dfa_cap = DfaCapacity::new(max_word, dfa_sigs,
+			dfa_subsigs);
+
+		//IGC mirrors CS on subsigs/sigs (compute_sig_adv asserts
+		//symmetry); only the igc expansion rate is shrunk (our sig is
+		//case-sensitive, so the igc trace is empty).
+		let init_cp_cap_igc = CpCapacity{
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+		};
+		let init_sed_cap_igc = SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig, avg_active_pats_per_subsig,
+			basis_pats_in_trace, 4, //perc_pats_expansion_rate_igc small
+			sigs, perc_comp_subsigs,
+			basis_unique_states, basis_acc_states);
+
+		let scan_files: Vec<String> = vec![
+			format!("{}/binexec.dat", set1)]; //single job
+
+		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,
+			CS1E,S>(
+			0,
+			&format!("{}/main.dat", set1), //src sig
+			scan_files, //list of files to discharge
+			"data/debug/small_email/reports/report_zk.dat", //report
+			b_write_cache,
+			"email_data", //cache name
+			&format!("{}/main_dfa.dat", set1), //sigs needing dfa
+			&format!("{}/needs_ised.dat", set1), //ised (empty)
+			&format!("{}/needs_ised_igc.dat", set1), //ised_igc (empty)
+			max_word, //chunk len
+			&init_cp_cap,
+			&init_sed_cap,
+			&init_dfa_cap,
+			&init_cp_cap_igc,
+			&init_sed_cap_igc,
+			&vec_decrease_level,
+			num_circs,
+			b_check_lkup
+		);
+	}
+
 	/// 2026-05-21: full_clam_short_file — mirrors full_clamav with
 	/// b_light_test=false and b_setup=false hardcoded, and scan
 	/// targets swapped to 8x ~1MB sample_1M_*.dat files. Goal:
@@ -2560,5 +2675,14 @@ pub mod tests_zkp_driver{
 	#[test]
 	pub fn test_full_dna(){
 		full_dna::<Fr>(false);
+	}
+
+	/// ZK discharge of one Enron email (merged_000001) against the
+	/// Zombie-style DL proximity policy (light-test, single job).
+	/// Invoke via:
+	/// `cargo test -p zkregplus -- test_small_email --show-output --nocapture`
+	#[test]
+	pub fn test_small_email(){
+		small_email::<Fr>(false);
 	}
 }
