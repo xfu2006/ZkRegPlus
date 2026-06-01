@@ -444,6 +444,140 @@ fn class_to_arr(v: &Class, _limit: &mut usize)->Vec<u8>{
 	res
 }
 
+/// One pinnable character-class "leg", e.g. `[0-9]{3}` or `[0-9]{2,5}`.
+/// `min` = guaranteed occurrences (only these positions are safely
+/// pinnable); `max` = upper bound (None = unbounded), kept for the
+/// variable-tail renderer (M3). Bare class / `{1}` -> min=max=1.
+/// Produced by find_class_runs; consumed by select_slots (M2) and the
+/// fan-out renderer (M3+). SDE-rep aggressive expansion.
+#[derive(Clone)]
+struct Leg {
+	class: Class,
+	min: usize,
+	max: Option<usize>,
+}
+
+/// Walk `hir` left-to-right and collect each character-class run as a
+/// Leg, in source order. Captures: fixed reps `[0-9]{n}`, variable reps
+/// `[0-9]{a,b}` / `+` / `{n,}` (pinnable count = min), and bare classes
+/// `[0-9]` / `[0-9]{1}` (min=max=1; to_hir simplifies `{1}` to Class).
+/// Skips min==0 reps (`*`,`?`,`{0,k}` -> no guaranteed position) and
+/// non-class bodies. Read-only, order-preserving.
+fn find_class_runs(hir: &Hir) -> Vec<Leg> {
+	let mut legs = Vec::new();
+	collect_class_runs(hir, &mut legs);
+	legs
+}
+
+fn collect_class_runs(hir: &Hir, legs: &mut Vec<Leg>) {
+	match hir.kind() {
+		//bare class (incl. `{1}`) = one guaranteed position.
+		HirKind::Class(c) =>
+			legs.push(Leg { class: c.clone(), min: 1,
+				max: Some(1) }),
+		HirKind::Repetition(rep) => match rep.sub.kind() {
+			HirKind::Class(c) => {
+				let min = rep.min as usize;
+				if min >= 1 {
+					//normalize the {n,} sentinel to unbounded.
+					let max = match rep.max {
+						Some(999777979) | None => None,
+						Some(x) => Some(x as usize),
+					};
+					legs.push(Leg { class: c.clone(),
+						min, max });
+				}
+				//min==0: no guaranteed position -> skip.
+			}
+			//non-class body (e.g. `(ab)+`): descend, don't pin.
+			_ => collect_class_runs(&rep.sub, legs),
+		},
+		HirKind::Concat(v) | HirKind::Alternation(v) => {
+			for h in v { collect_class_runs(h, legs); }
+		}
+		HirKind::Capture(cap) =>
+			collect_class_runs(&cap.sub, legs),
+		_ => {}
+	}
+}
+
+/// Cardinality of a character class = count of distinct bytes it
+/// matches. `[0-9]`=10, hex=16, `[a-z]`/`[A-Z]`=26, alnum=62,
+/// wildcard=256. Used as the per-leg fan-out multiplier in
+/// select_slots. Reuses class_to_arr for an identical byte set.
+fn card(class: &Class) -> usize {
+	let mut dummy = 0usize;
+	class_to_arr(class, &mut dummy).len()
+}
+
+/// True iff every byte matched by `class` shares one high nibble
+/// (byte>>4). `[0-9]`=3_, `[a-f]`=6_, `[A-O]`=4_ -> true;
+/// `[a-z]`/`[A-Z]`/alnum span two blocks -> false. Tier-1 (free
+/// borrow) eligibility for the SDE-rep anchor renderer (M4, cs path).
+/// Empty class -> false (nothing to anchor).
+fn is_single_hi_nibble_block(class: &Class) -> bool {
+	let mut dummy = 0usize;
+	let bytes = class_to_arr(class, &mut dummy);
+	match bytes.first() {
+		None => false,
+		Some(&first) => {
+			let hi = first >> 4;
+			bytes.iter().all(|&b| b >> 4 == hi)
+		}
+	}
+}
+
+/// Position priority within a leg of length `n`: first, last, then
+/// inward from the end -> [0, n-1, n-2, .., 1]. Spreads pinned digits
+/// across the run (first & last before any middle) for wider positional
+/// coverage, mirroring the leg-level priority.
+fn pos_priority(n: usize) -> Vec<usize> {
+	let mut q = Vec::with_capacity(n);
+	if n == 0 { return q; }
+	q.push(0);
+	for i in (1..n).rev() { q.push(i); }
+	q
+}
+
+/// Choose which (leg, position) slots to pin for fan-out, under a
+/// product budget `b` (= combination_limit). Walk round-major: for each
+/// round, visit legs in priority [0, m-1, m-2, .., 1] (first leg, last
+/// leg, then middles right-to-left); within a leg the round indexes its
+/// pos_priority (first, last, then inward). Take a slot iff
+/// product*card(leg) <= b (then grow the product); else skip and keep
+/// going so leftover budget can flow to a cheaper leg / position.
+/// Returns chosen slots in consideration order; the product of their
+/// cardinalities is the fan-out size (<= b).
+fn select_slots(legs: &[Leg], b: usize) -> Vec<(usize, usize)> {
+	let m = legs.len();
+	if m == 0 { return Vec::new(); }
+	//leg priority: first leg, last leg, then middles right-to-left.
+	let mut prio = Vec::with_capacity(m);
+	prio.push(0);
+	for i in (1..m).rev() { prio.push(i); }
+	//per-leg position priority (first, last, then inward).
+	let qs: Vec<Vec<usize>> =
+		legs.iter().map(|l| pos_priority(l.min)).collect();
+
+	let max_n = legs.iter().map(|l| l.min).max().unwrap_or(0);
+	let mut chosen = Vec::new();
+	let mut product = 1usize;
+	for round in 0..max_n {
+		for &leg in &prio {
+			if round >= qs[leg].len() { continue; }
+			let c = card(&legs[leg].class);
+			//wildcard (all 256 bytes): no selectivity, never pin.
+			if c >= 256 { continue; }
+			let pos = qs[leg][round];
+			if product.saturating_mul(c) <= b {
+				product *= c;
+				chosen.push((leg, pos));
+			}
+		}
+	}
+	chosen
+}
+
 /// encoded string is in hex,
 /// b_process_literal is set then convert every char e.g., 'a' to '61'
 /// IT IS USED when in hex mode
@@ -1479,6 +1613,7 @@ mod tests_pcre{
 	use crate::preprocess::handle_location_for_pm;
 	use utils::{data::{str_to_hex}, os::{perl_is_match}};
 	use self::rustomaton::automaton::{Automata};
+	use super::to_hir;
 
 	const REPEAT_LEN_LIMIT:usize=1024*6;
 	const COMBINATION_LIMIT:usize = 127;
@@ -1788,6 +1923,80 @@ mod tests_pcre{
 		//"4:" = 4 BYTES = 8 nibbles (ClamAV byte-offset convention)
 		assert!(r.iter().any(|(t,b)| t=="616263" && *b==(8,8)),
 			"pm-path: {:?} (from {})", r, s);
+	}
+
+	#[test]
+	pub fn tests_sde_rep_find_runs(){
+		use super::find_class_runs;
+		//fixed rep -> one leg, min == count
+		let legs = find_class_runs(&to_hir("[0-9]{3}"));
+		assert_eq!(legs.len(), 1);
+		assert_eq!(legs[0].min, 3);
+		//four legs across literals, order + counts preserved
+		let legs = find_class_runs(&to_hir(
+			"[0-9]{3}-[0-9]{3}-[0-9]{3}-[0-9]{4}"));
+		assert_eq!(legs.iter().map(|l| l.min).collect::<Vec<_>>(),
+			vec![3,3,3,4]);
+		//variable rep: pinnable count = guaranteed minimum
+		let legs = find_class_runs(&to_hir("[0-9]{2,5}"));
+		assert_eq!(legs.len(), 1);
+		assert_eq!((legs[0].min, legs[0].max), (2, Some(5)));
+		//'+' : min 1, unbounded above
+		let legs = find_class_runs(&to_hir("[0-9]+"));
+		assert_eq!((legs[0].min, legs[0].max), (1, None));
+		//bare class / `{1}` (to_hir simplifies {1} to Class)
+		assert_eq!(find_class_runs(&to_hir("[0-9]")).len(), 1);
+		assert_eq!(find_class_runs(&to_hir("[0-9]{1}"))[0].min, 1);
+		//min-0 reps have no guaranteed position -> skipped
+		assert_eq!(find_class_runs(&to_hir("[0-9]*")).len(), 0);
+		assert_eq!(find_class_runs(&to_hir("[0-9]?")).len(), 0);
+		//pure literals -> no legs
+		assert_eq!(find_class_runs(&to_hir("abc")).len(), 0);
+	}
+
+	#[test]
+	pub fn tests_sde_rep_card(){
+		use super::{find_class_runs, card};
+		let c = |p| find_class_runs(&to_hir(p))[0].class.clone();
+		assert_eq!(card(&c("[0-9]{2}")), 10);
+		assert_eq!(card(&c("[0-9a-f]{2}")), 16);
+		assert_eq!(card(&c("[a-z]{2}")), 26);
+		assert_eq!(card(&c("[a-zA-Z0-9]{2}")), 62);
+		//'.' (dot_matches_new_line + byte mode) = all 256 bytes
+		assert_eq!(card(&c(".{2}")), 256);
+	}
+
+	#[test]
+	pub fn tests_sde_rep_hi_nibble_block(){
+		use super::{find_class_runs, is_single_hi_nibble_block};
+		let c = |p| find_class_runs(&to_hir(p))[0].class.clone();
+		//single high-nibble block -> true
+		assert!(is_single_hi_nibble_block(&c("[0-9]{2}")));//3_
+		assert!(is_single_hi_nibble_block(&c("[a-f]{2}")));//6_
+		assert!(is_single_hi_nibble_block(&c("[a-o]{2}")));//6_
+		assert!(is_single_hi_nibble_block(&c("[A-O]{2}")));//4_
+		//straddles two high-nibble blocks -> false
+		assert!(!is_single_hi_nibble_block(&c("[a-z]{2}")));
+		assert!(!is_single_hi_nibble_block(&c("[A-Z]{2}")));
+		assert!(!is_single_hi_nibble_block(&c("[a-zA-Z0-9]{2}")));
+	}
+
+	#[test]
+	pub fn tests_sde_rep_select_slots(){
+		use super::{find_class_runs, select_slots};
+		//driverlic: leg priority [0,3,2,1], all card 10
+		let legs = find_class_runs(&to_hir(
+			"[0-9]{3}-[0-9]{3}-[0-9]{3}-[0-9]{4}"));
+		assert_eq!(select_slots(&legs, 1000),
+			vec![(0,0),(3,0),(2,0)]);
+		assert_eq!(select_slots(&legs, 100),
+			vec![(0,0),(3,0)]);
+		//single leg spreads within-leg: first + last
+		let legs = find_class_runs(&to_hir("[0-9]{9}"));
+		assert_eq!(select_slots(&legs, 100), vec![(0,0),(0,8)]);
+		//mixed cardinalities, take-if-fits-skip (26*10=260<=300)
+		let legs = find_class_runs(&to_hir("[A-Z]{2}[0-9]{6}"));
+		assert_eq!(select_slots(&legs, 300), vec![(0,0),(1,0)]);
 	}
 
 }
