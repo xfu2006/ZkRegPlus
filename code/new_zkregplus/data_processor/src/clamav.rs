@@ -49,7 +49,7 @@ use crate::{
 	strings::{find_all,extract_nums,validate_counter_constraint,validate_ra_regex,validate_ra_regex_relaxed,validate_pm_regex,is_match,find_only,count_occ,drop_last_dotstar,split,validate_expr},
 	type_def::{PcreInfo,ClamSigType,SubSigType,SubSigObj,ClamavApproxConfig,TriVal,ClamavSig,EvalDNF,CompOp},
 	hex_acdfa::{HexACDFA},
-	pcre::{collect_bag_words_from_rustomaton_regex, collect_pm_reg_from_rustomaton_regex, rustomaton_to_hir, collect_pm_reg_from_rustomaton_regex_worker, vec_pmreg_to_res, pcre_to_dfa, clamav_genregex_to_dfa, filter_bag_of_words,parse_pcre_subsig},
+	pcre::{collect_bag_words_from_rustomaton_regex, collect_pm_reg_from_rustomaton_regex, rustomaton_to_hir, collect_pm_reg_from_rustomaton_regex_worker, vec_pmreg_to_res, pcre_to_dfa, clamav_genregex_to_dfa, filter_bag_of_words,parse_pcre_subsig, expand_rep_subsig},
 	fsa_utils::{size_nfa,build_dfa,size_dfa,empty_nfa,build_nfa,get_total_size},
 	preprocess::{is_pcre_subsig,handle_range,handle_modifier,handle_location,handle_negation,handle_modifier_for_pm,handle_location_for_pm,recursive_triggers,plug_in_trigger},
 	discharge_proof::{FailDischargeRecord, ChunkPeaks},
@@ -567,10 +567,10 @@ impl ClamavSig{
 			self.expr = plug_in_trigger(i, &self.expr, &rec_trig);
 		}
 		if self.sigtype==ClamSigType::PM{
-			self.preprocess_expr_new(true);
+			self.preprocess_expr_new(true, cfg);
 		}else if self.sigtype==ClamSigType::General{
 			//self.preprocess_expr();
-			self.preprocess_expr_new(false);
+			self.preprocess_expr_new(false, cfg);
 		}else{
 			panic!("cannot handle self.sigtype: {:?}", self.sigtype);
 		}
@@ -2251,11 +2251,20 @@ impl ClamavSig{
 	/// The output will generate the vec_subsib_obj
 	/// if b_pm is set, check all subsignatures has simplified single pattern
 	/// (i.e., no class chars, no union class etc.)
-	fn preprocess_expr_new(&mut self, b_pm: bool){
+	fn preprocess_expr_new(&mut self, b_pm: bool,
+		cfg: &ClamavApproxConfig){
 		//0. make a copy of all existing subsigs
 		let log_level = LOG6;
 		let mut vec_sig_obj= vec![];
 		for (id,x) in self.vec_subsigs.iter().enumerate(){
+			if cfg.b_aggressive_sde_for_rep {
+				let b_igc = !self.vec_bcase_sensitive[id];
+				if let Some(_v) = expand_rep_subsig(
+					&self.vec_pcre_info[id].original_str,
+					b_igc, cfg) {
+					// M5 pushes variants here; stub = None now
+				}
+			}
 			vec_sig_obj.push( SubSigObj{value: x.clone(),
 				subsig_type: SubSigType::GeneralRegex,
 				real_value: x.clone(),
@@ -3451,8 +3460,9 @@ pub fn default_clamav_cfg()->ClamavApproxConfig{
 		max_pm_sections: 10, // LATEST OLD 32 does not help much
 		combination_limit: 127, 
 		repeat_limit: 256,  //-> avg step: 19  
-		min_bag_len: 6,  
+		min_bag_len: 6,
 		min_pm_word_len: 4, // increase to 5 will kill a lot
+		b_aggressive_sde_for_rep: false,
 	}
 }
 //-----------------------------------------

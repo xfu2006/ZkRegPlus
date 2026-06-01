@@ -29,7 +29,7 @@ use crate::{
 	fsa_utils::{build_dfa}, 
 	preprocess::{to_ignore_case,handle_location, handle_negation,
 		handle_range_without_approx, handle_modifier, extract_clamav_reg},
-	type_def::{PcreInfo},
+	type_def::{PcreInfo, ClamavApproxConfig},
 };
 
 use self::rustomaton::dfa::{DFA};
@@ -152,6 +152,26 @@ fn join_vs(v: &Vec<String>) -> String{
 ///   to rustomaton format -> note we have to approxiamte backreferences
 ///    as it's beyond regular; we do NOT handle lookaround (anyway
 ///         there are only 6 in clamav, we rewrote them manually in dataset)
+/// Aggressive SDE fan-out (M1 stub): expand class repetitions in
+/// `orig` (raw PCRE) into a union of concrete SED subsig variants.
+/// `b_igc` = ignore-case; `cfg.combination_limit` is the fan-out cap B.
+/// Returns None when disabled / no eligible run (caller keeps the
+/// single-object path). Real logic lands in M2-M4.
+///
+/// Examples (B = cfg.combination_limit):
+///  - "[0-9]{9}", B=100  -> 100 variants: pin 1st & 2nd digit
+///    (00..99), e.g. "30 31 (30|..|39){7}", "30 32 ...", ...
+///  - "Driver License.{0,300}[0-9]{3}-[0-9]{3}-[0-9]{3}-[0-9]{4}",
+///    B=1000 -> 1000 variants: pin 1st digit of legs 1,4,3
+///    (leg 2 skipped, budget exhausted), each leg's other digits
+///    left as the class.
+///  - "[a-z]{4}", B=100, case-insensitive -> pin 1st & 2nd letter
+///    over folded lowercase reps (no 0x3X borrow on the igc path).
+pub fn expand_rep_subsig(_orig: &str, _b_igc: bool,
+	_cfg: &ClamavApproxConfig) -> Option<Vec<String>> {
+	None
+}
+
 pub fn parse_pcre_subsig(s: &str, combination_limit: usize, repeat_limit: usize)
 	->(String, String, bool, PcreInfo){
 	let (mut trigger, reg_s, flags) = extract_clamav_reg(s);

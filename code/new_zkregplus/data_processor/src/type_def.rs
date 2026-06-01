@@ -40,6 +40,10 @@ pub struct ClamavApproxConfig{
 	pub min_bag_len: usize,
 	/// the min len for words to be included in PM-REG (SED) approach
 	pub min_pm_word_len: usize,
+	/// gate: aggressively fan out class repetitions (e.g. [0-9]{n})
+	/// into a union of concrete SED subsig variants. Default false
+	/// reproduces baselines exactly.
+	pub b_aggressive_sde_for_rep: bool,
 }
 
 #[derive(Copy,Clone,Debug,PartialEq,Serialize,Deserialize)]
