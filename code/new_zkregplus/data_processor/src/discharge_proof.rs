@@ -46,6 +46,26 @@ pub struct FailDischargeRecord{
 	pub most_freq_seg_cs_pats: Option<Vec<(String,f32,f32)>>,// optiona,
 		//the set of frequent pattersn using segment eval approach
 		//and the corresponding acc_rate and pat_rate
+
+	pub chunk_peaks: ChunkPeaks, //per-chunk-max circuit-sizing peaks
+		//(chunk = seg_word_len*62 nibbles). Feeds estimate_config().
+}
+
+/// Per-file circuit-sizing peaks. Each metric is computed PER CHUNK
+/// (one chunk = seg_word_len*62 nibbles, matching the ZK word chunk)
+/// and the MAX over all chunks of the file is kept (cs + igc summed,
+/// consistent with total_unique_states / total_accepted). The circuit
+/// must hold the worst chunk, so the per-chunk MAX is the right basis.
+/// estimate_config() aggregates these across files into a percentile-
+/// coverage capacity ladder.
+#[derive(Clone,Debug,Default)]
+pub struct ChunkPeaks{
+	pub seg_size: usize, //nibbles per chunk (= seg_word_len*62)
+	pub max_unique_states: usize, //distinct DFA states in a chunk
+	pub max_acc_states: usize, //accepted-state count in a chunk
+	pub max_pats_in_trace: usize, //sum of freq*#patterns in a chunk
+	pub perc_pats_expansion_rate: usize, //100*avg #chunks a pattern
+		//spans (>=100; 100 = every pattern lives in one chunk only)
 }
 
 impl FailDischargeRecord{

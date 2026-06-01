@@ -28695,6 +28695,22 @@ Goal 1. design of improvement of repetition
 Goal 2. writing planning section 7.
 	[a] take the memory from the other session
 	[b] review sectoin 7 structure
+
+Goal 3. add a config estimate function for future tuning purpose.
+	[a] implemented but still some attributes far away
+	[b] some are not resolved yet
+
+Monday 06/01/2026
+Goal 1. implement the solution for email reg
+	[a] 0x3 extraction trick
+	[b] reptition -> alternation repetition unrolling alg.
+	[c] 
+Goal 2. writing put the estimate of Reef.
+	[a] create the gen script for table reef_vs_bora
+	[b] create slides
+Goal 3. continue writing
+	[a] embed the table
+
 -- TODO -- remove the project backup
 
 === TODOs ====

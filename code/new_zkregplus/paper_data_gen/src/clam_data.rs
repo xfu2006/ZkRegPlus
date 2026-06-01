@@ -413,7 +413,7 @@ pub fn report_all_discharge_approach_stats<F:PrimeField>(sig_file: &str, needs_d
 			// only — not the ZK circuit — so the F-level pad
 			// doesn't affect reported stats. Pass 1 to mean
 			// "no F-level pad"; sub-F pad is still applied.
-			quick_discharge_file(fpath, &db, &cfg, 1)
+			quick_discharge_file(fpath, &db, &cfg, 1, 2048)
 		} else {
 			discharge_file(fpath, &db, &cfg)
 		}

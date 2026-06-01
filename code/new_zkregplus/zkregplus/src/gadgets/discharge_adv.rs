@@ -4607,7 +4607,7 @@ use utils::consts::read_global_config;
 			&db.dfa_crit_igc,
 			&db.bundle_subsig_igc.vec_acdfa[0], //dfa_patterns_igc,
 			true, cfg,
-			&db.sig_to_id, test_wlen
+			&db.sig_to_id, test_wlen, test_wlen
         ).1; //use optimize mode
 
 		//1.2 verify the sig_to_discharge is in the word info.

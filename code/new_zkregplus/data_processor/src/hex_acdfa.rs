@@ -839,6 +839,65 @@ impl HexACDFA{
 		(result_vec, overall_max_acc_rate, overall_max_pat_rate)
 	}
 
+	/// Per-chunk circuit-sizing peaks over an accepting path, MAX over
+	/// chunks of `seg_size` nibbles. The three peaks mirror the exact
+	/// quantities the SED gadget (fsm_adv.rs) bounds per word-chunk:
+	///  - max_uniq_acc_pats: SUM over the DISTINCT accepted states in
+	///    the chunk of their #patterns. This is `proj_states.len()`
+	///    at fsm_adv.rs:1150 (distinct final states expanded by
+	///    acdfa.outputs, NO subsig projection) -> bounds
+	///    basis_unique_states (ulen check, fsm_adv.rs:1176).
+	///  - max_acc: count of accepted-state VISITS in the chunk =
+	///    states_final.len -> bounds basis_acc_states (fsm_adv.rs:705).
+	///  - max_pats: sum of #patterns over accepted-state VISITS ->
+	///    bounds basis_pats_in_trace.
+	/// Also returns (#distinct patterns, sum over patterns of #chunks
+	/// each spans) for the pattern-expansion estimate.
+	/// Returns (max_uniq_acc_pats, max_acc, max_pats, n_pats,
+	/// sum_pat_chunks).
+	pub fn get_chunk_peaks(&self, acc_path: &Vec<usize>, seg_size: usize)
+		->(usize, usize, usize, usize, usize){
+		if seg_size==0 { return (0,0,0,0,0); }
+		let mut max_uniq_acc_pats = 0usize;
+		let mut max_acc = 0usize;
+		let mut max_pats = 0usize;
+		// pat_id -> set of chunk indices it appears in
+		let mut pat_chunks: HashMap<usize, HashSet<usize>> =
+			HashMap::new();
+		for (ci, chunk) in acc_path.chunks(seg_size).enumerate(){
+			// distinct ACCEPTED states in this chunk
+			let mut acc_states = HashSet::<usize>::new();
+			let mut acc_cnt = 0usize;
+			let mut pat_cnt = 0usize;
+			for &state in chunk{
+				if self.is_accept(state){
+					acc_cnt += 1;
+					acc_states.insert(state);
+					if let Some(pids) = self.outputs.get(&state){
+						pat_cnt += pids.len();
+						for &pid in pids{
+							pat_chunks.entry(pid)
+								.or_insert_with(HashSet::new)
+								.insert(ci);
+						}
+					}
+				}
+			}
+			// sum of #patterns over the DISTINCT accepted states
+			// (= proj_states.len() for this chunk)
+			let uniq_acc_pats: usize = acc_states.iter().map(|s|
+				self.outputs.get(s).map_or(0, |p| p.len())).sum();
+			if uniq_acc_pats>max_uniq_acc_pats {
+				max_uniq_acc_pats = uniq_acc_pats; }
+			if acc_cnt>max_acc { max_acc = acc_cnt; }
+			if pat_cnt>max_pats { max_pats = pat_cnt; }
+		}
+		let n_pats = pat_chunks.len();
+		let sum_pat_chunks: usize =
+			pat_chunks.values().map(|s| s.len()).sum();
+		(max_uniq_acc_pats, max_acc, max_pats, n_pats, sum_pat_chunks)
+	}
+
 	/// for each string show the vector of positions
 	pub fn get_pattern_pos(&self, acc_path: &Vec<usize>)->HashMap<String,Vec<usize>>{
 		let mut res = HashMap::<String, Vec<usize>>::new();

@@ -395,7 +395,8 @@ pub fn print_discharge_stats(vdata: &Vec<FailDischargeRecord>,
 /// if b_quick mode use quick_discharge function.
 pub fn report_all_discharge_approach_stats<F:PrimeField>(sig_file: &str, needs_dfa_file: &str, needs_ised_file: &str, needs_ised_igc_file: &str,
 	discharge_list_file: &str, report_file: &str,
-	b_read_cache: bool, cache_dir: &str, b_quick: bool){
+	b_read_cache: bool, cache_dir: &str, b_quick: bool,
+	seg_word_len: usize, percentiles: &[usize]){
 	//1. generate the clamav db
 	println!("REPORT all discharge approach ...");
 	println!("Step 1. generating clam db ...");
@@ -416,7 +417,7 @@ pub fn report_all_discharge_approach_stats<F:PrimeField>(sig_file: &str, needs_d
 			// only — not the ZK circuit — so the F-level pad
 			// doesn't affect reported stats. Pass 1 to mean
 			// "no F-level pad"; sub-F pad is still applied.
-			quick_discharge_file(fpath, &db, &cfg, 1)
+			quick_discharge_file(fpath, &db, &cfg, 1, seg_word_len)
 		} else {
 			discharge_file(fpath, &db, &cfg)
 		}
@@ -426,7 +427,167 @@ pub fn report_all_discharge_approach_stats<F:PrimeField>(sig_file: &str, needs_d
 	println!("Step 3. print discharge stats ...");
 	print_discharge_stats(&final_data, &mut vlog);
 
+	//3b. estimate a percentile-coverage capacity ladder (additive;
+	//does not affect the discharge stats above). Must run before
+	//print_sed_stats, which consumes `db`.
+	estimate_config::<F>(&final_data, &db, percentiles, &mut vlog);
+
 	//4. print specifically the SED and ISED stats
 	print_sed_stats::<F>(&final_data, db, &mut vlog);
 	write_lines(report_file, &vlog, true);
+}
+
+/// One percentile's estimated config values (the numbers a runner would
+/// paste into CpCapacity / SedCapacity::new / DfaCapacity).
+#[derive(Clone,Debug,Default)]
+struct EstimatedConfig{
+	pub percentile: usize,
+	pub coverage_files: usize, //# files guaranteed to fit
+	pub total_files: usize,
+	pub basis_unique_states: usize,
+	pub basis_acc_states: usize,
+	pub basis_pats_in_trace: usize,
+	pub perc_pats_expansion_rate: usize,
+	pub sigs_sed: usize, //SED survivors (cost proxy)
+	pub subsigs: usize,
+	pub avg_pats_per_subsig: usize,
+	pub dfa_sigs: usize, //sigs routed to DFA = pm \ all_dfa
+	pub dfa_subsigs: usize, //sum vec_subsig_obj.len() over them
+}
+
+/// Per-file capacity requirement. Densities are the per-chunk MAX (from
+/// FailDischargeRecord.chunk_peaks, chunk = seg_word_len*62 nibbles)
+/// converted to basis points; structural fields come from the DB over
+/// the file's SED survivors (crit \ pm).
+#[derive(Clone,Debug,Default)]
+struct FileReq{
+	pub sigs_sed: usize,
+	pub basis_unique_states: usize,
+	pub basis_acc_states: usize,
+	pub basis_pats_in_trace: usize,
+	pub perc_pats_expansion_rate: usize,
+	pub subsigs: usize,
+	pub avg_pats_per_subsig: usize,
+	pub dfa_sigs: usize,
+	pub dfa_subsigs: usize,
+}
+
+/// Estimate the sizing config from the discharge records, as a MONOTONE
+/// ENVELOPE percentile ladder: for each p, take the cheapest p% of files
+/// (ranked by sigs_sed) and the element-wise MAX of their requirements,
+/// so every one of those files is guaranteed to fit => >= p% coverage.
+/// All density attributes are per-chunk-max (controlled by seg_word_len)
+/// then maxed across the chosen files.
+pub fn estimate_config<F:PrimeField>(
+	vdata: &Vec<FailDischargeRecord>, db: &ClamavDB<F>,
+	percentiles: &[usize], vlog: &mut Vec<String>){
+	//1. build per-file requirement vectors
+	let mut reqs: Vec<FileReq> = Vec::with_capacity(vdata.len());
+	for rec in vdata{
+		let cp = &rec.chunk_peaks;
+		let nib = cp.seg_size; //chunk nibbles
+		if nib==0 { continue; } //old/empty record, skip
+		let to_basis = |x: usize| -> usize { x * 10000 / nib };
+		//SED survivors = sigs reaching SED = crit \ pm
+		let survivors: Vec<&String> =
+			rec.crit.difference(&rec.pm).collect();
+		let mut max_subsigs = 0usize;
+		let mut tot_subsigs = 0usize;
+		let mut tot_steps = 0usize;
+		for sname in &survivors{
+			if let Some(id) = db.sig_to_id.get(*sname){
+				let sig = &db.vec_sigs[*id-1];
+				let ns = sig.vec_subsig_obj.len();
+				if ns>max_subsigs { max_subsigs = ns; }
+				tot_subsigs += ns;
+				for sp in sig.vec_subsig_pm_bounds.iter(){
+					tot_steps += sp.len();
+				}
+			}
+		}
+		let avg_pats = if tot_subsigs==0 {1}
+			else { (tot_steps / tot_subsigs).max(1) };
+		//DFA-routed sigs = sigs that FAILED SED = pm \ all_dfa
+		//(mirrors vec_dfa_sigs in clamav.rs:3144; one combined
+		//cs+igc set, no split). dfa_subsigs = sum of their
+		//vec_subsig_obj over the routed set.
+		let dfa_routed: Vec<&String> =
+			rec.pm.difference(&rec.all_dfa).collect();
+		let mut dfa_subsigs = 0usize;
+		for sname in &dfa_routed{
+			if let Some(id) = db.sig_to_id.get(*sname){
+				dfa_subsigs += db.vec_sigs[*id-1]
+					.vec_subsig_obj.len();
+			}
+		}
+		reqs.push(FileReq{
+			sigs_sed: survivors.len(),
+			basis_unique_states: to_basis(cp.max_unique_states),
+			basis_acc_states: to_basis(cp.max_acc_states),
+			basis_pats_in_trace: to_basis(cp.max_pats_in_trace),
+			perc_pats_expansion_rate: cp.perc_pats_expansion_rate,
+			subsigs: max_subsigs,
+			avg_pats_per_subsig: avg_pats,
+			dfa_sigs: dfa_routed.len(),
+			dfa_subsigs,
+		});
+	}
+	let n = reqs.len();
+	flog(0, LOG1, &format!(
+		"==== ESTIMATE_CONFIG (monotone envelope, proxy=sigs_sed) ====="),
+		vlog);
+	if n==0{
+		flog(0, LOG1, &format!(
+			"   no records with chunk_peaks (seg_size>0); nothing to do"),
+			vlog);
+		return;
+	}
+	//2. sort ascending by the cost proxy (sigs_sed)
+	reqs.sort_by(|a,b| a.sigs_sed.cmp(&b.sigs_sed));
+	flog(0, LOG1, &format!(
+		"   files={}, columns: p% cover b_uniq b_acc b_pat exp% \
+		 sigs_sed subsigs avg_pats dfa_sigs dfa_subsigs", n), vlog);
+	//3. element-wise max over cheapest p% of files
+	for &p in percentiles{
+		let k = ((n * p) / 100).max(1).min(n);
+		let mut cfg = EstimatedConfig{
+			percentile: p, coverage_files: k, total_files: n,
+			..Default::default()
+		};
+		for r in reqs.iter().take(k){
+			cfg.basis_unique_states =
+				cfg.basis_unique_states.max(r.basis_unique_states);
+			cfg.basis_acc_states =
+				cfg.basis_acc_states.max(r.basis_acc_states);
+			cfg.basis_pats_in_trace =
+				cfg.basis_pats_in_trace.max(r.basis_pats_in_trace);
+			cfg.perc_pats_expansion_rate =
+				cfg.perc_pats_expansion_rate
+					.max(r.perc_pats_expansion_rate);
+			cfg.sigs_sed = cfg.sigs_sed.max(r.sigs_sed);
+			cfg.subsigs = cfg.subsigs.max(r.subsigs);
+			cfg.avg_pats_per_subsig =
+				cfg.avg_pats_per_subsig.max(r.avg_pats_per_subsig);
+			cfg.dfa_sigs = cfg.dfa_sigs.max(r.dfa_sigs);
+			cfg.dfa_subsigs = cfg.dfa_subsigs.max(r.dfa_subsigs);
+		}
+		flog(0, LOG1, &format!(
+			"   {:>3}% {:>4}/{:<4} {:>6} {:>6} {:>6} {:>5} \
+			 {:>8} {:>7} {:>8} {:>8} {:>11}",
+			cfg.percentile, cfg.coverage_files, cfg.total_files,
+			cfg.basis_unique_states, cfg.basis_acc_states,
+			cfg.basis_pats_in_trace, cfg.perc_pats_expansion_rate,
+			cfg.sigs_sed, cfg.subsigs, cfg.avg_pats_per_subsig,
+			cfg.dfa_sigs, cfg.dfa_subsigs),
+			vlog);
+	}
+	flog(0, LOG1, &format!(
+		"   NOTE: b_uniq=sum#pats over distinct ACCEPTED states \
+		 (=proj_states.len); b_acc=accepted-state visits; \
+		 b_pat=sum#pats over visits; all basis pts (/10000) of the \
+		 worst chunk, per-case max(cs,igc). exp%=perc_pats_expansion \
+		 floor=ceil(nlen/10000) (loose loc-space sentinel; real adds \
+		 headroom). dfa_sigs/subsigs from pm\\all_dfa (SED failers). \
+		 perc_comp_subsigs & avg_active_pats not estimated (defaults)."),
+		vlog);
 }

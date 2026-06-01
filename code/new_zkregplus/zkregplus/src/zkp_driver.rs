@@ -120,7 +120,7 @@ fn load_files<F:PrimeField + ColEle>(_job_id: usize, list_file_path: &str, db: &
 				&db.dfa_crit_igc,
 				&db.bundle_subsig_igc.vec_acdfa[0], //dfa_patterns_igc,
 				true, cfg,
-				&db.sig_to_id, max_word_len); //use optimize mode
+				&db.sig_to_id, max_word_len, max_word_len);//optimize
 			if !rec.is_success(){
 				println!("FAILED discharging file: {} on sigs: {:?}",
 					fail_info.fname,
@@ -682,8 +682,14 @@ where
 /// assumed under config_dir (main.dat, main_dfa.dat, needs_ised.dat,
 /// needs_ised_igc.dat, binexec.dat); the report is written under
 /// report_dir as discharge_main_binexec.dat.
+/// max_word_len = the ZK chunk length (words/F-elements per fold step,
+/// as in the test runners). It drives the per-chunk segmentation used
+/// by estimate_config (seg_size = max_word_len*62 nibbles); the
+/// discharge classification itself stays F-pad-free, so the report is
+/// unchanged. percentiles = coverage ladder, e.g. [20,50,100].
 pub fn run_db_bundle<F:PrimeField>(config_dir: &str, report_dir: &str,
-	b_cache: bool, b_quick: bool, range_bits: usize){
+	b_cache: bool, b_quick: bool, range_bits: usize,
+	max_word_len: usize, percentiles: &[usize]){
 	utils::os::print_computer_config(Some("run_db_bundle"));
 	utils::consts::get_global_config().range2_bit = range_bits;
 	crate::stats_helper::report_all_discharge_approach_stats::<F>(
@@ -695,7 +701,8 @@ pub fn run_db_bundle<F:PrimeField>(config_dir: &str, report_dir: &str,
 		&format!("{}/discharge_main_binexec.dat", report_dir), //report
 		b_cache, //read cache
 		"main", //cache name
-		b_quick);
+		b_quick,
+		max_word_len, percentiles);
 }
 
 #[cfg(test)]
@@ -2688,10 +2695,15 @@ pub mod tests_zkp_driver{
 			b_cache, b_quick, range_bits);
 		*/
 		let range_bits = 27;
+		// max_word_len=2048 reproduces the baseline seg_size
+		// (2048*62 == 62*512*4), so the report stays byte-identical.
+		let max_word_len = 2048;
+		let percentiles = [20usize, 50, 100];
 		super::run_db_bundle::<Fr>(
 			"data/paper_data/dna/config", //config dir
 			"data/paper_data/dna/reports", //report dir
-			b_cache, b_quick, range_bits);
+			b_cache, b_quick, range_bits,
+			max_word_len, &percentiles);
 	}
 
 	/// ZK discharge of the full clean chr17 sample (light-test,

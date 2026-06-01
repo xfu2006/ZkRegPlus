@@ -52,7 +52,7 @@ use crate::{
 	pcre::{collect_bag_words_from_rustomaton_regex, collect_pm_reg_from_rustomaton_regex, rustomaton_to_hir, collect_pm_reg_from_rustomaton_regex_worker, vec_pmreg_to_res, pcre_to_dfa, clamav_genregex_to_dfa, filter_bag_of_words,parse_pcre_subsig},
 	fsa_utils::{size_nfa,build_dfa,size_dfa,empty_nfa,build_nfa,get_total_size},
 	preprocess::{is_pcre_subsig,handle_range,handle_modifier,handle_location,handle_negation,handle_modifier_for_pm,handle_location_for_pm,recursive_triggers,plug_in_trigger},
-	discharge_proof::{FailDischargeRecord},
+	discharge_proof::{FailDischargeRecord, ChunkPeaks},
 };
 use folding_schemes::{
 	folding::foldpot::sigma_ir1cs::{WordInfo,DischargeSigInfo}
@@ -2719,6 +2719,7 @@ pub fn quick_discharge_file_by_crit_bag_pm_old(fname: &str,
 		max_seg_acc_rate:0.0,
 		max_seg_pat_rate:0.0,
 		most_freq_seg_cs_pats: None,
+		chunk_peaks: ChunkPeaks::default(),
 	};
 
 	panic!("should call quick_discharge_file_by_crit_bag_new")
@@ -2738,8 +2739,11 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 	dfa_crit_igc: &HexACDFA, dfa_bag_igc: &HexACDFA,
 	_b_optimize_pm: bool, _cfg: &ClamavApproxConfig,
 	sig_to_id: &HashMap<String,usize>,
-	max_word_len: usize)
+	max_word_len: usize, seg_word_len: usize)
 ->(FailDischargeRecord, WordInfo){
+	// max_word_len drives the F-level pad (classification, kept at the
+	// baseline). seg_word_len drives only the per-chunk segmentation
+	// for the density estimate: seg_size = seg_word_len*62 nibbles.
 	//0. internal function closure
 	let sum_vec_size = |hs: &HashMap<String,Vec<usize>>| -> usize{
 		hs.into_iter().map(|(_,v)| v.len()).sum::<usize>()
@@ -3085,11 +3089,48 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		Some(dfa_bag.get_most_freq_patterns(&dfa_acc_path))
 	};
 	let top_n = 10;
-	let seg_size = 62 * 512 * 4;
+	// chunk = seg_word_len words = seg_word_len*62 nibbles, matching the
+	// ZK word chunk. Baseline seg_word_len=2048 reproduces 62*512*4.
+	let seg_size = seg_word_len * 62;
 	let (most_freq_seg_cs_pats, max_seg_acc_rate, max_seg_pat_rate) =
 		dfa_bag.get_most_freq_seg_patterns(&dfa_acc_path,
 			top_n, seg_size);
 	let most_freq_seg_cs_pats = Some(most_freq_seg_cs_pats);
+
+	// per-chunk-max circuit-sizing peaks. The SED gadget bounds the cs
+	// and igc automata SEPARATELY by the SAME basis_acc_states /
+	// basis_pats_in_trace (fsm_adv.rs:705; init_sed_cap vs
+	// init_sed_cap_igc both pass the value). So the binding requirement
+	// is the per-CASE MAX, not the sum: a chunk must satisfy
+	// cs<=basis AND igc<=basis  <=>  max(cs,igc)<=basis.
+	// max_unique_states = get_chunk_peaks's max_uniq_acc_pats =
+	// sum over distinct accepted states of #patterns (= proj_states.len
+	// at fsm_adv.rs:1150), the exact quantity basis_unique_states
+	// bounds (ulen check, fsm_adv.rs:1176).
+	let (u_cs, a_cs, p_cs, np_cs, sc_cs) =
+		dfa_bag.get_chunk_peaks(&dfa_acc_path, seg_size);
+	let (u_ig, a_ig, p_ig, np_ig, sc_ig) =
+		dfa_bag_igc.get_chunk_peaks(&dfa_acc_path_igc, seg_size);
+	// perc_pats_expansion_rate: the SED discharge gadget uses
+	// total_steps_estimate = basis_pats_in_trace * perc_pats_expansion_rate
+	// as a loc-space sentinel offset (discharge_adv.rs:758,769) that
+	// must cover the actual discharge steps; it is NOT a tight buffer
+	// (the gadget does `let _ = expansion`, and real igc uses 2). Since
+	// the step count tracks the same pattern-in-trace occurrences and
+	// basis_pats_in_trace is set to max_pats_count*10000/nlen, the
+	// minimum safe multiplier collapses to rate >= nlen/10000,
+	// independent of pattern counts. We report this floor (ceil);
+	// real configs (e.g. cs=104) carry large headroom above it.
+	let _ = (np_cs, np_ig, sc_cs, sc_ig); //old recurrence metric dropped
+	let perc_pats_expansion_rate = (seg_size + 9999) / 10000;
+	let perc_pats_expansion_rate = perc_pats_expansion_rate.max(1);
+	let chunk_peaks = ChunkPeaks{
+		seg_size,
+		max_unique_states: u_cs.max(u_ig),
+		max_acc_states: a_cs.max(a_ig),
+		max_pats_in_trace: p_cs.max(p_ig),
+		perc_pats_expansion_rate,
+	};
 
 	//6. compute stats 
 	let file_len = ((nibbles.len()/2).ilog2() + 1) as usize;
@@ -3112,6 +3153,7 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		max_seg_acc_rate,
 		max_seg_pat_rate,
 		most_freq_seg_cs_pats,
+		chunk_peaks,
 	};
 
 	let vec_sed_sigs = set_sigs_crit.difference(&set_sigs_pm).map(|s|
@@ -3205,14 +3247,14 @@ pub fn quick_discharge_file_by_crit_bag_pm(
 	b_optimize_pm: bool,
 	cfg: &ClamavApproxConfig,
 	sig_to_id: &HashMap<String,usize>,
-	max_word_len: usize)
+	max_word_len: usize, seg_word_len: usize)
 ->(FailDischargeRecord,WordInfo){
 	quick_discharge_file_by_crit_bag_pm_new(
 		fname,
 		nibbles, v_sigs, vec_sigs_no_crit_pat,
 		map_crit_pat, map_crit_pat_igc,
 		dfa_crit, dfa_bag, dfa_crit_igc, dfa_bag_igc,
-		b_optimize_pm, cfg, sig_to_id, max_word_len)
+		b_optimize_pm, cfg, sig_to_id, max_word_len, seg_word_len)
 }
 
 /// This one works by cp -> sed -> dfa and return the WordInfo
@@ -4151,7 +4193,7 @@ mod tests_clamav{
 				&map_crit_pat, &map_crit_pat_igc,
 					&dfa_crit, &dfa_bag, &dfa_crit_igc,
 					&dfa_bag_igc, false, &cfg,
-					&sig_to_id, 1).0;
+					&sig_to_id, 1, 1).0;
 			assert!(act.crit==set_crit, "ERROR: s: {}. act.crit: {:?} != set_crit: {:?}", s, act.crit, set_crit);
 			assert!(act.bag==set_bag, "ERROR: s: {}. act.bag: {:?} != set_bag: {:?}", s, act.bag, set_bag);
 			assert!(act.pm==set_pm, "ERROR: s: {}. act.pm: {:?} != set_pm: {:?}", s, act.pm, set_pm);

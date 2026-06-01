@@ -1453,7 +1453,7 @@ pub mod tests_dfa_adv_gadget{
 			&db.dfa_crit_igc,
 			&db.bundle_subsig_igc.vec_acdfa[0], //dfa_patterns_igc,
 			true, &cfg,
-			&db.sig_to_id, wlen
+			&db.sig_to_id, wlen, wlen
         ).1; //use optimize mode
 
 		//note: set true to use char map for nibbles.
