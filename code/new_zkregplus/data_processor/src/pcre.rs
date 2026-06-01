@@ -219,26 +219,38 @@ fn preprocess_rep(s: &str)->String{
 }
 
 /// preprocess some chars not accepted by the rustomaton
-fn preprocess_badchars(s: &str)->String{
+fn preprocess_badchars(s: &str, b_double_dot: bool)->String{
 	//1. handle slash
 	let s2 = s.replace("\\/", "\\x2f");
 	//for each "." as long as it is continued with alpha-numeric letter
 	//(but not *, ?), it is converted to a sequenc of ".."
 	//the reason is that one "." in pcre is 2-hex nibbles
 
-	//2. handle dot
+	//2. handle dot. ONLY on nibble paths (b_double_dot): a PCRE '.'
+	//before a hex literal must become ".." (2 nibbles = 1 byte). On
+	//the byte-level DFA path '.' is already a full byte
+	//(handle_class_full), so doubling there double-encodes -> skip
+	//it (#3 fix).
+	if !b_double_dot { return s2; }
 	let mut s3 = String::with_capacity(s2.len());
     let mut chars = s2.chars().peekable();
+    let mut bs = 0usize; //consecutive '\' just before current char
 
     while let Some(c) = chars.next() {
-        if c == '.' {
+        //only double an UNescaped '.' (even # of preceding '\').
+        //an escaped "\." is a literal period -> HIR emits byte 2e,
+        //already 2 nibbles, so doubling injects a spurious wildcard
+        //nibble (#4 fix).
+        if c == '.' && bs % 2 == 0 {
             if let Some(&next) = chars.peek() {
                 if next == '.' || next.is_ascii_alphanumeric() {
                     s3.push_str("..");
+                    bs = 0;
                     continue;
                 }
             }
         }
+        if c == '\\' { bs += 1; } else { bs = 0; }
         s3.push(c);
     }
 
@@ -370,7 +382,7 @@ pub fn pcre_to_dfa(s: &str, combination_limit: usize, repeat_limit: usize)->DFA<
 	let (_trigger, _src, b_c, pi) = parse_pcre_subsig(s, combination_limit, repeat_limit);
 	let b_ignore_case = !b_c;
 	let (_, s, _) = extract_clamav_reg(s);
-	let s = preprocess_badchars(&s);
+	let s = preprocess_badchars(&s, false);//#3: dots already bytes
 	let (s, _b_backref) = preprocess_backref(&s);
 	let mut s = preprocess_rep(&s);
 	if !pi.b_begin{ s = ".*".to_string() + &s; }
@@ -460,7 +472,7 @@ fn hex_hir_to_dfa(s: &str, hir: &Hir, b_ignore_case: bool, b_process_literal: bo
 						//problem with concat
 				}
 				dfa_res = dfa_res.minimize();
-				
+
 			}
 
 			dfa_res
@@ -581,7 +593,7 @@ fn hex_hir_to_dfa(s: &str, hir: &Hir, b_ignore_case: bool, b_process_literal: bo
 /// convert a pcre regex to the rustomaton format of hex strings
 /// e.g., "AB.*" to "4142.*"
 pub fn pcre_to_rustomaton_regex(s: &str, combination_limit: usize, repeat_limit: usize) -> (String, PcreInfo){
-	let s = preprocess_badchars(&s);
+	let s = preprocess_badchars(&s, true);//nibble path: keep doubling
 	let (s, b_backref) = preprocess_backref(&s);
 	let s = preprocess_rep(&s);
 	let hir  = to_hir(&s);
@@ -1510,6 +1522,20 @@ mod tests_pcre{
 			 	vec!["willReadFrequently a.createImageData b\x3d a.getImageData a.putImageData\x28b"],
 			 	vec!["00willReadFrequently000a.jpg.createImageData 00b.jpgabc \x3d  a.jpg.getImageData a.jpg.putImageData \x29 b.jpg"],
 			 ),
+			// #4 escaped-dot regression: "\." is a LITERAL period
+			// (1 byte = 2e), must NOT gain a spurious wildcard nibble.
+			("escdot1", r"a\.createImageData",
+				vec!["a.createImageData"],
+				vec!["aXcreateImageData"]),
+			// two literal periods in a row
+			("escdot2", r"x\.\.y", vec!["x..y"],
+				vec!["x.ay", "xaby"]),
+			// unescaped '.' = exactly ONE byte (regression guard)
+			("wilddot1", r"a.b", vec!["a.b", "aXb", "a1b"],
+				vec!["ab", "aXYb"]),
+			// mix: literal '.', then a one-byte wildcard
+			("escwild1", r"a\.b.c", vec!["a.bXc", "a.b.c"],
+				vec!["axbXc", "a.bc"]),
 			("lookend1", "AA.*BB$", vec!["AA123BB"], vec!["AA11BBC"]),
 			("lookbegin1", "^AA.*", vec!["AA123"], vec!["BAA123"]),
 			("boundary1", r".*\bGreat", vec!["AA Great"], vec!["AAGreat"]),
@@ -1603,6 +1629,13 @@ mod tests_pcre{
 			// concat
 			("/./",  vec!["1", "a"], vec![""]),
 			("/../",  vec!["12", "ab"], vec![""]),
+			// '.' = exactly ONE byte; /.../ auto-wraps .* both ends
+			("/.a/", vec!["Xa","XYa","1a"], vec!["a","bc"]),
+			("/..a/", vec!["XYa","XYZa","12ba"], vec!["Xa","a"]),
+			("/a.b/", vec!["aXb","zaybz"], vec!["ab","axyb"]),
+			("/..*/", vec!["a","ab","1"], vec![""]),
+			("/^a.b$/", vec!["aXb","a1b"], vec!["ab","aXYb","Xab"]),
+			("/^..$/", vec!["ab","12"], vec!["a","abc",""]),
 			// class with repetition
 			(r"/[1|2|3]+ab/", vec!["122ab", "12232ab"], vec!["a14ab"]),
 			(r"/[1|2|3]{1,3}ab/", vec!["12ab", "122ab"], vec!["ab", "a5555ab"]),
@@ -1693,10 +1726,11 @@ mod tests_pcre{
 			("(11|22)(33|44)aa", vec!["1133aa", "2244aa"], vec!["1234aa"]),
 			//sipmle negation
 			("!(00|12)aa", vec!["3344aa"], vec!["12aa", "3300aa"]),
-			//begin-offset: exactly 4 leading nibbles, anchored at start
+			//begin-offset: "4:" = 4 BYTES = exactly 8 leading nibbles,
+			//anchored at start (ClamAV byte-offset convention)
 			("4:61626364",
-			 vec!["aaaa61626364", "000061626364"],
-			 vec!["aa61626364", "aaaaa61626364", "61626364"]),
+			 vec!["aaaaaaaa61626364", "0000000061626364"],
+			 vec!["aaaaaa61626364", "aaaaaaaaaa61626364", "61626364"]),
 		];
 		for tc in testcases{
 			let yes_strs = tc.1;
@@ -1751,7 +1785,8 @@ mod tests_pcre{
 		//covers handle_location_for_pm (not exercised by small_dna gate)
 		let s = handle_location_for_pm("4:616263");
 		let r = collect_pm_reg_from_rustomaton_regex(&s, 2);
-		assert!(r.iter().any(|(t,b)| t=="616263" && *b==(4,4)),
+		//"4:" = 4 BYTES = 8 nibbles (ClamAV byte-offset convention)
+		assert!(r.iter().any(|(t,b)| t=="616263" && *b==(8,8)),
 			"pm-path: {:?} (from {})", r, s);
 	}
 

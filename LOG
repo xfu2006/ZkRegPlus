@@ -28710,6 +28710,17 @@ Goal 2. writing put the estimate of Reef.
 	[b] create slides
 Goal 3. continue writing
 	[a] embed the table
+Goal 4. continue design
+	[a] refactor several classes of improvement
+	[b] case insentive 
+	[c] balanced structure of extendingA
+	[d] full design now
+Goal 5. Implementation
+	[a] mliestone 1 -> interface change -> OK
+	[b] existing testing failure
+		=> check #1, #2 => done
+		=> #3 check and analyze.
+			=> regression test on small_data etc.
 
 -- TODO -- remove the project backup
 
