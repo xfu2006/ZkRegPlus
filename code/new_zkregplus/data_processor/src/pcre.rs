@@ -9,7 +9,7 @@ extern crate regex_syntax;
 extern crate serde;
 extern crate common_substrings;
 extern crate rustomaton;
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use std::mem::{discriminant};
 use self::serde::{Serialize,Deserialize};
 use self::regex_syntax::{
@@ -144,34 +144,47 @@ fn join_vs(v: &Vec<String>) -> String{
 	else{ "(".to_string() + &v.join("|") + &")".to_string() }
 }
 
+/// Aggressive SDE fan-out (M3): expand small-cardinality class
+/// repetitions in `orig` (raw PCRE) into a union of concrete SED subsig
+/// variants -- one more-constrained PCRE per pinned-byte combination.
+/// `cfg.combination_limit` is the fan-out cap B; `b_igc` (the subsig's
+/// case-insensitive flag) folds letter classes to lowercase so igc fan-out
+/// pins even whole-byte anchors with no redundant `a`/`A` (digits are
+/// caseless -> unaffected). No nibble-borrow here: anchors stay byte-PCRE,
+/// a tighter-but-sound over-approx (the constant high nibble of an adjacent
+/// same-block class is already present downstream). Returns None when
+/// disabled, when there is no class run, or when no slot is selectable
+/// (wildcard-only, or B below the smallest class) -> caller keeps the
+/// single-object path. Over-approximation: the variant union always
+/// contains the original, so discharge stays sound.
+///
+/// Examples (B = cfg.combination_limit):
+///  - "[0-9]{3}-[0-9]{3}-[0-9]{3}", B=1000, gate on -> Some(1000): pin
+///    the 1st digit of every leg (10*10*10); middles stay class.
+///  - "[a-fA-F]{3}", B=100, gate on, b_igc -> Some(36): folds 12->6, so
+///    two positions fit (6*6); cs would be Some(12) (one position, 12<144).
+///  - ".{4}" (wildcard-only), or gate off -> None.
+pub fn expand_rep_subsig(orig: &str, b_igc: bool,
+	cfg: &ClamavApproxConfig) -> Option<Vec<String>> {
+	if !cfg.b_aggressive_sde_for_rep { return None; }
+	let hir = to_hir(orig);
+	let legs = find_class_runs(&hir);
+	if legs.is_empty() { return None; }
+	let slots = select_slots(&legs, cfg.combination_limit, b_igc);
+	//no selectable slot (wildcard-only, or B below smallest card):
+	//nothing to fan out -> caller keeps the single-object path.
+	if slots.is_empty() { return None; }
+	Some(render_variants(&hir, &legs, &slots, b_igc))
+}
+
 /// We ignore other clamAV pcre flags: g (global), r( rolling), e(encompass),
 /// x - extended, a - anchored, e - dollar endonly, u - ungreedy
-/// by default we do dotall, multiline, we only check if it is case 
+/// by default we do dotall, multiline, we only check if it is case
 /// sensitive. Return trigger, the regex string itself, and the
 ///   trigger. The regex string is approximated
 ///   to rustomaton format -> note we have to approxiamte backreferences
 ///    as it's beyond regular; we do NOT handle lookaround (anyway
 ///         there are only 6 in clamav, we rewrote them manually in dataset)
-/// Aggressive SDE fan-out (M1 stub): expand class repetitions in
-/// `orig` (raw PCRE) into a union of concrete SED subsig variants.
-/// `b_igc` = ignore-case; `cfg.combination_limit` is the fan-out cap B.
-/// Returns None when disabled / no eligible run (caller keeps the
-/// single-object path). Real logic lands in M2-M4.
-///
-/// Examples (B = cfg.combination_limit):
-///  - "[0-9]{9}", B=100  -> 100 variants: pin 1st & 2nd digit
-///    (00..99), e.g. "30 31 (30|..|39){7}", "30 32 ...", ...
-///  - "Driver License.{0,300}[0-9]{3}-[0-9]{3}-[0-9]{3}-[0-9]{4}",
-///    B=1000 -> 1000 variants: pin 1st digit of legs 1,4,3
-///    (leg 2 skipped, budget exhausted), each leg's other digits
-///    left as the class.
-///  - "[a-z]{4}", B=100, case-insensitive -> pin 1st & 2nd letter
-///    over folded lowercase reps (no 0x3X borrow on the igc path).
-pub fn expand_rep_subsig(_orig: &str, _b_igc: bool,
-	_cfg: &ClamavApproxConfig) -> Option<Vec<String>> {
-	None
-}
-
 pub fn parse_pcre_subsig(s: &str, combination_limit: usize, repeat_limit: usize)
 	->(String, String, bool, PcreInfo){
 	let (mut trigger, reg_s, flags) = extract_clamav_reg(s);
@@ -444,6 +457,36 @@ fn class_to_arr(v: &Class, _limit: &mut usize)->Vec<u8>{
 	res
 }
 
+/// Case-fold a class's candidate byte set for igc fan-out. When `b_igc`,
+/// map each ASCII uppercase byte to lowercase, then sort+dedup so the
+/// result is ascending and unique; the cs path (`b_igc==false`) returns
+/// the bytes unchanged. Folding to ONE case (lowercase, matching the
+/// new_adv_new to_v8_lower direction) keeps igc fan-out from emitting
+/// redundant `a`&`A` variants: under igc a pinned lowercase byte already
+/// matches BOTH cases, so the folded set is sound (variant union still
+/// >= original) and smaller.
+/// Examples: cs `[A-F]` 0x41..0x46 -> unchanged; igc `[A-F]` -> 0x61..
+/// 0x66; igc `[a-fA-F]` (12 bytes) -> 0x61..0x66 (6); digits fold to self.
+fn fold_bytes_igc(bytes: &[u8], b_igc: bool) -> Vec<u8> {
+	if !b_igc { return bytes.to_vec(); }
+	let mut out: Vec<u8> = bytes.iter()
+		.map(|b| b.to_ascii_lowercase()).collect();
+	out.sort();
+	out.dedup();
+	out
+}
+
+/// Folded cardinality of `class` under igc = number of DISTINCT bytes the
+/// fan-out will actually enumerate. cs path == card(); igc collapses case
+/// pairs (e.g. hex `[a-fA-F]` 12 -> 6). Used as the per-leg budget
+/// multiplier in select_slots so the chosen slot count matches the
+/// rendered variant count under igc. (Wildcard stays excluded via raw
+/// card, NOT this, so 256 is unaffected by folding.)
+fn card_igc(class: &Class, b_igc: bool) -> usize {
+	let mut dummy = 0usize;
+	fold_bytes_igc(&class_to_arr(class, &mut dummy), b_igc).len()
+}
+
 /// One pinnable character-class "leg", e.g. `[0-9]{3}` or `[0-9]{2,5}`.
 /// `min` = guaranteed occurrences (only these positions are safely
 /// pinnable); `max` = upper bound (None = unbounded), kept for the
@@ -547,8 +590,12 @@ fn pos_priority(n: usize) -> Vec<usize> {
 /// product*card(leg) <= b (then grow the product); else skip and keep
 /// going so leftover budget can flow to a cheaper leg / position.
 /// Returns chosen slots in consideration order; the product of their
-/// cardinalities is the fan-out size (<= b).
-fn select_slots(legs: &[Leg], b: usize) -> Vec<(usize, usize)> {
+/// cardinalities is the fan-out size (<= b). Cardinality for the budget
+/// is FOLDED under `b_igc` (igc collapses case pairs, e.g. hex 12->6, so
+/// more positions fit); the wildcard exclusion still uses the RAW 256
+/// count so a full class is never pinned regardless of folding.
+fn select_slots(legs: &[Leg], b: usize,
+	b_igc: bool) -> Vec<(usize, usize)> {
 	let m = legs.len();
 	if m == 0 { return Vec::new(); }
 	//leg priority: first leg, last leg, then middles right-to-left.
@@ -565,9 +612,10 @@ fn select_slots(legs: &[Leg], b: usize) -> Vec<(usize, usize)> {
 	for round in 0..max_n {
 		for &leg in &prio {
 			if round >= qs[leg].len() { continue; }
-			let c = card(&legs[leg].class);
-			//wildcard (all 256 bytes): no selectivity, never pin.
-			if c >= 256 { continue; }
+			//wildcard (256 raw bytes): no selectivity, never pin.
+			if card(&legs[leg].class) >= 256 { continue; }
+			//budget uses folded cardinality (igc collapses cases).
+			let c = card_igc(&legs[leg].class, b_igc);
 			let pos = qs[leg][round];
 			if product.saturating_mul(c) <= b {
 				product *= c;
@@ -576,6 +624,201 @@ fn select_slots(legs: &[Leg], b: usize) -> Vec<(usize, usize)> {
 		}
 	}
 	chosen
+}
+
+/// Render one concrete byte as a PCRE hex escape, e.g. 0x35 -> `\x35`.
+/// Uniformly safe for non-printable / regex-special bytes. Two-nibble
+/// (even) anchor -> compatible with the igc whole-byte fold (M4).
+fn byte_to_pcre(b: u8) -> String {
+	format!("\\x{:02x}", b)
+}
+
+/// Render a character class as a compact PCRE bracket expression over
+/// hex escapes, coalescing consecutive bytes into ranges, e.g.
+/// `[0-9]` -> `[\x30-\x39]`, full wildcard -> `[\x00-\xff]`. Endpoints
+/// are `\xNN` so `]`,`-`,`^`,`\` never need special escaping. Empty
+/// class -> empty string. Reuses class_to_arr for the byte set.
+fn class_to_pcre(class: &Class) -> String {
+	let mut dummy = 0usize;
+	let bytes = class_to_arr(class, &mut dummy);
+	if bytes.is_empty() { return String::new(); }
+	let mut s = String::from("[");
+	let mut i = 0;
+	while i < bytes.len() {
+		let start = bytes[i];
+		let mut end = start;
+		while i + 1 < bytes.len()
+			&& end < u8::MAX && bytes[i + 1] == end + 1 {
+			end = bytes[i + 1];
+			i += 1;
+		}
+		s.push_str(&byte_to_pcre(start));
+		if start != end {
+			s.push('-');
+			s.push_str(&byte_to_pcre(end));
+		}
+		i += 1;
+	}
+	s.push(']');
+	s
+}
+
+/// PCRE quantifier suffix for a `{min,max}` run (None = unbounded):
+/// `*` `+` `?` `{n}` `{n,}` `{0,n}` `{m,n}`. Used to re-emit an
+/// unpinned leg compactly and to wrap a non-class repetition body.
+fn quantifier_str(min: usize, max: Option<usize>) -> String {
+	match max {
+		None => match min {
+			0 => "*".to_string(),
+			1 => "+".to_string(),
+			_ => format!("{{{},}}", min),
+		},
+		Some(mx) => {
+			if min == 0 && mx == 1 { "?".to_string() }
+			else if mx == min { format!("{{{}}}", min) }
+			else if min == 0 { format!("{{0,{}}}", mx) }
+			else { format!("{{{},{}}}", min, mx) }
+		}
+	}
+}
+
+/// Re-emit one class-repetition leg with its pinned positions fixed to
+/// concrete bytes. Positions `0..min` are guaranteed (pinnable); each is
+/// a `\xNN` if assigned, else the class. The optional `min..max` tail
+/// stays as the class (`*` if unbounded, `?`/`{0,t}` otherwise). With no
+/// pin, emit the compact `class{min,max}` form. `idx` = this leg's index.
+fn emit_leg(leg: &Leg, idx: usize,
+	assign: &HashMap<(usize, usize), u8>) -> String {
+	let cp = class_to_pcre(&leg.class);
+	let has_pin = (0..leg.min)
+		.any(|p| assign.contains_key(&(idx, p)));
+	if !has_pin {
+		return format!("{}{}", cp,
+			quantifier_str(leg.min, leg.max));
+	}
+	let mut s = String::new();
+	for p in 0..leg.min {
+		match assign.get(&(idx, p)) {
+			Some(b) => s.push_str(&byte_to_pcre(*b)),
+			None => s.push_str(&cp),
+		}
+	}
+	//variable tail: the optional (max-min) positions stay class.
+	match leg.max {
+		None => { s.push_str(&cp); s.push('*'); }
+		Some(mx) => {
+			let t = mx - leg.min;
+			if t == 1 { s.push_str(&cp); s.push('?'); }
+			else if t > 1 {
+				s.push_str(&format!("{}{{0,{}}}", cp, t));
+			}
+		}
+	}
+	s
+}
+
+/// Re-emit `hir` as a PCRE string with the pinned (leg, pos) slots in
+/// `assign` fixed to concrete bytes; everything else is reproduced
+/// faithfully. `ctr` tracks the leg index, incremented at exactly the
+/// nodes collect_class_runs treats as legs (bare Class, Repetition over
+/// a Class) so indices stay aligned with `legs`. M3 = no borrow / no
+/// igc fold; pinned bytes are plain whole-byte anchors.
+fn emit_variant(hir: &Hir, legs: &[Leg],
+	assign: &HashMap<(usize, usize), u8>, ctr: &mut usize) -> String {
+	match hir.kind() {
+		Empty => String::new(),
+		HirKind::Literal(x) => x.0.iter()
+			.map(|b| byte_to_pcre(*b)).collect::<String>(),
+		HirKind::Class(_) => {
+			let idx = *ctr; *ctr += 1;
+			match assign.get(&(idx, 0)) {
+				Some(b) => byte_to_pcre(*b),
+				None => class_to_pcre(&legs[idx].class),
+			}
+		}
+		HirKind::Repetition(rep) => match rep.sub.kind() {
+			HirKind::Class(_) => {
+				let idx = *ctr; *ctr += 1;
+				emit_leg(&legs[idx], idx, assign)
+			}
+			//non-class body (e.g. `(ab)+`): descend, wrap, no pin.
+			_ => {
+				let inner =
+					emit_variant(&rep.sub, legs, assign, ctr);
+				let max = match rep.max {
+					Some(999777979) => None,
+					m => m.map(|x| x as usize),
+				};
+				format!("(?:{}){}", inner,
+					quantifier_str(rep.min as usize, max))
+			}
+		},
+		HirKind::Concat(v) => v.iter()
+			.map(|h| emit_variant(h, legs, assign, ctr))
+			.collect::<String>(),
+		HirKind::Alternation(v) => {
+			let parts: Vec<String> = v.iter()
+				.map(|h| emit_variant(h, legs, assign, ctr))
+				.collect();
+			format!("(?:{})", parts.join("|"))
+		}
+		HirKind::Capture(cap) =>
+			format!("({})", emit_variant(&cap.sub, legs, assign, ctr)),
+		HirKind::Look(l) => match l {
+			Look::Start => "^".to_string(),
+			Look::End => "$".to_string(),
+			Look::WordAscii => "\\b".to_string(),
+			_ => String::new(),
+		},
+	}
+}
+
+/// Enumerate concrete fan-out variants of `hir`: the cross product of
+/// candidate bytes over the chosen `slots`, one PCRE string each.
+/// Slots are sorted to canonical (leg, pos) order and each slot's bytes
+/// are ascending, so the enumeration is LEXICOGRAPHIC (first slot most
+/// significant) -> deterministic goldens & stable SNARK cache. Count =
+/// product of the selected legs' cardinalities (== fan-out budget use).
+///
+/// Example: `[0-9]{3}` with slots `[(0,0),(0,2)]` (pin first & last
+/// digit, middle stays class) -> 100 variants, lexicographic:
+///   out[0]  = `\x30[\x30-\x39]\x30`
+///   out[1]  = `\x30[\x30-\x39]\x31`
+///   ...
+///   out[99] = `\x39[\x30-\x39]\x39`
+/// Under `b_igc` the per-slot candidate bytes are case-FOLDED to
+/// lowercase (digits unchanged), so igc variants pin even 2-nibble
+/// lowercase anchors and never duplicate an `a`/`A` pair.
+fn render_variants(hir: &Hir, legs: &[Leg],
+	slots: &[(usize, usize)], b_igc: bool) -> Vec<String> {
+	let mut order = slots.to_vec();
+	order.sort();
+	//candidate bytes per slot (folded under igc; ascending -> lex enum).
+	let cands: Vec<Vec<u8>> = order.iter().map(|&(l, _)| {
+		let mut dummy = 0usize;
+		let raw = class_to_arr(&legs[l].class, &mut dummy);
+		fold_bytes_igc(&raw, b_igc)
+	}).collect();
+	let total: usize = cands.iter().map(|c| c.len()).product();
+	let mut out = Vec::with_capacity(total);
+	let mut idxs = vec![0usize; order.len()];
+	loop {
+		let mut assign = HashMap::new();
+		for (k, &(l, p)) in order.iter().enumerate() {
+			assign.insert((l, p), cands[k][idxs[k]]);
+		}
+		let mut ctr = 0usize;
+		out.push(emit_variant(hir, legs, &assign, &mut ctr));
+		//mixed-radix increment, last slot least significant.
+		let mut k = order.len();
+		loop {
+			if k == 0 { return out; }
+			k -= 1;
+			idxs[k] += 1;
+			if idxs[k] < cands[k].len() { break; }
+			idxs[k] = 0;
+		}
+	}
 }
 
 /// encoded string is in hex,
@@ -1987,16 +2230,126 @@ mod tests_pcre{
 		//driverlic: leg priority [0,3,2,1], all card 10
 		let legs = find_class_runs(&to_hir(
 			"[0-9]{3}-[0-9]{3}-[0-9]{3}-[0-9]{4}"));
-		assert_eq!(select_slots(&legs, 1000),
+		assert_eq!(select_slots(&legs, 1000, false),
 			vec![(0,0),(3,0),(2,0)]);
-		assert_eq!(select_slots(&legs, 100),
+		assert_eq!(select_slots(&legs, 100, false),
 			vec![(0,0),(3,0)]);
 		//single leg spreads within-leg: first + last
 		let legs = find_class_runs(&to_hir("[0-9]{9}"));
-		assert_eq!(select_slots(&legs, 100), vec![(0,0),(0,8)]);
+		assert_eq!(select_slots(&legs, 100, false), vec![(0,0),(0,8)]);
 		//mixed cardinalities, take-if-fits-skip (26*10=260<=300)
 		let legs = find_class_runs(&to_hir("[A-Z]{2}[0-9]{6}"));
-		assert_eq!(select_slots(&legs, 300), vec![(0,0),(1,0)]);
+		assert_eq!(select_slots(&legs, 300, false), vec![(0,0),(1,0)]);
+	}
+
+	#[test]
+	pub fn tests_sde_rep_fold_bytes(){
+		use super::fold_bytes_igc;
+		//cs: identity (bytes pass through unchanged).
+		let up: Vec<u8> = (0x41u8..=0x46).collect();
+		assert_eq!(fold_bytes_igc(&up, false), up);
+		//igc: A-F -> a-f.
+		assert_eq!(fold_bytes_igc(&up, true),
+			(0x61u8..=0x66).collect::<Vec<u8>>());
+		//igc: a-f + A-F dedups to a-f (12 -> 6), ascending.
+		let mut mixed: Vec<u8> = (0x41u8..=0x46).collect();
+		mixed.extend(0x61u8..=0x66);
+		assert_eq!(fold_bytes_igc(&mixed, true),
+			(0x61u8..=0x66).collect::<Vec<u8>>());
+		//digits are caseless: fold is identity even under igc.
+		let dig: Vec<u8> = (0x30u8..=0x39).collect();
+		assert_eq!(fold_bytes_igc(&dig, true), dig);
+	}
+
+	#[test]
+	pub fn tests_sde_rep_render_variants(){
+		use super::{find_class_runs, render_variants};
+		//middle position stays class; first+last pinned; lexicographic.
+		let hir = to_hir("[0-9]{3}");
+		let legs = find_class_runs(&hir);
+		let v = render_variants(&hir, &legs, &[(0,0),(0,2)], false);
+		assert_eq!(v.len(), 100);
+		assert_eq!(v[0], "\\x30[\\x30-\\x39]\\x30");
+		assert_eq!(v[1], "\\x30[\\x30-\\x39]\\x31");
+		assert_eq!(v[99], "\\x39[\\x30-\\x39]\\x39");
+		//bounded variable tail (max-min=2) stays class.
+		let hir = to_hir("[0-9]{2,4}");
+		let legs = find_class_runs(&hir);
+		let v = render_variants(&hir, &legs, &[(0,0),(0,1)], false);
+		assert_eq!(v.len(), 100);
+		assert_eq!(v[0], "\\x30\\x30[\\x30-\\x39]{0,2}");
+		//unbounded tail -> '*'.
+		let hir = to_hir("[0-9]+");
+		let legs = find_class_runs(&hir);
+		let v = render_variants(&hir, &legs, &[(0,0)], false);
+		assert_eq!(v.len(), 10);
+		assert_eq!(v[0], "\\x30[\\x30-\\x39]*");
+		assert_eq!(v[9], "\\x39[\\x30-\\x39]*");
+		//literal between legs + canonical (leg,pos) ordering.
+		let hir = to_hir("[0-9]{2}-[0-9]{2}");
+		let legs = find_class_runs(&hir);
+		let v = render_variants(&hir, &legs, &[(0,0),(0,1),(1,0)], false);
+		assert_eq!(v.len(), 1000);
+		assert_eq!(v[0], "\\x30\\x30\\x2d\\x30[\\x30-\\x39]");
+	}
+
+	#[test]
+	pub fn tests_sde_rep_expand_count(){
+		use super::expand_rep_subsig;
+		use crate::clamav::default_clamav_cfg;
+		let mut cfg = default_clamav_cfg();
+		cfg.b_aggressive_sde_for_rep = true;
+		cfg.combination_limit = 1000;
+		//pin 1st digit of all 3 legs: 10*10*10 = 1000 variants.
+		let v = expand_rep_subsig(
+			"[0-9]{3}-[0-9]{3}-[0-9]{3}", false, &cfg);
+		assert_eq!(v.map(|x| x.len()), Some(1000));
+	}
+
+	#[test]
+	pub fn tests_sde_rep_expand_igc(){
+		use super::expand_rep_subsig;
+		use crate::clamav::default_clamav_cfg;
+		let mut cfg = default_clamav_cfg();
+		cfg.b_aggressive_sde_for_rep = true;
+		cfg.combination_limit = 100;
+		//cs: raw card 12 -> only 1 position fits (12<=100<144).
+		let cs = expand_rep_subsig("[a-fA-F]{3}", false, &cfg)
+			.expect("cs some");
+		assert_eq!(cs.len(), 12);
+		//igc: folds case pairs 12->6 -> 2 positions fit (6*6=36).
+		let igc = expand_rep_subsig("[a-fA-F]{3}", true, &cfg)
+			.expect("igc some");
+		assert_eq!(igc.len(), 36);
+		//folded variants pin LOWERCASE bytes (even 2-nibble anchors);
+		//unpinned middle keeps the full class.
+		assert_eq!(igc[0], "\\x61[\\x41-\\x46\\x61-\\x66]\\x61");
+		assert_eq!(igc[35], "\\x66[\\x41-\\x46\\x61-\\x66]\\x66");
+		//digits are caseless: igc == cs (fold is identity).
+		cfg.combination_limit = 1000;
+		let d_cs = expand_rep_subsig("[0-9]{3}", false, &cfg);
+		let d_igc = expand_rep_subsig("[0-9]{3}", true, &cfg);
+		assert_eq!(d_cs, d_igc);
+	}
+
+	#[test]
+	pub fn tests_sde_rep_expand_none(){
+		use super::expand_rep_subsig;
+		use crate::clamav::default_clamav_cfg;
+		//gate off (default) -> None even with an eligible run.
+		let cfg = default_clamav_cfg();
+		assert!(expand_rep_subsig("[0-9]{3}", false, &cfg).is_none());
+		//gate on, but no eligible slot / run:
+		let mut cfg = default_clamav_cfg();
+		cfg.b_aggressive_sde_for_rep = true;
+		cfg.combination_limit = 1000;
+		//wildcard-only: card 256 never selectable.
+		assert!(expand_rep_subsig(".{4}", false, &cfg).is_none());
+		//literal-only: no class run.
+		assert!(expand_rep_subsig("abc", false, &cfg).is_none());
+		//budget below smallest class card (10 > 5).
+		cfg.combination_limit = 5;
+		assert!(expand_rep_subsig("[0-9]{3}", false, &cfg).is_none());
 	}
 
 }
