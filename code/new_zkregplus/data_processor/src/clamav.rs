@@ -51,7 +51,7 @@ use crate::{
 	hex_acdfa::{HexACDFA},
 	pcre::{collect_bag_words_from_rustomaton_regex, collect_pm_reg_from_rustomaton_regex, rustomaton_to_hir, collect_pm_reg_from_rustomaton_regex_worker, vec_pmreg_to_res, pcre_to_dfa, clamav_genregex_to_dfa, filter_bag_of_words,parse_pcre_subsig, expand_rep_subsig},
 	fsa_utils::{size_nfa,build_dfa,size_dfa,empty_nfa,build_nfa,get_total_size},
-	preprocess::{is_pcre_subsig,handle_range,handle_modifier,handle_location,handle_negation,handle_modifier_for_pm,handle_location_for_pm,recursive_triggers,plug_in_trigger},
+	preprocess::{is_pcre_subsig,handle_range,handle_modifier,handle_location,handle_negation,handle_modifier_for_pm,handle_location_for_pm,recursive_triggers,plug_in_trigger,extract_clamav_reg},
 	discharge_proof::{FailDischargeRecord, ChunkPeaks},
 };
 use folding_schemes::{
@@ -2256,15 +2256,12 @@ impl ClamavSig{
 		//0. make a copy of all existing subsigs
 		let log_level = LOG6;
 		let mut vec_sig_obj= vec![];
+		// M5: fan-out variants are appended right after each base
+		// obj; the bare-id rewrite into sexpr2 is deferred until
+		// the counter loops finish (counter-created ids are
+		// always > N, so \b{id}\b can't collide).
+		let mut variant_rewrites: Vec<(usize, String)> = vec![];
 		for (id,x) in self.vec_subsigs.iter().enumerate(){
-			if cfg.b_aggressive_sde_for_rep {
-				let b_igc = !self.vec_bcase_sensitive[id];
-				if let Some(_v) = expand_rep_subsig(
-					&self.vec_pcre_info[id].original_str,
-					b_igc, cfg) {
-					// M5 pushes variants here; stub = None now
-				}
-			}
 			vec_sig_obj.push( SubSigObj{value: x.clone(),
 				subsig_type: SubSigType::GeneralRegex,
 				real_value: x.clone(),
@@ -2272,6 +2269,35 @@ impl ClamavSig{
 				set_subsigs: HashSet::<usize>::new(),
 				min_required: 0,
 				});
+			if cfg.b_aggressive_sde_for_rep
+				&& self.vec_pcre_info[id].b_pcre {
+				let b_igc = !self.vec_bcase_sensitive[id];
+				let (_t, body, _f) = extract_clamav_reg(
+					&self.vec_pcre_info[id].original_str);
+				if let Some(variants) = expand_rep_subsig(
+					&body, b_igc, cfg) {
+					let mut new_ids: Vec<usize> = vec![];
+					for v in &variants {
+						let newid = vec_sig_obj.len();
+						new_ids.push(newid);
+						vec_sig_obj.push(SubSigObj{
+							value: v.clone(),
+							subsig_type:
+								SubSigType::GeneralRegex,
+							real_value: v.clone(),
+							b_ignore_case: b_igc,
+							set_subsigs:
+								HashSet::<usize>::new(),
+							min_required: 0,
+						});
+					}
+					let parts: Vec<String> = new_ids.iter()
+						.map(|i| format!("{}", i)).collect();
+					let tok = format!("({})",
+						parts.join("|"));
+					variant_rewrites.push((id, tok));
+				}
+			}
 		}
 
 
@@ -2456,6 +2482,17 @@ impl ClamavSig{
 			}
 			newexpr = newexpr + ")";
 			sexpr2 = sexpr2.replace(&old_subexp, &newexpr);
+		}
+
+		// M5: replace each bare original id with its fan-out
+		// disjunction. Counter loops above created new ids >=
+		// self.vec_subsigs.len(); \b{id}\b for id < that range
+		// matches only the original-id tokens left in sexpr2.
+		for (id, tok) in &variant_rewrites {
+			let re = Regex::new(&format!(r"\b{}\b", id))
+				.unwrap();
+			sexpr2 = re.replace_all(&sexpr2, tok.as_str())
+				.to_string();
 		}
 
 		//6. validate the rest of expression are ok
@@ -4210,6 +4247,98 @@ mod tests_clamav{
 			assert!(act.all_dfa==set_dfa, "ERROR: s: {}. act.dfa: {:?} != set_dfa: {:?}", s, act.all_dfa, set_dfa);
 		}
 
+	}
+
+	/// M5 OBJ COUNT: gate ON, combination_limit=1000, one PCRE
+	/// subsig `/[0-9]{3}/`. card=10, 3 positions -> 10^3=1000
+	/// variants fit B=1000 exactly. Expect 1 base + 1000
+	/// variants = 1001 SubSigObjs; expr rewritten from "0" to
+	/// "(1|2|...|1000)".
+	#[test]
+	pub fn tests_sde_rep_preprocess_objcount(){
+		let mut cfg = default_clamav_cfg();
+		cfg.b_aggressive_sde_for_rep = true;
+		cfg.combination_limit = 1000;
+		let s = "Test.SDE.Rep.ObjCount;m;0;/[0-9]{3}/";
+		let sig = gen_clamav_sig(s, ClamSigType::General,
+			&cfg);
+		assert_eq!(sig.vec_subsig_obj.len(), 1001,
+			"expected 1 base + 1000 variants, got {}; \
+			 expr={}",
+			sig.vec_subsig_obj.len(), sig.expr);
+		let parts: Vec<String> = (1..=1000)
+			.map(|i| format!("{}", i)).collect();
+		let expect = format!("({})", parts.join("|"));
+		assert_eq!(sig.expr, expect,
+			"expr mismatch\nexpect: {}\nactual: {}",
+			expect, sig.expr);
+	}
+
+	/// M5 DNF FOLD: gen_eval_dnf collapses `(1|2|...|N)` into a
+	/// single disjunct of N operands via EvalDNF::or (set-union
+	/// of cross-products). Verifies the auto-fold property the
+	/// fan-out depends on: no explicit DNF surgery needed in the
+	/// production path. (a) hand-built 3-operand fixture; (b)
+	/// the 1000-variant fan-out reused from objcount.
+	#[test]
+	pub fn tests_sde_rep_dnf_fold(){
+		// (a) hand-built: 4 subsigs (ids 0..=3), expr "(1|2|3)".
+		// Format the input so id 0 is the trigger subsig and
+		// expr references ids 1,2,3 via the boolean OR.
+		let cfg = default_clamav_cfg();
+		let s = "Test.SDE.DnfFold.Hand;m;(1|2|3);\
+			deadbeef;cafebabe;feedface;baadf00d";
+		let sig = gen_clamav_sig(s, ClamSigType::General,
+			&cfg);
+		assert_eq!(sig.eval_dnf.vec_disjunc.len(), 1,
+			"hand: want 1 disjunct, got {:?}",
+			sig.eval_dnf.vec_disjunc);
+		assert_eq!(sig.eval_dnf.vec_disjunc[0], vec![1,2,3],
+			"hand: want [1,2,3], got {:?}",
+			sig.eval_dnf.vec_disjunc[0]);
+
+		// (b) 1000-variant fan-out reuses the objcount fixture.
+		let mut cfg2 = default_clamav_cfg();
+		cfg2.b_aggressive_sde_for_rep = true;
+		cfg2.combination_limit = 1000;
+		let s2 = "Test.SDE.DnfFold.Fan;m;0;/[0-9]{3}/";
+		let sig2 = gen_clamav_sig(s2, ClamSigType::General,
+			&cfg2);
+		assert_eq!(sig2.eval_dnf.vec_disjunc.len(), 1,
+			"fan: want 1 disjunct, got {} disjuncts",
+			sig2.eval_dnf.vec_disjunc.len());
+		assert_eq!(sig2.eval_dnf.vec_disjunc[0].len(), 1000,
+			"fan: want disjunct of 1000, got {}",
+			sig2.eval_dnf.vec_disjunc[0].len());
+		// Sorted by EvalDNF::or via union_vecs; check head/tail.
+		assert_eq!(sig2.eval_dnf.vec_disjunc[0][0], 1);
+		assert_eq!(sig2.eval_dnf.vec_disjunc[0][999], 1000);
+	}
+
+	/// M5 REGRESSION GUARD: same `/[0-9]{3}/` fixture as objcount
+	/// but cfg gate OFF (default). Asserts the M5 wiring is
+	/// byte-identical to the pre-M5 baseline at the gate
+	/// boundary: 1 base SubSigObj (no variants), expr unchanged
+	/// from "0". Failure here = M5 leaked into the gate-OFF path.
+	#[test]
+	pub fn tests_sde_rep_gate_off_baseline(){
+		let cfg = default_clamav_cfg();
+		// Defensive: defaults must keep the gate OFF.
+		assert!(!cfg.b_aggressive_sde_for_rep,
+			"default cfg must have gate OFF; got ON");
+		let s = "Test.SDE.Rep.GateOff;m;0;/[0-9]{3}/";
+		let sig = gen_clamav_sig(s, ClamSigType::General,
+			&cfg);
+		assert_eq!(sig.vec_subsig_obj.len(), 1,
+			"gate off: want 1 base obj, got {}",
+			sig.vec_subsig_obj.len());
+		assert_eq!(sig.expr, "0",
+			"gate off: expr must stay \"0\", got {}",
+			sig.expr);
+		// gen_eval_dnf on "0" must produce [[0]].
+		assert_eq!(sig.eval_dnf.vec_disjunc, vec![vec![0]],
+			"gate off: dnf must be [[0]], got {:?}",
+			sig.eval_dnf.vec_disjunc);
 	}
 }
 
