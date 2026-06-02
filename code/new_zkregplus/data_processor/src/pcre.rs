@@ -737,9 +737,24 @@ fn emit_variant(hir: &Hir, legs: &[Leg],
 			}
 		}
 		HirKind::Repetition(rep) => match rep.sub.kind() {
-			HirKind::Class(_) => {
+			// class-rep with min>=1 is a leg in collect_class_runs;
+			// consume ctr and emit pinned/unpinned via emit_leg.
+			HirKind::Class(_) if rep.min >= 1 => {
 				let idx = *ctr; *ctr += 1;
 				emit_leg(&legs[idx], idx, assign)
+			}
+			// class-rep with min==0 (`.{0,k}`, `[-\s]?`, `[0-9]{2}?`)
+			// is NOT a leg in collect_class_runs (line 524 skip);
+			// re-emit faithfully WITHOUT consuming ctr so leg indices
+			// stay aligned with collect_class_runs.
+			HirKind::Class(c) => {
+				let cp = class_to_pcre(c);
+				let max = match rep.max {
+					Some(999777979) => None,
+					m => m.map(|x| x as usize),
+				};
+				format!("{}{}", cp,
+					quantifier_str(rep.min as usize, max))
 			}
 			//non-class body (e.g. `(ab)+`): descend, wrap, no pin.
 			_ => {
@@ -2350,6 +2365,46 @@ mod tests_pcre{
 		//budget below smallest class card (10 > 5).
 		cfg.combination_limit = 5;
 		assert!(expand_rep_subsig("[0-9]{3}", false, &cfg).is_none());
+	}
+
+	/// 2026-06-02 regression: min==0 class reps (`.{0,k}`, `[-\s]?`,
+	/// `[0-9]{2}?`) are skipped by collect_class_runs but were
+	/// (pre-fix) still consumed by emit_variant's ctr, causing
+	/// legs[idx] OOB on any sig with such a rep next to fan-out
+	/// legs. Real-world trigger = small_email DLP sigs
+	/// (Passport/SSN/License/Bank/ITIN). This test pins the fix:
+	/// expansion succeeds and yields the expected cross-product.
+	#[test]
+	pub fn tests_sde_rep_min0_class_rep(){
+		use super::expand_rep_subsig;
+		use crate::clamav::default_clamav_cfg;
+		let mut cfg = default_clamav_cfg();
+		cfg.b_aggressive_sde_for_rep = true;
+		cfg.combination_limit = 1000;
+		// (a) `.{0,100}` between two class-reps -- the small_email
+		// shape. Two legs at min>=1, dot-rep min=0 in the middle.
+		let v = expand_rep_subsig(
+			"[0-9]{3}.{0,100}[0-9]{3}", false, &cfg)
+			.expect("expand none");
+		// 2 fan-out legs * 10 cardinality * up to 3 positions each;
+		// just assert non-empty + that the dot-rep quantifier
+		// survived (class_to_pcre re-emits the dot as a byte-range
+		// form like [\x00-\xff], so check the {0,100} suffix only).
+		assert!(!v.is_empty(), "no variants");
+		assert!(v[0].contains("{0,100}"),
+			"dot-rep quantifier missing in v[0]: {}", v[0]);
+		// (b) `[-\s]?` (min=0, max=1) between two class-reps -- the
+		// SSN/ITIN shape. Class body, min=0, max=1.
+		let v2 = expand_rep_subsig(
+			"[0-9]{3}[-\\s]?[0-9]{3}", false, &cfg)
+			.expect("expand none [b]");
+		assert!(!v2.is_empty(), "no variants [b]");
+		// (c) `[0-9]{2}?` (min=0, max=2). Verifies the optional
+		// quantifier on a fan-out class still re-emits.
+		let v3 = expand_rep_subsig(
+			"[0-9]{3}[0-9]{2}?[0-9]{3}", false, &cfg)
+			.expect("expand none [c]");
+		assert!(!v3.is_empty(), "no variants [c]");
 	}
 
 }

@@ -4460,5 +4460,61 @@ mod tests_clamav{
 		}
 	}
 
+	/// M7 preflight (2026-06-02): small_email main.dat under
+	/// gate ON (combination_limit=1000) vs OFF; per-sig variant
+	/// counts + bag-empty proxy. data_processor only -- no
+	/// zkp_driver / GlobalConfig wiring, no full pipeline. Step
+	/// 3 (CapErr tuning) deferred to a follow-up plumbing pass.
+	/// Invoke: cargo test -p data_processor -- \
+	///   test_small_email_m7_preflight --nocapture
+	#[test]
+	pub fn test_small_email_m7_preflight(){
+		let proj_root = utils::os::proj_root();
+		let path = format!(
+			"{}/data/debug/small_email/config/main.dat",
+			proj_root);
+		let text = std::fs::read_to_string(&path)
+			.expect("read main.dat");
+
+		let mut cfg_off = default_clamav_cfg();
+		cfg_off.b_aggressive_sde_for_rep = false;
+
+		let mut cfg_on = default_clamav_cfg();
+		cfg_on.b_aggressive_sde_for_rep = true;
+		cfg_on.combination_limit = 1000;
+
+		let lines: Vec<&str> = text.lines()
+			.filter(|l| !l.trim().is_empty()
+				&& !l.trim().starts_with('#'))
+			.collect();
+
+		println!("\n=== M7 preflight: small_email ===");
+		println!("{:<40} | {:>8} | {:>8}",
+			"sig", "off", "on");
+		let mut tot_off = 0usize;
+		let mut tot_on = 0usize;
+		// NOTE: do NOT call gen_approx_bagwords here -- under gate
+		// ON it builds a rustomaton NFA per variant (~1000/sig);
+		// the re-emitted dot-class `.{0,100}` causes near-
+		// exponential NFA fan-out. Variant counts only need the
+		// string-rendering pass that gen_clamav_sig already does.
+		for line in &lines {
+			let sig_name = line.split(';').next()
+				.unwrap_or("?");
+			let sig_off = gen_clamav_sig(line,
+				ClamSigType::General, &cfg_off);
+			let sig_on = gen_clamav_sig(line,
+				ClamSigType::General, &cfg_on);
+			let n_off = sig_off.vec_subsig_obj.len();
+			let n_on = sig_on.vec_subsig_obj.len();
+			tot_off += n_off; tot_on += n_on;
+			println!("{:<40} | {:>8} | {:>8}",
+				sig_name, n_off, n_on);
+		}
+		println!("{:<40} | {:>8} | {:>8}",
+			"TOTAL_subsig_obj", tot_off, tot_on);
+		println!("=== END M7 preflight ===\n");
+	}
+
 }
 
