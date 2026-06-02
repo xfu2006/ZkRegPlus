@@ -28701,7 +28701,7 @@ Goal 3. add a config estimate function for future tuning purpose.
 	[b] some are not resolved yet
 
 Monday 06/01/2026
-LOC (data_processor): 10124 -> 
+LOC (data_processor): 10124 -> 11585 (+1500)
 Goal 1. implement the solution for email reg
 	[a] 0x3 extraction trick
 	[b] reptition -> alternation repetition unrolling alg.
@@ -28726,6 +28726,26 @@ Goal 5. Implementation
 	[d] regression testing.
 Goal 6. milestone 2
 	[a] refine design to imrove sequencing
+Goal 7. milestone 3 -> copmleted
+Goal 8. milestone 4. => completed
+
+
+Tuesday 06/02/2026
+LOC (data_processor): 11585 - >
+Goal 1. milestone 5
+	[a] approve code change
+	[b] approve test cases => DONE
+Goal 2. milestone 6.
+	[a] code change
+	[b] test case 
+	[c] add additional test case
+Goal 3. paper refine (data gen scripts refactor)
+	[a] in common add a function which generate the major
+		stages of computing in a script
+	[b] add get_cost(), test_get_cost(), get_main_folding_stats()
+	[c] test over multiple jobs 
+	[d] review code of common.py
+	[e] call common.py in run_reef_sample.py
 
 
 -- TODO -- remove the project backup

@@ -49,7 +49,7 @@ use crate::{
 	strings::{find_all,extract_nums,validate_counter_constraint,validate_ra_regex,validate_ra_regex_relaxed,validate_pm_regex,is_match,find_only,count_occ,drop_last_dotstar,split,validate_expr},
 	type_def::{PcreInfo,ClamSigType,SubSigType,SubSigObj,ClamavApproxConfig,TriVal,ClamavSig,EvalDNF,CompOp},
 	hex_acdfa::{HexACDFA},
-	pcre::{collect_bag_words_from_rustomaton_regex, collect_pm_reg_from_rustomaton_regex, rustomaton_to_hir, collect_pm_reg_from_rustomaton_regex_worker, vec_pmreg_to_res, pcre_to_dfa, clamav_genregex_to_dfa, filter_bag_of_words,parse_pcre_subsig, expand_rep_subsig},
+	pcre::{collect_bag_words_from_rustomaton_regex, collect_pm_reg_from_rustomaton_regex, rustomaton_to_hir, collect_pm_reg_from_rustomaton_regex_worker, vec_pmreg_to_res, pcre_to_dfa, clamav_genregex_to_dfa, filter_bag_of_words,parse_pcre_subsig, expand_rep_subsig, pcre_to_rustomaton_regex},
 	fsa_utils::{size_nfa,build_dfa,size_dfa,empty_nfa,build_nfa,get_total_size},
 	preprocess::{is_pcre_subsig,handle_range,handle_modifier,handle_location,handle_negation,handle_modifier_for_pm,handle_location_for_pm,recursive_triggers,plug_in_trigger,extract_clamav_reg},
 	discharge_proof::{FailDischargeRecord, ChunkPeaks},
@@ -2278,13 +2278,24 @@ impl ClamavSig{
 					&body, b_igc, cfg) {
 					let mut new_ids: Vec<usize> = vec![];
 					for v in &variants {
+						// Fix-B: M3 emits variants in PCRE
+						// \xNN body form; downstream
+						// gen_approx_bagwords feeds real_value
+						// into rustomaton_to_hir which expects
+						// hex form. Convert here so variant
+						// bagwords match the same encoding as
+						// the base obj's preprocessed regex.
+						let (v_hex, _pi) =
+							pcre_to_rustomaton_regex(
+								v, cfg.combination_limit,
+								cfg.repeat_limit);
 						let newid = vec_sig_obj.len();
 						new_ids.push(newid);
 						vec_sig_obj.push(SubSigObj{
 							value: v.clone(),
 							subsig_type:
 								SubSigType::GeneralRegex,
-							real_value: v.clone(),
+							real_value: v_hex,
 							b_ignore_case: b_igc,
 							set_subsigs:
 								HashSet::<usize>::new(),
@@ -3519,7 +3530,8 @@ mod tests_clamav{
 		hex_acdfa::{HexACDFA},
 		type_def::{ClamSigType,TriVal,CompOp,ClamavSig,SubSigObj,SubSigType,ClamavApproxConfig},
 		fsa_utils::{build_nfa_fast, build_nfa_slow, nfa_eq},
-		clamav::{find_sig,gen_clamav_sig,quick_discharge_file_by_crit_bag_pm, filter_by,default_clamav_cfg,RANGE_MAX}
+		clamav::{find_sig,gen_clamav_sig,quick_discharge_file_by_crit_bag_pm, filter_by,default_clamav_cfg,RANGE_MAX},
+		pcre::{pcre_to_rustomaton_regex, expand_rep_subsig}
 	};
 
 
@@ -4340,5 +4352,113 @@ mod tests_clamav{
 			"gate off: dnf must be [[0]], got {:?}",
 			sig.eval_dnf.vec_disjunc);
 	}
+
+	/// RING-3a: union of fan-out variants is logically
+	/// equivalent to the orig regex (both directions). Tests
+	/// the slot-selection + enumeration machinery. Independent
+	/// of bagword/HexACDFA encoding.
+	/// pcre_to_rustomaton_regex wraps unanchored output with
+	/// outer ".*"; both orig and variants get the same wrap,
+	/// so we strip it to keep NFA determinization tractable.
+	#[test]
+	pub fn tests_sde_rep_contains_logical(){
+		fn strip_wrap(s: &str) -> String {
+			let s = s.strip_prefix(".*").unwrap_or(s);
+			let s = s.strip_suffix(".*").unwrap_or(s);
+			s.to_string()
+		}
+		fn check(orig_pcre: &str, b_igc: bool,
+			combination_limit: usize, want_n: usize,
+			label: &str){
+			let mut cfg = default_clamav_cfg();
+			cfg.b_aggressive_sde_for_rep = true;
+			cfg.combination_limit = combination_limit;
+			let (orig_w, _) = pcre_to_rustomaton_regex(
+				orig_pcre, cfg.combination_limit,
+				cfg.repeat_limit);
+			let orig = strip_wrap(&orig_w);
+			let vars = expand_rep_subsig(
+				orig_pcre, b_igc, &cfg)
+				.expect("variants");
+			assert_eq!(vars.len(), want_n,
+				"{}: want {} variants, got {}",
+				label, want_n, vars.len());
+			let vs: Vec<String> = vars.iter().map(|v|
+				strip_wrap(&pcre_to_rustomaton_regex(v,
+					cfg.combination_limit,
+					cfg.repeat_limit).0)).collect();
+			let union = format!("({})", vs.join("|"));
+			assert!(
+				nfa_eq(&build_nfa_slow(&orig),
+					&build_nfa_slow(&union)),
+				"{}: L(orig) != L(union)\norig:{}\n\
+				 union:{}",
+				label, orig, union);
+		}
+		// Case A: [0-9]{2} cs B=100 -> 100 variants, full
+		// enum, both slots pinned.
+		check("[0-9]{2}", false, 100, 100, "A");
+		// Case B: [0-9]{3} cs B=10 -> 10 variants, only 1
+		// slot pinned, other 2 stay [0-9].
+		check("[0-9]{3}", false, 10, 10, "B");
+	}
+
+	/// RING-3b: under "low enough" min_bag_len (each variant
+	/// fits as a single bagword), the rendered SED layer is
+	/// language-equivalent to orig at the False <-> orig-false,
+	/// Maybe <-> orig-true boundary. Bagword eval cannot
+	/// return True by design (see eval_pattern_occ:1732).
+	#[test]
+	pub fn tests_sde_rep_rendered_replay_equiv(){
+		// /[0-9]{3}/ with B=1000 -> 1000 variants, each 6
+		// hex chars; min_bag_len=2 keeps every variant.
+		let mut cfg = default_clamav_cfg();
+		cfg.b_aggressive_sde_for_rep = true;
+		cfg.combination_limit = 1000;
+		cfg.min_bag_len = 2;
+		let s = "Test.SDE.RepEquiv;m;0;/[0-9]{3}/";
+		let mut sig = gen_clamav_sig(s,
+			ClamSigType::General, &cfg);
+		sig.gen_approx_bagwords(&cfg);
+
+		// Oracle: orig /[0-9]{3}/ matches input I as
+		// substring iff I has three consecutive ASCII digits.
+		fn has_three_digits(b: &[u8]) -> bool {
+			b.windows(3).any(|w|
+				w.iter().all(|c|
+					*c >= b'0' && *c <= b'9'))
+		}
+		let inputs: Vec<&[u8]> = vec![
+			// positives: orig matches -> SED == Maybe
+			b"000",
+			b"X123Y",
+			b"12345",
+			b"abc123",
+			// negatives: orig doesn't match -> SED == False
+			b"XYZ",
+			b"X1Y2Z",
+			b"a1b2c3",
+			b"",
+		];
+		for ascii in inputs {
+			let mut nib: Vec<u8> = vec![];
+			for byte in ascii {
+				nib.push(byte >> 4);
+				nib.push(byte & 0xf);
+			}
+			let got = sig.accepts_approx_bagwords(&nib);
+			let want = if has_three_digits(ascii) {
+				TriVal::Maybe
+			} else {
+				TriVal::False
+			};
+			assert_eq!(got, want,
+				"input {:?}: got {:?}, want {:?}",
+				std::str::from_utf8(ascii)
+					.unwrap_or("?"),
+				got, want);
+		}
+	}
+
 }
 
