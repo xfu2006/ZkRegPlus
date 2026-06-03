@@ -1199,11 +1199,35 @@ fn handle_class(v: &Class, _limit: &mut usize, _repeat_limit: usize)->(Vec<Strin
 	let vbytes = class_to_arr(v, _limit);
 
 	let vstr = if vbytes.len()==256 {vec![".".to_string()]} else{
-				vbytes.iter().map(|v| 
-					(&format!("{:#04x}",v)[2..]).to_string())
-					.collect::<Vec<String>>()
+		factor_high_nibble(&vbytes)
 	};
 	(vstr, PcreInfo::new_pcre())
+}
+
+/// Emit a byte class as rustomaton-hex. The returned Vec<String> is
+/// joined by `join_vs` as an ALT, so we return a single-element vec
+/// when factoring so it stays a concat. If all bytes share a high
+/// nibble (e.g. 0x30..0x39 for `[0-9]`), emit `"3(0|1|..|9)"` so the
+/// high nibble becomes a fixed-literal anchor visible to pm-reg;
+/// otherwise return the flat per-byte alt list.
+fn factor_high_nibble(vbytes: &[u8]) -> Vec<String> {
+	if vbytes.len() < 2 {
+		return vbytes.iter()
+			.map(|v| (&format!("{:#04x}", v)[2..]).to_string())
+			.collect();
+	}
+	let high0 = vbytes[0] >> 4;
+	let all_same_high = vbytes.iter().all(|b| (b >> 4) == high0);
+	if all_same_high {
+		let lows: Vec<String> = vbytes.iter()
+			.map(|b| format!("{:x}", b & 0x0f))
+			.collect();
+		vec![format!("{:x}({})", high0, lows.join("|"))]
+	} else {
+		vbytes.iter()
+			.map(|v| (&format!("{:#04x}", v)[2..]).to_string())
+			.collect()
+	}
 }
 
 /// no packing to . trick

@@ -2327,6 +2327,9 @@ pub mod tests_zkp_driver{
 		//capacity tuning is cheap.
 		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
 		get_global_config().clamav_cfg.sde_rep_fanout_cap = 1000;
+		//Lower pm-reg word floor so fan-out borrowed bytes
+		//(1-2 chars per pin) can qualify as SDE anchors.
+		get_global_config().clamav_cfg.min_pm_word_len = 3;
 		get_global_config().b_dryrun_after_capcheck = true;
 
 		//no cached email DB -> build fresh from main.dat

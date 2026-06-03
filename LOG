@@ -28764,7 +28764,8 @@ Goal 1. continue to debug the blow up problem
 			limit 1000? which it should only extract three char classes.
 		collect_bagwords_from_rustomaton_regex: 
 	[b] decision: separate the two word combination limit.
-	[c] 
+	[c] fix the word extraction error
+	[d] fix bag words empty err
 Goal 2. Writing
 	[a] read existing desc
 	[b] verify if existing desc is accurate
@@ -28779,10 +28780,9 @@ Goal 3. set up the data
 	[a] pack the chr17_variants again and
 		change py file.
 	[b] fix INSTALL.py
+Goal 4. continue to work on the samples
+	[a] understand sample how it's discharged
+	[b] check how the new algorithm discharge
+	[c] fix minor issue about password does not appear in CP word
 
 === TODOs ====
-Goal 3. todos
-	[e] set up the data (and download script)
-	[g] run full discharge and see the cost
--- TODO -- check what DEBUG USE 6703
-al
