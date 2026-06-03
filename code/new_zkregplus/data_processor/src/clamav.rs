@@ -905,31 +905,6 @@ impl ClamavSig{
 			let new_vec = self.remove_special_pats(&vec, s);
 			new_vec
 		}).collect::<Vec<Vec<(String, (usize, usize) )>>>();
-
-		if std::env::var("ZKR_PROBE_64004").is_ok()
-			&& self.name.contains("DLProx") {
-			let snip = |s: &str, n: usize| -> String {
-				if s.len() <= n {s.to_string()}
-				else {format!("{}…(+{}b)", &s[..n], s.len()-n)}
-			};
-			let n = self.vec_subsig_pm_bounds.len();
-			println!("DEBUG USE 64004.0 sig={} n_subsigs={}",
-				self.name, n);
-			let last = n.saturating_sub(1);
-			let idxs: Vec<usize> = if n <= 6
-				{(0..n).collect()}
-				else {vec![0, 1, 2, last/2, last-1, last]};
-			for i in idxs {
-				let pm = &self.vec_subsig_pm_bounds[i];
-				println!("DEBUG USE 64004.{} sig={} n_pm_items={}",
-					i, self.name, pm.len());
-				for (k, (w, (lo, hi))) in pm.iter().enumerate() {
-					println!("DEBUG USE 64004.{}.{} sig={} \
-						word=\"{}\" min_gap={} max_gap={}",
-						i, k, self.name, snip(w, 60), lo, hi);
-				}
-			}
-		}
 	}
 
 	/// handle special patterns like 0000
@@ -2040,54 +2015,6 @@ impl ClamavSig{
 		}
 		let max_set_cs = &vec_all[max_id].0;
 		let max_set_igc = &vec_all[max_id].1;
-
-		if std::env::var("ZKR_PROBE_64002").is_ok()
-			&& self.name.contains("DLProx") {
-			let summarize = |hs: &HashSet<String>| -> String {
-				let n = hs.len();
-				let mn = hs.iter().map(|s| s.len()).min()
-					.unwrap_or(0);
-				let mx = hs.iter().map(|s| s.len()).max()
-					.unwrap_or(0);
-				let tot: usize = hs.iter().map(|s| s.len()).sum();
-				let av = if n==0 {0} else {tot/n};
-				let mut sample: Vec<&String> =
-					hs.iter().take(3).collect();
-				sample.sort();
-				format!("n={} min_len={} max_len={} avg_len={} \
-					sample={:?}", n, mn, mx, av, sample)
-			};
-			println!("DEBUG USE 64002.1 sig={} chosen_max_id={} \
-				n_dnf_items={}",
-				self.name, max_id, vec_all.len());
-			println!("DEBUG USE 64002.2 sig={} chosen_CP_cs: {}",
-				self.name, summarize(max_set_cs));
-			println!("DEBUG USE 64002.3 sig={} chosen_CP_igc: {}",
-				self.name, summarize(max_set_igc));
-			let bag_cnts: Vec<usize> = self.vec_subsig_bagwords
-				.iter().map(|s| s.len()).collect();
-			println!("DEBUG USE 64002.4 sig={} subsig_bag_sizes={:?}",
-				self.name, bag_cnts);
-			// per-subsig bag contents (truncated)
-			for (sid, hs) in self.vec_subsig_bagwords.iter()
-				.enumerate() {
-				println!("DEBUG USE 64002.5 sig={} subsig={} \
-					n_clauses={}",
-					self.name, sid, hs.len());
-				for (k, clause) in hs.iter().take(5).enumerate() {
-					let set: HashSet<String> = clause.iter()
-						.cloned().collect();
-					println!("DEBUG USE 64002.5.c{} sig={} \
-						subsig={} {}",
-						k, self.name, sid, summarize(&set));
-				}
-			}
-			// snapshot of map size before update
-			println!("DEBUG USE 64002.6 sig={} map_size_before={} \
-				map_igc_size_before={}",
-				self.name, map.len(), map_igc.len());
-		}
-
 		if !Self::is_bad_critical_pat(&max_set_cs) &&
 			!Self::is_bad_critical_pat(&max_set_igc){
 			self.update_map(&max_set_cs, map);
@@ -2594,45 +2521,6 @@ impl ClamavSig{
 		self.expr = sexpr2;
 		self.vec_subsig_obj = vec_sig_obj;
 		log(0, log_level, &format!("preprocess_expr COMPLETED: name: {}, expr: {}", self.name, self.expr));
-
-		if std::env::var("ZKR_PROBE_64003").is_ok()
-			&& self.name.contains("DLProx") {
-			let snip = |s: &str, n: usize| -> String {
-				if s.len() <= n {s.to_string()}
-				else {format!("{}…(+{}b)", &s[..n], s.len()-n)}
-			};
-			//Tail of real_value (where pinned bytes would land,
-			//past the ~600-char .{0,300} expansion).
-			let tail = |s: &str| -> String {
-				let n = s.len();
-				if n <= 200 {s.to_string()}
-				else {format!("…{}", &s[n-200..])}
-			};
-			println!("DEBUG USE 64003.0 sig={} \
-				n_subsig_obj={} expr={}",
-				self.name, self.vec_subsig_obj.len(),
-				snip(&self.expr, 200));
-			let last = self.vec_subsig_obj.len()
-				.saturating_sub(1);
-			let idxs: Vec<usize> = if self.vec_subsig_obj.len() <= 6
-				{(0..self.vec_subsig_obj.len()).collect()}
-				else {vec![0,1,2,3, last/2, last-1, last]};
-			for i in idxs {
-				let s = &self.vec_subsig_obj[i];
-				println!("DEBUG USE 64003.{} sig={} type={:?} \
-					b_ic={} set_subsigs={:?} min_req={} \
-					value={} real_value_tail={}",
-					i, self.name, s.subsig_type,
-					s.b_ignore_case, s.set_subsigs,
-					s.min_required,
-					snip(&s.value, 120),
-					tail(&s.real_value));
-			}
-			println!("DEBUG USE 64003.dnf sig={} n_items={} \
-				items={:?}",
-				self.name, self.eval_dnf.vec_disjunc.len(),
-				self.eval_dnf.vec_disjunc);
-		}
 
 	}
 
@@ -3343,35 +3231,6 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		*sig_to_id.get(s).unwrap()).collect::<Vec<usize>>(); //
 		//this actually indicates failed sigs because
 		//dfa is the last step
-
-	if std::env::var("ZKR_PROBE_64001").is_ok() {
-		let mut rows: Vec<(String,&'static str)> = Vec::new();
-		for s in v_sigs {
-			let n = &s.name;
-			let cls = if !set_sigs_crit.contains(n) {
-				"CP"
-			} else if !set_sigs_pm.contains(n) {
-				"SED"
-			} else if !set_sigs_dfa.contains(n) {
-				"DFA"
-			} else {
-				"FAIL"
-			};
-			rows.push((n.clone(), cls));
-		}
-		rows.sort_by(|a,b| a.0.cmp(&b.0));
-		for (n,c) in &rows {
-			println!("DEBUG USE 64001.1 fname={} sig={} class={}",
-				fname, n, c);
-		}
-		let n_cp = rows.iter().filter(|(_,c)| *c=="CP").count();
-		let n_sed = rows.iter().filter(|(_,c)| *c=="SED").count();
-		let n_dfa = rows.iter().filter(|(_,c)| *c=="DFA").count();
-		let n_fail = rows.iter().filter(|(_,c)| *c=="FAIL").count();
-		println!("DEBUG USE 64001.2 fname={} totals \
-			CP={} SED={} DFA={} FAIL={} (of {})",
-			fname, n_cp, n_sed, n_dfa, n_fail, rows.len());
-	}
 
 	//6.-- no need, we will direclty jump to dfa approach
 	let vec_ised_sigs_info = vec![];

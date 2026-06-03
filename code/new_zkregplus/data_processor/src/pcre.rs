@@ -582,6 +582,23 @@ fn pos_priority(n: usize) -> Vec<usize> {
 	q
 }
 
+/// Like `pos_priority` but biased for the LAST leg: visit position n-2
+/// first so the pinned byte sits next to a trailing factored class.
+/// After factoring, that produces a `<pin>3(<low>)` literal whose
+/// fixed prefix is 3 hex chars (pinned byte + next class's high
+/// nibble) — a pm-reg anchor. Falls back to standard order when n<2.
+fn pos_priority_last(n: usize) -> Vec<usize> {
+	if n < 2 { return pos_priority(n); }
+	let target = n - 2;
+	let mut q = Vec::with_capacity(n);
+	q.push(target);
+	q.push(0);
+	for i in (1..n).rev() {
+		if i != target { q.push(i); }
+	}
+	q
+}
+
 /// Choose which (leg, position) slots to pin for fan-out, under a
 /// product budget `b` (= combination_limit). Walk round-major: for each
 /// round, visit legs in priority [0, m-1, m-2, .., 1] (first leg, last
@@ -602,9 +619,14 @@ fn select_slots(legs: &[Leg], b: usize,
 	let mut prio = Vec::with_capacity(m);
 	prio.push(0);
 	for i in (1..m).rev() { prio.push(i); }
-	//per-leg position priority (first, last, then inward).
-	let qs: Vec<Vec<usize>> =
-		legs.iter().map(|l| pos_priority(l.min)).collect();
+	//per-leg position priority (first, last, then inward); the
+	//last leg uses pos_priority_last to surface a 3-hex-char
+	//pm-reg anchor `<pin>3` at the leg tail.
+	let qs: Vec<Vec<usize>> = legs.iter().enumerate()
+		.map(|(idx, l)| {
+			if idx == m - 1 { pos_priority_last(l.min) }
+			else { pos_priority(l.min) }
+		}).collect();
 
 	let max_n = legs.iter().map(|l| l.min).max().unwrap_or(0);
 	let mut chosen = Vec::new();
@@ -1206,28 +1228,39 @@ fn handle_class(v: &Class, _limit: &mut usize, _repeat_limit: usize)->(Vec<Strin
 
 /// Emit a byte class as rustomaton-hex. The returned Vec<String> is
 /// joined by `join_vs` as an ALT, so we return a single-element vec
-/// when factoring so it stays a concat. If all bytes share a high
-/// nibble (e.g. 0x30..0x39 for `[0-9]`), emit `"3(0|1|..|9)"` so the
-/// high nibble becomes a fixed-literal anchor visible to pm-reg;
-/// otherwise return the flat per-byte alt list.
+/// to keep the factored form as a concat. Bytes are grouped by high
+/// nibble; each group emits `<h>(<lows>)` and the groups are joined
+/// by `|`. This exposes the high nibble as a fixed-literal anchor for
+/// pm-reg whenever the byte run lives in a single high-nibble row,
+/// and even across rows gives each branch a fixed leading nibble.
 fn factor_high_nibble(vbytes: &[u8]) -> Vec<String> {
 	if vbytes.len() < 2 {
 		return vbytes.iter()
 			.map(|v| (&format!("{:#04x}", v)[2..]).to_string())
 			.collect();
 	}
-	let high0 = vbytes[0] >> 4;
-	let all_same_high = vbytes.iter().all(|b| (b >> 4) == high0);
-	if all_same_high {
-		let lows: Vec<String> = vbytes.iter()
-			.map(|b| format!("{:x}", b & 0x0f))
-			.collect();
-		vec![format!("{:x}({})", high0, lows.join("|"))]
-	} else {
-		vbytes.iter()
-			.map(|v| (&format!("{:#04x}", v)[2..]).to_string())
-			.collect()
+	let mut groups: std::collections::BTreeMap<u8, Vec<u8>>
+		= std::collections::BTreeMap::new();
+	for &b in vbytes {
+		groups.entry(b >> 4).or_default().push(b & 0x0f);
 	}
+	let fmt_group = |high: u8, lows: &[u8]| -> String {
+		if lows.len() == 1 {
+			format!("{:x}{:x}", high, lows[0])
+		} else {
+			let alt = lows.iter()
+				.map(|l| format!("{:x}", l))
+				.collect::<Vec<_>>().join("|");
+			format!("{:x}({})", high, alt)
+		}
+	};
+	if groups.len() == 1 {
+		let (h, ls) = groups.iter().next().unwrap();
+		return vec![fmt_group(*h, ls)];
+	}
+	let branches: Vec<String> = groups.iter()
+		.map(|(h, ls)| fmt_group(*h, ls)).collect();
+	vec![format!("({})", branches.join("|"))]
 }
 
 /// no packing to . trick
@@ -2289,19 +2322,21 @@ mod tests_pcre{
 	#[test]
 	pub fn tests_sde_rep_select_slots(){
 		use super::{find_class_runs, select_slots};
-		//driverlic: leg priority [0,3,2,1], all card 10
+		//driverlic: leg priority [0,3,2,1], all card 10. Last leg
+		//(idx 3, n=4) uses pos_priority_last -> pos n-2 = 2 first.
 		let legs = find_class_runs(&to_hir(
 			"[0-9]{3}-[0-9]{3}-[0-9]{3}-[0-9]{4}"));
 		assert_eq!(select_slots(&legs, 1000, false),
-			vec![(0,0),(3,0),(2,0)]);
+			vec![(0,0),(3,2),(2,0)]);
 		assert_eq!(select_slots(&legs, 100, false),
-			vec![(0,0),(3,0)]);
-		//single leg spreads within-leg: first + last
+			vec![(0,0),(3,2)]);
+		//single leg = also the last leg: pos n-2=7 first, then 0.
 		let legs = find_class_runs(&to_hir("[0-9]{9}"));
-		assert_eq!(select_slots(&legs, 100, false), vec![(0,0),(0,8)]);
-		//mixed cardinalities, take-if-fits-skip (26*10=260<=300)
+		assert_eq!(select_slots(&legs, 100, false), vec![(0,7),(0,0)]);
+		//mixed cardinalities (26*10=260<=300); last leg's first
+		//pos is n-2 = 4 of `[0-9]{6}`.
 		let legs = find_class_runs(&to_hir("[A-Z]{2}[0-9]{6}"));
-		assert_eq!(select_slots(&legs, 300, false), vec![(0,0),(1,0)]);
+		assert_eq!(select_slots(&legs, 300, false), vec![(0,0),(1,4)]);
 	}
 
 	#[test]
@@ -2383,10 +2418,11 @@ mod tests_pcre{
 		let igc = expand_rep_subsig("[a-fA-F]{3}", true, &cfg)
 			.expect("igc some");
 		assert_eq!(igc.len(), 36);
-		//folded variants pin LOWERCASE bytes (even 2-nibble anchors);
-		//unpinned middle keeps the full class.
-		assert_eq!(igc[0], "\\x61[\\x41-\\x46\\x61-\\x66]\\x61");
-		assert_eq!(igc[35], "\\x66[\\x41-\\x46\\x61-\\x66]\\x66");
+		//folded variants pin LOWERCASE bytes; for a 3-byte leg the
+		//last-leg priority pins pos n-2=1 first then pos 0, leaving
+		//pos 2 (the trailing byte) as the full class.
+		assert_eq!(igc[0], "\\x61\\x61[\\x41-\\x46\\x61-\\x66]");
+		assert_eq!(igc[35], "\\x66\\x66[\\x41-\\x46\\x61-\\x66]");
 		//digits are caseless: igc == cs (fold is identity).
 		cfg.sde_rep_fanout_cap = 1000;
 		let d_cs = expand_rep_subsig("[0-9]{3}", false, &cfg);
