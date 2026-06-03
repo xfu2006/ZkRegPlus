@@ -1425,10 +1425,21 @@ fn handle_alt_bagwords(v: &Vec<Hir>, limit: &mut usize, min_bag_len: usize)
 		}else{//less accurate in discharging
 			let n1 = res.len();
 			let n2 = bag.len();
-			let vec1 = res.iter().map(|x| x.clone())
+			let mut vec1 = res.iter().map(|x| x.clone())
 				.collect::<Vec<Vec<String>>>();
-			let vec2 = bag.iter().map(|x| x.clone())
+			let mut vec2 = bag.iter().map(|x| x.clone())
 				.collect::<Vec<Vec<String>>>();
+			//Only the aggressive-SDE pipeline opts into the
+			//deterministic longest-clause-first pairing; other
+			//runners keep the original (HashSet-random) order
+			//so their baselines are byte-identical.
+			if utils::consts::read_global_config()
+				.clamav_cfg.b_aggressive_sde_for_rep {
+				let key = |c: &Vec<String>| c.iter()
+					.map(|s| s.len()).min().unwrap_or(0);
+				vec1.sort_by(|a, b| key(b).cmp(&key(a)));
+				vec2.sort_by(|a, b| key(b).cmp(&key(a)));
+			}
 			let n = if n1>n2 {n1} else {n2};
 			for i in 0..n{
 				let u = if i<n1 {i} else {n1-1};

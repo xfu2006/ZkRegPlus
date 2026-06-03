@@ -42,8 +42,8 @@ EXTRACT_DIR = os.path.join(TMP_DIR, "extract")
 
 # ---- Google Drive ids (src_sig.7z intentionally NOT fetched) --------
 SAMPLES_ID  = "1OM_W54JxPEiV3S26XwY7f1qhEAVyFtv_"   # samples.7z
-SIG_C21_ID  = "1F79N8kFVFAXLhOoJ2oT8nzVJI5DWpcZR"   # sig_c21*.7z
-SIG_C21_TOP = "sig_c21_variantsls"                  # archive top dir
+SIG_C21_ID  = "https://drive.google.com/file/d/1314OL6_FYLmBH2i2_kQd7fwuVv73g6LU/view?usp=sharing"   # sig_c21*.7z
+SIG_C21_TOP = "chr17_variants"                      # archive top dir
 
 # ---- email-pipeline globals (re-anchored from the former script) ----
 SRC_DIR          = os.path.join(SAMPLES_DIR, "email", "src", "maildir")
@@ -87,14 +87,22 @@ def check_install_deps():
         sys.exit(1)
 
 
-# Download a Google Drive file id to dest (skips if already present).
-def gdrive_download(file_id, dest):
+# Download a Google Drive file to dest (skips if already present).
+# Accepts either a bare file id (SAMPLES_ID) or a full share URL
+# (".../file/d/<id>/view?usp=sharing", as SIG_C21_ID now is); fuzzy=True
+# lets gdown extract the id from the URL form.
+def gdrive_download(file_id_or_url, dest):
     import gdown
     if os.path.isfile(dest):
         print("  cached: %s" % dest)
         return
-    url = "https://drive.google.com/uc?export=download&id=%s" % file_id
-    gdown.download(url, dest, quiet=False)
+    if "://" in file_id_or_url:
+        gdown.download(url=file_id_or_url, output=dest,
+                       quiet=False, fuzzy=True)
+    else:
+        url = ("https://drive.google.com/uc?export=download&id=%s"
+               % file_id_or_url)
+        gdown.download(url, dest, quiet=False)
 
 
 # Extract a .7z archive into out_dir (created if missing).

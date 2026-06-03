@@ -28769,6 +28769,16 @@ Goal 2. Writing
 	[a] read existing desc
 	[b] verify if existing desc is accurate
 	[c] go back to 7.2 structure. 
+	[d] expand the writing
+		-> p1
+		-> b1
+		-> b2
+		-> p3 draft
+	[e] research the license of microsoft DLP
+Goal 3. set up the data
+	[a] pack the chr17_variants again and
+		change py file.
+	[b] fix INSTALL.py
 
 === TODOs ====
 Goal 3. todos
