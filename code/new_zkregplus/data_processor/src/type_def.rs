@@ -13,38 +13,12 @@ use std::{ collections::{HashSet,HashMap}, sync::{Arc} };
 use crate::hex_acdfa::HexACDFA;
 
 
-///ClamavParserConfig defines several config for
-///approximations when parsing clamav signature
-#[derive(Copy,Clone,Debug,PartialEq,Serialize,Deserialize)]
-pub struct ClamavApproxConfig{
-	/// max pm-reg sections allowed (longer than that will be approximated).
-	/// e.g., `(abc.{10,10}){20, inf}` when the max-pm-sections is 
-	/// set to 5 will be approximated to the pm-reg sections for
-	/// `(abc.{10,10}){5,5}.*`
-	pub max_pm_sections: usize,
-	/// the max combination limit for concat of alternations,
-	/// e.g., `(a|b)(c|d)` can be extracted to `(ac|ad|bc|bd)`
-	/// if combination_limit>4.
-	pub combination_limit: usize,
-	/// repeat_limit for interpolating repitions.
-	/// Sometimes, for extracting pm_reg, e.g.,
-	/// `(abc.{10})+` maybe approximated to 
-	/// the pm_reg for `(abc.{10}){20,20}.*` when the repeat limit is 20.
-	/// This saves the cost of PM-reg approach. and In non-negative context
-	/// is a conservative approx.
-	pub repeat_limit: usize,
-	/// mininimum size of the word length to be included in bag of words
-	/// and also PM-reg. (when NO words of good length is found), the
-	/// bag words is an empty vec (which will AUTOMATICALLY trigger
-	/// the subsignature) because it fails to discharge.
-	pub min_bag_len: usize,
-	/// the min len for words to be included in PM-REG (SED) approach
-	pub min_pm_word_len: usize,
-	/// gate: aggressively fan out class repetitions (e.g. [0-9]{n})
-	/// into a union of concrete SED subsig variants. Default false
-	/// reproduces baselines exactly.
-	pub b_aggressive_sde_for_rep: bool,
-}
+/// M8 (2026-06-02): definition moved to utils::consts so it can be
+/// embedded in GlobalConfig without a dependency cycle. This
+/// re-export keeps every existing
+/// `use crate::type_def::ClamavApproxConfig` / `use
+/// data_processor::type_def::ClamavApproxConfig` working unchanged.
+pub use utils::consts::ClamavApproxConfig;
 
 #[derive(Copy,Clone,Debug,PartialEq,Serialize,Deserialize)]
 pub enum ClamSigType{

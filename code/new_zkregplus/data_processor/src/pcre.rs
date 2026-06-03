@@ -147,7 +147,7 @@ fn join_vs(v: &Vec<String>) -> String{
 /// Aggressive SDE fan-out (M3): expand small-cardinality class
 /// repetitions in `orig` (raw PCRE) into a union of concrete SED subsig
 /// variants -- one more-constrained PCRE per pinned-byte combination.
-/// `cfg.combination_limit` is the fan-out cap B; `b_igc` (the subsig's
+/// `cfg.sde_rep_fanout_cap` is the fan-out cap B; `b_igc` (the subsig's
 /// case-insensitive flag) folds letter classes to lowercase so igc fan-out
 /// pins even whole-byte anchors with no redundant `a`/`A` (digits are
 /// caseless -> unaffected). No nibble-borrow here: anchors stay byte-PCRE,
@@ -158,7 +158,7 @@ fn join_vs(v: &Vec<String>) -> String{
 /// single-object path. Over-approximation: the variant union always
 /// contains the original, so discharge stays sound.
 ///
-/// Examples (B = cfg.combination_limit):
+/// Examples (B = cfg.sde_rep_fanout_cap):
 ///  - "[0-9]{3}-[0-9]{3}-[0-9]{3}", B=1000, gate on -> Some(1000): pin
 ///    the 1st digit of every leg (10*10*10); middles stay class.
 ///  - "[a-fA-F]{3}", B=100, gate on, b_igc -> Some(36): folds 12->6, so
@@ -170,7 +170,7 @@ pub fn expand_rep_subsig(orig: &str, b_igc: bool,
 	let hir = to_hir(orig);
 	let legs = find_class_runs(&hir);
 	if legs.is_empty() { return None; }
-	let slots = select_slots(&legs, cfg.combination_limit, b_igc);
+	let slots = select_slots(&legs, cfg.sde_rep_fanout_cap, b_igc);
 	//no selectable slot (wildcard-only, or B below smallest card):
 	//nothing to fan out -> caller keeps the single-object path.
 	if slots.is_empty() { return None; }
@@ -642,6 +642,18 @@ fn class_to_pcre(class: &Class) -> String {
 	let mut dummy = 0usize;
 	let bytes = class_to_arr(class, &mut dummy);
 	if bytes.is_empty() { return String::new(); }
+	// M9 fix-A (2026-06-02): collapse the full-byte class to "."
+	// instead of "[\x00-\xff]". The variant string is only consumed
+	// by pcre_to_rustomaton_regex downstream; in the rustomaton-hex
+	// domain "." matches any single nibble, so ".?.?" per byte gives
+	// the same matching power as the 256-element byte alternation but
+	// at ~200x smaller string size. Soundness: every real
+	// SubSigObj.value consumer is gated on CounterConstraint or
+	// DFA-routed sigs; DLP variants are GeneralRegex/SED-routed and
+	// pass through this path only at the rustomaton level.
+	if bytes.len() == 256 {
+		return ".".to_string();
+	}
 	let mut s = String::from("[");
 	let mut i = 0;
 	while i < bytes.len() {
@@ -2314,7 +2326,7 @@ mod tests_pcre{
 		use crate::clamav::default_clamav_cfg;
 		let mut cfg = default_clamav_cfg();
 		cfg.b_aggressive_sde_for_rep = true;
-		cfg.combination_limit = 1000;
+		cfg.sde_rep_fanout_cap = 1000;
 		//pin 1st digit of all 3 legs: 10*10*10 = 1000 variants.
 		let v = expand_rep_subsig(
 			"[0-9]{3}-[0-9]{3}-[0-9]{3}", false, &cfg);
@@ -2327,7 +2339,7 @@ mod tests_pcre{
 		use crate::clamav::default_clamav_cfg;
 		let mut cfg = default_clamav_cfg();
 		cfg.b_aggressive_sde_for_rep = true;
-		cfg.combination_limit = 100;
+		cfg.sde_rep_fanout_cap = 100;
 		//cs: raw card 12 -> only 1 position fits (12<=100<144).
 		let cs = expand_rep_subsig("[a-fA-F]{3}", false, &cfg)
 			.expect("cs some");
@@ -2341,7 +2353,7 @@ mod tests_pcre{
 		assert_eq!(igc[0], "\\x61[\\x41-\\x46\\x61-\\x66]\\x61");
 		assert_eq!(igc[35], "\\x66[\\x41-\\x46\\x61-\\x66]\\x66");
 		//digits are caseless: igc == cs (fold is identity).
-		cfg.combination_limit = 1000;
+		cfg.sde_rep_fanout_cap = 1000;
 		let d_cs = expand_rep_subsig("[0-9]{3}", false, &cfg);
 		let d_igc = expand_rep_subsig("[0-9]{3}", true, &cfg);
 		assert_eq!(d_cs, d_igc);
@@ -2357,13 +2369,13 @@ mod tests_pcre{
 		//gate on, but no eligible slot / run:
 		let mut cfg = default_clamav_cfg();
 		cfg.b_aggressive_sde_for_rep = true;
-		cfg.combination_limit = 1000;
+		cfg.sde_rep_fanout_cap = 1000;
 		//wildcard-only: card 256 never selectable.
 		assert!(expand_rep_subsig(".{4}", false, &cfg).is_none());
 		//literal-only: no class run.
 		assert!(expand_rep_subsig("abc", false, &cfg).is_none());
 		//budget below smallest class card (10 > 5).
-		cfg.combination_limit = 5;
+		cfg.sde_rep_fanout_cap = 5;
 		assert!(expand_rep_subsig("[0-9]{3}", false, &cfg).is_none());
 	}
 
@@ -2380,7 +2392,7 @@ mod tests_pcre{
 		use crate::clamav::default_clamav_cfg;
 		let mut cfg = default_clamav_cfg();
 		cfg.b_aggressive_sde_for_rep = true;
-		cfg.combination_limit = 1000;
+		cfg.sde_rep_fanout_cap = 1000;
 		// (a) `.{0,100}` between two class-reps -- the small_email
 		// shape. Two legs at min>=1, dot-rep min=0 in the middle.
 		let v = expand_rep_subsig(

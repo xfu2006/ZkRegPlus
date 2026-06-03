@@ -663,10 +663,8 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 			if std::env::var("ZKR_PROBE_69200").is_ok()
 				&& !subsig.is_zero() {
 				let u = field_to_usize(&subsig) as u64;
-				let bits = read_global_config().range2_bit;
-				let p1 = if bits > 19 {16}
-					else { bits * 2 / 3 };
-				let p2 = bits - p1;
+				let (_p1, p2) =
+					utils::consts::current_bit_parts();
 				let sig_id_69200 = u >> p2;
 				if sig_id_69200 == 34555
 					|| sig_id_69200 == 35355 {
@@ -1099,10 +1097,8 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		// is the source of the panic. Gated on ZKR_PROBE_77317 to
 		// match the 77317.x probe family (set by full_debug_watch.py).
 		if std::env::var("ZKR_PROBE_77317").is_ok() {
-			let bits = read_global_config().range2_bit;
-			let bit_part1 = bits*2/3;
-			let bit_part1 = if bits>19 {16} else {bit_part1};
-			let bit_part2 = bits - bit_part1;
+			let (_bit_part1, bit_part2) =
+				utils::consts::current_bit_parts();
 			let mask2: u64 = (1u64 << bit_part2) - 1;
 			let f_false = F::from(TriVal::False as u8);
 			for i in 0..inp_subsigs.len() {
@@ -2299,11 +2295,9 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		// as the structure of subsigs are different between the 
 		// two components.
 		//
-		// COST: 8n 
-		let bits = read_global_config().range2_bit;
-		let bit_part1 = bits*2/3; //16 for accomodating 64k sigs for bits 24
-		let bit_part1 = if bits>19 {16} else {bit_part1};
-		let bit_part2 = bits - bit_part1;
+		// COST: 8n
+		let (_bit_part1, bit_part2) =
+			utils::consts::current_bit_parts();
 		let fac2 = new_const_var(&cs, F::from(1u64<<bit_part2) );
 		let f_false = new_const_var(&cs, F::from(TriVal::False as u8));
 

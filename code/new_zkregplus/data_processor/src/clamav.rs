@@ -1626,7 +1626,7 @@ impl ClamavSig{
 	pub fn gen_approx_bagwords(&mut self, cfg: &ClamavApproxConfig){
 		let b_debug = read_global_config().log_level >= LOG6;
 
-		for obj in &self.vec_subsig_obj{
+		for obj in self.vec_subsig_obj.iter(){
 			//0. if obj is not general regex or counter constraint ignore.
 			if obj.subsig_type==SubSigType::SubsigCountConstraint{
 				self.vec_subsig_bagwords.push( HashSet::<Vec<String>>::new() );
@@ -1635,13 +1635,13 @@ impl ClamavSig{
 
 			//1. check if it has no nested structure
 			assert!(obj.subsig_type==SubSigType::GeneralRegex ||
-				obj.subsig_type==SubSigType::CounterConstraint, 
+				obj.subsig_type==SubSigType::CounterConstraint,
 				"type needs to be general regex or counter constraint");
 			let s = &obj.real_value;
 			let bags_both = Self::gen_approx_patterns_for_sig(s, cfg);
-
 			self.vec_subsig_bagwords.push(bags_both);
 		}
+
 		let total_size = self.vec_subsig_bagwords.iter().map(|v| v.len()).sum::<usize>();
 		if total_size==0{
 			if b_debug{
@@ -2278,16 +2278,15 @@ impl ClamavSig{
 					&body, b_igc, cfg) {
 					let mut new_ids: Vec<usize> = vec![];
 					for v in &variants {
-						// Fix-B: M3 emits variants in PCRE
-						// \xNN body form; downstream
-						// gen_approx_bagwords feeds real_value
-						// into rustomaton_to_hir which expects
-						// hex form. Convert here so variant
-						// bagwords match the same encoding as
-						// the base obj's preprocessed regex.
+						//Variants are emitted in PCRE \xNN body
+						//form; gen_approx_bagwords feeds
+						//real_value into rustomaton_to_hir which
+						//expects hex form. Convert here so
+						//variant bagwords match the same encoding
+						//as the base obj's preprocessed regex.
 						let (v_hex, _pi) =
 							pcre_to_rustomaton_regex(
-								v, cfg.combination_limit,
+								v, cfg.variant_combine_cap,
 								cfg.repeat_limit);
 						let newid = vec_sig_obj.len();
 						new_ids.push(newid);
@@ -3502,16 +3501,15 @@ pub fn find_sig(sig_name:&str, fpath: &str, sigtype: ClamSigType, cfg: &ClamavAp
 	None
 }
 
-/// generate a default clamav config.
+/// M8 (2026-06-02): single source of truth is now
+/// GlobalConfig.clamav_cfg (utils::consts). This returns a Copy
+/// so the caller-mutate idiom
+/// `let mut cfg = default_clamav_cfg(); cfg.foo = X;`
+/// keeps working unchanged (it mutates a local stack copy).
+/// Defaults under GlobalConfig match the prior struct literal
+/// verbatim so every existing runner is byte-identical.
 pub fn default_clamav_cfg()->ClamavApproxConfig{
-	ClamavApproxConfig{
-		max_pm_sections: 10, // LATEST OLD 32 does not help much
-		combination_limit: 127, 
-		repeat_limit: 256,  //-> avg step: 19  
-		min_bag_len: 6,
-		min_pm_word_len: 4, // increase to 5 will kill a lot
-		b_aggressive_sde_for_rep: false,
-	}
+	utils::consts::read_global_config().clamav_cfg
 }
 //-----------------------------------------
 //endregion: utility functions 
@@ -4261,7 +4259,7 @@ mod tests_clamav{
 
 	}
 
-	/// M5 OBJ COUNT: gate ON, combination_limit=1000, one PCRE
+	/// M5 OBJ COUNT: gate ON, sde_rep_fanout_cap=1000, one PCRE
 	/// subsig `/[0-9]{3}/`. card=10, 3 positions -> 10^3=1000
 	/// variants fit B=1000 exactly. Expect 1 base + 1000
 	/// variants = 1001 SubSigObjs; expr rewritten from "0" to
@@ -4270,7 +4268,7 @@ mod tests_clamav{
 	pub fn tests_sde_rep_preprocess_objcount(){
 		let mut cfg = default_clamav_cfg();
 		cfg.b_aggressive_sde_for_rep = true;
-		cfg.combination_limit = 1000;
+		cfg.sde_rep_fanout_cap = 1000;
 		let s = "Test.SDE.Rep.ObjCount;m;0;/[0-9]{3}/";
 		let sig = gen_clamav_sig(s, ClamSigType::General,
 			&cfg);
@@ -4312,7 +4310,7 @@ mod tests_clamav{
 		// (b) 1000-variant fan-out reuses the objcount fixture.
 		let mut cfg2 = default_clamav_cfg();
 		cfg2.b_aggressive_sde_for_rep = true;
-		cfg2.combination_limit = 1000;
+		cfg2.sde_rep_fanout_cap = 1000;
 		let s2 = "Test.SDE.DnfFold.Fan;m;0;/[0-9]{3}/";
 		let sig2 = gen_clamav_sig(s2, ClamSigType::General,
 			&cfg2);
@@ -4372,6 +4370,10 @@ mod tests_clamav{
 			label: &str){
 			let mut cfg = default_clamav_cfg();
 			cfg.b_aggressive_sde_for_rep = true;
+			//M9 split: both budgets must match for the NFA-equivalence
+			//contract -- fan-out width drives variant count, cartesian
+			//cap drives the reference rewriter on both sides.
+			cfg.sde_rep_fanout_cap = combination_limit;
 			cfg.combination_limit = combination_limit;
 			let (orig_w, _) = pcre_to_rustomaton_regex(
 				orig_pcre, cfg.combination_limit,
@@ -4414,7 +4416,7 @@ mod tests_clamav{
 		// hex chars; min_bag_len=2 keeps every variant.
 		let mut cfg = default_clamav_cfg();
 		cfg.b_aggressive_sde_for_rep = true;
-		cfg.combination_limit = 1000;
+		cfg.sde_rep_fanout_cap = 1000;
 		cfg.min_bag_len = 2;
 		let s = "Test.SDE.RepEquiv;m;0;/[0-9]{3}/";
 		let mut sig = gen_clamav_sig(s,
@@ -4461,7 +4463,7 @@ mod tests_clamav{
 	}
 
 	/// M7 preflight (2026-06-02): small_email main.dat under
-	/// gate ON (combination_limit=1000) vs OFF; per-sig variant
+	/// gate ON (sde_rep_fanout_cap=1000) vs OFF; per-sig variant
 	/// counts + bag-empty proxy. data_processor only -- no
 	/// zkp_driver / GlobalConfig wiring, no full pipeline. Step
 	/// 3 (CapErr tuning) deferred to a follow-up plumbing pass.
@@ -4481,7 +4483,7 @@ mod tests_clamav{
 
 		let mut cfg_on = default_clamav_cfg();
 		cfg_on.b_aggressive_sde_for_rep = true;
-		cfg_on.combination_limit = 1000;
+		cfg_on.sde_rep_fanout_cap = 1000;
 
 		let lines: Vec<&str> = text.lines()
 			.filter(|l| !l.trim().is_empty()

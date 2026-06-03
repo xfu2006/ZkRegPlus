@@ -71,15 +71,13 @@ impl HexACDFA{
 	/// We generate subsig_id combined within state_part_bits
 	/// NOTE: subsig_id should be ADJUSTED value (+1).
 	pub fn gen_subsig_id_worker(sig_id: usize, subsig_id: usize)->usize{
-		let bits = read_global_config().range2_bit;
-		let bit_part1 = bits*2/3; //16 for accomodating 64k sigs for bits 24
-		let bit_part1 = if bits>19 {16} else {bit_part1};
-		let bit_part2 = bits - bit_part1;
-		assert!(sig_id < (1<<bit_part1), "sig_id: {}, bit_part1: {}", sig_id, bit_part1);
-		assert!(subsig_id < (1<<bit_part2), "subsig_id: {}, bit_part2: {}", subsig_id, bit_part2);
-		let res = (sig_id<<bit_part2) + subsig_id;
-
-		res
+		let (bit_part1, bit_part2) =
+			utils::consts::current_bit_parts();
+		assert!(sig_id < (1<<bit_part1),
+			"sig_id: {}, bit_part1: {}", sig_id, bit_part1);
+		assert!(subsig_id < (1<<bit_part2),
+			"subsig_id: {}, bit_part2: {}", subsig_id, bit_part2);
+		(sig_id<<bit_part2) + subsig_id
 	}
 
 	/// convert a hex string to its lower version

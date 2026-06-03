@@ -780,10 +780,9 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 		let (zero,one) = (new_const_var(&cs, F::zero()), 
 			new_const_var(&cs, F::one()));
 		//let fr = new_const_var(&cs, F::from(RANGE2));
-		let bits = read_global_config().range2_bit; //26 bit
-		let bit_part1 = bits*2/3; //16 for accomodating 64k sigs for bits 24
-		let bit_part1 = if bits>19 {16} else {bit_part1};
-		let bit_part2 = bits - bit_part1;
+		let bits = read_global_config().range2_bit;
+		let (bit_part1, bit_part2) =
+			utils::consts::current_bit_parts();
 		let _f_part1 = new_const_var(&cs, F::from(1u32<<bit_part1));
 		let f_part2 = new_const_var(&cs, F::from(1u32<<bit_part2));
 		let start = new_const_var(&cs, F::from(0x40000000u32));
@@ -1165,11 +1164,9 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 		// as the structure of subsigs are different between the 
 		// two components.
 		//
-		// COST: 4n 
-		let bits = read_global_config().range2_bit;
-		let bit_part1 = bits*2/3; //16 for accomodating 64k sigs for bits 24
-		let bit_part1 = if bits>19 {16} else {bit_part1};
-		let bit_part2 = bits - bit_part1;
+		// COST: 4n
+		let (_bit_part1, bit_part2) =
+			utils::consts::current_bit_parts();
 		let fac2 = new_const_var(&cs, F::from(1u64<<bit_part2) );
 		let f_false = new_const_var(&cs, F::from(TriVal::False as u8));
 
@@ -1374,10 +1371,8 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for DfaAdvGadget<F>{
 #[allow(dead_code)]
 pub fn extract_sigid<F:PrimeField + ColEle>(subsig_id: F)->(F,F){
 	let u_subsig_id = field_to_usize(&subsig_id);
-	let bits = read_global_config().range2_bit; //26 bit
-	let bit_part1 = bits*2/3; //16 for accomodating 64k sigs for bits 24
-	let bit_part1 = if bits>19 {16} else {bit_part1};
-	let bit_part2 = bits - bit_part1;
+	let (bit_part1, bit_part2) =
+		utils::consts::current_bit_parts();
 	let sig_id = u_subsig_id >> bit_part2;
 	let real_subsig_id = u_subsig_id - (sig_id<<bit_part2);
 	assert!(sig_id < (1<<bit_part1));

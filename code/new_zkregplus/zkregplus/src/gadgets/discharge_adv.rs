@@ -561,11 +561,8 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 			let items =  self.store_items.get(subsig).unwrap();
 			// DEBUG USE 69200.c.* gate (circuit side). Decodes
 			// sig_id via the same bit-shift used by 67120.1.
-			let _69200_bits =
-				read_global_config().range2_bit;
-			let _69200_p1 = if _69200_bits > 19 {16}
-				else { _69200_bits * 2 / 3 };
-			let _69200_p2 = _69200_bits - _69200_p1;
+			let (_69200_p1, _69200_p2) =
+				utils::consts::current_bit_parts();
 			let _69200_sig_id =
 				(u_subsig as u64) >> _69200_p2;
 			let _69200_ss_idx =

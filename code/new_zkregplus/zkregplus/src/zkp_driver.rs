@@ -668,6 +668,18 @@ where
 	);
 	log_perf(0, log_level, &format!("ZIP driver step 2: build circs."), &mut gt1);
 
+	// M8 (2026-06-02): capacity-check-only mode. build_circs_adv
+	// enforces per-circuit capacity asserts; reaching here means
+	// caps are sufficient for this DB+files. Stop before
+	// foldpot_main so we can tune caps without paying for folding
+	// / Groth16. Toggle via get_global_config().b_dryrun_after_capcheck.
+	if read_global_config().b_dryrun_after_capcheck {
+		log(0, log_level, &format!(
+			"=== M8 DRYRUN: build_circs_adv passed, exiting before \
+			 foldpot_main. circs={} ===", vec_circs.len()));
+		return;
+	}
+
 	//4. run the foldpot_main
 	let lkup = Arc::new(db.lkup);
 	foldpot_main::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,FC<CF1<C1>,C1,CS1>,
@@ -2287,8 +2299,11 @@ pub mod tests_zkp_driver{
 		get_global_config().b_write_snark_cache = false;
 		get_global_config().b_read_snark_cache = false;
 		get_global_config().b_light_test = true;
-		//merged_000001 ~131KB -> ~262K nibbles; 2^19 leaves headroom
-		get_global_config().range2_bit = 19;
+		//range2_bit=20 unlocks the equal 10/10 bit_parts split
+		//(max 1024 sigs * 1024 subsigs) used when
+		//b_aggressive_sde_for_rep is on. M5 emits 1 base +
+		//<=1000 variants per sig, fitting under 1024.
+		get_global_config().range2_bit = 20;
 		//min_* floors set LOW (single tiny regex sig)
 		get_global_config().min_subsigs = 64;
 		get_global_config().min_basis_unique_states = 100;
@@ -2302,6 +2317,17 @@ pub mod tests_zkp_driver{
 		get_global_config().n_par_batch_claim = 8;
 		get_global_config().perc_lkup_share = if !b_check_lkup {1}
 			else {200};
+
+		//SDE-rep fan-out gate ON for the DLP sigs;
+		//sde_rep_fanout_cap=1000 to saturate Cat-3.
+		//variant_combine_cap keeps default 4 to bound the per-
+		//variant PCRE->rustomaton-hex rewrite. Dryrun returns
+		//from zkp_driver_adv right after build_circs_adv
+		//validates capacities -- skips folding/Groth16 so
+		//capacity tuning is cheap.
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
+		get_global_config().clamav_cfg.sde_rep_fanout_cap = 1000;
+		get_global_config().b_dryrun_after_capcheck = true;
 
 		//no cached email DB -> build fresh from main.dat
 		get_global_config().b_read_cache = false;

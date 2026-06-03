@@ -28731,7 +28731,7 @@ Goal 8. milestone 4. => completed
 
 
 Tuesday 06/02/2026
-LOC (data_processor): 11585 - >
+LOC (data_processor): 11585 -> 12081 (+400) 
 Goal 1. milestone 5
 	[a] approve code change
 	[b] approve test cases => DONE
@@ -28746,9 +28746,29 @@ Goal 3. paper refine (data gen scripts refactor)
 	[c] test over multiple jobs 
 	[d] review code of common.py
 	[e] call common.py in run_reef_sample.py
+Goal 4. paper 7.0 => done
+Goal 5. mile stone 7
+	[a] failed test
+	[b] check again.
+Goal 6. milestone 8
+	[a] looking pass by very very slow
+	[b] check why it's so slow?
 
 
--- TODO -- remove the project backup
+Wed 06/03/2026
+LOC (data_processor): 12801 ->  
+Goal 1. continue to debug the blow up problem
+	[a] check the passing of word_combination_limit and the 
+		two functions:
+		pcre_to_rustomaton_regex: why it blows up given word combination
+			limit 1000? which it should only extract three char classes.
+		collect_bagwords_from_rustomaton_regex: 
+	[b] decision: separate the two word combination limit.
+	[c] 
+Goal 2. Writing
+	[a] read existing desc
+	[b] verify if existing desc is accurate
+	[c] go back to 7.2 structure. 
 
 === TODOs ====
 Goal 3. todos
