@@ -28784,5 +28784,11 @@ Goal 4. continue to work on the samples
 	[a] understand sample how it's discharged
 	[b] check how the new algorithm discharge
 	[c] fix minor issue about password does not appear in CP word
+	[d] improve the class rewriting function.
+	[e] seems to be fixed
+	[f] regressio testing
+Goal 5. regression testin
+	[a] many 24 passes still could not figure out the right config
+	[b] run test_bundle to figure it out
 
 === TODOs ====

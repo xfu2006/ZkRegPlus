@@ -1597,6 +1597,25 @@ impl <F:PrimeField> ClamavDB<F>{
 					
 					}).collect::<Vec<(usize,(usize,usize))>>()
 				};
+				// DEBUG USE 64009: per-(sig,subsig) dump of the
+				// CIRCUIT-side pat_id (= acdfa word_id + 1) for
+				// each pm-bound entry. Use this to resolve the
+				// StepQueueItem.pat field back to a literal word.
+				if std::env::var("ZKR_PROBE_64009").is_ok()
+					&& s.name == "Bora.Email.DLProx.SSN.B1" {
+					for (j, x) in s.vec_subsig_pm_bounds[i]
+						.iter().enumerate() {
+						let word = &x.0;
+						let wid_raw = *acdfa.pattern_to_id
+							.get(word).unwrap();
+						println!("DEBUG USE 64009.c sig={} \
+							subsig_idx={} step_idx={} \
+							circ_pat_id={} word={} \
+							rg=({},{})",
+							s.name, i, j+1,
+							wid_raw+1, word, x.1.0, x.1.1);
+					}
+				}
 				// DEBUG USE 69200.c.patmap: circuit-side
 				// (pat_id <-> word) for the two known-failing
 				// sig_ids. Emitted once per (sig, subsig, igc)
@@ -2040,6 +2059,37 @@ impl <F:PrimeField> ClamavDB<F>{
 		let mut sig_to_id = HashMap::<String,usize>::new();
 		for (id, s) in v_sigs.iter().enumerate(){
 			sig_to_id.insert(s.name.clone(), id+1);
+		}
+		if std::env::var("ZKR_PROBE_64006").is_ok() {
+			let mut rows: Vec<(usize, String)> = sig_to_id.iter()
+				.map(|(n, id)| (*id, n.clone())).collect();
+			rows.sort_by_key(|r| r.0);
+			for (id, name) in &rows {
+				println!("DEBUG USE 64006 sig_id={} name={}",
+					id, name);
+			}
+		}
+		if std::env::var("ZKR_PROBE_64007").is_ok() {
+			//pm_bounds dump for SSN.B1 (sig_id=5), subsig_id=2.
+			let target = "Bora.Email.DLProx.SSN.B1";
+			for s in v_sigs.iter() {
+				if s.name != target { continue; }
+				let n = s.vec_subsig_pm_bounds.len();
+				println!("DEBUG USE 64007.head sig={} \
+					n_subsigs={}", s.name, n);
+				let target_sub = 2usize;
+				if target_sub >= n { continue; }
+				let pm = &s.vec_subsig_pm_bounds[target_sub];
+				println!("DEBUG USE 64007 sig={} subsig={} \
+					n_pats={}",
+					s.name, target_sub, pm.len());
+				for (k, (w, (lo, hi))) in pm.iter().enumerate() {
+					println!("DEBUG USE 64007.row sig={} \
+						subsig={} pat_id={} word={} \
+						min_gap={} max_gap={}",
+						s.name, target_sub, k+1, w, lo, hi);
+				}
+			}
 		}
 
 		//7. build the stores of information for SED and ISED

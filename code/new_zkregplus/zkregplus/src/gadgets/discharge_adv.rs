@@ -1,5 +1,6 @@
-use utils::consts::{read_global_config, B_DEBUG};
+use utils::consts::{read_global_config, B_DEBUG, PROBE_CHUNK_ID};
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::Ordering;
 /* Created 05/06/2025
    Implementation initially completed 06/11/2025
    Further improvement to cut cost and completed: 06/26/2025
@@ -570,7 +571,9 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 			let probe_69200 =
 				std::env::var("ZKR_PROBE_69200").is_ok()
 				&& (_69200_sig_id == 34555
-					|| _69200_sig_id == 35355);
+					|| _69200_sig_id == 35355
+					|| (_69200_sig_id == 5
+						&& _69200_ss_idx == 2));
 			if probe_69200 {
 				println!("DEBUG USE 69200.c.bounds: \
 					subsig={} sig_id={} ss_idx={} \
@@ -704,7 +707,28 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 				cur_q_item.locs = cur_q_locs;
 				vec_res.push(cur_q_item);
 			}
-			
+			//Final dump: full vec_res (per-step item) for SSN.B1
+			//subsig=2 so we can see the SSN-step entry too.
+			if probe_69200 {
+				for (k, it) in vec_res.iter().enumerate() {
+					let step = field_to_usize(&it.step);
+					let pat = field_to_usize(&it.pat);
+					let rg_s = field_to_usize(&it.rg_start);
+					let rg_e = field_to_usize(&it.rg_end);
+					let n_real: usize = it.locs.iter()
+						.filter(|l| !l.is_zero()).count();
+					let locs_head: Vec<usize> = it.locs.iter()
+						.filter(|l| !l.is_zero())
+						.take(20)
+						.map(|l| field_to_usize(l))
+						.collect();
+					println!("DEBUG USE 69200.c.final \
+						subsig={} k={} step={} pat={} \
+						rg=({},{}) n_locs_real={} head20={:?}",
+						u_subsig, k, step, pat,
+						rg_s, rg_e, n_real, locs_head);
+				}
+			}
 			((subsig.clone(), vec_to_add),
 			 (subsig.clone(), vec_res),
 			 (subsig.clone(), vec_fwd_prf)
@@ -911,8 +935,46 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 			assert!(new_vec_res.len()==
 				field_to_usize(&new_vec_res[new_vec_res.len()-1].step)+1);
 
-			((subsig.clone(), vec_to_del), 
-				(subsig.clone(),new_vec_res), 
+			//Post-backward dump for SSN.B1 subsig=2.
+			let (_p1_bwd, _p2_bwd) =
+				utils::consts::current_bit_parts();
+			let _sid_bwd = (u_subsig as u64) >> _p2_bwd;
+			let _ssidx_bwd = (u_subsig as u64)
+				& ((1u64<<_p2_bwd)-1);
+			let probe_bwd =
+				std::env::var("ZKR_PROBE_69200").is_ok()
+				&& _sid_bwd == 5 && _ssidx_bwd == 2;
+			if probe_bwd {
+				println!("DEBUG USE 69200.c.bwd_head \
+					subsig={} steps={} real_steps={} \
+					b_added_step={} max_steps={} \
+					n_to_del={} n_bwd_prf={} new_vec_res.len={}",
+					u_subsig, steps, real_steps,
+					b_added_step, max_steps,
+					vec_to_del.len(), vec_bwd_prf.len(),
+					new_vec_res.len());
+				for (k, it) in new_vec_res.iter().enumerate() {
+					let step = field_to_usize(&it.step);
+					let pat = field_to_usize(&it.pat);
+					let rg_s = field_to_usize(&it.rg_start);
+					let rg_e = field_to_usize(&it.rg_end);
+					let n_real: usize = it.locs.iter()
+						.filter(|l| !l.is_zero()).count();
+					let head: Vec<usize> = it.locs.iter()
+						.filter(|l| !l.is_zero())
+						.take(20)
+						.map(|l| field_to_usize(l))
+						.collect();
+					println!("DEBUG USE 69200.c.bwd_res \
+						subsig={} k={} step={} pat={} \
+						rg=({},{}) n_real={} head={:?}",
+						u_subsig, k, step, pat,
+						rg_s, rg_e, n_real, head);
+				}
+			}
+
+			((subsig.clone(), vec_to_del),
+				(subsig.clone(),new_vec_res),
 				(subsig.clone(),vec_bwd_prf)
 			)
 		}).collect::<Vec<_>>();
@@ -1062,6 +1124,59 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 		//3. consruct container
 		let (n, n_pat,_n_trace) = Self::vec_size(&self.q_type, &self.capacity);
 		println!("DEBUG USE 6901.8: step queue: {}, b_igc: {} usage: {}", name, self.b_igc, (vec_encoded.len() as f32)/(n as f32));
+		if std::env::var("ZKR_PROBE_64008").is_ok() {
+			use ark_ff::PrimeField as _ArkPF;
+			let f_to_u64 = |x: &F| -> u64 {
+				x.into_bigint().as_ref()[0]
+			};
+			let chunk_id = PROBE_CHUNK_ID
+				.load(Ordering::Relaxed);
+			//Per-chunk dump for SSN.B1, subsig=2 (encoded=5122).
+			let target_subsig = F::from(5122u32);
+			let n_subsigs_present = self.store_items.len();
+			if let Some(items) = self.store_items
+				.get(&target_subsig) {
+				println!("DEBUG USE 64008.head chunk={} q={} \
+					b_igc={} subsig=5122 n_items={} \
+					n_subsigs_in_store={}",
+					chunk_id, name, self.b_igc,
+					items.len(), n_subsigs_present);
+				for it in items {
+					let step = f_to_u64(&it.step);
+					let pat = f_to_u64(&it.pat);
+					let rg_s = f_to_u64(&it.rg_start);
+					let rg_e = f_to_u64(&it.rg_end);
+					let locs: Vec<u64> = it.locs.iter()
+						.filter(|l| !l.is_zero())
+						.map(|l| f_to_u64(l)).collect();
+					println!("DEBUG USE 64008.row chunk={} \
+						q={} step={} pat={} rg=({},{}) \
+						n_locs={} locs={:?}",
+						chunk_id, name, step, pat,
+						rg_s, rg_e, locs.len(), locs);
+				}
+			}
+		}
+		if std::env::var("ZKR_PROBE_64005").is_ok()
+			&& n < vec_encoded.len()+1 {
+			let mut hist: std::collections::BTreeMap<String, usize>
+				= std::collections::BTreeMap::new();
+			for s in &vec_subsigs {
+				*hist.entry(format!("{}", s)).or_default() += 1;
+			}
+			let mut top: Vec<(String, usize)> = hist.into_iter()
+				.collect();
+			top.sort_by(|a,b| b.1.cmp(&a.1));
+			let n_top = top.len().min(10);
+			println!("DEBUG USE 64005.0 q={} b_igc={} \
+				distinct_subsigs={} total_entries={} top10:",
+				name, self.b_igc, top.len(),
+				vec_subsigs.len());
+			for (i,(s,c)) in top.iter().take(n_top).enumerate() {
+				println!("DEBUG USE 64005.{} q={} subsig={} count={}",
+					i, name, s, c);
+			}
+		}
 		if n<vec_encoded.len()+1{
 			let n = if n==0 {1} else {n};
 			if n_pat==n{

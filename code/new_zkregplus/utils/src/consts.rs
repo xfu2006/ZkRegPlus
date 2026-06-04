@@ -31,7 +31,13 @@ pub const ALWAYS_INIT:bool = true;
 pub const ADD_CHAIN_SIZE: usize = 64;
 
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::atomic::AtomicUsize;
 use serde::{Serialize, Deserialize};
+
+/// Probe-only: chunk index of the current chunk-loop iteration. Set
+/// by foldpot driver before each gen_nd_advice call so SED probes
+/// can correlate StepQueue dumps with chunk_id.
+pub static PROBE_CHUNK_ID: AtomicUsize = AtomicUsize::new(0);
 
 /// Knobs that govern ClamAV PCRE approximation when building the
 /// pattern DB. Lives in utils so GlobalConfig can embed it;

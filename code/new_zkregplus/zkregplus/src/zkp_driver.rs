@@ -2326,26 +2326,31 @@ pub mod tests_zkp_driver{
 		//validates capacities -- skips folding/Groth16 so
 		//capacity tuning is cheap.
 		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
-		get_global_config().clamav_cfg.sde_rep_fanout_cap = 1000;
+		get_global_config().clamav_cfg.sde_rep_fanout_cap = 128;
 		//Lower pm-reg word floor so fan-out borrowed bytes
 		//(1-2 chars per pin) can qualify as SDE anchors.
 		get_global_config().clamav_cfg.min_pm_word_len = 3;
-		get_global_config().b_dryrun_after_capcheck = true;
+		get_global_config().b_dryrun_after_capcheck = false;
 
 		//no cached email DB -> build fresh from main.dat
 		get_global_config().b_read_cache = false;
 		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/small_email/config";
-		let max_word = 512 * 8; //4096 nibbles/chunk -> ~64 fold steps
-		let sigs = 20; //generous (1 real sig); mirrors full_dna
-		let subsigs = 20;
-		let avg_pats_per_subsig = 1;
-		let avg_active_pats_per_subsig = 1;
+		let max_word = 64 * 8; //512 nibbles/chunk -> ~512 fold steps
+		//Empirical caps from test_db_bundle ESTIMATE_CONFIG
+		//(small_email config, range_bits=20, max_word_len=512,
+		//fanout_cap=128). Only perc_pats_expansion_rate is
+		//iterated; the rest are pinned to the report's worst-chunk
+		//peaks with a small safety margin.
+		let sigs = 10; //empirical sigs_sed=6
+		let subsigs = 700; //SED total=606 (per-chunk peak 101)
+		let avg_pats_per_subsig = 4; //empirical avg_pats=3
+		let avg_active_pats_per_subsig = 22; //CapErr back-solved
 		let perc_comp_subsigs = 20;
-		let basis_unique_states = 6500;
-		let basis_acc_states = 2;
-		let basis_pats_in_trace = 4;
-		let perc_pats_expansion_rate = 200; //START; CapErr back-solves
+		let basis_unique_states = 50; //empirical b_uniq=9
+		let basis_acc_states = 400; //empirical b_acc=318
+		let basis_pats_in_trace = 500; //empirical b_pat=321
+		let perc_pats_expansion_rate = 5000; //tune via CapErr
 		let dfa_sigs = 0; //min_dfa_sigs floor (2) covers the DFA sig
 		let dfa_subsigs = 0;
 		let vec_decrease_level = vec![];
@@ -2723,6 +2728,25 @@ pub mod tests_zkp_driver{
 			"data/paper_data/reports", //report dir
 			b_cache, b_quick, range_bits);
 		*/
+
+		//small_email cap estimator: matches the small_email runner
+		//(range2_bit=20, max_word=512, aggressive SDE-rep fan-out).
+		//dfa_sigs/dfa_subsigs in the report are unreliable here -
+		//treat them as 0 and use the FSM/SED columns to seed caps.
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep
+			= true;
+		get_global_config().clamav_cfg.sde_rep_fanout_cap = 128;
+		get_global_config().clamav_cfg.min_pm_word_len = 3;
+		let range_bits_email = 20;
+		let max_word_len_email = 512;
+		let percentiles_email = [20usize, 50, 100];
+		super::run_db_bundle::<Fr>(
+			"data/debug/small_email/config", //config dir
+			"data/debug/small_email/reports", //report dir
+			b_cache, b_quick, range_bits_email,
+			max_word_len_email, &percentiles_email);
+
+		/*
 		let range_bits = 27;
 		// max_word_len=2048 reproduces the baseline seg_size
 		// (2048*62 == 62*512*4), so the report stays byte-identical.
@@ -2733,6 +2757,7 @@ pub mod tests_zkp_driver{
 			"data/paper_data/dna/reports", //report dir
 			b_cache, b_quick, range_bits,
 			max_word_len, &percentiles);
+		*/
 	}
 
 	/// ZK discharge of the full clean chr17 sample (light-test,

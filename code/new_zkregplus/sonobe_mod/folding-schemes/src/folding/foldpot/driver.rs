@@ -547,6 +547,11 @@ where
 		let cap = lock_unwrap!(circ.get_mapper()).get_capacity();
 		let mut prev_adv = None;
 		for i in 0..num_segs{
+			//Probe hook: publish chunk_id for the 64008 dump.
+			if std::env::var("ZKR_PROBE_64008").is_ok() {
+				utils::consts::PROBE_CHUNK_ID
+					.store(i, Ordering::Relaxed);
+			}
 			let start = i*max_wlen;
 			let end = if (i+1)*max_wlen>wlen {wlen} else {(i+1)*max_wlen};
 			let seg = word[start..end].to_vec();
@@ -863,6 +868,11 @@ where
 		let cap = lock_unwrap!(circ.get_mapper()).get_capacity();
 		let mut prev_adv = None;
 		for i in 0..num_segs{
+			//Probe hook: publish chunk_id for the 64008 dump.
+			if std::env::var("ZKR_PROBE_64008").is_ok() {
+				utils::consts::PROBE_CHUNK_ID
+					.store(i, Ordering::Relaxed);
+			}
 			let start = i*max_wlen;
 			let end = if (i+1)*max_wlen>wlen {wlen} else {(i+1)*max_wlen};
 			let seg = word[start..end].to_vec();
