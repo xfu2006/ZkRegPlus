@@ -669,9 +669,6 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 						total_added,
 						next_locs.len(), next_head);
 				}
-				//we will stop if results in 0 items added
-				//when it has explored ALL existing items in the
-				//current sq_res.
 				if total_added==0 && i>=items.len() {
 					if probe_69200 {
 						println!("DEBUG USE \
@@ -688,8 +685,14 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 					.collect::<HashSet<F>>()
 					.into_iter().collect::<Vec<F>>();
 				next_locs.sort();
-				assert!(to_add_item.is_some());
-				let mut to_add_item = to_add_item.unwrap();
+				//If prev step contributed zero locs, the inner
+				//loop never ran and to_add_item stays None;
+				//synthesize an empty template so downstream
+				//data structures stay consistent.
+				let mut to_add_item = to_add_item.unwrap_or_else(
+					|| StepQueueItem::new(*subsig,
+						F::from(i as u32), dst_pat,
+						f_rg_start, f_rg_end, vec![]));
 				if b_debug{
 					check_disjoint("cur_q_item.locs disjoint next_locs",
 						&cur_q_item.locs, &next_locs);

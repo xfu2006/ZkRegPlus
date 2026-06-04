@@ -28790,5 +28790,9 @@ Goal 4. continue to work on the samples
 Goal 5. regression testin
 	[a] many 24 passes still could not figure out the right config
 	[b] run test_bundle to figure it out
+Goal 6. another idea of improve step queue propgation, but
+	needs verification.
+	Note ** we commented out   if total_added==0 && i>=items.len() {
+	-- would this affect the analysis?
 
 === TODOs ====
