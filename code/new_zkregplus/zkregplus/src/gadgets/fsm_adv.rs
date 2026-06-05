@@ -330,10 +330,13 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 	) ->Result<Self, Error>{
 		let sname = if b_igc {"fsm_adv_stmt_igc"} else {"fsm_adv_stmt_cs"};
 		let stmt_container = Container::<F>::new(sname);
-		if _inp_subsigs.len()>capacity.subsigs{
-			return Err(Error::CapErr(vec![(format!("fsm_adv::subsigs b_igc: {}", b_igc), _inp_subsigs.len())]));
-		}
-		assert!(_inp_subsigs.len()<=capacity.subsigs);
+		// Vestigial cap on the input subsig list, inherited from v1.
+		// v2 never reads _inp_subsigs after this point; circuit cost
+		// is driven by basis_unique_states/basis_acc_states/basis_pats_in_trace.
+		//if _inp_subsigs.len()>capacity.subsigs{
+		//	return Err(Error::CapErr(vec![(format!("fsm_adv::subsigs b_igc: {}", b_igc), _inp_subsigs.len())]));
+		//}
+		//assert!(_inp_subsigs.len()<=capacity.subsigs);
 
 		//1. construct the fsm_acc combo which has the transition
 		// info and results in (state, loc) columns

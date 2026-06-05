@@ -1,25 +1,26 @@
 small_email: Zombie-style proximity policy on Enron email.
 
 Policy, faithful to Zombie (NSDI'24) §6.3 proximity example:
-  keyword R1 within 100 chars of R2, case-sensitive, dot-all,
-  both directions.
-  R1 = driving license | driver's license | DL   (shared keyword)
-  R2 = Zombie's 5-arm Microsoft Purview DLP union, SPLIT into 5
-       separate sigs (one PCRE subsig each, no trigger, logic "0"):
-         Bora.Email.DLProx.Passport  [0-9a-zA-Z][0-9]{8}
-         Bora.Email.DLProx.SSN       [0-9]{3}[-\s]?[0-9]{2}?[-\s]?[0-9]{4}
-         Bora.Email.DLProx.License   ([0-9]{3}\s){2}[0-9]{3}
-         Bora.Email.DLProx.Bank      [0-9]{6,17}
-         Bora.Email.DLProx.ITIN      9[0-9]{2}[-\s]?(5[0-9]|6[0-5]|..)[-\s]?[0-9]{4}
+  keyword within 300 chars of number_arm, case-sensitive, dot-all,
+  BOTH directions (F = keyword.{0,300}arm, B = arm.{0,300}keyword).
+  5 SIT families, one primary keyword each, F+B pair = 10 DLP sigs.
+
+  Family       primary kw        number arm
+  -----------  ----------------  -----------------------
+  Passport     passport          [0-9a-zA-Z][0-9]{8}
+  SSN          SSN               [0-9]{3}[-\s]?[0-9]{2}?[-\s]?[0-9]{4}
+  License      driving license   ([0-9]{3}\s){2}[0-9]{3}
+  Bank         bank account      [0-9]{6,17}
+  ITIN         ITIN              9[0-9]{2}[-\s]?(5[0-9]|6[0-5]|..)[-\s]?[0-9]{4}
 
 main_dfa.dat lists ONLY the Win.Alphabet.SAMPLE-1 seed sig (cheap
-hex DFA that seeds the 16-nibble alphabet). The 5 DLP sigs are NOT
-in the DFA list -- building a DFA for the .{0,100} x 5-arm union is
+hex DFA that seeds the 16-nibble alphabet). The 10 DLP sigs are NOT
+in the DFA list -- building a DFA for the .{0,300} x 5-arm union is
 too expensive; they go through the SED / pm-bounds path instead.
 
 Scan target: data/samples/email_merged128k/merged_000020. It has
 the keyword (x2) and the License "ddd ddd ddd" arm (x6) but no arm
-match within 100 chars of a keyword -> clean under all 5 arms ->
+match within 300 chars of a keyword -> clean under all 10 arms ->
 discharges green while exercising the proximity prune.
 
 Run: cargo test -p zkregplus -- test_small_email \

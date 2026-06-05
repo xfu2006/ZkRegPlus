@@ -28795,4 +28795,16 @@ Goal 6. another idea of improve step queue propgation, but
 	Note ** we commented out   if total_added==0 && i>=items.len() {
 	-- would this affect the analysis?
 
+Thursday 06/04/2026
+Goal 1. think about the SDE approach about email again
+	[a] problem is subsig increase blows up FSM capacity
+
+Friday 06/05/2026
+Goal 1. brief regression test
+	[a] make a branch sde_aggresive
+	[b] go to server and brief gression test on full_clam (stage 1 only)
+		to make sure it works
+
+Goal 2. build up enron data
+
 === TODOs ====

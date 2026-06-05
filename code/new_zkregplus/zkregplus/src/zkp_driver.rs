@@ -2319,38 +2319,40 @@ pub mod tests_zkp_driver{
 			else {200};
 
 		//SDE-rep fan-out gate ON for the DLP sigs;
-		//sde_rep_fanout_cap=1000 to saturate Cat-3.
+		//sde_rep_fanout_cap=100: only 2 digits extracted per leg.
 		//variant_combine_cap keeps default 4 to bound the per-
 		//variant PCRE->rustomaton-hex rewrite. Dryrun returns
 		//from zkp_driver_adv right after build_circs_adv
 		//validates capacities -- skips folding/Groth16 so
 		//capacity tuning is cheap.
 		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
-		get_global_config().clamav_cfg.sde_rep_fanout_cap = 128;
+		get_global_config().clamav_cfg.sde_rep_fanout_cap = 100;
 		//Lower pm-reg word floor so fan-out borrowed bytes
 		//(1-2 chars per pin) can qualify as SDE anchors.
 		get_global_config().clamav_cfg.min_pm_word_len = 3;
+		//Distributed-pin mode: pins spread across legs (priority
+		//1st, last, middles R->L), within-leg ascending order.
+		get_global_config().clamav_cfg
+			.b_sde_rep_tight_first_leg = false;
 		get_global_config().b_dryrun_after_capcheck = false;
 
 		//no cached email DB -> build fresh from main.dat
 		get_global_config().b_read_cache = false;
 		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/small_email/config";
-		let max_word = 64 * 8; //512 nibbles/chunk -> ~512 fold steps
+		let max_word = 256; //~17 fold steps over 260k nibbles
 		//Empirical caps from test_db_bundle ESTIMATE_CONFIG
-		//(small_email config, range_bits=20, max_word_len=512,
-		//fanout_cap=128). Only perc_pats_expansion_rate is
-		//iterated; the rest are pinned to the report's worst-chunk
-		//peaks with a small safety margin.
-		let sigs = 10; //empirical sigs_sed=6
-		let subsigs = 700; //SED total=606 (per-chunk peak 101)
-		let avg_pats_per_subsig = 4; //empirical avg_pats=3
-		let avg_active_pats_per_subsig = 22; //CapErr back-solved
+		//(10 F-only DLP sigs, range_bits=20, max_word_len=256,
+		//fanout_cap=100 i.e. <=2 digits/leg, tight-first-leg).
+		let sigs = 10; //empirical sigs_sed=5
+		let subsigs = 500; //comp_sig::subsigs_cs needs universe=467
+		let avg_pats_per_subsig = 4; //empirical avg_pats=2
+		let avg_active_pats_per_subsig = 7;
 		let perc_comp_subsigs = 20;
-		let basis_unique_states = 50; //empirical b_uniq=9
-		let basis_acc_states = 400; //empirical b_acc=318
-		let basis_pats_in_trace = 500; //empirical b_pat=321
-		let perc_pats_expansion_rate = 5000; //tune via CapErr
+		let basis_unique_states = 150; //empirical b_uniq=15, cp_pack=102
+		let basis_acc_states = 600; //empirical b_acc=512
+		let basis_pats_in_trace = 700; //empirical b_pat=514, joinwide buffer
+		let perc_pats_expansion_rate = 10000; //F+B StepFwdPrf grows ~1.6x/chunk
 		let dfa_sigs = 0; //min_dfa_sigs floor (2) covers the DFA sig
 		let dfa_subsigs = 0;
 		let vec_decrease_level = vec![];
@@ -2735,10 +2737,15 @@ pub mod tests_zkp_driver{
 		//treat them as 0 and use the FSM/SED columns to seed caps.
 		get_global_config().clamav_cfg.b_aggressive_sde_for_rep
 			= true;
-		get_global_config().clamav_cfg.sde_rep_fanout_cap = 128;
+		get_global_config().clamav_cfg.sde_rep_fanout_cap = 100;
 		get_global_config().clamav_cfg.min_pm_word_len = 3;
+		//Tight first-leg mode: 2 adj pins at first leg + 1 pin
+		//Distributed-pin mode: pins spread across legs (priority
+		//1st, last, middles R->L), within-leg ascending order.
+		get_global_config().clamav_cfg
+			.b_sde_rep_tight_first_leg = false;
 		let range_bits_email = 20;
-		let max_word_len_email = 512;
+		let max_word_len_email = 256;
 		let percentiles_email = [20usize, 50, 100];
 		super::run_db_bundle::<Fr>(
 			"data/debug/small_email/config", //config dir

@@ -73,6 +73,12 @@ pub struct ClamavApproxConfig{
 	/// each aggressive-SDE variant is re-rewritten through
 	/// pcre_to_rustomaton_regex. Inert when b_aggressive_sde_for_rep is off.
 	pub variant_combine_cap: usize,
+	/// Slot picker variant: pin TWO adjacent bytes at the first
+	/// leg + ONE byte at the last leg, skip middle legs entirely.
+	/// Produces a 5-hex-char first anchor (vs 3 chars) at the
+	/// cost of more variants per sig. Inert when
+	/// b_aggressive_sde_for_rep is off.
+	pub b_sde_rep_tight_first_leg: bool,
 }
 
 pub struct GlobalConfig {
@@ -161,6 +167,7 @@ impl Default for GlobalConfig {
 				b_aggressive_sde_for_rep: false,
 				sde_rep_fanout_cap: 127,
 				variant_combine_cap: 4,
+				b_sde_rep_tight_first_leg: false,
 			},
 			b_dryrun_after_capcheck: false,
         }
@@ -204,6 +211,7 @@ static GLOBAL_CONFIG: RwLock<GlobalConfig> = RwLock::new(GlobalConfig {
 		b_aggressive_sde_for_rep: false,
 		sde_rep_fanout_cap: 127,
 		variant_combine_cap: 4,
+		b_sde_rep_tight_first_leg: false,
 	},
 	b_dryrun_after_capcheck: false,
 });

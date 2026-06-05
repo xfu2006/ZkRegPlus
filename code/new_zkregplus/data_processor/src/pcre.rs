@@ -170,7 +170,8 @@ pub fn expand_rep_subsig(orig: &str, b_igc: bool,
 	let hir = to_hir(orig);
 	let legs = find_class_runs(&hir);
 	if legs.is_empty() { return None; }
-	let slots = select_slots(&legs, cfg.sde_rep_fanout_cap, b_igc);
+	let slots = select_slots(&legs, cfg.sde_rep_fanout_cap, b_igc,
+		cfg.b_sde_rep_tight_first_leg);
 	//no selectable slot (wildcard-only, or B below smallest card):
 	//nothing to fan out -> caller keeps the single-object path.
 	if slots.is_empty() { return None; }
@@ -612,20 +613,35 @@ fn pos_priority_last(n: usize) -> Vec<usize> {
 /// more positions fit); the wildcard exclusion still uses the RAW 256
 /// count so a full class is never pinned regardless of folding.
 fn select_slots(legs: &[Leg], b: usize,
-	b_igc: bool) -> Vec<(usize, usize)> {
+	b_igc: bool, tight: bool) -> Vec<(usize, usize)> {
 	let m = legs.len();
 	if m == 0 { return Vec::new(); }
-	//leg priority: first leg, last leg, then middles right-to-left.
-	let mut prio = Vec::with_capacity(m);
-	prio.push(0);
-	for i in (1..m).rev() { prio.push(i); }
-	//per-leg position priority (first, last, then inward); the
-	//last leg uses pos_priority_last to surface a 3-hex-char
-	//pm-reg anchor `<pin>3` at the leg tail.
+	//leg priority:
+	// - default: first leg, last leg, then middles right-to-left
+	// - tight  : first + last only (middles stay as full classes)
+	let prio: Vec<usize> = if tight {
+		if m == 1 { vec![0] } else { vec![0, m - 1] }
+	} else {
+		let mut p = Vec::with_capacity(m);
+		p.push(0);
+		for i in (1..m).rev() { p.push(i); }
+		p
+	};
+	//per-leg position priority:
+	// - last leg (incl. single-leg case): pos_priority_last
+	// - first leg in tight mode (only when there is a distinct
+	//   last leg): forward [0,1,..,n-1] so adjacent bytes get
+	//   pinned together -> longer fixed-literal anchor
+	// - all other legs: pos_priority (= [0, n-1, n-2, .., 1])
 	let qs: Vec<Vec<usize>> = legs.iter().enumerate()
 		.map(|(idx, l)| {
-			if idx == m - 1 { pos_priority_last(l.min) }
-			else { pos_priority(l.min) }
+			if idx == m - 1 {
+				pos_priority_last(l.min)
+			} else if tight && idx == 0 {
+				(0..l.min).collect()
+			} else {
+				pos_priority(l.min)
+			}
 		}).collect();
 
 	let max_n = legs.iter().map(|l| l.min).max().unwrap_or(0);
@@ -2326,17 +2342,53 @@ mod tests_pcre{
 		//(idx 3, n=4) uses pos_priority_last -> pos n-2 = 2 first.
 		let legs = find_class_runs(&to_hir(
 			"[0-9]{3}-[0-9]{3}-[0-9]{3}-[0-9]{4}"));
-		assert_eq!(select_slots(&legs, 1000, false),
+		assert_eq!(select_slots(&legs, 1000, false, false),
 			vec![(0,0),(3,2),(2,0)]);
-		assert_eq!(select_slots(&legs, 100, false),
+		assert_eq!(select_slots(&legs, 100, false, false),
 			vec![(0,0),(3,2)]);
 		//single leg = also the last leg: pos n-2=7 first, then 0.
 		let legs = find_class_runs(&to_hir("[0-9]{9}"));
-		assert_eq!(select_slots(&legs, 100, false), vec![(0,7),(0,0)]);
+		assert_eq!(select_slots(&legs, 100, false, false),
+			vec![(0,7),(0,0)]);
 		//mixed cardinalities (26*10=260<=300); last leg's first
 		//pos is n-2 = 4 of `[0-9]{6}`.
 		let legs = find_class_runs(&to_hir("[A-Z]{2}[0-9]{6}"));
-		assert_eq!(select_slots(&legs, 300, false), vec![(0,0),(1,4)]);
+		assert_eq!(select_slots(&legs, 300, false, false),
+			vec![(0,0),(1,4)]);
+	}
+
+	#[test]
+	pub fn tests_sde_rep_select_slots_tight(){
+		use super::{find_class_runs, select_slots};
+		//SSN-shape: 3 legs of [0-9] with sizes [3,2,4].
+		//Tight: leg_priority=[0,2] (skip middle), first leg
+		//forward, last leg n-2 first.
+		//Round 0: (0,0)->10, (2,2)->100. Round 1: (0,1)->1000
+		//take, (2,0)->10000 skip. Round 2: (0,2)->10000 skip.
+		let legs = find_class_runs(&to_hir(
+			"[0-9]{3}[-\\s]?[0-9]{2}[-\\s]?[0-9]{4}"));
+		assert_eq!(select_slots(&legs, 1000, false, true),
+			vec![(0,0),(2,2),(0,1)]);
+		//License.B3 shape: digit/space alternation gives 5 legs
+		//(3 digit + 2 \s). Tight mode skips middle legs (incl.
+		//the \s ones), so only legs 0 and 4 are visited.
+		//Last leg [0-9]{3}, pos_priority_last(3)=[1,0,2].
+		let legs = find_class_runs(&to_hir(
+			"[0-9]{3}\\s[0-9]{3}\\s[0-9]{3}"));
+		assert_eq!(select_slots(&legs, 1000, false, true),
+			vec![(0,0),(4,1),(0,1)]);
+		//Passport-shape: 2 legs, first leg n=1 -> only one
+		//position to pin -> falls through to (0,0) + last
+		//leg's n-2. Same as non-tight.
+		let legs = find_class_runs(&to_hir(
+			"[0-9a-zA-Z][0-9]{8}"));
+		assert_eq!(select_slots(&legs, 1000, false, true),
+			vec![(0,0),(1,6)]);
+		//Single leg = also the last leg: tight has no effect
+		//(no separate first/last), use pos_priority_last.
+		let legs = find_class_runs(&to_hir("[0-9]{9}"));
+		assert_eq!(select_slots(&legs, 100, false, true),
+			vec![(0,7),(0,0)]);
 	}
 
 	#[test]
