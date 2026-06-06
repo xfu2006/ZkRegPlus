@@ -179,6 +179,10 @@ pub struct ClamavDB<F: PrimeField>{
 
 	/// the ignore case version of the bundle of subsig.
 	pub bundle_subsig_igc: Arc<BundleSubsigStore>,
+	/// Aggressive mode (b_aggressive_sde_for_rep) global halo span:
+	/// max match length in nibbles over all subsigs. 0 when flag off.
+	/// M1b sizes the forward halo from this DB self-mark.
+	pub aggressive_max_span_nibbles: usize,
 }
 
 impl <F:PrimeField> fmt::Debug for ClamavDB<F>{
@@ -1961,6 +1965,19 @@ impl <F:PrimeField> ClamavDB<F>{
 			}
 			s
 		}).collect::<Vec<ClamavSig>>();
+		//1b. aggressive shape guard + global halo span (flag-on only).
+		let mut aggressive_max_span_nibbles = 0usize;
+		if cfg.b_aggressive_sde_for_rep {
+			for s in v_sigs.iter_mut() {
+				let (span, anchors) = s.compute_aggressive_shape(cfg)
+					.map_err(|e| Error::Other(format!(
+						"AggressiveShapeErr in sig {}: {:?}",
+						s.name, e)))?;
+				s.vec_subsig_anchor_dir = anchors;
+				aggressive_max_span_nibbles =
+					aggressive_max_span_nibbles.max(span);
+			}
+		}
 		if b_perf {flog_perf(0, log_level, &format!("Build_DB: Step 1: Generate signatures"), &mut timer,
 			vlog);}
 		if b_perf {flog_perf(0, log_level, &format!("Bluld_DB: Step 2: Writing signatures"), &mut timer,
@@ -2134,7 +2151,8 @@ impl <F:PrimeField> ClamavDB<F>{
 			lkup: lkup,
 			
 			bundle_subsig: Arc::new(bundle_subsig),
-			bundle_subsig_igc: Arc::new(bundle_subsig_igc)
+			bundle_subsig_igc: Arc::new(bundle_subsig_igc),
+			aggressive_max_span_nibbles,
 
 		};
 
@@ -2189,9 +2207,14 @@ impl <F:PrimeField> ClamavDB<F>{
 
 		let s_bundle_subsig_igc= serde_json::to_string(
 			&self.bundle_subsig_igc).unwrap();
-		write_to_file(&format!("{}/bundle_subsig_igc.txt", &sdir), 
+		write_to_file(&format!("{}/bundle_subsig_igc.txt", &sdir),
 			&s_bundle_subsig_igc);
-		
+
+		let s_agg = serde_json::to_string(
+			&self.aggressive_max_span_nibbles).unwrap();
+		write_to_file(&format!("{}/aggressive_meta.txt", &sdir),
+			&s_agg);
+
 	}
 
 	/// Load from saved cached
@@ -2253,6 +2276,11 @@ impl <F:PrimeField> ClamavDB<F>{
 		let vec_sigs_no_critical_pat = vec_sigs.iter().filter(|s| s.b_no_crit_pat)
 			.map(|s| s.clone()).collect::<Vec<Arc<ClamavSig>>>();
 
+		let agg_path = format!("{}/aggressive_meta.txt", sdir);
+		let aggressive_max_span_nibbles = if file_exists(&agg_path) {
+			serde_json::from_str(&read(&agg_path)).unwrap_or(0)
+		} else { 0 };
+
 		let res = ClamavDB{
 			vec_sigs: vec_sigs,
 			vec_sigs_no_critical_pat: vec_sigs_no_critical_pat,
@@ -2268,6 +2296,7 @@ impl <F:PrimeField> ClamavDB<F>{
 			lkup,
 			bundle_subsig,
 			bundle_subsig_igc,
+			aggressive_max_span_nibbles,
 		};
 
 		res
@@ -2363,7 +2392,71 @@ mod tests_clam_db{
 		let db2 = ClamavDB::<Fr>::load("debug1");
 		let mut vlog = vec![];
 		db2.print_summary(&mut vlog);
-		assert!(db2.vec_sigs.len()==3, "ERROR reading file vec_sigs: {:?}", 
+		assert!(db2.vec_sigs.len()==3, "ERROR reading file vec_sigs: {:?}",
 			db.vec_sigs);
+	}
+
+	/// M1a build_db integration: F1 forward / F2 backward anchors +
+	/// global halo span persisted; gate-off inert; unbounded errors.
+	/// build_test_db appends an alphabet-padding sig (full hex DFA).
+	#[test]
+	fn tests_sde_rep_shape_guard_db(){
+		let proot = proj_root();
+		let lines = |fx: &str| -> Vec<String> {
+			let p = format!(
+				"{}/data/debug/sde_aggressive/{}/main.dat", proot, fx);
+			std::fs::read_to_string(&p).expect("read main.dat")
+				.lines().map(|l| l.trim().to_string())
+				.filter(|l| !l.is_empty() && !l.starts_with('#'))
+				.collect()
+		};
+		let mut cfg_on = default_clamav_cfg();
+		cfg_on.b_aggressive_sde_for_rep = true;
+		//fan-out is orthogonal to M1a (span/anchor/M come from the
+		//ORIGINAL subsig); keep it off so the DFA stays small.
+		cfg_on.sde_rep_fanout_cap = 1;
+		let mut cfg_off = default_clamav_cfg();
+		cfg_off.b_aggressive_sde_for_rep = false;
+		let none: Vec<String> = vec![];
+		//work dir under data/ (write_to_file won't create parents).
+		let wdir = |d: &str| -> String {
+			std::fs::create_dir_all(
+				format!("{}/data/{}", proot, d)).unwrap();
+			d.to_string()
+		};
+
+		//T7 F1 flag-ON: global M=156 nibbles, forward anchor (0).
+		let db = ClamavDB::<Fr>::build_test_db(&cfg_on,
+			&wdir("debug/sde_aggressive/m1a_f1"), &lines("F1"),
+			&none, &none, &none).expect("F1 build");
+		assert_eq!(db.aggressive_max_span_nibbles, 156);
+		assert!(db.vec_sigs.iter().any(|s|
+			s.vec_subsig_anchor_dir.iter().any(|&d| d==0)));
+
+		//T8 F2 flag-ON: M=180 (multi-leg dominates), backward (1).
+		let db = ClamavDB::<Fr>::build_test_db(&cfg_on,
+			&wdir("debug/sde_aggressive/m1a_f2"), &lines("F2"),
+			&none, &none, &none).expect("F2 build");
+		assert_eq!(db.aggressive_max_span_nibbles, 180);
+		assert!(db.vec_sigs.iter().any(|s|
+			s.vec_subsig_anchor_dir.iter().any(|&d| d==1)));
+
+		//T10 F1 flag-OFF: inert (M=0, no anchors).
+		let db = ClamavDB::<Fr>::build_test_db(&cfg_off,
+			&wdir("debug/sde_aggressive/m1a_f1_off"), &lines("F1"),
+			&none, &none, &none).expect("F1 off build");
+		assert_eq!(db.aggressive_max_span_nibbles, 0);
+		assert!(db.vec_sigs.iter().all(|s|
+			s.vec_subsig_anchor_dir.is_empty()));
+
+		//T9 unbounded sig (.* gap) -> build_test_db Err (step-1b,
+		//before DFA build) regardless of alphabet padding.
+		let bad = vec![
+			"Bad.Unbounded;Engine:81-255,Target:0;0;/SSN.*[0-9]{3}/s"
+				.to_string()];
+		let r = ClamavDB::<Fr>::build_test_db(&cfg_on,
+			&wdir("debug/sde_aggressive/m1a_bad"), &bad,
+			&none, &none, &none);
+		assert!(r.is_err(), "unbounded sig must error build_db");
 	}
 }

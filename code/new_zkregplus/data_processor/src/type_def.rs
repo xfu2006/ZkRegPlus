@@ -155,6 +155,11 @@ pub struct ClamavSig{
 	pub vec_subsig_pm_bounds: Vec<Vec<(String, (usize, usize) )>>,
 	/// will fail crit_pat coz no crit_pat can be extracted
 	pub b_no_crit_pat: bool,
+	/// Aggressive mode anchor dir per ORIGINAL subsig: -1 N/A,
+	/// 0 keyword-leftmost (forward), 1 keyword-rightmost (backward).
+	/// Empty unless b_aggressive_sde_for_rep built this DB.
+	#[serde(default)]
+	pub vec_subsig_anchor_dir: Vec<i8>,
 }
 
 #[derive(Clone,Serialize,Deserialize)]

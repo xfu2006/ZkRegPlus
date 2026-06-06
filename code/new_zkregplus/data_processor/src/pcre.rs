@@ -545,6 +545,79 @@ fn collect_class_runs(hir: &Hir, legs: &mut Vec<Leg>) {
 	}
 }
 
+/// Aggressive-mode shape rejection reasons. Unbounded = a `.*`/`{n,}`
+/// gap (no finite halo); KwInMiddle = keyword interleaved with regex;
+/// NoAnchor = regex run with no keyword literal to anchor on.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AggShapeErr { Unbounded, KwInMiddle, NoAnchor }
+
+/// Shape-guard result for one subsig body. `anchor`: Some(0)=keyword
+/// leftmost (forward), Some(1)=keyword rightmost (backward), None=no
+/// regex (pure literal). `max_span_bytes`: longest match (finite).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShapeInfo { pub anchor: Option<i8>, pub max_span_bytes: usize }
+
+/// Longest possible match of `hir` in bytes. Err(Unbounded) on any
+/// `.*`/`.+`/`{n,}` (max None or the {n,} sentinel). Read-only walk.
+fn max_match_bytes(hir: &Hir) -> Result<usize, AggShapeErr> {
+	match hir.kind() {
+		HirKind::Empty | HirKind::Look(_) => Ok(0),
+		HirKind::Literal(x) => Ok(x.0.len()),
+		HirKind::Class(_) => Ok(1),
+		HirKind::Repetition(rep) => {
+			let max = match rep.max {
+				None | Some(999777979) =>
+					return Err(AggShapeErr::Unbounded),
+				Some(x) => x as usize,
+			};
+			Ok(max * max_match_bytes(&rep.sub)?)
+		}
+		HirKind::Concat(v) => {
+			let mut s = 0; for h in v { s += max_match_bytes(h)?; } Ok(s)
+		}
+		HirKind::Alternation(v) => {
+			let mut m = 0;
+			for h in v { m = m.max(max_match_bytes(h)?); } Ok(m)
+		}
+		HirKind::Capture(c) => max_match_bytes(&c.sub),
+	}
+}
+
+/// Validate one subsig regex body for aggressive mode and measure span.
+/// The keyword literal must sit at exactly one end of the top-level
+/// chain (else KwInMiddle / NoAnchor); unbounded gaps rejected.
+pub fn analyze_aggressive_shape(hir: &Hir)
+	-> Result<ShapeInfo, AggShapeErr> {
+	let span = max_match_bytes(hir)?;           // also rejects Unbounded
+	let segs: Vec<&Hir> = match hir.kind() {
+		HirKind::Concat(v) => v.iter().collect(),
+		_ => vec![hir],
+	};
+	let (mut lit, mut non) = (Vec::new(), Vec::new());
+	for (i, s) in segs.iter().enumerate() {
+		if max_match_bytes(s)? == 0 { continue; }   // zero-width: skip
+		match s.kind() {
+			HirKind::Literal(_) => lit.push(i),
+			_ => non.push(i),
+		}
+	}
+	if non.is_empty() {
+		return Ok(ShapeInfo{anchor: None, max_span_bytes: span});
+	}
+	if lit.is_empty() { return Err(AggShapeErr::NoAnchor); }
+	let (lmin, lmax) = (*lit.iter().min().unwrap(),
+		*lit.iter().max().unwrap());
+	let (nmin, nmax) = (*non.iter().min().unwrap(),
+		*non.iter().max().unwrap());
+	if lmax < nmin {
+		Ok(ShapeInfo{anchor: Some(0), max_span_bytes: span})   // fwd
+	} else if lmin > nmax {
+		Ok(ShapeInfo{anchor: Some(1), max_span_bytes: span})   // bwd
+	} else {
+		Err(AggShapeErr::KwInMiddle)
+	}
+}
+
 /// Cardinality of a character class = count of distinct bytes it
 /// matches. `[0-9]`=10, hex=16, `[a-z]`/`[A-Z]`=26, alnum=62,
 /// wildcard=256. Used as the per-leg fan-out multiplier in
@@ -2306,6 +2379,37 @@ mod tests_pcre{
 		assert_eq!(find_class_runs(&to_hir("[0-9]?")).len(), 0);
 		//pure literals -> no legs
 		assert_eq!(find_class_runs(&to_hir("abc")).len(), 0);
+	}
+
+	#[test]
+	pub fn tests_sde_rep_shape_guard(){
+		use super::{analyze_aggressive_shape, AggShapeErr};
+		//T1 F1 forward: keyword SSN leftmost, span 78 bytes.
+		let r = analyze_aggressive_shape(&to_hir(
+			"SSN.{0,64}[0-9]{3}[-\\s]?[0-9]{2}[-\\s]?[0-9]{4}"))
+			.unwrap();
+		assert_eq!((r.anchor, r.max_span_bytes), (Some(0), 78));
+		//T2 F2 single backward: SSN rightmost, span 78.
+		let r = analyze_aggressive_shape(&to_hir(
+			"[0-9]{3}[-\\s]?[0-9]{2}[-\\s]?[0-9]{4}.{0,64}SSN"))
+			.unwrap();
+		assert_eq!((r.anchor, r.max_span_bytes), (Some(1), 78));
+		//T3 F2 multi backward: trailing literal, span 90.
+		let r = analyze_aggressive_shape(&to_hir(
+			"([0-9]{3}\\s){2}[0-9]{3}.{0,64}driving\\x20license"))
+			.unwrap();
+		assert_eq!((r.anchor, r.max_span_bytes), (Some(1), 90));
+		//T4 unbounded gap rejected.
+		assert_eq!(analyze_aggressive_shape(&to_hir("SSN.*[0-9]{3}")),
+			Err(AggShapeErr::Unbounded));
+		//T5 keyword in the middle rejected.
+		assert_eq!(analyze_aggressive_shape(&to_hir(
+			"[0-9]{3}.{0,9}SSN.{0,9}[0-9]{3}")),
+			Err(AggShapeErr::KwInMiddle));
+		//T6 no keyword anchor rejected.
+		assert_eq!(analyze_aggressive_shape(&to_hir(
+			"[0-9]{3}.{0,9}[0-9]{3}")),
+			Err(AggShapeErr::NoAnchor));
 	}
 
 	#[test]

@@ -49,7 +49,7 @@ use crate::{
 	strings::{find_all,extract_nums,validate_counter_constraint,validate_ra_regex,validate_ra_regex_relaxed,validate_pm_regex,is_match,find_only,count_occ,drop_last_dotstar,split,validate_expr},
 	type_def::{PcreInfo,ClamSigType,SubSigType,SubSigObj,ClamavApproxConfig,TriVal,ClamavSig,EvalDNF,CompOp},
 	hex_acdfa::{HexACDFA},
-	pcre::{collect_bag_words_from_rustomaton_regex, collect_pm_reg_from_rustomaton_regex, rustomaton_to_hir, collect_pm_reg_from_rustomaton_regex_worker, vec_pmreg_to_res, pcre_to_dfa, clamav_genregex_to_dfa, filter_bag_of_words,parse_pcre_subsig, expand_rep_subsig, pcre_to_rustomaton_regex},
+	pcre::{collect_bag_words_from_rustomaton_regex, collect_pm_reg_from_rustomaton_regex, rustomaton_to_hir, collect_pm_reg_from_rustomaton_regex_worker, vec_pmreg_to_res, pcre_to_dfa, clamav_genregex_to_dfa, filter_bag_of_words,parse_pcre_subsig, expand_rep_subsig, pcre_to_rustomaton_regex, to_hir, analyze_aggressive_shape, AggShapeErr},
 	fsa_utils::{size_nfa,build_dfa,size_dfa,empty_nfa,build_nfa,get_total_size},
 	preprocess::{is_pcre_subsig,handle_range,handle_modifier,handle_location,handle_negation,handle_modifier_for_pm,handle_location_for_pm,recursive_triggers,plug_in_trigger,extract_clamav_reg},
 	discharge_proof::{FailDischargeRecord, ChunkPeaks},
@@ -475,6 +475,7 @@ pub fn gen_clamav_sig(s: &str, sigtype: ClamSigType, cfg: &ClamavApproxConfig)
 		vec_subsig_pm_bounds: vec![],
 		vec_pcre_info: vec![],
 		b_no_crit_pat: false,
+		vec_subsig_anchor_dir: vec![],
 	};
 	let raw_subsigs: Vec<String> = parts[3..].to_vec();
 	sig.preprocess(cfg);
@@ -2255,6 +2256,31 @@ impl ClamavSig{
 		};
 		(b_res, new_str)
 	}
+	/// Aggressive shape guard + span for this sig (flag-on path). pcre
+	/// bodies are HIR-checked (anchor + span); hex subsigs contribute
+	/// their nibble length. Returns (max span in NIBBLES, per-subsig
+	/// anchor dir). Err on any non-conforming pcre body.
+	pub fn compute_aggressive_shape(&self, _cfg: &ClamavApproxConfig)
+		-> Result<(usize, Vec<i8>), AggShapeErr> {
+		let n = self.vec_pcre_info.len();
+		let mut max_span_nibbles = 0usize;
+		let mut anchors = vec![-1i8; n];
+		for id in 0..n {
+			if self.vec_pcre_info[id].b_pcre {
+				let (_t, body, _f) = extract_clamav_reg(
+					&self.vec_pcre_info[id].original_str);
+				let info = analyze_aggressive_shape(&to_hir(&body))?;
+				if let Some(d) = info.anchor { anchors[id] = d; }
+				max_span_nibbles =
+					max_span_nibbles.max(info.max_span_bytes * 2);
+			} else {
+				let nlen = self.vec_subsigs[id].len();
+				max_span_nibbles = max_span_nibbles.max(nlen);
+			}
+		}
+		Ok((max_span_nibbles, anchors))
+	}
+
 	/// To extract expressions like "0>5", "1=0" to add new subsigs
 	/// These ops are pushed as extra signatures on counters
 	/// these counter signatures will be stored in vec_subsig_objs

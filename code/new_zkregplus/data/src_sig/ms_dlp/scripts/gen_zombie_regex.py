@@ -47,8 +47,8 @@ VERIFY_TIMEOUT = 8                    # seconds; "Parse Successful!" prints firs
                                       # so a short cap is plenty to capture it
 
 # --- low-level helpers -----------------------------------------------------
-_WORDNUM = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4,
-            "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+_WORDNUM = {"zero": 0, "a": 1, "an": 1, "one": 1, "two": 2, "three": 3,
+            "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
             "ten": 10, "eleven": 11, "twelve": 12}
 
 # parenthesized single-char literals, e.g. "an equal sign (=)" -> '='
@@ -158,6 +158,9 @@ def _split_alternatives(block):
         if line.upper() == "OR":
             groups.append([])
             continue
+        # skip negative-example prose, e.g. "... ddddddddd won't match"
+        if re.search(r"(wo\s*n'?t|will not|does\s*n'?t|do not)\s+match", line, re.I):
+            continue
         groups[-1].append(line)
 
     alts = []
@@ -205,6 +208,11 @@ def _parse_count(pl):
     m = re.search(r"\b(\d+)\s*-\s*(\d+)\s+(?:consecutive\s+)?" + _UNIT, pl)
     if m:
         return int(m.group(1)), int(m.group(2))
+    # hyphenated word range, e.g. 'two-three digits', 'three-four digits'
+    # (must precede the single-leading-count match, which would take only 'two')
+    m = re.match(r"(\w+)-(\w+)\b", pl)
+    if m and _count(m.group(1)) is not None and _count(m.group(2)) is not None:
+        return _count(m.group(1)), _count(m.group(2))
     # single leading count (also handles hyphenated 'two-digit', 'one-digit')
     m = re.match(r"(\w+)\b", pl)
     if m and _count(m.group(1)) is not None:
@@ -220,12 +228,14 @@ def _expand_num_ranges(text):
     into a zero-padded literal alternation. Returns a regex group or None."""
     toks = []
     width = 1
-    for a, b in re.findall(r"(\d+)\s*(?:-|to)\s*['\"]?(\d+)", text):
+    # endpoints may be quoted on either side, e.g. ITIN's '50' to '65'
+    rng = r"['\"]?(\d+)['\"]?\s*(?:-|to)\s*['\"]?(\d+)['\"]?"
+    for a, b in re.findall(rng, text):
         width = max(width, len(a), len(b))
         for v in range(int(a), int(b) + 1):
             toks.append((v, max(len(a), len(b))))
     # standalone singletons introduced by 'or'/'and', e.g. '... or 80'
-    cleaned = re.sub(r"(\d+)\s*(?:-|to)\s*['\"]?\d+", " ", text)
+    cleaned = re.sub(rng, " ", text)
     for s in re.findall(r"\b(\d+)\b", cleaned):
         toks.append((int(s), len(s)))
         width = max(width, len(s))
@@ -241,6 +251,14 @@ def _translate_element(phrase):
     p = _norm(phrase)
     pl = p.lower()
     parens = _RE_PARENCH.findall(p)
+
+    # --- explicit "ddd ddd ddd" digit mask (e.g. US DL "formatted like ...") --
+    # space-separated runs of 'd' -> [0-9]{k} groups joined by a literal space.
+    # Must precede the plain-digit rule, which would otherwise see "nine digits".
+    m = re.search(r"\bd{2,}(?:\s+d{2,})+", p)
+    if m and "digit" in pl:
+        groups = m.group(0).split()
+        return "\\x20".join("[0-9]{%d}" % len(g) for g in groups), "exact"
 
     # --- numeric value sets / ranges on digits ---------------------------
     # "two digits in the ranges 00-12, 21-32, 61-72, or 80"
@@ -392,6 +410,14 @@ def _translate_element(phrase):
         excl = re.search(r"exclud(?:ing|e)\s+([A-Za-z,\s'\"and]+)", pl)
         excpt = re.search(r"except\s+([A-Za-z,\s'\"and]+)", pl)
         ci = "not case-sensitive" in pl or "case-sensitive" in pl
+        # quoted literal after "the letter(s)", e.g. the letters "ET" -> ET
+        mlit = re.search(r"letters?\s+['\"]([A-Za-z]{2,})['\"]", p)
+        if mlit:
+            lit = mlit.group(1)
+            if ci:
+                return "".join("[%s%s]" % (c.upper(), c.lower())
+                               for c in lit), "exact"
+            return _esc(lit), "exact"
         if mset:
             toks = [t.strip() for t in re.split(r"[,/]", mset.group(1)) if t.strip()]
             if all(len(t) == 1 for t in toks):
@@ -406,7 +432,11 @@ def _translate_element(phrase):
                 base = "[" + "".join(toks).upper() + "".join(toks).lower() + "]"
                 return _rep(base, cr[0], cr[1]), "exact"
         if excl or excpt:
-            letters = re.findall(r"[A-Za-z]", (excl or excpt).group(1))
+            g = (excl or excpt).group(1)
+            # only quoted single letters, or standalone single-letter tokens --
+            # never letters embedded in a word like "and"
+            quoted = re.findall(r"['\"]([A-Za-z])['\"]", g)
+            letters = quoted or re.findall(r"(?<![A-Za-z])[A-Za-z](?![A-Za-z])", g)
             base = _letters_excluding(letters)
             return _rep(base, cr[0], cr[1]), "exact"
         # "five letters ... or the digit '9' in place of a letter"
@@ -432,7 +462,7 @@ def _translate_element(phrase):
                                 r"county|citizenship|indicator|issue|individual",
                                 pl, re.I))
         frag = _rep("[0-9]", cr[0], cr[1])
-        if "optional" in pl:
+        if "option" in pl:   # matches optional / options (a spec typo) / (optional)
             frag = "(" + frag + ")?"
         return frag, ("approx" if approx else "exact")
 
@@ -485,7 +515,7 @@ def _try_separator(p):
     else:
         frag = _cls(chars)
 
-    if "optional" in pl:
+    if "option" in pl:   # matches optional / options (a spec typo) / (optional)
         frag = frag + "?" if (frag.startswith("[") or "\\x" in frag
                               and len(frag) <= 4 or len(frag) == 1) else "(" + frag + ")?"
     return frag, "exact"
@@ -577,88 +607,48 @@ def verify(regex):
 
 
 # --- positive self-test samples -------------------------------------------
-# Realistic instances of each SIT, written by hand from general knowledge of the
-# identifier (NOT derived from the generated regex and NOT copied from the MS
-# spec), so a too-strict translation shows up as a non-match. Value-constrained
-# fields use valid in-range instances. Positive-only by design. Connection-string
-# / secret-key SITs are intentionally absent (the pattern detects a substring of
-# a longer string, so fullmatch is not the right oracle) and report n/a.
-SAMPLES = {
-    "sit-defn-aba-routing": ["021000021", "111000025"],
-    "sit-defn-australia-bank-account-number": ["062-000", "013-006"],
-    "sit-defn-australia-business-number": ["51 824 753 556", "83 914 571 673"],
-    "sit-defn-australia-drivers-license-number": ["12345678", "1234AB"],
-    "sit-defn-australia-medical-account-number": ["2123456701", "4987654328"],
-    "sit-defn-australia-passport-number": ["N1234567", "PA1234567"],
-    "sit-defn-australia-tax-file-number": ["123 456 789", "123456782"],
-    "sit-defn-austria-social-security-number": ["1234010170", "9876311285"],
-    "sit-defn-austria-value-added-tax": ["ATU12345678", "atu12345678"],
-    "sit-defn-canada-bank-account-number": ["12345-678", "012345678"],
-    "sit-defn-canada-drivers-license-number": ["123456-789", "1234567"],
-    "sit-defn-denmark-personal-identification-number": ["010170-1234", "0101701234"],
-    "sit-defn-drug-enforcement-agency-number": ["AB1234563", "FS9876543"],
-    "sit-defn-estonia-drivers-license-number": ["ET123456", "et654321"],
-    "sit-defn-estonia-passport-number": ["A1234567", "K7654321"],
-    "sit-defn-estonia-personal-identification-code": ["37605030299", "49001012333"],
-    "sit-defn-finland-passport-number": ["AB1234567", "XY7654321"],
-    "sit-defn-germany-tax-identification-number": ["12 345 678 901", "12345678901"],
-    "sit-defn-germany-value-added-tax-number": ["DE123456789", "de 123 456 789"],
-    "sit-defn-india-drivers-license-number": ["MH12 2013 1234567", "DL0120151234567"],
-    "sit-defn-india-gst-number": ["27AAPFU0939F1ZV", "29ABCDE1234F2Z5"],
-    "sit-defn-india-permanent-account-number": ["AAPFU0939F", "ABCDE1234F"],
-    "sit-defn-india-voter-id-card": ["ABC1234567", "XYZ7654321"],
-    "sit-defn-indonesia-drivers-license-number": ["401234567890", "1234-5678-901234"],
-    "sit-defn-indonesia-identity-card-number": ["3201011503900001", "3174052208850002"],
-    "sit-defn-indonesia-passport-number": ["A1234567", "AB123456"],
-    "sit-defn-italy-drivers-license-number": ["MV1234567X", "RA7654321B"],
-    "sit-defn-italy-fiscal-code": ["RSSMRA85T10A562S", "VRDLGI70A01F205X"],
-    "sit-defn-italy-value-added-tax-number": ["IT12345678901", "it12345678901"],
-    "sit-defn-lithuania-passport-number": ["12345678", "ABCD5678"],
-    "sit-defn-malaysia-identification-card-number": ["900101-14-5678", "880520145678"],
-    "sit-defn-malaysia-passport-number": ["A12345678", "H87654321"],
-    "sit-defn-medicare-beneficiary-identifier-card": ["1EG4-TE5-MK73", "1EG4TE5MK73"],
-    "sit-defn-netherlands-citizens-service-number": ["123 456 782", "123456782"],
-    "sit-defn-netherlands-passport-number": ["AB1234567", "123456789"],
-    "sit-defn-new-zealand-bank-account-number": ["01 0902 0068389 00", "12-3456-7890123-01"],
-    "sit-defn-new-zealand-drivers-license-number": ["AB123456", "XY654321"],
-    "sit-defn-new-zealand-inland-revenue-number": ["12-345-678", "123 456 789"],
-    "sit-defn-new-zealand-ministry-of-health-number": ["ABC1234", "XYZ4321"],
-    "sit-defn-new-zealand-social-welfare-number": ["123-456-789", "123456789"],
-    "sit-defn-philippines-national-identification-number": ["1234-5678-9012", "123456789012"],
-    "sit-defn-philippines-passport-number": ["A123456", "EB1234567"],
-    "sit-defn-philippines-unified-multi-purpose-identification-number": ["1234-5678901-2", "0011-1234567-8"],
-    "sit-defn-poland-drivers-license-number": ["12345/67/8901", "00001/01/2015"],
-    "sit-defn-poland-regon-number": ["123456785", "123456789-12345"],
-    "sit-defn-qatari-id-card-number": ["28412345678", "30198765432"],
-    "sit-defn-romania-drivers-license-number": ["B12345678", "912345678"],
-    "sit-defn-romania-passport-number": ["12345678", "123456789"],
-    "sit-defn-south-africa-identification-number": ["8001015009087", "9202204720082"],
-    "sit-defn-sweden-national-id": ["19900101-1234", "900101-1234"],
-    "sit-defn-sweden-tax-identification-number": ["900101-1234", "19900101+1234"],
-    "sit-defn-uk-drivers-license-number": ["MORGA657054SM9IJ", "SMITH712161S99AB"],
-    "sit-defn-uk-electoral-roll-number": ["AB1234", "XY12"],
-    "sit-defn-uk-national-health-service-number": ["123 456 7890", "1234567881"],
-    "sit-defn-uk-national-insurance-number": ["AB123456C", "QQ 12 34 56 C"],
-    "sit-defn-us-bank-account-number": ["12345678", "123456789012"],
-    "sit-defn-us-drivers-license-number": ["123 456 789"],
-    "sit-defn-us-individual-taxpayer-identification-number": ["955-70-1234", "955701234"],
-    "sit-defn-us-uk-passport-number": ["A12345678", "912345678"],
+# Samples live in regex_pat_samples/<slug>.txt, generated per-SIT by web-verified
+# agents (see docs/reg_pat_samples.log). Positive-only by design. Our dialect is
+# a strict subset of Python regex, so re is a faithful oracle with no translation.
+#   - identifier SITs: the sample IS the value -> re.fullmatch.
+#   - connection-string / secret-key SITs: the pattern DETECTS a substring of a
+#     longer string -> re.search.
+SAMPLE_DIR = "regex_pat_samples"
+
+# SITs whose pattern detects a fragment inside a longer string (tested w/ search).
+SUBSTRING_SITS = {
+    "sit-defn-azure-document-db-auth-key",
+    "sit-defn-azure-iaas-database-connection-string-azure-sql-connection-string",
+    "sit-defn-azure-iot-connection-string",
+    "sit-defn-azure-redis-cache-connection-string",
+    "sit-defn-azure-service-bus-connection-string",
+    "sit-defn-azure-storage-account-key",
+    "sit-defn-sql-server-connection-string",
 }
 
 
+def _load_samples(slug):
+    path = os.path.join(SAMPLE_DIR, slug + ".txt")
+    if not os.path.isfile(path):
+        return None
+    with open(path) as f:
+        lines = [ln.strip() for ln in f if ln.strip()]
+    return lines or None
+
+
 def test_samples(slug, regex):
-    """Positive self-test: does the pure pattern regex fullmatch every known
-    sample for this SIT? Returns (n_pass, n_total, [unmatched]) or None if no
-    samples are registered. Our dialect is a strict subset of Python regex, so
-    re.fullmatch is a faithful oracle with no translation needed."""
-    samples = SAMPLES.get(slug)
+    """Positive self-test: does the pure pattern regex accept every web-verified
+    sample for this SIT? fullmatch for identifiers, search for substring-detector
+    (connection-string) SITs. Returns (n_pass, n_total, [unmatched]) or None."""
+    samples = _load_samples(slug)
     if not samples:
         return None
     try:
         rx = re.compile(regex)
     except re.error:
         return 0, len(samples), list(samples)
-    miss = [s for s in samples if not rx.fullmatch(s)]
+    accept = rx.search if slug in SUBSTRING_SITS else rx.fullmatch
+    miss = [s for s in samples if not accept(s)]
     return len(samples) - len(miss), len(samples), miss
 
 

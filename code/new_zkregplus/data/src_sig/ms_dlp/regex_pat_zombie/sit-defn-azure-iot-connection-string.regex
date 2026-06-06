@@ -1,1 +1,1 @@
-HostName\x20\x3D\x20.{1,200}azure\x2Ddevices\x2Enet.{1,200}SharedAccessKey\x20\x3D\x20[A-Za-z0-9\x2F\x2B]{43}\x3D
+HostName[\x20\x09]{0,2}\x3D[\x20\x09]{0,2}.{1,200}azure\x2Ddevices\x2Enet.{1,200}SharedAccessKey[\x20\x09]{0,2}\x3D[\x20\x09]{0,2}[A-Za-z0-9\x2F\x2B]{43}\x3D
