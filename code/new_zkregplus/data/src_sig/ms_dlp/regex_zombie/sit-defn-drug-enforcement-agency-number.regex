@@ -1,0 +1,1 @@
+([A-Za-z][A-Za-z0-9][0-9]{7}.{0,300}(dea|dea\x23|drug\x20enforcement\x20administration|drug\x20enforcement\x20agency))|((dea|dea\x23|drug\x20enforcement\x20administration|drug\x20enforcement\x20agency).{0,300}[A-Za-z][A-Za-z0-9][0-9]{7})

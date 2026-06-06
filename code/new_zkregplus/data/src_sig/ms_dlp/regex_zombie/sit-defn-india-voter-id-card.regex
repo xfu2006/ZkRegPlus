@@ -1,0 +1,1 @@
+([A-Za-z]{3}[0-9]{7}.{0,300}(voter|voterid|votercard|voteridcard|electoral\x20photo\x20identity\x20card|EPIC|ECI|election\x20commmision))|((voter|voterid|votercard|voteridcard|electoral\x20photo\x20identity\x20card|EPIC|ECI|election\x20commmision).{0,300}[A-Za-z]{3}[0-9]{7})

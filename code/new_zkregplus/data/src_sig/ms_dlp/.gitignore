@@ -1,0 +1,12 @@
+# Upstream clone of https://github.com/PepperSieve/Zombie (no license / all
+# rights reserved). Retained locally for research/benchmarking only; never
+# redistribute. Reproduce via scripts/download_zombie.py (pinned commit logged
+# in docs/download_zombie.log).
+zombie/
+
+# Scraped Microsoft Purview SIT specs (proximity/pattern/keywords) pulled from
+# learn.microsoft.com by scripts/retrieve_ms_dlp.py. Microsoft's curated
+# compilation -- used as research facts only, not redistributed. Regenerate
+# locally; provenance (source_url/etag/Last-Modified) is in each record and in
+# docs/retrieve_record.log.
+raw_data_records/

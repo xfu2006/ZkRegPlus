@@ -28841,6 +28841,24 @@ Goal 3. design stage for sde aggresive mode
 	[c] do the planning of implementation 
 		M0 -> DONE
 		M1 -> DONE
-		M2 -> 
+		M2 -> DONE
+		M3 -> DONE
+		M4 -> DONE
+		M5 -> DONE
+		M6 -> DONE
+
+Sat 06/06/2026
+Goal 1. Milestone 0 of sde_aggressive sub-project
+	[a] plan again
+	[b] run
+	[c] check
+
+Goal 2. parse and generate regex for Zombie
+	[a] filter more examples
+	[b] discuss parsing algorithm
+	[c] design how to check
+	[d] fix rule iteration
+	[e] design test.
+	[f] design the procedure to generate samples of match.
 
 === TODOs ====

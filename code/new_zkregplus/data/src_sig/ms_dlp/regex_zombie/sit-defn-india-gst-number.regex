@@ -1,0 +1,1 @@
+([0-9]{2}[\x2D\x20]?[A-Za-z0-9]{10}[A-Za-z0-9][\x2D\x20]?[A-Za-z][\x2D\x20]?[0-9].{0,300}(gst|gstin|goods\x20and\x20services\x20tax|goods\x20and\x20service\x20tax))|((gst|gstin|goods\x20and\x20services\x20tax|goods\x20and\x20service\x20tax).{0,300}[0-9]{2}[\x2D\x20]?[A-Za-z0-9]{10}[A-Za-z0-9][\x2D\x20]?[A-Za-z][\x2D\x20]?[0-9])

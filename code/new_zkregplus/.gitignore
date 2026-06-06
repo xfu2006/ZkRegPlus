@@ -5,3 +5,6 @@ log.txt
 session.log
 *.md
 .claude/*
+# sde_aggressive M0 baselines + fixtures (local-only, not committed)
+data/baselines/
+data/debug/sde_aggressive/

@@ -1,0 +1,1 @@
+([0-9]{4}\x2D?[0-9]{4}\x2D?[0-9]{4}.{0,300}(PhilSys|Phil\x20ID|National\x20ID|PSN|PhilSys\x20Number|ID\x20numner|National\x20identification\x20number))|((PhilSys|Phil\x20ID|National\x20ID|PSN|PhilSys\x20Number|ID\x20numner|National\x20identification\x20number).{0,300}[0-9]{4}\x2D?[0-9]{4}\x2D?[0-9]{4})

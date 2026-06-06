@@ -1,0 +1,81 @@
+[job 0] LOG1:  ==== Summary of ClamavSig Database ====
+[job 0] LOG1:  #critical patterns: 1005 (CS) 0 (IGC), #sigs: 11, ACDFA for Critical Pattenrs State: 2354 (CS) 8 (IGC)
+[job 0] LOG1:  Signatures:11, Fixed Patterns: 27, Pattners IGC: 0
+[job 0] LOG1:  ACDFA for BagWords: states (cs): 177, states (igc): 8
+[job 0] LOG1:  ==========Adv Stats of ACDFA dfa_crit ==========================
+[job 0] LOG1:  HEX-AC-DFA id: 0, num_states: 2354, patterns: 1005, accept_states: 1005, init_state: 1007
+[job 0] LOG1:    MAX output sig: 4, avg sigs/acc state: 3
+[job 0] LOG1:  ==================================
+[job 0] LOG1:  ==========Adv Stats of ACDFA dfa_crit_igc ==========================
+[job 0] LOG1:  HEX-AC-DFA id: 0, num_states: 8, patterns: 0, accept_states: 0, init_state: 2
+[job 0] LOG1:    MAX output sig: 0, avg sigs/acc state: 0
+[job 0] LOG1:  ==================================
+[job 0] LOG1:  ==== Status of ACDFA dfa_patterns =====
+ HEX-AC-DFA id: 0, num_states: 177, patterns: 27, accept_states: 30, init_state: 32
+[job 0] LOG1:  MAX output words for a final state: 2, avg: 1
+[job 0] LOG1:  ==== Status of ACDFA dfa_patterns_igc =====
+ HEX-AC-DFA id: 0, num_states: 8, patterns: 0, accept_states: 0, init_state: 2
+[job 0] LOG1:  MAX output words for a final state: 0, avg: 0
+[job 0] LOG1:  ==== WARNING: UNABLE TO DISCHARGE by crit_gab_pm which needs DFA discharge =====
+[job 0] LOG1:  ==== Needs to build DFA for the following ===========
+{}=========================
+
+[job 0] LOG1:  ==== WARNING: DFA could also not discharge the following =====
+[job 0] LOG1:  ==== WARNING: ISED could not discharge the following =====
+[job 0] LOG1:  ==== STATS SUMMARY (avg, max, count_non_zero) =========
+[job 0] LOG1:  Note: set b_optimize_pm to false in 
+gen_report_all_discharge_approach_stats
+ for accurate PM-REG data, otherwise it's filtered by prevoius step 
+
+[job 0] LOG1:  -b_include_bs: false------------------------------------------------------
+[job 0] LOG1:  log(f)	files	crit	pm	c_pm	dfa	ind_pm
+[job 0] LOG1:  0 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  1 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  2 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  3 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  4 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  5 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  6 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  7 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  8 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  9 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  10 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  11 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  12 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  13 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  14 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  15 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  16 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  17 	 1 	(4,4,1)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  18 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  19 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  20 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  21 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  22 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  23 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  24 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  25 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  26 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  27 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  28 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  29 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  30 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  31 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  ====  Accepthance Path Stats =======
+[job 0] LOG1:  hs_len (number of accepted patterns but only counting position once)/acc_path: 0.004033202862421688%, hs_len: 21, accpath_len: 520678
+[job 0] LOG1:  accepted states (counting multiple pos for one state, and ALL sigs)/acc_path: 0.9960090497389942%, accepted_states: 5186, accpath_len: 520678
+[job 0] LOG1:  acc_states/path_len: avg: 0.9960090497389942%, max: 0.9960090497389942%
+[job 0] LOG1:  unique states ratio: avg: 0.00787434844568044%, max: 0.00787434844568044%, min: 0.00787434844568044%
+[job 0] LOG1:  *** pm_reg pm_witness/total_accepted: (avg: max) -> appearahce of each acpeted states: (1814470.59%,1814470.59%). 
+[job 0] LOG1:  pm_reg (sde) total witness_len/file_size: (avg: max): (59.24198833059972%,59.24198833059972%). This indicates total cost of discharging one file against ALL bag left sigs
+[job 0] LOG1:  pat ratio: avg: 5.1474295%, max: 5.1474295%
+[job 0] LOG1:  ==== ESTIMATE_CONFIG (monotone envelope, proxy=sigs_sed) =====
+[job 0] LOG1:     files=1, columns: p% cover b_uniq b_acc b_pat exp% sigs_sed subsigs avg_pats dfa_sigs dfa_subsigs
+[job 0] LOG1:      20%    1/1        15    512    514     2        4     101        2        0           0
+[job 0] LOG1:      50%    1/1        15    512    514     2        4     101        2        0           0
+[job 0] LOG1:     100%    1/1        15    512    514     2        4     101        2        0           0
+[job 0] LOG1:     NOTE: b_uniq=sum#pats over distinct ACCEPTED states (=proj_states.len); b_acc=accepted-state visits; b_pat=sum#pats over visits; all basis pts (/10000) of the worst chunk, per-case max(cs,igc). exp%=perc_pats_expansion floor=ceil(nlen/10000) (loose loc-space sentinel; real adds headroom). dfa_sigs/subsigs from pm\all_dfa (SED failers). perc_comp_subsigs & avg_active_pats not estimated (defaults).
+[job 0] LOG1:  === SED Stats =====
+[job 0] LOG1:     sigs: 4, subsigs: 404, total_steps: 1204, avg_steps: 301
+[job 0] LOG1:  === ISED Stats =====
+[job 0] LOG1:     sigs: 0, subsigs: 0, total_steps: 0, avg_steps: N/A

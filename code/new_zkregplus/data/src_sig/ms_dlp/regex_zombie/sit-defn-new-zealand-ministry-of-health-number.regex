@@ -1,0 +1,1 @@
+([BCEFGHJKLMPQRSTUVWXYZbcefghjklmpqrstuvwxyz]{3}[0-9]{4}.{0,300}(NHI|New\x20Zealand|National\x20Health\x20Index|NHI\x23|National\x20Health\x20Index\x23))|((NHI|New\x20Zealand|National\x20Health\x20Index|NHI\x23|National\x20Health\x20Index\x23).{0,300}[BCEFGHJKLMPQRSTUVWXYZbcefghjklmpqrstuvwxyz]{3}[0-9]{4})

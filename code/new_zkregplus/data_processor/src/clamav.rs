@@ -4529,5 +4529,51 @@ mod tests_clamav{
 		println!("=== END M7 preflight ===\n");
 	}
 
+	/// Parse-check for the sde_aggressive fixtures F1-F3: every
+	/// main.dat line builds via gen_clamav_sig under flag off and on
+	/// (>=1 subsig_obj each, no panic). Run:
+	///   cargo test -p data_processor -- \
+	///     test_sde_aggressive_fixtures_parse --nocapture
+	#[test]
+	pub fn test_sde_aggressive_fixtures_parse(){
+		let proj_root = utils::os::proj_root();
+		let mut cfg_off = default_clamav_cfg();
+		cfg_off.b_aggressive_sde_for_rep = false;
+		let mut cfg_on = default_clamav_cfg();
+		cfg_on.b_aggressive_sde_for_rep = true;
+		cfg_on.sde_rep_fanout_cap = 100;
+
+		for fx in ["F1", "F2", "F3"]{
+			let path = format!(
+				"{}/data/debug/sde_aggressive/{}/main.dat",
+				proj_root, fx);
+			let text = std::fs::read_to_string(&path)
+				.expect("read fixture main.dat");
+			let lines: Vec<&str> = text.lines()
+				.filter(|l| !l.trim().is_empty()
+					&& !l.trim().starts_with('#'))
+				.collect();
+			assert!(!lines.is_empty(),
+				"fixture {} has no sig lines", fx);
+			println!("\n=== fixture {} ===", fx);
+			for line in &lines{
+				let name = line.split(';').next()
+					.unwrap_or("?");
+				let s_off = gen_clamav_sig(line,
+					ClamSigType::General, &cfg_off);
+				let s_on = gen_clamav_sig(line,
+					ClamSigType::General, &cfg_on);
+				let n_off = s_off.vec_subsig_obj.len();
+				let n_on = s_on.vec_subsig_obj.len();
+				assert!(n_off >= 1 && n_on >= 1,
+					"{}: empty subsig_obj off={} on={}",
+					name, n_off, n_on);
+				println!("{:<22} off={:>4} on={:>4}",
+					name, n_off, n_on);
+			}
+		}
+		println!("=== sde_aggressive fixtures parse OK ===\n");
+	}
+
 }
 

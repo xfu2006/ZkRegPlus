@@ -1,0 +1,1 @@
+([0-9]{2}[0-9]{4}[0-9]{6}[0-9]{4}.{0,300}(KTP|Kartu\x20Tanda\x20Penduduk|Nomor\x20Induk\x20Kependudukan))|((KTP|Kartu\x20Tanda\x20Penduduk|Nomor\x20Induk\x20Kependudukan).{0,300}[0-9]{2}[0-9]{4}[0-9]{6}[0-9]{4})

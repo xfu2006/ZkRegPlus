@@ -1,0 +1,1 @@
+([A-Za-z]{2}[0-9]{1,4}.{0,300}(council\x20nomination|nomination\x20form|electoral\x20register|electoral\x20roll))|((council\x20nomination|nomination\x20form|electoral\x20register|electoral\x20roll).{0,300}[A-Za-z]{2}[0-9]{1,4})

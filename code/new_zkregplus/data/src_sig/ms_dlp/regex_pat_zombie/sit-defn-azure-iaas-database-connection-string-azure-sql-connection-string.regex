@@ -1,0 +1,1 @@
+(Server|server|data\x20source)\x20\x3D\x20.{1,200}(cloudapp\x2Eazure\x2Ecom|cloudapp\x2Eazure\x2Enet|database\x2Ewindows\x2Enet).{1,300}(Password|password|pwd)\x20\x3D\x20[^\x3B\x22\x27]+[\x3B\x22\x27]
