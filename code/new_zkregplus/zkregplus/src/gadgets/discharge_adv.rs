@@ -4770,6 +4770,7 @@ use utils::consts::read_global_config;
 			basis_pats_in_trace: 25*100, 
 			basis_unique_states: 20*100,
 			basis_acc_states: 15*100,
+			halo_nibbles: 0,
 		};
 		let cap_disc = DischargeAdvCapacity{//capaciity of discharge comopnent
 			max_nibble_len: nibble_len, 
@@ -4811,8 +4812,8 @@ use utils::consts::read_global_config;
 
 			let adv_faa = FsmAdvAdvice::new(b_igc, //case sensitive,
 				1, //dist to wea gadget
-				&nibbles, &acdfa, inp_state, 
-				inp_loc, &input_subsigs, &cap, fsm_id, 
+				&nibbles, &[], &acdfa, inp_state,
+				inp_loc, &input_subsigs, &cap, fsm_id,
 				&bundle.vec_subsig_stores[store_id], 0)
 					.expect("fsm_adv advice err"); 
 			let stmt_faa = adv_faa.stmt_container;

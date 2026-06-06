@@ -2660,6 +2660,7 @@ use utils::consts::read_global_config;
 			basis_pats_in_trace: 8*100, 
 			basis_unique_states: 20*100,
 			basis_acc_states: 5*100,
+			halo_nibbles: 0,
 		};
 		let cap_disc = DischargeAdvCapacity{//capaciity of discharge comopnent
 			max_nibble_len: nibble_len, 
@@ -2717,8 +2718,8 @@ use utils::consts::read_global_config;
 		 	let adv_faa_cs = FsmAdvAdvice::new(
 				false, //case sensitive
 				1, //dist to wea 
-				&nibbles, &acdfa_cs, inp_state_cs, 
-				inp_loc_cs, &input_subsigs_cs, &cap, fsm_id_cs, 
+				&nibbles, &[], &acdfa_cs, inp_state_cs,
+				inp_loc_cs, &input_subsigs_cs, &cap, fsm_id_cs,
 				&bundle_cs.vec_subsig_stores[store_id], 0)
 					.expect("fsm_adv advice err"); 
 			let stmt_faa_cs = adv_faa_cs.stmt_container;
@@ -2727,8 +2728,8 @@ use utils::consts::read_global_config;
 		 	let adv_faa_igc = FsmAdvAdvice::new(
 				true, //igc
 				2, //dist to wea
-				&nibbles, &acdfa_igc, inp_state_igc, 
-				inp_loc_igc, &input_subsigs_igc, &cap, fsm_id_igc, 
+				&nibbles, &[], &acdfa_igc, inp_state_igc,
+				inp_loc_igc, &input_subsigs_igc, &cap, fsm_id_igc,
 				&bundle_igc.vec_subsig_stores[store_id], 0)
 					.expect("fsm_adv advice err"); 
 			let stmt_faa_igc = adv_faa_igc.stmt_container;

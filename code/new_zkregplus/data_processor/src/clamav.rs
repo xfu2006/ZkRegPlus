@@ -3267,7 +3267,7 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 	let wi = WordInfo{
 		vec_sed_sigs, vec_dfa_sigs, vec_ised_sigs,
 		vec_sed_sigs_info, vec_ised_sigs_info, vec_dfa_sigs_info,
-		file_nibble_len: nibbles.len()};
+		file_nibble_len: nibbles.len(), halo_nibbles: vec![]};
 
 	// 2026-05-16: probe 77319.1 — dump the raw discharge-prover
 	// output for this file. This is the GROUND TRUTH from
@@ -3518,7 +3518,7 @@ pub fn deprecated_quick_discharge_file_adv(
 
 	WordInfo{ vec_sed_sigs, vec_dfa_sigs, vec_ised_sigs, vec_sed_sigs_info,
 		vec_ised_sigs_info, vec_dfa_sigs_info,
-		file_nibble_len: nibbles.len()}
+		file_nibble_len: nibbles.len(), halo_nibbles: vec![]}
 }
 
 

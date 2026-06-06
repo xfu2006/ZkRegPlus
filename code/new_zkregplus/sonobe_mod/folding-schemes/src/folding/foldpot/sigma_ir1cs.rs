@@ -118,6 +118,12 @@ pub struct WordInfo{
 	/// and F-level pad from the mapper share one contiguous
 	/// slice of the canonical pad stream).
 	pub file_nibble_len: usize,
+
+	/// Aggressive-mode forward halo: this segment's successor's first
+	/// nibbles (raw 0..15), set by the driver per segment. Empty for the
+	/// last segment / non-aggressive runs. SED truncates to M.
+	#[serde(default)]
+	pub halo_nibbles: Vec<u8>,
 }
 
 impl WordInfo{
@@ -130,6 +136,7 @@ impl WordInfo{
 			vec_ised_sigs_info: vec![],
 			vec_dfa_sigs_info: vec![],
 			file_nibble_len: 0,
+			halo_nibbles: vec![],
 		}
 	}
 
@@ -527,6 +534,10 @@ pub trait Capacity: Debug + Send + Sync{
 
 	/// needed for downcasting for composite gadget mapper
 	fn as_any(&self) -> &dyn Any;
+
+	/// Aggressive-mode forward-halo width in nibbles (0 = none).
+	/// Lets the driver source per-chunk look-ahead without a downcast.
+	fn halo_nibbles(&self) -> usize { 0 }
 }
 
 #[derive(Clone,Debug,Copy)]

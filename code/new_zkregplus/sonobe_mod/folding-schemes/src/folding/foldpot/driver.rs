@@ -555,8 +555,25 @@ where
 			let start = i*max_wlen;
 			let end = if (i+1)*max_wlen>wlen {wlen} else {(i+1)*max_wlen};
 			let seg = word[start..end].to_vec();
+			//aggressive forward halo: per-seg look-ahead = successor's
+			//first M nibbles as raw u8 (empty for last seg / non-aggr
+			//⇒ SED pads). Threaded via a per-seg WordInfo clone.
+			let m_halo = cap.halo_nibbles();
+			let wi_owned;
+			let wi_ref = if m_halo>0 && end<wlen {
+				let n_end = if end+max_wlen>wlen {wlen}
+					else {end+max_wlen};
+				let nxt = utils::data::packed_to_nibbles(
+					&word[end..n_end].to_vec());
+				let take = m_halo.min(nxt.len());
+				let mut wi = word_info.clone();
+				wi.halo_nibbles = nxt[0..take].iter()
+					.map(|f| field_to_usize(f) as u8).collect();
+				wi_owned = wi;
+				&wi_owned
+			} else { word_info };
 			let advice = lock_unwrap!(circ.get_mapper())
-				.gen_nd_advice(&seg, &word_info, prev_adv, i, job_id)?;
+				.gen_nd_advice(&seg, wi_ref, prev_adv, i, job_id)?;
 			vec_pci.push(pci);
 			vec_size.push(end-start);
 			vec_cap.push(cap.clone());
@@ -876,8 +893,25 @@ where
 			let start = i*max_wlen;
 			let end = if (i+1)*max_wlen>wlen {wlen} else {(i+1)*max_wlen};
 			let seg = word[start..end].to_vec();
+			//aggressive forward halo: per-seg look-ahead = successor's
+			//first M nibbles as raw u8 (empty for last seg / non-aggr
+			//⇒ SED pads). Threaded via a per-seg WordInfo clone.
+			let m_halo = cap.halo_nibbles();
+			let wi_owned;
+			let wi_ref = if m_halo>0 && end<wlen {
+				let n_end = if end+max_wlen>wlen {wlen}
+					else {end+max_wlen};
+				let nxt = utils::data::packed_to_nibbles(
+					&word[end..n_end].to_vec());
+				let take = m_halo.min(nxt.len());
+				let mut wi = word_info.clone();
+				wi.halo_nibbles = nxt[0..take].iter()
+					.map(|f| field_to_usize(f) as u8).collect();
+				wi_owned = wi;
+				&wi_owned
+			} else { word_info };
 			let advice = lock_unwrap!(circ.get_mapper())
-				.gen_nd_advice(&seg, &word_info, prev_adv, i, job_id)?;
+				.gen_nd_advice(&seg, wi_ref, prev_adv, i, job_id)?;
 			vec_pci.push(pci);
 			vec_size.push(end-start);
 			vec_cap.push(cap.clone());

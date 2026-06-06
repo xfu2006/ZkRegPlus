@@ -182,6 +182,10 @@ impl Capacity for CompositeCapacity{
     }
 
 	fn as_any(&self)->&dyn Any{ self }
+
+	fn halo_nibbles(&self) -> usize {
+		self.vec_cap.iter().map(|c| c.halo_nibbles()).max().unwrap_or(0)
+	}
 }
 
 /// A composable gadget mapper means that it can have a flexible

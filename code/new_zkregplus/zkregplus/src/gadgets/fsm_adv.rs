@@ -111,6 +111,12 @@ pub struct FsmAdvCapacity{
 	/// and not restricted to the projected combo store
 	/// Usually this is less than 5%, wost case 30%.
 	pub basis_acc_states: usize,
+
+	/// Forward-halo width in nibbles for aggressive mode = M =
+	/// db.aggressive_max_span_nibbles. 0 disables the halo (circuit then
+	/// byte-identical to non-aggressive). Structural span, not a load
+	/// estimate — constant across capacity ladders.
+	pub halo_nibbles: usize,
 }
 
 /// Advice for the WordExtract Gadget.
@@ -190,7 +196,8 @@ impl Capacity for FsmAdvCapacity{
 		self.avg_pats_per_subsig >= other.avg_pats_per_subsig &&
 		self.basis_pats_in_trace >= other.basis_pats_in_trace &&
 		self.basis_unique_states >= other.basis_unique_states &&
-		self.basis_acc_states >= other.basis_acc_states
+		self.basis_acc_states >= other.basis_acc_states &&
+		self.halo_nibbles == other.halo_nibbles
 
 	}
 
@@ -205,6 +212,7 @@ impl Capacity for FsmAdvCapacity{
 			basis_pats_in_trace: self.basis_pats_in_trace,
 			basis_unique_states: self.basis_unique_states,
 			basis_acc_states: self.basis_acc_states,
+			halo_nibbles: self.halo_nibbles,
 		})
 	}
 
@@ -265,22 +273,25 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 	pub fn new(
 		b_igc: bool,
 		offset_wea: usize,
-		nibbles: &Vec<F>, 
-		acdfa: &HexACDFA, 
+		nibbles: &Vec<F>,
+		halo_nibbles: &[F], //M look-ahead nibbles; empty if M==0
+		acdfa: &HexACDFA,
 		inp_state: F,  //it's already adjusted (starting from 1)
-		inp_loc: F, //it's starting from 1 (for first component). 
+		inp_loc: F, //it's starting from 1 (for first component).
 		inp_subsigs: &Vec<F>,
-		capacity: &FsmAdvCapacity, 
+		capacity: &FsmAdvCapacity,
 		fsm_id: u32,
 		store_subsig_pat: &SubsigPatternStore,
 		job_id: usize,
 	) ->Result<Self, Error>{
 		let b_debug = B_DEBUG;
 		let res = if B_FSM_ADV_NEW{
-			Self::new_v2(b_igc, offset_wea, nibbles, acdfa, inp_state,
+			Self::new_v2(b_igc, offset_wea, nibbles, halo_nibbles, acdfa,
+				inp_state,
 				inp_loc, inp_subsigs, capacity, fsm_id, store_subsig_pat, job_id)
 		}else{
-			Self::new_v1(b_igc, offset_wea, nibbles, acdfa, inp_state,
+			Self::new_v1(b_igc, offset_wea, nibbles, halo_nibbles, acdfa,
+				inp_state,
 				inp_loc, inp_subsigs, capacity, fsm_id, store_subsig_pat, job_id)
 		};
 		if b_debug{
@@ -318,10 +329,11 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 	pub fn new_v2(
 		b_igc: bool,
 		offset_wea: usize,
-		nibbles: &Vec<F>, 
-		acdfa: &HexACDFA, 
+		nibbles: &Vec<F>,
+		halo_nibbles: &[F], //M look-ahead nibbles; empty if M==0
+		acdfa: &HexACDFA,
 		inp_state: F,  //it's already adjusted (starting from 1)
-		inp_loc: F, //it's starting from 1 (for first component). 
+		inp_loc: F, //it's starting from 1 (for first component).
 		_inp_subsigs: &Vec<F>,
 		capacity: &FsmAdvCapacity, 
 		fsm_id: u32,
@@ -342,8 +354,8 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		// info and results in (state, loc) columns
 		let fsm_acc = Self::gen_fsm_acc_combo(
 			b_igc,
-			offset_wea as isize, 
-			nibbles, acdfa, 
+			offset_wea as isize,
+			nibbles, halo_nibbles, acdfa,
 			inp_state, inp_loc, capacity, fsm_id, job_id)?;
 		let fsm_acc2 = fsm_acc.clone(); //low cost, need to add
 		//fsm_acc to fix location first before we build exteranl cols from it.
@@ -364,12 +376,13 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 	pub fn new_v1(
 		b_igc: bool,
 		offset_wea: usize,
-		nibbles: &Vec<F>, 
-		acdfa: &HexACDFA, 
+		nibbles: &Vec<F>,
+		halo_nibbles: &[F], //M look-ahead nibbles; empty if M==0
+		acdfa: &HexACDFA,
 		inp_state: F,  //it's already adjusted (starting from 1)
-		inp_loc: F, //it's starting from 1 (for first component). 
+		inp_loc: F, //it's starting from 1 (for first component).
 		inp_subsigs: &Vec<F>,
-		capacity: &FsmAdvCapacity, 
+		capacity: &FsmAdvCapacity,
 		fsm_id: u32,
 		store_subsig_pat: &SubsigPatternStore,
 		job_id: usize,
@@ -443,8 +456,8 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		// info and results in (state, loc) columns
 		let fsm_acc = Self::gen_fsm_acc_combo(
 			b_igc,
-			offset_wea as isize, 
-			nibbles, acdfa, 
+			offset_wea as isize,
+			nibbles, halo_nibbles, acdfa,
 			inp_state, inp_loc, capacity, fsm_id, job_id)?;
 		let fsm_acc2 = fsm_acc.clone(); //low cost, need to add
 		//fsm_acc to fix location first before we build exteranl cols from it.
@@ -634,8 +647,9 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 	fn gen_fsm_acc_combo(
 		b_igc: bool,
 		wea_offset: isize,
-		nibbles: &Vec<F>, 
-		acdfa: &HexACDFA, 
+		nibbles: &Vec<F>,
+		halo_nibbles: &[F], //M look-ahead nibbles; empty if M==0
+		acdfa: &HexACDFA,
 		inp_state: F,  //it's the adjusted state (starting rom 1)
 		inp_loc: F, //starting from 1. 
 		capacity: &FsmAdvCapacity, 
@@ -682,6 +696,25 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		}
 		assert!(raw_states.len()==nlen+1 && raw_locs.len()==1);
 
+		//halo: continue M transitions from the boundary state so a
+		//match straddling the right edge completes in this chunk.
+		//cur_state == raw_states[nlen]-1 here. Empty when M==0.
+		let m = capacity.halo_nibbles;
+		assert!(halo_nibbles.len()==m,
+			"halo len {} != M {}", halo_nibbles.len(), m);
+		let mut halo_raw_states = vec![]; //M post-boundary states
+		let mut halo_trans = vec![];      //M transitions
+		for h in 0..m{
+			let ch: u8 = field_to_usize(&halo_nibbles[h])
+				.try_into().unwrap();
+			let nxt = acdfa.trans.get(&cur_state).unwrap()[ch as usize];
+			halo_raw_states.push(F::from((nxt+1) as u32));
+			halo_trans.push(F::from(ch)
+				+ (F::from(cur_state as u32)+one)*hex
+				+ (F::from(nxt as u32)+one)*unit);
+			cur_state = nxt;
+		}
+
 		let _f_id_state = F::from(fsm_id+6);
 		let f_id_trans= F::from(fsm_id+3);
 		let f_id_loc= F::from(RANGE2);
@@ -693,24 +726,36 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 			if acdfa.is_final(f_s) {f_id_final} else {f_id_non_final}
 		}).collect::<Vec<F>>();
 
+		let vec_si_halo = halo_raw_states.iter().map(|s|{
+			if acdfa.is_final(field_to_usize(s)-1) {f_id_final}
+			else {f_id_non_final}
+		}).collect::<Vec<F>>();
+
 		//2. build the states_final and locs_final
 		// NOTE: we do not include element 0 coz it's already
 		// handled in the previous seg.
-		let states_final = (1..vec_si_states.len()).into_par_iter().filter(|i|{
+		let mut states_final = (1..vec_si_states.len()).into_par_iter().filter(|i|{
 				vec_si_states[*i]==f_id_final
 			}).map(|i| raw_states[i]).collect::<Vec<F>>();
-		let locs_final = (1..vec_si_states.len()).into_par_iter().filter(|i|{
+		let mut locs_final = (1..vec_si_states.len()).into_par_iter().filter(|i|{
 				vec_si_states[*i]==f_id_final
 			}).map(|i| raw_locs[0] + F::from(i as u32)).collect::<Vec<F>>();
 		assert!(states_final.len()==locs_final.len());
+		//halo accepting states: loc = inp_loc + nlen + (h+1).
+		for h in 0..m{
+			if vec_si_halo[h]==f_id_final{
+				states_final.push(halo_raw_states[h]);
+				locs_final.push(raw_locs[0] + F::from((nlen+h+1) as u32));
+			}
+		}
 
 
-		let target_size = nlen*capacity.basis_acc_states/10000;
+		let target_size = (nlen+m)*capacity.basis_acc_states/10000;
 		let target_size = if target_size < 2 {2} else {target_size};
 		if states_final.len() + 1>target_size{
 			report_top_states(&states_final, acdfa, 10, "basis_acc_states overflow");
 			//needs at least one padding entry
-			let target_basis_acc_states = (states_final.len()+1) * 10000/nlen 
+			let target_basis_acc_states = (states_final.len()+1) * 10000/(nlen+m)
 				+ 1;
 			return Err(Error::CapErr(vec![(format!("fsm_adv::basis_acc_states, b_igc: {}", b_igc), target_basis_acc_states)]));
 		}
@@ -824,6 +869,28 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		res.lock().unwrap().add_col(col_si_states_final);
 		res.lock().unwrap().add_col(col_locs_final);
 		res.lock().unwrap().add_col(col_si_locs_final);
+
+		//halo columns (aggressive mode only): emitted look-ahead in
+		//IDX_OUP (carried to next chunk), received look-ahead in IDX_INP
+		//(authenticated == own prefix in validate), states/trans in DATA.
+		if m>0{
+			res.lock().unwrap().add_col(Col::<F>::new(halo_nibbles.to_vec(),
+				"halo_nibbles", IDX_OUP));
+			res.lock().unwrap().add_col(Col::<F>::new_const(
+				vec![f_char; m], "si_halo_nibbles", IDX_SI_OUP));
+			res.lock().unwrap().add_col(Col::<F>::new(nibbles[0..m].to_vec(),
+				"halo_inp_nibbles", IDX_INP));
+			res.lock().unwrap().add_col(Col::<F>::new_const(
+				vec![f_char; m], "si_halo_inp_nibbles", IDX_SI_INP));
+			res.lock().unwrap().add_col(Col::<F>::new(halo_raw_states,
+				"halo_states", IDX_DATA));
+			res.lock().unwrap().add_col(Col::<F>::new(vec_si_halo,
+				"si_halo_states", IDX_SI_DATA));
+			res.lock().unwrap().add_col(Col::<F>::new(halo_trans,
+				"halo_trans", IDX_DATA));
+			res.lock().unwrap().add_col(Col::<F>::new_const(
+				vec![f_id_trans; m], "si_halo_trans", IDX_SI_DATA));
+		}
 
 		if b_perf{log_perf(job_id, LOG1, "-- -- fsm_gen_fsm_combo", &mut gt);}
 
@@ -1176,11 +1243,12 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		// appeared multiple times, it does not affect the correctness
 		// of left join.
 		let nlen = capacity.max_nibble_len;
-		let ulen = nlen * capacity.basis_unique_states/10000;
-		if ulen<proj_states.len()+1{//guaranees on dummy 0-entry for 
+		let m = capacity.halo_nibbles;
+		let ulen = (nlen+m) * capacity.basis_unique_states/10000;
+		if ulen<proj_states.len()+1{//guaranees on dummy 0-entry for
 			//skipping conditional logup later
-			let new_val = (tuples.len()+1) * 10000/nlen + 1;
-			assert!(new_val * nlen /10000 >= tuples.len()+1);
+			let new_val = (tuples.len()+1) * 10000/(nlen+m) + 1;
+			assert!(new_val * (nlen+m) /10000 >= tuples.len()+1);
 			return Err(Error::CapErr(
 				vec![(format!(
 					"fsm_adv::basis_unique_states proj_state-pat, b_igc: {}", b_igc), new_val) ]
@@ -1196,7 +1264,7 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		let c3 = ct_stat_pat.lock().unwrap().get_container("id")?.lock().unwrap().to_vec();
 		let c4 = ct_stat_pat.lock().unwrap().get_container("count")?.lock().unwrap().to_vec();
 		if c1.len()>ulen{
-			let new_val = (c1.len()+1) * 10000/nlen + 1;
+			let new_val = (c1.len()+1) * 10000/(nlen+m) + 1;
 			return Err(Error::CapErr(
 				vec![(format!(
 					"fsm_adv::basis_unique_states cs_stat_pat, b_igc: {}", b_igc), new_val) ]
@@ -1217,8 +1285,8 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 
 		//3. left join loc-state and pat-state table
 		//here only need pat-state to be wide-wellfomed
-		let packed_trace_size = capacity.basis_pats_in_trace * 
-			capacity.max_nibble_len / 10000;
+		let packed_trace_size = capacity.basis_pats_in_trace *
+			(capacity.max_nibble_len + capacity.halo_nibbles) / 10000;
 		if capacity.basis_pats_in_trace > 2*capacity.basis_acc_states{
 			println!("WARNING: basis_pats_in_trace: {} should be usually 1.1 * basis_acc_states: {}. It's too large. ", capacity.basis_pats_in_trace, capacity.basis_acc_states);
 		}
@@ -1326,10 +1394,11 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		let nibbles = vec![F::zero(); capacity.max_nibble_len];
 		let dummy_inp_subsigs = vec![
 			F::from(store_subsig_pat.subsig_ids[0] as u32)];
-		let dummy_adv = FsmAdvAdvice::new(b_igc, 
+		let dummy_adv = FsmAdvAdvice::new(b_igc,
 			offset_wea, //offset to word_extract
-			&nibbles, acdfa, dummy_inp_state,
-			dummy_inp_loc, &dummy_inp_subsigs, capacity, 
+			&nibbles, &vec![F::zero(); capacity.halo_nibbles], acdfa,
+			dummy_inp_state,
+			dummy_inp_loc, &dummy_inp_subsigs, capacity,
 			fsm_id, store_subsig_pat, 0).expect("\n\n ==== **** =====\nCannot handle dummy advice generation for fsm_adv. Needs to raise the following for at least one circ. ");
 		let mut vec_cfg = prev_cfgs.clone();
 		vec_cfg.push(dummy_adv.stmt_container.lock().unwrap().get_cfg());
@@ -1371,7 +1440,9 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		let mut gt = GTimer::new();
 		let (nc, nv) = (cs.num_constraints(), cs.num_witness_variables());
 		let nlen = self.capacity.max_nibble_len;
-		let alen = self.capacity.max_nibble_len 
+		let m = self.capacity.halo_nibbles;
+		let alen = (self.capacity.max_nibble_len
+			+ self.capacity.halo_nibbles)
 			* self.capacity.basis_acc_states/10000;
 		let alen = if alen<2 {2} else {alen};
 		let _tblid_state = FpVar::new_constant(cs.clone(),
@@ -1507,6 +1578,28 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 			let trans = &trans[idx];
 			check_eq(&exp_trans, &trans, "ERROR checking trans part2")?;
 		}
+		//halo transition checks (aggressive only): the chain is anchored
+		//at the committed boundary state states[nlen]. Plus authenticity:
+		//received look-ahead == this chunk's own first M nibbles (combined
+		//with the IDX_OUP->IDX_INP fold this pins the predecessor's halo).
+		if m>0{
+			let h_nib = fsm_acc.get_container("halo_nibbles")?
+				.lock().unwrap().to_vec();
+			let h_st = fsm_acc.get_container("halo_states")?
+				.lock().unwrap().to_vec();
+			let h_tr = fsm_acc.get_container("halo_trans")?
+				.lock().unwrap().to_vec();
+			let h_inp = fsm_acc.get_container("halo_inp_nibbles")?
+				.lock().unwrap().to_vec();
+			for h in 0..m{
+				let src = if h==0 {&states[nlen]} else {&h_st[h-1]};
+				let exp = &h_nib[h] + &(src*&hex_var)
+					+ &(&h_st[h]*&unit_var);
+				check_eq(&exp, &h_tr[h], "ERROR checking halo trans")?;
+				check_eq(&h_inp[h], &chars[h],
+					"halo authenticity fails")?;
+			}
+		}
 		if b_perf{
 			log_perf(self.job_id, log_level, "validate_fsm_acc_container step 3", &mut gt);
 		}
@@ -1586,12 +1679,25 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		//3.2 use sid_states_final to sum up the logup equation LHS
 		//COST: 2*nlen
 		assert!(states.len()==nlen+1);
+		//aggressive: append halo states to the logup path so halo
+		//accepting states are summed on the LHS too (m==0 ⇒ path==states,
+		//plen==nlen, identical to before).
+		let (h_st_path, h_si_path) = if m>0 {
+			(fsm_acc.get_container("halo_states")?.lock().unwrap().to_vec(),
+			 fsm_acc.get_container("si_halo_states")?.lock().unwrap()
+				.to_vec())
+		} else { (vec![], vec![]) };
+		let path_states: Vec<FpVar<F>> =
+			states.iter().chain(h_st_path.iter()).cloned().collect();
+		let path_si: Vec<FpVar<F>> =
+			si_states.iter().chain(h_si_path.iter()).cloned().collect();
+		let plen = nlen + m;
 		let unit_cvar = new_const_var(&cs, F::from(1u32<<read_global_config().range2_bit));
 		let f_id_non_final = F::from(self.fsm_id+1);
 		let non_final_cvar = new_const_var(&cs, f_id_non_final); 
 		let lb_one= LinearCombination::from((F::one(),Variable::One));
 		//3.2.1 precompute the value of inverse values
-		let states_val = states.iter().map(|s| s.value().unwrap())
+		let states_val = path_states.iter().map(|s| s.value().unwrap())
 			.collect::<Vec<F>>();
 		let r1_val = r1.value()?;
 		let unit_val = unit_cvar.value()?;
@@ -1600,13 +1706,13 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 			let val = r1_val + s + unit_val *(inp_val + F::from(i as u32));
 			val.inverse().expect("INV err")
 		}).collect::<Vec<F>>();
-		assert!(vec_inv.len()==nlen+1); //because have 1 more last state
+		assert!(vec_inv.len()==plen+1); //path: states(nlen+1) + halo(m)
 
-		let si_state_vals = si_states.iter().map(|s| s.value().unwrap())
+		let si_state_vals = path_si.iter().map(|s| s.value().unwrap())
 			.collect::<Vec<F>>();
 		let c_non_final = non_final_cvar.value()?;
-		let mut exp_lhs_sum_val = vec![F::zero();nlen+1];
-		for i in 1..nlen+1{
+		let mut exp_lhs_sum_val = vec![F::zero();plen+1];
+		for i in 1..plen+1{
 			exp_lhs_sum_val[i] = exp_lhs_sum_val[i-1] + 
 				(si_state_vals[i] - c_non_final) * vec_inv[i];
 		}
@@ -1617,7 +1723,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		//3.2.2 now compute the constraints
 		let tp_r1 = var_to_tuple_adv(&r1, F::one());
 		let tp_inp_loc = var_to_tuple_adv(&inp_loc, unit_val);
-		for i in 0..nlen{
+		for i in 0..plen{
 			//let nc = cs.num_constraints();
 			//we skip item [0] because it's handled in
 			//the last round
@@ -1634,7 +1740,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 			let lb_item = LinearCombination::<F>( vec![
 				(unit_val * F::from((i+1) as u32), Variable::One),
 				tp_r1.clone(),
-				var_to_tuple_adv(&states[i+1], F::one()),
+				var_to_tuple_adv(&path_states[i+1], F::one()),
 				tp_inp_loc.clone(),
 			]);
 			let inv = vec_inv[i+1]; //improved using precompued value
@@ -1656,7 +1762,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 			//exp_lhs_sum[i+1] = exp_hs_sum[i] + inv[i] * si[i+1] - inv[i]*non_final_cvar
 			//which is: 
 			// inv[i] * si[i+1] = exp_lhs_sum[i+1] - exp_hs_sum[i] + non_final_cvar* inv[i]
-			let lb_si = var_to_lb(&si_states[i+1], F::one());
+			let lb_si = var_to_lb(&path_si[i+1], F::one());
 			let lb3 = LinearCombination::<F>(vec![
 				var_to_tuple_adv(&exp_lhs_sum[i+1], F::one()),
 				var_to_tuple_adv(&exp_lhs_sum[i], F::zero()-F::one()),
@@ -1671,7 +1777,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 			//		//to break long linear combination
 			//}
 		}
-		let lhs_sum = exp_lhs_sum[nlen].clone(); //take the last one
+		let lhs_sum = exp_lhs_sum[plen].clone(); //last (incl. halo path)
 		if b_perf{
 			log_perf(self.job_id, log_level, "validate_fsm_acc_container step 7", &mut gt);
 		}
@@ -2233,11 +2339,12 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for FsmAdvGadget<F>{
 
 	fn est_cost(&self)->usize{
 		// key is the low basis_pat_in_trace 
-		let est = 
-			118 * 
-			self.capacity.max_nibble_len 
-			* self.capacity.basis_pats_in_trace/10000 			
-		+ 107 * self.capacity.avg_pats_per_subsig * self.capacity.subsigs;
+		let est =
+			118 *
+			(self.capacity.max_nibble_len + self.capacity.halo_nibbles)
+			* self.capacity.basis_pats_in_trace/10000
+		+ 107 * self.capacity.avg_pats_per_subsig * self.capacity.subsigs
+		+ 2 * self.capacity.halo_nibbles;
 
 		est
 	}
@@ -2350,6 +2457,7 @@ pub mod tests_fsm_adv_gadget{
 			basis_pats_in_trace: 15*100,
 			basis_unique_states: 40*100,
 			basis_acc_states: 10*100,
+			halo_nibbles: 0,
 		};
 
 		let nibbles = stmt_wea.lock().unwrap().get_container("nibbles").unwrap()
@@ -2367,8 +2475,8 @@ pub mod tests_fsm_adv_gadget{
 		let fsm_id = ClamavDB::<Fr>::pm_acdfa_id(0, b_igc); //0 for all
 		let adv_faa = FsmAdvAdvice::new(false, //case sensitive,
 			1, //dist to wea
-			&nibbles, &acdfa, inp_state, 
-			inp_loc, &input_subsigs, &cap, fsm_id, 
+			&nibbles, &[], &acdfa, inp_state,
+			inp_loc, &input_subsigs, &cap, fsm_id,
 			&bundle.vec_subsig_stores[0], 0).unwrap(); //for SED
 		let stmt_faa = adv_faa.stmt_container;
 		let cfg_faa = stmt_faa.lock().unwrap().get_cfg(); 
@@ -2407,5 +2515,96 @@ pub mod tests_fsm_adv_gadget{
 			Some(vec_cfg),
 		);
 
+	}
+
+	/// M1b forward-halo: a "abc" pattern (nibbles 6,1,6,2,6,3) is split
+	/// so "ab" sits at the chunk tail and "c" in the halo; it must then
+	/// complete in the halo region (trace idx 64 > nlen=62) and the
+	/// committed boundary loc must stay at inp_loc+nlen. Negative control:
+	/// with halo off, "abc" never completes.
+	fn build_fsm_halo_locs(halo: &[Fr], m: usize) -> (Vec<Fr>, Vec<Fr>){
+		let path = "debug/sed/simple";
+		let db = ClamavDB::<Fr>::build_db_from_dir(path).expect("db err");
+		let wlen = 1usize;
+		//62 own nibbles: "ab"=6,1,6,2 at the tail (pos 58..61), else 0.
+		let mut own = vec![Fr::zero(); wlen*LEGS];
+		for (k,v) in [6u32,1,6,2].iter().enumerate(){
+			own[58+k] = Fr::from(*v);
+		}
+		let word = pad_word_to_multiple::<Fr>(&pack_nibbles(&own), wlen);
+		let act_size = word.len();
+		let adv_wea = WordExtractAdvAdvice::new(&word, act_size, false)
+			.expect("word_extract_adv err");
+		let stmt_wea = adv_wea.stmt_container;
+		let cfg_wea = stmt_wea.lock().unwrap().get_cfg();
+
+		let b_igc = false;
+		let bundle = &db.bundle_subsig;
+		let acdfa = &bundle.vec_acdfa[0];
+		let (nibble_len, state_bits) = (wlen*LEGS, acdfa.state_part_bits);
+		let cap = FsmAdvCapacity{max_nibble_len: nibble_len,
+			acdfa_state_part_bits: state_bits, subsigs: 5,
+			avg_pats_per_subsig: 4, basis_pats_in_trace: 15*100,
+			basis_unique_states: 40*100, basis_acc_states: 10*100,
+			halo_nibbles: m};
+		let nibbles = stmt_wea.lock().unwrap().get_container("nibbles")
+			.unwrap().lock().unwrap().to_vec();
+		let inp_state = Fr::from((acdfa.init_state + 1) as u32);
+		let inp_loc = Fr::from(1u32);
+		let input_subsigs = vec![Fr::from(
+			acdfa.gen_subsig_id(1, 1) as u32)];
+		let fsm_id = ClamavDB::<Fr>::pm_acdfa_id(0, b_igc);
+		let adv_faa = FsmAdvAdvice::new(false, 1, &nibbles, halo, &acdfa,
+			inp_state, inp_loc, &input_subsigs, &cap, fsm_id,
+			&bundle.vec_subsig_stores[0], 0).unwrap();
+		let stmt_faa = adv_faa.stmt_container;
+		let cfg_faa = stmt_faa.lock().unwrap().get_cfg();
+
+		let mut vec_cfg = vec![cfg_wea.clone(), cfg_faa];
+		ContainerConfig::adjust_locations(&mut vec_cfg);
+
+		//read the boundary loc and the accepting locs (witness).
+		let locs = stmt_faa.lock().unwrap()
+			.search_container("fsm_adv_stmt_cs fsm_acc locs").unwrap()
+			.lock().unwrap().to_vec();
+		let locs_final = stmt_faa.lock().unwrap()
+			.search_container("fsm_adv_stmt_cs fsm_acc locs_final").unwrap()
+			.lock().unwrap().to_vec();
+
+		//validate the full gadget constraints (incl. the extended logup).
+		let cps1 = stmt_wea.lock().unwrap().gen_stmt_components();
+		let cps2 = stmt_faa.lock().unwrap().gen_stmt_components();
+		let cps = cps1.0.into_iter().zip(cps2.0.into_iter()).map(|(a,b)|
+			vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
+		let mut fag = FsmAdvGadget::<Fr>::new(false, 1, &acdfa, &cap,
+			fsm_id, &vec![cfg_wea.clone()], &bundle.vec_subsig_stores[0]);
+		fag.set_container_cfg(vec_cfg.clone().into(), 1);
+		let _sizes = fag.get_to_add_size();
+		test_gadget_adv::<Fr>(Arc::new(fag), &word, &cps[0], &cps[1],
+			&cps[2], &cps[6], &cps[7],
+			&vec![cps[3].clone(), cps[4].clone(), cps[5].clone()].concat(),
+			4, false, Some(vec_cfg));
+		(locs, locs_final)
+	}
+
+	#[test]
+	fn test_fsm_adv_halo_straddle(){
+		let halo = vec![Fr::from(6u32), Fr::from(3u32),
+			Fr::zero(), Fr::zero()]; //"c" then filler
+		let (locs, locs_final) = build_fsm_halo_locs(&halo, 4);
+		//boundary loc committed at inp_loc+nlen = 1+62 = 63 (NOT +M).
+		assert_eq!(locs[1], Fr::from(63u32),
+			"oup_loc must stay at the true boundary");
+		//"abc" completes at trace idx 64 -> loc 65 (in the halo region).
+		assert!(locs_final.iter().any(|x| *x == Fr::from(65u32)),
+			"straddling match (loc 65) missing from locs_final");
+		assert!(locs_final.iter().all(|x| *x <= Fr::from(66u32)),
+			"no loc may exceed nlen+M+inp_loc");
+
+		//negative control: halo off -> "abc" never completes.
+		let (locs0, locs_final0) = build_fsm_halo_locs(&[], 0);
+		assert_eq!(locs0[1], Fr::from(63u32));
+		assert!(locs_final0.iter().all(|x| *x <= Fr::from(63u32)),
+			"without halo, no accepting loc may exceed the boundary");
 	}
 }
