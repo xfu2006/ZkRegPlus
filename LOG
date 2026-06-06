@@ -28804,7 +28804,43 @@ Goal 1. brief regression test
 	[a] make a branch sde_aggresive
 	[b] go to server and brief gression test on full_clam (stage 1 only)
 		to make sure it works
+	[c] 8:22AM==> 8:30am ==> (expected 12;30pm)
+		=> 1:50pm (running ok, so stopped early).
 
 Goal 2. build up enron data
+	[a] review the spec download script
+	[b] run spec download script
+	[c] review docs and generated data
+	[d] update measure.py
+	[e] think about translation
+	[f] download zombie first.
+	[g] finish testing zombie
+	[h] check how to use Zombie
+		-> does it perform both directions?
+		-> install dependency
+		-> update script to apply upates the dependency and check 
+			installation.
+	[i] do experiment with Zombie
+		[a] 4kb x driver liecense - 200k r1cs, and 2 sec proer time
+		[b] expand 10 times of keyword "driver license".
+		[c] cost is linear increase (if compare step by step)
+			BUT as the other costs stay, so it's not strictly 10 times.
+			it growing from 162k r1cs -> 276k r1cs (step wise it's incrassing
+				because keywords only accounts for a small portion of
+				entire thing)
+				prover time 1.25-> 5 sec (5x) more
+		[d] increase distance from 100 to 1000 and see what's the rate:
+			not changing and slightly done becaues the distance check
+			is an ADD. That is FREE!
+			
+
+Goal 3. design stage for sde aggresive mode
+	[a] clear the design: (1) right_leg of next chunk
+		(2) reverse pat matching (3) filter input_subsig
+	[b] consider design with minimum impact of existing code
+	[c] do the planning of implementation 
+		M0 -> DONE
+		M1 -> DONE
+		M2 -> 
 
 === TODOs ====
