@@ -25,6 +25,16 @@
 #        a regex is emitted but a constraint regex cannot express was dropped
 #        (checksum, date validity, broad "any combination" blobs); the loss is
 #        recorded as a warning. 'untranslatable' SITs are skipped (no file).
+#  Results manually sampled and audited by BORA author. Tests in two ways
+#  (1) ALL regex are tested (accepted) by Zombie
+#  (2) An LLM assisted query is to retrieve samples from web for each
+#       rule (e.g., driver license of NY). Then, these samples are 
+#       tested against the regex generated. If non-match, it means
+#       regexes generated are incorrect and they are removed (mostly
+#       because inaccurate specification in the original SIT or
+#       too ambiguous translation).
+#  ALL regexes generated are verified to accept the web crawled samples
+#   in regex_pat_samples/ 
 # -------------------------------------------
 
 import os
@@ -550,18 +560,48 @@ def patterns_to_regex(pattern_str):
     return regex, worst, warnings
 
 
-def sit_to_regex(proximity, pattern_str, keywords):
-    """Build the full proximity policy regex (PAT.{0,N}KWS)|(KWS.{0,N}PAT).
-    Returns (full_regex, status, warnings); reuses patterns_to_regex for PAT."""
-    pat, status, warns = patterns_to_regex(pattern_str)
-    if pat is None:
-        return None, status, warns
+# Per-SIT relaxations: for a few SITs the spec-faithful translation diverges from
+# the real-world format (the spec says e.g. "hyphen"/"check digit", but real
+# values differ -- verified via web-crawled samples, docs/reg_pat_samples.log).
+# A general rule can't fix these without breaking faithful SITs, so we bend just
+# these regexes toward reality via literal (old -> new) substring tweaks. Each
+# `old` is a unique substring of that SIT's generated regex. Logged as warnings.
+REGEX_RELAXATIONS = {
+    "sit-defn-poland-regon-number": [
+        (r"[0-9]{9}\x2D[0-9]{5}", r"[0-9]{9}\x2D?[0-9]{5}",
+         "real 14-digit REGON has no hyphen -> hyphen optional")],
+    "sit-defn-india-gst-number": [
+        (r"[\x2D\x20]?[0-9]", r"[\x2D\x20]?[A-Za-z0-9]",
+         "real GSTIN check char is alphanumeric, not a digit")],
+    "sit-defn-germany-tax-identification-number": [
+        (r"[0-9]{2}[0-9]", r"[0-9]{2}\x20?[0-9]",
+         "allow optional space before the check digit (real grouping)")],
+    "sit-defn-canada-drivers-license-number": [
+        (r"[0-9]{5}[0-9][0156]", r"[0-9]{5}\x2D?[0-9][0156]",
+         "Quebec format separator before the date-encoded tail")],
+}
+
+
+def _relax(slug, regex, warnings):
+    """Apply this SIT's real-world relaxations to its generated regex."""
+    for old, new, note in REGEX_RELAXATIONS.get(slug, []):
+        if old in regex:
+            regex = regex.replace(old, new)
+            warnings.append("relaxed to real-world: " + note)
+        else:
+            warnings.append("relaxation not applied (pattern absent): " + note)
+    return regex
+
+
+def sit_to_regex(proximity, pat, keywords):
+    """Build the full proximity policy regex (PAT.{0,N}KWS)|(KWS.{0,N}PAT) from a
+    PRECOMPUTED (and possibly relaxed) pure pattern. Returns the full regex, or
+    None if there are no keywords."""
     if not keywords:
-        return None, "untranslatable", ["no keywords"]
+        return None
     kws = "(" + "|".join(_esc(k) for k in keywords) + ")"
     n = str(proximity)
-    full = "({p}.{{0,{n}}}{k})|({k}.{{0,{n}}}{p})".format(p=pat, k=kws, n=n)
-    return full, status, warns
+    return "({p}.{{0,{n}}}{k})|({k}.{{0,{n}}}{p})".format(p=pat, k=kws, n=n)
 
 
 # --- I/O + verification ----------------------------------------------------
@@ -577,7 +617,7 @@ def write_one(directory, slug, regex):
         f.write(regex + "\n")
 
 
-def verify(regex):
+def verify_by_run_zombie(regex):
     """Lightweight syntax check, always run as part of the workflow: feed the
     regex to TestRegex in estimate mode (setting A) and report whether it
     parsed. We only care that 'Parse Successful!' is printed; the analysis that
@@ -707,8 +747,8 @@ def main():
             rows.append({"slug": rec["slug"], "status": "SKIP",
                          "warnings": warns, "verify": None})
             continue
-        full, _, _ = sit_to_regex(rec["proximity"], rec["pattern"],
-                                  rec["keywords"])
+        pat = _relax(rec["slug"], pat, warns)
+        full = sit_to_regex(rec["proximity"], pat, rec["keywords"])
         if full is None:
             rows.append({"slug": rec["slug"], "status": "SKIP",
                          "warnings": ["no keywords"], "verify": None})
@@ -717,7 +757,7 @@ def main():
         write_one(FULL_DIR, rec["slug"], full)
         rows.append({"slug": rec["slug"],
                      "status": "OK" if status == "exact" else "APPROX",
-                     "warnings": warns, "verify": verify(full),
+                     "warnings": warns, "verify": verify_by_run_zombie(full),
                      "samples": test_samples(rec["slug"], pat)})
 
     counts, s_pass, s_tot = write_log(rows)

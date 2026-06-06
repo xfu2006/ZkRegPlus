@@ -367,6 +367,15 @@ def write_log(results):
         f.write("\n\n")
         f.write("index_url:  %s\n" % INDEX_URL)
         f.write("records_in: %s/\n\n" % RECORDS_DIR)
+        f.write("== WHY SITs ARE DROPPED (rejected for ANY of these reasons) ==\n")
+        f.write("  (a) no pattern section     : no usable Pattern prose\n")
+        f.write("  (b) no proximity spec      : no patternsProximity / 'within N characters'\n")
+        f.write("  (c) no keyword list        : no positive keyword bullet\n")
+        f.write("  (d) ML/named-entity        : trainable / named-entity / exact-data-match\n")
+        f.write("  (e) non-English keyword(s) : at least one non-ASCII keyword\n")
+        f.write("  (f) Func_* classifier      : Pattern names a Func_* fn, no literal format\n")
+        f.write("  (g) verified non-matching  : hardcoded remove list; regex matches no real\n")
+        f.write("                               sample (see docs/reg_pat_samples.log)\n\n")
         # document the hardcoded remove list (criterion g): SITs whose Pattern is
         # regex-shaped but whose generated regex was verified, via web-crawled
         # real samples (docs/reg_pat_samples.log), to not match real values.
@@ -387,6 +396,14 @@ def write_log(results):
         f.write("scanned:  %d\n" % len(results))
         f.write("accepted: %d\n" % len(accepted))
         f.write("rejected: %d\n" % len(rejected))
+        markers = [("a", "no pattern section"), ("b", "no proximity spec"),
+                   ("c", "no keyword list"), ("d", "ML/named-entity"),
+                   ("e", "non-English keyword"), ("f", "Func_*"),
+                   ("g", "verified to not match real samples")]
+        f.write("rejected by reason (a SIT may fail several):\n")
+        for code, mark in markers:
+            n = sum(1 for r in rejected if any(mark in x for x in r["reasons"]))
+            f.write("  (%s) %-22s %d\n" % (code, mark, n))
     return len(accepted), len(rejected)
 
 

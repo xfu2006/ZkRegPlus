@@ -28855,6 +28855,7 @@ Goal 1. Milestone 0 of sde_aggressive sub-project
 
 Goal 2. Milestone 1
 	[a] plan
+	[b] review plan
 
 Goal 2. parse and generate regex for Zombie
 	[a] filter more examples
@@ -28864,5 +28865,7 @@ Goal 2. parse and generate regex for Zombie
 	[e] design test.
 	[f] design the procedure to generate samples of match.
 	[g] review the samples generated.
+	[h] look at failed cases.
+	[i] fix all samples. no all regex done.
 
 === TODOs ====
