@@ -5467,7 +5467,8 @@ use utils::consts::{read_global_config, get_global_config};
 				vec_pm_bounds[1..].to_vec()
 			}else{vec_pm_bounds};
 
-			SubsigStepStoreItem{subsig_id, igc, vec_pm_bounds}
+			SubsigStepStoreItem{subsig_id, igc, vec_pm_bounds,
+				is_backward: false}
 		};
 		let si_100 = to_si(&subsig100_steps); 
 		let si_200 = to_si(&subsig200_steps); 
@@ -5490,7 +5491,7 @@ use utils::consts::{read_global_config, get_global_config};
 			(206usize, si_206),
 		].into_iter().map(|x| x).collect::<HashMap<usize, SubsigStepStoreItem>>();
 		let subsig_store_info = SubsigStepStore{
-			subsig_ids, subsig_to_steps, 
+			subsig_ids, subsig_to_steps, b_aggressive: false,
 		};
 		let capacity= DischargeAdvCapacity{
 			max_nibble_len: 62, 

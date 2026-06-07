@@ -107,6 +107,8 @@ pub const ID_ENCODED_RG_END:u32=0x71090005;
 pub const ID_ENCODED_LAST_STEP:u32=0x71090006;
 pub const ID_ENCODED_PREV_ENCODED:u32=0x71090007;
 pub const ID_SUBSIG_IGC:u32=0x71090008;
+/// Aggressive mode: per-subsig backward-direction flag table.
+pub const ID_SUBSIG_IS_BACKWARD:u32=0x71090009;
 
 pub const ID_SIG_NO_CRIT:u32 = 0x73010001;
 pub const ID_SIG_NO_CRIT_COUNT:u32 = 0x73020001;
@@ -469,10 +471,37 @@ impl SubsigPatternStore{
 	}
 }
 
+/// Forward pm-bounds chain -> keyword-first backward chain
+/// (aggressive mode). The stored chain stays forward; this is applied
+/// at lookup-generation / processing time when is_backward is set.
+///   new step 1 = keyword (forward's LAST pat), begin = `begin_anywhere`;
+///   each reversed step takes its forward neighbor's gap as a positive
+///   backward magnitude (abs value; direction is carried by the
+///   is_backward flag, never a sign). The forward step-1 begin is
+///   DROPPED (sound under the DLP begin-guard, which requires it to be
+///   the vacuous "anywhere" begin).
+/// Generic over the pattern key so both the stored (pat_id: usize) and
+/// the content (word: String) representations reuse it.
+/// Involution: reverse(reverse(C)) == C on the begin-normalized domain
+/// (i.e. when C's step-1 begin already equals `begin_anywhere`).
+pub fn reverse_pm_bounds<T: Clone>(
+	fwd: &[(T, (usize, usize))],
+	begin_anywhere: (usize, usize),
+) -> Vec<(T, (usize, usize))> {
+	let k = fwd.len();
+	if k == 0 { return vec![]; }
+	let mut out = Vec::with_capacity(k);
+	out.push((fwd[k - 1].0.clone(), begin_anywhere));      // keyword anchor
+	for j in 1..k {
+		out.push((fwd[k - 1 - j].0.clone(), fwd[k - j].1)); // shift gap back one
+	}
+	out
+}
+
 impl SubsigStepStoreItem{
 	pub fn new(subsig_id: usize, igc: bool,
 		vec_pm_bounds: Vec<(usize,(usize,usize))>)->Self{
-		Self{subsig_id, vec_pm_bounds, igc}
+		Self{subsig_id, vec_pm_bounds, igc, is_backward: false}
 	}
 
 	pub fn dump(&self){
@@ -486,7 +515,8 @@ impl SubsigStepStoreItem{
 
 impl SubsigStepStore{
 	pub fn new()->Self{
-		Self{subsig_ids: vec![], subsig_to_steps: HashMap::new()}
+		Self{subsig_ids: vec![], subsig_to_steps: HashMap::new(),
+			b_aggressive: false}
 	}
 	pub fn add(&mut self, item: &SubsigStepStoreItem){
 		let subsig_id = item.subsig_id;
@@ -651,6 +681,25 @@ impl SubsigStepStore{
 		}).collect::<Vec<(F,F)>>();
 
 		all_tuples = [&all_tuples[..], &tuples2[..]].concat();
+
+		//2b. aggressive mode only: commit per-subsig backward flag.
+		// Flag-off => b_aggressive=false => zero rows => byte-identical
+		// lookup. Covers ALL subsigs (0/1) so the gadget authenticates
+		// each subsig's direction by simple membership.
+		if self.b_aggressive {
+			let tbl_id_start = F::from(1u64<<32)
+				* F::from(ID_SUBSIG_IS_BACKWARD);
+			let mut tuples3 = self.subsig_ids.par_iter().map(|subsig_id|{
+				let item = self.subsig_to_steps.get(subsig_id)
+					.expect(&format!("cannot find subsigid: {}",
+						subsig_id));
+				let f = if item.is_backward {F::one()} else {F::zero()};
+				let tbl_id = tbl_id_start + F::from(*subsig_id as u64);
+				(tbl_id, f)
+			}).collect::<Vec<(F,F)>>();
+			all_tuples.append(&mut tuples3);
+		}
+
 		all_tuples.sort();
 
 		if B_DEBUG {//key of all_tuples should be sorted
@@ -717,7 +766,8 @@ impl SubsigStepStore{
 		let mut subsig_ids = inp_subsigs_id.clone();
 		subsig_ids.sort();
 
-		let res = Self{subsig_ids, subsig_to_steps: new_map};
+		let res = Self{subsig_ids, subsig_to_steps: new_map,
+			b_aggressive: self.b_aggressive};
 
 		res
 	}
@@ -790,14 +840,26 @@ impl SubsigStepStore{
 					entries.push(vec![subsig_id, 0, 0, 0, 0]);
 				}
 			}else{
-				//2. generate the records for SubsigStepItem 
+				//2. generate the records for SubsigStepItem
 				let item = &self.subsig_to_steps.get(&subsig_id).unwrap();
-				for step in &item.vec_pm_bounds{
+				// Aggressive backward subsig: emit the reversed,
+				// keyword-first chain so the gadget reads it in
+				// backward-walk order (id1 increments in emission
+				// order => keyword becomes step 1). Forward items
+				// and flag-off builds keep the stored order.
+				let reversed;
+				let steps: &Vec<(usize,(usize,usize))> =
+					if item.is_backward {
+						reversed = reverse_pm_bounds(
+							&item.vec_pm_bounds, (0, max));
+						&reversed
+					} else { &item.vec_pm_bounds };
+				for step in steps{
 					let pat_id = step.0; //no adjust (already did in table)
 					let (r_s, r_e) = (step.1.0, step.1.1);
 					entries.push(vec![subsig_id, id1, pat_id, r_s, r_e]);
 					id1+=1;
-				}//for step 
+				}//for step
 			}//end of else
 
 			//3. generate the dummy END record
@@ -1653,7 +1715,12 @@ impl <F:PrimeField> ClamavDB<F>{
 				}
 				let item = SubsigStepStoreItem{subsig_id: subsig_id,
 					igc: s.vec_subsig_obj[i].b_ignore_case,
-					vec_pm_bounds: vec_bounds};
+					vec_pm_bounds: vec_bounds,
+					// keyword-rightmost (anchor_dir==1) => backward.
+					// anchor_dir is only populated under aggressive
+					// mode, so this is false (empty) when flag-off.
+					is_backward:
+						s.vec_subsig_anchor_dir.get(i)==Some(&1)};
 				store_step_items.push(item);
 
 				//5. build the subsig_step_info_store_item 
@@ -1719,6 +1786,11 @@ impl <F:PrimeField> ClamavDB<F>{
 
 		//3. build the store2: SubsigStepStore
 		let mut store_step = SubsigStepStore::new();
+		// DB self-mark: anchor_dir is populated only under aggressive
+		// mode (build_db Step 1b), so a non-empty anchor_dir on any
+		// selected sig means this is an aggressive build.
+		store_step.b_aggressive = selected_sigs.iter()
+			.any(|s| !s.vec_subsig_anchor_dir.is_empty());
 		for item in store_items_step{
 			store_step.add(&item);
 		}
@@ -1974,8 +2046,33 @@ impl <F:PrimeField> ClamavDB<F>{
 						"AggressiveShapeErr in sig {}: {:?}",
 						s.name, e)))?;
 				s.vec_subsig_anchor_dir = anchors;
+				// DLP restriction: reversal of a keyword-rightmost
+				// (backward) chain drops the leftmost begin-offset.
+				// Dropping it is discharge-sound (only broadens
+				// candidate positions => more Maybe => fewer
+				// discharges). An UPPER-UNBOUNDED begin (begin.1==MAX,
+				// "anywhere") is also exactly equivalent; a lower-
+				// bounded (k,MAX) begin (e.g. the degenerate '000'
+				// fan-out variant whose digit bagword was dropped) is
+				// a sound over-approximation. Reject only a genuine
+				// upper-BOUNDED absolute anchor (begin.1 finite, like
+				// ^.{0,10}), which is not a DLP proximity shape.
+				for (i, &d) in s.vec_subsig_anchor_dir.iter().enumerate() {
+					if d != 1 { continue; }
+					if let Some(first) = s.vec_subsig_pm_bounds.get(i)
+						.and_then(|v| v.first()) {
+						if first.1.1 != usize::MAX {
+							return Err(Error::Other(format!(
+								"AggressiveShapeErr: backward subsig {} \
+								 of sig '{}' has upper-bounded begin {:?}; \
+								 not a DLP proximity shape", i, s.name,
+								first.1)));
+						}
+					}
+				}
 				aggressive_max_span_nibbles =
 					aggressive_max_span_nibbles.max(span);
+				s.assert_aggressive_consistent();
 			}
 		}
 		if b_perf {flog_perf(0, log_level, &format!("Build_DB: Step 1: Generate signatures"), &mut timer,
@@ -2368,9 +2465,77 @@ impl <F:PrimeField> ClamavDB<F>{
 mod tests_clam_db{
 	extern crate utils;
 
-	use crate::{clam_db::{ClamavDB},clamav::{default_clamav_cfg}};
-	use utils::{os::{proj_root}};
+	use crate::{clam_db::{ClamavDB, SubsigStepStore, SubsigStepStoreItem,
+		reverse_pm_bounds}, clamav::{default_clamav_cfg}};
+	use crate::type_def::ClamSigType;
+	use utils::{os::{proj_root}, consts::read_global_config};
 	use ark_bn254::{Fr};
+	use ark_ff::PrimeField;
+
+	/// T1+T2: reverse_pm_bounds golden output + involution on the
+	/// begin-normalized domain.
+	#[test]
+	fn test_m3_reverse_golden(){
+		let max = usize::MAX;
+		//3-step forward chain [p1,p2,p3=kw].
+		let fwd: Vec<(usize,(usize,usize))> =
+			vec![(1,(99,99)), (2,(10,20)), (3,(30,40))];
+		let bwd = reverse_pm_bounds(&fwd, (0, max));
+		//keyword(3) first w/ anywhere begin; gaps shifted back one;
+		//forward begin (99,99) dropped.
+		assert_eq!(bwd, vec![(3,(0,max)), (2,(30,40)), (1,(10,20))]);
+		//2-step case.
+		let f2: Vec<(usize,(usize,usize))> = vec![(7,(5,5)), (9,(0,4))];
+		assert_eq!(reverse_pm_bounds(&f2,(0,max)),
+			vec![(9,(0,max)), (7,(0,4))]);
+		//involution on begin-normalized domain (step-1 begin already
+		//anywhere): reverse(reverse(C)) == C.
+		let norm: Vec<(usize,(usize,usize))> =
+			vec![(1,(0,max)), (2,(10,20)), (3,(30,40))];
+		let rr = reverse_pm_bounds(&reverse_pm_bounds(&norm,(0,max)),
+			(0,max));
+		assert_eq!(rr, norm);
+		//empty chain.
+		assert!(reverse_pm_bounds::<usize>(&[], (0,max)).is_empty());
+	}
+
+	/// T3+T5: gen_cols emits reversed rows for an is_backward item
+	/// (keyword becomes step 1) and forward order otherwise.
+	#[test]
+	fn test_m3_gen_cols_backward(){
+		let rb = read_global_config().range2_bit;
+		let f = |u: usize| Fr::from(u as u64);
+		let mut store = SubsigStepStore::new();
+		store.b_aggressive = true;
+		//forward subsig 100: pats 5,6 in stored order.
+		store.add(&SubsigStepStoreItem{subsig_id:100, igc:false,
+			vec_pm_bounds: vec![(5,(1,2)),(6,(3,4))], is_backward:false});
+		//backward subsig 200: stored fwd [7,8] -> emitted reversed [8,7].
+		store.add(&SubsigStepStoreItem{subsig_id:200, igc:false,
+			vec_pm_bounds: vec![(7,(1,2)),(8,(3,4))], is_backward:true});
+		store.finalize();
+		let cols = store.gen_cols::<Fr>(rb, None);
+		//cols: [subsig, step, pat, rg_s, rg_e, encoded]; collect pat
+		//order per subsig (skip dummy 0/max rows).
+		let max = (1usize<<rb)-1;
+		let pats_of = |sid: usize| -> Vec<usize> {
+			let mut v = vec![];
+			for r in 0..cols[0].len(){
+				if cols[0][r]==f(sid) {
+					let p = &cols[2][r];
+					if *p!=Fr::from(0u64) && *p!=f(max) {
+						//recover small pat id by trial (<=8).
+						for cand in 1..16usize{
+							if *p==f(cand){ v.push(cand); break; }
+						}
+					}
+				}
+			}
+			v
+		};
+		assert_eq!(pats_of(100), vec![5,6], "forward unchanged");
+		assert_eq!(pats_of(200), vec![8,7], "backward reversed (kw=8 first)");
+	}
 
 	#[test]
 	fn test_load_clam_db(){

@@ -160,6 +160,12 @@ pub struct ClamavSig{
 	/// Empty unless b_aggressive_sde_for_rep built this DB.
 	#[serde(default)]
 	pub vec_subsig_anchor_dir: Vec<i8>,
+	/// Aggressive mode fan-out map: original subsig id -> [start,end]
+	/// (inclusive) range in the rebuilt vec_subsig_obj. The orphaned
+	/// base is dropped; an unfanned subsig maps to a single index.
+	/// Empty unless b_aggressive_sde_for_rep built this DB.
+	#[serde(default)]
+	pub vec_fanout_map: Vec<(usize, usize)>,
 }
 
 #[derive(Clone,Serialize,Deserialize)]
@@ -260,7 +266,13 @@ pub struct SubsigStepStoreItem{
 	/// *** SPECIFIC NOTE ***: here (a,b) are the ORIGINAL vec_pm_bounds
 	/// value in ClamavSig object PLUS the pattern word length (reason:
 	///  the location of the acc_state is at the END of the word)
-	pub vec_pm_bounds: Vec<(usize, (usize, usize))>
+	pub vec_pm_bounds: Vec<(usize, (usize, usize))>,
+	/// Aggressive mode: process this chain keyword-first / backward.
+	/// Stored chain stays forward; this flag drives the reversed
+	/// lookup rows + backward gadget query. False unless
+	/// b_aggressive_sde_for_rep tagged this subsig keyword-rightmost.
+	#[serde(default)]
+	pub is_backward: bool,
 }
 
 
@@ -275,6 +287,11 @@ pub struct SubsigStepStore{
 	/// map from subsig_id to the record. We assume that
 	/// item is small, so returning by clone is ok.
 	pub subsig_to_steps: HashMap<usize, SubsigStepStoreItem>,
+	/// DB self-mark: this store was built under aggressive mode.
+	/// Gates the per-subsig is_backward lookup column so flag-off
+	/// emits zero extra rows (byte-identical lookup).
+	#[serde(default)]
+	pub b_aggressive: bool,
 }
 
 

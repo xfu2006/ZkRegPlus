@@ -476,6 +476,7 @@ pub fn gen_clamav_sig(s: &str, sigtype: ClamSigType, cfg: &ClamavApproxConfig)
 		vec_pcre_info: vec![],
 		b_no_crit_pat: false,
 		vec_subsig_anchor_dir: vec![],
+		vec_fanout_map: vec![],
 	};
 	let raw_subsigs: Vec<String> = parts[3..].to_vec();
 	sig.preprocess(cfg);
@@ -1356,59 +1357,64 @@ impl ClamavSig{
 		hs:&HashMap<String,Vec<usize>>, hs_igc: &HashMap<String,Vec<usize>>,
 		_fname: &str)
 		->(TriVal, usize, usize){
-		let pat = &self.vec_subsig_pm_bounds[subsig_id];
+		let b_igc = self.vec_subsig_obj[subsig_id].b_ignore_case;
+		self.eval_pm_bounds_core(
+			&self.vec_subsig_pm_bounds[subsig_id], false, b_igc, hs, hs_igc)
+	}
+
+	/// Shared pm-bounds propagation core for forward and backward
+	/// (aggressive keyword-anchored) evaluation. `pat` is a step chain
+	/// of (word, (a,b)); positions are word-END indices.
+	///   forward step:  window = [x + a + len(word), x + b + len(word)]
+	///   backward step (is_backward, id>=1): the previously-placed
+	///     pattern is AHEAD, so window = [x - b - prev_len,
+	///     x - a - prev_len] (bounds swap, saturating floor 0); the
+	///     length term uses the PREVIOUS word's length. Step 0 is always
+	///     the forward-style anchor (keyword with the "anywhere" begin).
+	/// is_backward==false reproduces the original forward evaluator
+	/// exactly (flag-off byte-identical discharge).
+	fn eval_pm_bounds_core(&self,
+		pat: &[(String,(usize,usize))], is_backward: bool, b_igc: bool,
+		hs:&HashMap<String,Vec<usize>>, hs_igc:&HashMap<String,Vec<usize>>)
+		->(TriVal, usize, usize){
 		let mut cost = 0;
 		let mut cost2 = 0;
-		//if pat.len()==0{
-			//println!("WARN: pm bounds empty for sig: {}, subsig_id: {}",
-			//	self.to_str(), subsig_id);
-			//NO need to return Maybe as it will skip the loop and
-			//arr_pos decides the return value
-		//}
-		// DEBUG USE 69200.h.* gate: host-side trace for the two
-		// known-failing subsigs (sig_id 34555 ss#2, 35355 ss#0).
-		let probe_69200 = std::env::var("ZKR_PROBE_69200").is_ok()
-			&& (self.name == "Email.Phishing.VOF1-6295244-1"
-				|| self.name == "Win.Virus.Hematite-6232506-0");
-		if probe_69200 {
-			println!("DEBUG USE 69200.h.bounds: sig=\"{}\" \
-				ssid={} pat_len={} pm_bounds={:?}",
-				self.name, subsig_id, pat.len(), pat);
-		}
 		let mut arr_pos = vec![0];
+		let mut prev_len = 0usize;
 		for id in 0..pat.len(){
 			let word = &pat[id].0;
 			let rg = pat[id].1;
-			let allowed = arr_pos.iter().map(|x|{
-				let min = if rg.0==usize::MAX {usize::MAX} 
-					else {x + rg.0 + word.len()};
-				let max = if rg.1==usize::MAX {usize::MAX}
-					else {x + rg.1 + word.len()};
-				let min = if min>RANGE_MAX {RANGE_MAX} else {min};
-				let max = if max>RANGE_MAX {RANGE_MAX} else {max};
-				(min,max) 
+			let back = is_backward && id>=1; //step 0 = forward anchor
+			let len_term = if back {prev_len} else {word.len()};
+			let mut allowed = arr_pos.iter().map(|x|{
+				if !back {
+					let min = if rg.0==usize::MAX {usize::MAX}
+						else {x + rg.0 + len_term};
+					let max = if rg.1==usize::MAX {usize::MAX}
+						else {x + rg.1 + len_term};
+					let min = if min>RANGE_MAX {RANGE_MAX} else {min};
+					let max = if max>RANGE_MAX {RANGE_MAX} else {max};
+					(min,max)
+				}else{
+					//backward: subtract, swap bounds, saturating floor 0
+					(x.saturating_sub(rg.1.saturating_add(len_term)),
+					 x.saturating_sub(rg.0.saturating_add(len_term)))
+				}
 			}).collect::<Vec<(usize,usize)>>();
-			let arr_cur_pos = if self.vec_subsig_obj[subsig_id].b_ignore_case{
+			//backward windows descend as x ascends; the binary search
+			//below needs windows sorted ascending by start.
+			if back { allowed.sort(); }
+			let arr_cur_pos = if b_igc{
 				hs_igc.get(word).map_or(vec![], |v| v.to_vec())
 			}else{
 				hs.get(word).map_or(vec![], |v| v.to_vec())
 			};
 			cost2+= arr_cur_pos.len();
-			// DEBUG USE 69200.h.step capture (pre-consume) — keep
-			// short head for log size; gated via probe_69200.
-			let _69200_cur_n = if probe_69200 {arr_cur_pos.len()}
-				else {0usize};
-			let _69200_cur_head: Vec<usize> = if probe_69200 {
-				arr_cur_pos.iter().take(8).copied().collect()
-			} else { vec![] };
-			let _69200_prev_n = if probe_69200 {arr_pos.len()}
-				else {0usize};
-
 			let allowed_pos = arr_cur_pos.into_iter().filter(|x|{
 				if allowed.len()==0 {return false;}
 
 				//FAST version
-				//binary search find the SMALLEST idx s.t. allowd[idx]>=x 
+				//binary search find the SMALLEST idx s.t. allowd[idx]>=x
 				let mut idx1= 0;
 				let mut idx2 = allowed.len()-1;
 				let mut idx = (idx1+idx2)/2;
@@ -1448,30 +1454,9 @@ impl ClamavSig{
 			).collect::<Vec<usize>>();
 			cost += allowed_pos.len();
 			arr_pos = allowed_pos;
-			// DEBUG USE 69200.h.step post-iteration trace.
-			if probe_69200 {
-				let head: Vec<usize> = arr_pos.iter().take(8)
-					.copied().collect();
-				println!("DEBUG USE 69200.h.step: \
-					sig=\"{}\" ssid={} step={} \
-					word=\"{}\" rg=({},{}) \
-					prev.n={} cur.n={} cur.head={:?} \
-					next.n={} next.head={:?}",
-					self.name, subsig_id, id, word,
-					rg.0, rg.1,
-					_69200_prev_n, _69200_cur_n,
-					_69200_cur_head,
-					arr_pos.len(), head);
-			}
+			prev_len = word.len();
 		}
 		let res = if arr_pos.len()>0 {TriVal::Maybe} else {TriVal::False};
-		if probe_69200 {
-			println!("DEBUG USE 69200.h.final: sig=\"{}\" \
-				ssid={} arr_pos.n={} cost={} cost2={} \
-				res={:?}",
-				self.name, subsig_id, arr_pos.len(),
-				cost, cost2, res);
-		}
 		(res, cost, cost2)
 	}
 
@@ -2260,6 +2245,41 @@ impl ClamavSig{
 	/// bodies are HIR-checked (anchor + span); hex subsigs contribute
 	/// their nibble length. Returns (max span in NIBBLES, per-subsig
 	/// anchor dir). Err on any non-conforming pcre body.
+	/// Aggressive mode invariant: every per-subsig array has the same
+	/// length, there are no counter constraints, and the fan-out map is
+	/// a contiguous in-bounds partition of the rebuilt subsig array.
+	/// Call after gen_approx_bagwords/pm_bounds + anchor_dir are set.
+	pub fn assert_aggressive_consistent(&self){
+		let n = self.vec_subsig_obj.len();
+		let chk = |len: usize, name: &str|{
+			assert_eq!(len, n, "aggressive: {} len {} != \
+				vec_subsig_obj len {} (sig {})", name, len, n, self.name);
+		};
+		chk(self.vec_subsigs.len(), "vec_subsigs");
+		chk(self.vec_bneg.len(), "vec_bneg");
+		chk(self.vec_bcase_sensitive.len(), "vec_bcase_sensitive");
+		chk(self.vec_pcre_info.len(), "vec_pcre_info");
+		chk(self.vec_subsig_pm_bounds.len(), "vec_subsig_pm_bounds");
+		chk(self.vec_subsig_bagwords.len(), "vec_subsig_bagwords");
+		chk(self.vec_subsig_anchor_dir.len(), "vec_subsig_anchor_dir");
+		for o in &self.vec_subsig_obj{
+			assert!(matches!(o.subsig_type, SubSigType::GeneralRegex),
+				"aggressive: subsig must be GeneralRegex (no counter \
+				 constraints), sig {}", self.name);
+		}
+		//fan-out map is a contiguous in-bounds partition of [0,n).
+		let mut next = 0usize;
+		for (k,(s,e)) in self.vec_fanout_map.iter().enumerate(){
+			assert!(*s==next && *e>=*s && *e<n,
+				"aggressive: fanout_map[{}]=({},{}) not contiguous/\
+				 in-bounds (next={}, n={}) sig {}",
+				k, s, e, next, n, self.name);
+			next = e+1;
+		}
+		assert_eq!(next, n, "aggressive: fanout_map covers {} != {} \
+			subsigs (sig {})", next, n, self.name);
+	}
+
 	pub fn compute_aggressive_shape(&self, _cfg: &ClamavApproxConfig)
 		-> Result<(usize, Vec<i8>), AggShapeErr> {
 		let n = self.vec_pcre_info.len();
@@ -2298,35 +2318,48 @@ impl ClamavSig{
 		// the counter loops finish (counter-created ids are
 		// always > N, so \b{id}\b can't collide).
 		let mut variant_rewrites: Vec<(usize, String)> = vec![];
+		let b_aggr = cfg.b_aggressive_sde_for_rep;
+		// Aggressive mode rebuilds every per-subsig array in lockstep:
+		// each original subsig is REPLACED by its fan-out variants (the
+		// orphaned base is dropped) or kept as a single entry if it has
+		// no rep to expand. fanout_map records each original's
+		// [start,end] range; variants INHERIT the original's b_neg /
+		// case / pcre_info; vec_subsigs gets the variant regex.
+		let mut new_subsigs: Vec<String> = vec![];
+		let mut new_bneg: Vec<bool> = vec![];
+		let mut new_bcase: Vec<bool> = vec![];
+		let mut new_pcre: Vec<PcreInfo> = vec![];
+		let mut fanout_map: Vec<(usize,usize)> = vec![];
 		for (id,x) in self.vec_subsigs.iter().enumerate(){
-			vec_sig_obj.push( SubSigObj{value: x.clone(),
-				subsig_type: SubSigType::GeneralRegex,
-				real_value: x.clone(),
-				b_ignore_case: !self.vec_bcase_sensitive[id],
-				set_subsigs: HashSet::<usize>::new(),
-				min_required: 0,
-				});
-			if cfg.b_aggressive_sde_for_rep
-				&& self.vec_pcre_info[id].b_pcre {
-				let b_igc = !self.vec_bcase_sensitive[id];
+			let b_igc = !self.vec_bcase_sensitive[id];
+			if !b_aggr {
+				//NON-aggressive: byte-identical to the original
+				//(push the base only; no map, no array rebuild).
+				vec_sig_obj.push( SubSigObj{value: x.clone(),
+					subsig_type: SubSigType::GeneralRegex,
+					real_value: x.clone(), b_ignore_case: b_igc,
+					set_subsigs: HashSet::<usize>::new(),
+					min_required: 0});
+				continue;
+			}
+			let variants_opt = if self.vec_pcre_info[id].b_pcre {
 				let (_t, body, _f) = extract_clamav_reg(
 					&self.vec_pcre_info[id].original_str);
-				if let Some(variants) = expand_rep_subsig(
-					&body, b_igc, cfg) {
+				expand_rep_subsig(&body, b_igc, cfg)
+			} else { None };
+			let start = vec_sig_obj.len();
+			match variants_opt {
+				Some(variants) => {
 					let mut new_ids: Vec<usize> = vec![];
 					for v in &variants {
 						//Variants are emitted in PCRE \xNN body
-						//form; gen_approx_bagwords feeds
-						//real_value into rustomaton_to_hir which
-						//expects hex form. Convert here so
-						//variant bagwords match the same encoding
-						//as the base obj's preprocessed regex.
+						//form; convert real_value to hex so the
+						//variant bagwords match the base encoding.
 						let (v_hex, _pi) =
-							pcre_to_rustomaton_regex(
-								v, cfg.variant_combine_cap,
+							pcre_to_rustomaton_regex(v,
+								cfg.variant_combine_cap,
 								cfg.repeat_limit);
-						let newid = vec_sig_obj.len();
-						new_ids.push(newid);
+						new_ids.push(vec_sig_obj.len());
 						vec_sig_obj.push(SubSigObj{
 							value: v.clone(),
 							subsig_type:
@@ -2335,16 +2368,57 @@ impl ClamavSig{
 							b_ignore_case: b_igc,
 							set_subsigs:
 								HashSet::<usize>::new(),
-							min_required: 0,
-						});
+							min_required: 0});
+						new_subsigs.push(v.clone());
+						new_bneg.push(self.vec_bneg[id]);
+						new_bcase.push(
+							self.vec_bcase_sensitive[id]);
+						new_pcre.push(
+							self.vec_pcre_info[id].clone());
 					}
 					let parts: Vec<String> = new_ids.iter()
 						.map(|i| format!("{}", i)).collect();
-					let tok = format!("({})",
-						parts.join("|"));
-					variant_rewrites.push((id, tok));
+					variant_rewrites.push((id,
+						format!("({})", parts.join("|"))));
+				}
+				None => {
+					//unfanned: keep this subsig as a single
+					//remapped entry.
+					let newid = vec_sig_obj.len();
+					vec_sig_obj.push( SubSigObj{
+						value: x.clone(),
+						subsig_type:
+							SubSigType::GeneralRegex,
+						real_value: x.clone(),
+						b_ignore_case: b_igc,
+						set_subsigs:
+							HashSet::<usize>::new(),
+						min_required: 0});
+					new_subsigs.push(x.clone());
+					new_bneg.push(self.vec_bneg[id]);
+					new_bcase.push(
+						self.vec_bcase_sensitive[id]);
+					new_pcre.push(
+						self.vec_pcre_info[id].clone());
+					variant_rewrites.push((id,
+						format!("{}", newid)));
 				}
 			}
+			fanout_map.push((start, vec_sig_obj.len()-1));
+		}
+		// Aggressive: no counter constraints are supported (the shape
+		// guard guarantees pure regex DNF). Assert before the counter
+		// loops so the rebuilt arrays can't be silently misaligned.
+		if b_aggr {
+			let has_counter =
+				!find_all(r"\d+( *)(=|<|>|==)( *)\d+",
+					&self.expr).is_empty()
+				|| !find_all(
+					r"\(\d+((\||\&)\d+)+\)( *)(>|=|<)( *)(\d+)(,\d+)?",
+					&self.expr).is_empty();
+			assert!(!has_counter, "aggressive mode does not support \
+				counter constraints: sig {} expr {}",
+				self.name, self.expr);
 		}
 
 
@@ -2531,21 +2605,37 @@ impl ClamavSig{
 			sexpr2 = sexpr2.replace(&old_subexp, &newexpr);
 		}
 
-		// M5: replace each bare original id with its fan-out
-		// disjunction. Counter loops above created new ids >=
-		// self.vec_subsigs.len(); \b{id}\b for id < that range
-		// matches only the original-id tokens left in sexpr2.
+		// Aggressive remaps EVERY original id (fanned -> variant union,
+		// unfanned -> new index), and remapped indices can collide with
+		// original-id tokens, so a single-pass \b{id}\b rewrite would
+		// re-match digits inside an already-substituted token. Use a
+		// collision-safe two-phase rewrite: original id -> underscore
+		// placeholder (underscores are word chars, so \b{digit}\b can't
+		// match the inner digits), then placeholder -> final token.
+		// Non-aggressive: variant_rewrites is empty -> both phases noop.
+		for (id, _tok) in &variant_rewrites {
+			let re = Regex::new(&format!(r"\b{}\b", id)).unwrap();
+			sexpr2 = re.replace_all(&sexpr2,
+				format!("__MAP_{}_END__", id).as_str()).to_string();
+		}
 		for (id, tok) in &variant_rewrites {
-			let re = Regex::new(&format!(r"\b{}\b", id))
-				.unwrap();
-			sexpr2 = re.replace_all(&sexpr2, tok.as_str())
-				.to_string();
+			sexpr2 = sexpr2.replace(
+				&format!("__MAP_{}_END__", id), tok);
 		}
 
 		//6. validate the rest of expression are ok
 		validate_expr(&sexpr2, &self.name);
 		self.expr = sexpr2;
 		self.vec_subsig_obj = vec_sig_obj;
+		// Aggressive: swap in the lockstep-rebuilt per-subsig arrays
+		// + the fan-out map. (Non-aggressive leaves them as parsed.)
+		if b_aggr {
+			self.vec_subsigs = new_subsigs;
+			self.vec_bneg = new_bneg;
+			self.vec_bcase_sensitive = new_bcase;
+			self.vec_pcre_info = new_pcre;
+			self.vec_fanout_map = fanout_map;
+		}
 		log(0, log_level, &format!("preprocess_expr COMPLETED: name: {}, expr: {}", self.name, self.expr));
 
 	}
@@ -3570,6 +3660,91 @@ mod tests_clamav{
 	};
 
 
+	/// C8e: aggressive fan-out restructure replaces the orphaned base
+	/// with variants, rebuilds every per-subsig array in lockstep,
+	/// records a contiguous fanout_map, and rewrites the DNF.
+	#[test]
+	fn test_c8_fanout_mapping(){
+		let mut cfg = default_clamav_cfg();
+		cfg.b_aggressive_sde_for_rep = true;
+		cfg.sde_rep_fanout_cap = 1000;
+		let expr = "Agg.B3;Engine:81-255,Target:0;0;\
+			/[0-9][0-9][0-9].{0,4}SECRETKW/";
+		let mut sig = gen_clamav_sig(expr, ClamSigType::General, &cfg);
+		sig.gen_approx_bagwords(&cfg);
+		sig.gen_approx_pm_bounds(&cfg);
+		let (_span, anchors) =
+			sig.compute_aggressive_shape(&cfg).expect("shape");
+		sig.vec_subsig_anchor_dir = anchors;
+		//[0-9][0-9][0-9] => 1000 variants of original 0; base dropped.
+		assert_eq!(sig.vec_subsig_obj.len(), 1000);
+		assert_eq!(sig.vec_fanout_map, vec![(0usize, 999usize)]);
+		//DNF rewritten to the variant union; no orphaned base id.
+		assert!(sig.expr.starts_with("(0|1|"), "expr={}", sig.expr);
+		assert!(sig.expr.contains("999)"), "expr={}", sig.expr);
+		//every variant inherits the original's backward direction.
+		assert!(sig.vec_subsig_anchor_dir.iter().all(|&d| d==1));
+		//all per-subsig arrays consistent + no counters + map partition.
+		sig.assert_aggressive_consistent();
+		//flag-OFF: no fan-out, no map, base kept (byte-identical path).
+		let mut cfg_off = default_clamav_cfg();
+		cfg_off.b_aggressive_sde_for_rep = false;
+		let sig_off = gen_clamav_sig(expr, ClamSigType::General, &cfg_off);
+		assert_eq!(sig_off.vec_subsig_obj.len(), 1);
+		assert!(sig_off.vec_fanout_map.is_empty());
+		assert_eq!(sig_off.expr, "0");
+	}
+
+	/// T4 (load-bearing): forward eval of the stored chain and backward
+	/// eval of reverse_pm_bounds(chain) give the SAME verdict, validated
+	/// against a hand-computed oracle. Materialized-variant chains have a
+	/// vacuous (0,MAX) begin so equivalence is exact.
+	#[test]
+	fn test_m3_host_equiv(){
+		use crate::clam_db::reverse_pm_bounds;
+		//word -> sorted END positions (start+len) in `text`.
+		let mk_hs = |text: &str, words: &[&str]|
+			-> HashMap<String,Vec<usize>>{
+			let mut hs = HashMap::new();
+			for w in words{
+				let (mut v, mut start) = (vec![], 0usize);
+				while let Some(p) = text[start..].find(w){
+					let abs = start + p;
+					v.push(abs + w.len());
+					start = abs + 1;
+				}
+				hs.insert(w.to_string(), v);
+			}
+			hs
+		};
+		//forward stored chain (content level, raw ranges): "001" then
+		//within 0..4 of "SECRETKW" (keyword-rightmost => backward sig).
+		let fwd = vec![("001".to_string(), (0usize, usize::MAX)),
+			("SECRETKW".to_string(), (0usize, 4usize))];
+		let bwd = reverse_pm_bounds(&fwd, (0usize, usize::MAX));
+		let empty: HashMap<String,Vec<usize>> = HashMap::new();
+		let sig = gen_clamav_sig(
+			"D;E;0;/x/", ClamSigType::General, &default_clamav_cfg());
+		//(input, expected verdict-is-Maybe)
+		let cases = [
+			("AB001xySECRETKW", true),    //gap 2 within [0,4]
+			("AB001xyNOPEzzzz", false),   //keyword absent
+			("AB001xyyyyyyyyyySECRETKW", false), //gap 11 > 4
+			("001SECRETKW", true),        //gap 0
+		];
+		for (text, expect_maybe) in cases{
+			let hs = mk_hs(text, &["001","SECRETKW"]);
+			let (f,_,_) = sig.eval_pm_bounds_core(&fwd, false, false,
+				&hs, &empty);
+			let (b,_,_) = sig.eval_pm_bounds_core(&bwd, true, false,
+				&hs, &empty);
+			assert_eq!(f, b, "fwd!=bwd on {:?}", text);
+			let got_maybe = f == TriVal::Maybe;
+			assert_eq!(got_maybe, expect_maybe,
+				"oracle mismatch on {:?}: {:?}", text, f);
+		}
+	}
+
 	/// a test case for clamav
 	struct ClamavTestCase{
 		sig_name: String,
@@ -4296,11 +4471,11 @@ mod tests_clamav{
 
 	}
 
-	/// M5 OBJ COUNT: gate ON, sde_rep_fanout_cap=1000, one PCRE
+	/// M5/C8 OBJ COUNT: gate ON, sde_rep_fanout_cap=1000, one PCRE
 	/// subsig `/[0-9]{3}/`. card=10, 3 positions -> 10^3=1000
-	/// variants fit B=1000 exactly. Expect 1 base + 1000
-	/// variants = 1001 SubSigObjs; expr rewritten from "0" to
-	/// "(1|2|...|1000)".
+	/// variants fit B=1000 exactly. Under C8 the orphaned base is
+	/// REPLACED by the variants, so expect exactly 1000 SubSigObjs
+	/// (ids 0..999); expr rewritten from "0" to "(0|1|...|999)".
 	#[test]
 	pub fn tests_sde_rep_preprocess_objcount(){
 		let mut cfg = default_clamav_cfg();
@@ -4309,11 +4484,13 @@ mod tests_clamav{
 		let s = "Test.SDE.Rep.ObjCount;m;0;/[0-9]{3}/";
 		let sig = gen_clamav_sig(s, ClamSigType::General,
 			&cfg);
-		assert_eq!(sig.vec_subsig_obj.len(), 1001,
-			"expected 1 base + 1000 variants, got {}; \
+		assert_eq!(sig.vec_subsig_obj.len(), 1000,
+			"expected 1000 variants (base replaced), got {}; \
 			 expr={}",
 			sig.vec_subsig_obj.len(), sig.expr);
-		let parts: Vec<String> = (1..=1000)
+		assert_eq!(sig.vec_fanout_map, vec![(0usize, 999usize)],
+			"fanout_map should map original 0 -> [0,999]");
+		let parts: Vec<String> = (0..=999)
 			.map(|i| format!("{}", i)).collect();
 		let expect = format!("({})", parts.join("|"));
 		assert_eq!(sig.expr, expect,
@@ -4357,9 +4534,10 @@ mod tests_clamav{
 		assert_eq!(sig2.eval_dnf.vec_disjunc[0].len(), 1000,
 			"fan: want disjunct of 1000, got {}",
 			sig2.eval_dnf.vec_disjunc[0].len());
-		// Sorted by EvalDNF::or via union_vecs; check head/tail.
-		assert_eq!(sig2.eval_dnf.vec_disjunc[0][0], 1);
-		assert_eq!(sig2.eval_dnf.vec_disjunc[0][999], 1000);
+		// Sorted by EvalDNF::or via union_vecs; under C8 the base is
+		// replaced so variant ids are 0..999 (head 0, tail 999).
+		assert_eq!(sig2.eval_dnf.vec_disjunc[0][0], 0);
+		assert_eq!(sig2.eval_dnf.vec_disjunc[0][999], 999);
 	}
 
 	/// M5 REGRESSION GUARD: same `/[0-9]{3}/` fixture as objcount
