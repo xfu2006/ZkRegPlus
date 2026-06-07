@@ -347,6 +347,11 @@ pub struct DischargeAdvCapacity{
 	/// in step queue. So basis_pats_in_trace * perc_pats_expansion_rate/100
 	/// decides the step queue
 	pub perc_pats_expansion_rate: usize,
+
+	/// AGGRESSIVE-ONLY (DB self-mark = aggressive_max_span_nibbles>0).
+	/// When true the gadget runs forward-only discharge with the
+	/// failed_subsigs accumulator; false = byte-identical legacy path.
+	pub b_aggressive: bool,
 }
 
 /// Advice for the Discharge Subsig Gadget.
@@ -1962,7 +1967,8 @@ impl Capacity for DischargeAdvCapacity{
 		self.subsigs >= other.subsigs &&
 		self.avg_active_pats_per_subsig >= other.avg_active_pats_per_subsig &&
 		self.basis_pats_in_trace >= other.basis_pats_in_trace &&
-		self.perc_pats_expansion_rate >= other.perc_pats_expansion_rate
+		self.perc_pats_expansion_rate >= other.perc_pats_expansion_rate &&
+		self.b_aggressive == other.b_aggressive
 
 	}
 
@@ -1975,11 +1981,70 @@ impl Capacity for DischargeAdvCapacity{
 			avg_active_pats_per_subsig: self.avg_active_pats_per_subsig,
 			basis_pats_in_trace: self.basis_pats_in_trace,
 			perc_pats_expansion_rate: self.perc_pats_expansion_rate,
+			b_aggressive: self.b_aggressive,
 		})
 	}
 
 	/// needed for downcasting for composite gadget mapper
 	fn as_any(&self) -> &dyn Any { self }
+}
+
+/// AGGRESSIVE-ONLY. Per-chunk dedup set of FAILED (dischargeable) subsigs,
+/// keyed by each subsig's LAST_STEP `encoded` value (a fixed, file-
+/// independent, authenticated key = encode(subsig,num_steps,last_pat,
+/// last_rg)). Carried in IDX_OUP and folded across chunks (OUP==next INP).
+/// Disjoint cs / igc instances mirror the two sq_res. The verdict
+/// (compute_sig) is read by membership in this set.
+#[derive(Clone, Debug)]
+pub struct FailedSubsigAcc<F: PrimeField + ColEle>{
+	/// dedup set of LAST_STEP encoded keys (to_container sorts + front-pads)
+	pub acc: Vec<F>,
+	pub capacity: DischargeAdvCapacity,
+	pub b_igc: bool,
+}
+
+impl <F: PrimeField + ColEle> FailedSubsigAcc<F>{
+	/// Column length = subsigs * perc_failed_subsigs / 10000, floored to
+	/// >=1 then rounded up to even (mirrors vec_size; leaves room for the
+	/// mandatory zero-pad dummy). Read DIRECTLY from GlobalConfig (no
+	/// SedCapacity::new param, avoiding the 40-call-site trap).
+	pub fn acc_size(capacity: &DischargeAdvCapacity)->usize{
+		let perc = read_global_config().perc_failed_subsigs;
+		let n = (capacity.subsigs * perc / 10000).max(1);
+		if n%2==1 {n+1} else {n}
+	}
+
+	/// Build a 1-data-col container (+ si selector) holding the sorted,
+	/// front-zero-padded set. b_inp ⇒ IDX_INP (carried-in acc_in), else
+	/// IDX_OUP (acc_out). Throws CapErr if the set overflows acc_size.
+	pub fn to_container(&self, name: &str, b_inp: bool)
+	->Result<Arc<Mutex<Container<F>>>, Error>{
+		let n = Self::acc_size(&self.capacity);
+		let zero = F::zero();
+		let mut set: Vec<F> = self.acc.iter().filter(|f| !f.is_zero())
+			.cloned().collect();
+		set.sort_by_key(|f| field_to_usize(f));
+		set.dedup();
+		if n < set.len()+1{ //need >=1 zero-pad dummy
+			let new_val = ((set.len()+1) as f32 / n as f32
+				* read_global_config().perc_failed_subsigs as f32)
+				as usize + 1;
+			return Err(Error::CapErr(vec![(
+				format!("dis_adv::perc_failed_subsigs, b_igc: {}",
+					self.b_igc), new_val)]));
+		}
+		let n2 = n - set.len();
+		let vec_acc = vec![vec![zero; n2], set].concat();
+		let seg = if b_inp {IDX_INP} else {IDX_OUP};
+		let si_seg = if b_inp {IDX_SI_INP} else {IDX_SI_OUP};
+		let res = Container::new(name);
+		//encoded keys are large (subsig*f1^4+...); si=0 like sq_res "encoded"
+		//(carried key, NOT range-checked), authenticated via fold + logups.
+		res.lock().unwrap().add_col(Col::new(vec_acc, "acc_encoded", seg));
+		res.lock().unwrap().add_col(Col::new_const(
+			vec![F::zero(); n], "si_acc_encoded", si_seg));
+		Ok(res)
+	}
 }
 
 impl <F: PrimeField + ColEle> NdAdvice for DischargeAdvAdvice<F>{
@@ -2009,15 +2074,17 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		inp_subsigs: &Vec<F>,
 		fsm_id: u32,
 		subsig_store_info: &SubsigStepStore,
-		capacity: &DischargeAdvCapacity, 
+		capacity: &DischargeAdvCapacity,
 		inp_step_queue: &StepQueue<F>, // the steps_queue from input
+		inp_failed_acc: &Vec<F>, // AGGRESSIVE: carried-in failed_subsigs acc
 		last_loc: F,
 		seg_id: usize,
 		job_id: usize,
 	) ->Result<Self, Error>{
-		let sname = if b_igc {"discharge_adv_stmt_igc"} else 
+		let sname = if b_igc {"discharge_adv_stmt_igc"} else
 			{"discharge_adv_stmt_cs"};
 		let stmt_container = Container::<F>::new(sname);
+		let b_aggr = capacity.b_aggressive;
 		//1. constructure step_store. DEPRECATED. no need anymore
 		//as we have info encoded in lkup table StoreSteps.
 
@@ -2031,15 +2098,149 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let default_min_loc = last_loc + F::one();
 
 
-		//3. construct 2nd (backward) step-queue
-		let backward_step_queue = Self::gen_backward_steps_queue_combo(
-			b_igc,
-			&sq_fwd, &ct_fwd_sq, subsig_store_info, default_min_loc, capacity,
-			seg_id, job_id)?;
+		//3. construct 2nd (backward) step-queue. AGGRESSIVE: forward-only,
+		//so the backward combo becomes a no-op init carry (its proofs are
+		//gated off in validate; the verdict comes from the accumulator).
+		let backward_step_queue = if b_aggr {
+			//soundness premise (release-safe assert): the forward input must
+			//be a fresh init (step-0) so the kept step-queue columns fold as
+			//init==init (chunk-invariant SED universe; see M2/M5).
+			assert!(inp_step_queue.store_items.values().all(|items|
+				items.iter().all(|it| it.step.is_zero())),
+				"aggressive no-op carry needs a fresh (step-0) forward input");
+			Self::gen_noop_backward_combo(b_igc, &sq_fwd,
+				subsig_store_info, capacity)?
+		} else {
+			Self::gen_backward_steps_queue_combo(b_igc,
+				&sq_fwd, &ct_fwd_sq, subsig_store_info, default_min_loc,
+				capacity, seg_id, job_id)?
+		};
 		stmt_container.lock().unwrap().add_container(backward_step_queue);
+
+		//4. AGGRESSIVE: build the failed_subsigs accumulator (acc_in in
+		//IDX_INP, acc_out in IDX_OUP) + the completeness/carry-in m-tables.
+		if b_aggr {
+			let acc_combo = Self::gen_failed_acc_combo(b_igc, &ct_fwd_sq,
+				&sq_fwd, inp_failed_acc, subsig_store_info, capacity)?;
+			stmt_container.lock().unwrap().add_container(acc_combo);
+		}
 
 		Ok(Self{capacity: Clone::clone(capacity), fsm_id,
 			stmt_container, b_igc, offset_fsm})
+	}
+
+	/// AGGRESSIVE-ONLY. Subsigs that reached their final step in this chunk,
+	/// returned as their LAST_STEP `encoded` keys (= encoded of the max-step
+	/// item; fixed per subsig). Type-agnostic over all 3 subsig types.
+	fn extract_final_step_encoded(sq_fwd: &StepQueue<F>,
+		info: &SubsigStepStore)->Vec<F>{
+		sq_fwd.subsigs.iter().filter(|&&s| !s.is_zero()).filter_map(|&s|{
+			let items = sq_fwd.store_items.get(&s)?;
+			let max_item = items.iter()
+				.max_by_key(|it| field_to_usize(&it.step))?;
+			let num = info.subsig_to_steps
+				.get(&field_to_usize(&s))?.vec_pm_bounds.len();
+			if field_to_usize(&max_item.step)==num {Some(max_item.encoded)}
+			else {None}
+		}).collect()
+	}
+
+	/// AGGRESSIVE-ONLY. No-op backward combo: sq_res2 = fresh init (same
+	/// column layout as the real backward result, so the carried step-queue
+	/// columns fold as init==init). Emits NO backward proofs (validate
+	/// gates them off). Saves the backward-proof cost.
+	fn gen_noop_backward_combo(
+		b_igc: bool,
+		input_step_queue: &StepQueue<F>,
+		subsig_store_info: &SubsigStepStore,
+		capacity: &DischargeAdvCapacity,
+	)->Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
+		let res = Container::<F>::new("bwd_steps_queue");
+		let sq_init = Self::gen_empty_steps_queue_serialized(
+			b_igc, &input_step_queue.subsigs, subsig_store_info, 0, capacity);
+		let ct_sq_res2 = sq_init.to_container("sq_res2",
+			false, true, true, true, subsig_store_info)?;
+		res.lock().unwrap().add_container(ct_sq_res2);
+		Ok(res)
+	}
+
+	/// AGGRESSIVE-ONLY. Build acc_in (IDX_INP) + acc_out (IDX_OUP) failed-
+	/// subsig accumulators and the two C5 logup m-tables (completeness +
+	/// carry-in). acc_out = dedup(acc_in ∪ this-chunk's final-step keys).
+	fn gen_failed_acc_combo(
+		b_igc: bool,
+		ct_fwd_sq: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
+		sq_fwd: &StepQueue<F>,
+		inp_failed_acc: &Vec<F>,
+		subsig_store_info: &SubsigStepStore,
+		capacity: &DischargeAdvCapacity,
+	)->Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
+		let res = Container::<F>::new("failed_acc_combo");
+		//1. union acc_in with this chunk's final-step encoded keys
+		let chunk_failed = Self::extract_final_step_encoded(sq_fwd,
+			subsig_store_info);
+		let mut out_set: Vec<F> = inp_failed_acc.iter()
+			.filter(|f| !f.is_zero()).cloned()
+			.chain(chunk_failed.into_iter()).collect();
+		out_set.sort_by_key(|f| field_to_usize(f));
+		out_set.dedup();
+		let acc_in = FailedSubsigAcc{acc: inp_failed_acc.clone(),
+			capacity: Clone::clone(capacity), b_igc};
+		let acc_out= FailedSubsigAcc{acc: out_set,
+			capacity: Clone::clone(capacity), b_igc};
+		let ct_acc_in = acc_in.to_container("failed_acc_in", true)?; //IDX_INP
+		let ct_acc_out= acc_out.to_container("failed_acc", false)?;  //IDX_OUP
+		//2. read back the padded committed key vectors
+		let acc_out_vec = ct_acc_out.lock().unwrap()
+			.get_container("acc_encoded").unwrap().lock().unwrap().to_vec();
+		let acc_in_vec = ct_acc_in.lock().unwrap()
+			.get_container("acc_encoded").unwrap().lock().unwrap().to_vec();
+		//3. qry_final: matches the in-circuit tag-selector over fwd sq_res:
+		//   encoded[i] iff its si_step is the LAST_STEP tag, else 0.
+		let fwd_encoded = ct_fwd_sq.lock().unwrap()
+			.get_container("encoded").unwrap().lock().unwrap().to_vec();
+		let fwd_si_step = ct_fwd_sq.lock().unwrap()
+			.get_container("si_step").unwrap().lock().unwrap().to_vec();
+		let qry_final: Vec<F> = fwd_encoded.iter().zip(fwd_si_step.iter())
+			.map(|(e, sid)|{
+				let last_tag = SubsigStepStore::gen_step_tbl_id(*e,
+					ID_ENCODED_LAST_STEP);
+				if *sid==last_tag {*e} else {F::zero()}
+			}).collect();
+		//4. m-tables (logup qry ⊆ lkup=acc_out); zeros map to acc_out pad
+		let mtbl_complete = gen_m_table(&qry_final, &acc_out_vec);
+		let mtbl_carry = gen_m_table(&acc_in_vec, &acc_out_vec);
+		//5. proof container (m-tables in DATA, si=0 = not range-checked)
+		let prf = Container::<F>::new("failed_acc_prf");
+		let nc = mtbl_complete.len();
+		let nk = mtbl_carry.len();
+		prf.lock().unwrap().add_col(Col::new(mtbl_complete,
+			"mtbl_complete", IDX_DATA));
+		prf.lock().unwrap().add_col(Col::new_const(vec![F::zero();nc],
+			"si_mtbl_complete", IDX_SI_DATA));
+		prf.lock().unwrap().add_col(Col::new(mtbl_carry,
+			"mtbl_carry", IDX_DATA));
+		prf.lock().unwrap().add_col(Col::new_const(vec![F::zero();nk],
+			"si_mtbl_carry", IDX_SI_DATA));
+		res.lock().unwrap().add_container(ct_acc_in);
+		res.lock().unwrap().add_container(ct_acc_out);
+		res.lock().unwrap().add_container(prf);
+		Ok(res)
+	}
+
+	/// AGGRESSIVE-ONLY. Read this chunk's acc_out (failed_subsigs keys) to
+	/// carry into the next chunk. Absence-tolerant: [] when flag-off.
+	pub fn get_output_failed_acc(&self)->Vec<F>{
+		//flag-off: no accumulator container exists (search_container would
+		//panic, not return Err), so gate on the mode.
+		if !self.capacity.b_aggressive { return vec![]; }
+		let sname = if self.b_igc {"discharge_adv_stmt_igc"}
+			else {"discharge_adv_stmt_cs"};
+		self.stmt_container.lock().unwrap().search_container(
+			&format!("{} failed_acc_combo failed_acc", sname))
+			.expect("aggr: failed_acc missing")
+			.lock().unwrap().get_container("acc_encoded")
+			.unwrap().lock().unwrap().to_vec()
 	}
 
 
@@ -3158,8 +3359,8 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			StepQueueType::ResSmall,
 			capacity, b_igc);
 		let dummy_adv = DischargeAdvAdvice::new(b_igc, offset_fsm,
-			&pat_loc, &sigs, fsm_id, store_steps, 
-			Clone::clone(&capacity), &inp_steps_queue_obj, zero, 0, 0)
+			&pat_loc, &sigs, fsm_id, store_steps,
+			Clone::clone(&capacity), &inp_steps_queue_obj, &vec![], zero, 0, 0)
 			.expect("discharge_adv advice err");
 		let mut vec_cfg = prev_cfgs.clone();
 		vec_cfg.push(dummy_adv.stmt_container.lock().unwrap().get_cfg());
@@ -3920,10 +4121,72 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 	///     and ratio_pat * nlen (see validate_forward_step_queue for
 	///     real data for n1)
 	/// COST: 24.5*n1
+	/// AGGRESSIVE-ONLY. Validate the failed_subsigs accumulator in place of
+	/// the (gated-off) backward step-queue proofs. Two one-directional
+	/// logups: (1) COMPLETENESS (soundness-critical): {fwd final-step
+	/// encoded keys} ⊆ acc_out — prover can't omit a real violation;
+	/// (2) carry-in: acc_in ⊆ acc_out. Final-step entries are picked by the
+	/// LAST_STEP tag (sortedness-free, since the forward result is unsorted).
 	#[allow(dead_code)]
-	fn validate_backward_step_queue(&self, 
+	fn validate_aggressive_acc(&self,
+		stmt: &Container<FpVar<F>>,
+		forward_step_q: &Container<FpVar<F>>,
+		r1: FpVar<F>,
+		cs: ConstraintSystemRef<F>,
+		_word_id: FpVar<F>,
+		_subseg_id: FpVar<F>,
+	)->Result<(), SynthesisError>{
+		//0. retrieve acc_in / acc_out / m-tables / forward sq_res columns
+		let combo = stmt.get_container("failed_acc_combo")?;
+		let combo = combo.lock().unwrap();
+		let acc_out = combo.get_container("failed_acc")?
+			.lock().unwrap().get_container("acc_encoded")?
+			.lock().unwrap().to_vec();
+		let acc_in = combo.get_container("failed_acc_in")?
+			.lock().unwrap().get_container("acc_encoded")?
+			.lock().unwrap().to_vec();
+		let prf = combo.get_container("failed_acc_prf")?;
+		let prf = prf.lock().unwrap();
+		let mtbl_complete = prf.get_container("mtbl_complete")?
+			.lock().unwrap().to_vec();
+		let mtbl_carry = prf.get_container("mtbl_carry")?
+			.lock().unwrap().to_vec();
+		let sq_res = forward_step_q.get_container("sq_res")?;
+		let sq_res = sq_res.lock().unwrap();
+		let fwd_encoded = sq_res.get_container("encoded")?
+			.lock().unwrap().to_vec();
+		let fwd_si_step = sq_res.get_container("si_step")?
+			.lock().unwrap().to_vec();
+
+		//1. tag-based final-step selector (no sortedness needed). The
+		//LAST_STEP tag = info_id*f1^5*2^32 + LAST_STEP*f1^5 + encoded
+		//(gen_step_tbl_id, clam_db.rs). So qry=encoded iff si_step matches.
+		let rb = read_global_config().range2_bit;
+		let f1 = F::from(1u64 << rb);
+		let factor1 = f1*f1*f1*f1*f1;
+		let factor2 = F::from(1u64<<32);
+		let info_id = F::from(0x23001101u64);
+		let last = F::from(ID_ENCODED_LAST_STEP as u64);
+		let const_part = info_id*factor1*factor2 + last*factor1;
+		let const_var = new_const_var(&cs, const_part);
+		let qry_final: Vec<FpVar<F>> = fwd_encoded.iter()
+			.zip(fwd_si_step.iter()).map(|(e, sid)|{
+				let expected = &const_var + e; // LAST_STEP tag for this e
+				let sel = is_zero_better(&(sid - &expected), &cs).unwrap();
+				e * &sel // encoded if final-step, else 0 (ignored by logup)
+			}).collect();
+
+		//2. completeness (soundness-critical): {fwd final-step} ⊆ acc_out
+		assert_logup(cs.clone(), &qry_final, &acc_out, &mtbl_complete, &r1)?;
+		//3. carry-in: acc_in ⊆ acc_out
+		assert_logup(cs.clone(), &acc_in, &acc_out, &mtbl_carry, &r1)?;
+		Ok(())
+	}
+
+	#[allow(dead_code)]
+	fn validate_backward_step_queue(&self,
 		forward_step_q: &Container<FpVar<F>>,  //needed to extract its result
-		backward_step_q: &Container<FpVar<F>>, //backward combo 
+		backward_step_q: &Container<FpVar<F>>, //backward combo
 		r1: FpVar<F>,
 		r2: FpVar<F>,
 		cs: ConstraintSystemRef<F>,
@@ -4607,13 +4870,22 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for DischargeAdvGadget<F>{
 			&forward_step_queue.lock().unwrap(), r1.clone(), r2.clone(), 
 			cs.clone(), default_min_loc, word_id.clone(), subseg_id.clone())?;
 
-		//4. validate the backward step queue
-		// COST: 24.5*n1
+		//4. validate the backward step queue. AGGRESSIVE: the backward
+		//proofs are gated off; instead validate the failed_subsigs
+		//accumulator (completeness + carry-in logups).
 		let backward_step_queue= stmt.get_container("bwd_steps_queue")?;
-		self.validate_backward_step_queue(&forward_step_queue.lock().unwrap(), 
-			&backward_step_queue.lock().unwrap(),
-			r1.clone(), r2.clone(), cs.clone(), default_min_loc,
-			word_id.clone(), subseg_id.clone())?;
+		if self.capacity.b_aggressive {
+			let _ = &backward_step_queue; //kept (no-op carry), not validated
+			self.validate_aggressive_acc(&stmt,
+				&forward_step_queue.lock().unwrap(),
+				r1.clone(), cs.clone(),
+				word_id.clone(), subseg_id.clone())?;
+		} else {
+			self.validate_backward_step_queue(&forward_step_queue.lock().unwrap(),
+				&backward_step_queue.lock().unwrap(),
+				r1.clone(), r2.clone(), cs.clone(), default_min_loc,
+				word_id.clone(), subseg_id.clone())?;
+		}
 
 		let b_perf = false;
 		if b_perf{
@@ -4634,7 +4906,7 @@ fn dummy_test<F:PrimeField + ColEle>(){
 
 #[cfg(test)]
 pub mod tests_discharge_adv_gadget{
-use utils::consts::read_global_config;
+use utils::consts::{read_global_config, get_global_config};
 	use ark_ff::{Zero};
 	use std::{sync::Arc};
 	use ark_bn254::{Fr};
@@ -4651,7 +4923,8 @@ use utils::consts::read_global_config;
 		fsm_adv::{FsmAdvAdvice,FsmAdvCapacity},
 		word_extract_adv::{WordExtractAdvAdvice},
 		discharge_adv::{DischargeAdvAdvice,DischargeAdvGadget,
-			DischargeAdvCapacity,StepQueueItem,StepQueue,StepQueueType},
+			DischargeAdvCapacity,StepQueueItem,StepQueue,StepQueueType,
+			FailedSubsigAcc},
 		traits::{Container,Col,IDX_DATA,IDX_SI_DATA},
 	};
 	use data_processor::{clam_db::{ClamavDB,RANGE2}, 
@@ -4778,6 +5051,7 @@ use utils::consts::read_global_config;
 			avg_active_pats_per_subsig: 1,
 			basis_pats_in_trace: cap.basis_pats_in_trace,
 			perc_pats_expansion_rate: 100,
+			b_aggressive: false,
 		};
 
 		//2. create advice for word_extract_adv, fsm_adv, and discharge_adv
@@ -4833,8 +5107,8 @@ use utils::consts::read_global_config;
 			let adv_disc= DischargeAdvAdvice::new(false, //case sensitive
 				1, //offset to fsm
 				&pat_loc, &input_subsigs,
-				fsm_id, steps_store, &cap_disc, &inp_steps_queue, last_loc,
-				i, 0)
+				fsm_id, steps_store, &cap_disc, &inp_steps_queue, &vec![],
+				last_loc, i, 0)
 					.expect("discharge_adv advice err");
 			let oup_queue = adv_disc.get_output_steps_queue();
 			let stmt_disc= adv_disc.stmt_container;
@@ -4899,6 +5173,42 @@ use utils::consts::read_global_config;
 
 		//4. verify the sigs_to_discharge have been discharged
 		//todo!()
+	}
+
+	/// AGGRESSIVE C2 unit test: FailedSubsigAcc sizing + to_container
+	/// (floor>=1, even, sort+dedup+front-pad, CapErr on overflow).
+	#[test]
+	fn test_failed_subsig_acc(){
+		get_global_config().perc_failed_subsigs = 10000; //100% of subsigs
+		let cap = DischargeAdvCapacity{ max_nibble_len:62, subsigs:6,
+			avg_active_pats_per_subsig:1, basis_pats_in_trace:100,
+			perc_pats_expansion_rate:100, b_aggressive:true };
+		//acc_size = 6*10000/10000 = 6 (already even)
+		assert_eq!(FailedSubsigAcc::<Fr>::acc_size(&cap), 6);
+		//floor>=1: with perc 0 the size floors to 1 then even -> 2
+		get_global_config().perc_failed_subsigs = 0;
+		assert_eq!(FailedSubsigAcc::<Fr>::acc_size(&cap), 2);
+		get_global_config().perc_failed_subsigs = 10000;
+
+		//sort + dedup + front-zero-pad. Dup 30, 3 distinct -> [0,0,0,10,20,30]
+		let acc = FailedSubsigAcc{ acc: to_vf(vec![30,10,30,20]),
+			capacity: cap.clone(), b_igc:false };
+		let ct = acc.to_container("failed_acc", false).expect("acc ct");
+		let col = ct.lock().unwrap().get_container("acc_encoded").unwrap()
+			.lock().unwrap().to_vec();
+		assert_eq!(col.len(), 6);
+		let nz: Vec<Fr> = col.iter().filter(|f| !f.is_zero())
+			.cloned().collect();
+		assert_eq!(nz, to_vf(vec![10,20,30]));
+		//front-padded with zeros (zeros come first)
+		assert!(col[0].is_zero() && col[1].is_zero() && col[2].is_zero());
+
+		//CapErr: 6 distinct keys need size >= 7 > acc_size(6) -> Err
+		let big = FailedSubsigAcc{ acc: to_vf(vec![1,2,3,4,5,6]),
+			capacity: cap.clone(), b_igc:false };
+		assert!(big.to_container("x", false).is_err(),
+			"overflow must raise CapErr");
+		get_global_config().perc_failed_subsigs = 0; //restore default
 	}
 
 	#[test]
@@ -4997,6 +5307,7 @@ use utils::consts::read_global_config;
 			avg_active_pats_per_subsig: 4,
 			basis_pats_in_trace: 48*100,
 			perc_pats_expansion_rate: 132,
+			b_aggressive: false,
 		};
 		let b_igc = false;
 		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),
@@ -5205,6 +5516,7 @@ use utils::consts::read_global_config;
 			avg_active_pats_per_subsig: 5,
 			basis_pats_in_trace: 48*100,
 			perc_pats_expansion_rate: 132,
+			b_aggressive: false,
 		};
 		let b_igc = false;
 		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),

@@ -593,6 +593,209 @@ def _relax(slug, regex, warnings):
     return regex
 
 
+# Microsoft's Purview pages mix descriptive PROSE into the keyword list of some
+# SITs -- e.g. "The regular expression ... finds content ...", "for example AB",
+# "Any combination of ...", "Equal sign (=)" -- and a few leak an example secret
+# VALUE as a keyword (e.g. an 86-char base64 storage key). These are not keywords;
+# they bloat (and, for >=33-byte tokens, break) the proximity regex KWS. Drop them.
+# Real keywords -- including long German compounds and multi-word phrases like
+# "Driver's License" / "Permis de Conduire" -- carry none of these markers.
+_PROSE_MARKERS = (
+    "for example", "any combination of", "followed by", "-or-",
+    "the regular expression", "the function", "a keyword from",
+    "finds content", "find content", "is found", "matches the pattern",
+    "sign (", "symbol (", "whitespace character", "isn't preceded",
+)
+_RE_SECRET_VALUE = re.compile(r"^[A-Za-z0-9/+]{40,}={0,2}$")  # leaked base64 secret
+
+
+def _is_prose_keyword(kw):
+    """True if a 'keyword' line is actually descriptive prose or a leaked example
+    value rather than a real keyword."""
+    low = kw.lower()
+    if any(m in low for m in _PROSE_MARKERS):
+        return True
+    return bool(_RE_SECRET_VALUE.match(kw))
+
+
+def _filter_keywords(keywords):
+    """Split keywords into (kept, dropped); dropped are prose/leaked values."""
+    kept, dropped = [], []
+    for k in keywords:
+        (dropped if _is_prose_keyword(k) else kept).append(k)
+    return kept, dropped
+
+
+# ===========================================================================
+# Zombie compiler-limit approximation  (see docs/verify_zombie_limit.log)
+# ===========================================================================
+# Zombie's regex->circuit compiler has two hard limits (empirically established,
+# verified case-by-case in docs/verify_zombie_limit.log):
+#   (1) ceiling: a contiguous FIXED-length match segment is packed base-256 into
+#       one BN254 field element, so it must be <=32 bytes. A run/segment >=33 B
+#       overflows the 256-bit integer (panic) or emits a malformed expression
+#       (parse error). A "segment" = adjacent literals + fixed-count reps
+#       (lit{n}, [..]{n}); a variable operator (?, {lo,hi}, *, +) or | splits it.
+#   (2) gap: an intra-pattern bounded wildcard gap .{lo,hi} between anchors is
+#       uncompilable at ANY width (the top-level proximity .{0,N} is fine -- it
+#       is stripped and enforced natively by run_zombie.py, not compiled).
+#
+# We approximate the generated regex to fit, ALWAYS over-approximating (widening
+# the match set) so the non-membership claim stays SOUND (we never clear a doc
+# that the exact regex would flag; the cost is extra false positives). Every
+# change is recorded as a "zombie-limit[...]" warning citing the limit log.
+LIMIT_LOG        = os.path.join(DOCS_DIR, "verify_zombie_limit.log")
+ZOMBIE_SEG_LIMIT = 32        # max bytes in one packed fixed-length segment
+
+# Connection-string SITs: the PATs are "anchor .{1,200} anchor .{1,300} ... key"
+# -- both limits at once (wildcard gaps + a >32 B key/password run). They can't
+# be chopped/capped in place; instead we COLLAPSE each onto the single native
+# proximity window: PAT becomes the value token (capped class-run, no gap), and
+# the literal anchors move into the keyword set. The window then ties "a value-
+# shaped run" to "any anchor", dropping ordering/'='/exact-length -- a broad but
+# sound over-approximation. Every (pat, anchors) below is verified to build AND
+# to still match all web-crawled samples (docs/verify_zombie_limit.log).
+CONNSTRING_COLLAPSE = {
+    "sit-defn-azure-document-db-auth-key":
+        {"pat": r"[A-Za-z0-9\x2F\x2B]{32}",
+         "anchors": ["DocumentDb", "AccountKey"]},
+    "sit-defn-azure-storage-account-key":
+        {"pat": r"[A-Za-z0-9\x2F\x2B]{32}",
+         "anchors": ["DefaultEndpointsProtocol", "AccountKey"]},
+    "sit-defn-azure-iot-connection-string":
+        {"pat": r"[A-Za-z0-9\x2F\x2B]{32}",
+         "anchors": ["HostName", "azure-devices.net", "SharedAccessKey"]},
+    "sit-defn-azure-redis-cache-connection-string":
+        {"pat": r"[A-Za-z0-9\x2F\x2B]{32}",
+         "anchors": ["redis.cache.windows.net", "password", "pwd"]},
+    "sit-defn-azure-iaas-database-connection-string-azure-sql-connection-string":
+        {"pat": r"[^\x3B\x22\x27]{8,32}",
+         "anchors": ["Server", "data source", "cloudapp.azure.com",
+                     "database.windows.net", "Password", "pwd"]},
+    "sit-defn-sql-server-connection-string":
+        {"pat": r"[^\x3B\x2F\x22]{8,32}",
+         "anchors": ["User Id", "uid", "UserId", "Password", "pwd"]},
+}
+
+
+def _atoms(s):
+    """Split a regex literal string into matched-byte atoms (a bare char, or a
+    \\xHH escape = one byte)."""
+    out, i = [], 0
+    while i < len(s):
+        if s[i] == "\\" and s[i + 1:i + 2] == "x":
+            out.append(s[i:i + 4]); i += 4
+        else:
+            out.append(s[i]); i += 1
+    return out
+
+
+def _cap_reps(pat):
+    """Cap every {n}/{lo,hi} quantifier count to <=ZOMBIE_SEG_LIMIT so a single
+    fixed-count rep cannot overflow the packed segment (e.g. [..]{86} -> {32}).
+    Per-rep, not segment-wide: a rep adjacent to long literals is handled by the
+    connection-string collapse, the only place that occurs."""
+    notes = []
+
+    def repl(m):
+        lo, hi = m.group(1), m.group(3)
+        if hi is None:
+            if int(lo) > ZOMBIE_SEG_LIMIT:
+                notes.append("zombie-limit[ceiling]: rep {%s} > %dB packed-run "
+                             "limit -> {%d} (see %s)"
+                             % (lo, ZOMBIE_SEG_LIMIT, ZOMBIE_SEG_LIMIT, LIMIT_LOG))
+                return "{%d}" % ZOMBIE_SEG_LIMIT
+            return m.group(0)
+        nlo, nhi = min(int(lo), ZOMBIE_SEG_LIMIT), min(int(hi), ZOMBIE_SEG_LIMIT)
+        if (nlo, nhi) != (int(lo), int(hi)):
+            notes.append("zombie-limit[ceiling]: rep {%s,%s} > %dB -> {%d,%d} "
+                         "(see %s)" % (lo, hi, ZOMBIE_SEG_LIMIT, nlo, nhi, LIMIT_LOG))
+            return "{%d,%d}" % (nlo, nhi)
+        return m.group(0)
+
+    return re.sub(r"\{(\d+)(,(\d+))?\}", repl, pat), notes
+
+
+def _chop_pat_literals(pat):
+    """Chop any contiguous literal run in PAT (outside classes/quantifiers) that
+    exceeds ZOMBIE_SEG_LIMIT to its prefix. A prefix matches a superset -> sound."""
+    out, run, notes, i = [], [], [], 0
+
+    def flush():
+        if len(run) > ZOMBIE_SEG_LIMIT:
+            notes.append("zombie-limit[ceiling]: PAT literal run of %dB > %dB "
+                         "packed-run limit -> chopped to its %dB prefix (a prefix "
+                         "matches a superset -> sound) (see %s)"
+                         % (len(run), ZOMBIE_SEG_LIMIT, ZOMBIE_SEG_LIMIT, LIMIT_LOG))
+            out.extend(run[:ZOMBIE_SEG_LIMIT])
+        else:
+            out.extend(run)
+        run.clear()
+
+    while i < len(pat):
+        c = pat[i]
+        if c == "\\" and pat[i + 1:i + 2] == "x":
+            run.append(pat[i:i + 4]); i += 4; continue
+        if c.isalnum():
+            run.append(c); i += 1; continue
+        flush()
+        if c in "[{":                       # copy class / quantifier block verbatim
+            close = "]" if c == "[" else "}"
+            j = pat.find(close, i)
+            j = j + 1 if j >= 0 else len(pat)
+            out.append(pat[i:j]); i = j; continue
+        out.append(c); i += 1
+    flush()
+    return "".join(out), notes
+
+
+def _has_wildcard_gap(pat):
+    """True if PAT contains an intra-pattern bounded wildcard gap .{...}/.* /.+ ."""
+    return bool(re.search(r"\.\{\d|\.\*|\.\+", pat))
+
+
+def _approx_keywords(keywords):
+    """Chop any keyword longer than ZOMBIE_SEG_LIMIT to a 32-byte prefix."""
+    out, notes = [], []
+    for k in keywords:
+        if len(_atoms(k)) > ZOMBIE_SEG_LIMIT:
+            short = "".join(_atoms(k)[:ZOMBIE_SEG_LIMIT])
+            notes.append("zombie-limit[ceiling]: keyword %r (%dB) > %dB packed-run "
+                         "limit -> chopped to 32B prefix %r (a prefix matches a "
+                         "superset -> sound) (see %s)"
+                         % (k, len(_atoms(k)), ZOMBIE_SEG_LIMIT, short, LIMIT_LOG))
+            k = short
+        out.append(k)
+    return out, notes
+
+
+def approx_for_zombie(slug, pat, keywords):
+    """Make (pat, keywords) fit Zombie's compiler limits. Returns
+    (pat', keywords', notes); notes is empty when nothing had to be approximated.
+    Order: connection-string collapse (whole-PAT) OR general cap+chop, then a
+    keyword chop applied in either case."""
+    notes = []
+    if slug in CONNSTRING_COLLAPSE:
+        spec = CONNSTRING_COLLAPSE[slug]
+        notes.append("zombie-limit[gap+ceiling]: original PAT had an intra-pattern "
+                     "wildcard gap .{lo,hi} (uncompilable at any width) and a >32B "
+                     "value run; COLLAPSED onto the native proximity window -> PAT = "
+                     "value token %r, anchor literals %r moved into the keyword set. "
+                     "Drops ordering/'='/exact length (broader match) -> sound for "
+                     "non-membership (see %s)."
+                     % (spec["pat"], spec["anchors"], LIMIT_LOG))
+        pat, keywords = spec["pat"], spec["anchors"] + keywords
+    else:
+        pat, n = _cap_reps(pat);          notes += n
+        pat, n = _chop_pat_literals(pat); notes += n
+        if _has_wildcard_gap(pat):
+            notes.append("zombie-limit[unsupported]: PAT has an intra-pattern "
+                         "wildcard gap .{lo,hi} not covered by the connection-string "
+                         "collapse -> will NOT build in Zombie (see %s)." % LIMIT_LOG)
+    keywords, n = _approx_keywords(keywords); notes += n
+    return pat, keywords, notes
+
+
 def sit_to_regex(proximity, pat, keywords):
     """Build the full proximity policy regex (PAT.{0,N}KWS)|(KWS.{0,N}PAT) from a
     PRECOMPUTED (and possibly relaxed) pure pattern. Returns the full regex, or
@@ -702,6 +905,10 @@ def write_log(rows):
         f.write("outputs:\n")
         f.write("  %s/  (pure pattern regex)\n" % PAT_DIR)
         f.write("  %s/  (full proximity policy)\n\n" % FULL_DIR)
+        f.write("note: warnings tagged 'zombie-limit[...]' are approximations forced\n")
+        f.write("  by Zombie's regex-compiler limits (packed run <=32 B; no intra-\n")
+        f.write("  pattern wildcard gap). Each names why and how; all widen the match\n")
+        f.write("  set, so non-membership stays sound. Limits: %s\n\n" % LIMIT_LOG)
         f.write("== PER-SIT RESULTS ==\n")
         for r in rows:
             vtag = ""
@@ -718,11 +925,15 @@ def write_log(rows):
                     f.write("           ! sample not matched: %r\n" % s)
         s_pass = sum(r["samples"][0] for r in rows if r.get("samples"))
         s_tot = sum(r["samples"][1] for r in rows if r.get("samples"))
+        z = sum(1 for r in rows
+                if any("zombie-limit" in w for w in r.get("warnings", [])))
         f.write("\n== SUMMARY ==\n")
         f.write("total:   %d\n" % len(rows))
         f.write("OK:      %d\n" % counts["OK"])
         f.write("APPROX:  %d\n" % counts["APPROX"])
         f.write("SKIP:    %d\n" % counts["SKIP"])
+        f.write("zombie-limit approx: %d  (forced by compiler limits; see %s)\n"
+                % (z, LIMIT_LOG))
         f.write("samples: %d/%d positive matches\n" % (s_pass, s_tot))
     return counts, s_pass, s_tot
 
@@ -748,6 +959,15 @@ def main():
                          "warnings": warns, "verify": None})
             continue
         pat = _relax(rec["slug"], pat, warns)
+        rec["keywords"], dropped_kw = _filter_keywords(rec["keywords"])
+        for d in dropped_kw:
+            warns.append("dropped non-keyword line (prose/example leak): %r" % d)
+        # force the regex to fit Zombie's compiler limits (see verify_zombie_limit.log)
+        pat, rec["keywords"], znotes = approx_for_zombie(rec["slug"], pat,
+                                                         rec["keywords"])
+        warns.extend(znotes)
+        if znotes and status == "exact":
+            status = "approx"             # a Zombie-limit approximation was applied
         full = sit_to_regex(rec["proximity"], pat, rec["keywords"])
         if full is None:
             rows.append({"slug": rec["slug"], "status": "SKIP",

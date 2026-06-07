@@ -38,7 +38,7 @@ use ark_ff::{PrimeField};
 use crate::gadgets::{
 	commons::{encode_cols_better, gen_m_table, encode_cols_var_adv_better,
 		new_const_var, check_eq, new_var, is_zero_better, var_to_lb,
-		check_prod_zero, better_select},
+		check_prod_zero, better_select, verify_encode_cols_in_range},
 	db::{assert_logup,  gen_union_prf, verify_union_prf,
 		//verify_encoded_table, assert_well_formed_sorted
 	},
@@ -51,7 +51,7 @@ use crate::gadgets::{
 		//IDX_SI_INP, IDX_SI_OUP,
 		IDX_SI_DATA,
 	},
-	discharge_adv::{StepQueue,DischargeAdvCapacity,StepQueueType},
+	discharge_adv::{StepQueue,StepQueueItem,DischargeAdvCapacity,StepQueueType},
 };
 use data_processor::{
 	type_def::{SubsigStepStore,TriVal,SubsigInfoStore,CompOp,SubSigType,
@@ -137,6 +137,11 @@ pub struct ComputeSigAdvCapacity{
 	/// Real data: perc_comp_subsigs is 17 for binexec data set.
 	/// Same for both cs and igc case
 	pub perc_comp_subsigs: usize,
+
+	/// AGGRESSIVE-ONLY (DB self-mark = aggressive_max_span_nibbles>0).
+	/// Propagated to the inner DischargeAdvCapacity; selects the
+	/// accumulator-membership verdict path. false = legacy byte-identical.
+	pub b_aggressive: bool,
 }
 
 /// Advice for the Compute Sig Gadget.
@@ -186,7 +191,8 @@ impl Capacity for ComputeSigAdvCapacity{
 		self.basis_pats_in_trace_igc>= other.basis_pats_in_trace_igc &&
 		self.perc_pats_expansion_rate_cs >= other.perc_pats_expansion_rate_cs &&
 		self.perc_pats_expansion_rate_igc >= other.perc_pats_expansion_rate_igc &&
-		self.perc_comp_subsigs >= other.perc_comp_subsigs
+		self.perc_comp_subsigs >= other.perc_comp_subsigs &&
+		self.b_aggressive == other.b_aggressive
 	}
 
 	/// to get around the requirement on Clone trait which require Sized
@@ -202,6 +208,7 @@ impl Capacity for ComputeSigAdvCapacity{
 			perc_pats_expansion_rate_igc: self.perc_pats_expansion_rate_igc,
 			max_nibble_len: self.max_nibble_len,
 			perc_comp_subsigs: self.perc_comp_subsigs,
+			b_aggressive: self.b_aggressive,
 		})
 	}
 
@@ -348,6 +355,12 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		capacity: &ComputeSigAdvCapacity,
 		subsig_store_info: &SubsigStepStore,
 	)->Result<(std::sync::Arc<std::sync::Mutex<Container<F>>>,Vec<F>), Error>{
+		//AGGRESSIVE: derive the verdict by MEMBERSHIP in the failed_subsigs
+		//accumulator (sq_res is acc_out) instead of from the sq_res2 last-step.
+		if capacity.b_aggressive{
+			return Self::gen_eval_subsig_by_acc(b_igc, offset_discharge,
+				inp_subsigs, sq_res, capacity, subsig_store_info);
+		}
 		//0. init data
 		let b_debug = B_DEBUG;
 		if b_debug{
@@ -515,8 +528,107 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 			"sid_subsig_raw_eval", IDX_SI_DATA));
 		res.lock().unwrap().add_col(Col::new(mtbl_last_step, "mtbl_last_step", 
 			IDX_DATA));
-		res.lock().unwrap().add_col(Col::new_const(sid_m_tbl_last_step, 
+		res.lock().unwrap().add_col(Col::new_const(sid_m_tbl_last_step,
 			"sid_mtbl_last_step", IDX_SI_DATA)); //it's zero
+		Ok( (res, vec_res) )
+	}
+
+	/// AGGRESSIVE-ONLY. Eval each subsig by MEMBERSHIP in the failed_subsigs
+	/// accumulator (acc_out, passed as `acc_ct`): Maybe iff the subsig's
+	/// LAST_STEP `encoded` key is in acc_out, else False. The key is
+	/// re-derived via StepQueueItem::from_subsig_store_item so it matches
+	/// the keys C5 puts into acc_out byte-for-byte. Emits the 4 encode
+	/// sub-fields (range-checked via si=RANGE2) so validate can bind the
+	/// key to inp_subsig. Returns (combo, vec_res) like the sq_res path.
+	fn gen_eval_subsig_by_acc(
+		b_igc: bool,
+		offset_discharge: i32,
+		inp_subsigs: &Vec<F>,
+		acc_ct: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
+		capacity: &ComputeSigAdvCapacity,
+		subsig_store_info: &SubsigStepStore,
+	)->Result<(std::sync::Arc<std::sync::Mutex<Container<F>>>,Vec<F>), Error>{
+		let zero = F::zero();
+		let tname = if b_igc {"eval_res_combo_igc"} else {"eval_res_combo_cs"};
+		let res = Container::<F>::new(tname);
+		let sname = if b_igc {"discharge_adv_stmt_igc"}
+			else {"discharge_adv_stmt_cs"};
+		let cap_subsigs = if b_igc {capacity.subsigs_cs}
+			else {capacity.subsigs_igc};
+		assert!(inp_subsigs.len()==cap_subsigs);
+		let n = inp_subsigs.len();
+
+		//1. external ref to acc_out (committed; no extra space)
+		let acc_ext = acc_ct.lock().unwrap().duplicate_as_external_adv(
+			offset_discharge,
+			Some(format!("{} failed_acc_combo failed_acc", sname)),
+			Some("failed_acc".to_string()));
+		let acc_set: Vec<F> = acc_ext.get_container("acc_encoded").unwrap()
+			.lock().unwrap().to_vec();
+		let acc_lookup: HashSet<usize> = acc_set.iter()
+			.filter(|f| !f.is_zero()).map(field_to_usize).collect();
+
+		//2. per inp_subsig: LAST_STEP encoded key + its 4 encode sub-fields
+		//   (step, pat, rg_start, rg_end) + the membership verdict.
+		let v_false = F::from(TriVal::False as u8);
+		let v_maybe = F::from(TriVal::Maybe as u8);
+		let mut encoded_last = vec![zero; n];
+		let (mut f_step, mut f_pat, mut f_rgs, mut f_rge) =
+			(vec![zero;n], vec![zero;n], vec![zero;n], vec![zero;n]);
+		let mut vec_res = vec![v_false; n];
+		for i in 0..n{
+			if inp_subsigs[i].is_zero(){ vec_res[i]=zero; continue; }
+			let su = field_to_usize(&inp_subsigs[i]);
+			let item = subsig_store_info.subsig_to_steps.get(&su)
+				.expect(&format!("no store item for subsig {}", su));
+			let num = item.vec_pm_bounds.len();
+			let sqi = StepQueueItem::from_subsig_store_item(item, num,
+				inp_subsigs[i], vec![]);
+			encoded_last[i] = sqi.encoded;
+			f_step[i] = sqi.step; f_pat[i] = sqi.pat;
+			f_rgs[i] = sqi.rg_start; f_rge[i] = sqi.rg_end;
+			vec_res[i] = if acc_lookup.contains(&field_to_usize(&sqi.encoded))
+				{v_maybe} else {v_false};
+		}
+		//3. maybe_masked: the key iff Maybe (else 0); logup acc_out ⊆ this
+		let maybe_masked: Vec<F> = (0..n).map(|i|
+			if vec_res[i]==v_maybe {encoded_last[i]} else {zero}).collect();
+		let mtbl = gen_m_table(&acc_set, &maybe_masked);
+
+		//4. assemble combo. encoded key uses si=0 (large, not range-checked);
+		//   inp_subsig + 4 sub-fields use si=RANGE2 (auto range-check <f1) so
+		//   the key↔inp_subsig binding is canonical (validate enforces the sum).
+		let frg = F::from(RANGE2);
+		let nm = mtbl.len();
+		res.lock().unwrap().add_container(Arc::new(Mutex::new(acc_ext)));
+		res.lock().unwrap().add_col(Col::new(inp_subsigs.clone(),
+			"inp_subsig", IDX_DATA));
+		res.lock().unwrap().add_col(Col::new_const(vec![frg;n],
+			"sid_inp_subsig", IDX_SI_DATA));
+		res.lock().unwrap().add_col(Col::new(encoded_last,
+			"inp_subsig_encoded", IDX_DATA));
+		res.lock().unwrap().add_col(Col::new_const(vec![zero;n],
+			"sid_inp_subsig_encoded", IDX_SI_DATA));
+		res.lock().unwrap().add_col(Col::new(f_step, "enc_step", IDX_DATA));
+		res.lock().unwrap().add_col(Col::new_const(vec![frg;n],
+			"sid_enc_step", IDX_SI_DATA));
+		res.lock().unwrap().add_col(Col::new(f_pat, "enc_pat", IDX_DATA));
+		res.lock().unwrap().add_col(Col::new_const(vec![frg;n],
+			"sid_enc_pat", IDX_SI_DATA));
+		res.lock().unwrap().add_col(Col::new(f_rgs, "enc_rgs", IDX_DATA));
+		res.lock().unwrap().add_col(Col::new_const(vec![frg;n],
+			"sid_enc_rgs", IDX_SI_DATA));
+		res.lock().unwrap().add_col(Col::new(f_rge, "enc_rge", IDX_DATA));
+		res.lock().unwrap().add_col(Col::new_const(vec![frg;n],
+			"sid_enc_rge", IDX_SI_DATA));
+		res.lock().unwrap().add_col(Col::new(vec_res.clone(),
+			"subsig_raw_eval", IDX_DATA));
+		res.lock().unwrap().add_col(Col::new_const(vec![frg;n],
+			"sid_subsig_raw_eval", IDX_SI_DATA));
+		res.lock().unwrap().add_col(Col::new(mtbl, "mtbl_membership",
+			IDX_DATA));
+		res.lock().unwrap().add_col(Col::new_const(vec![zero;nm],
+			"sid_mtbl_membership", IDX_SI_DATA));
 		Ok( (res, vec_res) )
 	}
 
@@ -1430,6 +1542,7 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 										  //parse_from
 			basis_pats_in_trace: capacity.basis_pats_in_trace_cs,
 			perc_pats_expansion_rate: 100,
+			b_aggressive: capacity.b_aggressive,
 		};
 		let dis_cap_igc= DischargeAdvCapacity{
 			max_nibble_len: capacity.max_nibble_len,
@@ -1438,6 +1551,7 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 										  //parse_from
 			basis_pats_in_trace: capacity.basis_pats_in_trace_igc,
 			perc_pats_expansion_rate: 100,
+			b_aggressive: capacity.b_aggressive,
 		};
 		let step_q_size_cs = StepQueue::<F>::vec_size(&StepQueueType::ResSmall,
 			&dis_cap_cs).0;
@@ -1516,12 +1630,73 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 	/// COST: 6n1 + 5n2 (n1: num of subsigs, n2: sq_res len which
 	///    is determined by discharge_adv::StepQueue::vec_size 
 	/// (perc_pat_in_trace * perc_pats_expansion_rate / 100)
-	fn validate_eval_subsig_by_sq_combo(&self, 
-		eval_res_combo: &Container<FpVar<F>>, 
+	/// AGGRESSIVE-ONLY. Validate the membership verdict:
+	/// (a) BIND each encoded_last key to inp_subsig via the encode
+	///     weighted-sum (sub-fields range-checked via si=RANGE2) so the key
+	///     canonically decodes to inp_subsig;
+	/// (b) subsig_raw_eval ∈ {False=1, Maybe=3} (dummy subsig=0 exempt);
+	/// (c) SOUNDNESS logup: acc_out ⊆ {encoded_last[i] : Maybe} — every
+	///     accumulated failed key MUST be marked Maybe, else a real match is
+	///     wrongly discharged. (Over-marking Maybe is harmless.)
+	fn validate_eval_subsig_by_acc(&self,
+		eval_res_combo: &Container<FpVar<F>>,
+		r1: FpVar<F>,
+		cs: ConstraintSystemRef<F>,
+	)->Result<(), SynthesisError>{
+		let one = new_const_var(&cs, F::one());
+		let three = new_const_var(&cs, F::from(3u64));
+		let lb_zero = LinearCombination::from((F::zero(), Variable::One));
+		//0. columns
+		let get = |nm:&str| eval_res_combo.get_container(nm).unwrap()
+			.lock().unwrap().to_vec();
+		let inp_subsig = get("inp_subsig");
+		let encoded_last = get("inp_subsig_encoded");
+		let f_step = get("enc_step");
+		let f_pat = get("enc_pat");
+		let f_rgs = get("enc_rgs");
+		let f_rge = get("enc_rge");
+		let subsig_raw_eval = get("subsig_raw_eval");
+		let mtbl = get("mtbl_membership");
+		let acc_out = eval_res_combo.get_container("failed_acc").unwrap()
+			.lock().unwrap().get_container("acc_encoded").unwrap()
+			.lock().unwrap().to_vec();
+		let n = inp_subsig.len();
+
+		//1. BIND: encoded_last = inp_subsig*f1^4 + step*f1^3 + pat*f1^2
+		//   + rgs*f1 + rge. Sub-fields are range-checked (<f1) via si=RANGE2,
+		//   so this pins inp_subsig = encoded_last div f1^4 (unique decode).
+		verify_encode_cols_in_range(&encoded_last[..],
+			&[&inp_subsig[..], &f_step[..], &f_pat[..], &f_rgs[..],
+				&f_rge[..]], self.capacity.b_aggressive as usize)?;
+
+		//2. per entry: subsig_raw_eval ∈ {1,3} (dummy subsig=0 exempt);
+		//   maybe_masked[i] = encoded_last[i] iff Maybe, else 0.
+		let mut maybe_masked = Vec::with_capacity(n);
+		for i in 0..n{
+			let v = &subsig_raw_eval[i];
+			let is_dummy = is_zero_better(&inp_subsig[i], &cs).unwrap();
+			let prod = (v - &one) * (v - &three);
+			check_prod_zero(&(&one - &is_dummy), &prod, lb_zero.clone(),
+				"aggr_raw_eval_in_{1,3}")?;
+			let b_maybe = is_zero_better(&(v - &three), &cs).unwrap();
+			maybe_masked.push(&encoded_last[i] * &b_maybe);
+		}
+
+		//3. SOUNDNESS logup: acc_out ⊆ maybe_masked
+		assert_logup(cs.clone(), &acc_out, &maybe_masked, &mtbl, &r1)?;
+		Ok(())
+	}
+
+	fn validate_eval_subsig_by_sq_combo(&self,
+		eval_res_combo: &Container<FpVar<F>>,
 		r1: FpVar<F>,
 		_r2: FpVar<F>,
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
+		//AGGRESSIVE: verdict comes from accumulator membership, not sq_res.
+		if self.capacity.b_aggressive{
+			return self.validate_eval_subsig_by_acc(eval_res_combo, r1, cs);
+		}
 		//0. retrieve data from combo
 		let b_perf = false;
 		let nc = cs.num_constraints();
@@ -2668,6 +2843,7 @@ use utils::consts::read_global_config;
 			avg_active_pats_per_subsig: 2,
 			basis_pats_in_trace: cap.basis_pats_in_trace,
 			perc_pats_expansion_rate: 150,
+			b_aggressive: false,
 		};
 		let cap_sig= ComputeSigAdvCapacity{//capaciity of compute sig adv comp 
 			max_nibble_len: nibble_len, 
@@ -2679,6 +2855,7 @@ use utils::consts::read_global_config;
 			perc_comp_subsigs: 20, //real data will be much lower like 17 at most
 			perc_pats_expansion_rate_cs: perc_pats_expansion_rate,
 			perc_pats_expansion_rate_igc: perc_pats_expansion_rate,
+			b_aggressive: false,
 		};
 
 		//2. create advice for word_extract_adv, fsm_adv, and discharge_adv
@@ -2744,7 +2921,8 @@ use utils::consts::read_global_config;
 				2, //dist to fsm_cs
 				&pat_loc_cs,
 				&input_subsigs_cs,
-				fsm_id_cs, steps_store_cs, &cap_disc, &inp_steps_queue_cs, last_loc_cs,
+				fsm_id_cs, steps_store_cs, &cap_disc, &inp_steps_queue_cs,
+				&vec![], last_loc_cs,
 				i, 0
 			).expect("discharge_adv advice err");
 			let oup_queue_cs = adv_disc_cs.get_output_steps_queue();
@@ -2759,7 +2937,8 @@ use utils::consts::read_global_config;
 				2, //dist to fsm_adv_igc
 				&pat_loc_igc,
 				&input_subsigs_igc,
-				fsm_id_igc, steps_store_igc, &cap_disc, &inp_steps_queue_igc, last_loc_igc,
+				fsm_id_igc, steps_store_igc, &cap_disc, &inp_steps_queue_igc,
+				&vec![], last_loc_igc,
 				i, 0
 			).expect("discharge_adv advice err");
 			let oup_queue_igc = adv_disc_igc.get_output_steps_queue();
@@ -3011,6 +3190,7 @@ use utils::consts::read_global_config;
 			avg_active_pats_per_subsig: 2,
 			basis_pats_in_trace: 48*100, //48 percent
 			perc_pats_expansion_rate: 150,
+			b_aggressive: false,
 		};
 		let b_igc = false;
 		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),

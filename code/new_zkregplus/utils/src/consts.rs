@@ -126,6 +126,11 @@ pub struct GlobalConfig {
 	/// finishes capacity validation, skipping foldpot_main /
 	/// Groth16. Lets us cap-tune real DB builds cheaply.
 	pub b_dryrun_after_capcheck: bool,
+	/// AGGRESSIVE-ONLY (b_aggressive_sde_for_rep). Sizes the per-chunk
+	/// failed_subsigs accumulator: size = capacity.subsigs * this / 10000
+	/// (basis points, floored to >=1). Unused when aggressive mode is off
+	/// (the accumulator code path is gated).
+	pub perc_failed_subsigs: usize,
 }
 
 impl Default for GlobalConfig {
@@ -170,6 +175,7 @@ impl Default for GlobalConfig {
 				b_sde_rep_tight_first_leg: false,
 			},
 			b_dryrun_after_capcheck: false,
+			perc_failed_subsigs: 0,
         }
     }
 }
@@ -214,6 +220,7 @@ static GLOBAL_CONFIG: RwLock<GlobalConfig> = RwLock::new(GlobalConfig {
 		b_sde_rep_tight_first_leg: false,
 	},
 	b_dryrun_after_capcheck: false,
+	perc_failed_subsigs: 0,
 });
 
 pub fn read_global_config() -> RwLockReadGuard<'static, GlobalConfig> {

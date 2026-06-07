@@ -1,1 +1,1 @@
-DefaultEndpointsProtocol[\x20\x09]{0,2}\x3D[\x20\x09]{0,2}.{1,200}AccountKey[\x20\x09]{0,2}\x3D[\x20\x09]{0,2}[A-Za-z0-9\x2F\x2B]{86}\x3D\x3D
+[A-Za-z0-9\x2F\x2B]{32}

@@ -305,8 +305,24 @@ pub mod tests_word_extract_gadget{
 	///     the LAST gadget (g) only.
 	/// For non-legacy case, word/inp/...data has the infor for 
 	/// ALL gadgets (in a CompositeComponent)
+	/// Thin wrapper: build the gadget and assert the circuit IS satisfiable.
+	/// (~40 callers use this form unchanged.)
 	pub fn test_gadget_adv<F:PrimeField + Absorb + ColEle> (
-		g: Arc<dyn SigmaGadget<F> + Send + Sync>, 
+		g: Arc<dyn SigmaGadget<F> + Send + Sync>,
+		word: &Vec<F>, inp: &Vec<F>, oup: &Vec<F>, data: &Vec<F>,
+		failed_sigs: &Vec<F>, discharged_sigs: &Vec<F>,
+		subtbl_id: &Vec<F>, lkup_share_size: usize,
+		b_legacy: bool, vec_cfgs: Option<Vec<ContainerConfig>>,
+	){
+		test_gadget_adv_ex(g, word, inp, oup, data, failed_sigs,
+			discharged_sigs, subtbl_id, lkup_share_size, b_legacy,
+			vec_cfgs, true);
+	}
+
+	/// As test_gadget_adv, but `b_expect_sat=false` asserts the circuit is
+	/// UNSAT (or assert_msg3 errors) — used by adversarial rejection tests.
+	pub fn test_gadget_adv_ex<F:PrimeField + Absorb + ColEle> (
+		g: Arc<dyn SigmaGadget<F> + Send + Sync>,
 		word: &Vec<F>,
 		inp: &Vec<F>,
 		oup: &Vec<F>,
@@ -319,6 +335,7 @@ pub mod tests_word_extract_gadget{
 						//true works for CP gadgets
 						//false works for SED and later gadgets
 		vec_cfgs: Option<Vec<ContainerConfig>>, //set when b_legacy false
+		b_expect_sat: bool, //false = adversarial: expect UNSAT / error
 	){
 		//1. generate the statement
 		//1.1 generate StatementConfig
@@ -536,8 +553,15 @@ pub mod tests_word_extract_gadget{
 		let last_idx = cfg.stmt_map.len()-1;
 		let w_id = FpVar::new_constant(cs.clone(), F::zero()).unwrap();
 		let s_id = FpVar::new_constant(cs.clone(), F::zero()).unwrap();
-		g.assert_msg3(last_idx, cs.clone(), &witvar, &cfg, w_id, s_id).expect("assert m3 fail");
-		assert!(cs.is_satisfied().unwrap());
+		let r = g.assert_msg3(last_idx, cs.clone(), &witvar, &cfg, w_id, s_id);
+		if b_expect_sat {
+			r.expect("assert m3 fail");
+			assert!(cs.is_satisfied().unwrap());
+		} else {
+			//adversarial: rejection = assert_msg3 errored OR cs unsatisfied
+			let sat = r.is_ok() && cs.is_satisfied().unwrap();
+			assert!(!sat, "expected UNSAT (adversarial) but circuit satisfied");
+		}
 	}
 
 	#[test]

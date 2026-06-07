@@ -141,6 +141,11 @@ pub struct SedInput<F:PrimeField + ColEle>{
 	pub inp_loc_igc: F,
 	/// the steps_queue for the discharge for ignore case
 	pub inp_steps_queue_igc: Vec<F>,
+
+	/// AGGRESSIVE-ONLY carried-in failed_subsigs accumulator (LAST_STEP
+	/// encoded keys). Empty on the first chunk / when flag-off.
+	pub inp_failed_acc_cs: Vec<F>,
+	pub inp_failed_acc_igc: Vec<F>,
 }
 
 #[derive(Clone,Debug)]
@@ -189,7 +194,7 @@ impl SedCapacity{
 		let max_nibble_len = max_word_len * LEGS;
 		let faa_capacity = FsmAdvCapacity{max_nibble_len, acdfa_state_part_bits,			subsigs, avg_pats_per_subsig, basis_pats_in_trace,
 			basis_unique_states, basis_acc_states, halo_nibbles: 0};
-		let da_capacity = DischargeAdvCapacity{max_nibble_len, subsigs, avg_active_pats_per_subsig, basis_pats_in_trace, perc_pats_expansion_rate};
+		let da_capacity = DischargeAdvCapacity{max_nibble_len, subsigs, avg_active_pats_per_subsig, basis_pats_in_trace, perc_pats_expansion_rate, b_aggressive: false};
 		//NOTE csa_capacity for the other cs/igc case will be temporarily
 		//set and later merged (because one csa coresponds to two discharge
 		//adv components
@@ -201,7 +206,7 @@ impl SedCapacity{
 			basis_pats_in_trace_igc: basis_pats_in_trace, 
 			perc_pats_expansion_rate_cs: perc_pats_expansion_rate,
 			perc_pats_expansion_rate_igc: perc_pats_expansion_rate,
-			perc_comp_subsigs};
+			perc_comp_subsigs, b_aggressive: false};
 			
 		let comp_capacities: Vec<Arc<dyn Capacity + Send + Sync>> = vec![
 			Arc::new(wea_capacity),
@@ -301,6 +306,17 @@ impl SedCapacity{
 		let mut faa = Clone::clone(self.faa_capacity());
 		faa.halo_nibbles = m;
 		self.comp_capacities[1] = Arc::new(faa);
+	}
+
+	/// AGGRESSIVE-ONLY. Mark the discharge + compute-sig capacities so the
+	/// gadgets select the forward-only accumulator path (DB self-mark).
+	pub fn set_aggressive(&mut self, b_aggr: bool){
+		let mut da = Clone::clone(self.da_capacity());
+		da.b_aggressive = b_aggr;
+		self.comp_capacities[2] = Arc::new(da);
+		let mut csa = Clone::clone(self.csa_capacity());
+		csa.b_aggressive = b_aggr;
+		self.comp_capacities[3] = Arc::new(csa);
 	}
 
 	pub fn da_capacity(&self)->&DischargeAdvCapacity{
@@ -546,8 +562,9 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
                         .lock().unwrap().to_vec();
                 let last_loc_cs = locs_cs[locs_cs.len()-1];
                 let discharge_adv_advice_cs = DischargeAdvAdvice::<F>
-                        ::new(false, 2, &pat_loc_cs, &subsigs_inp_cs, fsm_id_cs as u32, 
-                                subsig_step_store_cs, &da_cap_cs, &inp_steps_queue_obj_cs, last_loc_cs,
+                        ::new(false, 2, &pat_loc_cs, &subsigs_inp_cs, fsm_id_cs as u32,
+                                subsig_step_store_cs, &da_cap_cs, &inp_steps_queue_obj_cs,
+				&inp.inp_failed_acc_cs, last_loc_cs,
 				seg_id, job_id)?;
 		if b_perf{ log_perf(job_id, LOG1, "-- Sed advice step4: discharge_cs", &mut t1); }
 
@@ -562,8 +579,9 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
                         .lock().unwrap().to_vec();
                 let last_loc_igc = locs_igc[locs_igc.len()-1];
                 let discharge_adv_advice_igc = DischargeAdvAdvice::<F>
-                        ::new(true, 2, &pat_loc_igc, &subsigs_inp_igc, fsm_id_igc as u32, 
-                                subsig_step_store_igc, &da_cap_igc, &inp_steps_queue_obj_igc, last_loc_igc,
+                        ::new(true, 2, &pat_loc_igc, &subsigs_inp_igc, fsm_id_igc as u32,
+                                subsig_step_store_igc, &da_cap_igc, &inp_steps_queue_obj_igc,
+				&inp.inp_failed_acc_igc, last_loc_igc,
 				seg_id, job_id)?;
 		if b_perf{ log_perf(job_id, LOG1, "-- Sed advice step5: discharge_igc", &mut t1); }
 
@@ -576,10 +594,29 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 		csa_cap.basis_pats_in_trace_igc = csa_cap_igc.basis_pats_in_trace_igc;
 		csa_cap.perc_pats_expansion_rate_igc= csa_cap_igc.perc_pats_expansion_rate_igc;
 		csa_cap.subsigs_igc = csa_cap_igc.subsigs_igc;
+		//AGGRESSIVE: compute_sig reads the failed_subsigs accumulator
+		//(acc_out) instead of the (no-op) backward sq_res2.
+		let b_aggr = cs_capacity.da_capacity().b_aggressive;
 		let stmt_disc_cs = &discharge_adv_advice_cs.stmt_container;
-		let sq_res_cs = stmt_disc_cs.lock().unwrap().search_container("discharge_adv_stmt_cs bwd_steps_queue sq_res2").expect("sq_res err");
+		let sq_res_cs = if b_aggr {
+			stmt_disc_cs.lock().unwrap().search_container(
+				"discharge_adv_stmt_cs failed_acc_combo failed_acc")
+				.expect("acc_out cs err")
+		} else {
+			stmt_disc_cs.lock().unwrap().search_container(
+				"discharge_adv_stmt_cs bwd_steps_queue sq_res2")
+				.expect("sq_res err")
+		};
 		let stmt_disc_igc = &discharge_adv_advice_igc.stmt_container;
-		let sq_res_igc = stmt_disc_igc.lock().unwrap().search_container("discharge_adv_stmt_igc bwd_steps_queue sq_res2").expect("sq_res err");
+		let sq_res_igc = if b_aggr {
+			stmt_disc_igc.lock().unwrap().search_container(
+				"discharge_adv_stmt_igc failed_acc_combo failed_acc")
+				.expect("acc_out igc err")
+		} else {
+			stmt_disc_igc.lock().unwrap().search_container(
+				"discharge_adv_stmt_igc bwd_steps_queue sq_res2")
+				.expect("sq_res err")
+		};
 		let compute_sig_adv_advice = ComputeSigAdvAdvice::<F>::new(
 			fsm_id_cs as u32, fsm_id_igc as u32,
 			&inp_sigs, 
@@ -656,6 +693,10 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 			cs_capacity.set_halo_nibbles(m);
 			igc_capacity.set_halo_nibbles(m);
 		}
+		//Aggressive mode = DB self-mark (M>0). Mark discharge + compute-sig
+		//capacities so the gadgets take the forward-only accumulator path.
+		cs_capacity.set_aggressive(m > 0);
+		igc_capacity.set_aggressive(m > 0);
 		let mut cfgs = vec![];
 		//1. build the gadgets
 		//1.1 the word extract gadget
@@ -884,6 +925,11 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 				(last_oup_state_cs, last_loc_cs, last_steps_queue_cs.to_vec())
 			}
 		);
+		//AGGRESSIVE: carry the failed_subsigs accumulator (cs). Empty on
+		//the first chunk / flag-off (get_output_failed_acc returns []).
+		let inp_failed_acc_cs: Vec<F> = r_prev_adv.as_ref().map_or(vec![],
+			|adv| adv.as_any().downcast_ref::<SedAdvice<F>>().unwrap()
+				.discharge_adv_advice_cs.get_output_failed_acc());
 
 		//3.2 the ignore case version 
 		let init_state_igc = F::from((pm_acdfa_igc.init_state+1) as u32);//adj+1
@@ -957,10 +1003,15 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 				(last_oup_state_igc,last_loc_igc,last_steps_queue_igc.to_vec())
 			}
 		);
+		//AGGRESSIVE: carry the failed_subsigs accumulator (igc).
+		let inp_failed_acc_igc: Vec<F> = r_prev_adv.as_ref().map_or(vec![],
+			|adv| adv.as_any().downcast_ref::<SedAdvice<F>>().unwrap()
+				.discharge_adv_advice_igc.get_output_failed_acc());
 
 		//3. build the advice
 		let inp = SedInput{inp_state_cs, inp_loc_cs, inp_steps_queue_cs,
-			inp_state_igc, inp_loc_igc, inp_steps_queue_igc};
+			inp_state_igc, inp_loc_igc, inp_steps_queue_igc,
+			inp_failed_acc_cs, inp_failed_acc_igc};
 
 		//aggressive forward halo (M nibbles). word_info.halo_nibbles
 		//holds the successor's first nibbles (raw u8) set by the driver;
