@@ -33,7 +33,7 @@ use std::{sync::{Arc, Mutex},
 	marker::{PhantomData},
 	any::Any,
 };
-use ark_ff::{PrimeField};
+use ark_ff::{PrimeField, BigInteger};
 
 use crate::gadgets::{
 	commons::{encode_cols_better, gen_m_table, encode_cols_var_adv_better,
@@ -51,7 +51,8 @@ use crate::gadgets::{
 		//IDX_SI_INP, IDX_SI_OUP,
 		IDX_SI_DATA,
 	},
-	discharge_adv::{StepQueue,StepQueueItem,DischargeAdvCapacity,StepQueueType},
+	discharge_adv::{StepQueue,StepQueueItem,DischargeAdvCapacity,StepQueueType,
+		FailedSubsigAcc},
 };
 use data_processor::{
 	type_def::{SubsigStepStore,TriVal,SubsigInfoStore,CompOp,SubSigType,
@@ -562,11 +563,15 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		let acc_ext = acc_ct.lock().unwrap().duplicate_as_external_adv(
 			offset_discharge,
 			Some(format!("{} failed_acc_combo failed_acc", sname)),
-			Some("failed_acc".to_string()));
+			Some("acc_ref".to_string())); //distinct name (avoid collision
+				//with the source container also named "failed_acc")
 		let acc_set: Vec<F> = acc_ext.get_container("acc_encoded").unwrap()
 			.lock().unwrap().to_vec();
-		let acc_lookup: HashSet<usize> = acc_set.iter()
-			.filter(|f| !f.is_zero()).map(field_to_usize).collect();
+		//keys are full-width encoded values; key the membership set by the
+		//byte repr (field_to_usize only handles 32-bit values).
+		let acc_lookup: HashSet<Vec<u8>> = acc_set.iter()
+			.filter(|f| !f.is_zero())
+			.map(|f| f.into_bigint().to_bytes_le()).collect();
 
 		//2. per inp_subsig: LAST_STEP encoded key + its 4 encode sub-fields
 		//   (step, pat, rg_start, rg_end) + the membership verdict.
@@ -587,7 +592,8 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 			encoded_last[i] = sqi.encoded;
 			f_step[i] = sqi.step; f_pat[i] = sqi.pat;
 			f_rgs[i] = sqi.rg_start; f_rge[i] = sqi.rg_end;
-			vec_res[i] = if acc_lookup.contains(&field_to_usize(&sqi.encoded))
+			vec_res[i] = if acc_lookup.contains(
+				&sqi.encoded.into_bigint().to_bytes_le())
 				{v_maybe} else {v_false};
 		}
 		//3. maybe_masked: the key iff Maybe (else 0); logup acc_out ⊆ this
@@ -1553,24 +1559,33 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 			perc_pats_expansion_rate: 100,
 			b_aggressive: capacity.b_aggressive,
 		};
-		let step_q_size_cs = StepQueue::<F>::vec_size(&StepQueueType::ResSmall,
-			&dis_cap_cs).0;
-		let step_q_size_igc= StepQueue::<F>::vec_size(&StepQueueType::ResSmall,
-			&dis_cap_igc).0;
-		let sq_res_vec_cs = vec![zero; step_q_size_cs];
-		let sq_res_vec_igc = vec![zero; step_q_size_igc];
-		let sq_res_obj_cs = StepQueue::parse_from(&sq_res_vec_cs, 
-			StepQueueType::ResSmall,
-			&dis_cap_cs, false);
-		let sq_res_obj_igc = StepQueue::parse_from(&sq_res_vec_igc, 
-			StepQueueType::ResSmall,
-			&dis_cap_igc, true);
-		let sq_res_cs = sq_res_obj_cs.to_container(
-			"sq_res2_cs", false, true, true, true,
-			&store_steps_cs).expect("sq_res_cs err");
-		let sq_res_igc = sq_res_obj_igc.to_container(
-			"sq_res2_igc ", false, true, true, true,
-			&store_steps_igc).expect("sq_res_igc err");
+		//AGGRESSIVE: the dummy sq_res must be acc_out-shaped (acc_encoded) so
+		//gen_eval_subsig_by_acc's external-ref structure (and thus the gadget
+		//cfg) matches the real accumulator. Non-aggressive uses a step-queue
+		//(sq_res2) dummy.
+		let (sq_res_cs, sq_res_igc) = if capacity.b_aggressive {
+			let acc_cs = FailedSubsigAcc::<F>{ acc: vec![],
+				capacity: Clone::clone(&dis_cap_cs), b_igc: false };
+			let acc_igc = FailedSubsigAcc::<F>{ acc: vec![],
+				capacity: Clone::clone(&dis_cap_igc), b_igc: true };
+			(acc_cs.to_container("failed_acc", false).expect("dummy acc cs"),
+			 acc_igc.to_container("failed_acc", false).expect("dummy acc igc"))
+		} else {
+			let step_q_size_cs = StepQueue::<F>::vec_size(
+				&StepQueueType::ResSmall, &dis_cap_cs).0;
+			let step_q_size_igc= StepQueue::<F>::vec_size(
+				&StepQueueType::ResSmall, &dis_cap_igc).0;
+			let sq_res_obj_cs = StepQueue::parse_from(
+				&vec![zero; step_q_size_cs], StepQueueType::ResSmall,
+				&dis_cap_cs, false);
+			let sq_res_obj_igc = StepQueue::parse_from(
+				&vec![zero; step_q_size_igc], StepQueueType::ResSmall,
+				&dis_cap_igc, true);
+			(sq_res_obj_cs.to_container("sq_res2_cs", false, true, true, true,
+				&store_steps_cs).expect("sq_res_cs err"),
+			 sq_res_obj_igc.to_container("sq_res2_igc ", false, true, true,
+				true, &store_steps_igc).expect("sq_res_igc err"))
+		};
 		let mut sigs_to_id = HashMap::<String,usize>::new();
 		sigs_to_id.insert("none".to_string(), 0);
 
@@ -1657,7 +1672,7 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		let f_rge = get("enc_rge");
 		let subsig_raw_eval = get("subsig_raw_eval");
 		let mtbl = get("mtbl_membership");
-		let acc_out = eval_res_combo.get_container("failed_acc").unwrap()
+		let acc_out = eval_res_combo.get_container("acc_ref").unwrap()
 			.lock().unwrap().get_container("acc_encoded").unwrap()
 			.lock().unwrap().to_vec();
 		let n = inp_subsig.len();
@@ -2693,16 +2708,17 @@ impl ComputeSigAdvCapacity{
 
 #[cfg(test)]
 pub mod tests_compute_sig_adv{
-use utils::consts::read_global_config;
+use utils::consts::{read_global_config, get_global_config};
 	use ark_ff::{Zero};
 	use std::{sync::Arc};
 	use ark_bn254::{Fr};
+	use folding_schemes::folding::foldpot::circuits_super::field_to_usize;
 	use utils::{data::{pack_nibbles, pad_word_to_multiple},
 		os::{read_nibbles,proj_root,write_to_file}};
 	use crate::gadgets::{
 		word_extract::{
 			LEGS,
-			tests_word_extract_gadget::{test_gadget_adv},
+			tests_word_extract_gadget::{test_gadget_adv, test_gadget_adv_ex},
 		},
 		fsm_adv::{FsmAdvAdvice,FsmAdvCapacity},
 		word_extract_adv::{WordExtractAdvAdvice},
@@ -3064,6 +3080,275 @@ use utils::consts::read_global_config;
 
 		//4. verify the sigs_to_discharge have been discharged
 		//manually checked.
+	}
+
+	// =====================================================================
+	//  M2 AGGRESSIVE functional tests (failed_subsigs accumulator).
+	//  Single-chunk (n_cycles==1, match fully inside) with halo_nibbles=0
+	//  (decouples M1b) but b_aggressive=true (exercises C3-C6). A counter-
+	//  constraint sig (0>2) lets a subsig reach final-step (-> accumulator)
+	//  while the SIG stays discharged (count<3), avoiding a true-hit panic.
+	// =====================================================================
+
+	fn build_aggr_db()->(ClamavDB<Fr>, ClamavApproxConfig){
+		let mut cfg = default_clamav_cfg();
+		cfg.b_aggressive_sde_for_rep = true;
+		cfg.sde_rep_fanout_cap = 1; //orthogonal to M2; keep DFA small
+		//DNF sig (0&1): both subsigs are aggressive-shape kw.{0,2}[digits]
+		//(kw len>=min_bag_len=6 so it is a crit pattern). A word that
+		//matches subsig0 but misses subsig1 keeps the SIG discharged (DNF
+		//needs both) while subsig0 reaches final-step -> accumulator.
+		let sigs = vec![
+			"Agg.Dnf;Engine:51-255,Target:0;0&1;\
+			 /KEYWORD.{0,2}[0-9][0-9]/;/OTHRKWD.{0,2}[0-9][0-9]/"
+				.to_string()];
+		let p = format!("{}/data/debug/sed/aggr", proj_root());
+		std::fs::create_dir_all(&p).unwrap();
+		let db = ClamavDB::<Fr>::build_test_db(&cfg, "debug/sed/aggr",
+			&sigs, &vec![], &vec![], &vec![]).expect("aggr db build");
+		(db, cfg)
+	}
+
+	/// Re-derive a subsig's LAST_STEP encoded key (matches acc_out keys).
+	fn last_key(s: &Fr, store: &SubsigStepStore)->Fr{
+		let item = store.subsig_to_steps.get(&field_to_usize(s))
+			.expect("store item");
+		StepQueueItem::from_subsig_store_item(item,
+			item.vec_pm_bounds.len(), *s, vec![]).encoded
+	}
+
+	fn run_aggr_case<TF>(db: &ClamavDB<Fr>, sig_name: &str, word_content: &str,
+		cfg: &ClamavApproxConfig, witness_idxs: Vec<usize>, seed: bool,
+		expect_sat: bool, tamper: TF)
+	where TF: Fn(&mut Vec<Vec<Fr>>, &Vec<Fr>, &SubsigStepStore){
+		get_global_config().perc_failed_subsigs = 10000; //100% of subsigs
+		//1. data prep
+		let path = format!("{}/data/debug/sed/aggr/word.txt", proj_root());
+		write_to_file(&path, word_content);
+		let nibbles_raw = read_nibbles(&path);
+		let f_nibbles = nibbles_raw.iter().map(|x| Fr::from(*x as u32))
+			.collect::<Vec<Fr>>();
+		let sig = &db.vec_sigs.iter().filter(|s| s.name==sig_name)
+			.map(|s| s.clone()).collect::<Vec<Arc<ClamavSig>>>()[0];
+		let v_sig_obj = vec![sig.clone()];
+		let _ = (&nibbles_raw, cfg); //quick_discharge routing bypassed
+		//DECOUPLE input_subsigs (ALL sig subsigs -> the accumulator can see
+		//a matched/Maybe subsig) from the discharge witness (only the FALSE
+		//subsigs, which gen_discharge_sig_combo asserts are False). This
+		//mirrors the real flow where SED evaluates all subsigs but discharges
+		//via a false witness, and lets a Maybe subsig populate the accumulator
+		//while the SIG stays discharged.
+		let n_subsig = sig.vec_subsigs.len();
+		let input_info = DischargeSigInfo{ sig_name: sig_name.to_string(),
+			b_success: true, min_cost: 0, min_dnf_id: 0,
+			subsig_ids: (0..n_subsig).collect(),
+			subsig_igc: vec![false; n_subsig] };
+		//negation-DNF of "0&1" is (¬0)|(¬1): clause k falsifies via subsig k.
+		//min_dnf_id selects the clause whose subsig is actually False.
+		let discharge_infos = vec![DischargeSigInfo{
+			sig_name: sig_name.to_string(), b_success: true, min_cost: 0,
+			min_dnf_id: witness_idxs[0], subsig_ids: witness_idxs.clone(),
+			subsig_igc: vec![false; witness_idxs.len()] }];
+		let input_infos = vec![input_info];
+		let bundle_cs = &db.bundle_subsig;
+		let bundle_igc = &db.bundle_subsig_igc;
+		let acdfa_cs = &bundle_cs.vec_acdfa[0];
+		let acdfa_igc = &bundle_igc.vec_acdfa[0];
+		let sig_id = *(db.sig_to_id.get(&sig_name.to_string()).unwrap());
+		use crate::circs::sed_mapper::SedAdvice;
+		let input_subsigs_cs: Vec<Fr> = SedAdvice::collect_subsig_ids(
+			&v_sig_obj, &input_infos, &db.sig_to_id, false, &acdfa_cs);
+		let input_subsigs_igc: Vec<Fr> = SedAdvice::collect_subsig_ids(
+			&v_sig_obj, &input_infos, &db.sig_to_id, true, &acdfa_igc);
+		let store_id = 0;
+		let fsm_id_cs = ClamavDB::<Fr>::pm_acdfa_id(store_id, false);
+		let fsm_id_igc = ClamavDB::<Fr>::pm_acdfa_id(store_id, true);
+		let steps_store_cs = &bundle_cs.vec_subsig_step_stores[store_id];
+		let steps_store_igc = &bundle_igc.vec_subsig_step_stores[store_id];
+		let steps_extra_cs = &bundle_cs.vec_subsig_info_stores[store_id];
+		let steps_extra_igc = &bundle_igc.vec_subsig_info_stores[store_id];
+		//2. caps: aggressive ON, halo OFF (decouple M1b)
+		let wlen = 2usize;
+		let ppe = 150;
+		let (nibble_len, sbits) = (wlen*LEGS, acdfa_cs.state_part_bits);
+		let cap = FsmAdvCapacity{ max_nibble_len: nibble_len,
+			acdfa_state_part_bits: sbits, subsigs:25, avg_pats_per_subsig:4,
+			basis_pats_in_trace:8*100, basis_unique_states:20*100,
+			basis_acc_states:5*100, halo_nibbles:0 };
+		let cap_disc = DischargeAdvCapacity{ max_nibble_len: nibble_len,
+			subsigs: cap.subsigs, avg_active_pats_per_subsig:2,
+			basis_pats_in_trace: cap.basis_pats_in_trace,
+			perc_pats_expansion_rate:150, b_aggressive:true };
+		let cap_sig = ComputeSigAdvCapacity{ max_nibble_len: nibble_len,
+			sigs:1, subsigs_cs: cap.subsigs, subsigs_igc: cap.subsigs,
+			basis_pats_in_trace_cs: cap.basis_pats_in_trace,
+			basis_pats_in_trace_igc: cap.basis_pats_in_trace,
+			perc_comp_subsigs:20, perc_pats_expansion_rate_cs: ppe,
+			perc_pats_expansion_rate_igc: ppe, b_aggressive:true };
+		//3. optional seed of carried-in accumulator with raw subsig 0's
+		//LAST_STEP key (a non-witness subsig that membership marks Maybe).
+		let seed_acc_cs: Vec<Fr> = if seed {
+			let s = Fr::from(acdfa_cs.gen_subsig_id(sig_id, 0+1) as u32);
+			vec![last_key(&s, steps_store_cs)]
+		} else { vec![] };
+		//4. single-cycle chain
+		let all_word = pad_word_to_multiple::<Fr>(
+			&pack_nibbles(&f_nibbles), wlen);
+		assert!(all_word.len()/wlen==1, "aggr test needs n_cycles==1");
+		let word = all_word[0..wlen].to_vec();
+		let adv_wea = WordExtractAdvAdvice::new(&word, word.len(), false)
+			.expect("wea");
+		let stmt_wea = adv_wea.stmt_container;
+		let cfg_wea = stmt_wea.lock().unwrap().get_cfg();
+		let nibbles = stmt_wea.lock().unwrap().get_container("nibbles")
+			.unwrap().lock().unwrap().to_vec();
+		let adv_faa_cs = FsmAdvAdvice::new(false,1,&nibbles,&[],&acdfa_cs,
+			Fr::from((acdfa_cs.init_state+1) as u32), Fr::from(1u32),
+			&input_subsigs_cs,&cap,fsm_id_cs,
+			&bundle_cs.vec_subsig_stores[store_id],0).expect("faa cs");
+		let stmt_faa_cs = adv_faa_cs.stmt_container;
+		let cfg_faa_cs = stmt_faa_cs.lock().unwrap().get_cfg();
+		let adv_faa_igc = FsmAdvAdvice::new(true,2,&nibbles,&[],&acdfa_igc,
+			Fr::from((acdfa_igc.init_state+1) as u32), Fr::from(1u32),
+			&input_subsigs_igc,&cap,fsm_id_igc,
+			&bundle_igc.vec_subsig_stores[store_id],0).expect("faa igc");
+		let stmt_faa_igc = adv_faa_igc.stmt_container;
+		let cfg_faa_igc = stmt_faa_igc.lock().unwrap().get_cfg();
+		let pat_loc_cs = stmt_faa_cs.lock().unwrap().search_container(
+			"fsm_adv_stmt_cs packed_trace pat_loc sorted_tbl").unwrap();
+		let locs_cs = stmt_faa_cs.lock().unwrap().search_container(
+			"fsm_adv_stmt_cs fsm_acc locs").unwrap().lock().unwrap().to_vec();
+		let adv_disc_cs = DischargeAdvAdvice::new(false,2,&pat_loc_cs,
+			&input_subsigs_cs,fsm_id_cs,steps_store_cs,&cap_disc,
+			&inp_empty_sq(false,&input_subsigs_cs,steps_store_cs,fsm_id_cs,
+				&cap_disc), &seed_acc_cs,
+			locs_cs[locs_cs.len()-1],0,0).expect("disc cs");
+		let stmt_disc_cs = adv_disc_cs.stmt_container;
+		let cfg_disc_cs = stmt_disc_cs.lock().unwrap().get_cfg();
+		let pat_loc_igc = stmt_faa_igc.lock().unwrap().search_container(
+			"fsm_adv_stmt_igc packed_trace pat_loc sorted_tbl").unwrap();
+		let locs_igc = stmt_faa_igc.lock().unwrap().search_container(
+			"fsm_adv_stmt_igc fsm_acc locs").unwrap().lock().unwrap().to_vec();
+		let adv_disc_igc = DischargeAdvAdvice::new(true,2,&pat_loc_igc,
+			&input_subsigs_igc,fsm_id_igc,steps_store_igc,&cap_disc,
+			&inp_empty_sq(true,&input_subsigs_igc,steps_store_igc,fsm_id_igc,
+				&cap_disc), &vec![],
+			locs_igc[locs_igc.len()-1],0,0).expect("disc igc");
+		let stmt_disc_igc = adv_disc_igc.stmt_container;
+		let cfg_disc_igc = stmt_disc_igc.lock().unwrap().get_cfg();
+		//compute_sig fed acc_out (aggressive)
+		let inp_sigs = vec![Fr::from(sig_id as u64)];
+		let acc_cs = stmt_disc_cs.lock().unwrap().search_container(
+			"discharge_adv_stmt_cs failed_acc_combo failed_acc")
+			.expect("acc_cs");
+		let acc_igc = stmt_disc_igc.lock().unwrap().search_container(
+			"discharge_adv_stmt_igc failed_acc_combo failed_acc")
+			.expect("acc_igc");
+		let adv_sig = ComputeSigAdvAdvice::new(fsm_id_cs,fsm_id_igc,
+			&inp_sigs,&input_subsigs_cs,&input_subsigs_igc,&discharge_infos,
+			&acc_cs,&acc_igc,&cap_sig,steps_store_cs,steps_store_igc,
+			steps_extra_cs,steps_extra_igc,&v_sig_obj,&db.sig_to_id,0)
+			.expect("sig adv");
+		let stmt_sig = adv_sig.stmt_container;
+		let cfg_sig = stmt_sig.lock().unwrap().get_cfg();
+		let mut vec_cfg = vec![cfg_wea.clone(),cfg_faa_cs.clone(),
+			cfg_faa_igc.clone(),cfg_disc_cs.clone(),cfg_disc_igc.clone(),
+			cfg_sig.clone()];
+		ContainerConfig::adjust_locations(&mut vec_cfg);
+		//gen cps (concat all 6 gadgets per segment)
+		let parts = vec![
+			stmt_wea.lock().unwrap().gen_stmt_components().0,
+			stmt_faa_cs.lock().unwrap().gen_stmt_components().0,
+			stmt_faa_igc.lock().unwrap().gen_stmt_components().0,
+			stmt_disc_cs.lock().unwrap().gen_stmt_components().0,
+			stmt_disc_igc.lock().unwrap().gen_stmt_components().0,
+			stmt_sig.lock().unwrap().gen_stmt_components().0,
+		];
+		let mut cps = parts[0].clone();
+		for o in &parts[1..]{ cps = cps.into_iter().zip(o.iter())
+			.map(|(a,b)| vec![a,b.clone()].concat()).collect(); }
+		//adversarial tamper
+		tamper(&mut cps, &input_subsigs_cs, steps_store_cs);
+		//gadget + run
+		let lkup_share_size = 4usize;
+		let mut dcg = ComputeSigAdvGadget::<Fr>::new(fsm_id_cs,fsm_id_igc,
+			&cap_sig,&vec![cfg_wea.clone(),cfg_faa_cs.clone(),
+			cfg_faa_igc.clone(),cfg_disc_cs.clone(),cfg_disc_igc.clone()],
+			&bundle_cs.vec_subsig_step_stores[0],
+			&bundle_igc.vec_subsig_step_stores[0],
+			&bundle_cs.vec_subsig_info_stores[0],
+			&bundle_igc.vec_subsig_info_stores[0]);
+		dcg.set_container_cfg(vec_cfg.clone().into(),5);
+		let rg = Arc::new(dcg);
+		test_gadget_adv_ex::<Fr>(rg,&word,&cps[0],&cps[1],&cps[2],&cps[6],
+			&cps[7],&vec![cps[3].clone(),cps[4].clone(),cps[5].clone()]
+			.concat(), lkup_share_size, false, Some(vec_cfg), expect_sat);
+		get_global_config().perc_failed_subsigs = 0; //restore default
+	}
+
+	fn inp_empty_sq(b_igc:bool, subs:&Vec<Fr>, store:&SubsigStepStore,
+		fsm_id:u32, cap:&DischargeAdvCapacity)->StepQueue<Fr>{
+		DischargeAdvAdvice::gen_empty_steps_queue_serialized(
+			b_igc, subs, store, fsm_id, cap)
+	}
+
+	/// EQUIV: aggressive circuit accepts honest witnesses — both a forward
+	/// match (non-empty accumulator) and a close-miss (empty), and a seeded
+	/// carry. (Sig stays discharged via the counter; circuit is satisfiable.)
+	#[test]
+	fn test_acc_equiv_f1(){
+		let (db, cfg) = build_aggr_db();
+		//forward match: subsig0 reaches final-step -> accumulator non-empty;
+		//subsig1 is the False discharge witness.
+		run_aggr_case(&db,"Agg.Dnf","KEYWORD12QQQQQ",&cfg,vec![1],false,
+			true,|_,_,_|{});
+		//close-miss: both false -> accumulator empty; subsig0 witness.
+		run_aggr_case(&db,"Agg.Dnf","QQQQQQQQQQ",&cfg,vec![0],false,
+			true,|_,_,_|{});
+		//seeded carry-in: subsig0 forced Maybe via membership; witness subsig1.
+		run_aggr_case(&db,"Agg.Dnf","QQQQQQQQQQ",&cfg,vec![1],true,
+			true,|_,_,_|{});
+	}
+
+	/// ADVERSARIAL (C5 completeness): drop a forward final-step key from
+	/// acc_out (IDX_OUP, cps[1]) -> {fwd final}⊄acc_out -> UNSAT.
+	#[test]
+	fn test_acc_omit_violation(){
+		let (db, cfg) = build_aggr_db();
+		run_aggr_case(&db,"Agg.Dnf","KEYWORD12QQQQQ",&cfg,vec![1],false,
+			false,|cps, subs, store|{
+				for s in subs.iter().filter(|x| !x.is_zero()){
+					let k = last_key(s, store);
+					for v in cps[1].iter_mut(){ if *v==k {*v=Fr::zero();} }
+				}
+			});
+	}
+
+	/// ADVERSARIAL (C5 carry-in): drop the seeded acc_in key from acc_out
+	/// (cps[1]) -> acc_in⊄acc_out -> UNSAT.
+	#[test]
+	fn test_acc_drop_carry(){
+		let (db, cfg) = build_aggr_db();
+		run_aggr_case(&db,"Agg.Dnf","QQQQQQQQQQ",&cfg,vec![1],true,
+			false,|cps, subs, store|{
+				for s in subs.iter().filter(|x| !x.is_zero()){
+					let k = last_key(s, store);
+					for v in cps[1].iter_mut(){ if *v==k {*v=Fr::zero();} }
+				}
+			});
+	}
+
+	/// ADVERSARIAL (C6 membership): flip the accumulated subsig's verdict
+	/// Maybe(3)->False(1) in IDX_DATA (cps[2]) -> acc_out⊄Maybe-slots -> UNSAT.
+	#[test]
+	fn test_acc_wrong_membership(){
+		let (db, cfg) = build_aggr_db();
+		run_aggr_case(&db,"Agg.Dnf","KEYWORD12QQQQQ",&cfg,vec![1],false,
+			false,|cps, _, _|{
+				for v in cps[2].iter_mut(){
+					if *v==Fr::from(3u64){ *v=Fr::from(1u64); }
+				}
+			});
 	}
 
 	#[test]

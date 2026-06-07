@@ -16,7 +16,7 @@ use folding_schemes::folding::foldpot::container_config::ColEle;
 use rayon::iter::{IntoParallelRefIterator,ParallelIterator,IntoParallelIterator
 	, IndexedParallelIterator};
 use std::{collections::{HashMap}};
-use ark_ff::{PrimeField,Zero};
+use ark_ff::{PrimeField,Zero,BigInteger};
 use std::{marker::{PhantomData},collections::{HashSet}};
 
 use utils::{logger::{log_perf, LOG1}, 
@@ -2023,7 +2023,10 @@ impl <F: PrimeField + ColEle> FailedSubsigAcc<F>{
 		let zero = F::zero();
 		let mut set: Vec<F> = self.acc.iter().filter(|f| !f.is_zero())
 			.cloned().collect();
-		set.sort_by_key(|f| field_to_usize(f));
+		//keys are full-width encoded values (~194 bit) — sort/dedup by the
+		//byte repr (field_to_usize only handles 32-bit values).
+		set.sort_by(|a,b| a.into_bigint().to_bytes_le()
+			.cmp(&b.into_bigint().to_bytes_le()));
 		set.dedup();
 		if n < set.len()+1{ //need >=1 zero-pad dummy
 			let new_val = ((set.len()+1) as f32 / n as f32
@@ -2089,6 +2092,8 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		//as we have info encoded in lkup table StoreSteps.
 
 		//2. construct 1st (forward) step-queue
+		//forward builds sq_inp in IDX_DATA (not IDX_INP) under aggressive, so
+		//the only IDX_INP/IDX_OUP carried state is the accumulator.
 		let (forward_step_queue, sq_fwd, last_loc) = Self::gen_forward_steps_queue_combo(
 			b_igc, offset_fsm,
 			&inp_subsigs, pat_loc, inp_step_queue, fsm_id, &capacity,
@@ -2097,32 +2102,19 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		stmt_container.lock().unwrap().add_container(forward_step_queue);
 		let default_min_loc = last_loc + F::one();
 
-
-		//3. construct 2nd (backward) step-queue. AGGRESSIVE: forward-only,
-		//so the backward combo becomes a no-op init carry (its proofs are
-		//gated off in validate; the verdict comes from the accumulator).
-		let backward_step_queue = if b_aggr {
-			//soundness premise (release-safe assert): the forward input must
-			//be a fresh init (step-0) so the kept step-queue columns fold as
-			//init==init (chunk-invariant SED universe; see M2/M5).
-			assert!(inp_step_queue.store_items.values().all(|items|
-				items.iter().all(|it| it.step.is_zero())),
-				"aggressive no-op carry needs a fresh (step-0) forward input");
-			Self::gen_noop_backward_combo(b_igc, &sq_fwd,
-				subsig_store_info, capacity)?
-		} else {
-			Self::gen_backward_steps_queue_combo(b_igc,
-				&sq_fwd, &ct_fwd_sq, subsig_store_info, default_min_loc,
-				capacity, seg_id, job_id)?
-		};
-		stmt_container.lock().unwrap().add_container(backward_step_queue);
-
-		//4. AGGRESSIVE: build the failed_subsigs accumulator (acc_in in
-		//IDX_INP, acc_out in IDX_OUP) + the completeness/carry-in m-tables.
+		//3. AGGRESSIVE = forward-only: NO backward step-queue (sq_res2). The
+		//ONLY carried IDX_INP/IDX_OUP state is the failed_subsigs accumulator,
+		//so acc_out is the sole IDX_OUP container (compute_sig's external-ref
+		//to it is unambiguous). Non-aggressive keeps the backward combo.
 		if b_aggr {
 			let acc_combo = Self::gen_failed_acc_combo(b_igc, &ct_fwd_sq,
 				&sq_fwd, inp_failed_acc, subsig_store_info, capacity)?;
 			stmt_container.lock().unwrap().add_container(acc_combo);
+		} else {
+			let backward_step_queue = Self::gen_backward_steps_queue_combo(
+				b_igc, &sq_fwd, &ct_fwd_sq, subsig_store_info, default_min_loc,
+				capacity, seg_id, job_id)?;
+			stmt_container.lock().unwrap().add_container(backward_step_queue);
 		}
 
 		Ok(Self{capacity: Clone::clone(capacity), fsm_id,
@@ -2145,25 +2137,6 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		}).collect()
 	}
 
-	/// AGGRESSIVE-ONLY. No-op backward combo: sq_res2 = fresh init (same
-	/// column layout as the real backward result, so the carried step-queue
-	/// columns fold as init==init). Emits NO backward proofs (validate
-	/// gates them off). Saves the backward-proof cost.
-	fn gen_noop_backward_combo(
-		b_igc: bool,
-		input_step_queue: &StepQueue<F>,
-		subsig_store_info: &SubsigStepStore,
-		capacity: &DischargeAdvCapacity,
-	)->Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
-		let res = Container::<F>::new("bwd_steps_queue");
-		let sq_init = Self::gen_empty_steps_queue_serialized(
-			b_igc, &input_step_queue.subsigs, subsig_store_info, 0, capacity);
-		let ct_sq_res2 = sq_init.to_container("sq_res2",
-			false, true, true, true, subsig_store_info)?;
-		res.lock().unwrap().add_container(ct_sq_res2);
-		Ok(res)
-	}
-
 	/// AGGRESSIVE-ONLY. Build acc_in (IDX_INP) + acc_out (IDX_OUP) failed-
 	/// subsig accumulators and the two C5 logup m-tables (completeness +
 	/// carry-in). acc_out = dedup(acc_in ∪ this-chunk's final-step keys).
@@ -2182,7 +2155,8 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let mut out_set: Vec<F> = inp_failed_acc.iter()
 			.filter(|f| !f.is_zero()).cloned()
 			.chain(chunk_failed.into_iter()).collect();
-		out_set.sort_by_key(|f| field_to_usize(f));
+		out_set.sort_by(|a,b| a.into_bigint().to_bytes_le()
+			.cmp(&b.into_bigint().to_bytes_le()));
 		out_set.dedup();
 		let acc_in = FailedSubsigAcc{acc: inp_failed_acc.clone(),
 			capacity: Clone::clone(capacity), b_igc};
@@ -2276,7 +2250,12 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 
 	/// retrieve the steps_queue from input
 	pub fn get_output_steps_queue(&self)->Vec<F>{
-		let sname = if self.b_igc {"discharge_adv_stmt_igc"} 
+		//AGGRESSIVE = forward-only: there is no carried step-queue (sq_res2);
+		//each chunk re-seeds the forward from a fresh init. The cross-chunk
+		//state is the failed_subsigs accumulator (get_output_failed_acc).
+		//Return empty so callers fall back to the init step-queue.
+		if self.capacity.b_aggressive { return vec![]; }
+		let sname = if self.b_igc {"discharge_adv_stmt_igc"}
 			else {"discharge_adv_stmt_cs"};
 		let res = self.stmt_container.lock().unwrap().search_container(
 			&format!("{} bwd_steps_queue sq_res2", sname)).unwrap();
@@ -2737,7 +2716,11 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		}
 
 		
-		let ct_sq_inp = inp_step_queue.to_container("sq_inp",true,//inp
+		//AGGRESSIVE: sq_inp goes to IDX_DATA (b_inp=false), NOT IDX_INP, so the
+		//only carried IDX_INP/IDX_OUP state is the accumulator (no step-queue
+		//carry in forward-only mode). Non-aggressive keeps it in IDX_INP.
+		let ct_sq_inp = inp_step_queue.to_container("sq_inp",
+			!capacity.b_aggressive,//inp
 			false,  //b_step
 			false,  //b_oup
 			false,  //b_subsig
@@ -4870,17 +4853,16 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for DischargeAdvGadget<F>{
 			&forward_step_queue.lock().unwrap(), r1.clone(), r2.clone(), 
 			cs.clone(), default_min_loc, word_id.clone(), subseg_id.clone())?;
 
-		//4. validate the backward step queue. AGGRESSIVE: the backward
-		//proofs are gated off; instead validate the failed_subsigs
-		//accumulator (completeness + carry-in logups).
-		let backward_step_queue= stmt.get_container("bwd_steps_queue")?;
+		//4. AGGRESSIVE = forward-only: no backward step-queue exists; validate
+		//the failed_subsigs accumulator instead (completeness + carry-in
+		//logups). Non-aggressive validates the backward step queue.
 		if self.capacity.b_aggressive {
-			let _ = &backward_step_queue; //kept (no-op carry), not validated
 			self.validate_aggressive_acc(&stmt,
 				&forward_step_queue.lock().unwrap(),
 				r1.clone(), cs.clone(),
 				word_id.clone(), subseg_id.clone())?;
 		} else {
+			let backward_step_queue= stmt.get_container("bwd_steps_queue")?;
 			self.validate_backward_step_queue(&forward_step_queue.lock().unwrap(),
 				&backward_step_queue.lock().unwrap(),
 				r1.clone(), r2.clone(), cs.clone(), default_min_loc,
