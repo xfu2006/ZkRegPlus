@@ -1,0 +1,488 @@
+# -------------------------------------------
+# Creator: BORA Author. Implemented with Claude Code; reviewed by BORA author.
+# Date: 06/06/2026
+# Purpose: build the real Zombie regex non-membership circuit for every policy in
+#          regex_zombie/ and measure its cost (R1CS size, prove time, verify time,
+#          proof size). Sequential. Sweeps a set of document lengths (STR_LENGTH).
+#
+#   Pipeline per (policy, str_len):
+#     1. parse the baked policy regex (PAT.{0,N}KWS)|(KWS.{0,N}PAT) back into its
+#        three parts -- PAT, KWS, proximity -- with extract_parts().
+#     2. feed Zombie NATIVELY: stdin = "PAT & KWS", proximity pair "0 1"
+#        (TestRegex F). The window is enforced by Zombie's procCheck/spread, not
+#        by a baked .{0,N}; PROXY_DIST is the SIT's proximity.
+#     3. rewrite STR_LENGTH / PROXY_DIST in the emitted .zok, drop it at
+#        circ/zkmb/policy<str_len>.zok, and run circ_executable (Spartan NIZK):
+#          circ_executable policy_<str_len> true prover_verifier
+#        which prints constraints / prove ms / proof bytes / verify ms.
+#
+#   The witness is Zombie's all-zero default (RegexProverWitness::<N>::default()):
+#   cost is fixed by the DFA x STR_LENGTH and is content-invariant, so an all-zero
+#   (trivially non-matching) document yields the same numbers as any real one.
+#
+#   ENABLEMENT: the circ benchmark dispatcher (zk_test() in circ/src/zkmb.rs, which
+#   main() already calls) only ships arms for a couple of sizes. circ also cannot be
+#   built where it sits -- it is inside the BORA cargo workspace. So ensure_zombie_
+#   built() follows download_zombie.py's verified recipe: it makes a persistent COPY
+#   of circ OUTSIDE the workspace (BUILD_ROOT, in /tmp), adds the "policy_<N>" arms
+#   to that copy's zkmb.rs, and builds circ_executable there with the committed
+#   Cargo.lock (--locked) and system GMP/MPFR/MPC (CARGO_FEATURE_USE_SYSTEM_LIBS=1).
+#   The arm patch is IDEMPOTENT (pristine zkmb.rs.orig + regenerate each run), so any
+#   number of runs never compounds; the in-tree clone is left untouched. It aborts
+#   loudly if the upstream source has drifted from the pinned commit.
+#
+#   The Zombie tree (zombie/) is a pinned, no-license local clone -- not
+#   redistributed; all edits/artifacts here stay local.
+# -------------------------------------------
+
+import os
+import re
+import sys
+import json
+import shutil
+import subprocess
+import statistics
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from common import gen_report_header, gen_machine_config  # noqa: E402
+
+# --- configuration ---------------------------------------------------------
+FULL_DIR   = "regex_zombie"                 # input : baked policy regexes
+DOCS_DIR   = "docs"
+LOG_FILE   = os.path.join(DOCS_DIR, "run_zombie.log")
+# resume/crash cache: a transient build artifact (not a deliverable), so it lives
+# in /tmp, never under docs/. Delete it to force a clean re-measure of all sizes.
+PARTIAL_DIR = "/tmp/bora_zombie_run"
+PARTIAL     = os.path.join(PARTIAL_DIR, "run_zombie.partial.jsonl")
+
+ZOMBIE     = "zombie"
+TESTREGEX  = os.path.join(ZOMBIE, "regex", "bin", "TestRegex")
+CLONE_CIRC = os.path.join(ZOMBIE, "circ")          # pristine clone (copy source)
+
+# circ cannot be built where it sits -- it is inside the BORA cargo workspace, and
+# adding a local [workspace] re-resolves the lockfile to MSRV-incompatible crates
+# (see download_zombie.py's note). Per that verified recipe we build a COPY of circ
+# OUTSIDE the workspace, with the committed Cargo.lock (--locked) and system
+# GMP/MPFR/MPC (CARGO_FEATURE_USE_SYSTEM_LIBS=1). The copy is persistent so the slow
+# first build is reused; delete BUILD_ROOT to force a fresh copy + rebuild.
+BUILD_ROOT = "/tmp/bora_zombie_circ"
+CIRC_BUILD = os.path.join(BUILD_ROOT, "circ")
+BUILD_RS      = os.path.join(CIRC_BUILD, "src", "zkmb.rs")
+BUILD_RS_ORIG = BUILD_RS + ".orig"
+ZKMB_DIR   = os.path.join(CIRC_BUILD, "zkmb")      # circ reads ./zkmb/<circuit>.zok
+KEYS_DIR   = os.path.join(CIRC_BUILD, "keys")      # circ writes ./keys/<circuit>_*
+CIRC_BIN   = os.path.join(CIRC_BUILD, "target", "release", "circ_executable")
+SYSTEM_LIBS_ENV = {"CARGO_FEATURE_USE_SYSTEM_LIBS": "1"}
+
+VEC_SIZE   = [1000, 2000, 4000]             # STR_LENGTH sweep (all > 2*PROXY_DIST)
+CODEGEN_TIMEOUT = 300                        # s, TestRegex F (DFA build)
+PROVE_TIMEOUT   = 7200                       # s, key-gen + prove + verify per run
+
+# patch sentinel (delimits OUR auto-generated match arms inside zk_test()).
+SENT_BEGIN = "        // >>> run_zombie auto-generated arms (do not edit)"
+SENT_END   = "        // <<< run_zombie auto-generated arms"
+ARM_ANCHOR = "        _ => ()\n"            # the catch-all arm we insert before
+
+
+# --- tiny io helpers -------------------------------------------------------
+def _read(p):
+    with open(p) as f:
+        return f.read()
+
+
+def _atomic_write(p, text):
+    tmp = p + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(text)
+    os.replace(tmp, p)
+
+
+# ===========================================================================
+# part 1: parse the baked policy regex into its three parts (round-trippable)
+# ===========================================================================
+# The generator (gen_zombie_regex.sit_to_regex) emits exactly
+#     (PAT.{0,N}KWS)|(KWS.{0,N}PAT)
+# where KWS = (kw1|kw2|...) is a single parenthesized group and N = proximity.
+# In our dialect bare '(' ')' are always structural (literal parens are \x28/\x29),
+# so plain paren-depth counting is safe.
+
+def _match_group_fwd(s, i):
+    """s[i] must be '('; return index just past its matching ')'."""
+    if s[i] != "(":
+        raise ValueError("expected '(' at %d" % i)
+    depth = 0
+    for j in range(i, len(s)):
+        if s[j] == "(":
+            depth += 1
+        elif s[j] == ")":
+            depth -= 1
+            if depth == 0:
+                return j + 1
+    raise ValueError("unbalanced parentheses")
+
+
+def _split_fwd_branch(a):
+    """a = PAT.{0,N}KWS -> (pat, kws, prox). KWS is the trailing balanced group."""
+    if not a.endswith(")"):
+        raise ValueError("forward branch does not end in KWS group")
+    depth = 0
+    for j in range(len(a) - 1, -1, -1):
+        if a[j] == ")":
+            depth += 1
+        elif a[j] == "(":
+            depth -= 1
+            if depth == 0:
+                kws, prefix = a[j:], a[:j]    # KWS = "(...)", prefix = PAT + ".{0,N}"
+                break
+    else:
+        raise ValueError("could not locate KWS group")
+    m = re.match(r"^(.*)\.\{0,(\d+)\}$", prefix, re.S)  # greedy -> last .{0,N} = connector
+    if not m:
+        raise ValueError("no .{0,N} proximity connector before KWS")
+    return m.group(1), kws, int(m.group(2))
+
+
+def extract_parts(full):
+    """Parse a baked policy regex into (pat, kws, prox). Cross-checks the backward
+    branch against the forward one; raises ValueError on any malformed input."""
+    full = full.strip()
+    end_a = _match_group_fwd(full, 0)        # first balanced group = "(A)"
+    a = full[1:end_a - 1]
+    rest = full[end_a:]
+    if not (rest.startswith("|(") and rest.endswith(")")):
+        raise ValueError("expected '|(...)' backward branch")
+    b = rest[2:-1]
+    pat, kws, prox = _split_fwd_branch(a)
+    if b != "{k}.{{0,{n}}}{p}".format(k=kws, n=prox, p=pat):
+        raise ValueError("backward branch inconsistent with forward branch")
+    return pat, kws, prox
+
+
+def assemble_parts(pat, kws, prox):
+    """Inverse of extract_parts; identical to gen_zombie_regex.sit_to_regex's body."""
+    return "({p}.{{0,{n}}}{k})|({k}.{{0,{n}}}{p})".format(p=pat, n=prox, k=kws)
+
+
+def selftest():
+    """Round-trip extract/assemble over every regex_zombie/ file plus hand cases."""
+    cases = [
+        ("[0-9]{3}", "(visa|card)", 300),
+        ("(a|b)[A-Za-z0-9]{2}", "(ssn)", 50),
+        ("X.{0,50}[0-9]", "(kw1|kw2)", 300),     # PAT itself ends in .{0,k}
+        ("\\x41\\x42", "(\\x70\\x77)", 17),
+    ]
+    n_ok = 0
+    for pat, kws, prox in cases:
+        full = assemble_parts(pat, kws, prox)
+        assert extract_parts(full) == (pat, kws, prox), full
+        n_ok += 1
+    if os.path.isdir(FULL_DIR):
+        for fn in sorted(os.listdir(FULL_DIR)):
+            if not fn.endswith(".regex"):
+                continue
+            full = _read(os.path.join(FULL_DIR, fn)).strip()
+            parts = extract_parts(full)
+            assert assemble_parts(*parts) == full, fn
+            n_ok += 1
+    print("[selftest] round-trip OK on %d cases" % n_ok)
+    return n_ok
+
+
+# ===========================================================================
+# part 2: idempotent Rust enablement + build
+# ===========================================================================
+def _arm(n):
+    return ('        "policy_%d" => benchmark_one_circuit("policy%d", '
+            'vec![RegexProverWitness::<%d>::default()], '
+            'vec![RegexVerifierWitness::<%d>::default()], '
+            'should_generate, benchmark_method),' % (n, n, n, n))
+
+
+def _render_zkmb(orig, sizes):
+    """Deterministically produce the patched zkmb.rs from the pristine baseline:
+    drop any existing policy_<N> arm for our sizes (avoid duplicate/unreachable
+    arms), then insert our sentinel block before the catch-all arm."""
+    text = orig
+    for n in sizes:
+        text = re.sub(r'^[ \t]*"policy_%d" => .*\n' % n, "", text, flags=re.M)
+    block = SENT_BEGIN + "\n" + "\n".join(_arm(n) for n in sizes) + "\n" + SENT_END + "\n"
+    if text.count(ARM_ANCHOR) != 1:
+        raise SystemExit("zkmb.rs: expected exactly one catch-all arm anchor "
+                         "(%r); upstream may have drifted." % ARM_ANCHOR.strip())
+    return text.replace(ARM_ANCHOR, block + ARM_ANCHOR)
+
+
+def _copy_circ_out_of_workspace():
+    """Make the persistent out-of-workspace copy of circ once (excluding the
+    top-level target/ and .git only -- an unanchored 'target' would also drop the
+    source module circ/src/target/ and break the build). The pristine clone (with
+    download_zombie.py's patches) is the source; the copy lives in /tmp, outside
+    the BORA workspace, so cargo never walks up to it."""
+    if os.path.isdir(CIRC_BUILD):
+        return
+    if not os.path.isfile(os.path.join(CLONE_CIRC, "src", "zkmb.rs")):
+        raise SystemExit("missing %s -- run download_zombie.py first." % CLONE_CIRC)
+    print("[zombie] copying circ -> %s (out of the BORA workspace)..." % CIRC_BUILD)
+    os.makedirs(BUILD_ROOT, exist_ok=True)
+
+    def _root_ignore(dirpath, names):
+        if os.path.abspath(dirpath) == os.path.abspath(CLONE_CIRC):
+            return {n for n in names if n in ("target", ".git")}
+        return set()
+
+    shutil.copytree(CLONE_CIRC, CIRC_BUILD, symlinks=True, ignore=_root_ignore)
+
+
+def ensure_zombie_built(sizes):
+    """Build circ_executable (with our policy_<N> arms) from the out-of-workspace
+    copy and return the binary path.
+
+    The copy's zkmb.rs is patched IDEMPOTENTLY: a pristine zkmb.rs.orig is captured
+    once and zkmb.rs is regenerated from it every call, so the result is a pure
+    function of the baseline -- N runs equal 1 run. Rebuilds only when the source
+    changed or the binary is missing. Uses the committed Cargo.lock (--locked) and
+    system GMP/MPFR/MPC (download_zombie.py's verified recipe)."""
+    _copy_circ_out_of_workspace()
+
+    # capture the copy's pristine baseline once (the clone never patches zkmb.rs).
+    if not os.path.isfile(BUILD_RS_ORIG):
+        cur = _read(BUILD_RS)
+        if SENT_BEGIN in cur:
+            raise SystemExit("copy zkmb.rs already patched but no .orig backup; "
+                             "delete %s and re-run." % BUILD_ROOT)
+        if "fn main() {\n    zk_test()\n}" not in cur:
+            raise SystemExit("zkmb.rs: unexpected main(); upstream may have "
+                             "drifted from the pinned commit.")
+        _atomic_write(BUILD_RS_ORIG, cur)
+
+    orig = _read(BUILD_RS_ORIG)
+    desired = _render_zkmb(orig, sizes)
+    changed = _read(BUILD_RS) != desired
+    if changed:
+        _atomic_write(BUILD_RS, desired)
+
+    if changed or not os.path.isfile(CIRC_BIN):
+        print("[zombie] building circ_executable (first build is slow)...")
+        env = dict(os.environ)
+        env.update(SYSTEM_LIBS_ENV)
+        r = subprocess.run(["cargo", "build", "--release", "--bin",
+                            "circ_executable", "--locked"], cwd=CIRC_BUILD, env=env)
+        if r.returncode != 0 or not os.path.isfile(CIRC_BIN):
+            raise SystemExit("cargo build failed; see output above.")
+    os.makedirs(KEYS_DIR, exist_ok=True)
+    return CIRC_BIN
+
+
+# ===========================================================================
+# part 3: run one circuit, measure
+# ===========================================================================
+def _rec(slug, str_len, pat=None, kws=None, prox=None, status="", err="", **m):
+    d = {"regex_name": slug, "str_len": str_len,
+         "pat_len": len(pat) if pat is not None else None,
+         "kws_len": len(kws) if kws is not None else None,
+         "prox": prox, "r1cs_cons": None, "prove_ms": None,
+         "verify_ms": None, "proof_bytes": None, "status": status, "err": err}
+    d.update(m)
+    return d
+
+
+def _slice_zok(stdout):
+    """The .zok begins at the 'const u32 STR_LENGTH' line (after 'Parse
+    Successful!' / '[Zokrates Code]')."""
+    i = stdout.find("const u32 STR_LENGTH")
+    return stdout[i:] if i >= 0 else None
+
+
+def _parse_metrics(stdout):
+    def g(p):
+        m = re.search(p, stdout)
+        return int(m.group(1)) if m else None
+    cons = g(r"circuit constraints cons (\d+)")
+    prove = g(r"prove takes (\d+)")
+    proof = g(r"proof size is (\d+) bytes")
+    verify = g(r"verify takes (\d+)")
+    if None in (cons, prove, proof, verify):
+        return None
+    return {"r1cs_cons": cons, "prove_ms": prove,
+            "verify_ms": verify, "proof_bytes": proof}
+
+
+def run_zombie(binp, regex_name, str_len):
+    """Build the real Zombie circuit for one policy at one document length and
+    measure it. Returns a result dict; tolerant of every failure mode (parse,
+    proximity-too-large, codegen/prove timeout, OOM, prove failure)."""
+    full = _read(os.path.join(FULL_DIR, regex_name + ".regex")).strip()
+    try:
+        pat, kws, prox = extract_parts(full)
+    except Exception as e:
+        return _rec(regex_name, str_len, status="parse_fail", err=str(e))
+
+    # spread() loops PROXY_DIST..(STR_LENGTH-PROXY_DIST); a too-short document
+    # makes procCheck vacuous, so skip rather than emit a meaningless number.
+    if str_len <= 2 * prox:
+        return _rec(regex_name, str_len, pat, kws, prox,
+                    status="skip_proximity", err="str_len<=2*prox")
+
+    # stage 1: codegen (native proximity: two patterns, pair 0 1).
+    stdin = pat + " & " + kws + "\n"
+    try:
+        z = subprocess.run([TESTREGEX, "F", "0", "1"], input=stdin,
+                           capture_output=True, text=True, timeout=CODEGEN_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return _rec(regex_name, str_len, pat, kws, prox, status="codegen_timeout")
+    if "Parse Successful!" not in z.stdout:
+        return _rec(regex_name, str_len, pat, kws, prox,
+                    status="parse_fail", err=(z.stderr or z.stdout)[:200])
+    zok = _slice_zok(z.stdout)
+    if zok is None:
+        return _rec(regex_name, str_len, pat, kws, prox,
+                    status="codegen_fail", err="no .zok in stdout")
+    zok = zok.replace("const u32 STR_LENGTH = 1000",
+                      "const u32 STR_LENGTH = %d" % str_len, 1)
+    if prox != 300:
+        zok = zok.replace("const u32 PROXY_DIST = 300",
+                          "const u32 PROXY_DIST = %d" % prox, 1)
+    _atomic_write(os.path.join(ZKMB_DIR, "policy%d.zok" % str_len), zok)
+
+    # stage 2: key-gen + prove + verify via Spartan NIZK.
+    try:
+        p = subprocess.run([os.path.abspath(binp),
+                            "policy_%d" % str_len, "true", "prover_verifier"],
+                           cwd=CIRC_BUILD, capture_output=True, text=True,
+                           timeout=PROVE_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return _rec(regex_name, str_len, pat, kws, prox, status="prove_timeout")
+    if p.returncode != 0:
+        st = "oom_or_killed" if p.returncode < 0 else "prove_fail"
+        return _rec(regex_name, str_len, pat, kws, prox,
+                    status=st, err=(p.stderr or "")[-300:])
+    m = _parse_metrics(p.stdout)
+    if m is None:
+        return _rec(regex_name, str_len, pat, kws, prox,
+                    status="prove_fail", err="metrics not found in stdout")
+    return _rec(regex_name, str_len, pat, kws, prox, status="ok", **m)
+
+
+# ===========================================================================
+# part 4: sweep one size over all policies (sequential), with resume
+# ===========================================================================
+def _load_partial():
+    """Map "slug|str_len" -> prior result, for crash/resume skip."""
+    done = {}
+    if os.path.isfile(PARTIAL):
+        with open(PARTIAL) as f:
+            for ln in f:
+                ln = ln.strip()
+                if not ln:
+                    continue
+                r = json.loads(ln)
+                done["%s|%d" % (r["regex_name"], r["str_len"])] = r
+    return done
+
+
+def _append_partial(rec):
+    with open(PARTIAL, "a") as f:
+        f.write(json.dumps(rec) + "\n")
+
+
+def run_zombie_on_all(binp, str_len, done):
+    """Measure every regex_zombie/ policy at one document length, sequentially.
+    Reuses already-completed (slug,str_len) results from the partial log."""
+    slugs = sorted(f[:-6] for f in os.listdir(FULL_DIR) if f.endswith(".regex"))
+    results = []
+    for i, slug in enumerate(slugs, 1):
+        key = "%s|%d" % (slug, str_len)
+        if key in done:
+            r = done[key]
+            tag = "%s (cached)" % r["status"]
+        else:
+            r = run_zombie(binp, slug, str_len)
+            _append_partial(r)
+            done[key] = r
+            tag = r["status"]
+        results.append(r)
+        print("[run] size=%d %d/%d %-52s -> %s"
+              % (str_len, i, len(slugs), slug, tag))
+    return {"meta": {"str_len": str_len, "n_policies": len(slugs),
+                     "machine": gen_machine_config()}, "results": results}
+
+
+# ===========================================================================
+# part 5: log
+# ===========================================================================
+def _fmt(v):
+    return "-" if v is None else str(v)
+
+
+def write_log(results, sizes):
+    by_size = {s: [r for r in results if r["str_len"] == s] for s in sizes}
+    with open(LOG_FILE, "w") as f:
+        f.write(gen_report_header("Zombie regex non-membership cost measurement"))
+        f.write("\n\n")
+        f.write("input:   %s/  (baked policy regexes)\n" % FULL_DIR)
+        f.write("circuit: native two-pattern proximity (PAT & KWS, pair 0 1), "
+                "all-zero witness\n")
+        f.write("metrics: r1cs constraints, prove ms, verify ms, proof bytes "
+                "(Spartan NIZK)\n")
+        f.write("sizes:   %s\n" % ", ".join(str(s) for s in sizes))
+        hdr = ("%-52s %7s %7s %6s %10s %9s %9s %10s  %s"
+               % ("policy", "pat_len", "kws_len", "prox", "r1cs_cons",
+                  "prove_ms", "verify_ms", "proof_B", "status"))
+        for s in sizes:
+            rows = by_size[s]
+            f.write("\n\n== STR_LENGTH = %d ==\n" % s)
+            f.write(hdr + "\n")
+            f.write("-" * len(hdr) + "\n")
+            for r in sorted(rows, key=lambda x: x["regex_name"]):
+                f.write("%-52s %7s %7s %6s %10s %9s %9s %10s  %s\n"
+                        % (r["regex_name"], _fmt(r["pat_len"]), _fmt(r["kws_len"]),
+                           _fmt(r["prox"]), _fmt(r["r1cs_cons"]), _fmt(r["prove_ms"]),
+                           _fmt(r["verify_ms"]), _fmt(r["proof_bytes"]), r["status"]))
+            ok = [r for r in rows if r["status"] == "ok"]
+            bad = [r for r in rows if r["status"] != "ok"]
+            f.write("\n  -- summary (STR_LENGTH=%d) --\n" % s)
+            f.write("  policies: %d   ok: %d   not-ok: %d\n"
+                    % (len(rows), len(ok), len(bad)))
+            if ok:
+                for label, key in (("r1cs_cons", "r1cs_cons"),
+                                   ("prove_ms", "prove_ms"),
+                                   ("verify_ms", "verify_ms"),
+                                   ("proof_bytes", "proof_bytes")):
+                    vals = [r[key] for r in ok]
+                    f.write("  %-12s mean/median/min/max: %.1f / %.1f / %d / %d\n"
+                            % (label, statistics.mean(vals),
+                               statistics.median(vals), min(vals), max(vals)))
+            for r in bad:
+                f.write("  ! %-52s %s  %s\n"
+                        % (r["regex_name"], r["status"], r["err"][:80]))
+
+
+# -------------------------------------------
+# MAIN
+# -------------------------------------------
+def main():
+    os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir))
+    os.makedirs(DOCS_DIR, exist_ok=True)
+    os.makedirs(PARTIAL_DIR, exist_ok=True)        # transient cache lives in /tmp
+
+    if "--selftest" in sys.argv:           # parse round-trip only; no Rust/build
+        selftest()
+        return
+
+    selftest()                             # guard against generator-template drift
+    binp = ensure_zombie_built(VEC_SIZE)
+
+    done = _load_partial()
+    results = []
+    for s in VEC_SIZE:
+        out = run_zombie_on_all(binp, s, done)
+        results.extend(out["results"])
+
+    write_log(results, VEC_SIZE)
+    n_ok = sum(1 for r in results if r["status"] == "ok")
+    print("[run_zombie] %s : %d results, %d ok across sizes %s"
+          % (LOG_FILE, len(results), n_ok, VEC_SIZE))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,3 @@
+# sigs.db
+Agg.Dnf;Engine:51-255,Target:0;0&1;/KEYWORD.{0,2}[0-9][0-9]/;/OTHRKWD.{0,2}[0-9][0-9]/
+sig_alpha01;Engine:51-255,Target:0;0|1;123456789abcdef0123;432345678901abcdef::i
