@@ -583,6 +583,25 @@ where
 		Ok ((num_segs, vec_size, vec_pci, vec_cap, vec_adv))
 	}
 
+	/// Aggressive forward halo: clone word_info with halo_nibbles set to
+	/// the successor's first m_halo nibbles, unpacked from the remaining
+	/// packed words. None when m_halo==0 or no successor (caller uses the
+	/// bare word_info; SED then pads with the canonical stream). Mirrors
+	/// the inline block in gen_nd_advice_at_layer so the cmF / prove
+	/// passes emit the same halo the planning pass authenticates.
+	fn with_chunk_halo(word_info: &WordInfo, remaining: &[CF1<C1>],
+		m_halo: usize) -> Option<WordInfo> {
+		if m_halo==0 || remaining.is_empty() { return None; }
+		let n_take = (m_halo/62 + 1).min(remaining.len()); //62=LEGS nib/F
+		let nxt = utils::data::packed_to_nibbles(
+			&remaining[0..n_take].to_vec());
+		let take = m_halo.min(nxt.len());
+		let mut wi = word_info.clone();
+		wi.halo_nibbles = nxt[0..take].iter()
+			.map(|f| field_to_usize(f) as u8).collect();
+		Some(wi)
+	}
+
 	/// find a working layer that would successfully generate
 	/// return if success (LAYER_ID, num_steps, vec<size of word seg>, vec<PCI>
 	/// 	vec<capacity needed>, vec<advice>)
@@ -1969,9 +1988,17 @@ where
 				let frag = remaining[0..act_len].to_vec();
 				remaining = remaining[act_len..].to_vec();
 
+				//aggressive forward halo: emit the successor prefix so
+				//this chunk's IDX_OUP halo matches the next chunk's
+				//authenticated IDX_INP prefix (else sum_inp!=sum_oup).
+				let m_halo = lock_unwrap!(circ.get_mapper())
+					.get_capacity().halo_nibbles();
+				let wi_owned = Self::with_chunk_halo(word_info,
+					&remaining, m_halo);
+				let wi_ref = wi_owned.as_ref().unwrap_or(word_info);
 				//3.2 generate the adice again
 				let res = lock_unwrap!(circ.get_mapper())
-					.gen_nd_advice(&frag, word_info, prev_adv, subseg_id - 1, job_id);
+					.gen_nd_advice(&frag, wi_ref, prev_adv, subseg_id - 1, job_id);
 				assert!(res.is_ok(), "UNABLE to generate advice for word id: {}, segment_id: {}", word_id, subseg_id); 
 				let cur_adv = res.unwrap();
 				log_perf(job_id, log_level+2, &format!("PERF 1009: -- Pass2. gen advice. sugseg_id: {}", subseg_id), &mut gt_p2);
@@ -2140,9 +2167,17 @@ where
 				let frag = remaining[0..act_len].to_vec();
 				remaining = remaining[act_len..].to_vec();
 
+				//aggressive forward halo: emit the successor prefix so
+				//this chunk's IDX_OUP halo matches the next chunk's
+				//authenticated IDX_INP prefix (else sum_inp!=sum_oup).
+				let m_halo = lock_unwrap!(circ.get_mapper())
+					.get_capacity().halo_nibbles();
+				let wi_owned = Self::with_chunk_halo(word_info,
+					&remaining, m_halo);
+				let wi_ref = wi_owned.as_ref().unwrap_or(word_info);
 				let res = lock_unwrap!(circ.get_mapper())
-					.gen_nd_advice(&frag, word_info, prev_adv, subseg_id - 1, job_id);
-				assert!(res.is_ok(), "UNABLE to generate advice for word id: {}, segment_id: {}", word_id, subseg_id); 
+					.gen_nd_advice(&frag, wi_ref, prev_adv, subseg_id - 1, job_id);
+				assert!(res.is_ok(), "UNABLE to generate advice for word id: {}, segment_id: {}", word_id, subseg_id);
 				let cur_adv = res.unwrap();
 				log_perf(job_id, log_level+1, &format!("PERF 1009: -- Pass 3. gen advice for word_id: {}, seg_id: {}", word_id, subseg_id), &mut gt_fold);
 
@@ -3117,30 +3152,6 @@ where
 	  				com_all_w.clone(), r_all_w.clone(), randf).unwrap();
 	  			let mainres = main_circ.res.clone();
 	  			let mainres_hash = main_circ.res_hash.clone();
-	  			//DEBUG USE 60003: localize the unsatisfied decider
-	  			//constraint, then abort before the expensive Groth16.
-	  			{
-	  				use ark_relations::r1cs::{ConstraintSystem,
-	  					ConstraintSynthesizer, SynthesisMode};
-	  				let dcs = ConstraintSystem::<CF1<C1>>::new_ref();
-	  				dcs.set_mode(SynthesisMode::Prove{
-	  					construct_matrices: true});
-	  				//check_cs (B_DEBUG3) panics at the first unsatisfied
-	  				//gadget by name inside generate_constraints.
-	  				main_circ.clone().generate_constraints(dcs.clone())
-	  					.unwrap();
-	  				dcs.finalize();
-	  				let sat = dcs.is_satisfied().unwrap();
-	  				eprintln!("DEBUG USE 60003.1: decider cs sat={} \
-	  					nc={}", sat, dcs.num_constraints());
-	  				if !sat {
-	  					eprintln!("DEBUG USE 60003.2: first unsat = {:?}",
-	  						dcs.which_is_unsatisfied());
-	  				}
-	  				panic!("DEBUG USE 60003.3: abort after decider cs \
-	  					check (sat={})", sat);
-	  			}
-	  			#[allow(unreachable_code)]
 	  			log_perf(job_id, log_level, &format!("FoldPot Step 4: build MAIN decider circuit. MEM: {} GB", get_mem_usage()), &mut gt1);
 	  			log_perf(job_id, LOG2, &format!(
 	  				"DEBUG USE 60002.07: MEM after MAIN circuit built \

@@ -805,7 +805,7 @@ where
 		opt_kzg_sum1: Option<F>, //optional kzg_sum1
 		)->bool{
 		//0. build rand input for generate Fiat-Shamir randoms
-		let b_debug = true; //DEBUG USE 60002.9: localize failing sub-check
+		let b_debug = B_DEBUG;
 		let rand_inp = SnarkRandInput::<E>{
 			kzg_all_words: claim.kzg_all_words.clone(),
 			kzg_length: claim.kzg_length.clone(),

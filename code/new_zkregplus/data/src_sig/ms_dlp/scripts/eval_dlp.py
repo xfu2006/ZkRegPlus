@@ -184,12 +184,20 @@ def eval_dir(dirpath, policies):
 
 
 # --- log -------------------------------------------------------------------
+# name of the plain-text list of clean (unflagged) files, written alongside the
+# main log so downstream tooling can consume the pass set directly.
+CLEAN_LIST_FILE = "clean_email_list.txt"
+
+
 # write docs/eval_<dirbasename>.log: provenance header, then a summary
 # (total / pass / flagged + per-policy tally) and an itemized list of every
-# flagged file with the policy name(s) it matched.
+# flagged file with the policy name(s) it matched. Also writes
+# docs/clean_email_list.txt: one relative path per line for every file that
+# matched NO policy (the pass set), sorted.
 def write_log(dirbasename, dirpath, policies, rel_results, n_files,
               n_unreadable):
     flagged = {rel: hits for rel, hits in rel_results.items() if hits}
+    clean = sorted(rel for rel, hits in rel_results.items() if not hits)
     n_scanned = len(rel_results)
     n_flagged = len(flagged)
     n_pass = n_scanned - n_flagged
@@ -232,8 +240,19 @@ def write_log(dirbasename, dirpath, policies, rel_results, n_files,
         for rel in sorted(flagged):
             f.write("  %s: %s\n" % (rel, ", ".join(flagged[rel])))
 
+    # clean (unflagged) file list: a short '#' header then one path per line.
+    clean_file = os.path.join(DOCS_DIR, CLEAN_LIST_FILE)
+    with open(clean_file, "w") as f:
+        f.write("# clean (unflagged) files: matched NO policy in %s/\n"
+                % FULL_DIR)
+        f.write("# corpus: %s\n" % dirpath)
+        f.write("# count:  %d clean of %d scanned\n" % (n_pass, n_scanned))
+        for rel in clean:
+            f.write("%s\n" % rel)
+
     print("[eval_dlp] %s : %d scanned, %d pass, %d flagged"
           % (log_file, n_scanned, n_pass, n_flagged))
+    print("[eval_dlp] %s : %d clean files" % (clean_file, n_pass))
     return log_file
 
 

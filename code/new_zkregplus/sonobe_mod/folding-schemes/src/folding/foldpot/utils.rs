@@ -220,12 +220,12 @@ pub const LOG2:usize = 1;
 pub const LOG1:usize = 0;
 pub const B_DEBUG:bool = false; //category 1
 pub const B_DEBUG2:bool = false; //cateogry 2
-pub const B_DEBUG3:bool = true; //DEBUG USE 60003: enable check_cs sites
+pub const B_DEBUG3:bool = false; //category 3 (higher ID the higher cost)
 
 /// NOTE it has an internal bug, manually turn it on
 /// if you need it.
 pub fn check_cs<F:PrimeField>(cs: &ConstraintSystemRef<F>, info: &str){
-	let b_debug = true; //DEBUG USE 60003: localize failing gadget
+	let b_debug = B_DEBUG;
 	if b_debug{ emit_stdout(format!(
 		"-- DEBUG USE 1001: entering CHECK: {}", info));}
 	if b_debug && cs.should_construct_matrices(){

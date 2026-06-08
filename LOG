@@ -28931,12 +28931,18 @@ Goal 1. eval regex over email_128k set
 	[d] now improved to about 40%
 	[e] identify another case
 		-> sql connection string, too easy to flag.
+		-> include the assignment operator
+	[f] refine the measure.py now given the new list
+		=> the pass rate is about 92% NOW.
+	[g] now the set is good NOW.
 Goal 2. Fix M6.
 	[a] plan
 	[b] implementation
 	[c] test
 	[d] review data
 	[e] issue of basis_failed_subsigs
+	[f] main testing passed
+	[g] misc test cases
 Goal 3. Writing 7.2
 	[a] renaming dataset.
 	[b] paragraph 1.
@@ -28945,5 +28951,9 @@ Goal 3. Writing 7.2
 		[c2] copy everything from debug_config -> DONE
 		[c3] double check the narratives of the dropped sigs -> DONE
 		[c4] write a script for generating table.
+		[c5] review code
+		[c6] update table1 Mal set.
+		[c7] refine data.
+	[d] bullet 1 in desc
 
 === TODOs ====

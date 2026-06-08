@@ -5284,7 +5284,7 @@ fn dummy_test<F:PrimeField + ColEle>(){
 pub mod tests_discharge_adv_gadget{
 use utils::consts::{read_global_config, get_global_config};
 	use ark_ff::{Zero};
-	use std::{sync::Arc};
+	use std::{sync::{Arc,Mutex}};
 	use ark_bn254::{Fr};
 	use ark_relations::r1cs::{ConstraintSystem};
 	use ark_r1cs_std::fields::fp::FpVar;
@@ -5294,7 +5294,7 @@ use utils::consts::{read_global_config, get_global_config};
 	use crate::gadgets::{
 		word_extract::{
 			LEGS,
-			tests_word_extract_gadget::{test_gadget_adv},
+			tests_word_extract_gadget::{test_gadget_adv,test_gadget_adv_ex},
 		},
 		fsm_adv::{FsmAdvAdvice,FsmAdvCapacity},
 		word_extract_adv::{WordExtractAdvAdvice},
@@ -5872,6 +5872,154 @@ use utils::consts::{read_global_config, get_global_config};
 			&vec![cps[3].clone(),cps[4].clone(),cps[5].clone()].concat(),
 			4usize,false,Some(vec_cfg));
 		get_global_config().basis_failed_subsigs = 0;
+	}
+
+	/// M5 quick-cert harness: TWO forward sigs -- one keyword (KEYWORD)
+	/// PRESENT in the word (-> NEEDS) and one (OTHRKWD) ABSENT (-> QUICK),
+	/// so the NEEDS/QUICK split + absence cert are non-trivial. `tamper`
+	/// corrupts a committed quick_cert_combo col before the statement is
+	/// serialized; expect_sat=false asserts the circuit REJECTS it.
+	fn run_m5_quick_case<TF>(tag: &str, word_str: &str, expect_sat: bool,
+		tamper: TF) where TF: Fn(&Arc<Mutex<Container<Fr>>>) {
+		get_global_config().basis_failed_subsigs = 10000;
+		let mut cfg = default_clamav_cfg();
+		cfg.b_aggressive_sde_for_rep = true;
+		cfg.sde_rep_fanout_cap = 4;
+		cfg.min_bag_len = 2;
+		let sigs = vec![
+			"Agg.QF;Engine:51-255,Target:0;0;/KEYWORD.{0,4}[cd][cd]/"
+				.to_string(),
+			"Agg.QO;Engine:51-255,Target:0;0;/OTHRKWD.{0,4}[cd][cd]/"
+				.to_string()];
+		//unique dir per test -> no parallel file-write collision.
+		let rel = format!("debug/sed/aggrq_{}", tag);
+		let p = format!("{}/data/{}", proj_root(), rel);
+		std::fs::create_dir_all(&p).unwrap();
+		let db = ClamavDB::<Fr>::build_test_db(&cfg, &rel,
+			&sigs, &vec![], &vec![], &vec![]).expect("q db");
+		let b_igc = false;
+		let bundle = &db.bundle_subsig;
+		let acdfa = &bundle.vec_acdfa[0];
+		let store_id = 0;
+		let fsm_id = ClamavDB::<Fr>::pm_acdfa_id(store_id, b_igc);
+		let steps_store = &bundle.vec_subsig_step_stores[store_id];
+		let mut ss: Vec<usize> = steps_store.subsig_ids.iter().cloned()
+			.filter(|s| *s!=0).collect();
+		ss.sort();
+		let input_subsigs: Vec<Fr> = ss.iter()
+			.map(|s| Fr::from(*s as u32)).collect();
+		let m_aggr = db.aggressive_max_span_nibbles;
+		let init_loc = if m_aggr>0 {Fr::from((m_aggr+1) as u32)}
+			else {Fr::from(1u32)};
+		let wlen = 2usize;
+		let (nibble_len, sbits) = (wlen*LEGS, acdfa.state_part_bits);
+		let cap = FsmAdvCapacity{ max_nibble_len: nibble_len,
+			acdfa_state_part_bits: sbits, subsigs:30, avg_pats_per_subsig:4,
+			basis_pats_in_trace:30*100, basis_unique_states:20*100,
+			basis_acc_states:15*100, halo_nibbles:0 };
+		let cap_disc = DischargeAdvCapacity{ max_nibble_len: nibble_len,
+			subsigs: cap.subsigs, universe_subsigs: cap.subsigs,
+			avg_active_pats_per_subsig:2,
+			basis_pats_in_trace: cap.basis_pats_in_trace,
+			perc_pats_expansion_rate:600, b_aggressive:true };
+		let path = format!("{}/word.txt", p);
+		write_to_file(&path, word_str);
+		let f_nibbles: Vec<Fr> = read_nibbles(&path).iter()
+			.map(|x| Fr::from(*x as u32)).collect();
+		let all_word = pad_word_to_multiple::<Fr>(
+			&pack_nibbles(&f_nibbles), wlen);
+		let word = all_word[0..wlen].to_vec();
+		let adv_wea = WordExtractAdvAdvice::new(&word, word.len(), false)
+			.expect("wea");
+		let stmt_wea = adv_wea.stmt_container;
+		let cfg_wea = stmt_wea.lock().unwrap().get_cfg();
+		let nibbles = stmt_wea.lock().unwrap().get_container("nibbles")
+			.unwrap().lock().unwrap().to_vec();
+		let adv_faa = FsmAdvAdvice::new(b_igc,1,&nibbles,&[],&acdfa,
+			Fr::from((acdfa.init_state+1) as u32), init_loc, &input_subsigs,
+			&cap,fsm_id,&bundle.vec_subsig_stores[store_id],0).expect("faa");
+		let stmt_faa = adv_faa.stmt_container;
+		let cfg_faa = stmt_faa.lock().unwrap().get_cfg();
+		let pat_loc = stmt_faa.lock().unwrap().search_container(
+			"fsm_adv_stmt_cs packed_trace pat_loc sorted_tbl").unwrap();
+		let locs = stmt_faa.lock().unwrap().search_container(
+			"fsm_adv_stmt_cs fsm_acc locs").unwrap().lock().unwrap()
+			.to_vec();
+		let inp_sq = DischargeAdvAdvice::gen_empty_steps_queue_serialized(
+			b_igc,&input_subsigs,steps_store,fsm_id,&cap_disc);
+		let adv_disc = DischargeAdvAdvice::new(b_igc,1,&pat_loc,
+			&input_subsigs,fsm_id,steps_store,&cap_disc,&inp_sq,&vec![],
+			locs[locs.len()-1],0,0).expect("disc adv");
+		let stmt_disc = adv_disc.stmt_container;
+		//adversarial tamper on the committed quick_cert_combo cols.
+		tamper(&stmt_disc);
+		let cfg_disc = stmt_disc.lock().unwrap().get_cfg();
+		let mut vec_cfg = vec![cfg_wea.clone(),cfg_faa.clone(),cfg_disc];
+		ContainerConfig::adjust_locations(&mut vec_cfg);
+		let cps1 = stmt_wea.lock().unwrap().gen_stmt_components();
+		let cps2 = stmt_faa.lock().unwrap().gen_stmt_components();
+		let cps3 = stmt_disc.lock().unwrap().gen_stmt_components();
+		let cps = cps1.0.into_iter().zip(cps2.0.into_iter())
+			.map(|(a,b)| vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
+		let cps = cps.into_iter().zip(cps3.0.into_iter())
+			.map(|(a,b)| vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
+		let mut dcg = DischargeAdvGadget::<Fr>::new(b_igc,1,&cap_disc,
+			fsm_id,&vec![cfg_wea.clone(),cfg_faa.clone()],
+			&bundle.vec_subsig_step_stores[0]);
+		dcg.set_container_cfg(vec_cfg.clone().into(),2);
+		let rg = Arc::new(dcg);
+		test_gadget_adv_ex::<Fr>(rg,&word,&cps[0],&cps[1],&cps[2],&cps[6],
+			&cps[7],&vec![cps[3].clone(),cps[4].clone(),cps[5].clone()]
+			.concat(),4usize,false,Some(vec_cfg),expect_sat);
+		get_global_config().basis_failed_subsigs = 0;
+	}
+
+	/// helper: zero the first non-zero entry of a quick_cert_combo col.
+	fn zero_first_nz(stmt_disc: &Arc<Mutex<Container<Fr>>>, col: &str){
+		let combo = stmt_disc.lock().unwrap()
+			.get_container("quick_cert_combo").unwrap();
+		let c = combo.lock().unwrap().get_col(col).unwrap();
+		let mut c = c.lock().unwrap();
+		for v in c.data.iter_mut(){
+			if !v.is_zero(){ *v=Fr::zero(); return; }
+		}
+		panic!("col {} had no non-zero entry to tamper", col);
+	}
+
+	/// M5 EQUIV: honest QUICK discharge (OTHRKWD absent) via the absence
+	/// cert is satisfiable -- baseline for the two rejection tests below.
+	#[test]
+	fn test_m5_quick_equiv(){
+		run_m5_quick_case("equiv", "KEYWORDcd", true, |_|{});
+	}
+
+	/// M5 ADVERSARIAL (partition completeness): drop a QUICK subsig from
+	/// the committed quick_subsig col -> NEEDS u QUICK != U -> the union
+	/// proof (verify_union_prf) fails -> UNSAT.
+	#[test]
+	fn test_m5_partition_drop_reject(){
+		run_m5_quick_case("pdrop", "KEYWORDcd", false, |stmt_disc|{
+			zero_first_nz(stmt_disc, "quick_subsig");
+		});
+	}
+
+	/// M5 ADVERSARIAL (quick-anchor membership): corrupt a committed
+	/// quick_anchor to a bogus pat (not in the validated dedup set A) ->
+	/// the anchor membership logup (quick_anchor subset anchor_a) fails ->
+	/// UNSAT. A QUICK subsig cannot be discharged with an unauthenticated
+	/// anchor (e.g. claiming a present-anchor subsig as absent).
+	#[test]
+	fn test_m5_quick_anchor_reject(){
+		run_m5_quick_case("qanch", "KEYWORDcd", false, |stmt_disc|{
+			let combo = stmt_disc.lock().unwrap()
+				.get_container("quick_cert_combo").unwrap();
+			let c = combo.lock().unwrap().get_col("quick_anchor").unwrap();
+			let mut c = c.lock().unwrap();
+			for v in c.data.iter_mut(){
+				if !v.is_zero(){ *v=Fr::from(909091u64); return; }
+			}
+			panic!("quick_anchor had no non-zero entry to tamper");
+		});
 	}
 
 	/// AGGRESSIVE C2 unit test: FailedSubsigAcc sizing + to_container

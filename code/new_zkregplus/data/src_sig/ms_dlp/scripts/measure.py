@@ -1,19 +1,25 @@
 # -------------------------------------------
 # Creator: BORA Author
 # Date: 06/04/2026
-# Purpose: measure how densely the Microsoft Purview SIT keywords (harvested by
-#          retrieve_ms_dlp.py into raw_data_records/) occur in the Enron email
-#          corpus (data/samples/email_merged128k/).
+# Purpose: measure how densely the in-force MS-DLP policy keywords occur in the
+#          CLEAN (unflagged) Enron emails -- the documents eval_dlp.py found match
+#          NO regex_zombie policy.
 #
-#          Step 1: collect every keyword from raw_data_records/*.txt into one
-#                  de-duplicated vocabulary.
-#          Step 2: in parallel, scan each email file and, for every keyword,
-#                  count how many times it occurs; from that derive, per file,
-#                  the number of DISTINCT keywords present and the TOTAL keyword
-#                  occurrences.
+#          Step 1: parse every regex_zombie/<slug>.regex, pull the keyword
+#                  alternatives out of its KWS group (post gen_zombie_regex
+#                  filtering: whitespace-delimiting, short-keyword drop,
+#                  connection-string rewrite), de-duplicate into one vocabulary.
+#          Step 2: in parallel, scan each CLEAN email (docs/clean_email_list.txt)
+#                  and, for every keyword, count how many times it occurs; from
+#                  that derive, per file, the number of DISTINCT keywords present
+#                  and the TOTAL keyword occurrences.
 #          Step 3: summarize over the corpus -- file count, vocabulary size,
-#                  distinct-keywords-per-file (avg/min/max) and
-#                  total-occurrences-per-file (avg/min/max).
+#                  distinct-keywords-per-file (avg/min/max),
+#                  total-occurrences-per-file (avg/min/max), and
+#                  max_occ_per_chunk: split each file into chunk_size-byte chunks
+#                  (a main() parameter, default 64 KB), sum keyword occurrences
+#                  per chunk, take the file's MAX -- then summarize that across
+#                  files (avg/min/max).
 #
 # MATCH SEMANTICS (documented so the numbers are reproducible):
 #   - case-insensitive;
@@ -30,21 +36,25 @@
 import os
 import re
 import sys
-import glob
+import collections
 from concurrent.futures import ProcessPoolExecutor
 
-# common.py lives beside this script (scripts/); import provenance helpers.
+# common.py / run_zombie.py live beside this script (scripts/).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import gen_report_header  # noqa: E402
+import run_zombie as rz               # noqa: E402  (extract_parts for KWS parsing)
 
 # --- configuration ---------------------------------------------------------
-RECORDS_DIR = "raw_data_records"        # input: per-SIT keyword summaries
+FULL_DIR = "regex_zombie"               # input: baked policy regexes (keyword src)
 DOCS_DIR = "docs"
 REPORT_FILE = os.path.join(DOCS_DIR, "measure_report.txt")
 # email corpus, relative to this script (scripts/ -> ms_dlp -> src_sig -> data).
 SAMPLES_DIR = os.path.normpath(os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     os.pardir, os.pardir, os.pardir, "samples", "email_merged128k"))
+# restrict the scan to the CLEAN (unflagged) emails -- the documents eval_dlp.py
+# found match NO regex_zombie policy. Paths inside are relative to SAMPLES_DIR.
+CLEAN_LIST = os.path.join(DOCS_DIR, "clean_email_list.txt")
 
 N_WORKERS = os.cpu_count() or 8
 CHUNKSIZE = 16                          # files per task dispatched to a worker
@@ -52,26 +62,69 @@ CHUNKSIZE = 16                          # files per task dispatched to a worker
 _WS = re.compile(r"\s+")
 
 
-# --- step 1: collect the keyword vocabulary --------------------------------
-# read every raw_data_records/*.txt, pull the lines under "--- keywords ... ---"
-# (the last section of each record), normalize (lower + single-spaced) and
-# de-duplicate into one vocabulary.
-def collect_vocab(records_dir):
+# whitespace-delimiter class that gen_zombie_regex.sit_to_regex wraps around each
+# keyword (connection-string SITs are NOT wrapped).
+WS_CLASS = r"[\x20\x09\x0A\x0D]"
+
+
+def _decode_esc(s):
+    """Decode \\xHH escapes in a regex literal back to characters."""
+    return re.sub(r"\\x([0-9A-Fa-f]{2})",
+                  lambda m: chr(int(m.group(1), 16)), s)
+
+
+def _strip_ws_wrap(alt):
+    """Strip the optional whitespace-delimiter class wrapping a keyword."""
+    if alt.startswith(WS_CLASS):
+        alt = alt[len(WS_CLASS):]
+    if alt.endswith(WS_CLASS):
+        alt = alt[:-len(WS_CLASS)]
+    return alt
+
+
+# --- step 1: collect the keyword vocabulary from the baked policies ---------
+# parse every regex_zombie/<slug>.regex into (PAT, KWS, prox) via run_zombie's
+# extract_parts, take the keyword alternatives out of KWS (stripping the
+# whitespace-delimiter wrappers and decoding \xHH escapes), normalize (lower +
+# single-spaced) and de-duplicate into one vocabulary. This reflects the keywords
+# ACTUALLY in force after gen_zombie_regex's filtering (short-keyword drop,
+# connection-string rewrite) -- not the raw raw_data_records/ lists.
+def collect_vocab(regex_dir=FULL_DIR):
     vocab = set()      # distinct keywords (deduped across all SITs)
     total = 0          # total keyword entries (a keyword shared by N SITs counts N)
-    for path in glob.glob(os.path.join(records_dir, "*.txt")):
-        with open(path, encoding="utf-8", errors="replace") as f:
-            grab = False
-            for ln in f:
-                if ln.startswith("--- keywords"):
-                    grab = True
-                    continue
-                if grab:
-                    kw = _WS.sub(" ", ln.strip().lower())
-                    if kw:
-                        total += 1
-                        vocab.add(kw)
+    for fn in sorted(os.listdir(regex_dir)):
+        if not fn.endswith(".regex"):
+            continue
+        full = open(os.path.join(regex_dir, fn),
+                    encoding="utf-8").read().strip()
+        try:
+            _pat, kws, _prox = rz.extract_parts(full)
+        except Exception:
+            continue                       # non-standard structure -> skip
+        for alt in kws[1:-1].split("|"):   # strip outer parens, split alternatives
+            kw = _WS.sub(" ", _decode_esc(_strip_ws_wrap(alt)).strip().lower())
+            if kw:
+                total += 1
+                vocab.add(kw)
     return vocab, total
+
+
+# read docs/clean_email_list.txt (paths relative to SAMPLES_DIR; '#' header lines
+# ignored) -> sorted absolute paths that exist. These are the unflagged emails.
+def read_clean_list(clean_list=CLEAN_LIST, samples_dir=SAMPLES_DIR):
+    if not os.path.isfile(clean_list):
+        raise SystemExit("[corpus] %s not found; run eval_dlp.py first"
+                         % clean_list)
+    files = []
+    with open(clean_list, encoding="utf-8") as f:
+        for ln in f:
+            ln = ln.strip()
+            if not ln or ln.startswith("#"):
+                continue
+            p = os.path.join(samples_dir, ln)
+            if os.path.isfile(p):
+                files.append(p)
+    return sorted(files)
 
 
 # build one case-insensitive regex matching any vocabulary keyword. Alternatives
@@ -94,15 +147,21 @@ def build_pattern(vocab):
 # the compiled pattern is large; compile it ONCE per worker via the pool
 # initializer and stash it in a module global, rather than pickling it per task.
 _PATTERN = None
+_CHUNK_SIZE = None      # file-split chunk size in characters (~bytes for ASCII)
 
 
-def _init_worker(vocab_list):
-    global _PATTERN
+def _init_worker(vocab_list, chunk_size):
+    global _PATTERN, _CHUNK_SIZE
     _PATTERN = build_pattern(vocab_list)
+    _CHUNK_SIZE = chunk_size
 
 
-# scan one email file. Returns (distinct_keywords_present, total_occurrences);
-# returns None if the file cannot be read.
+# scan one email file. Splits it into _CHUNK_SIZE-char chunks and, for each
+# chunk, sums the keyword occurrences whose match STARTS in that chunk (so every
+# occurrence is counted once, in exactly one chunk -- no boundary double-count).
+# Returns (distinct_keywords_present, total_occurrences, max_occ_per_chunk);
+# max_occ_per_chunk = the largest per-chunk occurrence sum over the file's chunks.
+# Returns None if the file cannot be read.
 def _scan_file(path):
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
@@ -110,13 +169,49 @@ def _scan_file(path):
     except OSError:
         return None
     counts = {}
+    chunk_occ = {}            # chunk index -> total keyword occurrences starting in it
     for m in _PATTERN.finditer(text):
         key = _WS.sub(" ", m.group(0).lower())
         counts[key] = counts.get(key, 0) + 1
-    return len(counts), sum(counts.values())
+        ci = m.start() // _CHUNK_SIZE
+        chunk_occ[ci] = chunk_occ.get(ci, 0) + 1
+    max_occ_per_chunk = max(chunk_occ.values()) if chunk_occ else 0
+    return len(counts), sum(counts.values()), max_occ_per_chunk
 
 
 # --- step 3: summary -------------------------------------------------------
+# render the distribution of a per-file integer metric (used for
+# max_occ_per_chunk): exact rows for values 0..max_exact, a bucketed tail above
+# that, then median/p90/p99/max. Returns a list of report lines.
+def format_distribution(values, max_exact=10):
+    n = len(values)
+    if not n:
+        return ["  (no files)"]
+    c = collections.Counter(values)
+    out = ["  %5s  %8s  %8s  %10s" % ("value", "files", "share", "cum.share")]
+    cum = 0
+    for v in range(0, max_exact + 1):
+        if v not in c:
+            continue
+        cum += c[v]
+        out.append("  %5d  %8d  %7.1f%%  %9.1f%%"
+                   % (v, c[v], 100.0 * c[v] / n, 100.0 * cum / n))
+    tail = sorted(v for v in c if v > max_exact)
+    if tail:
+        tc = sum(c[v] for v in tail); cum += tc
+        out.append("  %5s  %8d  %7.1f%%  %9.1f%%   (range %d..%d)"
+                   % (">%d" % max_exact, tc, 100.0 * tc / n, 100.0 * cum / n,
+                      tail[0], tail[-1]))
+    s = sorted(values)
+    def pct(p):
+        return s[min(n - 1, int(p * n))]
+    out.append("")
+    out.append("  median=%d  p90=%d  p99=%d  max=%d   (0 occ: %d files, %.1f%%)"
+               % (pct(0.50), pct(0.90), pct(0.99), s[-1], c[0],
+                  100.0 * c[0] / n))
+    return out
+
+
 def _stats(values):
     """(avg, min, max) for a non-empty list; (0,0,0) if empty."""
     if not values:
@@ -124,18 +219,24 @@ def _stats(values):
     return sum(values) / len(values), min(values), max(values)
 
 
-def write_report(n_files, vocab_size, vocab_total, distinct, total, files):
+def write_report(n_files, vocab_size, vocab_total, distinct, total, maxocc,
+                 chunk_size, files):
     # argmin/argmax (by total occurrences) for a little context in the report.
     lo_i = min(range(len(total)), key=lambda i: total[i]) if total else None
     hi_i = max(range(len(total)), key=lambda i: total[i]) if total else None
     d_avg, d_min, d_max = _stats(distinct)
     t_avg, t_min, t_max = _stats(total)
+    mo_avg, mo_min, mo_max = _stats(maxocc)
+    # the single file with the largest max_occ_per_chunk (the densest 64KB window).
+    mo_hi_i = max(range(len(maxocc)), key=lambda i: maxocc[i]) if maxocc else None
 
     lines = []
     lines.append(gen_report_header("ms_dlp keyword-density measurement"))
     lines.append("")
-    lines.append("records_dir: %s/" % RECORDS_DIR)
+    lines.append("keywords:    parsed from %s/ KWS groups (post-filter)" % FULL_DIR)
     lines.append("samples_dir: %s" % SAMPLES_DIR)
+    lines.append("corpus:      clean (unflagged) subset -- %s" % CLEAN_LIST)
+    lines.append("chunk_size:  %d bytes (%d KB)" % (chunk_size, chunk_size // 1024))
     lines.append("")
     lines.append("match: case-insensitive, non-alphanumeric-flanked, "
                  "non-overlapping longest-first")
@@ -148,6 +249,8 @@ def write_report(n_files, vocab_size, vocab_total, distinct, total, files):
                  "%.2f / %d / %d" % (d_avg, d_min, d_max))
     lines.append("(4) total keyword occ. per file  avg/min/max: "
                  "%.2f / %d / %d" % (t_avg, t_min, t_max))
+    lines.append("(5) max_occ_per_chunk (densest %dKB chunk, occ) avg/min/max: "
+                 "%.2f / %d / %d" % (chunk_size // 1024, mo_avg, mo_min, mo_max))
     if hi_i is not None:
         lines.append("")
         lines.append("    busiest file: %s (%d occ, %d distinct)"
@@ -156,6 +259,13 @@ def write_report(n_files, vocab_size, vocab_total, distinct, total, files):
         lines.append("    emptiest file: %s (%d occ, %d distinct)"
                      % (os.path.basename(files[lo_i]), total[lo_i],
                         distinct[lo_i]))
+        lines.append("    densest chunk: %s (max_occ_per_chunk=%d, %d total occ)"
+                     % (os.path.basename(files[mo_hi_i]), maxocc[mo_hi_i],
+                        total[mo_hi_i]))
+    lines.append("")
+    lines.append("== max_occ_per_chunk DISTRIBUTION (%dKB chunks) =="
+                 % (chunk_size // 1024))
+    lines.extend(format_distribution(maxocc))
     report = "\n".join(lines)
 
     os.makedirs(DOCS_DIR, exist_ok=True)
@@ -168,46 +278,51 @@ def write_report(n_files, vocab_size, vocab_total, distinct, total, files):
 # MAIN
 # -------------------------------------------
 def main():
-    # anchor cwd to ms_dlp/ (parent of scripts/) so RECORDS_DIR / DOCS_DIR
+    # anchor cwd to ms_dlp/ (parent of scripts/) so FULL_DIR / DOCS_DIR
     # resolve regardless of the invocation directory.
     os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir))
 
-    # step 1: vocabulary
-    vocab, vocab_total = collect_vocab(RECORDS_DIR)
-    vocab_list = sorted(vocab)
-    print("[vocab] %d keywords (%d distinct) from %s/"
-          % (vocab_total, len(vocab), RECORDS_DIR))
-    if not vocab:
-        raise SystemExit("[vocab] no keywords found; run retrieve_ms_dlp.py first")
+    # file-split chunk size for the max_occ_per_chunk metric. Change here.
+    chunk_size = 64 * 1024              # 64 KB
 
-    # enumerate the corpus
-    files = sorted(glob.glob(os.path.join(SAMPLES_DIR, "*")))
-    files = [p for p in files if os.path.isfile(p)]
-    print("[corpus] %d files in %s" % (len(files), SAMPLES_DIR))
+    # step 1: vocabulary, parsed from the baked regex_zombie/ KWS groups
+    vocab, vocab_total = collect_vocab(FULL_DIR)
+    vocab_list = sorted(vocab)
+    print("[vocab] %d keywords (%d distinct) parsed from %s/"
+          % (vocab_total, len(vocab), FULL_DIR))
+    if not vocab:
+        raise SystemExit("[vocab] no keywords parsed from %s/; "
+                         "run gen_zombie_regex.py first" % FULL_DIR)
+
+    # enumerate the corpus: only the CLEAN (unflagged) emails listed by eval_dlp.py
+    files = read_clean_list()
+    print("[corpus] %d clean files from %s" % (len(files), CLEAN_LIST))
     if not files:
-        raise SystemExit("[corpus] no sample files found at %s" % SAMPLES_DIR)
+        raise SystemExit("[corpus] no clean files in %s (run eval_dlp.py first)"
+                         % CLEAN_LIST)
 
     # step 2: parallel per-file scan
-    distinct, total = [], []
+    distinct, total, maxocc = [], [], []
     kept_files = []
     done = 0
     with ProcessPoolExecutor(max_workers=N_WORKERS,
                              initializer=_init_worker,
-                             initargs=(vocab_list,)) as ex:
+                             initargs=(vocab_list, chunk_size)) as ex:
         for path, res in zip(files, ex.map(_scan_file, files,
                                            chunksize=CHUNKSIZE)):
             done += 1
             if res is not None:
-                d, t = res
+                d, t, mo = res
                 distinct.append(d)
                 total.append(t)
+                maxocc.append(mo)
                 kept_files.append(path)
             if done % 1000 == 0 or done == len(files):
                 print("[scan] %d/%d files" % (done, len(files)))
 
     # step 3: summarize
     report = write_report(len(kept_files), len(vocab), vocab_total, distinct,
-                          total, kept_files)
+                          total, maxocc, chunk_size, kept_files)
     print()
     print(report)
     print()
