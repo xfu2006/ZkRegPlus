@@ -453,6 +453,10 @@ struct EstimatedConfig{
 	pub avg_pats_per_subsig: usize,
 	pub dfa_sigs: usize, //sigs routed to DFA = pm \ all_dfa
 	pub dfa_subsigs: usize, //sum vec_subsig_obj.len() over them
+	//AGGRESSIVE M5: max|NEEDS|/chunk = forward step-queue capacity after the
+	//anchor-presence pre-filter. Set GlobalConfig.aggr_needs_subsigs from this.
+	//0 when aggressive mode is off.
+	pub needs_subsigs: usize,
 }
 
 /// Per-file capacity requirement. Densities are the per-chunk MAX (from
@@ -470,6 +474,7 @@ struct FileReq{
 	pub avg_pats_per_subsig: usize,
 	pub dfa_sigs: usize,
 	pub dfa_subsigs: usize,
+	pub needs_subsigs: usize, //AGGRESSIVE M5: cp.max_needs_subsigs
 }
 
 /// Estimate the sizing config from the discharge records, as a MONOTONE
@@ -530,6 +535,7 @@ pub fn estimate_config<F:PrimeField>(
 			avg_pats_per_subsig: avg_pats,
 			dfa_sigs: dfa_routed.len(),
 			dfa_subsigs,
+			needs_subsigs: cp.max_needs_subsigs,
 		});
 	}
 	let n = reqs.len();
@@ -546,7 +552,7 @@ pub fn estimate_config<F:PrimeField>(
 	reqs.sort_by(|a,b| a.sigs_sed.cmp(&b.sigs_sed));
 	flog(0, LOG1, &format!(
 		"   files={}, columns: p% cover b_uniq b_acc b_pat exp% \
-		 sigs_sed subsigs avg_pats dfa_sigs dfa_subsigs", n), vlog);
+		 sigs_sed subsigs avg_pats dfa_sigs dfa_subsigs needs", n), vlog);
 	//3. element-wise max over cheapest p% of files
 	for &p in percentiles{
 		let k = ((n * p) / 100).max(1).min(n);
@@ -570,15 +576,16 @@ pub fn estimate_config<F:PrimeField>(
 				cfg.avg_pats_per_subsig.max(r.avg_pats_per_subsig);
 			cfg.dfa_sigs = cfg.dfa_sigs.max(r.dfa_sigs);
 			cfg.dfa_subsigs = cfg.dfa_subsigs.max(r.dfa_subsigs);
+			cfg.needs_subsigs = cfg.needs_subsigs.max(r.needs_subsigs);
 		}
 		flog(0, LOG1, &format!(
 			"   {:>3}% {:>4}/{:<4} {:>6} {:>6} {:>6} {:>5} \
-			 {:>8} {:>7} {:>8} {:>8} {:>11}",
+			 {:>8} {:>7} {:>8} {:>8} {:>11} {:>6}",
 			cfg.percentile, cfg.coverage_files, cfg.total_files,
 			cfg.basis_unique_states, cfg.basis_acc_states,
 			cfg.basis_pats_in_trace, cfg.perc_pats_expansion_rate,
 			cfg.sigs_sed, cfg.subsigs, cfg.avg_pats_per_subsig,
-			cfg.dfa_sigs, cfg.dfa_subsigs),
+			cfg.dfa_sigs, cfg.dfa_subsigs, cfg.needs_subsigs),
 			vlog);
 	}
 	flog(0, LOG1, &format!(

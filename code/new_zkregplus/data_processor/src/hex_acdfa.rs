@@ -896,6 +896,31 @@ impl HexACDFA{
 		(max_uniq_acc_pats, max_acc, max_pats, n_pats, sum_pat_chunks)
 	}
 
+	/// AGGRESSIVE M5 estimator. Max over chunks of the per-chunk NEEDS count
+	/// = sum over the anchor pat-ids present in the chunk of how many universe
+	/// subsigs are anchored there (anchor_mult: pat-id -> subsig multiplicity,
+	/// so a fan-out family of K subsigs sharing one anchor contributes K when
+	/// that anchor is present). Mirrors the per-chunk loop of get_chunk_peaks.
+	pub fn get_max_needs(&self, acc_path: &Vec<usize>, seg_size: usize,
+		anchor_mult: &HashMap<usize,usize>) -> usize {
+		if seg_size==0 { return 0; }
+		let mut mx = 0usize;
+		for chunk in acc_path.chunks(seg_size){
+			let mut present = HashSet::<usize>::new();
+			for &state in chunk{
+				if self.is_accept(state){
+					if let Some(pids) = self.outputs.get(&state){
+						for &p in pids { present.insert(p); }
+					}
+				}
+			}
+			let needs: usize = present.iter()
+				.map(|p| anchor_mult.get(p).copied().unwrap_or(0)).sum();
+			if needs>mx { mx = needs; }
+		}
+		mx
+	}
+
 	/// for each string show the vector of positions
 	pub fn get_pattern_pos(&self, acc_path: &Vec<usize>)->HashMap<String,Vec<usize>>{
 		let mut res = HashMap::<String, Vec<usize>>::new();
@@ -997,6 +1022,36 @@ mod tests_hex_acdfa{
 				assert!(word2==&w, "word2: {} != w: {}", word2, w);
 			}
 		}
+	}
+
+	/// AGGRESSIVE M5 (C7): get_max_needs = max over chunks of the per-chunk
+	/// NEEDS count (sum of anchor multiplicities for anchors present in the
+	/// chunk). Two anchors in separate chunks => max of the two; same chunk
+	/// => their sum; absent anchor => 0.
+	#[test]
+	fn test_m5_get_max_needs(){
+		use std::collections::HashMap;
+		//each pattern must cover all 16 hex digits (alpha_size==17 assert).
+		let (wa, wb) = ("0123456789abcdef".to_string(),
+			"abcdef0123456789".to_string());
+		let pats = vec![wa.clone(), wb.clone()];
+		let dfa = HexACDFA::new(1, &pats);
+		let s_a = *dfa.word_to_state_id(&wa).iter().next().unwrap();
+		let s_b = *dfa.word_to_state_id(&wb).iter().next().unwrap();
+		let pat_a = *dfa.pattern_to_id.get(&wa).unwrap();
+		let pat_b = *dfa.pattern_to_id.get(&wb).unwrap();
+		assert!(dfa.is_accept(s_a) && dfa.is_accept(s_b));
+		let mut mult = HashMap::<usize,usize>::new();
+		mult.insert(pat_a, 3); mult.insert(pat_b, 5);
+		let path = vec![s_a, s_a, s_b];
+		//seg_size=2: chunk0=[s_a,s_a] (aaaa, mult 3), chunk1=[s_b] (bbbb, 5)
+		assert_eq!(dfa.get_max_needs(&path, 2, &mult), 5);
+		//seg_size=3: one chunk with both anchors -> 3+5
+		assert_eq!(dfa.get_max_needs(&path, 3, &mult), 8);
+		//anchor absent from the path -> 0
+		let mut mult2 = HashMap::<usize,usize>::new();
+		mult2.insert(999, 7);
+		assert_eq!(dfa.get_max_needs(&path, 3, &mult2), 0);
 	}
 
 	#[test]

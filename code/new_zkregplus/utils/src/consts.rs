@@ -131,6 +131,12 @@ pub struct GlobalConfig {
 	/// (basis points, floored to >=1). Unused when aggressive mode is off
 	/// (the accumulator code path is gated).
 	pub perc_failed_subsigs: usize,
+	/// AGGRESSIVE-ONLY (b_aggressive_sde_for_rep). M5 NEEDS/QUICK filter:
+	/// max|NEEDS|/chunk = the forward step-queue capacity (capacity.subsigs)
+	/// after pre-filtering anchor-absent subsigs into QUICK. 0 = no shrink
+	/// (forward runs over the full universe = pre-M5 behavior). Set by the
+	/// runner from the estimator's reported needs_subsigs.
+	pub aggr_needs_subsigs: usize,
 }
 
 impl Default for GlobalConfig {
@@ -176,6 +182,7 @@ impl Default for GlobalConfig {
 			},
 			b_dryrun_after_capcheck: false,
 			perc_failed_subsigs: 0,
+			aggr_needs_subsigs: 0,
         }
     }
 }
@@ -221,6 +228,7 @@ static GLOBAL_CONFIG: RwLock<GlobalConfig> = RwLock::new(GlobalConfig {
 	},
 	b_dryrun_after_capcheck: false,
 	perc_failed_subsigs: 0,
+	aggr_needs_subsigs: 0,
 });
 
 pub fn read_global_config() -> RwLockReadGuard<'static, GlobalConfig> {

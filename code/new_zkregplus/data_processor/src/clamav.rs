@@ -3307,12 +3307,47 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 	let _ = (np_cs, np_ig, sc_cs, sc_ig); //old recurrence metric dropped
 	let perc_pats_expansion_rate = (seg_size + 9999) / 10000;
 	let perc_pats_expansion_rate = perc_pats_expansion_rate.max(1);
+	// AGGRESSIVE M5: per-chunk NEEDS = universe subsigs whose keyword anchor
+	// is present this chunk (anchor = vec_subsig_pm_bounds[is_bwd?last:first]
+	// .0, matching the gadget split_needs_quick + committed
+	// ID_SUBSIG_ANCHOR_PAT). Universe = survivor sigs (crit, not pm). cs/igc
+	// kept separate then max (one aggr_needs_subsigs knob covers both
+	// discharge gadgets). 0 when flag-off (Default) so the non-aggressive
+	// estimate is byte-identical.
+	let max_needs_subsigs = if read_global_config()
+			.clamav_cfg.b_aggressive_sde_for_rep {
+		let mut mult_cs: HashMap<usize,usize> = HashMap::new();
+		let mut mult_ig: HashMap<usize,usize> = HashMap::new();
+		for s in v_sigs.iter().filter(|s|
+			set_sigs_crit.contains(&s.name)
+			&& !set_sigs_pm.contains(&s.name)){
+			for sid in 0..s.vec_subsig_pm_bounds.len(){
+				let pb = &s.vec_subsig_pm_bounds[sid];
+				if pb.is_empty() { continue; }
+				let is_bwd = s.vec_subsig_anchor_dir.get(sid)
+					.map_or(false,|d| *d==1);
+				let anchor = if is_bwd {&pb[pb.len()-1].0}
+					else {&pb[0].0};
+				let igc = s.vec_subsig_obj.get(sid)
+					.map_or(false,|o| o.b_ignore_case);
+				let (dfa, mult) = if igc {(&dfa_bag_igc,&mut mult_ig)}
+					else {(&dfa_bag,&mut mult_cs)};
+				if let Some(&pid) = dfa.pattern_to_id.get(anchor){
+					*mult.entry(pid).or_insert(0) += 1;
+				}
+			}
+		}
+		dfa_bag.get_max_needs(&dfa_acc_path, seg_size, &mult_cs)
+			.max(dfa_bag_igc.get_max_needs(&dfa_acc_path_igc,
+				seg_size, &mult_ig))
+	} else { 0 };
 	let chunk_peaks = ChunkPeaks{
 		seg_size,
 		max_unique_states: u_cs.max(u_ig),
 		max_acc_states: a_cs.max(a_ig),
 		max_pats_in_trace: p_cs.max(p_ig),
 		perc_pats_expansion_rate,
+		max_needs_subsigs,
 	};
 
 	//6. compute stats 

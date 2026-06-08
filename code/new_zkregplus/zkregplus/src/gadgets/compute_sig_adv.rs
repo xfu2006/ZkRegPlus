@@ -1559,6 +1559,9 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		let dis_cap_cs = DischargeAdvCapacity{
 			max_nibble_len: capacity.max_nibble_len,
 			subsigs: capacity.subsigs_cs,
+			//compute_sig checks the full universe; the dummy acc container
+			//(sized off universe_subsigs) must match the real one.
+			universe_subsigs: capacity.subsigs_cs,
 			avg_active_pats_per_subsig: 2, //it's ok, coz it's not affecting
 										  //parse_from
 			basis_pats_in_trace: capacity.basis_pats_in_trace_cs,
@@ -1568,6 +1571,7 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		let dis_cap_igc= DischargeAdvCapacity{
 			max_nibble_len: capacity.max_nibble_len,
 			subsigs: capacity.subsigs_igc,
+			universe_subsigs: capacity.subsigs_igc,
 			avg_active_pats_per_subsig: 2, //it's ok, coz it's not affecting
 										  //parse_from
 			basis_pats_in_trace: capacity.basis_pats_in_trace_igc,
@@ -2869,8 +2873,9 @@ use utils::consts::{read_global_config, get_global_config};
 			halo_nibbles: 0,
 		};
 		let cap_disc = DischargeAdvCapacity{//capaciity of discharge comopnent
-			max_nibble_len: nibble_len, 
+			max_nibble_len: nibble_len,
 			subsigs: cap.subsigs,
+			universe_subsigs: cap.subsigs,
 			avg_active_pats_per_subsig: 2,
 			basis_pats_in_trace: cap.basis_pats_in_trace,
 			perc_pats_expansion_rate: 150,
@@ -3194,7 +3199,8 @@ use utils::consts::{read_global_config, get_global_config};
 			basis_pats_in_trace:8*100, basis_unique_states:20*100,
 			basis_acc_states:5*100, halo_nibbles:0 };
 		let cap_disc = DischargeAdvCapacity{ max_nibble_len: nibble_len,
-			subsigs: cap.subsigs, avg_active_pats_per_subsig:2,
+			subsigs: cap.subsigs, universe_subsigs: cap.subsigs,
+			avg_active_pats_per_subsig:2,
 			basis_pats_in_trace: cap.basis_pats_in_trace,
 			perc_pats_expansion_rate:600, b_aggressive:true };
 		let cap_sig = ComputeSigAdvCapacity{ max_nibble_len: nibble_len,
@@ -3622,8 +3628,9 @@ use utils::consts::{read_global_config, get_global_config};
 		store_items.insert(Fr::from(100u32), subsig100_steps);
 		store_items.insert(Fr::from(200u32), subsig200_steps);
 		let capacity= DischargeAdvCapacity{
-			max_nibble_len: 62, 
+			max_nibble_len: 62,
 			subsigs: 4,
+			universe_subsigs: 4,
 			avg_active_pats_per_subsig: 2,
 			basis_pats_in_trace: 48*100, //48 percent
 			perc_pats_expansion_rate: 150,

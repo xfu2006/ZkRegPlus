@@ -52,7 +52,7 @@ use data_processor::{
 		 ID_ENCODED_NORMAL_STEP, ID_ENCODED_LAST_STEP,
 			ID_ENCODED_PAT, ID_ENCODED_PREV_ENCODED,
 			ID_ENCODED_RG_START, ID_ENCODED_RG_END, ID_ENCODED_SUBSIG,
-			ID_SUBSIG_IS_BACKWARD, reverse_pm_bounds,
+			ID_SUBSIG_IS_BACKWARD, ID_SUBSIG_ANCHOR_PAT, reverse_pm_bounds,
 	},
 	type_def::{SubsigStepStore,SubsigStepStoreItem},
 	//clamav::{default_clamav_cfg},
@@ -348,6 +348,13 @@ pub struct DischargeAdvCapacity{
 	/// in step queue. So basis_pats_in_trace * perc_pats_expansion_rate/100
 	/// decides the step queue
 	pub perc_pats_expansion_rate: usize,
+
+	/// AGGRESSIVE-ONLY. Full per-chunk subsig universe (= what compute_sig
+	/// checks). `subsigs` shrinks to max|NEEDS| (anchor-present) sizing the
+	/// forward step queue + in-forward no-show; the flat coverage structures
+	/// (U/QUICK/partition/anchor-lookup) and the cumulative failed_subsigs
+	/// accumulator size off this instead. Non-aggressive: equals subsigs.
+	pub universe_subsigs: usize,
 
 	/// AGGRESSIVE-ONLY (DB self-mark = aggressive_max_span_nibbles>0).
 	/// When true the gadget runs forward-only discharge with the
@@ -2019,6 +2026,7 @@ impl Capacity for DischargeAdvCapacity{
 
 		self.max_nibble_len >= other.max_nibble_len &&
 		self.subsigs >= other.subsigs &&
+		self.universe_subsigs >= other.universe_subsigs &&
 		self.avg_active_pats_per_subsig >= other.avg_active_pats_per_subsig &&
 		self.basis_pats_in_trace >= other.basis_pats_in_trace &&
 		self.perc_pats_expansion_rate >= other.perc_pats_expansion_rate &&
@@ -2032,6 +2040,7 @@ impl Capacity for DischargeAdvCapacity{
 		Arc::new(DischargeAdvCapacity{
 			max_nibble_len: self.max_nibble_len,
 			subsigs: self.subsigs,
+			universe_subsigs: self.universe_subsigs,
 			avg_active_pats_per_subsig: self.avg_active_pats_per_subsig,
 			basis_pats_in_trace: self.basis_pats_in_trace,
 			perc_pats_expansion_rate: self.perc_pats_expansion_rate,
@@ -2064,7 +2073,9 @@ impl <F: PrimeField + ColEle> FailedSubsigAcc<F>{
 	/// SedCapacity::new param, avoiding the 40-call-site trap).
 	pub fn acc_size(capacity: &DischargeAdvCapacity)->usize{
 		let perc = read_global_config().perc_failed_subsigs;
-		let n = (capacity.subsigs * perc / 10000).max(1);
+		//cumulative across chunks -> size off the FULL universe, not NEEDS
+		//(M5 shrinks capacity.subsigs to max|NEEDS|).
+		let n = (capacity.universe_subsigs * perc / 10000).max(1);
 		if n%2==1 {n+1} else {n}
 	}
 
@@ -2145,25 +2156,56 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		//1. constructure step_store. DEPRECATED. no need anymore
 		//as we have info encoded in lkup table StoreSteps.
 
-		//2. construct 1st (forward) step-queue
+		//2. construct 1st (forward) step-queue.
 		//forward builds sq_inp in IDX_DATA (not IDX_INP) under aggressive, so
 		//the only IDX_INP/IDX_OUP carried state is the accumulator.
+		//AGGRESSIVE M5: split the universe U into NEEDS (keyword anchor
+		//present this chunk) + QUICK (absent). The forward runs over a FRESH
+		//NEEDS-seeded init each chunk (forward-only mode has no step-queue
+		//carry); QUICK is discharged by an anchor-absence cert
+		//(gen_quick_cert_combo). Non-aggressive uses the carried inp_step_queue.
+		let (needs, quick) = if b_aggr {
+			Self::split_needs_quick(&inp_subsigs, pat_loc, subsig_store_info)
+		} else { (vec![], vec![]) };
+		let fresh_inp_sq;
+		let fwd_inp_sq: &StepQueue<F> = if b_aggr {
+			fresh_inp_sq = Self::gen_empty_steps_queue_serialized(
+				b_igc, &needs, subsig_store_info, fsm_id, capacity);
+			&fresh_inp_sq
+		} else { inp_step_queue };
 		let (forward_step_queue, sq_fwd, last_loc) = Self::gen_forward_steps_queue_combo(
 			b_igc, offset_fsm,
-			&inp_subsigs, pat_loc, inp_step_queue, fsm_id, &capacity,
+			&inp_subsigs, pat_loc, fwd_inp_sq, fsm_id, &capacity,
 			subsig_store_info, last_loc, seg_id, job_id)?;
 		let ct_fwd_sq = forward_step_queue.lock().unwrap().get_container("sq_res")?;
+		//M5: the forward sq_inp encoded column (step-0 NEEDS seeds, encoded==
+		//subsig) is the EXACT vector validate's partition reads, captured here
+		//before the container is moved. Empty in non-aggressive.
+		let sq_inp_encoded: Vec<F> = if b_aggr {
+			forward_step_queue.lock().unwrap().get_container("sq_inp")?
+				.lock().unwrap().get_container("encoded")?
+				.lock().unwrap().to_vec()
+		} else { vec![] };
 		stmt_container.lock().unwrap().add_container(forward_step_queue);
 		let default_min_loc = last_loc + F::one();
 
 		//3. AGGRESSIVE = forward-only: NO backward step-queue (sq_res2). The
-		//ONLY carried IDX_INP/IDX_OUP state is the failed_subsigs accumulator,
-		//so acc_out is the sole IDX_OUP container (compute_sig's external-ref
-		//to it is unambiguous). Non-aggressive keeps the backward combo.
+		//carried IDX_INP/IDX_OUP state is the failed_subsigs accumulator
+		//(acc_out, sole IDX_OUP). The QUICK cert combo proves U = NEEDS u QUICK
+		//and that every QUICK subsig's anchor is absent (so safely dropped).
+		//Non-aggressive keeps the backward combo.
 		if b_aggr {
 			let acc_combo = Self::gen_failed_acc_combo(b_igc, &ct_fwd_sq,
 				&sq_fwd, inp_failed_acc, subsig_store_info, capacity)?;
 			stmt_container.lock().unwrap().add_container(acc_combo);
+			//NEEDS for the partition = sq_inp_encoded (captured above), the
+			//EXACT vector validate reads, so gen/validate zero-counts
+			//(diff_zero) match. host `needs` only seeded the forward.
+			let _ = &needs;
+			let quick_combo = Self::gen_quick_cert_combo(b_igc, pat_loc,
+				&inp_subsigs, &sq_inp_encoded, &quick, subsig_store_info,
+				capacity)?;
+			stmt_container.lock().unwrap().add_container(quick_combo);
 		} else {
 			let backward_step_queue = Self::gen_backward_steps_queue_combo(
 				b_igc, &sq_fwd, &ct_fwd_sq, subsig_store_info, default_min_loc,
@@ -2173,6 +2215,38 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 
 		Ok(Self{capacity: Clone::clone(capacity), fsm_id,
 			stmt_container, b_igc, offset_fsm})
+	}
+
+	/// AGGRESSIVE M5. Partition the universe U into NEEDS (keyword anchor
+	/// present in this chunk's pat_loc) and QUICK (anchor absent). The anchor
+	/// pat-id per subsig = keyword = (is_backward ? last : first) of
+	/// vec_pm_bounds, matching the committed ID_SUBSIG_ANCHOR_PAT column.
+	/// Returns (needs, quick), both sorted.
+	fn split_needs_quick(
+		inp_subsigs: &Vec<F>,
+		pat_loc: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
+		info: &SubsigStepStore,
+	) -> (Vec<F>, Vec<F>) {
+		let present: std::collections::HashSet<F> = pat_loc.lock().unwrap()
+			.get_container("sorted_key").unwrap().lock().unwrap().to_vec()
+			.into_iter().filter(|p| !p.is_zero()).collect();
+		let anchor_of = |s: &F| -> F {
+			match info.subsig_to_steps.get(&field_to_usize(s)) {
+				Some(it) => {
+					let pb = &it.vec_pm_bounds;
+					let a = if it.is_backward { pb.last() } else { pb.first() };
+					a.map(|x| F::from(x.0 as u64)).unwrap_or(F::zero())
+				}
+				None => F::zero(),
+			}
+		};
+		let (mut needs, mut quick) = (vec![], vec![]);
+		for s in inp_subsigs {
+			if present.contains(&anchor_of(s)) { needs.push(*s); }
+			else { quick.push(*s); }
+		}
+		needs.sort(); quick.sort();
+		(needs, quick)
 	}
 
 	/// AGGRESSIVE-ONLY. Subsigs that reached their final step in this chunk,
@@ -2271,8 +2345,160 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 			.unwrap().lock().unwrap().to_vec()
 	}
 
+	/// AGGRESSIVE M5. Prove QUICK subsigs are safely droppable from the
+	/// forward step queue:
+	///  (1) partition U = NEEDS u QUICK (gen_union_prf). NEEDS is bound at
+	///      validate to the forward step-0 seeds (encoded==subsig at step 0),
+	///      so it equals what actually ran; here `needs` supplies the m-table.
+	///  (2) each QUICK subsig's keyword anchor is in the absent set A
+	///      (membership logup). The anchor is authenticated by the
+	///      ID_SUBSIG_ANCHOR_PAT sid column (same as is_backward_bit).
+	///  (3) each A member is absent from pat_loc (p1 < a < p2 neighboring
+	///      pair) -- the absence half of the forward no-show (no dst_loc query).
+	/// A is deduped per fan-out family so a K-subsig family with an absent
+	/// anchor costs ONE cert. Flat structures size off universe_subsigs.
+	fn gen_quick_cert_combo(
+		b_igc: bool,
+		pat_loc: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
+		u: &Vec<F>,
+		needs_encoded: &Vec<F>,
+		quick: &Vec<F>,
+		info: &SubsigStepStore,
+		capacity: &DischargeAdvCapacity,
+	)->Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
+		let _ = b_igc;
+		let res = Container::<F>::new("quick_cert_combo");
+		let (zero, one) = (F::zero(), F::one());
+		let frg = F::from(RANGE2);
+		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
+		let max = F::from(max_val as u32);
+		let n_u = capacity.universe_subsigs;
+		if quick.len() > n_u || u.len() > n_u {
+			return Err(Error::CapErr(vec![(format!(
+				"dis_adv::universe_subsigs"), u.len().max(quick.len()))]));
+		}
 
-	/// mainly used for initializing input. 
+		//1. partition U = NEEDS u QUICK. NEEDS = needs_encoded (the forward
+		//sq_inp column, exactly what validate reads). quick/U are front
+		//zero-padded to universe_subsigs to match their committed columns, so
+		//gen and validate see identical vectors (zero counts -> diff_zero).
+		let quick_pad = [&vec![zero; n_u - quick.len()][..], &quick[..]]
+			.concat();
+		let u_pad = [&vec![zero; n_u - u.len()][..], &u[..]].concat();
+		//needs_encoded = forward sq_inp.encoded = step-0 encode_cols of the
+		//subsig (subsig at the high position, NOT the raw id). Encode U and
+		//QUICK the SAME way so all three union operands live in one space;
+		//the map is injective so the encoded union holds iff the raw one does.
+		let zc = vec![zero; n_u];
+		let enc = |raw:&Vec<F>| encode_cols(&vec![raw.clone(), zc.clone(),
+			zc.clone(), zc.clone(), zc.clone()], &vec![0,1,2,3,4]);
+		let quick_enc = enc(&quick_pad);
+		let u_enc = enc(&u_pad);
+		let prf_part = gen_union_prf(needs_encoded, &quick_enc, &u_enc,
+			"prf_partition")?;
+		res.lock().unwrap().add_container(prf_part);
+		res.lock().unwrap().add_col(Col::new(quick_enc,
+			"quick_subsig", IDX_DATA));
+		res.lock().unwrap().add_col(Col::new_const(vec![zero; n_u],
+			"si_quick_subsig", IDX_SI_DATA));
+		res.lock().unwrap().add_col(Col::new(u_enc,
+			"u_subsig", IDX_DATA));
+		res.lock().unwrap().add_col(Col::new_const(vec![zero; n_u],
+			"si_u_subsig", IDX_SI_DATA));
+
+		//2. quick_anchor[i] = keyword anchor of quick[i] (0 for pad). The sid
+		//column (base + subsig) authenticates it against ID_SUBSIG_ANCHOR_PAT
+		//through the framework lookup (mirrors is_backward_bit).
+		let f_base = F::from(1u64<<32) * F::from(ID_SUBSIG_ANCHOR_PAT);
+		let anchor_of = |s: &F| -> F {
+			match info.subsig_to_steps.get(&field_to_usize(s)) {
+				Some(it) => {
+					let pb = &it.vec_pm_bounds;
+					let a = if it.is_backward {pb.last()} else {pb.first()};
+					a.map(|x| F::from(x.0 as u64)).unwrap_or(zero)
+				}
+				None => zero,
+			}
+		};
+		let quick_anchor = quick_pad.iter().map(|s|
+			if s.is_zero() {zero} else {anchor_of(s)}).collect::<Vec<F>>();
+		let sid_quick_anchor = quick_pad.iter().map(|s| f_base + *s)
+			.collect::<Vec<F>>();
+		res.lock().unwrap().add_col(Col::new(quick_anchor.clone(),
+			"quick_anchor", IDX_DATA));
+		res.lock().unwrap().add_col(Col::new(sid_quick_anchor,
+			"si_quick_anchor", IDX_SI_DATA));
+
+		//3. A = dedup(nonzero quick_anchor), front zero-pad. Membership
+		//quick_anchor in A => every QUICK anchor is certified absent.
+		let mut a_set = quick_anchor.iter().filter(|p| !p.is_zero())
+			.cloned().collect::<Vec<F>>();
+		a_set.sort(); a_set.dedup();
+		if a_set.len() > n_u {
+			return Err(Error::CapErr(vec![(format!(
+				"dis_adv::universe_subsigs(A)"), a_set.len())]));
+		}
+		let a_pad = [&vec![zero; n_u - a_set.len()][..], &a_set[..]].concat();
+		let mtbl_anchor = gen_m_table(&quick_anchor, &a_pad);
+		res.lock().unwrap().add_col(Col::new(a_pad.clone(), "anchor_a",
+			IDX_DATA));
+		res.lock().unwrap().add_col(Col::new_const(vec![zero; n_u],
+			"si_anchor_a", IDX_SI_DATA));
+		let nm = mtbl_anchor.len();
+		res.lock().unwrap().add_col(Col::new(mtbl_anchor, "mtbl_anchor",
+			IDX_DATA));
+		res.lock().unwrap().add_col(Col::new_const(vec![zero; nm],
+			"si_mtbl_anchor", IDX_SI_DATA));
+
+		//4. absence cert: each A member absent from pat_loc (p1 < a < p2).
+		//Absence half of the forward no-show; pat is sorted in fsm_adv.
+		let pat = pat_loc.lock().unwrap().get_container("sorted_key")
+			.unwrap().lock().unwrap().to_vec();
+		let tuples = a_pad.par_iter().map(|&a|{
+			if a.is_zero() { (zero, zero) }
+			else {
+				let idx = match pat.binary_search(&a){
+					Ok(_) => panic!("M5: anchor {} present, not QUICK!", a),
+					Err(i) => i,
+				};
+				let p1 = if idx==0 {zero} else {pat[idx-1]};
+				let p2 = if idx==pat.len() {max} else {pat[idx]};
+				assert!(p1<a && a<p2);
+				(a - p1 - one, p2 - one - a)
+			}
+		}).collect::<Vec<(F,F)>>();
+		let a_p1 = tuples.iter().map(|t| t.0).collect::<Vec<F>>();
+		let p2_a = tuples.iter().map(|t| t.1).collect::<Vec<F>>();
+		let p1_p2 = a_pad.iter().zip(a_p1.iter().zip(p2_a.iter()))
+			.map(|(&a,(&ap1,&p2a))|{
+				let p1 = a - one - ap1;
+				let p2 = a + one + p2a;
+				encode_2col(&[p1], &[p2])[0]
+			}).collect::<Vec<F>>();
+		let all_pairs = (0..pat.len()-1).map(|i|
+			encode_2col(&[pat[i]], &[pat[i+1]])[0]).collect::<Vec<F>>();
+		let all_pairs = [
+			encode_2col(&[zero-one, pat[pat.len()-1]], &[one, max]),
+			all_pairs,
+		].concat();
+		let m_tbl_pairs = gen_m_table(&p1_p2, &all_pairs);
+		res.lock().unwrap().add_col(Col::new(a_p1, "a_p1", IDX_DATA));
+		res.lock().unwrap().add_col(Col::new_const(vec![frg; n_u],
+			"si_a_p1", IDX_SI_DATA));
+		res.lock().unwrap().add_col(Col::new(p2_a, "p2_a", IDX_DATA));
+		res.lock().unwrap().add_col(Col::new_const(vec![frg; n_u],
+			"si_p2_a", IDX_SI_DATA));
+		let nmp = m_tbl_pairs.len();
+		res.lock().unwrap().add_col(Col::new(m_tbl_pairs, "m_tbl_pairs_a",
+			IDX_DATA));
+		res.lock().unwrap().add_col(Col::new_const(vec![frg; nmp],
+			"si_m_tbl_pairs_a", IDX_SI_DATA));
+
+		Ok(res)
+	}
+
+
+	/// mainly used for initializing input.
 	/// Generate an steps_queue (serialized) based on the inp_subsig.
 	/// For each subsig, generate an empty StepQueue which does not
 	/// have ANY steps (because it's empty).
@@ -4261,6 +4487,75 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		Ok(())
 	}
 
+	/// AGGRESSIVE M5. Validate the QUICK cert combo (gen_quick_cert_combo):
+	///  (1) partition U = NEEDS u QUICK. NEEDS = the forward sq_inp seeds
+	///      (step-0, encoded==subsig) so it is exactly what the forward ran;
+	///  (2) membership: every quick_anchor is in A (the anchor itself is bound
+	///      to the committed ID_SUBSIG_ANCHOR_PAT table by its sid column);
+	///  (3) absence: every A member is absent from pat_loc (p1 < a < p2,
+	///      neighboring pair) -- absence half of the forward no-show.
+	fn validate_quick_cert(&self,
+		stmt: &Container<FpVar<F>>,
+		forward_step_q: &Container<FpVar<F>>,
+		r1: FpVar<F>,
+		cs: ConstraintSystemRef<F>,
+	)->Result<(), SynthesisError>{
+		let combo = stmt.get_container("quick_cert_combo")?;
+		let combo = combo.lock().unwrap();
+		let quick = combo.get_container("quick_subsig")?
+			.lock().unwrap().to_vec();
+		let u = combo.get_container("u_subsig")?.lock().unwrap().to_vec();
+		let quick_anchor = combo.get_container("quick_anchor")?
+			.lock().unwrap().to_vec();
+		let anchor_a = combo.get_container("anchor_a")?
+			.lock().unwrap().to_vec();
+		let mtbl_anchor = combo.get_container("mtbl_anchor")?
+			.lock().unwrap().to_vec();
+		let a_p1 = combo.get_container("a_p1")?.lock().unwrap().to_vec();
+		let p2_a = combo.get_container("p2_a")?.lock().unwrap().to_vec();
+		let m_tbl_pairs = combo.get_container("m_tbl_pairs_a")?
+			.lock().unwrap().to_vec();
+		let prf_part = combo.get_container("prf_partition")?;
+
+		//1. partition U = NEEDS u QUICK. NEEDS = forward sq_inp seeds (step-0,
+		//encoded==subsig), so the partition is over exactly what ran.
+		let needs = forward_step_q.get_container("sq_inp")?
+			.lock().unwrap().get_container("encoded")?
+			.lock().unwrap().to_vec();
+		verify_union_prf(&needs, &quick, &u, &prf_part, &r1)?;
+
+		//2. membership: every quick_anchor lies in A (certified absent).
+		assert_logup(cs.clone(), &quick_anchor, &anchor_a, &mtbl_anchor, &r1)?;
+
+		//3. absence: each A member absent from pat_loc. p1=a-1-a_p1,
+		//p2=a+1+p2_a (a_p1/p2_a are in RANGE2 via their sid => p1<a<p2), and
+		//(p1,p2) are neighbors in the sorted pat_loc. Mirror of the forward
+		//no-show validate (encode pairs with r1; m-table counts are
+		//encoding-agnostic so they match the encode_2col gen side).
+		let pat_loc = forward_step_q.get_container("pat_loc")?;
+		let pat = pat_loc.lock().unwrap().get_container("sorted_key")?
+			.lock().unwrap().to_vec();
+		let one = new_const_var(&cs, F::one());
+		let zero = new_const_var(&cs, F::zero());
+		let max = new_const_var(&cs,
+			F::from(((1u64<<read_global_config().range2_bit)-1) as u32));
+		let p1_p2 = anchor_a.iter().zip(a_p1.iter().zip(p2_a.iter()))
+			.map(|(a,(ap1,p2a))|{
+				let p1 = a - &one - ap1;
+				let p2 = a + &one + p2a;
+				&p1 + &p2*&r1
+			}).collect::<Vec<FpVar<F>>>();
+		let mut all_pairs = (0..pat.len()-1).map(|i|
+			&pat[i] + &pat[i+1]*&r1).collect::<Vec<FpVar<F>>>();
+		let mut head = vec![
+			&zero - &one + &one*&r1,
+			&pat[pat.len()-1] + &max*&r1,
+		];
+		head.append(&mut all_pairs);
+		assert_logup(cs.clone(), &p1_p2, &head, &m_tbl_pairs, &r1)?;
+		Ok(())
+	}
+
 	#[allow(dead_code)]
 	fn validate_backward_step_queue(&self,
 		forward_step_q: &Container<FpVar<F>>,  //needed to extract its result
@@ -4956,6 +5251,10 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for DischargeAdvGadget<F>{
 				&forward_step_queue.lock().unwrap(),
 				r1.clone(), cs.clone(),
 				word_id.clone(), subseg_id.clone())?;
+			//M5: prove U = NEEDS u QUICK + QUICK anchors absent.
+			self.validate_quick_cert(&stmt,
+				&forward_step_queue.lock().unwrap(),
+				r1.clone(), cs.clone())?;
 		} else {
 			let backward_step_queue= stmt.get_container("bwd_steps_queue")?;
 			self.validate_backward_step_queue(&forward_step_queue.lock().unwrap(),
@@ -5123,8 +5422,9 @@ use utils::consts::{read_global_config, get_global_config};
 			halo_nibbles: 0,
 		};
 		let cap_disc = DischargeAdvCapacity{//capaciity of discharge comopnent
-			max_nibble_len: nibble_len, 
+			max_nibble_len: nibble_len,
 			subsigs: cap.subsigs,
+			universe_subsigs: cap.subsigs,
 			avg_active_pats_per_subsig: 1,
 			basis_pats_in_trace: cap.basis_pats_in_trace,
 			perc_pats_expansion_rate: 100,
@@ -5299,7 +5599,8 @@ use utils::consts::{read_global_config, get_global_config};
 			basis_pats_in_trace:25*100, basis_unique_states:20*100,
 			basis_acc_states:15*100, halo_nibbles:0 };
 		let cap_disc = DischargeAdvCapacity{ max_nibble_len: nibble_len,
-			subsigs: cap.subsigs, avg_active_pats_per_subsig:2,
+			subsigs: cap.subsigs, universe_subsigs: cap.subsigs,
+			avg_active_pats_per_subsig:2,
 			basis_pats_in_trace: cap.basis_pats_in_trace,
 			perc_pats_expansion_rate:600, b_aggressive:true };
 		//word: "ab" before KEYWORD within the gap -> variant "ab" matches via
@@ -5363,6 +5664,7 @@ use utils::consts::{read_global_config, get_global_config};
 	fn test_failed_subsig_acc(){
 		get_global_config().perc_failed_subsigs = 10000; //100% of subsigs
 		let cap = DischargeAdvCapacity{ max_nibble_len:62, subsigs:6,
+			universe_subsigs:6,
 			avg_active_pats_per_subsig:1, basis_pats_in_trace:100,
 			perc_pats_expansion_rate:100, b_aggressive:true };
 		//acc_size = 6*10000/10000 = 6 (already even)
@@ -5484,8 +5786,9 @@ use utils::consts::{read_global_config, get_global_config};
 		store_items.insert(Fr::from(100u32), subsig100_steps);
 		store_items.insert(Fr::from(200u32), subsig200_steps);
 		let capacity= DischargeAdvCapacity{
-			max_nibble_len: 62, 
+			max_nibble_len: 62,
 			subsigs: 4,
+			universe_subsigs: 4,
 			avg_active_pats_per_subsig: 4,
 			basis_pats_in_trace: 48*100,
 			perc_pats_expansion_rate: 132,
@@ -5694,8 +5997,9 @@ use utils::consts::{read_global_config, get_global_config};
 			subsig_ids, subsig_to_steps, b_aggressive: false,
 		};
 		let capacity= DischargeAdvCapacity{
-			max_nibble_len: 62, 
+			max_nibble_len: 62,
 			subsigs: 4,
+			universe_subsigs: 4,
 			avg_active_pats_per_subsig: 5,
 			basis_pats_in_trace: 48*100,
 			perc_pats_expansion_rate: 132,

@@ -109,6 +109,8 @@ pub const ID_ENCODED_PREV_ENCODED:u32=0x71090007;
 pub const ID_SUBSIG_IGC:u32=0x71090008;
 /// Aggressive mode: per-subsig backward-direction flag table.
 pub const ID_SUBSIG_IS_BACKWARD:u32=0x71090009;
+/// Aggressive mode: per-subsig anchor (keyword) pat-id table. M5 NEEDS/QUICK.
+pub const ID_SUBSIG_ANCHOR_PAT:u32=0x7109000A;
 
 pub const ID_SIG_NO_CRIT:u32 = 0x73010001;
 pub const ID_SIG_NO_CRIT_COUNT:u32 = 0x73020001;
@@ -703,6 +705,35 @@ impl SubsigStepStore{
 				tuples3.push((tbl_id_start, F::zero()));
 			}
 			all_tuples.append(&mut tuples3);
+		}
+
+		//2c. aggressive mode only: commit per-subsig ANCHOR pat-id (the
+		// keyword that gates the chain). M5 binds each subsig to this so
+		// QUICK subsigs can prove anchor-absence. The anchor = the KEYWORD =
+		// step-1 AS EVALUATED: vec_pm_bounds is STORED FORWARD (M3) but
+		// reversed at lookup-gen, so for a backward subsig the keyword is the
+		// LAST forward element, else the first. Same gating/pad as is_backward
+		// so flag-off => zero rows => byte-identical lookup.
+		if self.b_aggressive {
+			let tbl_id_start = F::from(1u64<<32)
+				* F::from(ID_SUBSIG_ANCHOR_PAT);
+			let mut tuples4 = self.subsig_ids.par_iter().map(|subsig_id|{
+				let item = self.subsig_to_steps.get(subsig_id)
+					.expect(&format!("cannot find subsigid: {}",
+						subsig_id));
+				let anchor = if item.is_backward {
+					item.vec_pm_bounds.last().map(|s| s.0)
+				} else {
+					item.vec_pm_bounds.first().map(|s| s.0)
+				}.unwrap_or(0);
+				let tbl_id = tbl_id_start + F::from(*subsig_id as u64);
+				(tbl_id, F::from(anchor as u64))
+			}).collect::<Vec<(F,F)>>();
+			//subsig 0 pad row -> anchor 0 (referenced by padded prf rows).
+			if !self.subsig_ids.contains(&0){
+				tuples4.push((tbl_id_start, F::zero()));
+			}
+			all_tuples.append(&mut tuples4);
 		}
 
 		all_tuples.sort();

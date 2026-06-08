@@ -66,6 +66,11 @@ pub struct ChunkPeaks{
 	pub max_pats_in_trace: usize, //sum of freq*#patterns in a chunk
 	pub perc_pats_expansion_rate: usize, //100*avg #chunks a pattern
 		//spans (>=100; 100 = every pattern lives in one chunk only)
+	//AGGRESSIVE M5 (b_aggressive_sde_for_rep only; 0 otherwise). Max over
+	//chunks of the per-chunk NEEDS count = universe subsigs whose keyword
+	//anchor is present that chunk. Sizes aggr_needs_subsigs (forward step
+	//queue). 0 when flag-off so non-aggressive estimate is unchanged.
+	pub max_needs_subsigs: usize,
 }
 
 impl FailDischargeRecord{

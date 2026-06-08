@@ -194,7 +194,7 @@ impl SedCapacity{
 		let max_nibble_len = max_word_len * LEGS;
 		let faa_capacity = FsmAdvCapacity{max_nibble_len, acdfa_state_part_bits,			subsigs, avg_pats_per_subsig, basis_pats_in_trace,
 			basis_unique_states, basis_acc_states, halo_nibbles: 0};
-		let da_capacity = DischargeAdvCapacity{max_nibble_len, subsigs, avg_active_pats_per_subsig, basis_pats_in_trace, perc_pats_expansion_rate, b_aggressive: false};
+		let da_capacity = DischargeAdvCapacity{max_nibble_len, subsigs, universe_subsigs: subsigs, avg_active_pats_per_subsig, basis_pats_in_trace, perc_pats_expansion_rate, b_aggressive: false};
 		//NOTE csa_capacity for the other cs/igc case will be temporarily
 		//set and later merged (because one csa coresponds to two discharge
 		//adv components
@@ -313,6 +313,13 @@ impl SedCapacity{
 	pub fn set_aggressive(&mut self, b_aggr: bool){
 		let mut da = Clone::clone(self.da_capacity());
 		da.b_aggressive = b_aggr;
+		if b_aggr {
+			//M5: subsigs currently = universe (set in new); universe_subsigs
+			//already holds it. Shrink the forward step queue to the
+			//estimator-supplied NEEDS (0 = no shrink = pre-M5 behavior).
+			let needs = read_global_config().aggr_needs_subsigs;
+			if needs > 0 { da.subsigs = needs; }
+		}
 		self.comp_capacities[2] = Arc::new(da);
 		let mut csa = Clone::clone(self.csa_capacity());
 		csa.b_aggressive = b_aggr;
