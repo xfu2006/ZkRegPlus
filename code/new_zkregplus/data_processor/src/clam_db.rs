@@ -697,6 +697,11 @@ impl SubsigStepStore{
 				let tbl_id = tbl_id_start + F::from(*subsig_id as u64);
 				(tbl_id, f)
 			}).collect::<Vec<(F,F)>>();
+			//subsig 0 is the pad/dummy referenced by padded prf rows in the
+			//gadget; commit it as is_backward=0 so those rows authenticate.
+			if !self.subsig_ids.contains(&0){
+				tuples3.push((tbl_id_start, F::zero()));
+			}
 			all_tuples.append(&mut tuples3);
 		}
 

@@ -47,11 +47,12 @@ use data_processor::{
 //	hex_acdfa::HexACDFA,
 	clam_db::{
 		RANGE2,
-		//CHAR, 
+		//CHAR,
 		STORE_SUBSIG_STEP,
 		 ID_ENCODED_NORMAL_STEP, ID_ENCODED_LAST_STEP,
 			ID_ENCODED_PAT, ID_ENCODED_PREV_ENCODED,
 			ID_ENCODED_RG_START, ID_ENCODED_RG_END, ID_ENCODED_SUBSIG,
+			ID_SUBSIG_IS_BACKWARD, reverse_pm_bounds,
 	},
 	type_def::{SubsigStepStore,SubsigStepStoreItem},
 	//clamav::{default_clamav_cfg},
@@ -563,7 +564,17 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 			let subsig_rec= info.subsig_to_steps.get(&u_subsig).expect(
 				&format!("cannot find step info for subsig: {}", subsig));
 			let max_steps = subsig_rec.vec_pm_bounds.len();
-			let pm_bounds = &subsig_rec.vec_pm_bounds;
+			// Backward subsigs walk the reversed (keyword-first) chain so the
+			// emitted encoded rows match the committed step-store (gen_cols);
+			// storage stays forward. Flag-off: is_backward always false.
+			let reversed_pm;
+			let pm_bounds = if subsig_rec.is_backward {
+				reversed_pm = reverse_pm_bounds(
+					&subsig_rec.vec_pm_bounds, (0, max_val));
+				&reversed_pm
+			} else {
+				&subsig_rec.vec_pm_bounds
+			};
 			let items =  self.store_items.get(subsig).unwrap();
 			// DEBUG USE 69200.c.* gate (circuit side). Decodes
 			// sig_id via the same bit-shift used by 67120.1.
@@ -610,7 +621,9 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 				let (rg_start,rg_end) =(pm_bounds[i-1].1.0,pm_bounds[i-1].1.1);
 				let f_rg_start = F::from(rg_start as u32);
 				let f_rg_end = F::from(rg_end as u32);
-				let dst_pat = F::from(subsig_rec.vec_pm_bounds[i-1].0 as u32);
+				//dst_pat from the (possibly reversed) pm_bounds so it
+				//follows the reversal for backward subsigs.
+				let dst_pat = F::from(pm_bounds[i-1].0 as u32);
 				let locs_available = hm_loc.get(&dst_pat).map_or(
 					//default is empty - two dummy entries
 					vec![(zero,zero), (one,max)], 
@@ -632,10 +645,13 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 				//is later shown the correlation using lkups)
 				let mut next_locs:Vec<F> = vec![];
 				let mut to_add_item = None;
+				//step 1 = keyword forward-anchor even for backward subsigs;
+				//backward window applies only from step 2 (i>=2).
+				let b_backward = subsig_rec.is_backward && i>=2;
 				for j in 0..vec_res[i-1].locs.len(){//each encoded-loc
 					let (new_to_add_item, fwd_prf_item) = vec_res[i-1].
-						gen_forward_prf(dst_pat, f_rg_start, f_rg_end, 
-							j, &locs_available);
+						gen_forward_prf(dst_pat, f_rg_start, f_rg_end,
+							j, &locs_available, b_backward);
 					total_added += new_to_add_item.locs.len();
 					let mut new_locs = new_to_add_item.locs.clone();
 					to_add_item = if to_add_item.is_none(){
@@ -1339,7 +1355,8 @@ impl <F:PrimeField + ColEle> StepQueueItem<F>{
 		next_pat: F,  //pat of next step
 		nxt_rg_start: F, nxt_rg_end: F,  //range belong to next step
 		my_loc_idx: usize, //the idx of loc of mine
-		locs_available: &Vec<(F,F)>, //query res for available locs for nxt pat 
+		locs_available: &Vec<(F,F)>, //query res for available locs for nxt pat
+		b_backward: bool, //aggressive backward step (i>=2 of a backward subsig)
 	)->(StepQueueItem<F>, StepFwdPrfItem<F>){
 		//0. initial data
 		let b_debug = B_DEBUG;
@@ -1357,13 +1374,18 @@ impl <F:PrimeField + ColEle> StepQueueItem<F>{
 		}
 
 		let src_loc = self.locs[my_loc_idx];
-		let rg1= nxt_rg_start + src_loc;
-		let rg2 = nxt_rg_end + src_loc;
-		//no need for rg1 as later it will never underflow
-		//rg2 reset is needed as later for case i==last
-		//  we do dst_loc - rg2 - one (it needs to be a possible number)
-		//  to satisfy the range-query semantics.
-		let rg2 = if rg2>=max {max-one} else {rg2};
+		//Window bounds. Forward: [src_loc+rg_start, src_loc+rg_end] (clamp the
+		//upper bound at max, since dst_loc-rg2-one must stay a valid number for
+		//the i==last border). Backward: [src_loc-rg_end, src_loc-rg_start]
+		//(bounds swap). The CU1 M+1 offset guarantees src_loc-rg_end>=1, so the
+		//backward window never underflows and needs no clamp. nxt_rg_start/
+		//nxt_rg_end stay the STORED ranges used for dst_encoded below.
+		let (rg1, rg2) = if b_backward {
+			(src_loc - nxt_rg_end, src_loc - nxt_rg_start)
+		} else {
+			let rg2 = nxt_rg_end + src_loc;
+			(nxt_rg_start + src_loc, if rg2>=max {max-one} else {rg2})
+		};
 
 		//2. perform binary search for the query
 		let id1 = match vec_locs.binary_search(&rg1) {Ok(k)=>k-1,Err(k) => k-1};
@@ -1386,8 +1408,8 @@ impl <F:PrimeField + ColEle> StepQueueItem<F>{
 			.map(|i| (vec_pat_id[i], vec_locs[i])).collect::<Vec<(F,F)>>();
 
 		let prf = StepFwdPrfItem::new(self.encoded, src_loc,
-			dst_encoded, pat_loc_qry);
-			
+			dst_encoded, pat_loc_qry, b_backward);
+
 		(to_add, prf)
 	}
 
@@ -1623,6 +1645,32 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 			&format!("sid_{}",names[11]), IDX_SI_DATA)
 		);  //this cannot be const
 
+		//CU5a (M4-5): commit each row's per-subsig is_backward BIT so the
+		//validate gadget can derive the backward selector. We bind the BIT
+		//(== committed value), NOT the selector b: the keyword (step 1) of a
+		//backward subsig is a forward anchor (selector 0) while the committed
+		//bit is 1, so binding the selector would fail the SID equality. The
+		//selector b = bit && src_step!=0 is derived in-circuit (validate).
+		//SID key mirrors ClamavDB::add_store_to_lkup: base + subsig.
+		//Flag-off (b_aggressive=false): emit neither column -> shape unchanged.
+		if self.capacity.b_aggressive{
+			let f_base = F::from(1u64<<32)
+				* F::from(ID_SUBSIG_IS_BACKWARD);
+			//padded dst_subsig (pad rows -> subsig 0).
+			let padded_subsig = vec![pad.clone(), v2d[11].clone()].concat();
+			let col_bit = padded_subsig.iter().map(|s|{
+				let u = field_to_usize(s);
+				let is_bwd = subsig_store_info.subsig_to_steps.get(&u)
+					.map_or(false, |it| it.is_backward);
+				if is_bwd {F::one()} else {F::zero()}
+			}).collect::<Vec<F>>();
+			let sid_bit = padded_subsig.iter().map(|s| f_base + *s)
+				.collect::<Vec<F>>();
+			res.lock().unwrap().add_col(Col::new(col_bit,
+				"is_backward_bit", IDX_DATA));
+			res.lock().unwrap().add_col(Col::new(sid_bit,
+				"sid_is_backward_bit", IDX_SI_DATA));
+		}
 
 		Ok(res)
 	}
@@ -1654,7 +1702,7 @@ impl <F:PrimeField + ColEle> StepFwdPrfItem<F>{
 	/// the query result).
 	/// where loc1 is the loc embedded in src_encoded_step_loc.
 	pub fn new(src_encoded: F, src_loc: F,
-		dst_encoded:F, pat_loc_qry: Vec<(F,F)>)->Self{
+		dst_encoded:F, pat_loc_qry: Vec<(F,F)>, b_backward: bool)->Self{
 		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
 		let dec = &decode_cols(&vec![src_encoded], 5);
@@ -1680,10 +1728,16 @@ impl <F:PrimeField + ColEle> StepFwdPrfItem<F>{
 			let n_locs = vec_dst_loc.len();
 			assert!(n_locs>=2); //at least two wrapping entries
 
-			let rg1= dst_rg_start + src_loc;
-			let rg2 = dst_rg_end + src_loc; 
-			//no need for similar massage for rg1 as underflow never happens
-			let rg2 = if rg2>=max {max-one} else {rg2};
+			//Mirror StepQueueItem::gen_forward_prf's window: backward swaps &
+			//subtracts; the CU1 offset + folded rg_start>=1 keep both bounds in
+			//[1,max] so NO clamp. diff1/diff2 below are direction-agnostic
+			//(rg1=lower, rg2=upper).
+			let (rg1, rg2) = if b_backward {
+				(src_loc - dst_rg_end, src_loc - dst_rg_start)
+			} else {
+				let rg2 = dst_rg_end + src_loc;
+				(dst_rg_start + src_loc, if rg2>=max {max-one} else {rg2})
+			};
 			let vec_diff1 = (0..n_locs).into_par_iter().map(|i|{
 				let diff = if i==0 {rg1-vec_dst_loc[i]-one}
 					else if i==n_locs-1 {zero} //don't care
@@ -2636,10 +2690,28 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		// in the middle.
 
 		//6. prove the validity of diff1/diff2.
-		let rg2 = dst_rg_end.par_iter().zip(src_loc.par_iter()).map(|(a,b)|
-			*a + *b).collect::<Vec<F>>();
-		let abs_rg2_max = rg2.par_iter().map(|rg2|
-			if *rg2>=max {*rg2-max} else {max-*rg2}).collect::<Vec<F>>();
+		//CU5b (M4-5): abs_rg2_max must match the rg2 that validate selects.
+		//Backward rows use the upper bound rg2 = src_loc - dst_rg_start
+		//(< max => clamp is a no-op, item21=0); forward rows keep
+		//rg2 = dst_rg_end + src_loc (may overflow -> real clamp). The
+		//b_backward selector = is_backward(dst_subsig) && src_step!=0, read
+		//here as the is_backward_bit column gated by src_step. Flag-off
+		//(b_aggressive=false): forward formula verbatim -> byte-identical.
+		let v_bit = if capacity.b_aggressive {
+			prf_fwd.lock().unwrap().get_container("is_backward_bit")
+				.unwrap().lock().unwrap().to_vec()
+		} else { vec![] };
+		let v_src_step = &v2d[3];
+		let abs_rg2_max = (0..src_loc.len()).into_par_iter().map(|i|{
+			let b_bwd = capacity.b_aggressive
+				&& v_bit[i]==one && v_src_step[i]!=zero;
+			let rg2 = if b_bwd {
+				src_loc[i] - _dst_rg_start[i]   //backward upper bound
+			} else {
+				dst_rg_end[i] + src_loc[i]      //forward (verbatim)
+			};
+			if rg2>=max {rg2-max} else {max-rg2}
+		}).collect::<Vec<F>>();
 		let len1 = abs_rg2_max.len();
 		res.lock().unwrap().add_col(Col::new(abs_rg2_max, 
 			"abs_rg2_max", IDX_DATA));
@@ -3968,9 +4040,32 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 
 		let lb_max = var_to_lb(&max, F::one());
 		let lb_neg1 = var_to_lb(&one, -F::one());
+		//CU6 (M4-4): aggressive backward selector. is_backward_bit is bound to
+		//the committed ID_SUBSIG_IS_BACKWARD table (CU5a). The per-row selector
+		//b = bit && (src_step!=0) picks the backward window for step>=2 of a
+		//backward subsig (the keyword step 1 stays forward). Flag-off: column
+		//absent, b_aggr false -> verbatim forward rg1/rg2 (pure LC, no new var).
+		let b_aggr = self.capacity.b_aggressive;
+		let v_bit = if b_aggr {
+			prf_fwd.lock().unwrap().get_container("is_backward_bit")
+				.unwrap().lock().unwrap().to_vec()
+		} else { vec![] };
 		for i in 0..diff1.len(){
-			let rg1 = &dst_rg_start[i] + &src_loc[i];
-			let rg2 = &dst_rg_end[i] + &src_loc[i];
+			let (rg1, rg2) = if b_aggr {
+				//b in {0,1}: bit (committed) AND src_step!=0.
+				let step_active = &one
+					- &is_zero_better(&_src_step[i], &cs)?;
+				let b = &v_bit[i] * &step_active;
+				let fwd_rg1 = &dst_rg_start[i] + &src_loc[i]; //lower
+				let fwd_rg2 = &dst_rg_end[i]   + &src_loc[i]; //upper
+				let bwd_rg1 = &src_loc[i] - &dst_rg_end[i];   //lower (swap)
+				let bwd_rg2 = &src_loc[i] - &dst_rg_start[i]; //upper (swap)
+				( &fwd_rg1 + &(&b * &(&bwd_rg1 - &fwd_rg1)),
+				  &fwd_rg2 + &(&b * &(&bwd_rg2 - &fwd_rg2)) )
+			} else {
+				( &dst_rg_start[i] + &src_loc[i],
+				  &dst_rg_end[i] + &src_loc[i] )
+			};
 			//step 1. verify the validity of abs_rg2_max
 			//note: one of item11 and item12 is 0
 			//note2: no need for abs_rg1_max as it's not possible to underflow
@@ -5155,6 +5250,111 @@ use utils::consts::{read_global_config, get_global_config};
 
 		//4. verify the sigs_to_discharge have been discharged
 		//todo!()
+	}
+
+	/// M4: run the DISCHARGE GADGET CIRCUIT on a multi-step BACKWARD subsig
+	/// (aggressive), so validate_fwdprf_valid_prf's backward branch (CU6
+	/// selector, CU5a is_backward_bit binding, CU5b abs) is exercised with a
+	/// real witness. This is the ONLY path that takes CU6's backward branch:
+	/// flag-off takes the else; run_aggr_case runs only compute_sig;
+	/// discharge_test_case is flag-off. Asserts the circuit is satisfiable
+	/// with the honest backward witness (host walk CU2/3/4 <-> circuit CU6).
+	#[test]
+	fn test_m4_discharge_circuit_backward(){
+		get_global_config().perc_failed_subsigs = 10000; //aggr acc sizing
+		let mut cfg = default_clamav_cfg();
+		cfg.b_aggressive_sde_for_rep = true;
+		cfg.sde_rep_fanout_cap = 4;   //[ab][ab]=4 combos, all materialized
+		cfg.min_bag_len = 2;          //2-char variants become bagwords
+		let sigs = vec![
+			"Agg.DiscBwd;Engine:51-255,Target:0;0;/[ab][ab].{0,4}KEYWORD/"
+				.to_string()];
+		let p = format!("{}/data/debug/sed/aggrdiscbwd", proj_root());
+		std::fs::create_dir_all(&p).unwrap();
+		let db = ClamavDB::<Fr>::build_test_db(&cfg, "debug/sed/aggrdiscbwd",
+			&sigs, &vec![], &vec![], &vec![]).expect("disc bwd db");
+		let b_igc = false;
+		let bundle = &db.bundle_subsig;
+		let acdfa = &bundle.vec_acdfa[0];
+		let store_id = 0;
+		let fsm_id = ClamavDB::<Fr>::pm_acdfa_id(store_id, b_igc);
+		let steps_store = &bundle.vec_subsig_step_stores[store_id];
+		assert!(steps_store.subsig_to_steps.values()
+			.any(|it| it.is_backward && it.vec_pm_bounds.len()>=2),
+			"need a >=2-step backward subsig to exercise CU6 backward");
+		//input_subsigs = the fanned backward variants (store keys, non-dummy).
+		let mut ss: Vec<usize> = steps_store.subsig_ids.iter().cloned()
+			.filter(|s| *s!=0).collect();
+		ss.sort();
+		let input_subsigs: Vec<Fr> = ss.iter().map(|s| Fr::from(*s as u32))
+			.collect();
+		//offset (CU1): start positions at M+1 so backward never underflows.
+		let m_aggr = db.aggressive_max_span_nibbles;
+		let init_loc = if m_aggr>0 {Fr::from((m_aggr+1) as u32)}
+			else {Fr::from(1u32)};
+		let wlen = 2usize;
+		let (nibble_len, sbits) = (wlen*LEGS, acdfa.state_part_bits);
+		let cap = FsmAdvCapacity{ max_nibble_len: nibble_len,
+			acdfa_state_part_bits: sbits, subsigs:25, avg_pats_per_subsig:4,
+			basis_pats_in_trace:25*100, basis_unique_states:20*100,
+			basis_acc_states:15*100, halo_nibbles:0 };
+		let cap_disc = DischargeAdvCapacity{ max_nibble_len: nibble_len,
+			subsigs: cap.subsigs, avg_active_pats_per_subsig:2,
+			basis_pats_in_trace: cap.basis_pats_in_trace,
+			perc_pats_expansion_rate:600, b_aggressive:true };
+		//word: "ab" before KEYWORD within the gap -> variant "ab" matches via
+		//the backward window; other variants run the backward query too.
+		let path = format!("{}/data/debug/sed/aggrdiscbwd/word.txt",
+			proj_root());
+		write_to_file(&path, "abxxKEYWORD");
+		let f_nibbles: Vec<Fr> = read_nibbles(&path).iter()
+			.map(|x| Fr::from(*x as u32)).collect();
+		let all_word = pad_word_to_multiple::<Fr>(
+			&pack_nibbles(&f_nibbles), wlen);
+		assert!(all_word.len()/wlen==1, "single-cycle test");
+		let word = all_word[0..wlen].to_vec();
+		let adv_wea = WordExtractAdvAdvice::new(&word, word.len(), false)
+			.expect("wea");
+		let stmt_wea = adv_wea.stmt_container;
+		let cfg_wea = stmt_wea.lock().unwrap().get_cfg();
+		let nibbles = stmt_wea.lock().unwrap().get_container("nibbles")
+			.unwrap().lock().unwrap().to_vec();
+		let adv_faa = FsmAdvAdvice::new(b_igc,1,&nibbles,&[],&acdfa,
+			Fr::from((acdfa.init_state+1) as u32), init_loc, &input_subsigs,
+			&cap,fsm_id,&bundle.vec_subsig_stores[store_id],0).expect("faa");
+		let stmt_faa = adv_faa.stmt_container;
+		let cfg_faa = stmt_faa.lock().unwrap().get_cfg();
+		let pat_loc = stmt_faa.lock().unwrap().search_container(
+			"fsm_adv_stmt_cs packed_trace pat_loc sorted_tbl").unwrap();
+		let locs = stmt_faa.lock().unwrap().search_container(
+			"fsm_adv_stmt_cs fsm_acc locs").unwrap().lock().unwrap().to_vec();
+		let inp_sq = DischargeAdvAdvice::gen_empty_steps_queue_serialized(
+			b_igc,&input_subsigs,steps_store,fsm_id,&cap_disc);
+		let adv_disc = DischargeAdvAdvice::new(b_igc,1,&pat_loc,&input_subsigs,
+			fsm_id,steps_store,&cap_disc,&inp_sq,&vec![],
+			locs[locs.len()-1],0,0).expect("disc adv");
+		let stmt_disc = adv_disc.stmt_container;
+		let cfg_disc = stmt_disc.lock().unwrap().get_cfg();
+		let mut vec_cfg = vec![cfg_wea.clone(),cfg_faa.clone(),cfg_disc];
+		ContainerConfig::adjust_locations(&mut vec_cfg);
+		let cps1 = stmt_wea.lock().unwrap().gen_stmt_components();
+		let cps2 = stmt_faa.lock().unwrap().gen_stmt_components();
+		let cps3 = stmt_disc.lock().unwrap().gen_stmt_components();
+		let cps = cps1.0.into_iter().zip(cps2.0.into_iter())
+			.map(|(a,b)| vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
+		let cps = cps.into_iter().zip(cps3.0.into_iter())
+			.map(|(a,b)| vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
+		let mut dcg = DischargeAdvGadget::<Fr>::new(b_igc,1,&cap_disc,fsm_id,
+			&vec![cfg_wea.clone(),cfg_faa.clone()],
+			&bundle.vec_subsig_step_stores[0]);
+		dcg.set_container_cfg(vec_cfg.clone().into(),2);
+		let rg = Arc::new(dcg);
+		//SAT => CU6 backward branch + CU5a binding + CU5b abs all consistent
+		//with the honest reversed-chain witness.
+		test_gadget_adv::<Fr>(rg,&word,&cps[0],&cps[1],&cps[2],&cps[6],&cps[7],
+			&vec![cps[3].clone(),cps[4].clone(),cps[5].clone()].concat(),
+			4usize,false,Some(vec_cfg));
+		get_global_config().perc_failed_subsigs = 0; //restore default
 	}
 
 	/// AGGRESSIVE C2 unit test: FailedSubsigAcc sizing + to_container

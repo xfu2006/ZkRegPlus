@@ -891,7 +891,23 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 		//3. generate the inputs.
 		//3.1 the case sensitive version
 		let init_state_cs = F::from((pm_acdfa_cs.init_state+1) as u32); //adj +1
-		let init_loc_cs = F::one();
+		// Aggressive backward propagation reads a regex position as
+		// src_loc - rg_end. To keep that subtraction >= 1 (never wrapping in
+		// the field), lift the whole coordinate system: start positions at
+		// M+1 instead of 1, where M = max match span in nibbles. Every
+		// per-step rg_end <= M, so even the smallest position M+1 gives
+		// src_loc - rg_end >= 1. Gaps between patterns are unchanged (both
+		// ends shift by M), so verdicts are unaffected -- this only moves the
+		// origin off 0. Flag-off (m==0) keeps the original start at 1.
+		//
+		// Example: /[0-9][0-9][0-9].{0,4}SECRET/, M=13. If SECRET ends at
+		// position 8, the backward window for the digits is [8-10, 8-6] =
+		// [-2, 2] -> underflow. With +13: SECRET ends at 21, window [11, 15],
+		// no underflow; the "123" it points back to also shifts +13, so the
+		// gap (5) is identical.
+		let m_aggr = self.clamdb.aggressive_max_span_nibbles;
+		let init_loc_cs = if m_aggr>0 {F::from((m_aggr+1) as u64)}
+			else {F::one()};
 		let inp_subsigs_cs: Vec<F>= SedAdvice
 			::collect_subsig_ids(&vec_sigs_to_discharge, 
 				&discharge_info, sig_to_id, false, &pm_acdfa_cs);
@@ -933,7 +949,9 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 
 		//3.2 the ignore case version 
 		let init_state_igc = F::from((pm_acdfa_igc.init_state+1) as u32);//adj+1
-		let init_loc_igc = F::one();
+		// M+1 coordinate offset under aggressive mode (see init_loc_cs above).
+		let init_loc_igc = if m_aggr>0 {F::from((m_aggr+1) as u64)}
+			else {F::one()};
 		let inp_subsigs_igc: Vec<F>= SedAdvice
 			::collect_subsig_ids(&vec_sigs_to_discharge,
 				&discharge_info, sig_to_id, true, &pm_acdfa_igc);

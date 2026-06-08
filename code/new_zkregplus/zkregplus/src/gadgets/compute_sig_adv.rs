@@ -55,11 +55,11 @@ use crate::gadgets::{
 		FailedSubsigAcc},
 };
 use data_processor::{
-	type_def::{SubsigStepStore,TriVal,SubsigInfoStore,CompOp,SubSigType,
-		ClamavSig},
+	type_def::{SubsigStepStore,SubsigStepStoreItem,TriVal,SubsigInfoStore,
+		CompOp,SubSigType,ClamavSig},
 	clam_db::{RANGE2,ID_ENCODED_NORMAL_STEP, ID_ENCODED_LAST_STEP,
 		ID_COMP_OP, ID_COMP_NUM, ID_COMP_SUBSIG,ID_MIN_REQUIRED,
-		ID_SUBSIG_TYPE, 
+		ID_SUBSIG_TYPE, reverse_pm_bounds,
 //		ID_SUBSIG_IGC
 	},
 	hex_acdfa::HexACDFA,
@@ -587,7 +587,22 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 			let item = subsig_store_info.subsig_to_steps.get(&su)
 				.expect(&format!("no store item for subsig {}", su));
 			let num = item.vec_pm_bounds.len();
-			let sqi = StepQueueItem::from_subsig_store_item(item, num,
+			//CU10 (M4): backward subsigs are discharged over the REVERSED,
+			//keyword-first chain (CU2), so the accumulator stores the reversed
+			//last-step key. Derive the membership key from the same reversed
+			//chain here, else a matched backward subsig is not found in the
+			//accumulator. Forward subsigs (flag-off) take the stored chain
+			//verbatim -> byte-identical.
+			let max_val:usize = (1<<read_global_config().range2_bit) - 1;
+			let rev_item;
+			let use_item = if item.is_backward {
+				rev_item = SubsigStepStoreItem{ subsig_id: item.subsig_id,
+					igc: item.igc, is_backward: item.is_backward,
+					vec_pm_bounds: reverse_pm_bounds(
+						&item.vec_pm_bounds, (0, max_val)) };
+				&rev_item
+			} else { item };
+			let sqi = StepQueueItem::from_subsig_store_item(use_item, num,
 				inp_subsigs[i], vec![]);
 			encoded_last[i] = sqi.encoded;
 			f_step[i] = sqi.step; f_pat[i] = sqi.pat;
@@ -3167,9 +3182,12 @@ use utils::consts::{read_global_config, get_global_config};
 		let steps_store_igc = &bundle_igc.vec_subsig_step_stores[store_id];
 		let steps_extra_cs = &bundle_cs.vec_subsig_info_stores[store_id];
 		let steps_extra_igc = &bundle_igc.vec_subsig_info_stores[store_id];
-		//2. caps: aggressive ON, halo OFF (decouple M1b)
+		//2. caps: aggressive ON, halo OFF (decouple M1b). ppe sized for the
+		//multi-step backward fixture (fanned variants + reversed legs need
+		//more pat-expansion); forward fixtures are satisfiable at any larger
+		//cap (these tests check satisfiability, not exact dims).
 		let wlen = 2usize;
-		let ppe = 150;
+		let ppe = 600;
 		let (nibble_len, sbits) = (wlen*LEGS, acdfa_cs.state_part_bits);
 		let cap = FsmAdvCapacity{ max_nibble_len: nibble_len,
 			acdfa_state_part_bits: sbits, subsigs:25, avg_pats_per_subsig:4,
@@ -3178,7 +3196,7 @@ use utils::consts::{read_global_config, get_global_config};
 		let cap_disc = DischargeAdvCapacity{ max_nibble_len: nibble_len,
 			subsigs: cap.subsigs, avg_active_pats_per_subsig:2,
 			basis_pats_in_trace: cap.basis_pats_in_trace,
-			perc_pats_expansion_rate:150, b_aggressive:true };
+			perc_pats_expansion_rate:600, b_aggressive:true };
 		let cap_sig = ComputeSigAdvCapacity{ max_nibble_len: nibble_len,
 			sigs:1, subsigs_cs: cap.subsigs, subsigs_igc: cap.subsigs,
 			basis_pats_in_trace_cs: cap.basis_pats_in_trace,
@@ -3202,14 +3220,19 @@ use utils::consts::{read_global_config, get_global_config};
 		let cfg_wea = stmt_wea.lock().unwrap().get_cfg();
 		let nibbles = stmt_wea.lock().unwrap().get_container("nibbles")
 			.unwrap().lock().unwrap().to_vec();
+		//Match production (sed_mapper CU1): aggressive lifts the position
+		//origin to M+1 so backward windows (src_loc-rg_end) never underflow.
+		let m_aggr = db.aggressive_max_span_nibbles;
+		let init_loc = if m_aggr>0 {Fr::from((m_aggr+1) as u32)}
+			else {Fr::from(1u32)};
 		let adv_faa_cs = FsmAdvAdvice::new(false,1,&nibbles,&[],&acdfa_cs,
-			Fr::from((acdfa_cs.init_state+1) as u32), Fr::from(1u32),
+			Fr::from((acdfa_cs.init_state+1) as u32), init_loc,
 			&input_subsigs_cs,&cap,fsm_id_cs,
 			&bundle_cs.vec_subsig_stores[store_id],0).expect("faa cs");
 		let stmt_faa_cs = adv_faa_cs.stmt_container;
 		let cfg_faa_cs = stmt_faa_cs.lock().unwrap().get_cfg();
 		let adv_faa_igc = FsmAdvAdvice::new(true,2,&nibbles,&[],&acdfa_igc,
-			Fr::from((acdfa_igc.init_state+1) as u32), Fr::from(1u32),
+			Fr::from((acdfa_igc.init_state+1) as u32), init_loc,
 			&input_subsigs_igc,&cap,fsm_id_igc,
 			&bundle_igc.vec_subsig_stores[store_id],0).expect("faa igc");
 		let stmt_faa_igc = adv_faa_igc.stmt_container;
@@ -3344,6 +3367,135 @@ use utils::consts::{read_global_config, get_global_config};
 	fn test_acc_wrong_membership(){
 		let (db, cfg) = build_aggr_db();
 		run_aggr_case(&db,"Agg.Dnf","KEYWORD12QQQQQ",&cfg,vec![1],false,
+			false,|cps, _, _|{
+				for v in cps[2].iter_mut(){
+					if *v==Fr::from(3u64){ *v=Fr::from(1u64); }
+				}
+			});
+	}
+
+	// ===== M4 backward-propagation tests (keyword-RIGHT subsigs) =====
+
+	/// DNF (0&1) of two keyword-RIGHT (is_backward=1) subsigs. subsig0 matches
+	/// a word with digits before KEYWORD; subsig1 (OTHRKWD absent) is the False
+	/// discharge witness.
+	fn build_aggr_db_bwd()->(ClamavDB<Fr>, ClamavApproxConfig){
+		let mut cfg = default_clamav_cfg();
+		cfg.b_aggressive_sde_for_rep = true;
+		cfg.sde_rep_fanout_cap = 1; //orthogonal; keep DFA small
+		let sigs = vec![
+			"Agg.Bwd;Engine:51-255,Target:0;0&1;\
+			 /[0-9][0-9].{0,2}KEYWORD/;/[0-9][0-9].{0,2}OTHRKWD/"
+				.to_string()];
+		let p = format!("{}/data/debug/sed/aggrbwd", proj_root());
+		std::fs::create_dir_all(&p).unwrap();
+		let db = ClamavDB::<Fr>::build_test_db(&cfg, "debug/sed/aggrbwd",
+			&sigs, &vec![], &vec![], &vec![]).expect("aggr bwd db build");
+		(db, cfg)
+	}
+
+	/// MIXED DNF (0&1): subsig0 keyword-LEFT (forward), subsig1 keyword-RIGHT
+	/// (backward). Exercises the per-row direction selector within one
+	/// fwd-prf container.
+	fn build_aggr_db_mixed()->(ClamavDB<Fr>, ClamavApproxConfig){
+		let mut cfg = default_clamav_cfg();
+		cfg.b_aggressive_sde_for_rep = true;
+		cfg.sde_rep_fanout_cap = 1;
+		let sigs = vec![
+			"Agg.Mix;Engine:51-255,Target:0;0&1;\
+			 /KEYWORD.{0,2}[0-9][0-9]/;/[0-9][0-9].{0,2}OTHRKWD/"
+				.to_string()];
+		let p = format!("{}/data/debug/sed/aggrmix", proj_root());
+		std::fs::create_dir_all(&p).unwrap();
+		let db = ClamavDB::<Fr>::build_test_db(&cfg, "debug/sed/aggrmix",
+			&sigs, &vec![], &vec![], &vec![]).expect("aggr mix db build");
+		(db, cfg)
+	}
+
+	/// EQUIV: aggressive circuit accepts honest witnesses for a BACKWARD subsig
+	/// (the host advice now walks the reversed chain with backward windows; the
+	/// circuit selector + offset must agree => satisfiable). Covers a real
+	/// backward match (non-empty accumulator) and a close-miss (empty).
+	#[test]
+	fn test_m4_backward_equiv(){
+		let (db, cfg) = build_aggr_db_bwd();
+		//confirm the fixture actually produced a backward subsig.
+		let store = &db.bundle_subsig.vec_subsig_step_stores[0];
+		assert!(store.subsig_to_steps.values().any(|it| it.is_backward),
+			"fixture must produce a backward (keyword-right) subsig");
+		//backward match: "12" before KEYWORD within the gap -> subsig0 Maybe
+		//(accumulator); OTHRKWD absent -> subsig1 False (witness vec![1]).
+		run_aggr_case(&db,"Agg.Bwd","12KEYWORDQQQ",&cfg,vec![1],false,
+			true,|_,_,_|{});
+		//close-miss: no KEYWORD -> both False -> accumulator empty; witness 0.
+		run_aggr_case(&db,"Agg.Bwd","QQQQQQQQQQ",&cfg,vec![0],false,
+			true,|_,_,_|{});
+	}
+
+	/// MIXED: one forward + one backward subsig in the SAME discharge run; the
+	/// per-row selector must apply forward arithmetic to one and backward to
+	/// the other. Honest witness => satisfiable.
+	#[test]
+	fn test_m4_mixed_equiv(){
+		let (db, cfg) = build_aggr_db_mixed();
+		let store = &db.bundle_subsig.vec_subsig_step_stores[0];
+		assert!(store.subsig_to_steps.values().any(|it| it.is_backward),
+			"mixed fixture needs a backward subsig");
+		assert!(store.subsig_to_steps.values().any(|it| !it.is_backward),
+			"mixed fixture needs a forward subsig");
+		//KEYWORD..12 matches the forward subsig0 (Maybe); OTHRKWD absent ->
+		//backward subsig1 False (witness vec![1]).
+		run_aggr_case(&db,"Agg.Mix","KEYWORD12QQQ",&cfg,vec![1],false,
+			true,|_,_,_|{});
+	}
+
+	/// MULTI-STEP backward chain: the left class is materialized as a bagword
+	/// via fanout, giving a 2-step reversed chain [keyword, regex-leg] so the
+	/// backward WINDOW (src_loc-rg_end) actually runs (step 2). Low-cardinality
+	/// class [ab][ab] + small fanout keeps the AC-DFA tiny.
+	fn build_aggr_db_bwd_ms()->(ClamavDB<Fr>, ClamavApproxConfig){
+		let mut cfg = default_clamav_cfg();
+		cfg.b_aggressive_sde_for_rep = true;
+		cfg.sde_rep_fanout_cap = 4;   //[ab][ab] = 4 combos, all materialized
+		cfg.min_bag_len = 2;          //2-char variants become bagwords
+		let sigs = vec![
+			"Agg.BwdMs;Engine:51-255,Target:0;0&1;\
+			 /[ab][ab].{0,4}KEYWORD/;/[ab][ab].{0,4}OTHRKWD/"
+				.to_string()];
+		let p = format!("{}/data/debug/sed/aggrbwdms", proj_root());
+		std::fs::create_dir_all(&p).unwrap();
+		let db = ClamavDB::<Fr>::build_test_db(&cfg, "debug/sed/aggrbwdms",
+			&sigs, &vec![], &vec![], &vec![]).expect("aggr bwd-ms db build");
+		(db, cfg)
+	}
+
+	/// EQUIV (multi-step backward): exercises the backward WINDOW arithmetic
+	/// (step 2 of a reversed chain). "ab" appears before KEYWORD within the
+	/// gap -> subsig0 reaches its final (regex) step via the backward query.
+	#[test]
+	fn test_m4_multileg(){
+		let (db, cfg) = build_aggr_db_bwd_ms();
+		let store = &db.bundle_subsig.vec_subsig_step_stores[0];
+		let max_steps = store.subsig_to_steps.values()
+			.filter(|it| it.is_backward)
+			.map(|it| it.vec_pm_bounds.len()).max().unwrap_or(0);
+		assert!(max_steps>=2,
+			"multi-step backward fixture must have a >=2-step chain (got {})",
+			max_steps);
+		run_aggr_case(&db,"Agg.BwdMs","abxxKEYWORD",&cfg,vec![1],false,
+			true,|_,_,_|{});
+	}
+
+	/// ADVERSARIAL (M4 backward membership): the matched BACKWARD subsig is
+	/// Maybe via its REVERSED-chain accumulator key (CU10). Flip that Maybe(3)
+	/// -> False(1) in IDX_DATA so the prover tries to discharge a real backward
+	/// match. acc_out (holding the reversed key) ⊄ Maybe-slots => UNSAT. This
+	/// confirms the reversed-key membership is soundly enforced (a forward-key
+	/// derivation would not catch this).
+	#[test]
+	fn test_m4_backward_membership(){
+		let (db, cfg) = build_aggr_db_bwd();
+		run_aggr_case(&db,"Agg.Bwd","12KEYWORDQQQ",&cfg,vec![1],false,
 			false,|cps, _, _|{
 				for v in cps[2].iter_mut(){
 					if *v==Fr::from(3u64){ *v=Fr::from(1u64); }
