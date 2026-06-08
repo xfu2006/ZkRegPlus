@@ -2372,7 +2372,10 @@ pub mod tests_zkp_driver{
 		let basis_unique_states = 150; //empirical b_uniq=15, cp_pack=102
 		let basis_acc_states = 600; //empirical b_acc=512
 		let basis_pats_in_trace = 700; //empirical b_pat=514, joinwide buffer
-		let perc_pats_expansion_rate = 10000; //F+B StepFwdPrf grows ~1.6x/chunk
+		//Aggressive reseeds the step queue per chunk (no F+B carry growth),
+		//so StepFwdPrf stays tiny: peak usage 1.36% at perc=10000 (probe
+		//6901.8). 300 -> ~45% usage, 2x margin (was 10000).
+		let perc_pats_expansion_rate = 300; //F+B StepFwdPrf, see 6901.8
 		let dfa_sigs = 0; //min_dfa_sigs floor (2) covers the DFA sig
 		let dfa_subsigs = 0;
 		let vec_decrease_level = vec![];
