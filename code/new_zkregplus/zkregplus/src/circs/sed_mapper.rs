@@ -930,10 +930,14 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 				//if lack of capacity
 
 
+		// Clone the fresh init queue so the aggressive carry below can
+		// reuse it (the default tuple consumes the original).
+		let init_steps_queue_cs_aggr = init_steps_queue_cs.clone();
+
 		let (inp_state_cs, inp_loc_cs, inp_steps_queue_cs) = r_prev_adv
 		.as_ref().map_or(
 			(init_state_cs, init_loc_cs, init_steps_queue_cs), |adv|{
-				let adv= adv.as_any().downcast_ref::<SedAdvice<F>>(); 
+				let adv= adv.as_any().downcast_ref::<SedAdvice<F>>();
 				let fsm_adv_advice_cs= &adv.unwrap().fsm_adv_advice_cs;
 				let states_cs = fsm_adv_advice_cs.stmt_container.lock().unwrap()
 					.search_container("fsm_adv_stmt_cs fsm_acc states").unwrap()
@@ -944,8 +948,16 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 					.lock().unwrap().to_vec();
 				let last_loc_cs = locs_cs[locs_cs.len()-1];
 				let da_adv_cs = &adv.unwrap().discharge_adv_advice_cs;
-				let last_steps_queue_cs = da_adv_cs.get_output_steps_queue();
-				(last_oup_state_cs, last_loc_cs, last_steps_queue_cs.to_vec())
+				// Non-aggr: carry the prior chunk's output step-queue.
+				// Aggr: that output is empty (gadget reseeds NEEDS each
+				// chunk), so fall back to this chunk's fresh init queue
+				// to keep parse_from well-formed.
+				let sq_cs = if m_aggr>0 {
+					init_steps_queue_cs_aggr.clone()
+				} else {
+					da_adv_cs.get_output_steps_queue().to_vec()
+				};
+				(last_oup_state_cs, last_loc_cs, sq_cs)
 			}
 		);
 		//AGGRESSIVE: carry the failed_subsigs accumulator (cs). Empty on
@@ -1010,22 +1022,33 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 				&self.capacity.igc.da_capacity()
 			).to_vec(&subsig_step_store_igc)?;
 
+		// Clone the fresh init queue so the aggressive carry below can
+		// reuse it (the default tuple consumes the original).
+		let init_steps_queue_igc_aggr = init_steps_queue_igc.clone();
+
 		let (inp_state_igc, inp_loc_igc, inp_steps_queue_igc) = r_prev_adv
 		.as_ref().map_or(
 			(init_state_igc, init_loc_igc, init_steps_queue_igc), |adv|{
-				let adv= adv.as_any().downcast_ref::<SedAdvice<F>>(); 
+				let adv= adv.as_any().downcast_ref::<SedAdvice<F>>();
 				let fsm_adv_advice_igc= &adv.unwrap().fsm_adv_advice_igc;
 				let states_igc = fsm_adv_advice_igc.stmt_container.lock().unwrap()
 					.search_container("fsm_adv_stmt_igc fsm_acc states")
 					.unwrap().lock().unwrap().to_vec();
-				let last_oup_state_igc = states_igc[states_igc.len()-1]; 
+				let last_oup_state_igc = states_igc[states_igc.len()-1];
 				let locs_igc = fsm_adv_advice_igc.stmt_container.lock().unwrap()
 					.search_container("fsm_adv_stmt_igc fsm_acc locs").unwrap()
 					.lock().unwrap().to_vec();
 				let last_loc_igc = locs_igc[locs_igc.len()-1];
 				let da_adv_igc = &adv.unwrap().discharge_adv_advice_igc;
-				let last_steps_queue_igc = da_adv_igc.get_output_steps_queue();
-				(last_oup_state_igc,last_loc_igc,last_steps_queue_igc.to_vec())
+				// Non-aggr: carry the prior chunk's output step-queue.
+				// Aggr: empty under aggr, so fall back to this chunk's
+				// fresh init queue to keep parse_from well-formed.
+				let sq_igc = if m_aggr>0 {
+					init_steps_queue_igc_aggr.clone()
+				} else {
+					da_adv_igc.get_output_steps_queue().to_vec()
+				};
+				(last_oup_state_igc, last_loc_igc, sq_igc)
 			}
 		);
 		//AGGRESSIVE: carry the failed_subsigs accumulator (igc).

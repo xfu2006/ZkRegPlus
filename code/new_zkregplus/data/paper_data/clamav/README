@@ -1,0 +1,127 @@
+Version: ClamAV 0.103.11/27152/     Fri Jan 12 04:41:15 2024
+#TOTAL sigs: 38889 ==> after dropping 38875 (dropped 14)
+to extract: sigtool -u cvd/main.cvd
+or run ./extract.sh in cvd
+(ORIGINAL DATA in src_sigs/clamav/new_src)
+
+############################################################
+We removed the following (13) signatures, becasue (when target chaned to 0) it raises
+false flags on vmlinuz-3.10.0-1160.76.1.el7.x86_64 
+clamscan -r -d categories/removed.ldb ../binexec | grep FOUND
+note that clamscan only reports the first found (so try out the two sigs one by one)
+
+# note: THEIR target is changed to 0, and EP+0 is removed because EP depends on
+# file parsing
+############################################################
+1. Win.Trojan.FakeSkype-1;Engine:51-255,Target:0;0&(1=0);0:4d5a{60-300}50450000;0:4d5a{60-300}50450000????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????00000000
+2. Win.Trojan.Heuristic-786;Engine:51-255,Target:0;0&(1=0);0:4d5a{60-300}50450000;0:4d5a{60-300}50450000????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????00000000
+3. Win.Trojan.Fakesec-894;Engine:51-255,Target:0;(0|1|2|3);6a4b68;6a7168;e916fe;60be00
+4. Win.Trojan.Fakesec-888;Engine:51-255,Target:0;(0);68f0
+5. Win.Trojan.Generic-43;Engine:51-255,IconGroup1:FAKESEC,Target:1;(0|1);EP+0:5250{-8}5133c0;EP+0:0000000000000000000000000000000000000000000000000000000000000000
+6. Win.Trojan.Fakesec-893;Engine:51-255,Target:0;(0|1|2|3|4|5|6|7|8|9);83ec10;e8a91400;81ec000f;83ec243eff742424;68f0f0;f08704;e84f14;6a2468;e86e17;e8a614
+7. Win.Trojan.Ag-18;Engine:51-255,Target:0;0|1|2|3;33d2ff742410e8;676c655f70726a5c7372635c7469676572345f76;43006f006d00700061006e0079004e0061006d006500000000004d006900630072006f0073006f0066007400200043006f00720070006f007200610074006900;080e40
+8. Legacy.Trojan.Agent-1388599;Engine:51-255,Target:0;0|1;5083?8;5083?0
+9. Win.Trojan.Generic-46;Engine:51-255,Target:0;(0|1|2);5250{-8}5133c0ffa00403;0000000000000000000000000000000000000000000000000000000000000000;3000??000000000000000000??00??003000??00000000000000000000000000
+10. Win.Trojan.Fakesec-887;Engine:51-255,Target:0;(0|1|2|3|4|5|6|7);556a0083;83ec34;83ec30;450052004e0045004c00330032002e0064006c006c00000000476c6f62616c41;45524e454c33322e646c6c00476c6f62616c416c6c6f6300476c6f;83ec44;8bff55;83ec24
+11. Win.Trojan.Generic-47;Engine:51-255,IconGroup1:FAKESEC,Target:1;(0|1|2);EP+0:83ec44;EP+0:8bff558bec5150523eff153c10;EP+0:558bec81ecfc000000e8210000005064
+# failed data/email/src/maildir/giron-d/sent_items/33.
+12.  Win.Trojan.Ag-4254306-1;Engine:51-255,IconGroup1:DOCUMENT,Target:1;(0|1);EP+0:5064ff35000000006489250000000033c0890850454332;*:426f6d65*426f6d65 
+13. # this one is tricky: the "." actually should be single line mode
+# not catching \n. But we use MULTILINE matching for all, and this
+# easily causes FALSE POSITIVES because a pound key can be matched very
+# far away from the var = pattern (e.g., /home/xiang/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/email/src/maildir/giron-d/sent_items/33.)
+# This one is solely caused by our approximation all to MULTILINE mode,
+# clamscan actually did not report false positives.
+Html.Exploit.CVE_2017_0069-6013012-3;Engine:81-255,Target:3;0&1&2&3;77696e646f772e6f70656e28;6c6f636174696f6e2e7265706c61636528;766172;2/var.{0,50}?=.{0,100}?[\x22\x27].*?#([^\x22\x27\x23])\1{100,}?/
+14. (due to no DFA, unable to discharge via ISED) #Js.File.MaliciousHeuristic-6260249-0;Engine:81-255,Target:7;0>1&1>7&2&3;6576616c28;76617220;0&1/w(?P<junk>[a-z\d]{3,6})s(?P=junk)c(?P=junk)r(?P=junk)i(?P=junk)p(?P=junk)t(?P=junk).(?P=junk)s(?P=junk)h(?P=junk)e(?P=junk)l(?P=junk)l/;0&1/p(?P<junk>[a-z\d]{3,6})o(?P=junk)w(?P=junk)e(?P=junk)r(?P=junk)s(?P=junk)h(?P=junk)e(?P=junk)l(?P=junk)l(?P=junk).(?P=junk)e(?P=junk)x(?P=junk)e/
+
+#############################################################################
+# --- we manually re-write one signature for speeding up DFA 
+# --- generation, but it's equivalent to the original
+#############################################################################
+1. Email.Phishing.VOF1-6295631-2;Engine:81-255,Container:CL_TYPE_MAIL,Target:0;2;0:504b;0:4d5a;0|1/\b(FedEx|DHL|US?PS).{0,100}\.(exe|scr|js)/
+==> change .{0,100} to five copies of .{0,20}
+==> the reason is that when step-by-step minimization of DFA is done
+	at each step of concat, it helps to reduce complexity.
+
+#############################################################################
+# --- we manually re-write one signature for addressing distinct semsantcis
+#############################################################################
+1.  Win.Virus.Hematite-6232506-0;Engine:51-255,Target:1;(0|1|2|3)>1,2;EP+2:00110000{-8}0004;8DAC24001000005058C74500;7F0C81C77856341281C787A9CB6D;9090BF{-200}B9D3F2000081C14A000100
+--> 
+Win.Virus.Hematite-6232506-0;Engine:51-255,Target:1;((0>1&1>1)|(0>1&2>1)|(0>1&3>1)|(1>1&2>1)|(1>1&3>1)|(2>1|3>1));EP+2:00110000{-8}0004;8DAC24001000005058C74500;7F0C81C77856341281C787A9CB6D;9090BF{-200}B9D3F2000081C14A000100
+
+#-----------------------------------------------------
+# 2 minor syntax change correction
+#-----------------------------------------------------
+1. Drop the "," in "0=2,&1&2" => "0=2&1&2" in the following:
+
+Unix.Trojan.Elknot-2;Engine:51-255,Target:6;0=2,&1&2;2f746d702f67617465732e6c6f636b;3135435468726561644d6f6e4761746573;3136435468726561645461736b4761746573
+
+2. for the conveinence of our own parse , rewrite the following in
+the following APPROXIMATED form by ignoring the "3" distinctive matches
+
+From ((0&1)|2|3|4)>1,3 to
+((0>1&1>1&2>1)|(0>1&1>1&3>1)|(0>1&1>1&4>1))
+Unix.Malware.Chaos-6474834-0;Target:6;((0>1&1>1&2>1)|(0>1&1>1&3>1)|(0>1&1>1&4>1));B866000000BB010000008D4C2404CD80;44240806000000C744240403000000C70424020000E8;2f7573722f7362696e2f7373686400;2f7661722f72756e2f7379736c6f672e70696400;c6(00|01|02|03|04|05|06|07)2f8b(45|4d|55|5d|65|6d|75|7d)??83(c0|c8|d0|d8|e0|e8|f0|f8)04c6(00|01|02|03|04|05|06|07)2f8b(45|4d|55|5d|65|6d|75|7d)??83(c0|c8|d0|d8|e0|e8|f0|f8)01c6(00|01|02|03|04|05|06|07)628b(45|4d|55|5d|65|6d|75|7d)??83(c0|c8|d0|d8|e0|e8|f0|f8)05c6(00|01|02|03|04|05|06|07)738b(45|4d|55|5d|65|6d|75|7d)??83(c0|c8|d0|d8|e0|e8|f0|f8)02c6(00|01|02|03|04|05|06|07)698b(45|4d|55|5d|65|6d|75|7d)??83(c0|c8|d0|d8|e0|e8|f0|f8)06c6(00|01|02|03|04|05|06|07)688b(45|4d|55|5d|65|6d|75|7d)??83(c0|c8|d0|d8|e0|e8|f0|f8)03c6(00|01|02|03|04|05|06|07)6e8b(45|4d|55|5d|65|6d|75|7d)??83(c0|c8|d0|d8|e0|e8|f0|f8)07c6(00|01|02|03|04|05|06|07)00
+=>
+Unix.Malware.Chaos-6474834-0;Target:6;((0&1)|2|3|4)>1,3;B866000000BB010000008D4C2404CD80;44240806000000C744240403000000C70424020000E8;2f7573722f7362696e2f7373686400;2f7661722f72756e2f7379736c6f672e70696400;c6(00|01|02|03|04|05|06|07)2f8b(45|4d|55|5d|65|6d|75|7d)??83(c0|c8|d0|d8|e0|e8|f0|f8)04c6(00|01|02|03|04|05|06|07)2f8b(45|4d|55|5d|65|6d|75|7d)??83(c0|c8|d0|d8|e0|e8|f0|f8)01c6(00|01|02|03|04|05|06|07)628b(45|4d|55|5d|65|6d|75|7d)??83(c0|c8|d0|d8|e0|e8|f0|f8)05c6(00|01|02|03|04|05|06|07)738b(45|4d|55|5d|65|6d|75|7d)??83(c0|c8|d0|d8|e0|e8|f0|f8)02c6(00|01|02|03|04|05|06|07)698b(45|4d|55|5d|65|6d|75|7d)??83(c0|c8|d0|d8|e0|e8|f0|f8)06c6(00|01|02|03|04|05|06|07)688b(45|4d|55|5d|65|6d|75|7d)??83(c0|c8|d0|d8|e0|e8|f0|f8)03c6(00|01|02|03|04|05|06|07)6e8b(45|4d|55|5d|65|6d|75|7d)??83(c0|c8|d0|d8|e0|e8|f0|f8)07c6(00|01|02|03|04|05|06|07)00
+
+
+
+#############################################################################
+# --- we manually changed the following cases to remove look-arounds that cannot be handled
+# by rust regex-syntax parser
+#############################################################################
+1. (this one is equivalent)
+Win.Exploit.CVE_2018_4899-6453839-1;Engine:81-255,Container:CL_TYPE_ZIP,Target:0;1;3C50616765436F6E74656E7420536F757263653D222F;0/<PageContent\s+?Source\s?=\x22\/((\w+(?=%)|(\w+\/\w+(?=%)|(\w+_)(?=%)|(\w+\/\w+\.\w+(?=%)))))[^>]*?[^\x23\x2f\x3e]/si
+----
+Win.Exploit.CVE_2018_4899-6453839-1;Engine:81-255,Container:CL_TYPE_ZIP,Target:0;1;3C50616765436F6E74656E7420536F757263653D222F;0/<PageContent\s+?Source\s?=\x22\/((\w+|(\w+\/\w+|(\w+_)|(\w+\/\w+\.\w+))))(%[^>]*?)[^\x23\x2f\x3e]/si
+
+2. -- this one is over approximation (we skipped the check) 
+Html.Exploit.CVE_2018_12770-6607387-0;Engine:81-255,Target:3;1;3C7363726970743E{-12}66756E6374696F6E*3C696E707574206964{-46}74797065{-5}696D616765;0/\<script\>[^>]*?function\s?(?P<func>\w+\x28\x29)[^>]*?\.type\s?=\s?[\x27\x22](?P<type>\w+).*?type\s?=\s?[\x27\x22](?!(?P=type)).*?=[\x27\x22](?P=func)/smi
+----
+Html.Exploit.CVE_2018_12770-6607387-0;Engine:81-255,Target:3;1;3C7363726970743E{-12}66756E6374696F6E*3C696E707574206964{-46}74797065{-5}696D616765;0/\<script\>[^>]*?function\s?(?P<func>\w+\x28\x29)[^>]*?\.type\s?=\s?[\x27\x22](?P<type>\w+).*?type\s?=\s?[\x27\x22].*?=[\x27\x22](?P=func)/smi
+
+3. -- this one is over approximation (we dropped the check) 
+Doc.Downloader.TemplateInjection-6332119-0;Engine:81-255,Target:0;1;0:3c3f786d6c{-500}52656c6174696f6e73686970204964{-50}724964{-250}617474616368656454656d706c617465{-50}5461726765743d{-250}5461726765744d6f6465{-25}45787465726e616c;0/Target=(\x22|\x27|)(file|ftp|http|https)://(?!(10|172\.(1[6-9]|2[0-9]|3[0-2])|192\.168))(?:(?:2(?:[0-4][0-9]|5[0-5])|[0-1]?[0-9]?[0-9])\.){3}(?:(?:2([0-4][0-9]|5[0-5])|[0-1]?[0-9]?[0-9]))/
+---
+Doc.Downloader.TemplateInjection-6332119-0;Engine:81-255,Target:0;1;0:3c3f786d6c{-500}52656c6174696f6e73686970204964{-50}724964{-250}617474616368656454656d706c617465{-50}5461726765743d{-250}5461726765744d6f6465{-25}45787465726e616c;0/Target=(\x22|\x27|)(file|ftp|http|https)://(?:(?:2(?:[0-4][0-9]|5[0-5])|[0-1]?[0-9]?[0-9])\.){3}(?:(?:2([0-4][0-9]|5[0-5])|[0-1]?[0-9]?[0-9]))/
+
+4. -- this one is equivalent
+Pdf.Exploit.CVE_2018_4882-6449962-1;Engine:81-255,Target:10;2;2F576964676574*20FEFF;2F576964676574*2EFEFF;0|1/\x2FWidget((?!\x3E\x3E).)*?\x2F(RC|V|AC)\s*\x28[^\x29]*?[\x2E\x20]\xFE\xFF.*?\x29/s
+---
+Pdf.Exploit.CVE_2018_4882-6449962-1;Engine:81-255,Target:10;2;2F576964676574*20FEFF;2F576964676574*2EFEFF;0|1/\x2FWidget[^\x3E\x3E])*?\x2F(RC|V|AC)\s*\x28[^\x29]*?[\x2E\x20]\xFE\xFF.*?\x29/s
+
+5. --- This one is over approximation
+Email.Exploit.Efail-6543464-0;Engine:81-255,Target:4;1;436f6e74656e742d547970653a20746578742f68746d6c*3c626173652068726566*3c612068726566*2d2d*436f6e74656e742d547970653a20746578742f68746d6c*3c2f613e;0/Content-Type: text\x2fhtml.+?\x3cbase href.+?\x3ca href(?!.+?\x3c\x2fa\x3e.+?Content-Type).+?Content-Type.+?\x3c\x2fa\x3e/is
+---
+Email.Exploit.Efail-6543464-0;Engine:81-255,Target:4;1;436f6e74656e742d547970653a20746578742f68746d6c*3c626173652068726566*3c612068726566*2d2d*436f6e74656e742d547970653a20746578742f68746d6c*3c2f613e;0/Content-Type: text\x2fhtml.+?\x3cbase href.+?\x3ca href.+?Content-Type.+?\x3c\x2fa\x3e/is
+
+6. -- this one is over approximation, we skipped the check 
+Win.Packer.Crypter-6614720-1;Engine:81-255,Target:1;10;4c6f61644c696272617279;47657450726f6341646472657373;c745;c785;816d;8145;8185;81ad;558bec81ec{4}33c00f84;558bec81ec{9}33c58945??5333db899d{4}5657c785{8}c785{8}c785{8}c785;0&1&(2>10)&(3>10)&(((4>10)&(5>10))|((6>10)&(7>10)))&(8|9)/(?:(?:\xC7\x45|\xC7\x85|\x81\x6D|\x81\x45|\x81\x85|\x81\xAD).{5,8}(?!\xFF\x15)(?:\xC7\x45|\xC7\x85|\x81\x6D|\x81\x45|\x81\x85|\x81\xAD).{5,8}(?!\xFF\x15)){20}/
+---
+Win.Packer.Crypter-6614720-1;Engine:81-255,Target:1;10;4c6f61644c696272617279;47657450726f6341646472657373;c745;c785;816d;8145;8185;81ad;558bec81ec{4}33c00f84;558bec81ec{9}33c58945??5333db899d{4}5657c785{8}c785{8}c785{8}c785;0&1&(2>10)&(3>10)&(((4>10)&(5>10))|((6>10)&(7>10)))&(8|9)/(?:(?:\xC7\x45|\xC7\x85|\x81\x6D|\x81\x45|\x81\x85|\x81\xAD).{5,8}(?:\xC7\x45|\xC7\x85|\x81\x6D|\x81\x45|\x81\x85|\x81\xAD).{5,8}){20}/
+
+==== More fixes of regex ===
+1. Txt.Downloader.Generic-5657800-0 Problem: { } needs to be escaped
+2. Doc.Macro.CmdC-6249572-0, {4-7} needs to be changed to {4,7}
+3. Js.Downloader.Nemucod-6297599-0, change the " to \x22
+4. similarly Js.Downloader.Nemucod-6311824-1
+5. Doc.Macro.Obfuscation-6334622-0, double quote to \x22
+6. Doc.Macro.JunkCode-6335442-0, double quote to \x22
+7. Js.Downloader.Agent-6335779-0, double quote to \x22
+8. Doc.Macro.Obfuscation-6336014-0, double quote to \x22
+9. Doc.Macro.Emotet-6374344-0, double quote to \x22
+10. Doc.Macro.Emotet-6376221-0, double quote to \x22
+11. Doc.Dropper.Agent-6394293-0, double quote to \x22
+12. Doc.Macro.Obfuscation-6398752-1, double quote to \x22
+13. Win.Trojan.PowerShell-6437865-0, double quote to \x22
+14. Vbs.Downloader.Agent-6619201-1, double quote to \x22
+15. Doc.Macro.Obfuscated-6397052-2, double quote to \x22
+16. Win.Ransomware.Locky-4, double quote to \x22
+17. Doc.Macro.ReplaceFuncs-6171292-0, double quote to \x22
+18. Vbs.Downloader.WannaMine-6449926-0, \2b -> \x2b
+19. Pdf.Exploit.CVE_2018_4882-6449962-1: missing a preceding (
+20. Win.Exploit.CVE_2018_12758-6613271-0. remove the {} around \w
+21. Modification date in [^)] change \x29 to

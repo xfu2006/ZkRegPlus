@@ -583,6 +583,11 @@ fn max_match_bytes(hir: &Hir) -> Result<usize, AggShapeErr> {
 	}
 }
 
+/// A literal segment shorter than this many bytes is regex content
+/// (e.g. the leading digit of a number pattern), not a proximity
+/// keyword anchor. Real DLP keywords are multi-byte words.
+const MIN_KW_ANCHOR_BYTES: usize = 2;
+
 /// Validate one subsig regex body for aggressive mode and measure span.
 /// The keyword literal must sit at exactly one end of the top-level
 /// chain (else KwInMiddle / NoAnchor); unbounded gaps rejected.
@@ -597,8 +602,9 @@ pub fn analyze_aggressive_shape(hir: &Hir)
 	for (i, s) in segs.iter().enumerate() {
 		if max_match_bytes(s)? == 0 { continue; }   // zero-width: skip
 		match s.kind() {
-			HirKind::Literal(_) => lit.push(i),
-			_ => non.push(i),
+			HirKind::Literal(x)
+				if x.0.len() >= MIN_KW_ANCHOR_BYTES => lit.push(i),
+			_ => non.push(i),   // short literals = regex content
 		}
 	}
 	if non.is_empty() {
@@ -2410,6 +2416,15 @@ mod tests_pcre{
 		assert_eq!(analyze_aggressive_shape(&to_hir(
 			"[0-9]{3}.{0,9}[0-9]{3}")),
 			Err(AggShapeErr::NoAnchor));
+		//T7 number pattern with a leading 1-byte literal digit (ITIN:
+		//`9[0-9]{2}...`) is NOT a middle keyword -- the lone `9` is
+		//regex content, so keyword `ITIN` anchors forward / backward.
+		let r = analyze_aggressive_shape(&to_hir(
+			"ITIN.{0,64}9[0-9]{2}[-\\s]?[0-9]{4}")).unwrap();
+		assert_eq!(r.anchor, Some(0));
+		let r = analyze_aggressive_shape(&to_hir(
+			"9[0-9]{2}[-\\s]?[0-9]{4}.{0,64}ITIN")).unwrap();
+		assert_eq!(r.anchor, Some(1));
 	}
 
 	#[test]

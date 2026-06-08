@@ -1,0 +1,1290 @@
+[job 0] LOG1:  ==== Summary of ClamavSig Database ====
+[job 0] LOG1:  #critical patterns: 48392 (CS) 662 (IGC), #sigs: 38875, ACDFA for Critical Pattenrs State: 2979407 (CS) 49585 (IGC)
+[job 0] LOG1:  Signatures:38875, Fixed Patterns: 118357, Pattners IGC: 483
+[job 0] LOG1:  ACDFA for BagWords: states (cs): 6416943, states (igc): 70149
+[job 0] LOG1:  ==========Adv Stats of ACDFA dfa_crit ==========================
+[job 0] LOG1:  HEX-AC-DFA id: 0, num_states: 2979407, patterns: 48392, accept_states: 59434, init_state: 59436
+[job 0] LOG1:    MAX output sig: 83, avg sigs/acc state: 3
+[job 0] LOG1:  ==================================
+[job 0] LOG1:  ==========Adv Stats of ACDFA dfa_crit_igc ==========================
+[job 0] LOG1:  HEX-AC-DFA id: 0, num_states: 49585, patterns: 662, accept_states: 631, init_state: 633
+[job 0] LOG1:    MAX output sig: 2, avg sigs/acc state: 1
+[job 0] LOG1:  ==================================
+[job 0] LOG1:  ==== Status of ACDFA dfa_patterns =====
+ HEX-AC-DFA id: 0, num_states: 6416943, patterns: 118357, accept_states: 393654, init_state: 393656
+[job 0] LOG1:  MAX output words for a final state: 18, avg: 1
+[job 0] LOG1:  ==== Status of ACDFA dfa_patterns_igc =====
+ HEX-AC-DFA id: 0, num_states: 70149, patterns: 483, accept_states: 697, init_state: 699
+[job 0] LOG1:  MAX output words for a final state: 3, avg: 1
+[job 0] LOG1:  ==== WARNING: UNABLE TO DISCHARGE by crit_gab_pm which needs DFA discharge =====
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/a2p, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/anthoscli__00, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/anthoscli__01, sigs: {"Legacy.Trojan.Agent-1388621", "Doc.Dropper.Emotet-6769504-0", "Win.Trojan.Emotet-6397178-0", "Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/anthoscli__02, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0", "Win.Trojan.Emotet-6397178-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/anvil, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/as, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/audit2why.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/auditd, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/aureport, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/ausearch, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/bash, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/bc, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/BIG5HKSCS.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/BIG5.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/bison, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/blkid, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/bltest, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/bootctl, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/bounce, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/bridge, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/_bsddb.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/B.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/btrfs, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/btrfs-convert, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/btrfs-debug-tree, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/btrfs-find-root, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/btrfs-image, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/btrfs-map-logical, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/btrfs-select-super, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/btrfstune, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/btrfs-zero-log, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/busctl, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/Byte.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/c++, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/cc1, sigs: {"Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/cc1plus, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1", "Legacy.Trojan.Agent-1388621"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/certutil, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/cfdisk, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/_cffi_backend.cpython-39-x86_64-linux-gnu.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/cgdisk, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/chage, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/chgpasswd, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/chronyc, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/chronyd, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/cleanup, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/cmsutil, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/CN.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/_codecs_cn.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/_codecs_hk.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/_codecs_jp.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/_codecs_kr.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/_codecs_tw.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/Collate.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/collect2, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/compctl.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/complete.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/computil.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/conf, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/convertquota, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/coredumpctl, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/cp, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/CP932.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/cPickle.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/cpio, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/cpp, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/cpupower, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/crlutil, sigs: {"Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/crond, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/cscope, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/ctags, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/ctr-cavstest, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/_ctypes.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/curl, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/curses_c.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/_curses.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/cvtsudoers, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/cygrpc.cpython-39-x86_64-linux-gnu.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0", "Legacy.Trojan.Agent-1388621"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/datetime.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/db_dump185, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/_dbus_bindings.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/dbus-binding-tool, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/dbus-daemon, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/dd, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/debugfs, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/derdump, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/devlink, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/df, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/dgawk, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/dhclient, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/diff, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/dir, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/discard, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/dmidecode, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/dmsetup, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/dnsblog, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/doxygen, sigs: {"Pdf.Exploit.CVE_2013_3353-1", "Win.Packed.addsub-6961201-1", "Win.Exploit.CVE_2017_11918-6389654-1", "Pdf.Exploit.APSB16_26-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/du, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/dumpkeys, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/dwp, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/dwz, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/e2fsck, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/e2label, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/eapol_test, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/edquota, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/eqn, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/error, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/ether-wake, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/ethtool, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/EUC-JP-MS.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/eu-elflint, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/eu-readelf, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/Expat.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/exportfs, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/f951, sigs: {"Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/factor, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/fdisk, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/find, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/fipstest, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/flex, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/flush, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/fsck.ext2, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/fsck.ext3, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/fsck.ext4, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/fsck.minix, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/g++, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/gawk, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/GB18030.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/GBK.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/gcc, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/gcloud-crc32c, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/gcov, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/gdb, sigs: {"Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/gdisk, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/gfortran, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/gio, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/_gi.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-add, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-annotate, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-apply, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-archive, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-bisect--helper, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-blame, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-branch, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-bundle, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-cat-file, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-check-attr, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-check-ignore, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-checkout, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-checkout-index, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-check-ref-format, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-cherry, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-cherry-pick, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-clean, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-clone, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-column, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-commit, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-commit-tree, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-config, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-count-objects, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-credential, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-credential-cache, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-credential-cache--daemon, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-credential-store, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-describe, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-diff, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-diff-files, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-diff-index, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-diff-tree, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-fast-export, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-fast-import, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-fetch, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-fetch-pack, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-fmt-merge-msg, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-for-each-ref, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-format-patch, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-fsck, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-fsck-objects, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-gc, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-get-tar-commit-id, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-grep, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-hash-object, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-help, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-http-backend, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-http-fetch, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-http-push, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-imap-send, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-index-pack, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-init, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-init-db, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-log, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-ls-files, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-ls-remote, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-ls-tree, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-mailinfo, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-mailsplit, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-merge, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-merge-base, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-merge-file, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-merge-index, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-merge-ours, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-merge-recursive, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-merge-subtree, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-merge-tree, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-mktag, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-mktree, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-mv, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-name-rev, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-notes, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-pack-objects, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-pack-redundant, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-pack-refs, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-patch-id, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-peek-remote, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-prune, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-prune-packed, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-push, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-read-tree, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-receive-pack, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-reflog, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-remote, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-remote-ext, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-remote-fd, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-remote-ftp, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-remote-ftps, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-remote-http, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-remote-https, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-replace, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-repo-config, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-rerere, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-reset, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-revert, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-rev-list, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-rev-parse, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-rm, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-send-pack, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-shell, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-shortlog, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-show, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-show-branch, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-show-index, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-show-ref, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-stage, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-status, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-stripspace, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-submodule--helper, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-symbolic-ref, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-tag, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-tar-tree, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-unpack-file, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-unpack-objects, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-update-index, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-update-ref, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-update-server-info, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-upload-archive, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-upload-pack, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-var, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-verify-pack, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-verify-tag, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-whatchanged, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/git-write-tree, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/google_authorized_keys, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/google_authorized_keys_sk, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/google_guest_agent, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0", "Legacy.Trojan.Agent-1388621"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/google_metadata_script_runner, sigs: {"Win.Trojan.Emotet-6397178-0", "Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1", "Legacy.Trojan.Agent-1388621"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/google_osconfig_agent, sigs: {"Doc.Dropper.Emotet-6769504-0", "Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1", "Win.Trojan.Emotet-6397178-0", "Legacy.Trojan.Agent-1388621"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/google_oslogin_nss_cache, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/gpasswd, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/gpg2, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/gpg-agent, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0", "Legacy.Trojan.Agent-1388621"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/gpg-check-pattern, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/gpgconf, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/gpg-connect-agent, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/_gpgme.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/gpg-preset-passphrase, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/gpg-protect-tool, sigs: {"Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/gpgv2, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/gprof, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/grep, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/groff, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/grops, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/grotty, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/groupadd, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/groupdel, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/groupmod, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/grub2-bios-setup, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/grub2-editenv, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/grub2-file, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/grub2-fstest, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/grub2-glue-efi, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/grub2-install, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/grub2-macbless, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/grub2-menulst2cfg, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/grub2-mkfont, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/grub2-mkimage, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/grub2-mklayout, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/grub2-mknetdir, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/grub2-mkpasswd-pbkdf2, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/grub2-mkrelpath, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/grub2-mkrescue, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/grub2-mkstandalone, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/grub2-ofpathname, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/grub2-probe, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/grub2-render-label, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/grub2-rpm-sort, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/grub2-script-check, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/grub2-sparc64-setup, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/grub2-syslinux2cfg, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/grubby, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/gssproxy, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/gzip, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/hostnamectl, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/htop, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/IBM1364.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/IBM1371.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/IBM1388.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/IBM1390.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/IBM1399.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/IBM930.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/IBM932.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/IBM933.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/IBM935.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/IBM937.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/IBM939.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/IBM943.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/ident, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/ifconfig, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/indent, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/info, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/install, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/install-info, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/_io.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/ip, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/iprconfig, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/iprdump, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/iprinit, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/iprupdate, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/journalctl, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/JP.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/kernel.exec, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/kmod, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/KR.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/ld-2.17.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/ld.bfd, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/ldconfig, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1", "Legacy.Trojan.Agent-1388621"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/ld.gold, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/less, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/lexgrog, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libapr-1.so.0.4.8, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libaprutil-1.so.0.5.2, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libasound.so.2.0.0, sigs: {"Win.Packed.addsub-6963063-0", "Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libassuan.so.0.4.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libaudit.so.1.0.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libauparse.so.0.0.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libavahi-client.so.3.2.9, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libbfd-2.27-44.base.el7_9.1.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1", "Legacy.Trojan.Agent-1388621"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libblkid.so.1.1.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libboost_date_time-mt.so.1.53.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libboost_date_time.so.1.53.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libboost_regex-mt.so.1.53.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libboost_regex.so.1.53.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libboost_thread-mt.so.1.53.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libbz2.so.1.0.6, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libc-2.17.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0", "Legacy.Trojan.Agent-1388621"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libcidn-2.17.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libcloog-isl.so.4, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libCNS.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libcommon.so.9.3.1, sigs: {"Win.Packed.addsub-6961201-1", "Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libcroco-0.6.so.3.0.1, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libcrypto.so.1.0.2k, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1", "Legacy.Trojan.Agent-1388621"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libcryptsetup.so.12.3.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libcryptsetup.so.4.7.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libcupsppdc.so.1, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libcups.so.2, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libcurl.so.4.3.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libdb-5.3.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libdbus-1.so.3.14.14, sigs: {"Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libdbus-glib-1.so.2.2.2, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libdevmapper.so.1.02, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libdns-export.so.1102.1.2, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libdrm_intel.so.1.0.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libdrm.so.2.4.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libdw-0.176.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libdwarf.so.0.20130207.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1", "Legacy.Trojan.Agent-1388621"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libdynC_API.so.9.3.1, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libdynElf.so.9.3.1, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libdyninstAPI.so.9.3.1, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libebtc.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libedit.so.0.0.42, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libefiboot.so.1.36, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libefivar.so.1.36, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libelf-0.176.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libevent-2.0.so.5.1.9, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libevent_core-2.0.so.5.1.9, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libevent_extra-2.0.so.5.1.9, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libexpat.so.1.6.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libext2fs.so.2.4, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libform.so.5.9, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libformw.so.5.9, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libfreeblpriv3.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libfreetype.so.6.14.0, sigs: {"Win.Packed.addsub-6961201-1", "Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libGB.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libgcc_s-4.8.5-20150702.so.1, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libgcrypt.so.11.8.2, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libgettextlib-0.19.8.1.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libgettextpo.so.0.5.4, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libgettextsrc-0.19.8.1.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libgfortran.so.3.0.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libgio-2.0.so.0.5600.1, sigs: {"Win.Packed.addsub-6963063-0", "Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libgirepository-1.0.so.1.0.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libglib-2.0.so.0.5600.1, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libgmp.so.10.2.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libgnutls.so.28.43.3, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1", "Legacy.Trojan.Agent-1388621"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libgobject-2.0.so.0.5600.1, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libgomp.so.1.0.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libgpgme-pthread.so.11.8.1, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libgpgme.so.11.8.1, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libgssapi_krb5.so.2.2, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libgssrpc.so.4.2, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libhogweed.so.2.5, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libhwloc.so.5.7.5, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libibverbs.so.1.5.22.4, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libICE.so.6.3.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libicudata.so.50.2, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libicui18n.so.50.2, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libicule.so.50.2, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0", "Legacy.Trojan.Agent-1388621"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libicutest.so.50.2, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libicutu.so.50.2, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libicuuc.so.50.2, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1", "Legacy.Trojan.Agent-1388621"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libidn.so.11.6.11, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libini_config.so.3.2.1, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libinstructionAPI.so.9.3.1, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libipset.so.13.1.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libisccfg-export.so.160.2.1, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libisc-export.so.169.0.3, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libJIS.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libJISX0213.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libk5crypto.so.3.1, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libkdb5.so.8.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libkmod.so.2.2.10, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libkrb5.so.3.3, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libkrb5support.so.0.1, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libldap-2.4.so.2.10.7, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libldap_r-2.4.so.2.10.7, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/liblto_plugin.so.0.0.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/liblua-5.1.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/liblzma.so.5.2.2, sigs: {"Win.Packed.addsub-6963063-0", "Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/liblzo2.so.2.0.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libm-2.17.so, sigs: {"Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libmagic.so.1.0.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libman-2.6.3.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libmlx5.so.1.8.22.4, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libmount.so.1.1.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libmozjs-17.0.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libmpc.so.3.0.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libmpfr.so.4.1.1, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libmysqlclient.so.18.0.0, sigs: {"Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libncurses++.so.5.9, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libncurses.so.5.9, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libncurses++w.so.5.9, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libncursesw.so.5.9, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libneon.so.27.3.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libnetfilter_conntrack.so.3.6.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libnettle.so.4.7, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libnewt.so.0.52.15, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libnl-3.so.200.23.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libnl-nf-3.so.200.23.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libnl-route-3.so.200.23.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libnl-xfrm-3.so.200.23.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libnm-settings-plugin-ifcfg-rh.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libnm.so.0.1.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libnsl-2.17.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libnspr4.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libnss3.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libnssckbi.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libnssdbm3.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libnss_myhostname.so.2, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libnss_mymachines.so.2, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libnss_nisplus-2.17.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libnsspem.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libnssutil3.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libomapi.so.0.0.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libopcodes-2.27-44.base.el7_9.1.so, sigs: {"Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libp11-kit.so.0.3.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libpapi.so.5.2.0.0, sigs: {"Win.Packed.addsub-6963063-0", "Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libparseAPI.so.9.3.1, sigs: {"Win.Packed.addsub-6963063-0", "Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libparted-fs-resize.so.0.0.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libparted.so.2.0.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libpatchAPI.so.9.3.1, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libpcontrol.so.9.3.1, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libpcre16.so.0.2.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libpcre32.so.0.0.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libpcre.so.1.2.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libperl.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libpfm.so.4.7.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libply.so.2.1.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libply-splash-core.so.2.1.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libpng15.so.15.13.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libpolkit-gobject-1.so.0.0.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libprocps.so.4.0.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libproxy.so.1.0.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libpthread-2.17.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libpth.so.20.0.27, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libpython2.7.so.1.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libpython3.9.so, sigs: {"Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1", "Win.Trojan.FakeDefrag-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libpython3.9.so.1.0, sigs: {"Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1", "Win.Trojan.FakeDefrag-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libquadmath.so.0.0.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/librdmacm.so.1.1.22.4, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libreadline.so.6.2, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libresolv-2.17.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/librpmbuild.so.3.2.2, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/librpmio.so.3.2.2, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/librpm.so.3.2.2, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libsasl2.so.3.0.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libseccomp.so.2.3.1, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libselinux.so.1, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libsemanage.so.1, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libsepol.so.1, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libsgutils2.so.2.0.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libslang.so.2.2.4, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0", "Legacy.Trojan.Agent-1388621"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libslapi-2.4.so.2.10.7, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libsmartcols.so.1.1.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libsmime3.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libsoftokn3.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libsqlite3.so.0.8.6, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libssh2.so.1.0.1, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libssl3.so, sigs: {"Win.Packed.addsub-6963063-0", "Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libssl.so.1.0.2k, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libstackwalk.so.9.3.1, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libstdc++.so.6.0.19, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libsvn_client-1.so.0.0.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libsvn_diff-1.so.0.0.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libsvn_fs_base-1.so.0.0.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libsvn_fs_fs-1.so.0.0.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libsvn_ra_neon-1.so.0.0.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libsvn_ra_svn-1.so.0.0.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libsvn_repos-1.so.0.0.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libsvn_subr-1.so.0.0.0, sigs: {"Win.Packed.addsub-6963063-0", "Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libsvn_swig_py-1.so.0.0.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libsvn_wc-1.so.0.0.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libsymtabAPI.so.9.3.1, sigs: {"Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libsystemd-journal.so.0.11.5, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libsystemd.so.0.6.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libtasn1.so.6.5.3, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libtcl8.5.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libtinfo.so.5.9, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libtirpc.so.1.0.10, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libtspi.so.1.2.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libudev.so.1.6.2, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libunistring.so.0.1.2, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libuser.so.1.5.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libustr-1.0.so.1.0.4, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libX11.so.6.3.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libxcb-glx.so.0.0.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libxcb.so.1.1.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libxcb-xinput.so.0.1.0, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libxcb-xkb.so.1.0.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libxml2.so.2.9.1, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libXt.so.6.0.0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/libz.so.1.2.7, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/listsuites, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/lmtp, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/loadkeys, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/local, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/localectl, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/localedef, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/loginctl, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/logrotate, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/losetup, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/ls, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/lsblk, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/lshw, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/lspci, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/lstopo-no-graphics, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/lto1, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0", "Legacy.Trojan.Agent-1388621"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/lto-wrapper, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/ltrace, sigs: {"Win.Packed.addsub-6961201-1", "Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/luac, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/lz4, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/lzma.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0", "Legacy.Trojan.Agent-1388621"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/m4, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/machinectl, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/mailx, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/make, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/man, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/mandb, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/master, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merge, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_0, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_1, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_10, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_100, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_101, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_102, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_103, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_104, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_105, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_106, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_107, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_108, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_109, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_11, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_110, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_111, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_112, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_113, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_114, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_115, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_116, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_117, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_118, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_119, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_12, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_120, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_121, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_122, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_123, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_124, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_125, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_126, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_127, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_128, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_129, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_13, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_130, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_131, sigs: {"Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_132, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_133, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_134, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_135, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_136, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_137, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_138, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_139, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_14, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_140, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_141, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_142, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_143, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_144, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_145, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_146, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_147, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_148, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_149, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_15, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_150, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_151, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_152, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_153, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_154, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_155, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_156, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_157, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_158, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_159, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_16, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_160, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_161, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_162, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_163, sigs: {"Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_164, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_165, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_166, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_167, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_168, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_169, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_17, sigs: {"Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_170, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_171, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_172, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_173, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_174, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_175, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_176, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_177, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_178, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_179, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_18, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_180, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_181, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_182, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_183, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_184, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_185, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_186, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_187, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_188, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_189, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_19, sigs: {"Win.Packed.addsub-6963063-0", "Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_190, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_191, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_192, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_193, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_194, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_195, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_196, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_197, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_198, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_199, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_2, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_20, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_200, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_201, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_202, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_203, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_204, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_205, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_206, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_207, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_208, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_209, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_21, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_210, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_211, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_212, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_213, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_214, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_215, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_216, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_217, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_218, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_219, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_22, sigs: {"Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_220, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_221, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_222, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_223, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_224, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_225, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_226, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_227, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_228, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_229, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_23, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_230, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_231, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_232, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_233, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_234, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_235, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_236, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_237, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_238, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_239, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_24, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_240, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_241, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_242, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_243, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_244, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_245, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_246, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_247, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_248, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_249, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_25, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_250, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_251, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_252, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_253, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_254, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_255, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_256, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_257, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_258, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_259, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_26, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_260, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_261, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_262, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_263, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_264, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_265, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_266, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_267, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_268, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_269, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_27, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_270, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_271, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_272, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_273, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_274, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_275, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_276, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_277, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_278, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_279, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_28, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_280, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_281, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_282, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_283, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_284, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_285, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_286, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_287, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_288, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_289, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_29, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1", "Legacy.Trojan.Agent-1388621"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_290, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_291, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_292, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_293, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_294, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_295, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_296, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_297, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_298, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_299, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_3, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_30, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_300, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_301, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_302, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_303, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_304, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_305, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_306, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_307, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_308, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_309, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_31, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_310, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_311, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_312, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_313, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_314, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_315, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_316, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_317, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_318, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_319, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_32, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_320, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_321, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_322, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_323, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_324, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_325, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_326, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_327, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_328, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_329, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_33, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_330, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_331, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_332, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_333, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_334, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_335, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_336, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_337, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_338, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_339, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_34, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_340, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_341, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_342, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_343, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_344, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_345, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_346, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_347, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_348, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_349, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_35, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_350, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_351, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_352, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_353, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_354, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_355, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_356, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_357, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_358, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_359, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_36, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_37, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_38, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_39, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_4, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_40, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_41, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_42, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_43, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_44, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_45, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_46, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_47, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_48, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_49, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_5, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_50, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_51, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_52, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_53, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_54, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_55, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_56, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_57, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_58, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_59, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_6, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_60, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_61, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_62, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_63, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_64, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_65, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_66, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_67, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_68, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_69, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_7, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_70, sigs: {"Win.Packed.addsub-6963063-0", "Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_71, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_72, sigs: {"Win.Packed.addsub-6961201-1", "Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_73, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_74, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1", "Legacy.Trojan.Agent-1388621"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_75, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_76, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_77, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_78, sigs: {"Win.Packed.addsub-6963063-0", "Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_79, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_8, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_80, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_81, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_82, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_83, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_84, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_85, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_86, sigs: {"Win.Packed.addsub-6961201-1", "Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_87, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_88, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_89, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_9, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_90, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_91, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_92, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_93, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_94, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_95, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_96, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_97, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_98, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/merged_99, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/mkdir, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/mke2fs, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/mkfs.btrfs, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/mkfs.ext2, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/mkfs.ext3, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/mkfs.ext4, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/mkfs.xfs, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/mknod, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/mkswap, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/modutil, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/mount.nfs, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/msgfmt, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/mv, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/netstat, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/NetworkManager, sigs: {"Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/newusers, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/nmcli, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/nm-iface-helper, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/nmtui, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/Normalize.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/nqmgr, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/numfmt, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/nvme, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/objcopy, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/objdump, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/objtool, sigs: {"Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/ocspclnt, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/od, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/oldfind, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/_openssl.abi3.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1", "Legacy.Trojan.Agent-1388621"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/oqmgr, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/p11-kit-trust.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/pam_systemd.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/parted, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/partx, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/patch, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/pdcp, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/pdsh, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/perf, sigs: {"Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/perf.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/pgawk, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/pic, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/pickup, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/ping, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/pipe, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/pk12util, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/plymouthd, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/polkitd, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/posix_c.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/POSIX.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/postalias, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/postcat, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/postconf, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/postdrop, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/postfix, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/post-grohtml, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/postkick, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/postlock, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/postlog, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/postmap, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/postmulti, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/postqueue, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/postscreen, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/postsuper, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/PPPort.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/pr, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/pre-grohtml, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/proxymap, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/proxymech.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/ps, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/ptx, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/pycurl.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/qemu-ga, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/qmgr, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/qmqpd, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/quot, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/quota, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/quotacheck, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/quotaon, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/quotasync, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/rcs, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/rdma, sigs: {"Win.Packed.addsub-6963063-0", "Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/readelf, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/repquota, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/re.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/route, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/rpcgen, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/rpc.gssd, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/rpc.mountd, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/rpc.rquotad, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/rpc.statd, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/rpdcp, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/_rpm.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/rsync, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/rsyslogd, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/_rust.abi3.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/scache, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/scp, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/screen, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/sed, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/selfserv, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/_selinux.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/sendmail.postfix, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/setquota, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/sfdisk, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/sftp, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/sftp-server, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/sgdisk, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/sginfo, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/sg_inq, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/sg_logs, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/sg_ses, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/sg_vpd, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/showq, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/signtool, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/signver, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/SJIS.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/sln, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0", "Legacy.Trojan.Agent-1388621"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/sm-notify, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/smtp, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/smtpd, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/smtp-sink, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/smtp-source, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/_socketmodule.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/sort, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/spawn, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/spax, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/split, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/_sqlite3.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/ss, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/ssh, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/ssh-add, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/sshd, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/ssh-keygen, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/ssh-keyscan, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/ssh-pkcs11-helper, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/_ssl.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/ssltap, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/stap, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/stap-authorize-cert, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/stapbpf, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/stapdyn, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/stapio, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/stat, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/stdbuf, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/Storable.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/strace, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0", "Legacy.Trojan.Agent-1388621"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/strip, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/strsclnt, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/stty, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0", "Legacy.Trojan.Agent-1388621"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/svn, sigs: {"Win.Packed.addsub-6963063-0", "Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/svnadmin, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/svnlook, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/svnserve, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/swig, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/symkeyutil, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemctl, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd, sigs: {"Win.Packed.addsub-6961201-1", "Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-activate, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-analyze, sigs: {"Legacy.Trojan.Agent-1388621", "Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-backlight, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-bootchart, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-cgls, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-cgtop, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-coredump, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-cryptsetup, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-cryptsetup-generator, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-delta, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-efi-boot-generator, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-firstboot, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-fsck, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-fstab-generator, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-hostnamed, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-hwdb, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-importd, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-inhibit, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-initctl, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-journald, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-localed, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-logind, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-machined, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-modules-load, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-nspawn, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-pull, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-readahead, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-run, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-shutdown, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-shutdownd, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-sleep, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-socket-proxyd, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-stdio-bridge, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-sysctl, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-sysv-generator, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-timedated, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-tmpfiles, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-tty-ask-password-agent, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-udevd, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/systemd-update-utmp, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/tail, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/tar, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/tbl, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/tc, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/tcsd, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/teamd, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/_testcapi.cpython-39-x86_64-linux-gnu.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/tic, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/timedatectl, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/tlsmgr, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/tlsproxy, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/top, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/trivial-rewrite, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/troff, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/trust, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/tstclnt, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/tune2fs, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/turbostat, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/TW.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/udevadm, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/UHC.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/unicodedata.so, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0", "Win.Trojan.FakeDefrag-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/unzip, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/unzipsfx, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/useradd, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/userdel, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/usermod, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/vdir, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/verify, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/vfychain, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/vfyserv, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/vi, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/vim, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/virtual, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/visudo, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/vmlinuz-0-rescue-b1527a5456aab241a74a8a3dc31395c0, sigs: {"Win.Packed.addsub-6963063-0", "Email.Phishing.VOF1-6295631-2", "Email.Phishing.VOF1-6295244-1", "Email.Phishing.VOF1-6314020-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/vmlinuz-3.10.0-1160.76.1.el7.x86_64, sigs: {"Email.Phishing.VOF1-6295244-1", "Win.Packed.addsub-6963063-0", "Email.Phishing.VOF1-6295631-2", "Win.Packed.addsub-6961201-1", "Email.Phishing.VOF1-6314020-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/wget, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/wpa_cli, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/wpa_supplicant, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/x86_64-redhat-linux-c++, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/x86_64-redhat-linux-g++, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/x86_64-redhat-linux-gcc, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/xfs_copy, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/xfs_db, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1", "Legacy.Trojan.Agent-1388621"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/xfs_growfs, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/xfs_io, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/xfs_logprint, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/xfs_mdrestore, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/xfs_quota, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/xfs_repair, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/xgettext, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/xtables-multi, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/xz, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/yacc, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/zip, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/zipcloak, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/zipinfo, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/zipnote, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/zipsplit, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/zle.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/zramctl, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+[job 0] LOG1:  fname: data/samples/binexec_merged128k/zsh, sigs: {"Win.Packed.addsub-6961201-1", "Win.Packed.addsub-6963063-0"}
+[job 0] LOG1:  ==== Needs to build DFA for the following ===========
+{"Pdf.Exploit.APSB16_26-1", "Win.Trojan.FakeDefrag-1", "Doc.Dropper.Emotet-6769504-0", "Pdf.Exploit.CVE_2013_3353-1", "Win.Packed.addsub-6961201-1", "Win.Trojan.Emotet-6397178-0", "Win.Packed.addsub-6963063-0", "Email.Phishing.VOF1-6295631-2", "Email.Phishing.VOF1-6295244-1", "Legacy.Trojan.Agent-1388621", "Email.Phishing.VOF1-6314020-0", "Win.Exploit.CVE_2017_11918-6389654-1"}=========================
+
+[job 0] LOG1:  ==== WARNING: DFA could also not discharge the following =====
+[job 0] LOG1:  ==== WARNING: ISED could not discharge the following =====
+[job 0] LOG1:  ==== STATS SUMMARY (avg, max, count_non_zero) =========
+[job 0] LOG1:  Note: set b_optimize_pm to false in 
+gen_report_all_discharge_approach_stats
+ for accurate PM-REG data, otherwise it's filtered by prevoius step 
+
+[job 0] LOG1:  -b_include_bs: false------------------------------------------------------
+[job 0] LOG1:  log(f)	files	crit	pm	c_pm	dfa	ind_pm
+[job 0] LOG1:  0 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  1 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  2 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  3 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  4 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  5 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  6 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  7 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  8 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  9 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  10 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  11 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  12 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  13 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  14 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  15 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  16 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  17 	 633 	(28,104,633)	(2,3,633)	(2,3,633)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  18 	 163 	(34,113,163)	(2,3,163)	(2,3,163)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  19 	 158 	(42,121,158)	(2,3,158)	(2,3,158)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  20 	 67 	(55,130,67)	(2,3,67)	(2,3,67)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  21 	 153 	(110,134,153)	(2,3,153)	(2,3,153)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  22 	 14 	(60,85,14)	(2,3,14)	(2,3,14)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  23 	 7 	(96,164,7)	(3,5,7)	(3,5,7)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  24 	 9 	(143,194,9)	(3,5,9)	(3,5,9)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  25 	 5 	(139,207,5)	(3,5,5)	(3,5,5)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  26 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  27 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  28 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  29 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  30 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  31 	 0 	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)	(0,0,0)))
+[job 0] LOG1:  ====  Accepthance Path Stats =======
+[job 0] LOG1:  hs_len (number of accepted patterns but only counting position once)/acc_path: 0.026692154776221513%, hs_len: 817302, accpath_len: 3061955870
+[job 0] LOG1:  accepted states (counting multiple pos for one state, and ALL sigs)/acc_path: 1.078482786886148%, accepted_states: 33022667, accpath_len: 3061955870
+[job 0] LOG1:  acc_states/path_len: avg: 1.0188157013082086%, max: 1.876120864819417%
+[job 0] LOG1:  unique states ratio: avg: 0.0005529707934948887%, max: 0.0024739905869381454%, min: 0.00002082002573080846%
+[job 0] LOG1:  *** pm_reg pm_witness/total_accepted: (avg: max) -> appearahce of each acpeted states: (12207078774.42%,23342246960.87%). 
+[job 0] LOG1:  pm_reg (sde) total witness_len/file_size: (avg: max): (351189.9181515839%,1186184.2500055237%). This indicates total cost of discharging one file against ALL bag left sigs
+[job 0] LOG1:  pat ratio: avg: 2.5584426%, max: 13.312096%
+[job 0] LOG1:  ==== ESTIMATE_CONFIG (monotone envelope, proxy=sigs_sed) =====
+[job 0] LOG1:     files=1209, columns: p% cover b_uniq b_acc b_pat exp% sigs_sed subsigs avg_pats dfa_sigs dfa_subsigs
+[job 0] LOG1:      20%  241/1209     53    389    403    13       24      44        3        3           5
+[job 0] LOG1:      50%  604/1209     58    409    413    13       31      44        3        3           5
+[job 0] LOG1:     100% 1209/1209     82   1331   1331    13      202      44        3        5          13
+[job 0] LOG1:     NOTE: b_uniq=sum#pats over distinct ACCEPTED states (=proj_states.len); b_acc=accepted-state visits; b_pat=sum#pats over visits; all basis pts (/10000) of the worst chunk, per-case max(cs,igc). exp%=perc_pats_expansion floor=ceil(nlen/10000) (loose loc-space sentinel; real adds headroom). dfa_sigs/subsigs from pm\all_dfa (SED failers). perc_comp_subsigs & avg_active_pats not estimated (defaults).
+[job 0] LOG1:  === SED Stats =====
+[job 0] LOG1:     sigs: 364, subsigs: 1580, total_steps: 2704, avg_steps: 7
+[job 0] LOG1:  === ISED Stats =====
+[job 0] LOG1:     sigs: 12, subsigs: 28, total_steps: 30, avg_steps: 2

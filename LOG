@@ -28923,5 +28923,27 @@ Goal 8. milestone M5.
 	[a] plan
 	[b] implement
 
+Monday 06/08/2026
+Goal 1. eval regex over email_128k set
+	[a] there are some regex rules that everyone fails
+	[b] check if dropping short keywords would help
+	[c] not helping only dropped 4%.
+	[d] now improved to about 40%
+	[e] identify another case
+		-> sql connection string, too easy to flag.
+Goal 2. Fix M6.
+	[a] plan
+	[b] implementation
+	[c] test
+	[d] review data
+	[e] issue of basis_failed_subsigs
+Goal 3. Writing 7.2
+	[a] renaming dataset.
+	[b] paragraph 1.
+	[c] redo the paper_data full_data set 
+		[c1] make a copy first -> DONE
+		[c2] copy everything from debug_config -> DONE
+		[c3] double check the narratives of the dropped sigs -> DONE
+		[c4] write a script for generating table.
 
 === TODOs ====

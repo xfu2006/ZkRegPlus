@@ -626,6 +626,25 @@ def _filter_keywords(keywords):
     return kept, dropped
 
 
+# Minimum keyword length (trimmed; internal spaces between words are KEPT).
+# Short acronyms like "id"/"ids"/"dl" are real Purview keywords but, as standalone
+# tokens, they pervade ordinary business email ("Request ID: 12345", "User DL"),
+# so even whitespace-delimited they flood the proximity policy with false hits
+# (Canada-DL flagged 39% of the corpus on "id" alone). Dropping sub-threshold
+# keywords trades a little recall for a large precision gain (Canada-DL -> ~4%).
+MIN_KEYWORD_LEN = 4
+
+
+def _filter_short_keywords(keywords):
+    """Drop keywords whose trimmed length is below MIN_KEYWORD_LEN (leading/
+    trailing whitespace stripped first; spaces between words preserved). Returns
+    (kept, dropped)."""
+    kept, dropped = [], []
+    for k in keywords:
+        (kept if len(k.strip()) >= MIN_KEYWORD_LEN else dropped).append(k)
+    return kept, dropped
+
+
 # ===========================================================================
 # Zombie compiler-limit approximation  (see docs/verify_zombie_limit.log)
 # ===========================================================================
@@ -647,34 +666,52 @@ def _filter_keywords(keywords):
 LIMIT_LOG        = os.path.join(DOCS_DIR, "verify_zombie_limit.log")
 ZOMBIE_SEG_LIMIT = 32        # max bytes in one packed fixed-length segment
 
-# Connection-string SITs: the PATs are "anchor .{1,200} anchor .{1,300} ... key"
-# -- both limits at once (wildcard gaps + a >32 B key/password run). They can't
-# be chopped/capped in place; instead we COLLAPSE each onto the single native
-# proximity window: PAT becomes the value token (capped class-run, no gap), and
-# the literal anchors move into the keyword set. The window then ties "a value-
-# shaped run" to "any anchor", dropping ordering/'='/exact-length -- a broad but
-# sound over-approximation. Every (pat, anchors) below is verified to build AND
-# to still match all web-crawled samples (docs/verify_zombie_limit.log).
-CONNSTRING_COLLAPSE = {
-    "sit-defn-azure-document-db-auth-key":
-        {"pat": r"[A-Za-z0-9\x2F\x2B]{32}",
-         "anchors": ["DocumentDb", "AccountKey"]},
-    "sit-defn-azure-storage-account-key":
-        {"pat": r"[A-Za-z0-9\x2F\x2B]{32}",
-         "anchors": ["DefaultEndpointsProtocol", "AccountKey"]},
-    "sit-defn-azure-iot-connection-string":
-        {"pat": r"[A-Za-z0-9\x2F\x2B]{32}",
-         "anchors": ["HostName", "azure-devices.net", "SharedAccessKey"]},
-    "sit-defn-azure-redis-cache-connection-string":
-        {"pat": r"[A-Za-z0-9\x2F\x2B]{32}",
-         "anchors": ["redis.cache.windows.net", "password", "pwd"]},
-    "sit-defn-azure-iaas-database-connection-string-azure-sql-connection-string":
-        {"pat": r"[^\x3B\x22\x27]{8,32}",
-         "anchors": ["Server", "data source", "cloudapp.azure.com",
-                     "database.windows.net", "Password", "pwd"]},
+# Connection-string SITs: the real PATs are "anchor .{1,200} anchor ... KEY = value"
+# -- both Zombie limits at once (interior wildcard gaps + a >32 B key run). The
+# earlier approach COLLAPSED each onto the proximity window with a value-only PAT
+# and the literal anchors as OR'd keywords; that is a sound over-approximation but
+# in practice matches a bare word like "password"/"sample" near any text, flagging
+# ~46% of ordinary email AND -- once keywords are whitespace-delimited -- failing
+# to match real connection strings at all (the keyword is '='-adjacent, not a
+# standalone word).
+#
+# Instead we rebuild each as the actual ASSIGNMENT SYNTAX it detects: PAT is the
+# CONTIGUOUS token  (KEY)[ ]=[ ](value)  -- compilable (no interior gap) -- and a
+# distinctive CONTEXT anchor (a hostname / the User-Id field) is the single
+# proximity keyword. This REQUIRES the "=value" syntax, so it NARROWS the match
+# set (precision-oriented: ~0.4% false positives, full sample recall) and is NO
+# LONGER a sound non-membership superset of the real SIT, unlike the limit
+# approximations elsewhere. Context anchors are NOT whitespace-delimited (they sit
+# inside hostnames/syntax, e.g. "...redis.cache.windows.net:6380"); main() passes
+# ws_delimit=False for these slugs. Every entry is verified to build AND to match
+# all web-crawled samples (docs/verify_zombie_limit.log).
+_B64_VALUE = r"[A-Za-z0-9\x2F\x2B]{32}"      # base64-ish key (32 B prefix; ceiling)
+_PWD_VALUE = r"[^\x3B\x2F\x22]{8,32}"        # password value (no ; / ")
+CONNSTRING_SYNTAX = {
     "sit-defn-sql-server-connection-string":
-        {"pat": r"[^\x3B\x2F\x22]{8,32}",
-         "anchors": ["User Id", "uid", "UserId", "Password", "pwd"]},
+        {"keys": ["Password", "pwd"], "value": _PWD_VALUE,
+         "context": ["User Id=", "User ID=", "uid=", "UserId="]},
+    "sit-defn-azure-iaas-database-connection-string-azure-sql-connection-string":
+        {"keys": ["Password", "pwd"], "value": _PWD_VALUE,
+         "context": ["database.windows.net", "cloudapp.azure"]},
+    "sit-defn-azure-storage-account-key":
+        {"keys": ["AccountKey"], "value": _B64_VALUE,
+         "context": ["DefaultEndpointsProtocol"]},
+    # doc-db: samples label the key variably ("AccountKey=", "primary key=",
+    # "AuthKey:", "master key>"), so there is no single KEY= token. "DocumentDb"
+    # is a highly distinctive context anchor (effectively absent from ordinary
+    # mail), so gate a base64 value on it directly (no "keys" -> value-only PAT).
+    "sit-defn-azure-document-db-auth-key":
+        {"value": _B64_VALUE, "context": ["DocumentDb"]},
+    "sit-defn-azure-iot-connection-string":
+        {"keys": ["SharedAccessKey"], "value": _B64_VALUE,
+         "context": ["azure-devices.net"]},
+    "sit-defn-azure-service-bus-connection-string":
+        {"keys": ["SharedAccessKey"], "value": _B64_VALUE,
+         "context": ["servicebus.windows.net"]},
+    "sit-defn-azure-redis-cache-connection-string":
+        {"keys": ["password", "pwd"], "value": _B64_VALUE,
+         "context": ["redis.cache.windows.net"]},
 }
 
 
@@ -775,16 +812,25 @@ def approx_for_zombie(slug, pat, keywords):
     Order: connection-string collapse (whole-PAT) OR general cap+chop, then a
     keyword chop applied in either case."""
     notes = []
-    if slug in CONNSTRING_COLLAPSE:
-        spec = CONNSTRING_COLLAPSE[slug]
-        notes.append("zombie-limit[gap+ceiling]: original PAT had an intra-pattern "
-                     "wildcard gap .{lo,hi} (uncompilable at any width) and a >32B "
-                     "value run; COLLAPSED onto the native proximity window -> PAT = "
-                     "value token %r, anchor literals %r moved into the keyword set. "
-                     "Drops ordering/'='/exact length (broader match) -> sound for "
-                     "non-membership (see %s)."
-                     % (spec["pat"], spec["anchors"], LIMIT_LOG))
-        pat, keywords = spec["pat"], spec["anchors"] + keywords
+    if slug in CONNSTRING_SYNTAX:
+        spec = CONNSTRING_SYNTAX[slug]
+        if spec.get("keys"):
+            key_alt = "(" + "|".join(spec["keys"]) + ")"
+            # contiguous assignment token: KEY [sp] = [sp] value  (no interior gap)
+            pat = key_alt + r"[\x20]{0,2}\x3D[\x20]{0,2}" + spec["value"]
+            shape = "contiguous assignment token (requires the '=' syntax)"
+        else:
+            # value-only PAT, gated by a distinctive context anchor (e.g. DocumentDb)
+            pat = spec["value"]
+            shape = "value token gated by a distinctive context anchor"
+        keywords = list(spec["context"])     # replace noisy spec keywords entirely
+        notes.append("zombie-limit[gap+ceiling]->syntax: original PAT had an intra-"
+                     "pattern wildcard gap (uncompilable) and a >32B key run. Rebuilt "
+                     "as %s: PAT=%r with context anchor(s) %r as the proximity "
+                     "keyword(s). This NARROWS the match set (precision-oriented; NOT "
+                     "a sound non-membership superset, unlike the other limit "
+                     "approximations) (see %s)."
+                     % (shape, pat, keywords, LIMIT_LOG))
     else:
         pat, n = _cap_reps(pat);          notes += n
         pat, n = _chop_pat_literals(pat); notes += n
@@ -796,13 +842,31 @@ def approx_for_zombie(slug, pat, keywords):
     return pat, keywords, notes
 
 
-def sit_to_regex(proximity, pat, keywords):
+def sit_to_regex(proximity, pat, keywords, ws_delimit=True):
     """Build the full proximity policy regex (PAT.{0,N}KWS)|(KWS.{0,N}PAT) from a
     PRECOMPUTED (and possibly relaxed) pure pattern. Returns the full regex, or
-    None if there are no keywords."""
+    None if there are no keywords.
+
+    ws_delimit=True (default): each keyword is flanked by whitespace so a short
+    keyword (id, dl, ...) matches a standalone token but NOT a substring of a
+    larger word ("consider") or a hyphen/colon-joined token ("Message-ID:"). The
+    flanking class is consumed; scanners should pad the document with whitespace
+    so a keyword at the very start/end of the text still matches. We use an
+    explicit hex class (the Zombie dialect has no \\s; cf. the [\\x20\\x09] usage
+    above) and keep the wrappers INSIDE the outer (...) group so the structure --
+    and run_zombie's extract_parts round-trip -- is preserved.
+
+    ws_delimit=False: keywords are matched as bare substrings. Used for the
+    connection-string SITs, whose context anchors sit inside hostnames/syntax
+    ("...redis.cache.windows.net:6380", "User Id=") and would never be
+    whitespace-flanked."""
     if not keywords:
         return None
-    kws = "(" + "|".join(_esc(k) for k in keywords) + ")"
+    if ws_delimit:
+        ws = "[\\x20\\x09\\x0A\\x0D]"      # space, tab, LF, CR
+        kws = "(" + "|".join(ws + _esc(k) + ws for k in keywords) + ")"
+    else:
+        kws = "(" + "|".join(_esc(k) for k in keywords) + ")"
     n = str(proximity)
     return "({p}.{{0,{n}}}{k})|({k}.{{0,{n}}}{p})".format(p=pat, k=kws, n=n)
 
@@ -955,20 +1019,29 @@ def main():
         rec = parse_sit(os.path.join(RECORDS_DIR, fname))
         pat, status, warns = patterns_to_regex(rec["pattern"])
         if status == "untranslatable":
-            rows.append({"slug": rec["slug"], "status": "SKIP",
-                         "warnings": warns, "verify": None})
-            continue
+            # connection-string SITs rebuild PAT entirely from CONNSTRING_SYNTAX,
+            # so an untranslatable prose pattern is irrelevant -- don't skip them.
+            if rec["slug"] not in CONNSTRING_SYNTAX:
+                rows.append({"slug": rec["slug"], "status": "SKIP",
+                             "warnings": warns, "verify": None})
+                continue
+            pat = ""        # discarded; approx_for_zombie sets the real PAT below
         pat = _relax(rec["slug"], pat, warns)
         rec["keywords"], dropped_kw = _filter_keywords(rec["keywords"])
         for d in dropped_kw:
             warns.append("dropped non-keyword line (prose/example leak): %r" % d)
+        rec["keywords"], short_kw = _filter_short_keywords(rec["keywords"])
+        for d in short_kw:
+            warns.append("dropped short keyword (trimmed len < %d): %r"
+                         % (MIN_KEYWORD_LEN, d))
         # force the regex to fit Zombie's compiler limits (see verify_zombie_limit.log)
         pat, rec["keywords"], znotes = approx_for_zombie(rec["slug"], pat,
                                                          rec["keywords"])
         warns.extend(znotes)
         if znotes and status == "exact":
             status = "approx"             # a Zombie-limit approximation was applied
-        full = sit_to_regex(rec["proximity"], pat, rec["keywords"])
+        full = sit_to_regex(rec["proximity"], pat, rec["keywords"],
+                            ws_delimit=rec["slug"] not in CONNSTRING_SYNTAX)
         if full is None:
             rows.append({"slug": rec["slug"], "status": "SKIP",
                          "warnings": ["no keywords"], "verify": None})

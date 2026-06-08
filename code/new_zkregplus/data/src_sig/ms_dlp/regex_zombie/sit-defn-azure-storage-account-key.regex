@@ -1,1 +1,1 @@
-([A-Za-z0-9\x2F\x2B]{32}.{0,300}(DefaultEndpointsProtocol|AccountKey|contoso|fabrikam|northwind|sandbox|onebox|localhost|127\x2E0\x2E0\x2E1|testacs\x2E\x20com|s\x2Dint\x2E\x20net))|((DefaultEndpointsProtocol|AccountKey|contoso|fabrikam|northwind|sandbox|onebox|localhost|127\x2E0\x2E0\x2E1|testacs\x2E\x20com|s\x2Dint\x2E\x20net).{0,300}[A-Za-z0-9\x2F\x2B]{32})
+((AccountKey)[\x20]{0,2}\x3D[\x20]{0,2}[A-Za-z0-9\x2F\x2B]{32}.{0,300}(DefaultEndpointsProtocol))|((DefaultEndpointsProtocol).{0,300}(AccountKey)[\x20]{0,2}\x3D[\x20]{0,2}[A-Za-z0-9\x2F\x2B]{32})

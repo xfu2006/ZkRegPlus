@@ -3116,7 +3116,31 @@ where
 				let main_circ = MainDeciderCircuit::from_nova::<FC>(nova1,
 	  				com_all_w.clone(), r_all_w.clone(), randf).unwrap();
 	  			let mainres = main_circ.res.clone();
-	  			let mainres_hash = main_circ.res_hash.clone(); 
+	  			let mainres_hash = main_circ.res_hash.clone();
+	  			//DEBUG USE 60003: localize the unsatisfied decider
+	  			//constraint, then abort before the expensive Groth16.
+	  			{
+	  				use ark_relations::r1cs::{ConstraintSystem,
+	  					ConstraintSynthesizer, SynthesisMode};
+	  				let dcs = ConstraintSystem::<CF1<C1>>::new_ref();
+	  				dcs.set_mode(SynthesisMode::Prove{
+	  					construct_matrices: true});
+	  				//check_cs (B_DEBUG3) panics at the first unsatisfied
+	  				//gadget by name inside generate_constraints.
+	  				main_circ.clone().generate_constraints(dcs.clone())
+	  					.unwrap();
+	  				dcs.finalize();
+	  				let sat = dcs.is_satisfied().unwrap();
+	  				eprintln!("DEBUG USE 60003.1: decider cs sat={} \
+	  					nc={}", sat, dcs.num_constraints());
+	  				if !sat {
+	  					eprintln!("DEBUG USE 60003.2: first unsat = {:?}",
+	  						dcs.which_is_unsatisfied());
+	  				}
+	  				panic!("DEBUG USE 60003.3: abort after decider cs \
+	  					check (sat={})", sat);
+	  			}
+	  			#[allow(unreachable_code)]
 	  			log_perf(job_id, log_level, &format!("FoldPot Step 4: build MAIN decider circuit. MEM: {} GB", get_mem_usage()), &mut gt1);
 	  			log_perf(job_id, LOG2, &format!(
 	  				"DEBUG USE 60002.07: MEM after MAIN circuit built \

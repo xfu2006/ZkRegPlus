@@ -2067,12 +2067,12 @@ pub struct FailedSubsigAcc<F: PrimeField + ColEle>{
 }
 
 impl <F: PrimeField + ColEle> FailedSubsigAcc<F>{
-	/// Column length = subsigs * perc_failed_subsigs / 10000, floored to
+	/// Column length = subsigs * basis_failed_subsigs / 10000, floored to
 	/// >=1 then rounded up to even (mirrors vec_size; leaves room for the
 	/// mandatory zero-pad dummy). Read DIRECTLY from GlobalConfig (no
 	/// SedCapacity::new param, avoiding the 40-call-site trap).
 	pub fn acc_size(capacity: &DischargeAdvCapacity)->usize{
-		let perc = read_global_config().perc_failed_subsigs;
+		let perc = read_global_config().basis_failed_subsigs;
 		//cumulative across chunks -> size off the FULL universe, not NEEDS
 		//(M5 shrinks capacity.subsigs to max|NEEDS|).
 		let n = (capacity.universe_subsigs * perc / 10000).max(1);
@@ -2095,10 +2095,10 @@ impl <F: PrimeField + ColEle> FailedSubsigAcc<F>{
 		set.dedup();
 		if n < set.len()+1{ //need >=1 zero-pad dummy
 			let new_val = ((set.len()+1) as f32 / n as f32
-				* read_global_config().perc_failed_subsigs as f32)
+				* read_global_config().basis_failed_subsigs as f32)
 				as usize + 1;
 			return Err(Error::CapErr(vec![(
-				format!("dis_adv::perc_failed_subsigs, b_igc: {}",
+				format!("dis_adv::basis_failed_subsigs, b_igc: {}",
 					self.b_igc), new_val)]));
 		}
 		let n2 = n - set.len();
@@ -5561,7 +5561,7 @@ use utils::consts::{read_global_config, get_global_config};
 	/// with the honest backward witness (host walk CU2/3/4 <-> circuit CU6).
 	#[test]
 	fn test_m4_discharge_circuit_backward(){
-		get_global_config().perc_failed_subsigs = 10000; //aggr acc sizing
+		get_global_config().basis_failed_subsigs = 10000; //aggr acc sizing
 		let mut cfg = default_clamav_cfg();
 		cfg.b_aggressive_sde_for_rep = true;
 		cfg.sde_rep_fanout_cap = 4;   //[ab][ab]=4 combos, all materialized
@@ -5655,14 +5655,230 @@ use utils::consts::{read_global_config, get_global_config};
 		test_gadget_adv::<Fr>(rg,&word,&cps[0],&cps[1],&cps[2],&cps[6],&cps[7],
 			&vec![cps[3].clone(),cps[4].clone(),cps[5].clone()].concat(),
 			4usize,false,Some(vec_cfg));
-		get_global_config().perc_failed_subsigs = 0; //restore default
+		get_global_config().basis_failed_subsigs = 0; //restore default
+	}
+
+	/// M6: exercise the AGGRESSIVE failed_subsigs accumulator CARRY across
+	/// two chunks at the gadget level. Every prior aggr test passes
+	/// inp_failed_acc=[] (empty carry); this is the FIRST non-empty carry.
+	/// Chunk 0 completes a backward subsig (acc0 non-empty); chunk 1
+	/// consumes acc0 as acc_in and must stay satisfiable (acc_in subset
+	/// acc_out, qry_final subset acc_out). Localizes the cross-chunk seam
+	/// the full small_email run fails at batch verify.
+	#[test]
+	fn test_m6_discharge_circuit_carry_acc(){
+		get_global_config().basis_failed_subsigs = 10000; //aggr acc sizing
+		let mut cfg = default_clamav_cfg();
+		cfg.b_aggressive_sde_for_rep = true;
+		cfg.sde_rep_fanout_cap = 4;
+		cfg.min_bag_len = 2;
+		let sigs = vec![
+			"Agg.CarryAcc;Engine:51-255,Target:0;0;/[ab][ab].{0,4}KEYWORD/"
+				.to_string()];
+		let p = format!("{}/data/debug/sed/aggrcarry", proj_root());
+		std::fs::create_dir_all(&p).unwrap();
+		let db = ClamavDB::<Fr>::build_test_db(&cfg, "debug/sed/aggrcarry",
+			&sigs, &vec![], &vec![], &vec![]).expect("carry db");
+		let b_igc = false;
+		let bundle = &db.bundle_subsig;
+		let acdfa = &bundle.vec_acdfa[0];
+		let store_id = 0;
+		let fsm_id = ClamavDB::<Fr>::pm_acdfa_id(store_id, b_igc);
+		let steps_store = &bundle.vec_subsig_step_stores[store_id];
+		let mut ss: Vec<usize> = steps_store.subsig_ids.iter().cloned()
+			.filter(|s| *s!=0).collect();
+		ss.sort();
+		let input_subsigs: Vec<Fr> = ss.iter().map(|s| Fr::from(*s as u32))
+			.collect();
+		let m_aggr = db.aggressive_max_span_nibbles;
+		let init_loc = if m_aggr>0 {Fr::from((m_aggr+1) as u32)}
+			else {Fr::from(1u32)};
+		let wlen = 2usize;
+		let (nibble_len, sbits) = (wlen*LEGS, acdfa.state_part_bits);
+		let cap = FsmAdvCapacity{ max_nibble_len: nibble_len,
+			acdfa_state_part_bits: sbits, subsigs:25, avg_pats_per_subsig:4,
+			basis_pats_in_trace:25*100, basis_unique_states:20*100,
+			basis_acc_states:15*100, halo_nibbles:0 };
+		let cap_disc = DischargeAdvCapacity{ max_nibble_len: nibble_len,
+			subsigs: cap.subsigs, universe_subsigs: cap.subsigs,
+			avg_active_pats_per_subsig:2,
+			basis_pats_in_trace: cap.basis_pats_in_trace,
+			perc_pats_expansion_rate:600, b_aggressive:true };
+		let path = format!("{}/data/debug/sed/aggrcarry/word.txt",
+			proj_root());
+		write_to_file(&path, "abxxKEYWORD");
+		let f_nibbles: Vec<Fr> = read_nibbles(&path).iter()
+			.map(|x| Fr::from(*x as u32)).collect();
+		let all_word = pad_word_to_multiple::<Fr>(
+			&pack_nibbles(&f_nibbles), wlen);
+		let word = all_word[0..wlen].to_vec();
+		let adv_wea = WordExtractAdvAdvice::new(&word, word.len(), false)
+			.expect("wea");
+		let stmt_wea = adv_wea.stmt_container;
+		let cfg_wea = stmt_wea.lock().unwrap().get_cfg();
+		let nibbles = stmt_wea.lock().unwrap().get_container("nibbles")
+			.unwrap().lock().unwrap().to_vec();
+		let adv_faa = FsmAdvAdvice::new(b_igc,1,&nibbles,&[],&acdfa,
+			Fr::from((acdfa.init_state+1) as u32), init_loc, &input_subsigs,
+			&cap,fsm_id,&bundle.vec_subsig_stores[store_id],0).expect("faa");
+		let stmt_faa = adv_faa.stmt_container;
+		let cfg_faa = stmt_faa.lock().unwrap().get_cfg();
+		let pat_loc = stmt_faa.lock().unwrap().search_container(
+			"fsm_adv_stmt_cs packed_trace pat_loc sorted_tbl").unwrap();
+		let locs = stmt_faa.lock().unwrap().search_container(
+			"fsm_adv_stmt_cs fsm_acc locs").unwrap().lock().unwrap()
+			.to_vec();
+		let last_loc = locs[locs.len()-1];
+		let inp_sq = DischargeAdvAdvice::gen_empty_steps_queue_serialized(
+			b_igc,&input_subsigs,steps_store,fsm_id,&cap_disc);
+		//CHUNK 0: empty carry. Advice only -> extract acc0.
+		let adv_disc0 = DischargeAdvAdvice::new(b_igc,1,&pat_loc,
+			&input_subsigs,fsm_id,steps_store,&cap_disc,&inp_sq,&vec![],
+			last_loc,0,0).expect("disc0");
+		let acc0 = adv_disc0.get_output_failed_acc();
+		assert!(acc0.iter().any(|f| !f.is_zero()),
+			"chunk 0 must populate the accumulator (non-empty carry)");
+		//CHUNK 1: carry acc0 as inp_failed_acc.
+		let adv_disc = DischargeAdvAdvice::new(b_igc,1,&pat_loc,
+			&input_subsigs,fsm_id,steps_store,&cap_disc,&inp_sq,&acc0,
+			last_loc,1,0).expect("disc1");
+		let stmt_disc = adv_disc.stmt_container;
+		let cfg_disc = stmt_disc.lock().unwrap().get_cfg();
+		let mut vec_cfg = vec![cfg_wea.clone(),cfg_faa.clone(),cfg_disc];
+		ContainerConfig::adjust_locations(&mut vec_cfg);
+		let cps1 = stmt_wea.lock().unwrap().gen_stmt_components();
+		let cps2 = stmt_faa.lock().unwrap().gen_stmt_components();
+		let cps3 = stmt_disc.lock().unwrap().gen_stmt_components();
+		let cps = cps1.0.into_iter().zip(cps2.0.into_iter())
+			.map(|(a,b)| vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
+		let cps = cps.into_iter().zip(cps3.0.into_iter())
+			.map(|(a,b)| vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
+		let mut dcg = DischargeAdvGadget::<Fr>::new(b_igc,1,&cap_disc,
+			fsm_id,&vec![cfg_wea.clone(),cfg_faa.clone()],
+			&bundle.vec_subsig_step_stores[0]);
+		dcg.set_container_cfg(vec_cfg.clone().into(),2);
+		let rg = Arc::new(dcg);
+		//SAT => the non-empty failed_acc carry (acc_in IDX_INP) is
+		//consistent with this chunk's acc_out + qry_final logups.
+		test_gadget_adv::<Fr>(rg,&word,&cps[0],&cps[1],&cps[2],&cps[6],
+			&cps[7],&vec![cps[3].clone(),cps[4].clone(),cps[5].clone()]
+			.concat(),4usize,false,Some(vec_cfg));
+		get_global_config().basis_failed_subsigs = 0; //restore default
+	}
+
+	/// AGGRESSIVE M5 (C7): run the DISCHARGE GADGET CIRCUIT with b_aggressive
+	/// set on a MIX of FORWARD (keyword leftmost) AND BACKWARD (keyword
+	/// rightmost) subsigs in ONE chunk. Both families share the present anchor
+	/// KEYWORD so both land in NEEDS and run the forward step queue together --
+	/// the forward variants via the plain window, the backward variants via
+	/// CU6's backward window -- under the M5 split + quick-cert path. Asserts
+	/// the circuit is satisfiable with the honest mixed witness.
+	#[test]
+	fn test_m5_discharge_circuit_mixed(){
+		get_global_config().basis_failed_subsigs = 10000;
+		let mut cfg = default_clamav_cfg();
+		cfg.b_aggressive_sde_for_rep = true;
+		cfg.sde_rep_fanout_cap = 4;
+		cfg.min_bag_len = 2;
+		let sigs = vec![
+			//forward: keyword leftmost, class [cd][cd] fanned on the right.
+			"Agg.Fwd;Engine:51-255,Target:0;0;/KEYWORD.{0,4}[cd][cd]/"
+				.to_string(),
+			//backward: class [ab][ab] left, keyword rightmost (reversed).
+			"Agg.Bwd;Engine:51-255,Target:0;0;/[ab][ab].{0,4}KEYWORD/"
+				.to_string()];
+		let p = format!("{}/data/debug/sed/aggrmix", proj_root());
+		std::fs::create_dir_all(&p).unwrap();
+		let db = ClamavDB::<Fr>::build_test_db(&cfg, "debug/sed/aggrmix",
+			&sigs, &vec![], &vec![], &vec![]).expect("mix db");
+		let b_igc = false;
+		let bundle = &db.bundle_subsig;
+		let acdfa = &bundle.vec_acdfa[0];
+		let store_id = 0;
+		let fsm_id = ClamavDB::<Fr>::pm_acdfa_id(store_id, b_igc);
+		let steps_store = &bundle.vec_subsig_step_stores[store_id];
+		//both directions must be present (the point of the test).
+		assert!(steps_store.subsig_to_steps.values()
+			.any(|it| it.is_backward && it.vec_pm_bounds.len()>=2),
+			"need a >=2-step backward subsig");
+		assert!(steps_store.subsig_to_steps.values()
+			.any(|it| !it.is_backward && it.vec_pm_bounds.len()>=2),
+			"need a >=2-step forward subsig");
+		let mut ss: Vec<usize> = steps_store.subsig_ids.iter().cloned()
+			.filter(|s| *s!=0).collect();
+		ss.sort();
+		let input_subsigs: Vec<Fr> = ss.iter().map(|s| Fr::from(*s as u32))
+			.collect();
+		let m_aggr = db.aggressive_max_span_nibbles;
+		let init_loc = if m_aggr>0 {Fr::from((m_aggr+1) as u32)}
+			else {Fr::from(1u32)};
+		let wlen = 2usize;
+		let (nibble_len, sbits) = (wlen*LEGS, acdfa.state_part_bits);
+		let cap = FsmAdvCapacity{ max_nibble_len: nibble_len,
+			acdfa_state_part_bits: sbits, subsigs:25, avg_pats_per_subsig:4,
+			basis_pats_in_trace:25*100, basis_unique_states:20*100,
+			basis_acc_states:15*100, halo_nibbles:0 };
+		let cap_disc = DischargeAdvCapacity{ max_nibble_len: nibble_len,
+			subsigs: cap.subsigs, universe_subsigs: cap.subsigs,
+			avg_active_pats_per_subsig:2,
+			basis_pats_in_trace: cap.basis_pats_in_trace,
+			perc_pats_expansion_rate:600, b_aggressive:true };
+		//word: "ab" before KEYWORD (backward) + "cd" after KEYWORD (forward).
+		let path = format!("{}/data/debug/sed/aggrmix/word.txt", proj_root());
+		write_to_file(&path, "abKEYWORDcd");
+		let f_nibbles: Vec<Fr> = read_nibbles(&path).iter()
+			.map(|x| Fr::from(*x as u32)).collect();
+		let all_word = pad_word_to_multiple::<Fr>(
+			&pack_nibbles(&f_nibbles), wlen);
+		assert!(all_word.len()/wlen==1, "single-cycle test");
+		let word = all_word[0..wlen].to_vec();
+		let adv_wea = WordExtractAdvAdvice::new(&word, word.len(), false)
+			.expect("wea");
+		let stmt_wea = adv_wea.stmt_container;
+		let cfg_wea = stmt_wea.lock().unwrap().get_cfg();
+		let nibbles = stmt_wea.lock().unwrap().get_container("nibbles")
+			.unwrap().lock().unwrap().to_vec();
+		let adv_faa = FsmAdvAdvice::new(b_igc,1,&nibbles,&[],&acdfa,
+			Fr::from((acdfa.init_state+1) as u32), init_loc, &input_subsigs,
+			&cap,fsm_id,&bundle.vec_subsig_stores[store_id],0).expect("faa");
+		let stmt_faa = adv_faa.stmt_container;
+		let cfg_faa = stmt_faa.lock().unwrap().get_cfg();
+		let pat_loc = stmt_faa.lock().unwrap().search_container(
+			"fsm_adv_stmt_cs packed_trace pat_loc sorted_tbl").unwrap();
+		let locs = stmt_faa.lock().unwrap().search_container(
+			"fsm_adv_stmt_cs fsm_acc locs").unwrap().lock().unwrap().to_vec();
+		let inp_sq = DischargeAdvAdvice::gen_empty_steps_queue_serialized(
+			b_igc,&input_subsigs,steps_store,fsm_id,&cap_disc);
+		let adv_disc = DischargeAdvAdvice::new(b_igc,1,&pat_loc,&input_subsigs,
+			fsm_id,steps_store,&cap_disc,&inp_sq,&vec![],
+			locs[locs.len()-1],0,0).expect("disc adv");
+		let stmt_disc = adv_disc.stmt_container;
+		let cfg_disc = stmt_disc.lock().unwrap().get_cfg();
+		let mut vec_cfg = vec![cfg_wea.clone(),cfg_faa.clone(),cfg_disc];
+		ContainerConfig::adjust_locations(&mut vec_cfg);
+		let cps1 = stmt_wea.lock().unwrap().gen_stmt_components();
+		let cps2 = stmt_faa.lock().unwrap().gen_stmt_components();
+		let cps3 = stmt_disc.lock().unwrap().gen_stmt_components();
+		let cps = cps1.0.into_iter().zip(cps2.0.into_iter())
+			.map(|(a,b)| vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
+		let cps = cps.into_iter().zip(cps3.0.into_iter())
+			.map(|(a,b)| vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
+		let mut dcg = DischargeAdvGadget::<Fr>::new(b_igc,1,&cap_disc,fsm_id,
+			&vec![cfg_wea.clone(),cfg_faa.clone()],
+			&bundle.vec_subsig_step_stores[0]);
+		dcg.set_container_cfg(vec_cfg.clone().into(),2);
+		let rg = Arc::new(dcg);
+		test_gadget_adv::<Fr>(rg,&word,&cps[0],&cps[1],&cps[2],&cps[6],&cps[7],
+			&vec![cps[3].clone(),cps[4].clone(),cps[5].clone()].concat(),
+			4usize,false,Some(vec_cfg));
+		get_global_config().basis_failed_subsigs = 0;
 	}
 
 	/// AGGRESSIVE C2 unit test: FailedSubsigAcc sizing + to_container
 	/// (floor>=1, even, sort+dedup+front-pad, CapErr on overflow).
 	#[test]
 	fn test_failed_subsig_acc(){
-		get_global_config().perc_failed_subsigs = 10000; //100% of subsigs
+		get_global_config().basis_failed_subsigs = 10000; //100% of subsigs
 		let cap = DischargeAdvCapacity{ max_nibble_len:62, subsigs:6,
 			universe_subsigs:6,
 			avg_active_pats_per_subsig:1, basis_pats_in_trace:100,
@@ -5670,9 +5886,9 @@ use utils::consts::{read_global_config, get_global_config};
 		//acc_size = 6*10000/10000 = 6 (already even)
 		assert_eq!(FailedSubsigAcc::<Fr>::acc_size(&cap), 6);
 		//floor>=1: with perc 0 the size floors to 1 then even -> 2
-		get_global_config().perc_failed_subsigs = 0;
+		get_global_config().basis_failed_subsigs = 0;
 		assert_eq!(FailedSubsigAcc::<Fr>::acc_size(&cap), 2);
-		get_global_config().perc_failed_subsigs = 10000;
+		get_global_config().basis_failed_subsigs = 10000;
 
 		//sort + dedup + front-zero-pad. Dup 30, 3 distinct -> [0,0,0,10,20,30]
 		let acc = FailedSubsigAcc{ acc: to_vf(vec![30,10,30,20]),
@@ -5692,7 +5908,7 @@ use utils::consts::{read_global_config, get_global_config};
 			capacity: cap.clone(), b_igc:false };
 		assert!(big.to_container("x", false).is_err(),
 			"overflow must raise CapErr");
-		get_global_config().perc_failed_subsigs = 0; //restore default
+		get_global_config().basis_failed_subsigs = 0; //restore default
 	}
 
 	#[test]

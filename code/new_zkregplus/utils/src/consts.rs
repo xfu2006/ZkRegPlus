@@ -127,10 +127,10 @@ pub struct GlobalConfig {
 	/// Groth16. Lets us cap-tune real DB builds cheaply.
 	pub b_dryrun_after_capcheck: bool,
 	/// AGGRESSIVE-ONLY (b_aggressive_sde_for_rep). Sizes the per-chunk
-	/// failed_subsigs accumulator: size = capacity.subsigs * this / 10000
-	/// (basis points, floored to >=1). Unused when aggressive mode is off
-	/// (the accumulator code path is gated).
-	pub perc_failed_subsigs: usize,
+	/// failed_subsigs accumulator: size = capacity.universe_subsigs *
+	/// this / 10000 (basis points, floored to >=1). Unused when
+	/// aggressive mode is off (the accumulator code path is gated).
+	pub basis_failed_subsigs: usize,
 	/// AGGRESSIVE-ONLY (b_aggressive_sde_for_rep). M5 NEEDS/QUICK filter:
 	/// max|NEEDS|/chunk = the forward step-queue capacity (capacity.subsigs)
 	/// after pre-filtering anchor-absent subsigs into QUICK. 0 = no shrink
@@ -181,7 +181,7 @@ impl Default for GlobalConfig {
 				b_sde_rep_tight_first_leg: false,
 			},
 			b_dryrun_after_capcheck: false,
-			perc_failed_subsigs: 0,
+			basis_failed_subsigs: 0,
 			aggr_needs_subsigs: 0,
         }
     }
@@ -227,7 +227,7 @@ static GLOBAL_CONFIG: RwLock<GlobalConfig> = RwLock::new(GlobalConfig {
 		b_sde_rep_tight_first_leg: false,
 	},
 	b_dryrun_after_capcheck: false,
-	perc_failed_subsigs: 0,
+	basis_failed_subsigs: 0,
 	aggr_needs_subsigs: 0,
 });
 

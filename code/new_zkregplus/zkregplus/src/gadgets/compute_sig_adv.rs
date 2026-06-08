@@ -3141,7 +3141,7 @@ use utils::consts::{read_global_config, get_global_config};
 		cfg: &ClamavApproxConfig, witness_idxs: Vec<usize>, seed: bool,
 		expect_sat: bool, tamper: TF)
 	where TF: Fn(&mut Vec<Vec<Fr>>, &Vec<Fr>, &SubsigStepStore){
-		get_global_config().perc_failed_subsigs = 10000; //100% of subsigs
+		get_global_config().basis_failed_subsigs = 10000; //100% of subsigs
 		//1. data prep
 		let path = format!("{}/data/debug/sed/aggr/word.txt", proj_root());
 		write_to_file(&path, word_content);
@@ -3312,7 +3312,7 @@ use utils::consts::{read_global_config, get_global_config};
 		test_gadget_adv_ex::<Fr>(rg,&word,&cps[0],&cps[1],&cps[2],&cps[6],
 			&cps[7],&vec![cps[3].clone(),cps[4].clone(),cps[5].clone()]
 			.concat(), lkup_share_size, false, Some(vec_cfg), expect_sat);
-		get_global_config().perc_failed_subsigs = 0; //restore default
+		get_global_config().basis_failed_subsigs = 0; //restore default
 	}
 
 	fn inp_empty_sq(b_igc:bool, subs:&Vec<Fr>, store:&SubsigStepStore,

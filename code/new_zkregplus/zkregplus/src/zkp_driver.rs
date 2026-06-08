@@ -2293,8 +2293,14 @@ pub mod tests_zkp_driver{
 	/// full_dna (generous); a CapErr-driven tuning pass may be needed
 	/// for a minimal circuit. Invoke via test_small_email.
 	#[allow(dead_code)]
-	fn small_email<F:PrimeField>(b_check_lkup: bool){
+	fn small_email<F:PrimeField>(_b_check_lkup: bool){
 		utils::os::print_computer_config(Some("small_email"));
+		//Small set: do NOT distribute / enforce the lkup-share table.
+		//b_check_lkup=false skips the in-circuit Hab22 lookup-sum
+		//check (matches small_dna), so the large fan-out lookup table
+		//need not be covered by lk_share*chunks. Verdict soundness is
+		//cross-checked out-of-circuit (Phase-3 rustomaton oracle).
+		let b_check_lkup = false;
 		get_global_config().snark_cache_dir = "email_dlp".to_string();
 		get_global_config().b_write_snark_cache = false;
 		get_global_config().b_read_snark_cache = false;
@@ -2315,6 +2321,10 @@ pub mod tests_zkp_driver{
 		get_global_config().n_par_snark = 2;
 		get_global_config().n_par_snark_cp = 2;
 		get_global_config().n_par_batch_claim = 8;
+		//Small set: skip the distributed lkup-share check
+		//(b_check_lkup=false below), so perc=1 / lk_share is a small
+		//non-binding hint. The fan-out lookup table (lkup_len=1133682)
+		//need not be distributed across the 16 chunks here.
 		get_global_config().perc_lkup_share = if !b_check_lkup {1}
 			else {200};
 
@@ -2334,6 +2344,16 @@ pub mod tests_zkp_driver{
 		//1st, last, middles R->L), within-leg ascending order.
 		get_global_config().clamav_cfg
 			.b_sde_rep_tight_first_leg = false;
+		//M5 NEEDS/QUICK filter: shrink per-chunk SED universe to the
+		//active NEEDS set. Estimator (test_db_bundle) reports max
+		//needs/chunk=200; 256 adds margin. capacity.subsigs->256,
+		//universe_subsigs stays at `subsigs` (500) for the accumulator.
+		get_global_config().aggr_needs_subsigs = 256;
+		//M2 failed_subsigs accumulator (basis points): acc_size =
+		//universe_subsigs * this / 10000. Left at default 0 (acc_size=2):
+		//small_email's subsigs are discharged early by the QUICK absence
+		//cert, so few/none reach a final step -> the accumulator stays
+		//empty. A larger value only allocates empty columns (51x cs1e).
 		get_global_config().b_dryrun_after_capcheck = false;
 
 		//no cached email DB -> build fresh from main.dat
@@ -2681,7 +2701,8 @@ pub mod tests_zkp_driver{
 		let b_check_lkup = true;
 		let _b_light_test = false;
 		let _b_setup = false;
-		small_data::<Fr>(b_check_lkup); //small data
+		//small_data::<Fr>(b_check_lkup); //small data
+		small_email::<Fr>(b_check_lkup); //M6: aggressive multi-chunk run
 		//small_dna::<Fr>(); //small data dna set
 		//full_dna::<Fr>(b_check_lkup);
 		//small_debug::<Fr>(b_check_lkup); //small_data + max_word=2

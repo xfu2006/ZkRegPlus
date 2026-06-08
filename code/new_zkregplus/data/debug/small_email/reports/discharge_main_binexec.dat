@@ -70,12 +70,12 @@ gen_report_all_discharge_approach_stats
 [job 0] LOG1:  pm_reg (sde) total witness_len/file_size: (avg: max): (59.24198833059972%,59.24198833059972%). This indicates total cost of discharging one file against ALL bag left sigs
 [job 0] LOG1:  pat ratio: avg: 5.1474295%, max: 5.1474295%
 [job 0] LOG1:  ==== ESTIMATE_CONFIG (monotone envelope, proxy=sigs_sed) =====
-[job 0] LOG1:     files=1, columns: p% cover b_uniq b_acc b_pat exp% sigs_sed subsigs avg_pats dfa_sigs dfa_subsigs
-[job 0] LOG1:      20%    1/1        15    512    514     2        4     101        2        0           0
-[job 0] LOG1:      50%    1/1        15    512    514     2        4     101        2        0           0
-[job 0] LOG1:     100%    1/1        15    512    514     2        4     101        2        0           0
+[job 0] LOG1:     files=1, columns: p% cover b_uniq b_acc b_pat exp% sigs_sed subsigs avg_pats dfa_sigs dfa_subsigs needs
+[job 0] LOG1:      20%    1/1        15    512    514     2        4     100        3        0           0    200
+[job 0] LOG1:      50%    1/1        15    512    514     2        4     100        3        0           0    200
+[job 0] LOG1:     100%    1/1        15    512    514     2        4     100        3        0           0    200
 [job 0] LOG1:     NOTE: b_uniq=sum#pats over distinct ACCEPTED states (=proj_states.len); b_acc=accepted-state visits; b_pat=sum#pats over visits; all basis pts (/10000) of the worst chunk, per-case max(cs,igc). exp%=perc_pats_expansion floor=ceil(nlen/10000) (loose loc-space sentinel; real adds headroom). dfa_sigs/subsigs from pm\all_dfa (SED failers). perc_comp_subsigs & avg_active_pats not estimated (defaults).
 [job 0] LOG1:  === SED Stats =====
-[job 0] LOG1:     sigs: 4, subsigs: 404, total_steps: 1204, avg_steps: 301
+[job 0] LOG1:     sigs: 4, subsigs: 400, total_steps: 1200, avg_steps: 300
 [job 0] LOG1:  === ISED Stats =====
 [job 0] LOG1:     sigs: 0, subsigs: 0, total_steps: 0, avg_steps: N/A
