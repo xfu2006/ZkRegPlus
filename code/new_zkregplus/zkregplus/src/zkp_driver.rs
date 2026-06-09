@@ -2615,38 +2615,30 @@ pub mod tests_zkp_driver{
 	}
 
 	/// Copy of small_email2 (full MS-DLP set, main_full.dat,
-	/// range2_bit=25, aggressive fan-out) scanning binexec3.dat -- the
-	/// two most challenging clean emails (merged_005547, merged_004945,
-	/// high keyword density). SHARES the "email_data" DB cache with
-	/// small_email and small_email2 (identical DB for the _2/_3 pair);
-	/// here we READ it (built by test_db_bundle) to skip the rebuild.
+	/// range2_bit=25, aggressive fan-out) scanning binexec3.dat =
+	/// merged_004945 -- the dischargeable one of the challenge pair
+	/// (boosted NINO fan-out clears it; merged_005547 stays blocked by
+	/// sql-conn-string). The commented estimator pass at the top writes
+	/// the boosted "email_data" cache that this ZK path then READS.
 	#[allow(dead_code)]
 	fn small_email3<F:PrimeField>(_b_check_lkup: bool){
 		utils::os::print_computer_config(Some("small_email3"));
-		//TEMP: discharge-only sweep over the full clean_email_list
-		//(binexec4.dat, 8760 emails) vs the full MS DLP set. No cache
-		//read AND no cache write (b_write_cache=false; throwaway
-		//cache_dir as a second guard so the shared "email_data" cache is
-		//untouched). print_discharge_stats prints "failed files: N";
-		//discharged = total - N. The ZK path below is commented out.
-		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
-		get_global_config().clamav_cfg.sde_rep_fanout_cap = 100;
-		get_global_config().clamav_cfg.min_pm_word_len = 3;
-		get_global_config().clamav_cfg
-			.b_sde_rep_tight_first_leg = false;
-		super::run_db_bundle::<F>(
-			"data/debug/small_email/config", //config dir
-			"data/debug/small_email/reports", //report dir
-			false, //b_cache: do NOT read cache (fresh build)
-			false, //b_write_cache: do NOT write cache
-			true, //b_quick
-			25, //range_bits (matches main_full.dat DB)
-			256, //max_word_len
-			&[20usize, 50, 100], //percentiles
-			"main_full.dat", //full MS DLP set
-			"binexec4.dat", //scan: all 8760 clean emails
-			"email_data_scan_tmp"); //throwaway (unused, nothing written)
-		/* ORIGINAL ZK discharge path (disabled for the sweep above):
+		//ESTIMATOR pass (commented; uncomment to re-estimate caps / rebuild
+		//the boosted email_data cache). Sweeps binexec3.dat=merged_004945 vs
+		//the full MS DLP set, prints ESTIMATE_CONFIG, and WRITES the boosted
+		//DB to "email_data" (b_write_cache=true). The ZK path below READS it.
+		//get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
+		//get_global_config().clamav_cfg.sde_rep_fanout_cap = 100;
+		//get_global_config().clamav_cfg.min_pm_word_len = 3;
+		//get_global_config().clamav_cfg.b_sde_rep_tight_first_leg = false;
+		//super::run_db_bundle::<F>(
+		//	"data/debug/small_email/config","data/debug/small_email/reports",
+		//	false, true, true, 25, 256, &[20usize,50,100],
+		//	"main_full.dat", "binexec3.dat", "email_data");
+
+		//ZK discharge path: prove merged_004945 (boosted NINO fan-out)
+		//discharges vs the full MS DLP set. Reads the boosted email_data
+		//cache written by the estimator pass above.
 		let b_check_lkup = false;
 		get_global_config().snark_cache_dir = "email_dlp".to_string();
 		get_global_config().b_write_snark_cache = false;
@@ -2670,9 +2662,10 @@ pub mod tests_zkp_driver{
 		get_global_config().clamav_cfg.min_pm_word_len = 3;
 		get_global_config().clamav_cfg
 			.b_sde_rep_tight_first_leg = false;
-		//binexec3 estimator reports needs/chunk=80 (these emails trigger
-		//a small SED universe); 200 adds margin.
-		get_global_config().aggr_needs_subsigs = 200;
+		//binexec3 (merged_004945) estimator reports needs=2880 (boosted NINO
+		//fan-out grows the forward step queue); 3000 adds margin.
+		get_global_config().aggr_needs_subsigs = 3000;
+		//Caps validated by dryrun; run the full fold + Groth16 for cost.
 		get_global_config().b_dryrun_after_capcheck = false;
 
 		//Read the shared "email_data" DB cache (built by test_db_bundle
@@ -2684,18 +2677,29 @@ pub mod tests_zkp_driver{
 		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/small_email/config";
 		let max_word = 256;
-		//Caps from the binexec3 estimator (scan=merged_005547/004945) +
+		//Caps from the binexec3 estimator (scan=merged_004945, boosted) +
 		//margin for the estimator's known under-prediction (esp. CP
 		//basis_unique: merged_000005 went 96->249, ~2.6x). Bump on CapErr.
-		let sigs = 8; //estimator sigs_sed=2
-		let subsigs = 200; //estimator SED universe=80
+		let sigs = 8; //estimator sigs_sed=4
+		//dryrun demand dis_adv::universe_subsigs=3000 (boosted NINO emits
+		//~2880 variants globally; estimator subsigs col=800 under-predicts
+		//the accumulator universe). 3100 adds margin.
+		let subsigs = 3100; //dryrun universe demand=3000
 		let avg_pats_per_subsig = 4; //estimator avg_pats=3
-		let avg_active_pats_per_subsig = 7;
+		//Not estimated (estimator uses defaults). Fold-time advice demand
+		//dis_adv::avg_active_pats_per_subsig=12 (boosted NINO variants are
+		//pattern-dense); 14 adds margin.
+		let avg_active_pats_per_subsig = 14; //fold demand=12
 		let perc_comp_subsigs = 20;
-		let basis_unique_states = 500; //est b_uniq=100; CP demand higher
-		let basis_acc_states = 1000; //estimator b_acc=688
-		let basis_pats_in_trace = 1000; //estimator b_pat=741
-		let perc_pats_expansion_rate = 300;
+		let basis_unique_states = 500; //est b_uniq=113; CP demand higher
+		let basis_acc_states = 1000; //estimator b_acc=719
+		let basis_pats_in_trace = 1100; //estimator b_pat=800
+		//Fold-time StepFwdPrf demand climbs per chunk (9560 then 10380):
+		//the boosted NINO fan-out (3000-subsig universe) makes the per-
+		//chunk forward-step expansion ~30x denser than small_email (300).
+		//14000 over-provisions to clear all chunks; perc is NOT the RAM
+		//driver (300->10000 moved RAM only 1.3x), so this is cheap.
+		let perc_pats_expansion_rate = 14000; //fold StepFwdPrf demand~10380+
 		let dfa_sigs = 0;
 		let dfa_subsigs = 0;
 		let vec_decrease_level = vec![];
@@ -2729,8 +2733,8 @@ pub mod tests_zkp_driver{
 			sigs, perc_comp_subsigs,
 			basis_unique_states, basis_acc_states);
 
-		//binexec3.dat scans merged_005547 + merged_004945 (the most
-		//challenging clean emails; high keyword density).
+		//binexec3.dat scans merged_004945 (the dischargeable one of the
+		//challenge pair; merged_005547 is blocked by sql-conn-string).
 		let scan_files: Vec<String> = vec![
 			format!("{}/binexec3.dat", set1)]; //single job
 
@@ -2760,7 +2764,6 @@ pub mod tests_zkp_driver{
 			num_circs,
 			b_check_lkup
 		);
-		*/
 	}
 
 	/// 2026-05-21: full_clam_short_file — mirrors full_clamav with

@@ -1,0 +1,1 @@
+(AccountKey)[\x20]{0,2}\x3D[\x20]{0,2}[A-Za-z0-9\x2F\x2B]{32}.{0,300}DefaultEndpointsProtocol

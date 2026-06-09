@@ -1,0 +1,1 @@
+(Password|pwd)[\x20]{0,2}\x3D[\x20]{0,2}[^\x3B\x2F\x22]{8,32}.{0,300}database\x2Ewindows\x2Enet

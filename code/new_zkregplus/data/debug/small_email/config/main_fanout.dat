@@ -1,0 +1,6 @@
+# SITs that get the sde_rep_fanout_boost (10x). Each line is a
+# substring matched against sig names (one SIT = all its arms).
+# Lifts the NINO number fan-out from cap 100 (d0 only, ~16%) to 1000
+# (d0 + d5 + suffix stretch chain, ~97%) to discharge the dominant
+# "insurance + digits" false positives.
+sit-defn-uk-national-insurance-number

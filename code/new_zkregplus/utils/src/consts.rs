@@ -79,7 +79,16 @@ pub struct ClamavApproxConfig{
 	/// cost of more variants per sig. Inert when
 	/// b_aggressive_sde_for_rep is off.
 	pub b_sde_rep_tight_first_leg: bool,
+	/// Per-sig fan-out multiplier for SITs listed in main_fanout.dat
+	/// (co-located with the needs_dfa file). 1 = no boost. Inert when
+	/// b_aggressive_sde_for_rep is off or the file is absent.
+	#[serde(default = "fanout_boost_default")]
+	pub sde_rep_fanout_boost: usize,
 }
+
+/// serde fallback for sde_rep_fanout_boost on configs that predate the
+/// field: 1 = no boost (so old configs reproduce baseline fan-out).
+fn fanout_boost_default() -> usize { 1 }
 
 pub struct GlobalConfig {
     pub log_level: usize,
@@ -179,6 +188,7 @@ impl Default for GlobalConfig {
 				sde_rep_fanout_cap: 127,
 				variant_combine_cap: 4,
 				b_sde_rep_tight_first_leg: false,
+				sde_rep_fanout_boost: 10,
 			},
 			b_dryrun_after_capcheck: false,
 			basis_failed_subsigs: 0,
@@ -225,6 +235,7 @@ static GLOBAL_CONFIG: RwLock<GlobalConfig> = RwLock::new(GlobalConfig {
 		sde_rep_fanout_cap: 127,
 		variant_combine_cap: 4,
 		b_sde_rep_tight_first_leg: false,
+		sde_rep_fanout_boost: 10,
 	},
 	b_dryrun_after_capcheck: false,
 	basis_failed_subsigs: 0,

@@ -29001,3 +29001,12 @@ Goal 4. build a function which can measure the discharged sigs and failed
 	[a] discuss the design
 	[b] try to measure how many can be discharged.
 	[c] only discharged 60%.
+	[d] but it does come out fast - 10 minutes
+	[e] now discharge the entire raw enron file - also 10 minutes
+	[f]  uk-national-insurance-number, sql-server-connection-string
+	[g] uk first:
+		idea: connect digit with char class -> working
+	[h] test the hard file cost first.
+		-> compare with small_email and small_email2.
+		-> MUCH greater cost perc_expansion_rate is 14000!
+	[i] the other direction.

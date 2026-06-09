@@ -1,0 +1,1 @@
+(PA|PB|PC|PD|PE|PF|PU|PW|PX|PZ)[0-9]{7}.{0,300}[\x20\x09\x0A\x0D]passportno[\x20\x09\x0A\x0D]

@@ -2057,13 +2057,35 @@ impl <F:PrimeField> ClamavDB<F>{
 		let set_need_dfa = read_lines(needs_dfa_list_file).iter().filter(|s|
 			!s.starts_with("#")).map(|s| s.trim().to_string())
 			.collect::<HashSet<String>>();
+		//Optional per-sig fan-out boost list, co-located with needs_dfa
+		//(main_fanout.dat). Each line is a substring of sig names to
+		//boost (a SIT base name boosts all its arms). Absent file = no
+		//boost, so existing configs reproduce baseline fan-out exactly.
+		let set_need_fanout: HashSet<String> = needs_dfa_list_file
+			.rsplit_once('/')
+			.map(|(dir, _)| format!("{}/main_fanout.dat", dir))
+			.filter(|p| std::path::Path::new(p).exists())
+			.map(|p| read_lines(&p).iter()
+				.filter(|s| !s.starts_with('#') && !s.trim().is_empty())
+				.map(|s| s.trim().to_string()).collect())
+			.unwrap_or_default();
 		let subset_lines = read_lines(sig_file).iter().filter(|s|
 			!s.starts_with("#") && !s.trim().is_empty())
 			.map(|s| s.to_string())
 			.collect::<Vec<String>>();
-		let v_sigs:Vec<Arc<ClamavSig>> = subset_lines.iter().map(
-			|s| Arc::new(gen_clamav_sig(s, ClamSigType::General,cfg)) )
-			.collect();
+		//Per-sig cfg: boosted sigs get sde_rep_fanout_cap *= boost. The
+		//boosted cap rides the existing cfg into expand_rep_subsig; only
+		//that fn reads it, so non-aggressive builds are unaffected.
+		let v_sigs:Vec<Arc<ClamavSig>> = subset_lines.iter().map(|s| {
+			let name = s.split(';').next().unwrap_or("");
+			let mut scfg = *cfg;
+			if cfg.sde_rep_fanout_boost > 1
+				&& set_need_fanout.iter().any(|p| name.contains(p.as_str())) {
+				scfg.sde_rep_fanout_cap = scfg.sde_rep_fanout_cap
+					.saturating_mul(cfg.sde_rep_fanout_boost);
+			}
+			Arc::new(gen_clamav_sig(s, ClamSigType::General, &scfg))
+		}).collect();
 		let mut v_sigs = v_sigs.par_iter().map(|s1| {
 			let mut s = s1.as_ref().clone();
 			s.gen_approx_bagwords(cfg);
