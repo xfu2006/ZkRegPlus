@@ -21,6 +21,20 @@
 #                  per chunk, take the file's MAX -- then summarize that across
 #                  files (avg/min/max).
 #
+# WHY max_occ_per_chunk MATTERS:
+#   BORA proves regex non-membership chunk by chunk (one folding step per
+#   chunk_size-byte window). Within a chunk the circuit does NOT pay for the raw
+#   byte length -- it pays for each KEYWORD occurrence, because every keyword hit
+#   anchors one proximity-window obligation (prove no PAT lies within .{0,N} of
+#   it). So a chunk's per-step proving cost scales with its keyword-occurrence
+#   count, not its size, and the file's max_occ_per_chunk is its heaviest single
+#   folding step -- the one that sets peak witness/constraint count and memory.
+#   The corpus-wide max over clean docs therefore bounds the worst single step
+#   BORA must absorb on legitimately-passing mail; a long tail here (not the
+#   average) is what drives the §7.6 cost. We measure it on the CLEAN subset
+#   precisely because those are the documents that must still be proven
+#   non-matching -- their density, not the flagged docs', is the cost we pay.
+#
 # MATCH SEMANTICS (documented so the numbers are reproducible):
 #   - case-insensitive;
 #   - a match may not be flanked by an alphanumeric char (so "aba" is NOT
@@ -159,8 +173,9 @@ def _init_worker(vocab_list, chunk_size):
 # scan one email file. Splits it into _CHUNK_SIZE-char chunks and, for each
 # chunk, sums the keyword occurrences whose match STARTS in that chunk (so every
 # occurrence is counted once, in exactly one chunk -- no boundary double-count).
-# Returns (distinct_keywords_present, total_occurrences, max_occ_per_chunk);
-# max_occ_per_chunk = the largest per-chunk occurrence sum over the file's chunks.
+# Returns (distinct_keywords_present, total_occurrences, max_occ_per_chunk,
+# top_kw); max_occ_per_chunk = the largest per-chunk occurrence sum over the
+# file's chunks, top_kw = the (keyword, count) breakdown of that densest chunk.
 # Returns None if the file cannot be read.
 def _scan_file(path):
     try:
@@ -170,13 +185,24 @@ def _scan_file(path):
         return None
     counts = {}
     chunk_occ = {}            # chunk index -> total keyword occurrences starting in it
+    chunk_kw = {}             # chunk index -> Counter(keyword -> occ)
     for m in _PATTERN.finditer(text):
         key = _WS.sub(" ", m.group(0).lower())
         counts[key] = counts.get(key, 0) + 1
         ci = m.start() // _CHUNK_SIZE
         chunk_occ[ci] = chunk_occ.get(ci, 0) + 1
-    max_occ_per_chunk = max(chunk_occ.values()) if chunk_occ else 0
-    return len(counts), sum(counts.values()), max_occ_per_chunk
+        kc = chunk_kw.get(ci)
+        if kc is None:
+            kc = chunk_kw[ci] = collections.Counter()
+        kc[key] += 1
+    if chunk_occ:
+        max_ci = max(chunk_occ, key=lambda c: chunk_occ[c])
+        max_occ_per_chunk = chunk_occ[max_ci]
+        top_kw = chunk_kw[max_ci].most_common(5)   # picklable list of (kw, count)
+    else:
+        max_occ_per_chunk = 0
+        top_kw = []
+    return len(counts), sum(counts.values()), max_occ_per_chunk, top_kw
 
 
 # --- step 3: summary -------------------------------------------------------
@@ -212,6 +238,30 @@ def format_distribution(values, max_exact=10):
     return out
 
 
+# list the N "worst" files: those with the largest max_occ_per_chunk (densest
+# chunk drives BORA's per-chunk proving cost). Ties broken by total occurrences.
+# All candidates are clean (unflagged) by construction -- read_clean_list() is the
+# only corpus source. Shows the keywords dominating each file's densest chunk.
+def format_worst(maxocc, total, distinct, topkws, files, n=10):
+    order = sorted(range(len(maxocc)),
+                   key=lambda i: (maxocc[i], total[i]), reverse=True)[:n]
+    # first the ranked table ...
+    out = ["  %4s  %8s  %7s  %8s  %s"
+           % ("rank", "max_occ", "total", "distinct", "file")]
+    for r, i in enumerate(order, 1):
+        out.append("  %4d  %8d  %7d  %8d  %s"
+                   % (r, maxocc[i], total[i], distinct[i],
+                      os.path.basename(files[i])))
+    # ... then the densest-chunk keyword breakdown per file.
+    out.append("")
+    out.append("  densest-chunk keyword breakdown:")
+    for r, i in enumerate(order, 1):
+        kw = (", ".join("%s (%d)" % (k, c) for k, c in topkws[i])
+              if topkws[i] else "(none)")
+        out.append("  %4d  %s: %s" % (r, os.path.basename(files[i]), kw))
+    return out
+
+
 def _stats(values):
     """(avg, min, max) for a non-empty list; (0,0,0) if empty."""
     if not values:
@@ -220,7 +270,7 @@ def _stats(values):
 
 
 def write_report(n_files, vocab_size, vocab_total, distinct, total, maxocc,
-                 chunk_size, files):
+                 topkws, chunk_size, files):
     # argmin/argmax (by total occurrences) for a little context in the report.
     lo_i = min(range(len(total)), key=lambda i: total[i]) if total else None
     hi_i = max(range(len(total)), key=lambda i: total[i]) if total else None
@@ -263,9 +313,24 @@ def write_report(n_files, vocab_size, vocab_total, distinct, total, maxocc,
                      % (os.path.basename(files[mo_hi_i]), maxocc[mo_hi_i],
                         total[mo_hi_i]))
     lines.append("")
+    lines.append("== WHY max_occ_per_chunk MATTERS ==")
+    lines.append("BORA proves regex non-membership chunk by chunk (one folding")
+    lines.append("step per %dKB window). A chunk's circuit pays NOT for its byte"
+                 % (chunk_size // 1024))
+    lines.append("length but for each KEYWORD occurrence -- every hit anchors one")
+    lines.append("proximity obligation (prove no pattern lies within .{0,N} of it).")
+    lines.append("So max_occ_per_chunk is the file's heaviest single folding step,")
+    lines.append("setting its peak witness/constraint count and memory. Measured on")
+    lines.append("the CLEAN subset because those docs must still be proven non-")
+    lines.append("matching -- their density, not the flagged docs', is the cost we pay.")
+    lines.append("")
     lines.append("== max_occ_per_chunk DISTRIBUTION (%dKB chunks) =="
                  % (chunk_size // 1024))
     lines.extend(format_distribution(maxocc))
+    lines.append("")
+    lines.append("== 10 WORST FILES by max_occ_per_chunk (%dKB chunks) =="
+                 % (chunk_size // 1024))
+    lines.extend(format_worst(maxocc, total, distinct, topkws, files))
     report = "\n".join(lines)
 
     os.makedirs(DOCS_DIR, exist_ok=True)
@@ -302,7 +367,7 @@ def main():
                          % CLEAN_LIST)
 
     # step 2: parallel per-file scan
-    distinct, total, maxocc = [], [], []
+    distinct, total, maxocc, topkws = [], [], [], []
     kept_files = []
     done = 0
     with ProcessPoolExecutor(max_workers=N_WORKERS,
@@ -312,17 +377,18 @@ def main():
                                            chunksize=CHUNKSIZE)):
             done += 1
             if res is not None:
-                d, t, mo = res
+                d, t, mo, tk = res
                 distinct.append(d)
                 total.append(t)
                 maxocc.append(mo)
+                topkws.append(tk)
                 kept_files.append(path)
             if done % 1000 == 0 or done == len(files):
                 print("[scan] %d/%d files" % (done, len(files)))
 
     # step 3: summarize
     report = write_report(len(kept_files), len(vocab), vocab_total, distinct,
-                          total, maxocc, chunk_size, kept_files)
+                          total, maxocc, topkws, chunk_size, kept_files)
     print()
     print(report)
     print()

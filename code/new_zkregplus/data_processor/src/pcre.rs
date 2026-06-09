@@ -168,14 +168,28 @@ pub fn expand_rep_subsig(orig: &str, b_igc: bool,
 	cfg: &ClamavApproxConfig) -> Option<Vec<String>> {
 	if !cfg.b_aggressive_sde_for_rep { return None; }
 	let hir = to_hir(orig);
-	let legs = find_class_runs(&hir);
+	//Scope the fan-out to the regex part beyond `[ws]KW[ws].{0,N}`, so
+	//budget never lands on a boundary `[ws]` delimiter. The keyword side
+	//+ gap is re-emitted verbatim and concatenated back onto each
+	//variant. Non-matching shapes keep the whole-HIR path (unchanged).
+	let (head, regex_hir, tail) = match partition_keyword_gap(&hir) {
+		Some(arm) if arm.dir == 0 =>
+			(render_verbatim(&arm.anchor), concat_hir(&arm.regex),
+			 String::new()),
+		Some(arm) =>
+			(String::new(), concat_hir(&arm.regex),
+			 render_verbatim(&arm.anchor)),
+		None => (String::new(), hir, String::new()),
+	};
+	let legs = find_class_runs(&regex_hir);
 	if legs.is_empty() { return None; }
 	let slots = select_slots(&legs, cfg.sde_rep_fanout_cap, b_igc,
 		cfg.b_sde_rep_tight_first_leg);
 	//no selectable slot (wildcard-only, or B below smallest card):
 	//nothing to fan out -> caller keeps the single-object path.
 	if slots.is_empty() { return None; }
-	Some(render_variants(&hir, &legs, &slots, b_igc))
+	Some(render_variants(&regex_hir, &legs, &slots, b_igc).iter()
+		.map(|r| format!("{}{}{}", head, r, tail)).collect())
 }
 
 /// We ignore other clamAV pcre flags: g (global), r( rolling), e(encompass),
@@ -499,26 +513,34 @@ struct Leg {
 	class: Class,
 	min: usize,
 	max: Option<usize>,
+	/// Not a guaranteed match position: the leg sits under an optional
+	/// repetition (`?`/`*`/`{0,k}`) or inside an alternation branch, so a
+	/// real match may omit it. select_slots funds these only after every
+	/// mandatory leg, since the pm-reg layer collapses non-guaranteed
+	/// legs to wildcards (their pins never become anchors).
+	optional: bool,
 }
 
 /// Walk `hir` left-to-right and collect each character-class run as a
 /// Leg, in source order. Captures: fixed reps `[0-9]{n}`, variable reps
 /// `[0-9]{a,b}` / `+` / `{n,}` (pinnable count = min), and bare classes
 /// `[0-9]` / `[0-9]{1}` (min=max=1; to_hir simplifies `{1}` to Class).
-/// Skips min==0 reps (`*`,`?`,`{0,k}` -> no guaranteed position) and
-/// non-class bodies. Read-only, order-preserving.
+/// Skips bare min==0 class reps (`*`,`?`,`{0,k}` -> no guaranteed
+/// position). A leg is `optional` when it sits under a min==0 wrapper or
+/// inside an alternation branch. Read-only, order-preserving.
 fn find_class_runs(hir: &Hir) -> Vec<Leg> {
 	let mut legs = Vec::new();
-	collect_class_runs(hir, &mut legs);
+	collect_class_runs(hir, false, &mut legs);
 	legs
 }
 
-fn collect_class_runs(hir: &Hir, legs: &mut Vec<Leg>) {
+fn collect_class_runs(hir: &Hir, in_optional: bool,
+	legs: &mut Vec<Leg>) {
 	match hir.kind() {
 		//bare class (incl. `{1}`) = one guaranteed position.
 		HirKind::Class(c) =>
 			legs.push(Leg { class: c.clone(), min: 1,
-				max: Some(1) }),
+				max: Some(1), optional: in_optional }),
 		HirKind::Repetition(rep) => match rep.sub.kind() {
 			HirKind::Class(c) => {
 				let min = rep.min as usize;
@@ -529,18 +551,23 @@ fn collect_class_runs(hir: &Hir, legs: &mut Vec<Leg>) {
 						Some(x) => Some(x as usize),
 					};
 					legs.push(Leg { class: c.clone(),
-						min, max });
+						min, max, optional: in_optional });
 				}
 				//min==0: no guaranteed position -> skip.
 			}
-			//non-class body (e.g. `(ab)+`): descend, don't pin.
-			_ => collect_class_runs(&rep.sub, legs),
+			//non-class body (e.g. `([0-9]{2})?`): a min==0 wrapper
+			//makes everything inside non-guaranteed.
+			_ => collect_class_runs(&rep.sub,
+				in_optional || rep.min == 0, legs),
 		},
-		HirKind::Concat(v) | HirKind::Alternation(v) => {
-			for h in v { collect_class_runs(h, legs); }
-		}
+		//concat preserves the guarantee; each alternation branch is
+		//conditional, so its legs are never guaranteed.
+		HirKind::Concat(v) =>
+			{ for h in v { collect_class_runs(h, in_optional, legs); } }
+		HirKind::Alternation(v) =>
+			{ for h in v { collect_class_runs(h, true, legs); } }
 		HirKind::Capture(cap) =>
-			collect_class_runs(&cap.sub, legs),
+			collect_class_runs(&cap.sub, in_optional, legs),
 		_ => {}
 	}
 }
@@ -588,12 +615,99 @@ fn max_match_bytes(hir: &Hir) -> Result<usize, AggShapeErr> {
 /// keyword anchor. Real DLP keywords are multi-byte words.
 const MIN_KW_ANCHOR_BYTES: usize = 2;
 
+/// A `.{0,N}` gap with N at least this big is the keyword/regex
+/// separator (DLP proximity windows are >=100). Bounded only --
+/// unbounded gaps are rejected upstream by max_match_bytes.
+const GAP_MIN: usize = 100;
+
+/// Whitespace-only class: every byte is tab/newline/CR/space. These are
+/// the keyword word-boundary delimiters; they belong to the anchor, not
+/// the fan-out regex part.
+fn is_ws_class(c: &Class) -> bool {
+	let mut dummy = 0usize;
+	let bytes = class_to_arr(c, &mut dummy);
+	!bytes.is_empty() && bytes.iter().all(|&b|
+		b == 0x09 || b == 0x0a || b == 0x0d || b == 0x20)
+}
+
+/// True for a `.{0,N}` (dot-class repetition) with bounded N >= GAP_MIN.
+fn is_big_gap(h: &Hir) -> bool {
+	match h.kind() {
+		HirKind::Repetition(rep) => matches!(rep.max,
+			Some(m) if (m as usize) >= GAP_MIN)
+			&& matches!(rep.sub.kind(),
+				HirKind::Class(c) if card(c) >= 256),
+		_ => false,
+	}
+}
+
+/// One DLP arm split around its proximity gap. `dir` 0 = keyword left of
+/// the gap (forward), 1 = keyword right (backward). `anchor` = the
+/// keyword side plus the gap (re-emitted verbatim); `regex` = the
+/// far-side segments (the only fan-out target).
+struct ArmShape { dir: i8, anchor: Vec<Hir>, regex: Vec<Hir> }
+
+/// Recognize `[ws]? KW [ws]? .{0,N>=GAP_MIN} REGEX` and its mirror. The
+/// keyword side must be only literal(s) and whitespace delimiters; the
+/// far side must hold at least one class run. None for any other shape
+/// -> caller keeps the whole-HIR path.
+fn partition_keyword_gap(hir: &Hir) -> Option<ArmShape> {
+	let segs: Vec<&Hir> = match hir.kind() {
+		HirKind::Concat(v) => v.iter().collect(),
+		_ => return None,
+	};
+	let gap = segs.iter().position(|s| is_big_gap(s))?;
+	let kw = segs.iter().position(|s| matches!(s.kind(),
+		HirKind::Literal(x) if x.0.len() >= MIN_KW_ANCHOR_BYTES))?;
+	let (dir, anchor_rng, regex_rng) = if kw < gap {
+		(0i8, 0..gap + 1, gap + 1..segs.len())
+	} else {
+		(1i8, gap..segs.len(), 0..gap)
+	};
+	//keyword side = only literals + whitespace classes (and the gap).
+	for i in anchor_rng.clone() {
+		if i == gap { continue; }
+		match segs[i].kind() {
+			HirKind::Literal(_) => {}
+			HirKind::Class(c) if is_ws_class(c) => {}
+			_ => return None,
+		}
+	}
+	//far side must contain at least one fan-out leg.
+	if !regex_rng.clone().any(|i| !find_class_runs(segs[i]).is_empty()) {
+		return None;
+	}
+	Some(ArmShape {
+		dir,
+		anchor: anchor_rng.map(|i| segs[i].clone()).collect(),
+		regex: regex_rng.map(|i| segs[i].clone()).collect(),
+	})
+}
+
+/// Build a Concat HIR from owned segments (single seg passes through).
+fn concat_hir(segs: &[Hir]) -> Hir { Hir::concat(segs.to_vec()) }
+
+/// Re-emit `segs` as PCRE with no pins (faithful). Used for the keyword
+/// + gap anchor that surrounds a fanned-out regex part.
+fn render_verbatim(segs: &[Hir]) -> String {
+	let h = concat_hir(segs);
+	let legs = find_class_runs(&h);
+	let mut ctr = 0usize;
+	emit_variant(&h, &legs, &HashMap::new(), &mut ctr)
+}
+
 /// Validate one subsig regex body for aggressive mode and measure span.
 /// The keyword literal must sit at exactly one end of the top-level
-/// chain (else KwInMiddle / NoAnchor); unbounded gaps rejected.
+/// chain (else KwInMiddle / NoAnchor); unbounded gaps rejected. A
+/// ws-delimited keyword arm (`[ws]KW[ws].{0,N}REGEX`) is accepted via
+/// partition_keyword_gap before the generic check.
 pub fn analyze_aggressive_shape(hir: &Hir)
 	-> Result<ShapeInfo, AggShapeErr> {
 	let span = max_match_bytes(hir)?;           // also rejects Unbounded
+	if let Some(arm) = partition_keyword_gap(hir) {
+		return Ok(ShapeInfo { anchor: Some(arm.dir),
+			max_span_bytes: span });
+	}
 	let segs: Vec<&Hir> = match hir.kind() {
 		HirKind::Concat(v) => v.iter().collect(),
 		_ => vec![hir],
@@ -679,6 +793,12 @@ fn pos_priority_last(n: usize) -> Vec<usize> {
 	q
 }
 
+/// Max concrete values a single pinned position may fan out to. Legs
+/// whose folded cardinality exceeds this are skipped in select_slots:
+/// keeps digits (10), hex (16) and single-case letters (26); drops
+/// combined letters (52), alnum (62) and the full wildcard (256/128).
+const SINGLE_FANOUT_MAX: usize = 26;
+
 /// Choose which (leg, position) slots to pin for fan-out, under a
 /// product budget `b` (= combination_limit). Walk round-major: for each
 /// round, visit legs in priority [0, m-1, m-2, .., 1] (first leg, last
@@ -689,8 +809,10 @@ fn pos_priority_last(n: usize) -> Vec<usize> {
 /// Returns chosen slots in consideration order; the product of their
 /// cardinalities is the fan-out size (<= b). Cardinality for the budget
 /// is FOLDED under `b_igc` (igc collapses case pairs, e.g. hex 12->6, so
-/// more positions fit); the wildcard exclusion still uses the RAW 256
-/// count so a full class is never pinned regardless of folding.
+/// more positions fit). A leg whose folded cardinality exceeds
+/// SINGLE_FANOUT_MAX is never pinned -- weak high-card legs (combined
+/// letters 52, alnum 62, full wildcard) yield poor anchors, so budget is
+/// kept for selective ones (digits 10, hex 16, single-case letters 26).
 fn select_slots(legs: &[Leg], b: usize,
 	b_igc: bool, tight: bool) -> Vec<(usize, usize)> {
 	let m = legs.len();
@@ -726,17 +848,26 @@ fn select_slots(legs: &[Leg], b: usize,
 	let max_n = legs.iter().map(|l| l.min).max().unwrap_or(0);
 	let mut chosen = Vec::new();
 	let mut product = 1usize;
-	for round in 0..max_n {
-		for &leg in &prio {
-			if round >= qs[leg].len() { continue; }
-			//wildcard (256 raw bytes): no selectivity, never pin.
-			if card(&legs[leg].class) >= 256 { continue; }
-			//budget uses folded cardinality (igc collapses cases).
-			let c = card_igc(&legs[leg].class, b_igc);
-			let pos = qs[leg][round];
-			if product.saturating_mul(c) <= b {
-				product *= c;
-				chosen.push((leg, pos));
+	//two passes: fund guaranteed (mandatory) legs first, then
+	//optional/alternation legs with whatever budget remains. Mandatory
+	//pins become pm-reg anchors; optional ones collapse to wildcards.
+	//All-mandatory (or all-optional) reduces to the old single pass.
+	for want_optional in [false, true] {
+		for round in 0..max_n {
+			for &leg in &prio {
+				if legs[leg].optional != want_optional { continue; }
+				if round >= qs[leg].len() { continue; }
+				//budget uses folded cardinality (igc collapses cases).
+				let c = card_igc(&legs[leg].class, b_igc);
+				//cap one position's fan-out: skip weak high-card legs
+				//(combined letters/alnum/full wildcard); keep selective
+				//ones so budget flows to strong anchors.
+				if c > SINGLE_FANOUT_MAX { continue; }
+				let pos = qs[leg][round];
+				if product.saturating_mul(c) <= b {
+					product *= c;
+					chosen.push((leg, pos));
+				}
 			}
 		}
 	}
@@ -2385,6 +2516,17 @@ mod tests_pcre{
 		assert_eq!(find_class_runs(&to_hir("[0-9]?")).len(), 0);
 		//pure literals -> no legs
 		assert_eq!(find_class_runs(&to_hir("abc")).len(), 0);
+		//optional GROUP `([0-9]{2})?` -> leg kept (ctr alignment) but
+		//flagged optional; following mandatory leg stays guaranteed.
+		let legs = find_class_runs(&to_hir("([0-9]{2})?[0-9]{6}"));
+		assert_eq!(legs.iter().map(|l| l.optional)
+			.collect::<Vec<_>>(), vec![true, false]);
+		//alternation branches are conditional -> their legs optional;
+		//the mandatory prefix leg stays guaranteed.
+		let legs = find_class_runs(&to_hir(
+			"[0-9]{4}([A-Z]{3}|[0-9]{3})"));
+		assert_eq!(legs.iter().map(|l| l.optional)
+			.collect::<Vec<_>>(), vec![false, true, true]);
 	}
 
 	#[test]
@@ -2476,6 +2618,23 @@ mod tests_pcre{
 			vec![(0,0),(1,4)]);
 	}
 
+	/// Mandatory-first budgeting: with an optional leg present, the
+	/// budget must skip it and pin the guaranteed legs (which become
+	/// pm-reg anchors). Sweden-id shape `([0-9]{2})?[0-9]{6}[0-9]{4}`:
+	/// legs [A optional, B mandatory, C mandatory]. B=100 -> pin the two
+	/// mandatory legs (C last-leg pos n-2=2, then B pos 0); leg A unfunded.
+	/// Pre-fix behavior pinned the optional leg A and yielded [(0,0),(2,2)].
+	#[test]
+	pub fn tests_sde_rep_select_slots_mandatory_first(){
+		use super::{find_class_runs, select_slots};
+		let legs = find_class_runs(&to_hir(
+			"([0-9]{2})?[0-9]{6}[0-9]{4}"));
+		assert_eq!(legs.iter().map(|l| l.optional)
+			.collect::<Vec<_>>(), vec![true, false, false]);
+		assert_eq!(select_slots(&legs, 100, false, false),
+			vec![(2,2),(1,0)]);
+	}
+
 	#[test]
 	pub fn tests_sde_rep_select_slots_tight(){
 		use super::{find_class_runs, select_slots};
@@ -2496,13 +2655,14 @@ mod tests_pcre{
 			"[0-9]{3}\\s[0-9]{3}\\s[0-9]{3}"));
 		assert_eq!(select_slots(&legs, 1000, false, true),
 			vec![(0,0),(4,1),(0,1)]);
-		//Passport-shape: 2 legs, first leg n=1 -> only one
-		//position to pin -> falls through to (0,0) + last
-		//leg's n-2. Same as non-tight.
+		//Passport-shape: leg 0 = [0-9a-zA-Z] (card 62) exceeds
+		//SINGLE_FANOUT_MAX, so it is never pinned; budget falls
+		//entirely on leg 1 = [0-9]{8} (10*10*10=1000), last-leg
+		//pos order [6,0,7,..].
 		let legs = find_class_runs(&to_hir(
 			"[0-9a-zA-Z][0-9]{8}"));
 		assert_eq!(select_slots(&legs, 1000, false, true),
-			vec![(0,0),(1,6)]);
+			vec![(1,6),(1,0),(1,7)]);
 		//Single leg = also the last leg: tight has no effect
 		//(no separate first/last), use pos_priority_last.
 		let legs = find_class_runs(&to_hir("[0-9]{9}"));
@@ -2659,6 +2819,56 @@ mod tests_pcre{
 			"[0-9]{3}[0-9]{2}?[0-9]{3}", false, &cfg)
 			.expect("expand none [c]");
 		assert!(!v3.is_empty(), "no variants [c]");
+	}
+
+	/// ws-delimited keyword arms (regenerated DLP format): the shape
+	/// guard must NOT reject `[ws]KW[ws].{0,N}REGEX` as KwInMiddle, the
+	/// direction comes from the gap, and the fan-out must scope to the
+	/// regex part (keyword + ws + gap re-emitted verbatim, never pinned).
+	#[test]
+	pub fn tests_sde_rep_ws_keyword_arm(){
+		use super::{partition_keyword_gap, analyze_aggressive_shape,
+			expand_rep_subsig, to_hir};
+		use crate::clamav::default_clamav_cfg;
+		let mut cfg = default_clamav_cfg();
+		cfg.b_aggressive_sde_for_rep = true;
+		cfg.sde_rep_fanout_cap = 100;
+		// forward arm -> dir 0, no KwInMiddle crash.
+		let fwd = "[\\x20\\x09\\x0a\\x0d]insurance[\\x20\\x09\\x0a\\x0d]\
+			.{0,300}[A-Za-z]{2}[0-9]{6}[ABCDabcd]";
+		assert_eq!(partition_keyword_gap(&to_hir(fwd)).unwrap().dir, 0);
+		assert_eq!(analyze_aggressive_shape(&to_hir(fwd)).unwrap()
+			.anchor, Some(0));
+		let vf = expand_rep_subsig(fwd, false, &cfg).expect("fwd");
+		// anchor (ws+KW+gap) is verbatim and identical across variants;
+		// if a ws byte were pinned the shared prefix would break.
+		let end = vf[0].find("{0,300}").unwrap() + "{0,300}".len();
+		let pf = vf[0][..end].to_string();
+		assert!(vf.iter().all(|s| s.starts_with(&pf)),
+			"anchor not shared -> ws/keyword got fanned");
+		// [A-Za-z]{2} (card 52) exceeds SINGLE_FANOUT_MAX, so it is NOT
+		// pinned; budget lands on [0-9]{6} (10) + [ABCDabcd] (8) = 80
+		// variants -> the number leg now anchors (was letter-only).
+		assert_eq!(vf.len(), 80);
+		// backward mirror -> dir 1, no crash.
+		let bwd = "[A-Za-z]{2}[0-9]{6}[ABCDabcd].{0,300}\
+			[\\x20\\x09\\x0a\\x0d]insurance[\\x20\\x09\\x0a\\x0d]";
+		assert_eq!(partition_keyword_gap(&to_hir(bwd)).unwrap().dir, 1);
+		assert_eq!(analyze_aggressive_shape(&to_hir(bwd)).unwrap()
+			.anchor, Some(1));
+		// Sweden fwd: regex part = ([0-9]{2})?[0-9]{6}[+-]?[0-9]{4};
+		// mandatory-first pins concrete digit bytes in the regex part.
+		let swe = "[\\x20\\x09\\x0a\\x0d]id\\x20no[\\x20\\x09\\x0a\\x0d]\
+			.{0,300}([0-9]{2})?[0-9]{6}[\\x2D\\x2B]?[0-9]{4}";
+		assert_eq!(partition_keyword_gap(&to_hir(swe)).unwrap().dir, 0);
+		let vs = expand_rep_subsig(swe, false, &cfg).expect("swe");
+		assert!(vs.iter().any(|s| s.contains("\\x30")),
+			"no pinned digit in regex part");
+		// non-matching shapes -> None (keep whole-HIR path).
+		assert!(partition_keyword_gap(&to_hir("[0-9]{3}-[0-9]{3}"))
+			.is_none());
+		assert!(partition_keyword_gap(&to_hir("foo[0-9]{3}"))
+			.is_none());
 	}
 
 }

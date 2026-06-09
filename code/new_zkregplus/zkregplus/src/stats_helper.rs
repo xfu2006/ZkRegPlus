@@ -395,7 +395,7 @@ pub fn print_discharge_stats(vdata: &Vec<FailDischargeRecord>,
 /// if b_quick mode use quick_discharge function.
 pub fn report_all_discharge_approach_stats<F:PrimeField>(sig_file: &str, needs_dfa_file: &str, needs_ised_file: &str, needs_ised_igc_file: &str,
 	discharge_list_file: &str, report_file: &str,
-	b_read_cache: bool, cache_dir: &str, b_quick: bool,
+	b_read_cache: bool, b_write_cache: bool, cache_dir: &str, b_quick: bool,
 	seg_word_len: usize, percentiles: &[usize]){
 	//1. generate the clamav db
 	println!("REPORT all discharge approach ...");
@@ -403,7 +403,6 @@ pub fn report_all_discharge_approach_stats<F:PrimeField>(sig_file: &str, needs_d
 	let mut vlog = vec![];
 	let cfg = default_clamav_cfg();
 	let proot = proj_root();
-	let b_write_cache = true;
 	let db = ClamavDB::<F>::build_or_load(&cfg, sig_file, needs_dfa_file, needs_ised_file, needs_ised_igc_file, &mut vlog, cache_dir, b_read_cache, b_write_cache).expect("build db err");
 	db.print_summary(&mut vlog);
 

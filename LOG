@@ -28942,7 +28942,7 @@ Goal 2. Fix M6.
 	[d] review data
 	[e] issue of basis_failed_subsigs
 	[f] main testing passed
-	[g] misc test cases
+	[g] misc test cases -> All done but not saving much (about 25%).
 Goal 3. Writing 7.2
 	[a] renaming dataset.
 	[b] paragraph 1.
@@ -28955,5 +28955,49 @@ Goal 3. Writing 7.2
 		[c6] update table1 Mal set.
 		[c7] refine data.
 	[d] bullet 1 in desc
+Goal 4. improve!
+	=> yes M6 is imrpoved, just lower the perc_expansion_rate
+Goal 5. set up the ACCESS server
+	[a] reading instructions
+	[b] submitted the request. 
+Goal 7. script for adding regex for bora
+	[a] generate the list
+	[b] create the list and 
+	[c] stack overflow issue: just remove the "0" trigger before pcre.
+		the reason: if put the 0 trigger, we have to put the real one as
+			subsig #1. In cases keyword is short, we are not able to find trigger
+			0. In this case, just provide one subsig (#0), and without trigger.
+			BORA can handle this WITOUT trigger.
 
-=== TODOs ====
+Tuesday 06/08/2026
+Goal 1. figure out the false positive.
+	[a] insert more probes and search location on match
+		also print out the rule pattern keywords and vec_pm_bounds
+	[b] missing one pm-bound issue
+	[c] fix the gen_bora_regex.py for traiing spaces first -> seems not a 
+		problem
+	[d] fix the pick of legs -> DONE
+	[e] fix alternation of pattern -> DONE
+	[f] generate again
+		-> still has no branch -> fixed
+	[g] refine code. improve shape analysis and leg pick.
+	[h] regression testing.
+	[i] issue char class fans out too much.
+	[j] regression test
+		[1] cap issue
+		[2] working -> circ size  
+Goal 2. writing dna
+	[a] DNA data row in Table 1
+	[b] description
+	[c] fix URL.
+	[d] 1st pass
+	[e] 2nd pass  -> DONE
+Goal 3. see if it works for the most difficult file
+	[a] update measure.py to get top 10 tough files of email_merged128k
+	[b] create small_email3.
+	[c] not working, failure. 
+Goal 4. build a function which can measure the discharged sigs and failed
+	samples
+	[a] discuss the design
+	[b] try to measure how many can be discharged.
+	[c] only discharged 60%.

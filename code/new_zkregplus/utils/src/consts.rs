@@ -248,8 +248,12 @@ pub fn current_bit_parts() -> (usize, usize) {
     let g = read_global_config();
     let bits = g.range2_bit;
     if g.clamav_cfg.b_aggressive_sde_for_rep {
-        let p1 = bits / 2;
-        (p1, bits - p1)
+        // Reserve 10 bits (1024) for subsig_id -- M5 fan-out emits at
+        // most ~1000 variants/sig -- and give the rest to sig_id (15
+        // bits at range2_bit=25 -> 32768 sigs, vs only 1024 under the
+        // old equal split). range2_bit=20 still yields (10,10).
+        let p2 = 10;
+        (bits - p2, p2)
     } else {
         let p1 = if bits > 19 { 16 } else { bits * 2 / 3 };
         (p1, bits - p1)

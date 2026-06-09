@@ -774,8 +774,20 @@ impl ClamavSig{
 				//let res2 = if self.vec_bneg[*id] {!res} else {res};
 				if b_debug{
 					let subsig_id= HexACDFA::gen_subsig_id_worker(
-						sig_id, *id + 1); 
+						sig_id, *id + 1);
 					println!("DEBUG USE 6735.1 discharge sig: {} subsig: {} by dfa: {}", self.name, subsig_id, res);
+				}
+				if std::env::var("ZKR_PROBE_69501").is_ok()
+					&& (self.name.contains(
+						"uk-national-insurance-number.kw03")
+					|| self.name.contains(
+						"sweden-national-id.kw00")
+					|| self.name.contains(
+						"sql-server-connection-string")) {
+					println!("DEBUG USE 69501.7:   dnf[{}] \
+						subsig[{}] accept={} regex={}",
+						dnf_id, *id, res,
+						self.vec_subsig_obj[*id].value);
 				}
 				item_res = item_res || res;
 			}
@@ -3185,9 +3197,34 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		let hs_occ_igc_new = filter_by(&hs_occ_igc, &bag_pm_igc); 
 	
 		//3. process each one and return the result
-		let (res, info) = 
+		let (res, info) =
 			sig.accepts_approx_pm_bounds(&hs_occ_new, &hs_occ_igc_new, fname);
 		let info = info.unwrap();
+		if std::env::var("ZKR_PROBE_69501").is_ok()
+			&& (sig.name.contains("uk-national-insurance-number.kw03")
+				|| sig.name.contains("sweden-national-id.kw00")
+				|| sig.name.contains("sql-server-connection-string")) {
+			println!("DEBUG USE 69501.1: PM sig={} res={:?}",
+				sig.name, res);
+			for (sid, pmb) in sig.vec_subsig_pm_bounds.iter()
+				.enumerate() {
+				println!("DEBUG USE 69501.2:   subsig[{}] \
+					type={:?} igc={} regex={}", sid,
+					sig.vec_subsig_obj[sid].subsig_type,
+					sig.vec_subsig_obj[sid].b_ignore_case,
+					sig.vec_subsig_obj[sid].value);
+				println!("DEBUG USE 69501.3:   pm_bounds={:?}",
+					pmb);
+			}
+			for (pat, vec) in &hs_occ_new {
+				println!("DEBUG USE 69501.4:   CS pos {} -> {:?}",
+					pat, vec);
+			}
+			for (pat, vec) in &hs_occ_igc_new {
+				println!("DEBUG USE 69501.5:   IGC pos {} -> {:?}",
+					pat, vec);
+			}
+		}
 		let _pm_witness_len = sum_vec_size(&hs_occ_new) + sum_vec_size(&hs_occ_igc_new);
 		let new_pm_witness_len = info.min_cost; //more accurate because
 		let mut max_occ = 0;
@@ -3256,6 +3293,16 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		let sig_id = sig_to_id.get(&s.name).expect(
 			&format!("cannot find id for {}", s.name));
 		let (res, info) = s.accepts_by_automaton(*sig_id, nibbles);
+		if std::env::var("ZKR_PROBE_69501").is_ok()
+			&& (s.name.contains("uk-national-insurance-number.kw03")
+				|| s.name.contains("sweden-national-id.kw00")
+				|| s.name.contains("sql-server-connection-string")) {
+			let built = s.vec_subsig_obj.len()
+				== s.vec_subsig_automaton.len();
+			println!("DEBUG USE 69501.6: DFA sig={} \
+				matches={} automaton_built={}",
+				s.name, res, built);
+		}
 		if res==true{
 			set_sigs_dfa.insert(s.name.clone()); //failed to discharge via dfa
 		}else{

@@ -700,19 +700,21 @@ where
 /// discharge classification itself stays F-pad-free, so the report is
 /// unchanged. percentiles = coverage ladder, e.g. [20,50,100].
 pub fn run_db_bundle<F:PrimeField>(config_dir: &str, report_dir: &str,
-	b_cache: bool, b_quick: bool, range_bits: usize,
-	max_word_len: usize, percentiles: &[usize]){
+	b_cache: bool, b_write_cache: bool, b_quick: bool, range_bits: usize,
+	max_word_len: usize, percentiles: &[usize], sig_file_name: &str,
+	scan_file_name: &str, cache_dir: &str){
 	utils::os::print_computer_config(Some("run_db_bundle"));
 	utils::consts::get_global_config().range2_bit = range_bits;
 	crate::stats_helper::report_all_discharge_approach_stats::<F>(
-		&format!("{}/main.dat", config_dir), //src sig
+		&format!("{}/{}", config_dir, sig_file_name), //src sig
 		&format!("{}/main_dfa.dat", config_dir), //need_dfa
 		&format!("{}/needs_ised.dat", config_dir), //need_ised
 		&format!("{}/needs_ised_igc.dat", config_dir), //ised_igc
-		&format!("{}/binexec.dat", config_dir), //files to discharge
+		&format!("{}/{}", config_dir, scan_file_name), //files to discharge
 		&format!("{}/discharge_main_binexec.dat", report_dir), //report
 		b_cache, //read cache
-		"main", //cache name
+		b_write_cache, //write the built DB to cache_dir for reuse
+		cache_dir, //cache name
 		b_quick,
 		max_word_len, percentiles);
 }
@@ -2422,7 +2424,14 @@ pub mod tests_zkp_driver{
 			scan_files, //list of files to discharge
 			"data/debug/small_email/reports/report_zk.dat", //report
 			b_write_cache,
-			"email_data", //cache name
+			//WARNING: small_email and small_email2 SHARE this
+			//"email_data" DB cache, but use different range2_bit
+			//(20 vs 25) and sigs (main.dat vs main_full.dat), so a
+			//cache from one is INVALID for the other. Both rebuild
+			//fresh (b_read_cache=false) and overwrite it each run;
+			//never set b_read_cache=true without first rebuilding
+			//the cache for the matching runner.
+			"email_data", //cache name (SHARED w/ small_email2)
 			&format!("{}/main_dfa.dat", set1), //sigs needing dfa
 			&format!("{}/needs_ised.dat", set1), //ised (empty)
 			&format!("{}/needs_ised_igc.dat", set1), //ised_igc (empty)
@@ -2436,6 +2445,322 @@ pub mod tests_zkp_driver{
 			num_circs,
 			b_check_lkup
 		);
+	}
+
+	/// Copy of small_email with the source-signature DB swapped to
+	/// main_full.dat (the full DLP sig set); all other knobs identical.
+	#[allow(dead_code)]
+	fn small_email2<F:PrimeField>(_b_check_lkup: bool){
+		utils::os::print_computer_config(Some("small_email2"));
+		//Small set: do NOT distribute / enforce the lkup-share table.
+		//b_check_lkup=false skips the in-circuit Hab22 lookup-sum
+		//check (matches small_dna), so the large fan-out lookup table
+		//need not be covered by lk_share*chunks. Verdict soundness is
+		//cross-checked out-of-circuit (Phase-3 rustomaton oracle).
+		let b_check_lkup = false;
+		get_global_config().snark_cache_dir = "email_dlp".to_string();
+		get_global_config().b_write_snark_cache = false;
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_light_test = true;
+		//range2_bit=25 gives the aggressive (15,10) bit_parts split:
+		//sig_id 15 bits (max 32768 sigs, full MS-DLP set has 3142) and
+		//subsig_id 10 bits (max 1024; M5 emits 1 base + <=1000 variants
+		//per sig). The old 20 (10/10) capped sigs at 1024 -> overflowed
+		//at sig 3139 in hex_acdfa. 25 < full_clamav's 26, so feasible.
+		get_global_config().range2_bit = 25;
+		//min_* floors set LOW (single tiny regex sig)
+		get_global_config().min_subsigs = 64;
+		get_global_config().min_basis_unique_states = 100;
+		get_global_config().min_basis_acc_states = 2;
+		get_global_config().min_basis_pats_in_trace = 4;
+		get_global_config().min_avg_pats_per_subsig = 1;
+		get_global_config().min_dfa_sigs = 2;
+		get_global_config().min_dfa_subsigs = 2;
+		get_global_config().n_par_snark = 2;
+		get_global_config().n_par_snark_cp = 2;
+		get_global_config().n_par_batch_claim = 8;
+		//Small set: skip the distributed lkup-share check
+		//(b_check_lkup=false below), so perc=1 / lk_share is a small
+		//non-binding hint. The fan-out lookup table (lkup_len=1133682)
+		//need not be distributed across the 16 chunks here.
+		get_global_config().perc_lkup_share = if !b_check_lkup {1}
+			else {200};
+
+		//SDE-rep fan-out gate ON for the DLP sigs;
+		//sde_rep_fanout_cap=100: only 2 digits extracted per leg.
+		//variant_combine_cap keeps default 4 to bound the per-
+		//variant PCRE->rustomaton-hex rewrite. Dryrun returns
+		//from zkp_driver_adv right after build_circs_adv
+		//validates capacities -- skips folding/Groth16 so
+		//capacity tuning is cheap.
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
+		get_global_config().clamav_cfg.sde_rep_fanout_cap = 100;
+		//Lower pm-reg word floor so fan-out borrowed bytes
+		//(1-2 chars per pin) can qualify as SDE anchors.
+		get_global_config().clamav_cfg.min_pm_word_len = 3;
+		//Distributed-pin mode: pins spread across legs (priority
+		//1st, last, middles R->L), within-leg ascending order.
+		get_global_config().clamav_cfg
+			.b_sde_rep_tight_first_leg = false;
+		//M5 NEEDS/QUICK filter: shrink per-chunk SED universe to the
+		//active NEEDS set. Full-set estimator (test_db_bundle on
+		//main_full.dat) reports max needs/chunk=600; 700 adds margin.
+		get_global_config().aggr_needs_subsigs = 700;
+		//M2 failed_subsigs accumulator (basis points): acc_size =
+		//universe_subsigs * this / 10000. Left at default 0 (acc_size=2):
+		//subsigs are discharged early by the QUICK absence cert, so
+		//few/none reach a final step -> the accumulator stays empty.
+		get_global_config().b_dryrun_after_capcheck = false;
+
+		//Build the DB fresh: the data/cache/email_data write hits a 2GiB
+		//per-file truncation (vec_sigs/bundle_subsig .txt capped at
+		//2147479552 B), so the cache is not safely readable yet. Flip to
+		//true only after the write-truncation is fixed. SHARED w/
+		//small_email (see warning at the zkp_driver_adv call below).
+		get_global_config().b_read_cache = false;
+		let b_write_cache = !read_global_config().b_read_cache;
+		let set1 = "data/debug/small_email/config";
+		let max_word = 256; //~17 fold steps over 260k nibbles
+		//Empirical caps from test_db_bundle ESTIMATE_CONFIG on the
+		//REGENERATED full MS DLP set (6729 arms, ws-boundary keywords +
+		//alternation split, range_bits=25, max_word=256, fanout_cap=100,
+		//cap-26 leg select), scan=merged_000020 (conservative). The ws
+		//boundaries kill the false-positive keyword hits, so only 6 SITs
+		//reach SED (universe ~600) vs 2708 on the old stripped set.
+		let sigs = 12; //estimator sigs_sed=6
+		let subsigs = 700; //estimator SED universe=600
+		let avg_pats_per_subsig = 4; //estimator avg_pats=3
+		let avg_active_pats_per_subsig = 7;
+		let perc_comp_subsigs = 20;
+		//cp::basis_unique_states demand=249 on merged_000005 (CapErr;
+		//estimator on _000020 gave 96 -> under-predicted); 350 = ~40%
+		//margin. Feeds both CpCapacity and SedCapacity.
+		let basis_unique_states = 350; //demand 249 (CapErr), est b_uniq=96
+		let basis_acc_states = 1200; //estimator b_acc=1143 (passed)
+		//merged_000005 joinwide demand=1257 (estimator on _000020 gave
+		//1157 -> under-predicted); 1400 adds ~11% margin.
+		let basis_pats_in_trace = 1400; //demand 1257 (CapErr), est b_pat=1157
+		//Aggressive reseeds the step queue per chunk (no F+B carry growth),
+		//so StepFwdPrf stays tiny: peak usage 1.36% at perc=10000 (probe
+		//6901.8). 300 -> ~45% usage, 2x margin (was 10000).
+		let perc_pats_expansion_rate = 300; //F+B StepFwdPrf, see 6901.8
+		let dfa_sigs = 0; //min_dfa_sigs floor (2) covers the DFA sig
+		let dfa_subsigs = 0;
+		let vec_decrease_level = vec![];
+		let num_circs = 1;
+
+		let init_cp_cap = CpCapacity{
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+		};
+		let init_sed_cap = SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig, avg_active_pats_per_subsig,
+			basis_pats_in_trace, perc_pats_expansion_rate,
+			sigs, perc_comp_subsigs,
+			basis_unique_states, basis_acc_states);
+		let init_dfa_cap = DfaCapacity::new(max_word, dfa_sigs,
+			dfa_subsigs);
+
+		//IGC mirrors CS on subsigs/sigs (compute_sig_adv asserts
+		//symmetry); only the igc expansion rate is shrunk (our sig is
+		//case-sensitive, so the igc trace is empty).
+		let init_cp_cap_igc = CpCapacity{
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+		};
+		let init_sed_cap_igc = SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig, avg_active_pats_per_subsig,
+			basis_pats_in_trace, 4, //perc_pats_expansion_rate_igc small
+			sigs, perc_comp_subsigs,
+			basis_unique_states, basis_acc_states);
+
+		//binexec2.dat scans merged_000005 (in clean_email_list -> clean
+		//discharge vs all 60 SITs; merged_000020 is flagged).
+		let scan_files: Vec<String> = vec![
+			format!("{}/binexec2.dat", set1)]; //single job
+
+		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,
+			CS1E,S>(
+			0,
+			&format!("{}/main_full.dat", set1), //src sig
+			scan_files, //list of files to discharge
+			"data/debug/small_email/reports/report_zk.dat", //report
+			b_write_cache,
+			//WARNING: small_email2 and small_email SHARE this
+			//"email_data" DB cache, but use different range2_bit
+			//(25 vs 20) and sigs (main_full.dat vs main.dat), so a
+			//cache from one is INVALID for the other. Both rebuild
+			//fresh (b_read_cache=false) and overwrite it each run;
+			//running small_email2 clobbers the small_email cache.
+			"email_data", //cache name (SHARED w/ small_email)
+			&format!("{}/main_dfa.dat", set1), //sigs needing dfa
+			&format!("{}/needs_ised.dat", set1), //ised (empty)
+			&format!("{}/needs_ised_igc.dat", set1), //ised_igc (empty)
+			max_word, //chunk len
+			&init_cp_cap,
+			&init_sed_cap,
+			&init_dfa_cap,
+			&init_cp_cap_igc,
+			&init_sed_cap_igc,
+			&vec_decrease_level,
+			num_circs,
+			b_check_lkup
+		);
+	}
+
+	/// Copy of small_email2 (full MS-DLP set, main_full.dat,
+	/// range2_bit=25, aggressive fan-out) scanning binexec3.dat -- the
+	/// two most challenging clean emails (merged_005547, merged_004945,
+	/// high keyword density). SHARES the "email_data" DB cache with
+	/// small_email and small_email2 (identical DB for the _2/_3 pair);
+	/// here we READ it (built by test_db_bundle) to skip the rebuild.
+	#[allow(dead_code)]
+	fn small_email3<F:PrimeField>(_b_check_lkup: bool){
+		utils::os::print_computer_config(Some("small_email3"));
+		//TEMP: discharge-only sweep over the full clean_email_list
+		//(binexec4.dat, 8760 emails) vs the full MS DLP set. No cache
+		//read AND no cache write (b_write_cache=false; throwaway
+		//cache_dir as a second guard so the shared "email_data" cache is
+		//untouched). print_discharge_stats prints "failed files: N";
+		//discharged = total - N. The ZK path below is commented out.
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
+		get_global_config().clamav_cfg.sde_rep_fanout_cap = 100;
+		get_global_config().clamav_cfg.min_pm_word_len = 3;
+		get_global_config().clamav_cfg
+			.b_sde_rep_tight_first_leg = false;
+		super::run_db_bundle::<F>(
+			"data/debug/small_email/config", //config dir
+			"data/debug/small_email/reports", //report dir
+			false, //b_cache: do NOT read cache (fresh build)
+			false, //b_write_cache: do NOT write cache
+			true, //b_quick
+			25, //range_bits (matches main_full.dat DB)
+			256, //max_word_len
+			&[20usize, 50, 100], //percentiles
+			"main_full.dat", //full MS DLP set
+			"binexec4.dat", //scan: all 8760 clean emails
+			"email_data_scan_tmp"); //throwaway (unused, nothing written)
+		/* ORIGINAL ZK discharge path (disabled for the sweep above):
+		let b_check_lkup = false;
+		get_global_config().snark_cache_dir = "email_dlp".to_string();
+		get_global_config().b_write_snark_cache = false;
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_light_test = true;
+		get_global_config().range2_bit = 25;
+		get_global_config().min_subsigs = 64;
+		get_global_config().min_basis_unique_states = 100;
+		get_global_config().min_basis_acc_states = 2;
+		get_global_config().min_basis_pats_in_trace = 4;
+		get_global_config().min_avg_pats_per_subsig = 1;
+		get_global_config().min_dfa_sigs = 2;
+		get_global_config().min_dfa_subsigs = 2;
+		get_global_config().n_par_snark = 2;
+		get_global_config().n_par_snark_cp = 2;
+		get_global_config().n_par_batch_claim = 8;
+		get_global_config().perc_lkup_share = if !b_check_lkup {1}
+			else {200};
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
+		get_global_config().clamav_cfg.sde_rep_fanout_cap = 100;
+		get_global_config().clamav_cfg.min_pm_word_len = 3;
+		get_global_config().clamav_cfg
+			.b_sde_rep_tight_first_leg = false;
+		//binexec3 estimator reports needs/chunk=80 (these emails trigger
+		//a small SED universe); 200 adds margin.
+		get_global_config().aggr_needs_subsigs = 200;
+		get_global_config().b_dryrun_after_capcheck = false;
+
+		//Read the shared "email_data" DB cache (built by test_db_bundle
+		//on main_full.dat, range2_bit=25 -- the identical DB) to skip the
+		//~10min rebuild. The 2GiB write-truncation is fixed (write_all),
+		//so the cache is complete. Flip to false if main_full.dat or the
+		//DB-build code changes. SHARED w/ small_email, small_email2.
+		get_global_config().b_read_cache = true;
+		let b_write_cache = !read_global_config().b_read_cache;
+		let set1 = "data/debug/small_email/config";
+		let max_word = 256;
+		//Caps from the binexec3 estimator (scan=merged_005547/004945) +
+		//margin for the estimator's known under-prediction (esp. CP
+		//basis_unique: merged_000005 went 96->249, ~2.6x). Bump on CapErr.
+		let sigs = 8; //estimator sigs_sed=2
+		let subsigs = 200; //estimator SED universe=80
+		let avg_pats_per_subsig = 4; //estimator avg_pats=3
+		let avg_active_pats_per_subsig = 7;
+		let perc_comp_subsigs = 20;
+		let basis_unique_states = 500; //est b_uniq=100; CP demand higher
+		let basis_acc_states = 1000; //estimator b_acc=688
+		let basis_pats_in_trace = 1000; //estimator b_pat=741
+		let perc_pats_expansion_rate = 300;
+		let dfa_sigs = 0;
+		let dfa_subsigs = 0;
+		let vec_decrease_level = vec![];
+		let num_circs = 1;
+
+		let init_cp_cap = CpCapacity{
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+		};
+		let init_sed_cap = SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig, avg_active_pats_per_subsig,
+			basis_pats_in_trace, perc_pats_expansion_rate,
+			sigs, perc_comp_subsigs,
+			basis_unique_states, basis_acc_states);
+		let init_dfa_cap = DfaCapacity::new(max_word, dfa_sigs,
+			dfa_subsigs);
+
+		let init_cp_cap_igc = CpCapacity{
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+		};
+		let init_sed_cap_igc = SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig, avg_active_pats_per_subsig,
+			basis_pats_in_trace, 4,
+			sigs, perc_comp_subsigs,
+			basis_unique_states, basis_acc_states);
+
+		//binexec3.dat scans merged_005547 + merged_004945 (the most
+		//challenging clean emails; high keyword density).
+		let scan_files: Vec<String> = vec![
+			format!("{}/binexec3.dat", set1)]; //single job
+
+		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,
+			CS1E,S>(
+			0,
+			&format!("{}/main_full.dat", set1), //src sig
+			scan_files, //list of files to discharge
+			"data/debug/small_email/reports/report_zk.dat", //report
+			b_write_cache,
+			//WARNING: small_email3, small_email2 and small_email SHARE
+			//this "email_data" DB cache. _3/_2 use range2_bit=25 +
+			//main_full.dat; small_email uses 20 + main.dat (INVALID to
+			//cross-read). Here b_read_cache=true reads the cache built
+			//by test_db_bundle (binexec3) / small_email2.
+			"email_data", //cache (SHARED w/ small_email, small_email2)
+			&format!("{}/main_dfa.dat", set1), //sigs needing dfa
+			&format!("{}/needs_ised.dat", set1), //ised (empty)
+			&format!("{}/needs_ised_igc.dat", set1), //ised_igc (empty)
+			max_word, //chunk len
+			&init_cp_cap,
+			&init_sed_cap,
+			&init_dfa_cap,
+			&init_cp_cap_igc,
+			&init_sed_cap_igc,
+			&vec_decrease_level,
+			num_circs,
+			b_check_lkup
+		);
+		*/
 	}
 
 	/// 2026-05-21: full_clam_short_file — mirrors full_clamav with
@@ -2752,13 +3077,13 @@ pub mod tests_zkp_driver{
 		super::run_db_bundle::<Fr>(
 			"data/paper_data/debug_config", //config dir
 			"data/paper_data/reports", //report dir
-			b_cache, b_quick, range_bits);
+			b_cache, b_quick, range_bits, "main.dat");
 		*/
 
-		//small_email cap estimator: matches the small_email runner
-		//(range2_bit=20, max_word=512, aggressive SDE-rep fan-out).
-		//dfa_sigs/dfa_subsigs in the report are unreliable here -
-		//treat them as 0 and use the FSM/SED columns to seed caps.
+		//small_email2 cap estimator: matches the small_email2 runner
+		//(range2_bit=25, max_word=256, aggressive SDE-rep fan-out) on
+		//the FULL MS DLP set. dfa_sigs/dfa_subsigs in the report are
+		//unreliable here - treat as 0 and seed caps from FSM/SED cols.
 		get_global_config().clamav_cfg.b_aggressive_sde_for_rep
 			= true;
 		get_global_config().clamav_cfg.sde_rep_fanout_cap = 100;
@@ -2768,14 +3093,22 @@ pub mod tests_zkp_driver{
 		//1st, last, middles R->L), within-leg ascending order.
 		get_global_config().clamav_cfg
 			.b_sde_rep_tight_first_leg = false;
-		let range_bits_email = 20;
+		let range_bits_email = 25;
 		let max_word_len_email = 256;
 		let percentiles_email = [20usize, 50, 100];
+		//Scan binexec3.dat (the most challenging clean emails) so the
+		//estimate reflects small_email3's targets, and WRITE the DB to
+		//the shared "email_data" cache (same main_full.dat/range2_bit=25/
+		//fanout as small_email2/3) so small_email3 can read it (no
+		//rebuild). b_cache=false here => build fresh + write cache.
 		super::run_db_bundle::<Fr>(
 			"data/debug/small_email/config", //config dir
 			"data/debug/small_email/reports", //report dir
-			b_cache, b_quick, range_bits_email,
-			max_word_len_email, &percentiles_email);
+			b_cache, true, b_quick, range_bits_email,
+			max_word_len_email, &percentiles_email,
+			"main_full.dat", //full MS DLP set
+			"binexec3.dat", //scan: challenging clean emails
+			"email_data"); //write DB cache (shared w/ small_email2/3)
 
 		/*
 		let range_bits = 27;
@@ -2787,7 +3120,7 @@ pub mod tests_zkp_driver{
 			"data/paper_data/dna/config", //config dir
 			"data/paper_data/dna/reports", //report dir
 			b_cache, b_quick, range_bits,
-			max_word_len, &percentiles);
+			max_word_len, &percentiles, "main.dat");
 		*/
 	}
 
@@ -2806,5 +3139,21 @@ pub mod tests_zkp_driver{
 	#[test]
 	pub fn test_small_email(){
 		small_email::<Fr>(false);
+	}
+
+	/// small_email against a 5-arm slice of the full MS DLP set
+	/// (main_full2.dat = anchor + aba-routing arms). Invoke via:
+	/// `cargo test -p zkregplus -- test_small_email2 --show-output --nocapture`
+	#[test]
+	pub fn test_small_email2(){
+		small_email2::<Fr>(false);
+	}
+
+	/// small_email3: full MS DLP set vs binexec3.dat (the two most
+	/// challenging clean emails). Reads the shared email_data DB cache.
+	/// `cargo test -p zkregplus -- test_small_email3 --show-output --nocapture`
+	#[test]
+	pub fn test_small_email3(){
+		small_email3::<Fr>(false);
 	}
 }

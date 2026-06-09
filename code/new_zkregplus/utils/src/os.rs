@@ -82,7 +82,11 @@ pub fn write_to_file(fname: &str, line: &str){
 	}
     let mut fh = OpenOptions::new().create_new(true).write(true).open(fname)
 		.expect(&format!("open {} failed", fname));
-   	fh.write(line.as_bytes()).expect("write failed");
+	//write_all (not write): a single write() caps at ~2GiB on Linux
+	//(0x7ffff000) and silently truncates large buffers (e.g. the
+	//multi-GB DB cache vec_sigs/bundle_subsig), which .expect() does
+	//not catch. write_all loops until every byte lands.
+   	fh.write_all(line.as_bytes()).expect("write failed");
 }
 
 /// write a vector of lines to file
