@@ -2627,14 +2627,16 @@ pub mod tests_zkp_driver{
 		//the boosted email_data cache). Sweeps binexec3.dat=merged_004945 vs
 		//the full MS DLP set, prints ESTIMATE_CONFIG, and WRITES the boosted
 		//DB to "email_data" (b_write_cache=true). The ZK path below READS it.
-		//get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
-		//get_global_config().clamav_cfg.sde_rep_fanout_cap = 100;
-		//get_global_config().clamav_cfg.min_pm_word_len = 3;
-		//get_global_config().clamav_cfg.b_sde_rep_tight_first_leg = false;
-		//super::run_db_bundle::<F>(
-		//	"data/debug/small_email/config","data/debug/small_email/reports",
-		//	false, true, true, 25, 256, &[20usize,50,100],
-		//	"main_full.dat", "binexec3.dat", "email_data");
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
+		get_global_config().clamav_cfg.sde_rep_fanout_cap = 100;
+		get_global_config().clamav_cfg.sde_rep_fanout_boost = 1; //BONUS off: 100 for all
+		get_global_config().clamav_cfg.min_pm_word_len = 3;
+		get_global_config().clamav_cfg.b_sde_rep_tight_first_leg = false;
+		super::run_db_bundle::<F>(
+			"data/debug/small_email/config","data/debug/small_email/reports",
+			false, false, true, 25, 256, &[20usize,50,100],
+			"main_full.dat", "binexec4.dat", "email_data");
+		return;
 
 		//ZK discharge path: prove merged_004945 (boosted NINO fan-out)
 		//discharges vs the full MS DLP set. Reads the boosted email_data

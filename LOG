@@ -29009,4 +29009,18 @@ Goal 4. build a function which can measure the discharged sigs and failed
 	[h] test the hard file cost first.
 		-> compare with small_email and small_email2.
 		-> MUCH greater cost perc_expansion_rate is 14000!
+		=> 2.1M -> 19.4M (9x)
+		----------------------------------
+		max_word_len = 256
+		gen_step_cs step 3: cs: 13764231, vars: 11726560,
+		stmt_len: 11127437, wtns size: 16787076
+		----------------------------------
+		max_word_len = 256 * 4
+		gen_step_cs step 3: doesn't help much at least 3 times? 
+
+Wed 06/10/2026
+Goal 1. fix the sql-connection issue
+	[a] 
+Goal 2. cut half of the cost case sensitive only
+	[a]
 	[i] the other direction.
