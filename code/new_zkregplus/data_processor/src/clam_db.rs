@@ -2269,8 +2269,18 @@ impl <F:PrimeField> ClamavDB<F>{
 			Self::build_ised_bundle(&v_sigs, &sig_to_id, 
 				needs_ised_list_file, false, cfg); 
 		let bundle_subsig_igc=
-			Self::build_ised_bundle(&v_sigs, &sig_to_id, 
-				needs_ised_igc_list_file, true, cfg); 
+			Self::build_ised_bundle(&v_sigs, &sig_to_id,
+				needs_ised_igc_list_file, true, cfg);
+		//CS-only invariant: aggressive fan-out must not yield any
+		//ignore-case subsig (the circuit collapses the igc side).
+		if cfg.b_aggressive_sde_for_rep{
+			let n_igc = v_sigs.iter()
+				.flat_map(|s| s.vec_subsig_obj.iter())
+				.filter(|o| o.b_ignore_case).count();
+			assert!(n_igc==0,
+				"aggressive mode requires all-CS subsigs, found {} igc",
+				n_igc);
+		}
 		if b_perf {flog_perf(0, log_level, &format!("Build_DB: Step 6: Build SED bundles."), &mut timer, vlog);}
 
 		//8. build lkup

@@ -304,6 +304,88 @@ where C: CurveGroup<ScalarField=F>,
 	layer_circs
 }
 
+/// Aggressive-mode circuit builder: assembles CS-only circuits. The igc
+/// CP/SED capacities collapse to a 1-subsig sentinel (aggressive mode
+/// guarantees all-CS subsigs), cutting the dead igc gadget cost. Takes an
+/// explicit CS capacity ladder, lowest-cost first; one circuit per entry,
+/// no decreased_copy. There is no DFA gadget in aggressive mode.
+fn build_circs_adv_aggr<F,C,CS>(
+	poseidon_config: &PoseidonConfig<F>,
+	total_word_n: usize,
+	chunk_len: usize,
+	lkup_len: usize,
+	db: Arc<ClamavDB<F>>,
+	cs_caps: &Vec<(CpCapacity, SedCapacity)>,
+	b_check_lkup: bool
+)->Vec<Vec<FC<F,C,CS>>>
+where C: CurveGroup<ScalarField=F>,
+	  CS: CommitmentScheme<C,false>,
+	  F: PrimeField + Absorb + ColEle + ColEle,
+{
+	//1. lkup share (identical to build_circs_adv)
+	let max_nibble_len = chunk_len * LEGS;
+	let total_nibbles = total_word_n * LEGS;
+	let chunks = total_nibbles/max_nibble_len;
+	let lk_share = read_global_config().perc_lkup_share* max_nibble_len/100;
+	let lk_share = if lk_share == 0 {1} else {lk_share};
+	if b_check_lkup && lk_share*chunks < lkup_len{
+		panic!("ERROR: lk_share: {} *chunks: {}  < lkup_len: {}",
+			lk_share, chunks, lkup_len);
+	}
+
+	//2. minimal igc caps: no igc subsigs -> only the 1-entry sentinel.
+	let state_bits = read_global_config().range2_bit;
+	let cp_cap_igc = CpCapacity{
+		max_word_len: chunk_len,    //packed words per chunk (must match)
+		basis_unique_states: 4,     //unique crit-pat DFA states (basis pts)
+		subsigs: 1,                 //igc crit-pat universe (sentinel only)
+		avg_pats_per_subsig: 1,     //patterns per subsig
+	};
+
+	//3. one circuit per cs cap entry, caller order (lowest cost first)
+	let mut layer_circs = vec![];
+	for (i,(cp_cap_cs, sed_cap_cs)) in cs_caps.iter().enumerate(){
+		assert!(cp_cap_cs.max_word_len == chunk_len);
+		assert!(sed_cap_cs.wea_capacity().max_word_len == chunk_len);
+		let cp_cs = CpComponentMapper::<F,LK<F>>::new(
+			cp_cap_cs.clone(), db.clone(), false);
+		let cp_igc = CpComponentMapper::<F,LK<F>>::new(
+			cp_cap_igc.clone(), db.clone(), true);
+		//igc sentinel (no igc subsigs): subsigs=1. perc_pats must clear
+		//the empty-trace StepFwdPrf minimum (~24); basis_pats stays small
+		//(fsm_adv enforces basis_pats <= 10*basis_acc_states).
+		let sed_cap_igc = SedCapacity::new(
+			chunk_len,   //max_word_len: packed words per chunk (must match)
+			state_bits,  //acdfa_state_part_bits: bits per DFA state id
+			1,           //subsigs: igc SED universe (sentinel only)
+			1,           //avg_pats_per_subsig: patterns per subsig
+			1,           //avg_active_pats_per_subsig: active pats per subsig
+			4,           //basis_pats_in_trace: trace buffer (basis points)
+			64,          //perc_pats_expansion_rate: StepFwdPrf fwd buffer
+			1,           //sigs_sed: number of sigs discharged via SED
+			1,           //perc_comp_subsigs: compute-sig subsig share (%)
+			2,           //basis_unique_states: unique DFA states (basis pts)
+			2);          //basis_acc_states: accepting DFA states (basis pts)
+		let sed = SedComponentMapper::<F,LK<F>>::new(
+			sed_cap_cs.clone(), sed_cap_igc, db.clone());
+		let hybrid = CompositeGadgetMapper::<F,LK<F>>::new("hybrid_cgm1",
+			vec![
+				Arc::new(Mutex::new(cp_cs)),
+				Arc::new(Mutex::new(cp_igc)),
+				Arc::new(Mutex::new(sed)),
+			]);
+		let circ= SigmaIR1CS_Inst::<F,C,CS,LK<F>,
+			CompositeGadgetMapper<F,LK<F>> ,false> ::new_adv(
+			format!("circ_cat_{}_circ_{}", i, 0),
+			poseidon_config.clone(),
+			Arc::new(Mutex::new(hybrid)),
+			false, lk_share, false, b_check_lkup
+		).expect("error building aggr circ");
+		layer_circs.push( vec![circ] );
+	}
+	layer_circs //caller already lowest-cost first: no reverse
+}
+
 /// build the list of circs. Note: for convenience of implementation,
 /// we put the circ config hard coded in this function. To change
 /// config, modify the local variables at the beginning of this function.
@@ -688,6 +770,136 @@ where
 
 }
 
+/// Aggressive-mode driver: same flow as zkp_driver_adv but builds
+/// CS-only circuits from an explicit CS capacity ladder (lowest-cost
+/// first, one circuit per entry) via build_circs_adv_aggr. zkp_driver_adv
+/// and the non-aggressive path are unchanged.
+pub fn zkp_driver_adv_aggr<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + std::fmt::Debug + Clone, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, S>
+(
+	job_id: usize,
+	sig_file: &str,
+	list_files_to_scan: Vec<String>,
+	_logfile: &str,
+	b_write_cache: bool,
+	cache_dir: &str,
+	list_of_dfa_sigs: &str,
+	list_of_ised_sigs: &str,
+	list_of_ised_igc_sigs: &str,
+	chunk_len: usize,
+	cs_caps: &Vec<(CpCapacity, SedCapacity)>,
+	b_check_lkup: bool,
+)
+where
+	GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
+	GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
+	CS1E: CommitmentScheme<
+		C1,
+		ProverChallenge = C1::ScalarField,
+		Challenge = C1::ScalarField,
+		Proof = KZGProof<C1>,
+	>,
+	<CS1E as CommitmentScheme<C1>>::ProverParams: Send + Sync,
+	<CS1E as CommitmentScheme<C1>>::VerifierParams: Send + Sync,
+	CS1: CommitmentScheme<C1, ProverParams = PedersenParams<C1>>,
+	<CS1 as CommitmentScheme<C1>>::VerifierParams: Send + Sync,
+	CS2: CommitmentScheme<C2, ProverParams = PedersenParams<C2>, VerifierParams = PedersenParams<C2>>,
+	<CS2 as CommitmentScheme<C2>>::VerifierParams: Send + Sync,
+	S: SNARK<C1::ScalarField> + SNARK<<E as Pairing>::ScalarField>,
+	<C1 as CurveGroup>::BaseField: PrimeField,
+	<C2 as CurveGroup>::BaseField: PrimeField,
+	<C1 as Group>::ScalarField: Absorb,
+	<C2 as Group>::ScalarField: Absorb,
+	for<'b> &'b GC1: GroupOpsBounds<'b, C1, GC1>,
+	for<'b> &'b GC2: GroupOpsBounds<'b, C2, GC2>,
+	for<'a> &'a P::G1Var: GroupOpsBounds<'a, E::G1, P::G1Var>,
+	for<'a> &'a P::G2Var: GroupOpsBounds<'a, E::G2, P::G2Var>,
+	for<'a> &'a P::GTVar: FieldOpsBounds<'a, E::TargetField, P::GTVar>,
+	P::G1Var: ToConstraintFieldGadget<CF2<E::G1>>,
+	CF2<E::G1>: PrimeField,
+	P::G2Var: ToConstraintFieldGadget<CF3<E::G2>>,
+	P::GTVar: ToConstraintFieldGadget<CF2<E::G1>>,
+	CF3<E::G2>: PrimeField,
+	<E as Pairing>::ScalarField: Absorb,
+	C1: CurveGroup<BaseField = <C2G2::BaseField as Field>::BasePrimeField, ScalarField=E::ScalarField>,
+	C2G2: CurveGroup<ScalarField=E::ScalarField>,
+	C2: CurveGroup<BaseField = C1::ScalarField, ScalarField=C1::BaseField,
+		Affine = ark_ec::short_weierstrass::Affine<<C2 as CurveGroup>::Config>>,
+	E::G1: ToConstraintField<CF2<C1>>,
+	E::G2: ToConstraintField<CF2<C1>>,
+	E::TargetField: ToConstraintField<CF2<C1>> + Field<BasePrimeField=CF3<C1>>,
+	C1::Affine: AffineFromField<CF2<C1>>,
+	C1::Config: SWCurveConfig,
+	<C2 as CurveGroup>::Config: SWCurveConfig,
+	C2G2::Affine: AffineFromField<CF2<C2G2>>,
+	<E as Pairing>::ScalarField: ColEle,
+	<S as SNARK<C1::ScalarField>>::ProvingKey: 'static,
+	<S as SNARK<C1::ScalarField>>::VerifyingKey: 'static,
+	<S as SNARK<<E as Pairing>::ScalarField>>::ProvingKey: Send,
+	<S as SNARK<<E as Pairing>::ScalarField>>::VerifyingKey: Send,
+{
+	//1. build or load the clamdb
+	let log_level = LOG1;
+	let mut gt1 = GTimer::new();
+	log(0, log_level, &format!("=== ZKP driver (aggr) starts ===="));
+	let poseidon_config = poseidon_canonical_config::<CF1<C1>>();
+	let mut vlog = vec![];
+	let cfg = default_clamav_cfg();
+	let db = ClamavDB::<CF1<C1>>::build_or_load(&cfg, sig_file,
+		list_of_dfa_sigs, list_of_ised_sigs, list_of_ised_igc_sigs,
+		&mut vlog, cache_dir, read_global_config().b_read_cache, b_write_cache)
+		.expect("build db err");
+	if log_level>=LOG1+1{
+		db.print_summary(&mut vlog);
+	}
+	log_perf(0, log_level, &format!("ZIP driver step 1: build DB."), &mut gt1);
+
+	//2. load the files as vec of words
+	let mut max_total_word_len = 0;
+	let mut jobs = vec![];
+	for list_file_to_scan in list_files_to_scan{
+		let (vec_words, vec_word_info, vec_word_fnames) = load_files::<CF1<C1>>(job_id, &list_file_to_scan, &db, &cfg, b_write_cache, cache_dir, chunk_len);
+		let total_word_len:usize = vec_words.iter().map(|w| w.len()).sum();
+		if total_word_len > max_total_word_len{
+			max_total_word_len = total_word_len;
+		}
+		jobs.push(FoldPotJob{
+			vec_words,
+			vec_word_info,
+			vec_word_fnames,
+			idx_individual_prf: 0,
+		});
+	}
+	let lkup_len = db.lkup.get_size();
+	log_perf(0, log_level, &format!("ZIP driver step 2: load words and prepare {} jobs.", jobs.len()), &mut gt1);
+
+	//3. build the circuits (CS-only aggressive)
+	let rc_db = Arc::new(db.clone());
+	let vec_circs = build_circs_adv_aggr::<CF1<C1>,C1,CS1>(
+		&poseidon_config,
+		max_total_word_len,
+		chunk_len,
+		lkup_len,
+		rc_db,
+		cs_caps,
+		b_check_lkup
+	);
+	log_perf(0, log_level, &format!("ZIP driver step 2: build circs."), &mut gt1);
+
+	if read_global_config().b_dryrun_after_capcheck {
+		log(0, log_level, &format!(
+			"=== M8 DRYRUN: build_circs_adv_aggr passed, exiting before \
+			 foldpot_main. circs={} ===", vec_circs.len()));
+		return;
+	}
+
+	//4. run the foldpot_main
+	let lkup = Arc::new(db.lkup);
+	foldpot_main::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,FC<CF1<C1>,C1,CS1>,
+		S,LK<CF1<C1>>,GM<CF1<C1>>, false>(
+		lkup, vec_circs, &mut jobs, cache_dir).expect("main err");
+
+}
+
 /// Discharge a bundle of files against a ClamavDB and report the
 /// per-approach (CP/SED/ISED/DFA) stats. Ported from the old
 /// paper_data_gen main (gen_clamav_data). Standard file names are
@@ -728,7 +940,8 @@ pub mod tests_zkp_driver{
 	use ark_grumpkin::{constraints::GVar as GVar2, Projective as Projective2};
 	use ark_groth16::Groth16;
 	use folding_schemes::{commitment::{pedersen::Pedersen, kzg::KZG}};
-	use crate::zkp_driver::{zkp_driver, zkp_driver_adv};
+	use crate::zkp_driver::{zkp_driver, zkp_driver_adv,
+		zkp_driver_adv_aggr};
 	use crate::circs::{
 		cp_mapper::{CpCapacity},
 		sed_mapper::{SedCapacity},
@@ -2226,11 +2439,17 @@ pub mod tests_zkp_driver{
 			avg_pats_per_subsig,
 		};
 		let init_sed_cap = SedCapacity::new(
-			max_word, read_global_config().range2_bit, subsigs,
-			avg_pats_per_subsig, avg_active_pats_per_subsig,
-			basis_pats_in_trace, perc_pats_expansion_rate,
-			sigs, perc_comp_subsigs,
-			basis_unique_states, basis_acc_states);
+			max_word,                  //max_word_len: packed words per chunk
+			read_global_config().range2_bit, //acdfa_state_part_bits
+			subsigs,                   //subsigs: SED universe size
+			avg_pats_per_subsig,       //avg_pats_per_subsig: pats per subsig
+			avg_active_pats_per_subsig,//active pats per subsig (per chunk)
+			basis_pats_in_trace,       //basis_pats_in_trace (basis points)
+			perc_pats_expansion_rate,  //perc_pats_expansion_rate: StepFwdPrf
+			sigs,                      //sigs_sed: sigs discharged via SED
+			perc_comp_subsigs,         //perc_comp_subsigs: compute-sig share
+			basis_unique_states,       //unique DFA states (basis points)
+			basis_acc_states);         //accepting DFA states (basis points)
 		let init_dfa_cap = DfaCapacity::new(max_word, dfa_sigs,
 			dfa_subsigs);
 
@@ -2378,10 +2597,8 @@ pub mod tests_zkp_driver{
 		//so StepFwdPrf stays tiny: peak usage 1.36% at perc=10000 (probe
 		//6901.8). 300 -> ~45% usage, 2x margin (was 10000).
 		let perc_pats_expansion_rate = 300; //F+B StepFwdPrf, see 6901.8
-		let dfa_sigs = 0; //min_dfa_sigs floor (2) covers the DFA sig
-		let dfa_subsigs = 0;
-		let vec_decrease_level = vec![];
-		let num_circs = 1;
+		let _dfa_sigs = 0; //no DFA gadget in aggressive mode
+		let _dfa_subsigs = 0;
 
 		let init_cp_cap = CpCapacity{
 			max_word_len: max_word,
@@ -2390,34 +2607,26 @@ pub mod tests_zkp_driver{
 			avg_pats_per_subsig,
 		};
 		let init_sed_cap = SedCapacity::new(
-			max_word, read_global_config().range2_bit, subsigs,
-			avg_pats_per_subsig, avg_active_pats_per_subsig,
-			basis_pats_in_trace, perc_pats_expansion_rate,
-			sigs, perc_comp_subsigs,
-			basis_unique_states, basis_acc_states);
-		let init_dfa_cap = DfaCapacity::new(max_word, dfa_sigs,
-			dfa_subsigs);
+			max_word,                  //max_word_len: packed words per chunk
+			read_global_config().range2_bit, //acdfa_state_part_bits
+			subsigs,                   //subsigs: SED universe size
+			avg_pats_per_subsig,       //avg_pats_per_subsig: pats per subsig
+			avg_active_pats_per_subsig,//active pats per subsig (per chunk)
+			basis_pats_in_trace,       //basis_pats_in_trace (basis points)
+			perc_pats_expansion_rate,  //perc_pats_expansion_rate: StepFwdPrf
+			sigs,                      //sigs_sed: sigs discharged via SED
+			perc_comp_subsigs,         //perc_comp_subsigs: compute-sig share
+			basis_unique_states,       //unique DFA states (basis points)
+			basis_acc_states);         //accepting DFA states (basis points)
 
-		//IGC mirrors CS on subsigs/sigs (compute_sig_adv asserts
-		//symmetry); only the igc expansion rate is shrunk (our sig is
-		//case-sensitive, so the igc trace is empty).
-		let init_cp_cap_igc = CpCapacity{
-			max_word_len: max_word,
-			basis_unique_states,
-			subsigs,
-			avg_pats_per_subsig,
-		};
-		let init_sed_cap_igc = SedCapacity::new(
-			max_word, read_global_config().range2_bit, subsigs,
-			avg_pats_per_subsig, avg_active_pats_per_subsig,
-			basis_pats_in_trace, 4, //perc_pats_expansion_rate_igc small
-			sigs, perc_comp_subsigs,
-			basis_unique_states, basis_acc_states);
+		//CS-only aggressive ladder (lowest cost first); the igc side is
+		//collapsed inside build_circs_adv_aggr. One circuit per entry.
+		let cs_caps = vec![(init_cp_cap, init_sed_cap)];
 
 		let scan_files: Vec<String> = vec![
 			format!("{}/binexec.dat", set1)]; //single job
 
-		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,
+		zkp_driver_adv_aggr::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,
 			CS1E,S>(
 			0,
 			&format!("{}/main.dat", set1), //src sig
@@ -2436,13 +2645,7 @@ pub mod tests_zkp_driver{
 			&format!("{}/needs_ised.dat", set1), //ised (empty)
 			&format!("{}/needs_ised_igc.dat", set1), //ised_igc (empty)
 			max_word, //chunk len
-			&init_cp_cap,
-			&init_sed_cap,
-			&init_dfa_cap,
-			&init_cp_cap_igc,
-			&init_sed_cap_igc,
-			&vec_decrease_level,
-			num_circs,
+			&cs_caps,
 			b_check_lkup
 		);
 	}
@@ -2544,10 +2747,8 @@ pub mod tests_zkp_driver{
 		//so StepFwdPrf stays tiny: peak usage 1.36% at perc=10000 (probe
 		//6901.8). 300 -> ~45% usage, 2x margin (was 10000).
 		let perc_pats_expansion_rate = 300; //F+B StepFwdPrf, see 6901.8
-		let dfa_sigs = 0; //min_dfa_sigs floor (2) covers the DFA sig
-		let dfa_subsigs = 0;
-		let vec_decrease_level = vec![];
-		let num_circs = 1;
+		let _dfa_sigs = 0; //no DFA gadget in aggressive mode
+		let _dfa_subsigs = 0;
 
 		let init_cp_cap = CpCapacity{
 			max_word_len: max_word,
@@ -2556,36 +2757,28 @@ pub mod tests_zkp_driver{
 			avg_pats_per_subsig,
 		};
 		let init_sed_cap = SedCapacity::new(
-			max_word, read_global_config().range2_bit, subsigs,
-			avg_pats_per_subsig, avg_active_pats_per_subsig,
-			basis_pats_in_trace, perc_pats_expansion_rate,
-			sigs, perc_comp_subsigs,
-			basis_unique_states, basis_acc_states);
-		let init_dfa_cap = DfaCapacity::new(max_word, dfa_sigs,
-			dfa_subsigs);
+			max_word,                  //max_word_len: packed words per chunk
+			read_global_config().range2_bit, //acdfa_state_part_bits
+			subsigs,                   //subsigs: SED universe size
+			avg_pats_per_subsig,       //avg_pats_per_subsig: pats per subsig
+			avg_active_pats_per_subsig,//active pats per subsig (per chunk)
+			basis_pats_in_trace,       //basis_pats_in_trace (basis points)
+			perc_pats_expansion_rate,  //perc_pats_expansion_rate: StepFwdPrf
+			sigs,                      //sigs_sed: sigs discharged via SED
+			perc_comp_subsigs,         //perc_comp_subsigs: compute-sig share
+			basis_unique_states,       //unique DFA states (basis points)
+			basis_acc_states);         //accepting DFA states (basis points)
 
-		//IGC mirrors CS on subsigs/sigs (compute_sig_adv asserts
-		//symmetry); only the igc expansion rate is shrunk (our sig is
-		//case-sensitive, so the igc trace is empty).
-		let init_cp_cap_igc = CpCapacity{
-			max_word_len: max_word,
-			basis_unique_states,
-			subsigs,
-			avg_pats_per_subsig,
-		};
-		let init_sed_cap_igc = SedCapacity::new(
-			max_word, read_global_config().range2_bit, subsigs,
-			avg_pats_per_subsig, avg_active_pats_per_subsig,
-			basis_pats_in_trace, 4, //perc_pats_expansion_rate_igc small
-			sigs, perc_comp_subsigs,
-			basis_unique_states, basis_acc_states);
+		//CS-only aggressive ladder (lowest cost first); the igc side is
+		//collapsed inside build_circs_adv_aggr. One circuit per entry.
+		let cs_caps = vec![(init_cp_cap, init_sed_cap)];
 
 		//binexec2.dat scans merged_000005 (in clean_email_list -> clean
 		//discharge vs all 60 SITs; merged_000020 is flagged).
 		let scan_files: Vec<String> = vec![
 			format!("{}/binexec2.dat", set1)]; //single job
 
-		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,
+		zkp_driver_adv_aggr::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,
 			CS1E,S>(
 			0,
 			&format!("{}/main_full.dat", set1), //src sig
@@ -2603,13 +2796,7 @@ pub mod tests_zkp_driver{
 			&format!("{}/needs_ised.dat", set1), //ised (empty)
 			&format!("{}/needs_ised_igc.dat", set1), //ised_igc (empty)
 			max_word, //chunk len
-			&init_cp_cap,
-			&init_sed_cap,
-			&init_dfa_cap,
-			&init_cp_cap_igc,
-			&init_sed_cap_igc,
-			&vec_decrease_level,
-			num_circs,
+			&cs_caps,
 			b_check_lkup
 		);
 	}
@@ -2627,6 +2814,7 @@ pub mod tests_zkp_driver{
 		//the boosted email_data cache). Sweeps binexec3.dat=merged_004945 vs
 		//the full MS DLP set, prints ESTIMATE_CONFIG, and WRITES the boosted
 		//DB to "email_data" (b_write_cache=true). The ZK path below READS it.
+		/* ESTIMATOR/SWEEP pass disabled -- ZK path active below.
 		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
 		get_global_config().clamav_cfg.sde_rep_fanout_cap = 100;
 		get_global_config().clamav_cfg.sde_rep_fanout_boost = 1; //BONUS off: 100 for all
@@ -2637,6 +2825,7 @@ pub mod tests_zkp_driver{
 			false, false, true, 25, 256, &[20usize,50,100],
 			"main_full.dat", "binexec4.dat", "email_data");
 		return;
+		*/
 
 		//ZK discharge path: prove merged_004945 (boosted NINO fan-out)
 		//discharges vs the full MS DLP set. Reads the boosted email_data
@@ -2661,6 +2850,9 @@ pub mod tests_zkp_driver{
 			else {200};
 		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
 		get_global_config().clamav_cfg.sde_rep_fanout_cap = 100;
+		//NINO 10x boost (cap 100->1000) via main_fanout.dat; needed for
+		//merged_004945 to discharge clean. Applied at DB build below.
+		get_global_config().clamav_cfg.sde_rep_fanout_boost = 10;
 		get_global_config().clamav_cfg.min_pm_word_len = 3;
 		get_global_config().clamav_cfg
 			.b_sde_rep_tight_first_leg = false;
@@ -2675,6 +2867,8 @@ pub mod tests_zkp_driver{
 		//~10min rebuild. The 2GiB write-truncation is fixed (write_all),
 		//so the cache is complete. Flip to false if main_full.dat or the
 		//DB-build code changes. SHARED w/ small_email, small_email2.
+		//Reuse the boosted DB cache just rebuilt (boost=10) to skip the
+		//~12min rebuild.
 		get_global_config().b_read_cache = true;
 		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/small_email/config";
@@ -2702,10 +2896,8 @@ pub mod tests_zkp_driver{
 		//14000 over-provisions to clear all chunks; perc is NOT the RAM
 		//driver (300->10000 moved RAM only 1.3x), so this is cheap.
 		let perc_pats_expansion_rate = 14000; //fold StepFwdPrf demand~10380+
-		let dfa_sigs = 0;
-		let dfa_subsigs = 0;
-		let vec_decrease_level = vec![];
-		let num_circs = 1;
+		let _dfa_sigs = 0; //no DFA gadget in aggressive mode
+		let _dfa_subsigs = 0;
 
 		let init_cp_cap = CpCapacity{
 			max_word_len: max_word,
@@ -2714,33 +2906,28 @@ pub mod tests_zkp_driver{
 			avg_pats_per_subsig,
 		};
 		let init_sed_cap = SedCapacity::new(
-			max_word, read_global_config().range2_bit, subsigs,
-			avg_pats_per_subsig, avg_active_pats_per_subsig,
-			basis_pats_in_trace, perc_pats_expansion_rate,
-			sigs, perc_comp_subsigs,
-			basis_unique_states, basis_acc_states);
-		let init_dfa_cap = DfaCapacity::new(max_word, dfa_sigs,
-			dfa_subsigs);
+			max_word,                  //max_word_len: packed words per chunk
+			read_global_config().range2_bit, //acdfa_state_part_bits
+			subsigs,                   //subsigs: SED universe size
+			avg_pats_per_subsig,       //avg_pats_per_subsig: pats per subsig
+			avg_active_pats_per_subsig,//active pats per subsig (per chunk)
+			basis_pats_in_trace,       //basis_pats_in_trace (basis points)
+			perc_pats_expansion_rate,  //perc_pats_expansion_rate: StepFwdPrf
+			sigs,                      //sigs_sed: sigs discharged via SED
+			perc_comp_subsigs,         //perc_comp_subsigs: compute-sig share
+			basis_unique_states,       //unique DFA states (basis points)
+			basis_acc_states);         //accepting DFA states (basis points)
 
-		let init_cp_cap_igc = CpCapacity{
-			max_word_len: max_word,
-			basis_unique_states,
-			subsigs,
-			avg_pats_per_subsig,
-		};
-		let init_sed_cap_igc = SedCapacity::new(
-			max_word, read_global_config().range2_bit, subsigs,
-			avg_pats_per_subsig, avg_active_pats_per_subsig,
-			basis_pats_in_trace, 4,
-			sigs, perc_comp_subsigs,
-			basis_unique_states, basis_acc_states);
+		//CS-only aggressive ladder (lowest cost first); the igc side is
+		//collapsed inside build_circs_adv_aggr. One circuit per entry.
+		let cs_caps = vec![(init_cp_cap, init_sed_cap)];
 
 		//binexec3.dat scans merged_004945 (the dischargeable one of the
 		//challenge pair; merged_005547 is blocked by sql-conn-string).
 		let scan_files: Vec<String> = vec![
 			format!("{}/binexec3.dat", set1)]; //single job
 
-		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,
+		zkp_driver_adv_aggr::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,
 			CS1E,S>(
 			0,
 			&format!("{}/main_full.dat", set1), //src sig
@@ -2757,13 +2944,7 @@ pub mod tests_zkp_driver{
 			&format!("{}/needs_ised.dat", set1), //ised (empty)
 			&format!("{}/needs_ised_igc.dat", set1), //ised_igc (empty)
 			max_word, //chunk len
-			&init_cp_cap,
-			&init_sed_cap,
-			&init_dfa_cap,
-			&init_cp_cap_igc,
-			&init_sed_cap_igc,
-			&vec_decrease_level,
-			num_circs,
+			&cs_caps,
 			b_check_lkup
 		);
 	}

@@ -317,8 +317,12 @@ impl SedCapacity{
 			//M5: subsigs currently = universe (set in new); universe_subsigs
 			//already holds it. Shrink the forward step queue to the
 			//estimator-supplied NEEDS (0 = no shrink = pre-M5 behavior).
+			//Clamp NEEDS to this gadget's own universe -- active subsigs
+			//cannot exceed the universe. No-op when universe >= NEEDS (every
+			//symmetric run); lets a collapsed igc sentinel (universe=1) stay
+			//tiny instead of inheriting the cs NEEDS.
 			let needs = read_global_config().aggr_needs_subsigs;
-			if needs > 0 { da.subsigs = needs; }
+			if needs > 0 { da.subsigs = needs.min(da.universe_subsigs); }
 		}
 		self.comp_capacities[2] = Arc::new(da);
 		let mut csa = Clone::clone(self.csa_capacity());

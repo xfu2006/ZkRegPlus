@@ -554,8 +554,10 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		let res = Container::<F>::new(tname);
 		let sname = if b_igc {"discharge_adv_stmt_igc"}
 			else {"discharge_adv_stmt_cs"};
-		let cap_subsigs = if b_igc {capacity.subsigs_cs}
-			else {capacity.subsigs_igc};
+		// CS-only aggressive mode allows subsigs_igc < subsigs_cs; when
+		// symmetric this is identical. The non-aggr gen() is left as-is.
+		let cap_subsigs = if b_igc {capacity.subsigs_igc}
+			else {capacity.subsigs_cs};
 		assert!(inp_subsigs.len()==cap_subsigs);
 		let n = inp_subsigs.len();
 

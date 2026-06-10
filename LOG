@@ -29020,7 +29020,18 @@ Goal 4. build a function which can measure the discharged sigs and failed
 
 Wed 06/10/2026
 Goal 1. fix the sql-connection issue
-	[a] 
+	[a]  combination
+	[b] drop the ones that do NOT have keywords
+	[c] add international folder
+	[d] add requirement to handle 
+	[e] review how to test samples
+	[f] 
 Goal 2. cut half of the cost case sensitive only
-	[a]
-	[i] the other direction.
+	[a] design
+	[b] implenetaion finished
+	[c] test small_email ->25% improvement
+	[d] small_email2 -> sliht change to full dataset, which is good
+	[e] small_email3 
+Goal 3. writing
+	[a] DLP data row
+	[b] description in paragraph 
