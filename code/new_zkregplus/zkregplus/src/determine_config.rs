@@ -10,12 +10,13 @@
 use crate::circs::cp_mapper::CpCapacity;
 use crate::circs::sed_mapper::SedCapacity;
 use crate::circs::dfa_mapper::DfaCapacity;
+use serde::{Serialize, Deserialize};
 
 /// Scalar cap parameters tuned by the loop. Seeded from the estimator output,
 /// bumped per CapErr, and turned into CpCapacity/SedCapacity(/DfaCapacity)
 /// each iteration (we rebuild rather than poke struct fields, since
 /// SedCapacity::new builds internal comp_capacities from these values).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CapParams {
     // CP (critical-pattern) gadget
     pub cp_basis_unique_states: usize,
@@ -46,6 +47,57 @@ pub struct CapParams {
     pub aggr_needs_subsigs: usize,
     pub max_word_len: usize,
     pub acdfa_state_part_bits: usize,
+}
+
+impl CapParams {
+    /// Write this config as pretty JSON. The determine_config -> full_dlp
+    /// handoff: the Python driver never parses stdout or edits source, it
+    /// just sequences runs and lets these files carry the config.
+    pub fn save_json(&self, path: &str) -> std::io::Result<()> {
+        let s = serde_json::to_string_pretty(self)
+            .expect("CapParams serialize");
+        std::fs::write(path, s)
+    }
+
+    /// Read a config written by save_json. Panics with the path on error so
+    /// a missing/garbled handoff fails loudly in the driver.
+    pub fn load_json(path: &str) -> CapParams {
+        let s = std::fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("read config {}: {}", path, e));
+        serde_json::from_str(&s)
+            .unwrap_or_else(|e| panic!("parse config {}: {}", path, e))
+    }
+}
+
+/// The per-step run-config the Python driver writes and points at via the
+/// ZKR_DLP_RUNCFG env var. Paths are repo-root-relative (resolved like
+/// run_db_bundle resolves config_dir). The full_dlp_sample* / full_dlp tests
+/// read this instead of hardcoding paths, so fixture<->real is data-only.
+#[derive(Clone, Debug, Deserialize)]
+pub struct RunCfg {
+    pub config_dir: String,
+    pub sig_file: String,
+    pub cache_dir: String,
+    pub fanout_cap: usize,
+    pub chunk_len: usize,
+    pub range2_bit: usize,
+    #[serde(default)] pub scan_file: String,
+    #[serde(default)] pub config_out: String,
+    #[serde(default)] pub config_c1: String,
+    #[serde(default)] pub config_c2: String,
+    #[serde(default)] pub report_out: String,
+}
+
+impl RunCfg {
+    /// Load the run-config the driver pointed ZKR_DLP_RUNCFG at.
+    pub fn from_env() -> RunCfg {
+        let path = std::env::var("ZKR_DLP_RUNCFG")
+            .expect("ZKR_DLP_RUNCFG not set (run via scripts/run_full_dlp.py)");
+        let s = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read runcfg {}: {}", path, e));
+        serde_json::from_str(&s)
+            .unwrap_or_else(|e| panic!("parse runcfg {}: {}", path, e))
+    }
 }
 
 /// Parse a CapErr out of a panic message. Some gadgets `.expect()` a CapErr
@@ -131,15 +183,33 @@ pub fn apply_caperr_bumps(p: &mut CapParams, b_aggr: bool,
             up(&mut p.dfa_sigs, r, &mut changed);
         } else if name.starts_with("dfa_adv::subsigs") {
             up(&mut p.dfa_subsigs, r, &mut changed);
+        } else if name.starts_with("cp::") {
+            // CP pack gadget caps (pack.rs) -> the CP-capacity fields. Must
+            // precede the generic subsigs/basis branches so cp::subsigs is not
+            // mis-routed to the SED subsigs.
+            if name.starts_with("cp::subsigs") {
+                up(&mut p.cp_subsigs, r, &mut changed);
+            } else if name.starts_with("cp::avg_pats") {
+                up(&mut p.cp_avg_pats, r, &mut changed);
+            } else if name.starts_with("cp::basis_unique_states") {
+                up(&mut p.cp_basis_unique_states, r, &mut changed);
+            } else {
+                unmapped.push(name.clone());
+            }
         } else if name.contains("subsigs") {
             // dis_adv::subsigs / comp_sig::subsigs{,_cs,_igc,_N} / fsm_adv::subsigs
             if igc { up(&mut p.subsigs_igc, r, &mut changed); }
             else {
-                up(&mut p.subsigs, r, &mut changed);
+                // +1 reserves the comp_sig dummy entry (inp_subsigs[0] must be
+                // 0; compute_sig_adv.rs:1103). The universe CapErr reports the
+                // raw subsig count, one short of the buffer comp_sig needs.
+                up(&mut p.subsigs, r + 1, &mut changed);
                 if b_aggr { up(&mut p.aggr_needs_subsigs, r, &mut changed); }
             }
+        } else if name.contains("basis_unique_states") {
+            up(&mut p.basis_unique_states, r, &mut changed);    // SED/fsm pack
         } else {
-            // max_word_len, lkup/pack sizing, basis_unique_states (pack), etc.
+            // max_word_len, lkup/pack sizing, etc.
             unmapped.push(name.clone());
         }
     }

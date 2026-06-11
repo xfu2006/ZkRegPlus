@@ -64,7 +64,8 @@ PARTIAL_DIR = "/tmp/bora_zombie_run"
 PARTIAL     = os.path.join(PARTIAL_DIR, "run_zombie.partial.jsonl")  # per-pass below
 
 ZOMBIE     = "zombie"
-TESTREGEX  = os.path.join(ZOMBIE, "regex", "bin", "TestRegex")
+REGEX_DIR  = os.path.join(ZOMBIE, "regex")         # TestRegex source (built via make)
+TESTREGEX  = os.path.join(REGEX_DIR, "bin", "TestRegex")
 CLONE_CIRC = os.path.join(ZOMBIE, "circ")          # pristine clone (copy source)
 
 # circ cannot be built where it sits -- it is inside the BORA cargo workspace, and
@@ -280,15 +281,37 @@ def _copy_circ_out_of_workspace():
     shutil.copytree(CLONE_CIRC, CIRC_BUILD, symlinks=True, ignore=_root_ignore)
 
 
+def ensure_testregex():
+    """Ensure <ms_dlp>/zombie/regex/bin/TestRegex (the regex->DFA codegen tool) is
+    present. It is a `make` artifact -- the source copy ships zombie/regex/src but
+    not the compiled bin/ -- so build it in place on first use. Paths are relative
+    to cwd (set to get_ms_dlp_dir() in main), so this is machine-independent. Fail
+    early with an actionable message instead of crashing deep in a worker thread
+    with FileNotFoundError."""
+    if os.path.isfile(TESTREGEX):
+        return
+    if not os.path.isdir(REGEX_DIR):
+        raise SystemExit(
+            "TestRegex missing and %s/ not found. Run scripts/download_zombie.py to "
+            "fetch + build the Zombie tree." % REGEX_DIR)
+    print("[zombie] TestRegex missing; building (make in %s)..." % REGEX_DIR)
+    r = subprocess.run(["make"], cwd=REGEX_DIR)
+    if r.returncode != 0 or not os.path.isfile(TESTREGEX):
+        raise SystemExit(
+            "`make` in %s did not produce bin/TestRegex (needs g++ + libgmp-dev). "
+            "See output above, or run scripts/download_zombie.py." % REGEX_DIR)
+
+
 def ensure_zombie_built(sizes):
     """Build circ_executable (with our policy_<N> arms) from the out-of-workspace
-    copy and return the binary path.
+    copy and return the binary path. Also provisions TestRegex if absent.
 
     The copy's zkmb.rs is patched IDEMPOTENTLY: a pristine zkmb.rs.orig is captured
     once and zkmb.rs is regenerated from it every call, so the result is a pure
     function of the baseline -- N runs equal 1 run. Rebuilds only when the source
     changed or the binary is missing. Uses the committed Cargo.lock (--locked) and
     system GMP/MPFR/MPC (download_zombie.py's verified recipe)."""
+    ensure_testregex()                 # regex->DFA codegen tool (make artifact)
     _copy_circ_out_of_workspace()
 
     # capture the copy's pristine baseline once (the clone never patches zkmb.rs).

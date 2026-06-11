@@ -49,7 +49,7 @@ use crate::{
 	strings::{find_all,extract_nums,validate_counter_constraint,validate_ra_regex,validate_ra_regex_relaxed,validate_pm_regex,is_match,find_only,count_occ,drop_last_dotstar,split,validate_expr},
 	type_def::{PcreInfo,ClamSigType,SubSigType,SubSigObj,ClamavApproxConfig,TriVal,ClamavSig,EvalDNF,CompOp},
 	hex_acdfa::{HexACDFA},
-	pcre::{collect_bag_words_from_rustomaton_regex, collect_pm_reg_from_rustomaton_regex, rustomaton_to_hir, collect_pm_reg_from_rustomaton_regex_worker, vec_pmreg_to_res, pcre_to_dfa, clamav_genregex_to_dfa, filter_bag_of_words,parse_pcre_subsig, expand_rep_subsig, pcre_to_rustomaton_regex, to_hir, analyze_aggressive_shape, AggShapeErr},
+	pcre::{collect_bag_words_from_rustomaton_regex, collect_pm_reg_from_rustomaton_regex, rustomaton_to_hir, collect_pm_reg_from_rustomaton_regex_worker, vec_pmreg_to_res, pcre_to_dfa, clamav_genregex_to_dfa, filter_bag_of_words,parse_pcre_subsig, expand_rep_subsig, pcre_to_rustomaton_regex, to_hir, analyze_aggressive_shape, direction_from_name, AggShapeErr},
 	fsa_utils::{size_nfa,build_dfa,size_dfa,empty_nfa,build_nfa,get_total_size},
 	preprocess::{is_pcre_subsig,handle_range,handle_modifier,handle_location,handle_negation,handle_modifier_for_pm,handle_location_for_pm,recursive_triggers,plug_in_trigger,extract_clamav_reg},
 	discharge_proof::{FailDischargeRecord, ChunkPeaks},
@@ -478,17 +478,7 @@ pub fn gen_clamav_sig(s: &str, sigtype: ClamSigType, cfg: &ClamavApproxConfig)
 		vec_subsig_anchor_dir: vec![],
 		vec_fanout_map: vec![],
 	};
-	let raw_subsigs: Vec<String> = parts[3..].to_vec();
 	sig.preprocess(cfg);
-	println!("DEBUG USE 60123.1: name={} raw_subsigs={:?}",
-		sig.name, raw_subsigs);
-	println!("DEBUG USE 60123.2: name={} post-preprocess \
-		vec_subsigs={:?} vec_bcase_sensitive={:?} vec_bneg={:?}",
-		sig.name, sig.vec_subsigs, sig.vec_bcase_sensitive,
-		sig.vec_bneg);
-	println!("DEBUG USE 60123.3: name={} vec_pcre_info={:?}",
-		sig.name, sig.vec_pcre_info);
-
 	sig
 }
 
@@ -2365,9 +2355,13 @@ impl ClamavSig{
 		let mut anchors = vec![-1i8; n];
 		for id in 0..n {
 			if self.vec_pcre_info[id].b_pcre {
+				//name-driven direction; direction_from_name asserts the
+				//.fwd/.bwd convention. Non-PCRE sigs skip this entirely.
+				let dir = direction_from_name(&self.name);
 				let (_t, body, _f) = extract_clamav_reg(
 					&self.vec_pcre_info[id].original_str);
-				let info = analyze_aggressive_shape(&to_hir(&body))?;
+				let info =
+					analyze_aggressive_shape(&to_hir(&body), Some(dir))?;
 				if let Some(d) = info.anchor { anchors[id] = d; }
 				max_span_nibbles =
 					max_span_nibbles.max(info.max_span_bytes * 2);

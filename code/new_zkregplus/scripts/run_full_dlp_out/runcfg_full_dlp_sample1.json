@@ -1,0 +1,10 @@
+{
+  "config_dir": "data/paper_data/dlp",
+  "sig_file": "main_dlp_sample.dat",
+  "cache_dir": "dlp_sample_cache",
+  "fanout_cap": 10,
+  "chunk_len": 512,
+  "range2_bit": 25,
+  "config_c1": "data/paper_data/dlp/dlp_config_C1.json",
+  "config_c2": "data/paper_data/dlp/dlp_config_C2.json"
+}

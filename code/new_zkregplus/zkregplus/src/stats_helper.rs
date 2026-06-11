@@ -18,7 +18,7 @@ use utils::{
 	timer::{Timer},
 };
 use data_processor::{
-	discharge_proof::{FailDischargeRecord},
+	discharge_proof::{FailDischargeRecord, ChunkPeaks},
 	discharge_prover::{quick_discharge_file, discharge_file},
 	clamav::{default_clamav_cfg},
 	clam_db::{ClamavDB},
@@ -424,6 +424,19 @@ pub fn report_all_discharge_approach_stats<F:PrimeField>(sig_file: &str, needs_d
 		}
 	}).collect::<Vec<FailDischargeRecord>>();// for each file
 
+	// TEMP (gen dlp list -- remove after): write pass/fail lists when
+	// ZKR_DLP_LIST_DIR is set. pass = discharged (!is_fail), fail = not.
+	if let Ok(dir) = std::env::var("ZKR_DLP_LIST_DIR") {
+		let pass: Vec<String> = final_data.iter().filter(|r| !r.is_fail())
+			.map(|r| r.fname.clone()).collect();
+		let fail: Vec<String> = final_data.iter().filter(|r| r.is_fail())
+			.map(|r| r.fname.clone()).collect();
+		write_lines(&format!("{}/pass_clean_enron_list.txt", dir), &pass, true);
+		write_lines(&format!("{}/fail_clean_enron_list.txt", dir), &fail, true);
+		println!("DLP LIST: total={}, pass(discharged)={}, fail={}, dir={}",
+			final_data.len(), pass.len(), fail.len(), dir);
+	}
+
 	//3. write the report
 	println!("Step 3. print discharge stats ...");
 	print_discharge_stats(&final_data, &mut vlog);
@@ -440,6 +453,134 @@ pub fn report_all_discharge_approach_stats<F:PrimeField>(sig_file: &str, needs_d
 	//4. print specifically the SED and ISED stats
 	print_sed_stats::<F>(&final_data, db, &mut vlog);
 	write_lines(report_file, &vlog, true);
+}
+
+/// Discharge every file in `list_file` against the DLP DB and split into
+/// pass (discharged) / fail (not) lists under `out_dir`. Lean path: DB
+/// build + parallel discharge only -- no estimator / SED stats (those are
+/// the serial low-memory tail). A 5s heartbeat + slow-file probe localize
+/// where wall time goes. Each discharge is panic-guarded so one bad file
+/// cannot abort the run.
+pub fn collect_discharge_pass_fail<F:PrimeField>(
+	sig_file: &str, needs_dfa_file: &str,
+	needs_ised_file: &str, needs_ised_igc_file: &str,
+	list_file: &str, path_prefix: &str, out_dir: &str,
+	b_read_cache: bool, b_write_cache: bool, cache_dir: &str,
+	seg_word_len: usize){
+	use std::sync::Arc;
+	use std::sync::atomic::{AtomicUsize, AtomicU8, Ordering};
+	use std::time::{Instant, Duration};
+
+	let proot = proj_root();
+	let cfg = default_clamav_cfg();
+	let mut vlog = vec![];
+	let t0 = Instant::now();
+
+	// normalize list: drop blank / '#' lines, prepend dataset base so
+	// each entry is proot-relative (what quick_discharge expects).
+	// path_prefix="" leaves already-full paths untouched.
+	let raw = read_lines(&format!("{}/{}", proot, list_file));
+	let files: Vec<String> = raw.iter().map(|l| l.trim())
+		.filter(|l| !l.is_empty() && !l.starts_with('#'))
+		.map(|l| if path_prefix.is_empty() { l.to_string() }
+			else { format!("{}/{}", path_prefix, l) })
+		.collect();
+	let total = files.len();
+	println!("[collect] list={} kept={} (raw={})",
+		list_file, total, raw.len());
+
+	// phase: 0=db_build 1=discharge 2=write 3=done
+	let phase = Arc::new(AtomicU8::new(0));
+	let done  = Arc::new(AtomicUsize::new(0));
+	let (hb_p, hb_d) = (phase.clone(), done.clone());
+	let hb = std::thread::spawn(move || {
+		let names = ["db_build","discharge","write","done"];
+		let pick = |s:&str,k:&str| -> String { s.lines()
+			.find(|l| l.starts_with(k))
+			.and_then(|l| l.split_whitespace().nth(1)
+				.map(String::from)).unwrap_or("?".into()) };
+		loop{
+			std::thread::sleep(Duration::from_secs(5));
+			let p = hb_p.load(Ordering::Relaxed);
+			if p >= 3 { break; }
+			let d = hb_d.load(Ordering::Relaxed);
+			let el = t0.elapsed().as_secs_f64();
+			let st = std::fs::read_to_string("/proc/self/status")
+				.unwrap_or_default();
+			let mi = std::fs::read_to_string("/proc/meminfo")
+				.unwrap_or_default();
+			println!("[collect HB] phase={} done={}/{} \
+elapsed={:.0}s rate={:.0}f/s VmRSS={}kB MemAvail={}kB",
+				names[p as usize], d, total, el,
+				if el>0.0 {d as f64/el} else {0.0},
+				pick(&st,"VmRSS:"), pick(&mi,"MemAvailable:"));
+		}
+	});
+
+	// phase 0: DB build / load (high memory; cached for reruns)
+	println!("[collect] phase0 DB build/load start ...");
+	let db = ClamavDB::<F>::build_or_load(&cfg, sig_file,
+		needs_dfa_file, needs_ised_file, needs_ised_igc_file,
+		&mut vlog, cache_dir, b_read_cache, b_write_cache)
+		.expect("build db err");
+	db.print_summary(&mut vlog);
+	println!("[collect] phase0 DB done at {:.0}s",
+		t0.elapsed().as_secs_f64());
+
+	// phase 1: parallel discharge (low memory; the long pole). Each call
+	// is caught so a single panic counts as fail, not a run abort.
+	phase.store(1, Ordering::Relaxed);
+	let slow = Duration::from_secs(2);
+	let recs = files.par_iter().map(|fp| {
+		let ti = Instant::now();
+		let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+			|| quick_discharge_file(fp, &db, &cfg, 1, seg_word_len)));
+		let dt = ti.elapsed();
+		if dt > slow {
+			println!("[collect SLOW] took={:.1}s file={}",
+				dt.as_secs_f64(), fp);
+		}
+		done.fetch_add(1, Ordering::Relaxed);
+		res.unwrap_or_else(|_| {
+			println!("[collect PANIC] file={}", fp);
+			let mut bad: HashSet<String> = HashSet::new();
+			bad.insert("PANIC".to_string());
+			FailDischargeRecord{
+				fname: fp.clone(), flen: 0,
+				crit: HashSet::new(), bag: HashSet::new(),
+				pm: HashSet::new(), all_dfa: bad,
+				total_unique_states: 0, total_acc_path_len: 0,
+				total_hs_size: 0, total_accepted: 0,
+				total_pm_witness_len: 0, ind_pm_reg: HashSet::new(),
+				most_freq_sed_cs_pats: None, seg_size: 0,
+				max_seg_acc_rate: 0.0, max_seg_pat_rate: 0.0,
+				most_freq_seg_cs_pats: None,
+				chunk_peaks: ChunkPeaks::default(),
+			}
+		})
+	}).collect::<Vec<FailDischargeRecord>>();
+	println!("[collect] phase1 discharge done at {:.0}s",
+		t0.elapsed().as_secs_f64());
+
+	// phase 2: split + write full / pass / fail
+	phase.store(2, Ordering::Relaxed);
+	let full: Vec<String> = recs.iter()
+		.map(|r| r.fname.clone()).collect();
+	let pass: Vec<String> = recs.iter().filter(|r| !r.is_fail())
+		.map(|r| r.fname.clone()).collect();
+	let fail: Vec<String> = recs.iter().filter(|r| r.is_fail())
+		.map(|r| r.fname.clone()).collect();
+	write_lines(&format!("{}/full_clean_enron_list.txt", out_dir),
+		&full, true);
+	write_lines(&format!("{}/pass_clean_enron_list.txt", out_dir),
+		&pass, true);
+	write_lines(&format!("{}/fail_clean_enron_list.txt", out_dir),
+		&fail, true);
+	phase.store(3, Ordering::Relaxed);
+	let _ = hb.join();
+	println!("[collect] DONE total={} pass(discharged)={} fail={} \
+wall={:.0}s dir={}", total, pass.len(), fail.len(),
+		t0.elapsed().as_secs_f64(), out_dir);
 }
 
 /// One percentile's estimated config values (the numbers a runner would

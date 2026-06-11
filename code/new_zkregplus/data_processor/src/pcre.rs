@@ -172,7 +172,7 @@ pub fn expand_rep_subsig(orig: &str, b_igc: bool,
 	//budget never lands on a boundary `[ws]` delimiter. The keyword side
 	//+ gap is re-emitted verbatim and concatenated back onto each
 	//variant. Non-matching shapes keep the whole-HIR path (unchanged).
-	let (head, regex_hir, tail) = match partition_keyword_gap(&hir) {
+	let (head, regex_hir, tail) = match partition_keyword_gap(&hir, None) {
 		Some(arm) if arm.dir == 0 =>
 			(render_verbatim(&arm.anchor), concat_hir(&arm.regex),
 			 String::new()),
@@ -630,16 +630,23 @@ fn is_ws_class(c: &Class) -> bool {
 		b == 0x09 || b == 0x0a || b == 0x0d || b == 0x20)
 }
 
-/// True for a `.{0,N}` (dot-class repetition) with bounded N >= GAP_MIN.
-fn is_big_gap(h: &Hir) -> bool {
+/// N of a `.{0,N}` big gap (bounded N >= GAP_MIN over a wildcard class),
+/// else None. Lets the partition pick the LONGEST proximity gap when a
+/// pattern has several gaps.
+fn gap_size(h: &Hir) -> Option<usize> {
 	match h.kind() {
-		HirKind::Repetition(rep) => matches!(rep.max,
-			Some(m) if (m as usize) >= GAP_MIN)
-			&& matches!(rep.sub.kind(),
-				HirKind::Class(c) if card(c) >= 256),
-		_ => false,
+		HirKind::Repetition(rep) => match rep.max {
+			Some(m) if (m as usize) >= GAP_MIN
+				&& matches!(rep.sub.kind(),
+					HirKind::Class(c) if card(c) >= 256) => Some(m as usize),
+			_ => None,
+		},
+		_ => None,
 	}
 }
+
+/// True for a `.{0,N}` (dot-class repetition) with bounded N >= GAP_MIN.
+fn is_big_gap(h: &Hir) -> bool { gap_size(h).is_some() }
 
 /// One DLP arm split around its proximity gap. `dir` 0 = keyword left of
 /// the gap (forward), 1 = keyword right (backward). `anchor` = the
@@ -651,18 +658,30 @@ struct ArmShape { dir: i8, anchor: Vec<Hir>, regex: Vec<Hir> }
 /// keyword side must be only literal(s) and whitespace delimiters; the
 /// far side must hold at least one class run. None for any other shape
 /// -> caller keeps the whole-HIR path.
-fn partition_keyword_gap(hir: &Hir) -> Option<ArmShape> {
+fn partition_keyword_gap(hir: &Hir, dir_hint: Option<i8>)
+	-> Option<ArmShape> {
 	let segs: Vec<&Hir> = match hir.kind() {
 		HirKind::Concat(v) => v.iter().collect(),
 		_ => return None,
 	};
-	let gap = segs.iter().position(|s| is_big_gap(s))?;
-	let kw = segs.iter().position(|s| matches!(s.kind(),
-		HirKind::Literal(x) if x.0.len() >= MIN_KW_ANCHOR_BYTES))?;
-	let (dir, anchor_rng, regex_rng) = if kw < gap {
-		(0i8, 0..gap + 1, gap + 1..segs.len())
+	//longest proximity gap (idea 3): disambiguates multiple gaps.
+	let gap = segs.iter().enumerate()
+		.filter_map(|(i, s)| gap_size(s).map(|n| (i, n)))
+		.max_by_key(|&(_, n)| n).map(|(i, _)| i)?;
+	//direction: the caller's hint (from the .fwd/.bwd sig name) wins; else
+	//guess from the keyword-literal position (legacy path).
+	let dir = match dir_hint {
+		Some(d) => d,
+		None => {
+			let kw = segs.iter().position(|s| matches!(s.kind(),
+				HirKind::Literal(x) if x.0.len() >= MIN_KW_ANCHOR_BYTES))?;
+			if kw < gap { 0i8 } else { 1i8 }
+		}
+	};
+	let (anchor_rng, regex_rng) = if dir == 0 {
+		(0..gap + 1, gap + 1..segs.len())
 	} else {
-		(1i8, gap..segs.len(), 0..gap)
+		(gap..segs.len(), 0..gap)
 	};
 	//keyword side = only literals + whitespace classes (and the gap).
 	for i in anchor_rng.clone() {
@@ -673,8 +692,11 @@ fn partition_keyword_gap(hir: &Hir) -> Option<ArmShape> {
 			_ => return None,
 		}
 	}
-	//far side must contain at least one fan-out leg.
-	if !regex_rng.clone().any(|i| !find_class_runs(segs[i]).is_empty()) {
+	//far side must contain at least one fan-out leg -- only when guessing.
+	//With an authoritative dir_hint the far side IS the regex by
+	//definition, so a fully-concrete fanned variant (no class run) is fine.
+	if dir_hint.is_none()
+		&& !regex_rng.clone().any(|i| !find_class_runs(segs[i]).is_empty()) {
 		return None;
 	}
 	Some(ArmShape {
@@ -701,10 +723,10 @@ fn render_verbatim(segs: &[Hir]) -> String {
 /// chain (else KwInMiddle / NoAnchor); unbounded gaps rejected. A
 /// ws-delimited keyword arm (`[ws]KW[ws].{0,N}REGEX`) is accepted via
 /// partition_keyword_gap before the generic check.
-pub fn analyze_aggressive_shape(hir: &Hir)
+pub fn analyze_aggressive_shape(hir: &Hir, dir_hint: Option<i8>)
 	-> Result<ShapeInfo, AggShapeErr> {
 	let span = max_match_bytes(hir)?;           // also rejects Unbounded
-	if let Some(arm) = partition_keyword_gap(hir) {
+	if let Some(arm) = partition_keyword_gap(hir, dir_hint) {
 		return Ok(ShapeInfo { anchor: Some(arm.dir),
 			max_span_bytes: span });
 	}
@@ -736,6 +758,17 @@ pub fn analyze_aggressive_shape(hir: &Hir)
 	} else {
 		Err(AggShapeErr::KwInMiddle)
 	}
+}
+
+/// Anchor direction from a generator sig name: 'fwd' -> 0 (keyword left),
+/// 'bwd' -> 1 (keyword right). Asserts the name carries a 'fwd'/'bwd'
+/// keyword (the generator always appends .fwd/.bwd to a DLP proximity
+/// sig); a missing one is a generator/format bug.
+pub fn direction_from_name(name: &str) -> i8 {
+	assert!(name.contains("fwd") || name.contains("bwd"),
+		"aggressive shape: sig name '{}' must contain a 'fwd'/'bwd' \
+		 direction keyword", name);
+	if name.contains("bwd") { 1 } else { 0 }
 }
 
 /// Cardinality of a character class = count of distinct bytes it
@@ -2534,39 +2567,80 @@ mod tests_pcre{
 		use super::{analyze_aggressive_shape, AggShapeErr};
 		//T1 F1 forward: keyword SSN leftmost, span 78 bytes.
 		let r = analyze_aggressive_shape(&to_hir(
-			"SSN.{0,64}[0-9]{3}[-\\s]?[0-9]{2}[-\\s]?[0-9]{4}"))
+			"SSN.{0,64}[0-9]{3}[-\\s]?[0-9]{2}[-\\s]?[0-9]{4}"), None)
 			.unwrap();
 		assert_eq!((r.anchor, r.max_span_bytes), (Some(0), 78));
 		//T2 F2 single backward: SSN rightmost, span 78.
 		let r = analyze_aggressive_shape(&to_hir(
-			"[0-9]{3}[-\\s]?[0-9]{2}[-\\s]?[0-9]{4}.{0,64}SSN"))
+			"[0-9]{3}[-\\s]?[0-9]{2}[-\\s]?[0-9]{4}.{0,64}SSN"), None)
 			.unwrap();
 		assert_eq!((r.anchor, r.max_span_bytes), (Some(1), 78));
 		//T3 F2 multi backward: trailing literal, span 90.
 		let r = analyze_aggressive_shape(&to_hir(
-			"([0-9]{3}\\s){2}[0-9]{3}.{0,64}driving\\x20license"))
+			"([0-9]{3}\\s){2}[0-9]{3}.{0,64}driving\\x20license"), None)
 			.unwrap();
 		assert_eq!((r.anchor, r.max_span_bytes), (Some(1), 90));
 		//T4 unbounded gap rejected.
-		assert_eq!(analyze_aggressive_shape(&to_hir("SSN.*[0-9]{3}")),
+		assert_eq!(analyze_aggressive_shape(&to_hir("SSN.*[0-9]{3}"), None),
 			Err(AggShapeErr::Unbounded));
 		//T5 keyword in the middle rejected.
 		assert_eq!(analyze_aggressive_shape(&to_hir(
-			"[0-9]{3}.{0,9}SSN.{0,9}[0-9]{3}")),
+			"[0-9]{3}.{0,9}SSN.{0,9}[0-9]{3}"), None),
 			Err(AggShapeErr::KwInMiddle));
 		//T6 no keyword anchor rejected.
 		assert_eq!(analyze_aggressive_shape(&to_hir(
-			"[0-9]{3}.{0,9}[0-9]{3}")),
+			"[0-9]{3}.{0,9}[0-9]{3}"), None),
 			Err(AggShapeErr::NoAnchor));
 		//T7 number pattern with a leading 1-byte literal digit (ITIN:
 		//`9[0-9]{2}...`) is NOT a middle keyword -- the lone `9` is
 		//regex content, so keyword `ITIN` anchors forward / backward.
 		let r = analyze_aggressive_shape(&to_hir(
-			"ITIN.{0,64}9[0-9]{2}[-\\s]?[0-9]{4}")).unwrap();
+			"ITIN.{0,64}9[0-9]{2}[-\\s]?[0-9]{4}"), None).unwrap();
 		assert_eq!(r.anchor, Some(0));
 		let r = analyze_aggressive_shape(&to_hir(
-			"9[0-9]{2}[-\\s]?[0-9]{4}.{0,64}ITIN")).unwrap();
+			"9[0-9]{2}[-\\s]?[0-9]{4}.{0,64}ITIN"), None).unwrap();
 		assert_eq!(r.anchor, Some(1));
+		tests_sde_rep_name_direction();
+	}
+
+	/// Name-driven direction (idea 1/3): the .fwd/.bwd sig name selects the
+	/// anchor side, so a leading short literal (e.g. "00") can't be mistaken
+	/// for the keyword. Longest-gap split + far-side relaxation for a
+	/// fully-concrete fanned variant.
+	fn tests_sde_rep_name_direction(){
+		use super::{analyze_aggressive_shape, direction_from_name, to_hir};
+		// real bora .bwd arm (leading "00") that used to panic KwInMiddle:
+		// the backward hint accepts it.
+		let r = analyze_aggressive_shape(&to_hir(
+			"00[0-9]{2}\\x2D?[0-9]{4}\\x2D?[0-9].{0,300}\
+			 [\\x20\\x09\\x0a\\x0d]aba\\x20number[\\x20\\x09\\x0a\\x0d]"),
+			Some(1)).unwrap();
+		assert_eq!(r.anchor, Some(1));
+		// same SIT, forward arm with the forward hint.
+		let r = analyze_aggressive_shape(&to_hir(
+			"[\\x20\\x09\\x0a\\x0d]aba\\x20number[\\x20\\x09\\x0a\\x0d]\
+			 .{0,300}00[0-9]{2}\\x2D?[0-9]{4}\\x2D?[0-9]"),
+			Some(0)).unwrap();
+		assert_eq!(r.anchor, Some(0));
+		// multiple gaps -> the LONGEST one is the split (idea 3).
+		let r = analyze_aggressive_shape(&to_hir(
+			"[0-9]{3}.{0,150}[0-9]{4}.{0,300}KEYWORD"), Some(1)).unwrap();
+		assert_eq!(r.anchor, Some(1));
+		// fully-concrete far side (no class run) still accepted via the
+		// hint (far-side relaxation); keyword side stays clean.
+		let r = analyze_aggressive_shape(&to_hir(
+			"0012345678.{0,300}[\\x20]aba\\x20number[\\x20]"),
+			Some(1)).unwrap();
+		assert_eq!(r.anchor, Some(1));
+		// direction_from_name keyword assertion.
+		assert_eq!(direction_from_name("Dlp.x.kw00.p00.fwd"), 0);
+		assert_eq!(direction_from_name("Dlp.x.kw00.p00.bwd"), 1);
+	}
+
+	#[test]
+	#[should_panic]
+	fn tests_sde_rep_name_direction_missing(){
+		super::direction_from_name("Dlp.x.kw00.p00");
 	}
 
 	#[test]
@@ -2836,8 +2910,9 @@ mod tests_pcre{
 		// forward arm -> dir 0, no KwInMiddle crash.
 		let fwd = "[\\x20\\x09\\x0a\\x0d]insurance[\\x20\\x09\\x0a\\x0d]\
 			.{0,300}[A-Za-z]{2}[0-9]{6}[ABCDabcd]";
-		assert_eq!(partition_keyword_gap(&to_hir(fwd)).unwrap().dir, 0);
-		assert_eq!(analyze_aggressive_shape(&to_hir(fwd)).unwrap()
+		assert_eq!(partition_keyword_gap(&to_hir(fwd), None).unwrap().dir,
+			0);
+		assert_eq!(analyze_aggressive_shape(&to_hir(fwd), None).unwrap()
 			.anchor, Some(0));
 		let vf = expand_rep_subsig(fwd, false, &cfg).expect("fwd");
 		// anchor (ws+KW+gap) is verbatim and identical across variants;
@@ -2853,21 +2928,23 @@ mod tests_pcre{
 		// backward mirror -> dir 1, no crash.
 		let bwd = "[A-Za-z]{2}[0-9]{6}[ABCDabcd].{0,300}\
 			[\\x20\\x09\\x0a\\x0d]insurance[\\x20\\x09\\x0a\\x0d]";
-		assert_eq!(partition_keyword_gap(&to_hir(bwd)).unwrap().dir, 1);
-		assert_eq!(analyze_aggressive_shape(&to_hir(bwd)).unwrap()
+		assert_eq!(partition_keyword_gap(&to_hir(bwd), None).unwrap().dir,
+			1);
+		assert_eq!(analyze_aggressive_shape(&to_hir(bwd), None).unwrap()
 			.anchor, Some(1));
 		// Sweden fwd: regex part = ([0-9]{2})?[0-9]{6}[+-]?[0-9]{4};
 		// mandatory-first pins concrete digit bytes in the regex part.
 		let swe = "[\\x20\\x09\\x0a\\x0d]id\\x20no[\\x20\\x09\\x0a\\x0d]\
 			.{0,300}([0-9]{2})?[0-9]{6}[\\x2D\\x2B]?[0-9]{4}";
-		assert_eq!(partition_keyword_gap(&to_hir(swe)).unwrap().dir, 0);
+		assert_eq!(partition_keyword_gap(&to_hir(swe), None).unwrap().dir,
+			0);
 		let vs = expand_rep_subsig(swe, false, &cfg).expect("swe");
 		assert!(vs.iter().any(|s| s.contains("\\x30")),
 			"no pinned digit in regex part");
 		// non-matching shapes -> None (keep whole-HIR path).
-		assert!(partition_keyword_gap(&to_hir("[0-9]{3}-[0-9]{3}"))
+		assert!(partition_keyword_gap(&to_hir("[0-9]{3}-[0-9]{3}"), None)
 			.is_none());
-		assert!(partition_keyword_gap(&to_hir("foo[0-9]{3}"))
+		assert!(partition_keyword_gap(&to_hir("foo[0-9]{3}"), None)
 			.is_none());
 	}
 

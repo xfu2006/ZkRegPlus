@@ -3,7 +3,7 @@
 */
 
 //use std::collections::{HashSet};
-use utils::{logger::{log,LOG1,log_perf}, timer::Timer as GTimer, consts::read_global_config};
+use utils::{logger::{log,LOG1,log_perf}, timer::Timer as GTimer, consts::{read_global_config, get_global_config}};
 use ark_ff::{Field,PrimeField,ToConstraintField};
 use ark_ec::{Group, CurveGroup,
 	pairing::{Pairing},
@@ -397,9 +397,11 @@ pub(crate) fn determine_config_aggr<F,C,CS>(
 	sample_word_infos: &Vec<WordInfo>,
 	mut p: crate::determine_config::CapParams,
 	chunk_len: usize, lkup_len: usize, total_word_n: usize, max_iters: usize,
+	n_threads: usize,
 )->Result<crate::determine_config::CapParams, String>
 where C: CurveGroup<ScalarField=F>,
 	  CS: CommitmentScheme<C,false>,
+	  <CS as CommitmentScheme<C,false>>::ProverParams: Send + Sync,
 	  F: PrimeField + Absorb + ColEle,
 {
 	use folding_schemes::folding::foldpot::capacity_planner::CapacityPlanner;
@@ -424,7 +426,7 @@ where C: CurveGroup<ScalarField=F>,
 				false);
 			let planner = CapacityPlanner::<C, FC<F,C,CS>, LK<F>, GM<F>,
 				false>::new(layered);
-			planner.capacity_probe(&padded, sample_word_infos)
+			planner.capacity_probe_par(&padded, sample_word_infos, n_threads)
 		})?;
 		t_round.stop();
 		match probe_res {
@@ -456,6 +458,73 @@ where C: CurveGroup<ScalarField=F>,
 	Err(format!("max_iters {} reached without convergence", max_iters))
 }
 
+/// One DLP sample's determine_config run (M2). Builds-or-loads the cached
+/// aggressive DLP DB (first run builds+caches, rest load), discharges the
+/// sample manifest, auto-tunes the LOWEST CapParams via determine_config_aggr
+/// (seeded low; CapErr bumps are exact so it converges in a few iters), and
+/// writes the result to rc.config_out -- the JSON handoff the driver sequences.
+pub(crate) fn run_dlp_sample_config<F,C,CS>(rc: &crate::determine_config::RunCfg)
+where C: CurveGroup<ScalarField=F>,
+      CS: CommitmentScheme<C,false>,
+      <CS as CommitmentScheme<C,false>>::ProverParams: Send + Sync,
+      F: PrimeField + Absorb + ColEle,
+{
+	use crate::determine_config::capparams_from_caps_aggr;
+	//1. knobs: aggressive CS-only fan-out; low floors so the tuner finds the
+	//true minimum (bumps climb to the exact required value).
+	get_global_config().range2_bit = rc.range2_bit;
+	get_global_config().b_light_test = true;
+	get_global_config().perc_lkup_share = 1;
+	get_global_config().min_subsigs = 1;
+	get_global_config().min_basis_unique_states = 2;
+	get_global_config().min_basis_acc_states = 2;
+	get_global_config().min_basis_pats_in_trace = 4;
+	get_global_config().min_avg_pats_per_subsig = 1;
+	get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
+	get_global_config().clamav_cfg.sde_rep_fanout_cap = rc.fanout_cap;
+	get_global_config().clamav_cfg.min_pm_word_len = 3;
+
+	//2. build or load the cached DB (shared across all samples; same sig set)
+	let cfg = default_clamav_cfg();
+	let sig = format!("{}/{}", rc.config_dir, rc.sig_file);
+	let dfa = format!("{}/main_dfa.dat", rc.config_dir);
+	let ised = format!("{}/needs_ised.dat", rc.config_dir);
+	let ised_igc = format!("{}/needs_ised_igc.dat", rc.config_dir);
+	let mut vlog = vec![];
+	let db = ClamavDB::<F>::build_or_load(&cfg, &sig, &dfa, &ised, &ised_igc,
+		&mut vlog, &rc.cache_dir, true, true).expect("build/load db");
+
+	//3. discharge the sample manifest -> words + per-file WordInfo
+	let scan = format!("{}/{}", rc.config_dir, rc.scan_file);
+	let (words, infos, _fnames) = load_files::<F>(0, &scan, &db, &cfg,
+		false, &rc.cache_dir, rc.chunk_len);
+	let total_word_n: usize = words.iter().map(|w| w.len()).sum();
+	let rc_db = Arc::new(db);
+	let lkup_len = rc_db.lkup.get_size();
+
+	//4. seed a LOW config; determine_config_aggr climbs via exact CapErr bumps
+	let mw = rc.chunk_len;
+	let cp = CpCapacity { max_word_len: mw, basis_unique_states: 2,
+		subsigs: 1, avg_pats_per_subsig: 1 };
+	let sed = SedCapacity::new(mw, rc.range2_bit, 1, 1, 1, 4, 16, 1, 1, 2, 2);
+	let p0 = capparams_from_caps_aggr(&cp, &sed, 1);
+
+	//5. tune + write the JSON handoff
+	let n_threads = std::env::var("ZKR_DC_THREADS").ok()
+		.and_then(|s| s.parse().ok()).unwrap_or(4);
+	match determine_config_aggr::<F,C,CS>(rc_db, &words, &infos, p0,
+		rc.chunk_len, lkup_len, total_word_n, 60, n_threads) {
+		Ok(p) => {
+			// resolve via proj_root (test cwd is the package dir, not the
+			// workspace root) -- matching load_files' path handling.
+			let out = format!("{}/{}", proj_root(), rc.config_out);
+			p.save_json(&out).expect("save config_out");
+			log(0, LOG1, &format!("FULL_DLP sample -> {} : {:?}", out, p));
+		}
+		Err(e) => panic!("determine_config_aggr failed: {}", e),
+	}
+}
+
 /// determine_config (non-aggressive): same loop as the aggressive variant but
 /// builds the full cs/igc/dfa ladder via build_circs_adv. CapErr bumps route
 /// to cs or igc fields by the b_igc suffix. Returns the confirmed-lowest base
@@ -467,9 +536,11 @@ pub(crate) fn determine_config_general<F,C,CS>(
 	mut p: crate::determine_config::CapParams,
 	chunk_len: usize, lkup_len: usize, total_word_n: usize,
 	vec_decrease_level: &Vec<usize>, n_circs: usize, max_iters: usize,
+	n_threads: usize,
 )->Result<crate::determine_config::CapParams, String>
 where C: CurveGroup<ScalarField=F>,
 	  CS: CommitmentScheme<C,false>,
+	  <CS as CommitmentScheme<C,false>>::ProverParams: Send + Sync,
 	  F: PrimeField + Absorb + ColEle,
 {
 	use folding_schemes::folding::foldpot::capacity_planner::CapacityPlanner;
@@ -489,7 +560,7 @@ where C: CurveGroup<ScalarField=F>,
 				&cp_igc, &sed_igc, vec_decrease_level, n_circs, false);
 			let planner = CapacityPlanner::<C, FC<F,C,CS>, LK<F>, GM<F>,
 				false>::new(layered);
-			planner.capacity_probe(&padded, sample_word_infos)
+			planner.capacity_probe_par(&padded, sample_word_infos, n_threads)
 		})?;
 		t_round.stop();
 		match probe_res {
@@ -890,9 +961,15 @@ where
 			.flat_map(|j| j.vec_words.iter().cloned()).collect();
 		let all_infos: Vec<WordInfo> = jobs.iter()
 			.flat_map(|j| j.vec_word_info.iter().cloned()).collect();
+		// concurrency degree for the probe (bounds peak RAM = N ladder clones).
+		let n_threads = std::env::var("ZKR_DC_THREADS").ok()
+			.and_then(|s| s.parse().ok()).unwrap_or(4);
+		log(0, log_level, &format!("DETERMINE_CONFIG: probing {} words over \
+			{} threads", all_words.len(), n_threads));
 		match determine_config_general::<CF1<C1>,C1,CS1>(rc_db.clone(),
 			&all_words, &all_infos, p0, chunk_len,
-			lkup_len, max_total_word_len, vec_decrease_level, num_circs, 60) {
+			lkup_len, max_total_word_len, vec_decrease_level, num_circs, 60,
+			n_threads) {
 			Ok(new) => {
 				log(0, log_level, &format!(
 					"DETERMINE_CONFIG RESULT (new): {:?}", new));
@@ -1069,9 +1146,11 @@ where
 			.flat_map(|j| j.vec_words.iter().cloned()).collect();
 		let all_infos: Vec<WordInfo> = jobs.iter()
 			.flat_map(|j| j.vec_word_info.iter().cloned()).collect();
+		let n_threads = std::env::var("ZKR_DC_THREADS").ok()
+			.and_then(|s| s.parse().ok()).unwrap_or(4);
 		match determine_config_aggr::<CF1<C1>,C1,CS1>(rc_db.clone(),
 			&all_words, &all_infos, p0, chunk_len,
-			lkup_len, max_total_word_len, 30) {
+			lkup_len, max_total_word_len, 30, n_threads) {
 			Ok(new) => {
 				log(0, log_level, &format!(
 					"DETERMINE_CONFIG RESULT (new): {:?}", new));
@@ -3078,7 +3157,7 @@ pub mod tests_zkp_driver{
 		//DB-build code changes. SHARED w/ small_email, small_email2.
 		//Rebuild fresh (false): the boosted cache is easily clobbered by the
 		//other two runners; set true only right after a matching rebuild.
-		get_global_config().b_read_cache = true; //TEMP: timing breakdown
+		get_global_config().b_read_cache = false;
 		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/small_email/config";
 		let max_word = 256;
@@ -3462,6 +3541,73 @@ pub mod tests_zkp_driver{
 	}
 
 	/// Discharge-approach stats over the paper_data debug bundle.
+	/// TEMP (gen dlp list -- remove after): discharge the clean Enron emails
+	/// against the DLP-international bora regex and write pass/fail lists.
+	/// `cargo test -p zkregplus -- test_gen_dlp_list --show-output --nocapture`
+	#[test]
+	pub fn test_gen_dlp_list(){
+		std::env::set_var("ZKR_DLP_LIST_DIR",
+			"data/debug/small_data_set2/config_dfa");
+		// aggressive SDE-for-rep fan-out: expand [0-9]{n} reps into concrete
+		// variants (less-conservative discharge).
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
+		get_global_config().clamav_cfg.sde_rep_fanout_cap = 100;
+		get_global_config().clamav_cfg.min_pm_word_len = 3;
+		super::run_db_bundle::<Fr>(
+			"data/debug/small_data_set2/config_dfa", //config dir
+			"data/debug/small_data_set2/config_dfa", //report dir
+			false, false, true, //b_cache, b_write_cache, b_quick
+			25, 512, &[100usize], //range_bits, max_word_len, percentiles
+			"main_data_dlp_internationl.dat", //src sig (NEW)
+			"binexec_dlp_intl.dat", //scan manifest (NEW)
+			"dlp_intl_data_aggr"); //cache name (NEW)
+	}
+
+	/// Discharge the FULL clean Enron international list (~515K files)
+	/// against the DLP-international bora set; write full/pass/fail_
+	/// clean_enron_list to the config dir. Lean path + heartbeat probes
+	/// (see stats_helper::collect_discharge_pass_fail). Run from compile.sh:
+	/// `cargo test -p zkregplus --release -- \
+	///   zkp_driver::tests_zkp_driver::collect_enron_list --exact --nocapture`
+	#[test]
+	pub fn collect_enron_list(){
+		get_global_config().range2_bit = 25;
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
+		get_global_config().clamav_cfg.sde_rep_fanout_cap = 100;
+		get_global_config().clamav_cfg.min_pm_word_len = 3;
+		let dir = "data/debug/small_data_set2/config_dfa";
+		crate::stats_helper::collect_discharge_pass_fail::<Fr>(
+			&format!("{}/main_data_dlp_internationl.dat", dir),
+			&format!("{}/main_dfa.dat", dir),
+			&format!("{}/needs_ised.dat", dir),
+			&format!("{}/needs_ised_igc.dat", dir),
+			"data/src_sig/ms_dlp/docs/\
+clean_email_list_email_regex_zombie_international.txt", //515K list
+			"data/samples/email",  //base prefix for list entries
+			dir,                   //out dir for full/pass/fail lists
+			true, true,            //b_read_cache, b_write_cache
+			"dlp_intl_data_aggr",  //DB cache name
+			512);                  //seg_word_len
+	}
+
+	/// full_dlp pipeline (M2): tune the SMALL (easy) config from sample1's
+	/// manifest. Driven by scripts/run_full_dlp.py via ZKR_DLP_RUNCFG; writes
+	/// CapParams JSON to runcfg.config_out. Same body as full_dlp_sample2 (the
+	/// scan manifest + output path differ only in the driver's runcfg).
+	#[test]
+	pub fn full_dlp_sample1(){
+		let rc = crate::determine_config::RunCfg::from_env();
+		super::run_dlp_sample_config::<Fr,C1,CS1>(&rc);
+	}
+
+	/// full_dlp pipeline (M2): tune the BIG (hard) config from sample2's
+	/// manifest. See full_dlp_sample1.
+	#[test]
+	pub fn full_dlp_sample2(){
+		let rc = crate::determine_config::RunCfg::from_env();
+		super::run_dlp_sample_config::<Fr,C1,CS1>(&rc);
+	}
+
 	/// Invoke via:
 	/// `cargo test -p zkregplus -- test_db_bundle --show-output --nocapture`
 	/// BASELINE 2026-05-31 (b_cache=false, b_quick=true; pre-ApproxConfig

@@ -1877,11 +1877,15 @@ impl <F:PrimeField> ClamavDB<F>{
 		cfg: &ClamavApproxConfig,  //cfg used by build_db
 	) -> BundleSubsigStore{
 		let b_debug = B_DEBUG;
+		let t_ised = std::time::Instant::now();
 		//1. read the signatures
 		let sig_names_need_ised
 			=read_lines(needs_ised_list_file).iter().filter(|s|
 			!s.starts_with("#")).map(|s| s.trim().to_string())
 			.collect::<Vec<String>>();
+		println!("DEBUG USE 60938.5: build_ised_bundle START b_igc={} \
+n_sigs={} n_need_ised={}", b_igc, sigs.len(),
+			sig_names_need_ised.len());
 
 		//2. locate the sigs for sigs_needs_ised
 		// as there are up to 200 sigs to process, we simply do linear search
@@ -1933,11 +1937,20 @@ impl <F:PrimeField> ClamavDB<F>{
 		if b_debug && b_igc{
 			println!("DEBUG USE 6105: in build_sed_bundle 0: b_igc: {}, pats: {:#?}", b_igc, pats);
 		}
+		println!("DEBUG USE 60938.6: ised b_igc={} build all_acdfa over \
+|pats|={} elapsed={:.0}s", b_igc, pats.len(),
+			t_ised.elapsed().as_secs_f64());
 		let all_acdfa = HexACDFA::new_adv(0, &pats, b_igc);
+		println!("DEBUG USE 60938.7: ised b_igc={} all_acdfa done \
+num_states={} build_store over |sigs|={} elapsed={:.0}s", b_igc,
+			all_acdfa.num_states, sigs.len(),
+			t_ised.elapsed().as_secs_f64());
 
 		//6.2 build the store and append it to all
 		let (store_0,map_pat_0) = Self
 			::build_store(&sig_to_id, sigs, &all_acdfa, b_igc);
+		println!("DEBUG USE 60938.8: ised b_igc={} build_store done \
+elapsed={:.0}s", b_igc, t_ised.elapsed().as_secs_f64());
 		let names = vec![vec!["all".to_string()], sig_names_need_ised].concat();
 		let n = names.len();
 		let dfas = vec![vec![all_acdfa.clone()], vec_ised_acdfa].concat();
@@ -2076,7 +2089,12 @@ impl <F:PrimeField> ClamavDB<F>{
 		//Per-sig cfg: boosted sigs get sde_rep_fanout_cap *= boost. The
 		//boosted cap rides the existing cfg into expand_rep_subsig; only
 		//that fn reads it, so non-aggressive builds are unaffected.
-		let v_sigs:Vec<Arc<ClamavSig>> = subset_lines.iter().map(|s| {
+		let n_sigs = subset_lines.len();
+		let prog_stride = (n_sigs/20).max(1); //~20 progress lines/phase
+		println!("DEBUG USE 60938.0: build_db START n_sigs={}", n_sigs);
+		let t_gen = std::time::Instant::now();
+		let v_sigs:Vec<Arc<ClamavSig>> = subset_lines.iter()
+			.enumerate().map(|(i,s)| {
 			let name = s.split(';').next().unwrap_or("");
 			let mut scfg = *cfg;
 			if cfg.sde_rep_fanout_boost > 1
@@ -2084,8 +2102,16 @@ impl <F:PrimeField> ClamavDB<F>{
 				scfg.sde_rep_fanout_cap = scfg.sde_rep_fanout_cap
 					.saturating_mul(cfg.sde_rep_fanout_boost);
 			}
-			Arc::new(gen_clamav_sig(s, ClamSigType::General, &scfg))
+			let sig = Arc::new(gen_clamav_sig(s,
+				ClamSigType::General, &scfg));
+			if (i+1) % prog_stride == 0 || i+1==n_sigs {
+				println!("DEBUG USE 60938.1: gen_clamav_sig {}/{} \
+elapsed={:.0}s", i+1, n_sigs, t_gen.elapsed().as_secs_f64());
+			}
+			sig
 		}).collect();
+		let apx_prog = std::sync::atomic::AtomicUsize::new(0);
+		let t_apx = std::time::Instant::now();
 		let mut v_sigs = v_sigs.par_iter().map(|s1| {
 			let mut s = s1.as_ref().clone();
 			s.gen_approx_bagwords(cfg);
@@ -2093,12 +2119,23 @@ impl <F:PrimeField> ClamavDB<F>{
 			if set_need_dfa.contains(&s.name){
 				s.set_vec_automaton(cfg);
 			}
+			let c = apx_prog.fetch_add(1,
+				std::sync::atomic::Ordering::Relaxed)+1;
+			if c % prog_stride == 0 || c==n_sigs {
+				println!("DEBUG USE 60938.2: approx(bag/pm/dfa) {}/{} \
+elapsed={:.0}s", c, n_sigs, t_apx.elapsed().as_secs_f64());
+			}
 			s
 		}).collect::<Vec<ClamavSig>>();
 		//1b. aggressive shape guard + global halo span (flag-on only).
 		let mut aggressive_max_span_nibbles = 0usize;
 		if cfg.b_aggressive_sde_for_rep {
-			for s in v_sigs.iter_mut() {
+			let t_shape = std::time::Instant::now();
+			for (si, s) in v_sigs.iter_mut().enumerate() {
+				if (si+1) % prog_stride == 0 || si+1==n_sigs {
+					println!("DEBUG USE 60938.3: shape_guard {}/{} \
+elapsed={:.0}s", si+1, n_sigs, t_shape.elapsed().as_secs_f64());
+				}
 				let (span, anchors) = s.compute_aggressive_shape(cfg)
 					.map_err(|e| Error::Other(format!(
 						"AggressiveShapeErr in sig {}: {:?}",
@@ -2141,10 +2178,15 @@ impl <F:PrimeField> ClamavDB<F>{
 		//2. collect critical pattern
 		let mut map_crit_pat = HashMap::<String,Vec<String>>::new();
 		let mut map_crit_pat_igc = HashMap::<String,Vec<String>>::new();
-		for i in 0..v_sigs.len(){ 
+		let t_crit = std::time::Instant::now();
+		for i in 0..v_sigs.len(){
 			let b_res = v_sigs[i]
-				.add_critical_pattern(&mut map_crit_pat,&mut map_crit_pat_igc); 
+				.add_critical_pattern(&mut map_crit_pat,&mut map_crit_pat_igc);
 			v_sigs[i].b_no_crit_pat = !b_res;
+			if (i+1) % prog_stride == 0 || i+1==v_sigs.len() {
+				println!("DEBUG USE 60938.4: crit_pat {}/{} elapsed={:.0}s",
+					i+1, v_sigs.len(), t_crit.elapsed().as_secs_f64());
+			}
 		}
 		let v_sigs = v_sigs.iter().map(|s|
 			Arc::new(s.clone())
@@ -2684,8 +2726,10 @@ mod tests_clam_db{
 
 		//T9 unbounded sig (.* gap) -> build_test_db Err (step-1b,
 		//before DFA build) regardless of alphabet padding.
+		//named .fwd so direction_from_name passes; the Unbounded gap is
+		//what must make build_db Err (not the missing direction).
 		let bad = vec![
-			"Bad.Unbounded;Engine:81-255,Target:0;0;/SSN.*[0-9]{3}/s"
+			"Bad.Unbounded.fwd;Engine:81-255,Target:0;0;/SSN.*[0-9]{3}/s"
 				.to_string()];
 		let r = ClamavDB::<Fr>::build_test_db(&cfg_on,
 			&wdir("debug/sde_aggressive/m1a_bad"), &bad,

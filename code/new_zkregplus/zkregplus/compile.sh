@@ -23,8 +23,11 @@
 # ZK discharge of the full clean chr17 DNA sample (heavy)
 #RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" RUST_TEST_TIME_INTEGRATION=3600000,36000000 RUST_BACKTRACE=1 cargo test --release -p zkregplus -- test_full_dna --show-output --nocapture
 
+# discharge FULL clean Enron intl list (~515K) -> full/pass/fail_clean_enron_list (heartbeat + slow-file probes in stdout)
+RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" RUST_TEST_TIME_INTEGRATION=3600000,36000000 RUST_BACKTRACE=1 cargo test -p zkregplus --release -- zkp_driver::tests_zkp_driver::collect_enron_list --exact --nocapture 2>&1 | tee /tmp/collect_enron.log
+
 # run zkreg example small
-RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" RUST_TEST_TIME_INTEGRATION=3600000,36000000 RUST_BACKTRACE=1 RUSTFLAGS="-Awarnings" time cargo run --release --example zkreg small
+#RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" RUST_TEST_TIME_INTEGRATION=3600000,36000000 RUST_BACKTRACE=1 RUSTFLAGS="-Awarnings" time cargo run --release --example zkreg small
 #2>&1 | less
 
 # run fold pot
