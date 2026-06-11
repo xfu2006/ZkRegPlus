@@ -16,7 +16,7 @@
 
 #RUST_BACKTRACE=1 cargo test --lib --release -- test_zkreg_main --show-output --nocapture
 # discharge FULL clean Enron intl list (~515K) -> full/pass/fail lists
-RUST_BACKTRACE=1 cargo test --lib --release -- collect_enron_list --exact --nocapture 2>&1 | tee /tmp/collect_enron.log
+RUST_BACKTRACE=1 cargo test --lib --release -- collect_enron_list --nocapture 2>&1 | tee /tmp/collect_enron.log
 #RUST_BACKTRACE=1 cargo test --lib -- test_zkreg_main --show-output --nocapture
 #RUST_BACKTRACE=1 cargo test --lib -- test_zkreg_main --show-output --nocapture
 #RUST_BACKTRACE=full cargo test -- test_zkreg_main --show-output --nocapture
