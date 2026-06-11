@@ -3587,8 +3587,8 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			dir,                   //out dir for full/pass/fail lists
 			true, true,            //b_read_cache, b_write_cache
 			"dlp_intl_data_aggr",  //DB cache name
-			512);                  //seg_word_len
-	}
+			64);                   //seg_word_len: 64w*31B ~= 2KB
+	}                              //(median email fills ~78%)
 
 	/// full_dlp pipeline (M2): tune the SMALL (easy) config from sample1's
 	/// manifest. Driven by scripts/run_full_dlp.py via ZKR_DLP_RUNCFG; writes

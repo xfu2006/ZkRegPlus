@@ -29065,8 +29065,10 @@ Goal 3. define the structure of slides => DONE
 	[a] initial structure
 Goal 4. collect the zombie data on server
 	[a] started 6:45am => 1:00pm (6.5 hrs!) 
+	[b] fixed a number of issues
 Goal 5. plan refining
 	[a] pack it as a function, insert more probes about progress
 		generate full, pass, fail clean_enron_list.txt
 	[b] wrapped it as a function and run starts 1:30pm
+		2:50pm => 
 

@@ -70,11 +70,13 @@ import subprocess
 import sys
 
 # ---------------------------------------------------------------------------
-# Paths. REPO_ROOT = the new_zkregplus workspace root (parent of scripts/).
-# All cargo runs happen from REPO_ROOT; data paths are repo-root-relative so
-# they match the binexec manifests the Rust side reads.
+# Paths. REPO_ROOT = the new_zkregplus workspace root. This file lives at
+# zkregplus/src/, so go up three levels. All cargo runs happen from
+# REPO_ROOT; data paths are repo-root-relative so they match the binexec
+# manifests the Rust side reads.
 # ---------------------------------------------------------------------------
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))))
 RUN_DIR = os.path.join(REPO_ROOT, "scripts", "run_full_dlp_out")  # logs+runcfgs
 
 # RUSTFLAGS mirrors the project's compile.sh (lld linker, warnings off).
@@ -292,9 +294,12 @@ def print_summary(ds):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--data", choices=list(DATASETS), default="fixture",
+    ap.add_argument("--data", choices=list(DATASETS), default="real",
                     help="path set: fixture (tiny test DB) or real "
-                         "(full DLP-international). Default fixture.")
+                         "(full DLP-international). Default real.")
+    ap.add_argument("--with-full", action="store_true",
+                    help="also run the final full_dlp step (off by "
+                         "default: a no-arg run stops after sample3)")
     ap.add_argument("--only",
                     help="run only this step (compile|manifests|sample1|"
                          "sample2|sample3|full_dlp)")
@@ -322,6 +327,9 @@ def main():
     started = args.from_step is None
     for name, fn, idem in steps:
         if args.only and name != args.only:
+            continue
+        if name == "full_dlp" and not (args.with_full
+                                       or args.only == "full_dlp"):
             continue
         if not started:
             if name == args.from_step:
