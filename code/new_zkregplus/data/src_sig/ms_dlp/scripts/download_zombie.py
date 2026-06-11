@@ -25,7 +25,7 @@ import subprocess
 
 # common.py lives beside this script (scripts/); import provenance helpers.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import gen_report_header, gen_run_date  # noqa: E402
+from common import gen_report_header, gen_run_date, get_ms_dlp_dir  # noqa: E402
 
 # --- configuration ---------------------------------------------------------
 ZOMBIE_URL = "https://github.com/PepperSieve/Zombie"
@@ -439,9 +439,8 @@ def main():
     # + dependency report only).
     do_build = "--verify-build" in sys.argv or "--build" in sys.argv
 
-    # anchor cwd to ms_dlp/ (parent of scripts/) so DEST / DOCS_DIR resolve
-    # regardless of the invocation directory.
-    os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir))
+    # resolve all relative paths against the ms_dlp dir (never cwd / hardcoded).
+    os.chdir(get_ms_dlp_dir())
 
     # wipe any prior clone so we always get a clean snapshot.
     if os.path.exists(DEST):

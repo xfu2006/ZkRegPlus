@@ -1,0 +1,29 @@
+00	id-kaart
+01	isikukood#
+02	isikukood
+03	maksu id
+04	maksukohustuslase identifitseeri
+05	maksunumber
+06	national identification number
+07	national number
+08	personal code
+09	personal id number
+10	personal identification code
+11	personal identification number
+12	personalidnumber#
+13	tax id
+14	tax identification no
+15	tax identification number
+16	tax no#
+17	tax no
+18	tax number
+19	tax registration number
+20	taxid#
+21	taxidno#
+22	taxidnumber#
+23	taxno#
+24	taxnumber#
+25	taxnumber
+26	tin id
+27	tin no
+28	tin#

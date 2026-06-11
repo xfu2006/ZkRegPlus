@@ -71,6 +71,17 @@ pub struct ChunkPeaks{
 	//anchor is present that chunk. Sizes aggr_needs_subsigs (forward step
 	//queue). 0 when flag-off so non-aggressive estimate is unchanged.
 	pub max_needs_subsigs: usize,
+	//SED forward-propagation peaks (measured; 0 when not discharged).
+	//Per-chunk count of forward-proof (subsig,step,loc) entries summed
+	//across survivor subsigs, max over chunks. Sizes StepFwdPrf.
+	pub max_fwd_entries_per_chunk: usize,
+	//Per-chunk carried live-location count summed across subsigs, max
+	//over chunks. Sizes the carried StepQueue (general-mode carry).
+	pub max_carried_live_per_chunk: usize,
+	//Per-chunk total active pattern-steps (non-empty loc set) summed
+	//across subsigs, max over chunks. Estimator divides by subsigs to
+	//size avg_active_pats_per_subsig.
+	pub max_active_steps_per_chunk: usize,
 }
 
 impl FailDischargeRecord{

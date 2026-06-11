@@ -1,0 +1,1 @@
+27[0-9]{8}.{0,300}[\x20\x09\x0A\x0D]national\x20insurance\x20number[\x20\x09\x0A\x0D]

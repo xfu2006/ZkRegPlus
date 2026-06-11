@@ -44,17 +44,37 @@ import shutil
 import subprocess
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import gen_report_header  # noqa: E402
+from common import gen_report_header, get_ms_dlp_dir  # noqa: E402
 
 # --- configuration ---------------------------------------------------------
-RECORDS_DIR = "raw_data_records"      # input : per-SIT specs
-PAT_DIR     = "regex_pat_zombie"      # output: pure pattern regex
-FULL_DIR    = "regex_zombie"          # output: full proximity policy
 DOCS_DIR    = "docs"
-LOG_FILE    = os.path.join(DOCS_DIR, "gen_zombie_regex.log")
 TESTREGEX   = os.path.join("zombie", "regex", "bin", "TestRegex")
 VERIFY_TIMEOUT = 8                    # seconds; "Parse Successful!" prints first,
                                       # so a short cap is plenty to capture it
+
+# Two passes run from the SAME pipeline (only the I/O dirs differ): the English
+# batch and the international SUPERSET (English + foreign rules with non-English
+# keywords stripped; see retrieve_ms_dlp.py). Each Pass names its input records,
+# its per-combo pattern + full-policy output dirs, its positive-sample dir, and
+# its log. PER-COMBO LAYOUT: a SIT with C>1 expanded combinations (see expand_pat)
+# writes <slug>/comb<MM>.regex; a single-combination SIT writes the flat
+# <slug>.regex (no churn for the 78% of SITs with no alternation).
+class Pass:
+    def __init__(self, records, pat_dir, full_dir, sample_dir, log_file):
+        self.records, self.pat_dir, self.full_dir = records, pat_dir, full_dir
+        self.sample_dir, self.log_file = sample_dir, log_file
+
+PASS_ENGLISH = Pass(
+    "raw_data_records", "regex_pat_zombie", "regex_zombie",
+    "regex_pat_samples", os.path.join(DOCS_DIR, "gen_zombie_regex.log"))
+PASS_INTL = Pass(
+    "raw_data_records_international", "regex_pat_zombie_international",
+    "regex_zombie_international", "regex_pat_samples_international",
+    os.path.join(DOCS_DIR, "gen_zombie_regex_international.log"))
+ALL_PASSES = [PASS_ENGLISH, PASS_INTL]
+
+# LIMIT_LOG referenced by the limit-fitting warnings below.
+LIMIT_LOG   = os.path.join(DOCS_DIR, "verify_zombie_limit.log")
 
 # --- low-level helpers -----------------------------------------------------
 _WORDNUM = {"zero": 0, "a": 1, "an": 1, "one": 1, "two": 2, "three": 3,
@@ -608,12 +628,22 @@ _PROSE_MARKERS = (
 )
 _RE_SECRET_VALUE = re.compile(r"^[A-Za-z0-9/+]{40,}={0,2}$")  # leaked base64 secret
 
+# A keyword line longer than this is a descriptive SENTENCE, not a keyword (the
+# marker list above catches the common ones; this is the backstop for sentences
+# that carry no marker). Real keywords -- even long German compounds
+# ("Identifikationsnummer", ~21) and multi-word phrases ("Permis de Conduire",
+# ~17) -- stay well under it; only prose like "Any combination of 1-200
+# characters that are upper- or lowercase letters, digits, ..." exceeds it.
+MAX_KEYWORD_LEN = 50
+
 
 def _is_prose_keyword(kw):
-    """True if a 'keyword' line is actually descriptive prose or a leaked example
-    value rather than a real keyword."""
+    """True if a 'keyword' line is actually descriptive prose, a leaked example
+    value, or an over-long sentence rather than a real keyword."""
     low = kw.lower()
     if any(m in low for m in _PROSE_MARKERS):
+        return True
+    if len(kw.strip()) > MAX_KEYWORD_LEN:        # very long sentence, not a keyword
         return True
     return bool(_RE_SECRET_VALUE.match(kw))
 
@@ -648,71 +678,39 @@ def _filter_short_keywords(keywords):
 # ===========================================================================
 # Zombie compiler-limit approximation  (see docs/verify_zombie_limit.log)
 # ===========================================================================
-# Zombie's regex->circuit compiler has two hard limits (empirically established,
+# Zombie's regex->circuit compiler has three hard limits (empirically established,
 # verified case-by-case in docs/verify_zombie_limit.log):
 #   (1) ceiling: a contiguous FIXED-length match segment is packed base-256 into
 #       one BN254 field element, so it must be <=32 bytes. A run/segment >=33 B
 #       overflows the 256-bit integer (panic) or emits a malformed expression
 #       (parse error). A "segment" = adjacent literals + fixed-count reps
 #       (lit{n}, [..]{n}); a variable operator (?, {lo,hi}, *, +) or | splits it.
-#   (2) gap: an intra-pattern bounded wildcard gap .{lo,hi} between anchors is
-#       uncompilable at ANY width (the top-level proximity .{0,N} is fine -- it
-#       is stripped and enforced natively by run_zombie.py, not compiled).
+#   (2) zerolb: ANY zero-lower-bound rep {0,N} (literal or wildcard, every N) is
+#       miscompiled to an empty coefficient and rejected. The top-level proximity
+#       .{0,N} is exempt -- run_zombie.py strips it and enforces it natively.
+#   (3) litgap: a wildcard rep .{m,N}/.*/.+ is safe ONLY when it LEADS its
+#       sequence; the moment a literal OR class precedes it, codegen tiles the
+#       preceding bytes with the wildcard span into an over-32 B run -> ceiling,
+#       for EVERY width (even .{1,5}). This -- NOT "a bounded gap is uncompilable
+#       at any width" -- is the real rule (verified G7 in the limit log): e.g.
+#       `User Id .{1,200} Password=value` fails because "User Id" sits in FRONT
+#       of the gap, whereas a LEADING `.{1,200}B` compiles.
 #
 # We approximate the generated regex to fit, ALWAYS over-approximating (widening
 # the match set) so the non-membership claim stays SOUND (we never clear a doc
 # that the exact regex would flag; the cost is extra false positives). Every
 # change is recorded as a "zombie-limit[...]" warning citing the limit log.
-LIMIT_LOG        = os.path.join(DOCS_DIR, "verify_zombie_limit.log")
 ZOMBIE_SEG_LIMIT = 32        # max bytes in one packed fixed-length segment
 
-# Connection-string SITs: the real PATs are "anchor .{1,200} anchor ... KEY = value"
-# -- both Zombie limits at once (interior wildcard gaps + a >32 B key run). The
-# earlier approach COLLAPSED each onto the proximity window with a value-only PAT
-# and the literal anchors as OR'd keywords; that is a sound over-approximation but
-# in practice matches a bare word like "password"/"sample" near any text, flagging
-# ~46% of ordinary email AND -- once keywords are whitespace-delimited -- failing
-# to match real connection strings at all (the keyword is '='-adjacent, not a
-# standalone word).
-#
-# Instead we rebuild each as the actual ASSIGNMENT SYNTAX it detects: PAT is the
-# CONTIGUOUS token  (KEY)[ ]=[ ](value)  -- compilable (no interior gap) -- and a
-# distinctive CONTEXT anchor (a hostname / the User-Id field) is the single
-# proximity keyword. This REQUIRES the "=value" syntax, so it NARROWS the match
-# set (precision-oriented: ~0.4% false positives, full sample recall) and is NO
-# LONGER a sound non-membership superset of the real SIT, unlike the limit
-# approximations elsewhere. Context anchors are NOT whitespace-delimited (they sit
-# inside hostnames/syntax, e.g. "...redis.cache.windows.net:6380"); main() passes
-# ws_delimit=False for these slugs. Every entry is verified to build AND to match
-# all web-crawled samples (docs/verify_zombie_limit.log).
-_B64_VALUE = r"[A-Za-z0-9\x2F\x2B]{32}"      # base64-ish key (32 B prefix; ceiling)
-_PWD_VALUE = r"[^\x3B\x2F\x22]{8,32}"        # password value (no ; / ")
-CONNSTRING_SYNTAX = {
-    "sit-defn-sql-server-connection-string":
-        {"keys": ["Password", "pwd"], "value": _PWD_VALUE,
-         "context": ["User Id=", "User ID=", "uid=", "UserId="]},
-    "sit-defn-azure-iaas-database-connection-string-azure-sql-connection-string":
-        {"keys": ["Password", "pwd"], "value": _PWD_VALUE,
-         "context": ["database.windows.net", "cloudapp.azure"]},
-    "sit-defn-azure-storage-account-key":
-        {"keys": ["AccountKey"], "value": _B64_VALUE,
-         "context": ["DefaultEndpointsProtocol"]},
-    # doc-db: samples label the key variably ("AccountKey=", "primary key=",
-    # "AuthKey:", "master key>"), so there is no single KEY= token. "DocumentDb"
-    # is a highly distinctive context anchor (effectively absent from ordinary
-    # mail), so gate a base64 value on it directly (no "keys" -> value-only PAT).
-    "sit-defn-azure-document-db-auth-key":
-        {"value": _B64_VALUE, "context": ["DocumentDb"]},
-    "sit-defn-azure-iot-connection-string":
-        {"keys": ["SharedAccessKey"], "value": _B64_VALUE,
-         "context": ["azure-devices.net"]},
-    "sit-defn-azure-service-bus-connection-string":
-        {"keys": ["SharedAccessKey"], "value": _B64_VALUE,
-         "context": ["servicebus.windows.net"]},
-    "sit-defn-azure-redis-cache-connection-string":
-        {"keys": ["password", "pwd"], "value": _B64_VALUE,
-         "context": ["redis.cache.windows.net"]},
-}
+# NOTE: the connection-string SITs used to be rebuilt here from a hand-written
+# CONNSTRING_SYNTAX table (a value-only PAT + context-anchor keywords). That was
+# the ONLY place the pipeline NARROWED the match set (precision-oriented, not a
+# sound non-membership superset) AND it discarded the SITs' real keywords. It is
+# gone: connection-string SITs have prose patterns that are untranslatable and an
+# intra-pattern literal-preceded gap that Zombie cannot compile (limit (3) above),
+# so they now fall through to the GENERAL discard (reason=untranslatable-pattern /
+# uncompilable-pat). Every SIT the pipeline emits is therefore a sound
+# over-approximation, with real keywords.
 
 
 def _atoms(s):
@@ -786,9 +784,51 @@ def _chop_pat_literals(pat):
     return "".join(out), notes
 
 
-def _has_wildcard_gap(pat):
-    """True if PAT contains an intra-pattern bounded wildcard gap .{...}/.* /.+ ."""
-    return bool(re.search(r"\.\{\d|\.\*|\.\+", pat))
+# a VARIABLE-width wildcard rep: .* / .+ / .{m,n} (range). A FIXED .{n} is not
+# flagged (it does not trigger the litgap overflow in our corpus).
+_RE_VARWILD = re.compile(r"\.(?:\*|\+|\{\d*,\d*\})")
+
+
+def _uncompilable_reason(pat):
+    """Return a reason string if PAT cannot be compiled by Zombie even after the
+    sound wideners (cap/chop), else None. The verified killer the wideners cannot
+    fix is a VARIABLE wildcard rep (.* / .+ / .{m,n}) PRECEDED by fixed content (a
+    literal or class) at the same concatenation level: codegen tiles the preceding
+    bytes with the wildcard span into an over-32 B run -> ceiling at EVERY width
+    (limit (3) 'litgap'; verified G7 in verify_zombie_limit.log). A LEADING
+    wildcard rep compiles, so it is allowed. Paren-level aware: a closed group is
+    fixed content in its parent; '|' starts a fresh alternative."""
+    stack = [False]                       # seen-fixed-content flag per paren level
+    i, n = 0, len(pat)
+    while i < n:
+        c = pat[i]
+        if c == "\\" and i + 1 < n:
+            stack[-1] = True; i += 2; continue
+        if c == "(":
+            stack.append(False); i += 1; continue
+        if c == ")":
+            if len(stack) > 1:
+                stack.pop()
+            stack[-1] = True              # the closed group is fixed content here
+            i += 1; continue
+        if c == "|":
+            stack[-1] = False; i += 1; continue
+        if c == "[":                      # a class matches a (fixed) byte
+            j = pat.find("]", i)
+            j = j + 1 if j >= 0 else n
+            stack[-1] = True; i = j; continue
+        if c == ".":
+            m = _RE_VARWILD.match(pat, i)
+            if m and stack[-1]:
+                return ("not Zombie-compilable: variable wildcard gap %r preceded "
+                        "by fixed content (litgap, limit (3); see %s)"
+                        % (m.group(0), LIMIT_LOG))
+            i = m.end() if m else i + 1   # leading var-wild / bare '.' -> no fixed
+            continue
+        if not c.isspace():
+            stack[-1] = True
+        i += 1
+    return None
 
 
 def _approx_keywords(keywords):
@@ -806,40 +846,249 @@ def _approx_keywords(keywords):
     return out, notes
 
 
-def approx_for_zombie(slug, pat, keywords):
-    """Make (pat, keywords) fit Zombie's compiler limits. Returns
-    (pat', keywords', notes); notes is empty when nothing had to be approximated.
-    Order: connection-string collapse (whole-PAT) OR general cap+chop, then a
-    keyword chop applied in either case."""
+# --- Zombie KWS buildability: the cross-keyword 32 B packed-run limit ---------
+# Zombie compiles the WHOLE keyword OR-group KWS=(kw1|kw2|...) into ONE circuit;
+# its codegen packs ADJACENT keyword character-runs into 32-byte isZero() terms,
+# so two long adjacent keywords overflow -> a malformed .zok (a dangling "+ )")
+# that circ rejects (rc 101). Real example (canada-bank): "canada savings bonds"
+# and "canada revenue agency" pack into one 41-byte run. Per-keyword chopping to
+# <=32 (_approx_keywords) does NOT fix it because the overflow is ACROSS adjacent
+# keywords. We prefix-chop every keyword to the largest cap K at which the KWS
+# circuit builds. BORA never hits this (one keyword per sig, and it runs as PCRE),
+# but to keep BORA and Zombie on a BYTE-IDENTICAL keyword set we chop HERE, in the
+# shared pipeline, so both inherit the SAME chopped keywords -- BORA's keywords are
+# DRIVEN BY ZOMBIE's limit. Prefix = superset -> sound.
+KW_CHOP_LADDER = (24, 18, 15, 12, 10, 8)   # descending caps tried until KWS builds
+
+
+def _zombie_kws_builds(pat, keywords):
+    """True if the Zombie KWS codegen for (pat, KWS(keywords)) is well-formed (no
+    >32 B cross-keyword packed-run overflow). Uses TestRegex F (codegen only, no
+    circuit build -> fast). Returns True when the binary is unavailable (cannot
+    check, so do not chop). The KWS is rendered EXACTLY as sit_to_regex builds it."""
+    if not os.path.isfile(TESTREGEX) or not keywords:
+        return True
+    ws = "[\\x20\\x09\\x0A\\x0D]"
+    kws = "(" + "|".join(ws + _esc(k) + ws for k in keywords) + ")"
+    try:
+        z = subprocess.run([TESTREGEX, "F", "0", "1"],
+                           input=pat + " & " + kws + "\n",
+                           capture_output=True, text=True, timeout=VERIFY_TIMEOUT)
+    except (subprocess.TimeoutExpired, OSError):
+        return True
+    if "Parse Successful!" not in z.stdout:
+        return False                       # codegen itself failed -> not buildable
+    return "+ )" not in z.stdout           # dangling '+' = malformed packed run
+
+
+def _dedupe(seq):
+    seen, out = set(), []
+    for x in seq:
+        if x not in seen:
+            seen.add(x); out.append(x)
+    return out
+
+
+def fit_kws_for_zombie(pat, keywords):
+    """Prefix-chop the keyword set (only if the full KWS won't build in Zombie) to
+    the largest cap K from KW_CHOP_LADDER at which the KWS circuit builds. Returns
+    (keywords', notes). The SAME chopped set is returned to BOTH generators."""
+    if _zombie_kws_builds(pat, keywords):
+        return keywords, []
+    for K in KW_CHOP_LADDER:
+        chopped = _dedupe(["".join(_atoms(k)[:K]) for k in keywords])
+        if _zombie_kws_builds(pat, chopped):
+            return chopped, ["zombie-kws-chop[K=%d]: keyword OR-group overflowed "
+                             "Zombie's 32B packed-run limit (cross-keyword packing); "
+                             "every keyword chopped to its %dB prefix so the KWS "
+                             "circuit builds. Prefix = superset -> sound. Applied to "
+                             "BORA too for a byte-identical keyword set (see %s)."
+                             % (K, K, LIMIT_LOG)]
+    K = KW_CHOP_LADDER[-1]
+    chopped = _dedupe(["".join(_atoms(k)[:K]) for k in keywords])
+    return chopped, ["zombie-kws-chop[K=%d, STILL malformed]: KWS may not build in "
+                     "Zombie even at the smallest cap -> FLAGGED (see %s)."
+                     % (K, LIMIT_LOG)]
+
+
+def fit_pat_to_limits(pat):
+    """Apply Zombie's SOUND compiler-limit wideners to PAT and report whether it
+    can compile. Returns (pat', notes, uncompilable_reason). Wideners (each WIDENS
+    the match set -> sound non-membership): cap every {n}/{lo,hi} to <=32; chop any
+    >32 B literal run to its 32 B prefix. If after that PAT still cannot build (a
+    litgap the wideners cannot remove), uncompilable_reason is a string and the SIT
+    must be discarded; otherwise None. Keyword length-capping is separate
+    (_approx_keywords), applied by process_sit."""
     notes = []
-    if slug in CONNSTRING_SYNTAX:
-        spec = CONNSTRING_SYNTAX[slug]
-        if spec.get("keys"):
-            key_alt = "(" + "|".join(spec["keys"]) + ")"
-            # contiguous assignment token: KEY [sp] = [sp] value  (no interior gap)
-            pat = key_alt + r"[\x20]{0,2}\x3D[\x20]{0,2}" + spec["value"]
-            shape = "contiguous assignment token (requires the '=' syntax)"
-        else:
-            # value-only PAT, gated by a distinctive context anchor (e.g. DocumentDb)
-            pat = spec["value"]
-            shape = "value token gated by a distinctive context anchor"
-        keywords = list(spec["context"])     # replace noisy spec keywords entirely
-        notes.append("zombie-limit[gap+ceiling]->syntax: original PAT had an intra-"
-                     "pattern wildcard gap (uncompilable) and a >32B key run. Rebuilt "
-                     "as %s: PAT=%r with context anchor(s) %r as the proximity "
-                     "keyword(s). This NARROWS the match set (precision-oriented; NOT "
-                     "a sound non-membership superset, unlike the other limit "
-                     "approximations) (see %s)."
-                     % (shape, pat, keywords, LIMIT_LOG))
-    else:
-        pat, n = _cap_reps(pat);          notes += n
-        pat, n = _chop_pat_literals(pat); notes += n
-        if _has_wildcard_gap(pat):
-            notes.append("zombie-limit[unsupported]: PAT has an intra-pattern "
-                         "wildcard gap .{lo,hi} not covered by the connection-string "
-                         "collapse -> will NOT build in Zombie (see %s)." % LIMIT_LOG)
-    keywords, n = _approx_keywords(keywords); notes += n
-    return pat, keywords, notes
+    pat, n = _cap_reps(pat);          notes += n
+    pat, n = _chop_pat_literals(pat); notes += n
+    return pat, notes, _uncompilable_reason(pat)
+
+
+# ===========================================================================
+# Alternation expansion  (shared by gen_zombie_regex AND gen_regex_bora)
+# ===========================================================================
+# A PAT is a sequence of STEPS; a step that is a top-level alternation group
+# contributes its branches, everything else is one fixed choice. expand_pat emits
+# the full Cartesian product as alternation-free concatenation strings ("combos"),
+# RECURSIVELY (nested alternations are expanded too). Both Zombie and BORA build
+# from this SAME combo list so their regex sets are structurally identical; Zombie
+# bakes one (combo.{0,N}KWS)|(KWS.{0,N}combo) circuit per combo, BORA one
+# (keyword,direction) sig per combo. The product is capped at MAX_COMBINATIONS;
+# beyond it we TRUNCATE (keep the first N, drop the rest -> a coverage gap, logged
+# as combos-truncated). A QUANTIFIED group `(...){n}` is NOT distributed (the
+# quantifier is repetition, not a pick) -- it stays an atom.
+MAX_COMBINATIONS = 128
+
+
+def strip_outer_group(s):
+    """If `s` is a single group enclosing the WHOLE pattern, return (inner, True);
+    else (s, False). Dialect-aware: [..] classes are atomic, \\-escapes are a
+    2-char unit, so a `)` inside a class or after an escape is ignored."""
+    if not s.startswith("("):
+        return s, False
+    depth, in_class, i = 0, False, 0
+    while i < len(s):
+        c = s[i]
+        if c == "\\" and i + 1 < len(s):
+            i += 2; continue
+        if in_class:
+            if c == "]":
+                in_class = False
+            i += 1; continue
+        if c == "[":
+            in_class = True
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return (s[1:-1], True) if i == len(s) - 1 else (s, False)
+        i += 1
+    return s, False
+
+
+def top_level_split(s, sep="|"):
+    """Split `s` on `sep` at paren-depth 0 only, treating [..] classes as atomic
+    and \\-escapes as a 2-char unit. Nested alternations stay intact."""
+    parts, buf, depth, in_class, i = [], [], 0, False, 0
+    while i < len(s):
+        c = s[i]
+        if c == "\\" and i + 1 < len(s):
+            buf.append(s[i:i + 2]); i += 2; continue
+        if in_class:
+            buf.append(c)
+            if c == "]":
+                in_class = False
+            i += 1; continue
+        if c == "[":
+            in_class = True
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+        elif c == sep and depth == 0:
+            parts.append("".join(buf)); buf = []; i += 1; continue
+        buf.append(c); i += 1
+    parts.append("".join(buf))
+    return parts
+
+
+def _segments(s):
+    """Split a single (alternation-free at top level) sequence into segments:
+    ('group', inner) for an UNQUANTIFIED top-level (...) group (expandable), or
+    ('atom', text) for any other run (literals, classes, quantified groups). A
+    group immediately followed by a quantifier is kept as an atom (parens+quant)."""
+    segs, atom, i, n = [], [], 0, len(s)
+
+    def flush():
+        if atom:
+            segs.append(("atom", "".join(atom))); atom.clear()
+
+    while i < n:
+        c = s[i]
+        if c == "\\" and i + 1 < n:
+            atom.append(s[i:i + 2]); i += 2; continue
+        if c == "[":
+            j = s.find("]", i); j = j + 1 if j >= 0 else n
+            atom.append(s[i:j]); i = j; continue
+        if c == "(":
+            depth, j = 1, i + 1
+            while j < n and depth:
+                if s[j] == "\\":
+                    j += 2; continue
+                if s[j] == "(":
+                    depth += 1
+                elif s[j] == ")":
+                    depth -= 1
+                j += 1
+            inner = s[i + 1:j - 1]
+            k, quant = j, ""
+            if k < n and s[k] in "*+?":
+                quant = s[k]; k += 1
+            elif k < n and s[k] == "{":
+                e = s.find("}", k); e = e + 1 if e >= 0 else n
+                quant = s[k:e]; k = e
+            if quant:                       # quantified group -> atom (not a pick)
+                atom.append(s[i:k]); i = k; continue
+            flush()
+            segs.append(("group", inner)); i = j; continue
+        atom.append(c); i += 1
+    flush()
+    return segs
+
+
+def _count_combos(s):
+    """Number of fully-expanded combinations of `s` (recursive product-of-sums)."""
+    parts = top_level_split(s)
+    if len(parts) > 1:
+        return sum(_count_combos(p) for p in parts)
+    prod = 1
+    for kind, text in _segments(s):
+        if kind == "group":
+            prod *= _count_combos(text)
+    return prod
+
+
+def _gen_combos(s, cap):
+    """Materialize up to `cap` fully-expanded combinations of `s`, in deterministic
+    order (first branch first). Recursive cross-product; alternation eliminated."""
+    parts = top_level_split(s)
+    if len(parts) > 1:
+        out = []
+        for p in parts:
+            for c in _gen_combos(p, cap):
+                out.append(c)
+                if len(out) >= cap:
+                    return out
+        return out
+    results = [""]
+    for kind, text in _segments(s):
+        subs = _gen_combos(text, cap) if kind == "group" else [text]
+        new = []
+        for pre in results:
+            for sub in subs:
+                new.append(pre + sub)
+                if len(new) >= cap:
+                    break
+            if len(new) >= cap:
+                break
+        results = new
+    return results
+
+
+def expand_pat(pat):
+    """Expand PAT's alternations into the full Cartesian product of alternation-
+    free combos. Returns (combos, n_total, truncated): n_total is the FULL product
+    count; combos is its first min(n_total, MAX_COMBINATIONS) members (deduped,
+    order preserved); truncated is True when n_total exceeds the cap."""
+    n_total = _count_combos(pat)
+    raw = _gen_combos(pat, MAX_COMBINATIONS)
+    seen, combos = set(), []
+    for c in raw:
+        if c not in seen:
+            seen.add(c); combos.append(c)
+    return combos, n_total, n_total > MAX_COMBINATIONS
 
 
 def sit_to_regex(proximity, pat, keywords, ws_delimit=True):
@@ -879,9 +1128,31 @@ def reset_dir(path):
     os.makedirs(path)
 
 
-def write_one(directory, slug, regex):
-    with open(os.path.join(directory, slug + ".regex"), "w") as f:
-        f.write(regex + "\n")
+def _combo_path(directory, slug, idx, n_combos):
+    """Per-combo output path: <dir>/<slug>.regex when C==1 (no churn for the 78%
+    of SITs with no alternation), else <dir>/<slug>/comb<MM>.regex."""
+    if n_combos == 1:
+        return os.path.join(directory, slug + ".regex")
+    sub = os.path.join(directory, slug)
+    os.makedirs(sub, exist_ok=True)
+    return os.path.join(sub, "comb%02d.regex" % idx)
+
+
+def write_zombie_sit(p, res):
+    """Write this SIT's per-combo pure-pattern (p.pat_dir) and full-policy
+    (p.full_dir) regexes; return the list of full proximity regexes (one per combo,
+    each (combo.{0,N}KWS)|(KWS.{0,N}combo)) for parse verification."""
+    slug, combos, kws = res["slug"], res["combos"], res["keywords"]
+    n = len(combos)
+    fulls = []
+    for idx, combo in enumerate(combos):
+        full = sit_to_regex(res["proximity"], combo, kws)
+        with open(_combo_path(p.pat_dir, slug, idx, n), "w") as f:
+            f.write(combo + "\n")
+        with open(_combo_path(p.full_dir, slug, idx, n), "w") as f:
+            f.write(full + "\n")
+        fulls.append(full)
+    return fulls
 
 
 def verify_by_run_zombie(regex):
@@ -914,28 +1185,19 @@ def verify_by_run_zombie(regex):
 
 
 # --- positive self-test samples -------------------------------------------
-# Samples live in regex_pat_samples/<slug>.txt, generated per-SIT by web-verified
+# Samples live in <sample_dir>/<slug>.txt, generated per-SIT by web-verified
 # agents (see docs/reg_pat_samples.log). Positive-only by design. Our dialect is
 # a strict subset of Python regex, so re is a faithful oracle with no translation.
-#   - identifier SITs: the sample IS the value -> re.fullmatch.
-#   - connection-string / secret-key SITs: the pattern DETECTS a substring of a
-#     longer string -> re.search.
-SAMPLE_DIR = "regex_pat_samples"
-
-# SITs whose pattern detects a fragment inside a longer string (tested w/ search).
-SUBSTRING_SITS = {
-    "sit-defn-azure-document-db-auth-key",
-    "sit-defn-azure-iaas-database-connection-string-azure-sql-connection-string",
-    "sit-defn-azure-iot-connection-string",
-    "sit-defn-azure-redis-cache-connection-string",
-    "sit-defn-azure-service-bus-connection-string",
-    "sit-defn-azure-storage-account-key",
-    "sit-defn-sql-server-connection-string",
-}
+# A sample passes if it matches ANY of the expanded combos (their union is the
+# original PAT's language, modulo truncation -- see expand_pat). fullmatch for
+# identifier SITs. SUBSTRING_SITS (search instead of fullmatch) was only ever the
+# connection-string SITs, which are now discarded -> the set is empty, but kept so
+# a future substring-detector SIT can opt in.
+SUBSTRING_SITS = set()
 
 
-def _load_samples(slug):
-    path = os.path.join(SAMPLE_DIR, slug + ".txt")
+def _load_samples(slug, sample_dir):
+    path = os.path.join(sample_dir, slug + ".txt")
     if not os.path.isfile(path):
         return None
     with open(path) as f:
@@ -943,120 +1205,218 @@ def _load_samples(slug):
     return lines or None
 
 
-def test_samples(slug, regex):
-    """Positive self-test: does the pure pattern regex accept every web-verified
-    sample for this SIT? fullmatch for identifiers, search for substring-detector
-    (connection-string) SITs. Returns (n_pass, n_total, [unmatched]) or None."""
-    samples = _load_samples(slug)
+def test_samples(slug, combos, sample_dir):
+    """Positive self-test: does some expanded combo accept every web-verified
+    sample for this SIT? Returns (n_pass, n_total, [unmatched]) or None (no
+    samples). A sample matches the SIT iff ANY combo matches it."""
+    samples = _load_samples(slug, sample_dir)
     if not samples:
         return None
-    try:
-        rx = re.compile(regex)
-    except re.error:
+    rxs = []
+    for c in combos:
+        try:
+            rxs.append(re.compile(c))
+        except re.error:
+            pass
+    if not rxs:
         return 0, len(samples), list(samples)
-    accept = rx.search if slug in SUBSTRING_SITS else rx.fullmatch
-    miss = [s for s in samples if not accept(s)]
+    use_search = slug in SUBSTRING_SITS
+    def ok(s):
+        return any((rx.search(s) if use_search else rx.fullmatch(s)) for rx in rxs)
+    miss = [s for s in samples if not ok(s)]
     return len(samples) - len(miss), len(samples), miss
 
 
-def write_log(rows):
+# --- shared per-SIT pipeline ----------------------------------------------
+# Itemized reason vocabulary, emitted here so BOTH gen_zombie_regex and
+# gen_regex_bora (which calls process_sit) log identical reasons.
+DISCARD_REASONS = ("untranslatable-pattern", "no-keywords", "uncompilable-pat",
+                   "samples-failed")
+APPROX_TAGS = (("approx-translation", "approx element"),
+               ("real-world-relax", "relaxed to real-world"),
+               ("limit-widen", "zombie-limit["),
+               ("combos-truncated", "combos-truncated"))
+
+
+def _skip(slug, reason, detail, warnings):
+    return {"status": "SKIP", "slug": slug, "reason": reason, "detail": detail,
+            "warnings": list(warnings)}
+
+
+def process_sit(rec, sample_dir):
+    """The shared translate -> relax -> keyword-filter -> empty-gate -> fit/discard
+    -> expand pipeline. Identical for Zombie and BORA; only final assembly differs.
+    Returns a SKIP dict {status,slug,reason,detail,warnings} OR an emit dict
+    {status(OK|APPROX),slug,proximity,combos,keywords,warnings,n_total,truncated,
+    samples}. samples = test_samples(slug, combos, sample_dir)."""
+    slug = rec["slug"]
+    warnings = []
+    pat, status, warns = patterns_to_regex(rec["pattern"])
+    warnings += warns
+    if status == "untranslatable":
+        return _skip(slug, "untranslatable-pattern",
+                     warns[0] if warns else "no usable pattern prose", warnings)
+    pat = _relax(slug, pat, warnings)
+
+    kept, dropped = _filter_keywords(rec["keywords"])
+    for d in dropped:
+        warnings.append("dropped non-keyword line (prose/sentence/leak): %r" % d)
+    kept, short = _filter_short_keywords(kept)
+    for d in short:
+        warnings.append("dropped short keyword (trimmed len < %d): %r"
+                        % (MIN_KEYWORD_LEN, d))
+    if not kept:
+        return _skip(slug, "no-keywords",
+                     "no keyword survived filtering (prose / len<%d / len>%d / "
+                     "non-English all removed)" % (MIN_KEYWORD_LEN, MAX_KEYWORD_LEN),
+                     warnings)
+
+    pat, znotes, reason = fit_pat_to_limits(pat)
+    warnings += znotes
+    if reason:
+        return _skip(slug, "uncompilable-pat", reason, warnings)
+    if znotes and status == "exact":
+        status = "approx"
+    kept, knotes = _approx_keywords(kept)
+    warnings += knotes
+    if knotes and status == "exact":
+        status = "approx"
+    # chop the keyword set to fit Zombie's KWS packed-run limit (cross-keyword
+    # packing); the SAME chopped set feeds Zombie's KWS AND BORA's per-keyword KW.
+    kept, kbnotes = fit_kws_for_zombie(pat, kept)
+    warnings += kbnotes
+    if kbnotes and status == "exact":
+        status = "approx"
+
+    combos, n_total, truncated = expand_pat(pat)
+    if truncated:
+        warnings.append("combos-truncated: %d combos > %d -> kept %d, dropped %d "
+                        "paths NOT covered (coverage gap) (see expand_pat)"
+                        % (n_total, MAX_COMBINATIONS, len(combos),
+                           n_total - len(combos)))
+        status = "approx"
+    return {"status": "OK" if status == "exact" else "APPROX", "slug": slug,
+            "proximity": rec["proximity"], "combos": combos, "keywords": kept,
+            "warnings": warnings, "n_total": n_total, "truncated": truncated,
+            "samples": test_samples(slug, combos, sample_dir)}
+
+
+def write_log(p, rows):
+    """Write the itemized per-SIT log for one pass. Every dropped/altered rule
+    carries a greppable reason=<code> plus a human detail line, and the bottom
+    tallies discards and approximations by reason."""
     counts = {"OK": 0, "APPROX": 0, "SKIP": 0}
     for r in rows:
         counts[r["status"]] += 1
-    with open(LOG_FILE, "w") as f:
-        f.write(gen_report_header("ms_dlp pattern->regex generation log"))
+    with open(p.log_file, "w") as f:
+        f.write(gen_report_header("ms_dlp pattern->Zombie regex generation log"))
         f.write("\n\n")
-        f.write("outputs:\n")
-        f.write("  %s/  (pure pattern regex)\n" % PAT_DIR)
-        f.write("  %s/  (full proximity policy)\n\n" % FULL_DIR)
-        f.write("note: warnings tagged 'zombie-limit[...]' are approximations forced\n")
-        f.write("  by Zombie's regex-compiler limits (packed run <=32 B; no intra-\n")
-        f.write("  pattern wildcard gap). Each names why and how; all widen the match\n")
-        f.write("  set, so non-membership stays sound. Limits: %s\n\n" % LIMIT_LOG)
+        f.write("input:   %s/\n" % p.records)
+        f.write("outputs: %s/  (per-combo pure pattern: <slug>.regex or <slug>/comb<MM>.regex)\n"
+                % p.pat_dir)
+        f.write("         %s/  (per-combo full proximity policy, same layout)\n\n"
+                % p.full_dir)
+        f.write("note: PAT alternations are expanded into the cross-product of\n")
+        f.write("  alternation-free combos (cap %d, then TRUNCATE); each combo is\n"
+                % MAX_COMBINATIONS)
+        f.write("  one Zombie circuit. 'zombie-limit[...]' warnings widen the match\n")
+        f.write("  set (sound). Discard reasons: %s. Limits: %s\n\n"
+                % (", ".join(DISCARD_REASONS), LIMIT_LOG))
         f.write("== PER-SIT RESULTS ==\n")
         for r in rows:
-            vtag = ""
-            if r["status"] != "SKIP":
-                vtag = {True: "  parse=OK", False: "  parse=FAIL",
-                        None: "  parse=?"}[r["verify"]]
+            if r["status"] == "SKIP":
+                f.write("[SKIP  ] %s  reason=%s\n" % (r["slug"], r["reason"]))
+                f.write("           - %s\n" % r["detail"])
+                for w in r["warnings"]:
+                    f.write("           - %s\n" % w)
+                continue
+            vtag = {True: "parse=OK", False: "parse=FAIL",
+                    None: "parse=?"}[r["verify"]]
             samp = r.get("samples")
             stag = "  samples=%d/%d" % (samp[0], samp[1]) if samp else ""
-            f.write("[%-6s] %s%s%s\n" % (r["status"], r["slug"], vtag, stag))
+            ctag = "  combos=%d" % len(r["combos"])
+            if r["truncated"]:
+                ctag += "/%d(trunc)" % r["n_total"]
+            f.write("[%-6s] %s  keywords=%d%s  files=%d  %s%s\n"
+                    % (r["status"], r["slug"], len(r["keywords"]), ctag,
+                       r["n_files"], vtag, stag))
             for w in r["warnings"]:
                 f.write("           - %s\n" % w)
             if samp:
                 for s in samp[2]:
                     f.write("           ! sample not matched: %r\n" % s)
+        # tallies
         s_pass = sum(r["samples"][0] for r in rows if r.get("samples"))
         s_tot = sum(r["samples"][1] for r in rows if r.get("samples"))
-        z = sum(1 for r in rows
-                if any("zombie-limit" in w for w in r.get("warnings", [])))
+        n_combo = sum(len(r["combos"]) for r in rows if r["status"] != "SKIP")
+        max_combo = max([len(r["combos"]) for r in rows if r["status"] != "SKIP"],
+                        default=0)
+        f.write("\n== DISCARDED BY REASON ==\n")
+        for code in DISCARD_REASONS:
+            n = sum(1 for r in rows if r["status"] == "SKIP" and r["reason"] == code)
+            f.write("  %-22s %d\n" % (code, n))
+        f.write("\n== APPROXIMATED BY REASON ==\n")
+        for code, mark in APPROX_TAGS:
+            n = sum(1 for r in rows if r["status"] != "SKIP"
+                    and any(mark in w for w in r.get("warnings", [])))
+            f.write("  %-22s %d\n" % (code, n))
         f.write("\n== SUMMARY ==\n")
-        f.write("total:   %d\n" % len(rows))
-        f.write("OK:      %d\n" % counts["OK"])
-        f.write("APPROX:  %d\n" % counts["APPROX"])
-        f.write("SKIP:    %d\n" % counts["SKIP"])
-        f.write("zombie-limit approx: %d  (forced by compiler limits; see %s)\n"
-                % (z, LIMIT_LOG))
-        f.write("samples: %d/%d positive matches\n" % (s_pass, s_tot))
-    return counts, s_pass, s_tot
+        f.write("total SITs: %d\n" % len(rows))
+        f.write("OK:         %d\n" % counts["OK"])
+        f.write("APPROX:     %d\n" % counts["APPROX"])
+        f.write("SKIP:       %d\n" % counts["SKIP"])
+        f.write("combos:     %d total  (max %d per SIT; one Zombie circuit each)\n"
+                % (n_combo, max_combo))
+        f.write("samples:    %d/%d positive matches\n" % (s_pass, s_tot))
+    return counts, s_pass, s_tot, n_combo
+
+
+def run_pass(p, discard_on_sample_miss):
+    """Run one pass: read p.records, run gz.process_sit per SIT, write per-combo
+    Zombie regexes, verify, log. discard_on_sample_miss=True (international)
+    converts a sample-miss into reason=samples-failed; False (English) keeps the
+    rule and records the miss (a miss there is a regression -> caught at review)."""
+    reset_dir(p.pat_dir)
+    reset_dir(p.full_dir)
+    if not os.path.isdir(p.records):
+        print("[gen] %s : records dir %s absent -- skipping pass" % (p.log_file, p.records))
+        return
+    rows = []
+    for fname in sorted(os.listdir(p.records)):
+        if not fname.endswith(".txt"):
+            continue
+        rec = parse_sit(os.path.join(p.records, fname))
+        res = process_sit(rec, p.sample_dir)
+        if res["status"] == "SKIP":
+            rows.append(res)
+            continue
+        samp = res.get("samples")
+        if discard_on_sample_miss and samp and samp[0] < samp[1]:
+            rows.append(_skip(res["slug"], "samples-failed",
+                              "pattern matched only %d/%d web-verified samples -> "
+                              "discarded (international auto-discard policy)"
+                              % (samp[0], samp[1]), res["warnings"]))
+            continue
+        fulls = write_zombie_sit(p, res)
+        res["n_files"] = len(fulls)
+        res["verify"] = (all(verify_by_run_zombie(fr) for fr in fulls)
+                         if fulls else None)
+        rows.append(res)
+    counts, s_pass, s_tot, n_combo = write_log(p, rows)
+    print("[gen] %s : SITs=%d OK=%d APPROX=%d SKIP=%d  combos=%d  samples=%d/%d"
+          % (p.log_file, len(rows), counts["OK"], counts["APPROX"],
+             counts["SKIP"], n_combo, s_pass, s_tot))
 
 
 # -------------------------------------------
 # MAIN
 # -------------------------------------------
 def main():
-    # this script lives in scripts/, one level below ms_dlp/.
-    os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir))
+    # resolve all relative paths against the ms_dlp dir (never cwd / hardcoded).
+    os.chdir(get_ms_dlp_dir())
     os.makedirs(DOCS_DIR, exist_ok=True)
-    reset_dir(PAT_DIR)
-    reset_dir(FULL_DIR)
-
-    rows = []
-    for fname in sorted(os.listdir(RECORDS_DIR)):
-        if not fname.endswith(".txt"):
-            continue
-        rec = parse_sit(os.path.join(RECORDS_DIR, fname))
-        pat, status, warns = patterns_to_regex(rec["pattern"])
-        if status == "untranslatable":
-            # connection-string SITs rebuild PAT entirely from CONNSTRING_SYNTAX,
-            # so an untranslatable prose pattern is irrelevant -- don't skip them.
-            if rec["slug"] not in CONNSTRING_SYNTAX:
-                rows.append({"slug": rec["slug"], "status": "SKIP",
-                             "warnings": warns, "verify": None})
-                continue
-            pat = ""        # discarded; approx_for_zombie sets the real PAT below
-        pat = _relax(rec["slug"], pat, warns)
-        rec["keywords"], dropped_kw = _filter_keywords(rec["keywords"])
-        for d in dropped_kw:
-            warns.append("dropped non-keyword line (prose/example leak): %r" % d)
-        rec["keywords"], short_kw = _filter_short_keywords(rec["keywords"])
-        for d in short_kw:
-            warns.append("dropped short keyword (trimmed len < %d): %r"
-                         % (MIN_KEYWORD_LEN, d))
-        # force the regex to fit Zombie's compiler limits (see verify_zombie_limit.log)
-        pat, rec["keywords"], znotes = approx_for_zombie(rec["slug"], pat,
-                                                         rec["keywords"])
-        warns.extend(znotes)
-        if znotes and status == "exact":
-            status = "approx"             # a Zombie-limit approximation was applied
-        full = sit_to_regex(rec["proximity"], pat, rec["keywords"],
-                            ws_delimit=rec["slug"] not in CONNSTRING_SYNTAX)
-        if full is None:
-            rows.append({"slug": rec["slug"], "status": "SKIP",
-                         "warnings": ["no keywords"], "verify": None})
-            continue
-        write_one(PAT_DIR, rec["slug"], pat)
-        write_one(FULL_DIR, rec["slug"], full)
-        rows.append({"slug": rec["slug"],
-                     "status": "OK" if status == "exact" else "APPROX",
-                     "warnings": warns, "verify": verify_by_run_zombie(full),
-                     "samples": test_samples(rec["slug"], pat)})
-
-    counts, s_pass, s_tot = write_log(rows)
-    print("[gen] %s : total=%d OK=%d APPROX=%d SKIP=%d  samples=%d/%d"
-          % (LOG_FILE, len(rows), counts["OK"], counts["APPROX"],
-             counts["SKIP"], s_pass, s_tot))
+    run_pass(PASS_ENGLISH, discard_on_sample_miss=False)
+    run_pass(PASS_INTL, discard_on_sample_miss=True)
 
 
 if __name__ == "__main__":

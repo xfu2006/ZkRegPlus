@@ -52,7 +52,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # common.py lives beside this script (scripts/); import provenance helpers.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import gen_report_header  # noqa: E402
+from common import gen_report_header, get_ms_dlp_dir  # noqa: E402
 
 # --- configuration ---------------------------------------------------------
 LEARN_BASE = "https://learn.microsoft.com/en-us/purview"
@@ -60,7 +60,8 @@ INDEX_URL = LEARN_BASE + "/sit-sensitive-information-type-entity-definitions"
 USER_AGENT = "bora-ms-dlp-retriever/1.0 (research; stdlib urllib)"
 
 DOCS_DIR = "docs"
-RECORDS_DIR = "raw_data_records"
+RECORDS_DIR = "raw_data_records"                       # strict (English-only) batch
+INTL_RECORDS_DIR = "raw_data_records_international"     # relaxed superset (foreign too)
 LOG_FILE = os.path.join(DOCS_DIR, "retrieve_record.log")
 
 N_WORKERS = 4           # concurrent SIT page fetches (Learn 429s above ~8)
@@ -280,16 +281,32 @@ def classify_sit(slug):
         reasons.append("non-English keyword(s): %s"
                        % ", ".join(non_english[:3]))
 
+    # PASS 2 (international superset): RELAX criterion (e). A foreign SIT is kept
+    # IF it passes every OTHER criterion AND has >=1 English (ASCII) keyword after
+    # dropping the non-English ones; if no English keyword survives it is still
+    # dropped. (English SITs land here too -- english_keywords == keywords -- so
+    # the international batch is a superset of the strict batch.)
+    english_keywords = [kw for kw in keywords if kw.isascii()]
+    relaxed_reasons = [r for r in reasons
+                       if not r.startswith("non-English")
+                       and not r.startswith("no keyword list")]
+    if len(english_keywords) < 1:
+        relaxed_reasons.append("no English keyword left after stripping non-English")
+
     return {
         "slug": slug,
         "url": url,
         "accepted": not reasons,
         "reasons": reasons,
+        "relaxed_accepted": not relaxed_reasons,
+        "relaxed_reasons": relaxed_reasons,
         "proximity": proximity,
         "pattern": pattern_text,
         "pattern_items": pattern_items,
         "pattern_groups": pattern_groups,
         "keywords": keywords,
+        "english_keywords": english_keywords,
+        "non_english": non_english,
         "representative_keyword": keywords[0] if keywords else "",
         "last_modified": headers.get("Last-Modified", ""),
         "etag": headers.get("ETag", ""),
@@ -299,8 +316,12 @@ def classify_sit(slug):
 # write one accepted SIT summary to raw_data_records/<slug>.txt. Holds the three
 # public fields requested -- proximity, pattern list, keywords -- plus minimal
 # provenance (slug, url, the representative keyword, server Last-Modified/ETag).
-def write_record(rec):
-    path = os.path.join(RECORDS_DIR, rec["slug"] + ".txt")
+def write_record(rec, keywords, records_dir):
+    """Write one accepted SIT summary to <records_dir>/<slug>.txt using the GIVEN
+    keyword set (all keywords for the strict batch; English-only for the
+    international batch). The representative keyword is drawn from that set."""
+    path = os.path.join(records_dir, rec["slug"] + ".txt")
+    rep = keywords[0] if keywords else ""
     with open(path, "w") as f:
         f.write("slug:                   %s\n" % rec["slug"])
         f.write("source_url:             %s\n" % rec["url"])
@@ -309,7 +330,7 @@ def write_record(rec):
         f.write("last_modified:          %s\n" % rec["last_modified"])
         f.write("etag:                   %s\n" % rec["etag"])
         f.write("proximity:              %d characters\n" % rec["proximity"])
-        f.write("representative_keyword: %s\n" % rec["representative_keyword"])
+        f.write("representative_keyword: %s\n" % rep)
         # the Pattern section is usually a bulleted list of format elements;
         # preserve one element per line. When the page gave several alternative
         # formats (separate lists), they are written as groups joined by a lone
@@ -326,8 +347,8 @@ def write_record(rec):
                     f.write(it + "\n")
         else:
             f.write(rec["pattern"] + "\n")
-        f.write("\n--- keywords (%d) ---\n" % len(rec["keywords"]))
-        for kw in rec["keywords"]:
+        f.write("\n--- keywords (%d) ---\n" % len(keywords))
+        for kw in keywords:
             f.write(kw + "\n")
     return path
 
@@ -347,9 +368,11 @@ def classify_all(slugs):
                 results[slug] = {
                     "slug": slug, "url": "%s/%s" % (LEARN_BASE, slug),
                     "accepted": False, "reasons": ["fetch/parse error: %s" % e],
+                    "relaxed_accepted": False,
+                    "relaxed_reasons": ["fetch/parse error: %s" % e],
                     "proximity": None, "pattern": "", "pattern_items": [],
                     "pattern_groups": [],
-                    "keywords": [],
+                    "keywords": [], "english_keywords": [], "non_english": [],
                     "representative_keyword": "", "last_modified": "", "etag": "",
                 }
             if done % 25 == 0 or done == len(slugs):
@@ -384,7 +407,7 @@ def write_log(results):
                 "see docs/reg_pat_samples.log.\n")
         for slug in sorted(VERIFIED_NONMATCHING_SITS):
             f.write("  - %s\n" % slug)
-        f.write("\n== PER-SIT RESULTS ==\n")
+        f.write("\n== PER-SIT RESULTS (strict / English batch) ==\n")
         for r in results:
             if r["accepted"]:
                 f.write("[ACCEPT] %s  ->  %s/%s.txt\n"
@@ -392,7 +415,7 @@ def write_log(results):
             else:
                 f.write("[REJECT] %s  (%s)\n"
                         % (r["url"], "; ".join(r["reasons"])))
-        f.write("\n== SUMMARY ==\n")
+        f.write("\n== SUMMARY (strict / English batch) ==\n")
         f.write("scanned:  %d\n" % len(results))
         f.write("accepted: %d\n" % len(accepted))
         f.write("rejected: %d\n" % len(rejected))
@@ -404,6 +427,40 @@ def write_log(results):
         for code, mark in markers:
             n = sum(1 for r in rejected if any(mark in x for x in r["reasons"]))
             f.write("  (%s) %-22s %d\n" % (code, mark, n))
+
+        # --- PASS 2: international superset (criterion (e) relaxed) ---
+        intl = [r for r in results if r["relaxed_accepted"]]
+        rescued = [r for r in intl if not r["accepted"]]   # foreign rules saved
+        f.write("\n== INTERNATIONAL SUPERSET (relaxes (e): keep if >=1 English "
+                "keyword survives) ==\n")
+        f.write("records_in: %s/   (= strict batch + foreign rules with non-English "
+                "keywords stripped)\n" % INTL_RECORDS_DIR)
+        for r in intl:
+            if not r["accepted"]:
+                stripped = ", ".join(r["non_english"][:3]) or "-"
+                f.write("[INTL-ADD ] %s  (rescued; stripped non-English: %s)\n"
+                        % (r["url"], stripped))
+        for r in results:
+            if (not r["relaxed_accepted"] and r["non_english"]
+                    and "no English keyword left" in "; ".join(r["relaxed_reasons"])):
+                f.write("[INTL-DROP] %s  (no English keyword left after stripping)\n"
+                        % r["url"])
+        f.write("\n== SUMMARY (international superset) ==\n")
+        f.write("scanned:               %d\n" % len(results))
+        f.write("international accepted: %d   (strict %d + rescued foreign %d)\n"
+                % (len(intl), len(accepted), len(rescued)))
+        f.write("still rejected:        %d\n" % (len(results) - len(intl)))
+        # int'l relaxes (e), so non-English is no longer a reason; (c) becomes
+        # "no English keyword left". (a),(b),(d),(f),(g) are language-independent.
+        intl_rejected = [r for r in results if not r["relaxed_accepted"]]
+        markers_i = [("a", "no pattern section"), ("b", "no proximity spec"),
+                     ("c", "no English keyword"), ("d", "ML/named-entity"),
+                     ("f", "Func_*"), ("g", "verified to not match real samples")]
+        f.write("rejected by reason (a SIT may fail several; (e) non-English relaxed):\n")
+        for code, mark in markers_i:
+            n = sum(1 for r in intl_rejected
+                    if any(mark in x for x in r["relaxed_reasons"]))
+            f.write("  (%s) %-22s %d\n" % (code, mark, n))
     return len(accepted), len(rejected)
 
 
@@ -414,33 +471,45 @@ def main():
     # this script lives in scripts/, one level below ms_dlp/ where docs/ and
     # raw_data_records/ live; anchor cwd there so the relative paths resolve
     # regardless of where the script is invoked from.
-    os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir))
+    os.chdir(get_ms_dlp_dir())
     os.makedirs(DOCS_DIR, exist_ok=True)
-    # start from a clean records dir: if it already exists, remove its contents
-    # (so SITs excluded or rejected since a prior run never linger as stale
-    # files); create it fresh if it does not exist.
-    if os.path.isdir(RECORDS_DIR):
-        shutil.rmtree(RECORDS_DIR)
-    os.makedirs(RECORDS_DIR)
+    # start from clean records dirs: if they exist, remove contents (so SITs
+    # excluded or rejected since a prior run never linger as stale files).
+    for d in (RECORDS_DIR, INTL_RECORDS_DIR):
+        if os.path.isdir(d):
+            shutil.rmtree(d)
+        os.makedirs(d)
 
     # 1. enumerate every SIT definition page from the index.
     slugs = list_sit_slugs()
 
-    # 2. fetch + classify all pages in parallel.
+    # 2. fetch + classify all pages in parallel (ONE fetch feeds both batches).
     results = classify_all(slugs)
 
-    # 3. write a summary record for every accepted SIT.
-    n_written = 0
+    # 3a. PASS 1 (strict / English): write every strict-accepted SIT with ALL its
+    #     keywords -> raw_data_records/.
+    n_strict = 0
     for r in results:
         if r["accepted"]:
-            write_record(r)
-            n_written += 1
-    print("[records] wrote %d summaries to %s/" % (n_written, RECORDS_DIR))
+            write_record(r, r["keywords"], RECORDS_DIR)
+            n_strict += 1
+    print("[records] wrote %d strict summaries to %s/" % (n_strict, RECORDS_DIR))
 
-    # 4. write the provenance + per-SIT decision log.
+    # 3b. PASS 2 (international superset): write every relaxed-accepted SIT with its
+    #     ENGLISH keywords only -> raw_data_records_international/. English SITs land
+    #     here too (english==all), so this is a SUPERSET of the strict batch.
+    n_intl = 0
+    for r in results:
+        if r["relaxed_accepted"]:
+            write_record(r, r["english_keywords"], INTL_RECORDS_DIR)
+            n_intl += 1
+    print("[records] wrote %d international summaries to %s/"
+          % (n_intl, INTL_RECORDS_DIR))
+
+    # 4. write the provenance + per-SIT decision log (both batches).
     accepted, rejected = write_log(results)
-    print("[log] %s : scanned=%d accepted=%d rejected=%d"
-          % (LOG_FILE, len(results), accepted, rejected))
+    print("[log] %s : scanned=%d strict=%d international=%d"
+          % (LOG_FILE, len(results), accepted, n_intl))
 
 
 if __name__ == "__main__":

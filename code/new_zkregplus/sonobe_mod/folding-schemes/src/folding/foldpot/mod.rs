@@ -75,6 +75,7 @@ pub mod circuits_super;
 
 
 pub mod driver;
+pub mod capacity_planner;
 pub mod veccom;
 
 //use circuits::{AugmentedFCircuit, ChallengeGadget};

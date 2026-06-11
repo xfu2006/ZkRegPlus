@@ -1,0 +1,9 @@
+Win.Alphabet.SAMPLE-1;Engine:51-255,Target:1;0|1;09afcdeb1928374650123457890abcde;0123498765423afedc
+Dlp.sit-defn-sql-server-connection-string.kw00.fwd;Engine:81-255,Target:0;0;/User\x20Id\x3D.{0,300}(Password|pwd)[\x20]{0,2}\x3D[\x20]{0,2}[^\x3B\x2F\x22]{8,32}/s
+Dlp.sit-defn-sql-server-connection-string.kw00.bwd;Engine:81-255,Target:0;0;/(Password|pwd)[\x20]{0,2}\x3D[\x20]{0,2}[^\x3B\x2F\x22]{8,32}.{0,300}User\x20Id\x3D/s
+Dlp.sit-defn-sql-server-connection-string.kw01.fwd;Engine:81-255,Target:0;0;/User\x20ID\x3D.{0,300}(Password|pwd)[\x20]{0,2}\x3D[\x20]{0,2}[^\x3B\x2F\x22]{8,32}/s
+Dlp.sit-defn-sql-server-connection-string.kw01.bwd;Engine:81-255,Target:0;0;/(Password|pwd)[\x20]{0,2}\x3D[\x20]{0,2}[^\x3B\x2F\x22]{8,32}.{0,300}User\x20ID\x3D/s
+Dlp.sit-defn-sql-server-connection-string.kw02.fwd;Engine:81-255,Target:0;0;/uid\x3D.{0,300}(Password|pwd)[\x20]{0,2}\x3D[\x20]{0,2}[^\x3B\x2F\x22]{8,32}/s
+Dlp.sit-defn-sql-server-connection-string.kw02.bwd;Engine:81-255,Target:0;0;/(Password|pwd)[\x20]{0,2}\x3D[\x20]{0,2}[^\x3B\x2F\x22]{8,32}.{0,300}uid\x3D/s
+Dlp.sit-defn-sql-server-connection-string.kw03.fwd;Engine:81-255,Target:0;0;/UserId\x3D.{0,300}(Password|pwd)[\x20]{0,2}\x3D[\x20]{0,2}[^\x3B\x2F\x22]{8,32}/s
+Dlp.sit-defn-sql-server-connection-string.kw03.bwd;Engine:81-255,Target:0;0;/(Password|pwd)[\x20]{0,2}\x3D[\x20]{0,2}[^\x3B\x2F\x22]{8,32}.{0,300}UserId\x3D/s

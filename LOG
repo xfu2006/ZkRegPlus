@@ -29031,7 +29031,28 @@ Goal 2. cut half of the cost case sensitive only
 	[b] implenetaion finished
 	[c] test small_email ->25% improvement
 	[d] small_email2 -> sliht change to full dataset, which is good
-	[e] small_email3 
-Goal 3. writing
+	[e] small_email3  -> only 13% cuts
+		=> the vast majority is the discharge gadget which takes
+			11M out of 19M so igc cut is small
+	[f] further optimize the data of small_email3.
+Goal 3. writing 7.2
 	[a] DLP data row
 	[b] description in paragraph 
+Goal 4. writing of 7.3
+	[a] structure first
+Goal 5. regenerate the full data dlp set
+	[a] but it's taking very long and zombie works VERY SLOW!
+	[b] fix the ERROR
+	[c] parallel build circ and run
+	[d] running now
+Goal 6. have a more accurate ESTIMATE
+	[a] rough estimate stlil not working
+
+Thursday 06/11/2026
+Goal 1. check the results of determine_config()
+Goal 2. start to work on small_data3() and small_data4() again to point to real set
+	[a] should generate dlp and run_db and generate
+		full_clean_enron_list.txt
+		pass_clean_enron_list.txt
+		fail_clean_enron_list.txt
+

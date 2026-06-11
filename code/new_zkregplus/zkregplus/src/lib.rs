@@ -14,3 +14,6 @@ pub mod stats_helper;
 pub mod circs;
 /// the gadgets used by CP, SED, FDA
 pub mod gadgets;
+/// auto capacity tuner: estimate -> Pass-1 probe -> bump-on-CapErr loop
+/// to find the confirmed-lowest config for discharging a sample set.
+pub mod determine_config;

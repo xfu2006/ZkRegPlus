@@ -1,0 +1,1 @@
+[A-Za-z][0-9]{8}.{0,300}[\x20\x09\x0A\x0D]passportnumber[\x20\x09\x0A\x0D]

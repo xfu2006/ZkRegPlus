@@ -1472,6 +1472,72 @@ impl ClamavSig{
 		(res, cost, cost2)
 	}
 
+	/// Per-chunk SED forward-propagation peaks for capacity estimation.
+	/// Single pass mirroring eval_pm_bounds_core (step 0 = the anchor layer,
+	/// which dominates the StepFwdPrf load), counting src->dst transition
+	/// pairs and bucketing by dst chunk. Returns per chunk
+	/// (fwd_entries, active_steps, live_locs). Read-only; no discharge
+	/// effect. NOTE: the discharge-side count is a fixed fraction (~1/2-1/3)
+	/// of the gadget's StepFwdPrf container occupancy (encoding multiplicity),
+	/// so perc lands ~2-3x low without a calibration factor.
+	fn eval_pm_bounds_chunked(&self,
+		pat: &[(String,(usize,usize))], is_backward: bool, b_igc: bool,
+		hs:&HashMap<String,Vec<usize>>, hs_igc:&HashMap<String,Vec<usize>>,
+		seg_size: usize, _reset_per_chunk: bool)
+		->Vec<(usize,usize,usize)>{
+		let mut cells: Vec<(usize,usize,usize)> = vec![];
+		if seg_size==0 || pat.is_empty() { return cells; }
+		let getpos = |w: &String| -> Vec<usize> {
+			if b_igc { hs_igc.get(w).map_or(vec![], |v| v.to_vec()) }
+			else { hs.get(w).map_or(vec![], |v| v.to_vec()) }
+		};
+		let win = |x: usize, rg: (usize,usize), len_term: usize, back: bool|
+			-> (usize,usize) {
+			if !back {
+				let mn = if rg.0==usize::MAX {usize::MAX} else {x+rg.0+len_term};
+				let mx = if rg.1==usize::MAX {usize::MAX} else {x+rg.1+len_term};
+				(mn.min(RANGE_MAX), mx.min(RANGE_MAX))
+			} else {
+				(x.saturating_sub(rg.1.saturating_add(len_term)),
+				 x.saturating_sub(rg.0.saturating_add(len_term)))
+			}
+		};
+		let mut arr_pos = vec![0usize];   //virtual start; step 0 = anchor
+		let mut prev_len = 0usize;
+		for id in 0..pat.len(){
+			let word = &pat[id].0; let rg = pat[id].1;
+			let back = is_backward && id>=1;
+			let len_term = if back {prev_len} else {word.len()};
+			let allowed: Vec<(usize,usize)> = arr_pos.iter()
+				.map(|&x| win(x, rg, len_term, back)).collect();
+			let mut dst = getpos(word); dst.sort();
+			let mut next: Vec<usize> = vec![];
+			let mut seen: HashSet<usize> = HashSet::new();
+			let mut touched: HashSet<usize> = HashSet::new();
+			for (lo,hi) in &allowed{
+				if *lo>*hi { continue; }
+				let l = dst.partition_point(|&d| d < *lo);
+				let r = dst.partition_point(|&d| d <= *hi);
+				for &d in &dst[l..r]{
+					let c = d / seg_size;
+					while cells.len()<=c { cells.push((0,0,0)); }
+					cells[c].0 += 1;          //src->dst transition pair
+					touched.insert(c);
+					if seen.insert(d) { next.push(d); }
+				}
+			}
+			for c in touched{ cells[c].1 += 1; }
+			next.sort(); arr_pos = next;
+			prev_len = word.len();
+		}
+		for &loc in &arr_pos{
+			let c = loc / seg_size;
+			while cells.len()<=c { cells.push((0,0,0)); }
+			cells[c].2 += 1;
+		}
+		cells
+	}
+
 	/// collect bagwords from pmreg (in case it uses different min-len requirement)
 	pub fn collect_bagwords_from_pmreg(&self, b_ignore_case: bool) -> HashSet<String>{
 		let mut hs_res = HashSet::<String>::new();
@@ -3388,6 +3454,57 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 			.max(dfa_bag_igc.get_max_needs(&dfa_acc_path_igc,
 				seg_size, &mult_ig))
 	} else { 0 };
+	// Accurate perc / avg_active sizing: accumulate per-chunk forward-proof
+	// entries, active pattern-steps and carried live locs across all SED-
+	// universe subsigs (crit-hit, pm-failed). Aggressive resets the carry
+	// per chunk (gadget reseed); general keeps it. Estimator-pass only
+	// (b_estimate_caps) so normal discharge is unaffected.
+	let (mut max_fwd_entries_per_chunk, mut max_carried_live_per_chunk,
+		mut max_active_steps_per_chunk) = (0usize, 0usize, 0usize);
+	if read_global_config().b_estimate_caps {
+		let mut _et = Timer::new();
+		let reset_per_chunk = read_global_config()
+			.clamav_cfg.b_aggressive_sde_for_rep;
+		//F+B: fwd-anchored subsigs feed StepFwdPrf, bwd-anchored feed
+		//StepBwdPrf (separate buffers, same perc + cost-68). Measure each
+		//subsig in its ANCHOR direction; the binding peak per chunk is the
+		//MAX of the two buffers, not the sum.
+		let mut acc_f: Vec<(usize,usize,usize)> = vec![];
+		let mut acc_b: Vec<(usize,usize,usize)> = vec![];
+		for s in v_sigs.iter().filter(|s|
+			set_sigs_crit.contains(&s.name)
+			&& !set_sigs_pm.contains(&s.name)){
+			for sid in 0..s.vec_subsig_pm_bounds.len(){
+				let pb = &s.vec_subsig_pm_bounds[sid];
+				if pb.is_empty() { continue; }
+				let igc = s.vec_subsig_obj.get(sid)
+					.map_or(false,|o| o.b_ignore_case);
+				let is_bwd = s.vec_subsig_anchor_dir.get(sid)
+					.map_or(false,|d| *d==1);
+				let cells = s.eval_pm_bounds_chunked(pb, is_bwd, igc,
+					&hs_occ, &hs_occ_igc, seg_size, reset_per_chunk);
+				let acc = if is_bwd {&mut acc_b} else {&mut acc_f};
+				for (c,(f,a,l)) in cells.into_iter().enumerate(){
+					while acc.len()<=c { acc.push((0,0,0)); }
+					acc[c].0+=f; acc[c].1+=a; acc[c].2+=l;
+				}
+			}
+		}
+		let nc = acc_f.len().max(acc_b.len());
+		for c in 0..nc{
+			let f = acc_f.get(c).copied().unwrap_or((0,0,0));
+			let b = acc_b.get(c).copied().unwrap_or((0,0,0));
+			max_fwd_entries_per_chunk =
+				max_fwd_entries_per_chunk.max(f.0.max(b.0));
+			max_active_steps_per_chunk =
+				max_active_steps_per_chunk.max(f.1.max(b.1));
+			max_carried_live_per_chunk =
+				max_carried_live_per_chunk.max(f.2.max(b.2));
+		}
+		_et.stop();
+		log(0, LOG1, &format!(
+			"ESTIMATE: chunked SED propagation (this file): {} ms", _et.ms()));
+	}
 	let chunk_peaks = ChunkPeaks{
 		seg_size,
 		max_unique_states: u_cs.max(u_ig),
@@ -3395,6 +3512,9 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		max_pats_in_trace: p_cs.max(p_ig),
 		perc_pats_expansion_rate,
 		max_needs_subsigs,
+		max_fwd_entries_per_chunk,
+		max_carried_live_per_chunk,
+		max_active_steps_per_chunk,
 	};
 
 	//6. compute stats 

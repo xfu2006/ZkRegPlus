@@ -55,20 +55,23 @@ from concurrent.futures import ProcessPoolExecutor
 
 # common.py / run_zombie.py live beside this script (scripts/).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import gen_report_header  # noqa: E402
+from common import (gen_report_header, get_ms_dlp_dir,  # noqa: E402
+                    get_samples_dir)
 import run_zombie as rz               # noqa: E402  (extract_parts for KWS parsing)
 
 # --- configuration ---------------------------------------------------------
-FULL_DIR = "regex_zombie"               # input: baked policy regexes (keyword src)
 DOCS_DIR = "docs"
-REPORT_FILE = os.path.join(DOCS_DIR, "measure_report.txt")
-# email corpus, relative to this script (scripts/ -> ms_dlp -> src_sig -> data).
-SAMPLES_DIR = os.path.normpath(os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    os.pardir, os.pardir, os.pardir, "samples", "email_merged128k"))
-# restrict the scan to the CLEAN (unflagged) emails -- the documents eval_dlp.py
-# found match NO regex_zombie policy. Paths inside are relative to SAMPLES_DIR.
-CLEAN_LIST = os.path.join(DOCS_DIR, "clean_email_list.txt")
+# The measurement MATRIX: every (DATASET corpus) x (RULESET regex folder), matching
+# eval_dlp.py. Edit these two arrays to add corpora or rule sets -- the main loop
+# scales automatically. For each combination, vocab comes from the ruleset folder
+# and the scan is restricted to that combination's CLEAN (unflagged) subset, i.e.
+# docs/clean_email_list_<dataset>_<ruleset>.txt (produced by eval_dlp.py, which
+# MUST run first). Output: docs/measure_report_<dataset>_<ruleset>.txt.
+DATASETS = [
+    ("email_merged128k", get_samples_dir() / "email_merged128k"),
+    ("email",            get_samples_dir() / "email"),
+]
+RULESETS = ["regex_zombie", "regex_zombie_international"]
 
 N_WORKERS = os.cpu_count() or 8
 CHUNKSIZE = 16                          # files per task dispatched to a worker
@@ -103,13 +106,13 @@ def _strip_ws_wrap(alt):
 # single-spaced) and de-duplicate into one vocabulary. This reflects the keywords
 # ACTUALLY in force after gen_zombie_regex's filtering (short-keyword drop,
 # connection-string rewrite) -- not the raw raw_data_records/ lists.
-def collect_vocab(regex_dir=FULL_DIR):
+def collect_vocab(regex_dir):
     vocab = set()      # distinct keywords (deduped across all SITs)
     total = 0          # total keyword entries (a keyword shared by N SITs counts N)
-    for fn in sorted(os.listdir(regex_dir)):
-        if not fn.endswith(".regex"):
-            continue
-        full = open(os.path.join(regex_dir, fn),
+    # ONE policy per SIT (all combos of an expanded SIT share the same KWS, so
+    # iterating per-combo would count its keywords C times).
+    for name in rz.list_sit_reps(regex_dir):
+        full = open(os.path.join(regex_dir, name + ".regex"),
                     encoding="utf-8").read().strip()
         try:
             _pat, kws, _prox = rz.extract_parts(full)
@@ -123,12 +126,12 @@ def collect_vocab(regex_dir=FULL_DIR):
     return vocab, total
 
 
-# read docs/clean_email_list.txt (paths relative to SAMPLES_DIR; '#' header lines
-# ignored) -> sorted absolute paths that exist. These are the unflagged emails.
-def read_clean_list(clean_list=CLEAN_LIST, samples_dir=SAMPLES_DIR):
+# read a clean_email_list_<...>.txt (paths relative to its dataset dir; '#' header
+# lines ignored) -> sorted absolute paths that exist. These are the unflagged emails
+# for one (dataset, ruleset) combination.
+def read_clean_list(clean_list, samples_dir):
     if not os.path.isfile(clean_list):
-        raise SystemExit("[corpus] %s not found; run eval_dlp.py first"
-                         % clean_list)
+        raise SystemExit("[corpus] %s not found; run eval_dlp.py first" % clean_list)
     files = []
     with open(clean_list, encoding="utf-8") as f:
         for ln in f:
@@ -269,7 +272,8 @@ def _stats(values):
     return sum(values) / len(values), min(values), max(values)
 
 
-def write_report(n_files, vocab_size, vocab_total, distinct, total, maxocc,
+def write_report(tag, ruleset_dir, dataset_dir, clean_list, report_file,
+                 n_files, vocab_size, vocab_total, distinct, total, maxocc,
                  topkws, chunk_size, files):
     # argmin/argmax (by total occurrences) for a little context in the report.
     lo_i = min(range(len(total)), key=lambda i: total[i]) if total else None
@@ -283,9 +287,9 @@ def write_report(n_files, vocab_size, vocab_total, distinct, total, maxocc,
     lines = []
     lines.append(gen_report_header("ms_dlp keyword-density measurement"))
     lines.append("")
-    lines.append("keywords:    parsed from %s/ KWS groups (post-filter)" % FULL_DIR)
-    lines.append("samples_dir: %s" % SAMPLES_DIR)
-    lines.append("corpus:      clean (unflagged) subset -- %s" % CLEAN_LIST)
+    lines.append("keywords:    parsed from %s/ KWS groups (post-filter)" % ruleset_dir)
+    lines.append("dataset:     %s" % dataset_dir)
+    lines.append("corpus:      clean (unflagged) subset -- %s" % clean_list)
     lines.append("chunk_size:  %d bytes (%d KB)" % (chunk_size, chunk_size // 1024))
     lines.append("")
     lines.append("match: case-insensitive, non-alphanumeric-flanked, "
@@ -334,7 +338,7 @@ def write_report(n_files, vocab_size, vocab_total, distinct, total, maxocc,
     report = "\n".join(lines)
 
     os.makedirs(DOCS_DIR, exist_ok=True)
-    with open(REPORT_FILE, "w") as f:
+    with open(report_file, "w") as f:
         f.write(report + "\n")
     return report
 
@@ -342,57 +346,68 @@ def write_report(n_files, vocab_size, vocab_total, distinct, total, maxocc,
 # -------------------------------------------
 # MAIN
 # -------------------------------------------
-def main():
-    # anchor cwd to ms_dlp/ (parent of scripts/) so FULL_DIR / DOCS_DIR
-    # resolve regardless of the invocation directory.
-    os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir))
+def measure_combo(tag, ds_name, ds_dir, rs_dir, chunk_size):
+    """Measure one (dataset, ruleset) combination: vocab from rs_dir, scan that
+    combination's clean subset under ds_dir, write measure_report_<tag>.txt.
+    Returns a one-line summary dict (or None if skipped)."""
+    if not os.path.isdir(rs_dir):
+        print("[measure] ruleset %s/ absent -- skipping %s" % (rs_dir, tag)); return None
+    clean_list = os.path.join(DOCS_DIR, "clean_email_list_%s.txt" % tag)
+    report_file = os.path.join(DOCS_DIR, "measure_report_%s.txt" % tag)
 
-    # file-split chunk size for the max_occ_per_chunk metric. Change here.
-    chunk_size = 64 * 1024              # 64 KB
-
-    # step 1: vocabulary, parsed from the baked regex_zombie/ KWS groups
-    vocab, vocab_total = collect_vocab(FULL_DIR)
+    vocab, vocab_total = collect_vocab(rs_dir)
     vocab_list = sorted(vocab)
-    print("[vocab] %d keywords (%d distinct) parsed from %s/"
-          % (vocab_total, len(vocab), FULL_DIR))
+    print("[vocab] %s : %d keywords (%d distinct) from %s/"
+          % (tag, vocab_total, len(vocab), rs_dir))
     if not vocab:
-        raise SystemExit("[vocab] no keywords parsed from %s/; "
-                         "run gen_zombie_regex.py first" % FULL_DIR)
+        print("[measure] no keywords in %s/ -- run gen_zombie_regex.py" % rs_dir); return None
 
-    # enumerate the corpus: only the CLEAN (unflagged) emails listed by eval_dlp.py
-    files = read_clean_list()
-    print("[corpus] %d clean files from %s" % (len(files), CLEAN_LIST))
+    files = read_clean_list(clean_list, str(ds_dir))
+    print("[corpus] %s : %d clean files from %s" % (tag, len(files), clean_list))
     if not files:
-        raise SystemExit("[corpus] no clean files in %s (run eval_dlp.py first)"
-                         % CLEAN_LIST)
+        print("[measure] no clean files in %s -- run eval_dlp.py first" % clean_list)
+        return None
 
-    # step 2: parallel per-file scan
-    distinct, total, maxocc, topkws = [], [], [], []
-    kept_files = []
-    done = 0
-    with ProcessPoolExecutor(max_workers=N_WORKERS,
-                             initializer=_init_worker,
+    distinct, total, maxocc, topkws, kept_files, done = [], [], [], [], [], 0
+    with ProcessPoolExecutor(max_workers=N_WORKERS, initializer=_init_worker,
                              initargs=(vocab_list, chunk_size)) as ex:
-        for path, res in zip(files, ex.map(_scan_file, files,
-                                           chunksize=CHUNKSIZE)):
+        for path, res in zip(files, ex.map(_scan_file, files, chunksize=CHUNKSIZE)):
             done += 1
             if res is not None:
                 d, t, mo, tk = res
-                distinct.append(d)
-                total.append(t)
-                maxocc.append(mo)
-                topkws.append(tk)
-                kept_files.append(path)
-            if done % 1000 == 0 or done == len(files):
-                print("[scan] %d/%d files" % (done, len(files)))
+                distinct.append(d); total.append(t); maxocc.append(mo)
+                topkws.append(tk); kept_files.append(path)
+            if done % 5000 == 0 or done == len(files):
+                print("[scan] %s : %d/%d files" % (tag, done, len(files)))
 
-    # step 3: summarize
-    report = write_report(len(kept_files), len(vocab), vocab_total, distinct,
-                          total, maxocc, topkws, chunk_size, kept_files)
-    print()
-    print(report)
-    print()
-    print("[report] written to %s" % REPORT_FILE)
+    write_report(tag, rs_dir, ds_dir, clean_list, report_file, len(kept_files),
+                 len(vocab), vocab_total, distinct, total, maxocc, topkws,
+                 chunk_size, kept_files)
+    mo_avg = sum(maxocc) / len(maxocc) if maxocc else 0
+    print("[report] %s -> %s" % (tag, report_file))
+    return {"tag": tag, "files": len(kept_files), "vocab": len(vocab),
+            "vocab_total": vocab_total, "maxocc_avg": mo_avg,
+            "maxocc_max": max(maxocc) if maxocc else 0}
+
+
+def main():
+    os.chdir(get_ms_dlp_dir())          # resolve relative paths (rulesets, docs)
+    chunk_size = 64 * 1024              # 64 KB; file-split for max_occ_per_chunk
+
+    summaries = []
+    for ds_name, ds_dir in DATASETS:
+        for rs_dir in RULESETS:
+            tag = "%s_%s" % (ds_name, rs_dir)
+            print("\n=== measure %s ===" % tag)
+            s = measure_combo(tag, ds_name, ds_dir, rs_dir, chunk_size)
+            if s:
+                summaries.append(s)
+
+    print("\n=== measure matrix summary ===")
+    for s in summaries:
+        print("  %-48s files=%d vocab=%d(tot %d) max_occ_per_chunk avg/max=%.2f/%d"
+              % (s["tag"], s["files"], s["vocab"], s["vocab_total"],
+                 s["maxocc_avg"], s["maxocc_max"]))
 
 
 if __name__ == "__main__":

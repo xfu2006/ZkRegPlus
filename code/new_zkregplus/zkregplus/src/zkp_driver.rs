@@ -163,7 +163,7 @@ fn load_files<F:PrimeField + ColEle>(_job_id: usize, list_file_path: &str, db: &
 /// to call decrease_copy of capacity for the next circ
 /// Eventually list of circs will be sorted in ascending order
 #[allow(dead_code)]
-fn build_circs_adv<F,C,CS>(
+pub(crate) fn build_circs_adv<F,C,CS>(
 	poseidon_config: &PoseidonConfig<F>,
 	total_word_n: usize, //sum of word length, each word is packed,
 						//e.g., every 62 nibbles count as 1 in length (packed)
@@ -309,7 +309,7 @@ where C: CurveGroup<ScalarField=F>,
 /// guarantees all-CS subsigs), cutting the dead igc gadget cost. Takes an
 /// explicit CS capacity ladder, lowest-cost first; one circuit per entry,
 /// no decreased_copy. There is no DFA gadget in aggressive mode.
-fn build_circs_adv_aggr<F,C,CS>(
+pub(crate) fn build_circs_adv_aggr<F,C,CS>(
 	poseidon_config: &PoseidonConfig<F>,
 	total_word_n: usize,
 	chunk_len: usize,
@@ -384,6 +384,140 @@ where C: CurveGroup<ScalarField=F>,
 		layer_circs.push( vec![circ] );
 	}
 	layer_circs //caller already lowest-cost first: no reverse
+}
+
+/// determine_config (aggressive): auto-tune the LOWEST CapParams that pass the
+/// Pass-1 capacity probe over `sample_words`. Loop = build circuits from the
+/// scalar params -> CapacityPlanner Pass-1 probe -> on CapErr bump the exact
+/// param to its required value -> retry. No keys, no folding, no cyclepair;
+/// the foldpot framework is untouched. Returns the confirmed-lowest config.
+pub(crate) fn determine_config_aggr<F,C,CS>(
+	db: Arc<ClamavDB<F>>,
+	sample_words: &Vec<Vec<F>>,
+	sample_word_infos: &Vec<WordInfo>,
+	mut p: crate::determine_config::CapParams,
+	chunk_len: usize, lkup_len: usize, total_word_n: usize, max_iters: usize,
+)->Result<crate::determine_config::CapParams, String>
+where C: CurveGroup<ScalarField=F>,
+	  CS: CommitmentScheme<C,false>,
+	  F: PrimeField + Absorb + ColEle,
+{
+	use folding_schemes::folding::foldpot::capacity_planner::CapacityPlanner;
+	use crate::determine_config::{apply_caperr_bumps, caps_from_params_aggr};
+	let poseidon = poseidon_canonical_config::<F>();
+	// Pad each sample word to a multiple of chunk_len, matching foldpot_main's
+	// F-level padding (driver.rs:2745). The CP gadget asserts each segment is
+	// exactly max_word_len, so an unpadded short tail segment would panic.
+	let padded: Vec<Vec<F>> = sample_words.iter()
+		.map(|w| utils::data::pad_word_to_multiple::<F>(w, chunk_len))
+		.collect();
+	let mut t_all = GTimer::new();
+	for iter in 0..max_iters {
+		let mut t_round = GTimer::new();
+		utils::consts::get_global_config().aggr_needs_subsigs =
+			p.aggr_needs_subsigs;
+		let probe_res = crate::determine_config::probe_catching(|| {
+			let (cp, sed) = caps_from_params_aggr(&p);
+			let cs_caps = vec![(cp, sed)];
+			let layered = build_circs_adv_aggr::<F,C,CS>(&poseidon,
+				total_word_n, chunk_len, lkup_len, db.clone(), &cs_caps,
+				false);
+			let planner = CapacityPlanner::<C, FC<F,C,CS>, LK<F>, GM<F>,
+				false>::new(layered);
+			planner.capacity_probe(&padded, sample_word_infos)
+		})?;
+		t_round.stop();
+		match probe_res {
+			Ok(steps) => {
+				t_all.stop();
+				log(0, LOG1, &format!("determine_config_aggr CONVERGED @iter \
+					{}: steps={}, perc={}, needs={}, avg_active={}, subsigs={};\
+					 round {} ms, TOTAL {} ms", iter, steps,
+					p.perc_pats_expansion_rate, p.aggr_needs_subsigs,
+					p.avg_active_pats_per_subsig, p.subsigs, t_round.ms(),
+					t_all.ms()));
+				return Ok(p);
+			}
+			Err(errs) => {
+				let (changed, unmapped) =
+					apply_caperr_bumps(&mut p, true, &errs);
+				if !unmapped.is_empty() {
+					return Err(format!("unmapped CapErr(s): {:?}", unmapped));
+				}
+				if !changed {
+					return Err(format!(
+						"CapErr with no bump applied: {:?}", errs));
+				}
+				log(0, LOG1, &format!("determine_config_aggr iter {}: \
+					round {} ms, bumped {:?}", iter, t_round.ms(), errs));
+			}
+		}
+	}
+	Err(format!("max_iters {} reached without convergence", max_iters))
+}
+
+/// determine_config (non-aggressive): same loop as the aggressive variant but
+/// builds the full cs/igc/dfa ladder via build_circs_adv. CapErr bumps route
+/// to cs or igc fields by the b_igc suffix. Returns the confirmed-lowest base
+/// caps (decreased_copy regenerates the ladder).
+pub(crate) fn determine_config_general<F,C,CS>(
+	db: Arc<ClamavDB<F>>,
+	sample_words: &Vec<Vec<F>>,
+	sample_word_infos: &Vec<WordInfo>,
+	mut p: crate::determine_config::CapParams,
+	chunk_len: usize, lkup_len: usize, total_word_n: usize,
+	vec_decrease_level: &Vec<usize>, n_circs: usize, max_iters: usize,
+)->Result<crate::determine_config::CapParams, String>
+where C: CurveGroup<ScalarField=F>,
+	  CS: CommitmentScheme<C,false>,
+	  F: PrimeField + Absorb + ColEle,
+{
+	use folding_schemes::folding::foldpot::capacity_planner::CapacityPlanner;
+	use crate::determine_config::{apply_caperr_bumps, caps_from_params_general};
+	let poseidon = poseidon_canonical_config::<F>();
+	let padded: Vec<Vec<F>> = sample_words.iter()
+		.map(|w| utils::data::pad_word_to_multiple::<F>(w, chunk_len))
+		.collect();
+	let mut t_all = GTimer::new();
+	for iter in 0..max_iters {
+		let mut t_round = GTimer::new();
+		let probe_res = crate::determine_config::probe_catching(|| {
+			let (cp_cs, sed_cs, dfa, cp_igc, sed_igc) =
+				caps_from_params_general(&p);
+			let layered = build_circs_adv::<F,C,CS>(&poseidon, total_word_n,
+				chunk_len, lkup_len, db.clone(), &cp_cs, &sed_cs, &dfa,
+				&cp_igc, &sed_igc, vec_decrease_level, n_circs, false);
+			let planner = CapacityPlanner::<C, FC<F,C,CS>, LK<F>, GM<F>,
+				false>::new(layered);
+			planner.capacity_probe(&padded, sample_word_infos)
+		})?;
+		t_round.stop();
+		match probe_res {
+			Ok(steps) => {
+				t_all.stop();
+				log(0, LOG1, &format!("determine_config_general CONVERGED \
+					@iter {}: steps={}, perc_cs={}, perc_igc={}, subsigs={}, \
+					basis_acc={}; round {} ms, TOTAL {} ms", iter, steps,
+					p.perc_pats_expansion_rate, p.perc_pats_expansion_rate_igc,
+					p.subsigs, p.basis_acc_states, t_round.ms(), t_all.ms()));
+				return Ok(p);
+			}
+			Err(errs) => {
+				let (changed, unmapped) =
+					apply_caperr_bumps(&mut p, false, &errs);
+				if !unmapped.is_empty() {
+					return Err(format!("unmapped CapErr(s): {:?}", unmapped));
+				}
+				if !changed {
+					return Err(format!(
+						"CapErr with no bump applied: {:?}", errs));
+				}
+				log(0, LOG1, &format!("determine_config_general iter {}: \
+					round {} ms, bumped {:?}", iter, t_round.ms(), errs));
+			}
+		}
+	}
+	Err(format!("max_iters {} reached without convergence", max_iters))
 }
 
 /// build the list of circs. Note: for convenience of implementation,
@@ -733,11 +867,54 @@ where
 
 	//3. build the circuits
 	let rc_db = Arc::new(db.clone());
+	// determine_config probe (env-gated, non-aggressive): reuse the built DB +
+	// loaded jobs to auto-tune the lowest CapParams via the Pass-1 probe, then
+	// return. Warm-starts perc/avg_active (cs+igc) low to exercise convergence;
+	// compares vs the runner's hand caps with the +10% rule. Framework untouched.
+	if std::env::var("ZKR_DETERMINE_CONFIG").is_ok() {
+		use crate::determine_config::{capparams_from_caps_general, compare_caps};
+		let cur = capparams_from_caps_general(init_cp_capacity_cs,
+			init_sed_capacity_cs, init_dfa_capacity, init_sed_capacity_igc);
+		let mut p0 = cur.clone();
+		// warm-start LOW (floor 16) to exercise convergence to the true
+		// minimum. If 16 is below a structural build floor, build_circs panics
+		// -> probe_catching converts it to a bump (auto-discovers the floor).
+		p0.perc_pats_expansion_rate = cur.perc_pats_expansion_rate.min(16);
+		p0.perc_pats_expansion_rate_igc =
+			cur.perc_pats_expansion_rate_igc.min(16);
+		p0.avg_active_pats_per_subsig = cur.avg_active_pats_per_subsig.min(2);
+		p0.avg_active_pats_per_subsig_igc =
+			cur.avg_active_pats_per_subsig_igc.min(2);
+		// tune over ALL scan files (worst-case across the sample set).
+		let all_words: Vec<Vec<CF1<C1>>> = jobs.iter()
+			.flat_map(|j| j.vec_words.iter().cloned()).collect();
+		let all_infos: Vec<WordInfo> = jobs.iter()
+			.flat_map(|j| j.vec_word_info.iter().cloned()).collect();
+		match determine_config_general::<CF1<C1>,C1,CS1>(rc_db.clone(),
+			&all_words, &all_infos, p0, chunk_len,
+			lkup_len, max_total_word_len, vec_decrease_level, num_circs, 60) {
+			Ok(new) => {
+				log(0, log_level, &format!(
+					"DETERMINE_CONFIG RESULT (new): {:?}", new));
+				log(0, log_level, &format!(
+					"DETERMINE_CONFIG hand cfg (cur): {:?}", cur));
+				match compare_caps(&new, &cur) {
+					Ok(()) => log(0, log_level,
+						&format!("DETERMINE_CONFIG compare_caps: PASS")),
+					Err(bad) => log(0, log_level, &format!(
+						"DETERMINE_CONFIG compare_caps: FAIL {:?}", bad)),
+				}
+			}
+			Err(e) => log(0, log_level,
+				&format!("DETERMINE_CONFIG FAILED: {}", e)),
+		}
+		return;
+	}
 	let vec_circs = build_circs_adv::<CF1<C1>,C1,CS1>(
-		&poseidon_config, 
-		max_total_word_len, 
+		&poseidon_config,
+		max_total_word_len,
 		chunk_len,
-		lkup_len, 
+		lkup_len,
 		rc_db,
 		init_cp_capacity_cs,
 		init_sed_capacity_cs,
@@ -874,6 +1051,44 @@ where
 
 	//3. build the circuits (CS-only aggressive)
 	let rc_db = Arc::new(db.clone());
+	// determine_config probe (env-gated ZKR_DETERMINE_CONFIG): reuse the built
+	// DB + loaded jobs to auto-tune the LOWEST CapParams via the Pass-1
+	// capacity probe, then return (no folding). Warm-starts from a LOW
+	// perc/avg_active to exercise convergence; compares the result against the
+	// runner's hand caps (cur) with the +10% rule.
+	if std::env::var("ZKR_DETERMINE_CONFIG").is_ok() {
+		use crate::determine_config::{capparams_from_caps_aggr, compare_caps};
+		let cur = capparams_from_caps_aggr(&cs_caps[0].0, &cs_caps[0].1,
+			read_global_config().aggr_needs_subsigs);
+		let mut p0 = cur.clone();
+		// floor 16; probe_catching handles any structural-floor build panic.
+		p0.perc_pats_expansion_rate = cur.perc_pats_expansion_rate.min(16);
+		p0.avg_active_pats_per_subsig = cur.avg_active_pats_per_subsig.min(2);
+		// tune over ALL scan files (worst-case across the sample set).
+		let all_words: Vec<Vec<CF1<C1>>> = jobs.iter()
+			.flat_map(|j| j.vec_words.iter().cloned()).collect();
+		let all_infos: Vec<WordInfo> = jobs.iter()
+			.flat_map(|j| j.vec_word_info.iter().cloned()).collect();
+		match determine_config_aggr::<CF1<C1>,C1,CS1>(rc_db.clone(),
+			&all_words, &all_infos, p0, chunk_len,
+			lkup_len, max_total_word_len, 30) {
+			Ok(new) => {
+				log(0, log_level, &format!(
+					"DETERMINE_CONFIG RESULT (new): {:?}", new));
+				log(0, log_level, &format!(
+					"DETERMINE_CONFIG hand cfg (cur): {:?}", cur));
+				match compare_caps(&new, &cur) {
+					Ok(()) => log(0, log_level,
+						&format!("DETERMINE_CONFIG compare_caps: PASS")),
+					Err(bad) => log(0, log_level, &format!(
+						"DETERMINE_CONFIG compare_caps: FAIL {:?}", bad)),
+				}
+			}
+			Err(e) => log(0, log_level,
+				&format!("DETERMINE_CONFIG FAILED: {}", e)),
+		}
+		return;
+	}
 	let vec_circs = build_circs_adv_aggr::<CF1<C1>,C1,CS1>(
 		&poseidon_config,
 		max_total_word_len,
@@ -917,6 +1132,9 @@ pub fn run_db_bundle<F:PrimeField>(config_dir: &str, report_dir: &str,
 	scan_file_name: &str, cache_dir: &str){
 	utils::os::print_computer_config(Some("run_db_bundle"));
 	utils::consts::get_global_config().range2_bit = range_bits;
+	//enable the chunked SED propagation so ChunkPeaks gets the forward-
+	//proof counts the estimator back-solves perc / avg_active from.
+	utils::consts::get_global_config().b_estimate_caps = true;
 	crate::stats_helper::report_all_discharge_approach_stats::<F>(
 		&format!("{}/{}", config_dir, sig_file_name), //src sig
 		&format!("{}/main_dfa.dat", config_dir), //need_dfa
@@ -2497,22 +2715,15 @@ pub mod tests_zkp_driver{
 		);
 	}
 
-	/// small_email (2026-05-30): Zombie-style proximity demo on one
-	/// Enron email blob. Faithful to Zombie (NSDI'24) §6.3: keyword R1
-	/// within 100 chars of R2, case-sensitive, dot-all, both
-	/// directions. R1 = {driving license, driver's license, DL}. R2 =
-	/// Zombie's 5-arm Microsoft-Purview DLP union, SPLIT into 5 sigs
-	/// (Passport/SSN/License/Bank/ITIN) in main.dat -- one PCRE subsig
-	/// each (no trigger, logic "0"), all routed through SED/pm-bounds
-	/// (NOT the DFA list -- only the cheap Win.Alphabet seed sig is in
-	/// main_dfa.dat, to seed the nibble alphabet). Scan target
-	/// merged_000020 contains keyword + the License "ddd ddd ddd" arm
-	/// but no arm-number within 100 of a keyword -> clean non-match
-	/// under all 5 arms -> discharges green while exercising the
-	/// proximity prune.
+	/// Take a few MS DLP regex and discharge a couple of 
+	/// Enron 128k emails.
 	/// NOTE: capacities below are an initial estimate mirrored from
 	/// full_dna (generous); a CapErr-driven tuning pass may be needed
 	/// for a minimal circuit. Invoke via test_small_email.
+	/// MEASURED (CS-only build_circs_adv_aggr, 2026-06-10): GREEN
+	/// end-to-end (Phase1+Phase2+Groth16, verify_batch ok). cs1e 2.14M,
+	/// decider 4.73M, peak RAM ~15GB, 17 fold steps. CS-only cut vs the
+	/// prior igc-ON build: -24% (igc was ~37% of the gadget here).
 	#[allow(dead_code)]
 	fn small_email<F:PrimeField>(_b_check_lkup: bool){
 		utils::os::print_computer_config(Some("small_email"));
@@ -2650,8 +2861,12 @@ pub mod tests_zkp_driver{
 		);
 	}
 
-	/// Copy of small_email with the source-signature DB swapped to
-	/// main_full.dat (the full DLP sig set); all other knobs identical.
+	/// Take the FULL ms-dlp and dischage several average enron emails
+	/// end-to-end on merged_000005 (binexec2; discharges clean under
+	/// cap-100/distributed). cs1e 3.02M, decider 6.68M, peak RAM ~66GB,
+	/// 17 fold steps. ~41% bigger than small_email (full-set caps:
+	/// subsigs 700, basis_acc 1200, basis_pat 1400, dfa_crit 25720
+	/// states), NOT arm-count -- a 5-arm slice matched small_email.
 	#[allow(dead_code)]
 	fn small_email2<F:PrimeField>(_b_check_lkup: bool){
 		utils::os::print_computer_config(Some("small_email2"));
@@ -2801,12 +3016,7 @@ pub mod tests_zkp_driver{
 		);
 	}
 
-	/// Copy of small_email2 (full MS-DLP set, main_full.dat,
-	/// range2_bit=25, aggressive fan-out) scanning binexec3.dat =
-	/// merged_004945 -- the dischargeable one of the challenge pair
-	/// (boosted NINO fan-out clears it; merged_005547 stays blocked by
-	/// sql-conn-string). The commented estimator pass at the top writes
-	/// the boosted "email_data" cache that this ZK path then READS.
+	/// Take full ms_dlp regex and discharge several HARD instances
 	#[allow(dead_code)]
 	fn small_email3<F:PrimeField>(_b_check_lkup: bool){
 		utils::os::print_computer_config(Some("small_email3"));
@@ -2850,8 +3060,8 @@ pub mod tests_zkp_driver{
 			else {200};
 		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
 		get_global_config().clamav_cfg.sde_rep_fanout_cap = 100;
-		//NINO 10x boost (cap 100->1000) via main_fanout.dat; needed for
-		//merged_004945 to discharge clean. Applied at DB build below.
+		//boost=10 (cap 1000) required: boost 5 and 7 both fail to discharge
+		//merged_004945 (uk-NINO kw03.p00), so universe ~3000 is the minimum.
 		get_global_config().clamav_cfg.sde_rep_fanout_boost = 10;
 		get_global_config().clamav_cfg.min_pm_word_len = 3;
 		get_global_config().clamav_cfg
@@ -2859,7 +3069,6 @@ pub mod tests_zkp_driver{
 		//binexec3 (merged_004945) estimator reports needs=2880 (boosted NINO
 		//fan-out grows the forward step queue); 3000 adds margin.
 		get_global_config().aggr_needs_subsigs = 3000;
-		//Caps validated by dryrun; run the full fold + Groth16 for cost.
 		get_global_config().b_dryrun_after_capcheck = false;
 
 		//Read the shared "email_data" DB cache (built by test_db_bundle
@@ -2867,9 +3076,9 @@ pub mod tests_zkp_driver{
 		//~10min rebuild. The 2GiB write-truncation is fixed (write_all),
 		//so the cache is complete. Flip to false if main_full.dat or the
 		//DB-build code changes. SHARED w/ small_email, small_email2.
-		//Reuse the boosted DB cache just rebuilt (boost=10) to skip the
-		//~12min rebuild.
-		get_global_config().b_read_cache = true;
+		//Rebuild fresh (false): the boosted cache is easily clobbered by the
+		//other two runners; set true only right after a matching rebuild.
+		get_global_config().b_read_cache = true; //TEMP: timing breakdown
 		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/small_email/config";
 		let max_word = 256;
@@ -2895,7 +3104,12 @@ pub mod tests_zkp_driver{
 		//chunk forward-step expansion ~30x denser than small_email (300).
 		//14000 over-provisions to clear all chunks; perc is NOT the RAM
 		//driver (300->10000 moved RAM only 1.3x), so this is cheap.
-		let perc_pats_expansion_rate = 14000; //fold StepFwdPrf demand~10380+
+		//StepFwdPrf forward buffer. This is the dominant cost driver of the
+		//DischargeAdv gadget (cs1e scales ~linearly with it). Measured demand
+		//~10380 (merged_004945); 14000 was 26% over-provisioned. 10500 fits
+		//(99% used) but is the floor; 11000 gives ~5% margin. 14000->11000
+		//cuts cs1e ~40.2M->~32M (-20%), DischargeAdv 11.05M->~8.6M.
+		let perc_pats_expansion_rate = 11000; //demand ~10380; margin over floor
 		let _dfa_sigs = 0; //no DFA gadget in aggressive mode
 		let _dfa_subsigs = 0;
 

@@ -38,22 +38,30 @@
 import os
 import re
 import sys
+import time
 import json
 import shutil
 import subprocess
 import statistics
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import gen_report_header, gen_machine_config  # noqa: E402
+from common import gen_report_header, gen_machine_config, get_ms_dlp_dir  # noqa: E402
 
 # --- configuration ---------------------------------------------------------
-FULL_DIR   = "regex_zombie"                 # input : baked policy regexes
+# RULESETS: each baked policy folder is measured as its OWN pass (no document
+# axis -- circuits are built from regex, not corpora). main() reassigns FULL_DIR
+# / LOG_FILE / PARTIAL per ruleset, writing run_zombie_<ruleset>.log. Edit the
+# array to add rule sets.
+RULESETS   = ["regex_zombie_international"]  # international-only re-measure (1k/2k/4k)
+# RULESETS = ["regex_zombie", "regex_zombie_international"]  # full both-pass run
+FULL_DIR   = "regex_zombie"                 # input : baked policy regexes (per-pass)
 DOCS_DIR   = "docs"
-LOG_FILE   = os.path.join(DOCS_DIR, "run_zombie.log")
+LOG_FILE   = os.path.join(DOCS_DIR, "run_zombie.log")            # per-pass below
 # resume/crash cache: a transient build artifact (not a deliverable), so it lives
 # in /tmp, never under docs/. Delete it to force a clean re-measure of all sizes.
 PARTIAL_DIR = "/tmp/bora_zombie_run"
-PARTIAL     = os.path.join(PARTIAL_DIR, "run_zombie.partial.jsonl")
+PARTIAL     = os.path.join(PARTIAL_DIR, "run_zombie.partial.jsonl")  # per-pass below
 
 ZOMBIE     = "zombie"
 TESTREGEX  = os.path.join(ZOMBIE, "regex", "bin", "TestRegex")
@@ -74,9 +82,18 @@ KEYS_DIR   = os.path.join(CIRC_BUILD, "keys")      # circ writes ./keys/<circuit
 CIRC_BIN   = os.path.join(CIRC_BUILD, "target", "release", "circ_executable")
 SYSTEM_LIBS_ENV = {"CARGO_FEATURE_USE_SYSTEM_LIBS": "1"}
 
-VEC_SIZE   = [1000, 2000, 4000]             # STR_LENGTH sweep (all > 2*PROXY_DIST)
+VEC_SIZE   = [1000, 2000, 4000]             # STR_LENGTH sweep (each > 2*PROXY_DIST)
 CODEGEN_TIMEOUT = 300                        # s, TestRegex F (DFA build)
 PROVE_TIMEOUT   = 7200                       # s, key-gen + prove + verify per run
+
+# Parallel-build pipeline: keygen (the ~60s/circuit cost) is RAM-heavy, so we
+# build N_BUILD_JOBS circuits CONCURRENTLY -- each in its OWN /tmp work dir (own
+# ./zkmb + ./keys, shared abs-path binary) so the per-circuit 'policy2000' key
+# files do not collide -- then TIME each built circuit one-by-one (clean timing,
+# no build running). After a circuit is timed its work dir is deleted (disk stays
+# ~N_BUILD_JOBS x ~70MB).
+N_BUILD_JOBS = max(1, (os.cpu_count() or 8) // 4)   # 32 cores -> 8
+PAR_ROOT     = "/tmp/bora_zombie_par"               # per-circuit isolated work dirs
 
 # patch sentinel (delimits OUR auto-generated match arms inside zk_test()).
 SENT_BEGIN = "        // >>> run_zombie auto-generated arms (do not edit)"
@@ -163,6 +180,39 @@ def assemble_parts(pat, kws, prox):
     return "({p}.{{0,{n}}}{k})|({k}.{{0,{n}}}{p})".format(p=pat, n=prox, k=kws)
 
 
+def list_policy_names(full_dir=FULL_DIR):
+    """Every policy UNIT under full_dir as a name resolvable to <full_dir>/<name>.regex.
+    gen_zombie_regex writes per COMBO: a single-combo SIT is the flat '<slug>.regex'
+    (name '<slug>'); an expanded SIT is '<slug>/comb<MM>.regex' (name
+    '<slug>/comb<MM>'). Each unit is its OWN Zombie circuit, so total cost sums over
+    these names."""
+    names = []
+    if not os.path.isdir(full_dir):
+        return names
+    for entry in sorted(os.listdir(full_dir)):
+        path = os.path.join(full_dir, entry)
+        if os.path.isdir(path):
+            for fn in sorted(os.listdir(path)):
+                if fn.endswith(".regex"):
+                    names.append("%s/%s" % (entry, fn[:-6]))
+        elif entry.endswith(".regex"):
+            names.append(entry[:-6])
+    return names
+
+
+def list_sit_reps(full_dir=FULL_DIR):
+    """One representative policy name per SIT (combo 0 for expanded SITs). All
+    combos of a SIT share the same KWS, so vocabulary parsing must use ONE per SIT
+    (else a C-combo SIT's keywords are counted C times)."""
+    reps, seen = [], set()
+    for name in list_policy_names(full_dir):
+        slug = name.split("/", 1)[0]
+        if slug not in seen:
+            seen.add(slug)
+            reps.append(name)
+    return reps
+
+
 def selftest():
     """Round-trip extract/assemble over every regex_zombie/ file plus hand cases."""
     cases = [
@@ -176,14 +226,11 @@ def selftest():
         full = assemble_parts(pat, kws, prox)
         assert extract_parts(full) == (pat, kws, prox), full
         n_ok += 1
-    if os.path.isdir(FULL_DIR):
-        for fn in sorted(os.listdir(FULL_DIR)):
-            if not fn.endswith(".regex"):
-                continue
-            full = _read(os.path.join(FULL_DIR, fn)).strip()
-            parts = extract_parts(full)
-            assert assemble_parts(*parts) == full, fn
-            n_ok += 1
+    for name in list_policy_names(FULL_DIR):
+        full = _read(os.path.join(FULL_DIR, name + ".regex")).strip()
+        parts = extract_parts(full)
+        assert assemble_parts(*parts) == full, name
+        n_ok += 1
     print("[selftest] round-trip OK on %d cases" % n_ok)
     return n_ok
 
@@ -388,7 +435,7 @@ def _append_partial(rec):
 def run_zombie_on_all(binp, str_len, done):
     """Measure every regex_zombie/ policy at one document length, sequentially.
     Reuses already-completed (slug,str_len) results from the partial log."""
-    slugs = sorted(f[:-6] for f in os.listdir(FULL_DIR) if f.endswith(".regex"))
+    slugs = list_policy_names(FULL_DIR)     # one Zombie circuit per combo
     results = []
     for i, slug in enumerate(slugs, 1):
         key = "%s|%d" % (slug, str_len)
@@ -457,31 +504,211 @@ def write_log(results, sizes):
                         % (r["regex_name"], r["status"], r["err"][:80]))
 
 
+# ===========================================================================
+# part 4b: parallel-build / sequential-time pipeline
+# ===========================================================================
+def _codegen_zok(regex_name, str_len):
+    """Codegen one policy's .zok (TestRegex F, fast). Returns (zok|None, prox, status)."""
+    full = _read(os.path.join(FULL_DIR, regex_name + ".regex")).strip()
+    try:
+        pat, kws, prox = extract_parts(full)
+    except Exception as e:
+        return None, None, "parse_fail"
+    if str_len <= 2 * prox:
+        return None, prox, "skip_proximity"
+    try:
+        z = subprocess.run([TESTREGEX, "F", "0", "1"], input=pat + " & " + kws + "\n",
+                           capture_output=True, text=True, timeout=CODEGEN_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return None, prox, "codegen_timeout"
+    if "Parse Successful!" not in z.stdout:
+        return None, prox, "parse_fail"
+    zok = _slice_zok(z.stdout)
+    if zok is None:
+        return None, prox, "codegen_fail"
+    zok = zok.replace("const u32 STR_LENGTH = 1000", "const u32 STR_LENGTH = %d" % str_len, 1)
+    if prox != 300:
+        zok = zok.replace("const u32 PROXY_DIST = 300", "const u32 PROXY_DIST = %d" % prox, 1)
+    return zok, prox, "ok"
+
+
+def _build_one(binp, idx, regex_name, str_len):
+    """BUILD phase (concurrent): codegen + keygen into the circuit's OWN /tmp dir.
+    should_generate=true writes ./keys/. Returns {name, prox, dir, status[, err]}."""
+    zok, prox, cg = _codegen_zok(regex_name, str_len)
+    if cg != "ok":
+        return {"name": regex_name, "prox": prox, "dir": None, "status": cg}
+    d = os.path.join(PAR_ROOT, "c%05d" % idx)
+    shutil.rmtree(d, ignore_errors=True)
+    os.makedirs(os.path.join(d, "zkmb"))
+    os.makedirs(os.path.join(d, "keys"))
+    _atomic_write(os.path.join(d, "zkmb", "policy%d.zok" % str_len), zok)
+    # circ resolves the Z# stdlib by walking up from cwd for ZoKrates/zokrates_stdlib
+    # (parser.rs); the isolated dir has no such ancestor, so symlink it in.
+    os.symlink(os.path.join(os.path.abspath(CIRC_BUILD), "third_party", "ZoKrates"),
+               os.path.join(d, "ZoKrates"))
+    try:
+        p = subprocess.run([os.path.abspath(binp), "policy_%d" % str_len, "true", "prover"],
+                           cwd=d, capture_output=True, text=True, timeout=PROVE_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return {"name": regex_name, "prox": prox, "dir": d, "status": "build_timeout"}
+    if p.returncode != 0:
+        st = "oom_or_killed" if p.returncode < 0 else "build_fail"
+        return {"name": regex_name, "prox": prox, "dir": d, "status": st,
+                "err": (p.stderr or "")[-300:]}
+    return {"name": regex_name, "prox": prox, "dir": d, "status": "built"}
+
+
+def _time_one(binp, built, str_len):
+    """TIME phase (sequential): prove+verify on the PRE-BUILT keys
+    (should_generate=false). Returns a result rec (same shape as run_zombie)."""
+    name, prox, d = built["name"], built["prox"], built["dir"]
+    pat, kws, _ = extract_parts(_read(os.path.join(FULL_DIR, name + ".regex")).strip())
+    try:
+        p = subprocess.run([os.path.abspath(binp), "policy_%d" % str_len, "false",
+                            "prover_verifier"], cwd=d, capture_output=True, text=True,
+                           timeout=PROVE_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return _rec(name, str_len, pat, kws, prox, status="prove_timeout")
+    if p.returncode != 0:
+        st = "oom_or_killed" if p.returncode < 0 else "prove_fail"
+        return _rec(name, str_len, pat, kws, prox, status=st, err=(p.stderr or "")[-300:])
+    m = _parse_metrics(p.stdout)
+    if m is None:
+        return _rec(name, str_len, pat, kws, prox, status="prove_fail", err="no metrics")
+    return _rec(name, str_len, pat, kws, prox, status="ok", **m)
+
+
+def run_pipeline(binp, str_len, names, done):
+    """Batched parallel-build / sequential-time over `names` at one str_len; resumes
+    from `done`; appends each result to the partial log. Returns all results."""
+    key = lambda n: "%s|%d" % (n, str_len)
+    results = [done[key(n)] for n in names if key(n) in done]
+    todo = [n for n in names if key(n) not in done]
+    os.makedirs(PAR_ROOT, exist_ok=True)
+    total, ti = len(todo), 0
+    for b0 in range(0, total, N_BUILD_JOBS):
+        batch = todo[b0:b0 + N_BUILD_JOBS]
+        with ThreadPoolExecutor(max_workers=N_BUILD_JOBS) as ex:   # phase 1: build
+            built = [f.result() for f in as_completed(
+                [ex.submit(_build_one, binp, b0 + j, n, str_len)
+                 for j, n in enumerate(batch)])]
+        order = {n: k for k, n in enumerate(batch)}
+        built.sort(key=lambda b: order[b["name"]])
+        for b in built:                                            # phase 2: time, serial
+            ti += 1
+            if b["status"] != "built":
+                rec = _rec(b["name"], str_len, prox=b.get("prox"),
+                           status=b["status"], err=b.get("err", ""))
+            else:
+                rec = _time_one(binp, b, str_len)
+            if b.get("dir"):
+                shutil.rmtree(b["dir"], ignore_errors=True)
+            _append_partial(rec); done[key(b["name"])] = rec; results.append(rec)
+            print("[run] size=%d %d/%d %-52s -> %s"
+                  % (str_len, ti, total, b["name"], rec["status"]))
+    # OOM fallback: at STR_LENGTH=4000 the largest circuits cross 2^20 constraints;
+    # keygen for those can exhaust RAM under N_BUILD_JOBS-way concurrency. Rebuild any
+    # OOM-killed circuit ONE AT A TIME (full RAM per circuit). A later partial line
+    # overwrites the failed one on resume; the in-memory result is replaced in place.
+    retry = [r["regex_name"] for r in results if r.get("status") == "oom_or_killed"]
+    for ri, nm in enumerate(retry, 1):
+        print("[retry] size=%d %d/%d %-52s (serial OOM fallback) ..."
+              % (str_len, ri, len(retry), nm))
+        b = _build_one(binp, 0, nm, str_len)
+        rec = (_time_one(binp, b, str_len) if b["status"] == "built"
+               else _rec(nm, str_len, prox=b.get("prox"), status=b["status"],
+                         err=b.get("err", "")))
+        if b.get("dir"):
+            shutil.rmtree(b["dir"], ignore_errors=True)
+        _append_partial(rec); done[key(nm)] = rec
+        for i, r in enumerate(results):
+            if r["regex_name"] == nm and r["str_len"] == str_len:
+                results[i] = rec
+                break
+        print("[retry] size=%d %d/%d %-52s -> %s"
+              % (str_len, ri, len(retry), nm, rec["status"]))
+    return results
+
+
+def validate_pipeline(binp, str_len=2000, n=8):
+    """Tiny-batch correctness gate: run the first n circuits BOTH ways and assert the
+    DETERMINISTIC stats (r1cs_cons, proof_bytes) match exactly; report timings."""
+    names = list_policy_names(FULL_DIR)[:n]
+    print("[validate] %d circuits in %s\n[validate] baseline (sequential one-shot)..."
+          % (len(names), FULL_DIR))
+    t0 = time.time()
+    base = {nm: run_zombie(binp, nm, str_len) for nm in names}
+    t_base = time.time() - t0
+    print("[validate] pipeline (parallel-build / sequential-time)...")
+    t1 = time.time()
+    par = {r["regex_name"]: r for r in run_pipeline(binp, str_len, names, {})}
+    t_par = time.time() - t1
+    ok = True
+    print("\n[validate] per-circuit comparison (deterministic stats must match):")
+    for nm in names:
+        b, p = base[nm], par[nm]
+        same = (b["status"] == p["status"] and b.get("r1cs_cons") == p.get("r1cs_cons")
+                and b.get("proof_bytes") == p.get("proof_bytes"))
+        ok = ok and same
+        print("  %-46s base cons=%s proof=%s prove=%sms | par cons=%s proof=%s prove=%sms  %s"
+              % (nm.split("/")[-1][:46], b.get("r1cs_cons"), b.get("proof_bytes"),
+                 b.get("prove_ms"), p.get("r1cs_cons"), p.get("proof_bytes"),
+                 p.get("prove_ms"), "MATCH" if same else "*** MISMATCH ***"))
+    print("\n[validate] deterministic stats (cons, proof_bytes, status) match: %s"
+          % ("YES" if ok else "NO"))
+    print("[validate] wall: baseline=%.0fs  pipeline=%.0fs  (speedup %.1fx, jobs=%d)"
+          % (t_base, t_par, t_base / t_par if t_par else 0, N_BUILD_JOBS))
+    return ok
+
+
 # -------------------------------------------
 # MAIN
 # -------------------------------------------
-def main():
-    os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir))
-    os.makedirs(DOCS_DIR, exist_ok=True)
-    os.makedirs(PARTIAL_DIR, exist_ok=True)        # transient cache lives in /tmp
-
-    if "--selftest" in sys.argv:           # parse round-trip only; no Rust/build
-        selftest()
-        return
-
-    selftest()                             # guard against generator-template drift
-    binp = ensure_zombie_built(VEC_SIZE)
-
+def run_ruleset(rs_dir, binp):
+    """Measure one ruleset folder into run_zombie_<rs>.log via the parallel-build /
+    sequential-time pipeline, with its own /tmp partial. Returns (n_results, n_ok)."""
+    global FULL_DIR, LOG_FILE, PARTIAL
+    FULL_DIR = rs_dir
+    LOG_FILE = os.path.join(DOCS_DIR, "run_zombie_%s.log" % rs_dir)
+    PARTIAL = os.path.join(PARTIAL_DIR, "run_zombie_%s.partial.jsonl" % rs_dir)
+    selftest()                             # round-trip over THIS ruleset's combos
     done = _load_partial()
     results = []
     for s in VEC_SIZE:
-        out = run_zombie_on_all(binp, s, done)
-        results.extend(out["results"])
-
+        results.extend(run_pipeline(binp, s, list_policy_names(FULL_DIR), done))
     write_log(results, VEC_SIZE)
     n_ok = sum(1 for r in results if r["status"] == "ok")
     print("[run_zombie] %s : %d results, %d ok across sizes %s"
           % (LOG_FILE, len(results), n_ok, VEC_SIZE))
+    return len(results), n_ok
+
+
+def main():
+    os.chdir(get_ms_dlp_dir())                     # resolve relative paths here
+    os.makedirs(DOCS_DIR, exist_ok=True)
+    os.makedirs(PARTIAL_DIR, exist_ok=True)        # transient cache lives in /tmp
+
+    if "--selftest" in sys.argv:           # parse round-trip only; no Rust/build
+        for rs in RULESETS:
+            if os.path.isdir(rs):
+                globals()["FULL_DIR"] = rs
+                selftest()
+        return
+
+    binp = ensure_zombie_built(VEC_SIZE)   # one circ binary serves all rulesets
+
+    if "--validate" in sys.argv:           # tiny-batch baseline-vs-pipeline gate
+        globals()["FULL_DIR"] = RULESETS[0]
+        ok = validate_pipeline(binp)
+        sys.exit(0 if ok else 1)
+
+    for rs in RULESETS:
+        if not os.path.isdir(rs):
+            print("[run_zombie] ruleset %s/ absent -- skipping" % rs)
+            continue
+        print("\n=== run_zombie %s (sizes %s) ===" % (rs, VEC_SIZE))
+        run_ruleset(rs, binp)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,8 @@ use utils::{
 	data::{ceil_log2},
 	logger::{flog,LOG1,LOG3},
 	os::{proj_root,read_lines,write_lines},
+	consts::{read_global_config},
+	timer::{Timer},
 };
 use data_processor::{
 	discharge_proof::{FailDischargeRecord},
@@ -429,7 +431,11 @@ pub fn report_all_discharge_approach_stats<F:PrimeField>(sig_file: &str, needs_d
 	//3b. estimate a percentile-coverage capacity ladder (additive;
 	//does not affect the discharge stats above). Must run before
 	//print_sed_stats, which consumes `db`.
-	estimate_config::<F>(&final_data, &db, percentiles, &mut vlog);
+	if read_global_config().clamav_cfg.b_aggressive_sde_for_rep {
+		estimate_config_aggr::<F>(&final_data, &db, percentiles, &mut vlog);
+	} else {
+		estimate_config_general::<F>(&final_data, &db, percentiles, &mut vlog);
+	}
 
 	//4. print specifically the SED and ISED stats
 	print_sed_stats::<F>(&final_data, db, &mut vlog);
@@ -446,7 +452,9 @@ struct EstimatedConfig{
 	pub basis_unique_states: usize,
 	pub basis_acc_states: usize,
 	pub basis_pats_in_trace: usize,
-	pub perc_pats_expansion_rate: usize,
+	pub perc_pats_expansion_rate: usize, //back-solved from fwd-proof counts
+	pub avg_active_pats_per_subsig: usize, //ceil(active_steps/subsigs)
+	pub perc_comp_subsigs: usize, //scc table (count-constraint components)
 	pub sigs_sed: usize, //SED survivors (cost proxy)
 	pub subsigs: usize,
 	pub avg_pats_per_subsig: usize,
@@ -468,7 +476,10 @@ struct FileReq{
 	pub basis_unique_states: usize,
 	pub basis_acc_states: usize,
 	pub basis_pats_in_trace: usize,
-	pub perc_pats_expansion_rate: usize,
+	pub max_fwd_entries: usize,    //cp.max_fwd_entries_per_chunk
+	pub max_carried_live: usize,   //cp.max_carried_live_per_chunk
+	pub max_active_steps: usize,   //cp.max_active_steps_per_chunk
+	pub perc_comp_subsigs: usize,  //static DB/DNF property (scc table)
 	pub subsigs: usize,
 	pub avg_pats_per_subsig: usize,
 	pub dfa_sigs: usize,
@@ -482,15 +493,57 @@ struct FileReq{
 /// so every one of those files is guaranteed to fit => >= p% coverage.
 /// All density attributes are per-chunk-max (controlled by seg_word_len)
 /// then maxed across the chosen files.
-pub fn estimate_config<F:PrimeField>(
+/// scc-table percent for one file's SED survivors: percent of subsigs
+/// that are component subsigs of a SubsigCountConstraint (the scc_prf
+/// table, compute_sig_adv.rs get_scc_prf_size). DB/DNF property.
+fn comp_subsig_perc<F:PrimeField>(
+	db: &ClamavDB<F>, survivors: &Vec<&String>) -> usize{
+	use data_processor::type_def::SubSigType;
+	let (mut comp, mut total) = (0usize, 0usize);
+	for sname in survivors{
+		if let Some(id) = db.sig_to_id.get(*sname){
+			let sig = &db.vec_sigs[*id-1];
+			total += sig.vec_subsig_obj.len();
+			for o in &sig.vec_subsig_obj{
+				if o.subsig_type == SubSigType::SubsigCountConstraint{
+					comp += o.set_subsigs.len();
+				}
+			}
+		}
+	}
+	if total==0 {0} else {(comp*100 + total-1)/total}
+}
+
+#[derive(Clone,Copy)]
+enum EstMode { General, Aggressive }
+
+/// Non-aggressive estimator: DFA columns, carried-queue perc.
+pub fn estimate_config_general<F:PrimeField>(
 	vdata: &Vec<FailDischargeRecord>, db: &ClamavDB<F>,
 	percentiles: &[usize], vlog: &mut Vec<String>){
+	estimate_config_common(vdata, db, percentiles, vlog, EstMode::General);
+}
+/// Aggressive estimator: needs column, per-chunk-reset perc.
+pub fn estimate_config_aggr<F:PrimeField>(
+	vdata: &Vec<FailDischargeRecord>, db: &ClamavDB<F>,
+	percentiles: &[usize], vlog: &mut Vec<String>){
+	estimate_config_common(vdata, db, percentiles, vlog, EstMode::Aggressive);
+}
+
+fn estimate_config_common<F:PrimeField>(
+	vdata: &Vec<FailDischargeRecord>, db: &ClamavDB<F>,
+	percentiles: &[usize], vlog: &mut Vec<String>, mode: EstMode){
+	use crate::gadgets::discharge_adv::{FWD_COST, RES_SMALL_COST};
+	let (hn, hd) = (5usize, 4usize); //+25% headroom over minimal need
+	let mut _et = Timer::new();
 	//1. build per-file requirement vectors
 	let mut reqs: Vec<FileReq> = Vec::with_capacity(vdata.len());
+	let mut seg_size = 0usize;
 	for rec in vdata{
 		let cp = &rec.chunk_peaks;
 		let nib = cp.seg_size; //chunk nibbles
 		if nib==0 { continue; } //old/empty record, skip
+		seg_size = nib;
 		let to_basis = |x: usize| -> usize { x * 10000 / nib };
 		//SED survivors = sigs reaching SED = crit \ pm
 		let survivors: Vec<&String> =
@@ -529,7 +582,10 @@ pub fn estimate_config<F:PrimeField>(
 			basis_unique_states: to_basis(cp.max_unique_states),
 			basis_acc_states: to_basis(cp.max_acc_states),
 			basis_pats_in_trace: to_basis(cp.max_pats_in_trace),
-			perc_pats_expansion_rate: cp.perc_pats_expansion_rate,
+			max_fwd_entries: cp.max_fwd_entries_per_chunk,
+			max_carried_live: cp.max_carried_live_per_chunk,
+			max_active_steps: cp.max_active_steps_per_chunk,
+			perc_comp_subsigs: comp_subsig_perc(db, &survivors),
 			subsigs: max_subsigs,
 			avg_pats_per_subsig: avg_pats,
 			dfa_sigs: dfa_routed.len(),
@@ -538,9 +594,11 @@ pub fn estimate_config<F:PrimeField>(
 		});
 	}
 	let n = reqs.len();
+	let tag = match mode { EstMode::General=>"GENERAL",
+		EstMode::Aggressive=>"AGGRESSIVE" };
 	flog(0, LOG1, &format!(
-		"==== ESTIMATE_CONFIG (monotone envelope, proxy=sigs_sed) ====="),
-		vlog);
+		"==== ESTIMATE_CONFIG [{}] (monotone envelope, proxy=sigs_sed) ====",
+		tag), vlog);
 	if n==0{
 		flog(0, LOG1, &format!(
 			"   no records with chunk_peaks (seg_size>0); nothing to do"),
@@ -549,51 +607,81 @@ pub fn estimate_config<F:PrimeField>(
 	}
 	//2. sort ascending by the cost proxy (sigs_sed)
 	reqs.sort_by(|a,b| a.sigs_sed.cmp(&b.sigs_sed));
+	let min_active = read_global_config().min_avg_active_pats_per_subsig;
+	let min_comp = read_global_config().min_perc_comp_subsigs;
 	flog(0, LOG1, &format!(
-		"   files={}, columns: p% cover b_uniq b_acc b_pat exp% \
-		 sigs_sed subsigs avg_pats dfa_sigs dfa_subsigs needs", n), vlog);
-	//3. element-wise max over cheapest p% of files
+		"   files={}, columns: p% cover b_uniq b_acc b_pat perc avg_act \
+		 comp% sigs_sed subsigs avg_pats {}", n,
+		match mode { EstMode::General=>"dfa_sigs dfa_subsigs",
+			EstMode::Aggressive=>"needs" }), vlog);
+	//3. element-wise max over cheapest p% of files; perc/avg_active are
+	//back-solved from the envelope counts AFTER basis_pats/subsigs fixed.
 	for &p in percentiles{
 		let k = ((n * p) / 100).max(1).min(n);
-		let mut cfg = EstimatedConfig{
+		let mut c = EstimatedConfig{
 			percentile: p, coverage_files: k, total_files: n,
 			..Default::default()
 		};
+		let (mut mfwd, mut mlive, mut macts) = (0usize, 0usize, 0usize);
 		for r in reqs.iter().take(k){
-			cfg.basis_unique_states =
-				cfg.basis_unique_states.max(r.basis_unique_states);
-			cfg.basis_acc_states =
-				cfg.basis_acc_states.max(r.basis_acc_states);
-			cfg.basis_pats_in_trace =
-				cfg.basis_pats_in_trace.max(r.basis_pats_in_trace);
-			cfg.perc_pats_expansion_rate =
-				cfg.perc_pats_expansion_rate
-					.max(r.perc_pats_expansion_rate);
-			cfg.sigs_sed = cfg.sigs_sed.max(r.sigs_sed);
-			cfg.subsigs = cfg.subsigs.max(r.subsigs);
-			cfg.avg_pats_per_subsig =
-				cfg.avg_pats_per_subsig.max(r.avg_pats_per_subsig);
-			cfg.dfa_sigs = cfg.dfa_sigs.max(r.dfa_sigs);
-			cfg.dfa_subsigs = cfg.dfa_subsigs.max(r.dfa_subsigs);
-			cfg.needs_subsigs = cfg.needs_subsigs.max(r.needs_subsigs);
+			c.basis_unique_states =
+				c.basis_unique_states.max(r.basis_unique_states);
+			c.basis_acc_states = c.basis_acc_states.max(r.basis_acc_states);
+			c.basis_pats_in_trace =
+				c.basis_pats_in_trace.max(r.basis_pats_in_trace);
+			c.sigs_sed = c.sigs_sed.max(r.sigs_sed);
+			c.subsigs = c.subsigs.max(r.subsigs);
+			c.avg_pats_per_subsig =
+				c.avg_pats_per_subsig.max(r.avg_pats_per_subsig);
+			c.dfa_sigs = c.dfa_sigs.max(r.dfa_sigs);
+			c.dfa_subsigs = c.dfa_subsigs.max(r.dfa_subsigs);
+			c.needs_subsigs = c.needs_subsigs.max(r.needs_subsigs);
+			c.perc_comp_subsigs =
+				c.perc_comp_subsigs.max(r.perc_comp_subsigs);
+			mfwd = mfwd.max(r.max_fwd_entries);
+			mlive = mlive.max(r.max_carried_live);
+			macts = macts.max(r.max_active_steps);
 		}
+		//back-solve perc from the gadget vec_size: assumes gadget
+		//max_nibble_len == seg_size (runner max_word_len == seg_word_len).
+		let bp = c.basis_pats_in_trace.max(1);
+		let scale = 10000*100*100;
+		let cdiv = |num:usize, den:usize| (num + den.max(1)-1)/den.max(1);
+		let perc_fwd = cdiv(mfwd*scale, bp*seg_size.max(1)*FWD_COST);
+		let perc_q = cdiv(mlive*scale, bp*seg_size.max(1)*RES_SMALL_COST);
+		c.perc_pats_expansion_rate =
+			(perc_fwd.max(perc_q).max(100) * hn / hd).max(100);
+		c.avg_active_pats_per_subsig =
+			(cdiv(macts, c.subsigs.max(1)) * hn / hd).max(min_active);
+		c.perc_comp_subsigs = (c.perc_comp_subsigs * hn / hd).max(min_comp);
+		let tail = match mode {
+			EstMode::General => format!("{:>8} {:>11}",
+				c.dfa_sigs, c.dfa_subsigs),
+			EstMode::Aggressive => format!("{:>6}", c.needs_subsigs) };
 		flog(0, LOG1, &format!(
-			"   {:>3}% {:>4}/{:<4} {:>6} {:>6} {:>6} {:>5} \
-			 {:>8} {:>7} {:>8} {:>8} {:>11} {:>6}",
-			cfg.percentile, cfg.coverage_files, cfg.total_files,
-			cfg.basis_unique_states, cfg.basis_acc_states,
-			cfg.basis_pats_in_trace, cfg.perc_pats_expansion_rate,
-			cfg.sigs_sed, cfg.subsigs, cfg.avg_pats_per_subsig,
-			cfg.dfa_sigs, cfg.dfa_subsigs, cfg.needs_subsigs),
-			vlog);
+			"   {:>3}% {:>4}/{:<4} {:>6} {:>6} {:>6} {:>5} {:>7} {:>5} \
+			 {:>8} {:>7} {:>8} {}",
+			c.percentile, c.coverage_files, c.total_files,
+			c.basis_unique_states, c.basis_acc_states, c.basis_pats_in_trace,
+			c.perc_pats_expansion_rate, c.avg_active_pats_per_subsig,
+			c.perc_comp_subsigs, c.sigs_sed, c.subsigs,
+			c.avg_pats_per_subsig, tail), vlog);
 	}
 	flog(0, LOG1, &format!(
-		"   NOTE: b_uniq=sum#pats over distinct ACCEPTED states \
-		 (=proj_states.len); b_acc=accepted-state visits; \
-		 b_pat=sum#pats over visits; all basis pts (/10000) of the \
-		 worst chunk, per-case max(cs,igc). exp%=perc_pats_expansion \
-		 floor=ceil(nlen/10000) (loose loc-space sentinel; real adds \
-		 headroom). dfa_sigs/subsigs from pm\\all_dfa (SED failers). \
-		 perc_comp_subsigs & avg_active_pats not estimated (defaults)."),
-		vlog);
+		"   NOTE: perc back-solved from per-chunk forward-proof entries \
+		 (StepFwdPrf, FWD_COST={}) + carried queue (RES_SMALL_COST={}), \
+		 +{}% headroom; avg_act=ceil(active_steps/subsigs); comp%=count- \
+		 constraint component subsigs. {} mode.", FWD_COST, RES_SMALL_COST,
+		 (hn*100/hd)-100, tag), vlog);
+	if let EstMode::Aggressive = mode {
+		flog(0, LOG1, &format!(
+			"   CAVEAT: aggressive perc/avg_act are a RESPONSIVE LOWER BOUND \
+			 ~2-3x under the gadget StepFwdPrf demand (container-encoding \
+			 multiplicity, not propagation); finalize via dryrun CapErr or \
+			 scale up."), vlog);
+	}
+	_et.stop();
+	flog(0, LOG1, &format!(
+		"   ESTIMATE_CONFIG envelope+comp build: {} ms (chunked SED \
+		 propagation timed per-file above)", _et.ms()), vlog);
 }

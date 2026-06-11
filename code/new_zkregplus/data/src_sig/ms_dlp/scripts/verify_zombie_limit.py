@@ -38,13 +38,10 @@ import re
 import sys
 import subprocess
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-MS_DLP = os.path.dirname(HERE)
-sys.path.insert(0, HERE)
-os.chdir(MS_DLP)                       # run_zombie's relative paths resolve here
-
-import run_zombie as rz                # reuse the real pipeline helpers
-from common import gen_report_header   # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from common import gen_report_header, get_ms_dlp_dir  # noqa: E402
+os.chdir(get_ms_dlp_dir())            # run_zombie's relative paths resolve here
+import run_zombie as rz               # reuse the real pipeline helpers (after chdir)
 
 STR_LEN = 1000
 PROX = 300
@@ -54,8 +51,10 @@ LIMITS_SUMMARY = """\
 ZOMBIE REGEX-TO-CIRCUIT COMPILER LIMITS (empirically established)
 
 A circuit is built iff (1) every packed literal run/tile is <=32 bytes AND
-(2) the regex uses no zero-lower-bound repetition {0,N}. The longest SINGLE run
-is what matters -- never the total pattern length. Two real rejection modes:
+(2) the regex uses no zero-lower-bound repetition {0,N} AND (3) no wildcard rep
+.{m,N}/.*/.+ is PRECEDED by fixed content (a literal or class). The longest
+SINGLE run is what matters -- never the total pattern length. Three rejection
+modes:
 
   1. ceiling  (the 32-byte packed-run limit)
      Each match-run is packed base-256 into a field element:
@@ -83,18 +82,34 @@ is what matters -- never the total pattern length. Two real rejection modes:
        a{0,5}, a{0,32}, a{0,33}, .{0,33}                           FAIL
      (This is why the pipeline strips .{0,300} and does proximity natively.)
 
+  3. litgap  (a wildcard rep .{m,N}/.*/.+ PRECEDED by fixed content)
+     A wildcard rep is safe ONLY when it LEADS its sequence (nothing fixed is
+     packed before it). The moment a literal OR class precedes it, codegen tiles
+     the preceding bytes together with the wildcard span into a run that overflows
+     the 32 B ceiling -- and it fails for EVERY width, even .{1,5}. (Empirically
+     surfaces as the same ceiling signature: over-long packed run, dangling +.)
+       .{1,200}, .{1,500}, .{1,200}B                       PASS   (gap leads)
+       A.{1,200}, A.{1,5}B, [0-9].{1,50}, foo.{1,300}bar   FAIL   (litgap/ceiling)
+     This -- NOT "a bounded gap is uncompilable at any width" -- is why the
+     connection-string PATs (User Id .{1,200} Password=value) do not build: the
+     literal "User Id" sits in FRONT of the gap. The top-level proximity .{0,N}
+     is exempt: run_zombie strips it and enforces proximity natively (never
+     compiled).
+
   (codegen: TestRegex itself failing to parse the regex -- not seen here.)
 
 SAFE: a variable rep {m,N} with m>=1 compiles via a DFA loop / doubling and
-builds as long as no doubling tile exceeds 32 B; a wildcard has nothing to pack.
+builds as long as no doubling tile exceeds 32 B. A wildcard rep has nothing to
+pack -- but ONLY if it leads (see (3)); a literal/class before it forces a tile.
 The construction caps tiles at 32 B up to N~96, then jumps to 63/64 B tiles that
 overflow -- so the flip is in (96,127] (not at 2^k as one might guess):
        a{1,33}, a{1,96}           PASS   (max tile 32 B)
        a{1,127}, a{1,200}         FAIL   (tile 63/64 B -> ceiling)
-       .{1,500}                   PASS   (wildcard: nothing to pack)
+       .{1,500}                   PASS   (leading wildcard: nothing to pack)
 
 ONE-LINE RULE: a single literal run/tile >32 B overflows the 256-bit packing
-field element; any {0,N} is unsupported; everything else builds.
+field element; any {0,N} is unsupported; a wildcard rep preceded by fixed content
+overflows the ceiling; everything else builds.
 """
 
 
@@ -131,6 +146,15 @@ CASES = [
     ("l127","G6 lower-bound>=1",   "a{1,127}", grp("z"), 127, "FAIL", "ceiling"),
     ("l200","G6 lower-bound>=1",   "a{1,200}", grp("z"), 200, "FAIL", "ceiling"),
     ("lw",  "G6 lower-bound>=1",   ".{1,500}", grp("z"),   0, "PASS", "-"),
+    # G7 -- wildcard gap: safe iff it LEADS; a literal/class BEFORE it -> ceiling
+    # at every width (this, not "any bounded gap", is the connection-string killer)
+    ("g7a", "G7 litgap (lead ok)",   ".{1,200}",          grp("z"), 0, "PASS", "-"),
+    ("g7b", "G7 litgap (lead ok)",   ".{1,200}B",         grp("z"), 1, "PASS", "-"),
+    ("g7c", "G7 litgap (lit pre)",   "A.{1,200}",         grp("z"), 1, "FAIL", "ceiling"),
+    ("g7d", "G7 litgap (lit pre)",   "A.{1,200}B",        grp("z"), 1, "FAIL", "ceiling"),
+    ("g7e", "G7 litgap (any width)", "A.{1,5}B",          grp("z"), 1, "FAIL", "ceiling"),
+    ("g7f", "G7 litgap (cls pre)",   "[0-9].{1,50}",      grp("z"), 0, "FAIL", "ceiling"),
+    ("g7g", "G7 litgap (two gaps)",  "A.{1,200}.{1,200}B", grp("z"), 1, "FAIL", "ceiling"),
 ]
 
 

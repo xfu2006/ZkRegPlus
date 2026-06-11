@@ -46,16 +46,21 @@ from concurrent.futures import ProcessPoolExecutor
 
 # common.py lives beside this script (scripts/); import provenance helpers.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import gen_report_header  # noqa: E402
+from common import gen_report_header, get_ms_dlp_dir, get_samples_dir  # noqa: E402
 
 # --- configuration ---------------------------------------------------------
-FULL_DIR = "regex_zombie"               # input: baked policy regexes (READ-ONLY)
 DOCS_DIR = "docs"
-# email corpus, relative to this script (scripts/ -> ms_dlp -> src_sig -> data).
-# same anchoring convention as measure.py (no get_root_proj_dir in the tree).
-SAMPLES_DIR = os.path.normpath(os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    os.pardir, os.pardir, os.pardir, "samples", "email_merged128k"))
+# The evaluation MATRIX: every (DATASET corpus) x (RULESET regex folder). Edit
+# these two arrays to add corpora or rule sets -- the main loop scales
+# automatically. DATASETS are absolute (resolved from the project root, never
+# cwd / hardcoded); RULESETS are dir names under ms_dlp/ (cwd after chdir). Each
+# combination writes eval_<dataset>_<ruleset>.log and
+# clean_email_list_<dataset>_<ruleset>.txt.
+DATASETS = [
+    ("email_merged128k", get_samples_dir() / "email_merged128k"),
+    ("email",            get_samples_dir() / "email"),
+]
+RULESETS = ["regex_zombie", "regex_zombie_international"]
 
 N_WORKERS = os.cpu_count() or 8
 CHUNKSIZE = 16                          # files per task dispatched to a worker
@@ -92,17 +97,26 @@ def check_dependencies():
 
 
 # --- policy loading --------------------------------------------------------
-# read every regex_zombie/<slug>.regex into [(slug, pattern_str)]. Pattern
-# strings (not compiled objects) are returned so they pickle cleanly to the
-# worker processes, which compile them once via the pool initializer. The files
-# are opened READ-ONLY; nothing under regex_zombie/ is ever written.
-def load_policies(full_dir=FULL_DIR):
+# read every baked policy regex into [(name, pattern_str)]. PER-COMBO layout: a
+# single-combo SIT is the flat '<slug>.regex' (name '<slug>'); an expanded SIT is
+# '<slug>/comb<MM>.regex' (name '<slug>/comb<MM>'). A document is flagged if it
+# matches ANY combo of ANY SIT, and the union of a SIT's combos is exactly its
+# original policy language -- so the clean/flagged split is unchanged by
+# expansion. Pattern strings (not compiled objects) are returned so they pickle
+# cleanly to the workers. Files are opened READ-ONLY.
+def load_policies(full_dir):
     policies = []
-    for fn in sorted(os.listdir(full_dir)):
-        if not fn.endswith(".regex"):
-            continue
-        with open(os.path.join(full_dir, fn), encoding="utf-8") as f:
-            policies.append((fn[:-6], f.read().strip()))
+    for entry in sorted(os.listdir(full_dir)):
+        path = os.path.join(full_dir, entry)
+        if os.path.isdir(path):
+            for fn in sorted(os.listdir(path)):
+                if fn.endswith(".regex"):
+                    with open(os.path.join(path, fn), encoding="utf-8") as f:
+                        policies.append(("%s/%s" % (entry, fn[:-6]),
+                                         f.read().strip()))
+        elif entry.endswith(".regex"):
+            with open(path, encoding="utf-8") as f:
+                policies.append((entry[:-6], f.read().strip()))
     return policies
 
 
@@ -184,17 +198,14 @@ def eval_dir(dirpath, policies):
 
 
 # --- log -------------------------------------------------------------------
-# name of the plain-text list of clean (unflagged) files, written alongside the
-# main log so downstream tooling can consume the pass set directly.
-CLEAN_LIST_FILE = "clean_email_list.txt"
+# cap on itemized flagged files in the log (the clean LIST below is always
+# complete; the email/ corpus has 517k files so a full itemization is unusable).
+FLAGGED_ITEMIZE_CAP = 500
 
 
-# write docs/eval_<dirbasename>.log: provenance header, then a summary
-# (total / pass / flagged + per-policy tally) and an itemized list of every
-# flagged file with the policy name(s) it matched. Also writes
-# docs/clean_email_list.txt: one relative path per line for every file that
-# matched NO policy (the pass set), sorted.
-def write_log(dirbasename, dirpath, policies, rel_results, n_files,
+# write docs/eval_<tag>.log + docs/clean_email_list_<tag>.txt for one
+# (dataset, ruleset) combination, where tag = "<dataset>_<ruleset>".
+def write_log(tag, dataset_dir, ruleset_dir, policies, rel_results, n_files,
               n_unreadable):
     flagged = {rel: hits for rel, hits in rel_results.items() if hits}
     clean = sorted(rel for rel, hits in rel_results.items() if not hits)
@@ -208,14 +219,14 @@ def write_log(dirbasename, dirpath, policies, rel_results, n_files,
         for name in hits:
             tally[name] += 1
 
-    log_file = os.path.join(DOCS_DIR, "eval_%s.log" % dirbasename)
+    log_file = os.path.join(DOCS_DIR, "eval_%s.log" % tag)
     os.makedirs(DOCS_DIR, exist_ok=True)
     with open(log_file, "w") as f:
         f.write(gen_report_header("MS-DLP policy match evaluation"))
         f.write("\n\n")
-        f.write("policies:    %s/  (%d baked policy regexes, read verbatim)\n"
-                % (FULL_DIR, len(policies)))
-        f.write("corpus:      %s\n" % dirpath)
+        f.write("dataset:     %s\n" % dataset_dir)
+        f.write("ruleset:     %s/  (%d baked per-combo policies, read verbatim)\n"
+                % (ruleset_dir, len(policies)))
         f.write("engine:      Google RE2 (linear-time DFA)\n")
         f.write("match:       case_sensitive=False, dot_nl=True "
                 "(== re.IGNORECASE | re.DOTALL)\n")
@@ -228,32 +239,38 @@ def write_log(dirbasename, dirpath, policies, rel_results, n_files,
             f.write("unreadable:      %d (excluded from totals)\n"
                     % n_unreadable)
         f.write("pass (clean):    %d\n" % n_pass)
-        f.write("flagged:         %d\n" % n_flagged)
+        f.write("flagged:         %d  (%.2f%%)\n"
+                % (n_flagged, 100.0 * n_flagged / n_scanned if n_scanned else 0))
 
         f.write("\n== PER-POLICY TALLY (files flagged) ==\n")
         for name in sorted(tally, key=lambda k: (-tally[k], k)):
-            f.write("  %-52s %d\n" % (name, tally[name]))
+            f.write("  %-58s %d\n" % (name, tally[name]))
 
-        f.write("\n== FLAGGED FILES (itemized) ==\n")
+        f.write("\n== FLAGGED FILES (itemized; first %d) ==\n" % FLAGGED_ITEMIZE_CAP)
         if not flagged:
             f.write("  (none)\n")
-        for rel in sorted(flagged):
+        for i, rel in enumerate(sorted(flagged)):
+            if i >= FLAGGED_ITEMIZE_CAP:
+                f.write("  ... (%d more flagged files; see the clean list for the "
+                        "complementary pass set)\n" % (n_flagged - FLAGGED_ITEMIZE_CAP))
+                break
             f.write("  %s: %s\n" % (rel, ", ".join(flagged[rel])))
 
-    # clean (unflagged) file list: a short '#' header then one path per line.
-    clean_file = os.path.join(DOCS_DIR, CLEAN_LIST_FILE)
+    # clean (unflagged) file list: '#' header then one path per line, tagged by
+    # dataset+ruleset so measure.py can pick the right pass set per combination.
+    clean_file = os.path.join(DOCS_DIR, "clean_email_list_%s.txt" % tag)
     with open(clean_file, "w") as f:
-        f.write("# clean (unflagged) files: matched NO policy in %s/\n"
-                % FULL_DIR)
-        f.write("# corpus: %s\n" % dirpath)
+        f.write("# clean (unflagged) files: matched NO policy in %s/\n" % ruleset_dir)
+        f.write("# dataset: %s\n" % dataset_dir)
         f.write("# count:  %d clean of %d scanned\n" % (n_pass, n_scanned))
         for rel in clean:
             f.write("%s\n" % rel)
 
-    print("[eval_dlp] %s : %d scanned, %d pass, %d flagged"
-          % (log_file, n_scanned, n_pass, n_flagged))
+    print("[eval_dlp] %s : %d scanned, %d pass, %d flagged (%.2f%%)"
+          % (log_file, n_scanned, n_pass, n_flagged,
+             100.0 * n_flagged / n_scanned if n_scanned else 0))
     print("[eval_dlp] %s : %d clean files" % (clean_file, n_pass))
-    return log_file
+    return {"tag": tag, "scanned": n_scanned, "pass": n_pass, "flagged": n_flagged}
 
 
 # -------------------------------------------
@@ -261,18 +278,33 @@ def write_log(dirbasename, dirpath, policies, rel_results, n_files,
 # -------------------------------------------
 def main():
     check_dependencies()
-    # anchor cwd to ms_dlp/ (parent of scripts/) so FULL_DIR / DOCS_DIR resolve
-    # regardless of the invocation directory (same convention as measure.py).
-    os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir))
+    os.chdir(get_ms_dlp_dir())          # resolve relative paths (rulesets, docs)
 
-    policies = load_policies()
-    print("[policies] %d loaded from %s/" % (len(policies), FULL_DIR))
-    if not policies:
-        raise SystemExit("[policies] none found; run gen_zombie_regex.py first")
+    summaries = []
+    for ds_name, ds_dir in DATASETS:
+        for rs_dir in RULESETS:
+            tag = "%s_%s" % (ds_name, rs_dir)
+            print("\n=== eval %s ===" % tag)
+            if not os.path.isdir(rs_dir):
+                print("[eval_dlp] ruleset %s/ absent -- skipping" % rs_dir)
+                continue
+            if not os.path.isdir(ds_dir):
+                print("[eval_dlp] dataset %s absent -- skipping" % ds_dir)
+                continue
+            policies = load_policies(rs_dir)
+            print("[policies] %d per-combo policies from %s/" % (len(policies), rs_dir))
+            if not policies:
+                print("[eval_dlp] no policies in %s/ -- run gen_zombie_regex.py" % rs_dir)
+                continue
+            rel_results, n_files, n_unreadable = eval_dir(str(ds_dir), policies)
+            summaries.append(write_log(tag, ds_dir, rs_dir, policies,
+                                       rel_results, n_files, n_unreadable))
 
-    rel_results, n_files, n_unreadable = eval_dir(SAMPLES_DIR, policies)
-    write_log(os.path.basename(SAMPLES_DIR), SAMPLES_DIR, policies,
-              rel_results, n_files, n_unreadable)
+    print("\n=== eval matrix summary ===")
+    for s in summaries:
+        print("  %-48s scanned=%d pass=%d flagged=%d (%.2f%%)"
+              % (s["tag"], s["scanned"], s["pass"], s["flagged"],
+                 100.0 * s["flagged"] / s["scanned"] if s["scanned"] else 0))
 
 
 if __name__ == "__main__":
