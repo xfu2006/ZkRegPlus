@@ -29070,5 +29070,6 @@ Goal 5. plan refining
 	[a] pack it as a function, insert more probes about progress
 		generate full, pass, fail clean_enron_list.txt
 	[b] wrapped it as a function and run starts 1:30pm
-		2:50pm => 
+		2:50pm => stopped 5:00pm, error on screening
+	[c] 
 

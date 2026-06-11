@@ -364,7 +364,9 @@ where C: CurveGroup<ScalarField=F>,
 			64,          //perc_pats_expansion_rate: StepFwdPrf fwd buffer
 			1,           //sigs_sed: number of sigs discharged via SED
 			1,           //perc_comp_subsigs: compute-sig subsig share (%)
-			2,           //basis_unique_states: unique DFA states (basis pts)
+			//basis_unique_states: igc shares the cs value, so the tuner's
+			//shared p.basis_unique_states reaches this igc fsm (was hardcd 2).
+			sed_cap_cs.basis_unique_states,
 			2);          //basis_acc_states: accepting DFA states (basis pts)
 		let sed = SedComponentMapper::<F,LK<F>>::new(
 			sed_cap_cs.clone(), sed_cap_igc, db.clone());
@@ -3547,15 +3549,15 @@ pub mod tests_zkp_driver{
 	#[test]
 	pub fn test_gen_dlp_list(){
 		std::env::set_var("ZKR_DLP_LIST_DIR",
-			"data/debug/small_data_set2/config_dfa");
+			"data/paper_data/dlp/cfg");
 		// aggressive SDE-for-rep fan-out: expand [0-9]{n} reps into concrete
 		// variants (less-conservative discharge).
 		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
 		get_global_config().clamav_cfg.sde_rep_fanout_cap = 100;
 		get_global_config().clamav_cfg.min_pm_word_len = 3;
 		super::run_db_bundle::<Fr>(
-			"data/debug/small_data_set2/config_dfa", //config dir
-			"data/debug/small_data_set2/config_dfa", //report dir
+			"data/paper_data/dlp/cfg", //config dir
+			"data/paper_data/dlp/cfg", //report dir
 			false, false, true, //b_cache, b_write_cache, b_quick
 			25, 512, &[100usize], //range_bits, max_word_len, percentiles
 			"main_data_dlp_internationl.dat", //src sig (NEW)
@@ -3575,7 +3577,7 @@ pub mod tests_zkp_driver{
 		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
 		get_global_config().clamav_cfg.sde_rep_fanout_cap = 100;
 		get_global_config().clamav_cfg.min_pm_word_len = 3;
-		let dir = "data/debug/small_data_set2/config_dfa";
+		let dir = "data/paper_data/dlp/cfg";
 		crate::stats_helper::collect_discharge_pass_fail::<Fr>(
 			&format!("{}/main_data_dlp_internationl.dat", dir),
 			&format!("{}/main_dfa.dat", dir),

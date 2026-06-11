@@ -30,7 +30,7 @@ Arguments:
   --data {fixture,real}  Path set to run against (default: fixture). The ONLY
                          knob to switch fixture<->real -- same code/steps.
                            fixture -> data/paper_data/dlp/ (tiny test DB)
-                           real    -> data/debug/small_data_set2/config_dfa/
+                           real    -> data/paper_data/dlp/cfg/
                                       (full DLP-international + dlp_intl_data_aggr)
   --only STEP            Run just this one step (skip all others).
   --from STEP            Start at this step and run to the end (skip earlier).
@@ -77,7 +77,11 @@ import sys
 # ---------------------------------------------------------------------------
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))))
-RUN_DIR = os.path.join(REPO_ROOT, "scripts", "run_full_dlp_out")  # logs+runcfgs
+RUN_DIR = "/tmp/run_full_dlp_out"   # temp logs+runcfgs (kept OUT of the repo)
+# Config handoff (C1/C2) + reports live with the other configs, not in the
+# input config_dir. Repo-root-relative; resolved via p()/proj_root().
+CFG_DIR = "data/paper_data/dlp/cfg"
+REPORT_DIR = "data/paper_data/dlp/report"
 
 # RUSTFLAGS mirrors the project's compile.sh (lld linker, warnings off).
 RUSTFLAGS = "-C link-args=-fuse-ld=lld -Awarnings"
@@ -98,15 +102,15 @@ DATASETS = {
         "range2_bit": 25,
     },
     "real": {
-        "config_dir": "data/debug/small_data_set2/config_dfa",
+        "config_dir": "data/paper_data/dlp/cfg",
         "sig_file":   "main_data_dlp_internationl.dat",
         "cache_dir":  "dlp_intl_data_aggr",
         "scan1":      "binexec_sample1.dat",
         "scan2":      "binexec_sample2.dat",
         "scan3":      "binexec_sample3.dat",
         "fanout_cap": 100,
-        "chunk_len":  64,    # 64 words*31B ~= 2KB ZK step (matches the
-                             # collect_enron_list seg_word_len)
+        "chunk_len":  256,   # 256 words*31B ~= 8KB ZK step (fewer folding
+                             # steps -> shorter sample2 tuning)
         "range2_bit": 25,
     },
 }
@@ -146,33 +150,32 @@ def build_runcfg(ds, step):
         "fanout_cap": ds["fanout_cap"],
         "chunk_len":  ds["chunk_len"],
         "range2_bit": ds["range2_bit"],
-        # config handoff paths (repo-root-relative)
-        "config_c1":  os.path.join(cd, C1_NAME),
-        "config_c2":  os.path.join(cd, C2_NAME),
+        # config handoff paths (repo-root-relative; live in CFG_DIR)
+        "config_c1":  os.path.join(CFG_DIR, C1_NAME),
+        "config_c2":  os.path.join(CFG_DIR, C2_NAME),
     }
     if step == "sample1":
         cfg["scan_file"]  = ds["scan1"]
-        cfg["config_out"] = os.path.join(cd, C1_NAME)
+        cfg["config_out"] = os.path.join(CFG_DIR, C1_NAME)
     elif step == "sample2":
         cfg["scan_file"]  = ds["scan2"]
-        cfg["config_out"] = os.path.join(cd, C2_NAME)
+        cfg["config_out"] = os.path.join(CFG_DIR, C2_NAME)
     elif step == "sample3":
         cfg["scan_file"]   = ds["scan3"]
-        cfg["report_out"]  = os.path.join(cd, REPORT3_NAME)
+        cfg["report_out"]  = os.path.join(REPORT_DIR, REPORT3_NAME)
     elif step == "full_dlp":
         cfg["scan_file"]   = ds["scan3"]   # real: swap to the full pass list
-        cfg["report_out"]  = os.path.join(cd, REPORT_FULL_NAME)
+        cfg["report_out"]  = os.path.join(REPORT_DIR, REPORT_FULL_NAME)
     return cfg
 
 
 def artifacts(ds, step):
     """On-disk outputs that mark a step done (for idempotent skip)."""
-    cd = ds["config_dir"]
     return {
-        "sample1":  [p(cd, C1_NAME)],
-        "sample2":  [p(cd, C2_NAME)],
-        "sample3":  [p(cd, REPORT3_NAME)],
-        "full_dlp": [p(cd, REPORT_FULL_NAME)],
+        "sample1":  [p(CFG_DIR, C1_NAME)],
+        "sample2":  [p(CFG_DIR, C2_NAME)],
+        "sample3":  [p(REPORT_DIR, REPORT3_NAME)],
+        "full_dlp": [p(REPORT_DIR, REPORT_FULL_NAME)],
     }.get(step, [])
 
 
@@ -274,10 +277,9 @@ def make_steps():
 
 
 def print_summary(ds):
-    cd = ds["config_dir"]
     log("==== SUMMARY ====")
     for name, fn in [("C1 (easy/small)", C1_NAME), ("C2 (hard/big)", C2_NAME)]:
-        fp = p(cd, fn)
+        fp = p(CFG_DIR, fn)
         if os.path.isfile(fp):
             c = json.load(open(fp))
             log("%s  %s" % (name, json.dumps(
@@ -288,8 +290,31 @@ def print_summary(ds):
             log("%s  (not produced)" % name)
     for label, fn in [("sample3 coverage", REPORT3_NAME),
                       ("full_dlp cost", REPORT_FULL_NAME)]:
-        fp = p(cd, fn)
+        fp = p(REPORT_DIR, fn)
         log("%s -> %s" % (label, fp if os.path.isfile(fp) else "(none)"))
+
+
+def pack_results(status):
+    """Bundle the downloadable outputs (configs + reports + logs) into
+    /tmp/dlp_results.tgz on COMPLETE or ERROR, for scp off the server."""
+    import tarfile
+    out = "/tmp/dlp_results.tgz"
+    items = []
+    for d, fns in ((CFG_DIR, (C1_NAME, C2_NAME)),
+                   (REPORT_DIR, (REPORT3_NAME, REPORT_FULL_NAME))):
+        for fn in fns:
+            fp = p(d, fn)
+            if os.path.isfile(fp):
+                items.append((fp, os.path.join(os.path.basename(d), fn)))
+    if os.path.isdir(RUN_DIR):
+        for n in sorted(os.listdir(RUN_DIR)):
+            fp = os.path.join(RUN_DIR, n)
+            if os.path.isfile(fp):
+                items.append((fp, os.path.join("logs", n)))
+    with tarfile.open(out, "w:gz") as tf:
+        for src, arc in items:
+            tf.add(src, arcname=arc)
+    log("PACKED [%s] %d files -> %s" % (status, len(items), out))
 
 
 def main():
@@ -318,6 +343,8 @@ def main():
     steps = make_steps()
     names = [s[0] for s in steps]
     os.makedirs(RUN_DIR, exist_ok=True)
+    os.makedirs(p(CFG_DIR), exist_ok=True)
+    os.makedirs(p(REPORT_DIR), exist_ok=True)
 
     if args.only and args.only not in names:
         sys.exit("unknown --only step %r (have %s)" % (args.only, names))
@@ -351,10 +378,12 @@ def main():
         rc = fn(ds, args)
         if rc != 0:
             log("PIPELINE ABORTED at %s (rc=%d)" % (name, rc))
+            pack_results("ERROR")
             sys.exit(rc)
 
     if not args.dry_run:
         print_summary(ds)
+        pack_results("COMPLETE")
     log("DLP driver done.")
 
 
