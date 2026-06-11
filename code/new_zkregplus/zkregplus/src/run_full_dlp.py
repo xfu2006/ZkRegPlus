@@ -105,7 +105,8 @@ DATASETS = {
         "scan2":      "binexec_sample2.dat",
         "scan3":      "binexec_sample3.dat",
         "fanout_cap": 100,
-        "chunk_len":  512,
+        "chunk_len":  64,    # 64 words*31B ~= 2KB ZK step (matches the
+                             # collect_enron_list seg_word_len)
         "range2_bit": 25,
     },
 }
