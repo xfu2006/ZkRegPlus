@@ -32,14 +32,19 @@ pub struct CapParams {
     pub perc_comp_subsigs: usize,
     pub basis_unique_states: usize,
     pub basis_acc_states: usize,
-    // SED igc arm (non-aggressive only; the per-case CapErrs carry "b_igc:
-    // true"). In aggressive mode the igc side is a fixed sentinel, so these
-    // are unused. cp_igc reuses the cs CP caps (runners set them equal).
+    // SED igc arm: per-case CapErrs carry "b_igc: true". Tuned in both modes
+    // -- non-aggressive sizes the real igc arm; aggressive sizes the tiny
+    // 1-subsig sentinel independently from cs (so igc stays cheap).
     pub subsigs_igc: usize,
     pub avg_active_pats_per_subsig_igc: usize,
     pub basis_pats_in_trace_igc: usize,
     pub perc_pats_expansion_rate_igc: usize,
     pub basis_acc_states_igc: usize,
+    // aggressive igc sentinel: its own SMALL basis_unique_states (the cs
+    // field above is shared cs/igc in non-aggressive). serde-default so
+    // configs written before this field deserialize (clamped on use).
+    #[serde(default)]
+    pub basis_unique_states_igc: usize,
     // DFA gadget (non-aggressive only; 0 in aggressive)
     pub dfa_sigs: usize,
     pub dfa_subsigs: usize,
@@ -207,7 +212,13 @@ pub fn apply_caperr_bumps(p: &mut CapParams, b_aggr: bool,
                 if b_aggr { up(&mut p.aggr_needs_subsigs, r, &mut changed); }
             }
         } else if name.contains("basis_unique_states") {
-            up(&mut p.basis_unique_states, r, &mut changed);    // SED/fsm pack
+            // aggressive: igc has its own small sentinel field; cs and the
+            // non-aggressive shared arm keep the original field.
+            if igc && b_aggr {
+                up(&mut p.basis_unique_states_igc, r, &mut changed);
+            } else {
+                up(&mut p.basis_unique_states, r, &mut changed); // SED/fsm pack
+            }
         } else {
             // max_word_len, lkup/pack sizing, etc.
             unmapped.push(name.clone());
@@ -218,7 +229,11 @@ pub fn apply_caperr_bumps(p: &mut CapParams, b_aggr: bool,
 
 /// Build the aggressive CP+SED capacities from the scalar params (rebuild,
 /// not field-poke, since SedCapacity::new derives internal comp_capacities).
-pub fn caps_from_params_aggr(p: &CapParams) -> (CpCapacity, SedCapacity) {
+/// Returns (cp_cs, sed_cs, sed_igc); the igc sentinel keeps subsigs=1 and
+/// is tuned independently via the _igc params (clamped to sentinel floors so
+/// any seed -- including 0/serde-default -- yields a valid capacity).
+pub fn caps_from_params_aggr(p: &CapParams)
+    -> (CpCapacity, SedCapacity, SedCapacity) {
     let cp = CpCapacity {
         max_word_len: p.max_word_len,
         basis_unique_states: p.cp_basis_unique_states,
@@ -230,7 +245,14 @@ pub fn caps_from_params_aggr(p: &CapParams) -> (CpCapacity, SedCapacity) {
         p.avg_pats_per_subsig, p.avg_active_pats_per_subsig,
         p.basis_pats_in_trace, p.perc_pats_expansion_rate, p.sigs_sed,
         p.perc_comp_subsigs, p.basis_unique_states, p.basis_acc_states);
-    (cp, sed)
+    let sed_igc = SedCapacity::new(
+        p.max_word_len, p.acdfa_state_part_bits, 1, 1,
+        p.avg_active_pats_per_subsig_igc.max(1),
+        p.basis_pats_in_trace_igc.max(4),
+        p.perc_pats_expansion_rate_igc.max(64), 1, 1,
+        p.basis_unique_states_igc.max(2),
+        p.basis_acc_states_igc.max(2));
+    (cp, sed, sed_igc)
 }
 
 /// Build the non-aggressive cs/igc/dfa capacities from scalar params, in the
@@ -274,6 +296,7 @@ pub fn capparams_from_caps_general(cp_cs: &CpCapacity, sed_cs: &SedCapacity,
         basis_pats_in_trace_igc: sed_igc.basis_pats_in_trace,
         perc_pats_expansion_rate_igc: sed_igc.perc_pats_expansion_rate,
         basis_acc_states_igc: sed_igc.basis_acc_states,
+        basis_unique_states_igc: sed_igc.basis_unique_states,
         dfa_sigs: dfa.sigs,
         dfa_subsigs: dfa.subsigs,
         aggr_needs_subsigs: 0,
@@ -300,12 +323,14 @@ pub fn capparams_from_caps_aggr(cp: &CpCapacity, sed: &SedCapacity,
         perc_comp_subsigs: sed.perc_comp_subsigs,
         basis_unique_states: sed.basis_unique_states,
         basis_acc_states: sed.basis_acc_states,
-        // igc arm unused in aggressive (fixed sentinel in build_circs_adv_aggr)
+        // igc sentinel seeds: 0 here, clamped to floors in
+        // caps_from_params_aggr and bumped per igc CapErr by the tuner.
         subsigs_igc: 0,
         avg_active_pats_per_subsig_igc: 0,
         basis_pats_in_trace_igc: 0,
         perc_pats_expansion_rate_igc: 0,
         basis_acc_states_igc: 0,
+        basis_unique_states_igc: 0,
         dfa_sigs: 0,
         dfa_subsigs: 0,
         aggr_needs_subsigs,
@@ -367,7 +392,7 @@ mod tests {
             perc_comp_subsigs: 0, basis_unique_states: 0, basis_acc_states: 0,
             subsigs_igc: 0, avg_active_pats_per_subsig_igc: 0,
             basis_pats_in_trace_igc: 0, perc_pats_expansion_rate_igc: 0,
-            basis_acc_states_igc: 0,
+            basis_acc_states_igc: 0, basis_unique_states_igc: 0,
             dfa_sigs: 0, dfa_subsigs: 0, aggr_needs_subsigs: 0,
             max_word_len: 0, acdfa_state_part_bits: 0,
         }
@@ -419,13 +444,15 @@ mod tests {
         let (changed, _) = apply_caperr_bumps(&mut p, true,
             &[("dis_adv::subsigs".to_string(), 3000)]);
         assert!(changed);
-        assert_eq!(p.subsigs, 3000);
+        // +1 reserves the comp_sig dummy entry (inp_subsigs[0] must be 0);
+        // aggr_needs_subsigs carries the raw universe count.
+        assert_eq!(p.subsigs, 3001);
         assert_eq!(p.aggr_needs_subsigs, 3000, "aggr co-bump");
         // non-aggressive: no co-bump.
         let mut p2 = zero_params();
         apply_caperr_bumps(&mut p2, false,
             &[("comp_sig::subsigs_cs".to_string(), 700)]);
-        assert_eq!(p2.subsigs, 700);
+        assert_eq!(p2.subsigs, 701);   // +1 dummy-entry reservation
         assert_eq!(p2.aggr_needs_subsigs, 0, "no aggr co-bump");
         // unknown name surfaces as unmapped.
         let mut p3 = zero_params();
