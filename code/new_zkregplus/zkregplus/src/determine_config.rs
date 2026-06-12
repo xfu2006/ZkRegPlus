@@ -229,16 +229,23 @@ pub fn apply_caperr_bumps(p: &mut CapParams, b_aggr: bool,
 
 /// Build the aggressive CP+SED capacities from the scalar params (rebuild,
 /// not field-poke, since SedCapacity::new derives internal comp_capacities).
-/// Returns (cp_cs, sed_cs, sed_igc); the igc sentinel keeps subsigs=1 and
-/// is tuned independently via the _igc params (clamped to sentinel floors so
+/// Returns (cp_cs, sed_cs, cp_igc, sed_igc). The igc CP runs the real igc
+/// crit-pattern DFA, so it shares the tunable cp_basis_unique_states; the SED
+/// igc is a subsigs=1 sentinel tuned via the _igc params (clamped to floors so
 /// any seed -- including 0/serde-default -- yields a valid capacity).
 pub fn caps_from_params_aggr(p: &CapParams)
-    -> (CpCapacity, SedCapacity, SedCapacity) {
+    -> (CpCapacity, SedCapacity, CpCapacity, SedCapacity) {
     let cp = CpCapacity {
         max_word_len: p.max_word_len,
         basis_unique_states: p.cp_basis_unique_states,
         subsigs: p.cp_subsigs,
         avg_pats_per_subsig: p.cp_avg_pats,
+    };
+    let cp_igc = CpCapacity {
+        max_word_len: p.max_word_len,
+        basis_unique_states: p.cp_basis_unique_states, // shared with cs CP
+        subsigs: 1,                                    // sentinel
+        avg_pats_per_subsig: 1,
     };
     let sed = SedCapacity::new(
         p.max_word_len, p.acdfa_state_part_bits, p.subsigs,
@@ -252,7 +259,7 @@ pub fn caps_from_params_aggr(p: &CapParams)
         p.perc_pats_expansion_rate_igc.max(64), 1, 1,
         p.basis_unique_states_igc.max(2),
         p.basis_acc_states_igc.max(2));
-    (cp, sed, sed_igc)
+    (cp, sed, cp_igc, sed_igc)
 }
 
 /// Build the non-aggressive cs/igc/dfa capacities from scalar params, in the

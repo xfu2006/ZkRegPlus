@@ -315,7 +315,7 @@ pub(crate) fn build_circs_adv_aggr<F,C,CS>(
 	chunk_len: usize,
 	lkup_len: usize,
 	db: Arc<ClamavDB<F>>,
-	cs_caps: &Vec<(CpCapacity, SedCapacity, SedCapacity)>,
+	cs_caps: &Vec<(CpCapacity, SedCapacity, CpCapacity, SedCapacity)>,
 	b_check_lkup: bool
 )->Vec<Vec<FC<F,C,CS>>>
 where C: CurveGroup<ScalarField=F>,
@@ -333,23 +333,19 @@ where C: CurveGroup<ScalarField=F>,
 			lk_share, chunks, lkup_len);
 	}
 
-	//2. one circuit per cs cap entry, caller order (lowest cost first). The
-	//   igc sentinel SED cap (subsigs=1) is supplied per entry and tuned
-	//   independently; CP igc shares its small basis_unique_states.
+	//2. one circuit per cs cap entry, caller order (lowest cost first). Both
+	//   igc caps are supplied per entry: cp_igc runs the real igc crit DFA
+	//   (caller sizes its basis_unique_states); sed_igc is the subsigs=1
+	//   sentinel tuned via the _igc params.
 	let mut layer_circs = vec![];
-	for (i,(cp_cap_cs, sed_cap_cs, sed_cap_igc)) in cs_caps.iter().enumerate(){
+	for (i,(cp_cap_cs, sed_cap_cs, cp_cap_igc, sed_cap_igc))
+		in cs_caps.iter().enumerate(){
 		assert!(cp_cap_cs.max_word_len == chunk_len);
 		assert!(sed_cap_cs.wea_capacity().max_word_len == chunk_len);
-		let cp_cap_igc = CpCapacity{
-			max_word_len: chunk_len,
-			basis_unique_states: sed_cap_igc.basis_unique_states,
-			subsigs: 1,                 //igc crit-pat universe (sentinel only)
-			avg_pats_per_subsig: 1,
-		};
 		let cp_cs = CpComponentMapper::<F,LK<F>>::new(
 			cp_cap_cs.clone(), db.clone(), false);
 		let cp_igc = CpComponentMapper::<F,LK<F>>::new(
-			cp_cap_igc, db.clone(), true);
+			cp_cap_igc.clone(), db.clone(), true);
 		let sed = SedComponentMapper::<F,LK<F>>::new(
 			sed_cap_cs.clone(), sed_cap_igc.clone(), db.clone());
 		let hybrid = CompositeGadgetMapper::<F,LK<F>>::new("hybrid_cgm1",
@@ -403,8 +399,8 @@ where C: CurveGroup<ScalarField=F>,
 		utils::consts::get_global_config().aggr_needs_subsigs =
 			p.aggr_needs_subsigs;
 		let probe_res = crate::determine_config::probe_catching(|| {
-			let (cp, sed, sed_igc) = caps_from_params_aggr(&p);
-			let cs_caps = vec![(cp, sed, sed_igc)];
+			let (cp, sed, cp_igc, sed_igc) = caps_from_params_aggr(&p);
+			let cs_caps = vec![(cp, sed, cp_igc, sed_igc)];
 			let layered = build_circs_adv_aggr::<F,C,CS>(&poseidon,
 				total_word_n, chunk_len, lkup_len, db.clone(), &cs_caps,
 				false);
@@ -1024,7 +1020,7 @@ pub fn zkp_driver_adv_aggr<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>>
 	list_of_ised_sigs: &str,
 	list_of_ised_igc_sigs: &str,
 	chunk_len: usize,
-	cs_caps: &Vec<(CpCapacity, SedCapacity, SedCapacity)>,
+	cs_caps: &Vec<(CpCapacity, SedCapacity, CpCapacity, SedCapacity)>,
 	b_check_lkup: bool,
 )
 where
@@ -2893,14 +2889,18 @@ pub mod tests_zkp_driver{
 			basis_unique_states,       //unique DFA states (basis points)
 			basis_acc_states);         //accepting DFA states (basis points)
 
-		//CS-only aggressive ladder (lowest cost first). The igc sentinel
-		//(subsigs=1) reproduces the prior hardcoded values; basis_unique
-		//tracks the cs cap. One circuit per entry.
+		//CS-only aggressive ladder (lowest cost first). Both igc caps
+		//reproduce the prior hardcoded sentinel (CP basis_unique=4; SED
+		//subsigs=1, basis_unique tracks the cs cap). One circuit per entry.
+		let init_cp_cap_igc = CpCapacity{
+			max_word_len: init_cp_cap.max_word_len,
+			basis_unique_states: 4, subsigs: 1, avg_pats_per_subsig: 1};
 		let init_sed_cap_igc = SedCapacity::new(
 			init_sed_cap.max_word_len, init_sed_cap.acdfa_state_part_bits,
 			1, 1, 1, 4, 64, 1, 1,
 			init_sed_cap.basis_unique_states, 2);
-		let cs_caps = vec![(init_cp_cap, init_sed_cap, init_sed_cap_igc)];
+		let cs_caps = vec![(init_cp_cap, init_sed_cap,
+			init_cp_cap_igc, init_sed_cap_igc)];
 
 		let scan_files: Vec<String> = vec![
 			format!("{}/binexec.dat", set1)]; //single job
@@ -3052,14 +3052,18 @@ pub mod tests_zkp_driver{
 			basis_unique_states,       //unique DFA states (basis points)
 			basis_acc_states);         //accepting DFA states (basis points)
 
-		//CS-only aggressive ladder (lowest cost first). The igc sentinel
-		//(subsigs=1) reproduces the prior hardcoded values; basis_unique
-		//tracks the cs cap. One circuit per entry.
+		//CS-only aggressive ladder (lowest cost first). Both igc caps
+		//reproduce the prior hardcoded sentinel (CP basis_unique=4; SED
+		//subsigs=1, basis_unique tracks the cs cap). One circuit per entry.
+		let init_cp_cap_igc = CpCapacity{
+			max_word_len: init_cp_cap.max_word_len,
+			basis_unique_states: 4, subsigs: 1, avg_pats_per_subsig: 1};
 		let init_sed_cap_igc = SedCapacity::new(
 			init_sed_cap.max_word_len, init_sed_cap.acdfa_state_part_bits,
 			1, 1, 1, 4, 64, 1, 1,
 			init_sed_cap.basis_unique_states, 2);
-		let cs_caps = vec![(init_cp_cap, init_sed_cap, init_sed_cap_igc)];
+		let cs_caps = vec![(init_cp_cap, init_sed_cap,
+			init_cp_cap_igc, init_sed_cap_igc)];
 
 		//binexec2.dat scans merged_000005 (in clean_email_list -> clean
 		//discharge vs all 60 SITs; merged_000020 is flagged).
@@ -3205,14 +3209,18 @@ pub mod tests_zkp_driver{
 			basis_unique_states,       //unique DFA states (basis points)
 			basis_acc_states);         //accepting DFA states (basis points)
 
-		//CS-only aggressive ladder (lowest cost first). The igc sentinel
-		//(subsigs=1) reproduces the prior hardcoded values; basis_unique
-		//tracks the cs cap. One circuit per entry.
+		//CS-only aggressive ladder (lowest cost first). Both igc caps
+		//reproduce the prior hardcoded sentinel (CP basis_unique=4; SED
+		//subsigs=1, basis_unique tracks the cs cap). One circuit per entry.
+		let init_cp_cap_igc = CpCapacity{
+			max_word_len: init_cp_cap.max_word_len,
+			basis_unique_states: 4, subsigs: 1, avg_pats_per_subsig: 1};
 		let init_sed_cap_igc = SedCapacity::new(
 			init_sed_cap.max_word_len, init_sed_cap.acdfa_state_part_bits,
 			1, 1, 1, 4, 64, 1, 1,
 			init_sed_cap.basis_unique_states, 2);
-		let cs_caps = vec![(init_cp_cap, init_sed_cap, init_sed_cap_igc)];
+		let cs_caps = vec![(init_cp_cap, init_sed_cap,
+			init_cp_cap_igc, init_sed_cap_igc)];
 
 		//binexec3.dat scans merged_004945 (the dischargeable one of the
 		//challenge pair; merged_005547 is blocked by sql-conn-string).

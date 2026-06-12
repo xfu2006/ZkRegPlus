@@ -464,7 +464,9 @@ impl <F: PrimeField + ColEle> PackFinalAdvice<F>{
 		vec_final_states.sort();
 		let set_final_states = vec_final_states.par_iter().map(|&s|
 			s).collect::<HashSet<F>>();
-		if vec_final_states.len()>capacity_out-1{
+		// +1 form avoids usize underflow when capacity_out==0 (the CapErr
+		// then stays recoverable instead of falling through to a panic).
+		if vec_final_states.len()+1>capacity_out{
 			return Err(Error::CapErr(vec![(format!("capacity_out: pack, fsm_id: 0x{:x}", fsm_id), vec_final_states.len()+1)]));
 		}
 		let vec_final_states = [ 
@@ -477,7 +479,9 @@ impl <F: PrimeField + ColEle> PackFinalAdvice<F>{
 			.collect::<HashSet<F>>().into_iter().collect::<Vec<F>>();
 		vec_imm_states.sort();
 		assert!(vec_imm_states[0]!=zero);
-		if vec_imm_states.len()>capacity_imm-1{
+		// +1 form avoids usize underflow when capacity_imm==0 (the CapErr
+		// then stays recoverable instead of falling through to the assert).
+		if vec_imm_states.len()+1>capacity_imm{
 			return Err(Error::CapErr(vec![(format!("capacity_imm: pack, fsm_id: 0x{:x}", fsm_id), vec_imm_states.len()+1)]));
 		}
 		assert!(vec_imm_states.len()<capacity_imm, "imm_states: {} > capacity_imm: {}", vec_imm_states.len(), capacity_imm);
