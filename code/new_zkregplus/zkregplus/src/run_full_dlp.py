@@ -109,8 +109,7 @@ DATASETS = {
         "scan2":      "binexec_sample2.dat",
         "scan3":      "binexec_sample3.dat",
         "fanout_cap": 100,
-        "chunk_len":  256,   # 256 words*31B ~= 8KB ZK step (fewer folding
-                             # steps -> shorter sample2 tuning)
+        "chunk_len":  64,    # uniform ~2KB ZK step for sample1/2/3
         "range2_bit": 25,
     },
 }

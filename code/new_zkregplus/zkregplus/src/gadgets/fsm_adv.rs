@@ -237,6 +237,9 @@ fn report_top_states<F: ark_ff::PrimeField + ColEle>(
 	top_n: usize,
 	label: &str
 ) {
+	// High-volume diagnostic: fires on every basis-cap overflow (every
+	// determine_config bump). Off unless log_level cranked to LOG7.
+	if read_global_config().log_level < utils::logger::LOG7 { return; }
 	let mut counts = HashMap::<usize, usize>::new();
 	for f in states.iter() {
 		if f.is_zero() { continue; }

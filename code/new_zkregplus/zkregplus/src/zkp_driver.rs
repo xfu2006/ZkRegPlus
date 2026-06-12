@@ -3610,6 +3610,54 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		super::run_dlp_sample_config::<Fr,C1,CS1>(&rc);
 	}
 
+	/// full_dlp pipeline sample3: FOLD-ONLY run of the sample3 list over a
+	/// 2-circuit ladder -- C1 (sample1, cheap) + C2 (sample2, big). Each word
+	/// sticks to the cheapest fitting layer (foldpot find_working_layer). The
+	/// log carries per-word layer (PERF 1001 ... pci:) and per-step circ + time
+	/// (prove_step cost ... circ_id:). No SNARK (b_folding_only).
+	#[test]
+	pub fn full_dlp_sample3(){
+		use crate::determine_config::{CapParams, caps_from_params_aggr};
+		let rc = crate::determine_config::RunCfg::from_env();
+		let proot = utils::os::proj_root();
+		let cd = &rc.config_dir;
+		//aggressive CS-only knobs + low floors (mirror run_dlp_sample_config so
+		//the loaded C1/C2 caps reproduce), folding-only (no SNARK).
+		get_global_config().range2_bit = rc.range2_bit;
+		get_global_config().b_light_test = true;
+		get_global_config().b_folding_only = true;
+		get_global_config().b_read_cache = true;
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_write_snark_cache = false;
+		get_global_config().perc_lkup_share = 1;
+		get_global_config().min_subsigs = 1;
+		get_global_config().min_basis_unique_states = 2;
+		get_global_config().min_basis_acc_states = 2;
+		get_global_config().min_basis_pats_in_trace = 4;
+		get_global_config().min_avg_pats_per_subsig = 1;
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
+		get_global_config().clamav_cfg.sde_rep_fanout_cap = rc.fanout_cap;
+		get_global_config().clamav_cfg.min_pm_word_len = 3;
+		//2-circuit ladder from the two tuned configs (cheap C1 first, big C2).
+		let c1 = CapParams::load_json(&format!("{}/{}", proot, rc.config_c1));
+		let c2 = CapParams::load_json(&format!("{}/{}", proot, rc.config_c2));
+		let cs_caps = vec![caps_from_params_aggr(&c1),
+			caps_from_params_aggr(&c2)];
+		let scan = vec![format!("{}/{}", cd, rc.scan_file)];
+		zkp_driver_adv_aggr::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,
+			CS1E,S>(
+			0, &format!("{}/{}", cd, rc.sig_file), scan, &rc.report_out,
+			false, &rc.cache_dir,
+			&format!("{}/main_dfa.dat", cd),
+			&format!("{}/needs_ised.dat", cd),
+			&format!("{}/needs_ised_igc.dat", cd),
+			rc.chunk_len, &cs_caps, false);
+		//mark the step done for the pipeline's artifact check.
+		let _ = std::fs::write(&format!("{}/{}", proot, rc.report_out),
+			format!("sample3 fold-only: {} via 2 circs (C1+C2)\n",
+				rc.scan_file));
+	}
+
 	/// Invoke via:
 	/// `cargo test -p zkregplus -- test_db_bundle --show-output --nocapture`
 	/// BASELINE 2026-05-31 (b_cache=false, b_quick=true; pre-ApproxConfig
