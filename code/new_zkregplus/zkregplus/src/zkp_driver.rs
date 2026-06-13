@@ -438,6 +438,173 @@ where C: CurveGroup<ScalarField=F>,
 	Err(format!("max_iters {} reached without convergence", max_iters))
 }
 
+/// Shrink precision: Quick = stop at CapErr-led demands (C_low); Precise =
+/// tighten to the exact boundary (C_high, for BORA scaling data).
+#[derive(Clone,Copy,PartialEq)]
+pub(crate) enum ShrinkMode { Quick, Precise }
+
+type CapGet = fn(&crate::determine_config::CapParams)->usize;
+type CapSet = fn(&mut crate::determine_config::CapParams, usize);
+type CapFloor = fn(&crate::determine_config::CapParams)->usize;
+
+/// Non-source caps shrunk during finalize: (name, get, set, floor-fn). The
+/// SOURCE caps {subsigs, basis_pats_in_trace, aggr_needs_subsigs} are NEVER
+/// reset -- they stay at their Phase-A CapErr-exact count, which is what makes
+/// the subsig->avg_active overshoot structurally impossible. avg_active &
+/// perc_pats substitute for one max-buffer; policy (a) lets the gadget floor
+/// one, carry the other. Floors are config-dependent so they respect hard
+/// gadget constraints (e.g. basis_pats <= 10*basis_acc, else fsm_adv panics).
+fn shrink_fields()->Vec<(&'static str, CapGet, CapSet, CapFloor)>{
+	vec![
+	 ("basis_unique",    |p| p.basis_unique_states,
+	    |p,v| p.basis_unique_states=v, |_| 2),
+	 ("basis_acc",       |p| p.basis_acc_states,
+	    |p,v| p.basis_acc_states=v, |p| p.basis_pats_in_trace/10 + 2),
+	 ("cp_basis_unique", |p| p.cp_basis_unique_states,
+	    |p,v| p.cp_basis_unique_states=v, |_| 2),
+	 ("avg_active",      |p| p.avg_active_pats_per_subsig,
+	    |p,v| p.avg_active_pats_per_subsig=v, |_| 1),
+	 ("perc_pats",       |p| p.perc_pats_expansion_rate,
+	    |p,v| p.perc_pats_expansion_rate=v, |_| 2),
+	]
+}
+
+/// Run the increase loop from `p` over `padded` until every word plans
+/// (collect-probe + CapErr bump, re-probing only failures). Caps only grow,
+/// so passed words stay valid. Returns the converged config or Err.
+fn reconverge_probe<F,C,CS>(
+	db: &Arc<ClamavDB<F>>, poseidon: &PoseidonConfig<F>,
+	padded: &Vec<Vec<F>>, word_infos: &Vec<WordInfo>,
+	mut p: crate::determine_config::CapParams,
+	chunk_len: usize, lkup_len: usize, total_word_n: usize,
+	max_rounds: usize, n_threads: usize,
+)->Result<crate::determine_config::CapParams, String>
+where C: CurveGroup<ScalarField=F>,
+	  CS: CommitmentScheme<C,false>,
+	  <CS as CommitmentScheme<C,false>>::ProverParams: Send + Sync,
+	  F: PrimeField + Absorb + ColEle,
+{
+	use folding_schemes::folding::foldpot::capacity_planner::CapacityPlanner;
+	use crate::determine_config::{apply_caperr_bumps, caps_from_params_aggr,
+		parse_caperr_from_panic};
+	let mut pending: Vec<usize> = (0..padded.len()).collect();
+	for _round in 0..max_rounds {
+		utils::consts::get_global_config().aggr_needs_subsigs =
+			p.aggr_needs_subsigs;
+		let sub_w: Vec<Vec<F>> = pending.iter().map(|&i| padded[i].clone())
+			.collect();
+		let sub_i: Vec<WordInfo> = pending.iter()
+			.map(|&i| word_infos[i].clone()).collect();
+		let probe_res = crate::determine_config::probe_catching(|| {
+			let (cp, sed, cp_igc, sed_igc) = caps_from_params_aggr(&p);
+			let cs_caps = vec![(cp, sed, cp_igc, sed_igc)];
+			let layered = build_circs_adv_aggr::<F,C,CS>(poseidon,
+				total_word_n, chunk_len, lkup_len, db.clone(), &cs_caps,
+				false);
+			let planner = CapacityPlanner::<C, FC<F,C,CS>, LK<F>, GM<F>,
+				false>::new(layered);
+			Ok(planner.capacity_probe_collect(&sub_w, &sub_i, n_threads))
+		})?;
+		let results = match probe_res {
+			Ok(r) => r,
+			Err(errs) => {
+				let (changed, unmapped) =
+					apply_caperr_bumps(&mut p, true, &errs);
+				if !unmapped.is_empty() || !changed {
+					return Err(format!("reconverge: construction CapErr \
+						not bumpable: {:?}", errs));
+				}
+				continue;
+			}
+		};
+		let mut all_errs: Vec<(String, usize)> = vec![];
+		let mut failed: Vec<usize> = vec![];
+		for (k, r) in results.iter().enumerate(){
+			if let Some(errs) = r {
+				failed.push(pending[k]);
+				for (name, req) in errs {
+					if *req == 0 {
+						match parse_caperr_from_panic(name) {
+							Some(v) => all_errs.extend(v),
+							None => return Err(format!(
+								"reconverge: non-CapErr word {}: {}",
+								pending[k], name)),
+						}
+					} else { all_errs.push((name.clone(), *req)); }
+				}
+			}
+		}
+		if failed.is_empty() { return Ok(p); }
+		let (changed, unmapped) = apply_caperr_bumps(&mut p, true, &all_errs);
+		if !unmapped.is_empty() {
+			return Err(format!("reconverge: unmapped: {:?}", unmapped)); }
+		if !changed {
+			return Err(format!("reconverge: no bump: {:?}", all_errs)); }
+		pending = failed;
+	}
+	Err(format!("reconverge: max_rounds {} reached", max_rounds))
+}
+
+/// Seed-then-finalize with shrink. Phase A increases from the estimate seed to
+/// a sufficient config; Phase B resets the non-source caps to floor and
+/// reconverges to the CapErr-exact minimum (sources kept -> no overshoot).
+/// Precise then tightens by 1 until stable (exact boundary, for BORA scaling).
+pub(crate) fn finalize_caps_probe<F,C,CS>(
+	db: Arc<ClamavDB<F>>, words: &Vec<Vec<F>>, word_infos: &Vec<WordInfo>,
+	seed: crate::determine_config::CapParams,
+	chunk_len: usize, lkup_len: usize, total_word_n: usize,
+	max_rounds: usize, n_threads: usize, mode: ShrinkMode,
+)->Result<crate::determine_config::CapParams, String>
+where C: CurveGroup<ScalarField=F>,
+	  CS: CommitmentScheme<C,false>,
+	  <CS as CommitmentScheme<C,false>>::ProverParams: Send + Sync,
+	  F: PrimeField + Absorb + ColEle,
+{
+	let poseidon = poseidon_canonical_config::<F>();
+	let padded: Vec<Vec<F>> = words.iter()
+		.map(|w| utils::data::pad_word_to_multiple::<F>(w, chunk_len)).collect();
+	let mut t = GTimer::new();
+	macro_rules! rc { ($p:expr) => { reconverge_probe::<F,C,CS>(&db, &poseidon,
+		&padded, word_infos, $p, chunk_len, lkup_len, total_word_n, max_rounds,
+		n_threads) }; }
+	//Phase A: increase from estimate seed -> sufficient.
+	let s = rc!(seed)?;
+	log(0, LOG1, &format!("finalize Phase A done: {:?}", s));
+	//Phase B: reset non-source caps to floor, reconverge -> min (sources kept).
+	let mut p0 = s.clone();
+	for (_n,_g,set,floor) in shrink_fields(){ set(&mut p0, floor(&s)); }
+	let mut shrunk = match rc!(p0) {
+		Ok(c) => c,
+		Err(e) if e.contains("non-CapErr") => {
+			//floor-reset hit an unparseable panic: keep the valid sufficient
+			//config, warn loudly (exp-decrease gallop is the deferred upgrade).
+			log(0, LOG1, &format!("ERROR finalize: floor-reset panicked \
+				({}); returning un-shrunk sufficient config", e));
+			s.clone()
+		}
+		Err(e) => return Err(e),
+	};
+	log(0, LOG1, &format!("finalize Phase B (shrink) done: {:?}", shrunk));
+	//Precise: tighten each shrink cap by 1 until a round is net no-change
+	//(strips the even-rounding slack -> exact boundary for BORA).
+	if mode == ShrinkMode::Precise {
+		for _ in 0..12 {
+			let mut dec = shrunk.clone();
+			for (_n,g,set,floor) in shrink_fields(){
+				let v = g(&dec); let fl = floor(&dec);
+				if v>fl { set(&mut dec, v-1); }
+			}
+			let re = rc!(dec)?;
+			if re == shrunk { break; }
+			shrunk = re;
+		}
+		log(0, LOG1, &format!("finalize Precise done: {:?}", shrunk));
+	}
+	t.stop();
+	log(0, LOG1, &format!("finalize_caps_probe TOTAL {} ms", t.ms()));
+	Ok(shrunk)
+}
+
 /// One DLP sample's determine_config run (M2). Builds-or-loads the cached
 /// aggressive DLP DB (first run builds+caches, rest load), discharges the
 /// sample manifest, auto-tunes the LOWEST CapParams via determine_config_aggr
@@ -3756,5 +3923,187 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 	#[test]
 	pub fn test_small_email3(){
 		small_email3::<Fr>(false);
+	}
+
+	// ===== M2.5: estimator validation (OLD/NEW/REAL coverage) =====
+	use crate::determine_config::CapParams;
+
+	/// Per-cap OLD (pre-CP-extension) / NEW (estimator seed) / FIN
+	/// (probe-finalized) / REAL (determine_config oracle). Returns true
+	/// iff FIN >= REAL on every cap (the crash-proof coverage property).
+	fn cmp_caps(label:&str, old:&CapParams, new:&CapParams,
+		fin:&CapParams, real:&CapParams)->bool{
+		let rows: [(&str,usize,usize,usize,usize);9] = [
+		 ("cp_basis_unique", old.cp_basis_unique_states,
+		   new.cp_basis_unique_states, fin.cp_basis_unique_states,
+		   real.cp_basis_unique_states),
+		 ("basis_unique", old.basis_unique_states,
+		   new.basis_unique_states, fin.basis_unique_states,
+		   real.basis_unique_states),
+		 ("basis_acc", old.basis_acc_states, new.basis_acc_states,
+		   fin.basis_acc_states, real.basis_acc_states),
+		 ("basis_pats", old.basis_pats_in_trace,
+		   new.basis_pats_in_trace, fin.basis_pats_in_trace,
+		   real.basis_pats_in_trace),
+		 ("subsigs", old.subsigs, new.subsigs, fin.subsigs, real.subsigs),
+		 ("perc_pats", old.perc_pats_expansion_rate,
+		   new.perc_pats_expansion_rate, fin.perc_pats_expansion_rate,
+		   real.perc_pats_expansion_rate),
+		 ("avg_active", old.avg_active_pats_per_subsig,
+		   new.avg_active_pats_per_subsig, fin.avg_active_pats_per_subsig,
+		   real.avg_active_pats_per_subsig),
+		 ("aggr_needs", old.aggr_needs_subsigs, new.aggr_needs_subsigs,
+		   fin.aggr_needs_subsigs, real.aggr_needs_subsigs),
+		 ("cp_subsigs", old.cp_subsigs, new.cp_subsigs, fin.cp_subsigs,
+		   real.cp_subsigs),
+		];
+		let mut all_ok = true;
+		println!("== ESTIMATOR VALIDATION [{}] ==", label);
+		println!("{:<16} {:>9} {:>9} {:>9} {:>9}  FINok", "cap",
+			"OLD","NEW","FIN","REAL");
+		for (n,o,ne,f,r) in rows.iter(){
+			let ok = f>=r;
+			if !ok { all_ok=false; }
+			println!("{:<16} {:>9} {:>9} {:>9} {:>9}  {}", n,o,ne,f,r,
+				if ok {"yes"} else {"COVERAGE-GAP"});
+		}
+		println!("[{}] FIN covers REAL on ALL caps: {}", label, all_ok);
+		all_ok
+	}
+
+	/// Aggressive estimator validation: discharge `scan` (one pass for vdata
+	/// + words + infos), build NEW via the estimator, OLD = NEW without the
+	/// CP field, REAL via determine_config_aggr; print the comparison.
+	fn estimator_validate_aggr(label:&str, set1:&str, sig:&str, scan:&str,
+		range_bits:usize, max_word:usize, fanout:usize, cache:&str,
+		real_json:&str)->bool{
+		get_global_config().range2_bit = range_bits;
+		get_global_config().b_light_test = true;
+		get_global_config().b_read_cache = false;
+		get_global_config().b_estimate_caps = true;
+		get_global_config().perc_lkup_share = 1;
+		get_global_config().min_subsigs = 1;
+		get_global_config().min_basis_unique_states = 2;
+		get_global_config().min_basis_acc_states = 2;
+		get_global_config().min_basis_pats_in_trace = 4;
+		get_global_config().min_avg_pats_per_subsig = 1;
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
+		get_global_config().clamav_cfg.sde_rep_fanout_cap = fanout;
+		get_global_config().clamav_cfg.min_pm_word_len = 3;
+		let proot = utils::os::proj_root();
+		let cfg = data_processor::clamav::default_clamav_cfg();
+		let mut vlog = vec![];
+		let db = data_processor::clam_db::ClamavDB::<Fr>::build_or_load(
+			&cfg, &format!("{}/{}", set1, sig),
+			&format!("{}/main_dfa.dat", set1),
+			&format!("{}/needs_ised.dat", set1),
+			&format!("{}/needs_ised_igc.dat", set1), &mut vlog,
+			cache, true, true).expect("build db");
+		//discharge: vdata (estimator input) + packed words + word infos
+		//(finalize-probe input), one pass
+		let files = utils::os::read_lines(
+			&format!("{}/{}/{}", proot, set1, scan));
+		let (mut vdata, mut words, mut infos) = (vec![], vec![], vec![]);
+		for fpath in &files{
+			let nibbles = utils::os::read_nibbles(
+				&format!("{}/{}", proot, fpath));
+			let f_nib: Vec<Fr> = nibbles.iter().map(|x| Fr::from(*x as u32))
+				.collect();
+			words.push(utils::data::pack_nibbles(&f_nib));
+			let (fdr, rec) =
+				data_processor::clamav::quick_discharge_file_by_crit_bag_pm(
+				fpath, &nibbles, &db.vec_sigs, &db.vec_sigs_no_critical_pat,
+				&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
+				&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
+				&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
+				&db.sig_to_id, max_word, max_word);
+			vdata.push(fdr);
+			infos.push(rec);
+		}
+		//NEW estimate + OLD (cp field zeroed = pre-extension)
+		let configs = crate::stats_helper::estimate_config_aggr::<Fr>(
+			&vdata, &db, &[100], &mut vlog);
+		assert!(!configs.is_empty(), "estimator produced no config");
+		let c_new = crate::stats_helper::estimated_to_capparams_aggr(
+			&configs[0], max_word, range_bits, 3);
+		let mut c_old = c_new.clone();
+		c_old.cp_basis_unique_states = 0;
+		//REAL = the saved determine_config output for this scan/chunk.
+		let c_real = crate::determine_config::CapParams::load_json(
+			&format!("{}/{}", proot, real_json));
+		//FIN = estimator seed finalized by the collect-probe
+		let total_word_n: usize = words.iter().map(|w| w.len()).sum();
+		use folding_schemes::folding::foldpot::sigma_ir1cs
+			::LookupTableTwoCol as _;
+		let lkup_len = db.lkup.get_size();
+		let db_arc = std::sync::Arc::new(db);
+		let c_fin = super::finalize_caps_probe::<Fr,C1,CS1>(
+			db_arc, &words, &infos, c_new.clone(), max_word, lkup_len,
+			total_word_n, 60, 4, super::ShrinkMode::Precise)
+			.expect("finalize failed");
+		cmp_caps(label, &c_old, &c_new, &c_fin, &c_real)
+	}
+
+	/// Non-aggressive regression: with b_estimate_caps OFF, the M1 CP-peak
+	/// must stay 0 (discharge byte-identical to before).
+	fn estimator_regress_nonaggr(label:&str, set1:&str, sig:&str, dfa:&str,
+		ised:&str, ised_igc:&str, scan:&str, max_word:usize){
+		get_global_config().b_estimate_caps = false;
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = false;
+		get_global_config().b_read_cache = false;
+		let proot = utils::os::proj_root();
+		let cfg = data_processor::clamav::default_clamav_cfg();
+		let mut vlog = vec![];
+		let db = data_processor::clam_db::ClamavDB::<Fr>::build_or_load(
+			&cfg, &format!("{}/{}", set1, sig),
+			&format!("{}/{}", set1, dfa), &format!("{}/{}", set1, ised),
+			&format!("{}/{}", set1, ised_igc), &mut vlog,
+			&format!("regress_{}", label), false, false).expect("build db");
+		let files = utils::os::read_lines(
+			&format!("{}/{}/{}", proot, set1, scan));
+		let mut all_zero = true;
+		for fpath in &files{
+			let nibbles = utils::os::read_nibbles(
+				&format!("{}/{}", proot, fpath));
+			let (fdr, _rec) =
+				data_processor::clamav::quick_discharge_file_by_crit_bag_pm(
+				fpath, &nibbles, &db.vec_sigs, &db.vec_sigs_no_critical_pat,
+				&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
+				&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
+				&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
+				&db.sig_to_id, max_word, max_word);
+			if fdr.chunk_peaks.max_cp_unique_states != 0 { all_zero = false; }
+		}
+		println!("[{}] flag-off max_cp_unique_states all zero: {}",
+			label, all_zero);
+		assert!(all_zero, "M1 gate leaked with b_estimate_caps=false");
+	}
+
+	/// `cargo test -p zkregplus -- tests_estimator_coverage --nocapture`
+	#[test]
+	pub fn tests_estimator_coverage(){
+		estimator_regress_nonaggr("small_data",
+			"data/debug/small_data_set/config_dfa", "sigs.dat", "dfa.dat",
+			"ised.dat", "ised_igc.dat", "binexec.dat", 1);
+		// Aggressive validation on the international DLP set sample3 uses
+		// (directional fwd/bwd sigs; small_email main.dat predates that
+		// shape and panics under aggressive mode). chunk_len=42 (1.3 KB).
+		// REAL oracle = the saved C1/C2 (server determine_config output) at
+		// max_word_len=64; rebuild the real DLP DB (dlp_intl_data_aggr,
+		// what C1/C2 were tuned on) on first run, cached thereafter.
+		let cd = "data/paper_data/dlp/cfg";
+		let sg = "main_data_dlp_internationl.dat";
+		let ca = "dlp_intl_data_aggr";
+		// PASS CRITERION = finalize converges (every word plans under FIN),
+		// gated inside estimator_validate_aggr via .expect("finalize failed").
+		// The four-way OLD/NEW/FIN/REAL table is INFORMATIONAL: FIN may sit
+		// below an over-provisioned REAL (determine_config overshoots the
+		// multiplicative density caps) and still be a valid covering config.
+		let _fin_ge_real_1 = estimator_validate_aggr("dlp_sample1", cd, sg,
+			"binexec_sample1.dat", 25, 64, 100, ca,
+			"data/paper_data/dlp/cfg/dlp_config_C1.json");
+		let _fin_ge_real_2 = estimator_validate_aggr("dlp_sample2", cd, sg,
+			"binexec_sample2.dat", 25, 64, 100, ca,
+			"data/paper_data/dlp/cfg/dlp_config_C2.json");
 	}
 }

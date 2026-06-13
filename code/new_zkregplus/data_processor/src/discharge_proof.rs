@@ -82,6 +82,10 @@ pub struct ChunkPeaks{
 	//across subsigs, max over chunks. Estimator divides by subsigs to
 	//size avg_active_pats_per_subsig.
 	pub max_active_steps_per_chunk: usize,
+	//Distinct crit-pattern DFA states per chunk (max over chunks, cs/igc
+	//max) -> sizes cp_basis_unique_states (CP pack imm_buf). 0 unless
+	//b_estimate_caps, so non-aggressive discharge is byte-identical.
+	pub max_cp_unique_states: usize,
 }
 
 impl FailDischargeRecord{

@@ -586,7 +586,7 @@ wall={:.0}s dir={}", total, pass.len(), fail.len(),
 /// One percentile's estimated config values (the numbers a runner would
 /// paste into CpCapacity / SedCapacity::new / DfaCapacity).
 #[derive(Clone,Debug,Default)]
-struct EstimatedConfig{
+pub struct EstimatedConfig{
 	pub percentile: usize,
 	pub coverage_files: usize, //# files guaranteed to fit
 	pub total_files: usize,
@@ -605,6 +605,12 @@ struct EstimatedConfig{
 	//anchor-presence pre-filter. Set GlobalConfig.aggr_needs_subsigs from this.
 	//0 when aggressive mode is off.
 	pub needs_subsigs: usize,
+	//CP crit-pattern gadget caps (aggressive): cp_basis_unique is per-file
+	//(crit-DFA distinct states); cp_subsigs/cp_avg_pats are the DB crit
+	//universe (same for all files).
+	pub cp_basis_unique_states: usize,
+	pub cp_subsigs: usize,
+	pub cp_avg_pats: usize,
 }
 
 /// Per-file capacity requirement. Densities are the per-chunk MAX (from
@@ -626,6 +632,9 @@ struct FileReq{
 	pub dfa_sigs: usize,
 	pub dfa_subsigs: usize,
 	pub needs_subsigs: usize, //AGGRESSIVE M5: cp.max_needs_subsigs
+	pub cp_basis_unique_states: usize, //to_basis(cp.max_cp_unique_states)
+	pub cp_subsigs: usize,    //DB crit universe (same all files)
+	pub cp_avg_pats: usize,   //DB crit universe (same all files)
 }
 
 /// Estimate the sizing config from the discharge records, as a MONOTONE
@@ -661,25 +670,39 @@ enum EstMode { General, Aggressive }
 /// Non-aggressive estimator: DFA columns, carried-queue perc.
 pub fn estimate_config_general<F:PrimeField>(
 	vdata: &Vec<FailDischargeRecord>, db: &ClamavDB<F>,
-	percentiles: &[usize], vlog: &mut Vec<String>){
-	estimate_config_common(vdata, db, percentiles, vlog, EstMode::General);
+	percentiles: &[usize], vlog: &mut Vec<String>) -> Vec<EstimatedConfig>{
+	estimate_config_common(vdata, db, percentiles, vlog, EstMode::General)
 }
 /// Aggressive estimator: needs column, per-chunk-reset perc.
 pub fn estimate_config_aggr<F:PrimeField>(
 	vdata: &Vec<FailDischargeRecord>, db: &ClamavDB<F>,
-	percentiles: &[usize], vlog: &mut Vec<String>){
-	estimate_config_common(vdata, db, percentiles, vlog, EstMode::Aggressive);
+	percentiles: &[usize], vlog: &mut Vec<String>) -> Vec<EstimatedConfig>{
+	estimate_config_common(vdata, db, percentiles, vlog, EstMode::Aggressive)
 }
 
 fn estimate_config_common<F:PrimeField>(
 	vdata: &Vec<FailDischargeRecord>, db: &ClamavDB<F>,
-	percentiles: &[usize], vlog: &mut Vec<String>, mode: EstMode){
+	percentiles: &[usize], vlog: &mut Vec<String>, mode: EstMode)
+	-> Vec<EstimatedConfig>{
 	use crate::gadgets::discharge_adv::{FWD_COST, RES_SMALL_COST};
 	let (hn, hd) = (5usize, 4usize); //+25% headroom over minimal need
 	let mut _et = Timer::new();
 	//1. build per-file requirement vectors
 	let mut reqs: Vec<FileReq> = Vec::with_capacity(vdata.len());
 	let mut seg_size = 0usize;
+	//DB crit-pattern universe: cp_avg_pats = max crit patterns mapping to
+	//one target (static DB property; the per-file cp_subsigs comes from
+	//each record's crit-hit set below).
+	let cp_avg_pats_db = {
+		let mut npat: std::collections::HashMap<&String,usize> =
+			std::collections::HashMap::new();
+		for m in [&db.map_crit_pat, &db.map_crit_pat_igc]{
+			for (_pat, ts) in m{
+				for t in ts{ *npat.entry(t).or_insert(0)+=1; }
+			}
+		}
+		npat.values().copied().max().unwrap_or(1).max(1)
+	};
 	for rec in vdata{
 		let cp = &rec.chunk_peaks;
 		let nib = cp.seg_size; //chunk nibbles
@@ -732,6 +755,11 @@ fn estimate_config_common<F:PrimeField>(
 			dfa_sigs: dfa_routed.len(),
 			dfa_subsigs,
 			needs_subsigs: cp.max_needs_subsigs,
+			cp_basis_unique_states: to_basis(cp.max_cp_unique_states),
+			//per-file crit-hit sig count: upper-bounds the CP sig buffer
+			//(per-chunk demand <= per-file count; safe envelope direction)
+			cp_subsigs: rec.crit.len().max(1),
+			cp_avg_pats: cp_avg_pats_db,
 		});
 	}
 	let n = reqs.len();
@@ -744,7 +772,7 @@ fn estimate_config_common<F:PrimeField>(
 		flog(0, LOG1, &format!(
 			"   no records with chunk_peaks (seg_size>0); nothing to do"),
 			vlog);
-		return;
+		return vec![];
 	}
 	//2. sort ascending by the cost proxy (sigs_sed)
 	reqs.sort_by(|a,b| a.sigs_sed.cmp(&b.sigs_sed));
@@ -757,6 +785,7 @@ fn estimate_config_common<F:PrimeField>(
 			EstMode::Aggressive=>"needs" }), vlog);
 	//3. element-wise max over cheapest p% of files; perc/avg_active are
 	//back-solved from the envelope counts AFTER basis_pats/subsigs fixed.
+	let mut out: Vec<EstimatedConfig> = vec![];
 	for &p in percentiles{
 		let k = ((n * p) / 100).max(1).min(n);
 		let mut c = EstimatedConfig{
@@ -777,6 +806,10 @@ fn estimate_config_common<F:PrimeField>(
 			c.dfa_sigs = c.dfa_sigs.max(r.dfa_sigs);
 			c.dfa_subsigs = c.dfa_subsigs.max(r.dfa_subsigs);
 			c.needs_subsigs = c.needs_subsigs.max(r.needs_subsigs);
+			c.cp_basis_unique_states =
+				c.cp_basis_unique_states.max(r.cp_basis_unique_states);
+			c.cp_subsigs = c.cp_subsigs.max(r.cp_subsigs);
+			c.cp_avg_pats = c.cp_avg_pats.max(r.cp_avg_pats);
 			c.perc_comp_subsigs =
 				c.perc_comp_subsigs.max(r.perc_comp_subsigs);
 			mfwd = mfwd.max(r.max_fwd_entries);
@@ -807,6 +840,7 @@ fn estimate_config_common<F:PrimeField>(
 			c.perc_pats_expansion_rate, c.avg_active_pats_per_subsig,
 			c.perc_comp_subsigs, c.sigs_sed, c.subsigs,
 			c.avg_pats_per_subsig, tail), vlog);
+		out.push(c);
 	}
 	flog(0, LOG1, &format!(
 		"   NOTE: perc back-solved from per-chunk forward-proof entries \
@@ -825,4 +859,43 @@ fn estimate_config_common<F:PrimeField>(
 	flog(0, LOG1, &format!(
 		"   ESTIMATE_CONFIG envelope+comp build: {} ms (chunked SED \
 		 propagation timed per-file above)", _et.ms()), vlog);
+	out
+}
+
+/// Convert one aggressive estimated percentile config to CapParams for
+/// build_circs_adv_aggr. Structural caps (basis_*, cp_basis_unique) carry
+/// +25% headroom; perc_pats/avg_active carry `perc_margin` (the estimator's
+/// documented container-encoding lower bound). subsigs = NEEDS+1. These are
+/// SEEDS: finalize_caps_probe closes any remaining gap via real CapErrs.
+pub fn estimated_to_capparams_aggr(e: &EstimatedConfig,
+	max_word_len: usize, acdfa_state_part_bits: usize,
+	perc_margin: usize) -> crate::determine_config::CapParams {
+	let hm = |x: usize| x * 5 / 4;   //+25% structural headroom
+	crate::determine_config::CapParams{
+		cp_basis_unique_states: hm(e.cp_basis_unique_states).max(2),
+		cp_subsigs: e.cp_subsigs.max(1),
+		cp_avg_pats: e.cp_avg_pats.max(1),
+		subsigs: (hm(e.needs_subsigs) + 1).max(2),
+		avg_pats_per_subsig: e.avg_pats_per_subsig.max(1),
+		avg_active_pats_per_subsig:
+			(e.avg_active_pats_per_subsig * perc_margin).max(1),
+		basis_pats_in_trace: hm(e.basis_pats_in_trace).max(1),
+		perc_pats_expansion_rate:
+			(e.perc_pats_expansion_rate * perc_margin).max(1),
+		sigs_sed: e.sigs_sed.max(1),
+		perc_comp_subsigs: e.perc_comp_subsigs.max(1),
+		basis_unique_states: hm(e.basis_unique_states).max(2),
+		basis_acc_states: hm(e.basis_acc_states).max(2),
+		subsigs_igc: 0,
+		avg_active_pats_per_subsig_igc: 0,
+		basis_pats_in_trace_igc: 0,
+		perc_pats_expansion_rate_igc: 0,
+		basis_acc_states_igc: 0,
+		basis_unique_states_igc: 0,
+		dfa_sigs: 0,
+		dfa_subsigs: 0,
+		aggr_needs_subsigs: hm(e.needs_subsigs).max(1),
+		max_word_len,
+		acdfa_state_part_bits,
+	}
 }

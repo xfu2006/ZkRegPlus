@@ -896,6 +896,20 @@ impl HexACDFA{
 		(max_uniq_acc_pats, max_acc, max_pats, n_pats, sum_pat_chunks)
 	}
 
+	/// Max over chunks of the count of DISTINCT states visited in a chunk
+	/// (= CP pack imm_buf demand, pack.rs vec_imm_states). seg_size =
+	/// nibbles per chunk.
+	pub fn max_distinct_states_per_chunk(&self, acc_path: &Vec<usize>,
+		seg_size: usize) -> usize {
+		if seg_size==0 { return 0; }
+		let mut m = 0usize;
+		for chunk in acc_path.chunks(seg_size){
+			let d = chunk.iter().collect::<HashSet<_>>().len();
+			if d>m { m=d; }
+		}
+		m
+	}
+
 	/// AGGRESSIVE M5 estimator. Max over chunks of the per-chunk NEEDS count
 	/// = sum over the anchor pat-ids present in the chunk of how many universe
 	/// subsigs are anchored there (anchor_mult: pat-id -> subsig multiplicity,

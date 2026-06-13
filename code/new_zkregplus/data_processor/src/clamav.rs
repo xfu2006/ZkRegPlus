@@ -3499,6 +3499,14 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		log(0, LOG1, &format!(
 			"ESTIMATE: chunked SED propagation (this file): {} ms", _et.ms()));
 	}
+	// CP cap demand: distinct crit-DFA states per chunk (cs/igc max). Sizes
+	// cp_basis_unique_states (CP pack imm_buf). Estimator-pass only.
+	let max_cp_unique_states = if read_global_config().b_estimate_caps {
+		let cp_cs = dfa_crit.acc_path(&padded_nibbles);
+		let cp_ig = dfa_crit_igc.acc_path(&padded_nibbles);
+		dfa_crit.max_distinct_states_per_chunk(&cp_cs, seg_size).max(
+			dfa_crit_igc.max_distinct_states_per_chunk(&cp_ig, seg_size))
+	} else { 0 };
 	let chunk_peaks = ChunkPeaks{
 		seg_size,
 		max_unique_states: u_cs.max(u_ig),
@@ -3509,6 +3517,7 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		max_fwd_entries_per_chunk,
 		max_carried_live_per_chunk,
 		max_active_steps_per_chunk,
+		max_cp_unique_states,
 	};
 
 	//6. compute stats 

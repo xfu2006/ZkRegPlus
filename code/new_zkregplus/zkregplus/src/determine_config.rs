@@ -134,9 +134,9 @@ pub fn parse_caperr_from_panic(msg: &str) -> Option<Vec<(String, usize)>> {
 /// Run one build+probe closure, converting a build-time CapErr-panic into a
 /// normal CapErr. Returns Ok(Ok(steps)) on pass, Ok(Err(caperr)) on a (caught
 /// or returned) CapErr to bump, or Err(msg) on a non-CapErr panic (fatal).
-pub fn probe_catching<Fp>(f: Fp)
-    -> Result<Result<usize, Vec<(String, usize)>>, String>
-where Fp: FnOnce() -> Result<usize, Vec<(String, usize)>> {
+pub fn probe_catching<T, Fp>(f: Fp)
+    -> Result<Result<T, Vec<(String, usize)>>, String>
+where Fp: FnOnce() -> Result<T, Vec<(String, usize)>> {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
         Ok(r) => Ok(r),
         Err(panic) => {

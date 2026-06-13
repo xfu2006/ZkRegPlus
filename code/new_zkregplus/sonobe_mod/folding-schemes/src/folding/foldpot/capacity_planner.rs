@@ -143,6 +143,47 @@ where
         Ok(total)
     }
 
+    /// Collect-mode parallel probe: like capacity_probe_par but returns a
+    /// PER-WORD result (None = planned ok, Some(errs) = that word's CapErr)
+    /// so one sweep yields every failing word's demand instead of aborting
+    /// on the first. Drives the seed-then-finalize cap loop.
+    pub fn capacity_probe_collect(&self, words: &[Vec<CF1<C1>>],
+        word_infos: &[WordInfo], n_threads: usize)
+        -> Vec<Option<Vec<(String, usize)>>>
+    where FC: CloneDeep + Send + Sync, LK: Send + Sync, GM: Send + Sync {
+        use rayon::prelude::*;
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(n_threads.max(1)).build().expect("rayon pool");
+        pool.install(|| {
+            (0..words.len()).into_par_iter().map_init(
+                || CapacityPlanner::<C1, FC, LK, GM, H>::new(
+                    self.layered_circs.iter().map(|l|
+                        l.iter().map(|c| c.clone_deep_self()).collect())
+                        .collect()),
+                |planner, i| {
+                    let r = std::panic::catch_unwind(
+                        std::panic::AssertUnwindSafe(|| {
+                        match planner.plan_nd_advice(0, LOG2, false, &words[i],
+                                &word_infos[i], "probe") {
+                            Ok(_) => None,
+                            Err(Error::CapErr(v)) => Some(v),
+                            Err(e) => Some(vec![
+                                (format!("non-cap: {:?}", e), 0)]),
+                        }
+                    }));
+                    r.unwrap_or_else(|e| {
+                        let msg = e.downcast_ref::<&str>()
+                            .map(|s| s.to_string())
+                            .or_else(|| e.downcast_ref::<String>().cloned())
+                            .unwrap_or_else(|| "unknown".to_string());
+                        Some(vec![(format!("panic in probe word {}: {}",
+                            i, msg), 0)])
+                    })
+                }
+            ).collect()
+        })
+    }
+
     // ==================================================================
     // M2: copied planning methods (driver.rs b_fast=false path).
     // ==================================================================
