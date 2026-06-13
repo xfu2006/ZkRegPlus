@@ -605,6 +605,77 @@ where C: CurveGroup<ScalarField=F>,
 	Ok(shrunk)
 }
 
+/// Pick the small set of "binding candidate" files that drive the caps. Each
+/// cap is a max over files of a per-file ChunkPeaks proxy; the file that maxes
+/// a proxy is (monotonically) the file that maxes that cap, so tuning over the
+/// per-proxy top-K covers every file by construction. Returns sorted unique
+/// indices. n<=k -> all files (small sets need no pruning). This is what makes
+/// the tuner cost O(#caps * K) probes instead of O(#files).
+pub(crate) fn select_binding_candidates(
+	vdata: &Vec<data_processor::discharge_proof::FailDischargeRecord>,
+	k: usize) -> Vec<usize> {
+	let peaks: Vec<_> = vdata.iter().map(|r| r.chunk_peaks.clone()).collect();
+	select_candidates_from_peaks(&peaks, k)
+}
+
+/// Pure core of select_binding_candidates over the ChunkPeaks alone (so it is
+/// unit-testable without building full discharge records).
+pub(crate) fn select_candidates_from_peaks(
+	peaks: &[data_processor::discharge_proof::ChunkPeaks],
+	k: usize) -> Vec<usize> {
+	use data_processor::discharge_proof::ChunkPeaks;
+	let n = peaks.len();
+	if n <= k { return (0..n).collect(); }
+	//One proxy per multiplicity/structural cap (the count caps subsigs/
+	//aggr_needs are seeded exact from discharge, but max_needs still selects
+	//the SED-dense files, so include it).
+	let proxies: Vec<fn(&ChunkPeaks)->usize> = vec![
+		|c: &ChunkPeaks| c.max_needs_subsigs,
+		|c: &ChunkPeaks| c.max_fwd_entries_per_chunk,
+		|c: &ChunkPeaks| c.max_active_steps_per_chunk,
+		|c: &ChunkPeaks| c.max_pats_in_trace,
+		|c: &ChunkPeaks| c.max_unique_states,
+		|c: &ChunkPeaks| c.max_acc_states,
+		|c: &ChunkPeaks| c.max_cp_unique_states,
+	];
+	let mut set = std::collections::BTreeSet::<usize>::new();
+	for proj in proxies {
+		let mut idx: Vec<usize> = (0..n).collect();
+		idx.sort_by_key(|&i| std::cmp::Reverse(proj(&peaks[i])));
+		for &i in idx.iter().take(k) { set.insert(i); }
+	}
+	set.into_iter().collect()
+}
+
+/// Fast cap tuner: select the binding candidates (per-proxy top-K), then run
+/// finalize_caps_probe over ONLY those, instead of the whole file list. The
+/// result is identical to finalizing over all files (sufficiency holds because
+/// the candidates include each cap's argmax file; the count caps come from the
+/// estimate seed which is already exact from discharge), at O(#caps*K) probe
+/// cost -- corpus-size-independent. Giant-file single-chunk slicing (idea B)
+/// is a separate step; here each candidate is probed whole.
+pub(crate) fn fast_finalize<F,C,CS>(
+	db: Arc<ClamavDB<F>>, words: &Vec<Vec<F>>, word_infos: &Vec<WordInfo>,
+	vdata: &Vec<data_processor::discharge_proof::FailDischargeRecord>,
+	seed: crate::determine_config::CapParams,
+	chunk_len: usize, lkup_len: usize, total_word_n: usize,
+	max_rounds: usize, n_threads: usize, mode: ShrinkMode, k_cand: usize,
+)->Result<crate::determine_config::CapParams, String>
+where C: CurveGroup<ScalarField=F>,
+	  CS: CommitmentScheme<C,false>,
+	  <CS as CommitmentScheme<C,false>>::ProverParams: Send + Sync,
+	  F: PrimeField + Absorb + ColEle,
+{
+	let cand = select_binding_candidates(vdata, k_cand);
+	log(0, LOG1, &format!("fast_finalize: {} files -> {} binding candidates \
+		(K={})", words.len(), cand.len(), k_cand));
+	let cw: Vec<Vec<F>> = cand.iter().map(|&i| words[i].clone()).collect();
+	let ci: Vec<WordInfo> = cand.iter().map(|&i| word_infos[i].clone())
+		.collect();
+	finalize_caps_probe::<F,C,CS>(db, &cw, &ci, seed, chunk_len, lkup_len,
+		total_word_n, max_rounds, n_threads, mode)
+}
+
 /// One DLP sample's determine_config run (M2). Builds-or-loads the cached
 /// aggressive DLP DB (first run builds+caches, rest load), discharges the
 /// sample manifest, auto-tunes the LOWEST CapParams via determine_config_aggr
@@ -3782,6 +3853,46 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		super::run_dlp_sample_config::<Fr,C1,CS1>(&rc);
 	}
 
+	/// Pure-logic check of select_candidates_from_peaks: the per-proxy top-K
+	/// must include every cap's argmax file, and n<=k returns all files.
+	#[test]
+	fn test_select_binding_candidates(){
+		use data_processor::discharge_proof::ChunkPeaks;
+		let mk = |needs, fwd, act, pats, uniq, acc, cp| {
+			let mut c = ChunkPeaks::default();
+			c.max_needs_subsigs = needs;
+			c.max_fwd_entries_per_chunk = fwd;
+			c.max_active_steps_per_chunk = act;
+			c.max_pats_in_trace = pats;
+			c.max_unique_states = uniq;
+			c.max_acc_states = acc;
+			c.max_cp_unique_states = cp;
+			c
+		};
+		// file 5 = SED argmax (needs/fwd/act/pats/acc); file 0 = structural
+		// (unique) argmax; file 4 = cp argmax.
+		let peaks = vec![
+			mk(1, 1, 1, 1, 100, 1, 1),
+			mk(2, 2, 2, 2, 2, 2, 2),
+			mk(3, 3, 3, 3, 3, 3, 3),
+			mk(4, 4, 4, 4, 4, 4, 4),
+			mk(5, 5, 5, 5, 5, 5, 99),
+			mk(99, 99, 99, 99, 6, 6, 6),
+		];
+		// k=1: candidate set = union of per-proxy argmax = {0,4,5}.
+		assert_eq!(super::select_candidates_from_peaks(&peaks, 1),
+			vec![0usize,4,5]);
+		// n<=k: all files, sorted.
+		assert_eq!(super::select_candidates_from_peaks(&peaks, 6),
+			vec![0usize,1,2,3,4,5]);
+		assert_eq!(super::select_candidates_from_peaks(&peaks, 100),
+			vec![0usize,1,2,3,4,5]);
+		// k=2: needs top-2 = {5,4} both present.
+		let c2 = super::select_candidates_from_peaks(&peaks, 2);
+		assert!(c2.contains(&5) && c2.contains(&4),
+			"k=2 needs top-2 missing: {:?}", c2);
+	}
+
 	/// full_dlp pipeline sample3: FOLD-ONLY run of the sample3 list over a
 	/// 2-circuit ladder -- C1 (sample1, cheap) + C2 (sample2, big). Each word
 	/// sticks to the cheapest fitting layer (foldpot find_working_layer). The
@@ -3872,16 +3983,30 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		let i_lo: Vec<_> = lo.iter().map(|&i| infos[i].clone()).collect();
 		//C_high = PRECISE over the dense 10% (covers the tail + everything
 		//less dense). C_low = QUICK over the light 90% (SED-free -> fast).
-		let c_high = super::finalize_caps_probe::<Fr,C1,CS1>(db_arc.clone(),
-			&w_hi, &i_hi, seed_high, mw, lkup_len, total_word_n, 60, 4,
-			super::ShrinkMode::Precise).expect("C_high finalize");
-		let c_low = super::finalize_caps_probe::<Fr,C1,CS1>(db_arc.clone(),
-			&w_lo, &i_lo, seed_low, mw, lkup_len, total_word_n, 60, 4,
-			super::ShrinkMode::Quick).expect("C_low finalize");
+		//fast_finalize probes only the per-proxy top-K binding files of each
+		//tier (sufficiency by construction: the argmax file of every cap is
+		//in the candidate set), so cost is corpus-size-independent.
+		let k_cand = 8usize;
+		let vd_hi: Vec<_> = hi.iter().map(|&i| vdata[i].clone()).collect();
+		let vd_lo: Vec<_> = lo.iter().map(|&i| vdata[i].clone()).collect();
+		let c_high = super::fast_finalize::<Fr,C1,CS1>(db_arc.clone(),
+			&w_hi, &i_hi, &vd_hi, seed_high, mw, lkup_len, total_word_n, 60, 4,
+			super::ShrinkMode::Precise, k_cand).expect("C_high finalize");
+		let c_low = super::fast_finalize::<Fr,C1,CS1>(db_arc.clone(),
+			&w_lo, &i_lo, &vd_lo, seed_low, mw, lkup_len, total_word_n, 60, 4,
+			super::ShrinkMode::Quick, k_cand).expect("C_low finalize");
 		let _ = c_low.save_json(&format!("{}/{}", proot, rc.config_c1));
 		let _ = c_high.save_json(&format!("{}/{}", proot, rc.config_c2));
 		utils::logger::log(0, utils::logger::LOG1,
 			&format!("M3 self-tuned: C_low {:?}  C_high {:?}", c_low, c_high));
+		//determine_config-only mode: the config files are written; skip the
+		//fold. This is how a 500k workload is tuned on the server -- the
+		//resulting C1/C2 jsons feed full_enron (read-config-and-fold).
+		if std::env::var("ZKR_DLP_DETERMINE_ONLY").is_ok() {
+			utils::logger::log(0, utils::logger::LOG1, &format!(
+				"ZKR_DLP_DETERMINE_ONLY set: configs saved, skipping fold"));
+			return;
+		}
 		//free the DB before the fold driver loads its own copy (avoid 2x RAM)
 		drop(db_arc);
 		get_global_config().b_estimate_caps = false;
@@ -3898,6 +4023,49 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		let _ = std::fs::write(&format!("{}/{}", proot, rc.report_out),
 			format!("M3 sample3 fold-only: {} via 2-tier [C_low,C_high]\n",
 				rc.scan_file));
+	}
+
+	/// full_enron: read the C_low/C_high configs produced by determine_config
+	/// (a ZKR_DLP_DETERMINE_ONLY run) and FOLD the scan manifest over the
+	/// 2-tier ladder -- NO tuning. Sibling of full_clam but config-file-driven:
+	/// run determine_config once on the 500k workload, then point this at the
+	/// resulting C1/C2 jsons (RunCfg.config_c1/c2) to prove.
+	#[test]
+	pub fn full_enron(){
+		use crate::determine_config::{caps_from_params_aggr, CapParams};
+		use folding_schemes::folding::foldpot::sigma_ir1cs
+			::LookupTableTwoCol as _;
+		let rc = crate::determine_config::RunCfg::from_env();
+		let proot = utils::os::proj_root();
+		let cd = &rc.config_dir;
+		let mw = rc.chunk_len;
+		get_global_config().range2_bit = rc.range2_bit;
+		get_global_config().b_light_test = true;
+		get_global_config().b_folding_only = true;
+		get_global_config().b_read_cache = true;
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_write_snark_cache = false;
+		get_global_config().b_estimate_caps = false;
+		get_global_config().perc_lkup_share = 1;
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
+		get_global_config().clamav_cfg.sde_rep_fanout_cap = rc.fanout_cap;
+		get_global_config().clamav_cfg.min_pm_word_len = 3;
+		//C_low then C_high == cheap-first 2-tier ladder.
+		let c_low = CapParams::load_json(
+			&format!("{}/{}", proot, rc.config_c1));
+		let c_high = CapParams::load_json(
+			&format!("{}/{}", proot, rc.config_c2));
+		utils::logger::log(0, utils::logger::LOG1, &format!(
+			"full_enron: loaded C_low {:?}  C_high {:?}", c_low, c_high));
+		let cs_caps = vec![caps_from_params_aggr(&c_low),
+			caps_from_params_aggr(&c_high)];
+		let scan = vec![format!("{}/{}", cd, rc.scan_file)];
+		zkp_driver_adv_aggr::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,
+			CS1E,S>(
+			0, &format!("{}/{}", cd, rc.sig_file), scan, &rc.report_out,
+			false, &rc.cache_dir, &format!("{}/main_dfa.dat", cd),
+			&format!("{}/needs_ised.dat", cd),
+			&format!("{}/needs_ised_igc.dat", cd), mw, &cs_caps, false);
 	}
 
 	/// Invoke via:

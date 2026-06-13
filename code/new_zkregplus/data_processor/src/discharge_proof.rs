@@ -71,6 +71,11 @@ pub struct ChunkPeaks{
 	//anchor is present that chunk. Sizes aggr_needs_subsigs (forward step
 	//queue). 0 when flag-off so non-aggressive estimate is unchanged.
 	pub max_needs_subsigs: usize,
+	//Chunk index (0-based) achieving max_needs_subsigs. Lets the cap
+	//tuner slice a giant file down to its densest chunk window when
+	//probing (aggressive resets per chunk, so one chunk's demand is
+	//self-contained). 0 when flag-off / single-chunk.
+	pub max_needs_chunk_idx: usize,
 	//SED forward-propagation peaks (measured; 0 when not discharged).
 	//Per-chunk count of forward-proof (subsig,step,loc) entries summed
 	//across survivor subsigs, max over chunks. Sizes StepFwdPrf.

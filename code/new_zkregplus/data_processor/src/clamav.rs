@@ -3421,7 +3421,7 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 	// kept separate then max (one aggr_needs_subsigs knob covers both
 	// discharge gadgets). 0 when flag-off (Default) so the non-aggressive
 	// estimate is byte-identical.
-	let max_needs_subsigs = if read_global_config()
+	let (max_needs_subsigs, max_needs_chunk_idx) = if read_global_config()
 			.clamav_cfg.b_aggressive_sde_for_rep {
 		let mut mult_cs: HashMap<usize,usize> = HashMap::new();
 		let mut mult_ig: HashMap<usize,usize> = HashMap::new();
@@ -3444,10 +3444,13 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 				}
 			}
 		}
-		dfa_bag.get_max_needs(&dfa_acc_path, seg_size, &mult_cs)
-			.max(dfa_bag_igc.get_max_needs(&dfa_acc_path_igc,
-				seg_size, &mult_ig))
-	} else { 0 };
+		let (n_cs, i_cs) = dfa_bag.get_max_needs_idx(&dfa_acc_path,
+			seg_size, &mult_cs);
+		let (n_ig, i_ig) = dfa_bag_igc.get_max_needs_idx(&dfa_acc_path_igc,
+			seg_size, &mult_ig);
+		//densest chunk = whichever case (cs/igc) drives the max needs.
+		if n_ig > n_cs { (n_ig, i_ig) } else { (n_cs, i_cs) }
+	} else { (0, 0) };
 	// Accurate perc / avg_active sizing: accumulate per-chunk forward-proof
 	// entries, active pattern-steps and carried live locs across all SED-
 	// universe subsigs (crit-hit, pm-failed). Aggressive resets the carry
@@ -3514,6 +3517,7 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		max_pats_in_trace: p_cs.max(p_ig),
 		perc_pats_expansion_rate,
 		max_needs_subsigs,
+		max_needs_chunk_idx,
 		max_fwd_entries_per_chunk,
 		max_carried_live_per_chunk,
 		max_active_steps_per_chunk,

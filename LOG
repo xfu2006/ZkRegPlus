@@ -29100,10 +29100,18 @@ Goal 1. plan a run_full_dlp.py to run sample3 only, first determine
 		to non-aggresive case.
 Goal 2. writing
 	[a] planning
+	[b] check abnormal data
 Goal 3. test on server
 	[a] started
 	[b] but the prblem is sample 3 has much bigger size, looks like
 		measure.py does not work right, should ont just count frequencies
 		but also the number of different sigs it will trigger.
 	[a] 8:35am => 
+	[b] rerun using 10% highest 10:15 am => 
+Goal 4. request ci-org => done, submit a ticket
+Goal 5. re-write a measure2.py using the new eval criteria on the
+	needs_subsig counts
+Goal 5. watching the run of M3 sample3
+	[a] meomrized the project - "optimize determine_config()" 
+	[b] 
 

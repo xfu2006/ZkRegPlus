@@ -935,6 +935,29 @@ impl HexACDFA{
 		mx
 	}
 
+	/// Like get_max_needs but also returns the 0-based chunk index that
+	/// achieves the max (the densest chunk). Used by the cap tuner to slice
+	/// a giant file to its worst chunk window. Ties keep the first chunk.
+	pub fn get_max_needs_idx(&self, acc_path: &Vec<usize>, seg_size: usize,
+		anchor_mult: &HashMap<usize,usize>) -> (usize, usize) {
+		if seg_size==0 { return (0, 0); }
+		let (mut mx, mut mx_ci) = (0usize, 0usize);
+		for (ci, chunk) in acc_path.chunks(seg_size).enumerate(){
+			let mut present = HashSet::<usize>::new();
+			for &state in chunk{
+				if self.is_accept(state){
+					if let Some(pids) = self.outputs.get(&state){
+						for &p in pids { present.insert(p); }
+					}
+				}
+			}
+			let needs: usize = present.iter()
+				.map(|p| anchor_mult.get(p).copied().unwrap_or(0)).sum();
+			if needs>mx { mx = needs; mx_ci = ci; }
+		}
+		(mx, mx_ci)
+	}
+
 	/// for each string show the vector of positions
 	pub fn get_pattern_pos(&self, acc_path: &Vec<usize>)->HashMap<String,Vec<usize>>{
 		let mut res = HashMap::<String, Vec<usize>>::new();
@@ -1066,6 +1089,13 @@ mod tests_hex_acdfa{
 		let mut mult2 = HashMap::<usize,usize>::new();
 		mult2.insert(999, 7);
 		assert_eq!(dfa.get_max_needs(&path, 3, &mult2), 0);
+		//get_max_needs_idx: same max, plus the densest chunk index.
+		//seg_size=2: max 5 lives in chunk 1 (the s_b chunk).
+		assert_eq!(dfa.get_max_needs_idx(&path, 2, &mult), (5, 1));
+		//seg_size=3: both anchors in the single chunk 0.
+		assert_eq!(dfa.get_max_needs_idx(&path, 3, &mult), (8, 0));
+		//absent anchor -> (0, 0).
+		assert_eq!(dfa.get_max_needs_idx(&path, 3, &mult2), (0, 0));
 	}
 
 	#[test]
