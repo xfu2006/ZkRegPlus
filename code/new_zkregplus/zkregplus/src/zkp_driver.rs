@@ -3789,18 +3789,23 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 	/// (prove_step cost ... circ_id:). No SNARK (b_folding_only).
 	#[test]
 	pub fn full_dlp_sample3(){
-		use crate::determine_config::{CapParams, caps_from_params_aggr};
+		use crate::determine_config::caps_from_params_aggr;
+		use crate::stats_helper::{estimate_config_aggr,
+			estimated_to_capparams_aggr};
+		use folding_schemes::folding::foldpot::sigma_ir1cs
+			::LookupTableTwoCol as _;
 		let rc = crate::determine_config::RunCfg::from_env();
 		let proot = utils::os::proj_root();
 		let cd = &rc.config_dir;
-		//aggressive CS-only knobs + low floors (mirror run_dlp_sample_config so
-		//the loaded C1/C2 caps reproduce), folding-only (no SNARK).
+		let mw = rc.chunk_len;
+		//aggressive CS-only, folding-only, estimate-on for the tuning discharge.
 		get_global_config().range2_bit = rc.range2_bit;
 		get_global_config().b_light_test = true;
 		get_global_config().b_folding_only = true;
 		get_global_config().b_read_cache = true;
 		get_global_config().b_read_snark_cache = false;
 		get_global_config().b_write_snark_cache = false;
+		get_global_config().b_estimate_caps = true;
 		get_global_config().perc_lkup_share = 1;
 		get_global_config().min_subsigs = 1;
 		get_global_config().min_basis_unique_states = 2;
@@ -3810,23 +3815,80 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
 		get_global_config().clamav_cfg.sde_rep_fanout_cap = rc.fanout_cap;
 		get_global_config().clamav_cfg.min_pm_word_len = 3;
-		//2-circuit ladder from the two tuned configs (cheap C1 first, big C2).
-		let c1 = CapParams::load_json(&format!("{}/{}", proot, rc.config_c1));
-		let c2 = CapParams::load_json(&format!("{}/{}", proot, rc.config_c2));
-		let cs_caps = vec![caps_from_params_aggr(&c1),
-			caps_from_params_aggr(&c2)];
+		let cfg = data_processor::clamav::default_clamav_cfg();
+		let mut vlog = vec![];
+		let db = data_processor::clam_db::ClamavDB::<Fr>::build_or_load(
+			&cfg, &format!("{}/{}", cd, rc.sig_file),
+			&format!("{}/main_dfa.dat", cd),
+			&format!("{}/needs_ised.dat", cd),
+			&format!("{}/needs_ised_igc.dat", cd), &mut vlog,
+			&rc.cache_dir, true, true).expect("build db");
+		//discharge the full 5087 list (one pass) -> vdata + words + infos
+		let files = utils::os::read_lines(
+			&format!("{}/{}/{}", proot, cd, rc.scan_file));
+		let (mut vdata, mut words, mut infos) = (vec![], vec![], vec![]);
+		for fpath in &files{
+			let nibbles = utils::os::read_nibbles(
+				&format!("{}/{}", proot, fpath));
+			let f_nib: Vec<Fr> = nibbles.iter().map(|x| Fr::from(*x as u32))
+				.collect();
+			words.push(utils::data::pack_nibbles(&f_nib));
+			let (fdr, rec) =
+				data_processor::clamav::quick_discharge_file_by_crit_bag_pm(
+				fpath, &nibbles, &db.vec_sigs, &db.vec_sigs_no_critical_pat,
+				&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
+				&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
+				&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
+				&db.sig_to_id, mw, mw);
+			vdata.push(fdr);
+			infos.push(rec);
+		}
+		//estimate -> p90 (C_low seed) + p100 (C_high seed)
+		let est = estimate_config_aggr::<Fr>(&vdata, &db, &[90,100],
+			&mut vlog);
+		let seed_low = estimated_to_capparams_aggr(&est[0], mw,
+			rc.range2_bit, 3);
+		let seed_high = estimated_to_capparams_aggr(&est[1], mw,
+			rc.range2_bit, 3);
+		let total_word_n: usize = words.iter().map(|w| w.len()).sum();
+		let lkup_len = db.lkup.get_size();
+		let db_arc = std::sync::Arc::new(db);
+		//C_high = PRECISE finalize over ALL words (covers every file -> no crash)
+		let c_high = super::finalize_caps_probe::<Fr,C1,CS1>(db_arc.clone(),
+			&words, &infos, seed_high, mw, lkup_len, total_word_n, 60, 4,
+			super::ShrinkMode::Precise).expect("C_high finalize");
+		//C_low = QUICK finalize over cheapest 90% (SED survivors = crit \ pm)
+		let mut costs: Vec<(usize,usize)> = vdata.iter().enumerate()
+			.map(|(i,r)| (i, r.crit.difference(&r.pm).count())).collect();
+		costs.sort_by_key(|&(_,c)| c);
+		let k = ((costs.len()*90)/100).max(1);
+		let idx: Vec<usize> = costs[..k].iter().map(|&(i,_)| i).collect();
+		let w_low: Vec<Vec<Fr>> = idx.iter().map(|&i| words[i].clone())
+			.collect();
+		let i_low: Vec<_> = idx.iter().map(|&i| infos[i].clone()).collect();
+		let tw_low: usize = w_low.iter().map(|w| w.len()).sum();
+		let c_low = super::finalize_caps_probe::<Fr,C1,CS1>(db_arc.clone(),
+			&w_low, &i_low, seed_low, mw, lkup_len, tw_low, 60, 4,
+			super::ShrinkMode::Quick).expect("C_low finalize");
+		let _ = c_low.save_json(&format!("{}/{}", proot, rc.config_c1));
+		let _ = c_high.save_json(&format!("{}/{}", proot, rc.config_c2));
+		utils::logger::log(0, utils::logger::LOG1,
+			&format!("M3 self-tuned: C_low {:?}  C_high {:?}", c_low, c_high));
+		//free the DB before the fold driver loads its own copy (avoid 2x RAM)
+		drop(db_arc);
+		get_global_config().b_estimate_caps = false;
+		//2-tier ladder (cheap first), fold the full list folding-only
+		let cs_caps = vec![caps_from_params_aggr(&c_low),
+			caps_from_params_aggr(&c_high)];
 		let scan = vec![format!("{}/{}", cd, rc.scan_file)];
 		zkp_driver_adv_aggr::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,
 			CS1E,S>(
 			0, &format!("{}/{}", cd, rc.sig_file), scan, &rc.report_out,
-			false, &rc.cache_dir,
-			&format!("{}/main_dfa.dat", cd),
+			false, &rc.cache_dir, &format!("{}/main_dfa.dat", cd),
 			&format!("{}/needs_ised.dat", cd),
-			&format!("{}/needs_ised_igc.dat", cd),
-			rc.chunk_len, &cs_caps, false);
-		//mark the step done for the pipeline's artifact check.
+			&format!("{}/needs_ised_igc.dat", cd), mw, &cs_caps, false);
 		let _ = std::fs::write(&format!("{}/{}", proot, rc.report_out),
-			format!("sample3 fold-only: {} via 2 circs (C1+C2)\n",
+			format!("M3 sample3 fold-only: {} via 2-tier [C_low,C_high]\n",
 				rc.scan_file));
 	}
 
