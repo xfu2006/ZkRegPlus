@@ -3853,22 +3853,30 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		let total_word_n: usize = words.iter().map(|w| w.len()).sum();
 		let lkup_len = db.lkup.get_size();
 		let db_arc = std::sync::Arc::new(db);
-		//C_high = PRECISE finalize over ALL words (covers every file -> no crash)
-		let c_high = super::finalize_caps_probe::<Fr,C1,CS1>(db_arc.clone(),
-			&words, &infos, seed_high, mw, lkup_len, total_word_n, 60, 4,
-			super::ShrinkMode::Precise).expect("C_high finalize");
-		//C_low = QUICK finalize over cheapest 90% (SED survivors = crit \ pm)
+		//partition by NEEDS (max anchor-present subsigs/chunk) -- the cost
+		//driver (= subsigs), NOT survivors: a file can have high needs but few
+		//survivors, and needs is what blows up the circuit. The dense 10%
+		//(high needs) drive C_high, the light 90% (mostly needs=0) drive
+		//C_low. Finalize C_high over ONLY the dense tail -- the big envelope
+		//makes each probe ~18s, so all 5087 would take days; lower-needs files
+		//fit C_high (the denser circuit) so routing covers them, no crash.
 		let mut costs: Vec<(usize,usize)> = vdata.iter().enumerate()
-			.map(|(i,r)| (i, r.crit.difference(&r.pm).count())).collect();
+			.map(|(i,r)| (i, r.chunk_peaks.max_needs_subsigs)).collect();
 		costs.sort_by_key(|&(_,c)| c);
 		let k = ((costs.len()*90)/100).max(1);
-		let idx: Vec<usize> = costs[..k].iter().map(|&(i,_)| i).collect();
-		let w_low: Vec<Vec<Fr>> = idx.iter().map(|&i| words[i].clone())
-			.collect();
-		let i_low: Vec<_> = idx.iter().map(|&i| infos[i].clone()).collect();
-		let tw_low: usize = w_low.iter().map(|w| w.len()).sum();
+		let hi: Vec<usize> = costs[k..].iter().map(|&(i,_)| i).collect();
+		let lo: Vec<usize> = costs[..k].iter().map(|&(i,_)| i).collect();
+		let w_hi: Vec<Vec<Fr>> = hi.iter().map(|&i| words[i].clone()).collect();
+		let i_hi: Vec<_> = hi.iter().map(|&i| infos[i].clone()).collect();
+		let w_lo: Vec<Vec<Fr>> = lo.iter().map(|&i| words[i].clone()).collect();
+		let i_lo: Vec<_> = lo.iter().map(|&i| infos[i].clone()).collect();
+		//C_high = PRECISE over the dense 10% (covers the tail + everything
+		//less dense). C_low = QUICK over the light 90% (SED-free -> fast).
+		let c_high = super::finalize_caps_probe::<Fr,C1,CS1>(db_arc.clone(),
+			&w_hi, &i_hi, seed_high, mw, lkup_len, total_word_n, 60, 4,
+			super::ShrinkMode::Precise).expect("C_high finalize");
 		let c_low = super::finalize_caps_probe::<Fr,C1,CS1>(db_arc.clone(),
-			&w_low, &i_low, seed_low, mw, lkup_len, tw_low, 60, 4,
+			&w_lo, &i_lo, seed_low, mw, lkup_len, total_word_n, 60, 4,
 			super::ShrinkMode::Quick).expect("C_low finalize");
 		let _ = c_low.save_json(&format!("{}/{}", proot, rc.config_c1));
 		let _ = c_high.save_json(&format!("{}/{}", proot, rc.config_c2));
