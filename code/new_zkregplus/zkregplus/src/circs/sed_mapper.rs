@@ -101,6 +101,10 @@ pub struct SedCapacity{
 	pub	acdfa_state_part_bits: usize, 
 	pub	subsigs: usize,
 	pub	avg_pats_per_subsig: usize,
+	//avg_active_pats_per_subsig and perc_pats_expansion_rate are SUBSTITUTES
+	//for one step-queue buffer n=max(size_pat,size_trace); only the binding
+	//(larger) one costs r1cs. See DischargeAdvCapacity::avg_active_pats_per_
+	//subsig in gadgets/discharge_adv.rs for the full note.
 	pub	avg_active_pats_per_subsig: usize,
 	pub	basis_pats_in_trace: usize, //0.01 percent
 	pub perc_pats_expansion_rate: usize, //to model the rate of

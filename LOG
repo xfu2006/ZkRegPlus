@@ -29092,5 +29092,7 @@ Goal 5. improve estimator
 Saturday 06/13/2026
 Goal 1. plan a run_full_dlp.py to run sample3 only, first determine
 	size, and then real run
+	[a] test run finishes but avg_active 
+	[b] timing of sample1/sample2
 Goal 6. fix 7.7 paragraph 2.
 

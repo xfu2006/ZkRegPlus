@@ -329,10 +329,15 @@ pub struct DischargeAdvCapacity{
 	/// how many subsigs in input
 	pub subsigs: usize,
 
-	/// average number of ACTIVE patterns over subsigs during
-	/// forward propgation (note that this is a smaller number
-	/// than the avg_pats_per_subsig in fsm_adv component, that reflects
-	/// the STATIC number of steps of a subsig in average).
+	/// SUBSTITUTE with `perc_pats_expansion_rate` (see vec_size): the
+	/// step-queue buffer is n = max(size_pat, size_trace), with
+	/// size_pat = subsigs * avg_active_pats_per_subsig and size_trace driven
+	/// by basis_pats_in_trace * perc_pats_expansion_rate. n only needs to be
+	/// >= encoded, so EITHER cap satisfies it -- ONLY THE BINDING (larger) ONE
+	/// COSTS r1cs; the other is slack and can floor for free. Prefer letting
+	/// perc_pats carry (avg_active bumped from a low seed overshoots size_pat).
+	/// Meaning: average ACTIVE patterns per subsig during forward propagation
+	/// (smaller than the STATIC avg_pats_per_subsig in fsm_adv).
 	pub avg_active_pats_per_subsig: usize,
 
 	/// NOTE:  basis point number, e.g. 50 means 50 x 0.01 percent.
@@ -340,6 +345,8 @@ pub struct DischargeAdvCapacity{
 	/// wherethe packed trace is the (pat, loc) table size. 
 	pub basis_pats_in_trace: usize,
 
+	/// SUBSTITUTE with avg_active_pats_per_subsig -- see that field's NOTE:
+	/// only the binding term of n = max(size_pat, size_trace) costs r1cs.
 	/// NOTE that pats_pasis_in_trace tells the ratio of pats
 	/// in trace (regarding the currection section size).
 	/// However, some positions may stay LONGER than than the current
