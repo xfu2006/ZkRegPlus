@@ -515,7 +515,14 @@ impl <F: PrimeField + ColEle> GetSigAdvice<F>{
 		}
 		assert!(vec_sigs_to_include.len()==capacity.count_sig_no_crit_pat);
 
-		let output_vec = [&inp_sigs[..], &sigs_to_merge[..],
+		//Aggressive locality: drop inp_sigs from the oup union so oup is
+		//this chunk's fired sigs (per-chunk failed_sigs), not accumulated.
+		//Carry still threads oup->inp; the gadget just ignores inp_sigs.
+		let zero_sigs = vec![F::zero(); inp_sigs.len()];
+		let eff_inp_sigs = if read_global_config()
+			.clamav_cfg.b_aggressive_sde_for_rep
+			{&zero_sigs[..]} else {&inp_sigs[..]};
+		let output_vec = [eff_inp_sigs, &sigs_to_merge[..],
 			&vec_sigs_to_include[..]].concat();
 		let set_ouput_vec = output_vec.iter().filter(|x| !x.is_zero())
 			.map(|x| x.clone())
@@ -569,8 +576,8 @@ impl <F: PrimeField + ColEle> GetSigAdvice<F>{
 		let m_tbl_joins_to_sigs = gen_m_table(
 			&decoded_final_states_sigs_sigs, &sigs_to_merge);
 
-		let src_sigs = [ &inp_sigs[..], &sigs_to_merge[..], 
-				&vec_sigs_to_include[..] ].concat(); 
+		let src_sigs = [ eff_inp_sigs, &sigs_to_merge[..],
+				&vec_sigs_to_include[..] ].concat();
 		let m_tbl_inp_sigs_oup = gen_m_table(&src_sigs, &oup);
 		let m_tbl_decoded_final_states = gen_m_table(
 			&final_states, &decoded_final_states_sigs_states);
@@ -930,8 +937,14 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for GetSigGadget<F>{
 			(beta + *x).inverse().expect("inv failed")).collect::<Vec<F>>();
 
 		let inp = &my_stmt[0..slen];
+		//Aggressive locality: zero the inp_sigs slot so the oup logup
+		//yields per-chunk fired sigs (must match advice + assert_msg3).
+		let zero_inp = vec![F::zero(); slen];
+		let eff_inp = if read_global_config()
+			.clamav_cfg.b_aggressive_sde_for_rep
+			{&zero_inp[..]} else {&inp[..]};
 		let vec_inp = [
-			&inp[..],
+			eff_inp,
 			&data.sigs_to_merge[..],
 			&data.sigs_no_crit_pat[..]
 		].concat();
@@ -1018,11 +1031,18 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for GetSigGadget<F>{
 			&msg3.inv1_right, &beta,slen)?;
 		verify_logup_inverse(cs.clone(), &msg3.inv1_left, &msg3.inv1_right, &data.m_tbl_joins_to_sigs)?;
 
-		let to_merge = [
-			&inp[..],
-			&data.sigs_to_merge[..],
-			&data.sigs_no_crit_pat[..]
-		].concat();
+		//Aggressive locality: zero the inp_sigs slot in the oup logup so
+		//the constraint matches the per-chunk advice (host gen_msg3).
+		let to_merge = if read_global_config()
+			.clamav_cfg.b_aggressive_sde_for_rep {
+			let zero_inp: Vec<FpVar<F>> = (0..slen)
+				.map(|_| new_const_var(&cs, F::zero())).collect();
+			[&zero_inp[..], &data.sigs_to_merge[..],
+				&data.sigs_no_crit_pat[..]].concat()
+		} else {
+			[&inp[..], &data.sigs_to_merge[..],
+				&data.sigs_no_crit_pat[..]].concat()
+		};
 		verify_inverse(cs.clone(), &to_merge, &msg3.inv2_left, 
 			&gamma,slen+slen+clen)?;
 		verify_inverse(cs.clone(), oup, &msg3.inv2_right, &gamma,slen)?;
