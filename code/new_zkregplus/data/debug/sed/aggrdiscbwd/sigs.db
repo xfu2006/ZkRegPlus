@@ -1,3 +1,3 @@
 # sigs.db
-Agg.DiscBwd;Engine:51-255,Target:0;0;/[ab][ab].{0,4}KEYWORD/
-sig_alpha01;Engine:51-255,Target:0;0|1;123456789abcdef0123;432345678901abcdef::i
+Agg.DiscBwd.bwd;Engine:51-255,Target:0;0;/[ab][ab].{0,4}KEYWORD/
+sig_alpha01;Engine:51-255,Target:0;0|1;123456789abcdef0123;432345678901abcdef

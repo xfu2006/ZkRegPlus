@@ -145,11 +145,6 @@ pub struct SedInput<F:PrimeField + ColEle>{
 	pub inp_loc_igc: F,
 	/// the steps_queue for the discharge for ignore case
 	pub inp_steps_queue_igc: Vec<F>,
-
-	/// AGGRESSIVE-ONLY carried-in failed_subsigs accumulator (LAST_STEP
-	/// encoded keys). Empty on the first chunk / when flag-off.
-	pub inp_failed_acc_cs: Vec<F>,
-	pub inp_failed_acc_igc: Vec<F>,
 }
 
 #[derive(Clone,Debug)]
@@ -579,7 +574,7 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
                 let discharge_adv_advice_cs = DischargeAdvAdvice::<F>
                         ::new(false, 2, &pat_loc_cs, &subsigs_inp_cs, fsm_id_cs as u32,
                                 subsig_step_store_cs, &da_cap_cs, &inp_steps_queue_obj_cs,
-				&inp.inp_failed_acc_cs, last_loc_cs,
+				last_loc_cs,
 				seg_id, job_id)?;
 		if b_perf{ log_perf(job_id, LOG1, "-- Sed advice step4: discharge_cs", &mut t1); }
 
@@ -596,7 +591,7 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
                 let discharge_adv_advice_igc = DischargeAdvAdvice::<F>
                         ::new(true, 2, &pat_loc_igc, &subsigs_inp_igc, fsm_id_igc as u32,
                                 subsig_step_store_igc, &da_cap_igc, &inp_steps_queue_obj_igc,
-				&inp.inp_failed_acc_igc, last_loc_igc,
+				last_loc_igc,
 				seg_id, job_id)?;
 		if b_perf{ log_perf(job_id, LOG1, "-- Sed advice step5: discharge_igc", &mut t1); }
 
@@ -968,12 +963,6 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 				(last_oup_state_cs, last_loc_cs, sq_cs)
 			}
 		);
-		//AGGRESSIVE: carry the failed_subsigs accumulator (cs). Empty on
-		//the first chunk / flag-off (get_output_failed_acc returns []).
-		let inp_failed_acc_cs: Vec<F> = r_prev_adv.as_ref().map_or(vec![],
-			|adv| adv.as_any().downcast_ref::<SedAdvice<F>>().unwrap()
-				.discharge_adv_advice_cs.get_output_failed_acc());
-
 		//3.2 the ignore case version 
 		let init_state_igc = F::from((pm_acdfa_igc.init_state+1) as u32);//adj+1
 		// M+1 coordinate offset under aggressive mode (see init_loc_cs above).
@@ -1059,15 +1048,9 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 				(last_oup_state_igc, last_loc_igc, sq_igc)
 			}
 		);
-		//AGGRESSIVE: carry the failed_subsigs accumulator (igc).
-		let inp_failed_acc_igc: Vec<F> = r_prev_adv.as_ref().map_or(vec![],
-			|adv| adv.as_any().downcast_ref::<SedAdvice<F>>().unwrap()
-				.discharge_adv_advice_igc.get_output_failed_acc());
-
 		//3. build the advice
 		let inp = SedInput{inp_state_cs, inp_loc_cs, inp_steps_queue_cs,
-			inp_state_igc, inp_loc_igc, inp_steps_queue_igc,
-			inp_failed_acc_cs, inp_failed_acc_igc};
+			inp_state_igc, inp_loc_igc, inp_steps_queue_igc};
 
 		//aggressive forward halo (M nibbles). word_info.halo_nibbles
 		//holds the successor's first nibbles (raw u8) set by the driver;

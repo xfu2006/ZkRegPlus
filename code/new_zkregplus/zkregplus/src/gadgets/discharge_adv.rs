@@ -2062,8 +2062,7 @@ impl Capacity for DischargeAdvCapacity{
 /// AGGRESSIVE-ONLY. Per-chunk dedup set of FAILED (dischargeable) subsigs,
 /// keyed by each subsig's LAST_STEP `encoded` value (a fixed, file-
 /// independent, authenticated key = encode(subsig,num_steps,last_pat,
-/// last_rg)). Carried in IDX_OUP and folded across chunks (OUP==next INP).
-/// Disjoint cs / igc instances mirror the two sq_res. The verdict
+/// last_rg)). Local IDX_DATA witness (not carried). The verdict
 /// (compute_sig) is read by membership in this set.
 #[derive(Clone, Debug)]
 pub struct FailedSubsigAcc<F: PrimeField + ColEle>{
@@ -2087,9 +2086,9 @@ impl <F: PrimeField + ColEle> FailedSubsigAcc<F>{
 	}
 
 	/// Build a 1-data-col container (+ si selector) holding the sorted,
-	/// front-zero-padded set. b_inp ⇒ IDX_INP (carried-in acc_in), else
-	/// IDX_OUP (acc_out). Throws CapErr if the set overflows acc_size.
-	pub fn to_container(&self, name: &str, b_inp: bool)
+	/// front-zero-padded set in IDX_DATA (local acc_out, not carried).
+	/// Throws CapErr if the set overflows acc_size.
+	pub fn to_container(&self, name: &str)
 	->Result<Arc<Mutex<Container<F>>>, Error>{
 		let n = Self::acc_size(&self.capacity);
 		let zero = F::zero();
@@ -2110,14 +2109,12 @@ impl <F: PrimeField + ColEle> FailedSubsigAcc<F>{
 		}
 		let n2 = n - set.len();
 		let vec_acc = vec![vec![zero; n2], set].concat();
-		let seg = if b_inp {IDX_INP} else {IDX_OUP};
-		let si_seg = if b_inp {IDX_SI_INP} else {IDX_SI_OUP};
 		let res = Container::new(name);
-		//encoded keys are large (subsig*f1^4+...); si=0 like sq_res "encoded"
-		//(carried key, NOT range-checked), authenticated via fold + logups.
-		res.lock().unwrap().add_col(Col::new(vec_acc, "acc_encoded", seg));
+		//encoded keys are large (subsig*f1^4+...); si=0 = NOT range-checked,
+		//authenticated via the completeness logup (qry_final subset-of acc_out).
+		res.lock().unwrap().add_col(Col::new(vec_acc, "acc_encoded", IDX_DATA));
 		res.lock().unwrap().add_col(Col::new_const(
-			vec![F::zero(); n], "si_acc_encoded", si_seg));
+			vec![F::zero(); n], "si_acc_encoded", IDX_SI_DATA));
 		Ok(res)
 	}
 }
@@ -2151,7 +2148,6 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		subsig_store_info: &SubsigStepStore,
 		capacity: &DischargeAdvCapacity,
 		inp_step_queue: &StepQueue<F>, // the steps_queue from input
-		inp_failed_acc: &Vec<F>, // AGGRESSIVE: carried-in failed_subsigs acc
 		last_loc: F,
 		seg_id: usize,
 		job_id: usize,
@@ -2164,8 +2160,9 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		//as we have info encoded in lkup table StoreSteps.
 
 		//2. construct 1st (forward) step-queue.
-		//forward builds sq_inp in IDX_DATA (not IDX_INP) under aggressive, so
-		//the only IDX_INP/IDX_OUP carried state is the accumulator.
+		//forward builds sq_inp in IDX_DATA (not IDX_INP) under aggressive;
+		//the per-chunk acc_out also lives in IDX_DATA, so the discharge
+		//gadget contributes no IDX_INP/IDX_OUP carry.
 		//AGGRESSIVE M5: split the universe U into NEEDS (keyword anchor
 		//present this chunk) + QUICK (absent). The forward runs over a FRESH
 		//NEEDS-seeded init each chunk (forward-only mode has no step-queue
@@ -2197,13 +2194,13 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let default_min_loc = last_loc + F::one();
 
 		//3. AGGRESSIVE = forward-only: NO backward step-queue (sq_res2). The
-		//carried IDX_INP/IDX_OUP state is the failed_subsigs accumulator
-		//(acc_out, sole IDX_OUP). The QUICK cert combo proves U = NEEDS u QUICK
-		//and that every QUICK subsig's anchor is absent (so safely dropped).
+		//per-chunk failed-subsig set acc_out lives in IDX_DATA (local, not
+		//carried). The QUICK cert combo proves U = NEEDS u QUICK and that
+		//every QUICK subsig's anchor is absent (so safely dropped).
 		//Non-aggressive keeps the backward combo.
 		if b_aggr {
 			let acc_combo = Self::gen_failed_acc_combo(b_igc, &ct_fwd_sq,
-				&sq_fwd, inp_failed_acc, subsig_store_info, capacity)?;
+				&sq_fwd, subsig_store_info, capacity)?;
 			stmt_container.lock().unwrap().add_container(acc_combo);
 			//NEEDS for the partition = sq_inp_encoded (captured above), the
 			//EXACT vector validate reads, so gen/validate zero-counts
@@ -2272,40 +2269,29 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		}).collect()
 	}
 
-	/// AGGRESSIVE-ONLY. Build acc_in (IDX_INP) + acc_out (IDX_OUP) failed-
-	/// subsig accumulators and the two C5 logup m-tables (completeness +
-	/// carry-in). acc_out = dedup(acc_in ∪ this-chunk's final-step keys).
+	/// AGGRESSIVE-ONLY (local). acc_out = this chunk's final-step keys as a
+	/// DATA column, plus the completeness logup m-table. Discharge is
+	/// chunk-local: no cross-chunk carry, so no acc_in / carry-in logup.
 	fn gen_failed_acc_combo(
 		b_igc: bool,
 		ct_fwd_sq: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
 		sq_fwd: &StepQueue<F>,
-		inp_failed_acc: &Vec<F>,
 		subsig_store_info: &SubsigStepStore,
 		capacity: &DischargeAdvCapacity,
 	)->Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 		let res = Container::<F>::new("failed_acc_combo");
-		//1. union acc_in with this chunk's final-step encoded keys
-		let chunk_failed = Self::extract_final_step_encoded(sq_fwd,
+		//1. acc_out = this chunk's final-step encoded keys (dedup, sorted).
+		let mut out_set = Self::extract_final_step_encoded(sq_fwd,
 			subsig_store_info);
-		let mut out_set: Vec<F> = inp_failed_acc.iter()
-			.filter(|f| !f.is_zero()).cloned()
-			.chain(chunk_failed.into_iter()).collect();
 		out_set.sort_by(|a,b| a.into_bigint().to_bytes_le()
 			.cmp(&b.into_bigint().to_bytes_le()));
 		out_set.dedup();
-		let acc_in = FailedSubsigAcc{acc: inp_failed_acc.clone(),
+		let acc_out = FailedSubsigAcc{acc: out_set,
 			capacity: Clone::clone(capacity), b_igc};
-		let acc_out= FailedSubsigAcc{acc: out_set,
-			capacity: Clone::clone(capacity), b_igc};
-		let ct_acc_in = acc_in.to_container("failed_acc_in", true)?; //IDX_INP
-		let ct_acc_out= acc_out.to_container("failed_acc", false)?;  //IDX_OUP
-		//2. read back the padded committed key vectors
+		let ct_acc_out = acc_out.to_container("failed_acc")?; //IDX_DATA
 		let acc_out_vec = ct_acc_out.lock().unwrap()
 			.get_container("acc_encoded").unwrap().lock().unwrap().to_vec();
-		let acc_in_vec = ct_acc_in.lock().unwrap()
-			.get_container("acc_encoded").unwrap().lock().unwrap().to_vec();
-		//3. qry_final: matches the in-circuit tag-selector over fwd sq_res:
-		//   encoded[i] iff its si_step is the LAST_STEP tag, else 0.
+		//2. qry_final: encoded iff its si_step is the LAST_STEP tag, else 0.
 		let fwd_encoded = ct_fwd_sq.lock().unwrap()
 			.get_container("encoded").unwrap().lock().unwrap().to_vec();
 		let fwd_si_step = ct_fwd_sq.lock().unwrap()
@@ -2316,40 +2302,17 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 					ID_ENCODED_LAST_STEP);
 				if *sid==last_tag {*e} else {F::zero()}
 			}).collect();
-		//4. m-tables (logup qry ⊆ lkup=acc_out); zeros map to acc_out pad
+		//3. completeness m-table (logup qry_final subset-of acc_out).
 		let mtbl_complete = gen_m_table(&qry_final, &acc_out_vec);
-		let mtbl_carry = gen_m_table(&acc_in_vec, &acc_out_vec);
-		//5. proof container (m-tables in DATA, si=0 = not range-checked)
 		let prf = Container::<F>::new("failed_acc_prf");
 		let nc = mtbl_complete.len();
-		let nk = mtbl_carry.len();
 		prf.lock().unwrap().add_col(Col::new(mtbl_complete,
 			"mtbl_complete", IDX_DATA));
 		prf.lock().unwrap().add_col(Col::new_const(vec![F::zero();nc],
 			"si_mtbl_complete", IDX_SI_DATA));
-		prf.lock().unwrap().add_col(Col::new(mtbl_carry,
-			"mtbl_carry", IDX_DATA));
-		prf.lock().unwrap().add_col(Col::new_const(vec![F::zero();nk],
-			"si_mtbl_carry", IDX_SI_DATA));
-		res.lock().unwrap().add_container(ct_acc_in);
 		res.lock().unwrap().add_container(ct_acc_out);
 		res.lock().unwrap().add_container(prf);
 		Ok(res)
-	}
-
-	/// AGGRESSIVE-ONLY. Read this chunk's acc_out (failed_subsigs keys) to
-	/// carry into the next chunk. Absence-tolerant: [] when flag-off.
-	pub fn get_output_failed_acc(&self)->Vec<F>{
-		//flag-off: no accumulator container exists (search_container would
-		//panic, not return Err), so gate on the mode.
-		if !self.capacity.b_aggressive { return vec![]; }
-		let sname = if self.b_igc {"discharge_adv_stmt_igc"}
-			else {"discharge_adv_stmt_cs"};
-		self.stmt_container.lock().unwrap().search_container(
-			&format!("{} failed_acc_combo failed_acc", sname))
-			.expect("aggr: failed_acc missing")
-			.lock().unwrap().get_container("acc_encoded")
-			.unwrap().lock().unwrap().to_vec()
 	}
 
 	/// AGGRESSIVE M5. Prove QUICK subsigs are safely droppable from the
@@ -2538,9 +2501,9 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 	/// retrieve the steps_queue from input
 	pub fn get_output_steps_queue(&self)->Vec<F>{
 		//AGGRESSIVE = forward-only: there is no carried step-queue (sq_res2);
-		//each chunk re-seeds the forward from a fresh init. The cross-chunk
-		//state is the failed_subsigs accumulator (get_output_failed_acc).
-		//Return empty so callers fall back to the init step-queue.
+		//each chunk re-seeds the forward from a fresh init and the failed-
+		//subsig set is local (IDX_DATA). Return empty so callers fall back
+		//to the init step-queue.
 		if self.capacity.b_aggressive { return vec![]; }
 		let sname = if self.b_igc {"discharge_adv_stmt_igc"}
 			else {"discharge_adv_stmt_cs"};
@@ -3648,7 +3611,7 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			capacity, b_igc);
 		let dummy_adv = DischargeAdvAdvice::new(b_igc, offset_fsm,
 			&pat_loc, &sigs, fsm_id, store_steps,
-			Clone::clone(&capacity), &inp_steps_queue_obj, &vec![], zero, 0, 0)
+			Clone::clone(&capacity), &inp_steps_queue_obj, zero, 0, 0)
 			.expect("discharge_adv advice err");
 		let mut vec_cfg = prev_cfgs.clone();
 		vec_cfg.push(dummy_adv.stmt_container.lock().unwrap().get_cfg());
@@ -4432,12 +4395,9 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 	///     and ratio_pat * nlen (see validate_forward_step_queue for
 	///     real data for n1)
 	/// COST: 24.5*n1
-	/// AGGRESSIVE-ONLY. Validate the failed_subsigs accumulator in place of
-	/// the (gated-off) backward step-queue proofs. Two one-directional
-	/// logups: (1) COMPLETENESS (soundness-critical): {fwd final-step
-	/// encoded keys} ⊆ acc_out — prover can't omit a real violation;
-	/// (2) carry-in: acc_in ⊆ acc_out. Final-step entries are picked by the
-	/// LAST_STEP tag (sortedness-free, since the forward result is unsorted).
+	/// AGGRESSIVE-ONLY. Validate the per-chunk failed-subsig set with one
+	/// completeness logup {fwd final-step keys} subset-of acc_out (prover
+	/// can't omit a real match). Final-step entries picked by LAST_STEP tag.
 	#[allow(dead_code)]
 	fn validate_aggressive_acc(&self,
 		stmt: &Container<FpVar<F>>,
@@ -4447,20 +4407,15 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		_word_id: FpVar<F>,
 		_subseg_id: FpVar<F>,
 	)->Result<(), SynthesisError>{
-		//0. retrieve acc_in / acc_out / m-tables / forward sq_res columns
+		//0. retrieve acc_out / completeness m-table / forward sq_res columns
 		let combo = stmt.get_container("failed_acc_combo")?;
 		let combo = combo.lock().unwrap();
 		let acc_out = combo.get_container("failed_acc")?
 			.lock().unwrap().get_container("acc_encoded")?
 			.lock().unwrap().to_vec();
-		let acc_in = combo.get_container("failed_acc_in")?
-			.lock().unwrap().get_container("acc_encoded")?
-			.lock().unwrap().to_vec();
 		let prf = combo.get_container("failed_acc_prf")?;
 		let prf = prf.lock().unwrap();
 		let mtbl_complete = prf.get_container("mtbl_complete")?
-			.lock().unwrap().to_vec();
-		let mtbl_carry = prf.get_container("mtbl_carry")?
 			.lock().unwrap().to_vec();
 		let sq_res = forward_step_q.get_container("sq_res")?;
 		let sq_res = sq_res.lock().unwrap();
@@ -4487,10 +4442,8 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 				e * &sel // encoded if final-step, else 0 (ignored by logup)
 			}).collect();
 
-		//2. completeness (soundness-critical): {fwd final-step} ⊆ acc_out
+		//2. completeness (soundness-critical): {fwd final-step} subset acc_out
 		assert_logup(cs.clone(), &qry_final, &acc_out, &mtbl_complete, &r1)?;
-		//3. carry-in: acc_in ⊆ acc_out
-		assert_logup(cs.clone(), &acc_in, &acc_out, &mtbl_carry, &r1)?;
 		Ok(())
 	}
 
@@ -5491,7 +5444,7 @@ use utils::consts::{read_global_config, get_global_config};
 			let adv_disc= DischargeAdvAdvice::new(false, //case sensitive
 				1, //offset to fsm
 				&pat_loc, &input_subsigs,
-				fsm_id, steps_store, &cap_disc, &inp_steps_queue, &vec![],
+				fsm_id, steps_store, &cap_disc, &inp_steps_queue,
 				last_loc, i, 0)
 					.expect("discharge_adv advice err");
 			let oup_queue = adv_disc.get_output_steps_queue();
@@ -5574,7 +5527,7 @@ use utils::consts::{read_global_config, get_global_config};
 		cfg.sde_rep_fanout_cap = 4;   //[ab][ab]=4 combos, all materialized
 		cfg.min_bag_len = 2;          //2-char variants become bagwords
 		let sigs = vec![
-			"Agg.DiscBwd;Engine:51-255,Target:0;0;/[ab][ab].{0,4}KEYWORD/"
+			"Agg.DiscBwd.bwd;Engine:51-255,Target:0;0;/[ab][ab].{0,4}KEYWORD/"
 				.to_string()];
 		let p = format!("{}/data/debug/sed/aggrdiscbwd", proj_root());
 		std::fs::create_dir_all(&p).unwrap();
@@ -5639,7 +5592,7 @@ use utils::consts::{read_global_config, get_global_config};
 		let inp_sq = DischargeAdvAdvice::gen_empty_steps_queue_serialized(
 			b_igc,&input_subsigs,steps_store,fsm_id,&cap_disc);
 		let adv_disc = DischargeAdvAdvice::new(b_igc,1,&pat_loc,&input_subsigs,
-			fsm_id,steps_store,&cap_disc,&inp_sq,&vec![],
+			fsm_id,steps_store,&cap_disc,&inp_sq,
 			locs[locs.len()-1],0,0).expect("disc adv");
 		let stmt_disc = adv_disc.stmt_container;
 		let cfg_disc = stmt_disc.lock().unwrap().get_cfg();
@@ -5665,113 +5618,6 @@ use utils::consts::{read_global_config, get_global_config};
 		get_global_config().basis_failed_subsigs = 0; //restore default
 	}
 
-	/// M6: exercise the AGGRESSIVE failed_subsigs accumulator CARRY across
-	/// two chunks at the gadget level. Every prior aggr test passes
-	/// inp_failed_acc=[] (empty carry); this is the FIRST non-empty carry.
-	/// Chunk 0 completes a backward subsig (acc0 non-empty); chunk 1
-	/// consumes acc0 as acc_in and must stay satisfiable (acc_in subset
-	/// acc_out, qry_final subset acc_out). Localizes the cross-chunk seam
-	/// the full small_email run fails at batch verify.
-	#[test]
-	fn test_m6_discharge_circuit_carry_acc(){
-		get_global_config().basis_failed_subsigs = 10000; //aggr acc sizing
-		let mut cfg = default_clamav_cfg();
-		cfg.b_aggressive_sde_for_rep = true;
-		cfg.sde_rep_fanout_cap = 4;
-		cfg.min_bag_len = 2;
-		let sigs = vec![
-			"Agg.CarryAcc;Engine:51-255,Target:0;0;/[ab][ab].{0,4}KEYWORD/"
-				.to_string()];
-		let p = format!("{}/data/debug/sed/aggrcarry", proj_root());
-		std::fs::create_dir_all(&p).unwrap();
-		let db = ClamavDB::<Fr>::build_test_db(&cfg, "debug/sed/aggrcarry",
-			&sigs, &vec![], &vec![], &vec![]).expect("carry db");
-		let b_igc = false;
-		let bundle = &db.bundle_subsig;
-		let acdfa = &bundle.vec_acdfa[0];
-		let store_id = 0;
-		let fsm_id = ClamavDB::<Fr>::pm_acdfa_id(store_id, b_igc);
-		let steps_store = &bundle.vec_subsig_step_stores[store_id];
-		let mut ss: Vec<usize> = steps_store.subsig_ids.iter().cloned()
-			.filter(|s| *s!=0).collect();
-		ss.sort();
-		let input_subsigs: Vec<Fr> = ss.iter().map(|s| Fr::from(*s as u32))
-			.collect();
-		let m_aggr = db.aggressive_max_span_nibbles;
-		let init_loc = if m_aggr>0 {Fr::from((m_aggr+1) as u32)}
-			else {Fr::from(1u32)};
-		let wlen = 2usize;
-		let (nibble_len, sbits) = (wlen*LEGS, acdfa.state_part_bits);
-		let cap = FsmAdvCapacity{ max_nibble_len: nibble_len,
-			acdfa_state_part_bits: sbits, subsigs:25, avg_pats_per_subsig:4,
-			basis_pats_in_trace:25*100, basis_unique_states:20*100,
-			basis_acc_states:15*100, halo_nibbles:0 };
-		let cap_disc = DischargeAdvCapacity{ max_nibble_len: nibble_len,
-			subsigs: cap.subsigs, universe_subsigs: cap.subsigs,
-			avg_active_pats_per_subsig:2,
-			basis_pats_in_trace: cap.basis_pats_in_trace,
-			perc_pats_expansion_rate:600, b_aggressive:true };
-		let path = format!("{}/data/debug/sed/aggrcarry/word.txt",
-			proj_root());
-		write_to_file(&path, "abxxKEYWORD");
-		let f_nibbles: Vec<Fr> = read_nibbles(&path).iter()
-			.map(|x| Fr::from(*x as u32)).collect();
-		let all_word = pad_word_to_multiple::<Fr>(
-			&pack_nibbles(&f_nibbles), wlen);
-		let word = all_word[0..wlen].to_vec();
-		let adv_wea = WordExtractAdvAdvice::new(&word, word.len(), false)
-			.expect("wea");
-		let stmt_wea = adv_wea.stmt_container;
-		let cfg_wea = stmt_wea.lock().unwrap().get_cfg();
-		let nibbles = stmt_wea.lock().unwrap().get_container("nibbles")
-			.unwrap().lock().unwrap().to_vec();
-		let adv_faa = FsmAdvAdvice::new(b_igc,1,&nibbles,&[],&acdfa,
-			Fr::from((acdfa.init_state+1) as u32), init_loc, &input_subsigs,
-			&cap,fsm_id,&bundle.vec_subsig_stores[store_id],0).expect("faa");
-		let stmt_faa = adv_faa.stmt_container;
-		let cfg_faa = stmt_faa.lock().unwrap().get_cfg();
-		let pat_loc = stmt_faa.lock().unwrap().search_container(
-			"fsm_adv_stmt_cs packed_trace pat_loc sorted_tbl").unwrap();
-		let locs = stmt_faa.lock().unwrap().search_container(
-			"fsm_adv_stmt_cs fsm_acc locs").unwrap().lock().unwrap()
-			.to_vec();
-		let last_loc = locs[locs.len()-1];
-		let inp_sq = DischargeAdvAdvice::gen_empty_steps_queue_serialized(
-			b_igc,&input_subsigs,steps_store,fsm_id,&cap_disc);
-		//CHUNK 0: empty carry. Advice only -> extract acc0.
-		let adv_disc0 = DischargeAdvAdvice::new(b_igc,1,&pat_loc,
-			&input_subsigs,fsm_id,steps_store,&cap_disc,&inp_sq,&vec![],
-			last_loc,0,0).expect("disc0");
-		let acc0 = adv_disc0.get_output_failed_acc();
-		assert!(acc0.iter().any(|f| !f.is_zero()),
-			"chunk 0 must populate the accumulator (non-empty carry)");
-		//CHUNK 1: carry acc0 as inp_failed_acc.
-		let adv_disc = DischargeAdvAdvice::new(b_igc,1,&pat_loc,
-			&input_subsigs,fsm_id,steps_store,&cap_disc,&inp_sq,&acc0,
-			last_loc,1,0).expect("disc1");
-		let stmt_disc = adv_disc.stmt_container;
-		let cfg_disc = stmt_disc.lock().unwrap().get_cfg();
-		let mut vec_cfg = vec![cfg_wea.clone(),cfg_faa.clone(),cfg_disc];
-		ContainerConfig::adjust_locations(&mut vec_cfg);
-		let cps1 = stmt_wea.lock().unwrap().gen_stmt_components();
-		let cps2 = stmt_faa.lock().unwrap().gen_stmt_components();
-		let cps3 = stmt_disc.lock().unwrap().gen_stmt_components();
-		let cps = cps1.0.into_iter().zip(cps2.0.into_iter())
-			.map(|(a,b)| vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
-		let cps = cps.into_iter().zip(cps3.0.into_iter())
-			.map(|(a,b)| vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
-		let mut dcg = DischargeAdvGadget::<Fr>::new(b_igc,1,&cap_disc,
-			fsm_id,&vec![cfg_wea.clone(),cfg_faa.clone()],
-			&bundle.vec_subsig_step_stores[0]);
-		dcg.set_container_cfg(vec_cfg.clone().into(),2);
-		let rg = Arc::new(dcg);
-		//SAT => the non-empty failed_acc carry (acc_in IDX_INP) is
-		//consistent with this chunk's acc_out + qry_final logups.
-		test_gadget_adv::<Fr>(rg,&word,&cps[0],&cps[1],&cps[2],&cps[6],
-			&cps[7],&vec![cps[3].clone(),cps[4].clone(),cps[5].clone()]
-			.concat(),4usize,false,Some(vec_cfg));
-		get_global_config().basis_failed_subsigs = 0; //restore default
-	}
 
 	/// AGGRESSIVE M5 (C7): run the DISCHARGE GADGET CIRCUIT with b_aggressive
 	/// set on a MIX of FORWARD (keyword leftmost) AND BACKWARD (keyword
@@ -5789,10 +5635,10 @@ use utils::consts::{read_global_config, get_global_config};
 		cfg.min_bag_len = 2;
 		let sigs = vec![
 			//forward: keyword leftmost, class [cd][cd] fanned on the right.
-			"Agg.Fwd;Engine:51-255,Target:0;0;/KEYWORD.{0,4}[cd][cd]/"
+			"Agg.Fwd.fwd;Engine:51-255,Target:0;0;/KEYWORD.{0,4}[cd][cd]/"
 				.to_string(),
 			//backward: class [ab][ab] left, keyword rightmost (reversed).
-			"Agg.Bwd;Engine:51-255,Target:0;0;/[ab][ab].{0,4}KEYWORD/"
+			"Agg.Bwd.bwd;Engine:51-255,Target:0;0;/[ab][ab].{0,4}KEYWORD/"
 				.to_string()];
 		let p = format!("{}/data/debug/sed/aggrmix", proj_root());
 		std::fs::create_dir_all(&p).unwrap();
@@ -5857,7 +5703,7 @@ use utils::consts::{read_global_config, get_global_config};
 		let inp_sq = DischargeAdvAdvice::gen_empty_steps_queue_serialized(
 			b_igc,&input_subsigs,steps_store,fsm_id,&cap_disc);
 		let adv_disc = DischargeAdvAdvice::new(b_igc,1,&pat_loc,&input_subsigs,
-			fsm_id,steps_store,&cap_disc,&inp_sq,&vec![],
+			fsm_id,steps_store,&cap_disc,&inp_sq,
 			locs[locs.len()-1],0,0).expect("disc adv");
 		let stmt_disc = adv_disc.stmt_container;
 		let cfg_disc = stmt_disc.lock().unwrap().get_cfg();
@@ -5894,9 +5740,9 @@ use utils::consts::{read_global_config, get_global_config};
 		cfg.sde_rep_fanout_cap = 4;
 		cfg.min_bag_len = 2;
 		let sigs = vec![
-			"Agg.QF;Engine:51-255,Target:0;0;/KEYWORD.{0,4}[cd][cd]/"
+			"Agg.QF.fwd;Engine:51-255,Target:0;0;/KEYWORD.{0,4}[cd][cd]/"
 				.to_string(),
-			"Agg.QO;Engine:51-255,Target:0;0;/OTHRKWD.{0,4}[cd][cd]/"
+			"Agg.QO.fwd;Engine:51-255,Target:0;0;/OTHRKWD.{0,4}[cd][cd]/"
 				.to_string()];
 		//unique dir per test -> no parallel file-write collision.
 		let rel = format!("debug/sed/aggrq_{}", tag);
@@ -5955,7 +5801,7 @@ use utils::consts::{read_global_config, get_global_config};
 		let inp_sq = DischargeAdvAdvice::gen_empty_steps_queue_serialized(
 			b_igc,&input_subsigs,steps_store,fsm_id,&cap_disc);
 		let adv_disc = DischargeAdvAdvice::new(b_igc,1,&pat_loc,
-			&input_subsigs,fsm_id,steps_store,&cap_disc,&inp_sq,&vec![],
+			&input_subsigs,fsm_id,steps_store,&cap_disc,&inp_sq,
 			locs[locs.len()-1],0,0).expect("disc adv");
 		let stmt_disc = adv_disc.stmt_container;
 		//adversarial tamper on the committed quick_cert_combo cols.
@@ -6048,7 +5894,7 @@ use utils::consts::{read_global_config, get_global_config};
 		//sort + dedup + front-zero-pad. Dup 30, 3 distinct -> [0,0,0,10,20,30]
 		let acc = FailedSubsigAcc{ acc: to_vf(vec![30,10,30,20]),
 			capacity: cap.clone(), b_igc:false };
-		let ct = acc.to_container("failed_acc", false).expect("acc ct");
+		let ct = acc.to_container("failed_acc").expect("acc ct");
 		let col = ct.lock().unwrap().get_container("acc_encoded").unwrap()
 			.lock().unwrap().to_vec();
 		assert_eq!(col.len(), 6);
@@ -6061,7 +5907,7 @@ use utils::consts::{read_global_config, get_global_config};
 		//CapErr: 6 distinct keys need size >= 7 > acc_size(6) -> Err
 		let big = FailedSubsigAcc{ acc: to_vf(vec![1,2,3,4,5,6]),
 			capacity: cap.clone(), b_igc:false };
-		assert!(big.to_container("x", false).is_err(),
+		assert!(big.to_container("x").is_err(),
 			"overflow must raise CapErr");
 		get_global_config().basis_failed_subsigs = 0; //restore default
 	}

@@ -29179,7 +29179,9 @@ Goal 3. writing
 	[d] add a comment about inclusion proof why it's not included.
 	[e] clear pargraph 1.
 	[f] generate a sample table for sketch
-	[g] 
+	[g] zombie p1
+	[h] bullet 1 refine
+	[i] 
 Goal 4. continue implementation of new scheme
 	[a] read summary  -> good major problem solved
 	[b] review design plan 
@@ -29187,7 +29189,8 @@ Goal 4. continue implementation of new scheme
 	[d] M0 -> DONE
 	[e] build full dlp DB again -> PASSED
 	[f] M2 -> DONE
-	[g] M3 -> 
+	[g] M3 -> DONE
+	[h] M4 -> 
 
 
 
