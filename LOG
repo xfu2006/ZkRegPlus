@@ -29178,9 +29178,15 @@ Goal 3. writing
 	[c] review issue of inclusion proof
 	[d] add a comment about inclusion proof why it's not included.
 	[e] clear pargraph 1.
+	[f] generate a sample table for sketch
+	[g] 
 Goal 4. continue implementation of new scheme
 	[a] read summary  -> good major problem solved
 	[b] review design plan 
+	[c] M1 -> DONE and tested
+	[d] M0 -> DONE
+	[e] build full dlp DB again -> PASSED
+	[f] M2 ->  
 
 
 

@@ -4203,9 +4203,15 @@ where 	C: CurveGroup<ScalarField=F>,
 			&si.mtbl_sigs,
 			&rc2,
 		)?;
-		let b_correct = not_final_step.or(&b_sigs)?; 
-			//require b_sigs true at
-			//at last step
+		//Aggressive locality enforces failed-subset-of-discharged per
+		//chunk (b_sigs every step); else final-step-only relaxation.
+		//Flag-off path is the original expression, byte-identical.
+		let b_correct = if utils::consts::read_global_config()
+			.clamav_cfg.b_aggressive_sde_for_rep {
+			b_sigs.clone()
+		} else {
+			not_final_step.or(&b_sigs)?
+		};
 
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 9.2");
@@ -4250,6 +4256,17 @@ where 	C: CurveGroup<ScalarField=F>,
 			"DEBUG USE 73111.7: gen_step_cs RETURN job={} cs={} vars={}",
 			self.job_id, cs.num_constraints(),
 			cs.num_witness_variables()));
+
+		//M0 fingerprint: per-circuit synthesized dims + IO arity (inert
+		//unless fp_sink set). Re-emitted each step; sink keeps last.
+		utils::consts::fp_emit(
+			&format!("{}.nc", self.name), cs.num_constraints() as u64);
+		utils::consts::fp_emit(
+			&format!("{}.nv", self.name),
+			cs.num_witness_variables() as u64);
+		utils::consts::fp_emit(
+			&format!("{}.ext_in", self.name), external_inputs.len() as u64);
+
 		Ok(vec![new_cur_hc_cmF, hash_zi_part2])
 	}
 }

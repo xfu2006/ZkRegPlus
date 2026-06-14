@@ -1,0 +1,11 @@
+circ_cat_0_circ_0.ext_in 10757
+circ_cat_0_circ_0.nc 27269
+circ_cat_0_circ_0.nv 31301
+config.chunk_len 1
+config.lk_share 1
+paircycle.ext_in 625
+paircycle.nc 18615
+paircycle.nv 19289
+universe.lkup_len 6274
+universe.sigs 2
+universe.subsig_ids 2

@@ -30,9 +30,14 @@ pub const ALWAYS_INIT:bool = true;
 
 pub const ADD_CHAIN_SIZE: usize = 64;
 
-use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard, Arc, Mutex};
 use std::sync::atomic::AtomicUsize;
 use serde::{Serialize, Deserialize};
+
+/// Flag-off regression fingerprint sink: flat (label, value) pairs
+/// emitted by build_circs_adv (universe) and gen_step_cs (r1cs dims).
+/// None = disabled (default), so production runs are unaffected.
+pub type FpSink = Arc<Mutex<Vec<(String, u64)>>>;
 
 /// Probe-only: chunk index of the current chunk-loop iteration. Set
 /// by foldpot driver before each gen_nd_advice call so SED probes
@@ -150,6 +155,9 @@ pub struct GlobalConfig {
 	/// SED propagation to fill ChunkPeaks' forward-proof counts. Default
 	/// false = normal discharge unaffected. Set by run_db_bundle.
 	pub b_estimate_caps: bool,
+	/// M0 flag-off regression fingerprint sink. None = disabled
+	/// (default); Some collects (label,value) pairs for the test gate.
+	pub fp_sink: Option<FpSink>,
 }
 
 impl Default for GlobalConfig {
@@ -198,6 +206,7 @@ impl Default for GlobalConfig {
 			basis_failed_subsigs: 0,
 			aggr_needs_subsigs: 0,
 			b_estimate_caps: false,
+			fp_sink: None,
         }
     }
 }
@@ -246,6 +255,7 @@ static GLOBAL_CONFIG: RwLock<GlobalConfig> = RwLock::new(GlobalConfig {
 	basis_failed_subsigs: 0,
 	aggr_needs_subsigs: 0,
 	b_estimate_caps: false,
+	fp_sink: None,
 });
 
 pub fn read_global_config() -> RwLockReadGuard<'static, GlobalConfig> {
@@ -254,6 +264,16 @@ pub fn read_global_config() -> RwLockReadGuard<'static, GlobalConfig> {
 
 pub fn get_global_config() -> RwLockWriteGuard<'static, GlobalConfig> {
     GLOBAL_CONFIG.write().unwrap()
+}
+
+/// Push one (label,value) pair to the fingerprint sink when enabled.
+/// No-op (one read-lock + Option check) when fp_sink is None, so it is
+/// safe to call from synthesis paths in production.
+pub fn fp_emit(label: &str, val: u64) {
+    let sink = read_global_config().fp_sink.clone();
+    if let Some(sink) = sink {
+        sink.lock().unwrap().push((label.to_string(), val));
+    }
 }
 
 /// Bit-split for the packed (sig_id, subsig_id) identifier produced

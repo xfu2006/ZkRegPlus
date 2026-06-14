@@ -19,3 +19,5 @@ pub mod gadgets;
 pub mod determine_config;
 /// per-chunk NEEDS distribution study (aggressive SDE mode only).
 pub mod needs_dist;
+/// M0 flag-off regression fingerprint (caps universe + r1cs dims).
+pub mod fingerprint;
