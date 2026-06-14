@@ -2313,39 +2313,83 @@ impl ClamavSig{
 	/// bodies are HIR-checked (anchor + span); hex subsigs contribute
 	/// their nibble length. Returns (max span in NIBBLES, per-subsig
 	/// anchor dir). Err on any non-conforming pcre body.
-	/// Aggressive mode invariant: every per-subsig array has the same
-	/// length, there are no counter constraints, and the fan-out map is
-	/// a contiguous in-bounds partition of the rebuilt subsig array.
-	/// Call after gen_approx_bagwords/pm_bounds + anchor_dir are set.
-	pub fn assert_aggressive_consistent(&self){
+	/// Aggressive-mode precondition gatekeeper (graceful): array lengths
+	/// consistent, all subsigs GeneralRegex, contiguous fan-out partition, no
+	/// negation, single-clause (flat union) DNF. Err on first violation.
+	pub fn check_aggressive_consistent(&self)
+		-> Result<(), folding_schemes::Error> {
+		use folding_schemes::Error;
 		let n = self.vec_subsig_obj.len();
-		let chk = |len: usize, name: &str|{
-			assert_eq!(len, n, "aggressive: {} len {} != \
-				vec_subsig_obj len {} (sig {})", name, len, n, self.name);
+		let chk = |len: usize, name: &str| -> Result<(), Error> {
+			if len != n {
+				return Err(Error::Other(format!(
+					"AggressiveShapeErr: {} len {} != vec_subsig_obj len {}, \
+					 sig '{}'", name, len, n, self.name)));
+			}
+			Ok(())
 		};
-		chk(self.vec_subsigs.len(), "vec_subsigs");
-		chk(self.vec_bneg.len(), "vec_bneg");
-		chk(self.vec_bcase_sensitive.len(), "vec_bcase_sensitive");
-		chk(self.vec_pcre_info.len(), "vec_pcre_info");
-		chk(self.vec_subsig_pm_bounds.len(), "vec_subsig_pm_bounds");
-		chk(self.vec_subsig_bagwords.len(), "vec_subsig_bagwords");
-		chk(self.vec_subsig_anchor_dir.len(), "vec_subsig_anchor_dir");
-		for o in &self.vec_subsig_obj{
-			assert!(matches!(o.subsig_type, SubSigType::GeneralRegex),
-				"aggressive: subsig must be GeneralRegex (no counter \
-				 constraints), sig {}", self.name);
+		chk(self.vec_subsigs.len(), "vec_subsigs")?;
+		chk(self.vec_bneg.len(), "vec_bneg")?;
+		chk(self.vec_bcase_sensitive.len(), "vec_bcase_sensitive")?;
+		chk(self.vec_pcre_info.len(), "vec_pcre_info")?;
+		chk(self.vec_subsig_pm_bounds.len(), "vec_subsig_pm_bounds")?;
+		chk(self.vec_subsig_bagwords.len(), "vec_subsig_bagwords")?;
+		chk(self.vec_subsig_anchor_dir.len(), "vec_subsig_anchor_dir")?;
+
+		// no counter constraints: every subsig is a plain GeneralRegex.
+		for o in &self.vec_subsig_obj {
+			if !matches!(o.subsig_type, SubSigType::GeneralRegex) {
+				return Err(Error::Other(format!(
+					"AggressiveShapeErr: subsig must be GeneralRegex (no \
+					 counter constraints), sig '{}'", self.name)));
+			}
 		}
-		//fan-out map is a contiguous in-bounds partition of [0,n).
+
+		// fan-out map is a contiguous in-bounds partition of [0,n).
 		let mut next = 0usize;
-		for (k,(s,e)) in self.vec_fanout_map.iter().enumerate(){
-			assert!(*s==next && *e>=*s && *e<n,
-				"aggressive: fanout_map[{}]=({},{}) not contiguous/\
-				 in-bounds (next={}, n={}) sig {}",
-				k, s, e, next, n, self.name);
-			next = e+1;
+		for (k, (s, e)) in self.vec_fanout_map.iter().enumerate() {
+			if !(*s == next && *e >= *s && *e < n) {
+				return Err(Error::Other(format!(
+					"AggressiveShapeErr: fanout_map[{}]=({},{}) not \
+					 contiguous/in-bounds (next={}, n={}), sig '{}'",
+					k, s, e, next, n, self.name)));
+			}
+			next = e + 1;
 		}
-		assert_eq!(next, n, "aggressive: fanout_map covers {} != {} \
-			subsigs (sig {})", next, n, self.name);
+		if next != n {
+			return Err(Error::Other(format!(
+				"AggressiveShapeErr: fanout_map covers {} != {} subsigs, \
+				 sig '{}'", next, n, self.name)));
+		}
+
+		// N1: no negated subsig (locality discharges by absence; negation
+		// would invert that and break the union semantics).
+		if self.vec_bneg.iter().any(|b| *b) {
+			return Err(Error::Other(format!(
+				"AggressiveShapeErr: negated subsig forbidden in aggressive \
+				 mode, sig '{}'", self.name)));
+		}
+
+		// N2: flat single-clause DNF (one union of all variants); multi-clause
+		// would need the complex discharge path locality omits.
+		if self.eval_dnf.vec_disjunc.len() != 1 {
+			return Err(Error::Other(format!(
+				"AggressiveShapeErr: non-flat DNF (vec_disjunc.len={}); \
+				 aggressive requires a single union clause, sig '{}'",
+				self.eval_dnf.vec_disjunc.len(), self.name)));
+		}
+
+		// MS-DLP-specific, NOT a soundness requirement: the MS-DLP set is all
+		// case-sensitive and the aggressive circuit collapses the igc side to
+		// a sentinel, so we require no igc subsig. A uniformly case-insensitive
+		// DB would be equally fine in principle.
+		if self.vec_subsig_obj.iter().any(|o| o.b_ignore_case) {
+			return Err(Error::Other(format!(
+				"AggressiveShapeErr: igc subsig in aggressive mode (MS-DLP \
+				 is all case-sensitive), sig '{}'", self.name)));
+		}
+
+		Ok(())
 	}
 
 	pub fn compute_aggressive_shape(&self, _cfg: &ClamavApproxConfig)
@@ -3951,7 +3995,7 @@ mod tests_clamav{
 		let mut cfg = default_clamav_cfg();
 		cfg.b_aggressive_sde_for_rep = true;
 		cfg.sde_rep_fanout_cap = 1000;
-		let expr = "Agg.B3;Engine:81-255,Target:0;0;\
+		let expr = "Agg.B3.bwd;Engine:81-255,Target:0;0;\
 			/[0-9][0-9][0-9].{0,4}SECRETKW/";
 		let mut sig = gen_clamav_sig(expr, ClamSigType::General, &cfg);
 		sig.gen_approx_bagwords(&cfg);
@@ -3968,7 +4012,7 @@ mod tests_clamav{
 		//every variant inherits the original's backward direction.
 		assert!(sig.vec_subsig_anchor_dir.iter().all(|&d| d==1));
 		//all per-subsig arrays consistent + no counters + map partition.
-		sig.assert_aggressive_consistent();
+		sig.check_aggressive_consistent().unwrap();
 		//flag-OFF: no fan-out, no map, base kept (byte-identical path).
 		let mut cfg_off = default_clamav_cfg();
 		cfg_off.b_aggressive_sde_for_rep = false;
@@ -3976,6 +4020,51 @@ mod tests_clamav{
 		assert_eq!(sig_off.vec_subsig_obj.len(), 1);
 		assert!(sig_off.vec_fanout_map.is_empty());
 		assert_eq!(sig_off.expr, "0");
+	}
+
+	/// M1 gatekeeper: a conforming aggressive sig passes; each single-field
+	/// violation (negation, multi-clause DNF, length mismatch) is rejected
+	/// gracefully (Err, not panic).
+	#[test]
+	fn tests_aggressive_validator(){
+		let mut cfg = default_clamav_cfg();
+		cfg.b_aggressive_sde_for_rep = true;
+		cfg.sde_rep_fanout_cap = 1000;
+		let expr = "Agg.Val.bwd;Engine:81-255,Target:0;0;\
+			/[0-9][0-9][0-9].{0,4}SECRETKW/";
+		let mut base = gen_clamav_sig(expr, ClamSigType::General, &cfg);
+		base.gen_approx_bagwords(&cfg);
+		base.gen_approx_pm_bounds(&cfg);
+		let (_span, anchors) =
+			base.compute_aggressive_shape(&cfg).expect("shape");
+		base.vec_subsig_anchor_dir = anchors;
+
+		// conforming sig passes.
+		base.check_aggressive_consistent().expect("conforming must pass");
+
+		// N1: negated subsig -> Err.
+		let mut s_neg = base.clone();
+		s_neg.vec_bneg[0] = true;
+		assert!(s_neg.check_aggressive_consistent().is_err(),
+			"negated subsig must be rejected");
+
+		// N2: multi-clause DNF -> Err.
+		let mut s_dnf = base.clone();
+		s_dnf.eval_dnf.vec_disjunc.push(vec![0]);
+		assert!(s_dnf.check_aggressive_consistent().is_err(),
+			"multi-clause DNF must be rejected");
+
+		// E3 (now graceful): array-length mismatch -> Err.
+		let mut s_len = base.clone();
+		s_len.vec_bneg.pop();
+		assert!(s_len.check_aggressive_consistent().is_err(),
+			"length mismatch must be rejected");
+
+		// MS-DLP all-CS: an igc subsig -> Err.
+		let mut s_igc = base.clone();
+		s_igc.vec_subsig_obj[0].b_ignore_case = true;
+		assert!(s_igc.check_aggressive_consistent().is_err(),
+			"igc subsig must be rejected");
 	}
 
 	/// T4 (load-bearing): forward eval of the stored chain and backward

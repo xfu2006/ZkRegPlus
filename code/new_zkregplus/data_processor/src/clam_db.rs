@@ -2013,11 +2013,17 @@ elapsed={:.0}s", b_igc, t_ised.elapsed().as_secs_f64());
 		needs_ised: &Vec<String>,
 		needs_ised_igc: &Vec<String>)
 	-> Result<Self, Error>{
-		//padded sig to enforce full alphabet
+		//padded sig to enforce full alphabet. Aggressive mode forbids igc
+		//subsigs (all-CS invariant), so drop the ::i modifier when aggressive.
+		let pad = if cfg.b_aggressive_sde_for_rep {
+			"sig_alpha01;Engine:51-255,Target:0;0|1;123456789abcdef0123;432345678901abcdef"
+		} else {
+			"sig_alpha01;Engine:51-255,Target:0;0|1;123456789abcdef0123;432345678901abcdef::i"
+		};
 		let sigs = vec![
 			sigs.clone(),
-			vec!["sig_alpha01;Engine:51-255,Target:0;0|1;123456789abcdef0123;432345678901abcdef::i".to_string()], 
-		].concat(); 
+			vec![pad.to_string()],
+		].concat();
 		write_sigs_to_dir(&sigs, sigs_dir, needs_dfa, 
 			needs_ised, needs_ised_igc);
 		let db = Self::build_db_from_dir_adv(sigs_dir, &cfg);
@@ -2167,8 +2173,15 @@ elapsed={:.0}s", si+1, n_sigs, t_shape.elapsed().as_secs_f64());
 				}
 				aggressive_max_span_nibbles =
 					aggressive_max_span_nibbles.max(span);
-				s.assert_aggressive_consistent();
+				s.check_aggressive_consistent()?;
 			}
+			// N3: aggressive_max_span_nibbles = DB-wide max match length (M);
+			// sed_mapper enforces it fits the chunk (4*M <= chunk_len*LEGS)
+			// at circuit build.
+			flog(0, log_level, &format!(
+				"aggressive gatekeeper: validated {} sigs, \
+				 max_span_nibbles={}", n_sigs, aggressive_max_span_nibbles),
+				vlog);
 		}
 		if b_perf {flog_perf(0, log_level, &format!("Build_DB: Step 1: Generate signatures"), &mut timer,
 			vlog);}
@@ -2313,16 +2326,8 @@ elapsed={:.0}s", si+1, n_sigs, t_shape.elapsed().as_secs_f64());
 		let bundle_subsig_igc=
 			Self::build_ised_bundle(&v_sigs, &sig_to_id,
 				needs_ised_igc_list_file, true, cfg);
-		//CS-only invariant: aggressive fan-out must not yield any
-		//ignore-case subsig (the circuit collapses the igc side).
-		if cfg.b_aggressive_sde_for_rep{
-			let n_igc = v_sigs.iter()
-				.flat_map(|s| s.vec_subsig_obj.iter())
-				.filter(|o| o.b_ignore_case).count();
-			assert!(n_igc==0,
-				"aggressive mode requires all-CS subsigs, found {} igc",
-				n_igc);
-		}
+		//CS-only invariant (igc subsig forbidden) is now enforced per-sig and
+		//gracefully by check_aggressive_consistent in the 1b shape-guard loop.
 		if b_perf {flog_perf(0, log_level, &format!("Build_DB: Step 6: Build SED bundles."), &mut timer, vlog);}
 
 		//8. build lkup
@@ -2735,5 +2740,43 @@ mod tests_clam_db{
 			&wdir("debug/sde_aggressive/m1a_bad"), &bad,
 			&none, &none, &none);
 		assert!(r.is_err(), "unbounded sig must error build_db");
+	}
+
+	/// Heavy on-demand acceptance: the real DLP signature set conforms to the
+	/// aggressive gatekeeper. Forces a fresh build (b_read_cache=false) so the
+	/// gatekeeper runs in build_db; skips if the sig file is absent.
+	#[test]
+	#[ignore]
+	fn full_dlp_db_passes_gatekeeper(){
+		let proot = proj_root();
+		let sig = "data/paper_data/dlp/cfg/main_data_dlp_internationl.dat";
+		if !std::path::Path::new(&format!("{}/{}", proot, sig)).exists() {
+			eprintln!("skip full_dlp_db_passes_gatekeeper: sig file absent");
+			return;
+		}
+		utils::consts::get_global_config().range2_bit = 25;
+		let mut cfg = default_clamav_cfg();
+		cfg.b_aggressive_sde_for_rep = true;
+		cfg.sde_rep_fanout_cap = 100;
+		cfg.min_pm_word_len = 3;
+
+		let dir = "data/paper_data/dlp/cfg";
+		let dfa = format!("{}/main_dfa.dat", dir);
+		let ised = format!("{}/needs_ised.dat", dir);
+		let ised_igc = format!("{}/needs_ised_igc.dat", dir);
+		let mut vlog = vec![];
+
+		// b_read_cache=false -> fresh aggressive build so the gatekeeper runs
+		// in build_db; b_write_cache=false -> never clobber the real cache.
+		let db = ClamavDB::<Fr>::build_or_load(&cfg, sig, &dfa, &ised,
+			&ised_igc, &mut vlog, "dlp_intl_data_aggr", false, false)
+			.expect("real DLP DB must build (gatekeeper passes)");
+
+		// belt-and-suspenders: assert the validator directly on every sig
+		// (guards against a future flip to a cached load, which skips build).
+		for s in &db.vec_sigs {
+			s.check_aggressive_consistent()
+				.expect("real DLP sig must pass gatekeeper");
+		}
 	}
 }

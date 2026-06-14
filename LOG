@@ -29170,5 +29170,17 @@ Goal 1. double check the discharging of CP sigs again (non-aggresive mode)
 			the default to fail!)
 	[c] so the non-aggresive case is CORRECT. verified.
 Goal 2. design the handling of b_aggresive chain.
+	[a] project title "new_sde_aggresive"
+	[b] now let the tool do the research
+Goal 3. writing
+	[a] check if zombie collection does take advantage of the distance
+	[b] the attribution of sumcheck limitation is not right
+	[c] review issue of inclusion proof
+	[d] add a comment about inclusion proof why it's not included.
+	[e] clear pargraph 1.
+Goal 4. continue implementation of new scheme
+	[a] read summary  -> good major problem solved
+	[b] review design plan 
+
 
 
