@@ -3085,11 +3085,11 @@ pub mod tests_zkp_driver{
 		//needs/chunk=200; 256 adds margin. capacity.subsigs->256,
 		//universe_subsigs stays at `subsigs` (500) for the accumulator.
 		get_global_config().aggr_needs_subsigs = 256;
-		//M2 failed_subsigs accumulator (basis points): acc_size =
-		//universe_subsigs * this / 10000. Left at default 0 (acc_size=2):
-		//small_email's subsigs are discharged early by the QUICK absence
-		//cert, so few/none reach a final step -> the accumulator stays
-		//empty. A larger value only allocates empty columns (51x cs1e).
+		//Per-chunk failed-subsig set acc_out (local IDX_DATA witness, not
+		//carried): acc_size = universe_subsigs*basis_failed_subsigs/10000.
+		//Default 0 (acc_size=2): clean discharge -> no subsig reaches a
+		//final step -> acc_out empty, so 2 (1 zero-pad) suffices. A CapErr
+		//here would signal a real match (data not clean).
 		get_global_config().b_dryrun_after_capcheck = false;
 
 		//no cached email DB -> build fresh from main.dat
@@ -3756,7 +3756,6 @@ pub mod tests_zkp_driver{
 
 
 	#[test]
-	#[ignore = "small_email aggr red during locality swap; restore at M6"]
 	pub fn test_zkreg_main(){//test zkreg.main
 		let b_check_lkup = true;
 		let _b_light_test = false;
