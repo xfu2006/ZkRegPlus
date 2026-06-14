@@ -29101,6 +29101,7 @@ Goal 1. plan a run_full_dlp.py to run sample3 only, first determine
 Goal 2. writing
 	[a] planning
 	[b] check abnormal data
+	[c] still no conclusion there are about 13% with non-linear increase.
 Goal 3. test on server
 	[a] started
 	[b] but the prblem is sample 3 has much bigger size, looks like
@@ -29113,5 +29114,61 @@ Goal 5. re-write a measure2.py using the new eval criteria on the
 	needs_subsig counts
 Goal 5. watching the run of M3 sample3
 	[a] meomrized the project - "optimize determine_config()" 
-	[b] 
+	[b] -- ** unifnished yet *** --
+Goal 6. project distribution of NEEDS_SUBSIGS
+	[a] *** distribution study ***
+	[b] saved the result as chunk distribution
+	[c] note 96.2 are zero SDE needed, but there are HUGE ones
+		with 14200. But the max known is 3000 (which generates 30-40M R1CS)
+	[d] do an experiment with 14200 and see what is the cs1e.
+	--- data ---
+	 target cs1e │      corresponding NEEDS       │
+  ├─────────────┼────────────────────────────────┤
+  │ 60M         │ ≈ 3,500 – 4,500 (~4,000)       │
+  ├─────────────┼────────────────────────────────┤
+  │ 90M         │ ≈ 4,300 – 6,000 (~5,000–5,500) │
+
+	------------
+	If cut at 4500 NEEDS how many are removed
+	if cut at 3500 NEEDS how many are removed
+  ────────────┬────────────────────────────┬─────────────────────────────┐
+  │    Cut      │ full list (515,840, incl.  │  pass_clean (508,613, the   │
+  │  threshold  │           fails)           │          workload)          │
+  ├─────────────┼────────────────────────────┼─────────────────────────────┤
+  │ > 4500      │ 539 (0.105%)               │ 301 (0.059%)                │
+  ├─────────────┼────────────────────────────┼─────────────────────────────┤
+  │ > 11360     │ 92 (0.018%)                │ 0                           │
+  ├─────────────┼────────────────────────────┼─────────────────────────────┤
+  │ > 14199     │ 2 (the max-NEEDS files)    │ 0                           │
+  └─────────────┴────────────────────────────┴─────────────────────────────┘
+	Note cutting 3500 is just like cutting 4500. 
+	So just cut 3500. 0.059 is VERY SMALL!
+	 0            : 484,342  (95.21%)
+     (0,   1000]    :  23,965  ( 4.71%)   <- the light nonzero bulk
+     (1000, 8520]   :      11  (~0.002%)  <- nearly empty gap
+     (8520, 11360]  :     295  ( 0.058%)  <- the hot cluster
+     > 11360        :       0
+	=> DECISION cut ABOVE 1000.
+
+Goal 7. Finish the improvement of the determin_config()
+	[a] double check the algorithm
+	[b] go over the algorithm in details (needs to modify compute_sig.adv)
+		as well because there's nothing to carry over.
+	[c]
+
+Sunday 06/14/2026
+Goal 1. double check the discharging of CP sigs again (non-aggresive mode)
+    [a] sed component -> step queue is propagated and in the last round
+        it does discharge sigs for the entire word
+    [b] cp component ->
+        word_extract -> fsm -> pack (to final states) -> sigs
+        # the cp component establishes its failed_sigs from the
+            output buffer if the sigs gadget
+        # the output is a union of inp_sigs (from last chunk)
+			the failed sigs we discovered this chunk
+			techincally it has sigs_no_critical_pattern (these are
+			the default to fail!)
+	[c] so the non-aggresive case is CORRECT. verified.
+Goal 2. design the handling of b_aggresive chain.
+
 

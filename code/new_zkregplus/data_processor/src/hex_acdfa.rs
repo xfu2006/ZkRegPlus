@@ -958,6 +958,29 @@ impl HexACDFA{
 		(mx, mx_ci)
 	}
 
+	/// Per-chunk NEEDS vector (one entry per chunk), the full profile
+	/// behind get_max_needs_idx. Same body, keeps every chunk instead of
+	/// only the max. Used by the needs-distribution study.
+	pub fn get_needs_per_chunk(&self, acc_path: &Vec<usize>,
+		seg_size: usize, anchor_mult: &HashMap<usize,usize>) -> Vec<usize> {
+		if seg_size==0 { return vec![]; }
+		let mut out = vec![];
+		for chunk in acc_path.chunks(seg_size){
+			let mut present = HashSet::<usize>::new();
+			for &state in chunk{
+				if self.is_accept(state){
+					if let Some(pids) = self.outputs.get(&state){
+						for &p in pids { present.insert(p); }
+					}
+				}
+			}
+			let needs: usize = present.iter()
+				.map(|p| anchor_mult.get(p).copied().unwrap_or(0)).sum();
+			out.push(needs);
+		}
+		out
+	}
+
 	/// for each string show the vector of positions
 	pub fn get_pattern_pos(&self, acc_path: &Vec<usize>)->HashMap<String,Vec<usize>>{
 		let mut res = HashMap::<String, Vec<usize>>::new();

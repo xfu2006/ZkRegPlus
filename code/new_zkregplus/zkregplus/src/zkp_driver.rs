@@ -3954,6 +3954,15 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			vdata.push(fdr);
 			infos.push(rec);
 		}
+		//NEEDS distribution study: reuse the per-chunk arrays just
+		//discharged (aggressive flag is on here), no second pass. Study
+		//only -> print and return, skipping the finalize+fold.
+		if std::env::var("ZKR_DLP_NEEDS_DIST").is_ok() {
+			let rows: Vec<Vec<usize>> = vdata.iter()
+				.map(|r| r.chunk_peaks.needs_per_chunk.clone()).collect();
+			crate::needs_dist::print_needs_dist_rows(&rows, &files);
+			return;
+		}
 		//estimate -> p90 (C_low seed) + p100 (C_high seed)
 		let est = estimate_config_aggr::<Fr>(&vdata, &db, &[90,100],
 			&mut vlog);
@@ -4023,6 +4032,169 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		let _ = std::fs::write(&format!("{}/{}", proot, rc.report_out),
 			format!("M3 sample3 fold-only: {} via 2-tier [C_low,C_high]\n",
 				rc.scan_file));
+	}
+
+	/// NEEDS-distribution study over the full Enron clean list (parallel,
+	/// lean: keeps only per-chunk needs vectors, not full records). Loads
+	/// the aggressive DB, normalizes rc.scan_file (proot-relative list,
+	/// '#'/blank lines dropped, base "data/samples/email" prepended), then
+	/// prints the distribution. No tuning, no folding.
+	#[test]
+	pub fn full_enron_needs_dist(){
+		let rc = crate::determine_config::RunCfg::from_env();
+		let proot = utils::os::proj_root();
+		let cd = &rc.config_dir;
+		let mw = rc.chunk_len;
+		get_global_config().range2_bit = rc.range2_bit;
+		get_global_config().b_read_cache = true;
+		get_global_config().b_estimate_caps = false; //NEEDS doesn't need it
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
+		get_global_config().clamav_cfg.sde_rep_fanout_cap = rc.fanout_cap;
+		get_global_config().clamav_cfg.min_pm_word_len = 3;
+		let cfg = data_processor::clamav::default_clamav_cfg();
+		let mut vlog = vec![];
+		let db = data_processor::clam_db::ClamavDB::<Fr>::build_or_load(
+			&cfg, &format!("{}/{}", cd, rc.sig_file),
+			&format!("{}/main_dfa.dat", cd),
+			&format!("{}/needs_ised.dat", cd),
+			&format!("{}/needs_ised_igc.dat", cd), &mut vlog,
+			&rc.cache_dir, true, true).expect("build db");
+		let base = "data/samples/email";
+		let raw = utils::os::read_lines(
+			&format!("{}/{}", proot, rc.scan_file));
+		let files: Vec<String> = raw.iter().map(|l| l.trim())
+			.filter(|l| !l.is_empty() && !l.starts_with('#'))
+			.map(|l| if l.starts_with("data/") { l.to_string() }
+				else { format!("{}/{}", base, l) }).collect();
+		utils::logger::log(0, utils::logger::LOG1, &format!(
+			"[needs_dist] list={} kept={} (raw={})",
+			rc.scan_file, files.len(), raw.len()));
+		crate::needs_dist::print_needs_distribution::<Fr>(
+			&files, &proot, &db, &cfg, mw);
+	}
+
+	/// EXPERIMENT: real r1cs/cs1e at the corpus max NEEDS (~14200) and whether
+	/// the full SNARK (decider) fits 125GB. Estimates the aggressive config
+	/// from the densest corpus files, then folds a SHORT high-NEEDS file under
+	/// that (cap-driven) config -- cs1e equals the 14200-config circuit but
+	/// reached in ~3 steps not 111. ZKR_EXP_DECIDER=1 => run the Groth16
+	/// decider (full SNARK); else Phase-1 folding only. cs1e logs at step 0.
+	#[test]
+	pub fn full_enron_max_needs_cost(){
+		use crate::determine_config::caps_from_params_aggr;
+		use crate::stats_helper::{estimate_config_aggr,
+			estimated_to_capparams_aggr};
+		use folding_schemes::folding::foldpot::sigma_ir1cs
+			::LookupTableTwoCol as _;
+		let rc = crate::determine_config::RunCfg::from_env();
+		let proot = utils::os::proj_root();
+		let cd = &rc.config_dir;
+		let mw = rc.chunk_len;
+		get_global_config().range2_bit = rc.range2_bit;
+		get_global_config().b_light_test = true;
+		//decider (full SNARK) iff ZKR_EXP_DECIDER set; else fold-only.
+		get_global_config().b_folding_only =
+			std::env::var("ZKR_EXP_DECIDER").is_err();
+		get_global_config().b_read_cache = true;
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_write_snark_cache = false;
+		get_global_config().b_estimate_caps = true;
+		get_global_config().perc_lkup_share = 1;
+		get_global_config().min_subsigs = 1;
+		get_global_config().min_basis_unique_states = 2;
+		get_global_config().min_basis_acc_states = 2;
+		get_global_config().min_basis_pats_in_trace = 4;
+		get_global_config().min_avg_pats_per_subsig = 1;
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
+		get_global_config().clamav_cfg.sde_rep_fanout_cap = rc.fanout_cap;
+		get_global_config().clamav_cfg.min_pm_word_len = 3;
+		let cfg = data_processor::clamav::default_clamav_cfg();
+		let mut vlog = vec![];
+		let db = data_processor::clam_db::ClamavDB::<Fr>::build_or_load(
+			&cfg, &format!("{}/{}", cd, rc.sig_file),
+			&format!("{}/main_dfa.dat", cd),
+			&format!("{}/needs_ised.dat", cd),
+			&format!("{}/needs_ised_igc.dat", cd), &mut vlog,
+			&rc.cache_dir, true, true).expect("build db");
+		//densest corpus files (NEEDS up to 14200) + the short fold file ->
+		//estimate the config so it COVERS the fold file (no CapErr).
+		let base = "data/samples/email";
+		let fold_rel = std::env::var("ZKR_EXP_FOLDFILE").unwrap_or(
+			"src/maildir/taylor-m/inbox/137.".to_string());
+		let seed = ["src/maildir/dasovich-j/all_documents/8681.".to_string(),
+			"src/maildir/dasovich-j/notes_inbox/5594.".to_string(),
+			fold_rel.clone()];
+		let mut vdata = vec![];
+		for rel in &seed{
+			let fpath = format!("{}/{}", base, rel);
+			let nibbles = utils::os::read_nibbles(
+				&format!("{}/{}", proot, fpath));
+			let (fdr, _r) =
+				data_processor::clamav::quick_discharge_file_by_crit_bag_pm(
+				&fpath, &nibbles, &db.vec_sigs, &db.vec_sigs_no_critical_pat,
+				&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
+				&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
+				&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
+				&db.sig_to_id, mw, mw);
+			utils::logger::log(0, utils::logger::LOG1, &format!(
+				"[exp] seed {} NEEDS={}", rel,
+				fdr.chunk_peaks.max_needs_subsigs));
+			vdata.push(fdr);
+		}
+		let est = estimate_config_aggr::<Fr>(&vdata, &db, &[100], &mut vlog);
+		let mut p = estimated_to_capparams_aggr(&est[0], mw, rc.range2_bit, 3);
+		//estimator mins the IGC arm (aggressive collapses igc subsigs), but
+		//the igc discharge gadget still must cover the fold file's igc DFA
+		//diversity (CapErr basis_unique_states_igc). Lift igc structural caps
+		//to the cs arm so the build succeeds; NEEDS-driven cost is unchanged.
+		p.basis_unique_states_igc = p.basis_unique_states_igc
+			.max(p.basis_unique_states);
+		p.basis_acc_states_igc = p.basis_acc_states_igc
+			.max(p.basis_acc_states);
+		p.basis_pats_in_trace_igc = p.basis_pats_in_trace_igc
+			.max(p.basis_pats_in_trace);
+		//ZKR_EXP_PERC clamps the StepFwdPrf buffer (perc) so the circuit can
+		//synthesize in 125GB -- yields a cs1e LOWER BOUND for this subsigs
+		//universe; the real perc (logged above) makes the true circuit bigger.
+		if let Ok(s) = std::env::var("ZKR_EXP_PERC"){
+			if let Ok(v) = s.parse::<usize>(){
+				p.perc_pats_expansion_rate = v;
+				p.perc_pats_expansion_rate_igc = v.min(64).max(2);
+			}
+		}
+		//ZKR_EXP_NEEDS clamps the SED universe (aggr_needs + subsigs) to map
+		//the cs1e(NEEDS) curve and locate the 125GB synthesis ceiling.
+		if let Ok(s) = std::env::var("ZKR_EXP_NEEDS"){
+			if let Ok(v) = s.parse::<usize>(){
+				p.aggr_needs_subsigs = v;
+				p.subsigs = v + 1;
+			}
+		}
+		utils::logger::log(0, utils::logger::LOG1, &format!(
+			"[exp] NEEDS~14200 config: aggr_needs_subsigs={} subsigs={} \
+			 basis_unique_states={} basis_pats_in_trace={} \
+			 perc_pats_expansion_rate={} cp_subsigs={}",
+			p.aggr_needs_subsigs, p.subsigs, p.basis_unique_states,
+			p.basis_pats_in_trace, p.perc_pats_expansion_rate, p.cp_subsigs));
+		let _ = p.save_json(&format!("{}/{}/exp_config_needs14200.json",
+			proot, cd));
+		drop(db); //fold driver loads its own DB copy
+		get_global_config().b_estimate_caps = false;
+		get_global_config().aggr_needs_subsigs = p.aggr_needs_subsigs;
+		let cs_caps = vec![caps_from_params_aggr(&p)];
+		let manifest = format!("{}/exp_fold_manifest.dat", cd);
+		let _ = std::fs::write(&format!("{}/{}", proot, manifest),
+			format!("{}/{}\n", base, fold_rel));
+		let report = format!("{}/exp_max_needs_report.txt", cd);
+		utils::logger::log(0, utils::logger::LOG1, &format!(
+			"[exp] folding {} (decider={})", fold_rel,
+			!get_global_config().b_folding_only));
+		zkp_driver_adv_aggr::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,
+			CS1E,S>(
+			0, &format!("{}/{}", cd, rc.sig_file), vec![manifest], &report,
+			false, &rc.cache_dir, &format!("{}/main_dfa.dat", cd),
+			&format!("{}/needs_ised.dat", cd),
+			&format!("{}/needs_ised_igc.dat", cd), mw, &cs_caps, false);
 	}
 
 	/// full_enron: read the C_low/C_high configs produced by determine_config

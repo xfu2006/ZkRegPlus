@@ -3421,7 +3421,8 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 	// kept separate then max (one aggr_needs_subsigs knob covers both
 	// discharge gadgets). 0 when flag-off (Default) so the non-aggressive
 	// estimate is byte-identical.
-	let (max_needs_subsigs, max_needs_chunk_idx) = if read_global_config()
+	let (max_needs_subsigs, max_needs_chunk_idx, needs_per_chunk)
+			= if read_global_config()
 			.clamav_cfg.b_aggressive_sde_for_rep {
 		let mut mult_cs: HashMap<usize,usize> = HashMap::new();
 		let mut mult_ig: HashMap<usize,usize> = HashMap::new();
@@ -3448,9 +3449,19 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 			seg_size, &mult_cs);
 		let (n_ig, i_ig) = dfa_bag_igc.get_max_needs_idx(&dfa_acc_path_igc,
 			seg_size, &mult_ig);
+		//full per-chunk profile (element-wise max of cs/igc) for the
+		//needs-distribution study. Its max() equals max(n_cs,n_ig) below.
+		let v_cs = dfa_bag.get_needs_per_chunk(&dfa_acc_path, seg_size,
+			&mult_cs);
+		let v_ig = dfa_bag_igc.get_needs_per_chunk(&dfa_acc_path_igc,
+			seg_size, &mult_ig);
+		let nch = v_cs.len().max(v_ig.len());
+		let npc: Vec<usize> = (0..nch).map(|c|
+			v_cs.get(c).copied().unwrap_or(0)
+			.max(v_ig.get(c).copied().unwrap_or(0))).collect();
 		//densest chunk = whichever case (cs/igc) drives the max needs.
-		if n_ig > n_cs { (n_ig, i_ig) } else { (n_cs, i_cs) }
-	} else { (0, 0) };
+		if n_ig > n_cs { (n_ig, i_ig, npc) } else { (n_cs, i_cs, npc) }
+	} else { (0, 0, vec![]) };
 	// Accurate perc / avg_active sizing: accumulate per-chunk forward-proof
 	// entries, active pattern-steps and carried live locs across all SED-
 	// universe subsigs (crit-hit, pm-failed). Aggressive resets the carry
@@ -3518,6 +3529,7 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		perc_pats_expansion_rate,
 		max_needs_subsigs,
 		max_needs_chunk_idx,
+		needs_per_chunk,
 		max_fwd_entries_per_chunk,
 		max_carried_live_per_chunk,
 		max_active_steps_per_chunk,

@@ -76,6 +76,10 @@ pub struct ChunkPeaks{
 	//probing (aggressive resets per chunk, so one chunk's demand is
 	//self-contained). 0 when flag-off / single-chunk.
 	pub max_needs_chunk_idx: usize,
+	//Per-chunk NEEDS array (full profile; max() == max_needs_subsigs).
+	//Empty when flag-off; populated only under b_aggressive_sde_for_rep
+	//for the needs-distribution study.
+	pub needs_per_chunk: Vec<usize>,
 	//SED forward-propagation peaks (measured; 0 when not discharged).
 	//Per-chunk count of forward-proof (subsig,step,loc) entries summed
 	//across survivor subsigs, max over chunks. Sizes StepFwdPrf.

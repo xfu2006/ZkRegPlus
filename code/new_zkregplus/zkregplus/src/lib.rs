@@ -17,3 +17,5 @@ pub mod gadgets;
 /// auto capacity tuner: estimate -> Pass-1 probe -> bump-on-CapErr loop
 /// to find the confirmed-lowest config for discharging a sample set.
 pub mod determine_config;
+/// per-chunk NEEDS distribution study (aggressive SDE mode only).
+pub mod needs_dist;
