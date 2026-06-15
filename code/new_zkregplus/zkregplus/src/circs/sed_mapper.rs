@@ -627,12 +627,21 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 				"discharge_adv_stmt_igc bwd_steps_queue sq_res2")
 				.expect("sq_res err")
 		};
+		// Aggressive seed tie: the forward seed sq_inp (exists in non-aggr
+		// too; only the aggr compute_sig acc path reads it).
+		let sq_inp_cs = stmt_disc_cs.lock().unwrap().search_container(
+			"discharge_adv_stmt_cs fwd_steps_queue sq_inp")
+			.expect("sq_inp cs err");
+		let sq_inp_igc = stmt_disc_igc.lock().unwrap().search_container(
+			"discharge_adv_stmt_igc fwd_steps_queue sq_inp")
+			.expect("sq_inp igc err");
 		let compute_sig_adv_advice = ComputeSigAdvAdvice::<F>::new(
 			fsm_id_cs as u32, fsm_id_igc as u32,
 			&inp_sigs, 
 			&subsigs_inp_cs, &subsigs_inp_igc,
 			&discharge_info,
 			&sq_res_cs, &sq_res_igc,
+			&sq_inp_cs, &sq_inp_igc,
 			&csa_cap,
 			subsig_step_store_cs,  subsig_step_store_igc,
 			subsig_info_store_cs, subsig_info_store_igc,
@@ -876,13 +885,31 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 		let pm_acdfa_cs = &bundle_cs.vec_acdfa[0]; //0 stands for all
 		let pm_acdfa_igc= &bundle_igc.vec_acdfa[0];
 		let sig_to_id = &self.clamdb.sig_to_id;
-		let vec_sigs_to_discharge = 
-			bundle_cs.vec_sigs[0].iter().filter(|s|{
-				let id = sig_to_id.get(&s.name)
-					.expect(&format!("can't find sig: {}", s.name));
-				word_info.vec_sed_sigs.contains(id)
-			}).map(|s| s.clone()).collect::<Vec<Arc<ClamavSig>>>();
-	
+		// AGGRESSIVE: per-chunk universe = CP failed_c for this segment;
+		// build sigs + discharge_info together from failed_c_info_all_segs
+		// so they stay 1-1 (collect_subsig_ids zips by position). Empty
+		// failed_c_all_segs (non-aggressive / not built) => whole-word.
+		let (vec_sigs_to_discharge, discharge_info) =
+			if !word_info.failed_c_all_segs.is_empty()
+				&& seg_id < word_info.failed_c_info_all_segs.len() {
+				let infos = &word_info.failed_c_info_all_segs[seg_id];
+				let by_name: std::collections::HashMap<&str, Arc<ClamavSig>>
+					= bundle_cs.vec_sigs[0].iter()
+						.map(|s| (s.name.as_str(), s.clone())).collect();
+				let sigs = infos.iter().map(|i|
+					by_name.get(i.sig_name.as_str())
+						.expect("failed_c sig not in bundle").clone())
+					.collect::<Vec<Arc<ClamavSig>>>();
+				(sigs, infos.clone())
+			} else {
+				let sigs = bundle_cs.vec_sigs[0].iter().filter(|s|{
+					let id = sig_to_id.get(&s.name)
+						.expect(&format!("can't find sig: {}", s.name));
+					word_info.vec_sed_sigs.contains(id)
+				}).map(|s| s.clone()).collect::<Vec<Arc<ClamavSig>>>();
+				(sigs, word_info.vec_sed_sigs_info.clone())
+			};
+
 		let subsig_pat_store_cs = &bundle_cs.vec_subsig_stores[0];
 		let subsig_pat_store_igc = &bundle_igc.vec_subsig_stores[0];
 		let subsig_step_store_cs = &bundle_cs
@@ -893,7 +920,6 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 			.vec_subsig_info_stores[0];
 		let subsig_info_store_igc = &bundle_igc
 			.vec_subsig_info_stores[0];
-		let discharge_info = word_info.vec_sed_sigs_info.clone();
 		let sig_id = 0; //meaning discharge all
 		let pm_fsm_id_cs = ClamavDB::<F>::pm_acdfa_id(sig_id, false);
 		let pm_fsm_id_igc = ClamavDB::<F>::pm_acdfa_id(sig_id, true);

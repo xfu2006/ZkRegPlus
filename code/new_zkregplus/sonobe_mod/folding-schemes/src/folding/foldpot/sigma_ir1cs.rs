@@ -124,6 +124,15 @@ pub struct WordInfo{
 	/// last segment / non-aggressive runs. SED truncates to M.
 	#[serde(default)]
 	pub halo_nibbles: Vec<u8>,
+
+	/// Aggressive: per-segment CP failed_c (sig ids = the gadget's
+	/// failed_sigs for that segment), indexed by seg_id. Empty =>
+	/// non-aggressive / not built => SED falls back to vec_sed_sigs.
+	#[serde(default)]
+	pub failed_c_all_segs: Vec<Vec<usize>>,
+	/// 1-1 with failed_c_all_segs[seg]: each segment's DischargeSigInfo.
+	#[serde(default)]
+	pub failed_c_info_all_segs: Vec<Vec<DischargeSigInfo>>,
 }
 
 impl WordInfo{
@@ -137,6 +146,8 @@ impl WordInfo{
 			vec_dfa_sigs_info: vec![],
 			file_nibble_len: 0,
 			halo_nibbles: vec![],
+			failed_c_all_segs: vec![],
+			failed_c_info_all_segs: vec![],
 		}
 	}
 

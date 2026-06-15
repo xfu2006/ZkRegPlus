@@ -37,6 +37,7 @@ use ark_ff::{PrimeField, BigInteger};
 
 use crate::gadgets::{
 	commons::{encode_cols_better, gen_m_table, encode_cols_var_adv_better,
+		encode_cols, encode_cols_var,
 		new_const_var, check_eq, new_var, is_zero_better, var_to_lb,
 		check_prod_zero, better_select, verify_encode_cols_in_range},
 	db::{assert_logup,  gen_union_prf, verify_union_prf,
@@ -240,6 +241,8 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 					//extracting the dnf to the concat of inp_subsigs
 		sq_res_cs: &std::sync::Arc<std::sync::Mutex<Container<F>>>, // the steps_queue from the DischargeAdv
 		sq_res_igc: &std::sync::Arc<std::sync::Mutex<Container<F>>>, // the steps_queue from the DischargeAdv
+		sq_inp_cs: &std::sync::Arc<std::sync::Mutex<Container<F>>>, // forward seed (aggr seed tie)
+		sq_inp_igc: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
 		capacity: &ComputeSigAdvCapacity,
 		subsig_store_info_cs: &SubsigStepStore,
 		subsig_store_info_igc: &SubsigStepStore,
@@ -297,7 +300,8 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		let inp_sigs = [&pad2[..], &inp_sigs[..]].concat();
 		let (eval_res_combo_cs, raw_res_cs) = 
 			Self::gen_eval_subsig_by_sq_combo(false, -2, //case sensitive
-			&inp_subsigs_cs, sq_res_cs, &capacity, subsig_store_info_cs)?;
+			&inp_subsigs_cs, sq_res_cs, sq_inp_cs, &capacity,
+			subsig_store_info_cs)?;
 		stmt_container.lock().unwrap().add_container(eval_res_combo_cs);
 
 		//1.2 ignore case
@@ -306,7 +310,8 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		let inp_subsigs_igc = [&pad_igc[..], &inp_subsigs_igc[..]].concat();
 		let (eval_res_combo_igc, raw_res_igc) = 
 			Self::gen_eval_subsig_by_sq_combo(true, -1, //case sensitive
-			&inp_subsigs_igc, sq_res_igc, &capacity, subsig_store_info_igc)?;
+			&inp_subsigs_igc, sq_res_igc, sq_inp_igc, &capacity,
+			subsig_store_info_igc)?;
 		stmt_container.lock().unwrap().add_container(eval_res_combo_igc);
 
 		//2. based on non-deterministic advice of eval order
@@ -353,6 +358,7 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		offset_discharge: i32,
 		inp_subsigs: &Vec<F>, //this is either one of inp_subsigs_cs or igc
 		sq_res: &std::sync::Arc<std::sync::Mutex<Container<F>>>, //already sorted on subsig_step
+		sq_inp: &std::sync::Arc<std::sync::Mutex<Container<F>>>, //forward seed (aggr)
 		capacity: &ComputeSigAdvCapacity,
 		subsig_store_info: &SubsigStepStore,
 	)->Result<(std::sync::Arc<std::sync::Mutex<Container<F>>>,Vec<F>), Error>{
@@ -360,7 +366,7 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		//accumulator (sq_res is acc_out) instead of from the sq_res2 last-step.
 		if capacity.b_aggressive{
 			return Self::gen_eval_subsig_by_acc(b_igc, offset_discharge,
-				inp_subsigs, sq_res, capacity, subsig_store_info);
+				inp_subsigs, sq_res, sq_inp, capacity, subsig_store_info);
 		}
 		//0. init data
 		let b_debug = B_DEBUG;
@@ -546,6 +552,7 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		offset_discharge: i32,
 		inp_subsigs: &Vec<F>,
 		acc_ct: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
+		sq_inp: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
 		capacity: &ComputeSigAdvCapacity,
 		subsig_store_info: &SubsigStepStore,
 	)->Result<(std::sync::Arc<std::sync::Mutex<Container<F>>>,Vec<F>), Error>{
@@ -574,6 +581,25 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		let acc_lookup: HashSet<Vec<u8>> = acc_set.iter()
 			.filter(|f| !f.is_zero())
 			.map(|f| f.into_bigint().to_bytes_le()).collect();
+
+		// M7: external-ref the forward seed (sq_inp.encoded) and pin
+		// inp_subsig to it via encode(inp_subsig) subset-of seed. This
+		// replaces the QUICK cert: a subsig with a False verdict must have
+		// been seeded (else its encoded value is absent from the seed and
+		// the logup fails). encode_cols matches the seed's step-0 encoding
+		// (subsig at high pos, step/pat/rgs/rge = 0).
+		let seed_ext = sq_inp.lock().unwrap().duplicate_as_external_adv(
+			offset_discharge,
+			Some(format!("{} fwd_steps_queue sq_inp", sname)),
+			Some("seed_ref".to_string()));
+		let seed_enc: Vec<F> = seed_ext.get_container("encoded").unwrap()
+			.lock().unwrap().to_vec();
+		let zc = vec![zero; n];
+		let enc_inp = encode_cols(&vec![inp_subsigs.clone(),
+			zc.clone(), zc.clone(), zc.clone(), zc.clone()],
+			&vec![0,1,2,3,4]);
+		let mtbl_seed = gen_m_table(&enc_inp, &seed_enc);
+		let nm2 = mtbl_seed.len();
 
 		//2. per inp_subsig: LAST_STEP encoded key + its 4 encode sub-fields
 		//   (step, pat, rg_start, rg_end) + the membership verdict.
@@ -652,6 +678,12 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 			IDX_DATA));
 		res.lock().unwrap().add_col(Col::new_const(vec![zero;nm],
 			"sid_mtbl_membership", IDX_SI_DATA));
+		// M7 seed tie: external-ref seed + the subset-of m-table.
+		res.lock().unwrap().add_container(Arc::new(Mutex::new(seed_ext)));
+		res.lock().unwrap().add_col(Col::new(mtbl_seed, "mtbl_seed",
+			IDX_DATA));
+		res.lock().unwrap().add_col(Col::new_const(vec![zero;nm2],
+			"sid_mtbl_seed", IDX_SI_DATA));
 		Ok( (res, vec_res) )
 	}
 
@@ -1607,21 +1639,39 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 			 sq_res_obj_igc.to_container("sq_res2_igc ", false, true, true,
 				true, &store_steps_igc).expect("sq_res_igc err"))
 		};
+		// AGGRESSIVE seed tie: dummy sq_inp (forward seed) sized like the
+		// real one so compute_sig's mtbl_seed column matches in the cfg.
+		let sq_inp_size_cs = StepQueue::<F>::vec_size(
+			&StepQueueType::ResSmall, &dis_cap_cs).0;
+		let sq_inp_size_igc = StepQueue::<F>::vec_size(
+			&StepQueueType::ResSmall, &dis_cap_igc).0;
+		let dummy_sq_inp_cs = StepQueue::parse_from(
+			&vec![zero; sq_inp_size_cs], StepQueueType::ResSmall,
+			&dis_cap_cs, false)
+			.to_container("sq_inp", false, false, false, false,
+				&store_steps_cs).expect("dummy sq_inp cs");
+		let dummy_sq_inp_igc = StepQueue::parse_from(
+			&vec![zero; sq_inp_size_igc], StepQueueType::ResSmall,
+			&dis_cap_igc, true)
+			.to_container("sq_inp", false, false, false, false,
+				&store_steps_igc).expect("dummy sq_inp igc");
 		let mut sigs_to_id = HashMap::<String,usize>::new();
 		sigs_to_id.insert("none".to_string(), 0);
 
 
 		//3. create advice
 		let dummy_adv = ComputeSigAdvAdvice::new(
-			fsm_id_cs, 
-			fsm_id_igc, 
-			&sigs, 
-			&subsigs_cs, 
-			&subsigs_igc, 
+			fsm_id_cs,
+			fsm_id_igc,
+			&sigs,
+			&subsigs_cs,
+			&subsigs_igc,
 			&discharge_infos,
-			&sq_res_cs, 
-			&sq_res_igc, 
-			Clone::clone(&capacity), 
+			&sq_res_cs,
+			&sq_res_igc,
+			&dummy_sq_inp_cs,
+			&dummy_sq_inp_igc,
+			Clone::clone(&capacity),
 			store_steps_cs, 
 			store_steps_igc, 
 			store_extra_info_cs, 
@@ -1718,8 +1768,23 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 			maybe_masked.push(&encoded_last[i] * &b_maybe);
 		}
 
-		//3. SOUNDNESS logup: acc_out ⊆ maybe_masked
+		//3. SOUNDNESS logup: acc_out subset-of maybe_masked
 		assert_logup(cs.clone(), &acc_out, &maybe_masked, &mtbl, &r1)?;
+
+		//4. M7 SEED TIE: encode(inp_subsig) subset-of sq_inp.encoded, so
+		//every verdict-universe subsig was actually seeded into the forward
+		//(replaces QUICK; blocks a False-by-omission verdict). encode_cols_var
+		//matches the seed's step-0 encoding (subsig high, rest 0).
+		let seed_enc = eval_res_combo.get_container("seed_ref").unwrap()
+			.lock().unwrap().get_container("encoded").unwrap()
+			.lock().unwrap().to_vec();
+		let mtbl_seed = get("mtbl_seed");
+		let zc: Vec<FpVar<F>> = (0..n)
+			.map(|_| new_const_var(&cs, F::zero())).collect();
+		let enc_inp = encode_cols_var(&vec![inp_subsig.clone(),
+			zc.clone(), zc.clone(), zc.clone(), zc.clone()],
+			&vec![0,1,2,3,4]);
+		assert_logup(cs.clone(), &enc_inp, &seed_enc, &mtbl_seed, &r1)?;
 		Ok(())
 	}
 
@@ -2756,6 +2821,54 @@ use utils::consts::{read_global_config, get_global_config};
 	use folding_schemes::folding::foldpot::sigma_ir1cs::{SigmaGadget,
 		WordInfo, DischargeSigInfo};
 	use folding_schemes::folding::foldpot::container_config::ContainerConfig;
+
+	/// M7 adversarial: the seed tie `encode(inp_subsig) subset-of seed`
+	/// rejects a verdict-universe subsig that was NOT seeded into the
+	/// forward (the omission attack QUICK used to guard). Honest
+	/// (inp == seed) is SAT; a tampered un-seeded entry is UNSAT.
+	#[test]
+	fn test_m7_seed_tie_rejects_omission(){
+		use ark_relations::r1cs::ConstraintSystem;
+		use ark_r1cs_std::fields::fp::FpVar;
+		use ark_r1cs_std::alloc::AllocVar;
+		use crate::gadgets::commons::{encode_cols, encode_cols_var,
+			gen_m_table, new_const_var};
+		use crate::gadgets::db::assert_logup;
+		let enc = |xs: &[u64]| {
+			let f: Vec<Fr> = xs.iter().map(|&x| Fr::from(x)).collect();
+			let z = vec![Fr::zero(); xs.len()];
+			encode_cols(&vec![f, z.clone(), z.clone(), z.clone(),
+				z.clone()], &vec![0,1,2,3,4])
+		};
+		// forward seed = subsigs {1,2,3} (+ 0 dummy); committed + fixed.
+		let seed = [0u64,1,2,3];
+		let seed_enc_h = enc(&seed);
+		// honest m-table for inp == seed (seed subset-of seed).
+		let mtbl_h = gen_m_table(&seed_enc_h, &seed_enc_h);
+		let run = |inp: &[u64]| -> bool {
+			let cs = ConstraintSystem::<Fr>::new_ref();
+			let mk = |v: Fr, cs: &_| FpVar::new_witness(
+				ark_relations::r1cs::ConstraintSystemRef::clone(cs),
+				|| Ok(v)).unwrap();
+			let inp_var: Vec<FpVar<Fr>> = inp.iter()
+				.map(|&x| mk(Fr::from(x), &cs)).collect();
+			let seed_var: Vec<FpVar<Fr>> = seed_enc_h.iter()
+				.map(|&v| mk(v, &cs)).collect();
+			let mtbl_var: Vec<FpVar<Fr>> = mtbl_h.iter()
+				.map(|&v| mk(v, &cs)).collect();
+			let r1 = mk(Fr::from(7u64), &cs);
+			let zc: Vec<FpVar<Fr>> = (0..inp.len())
+				.map(|_| new_const_var(&cs, Fr::zero())).collect();
+			let enc_inp = encode_cols_var(&vec![inp_var, zc.clone(),
+				zc.clone(), zc.clone(), zc.clone()], &vec![0,1,2,3,4]);
+			assert_logup(cs.clone(), &enc_inp, &seed_var, &mtbl_var, &r1)
+				.unwrap();
+			cs.is_satisfied().unwrap()
+		};
+		assert!(run(&[0,1,2,3]), "honest inp == seed must be SAT");
+		assert!(!run(&[0,1,2,99]), "un-seeded subsig 99 must be UNSAT");
+		println!("=== test_m7_seed_tie_rejects_omission OK ===");
+	}
 	use std::{collections::{HashMap}};
 
 	/// a test case for discharge_test_case	
@@ -2995,10 +3108,12 @@ use utils::consts::{read_global_config, get_global_config};
 					&input_subsigs_cs, 
 					&input_subsigs_igc, 
 					&discharge_infos, 
-					&sq_res_cs, 
-					&sq_res_igc, 
-					&cap_sig, 
-					steps_store_cs, 
+					&sq_res_cs,
+					&sq_res_igc,
+					&sq_res_cs, //sq_inp placeholder (non-aggr: unused)
+					&sq_res_igc,
+					&cap_sig,
+					steps_store_cs,
 					steps_store_igc, 
 					steps_extra_store_cs, 
 					steps_extra_store_igc, 

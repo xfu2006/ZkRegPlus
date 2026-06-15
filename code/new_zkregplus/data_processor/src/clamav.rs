@@ -3492,10 +3492,11 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 	let _ = (np_cs, np_ig, sc_cs, sc_ig); //old recurrence metric dropped
 	let perc_pats_expansion_rate = (seg_size + 9999) / 10000;
 	let perc_pats_expansion_rate = perc_pats_expansion_rate.max(1);
-	// AGGRESSIVE M5: per-chunk NEEDS = universe subsigs whose keyword anchor
+	// AGGRESSIVE: per-chunk NEEDS = universe subsigs whose keyword anchor
 	// is present this chunk (anchor = vec_subsig_pm_bounds[is_bwd?last:first]
-	// .0, matching the gadget split_needs_quick + committed
-	// ID_SUBSIG_ANCHOR_PAT). Universe = survivor sigs (crit, not pm). cs/igc
+	// .0). Sizes aggr_needs_subsigs; the per-chunk failed_c universe
+	// (build_failed_c_per_seg) is what the gadget actually discharges.
+	// Universe = survivor sigs (crit, not pm). cs/igc
 	// kept separate then max (one aggr_needs_subsigs knob covers both
 	// discharge gadgets). 0 when flag-off (Default) so the non-aggressive
 	// estimate is byte-identical.
@@ -3652,11 +3653,30 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 	assert!(vec_sed_sigs_info.len()==vec_sed_sigs.len());
 	assert!(vec_dfa_sigs_info.len()==vec_dfa_sigs.len());
 
+	// Aggressive: per-segment CP failed_c, aligned to the circuit's
+	// max_word_len segments. Partition the whole-file dfa_crit acc paths
+	// (state carries across boundaries) by max_word_len*62 nibbles.
+	let (failed_c_all_segs, failed_c_info_all_segs) =
+		if read_global_config().clamav_cfg.b_aggressive_sde_for_rep {
+			let seg_nib = max_word_len * 62;
+			let info_by_name: HashMap<String, DischargeSigInfo> =
+				vec_sed_sigs_info.iter()
+					.map(|i| (i.sig_name.clone(), i.clone())).collect();
+			let no_crit_names: Vec<String> = vec_sigs_no_crit_pat
+				.iter().map(|s| s.name.clone()).collect();
+			build_failed_c_per_seg(
+				&dfa_crit.acc_path(&padded_nibbles),
+				&dfa_crit_igc.acc_path(&padded_nibbles),
+				seg_nib, dfa_crit, dfa_crit_igc,
+				map_crit_pat, map_crit_pat_igc,
+				&no_crit_names, &set_sigs_pm, sig_to_id, &info_by_name)
+		} else { (vec![], vec![]) };
 
 	let wi = WordInfo{
 		vec_sed_sigs, vec_dfa_sigs, vec_ised_sigs,
 		vec_sed_sigs_info, vec_ised_sigs_info, vec_dfa_sigs_info,
-		file_nibble_len: nibbles.len(), halo_nibbles: vec![]};
+		file_nibble_len: nibbles.len(), halo_nibbles: vec![],
+		failed_c_all_segs, failed_c_info_all_segs};
 
 	// 2026-05-16: probe 77319.1 — dump the raw discharge-prover
 	// output for this file. This is the GROUND TRUTH from
@@ -3711,6 +3731,69 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 	}
 
 	(fdr, wi)
+}
+
+/// AGGRESSIVE: per-segment CP failed_c (discharged sig ids + 1-1 info),
+/// the gadget's per-segment failed_sigs. `crit_acc_path_full*` MUST be
+/// the whole-file dfa_crit acc paths so the DFA state carries across
+/// segment boundaries; this only partitions them by seg_nib. Per chunk:
+/// accepted crit patterns -> sigs, union no_crit, keep discharged ones
+/// (name not in set_sigs_pm, mirrors vec_sed_sigs = crit \ pm); ids and
+/// info are built as pairs so they stay 1-1, sorted by id.
+fn build_failed_c_per_seg(
+	crit_acc_path_full: &Vec<usize>,
+	crit_acc_path_full_igc: &Vec<usize>,
+	seg_nib: usize,
+	dfa_crit: &HexACDFA, dfa_crit_igc: &HexACDFA,
+	map_crit_pat: &HashMap<String, Vec<String>>,
+	map_crit_pat_igc: &HashMap<String, Vec<String>>,
+	no_crit_names: &[String],
+	set_sigs_pm: &HashSet<String>,
+	sig_to_id: &HashMap<String, usize>,
+	info_by_name: &HashMap<String, DischargeSigInfo>,
+) -> (Vec<Vec<usize>>, Vec<Vec<DischargeSigInfo>>) {
+	if seg_nib == 0 { return (vec![], vec![]); }
+	let num_segs = (crit_acc_path_full.len() + seg_nib - 1) / seg_nib;
+	let mut ids_per_seg = Vec::with_capacity(num_segs);
+	let mut info_per_seg = Vec::with_capacity(num_segs);
+	for si in 0..num_segs {
+		let lo = si * seg_nib;
+		let hi = ((si + 1) * seg_nib).min(crit_acc_path_full.len());
+		let hi_ig = ((si + 1) * seg_nib).min(crit_acc_path_full_igc.len());
+		let lo_ig = lo.min(crit_acc_path_full_igc.len());
+		let mut names = HashSet::<String>::new();
+		for &st in &crit_acc_path_full[lo..hi] {
+			if dfa_crit.is_accept(st) {
+				for pat in dfa_crit.final_to_patterns(st) {
+					if let Some(sigs) = map_crit_pat.get(&pat) {
+						for s in sigs { names.insert(s.clone()); }
+					}
+				}
+			}
+		}
+		for &st in &crit_acc_path_full_igc[lo_ig..hi_ig] {
+			if dfa_crit_igc.is_accept(st) {
+				for pat in dfa_crit_igc.final_to_patterns(st) {
+					if let Some(sigs) = map_crit_pat_igc.get(&pat) {
+						for s in sigs { names.insert(s.clone()); }
+					}
+				}
+			}
+		}
+		for s in no_crit_names { names.insert(s.clone()); }
+		let mut pairs: Vec<(usize, DischargeSigInfo)> = names.iter()
+			.filter(|n| !set_sigs_pm.contains(*n))
+			.filter_map(|n| {
+				let id = sig_to_id.get(n)?;
+				let info = info_by_name.get(n)?;
+				Some((*id, info.clone()))
+			}).collect();
+		pairs.sort_by_key(|(id, _)| *id);
+		ids_per_seg.push(pairs.iter().map(|(id, _)| *id).collect());
+		info_per_seg.push(
+			pairs.into_iter().map(|(_, info)| info).collect());
+	}
+	(ids_per_seg, info_per_seg)
 }
 
 /// Return the FailDischargeRecord and WordInfo (even if it fails
@@ -3907,7 +3990,8 @@ pub fn deprecated_quick_discharge_file_adv(
 
 	WordInfo{ vec_sed_sigs, vec_dfa_sigs, vec_ised_sigs, vec_sed_sigs_info,
 		vec_ised_sigs_info, vec_dfa_sigs_info,
-		file_nibble_len: nibbles.len(), halo_nibbles: vec![]}
+		file_nibble_len: nibbles.len(), halo_nibbles: vec![],
+		failed_c_all_segs: vec![], failed_c_info_all_segs: vec![]}
 }
 
 
@@ -5227,6 +5311,79 @@ mod tests_clamav{
 			}
 		}
 		println!("=== sde_aggressive fixtures parse OK ===\n");
+	}
+
+	/// M7 host: build_failed_c_per_seg partitions the whole-file dfa_crit
+	/// acc path into per-segment failed_c, preserving the set, attributing
+	/// each pattern to its completion chunk, 1-1 with info, honoring the
+	/// no_crit union and the set_sigs_pm (discharged) filter.
+	#[test]
+	fn test_build_failed_c_per_seg(){
+		use super::{build_failed_c_per_seg, DischargeSigInfo};
+		let mk = |name: &str| DischargeSigInfo{
+			sig_name: name.to_string(), b_success: true, min_cost: 0,
+			min_dnf_id: 0, subsig_ids: vec![0], subsig_igc: vec![false] };
+		// dfa_crit over two literals: "ab" -> S1, "cd" -> S2. Patterns are
+		// hex-nibble strings (each char = one nibble); the all-digits
+		// filler makes the alphabet complete (HexACDFA requires 17) and
+		// never matches the crafted nibbles. igc is inert.
+		let fill = "0123456789abcdef".to_string();
+		let dfa = HexACDFA::new(0,
+			&vec!["ab".to_string(), "cd".to_string(), fill.clone()]);
+		let dfa_igc = HexACDFA::new(1, &vec![fill.clone()]);
+		let mut map = HashMap::<String,Vec<String>>::new();
+		map.insert("ab".to_string(), vec!["S1".to_string()]);
+		map.insert("cd".to_string(), vec!["S2".to_string()]);
+		let map_igc = HashMap::<String,Vec<String>>::new();
+		// "ab" -> nibbles 10,11 ; "cd" -> 12,13. ab completes in chunk 0,
+		// cd in chunk 1 (seg_nib=8).
+		let nibbles: Vec<u8> =
+			vec![10,11, 0,0,0,0,0,0, 12,13, 0,0,0,0,0,0];
+		let seg_nib = 8usize;
+		let path = dfa.acc_path(&nibbles);
+		let path_igc = dfa_igc.acc_path(&nibbles);
+		let mut sig_to_id = HashMap::<String,usize>::new();
+		for (n,i) in [("S1",1usize),("S2",2),("S3",3)]{
+			sig_to_id.insert(n.to_string(), i); }
+		let mut info = HashMap::<String,DischargeSigInfo>::new();
+		for n in ["S1","S2","S3"]{ info.insert(n.to_string(), mk(n)); }
+		let no_pm = HashSet::<String>::new();
+		let empty: Vec<String> = vec![];
+
+		// (1) per-segment vs (2) single-segment (file-level) partition.
+		let (ids, inf) = build_failed_c_per_seg(&path, &path_igc, seg_nib,
+			&dfa, &dfa_igc, &map, &map_igc, &empty, &no_pm, &sig_to_id,
+			&info);
+		let (full, _) = build_failed_c_per_seg(&path, &path_igc, path.len(),
+			&dfa, &dfa_igc, &map, &map_igc, &empty, &no_pm, &sig_to_id,
+			&info);
+		assert_eq!(ids.len(), (path.len()+seg_nib-1)/seg_nib);
+		assert!(ids.len() >= 2, "ab and cd must fall in distinct chunks");
+		for s in 0..ids.len(){ assert_eq!(ids[s].len(), inf[s].len()); }
+		// set preserved across chunking
+		let union: HashSet<usize> = ids.iter().flatten().cloned().collect();
+		let exp: HashSet<usize> = full[0].iter().cloned().collect();
+		assert_eq!(union, exp);
+		assert!(union.contains(&1) && union.contains(&2));
+		// boundary: S1 (ab) attributed to an earlier chunk than S2 (cd)
+		let seg_of = |id: usize| ids.iter().position(|v| v.contains(&id));
+		assert!(seg_of(1).unwrap() < seg_of(2).unwrap());
+
+		// (3) set_sigs_pm (non-discharged) filter drops S2 everywhere.
+		let mut pm = HashSet::<String>::new();
+		pm.insert("S2".to_string());
+		let (ids2, _) = build_failed_c_per_seg(&path, &path_igc, seg_nib,
+			&dfa, &dfa_igc, &map, &map_igc, &empty, &pm, &sig_to_id, &info);
+		let u2: HashSet<usize> = ids2.iter().flatten().cloned().collect();
+		assert!(!u2.contains(&2) && u2.contains(&1));
+
+		// (4) no_crit union: S3 appears in EVERY segment.
+		let no_crit = vec!["S3".to_string()];
+		let (ids3, _) = build_failed_c_per_seg(&path, &path_igc, seg_nib,
+			&dfa, &dfa_igc, &map, &map_igc, &no_crit, &no_pm, &sig_to_id,
+			&info);
+		for s in 0..ids3.len(){ assert!(ids3[s].contains(&3)); }
+		println!("=== test_build_failed_c_per_seg OK ===");
 	}
 
 }
