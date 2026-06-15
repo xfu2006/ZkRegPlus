@@ -2002,6 +2002,40 @@ impl ClamavSig{
 	pub fn add_critical_pattern(&self, map: &mut HashMap::<String,Vec<String>>,
 		map_igc: &mut HashMap<String,Vec<String>>)->bool{
 
+		// Aggressive: key discharge on each subsig's proximity KEYWORD anchor
+		// (bwd=last pm-bound token, else first), deduped across fanned variants,
+		// not the long digit literal get_critical_pattern would pick. Inserts
+		// directly (no update_map) so short keywords skip its <10-char warning.
+		if read_global_config().clamav_cfg.b_aggressive_sde_for_rep {
+			let mut set_cs = HashSet::<String>::new();
+			let mut set_igc = HashSet::<String>::new();
+			for sid in 0..self.vec_subsig_pm_bounds.len() {
+				let pb = &self.vec_subsig_pm_bounds[sid];
+				if pb.is_empty() { continue; }
+				let is_bwd = self.vec_subsig_anchor_dir.get(sid)
+					.map_or(false, |d| *d == 1);
+				let anchor = if is_bwd { &pb[pb.len()-1].0 }
+					else { &pb[0].0 };
+				if anchor.is_empty() { continue; }
+				let igc = self.vec_subsig_obj.get(sid)
+					.map_or(false, |o| o.b_ignore_case);
+				if igc { set_igc.insert(anchor.clone()); }
+				else { set_cs.insert(anchor.clone()); }
+			}
+			if set_cs.is_empty() && set_igc.is_empty() {
+				return false;
+			}
+			for pat in &set_cs {
+				map.entry(pat.clone()).or_insert_with(Vec::new)
+					.push(self.name.clone());
+			}
+			for pat in &set_igc {
+				map_igc.entry(pat.clone()).or_insert_with(Vec::new)
+					.push(self.name.clone());
+			}
+			return true;
+		}
+
 		//3. MAIN LOGIC:
 		// process each disjunctive item (just need to pick ONE result LATER)
 		let mut vec_all = vec![];
@@ -4065,6 +4099,50 @@ mod tests_clamav{
 		s_igc.vec_subsig_obj[0].b_ignore_case = true;
 		assert!(s_igc.check_aggressive_consistent().is_err(),
 			"igc subsig must be rejected");
+	}
+
+	/// M8: aggressive crit-pat collection keys on the proximity KEYWORD
+	/// anchor (deduped across the digit fan-out), not the digit variants.
+	#[test]
+	fn tests_aggressive_crit_keyword(){
+		let mut cfg = default_clamav_cfg();
+		cfg.b_aggressive_sde_for_rep = true;
+		cfg.sde_rep_fanout_cap = 1000;
+		let expr = "Agg.Kw.bwd;Engine:81-255,Target:0;0;\
+			/[0-9][0-9][0-9].{0,4}SECRETKW/";
+		let mut base = gen_clamav_sig(expr, ClamSigType::General, &cfg);
+		base.gen_approx_bagwords(&cfg);
+		base.gen_approx_pm_bounds(&cfg);
+		let (_span, anchors) =
+			base.compute_aggressive_shape(&cfg).expect("shape");
+		base.vec_subsig_anchor_dir = anchors;
+		// keyword-rightmost (bwd) => anchor = last pm-bound token, shared
+		// across every fanned variant.
+		let pb0 = &base.vec_subsig_pm_bounds[0];
+		let kw = pb0[pb0.len()-1].0.clone();
+		// a genuine fanned variant carries [digit, keyword]; the degenerate
+		// '000' variant drops its digit bagword (len 1), so pick a 2-token one.
+		let digit_variant = base.vec_subsig_pm_bounds.iter()
+			.find(|pb| pb.len() >= 2).map(|pb| pb[0].0.clone())
+			.expect("a fanned variant with a digit token");
+
+		// add_critical_pattern reads the GLOBAL flag, not cfg.
+		utils::consts::get_global_config()
+			.clamav_cfg.b_aggressive_sde_for_rep = true;
+		let mut map = HashMap::<String,Vec<String>>::new();
+		let mut map_igc = HashMap::<String,Vec<String>>::new();
+		let ok = base.add_critical_pattern(&mut map, &mut map_igc);
+		utils::consts::get_global_config()
+			.clamav_cfg.b_aggressive_sde_for_rep = false;
+
+		assert!(ok, "aggressive sig must yield a crit pattern");
+		assert_eq!(map.len(), 1, "one keyword key, deduped: {:?}",
+			map.keys());
+		assert!(map.contains_key(&kw), "keyword anchor must be the key");
+		assert_eq!(map[&kw], vec![base.name.clone()]);
+		assert!(!map.contains_key(&digit_variant),
+			"digit variant must NOT be a crit key");
+		assert!(map_igc.is_empty(), "all-CS sig => no igc keys");
 	}
 
 	/// T4 (load-bearing): forward eval of the stored chain and backward

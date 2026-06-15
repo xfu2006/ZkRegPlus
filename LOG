@@ -29181,7 +29181,7 @@ Goal 3. writing
 	[f] generate a sample table for sketch
 	[g] zombie p1
 	[h] bullet 1 refine
-	[i] 
+	[i] bullet 2 done 
 Goal 4. continue implementation of new scheme
 	[a] read summary  -> good major problem solved
 	[b] review design plan 
@@ -29189,8 +29189,13 @@ Goal 4. continue implementation of new scheme
 	[d] M0 -> DONE
 	[e] build full dlp DB again -> PASSED
 	[f] M2 -> DONE
-	[g] M3 -> DONE
-	[h] M4 -> 
+	[g] M6 -> DONE
+	[h] M6 drop quick segment
+	[i] design removing the "quick" from the framework.
+	[j] M7 -> redesign
+	[k] keep quick or not?
+
+-- TODO -- study the stats to decide whether to keep quick or needs.
 
 
 
