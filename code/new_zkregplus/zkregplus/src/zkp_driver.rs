@@ -3144,6 +3144,10 @@ pub mod tests_zkp_driver{
 			init_sed_cap.max_word_len, init_sed_cap.acdfa_state_part_bits,
 			1, 1, 1, 4, 64, 1, 1,
 			init_sed_cap.basis_unique_states, 2);
+		//M9: per-seg circuit selection is wired in the planner, but the
+		//multi-rung ladder is BLOCKED until the CP inp_sigs carry is made
+		//size-uniform across rungs (cp_mapper sig_buf_capacity=subsigs ->
+		//heterogeneous-rung carry mismatch). Kept at 1 rung == M7.
 		let cs_caps = vec![(init_cp_cap, init_sed_cap,
 			init_cp_cap_igc, init_sed_cap_igc)];
 

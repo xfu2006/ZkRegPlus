@@ -29204,6 +29204,8 @@ Goal 2. Milestone M7
 	[a] refine design
 	[b] review soundness
 	[c] review plan again
+	[d] impl -> DONE
+	[e] test
 
 Goal 2. Writing
 	[a] bullet 3
@@ -29211,6 +29213,9 @@ Goal 2. Writing
 	[c] entire paragraph
 	[d] bullet 3
 	[e] discussion the strcuture of the final comparison table.
+	[f] generate the table.
+	[g] structure of 7.8
+	[h] bullet 1 of 7.8
 
 
 

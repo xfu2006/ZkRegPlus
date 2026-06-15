@@ -940,6 +940,90 @@ where
 		Ok((num_segs, vec_size, vec_pci, vec_cap, vec_adv))
 	}
 
+	/// Aggressive: per-segment circuit selection. Each segment uses
+	/// the cheapest rung (layer) whose gen_nd_advice succeeds, bumping
+	/// up on any CapErr. Carry threads across rungs (state-only).
+	fn gen_nd_advice_per_seg_pll(
+		p_layered: &Vec<Vec<FC>>,
+		job_id: usize, _log_level: usize, b_save_advice: bool,
+		word: &Vec<CF1<C1>>, word_info: &WordInfo)
+		-> Result<(usize, Vec<usize>, Vec<usize>,
+			Vec<Arc<dyn Capacity + Send + Sync>>,
+			Vec<Arc<dyn NdAdvice + Send + Sync>>),Error>
+	{
+		let mut vec_pci = vec![];
+		let mut vec_size = vec![];
+		let mut vec_cap = vec![];
+		let mut vec_adv:Vec<Arc<dyn NdAdvice + Send + Sync>> = vec![];
+		let max_layer = p_layered.len()-1;
+		let max_wlen = lock_unwrap!(p_layered[0][0].get_mapper())
+			.max_word_len();
+		let wlen = word.len();
+		let num_segs = if wlen % max_wlen==0{wlen/max_wlen}
+			else {wlen/max_wlen+1};
+		let mut prev_adv = None;
+		for i in 0..num_segs{
+			let start = i*max_wlen;
+			let end = if (i+1)*max_wlen>wlen {wlen} else {(i+1)*max_wlen};
+			let seg = word[start..end].to_vec();
+			//halo is rung-independent (M = db max span); build once.
+			let m_halo = lock_unwrap!(p_layered[0][0].get_mapper())
+				.get_capacity().halo_nibbles();
+			let wi_owned;
+			let wi_ref = if m_halo>0 && end<wlen {
+				let n_end = if end+max_wlen>wlen {wlen}
+					else {end+max_wlen};
+				let nxt = utils::data::packed_to_nibbles(
+					&word[end..n_end].to_vec());
+				let take = m_halo.min(nxt.len());
+				let mut wi = word_info.clone();
+				wi.halo_nibbles = nxt[0..take].iter()
+					.map(|f| field_to_usize(f) as u8).collect();
+				wi_owned = wi;
+				&wi_owned
+			} else { word_info };
+			//bump from cheapest rung until the segment fits. Capacity
+			//overflow can surface as a panic (CapErr is not uniformly
+			//propagated), so catch it and treat as "rung too small",
+			//mirroring par_search_best_layer_pll.
+			let mut chosen = None;
+			let mut last_err = None;
+			for l in 0..=max_layer{
+				let circ = &p_layered[l][0];
+				let cap = lock_unwrap!(circ.get_mapper()).get_capacity();
+				let r = std::panic::catch_unwind(
+					std::panic::AssertUnwindSafe(|| {
+					lock_unwrap!(circ.get_mapper()).gen_nd_advice(
+						&seg, wi_ref, prev_adv.clone(), i, job_id)
+				})).unwrap_or_else(|e| {
+					let msg = if let Some(s)=e.downcast_ref::<&str>(){
+						s.to_string()
+					} else if let Some(s)=e.downcast_ref::<String>(){
+						s.clone()
+					} else { "Unknown panic".to_string() };
+					Err(Error::Other(format!(
+						"per-seg rung {} panic: {}", l, msg)))
+				});
+				match r{
+					Ok(adv) => {chosen=Some((l, cap.clone(), adv)); break;},
+					Err(e) => {last_err=Some(e);},
+				}
+			}
+			let (l, cap, adv) = match chosen{
+				Some(t) => t,
+				None => return Err(last_err.unwrap_or(
+					Error::NotSupported(
+						"no rung fits segment".to_string()))),
+			};
+			vec_pci.push(l);
+			vec_size.push(end-start);
+			vec_cap.push(cap);
+			prev_adv = Some(adv.clone());
+			if b_save_advice{ vec_adv.push(adv); }
+		}
+		Ok((num_segs, vec_size, vec_pci, vec_cap, vec_adv))
+	}
+
 	fn par_search_best_layer_pll(
 		p_layered: &Vec<Vec<FC>>,
 		job_id: usize, log_level: usize, b_save_advice: bool,
@@ -1036,25 +1120,40 @@ where
 			"DEBUG USE 73112.3: plan_pll BEFORE par_search \
 			 job={} max_layer={}",
 			job_id, p_layered.len()-1));
-		let (_best_layer, num_segs, vec_seg_size, vec_pci,
-				vec_cap, vec_adv) = {
-			let min_layer = 0;
-			let max_layer = p_layered.len()-1;
-			Self::par_search_best_layer_pll(
+		let aggr = utils::consts::read_global_config()
+			.clamav_cfg.b_aggressive_sde_for_rep;
+		let (num_segs, vec_seg_size, vec_pci, vec_cap, vec_adv) = if aggr {
+			let r = Self::gen_nd_advice_per_seg_pll(
 				p_layered, job_id, log_level+2, b_save_advice,
-				word, word_info, min_layer, max_layer)
-		}?;
-		emit_stdout(format!(
-			"DEBUG USE 73112.4: plan_pll AFTER  par_search \
-			 job={} best={}",
-			job_id, _best_layer));
-		let pci = vec_pci[0];
-		for x in &vec_pci{assert!(*x==pci);}
-		log_perf(job_id, log_level, &format!(
-			"PERF 1001: plan_nd_advice_pll for {}, fast: {}, \
-			 best_layer: {}, pci: {}, word.len: {} bytes.",
-			word_fname, b_fast, _best_layer, pci,
-			word.len() * 63/2), &mut gt2);
+				word, word_info)?;
+			//DEBUG USE 64211.1: per-chunk rung choices.
+			if std::env::var("ZKR_PROBE_64211").is_ok() {
+				emit_stdout(format!(
+					"DEBUG USE 64211.1: vec_pci={:?}", r.2));
+			}
+			r
+		} else {
+			let (_best_layer, num_segs, vec_seg_size, vec_pci,
+					vec_cap, vec_adv) = {
+				let min_layer = 0;
+				let max_layer = p_layered.len()-1;
+				Self::par_search_best_layer_pll(
+					p_layered, job_id, log_level+2, b_save_advice,
+					word, word_info, min_layer, max_layer)
+			}?;
+			emit_stdout(format!(
+				"DEBUG USE 73112.4: plan_pll AFTER  par_search \
+				 job={} best={}",
+				job_id, _best_layer));
+			let pci = vec_pci[0];
+			for x in &vec_pci{assert!(*x==pci);}
+			log_perf(job_id, log_level, &format!(
+				"PERF 1001: plan_nd_advice_pll for {}, fast: {}, \
+				 best_layer: {}, pci: {}, word.len: {} bytes.",
+				word_fname, b_fast, _best_layer, pci,
+				word.len() * 63/2), &mut gt2);
+			(num_segs, vec_seg_size, vec_pci, vec_cap, vec_adv)
+		};
 		Ok((num_segs, vec_seg_size, vec_pci, vec_cap, vec_adv))
 	}
 
