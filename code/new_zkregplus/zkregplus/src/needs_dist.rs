@@ -161,6 +161,21 @@ pub fn print_needs_dist_rows(rows: &Vec<Vec<usize>>, fnames: &[String]) {
 			lo, hi, cnt, pc(cnt), 100.0*cnt as f64/nz_n as f64);
 	}
 
+	// Optional raw dump for an off-line finer histogram (ZKR_NEEDS_RAW_DUMP).
+	// Inert by default; writes pooled non-zero per-chunk NEEDS and per-file
+	// max NEEDS to /tmp so a Python script can bin them at chosen cutoffs.
+	if std::env::var("ZKR_NEEDS_RAW_DUMP").is_ok() {
+		let join = |xs: &[usize]| xs.iter().map(|x| x.to_string())
+			.collect::<Vec<_>>().join("\n");
+		let fmaxes: Vec<usize> = rows.iter()
+			.map(|r| r.iter().copied().max().unwrap_or(0)).collect();
+		let _ = std::fs::write("/tmp/needs_raw_chunks.txt", join(&nz));
+		let _ = std::fs::write("/tmp/needs_raw_filemax.txt", join(&fmaxes));
+		println!("[needs_dist] raw dump -> /tmp/needs_raw_chunks.txt \
+			({} nz chunks), /tmp/needs_raw_filemax.txt ({} files)",
+			nz.len(), fmaxes.len());
+	}
+
 	write_lines("data/paper_data/dlp/report/needs_dist_report.txt", &v, true);
 	println!("[needs_dist] report -> /tmp/needs_dist_report.txt");
 }

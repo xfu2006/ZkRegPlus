@@ -502,6 +502,19 @@ fn card_igc(class: &Class, b_igc: bool) -> usize {
 	fold_bytes_igc(&class_to_arr(class, &mut dummy), b_igc).len()
 }
 
+/// True iff every byte the class matches is an ASCII digit (0x30..=0x39).
+/// A pure-digit leg pins to a digit in EVERY variant, so its high-nibble
+/// borrow always yields a clean 3-nibble anchor; a mixed leg (e.g. a
+/// `[\x2D0-9]` dash-or-digit column from an APPROX merge) has non-digit
+/// variants that produce no anchor. select_slots funds pure-digit legs
+/// first so the fan-out budget is never starved on a mixed column before
+/// reaching a clean digit run.
+fn leg_is_pure_digit(class: &Class) -> bool {
+	let mut dummy = 0usize;
+	let bytes = class_to_arr(class, &mut dummy);
+	!bytes.is_empty() && bytes.iter().all(|&b| (0x30..=0x39).contains(&b))
+}
+
 /// One pinnable character-class "leg", e.g. `[0-9]{3}` or `[0-9]{2,5}`.
 /// `min` = guaranteed occurrences (only these positions are safely
 /// pinnable); `max` = upper bound (None = unbounded), kept for the
@@ -881,14 +894,20 @@ fn select_slots(legs: &[Leg], b: usize,
 	let max_n = legs.iter().map(|l| l.min).max().unwrap_or(0);
 	let mut chosen = Vec::new();
 	let mut product = 1usize;
-	//two passes: fund guaranteed (mandatory) legs first, then
-	//optional/alternation legs with whatever budget remains. Mandatory
-	//pins become pm-reg anchors; optional ones collapse to wildcards.
-	//All-mandatory (or all-optional) reduces to the old single pass.
+	//passes: fund guaranteed (mandatory) legs before optional ones, and
+	//within each, pure-digit legs before mixed (separator+digit) ones.
+	//Mandatory pins become pm-reg anchors; optional ones collapse to
+	//wildcards. A pure-digit leg anchors in every variant, so funding it
+	//first keeps the budget from being starved on a mixed column (e.g.
+	//`[\x2D0-9]`) before a clean digit run. Pure-digit-only inputs (the
+	//NEEDS drivers) are unchanged: the mixed pass finds nothing.
 	for want_optional in [false, true] {
+	for want_pure in [true, false] {
 		for round in 0..max_n {
 			for &leg in &prio {
 				if legs[leg].optional != want_optional { continue; }
+				if leg_is_pure_digit(&legs[leg].class) != want_pure {
+					continue; }
 				if round >= qs[leg].len() { continue; }
 				//budget uses folded cardinality (igc collapses cases).
 				let c = card_igc(&legs[leg].class, b_igc);
@@ -903,6 +922,7 @@ fn select_slots(legs: &[Leg], b: usize,
 				}
 			}
 		}
+	}
 	}
 	chosen
 }
@@ -1520,6 +1540,31 @@ fn factor_high_nibble(vbytes: &[u8]) -> Vec<String> {
 	let branches: Vec<String> = groups.iter()
 		.map(|(h, ls)| fmt_group(*h, ls)).collect();
 	vec![format!("({})", branches.join("|"))]
+}
+
+/// Expose the fixed high nibble of a single-high-nibble class group so it sits
+/// CONTIGUOUS with an adjacent pinned/literal byte, giving the pm-reg extractor
+/// a >=3-hex anchor (e.g. a pinned `30` before a digit class yields `303`).
+/// In one non-overlapping pass over a rustomaton-hex string:
+///   `(h(l|l|..))`     -> `h(l|l|..)`                  (paren is redundant)
+///   `(h(l|l|..)){n}`  -> `h(l|l|..)(h(l|l|..)){n-1}`  (PEEL one iteration)
+/// Peeling -- never bare-stripping a quantified group -- keeps the language
+/// identical. Used ONLY on aggressive fan-out variant real_values, so the
+/// non-aggressive pipeline is byte-identical. Multi-high-nibble groups (letters:
+/// `(4..|5..)`) and `(?:..)` never match (`[0-9a-f]\(` needs a single hex digit
+/// right after `(`), so alternations are left untouched.
+pub fn expose_hi_nibble_anchor(hex: &str) -> String {
+	let rx = match regex::Regex::new(
+		r"\(([0-9a-f]\([^()]*\))\)(?:\{(\d+)\})?") {
+		Ok(r) => r, Err(_) => return hex.to_string(),
+	};
+	rx.replace_all(hex, |c: &regex::Captures| {
+		let inner = &c[1];
+		match c.get(2).map(|m| m.as_str().parse::<usize>().unwrap_or(1)) {
+			None | Some(0) | Some(1) => inner.to_string(),
+			Some(k) => format!("{}({}){{{}}}", inner, inner, k - 1),
+		}
+	}).to_string()
 }
 
 /// no packing to . trick
@@ -2814,7 +2859,7 @@ mod tests_pcre{
 		use crate::clamav::default_clamav_cfg;
 		let mut cfg = default_clamav_cfg();
 		cfg.b_aggressive_sde_for_rep = true;
-		cfg.sde_rep_fanout_cap = 100;
+		cfg.sde_rep_fanout_cap = 200;
 		//cs: raw card 12 -> only 1 position fits (12<=100<144).
 		let cs = expand_rep_subsig("[a-fA-F]{3}", false, &cfg)
 			.expect("cs some");
@@ -2906,7 +2951,7 @@ mod tests_pcre{
 		use crate::clamav::default_clamav_cfg;
 		let mut cfg = default_clamav_cfg();
 		cfg.b_aggressive_sde_for_rep = true;
-		cfg.sde_rep_fanout_cap = 100;
+		cfg.sde_rep_fanout_cap = 200;
 		// forward arm -> dir 0, no KwInMiddle crash.
 		let fwd = "[\\x20\\x09\\x0a\\x0d]insurance[\\x20\\x09\\x0a\\x0d]\
 			.{0,300}[A-Za-z]{2}[0-9]{6}[ABCDabcd]";
@@ -2946,6 +2991,24 @@ mod tests_pcre{
 			.is_none());
 		assert!(partition_keyword_gap(&to_hir("foo[0-9]{3}"), None)
 			.is_none());
+	}
+
+	#[test]
+	pub fn tests_expose_hi_nibble_anchor(){
+		use super::{expose_hi_nibble_anchor,
+			collect_pm_reg_from_rustomaton_regex};
+		// unquantified group -> de-paren; pinned 30 + exposed 3 = "303".
+		let a = expose_hi_nibble_anchor("30(3(0|1|2|3|4|5|6|7|8|9))30");
+		assert_eq!(a, "303(0|1|2|3|4|5|6|7|8|9)30");
+		assert!(collect_pm_reg_from_rustomaton_regex(&a, 3).iter()
+			.any(|(w, _)| w == "303"), "no 303 anchor: {:?}",
+			collect_pm_reg_from_rustomaton_regex(&a, 3));
+		// QUANTIFIED group -> PEEL (keeps {n} semantics, never corrupts).
+		let b = expose_hi_nibble_anchor("30(3(0|1)){5}30");
+		assert_eq!(b, "303(0|1)(3(0|1)){4}30");
+		// letters (multi-hi-nibble) + non-capturing groups untouched.
+		let c = "((?:4(1)|5(2))|3(0)3(1))";
+		assert_eq!(expose_hi_nibble_anchor(c), c);
 	}
 
 }

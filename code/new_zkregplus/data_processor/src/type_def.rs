@@ -86,6 +86,10 @@ pub struct SubSigObj{
 	/// See doc: https://docs.clamav.net/manual/Signatures/LogicalSignatures.html (4.7.1)
 	/// ``=X,Y: If the SUB-EXPRESSION A refers to a single signature then this signature must be matched exactly X times; if it refers to a (logical) block of signatures then this block must generate X matches and at least Y different signatures must get matched. ''
 	pub min_required: usize,
+	/// true if this subsig is one of the aggressive rep-fanout variants (a
+	/// borrow-expanded sibling). Used to assert the fan-out produced anchors.
+	#[serde(default)]
+	pub b_fanout_variant: bool,
 }
 
 /// tri-value ''boolean logic''

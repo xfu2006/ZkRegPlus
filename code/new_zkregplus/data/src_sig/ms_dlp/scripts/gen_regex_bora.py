@@ -244,6 +244,9 @@ def write_log(p, rows, n_sigs):
             ctag = "  combos=%d" % len(r["combos"])
             if r["truncated"]:
                 ctag += "/%d(trunc)" % r["n_total"]
+            if r.get("compress"):
+                ctag += "  compress=%s[%d->%d]" % (r["compress"]["kind"],
+                          r["compress"]["before"], r["compress"]["after"])
             f.write("[%-6s] %s  keywords=%d%s  files=%d  %s%s\n"
                     % (r["status"], r["slug"], len(r["keywords"]), ctag,
                        r["n_files"], ptag, stag))

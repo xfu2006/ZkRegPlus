@@ -49,7 +49,7 @@ use crate::{
 	strings::{find_all,extract_nums,validate_counter_constraint,validate_ra_regex,validate_ra_regex_relaxed,validate_pm_regex,is_match,find_only,count_occ,drop_last_dotstar,split,validate_expr},
 	type_def::{PcreInfo,ClamSigType,SubSigType,SubSigObj,ClamavApproxConfig,TriVal,ClamavSig,EvalDNF,CompOp},
 	hex_acdfa::{HexACDFA},
-	pcre::{collect_bag_words_from_rustomaton_regex, collect_pm_reg_from_rustomaton_regex, rustomaton_to_hir, collect_pm_reg_from_rustomaton_regex_worker, vec_pmreg_to_res, pcre_to_dfa, clamav_genregex_to_dfa, filter_bag_of_words,parse_pcre_subsig, expand_rep_subsig, pcre_to_rustomaton_regex, to_hir, analyze_aggressive_shape, direction_from_name, AggShapeErr},
+	pcre::{collect_bag_words_from_rustomaton_regex, collect_pm_reg_from_rustomaton_regex, rustomaton_to_hir, collect_pm_reg_from_rustomaton_regex_worker, vec_pmreg_to_res, pcre_to_dfa, clamav_genregex_to_dfa, filter_bag_of_words,parse_pcre_subsig, expand_rep_subsig, pcre_to_rustomaton_regex, expose_hi_nibble_anchor, to_hir, analyze_aggressive_shape, direction_from_name, AggShapeErr},
 	fsa_utils::{size_nfa,build_dfa,size_dfa,empty_nfa,build_nfa,get_total_size},
 	preprocess::{is_pcre_subsig,handle_range,handle_modifier,handle_location,handle_negation,handle_modifier_for_pm,handle_location_for_pm,recursive_triggers,plug_in_trigger,extract_clamav_reg},
 	discharge_proof::{FailDischargeRecord, ChunkPeaks},
@@ -850,6 +850,11 @@ impl ClamavSig{
 
 	/// NEW approach: directly based on regex structure
 	pub fn gen_approx_pm_bounds_new(&mut self, cfg: &ClamavApproxConfig){
+		// e2e check (aggressive + ZKR_ASSERT_FANOUT_PM): a rep-fanout variant
+		// must carry >=2 pm bag-word anchors, proving the borrow expansion
+		// turned an abstract class into concrete SED anchors.
+		let assert_fanout = cfg.b_aggressive_sde_for_rep
+			&& std::env::var("ZKR_ASSERT_FANOUT_PM").is_ok();
 		self.vec_subsig_pm_bounds = self.vec_subsig_obj.iter().map(|s|{
 			let vec = match s.subsig_type{
 				SubSigType::GeneralRegex => 
@@ -907,6 +912,16 @@ impl ClamavSig{
 			};
 
 			let new_vec = self.remove_special_pats(&vec, s);
+			// Verify the fan-out PRODUCED >=2 anchors (keyword + >=1 value);
+			// check the raw `vec`, not post-filter `new_vec`, since
+			// remove_special_pats may soundly drop a noise anchor (e.g. an
+			// all-zero pin -> "00") -- that is the filter's job, not a
+			// failed fan-out. A raw vec < 2 is the real dead case.
+			if assert_fanout && s.b_fanout_variant {
+				assert!(vec.len() >= 2,
+					"fanout variant produced <2 pm anchors: {:?} -> {:?}",
+					s.value, vec);
+			}
 			new_vec
 		}).collect::<Vec<Vec<(String, (usize, usize) )>>>();
 	}
@@ -2489,7 +2504,7 @@ impl ClamavSig{
 					subsig_type: SubSigType::GeneralRegex,
 					real_value: x.clone(), b_ignore_case: b_igc,
 					set_subsigs: HashSet::<usize>::new(),
-					min_required: 0});
+					min_required: 0, b_fanout_variant: false});
 				continue;
 			}
 			let variants_opt = if self.vec_pcre_info[id].b_pcre {
@@ -2505,10 +2520,14 @@ impl ClamavSig{
 						//Variants are emitted in PCRE \xNN body
 						//form; convert real_value to hex so the
 						//variant bagwords match the base encoding.
+						//expose hi-nibble borrow: un-wrap single-hi-nibble
+						//class parens so a pinned byte + adjacent class high
+						//nibble forms a >=3-hex pm anchor (aggr variants only).
 						let (v_hex, _pi) =
 							pcre_to_rustomaton_regex(v,
 								cfg.variant_combine_cap,
 								cfg.repeat_limit);
+						let v_hex = expose_hi_nibble_anchor(&v_hex);
 						new_ids.push(vec_sig_obj.len());
 						vec_sig_obj.push(SubSigObj{
 							value: v.clone(),
@@ -2518,7 +2537,8 @@ impl ClamavSig{
 							b_ignore_case: b_igc,
 							set_subsigs:
 								HashSet::<usize>::new(),
-							min_required: 0});
+							min_required: 0,
+							b_fanout_variant: true});
 						new_subsigs.push(v.clone());
 						new_bneg.push(self.vec_bneg[id]);
 						new_bcase.push(
@@ -2541,6 +2561,7 @@ impl ClamavSig{
 							SubSigType::GeneralRegex,
 						real_value: x.clone(),
 						b_ignore_case: b_igc,
+						b_fanout_variant: false,
 						set_subsigs:
 							HashSet::<usize>::new(),
 						min_required: 0});
@@ -2588,8 +2609,8 @@ impl ClamavSig{
 			let b_igc = !self.vec_bcase_sensitive[id];
 			let newobj = SubSigObj{value: subexp.clone(), subsig_type: SubSigType::CounterConstraint, real_value: r_val, b_ignore_case: b_igc,
 				set_subsigs: HashSet::<usize>::new(),
-				min_required: 0,
-			}; 
+				min_required: 0, b_fanout_variant: false,
+			};
 			vec_sig_obj.push(newobj);
 			sexpr2 = sexpr2.replace(&subexp, 
 				&format!("{}",newid));
@@ -2646,7 +2667,7 @@ impl ClamavSig{
 					let b_igc = !self.vec_bcase_sensitive[*id];
 					let newobj = SubSigObj{value: newstr.clone(), subsig_type: SubSigType::CounterConstraint, real_value: r_val, b_ignore_case: b_igc,
 						set_subsigs: HashSet::<usize>::new(),
-						min_required: 0,
+						min_required: 0, b_fanout_variant: false,
 					}; 
 					vec_sig_obj.push(newobj);
 					set_subsigs.insert(vec_sig_obj.len()-1);
@@ -2666,7 +2687,7 @@ impl ClamavSig{
 					if b_pm { self.validate_subsig_single_pattern(*id);}
 					set_subsigs.insert(*id);
 				}
-				let newobj = SubSigObj{value: old_subexp.clone(), subsig_type: SubSigType::SubsigCountConstraint, real_value: old_subexp.clone(), b_ignore_case: false, set_subsigs: set_subsigs, min_required: min_required};
+				let newobj = SubSigObj{value: old_subexp.clone(), subsig_type: SubSigType::SubsigCountConstraint, real_value: old_subexp.clone(), b_ignore_case: false, set_subsigs: set_subsigs, min_required: min_required, b_fanout_variant: false};
 				vec_sig_obj.push(newobj.clone());
 				let newid = vec_sig_obj.len()-1;
 				sexpr2 = sexpr2.replace(&old_subexp, &format!("{}", newid));
@@ -2695,7 +2716,7 @@ impl ClamavSig{
 					let b_igc = !self.vec_bcase_sensitive[*id];
 					let newobj = SubSigObj{value: newstr.clone(), subsig_type: SubSigType::CounterConstraint, real_value: r_val, b_ignore_case: b_igc,
 						set_subsigs: HashSet::<usize>::new(),
-						min_required: 0,
+						min_required: 0, b_fanout_variant: false,
 					}; 
 					vec_sig_obj.push(newobj);
 					set_subsigs.insert(vec_sig_obj.len()-1);
@@ -2708,7 +2729,7 @@ impl ClamavSig{
 				if !b_subsig_count{
 					sexpr2 = sexpr2.replace(&old_subexp, &newexpr);
 				}else{
-					let newobj = SubSigObj{value: old_subexp.clone(), subsig_type: SubSigType::SubsigCountConstraint, real_value: old_subexp.clone(), b_ignore_case: false, set_subsigs: set_subsigs, min_required: min_required};
+					let newobj = SubSigObj{value: old_subexp.clone(), subsig_type: SubSigType::SubsigCountConstraint, real_value: old_subexp.clone(), b_ignore_case: false, set_subsigs: set_subsigs, min_required: min_required, b_fanout_variant: false};
 					vec_sig_obj.push(newobj.clone());
 					let newid = vec_sig_obj.len()-1;
 					sexpr2 = sexpr2.replace(&old_subexp, &format!("{}", newid));
@@ -2743,7 +2764,7 @@ impl ClamavSig{
 				let b_igc = !self.vec_bcase_sensitive[*id];
 				let newobj = SubSigObj{value: newstr.clone(), subsig_type: SubSigType::CounterConstraint, real_value: r_val, b_ignore_case: b_igc,
 				set_subsigs: HashSet::<usize>::new(),
-				min_required: 0,
+				min_required: 0, b_fanout_variant: false,
 				}; 
 				vec_sig_obj.push(newobj);
 				self.vec_bneg.push(b_neg);
@@ -4713,7 +4734,7 @@ mod tests_clamav{
 				(s.0.to_string(), s.1))
 				.collect::<Vec<(String,(usize,usize))>>();
 			let sig = SubSigObj{value: s.to_string(), subsig_type:SubSigType::GeneralRegex, real_value: s.to_string(), b_ignore_case: false,
-				set_subsigs: HashSet::<usize>::new(), min_required: 0}; 
+				set_subsigs: HashSet::<usize>::new(), min_required: 0, b_fanout_variant: false}; 
 			let act = sig.gen_pm_bounds(&cfg);
 			assert!(expected==act, "failed_gen_pm for s: {}, expected: {:?}, actual: {:?}", s, expected, act);
 		}

@@ -1,1 +1,0 @@
-[\x20\x09\x0A\x0D]passportno[\x20\x09\x0A\x0D].{0,300}[A-Za-z][0-9]{8}

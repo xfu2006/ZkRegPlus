@@ -29236,8 +29236,26 @@ Goal 1. analyze the example
 	[a] ITIN examples expands into 88 expr because of alternation
 	[b] check the other examples 
 	[c] go over the alternation classes and see if they can be compiled
-Goal 2. Writing
+	[d] get the baseline to comparison
+	[e] plan the regex approx
 
+Goal 2. implement the improved regex approx algorithm
+	[a] plan
+	[b] review design
+	[c] implementation
+	[d] test. 
+	[e] check if fanout still works? -> RETEST.
+	[f] check zombie eval works?
 
+Goal 3. Writing -> 7.8 DONE.
+	[a] paragraph 2
+	[b] paragraph 3 
+	[c] paragraph 4
+	[d] paragraph 5
+	[c] paraggraph 4
+
+Goal 4. continue to check regex genration to avoid blow up alternations
+	[a] regex approx fan out working?
+	[b] proof cost of zombie
 
 

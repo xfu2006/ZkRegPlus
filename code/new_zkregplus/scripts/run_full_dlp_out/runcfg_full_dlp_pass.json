@@ -1,0 +1,12 @@
+{
+  "config_dir": "data/paper_data/dlp/cfg",
+  "sig_file": "main_data_dlp_internationl.dat",
+  "cache_dir": "dlp_intl_data_aggr",
+  "fanout_cap": 100,
+  "chunk_len": 64,
+  "range2_bit": 25,
+  "scan_file": "data/paper_data/dlp/cfg/pass_clean_enron_list.txt",
+  "config_ladder": "data/paper_data/dlp/cfg/dlp_config_ladder.json",
+  "k_max": 4,
+  "n_buckets": 2048
+}

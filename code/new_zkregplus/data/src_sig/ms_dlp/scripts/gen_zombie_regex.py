@@ -45,10 +45,16 @@ import subprocess
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import gen_report_header, get_ms_dlp_dir  # noqa: E402
+from compress_regex import compress_combos, PRECISE, APPROX  # noqa: E402
 
 # --- configuration ---------------------------------------------------------
 DOCS_DIR    = "docs"
 TESTREGEX   = os.path.join("zombie", "regex", "bin", "TestRegex")
+# Collapse each SIT's alternation-free combo cross-product back into ONE regex
+# (the common BORA+Zombie basis) instead of one circuit per combo. Off by default
+# -> byte-identical enumerated baseline; ZKR_COMPRESS_COMBOS=1 enables the
+# compression experiment (shrinks BORA's NEEDS fan-out, e.g. ITIN 88 -> 1).
+COMPRESS_COMBOS = os.environ.get("ZKR_COMPRESS_COMBOS") == "1"
 VERIFY_TIMEOUT = 8                    # seconds; "Parse Successful!" prints first,
                                       # so a short cap is plenty to capture it
 
@@ -1091,6 +1097,105 @@ def expand_pat(pat):
     return combos, n_total, n_total > MAX_COMBINATIONS
 
 
+# --- Zombie-only: strip the merged basis's zerolb constructs ----------------
+# Zombie's compiler rejects ANY zero-lower-bound rep ({0,N}, including ?) -- the
+# zerolb limit (verify_zombie_limit.log). The compressed BORA basis may carry an
+# optional separator (e.g. [\x2D\x20]?). For Zombie we DISTRIBUTE every {0,N}/?
+# atom into its present/absent forms (present uses m>=1 so it stays zerolb-free),
+# leaving classes, alternation groups, and {m>=1,n} reps intact. This is EXACT
+# w.r.t. the merged (no extra widening): it just trades one ? for two branches,
+# so ITIN collapses 88 -> 4 for Zombie rather than -> 1.
+def _tok_atoms(s):
+    """Split a flat-or-grouped regex into (body, quant) atoms; body =
+    (group)/[class]/\\xHH/char, quant = a trailing ?/{n}/{m,n} or ''. Paren and
+    bracket aware (a top-level group is one atom)."""
+    atoms, i, n = [], 0, len(s)
+    while i < n:
+        c = s[i]
+        if c == "(":
+            depth, j = 1, i + 1
+            while j < n and depth:
+                if s[j] == "(":
+                    depth += 1
+                elif s[j] == ")":
+                    depth -= 1
+                j += 1
+            body, i = s[i:j], j
+        elif c == "[":
+            j = s.find("]", i)
+            j = j + 1 if j >= 0 else n
+            body, i = s[i:j], j
+        elif c == "\\" and s[i + 1:i + 2] == "x":
+            body, i = s[i:i + 4], i + 4
+        else:
+            body, i = c, i + 1
+        m = re.match(r"\{\d+(?:,\d+)?\}|\?", s[i:])
+        q = m.group(0) if m else ""
+        i += len(q)
+        atoms.append((body, q))
+    return atoms
+
+
+def _split_top_alts(body):
+    """Split a group interior on top-level '|' (paren/bracket/escape aware)."""
+    alts, depth, last, i, n = [], 0, 0, 0, len(body)
+    while i < n:
+        c = body[i]
+        if c == "[":
+            j = body.find("]", i); i = (j + 1 if j >= 0 else n); continue
+        if c == "\\":
+            i += 2; continue
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+        elif c == "|" and depth == 0:
+            alts.append(body[last:i]); last = i + 1
+        i += 1
+    alts.append(body[last:])
+    return alts
+
+
+def _zf_atom(body, q):
+    """The list of zerolb-free choice strings one atom contributes. A group is
+    rendered recursively (its alternatives' optionals expanded) and kept as a
+    SINGLE grouped choice -- only ?/{0,N} atoms add the absent branch."""
+    if body.startswith("(") and body.endswith(")"):
+        outs = _dedupe([s for alt in _split_top_alts(body[1:-1])
+                        for s in _zf_concat(alt)])
+        present = "(" + "|".join(outs) + ")" if len(outs) > 1 else outs[0]
+    else:
+        present = body
+    m0 = re.fullmatch(r"\{0,(\d+)\}", q)
+    if q == "?":
+        return [present, ""]
+    if m0:
+        return [present + "{1,%s}" % m0.group(1), ""]
+    return [present + q]
+
+
+def _zf_concat(s):
+    """Cross-product expansion of a (flat or grouped) concatenation into the set
+    of zerolb-free strings whose union is L(s)."""
+    out = [""]
+    for body, q in _tok_atoms(s):
+        ch = _zf_atom(body, q)
+        out = [pre + c for pre in out for c in ch]
+    return _dedupe(out)
+
+
+def zombie_fit(merged):
+    """Expand a compressed merged regex into the smallest set of zerolb-free
+    Zombie combos (exact same language). Distributes every ?/{0,N} -- at any
+    nesting depth -- into present (m>=1) / absent, keeping classes, value-set
+    alternations, and {m>=1,n} reps. Asserts no zero-lower-bound rep survives."""
+    out = _zf_concat(merged)
+    for c in out:
+        assert not re.search(r"\?|\{0,\d+\}", c), \
+            "zombie_fit left a zerolb construct: %r" % c
+    return out
+
+
 def sit_to_regex(proximity, pat, keywords, ws_delimit=True):
     """Build the full proximity policy regex (PAT.{0,N}KWS)|(KWS.{0,N}PAT) from a
     PRECOMPUTED (and possibly relaxed) pure pattern. Returns the full regex, or
@@ -1142,7 +1247,10 @@ def write_zombie_sit(p, res):
     """Write this SIT's per-combo pure-pattern (p.pat_dir) and full-policy
     (p.full_dir) regexes; return the list of full proximity regexes (one per combo,
     each (combo.{0,N}KWS)|(KWS.{0,N}combo)) for parse verification."""
-    slug, combos, kws = res["slug"], res["combos"], res["keywords"]
+    # Zombie emits the zerolb-free expansion of the merged when compressing;
+    # otherwise the plain combos (== the merged, or the raw product when off).
+    slug, kws = res["slug"], res["keywords"]
+    combos = res.get("combos_zombie") or res["combos"]
     n = len(combos)
     fulls = []
     for idx, combo in enumerate(combos):
@@ -1295,9 +1403,27 @@ def process_sit(rec, sample_dir):
                         % (n_total, MAX_COMBINATIONS, len(combos),
                            n_total - len(combos)))
         status = "approx"
+    # Compress the alternation-free product into ONE regex (the common basis).
+    # The builder only widens, so L(merged) is a superset of the union (sound);
+    # APPROX merges widen the match set -> mark the SIT approx. combos_raw keeps
+    # the pre-compress product for the log.
+    combos_raw, compress, combos_zombie = combos, None, None
+    if COMPRESS_COMBOS and len(combos) > 1:
+        cr = compress_combos(combos)
+        compress = {"kind": cr.kind,
+                    "before": cr.stats.get("before", len(combos)),
+                    "after": len(cr.outputs)}
+        combos = cr.outputs
+        # Zombie cannot take the outputs' zerolb constructs (?/{0,N}); it gets an
+        # exact zerolb-free expansion of each. BORA uses the outputs directly.
+        combos_zombie = [z for c in combos for z in zombie_fit(c)]
+        if cr.kind == APPROX and status == "exact":
+            status = "approx"
     return {"status": "OK" if status == "exact" else "APPROX", "slug": slug,
             "proximity": rec["proximity"], "combos": combos, "keywords": kept,
             "warnings": warnings, "n_total": n_total, "truncated": truncated,
+            "combos_raw": combos_raw, "compress": compress,
+            "combos_zombie": combos_zombie,
             "samples": test_samples(slug, combos, sample_dir)}
 
 
@@ -1337,6 +1463,9 @@ def write_log(p, rows):
             ctag = "  combos=%d" % len(r["combos"])
             if r["truncated"]:
                 ctag += "/%d(trunc)" % r["n_total"]
+            if r.get("compress"):
+                ctag += "  compress=%s[%d->%d]" % (r["compress"]["kind"],
+                          r["compress"]["before"], r["compress"]["after"])
             f.write("[%-6s] %s  keywords=%d%s  files=%d  %s%s\n"
                     % (r["status"], r["slug"], len(r["keywords"]), ctag,
                        r["n_files"], vtag, stag))
