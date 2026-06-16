@@ -102,6 +102,12 @@ pub struct ChunkPeaks{
 	pub fwd_entries_per_chunk: Vec<usize>,
 	pub active_steps_per_chunk: Vec<usize>,
 	pub carried_live_per_chunk: Vec<usize>,
+	//PROBE (ZKR_DIGIT_PROBE only; empty otherwise): hypothetical
+	//digit-anchored NEEDS per chunk -- same get_needs_per_chunk count
+	//but anchored on the OPPOSITE-end pm token (where a fanned digit
+	//sits) instead of the keyword. Lets us compare keyword vs digit
+	//anchoring without changing any functional path. Measurement only.
+	pub digit_needs_per_chunk: Vec<usize>,
 }
 
 impl FailDischargeRecord{

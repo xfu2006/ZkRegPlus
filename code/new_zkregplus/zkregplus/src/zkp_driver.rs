@@ -3960,9 +3960,86 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		//discharged (aggressive flag is on here), no second pass. Study
 		//only -> print and return, skipping the finalize+fold.
 		if std::env::var("ZKR_DLP_NEEDS_DIST").is_ok() {
+			use std::collections::{HashMap, HashSet};
 			let rows: Vec<Vec<usize>> = vdata.iter()
 				.map(|r| r.chunk_peaks.needs_per_chunk.clone()).collect();
+			println!("=== KEYWORD-anchored NEEDS ===");
 			crate::needs_dist::print_needs_dist_rows(&rows, &files);
+			//PROBE: digit-anchored comparison (opposite-end token). Rows
+			//empty unless ZKR_DIGIT_PROBE was set during discharge.
+			let drows: Vec<Vec<usize>> = vdata.iter()
+				.map(|r| r.chunk_peaks.digit_needs_per_chunk.clone())
+				.collect();
+			if drows.iter().any(|r| !r.is_empty()) {
+				println!("=== DIGIT-anchored NEEDS (opposite-end token) ===");
+				crate::needs_dist::print_needs_dist_rows(&drows, &files);
+			}
+			//TASK2: worst-chunk breakdown. Global argmax (file i*, chunk c*),
+			//then which anchors fire there, how many sigs, the per-sig
+			//fan-out. Presence = hex-anchor nibbles are a contiguous subseq
+			//of the chunk's nibbles (cs anchors; igc not separated here).
+			let mut best = (0usize, 0usize, 0usize); //(needs, i, c)
+			for (i, r) in rows.iter().enumerate() {
+				for (c, &n) in r.iter().enumerate() {
+					if n > best.0 { best = (n, i, c); }
+				}
+			}
+			let (wneeds, wi, wc) = best;
+			let seg = vdata[wi].chunk_peaks.seg_size.max(1);
+			let wnib = utils::os::read_nibbles(
+				&format!("{}/{}", proot, &files[wi]));
+			let lo = (wc*seg).min(wnib.len());
+			let hi = ((wc+1)*seg).min(wnib.len());
+			let chunk = &wnib[lo..hi];
+			let present = |hexa: &str| -> bool {
+				let pat: Vec<u8> = hexa.chars()
+					.filter_map(|ch| ch.to_digit(16).map(|d| d as u8))
+					.collect();
+				if pat.is_empty() || pat.len() > chunk.len() {
+					return false; }
+				chunk.windows(pat.len()).any(|w| w == &pat[..])
+			};
+			let mut anc: HashMap<String,(usize,HashSet<String>)>
+				= HashMap::new();
+			let live = &vdata[wi].crit;
+			for s in db.vec_sigs.iter().filter(|s|
+				live.contains(&s.name)) {
+				for sid in 0..s.vec_subsig_pm_bounds.len() {
+					let pb = &s.vec_subsig_pm_bounds[sid];
+					if pb.is_empty() { continue; }
+					let is_bwd = s.vec_subsig_anchor_dir.get(sid)
+						.map_or(false,|d| *d==1);
+					let a = if is_bwd {&pb[pb.len()-1].0}
+						else {&pb[0].0};
+					if present(a) {
+						let e = anc.entry(a.clone())
+							.or_insert((0, HashSet::new()));
+						e.0 += 1; e.1.insert(s.name.clone());
+					}
+				}
+			}
+			let total_needs: usize = anc.values().map(|v| v.0).sum();
+			let n_sigs: HashSet<&String> = anc.values()
+				.flat_map(|v| v.1.iter()).collect();
+			let mut items: Vec<(String,usize,usize)> = anc.iter()
+				.map(|(k,v)| (k.clone(), v.0, v.1.len())).collect();
+			items.sort_by(|a,b| b.1.cmp(&a.1));
+			println!("=== WORST-CHUNK breakdown: {} chunk {} ===",
+				&files[wi], wc);
+			println!("measured-keyword-NEEDS={} recomputed-subsig-NEEDS={} \
+				present-anchors={} triggered-sigs={} avg-fanout={:.1}",
+				wneeds, total_needs, anc.len(), n_sigs.len(),
+				total_needs as f64 / n_sigs.len().max(1) as f64);
+			println!("top anchors (hex | text | subsigs | #sigs):");
+			for (a,cnt,ns) in items.iter().take(25) {
+				let txt: String = a.as_bytes().chunks(2)
+					.filter_map(|pair| {
+						let s = std::str::from_utf8(pair).ok()?;
+						u8::from_str_radix(s,16).ok().map(|b| b as char)
+					}).collect();
+				println!("  {:<34} | {:<24} | {:>5} | {:>4}",
+					a, txt, cnt, ns);
+			}
 			return;
 		}
 		//estimate -> p100 seed (fast_finalize warm-start for P_max).

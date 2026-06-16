@@ -29232,7 +29232,11 @@ Goal 5. New project - optimize determine_config_aggr
 	[d] test
 
 Tuesday 06/16/2026
-Goal 1. 
+Goal 1. analyze the example
+	[a] ITIN examples expands into 88 expr because of alternation
+	[b] check the other examples 
+	[c] go over the alternation classes and see if they can be compiled
+Goal 2. Writing
 
 
 

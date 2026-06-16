@@ -3541,6 +3541,44 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		//densest chunk = whichever case (cs/igc) drives the max needs.
 		if n_ig > n_cs { (n_ig, i_ig, npc) } else { (n_cs, i_cs, npc) }
 	} else { (0, 0, vec![]) };
+	//PROBE (ZKR_DIGIT_PROBE): same per-chunk NEEDS count but anchored on
+	//the OPPOSITE-end pm token (where a fanned KW.{0,N}digit / digit.
+	//{0,N}KW puts its digit) instead of the keyword. Reuses
+	//get_needs_per_chunk so it is apples-to-apples vs needs_per_chunk.
+	//Empty unless the env is set; no functional effect.
+	let digit_needs_per_chunk: Vec<usize> = if std::env::var(
+		"ZKR_DIGIT_PROBE").is_ok() && read_global_config()
+		.clamav_cfg.b_aggressive_sde_for_rep {
+		let mut md_cs: HashMap<usize,usize> = HashMap::new();
+		let mut md_ig: HashMap<usize,usize> = HashMap::new();
+		for s in v_sigs.iter().filter(|s|
+			set_sigs_crit.contains(&s.name)
+			&& !set_sigs_pm.contains(&s.name)){
+			for sid in 0..s.vec_subsig_pm_bounds.len(){
+				let pb = &s.vec_subsig_pm_bounds[sid];
+				if pb.is_empty() { continue; }
+				let is_bwd = s.vec_subsig_anchor_dir.get(sid)
+					.map_or(false,|d| *d==1);
+				//digit end = opposite of the keyword anchor end
+				let danchor = if is_bwd {&pb[0].0}
+					else {&pb[pb.len()-1].0};
+				let igc = s.vec_subsig_obj.get(sid)
+					.map_or(false,|o| o.b_ignore_case);
+				let (dfa, mult) = if igc {(&dfa_bag_igc,&mut md_ig)}
+					else {(&dfa_bag,&mut md_cs)};
+				if let Some(&pid) = dfa.pattern_to_id.get(danchor){
+					*mult.entry(pid).or_insert(0) += 1;
+				}
+			}
+		}
+		let d_cs = dfa_bag.get_needs_per_chunk(&dfa_acc_path,
+			seg_size, &md_cs);
+		let d_ig = dfa_bag_igc.get_needs_per_chunk(&dfa_acc_path_igc,
+			seg_size, &md_ig);
+		let n = d_cs.len().max(d_ig.len());
+		(0..n).map(|c| d_cs.get(c).copied().unwrap_or(0)
+			.max(d_ig.get(c).copied().unwrap_or(0))).collect()
+	} else { vec![] };
 	// Accurate perc / avg_active sizing: accumulate per-chunk forward-proof
 	// entries, active pattern-steps and carried live locs across all SED-
 	// universe subsigs (crit-hit, pm-failed). Aggressive resets the carry
@@ -3621,6 +3659,7 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		fwd_entries_per_chunk,
 		active_steps_per_chunk,
 		carried_live_per_chunk,
+		digit_needs_per_chunk,
 	};
 
 	//6. compute stats 
