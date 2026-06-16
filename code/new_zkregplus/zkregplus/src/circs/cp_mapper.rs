@@ -446,9 +446,13 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 		let data_pack= 2*mlen+flen; // the increased are unique_states, 
 									//final_staes, m_table
 
-		let inp_sigs= sig_buf_capacity;
-		let oup_sigs= sig_buf_capacity;
-		let data_sigs = final_states_len * 3 
+		//Aggressive: the sig inp/oup carry is removed (state-only carry);
+		//failed_sigs holds the per-chunk output. Non-aggr unchanged.
+		let b_aggr = read_global_config()
+			.clamav_cfg.b_aggressive_sde_for_rep;
+		let inp_sigs= if b_aggr {0} else {sig_buf_capacity};
+		let oup_sigs= if b_aggr {0} else {sig_buf_capacity};
+		let data_sigs = final_states_len * 3
 			+ join_buf_capacity * 5
 			+ sig_buf_capacity * 3
 			+ clen + 1; //for the sigs_no_crit_pat and its count
@@ -567,12 +571,21 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 		vec_sig_id_no_crit_pat.sort();
 
 		//3. compute the advice
-		let inp_sigs = prev_adv.map_or(vec![zero; sig_buf_capacity], 
-		|adv|{
-			let adv= adv.as_any().downcast_ref::<CpAdvice<F>>(); 
-			let last_oup_sigs = &adv.unwrap().sigs_advice.oup;
-			last_oup_sigs.to_vec()
-		});
+		//Aggressive: the inp_sigs carry is removed (state-only carry), so
+		//source local zeros sized by THIS chunk (GetSig zeroes them in the
+		//union); avoids a prev-rung-sized buffer reaching a different rung.
+		let b_aggr = read_global_config()
+			.clamav_cfg.b_aggressive_sde_for_rep;
+		let inp_sigs = if b_aggr {
+			vec![zero; sig_buf_capacity]
+		} else {
+			prev_adv.map_or(vec![zero; sig_buf_capacity],
+			|adv|{
+				let adv= adv.as_any().downcast_ref::<CpAdvice<F>>();
+				let last_oup_sigs = &adv.unwrap().sigs_advice.oup;
+				last_oup_sigs.to_vec()
+			})
+		};
 		let inp_buf = vec![ vec![inp_state], inp_sigs].concat();
 		let advice = CpAdvice::<F>::new(
 			&word_seg,
@@ -726,6 +739,10 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 		let mut vec_res= vec![];
 		let (final_states_len,join_buf_capacity,sig_buf_capacity,mlen)
 			 = self.capacity.get_old_stats();
+		//Aggressive: GetSig has no telescoped inp/oup sig buffers and no
+		//oup subtbl (carry removed; inv2 authenticates failed_sigs).
+		let b_aggr = read_global_config()
+			.clamav_cfg.b_aggressive_sde_for_rep;
 	
 		//1. word extract gadget prob statement:
 		// [word; act_w_len; extracted_word, no_inp/out, subtbl_ids]
@@ -805,7 +822,7 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 		let sig_st_len = sig_data_len;  //data (excluding fs input)
 		let sig_st_oup_start = s_subtbl_oup +  1;
 		let sig_st_oup_len = slen;
-		if B_DEBUG {
+		if B_DEBUG && !b_aggr {
 			let sig_gadget = &self.gadgets[3];
 			let (stmt_len,_,_,_) = sig_gadget.lock().unwrap().get_msg_size();
 			assert!( stmt_len == 
@@ -818,17 +835,28 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 		}
 
 
-		let sigs_range = vec![
-			(s_inp+1, s_inp+1 + slen-1),  //inp
-			(s_oup+1, s_oup+1 + slen-1),  //oup
-			(sig_data_start-olen, sig_data_start-olen + olen-1), 
-				//the final states (ACTUALLY imported from pack.rs last part)
-			(sig_data_start, sig_data_start +  sig_data_len-1), //data without final states input
-			(sig_st_start, sig_st_start + sig_st_len-1), //subtbl_ids (data part)
-			(sig_st_oup_start, sig_st_oup_start+ sig_st_oup_len-1),//st_oup
-				//excluding oup
-			(s_failed_sigs, e_failed_sigs), //failed sigs
-		];
+		let sigs_range = if b_aggr {
+			//Aggressive: [final_states, data, subtbl_data, failed_sigs]
+			//(inp/oup/st_oup dropped; inv2 authenticates failed_sigs).
+			vec![
+				(sig_data_start-olen, sig_data_start-olen + olen-1),
+				(sig_data_start, sig_data_start +  sig_data_len-1),
+				(sig_st_start, sig_st_start + sig_st_len-1),
+				(s_failed_sigs, e_failed_sigs),
+			]
+		} else {
+			vec![
+				(s_inp+1, s_inp+1 + slen-1),  //inp
+				(s_oup+1, s_oup+1 + slen-1),  //oup
+				(sig_data_start-olen, sig_data_start-olen + olen-1),
+					//the final states (ACTUALLY imported from pack.rs last part)
+				(sig_data_start, sig_data_start +  sig_data_len-1), //data without final states input
+				(sig_st_start, sig_st_start + sig_st_len-1), //subtbl_ids (data part)
+				(sig_st_oup_start, sig_st_oup_start+ sig_st_oup_len-1),//st_oup
+					//excluding oup
+				(s_failed_sigs, e_failed_sigs), //failed sigs
+			]
+		};
 		vec_res.push(sigs_range);
 
 		//2. build the results
@@ -871,11 +899,15 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 		assert!(total_si_info_size==total_data_size);
 		assert!(total_si_info_size==total_si_data_size);
 
-		let vec_si_inp_info = vec![//chunk info for si_inp
-			//word_extract and fsm
-			(1, true), //state
-			(slen, true), //signatures
-		];
+		let vec_si_inp_info = if b_aggr {
+			vec![(1, true)] //state only (sig carry removed)
+		} else {
+			vec![//chunk info for si_inp
+				//word_extract and fsm
+				(1, true), //state
+				(slen, true), //signatures
+			]
+		};
 		let total_si_inp_info_size = vec_si_inp_info.iter().map(|(s,_)| s)
 			.sum::<usize>();
 		assert!(total_si_inp_info_size == vec_alloc[4].1-vec_alloc[4].0+1);
@@ -923,12 +955,23 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 		let sizes = self.get_sizes();
 		let (inp_len, oup_len, data_len) =  (sizes[0], sizes[1], sizes[2]);
 		assert!(inp_len==oup_len);
-		let inp = advice.inp_buf.clone();
+		//Aggressive: telescoped inp/oup carry the AC-DFA state only; the
+		//sig buffers are dropped (inv2 authenticates failed_sigs).
+		let b_aggr = read_global_config()
+			.clamav_cfg.b_aggressive_sde_for_rep;
+		let last_state = advice.dfa_crit_advice
+			.states[advice.dfa_crit_advice.states.len()-1];
+		let inp = if b_aggr { advice.inp_buf[0..1].to_vec() }
+			else { advice.inp_buf.clone() };
 		assert!(inp.len()==inp_len);
-		let oup = vec![
-		  vec![advice.dfa_crit_advice.states[advice.dfa_crit_advice.states.len()-1]],  		//states
-		  advice.sigs_advice.oup.clone(), //the oup_sigs
-		].concat(); 
+		let oup = if b_aggr {
+			vec![last_state]
+		} else {
+			vec![
+			  vec![last_state],  //states
+			  advice.sigs_advice.oup.clone(), //the oup_sigs
+			].concat()
+		};
 		assert!(oup.len()==oup_len);
 
 		//3. build the data
@@ -969,15 +1012,23 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 			else {F::from(CRIT_FINAL)};
 		let f_range2 = F::from(RANGE2);
 
-		let subtbl_inp = vec![
-			vec![f_crit_states], //state
-			vec![f_range2; slen], //signatures in range2 
-		].concat();
+		let subtbl_inp = if b_aggr {
+			vec![f_crit_states] //state only (sig carry removed)
+		} else {
+			vec![
+				vec![f_crit_states], //state
+				vec![f_range2; slen], //signatures in range2
+			].concat()
+		};
 
-		let subtbl_oup = vec![
-			vec![f_crit_states],
-			advice.sigs_advice.gen_subtbl_id_for_oup(), //signatures in range2
-		].concat();
+		let subtbl_oup = if b_aggr {
+			vec![f_crit_states]
+		} else {
+			vec![
+				vec![f_crit_states],
+				advice.sigs_advice.gen_subtbl_id_for_oup(), //range2
+			].concat()
+		};
 
 		let subtbl_data = vec![
 			// -- the word extract generated data

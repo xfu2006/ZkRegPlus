@@ -3144,12 +3144,25 @@ pub mod tests_zkp_driver{
 			init_sed_cap.max_word_len, init_sed_cap.acdfa_state_part_bits,
 			1, 1, 1, 4, 64, 1, 1,
 			init_sed_cap.basis_unique_states, 2);
-		//M9: per-seg circuit selection is wired in the planner, but the
-		//multi-rung ladder is BLOCKED until the CP inp_sigs carry is made
-		//size-uniform across rungs (cp_mapper sig_buf_capacity=subsigs ->
-		//heterogeneous-rung carry mismatch). Kept at 1 rung == M7.
-		let cs_caps = vec![(init_cp_cap, init_sed_cap,
-			init_cp_cap_igc, init_sed_cap_igc)];
+		//M10: carry is now AC-DFA-state-only, so heterogeneous rungs
+		//fold. 2-rung ladder (lowest cost first): rung 0 shrinks only the
+		//subsig universe (compute_sig+discharge), keeping the per-nibble
+		//FSM/CP structure; rung 1 = full universe (covers max failed_c).
+		let r0_subsigs = 8;
+		let r0_cp = CpCapacity{ max_word_len: max_word,
+			basis_unique_states,
+			subsigs: r0_subsigs, avg_pats_per_subsig };
+		let r0_sed = SedCapacity::new(
+			max_word, read_global_config().range2_bit,
+			r0_subsigs, avg_pats_per_subsig, avg_active_pats_per_subsig,
+			basis_pats_in_trace, perc_pats_expansion_rate,
+			sigs, perc_comp_subsigs,
+			basis_unique_states, basis_acc_states);
+		let cs_caps = vec![
+			(r0_cp, r0_sed,
+				init_cp_cap_igc.clone(), init_sed_cap_igc.clone()),
+			(init_cp_cap, init_sed_cap,
+				init_cp_cap_igc, init_sed_cap_igc)];
 
 		let scan_files: Vec<String> = vec![
 			format!("{}/binexec.dat", set1)]; //single job

@@ -29205,9 +29205,10 @@ Goal 2. Milestone M7
 	[b] review soundness
 	[c] review plan again
 	[d] impl -> DONE
-	[e] test
+	[e] test -> working
+	[f] more test on dlp samples
 
-Goal 2. Writing
+Goal 3. Writing
 	[a] bullet 3
 	[b] bullet 4
 	[c] entire paragraph
@@ -29216,6 +29217,22 @@ Goal 2. Writing
 	[f] generate the table.
 	[g] structure of 7.8
 	[h] bullet 1 of 7.8
+
+Goal 4. Milestone M9
+	[a] arrange word_info and planner
+	[b] run on small email ok
+	[c] now on dlp_sample1() and dlp_sample2()
+	[d] stop dlp_sample1(0 and dlp_sample2() as we actually needs
+		determine_config() working
+
+Goal 5. New project - optimize determine_config_aggr
+	[a] mutiple rounds of design
+	[b] cut perc_expansion_rate for chunks! important
+	[c] approve code
+	[d] test
+
+Tuesday 06/16/2026
+Goal 1. 
 
 
 

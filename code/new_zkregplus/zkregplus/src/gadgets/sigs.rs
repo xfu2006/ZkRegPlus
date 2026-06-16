@@ -321,10 +321,15 @@ impl <F:Clone> SigGadgetMsg3<F>{
 			capacity.count_sig_no_crit_pat,
 		);
 		
+		//Aggressive locality drops the inp_sigs slot from inv2_left
+		//(carry removed): left = [sigs_to_merge, no_crit] = slen+clen.
+		let inv2_left_len = if read_global_config()
+			.clamav_cfg.b_aggressive_sde_for_rep {slen + clen}
+			else {2*slen + clen};
 		vec![
 			("inv1_left", jlen),
 			("inv1_right", slen),
-			("inv2_left", 2*slen + clen),
+			("inv2_left", inv2_left_len),
 			("inv2_right", slen),
 			("inv3_left", olen),
 			("inv3_right", jlen),
@@ -576,8 +581,15 @@ impl <F: PrimeField + ColEle> GetSigAdvice<F>{
 		let m_tbl_joins_to_sigs = gen_m_table(
 			&decoded_final_states_sigs_sigs, &sigs_to_merge);
 
-		let src_sigs = [ eff_inp_sigs, &sigs_to_merge[..],
-				&vec_sigs_to_include[..] ].concat();
+		//Aggressive: drop the inp_sigs prefix from the inv2 source
+		//(carry removed); src = [sigs_to_merge, no_crit].
+		let src_sigs = if read_global_config()
+			.clamav_cfg.b_aggressive_sde_for_rep {
+			[&sigs_to_merge[..], &vec_sigs_to_include[..]].concat()
+		} else {
+			[eff_inp_sigs, &sigs_to_merge[..],
+				&vec_sigs_to_include[..]].concat()
+		};
 		let m_tbl_inp_sigs_oup = gen_m_table(&src_sigs, &oup);
 		let m_tbl_decoded_final_states = gen_m_table(
 			&final_states, &decoded_final_states_sigs_states);
@@ -884,17 +896,22 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for GetSigGadget<F>{
 		//			random combination of poly (exact list matching, no
 		//				need to use Logup).	
 		//		
-		let (olen, _jlen, slen) = (self.capacity.final_states_buf_capacity, 
+		let (olen, _jlen, slen) = (self.capacity.final_states_buf_capacity,
 			self.capacity.join_buf_capacity, self.capacity.sig_buf_capacity);
+		let b_aggr = read_global_config()
+			.clamav_cfg.b_aggressive_sde_for_rep;
 		let word_len = 0;
-		let inp_len = slen;
-		let oup_len = slen;
+		//Aggressive: no telescoped inp/oup sig buffers and no oup subtbl
+		//(carry removed; inv2 authenticates failed_sigs).
+		let inp_len = if b_aggr {0} else {slen};
+		let oup_len = if b_aggr {0} else {slen};
 		let data_len = SigGadgetData::<F>::get_len(&self.capacity);
 		let msg3_len = SigGadgetMsg3::<F>::get_len(&self.capacity);
 		let failed_len = slen;
 		//subtbl_id excludes subtbl_ids FOR the first final_states of data,
-		//but includes the subtbl_ids for oup
-		let subtbl_id_len = data_len -olen + slen; 
+		//but includes the subtbl_ids for oup (non-aggressive only)
+		let subtbl_id_len = if b_aggr {data_len - olen}
+			else {data_len - olen + slen};
 		let stat_len = word_len + inp_len + oup_len + data_len + subtbl_id_len
 			+ failed_len;
 
@@ -918,10 +935,14 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for GetSigGadget<F>{
 		//unit test.
 		let (_alpha, beta, gamma, eta) = (msg2_vec[idx_msg2], 
 			msg2_vec[idx_msg2+1], msg2_vec[idx_msg2+2], msg2_vec[idx_msg2+3]);
-		let (_olen, _jlen, slen) = (self.capacity.final_states_buf_capacity,
+		let (olen, _jlen, slen) = (self.capacity.final_states_buf_capacity,
 			self.capacity.join_buf_capacity, self.capacity.sig_buf_capacity);
+		let b_aggr = read_global_config()
+			.clamav_cfg.b_aggressive_sde_for_rep;
+		//Aggressive: my_stmt has no inp/oup sig buffers; data starts at 0.
+		let off = if b_aggr {0} else {2*slen};
 		let data_len = SigGadgetData::<F>::get_len(&self.capacity);
-		let data_vec = my_stmt[2*slen..2*slen+data_len].to_vec();
+		let data_vec = my_stmt[off..off+data_len].to_vec();
 		let data = SigGadgetData::from_vec(&self.capacity, &data_vec);
 		if B_DEBUG {
 			let data_vec2 = data.clone().to_vec();
@@ -936,19 +957,20 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for GetSigGadget<F>{
 		let inv1_right= data.sigs_to_merge.par_iter().map(|x|
 			(beta + *x).inverse().expect("inv failed")).collect::<Vec<F>>();
 
-		let inp = &my_stmt[0..slen];
-		//Aggressive locality: zero the inp_sigs slot so the oup logup
-		//yields per-chunk fired sigs (must match advice + assert_msg3).
-		let zero_inp = vec![F::zero(); slen];
-		let eff_inp = if read_global_config()
-			.clamav_cfg.b_aggressive_sde_for_rep
-			{&zero_inp[..]} else {&inp[..]};
-		let vec_inp = [
-			eff_inp,
-			&data.sigs_to_merge[..],
-			&data.sigs_no_crit_pat[..]
-		].concat();
-		let vec_oup = &my_stmt[slen..2*slen];
+		//Aggressive: inv2 drops the inp_sigs slot and authenticates
+		//failed_sigs (read from the end of my_stmt) as the output.
+		let vec_inp: Vec<F> = if b_aggr {
+			[&data.sigs_to_merge[..], &data.sigs_no_crit_pat[..]].concat()
+		} else {
+			[&my_stmt[0..slen], &data.sigs_to_merge[..],
+				&data.sigs_no_crit_pat[..]].concat()
+		};
+		let vec_oup: Vec<F> = if b_aggr {
+			let f_start = off + data_len + (data_len - olen);
+			my_stmt[f_start..f_start+slen].to_vec()
+		} else {
+			my_stmt[slen..2*slen].to_vec()
+		};
 		let inv2_left = vec_inp.into_par_iter().map(|x|
 			(gamma+x).inverse().expect("inv failed")).collect::<Vec<F>>();
 		let inv2_right = vec_oup.into_par_iter().map(|x|
@@ -1007,16 +1029,29 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for GetSigGadget<F>{
 		//customized stmt_vec.
 
 
-		let inp = &my_stmt[0..slen];
-		let oup = &my_stmt[slen..2*slen];
+		let b_aggr = read_global_config()
+			.clamav_cfg.b_aggressive_sde_for_rep;
+		//Aggressive: no inp/oup sig buffers; data starts at 0, the oup
+		//subtbl is gone, and inv2 uses failed_sigs (carry removed).
+		let off = if b_aggr {0} else {2*slen};
+		let inp = if b_aggr {&my_stmt[0..0]} else {&my_stmt[0..slen]};
 		let data_len = SigGadgetData::<F>::get_len(&self.capacity);
-		let data_vec = my_stmt[2*slen..2*slen+data_len].to_vec();
+		let data_vec = my_stmt[off..off+data_len].to_vec();
 		let data = SigGadgetData::from_vec(&self.capacity, &data_vec);
 		if B_DEBUG { data.self_check(); }
 
-		//subtbl_id: only the data (excluding final_states_inp) and then oup
-		let subtbl_len = data_len -olen + slen; 
-		let subtbl_id = &my_stmt[2*slen+data_len.. 2*slen+data_len+subtbl_len];
+		//subtbl_id: data (excluding final_states_inp); oup subtbl only
+		//in non-aggressive.
+		let subtbl_len = if b_aggr {data_len - olen}
+			else {data_len - olen + slen};
+		let subtbl_id = &my_stmt[off+data_len.. off+data_len+subtbl_len];
+		//Aggressive inv2 output = failed_sigs (end of my_stmt).
+		let oup: Vec<FpVar<F>> = if b_aggr {
+			let f_start = off + data_len + subtbl_len;
+			my_stmt[f_start..f_start+slen].to_vec()
+		} else {
+			my_stmt[slen..2*slen].to_vec()
+		};
 		let m2= wtns.msg2[msg2_idx..msg2_idx+4].to_vec();
 		let (alpha, beta, gamma, eta) = (&m2[0], &m2[1], &m2[2], &m2[3]);
 		let msg3_len = SigGadgetMsg3::<F>::get_len(&self.capacity);
@@ -1031,21 +1066,19 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for GetSigGadget<F>{
 			&msg3.inv1_right, &beta,slen)?;
 		verify_logup_inverse(cs.clone(), &msg3.inv1_left, &msg3.inv1_right, &data.m_tbl_joins_to_sigs)?;
 
-		//Aggressive locality: zero the inp_sigs slot in the oup logup so
-		//the constraint matches the per-chunk advice (host gen_msg3).
-		let to_merge = if read_global_config()
-			.clamav_cfg.b_aggressive_sde_for_rep {
-			let zero_inp: Vec<FpVar<F>> = (0..slen)
-				.map(|_| new_const_var(&cs, F::zero())).collect();
-			[&zero_inp[..], &data.sigs_to_merge[..],
+		//Aggressive: drop the inp_sigs slot; to_merge = [merge, no_crit]
+		//and inv2 authenticates failed_sigs (carry removed).
+		let to_merge = if b_aggr {
+			[&data.sigs_to_merge[..],
 				&data.sigs_no_crit_pat[..]].concat()
 		} else {
 			[&inp[..], &data.sigs_to_merge[..],
 				&data.sigs_no_crit_pat[..]].concat()
 		};
-		verify_inverse(cs.clone(), &to_merge, &msg3.inv2_left, 
-			&gamma,slen+slen+clen)?;
-		verify_inverse(cs.clone(), oup, &msg3.inv2_right, &gamma,slen)?;
+		let inv2_left_len = if b_aggr {slen+clen} else {slen+slen+clen};
+		verify_inverse(cs.clone(), &to_merge, &msg3.inv2_left,
+			&gamma, inv2_left_len)?;
+		verify_inverse(cs.clone(), &oup, &msg3.inv2_right, &gamma,slen)?;
 		verify_logup_inverse(cs.clone(), &msg3.inv2_left, &msg3.inv2_right, &data.m_tbl_inp_sigs_oup)?;
 
 		verify_inverse(cs.clone(), &data.final_states,
@@ -1097,10 +1130,10 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for GetSigGadget<F>{
 		let zero = FpVar::new_constant(cs.clone(), F::zero())?;
 		let mut desc = SigGadgetData::<F>::gen_desc(&self.capacity);
 		desc = desc[1..desc.len()].to_vec(); //chop off final states (external)
-		desc.push( ("oup", slen) ); //the output buf
+		if !b_aggr { desc.push( ("oup", slen) ); } //oup subtbl: non-aggr
 
 
-		let vals = vec![//match desc
+		let mut vals = vec![//match desc
 			//excluding f_final_states.clone(),	 (this is the input from
 			//previous gadget
 			//f_states_sigs_cnt
@@ -1121,7 +1154,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for GetSigGadget<F>{
 		//when padded, needs to call thecheck_arr_eq_nz; otherwise
 		//if it's simple range without padding, just call check_arr_eq
 		//for smaller cost
-		let b_check_nz: Vec<bool> = vec![
+		let mut b_check_nz: Vec<bool> = vec![
 			//f_states_sigs_cnt
 			true, true, false,
 			//f_states_sigs
@@ -1138,6 +1171,8 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for GetSigGadget<F>{
 			//oup signatures
 			false
 		];
+		//Aggressive: the oup range-check entry is dropped (no oup subtbl).
+		if b_aggr { vals.pop(); b_check_nz.pop(); }
 		assert!(vals.len()==desc.len());
 		let mut start = 0;
 		//let one_var= FpVar::<F>::new_constant(cs.clone(), F::one())?;
@@ -1148,7 +1183,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for GetSigGadget<F>{
 									 //IT'S a fixed CONSTANT set up
 									 //at the Capacity.
 
-			if i==vals.len()-3{//the id_no_pat. //cost 1 each unit.
+			if desc[i].0=="sigs_no_crit_pat"{//the id_no_pat. cost 1 each.
 				//this branch ensures that the listed
 				//sigs are INDEED those listed in clam_db subtbl
 				//of ID_SIG_NO_CRIT_PAT
