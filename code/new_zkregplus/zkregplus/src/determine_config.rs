@@ -91,7 +91,15 @@ pub struct RunCfg {
     #[serde(default)] pub config_c1: String,
     #[serde(default)] pub config_c2: String,
     #[serde(default)] pub report_out: String,
+    // M11: aggressive per-chunk ladder. config_ladder = Vec<CapParams> handoff;
+    // k_max = rung cap (DP picks <= k_max); n_buckets = log-bucket coarsening.
+    #[serde(default)] pub config_ladder: String,
+    #[serde(default = "k_max_default")] pub k_max: usize,
+    #[serde(default = "n_buckets_default")] pub n_buckets: usize,
 }
+
+fn k_max_default() -> usize { 4 }
+fn n_buckets_default() -> usize { 2048 }
 
 impl RunCfg {
     /// Load the run-config the driver pointed ZKR_DLP_RUNCFG at.
@@ -387,6 +395,37 @@ pub fn compare_caps(new: &CapParams, cur: &CapParams) -> Result<(), Vec<String>>
     if bad.is_empty() { Ok(()) } else { Err(bad) }
 }
 
+/// Assemble the rung ladder from P_max + band-DP specs (M11). subsigs gets the
+/// +1 comp_sig dummy; aggr_needs is uniform = P_max.subsigs so the global
+/// forward-queue clamp is a per-rung no-op (each rung keeps its own universe).
+/// P_max's structural caps ride along; only subsigs/perc/avg_active vary.
+pub fn assemble_ladder(p_max: &CapParams,
+    specs: &[crate::band_dp::RungSpec]) -> Vec<CapParams> {
+    specs.iter().map(|s| {
+        let mut c = p_max.clone();
+        c.subsigs = s.subsigs + 1;
+        c.aggr_needs_subsigs = p_max.subsigs;
+        c.perc_pats_expansion_rate = s.perc_pats_expansion_rate;
+        c.avg_active_pats_per_subsig = s.avg_active_pats_per_subsig;
+        c
+    }).collect()
+}
+
+/// Save the rung LADDER (Vec<CapParams> JSON handoff; the Python driver
+/// sequences runs and lets this file carry the config).
+pub fn save_ladder(ladder: &[CapParams], path: &str) -> std::io::Result<()> {
+    let s = serde_json::to_string_pretty(ladder).expect("ladder serialize");
+    std::fs::write(path, s)
+}
+
+/// Load a ladder written by save_ladder. Panics loudly with the path on error.
+pub fn load_ladder(path: &str) -> Vec<CapParams> {
+    let s = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("read ladder {}: {}", path, e));
+    serde_json::from_str(&s)
+        .unwrap_or_else(|e| panic!("parse ladder {}: {}", path, e))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -504,5 +543,38 @@ mod tests {
             &[("comp_sig::subsigs_igc".to_string(), 99)]);
         assert_eq!(p.subsigs_igc, 99);
         assert_eq!(p.subsigs, 0, "cs subsigs untouched by igc");
+    }
+
+    #[test]
+    fn test_assemble_ladder() {
+        use crate::band_dp::RungSpec;
+        let mut p = zero_params();           // stand-in P_max
+        p.subsigs = 201; p.perc_pats_expansion_rate = 8000;
+        p.avg_active_pats_per_subsig = 12; p.basis_pats_in_trace = 700;
+        let specs = vec![
+            RungSpec { subsigs: 0, perc_pats_expansion_rate: 125,
+                avg_active_pats_per_subsig: 1 },
+            RungSpec { subsigs: 200, perc_pats_expansion_rate: 8000,
+                avg_active_pats_per_subsig: 12 }];
+        let l = assemble_ladder(&p, &specs);
+        assert_eq!(l.len(), 2);
+        assert_eq!(l[0].subsigs, 1);         // 0 + dummy
+        assert_eq!(l[0].perc_pats_expansion_rate, 125);
+        assert_eq!(l[1].subsigs, 201);
+        for c in &l {                        // uniform aggr_needs + structural rides along
+            assert_eq!(c.aggr_needs_subsigs, p.subsigs);
+            assert_eq!(c.basis_pats_in_trace, 700);
+        }
+        for w in l.windows(2) { assert!(w[0].subsigs <= w[1].subsigs); }
+    }
+
+    #[test]
+    fn test_ladder_json_round_trip() {
+        let mut a = zero_params(); a.subsigs = 5;
+        let mut b = zero_params(); b.subsigs = 50;
+        let l = vec![a, b];
+        let f = std::env::temp_dir().join("m11_ladder_round_trip.json");
+        save_ladder(&l, f.to_str().unwrap()).unwrap();
+        assert_eq!(load_ladder(f.to_str().unwrap()), l);
     }
 }

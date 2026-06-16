@@ -3548,6 +3548,10 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 	// (b_estimate_caps) so normal discharge is unaffected.
 	let (mut max_fwd_entries_per_chunk, mut max_carried_live_per_chunk,
 		mut max_active_steps_per_chunk) = (0usize, 0usize, 0usize);
+	//M11: retain the per-chunk profiles (not just the max) for the ladder DP.
+	let (mut fwd_entries_per_chunk, mut active_steps_per_chunk,
+		mut carried_live_per_chunk): (Vec<usize>, Vec<usize>, Vec<usize>)
+		= (vec![], vec![], vec![]);
 	if read_global_config().b_estimate_caps {
 		let mut _et = Timer::new();
 		let reset_per_chunk = read_global_config()
@@ -3581,12 +3585,13 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		for c in 0..nc{
 			let f = acc_f.get(c).copied().unwrap_or((0,0,0));
 			let b = acc_b.get(c).copied().unwrap_or((0,0,0));
-			max_fwd_entries_per_chunk =
-				max_fwd_entries_per_chunk.max(f.0.max(b.0));
-			max_active_steps_per_chunk =
-				max_active_steps_per_chunk.max(f.1.max(b.1));
-			max_carried_live_per_chunk =
-				max_carried_live_per_chunk.max(f.2.max(b.2));
+			let (fc, ac, lc) = (f.0.max(b.0), f.1.max(b.1), f.2.max(b.2));
+			fwd_entries_per_chunk.push(fc);
+			active_steps_per_chunk.push(ac);
+			carried_live_per_chunk.push(lc);
+			max_fwd_entries_per_chunk = max_fwd_entries_per_chunk.max(fc);
+			max_active_steps_per_chunk = max_active_steps_per_chunk.max(ac);
+			max_carried_live_per_chunk = max_carried_live_per_chunk.max(lc);
 		}
 		_et.stop();
 		log(0, LOG1, &format!(
@@ -3613,6 +3618,9 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		max_carried_live_per_chunk,
 		max_active_steps_per_chunk,
 		max_cp_unique_states,
+		fwd_entries_per_chunk,
+		active_steps_per_chunk,
+		carried_live_per_chunk,
 	};
 
 	//6. compute stats 

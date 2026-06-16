@@ -373,76 +373,71 @@ where C: CurveGroup<ScalarField=F>,
 	layer_circs //caller already lowest-cost first: no reverse
 }
 
-/// determine_config (aggressive): auto-tune the LOWEST CapParams that pass the
-/// Pass-1 capacity probe over `sample_words`. Loop = build circuits from the
-/// scalar params -> CapacityPlanner Pass-1 probe -> on CapErr bump the exact
-/// param to its required value -> retry. No keys, no folding, no cyclepair;
-/// the foldpot framework is untouched. Returns the confirmed-lowest config.
+/// determine_config (aggressive, M11): produce a per-chunk capacity LADDER
+/// (rungs, cheapest-first) + a per-rung chunk histogram. P_max = fast_finalize
+/// over the binding candidates (global-sufficient config); the per-chunk demand
+/// (universe=|failed_c|, plus fwd/active/live) is DP-partitioned into <= k_max
+/// cost-bands; each rung = P_max with {subsigs,perc,avg_active} set from its band
+/// (monotone envelopes), so every chunk routes to the cheapest sufficient rung
+/// at fold time. Aggressive only; the foldpot framework is untouched.
 pub(crate) fn determine_config_aggr<F,C,CS>(
 	db: Arc<ClamavDB<F>>,
-	sample_words: &Vec<Vec<F>>,
-	sample_word_infos: &Vec<WordInfo>,
-	mut p: crate::determine_config::CapParams,
-	chunk_len: usize, lkup_len: usize, total_word_n: usize, max_iters: usize,
-	n_threads: usize,
-)->Result<crate::determine_config::CapParams, String>
+	words: &Vec<Vec<F>>,
+	infos: &Vec<WordInfo>,
+	vdata: &Vec<data_processor::discharge_proof::FailDischargeRecord>,
+	seed: crate::determine_config::CapParams,
+	chunk_len: usize, lkup_len: usize, total_word_n: usize,
+	k_max: usize, n_buckets: usize, max_rounds: usize, n_threads: usize,
+	k_cand: usize,
+)->Result<(Vec<crate::determine_config::CapParams>, Vec<usize>), String>
 where C: CurveGroup<ScalarField=F>,
 	  CS: CommitmentScheme<C,false>,
 	  <CS as CommitmentScheme<C,false>>::ProverParams: Send + Sync,
 	  F: PrimeField + Absorb + ColEle,
 {
-	use folding_schemes::folding::foldpot::capacity_planner::CapacityPlanner;
-	use crate::determine_config::{apply_caperr_bumps, caps_from_params_aggr};
-	let poseidon = poseidon_canonical_config::<F>();
-	// Pad each sample word to a multiple of chunk_len, matching foldpot_main's
-	// F-level padding (driver.rs:2745). The CP gadget asserts each segment is
-	// exactly max_word_len, so an unpadded short tail segment would panic.
-	let padded: Vec<Vec<F>> = sample_words.iter()
-		.map(|w| utils::data::pad_word_to_multiple::<F>(w, chunk_len))
-		.collect();
-	let mut t_all = GTimer::new();
-	for iter in 0..max_iters {
-		let mut t_round = GTimer::new();
-		utils::consts::get_global_config().aggr_needs_subsigs =
-			p.aggr_needs_subsigs;
-		let probe_res = crate::determine_config::probe_catching(|| {
-			let (cp, sed, cp_igc, sed_igc) = caps_from_params_aggr(&p);
-			let cs_caps = vec![(cp, sed, cp_igc, sed_igc)];
-			let layered = build_circs_adv_aggr::<F,C,CS>(&poseidon,
-				total_word_n, chunk_len, lkup_len, db.clone(), &cs_caps,
-				false);
-			let planner = CapacityPlanner::<C, FC<F,C,CS>, LK<F>, GM<F>,
-				false>::new(layered);
-			planner.capacity_probe_par(&padded, sample_word_infos, n_threads)
-		})?;
-		t_round.stop();
-		match probe_res {
-			Ok(steps) => {
-				t_all.stop();
-				log(0, LOG1, &format!("determine_config_aggr CONVERGED @iter \
-					{}: steps={}, perc={}, needs={}, avg_active={}, subsigs={};\
-					 round {} ms, TOTAL {} ms", iter, steps,
-					p.perc_pats_expansion_rate, p.aggr_needs_subsigs,
-					p.avg_active_pats_per_subsig, p.subsigs, t_round.ms(),
-					t_all.ms()));
-				return Ok(p);
-			}
-			Err(errs) => {
-				let (changed, unmapped) =
-					apply_caperr_bumps(&mut p, true, &errs);
-				if !unmapped.is_empty() {
-					return Err(format!("unmapped CapErr(s): {:?}", unmapped));
-				}
-				if !changed {
-					return Err(format!(
-						"CapErr with no bump applied: {:?}", errs));
-				}
-				log(0, LOG1, &format!("determine_config_aggr iter {}: \
-					round {} ms, bumped {:?}", iter, t_round.ms(), errs));
-			}
+	// 1. P_max: the global-sufficient config (existing fast_finalize machinery).
+	let mut p_max = fast_finalize::<F,C,CS>(db.clone(), words, infos, vdata,
+		seed, chunk_len, lkup_len, total_word_n, max_rounds, n_threads,
+		ShrinkMode::Quick, k_cand)?;
+
+	// 2. flatten per-chunk demand (aligned by file,seg). universe = the exact
+	// discharge universe |failed_c_all_segs|; fwd/active/live from the retained
+	// ChunkPeaks arrays.
+	let (mut universe, mut fwd, mut active, mut live) =
+		(vec![], vec![], vec![], vec![]);
+	for (wi, fdr) in infos.iter().zip(vdata.iter()) {
+		let cp = &fdr.chunk_peaks;
+		for s in 0..wi.failed_c_all_segs.len() {
+			universe.push(wi.failed_c_all_segs[s].len());
+			fwd.push(cp.fwd_entries_per_chunk.get(s).copied().unwrap_or(0));
+			active.push(cp.active_steps_per_chunk.get(s).copied().unwrap_or(0));
+			live.push(cp.carried_live_per_chunk.get(s).copied().unwrap_or(0));
 		}
 	}
-	Err(format!("max_iters {} reached without convergence", max_iters))
+	if universe.is_empty() {
+		return Err("determine_config_aggr: no chunks in sample".into());
+	}
+
+	// 3. sufficiency guard: P_max.subsigs must cover the worst chunk universe.
+	let max_u = *universe.iter().max().unwrap();
+	if max_u + 1 > p_max.subsigs { p_max.subsigs = max_u + 1; }
+	p_max.aggr_needs_subsigs = p_max.subsigs;   // global clamp = per-rung no-op
+
+	// 4. band DP -> rung specs + histogram (seg_size from the discharge itself).
+	let seg_size = vdata.first().map(|f| f.chunk_peaks.seg_size)
+		.unwrap_or(chunk_len * crate::gadgets::word_extract::LEGS);
+	let (specs, hist) = crate::band_dp::plan_rungs(&universe, &fwd, &active,
+		&live, p_max.basis_pats_in_trace, seg_size,
+		p_max.subsigs.saturating_sub(1), p_max.perc_pats_expansion_rate,
+		p_max.avg_active_pats_per_subsig, k_max, n_buckets);
+
+	// 5. assemble ladder + report.
+	let ladder = crate::determine_config::assemble_ladder(&p_max, &specs);
+	log(0, LOG1, &format!("determine_config_aggr: {} rungs, hist={:?}, \
+		P_max.subsigs={}, perc={}, avg_active={}", ladder.len(), hist,
+		p_max.subsigs, p_max.perc_pats_expansion_rate,
+		p_max.avg_active_pats_per_subsig));
+	Ok((ladder, hist))
 }
 
 /// Shrink precision: Quick = stop at CapErr-led demands (C_low); Precise =
@@ -719,32 +714,51 @@ where C: CurveGroup<ScalarField=F>,
 	let db = ClamavDB::<F>::build_or_load(&cfg, &sig, &dfa, &ised, &ised_igc,
 		&mut vlog, &rc.cache_dir, true, true).expect("build/load db");
 
-	//3. discharge the sample manifest -> words + per-file WordInfo
+	//3. discharge the sample -> words + per-file (WordInfo, vdata). Capture the
+	//   FailDischargeRecord (vdata) for the per-chunk ladder demand (mirrors
+	//   load_files but keeps the record); b_estimate_caps populates the per-chunk
+	//   fwd/active/live arrays the band DP needs.
+	get_global_config().b_estimate_caps = true;
 	let scan = format!("{}/{}", rc.config_dir, rc.scan_file);
-	let (words, infos, _fnames) = load_files::<F>(0, &scan, &db, &cfg,
-		false, &rc.cache_dir, rc.chunk_len);
+	let files = read_lines(&format!("{}/{}", proj_root(), scan));
+	let (mut words, mut infos, mut vdata) = (vec![], vec![], vec![]);
+	for fpath in &files {
+		let nibbles = read_nibbles(&format!("{}/{}", proj_root(), fpath));
+		let f_nib: Vec<F> = nibbles.iter().map(|x| F::from(*x as u32)).collect();
+		words.push(pack_nibbles(&f_nib));
+		let (fdr, rec) = quick_discharge_file_by_crit_bag_pm(
+			fpath, &nibbles, &db.vec_sigs, &db.vec_sigs_no_critical_pat,
+			&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
+			&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
+			&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
+			&db.sig_to_id, rc.chunk_len, rc.chunk_len);
+		vdata.push(fdr);
+		infos.push(rec);
+	}
 	let total_word_n: usize = words.iter().map(|w| w.len()).sum();
 	let rc_db = Arc::new(db);
 	let lkup_len = rc_db.lkup.get_size();
 
-	//4. seed a LOW config; determine_config_aggr climbs via exact CapErr bumps
+	//4. seed a LOW config; fast_finalize (inside determine_config_aggr) climbs
+	//   to P_max via exact CapErr bumps, then the band DP forms the ladder.
 	let mw = rc.chunk_len;
 	let cp = CpCapacity { max_word_len: mw, basis_unique_states: 2,
 		subsigs: 1, avg_pats_per_subsig: 1 };
 	let sed = SedCapacity::new(mw, rc.range2_bit, 1, 1, 1, 4, 16, 1, 1, 2, 2);
-	let p0 = capparams_from_caps_aggr(&cp, &sed, 1);
+	let seed = capparams_from_caps_aggr(&cp, &sed, 1);
 
-	//5. tune + write the JSON handoff
+	//5. tune the per-chunk ladder + write the JSON handoff.
 	let n_threads = std::env::var("ZKR_DC_THREADS").ok()
 		.and_then(|s| s.parse().ok()).unwrap_or(4);
-	match determine_config_aggr::<F,C,CS>(rc_db, &words, &infos, p0,
-		rc.chunk_len, lkup_len, total_word_n, 60, n_threads) {
-		Ok(p) => {
-			// resolve via proj_root (test cwd is the package dir, not the
-			// workspace root) -- matching load_files' path handling.
+	match determine_config_aggr::<F,C,CS>(rc_db, &words, &infos, &vdata, seed,
+		rc.chunk_len, lkup_len, total_word_n, rc.k_max, rc.n_buckets, 60,
+		n_threads, 8) {
+		Ok((ladder, hist)) => {
 			let out = format!("{}/{}", proj_root(), rc.config_out);
-			p.save_json(&out).expect("save config_out");
-			log(0, LOG1, &format!("FULL_DLP sample -> {} : {:?}", out, p));
+			crate::determine_config::save_ladder(&ladder, &out)
+				.expect("save ladder");
+			log(0, LOG1, &format!("FULL_DLP sample -> {}: {} rungs, hist={:?}",
+				out, ladder.len(), hist));
 		}
 		Err(e) => panic!("determine_config_aggr failed: {}", e),
 	}
@@ -1353,46 +1367,10 @@ where
 
 	//3. build the circuits (CS-only aggressive)
 	let rc_db = Arc::new(db.clone());
-	// determine_config probe (env-gated ZKR_DETERMINE_CONFIG): reuse the built
-	// DB + loaded jobs to auto-tune the LOWEST CapParams via the Pass-1
-	// capacity probe, then return (no folding). Warm-starts from a LOW
-	// perc/avg_active to exercise convergence; compares the result against the
-	// runner's hand caps (cur) with the +10% rule.
-	if std::env::var("ZKR_DETERMINE_CONFIG").is_ok() {
-		use crate::determine_config::{capparams_from_caps_aggr, compare_caps};
-		let cur = capparams_from_caps_aggr(&cs_caps[0].0, &cs_caps[0].1,
-			read_global_config().aggr_needs_subsigs);
-		let mut p0 = cur.clone();
-		// floor 16; probe_catching handles any structural-floor build panic.
-		p0.perc_pats_expansion_rate = cur.perc_pats_expansion_rate.min(16);
-		p0.avg_active_pats_per_subsig = cur.avg_active_pats_per_subsig.min(2);
-		// tune over ALL scan files (worst-case across the sample set).
-		let all_words: Vec<Vec<CF1<C1>>> = jobs.iter()
-			.flat_map(|j| j.vec_words.iter().cloned()).collect();
-		let all_infos: Vec<WordInfo> = jobs.iter()
-			.flat_map(|j| j.vec_word_info.iter().cloned()).collect();
-		let n_threads = std::env::var("ZKR_DC_THREADS").ok()
-			.and_then(|s| s.parse().ok()).unwrap_or(4);
-		match determine_config_aggr::<CF1<C1>,C1,CS1>(rc_db.clone(),
-			&all_words, &all_infos, p0, chunk_len,
-			lkup_len, max_total_word_len, 30, n_threads) {
-			Ok(new) => {
-				log(0, log_level, &format!(
-					"DETERMINE_CONFIG RESULT (new): {:?}", new));
-				log(0, log_level, &format!(
-					"DETERMINE_CONFIG hand cfg (cur): {:?}", cur));
-				match compare_caps(&new, &cur) {
-					Ok(()) => log(0, log_level,
-						&format!("DETERMINE_CONFIG compare_caps: PASS")),
-					Err(bad) => log(0, log_level, &format!(
-						"DETERMINE_CONFIG compare_caps: FAIL {:?}", bad)),
-				}
-			}
-			Err(e) => log(0, log_level,
-				&format!("DETERMINE_CONFIG FAILED: {}", e)),
-		}
-		return;
-	}
+	// M11: aggressive determine_config moved to the run paths (run_dlp_sample_
+	// config / full_dlp_sample3), which carry vdata and emit the rung ladder.
+	// The non-aggressive ZKR_DETERMINE_CONFIG probe (zkp_driver_adv) is separate
+	// and unchanged.
 	let vec_circs = build_circs_adv_aggr::<CF1<C1>,C1,CS1>(
 		&poseidon_config,
 		max_total_word_len,
@@ -3987,65 +3965,41 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			crate::needs_dist::print_needs_dist_rows(&rows, &files);
 			return;
 		}
-		//estimate -> p90 (C_low seed) + p100 (C_high seed)
-		let est = estimate_config_aggr::<Fr>(&vdata, &db, &[90,100],
-			&mut vlog);
-		let seed_low = estimated_to_capparams_aggr(&est[0], mw,
-			rc.range2_bit, 3);
-		let seed_high = estimated_to_capparams_aggr(&est[1], mw,
-			rc.range2_bit, 3);
+		//estimate -> p100 seed (fast_finalize warm-start for P_max).
+		let est = estimate_config_aggr::<Fr>(&vdata, &db, &[100], &mut vlog);
+		let seed = estimated_to_capparams_aggr(&est[0], mw, rc.range2_bit, 3);
 		let total_word_n: usize = words.iter().map(|w| w.len()).sum();
 		let lkup_len = db.lkup.get_size();
 		let db_arc = std::sync::Arc::new(db);
-		//partition by NEEDS (max anchor-present subsigs/chunk) -- the cost
-		//driver (= subsigs), NOT survivors: a file can have high needs but few
-		//survivors, and needs is what blows up the circuit. The dense 10%
-		//(high needs) drive C_high, the light 90% (mostly needs=0) drive
-		//C_low. Finalize C_high over ONLY the dense tail -- the big envelope
-		//makes each probe ~18s, so all 5087 would take days; lower-needs files
-		//fit C_high (the denser circuit) so routing covers them, no crash.
-		let mut costs: Vec<(usize,usize)> = vdata.iter().enumerate()
-			.map(|(i,r)| (i, r.chunk_peaks.max_needs_subsigs)).collect();
-		costs.sort_by_key(|&(_,c)| c);
-		let k = ((costs.len()*90)/100).max(1);
-		let hi: Vec<usize> = costs[k..].iter().map(|&(i,_)| i).collect();
-		let lo: Vec<usize> = costs[..k].iter().map(|&(i,_)| i).collect();
-		let w_hi: Vec<Vec<Fr>> = hi.iter().map(|&i| words[i].clone()).collect();
-		let i_hi: Vec<_> = hi.iter().map(|&i| infos[i].clone()).collect();
-		let w_lo: Vec<Vec<Fr>> = lo.iter().map(|&i| words[i].clone()).collect();
-		let i_lo: Vec<_> = lo.iter().map(|&i| infos[i].clone()).collect();
-		//C_high = PRECISE over the dense 10% (covers the tail + everything
-		//less dense). C_low = QUICK over the light 90% (SED-free -> fast).
-		//fast_finalize probes only the per-proxy top-K binding files of each
-		//tier (sufficiency by construction: the argmax file of every cap is
-		//in the candidate set), so cost is corpus-size-independent.
-		let k_cand = 8usize;
-		let vd_hi: Vec<_> = hi.iter().map(|&i| vdata[i].clone()).collect();
-		let vd_lo: Vec<_> = lo.iter().map(|&i| vdata[i].clone()).collect();
-		let c_high = super::fast_finalize::<Fr,C1,CS1>(db_arc.clone(),
-			&w_hi, &i_hi, &vd_hi, seed_high, mw, lkup_len, total_word_n, 60, 4,
-			super::ShrinkMode::Precise, k_cand).expect("C_high finalize");
-		let c_low = super::fast_finalize::<Fr,C1,CS1>(db_arc.clone(),
-			&w_lo, &i_lo, &vd_lo, seed_low, mw, lkup_len, total_word_n, 60, 4,
-			super::ShrinkMode::Quick, k_cand).expect("C_low finalize");
-		let _ = c_low.save_json(&format!("{}/{}", proot, rc.config_c1));
-		let _ = c_high.save_json(&format!("{}/{}", proot, rc.config_c2));
-		utils::logger::log(0, utils::logger::LOG1,
-			&format!("M3 self-tuned: C_low {:?}  C_high {:?}", c_low, c_high));
-		//determine_config-only mode: the config files are written; skip the
-		//fold. This is how a 500k workload is tuned on the server -- the
-		//resulting C1/C2 jsons feed full_enron (read-config-and-fold).
+		//M11: per-chunk capacity ladder. P_max = fast_finalize over the binding
+		//candidates (global-sufficient); the per-chunk demand (universe + fwd/
+		//active/live) is DP-partitioned into <= k_max cost-bands. Each chunk
+		//routes to its cheapest sufficient rung at fold time -- so dense files'
+		//cheap chunks no longer inflate one global config (the C1/C2 saga bug).
+		let n_threads = std::env::var("ZKR_DC_THREADS").ok()
+			.and_then(|s| s.parse().ok()).unwrap_or(4);
+		let (ladder, hist) = super::determine_config_aggr::<Fr,C1,CS1>(
+			db_arc.clone(), &words, &infos, &vdata, seed, mw, lkup_len,
+			total_word_n, rc.k_max, rc.n_buckets, 60, n_threads, 8)
+			.expect("determine_config_aggr");
+		crate::determine_config::save_ladder(&ladder,
+			&format!("{}/{}", proot, rc.config_ladder)).expect("save ladder");
+		utils::logger::log(0, utils::logger::LOG1, &format!(
+			"M11 ladder: {} rungs, hist={:?}", ladder.len(), hist));
+		//determine_config-only mode: the ladder is written; skip the fold.
 		if std::env::var("ZKR_DLP_DETERMINE_ONLY").is_ok() {
 			utils::logger::log(0, utils::logger::LOG1, &format!(
-				"ZKR_DLP_DETERMINE_ONLY set: configs saved, skipping fold"));
+				"ZKR_DLP_DETERMINE_ONLY set: ladder saved, skipping fold"));
 			return;
 		}
 		//free the DB before the fold driver loads its own copy (avoid 2x RAM)
 		drop(db_arc);
 		get_global_config().b_estimate_caps = false;
-		//2-tier ladder (cheap first), fold the full list folding-only
-		let cs_caps = vec![caps_from_params_aggr(&c_low),
-			caps_from_params_aggr(&c_high)];
+		//global aggr_needs = P_max.subsigs (uniform across rungs) so the per-rung
+		//forward-queue clamp is a no-op; each rung uses its own universe.
+		get_global_config().aggr_needs_subsigs =
+			ladder.first().map(|c| c.aggr_needs_subsigs).unwrap_or(0);
+		let cs_caps: Vec<_> = ladder.iter().map(caps_from_params_aggr).collect();
 		let scan = vec![format!("{}/{}", cd, rc.scan_file)];
 		zkp_driver_adv_aggr::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,
 			CS1E,S>(
@@ -4054,8 +4008,8 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			&format!("{}/needs_ised.dat", cd),
 			&format!("{}/needs_ised_igc.dat", cd), mw, &cs_caps, false);
 		let _ = std::fs::write(&format!("{}/{}", proot, rc.report_out),
-			format!("M3 sample3 fold-only: {} via 2-tier [C_low,C_high]\n",
-				rc.scan_file));
+			format!("M11 sample3 fold-only: {} via {}-rung ladder\n",
+				rc.scan_file, cs_caps.len()));
 	}
 
 	/// NEEDS-distribution study over the full Enron clean list (parallel,
@@ -4246,15 +4200,14 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
 		get_global_config().clamav_cfg.sde_rep_fanout_cap = rc.fanout_cap;
 		get_global_config().clamav_cfg.min_pm_word_len = 3;
-		//C_low then C_high == cheap-first 2-tier ladder.
-		let c_low = CapParams::load_json(
-			&format!("{}/{}", proot, rc.config_c1));
-		let c_high = CapParams::load_json(
-			&format!("{}/{}", proot, rc.config_c2));
+		//M11: the per-chunk rung ladder (cheapest-first) written by sample3.
+		let ladder = crate::determine_config::load_ladder(
+			&format!("{}/{}", proot, rc.config_ladder));
 		utils::logger::log(0, utils::logger::LOG1, &format!(
-			"full_enron: loaded C_low {:?}  C_high {:?}", c_low, c_high));
-		let cs_caps = vec![caps_from_params_aggr(&c_low),
-			caps_from_params_aggr(&c_high)];
+			"full_enron: loaded {}-rung ladder", ladder.len()));
+		get_global_config().aggr_needs_subsigs =
+			ladder.first().map(|c| c.aggr_needs_subsigs).unwrap_or(0);
+		let cs_caps: Vec<_> = ladder.iter().map(caps_from_params_aggr).collect();
 		let scan = vec![format!("{}/{}", cd, rc.scan_file)];
 		zkp_driver_adv_aggr::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,
 			CS1E,S>(

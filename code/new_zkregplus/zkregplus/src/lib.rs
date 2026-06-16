@@ -17,6 +17,8 @@ pub mod gadgets;
 /// auto capacity tuner: estimate -> Pass-1 probe -> bump-on-CapErr loop
 /// to find the confirmed-lowest config for discharging a sample set.
 pub mod determine_config;
+/// M11 per-chunk capacity ladder planner (aggressive SDE only).
+pub mod band_dp;
 /// per-chunk NEEDS distribution study (aggressive SDE mode only).
 pub mod needs_dist;
 /// M0 flag-off regression fingerprint (caps universe + r1cs dims).

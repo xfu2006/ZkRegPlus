@@ -95,6 +95,13 @@ pub struct ChunkPeaks{
 	//max) -> sizes cp_basis_unique_states (CP pack imm_buf). 0 unless
 	//b_estimate_caps, so non-aggressive discharge is byte-identical.
 	pub max_cp_unique_states: usize,
+	//M11: per-chunk profiles (not just the max) for the capacity-ladder DP.
+	//Aggressive estimator pass only; empty otherwise. 1-1 with needs_per_chunk
+	//by chunk index. fwd sizes perc, active sizes avg_active, live sizes the
+	//carried StepQueue (perc_q).
+	pub fwd_entries_per_chunk: Vec<usize>,
+	pub active_steps_per_chunk: Vec<usize>,
+	pub carried_live_per_chunk: Vec<usize>,
 }
 
 impl FailDischargeRecord{
