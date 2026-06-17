@@ -1,1 +1,1 @@
-[A-Za-z]{2}[0-9]{6}[A-Da-d].{0,300}[\x20\x09\x0A\x0D]insurancenumber[\x20\x09\x0A\x0D]
+[A-Za-z]{2}[0-9]{6}[A-Da-d].{0,300}[\x20\x09\x0A\x0D]insurance\x23[\x20\x09\x0A\x0D]

@@ -2749,7 +2749,8 @@ mod tests_clam_db{
 	#[ignore]
 	fn full_dlp_db_passes_gatekeeper(){
 		let proot = proj_root();
-		let sig = "data/paper_data/dlp/cfg/main_data_dlp_internationl.dat";
+		let sig =
+			"data/paper_data/dlp/cfg/regex_pat/main_data_dlp_internationl.dat";
 		if !std::path::Path::new(&format!("{}/{}", proot, sig)).exists() {
 			eprintln!("skip full_dlp_db_passes_gatekeeper: sig file absent");
 			return;
@@ -2761,9 +2762,9 @@ mod tests_clam_db{
 		cfg.min_pm_word_len = 3;
 
 		let dir = "data/paper_data/dlp/cfg";
-		let dfa = format!("{}/main_dfa.dat", dir);
-		let ised = format!("{}/needs_ised.dat", dir);
-		let ised_igc = format!("{}/needs_ised_igc.dat", dir);
+		let dfa = format!("{}/regex_pat/main_dfa.dat", dir);
+		let ised = format!("{}/regex_pat/needs_ised.dat", dir);
+		let ised_igc = format!("{}/regex_pat/needs_ised_igc.dat", dir);
 		let mut vlog = vec![];
 
 		// b_read_cache=false -> fresh aggressive build so the gatekeeper runs

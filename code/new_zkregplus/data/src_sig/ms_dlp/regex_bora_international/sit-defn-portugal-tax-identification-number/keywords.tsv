@@ -1,19 +1,21 @@
 00	cpf#
-01	nif#
-02	numero fiscal
-03	tax id
-04	tax identification no
-05	tax identification number
-06	tax no#
-07	tax no
-08	tax number
-09	tax registration number
-10	taxid#
-11	taxidno#
-12	taxidnumber#
-13	taxno#
-14	taxnumber#
-15	taxnumber
-16	tin id
-17	tin no
-18	tin#
+01	cpf
+02	nif#
+03	nif
+04	numero fiscal
+05	tax id
+06	tax identification no
+07	tax identification number
+08	tax no#
+09	tax no
+10	tax number
+11	tax registration number
+12	taxid#
+13	taxidno#
+14	taxidnumber#
+15	taxno#
+16	taxnumber#
+17	taxnumber
+18	tin id
+19	tin no
+20	tin#

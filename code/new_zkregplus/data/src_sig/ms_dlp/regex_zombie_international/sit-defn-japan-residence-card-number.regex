@@ -1,1 +1,1 @@
-([A-Za-z]{2}[0-9]{8}[A-Za-z]{2}.{0,300}([\x20\x09\x0A\x0D]Residence\x20card\x20[\x20\x09\x0A\x0D]))|(([\x20\x09\x0A\x0D]Residence\x20card\x20[\x20\x09\x0A\x0D]).{0,300}[A-Za-z]{2}[0-9]{8}[A-Za-z]{2})
+([A-Za-z]{2}[0-9]{8}[A-Za-z]{2}.{0,300}(\x20Residence\x20card\x20\x20))|((\x20Residence\x20card\x20\x20).{0,300}[A-Za-z]{2}[0-9]{8}[A-Za-z]{2})

@@ -719,9 +719,9 @@ where C: CurveGroup<ScalarField=F>,
 	//2. build or load the cached DB (shared across all samples; same sig set)
 	let cfg = default_clamav_cfg();
 	let sig = format!("{}/{}", rc.config_dir, rc.sig_file);
-	let dfa = format!("{}/main_dfa.dat", rc.config_dir);
-	let ised = format!("{}/needs_ised.dat", rc.config_dir);
-	let ised_igc = format!("{}/needs_ised_igc.dat", rc.config_dir);
+	let dfa = format!("{}/regex_pat/main_dfa.dat", rc.config_dir);
+	let ised = format!("{}/regex_pat/needs_ised.dat", rc.config_dir);
+	let ised_igc = format!("{}/regex_pat/needs_ised_igc.dat", rc.config_dir);
 	let mut vlog = vec![];
 	let db = ClamavDB::<F>::build_or_load(&cfg, &sig, &dfa, &ised, &ised_igc,
 		&mut vlog, &rc.cache_dir, true, true).expect("build/load db");
@@ -3817,8 +3817,8 @@ pub mod tests_zkp_driver{
 			"data/paper_data/dlp/cfg", //report dir
 			false, false, true, //b_cache, b_write_cache, b_quick
 			25, 512, &[100usize], //range_bits, max_word_len, percentiles
-			"main_data_dlp_internationl.dat", //src sig (NEW)
-			"binexec_dlp_intl.dat", //scan manifest (NEW)
+			"regex_pat/main_data_dlp_internationl.dat", //src sig (NEW)
+			"jobs/binexec_dlp_intl.dat", //scan manifest (NEW)
 			"dlp_intl_data_aggr"); //cache name (NEW)
 	}
 
@@ -3836,14 +3836,14 @@ pub mod tests_zkp_driver{
 		get_global_config().clamav_cfg.min_pm_word_len = 3;
 		let dir = "data/paper_data/dlp/cfg";
 		crate::stats_helper::collect_discharge_pass_fail::<Fr>(
-			&format!("{}/main_data_dlp_internationl.dat", dir),
-			&format!("{}/main_dfa.dat", dir),
-			&format!("{}/needs_ised.dat", dir),
-			&format!("{}/needs_ised_igc.dat", dir),
+			&format!("{}/regex_pat/main_data_dlp_internationl.dat", dir),
+			&format!("{}/regex_pat/main_dfa.dat", dir),
+			&format!("{}/regex_pat/needs_ised.dat", dir),
+			&format!("{}/regex_pat/needs_ised_igc.dat", dir),
 			"data/src_sig/ms_dlp/docs/\
 clean_email_list_email_regex_zombie_international.txt", //515K list
 			"data/samples/email",  //base prefix for list entries
-			dir,                   //out dir for full/pass/fail lists
+			&format!("{}/corpus", dir), //out dir for full/pass/fail lists
 			true, true,            //b_read_cache, b_write_cache
 			"dlp_intl_data_aggr",  //DB cache name
 			64);                   //seg_word_len: 64w*31B ~= 2KB
@@ -3944,9 +3944,9 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		let mut vlog = vec![];
 		let db = data_processor::clam_db::ClamavDB::<Fr>::build_or_load(
 			&cfg, &format!("{}/{}", cd, rc.sig_file),
-			&format!("{}/main_dfa.dat", cd),
-			&format!("{}/needs_ised.dat", cd),
-			&format!("{}/needs_ised_igc.dat", cd), &mut vlog,
+			&format!("{}/regex_pat/main_dfa.dat", cd),
+			&format!("{}/regex_pat/needs_ised.dat", cd),
+			&format!("{}/regex_pat/needs_ised_igc.dat", cd), &mut vlog,
 			&rc.cache_dir, true, true).expect("build db");
 		//discharge the full 5087 list (one pass) -> vdata + words + infos
 		let files = utils::os::read_lines(
@@ -4072,9 +4072,9 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			zkp_driver_adv_aggr::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,
 				CS1E,S>(
 				0, &format!("{}/{}", cd, rc.sig_file), scan, &rc.report_out,
-				false, &rc.cache_dir, &format!("{}/main_dfa.dat", cd),
-				&format!("{}/needs_ised.dat", cd),
-				&format!("{}/needs_ised_igc.dat", cd), mw, &cs_caps, false);
+				false, &rc.cache_dir, &format!("{}/regex_pat/main_dfa.dat", cd),
+				&format!("{}/regex_pat/needs_ised.dat", cd),
+				&format!("{}/regex_pat/needs_ised_igc.dat", cd), mw, &cs_caps, false);
 			return;
 		}
 		//estimate -> p100 seed (fast_finalize warm-start for P_max).
@@ -4116,9 +4116,9 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		zkp_driver_adv_aggr::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,
 			CS1E,S>(
 			0, &format!("{}/{}", cd, rc.sig_file), scan, &rc.report_out,
-			false, &rc.cache_dir, &format!("{}/main_dfa.dat", cd),
-			&format!("{}/needs_ised.dat", cd),
-			&format!("{}/needs_ised_igc.dat", cd), mw, &cs_caps, false);
+			false, &rc.cache_dir, &format!("{}/regex_pat/main_dfa.dat", cd),
+			&format!("{}/regex_pat/needs_ised.dat", cd),
+			&format!("{}/regex_pat/needs_ised_igc.dat", cd), mw, &cs_caps, false);
 		let _ = std::fs::write(&format!("{}/{}", proot, rc.report_out),
 			format!("M11 sample3 fold-only: {} via {}-rung ladder\n",
 				rc.scan_file, cs_caps.len()));
@@ -4156,9 +4156,9 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		let mut vlog = vec![];
 		let db = data_processor::clam_db::ClamavDB::<Fr>::build_or_load(
 			&cfg, &format!("{}/{}", cd, rc.sig_file),
-			&format!("{}/main_dfa.dat", cd),
-			&format!("{}/needs_ised.dat", cd),
-			&format!("{}/needs_ised_igc.dat", cd), &mut vlog,
+			&format!("{}/regex_pat/main_dfa.dat", cd),
+			&format!("{}/regex_pat/needs_ised.dat", cd),
+			&format!("{}/regex_pat/needs_ised_igc.dat", cd), &mut vlog,
 			&rc.cache_dir, true, true).expect("build db");
 		let list = std::env::var("ZKR_CMP_LIST").expect("set ZKR_CMP_LIST");
 		let files = utils::os::read_lines(&list);
@@ -4230,9 +4230,9 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		let mut vlog = vec![];
 		let db = data_processor::clam_db::ClamavDB::<Fr>::build_or_load(
 			&cfg, &format!("{}/{}", cd, rc.sig_file),
-			&format!("{}/main_dfa.dat", cd),
-			&format!("{}/needs_ised.dat", cd),
-			&format!("{}/needs_ised_igc.dat", cd), &mut vlog,
+			&format!("{}/regex_pat/main_dfa.dat", cd),
+			&format!("{}/regex_pat/needs_ised.dat", cd),
+			&format!("{}/regex_pat/needs_ised_igc.dat", cd), &mut vlog,
 			&rc.cache_dir, true, true).expect("build db");
 		let base = "data/samples/email";
 		let raw = utils::os::read_lines(
@@ -4287,9 +4287,9 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		let mut vlog = vec![];
 		let db = data_processor::clam_db::ClamavDB::<Fr>::build_or_load(
 			&cfg, &format!("{}/{}", cd, rc.sig_file),
-			&format!("{}/main_dfa.dat", cd),
-			&format!("{}/needs_ised.dat", cd),
-			&format!("{}/needs_ised_igc.dat", cd), &mut vlog,
+			&format!("{}/regex_pat/main_dfa.dat", cd),
+			&format!("{}/regex_pat/needs_ised.dat", cd),
+			&format!("{}/regex_pat/needs_ised_igc.dat", cd), &mut vlog,
 			&rc.cache_dir, true, true).expect("build db");
 		//densest corpus files (NEEDS up to 14200) + the short fold file ->
 		//estimate the config so it COVERS the fold file (no CapErr).
@@ -4367,9 +4367,9 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		zkp_driver_adv_aggr::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,
 			CS1E,S>(
 			0, &format!("{}/{}", cd, rc.sig_file), vec![manifest], &report,
-			false, &rc.cache_dir, &format!("{}/main_dfa.dat", cd),
-			&format!("{}/needs_ised.dat", cd),
-			&format!("{}/needs_ised_igc.dat", cd), mw, &cs_caps, false);
+			false, &rc.cache_dir, &format!("{}/regex_pat/main_dfa.dat", cd),
+			&format!("{}/regex_pat/needs_ised.dat", cd),
+			&format!("{}/regex_pat/needs_ised_igc.dat", cd), mw, &cs_caps, false);
 	}
 
 	/// full_enron: read the C_low/C_high configs produced by determine_config
@@ -4409,9 +4409,9 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		zkp_driver_adv_aggr::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,
 			CS1E,S>(
 			0, &format!("{}/{}", cd, rc.sig_file), scan, &rc.report_out,
-			false, &rc.cache_dir, &format!("{}/main_dfa.dat", cd),
-			&format!("{}/needs_ised.dat", cd),
-			&format!("{}/needs_ised_igc.dat", cd), mw, &cs_caps, false);
+			false, &rc.cache_dir, &format!("{}/regex_pat/main_dfa.dat", cd),
+			&format!("{}/regex_pat/needs_ised.dat", cd),
+			&format!("{}/regex_pat/needs_ised_igc.dat", cd), mw, &cs_caps, false);
 	}
 
 	/// Invoke via:
@@ -4579,9 +4579,9 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		let mut vlog = vec![];
 		let db = data_processor::clam_db::ClamavDB::<Fr>::build_or_load(
 			&cfg, &format!("{}/{}", set1, sig),
-			&format!("{}/main_dfa.dat", set1),
-			&format!("{}/needs_ised.dat", set1),
-			&format!("{}/needs_ised_igc.dat", set1), &mut vlog,
+			&format!("{}/regex_pat/main_dfa.dat", set1),
+			&format!("{}/regex_pat/needs_ised.dat", set1),
+			&format!("{}/regex_pat/needs_ised_igc.dat", set1), &mut vlog,
 			cache, true, true).expect("build db");
 		//discharge: vdata (estimator input) + packed words + word infos
 		//(finalize-probe input), one pass
@@ -4676,7 +4676,7 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		// max_word_len=64; rebuild the real DLP DB (dlp_intl_data_aggr,
 		// what C1/C2 were tuned on) on first run, cached thereafter.
 		let cd = "data/paper_data/dlp/cfg";
-		let sg = "main_data_dlp_internationl.dat";
+		let sg = "regex_pat/main_data_dlp_internationl.dat";
 		let ca = "dlp_intl_data_aggr";
 		// PASS CRITERION = finalize converges (every word plans under FIN),
 		// gated inside estimator_validate_aggr via .expect("finalize failed").
@@ -4684,11 +4684,11 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		// below an over-provisioned REAL (determine_config overshoots the
 		// multiplicative density caps) and still be a valid covering config.
 		let _fin_ge_real_1 = estimator_validate_aggr("dlp_sample1", cd, sg,
-			"binexec_sample1.dat", 25, 64, 100, ca,
-			"data/paper_data/dlp/cfg/dlp_config_C1.json");
+			"jobs/binexec_sample1.dat", 25, 64, 100, ca,
+			"data/paper_data/dlp/cfg/config/full_dlp/dlp_config_C1.json");
 		let _fin_ge_real_2 = estimator_validate_aggr("dlp_sample2", cd, sg,
-			"binexec_sample2.dat", 25, 64, 100, ca,
-			"data/paper_data/dlp/cfg/dlp_config_C2.json");
+			"jobs/binexec_sample2.dat", 25, 64, 100, ca,
+			"data/paper_data/dlp/cfg/config/full_dlp/dlp_config_C2.json");
 	}
 
 	/// M0 flag-off regression gate. Runs small_data non-aggressive with

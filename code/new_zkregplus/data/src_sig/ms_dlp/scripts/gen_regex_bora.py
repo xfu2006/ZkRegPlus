@@ -86,9 +86,6 @@ class Pass:
         return os.path.join(self.out_dir, "main_full.dat")
 
 
-PASS_ENGLISH = Pass(
-    "raw_data_records", "regex_bora", "regex_pat_samples",
-    os.path.join(DOCS_DIR, "gen_regex_bora.log"))
 PASS_INTL = Pass(
     "raw_data_records_international", "regex_bora_international",
     "regex_pat_samples_international",
@@ -326,7 +323,7 @@ def main():
     # resolve all relative paths against the ms_dlp dir (never cwd / hardcoded).
     os.chdir(get_ms_dlp_dir())
     os.makedirs(DOCS_DIR, exist_ok=True)
-    run_pass(PASS_ENGLISH, discard_on_sample_miss=False)
+    # International SUPERSET only (it already subsumes the English batch).
     run_pass(PASS_INTL, discard_on_sample_miss=True)
 
 

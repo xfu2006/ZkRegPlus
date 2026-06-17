@@ -1,13 +1,16 @@
-00	insurance number
-01	personalidno#
-02	social security number
-03	personal id number
-04	personal identification no.
-05	insuranceno#
-06	uniqueidno#
-07	unique identification no.
-08	avs number
-09	personal identity no versicherun
-10	identifikationsnummer
-11	sozialversicherungsnummer
-12	identification personnelle id
+00	ahv
+01	ssn
+02	pid
+03	insurance number
+04	personalidno#
+05	social security number
+06	personal id number
+07	personal identification no.
+08	insuranceno#
+09	uniqueidno#
+10	unique identification no.
+11	avs number
+12	personal identity no versicherun
+13	identifikationsnummer
+14	sozialversicherungsnummer
+15	identification personnelle id

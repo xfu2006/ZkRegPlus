@@ -1,23 +1,24 @@
-00	cifid#
-01	spanishcifid#
-02	spanishcifid
-03	spanishcifno#
-04	spanishcifno
-05	tax file no
-06	tax file number
-07	tax id
-08	tax identification no
-09	tax identification number
-10	tax no#
-11	tax no
-12	tax number
-13	tax registration number
-14	taxid#
-15	taxidno#
-16	taxidnumber#
-17	taxno#
-18	taxnumber#
-19	taxnumber
-20	tin id
-21	tin no
-22	tin#
+00	cif
+01	cifid#
+02	spanishcifid#
+03	spanishcifid
+04	spanishcifno#
+05	spanishcifno
+06	tax file no
+07	tax file number
+08	tax id
+09	tax identification no
+10	tax identification number
+11	tax no#
+12	tax no
+13	tax number
+14	tax registration number
+15	taxid#
+16	taxidno#
+17	taxidnumber#
+18	taxno#
+19	taxnumber#
+20	taxnumber
+21	tin id
+22	tin no
+23	tin#

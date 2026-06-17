@@ -2,5 +2,6 @@
 01	vat no
 02	umsatzsteuer-identifikationsnumm
 03	umsatzsteuernummer
-04	btw#
-05	vat#
+04	btw
+05	btw#
+06	vat#

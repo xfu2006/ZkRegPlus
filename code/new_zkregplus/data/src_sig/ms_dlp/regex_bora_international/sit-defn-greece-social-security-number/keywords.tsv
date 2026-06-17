@@ -1,6 +1,7 @@
-00	ssn#
-01	social security no
-02	socialsecurityno#
-03	social security number
-04	amka
-05	a.m.k.a.
+00	ssn
+01	ssn#
+02	social security no
+03	socialsecurityno#
+04	social security number
+05	amka
+06	a.m.k.a.

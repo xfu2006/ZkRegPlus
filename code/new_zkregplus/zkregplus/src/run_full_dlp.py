@@ -87,8 +87,9 @@ REPORT_DIR = "data/paper_data/dlp/report"
 RUSTFLAGS = "-C link-args=-fuse-ld=lld -Awarnings"
 
 # Per-dataset path sets. Switching fixture<->real is data only; the Rust test
-# functions and this driver are identical across the two. `config_dir` holds
-# the sig file + binexec manifests; outputs (C1/C2/reports) land beside them.
+# functions and this driver are identical across the two. Paths are relative to
+# config_dir; for "real" they live in subfolders (regex_pat/, jobs/,
+# config/full_dlp/) -- see cfg/README.txt.
 DATASETS = {
     "fixture": {
         "config_dir": "data/paper_data/dlp",
@@ -103,11 +104,11 @@ DATASETS = {
     },
     "real": {
         "config_dir": "data/paper_data/dlp/cfg",
-        "sig_file":   "main_data_dlp_internationl.dat",
+        "sig_file":   "regex_pat/main_data_dlp_internationl.dat",
         "cache_dir":  "dlp_intl_data_aggr",
-        "scan1":      "binexec_sample1.dat",
-        "scan2":      "binexec_sample2.dat",
-        "scan3":      "binexec_sample3.dat",
+        "scan1":      "jobs/binexec_sample1.dat",
+        "scan2":      "jobs/binexec_sample2.dat",
+        "scan3":      "jobs/binexec_sample3.dat",
         "fanout_cap": 100,
         "chunk_len":  64,    # uniform ~2KB ZK step for sample1/2/3
         "range2_bit": 25,
@@ -115,8 +116,8 @@ DATASETS = {
 }
 
 # Output config files (the handoff) + reports, relative to config_dir.
-C1_NAME = "dlp_config_C1.json"      # small (easy) config from sample1
-C2_NAME = "dlp_config_C2.json"      # big (hard) config from sample2
+C1_NAME = "config/full_dlp/dlp_config_C1.json"  # small (easy) cfg, sample1
+C2_NAME = "config/full_dlp/dlp_config_C2.json"  # big (hard) cfg, sample2
 REPORT3_NAME = "dlp_report_sample3.txt"
 REPORT_FULL_NAME = "dlp_report_full.txt"
 

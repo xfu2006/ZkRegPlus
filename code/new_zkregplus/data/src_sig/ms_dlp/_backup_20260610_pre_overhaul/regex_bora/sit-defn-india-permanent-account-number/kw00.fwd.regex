@@ -1,1 +1,0 @@
-[\x20\x09\x0A\x0D]Permanent\x20Account\x20Number[\x20\x09\x0A\x0D].{0,300}[A-Za-z]{3}[CPHFATBLJGcphfatbljg][A-Za-z][0-9]{4}[A-Za-z0-9]

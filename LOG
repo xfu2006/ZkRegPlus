@@ -29263,7 +29263,7 @@ Goal 4. continue to check regex genration to avoid blow up alternations
 		===> dropping high cost >1000NEEDS leads to dropping 0.09% files
 			or 0.4% chunks
 
-Wed 06/16/2026
+Wed 06/17/2026
 Goal 1. check the paper structure so team can work on it. -> DONE
 Goal 2. continue to improve determine_config
 	[a] estimate of NEEDS -> fixed
@@ -29284,5 +29284,45 @@ Goal 5. clean up the writing and add appendix
 	[b] entire paper structure
 	[c] add the appendix
 	[d] read appendix 
+	[e] adjust figure locations.  -> send paper out to team
 Goal 6. check the over approx kill example problem
+	[a] recompute the generation algorithm: recover short keywords,
+		remove whitespace wrapping around keywords
+	[b] python dfa oom   -> fixed. recycle
+	[c] continue to fix
+	[d] no does not work, has to put white space back
+	[e] regenreate data
+Goal 7. organize the structure contents
+	[a] estabilsh sub-folder first.
+	[b] put a README file there
+Goal 8. more experiment on the pass/fail list
+	[a] create one function named gen_email_corpus_for_full_dlp()
+		in zkp_driver.rs and its workflow as follows.
+		* make sure whenever it needs to access file use get_proj_root() first
+		* and then locate the relative folder or file names.
+		-> compile the main_data_dlp_internationl.dat and save it
+			in regex_pat/. the data source is: 
+			data/src_sig/ms_dlp/regex_bora_international
+		-> then run_db_bundle() using the main_data_dlp_ingernationa.dat (rules)
+			over the data/src_sig/ms_dlp/docs/clean_email_list_email_regex_zombie_international.txt, or its tgz version (if it's tgz extract file in somewhere /tmp and when done remove it)
+			Generate the list of passed and failed generate them as
+			passed_clean_email.txt
+			failed_clean_email.txt
+			and put them in data/paper_data/dlp/cfg/corpus
+		-> then run get_distribution() of the passed_clean_emial.txt
+			get the list of emails due to high NEEDS value >4000
+			put the list of files as: high_cost_email_removed.txt
+			then remove high_cost_email from passed_clean_email.txt
+			and save the final list as final_enron_list.txt.tgz
+			in jobs
+		-> pack corpus as a tgz to minimize its size
+		-> Append (or replace the section) in README.txt (in data/paper_data/dlp/)
+			describes
+			the flow of how to generate final_enron_list.txt.tgz and list
+			the screening process (how many are screened) and
+			finally the percentage of files and (file size) are left
+			in the final_enron_list.txt.tgz compared with the ORIGINAL raw enron
+			email dir. make sure at the beginning note your function name()
+			that generates this list.
+	* show me a sample pargraph of the README section to append/overwrite first.
 

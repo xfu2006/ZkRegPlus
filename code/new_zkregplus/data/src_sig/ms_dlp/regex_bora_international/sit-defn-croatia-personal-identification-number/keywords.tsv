@@ -2,24 +2,25 @@
 01	nacionalni iden
 02	national identi
 03	oib#
-04	osobna iskaznic
-05	osobni id
-06	osobni identifi
-07	personal identi
-08	porezni broj
-09	porezni identif
-10	tax id
-11	tax identificat
-12	tax no#
-13	tax no
-14	tax number
-15	tax registratio
-16	taxid#
-17	taxidno#
-18	taxidnumber#
-19	taxno#
-20	taxnumber#
-21	taxnumber
-22	tin id
-23	tin no
-24	tin#
+04	oib
+05	osobna iskaznic
+06	osobni id
+07	osobni identifi
+08	personal identi
+09	porezni broj
+10	porezni identif
+11	tax id
+12	tax identificat
+13	tax no#
+14	tax no
+15	tax number
+16	tax registratio
+17	taxid#
+18	taxidno#
+19	taxidnumber#
+20	taxno#
+21	taxnumber#
+22	taxnumber
+23	tin id
+24	tin no
+25	tin#

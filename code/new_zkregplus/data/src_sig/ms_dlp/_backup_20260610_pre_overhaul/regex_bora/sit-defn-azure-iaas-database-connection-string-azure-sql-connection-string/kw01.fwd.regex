@@ -1,1 +1,0 @@
-cloudapp\x2Eazure.{0,300}(Password|pwd)[\x20]{0,2}\x3D[\x20]{0,2}[^\x3B\x2F\x22]{8,32}

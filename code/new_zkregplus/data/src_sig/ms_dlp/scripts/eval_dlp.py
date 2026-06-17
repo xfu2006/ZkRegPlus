@@ -57,14 +57,21 @@ DOCS_DIR = "docs"
 # combination writes eval_<dataset>_<ruleset>.log and
 # clean_email_list_<dataset>_<ruleset>.txt.
 DATASETS = [
-    ("email_merged128k", get_samples_dir() / "email_merged128k"),
     ("email",            get_samples_dir() / "email"),
 ]
-RULESETS = ["regex_zombie", "regex_zombie_international"]
+RULESETS = ["regex_zombie_international"]
 
-N_WORKERS = os.cpu_count() or 8
+N_WORKERS = 12                          # capped below cpu_count: bare-keyword
+                                        # DFA caches fat, 32 workers OOM 125G
 CHUNKSIZE = 16                          # files per task dispatched to a worker
-RE2_MAX_MEM = 256 << 20                 # DFA budget per pattern (256 MiB)
+BATCH_FILES = 40000                     # files per fresh-pool batch: each batch
+                                        # gets its own ProcessPoolExecutor, torn
+                                        # down after, freeing all DFA cache
+                                        # (no in-flight recycle = no deadlock)
+RE2_MAX_MEM = 64 << 20                  # DFA budget per pattern (64 MiB):
+                                        # big enough that hot patterns keep a
+                                        # fast DFA; worker recycling (below)
+                                        # bounds cumulative cache, not this cap
 
 
 # --- dependency check ------------------------------------------------------
@@ -181,20 +188,27 @@ def eval_dir(dirpath, policies):
     rel_results = {}
     n_unreadable = 0
     done = 0
-    with ProcessPoolExecutor(max_workers=N_WORKERS,
-                             initializer=_init_worker,
-                             initargs=(policies,)) as ex:
-        for path, hits in zip(files, ex.map(_check_file, files,
-                                            chunksize=CHUNKSIZE)):
-            done += 1
-            rel = os.path.relpath(path, dirpath)
-            if hits is None:
-                n_unreadable += 1
-            else:
-                rel_results[rel] = hits
-            if done % 1000 == 0 or done == len(files):
-                print("[scan] %d/%d files" % (done, len(files)))
-    return rel_results, len(files), n_unreadable
+    total = len(files)
+    # process the corpus in outer batches: each batch runs under its own
+    # executor that is destroyed when the `with` exits, freeing every
+    # worker's accumulated RE2 DFA cache before the next batch starts.
+    for start in range(0, total, BATCH_FILES):
+        batch = files[start:start + BATCH_FILES]
+        with ProcessPoolExecutor(max_workers=N_WORKERS,
+                                 initializer=_init_worker,
+                                 initargs=(policies,)) as ex:
+            for path, hits in zip(batch, ex.map(_check_file, batch,
+                                                chunksize=CHUNKSIZE)):
+                done += 1
+                rel = os.path.relpath(path, dirpath)
+                if hits is None:
+                    n_unreadable += 1
+                else:
+                    rel_results[rel] = hits
+                if done % 1000 == 0 or done == total:
+                    print("[scan] %d/%d files" % (done, total),
+                          flush=True)
+    return rel_results, total, n_unreadable
 
 
 # --- log -------------------------------------------------------------------
@@ -276,6 +290,38 @@ def write_log(tag, dataset_dir, ruleset_dir, policies, rel_results, n_files,
 # -------------------------------------------
 # MAIN
 # -------------------------------------------
+# --- docs compression ------------------------------------------------------
+DOCS_COMPRESS_MIN = 1 << 20             # compress docs files larger than 1 MiB
+_COMPRESSED_EXT = (".gz", ".tgz", ".zip", ".7z", ".xz")
+
+
+# walk DOCS_DIR recursively; for each file over DOCS_COMPRESS_MIN that is not
+# already compressed, write a sibling <name>.tgz (tar+gzip, max ratio) and
+# delete the original.
+def compress_large_docs():
+    import tarfile
+    if not os.path.isdir(DOCS_DIR):
+        return
+    for root, _dirs, names in os.walk(DOCS_DIR):
+        for n in sorted(names):
+            if n.lower().endswith(_COMPRESSED_EXT):
+                continue
+            p = os.path.join(root, n)
+            try:
+                orig = os.path.getsize(p)
+            except OSError:
+                continue
+            if orig <= DOCS_COMPRESS_MIN:
+                continue
+            tgz = p + ".tgz"
+            with tarfile.open(tgz, "w:gz", compresslevel=9) as tf:
+                tf.add(p, arcname=n)
+            os.remove(p)
+            print("[compress] %s -> .tgz (%.1f -> %.1f MB)"
+                  % (n, orig / 1e6, os.path.getsize(tgz) / 1e6),
+                  flush=True)
+
+
 def main():
     check_dependencies()
     os.chdir(get_ms_dlp_dir())          # resolve relative paths (rulesets, docs)
@@ -305,6 +351,8 @@ def main():
         print("  %-48s scanned=%d pass=%d flagged=%d (%.2f%%)"
               % (s["tag"], s["scanned"], s["pass"], s["flagged"],
                  100.0 * s["flagged"] / s["scanned"] if s["scanned"] else 0))
+
+    compress_large_docs()
 
 
 if __name__ == "__main__":

@@ -1,20 +1,21 @@
 00	bsn#
-01	burgerservicenummer
-02	citizen service number
-03	person number
-04	personal number
-05	personal numeric code
-06	person-related number
-07	persoonlijk nummer
-08	persoonlijke numerieke code
-09	persoonsgebonden
-10	persoonsnummer
-11	sociaal-fiscaal nummer
-12	social-fiscal number
-13	sofi
-14	sofinummer
-15	uniek identificatienummer
-16	uniek identiteitsnummer
-17	unique identification number
-18	unique identity number
-19	uniqueidentityno#
+01	bsn
+02	burgerservicenummer
+03	citizen service number
+04	person number
+05	personal number
+06	personal numeric code
+07	person-related number
+08	persoonlijk nummer
+09	persoonlijke numerieke code
+10	persoonsgebonden
+11	persoonsnummer
+12	sociaal-fiscaal nummer
+13	social-fiscal number
+14	sofi
+15	sofinummer
+16	uniek identificatienummer
+17	uniek identiteitsnummer
+18	unique identification number
+19	unique identity number
+20	uniqueidentityno#

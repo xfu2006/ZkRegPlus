@@ -1,15 +1,16 @@
 00	id no
 01	id number
-02	identification no
-03	identification number
-04	identifikationsnumret#
-05	identifikationsnumret
-06	identitetshandling
-07	identity document
-08	identity no
-09	identity number
-10	id-nummer
-11	personal id
-12	personnummer#
-13	personnummer
-14	skatteidentifikationsnummer
+02	id#
+03	identification no
+04	identification number
+05	identifikationsnumret#
+06	identifikationsnumret
+07	identitetshandling
+08	identity document
+09	identity no
+10	identity number
+11	id-nummer
+12	personal id
+13	personnummer#
+14	personnummer
+15	skatteidentifikationsnummer

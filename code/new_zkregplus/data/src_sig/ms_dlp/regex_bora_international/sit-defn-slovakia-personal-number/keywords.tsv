@@ -10,21 +10,22 @@
 09	rodne cislo
 10	social security number
 11	ssn#
-12	tax file no
-13	tax file number
-14	tax id
-15	tax identification no
-16	tax identification number
-17	tax no#
-18	tax no
-19	tax number
-20	tax registration number
-21	taxid#
-22	taxidno#
-23	taxidnumber#
-24	taxno#
-25	taxnumber#
-26	taxnumber
-27	tin id
-28	tin no
-29	tin#
+12	ssn
+13	tax file no
+14	tax file number
+15	tax id
+16	tax identification no
+17	tax identification number
+18	tax no#
+19	tax no
+20	tax number
+21	tax registration number
+22	taxid#
+23	taxidno#
+24	taxidnumber#
+25	taxno#
+26	taxnumber#
+27	taxnumber
+28	tin id
+29	tin no
+30	tin#

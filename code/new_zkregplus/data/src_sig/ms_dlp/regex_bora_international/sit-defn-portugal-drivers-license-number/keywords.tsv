@@ -46,74 +46,75 @@
 45	driver's licenses
 46	driver's licence
 47	driver's licences
-48	dls#
-49	driverlic#
-50	driverlics#
-51	driverlicense#
-52	driverlicenses#
-53	driverlicence#
-54	driverlicences#
-55	driver lic#
-56	driver lics#
-57	driver license#
-58	driver licenses#
-59	driver licences#
-60	driverslic#
-61	driverslics#
-62	driverslicense#
-63	driverslicenses#
-64	driverslicence#
-65	driverslicences#
-66	drivers lic#
-67	drivers lics#
-68	drivers license#
-69	drivers licenses#
-70	drivers licence#
-71	drivers licences#
-72	driver'lic#
-73	driver'lics#
-74	driver'license#
-75	driver'licenses#
-76	driver'licence#
-77	driver'licences#
-78	driver' lic#
-79	driver' lics#
-80	driver' license#
-81	driver' licenses#
-82	driver' licence#
-83	driver' licences#
-84	driver'slic#
-85	driver'slics#
-86	driver'slicense#
-87	driver'slicenses#
-88	driver'slicence#
-89	driver'slicences#
-90	driver's lic#
-91	driver's lics#
-92	driver's license#
-93	driver's licenses#
-94	driver's licence#
-95	driver's licences#
-96	driving licence
-97	driving license
-98	dlno#
-99	driv lic
-100	driv licen
-101	driv license
-102	driv licenses
-103	driv licence
-104	driv licences
-105	driver licen
-106	drivers licen
-107	driver's licen
-108	driving lic
-109	driving licen
-110	driving licenses
-111	driving licence
-112	driving licences
-113	driving permit
-114	dl no
-115	dlno
-116	dl number
-117	carteira de motorista
-118	carteira motorista
+48	dl#
+49	dls#
+50	driverlic#
+51	driverlics#
+52	driverlicense#
+53	driverlicenses#
+54	driverlicence#
+55	driverlicences#
+56	driver lic#
+57	driver lics#
+58	driver license#
+59	driver licenses#
+60	driver licences#
+61	driverslic#
+62	driverslics#
+63	driverslicense#
+64	driverslicenses#
+65	driverslicence#
+66	driverslicences#
+67	drivers lic#
+68	drivers lics#
+69	drivers license#
+70	drivers licenses#
+71	drivers licence#
+72	drivers licences#
+73	driver'lic#
+74	driver'lics#
+75	driver'license#
+76	driver'licenses#
+77	driver'licence#
+78	driver'licences#
+79	driver' lic#
+80	driver' lics#
+81	driver' license#
+82	driver' licenses#
+83	driver' licence#
+84	driver' licences#
+85	driver'slic#
+86	driver'slics#
+87	driver'slicense#
+88	driver'slicenses#
+89	driver'slicence#
+90	driver'slicences#
+91	driver's lic#
+92	driver's lics#
+93	driver's license#
+94	driver's licenses#
+95	driver's licence#
+96	driver's licences#
+97	driving licence
+98	driving license
+99	dlno#
+100	driv lic
+101	driv licen
+102	driv license
+103	driv licenses
+104	driv licence
+105	driv licences
+106	driver licen
+107	drivers licen
+108	driver's licen
+109	driving lic
+110	driving licen
+111	driving licenses
+112	driving licence
+113	driving licences
+114	driving permit
+115	dl no
+116	dlno
+117	dl number
+118	carteira de motorista
+119	carteira motorista

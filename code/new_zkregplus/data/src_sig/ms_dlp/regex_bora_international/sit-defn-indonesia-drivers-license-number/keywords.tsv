@@ -1,69 +1,70 @@
-00	Surat Ijin Mengemudi
-01	SMART SIM
-02	Non-SMART SIM
-03	nomor SIM
-04	nomor lisensi
-05	DriverLic
-06	DriverLics
-07	DriverLicense
-08	DriverLicenses
-09	Driver Lic
-10	Driver Lics
-11	Driver License
-12	Driver Licenses
-13	DriversLic
-14	DriversLics
-15	DriversLicense
-16	DriversLicenses
-17	Drivers Lic
-18	Drivers Lics
-19	Drivers License
-20	Drivers Licenses
-21	Driver'Lic
-22	Driver'Lics
-23	Driver'License
-24	Driver'Licenses
-25	Driver' Lic
-26	Driver' Lics
-27	Driver' License
-28	Driver' Licenses
-29	Driver'sLic
-30	Driver'sLics
-31	Driver'sLicense
-32	Driver'sLicenses
-33	Driver's Lic
-34	Driver's Lics
-35	Driver's License
-36	Driver's Licenses
-37	DriverLic#
-38	DriverLics#
-39	DriverLicense#
-40	DriverLicenses#
-41	Driver Lic#
-42	Driver Lics#
-43	Driver License#
-44	Driver Licenses#
-45	DriversLic#
-46	DriversLics#
-47	DriversLicense#
-48	DriversLicenses#
-49	Drivers Lic#
-50	Drivers Lics#
-51	Drivers License#
-52	Drivers Licenses#
-53	Driver'Lic#
-54	Driver'Lics#
-55	Driver'License#
-56	Driver'Licenses#
-57	Driver' Lic#
-58	Driver' Lics#
-59	Driver' License#
-60	Driver' Licenses#
-61	Driver'sLic#
-62	Driver'sLics#
-63	Driver'sLicense#
-64	Driver'sLicenses#
-65	Driver's Lic#
-66	Driver's Lics#
-67	Driver's License#
-68	Driver's Licenses#
+00	SIM
+01	Surat Ijin Mengemudi
+02	SMART SIM
+03	Non-SMART SIM
+04	nomor SIM
+05	nomor lisensi
+06	DriverLic
+07	DriverLics
+08	DriverLicense
+09	DriverLicenses
+10	Driver Lic
+11	Driver Lics
+12	Driver License
+13	Driver Licenses
+14	DriversLic
+15	DriversLics
+16	DriversLicense
+17	DriversLicenses
+18	Drivers Lic
+19	Drivers Lics
+20	Drivers License
+21	Drivers Licenses
+22	Driver'Lic
+23	Driver'Lics
+24	Driver'License
+25	Driver'Licenses
+26	Driver' Lic
+27	Driver' Lics
+28	Driver' License
+29	Driver' Licenses
+30	Driver'sLic
+31	Driver'sLics
+32	Driver'sLicense
+33	Driver'sLicenses
+34	Driver's Lic
+35	Driver's Lics
+36	Driver's License
+37	Driver's Licenses
+38	DriverLic#
+39	DriverLics#
+40	DriverLicense#
+41	DriverLicenses#
+42	Driver Lic#
+43	Driver Lics#
+44	Driver License#
+45	Driver Licenses#
+46	DriversLic#
+47	DriversLics#
+48	DriversLicense#
+49	DriversLicenses#
+50	Drivers Lic#
+51	Drivers Lics#
+52	Drivers License#
+53	Drivers Licenses#
+54	Driver'Lic#
+55	Driver'Lics#
+56	Driver'License#
+57	Driver'Licenses#
+58	Driver' Lic#
+59	Driver' Lics#
+60	Driver' License#
+61	Driver' Licenses#
+62	Driver'sLic#
+63	Driver'sLics#
+64	Driver'sLicense#
+65	Driver'sLicenses#
+66	Driver's Lic#
+67	Driver's Lics#
+68	Driver's License#
+69	Driver's Licenses#

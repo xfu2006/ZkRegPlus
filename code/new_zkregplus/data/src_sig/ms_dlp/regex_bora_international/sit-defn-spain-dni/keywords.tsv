@@ -1,12 +1,14 @@
 00	dni#
-01	documento nacional de id
-02	insurance number
-03	national identification 
-04	national identity
-05	nationalid#
-06	nationalidno#
-07	nie#
-08	personal identification 
-09	personal identity no
-10	unique identity number
-11	uniqueid#
+01	dni
+02	documento nacional de identidad
+03	insurance number
+04	national identification number
+05	national identity
+06	nationalid#
+07	nationalidno#
+08	nie#
+09	nie
+10	personal identification number
+11	personal identity no
+12	unique identity number
+13	uniqueid#

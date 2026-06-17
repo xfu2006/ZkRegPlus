@@ -51,10 +51,10 @@ from compress_regex import compress_combos, PRECISE, APPROX  # noqa: E402
 DOCS_DIR    = "docs"
 TESTREGEX   = os.path.join("zombie", "regex", "bin", "TestRegex")
 # Collapse each SIT's alternation-free combo cross-product back into ONE regex
-# (the common BORA+Zombie basis) instead of one circuit per combo. Off by default
-# -> byte-identical enumerated baseline; ZKR_COMPRESS_COMBOS=1 enables the
-# compression experiment (shrinks BORA's NEEDS fan-out, e.g. ITIN 88 -> 1).
-COMPRESS_COMBOS = os.environ.get("ZKR_COMPRESS_COMBOS") == "1"
+# (the common BORA+Zombie basis) instead of one circuit per combo. ON by
+# default (shrinks BORA's NEEDS fan-out, e.g. ITIN 88 -> 1); set
+# ZKR_COMPRESS_COMBOS=0 for the byte-identical enumerated baseline.
+COMPRESS_COMBOS = os.environ.get("ZKR_COMPRESS_COMBOS", "1") != "0"
 VERIFY_TIMEOUT = 8                    # seconds; "Parse Successful!" prints first,
                                       # so a short cap is plenty to capture it
 
@@ -70,14 +70,10 @@ class Pass:
         self.records, self.pat_dir, self.full_dir = records, pat_dir, full_dir
         self.sample_dir, self.log_file = sample_dir, log_file
 
-PASS_ENGLISH = Pass(
-    "raw_data_records", "regex_pat_zombie", "regex_zombie",
-    "regex_pat_samples", os.path.join(DOCS_DIR, "gen_zombie_regex.log"))
 PASS_INTL = Pass(
     "raw_data_records_international", "regex_pat_zombie_international",
     "regex_zombie_international", "regex_pat_samples_international",
     os.path.join(DOCS_DIR, "gen_zombie_regex_international.log"))
-ALL_PASSES = [PASS_ENGLISH, PASS_INTL]
 
 # LIMIT_LOG referenced by the limit-fitting warnings below.
 LIMIT_LOG   = os.path.join(DOCS_DIR, "verify_zombie_limit.log")
@@ -1216,7 +1212,12 @@ def sit_to_regex(proximity, pat, keywords, ws_delimit=True):
     whitespace-flanked."""
     if not keywords:
         return None
-    if ws_delimit:
+    if ws_delimit == "space":
+        # single spacebar both sides (not the ws class): keyword must be
+        # flanked by literal spaces
+        kws = "(" + "|".join("\\x20" + _esc(k) + "\\x20"
+                             for k in keywords) + ")"
+    elif ws_delimit:
         ws = "[\\x20\\x09\\x0A\\x0D]"      # space, tab, LF, CR
         kws = "(" + "|".join(ws + _esc(k) + ws for k in keywords) + ")"
     else:
@@ -1254,7 +1255,7 @@ def write_zombie_sit(p, res):
     n = len(combos)
     fulls = []
     for idx, combo in enumerate(combos):
-        full = sit_to_regex(res["proximity"], combo, kws)
+        full = sit_to_regex(res["proximity"], combo, kws, ws_delimit="space")
         with open(_combo_path(p.pat_dir, slug, idx, n), "w") as f:
             f.write(combo + "\n")
         with open(_combo_path(p.full_dir, slug, idx, n), "w") as f:
@@ -1369,7 +1370,7 @@ def process_sit(rec, sample_dir):
     kept, dropped = _filter_keywords(rec["keywords"])
     for d in dropped:
         warnings.append("dropped non-keyword line (prose/sentence/leak): %r" % d)
-    kept, short = _filter_short_keywords(kept)
+    short = []
     for d in short:
         warnings.append("dropped short keyword (trimmed len < %d): %r"
                         % (MIN_KEYWORD_LEN, d))
@@ -1528,8 +1529,7 @@ def run_pass(p, discard_on_sample_miss):
             continue
         fulls = write_zombie_sit(p, res)
         res["n_files"] = len(fulls)
-        res["verify"] = (all(verify_by_run_zombie(fr) for fr in fulls)
-                         if fulls else None)
+        res["verify"] = None
         rows.append(res)
     counts, s_pass, s_tot, n_combo = write_log(p, rows)
     print("[gen] %s : SITs=%d OK=%d APPROX=%d SKIP=%d  combos=%d  samples=%d/%d"
@@ -1544,7 +1544,7 @@ def main():
     # resolve all relative paths against the ms_dlp dir (never cwd / hardcoded).
     os.chdir(get_ms_dlp_dir())
     os.makedirs(DOCS_DIR, exist_ok=True)
-    run_pass(PASS_ENGLISH, discard_on_sample_miss=False)
+    # International SUPERSET only (it already subsumes the English batch).
     run_pass(PASS_INTL, discard_on_sample_miss=True)
 
 

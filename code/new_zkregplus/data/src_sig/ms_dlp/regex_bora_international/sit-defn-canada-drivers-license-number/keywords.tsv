@@ -1,123 +1,130 @@
-00	CDLS
-01	DriverLic
-02	DriverLics
-03	DriverLicense
-04	DriverLicenses
-05	DriverLicence
-06	DriverLicences
-07	Driver Lic
-08	Driver Lics
-09	Driver License
-10	Driver Licenses
-11	Driver Licence
-12	Driver Licences
-13	DriversLic
-14	DriversLics
-15	DriversLicence
-16	DriversLicences
-17	DriversLicense
-18	DriversLicenses
-19	Drivers Lic
-20	Drivers Lics
-21	Drivers License
-22	Drivers Licenses
-23	Drivers Licence
-24	Drivers Licences
-25	Driver'Lic
-26	Driver'Lics
-27	Driver'License
-28	Driver'Licenses
-29	Driver'Licence
-30	Driver'Licences
-31	Driver' Lic
-32	Driver' Lics
-33	Driver' License
-34	Driver' Licenses
-35	Driver' Licence
-36	Driver' Licences
-37	Driver'sLic
-38	Driver'sLics
-39	Driver'sLicense
-40	Driver'sLicenses
-41	Driver'sLicence
-42	Driver'sLicences
-43	Driver's Lic
-44	Driver's Lics
-45	Driver's License
-46	Driver's Licenses
-47	Driver's Licence
-48	Driver's Licences
-49	Permis de Conduire
-50	idcard number
-51	idcard numbers
-52	idcard #
-53	idcard #s
-54	idcard card
-55	idcard cards
-56	idcard
-57	identification number
-58	identification numbers
-59	identification #
-60	identification #s
-61	identification card
-62	identification cards
-63	identification
-64	DLS#
-65	CDL#
-66	CDLS#
-67	DriverLic#
-68	DriverLics#
-69	DriverLicense#
-70	DriverLicenses#
-71	DriverLicence#
-72	DriverLicences#
-73	Driver Lic#
-74	Driver Lics#
-75	Driver License#
-76	Driver Licenses#
-77	Driver License#
-78	Driver Licences#
-79	DriversLic#
-80	DriversLics#
-81	DriversLicense#
-82	DriversLicenses#
-83	DriversLicence#
-84	DriversLicences#
-85	Drivers Lic#
-86	Drivers Lics#
-87	Drivers License#
-88	Drivers Licenses#
-89	Drivers Licence#
-90	Drivers Licences#
-91	Driver'Lic#
-92	Driver'Lics#
-93	Driver'License#
-94	Driver'Licenses#
-95	Driver'Licence#
-96	Driver'Licences#
-97	Driver' Lic#
-98	Driver' Lics#
-99	Driver' License#
-100	Driver' Licenses#
-101	Driver' Licence#
-102	Driver' Licences#
-103	Driver'sLic#
-104	Driver'sLics#
-105	Driver'sLicense#
-106	Driver'sLicenses#
-107	Driver'sLicence#
-108	Driver'sLicences#
-109	Driver's Lic#
-110	Driver's Lics#
-111	Driver's License#
-112	Driver's Licenses#
-113	Driver's Licence#
-114	Driver's Licences#
-115	Permis de Conduire#
-116	ids#
-117	idcard card#
-118	idcard cards#
-119	idcard#
-120	identification card#
-121	identification cards#
-122	identification#
+00	DL
+01	DLS
+02	CDL
+03	CDLS
+04	DriverLic
+05	DriverLics
+06	DriverLicense
+07	DriverLicenses
+08	DriverLicence
+09	DriverLicences
+10	Driver Lic
+11	Driver Lics
+12	Driver License
+13	Driver Licenses
+14	Driver Licence
+15	Driver Licences
+16	DriversLic
+17	DriversLics
+18	DriversLicence
+19	DriversLicences
+20	DriversLicense
+21	DriversLicenses
+22	Drivers Lic
+23	Drivers Lics
+24	Drivers License
+25	Drivers Licenses
+26	Drivers Licence
+27	Drivers Licences
+28	Driver'Lic
+29	Driver'Lics
+30	Driver'License
+31	Driver'Licenses
+32	Driver'Licence
+33	Driver'Licences
+34	Driver' Lic
+35	Driver' Lics
+36	Driver' License
+37	Driver' Licenses
+38	Driver' Licence
+39	Driver' Licences
+40	Driver'sLic
+41	Driver'sLics
+42	Driver'sLicense
+43	Driver'sLicenses
+44	Driver'sLicence
+45	Driver'sLicences
+46	Driver's Lic
+47	Driver's Lics
+48	Driver's License
+49	Driver's Licenses
+50	Driver's Licence
+51	Driver's Licences
+52	Permis de Conduire
+53	id
+54	ids
+55	idcard number
+56	idcard numbers
+57	idcard #
+58	idcard #s
+59	idcard card
+60	idcard cards
+61	idcard
+62	identification number
+63	identification numbers
+64	identification #
+65	identification #s
+66	identification card
+67	identification cards
+68	identification
+69	DL#
+70	DLS#
+71	CDL#
+72	CDLS#
+73	DriverLic#
+74	DriverLics#
+75	DriverLicense#
+76	DriverLicenses#
+77	DriverLicence#
+78	DriverLicences#
+79	Driver Lic#
+80	Driver Lics#
+81	Driver License#
+82	Driver Licenses#
+83	Driver License#
+84	Driver Licences#
+85	DriversLic#
+86	DriversLics#
+87	DriversLicense#
+88	DriversLicenses#
+89	DriversLicence#
+90	DriversLicences#
+91	Drivers Lic#
+92	Drivers Lics#
+93	Drivers License#
+94	Drivers Licenses#
+95	Drivers Licence#
+96	Drivers Licences#
+97	Driver'Lic#
+98	Driver'Lics#
+99	Driver'License#
+100	Driver'Licenses#
+101	Driver'Licence#
+102	Driver'Licences#
+103	Driver' Lic#
+104	Driver' Lics#
+105	Driver' License#
+106	Driver' Licenses#
+107	Driver' Licence#
+108	Driver' Licences#
+109	Driver'sLic#
+110	Driver'sLics#
+111	Driver'sLicense#
+112	Driver'sLicenses#
+113	Driver'sLicence#
+114	Driver'sLicences#
+115	Driver's Lic#
+116	Driver's Lics#
+117	Driver's License#
+118	Driver's Licenses#
+119	Driver's Licence#
+120	Driver's Licences#
+121	Permis de Conduire#
+122	id#
+123	ids#
+124	idcard card#
+125	idcard cards#
+126	idcard#
+127	identification card#
+128	identification cards#
+129	identification#

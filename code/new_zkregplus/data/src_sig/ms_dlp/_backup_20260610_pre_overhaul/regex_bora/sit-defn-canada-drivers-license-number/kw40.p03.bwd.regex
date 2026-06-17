@@ -1,1 +1,0 @@
-[A-Za-z]{2}\x2D?[A-Za-z]{2}\x2D?[A-Za-z]{2}\x2D?[A-Za-z][0-9]{3}[A-Za-z]{2}.{0,300}[\x20\x09\x0A\x0D]Driver\x27sLicenses[\x20\x09\x0A\x0D]

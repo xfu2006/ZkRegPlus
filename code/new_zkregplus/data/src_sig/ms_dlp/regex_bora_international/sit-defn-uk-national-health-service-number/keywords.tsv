@@ -1,10 +1,13 @@
-00	national health
-01	health services
-02	health authorit
-03	patient id
-04	patient identif
-05	patient no
-06	patient number
-07	D.O.B
-08	Date of Birth
-09	Birth Date
+00	national health service
+01	nhs
+02	health services authority
+03	health authority
+04	patient id
+05	patient identification
+06	patient no
+07	patient number
+08	GP
+09	DOB
+10	D.O.B
+11	Date of Birth
+12	Birth Date

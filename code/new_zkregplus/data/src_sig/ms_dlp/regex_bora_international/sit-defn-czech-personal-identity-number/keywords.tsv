@@ -14,23 +14,25 @@
 13	personal identification number
 14	personal number
 15	pid#
-16	rodne cislo
-17	ssn#
-18	social security number
-19	tax id
-20	tax identification no
-21	tax identification number
-22	tax no#
-23	tax no
-24	tax number
-25	tax registration number
-26	taxid#
-27	taxidno#
-28	taxidnumber#
-29	taxno#
-30	taxnumber#
-31	taxnumber
-32	tin id
-33	tin no
-34	tin#
-35	unique identification number
+16	pid
+17	rodne cislo
+18	ssn
+19	ssn#
+20	social security number
+21	tax id
+22	tax identification no
+23	tax identification number
+24	tax no#
+25	tax no
+26	tax number
+27	tax registration number
+28	taxid#
+29	taxidno#
+30	taxidnumber#
+31	taxno#
+32	taxnumber#
+33	taxnumber
+34	tin id
+35	tin no
+36	tin#
+37	unique identification number

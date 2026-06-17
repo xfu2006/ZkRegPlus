@@ -5,9 +5,10 @@
 04	numero d'identite
 05	no d'identite
 06	no. d'identite
-07	ssn#
-08	securite sociale
-09	socialsecuritynumber
-10	social security number
-11	social security code
-12	social insurance number
+07	ssn
+08	ssn#
+09	securite sociale
+10	socialsecuritynumber
+11	social security number
+12	social security code
+13	social insurance number
