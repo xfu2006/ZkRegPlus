@@ -29255,7 +29255,34 @@ Goal 3. Writing -> 7.8 DONE.
 	[c] paraggraph 4
 
 Goal 4. continue to check regex genration to avoid blow up alternations
-	[a] regex approx fan out working?
-	[b] proof cost of zombie
+	[a] regex approx fan out working? -> working now
+	[b] proof cost of zombie -> 
+	[c] distribution -> MUCH better 0.004% need to be removed
+	[d] try the OLD digit allowed CP word selection
+		===> it's the same just keep the KEYWORD approach
+		===> dropping high cost >1000NEEDS leads to dropping 0.09% files
+			or 0.4% chunks
 
+Wed 06/16/2026
+Goal 1. check the paper structure so team can work on it. -> DONE
+Goal 2. continue to improve determine_config
+	[a] estimate of NEEDS -> fixed
+	[b] check why still some pruned list fails 
+		-> it's the approximated DB causing the problem
+Goal 3. improve the installation script
+	[a] improe interface
+	[b] remove spamassasin
+Goal 4. set up server.
+	[a] create volumn
+	[b] create large instance
+	[c] recreate image
+	[d] installation
+	[e] shelve image
+	[f] check cost: about 0.5 hr use. -> tomorrow
+Goal 5. clean up the writing and add appendix
+	[a] review sections
+	[b] entire paper structure
+	[c] add the appendix
+	[d] read appendix 
+Goal 6. check the over approx kill example problem
 

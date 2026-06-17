@@ -354,8 +354,7 @@ impl SubSigObj{
 		//by full_clam() and just pick the longest-avg clause (the
 		//keyword), which the bag fan-out would otherwise outrank.
 		let weight = 3;
-		let b_aggr = read_global_config().clamav_cfg
-			.b_aggressive_sde_for_rep;
+		let b_aggr = b_aggr_cp_gen();
 		let res = if b_aggr {
 			max_pat
 		} else if avg_len(&max_pat2)*weight>avg_len(&max_pat) {
@@ -521,6 +520,14 @@ pub fn preprocess_regex(s:&str, name: &str, sigtype: ClamSigType, cfg: &ClamavAp
 	}
 
 	(trigger, s, b_case_sensitive, pi)
+}
+
+/// Effective aggressive CP-word selection. False (=use original length-
+/// based CP generation) when ZKR_AGGR_LEN_ANCHOR is set, even in aggressive
+/// mode; fanout/discharge stay aggressive. Non-aggressive is unaffected.
+fn b_aggr_cp_gen() -> bool {
+	read_global_config().clamav_cfg.b_aggressive_sde_for_rep
+		&& std::env::var("ZKR_AGGR_LEN_ANCHOR").is_err()
 }
 
 impl ClamavSig{
@@ -2021,7 +2028,7 @@ impl ClamavSig{
 		// (bwd=last pm-bound token, else first), deduped across fanned variants,
 		// not the long digit literal get_critical_pattern would pick. Inserts
 		// directly (no update_map) so short keywords skip its <10-char warning.
-		if read_global_config().clamav_cfg.b_aggressive_sde_for_rep {
+		if b_aggr_cp_gen() {
 			let mut set_cs = HashSet::<String>::new();
 			let mut set_igc = HashSet::<String>::new();
 			for sid in 0..self.vec_subsig_pm_bounds.len() {

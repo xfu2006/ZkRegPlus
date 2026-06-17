@@ -2940,6 +2940,13 @@ where
 	let mut driver2 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,SigmaIR1CS_Inst<C1::ScalarField, C1, CS1, LK, FoldPairMapper<CF1<C1>,LK>,H>,S,LK,FoldPairMapper<CF1<C1>,LK>,H>
 		::new(poseidon_config_global.clone(), lkup_p2, vec_circ_cp, rand::rngs::OsRng, b_full2, global_max_total_n, global_max_words);
 
+	//DEBUG USE 61730.1: exact per-rung r1cs size (rows=constraints,
+	//cols=variables, io_l=public io len). Removable measurement print.
+	for (i,vp) in driver1.nova_param.1.vec_vp.iter().enumerate(){
+		println!("DEBUG USE 61730.1: rung {} r1cs rows={} cols={} io_l={}",
+			i, vp.r1cs.A.n_rows, vp.r1cs.A.n_cols, vp.r1cs.l);
+	}
+
 	//3.5 Sidecar: save/load Pedersen params + R1CS hashes to keep
 	// circuit-constant data stable across snark-cache runs.
 	// See decider_eth_circuit_super.rs lines 980-983, 1353-1356.

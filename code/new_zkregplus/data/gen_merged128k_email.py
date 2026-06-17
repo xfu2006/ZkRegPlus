@@ -6,9 +6,8 @@
 #         author, inspected block-by-block, and unit-tested.
 #
 # Merge files under email/src/maildir/ into 128KB blobs in
-# email_merged128k/, then (optionally) filter out blobs flagged by
-# SpamAssassin.  Writes canonical, human-readable records under
-# merge_records/ (file manifest, merge map, remove list).
+# email_merged128k/.  Writes canonical, human-readable records under
+# merge_records/ (file manifest, merge map).
 # ---------------------------------------------------------------------
 
 import argparse
@@ -17,7 +16,6 @@ import os
 import random
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
@@ -33,13 +31,9 @@ SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
 SRC_DIR     = os.path.join(SCRIPT_DIR, "email", "src", "maildir")
 TARGET_DIR  = os.path.join(SCRIPT_DIR, "email_merged128k")
 RECORDS_DIR = os.path.join(SCRIPT_DIR, "merged_records_email")
-SA_DIR      = os.path.join(SCRIPT_DIR, "..", "src_sig", "spamassasin")
-SA_SCRIPT   = os.path.join(SA_DIR, "sa_baseline_scan.sh")
 
 MANIFEST_PATH    = os.path.join(RECORDS_DIR, "email_filelist.txt")
 MAP_PATH         = os.path.join(RECORDS_DIR, "email_merge_map.txt")
-REMOVE_LIST_PATH = os.path.join(RECORDS_DIR, "email_remove_list.txt")
-SA_TSV_PATH      = "/tmp/email_merged128k_flagged.tsv"
 
 UNIT_TEST_TMP = "/tmp/merge128k_tests"
 
@@ -61,34 +55,13 @@ def step_done(name, t0):
           f"{h}:{m:02d}:{s:02d}")
 
 
-# ---- dependency / folder checks -------------------------------------
+# ---- folder checks --------------------------------------------------
 
-# Verify required external tools.  When need_sa is True, both spamc
-# and spamd must be on PATH.  On any miss, print every install line
-# at once and sys.exit(1).  Never interactive.
-def check_dependencies(need_sa):
-    missing = []
-    if need_sa:
-        for tool, pkg in (("spamc", "spamassassin"),
-                          ("spamd", "spamassassin")):
-            if shutil.which(tool) is None:
-                missing.append((tool, pkg))
-    if missing:
-        for tool, pkg in missing:
-            print(f"ERROR: {tool} is required.")
-            print(f"  Install with: sudo apt install {pkg}")
-        sys.exit(1)
-
-
-# Verify src_dir exists; create target_dir and records_dir if missing;
-# require sa_dir only when need_sa is True.  Exits on hard errors.
-def check_data_folders(src_dir, target_dir, records_dir,
-                       sa_dir, need_sa):
+# Verify src_dir exists; create target_dir and records_dir if missing.
+# Exits on hard errors.
+def check_data_folders(src_dir, target_dir, records_dir):
     if not os.path.isdir(src_dir):
         print(f"ERROR: source dir not found: {src_dir}")
-        sys.exit(1)
-    if need_sa and not os.path.isdir(sa_dir):
-        print(f"ERROR: SA rules dir not found: {sa_dir}")
         sys.exit(1)
     os.makedirs(target_dir,  exist_ok=True)
     os.makedirs(records_dir, exist_ok=True)
@@ -237,106 +210,9 @@ def exec_merge_plan(src_root, target_dir, plan, jobs=None):
             fut.result()
 
 
-# ---- block 5: remove-list I/O + SA TSV parsing ---------------------
+# ---- block 5: merged-name pattern ----------------------------------
 
 _MERGED_RE = re.compile(r"^merged_\d+$")
-
-
-# Sort + dedup; reject any entry containing a path separator.
-def _canonicalize_names(names):
-    canon = sorted(set(names))
-    for n in canon:
-        if "/" in n or "\\" in n:
-            raise ValueError(f"path separator in name: {n!r}")
-    return canon
-
-
-# Write the remove list as canonical UTF-8 text: one basename per
-# line, LF only, single trailing newline.  Empty list -> empty file
-# (zero bytes).  Atomic via .tmp + os.replace.
-def write_remove_list(names, path):
-    canon = _canonicalize_names(names)
-    tmp   = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
-        for n in canon:
-            print(n, file=f)
-    os.replace(tmp, path)
-
-
-# Read the remove list back as canonical (sorted+deduped) UTF-8
-# text.  Tolerant of blank lines, CRLFs, and trailing whitespace.
-# Rejects any entry containing a path separator.
-def read_remove_list(path):
-    out = []
-    with open(path, "r", encoding="utf-8") as f:
-        for ln in f:
-            n = ln.strip()
-            if not n:
-                continue
-            if "/" in n or "\\" in n:
-                raise ValueError(
-                    f"path separator in name: {n!r}")
-            out.append(n)
-    return sorted(set(out))
-
-
-# Delete target_dir/<name> for each name in parallel.  Missing
-# files are tolerated.  Returns (n_deleted, n_missing).
-def apply_remove_list(target_dir, names, jobs=None):
-    jobs = jobs or os.cpu_count() or 1
-
-    def _rm(n):
-        try:
-            os.remove(os.path.join(target_dir, n))
-            return (1, 0)
-        except FileNotFoundError:
-            return (0, 1)
-
-    n_deleted = 0
-    n_missing = 0
-    if names:
-        with ThreadPoolExecutor(max_workers=jobs) as ex:
-            for d, m in ex.map(_rm, names):
-                n_deleted += d
-                n_missing += m
-    return n_deleted, n_missing
-
-
-# Parse a sa_baseline_scan.sh TSV.  Each line is
-# "<score>/<threshold>\t<abs path to merged_NNNNN>".  Returns the
-# sorted, deduped set of merged basenames; malformed lines and
-# non-merged-style basenames are skipped silently.
-def parse_sa_tsv(tsv_path):
-    out = []
-    with open(tsv_path, "r", encoding="utf-8") as f:
-        for ln in f:
-            ln = ln.rstrip("\n\r")
-            if not ln or "\t" not in ln:
-                continue
-            _, p = ln.split("\t", 1)
-            bn = os.path.basename(p.strip())
-            if _MERGED_RE.match(bn):
-                out.append(bn)
-    return sorted(set(out))
-
-
-# ---- block 6: run_spamassassin --------------------------------------
-
-# Shell out to sa_baseline_scan.sh with ENRON/OUT/JOBS env overrides
-# (max parallelism via JOBS=cpu_count, which the script forwards to
-# both `xargs -P` and `spamd --max-children`).  Parse the resulting
-# TSV.  Returns the canonical (sorted+deduped) flagged basenames.
-def run_spamassassin(target_dir, sa_dir, out_tsv, jobs=None):
-    jobs = jobs or os.cpu_count() or 1
-    sh   = os.path.join(sa_dir, "sa_baseline_scan.sh")
-    if not os.path.isfile(sh):
-        raise FileNotFoundError(f"SA script not found: {sh}")
-    env = os.environ.copy()
-    env["ENRON"] = os.path.abspath(target_dir)
-    env["OUT"]   = os.path.abspath(out_tsv)
-    env["JOBS"]  = str(jobs)
-    subprocess.run(["bash", sh], env=env, check=True)
-    return parse_sa_tsv(out_tsv)
 
 
 # ---- block 7: merge map + records glue -----------------------------
@@ -389,11 +265,8 @@ def read_merge_map(path):
     return plan
 
 
-# Step [e] glue.  Writes filelist + merge_map; if remove_names is
-# not None, also writes the remove list.  remove_names=None means
-# SA wasn't run; remove_names=[] means SA ran and flagged nothing.
-def write_all_records(records_dir, file_list, plan,
-                      remove_names):
+# Records glue.  Writes the file manifest + merge map.
+def write_all_records(records_dir, file_list, plan):
     os.makedirs(records_dir, exist_ok=True)
     write_file_manifest(
         file_list,
@@ -401,10 +274,6 @@ def write_all_records(records_dir, file_list, plan,
     write_merge_map(
         plan,
         os.path.join(records_dir, "email_merge_map.txt"))
-    if remove_names is not None:
-        write_remove_list(
-            remove_names,
-            os.path.join(records_dir, "email_remove_list.txt"))
 
 
 # ---- block 8: integration tests (run inside main, not --test) -----
@@ -412,11 +281,9 @@ def write_all_records(records_dir, file_list, plan,
 # Integration test 1.  Pick n_samples random sources from the plan;
 # for each, locate (target_name, offset, size) and verify the bytes
 # in target_dir/<target_name> at [offset, offset+size] match the
-# source file's bytes.  Samples whose target was removed are
-# skipped.  Hard-exits on mismatch.
+# source file's bytes.  Hard-exits on mismatch.
 def integ_test_random_sample_in_merged(src_root, target_dir, plan,
-                                       remove_names, n_samples,
-                                       seed=20260520):
+                                       n_samples, seed=20260520):
     flat = []
     for b in plan:
         off = 0
@@ -427,15 +294,10 @@ def integ_test_random_sample_in_merged(src_root, target_dir, plan,
     if not flat:
         print("integ test 1: no sources to verify; skipped")
         return
-    removed = set(remove_names or [])
-    rng     = random.Random(seed)
-    n_ok    = 0
-    n_skip  = 0
+    rng  = random.Random(seed)
+    n_ok = 0
     for _ in range(n_samples):
         rp, tn, off, sz = rng.choice(flat)
-        if tn in removed:
-            n_skip += 1
-            continue
         with open(os.path.join(target_dir, tn), "rb") as f:
             f.seek(off)
             got = f.read(sz)
@@ -453,17 +315,15 @@ def integ_test_random_sample_in_merged(src_root, target_dir, plan,
             print(f"  first diff offset: {div}")
             sys.exit(1)
         n_ok += 1
-    print(f"integ test 1: {n_ok} samples verified, "
-          f"{n_skip} skipped (on remove list); seed={seed}")
+    print(f"integ test 1: {n_ok} samples verified; "
+          f"seed={seed}")
 
 
 # Integration test 2.  Verify
 #   sum(originals under src_root)
-#   == sum(removed-merged sizes reconstructed from filelist + map)
-#    + sum(sizes of merged blobs remaining on disk).
+#   == sum(sizes of merged blobs on disk).
 # Hard-exits on mismatch.
-def integ_test_size_accounting(src_root, target_dir,
-                               remove_names, records_dir):
+def integ_test_size_accounting(src_root, target_dir):
     t_orig = 0
     for dp, _, fns in os.walk(src_root, followlinks=False):
         for fn in fns:
@@ -475,34 +335,20 @@ def integ_test_size_accounting(src_root, target_dir,
         os.path.getsize(os.path.join(target_dir, n))
         for n in os.listdir(target_dir)
         if os.path.isfile(os.path.join(target_dir, n)))
-    fl = read_file_manifest(
-        os.path.join(records_dir, "email_filelist.txt"))
-    size_of  = {r["relpath"]: r["size"] for r in fl}
-    plan_map = read_merge_map(
-        os.path.join(records_dir, "email_merge_map.txt"))
-    removed   = set(remove_names or [])
-    t_removed = 0
-    for b in plan_map:
-        if b["target_name"] in removed:
-            for s in b["list_src"]:
-                t_removed += size_of[s["relpath"]]
-    if t_orig != t_remain + t_removed:
+    if t_orig != t_remain:
         print("integ test 2 FAILED: size accounting mismatch")
         print(f"  T_orig:    {t_orig}")
         print(f"  T_remain:  {t_remain}")
-        print(f"  T_removed: {t_removed}")
-        print(f"  delta:     "
-              f"{t_orig - (t_remain + t_removed)}")
+        print(f"  delta:     {t_orig - t_remain}")
         sys.exit(1)
     print(f"integ test 2: size accounting OK "
-          f"(orig={t_orig}, removed={t_removed}, "
-          f"remaining={t_remain})")
+          f"(orig={t_orig}, remaining={t_remain})")
 
 
 # ---- unit tests -----------------------------------------------------
 
 class TestBlock1(unittest.TestCase):
-    """Block 1: dep + data-folder checks."""
+    """Block 1: data-folder checks."""
 
     def setUp(self):
         self.tdir = tempfile.mkdtemp(dir=UNIT_TEST_TMP)
@@ -512,8 +358,7 @@ class TestBlock1(unittest.TestCase):
         src = os.path.join(self.tdir, "src"); os.makedirs(src)
         tgt = os.path.join(self.tdir, "tgt")
         rec = os.path.join(self.tdir, "rec")
-        sa  = os.path.join(self.tdir, "sa");  os.makedirs(sa)
-        check_data_folders(src, tgt, rec, sa, need_sa=True)
+        check_data_folders(src, tgt, rec)
         self.assertTrue(os.path.isdir(tgt))
         self.assertTrue(os.path.isdir(rec))
 
@@ -522,33 +367,8 @@ class TestBlock1(unittest.TestCase):
         src = os.path.join(self.tdir, "missing")
         tgt = os.path.join(self.tdir, "tgt")
         rec = os.path.join(self.tdir, "rec")
-        sa  = os.path.join(self.tdir, "sa"); os.makedirs(sa)
         with self.assertRaises(SystemExit):
-            check_data_folders(src, tgt, rec, sa, need_sa=False)
-
-    # Missing sa is fatal only when need_sa=True.
-    def test_check_data_folders_sa_gating(self):
-        src = os.path.join(self.tdir, "src"); os.makedirs(src)
-        tgt = os.path.join(self.tdir, "tgt")
-        rec = os.path.join(self.tdir, "rec")
-        sa  = os.path.join(self.tdir, "missing")
-        with self.assertRaises(SystemExit):
-            check_data_folders(src, tgt, rec, sa, need_sa=True)
-        check_data_folders(src, tgt, rec, sa, need_sa=False)
-
-    # need_sa=False imposes no tool requirements.
-    def test_check_dependencies_no_sa(self):
-        check_dependencies(need_sa=False)
-
-    # need_sa=True exits iff a tool is missing.
-    def test_check_dependencies_sa(self):
-        have_all = (shutil.which("spamc") is not None
-                    and shutil.which("spamd") is not None)
-        if have_all:
-            check_dependencies(need_sa=True)
-        else:
-            with self.assertRaises(SystemExit):
-                check_dependencies(need_sa=True)
+            check_data_folders(src, tgt, rec)
 
 
 class TestBlock2(unittest.TestCase):
@@ -858,233 +678,6 @@ class TestBlock4(unittest.TestCase):
         self.assertEqual(h_a, h_b)
 
 
-class TestBlock5(unittest.TestCase):
-    """Block 5: remove-list I/O + SA TSV parser."""
-
-    def setUp(self):
-        self.tdir = tempfile.mkdtemp(dir=UNIT_TEST_TMP)
-
-    # Canonical text on disk: sorted, deduped, LF, trailing newline.
-    def test_write_text_exact(self):
-        p = os.path.join(self.tdir, "rm.txt")
-        write_remove_list(
-            ["merged_00003", "merged_00001", "merged_00003"], p)
-        with open(p, "r", encoding="utf-8") as f:
-            text = f.read()
-        self.assertEqual(text,
-                         "merged_00001\nmerged_00003\n")
-
-    # Empty list -> empty file.
-    def test_empty(self):
-        p = os.path.join(self.tdir, "rm.txt")
-        write_remove_list([], p)
-        self.assertEqual(os.path.getsize(p), 0)
-        self.assertEqual(read_remove_list(p), [])
-
-    # Roundtrip preserves canonical content.
-    def test_roundtrip(self):
-        names = ["merged_00010", "merged_00002"]
-        p = os.path.join(self.tdir, "rm.txt")
-        write_remove_list(names, p)
-        self.assertEqual(read_remove_list(p),
-                         ["merged_00002", "merged_00010"])
-
-    # Two writes (one with shuffled input) are byte-identical.
-    def test_canonical_twice(self):
-        names = ["merged_00010", "merged_00002", "merged_00005"]
-        p_a = os.path.join(self.tdir, "a.txt")
-        p_b = os.path.join(self.tdir, "b.txt")
-        write_remove_list(names, p_a)
-        rng = random.Random(7)
-        sh  = list(names); rng.shuffle(sh)
-        write_remove_list(sh, p_b)
-        with open(p_a, "r", encoding="utf-8") as f:
-            a = f.read()
-        with open(p_b, "r", encoding="utf-8") as f:
-            b = f.read()
-        self.assertEqual(a, b)
-
-    # Path separators rejected on both write and read.
-    def test_reject_path_sep(self):
-        p = os.path.join(self.tdir, "rm.txt")
-        with self.assertRaises(ValueError):
-            write_remove_list(["foo/bar"], p)
-        with open(p, "w", encoding="utf-8", newline="\n") as f:
-            f.write("good_name\nbad/name\n")
-        with self.assertRaises(ValueError):
-            read_remove_list(p)
-
-    # Tolerant read: blank lines, CRLFs, trailing whitespace.
-    def test_tolerant_read(self):
-        p = os.path.join(self.tdir, "rm.txt")
-        with open(p, "wb") as f:
-            f.write(b"merged_00002\r\n\nmerged_00001  \n")
-        self.assertEqual(read_remove_list(p),
-                         ["merged_00001", "merged_00002"])
-
-    # Atomic write leaves no .tmp sibling.
-    def test_atomic(self):
-        p = os.path.join(self.tdir, "rm.txt")
-        write_remove_list(["x"], p)
-        self.assertFalse(os.path.exists(p + ".tmp"))
-
-    # Apply removes listed files, tolerates missing, idempotent.
-    def test_apply_idempotent(self):
-        for i in range(5):
-            with open(
-                os.path.join(self.tdir, f"merged_{i:05d}"),
-                "wb"
-            ) as f:
-                f.write(b"x")
-        out = apply_remove_list(
-            self.tdir,
-            ["merged_00001", "merged_00003", "merged_99999"])
-        self.assertEqual(out, (2, 1))
-        self.assertFalse(os.path.exists(
-            os.path.join(self.tdir, "merged_00001")))
-        self.assertFalse(os.path.exists(
-            os.path.join(self.tdir, "merged_00003")))
-        self.assertTrue(os.path.exists(
-            os.path.join(self.tdir, "merged_00000")))
-        out2 = apply_remove_list(
-            self.tdir,
-            ["merged_00001", "merged_00003", "merged_99999"])
-        self.assertEqual(out2, (0, 3))
-
-    # Parallel apply against 200 files.
-    def test_apply_parallel(self):
-        for i in range(200):
-            with open(
-                os.path.join(self.tdir, f"merged_{i:05d}"),
-                "wb"
-            ) as f:
-                f.write(b".")
-        names = [f"merged_{i:05d}" for i in range(200)]
-        out   = apply_remove_list(self.tdir, names)
-        self.assertEqual(out, (200, 0))
-        self.assertEqual(os.listdir(self.tdir), [])
-
-    # Empty list apply: (0, 0), dir untouched.
-    def test_apply_empty(self):
-        with open(os.path.join(self.tdir, "x"), "wb") as f:
-            f.write(b".")
-        self.assertEqual(apply_remove_list(self.tdir, []),
-                         (0, 0))
-
-    # parse_sa_tsv: scrambled rows -> sorted+deduped basenames.
-    def test_parse_tsv_basic(self):
-        p = os.path.join(self.tdir, "x.tsv")
-        with open(p, "w", encoding="utf-8") as f:
-            f.write("5.7/5.0\t/abs/dir/merged_00005\n")
-            f.write("7.4/5.0\t/abs/dir/merged_00002\n")
-            f.write("5.7/5.0\t/abs/dir/merged_00005\n")
-        self.assertEqual(parse_sa_tsv(p),
-                         ["merged_00002", "merged_00005"])
-
-    # parse_sa_tsv: empty TSV -> [].
-    def test_parse_tsv_empty(self):
-        p = os.path.join(self.tdir, "x.tsv")
-        open(p, "w").close()
-        self.assertEqual(parse_sa_tsv(p), [])
-
-    # parse_sa_tsv: malformed/non-matching lines skipped.
-    def test_parse_tsv_malformed(self):
-        p = os.path.join(self.tdir, "x.tsv")
-        with open(p, "w", encoding="utf-8") as f:
-            f.write("no-tab-here\n")
-            f.write("5.0/5.0\t/abs/not_merged_thing\n")
-            f.write("5.0/5.0\t/abs/merged_00007\n")
-        self.assertEqual(parse_sa_tsv(p), ["merged_00007"])
-
-
-_HAVE_SA = (shutil.which("spamc") is not None
-            and shutil.which("spamd") is not None
-            and os.path.isfile(SA_SCRIPT))
-
-
-class TestBlock6(unittest.TestCase):
-    """Block 6: run_spamassassin."""
-
-    def setUp(self):
-        self.tdir = tempfile.mkdtemp(dir=UNIT_TEST_TMP)
-
-    # Missing SA script raises before any subprocess call.
-    def test_missing_script(self):
-        tgt = os.path.join(self.tdir, "tgt"); os.makedirs(tgt)
-        sa  = os.path.join(self.tdir, "sa");  os.makedirs(sa)
-        out = os.path.join(self.tdir, "x.tsv")
-        with self.assertRaises(FileNotFoundError):
-            run_spamassassin(tgt, sa, out)
-
-    # End-to-end wiring smoke test (slow; gated on spamc).
-    @unittest.skipUnless(_HAVE_SA, "spamc/spamd/SA dir missing")
-    def test_smoke(self):
-        tgt = os.path.join(self.tdir, "tgt"); os.makedirs(tgt)
-        ham  = (
-            "From: bob@example.com\n"
-            "To: alice@example.com\n"
-            "Date: Mon, 01 Jan 2024 00:00:00 +0000\n"
-            "Subject: Meeting tomorrow\n"
-            "\n"
-            "Hi Alice, are we still on for the meeting?\n"
-        )
-        spam = (
-            "From: spammer@example.com\n"
-            "To: victim@example.com\n"
-            "Date: Mon, 01 Jan 2024 00:00:00 +0000\n"
-            "Subject: BUY V14GR4 NOW!!! CHEAP MEDICATIONS\n"
-            "\n"
-            "Click here to buy cheap pills! Best prices.\n"
-        )
-        for i, body in enumerate([ham, spam]):
-            with open(os.path.join(tgt, f"merged_{i:05d}"),
-                      "wb") as f:
-                f.write(body.encode("utf-8"))
-        out = os.path.join(self.tdir, "scan.tsv")
-        try:
-            flagged = run_spamassassin(tgt, SA_DIR, out)
-        except subprocess.CalledProcessError as e:
-            self.skipTest(f"sa_baseline_scan.sh failed: {e}")
-        self.assertIsInstance(flagged, list)
-        for n in flagged:
-            self.assertTrue(_MERGED_RE.match(n))
-
-    # Two runs on the same corpus -> byte-identical remove lists.
-    @unittest.skipUnless(_HAVE_SA, "spamc/spamd/SA dir missing")
-    def test_canonical_twice(self):
-        tgt = os.path.join(self.tdir, "tgt"); os.makedirs(tgt)
-        msgs = [
-            ("From: a@e.com\n"
-             "Date: Mon, 01 Jan 2024 00:00:00 +0000\n"
-             "Subject: hello\n\nordinary message body\n"),
-            ("From: b@e.com\n"
-             "Date: Mon, 01 Jan 2024 00:00:00 +0000\n"
-             "Subject: BUY V14GR4 NOW CHEAP MEDS\n"
-             "\nbuy buy buy now now now!!!\n"),
-        ]
-        for i, m in enumerate(msgs):
-            with open(os.path.join(tgt, f"merged_{i:05d}"),
-                      "wb") as f:
-                f.write(m.encode("utf-8"))
-        out_a = os.path.join(self.tdir, "a.tsv")
-        out_b = os.path.join(self.tdir, "b.tsv")
-        try:
-            list_a = run_spamassassin(tgt, SA_DIR, out_a)
-            list_b = run_spamassassin(tgt, SA_DIR, out_b)
-        except subprocess.CalledProcessError as e:
-            self.skipTest(f"sa_baseline_scan.sh failed: {e}")
-        self.assertEqual(list_a, list_b)
-        ra = os.path.join(self.tdir, "ra.txt")
-        rb = os.path.join(self.tdir, "rb.txt")
-        write_remove_list(list_a, ra)
-        write_remove_list(list_b, rb)
-        with open(ra, "r", encoding="utf-8") as f:
-            ta = f.read()
-        with open(rb, "r", encoding="utf-8") as f:
-            tb = f.read()
-        self.assertEqual(ta, tb)
-
-
 class TestBlock7(unittest.TestCase):
     """Block 7: merge map + write_all_records."""
 
@@ -1182,7 +775,7 @@ class TestBlock7(unittest.TestCase):
         write_merge_map(self._basic_plan(), p)
         self.assertFalse(os.path.exists(p + ".tmp"))
 
-    # write_all_records emits 3 files byte-identical across runs.
+    # write_all_records emits 2 files byte-identical across runs.
     def test_write_all_records_twice(self):
         plan = self._basic_plan()
         fl   = [{"relpath": "a",     "size": 4},
@@ -1190,16 +783,14 @@ class TestBlock7(unittest.TestCase):
                 {"relpath": "c",     "size": 200},
                 {"relpath": "d",     "size": 1},
                 {"relpath": "e",     "size": 1}]
-        rm   = ["merged_00001"]
 
         d_a = os.path.join(self.tdir, "ra")
         d_b = os.path.join(self.tdir, "rb")
-        write_all_records(d_a, fl, plan, rm)
-        write_all_records(d_b, fl, plan, rm)
+        write_all_records(d_a, fl, plan)
+        write_all_records(d_b, fl, plan)
 
         for fn in ("email_filelist.txt",
-                   "email_merge_map.txt",
-                   "email_remove_list.txt"):
+                   "email_merge_map.txt"):
             with open(os.path.join(d_a, fn), "r",
                       encoding="utf-8") as f:
                 ta = f.read()
@@ -1208,12 +799,12 @@ class TestBlock7(unittest.TestCase):
                 tb = f.read()
             self.assertEqual(ta, tb, fn)
 
-    # remove_names=None: no remove list file emitted.
-    def test_write_all_records_no_sa(self):
+    # Emits filelist + map, never a remove list.
+    def test_write_all_records_files(self):
         plan = self._basic_plan()
         fl   = [{"relpath": "a", "size": 4}]
         d    = os.path.join(self.tdir, "r")
-        write_all_records(d, fl, plan, None)
+        write_all_records(d, fl, plan)
         self.assertFalse(os.path.exists(
             os.path.join(d, "email_remove_list.txt")))
         self.assertTrue(os.path.exists(
@@ -1250,38 +841,15 @@ def _human_size(n):
     return f"{x:.2f} EiB"
 
 
-# Print up-front warning about the two SA modes; exit if the remove
-# list is missing and --rescan was not requested.
-def _print_time_warning(rescan, list_exists):
-    print("=" * 60)
-    print("gen_merged128k_email.py")
-    print("=" * 60)
-    # Estimates measured on the Enron 517k-file / 11k-bin corpus
-    # at 32 cores; update if the dataset materially changes.
-    if rescan:
-        print("MODE: --rescan -> running SpamAssassin")
-        print("      (~16 min: a/b/c/e ~45 s + SA scan ~15 min)")
-    elif list_exists:
-        print("MODE: existing remove list found -> reading it")
-        print("      (~1 min: merge pipeline only)")
-    else:
-        print("ERROR: remove list not found at:")
-        print(f"  {REMOVE_LIST_PATH}")
-        print("  Re-run with --rescan to run SpamAssassin and")
-        print("  generate it (~16 min on this dataset).")
-        sys.exit(1)
-    print()
-
-
-# Execute steps [a]-[e], run integration tests, then stats.  Every
+# Execute steps [a]-[d], run integration tests, then stats.  Every
 # major step is framed by step_enter / step_done with wall-clock.
 def _run_pipeline(args):
-    list_exists = os.path.isfile(REMOVE_LIST_PATH)
-    _print_time_warning(args.rescan, list_exists)
+    print("=" * 60)
+    print("gen_merged128k_email.py  (merge-only)")
+    print("=" * 60)
+    print()
 
-    check_dependencies(need_sa=args.rescan)
-    check_data_folders(SRC_DIR, TARGET_DIR, RECORDS_DIR,
-                       SA_DIR, need_sa=args.rescan)
+    check_data_folders(SRC_DIR, TARGET_DIR, RECORDS_DIR)
 
     t0 = step_enter("[a] canonical_file_list")
     fl = canonical_file_list(SRC_DIR)
@@ -1297,41 +865,19 @@ def _run_pipeline(args):
     exec_merge_plan(SRC_DIR, TARGET_DIR, plan)
     step_done("[c] exec_merge_plan", t0)
 
-    t0 = step_enter("[d] spam filter")
-    if args.rescan:
-        flagged = run_spamassassin(TARGET_DIR, SA_DIR,
-                                   SA_TSV_PATH)
-        write_remove_list(flagged, REMOVE_LIST_PATH)
-        print(f"  flagged (SA scan): {len(flagged)}")
-    else:
-        flagged = read_remove_list(REMOVE_LIST_PATH)
-        print(f"  flagged (existing list): {len(flagged)}")
-    n_del, n_miss = apply_remove_list(TARGET_DIR, flagged)
-    print(f"  deleted: {n_del}, missing: {n_miss}")
-    step_done("[d] spam filter", t0)
-
-    t0 = step_enter("[e] write_all_records")
-    write_all_records(RECORDS_DIR, fl, plan, flagged)
-    step_done("[e] write_all_records", t0)
+    t0 = step_enter("[d] write_all_records")
+    write_all_records(RECORDS_DIR, fl, plan)
+    step_done("[d] write_all_records", t0)
 
     t0 = step_enter("integration tests")
     integ_test_random_sample_in_merged(
-        SRC_DIR, TARGET_DIR, plan, flagged,
-        args.integ_samples)
-    integ_test_size_accounting(
-        SRC_DIR, TARGET_DIR, flagged, RECORDS_DIR)
+        SRC_DIR, TARGET_DIR, plan, args.integ_samples)
+    integ_test_size_accounting(SRC_DIR, TARGET_DIR)
     step_done("integration tests", t0)
 
     # Final stats.
     n_orig    = len(fl)
     t_orig    = sum(r["size"] for r in fl)
-    size_of   = {r["relpath"]: r["size"] for r in fl}
-    removed_s = set(flagged)
-    n_removed = len(flagged)
-    t_removed = sum(
-        size_of[s["relpath"]]
-        for b in plan if b["target_name"] in removed_s
-        for s in b["list_src"])
     final_files = [
         n for n in os.listdir(TARGET_DIR)
         if os.path.isfile(os.path.join(TARGET_DIR, n))]
@@ -1346,16 +892,12 @@ def _run_pipeline(args):
     print(f"original set:     {n_orig} files, "
           f"{t_orig} bytes ({_human_size(t_orig)})")
     print(f"merged generated: {n_generated} files")
-    print(f"merged removed:   {n_removed} files, "
-          f"{t_removed} bytes ({_human_size(t_removed)})")
     print(f"merged left:      {n_final} files, "
           f"{t_final} bytes ({_human_size(t_final)})")
     print(f"records: "
           f"{os.path.join(RECORDS_DIR, 'email_filelist.txt')}")
     print(f"         "
           f"{os.path.join(RECORDS_DIR, 'email_merge_map.txt')}")
-    if os.path.isfile(REMOVE_LIST_PATH):
-        print(f"         {REMOVE_LIST_PATH}")
     print("done.")
 
 
@@ -1364,8 +906,6 @@ def main():
         description="Merge maildir files into 128KB blobs.")
     parser.add_argument("--test", action="store_true",
                         help="run inline unit tests and exit")
-    parser.add_argument("--rescan", action="store_true",
-                        help="force SpamAssassin re-scan")
     parser.add_argument("--integ-samples", type=int, default=100,
                         help="random samples for integ test 1")
     args = parser.parse_args()

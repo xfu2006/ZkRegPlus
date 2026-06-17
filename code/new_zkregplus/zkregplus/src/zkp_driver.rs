@@ -400,15 +400,27 @@ where C: CurveGroup<ScalarField=F>,
 		seed, chunk_len, lkup_len, total_word_n, max_rounds, n_threads,
 		ShrinkMode::Quick, k_cand)?;
 
-	// 2. flatten per-chunk demand (aligned by file,seg). universe = the exact
-	// discharge universe |failed_c_all_segs|; fwd/active/live from the retained
-	// ChunkPeaks arrays.
+	// 2. flatten per-chunk demand (aligned by file,seg). universe = compute_sig's
+	// inp_subsigs = sum over the failed sigs of their (fanned) subsig count, NOT
+	// the failed-sig COUNT: comp_sig ingests every subsig of each failed sig, so
+	// the subsigs cap must be sized on that. fwd/active/live from ChunkPeaks.
+	let n_ids = db.sig_to_id.values().copied().max()
+		.map(|m| m + 1).unwrap_or(0);
+	let mut subsig_cnt_by_id = vec![0usize; n_ids];
+	for s in db.vec_sigs.iter().chain(db.vec_sigs_no_critical_pat.iter()) {
+		if let Some(&id) = db.sig_to_id.get(&s.name) {
+			subsig_cnt_by_id[id] = s.vec_subsig_obj.len();
+		}
+	}
 	let (mut universe, mut fwd, mut active, mut live) =
 		(vec![], vec![], vec![], vec![]);
 	for (wi, fdr) in infos.iter().zip(vdata.iter()) {
 		let cp = &fdr.chunk_peaks;
 		for s in 0..wi.failed_c_all_segs.len() {
-			universe.push(wi.failed_c_all_segs[s].len());
+			let n_sub: usize = wi.failed_c_all_segs[s].iter()
+				.map(|&id| subsig_cnt_by_id.get(id).copied().unwrap_or(0))
+				.sum();
+			universe.push(n_sub);
 			fwd.push(cp.fwd_entries_per_chunk.get(s).copied().unwrap_or(0));
 			active.push(cp.active_steps_per_chunk.get(s).copied().unwrap_or(0));
 			live.push(cp.carried_live_per_chunk.get(s).copied().unwrap_or(0));
@@ -4042,6 +4054,29 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			}
 			return;
 		}
+		//Measurement hook: fold the scan list against an ALREADY-saved ladder
+		//(skip re-derivation) so the SAME rungs are exercised over a small list.
+		if std::env::var("ZKR_DLP_LOAD_LADDER").is_ok() {
+			let ladder = crate::determine_config::load_ladder(
+				&format!("{}/{}", proot, rc.config_ladder));
+			utils::logger::log(0, utils::logger::LOG1, &format!(
+				"ZKR_DLP_LOAD_LADDER: folding {} files via {} saved rungs",
+				files.len(), ladder.len()));
+			get_global_config().b_estimate_caps = false;
+			get_global_config().aggr_needs_subsigs =
+				ladder.first().map(|c| c.aggr_needs_subsigs).unwrap_or(0);
+			let cs_caps: Vec<_> =
+				ladder.iter().map(caps_from_params_aggr).collect();
+			drop(db); //free discharge DB; fold driver loads its own (avoid 2x)
+			let scan = vec![format!("{}/{}", cd, rc.scan_file)];
+			zkp_driver_adv_aggr::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,
+				CS1E,S>(
+				0, &format!("{}/{}", cd, rc.sig_file), scan, &rc.report_out,
+				false, &rc.cache_dir, &format!("{}/main_dfa.dat", cd),
+				&format!("{}/needs_ised.dat", cd),
+				&format!("{}/needs_ised_igc.dat", cd), mw, &cs_caps, false);
+			return;
+		}
 		//estimate -> p100 seed (fast_finalize warm-start for P_max).
 		let est = estimate_config_aggr::<Fr>(&vdata, &db, &[100], &mut vlog);
 		let seed = estimated_to_capparams_aggr(&est[0], mw, rc.range2_bit, 3);
@@ -4087,6 +4122,91 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		let _ = std::fs::write(&format!("{}/{}", proot, rc.report_out),
 			format!("M11 sample3 fold-only: {} via {}-rung ladder\n",
 				rc.scan_file, cs_caps.len()));
+	}
+
+	/// Experiment: is the accept-vs-fold discharge gap the (max_word_len,
+	/// seg_word_len) SEGMENTATION (same function both sides)? Re-discharge
+	/// ZKR_CMP_LIST on the compressed DB at the fold's (mw,mw) vs the accept
+	/// shape (1, seg) for seg in {mw, whole-file}, bucket is_fail/is_success.
+	#[test]
+	pub fn dlp_discharge_seg_compare(){
+		use data_processor::clamav::quick_discharge_file_by_crit_bag_pm;
+		use data_processor::discharge_prover::quick_discharge_file;
+		let rc = crate::determine_config::RunCfg::from_env();
+		let proot = utils::os::proj_root();
+		let cd = &rc.config_dir;
+		let mw = rc.chunk_len;
+		get_global_config().range2_bit = rc.range2_bit;
+		get_global_config().b_light_test = true;
+		get_global_config().b_read_cache = true;
+		get_global_config().b_estimate_caps = false;
+		get_global_config().perc_lkup_share = 1;
+		get_global_config().min_subsigs = 1;
+		get_global_config().min_basis_unique_states = 2;
+		get_global_config().min_basis_acc_states = 2;
+		get_global_config().min_basis_pats_in_trace = 4;
+		get_global_config().min_avg_pats_per_subsig = 1;
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
+		get_global_config().clamav_cfg.sde_rep_fanout_cap = rc.fanout_cap;
+		let min_pm = std::env::var("ZKR_MIN_PM").ok()
+			.and_then(|s| s.parse().ok()).unwrap_or(3usize);
+		get_global_config().clamav_cfg.min_pm_word_len = min_pm;
+		println!("ZKR_MIN_PM (min_pm_word_len) = {}", min_pm);
+		let cfg = data_processor::clamav::default_clamav_cfg();
+		let mut vlog = vec![];
+		let db = data_processor::clam_db::ClamavDB::<Fr>::build_or_load(
+			&cfg, &format!("{}/{}", cd, rc.sig_file),
+			&format!("{}/main_dfa.dat", cd),
+			&format!("{}/needs_ised.dat", cd),
+			&format!("{}/needs_ised_igc.dat", cd), &mut vlog,
+			&rc.cache_dir, true, true).expect("build db");
+		let list = std::env::var("ZKR_CMP_LIST").expect("set ZKR_CMP_LIST");
+		let files = utils::os::read_lines(&list);
+		let id2name: std::collections::HashMap<usize, String> =
+			db.sig_to_id.iter().map(|(k, v)| (*v, k.clone())).collect();
+		let big = 1_000_000usize;
+		let (mut fold_ok, mut acc64_clean, mut accbig_clean) = (0, 0, 0);
+		let (mut gap, mut truematch, mut skip) = (0, 0, 0);
+		let mut ex = vec![];
+		for f in &files {
+			let nib = utils::os::read_nibbles(&format!("{}/{}", proot, f));
+			if nib.len() < 2 { skip += 1; continue; }
+			let (fi, rec) = quick_discharge_file_by_crit_bag_pm(
+				f, &nib, &db.vec_sigs, &db.vec_sigs_no_critical_pat,
+				&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
+				&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
+				&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
+				&db.sig_to_id, mw, mw);
+			let fold = rec.is_success() && !fi.is_fail();
+			let a64 = !quick_discharge_file(f, &db, &cfg, 1, mw).is_fail();
+			let abig = !quick_discharge_file(f, &db, &cfg, 1, big).is_fail();
+			if fold { fold_ok += 1; }
+			if a64 { acc64_clean += 1; }
+			if abig { accbig_clean += 1; }
+			if !fold && abig { gap += 1; }
+			if !fold && !abig { truematch += 1;
+				if ex.len() < 12 {
+					let names: Vec<String> = rec.vec_ised_sigs.iter()
+						.map(|id| id2name.get(id).cloned()
+							.unwrap_or(format!("id{}", id))).collect();
+					ex.push((f.clone(), names)); } }
+		}
+		println!("=== discharge seg compare: {} files ({} skipped) ===",
+			files.len(), skip);
+		println!("fold (mw={},seg={}) is_success & !is_fail : {}",
+			mw, mw, fold_ok);
+		println!("accept-shape (mw=1, seg={})   !is_fail   : {}",
+			mw, acc64_clean);
+		println!("accept-shape (mw=1, whole)    !is_fail   : {}",
+			accbig_clean);
+		println!("-> GAP (fold-fail BUT whole-clean) : {}  [SEGMENTATION]",
+			gap);
+		println!("-> TRUE-MATCH (fold-fail & whole-fail): {} [DB/real]",
+			truematch);
+		println!("-- TRUE-MATCH examples (matched SIT under compressed DB) --");
+		for (f, names) in &ex {
+			println!("  {}\n     -> {:?}", f, names);
+		}
 	}
 
 	/// NEEDS-distribution study over the full Enron clean list (parallel,

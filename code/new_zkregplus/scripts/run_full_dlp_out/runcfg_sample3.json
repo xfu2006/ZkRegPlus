@@ -10,6 +10,6 @@
   "config_c2": "data/paper_data/dlp/cfg/dlp_config_C2.json",
   "report_out": "data/paper_data/dlp/report/dlp_report_sample3.txt",
   "config_ladder": "data/paper_data/dlp/cfg/dlp_config_ladder.json",
-  "k_max": 4,
+  "k_max": 2,
   "n_buckets": 2048
 }
