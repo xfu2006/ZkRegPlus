@@ -1,1 +1,1 @@
-[0-9]{6}\x2D[0-9]{4}.{0,300}[\x20\x09\x0A\x0D]driving\x20license[\x20\x09\x0A\x0D]
+[0-9]{6}\x2D[0-9]{4}.{0,300}\x20driving\x20license\x20

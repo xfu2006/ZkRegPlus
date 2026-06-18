@@ -1,1 +1,1 @@
-[A-Za-z0-9]{9}.{0,300}[\x20\x09\x0A\x0D]paspoort\x20nummer[\x20\x09\x0A\x0D]
+[A-Za-z0-9]{9}.{0,300}\x20paspoort\x20nummer\x20

@@ -1,1 +1,1 @@
-[0-9]{4}\x2D[0-9]{4}\x2D[0-9]{6}.{0,300}[\x20\x09\x0A\x0D]Surat\x20Ijin\x20Mengemudi[\x20\x09\x0A\x0D]
+[0-9]{4}\x2D[0-9]{4}\x2D[0-9]{6}.{0,300}\x20Surat\x20Ijin\x20Mengemudi\x20

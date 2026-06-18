@@ -1,1 +1,1 @@
-[\x20\x09\x0A\x0D]department\x20of\x20immigration[\x20\x09\x0A\x0D].{0,300}[AC-FNUX][0-9]{7}
+\x20department\x20of\x20immigration\x20.{0,300}[AC-FNUX][0-9]{7}

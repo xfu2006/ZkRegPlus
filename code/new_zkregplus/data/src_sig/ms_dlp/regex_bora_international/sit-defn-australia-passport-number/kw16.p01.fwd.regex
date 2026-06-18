@@ -1,1 +1,1 @@
-[\x20\x09\x0A\x0D]issuing\x20authority[\x20\x09\x0A\x0D].{0,300}P[A-FUWXZ][0-9]{7}
+\x20issuing\x20authority\x20.{0,300}P[A-FUWXZ][0-9]{7}

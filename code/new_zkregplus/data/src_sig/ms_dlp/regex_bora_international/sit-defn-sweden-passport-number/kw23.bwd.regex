@@ -1,1 +1,1 @@
-[0-9]{8}.{0,300}[\x20\x09\x0A\x0D]visa\x20requirements[\x20\x09\x0A\x0D]
+[0-9]{8}.{0,300}\x20visa\x20requirements\x20

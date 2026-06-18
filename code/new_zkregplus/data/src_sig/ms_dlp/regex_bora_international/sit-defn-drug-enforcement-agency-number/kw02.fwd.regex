@@ -1,1 +1,1 @@
-[\x20\x09\x0A\x0D]drug\x20enforcement\x20administration[\x20\x09\x0A\x0D].{0,300}[A-Za-z][A-Za-z0-9][0-9]{7}
+\x20drug\x20enforcement\x20administration\x20.{0,300}[A-Za-z][A-Za-z0-9][0-9]{7}

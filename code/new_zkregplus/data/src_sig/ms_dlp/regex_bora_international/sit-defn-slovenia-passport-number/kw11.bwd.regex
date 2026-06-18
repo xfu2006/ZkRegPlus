@@ -1,1 +1,1 @@
-[A-Za-z][A-Za-z][0-9]{7}.{0,300}[\x20\x09\x0A\x0D]potni\x20list\x23[\x20\x09\x0A\x0D]
+[A-Za-z][A-Za-z][0-9]{7}.{0,300}\x20potni\x20list\x23\x20

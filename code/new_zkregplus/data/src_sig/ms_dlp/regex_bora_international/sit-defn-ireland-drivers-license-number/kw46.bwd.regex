@@ -1,1 +1,1 @@
-[0-9]{6}[A-Za-z]{4}.{0,300}[\x20\x09\x0A\x0D]driver\x27s\x20licence[\x20\x09\x0A\x0D]
+[0-9]{6}[A-Za-z]{4}.{0,300}\x20driver\x27s\x20licence\x20

@@ -1,1 +1,1 @@
-[A-Za-z]{2}[0-9]{6}.{0,300}[\x20\x09\x0A\x0D]new\x20zealand\x20automobile\x20a[\x20\x09\x0A\x0D]
+[A-Za-z]{2}[0-9]{6}.{0,300}\x20new\x20zealand\x20automobile\x20a\x20

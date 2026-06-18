@@ -1,1 +1,1 @@
-[A-Za-z0-9]{9}.{0,300}[\x20\x09\x0A\x0D]passport\x20\x23[\x20\x09\x0A\x0D]
+[A-Za-z0-9]{9}.{0,300}\x20passport\x20\x23\x20

@@ -1,1 +1,1 @@
-[\x20\x09\x0A\x0D]sairausvakuutusnumero[\x20\x09\x0A\x0D].{0,300}[0-9]{10}[\x2D\x20]?[0-9]{10}
+\x20sairausvakuutusnumero\x20.{0,300}[0-9]{10}[\x2D\x20]?[0-9]{10}

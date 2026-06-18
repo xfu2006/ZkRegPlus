@@ -1,1 +1,1 @@
-[A-Za-z][A-Za-z0-9][\x2D\x20]?[A-Za-z0-9]{7}[\x2D\x20]?[A-Za-z].{0,300}[\x20\x09\x0A\x0D]dl\x23[\x20\x09\x0A\x0D]
+[A-Za-z][A-Za-z0-9][\x2D\x20]?[A-Za-z0-9]{7}[\x2D\x20]?[A-Za-z].{0,300}\x20dl\x23\x20

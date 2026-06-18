@@ -1,1 +1,1 @@
-[0-9]{6,17}.{0,300}[\x20\x09\x0A\x0D]Checking\x20Acct\x20N[\x20\x09\x0A\x0D]
+[0-9]{6,17}.{0,300}\x20Checking\x20Acct\x20N\x20

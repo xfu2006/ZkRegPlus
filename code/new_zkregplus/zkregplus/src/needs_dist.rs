@@ -8,24 +8,33 @@ use rayon::prelude::*;
 use data_processor::clam_db::ClamavDB;
 use data_processor::type_def::ClamavApproxConfig;
 use data_processor::clamav::quick_discharge_file_by_crit_bag_pm;
+use data_processor::discharge_proof::FailDischargeRecord;
 use utils::os::{read_nibbles, write_lines};
 use utils::consts::read_global_config;
 
-/// (1) Per-chunk NEEDS for one file. fpath is relative to proot. Requires
-/// the aggressive flag (else chunk_peaks.needs_per_chunk is empty).
-pub fn file_needs_per_chunk<F: PrimeField>(fpath: &str, proot: &str,
-	db: &ClamavDB<F>, cfg: &ClamavApproxConfig, mw: usize) -> Vec<usize> {
+/// Discharge one file -> its FailDischargeRecord. None for empty/1-nibble
+/// files (no chunks; the shared discharge panics on ilog2(0) at file_len).
+/// fpath is relative to proot; aggressive flag gates needs_per_chunk.
+pub fn discharge_one<F: PrimeField>(fpath: &str, proot: &str,
+	db: &ClamavDB<F>, cfg: &ClamavApproxConfig, mw: usize)
+	-> Option<FailDischargeRecord> {
 	let nibbles = read_nibbles(&format!("{}/{}", proot, fpath));
-	//empty/1-nibble files have no NEEDS and would panic the shared
-	//discharge (ilog2(0) at clamav.rs file_len). Skip -> no chunks.
-	if nibbles.len() < 2 { return vec![]; }
+	if nibbles.len() < 2 { return None; }
 	let (fdr, _rec) = quick_discharge_file_by_crit_bag_pm(
 		fpath, &nibbles, &db.vec_sigs, &db.vec_sigs_no_critical_pat,
 		&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
 		&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
 		&db.bundle_subsig_igc.vec_acdfa[0], true, cfg,
 		&db.sig_to_id, mw, mw);
-	fdr.chunk_peaks.needs_per_chunk
+	Some(fdr)
+}
+
+/// (1) Per-chunk NEEDS for one file. fpath is relative to proot. Requires
+/// the aggressive flag (else chunk_peaks.needs_per_chunk is empty).
+pub fn file_needs_per_chunk<F: PrimeField>(fpath: &str, proot: &str,
+	db: &ClamavDB<F>, cfg: &ClamavApproxConfig, mw: usize) -> Vec<usize> {
+	discharge_one(fpath, proot, db, cfg, mw)
+		.map(|f| f.chunk_peaks.needs_per_chunk).unwrap_or_default()
 }
 
 /// (2) Per-chunk NEEDS for many files (2D: file -> per-chunk array).

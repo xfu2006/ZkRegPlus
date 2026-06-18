@@ -1,1 +1,1 @@
-[\x20\x09\x0A\x0D]drivers\x20licence[\x20\x09\x0A\x0D].{0,300}[Ee][Tt][0-9]{6}
+\x20drivers\x20licence\x20.{0,300}[Ee][Tt][0-9]{6}

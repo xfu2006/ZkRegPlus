@@ -1,1 +1,1 @@
-[0-9]{9}.{0,300}[\x20\x09\x0A\x0D]national\x20identi[\x20\x09\x0A\x0D]
+[0-9]{9}.{0,300}\x20national\x20identi\x20

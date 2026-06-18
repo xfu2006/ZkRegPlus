@@ -1,1 +1,1 @@
-[\x20\x09\x0A\x0D]New\x20Zealand[\x20\x09\x0A\x0D].{0,300}[ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjklmnpqrstuvwxyz]{3}[0-9]{4}
+\x20New\x20Zealand\x20.{0,300}[ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjklmnpqrstuvwxyz]{3}[0-9]{4}

@@ -1,1 +1,1 @@
-[\x20\x09\x0A\x0D]multiple\x20entry[\x20\x09\x0A\x0D].{0,300}[0-9]{8}
+\x20multiple\x20entry\x20.{0,300}[0-9]{8}

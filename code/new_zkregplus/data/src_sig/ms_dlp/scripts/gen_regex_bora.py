@@ -100,12 +100,13 @@ def sit_to_bora_regexes(proximity, combos, keywords):
     branches is a list of {pidx, fwd, bwd} with
         fwd = KW.{0,N}combo   (keyword first)   -- "forward"
         bwd = combo.{0,N}KW   (pattern first)   -- "backward"
-    KW is the keyword escaped into the dialect and whitespace-flanked (mirrors
-    gz.sit_to_regex). Empty when there are no keywords/combos."""
+    KW is the keyword escaped into the dialect and flanked by a single
+    space (mirrors gz.sit_to_regex space mode). Empty when there are no
+    keywords/combos."""
     out = []
     n = str(proximity)
     for i, kw in enumerate(keywords):
-        ktok = WS_CLASS + gz._esc(kw) + WS_CLASS
+        ktok = "\\x20" + gz._esc(kw) + "\\x20"
         bl = []
         for m, combo in enumerate(combos):
             bl.append({

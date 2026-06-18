@@ -1,1 +1,1 @@
-[A-Za-z][0-9]{6,8}.{0,300}[\x20\x09\x0A\x0D]passport\x20no[\x20\x09\x0A\x0D]
+[A-Za-z][0-9]{6,8}.{0,300}\x20passport\x20no\x20

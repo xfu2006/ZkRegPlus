@@ -1,1 +1,1 @@
-[A-Za-z]{2}[0-9]{6}.{0,300}[\x20\x09\x0A\x0D]reisepass\x20kein[\x20\x09\x0A\x0D]
+[A-Za-z]{2}[0-9]{6}.{0,300}\x20reisepass\x20kein\x20

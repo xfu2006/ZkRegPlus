@@ -1,1 +1,1 @@
-[\x20\x09\x0A\x0D]taxidnumber\x23[\x20\x09\x0A\x0D].{0,300}[0-9]{7}[A-Za-z]
+\x20taxidnumber\x23\x20.{0,300}[0-9]{7}[A-Za-z]

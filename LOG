@@ -29326,3 +29326,10 @@ Goal 8. more experiment on the pass/fail list
 			that generates this list.
 	* show me a sample pargraph of the README section to append/overwrite first.
 
+	[b] refine design
+	[c] short key words problem again - set pm_bound_len to 3
+		96.11% of files and 89.99% of data.
+		=> updated to 97% and 92% of data (after step 1)
+	[d] improve the writing of data of code
+	[e] find out why it fails to discharge
+

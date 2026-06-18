@@ -1,1 +1,1 @@
-[0-9]{3}\x20?[0-9]{3}\x20?[0-9]{4}.{0,300}[\x20\x09\x0A\x0D]health\x20services\x20authority[\x20\x09\x0A\x0D]
+[0-9]{3}\x20?[0-9]{3}\x20?[0-9]{4}.{0,300}\x20health\x20services\x20authority\x20

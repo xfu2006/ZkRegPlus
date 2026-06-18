@@ -1,1 +1,1 @@
-[\x20\x09\x0A\x0D]driver\x27slicence[\x20\x09\x0A\x0D].{0,300}[0-9]{12}
+\x20driver\x27slicence\x20.{0,300}[0-9]{12}

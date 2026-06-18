@@ -1,1 +1,1 @@
-[A-Za-z0-9][0-9]{8}.{0,300}[\x20\x09\x0A\x0D]permisului\x20de\x20conducere[\x20\x09\x0A\x0D]
+[A-Za-z0-9][0-9]{8}.{0,300}\x20permisului\x20de\x20conducere\x20
