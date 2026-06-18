@@ -29329,7 +29329,28 @@ Goal 8. more experiment on the pass/fail list
 	[b] refine design
 	[c] short key words problem again - set pm_bound_len to 3
 		96.11% of files and 89.99% of data.
-		=> updated to 97% and 92% of data (after step 1)
+		==> re-computed as
+		inal  cfg/jobs/final_enron_list.txt.tgz
+        497257 files, 1277 MB = 97.58% files / 92.82% size of step1
+
 	[d] improve the writing of data of code
 	[e] find out why it fails to discharge
+
+Thursday 06/18/2026
+Goal 1. refine regex generation another round
+	[a] found -> it's caused by remove_special_char
+	[b] data looks good now at least 96.26% retained.
+Goal 2. Writing
+	[a] 7.3 plan
+	[b] p1
+	[c] p2.
+	[c] p3.
+Goal 3. DLP sample
+	[a] impl
+	[b] fix the folding CapErr issue
+	[c] first run completes 500 files (0.1% single job)
+		-> 4112 sec = 68.5 min
+		-> ring 0 2.96M, ring 1 3.42M
+		=> even at the current implementation if 8 jobs
+		the whole folding can be finished within 15 hours.
 

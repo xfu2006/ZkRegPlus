@@ -480,6 +480,8 @@ fn shrink_fields()->Vec<(&'static str, CapGet, CapSet, CapFloor)>{
 	    |p,v| p.avg_active_pats_per_subsig=v, |_| 1),
 	 ("perc_pats",       |p| p.perc_pats_expansion_rate,
 	    |p,v| p.perc_pats_expansion_rate=v, |_| 2),
+	 ("perc_comp",       |p| p.perc_comp_subsigs,
+	    |p,v| p.perc_comp_subsigs=v, |_| 2),
 	]
 }
 
@@ -688,92 +690,6 @@ where C: CurveGroup<ScalarField=F>,
 		.collect();
 	finalize_caps_probe::<F,C,CS>(db, &cw, &ci, seed, chunk_len, lkup_len,
 		total_word_n, max_rounds, n_threads, mode)
-}
-
-/// One DLP sample's determine_config run (M2). Builds-or-loads the cached
-/// aggressive DLP DB (first run builds+caches, rest load), discharges the
-/// sample manifest, auto-tunes the LOWEST CapParams via determine_config_aggr
-/// (seeded low; CapErr bumps are exact so it converges in a few iters), and
-/// writes the result to rc.config_out -- the JSON handoff the driver sequences.
-pub(crate) fn run_dlp_sample_config<F,C,CS>(rc: &crate::determine_config::RunCfg)
-where C: CurveGroup<ScalarField=F>,
-      CS: CommitmentScheme<C,false>,
-      <CS as CommitmentScheme<C,false>>::ProverParams: Send + Sync,
-      F: PrimeField + Absorb + ColEle,
-{
-	use crate::determine_config::capparams_from_caps_aggr;
-	//1. knobs: aggressive CS-only fan-out; low floors so the tuner finds the
-	//true minimum (bumps climb to the exact required value).
-	get_global_config().range2_bit = rc.range2_bit;
-	get_global_config().b_light_test = true;
-	get_global_config().perc_lkup_share = 1;
-	get_global_config().min_subsigs = 1;
-	get_global_config().min_basis_unique_states = 2;
-	get_global_config().min_basis_acc_states = 2;
-	get_global_config().min_basis_pats_in_trace = 4;
-	get_global_config().min_avg_pats_per_subsig = 1;
-	get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
-	get_global_config().clamav_cfg.sde_rep_fanout_cap = rc.fanout_cap;
-	get_global_config().clamav_cfg.min_pm_word_len = 3;
-
-	//2. build or load the cached DB (shared across all samples; same sig set)
-	let cfg = default_clamav_cfg();
-	let sig = format!("{}/{}", rc.config_dir, rc.sig_file);
-	let dfa = format!("{}/regex_pat/main_dfa.dat", rc.config_dir);
-	let ised = format!("{}/regex_pat/needs_ised.dat", rc.config_dir);
-	let ised_igc = format!("{}/regex_pat/needs_ised_igc.dat", rc.config_dir);
-	let mut vlog = vec![];
-	let db = ClamavDB::<F>::build_or_load(&cfg, &sig, &dfa, &ised, &ised_igc,
-		&mut vlog, &rc.cache_dir, true, true).expect("build/load db");
-
-	//3. discharge the sample -> words + per-file (WordInfo, vdata). Capture the
-	//   FailDischargeRecord (vdata) for the per-chunk ladder demand (mirrors
-	//   load_files but keeps the record); b_estimate_caps populates the per-chunk
-	//   fwd/active/live arrays the band DP needs.
-	get_global_config().b_estimate_caps = true;
-	let scan = format!("{}/{}", rc.config_dir, rc.scan_file);
-	let files = read_lines(&format!("{}/{}", proj_root(), scan));
-	let (mut words, mut infos, mut vdata) = (vec![], vec![], vec![]);
-	for fpath in &files {
-		let nibbles = read_nibbles(&format!("{}/{}", proj_root(), fpath));
-		let f_nib: Vec<F> = nibbles.iter().map(|x| F::from(*x as u32)).collect();
-		words.push(pack_nibbles(&f_nib));
-		let (fdr, rec) = quick_discharge_file_by_crit_bag_pm(
-			fpath, &nibbles, &db.vec_sigs, &db.vec_sigs_no_critical_pat,
-			&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
-			&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
-			&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
-			&db.sig_to_id, rc.chunk_len, rc.chunk_len);
-		vdata.push(fdr);
-		infos.push(rec);
-	}
-	let total_word_n: usize = words.iter().map(|w| w.len()).sum();
-	let rc_db = Arc::new(db);
-	let lkup_len = rc_db.lkup.get_size();
-
-	//4. seed a LOW config; fast_finalize (inside determine_config_aggr) climbs
-	//   to P_max via exact CapErr bumps, then the band DP forms the ladder.
-	let mw = rc.chunk_len;
-	let cp = CpCapacity { max_word_len: mw, basis_unique_states: 2,
-		subsigs: 1, avg_pats_per_subsig: 1 };
-	let sed = SedCapacity::new(mw, rc.range2_bit, 1, 1, 1, 4, 16, 1, 1, 2, 2);
-	let seed = capparams_from_caps_aggr(&cp, &sed, 1);
-
-	//5. tune the per-chunk ladder + write the JSON handoff.
-	let n_threads = std::env::var("ZKR_DC_THREADS").ok()
-		.and_then(|s| s.parse().ok()).unwrap_or(4);
-	match determine_config_aggr::<F,C,CS>(rc_db, &words, &infos, &vdata, seed,
-		rc.chunk_len, lkup_len, total_word_n, rc.k_max, rc.n_buckets, 60,
-		n_threads, 8) {
-		Ok((ladder, hist)) => {
-			let out = format!("{}/{}", proj_root(), rc.config_out);
-			crate::determine_config::save_ladder(&ladder, &out)
-				.expect("save ladder");
-			log(0, LOG1, &format!("FULL_DLP sample -> {}: {} rungs, hist={:?}",
-				out, ladder.len(), hist));
-		}
-		Err(e) => panic!("determine_config_aggr failed: {}", e),
-	}
 }
 
 /// determine_config (non-aggressive): same loop as the aggressive variant but
@@ -3849,24 +3765,6 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			64);                   //seg_word_len: 64w*31B ~= 2KB
 	}                              //(median email fills ~78%)
 
-	/// full_dlp pipeline (M2): tune the SMALL (easy) config from sample1's
-	/// manifest. Driven by scripts/run_full_dlp.py via ZKR_DLP_RUNCFG; writes
-	/// CapParams JSON to runcfg.config_out. Same body as full_dlp_sample2 (the
-	/// scan manifest + output path differ only in the driver's runcfg).
-	#[test]
-	pub fn full_dlp_sample1(){
-		let rc = crate::determine_config::RunCfg::from_env();
-		super::run_dlp_sample_config::<Fr,C1,CS1>(&rc);
-	}
-
-	/// full_dlp pipeline (M2): tune the BIG (hard) config from sample2's
-	/// manifest. See full_dlp_sample1.
-	#[test]
-	pub fn full_dlp_sample2(){
-		let rc = crate::determine_config::RunCfg::from_env();
-		super::run_dlp_sample_config::<Fr,C1,CS1>(&rc);
-	}
-
 	/// Pure-logic check of select_candidates_from_peaks: the per-proxy top-K
 	/// must include every cap's argmax file, and n<=k returns all files.
 	#[test]
@@ -3907,13 +3805,54 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			"k=2 needs top-2 missing: {:?}", c2);
 	}
 
-	/// full_dlp pipeline sample3: FOLD-ONLY run of the sample3 list over a
-	/// 2-circuit ladder -- C1 (sample1, cheap) + C2 (sample2, big). Each word
-	/// sticks to the cheapest fitting layer (foldpot find_working_layer). The
-	/// log carries per-word layer (PERF 1001 ... pci:) and per-step circ + time
-	/// (prove_step cost ... circ_id:). No SNARK (b_folding_only).
+	/// One-off: aggressive NEEDS scan over the scan_file list. Dump
+	/// "maxNEEDS<TAB>foldable<TAB>fpath" sorted desc so the sample's
+	/// forced expensive file (and foldable peers) can be picked. Cached.
 	#[test]
-	pub fn full_dlp_sample3(){
+	pub fn dlp_dump_file_needs(){
+		use rayon::prelude::*;
+		let rc = crate::determine_config::RunCfg::from_env();
+		let proot = utils::os::proj_root();
+		let cd = &rc.config_dir;
+		let mw = rc.chunk_len;
+		get_global_config().range2_bit = rc.range2_bit;
+		get_global_config().b_read_cache = true;
+		get_global_config().b_estimate_caps = false;
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
+		get_global_config().clamav_cfg.sde_rep_fanout_cap = rc.fanout_cap;
+		get_global_config().clamav_cfg.min_pm_word_len = 3;
+		let cfg = data_processor::clamav::default_clamav_cfg();
+		let mut vlog = vec![];
+		let db = data_processor::clam_db::ClamavDB::<Fr>::build_or_load(
+			&cfg, &format!("{}/{}", cd, rc.sig_file),
+			&format!("{}/regex_pat/main_dfa.dat", cd),
+			&format!("{}/regex_pat/needs_ised.dat", cd),
+			&format!("{}/regex_pat/needs_ised_igc.dat", cd), &mut vlog,
+			&rc.cache_dir, true, true).expect("build db");
+		let files = utils::os::read_lines(
+			&format!("{}/{}", proot, rc.scan_file));
+		let mut rank: Vec<(usize, bool, String)> = files.par_iter()
+			.filter_map(|f| crate::needs_dist::discharge_one::<Fr>(
+				f, &proot, &db, &cfg, mw).map(|fdr| {
+				let mx = fdr.chunk_peaks.needs_per_chunk.iter()
+					.copied().max().unwrap_or(0);
+				(mx, !fdr.is_fail(), f.clone())
+			})).collect();
+		rank.sort_by(|a, b| b.0.cmp(&a.0));
+		let body: String = rank.iter()
+			.map(|(n, ok, f)| format!("{}\t{}\t{}\n", n, *ok as u8, f))
+			.collect();
+		let out = format!("{}/{}", proot, rc.report_out);
+		std::fs::write(&out, body).expect("write rank");
+		utils::logger::log(0, utils::logger::LOG1, &format!(
+			"[dump_file_needs] {} files ranked -> {}", rank.len(), out));
+	}
+
+	/// Sampled full_dlp: same DB as full_dlp (symlinked regex), discharge
+	/// a 500-file sample, print the NEEDS distribution, tune a k_max-rung
+	/// cap ladder, then fold-only for per-step stats + cs1e.
+	#[test]
+	pub fn full_dlp_sample(){
 		use crate::determine_config::caps_from_params_aggr;
 		use crate::stats_helper::{estimate_config_aggr,
 			estimated_to_capparams_aggr};
@@ -3923,7 +3862,7 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		let proot = utils::os::proj_root();
 		let cd = &rc.config_dir;
 		let mw = rc.chunk_len;
-		//aggressive CS-only, folding-only, estimate-on for the tuning discharge.
+		//aggressive CS-only, folding-only, estimate-on for the tuning.
 		get_global_config().range2_bit = rc.range2_bit;
 		get_global_config().b_light_test = true;
 		get_global_config().b_folding_only = true;
@@ -3948,7 +3887,7 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			&format!("{}/regex_pat/needs_ised.dat", cd),
 			&format!("{}/regex_pat/needs_ised_igc.dat", cd), &mut vlog,
 			&rc.cache_dir, true, true).expect("build db");
-		//discharge the full 5087 list (one pass) -> vdata + words + infos
+		//discharge the sample -> vdata + words + infos (one pass).
 		let files = utils::os::read_lines(
 			&format!("{}/{}/{}", proot, cd, rc.scan_file));
 		let (mut vdata, mut words, mut infos) = (vec![], vec![], vec![]);
@@ -3968,126 +3907,17 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			vdata.push(fdr);
 			infos.push(rec);
 		}
-		//NEEDS distribution study: reuse the per-chunk arrays just
-		//discharged (aggressive flag is on here), no second pass. Study
-		//only -> print and return, skipping the finalize+fold.
-		if std::env::var("ZKR_DLP_NEEDS_DIST").is_ok() {
-			use std::collections::{HashMap, HashSet};
-			let rows: Vec<Vec<usize>> = vdata.iter()
-				.map(|r| r.chunk_peaks.needs_per_chunk.clone()).collect();
-			println!("=== KEYWORD-anchored NEEDS ===");
-			crate::needs_dist::print_needs_dist_rows(&rows, &files);
-			//PROBE: digit-anchored comparison (opposite-end token). Rows
-			//empty unless ZKR_DIGIT_PROBE was set during discharge.
-			let drows: Vec<Vec<usize>> = vdata.iter()
-				.map(|r| r.chunk_peaks.digit_needs_per_chunk.clone())
-				.collect();
-			if drows.iter().any(|r| !r.is_empty()) {
-				println!("=== DIGIT-anchored NEEDS (opposite-end token) ===");
-				crate::needs_dist::print_needs_dist_rows(&drows, &files);
-			}
-			//TASK2: worst-chunk breakdown. Global argmax (file i*, chunk c*),
-			//then which anchors fire there, how many sigs, the per-sig
-			//fan-out. Presence = hex-anchor nibbles are a contiguous subseq
-			//of the chunk's nibbles (cs anchors; igc not separated here).
-			let mut best = (0usize, 0usize, 0usize); //(needs, i, c)
-			for (i, r) in rows.iter().enumerate() {
-				for (c, &n) in r.iter().enumerate() {
-					if n > best.0 { best = (n, i, c); }
-				}
-			}
-			let (wneeds, wi, wc) = best;
-			let seg = vdata[wi].chunk_peaks.seg_size.max(1);
-			let wnib = utils::os::read_nibbles(
-				&format!("{}/{}", proot, &files[wi]));
-			let lo = (wc*seg).min(wnib.len());
-			let hi = ((wc+1)*seg).min(wnib.len());
-			let chunk = &wnib[lo..hi];
-			let present = |hexa: &str| -> bool {
-				let pat: Vec<u8> = hexa.chars()
-					.filter_map(|ch| ch.to_digit(16).map(|d| d as u8))
-					.collect();
-				if pat.is_empty() || pat.len() > chunk.len() {
-					return false; }
-				chunk.windows(pat.len()).any(|w| w == &pat[..])
-			};
-			let mut anc: HashMap<String,(usize,HashSet<String>)>
-				= HashMap::new();
-			let live = &vdata[wi].crit;
-			for s in db.vec_sigs.iter().filter(|s|
-				live.contains(&s.name)) {
-				for sid in 0..s.vec_subsig_pm_bounds.len() {
-					let pb = &s.vec_subsig_pm_bounds[sid];
-					if pb.is_empty() { continue; }
-					let is_bwd = s.vec_subsig_anchor_dir.get(sid)
-						.map_or(false,|d| *d==1);
-					let a = if is_bwd {&pb[pb.len()-1].0}
-						else {&pb[0].0};
-					if present(a) {
-						let e = anc.entry(a.clone())
-							.or_insert((0, HashSet::new()));
-						e.0 += 1; e.1.insert(s.name.clone());
-					}
-				}
-			}
-			let total_needs: usize = anc.values().map(|v| v.0).sum();
-			let n_sigs: HashSet<&String> = anc.values()
-				.flat_map(|v| v.1.iter()).collect();
-			let mut items: Vec<(String,usize,usize)> = anc.iter()
-				.map(|(k,v)| (k.clone(), v.0, v.1.len())).collect();
-			items.sort_by(|a,b| b.1.cmp(&a.1));
-			println!("=== WORST-CHUNK breakdown: {} chunk {} ===",
-				&files[wi], wc);
-			println!("measured-keyword-NEEDS={} recomputed-subsig-NEEDS={} \
-				present-anchors={} triggered-sigs={} avg-fanout={:.1}",
-				wneeds, total_needs, anc.len(), n_sigs.len(),
-				total_needs as f64 / n_sigs.len().max(1) as f64);
-			println!("top anchors (hex | text | subsigs | #sigs):");
-			for (a,cnt,ns) in items.iter().take(25) {
-				let txt: String = a.as_bytes().chunks(2)
-					.filter_map(|pair| {
-						let s = std::str::from_utf8(pair).ok()?;
-						u8::from_str_radix(s,16).ok().map(|b| b as char)
-					}).collect();
-				println!("  {:<34} | {:<24} | {:>5} | {:>4}",
-					a, txt, cnt, ns);
-			}
-			return;
-		}
-		//Measurement hook: fold the scan list against an ALREADY-saved ladder
-		//(skip re-derivation) so the SAME rungs are exercised over a small list.
-		if std::env::var("ZKR_DLP_LOAD_LADDER").is_ok() {
-			let ladder = crate::determine_config::load_ladder(
-				&format!("{}/{}", proot, rc.config_ladder));
-			utils::logger::log(0, utils::logger::LOG1, &format!(
-				"ZKR_DLP_LOAD_LADDER: folding {} files via {} saved rungs",
-				files.len(), ladder.len()));
-			get_global_config().b_estimate_caps = false;
-			get_global_config().aggr_needs_subsigs =
-				ladder.first().map(|c| c.aggr_needs_subsigs).unwrap_or(0);
-			let cs_caps: Vec<_> =
-				ladder.iter().map(caps_from_params_aggr).collect();
-			drop(db); //free discharge DB; fold driver loads its own (avoid 2x)
-			let scan = vec![format!("{}/{}", cd, rc.scan_file)];
-			zkp_driver_adv_aggr::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,
-				CS1E,S>(
-				0, &format!("{}/{}", cd, rc.sig_file), scan, &rc.report_out,
-				false, &rc.cache_dir, &format!("{}/regex_pat/main_dfa.dat", cd),
-				&format!("{}/regex_pat/needs_ised.dat", cd),
-				&format!("{}/regex_pat/needs_ised_igc.dat", cd), mw, &cs_caps, false);
-			return;
-		}
-		//estimate -> p100 seed (fast_finalize warm-start for P_max).
+		//(1) NEEDS distribution over the sample (stdout + sample report).
+		let rows: Vec<Vec<usize>> = vdata.iter()
+			.map(|r| r.chunk_peaks.needs_per_chunk.clone()).collect();
+		crate::needs_dist::print_needs_dist_rows(&rows, &files,
+			"data/debug/full_dlp_sample/config/needs_dist.txt");
+		//(2) estimate -> seed -> k_max-rung ladder; save the JSON.
 		let est = estimate_config_aggr::<Fr>(&vdata, &db, &[100], &mut vlog);
 		let seed = estimated_to_capparams_aggr(&est[0], mw, rc.range2_bit, 3);
 		let total_word_n: usize = words.iter().map(|w| w.len()).sum();
 		let lkup_len = db.lkup.get_size();
 		let db_arc = std::sync::Arc::new(db);
-		//M11: per-chunk capacity ladder. P_max = fast_finalize over the binding
-		//candidates (global-sufficient); the per-chunk demand (universe + fwd/
-		//active/live) is DP-partitioned into <= k_max cost-bands. Each chunk
-		//routes to its cheapest sufficient rung at fold time -- so dense files'
-		//cheap chunks no longer inflate one global config (the C1/C2 saga bug).
 		let n_threads = std::env::var("ZKR_DC_THREADS").ok()
 			.and_then(|s| s.parse().ok()).unwrap_or(4);
 		let (ladder, hist) = super::determine_config_aggr::<Fr,C1,CS1>(
@@ -4095,33 +3925,25 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			total_word_n, rc.k_max, rc.n_buckets, 60, n_threads, 8)
 			.expect("determine_config_aggr");
 		crate::determine_config::save_ladder(&ladder,
-			&format!("{}/{}", proot, rc.config_ladder)).expect("save ladder");
+			&format!("{}/{}", proot, rc.config_out)).expect("save ladder");
 		utils::logger::log(0, utils::logger::LOG1, &format!(
-			"M11 ladder: {} rungs, hist={:?}", ladder.len(), hist));
-		//determine_config-only mode: the ladder is written; skip the fold.
-		if std::env::var("ZKR_DLP_DETERMINE_ONLY").is_ok() {
-			utils::logger::log(0, utils::logger::LOG1, &format!(
-				"ZKR_DLP_DETERMINE_ONLY set: ladder saved, skipping fold"));
-			return;
-		}
-		//free the DB before the fold driver loads its own copy (avoid 2x RAM)
+			"full_dlp_sample ladder: {} rungs, hist={:?}", ladder.len(),
+			hist));
+		//fold-only: load own DB from cache (avoid 2x RAM); stats + cs1e.
 		drop(db_arc);
 		get_global_config().b_estimate_caps = false;
-		//global aggr_needs = P_max.subsigs (uniform across rungs) so the per-rung
-		//forward-queue clamp is a no-op; each rung uses its own universe.
 		get_global_config().aggr_needs_subsigs =
 			ladder.first().map(|c| c.aggr_needs_subsigs).unwrap_or(0);
-		let cs_caps: Vec<_> = ladder.iter().map(caps_from_params_aggr).collect();
+		let cs_caps: Vec<_> = ladder.iter().map(caps_from_params_aggr)
+			.collect();
 		let scan = vec![format!("{}/{}", cd, rc.scan_file)];
 		zkp_driver_adv_aggr::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,
 			CS1E,S>(
 			0, &format!("{}/{}", cd, rc.sig_file), scan, &rc.report_out,
 			false, &rc.cache_dir, &format!("{}/regex_pat/main_dfa.dat", cd),
 			&format!("{}/regex_pat/needs_ised.dat", cd),
-			&format!("{}/regex_pat/needs_ised_igc.dat", cd), mw, &cs_caps, false);
-		let _ = std::fs::write(&format!("{}/{}", proot, rc.report_out),
-			format!("M11 sample3 fold-only: {} via {}-rung ladder\n",
-				rc.scan_file, cs_caps.len()));
+			&format!("{}/regex_pat/needs_ised_igc.dat", cd), mw, &cs_caps,
+			false);
 	}
 
 	/// Experiment: is the accept-vs-fold discharge gap the (max_word_len,
@@ -4375,81 +4197,19 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			&mut vlog, "dlp_corpus_aggr", b_cache, true)
 			.expect("build db");
 
-		// DIAG (ZKR_CORPUS_DIAG=1): dump all_dfa (un-discharged sigs)
-		// for the first emails to see WHY discharge fails, then stop.
-		if std::env::var("ZKR_CORPUS_DIAG").is_ok() {
-			for f in files.iter().take(20) {
-				if let Some(fdr) = crate::needs_dist::discharge_one(
-					f, &proot, &db, &cfg, mw) {
-					let mut d: Vec<&String> =
-						fdr.all_dfa.iter().collect();
-					d.sort();
-					println!("DEBUG USE 61001.1: {} fail={} \
-all_dfa={} crit={} bag={} pm={} dfa[:8]={:?}", f, fdr.is_fail(),
-						fdr.all_dfa.len(), fdr.crit.len(),
-						fdr.bag.len(), fdr.pm.len(),
-						&d[..d.len().min(8)]);
-				}
-			}
-			return;
-		}
-
-		// 4. ONE discharge pass -> (fname, is_fail, max_needs, size,
-		// blocker sig names). all_dfa is the set of sigs that survived
-		// CP/SED/pm and fell to the DFA bucket = why the file failed.
-		// Captured only for fails (empty otherwise) for the blocker
-		// histogram; passers stay cheap.
-		let recs: Vec<(String, bool, usize, u64, Vec<String>)> =
-			files.par_iter().map(|f| {
+		// 4. ONE discharge pass -> (fname, is_fail, max_needs, size).
+		let recs: Vec<(String, bool, usize, u64)> = files.par_iter()
+			.map(|f| {
 				let sz = std::fs::metadata(
 					format!("{}/{}", proot, f))
 					.map(|m| m.len()).unwrap_or(0);
 				match crate::needs_dist::discharge_one(
 					f, &proot, &db, &cfg, mw) {
-				Some(fdr) => {
-					let mn = fdr.chunk_peaks.needs_per_chunk.iter()
-						.copied().max().unwrap_or(0);
-					let blk: Vec<String> = if fdr.is_fail() {
-						fdr.all_dfa.iter().cloned().collect()
-					} else { vec![] };
-					(f.clone(), fdr.is_fail(), mn, sz, blk)
-				}
-				None => (f.clone(), false, 0, sz, vec![]),
+				Some(fdr) => (f.clone(), fdr.is_fail(),
+					fdr.chunk_peaks.needs_per_chunk.iter()
+						.copied().max().unwrap_or(0), sz),
+				None => (f.clone(), false, 0, sz),
 			}}).collect();
-
-			// 4b. blocker histogram: sig name -> #files it blocks,
-			// over the step-2 drops. Ranked desc, written to /tmp/bora
-			// so we can see which sigs to target (e.g. with fan-out).
-			{
-				use std::collections::HashMap;
-				let mut hist: HashMap<&str, usize> = HashMap::new();
-				let mut n_fail = 0usize;
-				for r in recs.iter().filter(|r| r.1) {
-					n_fail += 1;
-					for s in r.4.iter() {
-						*hist.entry(s.as_str()).or_insert(0) += 1;
-					}
-				}
-				let mut ranked: Vec<(&str, usize)> =
-					hist.into_iter().collect();
-				ranked.sort_by(|a, b| b.1.cmp(&a.1)
-					.then(a.0.cmp(b.0)));
-				let mut out: Vec<String> = vec![];
-				out.push(format!("# blocker sigs over {} step-2 \
-drops (sig <TAB> #files blocked, desc)", n_fail));
-				for (s, c) in ranked.iter() {
-					out.push(format!("{}\t{}", c, s));
-				}
-				let _ = std::fs::create_dir_all("/tmp/bora");
-				let _ = std::fs::write("/tmp/bora/corpus_blockers.txt",
-					out.join("\n"));
-				println!("[corpus] top blockers (sig: #files):");
-				for (s, c) in ranked.iter().take(40) {
-					println!("  {:>7}  {}", c, s);
-				}
-				println!("[corpus] {} distinct blocker sigs -> \
-/tmp/bora/corpus_blockers.txt", ranked.len());
-			}
 
 		// 5. split + prune. passed = discharged; final = passed minus
 		// the high-NEEDS (too costly to fold) emails.
@@ -4552,7 +4312,8 @@ failed={} high={} final={}", raw_n, n_stage1, passed.len(),
 			"[needs_dist] list={} kept={} (raw={})",
 			rc.scan_file, files.len(), raw.len()));
 		crate::needs_dist::print_needs_distribution::<Fr>(
-			&files, &proot, &db, &cfg, mw);
+			&files, &proot, &db, &cfg, mw,
+			"data/paper_data/dlp/report/needs_dist_report.txt");
 	}
 
 	/// EXPERIMENT: real r1cs/cs1e at the corpus max NEEDS (~14200) and whether

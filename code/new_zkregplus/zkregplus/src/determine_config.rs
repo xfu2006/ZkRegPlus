@@ -401,12 +401,22 @@ pub fn compare_caps(new: &CapParams, cur: &CapParams) -> Result<(), Vec<String>>
 /// P_max's structural caps ride along; only subsigs/perc/avg_active vary.
 pub fn assemble_ladder(p_max: &CapParams,
     specs: &[crate::band_dp::RungSpec]) -> Vec<CapParams> {
+    // Each rung holds P_max's absolute scc_prf capacity: get_scc_prf_size is
+    // inversely coupled to subsigs, so a band-DP-reduced rung needs a higher
+    // perc_comp (igc subsigs = aggressive sentinel 1) or the cheap rung CapErrs.
+    let cap_abs = (p_max.perc_comp_subsigs * (p_max.subsigs + 1) / 100).max(1);
     specs.iter().map(|s| {
         let mut c = p_max.clone();
         c.subsigs = s.subsigs + 1;
         c.aggr_needs_subsigs = p_max.subsigs;
-        c.perc_pats_expansion_rate = s.perc_pats_expansion_rate;
-        c.avg_active_pats_per_subsig = s.avg_active_pats_per_subsig;
+        // StepFwdPrf demand is a ~uniform container floor the band DP's
+        // per-chunk reduction undershoots; keep P_max's validated value.
+        c.perc_pats_expansion_rate =
+            s.perc_pats_expansion_rate.max(p_max.perc_pats_expansion_rate);
+        c.avg_active_pats_per_subsig =
+            s.avg_active_pats_per_subsig.max(p_max.avg_active_pats_per_subsig);
+        let denom = c.subsigs + 1;             // subsigs_cs + igc sentinel(1)
+        c.perc_comp_subsigs = (cap_abs * 100 + denom - 1) / denom; // ceil
         c
     }).collect()
 }

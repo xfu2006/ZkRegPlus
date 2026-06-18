@@ -1,0 +1,12 @@
+{
+  "config_dir": "data/paper_data/dlp/cfg",
+  "sig_file": "main_data_dlp_intl_ENUM.dat",
+  "cache_dir": "dlp_intl_data_enum",
+  "fanout_cap": 100,
+  "chunk_len": 64,
+  "range2_bit": 25,
+  "scan_file": "binexec_sample3.dat",
+  "config_ladder": "data/paper_data/dlp/cfg/dlp_config_ladder.json",
+  "k_max": 2,
+  "n_buckets": 2048
+}

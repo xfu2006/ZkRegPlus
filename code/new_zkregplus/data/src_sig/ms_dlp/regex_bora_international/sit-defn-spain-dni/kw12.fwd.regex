@@ -1,0 +1,1 @@
+\x20unique\x20identity\x20number\x20.{0,300}[0-9]{8}[\x2D\x20]?[A-Za-z]

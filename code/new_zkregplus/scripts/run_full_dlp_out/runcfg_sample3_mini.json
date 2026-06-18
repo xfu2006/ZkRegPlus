@@ -1,0 +1,15 @@
+{
+  "config_dir": "data/paper_data/dlp/cfg",
+  "sig_file": "main_data_dlp_internationl.dat",
+  "cache_dir": "dlp_intl_data_aggr",
+  "fanout_cap": 100,
+  "chunk_len": 64,
+  "range2_bit": 25,
+  "scan_file": "binexec_sample3_mini.dat",
+  "config_c1": "data/paper_data/dlp/cfg/dlp_config_C1.json",
+  "config_c2": "data/paper_data/dlp/cfg/dlp_config_C2.json",
+  "report_out": "data/paper_data/dlp/report/dlp_report_sample3_mini.txt",
+  "config_ladder": "data/paper_data/dlp/cfg/dlp_config_ladder.json",
+  "k_max": 3,
+  "n_buckets": 2048
+}

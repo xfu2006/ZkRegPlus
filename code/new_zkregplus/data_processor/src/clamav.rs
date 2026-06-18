@@ -918,7 +918,16 @@ impl ClamavSig{
 				}
 			};
 
-			let new_vec = self.remove_special_pats(&vec, s);
+			// Aggressive DLP fan-out keeps ALL pm anchors: the special-
+			// pattern blocklist is malware-noise tuning that would strip
+			// legitimate digit anchors (e.g. "3030"="00"), collapsing the
+			// SED chain so clean emails stop discharging. Sound -- anchors
+			// are necessary match conditions, so keeping more only helps.
+			let new_vec = if cfg.b_aggressive_sde_for_rep {
+				vec.clone()
+			} else {
+				self.remove_special_pats(&vec, s)
+			};
 			// Verify the fan-out PRODUCED >=2 anchors (keyword + >=1 value);
 			// check the raw `vec`, not post-filter `new_vec`, since
 			// remove_special_pats may soundly drop a noise anchor (e.g. an

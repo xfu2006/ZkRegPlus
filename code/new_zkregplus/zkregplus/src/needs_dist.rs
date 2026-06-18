@@ -53,9 +53,9 @@ pub fn collect_needs_per_chunk<F: PrimeField + Send + Sync>(
 /// view + pooled all-chunks view). Self-contained convenience wrapper.
 pub fn print_needs_distribution<F: PrimeField + Send + Sync>(
 	files: &[String], proot: &str, db: &ClamavDB<F>,
-	cfg: &ClamavApproxConfig, mw: usize) {
+	cfg: &ClamavApproxConfig, mw: usize, report_path: &str) {
 	let rows = collect_needs_per_chunk(files, proot, db, cfg, mw);
-	print_needs_dist_rows(&rows, files);
+	print_needs_dist_rows(&rows, files, report_path);
 }
 
 /// percentile of an ascending-sorted slice; q in permille (0..=1000).
@@ -71,9 +71,10 @@ fn median(xs: &mut Vec<f64>) -> f64 {
 }
 
 /// Print the distribution from precomputed per-file per-chunk NEEDS rows
-/// (rows[i] aligns with fnames[i]). Lets a caller that already discharged
-/// (e.g. full_dlp_sample3) reuse its data without a second pass.
-pub fn print_needs_dist_rows(rows: &Vec<Vec<usize>>, fnames: &[String]) {
+/// (rows[i] aligns with fnames[i]) and write it to report_path (repo-root
+/// relative). Lets a caller that already discharged reuse its data.
+pub fn print_needs_dist_rows(rows: &Vec<Vec<usize>>, fnames: &[String],
+	report_path: &str) {
 	let mut v: Vec<String> = vec![];
 	macro_rules! pl { ($($a:tt)*) => {{
 		let s = format!($($a)*); println!("{}", s); v.push(s); }}; }
@@ -85,7 +86,7 @@ pub fn print_needs_dist_rows(rows: &Vec<Vec<usize>>, fnames: &[String]) {
 	let total = pool.len();
 	if total == 0 {
 		pl!("no chunks (empty corpus or all files single empty)");
-		write_lines("data/paper_data/dlp/report/needs_dist_report.txt", &v, true);
+		write_lines(report_path, &v, true);
 		return;
 	}
 	pool.sort_unstable();
@@ -185,6 +186,6 @@ pub fn print_needs_dist_rows(rows: &Vec<Vec<usize>>, fnames: &[String]) {
 			nz.len(), fmaxes.len());
 	}
 
-	write_lines("data/paper_data/dlp/report/needs_dist_report.txt", &v, true);
-	println!("[needs_dist] report -> /tmp/needs_dist_report.txt");
+	write_lines(report_path, &v, true);
+	println!("[needs_dist] report -> {}", report_path);
 }

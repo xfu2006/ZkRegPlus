@@ -8,10 +8,10 @@ step 1 % vs raw (regex selectivity); steps 2-3 % vs step 1 (approximation loss)
         dropped  7791 files (1.51%), 45 MB (3.15%)
         retained 509612 files (98.49% raw), 1376 MB (96.85%)
   2. BORA discharge (main_data_dlp_internationl.dat)
-        dropped  12355 files (2.42%), 99 MB (7.18%)
-        retained 497257 files (97.58% step1), 1277 MB (92.82%)
+        dropped  4757 files (0.93%), 37 MB (2.68%)
+        retained 504855 files (99.07% step1), 1339 MB (97.32%)
   3. high-NEEDS prune (max-chunk NEEDS > 4000)
-        dropped  0 files (0.00%), 0 MB (0.00%)
-        retained 497257 files (97.58% step1), 1277 MB (92.82%)
+        dropped  1284 files (0.25%), 15 MB (1.06%)
+        retained 503571 files (98.81% step1), 1325 MB (96.26%)
   final  cfg/jobs/final_enron_list.txt.tgz
-        497257 files, 1277 MB = 97.58% files / 92.82% size of step1
+        503571 files, 1325 MB = 98.81% files / 96.26% size of step1
