@@ -3950,6 +3950,7 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		let cd = &rc.config_dir;
 		let mw = rc.chunk_len;
 		//aggressive CS-only, folding-only, estimate-on for the tuning.
+		get_global_config().log_level = utils::logger::LOG6;
 		get_global_config().range2_bit = rc.range2_bit;
 		get_global_config().b_light_test = true;
 		get_global_config().b_folding_only = true;
