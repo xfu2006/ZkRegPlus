@@ -9,7 +9,7 @@
   "full_list": "jobs/final_enron_list.txt.tgz",
   "num_jobs": 8,
   "reset": false,
-  "k_max": 3,
+  "k_max": 4,
   "n_buckets": 2048,
   "peel_pct": 90
 }
