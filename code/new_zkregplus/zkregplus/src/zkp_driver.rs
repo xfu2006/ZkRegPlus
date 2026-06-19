@@ -456,6 +456,9 @@ where C: CurveGroup<ScalarField=F>,
 	let band_k = if do_peel { k_max - 1 } else { k_max };
 	let seg_size = vdata.first().map(|f| f.chunk_peaks.seg_size)
 		.unwrap_or(chunk_len * crate::gadgets::word_extract::LEGS);
+	// Exact-per-rung sizing: each non-peel rung is sized to the max over its
+	// OWN chunks (de-saturates the cumulative-envelope inheritance); the top
+	// rung stays P_max-anchored. See band_dp::plan_rungs / assemble_ladder.
 	let (specs, hist) = crate::band_dp::plan_rungs(&universe, &fwd, &active,
 		&live, &uniq, &acc, &pats, &cpu, p_max.basis_pats_in_trace, seg_size,
 		p_max.subsigs.saturating_sub(1), p_max.perc_pats_expansion_rate,

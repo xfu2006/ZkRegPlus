@@ -47,8 +47,12 @@ fn raw_perc(fwd: usize, live: usize, basis_pats: usize,
 /// with universe <= ceiling, so they dominate every chunk in the band.
 struct Bucket {
     ceiling: usize, count: usize,
-    fwd: usize, active: usize, live: usize,
+    fwd: usize, active: usize, live: usize,            // cumulative envelopes
     uniq: usize, acc: usize, pats: usize, cpu: usize,
+    // per-bucket maxes (this bucket's OWN chunks only) -- used by the
+    // exact-per-rung sizing path; 0 when no chunk contributes.
+    m_fwd: usize, m_active: usize, m_live: usize,
+    m_uniq: usize, m_acc: usize, m_pats: usize, m_cpu: usize,
 }
 
 /// Log-bucket the per-chunk demand into <= n_buckets ascending buckets, each
@@ -78,7 +82,9 @@ fn bucketize(universe: &[usize], fwd: &[usize], active: &[usize],
         let b = bid(universe[i]);
         if b != cur {
             out.push(Bucket { ceiling: 0, count: 0, fwd: cf, active: ca,
-                live: cl, uniq: cu, acc: cc, pats: cp, cpu: cq });
+                live: cl, uniq: cu, acc: cc, pats: cp, cpu: cq,
+                m_fwd: 0, m_active: 0, m_live: 0,
+                m_uniq: 0, m_acc: 0, m_pats: 0, m_cpu: 0 });
             cur = b;
         }
         let last = out.last_mut().unwrap();
@@ -86,6 +92,14 @@ fn bucketize(universe: &[usize], fwd: &[usize], active: &[usize],
         last.count += 1;
         last.fwd = cf; last.active = ca; last.live = cl;
         last.uniq = cu; last.acc = cc; last.pats = cp; last.cpu = cq;
+        // per-bucket max over THIS bucket's own chunks (not cumulative).
+        last.m_fwd = last.m_fwd.max(fwd[i]);
+        last.m_active = last.m_active.max(active[i]);
+        last.m_live = last.m_live.max(live[i]);
+        last.m_uniq = last.m_uniq.max(g(uniq, i));
+        last.m_acc = last.m_acc.max(g(acc, i));
+        last.m_pats = last.m_pats.max(g(pats, i));
+        last.m_cpu = last.m_cpu.max(g(cpu, i));
     }
     out
 }
@@ -159,9 +173,37 @@ pub fn plan_rungs(universe: &[usize], fwd: &[usize], active: &[usize],
             .max(pat_loc * s.perc_pats_expansion_rate / 100)
     };
     let ends = dp_partition(&buckets, &cost, k_max);
+    let n_b = buckets.len();
     let (mut rungs, mut hist, mut start) = (vec![], vec![], 0usize);
     for &end in &ends {
-        rungs.push(specs[end - 1].clone());                 // group top bucket
+        // Exact-per-rung sizing for NON-top rungs: cap = max over the rung's
+        // OWN member buckets' per-bucket maxes (de-saturates the cumulative
+        // envelope). The top rung keeps the P_max-anchored spec -- it cannot
+        // CapErr-bump, so it retains the estimator's safety margin.
+        let spec = if end != n_b {
+            let grp = &buckets[start..end];
+            let mx = |sel: fn(&Bucket) -> usize|
+                grp.iter().map(sel).max().unwrap_or(0);
+            let (mf, ml, mac) = (mx(|b| b.m_fwd), mx(|b| b.m_live),
+                mx(|b| b.m_active));
+            // perc is a derived rate -> de-saturate via per-rung rp but keep
+            // the pmax_perc calibration (same mapping as the per-bucket spec).
+            let rp = raw_perc(mf, ml, basis_pats, seg_size);
+            RungSpec {
+                subsigs: buckets[end - 1].ceiling.min(pmax_subsigs),
+                perc_pats_expansion_rate:
+                    cdiv(pmax_perc * rp, top_raw).min(pmax_perc).max(1),
+                avg_active_pats_per_subsig:
+                    cdiv(pmax_avg * mac, top_active).min(pmax_avg).max(1),
+                max_unique_acc_pats: mx(|b| b.m_uniq),
+                max_acc_states: mx(|b| b.m_acc),
+                max_pats_in_trace: mx(|b| b.m_pats),
+                max_cp_unique_states: mx(|b| b.m_cpu),
+            }
+        } else {
+            specs[end - 1].clone()                          // legacy / top rung
+        };
+        rungs.push(spec);
         hist.push(buckets[start..end].iter().map(|b| b.count).sum());
         start = end;
     }
@@ -175,7 +217,9 @@ mod tests {
     fn mk(ceils: &[usize], counts: &[usize]) -> Vec<Bucket> {
         ceils.iter().zip(counts).map(|(&c, &n)|
             Bucket { ceiling: c, count: n, fwd: 0, active: 0, live: 0,
-                uniq: 0, acc: 0, pats: 0, cpu: 0 }).collect()
+                uniq: 0, acc: 0, pats: 0, cpu: 0,
+                m_fwd: 0, m_active: 0, m_live: 0,
+                m_uniq: 0, m_acc: 0, m_pats: 0, m_cpu: 0 }).collect()
     }
     fn total_cost(b: &[Bucket], ends: &[usize], cost: &dyn Fn(usize) -> usize) -> usize {
         let mut pc = vec![0usize; b.len() + 1];
@@ -287,5 +331,21 @@ mod tests {
         let u = vec![0, 0, 0, 50, 200, 200, 5];
         let (_, h) = plan(&u, &u, &u, &u, 700, 15872, 1000, 8000, 12, 3, 2048);
         assert_eq!(h.iter().sum::<usize>(), u.len());
+    }
+    #[test]
+    fn exact_rung_caps_desaturate_middle() {
+        // A LOW-NEEDS chunk (u=10) carries a HIGH basis_pats (9000); the mid
+        // chunk (u=500) carries only 80. The old cumulative envelope would
+        // pin the mid rung to 9000; exact-per-rung gives it its OWN 80. The
+        // top rung stays anchored (cumulative => 9000).
+        let u    = vec![10, 10, 500, 500, 9000, 9000];
+        let pats = vec![9000, 50, 80, 80, 200, 200];
+        let lo   = vec![0usize; 6];
+        let (r, _) = plan_rungs(&u, &lo, &lo, &lo, &lo, &lo, &pats, &lo,
+            700, 15872, 10000, 5000, 12, 3, 2048);
+        assert_eq!(r.len(), 3);
+        assert_eq!(r[1].max_pats_in_trace, 80,        // de-saturated mid rung
+            "mid rung must carry its own pats, not the inherited global max");
+        assert_eq!(r[2].max_pats_in_trace, 9000);     // top stays anchored
     }
 }

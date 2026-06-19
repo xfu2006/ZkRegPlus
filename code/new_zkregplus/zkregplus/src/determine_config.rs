@@ -423,20 +423,33 @@ pub fn assemble_ladder(p_max: &CapParams,
         if g == 0 { pmax_b }              // no per-chunk data -> keep P_max
         else { ((pmax_b * rate + g - 1) / g).min(pmax_b).max(2) }
     };
-    specs.iter().map(|s| {
+    let n = specs.len();
+    specs.iter().enumerate().map(|(i, s)| {
+        // Exact path (non-top rung): plan_rungs already de-saturated s.max_*
+        // to the rung's own member max, so use it directly (clamped <=P_max).
+        // Top rung + legacy path keep the P_max ratio-scale (top retains the
+        // estimator margin since it cannot CapErr-bump).
+        let exact = i + 1 != n;
+        let pick = |pmax_b: usize, rate: usize, g: usize| -> usize {
+            // exact non-top: the rung's own max (clamped <=P_max). When there
+            // is no per-chunk data for this axis (g==0) keep P_max, mirroring
+            // scale()'s no-data fallback.
+            if exact { if g == 0 { pmax_b } else { rate.max(2).min(pmax_b) } }
+            else { scale(pmax_b, rate, g) }
+        };
         let mut c = p_max.clone();
         c.subsigs = s.subsigs + 1;
         c.aggr_needs_subsigs = p_max.subsigs;
         c.perc_pats_expansion_rate = s.perc_pats_expansion_rate;
         c.avg_active_pats_per_subsig = s.avg_active_pats_per_subsig;
         c.basis_unique_states =
-            scale(p_max.basis_unique_states, s.max_unique_acc_pats, g_u);
+            pick(p_max.basis_unique_states, s.max_unique_acc_pats, g_u);
         c.basis_acc_states =
-            scale(p_max.basis_acc_states, s.max_acc_states, g_a);
+            pick(p_max.basis_acc_states, s.max_acc_states, g_a);
         c.basis_pats_in_trace =
-            scale(p_max.basis_pats_in_trace, s.max_pats_in_trace, g_p);
+            pick(p_max.basis_pats_in_trace, s.max_pats_in_trace, g_p);
         c.cp_basis_unique_states =
-            scale(p_max.cp_basis_unique_states, s.max_cp_unique_states, g_c);
+            pick(p_max.cp_basis_unique_states, s.max_cp_unique_states, g_c);
         // fsm_adv requires basis_acc_states >= basis_pats_in_trace/10.
         c.basis_acc_states =
             c.basis_acc_states.max(c.basis_pats_in_trace / 10 + 1);
