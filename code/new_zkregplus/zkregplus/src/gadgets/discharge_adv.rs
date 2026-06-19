@@ -1,4 +1,5 @@
 use utils::consts::{read_global_config, B_DEBUG, PROBE_CHUNK_ID};
+use folding_schemes::folding::foldpot::utils::B_DEBUG2;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::Ordering;
 /* Created 05/06/2025
@@ -1492,7 +1493,7 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 	) ->Result<std::sync::Arc<std::sync::Mutex<Container<F>>>, Error>{
 		//0. check data
 		//let b_debug = false;
-		let b_debug_capacity = true;
+		let b_debug_capacity = B_DEBUG2;
 		if B_DEBUG { assert!(is_sorted(&self.subsigs)); }
 		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let (zero, _one, _max) = (F::zero(), F::one(), F::from(max_val as u32));
@@ -1850,7 +1851,7 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 	/// might throw CapErr("dis_adv::perc_pats_expansion_rate")
 	pub fn to_container(&self, name: &str, subsig_store_info: &SubsigStepStore)->Result<std::sync::Arc<std::sync::Mutex<Container<F>>>,Error>{
 		//let b_debug = false;
-		let b_debug_capacity = true;
+		let b_debug_capacity = B_DEBUG2;
 		//0. check data
 		if B_DEBUG { assert!(is_sorted(&self.subsigs)); }
 		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
