@@ -8,7 +8,7 @@
   "scan_file": "scan_exp.dat",
   "config_out": "data/debug/full_dlp_sample/config/dlp_exp_ladder.json",
   "report_out": "data/debug/full_dlp_sample/report_exp.txt",
-  "k_max": 3,
+  "k_max": 4,
   "n_buckets": 2048,
   "peel_pct": 90
 }

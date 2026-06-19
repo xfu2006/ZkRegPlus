@@ -3457,15 +3457,8 @@ where 	C: CurveGroup<ScalarField=F>,
 		}
 		for (i,g) in self.gadgets.iter().enumerate(){
 			let (nc, ni, nv) = (cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables());
-			let g_name: String = lock_unwrap!(g).get_name().to_string();
-			emit_stdout(format!(
-				"DEBUG USE 73111.1: gadget BEFORE job={} gi={} name={}",
-				self.job_id, i, g_name));
 			lock_unwrap!(g).assert_msg3(i, cs.clone(), &wtns_var, &cfg,
 				si.word_id.clone(), si.subseg_id.clone())?;
-			emit_stdout(format!(
-				"DEBUG USE 73111.2: gadget AFTER  job={} gi={} name={} d_cs={}",
-				self.job_id, i, g_name, cs.num_constraints()-nc));
 			if B_DEBUG3{
 				check_cs(&cs, &format!("After gadget: {}", lock_unwrap!(g).get_name()));
 			}

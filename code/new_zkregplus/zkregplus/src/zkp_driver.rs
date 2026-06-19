@@ -3950,10 +3950,13 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		let cd = &rc.config_dir;
 		let mw = rc.chunk_len;
 		//aggressive CS-only, folding-only, estimate-on for the tuning.
-		get_global_config().log_level = utils::logger::LOG6;
+		get_global_config().log_level = utils::logger::LOG3;
 		get_global_config().range2_bit = rc.range2_bit;
-		get_global_config().b_light_test = true;
-		get_global_config().b_folding_only = true;
+		get_global_config().b_light_test = false;
+		get_global_config().b_folding_only = false;
+		//cap the entire snark proof-generation region at 1 concurrent
+		//decider (0 = auto: sum of n_par_snark + n_par_snark_cp).
+		get_global_config().n_par_snark_total = 1;
 		get_global_config().b_read_cache = true;
 		get_global_config().b_read_snark_cache = false;
 		get_global_config().b_write_snark_cache = false;

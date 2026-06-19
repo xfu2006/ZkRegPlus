@@ -3070,10 +3070,15 @@ where
 	let semaphore = Arc::new((Mutex::new(n_par_snark), Condvar::new()));
 	let n_par_snark_cp = read_global_config().n_par_snark_cp;
 	let semaphore_cp: Semaphore = Arc::new((Mutex::new(n_par_snark_cp), Condvar::new()));
-	// outer sema caps total snark-region occupancy at the sum of inner caps.
-	let n_par_snark_total = n_par_snark + n_par_snark_cp;
+	// Outer sema caps the ENTIRE snark proof-generation region. Config 0
+	// = auto (sum of inner caps, the legacy behaviour); a smaller value
+	// forces fewer concurrent deciders (lower peak RAM). Clamped to sum.
+	let n_par_snark_sum = n_par_snark + n_par_snark_cp;
+	let cfg_outer = read_global_config().n_par_snark_total;
+	let outer_cap = if cfg_outer == 0 { n_par_snark_sum }
+		else { cfg_outer.min(n_par_snark_sum) };
 	let semaphore_outer: Semaphore =
-		Arc::new((Mutex::new(n_par_snark_total), Condvar::new()));
+		Arc::new((Mutex::new(outer_cap), Condvar::new()));
 	let n_par_batch_claim = read_global_config().n_par_batch_claim;
 	let semaphore_batch_claim: Semaphore = Arc::new((Mutex::new(n_par_batch_claim), Condvar::new()));
 	// qa_pp lifted out so last finisher of each phase can drop it.

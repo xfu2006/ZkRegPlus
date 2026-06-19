@@ -119,6 +119,11 @@ pub struct GlobalConfig {
     pub n_par_snark: usize,
     pub n_par_snark_cp: usize,
     pub n_par_batch_claim: usize,
+    // Cap for the ENTIRE snark proof-generation region (outer sema).
+    // 0 = AUTO: use the sum n_par_snark + n_par_snark_cp (legacy
+    // behaviour). A smaller value forces fewer concurrent deciders to
+    // cap peak RAM; clamped to the sum at the use-site.
+    pub n_par_snark_total: usize,
     pub b_resume: bool,
 	pub perc_lkup_share: usize, //percentae of the lkup share
 					//compared with nibble length of a segment
@@ -186,6 +191,7 @@ impl Default for GlobalConfig {
             n_par_snark: 1,
             n_par_snark_cp: 1,
             n_par_batch_claim: 1,
+            n_par_snark_total: 0, //0 = auto: sum of inner caps
             b_resume: false,
 			perc_lkup_share: 1,
 			word_cap_per_job: 0,
@@ -235,6 +241,7 @@ static GLOBAL_CONFIG: RwLock<GlobalConfig> = RwLock::new(GlobalConfig {
     n_par_snark: 1,
     n_par_snark_cp: 1,
     n_par_batch_claim: 1,
+    n_par_snark_total: 0, //0 = auto: sum of inner caps
     b_resume: false,
 	perc_lkup_share: 1,
 	word_cap_per_job: 0,
