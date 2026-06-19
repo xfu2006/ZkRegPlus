@@ -122,10 +122,14 @@ with open(SUM, "w") as s:
                 % (c, n, st, wt, ms / max(n, 1), ms / 1000.0))
 print("\n" + open(SUM).read())
 
-# ---- pack (always) ----
+# ---- pack (always): artifacts + full run log (as dump.txt) + summary ----
 with tarfile.open(TAR, "w:gz") as t:
     for f in artifacts:
         if f and os.path.isfile(f):
             t.add(f, arcname=os.path.basename(f))
+    if os.path.isfile(LOG):
+        t.add(LOG, arcname="dump.txt")
+    if os.path.isfile(SUM):
+        t.add(SUM, arcname=os.path.basename(SUM))
 print("[run_exp] packed -> %s  (exit=%s, wall=%.0fs)" % (TAR, code, wall))
 sys.exit(0)

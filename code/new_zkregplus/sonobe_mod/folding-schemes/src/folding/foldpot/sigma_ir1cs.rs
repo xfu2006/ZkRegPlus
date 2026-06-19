@@ -387,6 +387,10 @@ pub trait SigmaIR1CS<const H: bool, F: PrimeField, LK: LookupTableTwoCol<F>, GM:
 	/// advice) + msg1)
 	fn get_size_f(&self) -> usize;
 
+	/// length of the cmF-committed vector (stmt + msg1); the
+	/// commitment key must cover at least this many generators.
+	fn get_cmf_len(&self) -> usize;
+
 	/// the maximal length of word that can be processed,
 	/// this request is essentially related to relation mapper which is
 	/// algorihtm specific.
@@ -2025,6 +2029,13 @@ impl WitnessSigmaIR1CSConfig{
 		raw_size_F - total_const
 	}
 
+	/// length of the cmF-committed vector (stmt + msg1) as actually
+	/// committed in gen_witness; includes constant statement entries,
+	/// unlike get_size_f which counts only witness variables.
+	pub fn get_cmf_len(&self) -> usize {
+		self.statement_size + self.msg1_size
+	}
+
 	/// return the stmt_idx for statement, then the starting
 	/// idx for msg1, msg2, msg3 in the combined message segments.
 	pub fn get_gadget_indices(&self, i: usize) 
@@ -3252,6 +3263,10 @@ where 	C: CurveGroup<ScalarField=F>,
 	/// return the size of F (problem statement + msg1)
 	fn get_size_f(&self) -> usize{
 		self.witness_config.get_size_f()
+	}
+
+	fn get_cmf_len(&self) -> usize{
+		self.witness_config.get_cmf_len()
 	}
 }
 

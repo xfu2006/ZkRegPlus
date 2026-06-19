@@ -1162,10 +1162,14 @@ where
 			} else {
 				let max_row_col = if r1cs.A.n_cols>r1cs.A.n_rows {r1cs.A.n_cols}
 					else {r1cs.A.n_rows};
-				if max_row_col > max_circ_pp_size{
-					max_circ_pp_size = max_row_col;
+				// cmF commits stmt+msg1, which can exceed the R1CS
+				// matrix dim; the key must cover it (Pedersen rounds
+				// up to a power of two).
+				let key_len = max_row_col.max(prep_param.F.get_cmf_len());
+				if key_len > max_circ_pp_size{
+					max_circ_pp_size = key_len;
 				}
-				(cs_pp, cs_vp) = CS1::setup(&mut rng, max_row_col)?;
+				(cs_pp, cs_vp) = CS1::setup(&mut rng, key_len)?;
 				total_w_len += r1cs.A.n_cols -1 - r1cs.l;
 				total_e_len += r1cs.A.n_rows;
 				log(job_id, log_level, &format!("PERF 1002 circ {}, r1cs cols: {}, rows: {}", idx_j, r1cs.A.n_cols, r1cs.A.n_rows));
