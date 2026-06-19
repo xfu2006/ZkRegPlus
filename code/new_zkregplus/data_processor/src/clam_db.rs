@@ -2433,9 +2433,11 @@ elapsed={:.0}s", si+1, n_sigs, t_shape.elapsed().as_secs_f64());
 	pub fn load(dir_name: &str) -> ClamavDB<F>{
 		let sdir = format!("{}/data/cache/{}/", &proj_root(), dir_name);
 
-		let s_vec_sigs= read(&format!("{}/vec_sigs.txt", sdir));
-		let vec_sigs:Vec<Arc<ClamavSig>> = serde_json::from_str(&s_vec_sigs)
-				.expect("Convert vec_sigs fails");
+		let vec_sigs:Vec<Arc<ClamavSig>>= serde_json::from_reader(
+			std::io::BufReader::with_capacity(1<<22,
+			std::fs::File::open(&format!("{}/vec_sigs.txt", sdir))
+				.expect("open vec_sigs")))
+			.expect("Convert vec_sigs fails");
 
 		let s_vec_crit_pat= read(&format!("{}/vec_crit_pat.txt", sdir));
 		let vec_crit_pat:Vec<String> = serde_json::from_str(&s_vec_crit_pat).expect("Convert vec_crit_pat fails");
@@ -2473,17 +2475,17 @@ elapsed={:.0}s", si+1, n_sigs, t_shape.elapsed().as_secs_f64());
 		let lkup = LookupTableTwoCol_Inst::deserialize_from(&s_lkup)
 				.expect("Convert dfa_patterns_igc fails");
 
-		let s_bundle_subsig 
-			= read(&format!("{}/bundle_subsig.txt", sdir));
-		let bundle_subsig= 
-			serde_json::from_str(&s_bundle_subsig)
-				.expect("Convert bundle_subsig fails");
+		let bundle_subsig= serde_json::from_reader(
+			std::io::BufReader::with_capacity(1<<22,
+			std::fs::File::open(&format!("{}/bundle_subsig.txt", sdir))
+				.expect("open bundle_subsig")))
+			.expect("Convert bundle_subsig fails");
 
-		let s_bundle_subsig_igc 
-			= read(&format!("{}/bundle_subsig_igc.txt", sdir));
-		let bundle_subsig_igc =  
-			serde_json::from_str(&s_bundle_subsig_igc)
-				.expect("Convert bundle_subsig_igc fails");
+		let bundle_subsig_igc= serde_json::from_reader(
+			std::io::BufReader::with_capacity(1<<22,
+			std::fs::File::open(&format!("{}/bundle_subsig_igc.txt", sdir))
+				.expect("open bundle_subsig_igc")))
+			.expect("Convert bundle_subsig_igc fails");
 
 		let vec_sigs_no_critical_pat = vec_sigs.iter().filter(|s| s.b_no_crit_pat)
 			.map(|s| s.clone()).collect::<Vec<Arc<ClamavSig>>>();

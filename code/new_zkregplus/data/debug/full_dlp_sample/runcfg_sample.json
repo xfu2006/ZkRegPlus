@@ -8,6 +8,7 @@
   "scan_file": "scan_500.dat",
   "config_out": "data/debug/full_dlp_sample/config/dlp_sample_ladder.json",
   "report_out": "data/debug/full_dlp_sample/report_fold.txt",
-  "k_max": 2,
-  "n_buckets": 2048
+  "k_max": 3,
+  "n_buckets": 2048,
+  "peel_pct": 90
 }

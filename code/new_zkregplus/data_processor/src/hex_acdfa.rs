@@ -981,6 +981,43 @@ impl HexACDFA{
 		out
 	}
 
+	/// Per-chunk FSM peaks (full profile behind get_chunk_peaks's maxes):
+	/// (uniq_acc_pats, acc_states, pats_in_trace) per chunk. Lets the rung
+	/// ladder size FSM basis caps per rung instead of one global max.
+	pub fn get_chunk_peaks_per_chunk(&self, acc_path: &Vec<usize>,
+		seg_size: usize) -> (Vec<usize>, Vec<usize>, Vec<usize>) {
+		if seg_size==0 { return (vec![], vec![], vec![]); }
+		let (mut v_uniq, mut v_acc, mut v_pats) = (vec![], vec![], vec![]);
+		for chunk in acc_path.chunks(seg_size){
+			let mut acc_states = HashSet::<usize>::new();
+			let (mut acc_cnt, mut pat_cnt) = (0usize, 0usize);
+			for &state in chunk{
+				if self.is_accept(state){
+					acc_cnt += 1;
+					acc_states.insert(state);
+					if let Some(pids) = self.outputs.get(&state){
+						pat_cnt += pids.len();
+					}
+				}
+			}
+			let uniq_acc_pats: usize = acc_states.iter().map(|s|
+				self.outputs.get(s).map_or(0, |p| p.len())).sum();
+			v_uniq.push(uniq_acc_pats);
+			v_acc.push(acc_cnt);
+			v_pats.push(pat_cnt);
+		}
+		(v_uniq, v_acc, v_pats)
+	}
+
+	/// Per-chunk distinct-states vector (full profile behind
+	/// max_distinct_states_per_chunk). CP pack imm_buf demand per chunk.
+	pub fn distinct_states_per_chunk(&self, acc_path: &Vec<usize>,
+		seg_size: usize) -> Vec<usize> {
+		if seg_size==0 { return vec![]; }
+		acc_path.chunks(seg_size)
+			.map(|c| c.iter().collect::<HashSet<_>>().len()).collect()
+	}
+
 	/// for each string show the vector of positions
 	pub fn get_pattern_pos(&self, acc_path: &Vec<usize>)->HashMap<String,Vec<usize>>{
 		let mut res = HashMap::<String, Vec<usize>>::new();

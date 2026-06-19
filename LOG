@@ -29353,4 +29353,25 @@ Goal 3. DLP sample
 		-> ring 0 2.96M, ring 1 3.42M
 		=> even at the current implementation if 8 jobs
 		the whole folding can be finished within 15 hours.
+		==> curgher cut to 34 minute
+Goal 4. DLP sample improvement
+	[a] ring 0 and ring 1 has the SAME config
+	[b] improved 60 min -> 40 min
+	[c] but ring 0 is still too big, may consider further splitting
+		ring 0 into two.
+	[d] apply approach to split ring 0 into two parts
+Goal 5. writing -> DONE
+	[a] move the paragraph
+	[b] fix the mal dataset row
+Goal 6. think about the high_cost_removed.txt
+	[a] it's only 3M for ring 1 can we relax from 4000 to 12000?
+	[b] set the NEEDS bar to 13000 to allow everyone in and
+		generate config file on the local machine but run on server
+	[c] generate the local file
+	[d] need to generate the enron_email_list first.
+
+Friday 06/18/2026
+Goal 1. refine the download.py 
+Goal 2. upload to server and test.
+Goal 3. 
 

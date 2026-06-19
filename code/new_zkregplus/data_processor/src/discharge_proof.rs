@@ -102,6 +102,13 @@ pub struct ChunkPeaks{
 	pub fwd_entries_per_chunk: Vec<usize>,
 	pub active_steps_per_chunk: Vec<usize>,
 	pub carried_live_per_chunk: Vec<usize>,
+	//Aggressive estimator pass only; empty otherwise. 1-1 with needs_per_chunk
+	//by chunk index. Per-chunk FSM/CP structural demand so the rung ladder can
+	//size basis caps per rung instead of cloning P_max's global max.
+	pub unique_acc_pats_per_chunk: Vec<usize>,
+	pub acc_states_per_chunk: Vec<usize>,
+	pub pats_in_trace_per_chunk: Vec<usize>,
+	pub cp_unique_states_per_chunk: Vec<usize>,
 	//PROBE (ZKR_DIGIT_PROBE only; empty otherwise): hypothetical
 	//digit-anchored NEEDS per chunk -- same get_needs_per_chunk count
 	//but anchored on the OPPOSITE-end pm token (where a fanned digit

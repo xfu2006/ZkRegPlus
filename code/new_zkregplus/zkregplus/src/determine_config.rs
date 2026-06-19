@@ -96,10 +96,14 @@ pub struct RunCfg {
     #[serde(default)] pub config_ladder: String,
     #[serde(default = "k_max_default")] pub k_max: usize,
     #[serde(default = "n_buckets_default")] pub n_buckets: usize,
+    // When k_max>=3, peel rung 0 into a smaller rung 0' sized at this
+    // percentile of rung 0's FSM/CP per-chunk demand (FSM-tail bumps to rung0).
+    #[serde(default = "peel_pct_default")] pub peel_pct: usize,
 }
 
 fn k_max_default() -> usize { 4 }
 fn n_buckets_default() -> usize { 2048 }
+fn peel_pct_default() -> usize { 90 }
 
 impl RunCfg {
     /// Load the run-config the driver pointed ZKR_DLP_RUNCFG at.
@@ -263,9 +267,9 @@ pub fn caps_from_params_aggr(p: &CapParams)
     let sed_igc = SedCapacity::new(
         p.max_word_len, p.acdfa_state_part_bits, 1, 1,
         p.avg_active_pats_per_subsig_igc.max(1),
-        p.basis_pats_in_trace_igc.max(4),
+        p.basis_pats_in_trace_igc.max(8),
         p.perc_pats_expansion_rate_igc.max(64), 1, 1,
-        p.basis_unique_states_igc.max(2),
+        p.basis_unique_states_igc.max(4),
         p.basis_acc_states_igc.max(2));
     (cp, sed, cp_igc, sed_igc)
 }
@@ -396,27 +400,40 @@ pub fn compare_caps(new: &CapParams, cur: &CapParams) -> Result<(), Vec<String>>
 }
 
 /// Assemble the rung ladder from P_max + band-DP specs (M11). subsigs gets the
-/// +1 comp_sig dummy; aggr_needs is uniform = P_max.subsigs so the global
-/// forward-queue clamp is a per-rung no-op (each rung keeps its own universe).
-/// P_max's structural caps ride along; only subsigs/perc/avg_active vary.
+/// +1 comp_sig dummy; aggr_needs is uniform = P_max.subsigs (the forward-queue
+/// clamp is per-rung no-op -- gadget clamps it to each rung's own universe).
+/// perc_pats/avg_active come from the band (already P_max-anchored); FSM/CP
+/// basis caps are ratio-scaled per rung; perc_comp stays P_max.
 pub fn assemble_ladder(p_max: &CapParams,
     specs: &[crate::band_dp::RungSpec]) -> Vec<CapParams> {
-    // Each rung holds P_max's absolute scc_prf capacity: get_scc_prf_size is
-    // inversely coupled to subsigs, so a band-DP-reduced rung needs a higher
-    // perc_comp (igc subsigs = aggressive sentinel 1) or the cheap rung CapErrs.
-    let cap_abs = (p_max.perc_comp_subsigs * (p_max.subsigs + 1) / 100).max(1);
+    // top rung carries the global-max structural rate; ratio-scale P_max's
+    // basis caps by rung_rate/top_rate so the top rung == P_max and cheaper
+    // rungs shrink to their band's demand. 0 -> no per-chunk data, keep P_max.
+    let g_u = specs.last().map_or(0, |s| s.max_unique_acc_pats);
+    let g_a = specs.last().map_or(0, |s| s.max_acc_states);
+    let g_p = specs.last().map_or(0, |s| s.max_pats_in_trace);
+    let g_c = specs.last().map_or(0, |s| s.max_cp_unique_states);
+    let scale = |pmax_b: usize, rate: usize, g: usize| -> usize {
+        if g == 0 { pmax_b }              // no per-chunk data -> keep P_max
+        else { ((pmax_b * rate + g - 1) / g).min(pmax_b).max(2) }
+    };
     specs.iter().map(|s| {
         let mut c = p_max.clone();
         c.subsigs = s.subsigs + 1;
         c.aggr_needs_subsigs = p_max.subsigs;
-        // StepFwdPrf demand is a ~uniform container floor the band DP's
-        // per-chunk reduction undershoots; keep P_max's validated value.
-        c.perc_pats_expansion_rate =
-            s.perc_pats_expansion_rate.max(p_max.perc_pats_expansion_rate);
-        c.avg_active_pats_per_subsig =
-            s.avg_active_pats_per_subsig.max(p_max.avg_active_pats_per_subsig);
-        let denom = c.subsigs + 1;             // subsigs_cs + igc sentinel(1)
-        c.perc_comp_subsigs = (cap_abs * 100 + denom - 1) / denom; // ceil
+        c.perc_pats_expansion_rate = s.perc_pats_expansion_rate;
+        c.avg_active_pats_per_subsig = s.avg_active_pats_per_subsig;
+        c.basis_unique_states =
+            scale(p_max.basis_unique_states, s.max_unique_acc_pats, g_u);
+        c.basis_acc_states =
+            scale(p_max.basis_acc_states, s.max_acc_states, g_a);
+        c.basis_pats_in_trace =
+            scale(p_max.basis_pats_in_trace, s.max_pats_in_trace, g_p);
+        c.cp_basis_unique_states =
+            scale(p_max.cp_basis_unique_states, s.max_cp_unique_states, g_c);
+        // fsm_adv requires basis_acc_states >= basis_pats_in_trace/10.
+        c.basis_acc_states =
+            c.basis_acc_states.max(c.basis_pats_in_trace / 10 + 1);
         c
     }).collect()
 }
@@ -561,11 +578,16 @@ mod tests {
         let mut p = zero_params();           // stand-in P_max
         p.subsigs = 201; p.perc_pats_expansion_rate = 8000;
         p.avg_active_pats_per_subsig = 12; p.basis_pats_in_trace = 700;
+        let z = (0, 0, 0, 0);                // no per-chunk data -> keep P_max
         let specs = vec![
             RungSpec { subsigs: 0, perc_pats_expansion_rate: 125,
-                avg_active_pats_per_subsig: 1 },
+                avg_active_pats_per_subsig: 1, max_unique_acc_pats: z.0,
+                max_acc_states: z.1, max_pats_in_trace: z.2,
+                max_cp_unique_states: z.3 },
             RungSpec { subsigs: 200, perc_pats_expansion_rate: 8000,
-                avg_active_pats_per_subsig: 12 }];
+                avg_active_pats_per_subsig: 12, max_unique_acc_pats: z.0,
+                max_acc_states: z.1, max_pats_in_trace: z.2,
+                max_cp_unique_states: z.3 }];
         let l = assemble_ladder(&p, &specs);
         assert_eq!(l.len(), 2);
         assert_eq!(l[0].subsigs, 1);         // 0 + dummy

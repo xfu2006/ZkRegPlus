@@ -2782,9 +2782,12 @@ impl ComputeSigAdvCapacity{
 		pats_len
 	}
 
-	/// compute the buffer size of subsig count constraint proof
+	/// compute the buffer size of subsig count constraint proof.
+	/// Floored at 1: the table always needs a null sentinel row (row 0),
+	/// so a dataset with no count constraints (perc_comp=0) still gets 1.
 	pub fn get_scc_prf_size(&self)->usize{
-		self.perc_comp_subsigs * (self.subsigs_cs + self.subsigs_igc) / 100
+		(self.perc_comp_subsigs * (self.subsigs_cs + self.subsigs_igc) / 100)
+			.max(1)
 	}
 }
 

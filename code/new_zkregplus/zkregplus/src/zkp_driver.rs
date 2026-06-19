@@ -388,7 +388,7 @@ pub(crate) fn determine_config_aggr<F,C,CS>(
 	seed: crate::determine_config::CapParams,
 	chunk_len: usize, lkup_len: usize, total_word_n: usize,
 	k_max: usize, n_buckets: usize, max_rounds: usize, n_threads: usize,
-	k_cand: usize,
+	k_cand: usize, peel_pct: usize,
 )->Result<(Vec<crate::determine_config::CapParams>, Vec<usize>), String>
 where C: CurveGroup<ScalarField=F>,
 	  CS: CommitmentScheme<C,false>,
@@ -414,6 +414,9 @@ where C: CurveGroup<ScalarField=F>,
 	}
 	let (mut universe, mut fwd, mut active, mut live) =
 		(vec![], vec![], vec![], vec![]);
+	// per-rung FSM/CP structural demand (B2): aligned 1-1 with the chunks.
+	let (mut uniq, mut acc, mut pats, mut cpu) =
+		(vec![], vec![], vec![], vec![]);
 	for (wi, fdr) in infos.iter().zip(vdata.iter()) {
 		let cp = &fdr.chunk_peaks;
 		for s in 0..wi.failed_c_all_segs.len() {
@@ -424,6 +427,18 @@ where C: CurveGroup<ScalarField=F>,
 			fwd.push(cp.fwd_entries_per_chunk.get(s).copied().unwrap_or(0));
 			active.push(cp.active_steps_per_chunk.get(s).copied().unwrap_or(0));
 			live.push(cp.carried_live_per_chunk.get(s).copied().unwrap_or(0));
+			// basis RATE (count*10000/word_nib) so per-rung caps are
+			// comparable across files; assemble_ladder ratio-scales P_max.
+			let wn = (cp.seg_size * wi.failed_c_all_segs.len()).max(1);
+			let rate = |v: usize| v * 10000 / wn;
+			uniq.push(rate(cp.unique_acc_pats_per_chunk.get(s)
+				.copied().unwrap_or(0)));
+			acc.push(rate(cp.acc_states_per_chunk.get(s).copied()
+				.unwrap_or(0)));
+			pats.push(rate(cp.pats_in_trace_per_chunk.get(s).copied()
+				.unwrap_or(0)));
+			cpu.push(rate(cp.cp_unique_states_per_chunk.get(s).copied()
+				.unwrap_or(0)));
 		}
 	}
 	if universe.is_empty() {
@@ -436,19 +451,91 @@ where C: CurveGroup<ScalarField=F>,
 	p_max.aggr_needs_subsigs = p_max.subsigs;   // global clamp = per-rung no-op
 
 	// 4. band DP -> rung specs + histogram (seg_size from the discharge itself).
+	// Reserve one rung for the p{peel_pct} peel of rung 0 when k_max>=3.
+	let do_peel = k_max >= 3 && peel_pct > 0 && peel_pct < 100;
+	let band_k = if do_peel { k_max - 1 } else { k_max };
 	let seg_size = vdata.first().map(|f| f.chunk_peaks.seg_size)
 		.unwrap_or(chunk_len * crate::gadgets::word_extract::LEGS);
 	let (specs, hist) = crate::band_dp::plan_rungs(&universe, &fwd, &active,
-		&live, p_max.basis_pats_in_trace, seg_size,
+		&live, &uniq, &acc, &pats, &cpu, p_max.basis_pats_in_trace, seg_size,
 		p_max.subsigs.saturating_sub(1), p_max.perc_pats_expansion_rate,
-		p_max.avg_active_pats_per_subsig, k_max, n_buckets);
+		p_max.avg_active_pats_per_subsig, band_k, n_buckets);
 
-	// 5. assemble ladder + report.
-	let ladder = crate::determine_config::assemble_ladder(&p_max, &specs);
+	// 5. assemble ladder; optionally peel a smaller rung 0' at the p{peel_pct}
+	// of rung 0's FSM/CP demand. The bulk fits rung 0'; the FSM-tail CapErr-
+	// bumps to rung 0 at fold time (cap-aware per-seg router). No extra probe.
+	let mut ladder = crate::determine_config::assemble_ladder(&p_max, &specs);
+	let mut hist = hist;
+	if do_peel && !ladder.is_empty() {
+		let r0 = ladder[0].clone();
+		let ceil0 = r0.subsigs.saturating_sub(1);
+		let idxs: Vec<usize> = (0..universe.len())
+			.filter(|&i| universe[i] <= ceil0).collect();
+		let pctl = |arr: &Vec<usize>| -> usize {
+			let mut v: Vec<usize> = idxs.iter().map(|&i| arr[i]).collect();
+			if v.is_empty() { return 0; }
+			v.sort_unstable();
+			v[(peel_pct * (v.len() - 1)) / 100]
+		};
+		let gmax = |arr: &Vec<usize>| arr.iter().copied().max().unwrap_or(0);
+		let sc = |cap: usize, p: usize, g: usize| -> usize {
+			if g == 0 { cap } else { ((cap * p + g - 1) / g).min(cap).max(2) }
+		};
+		let (pu, pa, pp, pc) =
+			(pctl(&uniq), pctl(&acc), pctl(&pats), pctl(&cpu));
+		let mut peeled = r0.clone();
+		peeled.basis_unique_states = sc(r0.basis_unique_states, pu, gmax(&uniq));
+		peeled.basis_acc_states = sc(r0.basis_acc_states, pa, gmax(&acc));
+		peeled.basis_pats_in_trace = sc(r0.basis_pats_in_trace, pp, gmax(&pats));
+		peeled.cp_basis_unique_states =
+			sc(r0.cp_basis_unique_states, pc, gmax(&cpu));
+		peeled.basis_acc_states = peeled.basis_acc_states
+			.max(peeled.basis_pats_in_trace / 10 + 1);
+		// informational hist: rung0 chunks fitting the peeled caps (all axes).
+		let bulk = idxs.iter().filter(|&&i| uniq[i] <= pu && acc[i] <= pa
+			&& pats[i] <= pp && cpu[i] <= pc).count();
+		let tail = idxs.len().saturating_sub(bulk);
+		ladder.insert(0, peeled);
+		if !hist.is_empty() { hist[0] = tail; }
+		hist.insert(0, bulk);
+		log(0, LOG1, &format!("peel rung0' p{}: bulk={} tail={} (FSM-tail \
+			bumps to rung0)", peel_pct, bulk, tail));
+	}
 	log(0, LOG1, &format!("determine_config_aggr: {} rungs, hist={:?}, \
 		P_max.subsigs={}, perc={}, avg_active={}", ladder.len(), hist,
 		p_max.subsigs, p_max.perc_pats_expansion_rate,
 		p_max.avg_active_pats_per_subsig));
+	// DIAGNOSTIC (ZKR_FSM_DIST): per-rung distribution of the FSM/CP basis
+	// rates, to see if rung 0's caps are forced by a few outlier chunks
+	// (peelable) or most chunks. Read-only; no effect when unset.
+	if std::env::var("ZKR_FSM_DIST").is_ok() {
+		let ceils: Vec<usize> = ladder.iter()
+			.map(|c| c.subsigs.saturating_sub(1)).collect();
+		let route = |u: usize| ceils.iter().position(|&c| u <= c)
+			.unwrap_or(ceils.len().saturating_sub(1));
+		let axes: [(&str, &Vec<usize>); 4] =
+			[("uniq", &uniq), ("acc", &acc), ("pats", &pats),
+			 ("cp_uniq", &cpu)];
+		let pct = |v: &mut Vec<usize>, q: usize| -> usize {
+			if v.is_empty() { 0 } else { v.sort_unstable();
+				v[(q * (v.len() - 1)) / 100] } };
+		for r in 0..ladder.len() {
+			let idxs: Vec<usize> = (0..universe.len())
+				.filter(|&i| route(universe[i]) == r).collect();
+			log(0, LOG1, &format!(
+				"=== FSM_DIST rung{} (universe<={}, n={} chunks) ===",
+				r, ceils.get(r).copied().unwrap_or(0), idxs.len()));
+			for (name, arr) in axes.iter() {
+				let mut vals: Vec<usize> = idxs.iter()
+					.map(|&i| arr[i]).collect();
+				let gmax = arr.iter().copied().max().unwrap_or(0);
+				log(0, LOG1, &format!(
+					"  {:<8} p50={} p90={} p99={} max={} (global max={})",
+					name, pct(&mut vals, 50), pct(&mut vals, 90),
+					pct(&mut vals, 99), pct(&mut vals, 100), gmax));
+			}
+		}
+	}
 	Ok((ladder, hist))
 }
 
@@ -481,7 +568,7 @@ fn shrink_fields()->Vec<(&'static str, CapGet, CapSet, CapFloor)>{
 	 ("perc_pats",       |p| p.perc_pats_expansion_rate,
 	    |p,v| p.perc_pats_expansion_rate=v, |_| 2),
 	 ("perc_comp",       |p| p.perc_comp_subsigs,
-	    |p,v| p.perc_comp_subsigs=v, |_| 2),
+	    |p,v| p.perc_comp_subsigs=v, |_| 0),
 	]
 }
 
@@ -3922,13 +4009,15 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			.and_then(|s| s.parse().ok()).unwrap_or(4);
 		let (ladder, hist) = super::determine_config_aggr::<Fr,C1,CS1>(
 			db_arc.clone(), &words, &infos, &vdata, seed, mw, lkup_len,
-			total_word_n, rc.k_max, rc.n_buckets, 60, n_threads, 8)
-			.expect("determine_config_aggr");
+			total_word_n, rc.k_max, rc.n_buckets, 60, n_threads, 8,
+			rc.peel_pct).expect("determine_config_aggr");
 		crate::determine_config::save_ladder(&ladder,
 			&format!("{}/{}", proot, rc.config_out)).expect("save ladder");
 		utils::logger::log(0, utils::logger::LOG1, &format!(
 			"full_dlp_sample ladder: {} rungs, hist={:?}", ladder.len(),
 			hist));
+		//ZKR_FSM_DIST: determine-only diagnostic, skip the fold.
+		if std::env::var("ZKR_FSM_DIST").is_ok() { return; }
 		//fold-only: load own DB from cache (avoid 2x RAM); stats + cs1e.
 		drop(db_arc);
 		get_global_config().b_estimate_caps = false;
@@ -4168,11 +4257,19 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		use rayon::prelude::*;
 		let proot = utils::os::proj_root();
 		let mw = 64; //chunk_len for the real DLP dataset
-		let needs_cut = 4000;
+		//ZKR_CORPUS_NEEDS_CUT overrides the high-cost prune threshold (default
+		//4000); the final list keeps foldable emails with max-NEEDS <= this.
+		let needs_cut = std::env::var("ZKR_CORPUS_NEEDS_CUT").ok()
+			.and_then(|s| s.parse().ok()).unwrap_or(4000usize);
 		get_global_config().range2_bit = 25;
 		//rules recompiled -> rebuild by default; ZKR_CORPUS_CACHE=1
 		//reuses the dlp_corpus_aggr cache for fast reruns/diagnostics.
 		let b_cache = std::env::var("ZKR_CORPUS_CACHE").is_ok();
+		//ZKR_CORPUS_CACHE_NAME overrides the DB cache (default dlp_corpus_aggr,
+		//the 39GB fanout DB). Point it at the experiment's dlp_intl_data_aggr
+		//(18GB) for a RAM-safe, experiment-consistent split.
+		let cache_name = std::env::var("ZKR_CORPUS_CACHE_NAME")
+			.unwrap_or_else(|_| "dlp_corpus_aggr".to_string());
 		get_global_config().b_read_cache = b_cache;
 		get_global_config().b_estimate_caps = false;
 		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
@@ -4194,7 +4291,7 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			&format!("{}/regex_pat/main_dfa.dat", CFG_DIR),
 			&format!("{}/regex_pat/needs_ised.dat", CFG_DIR),
 			&format!("{}/regex_pat/needs_ised_igc.dat", CFG_DIR),
-			&mut vlog, "dlp_corpus_aggr", b_cache, true)
+			&mut vlog, &cache_name, b_cache, true)
 			.expect("build db");
 
 		// 4. ONE discharge pass -> (fname, is_fail, max_needs, size).

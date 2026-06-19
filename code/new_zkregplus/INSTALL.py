@@ -2,12 +2,12 @@
 # ---------------------------------------------------------------------
 # INSTALL.py  --  one-shot data installer for new_zkregplus.
 #
-# Downloads + extracts the sample archive into data/, runs the binexec
-# merge pipeline (folded in from the former data/samples/gen_data.py),
-# and deploys the chromosome-17 (sig_c21) variants.  The email dataset
-# only scans the maildir and reports a merge plan (no merged blobs or
-# records are written).  All scratch lives under /tmp/bora_install and
-# is removed on completion.
+# Downloads + extracts data into data/.  The email dataset (Enron) is
+# fetched from the CMU source and placed under data/samples/email/src/
+# maildir; samples.7z is a byte-identical fallback used only when the
+# CMU host is unreachable.  The binexec merge pipeline and chr17
+# (sig_c21) variants deploy from samples.7z / sig_c21.7z.  All scratch
+# lives under /tmp/bora_install and is removed on completion.
 #
 # Run from anywhere:
 #   python3 INSTALL.py             menu: pick ALL / email / dna / binexec
@@ -22,7 +22,6 @@ import os
 import shutil
 import subprocess
 import sys
-import time
 
 # ---- paths (anchored on this file so cwd never matters) -------------
 ROOT        = os.path.dirname(os.path.abspath(__file__))
@@ -38,15 +37,29 @@ SAMPLES_ID  = "1OM_W54JxPEiV3S26XwY7f1qhEAVyFtv_"   # samples.7z
 SIG_C21_ID  = "https://drive.google.com/file/d/1314OL6_FYLmBH2i2_kQd7fwuVv73g6LU/view?usp=sharing"   # sig_c21*.7z
 SIG_C21_TOP = "chr17_variants"                      # archive top dir
 
-# ---- email-pipeline globals (re-anchored from the former script) ----
-SRC_DIR          = os.path.join(SAMPLES_DIR, "email", "src", "maildir")
-TARGET_DIR       = os.path.join(SAMPLES_DIR, "email_merged128k")
-RECORDS_DIR      = os.path.join(SAMPLES_DIR, "merged_records_email")
-TARGET_SIZE      = 128 * 1024                     # 128 KB merge target
+# ---- email (Enron) source ------------------------------------------
+# Primary = the CMU release (May 7 2015).  EMAIL_TREE_DIGEST is sha256
+# over the sorted "sha256  ./relpath" manifest of maildir; it gates a
+# freshly downloaded corpus before we trust it.
+ENRON_URL = ("https://www.cs.cmu.edu/~./enron/"
+             "enron_mail_20150507.tar.gz")
+EMAIL_DIR     = os.path.join(SAMPLES_DIR, "email")
+EMAIL_MAILDIR = os.path.join(EMAIL_DIR, "src", "maildir")
+EMAIL_README  = os.path.join(EMAIL_DIR, "README.md")
+EMAIL_TREE_DIGEST = \
+    "1381aa3063f8c8f0975d20532c5b7a8cafac016af35fe676d5e6405cc199ba7a"
+EMAIL_README_TEXT = (
+    "source: https://www.cs.cmu.edu/~./enron/\n"
+    "May 7, 2015 version: "
+    "https://www.cs.cmu.edu/~./enron/enron_mail_20150507.tar.gz\n"
+    "\n"
+    "The emails live in the sibling folder src/maildir/.\n"
+)
 
 # ---- binexec-pipeline globals (from the former gen_data.py) ---------
 BINEXEC_SRC = "binexec"                           # under SAMPLES_DIR
 BINEXEC_TGT = "binexec_merged128k"
+TARGET_SIZE = 128 * 1024                          # 128 KB merge target
 # Leave <100 KiB headroom under 32 MiB so the loc encoding never
 # overflows range2_bit=26 in full_data4 (see discharge_sig.rs).
 SPLIT_SIZE  = 32 * 1024 * 1024 - 100 * 1024
@@ -261,144 +274,6 @@ def deploy_chr17(extract_root):
 
 
 # =====================================================================
-# email merge pipeline  (folded verbatim from gen_merged128k_email.py)
-# =====================================================================
-
-# ---- step framing ---------------------------------------------------
-
-# Mark step start.  Prints banner; returns wall-clock t0 for step_done.
-def step_enter(name):
-    print(f"entering step: {name}")
-    return time.time()
-
-
-# Mark step completion.  Prints elapsed wall-clock as H:MM:SS.
-def step_done(name, t0):
-    dt = int(time.time() - t0)
-    h, rem = divmod(dt, 3600)
-    m, s   = divmod(rem, 60)
-    print(f"step {name} completed. total time: "
-          f"{h}:{m:02d}:{s:02d}")
-
-
-# ---- folder checks --------------------------------------------------
-
-# Verify src_dir exists; create target_dir and records_dir if missing.
-# Exits on hard errors.
-def check_data_folders(src_dir, target_dir, records_dir):
-    if not os.path.isdir(src_dir):
-        print(f"ERROR: source dir not found: {src_dir}")
-        sys.exit(1)
-    os.makedirs(target_dir,  exist_ok=True)
-    os.makedirs(records_dir, exist_ok=True)
-
-
-# ---- block 2: canonical file list -----------------------------------
-
-# Enumerate src_root recursively in canonical (relpath-sorted) order.
-# Returns [{"relpath": str, "size": int}, ...].  os.walk's default
-# order is filesystem-dependent, so we sort dirnames/filenames in
-# place at every level.  Symlinks and non-regular files are skipped.
-def canonical_file_list(src_root):
-    out = []
-    for dirpath, dirnames, filenames in os.walk(
-            src_root, topdown=True, followlinks=False):
-        dirnames.sort()
-        filenames.sort()
-        for fn in filenames:
-            full = os.path.join(dirpath, fn)
-            if os.path.islink(full) or not os.path.isfile(full):
-                continue
-            rp = os.path.relpath(full, src_root)
-            out.append({"relpath": rp,
-                        "size":    os.path.getsize(full)})
-    # Defensive final sort; survives any future walker swap.
-    out.sort(key=lambda r: (r["relpath"], r["size"]))
-    return out
-
-
-# ---- block 3: merge plan --------------------------------------------
-
-# Greedy in-order packing into target_size bins.  Walks the canonical
-# file list once, growing each bin while the next file fits; if the
-# first file in a bin already exceeds target_size, it forms its own
-# (solo, oversize) bin.  Target names are merged_NNNNN with width
-# sized to len(file_list).  Returns
-# [{"target_name": str, "list_src": [{"relpath","size"}, ...]}, ...].
-def compute_merge_plan(file_list, target_size):
-    plan = []
-    if not file_list:
-        return plan
-    width = max(5, len(str(len(file_list))))
-    start = 0
-    while start < len(file_list):
-        bin_src   = []
-        bin_total = 0
-        end       = start
-        while end < len(file_list) and \
-                bin_total + file_list[end]["size"] <= target_size:
-            bin_src.append(file_list[end])
-            bin_total += file_list[end]["size"]
-            end += 1
-        if not bin_src:
-            # First file alone exceeds target_size: solo bin.
-            bin_src.append(file_list[end])
-            end += 1
-        idx = len(plan)
-        plan.append({
-            "target_name": f"merged_{idx:0{width}d}",
-            "list_src":    bin_src,
-        })
-        start = end
-    assert sum(len(b["list_src"]) for b in plan) == len(file_list)
-    for b in plan:
-        if len(b["list_src"]) > 1:
-            sz = sum(s["size"] for s in b["list_src"])
-            assert sz <= target_size
-    return plan
-
-
-# Format n bytes as e.g. "8.62 GiB" for human-readable stats.
-def _human_size(n):
-    if n < 1024:
-        return f"{n} B"
-    x = float(n)
-    for unit in ("KiB", "MiB", "GiB", "TiB", "PiB"):
-        x /= 1024
-        if x < 1024:
-            return f"{x:.2f} {unit}"
-    return f"{x:.2f} EiB"
-
-
-# Scan the maildir and compute the merge plan as a dry run.  The
-# merged email_merged128k blobs and records are no longer created.
-def _run_pipeline():
-    check_data_folders(SRC_DIR, TARGET_DIR, RECORDS_DIR)
-
-    t0 = step_enter("[a] canonical_file_list")
-    fl = canonical_file_list(SRC_DIR)
-    print(f"  files: {len(fl)}")
-    step_done("[a] canonical_file_list", t0)
-
-    t0 = step_enter("[b] compute_merge_plan")
-    plan = compute_merge_plan(fl, TARGET_SIZE)
-    print(f"  bins:  {len(plan)}")
-    step_done("[b] compute_merge_plan", t0)
-
-    # Final stats (dry run -- nothing is written to disk).
-    n_orig      = len(fl)
-    t_orig      = sum(r["size"] for r in fl)
-    n_generated = len(plan)
-    print()
-    print("=== summary ===")
-    print(f"original set: {n_orig} files, "
-          f"{t_orig} bytes ({_human_size(t_orig)})")
-    print(f"merge plan:   {n_generated} bins (not materialized)")
-    print("note: email_merged128k and records are not created.")
-    print("done.")
-
-
-# =====================================================================
 # install orchestration
 # =====================================================================
 
@@ -450,16 +325,90 @@ def install_dataset_binexec():
 
 # ---- email (Enron) -------------------------------------------------
 
-# Empty the email target dirs (kept).
+# Write the source-provenance README beside src/ (both install paths).
+def write_email_readme():
+    os.makedirs(EMAIL_DIR, exist_ok=True)
+    with open(EMAIL_README, "w") as f:
+        f.write(EMAIL_README_TEXT)
+
+
+# True if the CMU host answers a quick HEAD for the tarball.
+def cmu_email_available():
+    try:
+        subprocess.run(
+            ["curl", "-fsI", "--connect-timeout", "10",
+             "--max-time", "20", ENRON_URL],
+            check=True, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL)
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+
+# sha256 over the sorted "sha256  ./relpath" manifest of maildir,
+# matching the fingerprint compared against EMAIL_TREE_DIGEST.
+def maildir_tree_digest(maildir):
+    cmd = ("set -o pipefail; find . -type f -print0 | LC_ALL=C sort -z "
+           "| xargs -0 sha256sum | sha256sum")
+    out = subprocess.run(["bash", "-c", cmd], cwd=maildir,
+                         capture_output=True, text=True, check=True)
+    return out.stdout.split()[0]
+
+
+# Empty the maildir so a re-install lands a clean corpus.
 def clean_email():
-    empty_dir(os.path.join(SAMPLES_DIR, "email_merged128k"))
-    empty_dir(os.path.join(SAMPLES_DIR, "merged_records_email"))
+    shutil.rmtree(EMAIL_MAILDIR, ignore_errors=True)
 
 
-# Deploy samples + scan the maildir and compute the merge plan.
-def install_dataset_email():
+# Download the CMU tarball, verify its fingerprint, wipe-then-place the
+# maildir at EMAIL_MAILDIR, and drop all scratch.  Raises on failure.
+def install_email_from_cmu():
+    scratch  = os.path.join(TMP_DIR, "enron_cmu")
+    tar_path = os.path.join(TMP_DIR, "enron_mail_20150507.tar.gz")
+    try:
+        shutil.rmtree(scratch, ignore_errors=True)
+        os.makedirs(scratch, exist_ok=True)
+        print("  download enron_mail_20150507.tar.gz")
+        subprocess.run(["curl", "-fL", "--retry", "3", "-o", tar_path,
+                        ENRON_URL], check=True)
+        print("  extract enron_mail_20150507.tar.gz")
+        subprocess.run(["tar", "-xzf", tar_path, "-C", scratch],
+                       check=True)
+        src_maildir = os.path.join(scratch, "maildir")
+        print("  verify corpus fingerprint")
+        digest = maildir_tree_digest(src_maildir)
+        if digest != EMAIL_TREE_DIGEST:
+            raise RuntimeError(
+                "CMU maildir digest mismatch: got %s" % digest)
+        shutil.rmtree(EMAIL_MAILDIR, ignore_errors=True)
+        os.makedirs(os.path.dirname(EMAIL_MAILDIR), exist_ok=True)
+        shutil.move(src_maildir, EMAIL_MAILDIR)
+        write_email_readme()
+        print("  email (CMU) -> %s" % EMAIL_MAILDIR)
+    finally:
+        if os.path.isfile(tar_path):
+            os.remove(tar_path)
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+# Fallback: deploy the maildir (among other samples) from samples.7z.
+def install_email_from_samples7z():
     ensure_samples_deployed()
-    _run_pipeline()
+    write_email_readme()
+
+
+# Prefer the CMU source; fall back to samples.7z only when CMU is
+# unreachable or its download/verify fails.
+def install_dataset_email():
+    if cmu_email_available():
+        try:
+            install_email_from_cmu()
+            return
+        except Exception as e:
+            print("  CMU install failed (%s); using samples.7z." % e)
+    else:
+        print("  CMU source unavailable; using samples.7z.")
+    install_email_from_samples7z()
 
 
 # ---- dna (chr17 / sig_c21 variants) --------------------------------

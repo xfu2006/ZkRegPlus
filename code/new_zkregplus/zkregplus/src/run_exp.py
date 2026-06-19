@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""Run full_dlp_sample (determine + fold) and pack all artifacts for analysis.
+
+Resolves the repo root from THIS file's location, so it works no matter the
+cwd (run it from zkregplus/src, the repo root, or anywhere).
+
+Usage:
+  python3 run_exp.py [runcfg_name] [--dry-run]
+    runcfg_name : a file under data/debug/full_dlp_sample/ (default
+                  runcfg_exp.json)
+    --dry-run   : print resolved paths + command, do not run cargo.
+
+Env:
+  ZKR_DC_THREADS   thread count (default 8)
+  ZKR_EXP_SKIP_FAIL passed through if set (drop non-foldable from the fold)
+
+Output (always packed, even on OOM/panic):
+  data/debug/full_dlp_sample/exp_out/artifacts_<ts>.tar.gz
+    {runcfg, ladder json, needs_dist.txt, fold report, scan list, run log,
+     summary} -- summary has per-rung r1cs/cs1e/max_pp, per-circuit fold step
+    cost, peak RSS, wall, exit code.
+
+Server (Jetstream2): git pull, then `python3 zkregplus/src/run_exp.py`.
+First run builds the DB cache from the in-git regex (~0.5hr), then reuses it.
+"""
+import os, sys, subprocess, time, datetime, tarfile, json, platform, re, shutil
+
+HERE = os.path.dirname(os.path.abspath(__file__))          # .../zkregplus/src
+REPO = os.path.abspath(os.path.join(HERE, "..", ".."))     # .../new_zkregplus
+CFG_REL = "data/debug/full_dlp_sample"
+CFG_DIR = os.path.join(REPO, CFG_REL)
+
+args = [a for a in sys.argv[1:] if a != "--dry-run"]
+DRY = "--dry-run" in sys.argv
+runcfg_name = args[0] if args else "runcfg_exp.json"
+RUNCFG = os.path.join(CFG_DIR, runcfg_name)
+OUT = "/tmp/full_dlp_exp"                                   # logs + summary
+TS = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+LOG = os.path.join(OUT, "run_%s.log" % TS)
+SUM = os.path.join(OUT, "summary_%s.txt" % TS)
+TAR = "/tmp/full_dlp_exp_artifacts_%s.tar.gz" % TS          # tarball in /tmp
+
+if not os.path.isfile(RUNCFG):
+    sys.exit("ERROR: runcfg not found: %s" % RUNCFG)
+rc = json.load(open(RUNCFG))
+
+env = dict(os.environ)
+env.setdefault("RUSTFLAGS", "-C link-args=-fuse-ld=lld -Awarnings")
+env["ZKR_DLP_RUNCFG"] = RUNCFG
+env.setdefault("ZKR_DC_THREADS", "8")
+
+time_prefix = ["/usr/bin/time", "-v"] if os.path.exists("/usr/bin/time") else []
+cmd = time_prefix + ["cargo", "test", "-p", "zkregplus", "--release", "--",
+    "zkp_driver::tests_zkp_driver::full_dlp_sample", "--exact", "--nocapture"]
+
+# artifacts to pack: config_out/report_out are repo-root-relative; scan_file is
+# config_dir-relative; needs_dist.txt is written by the Rust to config/.
+def repo(p):  return os.path.join(REPO, p) if p else None
+def cfg(p):   return os.path.join(CFG_DIR, p) if p else None
+artifacts = [RUNCFG,
+    repo(rc.get("config_out")),
+    repo(rc.get("report_out")),
+    cfg(rc.get("scan_file")),
+    os.path.join(CFG_DIR, "config", "needs_dist.txt")]
+
+print("[run_exp] REPO   =", REPO)
+print("[run_exp] RUNCFG =", RUNCFG)
+print("[run_exp] LOG    =", LOG)
+print("[run_exp] cmd    =", " ".join(cmd))
+print("[run_exp] cache  = %s (first run builds it from regex, ~0.5hr)"
+      % rc.get("cache_dir"))
+print("[run_exp] artifacts:", [a for a in artifacts if a])
+if DRY:
+    print("[run_exp] --dry-run: not executing.")
+    sys.exit(0)
+
+os.makedirs(OUT, exist_ok=True)
+t0 = time.time()
+with open(LOG, "w") as lf:
+    lf.write("# %s  host=%s cpu=%s\n# cmd=%s\n# runcfg=%s\n\n" % (
+        datetime.datetime.now(), platform.node(), os.cpu_count(),
+        " ".join(cmd), json.dumps(rc)))
+    lf.flush()
+    p = subprocess.Popen(cmd, cwd=REPO, env=env, stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT, text=True)
+    for line in p.stdout:
+        sys.stdout.write(line); lf.write(line); lf.flush()
+    p.wait()
+    code = p.returncode
+wall = time.time() - t0
+
+# ---- summary ----
+def grep(pats):
+    out = []
+    for l in open(LOG, errors="replace"):
+        if any(pat in l for pat in pats):
+            out.append(l.rstrip("\n"))
+    return out
+agg = {}
+for l in open(LOG, errors="replace"):
+    if "prove_step cost: i:" in l:
+        m = re.search(r"circ_id: (\d+).*stmt_len: (\d+).*wtns size: (\d+) (\d+) ms", l)
+        if m:
+            c = int(m.group(1)); d = agg.setdefault(c, [0, 0, 0, 0])
+            d[0] += 1; d[1] += int(m.group(4))
+            d[2] = int(m.group(2)); d[3] = int(m.group(3))
+git = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO,
+                     capture_output=True, text=True).stdout.strip()
+with open(SUM, "w") as s:
+    s.write("host=%s cpu=%s exit=%s wall_s=%.1f\n" % (
+        platform.node(), os.cpu_count(), code, wall))
+    s.write("git=%s\nruncfg=%s\n\n" % (git, json.dumps(rc)))
+    for l in grep(["ladder:", "peel rung0'", "PERF 1002", "cs1e_pp",
+                   "KEYS info", "gen_step_cs step 3", "gen_cs step 3.2",
+                   "Maximum resident set size", "Killed",
+                   "Out of memory", "panicked", "test result"]):
+        s.write(l + "\n")
+    s.write("\n-- per-circuit fold step cost --\n")
+    for c in sorted(agg):
+        n, ms, st, wt = agg[c]
+        s.write("circ%d: steps=%d stmt_len=%d wtns=%d avg=%.0fms total=%.1fs\n"
+                % (c, n, st, wt, ms / max(n, 1), ms / 1000.0))
+print("\n" + open(SUM).read())
+
+# ---- pack (always) ----
+with tarfile.open(TAR, "w:gz") as t:
+    for f in artifacts:
+        if f and os.path.isfile(f):
+            t.add(f, arcname=os.path.basename(f))
+print("[run_exp] packed -> %s  (exit=%s, wall=%.0fs)" % (TAR, code, wall))
+sys.exit(0)

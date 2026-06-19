@@ -3516,6 +3516,21 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		dfa_bag.get_chunk_peaks(&dfa_acc_path, seg_size);
 	let (u_ig, a_ig, p_ig, np_ig, sc_ig) =
 		dfa_bag_igc.get_chunk_peaks(&dfa_acc_path_igc, seg_size);
+	// M11 per-rung: per-chunk FSM peaks (cs/igc element-wise max).
+	// Estimator-pass only; empty otherwise. Sizes per-rung basis caps.
+	let (unique_acc_pats_per_chunk, acc_states_per_chunk,
+		pats_in_trace_per_chunk) = if read_global_config().b_estimate_caps {
+		let (uc, ac, pc) = dfa_bag
+			.get_chunk_peaks_per_chunk(&dfa_acc_path, seg_size);
+		let (ui, ai, pi) = dfa_bag_igc
+			.get_chunk_peaks_per_chunk(&dfa_acc_path_igc, seg_size);
+		let emax = |a: Vec<usize>, b: Vec<usize>| -> Vec<usize> {
+			let n = a.len().max(b.len());
+			(0..n).map(|c| a.get(c).copied().unwrap_or(0)
+				.max(b.get(c).copied().unwrap_or(0))).collect()
+		};
+		(emax(uc, ui), emax(ac, ai), emax(pc, pi))
+	} else { (vec![], vec![], vec![]) };
 	// perc_pats_expansion_rate: the SED discharge gadget uses
 	// total_steps_estimate = basis_pats_in_trace * perc_pats_expansion_rate
 	// as a loc-space sentinel offset (discharge_adv.rs:758,769) that
@@ -3674,12 +3689,19 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 	}
 	// CP cap demand: distinct crit-DFA states per chunk (cs/igc max). Sizes
 	// cp_basis_unique_states (CP pack imm_buf). Estimator-pass only.
-	let max_cp_unique_states = if read_global_config().b_estimate_caps {
+	let (max_cp_unique_states, cp_unique_states_per_chunk) =
+		if read_global_config().b_estimate_caps {
 		let cp_cs = dfa_crit.acc_path(&padded_nibbles);
 		let cp_ig = dfa_crit_igc.acc_path(&padded_nibbles);
-		dfa_crit.max_distinct_states_per_chunk(&cp_cs, seg_size).max(
-			dfa_crit_igc.max_distinct_states_per_chunk(&cp_ig, seg_size))
-	} else { 0 };
+		let m = dfa_crit.max_distinct_states_per_chunk(&cp_cs, seg_size).max(
+			dfa_crit_igc.max_distinct_states_per_chunk(&cp_ig, seg_size));
+		let vc = dfa_crit.distinct_states_per_chunk(&cp_cs, seg_size);
+		let vi = dfa_crit_igc.distinct_states_per_chunk(&cp_ig, seg_size);
+		let n = vc.len().max(vi.len());
+		let v: Vec<usize> = (0..n).map(|c| vc.get(c).copied().unwrap_or(0)
+			.max(vi.get(c).copied().unwrap_or(0))).collect();
+		(m, v)
+	} else { (0, vec![]) };
 	let chunk_peaks = ChunkPeaks{
 		seg_size,
 		max_unique_states: u_cs.max(u_ig),
@@ -3697,6 +3719,10 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		active_steps_per_chunk,
 		carried_live_per_chunk,
 		digit_needs_per_chunk,
+		unique_acc_pats_per_chunk,
+		acc_states_per_chunk,
+		pats_in_trace_per_chunk,
+		cp_unique_states_per_chunk,
 	};
 
 	//6. compute stats 
