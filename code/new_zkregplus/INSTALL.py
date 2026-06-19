@@ -66,24 +66,119 @@ SPLIT_SIZE  = 32 * 1024 * 1024 - 100 * 1024
 
 
 # =====================================================================
-# download tooling + filesystem helpers
+# toolchain install  (Rust 1.76 + system build deps)
+#
+# Brings a bare Ubuntu 24 instance to a buildable state: apt build deps
+# (incl. lld, required by the fused-ld link), p7zip, pip+gdown, and the
+# rustup-managed 1.76.0 toolchain pinned by ./rust-toolchain.  Idempotent;
+# needs sudo for apt.
 # =====================================================================
 
-# Verify gdown (pip) + 7za (p7zip) are present; exit with hints if not.
-def check_install_deps():
-    missing = []
+APT_PACKAGES = [
+    "build-essential", "lld", "pkg-config", "libssl-dev",
+    "curl", "git", "p7zip-full", "python3-pip",
+]
+RUST_VERSION = "1.76.0"
+
+
+# Run argv, echoing it; raise on non-zero.
+def run_cmd(argv):
+    print("  $ " + " ".join(argv))
+    subprocess.run(argv, check=True)
+
+
+# Install apt build deps (lld is required by the fused-ld link).
+def install_apt_deps():
+    sudo = [] if os.geteuid() == 0 else ["sudo"]
+    run_cmd(sudo + ["apt-get", "update"])
+    run_cmd(sudo + ["apt-get", "install", "-y"] + APT_PACKAGES)
+
+
+# pip-install gdown (Ubuntu 24 is PEP-668 managed -> retry w/ override).
+def install_pip_deps():
+    try:
+        run_cmd([sys.executable, "-m", "pip", "install", "--user",
+                 "gdown"])
+    except subprocess.CalledProcessError:
+        run_cmd([sys.executable, "-m", "pip", "install", "--user",
+                 "--break-system-packages", "gdown"])
+
+
+# Install rustup non-interactively, then the pinned 1.76.0 toolchain.
+def install_rust():
+    cargo_bin = os.path.expanduser("~/.cargo/bin")
+    rustup = os.path.join(cargo_bin, "rustup")
+    if shutil.which("rustup") is None and not os.path.isfile(rustup):
+        run_cmd(["bash", "-c",
+                 "curl --proto '=https' --tlsv1.2 -sSf "
+                 "https://sh.rustup.rs | sh -s -- -y "
+                 "--default-toolchain " + RUST_VERSION])
+    run_cmd([rustup, "toolchain", "install", RUST_VERSION])
+    print("  rust %s ready (pinned by ./rust-toolchain)" % RUST_VERSION)
+    print("  NOTE: run `source ~/.cargo/env` (or open a new shell).")
+
+
+# Full toolchain bring-up for a fresh instance (force all steps).
+def install_toolchain():
+    print("=== install toolchain (Rust %s + build deps) ==="
+          % RUST_VERSION)
+    install_apt_deps()
+    install_pip_deps()
+    install_rust()
+    print("toolchain ready -- build with:")
+    print('  RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" '
+          "cargo build --release")
+
+
+# True if every binary the apt packages provide is already on PATH.
+def apt_tools_present():
+    need = ("ld.lld", "7za", "cc", "pkg-config", "git", "curl")
+    return all(shutil.which(b) is not None for b in need)
+
+
+# True if the gdown python module imports.
+def have_gdown():
     try:
         import gdown  # noqa: F401
+        return True
     except ImportError:
-        missing.append(("python module 'gdown'", "pip install gdown"))
-    if shutil.which("7za") is None:
-        missing.append(("7za", "sudo apt install p7zip-full"))
-    if missing:
-        for what, how in missing:
-            print("ERROR: %s is required." % what)
-            print("  Install with: %s" % how)
-        sys.exit(1)
+        return False
 
+
+# True if rustup exists AND the pinned 1.76.0 toolchain is installed.
+def have_rust():
+    rustup = shutil.which("rustup") or \
+        os.path.join(os.path.expanduser("~/.cargo/bin"), "rustup")
+    if not os.path.isfile(rustup) and shutil.which("rustup") is None:
+        return False
+    try:
+        out = subprocess.run([rustup, "toolchain", "list"],
+                             capture_output=True, text=True, check=True)
+        return RUST_VERSION in out.stdout
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+
+# Default gate: install only the tools that are missing (idempotent).
+def ensure_toolchain():
+    ok_apt, ok_gdown, ok_rust = \
+        apt_tools_present(), have_gdown(), have_rust()
+    if ok_apt and ok_gdown and ok_rust:
+        print("toolchain present (apt deps, gdown, rust %s)."
+              % RUST_VERSION)
+        return
+    print("=== ensure toolchain (installing missing tools) ===")
+    if not ok_apt:
+        install_apt_deps()
+    if not ok_gdown:
+        install_pip_deps()
+    if not ok_rust:
+        install_rust()
+
+
+# =====================================================================
+# download tooling + filesystem helpers
+# =====================================================================
 
 # Download a Google Drive file to dest (skips if already present).
 # Accepts either a bare file id (SAMPLES_ID) or a full share URL
@@ -484,14 +579,22 @@ def main():
         description="Install new_zkregplus data into ./data.")
     ap.add_argument("--data", choices=["all"] + keys,
                     help="non-interactive dataset selection")
+    ap.add_argument("--toolchain", action="store_true",
+                    help="install Rust 1.76 + system build deps, then "
+                         "exit (unless --data is also given)")
     args = ap.parse_args()
+
+    if args.toolchain:
+        install_toolchain()
+        if not args.data:
+            return
 
     if args.data:
         selected = keys if args.data == "all" else [args.data]
     else:
         selected = select_datasets()
 
-    check_install_deps()
+    ensure_toolchain()                            # install missing tools
 
     os.makedirs(TMP_DIR, exist_ok=True)
     os.makedirs(CACHE_MAIN, exist_ok=True)        # ensure (never wiped)

@@ -29373,5 +29373,13 @@ Goal 6. think about the high_cost_removed.txt
 Friday 06/18/2026
 Goal 1. refine the download.py 
 Goal 2. upload to server and test.
-Goal 3. 
+	[a] available 99,875
+	[b] startd 6:38am => 
+		stuck unshelving to 8:00am
+	[c] prepare to kill the image and reattach the disk at 8:40am
+	[d] no one available
+	[e] build a small 512GB instance
+Goal 3. design runner for run_full_dlp.py  
+	[a] add requiremnts
+	[b] 
 
