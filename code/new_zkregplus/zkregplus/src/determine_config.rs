@@ -99,11 +99,17 @@ pub struct RunCfg {
     // When k_max>=3, peel rung 0 into a smaller rung 0' sized at this
     // percentile of rung 0's FSM/CP per-chunk demand (FSM-tail bumps to rung0).
     #[serde(default = "peel_pct_default")] pub peel_pct: usize,
+    // full_dlp(): deterministic size-balanced split source (config_dir-
+    // relative, .tgz ok) and job count; reset forces cache recompute.
+    #[serde(default)] pub full_list: String,
+    #[serde(default = "num_jobs_default")] pub num_jobs: usize,
+    #[serde(default)] pub reset: bool,
 }
 
 fn k_max_default() -> usize { 4 }
 fn n_buckets_default() -> usize { 2048 }
 fn peel_pct_default() -> usize { 90 }
+fn num_jobs_default() -> usize { 8 }
 
 impl RunCfg {
     /// Load the run-config the driver pointed ZKR_DLP_RUNCFG at.

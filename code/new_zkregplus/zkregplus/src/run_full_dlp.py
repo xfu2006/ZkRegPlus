@@ -1,391 +1,137 @@
 #!/usr/bin/env python3
-"""
-run_full_dlp.py -- server driver for the sampled DLP discharge + 2-circuit run.
-
-Pipeline (each step is a `cargo test` invocation; config flows ONLY through
-JSON files, never stdout-parsing or source edits):
-
-  0 compile      cargo test --no-run                       (build the test bin)
-  1 manifests    build binexec_sample{1,2,3}.dat           (Python; fixture =
-                 already present, real = pass_list +- measure_report ranking)
-  2 sample1      full_dlp_sample1  -> C1.json  (small cfg; builds+caches DB)
-  3 sample2      full_dlp_sample2  -> C2.json  (big   cfg)
-  4 sample3      full_dlp_sample3              (read C1,C2 -> coverage report)
-  5 full_dlp     full_dlp                      (read C1,C2 -> 2-circ Pass-1 cost)
-
-Reliability properties:
-  * config handoff = CapParams JSON files written/read by Rust (CapParams::
-    save_json / load_json). The driver never scrapes stdout or edits .rs.
-  * each step is IDEMPOTENT: it has an on-disk artifact (DB cache, C1.json,
-    C2.json, reports). A crash/restart resumes mid-pipeline; --force redoes.
-  * the expensive DB build happens once (step 2 via build_or_load) and every
-    later step loads the cache instantly.
-  * fixture vs real data is a --data flag (paths only); same code, same driver.
-
-Each Rust step reads ONE env var, ZKR_DLP_RUNCFG, pointing at a per-step JSON
-the driver writes (schema in build_runcfg()). Run under tmux/nohup for long
-real-data builds.
-
-Arguments:
-  --data {fixture,real}  Path set to run against (default: fixture). The ONLY
-                         knob to switch fixture<->real -- same code/steps.
-                           fixture -> data/paper_data/dlp/ (tiny test DB)
-                           real    -> data/paper_data/dlp/cfg/
-                                      (full DLP-international + dlp_intl_data_aggr)
-  --only STEP            Run just this one step (skip all others).
-  --from STEP            Start at this step and run to the end (skip earlier).
-  --force                Re-run steps even if their artifacts already exist
-                         (defeats the idempotent skip).
-  --threads N            ZKR_DC_THREADS = determine_config probe parallelism
-                         (default: 4).
-  --dry-run              Print the plan + each step's runcfg JSON; run nothing.
-
-  STEP is one of the ordered pipeline stages:
-    compile -> manifests -> sample1 -> sample2 -> sample3 -> full_dlp
-
-Behavior:
-  * Idempotent/resumable: each step checks for its artifact (the DB cache,
-    dlp_config_C1.json, dlp_config_C2.json, the reports) and SKIPS if present,
-    so a crash mid-pipeline resumes. --force overrides.
-  * Logs: per-step output -> scripts/run_full_dlp_out/<step>.log; the per-step
-    runcfg JSON -> scripts/run_full_dlp_out/runcfg_<step>.json.
-  * Cargo always runs from the workspace root with the project's lld RUSTFLAGS.
-  * --data real: the `manifests` step is a stub (errors if binexec_sample*.dat
-    are absent) -- the pass-list + measure_report auto-build is still TODO.
+"""Run full_dlp (split + cached discharge/ladder + multi-job fold) and
+pack all artifacts. Repo root resolved from this file, so cwd is free.
 
 Usage:
-  python3 scripts/run_full_dlp.py --data fixture            # full pipeline
-  python3 scripts/run_full_dlp.py --data fixture --only sample1
-  python3 scripts/run_full_dlp.py --data fixture --from sample3  # resume
-  python3 scripts/run_full_dlp.py --data fixture --force     # ignore artifacts
-  python3 scripts/run_full_dlp.py --data real --dry-run      # preview only
-  python3 scripts/run_full_dlp.py --data real --threads 8    # real run
+  python3 run_full_dlp.py [runcfg] [--jobs N] [--reset] [--dry-run]
+    runcfg     : path or name under data/paper_data/dlp/cfg/config/
+                 (default runcfg_full.json)
+    --jobs N   : override num_jobs in the runcfg for this run
+    --reset    : override reset=true (recompute split/discharge/ladder)
+    --dry-run  : print resolved paths + command, do not run cargo.
+
+Env:  ZKR_DC_THREADS  determine_config probe threads (default 8)
+
+Output (always packed, even on OOM/panic):
+  /tmp/full_dlp_artifacts_<ts>.tar.gz
+    {effective runcfg, ladder json, needs_dist.txt, run log (dump.txt),
+     per-job log_job_*.txt, summary}
 """
+import os, sys, subprocess, time, datetime, tarfile, json, platform, re, glob
 
-import argparse
-import datetime
-import json
-import os
-import subprocess
-import sys
+HERE = os.path.dirname(os.path.abspath(__file__))          # zkregplus/src
+REPO = os.path.abspath(os.path.join(HERE, "..", ".."))     # new_zkregplus
+CFG_DIR = os.path.join(REPO, "data/paper_data/dlp/cfg/config")
+LOGS_DIR = os.path.join(REPO, "data/cache/logs")           # log_job_*.txt
 
-# ---------------------------------------------------------------------------
-# Paths. REPO_ROOT = the new_zkregplus workspace root. This file lives at
-# zkregplus/src/, so go up three levels. All cargo runs happen from
-# REPO_ROOT; data paths are repo-root-relative so they match the binexec
-# manifests the Rust side reads.
-# ---------------------------------------------------------------------------
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__))))
-RUN_DIR = "/tmp/run_full_dlp_out"   # temp logs+runcfgs (kept OUT of the repo)
-# Config handoff (C1/C2) + reports live with the other configs, not in the
-# input config_dir. Repo-root-relative; resolved via p()/proj_root().
-CFG_DIR = "data/paper_data/dlp/cfg"
-REPORT_DIR = "data/paper_data/dlp/report"
+args = [a for a in sys.argv[1:] if not a.startswith("--")]
+DRY = "--dry-run" in sys.argv
+RESET = "--reset" in sys.argv
+JOBS = None
+for a in sys.argv[1:]:
+    if a.startswith("--jobs="):
+        JOBS = int(a.split("=", 1)[1])
+if "--jobs" in sys.argv:                       # also accept "--jobs N"
+    JOBS = int(sys.argv[sys.argv.index("--jobs") + 1])
 
-# RUSTFLAGS mirrors the project's compile.sh (lld linker, warnings off).
-RUSTFLAGS = "-C link-args=-fuse-ld=lld -Awarnings"
+runcfg_name = args[0] if args else "runcfg_full.json"
+RUNCFG = runcfg_name if os.path.isabs(runcfg_name) \
+    else os.path.join(CFG_DIR, runcfg_name)
+if not os.path.isfile(RUNCFG):
+    sys.exit("ERROR: runcfg not found: %s" % RUNCFG)
+rc = json.load(open(RUNCFG))
+if JOBS is not None:
+    rc["num_jobs"] = JOBS
+if RESET:
+    rc["reset"] = True
 
-# Per-dataset path sets. Switching fixture<->real is data only; the Rust test
-# functions and this driver are identical across the two. Paths are relative to
-# config_dir; for "real" they live in subfolders (regex_pat/, jobs/,
-# config/full_dlp/) -- see cfg/README.txt.
-DATASETS = {
-    "fixture": {
-        "config_dir": "data/paper_data/dlp",
-        "sig_file":   "main_dlp_sample.dat",
-        "cache_dir":  "dlp_sample_cache",
-        "scan1":      "binexec_sample1.dat",   # easy
-        "scan2":      "binexec_sample2.dat",   # hard
-        "scan3":      "binexec_sample3.dat",   # all / random
-        "fanout_cap": 10,        # cheap fan-out for the tiny fixture
-        "chunk_len":  512,
-        "range2_bit": 25,
-    },
-    "real": {
-        "config_dir": "data/paper_data/dlp/cfg",
-        "sig_file":   "regex_pat/main_data_dlp_internationl.dat",
-        "cache_dir":  "dlp_intl_data_aggr",
-        "scan1":      "jobs/binexec_sample1.dat",
-        "scan2":      "jobs/binexec_sample2.dat",
-        "scan3":      "jobs/binexec_sample3.dat",
-        "fanout_cap": 100,
-        "chunk_len":  64,    # uniform ~2KB ZK step for sample1/2/3
-        "range2_bit": 25,
-    },
-}
+OUT = "/tmp/full_dlp_run"
+TS = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+os.makedirs(OUT, exist_ok=True)
+EFF = os.path.join(OUT, "runcfg_effective_%s.json" % TS)   # patched runcfg
+LOG = os.path.join(OUT, "run_%s.log" % TS)                 # dump.txt
+SUM = os.path.join(OUT, "summary_%s.txt" % TS)
+TAR = "/tmp/full_dlp_artifacts_%s.tar.gz" % TS
+json.dump(rc, open(EFF, "w"), indent=2)
 
-# Output config files (the handoff) + reports, relative to config_dir.
-C1_NAME = "config/full_dlp/dlp_config_C1.json"  # small (easy) cfg, sample1
-C2_NAME = "config/full_dlp/dlp_config_C2.json"  # big (hard) cfg, sample2
-REPORT3_NAME = "dlp_report_sample3.txt"
-REPORT_FULL_NAME = "dlp_report_full.txt"
+env = dict(os.environ)
+env.setdefault("RUSTFLAGS", "-C link-args=-fuse-ld=lld -Awarnings")
+env["ZKR_DLP_RUNCFG"] = EFF
+env.setdefault("ZKR_DC_THREADS", "8")
 
-# Rust test functions (full libtest path under zkregplus).
-TEST_MOD = "zkp_driver::tests_zkp_driver"
+time_prefix = ["/usr/bin/time", "-v"] if os.path.exists("/usr/bin/time") else []
+cmd = time_prefix + ["cargo", "test", "-p", "zkregplus", "--release", "--",
+    "zkp_driver::tests_zkp_driver::full_dlp", "--exact", "--nocapture"]
 
+def repo(p):  return os.path.join(REPO, p) if p else None
+artifacts = [EFF,
+    repo(rc.get("config_out")),
+    os.path.join(REPO, rc.get("config_dir", ""), "config", "needs_dist.txt")]
 
-def ts():
-    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+print("[run_full_dlp] REPO   =", REPO)
+print("[run_full_dlp] RUNCFG =", RUNCFG, "(jobs=%s reset=%s)"
+      % (rc.get("num_jobs"), rc.get("reset")))
+print("[run_full_dlp] LOG    =", LOG)
+print("[run_full_dlp] cmd    =", " ".join(cmd))
+print("[run_full_dlp] cache  =", rc.get("cache_dir"),
+      "(first run builds it from regex, ~0.5hr)")
+if DRY:
+    print("[run_full_dlp] --dry-run: not executing.")
+    sys.exit(0)
 
+t0 = time.time()
+with open(LOG, "w") as lf:
+    lf.write("# %s host=%s cpu=%s\n# cmd=%s\n# runcfg=%s\n\n" % (
+        datetime.datetime.now(), platform.node(), os.cpu_count(),
+        " ".join(cmd), json.dumps(rc)))
+    lf.flush()
+    p = subprocess.Popen(cmd, cwd=REPO, env=env, stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT, text=True)
+    for line in p.stdout:
+        sys.stdout.write(line); lf.write(line); lf.flush()
+    p.wait()
+    code = p.returncode
+wall = time.time() - t0
 
-def log(msg):
-    print("[%s] %s" % (ts(), msg), flush=True)
+# ---- summary ----
+def grep(pats):
+    out = []
+    for l in open(LOG, errors="replace"):
+        if any(pat in l for pat in pats):
+            out.append(l.rstrip("\n"))
+    return out
+agg = {}
+for l in open(LOG, errors="replace"):
+    if "prove_step cost: i:" in l:
+        m = re.search(r"circ_id: (\d+).*stmt_len: (\d+).*wtns size: (\d+) (\d+) ms", l)
+        if m:
+            c = int(m.group(1)); d = agg.setdefault(c, [0, 0, 0, 0])
+            d[0] += 1; d[1] += int(m.group(4))
+            d[2] = int(m.group(2)); d[3] = int(m.group(3))
+git = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO,
+                     capture_output=True, text=True).stdout.strip()
+with open(SUM, "w") as s:
+    s.write("host=%s cpu=%s exit=%s wall_s=%.1f\n" % (
+        platform.node(), os.cpu_count(), code, wall))
+    s.write("git=%s\nruncfg=%s\n\n" % (git, json.dumps(rc)))
+    for l in grep(["PERF WORKFLOW", "PROGRESS step", "PROGRESS fold",
+                   "ladder:", "PERF 1002", "cs1e", "KEYS info",
+                   "Maximum resident set size", "Killed",
+                   "Out of memory", "panicked", "test result"]):
+        s.write(l + "\n")
+    s.write("\n-- per-circuit fold step cost --\n")
+    for c in sorted(agg):
+        n, ms, st, wt = agg[c]
+        s.write("circ%d: steps=%d stmt_len=%d wtns=%d avg=%.0fms total=%.1fs\n"
+                % (c, n, st, wt, ms / max(n, 1), ms / 1000.0))
+print("\n" + open(SUM).read())
 
-
-def p(*parts):
-    """Join under REPO_ROOT into an absolute path."""
-    return os.path.join(REPO_ROOT, *parts)
-
-
-def build_runcfg(ds, step):
-    """The per-step run-config the Rust side reads via ZKR_DLP_RUNCFG. Every
-    field is repo-root-relative (config_dir) or a name under it; Rust resolves
-    them the same way run_db_bundle already does."""
-    cd = ds["config_dir"]
-    cfg = {
-        "config_dir": cd,
-        "sig_file":   ds["sig_file"],
-        "cache_dir":  ds["cache_dir"],
-        "fanout_cap": ds["fanout_cap"],
-        "chunk_len":  ds["chunk_len"],
-        "range2_bit": ds["range2_bit"],
-        # config handoff paths (repo-root-relative; live in CFG_DIR)
-        "config_c1":  os.path.join(CFG_DIR, C1_NAME),
-        "config_c2":  os.path.join(CFG_DIR, C2_NAME),
-    }
-    if step == "sample1":
-        cfg["scan_file"]  = ds["scan1"]
-        cfg["config_out"] = os.path.join(CFG_DIR, C1_NAME)
-    elif step == "sample2":
-        cfg["scan_file"]  = ds["scan2"]
-        cfg["config_out"] = os.path.join(CFG_DIR, C2_NAME)
-    elif step == "sample3":
-        cfg["scan_file"]   = ds["scan3"]
-        cfg["report_out"]  = os.path.join(REPORT_DIR, REPORT3_NAME)
-    elif step == "full_dlp":
-        cfg["scan_file"]   = ds["scan3"]   # real: swap to the full pass list
-        cfg["report_out"]  = os.path.join(REPORT_DIR, REPORT_FULL_NAME)
-    return cfg
-
-
-def artifacts(ds, step):
-    """On-disk outputs that mark a step done (for idempotent skip)."""
-    return {
-        "sample1":  [p(CFG_DIR, C1_NAME)],
-        "sample2":  [p(CFG_DIR, C2_NAME)],
-        "sample3":  [p(REPORT_DIR, REPORT3_NAME)],
-        "full_dlp": [p(REPORT_DIR, REPORT_FULL_NAME)],
-    }.get(step, [])
-
-
-def have_artifacts(ds, step):
-    arts = artifacts(ds, step)
-    return bool(arts) and all(os.path.isfile(a) for a in arts)
-
-
-def run_cargo_test(test_name, runcfg_path, log_path, threads):
-    """Invoke one Rust step. Returns the process exit code. Output is teed to
-    log_path so a server run leaves a per-step record."""
-    env = dict(os.environ)
-    env["RUSTFLAGS"] = RUSTFLAGS
-    env["ZKR_DLP_RUNCFG"] = runcfg_path
-    env["ZKR_DC_THREADS"] = str(threads)
-    cmd = ["cargo", "test", "-p", "zkregplus", "--release", "--",
-           "%s::%s" % (TEST_MOD, test_name), "--exact", "--nocapture"]
-    log("RUN  %s   (log: %s)" % (" ".join(cmd), log_path))
-    with open(log_path, "w") as lf:
-        lf.write("# %s\n# ZKR_DLP_RUNCFG=%s\n# %s\n\n"
-                 % (ts(), runcfg_path, " ".join(cmd)))
-        lf.flush()
-        proc = subprocess.Popen(cmd, cwd=REPO_ROOT, env=env,
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True)
-        for line in proc.stdout:
-            lf.write(line)
-            lf.flush()
-        proc.wait()
-    return proc.returncode
-
-
-# ---------------------------------------------------------------------------
-# Steps
-# ---------------------------------------------------------------------------
-def step_compile(ds, args):
-    env = dict(os.environ); env["RUSTFLAGS"] = RUSTFLAGS
-    cmd = ["cargo", "test", "-p", "zkregplus", "--release", "--no-run"]
-    log("RUN  " + " ".join(cmd))
-    return subprocess.call(cmd, cwd=REPO_ROOT, env=env)
-
-
-def step_manifests(ds, args):
-    """Fixture: manifests already exist -> verify. Real: TODO build from the
-    aggressive pass list (joined with measure_report for the easy/hard rank);
-    left as an explicit gap so a missing pass list fails loudly, not silently.
-    """
-    cd = ds["config_dir"]
-    needed = [ds["scan1"], ds["scan2"], ds["scan3"]]
-    missing = [m for m in needed if not os.path.isfile(p(cd, m))]
-    if not missing:
-        for m in needed:
-            n = sum(1 for _ in open(p(cd, m)))
-            log("manifest OK  %s  (%d files)" % (m, n))
-        return 0
-    if args.data == "fixture":
-        log("ERROR fixture manifests missing: %s" % missing)
-        return 1
-    log("ERROR real manifests missing: %s\n"
-        "      build them from the aggressive pass list + measure_report "
-        "(easy=lowest max_occ_per_chunk, hard=highest, S1~50/S2~50/S3 1%%)."
-        % missing)
-    return 1
-
-
-def step_rust(step_name, test_fn):
-    """step_name drives the runcfg/artifacts (build_runcfg keys off it);
-    test_fn is the cargo test path. They differ (sample1 vs full_dlp_sample1)."""
-    def _run(ds, args):
-        os.makedirs(RUN_DIR, exist_ok=True)
-        runcfg = build_runcfg(ds, step_name)
-        runcfg_path = os.path.join(RUN_DIR, "runcfg_%s.json" % step_name)
-        with open(runcfg_path, "w") as f:
-            json.dump(runcfg, f, indent=2)
-        log_path = os.path.join(RUN_DIR, "%s.log" % step_name)
-        rc = run_cargo_test(test_fn, runcfg_path, log_path, args.threads)
-        if rc != 0:
-            log("STEP %s FAILED (rc=%d); see %s" % (step_name, rc, log_path))
-            return rc
-        # verify the step actually produced its artifact(s)
-        for a in artifacts(ds, step_name):
-            if not os.path.isfile(a):
-                log("STEP %s rc=0 but artifact missing: %s" % (step_name, a))
-                return 1
-        return 0
-    return _run
-
-
-# ordered pipeline: (name, runner, idempotent?)
-def make_steps():
-    return [
-        ("compile",   step_compile,            False),
-        ("manifests", step_manifests,          False),
-        ("sample1",   step_rust("sample1",  "full_dlp_sample1"), True),
-        ("sample2",   step_rust("sample2",  "full_dlp_sample2"), True),
-        ("sample3",   step_rust("sample3",  "full_dlp_sample3"), True),
-        ("full_dlp",  step_rust("full_dlp", "full_dlp"),         True),
-    ]
-
-
-def print_summary(ds):
-    log("==== SUMMARY ====")
-    for name, fn in [("C1 (easy/small)", C1_NAME), ("C2 (hard/big)", C2_NAME)]:
-        fp = p(CFG_DIR, fn)
-        if os.path.isfile(fp):
-            c = json.load(open(fp))
-            log("%s  %s" % (name, json.dumps(
-                {k: c[k] for k in ("subsigs", "perc_pats_expansion_rate",
-                 "avg_active_pats_per_subsig", "cp_subsigs",
-                 "aggr_needs_subsigs") if k in c})))
-        else:
-            log("%s  (not produced)" % name)
-    for label, fn in [("sample3 coverage", REPORT3_NAME),
-                      ("full_dlp cost", REPORT_FULL_NAME)]:
-        fp = p(REPORT_DIR, fn)
-        log("%s -> %s" % (label, fp if os.path.isfile(fp) else "(none)"))
-
-
-def pack_results(status):
-    """Bundle the downloadable outputs (configs + reports + logs) into
-    /tmp/dlp_results.tgz on COMPLETE or ERROR, for scp off the server."""
-    import tarfile
-    out = "/tmp/dlp_results.tgz"
-    items = []
-    for d, fns in ((CFG_DIR, (C1_NAME, C2_NAME)),
-                   (REPORT_DIR, (REPORT3_NAME, REPORT_FULL_NAME))):
-        for fn in fns:
-            fp = p(d, fn)
-            if os.path.isfile(fp):
-                items.append((fp, os.path.join(os.path.basename(d), fn)))
-    if os.path.isdir(RUN_DIR):
-        for n in sorted(os.listdir(RUN_DIR)):
-            fp = os.path.join(RUN_DIR, n)
-            if os.path.isfile(fp):
-                items.append((fp, os.path.join("logs", n)))
-    with tarfile.open(out, "w:gz") as tf:
-        for src, arc in items:
-            tf.add(src, arcname=arc)
-    log("PACKED [%s] %d files -> %s" % (status, len(items), out))
-
-
-def main():
-    ap = argparse.ArgumentParser(description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--data", choices=list(DATASETS), default="real",
-                    help="path set: fixture (tiny test DB) or real "
-                         "(full DLP-international). Default real.")
-    ap.add_argument("--with-full", action="store_true",
-                    help="also run the final full_dlp step (off by "
-                         "default: a no-arg run stops after sample3)")
-    ap.add_argument("--only",
-                    help="run only this step (compile|manifests|sample1|"
-                         "sample2|sample3|full_dlp)")
-    ap.add_argument("--from", dest="from_step",
-                    help="start at this step and run to the end")
-    ap.add_argument("--force", action="store_true",
-                    help="re-run steps even if their artifacts exist")
-    ap.add_argument("--threads", type=int, default=4,
-                    help="ZKR_DC_THREADS for the determine_config probe")
-    ap.add_argument("--dry-run", action="store_true",
-                    help="print the plan + per-step runcfg, run nothing")
-    args = ap.parse_args()
-
-    ds = DATASETS[args.data]
-    steps = make_steps()
-    names = [s[0] for s in steps]
-    os.makedirs(RUN_DIR, exist_ok=True)
-    os.makedirs(p(CFG_DIR), exist_ok=True)
-    os.makedirs(p(REPORT_DIR), exist_ok=True)
-
-    if args.only and args.only not in names:
-        sys.exit("unknown --only step %r (have %s)" % (args.only, names))
-    if args.from_step and args.from_step not in names:
-        sys.exit("unknown --from step %r (have %s)" % (args.from_step, names))
-
-    log("DLP driver: data=%s repo=%s" % (args.data, REPO_ROOT))
-    started = args.from_step is None
-    for name, fn, idem in steps:
-        if args.only and name != args.only:
-            continue
-        if name == "full_dlp" and not (args.with_full
-                                       or args.only == "full_dlp"):
-            continue
-        if not started:
-            if name == args.from_step:
-                started = True
-            else:
-                continue
-        if args.dry_run:
-            log("PLAN %s  runcfg=%s" % (name,
-                json.dumps(build_runcfg(ds, name)) if name not in
-                ("compile", "manifests") else "(n/a)"))
-            continue
-        if idem and not args.force and have_artifacts(ds, name):
-            log("SKIP %s (artifact present: %s)"
-                % (name, [os.path.relpath(a, REPO_ROOT)
-                          for a in artifacts(ds, name)]))
-            continue
-        log("---- STEP %s ----" % name)
-        rc = fn(ds, args)
-        if rc != 0:
-            log("PIPELINE ABORTED at %s (rc=%d)" % (name, rc))
-            pack_results("ERROR")
-            sys.exit(rc)
-
-    if not args.dry_run:
-        print_summary(ds)
-        pack_results("COMPLETE")
-    log("DLP driver done.")
-
-
-if __name__ == "__main__":
-    main()
+# ---- pack (always): artifacts + per-job logs + run log ----
+with tarfile.open(TAR, "w:gz") as t:
+    for f in artifacts + [LOG, SUM]:
+        if f and os.path.isfile(f):
+            t.add(f, arcname=os.path.basename(f))
+    for jf in sorted(glob.glob(os.path.join(LOGS_DIR, "log_job_*.txt"))):
+        t.add(jf, arcname="logs/" + os.path.basename(jf))
+print("[run_full_dlp] packed -> %s  (exit=%s, wall=%.0fs)" % (TAR, code, wall))
+sys.exit(0)

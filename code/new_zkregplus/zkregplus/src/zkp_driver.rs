@@ -1456,7 +1456,7 @@ pub mod tests_zkp_driver{
 	use ark_groth16::Groth16;
 	use folding_schemes::{commitment::{pedersen::Pedersen, kzg::KZG}};
 	use crate::zkp_driver::{zkp_driver, zkp_driver_adv,
-		zkp_driver_adv_aggr};
+		zkp_driver_adv_aggr, WordInfo};
 	use crate::circs::{
 		cp_mapper::{CpCapacity},
 		sed_mapper::{SedCapacity},
@@ -3770,8 +3770,8 @@ pub mod tests_zkp_driver{
 		let b_check_lkup = true;
 		let _b_light_test = false;
 		let _b_setup = false;
-		//small_data::<Fr>(b_check_lkup); //small data
-		small_email::<Fr>(b_check_lkup); //M6: aggressive multi-chunk run
+		small_data::<Fr>(b_check_lkup); //small data
+		//small_email::<Fr>(b_check_lkup); //M6: aggressive multi-chunk run
 		//small_dna::<Fr>(); //small data dna set
 		//full_dna::<Fr>(b_check_lkup);
 		//small_debug::<Fr>(b_check_lkup); //small_data + max_word=2
@@ -4033,6 +4033,267 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			&format!("{}/regex_pat/needs_ised.dat", cd),
 			&format!("{}/regex_pat/needs_ised_igc.dat", cd), mw, &cs_caps,
 			false);
+	}
+
+	/// Read a newline path list; transparently extracts a .tgz/.tar.gz
+	/// via `tar -xzO` (no temp file left behind). list_path is repo-rel.
+	fn read_path_list(list_path: &str) -> Vec<String> {
+		let proot = utils::os::proj_root();
+		let abs = format!("{}/{}", proot, list_path);
+		if list_path.ends_with(".tgz") || list_path.ends_with(".tar.gz") {
+			let out = std::process::Command::new("tar")
+				.args(["-xzO", "-f", &abs]).output()
+				.expect("tar -xzO path list");
+			String::from_utf8_lossy(&out.stdout).lines()
+				.map(|l| l.trim().to_string())
+				.filter(|l| !l.is_empty()).collect()
+		} else {
+			utils::os::read_lines(&abs)
+		}
+	}
+
+	/// Deterministic size-balanced split of a path list into num_jobs
+	/// lists. Sort by (-size, path) then greedy-LPT into the smallest
+	/// bin, so the same (list, num_jobs) yields identical bins each run.
+	fn split_jobs_balanced(list_path: &str, num_jobs: usize)
+		-> Vec<Vec<String>> {
+		use rayon::prelude::*;
+		let proot = utils::os::proj_root();
+		let paths = read_path_list(list_path);
+		let mut sized: Vec<(u64, String)> = paths.par_iter().map(|p| {
+			let sz = std::fs::metadata(format!("{}/{}", proot, p))
+				.map(|m| m.len()).unwrap_or(0);
+			(sz, p.clone())
+		}).collect();
+		sized.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+		let n = num_jobs.max(1);
+		let (mut bins, mut tot) = (vec![vec![]; n], vec![0u64; n]);
+		for (sz, p) in sized {
+			let j = (0..n).min_by_key(|&i| (tot[i], i)).unwrap();
+			bins[j].push(p);
+			tot[j] += sz;
+		}
+		bins
+	}
+
+	/// Discharge-cache dir, keyed only by params that change discharge
+	/// output (NOT num_jobs); lives beside the DB cache under data/cache.
+	fn discharge_cache_dir(cache_dir: &str, mw: usize, fanout: usize,
+		range2_bit: usize, min_pm: usize) -> String {
+		format!("{}/data/cache/{}/discharge/mw{}_fo{}_rb{}_pm{}_agg1",
+			utils::os::proj_root(), cache_dir, mw, fanout, range2_bit,
+			min_pm)
+	}
+
+	/// Load (vdata, infos) from the cache dir, or None if absent/bad.
+	fn load_discharge_cache(dir: &str)
+		-> Option<(Vec<data_processor::discharge_proof::FailDischargeRecord>,
+			Vec<WordInfo>)> {
+		let vf = std::fs::File::open(format!("{}/vdata.json", dir)).ok()?;
+		let inf = std::fs::File::open(format!("{}/infos.json", dir)).ok()?;
+		let vdata = serde_json::from_reader(
+			std::io::BufReader::new(vf)).ok()?;
+		let infos = serde_json::from_reader(
+			std::io::BufReader::new(inf)).ok()?;
+		Some((vdata, infos))
+	}
+
+	/// Persist (vdata, infos) to the cache dir (best-effort).
+	fn save_discharge_cache(dir: &str,
+		vdata: &Vec<data_processor::discharge_proof::FailDischargeRecord>,
+		infos: &Vec<WordInfo>) {
+		let _ = std::fs::create_dir_all(dir);
+		if let Ok(f) = std::fs::File::create(format!("{}/vdata.json", dir)) {
+			let _ = serde_json::to_writer(std::io::BufWriter::new(f), vdata);
+		}
+		if let Ok(f) = std::fs::File::create(format!("{}/infos.json", dir)) {
+			let _ = serde_json::to_writer(std::io::BufWriter::new(f), infos);
+		}
+	}
+
+	/// Full DLP run over rc.num_jobs balanced jobs: deterministic split,
+	/// cached discharge + ladder for sizing, then the multi-job fold for
+	/// cs1e / per-step cost. rc.reset recomputes split, discharge, ladder.
+	#[test]
+	pub fn full_dlp(){
+		use crate::determine_config::caps_from_params_aggr;
+		use crate::stats_helper::{estimate_config_aggr,
+			estimated_to_capparams_aggr};
+		use folding_schemes::folding::foldpot::sigma_ir1cs
+			::LookupTableTwoCol as _;
+		use rayon::prelude::*;
+		let rc = crate::determine_config::RunCfg::from_env();
+		let proot = utils::os::proj_root();
+		let cd = &rc.config_dir;
+		let mw = rc.chunk_len;
+		let reset = rc.reset;
+		let num_jobs = rc.num_jobs.max(1);
+		let l = utils::logger::LOG1;
+		let mut gt = utils::timer::Timer::new();
+		//aggressive CS-only, folding-only, estimate-on (mirror sample).
+		get_global_config().log_level = utils::logger::LOG3;
+		get_global_config().range2_bit = rc.range2_bit;
+		get_global_config().b_light_test = true;
+		get_global_config().b_folding_only = true;
+		get_global_config().b_read_cache = true;
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_write_snark_cache = false;
+		get_global_config().b_estimate_caps = true;
+		get_global_config().perc_lkup_share = 1;
+		get_global_config().min_subsigs = 1;
+		get_global_config().min_basis_unique_states = 2;
+		get_global_config().min_basis_acc_states = 2;
+		get_global_config().min_basis_pats_in_trace = 4;
+		get_global_config().min_avg_pats_per_subsig = 1;
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
+		get_global_config().clamav_cfg.sde_rep_fanout_cap = rc.fanout_cap;
+		get_global_config().clamav_cfg.min_pm_word_len = 3;
+		let cfg = data_processor::clamav::default_clamav_cfg();
+		let mut vlog = vec![];
+
+		// step 1: load DB.
+		utils::logger::log(0, l, &"PROGRESS step 1/6: load DB".to_string());
+		let db = std::sync::Arc::new(
+			data_processor::clam_db::ClamavDB::<Fr>::build_or_load(
+			&cfg, &format!("{}/{}", cd, rc.sig_file),
+			&format!("{}/regex_pat/main_dfa.dat", cd),
+			&format!("{}/regex_pat/needs_ised.dat", cd),
+			&format!("{}/regex_pat/needs_ised_igc.dat", cd), &mut vlog,
+			&rc.cache_dir, true, true).expect("build db"));
+		utils::logger::log_perf(0, l,
+			&"PERF WORKFLOW Step 1 time".to_string(), &mut gt);
+
+		// step 2: deterministic size-balanced split -> job_<i>.dat (reuse).
+		utils::logger::log(0, l,
+			&format!("PROGRESS step 2/6: split {} jobs", num_jobs));
+		let jobs_dir = format!("{}/{}/jobs/jobs{}", proot, cd, num_jobs);
+		let job_rel: Vec<String> = (0..num_jobs).map(|i|
+			format!("{}/jobs/jobs{}/job_{}.dat", cd, num_jobs, i)).collect();
+		let have_all = job_rel.iter().all(|p|
+			std::path::Path::new(&format!("{}/{}", proot, p)).exists());
+		if reset || !have_all {
+			let bins = split_jobs_balanced(
+				&format!("{}/{}", cd, rc.full_list), num_jobs);
+			let _ = std::fs::create_dir_all(&jobs_dir);
+			for (i, b) in bins.iter().enumerate() {
+				std::fs::write(format!("{}/job_{}.dat", jobs_dir, i),
+					b.join("\n")).expect("write job file");
+			}
+		}
+		utils::logger::log_perf(0, l,
+			&"PERF WORKFLOW Step 2 time".to_string(), &mut gt);
+
+		// step 3: discharge the full list (cache vdata+infos; words lazy).
+		utils::logger::log(0, l,
+			&"PROGRESS step 3/6: discharge full list".to_string());
+		let all_files = read_path_list(&format!("{}/{}", cd, rc.full_list));
+		let dcache = discharge_cache_dir(&rc.cache_dir, mw, rc.fanout_cap,
+			rc.range2_bit, 3);
+		let cached = if reset { None } else { load_discharge_cache(&dcache) };
+		let (mut words_opt, infos, vdata):
+			(Option<Vec<Vec<Fr>>>,
+			 Vec<WordInfo>,
+			 Vec<data_processor::discharge_proof::FailDischargeRecord>) =
+			match cached {
+			Some((vd, inf)) => {
+				utils::logger::log(0, l, &format!(
+					"  discharge cache HIT: {} records", inf.len()));
+				(None, inf, vd)
+			}
+			None => {
+				let trip: Vec<(Vec<Fr>,
+					data_processor::discharge_proof::FailDischargeRecord,
+					WordInfo)> = all_files.par_iter().map(|fp| {
+					let nib = utils::os::read_nibbles(
+						&format!("{}/{}", proot, fp));
+					let fnib: Vec<Fr> = nib.iter()
+						.map(|x| Fr::from(*x as u32)).collect();
+					let packed = utils::data::pack_nibbles(&fnib);
+					let (fdr, rec) =
+					  data_processor::clamav::quick_discharge_file_by_crit_bag_pm(
+						fp, &nib, &db.vec_sigs, &db.vec_sigs_no_critical_pat,
+						&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
+						&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
+						&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
+						&db.sig_to_id, mw, mw);
+					(packed, fdr, rec)
+				}).collect();
+				let (mut w, mut v, mut i) = (vec![], vec![], vec![]);
+				for (a, b, c) in trip { w.push(a); v.push(b); i.push(c); }
+				save_discharge_cache(&dcache, &v, &i);
+				(Some(w), i, v)
+			}
+		};
+		utils::logger::log_perf(0, l,
+			&"PERF WORKFLOW Step 3 time".to_string(), &mut gt);
+
+		// step 4: NEEDS distribution over the full list.
+		utils::logger::log(0, l,
+			&"PROGRESS step 4/6: NEEDS distribution".to_string());
+		let rows: Vec<Vec<usize>> = vdata.iter()
+			.map(|r| r.chunk_peaks.needs_per_chunk.clone()).collect();
+		crate::needs_dist::print_needs_dist_rows(&rows, &all_files,
+			&format!("{}/config/needs_dist.txt", cd));
+		utils::logger::log_perf(0, l,
+			&"PERF WORKFLOW Step 4 time".to_string(), &mut gt);
+
+		// step 5: capacity ladder (load if present, else estimate+determine).
+		utils::logger::log(0, l,
+			&"PROGRESS step 5/6: capacity ladder".to_string());
+		let ladder_path = format!("{}/{}", proot, rc.config_out);
+		let ladder: Vec<crate::determine_config::CapParams> =
+			if !reset && std::path::Path::new(&ladder_path).exists() {
+				utils::logger::log(0, l, &"  ladder cache HIT".to_string());
+				crate::determine_config::load_ladder(&ladder_path)
+			} else {
+				let words = words_opt.take().unwrap_or_else(|| {
+					all_files.par_iter().map(|fp| {
+						let nib = utils::os::read_nibbles(
+							&format!("{}/{}", proot, fp));
+						let fnib: Vec<Fr> = nib.iter()
+							.map(|x| Fr::from(*x as u32)).collect();
+						utils::data::pack_nibbles(&fnib)
+					}).collect()
+				});
+				let est = estimate_config_aggr::<Fr>(&vdata, &*db, &[100],
+					&mut vlog);
+				let seed = estimated_to_capparams_aggr(&est[0], mw,
+					rc.range2_bit, 3);
+				let total_word_n: usize = words.iter().map(|w| w.len()).sum();
+				let lkup_len = db.lkup.get_size();
+				let n_threads = std::env::var("ZKR_DC_THREADS").ok()
+					.and_then(|s| s.parse().ok()).unwrap_or(4);
+				let (lad, hist) = super::determine_config_aggr::<Fr,C1,CS1>(
+					db.clone(), &words, &infos, &vdata, seed, mw, lkup_len,
+					total_word_n, rc.k_max, rc.n_buckets, 60, n_threads, 8,
+					rc.peel_pct).expect("determine_config_aggr");
+				crate::determine_config::save_ladder(&lad, &ladder_path)
+					.expect("save ladder");
+				utils::logger::log(0, l, &format!(
+					"  ladder: {} rungs, hist={:?}", lad.len(), hist));
+				lad
+			};
+		utils::logger::log_perf(0, l,
+			&"PERF WORKFLOW Step 5 time".to_string(), &mut gt);
+
+		// step 6: multi-job fold (re-discharges per job; CS-only aggressive).
+		utils::logger::log(0, l,
+			&format!("PROGRESS step 6/6: fold {} jobs", num_jobs));
+		drop(words_opt); drop(infos); drop(vdata); drop(db);
+		get_global_config().b_estimate_caps = false;
+		get_global_config().aggr_needs_subsigs =
+			ladder.first().map(|c| c.aggr_needs_subsigs).unwrap_or(0);
+		let cs_caps: Vec<_> = ladder.iter().map(caps_from_params_aggr)
+			.collect();
+		zkp_driver_adv_aggr::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,
+			CS1E,S>(
+			0, &format!("{}/{}", cd, rc.sig_file), job_rel, &rc.report_out,
+			false, &rc.cache_dir, &format!("{}/regex_pat/main_dfa.dat", cd),
+			&format!("{}/regex_pat/needs_ised.dat", cd),
+			&format!("{}/regex_pat/needs_ised_igc.dat", cd), mw, &cs_caps,
+			false);
+		utils::logger::log_perf(0, l,
+			&"PERF WORKFLOW Step 6 time".to_string(), &mut gt);
 	}
 
 	/// Experiment: is the accept-vs-fold discharge gap the (max_word_len,

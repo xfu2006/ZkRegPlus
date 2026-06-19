@@ -1,0 +1,15 @@
+{
+  "config_dir": "data/paper_data/dlp/cfg",
+  "sig_file": "regex_pat/main_data_dlp_internationl.dat",
+  "cache_dir": "dlp_corpus_aggr",
+  "fanout_cap": 100,
+  "chunk_len": 64,
+  "range2_bit": 25,
+  "config_out": "data/paper_data/dlp/cfg/config/dlp_ladder.json",
+  "full_list": "jobs/final_enron_list.txt.tgz",
+  "num_jobs": 8,
+  "reset": false,
+  "k_max": 3,
+  "n_buckets": 2048,
+  "peel_pct": 90
+}

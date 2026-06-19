@@ -4,6 +4,7 @@
 */
 
 use std::collections::HashSet;
+use serde::{Serialize, Deserialize};
 
 /// record of discharges (e.g., the approach
 /// failed to discharge the string, that is the string
@@ -14,7 +15,7 @@ use std::collections::HashSet;
 /// (pm-reg, bag, critical patterns).
 /// NOTE the name is misleading: if discharged, it also has
 /// the record.
-#[derive(Clone,Debug)]
+#[derive(Clone,Debug,Serialize,Deserialize)]
 pub struct FailDischargeRecord{
 	pub fname: String,
 	pub flen: usize,
@@ -58,7 +59,7 @@ pub struct FailDischargeRecord{
 /// must hold the worst chunk, so the per-chunk MAX is the right basis.
 /// estimate_config() aggregates these across files into a percentile-
 /// coverage capacity ladder.
-#[derive(Clone,Debug,Default)]
+#[derive(Clone,Debug,Default,Serialize,Deserialize)]
 pub struct ChunkPeaks{
 	pub seg_size: usize, //nibbles per chunk (= seg_word_len*62)
 	pub max_unique_states: usize, //distinct DFA states in a chunk

@@ -2253,6 +2253,11 @@ where
 			let mut subseg_id = 1;
 			let word_info = &vec_word_info[word_id-1];
 			let word_fname = &vec_word_fnames[word_id-1];
+			if word_id == 1 || word_id % 100 == 0 || word_id == num_words {
+				log(job_id, LOG1, &format!(
+					"PROGRESS fold [{}] word {} of {}", phase_name,
+					word_id, num_words));
+			}
 			log_perf(job_id, log_level+2, &format!("PERF 1008: {} - Pass 3. START prove steps for word_id: {}, fname: {}, word_len: {}. ", phase_name, word_id, word_fname, format_bytes(word.len()*31)), &mut gtw_word);
 			while remaining.len()>0{
 				let mut gt_fold = GTimer::new();

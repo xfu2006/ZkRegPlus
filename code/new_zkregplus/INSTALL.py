@@ -114,8 +114,25 @@ def install_rust():
                  "https://sh.rustup.rs | sh -s -- -y "
                  "--default-toolchain " + RUST_VERSION])
     run_cmd([rustup, "toolchain", "install", RUST_VERSION])
+    persist_cargo_env()
     print("  rust %s ready (pinned by ./rust-toolchain)" % RUST_VERSION)
-    print("  NOTE: run `source ~/.cargo/env` (or open a new shell).")
+
+
+# Append `source ~/.cargo/env` to ~/.bashrc so new shells get cargo on
+# PATH. Idempotent: skips if any .cargo/env line is already present
+# (rustup usually adds its own `. "$HOME/.cargo/env"`).
+def persist_cargo_env():
+    rc = os.path.expanduser("~/.bashrc")
+    try:
+        existing = open(rc).read() if os.path.isfile(rc) else ""
+        if ".cargo/env" in existing:
+            return
+        with open(rc, "a") as f:
+            f.write('\n# added by new_zkregplus INSTALL.py\n'
+                    'source "$HOME/.cargo/env"\n')
+        print("  persisted cargo PATH -> %s" % rc)
+    except OSError as e:
+        print("  WARN: could not update %s (%s)" % (rc, e))
 
 
 # Full toolchain bring-up for a fresh instance (force all steps).
@@ -608,6 +625,11 @@ def main():
     finally:
         cleanup_temp()
 
+    print("\n" + "=" * 64)
+    print("  IMPORTANT: if `cargo` is 'command not found' in THIS shell:")
+    print("      source ~/.cargo/env")
+    print("  New shells pick it up automatically (added to ~/.bashrc).")
+    print("=" * 64)
     print("INSTALL complete: %s" % ", ".join(selected))
 
 

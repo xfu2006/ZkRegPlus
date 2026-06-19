@@ -29374,12 +29374,23 @@ Friday 06/18/2026
 Goal 1. refine the download.py 
 Goal 2. upload to server and test.
 	[a] available 99,875
-	[b] startd 6:38am => 
+	[b] startd 6:38am => [NO CHARGE] 
 		stuck unshelving to 8:00am
 	[c] prepare to kill the image and reattach the disk at 8:40am
 	[d] no one available
 	[e] build a small 512GB instance
 Goal 3. design runner for run_full_dlp.py  
 	[a] add requiremnts
+	[b] done
+	[c] upload to server
+Goal 4. run on small server
+	[a] run on small server (512GB) 
+		 8:50AM => 
+	[b] install data (about 5 to 10 minutes)
+	[c] compile.sh small_data () -> 41 sec
+		(but on laptop it only needs 34 sec)
+	[d] run_exp.py right now -> the full_dlp_sample() 500 samples
+Goal 4. Writing
+	[a] polish p1
 	[b] 
 
