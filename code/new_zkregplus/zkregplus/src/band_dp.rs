@@ -186,15 +186,26 @@ pub fn plan_rungs(universe: &[usize], fwd: &[usize], active: &[usize],
                 grp.iter().map(sel).max().unwrap_or(0);
             let (mf, ml, mac) = (mx(|b| b.m_fwd), mx(|b| b.m_live),
                 mx(|b| b.m_active));
-            // perc is a derived rate -> de-saturate via per-rung rp but keep
-            // the pmax_perc calibration (same mapping as the per-bucket spec).
-            let rp = raw_perc(mf, ml, basis_pats, seg_size);
+            let sub = buckets[end - 1].ceiling.min(pmax_subsigs);
+            // basis_pats the GADGET will use (assemble_ladder clamps
+            // RungSpec.max_pats_in_trace to pmax). Derive perc from THIS so the
+            // size_trace buffer (basis_pats*perc) matches the demand.
+            let bpc = mx(|b| b.m_pats).min(basis_pats).max(1);
+            let (hn, hd) = (5usize, 4usize);
+            // perc/avg_active are PRODUCT-coupled (size_trace=basis_pats*perc,
+            // size_pat=subsigs*avg_active). Derive each from the rung's OWN
+            // coupled cap + member-max demand (+25% leg room); then clamp the
+            // PRODUCT to the P_max budget so a rung never exceeds the top.
+            // (Was ratio-scaled vs a global anchor -> under-sized non-top
+            // rungs and avalanched them to the top.)
+            let perc = (raw_perc(mf, ml, bpc, seg_size) * hn / hd)
+                .min(basis_pats * pmax_perc / bpc).max(1);
+            let avg = (cdiv(mac, sub.max(1)) * hn / hd)
+                .min(pmax_subsigs * pmax_avg / sub.max(1)).max(1);
             RungSpec {
-                subsigs: buckets[end - 1].ceiling.min(pmax_subsigs),
-                perc_pats_expansion_rate:
-                    cdiv(pmax_perc * rp, top_raw).min(pmax_perc).max(1),
-                avg_active_pats_per_subsig:
-                    cdiv(pmax_avg * mac, top_active).min(pmax_avg).max(1),
+                subsigs: sub,
+                perc_pats_expansion_rate: perc,
+                avg_active_pats_per_subsig: avg,
                 max_unique_acc_pats: mx(|b| b.m_uniq),
                 max_acc_states: mx(|b| b.m_acc),
                 max_pats_in_trace: mx(|b| b.m_pats),
@@ -313,10 +324,18 @@ mod tests {
     }
     #[test]
     fn rungs_clamped_to_pmax() {
+        // Non-top rungs no longer clamp perc/avg_active individually -- a
+        // small-basis rung legitimately needs a higher RATE. The bounded
+        // quantity is the step BUFFER (the product): basis_pats*perc and
+        // subsigs*avg_active must not exceed the P_max budget.
         let u = vec![10, 500]; let big = vec![1_000_000, 2_000_000];
         let (r, _) = plan(&u, &big, &big, &big, 700, 15872, 300, 5000, 12, 2, 2048);
-        for s in &r { assert!(s.subsigs <= 300 && s.perc_pats_expansion_rate <= 5000
-            && s.avg_active_pats_per_subsig <= 12); }
+        for s in &r {
+            assert!(s.subsigs <= 300);
+            assert!(s.subsigs * s.avg_active_pats_per_subsig <= 300 * 12);
+            assert!(s.max_pats_in_trace.min(700) * s.perc_pats_expansion_rate
+                <= 700 * 5000);
+        }
     }
     #[test]
     fn top_rung_anchored_to_pmax() {                 // B1: top rung == pmax_perc

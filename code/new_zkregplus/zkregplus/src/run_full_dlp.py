@@ -11,6 +11,10 @@ Usage:
     --dry-run  : print resolved paths + command, do not run cargo.
 
 Env:  ZKR_DC_THREADS  determine_config probe threads (default 8)
+      ZKR_VM_MAX_MAP_COUNT  target vm.max_map_count (default 1073741824 = 1G;
+                 0 skips). Raised via `sudo sysctl` before the run so the
+                 8-job fold's many small mimalloc mappings don't hit the VMA
+                 ceiling (the PREFLIGHT ABORT / SIGABRT-with-free-RAM case).
 
 Output (always packed, even on OOM/panic):
   /tmp/full_dlp_artifacts_<ts>.tar.gz
@@ -18,6 +22,40 @@ Output (always packed, even on OOM/panic):
      per-job log_job_*.txt, summary}
 """
 import os, sys, subprocess, time, datetime, tarfile, json, platform, re, glob
+
+VMA_TARGET = int(os.environ.get("ZKR_VM_MAX_MAP_COUNT", "1073741824"))  # 0=skip
+
+
+def ensure_vma(target):
+    """Best-effort raise vm.max_map_count (the VMA ceiling). mimalloc frees
+    RAM via many small OS mappings; the multi-job fold can exhaust the default
+    1048576 and SIGABRT on a tiny alloc while RAM is free (or trip the in-prover
+    PREFLIGHT ABORT). Non-fatal -- prints the manual command if sudo fails."""
+    if target <= 0:
+        return
+    path = "/proc/sys/vm/max_map_count"
+    try:
+        cur = int(open(path).read().strip())
+    except Exception as e:
+        print("[run_full_dlp] vm.max_map_count: cannot read (%s); skip" % e)
+        return
+    if cur >= target:
+        print("[run_full_dlp] vm.max_map_count=%d already >= %d" % (cur, target))
+        return
+    print("[run_full_dlp] vm.max_map_count=%d < %d; raising via sudo sysctl"
+          % (cur, target))
+    rc_ = subprocess.run(["sudo", "sysctl", "-w",
+                          "vm.max_map_count=%d" % target]).returncode
+    if rc_ != 0:
+        print("[run_full_dlp] WARN: could not raise vm.max_map_count (sudo?). "
+              "Run manually: sudo sysctl -w vm.max_map_count=%d" % target)
+    else:
+        try:
+            print("[run_full_dlp] vm.max_map_count now %s"
+                  % open(path).read().strip())
+        except Exception:
+            pass
+
 
 HERE = os.path.dirname(os.path.abspath(__file__))          # zkregplus/src
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))     # new_zkregplus
@@ -75,10 +113,12 @@ print("[run_full_dlp] LOG    =", LOG)
 print("[run_full_dlp] cmd    =", " ".join(cmd))
 print("[run_full_dlp] cache  =", rc.get("cache_dir"),
       "(first run builds it from regex, ~0.5hr)")
+print("[run_full_dlp] vm.max_map_count target =", VMA_TARGET or "skip")
 if DRY:
     print("[run_full_dlp] --dry-run: not executing.")
     sys.exit(0)
 
+ensure_vma(VMA_TARGET)
 t0 = time.time()
 with open(LOG, "w") as lf:
     lf.write("# %s host=%s cpu=%s\n# cmd=%s\n# runcfg=%s\n\n" % (
