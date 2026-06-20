@@ -424,9 +424,19 @@ where C: CurveGroup<ScalarField=F>,
 				.map(|&id| subsig_cnt_by_id.get(id).copied().unwrap_or(0))
 				.sum();
 			universe.push(n_sub);
-			fwd.push(cp.fwd_entries_per_chunk.get(s).copied().unwrap_or(0));
-			active.push(cp.active_steps_per_chunk.get(s).copied().unwrap_or(0));
-			live.push(cp.carried_live_per_chunk.get(s).copied().unwrap_or(0));
+			// Q1: universe==0 => CP discharged every sig this seg
+			// (failed_c empty), so discharge_adv seeds NO inp_subsigs and
+			// the SED step queue is empty (discharge_adv.rs:2281-2298).
+			// eval_pm_bounds is cross-chunk and still tallies phantom
+			// fwd/active for crit sigs never seeded; zero them so the
+			// universe-0 rung sizes to perc=1. (aggressive-only path.)
+			let z = n_sub == 0;
+			fwd.push(if z {0} else {
+				cp.fwd_entries_per_chunk.get(s).copied().unwrap_or(0)});
+			active.push(if z {0} else {
+				cp.active_steps_per_chunk.get(s).copied().unwrap_or(0)});
+			live.push(if z {0} else {
+				cp.carried_live_per_chunk.get(s).copied().unwrap_or(0)});
 			// basis RATE (count*10000/word_nib) so per-rung caps are
 			// comparable across files; assemble_ladder ratio-scales P_max.
 			let wn = (cp.seg_size * wi.failed_c_all_segs.len()).max(1);

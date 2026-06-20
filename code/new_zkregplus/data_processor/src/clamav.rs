@@ -3702,6 +3702,17 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		if read_global_config().b_estimate_caps {
 		let cp_cs = dfa_crit.acc_path(&padded_nibbles);
 		let cp_ig = dfa_crit_igc.acc_path(&padded_nibbles);
+		// 60777.4 (ZKR_PROBE_CAPS): warm-path dfa_crit size -- the cold-build
+		// 60777.2 is skipped when the DB loads from cache. Once per process.
+		static L60777_4: std::sync::atomic::AtomicBool =
+			std::sync::atomic::AtomicBool::new(false);
+		if std::env::var("ZKR_PROBE_CAPS").is_ok() && !L60777_4
+			.swap(true, std::sync::atomic::Ordering::Relaxed) {
+			println!("DEBUG USE 60777.4: dfa_crit num_states={} \
+				num_acc_states={} dfa_crit_igc num_states={}",
+				dfa_crit.num_states, dfa_crit.num_acc_states,
+				dfa_crit_igc.num_states);
+		}
 		let m = dfa_crit.max_distinct_states_per_chunk(&cp_cs, seg_size).max(
 			dfa_crit_igc.max_distinct_states_per_chunk(&cp_ig, seg_size));
 		let vc = dfa_crit.distinct_states_per_chunk(&cp_cs, seg_size);

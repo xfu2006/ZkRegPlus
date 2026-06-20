@@ -226,14 +226,21 @@ pub fn plan_rungs(universe: &[usize], fwd: &[usize], active: &[usize],
                 .max_by_key(|&(_, f)| f).unwrap_or((0, 0));
             let (ma_u, ma) = grp.iter().map(|b| (b.ceiling, b.m_active))
                 .max_by_key(|&(_, a)| a).unwrap_or((0, 0));
+            // Q2 probe: peak CP-unique-states demand in this rung and the
+            // universe it occurs at. If max_cpu stays high at univ=0, the
+            // avalanche is CP-DFA-state-visits (keyword DFA), not perc.
+            let (mc_u, mc) = grp.iter().map(|b| (b.ceiling, b.m_cpu))
+                .max_by_key(|&(_, c)| c).unwrap_or((0, 0));
             let u_lo = grp.first().map(|b| b.ceiling).unwrap_or(0);
             let u_hi = grp.last().map(|b| b.ceiling).unwrap_or(0);
             println!("DEBUG USE 64400.rung {}: univ=[{}..{}] chunks={} \
-                perc={} avg_act={} basis_pats={} | max_fwd={}@univ{} \
-                max_active={}@univ{}", rungs.len(), u_lo, u_hi, cnt,
+                perc={} avg_act={} basis_pats={} cp_cap={} | max_fwd={}@univ{} \
+                max_active={}@univ{} max_cpu={}@univ{}",
+                rungs.len(), u_lo, u_hi, cnt,
                 spec.perc_pats_expansion_rate,
                 spec.avg_active_pats_per_subsig, spec.max_pats_in_trace,
-                mf, mf_u, ma, ma_u);
+                spec.max_cp_unique_states,
+                mf, mf_u, ma, ma_u, mc, mc_u);
         }
         rungs.push(spec);
         hist.push(buckets[start..end].iter().map(|b| b.count).sum());

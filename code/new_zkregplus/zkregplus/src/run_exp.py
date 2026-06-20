@@ -177,7 +177,8 @@ with open(SUM, "w") as s:
                    "Maximum resident set size", "Killed",
                    "Out of memory", "panicked", "test result",
                    "64300.TALLY", "64300.BAD", "64400.rung",
-                   "after msg3 of module"]):
+                   "60777.1: vec_crit_pat", "60777.2: dfa_crit",
+                   "60777.4: dfa_crit", "after msg3 of module"]):
         s.write(l + "\n")
     s.write("\n-- per-circuit fold step cost --\n")
     for c in sorted(agg):
