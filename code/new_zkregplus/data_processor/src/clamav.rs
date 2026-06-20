@@ -1531,6 +1531,15 @@ impl ClamavSig{
 			let len_term = if back {prev_len} else {word.len()};
 			let allowed: Vec<(usize,usize)> = arr_pos.iter()
 				.map(|&x| win(x, rg, len_term, back)).collect();
+			// +2 range-proof boundary rows per fwd-prf item (one item per src
+			// loc in arr_pos): the real StepFwdPrf row count is
+			// windowed + 2*num_items, not just the windowed transitions.
+			// Attribute each item's boundaries to its src loc's chunk.
+			for &x in &arr_pos{
+				let c = x / seg_size;
+				while cells.len()<=c { cells.push((0,0,0)); }
+				cells[c].0 += 2;
+			}
 			let mut dst = getpos(word); dst.sort();
 			let mut next: Vec<usize> = vec![];
 			let mut seen: HashSet<usize> = HashSet::new();

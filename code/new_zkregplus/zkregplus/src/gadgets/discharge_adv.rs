@@ -1,7 +1,7 @@
 use utils::consts::{read_global_config, B_DEBUG, PROBE_CHUNK_ID};
 use folding_schemes::folding::foldpot::utils::B_DEBUG2;
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 /* Created 05/06/2025
    Implementation initially completed 06/11/2025
    Further improvement to cut cost and completed: 06/26/2025
@@ -74,6 +74,14 @@ use folding_schemes::{
 	}
 };
 use std::any::Any;
+
+// DEBUG USE 64300: process-wide counters for the est_fwd_rows_one vs real
+// StepFwdPrf queue check (gated by ZKR_PROBE_64300). exact = est==real;
+// ok10 = conservative <=10% over; BAD = under, or over by >10%.
+static P64_CHECKED: AtomicUsize = AtomicUsize::new(0);
+static P64_EXACT: AtomicUsize = AtomicUsize::new(0);
+static P64_OK10: AtomicUsize = AtomicUsize::new(0);
+static P64_BAD: AtomicUsize = AtomicUsize::new(0);
 
 // -----------------------------------------------
 //		Structs
@@ -429,6 +437,60 @@ pub struct DischargeAdvGadget<F:PrimeField + ColEle>{
 	pub job_id: usize,
 }
 
+/// Counting-only mirror of gen_forward_prf's per-subsig propagation loop.
+/// Returns (windowed_advancing_total, num_items); the exact StepFwdPrf row
+/// count is then windowed + 2*num_items (the +2 = the two range-proof boundary
+/// entries per item). Pure usize -- inputs are pre-fold-available: pm_bounds,
+/// the per-step stored locs, and the pattern->sorted-locs map.
+fn est_fwd_rows_one(
+	pm_bounds: &[(usize,(usize,usize))],
+	is_backward: bool,
+	item_locs: &[Vec<usize>],
+	loc_map: &std::collections::HashMap<usize, Vec<usize>>,
+	max_val: usize,
+) -> (usize, usize) {
+	let max_steps = pm_bounds.len();
+	let init = item_locs.get(0).cloned().unwrap_or_else(|| vec![1]);
+	let mut vec_res: Vec<Vec<usize>> = vec![init];
+	let (mut win, mut nitems) = (0usize, 0usize);
+	for i in 1..max_steps + 1 {
+		let dst_pat = pm_bounds[i - 1].0;
+		let (rg_start, rg_end) = pm_bounds[i - 1].1;
+		let vec_locs = loc_map.get(&dst_pat).cloned()
+			.unwrap_or_else(|| vec![0, max_val]);
+		let b_backward = is_backward && i >= 2;
+		let (mut total_added, mut next_locs) = (0usize, vec![]);
+		for &src in &vec_res[i - 1] {
+			nitems += 1;
+			let (rg1, rg2) = if b_backward {
+				(src.saturating_sub(rg_end), src.saturating_sub(rg_start))
+			} else {
+				let r2 = rg_end + src;
+				(rg_start + src, if r2 >= max_val { max_val - 1 } else { r2 })
+			};
+			// mirror gen_forward_prf: id1 = bsearch(rg1)-1, id2 = found?k+1:k;
+			// advancing window = vec_locs[id1+1 .. id2].
+			let id1 = match vec_locs.binary_search(&rg1) {
+				Ok(k) => k as i64 - 1, Err(k) => k as i64 - 1 };
+			let id2 = match vec_locs.binary_search(&rg2) {
+				Ok(k) => k + 1, Err(k) => k };
+			let lo = (id1 + 1).max(0) as usize;
+			let hi = id2.min(vec_locs.len());
+			if hi > lo {
+				win += hi - lo; total_added += hi - lo;
+				for k in lo..hi { next_locs.push(vec_locs[k]); }
+			}
+		}
+		if total_added == 0 && i >= item_locs.len() { break; }
+		next_locs.sort(); next_locs.dedup();
+		let mut cur = item_locs.get(i).cloned().unwrap_or_default();
+		cur.extend(next_locs);
+		cur.sort(); cur.dedup();
+		vec_res.push(cur);
+	}
+	(win, nitems)
+}
+
 // ---------------------------------------------
 //            Implementations
 // ---------------------------------------------
@@ -623,8 +685,11 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 
 			//2.2. init the return result
 			let mut vec_to_add = vec![];
-			let mut vec_res = vec![init_item]; 
+			let mut vec_res = vec![init_item];
 			let mut vec_fwd_prf = vec![];
+			// DEBUG USE 64300: validate fwd-prf row estimate vs real.
+			let (mut p64_actual, mut p64_win, mut p64_nitems)
+				= (0usize, 0usize, 0usize);
 
 			//2.3 propgate for each layer (note: stop when there are NO MORE
 			// to proess - thus, we do not NECESSARILY have to extend to full
@@ -668,6 +733,9 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 						gen_forward_prf(dst_pat, f_rg_start, f_rg_end,
 							j, &locs_available, b_backward);
 					total_added += new_to_add_item.locs.len();
+					p64_actual += fwd_prf_item.vec_pat_id.len();
+					p64_win += new_to_add_item.locs.len();
+					p64_nitems += 1;
 					let mut new_locs = new_to_add_item.locs.clone();
 					to_add_item = if to_add_item.is_none(){
 						Some(new_to_add_item)
@@ -766,6 +834,52 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 						rg=({},{}) n_locs_real={} head20={:?}",
 						u_subsig, k, step, pat,
 						rg_s, rg_e, n_real, locs_head);
+				}
+			}
+			// DEBUG USE 64300: verify est_fwd_rows_one vs the REAL built
+			// StepFwdPrf queue, per subsig, at the production gadget site.
+			// est = e_win + 2*e_n (the function's prediction); real = the
+			// actual rows. Aggregate into process-wide counters (this runs in
+			// a par_iter, so use atomics) and only print deviations + a
+			// periodic tally -- so a full_dlp_sample server run yields a
+			// readable verdict, not millions of lines. exact = est==real;
+			// ok10 = real<=est<=1.1*real (conservative <=10%); BAD otherwise.
+			if std::env::var("ZKR_PROBE_64300").is_ok() {
+				let item_locs: Vec<Vec<usize>> = items.iter()
+					.map(|it| it.locs.iter().map(field_to_usize)
+						.collect()).collect();
+				let loc_map: std::collections::HashMap<usize, Vec<usize>> =
+					hm_loc.iter().map(|(k, v)| {
+						let mut ls: Vec<usize> = v.iter()
+							.map(|x| field_to_usize(&x.1)).collect();
+						ls.sort();
+						(field_to_usize(k), ls)
+					}).collect();
+				let (e_win, e_n) = est_fwd_rows_one(pm_bounds,
+					subsig_rec.is_backward, &item_locs, &loc_map, max_val);
+				let est = e_win + 2 * e_n;
+				let real = p64_actual;
+				let c = P64_CHECKED.fetch_add(1, Ordering::Relaxed) + 1;
+				if c == 1 {
+					println!("DEBUG USE 64300.START: fwd-queue \
+						est-vs-real check active");
+				}
+				if est == real {
+					P64_EXACT.fetch_add(1, Ordering::Relaxed);
+				} else if est >= real && est * 10 <= real * 11 {
+					P64_OK10.fetch_add(1, Ordering::Relaxed);
+				} else {
+					let b = P64_BAD.fetch_add(1, Ordering::Relaxed) + 1;
+					println!("DEBUG USE 64300.BAD #{}: subsig={} est={} \
+						(win={} n={}) real={} (win={} n={})", b, u_subsig,
+						est, e_win, e_n, real, p64_win, p64_nitems);
+				}
+				if c % 20000 == 0 {
+					println!("DEBUG USE 64300.TALLY: checked={} exact={} \
+						ok<=10%={} BAD={}", c,
+						P64_EXACT.load(Ordering::Relaxed),
+						P64_OK10.load(Ordering::Relaxed),
+						P64_BAD.load(Ordering::Relaxed));
 				}
 			}
 			((subsig.clone(), vec_to_add),
@@ -5970,3 +6084,77 @@ use utils::consts::{read_global_config, get_global_config};
 }
 
 
+
+#[cfg(test)]
+mod tests_est_fwd_rows {
+	use super::est_fwd_rows_one;
+	use std::collections::HashMap;
+
+	// Hand-traced reference cases for the forward-queue size estimator.
+	// est_fwd_rows_one returns (windowed_advancing, num_items); the real
+	// StepFwdPrf row count is then windowed + 2*num_items. The function is
+	// also validated against the live gadget (DEBUG 64300, 1032/1032 on
+	// small_data+small_email); these cases exercise depth/width the
+	// discharge-clean real-fold path cannot reach.
+	const MAX: usize = 1000;
+	fn lm(pairs: &[(usize, Vec<usize>)]) -> HashMap<usize, Vec<usize>> {
+		pairs.iter().cloned().collect()
+	}
+
+	#[test]
+	fn case_no_propagation() {
+		// 1 step, pattern absent in window (only dummy locs) -> 0 advancing,
+		// 1 item. Real rows = 0 + 2*1 = 2 (the pure boundary case).
+		let pm = [(10usize, (0usize, 5usize))];
+		let items = [vec![1usize]];
+		let (w, n) = est_fwd_rows_one(&pm, false, &items,
+			&lm(&[(10, vec![0, MAX])]), MAX);
+		assert_eq!((w, n), (0, 1));
+	}
+
+	#[test]
+	fn case_one_loc_per_step_then_die() {
+		// 3-step chain, 1 advancing at steps 1,2, dies at step 3.
+		let pm = [(20usize, (0, 20)), (30, (0, 20)), (40, (0, 20))];
+		let items = [vec![1usize], vec![], vec![]];
+		let (w, n) = est_fwd_rows_one(&pm, false, &items, &lm(&[
+			(20, vec![0, 11, MAX]), (30, vec![0, 25, MAX]),
+			(40, vec![0, MAX])]), MAX);
+		assert_eq!((w, n), (2, 3));
+	}
+
+	#[test]
+	fn case_multi_loc_per_step() {
+		// step 1 advances to 3 locations (5,10,15), then all die at step 2.
+		let pm = [(20usize, (0, 20)), (30, (0, 20))];
+		let items = [vec![1usize], vec![]];
+		let (w, n) = est_fwd_rows_one(&pm, false, &items, &lm(&[
+			(20, vec![0, 5, 10, 15, MAX]), (30, vec![0, MAX])]), MAX);
+		assert_eq!((w, n), (3, 4)); // win=3 at step1; nitems=1+3
+	}
+
+	#[test]
+	fn case_deep_full_propagation() {
+		// 4-step chain, 1 advancing at every step (propagates to the end).
+		let pm = [(20usize, (0, 20)), (30, (0, 20)), (40, (0, 20)),
+			(50, (0, 20))];
+		let items = [vec![1usize], vec![], vec![], vec![]];
+		let (w, n) = est_fwd_rows_one(&pm, false, &items, &lm(&[
+			(20, vec![0, 10, MAX]), (30, vec![0, 20, MAX]),
+			(40, vec![0, 30, MAX]), (50, vec![0, 40, MAX])]), MAX);
+		assert_eq!((w, n), (4, 4));
+	}
+
+	#[test]
+	fn case_die_in_the_middle() {
+		// 4-step chain, advances at 1,2, dies at 3; chain length 4 keeps the
+		// loop alive one more empty step then stops. nitems = 1+1+1.
+		let pm = [(20usize, (0, 20)), (30, (0, 20)), (40, (0, 20)),
+			(50, (0, 20))];
+		let items = [vec![1usize], vec![], vec![], vec![]];
+		let (w, n) = est_fwd_rows_one(&pm, false, &items, &lm(&[
+			(20, vec![0, 10, MAX]), (30, vec![0, 20, MAX]),
+			(40, vec![0, MAX]), (50, vec![0, MAX])]), MAX);
+		assert_eq!((w, n), (2, 3));
+	}
+}

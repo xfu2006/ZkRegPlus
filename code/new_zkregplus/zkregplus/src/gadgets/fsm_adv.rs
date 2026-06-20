@@ -1397,12 +1397,42 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		let nibbles = vec![F::zero(); capacity.max_nibble_len];
 		let dummy_inp_subsigs = vec![
 			F::from(store_subsig_pat.subsig_ids[0] as u32)];
-		let dummy_adv = FsmAdvAdvice::new(b_igc,
-			offset_wea, //offset to word_extract
-			&nibbles, &vec![F::zero(); capacity.halo_nibbles], acdfa,
-			dummy_inp_state,
-			dummy_inp_loc, &dummy_inp_subsigs, capacity,
-			fsm_id, store_subsig_pat, 0).expect("\n\n ==== **** =====\nCannot handle dummy advice generation for fsm_adv. Needs to raise the following for at least one circ. ");
+		// The dummy advice is a zero-nibble placeholder used only to derive
+		// the statement template. An undersized FSM-basis cap here (e.g. during
+		// early cap-discovery probes, before the cap is bumped for real data)
+		// would CapErr; retry with the bumped value rather than panicking. The
+		// template only grows (>= the real cap), so real witnesses still fit;
+		// the converged circuit never bumps, so the real fold is unchanged.
+		let halo0 = vec![F::zero(); capacity.halo_nibbles];
+		let mut dummy_cap = Clone::clone(capacity);
+		let dummy_adv = loop {
+			match FsmAdvAdvice::new(b_igc, offset_wea, &nibbles, &halo0,
+				acdfa, dummy_inp_state, dummy_inp_loc, &dummy_inp_subsigs,
+				&dummy_cap, fsm_id, store_subsig_pat, 0) {
+				Ok(a) => break a,
+				Err(Error::CapErr(v)) => {
+					let mut bumped = false;
+					for (k, n) in &v {
+						let n = *n;
+						if k.contains("basis_unique_states") {
+							if n > dummy_cap.basis_unique_states {
+								dummy_cap.basis_unique_states = n;
+								bumped = true; }
+						} else if k.contains("basis_acc_states") {
+							if n > dummy_cap.basis_acc_states {
+								dummy_cap.basis_acc_states = n; bumped = true; }
+						} else if k.contains("basis_pats_in_trace") {
+							if n > dummy_cap.basis_pats_in_trace {
+								dummy_cap.basis_pats_in_trace = n;
+								bumped = true; }
+						}
+					}
+					assert!(bumped, "dummy advice fsm_adv: unhandled \
+						CapErr {:?}", v);
+				}
+				Err(e) => panic!("dummy advice gen for fsm_adv: {:?}", e),
+			}
+		};
 		let mut vec_cfg = prev_cfgs.clone();
 		vec_cfg.push(dummy_adv.stmt_container.lock().unwrap().get_cfg());
 		ContainerConfig::adjust_locations(&mut vec_cfg);

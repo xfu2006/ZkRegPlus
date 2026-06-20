@@ -29421,6 +29421,7 @@ Goal 1. check the snark proof generation of full_dlp_sample()
 	[a] timing? -> 11 sec per step, which is NO good even worse than 3 circ version
 	[b] snark proof success? -> needs to set vmax
 	[c] double check the estimate algorithm
+	[d] push the new alg to test full_dlp_sample()
 
 Goal 2. start the full_dlp() 8-jobs first and see if it's ok
 	[a] fix the .gitignore counted as email problem 
