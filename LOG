@@ -29410,6 +29410,16 @@ Goal 6. check the full_dlp_sample snark prf generation and the new circ size
 	[a] new capacity decision working!
 	[b] circ0 is only 680k much smaller, circ1 as well, circ2 still 1.6M,
 		circ3 11 MB.
+	[c] got more problems -> chunk estimated good but is shifted to circ3!
+	[d] snark fails due to vm.max_map_count setting, change it in python
+		runner run_exp.py
+	[e] added more probes to analyze which cap caused bump up of circ problem.
+	[f] add a small test.
 
 Sat 06/20/2026
-Goal 1.
+Goal 1. check the snark proof generation of full_dlp_sample()
+	[a] timing?
+	[b] snark proof success?
+
+Goal 2. start the full_dlp() 8-jobs first and see if it's ok
+	[a] 

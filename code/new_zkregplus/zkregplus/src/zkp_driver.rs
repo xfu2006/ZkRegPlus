@@ -4047,16 +4047,23 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 	fn read_path_list(list_path: &str) -> Vec<String> {
 		let proot = utils::os::proj_root();
 		let abs = format!("{}/{}", proot, list_path);
-		if list_path.ends_with(".tgz") || list_path.ends_with(".tar.gz") {
-			let out = std::process::Command::new("tar")
-				.args(["-xzO", "-f", &abs]).output()
-				.expect("tar -xzO path list");
-			String::from_utf8_lossy(&out.stdout).lines()
-				.map(|l| l.trim().to_string())
-				.filter(|l| !l.is_empty()).collect()
-		} else {
-			utils::os::read_lines(&abs)
-		}
+		let raw: Vec<String> =
+			if list_path.ends_with(".tgz") || list_path.ends_with(".tar.gz") {
+				let out = std::process::Command::new("tar")
+					.args(["-xzO", "-f", &abs]).output()
+					.expect("tar -xzO path list");
+				String::from_utf8_lossy(&out.stdout).lines()
+					.map(|l| l.trim().to_string()).collect()
+			} else {
+				utils::os::read_lines(&abs)
+			};
+		// Drop blanks and dotfile entries (e.g. a swept-in .gitignore) so
+		// discharge never panics opening a non-email path.
+		raw.into_iter()
+			.filter(|l| !l.is_empty())
+			.filter(|l| l.rsplit('/').next()
+				.map_or(false, |n| !n.starts_with('.')))
+			.collect()
 	}
 
 	/// Deterministic size-balanced split of a path list into num_jobs

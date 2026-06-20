@@ -13,6 +13,11 @@ Usage:
 Env:
   ZKR_DC_THREADS   thread count (default 8)
   ZKR_EXP_SKIP_FAIL passed through if set (drop non-foldable from the fold)
+  ZKR_VM_MAX_MAP_COUNT  target vm.max_map_count (default 8388608 = 8M; 0
+                  skips). Raised via `sudo sysctl` before the run so
+                  mimalloc's many small mappings don't hit the VMA ceiling
+                  and SIGABRT the decider with a tiny-alloc failure while
+                  RAM is free.
 
 Output (always packed, even on OOM/panic):
   data/debug/full_dlp_sample/exp_out/artifacts_<ts>.tar.gz
@@ -39,6 +44,37 @@ TS = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 LOG = os.path.join(OUT, "run_%s.log" % TS)
 SUM = os.path.join(OUT, "summary_%s.txt" % TS)
 TAR = "/tmp/full_dlp_exp_artifacts_%s.tar.gz" % TS          # tarball in /tmp
+VMA_TARGET = int(os.environ.get("ZKR_VM_MAX_MAP_COUNT", "8388608"))  # 0=skip
+
+
+def ensure_vma(target):
+    """Best-effort raise vm.max_map_count (VMA ceiling). mimalloc frees RAM
+    via many small OS mappings; the 204M-constraint decider can exhaust the
+    default 1048576 and SIGABRT on a tiny alloc while RAM is free. Non-fatal."""
+    if target <= 0:
+        return
+    path = "/proc/sys/vm/max_map_count"
+    try:
+        cur = int(open(path).read().strip())
+    except Exception as e:
+        print("[run_exp] vm.max_map_count: cannot read (%s); skip" % e)
+        return
+    if cur >= target:
+        print("[run_exp] vm.max_map_count=%d already >= %d" % (cur, target))
+        return
+    print("[run_exp] vm.max_map_count=%d < %d; raising via sudo sysctl"
+          % (cur, target))
+    rc_ = subprocess.run(["sudo", "sysctl", "-w",
+                          "vm.max_map_count=%d" % target]).returncode
+    if rc_ != 0:
+        print("[run_exp] WARN: could not raise vm.max_map_count (sudo?). "
+              "Run manually: sudo sysctl -w vm.max_map_count=%d" % target)
+    else:
+        try:
+            print("[run_exp] vm.max_map_count now %s"
+                  % open(path).read().strip())
+        except Exception:
+            pass
 
 if not os.path.isfile(RUNCFG):
     sys.exit("ERROR: runcfg not found: %s" % RUNCFG)
@@ -70,10 +106,12 @@ print("[run_exp] cmd    =", " ".join(cmd))
 print("[run_exp] cache  = %s (first run builds it from regex, ~0.5hr)"
       % rc.get("cache_dir"))
 print("[run_exp] artifacts:", [a for a in artifacts if a])
+print("[run_exp] vm.max_map_count target =", VMA_TARGET or "skip")
 if DRY:
     print("[run_exp] --dry-run: not executing.")
     sys.exit(0)
 
+ensure_vma(VMA_TARGET)
 os.makedirs(OUT, exist_ok=True)
 t0 = time.time()
 with open(LOG, "w") as lf:
