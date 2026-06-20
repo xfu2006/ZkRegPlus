@@ -1006,7 +1006,14 @@ where
 				});
 				match r{
 					Ok(adv) => {chosen=Some((l, cap.clone(), adv)); break;},
-					Err(e) => {last_err=Some(e);},
+					Err(e) => {
+						if std::env::var("ZKR_PROBE_64212").is_ok() {
+							emit_stdout(format!(
+								"DEBUG USE 64212.1: seg {} rung {} \
+								 FAIL: {:?}", i, l, e));
+						}
+						last_err=Some(e);
+					},
 				}
 			}
 			let (l, cap, adv) = match chosen{
@@ -1015,6 +1022,10 @@ where
 					Error::NotSupported(
 						"no rung fits segment".to_string()))),
 			};
+			if std::env::var("ZKR_PROBE_64212").is_ok() {
+				emit_stdout(format!(
+					"DEBUG USE 64212.2: seg {} CHOSE rung {}", i, l));
+			}
 			vec_pci.push(l);
 			vec_size.push(end-start);
 			vec_cap.push(cap);
