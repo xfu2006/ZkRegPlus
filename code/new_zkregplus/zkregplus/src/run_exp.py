@@ -35,14 +35,22 @@ REPO = os.path.abspath(os.path.join(HERE, "..", ".."))     # .../new_zkregplus
 CFG_REL = "data/debug/full_dlp_sample"
 CFG_DIR = os.path.join(REPO, CFG_REL)
 
-FLAGS = {"--dry-run", "--fsm-dist", "--probe-fwd"}
+FLAGS = {"--dry-run", "--fsm-dist", "--probe-fwd", "--probe-route",
+         "--probe-caps", "--log6"}
 args = [a for a in sys.argv[1:] if a not in FLAGS]
 DRY = "--dry-run" in sys.argv
 # --fsm-dist: determine-only (ZKR_FSM_DIST=1) -- builds the ladder + the real
 # fwd queue (CapacityPlanner) but RETURNS before the fold, so it fits locally
-# (no 119M-lkup OOM). --probe-fwd: turn on the 64300 estimate-vs-real probe.
+# (no 119M-lkup OOM). --probe-fwd: 64300 estimate-vs-real probe.
+# --probe-route: 64212 per-seg rung-FAIL probe (which cap flips a chunk up).
+# --probe-caps: 64400 per-rung member breakdown (why perc/avg_act so high).
+# --log6: LOG6 per-gadget constraint breakdown at preprocess (which gadget
+#   bloats each rung). Verbose -- kill the run after the per-rung breakdown.
 FSM_DIST = "--fsm-dist" in sys.argv
 PROBE_FWD = "--probe-fwd" in sys.argv
+PROBE_ROUTE = "--probe-route" in sys.argv
+PROBE_CAPS = "--probe-caps" in sys.argv
+LOG6 = "--log6" in sys.argv
 runcfg_name = args[0] if args else "runcfg_exp.json"
 RUNCFG = os.path.join(CFG_DIR, runcfg_name)
 OUT = "/tmp/full_dlp_exp"                                   # logs + summary
@@ -94,6 +102,12 @@ if FSM_DIST:
     env["ZKR_FSM_DIST"] = "1"        # determine-only (skip the fold)
 if PROBE_FWD:
     env["ZKR_PROBE_64300"] = "1"     # fwd-queue estimate-vs-real probe
+if PROBE_ROUTE:
+    env["ZKR_PROBE_64212"] = "1"     # per-seg rung-FAIL (which cap flips up)
+if PROBE_CAPS:
+    env["ZKR_PROBE_CAPS"] = "1"      # per-rung member breakdown (64400)
+if LOG6:
+    env["ZKR_LOG6"] = "1"            # per-gadget constraint breakdown
 
 time_prefix = ["/usr/bin/time", "-v"] if os.path.exists("/usr/bin/time") else []
 cmd = time_prefix + ["cargo", "test", "-p", "zkregplus", "--release", "--",
@@ -162,7 +176,8 @@ with open(SUM, "w") as s:
                    "KEYS info", "gen_step_cs step 3", "gen_cs step 3.2",
                    "Maximum resident set size", "Killed",
                    "Out of memory", "panicked", "test result",
-                   "64300.TALLY", "64300.BAD"]):
+                   "64300.TALLY", "64300.BAD", "64400.rung",
+                   "after msg3 of module"]):
         s.write(l + "\n")
     s.write("\n-- per-circuit fold step cost --\n")
     for c in sorted(agg):

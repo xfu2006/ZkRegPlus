@@ -3953,7 +3953,10 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		let cd = &rc.config_dir;
 		let mw = rc.chunk_len;
 		//aggressive CS-only, folding-only, estimate-on for the tuning.
-		get_global_config().log_level = utils::logger::LOG3;
+		//ZKR_LOG6: per-gadget constraint breakdown (gen_step_cs "after msg3
+		//of module") to see which gadget bloats each rung at preprocess.
+		get_global_config().log_level = if std::env::var("ZKR_LOG6").is_ok() {
+			utils::logger::LOG6 } else { utils::logger::LOG3 };
 		get_global_config().range2_bit = rc.range2_bit;
 		get_global_config().b_light_test = false;
 		get_global_config().b_folding_only = false;

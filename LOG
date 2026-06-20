@@ -29422,6 +29422,9 @@ Goal 1. check the snark proof generation of full_dlp_sample()
 	[b] snark proof success? -> needs to set vmax
 	[c] double check the estimate algorithm
 	[d] push the new alg to test full_dlp_sample()
+	[e] verifyed with full_dlp_sample() that the estimate of
+		step forward queue size is good now
+		but still majority fall to circ3
 
 Goal 2. start the full_dlp() 8-jobs first and see if it's ok
 	[a] fix the .gitignore counted as email problem 

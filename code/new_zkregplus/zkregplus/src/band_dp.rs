@@ -214,6 +214,27 @@ pub fn plan_rungs(universe: &[usize], fwd: &[usize], active: &[usize],
         } else {
             specs[end - 1].clone()                          // legacy / top rung
         };
+        // DEBUG USE 64400 (ZKR_PROBE_CAPS): per-rung member breakdown -- the
+        // universe range, chunk count, derived perc/avg_act, and WHICH member
+        // bucket (by universe) pins the max fwd/active that sets perc/avg_act.
+        // Reveals the universe<->fwd decoupling: a low-universe bucket with a
+        // high max_fwd is why a "bulk" rung gets a huge perc.
+        if std::env::var("ZKR_PROBE_CAPS").is_ok() {
+            let grp = &buckets[start..end];
+            let cnt: usize = grp.iter().map(|b| b.count).sum();
+            let (mf_u, mf) = grp.iter().map(|b| (b.ceiling, b.m_fwd))
+                .max_by_key(|&(_, f)| f).unwrap_or((0, 0));
+            let (ma_u, ma) = grp.iter().map(|b| (b.ceiling, b.m_active))
+                .max_by_key(|&(_, a)| a).unwrap_or((0, 0));
+            let u_lo = grp.first().map(|b| b.ceiling).unwrap_or(0);
+            let u_hi = grp.last().map(|b| b.ceiling).unwrap_or(0);
+            println!("DEBUG USE 64400.rung {}: univ=[{}..{}] chunks={} \
+                perc={} avg_act={} basis_pats={} | max_fwd={}@univ{} \
+                max_active={}@univ{}", rungs.len(), u_lo, u_hi, cnt,
+                spec.perc_pats_expansion_rate,
+                spec.avg_active_pats_per_subsig, spec.max_pats_in_trace,
+                mf, mf_u, ma, ma_u);
+        }
         rungs.push(spec);
         hist.push(buckets[start..end].iter().map(|b| b.count).sum());
         start = end;
