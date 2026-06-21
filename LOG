@@ -29436,3 +29436,13 @@ Goal 3. still fail on estimate
 	[b] fixed the error capacity estimate for CP stage, but still
 		on cause of pushing chunks from circ0 to circ3
 	[c] fix working!
+	[d] still time out so need 1TB
+
+Sunday 06/21/2026
+Goal 1. fix the estimate alg again for the full set
+	[a] another server run
+	[b] 
+Goal 2. writing 7.3
+	[a] scheme and move folder
+	[b] fix issues one by one
+	[c] paragraph 3 and 4.

@@ -787,12 +787,40 @@ pub(crate) fn select_candidates_from_peaks(
 		|c: &ChunkPeaks| c.max_unique_states,
 		|c: &ChunkPeaks| c.max_acc_states,
 		|c: &ChunkPeaks| c.max_cp_unique_states,
+		//perc-demand proxy: max over chunks of fwd_entries/basis_pats (the
+		//StepFwdPrf back-solve). Surfaces low-basis_pats high-fwd fan-out
+		//chunks the raw-fwd/raw-pats proxies miss -- these set the top rung
+		//perc. 0 when per-chunk vecs are absent (non-estimator peaks).
+		|c: &ChunkPeaks| (0..c.fwd_entries_per_chunk.len()).map(|i| {
+			let f = c.fwd_entries_per_chunk[i];
+			let bp = c.pats_in_trace_per_chunk.get(i)
+				.copied().unwrap_or(0).max(1);
+			f.saturating_mul(10000) / bp
+		}).max().unwrap_or(0),
 	];
 	let mut set = std::collections::BTreeSet::<usize>::new();
 	for proj in proxies {
 		let mut idx: Vec<usize> = (0..n).collect();
 		idx.sort_by_key(|&i| std::cmp::Reverse(proj(&peaks[i])));
 		for &i in idx.iter().take(k) { set.insert(i); }
+	}
+	if std::env::var("ZKR_PROBE_64601").is_ok() {
+		// confirm the perc proxy surfaces the binding chunk: report the
+		// global-max fwd/basis_pats file, its raw fwd/pats, and whether it
+		// made the candidate set (selected=true -> probe can size the top rung).
+		let ratio = |c: &ChunkPeaks| (0..c.fwd_entries_per_chunk.len())
+			.map(|i| {
+				let f = c.fwd_entries_per_chunk[i];
+				let bp = c.pats_in_trace_per_chunk.get(i)
+					.copied().unwrap_or(0).max(1);
+				f.saturating_mul(10000) / bp
+			}).max().unwrap_or(0);
+		let (mut bi, mut bv) = (0usize, 0usize);
+		for i in 0..n { let v = ratio(&peaks[i]); if v>bv { bv=v; bi=i; } }
+		log(0, LOG1, &format!("DEBUG USE 64601.1: perc-ratio argmax file={} \
+			ratio={} (fwd={} pats={}); selected={}", bi, bv,
+			peaks[bi].max_fwd_entries_per_chunk,
+			peaks[bi].max_pats_in_trace, set.contains(&bi)));
 	}
 	set.into_iter().collect()
 }
@@ -3937,6 +3965,28 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		let c2 = super::select_candidates_from_peaks(&peaks, 2);
 		assert!(c2.contains(&5) && c2.contains(&4),
 			"k=2 needs top-2 missing: {:?}", c2);
+	}
+
+	/// The perc-demand proxy must surface a low-basis_pats high-fwd chunk that
+	/// every raw-magnitude proxy misses (the StepFwdPrf top-rung binder).
+	#[test]
+	fn test_perc_ratio_proxy_selects_low_pats(){
+		use data_processor::discharge_proof::ChunkPeaks;
+		let mk = |fwd: usize, pats: usize| {
+			let mut c = ChunkPeaks::default();
+			c.max_fwd_entries_per_chunk = fwd;
+			c.max_pats_in_trace = pats;
+			c.fwd_entries_per_chunk = vec![fwd];
+			c.pats_in_trace_per_chunk = vec![pats];
+			c
+		};
+		// W,W' max raw fwd (high pats -> low perc); C has lower fwd but tiny
+		// pats -> highest perc demand (fwd/pats). With k=1 the raw-fwd proxy
+		// picks the W's; the perc proxy must still pull in C (file 2).
+		let peaks = vec![mk(500,250), mk(480,240), mk(300,15)];
+		let c = super::select_candidates_from_peaks(&peaks, 1);
+		assert!(c.contains(&2),
+			"perc-binding low-pats file 2 not selected: {:?}", c);
 	}
 
 	/// One-off: aggressive NEEDS scan over the scan_file list. Dump
