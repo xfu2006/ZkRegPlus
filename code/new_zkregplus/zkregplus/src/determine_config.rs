@@ -28,6 +28,12 @@ pub struct CapParams {
     pub avg_active_pats_per_subsig: usize,
     pub basis_pats_in_trace: usize,
     pub perc_pats_expansion_rate: usize,
+    // aggressive: forward-queue cap INFERRED from container_rows (decoupled
+    // from basis_pats*perc); sizes the SED step queues in the gadget. perc
+    // above is kept cosmetic in aggressive. serde-default for old configs;
+    // non-aggressive leaves it 0 (gadget reads basis_pats*perc instead).
+    #[serde(default)]
+    pub prod_pats_expansion: usize,
     pub sigs_sed: usize,
     pub perc_comp_subsigs: usize,
     pub basis_unique_states: usize,
@@ -39,6 +45,8 @@ pub struct CapParams {
     pub avg_active_pats_per_subsig_igc: usize,
     pub basis_pats_in_trace_igc: usize,
     pub perc_pats_expansion_rate_igc: usize,
+    #[serde(default)]
+    pub prod_pats_expansion_igc: usize,
     pub basis_acc_states_igc: usize,
     // aggressive igc sentinel: its own SMALL basis_unique_states (the cs
     // field above is shared cs/igc in non-aggressive). serde-default so
@@ -186,7 +194,11 @@ pub fn apply_caperr_bumps(p: &mut CapParams, b_aggr: bool,
         // on comp_sig. ("b_igc: false" is the cs arm; note "b_igc" itself
         // contains "_igc" so we must NOT match on a bare "_igc".)
         let igc = name.contains("b_igc: true") || name.contains("subsigs_igc");
-        if name.starts_with("dis_adv::perc_pats_expansion_rate") {
+        if name.starts_with("dis_adv::prod_pats_expansion") {
+            // aggressive forward-queue cap (rung-independent).
+            if igc { up(&mut p.prod_pats_expansion_igc, r, &mut changed); }
+            else { up(&mut p.prod_pats_expansion, r, &mut changed); }
+        } else if name.starts_with("dis_adv::perc_pats_expansion_rate") {
             if igc { up(&mut p.perc_pats_expansion_rate_igc, r, &mut changed); }
             else { up(&mut p.perc_pats_expansion_rate, r, &mut changed); }
         } else if name.starts_with("dis_adv::avg_active_pats_per_subsig") {
@@ -265,18 +277,22 @@ pub fn caps_from_params_aggr(p: &CapParams)
         subsigs: 1,                                    // sentinel
         avg_pats_per_subsig: 1,
     };
-    let sed = SedCapacity::new(
+    let mut sed = SedCapacity::new(
         p.max_word_len, p.acdfa_state_part_bits, p.subsigs,
         p.avg_pats_per_subsig, p.avg_active_pats_per_subsig,
         p.basis_pats_in_trace, p.perc_pats_expansion_rate, p.sigs_sed,
         p.perc_comp_subsigs, p.basis_unique_states, p.basis_acc_states);
-    let sed_igc = SedCapacity::new(
+    // aggressive: override the forward-queue cap with the inferred prod
+    // (no-op when 0 -> keeps the basis_pats*perc default).
+    sed.set_prod_pats_expansion(p.prod_pats_expansion);
+    let mut sed_igc = SedCapacity::new(
         p.max_word_len, p.acdfa_state_part_bits, 1, 1,
         p.avg_active_pats_per_subsig_igc.max(1),
         p.basis_pats_in_trace_igc.max(8),
         p.perc_pats_expansion_rate_igc.max(64), 1, 1,
         p.basis_unique_states_igc.max(4),
         p.basis_acc_states_igc.max(2));
+    sed_igc.set_prod_pats_expansion(p.prod_pats_expansion_igc);
     (cp, sed, cp_igc, sed_igc)
 }
 
@@ -312,6 +328,7 @@ pub fn capparams_from_caps_general(cp_cs: &CpCapacity, sed_cs: &SedCapacity,
         avg_active_pats_per_subsig: sed_cs.avg_active_pats_per_subsig,
         basis_pats_in_trace: sed_cs.basis_pats_in_trace,
         perc_pats_expansion_rate: sed_cs.perc_pats_expansion_rate,
+        prod_pats_expansion: 0,        // re-inferred by determine_config_aggr
         sigs_sed: sed_cs.sigs_sed,
         perc_comp_subsigs: sed_cs.perc_comp_subsigs,
         basis_unique_states: sed_cs.basis_unique_states,
@@ -320,6 +337,7 @@ pub fn capparams_from_caps_general(cp_cs: &CpCapacity, sed_cs: &SedCapacity,
         avg_active_pats_per_subsig_igc: sed_igc.avg_active_pats_per_subsig,
         basis_pats_in_trace_igc: sed_igc.basis_pats_in_trace,
         perc_pats_expansion_rate_igc: sed_igc.perc_pats_expansion_rate,
+        prod_pats_expansion_igc: 0,
         basis_acc_states_igc: sed_igc.basis_acc_states,
         basis_unique_states_igc: sed_igc.basis_unique_states,
         dfa_sigs: dfa.sigs,
@@ -344,6 +362,7 @@ pub fn capparams_from_caps_aggr(cp: &CpCapacity, sed: &SedCapacity,
         avg_active_pats_per_subsig: sed.avg_active_pats_per_subsig,
         basis_pats_in_trace: sed.basis_pats_in_trace,
         perc_pats_expansion_rate: sed.perc_pats_expansion_rate,
+        prod_pats_expansion: 0,        // re-inferred by determine_config_aggr
         sigs_sed: sed.sigs_sed,
         perc_comp_subsigs: sed.perc_comp_subsigs,
         basis_unique_states: sed.basis_unique_states,
@@ -354,6 +373,7 @@ pub fn capparams_from_caps_aggr(cp: &CpCapacity, sed: &SedCapacity,
         avg_active_pats_per_subsig_igc: 0,
         basis_pats_in_trace_igc: 0,
         perc_pats_expansion_rate_igc: 0,
+        prod_pats_expansion_igc: 0,
         basis_acc_states_igc: 0,
         basis_unique_states_igc: 0,
         dfa_sigs: 0,
@@ -441,6 +461,9 @@ pub fn assemble_ladder(p_max: &CapParams,
         c.subsigs = s.subsigs + 1;
         c.aggr_needs_subsigs = p_max.subsigs;
         c.perc_pats_expansion_rate = s.perc_pats_expansion_rate;
+        // aggressive forward-queue cap (exact per prod-band); igc stays the
+        // P_max sentinel (floored for the dummy in determine_config_aggr).
+        c.prod_pats_expansion = s.prod_pats_expansion;
         c.avg_active_pats_per_subsig = s.avg_active_pats_per_subsig;
         c.basis_unique_states =
             pick(p_max.basis_unique_states, s.max_unique_acc_pats, g_u);
@@ -480,10 +503,12 @@ mod tests {
         CapParams {
             cp_basis_unique_states: 0, cp_subsigs: 0, cp_avg_pats: 0,
             subsigs: 0, avg_pats_per_subsig: 0, avg_active_pats_per_subsig: 0,
-            basis_pats_in_trace: 0, perc_pats_expansion_rate: 0, sigs_sed: 0,
+            basis_pats_in_trace: 0, perc_pats_expansion_rate: 0,
+            prod_pats_expansion: 0, sigs_sed: 0,
             perc_comp_subsigs: 0, basis_unique_states: 0, basis_acc_states: 0,
             subsigs_igc: 0, avg_active_pats_per_subsig_igc: 0,
             basis_pats_in_trace_igc: 0, perc_pats_expansion_rate_igc: 0,
+            prod_pats_expansion_igc: 0,
             basis_acc_states_igc: 0, basis_unique_states_igc: 0,
             dfa_sigs: 0, dfa_subsigs: 0, aggr_needs_subsigs: 0,
             max_word_len: 0, acdfa_state_part_bits: 0,
@@ -600,10 +625,12 @@ mod tests {
         let z = (0, 0, 0, 0);                // no per-chunk data -> keep P_max
         let specs = vec![
             RungSpec { subsigs: 0, perc_pats_expansion_rate: 125,
+                prod_pats_expansion: 0,
                 avg_active_pats_per_subsig: 1, max_unique_acc_pats: z.0,
                 max_acc_states: z.1, max_pats_in_trace: z.2,
                 max_cp_unique_states: z.3 },
             RungSpec { subsigs: 200, perc_pats_expansion_rate: 8000,
+                prod_pats_expansion: 0,
                 avg_active_pats_per_subsig: 12, max_unique_acc_pats: z.0,
                 max_acc_states: z.1, max_pats_in_trace: z.2,
                 max_cp_unique_states: z.3 }];

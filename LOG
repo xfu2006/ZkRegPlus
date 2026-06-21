@@ -29443,6 +29443,13 @@ Goal 1. fix the estimate alg again for the full set
 	[a] another server run
 	[b] found another perc error 
 	[c] test on server
+	[d] failed again
+	[e] another test.
+	[f] problem still too BIG! 
+		278k, 559k, 29M, 28M for 4 circs
+	[g] try to use forward-queue size (prod_basis_pats_perc_expansion)
+		directly to group
+	[h]
 Goal 2. writing 7.3
 	[a] scheme and move folder
 	[b] fix issues one by one
@@ -29450,3 +29457,4 @@ Goal 2. writing 7.3
 	[d] plan writing function for collect data
 	[e] code approval
 	[f] testing -> data generation
+	[g] collected data and generate python file for generating the tables.

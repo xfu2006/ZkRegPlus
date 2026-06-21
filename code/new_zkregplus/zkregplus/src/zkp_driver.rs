@@ -482,12 +482,22 @@ where C: CurveGroup<ScalarField=F>,
 	let band_k = if do_peel { k_max - 1 } else { k_max };
 	let seg_size = vdata.first().map(|f| f.chunk_peaks.seg_size)
 		.unwrap_or(chunk_len * crate::gadgets::word_extract::LEGS);
-	// Exact-per-rung sizing: each non-peel rung is sized to the max over its
-	// OWN chunks (de-saturates the cumulative-envelope inheritance); the top
-	// rung stays P_max-anchored. See band_dp::plan_rungs / assemble_ladder.
-	let (specs, hist) = crate::band_dp::plan_rungs(&universe, &fwd, &active,
-		&live, &uniq, &acc, &pats, &cpu, p_max.basis_pats_in_trace, seg_size,
-		p_max.subsigs.saturating_sub(1), p_max.perc_pats_expansion_rate,
+	// Per-chunk prod = forward-queue cap INFERRED from container_rows (= fwd),
+	// rung-independent (no basis_pats): prod=(fwd+1)*1e8/(max_nib*FWD_COST)+1,
+	// 0 when fwd==0 (=> universe==0). band_dp ranks/groups by this so high-fwd
+	// outliers form their own rung instead of inflating the bulk.
+	let legs = crate::gadgets::word_extract::LEGS;
+	let fwd_cost = crate::gadgets::discharge_adv::FWD_COST;
+	let max_nib_c = (p_max.max_word_len * legs).max(1);
+	let prod: Vec<usize> = fwd.iter().map(|&f|
+		if f == 0 { 0 }
+		else { (f + 1) * 100_000_000 / (max_nib_c * fwd_cost).max(1) + 1 })
+		.collect();
+	// rank/group by prod; universe + FSM/CP arrays ride as envelopes.
+	let (specs, hist) = crate::band_dp::plan_rungs(&prod, &universe, &fwd,
+		&active, &live, &uniq, &acc, &pats, &cpu, p_max.basis_pats_in_trace,
+		seg_size, p_max.subsigs.saturating_sub(1),
+		p_max.perc_pats_expansion_rate,
 		p_max.avg_active_pats_per_subsig, band_k, n_buckets);
 
 	// 5. assemble ladder; optionally peel a smaller rung 0' at the p{peel_pct}
@@ -530,62 +540,29 @@ where C: CurveGroup<ScalarField=F>,
 		log(0, LOG1, &format!("peel rung0' p{}: bulk={} tail={} (FSM-tail \
 			bumps to rung0)", peel_pct, bulk, tail));
 	}
-	// perc floor: preprocess builds a 1-subsig dummy sentinel whose +2N
-	// boundary rows need a minimum perc (StepFwdPrf vec_size check,
-	// discharge_adv.rs:1679). Q1's universe==0 gate drives perc to 1, below
-	// that minimum -> dummy-advice CapErr panic at preprocess. Floor each
-	// rung's perc (cs+igc) via the gadget's own back-solve
-	// (discharge_adv.rs:1683-1686), dummy_len=2 with a generous (len+1)=16
-	// margin -- still tiny vs a real perc, no-op for non-universe-0 rungs.
-	let legs = crate::gadgets::word_extract::LEGS;
-	let fwd_cost = crate::gadgets::discharge_adv::FWD_COST;
+	// Dummy-sentinel floor: preprocess builds a 1-subsig dummy whose +2N
+	// boundary rows need a minimum forward-queue size. Floor each rung's perc
+	// (legacy back-solve) AND prod (aggressive, rung-independent: no
+	// basis_pats) so the universe==0 rung still sizes the dummy. Generous
+	// (len+1)=16 margin -- tiny vs a real prod, no-op for active rungs. The
+	// igc prod gets only this floor (collapsed sentinel in aggressive).
 	for r in ladder.iter_mut() {
 		let max_nib = (r.max_word_len * legs).max(1);
 		let pmin = |bp: usize| 16 * 100_000_000
 			/ (max_nib * bp.max(1) * fwd_cost).max(1) + 1;
+		let prod_min = 16 * 100_000_000 / (max_nib * fwd_cost).max(1) + 1;
 		r.perc_pats_expansion_rate = r.perc_pats_expansion_rate
 			.max(pmin(r.basis_pats_in_trace));
 		r.perc_pats_expansion_rate_igc = r.perc_pats_expansion_rate_igc
 			.max(pmin(r.basis_pats_in_trace_igc));
+		r.prod_pats_expansion = r.prod_pats_expansion.max(prod_min);
+		r.prod_pats_expansion_igc = r.prod_pats_expansion_igc.max(prod_min);
 	}
-	// Exact per-rung StepFwdPrf perc. Route each chunk to its lowest-fitting
-	// rung (mirrors the per-seg router: every NON-perc cap fits), then charge
-	// the gadget's own back-solve (discharge_adv.rs:1684)
-	//   perc = (fwd+1)*1e8 / (max_nib * basis_pats * FWD_COST) + 1
-	// to that rung; per-rung max sets the perc. fwd is the proven-exact
-	// container_rows, so this reproduces the fold demand exactly and replaces
-	// the proxy/probe estimate that under-sized the top rung. Perc is excluded
-	// from the routing test (it is what we are sizing -> self-consistent).
-	{
-		let n_rung = ladder.len();
-		let mut perc_need = vec![0usize; n_rung];
-		for i in 0..universe.len() {
-			let mut r = n_rung.saturating_sub(1);
-			for (j, rg) in ladder.iter().enumerate() {
-				if universe[i] < rg.subsigs
-					&& pats[i] <= rg.basis_pats_in_trace
-					&& uniq[i] <= rg.basis_unique_states
-					&& acc[i] <= rg.basis_acc_states
-					&& cpu[i] <= rg.cp_basis_unique_states {
-					r = j; break;
-				}
-			}
-			let rg = &ladder[r];
-			let max_nib = (rg.max_word_len * legs).max(1);
-			let demand = (fwd[i] + 1) * 100_000_000
-				/ (max_nib * rg.basis_pats_in_trace.max(1)
-					* fwd_cost).max(1) + 1;
-			if demand > perc_need[r] { perc_need[r] = demand; }
-		}
-		for r in 0..n_rung {
-			if perc_need[r] > ladder[r].perc_pats_expansion_rate {
-				ladder[r].perc_pats_expansion_rate = perc_need[r];
-			}
-		}
-		if std::env::var("ZKR_PROBE_64601").is_ok() {
-			log(0, LOG1, &format!("DEBUG USE 64601.2: exact per-rung perc \
-				need={:?} (applied to ladder)", perc_need));
-		}
+	if std::env::var("ZKR_PROBE_64601").is_ok() {
+		let prods: Vec<usize> = ladder.iter()
+			.map(|r| r.prod_pats_expansion).collect();
+		log(0, LOG1, &format!("DEBUG USE 64601.3: per-rung prod \
+			cap={:?}", prods));
 	}
 	log(0, LOG1, &format!("determine_config_aggr: {} rungs, hist={:?}, \
 		P_max.subsigs={}, perc={}, avg_active={}", ladder.len(), hist,
@@ -4485,7 +4462,7 @@ fail: {} ({:.4}%)",
 			"data/debug/full_clamav/config/main_dfa.dat",
 			"data/debug/full_clamav/config/needs_ised.dat",
 			"data/debug/full_clamav/config/needs_ised_igc.dat",
-			"clamav_full", &mal_scan, 26, 512 * 8, false, true);
+			"clamav_full", &mal_scan, 26, 512 * 8, true, false);
 		report_tier_block("Data for Mal", &mal, mal_sigs);
 
 		let dna_scan = read_path_list("data/paper_data/dna/config/binexec.dat");
@@ -4507,19 +4484,25 @@ fail: {} ({:.4}%)",
 			"dlp_corpus_aggr", &dlp_scan, 25, 64, true, false);
 		report_tier_block("Data for Dlp", &dlp, dlp_sigs);
 
-		// -------- Figure 9(b): Mal by file size --------
-		println!("######## Filesize data for Mal ########");
-		let mut by_flen: std::collections::BTreeMap<usize, Vec<_>> =
-			std::collections::BTreeMap::new();
-		for r in &mal { by_flen.entry(r.flen).or_default().push(r.clone()); }
-		for (flen, recs) in &by_flen {
-			let lo = if *flen == 0 { 0 } else { 1usize << (flen - 1) };
-			let hi = 1usize << flen;
-			report_tier_block(
-				&format!("Filesize data for Mal -- flen={} ({}..{} bytes)",
-					flen, lo, hi),
-				recs, mal_sigs);
-		}
+		// -------- Figure 9(b): Mal/Dlp by file size --------
+		let by_size = |ds: &str,
+			recs: &[data_processor::discharge_proof::FailDischargeRecord],
+			sigs: usize| {
+			println!("######## Filesize data for {} ########", ds);
+			let mut by_flen: std::collections::BTreeMap<usize, Vec<_>> =
+				std::collections::BTreeMap::new();
+			for r in recs { by_flen.entry(r.flen).or_default().push(r.clone()); }
+			for (flen, bucket) in &by_flen {
+				let lo = if *flen == 0 { 0 } else { 1usize << (flen - 1) };
+				let hi = 1usize << flen;
+				report_tier_block(
+					&format!("Filesize data for {} -- flen={} ({}..{} bytes)",
+						ds, flen, lo, hi),
+					bucket, sigs);
+			}
+		};
+		by_size("Mal", &mal, mal_sigs);
+		by_size("Dlp", &dlp, dlp_sigs);
 	}
 
 	#[test]

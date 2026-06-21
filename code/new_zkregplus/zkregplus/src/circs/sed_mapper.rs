@@ -193,7 +193,10 @@ impl SedCapacity{
 		let max_nibble_len = max_word_len * LEGS;
 		let faa_capacity = FsmAdvCapacity{max_nibble_len, acdfa_state_part_bits,			subsigs, avg_pats_per_subsig, basis_pats_in_trace,
 			basis_unique_states, basis_acc_states, halo_nibbles: 0};
-		let da_capacity = DischargeAdvCapacity{max_nibble_len, subsigs, universe_subsigs: subsigs, avg_active_pats_per_subsig, basis_pats_in_trace, perc_pats_expansion_rate, b_aggressive: false};
+		//prod default = basis_pats*perc (reproduces the legacy forward-queue
+		//size); aggressive determine overrides via set_prod_pats_expansion.
+		let prod_pats_expansion = basis_pats_in_trace * perc_pats_expansion_rate;
+		let da_capacity = DischargeAdvCapacity{max_nibble_len, subsigs, universe_subsigs: subsigs, avg_active_pats_per_subsig, basis_pats_in_trace, perc_pats_expansion_rate, b_aggressive: false, prod_pats_expansion};
 		//NOTE csa_capacity for the other cs/igc case will be temporarily
 		//set and later merged (because one csa coresponds to two discharge
 		//adv components
@@ -327,6 +330,16 @@ impl SedCapacity{
 		let mut csa = Clone::clone(self.csa_capacity());
 		csa.b_aggressive = b_aggr;
 		self.comp_capacities[3] = Arc::new(csa);
+	}
+
+	/// AGGRESSIVE-ONLY. Override the discharge forward-queue cap with the
+	/// determine-inferred prod (container_rows-based, decoupled from
+	/// basis_pats*perc). No-op when prod==0 (keeps the new() default).
+	pub fn set_prod_pats_expansion(&mut self, prod: usize){
+		if prod == 0 { return; }
+		let mut da = Clone::clone(self.da_capacity());
+		da.prod_pats_expansion = prod;
+		self.comp_capacities[2] = Arc::new(da);
 	}
 
 	pub fn da_capacity(&self)->&DischargeAdvCapacity{

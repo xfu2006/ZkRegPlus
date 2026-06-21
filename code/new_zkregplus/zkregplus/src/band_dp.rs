@@ -1,12 +1,11 @@
-//! M11 per-chunk capacity ladder planner (aggressive SDE only). Given the
-//! per-chunk demand -- universe = |failed_c|, the forward/active/live
-//! propagation counts, and the per-chunk FSM/CP structural peaks -- partition
-//! the chunks into <= k_max cost-bands and emit one RungSpec per band. Each
-//! rung's caps are the per-axis MAX over its band (monotone envelopes over
-//! universe), so the rung dominates every chunk routed to it; a chunk routes to
-//! the cheapest band whose ceiling >= its universe. perc/avg_active are anchored
-//! to P_max (StepFwdPrf-validated) and scaled down by the band's fwd/active
-//! ratio. Pure: no circuit/DB deps, fully unit-testable.
+//! M11 per-chunk capacity ladder planner (aggressive SDE only). Ranks/groups
+//! chunks by `prod` (the forward-queue demand = container_rows, the dominant
+//! cost) into <= k_max cost-bands and emits one RungSpec per band. universe
+//! and the FSM/CP peaks ride as envelopes, so each rung's subsigs = max
+//! universe over its prod-band; the rung dominates every chunk routed to it.
+//! A chunk routes to the cheapest band whose prod cap >= its demand (the fold
+//! router bumps on prod). Grouping by prod isolates high-fwd outliers into
+//! their own rung instead of inflating the bulk. Pure, unit-testable.
 
 use crate::gadgets::discharge_adv::{FWD_COST, RES_SMALL_COST};
 
@@ -18,6 +17,9 @@ use crate::gadgets::discharge_adv::{FWD_COST, RES_SMALL_COST};
 pub struct RungSpec {
     pub subsigs: usize,
     pub perc_pats_expansion_rate: usize,
+    // aggressive: forward-queue cap inferred from container_rows (the ranking
+    // key). perc above is kept cosmetic; this sizes the queue in the gadget.
+    pub prod_pats_expansion: usize,
     pub avg_active_pats_per_subsig: usize,
     // per-rung raw FSM/CP demand (band envelope max). 0 when per-chunk arrays
     // are absent (non-estimator path); assemble_ladder then keeps P_max.
@@ -46,11 +48,14 @@ fn raw_perc(fwd: usize, live: usize, basis_pats: usize,
 /// bucket's max universe; the rest are running-MAX (envelope) over all chunks
 /// with universe <= ceiling, so they dominate every chunk in the band.
 struct Bucket {
-    ceiling: usize, count: usize,
+    // ceiling = bucket max RANK (prod, the forward-queue demand). univ =
+    // cumulative-max universe envelope -> the rung's subsigs ceiling.
+    ceiling: usize, count: usize, univ: usize,
     fwd: usize, active: usize, live: usize,            // cumulative envelopes
     uniq: usize, acc: usize, pats: usize, cpu: usize,
     // per-bucket maxes (this bucket's OWN chunks only) -- used by the
     // exact-per-rung sizing path; 0 when no chunk contributes.
+    m_univ: usize,
     m_fwd: usize, m_active: usize, m_live: usize,
     m_uniq: usize, m_acc: usize, m_pats: usize, m_cpu: usize,
 }
@@ -58,41 +63,44 @@ struct Bucket {
 /// Log-bucket the per-chunk demand into <= n_buckets ascending buckets, each
 /// carrying its universe ceiling, chunk count, and monotone envelopes (incl.
 /// the FSM/CP structural arrays). Empty structural arrays contribute 0.
-fn bucketize(universe: &[usize], fwd: &[usize], active: &[usize],
-    live: &[usize], uniq: &[usize], acc: &[usize], pats: &[usize],
-    cpu: &[usize], n_buckets: usize) -> Vec<Bucket> {
-    let n = universe.len();
+fn bucketize(rank: &[usize], universe: &[usize], fwd: &[usize],
+    active: &[usize], live: &[usize], uniq: &[usize], acc: &[usize],
+    pats: &[usize], cpu: &[usize], n_buckets: usize) -> Vec<Bucket> {
+    let n = rank.len();
     if n == 0 { return vec![]; }
     let mut idx: Vec<usize> = (0..n).collect();
-    idx.sort_by_key(|&i| universe[i]);
-    let maxv = universe[idx[n - 1]];
+    idx.sort_by_key(|&i| rank[i]);         // rank = prod (forward-queue demand)
+    let maxv = rank[idx[n - 1]];
     let nb = n_buckets.max(1);
     let lnmax = ((maxv + 1) as f64).ln();
     let bid = |u: usize| if maxv == 0 || lnmax == 0.0 { 0 }
         else { (((nb - 1) as f64) * ((u + 1) as f64).ln() / lnmax) as usize };
     let g = |a: &[usize], i: usize| a.get(i).copied().unwrap_or(0);
-    let (mut cf, mut ca, mut cl) = (0usize, 0usize, 0usize);
+    let (mut cv, mut cf, mut ca, mut cl) = (0usize, 0usize, 0usize, 0usize);
     let (mut cu, mut cc, mut cp, mut cq) = (0usize, 0usize, 0usize, 0usize);
     let mut cur = usize::MAX;
     let mut out: Vec<Bucket> = vec![];
-    for &i in &idx {                       // ascending universe => running max
+    for &i in &idx {                       // ascending prod => running max
+        cv = cv.max(g(universe, i));
         cf = cf.max(fwd[i]); ca = ca.max(active[i]); cl = cl.max(live[i]);
         cu = cu.max(g(uniq, i)); cc = cc.max(g(acc, i));
         cp = cp.max(g(pats, i)); cq = cq.max(g(cpu, i));
-        let b = bid(universe[i]);
+        let b = bid(rank[i]);
         if b != cur {
-            out.push(Bucket { ceiling: 0, count: 0, fwd: cf, active: ca,
-                live: cl, uniq: cu, acc: cc, pats: cp, cpu: cq,
-                m_fwd: 0, m_active: 0, m_live: 0,
+            out.push(Bucket { ceiling: 0, count: 0, univ: cv, fwd: cf,
+                active: ca, live: cl, uniq: cu, acc: cc, pats: cp, cpu: cq,
+                m_univ: 0, m_fwd: 0, m_active: 0, m_live: 0,
                 m_uniq: 0, m_acc: 0, m_pats: 0, m_cpu: 0 });
             cur = b;
         }
         let last = out.last_mut().unwrap();
-        last.ceiling = universe[i];        // ascending => last wins = bucket max
+        last.ceiling = rank[i];            // ascending => last wins = bucket max
         last.count += 1;
+        last.univ = cv;
         last.fwd = cf; last.active = ca; last.live = cl;
         last.uniq = cu; last.acc = cc; last.pats = cp; last.cpu = cq;
         // per-bucket max over THIS bucket's own chunks (not cumulative).
+        last.m_univ = last.m_univ.max(g(universe, i));
         last.m_fwd = last.m_fwd.max(fwd[i]);
         last.m_active = last.m_active.max(active[i]);
         last.m_live = last.m_live.max(live[i]);
@@ -136,27 +144,29 @@ fn dp_partition(buckets: &[Bucket], cost: &dyn Fn(usize) -> usize,
 /// `pmax_*` are the global-sufficient P_max caps (rungs clamped/anchored to
 /// them); the FSM/CP arrays (uniq/acc/pats/cpu) may be empty (-> 0, P_max kept).
 /// Returns (rungs asc, hist).
-pub fn plan_rungs(universe: &[usize], fwd: &[usize], active: &[usize],
-    live: &[usize], uniq: &[usize], acc: &[usize], pats: &[usize],
-    cpu: &[usize], basis_pats: usize, seg_size: usize,
+pub fn plan_rungs(prod: &[usize], universe: &[usize], fwd: &[usize],
+    active: &[usize], live: &[usize], uniq: &[usize], acc: &[usize],
+    pats: &[usize], cpu: &[usize], basis_pats: usize, seg_size: usize,
     pmax_subsigs: usize, pmax_perc: usize, pmax_avg: usize,
     k_max: usize, n_buckets: usize) -> (Vec<RungSpec>, Vec<usize>) {
-    let buckets = bucketize(universe, fwd, active, live, uniq, acc, pats,
-        cpu, n_buckets);
+    // rank/group by prod (forward-queue demand); universe rides as an
+    // envelope -> each rung's subsigs = max universe over its prod-band.
+    let buckets = bucketize(prod, universe, fwd, active, live, uniq, acc,
+        pats, cpu, n_buckets);
     if buckets.is_empty() { return (vec![], vec![]); }
-    // P_max anchors: the top (max-universe) band carries the global-max
+    // P_max anchors: the top (max-prod) band carries the global-max
     // fwd/active envelopes, so anchoring to it makes the top rung == P_max.
     let top = buckets.last().unwrap();
     let top_raw = raw_perc(top.fwd, top.live, basis_pats, seg_size);
     let top_active = top.active.max(1);
-    let pat_loc = (basis_pats * seg_size / 10000).max(1);
     let specs: Vec<RungSpec> = buckets.iter().map(|b| {
-        let v = b.ceiling.min(pmax_subsigs);
+        let v = b.univ.min(pmax_subsigs);
         let rp = raw_perc(b.fwd, b.live, basis_pats, seg_size);
         RungSpec {
             subsigs: v,
             perc_pats_expansion_rate:
                 cdiv(pmax_perc * rp, top_raw).min(pmax_perc).max(1),
+            prod_pats_expansion: b.ceiling,   // bucket max prod (the cap)
             avg_active_pats_per_subsig:
                 cdiv(pmax_avg * b.active, top_active).min(pmax_avg).max(1),
             max_unique_acc_pats: b.uniq,
@@ -165,12 +175,14 @@ pub fn plan_rungs(universe: &[usize], fwd: &[usize], active: &[usize],
             max_cp_unique_states: b.cpu,
         }
     }).collect();
-    // cost(i) = discharge::est_cost replicated (discharge_adv.rs:4865); compute_sig
-    // is structural (pat_loc-driven, uniform) so it drops out of the argmin.
+    // cost(i) = per-chunk buffer rows = max(size_pat, forward-queue rows).
+    // forward queue = prod*seg*FWD_COST/1e8 (StepFwdPrf vec_size), dominant
+    // here; size_pat = subsigs*avg_active (StepQueue).
     let cost = |i: usize| {
         let s = &specs[i];
-        (s.subsigs * s.avg_active_pats_per_subsig * 1000)
-            .max(pat_loc * s.perc_pats_expansion_rate / 100)
+        (s.subsigs * s.avg_active_pats_per_subsig)
+            .max(s.prod_pats_expansion * seg_size * FWD_COST
+                / (10000 * 100 * 100))
     };
     let ends = dp_partition(&buckets, &cost, k_max);
     let n_b = buckets.len();
@@ -186,7 +198,10 @@ pub fn plan_rungs(universe: &[usize], fwd: &[usize], active: &[usize],
                 grp.iter().map(sel).max().unwrap_or(0);
             let (mf, ml, mac) = (mx(|b| b.m_fwd), mx(|b| b.m_live),
                 mx(|b| b.m_active));
-            let sub = buckets[end - 1].ceiling.min(pmax_subsigs);
+            // subsigs = max universe over THIS prod-band; prod cap = band's
+            // max prod (ascending => the band's last bucket ceiling).
+            let sub = mx(|b| b.m_univ).min(pmax_subsigs);
+            let prod_cap = buckets[end - 1].ceiling;
             // basis_pats the GADGET will use (assemble_ladder clamps
             // RungSpec.max_pats_in_trace to pmax). Derive perc from THIS so the
             // size_trace buffer (basis_pats*perc) matches the demand.
@@ -205,6 +220,7 @@ pub fn plan_rungs(universe: &[usize], fwd: &[usize], active: &[usize],
             RungSpec {
                 subsigs: sub,
                 perc_pats_expansion_rate: perc,
+                prod_pats_expansion: prod_cap,
                 avg_active_pats_per_subsig: avg,
                 max_unique_acc_pats: mx(|b| b.m_uniq),
                 max_acc_states: mx(|b| b.m_acc),
@@ -215,32 +231,24 @@ pub fn plan_rungs(universe: &[usize], fwd: &[usize], active: &[usize],
             specs[end - 1].clone()                          // legacy / top rung
         };
         // DEBUG USE 64400 (ZKR_PROBE_CAPS): per-rung member breakdown -- the
-        // universe range, chunk count, derived perc/avg_act, and WHICH member
-        // bucket (by universe) pins the max fwd/active that sets perc/avg_act.
-        // Reveals the universe<->fwd decoupling: a low-universe bucket with a
-        // high max_fwd is why a "bulk" rung gets a huge perc.
+        // prod (forward-queue) range that keys the band, chunk count, the
+        // subsigs (universe envelope), prod cap, and member-max fwd/active/cpu.
         if std::env::var("ZKR_PROBE_CAPS").is_ok() {
             let grp = &buckets[start..end];
             let cnt: usize = grp.iter().map(|b| b.count).sum();
-            let (mf_u, mf) = grp.iter().map(|b| (b.ceiling, b.m_fwd))
-                .max_by_key(|&(_, f)| f).unwrap_or((0, 0));
-            let (ma_u, ma) = grp.iter().map(|b| (b.ceiling, b.m_active))
-                .max_by_key(|&(_, a)| a).unwrap_or((0, 0));
-            // Q2 probe: peak CP-unique-states demand in this rung and the
-            // universe it occurs at. If max_cpu stays high at univ=0, the
-            // avalanche is CP-DFA-state-visits (keyword DFA), not perc.
-            let (mc_u, mc) = grp.iter().map(|b| (b.ceiling, b.m_cpu))
-                .max_by_key(|&(_, c)| c).unwrap_or((0, 0));
-            let u_lo = grp.first().map(|b| b.ceiling).unwrap_or(0);
-            let u_hi = grp.last().map(|b| b.ceiling).unwrap_or(0);
-            println!("DEBUG USE 64400.rung {}: univ=[{}..{}] chunks={} \
-                perc={} avg_act={} basis_pats={} cp_cap={} | max_fwd={}@univ{} \
-                max_active={}@univ{} max_cpu={}@univ{}",
-                rungs.len(), u_lo, u_hi, cnt,
+            let mf = grp.iter().map(|b| b.m_fwd).max().unwrap_or(0);
+            let ma = grp.iter().map(|b| b.m_active).max().unwrap_or(0);
+            let mc = grp.iter().map(|b| b.m_cpu).max().unwrap_or(0);
+            let p_lo = grp.first().map(|b| b.ceiling).unwrap_or(0);
+            let p_hi = grp.last().map(|b| b.ceiling).unwrap_or(0);
+            println!("DEBUG USE 64400.rung {}: prod=[{}..{}] chunks={} \
+                subsigs={} prod_cap={} perc={} avg_act={} basis_pats={} \
+                cp_cap={} | max_fwd={} max_active={} max_cpu={}",
+                rungs.len(), p_lo, p_hi, cnt,
+                spec.subsigs, spec.prod_pats_expansion,
                 spec.perc_pats_expansion_rate,
                 spec.avg_active_pats_per_subsig, spec.max_pats_in_trace,
-                spec.max_cp_unique_states,
-                mf, mf_u, ma, ma_u, mc, mc_u);
+                spec.max_cp_unique_states, mf, ma, mc);
         }
         rungs.push(spec);
         hist.push(buckets[start..end].iter().map(|b| b.count).sum());
@@ -255,9 +263,9 @@ mod tests {
 
     fn mk(ceils: &[usize], counts: &[usize]) -> Vec<Bucket> {
         ceils.iter().zip(counts).map(|(&c, &n)|
-            Bucket { ceiling: c, count: n, fwd: 0, active: 0, live: 0,
-                uniq: 0, acc: 0, pats: 0, cpu: 0,
-                m_fwd: 0, m_active: 0, m_live: 0,
+            Bucket { ceiling: c, count: n, univ: c, fwd: 0, active: 0,
+                live: 0, uniq: 0, acc: 0, pats: 0, cpu: 0,
+                m_univ: c, m_fwd: 0, m_active: 0, m_live: 0,
                 m_uniq: 0, m_acc: 0, m_pats: 0, m_cpu: 0 }).collect()
     }
     fn total_cost(b: &[Bucket], ends: &[usize], cost: &dyn Fn(usize) -> usize) -> usize {
@@ -285,12 +293,13 @@ mod tests {
         rec(0, k, n, &pc, cost)
     }
 
-    // plan_rungs over universe arrays, reusing `u` for the FSM/CP arrays (the
+    // plan_rungs ranked by prod; tests pass `u` as BOTH prod and universe
+    // (rank==subsigs envelope), reusing `u` for the FSM/CP arrays too (the
     // tests assert DP/envelope/clamp behavior, not structural-cap values).
     fn plan(u: &[usize], fwd: &[usize], a: &[usize], l: &[usize],
         bp: usize, seg: usize, ps: usize, pp: usize, pa: usize,
         k: usize, nb: usize) -> (Vec<RungSpec>, Vec<usize>) {
-        plan_rungs(u, fwd, a, l, u, u, u, u, bp, seg, ps, pp, pa, k, nb)
+        plan_rungs(u, u, fwd, a, l, u, u, u, u, bp, seg, ps, pp, pa, k, nb)
     }
 
     #[test]
@@ -388,7 +397,7 @@ mod tests {
         let u    = vec![10, 10, 500, 500, 9000, 9000];
         let pats = vec![9000, 50, 80, 80, 200, 200];
         let lo   = vec![0usize; 6];
-        let (r, _) = plan_rungs(&u, &lo, &lo, &lo, &lo, &lo, &pats, &lo,
+        let (r, _) = plan_rungs(&u, &u, &lo, &lo, &lo, &lo, &lo, &pats, &lo,
             700, 15872, 10000, 5000, 12, 3, 2048);
         assert_eq!(r.len(), 3);
         assert_eq!(r[1].max_pats_in_trace, 80,        // de-saturated mid rung

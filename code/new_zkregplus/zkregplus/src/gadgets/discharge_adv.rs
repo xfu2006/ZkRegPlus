@@ -376,6 +376,14 @@ pub struct DischargeAdvCapacity{
 	/// When true the gadget runs forward-only discharge with the
 	/// failed_subsigs accumulator; false = byte-identical legacy path.
 	pub b_aggressive: bool,
+
+	/// AGGRESSIVE-ONLY forward-queue capacity, INFERRED from the precise
+	/// forward StepFwdPrf size (container_rows), not basis_pats*perc. When
+	/// b_aggressive, vec_size() sizes the forward step queues from this
+	/// directly; basis_pats/perc are kept for FSM/non-aggressive sizing but
+	/// are NOT read here. 0 means subsigs==0 (empty forward queue); floored
+	/// to the 1-subsig dummy sentinel. Backward queue is unused aggressive.
+	pub prod_pats_expansion: usize,
 }
 
 /// Advice for the Discharge Subsig Gadget.
@@ -512,10 +520,23 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 		let size_pat = capacity.subsigs*capacity.avg_active_pats_per_subsig;
 		let compress_ratio = match q_type{
 			StepQueueType::ResLarge=> RES_LARGE_COST,
-			StepQueueType::ToAddDel => ADD_DEL_COST, 
-			StepQueueType::ResSmall=> RES_SMALL_COST, 
+			StepQueueType::ToAddDel => ADD_DEL_COST,
+			StepQueueType::ResSmall=> RES_SMALL_COST,
 		};
-		let size_trace =  capacity.max_nibble_len 
+		// Aggressive: size_trace comes straight from the inferred
+		// forward-queue cap prod_pats_expansion (basis_pats/perc not read).
+		// Still max() with size_pat (the subsig-pattern term this queue also
+		// holds); whichever binds drives the back-solve (avg_active vs prod).
+		if capacity.b_aggressive {
+			let mut st = capacity.max_nibble_len
+				* capacity.prod_pats_expansion
+				* compress_ratio / (10000 * 100 * 100);
+			if st % 2 == 1 { st += 1; }
+			let sp = if size_pat % 2 == 1 { size_pat + 1 } else { size_pat };
+			let res = if sp > st { sp } else { st };
+			return (res, sp, st);
+		}
+		let size_trace =  capacity.max_nibble_len
 			* capacity.basis_pats_in_trace
 			* compress_ratio
 			* capacity.perc_pats_expansion_rate
@@ -1340,6 +1361,12 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 				let new_val_active_pats = (( ((vec_encoded.len()+1) as f32)/(n as f32) * (self.capacity.avg_active_pats_per_subsig as f32)) as usize) + 1;
 				return Err(Error::CapErr(vec![(format!("dis_adv::avg_active_pats_per_subsig, b_igc: {}", self.b_igc), new_val_active_pats)]));
 			}else{
+				//aggressive: size_trace is prod-driven; bump prod (the
+				//inferred forward-queue cap), not perc.
+				if self.capacity.b_aggressive {
+					let new_prod = (( ((vec_encoded.len()+1) as f32)/(n as f32) * (self.capacity.prod_pats_expansion as f32)) as usize) + 1;
+					return Err(Error::CapErr(vec![(format!("dis_adv::prod_pats_expansion, StepQueue b_igc: {}", self.b_igc), new_prod)]));
+				}
 				//basis_pats_in_trace is fixed in fsm_adv (don't float it
 				//to avoid increasing cost in fsm_adv. Insead, increase
 				//perc_pats_expansion_rate.
@@ -1589,6 +1616,14 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 	/// return the estimated needed size of buf for to_container
 	pub fn vec_size(&self)->usize{
 		let compress_ratio = FWD_COST;
+		//aggressive: forward queue sized directly from the inferred
+		//prod_pats_expansion (basis_pats/perc not read).
+		if self.capacity.b_aggressive {
+			return self.capacity.prod_pats_expansion
+				* self.capacity.max_nibble_len
+				* compress_ratio
+				/ (10000 * 100 * 100);
+		}
 		let res = self.capacity.basis_pats_in_trace
 			* self.capacity.max_nibble_len
 			* self.capacity.perc_pats_expansion_rate
@@ -1677,6 +1712,15 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 		let n = self.vec_size();
 		println!("DEBUG USE 6901.8: StepFwdPrf: {}, b_igc: {} usage: {}", name, self.b_igc, (v2d[0].len() as f32)/(n as f32));
 		if n<v2d[0].len()+1{
+			//aggressive: back-solve prod_pats_expansion (rung-independent,
+			//no basis_pats in the denominator):
+			//  n = prod * max_nibble * FWD_COST / 1e8
+			//=> prod >= (len+1)*1e8 / (max_nibble*FWD_COST)
+			if self.capacity.b_aggressive {
+				let new_prod = (v2d[0].len()+1) * 10000 * 100 * 100
+					/ (self.capacity.max_nibble_len * FWD_COST).max(1) + 1;
+				return Err(Error::CapErr(vec![(format!("dis_adv::prod_pats_expansion, StepFwdPrf b_igc: {}", self.b_igc), new_prod)]));
+			}
 			//back-solve perc_pats_expansion_rate from new vec_size():
 			//  n = basis_pats * max_nibble * perc * FWD_COST / 1e8
 			//=> perc >= (len+1)*1e8 / (basis_pats*max_nibble*FWD_COST)
@@ -2146,12 +2190,19 @@ impl Capacity for DischargeAdvCapacity{
 		let other = r_other.as_any().downcast_ref::<DischargeAdvCapacity>()
 			.expect("downcast err"); 
 
+		//forward-queue term: aggressive governs it by prod_pats_expansion
+		//(perc decoupled); non-aggressive keeps the perc check byte-identical.
+		let fwd_q_ok = if self.b_aggressive {
+			self.prod_pats_expansion >= other.prod_pats_expansion
+		} else {
+			self.perc_pats_expansion_rate >= other.perc_pats_expansion_rate
+		};
 		self.max_nibble_len >= other.max_nibble_len &&
 		self.subsigs >= other.subsigs &&
 		self.universe_subsigs >= other.universe_subsigs &&
 		self.avg_active_pats_per_subsig >= other.avg_active_pats_per_subsig &&
 		self.basis_pats_in_trace >= other.basis_pats_in_trace &&
-		self.perc_pats_expansion_rate >= other.perc_pats_expansion_rate &&
+		fwd_q_ok &&
 		self.b_aggressive == other.b_aggressive
 
 	}
@@ -2167,6 +2218,7 @@ impl Capacity for DischargeAdvCapacity{
 			basis_pats_in_trace: self.basis_pats_in_trace,
 			perc_pats_expansion_rate: self.perc_pats_expansion_rate,
 			b_aggressive: self.b_aggressive,
+			prod_pats_expansion: self.prod_pats_expansion,
 		})
 	}
 
@@ -5235,6 +5287,7 @@ use utils::consts::{read_global_config, get_global_config};
 			basis_pats_in_trace: cap.basis_pats_in_trace,
 			perc_pats_expansion_rate: 100,
 			b_aggressive: false,
+			prod_pats_expansion: 0,
 		};
 
 		//2. create advice for word_extract_adv, fsm_adv, and discharge_adv
@@ -5408,7 +5461,8 @@ use utils::consts::{read_global_config, get_global_config};
 			subsigs: cap.subsigs, universe_subsigs: cap.subsigs,
 			avg_active_pats_per_subsig:2,
 			basis_pats_in_trace: cap.basis_pats_in_trace,
-			perc_pats_expansion_rate:600, b_aggressive:true };
+			perc_pats_expansion_rate:600, b_aggressive:true,
+			prod_pats_expansion: 2500*600 };
 		//word: "ab" before KEYWORD within the gap -> variant "ab" matches via
 		//the backward window; other variants run the backward query too.
 		let path = format!("{}/data/debug/sed/aggrdiscbwd/word.txt",
@@ -5521,7 +5575,8 @@ use utils::consts::{read_global_config, get_global_config};
 			subsigs: cap.subsigs, universe_subsigs: cap.subsigs,
 			avg_active_pats_per_subsig:2,
 			basis_pats_in_trace: cap.basis_pats_in_trace,
-			perc_pats_expansion_rate:600, b_aggressive:true };
+			perc_pats_expansion_rate:600, b_aggressive:true,
+			prod_pats_expansion: 2500*600 };
 		//word: "ab" before KEYWORD (backward) + "cd" after KEYWORD (forward).
 		let path = format!("{}/data/debug/sed/aggrmix/word.txt", proj_root());
 		write_to_file(&path, "abKEYWORDcd");
@@ -5582,7 +5637,8 @@ use utils::consts::{read_global_config, get_global_config};
 		let cap = DischargeAdvCapacity{ max_nibble_len:62, subsigs:6,
 			universe_subsigs:6,
 			avg_active_pats_per_subsig:1, basis_pats_in_trace:100,
-			perc_pats_expansion_rate:100, b_aggressive:true };
+			perc_pats_expansion_rate:100, b_aggressive:true,
+			prod_pats_expansion: 100*100 };
 		//acc_size = 6*10000/10000 = 6 (already even)
 		assert_eq!(FailedSubsigAcc::<Fr>::acc_size(&cap), 6);
 		//floor>=1: with perc 0 the size floors to 1 then even -> 2
@@ -5709,6 +5765,7 @@ use utils::consts::{read_global_config, get_global_config};
 			basis_pats_in_trace: 48*100,
 			perc_pats_expansion_rate: 132,
 			b_aggressive: false,
+			prod_pats_expansion: 0,
 		};
 		let b_igc = false;
 		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),
@@ -5920,6 +5977,7 @@ use utils::consts::{read_global_config, get_global_config};
 			basis_pats_in_trace: 48*100,
 			perc_pats_expansion_rate: 132,
 			b_aggressive: false,
+			prod_pats_expansion: 0,
 		};
 		let b_igc = false;
 		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),
