@@ -417,6 +417,7 @@ where C: CurveGroup<ScalarField=F>,
 	// per-rung FSM/CP structural demand (B2): aligned 1-1 with the chunks.
 	let (mut uniq, mut acc, mut pats, mut cpu) =
 		(vec![], vec![], vec![], vec![]);
+	let mut nseg_dbg: Vec<usize> = vec![];   // probe-only: per-chunk num_segs
 	for (wi, fdr) in infos.iter().zip(vdata.iter()) {
 		let cp = &fdr.chunk_peaks;
 		for s in 0..wi.failed_c_all_segs.len() {
@@ -437,9 +438,10 @@ where C: CurveGroup<ScalarField=F>,
 				cp.active_steps_per_chunk.get(s).copied().unwrap_or(0)});
 			live.push(if z {0} else {
 				cp.carried_live_per_chunk.get(s).copied().unwrap_or(0)});
-			// basis RATE (count*10000/word_nib) so per-rung caps are
-			// comparable across files; assemble_ladder ratio-scales P_max.
-			let wn = (cp.seg_size * wi.failed_c_all_segs.len()).max(1);
+			// basis cap unit = count*10000/seg_size = the gadget per-chunk
+			// back-solve (cp_mapper.rs:253, fsm_adv). seg_size = ONE chunk's
+			// nibbles, not the file (was *num_segs: caps num_segs x too small).
+			let wn = cp.seg_size.max(1);
 			let rate = |v: usize| v * 10000 / wn;
 			uniq.push(rate(cp.unique_acc_pats_per_chunk.get(s)
 				.copied().unwrap_or(0)));
@@ -449,7 +451,21 @@ where C: CurveGroup<ScalarField=F>,
 				.unwrap_or(0)));
 			cpu.push(rate(cp.cp_unique_states_per_chunk.get(s).copied()
 				.unwrap_or(0)));
+			nseg_dbg.push(wi.failed_c_all_segs.len());
 		}
+	}
+	if std::env::var("ZKR_PROBE_CAPS").is_ok() {
+		// argmax of cpu (new per-chunk unit). old (*num_segs) value at the
+		// same chunk = new / num_segs; print both to show the fix in one run.
+		let (mut ai, mut amax) = (0usize, 0usize);
+		for (i, &v) in cpu.iter().enumerate() {
+			if v > amax { amax = v; ai = i; }
+		}
+		let ns = nseg_dbg.get(ai).copied().unwrap_or(1).max(1);
+		let mx = |v: &Vec<usize>| v.iter().copied().max().unwrap_or(0);
+		println!("DEBUG USE 64500.1: NEW per-chunk cpu cap={} (OLD *num_segs \
+			would be {} at this chunk, num_segs={}); maxes uniq={} acc={} \
+			pats={}", amax, amax / ns, ns, mx(&uniq), mx(&acc), mx(&pats));
 	}
 	if universe.is_empty() {
 		return Err("determine_config_aggr: no chunks in sample".into());
