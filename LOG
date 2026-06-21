@@ -29449,7 +29449,15 @@ Goal 1. fix the estimate alg again for the full set
 		278k, 559k, 29M, 28M for 4 circs
 	[g] try to use forward-queue size (prod_basis_pats_perc_expansion)
 		directly to group
-	[h]
+	[h] new algorithm: full_dlp_sample()
+	---------
+		job 0] LOG3: -- --  PERF 1002 circ 1, r1cs cols: 327398, rows: 269463
+[job 0] LOG3: -- --  PERF 1002 circ 2, r1cs cols: 427086, rows: 345971
+[job 0] LOG3: -- --  PERF 1002 circ 3, r1cs cols: 3574023, rows: 2623585
+[job 0] LOG3: -- --  PERF 1002 circ 4, r1cs cols: 19246874, rows: 13955872
+[job 0] LOG3: -- --  PERF 1002 circ 1, r1cs cols: 183775, rows: 185119
+[job 0] LOG1:  full_dlp_sample ladder: 4 rungs, hist=[1120, 334, 59, 7]
+	---------------
 Goal 2. writing 7.3
 	[a] scheme and move folder
 	[b] fix issues one by one
