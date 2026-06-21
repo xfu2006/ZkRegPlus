@@ -29428,3 +29428,11 @@ Goal 1. check the snark proof generation of full_dlp_sample()
 
 Goal 2. start the full_dlp() 8-jobs first and see if it's ok
 	[a] fix the .gitignore counted as email problem 
+
+Goal 3. still fail on estimate
+	[a] found the problem, should put a guard to estimate the size of
+			perc_expansion_rate, if CP discharges all put it as 0
+		also 2 sets of automata related cp properties
+	[b] fixed the error capacity estimate for CP stage, but still
+		on cause of pushing chunks from circ0 to circ3
+	[c] fix working!
