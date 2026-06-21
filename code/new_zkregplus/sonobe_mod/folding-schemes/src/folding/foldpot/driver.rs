@@ -1996,8 +1996,16 @@ where
 
 				//2.3 generate the advice and statement
 				//need to build the statement to fill the m_map
+				//aggressive forward halo: feed the successor prefix so this
+				//pass back-solves the same caps the per-seg router validated
+				//(else no-halo boundary pats inflate basis_* past the rung).
+				let m_halo = lock_unwrap!(circ.get_mapper())
+					.get_capacity().halo_nibbles();
+				let wi_owned = Self::with_chunk_halo(word_info,
+					&remaining, m_halo);
+				let wi_ref = wi_owned.as_ref().unwrap_or(word_info);
 				let res = lock_unwrap!(circ.get_mapper())
-					.gen_nd_advice(&frag, word_info, prev_adv, subseg_id - 1, job_id);
+					.gen_nd_advice(&frag, wi_ref, prev_adv, subseg_id - 1, job_id);
 				assert!(res.is_ok(), "\n\n===== **** =====\nUNABLE to generate advice for word: {}, segment_id: {}, ERROR: {:#?}\n==============\n", word_fname, subseg_id, res); 
 				let cur_adv = res.unwrap();
 
