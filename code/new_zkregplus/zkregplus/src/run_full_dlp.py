@@ -3,11 +3,14 @@
 pack all artifacts. Repo root resolved from this file, so cwd is free.
 
 Usage:
-  python3 run_full_dlp.py [runcfg] [--jobs N] [--reset] [--dry-run]
+  python3 run_full_dlp.py [runcfg] [--jobs N] [--reset] [--probe-reset]
+                          [--dry-run]
     runcfg     : path or name under data/paper_data/dlp/cfg/config/
                  (default runcfg_full.json)
     --jobs N   : override num_jobs in the runcfg for this run
     --reset    : override reset=true (recompute split/discharge/ladder)
+    --probe-reset : ZKR_PROBE_64600=1 -- per-file 64600.1 old cross-chunk
+                  vs new chunk-local-reset perc estimate (aggressive)
     --dry-run  : print resolved paths + command, do not run cargo.
 
 Env:  ZKR_DC_THREADS  determine_config probe threads (default 8)
@@ -65,6 +68,7 @@ LOGS_DIR = os.path.join(REPO, "data/cache/logs")           # log_job_*.txt
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
 DRY = "--dry-run" in sys.argv
 RESET = "--reset" in sys.argv
+PROBE_RESET = "--probe-reset" in sys.argv     # 64600 reset-vs-cross perc est
 JOBS = None
 for a in sys.argv[1:]:
     if a.startswith("--jobs="):
@@ -96,6 +100,8 @@ env = dict(os.environ)
 env.setdefault("RUSTFLAGS", "-C link-args=-fuse-ld=lld -Awarnings")
 env["ZKR_DLP_RUNCFG"] = EFF
 env.setdefault("ZKR_DC_THREADS", "8")
+if PROBE_RESET:
+    env["ZKR_PROBE_64600"] = "1"   # per-file old cross-chunk vs new reset est
 
 time_prefix = ["/usr/bin/time", "-v"] if os.path.exists("/usr/bin/time") else []
 cmd = time_prefix + ["cargo", "test", "-p", "zkregplus", "--release", "--",
@@ -157,7 +163,8 @@ with open(SUM, "w") as s:
     for l in grep(["PERF WORKFLOW", "PROGRESS step", "PROGRESS fold",
                    "ladder:", "PERF 1002", "cs1e", "KEYS info",
                    "Maximum resident set size", "Killed",
-                   "Out of memory", "panicked", "test result"]):
+                   "Out of memory", "panicked", "test result",
+                   "64600.1", "Job", "CapErr"]):
         s.write(l + "\n")
     s.write("\n-- per-circuit fold step cost --\n")
     for c in sorted(agg):

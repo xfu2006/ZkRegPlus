@@ -1568,6 +1568,85 @@ impl ClamavSig{
 		cells
 	}
 
+	/// Aggressive chunk-local variant of eval_pm_bounds_chunked. Each chunk
+	/// re-anchors the subsig (gadget reseed), so every fwd-prf item is charged
+	/// to the chunk of its ANCHOR (origin) and the queue does not carry across
+	/// chunks; range-bounded reach (<= DB span) keeps a chain within its
+	/// chunk+halo. Mirrors the chunk-local store fed to est_fwd_rows_one.
+	fn eval_pm_bounds_chunked_reset(&self,
+		pat: &[(String,(usize,usize))], is_backward: bool, b_igc: bool,
+		hs:&HashMap<String,Vec<usize>>, hs_igc:&HashMap<String,Vec<usize>>,
+		seg_size: usize)
+		->Vec<(usize,usize,usize)>{
+		let mut cells: Vec<(usize,usize,usize)> = vec![];
+		if seg_size==0 || pat.is_empty() { return cells; }
+		let getpos = |w: &String| -> Vec<usize> {
+			if b_igc { hs_igc.get(w).map_or(vec![], |v| v.to_vec()) }
+			else { hs.get(w).map_or(vec![], |v| v.to_vec()) }
+		};
+		let win = |x: usize, rg: (usize,usize), len_term: usize, back: bool|
+			-> (usize,usize) {
+			if !back {
+				let mn = if rg.0==usize::MAX {usize::MAX} else {x+rg.0+len_term};
+				let mx = if rg.1==usize::MAX {usize::MAX} else {x+rg.1+len_term};
+				(mn.min(RANGE_MAX), mx.min(RANGE_MAX))
+			} else {
+				(x.saturating_sub(rg.1.saturating_add(len_term)),
+				 x.saturating_sub(rg.0.saturating_add(len_term)))
+			}
+		};
+		// arr carries (pos, origin_chunk); all counts charged to origin.
+		let mut arr: Vec<(usize,usize)> = vec![];
+		let mut prev_len = 0usize;
+		for id in 0..pat.len(){
+			let word = &pat[id].0; let rg = pat[id].1;
+			let back = is_backward && id>=1;
+			let len_term = if back {prev_len} else {word.len()};
+			let mut dst = getpos(word); dst.sort();
+			let mut next: Vec<(usize,usize)> = vec![];
+			let mut seen: HashSet<(usize,usize)> = HashSet::new();
+			let mut touched: HashSet<usize> = HashSet::new();
+			if id==0 {
+				// anchor: seed every in-window occurrence; origin = own chunk.
+				let (lo,hi) = win(0, rg, len_term, false);
+				let l = dst.partition_point(|&d| d < lo);
+				let r = dst.partition_point(|&d| d <= hi);
+				for &d in &dst[l..r]{
+					let oc = d / seg_size;
+					while cells.len()<=oc { cells.push((0,0,0)); }
+					cells[oc].0 += 2;          //+2 boundary rows per item
+					touched.insert(oc);
+					if seen.insert((d,oc)) { next.push((d,oc)); }
+				}
+			} else {
+				for &(x,oc) in &arr{
+					while cells.len()<=oc { cells.push((0,0,0)); }
+					cells[oc].0 += 2;          //+2 per src item
+					let (lo,hi) = win(x, rg, len_term, back);
+					if lo>hi { continue; }
+					let l = dst.partition_point(|&d| d < lo);
+					let r = dst.partition_point(|&d| d <= hi);
+					for &d in &dst[l..r]{
+						cells[oc].0 += 1;      //windowed transition
+						touched.insert(oc);
+						if seen.insert((d,oc)) { next.push((d,oc)); }
+					}
+				}
+			}
+			for c in touched{
+				while cells.len()<=c { cells.push((0,0,0)); }
+				cells[c].1 += 1;
+			}
+			next.sort(); arr = next;
+			prev_len = word.len();
+		}
+		for &(_loc,oc) in &arr{
+			while cells.len()<=oc { cells.push((0,0,0)); }
+			cells[oc].2 += 1;
+		}
+		cells
+	}
+
 	/// collect bagwords from pmreg (in case it uses different min-len requirement)
 	pub fn collect_bagwords_from_pmreg(&self, b_ignore_case: bool) -> HashSet<String>{
 		let mut hs_res = HashSet::<String>::new();
@@ -3671,8 +3750,15 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 					.map_or(false,|o| o.b_ignore_case);
 				let is_bwd = s.vec_subsig_anchor_dir.get(sid)
 					.map_or(false,|d| *d==1);
-				let cells = s.eval_pm_bounds_chunked(pb, is_bwd, igc,
-					&hs_occ, &hs_occ_igc, seg_size, reset_per_chunk);
+				// Aggressive: chunk-local reseed (gadget-faithful perc);
+				// general: cross-chunk carry. Non-aggressive byte-identical.
+				let cells = if reset_per_chunk {
+					s.eval_pm_bounds_chunked_reset(pb, is_bwd, igc,
+						&hs_occ, &hs_occ_igc, seg_size)
+				} else {
+					s.eval_pm_bounds_chunked(pb, is_bwd, igc,
+						&hs_occ, &hs_occ_igc, seg_size, false)
+				};
 				let acc = if is_bwd {&mut acc_b} else {&mut acc_f};
 				for (c,(f,a,l)) in cells.into_iter().enumerate(){
 					while acc.len()<=c { acc.push((0,0,0)); }
@@ -3695,6 +3781,39 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		_et.stop();
 		log(0, LOG1, &format!(
 			"ESTIMATE: chunked SED propagation (this file): {} ms", _et.ms()));
+		// 64600: reset (new, used for sizing) vs cross-chunk (old) per-chunk
+		// max fwd-prf entries; confirms the reseed closes the est<real perc
+		// gap on server. Probe-only (recomputes the old cross-chunk acc).
+		if std::env::var("ZKR_PROBE_64600").is_ok() && reset_per_chunk {
+			let mut o_f: Vec<usize> = vec![];
+			let mut o_b: Vec<usize> = vec![];
+			for s in v_sigs.iter().filter(|s|
+				set_sigs_crit.contains(&s.name)
+				&& !set_sigs_pm.contains(&s.name)){
+				for sid in 0..s.vec_subsig_pm_bounds.len(){
+					let pb = &s.vec_subsig_pm_bounds[sid];
+					if pb.is_empty() { continue; }
+					let igc = s.vec_subsig_obj.get(sid)
+						.map_or(false,|o| o.b_ignore_case);
+					let is_bwd = s.vec_subsig_anchor_dir.get(sid)
+						.map_or(false,|d| *d==1);
+					let cl = s.eval_pm_bounds_chunked(pb, is_bwd, igc,
+						&hs_occ, &hs_occ_igc, seg_size, false);
+					let a = if is_bwd {&mut o_b} else {&mut o_f};
+					for (c,(f,_,_)) in cl.into_iter().enumerate(){
+						while a.len()<=c { a.push(0); }
+						a[c]+=f;
+					}
+				}
+			}
+			let omax = (0..o_f.len().max(o_b.len())).map(|c|
+				o_f.get(c).copied().unwrap_or(0)
+				.max(o_b.get(c).copied().unwrap_or(0)))
+				.max().unwrap_or(0);
+			log(0, LOG1, &format!("DEBUG USE 64600.1: {} per-chunk max fwd \
+				OLD cross-chunk={} NEW reset={}", fname, omax,
+				max_fwd_entries_per_chunk));
+		}
 	}
 	// CP cap demand: distinct crit-DFA states per chunk (cs/igc max). Sizes
 	// cp_basis_unique_states (CP pack imm_buf). Estimator-pass only.
