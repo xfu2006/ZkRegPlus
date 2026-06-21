@@ -29441,8 +29441,12 @@ Goal 3. still fail on estimate
 Sunday 06/21/2026
 Goal 1. fix the estimate alg again for the full set
 	[a] another server run
-	[b] 
+	[b] found another perc error 
+	[c] test on server
 Goal 2. writing 7.3
 	[a] scheme and move folder
 	[b] fix issues one by one
 	[c] paragraph 3 and 4.
+	[d] plan writing function for collect data
+	[e] code approval
+	[f] testing -> data generation

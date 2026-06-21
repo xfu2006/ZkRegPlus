@@ -11,8 +11,8 @@ Usage:
     --reset    : override reset=true (recompute split/discharge/ladder)
     --probe-reset : perc probes (aggressive) -- 64600.1 per-file old
                   cross-chunk vs new chunk-local-reset estimate, and
-                  64601.1 whether the perc-ratio binding chunk is a
-                  selected candidate (sets the top-rung perc)
+                  64601.2 the exact per-rung StepFwdPrf perc demand
+                  (route+back-solve) applied to the ladder
     --dry-run  : print resolved paths + command, do not run cargo.
 
 Env:  ZKR_DC_THREADS  determine_config probe threads (default 8)
@@ -104,7 +104,7 @@ env["ZKR_DLP_RUNCFG"] = EFF
 env.setdefault("ZKR_DC_THREADS", "8")
 if PROBE_RESET:
     env["ZKR_PROBE_64600"] = "1"   # per-file old cross-chunk vs new reset est
-    env["ZKR_PROBE_64601"] = "1"   # perc-ratio candidate selected? (top rung)
+    env["ZKR_PROBE_64601"] = "1"   # exact per-rung perc demand (64601.2)
 
 time_prefix = ["/usr/bin/time", "-v"] if os.path.exists("/usr/bin/time") else []
 cmd = time_prefix + ["cargo", "test", "-p", "zkregplus", "--release", "--",
@@ -167,7 +167,7 @@ with open(SUM, "w") as s:
                    "ladder:", "PERF 1002", "cs1e", "KEYS info",
                    "Maximum resident set size", "Killed",
                    "Out of memory", "panicked", "test result",
-                   "64600.1", "64601.1", "Job", "CapErr"]):
+                   "64600.1", "64601.2", "Job", "CapErr"]):
         s.write(l + "\n")
     s.write("\n-- per-circuit fold step cost --\n")
     for c in sorted(agg):

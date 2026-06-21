@@ -14,7 +14,9 @@
 #RUST_BACKTRACE=1 cargo test --lib --release -- test_full_debug_main --show-output --nocapture
 #RUST_BACKTRACE=1 cargo test --lib --release -- test_small_debug_main --show-output --nocapture
 
-RUST_BACKTRACE=1 cargo test --lib --release -- test_zkreg_main --show-output --nocapture
+#RUST_BACKTRACE=1 cargo test --lib --release -- test_zkreg_main --show-output --nocapture
+# collect Figure-9 tier-discharge stats -> dump for data/scripts/eval generator
+RUST_BACKTRACE=1 cargo test --lib --release -- test_collect_assess_tier_data --show-output --nocapture 2>&1 | tee /tmp/eval_effective.txt
 # discharge FULL clean Enron intl list (~515K) -> full/pass/fail lists
 #RUST_BACKTRACE=1 cargo test --lib --release -- collect_enron_list --nocapture 2>&1 | tee /tmp/collect_enron.log
 #RUST_BACKTRACE=1 cargo test --lib -- test_zkreg_main --show-output --nocapture

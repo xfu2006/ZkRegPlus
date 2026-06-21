@@ -548,6 +548,45 @@ where C: CurveGroup<ScalarField=F>,
 		r.perc_pats_expansion_rate_igc = r.perc_pats_expansion_rate_igc
 			.max(pmin(r.basis_pats_in_trace_igc));
 	}
+	// Exact per-rung StepFwdPrf perc. Route each chunk to its lowest-fitting
+	// rung (mirrors the per-seg router: every NON-perc cap fits), then charge
+	// the gadget's own back-solve (discharge_adv.rs:1684)
+	//   perc = (fwd+1)*1e8 / (max_nib * basis_pats * FWD_COST) + 1
+	// to that rung; per-rung max sets the perc. fwd is the proven-exact
+	// container_rows, so this reproduces the fold demand exactly and replaces
+	// the proxy/probe estimate that under-sized the top rung. Perc is excluded
+	// from the routing test (it is what we are sizing -> self-consistent).
+	{
+		let n_rung = ladder.len();
+		let mut perc_need = vec![0usize; n_rung];
+		for i in 0..universe.len() {
+			let mut r = n_rung.saturating_sub(1);
+			for (j, rg) in ladder.iter().enumerate() {
+				if universe[i] < rg.subsigs
+					&& pats[i] <= rg.basis_pats_in_trace
+					&& uniq[i] <= rg.basis_unique_states
+					&& acc[i] <= rg.basis_acc_states
+					&& cpu[i] <= rg.cp_basis_unique_states {
+					r = j; break;
+				}
+			}
+			let rg = &ladder[r];
+			let max_nib = (rg.max_word_len * legs).max(1);
+			let demand = (fwd[i] + 1) * 100_000_000
+				/ (max_nib * rg.basis_pats_in_trace.max(1)
+					* fwd_cost).max(1) + 1;
+			if demand > perc_need[r] { perc_need[r] = demand; }
+		}
+		for r in 0..n_rung {
+			if perc_need[r] > ladder[r].perc_pats_expansion_rate {
+				ladder[r].perc_pats_expansion_rate = perc_need[r];
+			}
+		}
+		if std::env::var("ZKR_PROBE_64601").is_ok() {
+			log(0, LOG1, &format!("DEBUG USE 64601.2: exact per-rung perc \
+				need={:?} (applied to ladder)", perc_need));
+		}
+	}
 	log(0, LOG1, &format!("determine_config_aggr: {} rungs, hist={:?}, \
 		P_max.subsigs={}, perc={}, avg_active={}", ladder.len(), hist,
 		p_max.subsigs, p_max.perc_pats_expansion_rate,
@@ -787,40 +826,12 @@ pub(crate) fn select_candidates_from_peaks(
 		|c: &ChunkPeaks| c.max_unique_states,
 		|c: &ChunkPeaks| c.max_acc_states,
 		|c: &ChunkPeaks| c.max_cp_unique_states,
-		//perc-demand proxy: max over chunks of fwd_entries/basis_pats (the
-		//StepFwdPrf back-solve). Surfaces low-basis_pats high-fwd fan-out
-		//chunks the raw-fwd/raw-pats proxies miss -- these set the top rung
-		//perc. 0 when per-chunk vecs are absent (non-estimator peaks).
-		|c: &ChunkPeaks| (0..c.fwd_entries_per_chunk.len()).map(|i| {
-			let f = c.fwd_entries_per_chunk[i];
-			let bp = c.pats_in_trace_per_chunk.get(i)
-				.copied().unwrap_or(0).max(1);
-			f.saturating_mul(10000) / bp
-		}).max().unwrap_or(0),
 	];
 	let mut set = std::collections::BTreeSet::<usize>::new();
 	for proj in proxies {
 		let mut idx: Vec<usize> = (0..n).collect();
 		idx.sort_by_key(|&i| std::cmp::Reverse(proj(&peaks[i])));
 		for &i in idx.iter().take(k) { set.insert(i); }
-	}
-	if std::env::var("ZKR_PROBE_64601").is_ok() {
-		// confirm the perc proxy surfaces the binding chunk: report the
-		// global-max fwd/basis_pats file, its raw fwd/pats, and whether it
-		// made the candidate set (selected=true -> probe can size the top rung).
-		let ratio = |c: &ChunkPeaks| (0..c.fwd_entries_per_chunk.len())
-			.map(|i| {
-				let f = c.fwd_entries_per_chunk[i];
-				let bp = c.pats_in_trace_per_chunk.get(i)
-					.copied().unwrap_or(0).max(1);
-				f.saturating_mul(10000) / bp
-			}).max().unwrap_or(0);
-		let (mut bi, mut bv) = (0usize, 0usize);
-		for i in 0..n { let v = ratio(&peaks[i]); if v>bv { bv=v; bi=i; } }
-		log(0, LOG1, &format!("DEBUG USE 64601.1: perc-ratio argmax file={} \
-			ratio={} (fwd={} pats={}); selected={}", bi, bv,
-			peaks[bi].max_fwd_entries_per_chunk,
-			peaks[bi].max_pats_in_trace, set.contains(&bi)));
 	}
 	set.into_iter().collect()
 }
@@ -3967,28 +3978,6 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			"k=2 needs top-2 missing: {:?}", c2);
 	}
 
-	/// The perc-demand proxy must surface a low-basis_pats high-fwd chunk that
-	/// every raw-magnitude proxy misses (the StepFwdPrf top-rung binder).
-	#[test]
-	fn test_perc_ratio_proxy_selects_low_pats(){
-		use data_processor::discharge_proof::ChunkPeaks;
-		let mk = |fwd: usize, pats: usize| {
-			let mut c = ChunkPeaks::default();
-			c.max_fwd_entries_per_chunk = fwd;
-			c.max_pats_in_trace = pats;
-			c.fwd_entries_per_chunk = vec![fwd];
-			c.pats_in_trace_per_chunk = vec![pats];
-			c
-		};
-		// W,W' max raw fwd (high pats -> low perc); C has lower fwd but tiny
-		// pats -> highest perc demand (fwd/pats). With k=1 the raw-fwd proxy
-		// picks the W's; the perc proxy must still pull in C (file 2).
-		let peaks = vec![mk(500,250), mk(480,240), mk(300,15)];
-		let c = super::select_candidates_from_peaks(&peaks, 1);
-		assert!(c.contains(&2),
-			"perc-binding low-pats file 2 not selected: {:?}", c);
-	}
-
 	/// One-off: aggressive NEEDS scan over the scan_file list. Dump
 	/// "maxNEEDS<TAB>foldable<TAB>fpath" sorted desc so the sample's
 	/// forced expensive file (and foldable peers) can be picked. Cached.
@@ -4405,6 +4394,137 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			false);
 		utils::logger::log_perf(0, l,
 			&"PERF WORKFLOW Step 6 time".to_string(), &mut gt);
+	}
+
+	/// Build/load a dataset DB and quick-discharge its corpus (NON-aggressive),
+	/// returning the per-file records + the ruleset size. Sets only the two
+	/// globals that affect classification (range2_bit; aggressive OFF); the DB
+	/// is loaded from its cache, which already encodes its build params.
+	fn discharge_dataset(
+		sig_file: &str, dfa_file: &str, ised_file: &str, ised_igc_file: &str,
+		cache_dir: &str, scan_paths: &[String],
+		range2_bit: usize, max_word_len: usize,
+		b_read_cache: bool, b_write_cache: bool,
+	) -> (Vec<data_processor::discharge_proof::FailDischargeRecord>, usize) {
+		use rayon::prelude::*;
+		get_global_config().range2_bit = range2_bit;
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = false;
+		let cfg = data_processor::clamav::default_clamav_cfg();
+		let proot = utils::os::proj_root();
+		let mut vlog = vec![];
+		let db = data_processor::clam_db::ClamavDB::<Fr>::build_or_load(
+			&cfg, sig_file, dfa_file, ised_file, ised_igc_file,
+			&mut vlog, cache_dir, b_read_cache, b_write_cache)
+			.expect("build/load db");
+		let total_sigs = db.vec_sigs.len();
+		let recs: Vec<_> = scan_paths.par_iter().map(|fp| {
+			let nib = utils::os::read_nibbles(&format!("{}/{}", proot, fp));
+			let (fdr, _wi) =
+				data_processor::clamav::quick_discharge_file_by_crit_bag_pm(
+					fp, &nib, &db.vec_sigs, &db.vec_sigs_no_critical_pat,
+					&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
+					&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
+					&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
+					&db.sig_to_id, max_word_len, max_word_len);
+			fdr
+		}).collect();
+		(recs, total_sigs)
+	}
+
+	/// Print one tier block: aggregate pair shares + up to 3 sample records.
+	/// cp = total_sigs-|crit|, sde = |crit|-|pm|, dfa = |pm|-|all_dfa|,
+	/// fail = |all_dfa| (summed over files). total_pairs = total_sigs*#files.
+	fn report_tier_block(
+		label: &str,
+		recs: &[data_processor::discharge_proof::FailDischargeRecord],
+		total_sigs: usize,
+	) {
+		if recs.is_empty() { return; }
+		let n = recs.len();
+		let (mut cp, mut sde, mut dfa, mut fail) = (0i64, 0i64, 0i64, 0i64);
+		for r in recs {
+			let (crit, pm, adfa) = (r.crit.len() as i64,
+				r.pm.len() as i64, r.all_dfa.len() as i64);
+			cp += total_sigs as i64 - crit;
+			sde += crit - pm;
+			dfa += pm - adfa;
+			fail += adfa;
+		}
+		let total = total_sigs as i64 * n as i64;
+		let pct = |x: i64| if total > 0 { 100.0 * x as f64 / total as f64 }
+			else { 0.0 };
+		println!("=== {} ===", label);
+		println!("total_sigs: {}  files: {}  total_pairs: {}",
+			total_sigs, n, total);
+		println!("cp: {} ({:.4}%)  sde: {} ({:.4}%)  dfa: {} ({:.4}%)  \
+fail: {} ({:.4}%)",
+			cp, pct(cp), sde, pct(sde), dfa, pct(dfa), fail, pct(fail));
+		for (i, r) in recs.iter().take(3).enumerate() {
+			println!("sample {}: fname: {}  flen: {}  |crit|: {}  |bag|: {}  \
+|pm|: {}  |all_dfa|: {}",
+				i + 1, r.fname, r.flen,
+				r.crit.len(), r.bag.len(), r.pm.len(), r.all_dfa.len());
+			println!("  record: {:?}", r);
+		}
+		println!();
+	}
+
+	/// Collect Figure-9 data. (a) per-dataset tier shares for Mal/Dna/Dlp;
+	/// (b) Mal stratified by file size (flen = floor(log2 bytes)+1 bucket).
+	/// Non-aggressive for all three; Dlp = full ~505K list (from .tgz).
+	pub fn collect_assess_tier_data() {
+		utils::os::print_computer_config(Some("collect_assess_tier_data"));
+
+		// -------- Figure 9(a) --------
+		let mal_scan: Vec<String> = (0..8)
+			.flat_map(|i| read_path_list(
+				&format!("data/debug/full_clamav/config/binexec_p{}.dat", i)))
+			.collect();
+		let (mal, mal_sigs) = discharge_dataset(
+			"data/debug/full_clamav/config/main.dat",
+			"data/debug/full_clamav/config/main_dfa.dat",
+			"data/debug/full_clamav/config/needs_ised.dat",
+			"data/debug/full_clamav/config/needs_ised_igc.dat",
+			"clamav_full", &mal_scan, 26, 512 * 8, false, true);
+		report_tier_block("Data for Mal", &mal, mal_sigs);
+
+		let dna_scan = read_path_list("data/paper_data/dna/config/binexec.dat");
+		let (dna, dna_sigs) = discharge_dataset(
+			"data/paper_data/dna/config/main.dat",
+			"data/paper_data/dna/config/main_dfa.dat",
+			"data/paper_data/dna/config/needs_ised.dat",
+			"data/paper_data/dna/config/needs_ised_igc.dat",
+			"dna_data", &dna_scan, 27, 512 * 8, true, false);
+		report_tier_block("Data for Dna", &dna, dna_sigs);
+
+		let dlp_scan = read_path_list(
+			"data/paper_data/dlp/cfg/jobs/final_enron_list.txt.tgz");
+		let (dlp, dlp_sigs) = discharge_dataset(
+			"data/paper_data/dlp/cfg/regex_pat/main_data_dlp_internationl.dat",
+			"data/paper_data/dlp/cfg/regex_pat/main_dfa.dat",
+			"data/paper_data/dlp/cfg/regex_pat/needs_ised.dat",
+			"data/paper_data/dlp/cfg/regex_pat/needs_ised_igc.dat",
+			"dlp_corpus_aggr", &dlp_scan, 25, 64, true, false);
+		report_tier_block("Data for Dlp", &dlp, dlp_sigs);
+
+		// -------- Figure 9(b): Mal by file size --------
+		println!("######## Filesize data for Mal ########");
+		let mut by_flen: std::collections::BTreeMap<usize, Vec<_>> =
+			std::collections::BTreeMap::new();
+		for r in &mal { by_flen.entry(r.flen).or_default().push(r.clone()); }
+		for (flen, recs) in &by_flen {
+			let lo = if *flen == 0 { 0 } else { 1usize << (flen - 1) };
+			let hi = 1usize << flen;
+			report_tier_block(
+				&format!("Filesize data for Mal -- flen={} ({}..{} bytes)",
+					flen, lo, hi),
+				recs, mal_sigs);
+		}
+	}
+
+	#[test]
+	pub fn test_collect_assess_tier_data() {
+		collect_assess_tier_data();
 	}
 
 	/// Experiment: is the accept-vs-fold discharge gap the (max_word_len,
