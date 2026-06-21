@@ -514,6 +514,24 @@ where C: CurveGroup<ScalarField=F>,
 		log(0, LOG1, &format!("peel rung0' p{}: bulk={} tail={} (FSM-tail \
 			bumps to rung0)", peel_pct, bulk, tail));
 	}
+	// perc floor: preprocess builds a 1-subsig dummy sentinel whose +2N
+	// boundary rows need a minimum perc (StepFwdPrf vec_size check,
+	// discharge_adv.rs:1679). Q1's universe==0 gate drives perc to 1, below
+	// that minimum -> dummy-advice CapErr panic at preprocess. Floor each
+	// rung's perc (cs+igc) via the gadget's own back-solve
+	// (discharge_adv.rs:1683-1686), dummy_len=2 with a generous (len+1)=16
+	// margin -- still tiny vs a real perc, no-op for non-universe-0 rungs.
+	let legs = crate::gadgets::word_extract::LEGS;
+	let fwd_cost = crate::gadgets::discharge_adv::FWD_COST;
+	for r in ladder.iter_mut() {
+		let max_nib = (r.max_word_len * legs).max(1);
+		let pmin = |bp: usize| 16 * 100_000_000
+			/ (max_nib * bp.max(1) * fwd_cost).max(1) + 1;
+		r.perc_pats_expansion_rate = r.perc_pats_expansion_rate
+			.max(pmin(r.basis_pats_in_trace));
+		r.perc_pats_expansion_rate_igc = r.perc_pats_expansion_rate_igc
+			.max(pmin(r.basis_pats_in_trace_igc));
+	}
 	log(0, LOG1, &format!("determine_config_aggr: {} rungs, hist={:?}, \
 		P_max.subsigs={}, perc={}, avg_active={}", ladder.len(), hist,
 		p_max.subsigs, p_max.perc_pats_expansion_rate,
