@@ -2332,9 +2332,6 @@ where
 			}//end for while remaining word 
 			word_id += 1;
 			log_perf(job_id, log_level+2, &format!("PERF 1008: {} - Pass 3. END prove steps for word_id: {} of {}, fname: {}, word_len: {}. ", phase_name, word_id, num_words, word_fname, format_bytes(word.len()*31)), &mut gtw_word0);
-			//===== REMOVE LATER 900001.4 =====
-			rss_probe("4", "after_P1P3_END", job_id, word_id);
-			//===== END REMOVE LATER 900001.4 =====
 		} //for each word
 		assert!(num_steps==vea.len(), "num_steps: {}, vea.len: {}", num_steps, vea.len());
         assert_eq!(C1::ScalarField::from(num_steps as u32), nova.i);

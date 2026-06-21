@@ -3355,10 +3355,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		//1. converts witness from extrenal_inputs to structured version
 		let (mut nc, mut nv) = (cs.num_constraints(), cs.num_witness_variables());
 		let mut gt = GTimer::new();
-		emit_stdout(format!(
-			"DEBUG USE 73111.0: gen_step_cs ENTER job={} cs={} vars={}",
-			self.job_id, cs.num_constraints(),
-			cs.num_witness_variables()));
 		// 2026-05-16: probe 77317.7 — entry of
 		// generate_step_constraints. word_id/subseg_id are not yet
 		// extracted at this point (si is built below), so we emit
@@ -3531,11 +3527,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		let v_inv_lzero = gen_vec_inverse(&vec_left);
 		assert!(v_inv_lzero.len()==self.stmt_config.input_size);
 		for i in 0..self.stmt_config.input_size{
-			if i % 1_000_000 == 0 {
-				emit_stdout(format!(
-					"DEBUG USE 73111.3: inp_loop job={} i={}/{}",
-					self.job_id, i, self.stmt_config.input_size));
-			}
 			//simulate the gen_witness:
 			//sum_inp = if b_first || inp_left.is_zero() {sum_inp}
 			//else{ sum_inp * r + si.inp_buf[i] };
@@ -3557,11 +3548,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		let v_inv_lzero = gen_vec_inverse(&vec_left);
 		assert!(v_inv_lzero.len()==self.stmt_config.output_size);
 		for i in 0..self.stmt_config.output_size{
-			if i % 1_000_000 == 0 {
-				emit_stdout(format!(
-					"DEBUG USE 73111.4: oup_loop job={} i={}/{}",
-					self.job_id, i, self.stmt_config.output_size));
-			}
 			//sum_oup = if b_last || oup_left.is_zero() {sum_oup}
 			//else{ sum_oup * r + si.oup_buf[i] };
 			//oup_left = if oup_left.is_zero() {zero} else {oup_left - one};
@@ -3707,11 +3693,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		let lb_one = LinearCombination::from((F::one(),Variable::One));
 		let (mut n_case1, mut n_case2, mut n_case3) = (0,0,0);
 		for i in 0..inv_hab22_left_size{
-			if i % 1_000_000 == 0 {
-				emit_stdout(format!(
-					"DEBUG USE 73111.5: hab22_left job={} i={}/{}",
-					self.job_id, i, inv_hab22_left_size));
-			}
 			let tb_id = qry_tbl1[i].value()?;
 			if qry_tbl1[i].is_constant(){ 
 				if tb_id.is_zero(){//case 1 do nothing, 0 r1cs
@@ -3818,15 +3799,7 @@ where 	C: CurveGroup<ScalarField=F>,
 				inv_hab22_right_size));
 		}
 		//5.2.2 now process the inv_hab22_right
-		emit_stdout(format!(
-			"DEBUG USE 9998: inv_hab22_right_size: {}",
-			inv_hab22_right_size));
 		for i in 0usize..inv_hab22_right_size{
-			if i % 1_000_000 == 0 {
-				emit_stdout(format!(
-					"DEBUG USE 73111.6: hab22_right job={} i={}/{}",
-					self.job_id, i, inv_hab22_right_size));
-			}
 			//let v_temp = &beta * &si.col1_share[i]; //cost 271ns
 			let v_temp = alloc_fpvar_mul(&beta, &si.col1_share[i]); //231ns
 			//let v = &alpha + &v_temp + &si.col2_share[i]; //255ns
@@ -4296,10 +4269,6 @@ where 	C: CurveGroup<ScalarField=F>,
 			), &mut gt
 		);
 
-		emit_stdout(format!(
-			"DEBUG USE 73111.7: gen_step_cs RETURN job={} cs={} vars={}",
-			self.job_id, cs.num_constraints(),
-			cs.num_witness_variables()));
 
 		//M0 fingerprint: per-circuit synthesized dims + IO arity (inert
 		//unless fp_sink set). Re-emitted each step; sink keeps last.

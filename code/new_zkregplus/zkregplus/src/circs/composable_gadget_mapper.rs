@@ -957,15 +957,6 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 				probe_77317_multiset_diff(&tag_diff,
 					comp_failed, comp_disch, &dummy_mtbl);
 			}
-			//REMOVE LATER -----------
-			if i==0{
-				emit_stdout(format!(
-					"DEBUG USE 7500: data[0]: {}, data[1]: {}, \
-					si_data[0]: {}, si_data[1]: {}",
-					vecs[2][0], vecs[2][1],
-					vecs[5][0], vecs[5][1]));
-			}
-			//REMOVE LATER ----------- LATER
 			if B_DEBUG {
 				let sizes = comp.lock().unwrap().get_sizes();
 				for i in 0..3{
@@ -989,9 +980,6 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 		let oup = vec_oup.concat();
 		assert!(inp.len()==oup.len());
 		let data = vec_data.concat();
-		emit_stdout(format!(
-			"DEBUG USE 7500: inp.len: {}, oup.len: {}, data.len: {}",
-			inp.len(), oup.len(), data.len()));
 		let failed_sigs = vec_failed_sigs.concat();
 		let failed_sigs = if b_dummy {vec![F::zero(); failed_sigs.len()]}
 			else {failed_sigs};

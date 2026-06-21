@@ -1290,7 +1290,7 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		//here only need pat-state to be wide-wellfomed
 		let packed_trace_size = capacity.basis_pats_in_trace *
 			(capacity.max_nibble_len + capacity.halo_nibbles) / 10000;
-		if capacity.basis_pats_in_trace > 2*capacity.basis_acc_states{
+		if B_DEBUG && capacity.basis_pats_in_trace > 2*capacity.basis_acc_states{
 			println!("WARNING: basis_pats_in_trace: {} should be usually 1.1 * basis_acc_states: {}. It's too large. ", capacity.basis_pats_in_trace, capacity.basis_acc_states);
 		}
 		if capacity.basis_pats_in_trace > 10*capacity.basis_acc_states{
