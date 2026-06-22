@@ -2933,6 +2933,18 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		}
 		let (sq_to_add, sq_res, fwd_prf) = inp_step_queue
 			.gen_forward_prf(pat_loc, subsig_store_info);
+		// DEBUG USE 64920.2 (ZKR_PROBE_ESTREAL): REAL StepFwdPrf container
+		// rows actually built for this chunk = sum over subsigs of sum over
+		// items of vec_pat_id.len() (the prod-sized occupancy). Compare
+		// seg-by-seg against the estimate (64920.1). Removable.
+		if std::env::var("ZKR_PROBE_ESTREAL").is_ok() {
+			let real: usize = fwd_prf.subsigs.iter().map(|s|
+				fwd_prf.store_items.get(s).map_or(0, |v| v.iter()
+					.map(|it| it.vec_pat_id.len()).sum::<usize>())).sum();
+			println!("DEBUG USE 64920.2: REAL seg={} igc={} \
+				fwd_container_rows={} n_subsigs={}",
+				seg_id, b_igc, real, fwd_prf.subsigs.len());
+		}
 		// DEBUG USE 64910 (ZKR_PROBE_FWDQ): per-subsig forward step-queue
 		// growth for ONE chunk, to see WHERE the queue explodes. 64910.1
 		// per subsig: bwd flag, per-step depth, peak, fwd rows, anchor +

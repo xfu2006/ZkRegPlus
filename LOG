@@ -29510,9 +29510,11 @@ Goal 4. add one proof only and generate proof size and print out
 	[d] for aggressive mode to sequential check circuit instead of parallel one
 	[e] review code
 	[f] generate small_data_par_full_snark() and deploy to server to run.
-	[g] let it run 12:00pm =>  
+	[g] let it run 12:00pm => 2:00pm (2 hrs) for full snark build. 
 	[h] add the print circuit cost into report.
-	[i] -- TODO: push to server
+	[i] push to server. 2:00pm =>3:56pm (but needs to adjust to LOG3) 
+	[j] copy over the tgz file into paper_data folder and
+		ask paper python to work with .tgz.
 Goal 5. further analyze the empowered full_dlp_sample() with the 
 	most challenge example which generates 30M circuit
 	[a] got the data from server
@@ -29524,7 +29526,11 @@ Goal 5. further analyze the empowered full_dlp_sample() with the
 	[f] should call: est_fwd_rows_one, which does the precise estimate
 	[g] review the est_fwd_rows_one() function
 	[h] refactor and move it to the estimate
-	[i] 
+	[i] local test -> there is still a draft of range 2.5x
+		=> needs to fix that drifting window
+	[j] still no good 1.4x difference
+		=> ask it to work out real plan to close the gap
+	[j] SERVER TEST: 
 
 
 

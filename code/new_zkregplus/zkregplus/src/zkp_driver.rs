@@ -1938,6 +1938,7 @@ pub mod tests_zkp_driver{
 		get_global_config().b_one_proof = true;    // only Job 0 proves
 		get_global_config().perc_lkup_share = if !b_check_lkup {1}
 			else {10000}; //enough lkup coverage for binexec_p* (4 files)
+		get_global_config().log_level = utils::logger::LOG3;
 		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/small_data_set/config_dfa"; //for dfa
 		let max_word= 1; //this is chunk_len

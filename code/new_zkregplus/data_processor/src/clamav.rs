@@ -1580,69 +1580,103 @@ impl ClamavSig{
 		->Vec<(usize,usize,usize)>{
 		let mut cells: Vec<(usize,usize,usize)> = vec![];
 		if seg_size==0 || pat.is_empty() { return cells; }
+		// Anchor on the rare keyword: the gadget reverses the chain for
+		// backward subsigs (gen_forward_prf, discharge_adv.rs:669) so step 0
+		// seeds the keyword, not the dense pat[0]. Mirror it so the estimate
+		// anchors where the gadget does. Forward subsigs are unchanged.
+		let rev_chain;
+		let pat: &[(String,(usize,usize))] = if is_backward {
+			rev_chain = crate::clam_db::reverse_pm_bounds(
+				pat, (0, RANGE_MAX));
+			&rev_chain
+		} else { pat };
 		let getpos = |w: &String| -> Vec<usize> {
 			if b_igc { hs_igc.get(w).map_or(vec![], |v| v.to_vec()) }
 			else { hs.get(w).map_or(vec![], |v| v.to_vec()) }
 		};
-		let win = |x: usize, rg: (usize,usize), len_term: usize, back: bool|
-			-> (usize,usize) {
-			if !back {
-				let mn = if rg.0==usize::MAX {usize::MAX} else {x+rg.0+len_term};
-				let mx = if rg.1==usize::MAX {usize::MAX} else {x+rg.1+len_term};
-				(mn.min(RANGE_MAX), mx.min(RANGE_MAX))
+		// Per-chunk forward-row estimate, faithful to gen_forward_prf /
+		// est_fwd_rows_one: a SENTINEL item queries the anchor (so the
+		// anchor-finding is itself a counted query), window via binary
+		// search (NO len_term), rows = win + 2*nitems, charged to the
+		// anchor's chunk. Only chunks that actually anchor a chain count
+		// (the gadget processes a chunk's anchored subsigs only). Replaces
+		// the prior direct-seed approximation that omitted the sentinel
+		// query step and under-counted ~2.5x.
+		let step_pos: Vec<Vec<usize>> = pat.iter().map(|(w,_)| {
+			let mut q = getpos(w); q.sort(); q }).collect();
+		let ranges: Vec<(usize,usize)> =
+			pat.iter().map(|(_,r)| *r).collect();
+		// fwd window slice [lo,hi) into sorted dst (mirrors
+		// est_fwd_rows_one: id1=bsearch(rg1)-1, id2=found?k+1:k).
+		let wstep = |src: usize, rs: usize, re: usize, back: bool,
+			dst: &[usize]| -> (usize,usize) {
+			// begin-anywhere is encoded rs/re==usize::MAX; clamp to RANGE_MAX
+			// so src+re does NOT overflow to 0 (the .fwd anchor's (0,MAX)
+			// range). Matches the old win() closure's usize::MAX guard.
+			let cl = |v: usize| if v==usize::MAX {RANGE_MAX} else {v};
+			let (rg1,rg2) = if back {
+				(src.saturating_sub(cl(re)), src.saturating_sub(cl(rs)))
 			} else {
-				(x.saturating_sub(rg.1.saturating_add(len_term)),
-				 x.saturating_sub(rg.0.saturating_add(len_term)))
-			}
+				let r2 = src.saturating_add(cl(re));
+				(src.saturating_add(cl(rs)).min(RANGE_MAX),
+				 if r2>=RANGE_MAX {RANGE_MAX-1} else {r2})
+			};
+			let id1 = match dst.binary_search(&rg1) {
+				Ok(k)=>k as i64 -1, Err(k)=>k as i64 -1 };
+			let id2 = match dst.binary_search(&rg2) {
+				Ok(k)=>k+1, Err(k)=>k };
+			let lo = (id1+1).max(0) as usize;
+			let hi = id2.min(dst.len());
+			(lo, hi.max(lo))
 		};
-		// arr carries (pos, origin_chunk); all counts charged to origin.
-		let mut arr: Vec<(usize,usize)> = vec![];
-		let mut prev_len = 0usize;
-		for id in 0..pat.len(){
-			let word = &pat[id].0; let rg = pat[id].1;
-			let back = is_backward && id>=1;
-			let len_term = if back {prev_len} else {word.len()};
-			let mut dst = getpos(word); dst.sort();
-			let mut next: Vec<(usize,usize)> = vec![];
-			let mut seen: HashSet<(usize,usize)> = HashSet::new();
-			let mut touched: HashSet<usize> = HashSet::new();
-			if id==0 {
-				// anchor: seed every in-window occurrence; origin = own chunk.
-				let (lo,hi) = win(0, rg, len_term, false);
-				let l = dst.partition_point(|&d| d < lo);
-				let r = dst.partition_point(|&d| d <= hi);
-				for &d in &dst[l..r]{
-					let oc = d / seg_size;
-					while cells.len()<=oc { cells.push((0,0,0)); }
-					cells[oc].0 += 2;          //+2 boundary rows per item
-					touched.insert(oc);
-					if seen.insert((d,oc)) { next.push((d,oc)); }
-				}
-			} else {
-				for &(x,oc) in &arr{
-					while cells.len()<=oc { cells.push((0,0,0)); }
-					cells[oc].0 += 2;          //+2 per src item
-					let (lo,hi) = win(x, rg, len_term, back);
-					if lo>hi { continue; }
-					let l = dst.partition_point(|&d| d < lo);
-					let r = dst.partition_point(|&d| d <= hi);
-					for &d in &dst[l..r]{
-						cells[oc].0 += 1;      //windowed transition
-						touched.insert(oc);
-						if seen.insert((d,oc)) { next.push((d,oc)); }
+		// anchors grouped by origin chunk; one sentinel chain per chunk.
+		let mut a_chunks: Vec<usize> =
+			step_pos[0].iter().map(|d| d/seg_size).collect();
+		a_chunks.sort(); a_chunks.dedup();
+		for &c in &a_chunks {
+			let anchors_c: Vec<usize> = step_pos[0].iter()
+				.filter(|&&d| d/seg_size==c).copied().collect();
+			if anchors_c.is_empty() { continue; }
+			while cells.len()<=c { cells.push((0,0,0)); }
+			let mut vec_res: Vec<Vec<usize>> = vec![vec![1]]; //sentinel
+			let (mut win, mut nitems, mut active) = (0usize,0usize,0usize);
+			for i in 1..=pat.len() {
+				let (rs,re) = ranges[i-1];
+				let back = is_backward && i>=2;
+				// step 1 = anchor query, restricted to chunk-c anchors.
+				let dst: &[usize] = if i==1 {&anchors_c} else {&step_pos[i-1]};
+				let mut total=0usize; let mut next: Vec<usize> = vec![];
+				for &src in &vec_res[i-1] {
+					nitems += 1;
+					let (lo,hi) = wstep(src,rs,re,back,dst);
+					if hi>lo {
+						win += hi-lo; total += hi-lo;
+						next.extend_from_slice(&dst[lo..hi]);
 					}
 				}
+				if total>0 { active += 1; }
+				if total==0 { break; }
+				next.sort(); next.dedup(); vec_res.push(next);
 			}
-			for c in touched{
-				while cells.len()<=c { cells.push((0,0,0)); }
-				cells[c].1 += 1;
-			}
-			next.sort(); arr = next;
-			prev_len = word.len();
+			cells[c].0 += win + 2*nitems;
+			cells[c].1 += active;
+			cells[c].2 += vec_res.last().map_or(0,|v| v.len());
 		}
-		for &(_loc,oc) in &arr{
-			while cells.len()<=oc { cells.push((0,0,0)); }
-			cells[oc].2 += 1;
+		// DEBUG USE 64922.1 (ZKR_ESTDIAG): per-subsig chain shape + rows for a
+		// target chunk, to localize the per-subsig EST-vs-REAL gap. Removable.
+		if std::env::var("ZKR_ESTDIAG").is_ok() {
+			let tc: usize = std::env::var("ZKR_ESTDIAG_CHUNK").ok()
+				.and_then(|s| s.parse().ok()).unwrap_or(usize::MAX);
+			if tc < cells.len() && cells[tc].0 > 0 {
+				let lens: Vec<usize> = pat.iter().map(|(w,_)| w.len())
+					.collect();
+				let rngs: Vec<(usize,usize)> = pat.iter()
+					.map(|(_,r)| *r).collect();
+				println!("DEBUG USE 64922.1: sig={} bwd={} npat={} \
+					chunk={} rows={} wlens={:?} ranges={:?}",
+					self.name, is_backward, pat.len(), tc,
+					cells[tc].0, lens, rngs);
+			}
 		}
 		cells
 	}
@@ -3740,6 +3774,9 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		//MAX of the two buffers, not the sum.
 		let mut acc_f: Vec<(usize,usize,usize)> = vec![];
 		let mut acc_b: Vec<(usize,usize,usize)> = vec![];
+		// DEBUG USE 64921 (ZKR_PROBE_ESTREAL): per-chunk count of subsigs that
+		// contribute fwd rows (vs gadget n_subsigs) to localize residual gap.
+		let mut acc_cnt: Vec<usize> = vec![];
 		for s in v_sigs.iter().filter(|s|
 			set_sigs_crit.contains(&s.name)
 			&& !set_sigs_pm.contains(&s.name)){
@@ -3763,6 +3800,10 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 				for (c,(f,a,l)) in cells.into_iter().enumerate(){
 					while acc.len()<=c { acc.push((0,0,0)); }
 					acc[c].0+=f; acc[c].1+=a; acc[c].2+=l;
+					if f>0 {
+						while acc_cnt.len()<=c { acc_cnt.push(0); }
+						acc_cnt[c]+=1;
+					}
 				}
 			}
 		}
@@ -3770,7 +3811,16 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		for c in 0..nc{
 			let f = acc_f.get(c).copied().unwrap_or((0,0,0));
 			let b = acc_b.get(c).copied().unwrap_or((0,0,0));
-			let (fc, ac, lc) = (f.0.max(b.0), f.1.max(b.1), f.2.max(b.2));
+			// Aggressive is forward-ONLY: the backward step-queue is skipped
+			// (discharge_adv.rs:2356), so bwd-anchored subsigs are walked
+			// forward (reversed) into the SAME StepFwdPrf buffer as fwd ones
+			// -> binding count is the SUM. Non-aggressive keeps separate
+			// fwd/bwd buffers -> binding is the MAX (byte-identical).
+			let (fc, ac, lc) = if reset_per_chunk {
+				(f.0 + b.0, f.1 + b.1, f.2 + b.2)
+			} else {
+				(f.0.max(b.0), f.1.max(b.1), f.2.max(b.2))
+			};
 			fwd_entries_per_chunk.push(fc);
 			active_steps_per_chunk.push(ac);
 			carried_live_per_chunk.push(lc);
@@ -3779,6 +3829,15 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 			max_carried_live_per_chunk = max_carried_live_per_chunk.max(lc);
 		}
 		_et.stop();
+		// DEBUG USE 64920.1 (ZKR_PROBE_ESTREAL): per-chunk forward-entry
+		// ESTIMATE (post anchor-reversal fix). Compare seg-by-seg against the
+		// gadget's REAL StepFwdPrf container rows (64920.2). Removable.
+		if std::env::var("ZKR_PROBE_ESTREAL").is_ok() {
+			log(0, LOG1, &format!("DEBUG USE 64920.1: EST fname={} \
+				fwd_entries_per_chunk={:?}", fname, fwd_entries_per_chunk));
+			log(0, LOG1, &format!("DEBUG USE 64921: EST fname={} \
+				subsig_count_per_chunk={:?}", fname, acc_cnt));
+		}
 		log(0, LOG1, &format!(
 			"ESTIMATE: chunked SED propagation (this file): {} ms", _et.ms()));
 		// 64600: reset (new, used for sizing) vs cross-chunk (old) per-chunk
