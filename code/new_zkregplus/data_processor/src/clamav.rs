@@ -4587,6 +4587,57 @@ mod tests_clamav{
 		}
 	}
 
+	#[test]
+	fn test_eval_pm_bounds_chunked_reset_anchor(){
+		// word -> sorted END positions (start+len), as in test_m3_host_equiv.
+		let mk_hs = |text: &str, words: &[&str]|
+			-> HashMap<String,Vec<usize>>{
+			let mut hs = HashMap::new();
+			for w in words{
+				let (mut v, mut start) = (vec![], 0usize);
+				while let Some(p) = text[start..].find(w){
+					let abs = start + p;
+					v.push(abs + w.len());
+					start = abs + 1;
+				}
+				hs.insert(w.to_string(), v);
+			}
+			hs
+		};
+		let empty: HashMap<String,Vec<usize>> = HashMap::new();
+		let sig = gen_clamav_sig("D;E;0;/x/", ClamSigType::General,
+			&default_clamav_cfg());
+		let seg = 1000usize;
+		// .fwd: begin-anywhere keyword anchor (0,usize::MAX) then NUM in 0..4.
+		// Bug-4 guard: (0,usize::MAX) must NOT overflow src+re. KW present
+		// once, NUM absent -> dies at step 2: rows = win(1) + 2*nitems(2) = 5.
+		let fwd = vec![("KW".to_string(), (0usize, usize::MAX)),
+			("NUM".to_string(), (0usize, 4usize))];
+		let hs = mk_hs("xxKWxxyyyy", &["KW","NUM"]);
+		let cells = sig.eval_pm_bounds_chunked_reset(&fwd, false, false,
+			&hs, &empty, seg);
+		assert_eq!(cells.get(0).map_or(0,|c| c.0), 5,
+			"begin-anywhere fwd anchor must find KW (bug-4): {:?}", cells);
+		// No anchor in the chunk -> anchored-chunks-only -> 0 rows.
+		let hs0 = mk_hs("xxxxyyyy", &["KW","NUM"]);
+		let c0 = sig.eval_pm_bounds_chunked_reset(&fwd, false, false,
+			&hs0, &empty, seg);
+		assert_eq!(c0.get(0).map_or(0,|c| c.0), 0,
+			"no anchor -> 0 rows: {:?}", c0);
+		// .bwd reversed: anchor = rightmost (NUM, begin-anywhere from
+		// reverse_pm_bounds), backward window for the keyword step. Guard:
+		// must not overflow/wrap -> a small finite count (anchor found at
+		// least gives the sentinel+anchor 5 rows), never 0-from-overflow or a
+		// huge wrapped value.
+		let bwd = crate::clam_db::reverse_pm_bounds(&fwd,
+			(0usize, crate::clamav::RANGE_MAX));
+		let hsb = mk_hs("xxKWNUMyyyy", &["KW","NUM"]);
+		let cb = sig.eval_pm_bounds_chunked_reset(&bwd, true, false,
+			&hsb, &empty, seg).get(0).map_or(0,|c| c.0);
+		assert!((5..100).contains(&cb),
+			"bwd must be small/finite (no overflow): {}", cb);
+	}
+
 	/// a test case for clamav
 	struct ClamavTestCase{
 		sig_name: String,

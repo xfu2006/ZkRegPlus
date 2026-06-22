@@ -29515,6 +29515,7 @@ Goal 4. add one proof only and generate proof size and print out
 	[i] push to server. 2:00pm =>3:56pm (but needs to adjust to LOG3) 
 	[j] copy over the tgz file into paper_data folder and
 		ask paper python to work with .tgz.
+	[k] strated again 4:00pm ==> 6:00pm (for LOG3 messages)
 Goal 5. further analyze the empowered full_dlp_sample() with the 
 	most challenge example which generates 30M circuit
 	[a] got the data from server
@@ -29530,7 +29531,12 @@ Goal 5. further analyze the empowered full_dlp_sample() with the
 		=> needs to fix that drifting window
 	[j] still no good 1.4x difference
 		=> ask it to work out real plan to close the gap
-	[j] SERVER TEST: 
+		=> fixed the BUG!
+	[j] unit test again.
+	[j] SERVER TEST: -> actually just run local 
+	[h]
+Gaol 6. Writing 
+	[a] 7.4 subsection 1
 
 
 
