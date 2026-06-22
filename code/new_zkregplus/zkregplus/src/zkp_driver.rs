@@ -395,6 +395,73 @@ where C: CurveGroup<ScalarField=F>,
 	  <CS as CommitmentScheme<C,false>>::ProverParams: Send + Sync,
 	  F: PrimeField + Absorb + ColEle,
 {
+	// DEBUG USE 64901 (ZKR_PROBE_WORSTCHUNK): rank files by their most
+	// EXPENSIVE chunk (cost ~= 0.18*prod + 60*NEEDS, matching the measured
+	// circ4 split: discharge fwd-queue dominant, compute_sig next) and print
+	// the top 20 with that chunk's file/seg + fwd/NEEDS/FSM, then exit. Runs
+	// before fast_finalize => ~minutes. Put the top file in full_dlp_sample.
+	if std::env::var("ZKR_PROBE_WORSTCHUNK").is_ok() {
+		let n_ids = db.sig_to_id.values().copied().max()
+			.map(|m| m + 1).unwrap_or(0);
+		let mut sc = vec![0usize; n_ids];
+		for s in db.vec_sigs.iter()
+			.chain(db.vec_sigs_no_critical_pat.iter()) {
+			if let Some(&id) = db.sig_to_id.get(&s.name) {
+				sc[id] = s.vec_subsig_obj.len();
+			}
+		}
+		let legs = crate::gadgets::word_extract::LEGS;
+		let fwd_cost = crate::gadgets::discharge_adv::FWD_COST;
+		let max_nib = (seed.max_word_len * legs).max(1);
+		let prod1 = |f: usize| if f == 0 { 0 }
+			else { (f + 1) * 100_000_000 / (max_nib * fwd_cost) + 1 };
+		// per file: (cost, fname, seg, fwd, prod, NEEDS, uniq, acc, pats)
+		let mut rows: Vec<(usize, String, usize, usize, usize,
+			usize, usize, usize, usize)> = vec![];
+		for (wi, fdr) in infos.iter().zip(vdata.iter()) {
+			let cp = &fdr.chunk_peaks;
+			let wn = cp.seg_size.max(1);
+			// best chunk of THIS file: (cost, seg, fwd, prod, NEEDS,
+			// uniq, acc, pats)
+			let mut best = (0usize, 0usize, 0usize, 0usize,
+				0usize, 0usize, 0usize, 0usize);
+			for s in 0..wi.failed_c_all_segs.len() {
+				let needs: usize = wi.failed_c_all_segs[s].iter()
+					.map(|&id| sc.get(id).copied().unwrap_or(0)).sum();
+				let fwd = if needs == 0 { 0 }
+					else { cp.fwd_entries_per_chunk.get(s).copied()
+						.unwrap_or(0) };
+				let p = prod1(fwd);
+				let cost = 18 * p / 100 + 60 * needs;
+				let uniq = cp.unique_acc_pats_per_chunk.get(s).copied()
+					.unwrap_or(0) * 10000 / wn;
+				let acc = cp.acc_states_per_chunk.get(s).copied()
+					.unwrap_or(0) * 10000 / wn;
+				let pats = cp.pats_in_trace_per_chunk.get(s).copied()
+					.unwrap_or(0) * 10000 / wn;
+				if cost > best.0 {
+					best = (cost, s, fwd, p, needs, uniq, acc, pats);
+				}
+			}
+			if best.0 > 0 {
+				rows.push((best.0, fdr.fname.clone(), best.1, best.2,
+					best.3, best.4, best.5, best.6, best.7));
+			}
+		}
+		rows.sort_by(|a, b| b.0.cmp(&a.0));
+		println!("DEBUG USE 64901: top {} files by max-chunk cost \
+			(of {} files with nonzero demand):",
+			20.min(rows.len()), rows.len());
+		for (r, e) in rows.iter().take(20).enumerate() {
+			println!("DEBUG USE 64901.{:02}: cost={} file={} seg={} \
+				fwd_queue={} prod={} NEEDS={} fwd/NEEDS={:.2} \
+				uniq={} acc={} pats={}",
+				r, e.0, e.1, e.2, e.3, e.4, e.5,
+				if e.5 > 0 { e.3 as f64 / e.5 as f64 } else { 0.0 },
+				e.6, e.7, e.8);
+		}
+		std::process::exit(0);
+	}
 	// 1. P_max: the global-sufficient config (existing fast_finalize machinery).
 	let mut p_max = fast_finalize::<F,C,CS>(db.clone(), words, infos, vdata,
 		seed, chunk_len, lkup_len, total_word_n, max_rounds, n_threads,
