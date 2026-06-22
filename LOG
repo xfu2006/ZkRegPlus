@@ -29510,15 +29510,22 @@ Goal 4. add one proof only and generate proof size and print out
 	[d] for aggressive mode to sequential check circuit instead of parallel one
 	[e] review code
 	[f] generate small_data_par_full_snark() and deploy to server to run.
-	[g] 
+	[g] let it run 12:00pm =>  
+	[h] add the print circuit cost into report.
+	[i] -- TODO: push to server
 Goal 5. further analyze the empowered full_dlp_sample() with the 
 	most challenge example which generates 30M circuit
 	[a] got the data from server
 	[b] analyze
 	[c] got the worst example: watson-k/e_mail_bin/379, seg 5 — prod=115,233,634, fwd_queue=310,927, NEEDS=only 200.
+	[d] analyze its discharging process (isolate the chunk and rules)
+	[e] looks like it's the estimate problem, BECAUSE the actual use is only
+		400 vs 31k!
+	[f] should call: est_fwd_rows_one, which does the precise estimate
+	[g] review the est_fwd_rows_one() function
+	[h] refactor and move it to the estimate
+	[i] 
 
 
 
-TODO ---
-Goal 1. add proof size.
 

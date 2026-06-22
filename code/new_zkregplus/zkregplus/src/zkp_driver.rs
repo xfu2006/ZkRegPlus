@@ -1754,120 +1754,99 @@ pub mod tests_zkp_driver{
 	}
 
 
-	/// small_debug (Plan D): single-job local reproducer for the
-	/// compute_sig_adv.rs:1269 panic. Uses the CACHED full_clamav DFA
-	/// (data/cache/full_data/, ~4.1GB) so the AC-DFA over-approximation
-	/// is identical to the server's; scans ONE file (merged_217); sets
-	/// b_folding_only=true so the heavy SNARK preprocess is skipped
-	/// (bug fires during gen_nd_advice / pass_all anyway). Capacities
-	/// mirror full_debug — already validated. Prerequisite: a prior
-	/// full_clamav run must have populated data/cache/full_data/.
+	/// small_debug: aggressive DLP single-chunk forward-queue probe.
+	/// Discharges watson-k/379 seg3..7 (target seg5 centered), then
+	/// builds REAL chunk advice via reconverge_probe (no keys) so the
+	/// 64910 probe dumps the forward queue and exits on seg5.
 	#[allow(dead_code)]
-	fn small_debug<F:PrimeField>(b_check_lkup: bool){
+	fn small_debug<F:PrimeField>(_b_check_lkup: bool){
 		utils::os::print_computer_config(Some("small_debug"));
-		get_global_config().snark_cache_dir = "full_clamav".to_string();
-		get_global_config().b_write_snark_cache = false;
-		get_global_config().b_read_snark_cache = false;
-		get_global_config().b_folding_only = true;
-		get_global_config().range2_bit = 26;
+		use crate::stats_helper::{estimate_config_aggr,
+			estimated_to_capparams_aggr};
+		use folding_schemes::folding::foldpot::sigma_ir1cs
+			::LookupTableTwoCol as _;
+		let proot = utils::os::proj_root();
+		let cd = "data/debug/full_dlp_sample";
+		let sig_file = "regex_pat/main_data_dlp_internationl.dat";
+		let cache_dir = "dlp_corpus_aggr";
+		let mw = 64usize;
+		let range2_bit = 25usize;
+		let scan = "data/debug/watson_seg5/scan.dat";
+		get_global_config().log_level = utils::logger::LOG3;
+		get_global_config().range2_bit = range2_bit;
 		get_global_config().b_light_test = true;
-		get_global_config().min_subsigs = 368;
-		get_global_config().min_basis_unique_states = 1054;
-		get_global_config().min_basis_acc_states = 268;
-		get_global_config().min_basis_pats_in_trace = 295;
-		get_global_config().min_avg_pats_per_subsig = 8;
-		get_global_config().min_dfa_sigs = 3;
-		get_global_config().min_dfa_subsigs = 3;
-		get_global_config().n_par_snark = 2;
-		get_global_config().n_par_snark_cp = 2;
-		get_global_config().n_par_batch_claim = 8;
-		get_global_config().perc_lkup_share = 143;
-
+		get_global_config().b_folding_only = true;
 		get_global_config().b_read_cache = true;
-		let b_write_cache = !read_global_config().b_read_cache;
-		let set1_cfg  = "data/debug/full_clamav/config/";
-		// All 4 files — matches server's binexec_debug.dat exactly.
-		let set1_scan = "data/debug/full_debug/config";
-		let max_word = 512 * 8;
-		let sigs = 400;
-		let subsigs = 580;
-		let avg_pats_per_subsig = 8;
-		let avg_active_pats_per_subsig = 2;
-		let perc_comp_subsigs = 20;
-		let vec_decrease_level = vec![2];
-		let num_circs = 2;
-		let basis_unique_states = 1300;
-		let basis_acc_states = 750;
-		let basis_pats_in_trace = 820;
-		let basis_acc_states_igc = basis_acc_states;
-		let basis_pats_in_trace_igc = basis_pats_in_trace;
-		let dfa_sigs = 8;
-		let dfa_subsigs = 8;
-		let perc_pats_expansion_rate = 104;
-		let perc_pats_expansion_rate_igc = 2;
-
-		let init_cp_cap = CpCapacity{
-			max_word_len: max_word,
-			basis_unique_states,
-			subsigs,
-			avg_pats_per_subsig,
-		};
-		let init_sed_cap = SedCapacity::new(
-			max_word, read_global_config().range2_bit, subsigs,
-			avg_pats_per_subsig,
-			avg_active_pats_per_subsig,
-			basis_pats_in_trace,
-			perc_pats_expansion_rate,
-			sigs,
-			perc_comp_subsigs,
-			basis_unique_states,
-			basis_acc_states,
-		);
-		let init_dfa_cap = DfaCapacity::new(
-			max_word, dfa_sigs, dfa_subsigs);
-		let init_cp_cap_igc = CpCapacity{
-			max_word_len: max_word,
-			basis_unique_states,
-			subsigs: subsigs,
-			avg_pats_per_subsig,
-		};
-		let init_sed_cap_igc = SedCapacity::new(
-			max_word, read_global_config().range2_bit, subsigs,
-			avg_pats_per_subsig,
-			avg_active_pats_per_subsig,
-			basis_pats_in_trace_igc,
-			perc_pats_expansion_rate_igc,
-			sigs,
-			perc_comp_subsigs,
-			basis_unique_states,
-			basis_acc_states_igc,
-		);
-
-		let scan_files: Vec<String> = vec![
-			format!("{}/binexec_debug.dat", set1_scan),
-		];
-
-		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,
-			CS2,CS1E,S>(
-			0,
-			&format!("{}/main.dat", set1_cfg),
-			scan_files,
-			"data/debug/full_debug/reports/report.dat",
-			b_write_cache,
-			"full_data",
-			&format!("{}/main_dfa.dat", set1_cfg),
-			&format!("{}/needs_ised.dat", set1_cfg),
-			&format!("{}/needs_ised_igc.dat", set1_cfg),
-			max_word,
-			&init_cp_cap,
-			&init_sed_cap,
-			&init_dfa_cap,
-			&init_cp_cap_igc,
-			&init_sed_cap_igc,
-			&vec_decrease_level,
-			num_circs,
-			b_check_lkup
-		);
+		get_global_config().b_estimate_caps = true;
+		get_global_config().perc_lkup_share = 1;
+		get_global_config().min_subsigs = 1;
+		get_global_config().min_basis_unique_states = 2;
+		get_global_config().min_basis_acc_states = 2;
+		get_global_config().min_basis_pats_in_trace = 4;
+		get_global_config().min_avg_pats_per_subsig = 1;
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
+		get_global_config().clamav_cfg.sde_rep_fanout_cap = 100;
+		get_global_config().clamav_cfg.min_pm_word_len = 3;
+		let cfg = data_processor::clamav::default_clamav_cfg();
+		let mut vlog = vec![];
+		let db = data_processor::clam_db::ClamavDB::<Fr>::build_or_load(
+			&cfg, &format!("{}/{}", cd, sig_file),
+			&format!("{}/regex_pat/main_dfa.dat", cd),
+			&format!("{}/regex_pat/needs_ised.dat", cd),
+			&format!("{}/regex_pat/needs_ised_igc.dat", cd), &mut vlog,
+			cache_dir, true, true).expect("build db");
+		//discharge the carved file -> words + infos + vdata.
+		let files = utils::os::read_lines(&format!("{}/{}", proot, scan));
+		let (mut words, mut infos, mut vdata) = (vec![], vec![], vec![]);
+		for fpath in &files{
+			let nibbles = utils::os::read_nibbles(
+				&format!("{}/{}", proot, fpath));
+			let f_nib: Vec<Fr> = nibbles.iter()
+				.map(|x| Fr::from(*x as u32)).collect();
+			words.push(utils::data::pack_nibbles(&f_nib));
+			let (fdr, rec) =
+				data_processor::clamav::quick_discharge_file_by_crit_bag_pm(
+				fpath, &nibbles, &db.vec_sigs,
+				&db.vec_sigs_no_critical_pat, &db.map_crit_pat,
+				&db.map_crit_pat_igc, &db.dfa_crit,
+				&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
+				&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
+				&db.sig_to_id, mw, mw);
+			vdata.push(fdr);
+			infos.push(rec);
+		}
+		//DEBUG USE 64911 (ZKR_PROBE_FWDQ): discharge-prover per-chunk
+		//forward-entry ESTIMATE (this drives prod) vs gadget real rows.
+		if std::env::var("ZKR_PROBE_FWDQ").is_ok() {
+			for (fi, fdr) in vdata.iter().enumerate() {
+				let cp = &fdr.chunk_peaks;
+				println!("DEBUG USE 64911.1: file={} \
+					fwd_entries_per_chunk={:?} needs_per_chunk={:?}",
+					fi, cp.fwd_entries_per_chunk,
+					cp.needs_per_chunk);
+			}
+		}
+		//estimate -> seed CapParams (lower bound; reconverge bumps it).
+		let est = estimate_config_aggr::<Fr>(&vdata, &db, &[100],
+			&mut vlog);
+		let seed = estimated_to_capparams_aggr(&est[0], mw, range2_bit, 3);
+		get_global_config().aggr_needs_subsigs = seed.aggr_needs_subsigs;
+		//Build advice on the REAL chunks via the capacity-probe loop:
+		//real gen_forward_prf, NO keys / NO fast_finalize. The 64910
+		//probe + ZKR_FWDQ_EXIT fire on seg5 and process::exit here.
+		let lkup_len = db.lkup.get_size();
+		let total_word_n: usize = words.iter().map(|w| w.len()).sum();
+		let poseidon = folding_schemes::transcript::poseidon
+			::poseidon_canonical_config::<Fr>();
+		let padded: Vec<Vec<Fr>> = words.iter()
+			.map(|w| utils::data::pad_word_to_multiple::<Fr>(w, mw))
+			.collect();
+		let db_arc = std::sync::Arc::new(db);
+		let r = super::reconverge_probe::<Fr,C1,CS1>(&db_arc, &poseidon,
+			&padded, &infos, seed, mw, lkup_len, total_word_n, 60, 4);
+		utils::logger::log(0, utils::logger::LOG1, &format!(
+			"small_debug: reconverge_probe returned (no seg5 blow-up \
+			seen): {:?}", r.map(|_| "ok")));
 	}
 
 	/// small data: multiple parallel jobs.

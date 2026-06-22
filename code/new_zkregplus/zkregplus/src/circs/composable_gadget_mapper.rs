@@ -759,10 +759,19 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 	/// Create the components. The config is contained
 	/// in the relation mapper object, and should be passed
 	/// by the corresonding constructor.
-	fn get_gadgets(&self) -> Vec<std::sync::Arc<std::sync::Mutex<dyn SigmaGadget<F> + Send + Sync>>>{  
+	fn get_gadgets(&self) -> Vec<std::sync::Arc<std::sync::Mutex<dyn SigmaGadget<F> + Send + Sync>>>{
 		self.vec_components.iter().map(|x|
 			x.lock().unwrap().create_gadgets()
 		).flatten().collect::<Vec<std::sync::Arc<std::sync::Mutex<dyn SigmaGadget<F> + Send + Sync>>>>()
+	}
+
+	/// per-component (name, gadget_count) spans, in get_gadgets() order,
+	/// so cost reporting can group gadgets under CP/SED/DFA.
+	fn component_spans(&self) -> Vec<(String, usize)>{
+		self.vec_components.iter().map(|c|{
+			let g = c.lock().unwrap();
+			(g.get_name(), g.num_gadgets())
+		}).collect()
 	}
 
 	/// Build the statement structure form all components.

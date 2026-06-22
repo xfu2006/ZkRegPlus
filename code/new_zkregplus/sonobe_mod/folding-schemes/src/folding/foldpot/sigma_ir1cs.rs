@@ -400,6 +400,89 @@ pub trait SigmaIR1CS<const H: bool, F: PrimeField, LK: LookupTableTwoCol<F>, GM:
 	/// This is mainly used to apply heurstics to pick the applicable
 	/// circuit with minimal cost for a given word
 	fn est_cost(&self)->usize;
+
+	/// (component_name, gadget_count) spans in get_gadgets() order, for
+	/// cost reporting. Default empty; SigmaIR1CS_Inst delegates to mapper.
+	fn component_spans(&self) -> Vec<(String, usize)> { vec![] }
+}
+
+/// One circuit's R1CS-constraint capture, filled by
+/// generate_step_constraints while armed. entry_nc/end_nc bracket the
+/// per-step (inner) circuit; gadgets = (name, cs-delta) in gadget order.
+pub struct CostCapture{
+	pub entry_nc: usize,
+	pub end_nc: usize,
+	pub gadgets: Vec<(String, usize)>,
+}
+thread_local!{
+	static COST_SINK: std::cell::RefCell<Option<CostCapture>> =
+		std::cell::RefCell::new(None);
+}
+/// Arm the per-gadget cost sink (clears any prior capture).
+pub fn cost_capture_begin(){
+	COST_SINK.with(|s| *s.borrow_mut() =
+		Some(CostCapture{entry_nc:0, end_nc:0, gadgets:vec![]}));
+}
+/// Disarm and return the collected capture (None if not armed).
+pub fn cost_capture_take() -> Option<CostCapture>{
+	COST_SINK.with(|s| s.borrow_mut().take())
+}
+fn cost_capture_set_entry(nc: usize){
+	COST_SINK.with(|s| if let Some(c)=s.borrow_mut().as_mut(){ c.entry_nc=nc; });
+}
+fn cost_capture_set_end(nc: usize){
+	COST_SINK.with(|s| if let Some(c)=s.borrow_mut().as_mut(){ c.end_nc=nc; });
+}
+fn cost_capture_push(name: &str, delta: usize){
+	COST_SINK.with(|s| if let Some(c)=s.borrow_mut().as_mut(){
+		c.gadgets.push((name.to_string(), delta)); });
+}
+
+/// Format one circuit's captured cost as a `circ` block grouped by
+/// component (CP/SED/DFA), with per-component subtotals, a framework
+/// remainder, and the per-step total. `spans` = (component_name,
+/// n_gadgets) aligned with cap.gadgets order. Returns the per-step total.
+/// Append #1/#2/... to names that repeat (the cs vs igc variants), so
+/// duplicate component/gadget names are distinguishable. Unique names
+/// are returned unchanged. O(n^2) but n is small.
+fn tag_dups(names: &[String]) -> Vec<String>{
+	let mut out = Vec::with_capacity(names.len());
+	for (i, n) in names.iter().enumerate(){
+		let total = names.iter().filter(|x| *x==n).count();
+		if total > 1{
+			let k = names[..=i].iter().filter(|x| *x==n).count();
+			out.push(format!("{}#{}", n, k));
+		} else { out.push(n.clone()); }
+	}
+	out
+}
+
+pub fn print_cost_report(label: &str, cap: &CostCapture,
+	spans: &[(String, usize)]) -> usize{
+	let inner_total = cap.end_nc.saturating_sub(cap.entry_nc);
+	let gadget_sum: usize = cap.gadgets.iter().map(|(_,c)| *c).sum();
+	let framework = inner_total.saturating_sub(gadget_sum);
+	emit_stdout(format!(
+		"==== COST {} (R1CS constraints) ====   total = {}",
+		label, inner_total));
+	let comp_names: Vec<String> = spans.iter().map(|(n,_)| n.clone()).collect();
+	let comp_tags = tag_dups(&comp_names);
+	let mut gi = 0;
+	for (idx, (_cname, n)) in spans.iter().enumerate(){
+		let end = (gi + *n).min(cap.gadgets.len());
+		let slice = &cap.gadgets[gi.min(cap.gadgets.len())..end];
+		let sub: usize = slice.iter().map(|(_,c)| *c).sum();
+		emit_stdout(format!("  {:<12} subtotal = {}", comp_tags[idx], sub));
+		let gnames: Vec<String> = slice.iter().map(|(n,_)| n.clone()).collect();
+		let gtags = tag_dups(&gnames);
+		for (j, (_, c)) in slice.iter().enumerate(){
+			emit_stdout(format!("    {:<26} {:>12}", gtags[j], c));
+		}
+		gi = end;
+	}
+	emit_stdout(format!(
+		"  framework (poseidon/logup/io)        {:>12}", framework));
+	inner_total
 }
 
 /// Helper supertrait that lets us deep-clone a `dyn SigmaGadget`
@@ -666,8 +749,15 @@ pub trait GadgetMapper<F:PrimeField, LK: LookupTableTwoCol<F>>: Send + Sync{
 	/// seg_id is used for debugging purpose usually.
 	/// `job_id` is passed for logging purposes.
 	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
-		prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>>, seg_id: usize, job_id: usize) 
+		prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>>, seg_id: usize, job_id: usize)
 		->Result<Arc<dyn NdAdvice + Send + Sync>, Error>;
+
+	/// (component_name, gadget_count) spans in get_gadgets() order.
+	/// Default: a single span over all gadgets. CompositeGadgetMapper
+	/// overrides this to expose per-component (CP/SED/DFA) boundaries.
+	fn component_spans(&self) -> Vec<(String, usize)>{
+		vec![(self.get_name(), self.get_gadgets().len())]
+	}
 }
 
 /// Extra (mostly sequence) info for build statement
@@ -3218,6 +3308,11 @@ where 	C: CurveGroup<ScalarField=F>,
 		Ok(z_i1)
 	}
 
+	/// delegate to the gadget mapper's per-component spans.
+	fn component_spans(&self) -> Vec<(String, usize)>{
+		lock_unwrap!(self.gadget_mapper).component_spans()
+	}
+
 	/// set its dummy stmt
 	//fn set_dummy_stmt(&mut self, vec: Vec<F>){
 	fn set_dummy_stmt(&mut self, stmt: StatementInst<F,LK>){
@@ -3354,6 +3449,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		//and print the stack use
 		//1. converts witness from extrenal_inputs to structured version
 		let (mut nc, mut nv) = (cs.num_constraints(), cs.num_witness_variables());
+		cost_capture_set_entry(cs.num_constraints());
 		let mut gt = GTimer::new();
 		// 2026-05-16: probe 77317.7 — entry of
 		// generate_step_constraints. word_id/subseg_id are not yet
@@ -3471,6 +3567,8 @@ where 	C: CurveGroup<ScalarField=F>,
 					self.name, i, lock_unwrap!(g).get_name(),
 					cs.num_constraints() - nc, cs.num_constraints()));
 			}
+			cost_capture_push(lock_unwrap!(g).get_name(),
+				cs.num_constraints() - nc);
 		}
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 3");
@@ -4291,6 +4389,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		utils::consts::fp_emit(
 			&format!("{}.ext_in", self.name), external_inputs.len() as u64);
 
+		cost_capture_set_end(cs.num_constraints());
 		Ok(vec![new_cur_hc_cmF, hash_zi_part2])
 	}
 }

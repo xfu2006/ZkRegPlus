@@ -51,7 +51,7 @@ use crate::{
 		FOLDPOT_CF_N_POINTS, dummy_instance_foldpot, get_r1cs_from_cs,
 		nifs::{NIFSFoldPot},
 		circuits_super::{ChallengeGadgetFoldPotSuper,AugmentedFCircuitFoldPotSuper, field_to_usize},
-		sigma_ir1cs::{SigmaIR1CS,LookupTableTwoCol,LookupTableTwoCol_Inst,ZiPartTwoInst,StatementInst, GadgetMapper},
+		sigma_ir1cs::{SigmaIR1CS,LookupTableTwoCol,LookupTableTwoCol_Inst,ZiPartTwoInst,StatementInst, GadgetMapper, cost_capture_begin, cost_capture_take, print_cost_report},
 		utils::{f1_limbs_to_f2, f1_to_f2_limbs, get_mem_usage_mb,mb2s},
 		cyclepair::{CyclePairCircuit,fold_cyclepair_circuit},
 		qa_nizk::{QaNizkProverParams,QaNizkVerifierParams,SparseMatrix,setup_qa_nizk,prove_qa_nizk_fast},
@@ -1131,13 +1131,34 @@ where
 		let n_circ = prep_param_src.vec_pp.len();
 		let mut idx_j = 0;
 		let mut max_circ_pp_size = 0;
+		let mut cost_grand_total = 0usize;
 		for prep_param in &prep_param_src.vec_pp{
-			let (r1cs,cf_r1cs,cp_r1cs_in) 
+			// arm the per-gadget cost sink; get_r1cs_super synthesizes
+			// the inner circuit (filling it), then print a circN cost
+			// report grouped by CP/SED/DFA component. Zero extra synthesis.
+			cost_capture_begin();
+			let (r1cs,cf_r1cs,cp_r1cs_in)
 				= get_r1cs_super::<E, P, C2G2, C1, GC1, C2, GC2, FC, LK, GM,H>(
-				&prep_param.poseidon_config, 
+				&prep_param.poseidon_config,
 				prep_param.F.clone(), n_circ, idx_j
 				).expect("fail in generating r1cs");
+			if let Some(cap) = cost_capture_take(){
+				let spans = prep_param.F.component_spans();
+				// skip the Phase-2 cyclepair circuit (FoldPairMapper):
+				// only the main CP/SED/DFA folding circuits are reported.
+				let is_cyclepair = spans.iter()
+					.any(|(n,_)| n.contains("FoldPair"));
+				if !cap.gadgets.is_empty() && !is_cyclepair{
+					cost_grand_total += print_cost_report(
+						&format!("circ{}", idx_j), &cap, &spans);
+				}
+			}
 			idx_j += 1;
+			if idx_j == n_circ && cost_grand_total > 0{
+				emit_stdout(format!(
+					"==== COST GRAND TOTAL over {} circuits = {} ====",
+					n_circ, cost_grand_total));
+			}
 			//if idx_j==1{ cp_r1cs = Some(cp_r1cs_in.clone()); }
 
 			let cs_pp: CS1::ProverParams;
