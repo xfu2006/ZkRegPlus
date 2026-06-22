@@ -29488,7 +29488,24 @@ Goal 3. adjust
 	[b] restarted short/clean print version at 9:00pm ===> 
 
 Monday 06/22/2026
-Goal 1. 
+Goal 1. set up 2nd jetstream volume and 2nd instance -> DONE
+	[a] => need to create a new one , no clone
+Goal 2. put the most expensive file into full_dlp_sample2 and analyze
+	if it does need the space
+	[a] observe server: grep -a "DEBUG USE 64901" nohup.out
+	[b] locate the two files which has the largest fwd and the largest subsigs
+		and analyze the details
+	[c] observe the two files and see how they blow up the cost
+Goal 3. section 7.4
+	[a] refine list of topics
+	[b] discuss C. 
+	[c] contents of 7.4 micro-bench mark
+	[d] details of C
+		[d1] ideas of the cost model and breakdown of circuits
+	[e] 
+Goal 4. add one proof only and generate proof size and print out
+	circuit structure ONE TIME only, do it using small_data_full.
+
 
 TODO ---
 Goal 1. add proof size.

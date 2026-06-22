@@ -5096,9 +5096,29 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for DischargeAdvGadget<F>{
 		let default_min_loc = &last_loc + &new_const_var(&cs, F::one());
 		t9901.stop();
 
-		// DEBUG USE 64900.5/.6 (ZKR_PROBE_CSBREAK): split discharge cs into
-		// forward-queue vs aggressive-acc (or backward-queue) sub-validators.
-		let b_csbreak = std::env::var("ZKR_PROBE_CSBREAK").is_ok();
+		// DEBUG USE 64900.5/.6 + 64902.1 (ZKR_PROBE_CSBREAK / ZKR_PROBE_SIZES):
+		// split discharge cs into forward-queue vs aggressive-acc (or backward-
+		// queue) sub-validators, plus the capacity-driven buffer lengths.
+		let b_csbreak = std::env::var("ZKR_PROBE_CSBREAK").is_ok()
+			|| std::env::var("ZKR_PROBE_SIZES").is_ok();
+		// DEBUG USE 64902.1: caps + derived buffer lengths that drive the cs
+		// below. sq_size_trace_fwdprf == StepFwdPrf forward-proof buffer (the
+		// 61% term); failed_acc == FailedSubsigAcc universe floor.
+		if b_csbreak {
+			let (sq_res, sq_pat, sq_trace) =
+				StepQueue::<F>::vec_size(&StepQueueType::ResSmall,
+					&self.capacity);
+			let acc = FailedSubsigAcc::<F>::acc_size(&self.capacity);
+			let c = &self.capacity;
+			println!("DEBUG USE 64902.1: discharge[igc={}] caps{{prod={} \
+				subsigs={} universe={} avg_active={} basis_pats={} perc={} \
+				max_nib={}}} sizes{{sq_res={} sq_size_pat={} \
+				sq_size_trace_fwdprf={} failed_acc={}}}",
+				self.b_igc, c.prod_pats_expansion, c.subsigs,
+				c.universe_subsigs, c.avg_active_pats_per_subsig,
+				c.basis_pats_in_trace, c.perc_pats_expansion_rate,
+				c.max_nibble_len, sq_res, sq_pat, sq_trace, acc);
+		}
 		//3. validate the forward step queue
 		// COST: 59*n1
 		let forward_step_queue= stmt.get_container("fwd_steps_queue")?;

@@ -3460,13 +3460,15 @@ where 	C: CurveGroup<ScalarField=F>,
 			}
 			let stmt_len = lock_unwrap!(g).get_msg_size().0;
 			log_perf(self.job_id, log_level, &format!("-- -- after msg3 of module {}: {}:\n\tINCREASED: constraints: {}, const vars: {}, wit vars: {} \n\t==> NOW: CS:{}, const: {}, witness: {}\n\t ==> stmt_size: {}. ", i, lock_unwrap!(g).get_name(), cs.num_constraints()-nc, cs.num_instance_variables()-ni, cs.num_witness_variables()-nv, cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables(), stmt_len), &mut gt3);
-			// DEBUG USE 64900.1 (ZKR_PROBE_CSBREAK): per-gadget cs delta +
-			// running total, to attribute one circuit's R1CS rows across its
-			// gadgets. Fires once per circ during preprocess get_r1cs_super.
-			if std::env::var("ZKR_PROBE_CSBREAK").is_ok() {
-				emit_stdout(format!("DEBUG USE 64900.1: gadget[{}] {} \
+			// DEBUG USE 64900.1 (ZKR_PROBE_CSBREAK / ZKR_PROBE_SIZES):
+			// per-gadget cs delta + running total, labeled by circ name so the
+			// 4 circuits' gadget rows are distinguishable. Fires once per circ
+			// during preprocess get_r1cs_super.
+			if std::env::var("ZKR_PROBE_CSBREAK").is_ok()
+				|| std::env::var("ZKR_PROBE_SIZES").is_ok() {
+				emit_stdout(format!("DEBUG USE 64900.1: circ={} gadget[{}] {} \
 					cs_delta: {} running_total: {}",
-					i, lock_unwrap!(g).get_name(),
+					self.name, i, lock_unwrap!(g).get_name(),
 					cs.num_constraints() - nc, cs.num_constraints()));
 			}
 		}
