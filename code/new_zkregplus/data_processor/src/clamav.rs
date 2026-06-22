@@ -1662,22 +1662,6 @@ impl ClamavSig{
 			cells[c].1 += active;
 			cells[c].2 += vec_res.last().map_or(0,|v| v.len());
 		}
-		// DEBUG USE 64922.1 (ZKR_ESTDIAG): per-subsig chain shape + rows for a
-		// target chunk, to localize the per-subsig EST-vs-REAL gap. Removable.
-		if std::env::var("ZKR_ESTDIAG").is_ok() {
-			let tc: usize = std::env::var("ZKR_ESTDIAG_CHUNK").ok()
-				.and_then(|s| s.parse().ok()).unwrap_or(usize::MAX);
-			if tc < cells.len() && cells[tc].0 > 0 {
-				let lens: Vec<usize> = pat.iter().map(|(w,_)| w.len())
-					.collect();
-				let rngs: Vec<(usize,usize)> = pat.iter()
-					.map(|(_,r)| *r).collect();
-				println!("DEBUG USE 64922.1: sig={} bwd={} npat={} \
-					chunk={} rows={} wlens={:?} ranges={:?}",
-					self.name, is_backward, pat.len(), tc,
-					cells[tc].0, lens, rngs);
-			}
-		}
 		cells
 	}
 
@@ -3774,9 +3758,6 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		//MAX of the two buffers, not the sum.
 		let mut acc_f: Vec<(usize,usize,usize)> = vec![];
 		let mut acc_b: Vec<(usize,usize,usize)> = vec![];
-		// DEBUG USE 64921 (ZKR_PROBE_ESTREAL): per-chunk count of subsigs that
-		// contribute fwd rows (vs gadget n_subsigs) to localize residual gap.
-		let mut acc_cnt: Vec<usize> = vec![];
 		for s in v_sigs.iter().filter(|s|
 			set_sigs_crit.contains(&s.name)
 			&& !set_sigs_pm.contains(&s.name)){
@@ -3800,10 +3781,6 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 				for (c,(f,a,l)) in cells.into_iter().enumerate(){
 					while acc.len()<=c { acc.push((0,0,0)); }
 					acc[c].0+=f; acc[c].1+=a; acc[c].2+=l;
-					if f>0 {
-						while acc_cnt.len()<=c { acc_cnt.push(0); }
-						acc_cnt[c]+=1;
-					}
 				}
 			}
 		}
@@ -3829,50 +3806,8 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 			max_carried_live_per_chunk = max_carried_live_per_chunk.max(lc);
 		}
 		_et.stop();
-		// DEBUG USE 64920.1 (ZKR_PROBE_ESTREAL): per-chunk forward-entry
-		// ESTIMATE (post anchor-reversal fix). Compare seg-by-seg against the
-		// gadget's REAL StepFwdPrf container rows (64920.2). Removable.
-		if std::env::var("ZKR_PROBE_ESTREAL").is_ok() {
-			log(0, LOG1, &format!("DEBUG USE 64920.1: EST fname={} \
-				fwd_entries_per_chunk={:?}", fname, fwd_entries_per_chunk));
-			log(0, LOG1, &format!("DEBUG USE 64921: EST fname={} \
-				subsig_count_per_chunk={:?}", fname, acc_cnt));
-		}
 		log(0, LOG1, &format!(
 			"ESTIMATE: chunked SED propagation (this file): {} ms", _et.ms()));
-		// 64600: reset (new, used for sizing) vs cross-chunk (old) per-chunk
-		// max fwd-prf entries; confirms the reseed closes the est<real perc
-		// gap on server. Probe-only (recomputes the old cross-chunk acc).
-		if std::env::var("ZKR_PROBE_64600").is_ok() && reset_per_chunk {
-			let mut o_f: Vec<usize> = vec![];
-			let mut o_b: Vec<usize> = vec![];
-			for s in v_sigs.iter().filter(|s|
-				set_sigs_crit.contains(&s.name)
-				&& !set_sigs_pm.contains(&s.name)){
-				for sid in 0..s.vec_subsig_pm_bounds.len(){
-					let pb = &s.vec_subsig_pm_bounds[sid];
-					if pb.is_empty() { continue; }
-					let igc = s.vec_subsig_obj.get(sid)
-						.map_or(false,|o| o.b_ignore_case);
-					let is_bwd = s.vec_subsig_anchor_dir.get(sid)
-						.map_or(false,|d| *d==1);
-					let cl = s.eval_pm_bounds_chunked(pb, is_bwd, igc,
-						&hs_occ, &hs_occ_igc, seg_size, false);
-					let a = if is_bwd {&mut o_b} else {&mut o_f};
-					for (c,(f,_,_)) in cl.into_iter().enumerate(){
-						while a.len()<=c { a.push(0); }
-						a[c]+=f;
-					}
-				}
-			}
-			let omax = (0..o_f.len().max(o_b.len())).map(|c|
-				o_f.get(c).copied().unwrap_or(0)
-				.max(o_b.get(c).copied().unwrap_or(0)))
-				.max().unwrap_or(0);
-			log(0, LOG1, &format!("DEBUG USE 64600.1: {} per-chunk max fwd \
-				OLD cross-chunk={} NEW reset={}", fname, omax,
-				max_fwd_entries_per_chunk));
-		}
 	}
 	// CP cap demand: distinct crit-DFA states per chunk (cs/igc max). Sizes
 	// cp_basis_unique_states (CP pack imm_buf). Estimator-pass only.

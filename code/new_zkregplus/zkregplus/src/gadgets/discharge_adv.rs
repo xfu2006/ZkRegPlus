@@ -2933,63 +2933,6 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		}
 		let (sq_to_add, sq_res, fwd_prf) = inp_step_queue
 			.gen_forward_prf(pat_loc, subsig_store_info);
-		// DEBUG USE 64920.2 (ZKR_PROBE_ESTREAL): REAL StepFwdPrf container
-		// rows actually built for this chunk = sum over subsigs of sum over
-		// items of vec_pat_id.len() (the prod-sized occupancy). Compare
-		// seg-by-seg against the estimate (64920.1). Removable.
-		if std::env::var("ZKR_PROBE_ESTREAL").is_ok() {
-			let real: usize = fwd_prf.subsigs.iter().map(|s|
-				fwd_prf.store_items.get(s).map_or(0, |v| v.iter()
-					.map(|it| it.vec_pat_id.len()).sum::<usize>())).sum();
-			println!("DEBUG USE 64920.2: REAL seg={} igc={} \
-				fwd_container_rows={} n_subsigs={}",
-				seg_id, b_igc, real, fwd_prf.subsigs.len());
-		}
-		// DEBUG USE 64910 (ZKR_PROBE_FWDQ): per-subsig forward step-queue
-		// growth for ONE chunk, to see WHERE the queue explodes. 64910.1
-		// per subsig: bwd flag, per-step depth, peak, fwd rows, anchor +
-		// next patterns. 64910.2 chunk summary + optional early-exit
-		// (ZKR_FWDQ_EXIT) right here, before any circuit synthesis.
-		if std::env::var("ZKR_PROBE_FWDQ").is_ok() {
-			let (_p1, p2) = utils::consts::current_bit_parts();
-			let mut rows: Vec<(usize, usize)> = vec![];
-			let mut total_fwd = 0usize;
-			for subsig in &sq_res.subsigs {
-				let u = field_to_usize(subsig);
-				let depth: Vec<usize> = sq_res.store_items.get(subsig)
-					.map_or(vec![], |v| v.iter().map(|it| it.locs
-					.iter().filter(|l| !l.is_zero()).count()).collect());
-				let fwd_rows = fwd_prf.store_items.get(subsig)
-					.map_or(0, |v| v.len());
-				total_fwd += fwd_rows;
-				rows.push((u, fwd_rows));
-				let rec = subsig_store_info.subsig_to_steps.get(&u);
-				let bwd = rec.map_or(false, |r| r.is_backward);
-				let pm: Vec<(usize,(usize,usize))> = rec.map_or(vec![],
-					|r| r.vec_pm_bounds.iter().take(3).cloned().collect());
-				let (pk, pk_at) = depth.iter().enumerate().fold(
-					(0usize, 0usize), |(m, mi), (i, &d)|
-					if d > m { (d, i) } else { (m, mi) });
-				println!("DEBUG USE 64910.1: seg={} igc={} subsig={} \
-					sig_id={} bwd={} steps={} depth={:?} \
-					peak={}@step{} fwd_rows={} pm_head={:?}",
-					seg_id, b_igc, u, (u as u64) >> p2, bwd as u8,
-					depth.len(), depth, pk, pk_at, fwd_rows, pm);
-			}
-			rows.sort_by(|a, b| b.1.cmp(&a.1));
-			let top: Vec<(usize, usize)> = rows.iter().take(5)
-				.cloned().collect();
-			println!("DEBUG USE 64910.2: seg={} igc={} n_subsigs={} \
-				total_fwd_rows={} top5={:?}", seg_id, b_igc,
-				sq_res.subsigs.len(), total_fwd, top);
-			if std::env::var("ZKR_FWDQ_EXIT").is_ok()
-				&& total_fwd > 50000 {
-				println!("DEBUG USE 64910.2: ZKR_FWDQ_EXIT exit \
-					before synthesis seg={} total_fwd_rows={}",
-					seg_id, total_fwd);
-				std::process::exit(0);
-			}
-		}
 		let sname_fsm = if b_igc {"fsm_adv_stmt_igc"} else {"fsm_adv_stmt_cs"};
 		let shift = 0-(offset_fsm as i32);
 		let pat_loc = pat_loc.lock().unwrap().duplicate_as_external_adv(shift,

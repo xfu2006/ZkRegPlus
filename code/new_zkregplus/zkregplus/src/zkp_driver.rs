@@ -1756,8 +1756,8 @@ pub mod tests_zkp_driver{
 
 	/// small_debug: aggressive DLP single-chunk forward-queue probe.
 	/// Discharges watson-k/379 seg3..7 (target seg5 centered), then
-	/// builds REAL chunk advice via reconverge_probe (no keys) so the
-	/// 64910 probe dumps the forward queue and exits on seg5.
+	/// builds REAL chunk advice via reconverge_probe (no keys) to
+	/// exercise the forward queue on a single file without SNARK keys.
 	#[allow(dead_code)]
 	fn small_debug<F:PrimeField>(_b_check_lkup: bool){
 		utils::os::print_computer_config(Some("small_debug"));
@@ -1815,25 +1815,13 @@ pub mod tests_zkp_driver{
 			vdata.push(fdr);
 			infos.push(rec);
 		}
-		//DEBUG USE 64911 (ZKR_PROBE_FWDQ): discharge-prover per-chunk
-		//forward-entry ESTIMATE (this drives prod) vs gadget real rows.
-		if std::env::var("ZKR_PROBE_FWDQ").is_ok() {
-			for (fi, fdr) in vdata.iter().enumerate() {
-				let cp = &fdr.chunk_peaks;
-				println!("DEBUG USE 64911.1: file={} \
-					fwd_entries_per_chunk={:?} needs_per_chunk={:?}",
-					fi, cp.fwd_entries_per_chunk,
-					cp.needs_per_chunk);
-			}
-		}
 		//estimate -> seed CapParams (lower bound; reconverge bumps it).
 		let est = estimate_config_aggr::<Fr>(&vdata, &db, &[100],
 			&mut vlog);
 		let seed = estimated_to_capparams_aggr(&est[0], mw, range2_bit, 3);
 		get_global_config().aggr_needs_subsigs = seed.aggr_needs_subsigs;
 		//Build advice on the REAL chunks via the capacity-probe loop:
-		//real gen_forward_prf, NO keys / NO fast_finalize. The 64910
-		//probe + ZKR_FWDQ_EXIT fire on seg5 and process::exit here.
+		//real gen_forward_prf, NO keys / NO fast_finalize.
 		let lkup_len = db.lkup.get_size();
 		let total_word_n: usize = words.iter().map(|w| w.len()).sum();
 		let poseidon = folding_schemes::transcript::poseidon
@@ -2980,6 +2968,7 @@ pub mod tests_zkp_driver{
 		get_global_config().n_par_snark_cp = if b_setup {1} else {2};
 		get_global_config().n_par_batch_claim = 8;
 		get_global_config().perc_lkup_share = 143; //this is for
+		get_global_config().log_level = utils::logger::LOG3;
 			//700MB data in 8 jobs and 256M lkup entries
 			//so we have per job: 90MB data = 180M nibbles
 			// then: 256/180 * 100 = 142.2% that's 142
@@ -3105,6 +3094,7 @@ pub mod tests_zkp_driver{
 		get_global_config().n_par_snark = 2;
 		get_global_config().n_par_snark_cp = 2;
 		get_global_config().n_par_batch_claim = 8;
+		get_global_config().log_level = utils::logger::LOG3;
 		//~200 needed when b_check_lkup (164M lkup / ~328 chunks);
 		//1 when not checking (panic guard is gated on b_check_lkup).
 		get_global_config().perc_lkup_share = if !b_check_lkup {1}
@@ -4343,6 +4333,7 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
 		get_global_config().clamav_cfg.sde_rep_fanout_cap = rc.fanout_cap;
 		get_global_config().clamav_cfg.min_pm_word_len = 3;
+		get_global_config().log_level = utils::logger::LOG3;
 		let cfg = data_processor::clamav::default_clamav_cfg();
 		let mut vlog = vec![];
 

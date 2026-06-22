@@ -29516,6 +29516,7 @@ Goal 4. add one proof only and generate proof size and print out
 	[j] copy over the tgz file into paper_data folder and
 		ask paper python to work with .tgz.
 	[k] strated again 4:00pm ==> 6:00pm (for LOG3 messages)
+		collected => DONE.
 Goal 5. further analyze the empowered full_dlp_sample() with the 
 	most challenge example which generates 30M circuit
 	[a] got the data from server
@@ -29533,10 +29534,14 @@ Goal 5. further analyze the empowered full_dlp_sample() with the
 		=> ask it to work out real plan to close the gap
 		=> fixed the BUG!
 	[j] unit test again.
-	[j] SERVER TEST: -> actually just run local 
+	[j] SERVER TEST: started 6:10pm on full_dlp_sample => success
+		circ size: 269k, 369k, 836k, 8.6M
+		fold time: 1.0s, 1.2s, 1.81s, 11.28s
 	[h]
 Gaol 6. Writing 
 	[a] 7.4 subsection 1
+	[b] planning on collector algorithm
+	[c] design of collector algorithm
 
 
 
