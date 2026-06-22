@@ -29458,7 +29458,24 @@ Goal 1. fix the estimate alg again for the full set
 [job 0] LOG3: -- --  PERF 1002 circ 1, r1cs cols: 183775, rows: 185119
 [job 0] LOG1:  full_dlp_sample ladder: 4 rungs, hist=[1120, 334, 59, 7]
 	---------------
-Goal 2. writing 7.3
+	[i] full_dlp started 5:30pm => 
+		figured estimate 6:30pm => 
+	--- full dlp --> note its cs1e is 89M vs 30.6M of full_clam()
+	#1: "grep -aE "determine_config_aggr:|64601.3" nohup.out
+  [job 0] LOG1:  determine_config_aggr: 4 rungs, hist=[1071545, 314751, 41919, 3537],
+  P_max.subsigs=18751, perc=2, avg_active=2
+  ", #2: nothing, #3: "grep -aE "PERF 1002 circ|cs1e:" nohup.out
+  [job 0] LOG3: -- --  PERF 1002 circ 1, r1cs cols: 325934, rows: 268343
+  [job 0] LOG3: -- --  PERF 1002 circ 2, r1cs cols: 690216, rows: 547871
+  [job 0] LOG3: -- --  PERF 1002 circ 3, r1cs cols: 6916604, rows: 5048740
+  [job 0] LOG3: -- --  PERF 1002 circ 4, r1cs cols: 42427674, rows: 30693773
+  [job 0] LOG2: --  - KEYS info: n_circs: 4, total_w: 50360416, total_e: 36558727, cs1e:
+  86919144, max_pp: 42427674, INCREASED RAM: 43 GB, TOTAL RAM: 207 GB.
+  [job 0] LOG3: -- --  PERF 1002 circ 1, r1cs cols: 183775, rows: 185119
+  [job 0] LOG2: --  - KEYS info: n_circs: 1, total_w: 183771, total_e: 185119, cs1e:
+  368891, max_pp: 185119, INCREASED RAM: 0 MB, TOTAL RAM: 206 GB.
+	--------------------
+Goal 2. writing 7.3 => DONE
 	[a] scheme and move folder
 	[b] fix issues one by one
 	[c] paragraph 3 and 4.
@@ -29466,3 +29483,7 @@ Goal 2. writing 7.3
 	[e] code approval
 	[f] testing -> data generation
 	[g] collected data and generate python file for generating the tables.
+
+TODO ---
+Goal 1. add proof size.
+

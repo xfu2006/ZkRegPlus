@@ -20,7 +20,7 @@ use std::{collections::{HashMap}};
 use ark_ff::{PrimeField,Zero,BigInteger};
 use std::{marker::{PhantomData},collections::{HashSet}};
 
-use utils::{logger::{log_perf, LOG1}, 
+use utils::{logger::{log_perf, LOG1, LOG6}, 
 	timer::Timer as GTimer};
 use crate::gadgets::{
 	commons::{gen_m_table,check_arr_eq,encode_cols,decode_cols,new_var,
@@ -2976,14 +2976,14 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		//------------------------------------------------------------------
 		//--- now argue that the generated step_queue and fwd_prf are correct
 		//------------------------------------------------------------------
-		if b_perf{log_perf(job_id, LOG1, "-- -- gen_fwd step0", &mut t1);}
+		if b_perf{log_perf(job_id, LOG6, "gen_fwd step0", &mut t1);}
 		//1. prove the sq_inp + sq_to_add = sq_res
 		let prf = Container::new("prf");
 		//1. prove inp_queue + to_add = sq_res
 		let prf_union = Self::gen_step_queue_union_prf("prf_union",
 			&ct_sq_inp, &ct_sq_to_add, &ct_sq_res)?;
 		prf.lock().unwrap().add_container(prf_union);
-		if b_perf{log_perf(job_id, LOG1, "-- -- gen_fwd step1", &mut t1);}
+		if b_perf{log_perf(job_id, LOG6, "gen_fwd step1", &mut t1);}
 
 		//2. prove that sq_inp has the same structure of the store_steps.
 		// This part is SKIPPED, as we have the new DB to bind
@@ -3001,14 +3001,14 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let prf_to_add_valid = Self::gen_to_add_valid_prf("prf_to_add",
 			&ct_sq_to_add, &prf_fwd);
 		prf.lock().unwrap().add_container(prf_to_add_valid);
-		if b_perf{log_perf(job_id, LOG1, "-- -- gen_fwd step2-3", &mut t1);}
+		if b_perf{log_perf(job_id, LOG6, "gen_fwd step2-3", &mut t1);}
 
 		//4. prove the validity of the fwd_prf
 		let (prf_fwdprf_valid, last_loc) = 
 			Self::gen_fwdprf_valid_prf("prf_fwdprf_valid", 
 				&prf_fwd, &ct_pat_loc, &ct_sq_res, capacity, last_loc)?;			//might throw CapErr on subsigs, just forward it
 		prf.lock().unwrap().add_container(prf_fwdprf_valid);
-		if b_perf{log_perf(job_id, LOG1, "-- -- gen_fwd step4", &mut t1);}
+		if b_perf{log_perf(job_id, LOG6, "gen_fwd step4", &mut t1);}
 
 		// --- now return 
 		res.lock().unwrap().add_container(prf);
@@ -3073,7 +3073,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		res.lock().unwrap().add_container(ct_sq_res2.clone());
 		res.lock().unwrap().add_container(bwd_prf.to_container("prf_bwd", 
 			subsig_store_info)?);
-		if b_perf{log_perf(job_id, LOG1, "-- -- gen_bwd step0", &mut t1);}
+		if b_perf{log_perf(job_id, LOG6, "gen_bwd step0", &mut t1);}
 
 
 		//------------------------------------------------------------------
@@ -3084,7 +3084,7 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let prf_union = Self::gen_step_queue_union_prf("prf_union",
 			&ct_sq_res2, &ct_sq_to_del, &ct_fwd_res)?;
 		prf.lock().unwrap().add_container(prf_union);
-		if b_perf{log_perf(job_id, LOG1, "-- -- gen_bwd step1", &mut t1);}
+		if b_perf{log_perf(job_id, LOG6, "gen_bwd step1", &mut t1);}
 
 		//2. no need to argume for the sq_inp conforms to store_steps
 		//as we are working on existing fwd prfs
@@ -3095,14 +3095,14 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let prf_to_del_valid = Self::gen_to_del_valid_prf("prf_to_del",
 			&ct_sq_to_del, &prf_bwd);
 		prf.lock().unwrap().add_container(prf_to_del_valid);
-		if b_perf{log_perf(job_id, LOG1, "-- -- gen_bwd step2-3", &mut t1);}
+		if b_perf{log_perf(job_id, LOG6, "gen_bwd step2-3", &mut t1);}
 
 		//4. prove the validity of the bwd_prf
 		let prf_bwdprf_valid = Self::gen_bwdprf_valid_prf("prf_bwdprf_valid",
 			&prf_bwd, &ct_sq_res2, default_min_loc, &subsig_store_info, 
 			&capacity, b_igc)?;
 		prf.lock().unwrap().add_container(prf_bwdprf_valid);
-		if b_perf{log_perf(job_id, LOG1, "-- -- gen_bwd step4", &mut t1);}
+		if b_perf{log_perf(job_id, LOG6, "gen_bwd step4", &mut t1);}
 
 		// --- now return 
 		res.lock().unwrap().add_container(prf);

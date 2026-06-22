@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 
 // This module generates the (pat-loc) for a nibble sequence.
 use folding_schemes::folding::foldpot::container_config::ColEle;
-use utils::{logger::{log_perf, LOG1,LOG2}, 
+use utils::{logger::{log_perf, LOG1,LOG2,LOG6},
 	timer::Timer as GTimer, consts::ADD_CHAIN_SIZE};
 use rayon::iter::{ParallelIterator,IntoParallelRefIterator,
 	IndexedParallelIterator, IntoParallelIterator};
@@ -895,7 +895,7 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 				vec![f_id_trans; m], "si_halo_trans", IDX_SI_DATA));
 		}
 
-		if b_perf{log_perf(job_id, LOG1, "-- -- fsm_gen_fsm_combo", &mut gt);}
+		if b_perf{log_perf(job_id, LOG6, "fsm_gen_fsm_combo", &mut gt);}
 
 		Ok(res)
 	}
@@ -1374,7 +1374,7 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 			_ => pat_loc_tbl
 		}?;
 
-		if b_perf{log_perf(job_id, LOG1, "-- -- fsm_packed_trace", &mut gt);}
+		if b_perf{log_perf(job_id, LOG6, "fsm_packed_trace", &mut gt);}
 		res.lock().unwrap().add_container(pat_loc_tbl);
 		Ok( res )
 	}

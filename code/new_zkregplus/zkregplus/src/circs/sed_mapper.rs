@@ -42,7 +42,7 @@ discharge_subsig_adv (one for case sentive and one for ignore case).
 */
 
 use folding_schemes::folding::foldpot::container_config::ColEle;
-use utils::{logger::{log, log_perf, emit_stdout, LOG7, LOG1}, timer::Timer, consts::{read_global_config, B_DEBUG} };
+use utils::{logger::{log, log_perf, emit_stdout, LOG7, LOG1, LOG5}, timer::Timer, consts::{read_global_config, B_DEBUG} };
 
 use std::{
 	marker::PhantomData,
@@ -533,7 +533,7 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 		//1. build the word extraction gadget's advice
 		let wd_extract_advice = WordExtractAdvAdvice::<F>
 			::new(word_seg, actual_size, false)?; //default mode for char sid
-		if b_perf{ log_perf(job_id, LOG1, "-- Sed advice step1: word_extract", &mut t1); }
+		if b_perf{ log_perf(job_id, LOG5, "Sed advice step1: word_extract", &mut t1); }
 
 		//2. build the fsm_adv advice (cs and igc)
 		assert!(vec_sigs_to_discharge.len()==discharge_info.len());
@@ -556,7 +556,7 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 				inp.inp_state_cs,inp.inp_loc_cs,
 				&subsigs_inp_cs, &fsm_cap_cs,fsm_id_cs as u32,
 				subsig_pat_store_cs, job_id)?;
-		if b_perf{ log_perf(job_id, LOG1, "-- Sed advice step2: fsm_cs", &mut t1); }
+		if b_perf{ log_perf(job_id, LOG5, "Sed advice step2: fsm_cs", &mut t1); }
 
 		//2.2 the igc version
 		let subsigs_inp_igc= Self::collect_subsig_ids(vec_sigs_to_discharge,
@@ -568,7 +568,7 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 				inp.inp_state_igc,inp.inp_loc_igc,
 				&subsigs_inp_igc, &fsm_cap_igc, fsm_id_igc as u32,
 				subsig_pat_store_igc, job_id)?;
-		if b_perf{ log_perf(job_id, LOG1, "-- Sed advice step3: fsm_igc", &mut t1); }
+		if b_perf{ log_perf(job_id, LOG5, "Sed advice step3: fsm_igc", &mut t1); }
 
 		//3. build the discharge_adv advice (cs and igc)
 		let da_cap_cs = &cs_capacity.da_capacity();
@@ -589,7 +589,7 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
                                 subsig_step_store_cs, &da_cap_cs, &inp_steps_queue_obj_cs,
 				last_loc_cs,
 				seg_id, job_id)?;
-		if b_perf{ log_perf(job_id, LOG1, "-- Sed advice step4: discharge_cs", &mut t1); }
+		if b_perf{ log_perf(job_id, LOG5, "Sed advice step4: discharge_cs", &mut t1); }
 
 		//3.2 the igc version
 		let pat_loc_igc = fsm_adv_advice_igc.stmt_container.lock().unwrap()
@@ -606,7 +606,7 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
                                 subsig_step_store_igc, &da_cap_igc, &inp_steps_queue_obj_igc,
 				last_loc_igc,
 				seg_id, job_id)?;
-		if b_perf{ log_perf(job_id, LOG1, "-- Sed advice step5: discharge_igc", &mut t1); }
+		if b_perf{ log_perf(job_id, LOG5, "Sed advice step5: discharge_igc", &mut t1); }
 
 
 		//4. build the compute_sig advice  (note: just one copy)
@@ -669,7 +669,7 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 			Arc::new(discharge_adv_advice_igc.clone()),
 			Arc::new(compute_sig_adv_advice.clone()),
 		];
-		if b_perf{ log_perf(job_id, LOG1, "-- Sed advice step6: compute_sig", &mut t1); }
+		if b_perf{ log_perf(job_id, LOG5, "Sed advice step6: compute_sig", &mut t1); }
 
 		Ok(Self{
 			wd_extract_advice, 

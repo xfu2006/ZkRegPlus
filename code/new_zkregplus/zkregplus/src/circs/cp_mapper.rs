@@ -37,7 +37,7 @@ use utils::consts::{read_global_config, B_DEBUG};
 
 // subtbl: follow inp/oup/data
 use folding_schemes::folding::foldpot::container_config::ColEle;
-use utils::{logger::{log, log_perf, emit_stdout, LOG1, LOG7}, timer::Timer };
+use utils::{logger::{log, log_perf, emit_stdout, LOG1, LOG5, LOG7}, timer::Timer };
 use std::{
 	marker::PhantomData,
 	sync::{Arc, Mutex},
@@ -233,7 +233,7 @@ impl <F:PrimeField + ColEle> CpAdvice<F>{
 		let nibbles = wd_extract_advice.data[1..].to_vec();
 		let dfa_crit_advice = FsmAdvice::<F>
 			::new(&nibbles, dfa_crit, inp_state, fsm_id as u32)?;
-		if b_perf{ log_perf(job_id, LOG1, "-- CpMapper gen_adv step1", &mut t1); }
+		if b_perf{ log_perf(job_id, LOG5, "CpMapper gen_adv step1", &mut t1); }
 
 
 		//2. build the packing final states gadget's advice
@@ -263,7 +263,7 @@ impl <F:PrimeField + ColEle> CpAdvice<F>{
 			},
 			_ => pack_res 
 		}?;
-		if b_perf{ log_perf(job_id, LOG1, "-- CpMapper gen_adv step2: pack_res", &mut t1); }
+		if b_perf{ log_perf(job_id, LOG5, "CpMapper gen_adv step2: pack_res", &mut t1); }
 
 		//3. build the advice for the sigs gadget
 		let sig_cap = SigGadgetCapacity{
@@ -273,7 +273,7 @@ impl <F:PrimeField + ColEle> CpAdvice<F>{
 			count_sig_no_crit_pat: vec_sig_id_no_crit_pat.len(),
 		};
 		let inp_sigs = inp_buf[1..sig_buf_capacity+1].to_vec();
-		if b_perf{ log_perf(job_id, LOG1, "-- CpMapper gen_adv step3: sig", &mut t1); }
+		if b_perf{ log_perf(job_id, LOG5, "CpMapper gen_adv step3: sig", &mut t1); }
 
 		
 		let sigs_res = GetSigAdvice::<F>::new(
@@ -300,7 +300,7 @@ impl <F:PrimeField + ColEle> CpAdvice<F>{
 			},
 			_ => sigs_res 
 		}?;
-		if b_perf{ log_perf(job_id, LOG1, "-- CpMapper gen_adv step4: assemble", &mut t1); }
+		if b_perf{ log_perf(job_id, LOG5, "CpMapper gen_adv step4: assemble", &mut t1); }
 
 		Ok(Self{
 			wd_extract_advice,

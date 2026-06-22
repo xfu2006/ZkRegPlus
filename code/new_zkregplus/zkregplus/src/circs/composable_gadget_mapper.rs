@@ -12,7 +12,7 @@ following:
 */
 
 use folding_schemes::folding::foldpot::container_config::{ColEle, ContainerConfig};
-use utils::{logger::{log_perf, emit_stdout, LOG1 }, timer::Timer, consts::B_DEBUG};
+use utils::{logger::{log_perf, emit_stdout, LOG1, LOG4 }, timer::Timer, consts::B_DEBUG};
 use std::any::{Any};
 use folding_schemes::{
 	Error,
@@ -1216,7 +1216,7 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 		).collect::<Vec<Vec<Arc<dyn NdAdvice + Send + Sync>>>>().concat();
 		assert!(vec_errs.len() + vec_adv.len() == res.len());
 
-		if b_perf{ log_perf(self.job_id, LOG1, "Generate Advice", &mut t1); }
+		if b_perf{ log_perf(self.job_id, LOG4, "Generate Advice", &mut t1); }
 	
 		if vec_errs.len()>0{ Err(Error::CapErr(vec_errs)) } else{
 			Ok(Arc::new(CompositeAdvice{
