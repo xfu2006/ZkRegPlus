@@ -3460,6 +3460,15 @@ where 	C: CurveGroup<ScalarField=F>,
 			}
 			let stmt_len = lock_unwrap!(g).get_msg_size().0;
 			log_perf(self.job_id, log_level, &format!("-- -- after msg3 of module {}: {}:\n\tINCREASED: constraints: {}, const vars: {}, wit vars: {} \n\t==> NOW: CS:{}, const: {}, witness: {}\n\t ==> stmt_size: {}. ", i, lock_unwrap!(g).get_name(), cs.num_constraints()-nc, cs.num_instance_variables()-ni, cs.num_witness_variables()-nv, cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables(), stmt_len), &mut gt3);
+			// DEBUG USE 64900.1 (ZKR_PROBE_CSBREAK): per-gadget cs delta +
+			// running total, to attribute one circuit's R1CS rows across its
+			// gadgets. Fires once per circ during preprocess get_r1cs_super.
+			if std::env::var("ZKR_PROBE_CSBREAK").is_ok() {
+				emit_stdout(format!("DEBUG USE 64900.1: gadget[{}] {} \
+					cs_delta: {} running_total: {}",
+					i, lock_unwrap!(g).get_name(),
+					cs.num_constraints() - nc, cs.num_constraints()));
+			}
 		}
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 3");

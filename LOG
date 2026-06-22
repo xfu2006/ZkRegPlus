@@ -29483,6 +29483,9 @@ Goal 2. writing 7.3 => DONE
 	[e] code approval
 	[f] testing -> data generation
 	[g] collected data and generate python file for generating the tables.
+Goal 3. adjust
+	[a] it looks pass1 is very slow, try to analyze (last circuit is really big!)
+	[b] restarted short/clean print version at 9:00pm ===> 
 
 TODO ---
 Goal 1. add proof size.

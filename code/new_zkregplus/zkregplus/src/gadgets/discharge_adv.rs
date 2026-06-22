@@ -5096,27 +5096,38 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for DischargeAdvGadget<F>{
 		let default_min_loc = &last_loc + &new_const_var(&cs, F::one());
 		t9901.stop();
 
+		// DEBUG USE 64900.5/.6 (ZKR_PROBE_CSBREAK): split discharge cs into
+		// forward-queue vs aggressive-acc (or backward-queue) sub-validators.
+		let b_csbreak = std::env::var("ZKR_PROBE_CSBREAK").is_ok();
 		//3. validate the forward step queue
 		// COST: 59*n1
 		let forward_step_queue= stmt.get_container("fwd_steps_queue")?;
+		let nc_fwd = cs.num_constraints();
 		let default_min_loc= self.validate_forward_step_queue(
-			&forward_step_queue.lock().unwrap(), r1.clone(), r2.clone(), 
+			&forward_step_queue.lock().unwrap(), r1.clone(), r2.clone(),
 			cs.clone(), default_min_loc, word_id.clone(), subseg_id.clone())?;
+		if b_csbreak { println!("DEBUG USE 64900.5: discharge[igc={}] \
+			fwd_queue cs: {}", self.b_igc, cs.num_constraints()-nc_fwd); }
 
 		//4. AGGRESSIVE = forward-only: no backward step-queue exists; validate
 		//the failed_subsigs accumulator instead (completeness + carry-in
 		//logups). Non-aggressive validates the backward step queue.
+		let nc_acc = cs.num_constraints();
 		if self.capacity.b_aggressive {
 			self.validate_aggressive_acc(&stmt,
 				&forward_step_queue.lock().unwrap(),
 				r1.clone(), cs.clone(),
 				word_id.clone(), subseg_id.clone())?;
+			if b_csbreak { println!("DEBUG USE 64900.6: discharge[igc={}] \
+				aggr_acc cs: {}", self.b_igc, cs.num_constraints()-nc_acc); }
 		} else {
 			let backward_step_queue= stmt.get_container("bwd_steps_queue")?;
 			self.validate_backward_step_queue(&forward_step_queue.lock().unwrap(),
 				&backward_step_queue.lock().unwrap(),
 				r1.clone(), r2.clone(), cs.clone(), default_min_loc,
 				word_id.clone(), subseg_id.clone())?;
+			if b_csbreak { println!("DEBUG USE 64900.6: discharge[igc={}] \
+				bwd_queue cs: {}", self.b_igc, cs.num_constraints()-nc_acc); }
 		}
 
 		let b_perf = false;
