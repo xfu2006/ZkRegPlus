@@ -1941,6 +1941,77 @@ pub mod tests_zkp_driver{
 	}
 
 
+	/// 2026-06-22: small_par_full_snark — identical config to
+	/// small_data_par but runs the FULL Groth16 decider
+	/// (b_light_test=false) and produces ONE proof only
+	/// (b_one_proof: every job folds, only Job 0 proves). For a
+	/// server full-snark validation run. Keep capacities in sync with
+	/// small_data_par if that is tuned.
+	#[allow(dead_code)]
+	fn small_par_full_snark<F:PrimeField>(b_check_lkup: bool){
+		utils::os::print_computer_config(Some("small_par_full_snark"));
+		get_global_config().snark_cache_dir = "small_20".to_string();
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_write_snark_cache = false;
+		get_global_config().range2_bit = 18;
+		get_global_config().b_read_cache = false;
+		get_global_config().b_light_test = false; // full snark
+		get_global_config().b_one_proof = true;    // only Job 0 proves
+		get_global_config().perc_lkup_share = if !b_check_lkup {1}
+			else {10000}; //enough lkup coverage for binexec_p* (4 files)
+		let b_write_cache = !read_global_config().b_read_cache;
+		let set1 = "data/debug/small_data_set/config_dfa"; //for dfa
+		let max_word= 1; //this is chunk_len
+		let sigs = 2; //good setting: 2
+		let subsigs = 4;
+		let avg_pats_per_subsig = 3;
+		let avg_active_pats_per_subsig = 2;
+		let perc_comp_subsigs = 26;  //26 for subsigs=4, 34 for subsigs=3
+		let basis_unique_states = 25*100;
+		let basis_acc_states = 807;  //6.46 percent
+		let basis_pats_in_trace = 1500;
+		let perc_pats_expansion_rate = 200;
+
+		let init_cp_cap= CpCapacity{
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+		};
+		let init_sed_cap= SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig, avg_active_pats_per_subsig,
+			basis_pats_in_trace,
+			perc_pats_expansion_rate,
+			sigs, perc_comp_subsigs,
+			basis_unique_states, basis_acc_states
+		);
+		let init_dfa_cap= DfaCapacity::new(max_word, sigs, subsigs);
+
+		let scan_files: Vec<String> = (1..=4).map(|i|
+			format!("{}/binexec_p{}.dat", set1, i)).collect();
+		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(0,
+			&format!("{}/sigs.dat",set1),
+			scan_files,
+			"data/small_data_set/reports/report.dat",
+			b_write_cache,
+			"small_20",
+			&format!("{}/dfa.dat", set1),
+			&format!("{}/ised.dat", set1),
+			&format!("{}/ised_igc.dat",set1),
+			max_word,
+			&init_cp_cap,
+			&init_sed_cap,
+			&init_dfa_cap,
+			&init_cp_cap,
+			&init_sed_cap,
+			&vec![],
+			1,
+			b_check_lkup
+		);
+	}
+
+
 	/// the sigs are the same as small data
 	/// has 1 long words (1k-packed nibbles - around 31kb)
 	/// read the READ me in data/small_data_set2/README for the design of sigs
@@ -5214,6 +5285,14 @@ failed={} high={} final={}", raw_n, n_stage1, passed.len(),
 	#[test]
 	pub fn test_small_email3(){
 		small_email3::<Fr>(false);
+	}
+
+	/// Full Groth16 snark on the small_data_par config, one proof only.
+	/// `cargo test -p zkregplus --release -- test_small_par_full_snark \
+	///   --show-output --nocapture`
+	#[test]
+	pub fn test_small_par_full_snark(){
+		small_par_full_snark::<Fr>(false);
 	}
 
 	// ===== M2.5: estimator validation (OLD/NEW/REAL coverage) =====

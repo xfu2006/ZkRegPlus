@@ -3211,6 +3211,19 @@ where
 			let mb_speed = get_speed(max_total_n, &mut gt_prove_steps);
 	  		log_perf(job_id, log_level, &format!("PERF 1006. Job Step 1: main circuits IVC PROVE STEPS (Folding) DONE. total_word_len: {}, steps: {}. SPEED: {} MB/hour", format_bytes(max_total_n * 31), _num_steps, mb_speed),
 	  			&mut gt1);
+
+	  		// b_one_proof: only Job 0 runs the SNARK deciders + Phase 2
+	  		// + proof assembly/verify. All jobs still do the Phase-1
+	  		// folding above; the others return here so a single full
+	  		// batch+individual proof is produced cheaply. Note: the
+	  		// last-finisher key-drop (keyed on n_jobs_total) will not
+	  		// fire in this mode, so g16 keys stay resident until return.
+	  		if read_global_config().b_one_proof && job_id != 0 {
+	  			log(job_id, log_level, &format!(
+	  				"Job {} folding done; b_one_proof set -> skip SNARK \
+	  				 (only Job 0 proves).", job_id));
+	  			return Ok(());
+	  		}
 	  	
 	  		//5. generate the inputs for cyclepair
 	  		let qa_pp_d1_guard = qa_pp_d1.read().unwrap();
@@ -3588,6 +3601,11 @@ where
 	);
 	log_perf(job_id, log_level, &format!("FOLDPOT Step 13. Verify Individual Proof."),
 		&mut gt1);
+	// Report the proof structure + byte sizes once (this job holds a
+	// complete batch+individual proof; under b_one_proof only Job 0
+	// reaches here).
+	batch_prf.print_size();
+	ind_prf.print_size();
 	log_perf(job_id, LOG2, &format!(
 		"DEBUG USE 60002.39: MEM after verify_individual: {} GB",
 		get_mem_usage()), &mut gt1);

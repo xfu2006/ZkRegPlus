@@ -29496,15 +29496,27 @@ Goal 2. put the most expensive file into full_dlp_sample2 and analyze
 	[b] locate the two files which has the largest fwd and the largest subsigs
 		and analyze the details
 	[c] observe the two files and see how they blow up the cost
-Goal 3. section 7.4
+Goal 3. section 7.4 -> DONE
 	[a] refine list of topics
 	[b] discuss C. 
 	[c] contents of 7.4 micro-bench mark
 	[d] details of C
 		[d1] ideas of the cost model and breakdown of circuits
-	[e] 
 Goal 4. add one proof only and generate proof size and print out
 	circuit structure ONE TIME only, do it using small_data_full.
+	[a] check out how many proofs
+	[b] lay specification
+	[c] add one_proof flag
+	[d] for aggressive mode to sequential check circuit instead of parallel one
+	[e] review code
+	[f] generate small_data_par_full_snark() and deploy to server to run.
+	[g] 
+Goal 5. further analyze the empowered full_dlp_sample() with the 
+	most challenge example which generates 30M circuit
+	[a] got the data from server
+	[b] analyze
+	[c] got the worst example: watson-k/e_mail_bin/379, seg 5 — prod=115,233,634, fwd_queue=310,927, NEEDS=only 200.
+
 
 
 TODO ---

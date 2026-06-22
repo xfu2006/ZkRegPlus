@@ -230,6 +230,89 @@ os       : {} (kernel {})\n\
 		task, now, cpus, ram_total, ram_avail,
 		cpu_model, cpu_mhz, os_name, kernel);
 	crate::logger::emit_stdout(block);
+
+	//8. dump every global config field, one per line (run/job name is
+	//   the task arg). GlobalConfig has no Debug derive, so list fields
+	//   explicitly; ClamavApproxConfig subfields are listed too.
+	let c = crate::consts::read_global_config();
+	let mut cb = String::from("---------- global config ----------\n");
+	cb.push_str(&format!("run/job                 : {}\n", task));
+	cb.push_str(&format!("log_level               : {}\n", c.log_level));
+	cb.push_str(&format!("range2_bit              : {}\n", c.range2_bit));
+	cb.push_str(&format!("b_light_test            : {}\n", c.b_light_test));
+	cb.push_str(&format!("b_folding_only          : {}\n", c.b_folding_only));
+	cb.push_str(&format!("b_read_cache            : {}\n", c.b_read_cache));
+	cb.push_str(&format!("b_write_snark_cache     : {}\n",
+		c.b_write_snark_cache));
+	cb.push_str(&format!("b_read_snark_cache      : {}\n",
+		c.b_read_snark_cache));
+	cb.push_str(&format!("snark_cache_dir         : {:?}\n",
+		c.snark_cache_dir));
+	cb.push_str(&format!("n_par_snark             : {}\n", c.n_par_snark));
+	cb.push_str(&format!("n_par_snark_cp          : {}\n", c.n_par_snark_cp));
+	cb.push_str(&format!("n_par_batch_claim       : {}\n",
+		c.n_par_batch_claim));
+	cb.push_str(&format!("n_par_snark_total       : {}\n",
+		c.n_par_snark_total));
+	cb.push_str(&format!("b_resume                : {}\n", c.b_resume));
+	cb.push_str(&format!("perc_lkup_share         : {}\n",
+		c.perc_lkup_share));
+	cb.push_str(&format!("word_cap_per_job        : {}\n",
+		c.word_cap_per_job));
+	cb.push_str(&format!("stall_watchdog_secs     : {}\n",
+		c.stall_watchdog_secs));
+	cb.push_str(&format!("b_dryrun_after_capcheck : {}\n",
+		c.b_dryrun_after_capcheck));
+	cb.push_str(&format!("basis_failed_subsigs    : {}\n",
+		c.basis_failed_subsigs));
+	cb.push_str(&format!("aggr_needs_subsigs      : {}\n",
+		c.aggr_needs_subsigs));
+	cb.push_str(&format!("b_estimate_caps         : {}\n",
+		c.b_estimate_caps));
+	cb.push_str(&format!("b_one_proof             : {}\n", c.b_one_proof));
+	cb.push_str(&format!("fp_sink                 : {}\n",
+		if c.fp_sink.is_some(){"Some"}else{"None"}));
+	cb.push_str(&format!("min_basis_unique_states : {}\n",
+		c.min_basis_unique_states));
+	cb.push_str(&format!("min_subsigs             : {}\n", c.min_subsigs));
+	cb.push_str(&format!("min_dfa_subsigs         : {}\n",
+		c.min_dfa_subsigs));
+	cb.push_str(&format!("min_sigs                : {}\n", c.min_sigs));
+	cb.push_str(&format!("min_dfa_sigs            : {}\n", c.min_dfa_sigs));
+	cb.push_str(&format!("min_avg_pats_per_subsig : {}\n",
+		c.min_avg_pats_per_subsig));
+	cb.push_str(&format!("min_avg_active_pats_per_subsig : {}\n",
+		c.min_avg_active_pats_per_subsig));
+	cb.push_str(&format!("min_basis_pats_in_trace : {}\n",
+		c.min_basis_pats_in_trace));
+	cb.push_str(&format!("min_perc_pats_expansion_rate : {}\n",
+		c.min_perc_pats_expansion_rate));
+	cb.push_str(&format!("min_sigs_sed            : {}\n", c.min_sigs_sed));
+	cb.push_str(&format!("min_perc_comp_subsigs   : {}\n",
+		c.min_perc_comp_subsigs));
+	cb.push_str(&format!("min_basis_acc_states    : {}\n",
+		c.min_basis_acc_states));
+	let cc = &c.clamav_cfg;
+	cb.push_str(&format!("clamav.max_pm_sections  : {}\n",
+		cc.max_pm_sections));
+	cb.push_str(&format!("clamav.combination_limit: {}\n",
+		cc.combination_limit));
+	cb.push_str(&format!("clamav.repeat_limit     : {}\n", cc.repeat_limit));
+	cb.push_str(&format!("clamav.min_bag_len      : {}\n", cc.min_bag_len));
+	cb.push_str(&format!("clamav.min_pm_word_len  : {}\n",
+		cc.min_pm_word_len));
+	cb.push_str(&format!("clamav.b_aggressive_sde_for_rep : {}\n",
+		cc.b_aggressive_sde_for_rep));
+	cb.push_str(&format!("clamav.sde_rep_fanout_cap : {}\n",
+		cc.sde_rep_fanout_cap));
+	cb.push_str(&format!("clamav.variant_combine_cap : {}\n",
+		cc.variant_combine_cap));
+	cb.push_str(&format!("clamav.b_sde_rep_tight_first_leg : {}\n",
+		cc.b_sde_rep_tight_first_leg));
+	cb.push_str(&format!("clamav.sde_rep_fanout_boost : {}\n",
+		cc.sde_rep_fanout_boost));
+	cb.push_str("-----------------------------------");
+	crate::logger::emit_stdout(cb);
 }
 
 /// check if s is a match of r by running perl.

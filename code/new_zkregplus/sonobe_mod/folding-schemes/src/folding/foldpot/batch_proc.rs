@@ -306,6 +306,118 @@ impl <E:Pairing, S: SNARK<E::ScalarField>> BatchProof<E,S>{
 	}
 }
 
+use ark_serialize::{CanonicalSerialize, Compress};
+
+/// Running tally of proof elements + their compressed byte size.
+/// G1/G2 are group elements, Fr is a scalar field element.
+struct SizeAcc{ n_g1: usize, n_g2: usize, n_fr: usize, bytes: usize }
+impl SizeAcc{
+	fn new() -> Self{ Self{n_g1:0, n_g2:0, n_fr:0, bytes:0} }
+	/// one G1 group element
+	fn g1<C: CanonicalSerialize>(&mut self, name: &str, e: &C){
+		let b = e.serialized_size(Compress::Yes);
+		self.n_g1 += 1; self.bytes += b;
+		emit_stdout(format!("  {:<22}: 1 G1             : {:>5} B", name, b));
+	}
+	/// one Fr scalar element
+	fn fr<C: CanonicalSerialize>(&mut self, name: &str, e: &C){
+		let b = e.serialized_size(Compress::Yes);
+		self.n_fr += 1; self.bytes += b;
+		emit_stdout(format!("  {:<22}: 1 Fr             : {:>5} B", name, b));
+	}
+	/// a kzg/veccom Proof = 1 Fr (eval) + 1 G1 (proof)
+	fn kzg_like<F: CanonicalSerialize, G: CanonicalSerialize>(
+		&mut self, name: &str, eval: &F, proof: &G){
+		let be = eval.serialized_size(Compress::Yes);
+		let bp = proof.serialized_size(Compress::Yes);
+		self.n_fr += 1; self.n_g1 += 1; self.bytes += be + bp;
+		emit_stdout(format!(
+			"  {:<22}: 1 Fr + 1 G1      : {:>5} B", name, be+bp));
+	}
+}
+
+impl<E: Pairing> IndividualProof<E>{
+	/// Print each field's element kinds + compressed bytes, then the
+	/// element totals; return the total byte size.
+	pub fn print_size(&self) -> usize{
+		emit_stdout("==== IndividualProof ====".to_string());
+		let mut a = SizeAcc::new();
+		a.kzg_like("vcom_prf", &self.vcom_prf.eval, &self.vcom_prf.proof);
+		a.fr("v_i", &self.v_i);
+		a.kzg_like("kzg_prf", &self.kzg_prf.eval, &self.kzg_prf.proof);
+		emit_stdout(format!(
+			"  ---- elements: {} G1, {} G2, {} Fr | TOTAL {} bytes",
+			a.n_g1, a.n_g2, a.n_fr, a.bytes));
+		a.bytes
+	}
+}
+
+impl<E: Pairing, S: SNARK<E::ScalarField>> BatchProof<E, S>
+	where S::Proof: CanonicalSerialize{
+	/// Print each field's element kinds + compressed bytes, then the
+	/// element totals; return the total byte size. Option (part-2)
+	/// fields print Some/None and count only when present. Each Groth16
+	/// S::Proof is a known shape (2 G1 + 1 G2): its bytes come from
+	/// serialized_size (exact for any S) and 2 G1 + 1 G2 fold into the
+	/// element tally.
+	pub fn print_size(&self) -> usize{
+		emit_stdout("==== BatchProof ====".to_string());
+		let mut a = SizeAcc::new();
+		a.g1("vcom_vec_v", &self.vcom_vec_v);
+		a.g1("kzg_vec_v",  &self.kzg_vec_v);
+		a.g1("vcom_vec_r", &self.vcom_vec_r);
+		a.g1("kzg_vec_r",  &self.kzg_vec_r);
+		a.g1("prf_qa_nizk.prf", &self.prf_qa_nizk.prf);
+		a.fr("ch", &self.ch);
+		a.fr("rc", &self.rc);
+		a.kzg_like("agg_kzg_prf",
+			&self.agg_kzg_prf.eval, &self.agg_kzg_prf.proof);
+		// part 2 (Option) -- present-aware
+		match &self.kzg_all_com1{ Some(x)=>a.g1("kzg_all_com1", x),
+			None=>emit_stdout("  kzg_all_com1          : None".to_string()) }
+		match &self.kzg_all_com_ch1{ Some(x)=>a.fr("kzg_all_com_ch1", x),
+			None=>emit_stdout("  kzg_all_com_ch1       : None".to_string()) }
+		match &self.kzg_all_com_prf1{
+			Some(p)=>a.kzg_like("kzg_all_com_prf1", &p.eval, &p.proof),
+			None=>emit_stdout("  kzg_all_com_prf1      : None".to_string()) }
+		match &self.kzg_all_com2{ Some(x)=>a.g1("kzg_all_com2", x),
+			None=>emit_stdout("  kzg_all_com2          : None".to_string()) }
+		match &self.kzg_all_com_ch2{ Some(x)=>a.fr("kzg_all_com_ch2", x),
+			None=>emit_stdout("  kzg_all_com_ch2       : None".to_string()) }
+		match &self.kzg_all_com_prf2{
+			Some(p)=>a.kzg_like("kzg_all_com_prf2", &p.eval, &p.proof),
+			None=>emit_stdout("  kzg_all_com_prf2      : None".to_string()) }
+		match &self.comE2{ Some(x)=>a.g1("comE2", x),
+			None=>emit_stdout("  comE2                 : None".to_string()) }
+		match &self.comW2{ Some(x)=>a.g1("comW2", x),
+			None=>emit_stdout("  comW2                 : None".to_string()) }
+		match &self.comF2{ Some(x)=>a.g1("comF2", x),
+			None=>emit_stdout("  comF2                 : None".to_string()) }
+		match &self.qa_nizk_prf2{ Some(p)=>a.g1("qa_nizk_prf2.prf", &p.prf),
+			None=>emit_stdout("  qa_nizk_prf2          : None".to_string()) }
+		// Groth16 proofs: bytes via serialized_size, 2 G1 + 1 G2 each
+		for (name, sp) in [("snark_proof_main", &self.snark_proof_main),
+			("snark_proof_cp", &self.snark_proof_cp)]{
+			match sp{
+				Some(p)=>{
+					let b = p.serialized_size(Compress::Yes);
+					a.n_g1 += 2; a.n_g2 += 1; a.bytes += b;
+					emit_stdout(format!(
+						"  {:<22}: Groth16 2 G1+1 G2: {:>5} B", name, b));
+				},
+				None=>emit_stdout(format!("  {:<22}: None", name)),
+			}
+		}
+		match &self.mainres_hash{ Some(x)=>a.fr("mainres_hash", x),
+			None=>emit_stdout("  mainres_hash          : None".to_string()) }
+		a.fr("hash_cmF", &self.hash_cmF);
+		emit_stdout(format!(
+			"  ---- elements: {} G1, {} G2, {} Fr | TOTAL {} bytes",
+			a.n_g1, a.n_g2, a.n_fr, a.bytes));
+		a.bytes
+	}
+}
+
 /// The (secret) advice input for the SNARK System.
 /// vec_r contains r_i for i'th individual proof.
 /// the commitment to vec_r will be 1-leaky, and similar is vec_v.
@@ -1033,4 +1145,93 @@ mod tests_batch_proc {
 			&ind_claims[i], &batch_proof, &ind_prf);
 		assert!(res, "verify indidivudal proof failed");
    }
+
+	/// print_size() must equal the true compressed serialized length.
+	#[test]
+	fn individual_proof_size_matches_serialization(){
+		use ark_serialize::CanonicalSerialize;
+		let g = G1::generator();
+		let p = super::IndividualProof::<Bn254>{
+			vcom_prf: super::veccom::Proof{ eval: Fr::zero(), proof: g },
+			v_i: Fr::zero(),
+			kzg_prf: super::kzg::Proof{ eval: Fr::zero(), proof: g },
+		};
+		let reported = p.print_size();
+		// independent ground truth: serialize each leaf, sum the lengths
+		let mut buf = Vec::new();
+		p.vcom_prf.eval.serialize_compressed(&mut buf).unwrap();
+		p.vcom_prf.proof.serialize_compressed(&mut buf).unwrap();
+		p.v_i.serialize_compressed(&mut buf).unwrap();
+		p.kzg_prf.eval.serialize_compressed(&mut buf).unwrap();
+		p.kzg_prf.proof.serialize_compressed(&mut buf).unwrap();
+		assert_eq!(reported, buf.len(),
+			"IndividualProof size estimate != serialized bytes");
+	}
+
+	/// Same for a fully-populated (part-2 added) BatchProof.
+	#[test]
+	fn batch_proof_size_matches_serialization(){
+		use ark_serialize::CanonicalSerialize;
+		use ark_ec::CurveGroup;
+		let g = G1::generator();
+		let kzg = || super::kzg::Proof::<G1>{ eval: Fr::zero(), proof: g };
+		let mut p = super::BatchProof::<Bn254, Groth16<Bn254>>{
+			vcom_vec_v: g, kzg_vec_v: g, vcom_vec_r: g, kzg_vec_r: g,
+			prf_qa_nizk: super::QaNizkProof{ prf: g },
+			ch: Fr::zero(), rc: Fr::zero(),
+			agg_kzg_prf: kzg(),
+			kzg_all_com1: None, kzg_all_com_ch1: None, kzg_all_com_prf1: None,
+			kzg_all_com2: None, kzg_all_com_ch2: None, kzg_all_com_prf2: None,
+			comE2: None, comW2: None, comF2: None, qa_nizk_prf2: None,
+			snark_proof_main: None, snark_proof_cp: None, mainres_hash: None,
+			hash_cmF: Fr::zero(),
+		};
+		// Groth16 Proof has no Default; build from affine generators.
+		let a = G1::generator().into_affine();
+		let b = ark_bn254::G2Projective::generator().into_affine();
+		let g16 = ark_groth16::Proof::<Bn254>{ a, b, c: a };
+		p.add_part2(g, Fr::zero(), kzg(), g, Fr::zero(), kzg(),
+			g, g, g, super::QaNizkProof{ prf: g },
+			g16.clone(), g16, Fr::zero());
+		let reported = p.print_size();
+		// independent ground truth: serialize each field in print_size order
+		let mut buf = Vec::new();
+		p.vcom_vec_v.serialize_compressed(&mut buf).unwrap();
+		p.kzg_vec_v.serialize_compressed(&mut buf).unwrap();
+		p.vcom_vec_r.serialize_compressed(&mut buf).unwrap();
+		p.kzg_vec_r.serialize_compressed(&mut buf).unwrap();
+		p.prf_qa_nizk.prf.serialize_compressed(&mut buf).unwrap();
+		p.ch.serialize_compressed(&mut buf).unwrap();
+		p.rc.serialize_compressed(&mut buf).unwrap();
+		p.agg_kzg_prf.eval.serialize_compressed(&mut buf).unwrap();
+		p.agg_kzg_prf.proof.serialize_compressed(&mut buf).unwrap();
+		p.kzg_all_com1.as_ref().unwrap()
+			.serialize_compressed(&mut buf).unwrap();
+		p.kzg_all_com_ch1.as_ref().unwrap()
+			.serialize_compressed(&mut buf).unwrap();
+		{ let pr = p.kzg_all_com_prf1.as_ref().unwrap();
+			pr.eval.serialize_compressed(&mut buf).unwrap();
+			pr.proof.serialize_compressed(&mut buf).unwrap(); }
+		p.kzg_all_com2.as_ref().unwrap()
+			.serialize_compressed(&mut buf).unwrap();
+		p.kzg_all_com_ch2.as_ref().unwrap()
+			.serialize_compressed(&mut buf).unwrap();
+		{ let pr = p.kzg_all_com_prf2.as_ref().unwrap();
+			pr.eval.serialize_compressed(&mut buf).unwrap();
+			pr.proof.serialize_compressed(&mut buf).unwrap(); }
+		p.comE2.as_ref().unwrap().serialize_compressed(&mut buf).unwrap();
+		p.comW2.as_ref().unwrap().serialize_compressed(&mut buf).unwrap();
+		p.comF2.as_ref().unwrap().serialize_compressed(&mut buf).unwrap();
+		p.qa_nizk_prf2.as_ref().unwrap().prf
+			.serialize_compressed(&mut buf).unwrap();
+		p.snark_proof_main.as_ref().unwrap()
+			.serialize_compressed(&mut buf).unwrap();
+		p.snark_proof_cp.as_ref().unwrap()
+			.serialize_compressed(&mut buf).unwrap();
+		p.mainres_hash.as_ref().unwrap()
+			.serialize_compressed(&mut buf).unwrap();
+		p.hash_cmF.serialize_compressed(&mut buf).unwrap();
+		assert_eq!(reported, buf.len(),
+			"BatchProof size estimate != serialized bytes");
+	}
 }

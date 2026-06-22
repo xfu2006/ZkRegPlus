@@ -160,6 +160,11 @@ pub struct GlobalConfig {
 	/// SED propagation to fill ChunkPeaks' forward-proof counts. Default
 	/// false = normal discharge unaffected. Set by run_db_bundle.
 	pub b_estimate_caps: bool,
+	/// If true, foldpot_main produces only ONE full batch+individual
+	/// proof: every job still runs Phase-1 folding, but only Job 0 runs
+	/// the Groth16 deciders + Phase-2 + proof assembly/verify; other jobs
+	/// return after folding. Default false = all jobs prove (unchanged).
+	pub b_one_proof: bool,
 	/// M0 flag-off regression fingerprint sink. None = disabled
 	/// (default); Some collects (label,value) pairs for the test gate.
 	pub fp_sink: Option<FpSink>,
@@ -212,6 +217,7 @@ impl Default for GlobalConfig {
 			basis_failed_subsigs: 0,
 			aggr_needs_subsigs: 0,
 			b_estimate_caps: false,
+			b_one_proof: false,
 			fp_sink: None,
         }
     }
@@ -262,6 +268,7 @@ static GLOBAL_CONFIG: RwLock<GlobalConfig> = RwLock::new(GlobalConfig {
 	basis_failed_subsigs: 0,
 	aggr_needs_subsigs: 0,
 	b_estimate_caps: false,
+	b_one_proof: false,
 	fp_sink: None,
 });
 
