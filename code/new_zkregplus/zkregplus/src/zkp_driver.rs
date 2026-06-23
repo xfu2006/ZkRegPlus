@@ -556,9 +556,15 @@ where C: CurveGroup<ScalarField=F>,
 	let legs = crate::gadgets::word_extract::LEGS;
 	let fwd_cost = crate::gadgets::discharge_adv::FWD_COST;
 	let max_nib_c = (p_max.max_word_len * legs).max(1);
+	// +10% headroom: the offline fwd predictor under-counts the online
+	// gadget queue by <1% on the worst (highest-subsig) chunk, and the
+	// top rung has no rung above to promote into, so a bare estimate
+	// CapErr-panics. Inflate every chunk's prod so all rung caps carry
+	// margin (band_dp sets each rung cap = bucket max prod).
 	let prod: Vec<usize> = fwd.iter().map(|&f|
 		if f == 0 { 0 }
-		else { (f + 1) * 100_000_000 / (max_nib_c * fwd_cost).max(1) + 1 })
+		else { (f + 1) * 100_000_000 * 11 / 10
+			/ (max_nib_c * fwd_cost).max(1) + 1 })
 		.collect();
 	// rank/group by prod; universe + FSM/CP arrays ride as envelopes.
 	let (specs, hist) = crate::band_dp::plan_rungs(&prod, &universe, &fwd,
@@ -4505,6 +4511,8 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 
 		let cfg = default_clamav_cfg();
 		let mut rollups: Vec<(&str, Vec<(&'static str, usize)>)> = Vec::new();
+		// parallel to rollups: per-dataset #DFAs folded into the lookup.
+		let mut dfa_rollups: Vec<(&str, Vec<(&'static str, usize)>)> = Vec::new();
 		// buffer each dataset block so all three print together at the end,
 		// uncluttered by the LOG3 build chatter above.
 		let mut blocks: Vec<String> = Vec::new();
@@ -4519,6 +4527,7 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			&mut vlog, "lkup_stats_tmp", false, false).expect("build Mal db");
 		blocks.push(db.fmt_lkup_dist("Mal", &format!("{}/main.dat", d)));
 		rollups.push(("Mal", db.lkup_cat_rollup()));
+		dfa_rollups.push(("Mal", db.dfa_counts()));
 
 		// ---- Dna (chr17 x NCBI) : full_dna db-build config ----
 		get_global_config().range2_bit = 27;
@@ -4530,6 +4539,7 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			&mut vlog, "lkup_stats_tmp", false, false).expect("build Dna db");
 		blocks.push(db.fmt_lkup_dist("Dna", &format!("{}/main.dat", d)));
 		rollups.push(("Dna", db.lkup_cat_rollup()));
+		dfa_rollups.push(("Dna", db.dfa_counts()));
 
 		// ---- Dlp (Enron x MS-DLP) : full_dlp db-build config ----
 		// hard-coded full-run Dlp config (read from disk; no env needed)
@@ -4550,6 +4560,7 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			&mut vlog, "lkup_stats_tmp", false, false).expect("build Dlp db");
 		blocks.push(db.fmt_lkup_dist("Dlp", &sig));
 		rollups.push(("Dlp", db.lkup_cat_rollup()));
+		dfa_rollups.push(("Dlp", db.dfa_counts()));
 
 		// machine config + all three blocks + cross-dataset roll-up,
 		// together at the end (uncluttered by the LOG3 build chatter above).
@@ -4561,6 +4572,7 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			"\n\n#################### LOOKUP COMPOSITION REPORT ####################\n");
 		for b in &blocks { report.push_str(b); report.push('\n'); }
 		report.push_str(&fmt_cross_rollup(&rollups));
+		report.push_str(&fmt_dfa_cross(&dfa_rollups));
 		report.push_str(
 			"\n#################### END LOOKUP COMPOSITION REPORT ###############");
 		utils::logger::emit_stdout(report);
@@ -4592,6 +4604,33 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		let _ = writeln!(s, "  {:<12}{}", "----------", bar);
 		let _ = write!(s, "  {:<12}", "TOTAL (M)");
 		for t in &totals { let _ = write!(s, "  {:>8.1}", *t as f64 / 1e6); }
+		let _ = writeln!(s, "\n===============================================================");
+		s
+	}
+
+	/// Cross-dataset DFA-count table: absolute number of DFAs folded into
+	/// the lookup table, one column per dataset, one row per source, with a
+	/// TOTAL row. Sources arrive in fixed order (db.dfa_counts()).
+	fn fmt_dfa_cross(rollups: &[(&str, Vec<(&'static str, usize)>)]) -> String {
+		use std::fmt::Write as _;
+		let totals: Vec<usize> = rollups.iter()
+			.map(|(_, r)| r.iter().map(|(_, n)| n).sum()).collect();
+		let bar: String = rollups.iter().map(|_| "  ----------").collect();
+
+		let mut s = String::new();
+		let _ = writeln!(s, "\n=============== Cross-Dataset #DFAs in Lookup ==================");
+		let _ = write!(s, "  {:<18}", "Source");
+		for (name, _) in rollups { let _ = write!(s, "  {:>10}", name); }
+		let _ = writeln!(s, "\n  {:<18}{}", "----------------", bar);
+		let nsrc = rollups.first().map(|(_, r)| r.len()).unwrap_or(0);
+		for si in 0..nsrc {
+			let _ = write!(s, "  {:<18}", rollups[0].1[si].0);
+			for (_, r) in rollups { let _ = write!(s, "  {:>10}", r[si].1); }
+			let _ = writeln!(s);
+		}
+		let _ = writeln!(s, "  {:<18}{}", "----------------", bar);
+		let _ = write!(s, "  {:<18}", "TOTAL");
+		for t in &totals { let _ = write!(s, "  {:>10}", t); }
 		let _ = writeln!(s, "\n===============================================================");
 		s
 	}

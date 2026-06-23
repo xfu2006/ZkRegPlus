@@ -29551,9 +29551,18 @@ Goal 7. new running of full_dlp
 Tuesday 06/23/2026
 Goal 1. debug capacity err again
 	[a] replicate err to full_dlp_sample() -> 
+	[b] put a 10% headroom
+	[c] test again 9:10AM => 
 Goal 2. create another big instance
 	[a] create volume 256GB
 	[b] create 1TB instance
+	[c] install
+	[d] test small run
+	[e] fix the installation issue of dna
+	[f] remove extra message
+	[g] run eval_reef.py -> paper data/raw_data/eval_reef.dat
+Goal 3. writing
+	[a] collect the data about DFA. 
 
 
 

@@ -2432,6 +2432,30 @@ elapsed={:.0}s", si+1, n_sigs, t_shape.elapsed().as_secs_f64());
 		}).collect()
 	}
 
+	/// Number of DFAs folded into the lookup table, by source, in the
+	/// same order they are added in build_store (lines ~2365-2380):
+	///   acdfa_crit / acdfa_crit_igc : the two AC-DFAs over critical
+	///       patterns (CS / IGC), one each.
+	///   bundle_subsig / bundle_subsig_igc : the ISED bundle AC-DFAs
+	///       (element 0 is the shared bag-of-words AC-DFA, 1.. are the
+	///       per-ISED-sig AC-DFAs), so the count is vec_acdfa.len().
+	///   sig_dfa : the per-subsig automata added by add_sig_dfa_to_lkup
+	///       (sum of vec_subsig_automaton over sigs that have any).
+	/// Returns (label, count) pairs; sum is the total DFA count.
+	pub fn dfa_counts(&self) -> Vec<(&'static str, usize)> {
+		let sig_dfa: usize = self.vec_sigs.iter()
+			.filter(|s| s.vec_subsig_automaton.len() > 0)
+			.map(|s| s.vec_subsig_automaton.len())
+			.sum();
+		vec![
+			("acdfa_crit",        1),
+			("acdfa_crit_igc",    1),
+			("bundle_subsig",     self.bundle_subsig.vec_acdfa.len()),
+			("bundle_subsig_igc", self.bundle_subsig_igc.vec_acdfa.len()),
+			("sig_dfa",           sig_dfa),
+		]
+	}
+
 	/// Format the per-source lookup composition (Q2 report) into a
 	/// String so the caller can print all datasets together. Call on a
 	/// freshly-built DB; a cache-loaded DB has an empty lkup_dist.
@@ -2462,6 +2486,14 @@ elapsed={:.0}s", si+1, n_sigs, t_shape.elapsed().as_secs_f64());
 		let roll: Vec<String> = self.lkup_cat_rollup().iter()
 			.map(|(c, n)| format!("{} {:.1}", c, pct(*n))).collect();
 		let _ = writeln!(s, "\n  Category roll-up:    {}", roll.join(" | "));
+
+		// number of DFAs folded into the lookup, by source.
+		let dfc = self.dfa_counts();
+		let dtot: usize = dfc.iter().map(|(_, n)| n).sum();
+		let dstr: Vec<String> = dfc.iter()
+			.map(|(c, n)| format!("{} {}", c, n)).collect();
+		let _ = writeln!(s, "  #DFAs in lkup: {}   ({})",
+			dtot, dstr.join(" | "));
 		s
 	}
 
