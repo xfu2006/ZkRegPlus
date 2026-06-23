@@ -12,7 +12,7 @@ use std::{sync::{Arc, Mutex, Condvar, RwLock,
 */
 
 extern crate utils;
-use utils::{logger::{log, log_perf, rss_probe, emit_stdout, ERR, LOG1,LOG2}, timer::Timer as GTimer, consts::{read_global_config, get_global_config}, data::{pad_word_to_multiple, gen_pad_nibbles_fe, pack_nibbles}};
+use utils::{logger::{log, log_perf, emit_stdout, ERR, LOG1,LOG2}, timer::Timer as GTimer, consts::{read_global_config, get_global_config}, data::{pad_word_to_multiple, gen_pad_nibbles_fe, pack_nibbles}};
 use std::{
     //process::{Stdio,Command},
     //fs::{read_to_string,OpenOptions,remove_file,File,metadata},
@@ -1896,9 +1896,6 @@ where
 		log_perf(job_id, log_level, &format!(
 			"PERF 1007. {} step 1: generate batch/ind claims. mem: {} GB, increased mem: {} MB, for words: {}, total_word_len: {} packed fields.", phase_name, m2/1024, if m2>m1 {m2-m1} else {0}, total_words, total_wd_len),
 			&mut gt1);
-		//===== REMOVE LATER 900001.1 =====
-		rss_probe("1", "after_PERF_1007_step1", job_id, 0);
-		//===== END REMOVE LATER 900001.1 =====
 
 
 		//------------------------------------------
@@ -1948,7 +1945,13 @@ where
 			let (steps, vec_len, vec_pci, _vec_cap_req, _advice) =
 				Self::plan_nd_advice_new_pll(
 					p_layered, job_id, log_level+2, false,
-					&word, word_info, word_fname)?;
+					&word, word_info, word_fname).map_err(|e| {
+					log(job_id, ERR, &format!("DEBUG USE 64903.1: \
+						Pass 1 advice-gen failed (likely CapErr) \
+						word_id {} of {}, fname: {}",
+						word_id, num_words, word_fname));
+					e
+				})?;
 			log_perf(job_id, log_level+2, &format!("PERF 1008: {} - Pass 1: START decide circ alloc for word_id: {}, fname: {}, word_len: {}. ", phase_name, word_id, word_fname, format_bytes(total_word_len*31)), &mut gt2);
 			for i in 0..steps{
 				//2.1 set up params
@@ -2035,9 +2038,6 @@ where
 			}
 
 			log_perf(job_id, log_level+1, &format!("PERF 1008: {} Pass 1. END generate advice word {} of {}: fname: {} of size: {}.", phase_name, word_id, num_words, word_fname, format_bytes(total_word_len*31)), &mut gtw);
-			//===== REMOVE LATER 900001.2 =====
-			rss_probe("2", "after_P1P1_END", job_id, word_id);
-			//===== END REMOVE LATER 900001.2 =====
 			word_id +=1;
 		}
 		let m4 = get_mem_usage_mb();
@@ -2153,9 +2153,6 @@ where
 				log_perf(job_id, log_level+2, &format!("PERF 1009 -- Pass 2. update extra info. "), &mut gt_p2);
 			}//end for while remaining word 
 			log_perf(job_id, log_level+2, &format!("PERF 1008: {} - Pass 2. END generate cmF for word_id: {} of {}, fname: {}, word_len: {}. ", phase_name, word_id, num_words, word_fname, format_bytes(word.len()*31)), &mut gtw2);
-			//===== REMOVE LATER 900001.3 =====
-			rss_probe("3", "after_P1P2_END", job_id, word_id);
-			//===== END REMOVE LATER 900001.3 =====
 			word_id += 1;
 		} //for each word
 		assert!(num_steps==vea.len(), "num_steps: {}, vea.len: {}", num_steps, vea.len());

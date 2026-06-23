@@ -187,6 +187,11 @@ pub struct ClamavDB<F: PrimeField>{
 	/// max match length in nibbles over all subsigs. 0 when flag off.
 	/// M1b sizes the forward halo from this DB self-mark.
 	pub aggressive_max_span_nibbles: usize,
+
+	/// Per-source lookup-table composition: (label, #entries added)
+	/// in build order. Populated by build_db; empty on cache load.
+	/// Consumed by collect_lookup_stats for the Q2 lookup report.
+	pub lkup_dist: Vec<(String, usize)>,
 }
 
 impl <F:PrimeField> fmt::Debug for ClamavDB<F>{
@@ -1074,6 +1079,19 @@ impl SubsigInfoStore{
 
 }
 
+/// Roll the 11 build-order lkup sources into 5 report categories.
+fn lkup_cat(label: &str) -> &'static str {
+	match label {
+		"char_map" | "range_table1" | "range_table2" => "range",
+		"acdfa_crit" | "acdfa_crit_igc"              => "AC-DFA(CP)",
+		"bundle_subsig" | "bundle_subsig_igc"        => "SDE",
+		"sig_dfa"                                    => "DFA",
+		_                                            => "sig-DB", // trival/evaldnf/no_crit_pat
+	}
+}
+
+/// Fixed category order for all roll-up displays.
+const LKUP_CATS: [&str; 5] = ["range", "AC-DFA(CP)", "SDE", "DFA", "sig-DB"];
 
 impl <F:PrimeField> ClamavDB<F>{
 	/// this adds a map from [0,...,F] -> ['0', ..., 'F']
@@ -2332,18 +2350,37 @@ elapsed={:.0}s", si+1, n_sigs, t_shape.elapsed().as_secs_f64());
 
 		//8. build lkup
 		let mut lkup = LookupTableTwoCol_Inst::<F>::dummy();
+		// per-source composition capture (cheap len-deltas, always on)
+		let mut lkup_dist: Vec<(String, usize)> = Vec::new();
+		let mut prev = lkup.vals.len();
+		let mut mark = |cur: usize, dist: &mut Vec<(String, usize)>,
+			prev: &mut usize, label: &str| {
+			dist.push((label.to_string(), cur - *prev));
+			*prev = cur;
+		};
 		Self::add_char_map(&mut lkup);
+		mark(lkup.vals.len(), &mut lkup_dist, &mut prev, "char_map");
 		Self::add_trival_rules(&mut lkup);
+		mark(lkup.vals.len(), &mut lkup_dist, &mut prev, "trival_rules");
 		Self::add_acdfa_to_lkup(&mut lkup, &dfa_crit, CRIT_INIT, &map_crit_pat, &sig_to_id);
+		mark(lkup.vals.len(), &mut lkup_dist, &mut prev, "acdfa_crit");
 		Self::add_acdfa_to_lkup(&mut lkup, &dfa_crit_igc, CRIT_IGC_INIT, &map_crit_pat_igc, &sig_to_id);
+		mark(lkup.vals.len(), &mut lkup_dist, &mut prev, "acdfa_crit_igc");
 		Self::add_range_to_lkup(&mut lkup, F::from(CHAR), (0,16));
+		mark(lkup.vals.len(), &mut lkup_dist, &mut prev, "range_table1");
 		Self::add_range_to_lkup(&mut lkup, F::from(RANGE2), (0,1<<read_global_config().range2_bit));
+		mark(lkup.vals.len(), &mut lkup_dist, &mut prev, "range_table2");
 		Self::add_bundle_subsig_to_lkup(&mut lkup, &sig_to_id, &bundle_subsig, false)?;
+		mark(lkup.vals.len(), &mut lkup_dist, &mut prev, "bundle_subsig");
 		Self::add_bundle_subsig_to_lkup(&mut lkup, &sig_to_id, &bundle_subsig_igc, true)?;
-		Self::add_sig_evaldnf_to_lkup(&mut lkup, &v_sigs, &sig_to_id); 
+		mark(lkup.vals.len(), &mut lkup_dist, &mut prev, "bundle_subsig_igc");
+		Self::add_sig_evaldnf_to_lkup(&mut lkup, &v_sigs, &sig_to_id);
+		mark(lkup.vals.len(), &mut lkup_dist, &mut prev, "sig_evaldnf");
 		Self::add_sig_dfa_to_lkup(&mut lkup, &v_sigs, &sig_to_id);
-		Self::add_sig_no_crit_pat(&mut lkup, &v_sigs_no_critical_pat, 
+		mark(lkup.vals.len(), &mut lkup_dist, &mut prev, "sig_dfa");
+		Self::add_sig_no_crit_pat(&mut lkup, &v_sigs_no_critical_pat,
 			&sig_to_id);
+		mark(lkup.vals.len(), &mut lkup_dist, &mut prev, "sig_no_crit_pat");
 		lkup.vals.sort();
 		if b_perf {flog_perf(0, log_level, &format!("Build_DB: Step 7: ADD all to lkup. Lkup size: {}", lkup.vals.len()), &mut timer, vlog);}
 
@@ -2365,6 +2402,7 @@ elapsed={:.0}s", si+1, n_sigs, t_shape.elapsed().as_secs_f64());
 			bundle_subsig: Arc::new(bundle_subsig),
 			bundle_subsig_igc: Arc::new(bundle_subsig_igc),
 			aggressive_max_span_nibbles,
+			lkup_dist,
 
 		};
 
@@ -2381,6 +2419,50 @@ elapsed={:.0}s", si+1, n_sigs, t_shape.elapsed().as_secs_f64());
 		self.dfa_crit_igc.log_stats_adv("dfa_crit_igc", &self.map_crit_pat_igc, &self.sig_to_id, vlog);
 		self.bundle_subsig.vec_acdfa[0].log_stats("dfa_patterns", vlog);
 		self.bundle_subsig_igc.vec_acdfa[0].log_stats("dfa_patterns_igc", vlog);
+	}
+
+	/// Category roll-up (cat, entries) in LKUP_CATS order. Shared by
+	/// the per-dataset printer and the cross-dataset summary table.
+	pub fn lkup_cat_rollup(&self) -> Vec<(&'static str, usize)> {
+		LKUP_CATS.iter().map(|&c| {
+			let n = self.lkup_dist.iter()
+				.filter(|(l, _)| lkup_cat(l) == c)
+				.map(|(_, n)| *n).sum();
+			(c, n)
+		}).collect()
+	}
+
+	/// Format the per-source lookup composition (Q2 report) into a
+	/// String so the caller can print all datasets together. Call on a
+	/// freshly-built DB; a cache-loaded DB has an empty lkup_dist.
+	pub fn fmt_lkup_dist(&self, name: &str, sig_path: &str) -> String {
+		use std::fmt::Write as _;
+		let cap: usize = 1 << 28;
+		let total: usize = self.lkup_dist.iter().map(|(_, n)| n).sum();
+		let pct = |n: usize| if total > 0 { 100.0 * n as f64 / total as f64 } else { 0.0 };
+
+		let mut s = String::new();
+		let _ = writeln!(s, "------------------ Lookup Composition: {} --------------------", name);
+		let _ = writeln!(s, "  sig DB     : {}", sig_path);
+		let _ = writeln!(s, "  #sigs      : {}      range2_bit : {}",
+			self.vec_sigs.len(), read_global_config().range2_bit);
+		let _ = writeln!(s, "  capacity   : 2^28 = {} entries", cap);
+		let _ = writeln!(s);
+		let _ = writeln!(s, "  {:<12}  {:<26}  {:>11}   {:>6}", "Category", "Source", "Entries", "%");
+		let _ = writeln!(s, "  {:<12}  {:<26}  {:>11}   {:>6}",
+			"----------", "------------------------", "-----------", "------");
+		for (l, n) in &self.lkup_dist {
+			let _ = writeln!(s, "  {:<12}  {:<26}  {:>11}   {:>6.2}", lkup_cat(l), l, n, pct(*n));
+		}
+		let _ = writeln!(s, "  {:<12}  {:<26}  {:>11}   {:>6}",
+			"----------", "", "-----------", "------");
+		let _ = writeln!(s, "  {:<12}  {:<26}  {:>11}   {:>5.2}% of cap",
+			"TOTAL", "", total, 100.0 * total as f64 / cap as f64);
+
+		let roll: Vec<String> = self.lkup_cat_rollup().iter()
+			.map(|(c, n)| format!("{} {:.1}", c, pct(*n))).collect();
+		let _ = writeln!(s, "\n  Category roll-up:    {}", roll.join(" | "));
+		s
 	}
 
 	/// dir_name has to be an alphanum file name (no path separators and ..)
@@ -2511,6 +2593,7 @@ elapsed={:.0}s", si+1, n_sigs, t_shape.elapsed().as_secs_f64());
 			bundle_subsig,
 			bundle_subsig_igc,
 			aggressive_max_span_nibbles,
+			lkup_dist: Vec::new(),
 		};
 
 		res

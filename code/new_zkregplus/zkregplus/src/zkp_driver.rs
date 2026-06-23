@@ -4482,6 +4482,113 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			&"PERF WORKFLOW Step 6 time".to_string(), &mut gt);
 	}
 
+	/// Q2 lookup-composition report. Builds each dataset's DB FRESH (no
+	/// cache, no folding, no proving) and prints the per-source lookup
+	/// breakdown one dataset at a time, then a cross-dataset roll-up.
+	/// All three build with default_clamav_cfg(); only sig paths and
+	/// range2_bit differ (Dlp also mirrors full_dlp's RunCfg + aggressive
+	/// globals). Runs on a local machine.
+	///   cargo run --release --example main -- collect_lookup_stats
+	#[test]
+	pub fn collect_lookup_stats() {
+		use data_processor::clam_db::ClamavDB;
+		use data_processor::clamav::default_clamav_cfg;
+
+		get_global_config().log_level = utils::logger::LOG3;
+
+		let cfg = default_clamav_cfg();
+		let mut rollups: Vec<(&str, Vec<(&'static str, usize)>)> = Vec::new();
+		// buffer each dataset block so all three print together at the end,
+		// uncluttered by the LOG3 build chatter above.
+		let mut blocks: Vec<String> = Vec::new();
+
+		// ---- Mal (CentOS x ClamAV) : full_clamav db-build config ----
+		get_global_config().range2_bit = 26;
+		let d = "data/debug/full_clamav/config";
+		let mut vlog = vec![];
+		let db = ClamavDB::<Fr>::build_or_load(&cfg,
+			&format!("{}/main.dat", d), &format!("{}/main_dfa.dat", d),
+			&format!("{}/needs_ised.dat", d), &format!("{}/needs_ised_igc.dat", d),
+			&mut vlog, "lkup_stats_tmp", false, false).expect("build Mal db");
+		blocks.push(db.fmt_lkup_dist("Mal", &format!("{}/main.dat", d)));
+		rollups.push(("Mal", db.lkup_cat_rollup()));
+
+		// ---- Dna (chr17 x NCBI) : full_dna db-build config ----
+		get_global_config().range2_bit = 27;
+		let d = "data/paper_data/dna/config";
+		let mut vlog = vec![];
+		let db = ClamavDB::<Fr>::build_or_load(&cfg,
+			&format!("{}/main.dat", d), &format!("{}/main_dfa.dat", d),
+			&format!("{}/needs_ised.dat", d), &format!("{}/needs_ised_igc.dat", d),
+			&mut vlog, "lkup_stats_tmp", false, false).expect("build Dna db");
+		blocks.push(db.fmt_lkup_dist("Dna", &format!("{}/main.dat", d)));
+		rollups.push(("Dna", db.lkup_cat_rollup()));
+
+		// ---- Dlp (Enron x MS-DLP) : full_dlp db-build config ----
+		// hard-coded full-run Dlp config (read from disk; no env needed)
+		let rc = crate::determine_config::RunCfg::from_path(&format!(
+			"{}/data/paper_data/dlp/cfg/config/runcfg_full.json",
+			utils::os::proj_root()));
+		let cd = rc.config_dir.clone();
+		get_global_config().range2_bit = rc.range2_bit;
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
+		get_global_config().clamav_cfg.sde_rep_fanout_cap = rc.fanout_cap;
+		get_global_config().clamav_cfg.min_pm_word_len = 3;
+		let sig = format!("{}/{}", cd, rc.sig_file);
+		let mut vlog = vec![];
+		let db = ClamavDB::<Fr>::build_or_load(&cfg, &sig,
+			&format!("{}/regex_pat/main_dfa.dat", cd),
+			&format!("{}/regex_pat/needs_ised.dat", cd),
+			&format!("{}/regex_pat/needs_ised_igc.dat", cd),
+			&mut vlog, "lkup_stats_tmp", false, false).expect("build Dlp db");
+		blocks.push(db.fmt_lkup_dist("Dlp", &sig));
+		rollups.push(("Dlp", db.lkup_cat_rollup()));
+
+		// machine config + all three blocks + cross-dataset roll-up,
+		// together at the end (uncluttered by the LOG3 build chatter above).
+		// Route the whole report through the same async stdout channel as
+		// print_computer_config so it stays FIFO-ordered after the config
+		// block (a direct println! would race ahead of the logger thread).
+		utils::os::print_computer_config(Some("collect_lookup_stats"));
+		let mut report = String::from(
+			"\n\n#################### LOOKUP COMPOSITION REPORT ####################\n");
+		for b in &blocks { report.push_str(b); report.push('\n'); }
+		report.push_str(&fmt_cross_rollup(&rollups));
+		report.push_str(
+			"\n#################### END LOOKUP COMPOSITION REPORT ###############");
+		utils::logger::emit_stdout(report);
+	}
+
+	/// Cross-dataset category roll-up (% of each dataset's populated
+	/// entries), one column per dataset. Categories arrive in fixed order.
+	/// Returned as a String so it prints with the per-dataset blocks.
+	fn fmt_cross_rollup(rollups: &[(&str, Vec<(&'static str, usize)>)]) -> String {
+		use std::fmt::Write as _;
+		let totals: Vec<usize> = rollups.iter()
+			.map(|(_, r)| r.iter().map(|(_, n)| n).sum()).collect();
+		let bar: String = rollups.iter().map(|_| "  --------").collect();
+
+		let mut s = String::new();
+		let _ = writeln!(s, "=============== Cross-Dataset Roll-up (% of populated) ========");
+		let _ = write!(s, "  {:<12}", "Category");
+		for (name, _) in rollups { let _ = write!(s, "  {:>8}", name); }
+		let _ = writeln!(s, "\n  {:<12}{}", "----------", bar);
+		let ncat = rollups.first().map(|(_, r)| r.len()).unwrap_or(0);
+		for ci in 0..ncat {
+			let _ = write!(s, "  {:<12}", rollups[0].1[ci].0);
+			for (di, (_, r)) in rollups.iter().enumerate() {
+				let p = if totals[di] > 0 { 100.0 * r[ci].1 as f64 / totals[di] as f64 } else { 0.0 };
+				let _ = write!(s, "  {:>8.1}", p);
+			}
+			let _ = writeln!(s);
+		}
+		let _ = writeln!(s, "  {:<12}{}", "----------", bar);
+		let _ = write!(s, "  {:<12}", "TOTAL (M)");
+		for t in &totals { let _ = write!(s, "  {:>8.1}", *t as f64 / 1e6); }
+		let _ = writeln!(s, "\n===============================================================");
+		s
+	}
+
 	/// Build/load a dataset DB and quick-discharge its corpus (NON-aggressive),
 	/// returning the per-file records + the ruleset size. Sets only the two
 	/// globals that affect classification (range2_bit; aggressive OFF); the DB

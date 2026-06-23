@@ -124,7 +124,12 @@ impl RunCfg {
     pub fn from_env() -> RunCfg {
         let path = std::env::var("ZKR_DLP_RUNCFG")
             .expect("ZKR_DLP_RUNCFG not set (run via scripts/run_full_dlp.py)");
-        let s = std::fs::read_to_string(&path)
+        Self::from_path(&path)
+    }
+
+    /// Load a run-config from a fixed JSON path on disk (no env needed).
+    pub fn from_path(path: &str) -> RunCfg {
+        let s = std::fs::read_to_string(path)
             .unwrap_or_else(|e| panic!("read runcfg {}: {}", path, e));
         serde_json::from_str(&s)
             .unwrap_or_else(|e| panic!("parse runcfg {}: {}", path, e))

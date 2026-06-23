@@ -29537,12 +29537,16 @@ Goal 5. further analyze the empowered full_dlp_sample() with the
 	[j] SERVER TEST: started 6:10pm on full_dlp_sample => success
 		circ size: 269k, 369k, 836k, 8.6M
 		fold time: 1.0s, 1.2s, 1.81s, 11.28s
-	[h]
 Gaol 6. Writing 
 	[a] 7.4 subsection 1
 	[b] planning on collector algorithm
 	[c] design of collector algorithm
-
+	[d] improve code
+	[e] generate the file
+Goal 7. new running of full_dlp
+	[a] improved circ estimate. started 8:00pm ===> 
+	[b] circ data? -> largest is 20M! (well better than 30M).  
+		fold time: ????
 
 
 

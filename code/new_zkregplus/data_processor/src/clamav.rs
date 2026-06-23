@@ -3806,8 +3806,6 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 			max_carried_live_per_chunk = max_carried_live_per_chunk.max(lc);
 		}
 		_et.stop();
-		log(0, LOG1, &format!(
-			"ESTIMATE: chunked SED propagation (this file): {} ms", _et.ms()));
 	}
 	// CP cap demand: distinct crit-DFA states per chunk (cs/igc max). Sizes
 	// cp_basis_unique_states (CP pack imm_buf). Estimator-pass only.
@@ -5090,7 +5088,6 @@ mod tests_clamav{
 			s.collect_all_bagwords(false)).flat_map(|s| s).
 			collect::<HashSet<String>>().into_iter().map(|s| s)
 			.collect::<Vec<String>>();
-		println!("\n************ DEBUG USE 101: collected patterns: {:?}", pats);
 		let dfa = HexACDFA::new(0, &pats);
 		for (s, sid,exp_val) in arr_cases{
 			let nibbles = hex_to_u8(s);
