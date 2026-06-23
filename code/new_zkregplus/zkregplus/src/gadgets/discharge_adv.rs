@@ -1717,6 +1717,28 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 			if self.capacity.b_aggressive {
 				let new_prod = (v2d[0].len()+1) * 10000 * 100 * 100
 					/ (self.capacity.max_nibble_len * FWD_COST).max(1) + 1;
+				// DEBUG USE 64904.1: gadget-actual fwd-queue demand at
+				// the over-cap chunk vs the provisioned cap, plus the
+				// per-subsig shape, so we can see whether determine's
+				// fwd predictor (64901) undercounts and on which axis.
+				if std::env::var("ZKR_PROBE_CAPERR").is_ok() {
+					let n_sub = self.subsigs.len();
+					let per_sub_max = self.subsigs.iter()
+						.map(|ss| self.store_items.get(ss)
+							.map(|v| v.iter()
+								.map(|it| it.vec_pat_id.len())
+								.sum::<usize>())
+							.unwrap_or(0))
+						.max().unwrap_or(0);
+					let actual = v2d[0].len();
+					println!("DEBUG USE 64904.1: StepFwdPrf \
+OVER-CAP name={} b_igc={} actual_fwd={} cap={} \
+pred_prod={} req_prod={} n_subsigs={} \
+max_subsig_fwd={}",
+						name, self.b_igc, actual, n,
+						self.capacity.prod_pats_expansion,
+						new_prod, n_sub, per_sub_max);
+				}
 				return Err(Error::CapErr(vec![(format!("dis_adv::prod_pats_expansion, StepFwdPrf b_igc: {}", self.b_igc), new_prod)]));
 			}
 			//back-solve perc_pats_expansion_rate from new vec_size():
