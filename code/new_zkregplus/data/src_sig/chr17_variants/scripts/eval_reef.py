@@ -729,7 +729,7 @@ def write_log(seq_run_results, full_category, discarded=None):
 # MAIN
 # --------------------------------
 timeout = 2000         # seconds
-threshold_perc = 30    # 30%
+threshold_perc = 50    # 50%
 sample_size = 10
 max_discard = 30       # per category: outliers to resample past before STOP
 

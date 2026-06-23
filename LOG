@@ -29552,7 +29552,8 @@ Tuesday 06/23/2026
 Goal 1. debug capacity err again
 	[a] replicate err to full_dlp_sample() -> 
 	[b] put a 10% headroom
-	[c] test again 9:10AM => 
+	[c] test again 
+		9:10AM => 
 Goal 2. create another big instance
 	[a] create volume 256GB
 	[b] create 1TB instance
@@ -29561,8 +29562,11 @@ Goal 2. create another big instance
 	[e] fix the installation issue of dna
 	[f] remove extra message
 	[g] run eval_reef.py -> paper data/raw_data/eval_reef.dat
+	[h] TODO: collect the eval_reef.dat.
 Goal 3. writing
 	[a] collect the data about DFA. 
+	[b] correct table info
+	[c] writing
 
 
 
