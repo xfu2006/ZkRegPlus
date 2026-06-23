@@ -1,1 +1,8 @@
-chr17_variants
+# Ignore everything under chr17_variants (large datasets: chr17_samples,
+# reef, reef_regex, variants, docs, ...) EXCEPT the scripts/ source tree.
+# Using chr17_variants/* (not chr17_variants) leaves the directory itself
+# un-excluded so the scripts/ re-include below can take effect; the sibling
+# data folders stay ignored, so `git reset --hard` never touches them.
+chr17_variants/*
+!chr17_variants/scripts/
+chr17_variants/scripts/__pycache__/
