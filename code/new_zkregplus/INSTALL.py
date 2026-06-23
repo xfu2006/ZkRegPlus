@@ -37,6 +37,26 @@ SAMPLES_ID  = "1OM_W54JxPEiV3S26XwY7f1qhEAVyFtv_"   # samples.7z
 SIG_C21_ID  = "https://drive.google.com/file/d/1314OL6_FYLmBH2i2_kQd7fwuVv73g6LU/view?usp=sharing"   # sig_c21*.7z
 SIG_C21_TOP = "chr17_variants"                      # archive top dir
 
+# ---- src_sig/.gitignore (canonical) --------------------------------
+# Ignore everything under chr17_variants (large datasets) EXCEPT the
+# scripts/ source tree, so the eval/gen scripts stay version-controlled
+# while the corpora do not.  INSTALL.py OVERWRITES this on the dna deploy:
+# an older single-line `chr17_variants` ignore would otherwise swallow
+# scripts/ too, so anyone who installs without pulling a fresh checkout
+# would lose those scripts from git.  Kept byte-identical to the committed
+# data/src_sig/.gitignore.
+SRC_SIG_GITIGNORE = os.path.join(SRC_SIG_DIR, ".gitignore")
+SRC_SIG_GITIGNORE_TEXT = (
+    "# Ignore everything under chr17_variants (large datasets: chr17_samples,\n"
+    "# reef, reef_regex, variants, docs, ...) EXCEPT the scripts/ source tree.\n"
+    "# Using chr17_variants/* (not chr17_variants) leaves the directory itself\n"
+    "# un-excluded so the scripts/ re-include below can take effect; the sibling\n"
+    "# data folders stay ignored, so `git reset --hard` never touches them.\n"
+    "chr17_variants/*\n"
+    "!chr17_variants/scripts/\n"
+    "chr17_variants/scripts/__pycache__/\n"
+)
+
 # ---- email (Enron) source ------------------------------------------
 # Primary = the CMU release (May 7 2015).  EMAIL_TREE_DIGEST is sha256
 # over the sorted "sha256  ./relpath" manifest of maildir; it gates a
@@ -371,6 +391,17 @@ def deploy_samples(extract_root):
                     ignore=shutil.ignore_patterns(".gitignore"))
 
 
+# Overwrite data/src_sig/.gitignore with the canonical content, so an old
+# single-line `chr17_variants` ignore (which swallowed scripts/) is fixed
+# in place wherever INSTALL.py runs.
+def write_src_sig_gitignore():
+    os.makedirs(SRC_SIG_DIR, exist_ok=True)
+    with open(SRC_SIG_GITIGNORE, "w") as f:
+        f.write(SRC_SIG_GITIGNORE_TEXT)
+    print("  wrote %s (scripts/ tracked; corpora ignored)"
+          % SRC_SIG_GITIGNORE)
+
+
 # Deploy the chr17 (sig_c21) payload: the whole top folder (INCLUDING
 # chr17_samples) -> data/src_sig/chr17_variants (item 3).  chr17_samples
 # is NOT moved out; instead data/samples/chr17_samples is a symlink into
@@ -381,6 +412,7 @@ def deploy_chr17(extract_root):
     dst_var = os.path.join(SRC_SIG_DIR, "chr17_variants")
     empty_dir(dst_var)
     move_children(top, dst_var)
+    write_src_sig_gitignore()      # fix the src_sig ignore (scripts/ tracked)
     # expose chr17_variants/chr17_samples under data/samples/ via symlink.
     link_target = os.path.join(dst_var, "chr17_samples")
     link_path   = os.path.join(SAMPLES_DIR, "chr17_samples")
