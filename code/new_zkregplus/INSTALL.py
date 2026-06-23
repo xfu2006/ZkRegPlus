@@ -199,20 +199,29 @@ def ensure_toolchain():
 
 # Download a Google Drive file to dest (skips if already present).
 # Accepts either a bare file id (SAMPLES_ID) or a full share URL
-# (".../file/d/<id>/view?usp=sharing", as SIG_C21_ID now is); fuzzy=True
-# lets gdown extract the id from the URL form.
+# (".../file/d/<id>/view?usp=sharing", as SIG_C21_ID now is). We extract
+# the id from the URL ourselves and always hand gdown a uc?id= link, so it
+# works on older gdown (<4.0) too -- those lack the fuzzy= kwarg that the
+# URL form would otherwise need (TypeError: unexpected keyword 'fuzzy').
+def _extract_drive_id(s):
+    import re
+    for pat in (r"/file/d/([A-Za-z0-9_-]+)",      # .../file/d/<id>/view
+                r"[?&]id=([A-Za-z0-9_-]+)",        # uc?export=...&id=<id>
+                r"/d/([A-Za-z0-9_-]+)"):           # /d/<id>
+        m = re.search(pat, s)
+        if m:
+            return m.group(1)
+    return s  # already a bare id
+
+
 def gdrive_download(file_id_or_url, dest):
     import gdown
     if os.path.isfile(dest):
         print("  cached: %s" % dest)
         return
-    if "://" in file_id_or_url:
-        gdown.download(url=file_id_or_url, output=dest,
-                       quiet=False, fuzzy=True)
-    else:
-        url = ("https://drive.google.com/uc?export=download&id=%s"
-               % file_id_or_url)
-        gdown.download(url, dest, quiet=False)
+    file_id = _extract_drive_id(file_id_or_url)
+    url = ("https://drive.google.com/uc?export=download&id=%s" % file_id)
+    gdown.download(url, dest, quiet=False)
 
 
 # Extract a .7z archive into out_dir (created if missing).

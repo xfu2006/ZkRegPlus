@@ -2956,7 +2956,9 @@ pub mod tests_zkp_driver{
 		get_global_config().b_write_snark_cache = b_setup;
 		get_global_config().b_read_snark_cache = !b_setup;
 		get_global_config().range2_bit = 26;
-		get_global_config().b_light_test = b_light_test;
+		let _ = b_light_test; // forced full snark below
+		get_global_config().b_light_test = false; // full snark (one proof)
+		get_global_config().b_one_proof = true;   // emit ONE proof only
 		get_global_config().min_subsigs = 368; // OLD value: 361
 		get_global_config().min_basis_unique_states= 1054; // OLD value: 600
 		get_global_config().min_basis_acc_states =  268; // OLD value: 113
@@ -3081,7 +3083,8 @@ pub mod tests_zkp_driver{
 		get_global_config().snark_cache_dir = "dna_clamav".to_string();
 		get_global_config().b_write_snark_cache = false;
 		get_global_config().b_read_snark_cache = false;
-		get_global_config().b_light_test = true;
+		get_global_config().b_light_test = false; // full snark (was true)
+		get_global_config().b_one_proof = true;   // emit ONE proof only
 		get_global_config().range2_bit = 27; //80.09M-nibble max offset
 		//min_* floors set LOW (DNA workload is tiny vs clamav)
 		get_global_config().min_subsigs = 64;
@@ -4307,6 +4310,7 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		use folding_schemes::folding::foldpot::sigma_ir1cs
 			::LookupTableTwoCol as _;
 		use rayon::prelude::*;
+		utils::os::print_computer_config(Some("full_dlp"));
 		let rc = crate::determine_config::RunCfg::from_env();
 		let proot = utils::os::proj_root();
 		let cd = &rc.config_dir;
@@ -4315,11 +4319,14 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		let num_jobs = rc.num_jobs.max(1);
 		let l = utils::logger::LOG1;
 		let mut gt = utils::timer::Timer::new();
-		//aggressive CS-only, folding-only, estimate-on (mirror sample).
+		//aggressive CS-only, estimate-on (mirror sample). Full-snark run:
+		//b_light_test=false + b_folding_only=false so a SNARK is emitted,
+		//b_one_proof=true so only Job 0 proves (ONE proof for all jobs).
 		get_global_config().log_level = utils::logger::LOG3;
 		get_global_config().range2_bit = rc.range2_bit;
-		get_global_config().b_light_test = true;
-		get_global_config().b_folding_only = true;
+		get_global_config().b_light_test = false; // full snark (was true)
+		get_global_config().b_folding_only = false; // emit snark (was true)
+		get_global_config().b_one_proof = true;     // ONE proof only
 		get_global_config().b_read_cache = true;
 		get_global_config().b_read_snark_cache = false;
 		get_global_config().b_write_snark_cache = false;

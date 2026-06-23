@@ -1297,7 +1297,7 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 
 		//3. consruct container
 		let (n, n_pat,_n_trace) = Self::vec_size(&self.q_type, &self.capacity);
-		if true { println!("DEBUG USE 6901.8: step queue: {}, b_igc: {} usage: {}", name, self.b_igc, (vec_encoded.len() as f32)/(n as f32)); } // TEMP ungate 6901.8 (revert to B_DEBUG2)
+		if B_DEBUG2 { println!("DEBUG USE 6901.8: step queue: {}, b_igc: {} usage: {}", name, self.b_igc, (vec_encoded.len() as f32)/(n as f32)); }
 		if std::env::var("ZKR_PROBE_64008").is_ok() {
 			use ark_ff::PrimeField as _ArkPF;
 			let f_to_u64 = |x: &F| -> u64 {
@@ -1708,7 +1708,7 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 			v_dst_loc, v_dst_pat_id, v_dst_pat_diff1, v_dst_pat_diff2,
 			v_dst_subsig];
 		let n = self.vec_size();
-		if true { println!("DEBUG USE 6901.8: StepFwdPrf: {}, b_igc: {} usage: {}", name, self.b_igc, (v2d[0].len() as f32)/(n as f32)); } // TEMP ungate 6901.8 (revert to B_DEBUG2)
+		if B_DEBUG2 { println!("DEBUG USE 6901.8: StepFwdPrf: {}, b_igc: {} usage: {}", name, self.b_igc, (v2d[0].len() as f32)/(n as f32)); }
 		if n<v2d[0].len()+1{
 			//aggressive: back-solve prod_pats_expansion (rung-independent,
 			//no basis_pats in the denominator):
@@ -2083,7 +2083,7 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 			v_src_min_loc, //id 4
 			v_prev_encoded, v_loc_to_del, v_src_subsigs.clone()];
 		let n = self.vec_size();
-		if true { println!("DEBUG USE 6901.8: StepBwdPrf: {}, b_igc: {} usage: {}", name, self.b_igc, (v2d[0].len() as f32)/(n as f32)); } // TEMP ungate 6901.8 (revert to B_DEBUG2)
+		if B_DEBUG2 { println!("DEBUG USE 6901.8: StepBwdPrf: {}, b_igc: {} usage: {}", name, self.b_igc, (v2d[0].len() as f32)/(n as f32)); }
 		if n<v2d[0].len()+1{
 			let new_val= (v2d[0].len()+1)*10000 * 100 * 100 / (self.capacity.max_nibble_len*self.capacity.basis_pats_in_trace * ADD_DEL_COST) + 1;
 			if b_debug_capacity{
