@@ -112,6 +112,10 @@ pub struct GlobalConfig {
     pub min_basis_acc_states: usize,
     pub b_light_test: bool,
     pub b_folding_only: bool,
+    // print the 6901.8 forward-queue (StepFwdPrf) saturation rate, but only
+    // when it exceeds 85%. Off by default; turned on for collect_scale_data so
+    // the run wrapper can audit that each tuned config is well-utilized.
+    pub b_show_queue_saturated: bool,
     pub b_read_cache: bool,
     pub b_write_snark_cache: bool, //write the generated snark key to cache
     pub b_read_snark_cache: bool,
@@ -189,6 +193,7 @@ impl Default for GlobalConfig {
             min_basis_acc_states: 2,
             b_light_test: true,
             b_folding_only: false,
+            b_show_queue_saturated: false,
             b_read_cache: false,
             b_write_snark_cache: false,
             b_read_snark_cache: false,
@@ -240,6 +245,7 @@ static GLOBAL_CONFIG: RwLock<GlobalConfig> = RwLock::new(GlobalConfig {
     min_basis_acc_states: 2,
     b_light_test: true,
     b_folding_only: false,
+    b_show_queue_saturated: false,
     b_read_cache: false,
     b_write_snark_cache: false,
     b_read_snark_cache: false,

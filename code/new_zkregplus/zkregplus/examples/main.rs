@@ -17,7 +17,7 @@ use utils::{
 
 use zkregplus::{
     circs::{cp_mapper::CpCapacity, dfa_mapper::DfaCapacity, sed_mapper::SedCapacity},
-    zkp_driver::{zkp_driver, zkp_driver_adv},
+    zkp_driver::{zkp_driver, zkp_driver_adv, DcMode},
 };
 
 // --- Setup Curves and Fields ---
@@ -232,7 +232,7 @@ fn small_data_par<F: PrimeField>(b_check_lkup: bool) {
         &init_sed_cap,
         &vec![1],
         2,
-        b_check_lkup,
+        b_check_lkup, DcMode::Off
     );
 }
 
@@ -381,7 +381,7 @@ fn full_clamav<F: PrimeField>(b_check_lkup: bool, b_light_test: bool,
         &init_sed_cap_igc,
         &vec_decrease_level,
         num_circs,
-        b_check_lkup,
+        b_check_lkup, DcMode::Off
     );
 }
 
@@ -494,7 +494,7 @@ fn full_debug<F: PrimeField>(b_check_lkup: bool) {
         &init_sed_cap_igc,
         &vec_decrease_level,
         num_circs,
-        b_check_lkup,
+        b_check_lkup, DcMode::Off
     );
 }
 

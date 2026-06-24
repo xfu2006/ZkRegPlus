@@ -1708,7 +1708,15 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 			v_dst_loc, v_dst_pat_id, v_dst_pat_diff1, v_dst_pat_diff2,
 			v_dst_subsig];
 		let n = self.vec_size();
-		if B_DEBUG2 { println!("DEBUG USE 6901.8: StepFwdPrf: {}, b_igc: {} usage: {}", name, self.b_igc, (v2d[0].len() as f32)/(n as f32)); }
+		let fwd_usage = (v2d[0].len() as f32)/(n as f32);
+		if B_DEBUG2 { println!("DEBUG USE 6901.8: StepFwdPrf: {}, b_igc: {} usage: {}", name, self.b_igc, fwd_usage); }
+		// b_show_queue_saturated: forward-queue (the dominant StepFwdPrf) audit.
+		// Print ONLY this queue and ONLY when usage > 85%, so the run wrapper
+		// can grep the max and confirm the tuned config is tight (not wasteful,
+		// not overflowing).
+		if read_global_config().b_show_queue_saturated && fwd_usage > 0.85 {
+			println!("DEBUG USE 6901.8: StepFwdPrf SATURATED: {}, b_igc: {} usage: {:.4}", name, self.b_igc, fwd_usage);
+		}
 		if n<v2d[0].len()+1{
 			//aggressive: back-solve prod_pats_expansion (rung-independent,
 			//no basis_pats in the denominator):

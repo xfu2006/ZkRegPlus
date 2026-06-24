@@ -1901,9 +1901,9 @@ impl <F:PrimeField> ClamavDB<F>{
 			=read_lines(needs_ised_list_file).iter().filter(|s|
 			!s.starts_with("#")).map(|s| s.trim().to_string())
 			.collect::<Vec<String>>();
-		println!("DEBUG USE 60938.5: build_ised_bundle START b_igc={} \
+		if B_DEBUG { println!("DEBUG USE 60938.5: build_ised_bundle START b_igc={} \
 n_sigs={} n_need_ised={}", b_igc, sigs.len(),
-			sig_names_need_ised.len());
+			sig_names_need_ised.len()); }
 
 		//2. locate the sigs for sigs_needs_ised
 		// as there are up to 200 sigs to process, we simply do linear search
@@ -1955,20 +1955,20 @@ n_sigs={} n_need_ised={}", b_igc, sigs.len(),
 		if b_debug && b_igc{
 			println!("DEBUG USE 6105: in build_sed_bundle 0: b_igc: {}, pats: {:#?}", b_igc, pats);
 		}
-		println!("DEBUG USE 60938.6: ised b_igc={} build all_acdfa over \
+		if B_DEBUG { println!("DEBUG USE 60938.6: ised b_igc={} build all_acdfa over \
 |pats|={} elapsed={:.0}s", b_igc, pats.len(),
-			t_ised.elapsed().as_secs_f64());
+			t_ised.elapsed().as_secs_f64()); }
 		let all_acdfa = HexACDFA::new_adv(0, &pats, b_igc);
-		println!("DEBUG USE 60938.7: ised b_igc={} all_acdfa done \
+		if B_DEBUG { println!("DEBUG USE 60938.7: ised b_igc={} all_acdfa done \
 num_states={} build_store over |sigs|={} elapsed={:.0}s", b_igc,
 			all_acdfa.num_states, sigs.len(),
-			t_ised.elapsed().as_secs_f64());
+			t_ised.elapsed().as_secs_f64()); }
 
 		//6.2 build the store and append it to all
 		let (store_0,map_pat_0) = Self
 			::build_store(&sig_to_id, sigs, &all_acdfa, b_igc);
-		println!("DEBUG USE 60938.8: ised b_igc={} build_store done \
-elapsed={:.0}s", b_igc, t_ised.elapsed().as_secs_f64());
+		if B_DEBUG { println!("DEBUG USE 60938.8: ised b_igc={} build_store done \
+elapsed={:.0}s", b_igc, t_ised.elapsed().as_secs_f64()); }
 		let names = vec![vec!["all".to_string()], sig_names_need_ised].concat();
 		let n = names.len();
 		let dfas = vec![vec![all_acdfa.clone()], vec_ised_acdfa].concat();
@@ -2259,21 +2259,21 @@ elapsed={:.0}s", si+1, n_sigs, t_shape.elapsed().as_secs_f64());
 		println!("DEBUG USE 60777.1: vec_crit_pat (CS) len={} \
 			pats={:?}", vec_crit_pat.len(), vec_crit_pat);
 		let dfa_crit = HexACDFA::new(0, &vec_crit_pat);
-		println!("DEBUG USE 60777.2: dfa_crit num_states={} \
+		if B_DEBUG { println!("DEBUG USE 60777.2: dfa_crit num_states={} \
 			num_acc_states={} outputs.len={}",
 			dfa_crit.num_states, dfa_crit.num_acc_states,
-			dfa_crit.outputs.len());
+			dfa_crit.outputs.len()); }
 		let vec_crit_pat_igc = map_crit_pat_igc.keys().cloned()
 				.collect::<Vec<String>>();
 		//RECOVER LATER: we changed false to true. Keep it
 		//if data is correct.
-		println!("DEBUG USE 60777.3: vec_crit_pat_igc len={} \
-			pats={:?}", vec_crit_pat_igc.len(), vec_crit_pat_igc);
+		if B_DEBUG { println!("DEBUG USE 60777.3: vec_crit_pat_igc len={} \
+			pats={:?}", vec_crit_pat_igc.len(), vec_crit_pat_igc); }
 		let dfa_crit_igc = HexACDFA::new_adv(0, &vec_crit_pat_igc, true);
-		println!("DEBUG USE 60777.4: dfa_crit_igc num_states={} \
+		if B_DEBUG { println!("DEBUG USE 60777.4: dfa_crit_igc num_states={} \
 			num_acc_states={} outputs.len={}",
 			dfa_crit_igc.num_states, dfa_crit_igc.num_acc_states,
-			dfa_crit_igc.outputs.len());
+			dfa_crit_igc.outputs.len()); }
 		if b_perf {flog_perf(0, log_level, 
 			&format!("Build_DB: Step 4: Build ACDFA of Critial Patterns."),&mut timer,vlog);
 		}
@@ -2679,11 +2679,15 @@ elapsed={:.0}s", si+1, n_sigs, t_shape.elapsed().as_secs_f64());
 				flog(0, LOG1, &format!("loadClamDB from: {}", cache_dir),vlog);
 				Self::load(cache_dir)
 			}else{
+				// absolute paths pass through; relative paths are resolved
+				// against the project root (cwd-independent under cargo test).
+				let join = |p: &str| if std::path::Path::new(p).is_absolute()
+					{ p.to_string() } else { format!("{}/{}", proot, p) };
 				let db = Self::build_db(
-					&format!("{}/{}",proot,sig_file),
-					&format!("{}/{}", proot, needs_dfa_list_file), 
-					&format!("{}/{}", proot, needs_ised_list_file), 
-					&format!("{}/{}", proot, needs_ised_igc_list_file), 
+					&join(sig_file),
+					&join(needs_dfa_list_file),
+					&join(needs_ised_list_file),
+					&join(needs_ised_igc_list_file),
 					&cfg, vlog)?;
 				if effective_write_cache {db.save(cache_dir);}
 				db	

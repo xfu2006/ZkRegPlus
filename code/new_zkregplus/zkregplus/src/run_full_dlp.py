@@ -71,7 +71,7 @@ args = [a for a in sys.argv[1:] if not a.startswith("--")]
 DRY = "--dry-run" in sys.argv
 RESET = "--reset" in sys.argv
 PROBE_RESET = "--probe-reset" in sys.argv     # 64600 reset-vs-cross perc est
-JOBS = None
+JOBS = 16          # default 16 jobs; override with --jobs N
 for a in sys.argv[1:]:
     if a.startswith("--jobs="):
         JOBS = int(a.split("=", 1)[1])

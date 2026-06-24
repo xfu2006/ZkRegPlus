@@ -29554,6 +29554,11 @@ Goal 1. debug capacity err again
 	[b] put a 10% headroom
 	[c] test again 
 		9:10AM => 
+		(phase 1: 1 hr 6000 to 8000) -2:10pm [15000 now]
+				10000			     -3:20pm [25000 now]
+				15000				 - 4:20pm [40839 now]
+				15000				 - 5:00pm [51333 now]
+		==> looks fine it will be successful, let it run for 12 hours.
 Goal 2. create another big instance
 	[a] create volume 256GB
 	[b] create 1TB instance
@@ -29562,11 +29567,23 @@ Goal 2. create another big instance
 	[e] fix the installation issue of dna
 	[f] remove extra message
 	[g] run eval_reef.py -> paper data/raw_data/eval_reef.dat
-	[h] TODO: collect the eval_reef.dat.
+	[h] collect the eval_reef.dat. => /media/volume/zkregplus_large/data
+	[i] now start the dlp dataset started 3:22pm
+		folding speed about 2x faster than M1, which is nice.
 Goal 3. writing
 	[a] collect the data about DFA. 
 	[b] correct table info
-	[c] writing
+	[c] paragraph 2 
+	[d] discuss bullet C
+	[e] planning the component cost table.
+	[f] plan the python file -> DONE
+Goal 4. plan on data of 7.5
+	[a] overall performance table
+	[b] python file
+	[c] scale up diagram
+	[d] pythone file for it
+	[e] create the data collection function
+	[f] create a python function for it.
 
 
 

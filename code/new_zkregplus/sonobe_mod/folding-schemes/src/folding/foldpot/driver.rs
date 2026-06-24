@@ -1048,9 +1048,9 @@ where
 		use rayon::prelude::*;
 		let results: Vec<_> = (min_layer..=max_layer)
 			.into_par_iter().map(|layer_id| {
-				emit_stdout(format!(
+				if crate::folding::foldpot::utils::B_DEBUG2 { emit_stdout(format!(
 					"DEBUG USE 73112.5: gen_adv BEFORE \
-					 job={} layer={}", job_id, layer_id));
+					 job={} layer={}", job_id, layer_id)); }
 				let r = std::panic::catch_unwind(
 					std::panic::AssertUnwindSafe(|| {
 					Self::gen_nd_advice_at_layer_pll(
@@ -1068,10 +1068,10 @@ where
 						"Thread panicked in gen_nd_advice_at_layer_pll \
 						 for layer {}: {}", layer_id, msg)))
 				});
-				emit_stdout(format!(
+				if crate::folding::foldpot::utils::B_DEBUG2 { emit_stdout(format!(
 					"DEBUG USE 73112.6: gen_adv AFTER  \
 					 job={} layer={} ok={}",
-					job_id, layer_id, r.is_ok()));
+					job_id, layer_id, r.is_ok())); }
 				(layer_id, r)
 			})
 			.collect();
@@ -1112,10 +1112,10 @@ where
 		let b_fast = true;
 		let mut gt1 = GTimer::new();
 		let mut gt2 = GTimer::new();
-		emit_stdout(format!(
+		if crate::folding::foldpot::utils::B_DEBUG2 { emit_stdout(format!(
 			"DEBUG USE 73112.0: plan_pll ENTER job={} word.len={} \
 			 layers={}",
-			job_id, word.len(), p_layered.len()));
+			job_id, word.len(), p_layered.len())); }
 		log_perf(job_id, log_level, &format!(
 			"plan_nd_advice_pll step 0. layers: {}, word.len(): {}, \
 			 b_save_adivce: {}",
@@ -1127,10 +1127,10 @@ where
 			assert!(lock_unwrap!(p_layered[i][0]
 				.get_mapper()).max_word_len() == mwl);
 		}
-		emit_stdout(format!(
+		if crate::folding::foldpot::utils::B_DEBUG2 { emit_stdout(format!(
 			"DEBUG USE 73112.3: plan_pll BEFORE par_search \
 			 job={} max_layer={}",
-			job_id, p_layered.len()-1));
+			job_id, p_layered.len()-1)); }
 		let aggr = utils::consts::read_global_config()
 			.clamav_cfg.b_aggressive_sde_for_rep;
 		let (num_segs, vec_seg_size, vec_pci, vec_cap, vec_adv) = if aggr {
@@ -1152,10 +1152,10 @@ where
 					p_layered, job_id, log_level+2, b_save_advice,
 					word, word_info, min_layer, max_layer)
 			}?;
-			emit_stdout(format!(
+			if crate::folding::foldpot::utils::B_DEBUG2 { emit_stdout(format!(
 				"DEBUG USE 73112.4: plan_pll AFTER  par_search \
 				 job={} best={}",
-				job_id, _best_layer));
+				job_id, _best_layer)); }
 			let pci = vec_pci[0];
 			for x in &vec_pci{assert!(*x==pci);}
 			log_perf(job_id, log_level, &format!(
@@ -2792,6 +2792,30 @@ where
         if read_global_config().b_write_snark_cache && !cache_base.exists(){
            std::fs::create_dir_all(&cache_base).expect("create cache dir err");
         }
+        // Auto-build on a cold/partial snark cache. Run-mode requests
+        // b_read_snark_cache, but the decider keys + Pedersen sidecars
+        // exist only after a prior write run. If any required file is
+        // missing, regenerate everything THIS run by flipping to write
+        // -mode: keys are built via circuit_specific_setup and keys +
+        // sidecars persisted, so the next run reads them. A complete
+        // cache flips nothing, so warm runs are byte-identical.
+        if read_global_config().b_read_snark_cache {
+            let need = ["g16_main.key", "g16_main.key.meta",
+                "g16_cp.key", "g16_cp.key.meta",
+                "g16_main.sidecar.cf", "g16_cp.sidecar.cf",
+                "g16_cp.sidecar.cp"];
+            let missing: Vec<&str> = need.iter().copied()
+                .filter(|f| !cache_base.join(f).exists()).collect();
+            if !missing.is_empty() {
+                let _ = std::fs::create_dir_all(&cache_base);
+                get_global_config().b_read_snark_cache = false;
+                get_global_config().b_write_snark_cache = true;
+                log(0, ERR, &format!(
+                    "PERF 1004: snark cache cold/partial at {:?} \
+                     (missing {:?}); building + persisting this run",
+                    cache_base, missing));
+            }
+        }
         let b_read_snark_cache = read_global_config().b_read_snark_cache;
 		let _b_write_snark_cache = read_global_config().b_write_snark_cache;
         // 2026-05-21 (Lever 2A): defer cp_key load until Phase 2 to free
@@ -2961,8 +2985,8 @@ where
 	//DEBUG USE 61730.1: exact per-rung r1cs size (rows=constraints,
 	//cols=variables, io_l=public io len). Removable measurement print.
 	for (i,vp) in driver1.nova_param.1.vec_vp.iter().enumerate(){
-		println!("DEBUG USE 61730.1: rung {} r1cs rows={} cols={} io_l={}",
-			i, vp.r1cs.A.n_rows, vp.r1cs.A.n_cols, vp.r1cs.l);
+		if utils::consts::B_DEBUG { println!("DEBUG USE 61730.1: rung {} r1cs rows={} cols={} io_l={}",
+			i, vp.r1cs.A.n_rows, vp.r1cs.A.n_cols, vp.r1cs.l); }
 	}
 
 	//3.5 Sidecar: save/load Pedersen params + R1CS hashes to keep
@@ -3113,9 +3137,9 @@ where
 	  	log(job_id, log_level, &format!("--- Job {} starts ---", job_id));
 	  	let mut gt1_0 = GTimer::new();
 	  	let mut gt1 = GTimer::new();
-	  	log_perf(job_id, LOG2, &format!(
+	  	if utils::consts::B_DEBUG { log_perf(job_id, LOG2, &format!(
 	  		"DEBUG USE 60002.0: MEM at job entry: {} GB",
-	  		get_mem_usage()), &mut gt1);
+	  		get_mem_usage()), &mut gt1); }
 	  	let vec_words = &job.vec_words;
 	  	let vec_words_info = &job.vec_word_info;
 	  	let idx_individual_prf = job.idx_individual_prf;

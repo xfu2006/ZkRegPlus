@@ -2925,7 +2925,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		{
 			use std::sync::atomic::{AtomicUsize, Ordering};
 			static N_PROBE_60931: AtomicUsize = AtomicUsize::new(0);
-			if N_PROBE_60931.fetch_add(1, Ordering::Relaxed) < 20{
+			if B_DEBUG && N_PROBE_60931.fetch_add(1, Ordering::Relaxed) < 20{
 				println!("DEBUG USE 60931.3: gen_witness commit '{}' \
 					vec.len={} (stmt {} + msg1 {})", self.name,
 					vec.len(), stmt.len(), v_msg1.len());
@@ -3269,9 +3269,9 @@ where 	C: CurveGroup<ScalarField=F>,
 		let stmt_len = wtns_cfg.statement_size;
 		let m1_len = wtns_cfg.msg1_size;
 
-		println!("DEBUG USE 60931.2: new_adv '{}' initial cmF key -> {} \
+		if B_DEBUG { println!("DEBUG USE 60931.2: new_adv '{}' initial cmF key -> {} \
 			(stmt {} + msg1 {})", name, stmt_len + m1_len + 1,
-			stmt_len, m1_len);
+			stmt_len, m1_len); }
 		let mut rng = ark_std::test_rng();
 		let (cs_pp, _cs_vp) = CS::setup(&mut rng, stmt_len + m1_len +1)
 			.expect("setup error");
@@ -3323,10 +3323,10 @@ where 	C: CurveGroup<ScalarField=F>,
 		// reads the container cfg), so resize here to the dummy
 		// (capacity-max) commit length before R1CS extraction.
 		let cmf_len = self.witness_config.get_cmf_len();
-		println!("DEBUG USE 60931.1: set_dummy_stmt resize cmF key \
+		if B_DEBUG { println!("DEBUG USE 60931.1: set_dummy_stmt resize cmF key \
 			-> {} (stmt {} + msg1 {})", cmf_len + 1,
 			self.witness_config.statement_size,
-			self.witness_config.msg1_size);
+			self.witness_config.msg1_size); }
 		let mut rng = ark_std::test_rng();
 		let (cs_pp, _cs_vp) = CS::setup(&mut rng, cmf_len + 1)
 			.expect("resize cmF params");

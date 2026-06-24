@@ -210,7 +210,7 @@ where C: CurveGroup<ScalarField=F>,
 	let chunks = total_nibbles/max_nibble_len;
 	let lk_share = read_global_config().perc_lkup_share* max_nibble_len/100;
 	let lk_share = if lk_share == 0 {1} else {lk_share};
-	println!("DEBUG USE 68911: lkup_len: {}, max_nibble_len: {}, total_nibble_len: {}, lk_share: {}, config.perc_lkup_share: {}, chunks: {}", lkup_len, max_nibble_len, total_nibbles, lk_share, read_global_config().perc_lkup_share, chunks);
+	if utils::consts::B_DEBUG { println!("DEBUG USE 68911: lkup_len: {}, max_nibble_len: {}, total_nibble_len: {}, lk_share: {}, config.perc_lkup_share: {}, chunks: {}", lkup_len, max_nibble_len, total_nibbles, lk_share, read_global_config().perc_lkup_share, chunks); }
 	if b_check_lkup && lk_share*chunks < lkup_len{
 		panic!("ERROR: lk_share: {} *chunks: {}  < lkup_len: {}",
 			lk_share, chunks, lkup_len);
@@ -302,7 +302,7 @@ where C: CurveGroup<ScalarField=F>,
 	layer_circs.reverse();
 
 	// DEBUG MESSAGE 1001: Print config of each circ before returning
-	println!("DEBUG USE 1001 ========================= build_circs_adv generates =================");
+	if utils::consts::B_DEBUG { println!("DEBUG USE 1001 ========================= build_circs_adv generates ================="); }
 	for (l1_idx, layer) in layer_circs.iter().enumerate() {
 		for (l2_idx, circ) in layer.iter().enumerate() {
 			println!("DEBUG MESSAGE 1001: Category {} Layer {} Circuit Name: {}\nCapacity: {:#?}", l1_idx, l2_idx, circ.get_name(), circ);
@@ -1212,11 +1212,22 @@ where
 		chunk_len,
 		init_cp_capacity, init_sed_capacity, init_dfa_capacity,
 		init_cp_capacity, init_sed_capacity, 
-		vec_decrease_levels, num_circs, b_check_lkup
+		vec_decrease_levels, num_circs, b_check_lkup, DcMode::Off
 	);
 }
+/// How the determine_config (capacity auto-tuning) probe interacts with
+/// folding in `zkp_driver_adv`:
+///  - `Off`           : skip the probe, fold with the caller's hand caps.
+///  - `ProbeOnly`     : run the probe, report, and RETURN without folding (the
+///                      manual capacity-tuning workflow).
+///  - `ProbeThenFold` : run the probe and fold with the TUNED caps (used by
+///                      collect_scale_data so each rule-set subset folds at its
+///                      own optimized capacities).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DcMode { Off, ProbeOnly, ProbeThenFold }
+
 /// `job_id`: The ID of the job being processed.
-pub fn zkp_driver_adv<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + std::fmt::Debug + Clone, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, S> 
+pub fn zkp_driver_adv<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + std::fmt::Debug + Clone, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, S>
 (
 	job_id: usize,
 	sig_file: &str, 
@@ -1234,8 +1245,9 @@ pub fn zkp_driver_adv<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + st
 	init_cp_capacity_igc: &CpCapacity, 
 	init_sed_capacity_igc: &SedCapacity,
 	vec_decrease_level: &Vec<usize>,
-	num_circs: usize, 
+	num_circs: usize,
 	b_check_lkup: bool,
+	dc_mode: DcMode,
 )
 where
 	GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
@@ -1328,12 +1340,19 @@ where
 
 	//3. build the circuits
 	let rc_db = Arc::new(db.clone());
-	// determine_config probe (env-gated, non-aggressive): reuse the built DB +
-	// loaded jobs to auto-tune the lowest CapParams via the Pass-1 probe, then
-	// return. Warm-starts perc/avg_active (cs+igc) low to exercise convergence;
-	// compares vs the runner's hand caps with the +10% rule. Framework untouched.
-	if std::env::var("ZKR_DETERMINE_CONFIG").is_ok() {
-		use crate::determine_config::{capparams_from_caps_general, compare_caps};
+
+	// Capacity source for folding. `DcMode::Off` -> the caller's hand caps.
+	// Otherwise the determine_config Pass-1 probe auto-tunes the lowest
+	// CapParams for THIS (DB, corpus): it reuses the built DB + loaded jobs,
+	// warm-starts perc/avg_active (cs+igc) low to exercise convergence, and
+	// compares vs the hand caps with the +10% rule. `ProbeOnly` stops after
+	// reporting; `ProbeThenFold` folds with the tuned caps.
+	let tuned: Option<(CpCapacity, SedCapacity, DfaCapacity,
+		CpCapacity, SedCapacity)> = if dc_mode == DcMode::Off {
+		None
+	} else {
+		use crate::determine_config::{capparams_from_caps_general,
+			compare_caps, caps_from_params_general};
 		let cur = capparams_from_caps_general(init_cp_capacity_cs,
 			init_sed_capacity_cs, init_dfa_capacity, init_sed_capacity_igc);
 		let mut p0 = cur.clone();
@@ -1371,23 +1390,61 @@ where
 					Err(bad) => log(0, log_level, &format!(
 						"DETERMINE_CONFIG compare_caps: FAIL {:?}", bad)),
 				}
+				// ProbeOnly: report and stop (no folding).
+				if dc_mode == DcMode::ProbeOnly { return; }
+				// Headroom: the probe sizes caps to the REAL document, but
+				// foldpot preprocesses a synthetic full-length 0-pad word that
+				// can need a bit more -- and its advice gen CapErr-PANICS (it
+				// does not self-bump). Inflate the tuned structural caps
+				// ~25%+16 so the 0-word advice passes (matches the codebase's
+				// +10% hand-cap headroom convention, with margin). RAM is
+				// dominated by the SED universe, so this is cheap.
+				// Pad ONLY the document-dependent state/pattern TRACE caps:
+				// these are >= bounds (CapErr bumps them when short), and the
+				// full-length 0-pad word produces a longer trace than gdb's
+				// real content. subsigs/cp_subsigs/sigs_sed are EXACT DB-universe
+				// counts (compute_sig_adv asserts inp == capacity), identical
+				// for the 0-word and the document, so they must NOT be padded.
+				let mut h = new.clone();
+				let pad = |v: usize| v * 5 / 4 + 16;
+				h.cp_basis_unique_states   = pad(h.cp_basis_unique_states);
+				h.basis_unique_states      = pad(h.basis_unique_states);
+				h.basis_acc_states         = pad(h.basis_acc_states);
+				h.basis_pats_in_trace      = pad(h.basis_pats_in_trace);
+				h.perc_pats_expansion_rate = pad(h.perc_pats_expansion_rate);
+				log(0, log_level, &format!(
+					"DETERMINE_CONFIG: folding with +headroom caps: {:?}", h));
+				Some(caps_from_params_general(&h))
 			}
-			Err(e) => log(0, log_level,
-				&format!("DETERMINE_CONFIG FAILED: {}", e)),
+			Err(e) => {
+				log(0, log_level, &format!("DETERMINE_CONFIG FAILED: {}", e));
+				if dc_mode == DcMode::ProbeThenFold {
+					panic!("ProbeThenFold: determine_config failed: {}", e);
+				}
+				return; // ProbeOnly with a failed probe: report and stop.
+			}
 		}
-		return;
-	}
+	};
+
+	// Pick the caps build_circs_adv folds with: tuned per-subset caps when the
+	// probe ran (ProbeThenFold), else the caller's hand caps.
+	let (cp_cs, sed_cs, dfa_c, cp_igc, sed_igc) = match &tuned {
+		Some(t) => (&t.0, &t.1, &t.2, &t.3, &t.4),
+		None => (init_cp_capacity_cs, init_sed_capacity_cs, init_dfa_capacity,
+			init_cp_capacity_igc, init_sed_capacity_igc),
+	};
+
 	let vec_circs = build_circs_adv::<CF1<C1>,C1,CS1>(
 		&poseidon_config,
 		max_total_word_len,
 		chunk_len,
 		lkup_len,
 		rc_db,
-		init_cp_capacity_cs,
-		init_sed_capacity_cs,
-		init_dfa_capacity,
-		init_cp_capacity_igc,
-		init_sed_capacity_igc,
+		cp_cs,
+		sed_cs,
+		dfa_c,
+		cp_igc,
+		sed_igc,
 		vec_decrease_level,
 		num_circs,
 		b_check_lkup
@@ -1520,8 +1577,8 @@ where
 	let rc_db = Arc::new(db.clone());
 	// M11: aggressive determine_config moved to the run paths (run_dlp_sample_
 	// config / full_dlp_sample3), which carry vdata and emit the rung ladder.
-	// The non-aggressive ZKR_DETERMINE_CONFIG probe (zkp_driver_adv) is separate
-	// and unchanged.
+	// The non-aggressive determine_config probe (zkp_driver_adv, via DcMode) is
+	// separate and unchanged.
 	let vec_circs = build_circs_adv_aggr::<CF1<C1>,C1,CS1>(
 		&poseidon_config,
 		max_total_word_len,
@@ -1592,7 +1649,7 @@ pub mod tests_zkp_driver{
 	use ark_groth16::Groth16;
 	use folding_schemes::{commitment::{pedersen::Pedersen, kzg::KZG}};
 	use crate::zkp_driver::{zkp_driver, zkp_driver_adv,
-		zkp_driver_adv_aggr, WordInfo};
+		zkp_driver_adv_aggr, WordInfo, DcMode};
 	use crate::circs::{
 		cp_mapper::{CpCapacity},
 		sed_mapper::{SedCapacity},
@@ -1909,7 +1966,7 @@ pub mod tests_zkp_driver{
 			&init_sed_cap, //as igc
 			&vec![],
 			1,
-			b_check_lkup
+			b_check_lkup, DcMode::Off
 		);
 	}
 
@@ -1981,7 +2038,7 @@ pub mod tests_zkp_driver{
 			&init_sed_cap,
 			&vec![],
 			1,
-			b_check_lkup
+			b_check_lkup, DcMode::Off
 		);
 	}
 
@@ -2082,7 +2139,7 @@ pub mod tests_zkp_driver{
 			&init_sed_cap_igc,
 			&vec![],
 			1,
-			b_check_lkup
+			b_check_lkup, DcMode::Off
 		);
 	}
 
@@ -2249,7 +2306,7 @@ pub mod tests_zkp_driver{
 			&init_sed_cap_igc,
 			&vec_decrease_level,
 			num_circs,
-			b_check_lkup
+			b_check_lkup, DcMode::Off
 		);
 	}
 
@@ -2354,7 +2411,7 @@ pub mod tests_zkp_driver{
 			&init_sed_cap_igc,
 			&vec_decrease_level,
 			num_circs,
-			b_check_lkup
+			b_check_lkup, DcMode::Off
 		);
 	}
 
@@ -2590,7 +2647,7 @@ pub mod tests_zkp_driver{
 			&init_sed_cap_igc,
 			&vec_decrease_level,
 			num_circs,
-			b_check_lkup
+			b_check_lkup, DcMode::Off
 		);
 	}
 
@@ -2721,7 +2778,7 @@ pub mod tests_zkp_driver{
 				&init_sed_cap_igc,
 				&vec_decrease_level,
 				num_circs,
-				b_check_lkup
+				b_check_lkup, DcMode::Off
 			);
 		}
 	}
@@ -2840,7 +2897,7 @@ pub mod tests_zkp_driver{
 			&init_sed_cap_igc,
 			&vec_decrease_level,
 			num_circs,
-			b_check_lkup
+			b_check_lkup, DcMode::Off
 		);
 	}
 
@@ -2943,7 +3000,7 @@ pub mod tests_zkp_driver{
 			&init_sed_cap_igc,
 			&vec_decrease_level,
 			num_circs,
-			b_check_lkup
+			b_check_lkup, DcMode::Off
 		);
 	}
 
@@ -2972,7 +3029,7 @@ pub mod tests_zkp_driver{
 		get_global_config().min_avg_pats_per_subsig= 8; // OLD value: 6
 		get_global_config().min_dfa_sigs = 3; // OLD value: 2
 		get_global_config().min_dfa_subsigs =  3; //OLD val 2
-		get_global_config().n_par_snark = if b_setup {1} else {2};
+		get_global_config().n_par_snark = 1;
 		get_global_config().n_par_snark_cp = if b_setup {1} else {2};
 		get_global_config().n_par_batch_claim = 8;
 		get_global_config().perc_lkup_share = 143; //this is for
@@ -3071,7 +3128,7 @@ pub mod tests_zkp_driver{
 			&init_sed_cap_igc,
 			&vec_decrease_level,
 			num_circs,
-			b_check_lkup
+			b_check_lkup, DcMode::Off
 		);
 	}
 
@@ -3188,7 +3245,7 @@ pub mod tests_zkp_driver{
 			&init_sed_cap_igc,
 			&vec_decrease_level,
 			num_circs,
-			b_check_lkup
+			b_check_lkup, DcMode::Off
 		);
 	}
 
@@ -3792,7 +3849,7 @@ pub mod tests_zkp_driver{
 			&init_sed_cap_igc,
 			&vec_decrease_level,
 			num_circs,
-			b_check_lkup
+			b_check_lkup, DcMode::Off
 		);
 	}
 
@@ -3916,7 +3973,7 @@ pub mod tests_zkp_driver{
 			&init_sed_cap_igc,
 			&vec_decrease_level,
 			num_circs,
-			b_check_lkup
+			b_check_lkup, DcMode::Off
 		);
 	}
 
@@ -4772,6 +4829,212 @@ fail: {} ({:.4}%)",
 		collect_assess_tier_data();
 	}
 
+	/// Collect §7.5 scalability-in-regex-set-size data (Q4). The corpus is
+	/// FIXED (the difficult gdb 6.6M file); only the rule set grows. We
+	/// sweep it in `num_rounds` rounds of `base_share_pct` each, so round
+	/// `r in 1..=num_rounds` uses `pct = r*base_share_pct` percent of the
+	/// rules; `(10,5)` => 10,20,30,40,50. The subset is the modulo-100
+	/// stratification "keep rule `j` iff `j%100 < pct`": the share is spread
+	/// across the whole file (not the first N rules) and every round is a
+	/// STRICT SUPERSET of the previous one. Settings, capacities and the
+	/// rule set are copied from `full_clamav()`; we run folding-only and
+	/// REBUILD the DB from each subset into the isolated `scale_data` cache
+	/// (overwriting the previous round -- never touches a production cache).
+	///
+	/// Each round's run log is bracketed on stdout with
+	/// `==== SCALE ROUND {BEGIN,END} pct=<P> ====`. `COST GRAND TOTAL` is
+	/// emitted to stdout only (no per-job file), so `run_collect_scale_data.py`
+	/// splits the captured stdout on these markers into per-round
+	/// `log_<pct>.txt` files. No tgz here -- the Python wrapper compresses.
+	#[allow(dead_code)]
+	pub fn collect_scale_data(base_share_pct: usize, num_rounds: usize) {
+		utils::os::print_computer_config(Some("collect_scale_data"));
+		assert!(base_share_pct >= 1 && num_rounds >= 1
+			&& num_rounds * base_share_pct <= 100,
+			"need base>=1, rounds>=1, rounds*base<=100 (got base={}, rounds={})",
+			base_share_pct, num_rounds);
+
+		// ---- settings: identical to full_clamav() (non-setup), except
+		// folding-only and pointed at the isolated scale_data cache. ----
+		get_global_config().snark_cache_dir = "scale_data".to_string();
+		get_global_config().b_write_snark_cache = false;
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_folding_only = true;   // discharge: folding only
+		get_global_config().b_show_queue_saturated = true; // audit fwd-queue >85%
+		get_global_config().range2_bit = 26;
+		get_global_config().b_light_test = false;
+		// Option A: LOW floors so determine_config's CapErr back-solve derives
+		// each subset's real caps (it only bumps UP from the floor; a high
+		// floor pins every subset to full-clamav size -> flat curve + OOM).
+		get_global_config().min_subsigs = 64;
+		get_global_config().min_basis_unique_states = 100;
+		get_global_config().min_basis_acc_states = 2;
+		get_global_config().min_basis_pats_in_trace = 4;
+		get_global_config().min_avg_pats_per_subsig = 1;
+		get_global_config().min_dfa_sigs = 2;
+		get_global_config().min_dfa_subsigs = 2;
+		get_global_config().n_par_snark = 2;
+		get_global_config().n_par_snark_cp = 2;
+		get_global_config().n_par_batch_claim = 8;
+		get_global_config().perc_lkup_share = 143;
+		get_global_config().log_level = utils::logger::LOG3;
+
+		// REBUILD the DB from each subset every round (never read a stale
+		// cache; b_write_cache writes the fresh subset DB into scale_data).
+		get_global_config().b_read_cache = false;
+		let b_write_cache = true;
+
+		// ---- LOW starting caps (Option A). These are the determine_config
+		// warm-start baseline (cur/p0); the per-round probe CapErr-bumps each
+		// UP to the subset's actual need, so the circuit (and RAM) tracks the
+		// rule-set size instead of being pinned at full-clamav size. ----
+		let set1 = "data/debug/full_clamav/config/";
+		let max_word = 512 * 8;
+		let sigs = 64;
+		let subsigs = 64;
+		let avg_pats_per_subsig = 8;
+		let avg_active_pats_per_subsig = 2;
+		let perc_comp_subsigs = 20;
+		// Single full-cap circuit (like full_dna): no decrease ladder, so the
+		// full-length 0-pad word always lands in a full-cap circuit (the
+		// reversed ladder otherwise starves the decreased layer-0 circuit).
+		let vec_decrease_level: Vec<usize> = vec![];
+		let num_circs = 1;
+		let basis_unique_states = 100;
+		let basis_acc_states = 2;
+		let basis_pats_in_trace = 4;
+		// igc arm kept at full-clamav (non-degenerate) values: unlike DNA,
+		// ClamAV has many case-insensitive patterns, so the igc forward queue
+		// must have room or its perc CapErr can't converge (req==current).
+		let basis_acc_states_igc = 750;
+		let basis_pats_in_trace_igc = 820;
+		let dfa_sigs = 2;
+		let dfa_subsigs = 2;
+		let perc_pats_expansion_rate = 104;
+		let perc_pats_expansion_rate_igc = 2;
+
+		let init_cp_cap = CpCapacity{
+			max_word_len: max_word, basis_unique_states, subsigs,
+			avg_pats_per_subsig };
+		let init_sed_cap = SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig, avg_active_pats_per_subsig,
+			basis_pats_in_trace, perc_pats_expansion_rate, sigs,
+			perc_comp_subsigs, basis_unique_states, basis_acc_states);
+		let init_dfa_cap = DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
+		let init_cp_cap_igc = CpCapacity{
+			max_word_len: max_word, basis_unique_states, subsigs,
+			avg_pats_per_subsig };
+		let init_sed_cap_igc = SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig, avg_active_pats_per_subsig,
+			basis_pats_in_trace_igc, perc_pats_expansion_rate_igc, sigs,
+			perc_comp_subsigs, basis_unique_states, basis_acc_states_igc);
+
+		// ---- fixed corpus: the difficult gdb (6.6M) single file ----
+		let scan_files = vec![
+			"data/debug/full_data_set/config/binexec_3.dat".to_string()];
+
+		// ---- full rule set (read once, same filter as build_db so the
+		// modulo index lines up with the DB's sig ordering) ----
+		let proot = utils::os::proj_root();
+		let all_rules: Vec<String> = utils::os::read_lines(
+				&format!("{}/{}main.dat", proot, set1))
+			.into_iter()
+			.filter(|s| !s.starts_with('#') && !s.trim().is_empty())
+			.collect();
+		let n_rules = all_rules.len();
+
+		// full auxiliary "needs" lists (sig NAMES, one per line). A rule
+		// subset must not reference a name it dropped, so each round we filter
+		// these to the subset's names -- build_ised_bundle asserts every listed
+		// name resolves to exactly one loaded sig.
+		let needs_dfa_full = utils::os::read_lines(
+			&format!("{}/{}main_dfa.dat", proot, set1));
+		let needs_ised_full = utils::os::read_lines(
+			&format!("{}/{}needs_ised.dat", proot, set1));
+		let needs_ised_igc_full = utils::os::read_lines(
+			&format!("{}/{}needs_ised_igc.dat", proot, set1));
+
+		// runtime scratch -- kept OUT of the project tree (cache stays in
+		// data/cache/scale_data; only the subset sig + needs files live here).
+		let scratch = "/tmp/bora/scale";
+		std::fs::create_dir_all(scratch).expect("mkdir /tmp/bora/scale");
+		let sub_main = format!("{}/main_scale.dat", scratch);
+		let sub_dfa = format!("{}/needs_dfa.dat", scratch);
+		let sub_ised = format!("{}/needs_ised.dat", scratch);
+		let sub_ised_igc = format!("{}/needs_ised_igc.dat", scratch);
+
+		for r in 1..=num_rounds {
+			let pct = r * base_share_pct;
+			// modulo-100 spread => strict nested supersets across rounds.
+			let subset: Vec<&str> = all_rules.iter().enumerate()
+				.filter(|(j, _)| j % 100 < pct)
+				.map(|(_, s)| s.as_str())
+				.collect();
+			std::fs::write(&sub_main, subset.join("\n") + "\n")
+				.expect("write subset main_scale.dat");
+
+			// drop needs-list entries whose sig is not in this subset (the sig
+			// name is the token before the first ';' or ':').
+			let names: std::collections::HashSet<String> = subset.iter()
+				.map(|l| l.split(|c| c == ';' || c == ':')
+					.next().unwrap_or("").trim().to_string())
+				.collect();
+			let filt = |full: &[String]| -> String {
+				let kept: Vec<&str> = full.iter()
+					.map(|s| s.trim())
+					.filter(|n| !n.is_empty() && !n.starts_with('#')
+						&& names.contains(*n))
+					.collect();
+				if kept.is_empty() { String::new() }
+				else { kept.join("\n") + "\n" }
+			};
+			std::fs::write(&sub_dfa, filt(&needs_dfa_full))
+				.expect("write needs_dfa");
+			std::fs::write(&sub_ised, filt(&needs_ised_full))
+				.expect("write needs_ised");
+			std::fs::write(&sub_ised_igc, filt(&needs_ised_igc_full))
+				.expect("write needs_ised_igc");
+
+			utils::logger::emit_stdout(format!(
+				"==== SCALE ROUND BEGIN pct={} rules={}/{} corpus=gdb ====",
+				pct, subset.len(), n_rules));
+			utils::logger::flush_logger();
+
+			zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+				0,
+				&sub_main,                                  // subset sig file
+				scan_files.clone(),
+				"data/debug/full_clamav/reports/report2.dat",
+				b_write_cache,
+				"scale_data",                               // isolated cache
+				&sub_dfa,
+				&sub_ised,
+				&sub_ised_igc,
+				max_word,
+				&init_cp_cap, &init_sed_cap, &init_dfa_cap,
+				&init_cp_cap_igc, &init_sed_cap_igc,
+				&vec_decrease_level, num_circs, false, DcMode::ProbeThenFold);
+
+			utils::logger::flush_logger();
+			utils::logger::emit_stdout(format!(
+				"==== SCALE ROUND END pct={} ====", pct));
+			utils::logger::flush_logger();
+		}
+	}
+
+	#[test]
+	pub fn test_collect_scale_data() {
+		let base = std::env::var("ZKR_SCALE_BASE").ok()
+			.and_then(|s| s.parse().ok()).unwrap_or(5usize);
+		let rounds = std::env::var("ZKR_SCALE_ROUNDS").ok()
+			.and_then(|s| s.parse().ok()).unwrap_or(2usize);
+		println!("collect_scale_data: base_share_pct={} num_rounds={}",
+			base, rounds);
+		collect_scale_data(base, rounds);
+	}
+
 	/// Experiment: is the accept-vs-fold discharge gap the (max_word_len,
 	/// seg_word_len) SEGMENTATION (same function both sides)? Re-discharge
 	/// ZKR_CMP_LIST on the compressed DB at the fold's (mw,mw) vs the accept
@@ -5384,6 +5647,14 @@ failed={} high={} final={}", raw_n, n_stage1, passed.len(),
 	#[test]
 	pub fn test_full_dna(){
 		full_dna::<Fr>(false);
+	}
+
+	/// full_clamav 8-job run (one full-mode proof). Reads the snark
+	/// cache, self-building it on first run. Invoke via run_full_clam.py
+	/// or: `cargo test -p zkregplus -- full_clam --exact --nocapture`
+	#[test]
+	pub fn full_clam(){
+		full_clamav::<Fr>(true, false, false);
 	}
 
 	/// ZK discharge of one Enron email (merged_000001) against the
