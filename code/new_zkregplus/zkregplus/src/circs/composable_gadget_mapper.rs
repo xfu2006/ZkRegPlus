@@ -949,8 +949,12 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 				let dummy_mtbl: Vec<F> = (0..comp_disch.len())
 					.map(|_| F::one()).collect();
 				emit_stdout(format!(
-					"DEBUG USE 77318.1: comp i={} name={} \
-					 failed.len={} discharged.len={}",
+					"DEBUG USE 77318.1: word_id={} seg={} comp i={} \
+					 name={} failed.len={} discharged.len={}",
+					folding_schemes::folding::foldpot::utils
+						::probe_77317_f_as_u64_lossy(&ea.word_id),
+					folding_schemes::folding::foldpot::utils
+						::probe_77317_f_as_u64_lossy(&ea.subseg_id),
 					i, comp_name,
 					comp_failed.len(), comp_disch.len()));
 				let tag_f = format!("1.c{}.failed", i);

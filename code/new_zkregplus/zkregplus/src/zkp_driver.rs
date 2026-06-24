@@ -4311,6 +4311,43 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			vdata.push(fdr);
 			infos.push(rec);
 		}
+		//PROBE FAILSEG (ZKR_PROBE_FAILSEG): per-segment failed_c (= the CP
+		//"needs discharge" set that SED must cover that chunk) for every
+		//file, with WHICH SUBSIG of WHICH SIG. The b_correct desync chunk
+		//(e.g. seg 33 of kean-s/166: sigs 890/891) shows here -- compare the
+		//bad file's segs against a passing file's. Runs in the cheap
+		//discharge phase, before key setup. DEBUG -- remove with the harness.
+		if std::env::var("ZKR_PROBE_FAILSEG").is_ok() {
+			for (fi, (fpath, wi)) in files.iter().zip(infos.iter())
+				.enumerate() {
+				let nseg = wi.failed_c_all_segs.len();
+				let tot: usize = wi.failed_c_all_segs.iter()
+					.map(|v| v.len()).sum();
+				utils::logger::emit_stdout(format!(
+					"PROBE FAILSEG file[{}]={} nibble_len={} n_segs={} \
+					 total_failed={}", fi, fpath, wi.file_nibble_len, nseg,
+					tot));
+				for s in 0..nseg {
+					let ids = &wi.failed_c_all_segs[s];
+					if ids.is_empty() { continue; }
+					let info = wi.failed_c_info_all_segs.get(s);
+					let detail: Vec<String> = ids.iter().enumerate()
+						.map(|(k, id)| {
+							match info.and_then(|v| v.get(k)) {
+								Some(di) => format!(
+									"sid={} {} subsigs={:?} igc={:?} \
+									 mincost={} ok={}", id, di.sig_name,
+									di.subsig_ids, di.subsig_igc,
+									di.min_cost, di.b_success),
+								None => format!("sid={} <no-info>", id),
+							}
+						}).collect();
+					utils::logger::emit_stdout(format!(
+						"PROBE FAILSEG   file[{}] seg={} n_failed={} :: {}",
+						fi, s, ids.len(), detail.join(" || ")));
+				}
+			}
+		}
 		//(1) NEEDS distribution over the sample (stdout + sample report).
 		let rows: Vec<Vec<usize>> = vdata.iter()
 			.map(|r| r.chunk_peaks.needs_per_chunk.clone()).collect();

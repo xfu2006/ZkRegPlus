@@ -27,18 +27,15 @@ RUNCFG = os.path.join(CFG_DIR, "config", "runcfg_sample.json")
 FULL_LADDER = "data/paper_data/dlp/cfg/config/dlp_ladder.json"
 LOG = "/tmp/sample_repro.log"
 
-# In-flight files at the full_dlp b_correct crash (one per job, mapped from the
-# log via per-job Pass-1<->Pass-3 word index). The culprit is one of these.
+# TRIMMED to 3 for speed: the confirmed bad file FIRST (crashes at seg 33), then
+# 2 passing comparison files (one same-mailbox kean-s, one non-kean-s). The full
+# 9-candidate set is backed up at jobs/suspect_list_full.txt -- restore later.
+# REMOVED 6: kean-s/archiving/untitled/4730, kean-s/enron_mentions/81,
+# kean-s/europe/2, holst-k/inbox/95, arora-h/inbox/85, perlingiere-d/.../229.
 SUSPECTS = [
     "data/samples/email/src/maildir/kean-s/archiving/untitled/166.",
     "data/samples/email/src/maildir/kean-s/archiving/untitled/5721.",
-    "data/samples/email/src/maildir/kean-s/archiving/untitled/4730.",
-    "data/samples/email/src/maildir/kean-s/enron_mentions/81.",
-    "data/samples/email/src/maildir/kean-s/europe/2.",
-    "data/samples/email/src/maildir/holst-k/inbox/95.",
     "data/samples/email/src/maildir/arnold-j/deleted_items/32.",
-    "data/samples/email/src/maildir/arora-h/inbox/85.",
-    "data/samples/email/src/maildir/perlingiere-d/deleted_items/229.",
 ]
 
 RUNCFG_JSON = {
@@ -76,6 +73,8 @@ def run():
     env["RUSTFLAGS"] = "-C link-args=-fuse-ld=lld -Awarnings"
     env["ZKR_DLP_RUNCFG"] = RUNCFG
     env["ZKR_PROBE_77317"] = "1"
+    # per-segment failed_c dump (which subsig of which sig per chunk)
+    env["ZKR_PROBE_FAILSEG"] = "1"
     # load full_dlp's full-corpus ladder so the suspects hit the real caps
     env["ZKR_LOAD_LADDER"] = FULL_LADDER
 
