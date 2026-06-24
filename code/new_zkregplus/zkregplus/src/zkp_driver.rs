@@ -4272,6 +4272,16 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			::LookupTableTwoCol as _;
 		let rc = crate::determine_config::RunCfg::from_env();
 		let proot = utils::os::proj_root();
+		//DEBUG USE 60777.0 (REMOVE with the ZKR_LOAD_LADDER repro knob):
+		//fail fast if the requested ladder file is missing, BEFORE the ~2h
+		//discharge phase, so a bad path doesn't waste a full run.
+		if let Ok(lp) = std::env::var("ZKR_LOAD_LADDER") {
+			let lp_abs = format!("{}/{}", proot, lp);
+			assert!(std::path::Path::new(&lp_abs).exists(),
+				"ZKR_LOAD_LADDER points to a missing file: {} \
+				 (run full_dlp to regenerate the ladder, or fix the path)",
+				lp_abs);
+		}
 		let cd = &rc.config_dir;
 		let mw = rc.chunk_len;
 		//aggressive CS-only, folding-only, estimate-on for the tuning.

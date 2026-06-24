@@ -29624,8 +29624,8 @@ Goal 4. writing
 	[g] refine the log generaiton
 --- ACTIVE ONE ---
 Goal 5. start data collection on GCP
-	Started 11:30AM
-	[b] server2 -> full_dna 
+	[a] server2 -> full_dna (11:30am->6:45pm: 7.25hr) jetstream2: 5.2 hrs.
+	[b] server2 -> full_clam (6:45pm 06/24 -> 
 Goal 6. debug full_dlp err
 	[b] can replicate the error 
 	[c] identified it's sde advice error, more details needed.
