@@ -3108,7 +3108,7 @@ pub mod tests_zkp_driver{
 		get_global_config().range2_bit = 26;
 		let _ = b_light_test; // forced full snark below
 		get_global_config().b_light_test = false; // full snark (one proof)
-		get_global_config().b_one_proof = true;   // emit ONE proof only
+		get_global_config().b_one_proof = false;  // every job proves
 		get_global_config().min_subsigs = 368; // OLD value: 361
 		get_global_config().min_basis_unique_states= 1054; // OLD value: 600
 		get_global_config().min_basis_acc_states =  268; // OLD value: 113
@@ -3116,8 +3116,9 @@ pub mod tests_zkp_driver{
 		get_global_config().min_avg_pats_per_subsig= 8; // OLD value: 6
 		get_global_config().min_dfa_sigs = 3; // OLD value: 2
 		get_global_config().min_dfa_subsigs =  3; //OLD val 2
-		get_global_config().n_par_snark = 1;
-		get_global_config().n_par_snark_cp = if b_setup {1} else {2};
+		get_global_config().n_par_snark = 1;            // part 1 (main): 1
+		get_global_config().n_par_snark_cp = 1;         // part 2 (cp): 1
+		// outer cap auto (n_par_snark_total=0) = sum = 2 -> max 2 at a time
 		get_global_config().n_par_batch_claim = 8;
 		get_global_config().perc_lkup_share = 143; //this is for
 		get_global_config().log_level = utils::logger::LOG3;
