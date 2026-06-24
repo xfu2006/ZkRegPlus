@@ -40,13 +40,19 @@ BUNDLE = "/tmp/bora/scale_data.tgz"                         # final artifact
 
 BEGIN_RE = re.compile(r"==== SCALE ROUND BEGIN pct=(\d+)\b")
 END_RE = re.compile(r"==== SCALE ROUND END pct=(\d+)")
-# Per-round forward-queue audit. TEMP: the Rust b_show_queue_saturated print is
-# UNGATED, so it emits StepFwdPrf usage for EVERY fold step -- we report the max
-# and flag <85% as over-provisioned. FOLD_MARK brackets the fold (logged right
-# before folding) so we only consider fold-time usage.
-SAT_RE = re.compile(r"StepFwdPrf usage:\s*([\d.]+) b_igc: false")   # CP fwd queue
-SDE_RE = re.compile(r"SDE basis_acc_states usage:\s*([\d.]+) b_igc: false")  # SDE acc-states
-FOLD_MARK = "folding with converged caps"
+# Per-round cap-tightening summary, emitted once by determine_config after it
+# converges (replaces the old per-step 6901.8/6902.1 prints). Reports the true
+# max forward-queue / SDE acc-states fill and how far perc was cut. One line:
+#   PERC TIGHTEN: perc_cs A->B (max_fwd=F), perc_igc C->D (max_fwd=G);
+#                 SDE acc max cs=H igc=I (binding cap, reported only)
+TIGHTEN_RE = re.compile(
+    r"PERC TIGHTEN: perc_cs (\d+)->(\d+) \(max_fwd=(\d+)\), "
+    r"perc_igc (\d+)->(\d+) \(max_fwd=(\d+)\); "
+    r"SDE acc max cs=(\d+) igc=(\d+)")
+# Converged caps -> basis_pats_in_trace then basis_acc_states (struct order).
+CAPS_RE = re.compile(
+    r"folding with converged caps:.*?basis_pats_in_trace: (\d+)"
+    r".*?basis_acc_states: (\d+)")
 
 # ----------------------------------------------------------------------------
 # Concat-corpus: prepend the foldpot 0-word (deterministic seed-0 pad, exactly
@@ -157,26 +163,31 @@ def split_and_pack(log_path):
         inner.append(tgz)
         print("[run_scale] round pct=%d: %d lines -> %s"
               % (pct, len(lines), os.path.basename(tgz)))
-        # Saturation verdicts (FOLD phase only): CP (fwd queue) + SDE (acc states).
-        in_fold, sat, sde = False, [], []
+        # Saturation / tightening verdict: the driver now back-solves the true
+        # forward-queue demand and cuts perc to fit (CP), and reports the SDE
+        # acc-states max vs its (binding) cap.
+        tg, caps = None, None
         for ln in lines:
-            if FOLD_MARK in ln:
-                in_fold = True
-            elif in_fold:
-                m = SAT_RE.search(ln)
-                if m: sat.append(float(m.group(1)))
-                m = SDE_RE.search(ln)
-                if m: sde.append(float(m.group(1)))
-        for label, vals in (("CP  fwd-queue ", sat), ("SDE acc-states", sde)):
-            if vals:
-                mx, mn = max(vals), min(vals)
-                tag = "tight OK" if mx >= 0.85 else "OVER-PROVISIONED (<85%)"
-                print("[run_scale] round pct=%d: %s usage over %d fold steps "
-                      "-- max %.4f min %.4f -- %s"
-                      % (pct, label, len(vals), mx, mn, tag))
-            else:
-                print("[run_scale] round pct=%d: %s -- no usage lines "
-                      "(b_show_queue_saturated off?)" % (pct, label))
+            m = TIGHTEN_RE.search(ln)
+            if m: tg = m
+            m = CAPS_RE.search(ln)
+            if m: caps = m          # last = converged caps used for the fold
+        if tg:
+            pc_a, pc_b, fwd_cs, pi_c, pi_d, fwd_igc, acc_cs, acc_igc = \
+                (int(x) for x in tg.groups())
+            basis_pats = int(caps.group(1)) if caps else 0
+            basis_acc = int(caps.group(2)) if caps else 0
+            reclaim = (pc_a / pc_b) if pc_b else 0.0
+            print("[run_scale] round pct=%d: CP  fwd-queue  perc %d->%d "
+                  "(true max fill=%d entries) -- reclaimed ~%.1fx, now tight"
+                  % (pct, pc_a, pc_b, fwd_cs, reclaim))
+            print("[run_scale] round pct=%d: SDE acc-states max=%d vs "
+                  "basis_acc cap=%d (binding, not cut); perc_igc %d->%d "
+                  "(max_fwd=%d, acc_igc=%d)"
+                  % (pct, acc_cs, basis_acc, pi_c, pi_d, fwd_igc, acc_igc))
+        else:
+            print("[run_scale] round pct=%d: no PERC TIGHTEN line found "
+                  "(stale binary? expected from determine_config)" % pct)
 
     os.makedirs(os.path.dirname(BUNDLE), exist_ok=True)
     with tarfile.open(BUNDLE, "w:gz", compresslevel=9) as t:

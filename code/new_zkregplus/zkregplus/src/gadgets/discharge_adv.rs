@@ -108,6 +108,14 @@ pub const FWD_COST:usize     =  68;  //compress ratio for StepFwdPrf
 	//from ~0.56 to ~0.84. Used by StepFwdPrf::vec_size and the
 	//perc_pats_expansion_rate back-solve in StepFwdPrf::to_container.
 
+/// Minimal perc_pats_expansion_rate that fits `actual_fwd` forward entries
+/// given `basis_pats` and `max_nibble`. Single source of truth for both the
+/// CapErr back-solve below and the post-convergence tightener warm-start.
+pub fn backsolve_perc(actual_fwd: usize, basis_pats: usize, max_nibble: usize) -> usize {
+	(actual_fwd + 1) * 10000 * 100 * 100
+		/ (max_nibble.max(1) * basis_pats.max(1) * FWD_COST).max(1) + 1
+}
+
 /// A step queue represents the state of the SED processing algorithm.
 /// For each (subsig-id-pat) it includes the list of current "valid"
 /// locations (in terms that they are propagated by the previous id/step,
@@ -1710,13 +1718,9 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 			v_dst_loc, v_dst_pat_id, v_dst_pat_diff1, v_dst_pat_diff2,
 			v_dst_subsig];
 		let n = self.vec_size();
-		let fwd_usage = (v2d[0].len() as f32)/(n as f32);
-		if B_DEBUG2 { println!("DEBUG USE 6901.8: StepFwdPrf: {}, b_igc: {} usage: {}", name, self.b_igc, fwd_usage); }
-		// TEMP (revert later): UNGATED -- print EVERY StepFwdPrf usage (not just
-		// >85%) so the run wrapper can read actual fold-time queue utilization.
-		if read_global_config().b_show_queue_saturated {
-			println!("DEBUG USE 6901.8: StepFwdPrf usage: {:.4} b_igc: {} ({})", fwd_usage, self.b_igc, name);
-		}
+		// record actual forward-queue fill so the post-convergence perc
+		// tightener can read the true max demand (replaces the 6901.8 probe).
+		utils::consts::record_fwd(self.b_igc, v2d[0].len());
 		if n<v2d[0].len()+1{
 			//aggressive: back-solve prod_pats_expansion (rung-independent,
 			//no basis_pats in the denominator):
@@ -1752,10 +1756,9 @@ max_subsig_fwd={}",
 			//back-solve perc_pats_expansion_rate from new vec_size():
 			//  n = basis_pats * max_nibble * perc * FWD_COST / 1e8
 			//=> perc >= (len+1)*1e8 / (basis_pats*max_nibble*FWD_COST)
-			let new_val = (v2d[0].len()+1) * 10000 * 100 * 100
-				/ (self.capacity.max_nibble_len
-					* self.capacity.basis_pats_in_trace
-					* FWD_COST) + 1;
+			let new_val = backsolve_perc(v2d[0].len(),
+				self.capacity.basis_pats_in_trace,
+				self.capacity.max_nibble_len);
 			if b_debug_capacity{
 				println!("DEBUG USE 9003: to throw perc_pats_expansion_rate ERROR on StepFwdProof in discharge_adv. DUMP of data");
 				self.dump();

@@ -944,18 +944,24 @@ where C: CurveGroup<ScalarField=F>,
 		.map(|w| utils::data::pad_word_to_multiple::<F>(w, chunk_len))
 		.collect();
 	let mut t_all = GTimer::new();
-	for iter in 0..max_iters {
-		let mut t_round = GTimer::new();
-		let probe_res = crate::determine_config::probe_catching(|| {
+	// reusable probe: same body as the convergence loop, callable for the
+	// post-convergence perc tightening (binary search) with the probe as oracle.
+	let run_probe = |p: &crate::determine_config::CapParams| {
+		crate::determine_config::probe_catching(|| {
 			let (cp_cs, sed_cs, dfa, cp_igc, sed_igc) =
-				caps_from_params_general(&p);
+				caps_from_params_general(p);
 			let layered = build_circs_adv::<F,C,CS>(&poseidon, total_word_n,
 				chunk_len, lkup_len, db.clone(), &cp_cs, &sed_cs, &dfa,
 				&cp_igc, &sed_igc, vec_decrease_level, n_circs, false);
 			let planner = CapacityPlanner::<C, FC<F,C,CS>, LK<F>, GM<F>,
 				false>::new(layered);
 			planner.capacity_probe_par(&padded, sample_word_infos, n_threads)
-		})?;
+		})
+	};
+	for iter in 0..max_iters {
+		let mut t_round = GTimer::new();
+		utils::consts::reset_sat();
+		let probe_res = run_probe(&p)?;
 		t_round.stop();
 		match probe_res {
 			Ok(steps) => {
@@ -965,6 +971,67 @@ where C: CurveGroup<ScalarField=F>,
 					basis_acc={}; round {} ms, TOTAL {} ms", iter, steps,
 					p.perc_pats_expansion_rate, p.perc_pats_expansion_rate_igc,
 					p.subsigs, p.basis_acc_states, t_round.ms(), t_all.ms()));
+				// --- post-convergence tightening of the decoupled forward
+				// queue cap. perc_pats_expansion_rate feeds ONLY the discharge
+				// fwd queue (no SED container reads it), so binary-search it
+				// DOWN with the probe as oracle, all other caps frozen. The
+				// converged pass above (after reset_sat) populated the true
+				// max fill. acc-states is the BINDING SED cap -> reported only,
+				// never cut. ---
+				let min_perc = read_global_config()
+					.min_perc_pats_expansion_rate.max(1);
+				// safety headroom over the sample-measured minimum so a full
+				// fold step heavier than the probe sample cannot CapErr; capped
+				// at the (known-good) converged value, floored at min_perc.
+				// Single-word case (scale experiment): sample == fold corpus, so
+				// the measured max is exact -> 0% margin. Multi-word full runs
+				// sample a subset -> 10% headroom.
+				let margin_pct = if sample_words.len() <= 1 { 0 } else { 10 };
+				let with_margin = |v: usize, cap: usize|
+					((v * (100 + margin_pct) + 99) / 100)
+						.clamp(min_perc, cap);
+				let (mfwd_cs, mfwd_igc) =
+					(utils::consts::get_fwd(false), utils::consts::get_fwd(true));
+				let (macc_cs, macc_igc) =
+					(utils::consts::get_acc(false), utils::consts::get_acc(true));
+				let (old_cs, old_igc) =
+					(p.perc_pats_expansion_rate, p.perc_pats_expansion_rate_igc);
+				use crate::gadgets::discharge_adv::backsolve_perc;
+				// cs arm: smallest perc in [min_perc, old_cs] that still probes
+				// Ok; seed the first probe at the back-solve of measured fill.
+				{
+					let (mut lo, mut hi) = (min_perc, old_cs);
+					let seed = backsolve_perc(mfwd_cs,
+						p.basis_pats_in_trace, chunk_len).clamp(min_perc, hi);
+					let mut next = if seed < hi { Some(seed) } else { None };
+					while lo < hi {
+						let mid = next.take().unwrap_or(lo + (hi - lo) / 2);
+						p.perc_pats_expansion_rate = mid;
+						if matches!(run_probe(&p), Ok(Ok(_))) { hi = mid; }
+						else { lo = mid + 1; }
+					}
+					p.perc_pats_expansion_rate = with_margin(hi, old_cs);
+				}
+				// igc arm (cs perc now frozen at its tightened value).
+				{
+					let (mut lo, mut hi) = (min_perc, old_igc);
+					let seed = backsolve_perc(mfwd_igc,
+						p.basis_pats_in_trace_igc, chunk_len).clamp(min_perc, hi);
+					let mut next = if seed < hi { Some(seed) } else { None };
+					while lo < hi {
+						let mid = next.take().unwrap_or(lo + (hi - lo) / 2);
+						p.perc_pats_expansion_rate_igc = mid;
+						if matches!(run_probe(&p), Ok(Ok(_))) { hi = mid; }
+						else { lo = mid + 1; }
+					}
+					p.perc_pats_expansion_rate_igc = with_margin(hi, old_igc);
+				}
+				log(0, LOG1, &format!("PERC TIGHTEN: perc_cs {}->{} \
+					(max_fwd={}), perc_igc {}->{} (max_fwd={}); SDE acc max \
+					cs={} igc={} (binding cap, reported only)",
+					old_cs, p.perc_pats_expansion_rate, mfwd_cs,
+					old_igc, p.perc_pats_expansion_rate_igc, mfwd_igc,
+					macc_cs, macc_igc));
 				return Ok(p);
 			}
 			Err(errs) => {

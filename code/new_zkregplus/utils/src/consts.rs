@@ -31,7 +31,7 @@ pub const ALWAYS_INIT:bool = true;
 pub const ADD_CHAIN_SIZE: usize = 64;
 
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard, Arc, Mutex};
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use serde::{Serialize, Deserialize};
 
 /// Flag-off regression fingerprint sink: flat (label, value) pairs
@@ -43,6 +43,31 @@ pub type FpSink = Arc<Mutex<Vec<(String, u64)>>>;
 /// by foldpot driver before each gen_nd_advice call so SED probes
 /// can correlate StepQueue dumps with chunk_id.
 pub static PROBE_CHUNK_ID: AtomicUsize = AtomicUsize::new(0);
+
+/// Post-convergence cap tightening: max ACTUAL fill seen per fold step,
+/// recorded by the gadgets (replaces the 6901.8 / 6902.1 println probes).
+/// fwd = discharge forward queue (v2d[0].len); acc = SDE accepting states.
+pub static MAX_FWD_CS:  AtomicUsize = AtomicUsize::new(0);
+pub static MAX_FWD_IGC: AtomicUsize = AtomicUsize::new(0);
+pub static MAX_ACC_CS:  AtomicUsize = AtomicUsize::new(0);
+pub static MAX_ACC_IGC: AtomicUsize = AtomicUsize::new(0);
+pub fn record_fwd(b_igc: bool, n: usize) {
+    (if b_igc {&MAX_FWD_IGC} else {&MAX_FWD_CS}).fetch_max(n, Ordering::Relaxed);
+}
+pub fn record_acc(b_igc: bool, n: usize) {
+    (if b_igc {&MAX_ACC_IGC} else {&MAX_ACC_CS}).fetch_max(n, Ordering::Relaxed);
+}
+pub fn reset_sat() {
+    for a in [&MAX_FWD_CS, &MAX_FWD_IGC, &MAX_ACC_CS, &MAX_ACC_IGC] {
+        a.store(0, Ordering::Relaxed);
+    }
+}
+pub fn get_fwd(b_igc: bool) -> usize {
+    (if b_igc {&MAX_FWD_IGC} else {&MAX_FWD_CS}).load(Ordering::Relaxed)
+}
+pub fn get_acc(b_igc: bool) -> usize {
+    (if b_igc {&MAX_ACC_IGC} else {&MAX_ACC_CS}).load(Ordering::Relaxed)
+}
 
 /// Knobs that govern ClamAV PCRE approximation when building the
 /// pattern DB. Lives in utils so GlobalConfig can embed it;
