@@ -608,6 +608,28 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 				seg_id, job_id)?;
 		if b_perf{ log_perf(job_id, LOG5, "Sed advice step5: discharge_igc", &mut t1); }
 
+		//PROBE 77318.4 (ZKR_PROBE_77317): per-seg discharge caps + forward-
+		//proof end-loc. da_cap.subsigs/prod_pats_expansion = forward-queue
+		//size; last_loc = where the discharge result becomes valid (emit
+		//step). Compare working segs (13/18/30) vs failing seg 33 of
+		//kean-s/166 (n_sigs=2). DEBUG -- remove with the harness.
+		if std::env::var("ZKR_PROBE_77317").is_ok() {
+			use folding_schemes::folding::foldpot::utils
+				::probe_77317_f_as_u64_lossy as f2u;
+			utils::logger::emit_stdout(format!(
+				"DEBUG USE 77318.4: SED disch-build seg_id={} n_sigs={} \
+				 subsigs_inp_cs={} subsigs_inp_igc={} \
+				 cap_cs[subsigs={} univ={} prod_fwd={} avg_act={}] \
+				 cap_igc[subsigs={} prod_fwd={}] last_loc_cs={} \
+				 last_loc_igc={}",
+				seg_id, vec_sigs_to_discharge.len(),
+				subsigs_inp_cs.len(), subsigs_inp_igc.len(),
+				da_cap_cs.subsigs, da_cap_cs.universe_subsigs,
+				da_cap_cs.prod_pats_expansion,
+				da_cap_cs.avg_active_pats_per_subsig,
+				da_cap_igc.subsigs, da_cap_igc.prod_pats_expansion,
+				f2u(&last_loc_cs), f2u(&last_loc_igc)));
+		}
 
 		//4. build the compute_sig advice  (note: just one copy)
 		let csa_cap_igc = &igc_capacity.csa_capacity(); //typically this is the 
@@ -1317,9 +1339,13 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 			use folding_schemes::folding::foldpot::utils::
 				probe_77317_dump_f_vec;
 			emit_stdout(format!(
-				"DEBUG USE 77318.3: SedComponentMapper \
+				"DEBUG USE 77318.3: word_id={} seg={} SedComponentMapper \
 				 vec_advices.len={} total_failed.len={} \
 				 total_discharged.len={}",
+				folding_schemes::folding::foldpot::utils
+					::probe_77317_f_as_u64_lossy(&_extra_info.word_id),
+				folding_schemes::folding::foldpot::utils
+					::probe_77317_f_as_u64_lossy(&_extra_info.subseg_id),
 				advice.vec_advices.len(),
 				res[6].len(), res[7].len()));
 			for (adv_id, adv) in advice.vec_advices.iter()
