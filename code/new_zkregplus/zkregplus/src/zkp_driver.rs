@@ -74,7 +74,11 @@ fn load_files<F:PrimeField + ColEle>(_job_id: usize, list_file_path: &str, db: &
 	//1. read the list of files
 	let _b_debug = false;
 	let proot = proj_root();
-	let file_names = &read_lines(&format!("{}/{}", proot, list_file_path));
+	// absolute paths (e.g. /tmp/bora/scale corpus) are used as-is; relative
+	// ones are proot-prefixed. Same guard as clam_db::build_or_load.
+	let resolve = |p: &str| if std::path::Path::new(p).is_absolute()
+		{ p.to_string() } else { format!("{}/{}", proot, p) };
+	let file_names = &read_lines(&resolve(list_file_path));
 	if file_names.len() > 0 {
 		println!("  First file: {}", file_names[0]);
 	}
@@ -82,7 +86,7 @@ fn load_files<F:PrimeField + ColEle>(_job_id: usize, list_file_path: &str, db: &
 	//2. parallel for each file read its nibbles and convert
 	let final_data = file_names.into_par_iter().map(|fpath|
 	{
-		let nibbles = read_nibbles(&format!("{}/{}", proot, fpath));
+		let nibbles = read_nibbles(&resolve(fpath));
 		let f_nibbles = nibbles.into_iter().map(|x| F::from(x as u32))
 			.collect::<Vec<F>>();
 		let packed = pack_nibbles(&f_nibbles);
@@ -106,7 +110,7 @@ fn load_files<F:PrimeField + ColEle>(_job_id: usize, list_file_path: &str, db: &
 	*/
 	let vec_word_info = file_names.into_par_iter().map(|fpath|
 		{
-			let abspath = format!("{}/{}", &proj_root(), fpath);
+			let abspath = resolve(fpath);
 			let nibbles = read_nibbles(&abspath);
 			let (fail_info, rec) = quick_discharge_file_by_crit_bag_pm(
 				fpath,
@@ -1355,21 +1359,39 @@ where
 			compare_caps, caps_from_params_general};
 		let cur = capparams_from_caps_general(init_cp_capacity_cs,
 			init_sed_capacity_cs, init_dfa_capacity, init_sed_capacity_igc);
-		let mut p0 = cur.clone();
-		// warm-start LOW (floor 16) to exercise convergence to the true
-		// minimum. If 16 is below a structural build floor, build_circs panics
-		// -> probe_catching converts it to a bump (auto-discovers the floor).
-		p0.perc_pats_expansion_rate = cur.perc_pats_expansion_rate.min(16);
-		p0.perc_pats_expansion_rate_igc =
-			cur.perc_pats_expansion_rate_igc.min(16);
-		p0.avg_active_pats_per_subsig = cur.avg_active_pats_per_subsig.min(2);
-		p0.avg_active_pats_per_subsig_igc =
-			cur.avg_active_pats_per_subsig_igc.min(2);
+		// Warm-start carry-over: each scale round's rule set is a superset of
+		// the previous, so caps only grow. If the prior round saved its
+		// converged caps, start the probe there (skips the floor-to-converged
+		// climb); else warm-start LOW (floor 16/2) to converge to the true
+		// minimum -- build_circs panics below a structural floor and
+		// probe_catching converts that into a bump.
+		let warmstart = "/tmp/bora/scale/warmstart_caps.json";
+		let b_warm = dc_mode == DcMode::ProbeThenFold;
+		let p0 = if b_warm && std::path::Path::new(warmstart).exists() {
+			crate::determine_config::CapParams::load_json(warmstart)
+		} else {
+			let mut p = cur.clone();
+			p.perc_pats_expansion_rate = cur.perc_pats_expansion_rate.min(16);
+			p.perc_pats_expansion_rate_igc =
+				cur.perc_pats_expansion_rate_igc.min(16);
+			p.avg_active_pats_per_subsig = cur.avg_active_pats_per_subsig.min(2);
+			p.avg_active_pats_per_subsig_igc =
+				cur.avg_active_pats_per_subsig_igc.min(2);
+			p
+		};
 		// tune over ALL scan files (worst-case across the sample set).
-		let all_words: Vec<Vec<CF1<C1>>> = jobs.iter()
+		let mut all_words: Vec<Vec<CF1<C1>>> = jobs.iter()
 			.flat_map(|j| j.vec_words.iter().cloned()).collect();
-		let all_infos: Vec<WordInfo> = jobs.iter()
+		let mut all_infos: Vec<WordInfo> = jobs.iter()
 			.flat_map(|j| j.vec_word_info.iter().cloned()).collect();
+		// Also converge against foldpot's preprocessing word: the full-length
+		// pseudo-random 0-pad word (driver.rs:2900) it sizes every circuit
+		// with. Probing it back-solves caps that exactly cover it, so the
+		// fold's 0-word advice passes with NO blind headroom and the forward
+		// queue stays at its saturated converged size.
+		all_words.push(utils::data::pack_nibbles(
+			&utils::data::gen_pad_nibbles_fe::<CF1<C1>>(0, chunk_len * 62)));
+		all_infos.push(WordInfo::dummy());
 		// concurrency degree for the probe (bounds peak RAM = N ladder clones).
 		let n_threads = std::env::var("ZKR_DC_THREADS").ok()
 			.and_then(|s| s.parse().ok()).unwrap_or(4);
@@ -1392,29 +1414,13 @@ where
 				}
 				// ProbeOnly: report and stop (no folding).
 				if dc_mode == DcMode::ProbeOnly { return; }
-				// Headroom: the probe sizes caps to the REAL document, but
-				// foldpot preprocesses a synthetic full-length 0-pad word that
-				// can need a bit more -- and its advice gen CapErr-PANICS (it
-				// does not self-bump). Inflate the tuned structural caps
-				// ~25%+16 so the 0-word advice passes (matches the codebase's
-				// +10% hand-cap headroom convention, with margin). RAM is
-				// dominated by the SED universe, so this is cheap.
-				// Pad ONLY the document-dependent state/pattern TRACE caps:
-				// these are >= bounds (CapErr bumps them when short), and the
-				// full-length 0-pad word produces a longer trace than gdb's
-				// real content. subsigs/cp_subsigs/sigs_sed are EXACT DB-universe
-				// counts (compute_sig_adv asserts inp == capacity), identical
-				// for the 0-word and the document, so they must NOT be padded.
-				let mut h = new.clone();
-				let pad = |v: usize| v * 5 / 4 + 16;
-				h.cp_basis_unique_states   = pad(h.cp_basis_unique_states);
-				h.basis_unique_states      = pad(h.basis_unique_states);
-				h.basis_acc_states         = pad(h.basis_acc_states);
-				h.basis_pats_in_trace      = pad(h.basis_pats_in_trace);
-				h.perc_pats_expansion_rate = pad(h.perc_pats_expansion_rate);
+				// Fold with the converged caps directly: the probe now includes
+				// foldpot's 0-pad word (above), so `new` already covers it -- no
+				// headroom, so the forward queue stays at its saturated size.
 				log(0, log_level, &format!(
-					"DETERMINE_CONFIG: folding with +headroom caps: {:?}", h));
-				Some(caps_from_params_general(&h))
+					"DETERMINE_CONFIG: folding with converged caps: {:?}", new));
+				if b_warm { let _ = new.save_json(warmstart); } // -> next round
+				Some(caps_from_params_general(&new))
 			}
 			Err(e) => {
 				log(0, log_level, &format!("DETERMINE_CONFIG FAILED: {}", e));
@@ -4847,12 +4853,31 @@ fail: {} ({:.4}%)",
 	/// splits the captured stdout on these markers into per-round
 	/// `log_<pct>.txt` files. No tgz here -- the Python wrapper compresses.
 	#[allow(dead_code)]
-	pub fn collect_scale_data(base_share_pct: usize, num_rounds: usize) {
+	pub fn collect_scale_data(vec_perc: Vec<usize>) {
 		utils::os::print_computer_config(Some("collect_scale_data"));
-		assert!(base_share_pct >= 1 && num_rounds >= 1
-			&& num_rounds * base_share_pct <= 100,
-			"need base>=1, rounds>=1, rounds*base<=100 (got base={}, rounds={})",
-			base_share_pct, num_rounds);
+		// vec_perc: strictly ascending, distinct, each in [1,100]. Each round
+		// folds the first `pct`% of a FIXED pseudo-random permutation of the
+		// rule set, so rounds are nested supersets. pct==100 takes ALL rules.
+		assert!(!vec_perc.is_empty(), "vec_perc must be non-empty");
+		assert!(vec_perc.iter().all(|&p| p >= 1 && p <= 100),
+			"vec_perc entries must be in [1,100]: {:?}", vec_perc);
+		assert!(vec_perc.windows(2).all(|w| w[0] < w[1]),
+			"vec_perc must be strictly ascending and distinct: {:?}", vec_perc);
+		// FIXED pseudo-random permutation (splitmix64 Fisher-Yates; identical
+		// every run, independent of the rand crate version).
+		const SCALE_PERM_SEED: u64 = 0x5CA1_5EED_0F0F_0F0F;
+		fn fixed_perm(n: usize, mut s: u64) -> Vec<usize> {
+			let mut v: Vec<usize> = (0..n).collect();
+			for i in (1..n).rev() {                  // Fisher-Yates, high->low
+				s = s.wrapping_add(0x9E3779B97F4A7C15);
+				let mut z = s;
+				z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+				z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+				z ^= z >> 31;
+				v.swap(i, (z % (i as u64 + 1)) as usize);
+			}
+			v
+		}
 
 		// ---- settings: identical to full_clamav() (non-setup), except
 		// folding-only and pointed at the isolated scale_data cache. ----
@@ -4900,7 +4925,10 @@ fail: {} ({:.4}%)",
 		// reversed ladder otherwise starves the decreased layer-0 circuit).
 		let vec_decrease_level: Vec<usize> = vec![];
 		let num_circs = 1;
-		let basis_unique_states = 100;
+		// basis_unique_states floored at the 0-word's required minimum: the CP
+		// pack gadget needs >=120 for the full-length 0-pad word (memorized from
+		// prior runs). The probe bumps it higher for larger subsets.
+		let basis_unique_states = 120;
 		let basis_acc_states = 2;
 		let basis_pats_in_trace = 4;
 		// igc arm kept at full-clamav (non-degenerate) values: unlike DNA,
@@ -4932,8 +4960,11 @@ fail: {} ({:.4}%)",
 			perc_comp_subsigs, basis_unique_states, basis_acc_states_igc);
 
 		// ---- fixed corpus: the difficult gdb (6.6M) single file ----
+		// Own isolated list file in /tmp (written by run_collect_scale_data.py:
+		// the foldpot 0-word prepended to gdb). Absolute -> load_files's
+		// is_absolute guard reads it as-is; no existing sample/config touched.
 		let scan_files = vec![
-			"data/debug/full_data_set/config/binexec_3.dat".to_string()];
+			"/tmp/bora/scale/binexec_3.dat".to_string()];
 
 		// ---- full rule set (read once, same filter as build_db so the
 		// modulo index lines up with the DB's sig ordering) ----
@@ -4944,6 +4975,7 @@ fail: {} ({:.4}%)",
 			.filter(|s| !s.starts_with('#') && !s.trim().is_empty())
 			.collect();
 		let n_rules = all_rules.len();
+		let perm = fixed_perm(n_rules, SCALE_PERM_SEED);   // fixed shuffled order
 
 		// full auxiliary "needs" lists (sig NAMES, one per line). A rule
 		// subset must not reference a name it dropped, so each round we filter
@@ -4960,17 +4992,21 @@ fail: {} ({:.4}%)",
 		// data/cache/scale_data; only the subset sig + needs files live here).
 		let scratch = "/tmp/bora/scale";
 		std::fs::create_dir_all(scratch).expect("mkdir /tmp/bora/scale");
+		// fresh sweep: drop any warm-start caps from a prior invocation so
+		// round 1 converges from the floors (zkp_driver_adv re-saves per round).
+		let _ = std::fs::remove_file(format!("{}/warmstart_caps.json", scratch));
 		let sub_main = format!("{}/main_scale.dat", scratch);
 		let sub_dfa = format!("{}/needs_dfa.dat", scratch);
 		let sub_ised = format!("{}/needs_ised.dat", scratch);
 		let sub_ised_igc = format!("{}/needs_ised_igc.dat", scratch);
 
-		for r in 1..=num_rounds {
-			let pct = r * base_share_pct;
-			// modulo-100 spread => strict nested supersets across rounds.
-			let subset: Vec<&str> = all_rules.iter().enumerate()
-				.filter(|(j, _)| j % 100 < pct)
-				.map(|(_, s)| s.as_str())
+		for &pct in vec_perc.iter() {
+			// first `pct`% of the fixed permutation => nested supersets.
+			// pct==100 takes ALL rules.
+			let count = if pct == 100 { n_rules }
+				else { ((n_rules * pct) / 100).max(1) };
+			let subset: Vec<&str> = perm.iter().take(count)
+				.map(|&i| all_rules[i].as_str())
 				.collect();
 			std::fs::write(&sub_main, subset.join("\n") + "\n")
 				.expect("write subset main_scale.dat");
@@ -5026,13 +5062,12 @@ fail: {} ({:.4}%)",
 
 	#[test]
 	pub fn test_collect_scale_data() {
-		let base = std::env::var("ZKR_SCALE_BASE").ok()
-			.and_then(|s| s.parse().ok()).unwrap_or(5usize);
-		let rounds = std::env::var("ZKR_SCALE_ROUNDS").ok()
-			.and_then(|s| s.parse().ok()).unwrap_or(2usize);
-		println!("collect_scale_data: base_share_pct={} num_rounds={}",
-			base, rounds);
-		collect_scale_data(base, rounds);
+		let percs: Vec<usize> = std::env::var("ZKR_SCALE_PERCS").ok()
+			.map(|s| s.split(',')
+				.filter_map(|x| x.trim().parse().ok()).collect())
+			.unwrap_or_else(|| vec![5usize, 10usize]);
+		println!("collect_scale_data: percs={:?}", percs);
+		collect_scale_data(percs);
 	}
 
 	/// Experiment: is the accept-vs-fold discharge gap the (max_word_len,

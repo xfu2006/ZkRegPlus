@@ -19,7 +19,7 @@
 */
 
 use folding_schemes::folding::foldpot::container_config::ColEle;
-use utils::{logger::{log,log_perf, emit_stdout, LOG1, LOG7}, timer::Timer, consts::read_global_config};
+use utils::{logger::{log,log_perf, emit_stdout, LOG1, LOG4, LOG7}, timer::Timer, consts::read_global_config};
 use std::{
 	marker::PhantomData,
 	sync::{Arc, Mutex},
@@ -246,7 +246,7 @@ impl <F:PrimeField+ColEle> DfaAdvice<F>{
 		//1. build the word extraction gadget's advice
 		let wd_extract_advice = WordExtractAdvAdvice::<F>
 			::new(word_seg, actual_size, true)?; //use char map mode for sid
-		if b_perf{ log_perf(job_id, LOG1, "-- DFA advice step1: word_extract", &mut t1); }
+		if b_perf{ log_perf(job_id, LOG4, "-- DFA advice step1: word_extract", &mut t1); }
 
 		//2. build dfa_adv advice
 		//we build a 2-d structure of info first and then
@@ -333,7 +333,7 @@ impl <F:PrimeField+ColEle> DfaAdvice<F>{
 			Arc::new(wd_extract_advice.clone()),
 			Arc::new(dfa_adv_advice.clone()),
 		];
-		if b_perf{ log_perf(job_id, LOG1, "-- DFA advice step2: dfa", &mut t1); }
+		if b_perf{ log_perf(job_id, LOG4, "-- DFA advice step2: dfa", &mut t1); }
 
 		Ok(Self{wd_extract_advice, dfa_adv_advice, vec_advices})
 	}

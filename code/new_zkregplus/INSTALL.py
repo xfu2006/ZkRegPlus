@@ -76,13 +76,8 @@ EMAIL_README_TEXT = (
     "The emails live in the sibling folder src/maildir/.\n"
 )
 
-# ---- binexec-pipeline globals (from the former gen_data.py) ---------
-BINEXEC_SRC = "binexec"                           # under SAMPLES_DIR
+# ---- binexec target dir (merge runs via samples/gen_data.py) --------
 BINEXEC_TGT = "binexec_merged128k"
-TARGET_SIZE = 128 * 1024                          # 128 KB merge target
-# Leave <100 KiB headroom under 32 MiB so the loc encoding never
-# overflows range2_bit=26 in full_data4 (see discharge_sig.rs).
-SPLIT_SIZE  = 32 * 1024 * 1024 - 100 * 1024
 
 
 # =====================================================================
@@ -272,107 +267,20 @@ def move_children(src_dir, dst_dir):
 
 
 # =====================================================================
-# binexec merge pipeline  (folded from the former gen_data.py)
+# binexec merge  (delegated to the canonical samples/gen_data.py)
 # =====================================================================
 
-# All file infos under dir_path, sorted ascending by (size, name).
-def get_file_info(dir_path):
-    vec_all = []
-    for e in os.scandir(dir_path):
-        if e.is_file():
-            vec_all.append({"name": e.name,
-                            "file_size": e.stat().st_size})
-    vec_all.sort(key=lambda r: (r["file_size"], r["name"]))
-    return vec_all
-
-
-# Total bytes across a list of file infos.
-def sum_filesize(vec_finfo):
-    return sum(rec["file_size"] for rec in vec_finfo)
-
-
-# Hard-exit with msg unless bcond holds.
-def my_assert(bcond, msg):
-    if not bcond:
-        print("ERROR: " + msg)
-        sys.exit(1)
-
-
-# Greedy ascending pack: merge files under target_size into bins; a
-# file already >= target_size forms its own (later split) bin.
-def binexec_get_merge_plan(f_info, target_size):
-    start = 0
-    res = []
-    while start < len(f_info):
-        list_src = []
-        end = start
-        while end < len(f_info) and \
-                sum_filesize(list_src) + f_info[end]["file_size"] \
-                < target_size:
-            list_src.append(f_info[end])
-            end += 1
-        if len(list_src) == 0:
-            list_src.append(f_info[end])
-            end += 1
-        my_assert(len(list_src) > 0, "list_src len is 0")
-        if len(list_src) > 1:
-            my_assert(sum_filesize(list_src) <= target_size,
-                      "sumfilesize > target!")
-        nameid = len(res)
-        target_name = ("merged_" + str(nameid)
-                       if len(list_src) > 1 else list_src[0]["name"])
-        res.append({"target_name": target_name, "list_src": list_src})
-        start = end
-    total = sum(len(r["list_src"]) for r in res)
-    print("Merged: total_files:", total, "len(f_info)", len(f_info))
-    my_assert(total == len(f_info), "total_files!=f_info")
-    return res
-
-
-# Materialize the plan with cat (merge) / cp (small) / split (large),
-# writing a per-source record under merge_records/.
-def binexec_exec_merge_plan(src_dir, dest_dir, plan, split_size):
-    frec = open("merge_records/" + src_dir + ".txt", "w")
-    for item in plan:
-        if len(item["list_src"]) > 1:
-            cmd = "cat "
-            srec = item["target_name"] + ": "
-            for rec in item["list_src"]:
-                cmd += " " + src_dir + "/" + rec["name"]
-                srec += " " + rec["name"]
-            cmd += " > " + dest_dir + "/" + item["target_name"]
-            print("MERGE cmd: " + cmd)
-            os.system(cmd)
-            frec.write(srec + "\n")
-        if len(item["list_src"]) == 1:
-            rec = item["list_src"][0]
-            if rec["file_size"] < split_size:
-                cmd = "cp " + src_dir + "/" + rec["name"] + " " + dest_dir
-                print("COPY cmd: " + cmd)
-                os.system(cmd)
-            else:
-                cmd = ("split -b " + str(split_size) +
-                       " --numeric-suffixes=0 --suffix-length=2 " +
-                       src_dir + "/" + rec["name"] + " " +
-                       dest_dir + "/" + rec["name"] + "__")
-                print("SPLIT cmd: " + cmd)
-                os.system(cmd)
-    frec.close()
-
-
-# Recreate binexec_merged128k from binexec, running under SAMPLES_DIR
-# (relative paths, as the former gen_data.py main did).
+# Recreate binexec_merged128k by running samples/gen_data.py with its
+# original semantics (relative paths; it rm/mkdir's the target itself).
+# gen_data.py opens merge_records/binexec.txt for write but does NOT
+# create that dir, so ensure it exists first or the merge aborts before
+# any file lands in binexec_merged128k.
 def install_binexec():
     prev = os.getcwd()
     os.chdir(SAMPLES_DIR)
     try:
         os.makedirs("merge_records", exist_ok=True)
-        shutil.rmtree(BINEXEC_TGT, ignore_errors=True)
-        os.makedirs(BINEXEC_TGT)
-        mylist = get_file_info(BINEXEC_SRC)
-        plan = binexec_get_merge_plan(mylist, TARGET_SIZE)
-        binexec_exec_merge_plan(BINEXEC_SRC, BINEXEC_TGT, plan,
-                                SPLIT_SIZE)
+        run_cmd([sys.executable, "gen_data.py"])
         print("binexec merge done -> %s" % BINEXEC_TGT)
     finally:
         os.chdir(prev)
@@ -389,6 +297,11 @@ def deploy_samples(extract_root):
     # keep the repo's samples/.gitignore (archive's is incomplete).
     shutil.copytree(src, SAMPLES_DIR, dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns(".gitignore"))
+    # samples.7z ships a stale gen_data.py (the -16 split-size semantics);
+    # overwrite it with the corrected master under data/ (-100KiB headroom)
+    # so install_binexec runs the right version, not the archived one.
+    shutil.copy2(os.path.join(DATA_DIR, "gen_data.py"),
+                 os.path.join(SAMPLES_DIR, "gen_data.py"))
 
 
 # Overwrite data/src_sig/.gitignore with the canonical content, so an old

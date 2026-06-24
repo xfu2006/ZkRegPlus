@@ -412,7 +412,11 @@ pub trait SigmaIR1CS<const H: bool, F: PrimeField, LK: LookupTableTwoCol<F>, GM:
 pub struct CostCapture{
 	pub entry_nc: usize,
 	pub end_nc: usize,
-	pub gadgets: Vec<(String, usize)>,
+	// (gadget_name, cs-delta, witness-var-delta). The witness-var delta is the
+	// per-gadget data-column/var size, captured by the SAME num_* bracketing as
+	// the constraint delta; summed per component it gives the data-col size used
+	// to redistribute the c4 logup query cost back into c1/c2/c3.
+	pub gadgets: Vec<(String, usize, usize)>,
 }
 thread_local!{
 	static COST_SINK: std::cell::RefCell<Option<CostCapture>> =
@@ -433,9 +437,9 @@ fn cost_capture_set_entry(nc: usize){
 fn cost_capture_set_end(nc: usize){
 	COST_SINK.with(|s| if let Some(c)=s.borrow_mut().as_mut(){ c.end_nc=nc; });
 }
-fn cost_capture_push(name: &str, delta: usize){
+fn cost_capture_push(name: &str, delta: usize, vdelta: usize){
 	COST_SINK.with(|s| if let Some(c)=s.borrow_mut().as_mut(){
-		c.gadgets.push((name.to_string(), delta)); });
+		c.gadgets.push((name.to_string(), delta, vdelta)); });
 }
 
 /// Format one circuit's captured cost as a `circ` block grouped by
@@ -460,7 +464,7 @@ fn tag_dups(names: &[String]) -> Vec<String>{
 pub fn print_cost_report(label: &str, cap: &CostCapture,
 	spans: &[(String, usize)]) -> usize{
 	let inner_total = cap.end_nc.saturating_sub(cap.entry_nc);
-	let gadget_sum: usize = cap.gadgets.iter().map(|(_,c)| *c).sum();
+	let gadget_sum: usize = cap.gadgets.iter().map(|(_,c,_)| *c).sum();
 	let framework = inner_total.saturating_sub(gadget_sum);
 	emit_stdout(format!(
 		"==== COST {} (R1CS constraints) ====   total = {}",
@@ -471,12 +475,17 @@ pub fn print_cost_report(label: &str, cap: &CostCapture,
 	for (idx, (_cname, n)) in spans.iter().enumerate(){
 		let end = (gi + *n).min(cap.gadgets.len());
 		let slice = &cap.gadgets[gi.min(cap.gadgets.len())..end];
-		let sub: usize = slice.iter().map(|(_,c)| *c).sum();
-		emit_stdout(format!("  {:<12} subtotal = {}", comp_tags[idx], sub));
-		let gnames: Vec<String> = slice.iter().map(|(n,_)| n.clone()).collect();
+		let sub: usize = slice.iter().map(|(_,c,_)| *c).sum();
+		// per-component data-column size = Σ witness-var deltas. Emitted on the
+		// same line as the constraint subtotal so the table generator can read
+		// both; absent in older logs (=> no logup-query split available there).
+		let vsub: usize = slice.iter().map(|(_,_,v)| *v).sum();
+		emit_stdout(format!(
+			"  {:<12} subtotal = {}   datacol = {}", comp_tags[idx], sub, vsub));
+		let gnames: Vec<String> = slice.iter().map(|(n,_,_)| n.clone()).collect();
 		let gtags = tag_dups(&gnames);
-		for (j, (_, c)) in slice.iter().enumerate(){
-			emit_stdout(format!("    {:<26} {:>12}", gtags[j], c));
+		for (j, (_, c, v)) in slice.iter().enumerate(){
+			emit_stdout(format!("    {:<26} {:>12} {:>12}", gtags[j], c, v));
 		}
 		gi = end;
 	}
@@ -3568,7 +3577,7 @@ where 	C: CurveGroup<ScalarField=F>,
 					cs.num_constraints() - nc, cs.num_constraints()));
 			}
 			cost_capture_push(lock_unwrap!(g).get_name(),
-				cs.num_constraints() - nc);
+				cs.num_constraints() - nc, cs.num_witness_variables() - nv);
 		}
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 3");

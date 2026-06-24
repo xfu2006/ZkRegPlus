@@ -1298,6 +1298,8 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 		//3. consruct container
 		let (n, n_pat,_n_trace) = Self::vec_size(&self.q_type, &self.capacity);
 		if B_DEBUG2 { println!("DEBUG USE 6901.8: step queue: {}, b_igc: {} usage: {}", name, self.b_igc, (vec_encoded.len() as f32)/(n as f32)); }
+		// TEMP (revert later): ungated step-queue usage.
+		if read_global_config().b_show_queue_saturated { println!("DEBUG USE 6901.8: step queue usage: {:.4} b_igc: {} ({})", (vec_encoded.len() as f32)/(n as f32), self.b_igc, name); }
 		if std::env::var("ZKR_PROBE_64008").is_ok() {
 			use ark_ff::PrimeField as _ArkPF;
 			let f_to_u64 = |x: &F| -> u64 {
@@ -1710,12 +1712,10 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 		let n = self.vec_size();
 		let fwd_usage = (v2d[0].len() as f32)/(n as f32);
 		if B_DEBUG2 { println!("DEBUG USE 6901.8: StepFwdPrf: {}, b_igc: {} usage: {}", name, self.b_igc, fwd_usage); }
-		// b_show_queue_saturated: forward-queue (the dominant StepFwdPrf) audit.
-		// Print ONLY this queue and ONLY when usage > 85%, so the run wrapper
-		// can grep the max and confirm the tuned config is tight (not wasteful,
-		// not overflowing).
-		if read_global_config().b_show_queue_saturated && fwd_usage > 0.85 {
-			println!("DEBUG USE 6901.8: StepFwdPrf SATURATED: {}, b_igc: {} usage: {:.4}", name, self.b_igc, fwd_usage);
+		// TEMP (revert later): UNGATED -- print EVERY StepFwdPrf usage (not just
+		// >85%) so the run wrapper can read actual fold-time queue utilization.
+		if read_global_config().b_show_queue_saturated {
+			println!("DEBUG USE 6901.8: StepFwdPrf usage: {:.4} b_igc: {} ({})", fwd_usage, self.b_igc, name);
 		}
 		if n<v2d[0].len()+1{
 			//aggressive: back-solve prod_pats_expansion (rung-independent,
@@ -2092,6 +2092,8 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 			v_prev_encoded, v_loc_to_del, v_src_subsigs.clone()];
 		let n = self.vec_size();
 		if B_DEBUG2 { println!("DEBUG USE 6901.8: StepBwdPrf: {}, b_igc: {} usage: {}", name, self.b_igc, (v2d[0].len() as f32)/(n as f32)); }
+		// TEMP (revert later): ungated backward-queue usage.
+		if read_global_config().b_show_queue_saturated { println!("DEBUG USE 6901.8: StepBwdPrf usage: {:.4} b_igc: {} ({})", (v2d[0].len() as f32)/(n as f32), self.b_igc, name); }
 		if n<v2d[0].len()+1{
 			let new_val= (v2d[0].len()+1)*10000 * 100 * 100 / (self.capacity.max_nibble_len*self.capacity.basis_pats_in_trace * ADD_DEL_COST) + 1;
 			if b_debug_capacity{

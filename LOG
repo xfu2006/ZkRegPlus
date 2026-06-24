@@ -29574,6 +29574,8 @@ Goal 2. create another big instance
 		=> 7:27pm already in circ2 construction 272GB
 		=> 535GB now (8:27pm) -> finished 8:43pm (5:20 hour + snark proof)
 		much faser than M1 server
+	[j] adjust timing calculation recopue 
+		9:08pm ==> 
 Goal 3. writing
 	[a] collect the data about DFA. 
 	[b] correct table info
@@ -29588,8 +29590,37 @@ Goal 4. plan on data of 7.5
 	[d] pythone file for it
 	[e] create the data collection function
 	[f] create a python function for it.
-Goal 5. run full_clam.py on sever
-	[a] 8:45pm => 
+
+Wed 06/24/2026
+Goal 1. run full_clam data on 1TB server.
+	[a] started 6:55AM => 
+	[b] observation of 512GB server circ0 -> 3 sec! cpu: 50%
+	* TODO: stop 512GB data and analyze/estimate
+Goal 2. collect the data and run on paper data for overall performance => DONE
+	[a] download data.tar
+	[b] Reef data
+		-> manual comparison
+		-> update python file
+		-> update PDF
+	[c] Bora dna data
+		-> manual comparison
+		-> update python file
+		-> update PDF
+	=> DONE
+Goal 3. Continue to fix the scallability analysis code
+	[a] StepFwdProof problem -> try to measure in real folding mode only
+	[b] insert 0-word to ensure consistency of cap bound
+	[c] change function prototype -> just take percentage list
+	[d] real psedu-random baesd and percentage based parameter for
+		collecting.
+	[e] run and check 5/10 percent
+Goal 4. writing
+	[a] look at table 6
+	[b] check c4 high value
+	[c] had to regenreate the data
+	[d] update python file to deal with two cases
+	[f] generate a sample data to test python file works with
+		both modes
 
 
 

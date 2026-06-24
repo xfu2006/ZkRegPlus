@@ -25,11 +25,11 @@ Env:  ZKR_VM_MAX_MAP_COUNT  target vm.max_map_count (default 1G; 0 skips).
 import os, sys, re, subprocess, time, datetime, tarfile, io, platform
 
 # ----------------------------------------------------------------------------
-# Two knobs: the sweep is pct = i * BASE_SHARE_PCT for i in 1..=NUM_ROUNDS.
-# (5, 2) -> 5%, 10%.  (10, 10) -> 10%,20%,...,100%.
+# One knob: the sweep percentages -- ASCENDING, DISTINCT, each in [1,100].
+# Each round folds the first pct% of a FIXED pseudo-random permutation of the
+# rule set, so rounds are nested supersets. 100 takes ALL rules.
 # ----------------------------------------------------------------------------
-BASE_SHARE_PCT = 5
-NUM_ROUNDS     = 2
+VEC_PERC = [5, 10]
 
 VMA_TARGET = int(os.environ.get("ZKR_VM_MAX_MAP_COUNT", "1073741824"))  # 0=skip
 
@@ -40,6 +40,61 @@ BUNDLE = "/tmp/bora/scale_data.tgz"                         # final artifact
 
 BEGIN_RE = re.compile(r"==== SCALE ROUND BEGIN pct=(\d+)\b")
 END_RE = re.compile(r"==== SCALE ROUND END pct=(\d+)")
+# Per-round forward-queue audit. TEMP: the Rust b_show_queue_saturated print is
+# UNGATED, so it emits StepFwdPrf usage for EVERY fold step -- we report the max
+# and flag <85% as over-provisioned. FOLD_MARK brackets the fold (logged right
+# before folding) so we only consider fold-time usage.
+SAT_RE = re.compile(r"StepFwdPrf usage:\s*([\d.]+)")
+FOLD_MARK = "folding with converged caps"
+
+# ----------------------------------------------------------------------------
+# Concat-corpus: prepend the foldpot 0-word (deterministic seed-0 pad, exactly
+# one max_word segment) to the real gdb corpus so the FOLD actually exercises
+# the circuit it is sized for -- the validity certificate for the scalability
+# figure. Fully isolated in /tmp/bora/scale: we write BOTH the concat word and
+# our OWN corpus list file there; collect_scale_data reads scan_files =
+# "/tmp/bora/scale/binexec_3.dat", so NO existing sample/config is touched and
+# full_clam()/full_data3() are unaffected. The gdb sample is read-only. The pad
+# stream mirrors utils/src/data.rs gen_pad_nibbles (splitmix64,
+# PAD_SEED=0xCAFEF00DDEADBEEF) -- VERIFIED bit-identical to the Rust dump; and
+# read_nibbles (byte->hi,lo) is its exact inverse, so the file reads back as the
+# bitwise 0-word.
+# ----------------------------------------------------------------------------
+MAX_WORD  = 512 * 8            # == zkp_driver.rs collect_scale_data: max_word = 512*8
+REAL_GDB  = os.path.join(REPO, "data/samples/binexec_merged128k/gdb")  # read-only
+CONCAT    = os.path.join(SCRATCH, "gdb_with_zeroword.bin")   # /tmp/bora/scale/...
+SCAN_LIST = os.path.join(SCRATCH, "binexec_3.dat")           # our own corpus list
+
+_MASK = (1 << 64) - 1
+def _block_r(block):
+    s = ((0xCAFEF00DDEADBEEF ^ block) + 0x9E3779B97F4A7C15) & _MASK
+    s = ((s ^ (s >> 30)) * 0xBF58476D1CE4E5B9) & _MASK
+    s = ((s ^ (s >> 27)) * 0x94D049BB133111EB) & _MASK
+    return (s ^ (s >> 31)) & _MASK
+def _gen_pad_nibbles(start, length):
+    out, idx = [], start
+    while len(out) < length:
+        b, inner = idx // 16, idx % 16
+        r = _block_r(b)
+        for k in range(inner, 16):
+            if len(out) >= length: break
+            out.append((r >> (k * 4)) & 0xf)
+        idx = (b + 1) * 16
+    return out
+def gen_pad_bytes(length):     # byte = (nib[2i]<<4)|nib[2i+1] == read_nibbles inverse
+    nb = _gen_pad_nibbles(0, length * 2)
+    return bytes(((nb[2*i] << 4) | nb[2*i+1]) for i in range(length))
+
+def build_concat_corpus():
+    """0-word (seed-0 pad, one segment) ++ real gdb, plus our own corpus list
+    file -- both written to /tmp/bora/scale. No existing sample/config touched."""
+    os.makedirs(SCRATCH, exist_ok=True)
+    pad = gen_pad_bytes(MAX_WORD * 31)            # 126976 B == one max_word segment
+    with open(REAL_GDB, "rb") as f: gdb = f.read()
+    with open(CONCAT, "wb") as f: f.write(pad + gdb)
+    with open(SCAN_LIST, "w") as f: f.write(CONCAT + "\n")   # absolute -> Rust guard handles it
+    print("[run_scale] concat corpus: 0-word %d B + gdb %d B -> %s (list %s)"
+          % (len(pad), len(gdb), CONCAT, SCAN_LIST))
 
 
 def ensure_vma(target):
@@ -101,6 +156,23 @@ def split_and_pack(log_path):
         inner.append(tgz)
         print("[run_scale] round pct=%d: %d lines -> %s"
               % (pct, len(lines), os.path.basename(tgz)))
+        # Forward-queue saturation verdict for this round (FOLD phase only).
+        in_fold, sat = False, []
+        for ln in lines:
+            if FOLD_MARK in ln:
+                in_fold = True
+            elif in_fold:
+                m = SAT_RE.search(ln)
+                if m:
+                    sat.append(float(m.group(1)))
+        if sat:
+            mx, mn = max(sat), min(sat)
+            tag = "tight OK" if mx >= 0.85 else "OVER-PROVISIONED (<85%)"
+            print("[run_scale] round pct=%d: fwd-queue usage over %d fold steps "
+                  "-- max %.4f, min %.4f -- %s" % (pct, len(sat), mx, mn, tag))
+        else:
+            print("[run_scale] round pct=%d: no StepFwdPrf usage lines "
+                  "(b_show_queue_saturated off?)" % pct)
 
     os.makedirs(os.path.dirname(BUNDLE), exist_ok=True)
     with tarfile.open(BUNDLE, "w:gz", compresslevel=9) as t:
@@ -117,8 +189,7 @@ def main():
     env = dict(os.environ)
     env.setdefault("RUSTFLAGS", "-C link-args=-fuse-ld=lld -Awarnings")
     env.setdefault("ZKR_DC_THREADS", "8")   # determine_config probe threads
-    env["ZKR_SCALE_BASE"] = str(BASE_SHARE_PCT)
-    env["ZKR_SCALE_ROUNDS"] = str(NUM_ROUNDS)
+    env["ZKR_SCALE_PERCS"] = ",".join(str(p) for p in VEC_PERC)
 
     time_prefix = ["/usr/bin/time", "-v"] if os.path.exists("/usr/bin/time") \
         else []
@@ -127,13 +198,13 @@ def main():
         "--exact", "--nocapture"]
 
     print("[run_scale] REPO   =", REPO)
-    print("[run_scale] sweep  = base=%d%% rounds=%d -> pct %s"
-          % (BASE_SHARE_PCT, NUM_ROUNDS,
-             [i * BASE_SHARE_PCT for i in range(1, NUM_ROUNDS + 1)]))
+    print("[run_scale] sweep  = percs %s%% of ruleset (nested supersets)"
+          % VEC_PERC)
     print("[run_scale] LOG    =", log)
     print("[run_scale] cmd    =", " ".join(cmd))
     print("[run_scale] bundle =", BUNDLE, "(packed even on crash)")
 
+    build_concat_corpus()
     ensure_vma(VMA_TARGET)
     t0 = time.time()
     code = -1
