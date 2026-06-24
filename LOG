@@ -29627,6 +29627,10 @@ Goal 5. start data collection on GCP
 	[b] server2 -> full_dna 
 	* TODO [c] server2 -> eval_reef
 	* TODO [c] server2 -> full_clam
+Goal 6. debug full_dlp err
+	[a] 512GB 
+Goal 7. debug scale_data on server
+	[a] 1tb server
 
 
 
