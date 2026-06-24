@@ -44,7 +44,8 @@ END_RE = re.compile(r"==== SCALE ROUND END pct=(\d+)")
 # UNGATED, so it emits StepFwdPrf usage for EVERY fold step -- we report the max
 # and flag <85% as over-provisioned. FOLD_MARK brackets the fold (logged right
 # before folding) so we only consider fold-time usage.
-SAT_RE = re.compile(r"StepFwdPrf usage:\s*([\d.]+)")
+SAT_RE = re.compile(r"StepFwdPrf usage:\s*([\d.]+) b_igc: false")   # CP fwd queue
+SDE_RE = re.compile(r"SDE basis_acc_states usage:\s*([\d.]+) b_igc: false")  # SDE acc-states
 FOLD_MARK = "folding with converged caps"
 
 # ----------------------------------------------------------------------------
@@ -156,23 +157,26 @@ def split_and_pack(log_path):
         inner.append(tgz)
         print("[run_scale] round pct=%d: %d lines -> %s"
               % (pct, len(lines), os.path.basename(tgz)))
-        # Forward-queue saturation verdict for this round (FOLD phase only).
-        in_fold, sat = False, []
+        # Saturation verdicts (FOLD phase only): CP (fwd queue) + SDE (acc states).
+        in_fold, sat, sde = False, [], []
         for ln in lines:
             if FOLD_MARK in ln:
                 in_fold = True
             elif in_fold:
                 m = SAT_RE.search(ln)
-                if m:
-                    sat.append(float(m.group(1)))
-        if sat:
-            mx, mn = max(sat), min(sat)
-            tag = "tight OK" if mx >= 0.85 else "OVER-PROVISIONED (<85%)"
-            print("[run_scale] round pct=%d: fwd-queue usage over %d fold steps "
-                  "-- max %.4f, min %.4f -- %s" % (pct, len(sat), mx, mn, tag))
-        else:
-            print("[run_scale] round pct=%d: no StepFwdPrf usage lines "
-                  "(b_show_queue_saturated off?)" % pct)
+                if m: sat.append(float(m.group(1)))
+                m = SDE_RE.search(ln)
+                if m: sde.append(float(m.group(1)))
+        for label, vals in (("CP  fwd-queue ", sat), ("SDE acc-states", sde)):
+            if vals:
+                mx, mn = max(vals), min(vals)
+                tag = "tight OK" if mx >= 0.85 else "OVER-PROVISIONED (<85%)"
+                print("[run_scale] round pct=%d: %s usage over %d fold steps "
+                      "-- max %.4f min %.4f -- %s"
+                      % (pct, label, len(vals), mx, mn, tag))
+            else:
+                print("[run_scale] round pct=%d: %s -- no usage lines "
+                      "(b_show_queue_saturated off?)" % (pct, label))
 
     os.makedirs(os.path.dirname(BUNDLE), exist_ok=True)
     with tarfile.open(BUNDLE, "w:gz", compresslevel=9) as t:

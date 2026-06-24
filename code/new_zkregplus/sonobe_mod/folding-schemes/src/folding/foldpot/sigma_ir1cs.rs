@@ -4395,6 +4395,34 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		b_correct.enforce_equal(&Boolean::TRUE)?;
 		if b_correct.value().is_ok(){
+			if !b_correct.value()? {
+				// PROBE 78010: the per-chunk failed_sigs ⊆ discharged_sigs
+				// coverage was violated (aggressive SDE). Name the failing
+				// chunk + caps BEFORE aborting so the offending file is
+				// identifiable from a sample run; set ZKR_PROBE_77317=1 for
+				// the full failed/discharged set + multiset-diff dump.
+				use crate::folding::foldpot::utils::{
+					probe_77317_f_as_u64_lossy, probe_77317_dump_fpvar_vec,
+					probe_77317_multiset_diff_fpvar};
+				let wid = si.word_id.value()
+					.map(|v| probe_77317_f_as_u64_lossy(&v)).unwrap_or(u64::MAX);
+				let sid = si.subseg_id.value()
+					.map(|v| probe_77317_f_as_u64_lossy(&v)).unwrap_or(u64::MAX);
+				emit_stdout(format!(
+					"PROBE 78010: b_correct FAILED -- word_id={} subseg_id={} \
+					 failed_cap={} discharged_cap={} mtbl={} aggressive={}",
+					wid, sid,
+					si.failed_sigs.len(), si.discharged_sigs.len(),
+					si.mtbl_sigs.len(),
+					utils::consts::read_global_config()
+						.clamav_cfg.b_aggressive_sde_for_rep));
+				probe_77317_dump_fpvar_vec("78010.failed",
+					"failed_sigs", &si.failed_sigs);
+				probe_77317_dump_fpvar_vec("78010.discharged",
+					"discharged_sigs", &si.discharged_sigs);
+				probe_77317_multiset_diff_fpvar("78010",
+					&si.failed_sigs, &si.discharged_sigs, &si.mtbl_sigs);
+			}
 			assert!(b_correct.value()?, "failed b_correct");
 		}
 

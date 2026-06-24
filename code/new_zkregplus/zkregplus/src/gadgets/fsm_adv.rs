@@ -755,6 +755,15 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 
 		let target_size = (nlen+m)*capacity.basis_acc_states/10000;
 		let target_size = if target_size < 2 {2} else {target_size};
+		// SDE saturation probe (pairs with CP's 6901.x): basis_acc_states fill
+		// = actual accepting states / provisioned cap. TEMP (revert later),
+		// gated like CP. Fires at probe (may be >1 -> CapErr) and fold; the
+		// Python wrapper filters to fold-stage (post FOLD_MARK).
+		if read_global_config().b_show_queue_saturated {
+			println!("DEBUG USE 6902.1: SDE basis_acc_states usage: {:.4} b_igc: {} (acc {}/{})",
+				(states_final.len() as f32) / (target_size as f32),
+				b_igc, states_final.len(), target_size);
+		}
 		if states_final.len() + 1>target_size{
 			report_top_states(&states_final, acdfa, 10, "basis_acc_states overflow");
 			//needs at least one padding entry

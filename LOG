@@ -29623,8 +29623,10 @@ Goal 4. writing
 		both modes
 	[g] refine the log generaiton
 Goal 5. start data collection on GCP
-	[a] server1 -> full_dlp
-	[b] server2 -> full_dna
+	Started 11:30AM
+	[b] server2 -> full_dna 
+	* TODO [c] server2 -> eval_reef
+	* TODO [c] server2 -> full_clam
 
 
 
