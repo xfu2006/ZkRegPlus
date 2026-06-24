@@ -29621,6 +29621,10 @@ Goal 4. writing
 	[d] update python file to deal with two cases
 	[f] generate a sample data to test python file works with
 		both modes
+	[g] refine the log generaiton
+Goal 5. start data collection on GCP
+	[a] server1 -> full_dlp
+	[b] server2 -> full_dna
 
 
 

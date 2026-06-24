@@ -417,6 +417,13 @@ pub struct CostCapture{
 	// the constraint delta; summed per component it gives the data-col size used
 	// to redistribute the c4 logup query cost back into c1/c2/c3.
 	pub gadgets: Vec<(String, usize, usize)>,
+	// MEASURED logup query cost: the actual cs-delta of the circuit-level
+	// inv_hab22 logup block (step 5 in generate_step_constraints) -- the real
+	// query-verification constraints inside c4 -- and the query-table length
+	// (inv_hab22_left_size = qry.len()). Primary source for the query cost;
+	// the data-col sum is the proxy estimate. 0 if not recorded.
+	pub logup_qry_nc: usize,
+	pub logup_qry_len: usize,
 }
 thread_local!{
 	static COST_SINK: std::cell::RefCell<Option<CostCapture>> =
@@ -425,7 +432,15 @@ thread_local!{
 /// Arm the per-gadget cost sink (clears any prior capture).
 pub fn cost_capture_begin(){
 	COST_SINK.with(|s| *s.borrow_mut() =
-		Some(CostCapture{entry_nc:0, end_nc:0, gadgets:vec![]}));
+		Some(CostCapture{entry_nc:0, end_nc:0, gadgets:vec![],
+			logup_qry_nc:0, logup_qry_len:0}));
+}
+/// Record the MEASURED logup query block cost (cs-delta) and query length.
+/// Only takes effect while the sink is armed (the preprocess COST run), so it
+/// fires once per circuit even though generate_step_constraints runs per step.
+fn cost_capture_set_logup(nc: usize, qlen: usize){
+	COST_SINK.with(|s| if let Some(c)=s.borrow_mut().as_mut(){
+		c.logup_qry_nc = nc; c.logup_qry_len = qlen; });
 }
 /// Disarm and return the collected capture (None if not armed).
 pub fn cost_capture_take() -> Option<CostCapture>{
@@ -491,6 +506,14 @@ pub fn print_cost_report(label: &str, cap: &CostCapture,
 	}
 	emit_stdout(format!(
 		"  framework (poseidon/logup/io)        {:>12}", framework));
+	// PERF 1012: MEASURED logup query cost -- the real cs-delta of the
+	// circuit-level inv_hab22 query-verification block, a subset of framework.
+	// `qry_len` is the merged query-table length (number of queries). This is
+	// the primary source for the c4 query cost; the per-component `datacol`
+	// sum is the proxy estimate of the same quantity.
+	emit_stdout(format!(
+		"  PERF 1012: logup query cost (measured) = {}   qry_len = {}",
+		cap.logup_qry_nc, cap.logup_qry_len));
 	inner_total
 }
 
@@ -3880,6 +3903,10 @@ where 	C: CurveGroup<ScalarField=F>,
 		log_perf(self.job_id, log_level, &format!("gen_step_cs step 5: AFTER inv_hab22: {}, INCREASED cs.lc_size: {}, cons: {}, vars: {} -- Breakdown of logup cases: n_case1: ({}, {:.2}%), n_case2: ({}, {:.2}%), n_case3: ({}, {:.2}%)"
 		, inv_hab22_left_size, cs.inner().unwrap().borrow().lc_map.len() - nl, cs.num_constraints()-nc, cs.num_witness_variables()-nv, n_case1, 100.0*(n_case1 as f64)/(n_total as f64), n_case2, 100.0*(n_case2 as f64)/(n_total as f64), n_case3, 100.0*(n_case3 as f64)/(n_total as f64)
 		), &mut gt);
+		// MEASURED logup query cost (real cs-delta of this inv_hab22 block) +
+		// query length. Routed through the cost sink so it surfaces once, next
+		// to the framework line, as PERF 1012 in print_cost_report.
+		cost_capture_set_logup(cs.num_constraints()-nc, inv_hab22_left_size);
 		//log(job_id, log_level, &format!("-- Breakdown of logup cases: n_case1: ({}, {:.2}%), n_case2: ({}, {:.2}%), n_case3: ({}, {:.2}%)", 
 		//n_case1, 100.0*(n_case1 as f64)/(n_total as f64), n_case2, 100.0*(n_case2 as f64)/(n_total as f64), n_case3, 100.0*(n_case3 as f64)/(n_total as f64)
 		//));
