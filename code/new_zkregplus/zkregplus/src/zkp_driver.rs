@@ -4249,23 +4249,41 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			.map(|r| r.chunk_peaks.needs_per_chunk.clone()).collect();
 		crate::needs_dist::print_needs_dist_rows(&rows, &files,
 			"data/debug/full_dlp_sample/config/needs_dist.txt");
-		//(2) estimate -> seed -> k_max-rung ladder; save the JSON.
-		let est = estimate_config_aggr::<Fr>(&vdata, &db, &[100], &mut vlog);
-		let seed = estimated_to_capparams_aggr(&est[0], mw, rc.range2_bit, 3);
-		let total_word_n: usize = words.iter().map(|w| w.len()).sum();
-		let lkup_len = db.lkup.get_size();
+		//(2) capacity ladder. ZKR_LOAD_LADDER=<repo-rel JSON>: load
+		//full_dlp's saved FULL-CORPUS ladder so a handful of files route
+		//through the REAL full-run caps and the b_correct overflow
+		//resurfaces; unset => rebuild from the sample (original behavior).
+		//DEBUG repro knob -- REMOVE once the crash file is identified.
 		let db_arc = std::sync::Arc::new(db);
-		let n_threads = std::env::var("ZKR_DC_THREADS").ok()
-			.and_then(|s| s.parse().ok()).unwrap_or(4);
-		let (ladder, hist) = super::determine_config_aggr::<Fr,C1,CS1>(
-			db_arc.clone(), &words, &infos, &vdata, seed, mw, lkup_len,
-			total_word_n, rc.k_max, rc.n_buckets, 60, n_threads, 8,
-			rc.peel_pct).expect("determine_config_aggr");
-		crate::determine_config::save_ladder(&ladder,
-			&format!("{}/{}", proot, rc.config_out)).expect("save ladder");
-		utils::logger::log(0, utils::logger::LOG1, &format!(
-			"full_dlp_sample ladder: {} rungs, hist={:?}", ladder.len(),
-			hist));
+		let ladder: Vec<crate::determine_config::CapParams> =
+			if let Ok(lp) = std::env::var("ZKR_LOAD_LADDER") {
+				let lp_abs = format!("{}/{}", proot, lp);
+				utils::logger::log(0, utils::logger::LOG1, &format!(
+					"full_dlp_sample: LOAD full-corpus ladder {}", lp_abs));
+				crate::determine_config::load_ladder(&lp_abs)
+			} else {
+				let est = estimate_config_aggr::<Fr>(&vdata, &*db_arc,
+					&[100], &mut vlog);
+				let seed = estimated_to_capparams_aggr(&est[0], mw,
+					rc.range2_bit, 3);
+				let total_word_n: usize =
+					words.iter().map(|w| w.len()).sum();
+				let lkup_len = db_arc.lkup.get_size();
+				let n_threads = std::env::var("ZKR_DC_THREADS").ok()
+					.and_then(|s| s.parse().ok()).unwrap_or(4);
+				let (lad, hist) = super::determine_config_aggr::<Fr,C1,CS1>(
+					db_arc.clone(), &words, &infos, &vdata, seed, mw,
+					lkup_len, total_word_n, rc.k_max, rc.n_buckets, 60,
+					n_threads, 8, rc.peel_pct)
+					.expect("determine_config_aggr");
+				crate::determine_config::save_ladder(&lad,
+					&format!("{}/{}", proot, rc.config_out))
+					.expect("save ladder");
+				utils::logger::log(0, utils::logger::LOG1, &format!(
+					"full_dlp_sample ladder: {} rungs, hist={:?}",
+					lad.len(), hist));
+				lad
+			};
 		//ZKR_FSM_DIST: determine-only diagnostic, skip the fold.
 		if std::env::var("ZKR_FSM_DIST").is_ok() { return; }
 		//fold-only: load own DB from cache (avoid 2x RAM); stats + cs1e.

@@ -21,15 +21,24 @@ CFG_DIR = os.path.join(ROOT, "data", "paper_data", "dlp", "cfg")
 
 SUSPECT_LIST = os.path.join(CFG_DIR, "jobs", "suspect_list.txt")
 RUNCFG = os.path.join(CFG_DIR, "config", "runcfg_sample.json")
+# full_dlp's saved FULL-CORPUS ladder (repo-rel); loaded via ZKR_LOAD_LADDER so
+# the few suspect files route through the REAL full-run caps and b_correct
+# overflows exactly as in full_dlp. Saved by full_dlp step 5 before the crash.
+FULL_LADDER = "data/paper_data/dlp/cfg/config/dlp_ladder.json"
 LOG = "/tmp/sample_repro.log"
 
+# In-flight files at the full_dlp b_correct crash (one per job, mapped from the
+# log via per-job Pass-1<->Pass-3 word index). The culprit is one of these.
 SUSPECTS = [
-    "data/samples/email/src/maildir/dasovich-j/all_documents/3512.",
-    "data/samples/email/src/maildir/dasovich-j/notes_inbox/1704.",
-    "data/samples/email/src/maildir/farmer-d/deleted_items/365.",
-    "data/samples/email/src/maildir/whalley-l/all_documents/654.",
-    "data/samples/email/src/maildir/whalley-l/discussion_threads/522.",
-    "data/samples/email/src/maildir/whalley-l/notes_inbox/311.",
+    "data/samples/email/src/maildir/kean-s/archiving/untitled/166.",
+    "data/samples/email/src/maildir/kean-s/archiving/untitled/5721.",
+    "data/samples/email/src/maildir/kean-s/archiving/untitled/4730.",
+    "data/samples/email/src/maildir/kean-s/enron_mentions/81.",
+    "data/samples/email/src/maildir/kean-s/europe/2.",
+    "data/samples/email/src/maildir/holst-k/inbox/95.",
+    "data/samples/email/src/maildir/arnold-j/deleted_items/32.",
+    "data/samples/email/src/maildir/arora-h/inbox/85.",
+    "data/samples/email/src/maildir/perlingiere-d/deleted_items/229.",
 ]
 
 RUNCFG_JSON = {
@@ -67,6 +76,8 @@ def run():
     env["RUSTFLAGS"] = "-C link-args=-fuse-ld=lld -Awarnings"
     env["ZKR_DLP_RUNCFG"] = RUNCFG
     env["ZKR_PROBE_77317"] = "1"
+    # load full_dlp's full-corpus ladder so the suspects hit the real caps
+    env["ZKR_LOAD_LADDER"] = FULL_LADDER
 
     cargo = [
         "cargo", "test", "-p", "zkregplus", "--release", "--",

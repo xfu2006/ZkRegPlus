@@ -29622,15 +29622,16 @@ Goal 4. writing
 	[f] generate a sample data to test python file works with
 		both modes
 	[g] refine the log generaiton
+--- ACTIVE ONE ---
 Goal 5. start data collection on GCP
 	Started 11:30AM
 	[b] server2 -> full_dna 
-	* TODO [c] server2 -> eval_reef
-	* TODO [c] server2 -> full_clam
 Goal 6. debug full_dlp err
 	[a] 512GB 
+	(IP: 149.165.170.106)
 Goal 7. debug scale_data on server
-	[a] 1tb server
+	[a] 1tb server 
+	(IP: 149.165.169.73) 
 
 
 
