@@ -29559,6 +29559,7 @@ Goal 1. debug capacity err again
 				15000				 - 4:20pm [40839 now]
 				15000				 - 5:00pm [51333 now]
 		==> looks fine it will be successful, let it run for 12 hours.
+		==> PERF 1007: Phase 1 step 2: dispatch w 219.22 MB:  27669182 ms
 Goal 2. create another big instance
 	[a] create volume 256GB
 	[b] create 1TB instance
@@ -29570,6 +29571,9 @@ Goal 2. create another big instance
 	[h] collect the eval_reef.dat. => /media/volume/zkregplus_large/data
 	[i] now start the dlp dataset started 3:22pm
 		folding speed about 2x faster than M1, which is nice.
+		=> 7:27pm already in circ2 construction 272GB
+		=> 535GB now (8:27pm) -> finished 8:43pm (5:20 hour + snark proof)
+		much faser than M1 server
 Goal 3. writing
 	[a] collect the data about DFA. 
 	[b] correct table info
@@ -29584,6 +29588,8 @@ Goal 4. plan on data of 7.5
 	[d] pythone file for it
 	[e] create the data collection function
 	[f] create a python function for it.
+Goal 5. run full_clam.py on sever
+	[a] 8:45pm => 
 
 
 

@@ -3137,6 +3137,9 @@ where
 	  	log(job_id, log_level, &format!("--- Job {} starts ---", job_id));
 	  	let mut gt1_0 = GTimer::new();
 	  	let mut gt1 = GTimer::new();
+	  	// gt_mem times MEM checkpoints around the main S::prove so they
+	  	// do not reset gt1 (else PERF 1006 Step 3 misses the proof).
+	  	let mut gt_mem = GTimer::new();
 	  	if utils::consts::B_DEBUG { log_perf(job_id, LOG2, &format!(
 	  		"DEBUG USE 60002.0: MEM at job entry: {} GB",
 	  		get_mem_usage()), &mut gt1); }
@@ -3230,8 +3233,11 @@ where
 	  		let Some((batch_prf, ind_prf)) = batch_ind_prfs.map(|x| (x.0, x.1))
 	  			else {return Err(Error::Other("batch proof is none!".to_string()));};
 			let mb_speed = get_speed(max_total_n, &mut gt_prove_steps);
-	  		log_perf(job_id, log_level, &format!("PERF 1006. Job Step 1: main circuits IVC PROVE STEPS (Folding) DONE. total_word_len: {}, steps: {}. SPEED: {} MB/hour", format_bytes(max_total_n * 31), _num_steps, mb_speed),
-	  			&mut gt1);
+	  		// SPEED + folding time come from gt_prove_steps (already
+	  		// stopped by get_speed); gt1's tail here is meaningless, so
+	  		// log() the real ms and just reset gt1 for the next step.
+	  		log(job_id, log_level, &format!("PERF 1006. Job Step 1: main circuits IVC PROVE STEPS (Folding) DONE. total_word_len: {}, steps: {}. SPEED: {} MB/hour {} ms", format_bytes(max_total_n * 31), _num_steps, mb_speed, gt_prove_steps.ms()));
+	  		gt1.clear_start();
 
 	  		// b_one_proof: only Job 0 runs the SNARK deciders + Phase 2
 	  		// + proof assembly/verify. All jobs still do the Phase-1
@@ -3351,7 +3357,7 @@ where
 	  			log_perf(job_id, LOG2, &format!(
 	  				"DEBUG USE 60002.08: MEM after main_pk read \
 	  				(before Phase 1 S::prove): {} GB",
-	  				get_mem_usage()), &mut gt1);
+	  				get_mem_usage()), &mut gt_mem);
 
 	  			let snark_proof_main: S::Proof = S::prove(&g16_pk,
 	  				main_circ, &mut rng)
@@ -3368,7 +3374,7 @@ where
 	  				let _ = qa_pp_d1.write().unwrap().take();
 	  				log_perf(job_id, LOG2, &format!(
 	  					"DEBUG USE 60001.4: MEM after drop main_pk + \
-	  					qa_pp_d1: {} GB", get_mem_usage()), &mut gt1);
+	  					qa_pp_d1: {} GB", get_mem_usage()), &mut gt_mem);
 	  			}
 
 	  			(snark_proof_main, mainres, mainres_hash, g16_vk_owned)
@@ -3376,7 +3382,7 @@ where
 	  		log_perf(job_id, LOG2, &format!(
 	  			"DEBUG USE 60002.1: MEM after Phase 1 snark block \
 	  			(main_circ dropped, before batch_ver_param): {} GB",
-	  			get_mem_usage()), &mut gt1);
+	  			get_mem_usage()), &mut gt_mem);
 
 	  		//7. prepare the other data.
 	  		let mut batch_ver_param = driver1.batch_vk.clone().unwrap().clone();
