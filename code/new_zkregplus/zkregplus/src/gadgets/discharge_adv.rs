@@ -1720,7 +1720,7 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 		let n = self.vec_size();
 		// record actual forward-queue fill so the post-convergence perc
 		// tightener can read the true max demand (replaces the 6901.8 probe).
-		utils::consts::record_fwd(self.b_igc, v2d[0].len());
+		utils::consts::record_fwd(self.b_igc, v2d[0].len(), n);
 		if n<v2d[0].len()+1{
 			//aggressive: back-solve prod_pats_expansion (rung-independent,
 			//no basis_pats in the denominator):

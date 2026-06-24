@@ -51,19 +51,28 @@ pub static MAX_FWD_CS:  AtomicUsize = AtomicUsize::new(0);
 pub static MAX_FWD_IGC: AtomicUsize = AtomicUsize::new(0);
 pub static MAX_ACC_CS:  AtomicUsize = AtomicUsize::new(0);
 pub static MAX_ACC_IGC: AtomicUsize = AtomicUsize::new(0);
-pub fn record_fwd(b_igc: bool, n: usize) {
-    (if b_igc {&MAX_FWD_IGC} else {&MAX_FWD_CS}).fetch_max(n, Ordering::Relaxed);
+// matched forward-queue CAPACITY (vec_size) at the record site, so
+// fold saturation = MAX_FWD / MAX_FWD_CAP is exact (no reconstruction).
+pub static MAX_FWD_CAP_CS:  AtomicUsize = AtomicUsize::new(0);
+pub static MAX_FWD_CAP_IGC: AtomicUsize = AtomicUsize::new(0);
+pub fn record_fwd(b_igc: bool, fill: usize, cap: usize) {
+    (if b_igc {&MAX_FWD_IGC} else {&MAX_FWD_CS}).fetch_max(fill, Ordering::Relaxed);
+    (if b_igc {&MAX_FWD_CAP_IGC} else {&MAX_FWD_CAP_CS}).fetch_max(cap, Ordering::Relaxed);
 }
 pub fn record_acc(b_igc: bool, n: usize) {
     (if b_igc {&MAX_ACC_IGC} else {&MAX_ACC_CS}).fetch_max(n, Ordering::Relaxed);
 }
 pub fn reset_sat() {
-    for a in [&MAX_FWD_CS, &MAX_FWD_IGC, &MAX_ACC_CS, &MAX_ACC_IGC] {
+    for a in [&MAX_FWD_CS, &MAX_FWD_IGC, &MAX_ACC_CS, &MAX_ACC_IGC,
+              &MAX_FWD_CAP_CS, &MAX_FWD_CAP_IGC] {
         a.store(0, Ordering::Relaxed);
     }
 }
 pub fn get_fwd(b_igc: bool) -> usize {
     (if b_igc {&MAX_FWD_IGC} else {&MAX_FWD_CS}).load(Ordering::Relaxed)
+}
+pub fn get_fwd_cap(b_igc: bool) -> usize {
+    (if b_igc {&MAX_FWD_CAP_IGC} else {&MAX_FWD_CAP_CS}).load(Ordering::Relaxed)
 }
 pub fn get_acc(b_igc: bool) -> usize {
     (if b_igc {&MAX_ACC_IGC} else {&MAX_ACC_CS}).load(Ordering::Relaxed)

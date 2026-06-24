@@ -29628,10 +29628,19 @@ Goal 5. start data collection on GCP
 	[b] server2 -> full_dna 
 Goal 6. debug full_dlp err
 	[a] 512GB 
-	(IP: 149.165.170.106)
-Goal 7. debug scale_data on server
+	[b] can replicate the error 
+	[c] identified it's sde advice error, more details needed.
+	[d] * now switch to 1tb server *
+		(IP: 149.165.169.73) 
+Goal 7. collect scale_data on server
 	[a] 1tb server 
-	(IP: 149.165.169.73) 
+	[b] collected 
+	[c] perc_expansion too high, adjust algorithm to be binary
+		search the perc_expansion
+	[d] collect data  
+	[e] * now switch to 512GB server *
+		(IP: 149.165.170.106)
+
 
 
 

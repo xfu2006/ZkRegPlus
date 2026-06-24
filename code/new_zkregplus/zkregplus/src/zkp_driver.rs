@@ -1536,11 +1536,25 @@ where
 		return;
 	}
 
+	// fold-time saturation audit: clear the probe's collectors so the
+	// numbers below reflect ONLY the real fold, proving the forward queue
+	// is saturated during proving (not just at probe time).
+	utils::consts::reset_sat();
+
 	//4. run the foldpot_main
 	let lkup = Arc::new(db.lkup);
 	foldpot_main::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,FC<CF1<C1>,C1,CS1>,
 		S,LK<CF1<C1>>,GM<CF1<C1>>, false>(
 		lkup, vec_circs, &mut jobs, cache_dir).expect("main err");
+
+	let pct = |f: usize, c: usize| if c == 0 { 0.0 } else { 100.0 * f as f64 / c as f64 };
+	let (ff_cs, fc_cs)   = (utils::consts::get_fwd(false), utils::consts::get_fwd_cap(false));
+	let (ff_igc, fc_igc) = (utils::consts::get_fwd(true),  utils::consts::get_fwd_cap(true));
+	log(0, log_level, &format!(
+		"FOLD FWD SAT: cs fill={}/cap={} ({:.1}%), igc fill={}/cap={} ({:.1}%); \
+		 SDE acc max cs={} igc={}",
+		ff_cs, fc_cs, pct(ff_cs, fc_cs), ff_igc, fc_igc, pct(ff_igc, fc_igc),
+		utils::consts::get_acc(false), utils::consts::get_acc(true)));
 
 }
 
