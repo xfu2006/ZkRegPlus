@@ -29640,10 +29640,25 @@ Goal 7. collect scale_data on server
 		(IP: 149.165.170.106)
 
 Thursday 06/25/2026
+Goal 1. move 50k credits from access-ci
+Goal 2. update the data source structure
+	[a] manual rename all files
+	[b] a double chekc script which checks validity of server container names
+	[c] put place-holder data into the container folders
+	[d] add another check of file name for warning
+	[e] update all related python functions
+----
 Goal 1. Continue to debug full_dlp err
 	[a] (IP: 149.165.169.73) 
+		-> root cause: keywords in halo flagged are not passed to sde.
+			it's probably an advice generation problem
+		-> check failed_c_all_seg[i] generation
 Goal 2. continue to adjust scale_data
 	[a] (IP: 149.165.170.106)
+		-> changed function prototype to take raw numbers
+		-> analyze the distribution of raw blocks and subsigs adding new slots
+			in step queue (waiting data0
+		-> 
 
 
 

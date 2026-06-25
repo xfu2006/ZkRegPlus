@@ -3999,8 +3999,17 @@ fn build_failed_c_per_seg(
 	let mut info_per_seg = Vec::with_capacity(num_segs);
 	for si in 0..num_segs {
 		let lo = si * seg_nib;
-		let hi = ((si + 1) * seg_nib).min(crit_acc_path_full.len());
-		let hi_ig = ((si + 1) * seg_nib).min(crit_acc_path_full_igc.len());
+		// Terminal-INCLUSIVE upper bound (+1): cp_mapper's per-chunk scan
+		// includes the chunk's terminal state (states[real_nib], i.e. the
+		// state right at the seg/seg+1 boundary). A keyword whose critical-
+		// pattern accept lands exactly on that boundary must be counted in
+		// THIS segment too (not only the next), otherwise CP flags it here
+		// while failed_c omits it -> empty discharge universe -> the
+		// per-chunk failed_subset_of_discharged check panics ("failed
+		// b_correct"). The boundary state is shared with the next segment
+		// (whose lo == this hi-1), matching cp_mapper's double-detection.
+		let hi = ((si + 1) * seg_nib + 1).min(crit_acc_path_full.len());
+		let hi_ig = ((si + 1) * seg_nib + 1).min(crit_acc_path_full_igc.len());
 		let lo_ig = lo.min(crit_acc_path_full_igc.len());
 		let mut names = HashSet::<String>::new();
 		for &st in &crit_acc_path_full[lo..hi] {
