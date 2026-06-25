@@ -1367,35 +1367,6 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 				probe_77317_dump_f_vec(&d_tag,
 					&format!("sed.adv{}.discharged", adv_id),
 					&cps[7]);
-					if adv_id==5 {
-						//60937.2: compute_sig discharged_sigs RAW from the
-						//advice container, bypassing gen_stmt_components' dest
-						//path (traits.rs:185 returns [] when dest is None).
-						//raw=[890,891] but cps[7] empty => dest/cfg None;
-						//raw also zeros => saved data was zeroed.
-						let ct = adv.get_container();
-						let raw = ct.lock().unwrap().search_container(
-							"sig_res_combo discharged_sigs");
-						match raw {
-							Ok(c) => {
-								let v = c.lock().unwrap().to_vec();
-								let nz: Vec<u64> = v.iter()
-									.filter(|f| !f.is_zero())
-									.map(|f| folding_schemes::folding
-										::foldpot::utils
-										::probe_77317_f_as_u64_lossy(f))
-									.collect();
-								emit_stdout(format!(
-									"DEBUG USE 60937.2: a5 RAW \
-									 discharged_sigs len={} nonzero={:?} \
-									 (cps7.len={})",
-									v.len(), nz, cps[7].len()));
-							}
-							Err(_) => emit_stdout(
-								"DEBUG USE 60937.2: a5 RAW \
-								 discharged_sigs NOT FOUND".to_string()),
-						}
-					}
 			}
 		}
 

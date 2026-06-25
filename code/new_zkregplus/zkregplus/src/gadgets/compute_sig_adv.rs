@@ -310,15 +310,17 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 					std::sync::atomic::Ordering::Relaxed);
 				let seg = utils::consts::PROBE_CHUNK_ID
 					.load(std::sync::atomic::Ordering::Relaxed);
+				let wid = utils::consts::PROBE_WORD_ID
+					.load(std::sync::atomic::Ordering::Relaxed);
 				let univ: Vec<u64> = inp_sigs.iter().filter(|f| !f.is_zero())
 					.map(|f| field_to_usize(f) as u64).collect();
 				let names: Vec<&str> = discharge_infos.iter()
 					.filter(|d| d.sig_name!="none")
 					.map(|d| d.sig_name.as_str()).collect();
 				utils::logger::emit_stdout(format!(
-					"DEBUG USE 60937.1: cs-build #{} seg~={} universe={:?} \
-					 n_infos={} infos={:?}",
-					ctr, seg, univ, names.len(), names));
+					"DEBUG USE 60937.1: cs-build #{} word_id={} seg~={} \
+					 universe={:?} n_infos={} infos={:?}",
+					ctr, wid, seg, univ, names.len(), names));
 			}
 		}
 
