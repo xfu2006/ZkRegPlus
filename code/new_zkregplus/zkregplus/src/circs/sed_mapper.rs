@@ -909,6 +909,14 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 			 max_word_len={}", word.len(), self.max_word_len());
 		let word_seg = word.clone();
 		if seg_id==0 {assert!(r_prev_adv.is_none());}
+		//60936.0 (gated): publish seg_id to a global so the compute_sig probes
+		//(60936.1/.2), which lack a seg_id param, can gate on the failing
+		//cluster. num_jobs=1 in the repro => no cross-thread race. REMOVE
+		//with the b_correct harness.
+		if std::env::var("ZKR_PROBE_77317").is_ok() {
+			utils::consts::PROBE_CHUNK_ID.store(seg_id,
+				std::sync::atomic::Ordering::Relaxed);
+		}
 
 		//2. collect the data for building advice.
 		//most vars have two versions: cs and igc
