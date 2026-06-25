@@ -424,23 +424,6 @@ pub struct CostCapture{
 	// the data-col sum is the proxy estimate. 0 if not recorded.
 	pub logup_qry_nc: usize,
 	pub logup_qry_len: usize,
-	// DEBUG USE 99991.1: logup query-table decomposition -- qry_len split into
-	// inter-module in/out buffers vs per-gadget data, plus the lookup-table
-	// (col1_share) size. Recorded once per round; remove in batch with 99991.
-	pub q_in99991: usize,
-	pub q_out99991: usize,
-	pub q_data99991: usize,
-	pub q_tbl99991: usize,
-	// DEBUG USE 99991.2: per-gadget data-column sizes (si_data_info), sums to
-	// q_data99991. Reveals which gadget owns the dominant data queries.
-	pub si_data99991: Vec<usize>,
-	// DEBUG USE 99991.5: full statement anatomy (the non-data skeleton) so we
-	// can see how `data` relates to the per-position word width and the other
-	// statement sections. wss = word_subseg_size (= max_word_len).
-	pub wss99991: usize,
-	pub fss99991: usize,
-	pub dss99991: usize,
-	pub mss99991: usize,
 }
 thread_local!{
 	static COST_SINK: std::cell::RefCell<Option<CostCapture>> =
@@ -450,10 +433,7 @@ thread_local!{
 pub fn cost_capture_begin(){
 	COST_SINK.with(|s| *s.borrow_mut() =
 		Some(CostCapture{entry_nc:0, end_nc:0, gadgets:vec![],
-			logup_qry_nc:0, logup_qry_len:0,
-			q_in99991:0, q_out99991:0, q_data99991:0, q_tbl99991:0,
-			si_data99991: vec![],
-			wss99991:0, fss99991:0, dss99991:0, mss99991:0}));  // DEBUG USE 99991.1/.2/.5
+			logup_qry_nc:0, logup_qry_len:0}));
 }
 /// Record the MEASURED logup query block cost (cs-delta) and query length.
 /// Only takes effect while the sink is armed (the preprocess COST run), so it
@@ -461,16 +441,6 @@ pub fn cost_capture_begin(){
 fn cost_capture_set_logup(nc: usize, qlen: usize){
 	COST_SINK.with(|s| if let Some(c)=s.borrow_mut().as_mut(){
 		c.logup_qry_nc = nc; c.logup_qry_len = qlen; });
-}
-/// DEBUG USE 99991.1: record the logup query-table split (input/output/data
-/// buffers) and the lookup-table (col1_share) size. Remove in batch with 99991.
-fn cost_capture_set_qry99991(q_in: usize, q_out: usize, q_data: usize, q_tbl: usize,
-	data_info: &[(usize,bool)], wss: usize, fss: usize, dss: usize, mss: usize){
-	COST_SINK.with(|s| if let Some(c)=s.borrow_mut().as_mut(){
-		c.q_in99991=q_in; c.q_out99991=q_out;
-		c.q_data99991=q_data; c.q_tbl99991=q_tbl;
-		c.si_data99991 = data_info.iter().map(|(x,_)| *x).collect();
-		c.wss99991=wss; c.fss99991=fss; c.dss99991=dss; c.mss99991=mss; });
 }
 /// Disarm and return the collected capture (None if not armed).
 pub fn cost_capture_take() -> Option<CostCapture>{
@@ -544,58 +514,6 @@ pub fn print_cost_report(label: &str, cap: &CostCapture,
 	emit_stdout(format!(
 		"  PERF 1012: logup query cost (measured) = {}   qry_len = {}",
 		cap.logup_qry_nc, cap.logup_qry_len));
-	// DEBUG USE 99991.1: logup qry_len decomposition. qry_len (PERF 1012) =
-	// subtable_id (input+output+data) + extra_var_size. Shows how much of the
-	// dominant logup block is inter-module I/O buffers vs per-gadget data, plus
-	// the lookup-table (col1_share) size. Remove in batch with the 99991 probes.
-	let q_sub99991 = cap.q_in99991 + cap.q_out99991 + cap.q_data99991;
-	emit_stdout(format!(
-		"  DEBUG USE 99991.1: logup qry split: subtable_id = {} (in {} + out {} + data {}) + extra {} ; lookup_table(col1_share) = {}",
-		q_sub99991, cap.q_in99991, cap.q_out99991, cap.q_data99991,
-		cap.logup_qry_len.saturating_sub(q_sub99991), cap.q_tbl99991));
-	// DEBUG USE 99991.2: per-gadget data-column sizes (si_data_info), summing to
-	// the dominant `data` query count above. Aligned with the gadget names when
-	// the lengths match; else raw. Remove in batch with the 99991 probes.
-	{
-		let all_names: Vec<String> =
-			cap.gadgets.iter().map(|(n,_,_)| n.clone()).collect();
-		if cap.si_data99991.len() == all_names.len(){
-			let tags = tag_dups(&all_names);
-			let parts: Vec<String> = tags.iter().zip(cap.si_data99991.iter())
-				.filter(|(_,d)| **d > 0)
-				.map(|(n,d)| format!("{}={}", n, d)).collect();
-			emit_stdout(format!(
-				"  DEBUG USE 99991.2: per-gadget data (nonzero): {}",
-				parts.join("  ")));
-			// per-COMPONENT data subtotals (walk spans in gadget order), each
-			// shown as a multiple of the per-position word width (wss) so the
-			// scaling dimension is obvious at a glance.
-			let mut gi = 0usize;
-			let comp_parts: Vec<String> = spans.iter().map(|(cn, n)|{
-				let end = (gi + *n).min(cap.si_data99991.len());
-				let sub: usize = cap.si_data99991[gi.min(cap.si_data99991.len())..end]
-					.iter().sum();
-				gi = end;
-				let per_w = if cap.wss99991>0 { sub as f64 / cap.wss99991 as f64 }
-					else { 0.0 };
-				format!("{}={} (~{:.1}xWss)", cn, sub, per_w)
-			}).collect();
-			emit_stdout(format!(
-				"  DEBUG USE 99991.2: per-component data: {}", comp_parts.join("  ")));
-		} else {
-			emit_stdout(format!(
-				"  DEBUG USE 99991.2: per-gadget data (raw, len {} != gadgets {}): {:?}",
-				cap.si_data99991.len(), all_names.len(), cap.si_data99991));
-		}
-	}
-	// DEBUG USE 99991.5: statement anatomy (the non-data skeleton). Lets us see
-	// how `data` (the dominant query source) compares to the per-position word
-	// width and the failed/discharged/mtbl sections. Remove in batch with 99991.
-	emit_stdout(format!(
-		"  DEBUG USE 99991.5: stmt anatomy: data={} word_subseg(=max_word_len)={} \
-		 in={} out={} lookup_share={} failed_sigs={} discharged_sigs={} mtbl_sigs={}",
-		cap.q_data99991, cap.wss99991, cap.q_in99991, cap.q_out99991,
-		cap.q_tbl99991, cap.fss99991, cap.dss99991, cap.mss99991));
 	inner_total
 }
 
@@ -3909,15 +3827,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		// query length. Routed through the cost sink so it surfaces once, next
 		// to the framework line, as PERF 1012 in print_cost_report.
 		cost_capture_set_logup(cs.num_constraints()-nc, inv_hab22_left_size);
-		// DEBUG USE 99991.1: capture the qry-table split + lookup-table size.
-		cost_capture_set_qry99991(self.stmt_config.input_size,
-			self.stmt_config.output_size, self.stmt_config.data_size,
-			self.stmt_config.lookup_share_size,
-			&self.stmt_config.si_data_info,
-			self.stmt_config.word_subseg_size,
-			self.stmt_config.failed_sigs_size,
-			self.stmt_config.discharged_sigs_size,
-			self.stmt_config.mtbl_sigs_size);
 		//log(job_id, log_level, &format!("-- Breakdown of logup cases: n_case1: ({}, {:.2}%), n_case2: ({}, {:.2}%), n_case3: ({}, {:.2}%)", 
 		//n_case1, 100.0*(n_case1 as f64)/(n_total as f64), n_case2, 100.0*(n_case2 as f64)/(n_total as f64), n_case3, 100.0*(n_case3 as f64)/(n_total as f64)
 		//));

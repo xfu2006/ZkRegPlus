@@ -29671,9 +29671,16 @@ Goal 2. continue to adjust scale_data
 	[d] looks like early termination! why?
 	[e] fixed but 2 rule circuit size is STILL TOO BIG!
 	[f] add more probes to analyze the last component why it's so big?
-	[g]
+	[g] issues solved. even if 1 sig, the bottom line is 10M because
+		2 ACDFAs, 3 columns each (state, id, transition).
+		Each needs to be chcked against the table -> resulting
+		in 17 columns.
+	[h] rebuild and deploy to server
 Goal 3. Writing
 	[a] last two paragraphs of 7.4
+	[b] polish
+	[c] start 7.5
+	[d]
 
 ----- ACTIVE GOALS -----
 Goal FINAL1. start data collection on GCP
