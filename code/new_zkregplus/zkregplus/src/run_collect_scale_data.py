@@ -2,36 +2,31 @@
 """Run collect_scale_data (§7.5 Q4 regex-set scalability) in RELEASE mode and
 pack the per-round logs as a single best-ratio tgz for gen_scale.py.
 
-collect_scale_data(base_share_pct, num_rounds) keeps the corpus FIXED (the
-difficult gdb file) and sweeps the rule set: round r uses pct = r*BASE_SHARE_PCT
-percent of the rules (modulo-100 stratified, strict nested supersets). It
-REBUILDS the DB from each subset into the isolated data/cache/scale_data cache
-and runs folding-only. Each round is bracketed on stdout with
-    ==== SCALE ROUND BEGIN pct=<P> ... ====   ...   ==== SCALE ROUND END pct=<P> ====
+collect_scale_data(counts) keeps the corpus FIXED (the difficult gdb file by
+default; override with ZKR_SCALE_WORD) and sweeps the rule set: each round folds
+the first `count` rules of a FIXED pseudo-random permutation (strict nested
+supersets). The sweep counts are owned by the Rust const SCALE_COUNTS in
+test_collect_scale_data -- NOT set here. It REBUILDS the DB from each subset into
+the isolated data/cache/scale_data cache and runs probe-then-fold. Each round is
+bracketed on stdout with
+    ==== SCALE ROUND BEGIN count=<N> ... ====   ...   ==== SCALE ROUND END count=<N> ====
 We capture the whole stdout, then SPLIT it on those markers into per-round
-/tmp/bora/scale/log_<pct>.txt files (COST GRAND TOTAL is stdout-only, so the
+/tmp/bora/scale/log_<count>.txt files (COST GRAND TOTAL is stdout-only, so the
 per-job log files are not enough).
 
 Output bundle (ALWAYS written, even on crash/panic/non-zero exit, so a partial
 run is still analyzable):
-    /tmp/bora/scale_data.tgz
-      -> log_<pct>.txt.tgz  (one per completed round, gzip level 9)
-           -> log_<pct>.txt
+    /tmp/bora/scale_data_<word>.tgz
+      -> log_<count>.txt.tgz  (one per completed round, gzip level 9)
+           -> log_<count>.txt
 This is exactly the structure gen_scale.py expects (just point its BUNDLE at
-/tmp/bora/scale_data.tgz).
+/tmp/bora/scale_data_<word>.tgz).
 
 Env:  ZKR_VM_MAX_MAP_COUNT  target vm.max_map_count (default 1G; 0 skips).
 """
 import os, sys, re, subprocess, time, datetime, tarfile, io, platform
 
 # ----------------------------------------------------------------------------
-# One knob: the sweep RAW SIG COUNTS -- ASCENDING, DISTINCT, each >= 1 and
-# <= rule total (38875). Each round folds the first `count` rules of a FIXED
-# pseudo-random permutation of the rule set, so rounds are nested supersets.
-# 777 ~= 2%, 1555 ~= 4% of the 38875-rule ClamAV set.
-# ----------------------------------------------------------------------------
-VEC_COUNT = [777, 1555]
-
 VMA_TARGET = int(os.environ.get("ZKR_VM_MAX_MAP_COUNT", "1073741824"))  # 0=skip
 
 HERE = os.path.dirname(os.path.abspath(__file__))          # zkregplus/src
@@ -213,7 +208,6 @@ def main():
     env = dict(os.environ)
     env.setdefault("RUSTFLAGS", "-C link-args=-fuse-ld=lld -Awarnings")
     env.setdefault("ZKR_DC_THREADS", "8")   # determine_config probe threads
-    env["ZKR_SCALE_COUNTS"] = ",".join(str(c) for c in VEC_COUNT)
 
     time_prefix = ["/usr/bin/time", "-v"] if os.path.exists("/usr/bin/time") \
         else []
@@ -222,8 +216,9 @@ def main():
         "--exact", "--nocapture"]
 
     print("[run_scale] REPO   =", REPO)
-    print("[run_scale] sweep  = counts %s rules of ruleset (nested supersets)"
-          % VEC_COUNT)
+    print("[run_scale] sweep  = counts owned by Rust const SCALE_COUNTS in "
+          "test_collect_scale_data (nested supersets); rounds parsed from "
+          "count= markers in the log")
     print("[run_scale] LOG    =", log)
     print("[run_scale] cmd    =", " ".join(cmd))
     print("[run_scale] bundle =", BUNDLE, "(packed even on crash)")

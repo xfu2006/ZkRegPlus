@@ -1,7 +1,6 @@
 use utils::consts::{read_global_config, B_DEBUG, PROBE_CHUNK_ID};
 use folding_schemes::folding::foldpot::utils::B_DEBUG2;
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicUsize, Ordering};
 /* Created 05/06/2025
    Implementation initially completed 06/11/2025
    Further improvement to cut cost and completed: 06/26/2025
@@ -74,14 +73,6 @@ use folding_schemes::{
 	}
 };
 use std::any::Any;
-
-// DEBUG USE 64300: process-wide counters for the est_fwd_rows_one vs real
-// StepFwdPrf queue check (gated by ZKR_PROBE_64300). exact = est==real;
-// ok10 = conservative <=10% over; BAD = under, or over by >10%.
-static P64_CHECKED: AtomicUsize = AtomicUsize::new(0);
-static P64_EXACT: AtomicUsize = AtomicUsize::new(0);
-static P64_OK10: AtomicUsize = AtomicUsize::new(0);
-static P64_BAD: AtomicUsize = AtomicUsize::new(0);
 
 // -----------------------------------------------
 //		Structs
@@ -682,30 +673,6 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 				&subsig_rec.vec_pm_bounds
 			};
 			let items =  self.store_items.get(subsig).unwrap();
-			// DEBUG USE 69200.c.* gate (circuit side). Decodes
-			// sig_id via the current_bit_parts bit-shift.
-			let (_69200_p1, _69200_p2) =
-				utils::consts::current_bit_parts();
-			let _69200_sig_id =
-				(u_subsig as u64) >> _69200_p2;
-			let _69200_ss_idx =
-				(u_subsig as u64) & ((1u64<<_69200_p2)-1);
-			let probe_69200 =
-				std::env::var("ZKR_PROBE_69200").is_ok()
-				&& (_69200_sig_id == 34555
-					|| _69200_sig_id == 35355
-					|| (_69200_sig_id == 5
-						&& _69200_ss_idx == 2));
-			if probe_69200 {
-				println!("DEBUG USE 69200.c.bounds: \
-					subsig={} sig_id={} ss_idx={} \
-					igc={} max_steps={} items.len={} \
-					pm_bounds={:?}",
-					u_subsig, _69200_sig_id,
-					_69200_ss_idx, self.b_igc,
-					max_steps, items.len(),
-					&subsig_rec.vec_pm_bounds);
-			}
 			assert!(max_steps+1>=items.len()); //this is not capacity err
 							//just check validity of subsig_store
 			let init_item = items[0].clone();
@@ -716,9 +683,6 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 			let mut vec_to_add = vec![];
 			let mut vec_res = vec![init_item];
 			let mut vec_fwd_prf = vec![];
-			// DEBUG USE 64300: validate fwd-prf row estimate vs real.
-			let (mut p64_actual, mut p64_win, mut p64_nitems)
-				= (0usize, 0usize, 0usize);
 
 			//2.3 propgate for each layer (note: stop when there are NO MORE
 			// to proess - thus, we do not NECESSARILY have to extend to full
@@ -762,9 +726,6 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 						gen_forward_prf(dst_pat, f_rg_start, f_rg_end,
 							j, &locs_available, b_backward);
 					total_added += new_to_add_item.locs.len();
-					p64_actual += fwd_prf_item.vec_pat_id.len();
-					p64_win += new_to_add_item.locs.len();
-					p64_nitems += 1;
 					let mut new_locs = new_to_add_item.locs.clone();
 					to_add_item = if to_add_item.is_none(){
 						Some(new_to_add_item)
@@ -773,44 +734,7 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 					next_locs.append(&mut new_locs);
 					vec_fwd_prf.push(fwd_prf_item);
 				}
-				// DEBUG USE 69200.c.step: per-iteration trace
-				// of locs_available (witness positions) and
-				// next_locs (what advanced forward).
-				if probe_69200 {
-					let avail_n = locs_available.len();
-					let avail_head: Vec<(usize,usize)> =
-						locs_available.iter().take(8)
-						.map(|(a,b)| (
-							field_to_usize(a),
-							field_to_usize(b)))
-						.collect();
-					let next_head: Vec<usize> =
-						next_locs.iter().take(8)
-						.map(|x| field_to_usize(x))
-						.collect();
-					println!("DEBUG USE 69200.c.step: \
-						subsig={} step={} dst_pat={} \
-						rg=({},{}) prev.n={} \
-						avail.n={} avail.head={:?} \
-						added={} next.n={} \
-						next.head={:?}",
-						u_subsig, i,
-						field_to_usize(&dst_pat),
-						rg_start, rg_end,
-						vec_res[i-1].locs.len(),
-						avail_n, avail_head,
-						total_added,
-						next_locs.len(), next_head);
-				}
 				if total_added==0 && i>=items.len() {
-					if probe_69200 {
-						println!("DEBUG USE \
-							69200.c.break: subsig={} \
-							step={} items.len={} \
-							reason=added0_and_past_items",
-							u_subsig, i,
-							items.len());
-					}
 					break;
 				};
 
@@ -842,74 +766,6 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 				cur_q_locs.sort();
 				cur_q_item.locs = cur_q_locs;
 				vec_res.push(cur_q_item);
-			}
-			//Final dump: full vec_res (per-step item) for SSN.B1
-			//subsig=2 so we can see the SSN-step entry too.
-			if probe_69200 {
-				for (k, it) in vec_res.iter().enumerate() {
-					let step = field_to_usize(&it.step);
-					let pat = field_to_usize(&it.pat);
-					let rg_s = field_to_usize(&it.rg_start);
-					let rg_e = field_to_usize(&it.rg_end);
-					let n_real: usize = it.locs.iter()
-						.filter(|l| !l.is_zero()).count();
-					let locs_head: Vec<usize> = it.locs.iter()
-						.filter(|l| !l.is_zero())
-						.take(20)
-						.map(|l| field_to_usize(l))
-						.collect();
-					println!("DEBUG USE 69200.c.final \
-						subsig={} k={} step={} pat={} \
-						rg=({},{}) n_locs_real={} head20={:?}",
-						u_subsig, k, step, pat,
-						rg_s, rg_e, n_real, locs_head);
-				}
-			}
-			// DEBUG USE 64300: verify est_fwd_rows_one vs the REAL built
-			// StepFwdPrf queue, per subsig, at the production gadget site.
-			// est = e_win + 2*e_n (the function's prediction); real = the
-			// actual rows. Aggregate into process-wide counters (this runs in
-			// a par_iter, so use atomics) and only print deviations + a
-			// periodic tally -- so a full_dlp_sample server run yields a
-			// readable verdict, not millions of lines. exact = est==real;
-			// ok10 = real<=est<=1.1*real (conservative <=10%); BAD otherwise.
-			if std::env::var("ZKR_PROBE_64300").is_ok() {
-				let item_locs: Vec<Vec<usize>> = items.iter()
-					.map(|it| it.locs.iter().map(field_to_usize)
-						.collect()).collect();
-				let loc_map: std::collections::HashMap<usize, Vec<usize>> =
-					hm_loc.iter().map(|(k, v)| {
-						let mut ls: Vec<usize> = v.iter()
-							.map(|x| field_to_usize(&x.1)).collect();
-						ls.sort();
-						(field_to_usize(k), ls)
-					}).collect();
-				let (e_win, e_n) = est_fwd_rows_one(pm_bounds,
-					subsig_rec.is_backward, &item_locs, &loc_map, max_val);
-				let est = e_win + 2 * e_n;
-				let real = p64_actual;
-				let c = P64_CHECKED.fetch_add(1, Ordering::Relaxed) + 1;
-				if c == 1 {
-					println!("DEBUG USE 64300.START: fwd-queue \
-						est-vs-real check active");
-				}
-				if est == real {
-					P64_EXACT.fetch_add(1, Ordering::Relaxed);
-				} else if est >= real && est * 10 <= real * 11 {
-					P64_OK10.fetch_add(1, Ordering::Relaxed);
-				} else {
-					let b = P64_BAD.fetch_add(1, Ordering::Relaxed) + 1;
-					println!("DEBUG USE 64300.BAD #{}: subsig={} est={} \
-						(win={} n={}) real={} (win={} n={})", b, u_subsig,
-						est, e_win, e_n, real, p64_win, p64_nitems);
-				}
-				if c % 20000 == 0 {
-					println!("DEBUG USE 64300.TALLY: checked={} exact={} \
-						ok<=10%={} BAD={}", c,
-						P64_EXACT.load(Ordering::Relaxed),
-						P64_OK10.load(Ordering::Relaxed),
-						P64_BAD.load(Ordering::Relaxed));
-				}
 			}
 			((subsig.clone(), vec_to_add),
 			 (subsig.clone(), vec_res),
@@ -1117,43 +973,6 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 			assert!(new_vec_res.len()==
 				field_to_usize(&new_vec_res[new_vec_res.len()-1].step)+1);
 
-			//Post-backward dump for SSN.B1 subsig=2.
-			let (_p1_bwd, _p2_bwd) =
-				utils::consts::current_bit_parts();
-			let _sid_bwd = (u_subsig as u64) >> _p2_bwd;
-			let _ssidx_bwd = (u_subsig as u64)
-				& ((1u64<<_p2_bwd)-1);
-			let probe_bwd =
-				std::env::var("ZKR_PROBE_69200").is_ok()
-				&& _sid_bwd == 5 && _ssidx_bwd == 2;
-			if probe_bwd {
-				println!("DEBUG USE 69200.c.bwd_head \
-					subsig={} steps={} real_steps={} \
-					b_added_step={} max_steps={} \
-					n_to_del={} n_bwd_prf={} new_vec_res.len={}",
-					u_subsig, steps, real_steps,
-					b_added_step, max_steps,
-					vec_to_del.len(), vec_bwd_prf.len(),
-					new_vec_res.len());
-				for (k, it) in new_vec_res.iter().enumerate() {
-					let step = field_to_usize(&it.step);
-					let pat = field_to_usize(&it.pat);
-					let rg_s = field_to_usize(&it.rg_start);
-					let rg_e = field_to_usize(&it.rg_end);
-					let n_real: usize = it.locs.iter()
-						.filter(|l| !l.is_zero()).count();
-					let head: Vec<usize> = it.locs.iter()
-						.filter(|l| !l.is_zero())
-						.take(20)
-						.map(|l| field_to_usize(l))
-						.collect();
-					println!("DEBUG USE 69200.c.bwd_res \
-						subsig={} k={} step={} pat={} \
-						rg=({},{}) n_real={} head={:?}",
-						u_subsig, k, step, pat,
-						rg_s, rg_e, n_real, head);
-				}
-			}
 
 			((subsig.clone(), vec_to_del),
 				(subsig.clone(),new_vec_res),
@@ -1305,62 +1124,8 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 
 		//3. consruct container
 		let (n, n_pat,_n_trace) = Self::vec_size(&self.q_type, &self.capacity);
-		if B_DEBUG2 { println!("DEBUG USE 6901.8: step queue: {}, b_igc: {} usage: {}", name, self.b_igc, (vec_encoded.len() as f32)/(n as f32)); }
 		// TEMP (revert later): ungated step-queue usage.
-		if read_global_config().b_show_queue_saturated { println!("DEBUG USE 6901.8: step queue usage: {:.4} b_igc: {} ({})", (vec_encoded.len() as f32)/(n as f32), self.b_igc, name); }
-		if std::env::var("ZKR_PROBE_64008").is_ok() {
-			use ark_ff::PrimeField as _ArkPF;
-			let f_to_u64 = |x: &F| -> u64 {
-				x.into_bigint().as_ref()[0]
-			};
-			let chunk_id = PROBE_CHUNK_ID
-				.load(Ordering::Relaxed);
-			//Per-chunk dump for SSN.B1, subsig=2 (encoded=5122).
-			let target_subsig = F::from(5122u32);
-			let n_subsigs_present = self.store_items.len();
-			if let Some(items) = self.store_items
-				.get(&target_subsig) {
-				println!("DEBUG USE 64008.head chunk={} q={} \
-					b_igc={} subsig=5122 n_items={} \
-					n_subsigs_in_store={}",
-					chunk_id, name, self.b_igc,
-					items.len(), n_subsigs_present);
-				for it in items {
-					let step = f_to_u64(&it.step);
-					let pat = f_to_u64(&it.pat);
-					let rg_s = f_to_u64(&it.rg_start);
-					let rg_e = f_to_u64(&it.rg_end);
-					let locs: Vec<u64> = it.locs.iter()
-						.filter(|l| !l.is_zero())
-						.map(|l| f_to_u64(l)).collect();
-					println!("DEBUG USE 64008.row chunk={} \
-						q={} step={} pat={} rg=({},{}) \
-						n_locs={} locs={:?}",
-						chunk_id, name, step, pat,
-						rg_s, rg_e, locs.len(), locs);
-				}
-			}
-		}
-		if std::env::var("ZKR_PROBE_64005").is_ok()
-			&& n < vec_encoded.len()+1 {
-			let mut hist: std::collections::BTreeMap<String, usize>
-				= std::collections::BTreeMap::new();
-			for s in &vec_subsigs {
-				*hist.entry(format!("{}", s)).or_default() += 1;
-			}
-			let mut top: Vec<(String, usize)> = hist.into_iter()
-				.collect();
-			top.sort_by(|a,b| b.1.cmp(&a.1));
-			let n_top = top.len().min(10);
-			println!("DEBUG USE 64005.0 q={} b_igc={} \
-				distinct_subsigs={} total_entries={} top10:",
-				name, self.b_igc, top.len(),
-				vec_subsigs.len());
-			for (i,(s,c)) in top.iter().take(n_top).enumerate() {
-				println!("DEBUG USE 64005.{} q={} subsig={} count={}",
-					i, name, s, c);
-			}
-		}
+		if B_DEBUG2 || read_global_config().b_show_queue_saturated { println!("DEBUG USE 6901.8: step queue usage: {:.4} b_igc: {} ({}) usage_full: {}", (vec_encoded.len() as f32)/(n as f32), self.b_igc, name, (vec_encoded.len() as f32)/(n as f32)); }
 		if n<vec_encoded.len()+1{
 			let n = if n==0 {1} else {n};
 			if n_pat==n{
@@ -1725,7 +1490,7 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 		// how many subsigs are alive, and how positions distribute across them
 		// (breadth = many subsigs x few pos => genuinely required; depth = few
 		// subsigs x many pos => prunable). chunk id via PROBE_CHUNK_ID.
-		if utils::consts::SCALE_DUMP_FWD.load(std::sync::atomic::Ordering::Relaxed) {
+		if v2d[0].len() > 0 && utils::consts::SCALE_DUMP_FWD.load(std::sync::atomic::Ordering::Relaxed) {
 			let chunk = utils::consts::PROBE_CHUNK_ID
 				.load(std::sync::atomic::Ordering::Relaxed);
 			// FULL queue membership: (global subsig id, slot consumption) for
@@ -1753,28 +1518,6 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 			if self.capacity.b_aggressive {
 				let new_prod = (v2d[0].len()+1) * 10000 * 100 * 100
 					/ (self.capacity.max_nibble_len * FWD_COST).max(1) + 1;
-				// DEBUG USE 64904.1: gadget-actual fwd-queue demand at
-				// the over-cap chunk vs the provisioned cap, plus the
-				// per-subsig shape, so we can see whether determine's
-				// fwd predictor (64901) undercounts and on which axis.
-				if std::env::var("ZKR_PROBE_CAPERR").is_ok() {
-					let n_sub = self.subsigs.len();
-					let per_sub_max = self.subsigs.iter()
-						.map(|ss| self.store_items.get(ss)
-							.map(|v| v.iter()
-								.map(|it| it.vec_pat_id.len())
-								.sum::<usize>())
-							.unwrap_or(0))
-						.max().unwrap_or(0);
-					let actual = v2d[0].len();
-					println!("DEBUG USE 64904.1: StepFwdPrf \
-OVER-CAP name={} b_igc={} actual_fwd={} cap={} \
-pred_prod={} req_prod={} n_subsigs={} \
-max_subsig_fwd={}",
-						name, self.b_igc, actual, n,
-						self.capacity.prod_pats_expansion,
-						new_prod, n_sub, per_sub_max);
-				}
 				return Err(Error::CapErr(vec![(format!("dis_adv::prod_pats_expansion, StepFwdPrf b_igc: {}", self.b_igc), new_prod)]));
 			}
 			//back-solve perc_pats_expansion_rate from new vec_size():
@@ -2118,9 +1861,8 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 			v_src_min_loc, //id 4
 			v_prev_encoded, v_loc_to_del, v_src_subsigs.clone()];
 		let n = self.vec_size();
-		if B_DEBUG2 { println!("DEBUG USE 6901.8: StepBwdPrf: {}, b_igc: {} usage: {}", name, self.b_igc, (v2d[0].len() as f32)/(n as f32)); }
 		// TEMP (revert later): ungated backward-queue usage.
-		if read_global_config().b_show_queue_saturated { println!("DEBUG USE 6901.8: StepBwdPrf usage: {:.4} b_igc: {} ({})", (v2d[0].len() as f32)/(n as f32), self.b_igc, name); }
+		if B_DEBUG2 || read_global_config().b_show_queue_saturated { println!("DEBUG USE 6901.8: StepBwdPrf usage: {:.4} b_igc: {} ({}) usage_full: {}", (v2d[0].len() as f32)/(n as f32), self.b_igc, name, (v2d[0].len() as f32)/(n as f32)); }
 		if n<v2d[0].len()+1{
 			let new_val= (v2d[0].len()+1)*10000 * 100 * 100 / (self.capacity.max_nibble_len*self.capacity.basis_pats_in_trace * ADD_DEL_COST) + 1;
 			if b_debug_capacity{
@@ -5153,58 +4895,27 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for DischargeAdvGadget<F>{
 		let default_min_loc = &last_loc + &new_const_var(&cs, F::one());
 		t9901.stop();
 
-		// DEBUG USE 64900.5/.6 + 64902.1 (ZKR_PROBE_CSBREAK / ZKR_PROBE_SIZES):
-		// split discharge cs into forward-queue vs aggressive-acc (or backward-
-		// queue) sub-validators, plus the capacity-driven buffer lengths.
-		let b_csbreak = std::env::var("ZKR_PROBE_CSBREAK").is_ok()
-			|| std::env::var("ZKR_PROBE_SIZES").is_ok();
-		// DEBUG USE 64902.1: caps + derived buffer lengths that drive the cs
-		// below. sq_size_trace_fwdprf == StepFwdPrf forward-proof buffer (the
-		// 61% term); failed_acc == FailedSubsigAcc universe floor.
-		if b_csbreak {
-			let (sq_res, sq_pat, sq_trace) =
-				StepQueue::<F>::vec_size(&StepQueueType::ResSmall,
-					&self.capacity);
-			let acc = FailedSubsigAcc::<F>::acc_size(&self.capacity);
-			let c = &self.capacity;
-			println!("DEBUG USE 64902.1: discharge[igc={}] caps{{prod={} \
-				subsigs={} universe={} avg_active={} basis_pats={} perc={} \
-				max_nib={}}} sizes{{sq_res={} sq_size_pat={} \
-				sq_size_trace_fwdprf={} failed_acc={}}}",
-				self.b_igc, c.prod_pats_expansion, c.subsigs,
-				c.universe_subsigs, c.avg_active_pats_per_subsig,
-				c.basis_pats_in_trace, c.perc_pats_expansion_rate,
-				c.max_nibble_len, sq_res, sq_pat, sq_trace, acc);
-		}
 		//3. validate the forward step queue
 		// COST: 59*n1
 		let forward_step_queue= stmt.get_container("fwd_steps_queue")?;
-		let nc_fwd = cs.num_constraints();
 		let default_min_loc= self.validate_forward_step_queue(
 			&forward_step_queue.lock().unwrap(), r1.clone(), r2.clone(),
 			cs.clone(), default_min_loc, word_id.clone(), subseg_id.clone())?;
-		if b_csbreak { println!("DEBUG USE 64900.5: discharge[igc={}] \
-			fwd_queue cs: {}", self.b_igc, cs.num_constraints()-nc_fwd); }
 
 		//4. AGGRESSIVE = forward-only: no backward step-queue exists; validate
 		//the failed_subsigs accumulator instead (completeness + carry-in
 		//logups). Non-aggressive validates the backward step queue.
-		let nc_acc = cs.num_constraints();
 		if self.capacity.b_aggressive {
 			self.validate_aggressive_acc(&stmt,
 				&forward_step_queue.lock().unwrap(),
 				r1.clone(), cs.clone(),
 				word_id.clone(), subseg_id.clone())?;
-			if b_csbreak { println!("DEBUG USE 64900.6: discharge[igc={}] \
-				aggr_acc cs: {}", self.b_igc, cs.num_constraints()-nc_acc); }
 		} else {
 			let backward_step_queue= stmt.get_container("bwd_steps_queue")?;
 			self.validate_backward_step_queue(&forward_step_queue.lock().unwrap(),
 				&backward_step_queue.lock().unwrap(),
 				r1.clone(), r2.clone(), cs.clone(), default_min_loc,
 				word_id.clone(), subseg_id.clone())?;
-			if b_csbreak { println!("DEBUG USE 64900.6: discharge[igc={}] \
-				bwd_queue cs: {}", self.b_igc, cs.num_constraints()-nc_acc); }
 		}
 
 		let b_perf = false;

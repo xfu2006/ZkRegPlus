@@ -29665,18 +29665,22 @@ Goal 2. continue to adjust scale_data
 		-> analyze the distribution of raw blocks and subsigs adding new slots
 			in step queue (waiting data0
 	[b] analyze the 2% against 4%: questin: why PEAK is not increased much?
+		-> ok, report writtin
+	[c] prepare the final code for collecting data
+	[d] upload to server and start collection
 
+----- ACTIVE GOALS -----
 Goal FINAL1. start data collection on GCP
 	[a] server2 -> full_dna (11:30am->6:45pm: 7.25hr) jetstream2: 5.2 hrs.
 	[b] server2 -> full_clam (6:45pm 06/24 -> 
-	[c] server1 -> full_dlp ??
+	[c] server1 -> full_dlp (11:00 06/25 -> 
 	[d] server2:
 		eval_reef??
 		eval_zombie??
 Goal FINAL2. start data collection on Jetstream 
 	[a] small -> scale_data (??
 	[b] large:
-		[b1] full_dlp??
+		[b1] full_dlp (11:00- 06/25 -> 
 		[b2] full_clam??
 		[b3] reef_eval
 		[b4] zombie_eval

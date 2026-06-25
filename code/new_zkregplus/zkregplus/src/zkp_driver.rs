@@ -5253,10 +5253,9 @@ fail: {} ({:.4}%)",
 
 	#[test]
 	pub fn test_collect_scale_data() {
-		let counts: Vec<usize> = std::env::var("ZKR_SCALE_COUNTS").ok()
-			.map(|s| s.split(',')
-				.filter_map(|x| x.trim().parse().ok()).collect())
-			.unwrap_or_else(|| vec![777usize, 1555usize]);
+		// Scale sweep: powers of two, last point = full ruleset.
+		let mut counts: Vec<usize> = (1..=15).map(|k| 1usize << k).collect(); // 2..32768
+		counts.push(38875); // full ClamAV ruleset (n_rules of current main.dat)
 		println!("collect_scale_data: counts={:?}", counts);
 		collect_scale_data(counts);
 	}
