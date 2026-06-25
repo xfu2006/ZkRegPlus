@@ -990,9 +990,9 @@ where C: CurveGroup<ScalarField=F>,
 				// foldpot pad) to sample_words, so the REAL word count is
 				// len-1; <=2 means a single real word -> exact -> 0% margin.
 				let margin_pct = if sample_words.len() <= 2 { 0 } else { 10 };
-				let with_margin = |v: usize, cap: usize|
+				let with_margin = |v: usize, lo: usize, cap: usize|
 					((v * (100 + margin_pct) + 99) / 100)
-						.clamp(min_perc, cap);
+						.clamp(lo, cap);
 				let (mfwd_cs, mfwd_igc) =
 					(utils::consts::get_fwd(false), utils::consts::get_fwd(true));
 				let (macc_cs, macc_igc) =
@@ -1002,10 +1002,20 @@ where C: CurveGroup<ScalarField=F>,
 				use crate::gadgets::discharge_adv::backsolve_perc;
 				// cs arm: smallest perc in [min_perc, old_cs] that still probes
 				// Ok; seed the first probe at the back-solve of measured fill.
+				// Dummy-sentinel floor (mirrors the aggressive pmin in
+				// determine_config_aggr): the final build always lays out a
+				// 1-subsig dummy whose +2N boundary rows need a non-empty
+				// forward queue, so perc must NOT tighten below the buffer that
+				// holds it -- even when the measured fill is 0. Without this the
+				// single-word scale run (margin 0) tightens down to min_perc and
+				// the fail-fast final build CapErrs on perc_pats_expansion_rate.
+				let pfloor = |bp: usize|
+					backsolve_perc(15, bp, chunk_len).max(min_perc);
 				{
-					let (mut lo, mut hi) = (min_perc, old_cs);
+					let lo_f = pfloor(p.basis_pats_in_trace);
+					let (mut lo, mut hi) = (lo_f, old_cs.max(lo_f));
 					let seed = backsolve_perc(mfwd_cs,
-						p.basis_pats_in_trace, chunk_len).clamp(min_perc, hi);
+						p.basis_pats_in_trace, chunk_len).clamp(lo_f, hi);
 					let mut next = if seed < hi { Some(seed) } else { None };
 					while lo < hi {
 						let mid = next.take().unwrap_or(lo + (hi - lo) / 2);
@@ -1013,13 +1023,15 @@ where C: CurveGroup<ScalarField=F>,
 						if matches!(run_probe(&p), Ok(Ok(_))) { hi = mid; }
 						else { lo = mid + 1; }
 					}
-					p.perc_pats_expansion_rate = with_margin(hi, old_cs);
+					p.perc_pats_expansion_rate =
+						with_margin(hi, lo_f, old_cs.max(lo_f));
 				}
 				// igc arm (cs perc now frozen at its tightened value).
 				{
-					let (mut lo, mut hi) = (min_perc, old_igc);
+					let lo_f = pfloor(p.basis_pats_in_trace_igc);
+					let (mut lo, mut hi) = (lo_f, old_igc.max(lo_f));
 					let seed = backsolve_perc(mfwd_igc,
-						p.basis_pats_in_trace_igc, chunk_len).clamp(min_perc, hi);
+						p.basis_pats_in_trace_igc, chunk_len).clamp(lo_f, hi);
 					let mut next = if seed < hi { Some(seed) } else { None };
 					while lo < hi {
 						let mid = next.take().unwrap_or(lo + (hi - lo) / 2);
@@ -1027,7 +1039,8 @@ where C: CurveGroup<ScalarField=F>,
 						if matches!(run_probe(&p), Ok(Ok(_))) { hi = mid; }
 						else { lo = mid + 1; }
 					}
-					p.perc_pats_expansion_rate_igc = with_margin(hi, old_igc);
+					p.perc_pats_expansion_rate_igc =
+						with_margin(hi, lo_f, old_igc.max(lo_f));
 				}
 				// avg-active-pats arms: size_pat = subsigs * avg_active is the
 				// perc-INDEPENDENT term of n = max(size_pat, size_trace). At LOW
@@ -5121,15 +5134,20 @@ fail: {} ({:.4}%)",
 		let basis_unique_states = 120;
 		let basis_acc_states = 2;
 		let basis_pats_in_trace = 4;
-		// igc arm kept at full-clamav (non-degenerate) values: unlike DNA,
-		// ClamAV has many case-insensitive patterns, so the igc forward queue
-		// must have room or its perc CapErr can't converge (req==current).
-		let basis_acc_states_igc = 750;
-		let basis_pats_in_trace_igc = 820;
+		// igc arm starts LOW like the cs arm (Option A): the old 750/820 pin
+		// was unreal for these subsets (measured igc acc=0, igc fill=0) and
+		// inflated FsmAdvGadget by ~0.8M/step. basis_acc/basis_pats start at
+		// the cs floors and bump UP per subset via fsm_adv CapErr; the forward
+		// queue's room is carried by perc_pats_expansion_rate_igc (FSM-free)
+		// instead of basis_pats_in_trace_igc (FSM-coupled). The earlier
+		// "perc CapErr can't converge" risk is covered by the dummy-sentinel
+		// pfloor added to the perc tightener above.
+		let basis_acc_states_igc = 2;
+		let basis_pats_in_trace_igc = 4;
 		let dfa_sigs = 2;
 		let dfa_subsigs = 2;
 		let perc_pats_expansion_rate = 104;
-		let perc_pats_expansion_rate_igc = 2;
+		let perc_pats_expansion_rate_igc = 104;
 
 		let init_cp_cap = CpCapacity{
 			max_word_len: max_word, basis_unique_states, subsigs,

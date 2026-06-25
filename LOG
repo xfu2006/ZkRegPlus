@@ -29668,6 +29668,7 @@ Goal 2. continue to adjust scale_data
 		-> ok, report writtin
 	[c] prepare the final code for collecting data
 	[d] upload to server and start collection
+	[d] looks like early termination!
 
 ----- ACTIVE GOALS -----
 Goal FINAL1. start data collection on GCP
@@ -29678,7 +29679,7 @@ Goal FINAL1. start data collection on GCP
 		eval_reef??
 		eval_zombie??
 Goal FINAL2. start data collection on Jetstream 
-	[a] small -> scale_data (??
+	[a] small -> scale_data (11:43AM 06/25 ->
 	[b] large:
 		[b1] full_dlp (11:00- 06/25 -> 
 		[b2] full_clam??
