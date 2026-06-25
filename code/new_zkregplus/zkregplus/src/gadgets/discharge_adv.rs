@@ -2395,6 +2395,88 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 			let acc_combo = Self::gen_failed_acc_combo(b_igc, &ct_fwd_sq,
 				&sq_fwd, subsig_store_info, capacity)?;
 			stmt_container.lock().unwrap().add_container(acc_combo);
+			//DEBUG USE 60934 (gated ZKR_PROBE_77317, segs 33/34/35 only):
+			//per-subsig forward-completion at the b_correct-failing cluster.
+			//acc_out (this chunk's discharge) only includes subsigs whose
+			//forward proof reached its FINAL step (max_item.step==num); empty
+			//acc_out at seg 33 => none reached final. This shows how far each
+			//subsig's forward scan advanced vs its total steps and the last
+			//loc reached vs last_loc (chunk end). REMOVE with b_correct harness.
+			if std::env::var("ZKR_PROBE_77317").is_ok()
+				&& (seg_id==33 || seg_id==34 || seg_id==35) {
+				//dec_ss maps the encoded subsig F back to (sig_id, subsig_id):
+				//sig_id confirms 890/891, subsig_id (0..99) picks which of the
+				//sig's 100 subsig patterns. Pairs with the per-step `pat` below.
+				use folding_schemes::folding::foldpot::utils
+					::probe_77319_decode_subsig as dec_ss;
+				let real: Vec<F> = sq_fwd.subsigs.iter()
+					.filter(|&&x| !x.is_zero()).cloned().collect();
+				let mut n_final = 0usize;
+				//(sig_id, subsig_id, max_step, num, last_loc_reached)
+				let mut stalled: Vec<(u64,u64,usize,usize,usize)> = vec![];
+				for &s in real.iter() {
+					let items = match sq_fwd.store_items.get(&s) {
+						Some(v) => v, None => continue };
+					let max_item = items.iter()
+						.max_by_key(|it| field_to_usize(&it.step));
+					let max_step = max_item
+						.map(|it| field_to_usize(&it.step)).unwrap_or(0);
+					let last_loc_reached = max_item
+						.and_then(|it| it.locs.last())
+						.map(|l| field_to_usize(l)).unwrap_or(0);
+					let num = subsig_store_info.subsig_to_steps
+						.get(&field_to_usize(&s))
+						.map(|r| r.vec_pm_bounds.len()).unwrap_or(0);
+					if num>0 && max_step==num { n_final += 1; }
+					else if stalled.len()<10 {
+						let (sig_id, ss_id) = dec_ss(&s);
+						stalled.push((sig_id, ss_id, max_step,
+							num, last_loc_reached));
+					}
+				}
+				utils::logger::emit_stdout(format!(
+					"DEBUG USE 60934.1: fwd-complete seg_id={} b_igc={} \
+					 n_subsigs={} n_reached_final={} n_stalled={} last_loc={}",
+					seg_id, b_igc, real.len(), n_final,
+					real.len().saturating_sub(n_final),
+					field_to_usize(&last_loc)));
+				utils::logger::emit_stdout(format!(
+					"DEBUG USE 60934.2: seg_id={} b_igc={} \
+					 stalled(sig_id,subsig_id,max_step,num,\
+					 last_loc_reached)={:?}",
+					seg_id, b_igc, stalled));
+				//60934.3: FULL forward step-queue dump -- every real subsig's
+				//per-step trace at segs 33/34/35, so the stalled queue (33) can
+				//be compared step-by-step against the completing ones (34/35).
+				//One line per subsig (sorted by id). REMOVE with the harness.
+				let mut sorted = real.clone();
+				sorted.sort_by_key(|x| field_to_usize(x));
+				for s in sorted.iter() {
+					let items = match sq_fwd.store_items.get(s) {
+						Some(v) => v, None => continue };
+					let trace: Vec<(usize,usize,usize,usize,usize,usize)>
+						= items.iter().map(|it| (
+							field_to_usize(&it.step),
+							field_to_usize(&it.pat),
+							field_to_usize(&it.rg_start),
+							field_to_usize(&it.rg_end),
+							it.locs.first().map(|l| field_to_usize(l))
+								.unwrap_or(0),
+							it.locs.last().map(|l| field_to_usize(l))
+								.unwrap_or(0))).collect();
+					let num = subsig_store_info.subsig_to_steps
+						.get(&field_to_usize(s))
+						.map(|r| r.vec_pm_bounds.len()).unwrap_or(0);
+					let (sig_id, ss_id) = dec_ss(s);
+					utils::logger::emit_stdout(format!(
+						"DEBUG USE 60934.3: seg_id={} b_igc={} subsig={} \
+						 sig_id={} subsig_id={} num={} \
+						 trace(step,pat,rg_start,rg_end,\
+						 loc_first,loc_last)={:?}",
+						seg_id, b_igc, field_to_usize(s),
+						sig_id, ss_id, num, trace));
+				}
+			}
 		} else {
 			let backward_step_queue = Self::gen_backward_steps_queue_combo(
 				b_igc, &sq_fwd, &ct_fwd_sq, subsig_store_info, default_min_loc,
