@@ -76,7 +76,20 @@ REPO = os.path.abspath(os.path.join(HERE, "..", ".."))     # new_zkregplus
 CFG_DIR = os.path.join(REPO, "data/paper_data/dlp/cfg/config")
 LOGS_DIR = os.path.join(REPO, "data/cache/logs")           # log_job_*.txt
 
-args = [a for a in sys.argv[1:] if not a.startswith("--")]
+# positional args = non-flag tokens, EXCLUDING the value consumed by a
+# space-form value flag (e.g. "--jobs 16" -> 16 must not become the runcfg).
+VALUE_FLAGS = {"--jobs", "--numa"}
+args, _skip = [], False
+for a in sys.argv[1:]:
+    if _skip:
+        _skip = False
+        continue
+    if a in VALUE_FLAGS:          # "--jobs 16" / "--numa off": consume value
+        _skip = True
+        continue
+    if a.startswith("--"):        # "--jobs=16", "--reset", "--dry-run", ...
+        continue
+    args.append(a)
 DRY = "--dry-run" in sys.argv
 RESET = "--reset" in sys.argv
 PROBE_RESET = "--probe-reset" in sys.argv     # 64600 reset-vs-cross perc est
@@ -93,6 +106,8 @@ NUMA = os.environ.get("ZKR_NUMA", "perjob")
 for a in sys.argv[1:]:
     if a.startswith("--numa="):
         NUMA = a.split("=", 1)[1]
+if "--numa" in sys.argv:                       # also accept "--numa P"
+    NUMA = sys.argv[sys.argv.index("--numa") + 1]
 
 runcfg_name = args[0] if args else "runcfg_full.json"
 RUNCFG = runcfg_name if os.path.isabs(runcfg_name) \
