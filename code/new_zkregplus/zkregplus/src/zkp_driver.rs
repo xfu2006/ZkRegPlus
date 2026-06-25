@@ -5094,7 +5094,7 @@ fail: {} ({:.4}%)",
 		// Option A: LOW floors so determine_config's CapErr back-solve derives
 		// each subset's real caps (it only bumps UP from the floor; a high
 		// floor pins every subset to full-clamav size -> flat curve + OOM).
-		get_global_config().min_subsigs = 64;
+		get_global_config().min_subsigs = 8;  // DEBUG USE 99991.3 (was 64): start subsigs low, let probe bump up
 		get_global_config().min_basis_unique_states = 100;
 		get_global_config().min_basis_acc_states = 2;
 		get_global_config().min_basis_pats_in_trace = 4;
@@ -5119,7 +5119,7 @@ fail: {} ({:.4}%)",
 		let set1 = "data/debug/full_clamav/config/";
 		let max_word = 512 * 8;
 		let sigs = 64;
-		let subsigs = 64;
+		let subsigs = 8;  // DEBUG USE 99991.3 (was 64): start subsigs low, probe bumps up per subset
 		let avg_pats_per_subsig = 8;
 		let avg_active_pats_per_subsig = 2;
 		let perc_comp_subsigs = 20;
@@ -5271,9 +5271,11 @@ fail: {} ({:.4}%)",
 
 	#[test]
 	pub fn test_collect_scale_data() {
-		// Scale sweep: powers of two, last point = full ruleset.
-		let mut counts: Vec<usize> = (1..=15).map(|k| 1usize << k).collect(); // 2..32768
-		counts.push(38875); // full ClamAV ruleset (n_rules of current main.dat)
+		// DEBUG USE 99991.4: small probe set; restore the powers-of-two sweep
+		// (the two commented lines) when done exploring.
+		let counts: Vec<usize> = vec![2, 4];
+		// let mut counts: Vec<usize> = (1..=15).map(|k| 1usize << k).collect(); // 2..32768
+		// counts.push(38875); // full ClamAV ruleset (n_rules of current main.dat)
 		println!("collect_scale_data: counts={:?}", counts);
 		collect_scale_data(counts);
 	}

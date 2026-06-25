@@ -424,6 +424,13 @@ pub struct CostCapture{
 	// the data-col sum is the proxy estimate. 0 if not recorded.
 	pub logup_qry_nc: usize,
 	pub logup_qry_len: usize,
+	// DEBUG USE 99991.1: logup query-table decomposition -- qry_len split into
+	// inter-module in/out buffers vs per-gadget data, plus the lookup-table
+	// (col1_share) size. Recorded once per round; remove in batch with 99991.
+	pub q_in99991: usize,
+	pub q_out99991: usize,
+	pub q_data99991: usize,
+	pub q_tbl99991: usize,
 }
 thread_local!{
 	static COST_SINK: std::cell::RefCell<Option<CostCapture>> =
@@ -433,7 +440,8 @@ thread_local!{
 pub fn cost_capture_begin(){
 	COST_SINK.with(|s| *s.borrow_mut() =
 		Some(CostCapture{entry_nc:0, end_nc:0, gadgets:vec![],
-			logup_qry_nc:0, logup_qry_len:0}));
+			logup_qry_nc:0, logup_qry_len:0,
+			q_in99991:0, q_out99991:0, q_data99991:0, q_tbl99991:0}));  // DEBUG USE 99991.1
 }
 /// Record the MEASURED logup query block cost (cs-delta) and query length.
 /// Only takes effect while the sink is armed (the preprocess COST run), so it
@@ -441,6 +449,13 @@ pub fn cost_capture_begin(){
 fn cost_capture_set_logup(nc: usize, qlen: usize){
 	COST_SINK.with(|s| if let Some(c)=s.borrow_mut().as_mut(){
 		c.logup_qry_nc = nc; c.logup_qry_len = qlen; });
+}
+/// DEBUG USE 99991.1: record the logup query-table split (input/output/data
+/// buffers) and the lookup-table (col1_share) size. Remove in batch with 99991.
+fn cost_capture_set_qry99991(q_in: usize, q_out: usize, q_data: usize, q_tbl: usize){
+	COST_SINK.with(|s| if let Some(c)=s.borrow_mut().as_mut(){
+		c.q_in99991=q_in; c.q_out99991=q_out;
+		c.q_data99991=q_data; c.q_tbl99991=q_tbl; });
 }
 /// Disarm and return the collected capture (None if not armed).
 pub fn cost_capture_take() -> Option<CostCapture>{
@@ -514,6 +529,15 @@ pub fn print_cost_report(label: &str, cap: &CostCapture,
 	emit_stdout(format!(
 		"  PERF 1012: logup query cost (measured) = {}   qry_len = {}",
 		cap.logup_qry_nc, cap.logup_qry_len));
+	// DEBUG USE 99991.1: logup qry_len decomposition. qry_len (PERF 1012) =
+	// subtable_id (input+output+data) + extra_var_size. Shows how much of the
+	// dominant logup block is inter-module I/O buffers vs per-gadget data, plus
+	// the lookup-table (col1_share) size. Remove in batch with the 99991 probes.
+	let q_sub99991 = cap.q_in99991 + cap.q_out99991 + cap.q_data99991;
+	emit_stdout(format!(
+		"  DEBUG USE 99991.1: logup qry split: subtable_id = {} (in {} + out {} + data {}) + extra {} ; lookup_table(col1_share) = {}",
+		q_sub99991, cap.q_in99991, cap.q_out99991, cap.q_data99991,
+		cap.logup_qry_len.saturating_sub(q_sub99991), cap.q_tbl99991));
 	inner_total
 }
 
@@ -3827,6 +3851,10 @@ where 	C: CurveGroup<ScalarField=F>,
 		// query length. Routed through the cost sink so it surfaces once, next
 		// to the framework line, as PERF 1012 in print_cost_report.
 		cost_capture_set_logup(cs.num_constraints()-nc, inv_hab22_left_size);
+		// DEBUG USE 99991.1: capture the qry-table split + lookup-table size.
+		cost_capture_set_qry99991(self.stmt_config.input_size,
+			self.stmt_config.output_size, self.stmt_config.data_size,
+			self.stmt_config.lookup_share_size);
 		//log(job_id, log_level, &format!("-- Breakdown of logup cases: n_case1: ({}, {:.2}%), n_case2: ({}, {:.2}%), n_case3: ({}, {:.2}%)", 
 		//n_case1, 100.0*(n_case1 as f64)/(n_total as f64), n_case2, 100.0*(n_case2 as f64)/(n_total as f64), n_case3, 100.0*(n_case3 as f64)/(n_total as f64)
 		//));

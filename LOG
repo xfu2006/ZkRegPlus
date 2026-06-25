@@ -29668,7 +29668,11 @@ Goal 2. continue to adjust scale_data
 		-> ok, report writtin
 	[c] prepare the final code for collecting data
 	[d] upload to server and start collection
-	[d] looks like early termination!
+	[d] looks like early termination! why?
+	[e] fixed but 2 rule circuit size is STILL TOO BIG!
+	[f] -> anlyze
+Goal 3. Writing
+	[a] last two paragraphs of 7.4
 
 ----- ACTIVE GOALS -----
 Goal FINAL1. start data collection on GCP
