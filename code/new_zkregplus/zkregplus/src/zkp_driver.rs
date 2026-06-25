@@ -4587,6 +4587,11 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		let num_jobs = rc.num_jobs.max(1);
 		let l = utils::logger::LOG1;
 		let mut gt = utils::timer::Timer::new();
+		// NUMA (ZKR_NUMA=perjob): interleave the shared DB/ACDFA across nodes so
+		// the per-job worker threads (pinned in driver.rs) read it with balanced
+		// bandwidth instead of hammering one remote node. No-op unless multi-node
+		// + flag set. See folding_schemes::folding::foldpot::numa.
+		folding_schemes::folding::foldpot::numa::set_interleave_all();
 		//aggressive CS-only, estimate-on (mirror sample). Full-snark run:
 		//b_light_test=false + b_folding_only=false so a SNARK is emitted,
 		//b_one_proof=true so only Job 0 proves (ONE proof for all jobs).

@@ -3130,6 +3130,9 @@ where
 	let n_jobs_total = jobs.len();
 
 	jobs.into_par_iter().enumerate().for_each(|(job_id, job)| {
+		// NUMA (ZKR_NUMA=perjob): pin this job's worker thread + its per-word
+		// allocations to node (job_id % n_nodes). No-op unless multi-node + flag.
+		super::numa::bind_thread_to_node(job_id);
 		let res = (|| -> Result<(), Error> {
                         let (pk_main_owned, vk_main_owned);
                         let (pk_cp_owned, vk_cp_owned);

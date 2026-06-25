@@ -4,7 +4,7 @@ pack all artifacts. Repo root resolved from this file, so cwd is free.
 
 Usage:
   python3 run_full_dlp.py [runcfg] [--jobs N] [--reset] [--probe-reset]
-                          [--dry-run]
+                          [--numa=P] [--dry-run]
     runcfg     : path or name under data/paper_data/dlp/cfg/config/
                  (default runcfg_full.json)
     --jobs N   : override num_jobs in the runcfg for this run
@@ -13,9 +13,18 @@ Usage:
                   cross-chunk vs new chunk-local-reset estimate, and
                   64601.3 the exact per-rung StepFwdPrf perc demand
                   (route+back-solve) applied to the ladder
+    --numa=P   : NUMA policy, passed to Rust via ZKR_NUMA (default perjob).
+                 The Rust side (foldpot::numa) does the pinning -- this runner
+                 only forwards the flag (no numactl wrapper):
+                   perjob -> interleave the shared DB/ACDFA across all nodes AND
+                     pin each job's worker thread + its per-word allocations to
+                     node (job_id % n_nodes). Fixes the dual-socket slowdown with
+                     true per-job memory locality. No-op on a single-NUMA box.
+                   off    -> no pinning (Linux first-touch default).
     --dry-run  : print resolved paths + command, do not run cargo.
 
-Env:  ZKR_DC_THREADS  determine_config probe threads (default 8)
+Env:  ZKR_NUMA       NUMA policy (perjob|off); --numa= overrides (default perjob)
+      ZKR_DC_THREADS  determine_config probe threads (default 8)
       ZKR_VM_MAX_MAP_COUNT  target vm.max_map_count (default 1073741824 = 1G;
                  0 skips). Raised via `sudo sysctl` before the run so the
                  8-job fold's many small mimalloc mappings don't hit the VMA
@@ -78,6 +87,13 @@ for a in sys.argv[1:]:
 if "--jobs" in sys.argv:                       # also accept "--jobs N"
     JOBS = int(sys.argv[sys.argv.index("--jobs") + 1])
 
+# NUMA policy forwarded to Rust via ZKR_NUMA (Rust does the pinning). Use the
+# '=' form so the value never leaks into the positional `args` filter above.
+NUMA = os.environ.get("ZKR_NUMA", "perjob")
+for a in sys.argv[1:]:
+    if a.startswith("--numa="):
+        NUMA = a.split("=", 1)[1]
+
 runcfg_name = args[0] if args else "runcfg_full.json"
 RUNCFG = runcfg_name if os.path.isabs(runcfg_name) \
     else os.path.join(CFG_DIR, runcfg_name)
@@ -101,6 +117,7 @@ json.dump(rc, open(EFF, "w"), indent=2)
 env = dict(os.environ)
 env.setdefault("RUSTFLAGS", "-C link-args=-fuse-ld=lld -Awarnings")
 env["ZKR_DLP_RUNCFG"] = EFF
+env["ZKR_NUMA"] = NUMA          # Rust foldpot::numa reads this (perjob|off)
 env.setdefault("ZKR_DC_THREADS", "8")
 if PROBE_RESET:
     env["ZKR_PROBE_64600"] = "1"   # per-file old cross-chunk vs new reset est
@@ -116,8 +133,8 @@ artifacts = [EFF,
     os.path.join(REPO, rc.get("config_dir", ""), "config", "needs_dist.txt")]
 
 print("[run_full_dlp] REPO   =", REPO)
-print("[run_full_dlp] RUNCFG =", RUNCFG, "(jobs=%s reset=%s)"
-      % (rc.get("num_jobs"), rc.get("reset")))
+print("[run_full_dlp] RUNCFG =", RUNCFG, "(jobs=%s reset=%s numa=%s)"
+      % (rc.get("num_jobs"), rc.get("reset"), NUMA))
 print("[run_full_dlp] LOG    =", LOG)
 print("[run_full_dlp] cmd    =", " ".join(cmd))
 print("[run_full_dlp] cache  =", rc.get("cache_dir"),

@@ -29676,22 +29676,24 @@ Goal 2. continue to adjust scale_data
 		Each needs to be chcked against the table -> resulting
 		in 17 columns.
 	[h] rebuild and deploy to server
+	[i] too slow try to refine run_full_dlp.py
+	[j] similarly refine run_full_clam.py
 Goal 3. Writing
 	[a] last two paragraphs of 7.4
 	[b] polish
 	[c] start 7.5
-	[d]
+	[d] draft of 7.5
 
 ----- ACTIVE GOALS -----
 Goal FINAL1. start data collection on GCP
 	[a] server2 -> full_dna (11:30am->6:45pm: 7.25hr) jetstream2: 5.2 hrs.
 	[b] server2 -> full_clam (6:45pm 06/24 -> 
-	[c] server1 -> full_dlp (11:00 06/25 -> 
+	[c] server1 -> full_dlp (11:00AM 06/25 -> 
 	[d] server2:
 		eval_reef??
 		eval_zombie??
 Goal FINAL2. start data collection on Jetstream 
-	[a] small -> scale_data (11:43AM 06/25 ->
+	[a] small -> scale_data (6:00PM 06/25 ->
 	[b] large:
 		[b1] full_dlp (11:00- 06/25 -> 
 		[b2] full_clam??
