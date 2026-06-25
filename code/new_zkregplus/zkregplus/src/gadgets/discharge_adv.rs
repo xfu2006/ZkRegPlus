@@ -2476,6 +2476,36 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 						seg_id, b_igc, field_to_usize(s),
 						sig_id, ss_id, num, trace));
 				}
+				//60935.1: SED pat_loc dump -- the pattern literals visible to
+				//THIS chunk's forward search + their real loc ranges (sentinels
+				//0/max dropped). If the keyword pattern (pat 40 for sig 890 per
+				//60934.3) is ABSENT or has no real loc in chunk 33's window,
+				//SED cannot anchor the discharge -> step-1 never fires, while
+				//CP flagged the keyword present. REMOVE with the harness.
+				let p_keys = pat_loc.lock().unwrap()
+					.get_container("sorted_key").unwrap()
+					.lock().unwrap().to_vec();
+				let p_locs = pat_loc.lock().unwrap()
+					.get_container("sorted_val").unwrap()
+					.lock().unwrap().to_vec();
+				let maxv = (1u64<<read_global_config().range2_bit)-1;
+				let mut per_pat: std::collections::BTreeMap<u64,(usize,u64,u64)>
+					= std::collections::BTreeMap::new();
+				for i in 0..p_keys.len() {
+					let p = field_to_usize(&p_keys[i]) as u64;
+					if p==0 { continue; }
+					let l = field_to_usize(&p_locs[i]) as u64;
+					if l==0 || l==maxv { continue; }
+					let e = per_pat.entry(p).or_insert((0,u64::MAX,0));
+					e.0 += 1; e.1 = e.1.min(l); e.2 = e.2.max(l);
+				}
+				let summary: Vec<(u64,usize,u64,u64)> = per_pat.iter()
+					.map(|(p,(n,mn,mx))| (*p,*n,*mn,*mx)).collect();
+				utils::logger::emit_stdout(format!(
+					"DEBUG USE 60935.1: pat_loc seg_id={} b_igc={} \
+					 n_distinct_pats={} \
+					 per_pat(pat,n_locs,min_loc,max_loc)={:?}",
+					seg_id, b_igc, summary.len(), summary));
 			}
 		} else {
 			let backward_step_queue = Self::gen_backward_steps_queue_combo(

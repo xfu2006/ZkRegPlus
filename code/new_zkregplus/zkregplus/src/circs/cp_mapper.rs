@@ -704,6 +704,37 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 				"DEBUG USE 77320.1.pad_only_ids b_igc={} \
 				 seg_id={} ids={:?}",
 				self.b_igc, _seg_id, pad_only));
+
+			//60935.2: chunk-relative nibble positions where the critical
+			//(keyword) pattern fires for sigs 890/891. Lets us see whether
+			//CP's keyword sits at the chunk trailing edge (so SED's
+			//chunk-local pat_loc, built over [chunk+halo], may not see it).
+			//Cross-ref nib_pos/real_nib + global loc vs 60935.1 min/max.
+			let mut kw_hits: Vec<(usize,usize,bool)> = vec![];
+			for i in 0..advice.dfa_crit_advice.states.len() {
+				let st = field_to_usize(&advice.dfa_crit_advice.states[i]);
+				if st==0 { continue; }
+				let raw_st = st-1;
+				if !acdfa.is_final(raw_st) { continue; }
+				for pat in &acdfa.final_to_patterns(raw_st) {
+					if let Some(sigs) = map_crit.get(pat) {
+						for sg in sigs {
+							if let Some(sid) = sigs_to_id.get(sg) {
+								if (*sid==890 || *sid==891)
+									&& kw_hits.len()<20 {
+									kw_hits.push((*sid, i, i<=real_nib));
+								}
+							}
+						}
+					}
+				}
+			}
+			if !kw_hits.is_empty() {
+				emit_stdout(format!(
+					"DEBUG USE 60935.2: CP kw-hits b_igc={} seg_id={} \
+					 real_nib={} hits(sig_id,nib_pos,in_real)={:?}",
+					self.b_igc, _seg_id, real_nib, kw_hits));
+			}
 		}
 
 		Ok( Arc::new(advice) )
