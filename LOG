@@ -29623,9 +29623,6 @@ Goal 4. writing
 		both modes
 	[g] refine the log generaiton
 --- ACTIVE ONE ---
-Goal 5. start data collection on GCP
-	[a] server2 -> full_dna (11:30am->6:45pm: 7.25hr) jetstream2: 5.2 hrs.
-	[b] server2 -> full_clam (6:45pm 06/24 -> 
 Goal 6. debug full_dlp err
 	[b] can replicate the error 
 	[c] identified it's sde advice error, more details needed.
@@ -29647,19 +29644,42 @@ Goal 2. update the data source structure
 	[c] put place-holder data into the container folders
 	[d] add another check of file name for warning
 	[e] update all related python functions
+	[f] add a RUN_ALL.sh which includes all python files
+Goal 3. writing
 ----
 Goal 1. Continue to debug full_dlp err
 	[a] (IP: 149.165.169.73) 
 		-> root cause: keywords in halo flagged are not passed to sde.
 			it's probably an advice generation problem
 		-> check failed_c_all_seg[i] generation
+		-> it's the boundary problem, 1 byte missing in range! fixed
+		-> test on server now on full_dlp_sample()
+		-> FIXED!
+	[b] now polish the full_dlp report
+		-> revmoe extra probes from the ealier attempt
+		-> check if it's possible to use the original ladder?
+		-> run small_data to check log status 
 Goal 2. continue to adjust scale_data
 	[a] (IP: 149.165.170.106)
 		-> changed function prototype to take raw numbers
 		-> analyze the distribution of raw blocks and subsigs adding new slots
 			in step queue (waiting data0
-		-> 
+	[b] analyze the 2% against 4%: questin: why PEAK is not increased much?
 
+Goal FINAL1. start data collection on GCP
+	[a] server2 -> full_dna (11:30am->6:45pm: 7.25hr) jetstream2: 5.2 hrs.
+	[b] server2 -> full_clam (6:45pm 06/24 -> 
+	[c] server1 -> full_dlp ??
+	[d] server2:
+		eval_reef??
+		eval_zombie??
+Goal FINAL2. start data collection on Jetstream 
+	[a] small -> scale_data (??
+	[b] large:
+		[b1] full_dlp??
+		[b2] full_clam??
+		[b3] reef_eval
+		[b4] zombie_eval
 
 
 

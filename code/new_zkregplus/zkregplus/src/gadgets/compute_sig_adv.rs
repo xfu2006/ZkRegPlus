@@ -294,35 +294,6 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 			&discharge_infos[..]].concat();
 		assert!(discharge_info.len()==capacity.sigs);
 
-		//60937.1 (gated, EVERY compute_sig build): the discharge universe per
-		//build instance. inp_sigs are raw sig ids (890/891). A global counter +
-		//best-effort seg (PROBE_CHUNK_ID, fresh because this is called inside
-		//sed_mapper::gen_nd_advice) let us line-correlate with the prove pass
-		//and catch the empty-universe advice that reaches the prover. If every
-		//seg-33 build shows [890,891] -> the universe is dropped at save/
-		//materialize (downstream); if a seg-33 build shows [] -> dropped at
-		//build. REMOVE with the b_correct harness.
-		{
-			static CS_BUILD_CTR: std::sync::atomic::AtomicUsize =
-				std::sync::atomic::AtomicUsize::new(0);
-			if std::env::var("ZKR_PROBE_77317").is_ok() {
-				let ctr = CS_BUILD_CTR.fetch_add(1,
-					std::sync::atomic::Ordering::Relaxed);
-				let seg = utils::consts::PROBE_CHUNK_ID
-					.load(std::sync::atomic::Ordering::Relaxed);
-				let wid = utils::consts::PROBE_WORD_ID
-					.load(std::sync::atomic::Ordering::Relaxed);
-				let univ: Vec<u64> = inp_sigs.iter().filter(|f| !f.is_zero())
-					.map(|f| field_to_usize(f) as u64).collect();
-				let names: Vec<&str> = discharge_infos.iter()
-					.filter(|d| d.sig_name!="none")
-					.map(|d| d.sig_name.as_str()).collect();
-				utils::logger::emit_stdout(format!(
-					"DEBUG USE 60937.1: cs-build #{} word_id={} seg~={} \
-					 universe={:?} n_infos={} infos={:?}",
-					ctr, wid, seg, univ, names.len(), names));
-			}
-		}
 
 		//1.1 case sensitive
 		let pad_cs = vec![F::zero(); capacity.subsigs_cs-inp_subsigs_cs.len()];
@@ -674,35 +645,6 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 			if vec_res[i]==v_maybe {encoded_last[i]} else {zero}).collect();
 		let mtbl = gen_m_table(&acc_set, &maybe_masked);
 
-		//60936.1 (gated, segs 33/34/35): per-sig verdict tally. A subsig whose
-		//LAST_STEP key is NOT in acc_out is False (=> dischargeable). If the
-		//keyword is absent from this chunk, 890/891's subsigs should ALL be
-		//False here. Confirms the verdict layer is correct before the sig-level
-		//assembly. REMOVE with the harness.
-		{
-			let _seg = utils::consts::PROBE_CHUNK_ID
-				.load(std::sync::atomic::Ordering::Relaxed);
-			if std::env::var("ZKR_PROBE_77317").is_ok()
-				&& (_seg==33||_seg==34||_seg==35) {
-				use folding_schemes::folding::foldpot::utils
-					::probe_77319_decode_subsig as dec_ss;
-				let mut tally: std::collections::BTreeMap<u64,(usize,usize)>
-					= std::collections::BTreeMap::new();
-				for i in 0..n {
-					if inp_subsigs[i].is_zero() { continue; }
-					let (sid,_ss) = dec_ss(&inp_subsigs[i]);
-					let e = tally.entry(sid).or_insert((0,0));
-					if vec_res[i]==v_maybe { e.1 += 1; } else { e.0 += 1; }
-				}
-				let summ: Vec<(u64,usize,usize)> = tally.iter()
-					.map(|(s,(f,m))| (*s,*f,*m)).collect();
-				utils::logger::emit_stdout(format!(
-					"DEBUG USE 60936.1: eval-verdict seg_id={} b_igc={} \
-					 acc_set_real={} per_sig(sig_id,n_false,n_maybe)={:?}",
-					_seg, b_igc,
-					acc_set.iter().filter(|f| !f.is_zero()).count(), summ));
-			}
-		}
 
 		//4. assemble combo. encoded key uses si=0 (large, not range-checked);
 		//   inp_subsig + 4 sub-fields use si=RANGE2 (auto range-check <f1) so
@@ -1317,31 +1259,6 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		res.lock().unwrap().add_col(Col::new_const(vec_sid_subsig_final_res,
 			"vec_sid_subsig_final_res", IDX_SI_DATA)); //zero
 
-		// DEBUG USE 67120.1: dump every non-False (sig_id, subsig_idx,
-		// raw_res, final TriVal) coming out of synthesis_combo. Pairs
-		// with the assertion at compute_sig_adv.rs:1269 — anything
-		// printed here that discharge_prover later asks to be False
-		// is the source of the panic. Gated on ZKR_PROBE_77317 to
-		// match the 77317.x probe family (set by full_debug_watch.py).
-		if std::env::var("ZKR_PROBE_77317").is_ok() {
-			let (_bit_part1, bit_part2) =
-				utils::consts::current_bit_parts();
-			let mask2: u64 = (1u64 << bit_part2) - 1;
-			let f_false = F::from(TriVal::False as u8);
-			for i in 0..inp_subsigs.len() {
-				let sid = inp_subsigs[i];
-				if sid.is_zero() { continue; }
-				let final_r = vec_subsig_final_res[i];
-				if final_r == f_false { continue; }
-				let raw_r = gen_regex_res[i];
-				let u = field_to_usize(&sid) as u64;
-				let sig_id = u >> bit_part2;
-				let subsig_idx = u & mask2;
-				println!("DEBUG USE 67120.1: sid={} sig_id={} \
-					subsig_idx_1based={} raw_res={} final={}",
-					u, sig_id, subsig_idx, raw_r, final_r);
-			}
-		}
 
 		Ok( (res, vec_subsig_final_res) )
 	}
@@ -1544,31 +1461,6 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 			v_computed_subsig[i] = subsig_id;
 		}
 
-		//60936.2 (gated, segs 33/34/35): the SIG-LEVEL discharge universe +
-		//per-sig chosen disjunct. inp_sigs = the sigs we must discharge this
-		//chunk. If this is [890,891] and the assert above passed (every chosen
-		//disjunct subsig is False), the discharge proof IS built here -> any
-		//empty discharged_sigs is lost DOWNSTREAM in the gadget. If inp_sigs is
-		//empty, the universe was dropped UPSTREAM (failed_c). REMOVE w/ harness.
-		{
-			let _seg = utils::consts::PROBE_CHUNK_ID
-				.load(std::sync::atomic::Ordering::Relaxed);
-			if std::env::var("ZKR_PROBE_77317").is_ok()
-				&& (_seg==33||_seg==34||_seg==35) {
-				let univ: Vec<u64> = inp_sigs.iter().filter(|f| !f.is_zero())
-					.map(|f| field_to_usize(f) as u64).collect();
-				let infos: Vec<(String,usize,bool,usize,usize)> = discharge_infos
-					.iter().filter(|d| d.sig_name!="none")
-					.map(|d| (d.sig_name.clone(), d.min_dnf_id, d.b_success,
-						d.min_cost, d.subsig_ids.len())).collect();
-				let vsigs_nz = v_sigs.iter().filter(|f| !f.is_zero()).count();
-				utils::logger::emit_stdout(format!(
-					"DEBUG USE 60936.2: sig-discharge seg_id={} \
-					 inp_sigs_universe={:?} v_sigs_nz={} n_disjunct_rows={} \
-					 infos(name,min_dnf_id,b_success,min_cost,n_subsig)={:?}",
-					_seg, univ, vsigs_nz, info_ts.len(), infos));
-			}
-		}
 		let src = encode_cols_better(
 			vec![&v_computed_subsig[..], &vec![f_false; n][..]],
 			vec![0,1]

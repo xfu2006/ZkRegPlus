@@ -49,11 +49,6 @@ pub static PROBE_CHUNK_ID: AtomicUsize = AtomicUsize::new(0);
 /// from any other code path (run_full_dlp, normal prover, etc.).
 pub static SCALE_DUMP_FWD: AtomicBool = AtomicBool::new(false);
 
-/// Probe-only (DEBUG b_correct harness): word_id (file index, 1-based) of
-/// the current word being processed. Set by the foldpot driver word loops so
-/// compute_sig probes can tell file-0 seg-33 from files 1/2. REMOVE w/ harness.
-pub static PROBE_WORD_ID: AtomicUsize = AtomicUsize::new(0);
-
 /// Post-convergence cap tightening: max ACTUAL fill seen per fold step,
 /// recorded by the gadgets (replaces the 6901.8 / 6902.1 println probes).
 /// fwd = discharge forward queue (v2d[0].len); acc = SDE accepting states.

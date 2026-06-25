@@ -2884,49 +2884,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		assert!(stmt_len==stmt.len(), "stmt.len(): {} != stmt_len: {}",
 			stmt.len(), stmt_len);
 		let v_stmt = stmt.clone();
-		// 2026-05-16: probe 77317.5 — at gen_witness entry, the
-		// F-valued stmt vector is what will be wrapped as witness.
-		// We slice out the failed/discharged/mtbl regions per
-		// stmt_cfg indices and dump them. Used to discriminate
-		// upstream (build_statement) vs downstream (to_vec_fp_var /
-		// from_vec) corruption.
-		if crate::folding::foldpot::utils::probe_77317_enabled() {
-			use crate::folding::foldpot::utils::{
-				probe_77317_dump_f_vec,
-				probe_77317_multiset_diff};
-			let if_ = stmt_cfg.idx_failed_sigs;
-			let nf  = stmt_cfg.failed_sigs_size;
-			let id_ = stmt_cfg.idx_discharged_sigs;
-			let nd  = stmt_cfg.discharged_sigs_size;
-			let im_ = stmt_cfg.idx_mtbl_sigs;
-			let nm  = stmt_cfg.mtbl_sigs_size;
-			emit_stdout(format!(
-				"DEBUG USE 77317.5: gen_witness ENTRY job={} \
-				 stmt.len={} idx_failed={} fail_sz={} \
-				 idx_discharged={} disch_sz={} \
-				 idx_mtbl={} mtbl_sz={}",
-				self.job_id, stmt.len(),
-				if_, nf, id_, nd, im_, nm));
-			if if_ + nf <= stmt.len()
-				&& id_ + nd <= stmt.len()
-				&& im_ + nm <= stmt.len() {
-				let f_slice = &stmt[if_..if_ + nf];
-				let d_slice = &stmt[id_..id_ + nd];
-				let m_slice = &stmt[im_..im_ + nm];
-				probe_77317_dump_f_vec("5.failed",
-					"stmt[failed]", f_slice);
-				probe_77317_dump_f_vec("5.discharged",
-					"stmt[discharged]", d_slice);
-				probe_77317_dump_f_vec("5.mtbl",
-					"stmt[mtbl]", m_slice);
-				probe_77317_multiset_diff("5",
-					f_slice, d_slice, m_slice);
-			} else {
-				emit_stdout(format!(
-					"DEBUG USE 77317.5.OOB: stmt_cfg \
-					 indices exceed stmt.len, cannot slice"));
-			}
-		}
 
 		assert!(v_idx.len()==self.gadgets.len(), "v_idx.len(): {} != gadgets.len: {}", v_idx.len(), self.gadgets.len());
 		let vec_msg_sizes = self.gadgets.iter().map(|g| 
@@ -3483,18 +3440,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		let (mut nc, mut nv) = (cs.num_constraints(), cs.num_witness_variables());
 		cost_capture_set_entry(cs.num_constraints());
 		let mut gt = GTimer::new();
-		// 2026-05-16: probe 77317.7 — entry of
-		// generate_step_constraints. word_id/subseg_id are not yet
-		// extracted at this point (si is built below), so we emit
-		// just the entry marker; correlation with 77317.4 below
-		// fills in word/seg.
-		if crate::folding::foldpot::utils::probe_77317_enabled() {
-			emit_stdout(format!(
-				"DEBUG USE 77317.7: ENTER generate_step_constraints \
-				 job={} cs={} vars={}",
-				self.job_id, cs.num_constraints(),
-				cs.num_witness_variables()));
-		}
 		log_perf(self.job_id, log_level, &format!("### gen_step_cs START: cs: {}, vars: {}",
 			cs.num_constraints(),
 			cs.num_witness_variables()
@@ -3554,31 +3499,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		//3. add all constraints by components
 		let mut gt3 = GTimer::new();
 		let si = StatementInstVar::<F>::from_vec(&self.stmt_config, &wtns_var.statement);
-		// 2026-05-16: probe 77317.4 — just after StatementInstVar
-		// from_vec slices wtns_var.statement into si.{failed,
-		// discharged,mtbl}_sigs. Lets us check the indices are sane
-		// and the FpVar values match what gen_witness handed in.
-		if crate::folding::foldpot::utils::probe_77317_enabled() {
-			use crate::folding::foldpot::utils
-				::probe_77317_dump_fpvar_vec;
-			let cfg = &self.stmt_config;
-			emit_stdout(format!(
-				"DEBUG USE 77317.4: AFTER from_vec job={} \
-				 stmt.len={} idx_failed={} failed_size={} \
-				 idx_discharged={} discharged_size={} \
-				 idx_mtbl={} mtbl_size={}",
-				self.job_id,
-				wtns_var.statement.len(),
-				cfg.idx_failed_sigs, cfg.failed_sigs_size,
-				cfg.idx_discharged_sigs, cfg.discharged_sigs_size,
-				cfg.idx_mtbl_sigs, cfg.mtbl_sigs_size));
-			probe_77317_dump_fpvar_vec("4.failed",
-				"si.failed_sigs", &si.failed_sigs);
-			probe_77317_dump_fpvar_vec("4.discharged",
-				"si.discharged_sigs", &si.discharged_sigs);
-			probe_77317_dump_fpvar_vec("4.mtbl",
-				"si.mtbl_sigs", &si.mtbl_sigs);
-		}
 		for (i,g) in self.gadgets.iter().enumerate(){
 			let (nc, ni, nv) = (cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables());
 			lock_unwrap!(g).assert_msg3(i, cs.clone(), &wtns_var, &cfg,
@@ -4329,36 +4249,6 @@ where 	C: CurveGroup<ScalarField=F>,
 			F::from(237177234918187u64))?;
 		//rc2 is used to prevent the initial dummy case rc0 causing
 		//inverse err. In the real mode, rc will be the real Fiat-Shamir
-		// 2026-05-16: probe 77317.3 — caller-side, just before
-		// check_logup. Prints the three FpVar vectors' values and
-		// computes the host-side multiset diff against mtbl weights.
-		// If MULTISET_MISMATCH fires here, the bug is upstream of
-		// the circuit (in build_statement / gen_witness / from_vec).
-		if crate::folding::foldpot::utils::probe_77317_enabled() {
-			use crate::folding::foldpot::utils::{
-				probe_77317_dump_fpvar_vec,
-				probe_77317_multiset_diff_fpvar};
-			let rc2_v = rc2.value().unwrap_or(F::zero());
-			emit_stdout(format!(
-				"DEBUG USE 77317.3: CALL_SITE sigs_check \
-				 job={} failed.len={} discharged.len={} \
-				 mtbl.len={} rc2_u64={}",
-				self.job_id,
-				si.failed_sigs.len(),
-				si.discharged_sigs.len(),
-				si.mtbl_sigs.len(),
-				crate::folding::foldpot::utils
-					::probe_77317_f_as_u64_lossy(&rc2_v)));
-			probe_77317_dump_fpvar_vec("3.failed",
-				"si.failed_sigs", &si.failed_sigs);
-			probe_77317_dump_fpvar_vec("3.discharged",
-				"si.discharged_sigs", &si.discharged_sigs);
-			probe_77317_dump_fpvar_vec("3.mtbl",
-				"si.mtbl_sigs", &si.mtbl_sigs);
-			probe_77317_multiset_diff_fpvar("3",
-				&si.failed_sigs, &si.discharged_sigs,
-				&si.mtbl_sigs);
-		}
 		let b_sigs = check_logup(cs.clone(),
 			&si.failed_sigs,
 			&si.discharged_sigs,
@@ -4395,34 +4285,6 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		b_correct.enforce_equal(&Boolean::TRUE)?;
 		if b_correct.value().is_ok(){
-			if !b_correct.value()? {
-				// PROBE 78010: the per-chunk failed_sigs ⊆ discharged_sigs
-				// coverage was violated (aggressive SDE). Name the failing
-				// chunk + caps BEFORE aborting so the offending file is
-				// identifiable from a sample run; set ZKR_PROBE_77317=1 for
-				// the full failed/discharged set + multiset-diff dump.
-				use crate::folding::foldpot::utils::{
-					probe_77317_f_as_u64_lossy, probe_77317_dump_fpvar_vec,
-					probe_77317_multiset_diff_fpvar};
-				let wid = si.word_id.value()
-					.map(|v| probe_77317_f_as_u64_lossy(&v)).unwrap_or(u64::MAX);
-				let sid = si.subseg_id.value()
-					.map(|v| probe_77317_f_as_u64_lossy(&v)).unwrap_or(u64::MAX);
-				emit_stdout(format!(
-					"PROBE 78010: b_correct FAILED -- word_id={} subseg_id={} \
-					 failed_cap={} discharged_cap={} mtbl={} aggressive={}",
-					wid, sid,
-					si.failed_sigs.len(), si.discharged_sigs.len(),
-					si.mtbl_sigs.len(),
-					utils::consts::read_global_config()
-						.clamav_cfg.b_aggressive_sde_for_rep));
-				probe_77317_dump_fpvar_vec("78010.failed",
-					"failed_sigs", &si.failed_sigs);
-				probe_77317_dump_fpvar_vec("78010.discharged",
-					"discharged_sigs", &si.discharged_sigs);
-				probe_77317_multiset_diff_fpvar("78010",
-					&si.failed_sigs, &si.discharged_sigs, &si.mtbl_sigs);
-			}
 			assert!(b_correct.value()?, "failed b_correct");
 		}
 

@@ -926,50 +926,6 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 					&word_seg, actual_word_len, &lkup,
 					ea, &advices.vec_adv[i], &cfg, &stmt_map
 				)?;
-			// 2026-05-16: probe 77318.1 — per-component output
-			// of build_statement_comp. Prints the failed_sigs
-			// (vecs[6]) and discharged_sigs (vecs[7]) contributed
-			// by THIS component, plus a multiset-diff that flags
-			// any uncovered F values immediately. Whichever
-			// component shows a non-empty diff is the culprit
-			// behind the host-side bug 77317.6 surfaced.
-			if std::env::var("ZKR_PROBE_77317").is_ok() {
-				use folding_schemes::folding::foldpot::utils::{
-					probe_77317_dump_f_vec,
-					probe_77317_multiset_diff};
-				let comp_failed = &vecs[6];
-				let comp_disch = &vecs[7];
-				// Construct a dummy mtbl of 1s the same length
-				// as the discharged side, so the diff helper
-				// counts each discharged entry once. (The real
-				// mtbl is computed only LATER by gen_m_table on
-				// the CONCATENATED vectors; here we just want to
-				// know per-component which failed entries lack
-				// a discharged counterpart entirely.)
-				let dummy_mtbl: Vec<F> = (0..comp_disch.len())
-					.map(|_| F::one()).collect();
-				emit_stdout(format!(
-					"DEBUG USE 77318.1: word_id={} seg={} comp i={} \
-					 name={} failed.len={} discharged.len={}",
-					folding_schemes::folding::foldpot::utils
-						::probe_77317_f_as_u64_lossy(&ea.word_id),
-					folding_schemes::folding::foldpot::utils
-						::probe_77317_f_as_u64_lossy(&ea.subseg_id),
-					i, comp_name,
-					comp_failed.len(), comp_disch.len()));
-				let tag_f = format!("1.c{}.failed", i);
-				let tag_d = format!("1.c{}.discharged", i);
-				let tag_diff = format!("1.c{}", i);
-				probe_77317_dump_f_vec(&tag_f,
-					&format!("c{}.failed[{}]", i, comp_name),
-					comp_failed);
-				probe_77317_dump_f_vec(&tag_d,
-					&format!("c{}.discharged[{}]",
-						i, comp_name),
-					comp_disch);
-				probe_77317_multiset_diff(&tag_diff,
-					comp_failed, comp_disch, &dummy_mtbl);
-			}
 			if B_DEBUG {
 				let sizes = comp.lock().unwrap().get_sizes();
 				for i in 0..3{
@@ -1037,75 +993,6 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 			"Increase failed sig buf. needs at least one 0 dummy entry");
 
 		let mtbl_sigs = gen_m_table(&failed_sigs, &discharged_sigs);
-		// 2026-05-16: probe 77317.6 — earliest construction site of
-		// (failed_sigs, discharged_sigs, mtbl_sigs) on the host
-		// side. If the multiset diff fails HERE, the bug is in
-		// build_statement_comp's per-component logic or in
-		// gen_m_table, not in any downstream slicing.
-		if std::env::var("ZKR_PROBE_77317").is_ok() {
-			use folding_schemes::folding::foldpot::utils::{
-				probe_77317_dump_f_vec,
-				probe_77317_multiset_diff,
-				probe_77319_decode_subsig};
-			emit_stdout(format!(
-				"DEBUG USE 77317.6: build_statement AFTER \
-				 gen_m_table failed.len={} discharged.len={} \
-				 mtbl.len={} b_dummy={}",
-				failed_sigs.len(), discharged_sigs.len(),
-				mtbl_sigs.len(), b_dummy));
-			probe_77317_dump_f_vec("6.failed",
-				"failed_sigs", &failed_sigs);
-			probe_77317_dump_f_vec("6.discharged",
-				"discharged_sigs", &discharged_sigs);
-			probe_77317_dump_f_vec("6.mtbl",
-				"mtbl_sigs", &mtbl_sigs);
-			probe_77317_multiset_diff("6",
-				&failed_sigs, &discharged_sigs, &mtbl_sigs);
-			// 77319.4 — decode each uncovered F value back to
-			// (sig_id, subsig_id_0_indexed) so the bundle names
-			// the missing entries without manual arithmetic.
-			use std::collections::HashMap;
-			let mut counts: HashMap<Vec<u8>, (F, i64)>
-				= HashMap::new();
-			for x in &failed_sigs {
-				let key = x.into_bigint().to_bytes_le();
-				counts.entry(key).or_insert((*x, 0)).1 += 1;
-			}
-			for i in 0..discharged_sigs.len() {
-				let w_bytes = mtbl_sigs[i].into_bigint()
-					.to_bytes_le();
-				let mut w_u64: u64 = 0;
-				for j in 0..w_bytes.len().min(8) {
-					w_u64 |= (w_bytes[j] as u64) << (8*j);
-				}
-				let key = discharged_sigs[i].into_bigint()
-					.to_bytes_le();
-				counts.entry(key)
-					.or_insert((discharged_sigs[i], 0)).1
-					-= w_u64 as i64;
-			}
-			let mut diffs: Vec<(F, i64)> = counts.into_iter()
-				.filter(|(_, (_, c))| *c != 0)
-				.map(|(_, (v, c))| (v, c))
-				.collect();
-			diffs.sort_by(|a, b| b.1.abs().cmp(&a.1.abs()));
-			for (val, cnt) in diffs.iter().take(20) {
-				let (sig_id, subsig_id)
-					= probe_77319_decode_subsig(val);
-				emit_stdout(format!(
-					"DEBUG USE 77319.4: uncovered F={} \
-					 sig_id={} subsig_id_0idx={} delta={} \
-					 (+ = uncovered in failed)",
-					{
-						let b = val.into_bigint().to_bytes_le();
-						let mut acc:u64=0;
-						for j in 0..b.len().min(8){
-							acc |= (b[j] as u64)<<(8*j);}
-						acc
-					},
-					sig_id, subsig_id, cnt));
-			}
-		}
 		let stmt = StatementInst{
 			pc_i: ea.pc_i,
 			pc_i1: ea.pc_i1, //will be reset later

@@ -656,31 +656,6 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 				}).collect::<Vec<Vec<F>>>()
 			}
 		);
-		// 2026-05-16: probe 77318.4 — per-advice breakdown inside
-		// DfaComponentMapper (mirrors 77318.3 for SED). One log
-		// line per advice in vec_advices.
-		if std::env::var("ZKR_PROBE_77317").is_ok() {
-			use folding_schemes::folding::foldpot::utils::
-				probe_77317_dump_f_vec;
-			emit_stdout(format!(
-				"DEBUG USE 77318.4: DfaComponentMapper \
-				 vec_advices.len={} total_failed.len={} \
-				 total_discharged.len={}",
-				advice.vec_advices.len(),
-				res[6].len(), res[7].len()));
-			for (adv_id, adv) in advice.vec_advices.iter()
-				.enumerate() {
-				let cps = adv.gen_stmt_components();
-				let f_tag = format!("4.dfa.a{}.failed", adv_id);
-				let d_tag = format!("4.dfa.a{}.disch", adv_id);
-				probe_77317_dump_f_vec(&f_tag,
-					&format!("dfa.adv{}.failed", adv_id),
-					&cps[6]);
-				probe_77317_dump_f_vec(&d_tag,
-					&format!("dfa.adv{}.discharged", adv_id),
-					&cps[7]);
-			}
-		}
 
 		if b_perf{
 			log(self.job_id, log_level, &format!("## build_stmt: DFA failed sigs"));

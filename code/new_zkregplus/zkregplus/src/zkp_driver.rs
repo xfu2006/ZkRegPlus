@@ -1811,6 +1811,7 @@ pub mod tests_zkp_driver{
 			else {8320}; //needed for 96k lkup entries for 4 chunks
 					//twice larger than what's really needed to
 					//leave out room to test the empty entries
+		get_global_config().log_level = utils::logger::LOG3;
 		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/small_data_set/config_dfa"; //for dfa 
 		let max_word= 1; //this is chunk_len

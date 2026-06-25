@@ -1459,9 +1459,6 @@ where
 			let total_word_len = word.len();
 			let mut acc_wd_len = 0;
 			let _mapper = self.circuits[0].get_mapper();
-			//60937.0 (DEBUG harness): publish word_id so compute_sig probes
-			//can tell file-0 seg-33 from files 1/2. REMOVE with the harness.
-			utils::consts::PROBE_WORD_ID.store(word_id, Ordering::Relaxed);
 			let (steps, vec_len, vec_pci, _vec_cap_req, advice) = self.plan_nd_advice(0, log_level+1, true, &word, &vec_word_info[word_id-1],
 				&format!("word_{}", word_id)).expect("Planning advice fails!"); 
 			for i in 0..steps{
@@ -1941,8 +1938,6 @@ where
 			let total_word_len = word.len();
 			let mut acc_wd_len = 0;
 			let _mapper = p_circuits[0].get_mapper();
-			//60937.0 (DEBUG harness): publish word_id (prove path). REMOVE w/ harness.
-			utils::consts::PROBE_WORD_ID.store(word_id, Ordering::Relaxed);
 			let word_info = &vec_word_info[word_id-1];
 			// Route through per-job-cloned `p_layered` to avoid
 			// shared mapper Mutex contention (was driver1.layered_circs

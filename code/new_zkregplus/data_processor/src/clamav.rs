@@ -3225,45 +3225,6 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		hs.into_iter().map(|(_,v)| v.len()).sum::<usize>()
 	};
 
-	// 2026-05-16: probe 77320.3 — one-shot CP-pattern dump for the
-	// three known suspect sig_ids (34602/35386/35701). If their
-	// patterns are heavy in "00" nibbles, pack-padding becomes the
-	// likely culprit for the multiset divergence; otherwise less so.
-	if std::env::var("ZKR_PROBE_77317").is_ok() {
-		static DUMP_77320_3: std::sync::Once = std::sync::Once::new();
-		DUMP_77320_3.call_once(|| {
-			let id_to_name: HashMap<usize, &String> = sig_to_id
-				.iter().map(|(n, id)| (*id, n)).collect();
-			let suspects: [usize; 3] = [34602, 35386, 35701];
-			for sid in &suspects {
-				let name = id_to_name.get(sid)
-					.map(|s| s.as_str()).unwrap_or("?");
-				let pats_cs: Vec<&String> = map_crit_pat.iter()
-					.filter(|(_, sigs)| sigs.iter()
-						.any(|n| n == name))
-					.map(|(p, _)| p).collect();
-				let pats_igc: Vec<&String> = map_crit_pat_igc
-					.iter()
-					.filter(|(_, sigs)| sigs.iter()
-						.any(|n| n == name))
-					.map(|(p, _)| p).collect();
-				println!(
-					"DEBUG USE 77320.3: sig_id={} name={} \
-					 cp_cs.len={} cp_igc.len={}",
-					sid, name, pats_cs.len(), pats_igc.len());
-				for p in &pats_cs {
-					println!(
-						"DEBUG USE 77320.3.cp_cs: \
-						 sig_id={} pat=\"{}\"", sid, p);
-				}
-				for p in &pats_igc {
-					println!(
-						"DEBUG USE 77320.3.cp_igc: \
-						 sig_id={} pat=\"{}\"", sid, p);
-				}
-			}
-		});
-	}
 
 	//1. process by critical pattern
 	// 2026-05-18 (pad-invariant rework, Step 4): the gadget's DFA
@@ -3311,135 +3272,6 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 	}
 	for s in vec_sigs_no_crit_pat{
 		set_sigs_crit.insert(s.as_ref().name.clone());
-	}
-	// 2026-05-16: probe 77320.2 — dump set_sigs_crit per file
-	// (discharge_prover's ground truth for "sigs needing handling").
-	// Compare against the union of per-segment 77320.1.sigs_to_merge
-	// in CP_cs. Symmetric difference pinpoints which sigs CP sees
-	// that discharge_prover doesn't (or vice versa).
-	if std::env::var("ZKR_PROBE_77317").is_ok() {
-		let from_cs: HashSet<String> = pats_crit.iter()
-			.filter_map(|p| map_crit_pat.get(p))
-			.flatten().cloned().collect();
-		let from_igc: HashSet<String> = pats_crit_igc.iter()
-			.filter_map(|p| map_crit_pat_igc.get(p))
-			.flatten().cloned().collect();
-		let from_no_crit_n = vec_sigs_no_crit_pat.len();
-		let mut crit_ids: Vec<usize> = set_sigs_crit.iter()
-			.filter_map(|n| sig_to_id.get(n)).copied().collect();
-		crit_ids.sort();
-		println!(
-			"DEBUG USE 77320.2: discharge_prover set_sigs_crit \
-			 fname={} nibbles.len={} set_sigs_crit.len={} \
-			 from_cs.len={} from_igc.len={} from_no_crit.len={}",
-			fname, nibbles.len(), crit_ids.len(),
-			from_cs.len(), from_igc.len(), from_no_crit_n);
-		println!(
-			"DEBUG USE 77320.2.ids fname={} ids={:?}",
-			fname, crit_ids);
-
-		// 2026-05-16: probe 77320.4 — for each suspect sig
-		// (34602/35386/35701), walk dfa_crit and dfa_crit_igc
-		// acc_paths over the FULL file nibbles and list the byte
-		// positions where any of that sig's CP final-states fire.
-		// 0 hits in both CS and IGC means discharge_prover's
-		// CP-scan didn't see this sig; if CP_cs nonetheless emits
-		// it in 77320.1, the divergence is in the scan/state path,
-		// not in set_sigs_crit's downstream filtering.
-		let id_to_name: HashMap<usize, &String> = sig_to_id
-			.iter().map(|(n, id)| (*id, n)).collect();
-		let suspects: [usize; 3] = [34602, 35386, 35701];
-		let walk = |path: &Vec<usize>, dfa: &HexACDFA,
-			map: &HashMap<String, Vec<String>>|
-			-> HashMap<usize, Vec<usize>>
-		{
-			let mut hits: HashMap<usize, Vec<usize>> = HashMap::new();
-			for (pos, &st) in path.iter().enumerate() {
-				if dfa.is_accept(st) {
-					let pats = dfa.final_to_patterns(st);
-					for pat in &pats {
-						if let Some(sigs) = map.get(pat) {
-							for s in sigs {
-								if let Some(sid) =
-									sig_to_id.get(s)
-								{
-									if suspects.contains(sid) {
-										hits.entry(*sid)
-										.or_default()
-										.push(pos);
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-			hits
-		};
-		let path_cs = dfa_crit.acc_path(&nibbles);
-		let path_igc = dfa_crit_igc.acc_path(&nibbles);
-		let hits_cs = walk(&path_cs, dfa_crit, map_crit_pat);
-		let hits_igc = walk(&path_igc, dfa_crit_igc,
-			map_crit_pat_igc);
-		for sid in &suspects {
-			let name = id_to_name.get(sid)
-				.map(|s| s.as_str()).unwrap_or("?");
-			let empty = vec![];
-			let hcs = hits_cs.get(sid).unwrap_or(&empty);
-			let hicg = hits_igc.get(sid).unwrap_or(&empty);
-			let hcs_head: Vec<usize> = hcs.iter().copied()
-				.take(20).collect();
-			let hicg_head: Vec<usize> = hicg.iter().copied()
-				.take(20).collect();
-			println!(
-				"DEBUG USE 77320.4: fname={} sig_id={} name={} \
-				 cs.hits={} igc.hits={} cs.first20={:?} \
-				 igc.first20={:?}",
-				fname, sid, name,
-				hcs.len(), hicg.len(),
-				hcs_head, hicg_head);
-		}
-	}
-	// 2026-05-17: probe 77320.5 — diagnostic for bag DFA. If the
-	// bag-side scan also suffers a pad-padding bug, we want
-	// evidence before extending the fix there. Compares the
-	// pattern set from dfa_bag.acc_path on raw vs zero-pad
-	// extended nibbles (matching the gadget's zero pad view).
-	// Non-empty pad-only sets => bag DFA needs the same fix
-	// as dfa_crit (zero-pad extension in discharge_prover).
-	if std::env::var("ZKR_PROBE_77317").is_ok() {
-		let max_bag_pat = dfa_bag.patterns.iter().map(|p| p.len())
-			.max().unwrap_or(0)
-			.max(dfa_bag_igc.patterns.iter().map(|p| p.len())
-				.max().unwrap_or(0));
-		let mut bag_padded: Vec<u8> =
-			Vec::with_capacity(nibbles.len() + max_bag_pat);
-		bag_padded.extend_from_slice(nibbles);
-		bag_padded.extend(
-			std::iter::repeat(0u8).take(max_bag_pat));
-		let bag_raw_cs = dfa_bag.get_patterns(
-			&dfa_bag.acc_path(nibbles));
-		let bag_pad_cs = dfa_bag.get_patterns(
-			&dfa_bag.acc_path(&bag_padded));
-		let bag_raw_igc = dfa_bag_igc.get_patterns(
-			&dfa_bag_igc.acc_path(nibbles));
-		let bag_pad_igc = dfa_bag_igc.get_patterns(
-			&dfa_bag_igc.acc_path(&bag_padded));
-		let pad_only_cs: Vec<&String> = bag_pad_cs
-			.difference(&bag_raw_cs).collect();
-		let pad_only_igc: Vec<&String> = bag_pad_igc
-			.difference(&bag_raw_igc).collect();
-		let cs_head: Vec<&String> =
-			pad_only_cs.iter().copied().take(20).collect();
-		let igc_head: Vec<&String> =
-			pad_only_igc.iter().copied().take(20).collect();
-		println!(
-			"DEBUG USE 77320.5: fname={} max_bag_pat={} \
-			 bag.pad_only.cs.len={} bag.pad_only.igc.len={} \
-			 cs.first20={:?} igc.first20={:?}",
-			fname, max_bag_pat,
-			pad_only_cs.len(), pad_only_igc.len(),
-			cs_head, igc_head);
 	}
 	let set_sigs_bag = set_sigs_crit.clone(); //skipping bag so take all from cirt
 			//directly and pass it to pm (SED approach).
@@ -3813,17 +3645,6 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		if read_global_config().b_estimate_caps {
 		let cp_cs = dfa_crit.acc_path(&padded_nibbles);
 		let cp_ig = dfa_crit_igc.acc_path(&padded_nibbles);
-		// 60777.4 (ZKR_PROBE_CAPS): warm-path dfa_crit size -- the cold-build
-		// 60777.2 is skipped when the DB loads from cache. Once per process.
-		static L60777_4: std::sync::atomic::AtomicBool =
-			std::sync::atomic::AtomicBool::new(false);
-		if std::env::var("ZKR_PROBE_CAPS").is_ok() && !L60777_4
-			.swap(true, std::sync::atomic::Ordering::Relaxed) {
-			println!("DEBUG USE 60777.4: dfa_crit num_states={} \
-				num_acc_states={} dfa_crit_igc num_states={}",
-				dfa_crit.num_states, dfa_crit.num_acc_states,
-				dfa_crit_igc.num_states);
-		}
 		let m = dfa_crit.max_distinct_states_per_chunk(&cp_cs, seg_size).max(
 			dfa_crit_igc.max_distinct_states_per_chunk(&cp_ig, seg_size));
 		let vc = dfa_crit.distinct_states_per_chunk(&cp_cs, seg_size);
@@ -3919,57 +3740,6 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		file_nibble_len: nibbles.len(), halo_nibbles: vec![],
 		failed_c_all_segs, failed_c_info_all_segs};
 
-	// 2026-05-16: probe 77319.1 — dump the raw discharge-prover
-	// output for this file. This is the GROUND TRUTH from
-	// quick_discharge_file_by_crit_bag_pm_new, BEFORE any advice
-	// construction in the ZK side. If the offending subsigs are
-	// missing from wi.vec_sed_sigs_info[i].subsig_ids HERE, the
-	// bug is in discharge_prover (this function or its callees).
-	// Reverse sig_id -> sig_name via the sig_to_id map passed in.
-	if std::env::var("ZKR_PROBE_77317").is_ok() {
-		let id_to_name: std::collections::HashMap<usize, &String>
-			= sig_to_id.iter().map(|(n, id)| (*id, n)).collect();
-		println!(
-			"DEBUG USE 77319.1: discharge_prover OUT fname={} \
-			 vec_sed_sigs.len={} vec_dfa_sigs.len={} \
-			 vec_ised_sigs.len={}",
-			fname,
-			wi.vec_sed_sigs.len(),
-			wi.vec_dfa_sigs.len(),
-			wi.vec_ised_sigs.len());
-		let dump_sigs = |label: &str, ids: &Vec<usize>,
-			infos: &Vec<DischargeSigInfo>|
-		{
-			for k in 0..ids.len() {
-				let sid = ids[k];
-				let name = id_to_name.get(&sid)
-					.map(|s| s.as_str()).unwrap_or("?");
-				let n_sub = infos.get(k)
-					.map(|i| i.subsig_ids.len()).unwrap_or(0);
-				let subs: Vec<usize> = infos.get(k)
-					.map(|i| i.subsig_ids.iter().copied()
-						.take(16).collect())
-					.unwrap_or_default();
-				println!(
-					"DEBUG USE 77319.1.{}: sig_id={} name={} \
-					 n_subsigs={} subsig_ids[0..16]={:?}",
-					label, sid, name, n_sub, subs);
-			}
-		};
-		dump_sigs("sed", &wi.vec_sed_sigs,
-			&wi.vec_sed_sigs_info);
-		dump_sigs("dfa", &wi.vec_dfa_sigs,
-			&wi.vec_dfa_sigs_info);
-		// ised has no info vec (always empty)
-		for sid in &wi.vec_ised_sigs {
-			let name = id_to_name.get(sid)
-				.map(|s| s.as_str()).unwrap_or("?");
-			println!(
-				"DEBUG USE 77319.1.ised: sig_id={} name={} \
-				 (final-failed, no discharge evidence)",
-				sid, name);
-		}
-	}
 
 	(fdr, wi)
 }
