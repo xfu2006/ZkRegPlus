@@ -31,7 +31,7 @@ pub const ALWAYS_INIT:bool = true;
 pub const ADD_CHAIN_SIZE: usize = 64;
 
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard, Arc, Mutex};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
 use serde::{Serialize, Deserialize};
 
 /// Flag-off regression fingerprint sink: flat (label, value) pairs
@@ -43,6 +43,11 @@ pub type FpSink = Arc<Mutex<Vec<(String, u64)>>>;
 /// by foldpot driver before each gen_nd_advice call so SED probes
 /// can correlate StepQueue dumps with chunk_id.
 pub static PROBE_CHUNK_ID: AtomicUsize = AtomicUsize::new(0);
+
+/// Set true ONLY at the top of collect_scale_data(); gates the per-step
+/// forward-queue membership dump (DEBUG USE 64731.2) so it can never fire
+/// from any other code path (run_full_dlp, normal prover, etc.).
+pub static SCALE_DUMP_FWD: AtomicBool = AtomicBool::new(false);
 
 /// Probe-only (DEBUG b_correct harness): word_id (file index, 1-based) of
 /// the current word being processed. Set by the foldpot driver word loops so

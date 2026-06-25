@@ -1725,19 +1725,25 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 		// how many subsigs are alive, and how positions distribute across them
 		// (breadth = many subsigs x few pos => genuinely required; depth = few
 		// subsigs x many pos => prunable). chunk id via PROBE_CHUNK_ID.
-		if std::env::var("ZKR_DUMP_FWD").is_ok() {
+		if utils::consts::SCALE_DUMP_FWD.load(std::sync::atomic::Ordering::Relaxed) {
 			let chunk = utils::consts::PROBE_CHUNK_ID
 				.load(std::sync::atomic::Ordering::Relaxed);
-			let mut per: Vec<usize> =
-				self.store_items.values().map(|v| v.len()).collect();
-			per.sort_unstable_by(|a, b| b.cmp(a));
-			let alive = per.iter().filter(|&&c| c > 0).count();
-			let top: Vec<usize> = per.iter().take(8).cloned().collect();
+			// FULL queue membership: (global subsig id, slot consumption) for
+			// every alive subsig, so the queue's subsig SET and per-subsig
+			// space use can be diffed across rulesets. slots = sum of
+			// vec_pat_id lengths, which matches fill = v2d[0].len().
+			let mut per: Vec<(usize, usize)> = self.store_items.iter()
+				.map(|(k, v)| (field_to_usize(k),
+					v.iter().map(|it| it.vec_pat_id.len()).sum::<usize>()))
+				.filter(|&(_, slots)| slots > 0)
+				.collect();
+			per.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+			let alive = per.len();
 			utils::logger::emit_stdout(format!(
-				"DEBUG USE 64731.1: FWD chunk={} igc={} n_subsigs={} \
-				 fill={}/cap={} alive_subsigs={} top_pos_per_subsig={:?}",
+				"DEBUG USE 64731.2: FWD chunk={} igc={} n_subsigs={} \
+				 fill={}/cap={} alive_subsigs={} subsig_slots={:?}",
 				chunk, self.b_igc, self.subsigs.len(),
-				v2d[0].len(), n, alive, top));
+				v2d[0].len(), n, alive, per));
 		}
 		if n<v2d[0].len()+1{
 			//aggressive: back-solve prod_pats_expansion (rung-independent,

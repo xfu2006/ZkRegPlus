@@ -25,11 +25,12 @@ Env:  ZKR_VM_MAX_MAP_COUNT  target vm.max_map_count (default 1G; 0 skips).
 import os, sys, re, subprocess, time, datetime, tarfile, io, platform
 
 # ----------------------------------------------------------------------------
-# One knob: the sweep percentages -- ASCENDING, DISTINCT, each in [1,100].
-# Each round folds the first pct% of a FIXED pseudo-random permutation of the
-# rule set, so rounds are nested supersets. 100 takes ALL rules.
+# One knob: the sweep RAW SIG COUNTS -- ASCENDING, DISTINCT, each >= 1 and
+# <= rule total (38875). Each round folds the first `count` rules of a FIXED
+# pseudo-random permutation of the rule set, so rounds are nested supersets.
+# 777 ~= 2%, 1555 ~= 4% of the 38875-rule ClamAV set.
 # ----------------------------------------------------------------------------
-VEC_PERC = [2, 4]
+VEC_COUNT = [777, 1555]
 
 VMA_TARGET = int(os.environ.get("ZKR_VM_MAX_MAP_COUNT", "1073741824"))  # 0=skip
 
@@ -46,8 +47,8 @@ WORD_SRC = os.environ.get(
 WORD_LABEL = os.path.splitext(os.path.basename(WORD_SRC))[0]
 BUNDLE = "/tmp/bora/scale_data_%s.tgz" % WORD_LABEL         # final artifact (per word)
 
-BEGIN_RE = re.compile(r"==== SCALE ROUND BEGIN pct=(\d+)\b")
-END_RE = re.compile(r"==== SCALE ROUND END pct=(\d+)")
+BEGIN_RE = re.compile(r"==== SCALE ROUND BEGIN count=(\d+)\b")
+END_RE = re.compile(r"==== SCALE ROUND END count=(\d+)")
 # Per-round cap-tightening summary, emitted once by determine_config after it
 # converges (replaces the old per-step 6901.8/6902.1 prints). Reports the true
 # max forward-queue / SDE acc-states fill and how far perc was cut. One line:
@@ -143,34 +144,34 @@ def split_and_pack(log_path):
     Tolerant: a round with a BEGIN but no END (crash mid-round) is still
     written, capturing up to the next BEGIN / EOF."""
     os.makedirs(SCRATCH, exist_ok=True)
-    rounds, cur_pct, buf = [], None, []
+    rounds, cur_cnt, buf = [], None, []
     for line in open(log_path, errors="replace"):
         mb = BEGIN_RE.search(line)
         if mb:
-            if cur_pct is not None:
-                rounds.append((cur_pct, buf))
-            cur_pct, buf = int(mb.group(1)), [line]
+            if cur_cnt is not None:
+                rounds.append((cur_cnt, buf))
+            cur_cnt, buf = int(mb.group(1)), [line]
             continue
-        if cur_pct is None:
+        if cur_cnt is None:
             continue
         buf.append(line)
         if END_RE.search(line):
-            rounds.append((cur_pct, buf))
-            cur_pct, buf = None, []
-    if cur_pct is not None:                    # trailing (un-ENDed) round
-        rounds.append((cur_pct, buf))
+            rounds.append((cur_cnt, buf))
+            cur_cnt, buf = None, []
+    if cur_cnt is not None:                    # trailing (un-ENDed) round
+        rounds.append((cur_cnt, buf))
 
     inner = []
-    for pct, lines in rounds:
-        txt = os.path.join(SCRATCH, "log_%d.txt" % pct)
+    for cnt, lines in rounds:
+        txt = os.path.join(SCRATCH, "log_%d.txt" % cnt)
         with open(txt, "w") as f:
             f.writelines(lines)
-        tgz = os.path.join(SCRATCH, "log_%d.txt.tgz" % pct)
+        tgz = os.path.join(SCRATCH, "log_%d.txt.tgz" % cnt)
         with tarfile.open(tgz, "w:gz", compresslevel=9) as t:
             t.add(txt, arcname=os.path.basename(txt))
         inner.append(tgz)
-        print("[run_scale] round pct=%d: %d lines -> %s"
-              % (pct, len(lines), os.path.basename(tgz)))
+        print("[run_scale] round count=%d: %d lines -> %s"
+              % (cnt, len(lines), os.path.basename(tgz)))
         # Saturation / tightening verdict: the driver now back-solves the true
         # forward-queue demand and cuts perc to fit (CP), and reports the SDE
         # acc-states max vs its (binding) cap.
@@ -186,16 +187,16 @@ def split_and_pack(log_path):
             basis_pats = int(caps.group(1)) if caps else 0
             basis_acc = int(caps.group(2)) if caps else 0
             reclaim = (pc_a / pc_b) if pc_b else 0.0
-            print("[run_scale] round pct=%d: CP  fwd-queue  perc %d->%d "
+            print("[run_scale] round count=%d: CP  fwd-queue  perc %d->%d "
                   "(true max fill=%d entries) -- reclaimed ~%.1fx, now tight"
-                  % (pct, pc_a, pc_b, fwd_cs, reclaim))
-            print("[run_scale] round pct=%d: SDE acc-states max=%d vs "
+                  % (cnt, pc_a, pc_b, fwd_cs, reclaim))
+            print("[run_scale] round count=%d: SDE acc-states max=%d vs "
                   "basis_acc cap=%d (binding, not cut); perc_igc %d->%d "
                   "(max_fwd=%d, acc_igc=%d)"
-                  % (pct, acc_cs, basis_acc, pi_c, pi_d, fwd_igc, acc_igc))
+                  % (cnt, acc_cs, basis_acc, pi_c, pi_d, fwd_igc, acc_igc))
         else:
-            print("[run_scale] round pct=%d: no PERC TIGHTEN line found "
-                  "(stale binary? expected from determine_config)" % pct)
+            print("[run_scale] round count=%d: no PERC TIGHTEN line found "
+                  "(stale binary? expected from determine_config)" % cnt)
 
     os.makedirs(os.path.dirname(BUNDLE), exist_ok=True)
     with tarfile.open(BUNDLE, "w:gz", compresslevel=9) as t:
@@ -212,7 +213,7 @@ def main():
     env = dict(os.environ)
     env.setdefault("RUSTFLAGS", "-C link-args=-fuse-ld=lld -Awarnings")
     env.setdefault("ZKR_DC_THREADS", "8")   # determine_config probe threads
-    env["ZKR_SCALE_PERCS"] = ",".join(str(p) for p in VEC_PERC)
+    env["ZKR_SCALE_COUNTS"] = ",".join(str(c) for c in VEC_COUNT)
 
     time_prefix = ["/usr/bin/time", "-v"] if os.path.exists("/usr/bin/time") \
         else []
@@ -221,8 +222,8 @@ def main():
         "--exact", "--nocapture"]
 
     print("[run_scale] REPO   =", REPO)
-    print("[run_scale] sweep  = percs %s%% of ruleset (nested supersets)"
-          % VEC_PERC)
+    print("[run_scale] sweep  = counts %s rules of ruleset (nested supersets)"
+          % VEC_COUNT)
     print("[run_scale] LOG    =", log)
     print("[run_scale] cmd    =", " ".join(cmd))
     print("[run_scale] bundle =", BUNDLE, "(packed even on crash)")

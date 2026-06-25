@@ -5038,16 +5038,20 @@ fail: {} ({:.4}%)",
 	/// splits the captured stdout on these markers into per-round
 	/// `log_<pct>.txt` files. No tgz here -- the Python wrapper compresses.
 	#[allow(dead_code)]
-	pub fn collect_scale_data(vec_perc: Vec<usize>) {
+	pub fn collect_scale_data(vec_count: Vec<usize>) {
 		utils::os::print_computer_config(Some("collect_scale_data"));
-		// vec_perc: strictly ascending, distinct, each in [1,100]. Each round
-		// folds the first `pct`% of a FIXED pseudo-random permutation of the
-		// rule set, so rounds are nested supersets. pct==100 takes ALL rules.
-		assert!(!vec_perc.is_empty(), "vec_perc must be non-empty");
-		assert!(vec_perc.iter().all(|&p| p >= 1 && p <= 100),
-			"vec_perc entries must be in [1,100]: {:?}", vec_perc);
-		assert!(vec_perc.windows(2).all(|w| w[0] < w[1]),
-			"vec_perc must be strictly ascending and distinct: {:?}", vec_perc);
+		// enable the forward-queue membership dump for THIS function only.
+		utils::consts::SCALE_DUMP_FWD
+			.store(true, std::sync::atomic::Ordering::Relaxed);
+		// vec_count: strictly ascending, distinct, each >= 1. Each round folds
+		// the first `cnt` rules of a FIXED pseudo-random permutation of the
+		// rule set (raw sig count), so rounds are nested supersets. The upper
+		// bound (cnt <= n_rules) is checked once n_rules is known.
+		assert!(!vec_count.is_empty(), "vec_count must be non-empty");
+		assert!(vec_count.iter().all(|&c| c >= 1),
+			"vec_count entries must be >= 1: {:?}", vec_count);
+		assert!(vec_count.windows(2).all(|w| w[0] < w[1]),
+			"vec_count must be strictly ascending and distinct: {:?}", vec_count);
 		// FIXED pseudo-random permutation (splitmix64 Fisher-Yates; identical
 		// every run, independent of the rand crate version).
 		const SCALE_PERM_SEED: u64 = 0x5CA1_5EED_0F0F_0F0F;
@@ -5185,11 +5189,12 @@ fail: {} ({:.4}%)",
 		let sub_ised = format!("{}/needs_ised.dat", scratch);
 		let sub_ised_igc = format!("{}/needs_ised_igc.dat", scratch);
 
-		for &pct in vec_perc.iter() {
-			// first `pct`% of the fixed permutation => nested supersets.
-			// pct==100 takes ALL rules.
-			let count = if pct == 100 { n_rules }
-				else { ((n_rules * pct) / 100).max(1) };
+		for &cnt in vec_count.iter() {
+			// take exactly the first `cnt` rules of the fixed permutation =>
+			// nested supersets.
+			assert!(cnt <= n_rules,
+				"count {} exceeds rule total {}", cnt, n_rules);
+			let count = cnt;
 			let subset: Vec<&str> = perm.iter().take(count)
 				.map(|&i| all_rules[i].as_str())
 				.collect();
@@ -5219,8 +5224,8 @@ fail: {} ({:.4}%)",
 				.expect("write needs_ised_igc");
 
 			utils::logger::emit_stdout(format!(
-				"==== SCALE ROUND BEGIN pct={} rules={}/{} corpus=gdb ====",
-				pct, subset.len(), n_rules));
+				"==== SCALE ROUND BEGIN count={} rules={}/{} corpus=gdb ====",
+				cnt, subset.len(), n_rules));
 			utils::logger::flush_logger();
 
 			zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
@@ -5240,19 +5245,19 @@ fail: {} ({:.4}%)",
 
 			utils::logger::flush_logger();
 			utils::logger::emit_stdout(format!(
-				"==== SCALE ROUND END pct={} ====", pct));
+				"==== SCALE ROUND END count={} ====", cnt));
 			utils::logger::flush_logger();
 		}
 	}
 
 	#[test]
 	pub fn test_collect_scale_data() {
-		let percs: Vec<usize> = std::env::var("ZKR_SCALE_PERCS").ok()
+		let counts: Vec<usize> = std::env::var("ZKR_SCALE_COUNTS").ok()
 			.map(|s| s.split(',')
 				.filter_map(|x| x.trim().parse().ok()).collect())
-			.unwrap_or_else(|| vec![5usize, 10usize]);
-		println!("collect_scale_data: percs={:?}", percs);
-		collect_scale_data(percs);
+			.unwrap_or_else(|| vec![777usize, 1555usize]);
+		println!("collect_scale_data: counts={:?}", counts);
+		collect_scale_data(counts);
 	}
 
 	/// Experiment: is the accept-vs-fold discharge gap the (max_word_len,
