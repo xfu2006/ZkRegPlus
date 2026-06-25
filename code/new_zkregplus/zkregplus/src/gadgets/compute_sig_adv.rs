@@ -294,7 +294,35 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 			&discharge_infos[..]].concat();
 		assert!(discharge_info.len()==capacity.sigs);
 
-		//1.1 case sensitive 
+		//60937.1 (gated, EVERY compute_sig build): the discharge universe per
+		//build instance. inp_sigs are raw sig ids (890/891). A global counter +
+		//best-effort seg (PROBE_CHUNK_ID, fresh because this is called inside
+		//sed_mapper::gen_nd_advice) let us line-correlate with the prove pass
+		//and catch the empty-universe advice that reaches the prover. If every
+		//seg-33 build shows [890,891] -> the universe is dropped at save/
+		//materialize (downstream); if a seg-33 build shows [] -> dropped at
+		//build. REMOVE with the b_correct harness.
+		{
+			static CS_BUILD_CTR: std::sync::atomic::AtomicUsize =
+				std::sync::atomic::AtomicUsize::new(0);
+			if std::env::var("ZKR_PROBE_77317").is_ok() {
+				let ctr = CS_BUILD_CTR.fetch_add(1,
+					std::sync::atomic::Ordering::Relaxed);
+				let seg = utils::consts::PROBE_CHUNK_ID
+					.load(std::sync::atomic::Ordering::Relaxed);
+				let univ: Vec<u64> = inp_sigs.iter().filter(|f| !f.is_zero())
+					.map(|f| field_to_usize(f) as u64).collect();
+				let names: Vec<&str> = discharge_infos.iter()
+					.filter(|d| d.sig_name!="none")
+					.map(|d| d.sig_name.as_str()).collect();
+				utils::logger::emit_stdout(format!(
+					"DEBUG USE 60937.1: cs-build #{} seg~={} universe={:?} \
+					 n_infos={} infos={:?}",
+					ctr, seg, univ, names.len(), names));
+			}
+		}
+
+		//1.1 case sensitive
 		let pad_cs = vec![F::zero(); capacity.subsigs_cs-inp_subsigs_cs.len()];
 		let inp_subsigs_cs = [&pad_cs[..], &inp_subsigs_cs[..]].concat();
 		let inp_sigs = [&pad2[..], &inp_sigs[..]].concat();
