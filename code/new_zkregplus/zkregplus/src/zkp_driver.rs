@@ -986,7 +986,10 @@ where C: CurveGroup<ScalarField=F>,
 				// Single-word case (scale experiment): sample == fold corpus, so
 				// the measured max is exact -> 0% margin. Multi-word full runs
 				// sample a subset -> 10% headroom.
-				let margin_pct = if sample_words.len() <= 1 { 0 } else { 10 };
+				// NOTE: the caller always appends one dummy 0-pad word (the
+				// foldpot pad) to sample_words, so the REAL word count is
+				// len-1; <=2 means a single real word -> exact -> 0% margin.
+				let margin_pct = if sample_words.len() <= 2 { 0 } else { 10 };
 				let with_margin = |v: usize, cap: usize|
 					((v * (100 + margin_pct) + 99) / 100)
 						.clamp(min_perc, cap);
@@ -1026,11 +1029,46 @@ where C: CurveGroup<ScalarField=F>,
 					}
 					p.perc_pats_expansion_rate_igc = with_margin(hi, old_igc);
 				}
+				// avg-active-pats arms: size_pat = subsigs * avg_active is the
+				// perc-INDEPENDENT term of n = max(size_pat, size_trace). At LOW
+				// rule-set fractions the trace demand is small, so this floor
+				// BINDS and perc has no leverage -- bin-search avg_active DOWN
+				// too (perc now frozen), probe as oracle. At high fractions the
+				// trace term binds and this harmlessly floors size_pat for free
+				// (see DischargeAdvCapacity vec_size doc). cs then igc. Floored
+				// at 1 (a subsig holds >=1 active pat); same margin as perc.
+				let (old_ap_cs, old_ap_igc) =
+					(p.avg_active_pats_per_subsig, p.avg_active_pats_per_subsig_igc);
+				let with_margin1 = |v: usize, cap: usize|
+					((v * (100 + margin_pct) + 99) / 100).clamp(1, cap);
+				{
+					let (mut lo, mut hi) = (1usize, old_ap_cs);
+					while lo < hi {
+						let mid = lo + (hi - lo) / 2;
+						p.avg_active_pats_per_subsig = mid;
+						if matches!(run_probe(&p), Ok(Ok(_))) { hi = mid; }
+						else { lo = mid + 1; }
+					}
+					p.avg_active_pats_per_subsig = with_margin1(hi, old_ap_cs);
+				}
+				{
+					let (mut lo, mut hi) = (1usize, old_ap_igc);
+					while lo < hi {
+						let mid = lo + (hi - lo) / 2;
+						p.avg_active_pats_per_subsig_igc = mid;
+						if matches!(run_probe(&p), Ok(Ok(_))) { hi = mid; }
+						else { lo = mid + 1; }
+					}
+					p.avg_active_pats_per_subsig_igc = with_margin1(hi, old_ap_igc);
+				}
 				log(0, LOG1, &format!("PERC TIGHTEN: perc_cs {}->{} \
-					(max_fwd={}), perc_igc {}->{} (max_fwd={}); SDE acc max \
+					(max_fwd={}), perc_igc {}->{} (max_fwd={}); avg_active_cs \
+					{}->{}, avg_active_igc {}->{}; SDE acc max \
 					cs={} igc={} (binding cap, reported only)",
 					old_cs, p.perc_pats_expansion_rate, mfwd_cs,
 					old_igc, p.perc_pats_expansion_rate_igc, mfwd_igc,
+					old_ap_cs, p.avg_active_pats_per_subsig,
+					old_ap_igc, p.avg_active_pats_per_subsig_igc,
 					macc_cs, macc_igc));
 				return Ok(p);
 			}

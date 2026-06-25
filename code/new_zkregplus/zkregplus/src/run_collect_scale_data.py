@@ -29,7 +29,7 @@ import os, sys, re, subprocess, time, datetime, tarfile, io, platform
 # Each round folds the first pct% of a FIXED pseudo-random permutation of the
 # rule set, so rounds are nested supersets. 100 takes ALL rules.
 # ----------------------------------------------------------------------------
-VEC_PERC = [5, 10]
+VEC_PERC = [2, 4, 8, 10, 20]
 
 VMA_TARGET = int(os.environ.get("ZKR_VM_MAX_MAP_COUNT", "1073741824"))  # 0=skip
 
