@@ -29,14 +29,22 @@ import os, sys, re, subprocess, time, datetime, tarfile, io, platform
 # Each round folds the first pct% of a FIXED pseudo-random permutation of the
 # rule set, so rounds are nested supersets. 100 takes ALL rules.
 # ----------------------------------------------------------------------------
-VEC_PERC = [2, 4, 8, 10, 20]
+VEC_PERC = [2, 4]
 
 VMA_TARGET = int(os.environ.get("ZKR_VM_MAX_MAP_COUNT", "1073741824"))  # 0=skip
 
 HERE = os.path.dirname(os.path.abspath(__file__))          # zkregplus/src
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))     # new_zkregplus
 SCRATCH = "/tmp/bora/scale"                                 # per-round logs
-BUNDLE = "/tmp/bora/scale_data.tgz"                         # final artifact
+# WORD source is parameterized: each run is a SEPARATE corpus (NOT concatenated
+# with any other word). Default = the difficult gdb (6.6M). Override with
+#   ZKR_SCALE_WORD=/abs/path/to/binary   (e.g. an easy ~512KB readelf)
+# Bundle name carries the word label so separate runs do not clobber each other.
+WORD_SRC = os.environ.get(
+    "ZKR_SCALE_WORD",
+    os.path.join(REPO, "data/samples/binexec_merged128k/gdb"))  # read-only
+WORD_LABEL = os.path.splitext(os.path.basename(WORD_SRC))[0]
+BUNDLE = "/tmp/bora/scale_data_%s.tgz" % WORD_LABEL         # final artifact (per word)
 
 BEGIN_RE = re.compile(r"==== SCALE ROUND BEGIN pct=(\d+)\b")
 END_RE = re.compile(r"==== SCALE ROUND END pct=(\d+)")
@@ -68,8 +76,8 @@ CAPS_RE = re.compile(
 # bitwise 0-word.
 # ----------------------------------------------------------------------------
 MAX_WORD  = 512 * 8            # == zkp_driver.rs collect_scale_data: max_word = 512*8
-REAL_GDB  = os.path.join(REPO, "data/samples/binexec_merged128k/gdb")  # read-only
-CONCAT    = os.path.join(SCRATCH, "gdb_with_zeroword.bin")   # /tmp/bora/scale/...
+REAL_GDB  = WORD_SRC                                          # read-only; default gdb
+CONCAT    = os.path.join(SCRATCH, "word_with_zeroword.bin")  # /tmp/bora/scale/...
 SCAN_LIST = os.path.join(SCRATCH, "binexec_3.dat")           # our own corpus list
 
 _MASK = (1 << 64) - 1
@@ -97,11 +105,11 @@ def build_concat_corpus():
     file -- both written to /tmp/bora/scale. No existing sample/config touched."""
     os.makedirs(SCRATCH, exist_ok=True)
     pad = gen_pad_bytes(MAX_WORD * 31)            # 126976 B == one max_word segment
-    with open(REAL_GDB, "rb") as f: gdb = f.read()
-    with open(CONCAT, "wb") as f: f.write(pad + gdb)
+    with open(REAL_GDB, "rb") as f: word = f.read()
+    with open(CONCAT, "wb") as f: f.write(pad + word)
     with open(SCAN_LIST, "w") as f: f.write(CONCAT + "\n")   # absolute -> Rust guard handles it
-    print("[run_scale] concat corpus: 0-word %d B + gdb %d B -> %s (list %s)"
-          % (len(pad), len(gdb), CONCAT, SCAN_LIST))
+    print("[run_scale] concat corpus: 0-word %d B + word '%s' %d B -> %s (list %s)"
+          % (len(pad), WORD_LABEL, len(word), CONCAT, SCAN_LIST))
 
 
 def ensure_vma(target):

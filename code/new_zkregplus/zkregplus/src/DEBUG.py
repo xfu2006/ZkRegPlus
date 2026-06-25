@@ -11,6 +11,7 @@ then (2) runs full_dlp_sample with the probe env vars, tee'ing to /tmp/sample_re
 """
 import os
 import json
+import shutil
 import subprocess
 import sys
 
@@ -78,8 +79,15 @@ def run():
     # load full_dlp's full-corpus ladder so the suspects hit the real caps
     env["ZKR_LOAD_LADDER"] = FULL_LADDER
 
+    # nohup / non-interactive shells often don't source ~/.cargo/env, so
+    # `cargo` isn't on PATH and Popen raises FileNotFoundError. Inject the
+    # rustup bin dir and resolve the binary explicitly.
+    cargo_dir = os.path.expanduser("~/.cargo/bin")
+    env["PATH"] = cargo_dir + os.pathsep + env.get("PATH", "")
+    cargo_bin = shutil.which("cargo", path=env["PATH"]) or "cargo"
+
     cargo = [
-        "cargo", "test", "-p", "zkregplus", "--release", "--",
+        cargo_bin, "test", "-p", "zkregplus", "--release", "--",
         "zkp_driver::tests_zkp_driver::full_dlp_sample",
         "--exact", "--nocapture",
     ]
