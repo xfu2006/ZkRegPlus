@@ -77,7 +77,108 @@ pub mod circuits_super;
 pub mod driver;
 pub mod capacity_planner;
 pub mod veccom;
-pub mod numa;
+
+/// NUMA pinning helpers for the multi-job fold (Linux-only). INLINED here (not a
+/// separate numa.rs) so it ships with mod.rs and needs no extra file to sync.
+///
+/// `full_dlp` runs every job as a rayon task whose hot per-word advice loop is
+/// sequential, so we pin each job's worker thread (+ its allocations) to one
+/// NUMA node, and interleave the shared read-only DB/ACDFA across all nodes so
+/// threads on either socket read it with balanced bandwidth instead of all
+/// hammering one remote node (the dual-socket slowdown). Enabled only when
+/// `ZKR_NUMA=perjob` AND nodes>1; otherwise every fn is a no-op. Raw libc
+/// syscalls -- no extra deps. The runner (run_full_dlp.py) sets `ZKR_NUMA`.
+pub mod numa {
+    #[cfg(target_os = "linux")]
+    mod imp {
+        const MPOL_PREFERRED: libc::c_long = 1;
+        const MPOL_INTERLEAVE: libc::c_long = 3;
+
+        fn enabled() -> bool {
+            std::env::var("ZKR_NUMA").map(|v| v == "perjob").unwrap_or(false)
+                && n_nodes() > 1
+        }
+
+        /// Number of NUMA nodes (counts /sys/devices/system/node/nodeN dirs).
+        pub fn n_nodes() -> usize {
+            let mut n = 0usize;
+            while std::path::Path::new(
+                &format!("/sys/devices/system/node/node{}", n)).is_dir() {
+                n += 1;
+            }
+            n.max(1)
+        }
+
+        /// CPUs of a node, from .../nodeN/cpulist (e.g. "0-15" or "0-7,32-39").
+        fn node_cpus(node: usize) -> Vec<usize> {
+            let s = std::fs::read_to_string(
+                format!("/sys/devices/system/node/node{}/cpulist", node))
+                .unwrap_or_default();
+            let mut cpus = vec![];
+            for part in s.trim().split(',') {
+                let part = part.trim();
+                if part.is_empty() { continue; }
+                match part.split_once('-') {
+                    Some((a, b)) => if let (Ok(a), Ok(b)) =
+                        (a.parse::<usize>(), b.parse::<usize>()) {
+                        cpus.extend(a..=b);
+                    },
+                    None => if let Ok(a) = part.parse::<usize>() { cpus.push(a); },
+                }
+            }
+            cpus
+        }
+
+        unsafe fn set_mempolicy(mode: libc::c_long, mask: &[u64], maxnode: usize) {
+            libc::syscall(libc::SYS_set_mempolicy, mode,
+                mask.as_ptr() as usize as libc::c_long, maxnode as libc::c_long);
+        }
+
+        /// Interleave subsequent allocations of THIS thread across all nodes.
+        /// Call on the main thread before the shared DB/ACDFA is built/loaded.
+        pub fn set_interleave_all() {
+            if !enabled() { return; }
+            let nn = n_nodes();
+            let mut mask = vec![0u64; (nn + 63) / 64];
+            for i in 0..nn { mask[i / 64] |= 1u64 << (i % 64); }
+            unsafe { set_mempolicy(MPOL_INTERLEAVE, &mask, nn + 1); }
+            eprintln!("[numa] interleave-all over {} nodes (main thread)", nn);
+        }
+
+        /// Pin the CALLING thread to `job_id % n_nodes`: CPU affinity to that
+        /// node's cores + prefer-local memory. Call atop each job closure.
+        pub fn bind_thread_to_node(job_id: usize) {
+            if !enabled() { return; }
+            let nn = n_nodes();
+            let node = job_id % nn;
+            unsafe {
+                let mut set: libc::cpu_set_t = std::mem::zeroed();
+                libc::CPU_ZERO(&mut set);
+                for c in node_cpus(node) {
+                    if c < 8 * std::mem::size_of::<libc::cpu_set_t>() {
+                        libc::CPU_SET(c, &mut set);
+                    }
+                }
+                libc::sched_setaffinity(
+                    0, std::mem::size_of::<libc::cpu_set_t>(), &set);
+                let mut mask = vec![0u64; (nn + 63) / 64];
+                mask[node / 64] |= 1u64 << (node % 64);
+                set_mempolicy(MPOL_PREFERRED, &mask, nn + 1);
+            }
+            eprintln!("[numa] job {} -> node {}/{}", job_id, node, nn);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    pub use imp::{set_interleave_all, bind_thread_to_node, n_nodes};
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn set_interleave_all() {}
+    #[cfg(not(target_os = "linux"))]
+    pub fn bind_thread_to_node(_job_id: usize) {}
+    #[cfg(not(target_os = "linux"))]
+    pub fn n_nodes() -> usize { 1 }
+}
 
 //use circuits::{AugmentedFCircuit, ChallengeGadget};
 //use traits::NovaR1CS;
