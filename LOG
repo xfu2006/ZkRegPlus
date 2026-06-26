@@ -29684,6 +29684,18 @@ Goal 3. Writing
 	[c] start 7.5
 	[d] draft of 7.5
 
+Friday 07/26/2026
+Goal 1. check data
+	[a] strangely 128 cpu behaves WORSE than 64 cpu on jetstream2
+		-> it's 2.6x slower than 512GB (so doubling CPU would be 1.3x SLOWER
+			in wall time and 2.6x slower in total time)
+		-> HAD to restrict to use ONLY half CPU and half RAM binding
+		-> ZKR_NUMA=off numactl --cpunodebind=0-3 --membind=0-3 nohup python3 -u run_full_dlp.py --jobs 8 &
+		-> NEED to verify if membind=0-3 would work, it might exceed
+			RAM resource!
+	[b] access-ci -> push request approval -> approved
+	[c] investigate backup plans for 1TB issue.
+
 ----- ACTIVE GOALS -----
 Goal FINAL1. start data collection on GCP
 	[a] server2 -> full_dna (11:30am->6:45pm: 7.25hr) jetstream2: 5.2 hrs.
@@ -29696,7 +29708,7 @@ Goal FINAL2. start data collection on Jetstream
 	[a] small -> scale_data (6:00PM 06/25 ->
 		->  (IP: 149.165.169.73) 
 	[b] large: -> (IP: 149.165.170.106)
-		[b1] full_dlp (9:15pm- 06/25 -> 
+		[b1] full_dlp (7:00am 06/26 -> 
 		[b2] full_clam??
 		[b3] reef_eval
 		[b4] zombie_eval

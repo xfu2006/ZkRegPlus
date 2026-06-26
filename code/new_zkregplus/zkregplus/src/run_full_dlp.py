@@ -13,17 +13,22 @@ Usage:
                   cross-chunk vs new chunk-local-reset estimate, and
                   64601.3 the exact per-rung StepFwdPrf perc demand
                   (route+back-solve) applied to the ladder
-    --numa=P   : NUMA policy, passed to Rust via ZKR_NUMA (default perjob).
-                 The Rust side (foldpot::numa) does the pinning -- this runner
-                 only forwards the flag (no numactl wrapper):
-                   perjob -> interleave the shared DB/ACDFA across all nodes AND
-                     pin each job's worker thread + its per-word allocations to
-                     node (job_id % n_nodes). Fixes the dual-socket slowdown with
-                     true per-job memory locality. No-op on a single-NUMA box.
-                   off    -> no pinning (Linux first-touch default).
+    --numa=P   : whole-process numactl policy (default socket). MEASURED best:
+                 8 jobs socket-confined is ~0.89x the 512GB baseline; 16 jobs
+                 across both sockets saturates memory bandwidth (~2.5x slower).
+                   socket     -> confine to the FIRST socket's nodes
+                     (--cpunodebind/--membind), 8 jobs all-local. DEFAULT/best.
+                   interleave -> --interleave=all (spread); only if you need >1
+                     socket's cores/RAM.
+                   off        -> no numactl (Linux first-touch).
+                   perjob     -> no numactl; let the Rust foldpot::numa pin per
+                     job (ZKR_NUMA=perjob). NOT recommended -- fragments the pool.
     --dry-run  : print resolved paths + command, do not run cargo.
 
-Env:  ZKR_NUMA       NUMA policy (perjob|off); --numa= overrides (default perjob)
+Defaults bake in the winning config: --jobs 8 --numa socket. Just run:
+  nohup python3 -u run_full_dlp.py &
+
+Env:  ZKR_NUMA       numa policy (socket|interleave|off|perjob); --numa= overrides
       ZKR_DC_THREADS  determine_config probe threads (default 8)
       ZKR_VM_MAX_MAP_COUNT  target vm.max_map_count (default 1073741824 = 1G;
                  0 skips). Raised via `sudo sysctl` before the run so the
@@ -93,21 +98,60 @@ for a in sys.argv[1:]:
 DRY = "--dry-run" in sys.argv
 RESET = "--reset" in sys.argv
 PROBE_RESET = "--probe-reset" in sys.argv     # 64600 reset-vs-cross perc est
-JOBS = 16          # default 16 jobs; override with --jobs N
+JOBS = 8           # default 8 jobs (measured best: 16 saturates mem bandwidth)
 for a in sys.argv[1:]:
     if a.startswith("--jobs="):
         JOBS = int(a.split("=", 1)[1])
 if "--jobs" in sys.argv:                       # also accept "--jobs N"
     JOBS = int(sys.argv[sys.argv.index("--jobs") + 1])
 
-# NUMA policy forwarded to Rust via ZKR_NUMA (Rust does the pinning). Use the
-# '=' form so the value never leaks into the positional `args` filter above.
-NUMA = os.environ.get("ZKR_NUMA", "perjob")
+# NUMA policy applied by THIS runner as a whole-process numactl wrapper (the
+# measured-best lever; the Rust per-job pinning is off by default -- it
+# fragmented the rayon pool). Default 'socket': confine the 8 jobs to the first
+# socket, all-local memory -- ~0.89x the 512GB baseline. Override with --numa=.
+NUMA = os.environ.get("ZKR_NUMA", "socket")
 for a in sys.argv[1:]:
     if a.startswith("--numa="):
         NUMA = a.split("=", 1)[1]
 if "--numa" in sys.argv:                       # also accept "--numa P"
     NUMA = sys.argv[sys.argv.index("--numa") + 1]
+
+
+def numa_prefix(policy):
+    """Whole-process numactl wrapper (measured best). Returns [] when numactl is
+    absent, the box is single-NUMA, or policy is off/none/perjob.
+      socket     -> pin cores to the FIRST socket's nodes (--cpunodebind only):
+                    8 jobs run on one socket; default first-touch keeps memory
+                    local -> ~0.89x the 512GB baseline. No --membind, so no 512GB
+                    cap (won't OOM on bigger footprints); only spills remote if a
+                    socket-0 node actually fills. 16 jobs saturate bandwidth.
+      interleave -> --interleave=all (spread across all nodes); only worth it if
+                    you genuinely need >1 socket's cores/RAM.
+      off/none/perjob -> no numactl (perjob lets the Rust path pin per job)."""
+    import shutil
+    if policy in ("off", "none", "perjob"):
+        return []
+    if not shutil.which("numactl"):
+        print("[run_full_dlp] numactl not found; NUMA '%s' skipped" % policy)
+        return []
+    try:
+        h = subprocess.run(["numactl", "-H"], capture_output=True,
+                           text=True).stdout
+        nnodes = max((int(x) for x in re.findall(r"node (\d+) cpus:", h)),
+                     default=-1) + 1
+    except Exception:
+        nnodes = 0
+    if nnodes <= 1:
+        print("[run_full_dlp] single NUMA node; no policy needed")
+        return []
+    if policy == "interleave":
+        print("[run_full_dlp] NUMA: --interleave=all over %d nodes" % nnodes)
+        return ["numactl", "--interleave=all"]
+    half = max(1, nnodes // 2)                  # 'socket' (default)
+    rng = "0-%d" % (half - 1)
+    print("[run_full_dlp] NUMA: pin cores to nodes %s of %d (local first-touch, "
+          "no membind cap)" % (rng, nnodes))
+    return ["numactl", "--cpunodebind=%s" % rng]
 
 runcfg_name = args[0] if args else "runcfg_full.json"
 RUNCFG = runcfg_name if os.path.isabs(runcfg_name) \
@@ -132,14 +176,18 @@ json.dump(rc, open(EFF, "w"), indent=2)
 env = dict(os.environ)
 env.setdefault("RUSTFLAGS", "-C link-args=-fuse-ld=lld -Awarnings")
 env["ZKR_DLP_RUNCFG"] = EFF
-env["ZKR_NUMA"] = NUMA          # Rust foldpot::numa reads this (perjob|off)
+# Rust per-job pinning only when policy is 'perjob'; otherwise off (we use the
+# whole-process numactl wrapper instead -- the Rust pinning fragmented the pool).
+env["ZKR_NUMA"] = "perjob" if NUMA == "perjob" else "off"
 env.setdefault("ZKR_DC_THREADS", "8")
 if PROBE_RESET:
     env["ZKR_PROBE_64600"] = "1"   # per-file old cross-chunk vs new reset est
     env["ZKR_PROBE_64601"] = "1"   # exact per-rung perc demand (64601.3)
 
 time_prefix = ["/usr/bin/time", "-v"] if os.path.exists("/usr/bin/time") else []
-cmd = time_prefix + ["cargo", "test", "-p", "zkregplus", "--release", "--",
+# numactl wraps cargo (children inherit the policy); time stays outermost for RSS.
+cmd = time_prefix + numa_prefix(NUMA) + ["cargo", "test", "-p", "zkregplus",
+    "--release", "--",
     "zkp_driver::tests_zkp_driver::full_dlp", "--exact", "--nocapture"]
 
 def repo(p):  return os.path.join(REPO, p) if p else None

@@ -9,8 +9,12 @@ cold/partial the prover rebuilds + persists keys this run (driver.rs auto-build)
 so the first run is slow and later runs reuse the keys.
 
 Usage:
-  python3 run_full_clam.py [--dry-run]
+  python3 run_full_clam.py [--dry-run] [--numa=P]
     --dry-run  : print resolved paths + command, do not run cargo.
+    --numa=P   : whole-process numactl policy. Default 'interleave' (proving is
+                 capacity-bound and may exceed one socket -> balanced bandwidth,
+                 no membind cap, won't OOM). 'socket' = pin cores to socket 0
+                 (faster IF peak RSS fits one socket). 'off' = no numactl.
 
 Env:  ZKR_VM_MAX_MAP_COUNT  target vm.max_map_count (default 1073741824 = 1G;
                  0 skips). Raised via `sudo sysctl` before the run so the
@@ -27,6 +31,54 @@ Output (ALWAYS packed, even on OOM/panic/exception):
 import os, sys, subprocess, time, datetime, tarfile, json, platform, re, glob
 
 VMA_TARGET = int(os.environ.get("ZKR_VM_MAX_MAP_COUNT", "1073741824"))  # 0=skip
+
+# NUMA policy applied as a whole-process numactl wrapper. UNLIKE full_dlp (advice
+# gen, bandwidth-bound, fits one socket -> 'socket' wins), full_clam is the
+# PROVING run: capacity-bound (snark keys + fold state) and can exceed one
+# socket's RAM, where --membind would OOM. So the default here is 'interleave'
+# -- spread pages over all nodes for balanced bandwidth, no per-socket cap.
+# Override with --numa=socket (only if a run's peak RSS fits one socket, for the
+# all-local speedup) or --numa=off. The Rust per-job pinning stays off.
+NUMA = os.environ.get("ZKR_NUMA", "interleave")
+for a in sys.argv[1:]:
+    if a.startswith("--numa="):
+        NUMA = a.split("=", 1)[1]
+if "--numa" in sys.argv:                       # also accept "--numa P"
+    NUMA = sys.argv[sys.argv.index("--numa") + 1]
+
+
+def numa_prefix(policy):
+    """Whole-process numactl wrapper. Returns [] when numactl is absent, the box
+    is single-NUMA, or policy is off/none/perjob.
+      interleave -> --interleave=all (DEFAULT for proving): balanced bandwidth
+                    over all nodes, no per-socket cap -> won't OOM at >512GB.
+      socket     -> pin cores to the FIRST socket's nodes (--cpunodebind only):
+                    all-local first-touch, faster IF the run fits one socket.
+      off/none/perjob -> no numactl (perjob lets the Rust path pin per job)."""
+    import shutil
+    if policy in ("off", "none", "perjob"):
+        return []
+    if not shutil.which("numactl"):
+        print("[run_full_clam] numactl not found; NUMA '%s' skipped" % policy)
+        return []
+    try:
+        h = subprocess.run(["numactl", "-H"], capture_output=True,
+                           text=True).stdout
+        nnodes = max((int(x) for x in re.findall(r"node (\d+) cpus:", h)),
+                     default=-1) + 1
+    except Exception:
+        nnodes = 0
+    if nnodes <= 1:
+        print("[run_full_clam] single NUMA node; no policy needed")
+        return []
+    if policy == "interleave":
+        print("[run_full_clam] NUMA: --interleave=all over %d nodes" % nnodes)
+        return ["numactl", "--interleave=all"]
+    half = max(1, nnodes // 2)                  # 'socket'
+    rng = "0-%d" % (half - 1)
+    print("[run_full_clam] NUMA: pin cores to nodes %s of %d (local first-touch, "
+          "no membind cap)" % (rng, nnodes))
+    return ["numactl", "--cpunodebind=%s" % rng]
 
 
 def ensure_vma(target):
@@ -77,9 +129,11 @@ TAR = "/tmp/full_clam.tgz"                                 # literal name
 
 env = dict(os.environ)
 env.setdefault("RUSTFLAGS", "-C link-args=-fuse-ld=lld -Awarnings")
+env["ZKR_NUMA"] = "perjob" if NUMA == "perjob" else "off"   # Rust pinning off
 
 time_prefix = ["/usr/bin/time", "-v"] if os.path.exists("/usr/bin/time") else []
-cmd = time_prefix + ["cargo", "test", "-p", "zkregplus", "--release", "--",
+cmd = time_prefix + numa_prefix(NUMA) + ["cargo", "test", "-p", "zkregplus",
+    "--release", "--",
     "zkp_driver::tests_zkp_driver::full_clam", "--exact", "--nocapture"]
 
 print("[run_full_clam] REPO   =", REPO)
