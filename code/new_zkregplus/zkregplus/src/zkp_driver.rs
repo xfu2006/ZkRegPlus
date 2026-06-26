@@ -5247,9 +5247,11 @@ fail: {} ({:.4}%)",
 			std::fs::write(&sub_ised_igc, filt(&needs_ised_igc_full))
 				.expect("write needs_ised_igc");
 
+			let corpus = std::env::var("ZKR_SCALE_CORPUS")
+				.unwrap_or_else(|_| "unknown".to_string());
 			utils::logger::emit_stdout(format!(
-				"==== SCALE ROUND BEGIN count={} rules={}/{} corpus=gdb ====",
-				cnt, subset.len(), n_rules));
+				"==== SCALE ROUND BEGIN count={} rules={}/{} corpus={} ====",
+				cnt, subset.len(), n_rules, corpus));
 			utils::logger::flush_logger();
 
 			zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(

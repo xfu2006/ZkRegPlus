@@ -29694,8 +29694,9 @@ Goal FINAL1. start data collection on GCP
 		eval_zombie??
 Goal FINAL2. start data collection on Jetstream 
 	[a] small -> scale_data (6:00PM 06/25 ->
-	[b] large:
-		[b1] full_dlp (11:00- 06/25 -> 
+		->  (IP: 149.165.169.73) 
+	[b] large: -> (IP: 149.165.170.106)
+		[b1] full_dlp (9:15pm- 06/25 -> 
 		[b2] full_clam??
 		[b3] reef_eval
 		[b4] zombie_eval

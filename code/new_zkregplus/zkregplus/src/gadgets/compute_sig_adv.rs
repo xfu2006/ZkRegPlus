@@ -384,9 +384,16 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		let tname = if b_igc {"eval_res_combo_igc"} 
 			else {"eval_res_combo_cs"};
 		let res = Container::<F>::new(tname);
-		let cap_subsigs = if b_igc {capacity.subsigs_cs} else
-			{capacity.subsigs_igc};
-		assert!(inp_subsigs.len()==cap_subsigs);
+		// inp_subsigs is the CS vector when !b_igc (padded to subsigs_cs at the
+		// call site) and the IGC vector when b_igc (padded to subsigs_igc), so
+		// the cap MUST match the same branch -- the two were swapped, which only
+		// surfaced once subsigs_cs and subsigs_igc diverged (e.g. the scale
+		// sweep bumps subsigs_cs alone), tripping the exact-equality assert.
+		let cap_subsigs = if b_igc {capacity.subsigs_igc} else
+			{capacity.subsigs_cs};
+		assert!(inp_subsigs.len()==cap_subsigs,
+			"inp_subsigs.len {} != cap_subsigs {} (b_igc={})",
+			inp_subsigs.len(), cap_subsigs, b_igc);
 		let sname = if b_igc {"discharge_adv_stmt_igc"}
 			else {"discharge_adv_stmt_cs"};
 		let sq_res = sq_res.lock().unwrap().duplicate_as_external_adv(

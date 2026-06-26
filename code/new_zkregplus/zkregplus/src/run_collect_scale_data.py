@@ -208,6 +208,10 @@ def main():
     env = dict(os.environ)
     env.setdefault("RUSTFLAGS", "-C link-args=-fuse-ld=lld -Awarnings")
     env.setdefault("ZKR_DC_THREADS", "8")   # determine_config probe threads
+    # real corpus identity for the SCALE ROUND markers (Rust reads this; the
+    # scan_files path is a fixed /tmp scratch list so the basename of the WORD
+    # source is the only thing that distinguishes e.g. gdb vs readelf runs).
+    env["ZKR_SCALE_CORPUS"] = os.path.basename(WORD_SRC)
 
     time_prefix = ["/usr/bin/time", "-v"] if os.path.exists("/usr/bin/time") \
         else []
