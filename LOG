@@ -29695,12 +29695,27 @@ Goal 1. check data
 			RAM resource!
 	[b] access-ci -> push request approval -> approved
 	[c] investigate backup plans for 1TB issue.
+	[d] try to estimate the time needed on servers (dlp)
+		Rough ratio: 1->9 
+		[d1] jet1tb: 24122 sec  ===>  63 hours (3 days->6 days)
+			could be: ending at Thursday 7am worst case
+			" PERF 1007: Phase 1 step 2: dispatch w into steps. mem: 8960 MB for total_word_len: 219.22 MB:  24122851 ms"
+		[d2] gcpm1: 46600 sec  ===>   116 hrs (4.85 - 5 days =>  9 days)
+			could be ending: Tuesday 11am to Saturday next week 11am
+			" [job 5] LOG2: --  PERF 1007: Phase 1 step 2: dispatch w into steps. mem: 0 MB for total_word_len: 219.22 MB:  46600020 ms"
+
+Goal 2. fix vpn (cs and cybersec) for future use
+	[a] fix the protocol validity check failure (legacy crypto)
+	[b] huvpn not working
+	[c] the other option hotspot.
+
+Goal 2. Writing
 
 ----- ACTIVE GOALS -----
 Goal FINAL1. start data collection on GCP
 	[a] server2 -> full_dna (11:30am->6:45pm: 7.25hr) jetstream2: 5.2 hrs.
-	[b] server2 -> full_clam (6:45pm 06/24 -> 
-	[c] server1 -> full_dlp (11:00AM 06/25 -> 
+	[b] server2 -> full_clam (6:45pm 06/24 W-> 
+	[c] server1 -> full_dlp (11:00AM 06/25 R -> 
 	[d] server2:
 		eval_reef??
 		eval_zombie??
@@ -29708,7 +29723,7 @@ Goal FINAL2. start data collection on Jetstream
 	[a] small -> scale_data (6:00PM 06/25 ->
 		->  (IP: 149.165.169.73) 
 	[b] large: -> (IP: 149.165.170.106)
-		[b1] full_dlp (7:00am 06/26 -> 
+		[b1] full_dlp (7:00am 06/26 F -> 
 		[b2] full_clam??
 		[b3] reef_eval
 		[b4] zombie_eval
