@@ -230,7 +230,12 @@ def build_test_msm(rf, dry):
 
 def run_msm_tier(info, rf, outdir, policies, dry):
     banner("TIER A: test_msm proxy (BN254 G1 MSM under numactl matrix)")
-    binp = os.path.join(ZKREG, "target/release/examples/test_msm")
+    # cargo workspace: example bins land in <repo>/target, not <crate>/target
+    binp = os.path.join(REPO, "target/release/examples/test_msm")
+    if not os.path.isfile(binp):
+        print("[msm] binary missing: %s\n[msm] build it first: cd %s && "
+              "cargo build --release --example test_msm" % (binp, ZKREG))
+        return {}
     results = {}
     for pol in policies:
         pre = numa_prefix(pol, info)
