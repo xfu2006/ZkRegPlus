@@ -29719,8 +29719,21 @@ Goal 1. try to locate err in full_clam() job 3 err.
 	[a] write bisec_debug.py
 	[b] implement it for future use 
 	[c] refine it to add log support
-	[d]
-Goal 2. 
+	[d] had to run full_clam first to get the key
+	[e] run error cannot built the keys
+	[f] run test_full_main to generate keys
+Goal 2. think about memory contention issue replace RwLock with ArcSwap
+	[a] prepared numa_probe.py 
+		------------
+		python3 numa_probe.py --all --label baseline                 # full baseline
+  python3 numa_probe.py --all --label arcswap        --skip-warm   # after ArcSwap
+  python3 numa_probe.py --all --label replicate-keys --skip-warm   # after key replication
+  python3 numa_probe.py --compare data/cache/numa_probe/*baseline \
+      data/cache/numa_probe/*arcswap data/cache/numa_probe/*replicate-keys
+		-----------------------
+Goal 2. writing 7.5
+	[a] p1
+	[b] p2
 
 ----- ACTIVE GOALS -----
 Goal FINAL1. start data collection on GCP
@@ -29734,7 +29747,7 @@ Goal FINAL1. start data collection on GCP
 		nohup python3 -u run_full_dlp.py --jobs=16 --numa=off
 	[d] server2:
 		eval_reef (7:55pm 06/26 -> 11:30pm 06/26: 4hrs) => done 
-		eval_zombie (8:00AM 06/27 ->  
+		eval_zombie (10:00AM 06/27 ->  
 Goal FINAL2. start data collection on Jetstream 
 	[a] small -> scale_data (6:00PM 06/25 ->
 		->  (IP: 149.165.169.73) 
@@ -29742,7 +29755,7 @@ Goal FINAL2. start data collection on Jetstream
 	[b] large: -> (IP: 149.165.170.106)
 		[b1] full_dlp (7:00am 06/26 F -> 
 			trace: 7:00am 5232 (job2) ->  8:00am 5767 (job2) 500/hr
-				
+				-> 1:00pm 8667: 600/hr
 		[b2] full_clam??
 		[b3] reef_eval
 		[b4] zombie_eval
