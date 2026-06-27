@@ -12,7 +12,10 @@ delta-debugging (ddmin) + a size-threshold probe when "neither half reproduces
 but the whole does", i.e. when the fault is NOT a single file but an
 aggregate/interaction across job 3's corpus.
 
-ALL temp/config artifacts live under /tmp/bora/bisec.
+ALL temp/config artifacts live under /tmp/bora/bisec. On exit (always, even on
+OOM-halt / budget-exceeded / panic) the whole session -- audit.json,
+verify_results.log, state.json, job3_master.txt, and every trial log + slice --
+is packed into /tmp/bisect_job3.tgz (literal name, overwritten each run).
 
 Oracle (checked in this order):
   OOM-HALT  child SIGKILL(-9/137), or SIGABRT(-6/134)+alloc-failed marker,
@@ -31,7 +34,7 @@ Resume: just re-run the identical command -- settled subsets are skipped;
 OOM-marked subsets are retried (use this after switching to the 1TB server).
 """
 
-import argparse, json, os, random, re, subprocess, sys, time
+import argparse, json, os, random, re, subprocess, sys, tarfile, time
 from hashlib import sha1
 from pathlib import Path
 
@@ -45,6 +48,11 @@ AUDIT      = BISEC / "audit.json"
 STATE      = BISEC / "state.json"
 VERIFY_LOG = BISEC / "verify_results.log"
 MASTER     = BISEC / "job3_master.txt"
+
+# single bundle of the whole session, ALWAYS rewritten on exit (finally), so an
+# OOM-halt / budget-exceeded / panic still leaves one artifact. Literal name.
+PACK_TGZ   = "/tmp/bisect_job3.tgz"
+PACK_ITEMS = [AUDIT, STATE, VERIFY_LOG, MASTER, SLICES, LOGS]
 
 TEST_FILTER = "zkp_driver::tests_zkp_driver::test_full_debug_main"
 PKG         = "zkregplus"
@@ -126,6 +134,21 @@ def find_proj_root(explicit):
                 return d
     sys.exit("could not auto-detect proj_root (no ancestor has "
              f"{REL_BINEXEC}); pass --proj-root")
+
+
+def pack_session():
+    """Bundle the whole bisect session (audit, summaries, every trial log and
+    slice) into PACK_TGZ. ALWAYS runs from main's finally -- an OOM-halt,
+    budget-exceeded, or panic still leaves a single artifact. Overwrites the
+    literal PACK_TGZ each run; directories (slices/, logs/) recurse."""
+    try:
+        with tarfile.open(PACK_TGZ, "w:gz") as t:
+            for p in PACK_ITEMS:
+                if p.exists():
+                    t.add(p, arcname=p.name)
+        log(f"packed session -> {PACK_TGZ}")
+    except Exception as e:
+        log(f"WARN: could not pack session: {e}")
 
 
 # ----------------------------------------------------------------------------
@@ -501,6 +524,8 @@ def main():
               "raise --max-trials to continue; progress is saved/resumable.",
               f"audit: {AUDIT}"])
         sys.exit(4)
+    finally:
+        pack_session()
 
     # 3. report (the result set was already tested during localize, so its
     # verdict is cached -- read it, don't risk another expensive run here)

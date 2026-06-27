@@ -29715,9 +29715,12 @@ Goal 2. Writing
 	[c] update the script to get just one snark proof timing.
 
 Sat 06/27/2026
-Goal 1. try to locate err
+Goal 1. try to locate err in full_clam() job 3 err.
 	[a] write bisec_debug.py
-	[b] 
+	[b] implement it for future use 
+	[c] refine it to add log support
+	[d]
+Goal 2. 
 
 ----- ACTIVE GOALS -----
 Goal FINAL1. start data collection on GCP
@@ -29730,13 +29733,16 @@ Goal FINAL1. start data collection on GCP
 	[c] server1 -> full_dlp (6:30pm 06/26 F -> 
 		nohup python3 -u run_full_dlp.py --jobs=16 --numa=off
 	[d] server2:
-		eval_reef (7:55pm 06/26 -> 
-		eval_zombie 
+		eval_reef (7:55pm 06/26 -> 11:30pm 06/26: 4hrs) => done 
+		eval_zombie (8:00AM 06/27 ->  
 Goal FINAL2. start data collection on Jetstream 
 	[a] small -> scale_data (6:00PM 06/25 ->
 		->  (IP: 149.165.169.73) 
+		-> trace: phase1: 12 hrs (vs 7 hrs on jet2)
 	[b] large: -> (IP: 149.165.170.106)
 		[b1] full_dlp (7:00am 06/26 F -> 
+			trace: 7:00am 5232 (job2) ->  8:00am 5767 (job2) 500/hr
+				
 		[b2] full_clam??
 		[b3] reef_eval
 		[b4] zombie_eval
