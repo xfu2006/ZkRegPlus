@@ -66,7 +66,10 @@ pub fn compute_powers<F: PrimeField>(size: usize, g: F) -> Vec<F> {
     use ark_std::cmp::{max, min};
     let num_cpus_available = rayon::current_num_threads();
     let num_elem_per_thread = max(size / num_cpus_available, MIN_PARALLEL_CHUNK_SIZE);
-    let num_cpus_used = size / num_elem_per_thread;
+    // ceil-divide so the final partial chunk (size not divisible by
+    // num_elem_per_thread, e.g. non-power-of-2 core counts) is included;
+    // the per-chunk min() already truncates it to the exact remainder.
+    let num_cpus_used = (size + num_elem_per_thread - 1) / num_elem_per_thread;
 
     // Split up the powers to compute across each thread evenly.
     let res: Vec<F> = (0..num_cpus_used)

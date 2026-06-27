@@ -22,6 +22,12 @@ HOW IT STAYS FAST (no 8-hour run, no Rust change)
   run that capped fold under each numactl policy and compare per-step ms.
   Everything is driven by EXISTING env vars + numactl -- zero Rust edits.
 
+  CAP IS IN WORDS, NOT STEPS. One word expands into MANY prove_steps (the
+  inner subseg loop, driver.rs:2288) -- empirically ~35 steps/word on the
+  DLP corpus. So per job, steps ~= word_cap * 35: word_cap=2 -> ~70 steps
+  (minutes), word_cap=40 -> ~1400 steps (HOURS). Keep the cap LOW; the
+  per-step ms is an average, so ~35-70 steps already gives a stable number.
+
 TIERS (run fastest-first)
   Tier A  test_msm proxy   : BN254 G1 MSM (the veccom.rs:315 kernel) under a
                              numactl matrix. No data, no cache, ~minutes.
@@ -35,11 +41,11 @@ TIERS (run fastest-first)
                              array, not GLOBAL_CONFIG). Needs perf privilege.
 
 USAGE (run ON the box under test, e.g. gcpm1)
-  python3 numa_probe.py                      # Tier A + Tier B, default cap=40
+  python3 numa_probe.py                      # Tier A + Tier B, default cap=2
   python3 numa_probe.py --dry-run            # print plan + commands, run none
   python3 numa_probe.py --msm-only           # Tier A only (instant signal)
   python3 numa_probe.py --skip-msm           # Tier B only
-  python3 numa_probe.py --word-cap 80 --jobs 8
+  python3 numa_probe.py --word-cap 4 --jobs 8   # ~140 steps/job (heavier)
   python3 numa_probe.py --policies socket,interleave,off,local0,remote
   python3 numa_probe.py --c2c                # also Tier C (uncapped, perf)
   python3 numa_probe.py --skip-warm          # cache already warm
@@ -337,13 +343,30 @@ def run_full_dlp(tag, policy, eff, word_cap, info, rf, outdir, dry):
         lf.flush()
         p = subprocess.Popen(cmd, cwd=REPO, env=env, stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT, text=True)
+        # console heartbeat: the prover only prints "PROGRESS fold" at word
+        # 1/100/last, so a low cap looks dead mid-fold. Echo a step counter
+        # at most every HB_SECS so np_console.log shows real progress.
+        HB_SECS = 15
+        step_n = 0
+        last_hb = t0
         for line in p.stdout:
             lf.write(line)
             lf.flush()
-            if any(k in line for k in ("PROGRESS fold", "PERF WORKFLOW",
-                                       "panicked", "PREFLIGHT", "Killed",
-                                       "CapErr", "test result")):
+            if "prove_step cost: i:" in line:
+                step_n += 1
+                now = time.time()
+                if now - last_hb >= HB_SECS:
+                    last_hb = now
+                    sys.stdout.write(
+                        "    [dlp:%s] fold step %d (all jobs)  %.0fs "
+                        "elapsed\n" % (tag, step_n, now - t0))
+                    sys.stdout.flush()
+            elif any(k in line for k in ("PROGRESS fold", "PERF WORKFLOW",
+                                         "panicked", "PREFLIGHT", "Killed",
+                                         "CapErr", "test result",
+                                         "73112.cap")):
                 sys.stdout.write("    " + line)
+                sys.stdout.flush()
         p.wait()
     wall = time.time() - t0
     agg = parse_steps(logp)
@@ -742,13 +765,17 @@ def main():
                     help="add the confined-vs-spread cliff (jobs x placement)")
     ap.add_argument("--all", action="store_true",
                     help="Tier A + Tier B + stress (NOT c2c -- add --c2c)")
-    ap.add_argument("--stress-spread-jobs", type=int, default=None,
-                    help="job count for the spread corner (default 2x --jobs)")
+    ap.add_argument("--stress-spread-jobs", type=int, default=8,
+                    help="job count for the spread corner. Default 8: stays "
+                         "safe even when folding keys are replicated per job "
+                         "(~N*(K+W); K~10GB key block). Raise only if RAM allows.")
     ap.add_argument("--runcfg", default=None,
                     help="full_dlp runcfg (default runcfg_full.json)")
     ap.add_argument("--jobs", type=int, default=8)
-    ap.add_argument("--word-cap", type=int, default=40,
-                    help="ZKR_WORD_CAP_PER_JOB for the capped fold (0=full)")
+    ap.add_argument("--word-cap", type=int, default=2,
+                    help="ZKR_WORD_CAP_PER_JOB for the capped fold (0=full). "
+                         "Cap is in WORDS; ~35 prove_steps/word, so 2 -> "
+                         "~70 steps/job (minutes). Keep low.")
     ap.add_argument("--window", type=int, default=45,
                     help="perf c2c sampling seconds (Tier C)")
     ap.add_argument("--policies", default=None,
@@ -783,7 +810,7 @@ def main():
                 else default_policies(info))
 
     do_stress = (args.stress or args.all) and not args.msm_only
-    spread_jobs = args.stress_spread_jobs or (2 * args.jobs)
+    spread_jobs = args.stress_spread_jobs or 8
 
     banner("PLAN")
     print("label         : %s  (git %s)" % (args.label, git_head()))

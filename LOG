@@ -29715,6 +29715,14 @@ Goal 2. Writing
 	[c] update the script to get just one snark proof timing.
 
 Sat 06/27/2026
+Goal 2. think about memory contention issue replace RwLock with ArcSwap
+	[a] prepared numa_probe.py 
+	[b] too many words -> make job shorter
+		------------
+		nohup python3 -u numa_probe.py --all --label jet512-baseline \
+    --skip-warm --stress-spread-jobs 12 > /tmp/np_console.log 2>&1 &
+		-----------------------
+	[b] now running first job baseline
 Goal 1. try to locate err in full_clam() job 3 err.
 	[a] write bisec_debug.py
 	[b] implement it for future use 
@@ -29723,16 +29731,11 @@ Goal 1. try to locate err in full_clam() job 3 err.
 	[e] run error cannot built the keys
 	[f] run test_full_main to generate keys. -> DOES NOT WORK. need 10 more hours
 		too expensive
-	[g]
-Goal 2. think about memory contention issue replace RwLock with ArcSwap
-	[a] prepared numa_probe.py 
-		------------
-		nohup python3 -u numa_probe.py --all --label jet512-baseline \
-    --skip-warm --stress-spread-jobs 12 > /tmp/np_console.log 2>&1 &
-		-----------------------
+	[g] updated python but why for numa_probe.py first. ????
 Goal 2. writing 7.5
 	[a] p1
 	[b] p2
+	[c] p3 and p4
 	[c] retrieval eval_reef and eval_zombie. very expensive at least 3 or 4 hours
 		
 
@@ -29744,8 +29747,12 @@ Goal FINAL1. start data collection on GCP
 		* but not all batch proof pass, not sure why? (5 jobs success
 			but one job fails and break the other 3)
 		* needs to check.
-	[c] server1 -> full_dlp (6:30pm 06/26 F -> 
+	[c] server1 -> full_dlp 
+		(6:30pm 06/26 F ->  3:53pm 06/27/2026 - 16 jobs) ===> FAILED
 		nohup python3 -u run_full_dlp.py --jobs=16 --numa=off
+		xxx FAILED xxx !!!
+		Fixed its vec com key size not power of 2 failure, fixed.
+		wait until numa experiment done.
 	[d] server2:
 		eval_reef (7:55pm 06/26 -> 11:30pm 06/26: 4hrs) => done 
 		eval_zombie (10:00AM 06/27 ->  
@@ -29754,9 +29761,14 @@ Goal FINAL2. start data collection on Jetstream
 		->  (IP: 149.165.169.73) 
 		-> trace: phase1: 12 hrs (vs 7 hrs on jet2)
 	[b] large: -> (IP: 149.165.170.106)
-		[b1] full_dlp (7:00am 06/26 F -> 
+		[b1] full_dlp (7:00am 06/26 --> 
 			trace: 7:00am 5232 (job2) ->  8:00am 5767 (job2) 500/hr
 				-> 1:00pm 8667: 600/hr
+				-> 4:00pm 10286: 600/hr
+				-> 6:15pm 10615: 300/hr
+			== >try to fix the 512GB RAM limitation due to memory 
+				pin poly -> add the other 512GB RAM as swap disk
+			==> put zram swap file  (will be low though
 		[b2] full_clam??
 		[b3] reef_eval
 		[b4] zombie_eval
