@@ -378,24 +378,49 @@ def run_dlp_tier(info, rf, outdir, policies, runcfg, jobs, word_cap,
 # ----------------------------------------------------------------------
 # Tier B-stress: reproduce the placement x concurrency cliff directly
 # ----------------------------------------------------------------------
+def confined_policy(info):
+    """Best-locality corner for THIS topology: 1 node on a 4+-node box, the
+    first socket (half the nodes) on 2-3 nodes, and just 'off' on 1 node."""
+    nn = info["nnodes"]
+    if nn >= 4:
+        return "local0"      # pin to node 0: sharpest locality
+    if nn >= 2:
+        return "socket"      # first half of the nodes
+    return "off"
+
+
 def run_stress_tier(info, rf, outdir, runcfg, jobs_confined, jobs_spread,
                     word_cap, dry):
-    """Two deliberately contrasting corners (capped fold, per-step ms):
-      confined : few jobs on ONE socket, all-local  -> the good case
-      spread   : 2x jobs across BOTH sockets        -> bandwidth-saturated
-    Reports the spread/confined per-step ratio (team measured ~2.5x on a
-    2-socket box). On a 1-node box the two corners coincide -> ratio ~1."""
-    banner("TIER B-STRESS: confined (1 socket) vs spread (both sockets)")
-    if info["nnodes"] < 2:
-        print("single NUMA node: confined and spread are identical here; the")
-        print("cliff needs >=2 sockets. Running both anyway for completeness.")
+    """Two contrasting corners (capped fold, per-step ms):
+      confined : few jobs, fewest nodes, all-local  -> low-contention floor
+      spread   : 2x jobs across ALL nodes           -> max-contention ceiling
+    cliff = spread/confined per-step ms: how much the cross-node bandwidth +
+    oversubscription tax costs when you light up the whole box. NOTE the two
+    corners differ in core count too (confined uses one node's cpus), so the
+    cliff blends NUMA + concurrency; the PURE per-node NUMA penalty at fixed
+    cores is the Tier B local0-vs-remote pair. On 1 node the corners coincide."""
+    nn = info["nnodes"]
+    cpol = confined_policy(info)
+    n0 = len(info["node_cpus"].get(0, [])) or info["total_cpus"]
+    banner("TIER B-STRESS: confined (%s) vs spread (all %d node(s))" % (
+        cpol, max(nn, 1)))
+    if nn < 2:
+        print("single NUMA node: confined and spread coincide; the cliff needs")
+        print(">=2 nodes. Running both anyway for completeness.")
     eff_c, _ = effective_runcfg(runcfg, jobs_confined, False, outdir, dry)
     eff_s, _ = effective_runcfg(runcfg, jobs_spread, False, outdir, dry)
-    print("confined: jobs=%d policy=socket   (all-local, the team's 0.89x)"
-          % jobs_confined)
-    print("spread  : jobs=%d policy=off      (both sockets, the team's ~2.5x)"
-          % jobs_spread)
-    confined = run_full_dlp("stress_confined", "socket", eff_c, word_cap,
+    print("confined: jobs=%d policy=%-9s (node 0, %d cpu, all-local floor)"
+          % (jobs_confined, cpol, n0))
+    print("spread  : jobs=%d policy=off       (all %d nodes, contention ceiling)"
+          % (jobs_spread, nn))
+    total_gb = sum(info["node_mem_mb"].values()) / 1024.0
+    if total_gb and jobs_spread > info["total_cpus"] // 8:
+        print("  RAM note: spread runs %d jobs; each allocates full per-job "
+              "SRS/keys." % jobs_spread)
+        print("            box has ~%.0f GB. If you hit OOM / PREFLIGHT ABORT,"
+              % total_gb)
+        print("            lower --stress-spread-jobs (or skip --stress here).")
+    confined = run_full_dlp("stress_confined", cpol, eff_c, word_cap,
                             info, rf, outdir, dry)
     spread = run_full_dlp("stress_spread", "off", eff_s, word_cap,
                           info, rf, outdir, dry)
@@ -405,7 +430,8 @@ def run_stress_tier(info, rf, outdir, runcfg, jobs_confined, jobs_spread,
               "-> spread/confined = %.2fx" % (
                   confined["dom_avg_ms"], spread["dom_avg_ms"], ratio))
     return {"confined": confined, "spread": spread,
-            "jobs_confined": jobs_confined, "jobs_spread": jobs_spread}
+            "jobs_confined": jobs_confined, "jobs_spread": jobs_spread,
+            "confined_policy": cpol, "nnodes": nn}
 
 
 # ----------------------------------------------------------------------
@@ -537,6 +563,7 @@ def collect_metrics(info, msm, dlp, stress, label, word_cap, jobs):
         s = stress.get("spread")
         st = {"jobs_confined": stress.get("jobs_confined"),
               "jobs_spread": stress.get("jobs_spread"),
+              "confined_policy": stress.get("confined_policy"),
               "confined": _step(c), "spread": _step(s),
               "ratio": (s["dom_avg_ms"] / c["dom_avg_ms"]
                         if c and s and c.get("dom_avg_ms") else None)}

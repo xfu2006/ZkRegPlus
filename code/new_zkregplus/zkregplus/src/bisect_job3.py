@@ -192,11 +192,17 @@ def preflight_keys(proj_root):
     kd = proj_root / REL_KEYDIR
     missing = [f for f in KEY_FILES if not (kd / f).exists()]
     if missing:
+        # Don't abort: the driver auto-flips to build + persist the keys
+        # on the first run (full_debug's cold-cache path). The FIRST trial
+        # therefore pays a multi-hour fold + keygen once; all later trials
+        # reuse the persisted keys. Warn loudly so the long trial 1 is
+        # expected (and beware OOM on a small box).
         loud([f"SNARK KEYS MISSING under {kd}",
               f"missing: {missing}",
-              "A run would AUTO-FLIP to a multi-hour key rebuild (and likely",
-              "OOM). Run full_clamav setup first to populate the keys."])
-        sys.exit(2)
+              "NOT aborting -- the first trial will auto-build + persist",
+              "them (multi-hour fold + keygen, one time). Later trials",
+              "reuse them. Watch trial 1 for OOM on a small box."])
+        return
     log(f"snark keys present under {kd}")
 
 
