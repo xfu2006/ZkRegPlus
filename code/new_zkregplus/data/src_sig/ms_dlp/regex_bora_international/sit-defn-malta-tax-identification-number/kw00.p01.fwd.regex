@@ -1,1 +1,1 @@
-\x20citizen\x20service\x20nu\x20.{0,300}[0-9]{9}
+\x20citizen\x20service\x20number\x20.{0,300}[0-9]{9}

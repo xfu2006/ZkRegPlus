@@ -1,8 +1,8 @@
-00	client identity
-01	identification 
-02	personal id num
-03	personal public
-04	personal servic
+00	client identity service
+01	identification number
+02	personal id number
+03	personal public service 
+04	personal service no
 05	pps no
 06	pps number
 07	pps num
@@ -11,26 +11,28 @@
 10	ppsno#
 11	ppsno
 12	psp
-13	public service 
-14	publicserviceno
-15	revenue and soc
-16	rsi no
-17	rsi number
-18	rsin
-19	uimh
-20	uimhir aitheant
-21	tax id
-22	tax identificat
-23	tax no#
-24	tax no
-25	tax number
-26	tax registratio
-27	taxid#
-28	taxidno#
-29	taxidnumber#
-30	taxno#
-31	taxnumber#
-32	taxnumber
-33	tin id
-34	tin no
-35	tin#
+13	public service no
+14	publicserviceno#
+15	publicserviceno
+16	revenue and social insur
+17	rsi no
+18	rsi number
+19	rsin
+20	uimh
+21	uimhir aitheantais phear
+22	tax id
+23	tax identification no
+24	tax identification numbe
+25	tax no#
+26	tax no
+27	tax number
+28	tax registration number
+29	taxid#
+30	taxidno#
+31	taxidnumber#
+32	taxno#
+33	taxnumber#
+34	taxnumber
+35	tin id
+36	tin no
+37	tin#

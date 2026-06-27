@@ -1,1 +1,1 @@
-\x20public\x20service\x20num\x20.{0,300}[0-9]{6}(\x2D)?[0-9]{5}
+\x20public\x20service\x20number\x20.{0,300}[0-9]{6}(\x2D)?[0-9]{5}

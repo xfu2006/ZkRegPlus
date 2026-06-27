@@ -1,19 +1,27 @@
-00	Checking Accoun
-01	Checking Acct N
-02	Checking Acct #
-03	Bank Account Nu
-04	Bank Account #
-05	Bank Acct Numbe
-06	Bank Acct #
-07	Bank Acct No.
-08	Bank Account No
-09	Savings Account
-10	Savings Acct Nu
-11	Savings Acct #
-12	Savings Acct No
-13	Debit Account N
-14	Debit Account
-15	Debit Account #
-16	Debit Acct Numb
-17	Debit Acct #
-18	Debit Acct No.
+00	Checking Account Number
+01	Checking Account
+02	Checking Account #
+03	Checking Acct Number
+04	Checking Acct #
+05	Checking Acct No.
+06	Checking Account No.
+07	Bank Account Number
+08	Bank Account #
+09	Bank Acct Number
+10	Bank Acct #
+11	Bank Acct No.
+12	Bank Account No.
+13	Savings Account Number
+14	Savings Account.
+15	Savings Account #
+16	Savings Acct Number
+17	Savings Acct #
+18	Savings Acct No.
+19	Savings Account No.
+20	Debit Account Number
+21	Debit Account
+22	Debit Account #
+23	Debit Acct Number
+24	Debit Acct #
+25	Debit Acct No.
+26	Debit Account No.

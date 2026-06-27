@@ -1,27 +1,28 @@
-00	luxembourg tax 
+00	luxembourg tax identifik
 01	social security
-02	sozialversicher
+02	sozialversicherungsauswe
 03	steier id
-04	steier identifi
+04	steier identifikatiounsn
 05	steier nummer
 06	steuer id
-07	steueridentifik
+07	steueridentifikationsnum
 08	steuernummer
 09	tax id
-10	tax identificat
-11	tax no#
-12	tax no
-13	tax number
-14	tax registratio
-15	taxid#
-16	taxidno#
-17	taxidnumber#
-18	taxno#
-19	taxnumber#
-20	taxnumber
-21	tin id
-22	tin no
-23	tin#
-24	zinn#
-25	zinn
-26	zinnzahl
+10	tax identification no
+11	tax identification numbe
+12	tax no#
+13	tax no
+14	tax number
+15	tax registration number
+16	taxid#
+17	taxidno#
+18	taxidnumber#
+19	taxno#
+20	taxnumber#
+21	taxnumber
+22	tin id
+23	tin no
+24	tin#
+25	zinn#
+26	zinn
+27	zinnzahl

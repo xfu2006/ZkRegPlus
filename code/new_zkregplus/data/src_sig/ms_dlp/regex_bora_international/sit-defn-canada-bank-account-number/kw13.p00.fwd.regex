@@ -1,1 +1,1 @@
-\x20social\x20insuranc\x20.{0,300}[0-9]{5}\x2D[0-9]{3}
+\x20social\x20insurance\x20number\x20.{0,300}[0-9]{5}\x2D[0-9]{3}

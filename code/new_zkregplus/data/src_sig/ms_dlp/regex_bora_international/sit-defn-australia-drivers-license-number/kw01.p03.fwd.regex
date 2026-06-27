@@ -1,1 +1,1 @@
-\x20australian\x20auto\x20.{0,300}[A-Za-z][0-9A-Za-z][0-9]{4}
+\x20australian\x20automobile\x20as\x20.{0,300}[A-Za-z][0-9A-Za-z][0-9]{4}

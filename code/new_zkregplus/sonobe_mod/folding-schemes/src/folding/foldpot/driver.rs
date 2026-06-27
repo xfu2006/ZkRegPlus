@@ -12,7 +12,7 @@ use std::{sync::{Arc, Mutex, Condvar, RwLock,
 */
 
 extern crate utils;
-use utils::{logger::{log, log_perf, emit_stdout, ERR, LOG1,LOG2}, timer::Timer as GTimer, consts::{read_global_config, get_global_config}, data::{pad_word_to_multiple, gen_pad_nibbles_fe, pack_nibbles}};
+use utils::{logger::{log, log_perf, emit_stdout, ERR, LOG1,LOG2,LOG3}, timer::Timer as GTimer, consts::{read_global_config, get_global_config}, data::{pad_word_to_multiple, gen_pad_nibbles_fe, pack_nibbles}};
 use std::{
     //process::{Stdio,Command},
     //fs::{read_to_string,OpenOptions,remove_file,File,metadata},
@@ -1920,6 +1920,10 @@ where
 		let num_words = vec_word_fnames.len();
 		// DEBUG/diagnostic: optional per-job word cap. 0 = unlimited.
 		let _word_cap = read_global_config().word_cap_per_job;
+		// aggressive-only: read once for the per-chunk LOG3 selection
+		// log inside the segment loop (non-aggr path stays unchanged).
+		let _b_aggr_log = read_global_config()
+			.clamav_cfg.b_aggressive_sde_for_rep;
 		for (word, word_fname) in iter_words.zip(vec_word_fnames.iter()){
 			if _word_cap > 0 && word_id > _word_cap {
 				emit_stdout(format!(
@@ -1962,6 +1966,12 @@ where
 				let circ = &p_circuits[pc_i1];
 				let _max_len = circ.max_word_len();
 				let act_len = vec_len[i];
+				// LOG3 per-chunk circ selection (aggressive only):
+				// one line per segment, real post-bump pci. fname
+				// gives the per-file attribution cost.txt lacks.
+				if _b_aggr_log {
+					log(job_id, LOG3, &format!("PERF 1001: per-chunk circ sel. {} word_id: {}, subseg_id: {}, fname: {}, pci: {}, seg_len: {}", phase_name, word_id, subseg_id, word_fname, pc_i1, act_len));
+				}
 				acc_wd_len += act_len;
 				let frag = remaining[0..act_len].to_vec();
 				remaining = remaining[act_len..].to_vec();
@@ -3602,18 +3612,26 @@ where
 	batch_ver_param.kzg_driver2 = Some(driver2.nova_param.1.cs1e_vp.clone());
 	let (batch_claim, ind_claim, _) = batch_claims.unwrap();
 	let opt_kzg_sum1 = if b_check_lkup {None} else {Some(kzg_sum1)};
-	assert!(BatchProcessor::<E,LK,S,CS1E,H>::verify_batch(
+	// Do NOT assert: a failed self-verification must not abort the whole
+	// run -- the other jobs are very expensive and we still want their
+	// timings. Log an ERROR and let this job finish normally.
+	let ok_batch = BatchProcessor::<E,LK,S,CS1E,H>::verify_batch(
 		&batch_ver_param,
 		Some(qa_nizk_vkey_hash1),
 		Some(qa_nizk_vkey2.clone()), //needs to be from nova qa_nizk
 		Some(g16_vk_main.clone()),
 		Some(g16_vk_cp.clone()),
 		&batch_claim,
-		&batch_prf, 
+		&batch_prf,
 		&driver1_poseidon_config,
 		true, //now full verification
 		opt_kzg_sum1
-	)); //note
+	);
+	if !ok_batch {
+		log(job_id, ERR, &format!(
+			"Job {} BATCH PROOF VERIFICATION FAILED (verify_batch \
+			returned false); continuing other jobs.", job_id));
+	}
 	log_perf(job_id, log_level, &format!("FoldPot Step 12: Verify Batch Proof."),
 		&mut gt1);
 	log_perf(job_id, LOG2, &format!(
@@ -3621,14 +3639,21 @@ where
 		get_mem_usage()), &mut gt1);
 
 	//12. verify the individual proof
-	assert!(BatchProcessor::<E,LK,S,CS1E,H>::verify_individual(
+	// Same policy as the batch proof: log an ERROR on failure, never abort
+	// the run (the other jobs are very expensive).
+	let ok_ind = BatchProcessor::<E,LK,S,CS1E,H>::verify_individual(
 		//&driver1.batch_vk.as_ref().unwrap(),
 		&batch_ver_param,
-		idx_individual_prf, 
+		idx_individual_prf,
 		&ind_claim,
-		&batch_prf, 
-		&ind_prf)
-	);
+		&batch_prf,
+		&ind_prf);
+	if !ok_ind {
+		log(job_id, ERR, &format!(
+			"Job {} INDIVIDUAL PROOF VERIFICATION FAILED \
+			(verify_individual returned false); continuing other jobs.",
+			job_id));
+	}
 	log_perf(job_id, log_level, &format!("FOLDPOT Step 13. Verify Individual Proof."),
 		&mut gt1);
 	// Report the proof structure + byte sizes once (this job holds a

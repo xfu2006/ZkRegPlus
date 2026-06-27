@@ -865,13 +865,13 @@ KW_CHOP_LADDER = (24, 18, 15, 12, 10, 8)   # descending caps tried until KWS bui
 
 def _zombie_kws_builds(pat, keywords):
     """True if the Zombie KWS codegen for (pat, KWS(keywords)) is well-formed (no
-    >32 B cross-keyword packed-run overflow). Uses TestRegex F (codegen only, no
-    circuit build -> fast). Returns True when the binary is unavailable (cannot
-    check, so do not chop). The KWS is rendered EXACTLY as sit_to_regex builds it."""
+    >32 B packed-run overflow). Uses TestRegex F (codegen only, no circuit build
+    -> fast). Returns True when the binary is unavailable (cannot check, so do not
+    chop). KWS is rendered with literal-space flanks, EXACTLY as write_zombie_sit
+    emits it (ws_delimit="space"), so the measured run matches what circ compiles."""
     if not os.path.isfile(TESTREGEX) or not keywords:
         return True
-    ws = "[\\x20\\x09\\x0A\\x0D]"
-    kws = "(" + "|".join(ws + _esc(k) + ws for k in keywords) + ")"
+    kws = "(" + "|".join("\\x20" + _esc(k) + "\\x20" for k in keywords) + ")"
     try:
         z = subprocess.run([TESTREGEX, "F", "0", "1"],
                            input=pat + " & " + kws + "\n",
@@ -880,7 +880,14 @@ def _zombie_kws_builds(pat, keywords):
         return True
     if "Parse Successful!" not in z.stdout:
         return False                       # codegen itself failed -> not buildable
-    return "+ )" not in z.stdout           # dangling '+' = malformed packed run
+    # A packed match-run is isZero((t[i-K]-c) + ...); its byte length is the
+    # largest back-offset K. circ overflows the 256-bit field element once a run
+    # exceeds ZOMBIE_SEG_LIMIT bytes. The "+ )"/BigInteger overflow signatures are
+    # NOT always present in TestRegex F stdout (a 33-34 B run can parse here yet be
+    # rejected by circ as "expected unaried_term"), so measure the run DIRECTLY.
+    offs = [int(m) for m in re.findall(r"t\[i - (\d+)\]", z.stdout)]
+    max_run = max(offs) if offs else 0
+    return max_run <= ZOMBIE_SEG_LIMIT and "+ )" not in z.stdout
 
 
 def _dedupe(seq):

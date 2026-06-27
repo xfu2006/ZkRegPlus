@@ -1,1 +1,1 @@
-\x20sozialversicherungsnummer\x20.{0,300}[0-9]{3}\x2E?[0-9]{4}\x2E?[0-9]{4}\x2E?[0-9]{2}
+\x20sozialversicherungsnumme\x20.{0,300}[0-9]{3}\x2E?[0-9]{4}\x2E?[0-9]{4}\x2E?[0-9]{2}

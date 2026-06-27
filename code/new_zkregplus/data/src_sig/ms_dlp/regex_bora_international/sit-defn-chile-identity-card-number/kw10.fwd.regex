@@ -1,1 +1,1 @@
-\x20numero\x20identificac\x20.{0,300}[0-9]{1,2}\x2E?[0-9]{3}\x2E?[0-9]{3}\x2D[A-Za-z0-9]
+\x20nacional\x20identidad\x20.{0,300}[0-9]{1,2}\x2E?[0-9]{3}\x2E?[0-9]{3}\x2D[A-Za-z0-9]

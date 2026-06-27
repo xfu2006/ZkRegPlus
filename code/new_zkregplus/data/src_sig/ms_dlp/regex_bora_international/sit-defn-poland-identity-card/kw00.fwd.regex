@@ -1,1 +1,1 @@
-\x20Numer\x20dowodu\x20os\x20.{0,300}[A-Za-z]{3}[0-9]{6}
+\x20Numer\x20dowodu\x20osobistego\x20.{0,300}[A-Za-z]{3}[0-9]{6}

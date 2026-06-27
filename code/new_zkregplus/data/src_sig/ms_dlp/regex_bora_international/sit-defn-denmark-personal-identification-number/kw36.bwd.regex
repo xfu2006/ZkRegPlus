@@ -1,1 +1,1 @@
-[0-9]{6}[\x2D\x20]?[0-9]{4}.{0,300}\x20uniqueidentityn\x20
+[0-9]{6}[\x2D\x20]?[0-9]{4}.{0,300}\x20sygesikringkortnummer\x20

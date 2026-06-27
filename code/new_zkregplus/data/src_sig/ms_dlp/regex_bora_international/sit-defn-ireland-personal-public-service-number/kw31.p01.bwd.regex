@@ -1,1 +1,1 @@
-[0-9]{7}[0-9A-Za-z][A-Za-z].{0,300}\x20taxnumber\x23\x20
+[0-9]{7}[0-9A-Za-z][A-Za-z].{0,300}\x20taxidnumber\x23\x20

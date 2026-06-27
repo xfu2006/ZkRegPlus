@@ -917,7 +917,9 @@ where
 		opt_kzg_sum1: Option<F>, //optional kzg_sum1
 		)->bool{
 		//0. build rand input for generate Fiat-Shamir randoms
-		let b_debug = B_DEBUG;
+		// Internal flag (replaces the B_DEBUG gate): set true to print which
+		// sub-check returned false during batch verification.
+		let b_debug = true;
 		let rand_inp = SnarkRandInput::<E>{
 			kzg_all_words: claim.kzg_all_words.clone(),
 			kzg_length: claim.kzg_length.clone(),
@@ -951,7 +953,11 @@ where
 				prf.kzg_vec_v.clone()
 		];
 		let (ch, rc) = rand_inp.gen_challenge();
-		if ch!=prf.ch || rc!=prf.rc {return false;}
+		if ch!=prf.ch || rc!=prf.rc {
+			if b_debug {emit_stdout(
+				"fs challenge (ch/rc) mismatch".to_string());}
+			return false;
+		}
 		let mut com_all = E::G1::zero();
 		let mut factor = E::ScalarField::one();
 		for i in 0..coms.len(){

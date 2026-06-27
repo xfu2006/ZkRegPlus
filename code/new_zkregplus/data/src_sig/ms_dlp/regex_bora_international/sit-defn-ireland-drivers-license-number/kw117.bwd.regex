@@ -1,1 +1,1 @@
-[0-9]{6}[A-Za-z]{4}.{0,300}\x20dl\x20number\x20
+[0-9]{6}[A-Za-z]{4}.{0,300}\x20IP\x20\x28this\x20keyword\x20is\x20case\x20

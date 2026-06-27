@@ -1,1 +1,1 @@
-\x20sundhedskort\x20.{0,300}[0-9]{6}[\x2D\x20]?[0-9]{4}
+\x20social\x20security\x20number\x20.{0,300}[0-9]{6}[\x2D\x20]?[0-9]{4}

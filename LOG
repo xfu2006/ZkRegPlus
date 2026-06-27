@@ -29710,15 +29710,28 @@ Goal 2. fix vpn (cs and cybersec) for future use
 	[c] the other option hotspot.
 
 Goal 2. Writing
+	[a] get gcpm1 server1
+	[b] point the paper dat agenerator to gcpm1 right now
+	[c] update the script to get just one snark proof timing.
+
+Sat 06/27/2026
+Goal 1. try to locate err
+	[a] write bisec_debug.py
+	[b] 
 
 ----- ACTIVE GOALS -----
 Goal FINAL1. start data collection on GCP
 	[a] server2 -> full_dna (11:30am->6:45pm: 7.25hr) jetstream2: 5.2 hrs.
-	[b] server2 -> full_clam (6:45pm 06/24 W-> 
-	[c] server1 -> full_dlp (11:00AM 06/25 R -> 
+	[b] server2 -> full_clam (6:45pm 06/24 W->7:75pm 06/26)
+		* 49 hrs
+		* but not all batch proof pass, not sure why? (5 jobs success
+			but one job fails and break the other 3)
+		* needs to check.
+	[c] server1 -> full_dlp (6:30pm 06/26 F -> 
+		nohup python3 -u run_full_dlp.py --jobs=16 --numa=off
 	[d] server2:
-		eval_reef??
-		eval_zombie??
+		eval_reef (7:55pm 06/26 -> 
+		eval_zombie 
 Goal FINAL2. start data collection on Jetstream 
 	[a] small -> scale_data (6:00PM 06/25 ->
 		->  (IP: 149.165.169.73) 

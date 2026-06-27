@@ -1,1 +1,1 @@
-\x20IP\x20\x28this\x20keyword\x20is\x20case\x2Dsensiti\x20.{0,300}[0-9]{6}[A-Za-z]{4}
+\x20ip\x20address\x20.{0,300}[0-9]{6}[A-Za-z]{4}

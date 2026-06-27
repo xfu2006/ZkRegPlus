@@ -1,99 +1,137 @@
-00	ausstellungsdat
+00	ausstellungsdatum
 01	ausstellungsort
-02	ausstellende be
-03	fuhrerschein
-04	fuehrerschein
-05	fuhrerscheinnum
-06	fuehrerscheinnu
-07	fuhrerschein-
-08	fuehrerschein-
-09	nr-fuhrerschein
-10	nr-fuehrerschei
-11	no-fuhrerschein
-12	no-fuehrerschei
-13	n-fuhrerschein
-14	n-fuehrerschein
-15	permis de condu
-16	driverlic
-17	driverlics
-18	driverlicense
-19	driverlicenses
-20	driverlicence
-21	driverlicences
-22	driver lic
-23	driver lics
-24	driver license
-25	driver licenses
-26	driver licence
-27	driver licences
-28	driverslic
-29	driverslics
-30	driverslicence
-31	driverslicences
-32	driverslicense
-33	driverslicenses
-34	drivers lic
-35	drivers lics
-36	drivers license
-37	drivers licence
-38	driver'lic
-39	driver'lics
-40	driver'license
-41	driver'licenses
-42	driver'licence
-43	driver'licences
-44	driver' lic
-45	driver' lics
-46	driver' license
-47	driver' licence
-48	driver'slic
-49	driver'slics
-50	driver'slicense
-51	driver'slicence
-52	driver's lic
-53	driver's lics
-54	driver's licens
-55	driver's licenc
-56	dl#
-57	dls#
-58	driverlic#
-59	driverlics#
-60	driverlicense#
-61	driverlicenses#
-62	driverlicence#
-63	driverlicences#
-64	driver lic#
-65	driver lics#
-66	driver license#
-67	driverslic#
-68	driverslics#
-69	driverslicense#
-70	driverslicence#
-71	drivers lic#
-72	drivers lics#
-73	driver'lic#
-74	driver'lics#
-75	driver'license#
-76	driver'licence#
-77	driver' lic#
-78	driver' lics#
-79	driver'slic#
-80	driver'slics#
-81	driver's lic#
-82	driver's lics#
-83	driving licence
-84	driving license
-85	dlno#
-86	driv lic
-87	driv licen
-88	driv license
-89	driv licenses
-90	driv licence
-91	driv licences
-92	driver licen
-93	drivers licen
-94	driver's licen
-95	driving lic
-96	driving licen
-97	driving permit
-98	dlno
+02	ausstellende behorde
+03	ausstellende behoerde
+04	fuhrerschein
+05	fuehrerschein
+06	fuhrerscheinnummer
+07	fuehrerscheinnummer
+08	fuhrerschein-
+09	fuehrerschein-
+10	fuhrerscheinnummernr
+11	fuehrerscheinnummernr
+12	fuhrerscheinnummerklasse
+13	fuehrerscheinnummerklasse
+14	nr-fuhrerschein
+15	nr-fuehrerschein
+16	no-fuhrerschein
+17	no-fuehrerschein
+18	n-fuhrerschein
+19	n-fuehrerschein
+20	permis de conduire
+21	driverlic
+22	driverlics
+23	driverlicense
+24	driverlicenses
+25	driverlicence
+26	driverlicences
+27	driver lic
+28	driver lics
+29	driver license
+30	driver licenses
+31	driver licence
+32	driver licences
+33	driverslic
+34	driverslics
+35	driverslicence
+36	driverslicences
+37	driverslicense
+38	driverslicenses
+39	drivers lic
+40	drivers lics
+41	drivers license
+42	drivers licenses
+43	drivers licence
+44	drivers licences
+45	driver'lic
+46	driver'lics
+47	driver'license
+48	driver'licenses
+49	driver'licence
+50	driver'licences
+51	driver' lic
+52	driver' lics
+53	driver' license
+54	driver' licenses
+55	driver' licence
+56	driver' licences
+57	driver'slic
+58	driver'slics
+59	driver'slicense
+60	driver'slicenses
+61	driver'slicence
+62	driver'slicences
+63	driver's lic
+64	driver's lics
+65	driver's license
+66	driver's licenses
+67	driver's licence
+68	driver's licences
+69	dl#
+70	dls#
+71	driverlic#
+72	driverlics#
+73	driverlicense#
+74	driverlicenses#
+75	driverlicence#
+76	driverlicences#
+77	driver lic#
+78	driver lics#
+79	driver license#
+80	driver licenses#
+81	driver licences#
+82	driverslic#
+83	driverslics#
+84	driverslicense#
+85	driverslicenses#
+86	driverslicence#
+87	driverslicences#
+88	drivers lic#
+89	drivers lics#
+90	drivers license#
+91	drivers licenses#
+92	drivers licence#
+93	drivers licences#
+94	driver'lic#
+95	driver'lics#
+96	driver'license#
+97	driver'licenses#
+98	driver'licence#
+99	driver'licences#
+100	driver' lic#
+101	driver' lics#
+102	driver' license#
+103	driver' licenses#
+104	driver' licence#
+105	driver' licences#
+106	driver'slic#
+107	driver'slics#
+108	driver'slicense#
+109	driver'slicenses#
+110	driver'slicence#
+111	driver'slicences#
+112	driver's lic#
+113	driver's lics#
+114	driver's license#
+115	driver's licenses#
+116	driver's licence#
+117	driver's licences#
+118	driving licence
+119	driving license
+120	dlno#
+121	driv lic
+122	driv licen
+123	driv license
+124	driv licenses
+125	driv licence
+126	driv licences
+127	driver licen
+128	drivers licen
+129	driver's licen
+130	driving lic
+131	driving licen
+132	driving licenses
+133	driving licence
+134	driving licences
+135	driving permit
+136	dlno

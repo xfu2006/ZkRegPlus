@@ -1,1 +1,1 @@
-\x20Passeport\x20Non\x20.{0,300}[A-Za-z]{2}[0-9]{6}
+\x20passportnumber\x20.{0,300}[A-Za-z]{2}[0-9]{6}

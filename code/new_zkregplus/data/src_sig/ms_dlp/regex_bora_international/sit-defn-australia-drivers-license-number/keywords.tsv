@@ -1,5 +1,5 @@
-00	international d
-01	australian auto
+00	international driving pe
+01	australian automobile as
 02	DriverLicence
 03	DriverLicences
 04	Driver Lic
@@ -11,37 +11,52 @@
 10	Drivers Lic
 11	Drivers Lics
 12	Drivers Licence
-13	Driver'Lic
-14	Driver'Lics
-15	Driver'Licence
-16	Driver'Licences
-17	Driver' Lic
-18	Driver' Lics
-19	Driver' Licence
-20	Driver'sLic
-21	Driver'sLics
-22	Driver'sLicence
-23	Driver's Lic
-24	Driver's Lics
-25	Driver's Licenc
-26	DriverLic#
-27	DriverLics#
-28	DriverLicence#
-29	DriverLicences#
-30	Driver Lic#
-31	Driver Lics#
-32	Driver Licence#
-33	DriversLic#
-34	DriversLics#
-35	DriversLicence#
-36	Drivers Lic#
-37	Drivers Lics#
-38	Driver'Lic#
-39	Driver'Lics#
-40	Driver'Licence#
-41	Driver' Lic#
-42	Driver' Lics#
-43	Driver'sLic#
-44	Driver'sLics#
-45	Driver's Lic#
-46	Driver's Lics#
+13	Drivers Licences
+14	Driver'Lic
+15	Driver'Lics
+16	Driver'Licence
+17	Driver'Licences
+18	Driver' Lic
+19	Driver' Lics
+20	Driver' Licence
+21	Driver' Licences
+22	Driver'sLic
+23	Driver'sLics
+24	Driver'sLicence
+25	Driver'sLicences
+26	Driver's Lic
+27	Driver's Lics
+28	Driver's Licence
+29	Driver's Licences
+30	DriverLic#
+31	DriverLics#
+32	DriverLicence#
+33	DriverLicences#
+34	Driver Lic#
+35	Driver Lics#
+36	Driver Licence#
+37	Driver Licences#
+38	DriversLic#
+39	DriversLics#
+40	DriversLicence#
+41	DriversLicences#
+42	Drivers Lic#
+43	Drivers Lics#
+44	Drivers Licence#
+45	Drivers Licences#
+46	Driver'Lic#
+47	Driver'Lics#
+48	Driver'Licence#
+49	Driver'Licences#
+50	Driver' Lic#
+51	Driver' Lics#
+52	Driver' Licence#
+53	Driver' Licences#
+54	Driver'sLic#
+55	Driver'sLics#
+56	Driver'sLicence#
+57	Driver'sLicences#
+58	Driver's Lic#
+59	Driver's Lics#
+60	Driver's Licence#
+61	Driver's Licences#

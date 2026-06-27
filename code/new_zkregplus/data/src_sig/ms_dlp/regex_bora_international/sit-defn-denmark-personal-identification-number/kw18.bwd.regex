@@ -1,1 +1,1 @@
-[0-9]{6}[\x2D\x20]?[0-9]{4}.{0,300}\x20personnummer\x20
+[0-9]{6}[\x2D\x20]?[0-9]{4}.{0,300}\x20personalidentityno\x23\x20

@@ -1,1 +1,1 @@
-\x20canadian\x20passpo\x20.{0,300}[A-Za-z]{2}[0-9]{6}
+\x20canadian\x20passport\x20.{0,300}[A-Za-z]{2}[0-9]{6}

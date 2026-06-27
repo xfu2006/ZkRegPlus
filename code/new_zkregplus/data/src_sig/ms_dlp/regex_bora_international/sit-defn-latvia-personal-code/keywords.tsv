@@ -1,53 +1,54 @@
-00	administrative num
+00	administrative number
 01	birth number
 02	citizen number
 03	civil number
-04	electronic census 
+04	electronic census number
 05	electronic number
 06	fiscal code
-07	healthcare user nu
+07	healthcare user number
 08	id#
 09	id-code
-10	identification num
+10	identification number
 11	id-number
 12	individual number
 13	latvija alva
 14	national id
-15	national identifyi
-16	national identity 
-17	national insurance
-18	national register 
-19	personal certifica
+15	national identifying number
+16	national identity number
+17	national insurance number
+18	national register number
+19	personal certificate number
 20	personal code
 21	personal id code
 22	personal id number
-23	personal identific
-24	personal identifie
-25	personal identity 
+23	personal identification code
+24	personal identifier
+25	personal identity number
 26	personal number
-27	personal numeric c
+27	personal numeric code
 28	personalcodeno#
 29	personas kods
-30	population identif
-31	public service num
-32	registration numbe
+30	population identification code
+31	public service number
+32	registration number
 33	revenue number
-34	social insurance n
-35	social security nu
+34	social insurance number
+35	social security number
 36	state tax code
 37	tax file number
 38	tax id
-39	tax identification
-40	tax no#
-41	tax no
-42	tax number
-43	taxid#
-44	taxidno#
-45	taxidnumber#
-46	taxno#
-47	taxnumber#
-48	taxnumber
-49	tin id
-50	tin no
-51	tin#
-52	voter's number
+39	tax identification no
+40	tax identification number
+41	tax no#
+42	tax no
+43	tax number
+44	taxid#
+45	taxidno#
+46	taxidnumber#
+47	taxno#
+48	taxnumber#
+49	taxnumber
+50	tin id
+51	tin no
+52	tin#
+53	voter's number

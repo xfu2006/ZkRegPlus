@@ -1,1 +1,1 @@
-\x20numer\x20identyfik\x20.{0,300}[0-9]{6}[0-9]{4}[0-9]
+\x20numer\x20identyfikacyjny\x20.{0,300}[0-9]{6}[0-9]{4}[0-9]

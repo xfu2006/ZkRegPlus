@@ -1,25 +1,26 @@
-00	asmeninis skaitmen
+00	asmeninis skaitmeninis k
 01	asmens kodas
-02	citizen service nu
-03	national identific
+02	citizen service number
+03	national identification 
 04	personal code
-05	personal numeric c
+05	personal numeric code
 06	tax id
-07	tax identification
-08	tax no#
-09	tax no
-10	tax number
-11	tax registration n
-12	taxid#
-13	taxidno#
-14	taxidnumber#
-15	taxno#
-16	taxnumber#
-17	taxnumber
-18	tin id
-19	tin no
-20	tin#
-21	unikalus identifik
-22	unique identificat
-23	unique identity nu
-24	uniqueidentityno#
+07	tax identification no
+08	tax identification numbe
+09	tax no#
+10	tax no
+11	tax number
+12	tax registration number
+13	taxid#
+14	taxidno#
+15	taxidnumber#
+16	taxno#
+17	taxnumber#
+18	taxnumber
+19	tin id
+20	tin no
+21	tin#
+22	unikalus identifikavimo 
+23	unique identification nu
+24	unique identity number
+25	uniqueidentityno#

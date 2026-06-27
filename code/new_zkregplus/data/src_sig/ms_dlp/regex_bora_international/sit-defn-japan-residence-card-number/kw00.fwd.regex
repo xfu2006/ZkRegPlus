@@ -1,1 +1,1 @@
-\x20Residence\x20card\x20\x20.{0,300}[A-Za-z]{2}[0-9]{8}[A-Za-z]{2}
+\x20Residence\x20card\x20number\x20.{0,300}[A-Za-z]{2}[0-9]{8}[A-Za-z]{2}

@@ -1,1 +1,1 @@
-\x20nationalnumber\x23\x20.{0,300}[0-9]{6}[\x2D\x20]?[0-9]{4}
+\x20krankenkassennummer\x20.{0,300}[0-9]{6}[\x2D\x20]?[0-9]{4}

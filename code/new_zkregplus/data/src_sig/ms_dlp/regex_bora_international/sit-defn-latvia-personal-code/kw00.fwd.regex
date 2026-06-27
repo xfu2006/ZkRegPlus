@@ -1,1 +1,1 @@
-\x20administrative\x20num\x20.{0,300}[0-9]{6}(\x2D)?[0-9]{5}
+\x20administrative\x20number\x20.{0,300}[0-9]{6}(\x2D)?[0-9]{5}

@@ -1,1 +1,1 @@
-\x20canadian\x20financ\x20.{0,300}[0-9]{5}\x2D[0-9]{3}
+\x20canadian\x20financial\x20institution\x20.{0,300}[0-9]{5}\x2D[0-9]{3}

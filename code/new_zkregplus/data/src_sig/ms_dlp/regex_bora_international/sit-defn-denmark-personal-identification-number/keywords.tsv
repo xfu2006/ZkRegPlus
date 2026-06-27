@@ -1,61 +1,69 @@
-00	centrale person
-01	civilt registre
+00	centrale personregister
+01	civilt registreringssyst
 02	cpr
 03	cpr#
-04	gesundheitskart
-05	gesundheitsvers
+04	gesundheitskarte nummer
+05	gesundheitsversicherungk
 06	health card
-07	health insuranc
-08	identification 
-09	identifikations
-10	identity number
-11	krankenkassennu
-12	nationalid#
-13	nationalnumber#
-14	national number
-15	personalidnumbe
-16	personalidentit
-17	personal id num
-18	personnummer
-19	personnummer#
-20	reisekrankenver
-21	rejsesygesikrin
-22	ssn
-23	ssn#
-24	skat id
-25	skat kode
-26	skat nummer
-27	skattenummer
-28	social security
-29	sundhedsforsikr
-30	sundhedskort
-31	sundhedskortnum
-32	sygesikring
-33	sygesikringkort
-34	tax code
-35	travel health i
-36	uniqueidentityn
-37	tax number
-38	tax registratio
-39	tax id
-40	tax identificat
-41	taxid#
-42	taxnumber#
-43	tax no
-44	taxno#
-45	taxnumber
-46	tin#
-47	taxidno#
-48	taxidnumber#
-49	tax no#
-50	tin id
-51	tin no
-52	cpr.nr
-53	cprnr
-54	cprnummer
-55	personnr
-56	personregister
-57	sygesikringsbev
-58	sygesikringskor
-59	sygesikringsnr
-60	sygesikringsnum
+07	health insurance card nu
+08	health insurance number
+09	identification number
+10	identifikationsnummer
+11	identifikationsnummer#
+12	identity number
+13	krankenkassennummer
+14	nationalid#
+15	nationalnumber#
+16	national number
+17	personalidnumber#
+18	personalidentityno#
+19	personal id number
+20	personnummer
+21	personnummer#
+22	reisekrankenversicherung
+23	rejsesygesikringskort
+24	ssn
+25	ssn#
+26	skat id
+27	skat kode
+28	skat nummer
+29	skattenummer
+30	social security number
+31	sundhedsforsikringskort
+32	sundhedsforsikringsnumme
+33	sundhedskort
+34	sundhedskortnummer
+35	sygesikring
+36	sygesikringkortnummer
+37	tax code
+38	travel health insurance 
+39	uniqueidentityno#
+40	tax number
+41	tax registration number
+42	tax id
+43	tax identification numbe
+44	taxid#
+45	taxnumber#
+46	tax no
+47	taxno#
+48	taxnumber
+49	tax identification no
+50	tin#
+51	taxidno#
+52	taxidnumber#
+53	tax no#
+54	tin id
+55	tin no
+56	cpr.nr
+57	cprnr
+58	cprnummer
+59	personnr
+60	personregister
+61	sygesikringsbevis
+62	sygesikringsbevisnr
+63	sygesikringsbevisnummer
+64	sygesikringskort
+65	sygesikringskortnr
+66	sygesikringskortnummer
+67	sygesikringsnr
+68	sygesikringsnummer

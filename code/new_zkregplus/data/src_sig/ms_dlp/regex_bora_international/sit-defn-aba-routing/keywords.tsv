@@ -3,13 +3,12 @@
 02	aba
 03	abarouting#
 04	abaroutingnumber
-05	americanbankassociationrouting#
-06	americanbankassociationroutingnu
-07	bankrouting#
-08	bankroutingnumber
-09	routing #
-10	routing no
-11	routing number
-12	routing transit number
-13	routing#
-14	RTN
+05	americanbankassociationr
+06	bankrouting#
+07	bankroutingnumber
+08	routing #
+09	routing no
+10	routing number
+11	routing transit number
+12	routing#
+13	RTN

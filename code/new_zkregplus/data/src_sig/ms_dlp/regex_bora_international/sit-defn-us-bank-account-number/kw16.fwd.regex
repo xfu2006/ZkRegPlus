@@ -1,1 +1,1 @@
-\x20Debit\x20Acct\x20Numb\x20.{0,300}[0-9]{6,17}
+\x20Savings\x20Acct\x20Number\x20.{0,300}[0-9]{6,17}

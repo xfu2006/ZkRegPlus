@@ -3993,31 +3993,24 @@ pub mod tests_zkp_driver{
 		);
 	}
 
-	/// 2026-05-16: full_debug — mirrors full_clamav (test-mod
-	/// capacities) but with a SINGLE list file (n_jobs=1) of 4
-	/// server-failing samples. Reuses data/cache/full_clamav snark
-	/// keys + data/cache/full_data DB cache. Used by
-	/// test_full_debug_main below, which full_debug_watch.py
-	/// invokes via `cargo test`. All capacities here are
-	/// byte-identical to the full_clamav() above — keep them in
-	/// sync if you tune full_clamav.
+	/// 2026-06-27: full_debug — job-3 fault isolation. Now a FAITHFUL
+	/// mirror of full_clamav() (full SNARK, one proof, b_read_snark_cache
+	/// from data/cache/full_data + full_data DB cache), but scans a
+	/// SINGLE job: ZKR_DBG_LIST if set (an explicit slice list written by
+	/// bisect_job3.py, absolute path), else the full job-3 list
+	/// binexec_p3.dat. n_jobs=1 => runtime job_id=0, so the batch-verify
+	/// ERROR prints as "Job 0 BATCH PROOF VERIFICATION FAILED". All caps
+	/// below are byte-identical to full_clamav — keep in sync if tuned.
+	/// Snark keys must already exist (data/cache/full_data/g16_*.key*),
+	/// else driver.rs auto-flips to a multi-hour key rebuild.
 	fn full_debug<F:PrimeField>(b_check_lkup: bool){
 		utils::os::print_computer_config(Some("full_debug"));
 		get_global_config().snark_cache_dir = "full_clamav".to_string();
-		// 2026-05-16: full_debug intentionally does NOT load or
-		// generate Groth16 keys. The check_logup panic we're trying
-		// to reproduce fires inside pass_all/gen_step_cs, which is
-		// reached before the post-pass_all SNARK step. Combined
-		// with b_folding_only=true (which returns Ok(()) right
-		// after pass_all), the prover never touches g16_main.key /
-		// g16_cp.key — so the user doesn't need to have run
-		// full_clamav_setup. See driver.rs:2497 (key load) and
-		// driver.rs:2845 (b_folding_only early return).
 		get_global_config().b_write_snark_cache = false;
-		get_global_config().b_read_snark_cache = false;
-		get_global_config().b_folding_only = true;
+		get_global_config().b_read_snark_cache = true;
 		get_global_config().range2_bit = 26;
-		get_global_config().b_light_test = true;
+		get_global_config().b_light_test = false; // full snark (one proof)
+		get_global_config().b_one_proof = false;  // every job proves
 		get_global_config().min_subsigs = 368;
 		get_global_config().min_basis_unique_states = 1054;
 		get_global_config().min_basis_acc_states = 268;
@@ -4025,15 +4018,15 @@ pub mod tests_zkp_driver{
 		get_global_config().min_avg_pats_per_subsig = 8;
 		get_global_config().min_dfa_sigs = 3;
 		get_global_config().min_dfa_subsigs = 3;
-		get_global_config().n_par_snark = 2;
-		get_global_config().n_par_snark_cp = 2;
+		get_global_config().n_par_snark = 1;
+		get_global_config().n_par_snark_cp = 1;
 		get_global_config().n_par_batch_claim = 8;
 		get_global_config().perc_lkup_share = 143;
+		get_global_config().log_level = utils::logger::LOG3;
 
 		get_global_config().b_read_cache = true;
 		let b_write_cache = !read_global_config().b_read_cache;
 		let set1_cfg  = "data/debug/full_clamav/config/";
-		let set1_scan = "data/debug/full_debug/config/";
 		let max_word = 512 * 8;
 		let sigs = 400;
 		let subsigs = 580;
@@ -4089,17 +4082,25 @@ pub mod tests_zkp_driver{
 			basis_acc_states_igc,
 		);
 
-		// Single list file => n_jobs = 1, 4 words inside.
-		let scan_files: Vec<String> = vec![
-			format!("{}/binexec_debug.dat", set1_scan),
-		];
+		// Job-3 isolation: scan ZKR_DBG_LIST if set (bisect_job3.py writes
+		// an explicit slice list there, absolute path), else the full
+		// job-3 list. Single list file => n_jobs = 1, runtime job_id = 0.
+		let scan_files: Vec<String> = match std::env::var("ZKR_DBG_LIST") {
+			Ok(p) if !p.trim().is_empty() => {
+				println!("ZKR_DBG_LIST override: scanning {}", p);
+				vec![p]
+			}
+			_ => vec![format!("{}/binexec_p3.dat", set1_cfg)],
+		};
 
 		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,
 			CS2,CS1E,S>(
 			0,
 			&format!("{}/main.dat", set1_cfg),
 			scan_files,
-			"data/debug/full_debug/reports/report.dat",
+			// distinct filename in full_clamav's existing reports dir
+			// (avoids clobbering the real run's report2.dat)
+			"data/debug/full_clamav/reports/report_dbg.dat",
 			b_write_cache,
 			"full_data",
 			&format!("{}/main_dfa.dat", set1_cfg),
@@ -4121,7 +4122,7 @@ pub mod tests_zkp_driver{
 	/// Invoked via `cargo test ... test_full_debug_main`.
 	#[test]
 	pub fn test_full_debug_main(){
-		full_debug::<Fr>(false);
+		full_debug::<Fr>(true); // b_check_lkup=true, matching full_clam()
 		utils::logger::flush_logger();
 		let sentinel = format!(
 			"{}/data/cache/run_complete.sentinel",

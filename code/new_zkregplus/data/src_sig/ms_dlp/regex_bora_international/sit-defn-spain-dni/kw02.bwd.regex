@@ -1,1 +1,1 @@
-[0-9]{8}[\x2D\x20]?[A-Za-z].{0,300}\x20documento\x20nacional\x20de\x20identidad\x20
+[0-9]{8}[\x2D\x20]?[A-Za-z].{0,300}\x20documento\x20nacional\x20de\x20id\x20
