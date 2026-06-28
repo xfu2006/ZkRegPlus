@@ -123,8 +123,9 @@ fn get_job_log(job_id: usize) -> Option<JobLog> {
 	// Slow path: build the path and open the file with NO cache lock
 	// held. Snapshot `b_resume` into a local so the config guard is
 	// dropped before any I/O.
-	let fpath = format!("{}/data/cache/logs/log_job_{}.txt",
-		proj_root(), job_id);
+	let tag = std::env::var("ZKR_LOG_TAG").unwrap_or_default();
+	let fpath = format!("{}/data/cache/logs/log_job_{}{}.txt",
+		proj_root(), tag, job_id);
 	if let Some(parent) = Path::new(&fpath).parent() {
 		let _ = fs::create_dir_all(parent);
 	}

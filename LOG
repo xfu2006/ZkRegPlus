@@ -29740,15 +29740,39 @@ Goal 2. writing 7.5
 	
 
 Sunday 06/28/2026
-Goal 1. collect the eval data from gcp box
-Goal 2. continue to analyze RAM contention or cpu bin problem.
+Goal 1. collect the eval data from gcp box -> TODO!!!
+Goal 2. continue to analyze RAM contention or cpu bin problem. -> DONE
 	-> 1st dump reveals no contention.
 	-> revise and do the 2nd run 
 Goal 3. submit request to move budget -> DONE
 Goal 4. debug the job3 problem.
-Goal 5. Writing
+	[a] refine to split job3 list to concurrent search -> CHECK IT LATER.
+Goal 5. collect scale data for DLP set 
+	[a] design the sscale up descrig
+	[b] implementation
+	[c] deploy the script on server.
+Goal 6. NUMA version of full_clam()
+	[a] baseline debug mode, baseline mode, default full 16 jobs mode
+	[b] done
+	[c] test mode
+	----------------------
+	# (1) 10% baseline — 1 process, no NUMA pin, full snark + 1 proof
+  python3 run_full_clam_numa.py --mode=debug
+  #   -> /tmp/full_clam_run/full_clam.log.baseline.tgz
+
+  # (2) 10% numa — two-process scheme at 10% load (fast NUMA shakeout)
+  python3 run_full_clam_numa.py --mode=numa
+  #   -> full_clam.log.part1.tgz (fold-only)  +  full_clam.log.part2.tgz (snark)
+
+  # (3) 100% numa — two-process scheme, full load (DEFAULT)
+  python3 run_full_clam_numa.py --mode=prod
+  #   -> full_clam.log.part1.tgz (fold-only)  +  full_clam.log.part2.t
+  ----------------------
+Goal 6. Writing
 	[a] update Diagram 9
 	[b] p1 draft. 
+	[c] think about getting the comparison data for DLP as well! 
+	[d] need to do a second set of scale_up data for DLP.
 
 ----- ACTIVE GOALS -----
 Goal FINAL1. start data collection on GCP

@@ -134,6 +134,12 @@ pub struct ClamavApproxConfig{
 /// field: 1 = no boost (so old configs reproduce baseline fan-out).
 fn fanout_boost_default() -> usize { 1 }
 
+/// full_clam manifest-slice selector for the two-half NUMA scheme.
+/// Full = first pct% of a job's file list; FirstHalf/SecondHalf = the
+/// two contiguous pct/2 halves of it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClamReadMode { Full, FirstHalf, SecondHalf }
+
 pub struct GlobalConfig {
     pub log_level: usize,
     pub range2_bit: usize,
@@ -155,6 +161,11 @@ pub struct GlobalConfig {
     // when it exceeds 85%. Off by default; turned on for collect_scale_data so
     // the run wrapper can audit that each tuned config is well-utilized.
     pub b_show_queue_saturated: bool,
+    // SCALE finalize (collect_scale_data_dlp): route fold CapErrs through
+    // catchable unwinding instead of process::exit / fail-fast abort, so the
+    // scale bump-retry finalizes caps. Default false -> full_dlp/full_clam/
+    // full_dna unchanged.
+    pub b_scale_catch_caperr: bool,
     pub b_read_cache: bool,
     pub b_write_snark_cache: bool, //write the generated snark key to cache
     pub b_read_snark_cache: bool,
@@ -211,6 +222,14 @@ pub struct GlobalConfig {
 	/// M0 flag-off regression fingerprint sink. None = disabled
 	/// (default); Some collects (label,value) pairs for the test gate.
 	pub fp_sink: Option<FpSink>,
+	/// full_clam two-half NUMA scheme: which manifest slice each job
+	/// reads, and the percent of each manifest used. Default Full/100 =
+	/// whole list -> every other caller is unchanged.
+	pub clam_read_mode: ClamReadMode,
+	pub clam_read_pct: usize,
+	/// full_clam part-2 gate: Some(path) = foldpot_main 10s-polls until
+	/// that flag file exists before the decider. None = no wait (default).
+	pub snark_wait_flag: Option<String>,
 }
 
 impl Default for GlobalConfig {
@@ -233,6 +252,7 @@ impl Default for GlobalConfig {
             b_light_test: true,
             b_folding_only: false,
             b_show_queue_saturated: false,
+            b_scale_catch_caperr: false,
             b_read_cache: false,
             b_write_snark_cache: false,
             b_read_snark_cache: false,
@@ -263,6 +283,9 @@ impl Default for GlobalConfig {
 			b_estimate_caps: false,
 			b_one_proof: false,
 			fp_sink: None,
+			clam_read_mode: ClamReadMode::Full,
+			clam_read_pct: 100,
+			snark_wait_flag: None,
         }
     }
 }
@@ -285,6 +308,7 @@ static GLOBAL_CONFIG: RwLock<GlobalConfig> = RwLock::new(GlobalConfig {
     b_light_test: true,
     b_folding_only: false,
     b_show_queue_saturated: false,
+    b_scale_catch_caperr: false,
     b_read_cache: false,
     b_write_snark_cache: false,
     b_read_snark_cache: false,
@@ -315,6 +339,9 @@ static GLOBAL_CONFIG: RwLock<GlobalConfig> = RwLock::new(GlobalConfig {
 	b_estimate_caps: false,
 	b_one_proof: false,
 	fp_sink: None,
+	clam_read_mode: ClamReadMode::Full,
+	clam_read_pct: 100,
+	snark_wait_flag: None,
 });
 
 pub fn read_global_config() -> RwLockReadGuard<'static, GlobalConfig> {

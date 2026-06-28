@@ -2449,7 +2449,10 @@ fn enable_ptrace_any() {
 /// watchdog. Default behavior is fail-fast; set ZKR_NO_FAIL_FAST=1
 /// to opt out and restore rayon's buffered-panic behavior.
 fn install_fail_fast_panic_hook() {
-	if std::env::var("ZKR_NO_FAIL_FAST").is_ok() {
+	// scale mode (b_scale_catch_caperr) needs panics to UNWIND so the
+	// bump-retry's catch_unwind can catch the 0-word advice panic; don't abort.
+	if std::env::var("ZKR_NO_FAIL_FAST").is_ok()
+		|| read_global_config().b_scale_catch_caperr {
 		return;
 	}
 	let default_hook = std::panic::take_hook();
@@ -3139,6 +3142,14 @@ where
 	// Used by last-finisher logic for main_key and cp_key drops.
 	let n_jobs_total = jobs.len();
 
+	// SCALE-MODE (get_global_config().b_scale_catch_caperr, e.g.
+	// collect_scale_data_dlp): stash a job CapErr here instead of process::exit,
+	// so it propagates as a catchable main-thread panic for the scale
+	// bump-retry. Flag false (full_dlp / full_clam / full_dna) -> unchanged
+	// (process::exit below).
+	let scale_job_err: std::sync::Mutex<Option<Error>> =
+		std::sync::Mutex::new(None);
+
 	jobs.into_par_iter().enumerate().for_each(|(job_id, job)| {
 		// NUMA (ZKR_NUMA=perjob): pin this job's worker thread + its per-word
 		// allocations to node (job_id % n_nodes). No-op unless multi-node + flag.
@@ -3293,6 +3304,20 @@ where
 	  				"Job {}: b_folding_only set, no snark generated",
 	  				job_id));
 	  			return Ok(());
+	  		}
+
+	  		// full_clam part-2 gate: wait until the driver frees the
+	  		// fold-only half's RAM (flag file appears) before the decider.
+	  		if let Some(flag) = read_global_config().snark_wait_flag.clone() {
+	  			while !std::path::Path::new(&flag).exists() {
+	  				log(job_id, log_level, &format!(
+	  					"Job {}: waiting for snark-start flag {}",
+	  					job_id, flag));
+	  				std::thread::sleep(
+	  					std::time::Duration::from_secs(10));
+	  			}
+	  			log(job_id, log_level, &format!(
+	  				"Job {}: snark-start flag seen; proceeding", job_id));
 	  		}
 
 	  		// ------------- The following is the CRITICAL SECTION -------
@@ -3675,9 +3700,21 @@ where
 	if let Err(e) = res {
 		log(job_id, ERR, &format!("Job {} FAILED with error: {:?}", job_id, e));
 		let _ = std::io::stdout().flush();
-		std::process::exit(1);
+		if read_global_config().b_scale_catch_caperr {
+			// scale mode: stash + return; surfaced after the for_each.
+			*scale_job_err.lock().unwrap() = Some(e);
+			return;
+		}
+		std::process::exit(1);  // default: unchanged
 	}
 	});
+
+	// scale mode: surface a stashed job CapErr as a normal Err -> the caller's
+	// .expect("main err") panics on the main thread, which the scale bump-retry
+	// catches. No-op on the default path (nothing stashed).
+	if let Some(e) = scale_job_err.into_inner().unwrap() {
+		return Err(e);
+	}
 
 	log_perf(0, log_level, "PERF 1005: FoldPot Step 4: parallel jobs of folding + nark generation", &mut gt_all);
 	log_perf(0, log_level, "PERF 1005: === ALL JOBS ===", &mut gt_all_0);

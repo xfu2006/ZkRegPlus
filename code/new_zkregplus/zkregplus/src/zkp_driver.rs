@@ -3,7 +3,7 @@
 */
 
 //use std::collections::{HashSet};
-use utils::{logger::{log,LOG1,log_perf}, timer::Timer as GTimer, consts::{read_global_config, get_global_config}};
+use utils::{logger::{log,LOG1,log_perf}, timer::Timer as GTimer, consts::{read_global_config, get_global_config, ClamReadMode}};
 use ark_ff::{Field,PrimeField,ToConstraintField};
 use ark_ec::{Group, CurveGroup,
 	pairing::{Pairing},
@@ -64,12 +64,26 @@ type GM<F> = CompositeGadgetMapper<F,LK<F>>;
 type FC<F,C,CS> = SigmaIR1CS_Inst<F,C,CS,LK<F>,GM<F>,false>;
 // --------- type aliases for zkp_driver above -------------
 
+/// full_clam manifest slice bounds. Full -> [0, n*pct/100);
+/// FirstHalf -> [0, n*pct/200); SecondHalf -> [n*pct/200, n*pct/100).
+/// Default Full/100 -> [0, n) (no-op for every non-full_clam caller).
+fn clam_slice_bounds(n: usize) -> (usize, usize) {
+	let (mode, pct) = { let g = read_global_config();
+		(g.clam_read_mode, g.clam_read_pct) };
+	let (hi, mid) = (n * pct / 100, n * pct / 200);
+	match mode {
+		ClamReadMode::Full => (0, hi),
+		ClamReadMode::FirstHalf => (0, mid),
+		ClamReadMode::SecondHalf => (mid, hi),
+	}
+}
+
 /// load the files and pack them as nibbles
 /// return (words in packed nibbles, word info, file names)
 /// max_word_len is forwarded into the discharge_prover so it can
 /// extend its nibble scan to match the circuit's padded view
 /// (Step 4 of the pad-invariant rework).
-fn load_files<F:PrimeField + ColEle>(_job_id: usize, list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavApproxConfig, _b_write_cache: bool, _cache_dir: &str, max_word_len: usize)
+fn load_files<F:PrimeField + ColEle>(job_id: usize, list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavApproxConfig, _b_write_cache: bool, _cache_dir: &str, max_word_len: usize)
 	->(Vec<Vec<F>>, Vec<WordInfo>, Vec<String>){
 	//1. read the list of files
 	let _b_debug = false;
@@ -78,7 +92,16 @@ fn load_files<F:PrimeField + ColEle>(_job_id: usize, list_file_path: &str, db: &
 	// ones are proot-prefixed. Same guard as clam_db::build_or_load.
 	let resolve = |p: &str| if std::path::Path::new(p).is_absolute()
 		{ p.to_string() } else { format!("{}/{}", proot, p) };
-	let file_names = &read_lines(&resolve(list_file_path));
+	// full_clam two-half slice of this job's manifest (Full/100 = no-op).
+	let all_names = read_lines(&resolve(list_file_path));
+	let (lo, hi) = clam_slice_bounds(all_names.len());
+	let sliced: Vec<String> = all_names[lo..hi].to_vec();
+	let file_names = &sliced;
+	println!("PROBE CLAM job {} mode {:?} pct {} n {} slice [{},{}) \
+first {} last {}", job_id, read_global_config().clam_read_mode,
+		read_global_config().clam_read_pct, all_names.len(), lo, hi,
+		file_names.first().map(|s| s.as_str()).unwrap_or("<none>"),
+		file_names.last().map(|s| s.as_str()).unwrap_or("<none>"));
 	if file_names.len() > 0 {
 		println!("  First file: {}", file_names[0]);
 	}
@@ -3151,7 +3174,7 @@ pub mod tests_zkp_driver{
 	/// Can finish in xxx hrs.
 	#[allow(dead_code)]
 	fn full_clamav<F:PrimeField>(b_check_lkup: bool, b_light_test: bool,
-		b_setup: bool){
+		b_setup: bool, read_mode: ClamReadMode, read_pct: usize){
 		utils::os::print_computer_config(Some("full_clamav"));
 		//extra setting
 		get_global_config().snark_cache_dir = "full_clamav".to_string();
@@ -3161,6 +3184,15 @@ pub mod tests_zkp_driver{
 		let _ = b_light_test; // forced full snark below
 		get_global_config().b_light_test = false; // full snark (one proof)
 		get_global_config().b_one_proof = false;  // every job proves
+		// full_clam two-half NUMA scheme (env-driven; unset = unchanged).
+		get_global_config().clam_read_mode = read_mode;
+		get_global_config().clam_read_pct = read_pct;
+		if let Ok(v) = std::env::var("ZKR_CLAM_ONE_PROOF") {
+			get_global_config().b_one_proof = v == "1"; }
+		if let Ok(v) = std::env::var("ZKR_CLAM_FOLD_ONLY") {
+			get_global_config().b_folding_only = v == "1"; }
+		if let Ok(p) = std::env::var("ZKR_SNARK_WAIT_FLAG") {
+			get_global_config().snark_wait_flag = Some(p); }
 		get_global_config().min_subsigs = 368; // OLD value: 361
 		get_global_config().min_basis_unique_states= 1054; // OLD value: 600
 		get_global_config().min_basis_acc_states =  268; // OLD value: 113
@@ -3240,7 +3272,9 @@ pub mod tests_zkp_driver{
 			basis_acc_states_igc,
 		);
 
-		let num_jobs = if b_setup {1} else {8};
+		let num_jobs = if b_setup {1} else {
+			std::env::var("ZKR_CLAM_NJOBS").ok()
+				.and_then(|s| s.parse().ok()).unwrap_or(8) };
 		let scan_files: Vec<String> = if b_setup {
 			(0..num_jobs).map(|i|
 				format!("{}/sample_1M_{}.dat", set1, i)).collect()
@@ -3270,6 +3304,134 @@ pub mod tests_zkp_driver{
 			num_circs,
 			b_check_lkup, DcMode::Off
 		);
+	}
+
+	/// full_clam_bisect: 8-way concurrent bisection of job 3's verify_batch
+	/// failure. Faithful clone of full_clamav (b_setup=false): SAME config and
+	/// SAME capacities, so the cached full_clamav g16 keys are reused read-only
+	/// and circuit sizes match. Differs ONLY in (1) per-job scan list from env
+	/// (ZKR_BISECT_DIR holds slice_0.dat..slice_{N-1}.dat, ZKR_BISECT_NJOBS=N)
+	/// and (2) report under data/debug/full_clam_bisect/. b_one_proof stays
+	/// false so every share proves+verifies and the failing share's
+	/// log_job_{id}.txt carries BATCH PROOF VERIFICATION FAILED. Splits ONLY
+	/// job 3's list; never calls or modifies full_clamav().
+	fn full_clam_bisect<F:PrimeField>(){
+		utils::os::print_computer_config(Some("full_clam_bisect"));
+		get_global_config().snark_cache_dir = "full_clamav".to_string();
+		get_global_config().b_write_snark_cache = false; // read-only key reuse
+		get_global_config().b_read_snark_cache = true;
+		get_global_config().range2_bit = 26;
+		get_global_config().b_light_test = false; // full snark
+		get_global_config().b_one_proof = false;  // every share proves+verifies
+		get_global_config().min_subsigs = 368;
+		get_global_config().min_basis_unique_states= 1054;
+		get_global_config().min_basis_acc_states =  268;
+		get_global_config().min_basis_pats_in_trace=  295;
+		get_global_config().min_avg_pats_per_subsig= 8;
+		get_global_config().min_dfa_sigs = 3;
+		get_global_config().min_dfa_subsigs =  3;
+		get_global_config().n_par_snark = 1;
+		get_global_config().n_par_snark_cp = 1;
+		get_global_config().n_par_batch_claim = 8;
+		get_global_config().perc_lkup_share = 143;
+		get_global_config().log_level = utils::logger::LOG3;
+
+		get_global_config().b_read_cache = true;
+		let b_write_cache = !read_global_config().b_read_cache;
+		let set1 = "data/debug/full_clamav/config/"; // DB/dfa/main: read-only
+		let max_word= 512 * 8;
+		let sigs = 400;
+		let subsigs = 580;
+		let avg_pats_per_subsig = 8;
+		let avg_active_pats_per_subsig = 2;
+		let perc_comp_subsigs = 20;
+		let vec_decrease_level = vec![2];
+		let num_circs = 2;
+		let basis_unique_states = 1300;
+		let basis_acc_states = 750;
+		let basis_pats_in_trace = 820;
+		let basis_acc_states_igc = basis_acc_states ;
+		let basis_pats_in_trace_igc = basis_pats_in_trace;
+		let dfa_sigs = 8;
+		let dfa_subsigs= 8;
+		let perc_pats_expansion_rate = 104;
+		let perc_pats_expansion_rate_igc = 2;
+
+		let init_cp_cap= CpCapacity{
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+		};
+		let init_sed_cap= SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig,
+			avg_active_pats_per_subsig,
+			basis_pats_in_trace,
+			perc_pats_expansion_rate,
+			sigs,
+			perc_comp_subsigs,
+			basis_unique_states,
+			basis_acc_states,
+		);
+		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
+		let init_cp_cap_igc= CpCapacity{
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs: subsigs,
+			avg_pats_per_subsig,
+		};
+		let init_sed_cap_igc= SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig,
+			avg_active_pats_per_subsig,
+			basis_pats_in_trace_igc,
+			perc_pats_expansion_rate_igc,
+			sigs,
+			perc_comp_subsigs,
+			basis_unique_states,
+			basis_acc_states_igc,
+		);
+
+		// vs full_clamav: per-job scan list from env (N shares of job 3).
+		let dir = std::env::var("ZKR_BISECT_DIR")
+			.expect("ZKR_BISECT_DIR must point at the slice dir");
+		let n_jobs: usize = std::env::var("ZKR_BISECT_NJOBS").ok()
+			.and_then(|s| s.trim().parse().ok()).unwrap_or(8);
+		let scan_files: Vec<String> = (0..n_jobs)
+			.map(|i| format!("{}/slice_{}.dat", dir, i)).collect();
+		// vs full_clamav: report under our own folder.
+		let report = "data/debug/full_clam_bisect/reports/report2.dat";
+
+		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+			0,
+			&format!("{}/main.dat",set1),
+			scan_files,
+			report,
+			b_write_cache,
+			"full_data",
+			&format!("{}/main_dfa.dat", set1),
+			&format!("{}/needs_ised.dat", set1),
+			&format!("{}/needs_ised_igc.dat",set1),
+			max_word,
+			&init_cp_cap,
+			&init_sed_cap,
+			&init_dfa_cap,
+			&init_cp_cap_igc,
+			&init_sed_cap_igc,
+			&vec_decrease_level,
+			num_circs,
+			true, DcMode::Off  // b_check_lkup=true: matches full_clam()
+		);
+	}
+
+	#[test]
+	pub fn test_full_clam_bisect(){
+		full_clam_bisect::<Fr>();
+		utils::logger::flush_logger();
+		let sentinel = format!("{}/data/cache/run_complete.sentinel",
+			utils::os::proj_root());
+		let _ = std::fs::write(&sentinel, "ok\n");
 	}
 
 	/// full_dna: ZK discharge of the full clean chr17 sample
@@ -5492,6 +5654,269 @@ fail: {} ({:.4}%)",
 		collect_scale_data(counts);
 	}
 
+	/// DLP twin of collect_scale_data using the AGGRESSIVE tuner (the same path
+	/// full_dlp uses). Corpus FIXED (one short email via the /tmp scan list);
+	/// sweeps the 9,860 Dlp.* rules (Win.Alphabet.SAMPLE-1 pinned). Folding-only,
+	/// isolated scale_data_dlp cache.
+	pub fn collect_scale_data_dlp(vec_count: Vec<usize>) {
+		use crate::determine_config::{caps_from_params_aggr,
+			apply_caperr_bumps, probe_catching};
+		use crate::stats_helper::{estimate_config_aggr, estimated_to_capparams_aggr};
+		use folding_schemes::folding::foldpot::sigma_ir1cs::LookupTableTwoCol as _;
+		// SCALE finalize: route fold CapErrs (main-thread 0-word advice AND
+		// job-thread Pass-1) through catchable unwinding instead of
+		// process::exit / fail-fast abort, so the bump-retry below finalizes the
+		// caps. Per-process; only this run sets it -> full_dlp/full_clam/full_dna
+		// leave it false (RULE 1).
+		get_global_config().b_scale_catch_caperr = true;
+		utils::os::print_computer_config(Some("collect_scale_data_dlp"));
+		utils::consts::SCALE_DUMP_FWD
+			.store(true, std::sync::atomic::Ordering::Relaxed);
+		assert!(!vec_count.is_empty(), "vec_count must be non-empty");
+		assert!(vec_count.iter().all(|&c| c >= 1),
+			"vec_count entries must be >= 1: {:?}", vec_count);
+		assert!(vec_count.windows(2).all(|w| w[0] < w[1]),
+			"vec_count must be strictly ascending and distinct: {:?}", vec_count);
+		const SCALE_PERM_SEED: u64 = 0x5CA1_5EED_0F0F_0F0F;
+		fn fixed_perm(n: usize, mut s: u64) -> Vec<usize> {
+			let mut v: Vec<usize> = (0..n).collect();
+			for i in (1..n).rev() {
+				s = s.wrapping_add(0x9E3779B97F4A7C15);
+				let mut z = s;
+				z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+				z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+				z ^= z >> 31;
+				v.swap(i, (z % (i as u64 + 1)) as usize);
+			}
+			v
+		}
+
+		// ---- config COPIED FROM full_dlp() (runcfg_full.json + the fn). ----
+		let mw = 64usize;            // chunk_len
+		let range2_bit = 25usize;
+		let fanout_cap = 100usize;
+		// SINGLE full-cap rung (like the ClamAV scale's num_circs=1): a decrease
+		// ladder starves the smaller rung of capacity for the full 0-pad word
+		// (driver.rs:2939). k_max=1, n_buckets=1 -> one rung sized for everything.
+		let k_max = 1usize; let n_buckets = 1usize; let peel_pct = 100usize;
+		get_global_config().snark_cache_dir = "scale_data_dlp".to_string();
+		get_global_config().log_level = utils::logger::LOG3;
+		get_global_config().range2_bit = range2_bit;
+		get_global_config().b_light_test = false;
+		get_global_config().b_folding_only = true;       // scale: folding only
+		get_global_config().b_show_queue_saturated = true;
+		get_global_config().b_estimate_caps = true;      // aggressive estimate path
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_write_snark_cache = false;
+		get_global_config().perc_lkup_share = 1;
+		get_global_config().min_subsigs = 1;
+		get_global_config().min_basis_unique_states = 2;
+		get_global_config().min_basis_acc_states = 2;
+		get_global_config().min_basis_pats_in_trace = 4;
+		get_global_config().min_avg_pats_per_subsig = 1;
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
+		get_global_config().clamav_cfg.sde_rep_fanout_cap = fanout_cap;
+		get_global_config().clamav_cfg.min_pm_word_len = 3;
+		get_global_config().b_read_cache = false;        // rebuild DB per subset
+
+		let proot = utils::os::proj_root();
+		let set1 = "data/paper_data/dlp/cfg/regex_pat/";  // READ-ONLY (rule source)
+		let cache_dir = "scale_data_dlp";                 // isolated, NOT full_dlp's
+		let report = "/tmp/bora/scale_dlp/report2.dat";   // isolated, NOT full_dlp's
+		let cfg = data_processor::clamav::default_clamav_cfg();
+
+		// ---- rule set: pin Win.Alphabet.SAMPLE-1 (line 0), permute the rest. --
+		let all_lines: Vec<String> = utils::os::read_lines(
+				&format!("{}/{}main_data_dlp_internationl.dat", proot, set1))
+			.into_iter()
+			.filter(|s| !s.starts_with('#') && !s.trim().is_empty())
+			.collect();
+		assert!(all_lines.first().map(|l| l.starts_with("Win.Alphabet"))
+			.unwrap_or(false), "expected Win.Alphabet.SAMPLE-1 as DLP rule 0");
+		let pinned = all_lines[0].clone();
+		let all_rules: Vec<String> = all_lines[1..].to_vec();        // 9,860
+		let n_rules = all_rules.len();
+		let perm = fixed_perm(n_rules, SCALE_PERM_SEED);
+		let needs_dfa_full = utils::os::read_lines(
+			&format!("{}/{}main_dfa.dat", proot, set1));
+		let needs_ised_full = utils::os::read_lines(
+			&format!("{}/{}needs_ised.dat", proot, set1));
+		let needs_ised_igc_full = utils::os::read_lines(
+			&format!("{}/{}needs_ised_igc.dat", proot, set1));
+
+		let scratch = "/tmp/bora/scale_dlp";
+		std::fs::create_dir_all(scratch).expect("mkdir /tmp/bora/scale_dlp");
+		let sub_main = format!("{}/main_scale.dat", scratch);
+		let sub_dfa = format!("{}/needs_dfa.dat", scratch);
+		let sub_ised = format!("{}/needs_ised.dat", scratch);
+		let sub_ised_igc = format!("{}/needs_ised_igc.dat", scratch);
+		// corpus list (built by run_collect_scale_dlp.py): one absolute word path.
+		let scan_list = format!("{}/binexec_3.dat", scratch);
+		let scan_files = vec![scan_list.clone()];
+		let corpus_files = utils::os::read_lines(&scan_list);  // absolute paths
+
+		for &cnt in vec_count.iter() {
+			assert!(cnt <= n_rules, "count {} exceeds rule total {}", cnt, n_rules);
+			// PINNED alphabet + first `cnt` of the permutation.
+			let mut subset: Vec<&str> = vec![pinned.as_str()];
+			subset.extend(perm.iter().take(cnt).map(|&i| all_rules[i].as_str()));
+			std::fs::write(&sub_main, subset.join("\n") + "\n")
+				.expect("write subset main_scale.dat");
+			let names: std::collections::HashSet<String> = subset.iter()
+				.map(|l| l.split(|c| c == ';' || c == ':')
+					.next().unwrap_or("").trim().to_string())
+				.collect();
+			let filt = |full: &[String]| -> String {
+				let kept: Vec<&str> = full.iter().map(|s| s.trim())
+					.filter(|n| !n.is_empty() && !n.starts_with('#')
+						&& names.contains(*n)).collect();
+				if kept.is_empty() { String::new() } else { kept.join("\n") + "\n" }
+			};
+			std::fs::write(&sub_dfa, filt(&needs_dfa_full)).expect("w dfa");
+			std::fs::write(&sub_ised, filt(&needs_ised_full)).expect("w ised");
+			std::fs::write(&sub_ised_igc, filt(&needs_ised_igc_full)).expect("w isedigc");
+
+			let corpus = std::env::var("ZKR_SCALE_CORPUS")
+				.unwrap_or_else(|_| "unknown".to_string());
+			utils::logger::emit_stdout(format!(
+				"==== SCALE ROUND BEGIN count={} rules={}/{} corpus={} ====",
+				cnt, cnt, n_rules, corpus));
+			utils::logger::flush_logger();
+
+			// 1. build subset DB (fresh; b_read_cache=false -> rebuild).
+			let mut vlog: Vec<String> = vec![];
+			let db = std::sync::Arc::new(
+				data_processor::clam_db::ClamavDB::<Fr>::build_or_load(
+					&cfg, &sub_main, &sub_dfa, &sub_ised, &sub_ised_igc,
+					&mut vlog, cache_dir, true, true).expect("build db"));
+
+			// 2. discharge the corpus -> words/infos/vdata (mirror full_dlp_sample).
+			let (mut vdata, mut words, mut infos) = (vec![], vec![], vec![]);
+			for fpath in &corpus_files {
+				let nibbles = utils::os::read_nibbles(fpath);  // absolute path
+				let f_nib: Vec<Fr> = nibbles.iter().map(|x| Fr::from(*x as u32))
+					.collect();
+				words.push(utils::data::pack_nibbles(&f_nib));
+				let (fdr, rec) =
+					data_processor::clamav::quick_discharge_file_by_crit_bag_pm(
+						fpath, &nibbles, &db.vec_sigs, &db.vec_sigs_no_critical_pat,
+						&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
+						&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
+						&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
+						&db.sig_to_id, mw, mw);
+				vdata.push(fdr); infos.push(rec);
+			}
+
+			// 2b. Add foldpot's canonical full 0-pad word to the TUNING set ONLY
+			// (not the fold corpus): determine_config_aggr's Phase-A then sizes
+			// every cap to discharge it, mirroring ProbeThenFold's 0-word probe
+			// push (zkp_driver_adv:1510). Without it the aggressive lower-bound
+			// caps miss the 0-word advice demands and the fold panics
+			// (driver.rs:2939). LOCAL to collect_scale_data_dlp.
+			{
+				let pad_nibs = utils::data::gen_pad_nibbles(0, mw * 62);
+				let pad_fnib: Vec<Fr> = pad_nibs.iter()
+					.map(|x| Fr::from(*x as u32)).collect();
+				words.push(utils::data::pack_nibbles(&pad_fnib));
+				let (fdr, rec) =
+					data_processor::clamav::quick_discharge_file_by_crit_bag_pm(
+						"__0word__", &pad_nibs, &db.vec_sigs,
+						&db.vec_sigs_no_critical_pat, &db.map_crit_pat,
+						&db.map_crit_pat_igc, &db.dfa_crit,
+						&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
+						&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
+						&db.sig_to_id, mw, mw);
+				vdata.push(fdr); infos.push(rec);
+			}
+
+			// 3. estimate -> seed -> aggressive ladder.
+			let est = estimate_config_aggr::<Fr>(&vdata, &*db, &[100], &mut vlog);
+			let seed = estimated_to_capparams_aggr(&est[0], mw, range2_bit, 3);
+			let total_word_n: usize = words.iter().map(|w| w.len()).sum();
+			let lkup_len = db.lkup.get_size();
+			let n_threads = std::env::var("ZKR_DC_THREADS").ok()
+				.and_then(|s| s.parse().ok()).unwrap_or(4);
+			let (ladder, hist) = super::determine_config_aggr::<Fr,C1,CS1>(
+				db.clone(), &words, &infos, &vdata, seed, mw, lkup_len,
+				total_word_n, k_max, n_buckets, 60, n_threads, 8, peel_pct)
+				.expect("determine_config_aggr");
+			utils::logger::emit_stdout(format!(
+				"[scale_dlp] count={}: ladder {} rungs hist={:?}",
+				cnt, ladder.len(), hist));
+
+			// 4. Finalize caps against foldpot's full-0-word advice
+			// (driver.rs:2925) via the EXISTING bump machinery, then fold. The
+			// tuner's probe (capacity_probe_collect) never runs that stricter
+			// 0-word preprocessing, so it under-sizes the CP/FSM caps. Here we
+			// run the fold, catch the main-thread 0-word CapErr with
+			// probe_catching, apply_caperr_bumps, and retry. Failed tries die
+			// early at the 0-word check (before COST/folding) so they are cheap;
+			// only the final try emits COST + folds. A non-CapErr panic is a
+			// HARD STOP (no fallback). All LOCAL to collect_scale_data_dlp.
+			get_global_config().b_estimate_caps = false;
+			drop(db);  // zkp_driver_adv_aggr reloads the DB from the cache
+			let mut p = ladder[0].clone();
+			let mut tries = 0u32;
+			loop {
+				get_global_config().aggr_needs_subsigs = p.aggr_needs_subsigs;
+				let cs_caps = vec![caps_from_params_aggr(&p)];
+				utils::consts::reset_sat();  // isolate THIS fold's saturation
+				let res = probe_catching(|| {
+					zkp_driver_adv_aggr::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,
+						CS1,CS2,CS1E,S>(
+						0, &sub_main, scan_files.clone(), report, true,
+						cache_dir, &sub_dfa, &sub_ised, &sub_ised_igc, mw,
+						&cs_caps, false);
+					Ok(())
+				});
+				match res {
+					Ok(Ok(())) => break,                 // fold passed
+					Ok(Err(errs)) => {                   // 0-word CapErr -> bump
+						let (changed, unmapped) =
+							apply_caperr_bumps(&mut p, true, &errs);
+						tries += 1;
+						utils::logger::emit_stdout(format!(
+							"[scale_dlp] count={}: 0-word bump try {}: {:?}",
+							cnt, tries, errs));
+						assert!(changed && unmapped.is_empty(),
+							"scale_dlp count={}: 0-word finalize stuck \
+							 (unmapped={:?}): {:?}", cnt, unmapped, errs);
+						assert!(tries <= 30,
+							"scale_dlp count={}: >30 0-word bumps", cnt);
+					}
+					Err(msg) => panic!(
+						"scale_dlp count={}: non-CapErr fold panic (HARD STOP): \
+						 {}", cnt, msg),
+				}
+			}
+			get_global_config().b_estimate_caps = true;  // restore for next subset
+			// Forward-queue saturation for THIS fold (for verification; NOT
+			// plotted). saturation = max fill / matched cap (exact, no recon).
+			let (fc, fcc) = (utils::consts::get_fwd(false),
+				utils::consts::get_fwd_cap(false).max(1));
+			let (fi, fic) = (utils::consts::get_fwd(true),
+				utils::consts::get_fwd_cap(true).max(1));
+			utils::logger::emit_stdout(format!(
+				"[scale_dlp] count={}: FWD-QUEUE SATURATION cs={:.1}% ({}/{}) \
+				 igc={:.1}% ({}/{})", cnt,
+				100.0 * fc as f32 / fcc as f32, fc, fcc,
+				100.0 * fi as f32 / fic as f32, fi, fic));
+
+			utils::logger::flush_logger();
+			utils::logger::emit_stdout(format!(
+				"==== SCALE ROUND END count={} ====", cnt));
+			utils::logger::flush_logger();
+		}
+	}
+
+	#[test]
+	pub fn test_collect_scale_dlp() {
+		// SMOKE TEST: two layers [1, 4]. Full sweep later: 1, 10%..100% of 9,860.
+		let counts: Vec<usize> = vec![1, 4];
+		println!("collect_scale_data_dlp: counts={:?}", counts);
+		collect_scale_data_dlp(counts);
+	}
+
 	/// Experiment: is the accept-vs-fold discharge gap the (max_word_len,
 	/// seg_word_len) SEGMENTATION (same function both sides)? Re-discharge
 	/// ZKR_CMP_LIST on the compressed DB at the fold's (mw,mw) vs the accept
@@ -6111,7 +6536,15 @@ failed={} high={} final={}", raw_n, n_stage1, passed.len(),
 	/// or: `cargo test -p zkregplus -- full_clam --exact --nocapture`
 	#[test]
 	pub fn full_clam(){
-		full_clamav::<Fr>(true, false, false);
+		let read_mode = match std::env::var("ZKR_CLAM_READ_MODE")
+			.as_deref() {
+			Ok("first") => ClamReadMode::FirstHalf,
+			Ok("second") => ClamReadMode::SecondHalf,
+			_ => ClamReadMode::Full,
+		};
+		let read_pct = std::env::var("ZKR_CLAM_PCT").ok()
+			.and_then(|s| s.parse().ok()).unwrap_or(100);
+		full_clamav::<Fr>(true, false, false, read_mode, read_pct);
 	}
 
 	/// ZK discharge of one Enron email (merged_000001) against the
