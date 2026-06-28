@@ -12,43 +12,38 @@ WHY THIS EXISTS
   node), NOT the GlobalConfig RwLock. This script CONFIRMS that on whatever
   box you run it, FAST, and tells you the best numactl policy there.
 
-HOW IT STAYS FAST (no 8-hour run, no Rust change)
-  Per-step fold time is the INVARIANT. A full run is ~27-36 min only because
-  it folds thousands of words; each step's MSM cost is identical whether you
-  fold 30 words or 30000. We cap the fold with ZKR_WORD_CAP_PER_JOB (an
-  existing env knob, driver.rs:2666) so full_dlp does a handful of real
-  folding steps and exits in minutes, then we read the per-step fold ms that
-  the prover already logs ("prove_step cost: ... circ_id: N ... W ms"). We
-  run that capped fold under each numactl policy and compare per-step ms.
-  Everything is driven by EXISTING env vars + numactl -- zero Rust edits.
-
-  CAP IS IN WORDS, NOT STEPS. One word expands into MANY prove_steps (the
-  inner subseg loop, driver.rs:2288) -- empirically ~35 steps/word on the
-  DLP corpus. So per job, steps ~= word_cap * 35: word_cap=2 -> ~70 steps
-  (minutes), word_cap=40 -> ~1400 steps (HOURS). Keep the cap LOW; the
-  per-step ms is an average, so ~35-70 steps already gives a stable number.
+HOW IT STAYS FAST (tiny dedicated corpus, no word cap)
+  Per-step fold time is the INVARIANT: each step's MSM cost is identical
+  whether the corpus is 4 files or 504k. Instead of capping the fold of the
+  504k-file production corpus (whose UNcapped discharge/ladder alone cost
+  ~30 min/policy), Tier B runs numa_probe_dlp() -- a folding-only sibling of
+  full_dlp() -- on the tiny data/debug/numa_probe corpus (~4 short files,
+  <100 chunks total, one high-NEEDS word that builds + folds the heavy top
+  rung). Real discharge -> ladder -> multi-job fold, minutes/policy, no cap.
+  We read the per-step fold ms the prover logs ("prove_step cost: ... circ_id:
+  N ... W ms") and compare across the numactl matrix. full_dlp() is untouched.
+  Build the corpus ONCE: python3 data/debug/numa_probe/build_np_corpus.py
 
 TIERS (run fastest-first)
   Tier A  test_msm proxy   : BN254 G1 MSM (the veccom.rs:315 kernel) under a
                              numactl matrix. No data, no cache, ~minutes.
                              Reproduces the NUMA penalty in isolation.
-  Tier B  capped full_dlp  : the REAL folding path, ZKR_WORD_CAP_PER_JOB
-                             small, under a numactl matrix. Per-step fold ms.
-                             Needs the full_dlp cache warm (one-time ~0.5hr;
-                             reused across all policy runs).
-  Tier C  perf c2c (opt)   : attach perf c2c to an UNcapped full_dlp to name
-                             the contended cache line (proves it's the SRS
-                             array, not GLOBAL_CONFIG). Needs perf privilege.
+  Tier B  numa_probe_dlp   : the REAL folding path on the tiny numa_probe
+                             corpus, under a numactl matrix. Per-step fold ms.
+                             DB cache is symlinked from dlp_corpus_aggr (no
+                             rebuild); discharge over ~4 files is seconds.
+  Tier C  perf c2c (opt)   : attach perf c2c to an UNcapped numa_probe_dlp to
+                             name the contended cache line (proves it's the
+                             SRS array, not GLOBAL_CONFIG). Needs perf priv.
 
 USAGE (run ON the box under test, e.g. gcpm1)
-  python3 numa_probe.py                      # Tier A + Tier B, default cap=2
+  python3 data/debug/numa_probe/build_np_corpus.py   # build corpus ONCE
+  python3 numa_probe.py                      # Tier A + Tier B
   python3 numa_probe.py --dry-run            # print plan + commands, run none
   python3 numa_probe.py --msm-only           # Tier A only (instant signal)
-  python3 numa_probe.py --skip-msm           # Tier B only
-  python3 numa_probe.py --word-cap 4 --jobs 8   # ~140 steps/job (heavier)
+  python3 numa_probe.py --skip-msm           # Tier B only (the fold path)
   python3 numa_probe.py --policies socket,interleave,off,local0,remote
   python3 numa_probe.py --c2c                # also Tier C (uncapped, perf)
-  python3 numa_probe.py --skip-warm          # cache already warm
 
 Stdlib only. Mirrors run_full_dlp.py conventions (runcfg, numa_prefix, env).
 """
@@ -71,11 +66,17 @@ HERE = os.path.dirname(os.path.abspath(__file__))          # zkregplus/src
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))     # new_zkregplus
 ZKREG = os.path.join(REPO, "zkregplus")                    # crate w/ example
 CFG_DIR = os.path.join(REPO, "data/paper_data/dlp/cfg/config")
+# Tier B default runcfg: the isolated tiny corpus built by
+# data/debug/numa_probe/build_np_corpus.py (run that ONCE first).
+NP_RUNCFG = os.path.join(REPO,
+    "data/debug/numa_probe/runcfg_numa_probe.json")
 LOGS_DIR = os.path.join(REPO, "data/cache/logs")
 # Durable history of probe runs (data/cache is gitignored but persists on the
 # box, and survives a git branch switch -- so baseline vs arcswap vs
 # replicate-keys results all live here for --compare).
-HIST_DIR = os.path.join(REPO, "data/cache/numa_probe")
+# results history lives in its OWN dir (NOT data/cache/numa_probe, which is
+# the DB symlink cache_dir) so the two never mingle.
+HIST_DIR = os.path.join(REPO, "data/cache/numa_probe_runs")
 
 # MEASURED reference points from run_full_dlp.py (jetstream2):
 #   socket-confined 8 jobs ~ 0.89x the 512GB baseline (FASTER)
@@ -292,7 +293,7 @@ def parse_steps(logpath):
 
 
 def effective_runcfg(runcfg_arg, jobs, reset, outdir, dry=False):
-    name = runcfg_arg or "runcfg_full.json"
+    name = runcfg_arg or NP_RUNCFG
     path = name if os.path.isabs(name) else os.path.join(CFG_DIR, name)
     if dry:
         # resolve only; never load/write in dry-run (file may be absent here)
@@ -300,9 +301,12 @@ def effective_runcfg(runcfg_arg, jobs, reset, outdir, dry=False):
             print("[dry-run] note: runcfg %s not present on this box" % path)
         return path, {}
     if not os.path.isfile(path):
-        sys.exit("ERROR: runcfg not found: %s" % path)
+        sys.exit("ERROR: runcfg not found: %s\n  (run the corpus builder "
+                 "first: python3 data/debug/numa_probe/build_np_corpus.py)"
+                 % path)
     rc = json.load(open(path))
-    rc["num_jobs"] = jobs
+    if jobs:
+        rc["num_jobs"] = jobs
     if reset:
         rc["reset"] = True
     eff = os.path.join(outdir, "runcfg_effective_j%d.json" % jobs)
@@ -313,7 +317,8 @@ def effective_runcfg(runcfg_arg, jobs, reset, outdir, dry=False):
 def full_dlp_cmd(policy, info):
     return numa_prefix(policy, info) + [
         "cargo", "test", "-p", "zkregplus", "--release", "--",
-        "zkp_driver::tests_zkp_driver::full_dlp", "--exact", "--nocapture"]
+        "zkp_driver::tests_zkp_driver::numa_probe_dlp", "--exact",
+        "--nocapture"]
 
 
 def full_dlp_env(eff, word_cap, policy, rf):
@@ -391,9 +396,9 @@ def run_dlp_tier(info, rf, outdir, policies, runcfg, jobs, word_cap,
         eff, rc.get("num_jobs", jobs), word_cap, rc.get("cache_dir")))
 
     if not skip_warm:
-        print("\n[warm] first full_dlp run builds the discharge/ladder cache")
-        print("       (~0.5hr if cold; instant if already cached). All policy")
-        print("       runs below reuse it. Use --skip-warm to skip.")
+        print("\n[warm] one warm-up numa_probe_dlp run (tiny corpus: DB is")
+        print("       symlinked from dlp_corpus_aggr, discharge over ~4 files")
+        print("       is seconds). Use --skip-warm to skip.")
         run_full_dlp("warm", "socket", eff, word_cap, info, rf, outdir, dry)
 
     results = {}
@@ -770,12 +775,15 @@ def main():
                          "safe even when folding keys are replicated per job "
                          "(~N*(K+W); K~10GB key block). Raise only if RAM allows.")
     ap.add_argument("--runcfg", default=None,
-                    help="full_dlp runcfg (default runcfg_full.json)")
-    ap.add_argument("--jobs", type=int, default=8)
-    ap.add_argument("--word-cap", type=int, default=2,
-                    help="ZKR_WORD_CAP_PER_JOB for the capped fold (0=full). "
-                         "Cap is in WORDS; ~35 prove_steps/word, so 2 -> "
-                         "~70 steps/job (minutes). Keep low.")
+                    help="runcfg JSON (default data/debug/numa_probe/"
+                         "runcfg_numa_probe.json; run build_np_corpus.py "
+                         "first)")
+    ap.add_argument("--jobs", type=int, default=0,
+                    help="num_jobs override (0 = use the runcfg value = "
+                         "corpus file count, one word per job)")
+    ap.add_argument("--word-cap", type=int, default=0,
+                    help="ZKR_WORD_CAP_PER_JOB (0=off). The numa_probe corpus "
+                         "is tiny, so no cap is needed; leave 0.")
     ap.add_argument("--window", type=int, default=45,
                     help="perf c2c sampling seconds (Tier C)")
     ap.add_argument("--policies", default=None,
@@ -793,6 +801,16 @@ def main():
     if args.compare:
         do_compare(args.compare)
         return
+
+    # resolve job count for display/stress: 0 means "use the runcfg value"
+    # (= corpus file count, one word per job). Best-effort read; defaults to 4.
+    if not args.jobs:
+        try:
+            rp = args.runcfg or NP_RUNCFG
+            rp = rp if os.path.isabs(rp) else os.path.join(CFG_DIR, rp)
+            args.jobs = int(json.load(open(rp)).get("num_jobs", 4))
+        except Exception:
+            args.jobs = 4
 
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     outdir = args.out or os.path.join(HIST_DIR, "%s_%s" % (ts, args.label))
@@ -817,8 +835,9 @@ def main():
     print("out dir       : %s" % outdir)
     print("policies      : %s" % ", ".join(policies))
     print("tier A msm    : %s" % ("skip" if args.skip_msm else "yes"))
-    print("tier B dlp    : %s (cap=%d jobs=%d)" % (
-        "no" if args.msm_only else "yes", args.word_cap, args.jobs))
+    print("tier B dlp    : %s (corpus=numa_probe jobs=%d cap=%s)" % (
+        "no" if args.msm_only else "yes", args.jobs,
+        args.word_cap or "off"))
     print("tier B stress : %s%s" % (
         "yes" if do_stress else "no",
         " (confined j%d vs spread j%d)" % (args.jobs, spread_jobs)

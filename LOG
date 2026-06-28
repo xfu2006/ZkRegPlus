@@ -29746,29 +29746,15 @@ Goal FINAL1. start data collection on GCP
 		* 49 hrs
 		* but not all batch proof pass, not sure why? (5 jobs success
 			but one job fails and break the other 3)
-		* needs to check.
-	[c] server1 -> full_dlp 
-		(6:30pm 06/26 F ->  3:53pm 06/27/2026 - 16 jobs) ===> FAILED
-		nohup python3 -u run_full_dlp.py --jobs=16 --numa=off
-		xxx FAILED xxx !!!
-		Fixed its vec com key size not power of 2 failure, fixed.
-		wait until numa experiment done.
+		* needs to check. ???
+	[c] server1 -> full_dlp ???
 	[d] server2:
 		eval_reef (7:55pm 06/26 -> 11:30pm 06/26: 4hrs) => done 
 		eval_zombie (10:00AM 06/27 ->  
 Goal FINAL2. start data collection on Jetstream 
-	[a] small -> scale_data (6:00PM 06/25 ->
-		->  (IP: 149.165.169.73) 
-		-> trace: phase1: 12 hrs (vs 7 hrs on jet2)
 	[b] large: -> (IP: 149.165.170.106)
-		[b1] full_dlp (7:00am 06/26 --> 
-			trace: 7:00am 5232 (job2) ->  8:00am 5767 (job2) 500/hr
-				-> 1:00pm 8667: 600/hr
-				-> 4:00pm 10286: 600/hr
-				-> 6:15pm 10615: 300/hr
-			== >try to fix the 512GB RAM limitation due to memory 
-				pin poly -> add the other 512GB RAM as swap disk
-			==> put zram swap file  (will be low though
+		[b0] full_dna??
+		[b1] full_dlp??
 		[b2] full_clam??
 		[b3] reef_eval
 		[b4] zombie_eval
