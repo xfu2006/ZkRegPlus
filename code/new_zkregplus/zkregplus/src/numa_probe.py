@@ -57,6 +57,7 @@ import platform
 import re
 import shutil
 import signal
+import statistics
 import subprocess
 import sys
 import tarfile
@@ -311,8 +312,15 @@ def parse_steps(logpath):
 # the prover logs these once per run; pull the keyless/circuit-selection +
 # key-setup costs so we report ALL three cost centers, not just per-step.
 STEP3_RE = re.compile(r"PERF WORKFLOW Step 3 time (\d+) ms")
-STEP5_RE = re.compile(r"PERF WORKFLOW Step 5 time (\d+) ms")
 STEP6_RE = re.compile(r"PERF WORKFLOW Step 6 time (\d+) ms")
+# the user's three target costs live in Phase 1:
+#  advice-gen (PERF 1008) = the keyless CIRCUIT SELECTION cost, per word --
+#    reference-comparable (matches ref_512_byfname.csv); reported as median.
+#  generate cmF (PERF 1007 step 3) = the cmF commitment; max-over-jobs.
+#  generate batch prf (step 4) = the key/MSM-bound batch proof; max-over-jobs.
+ADVICE_RE = re.compile(r"generate advice word \d+ of \d+:.*?(\d+) ms")
+CMF_RE = re.compile(r"Phase 1 step 3: generate cmF.*?(\d+) ms")
+BATCHPRF_RE = re.compile(r"Phase 1 step 4: generate batch prf.*?(\d+) ms")
 
 
 def parse_phase_ms(logpath, rx):
@@ -321,6 +329,29 @@ def parse_phase_ms(logpath, rx):
         if m:
             return int(m.group(1))
     return None
+
+
+def parse_phase_max(logpath, rx):
+    """Max over ALL matches -- the slowest job's stage (jobs run in parallel,
+    so the slowest sets the wall cost)."""
+    best = None
+    for l in open(logpath, errors="replace"):
+        m = rx.search(l)
+        if m:
+            v = int(m.group(1))
+            best = v if best is None else max(best, v)
+    return best
+
+
+def parse_phase_median(logpath, rx):
+    """Median over ALL matches -- robust central per-word cost (circuit
+    selection is per-word, so median matches cmp_perword's verdict)."""
+    vals = []
+    for l in open(logpath, errors="replace"):
+        m = rx.search(l)
+        if m:
+            vals.append(int(m.group(1)))
+    return round(statistics.median(vals)) if vals else None
 
 
 # ----------------------------------------------------------------------
@@ -567,19 +598,25 @@ def run_full_dlp(tag, policy, eff, word_cap, info, rf, outdir, dry,
     overall = tot_ms / tot_n if tot_n else 0.0
     dom = max(agg.items(), key=lambda kv: kv[1][1], default=(None, [0, 0, 0, 0]))
     dom_avg = dom[1][1] / dom[1][0] if dom[1][0] else 0.0
-    step3 = parse_phase_ms(logp, STEP3_RE)
+    step3 = parse_phase_ms(logp, STEP3_RE)        # global discharge (tiny)
     step6 = parse_phase_ms(logp, STEP6_RE)
+    circsel = parse_phase_median(logp, ADVICE_RE)  # CIRCUIT SELECTION (per word)
+    cmf = parse_phase_max(logp, CMF_RE)            # commit cmF (slowest job)
+    batchprf = parse_phase_max(logp, BATCHPRF_RE)  # batch proof (key/MSM bound)
     cont = samp.summary() if samp else {}
     cont.update(perf_stats)
-    print("[dlp:%s] wall=%.0fs%s steps=%d per_step=%.0fms(circ%s) circsel=%sms "
-          "keysetup=%ss cpu=%s%% remote=%s%% stall=%s%% peakRAM=%sGB"
+    print("[dlp:%s] wall=%.0fs%s steps=%d  FOLD per_step=%.0fms(circ%s)  "
+          "CIRCSEL advice_med=%sms  cmF_max=%sms  batchprf_max=%sms"
           % (tag, wall, " OOM" if oom else "", tot_n, dom_avg, dom[0],
-             step3, ("%.0f" % first_step_s) if first_step_s else "n/a",
+             circsel, cmf, batchprf))
+    print("[dlp:%s]   keysetup=%ss cpu=%s%% remote=%s%% stall=%s%% peakRAM=%sGB"
+          % (tag, ("%.0f" % first_step_s) if first_step_s else "n/a",
              cont.get("cpu_avg_pct"), cont.get("remote_alloc_pct"),
              cont.get("backend_stall_pct"), cont.get("peak_mem_gb")))
     return {"wall": wall, "steps": tot_n, "overall_ms": overall,
             "dom_circ": dom[0], "dom_avg_ms": dom_avg, "agg": agg,
             "oom": oom, "code": code, "step3_ms": step3, "step6_ms": step6,
+            "circsel_ms": circsel, "cmf_ms": cmf, "batchprf_ms": batchprf,
             "keysetup_s": first_step_s, "contention": cont}
 
 
@@ -991,9 +1028,11 @@ def run_matrix(info, rf, outdir, runcfg, word_cap, cells, pin, dry):
 
 def print_matrix_verdict(res):
     banner("Q1 / Q2 VERDICT (faithful per-step, production ladder)")
-    print("\n-- Q1: folding per-step vs jobs (off = all nodes) --")
-    print("%5s %15s %11s %7s %9s %9s" % (
-        "jobs", "per_step_ms", "keysetup_s", "cpu%", "remote%", "step6_s"))
+    print("\n-- Q1: cost vs jobs (off=all nodes). circsel=circuit selection "
+          "(advice/word), cmF=commit, per_step=folding --")
+    print("%5s %14s %11s %8s %7s %9s %8s" % (
+        "jobs", "per_step_ms", "circsel_ms", "cmF_ms", "cpu%", "remote%",
+        "stall%"))
     offs = sorted([(j, r) for (p, j), r in res.items()
                    if p == "off" and r], key=lambda t: t[0])
     base = None
@@ -1004,13 +1043,12 @@ def print_matrix_verdict(res):
         c = r.get("contention", {})
         psd = ("%.0f(%.2fx)" % (ps, ps / base)) if (ps and base) else (
             "OOM" if r.get("oom") else "%.0f" % ps)
-        print("%5d %15s %11s %7s %9s %9s" % (
-            j, psd,
-            ("%.0f" % r["keysetup_s"]) if r.get("keysetup_s") else "-",
+        print("%5d %14s %11s %8s %7s %9s %8s" % (
+            j, psd, r.get("circsel_ms"), r.get("cmf_ms"),
             c.get("cpu_avg_pct"), c.get("remote_alloc_pct"),
-            ("%.0f" % (r["step6_ms"] / 1000.0)) if r.get("step6_ms") else "-"))
-    print("  (Q1 answered if per_step rises with jobs while cpu% plateaus and")
-    print("   remote%/step6 grow -> bandwidth-bound, not compute-bound.)")
+            c.get("backend_stall_pct")))
+    print("  (Q1 answered if a cost rises with jobs while cpu% plateaus and")
+    print("   remote%/stall% grow -> bandwidth-bound, not compute-bound.)")
 
     print("\n-- Q2: 8 jobs, off(4 nodes) vs halfbox3(3 nodes) vs interleave --")
     for pol in ("off", "halfbox3", "interleave"):
@@ -1018,12 +1056,10 @@ def print_matrix_verdict(res):
         if not r:
             continue
         c = r.get("contention", {})
-        print("  %-10s per_step=%6.0fms keysetup=%5ss step6=%5ss cpu=%5s%% "
+        print("  %-10s per_step=%6.0fms circsel=%5sms cmF=%6sms cpu=%5s%% "
               "remote=%5s%% stall=%5s%%%s" % (
-                  pol, r["dom_avg_ms"],
-                  ("%.0f" % r["keysetup_s"]) if r.get("keysetup_s") else "-",
-                  ("%.0f" % (r["step6_ms"] / 1000.0)) if r.get("step6_ms")
-                  else "-", c.get("cpu_avg_pct"), c.get("remote_alloc_pct"),
+                  pol, r["dom_avg_ms"], r.get("circsel_ms"), r.get("cmf_ms"),
+                  c.get("cpu_avg_pct"), c.get("remote_alloc_pct"),
                   c.get("backend_stall_pct"), " OOM" if r.get("oom") else ""))
     o, h = res.get(("off", 8)), res.get(("halfbox3", 8))
     if o and h and o.get("dom_avg_ms") and h.get("dom_avg_ms"):
@@ -1046,7 +1082,8 @@ def matrix_metrics(info, msm, res, label, word_cap, pinned):
         cells["%s_j%d" % (pol, jobs)] = (
             {"policy": pol, "jobs": jobs, "per_step_ms": r["dom_avg_ms"],
              "dom_circ": r["dom_circ"], "steps": r["steps"],
-             "circsel_step3_ms": r.get("step3_ms"),
+             "circsel_advice_ms": r.get("circsel_ms"), "cmf_ms": r.get("cmf_ms"),
+             "batchprf_ms": r.get("batchprf_ms"), "discharge_ms": r.get("step3_ms"),
              "keysetup_s": r.get("keysetup_s"), "step6_ms": r.get("step6_ms"),
              "wall_s": r["wall"], "oom": r.get("oom"),
              "contention": r.get("contention")}
