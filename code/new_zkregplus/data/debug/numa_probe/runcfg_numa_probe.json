@@ -1,0 +1,15 @@
+{
+  "config_dir": "data/debug/numa_probe",
+  "sig_file": "regex_pat/main_data_dlp_internationl.dat",
+  "cache_dir": "numa_probe",
+  "fanout_cap": 100,
+  "chunk_len": 64,
+  "range2_bit": 25,
+  "config_out": "data/debug/numa_probe/np_ladder.json",
+  "full_list": "jobs/np_corpus_list.txt",
+  "num_jobs": 4,
+  "reset": true,
+  "k_max": 4,
+  "n_buckets": 2048,
+  "peel_pct": 90
+}
