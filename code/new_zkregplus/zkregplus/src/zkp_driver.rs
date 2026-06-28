@@ -64,18 +64,22 @@ type GM<F> = CompositeGadgetMapper<F,LK<F>>;
 type FC<F,C,CS> = SigmaIR1CS_Inst<F,C,CS,LK<F>,GM<F>,false>;
 // --------- type aliases for zkp_driver above -------------
 
-/// full_clam manifest slice bounds. Full -> [0, n*pct/100);
-/// FirstHalf -> [0, n*pct/200); SecondHalf -> [n*pct/200, n*pct/100).
-/// Default Full/100 -> [0, n) (no-op for every non-full_clam caller).
-fn clam_slice_bounds(n: usize) -> (usize, usize) {
-	let (mode, pct) = { let g = read_global_config();
-		(g.clam_read_mode, g.clam_read_pct) };
-	let (hi, mid) = (n * pct / 100, n * pct / 200);
-	match mode {
-		ClamReadMode::Full => (0, hi),
-		ClamReadMode::FirstHalf => (0, mid),
-		ClamReadMode::SecondHalf => (mid, hi),
-	}
+/// Take the first pct% of a manifest's file list (deterministic, on-disk
+/// order). pct=100 returns the whole list (byte-identical for non-split
+/// callers, e.g. full_dlp); pct<100 is the debug/numa speed mode.
+fn clam_take_pct(all_names: &[String]) -> Vec<String> {
+	let pct = read_global_config().clam_read_pct;
+	let k = (all_names.len() * pct / 100).min(all_names.len());
+	all_names[..k].to_vec()
+}
+
+/// Parse the job index j from a manifest path .../binexec_p{j}.dat so the
+/// PROBE lines carry the GLOBAL manifest id (part2 reports jobs 4-7, not
+/// 0-3). Returns the fallback job_id for non-binexec paths.
+fn clam_manifest_idx(path: &str, fallback: usize) -> usize {
+	path.rsplit('/').next().unwrap_or(path)
+		.strip_prefix("binexec_p").and_then(|s| s.strip_suffix(".dat"))
+		.and_then(|s| s.parse::<usize>().ok()).unwrap_or(fallback)
 }
 
 /// load the files and pack them as nibbles
@@ -92,16 +96,26 @@ fn load_files<F:PrimeField + ColEle>(job_id: usize, list_file_path: &str, db: &C
 	// ones are proot-prefixed. Same guard as clam_db::build_or_load.
 	let resolve = |p: &str| if std::path::Path::new(p).is_absolute()
 		{ p.to_string() } else { format!("{}/{}", proot, p) };
-	// full_clam two-half slice of this job's manifest (Full/100 = no-op).
+	// full_clam two-half scheme: the split is by whole manifest (job), so
+	// here we keep the FULL list and only trim to pct% for the debug/numa
+	// speed mode (Full/100 = whole list, byte-identical for full_dlp/bare).
 	let all_names = read_lines(&resolve(list_file_path));
-	let (lo, hi) = clam_slice_bounds(all_names.len());
-	let sliced: Vec<String> = all_names[lo..hi].to_vec();
-	let file_names = &sliced;
-	println!("PROBE CLAM job {} mode {:?} pct {} n {} slice [{},{}) \
-first {} last {}", job_id, read_global_config().clam_read_mode,
-		read_global_config().clam_read_pct, all_names.len(), lo, hi,
-		file_names.first().map(|s| s.as_str()).unwrap_or("<none>"),
-		file_names.last().map(|s| s.as_str()).unwrap_or("<none>"));
+	let file_names_owned = clam_take_pct(&all_names);
+	let file_names = &file_names_owned;
+	let (pmode, ppct) = { let g = read_global_config();
+		(g.clam_read_mode, g.clam_read_pct) };
+	if pmode != ClamReadMode::Full || ppct != 100 {   // quiet for full_dlp/bare
+		// Dump the exact files this job processes so the driver can check
+		// that the two parts together emit all 8 manifests' files. The job
+		// id is the GLOBAL manifest index (binexec_p{j}) so part2 reports
+		// jobs 4-7. One self-contained line per file (parses interleaved).
+		let mj = clam_manifest_idx(list_file_path, job_id);
+		println!("PROBE FILES job {} mode {:?} pct {} n {} took {}",
+			mj, pmode, ppct, all_names.len(), file_names.len());
+		for f in file_names {
+			println!("PROBE FILE job {} {}", mj, f);
+		}
+	}
 	if file_names.len() > 0 {
 		println!("  First file: {}", file_names[0]);
 	}
@@ -3215,19 +3229,16 @@ pub mod tests_zkp_driver{
 			//700MB data in 8 jobs and 256M lkup entries
 			//so we have per job: 90MB data = 180M nibbles
 			// then: 256/180 * 100 = 142.2% that's 142
-		// Split-load scaling: when a process reads only a manifest slice
-		// (production two-half = ~50% of each job) AND the lkup check is
-		// enforced, the per-chunk share must grow by 1/loaded_fraction so
-		// lk_share*chunks still covers lkup_len. Full/100 -> x1 (bare run
-		// and debug/numa, check off, unchanged).
-		if b_check_lkup {
-			let numer = match read_mode {
-				ClamReadMode::Full => 100,
-				_ => 200,        // half slice loads pct/2 of the manifest
-			};
-			let cur = read_global_config().perc_lkup_share;
-			get_global_config().perc_lkup_share =
-				cur * numer / read_pct.max(1);
+		// The two-half split is by whole manifest, so each job still reads a
+		// FULL manifest (same per-job data as the 8-job run) -> no per-job
+		// scaling needed; base 143 holds for prod. The debug/numa pct trim
+		// shrinks per-job data, so those modes keep the check OFF instead.
+		// ZKR_CLAM_LKUP_SHARE overrides the share outright as a safety hatch
+		// (no recompile) if a job ever trips the check.
+		let _ = read_pct;
+		if let Some(v) = std::env::var("ZKR_CLAM_LKUP_SHARE").ok()
+			.and_then(|s| s.parse::<usize>().ok()) {
+			get_global_config().perc_lkup_share = v;
 		}
 
 
@@ -3292,14 +3303,20 @@ pub mod tests_zkp_driver{
 			basis_acc_states_igc,
 		);
 
-		let num_jobs = if b_setup {1} else {
-			std::env::var("ZKR_CLAM_NJOBS").ok()
-				.and_then(|s| s.parse().ok()).unwrap_or(8) };
+		// Two-half scheme: split is by whole manifest. There are 8 manifests
+		// (binexec_p0..p7). Full = all 8 jobs; FirstHalf = jobs 0-3 (part1);
+		// SecondHalf = jobs 4-7 (part2). Per-job data is a full manifest in
+		// every mode, so the lkup share is unchanged from the 8-job run.
 		let scan_files: Vec<String> = if b_setup {
-			(0..num_jobs).map(|i|
+			(0..1).map(|i|
 				format!("{}/sample_1M_{}.dat", set1, i)).collect()
 		} else {
-			(0..num_jobs).map(|i|
+			let (js, je) = match read_mode {
+				ClamReadMode::Full       => (0, 8),
+				ClamReadMode::FirstHalf  => (0, 4),
+				ClamReadMode::SecondHalf => (4, 8),
+			};
+			(js..je).map(|i|
 				format!("{}/binexec_p{}.dat", set1, i)).collect()
 		};
 		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(

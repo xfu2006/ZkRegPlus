@@ -143,8 +143,11 @@ impl RunCfg {
 /// back through apply_caperr_bumps, auto-discovering the floor.
 /// Expects the Debug form: ... CapErr([("<name>", <num>), ...]) ...
 pub fn parse_caperr_from_panic(msg: &str) -> Option<Vec<(String, usize)>> {
-    let i = msg.find("CapErr([")?;
-    let mut rest = &msg[i + "CapErr([".len()..];
+    // Accept both compact "CapErr([..." and pretty {:#?} "CapErr(\n    [...".
+    let i = msg.find("CapErr(")?;
+    let after = &msg[i + "CapErr(".len()..];
+    let lb = after.find('[')?;
+    let mut rest = &after[lb + 1..];
     let mut res = vec![];
     loop {
         let Some(q1) = rest.find('"') else { break };

@@ -13,8 +13,7 @@ until this driver sees proc1 finish (freeing its RAM) and creates the flag.
 full_clam itself is unchanged for a bare `cargo test`; this driver only sets
 env knobs read by full_clam()/full_clamav():
   ZKR_CLAM_READ_MODE = full|first|second   manifest slice this job reads
-  ZKR_CLAM_PCT       = percent of each manifest used (split into two halves)
-  ZKR_CLAM_NJOBS     = jobs per process (default 8)
+  ZKR_CLAM_PCT       = percent of each manifest used (debug/numa speed mode)
   ZKR_CLAM_FOLD_ONLY = 1 -> b_folding_only (no snark)
   ZKR_CLAM_ONE_PROOF = 1 -> only Job 0 proves (one snark proof)
   ZKR_SNARK_WAIT_FLAG= flag path proc2's Job 0 waits on before the decider
@@ -32,7 +31,7 @@ checks them against the real binexec_p<j>.dat manifests for the given pct.
 
 Usage:
   python3 run_full_clam_numa.py [--mode=prod|numa|debug] [--pct=N]
-                                [--jobs=N] [--dry-run]
+                                [--dry-run]
 """
 import os, sys, subprocess, time, datetime, tarfile, platform, re, glob, \
     shutil, threading
@@ -50,7 +49,6 @@ MODE = getarg("mode", "prod")
 if MODE not in ("prod", "numa", "debug"):
     raise SystemExit("--mode must be prod|numa|debug (got %r)" % MODE)
 PCT = int(getarg("pct", "100" if MODE == "prod" else "10"))
-NJOBS = int(getarg("jobs", "8"))
 PART2_DELAY = int(getarg("part2-delay", "900"))   # min stagger before part2 (s)
 PART2_RAM_GB = float(getarg("part2-ram-gb", "500"))  # part2 waits until
                                                   # part1 tree RSS < this (GB)
@@ -169,10 +167,10 @@ def base_env(read_mode, fold_only, one_proof, wait_flag, log_tag):
     e["ZKR_NUMA"] = "off"                       # Rust per-job pinning off
     e["ZKR_CLAM_READ_MODE"] = read_mode         # full|first|second
     e["ZKR_CLAM_PCT"] = str(PCT)
-    e["ZKR_CLAM_NJOBS"] = str(NJOBS)
     e["ZKR_CLAM_FOLD_ONLY"] = "1" if fold_only else "0"
     e["ZKR_CLAM_ONE_PROOF"] = "1" if one_proof else "0"
-    # lkup-share invariant holds only at full data -> enforce only in prod.
+    # The split is by whole manifest, so each job reads full per-job data;
+    # the lkup-share invariant holds at pct=100 -> enforce only in prod.
     e["ZKR_CLAM_CHECK_LKUP"] = "1" if MODE == "prod" else "0"
     if wait_flag:
         e["ZKR_SNARK_WAIT_FLAG"] = wait_flag
@@ -206,23 +204,20 @@ def spawn(nodes, env, log_path, label):
 
 
 # ---------------- PROBE verification ----------------
-_PROBE = re.compile(
-    r"PROBE CLAM job (\d+) mode (\w+) pct (\d+) n (\d+) "
-    r"slice \[(\d+),(\d+)\) first (\S+) last (\S+)")
+_FILE = re.compile(r"^PROBE FILE job (\d+) (.+)$")
 
 
-def parse_probe(log_path):
+def parse_loaded(log_path):
+    """job_id -> set of file paths this process loaded, from the per-file
+    'PROBE FILE job J <path>' lines. load_files runs twice per job (two
+    passes) so each file is printed twice; the set dedups."""
     res = {}
     if not os.path.isfile(log_path):
         return res
     for ln in open(log_path, errors="replace"):
-        m = _PROBE.search(ln)
+        m = _FILE.match(ln.rstrip("\n"))
         if m:
-            j = int(m.group(1))
-            res[j] = dict(mode=m.group(2), pct=int(m.group(3)),
-                          n=int(m.group(4)), lo=int(m.group(5)),
-                          hi=int(m.group(6)), first=m.group(7),
-                          last=m.group(8))
+            res.setdefault(int(m.group(1)), set()).add(m.group(2))
     return res
 
 
@@ -231,54 +226,56 @@ def manifest(job):
     return [x.strip() for x in open(p) if x.strip()]
 
 
-def _at(L, i):
-    return L[i] if 0 <= i < len(L) else None
+def verify_split(part_logs):
+    """Check the two parts together emit all 8 manifests' files. The split
+    is by whole manifest (part1 = jobs 0-3, part2 = jobs 4-7), so each job
+    lands in exactly one part. Per job, compare its dumped file set to the
+    ORIGINAL manifest (binexec_p<j>.dat) -- pure set ops, any gap is named.
 
-
-def verify_two(log1, log2):
-    """Full coverage = proc1 first-half + proc2 second-half. Per job, the 4
-    boundary names must match the manifest at [0], [mid-1], [mid], [hi-1]."""
-    p1, p2 = parse_probe(log1), parse_probe(log2)
+    prod (pct=100): each job's set must EQUAL its manifest. pct<100: the set
+    is the first pct% sample, so only subset (no EXTRA) is checked. Either
+    way, all 8 jobs must be covered across the parts."""
+    per_part = [parse_loaded(p) for p in part_logs]
+    jobs = sorted(set().union(*[set(d) for d in per_part])) if per_part else []
     ok = True
-    print("\n[verify] two-half PROBE check (pct=%d)" % PCT)
-    for j in sorted(set(p1) | set(p2)):
-        L = manifest(j)
-        n = len(L)
-        hi = n * PCT // 100
-        mid = n * PCT // 200
-        e1f, e1l = _at(L, 0), _at(L, mid - 1)
-        e2f, e2l = _at(L, mid), _at(L, hi - 1)
-        g1, g2 = p1.get(j), p2.get(j)
-        c1 = g1 and g1["first"] == e1f and g1["last"] == e1l
-        c2 = g2 and g2["first"] == e2f and g2["last"] == e2l
-        good = bool(c1 and c2)
+    print("\n[verify] split check (pct=%d, %d part-log(s))"
+          % (PCT, len(part_logs)))
+    want = set(range(8))
+    if set(jobs) != want:
+        print("[verify] COVERAGE FAIL: emitted jobs %s != expected %s"
+              % (sorted(jobs), sorted(want)))
+        ok = False
+    for j in jobs:
+        L = set(manifest(j))
+        sets = [d.get(j, set()) for d in per_part]
+        merged = set().union(*sets) if sets else set()
+        overlap = set()
+        for i in range(len(sets)):
+            for k in range(i + 1, len(sets)):
+                overlap |= sets[i] & sets[k]
+        extra = merged - L
+        sizes = "/".join(str(len(s)) for s in sets)
+        if PCT >= 100:
+            missing = L - merged
+            good = not missing and not extra and not overlap
+            print("[verify] job %d |manifest|=%d merged=%d parts=%s  %s"
+                  % (j, len(L), len(merged), sizes,
+                     "PASS" if good else "FAIL"))
+            if missing:
+                print("         MISSING %d e.g. %s"
+                      % (len(missing), sorted(missing)[:3]))
+        else:
+            good = not extra and not overlap
+            print("[verify] job %d merged=%d (~%d%% of %d) parts=%s  %s"
+                  % (j, len(merged), PCT, len(L), sizes,
+                     "PASS" if good else "FAIL"))
+        if extra:
+            print("         EXTRA(not in manifest) %d e.g. %s"
+                  % (len(extra), sorted(extra)[:3]))
+        if overlap:
+            print("         OVERLAP between parts %d e.g. %s"
+                  % (len(overlap), sorted(overlap)[:3]))
         ok = ok and good
-        print("[verify] job %d N=%d mid=%d hi=%d  %s"
-              % (j, n, mid, hi, "PASS" if good else "FAIL"))
-        print("         p1 got %s / %s  exp %s / %s"
-              % (g1 and g1["first"], g1 and g1["last"], e1f, e1l))
-        print("         p2 got %s / %s  exp %s / %s"
-              % (g2 and g2["first"], g2 and g2["last"], e2f, e2l))
-    print("[verify] OVERALL: %s" % ("PASS" if ok else "FAIL"))
-    return ok
-
-
-def verify_one(log):
-    """Debug single-proc Full check: first=L[0], last=L[hi-1]."""
-    p = parse_probe(log)
-    ok = True
-    print("\n[verify] debug PROBE check (full, pct=%d)" % PCT)
-    for j in sorted(p):
-        L = manifest(j)
-        n = len(L)
-        hi = n * PCT // 100
-        ef, el = _at(L, 0), _at(L, hi - 1)
-        g = p[j]
-        good = g["first"] == ef and g["last"] == el
-        ok = ok and good
-        print("[verify] job %d N=%d hi=%d %s  got %s / %s  exp %s / %s"
-              % (j, n, hi, "PASS" if good else "FAIL",
-                 g["first"], g["last"], ef, el))
     print("[verify] OVERALL: %s" % ("PASS" if ok else "FAIL"))
     return ok
 
@@ -314,7 +311,7 @@ def run_debug():
         t.join()
     finally:
         try:
-            verify_one(log)
+            verify_split([log])
         except Exception as e:
             print("[numa] WARN: verify failed: %s" % e)
         pack_part("baseline", log, with_report=True)
@@ -373,7 +370,7 @@ def run_two():
         if t2 is not None:
             t2.join()
         try:
-            verify_two(log1, log2)
+            verify_split([log1, log2])
         except Exception as e:
             print("[numa] WARN: verify failed: %s" % e)
         pack_part("part1", log1, with_report=False)
@@ -383,7 +380,7 @@ def run_two():
     return rc1 or rc2
 
 
-print("[numa] MODE=%s PCT=%d NJOBS=%d nodes=%d" % (MODE, PCT, NJOBS, nnodes()))
+print("[numa] MODE=%s PCT=%d nodes=%d" % (MODE, PCT, nnodes()))
 print("[numa] REPO=%s  OUT=%s" % (REPO, OUT))
 if DRY:
     a, b = half_ranges()
