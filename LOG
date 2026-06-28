@@ -29742,8 +29742,13 @@ Goal 2. writing 7.5
 Sunday 06/28/2026
 Goal 1. collect the eval data from gcp box
 Goal 2. continue to analyze RAM contention or cpu bin problem.
-Goal 3. submit request to move budget
+	-> 1st dump reveals no contention.
+	-> revise and do the 2nd run 
+Goal 3. submit request to move budget -> DONE
 Goal 4. debug the job3 problem.
+Goal 5. Writing
+	[a] update Diagram 9
+	[b] p1 draft. 
 
 ----- ACTIVE GOALS -----
 Goal FINAL1. start data collection on GCP
