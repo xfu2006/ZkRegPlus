@@ -184,6 +184,12 @@ def numa_prefix(policy, info):
         half = max(1, nn // 2)
         return ["numactl", "--cpunodebind=0-%d" % (half - 1),
                 "--membind=0-%d" % (half - 1)]
+    if policy == "halfbox3":
+        # confine to the first 3/4 of the nodes -- a milder confinement that
+        # still FITS the ~160GB+ key working set that 2 nodes can't hold.
+        k = max(1, (nn * 3) // 4)
+        return ["numactl", "--cpunodebind=0-%d" % (k - 1),
+                "--membind=0-%d" % (k - 1)]
     if policy == "local0":
         return ["numactl", "--cpunodebind=0", "--membind=0"]
     if policy == "remote":
@@ -197,6 +203,7 @@ def policy_note(policy, info):
         "socket": "confine cpus to first socket's nodes (team default/best)",
         "interleave": "stripe pages over all nodes (run_full_clam default)",
         "halfbox": "confine cpu+mem to first half of nodes (emulate 512GB)",
+        "halfbox3": "confine cpu+mem to first 3/4 of nodes (fits the keys)",
         "local0": "node-0 cpus + node-0 memory (all-local contrast)",
         "remote": "node-0 cpus + far-node memory (FORCED REMOTE, worst case)",
         "perjob": "Rust foldpot::numa per-job pinning (ZKR_NUMA=perjob)",
@@ -350,37 +357,44 @@ def _numa_counters():
 
 
 def parse_perf(path):
-    """Pull stall% (backend-stalled / cycles) and LLC-miss% from a perf-stat
-    -o file -- the direct memory-bandwidth-contention signal. {} if absent."""
-    vals = {}
+    """Sum perf-stat INTERVAL CSV (-I -x ,) per event -> stall% + LLC-miss%.
+    Interval mode writes incrementally, so even a killed perf leaves data
+    (the old -o-only summary was empty on SIGINT). {} if absent/empty."""
+    sums = {}
     try:
         for l in open(path, errors="replace"):
-            p = l.split()
-            if len(p) >= 2:
-                num = p[0].replace(",", "")
-                if num.isdigit():
-                    vals[p[1]] = int(num)
+            if l.startswith("#") or not l.strip():
+                continue
+            f = l.split(",")
+            if len(f) < 4:
+                continue
+            val, ev = f[1].strip(), f[3].strip()
+            try:
+                sums[ev] = sums.get(ev, 0.0) + float(val)
+            except ValueError:           # <not supported>/<not counted>
+                continue
     except Exception:
         return {}
     out = {}
-    cyc, stall = vals.get("cycles"), vals.get("stalled-cycles-backend")
+    cyc, stall = sums.get("cycles"), sums.get("stalled-cycles-backend")
     if cyc and stall:
         out["backend_stall_pct"] = round(100.0 * stall / cyc, 1)
-    ll, lm = vals.get("LLC-loads"), vals.get("LLC-load-misses")
+    ll, lm = sums.get("LLC-loads"), sums.get("LLC-load-misses")
     if ll and lm:
         out["llc_miss_pct"] = round(100.0 * lm / ll, 1)
     return out
 
 
 def start_perf(outpath, ok):
-    """Best-effort system-wide perf stat (needs paranoid<=1 or root). Returns
-    a Popen to SIGINT later, or None. Never fatal."""
+    """Best-effort system-wide perf stat in INTERVAL CSV mode (needs
+    paranoid<=1 or root). Writes every 2s so a kill still leaves data.
+    Returns a Popen to SIGINT later, or None. Never fatal."""
     if not ok or not have("perf"):
         return None
     try:
         return subprocess.Popen(
-            ["perf", "stat", "-a", "-o", outpath, "-e",
-             "cycles,stalled-cycles-backend,LLC-load-misses,LLC-loads",
+            ["perf", "stat", "-a", "-I", "2000", "-x", ",", "-o", outpath,
+             "-e", "cycles,stalled-cycles-backend,LLC-load-misses,LLC-loads",
              "--", "sleep", "86400"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
@@ -410,7 +424,7 @@ class Sampler(threading.Thread):
     def __init__(self, interval=5):
         super().__init__(daemon=True)
         self.interval = interval
-        self._stop = threading.Event()
+        self._stopev = threading.Event()
         self.cpu = []
         self.peak_mem = 0.0
         self._last = _cpu_times()
@@ -418,7 +432,7 @@ class Sampler(threading.Thread):
         self.numa1 = None
 
     def run(self):
-        while not self._stop.wait(self.interval):
+        while not self._stopev.wait(self.interval):
             try:
                 tot, idle = _cpu_times()
                 pt, pi = self._last
@@ -430,7 +444,7 @@ class Sampler(threading.Thread):
                 pass
 
     def stop(self):
-        self._stop.set()
+        self._stopev.set()
         self.join(timeout=2)
         self.numa1 = _numa_counters()
 
@@ -933,8 +947,12 @@ def do_compare(paths):
 # ----------------------------------------------------------------------
 # ONE-run baseline matrix: (placement x jobs), ladder pinned, OOM-safe
 # ----------------------------------------------------------------------
+# off = Q1 curve + spread-all; halfbox3 (3 nodes) = the confine-vs-spread test
+# that FITS the ~160GB+ keys; halfbox (2 nodes) only at low jobs where it fits
+# (the j4+ 2-node cells OOM -- working set > 251GB); interleave@8 = the fix ref.
 DEFAULT_CELLS = [("off", 1), ("off", 4), ("off", 8), ("off", 16),
-                 ("halfbox", 4), ("halfbox", 8), ("halfbox", 16),
+                 ("halfbox3", 4), ("halfbox3", 8), ("halfbox3", 16),
+                 ("halfbox", 1), ("halfbox", 2),
                  ("interleave", 8)]
 
 
@@ -994,25 +1012,32 @@ def print_matrix_verdict(res):
     print("  (Q1 answered if per_step rises with jobs while cpu% plateaus and")
     print("   remote%/step6 grow -> bandwidth-bound, not compute-bound.)")
 
-    print("\n-- Q2: 8 jobs, off(all nodes) vs halfbox(half) vs interleave --")
-    for pol in ("off", "halfbox", "interleave"):
+    print("\n-- Q2: 8 jobs, off(4 nodes) vs halfbox3(3 nodes) vs interleave --")
+    for pol in ("off", "halfbox3", "interleave"):
         r = res.get((pol, 8))
         if not r:
             continue
         c = r.get("contention", {})
         print("  %-10s per_step=%6.0fms keysetup=%5ss step6=%5ss cpu=%5s%% "
-              "remote=%5s%%%s" % (
+              "remote=%5s%% stall=%5s%%%s" % (
                   pol, r["dom_avg_ms"],
                   ("%.0f" % r["keysetup_s"]) if r.get("keysetup_s") else "-",
                   ("%.0f" % (r["step6_ms"] / 1000.0)) if r.get("step6_ms")
                   else "-", c.get("cpu_avg_pct"), c.get("remote_alloc_pct"),
-                  " OOM" if r.get("oom") else ""))
-    o, h = res.get(("off", 8)), res.get(("halfbox", 8))
+                  c.get("backend_stall_pct"), " OOM" if r.get("oom") else ""))
+    o, h = res.get(("off", 8)), res.get(("halfbox3", 8))
     if o and h and o.get("dom_avg_ms") and h.get("dom_avg_ms"):
         ratio = h["dom_avg_ms"] / o["dom_avg_ms"]
-        print("  => halfbox/off per_step = %.2fx -- %s" % (
-            ratio, "confine-to-half is FASTER (reproduces 512GB < 1TB)"
+        print("  => halfbox3/off per_step = %.2fx -- %s" % (
+            ratio, "confine-to-fewer-nodes is FASTER (fewer cross-node hops)"
             if ratio < 1 else "no confine benefit at this scale"))
+    hb = sorted([(j, r) for (p, j), r in res.items()
+                 if p == "halfbox" and r], key=lambda t: t[0])
+    if hb:
+        print("  halfbox(2 nodes) where it fits (steepest confinement):")
+        for j, r in hb:
+            print("    j%-2d per_step=%6.0fms%s" % (
+                j, r["dom_avg_ms"], " OOM" if r.get("oom") else ""))
 
 
 def matrix_metrics(info, msm, res, label, word_cap, pinned):
