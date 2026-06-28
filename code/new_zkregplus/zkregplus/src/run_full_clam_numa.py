@@ -51,6 +51,9 @@ if MODE not in ("prod", "numa", "debug"):
     raise SystemExit("--mode must be prod|numa|debug (got %r)" % MODE)
 PCT = int(getarg("pct", "100" if MODE == "prod" else "10"))
 NJOBS = int(getarg("jobs", "8"))
+PART2_DELAY = int(getarg("part2-delay", "900"))   # min stagger before part2 (s)
+PART2_RAM_GB = float(getarg("part2-ram-gb", "500"))  # part2 waits until
+                                                  # part1 tree RSS < this (GB)
 DRY = "--dry-run" in sys.argv
 VMA_TARGET = int(os.environ.get("ZKR_VM_MAX_MAP_COUNT", "1073741824"))  # 0=skip
 
@@ -120,6 +123,44 @@ def numa_prefix(nodes):
         return []
     return ["numactl", "--cpunodebind=%s" % nodes,
             "--preferred-many=%s" % nodes]
+
+
+def _ppid(pid):
+    """Parent pid from /proc/<pid>/stat (ppid is the field after the last
+    ')', robust to spaces/parens in comm)."""
+    try:
+        data = open("/proc/%d/stat" % pid).read()
+        return int(data[data.rfind(")") + 2:].split()[1])
+    except Exception:
+        return None
+
+
+def _vmrss_kb(pid):
+    try:
+        for ln in open("/proc/%d/status" % pid):
+            if ln.startswith("VmRSS:"):
+                return int(ln.split()[1])
+    except Exception:
+        pass
+    return 0
+
+
+def tree_rss_gb(root_pid):
+    """Sum VmRSS (GB) over root_pid and all its descendants -- the whole
+    cargo + test-binary + job-thread tree. Threads share one VmRSS, so no
+    double counting. 0.0 if the tree is gone."""
+    pids = [int(d) for d in os.listdir("/proc") if d.isdigit()]
+    parent = {p: _ppid(p) for p in pids}
+    total = 0
+    for p in pids:
+        cur, hops = p, 0
+        while cur and hops < 64:
+            if cur == root_pid:
+                total += _vmrss_kb(p)
+                break
+            cur = parent.get(cur)
+            hops += 1
+    return total / (1024.0 * 1024.0)
 
 
 def base_env(read_mode, fold_only, one_proof, wait_flag, log_tag):
@@ -295,6 +336,23 @@ def run_two():
     t1 = t2 = None
     try:
         p1, t1 = spawn(a, env1, log1, "part1")
+        # Stagger part2 so the two halves don't fold (peak RAM) at once.
+        # Gate: start part2 once BOTH >=PART2_DELAY s elapsed AND part1's
+        # tree RSS < PART2_RAM_GB -- or immediately when part1 exits (its
+        # RAM is freed then).
+        print("[numa] part2 gate: t>=%ds AND part1 RSS<%.0fGB (or part1 exit)"
+              % (PART2_DELAY, PART2_RAM_GB))
+        waited = 0
+        while p1.poll() is None:
+            rss = tree_rss_gb(p1.pid)
+            if waited >= PART2_DELAY and rss < PART2_RAM_GB:
+                break
+            if waited % 60 == 0:
+                print("[numa] waiting part2: t=%ds rss=%.0fGB "
+                      "(need t>=%d AND rss<%.0f)"
+                      % (waited, rss, PART2_DELAY, PART2_RAM_GB))
+            time.sleep(10)
+            waited += 10
         p2, t2 = spawn(b, env2, log2, "part2")
         p1.wait()                                   # fold-only half done
         t1.join()

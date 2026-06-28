@@ -29750,7 +29750,9 @@ Goal 4. debug the job3 problem.
 Goal 5. collect scale data for DLP set 
 	[a] design the sscale up descrig
 	[b] implementation
-	[c] deploy the script on server.
+	[c] local testing
+	[d] local analysis
+	[e] deploy the script on server. ????
 Goal 6. NUMA version of full_clam()
 	[a] baseline debug mode, baseline mode, default full 16 jobs mode
 	[b] done
@@ -29769,7 +29771,7 @@ Goal 6. NUMA version of full_clam()
   #   -> full_clam.log.part1.tgz (fold-only)  +  full_clam.log.part2.t
   ----------------------
   	[d] run test
-		-> baseline debug mode
+		-> baseline debug mode ???
 		-> baseline mode
 
 Goal 6. Writing
