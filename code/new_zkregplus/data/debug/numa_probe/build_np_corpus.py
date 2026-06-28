@@ -46,6 +46,8 @@ RANK = os.path.join(REPO,
     "data/debug/full_dlp_sample/config/file_needs_rank.tsv")
 SRC_CFG = os.path.join(REPO, "data/paper_data/dlp/cfg")       # regex_pat + sig
 SRC_CACHE = os.path.join(REPO, "data/cache/dlp_corpus_aggr")  # 40GB DB cache
+PROD_LADDER = os.path.join(REPO,
+    "data/paper_data/dlp/cfg/config/dlp_ladder.json")        # production ladder
 NP_DIR = HERE                                                 # config_dir
 NP_CACHE = os.path.join(REPO, "data/cache/numa_probe")        # cache_dir
 CHUNK_BYTES = 32                                              # chunk_len=64 nib
@@ -177,6 +179,17 @@ def copy_regex(reset):
     os.makedirs(os.path.join(NP_DIR, "config"), exist_ok=True)
 
 
+def copy_prod_ladder(src):
+    """Copy the PRODUCTION ladder into config_out so numa_probe_dlp can pin it
+    (ZKR_LOAD_LADDER) and fold production-sized circuits. Without it the probe
+    builds a ladder from this tiny corpus -- circuits won't match production."""
+    dst = os.path.join(NP_DIR, "np_ladder.json")
+    if os.path.isfile(src):
+        shutil.copy2(src, dst)
+        return dst
+    return None
+
+
 def write_runcfg(num_jobs):
     rc = {
         "config_dir": os.path.relpath(NP_DIR, REPO),
@@ -203,11 +216,13 @@ def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--budget", type=int, default=100,
-                    help="max total chunks across the corpus (default 100)")
+    ap.add_argument("--budget", type=int, default=600,
+                    help="max total chunks across the corpus (default 600)")
     ap.add_argument("--hard", type=int, default=1)
     ap.add_argument("--medium", type=int, default=2)
-    ap.add_argument("--easy", type=int, default=6)
+    ap.add_argument("--easy", type=int, default=16,
+                    help="easy filler words (default 16 -> >=19 files so the "
+                         "16-job matrix cell has one word per job)")
     ap.add_argument("--hard-min", type=int, default=3000,
                     help="min NEEDS for the hard file (default 3000)")
     ap.add_argument("--med-lo", type=int, default=600)
@@ -217,6 +232,10 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--reset-regex", action="store_true",
                     help="overwrite the regex_pat copy")
+    ap.add_argument("--ladder-src", default=PROD_LADDER,
+                    help="production ladder to PIN (default full_dlp's "
+                         "config_out dlp_ladder.json); copied into config_out "
+                         "so numa_probe_dlp folds production-sized circuits")
     args = ap.parse_args()
 
     if not os.path.isfile(RANK):
@@ -235,6 +254,7 @@ def main():
     n_link = seed_cache()
     num_jobs = args.jobs or len(chosen)
     rcp, rc = write_runcfg(num_jobs)
+    lad = copy_prod_ladder(args.ladder_src)
 
     print("=== numa_probe corpus ===")
     print("files=%d  total_chunks=%d  (budget=%d)  num_jobs=%d"
@@ -254,8 +274,16 @@ def main():
     print("  regex  : %s/regex_pat/ (copied)" % NP_DIR)
     print("  cache  : %s (%d DB symlinks + fresh discharge/)"
           % (NP_CACHE, n_link))
-    print("\nrun the probe:  python3 zkregplus/src/numa_probe.py "
-          "--skip-msm --skip-warm")
+    if lad:
+        print("  ladder : %s (PINNED to production -- faithful circuits)" % lad)
+    else:
+        print("  ladder : MISSING %s -- probe will build a NON-faithful "
+              "ladder from this tiny corpus. Run full_dlp first to "
+              "generate it, or pass --ladder-src." % args.ladder_src)
+    print("\nrun the ONE-run baseline matrix:")
+    print("  python3 zkregplus/src/numa_probe.py --matrix --label baseline")
+    print("  (add --skip-msm to skip Tier A; needs >=16 corpus files for "
+          "the 16-job cell -- build with --easy 16 --budget 600)")
 
 
 if __name__ == "__main__":

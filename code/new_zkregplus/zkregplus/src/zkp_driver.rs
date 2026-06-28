@@ -4905,7 +4905,15 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			&"PROGRESS step 5/6: capacity ladder".to_string());
 		let ladder_path = format!("{}/{}", proot, rc.config_out);
 		let ladder: Vec<crate::determine_config::CapParams> =
-			if !reset && std::path::Path::new(&ladder_path).exists() {
+			if let Ok(lp) = std::env::var("ZKR_LOAD_LADDER") {
+				// NUMA probe: pin the PRODUCTION ladder so the folded
+				// circuits match production sizes (faithful per-step).
+				let p = format!("{}/{}", proot, lp);
+				utils::logger::log(0, l,
+					&format!("  ladder PINNED: {}", p));
+				crate::determine_config::load_ladder(&p)
+			} else if !reset
+				&& std::path::Path::new(&ladder_path).exists() {
 				utils::logger::log(0, l, &"  ladder cache HIT".to_string());
 				crate::determine_config::load_ladder(&ladder_path)
 			} else {

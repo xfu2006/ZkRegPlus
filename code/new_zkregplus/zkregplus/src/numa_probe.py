@@ -56,9 +56,11 @@ import os
 import platform
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tarfile
+import threading
 import time
 
 
@@ -176,6 +178,12 @@ def numa_prefix(policy, info):
     if policy == "socket":
         half = max(1, nn // 2)
         return ["numactl", "--cpunodebind=0-%d" % (half - 1)]
+    if policy == "halfbox":
+        # confine BOTH cpu and memory to the first half of the nodes -- the
+        # "restrict to half the box" case (emulates fewer-NUMA-nodes / 512GB).
+        half = max(1, nn // 2)
+        return ["numactl", "--cpunodebind=0-%d" % (half - 1),
+                "--membind=0-%d" % (half - 1)]
     if policy == "local0":
         return ["numactl", "--cpunodebind=0", "--membind=0"]
     if policy == "remote":
@@ -188,6 +196,7 @@ def policy_note(policy, info):
         "off": "no numactl (OS first-touch) -- baseline",
         "socket": "confine cpus to first socket's nodes (team default/best)",
         "interleave": "stripe pages over all nodes (run_full_clam default)",
+        "halfbox": "confine cpu+mem to first half of nodes (emulate 512GB)",
         "local0": "node-0 cpus + node-0 memory (all-local contrast)",
         "remote": "node-0 cpus + far-node memory (FORCED REMOTE, worst case)",
         "perjob": "Rust foldpot::numa per-job pinning (ZKR_NUMA=perjob)",
@@ -292,6 +301,153 @@ def parse_steps(logpath):
     return agg
 
 
+# the prover logs these once per run; pull the keyless/circuit-selection +
+# key-setup costs so we report ALL three cost centers, not just per-step.
+STEP3_RE = re.compile(r"PERF WORKFLOW Step 3 time (\d+) ms")
+STEP5_RE = re.compile(r"PERF WORKFLOW Step 5 time (\d+) ms")
+STEP6_RE = re.compile(r"PERF WORKFLOW Step 6 time (\d+) ms")
+
+
+def parse_phase_ms(logpath, rx):
+    for l in open(logpath, errors="replace"):
+        m = rx.search(l)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+# ----------------------------------------------------------------------
+# system-wide CPU / NUMA / memory contention sampler (stdlib + numastat)
+# ----------------------------------------------------------------------
+def _cpu_times():
+    # /proc/stat "cpu" aggregate: user nice system idle iowait irq softirq ...
+    p = [int(x) for x in open("/proc/stat").readline().split()[1:]]
+    idle = p[3] + (p[4] if len(p) > 4 else 0)
+    return sum(p), idle
+
+
+def _mem_used_gb():
+    mi = {}
+    for l in open("/proc/meminfo"):
+        k = l.split(":")[0]
+        mi[k] = int(l.split()[1])
+    return (mi.get("MemTotal", 0) - mi.get("MemAvailable", 0)) / 1048576.0
+
+
+def _numa_counters():
+    # system numastat: per-node local_node/other_node ALLOCATION counters.
+    if not have("numastat"):
+        return None
+    d = {}
+    for l in run(["numastat"]).stdout.splitlines():
+        p = l.split()
+        if len(p) >= 2 and p[0] in ("local_node", "other_node", "numa_foreign"):
+            try:
+                d[p[0]] = sum(float(x) for x in p[1:])
+            except ValueError:
+                pass
+    return d
+
+
+def parse_perf(path):
+    """Pull stall% (backend-stalled / cycles) and LLC-miss% from a perf-stat
+    -o file -- the direct memory-bandwidth-contention signal. {} if absent."""
+    vals = {}
+    try:
+        for l in open(path, errors="replace"):
+            p = l.split()
+            if len(p) >= 2:
+                num = p[0].replace(",", "")
+                if num.isdigit():
+                    vals[p[1]] = int(num)
+    except Exception:
+        return {}
+    out = {}
+    cyc, stall = vals.get("cycles"), vals.get("stalled-cycles-backend")
+    if cyc and stall:
+        out["backend_stall_pct"] = round(100.0 * stall / cyc, 1)
+    ll, lm = vals.get("LLC-loads"), vals.get("LLC-load-misses")
+    if ll and lm:
+        out["llc_miss_pct"] = round(100.0 * lm / ll, 1)
+    return out
+
+
+def start_perf(outpath, ok):
+    """Best-effort system-wide perf stat (needs paranoid<=1 or root). Returns
+    a Popen to SIGINT later, or None. Never fatal."""
+    if not ok or not have("perf"):
+        return None
+    try:
+        return subprocess.Popen(
+            ["perf", "stat", "-a", "-o", outpath, "-e",
+             "cycles,stalled-cycles-backend,LLC-load-misses,LLC-loads",
+             "--", "sleep", "86400"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        return None
+
+
+def stop_perf(p, outpath):
+    if not p:
+        return {}
+    try:
+        p.send_signal(signal.SIGINT)
+        p.wait(timeout=10)
+    except Exception:
+        try:
+            p.kill()
+        except Exception:
+            pass
+    return parse_perf(outpath)
+
+
+class Sampler(threading.Thread):
+    """Poll system CPU%, peak mem, and NUMA local/remote alloc deltas every
+    `interval`s while a run executes. CPU% is whole-box busy% (a stalled core
+    still counts busy, so low CPU% + slow per-step => idle/oversubscribed;
+    high CPU% + slow per-step + high remote% => bandwidth-bound)."""
+
+    def __init__(self, interval=5):
+        super().__init__(daemon=True)
+        self.interval = interval
+        self._stop = threading.Event()
+        self.cpu = []
+        self.peak_mem = 0.0
+        self._last = _cpu_times()
+        self.numa0 = _numa_counters()
+        self.numa1 = None
+
+    def run(self):
+        while not self._stop.wait(self.interval):
+            try:
+                tot, idle = _cpu_times()
+                pt, pi = self._last
+                self._last = (tot, idle)
+                if tot > pt:
+                    self.cpu.append(100.0 * (1 - (idle - pi) / (tot - pt)))
+                self.peak_mem = max(self.peak_mem, _mem_used_gb())
+            except Exception:
+                pass
+
+    def stop(self):
+        self._stop.set()
+        self.join(timeout=2)
+        self.numa1 = _numa_counters()
+
+    def summary(self):
+        cpu = sum(self.cpu) / len(self.cpu) if self.cpu else None
+        remote = None
+        if self.numa0 and self.numa1:
+            dl = self.numa1.get("local_node", 0) - self.numa0.get("local_node", 0)
+            do = self.numa1.get("other_node", 0) - self.numa0.get("other_node", 0)
+            if dl + do > 0:
+                remote = 100.0 * do / (dl + do)
+        return {"cpu_avg_pct": round(cpu, 1) if cpu is not None else None,
+                "peak_mem_gb": round(self.peak_mem, 1),
+                "remote_alloc_pct": round(remote, 1)
+                if remote is not None else None}
+
+
 def effective_runcfg(runcfg_arg, jobs, reset, outdir, dry=False):
     name = runcfg_arg or NP_RUNCFG
     path = name if os.path.isabs(name) else os.path.join(CFG_DIR, name)
@@ -321,7 +477,7 @@ def full_dlp_cmd(policy, info):
         "--nocapture"]
 
 
-def full_dlp_env(eff, word_cap, policy, rf):
+def full_dlp_env(eff, word_cap, policy, rf, pin_ladder=None):
     env = dict(os.environ)
     env["RUSTFLAGS"] = rf
     env["ZKR_DLP_RUNCFG"] = eff
@@ -329,28 +485,38 @@ def full_dlp_env(eff, word_cap, policy, rf):
     env.setdefault("ZKR_DC_THREADS", "8")
     if word_cap > 0:
         env["ZKR_WORD_CAP_PER_JOB"] = str(word_cap)
+    if pin_ladder:
+        # repo-relative production ladder -> numa_probe_dlp folds prod-sized
+        # circuits (faithful per-step). zkp_driver.rs honors ZKR_LOAD_LADDER.
+        env["ZKR_LOAD_LADDER"] = pin_ladder
     return env
 
 
-def run_full_dlp(tag, policy, eff, word_cap, info, rf, outdir, dry):
+def run_full_dlp(tag, policy, eff, word_cap, info, rf, outdir, dry,
+                 pin_ladder=None, sample=True):
     logp = os.path.join(outdir, "full_dlp_%s.log" % tag)
     cmd = full_dlp_cmd(policy, info)
-    env = full_dlp_env(eff, word_cap, policy, rf)
-    print("\n[dlp:%s] policy=%s cap=%s  (%s)" % (
-        tag, policy, word_cap or "none", policy_note(policy, info)))
+    env = full_dlp_env(eff, word_cap, policy, rf, pin_ladder)
+    print("\n[dlp:%s] policy=%s cap=%s ladder=%s  (%s)" % (
+        tag, policy, word_cap or "none", "pinned" if pin_ladder else "built",
+        policy_note(policy, info)))
     print("[dlp:%s] %s" % (tag, " ".join(cmd)))
     if dry:
         return None
+    samp = Sampler() if sample else None
+    if samp:
+        samp.start()
+    perf_out = os.path.join(outdir, "perf_%s.txt" % tag)
+    perf_p = start_perf(perf_out, sample and info.get("perf_stat_ok"))
     t0 = time.time()
+    first_step_s = None
+    code = None
     with open(logp, "w") as lf:
-        lf.write("# policy=%s cap=%s cmd=%s\n\n" % (
-            policy, word_cap, " ".join(cmd)))
+        lf.write("# policy=%s cap=%s ladder=%s cmd=%s\n\n" % (
+            policy, word_cap, pin_ladder, " ".join(cmd)))
         lf.flush()
         p = subprocess.Popen(cmd, cwd=REPO, env=env, stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT, text=True)
-        # console heartbeat: the prover only prints "PROGRESS fold" at word
-        # 1/100/last, so a low cap looks dead mid-fold. Echo a step counter
-        # at most every HB_SECS so np_console.log shows real progress.
         HB_SECS = 15
         step_n = 0
         last_hb = t0
@@ -360,6 +526,8 @@ def run_full_dlp(tag, policy, eff, word_cap, info, rf, outdir, dry):
             if "prove_step cost: i:" in line:
                 step_n += 1
                 now = time.time()
+                if first_step_s is None:
+                    first_step_s = now - t0          # key-setup proxy
                 if now - last_hb >= HB_SECS:
                     last_hb = now
                     sys.stdout.write(
@@ -368,24 +536,37 @@ def run_full_dlp(tag, policy, eff, word_cap, info, rf, outdir, dry):
                     sys.stdout.flush()
             elif any(k in line for k in ("PROGRESS fold", "PERF WORKFLOW",
                                          "panicked", "PREFLIGHT", "Killed",
-                                         "CapErr", "test result",
+                                         "CapErr", "test result", "ladder",
                                          "73112.cap")):
                 sys.stdout.write("    " + line)
                 sys.stdout.flush()
         p.wait()
+        code = p.returncode
     wall = time.time() - t0
+    if samp:
+        samp.stop()
+    perf_stats = stop_perf(perf_p, perf_out)
+    oom = code in (-9, 137)                           # SIGKILL == OOM killer
     agg = parse_steps(logp)
-    # overall weighted avg per-step ms + dominant circuit (most total ms)
     tot_ms = sum(d[1] for d in agg.values())
     tot_n = sum(d[0] for d in agg.values())
     overall = tot_ms / tot_n if tot_n else 0.0
     dom = max(agg.items(), key=lambda kv: kv[1][1], default=(None, [0, 0, 0, 0]))
     dom_avg = dom[1][1] / dom[1][0] if dom[1][0] else 0.0
-    print("[dlp:%s] wall=%.0fs steps=%d overall_avg=%.0fms/step  dom circ%s "
-          "avg=%.0fms (n=%d)" % (tag, wall, tot_n, overall, dom[0],
-                                 dom_avg, dom[1][0]))
+    step3 = parse_phase_ms(logp, STEP3_RE)
+    step6 = parse_phase_ms(logp, STEP6_RE)
+    cont = samp.summary() if samp else {}
+    cont.update(perf_stats)
+    print("[dlp:%s] wall=%.0fs%s steps=%d per_step=%.0fms(circ%s) circsel=%sms "
+          "keysetup=%ss cpu=%s%% remote=%s%% stall=%s%% peakRAM=%sGB"
+          % (tag, wall, " OOM" if oom else "", tot_n, dom_avg, dom[0],
+             step3, ("%.0f" % first_step_s) if first_step_s else "n/a",
+             cont.get("cpu_avg_pct"), cont.get("remote_alloc_pct"),
+             cont.get("backend_stall_pct"), cont.get("peak_mem_gb")))
     return {"wall": wall, "steps": tot_n, "overall_ms": overall,
-            "dom_circ": dom[0], "dom_avg_ms": dom_avg, "agg": agg}
+            "dom_circ": dom[0], "dom_avg_ms": dom_avg, "agg": agg,
+            "oom": oom, "code": code, "step3_ms": step3, "step6_ms": step6,
+            "keysetup_s": first_step_s, "contention": cont}
 
 
 def run_dlp_tier(info, rf, outdir, policies, runcfg, jobs, word_cap,
@@ -750,6 +931,112 @@ def do_compare(paths):
 
 
 # ----------------------------------------------------------------------
+# ONE-run baseline matrix: (placement x jobs), ladder pinned, OOM-safe
+# ----------------------------------------------------------------------
+DEFAULT_CELLS = [("off", 1), ("off", 4), ("off", 8), ("off", 16),
+                 ("halfbox", 4), ("halfbox", 8), ("halfbox", 16),
+                 ("interleave", 8)]
+
+
+def parse_cells(spec, default):
+    """'off:1,4,8,16;halfbox:4,8,16;interleave:8' -> [(pol,jobs),...]."""
+    if not spec:
+        return default
+    out = []
+    for grp in spec.split(";"):
+        if ":" in grp:
+            pol, js = grp.split(":", 1)
+            out += [(pol.strip(), int(j)) for j in js.split(",") if j.strip()]
+    return out
+
+
+def run_matrix(info, rf, outdir, runcfg, word_cap, cells, pin, dry):
+    banner("TIER B MATRIX: placement x jobs (ladder %s, OOM-safe, sampled)"
+           % ("PINNED" if pin else "built"))
+    res = {}
+    for pol, jobs in cells:
+        tag = "%s_j%d" % (pol, jobs)
+        try:
+            eff, rc = effective_runcfg(runcfg, jobs, False, outdir, dry)
+            pl = (rc.get("config_out") if (pin and not dry) else None)
+            r = run_full_dlp(tag, pol, eff, word_cap, info, rf, outdir, dry,
+                             pin_ladder=pl)
+            res[(pol, jobs)] = r
+            if r and r.get("oom"):
+                print("[matrix] OOM@%s recorded; continuing sweep." % tag)
+        except Exception as e:
+            print("[matrix] cell %s FAILED (%s); recorded None, continuing."
+                  % (tag, e))
+            res[(pol, jobs)] = None
+    return res
+
+
+def print_matrix_verdict(res):
+    banner("Q1 / Q2 VERDICT (faithful per-step, production ladder)")
+    print("\n-- Q1: folding per-step vs jobs (off = all nodes) --")
+    print("%5s %15s %11s %7s %9s %9s" % (
+        "jobs", "per_step_ms", "keysetup_s", "cpu%", "remote%", "step6_s"))
+    offs = sorted([(j, r) for (p, j), r in res.items()
+                   if p == "off" and r], key=lambda t: t[0])
+    base = None
+    for j, r in offs:
+        ps = r["dom_avg_ms"]
+        if ps and base is None:
+            base = ps
+        c = r.get("contention", {})
+        psd = ("%.0f(%.2fx)" % (ps, ps / base)) if (ps and base) else (
+            "OOM" if r.get("oom") else "%.0f" % ps)
+        print("%5d %15s %11s %7s %9s %9s" % (
+            j, psd,
+            ("%.0f" % r["keysetup_s"]) if r.get("keysetup_s") else "-",
+            c.get("cpu_avg_pct"), c.get("remote_alloc_pct"),
+            ("%.0f" % (r["step6_ms"] / 1000.0)) if r.get("step6_ms") else "-"))
+    print("  (Q1 answered if per_step rises with jobs while cpu% plateaus and")
+    print("   remote%/step6 grow -> bandwidth-bound, not compute-bound.)")
+
+    print("\n-- Q2: 8 jobs, off(all nodes) vs halfbox(half) vs interleave --")
+    for pol in ("off", "halfbox", "interleave"):
+        r = res.get((pol, 8))
+        if not r:
+            continue
+        c = r.get("contention", {})
+        print("  %-10s per_step=%6.0fms keysetup=%5ss step6=%5ss cpu=%5s%% "
+              "remote=%5s%%%s" % (
+                  pol, r["dom_avg_ms"],
+                  ("%.0f" % r["keysetup_s"]) if r.get("keysetup_s") else "-",
+                  ("%.0f" % (r["step6_ms"] / 1000.0)) if r.get("step6_ms")
+                  else "-", c.get("cpu_avg_pct"), c.get("remote_alloc_pct"),
+                  " OOM" if r.get("oom") else ""))
+    o, h = res.get(("off", 8)), res.get(("halfbox", 8))
+    if o and h and o.get("dom_avg_ms") and h.get("dom_avg_ms"):
+        ratio = h["dom_avg_ms"] / o["dom_avg_ms"]
+        print("  => halfbox/off per_step = %.2fx -- %s" % (
+            ratio, "confine-to-half is FASTER (reproduces 512GB < 1TB)"
+            if ratio < 1 else "no confine benefit at this scale"))
+
+
+def matrix_metrics(info, msm, res, label, word_cap, pinned):
+    cells = {}
+    for (pol, jobs), r in res.items():
+        cells["%s_j%d" % (pol, jobs)] = (
+            {"policy": pol, "jobs": jobs, "per_step_ms": r["dom_avg_ms"],
+             "dom_circ": r["dom_circ"], "steps": r["steps"],
+             "circsel_step3_ms": r.get("step3_ms"),
+             "keysetup_s": r.get("keysetup_s"), "step6_ms": r.get("step6_ms"),
+             "wall_s": r["wall"], "oom": r.get("oom"),
+             "contention": r.get("contention")}
+            if r else {"policy": pol, "jobs": jobs, "failed": True})
+    return {"label": label, "git": git_head(), "ladder_pinned": pinned,
+            "ts": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "host": platform.node(), "nnodes": info["nnodes"],
+            "total_cpus": info["total_cpus"], "word_cap": word_cap,
+            "msm": {pol: ({"n8_ms": d[8]["ms"], "n8_total_gbps": d[8]["total"]}
+                          if 8 in d else {})
+                    for pol, d in (msm or {}).items()},
+            "matrix": cells}
+
+
+# ----------------------------------------------------------------------
 # main
 # ----------------------------------------------------------------------
 def main():
@@ -796,6 +1083,19 @@ def main():
     ap.add_argument("--compare", nargs="+", default=None,
                     help="compare prior runs: dirs/globs/paths to results.json; "
                          "first is the baseline. Runs nothing else.")
+    ap.add_argument("--matrix", action="store_true",
+                    help="(DEFAULT) ONE-run baseline: (placement x jobs) sweep, "
+                         "prod ladder pinned, contention-sampled, OOM-safe; "
+                         "prints Q1/Q2. Tier A runs first unless --skip-msm.")
+    ap.add_argument("--tiers", action="store_true",
+                    help="legacy: per-policy Tier A/B(/stress) instead of the "
+                         "default matrix.")
+    ap.add_argument("--cells", default=None,
+                    help="matrix cells, e.g. "
+                         "'off:1,4,8,16;halfbox:4,8,16;interleave:8' (default).")
+    ap.add_argument("--no-pin-ladder", action="store_true",
+                    help="do NOT pin the production ladder (folds "
+                         "corpus-derived circuit sizes -- not faithful).")
     args = ap.parse_args()
 
     if args.compare:
@@ -826,6 +1126,34 @@ def main():
     rf = rustflags(args.rustflags)
     policies = (args.policies.split(",") if args.policies
                 else default_policies(info))
+
+    if not args.tiers:                      # matrix is the DEFAULT mode
+        cells = parse_cells(args.cells, DEFAULT_CELLS)
+        banner("PLAN: ONE-run baseline matrix")
+        print("label         : %s  (git %s)" % (args.label, git_head()))
+        print("out dir       : %s" % outdir)
+        print("ladder        : %s" % (
+            "built (NOT faithful)" if args.no_pin_ladder
+            else "PINNED to production"))
+        print("tier A msm    : %s" % ("skip" if args.skip_msm else "yes"))
+        print("cells         : %s" % ", ".join("%s/j%d" % c for c in cells))
+        msm = {}
+        if not args.skip_msm:
+            if args.skip_build or build_test_msm(rf, args.dry_run):
+                msm = run_msm_tier(info, rf, outdir, policies, args.dry_run)
+        res = run_matrix(info, rf, outdir, args.runcfg, args.word_cap,
+                         cells, not args.no_pin_ladder, args.dry_run)
+        if not args.dry_run:
+            print_matrix_verdict(res)
+            mm = matrix_metrics(info, msm, res, args.label, args.word_cap,
+                                not args.no_pin_ladder)
+            path = os.path.join(outdir, "results.json")
+            json.dump(mm, open(path, "w"), indent=2)
+            print("\n[record] results.json -> %s" % path)
+            pack_outdir(outdir)
+        else:
+            print("\n[dry-run] matrix: nothing executed.")
+        return
 
     do_stress = (args.stress or args.all) and not args.msm_only
     spread_jobs = args.stress_spread_jobs or 8

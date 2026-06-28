@@ -1,0 +1,7 @@
+# Only the builder is tracked. Everything else here is generated per-box by
+# build_np_corpus.py (runcfg paths, the regex_pat copy, the corpus list, the
+# ladder/config dirs) and the data/cache/numa_probe symlinks are
+# machine-specific, so they must be regenerated on each box, not committed.
+*
+!.gitignore
+!build_np_corpus.py
