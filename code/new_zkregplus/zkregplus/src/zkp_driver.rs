@@ -1803,7 +1803,7 @@ pub fn run_db_bundle<F:PrimeField>(config_dir: &str, report_dir: &str,
 #[cfg(test)]
 pub mod tests_zkp_driver{
 	use ark_ff::{PrimeField};
-	use utils::consts::{read_global_config, get_global_config};
+	use utils::consts::{read_global_config, get_global_config, ClamReadMode};
 	//use folding_schemes::folding::foldpot::container_config::ColEle;
 	use ark_bn254::{constraints::{GVar,PairingVar}, Bn254, Fr, G1Projective as Projective, G2Projective as ProjectiveG2};
 	use ark_grumpkin::{constraints::GVar as GVar2, Projective as Projective2};

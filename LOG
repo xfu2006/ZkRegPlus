@@ -29768,6 +29768,10 @@ Goal 6. NUMA version of full_clam()
   python3 run_full_clam_numa.py --mode=prod
   #   -> full_clam.log.part1.tgz (fold-only)  +  full_clam.log.part2.t
   ----------------------
+  	[d] run test
+		-> baseline debug mode
+		-> baseline mode
+
 Goal 6. Writing
 	[a] update Diagram 9
 	[b] p1 draft. 
