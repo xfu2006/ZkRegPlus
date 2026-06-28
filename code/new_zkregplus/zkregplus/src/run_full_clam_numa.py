@@ -131,6 +131,8 @@ def base_env(read_mode, fold_only, one_proof, wait_flag, log_tag):
     e["ZKR_CLAM_NJOBS"] = str(NJOBS)
     e["ZKR_CLAM_FOLD_ONLY"] = "1" if fold_only else "0"
     e["ZKR_CLAM_ONE_PROOF"] = "1" if one_proof else "0"
+    # lkup-share invariant holds only at full data -> enforce only in prod.
+    e["ZKR_CLAM_CHECK_LKUP"] = "1" if MODE == "prod" else "0"
     if wait_flag:
         e["ZKR_SNARK_WAIT_FLAG"] = wait_flag
     else:

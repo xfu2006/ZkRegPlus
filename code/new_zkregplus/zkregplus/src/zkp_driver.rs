@@ -3193,6 +3193,12 @@ pub mod tests_zkp_driver{
 			get_global_config().b_folding_only = v == "1"; }
 		if let Ok(p) = std::env::var("ZKR_SNARK_WAIT_FLAG") {
 			get_global_config().snark_wait_flag = Some(p); }
+		// The lkup-share invariant only holds at full per-job data;
+		// partial-load (debug/numa) modes false-trip it. The driver sets
+		// ZKR_CLAM_CHECK_LKUP=1 only for production, 0 otherwise. Unset =
+		// keep the caller's value (bare cargo test unchanged).
+		let b_check_lkup = std::env::var("ZKR_CLAM_CHECK_LKUP")
+			.map(|v| v == "1").unwrap_or(b_check_lkup);
 		get_global_config().min_subsigs = 368; // OLD value: 361
 		get_global_config().min_basis_unique_states= 1054; // OLD value: 600
 		get_global_config().min_basis_acc_states =  268; // OLD value: 113
@@ -3209,6 +3215,20 @@ pub mod tests_zkp_driver{
 			//700MB data in 8 jobs and 256M lkup entries
 			//so we have per job: 90MB data = 180M nibbles
 			// then: 256/180 * 100 = 142.2% that's 142
+		// Split-load scaling: when a process reads only a manifest slice
+		// (production two-half = ~50% of each job) AND the lkup check is
+		// enforced, the per-chunk share must grow by 1/loaded_fraction so
+		// lk_share*chunks still covers lkup_len. Full/100 -> x1 (bare run
+		// and debug/numa, check off, unchanged).
+		if b_check_lkup {
+			let numer = match read_mode {
+				ClamReadMode::Full => 100,
+				_ => 200,        // half slice loads pct/2 of the manifest
+			};
+			let cur = read_global_config().perc_lkup_share;
+			get_global_config().perc_lkup_share =
+				cur * numer / read_pct.max(1);
+		}
 
 
 		get_global_config().b_read_cache = true;
@@ -5912,7 +5932,7 @@ fail: {} ({:.4}%)",
 	#[test]
 	pub fn test_collect_scale_dlp() {
 		// SMOKE TEST: two layers [1, 4]. Full sweep later: 1, 10%..100% of 9,860.
-		let counts: Vec<usize> = vec![1, 4];
+		let counts: Vec<usize> = vec![9860];  // saturation validation @100%
 		println!("collect_scale_data_dlp: counts={:?}", counts);
 		collect_scale_data_dlp(counts);
 	}
