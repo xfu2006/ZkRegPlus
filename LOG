@@ -29782,25 +29782,46 @@ Goal 6. Writing
 	[c] think about getting the comparison data for DLP as well! 
 	[d] need to do a second set of scale_up data for DLP.
 
+Monday 06/29/2026
+Goal 1. numa runner for full_dlp -> DONE
+	[a] spec
+	[b] design details 
+	[c] impl done
+Goal 2. collect data
+	[a] zombie_eval -> TODO
+	[b] reel_eval
+	[c] full_clam 
+Goal 3. implement collect full_clam data again. -> DONE
+	[a] switch the 0-4 to the snark proof
+	[b] have an environment var to determine which process to
+			generate snark proof
+		also print out a message which proof is generated
+	[c] add an EXTRA check to make sure that all files 
+		are emitted, and explicity print SUCCESS or FAIL message.
+	[d] review code
+Goal 4. Writing
+	[a] collect zombie data about DLP: total R1CS 
+	[b] find the OLD full_clam data file by gcp1 rename as full_clam_8prf.log.tgz
+
 ----- ACTIVE GOALS -----
 Goal FINAL1. start data collection on GCP
-	[a] server2 -> full_dna (11:30am->6:45pm: 7.25hr) jetstream2: 5.2 hrs.
-	[b] server2 -> full_clam (6:45pm 06/24 W->7:75pm 06/26)
+	[a] server2 -> full_dna (11:30am->6:45pm: 7.25hr) jetstream2: 5.2 hrs. -> DONE
+	[b] server2 -> full_clam (6:45pm 06/24 W->7:75pm 06/26) -> DONE for now
 		* 49 hrs
 		* but not all batch proof pass, not sure why? (5 jobs success
 			but one job fails and break the other 3)
-		* needs to check. ???
-	[c] server1 -> full_dlp ???
+		* needs to check. => DO NOT COLLECT MORE UNLESS jetstrea2 not working 
+	[c] server1 -> full_dlp ==> DO NOT COLLECT UNLESS jetstream2 not working 
 	[d] server2:
 		eval_reef (7:55pm 06/26 -> 11:30pm 06/26: 4hrs) => done 
-		eval_zombie (10:00AM 06/27 ->  
+		eval_zombie (10:00AM 06/27 -> 04:24 0629AM: 44hrs) => DONE.  
 Goal FINAL2. start data collection on Jetstream 
 	[b] large: -> (IP: 149.165.170.106)
 		[b0] full_dna??
 		[b1] full_dlp??
 		[b2] full_clam??
 		[b3] reef_eval
-		[b4] zombie_eval
+		[b4] zombie_eval (11:00pm 06/28 -> 
 
 
 

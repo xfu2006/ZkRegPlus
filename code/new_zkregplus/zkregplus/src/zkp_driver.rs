@@ -82,6 +82,15 @@ fn clam_manifest_idx(path: &str, fallback: usize) -> usize {
 		.and_then(|s| s.parse::<usize>().ok()).unwrap_or(fallback)
 }
 
+/// Parse the GLOBAL job index i from a full_dlp split path .../job_{i}.dat
+/// so the two-half PROBE DLP lines report jobs 0..h-1 (part1) and h..N-1
+/// (part2). Returns the fallback for non job_ paths.
+fn dlp_job_idx(path: &str, fallback: usize) -> usize {
+	path.rsplit('/').next().unwrap_or(path)
+		.strip_prefix("job_").and_then(|s| s.strip_suffix(".dat"))
+		.and_then(|s| s.parse::<usize>().ok()).unwrap_or(fallback)
+}
+
 /// load the files and pack them as nibbles
 /// return (words in packed nibbles, word info, file names)
 /// max_word_len is forwarded into the discharge_prover so it can
@@ -115,6 +124,16 @@ fn load_files<F:PrimeField + ColEle>(job_id: usize, list_file_path: &str, db: &C
 		for f in file_names {
 			println!("PROBE FILE job {} {}", mj, f);
 		}
+	}
+	// full_dlp two-half scheme: one summary line per job (global id parsed
+	// from job_{i}.dat) so the driver can confirm part1 folded jobs 0..h-1
+	// and part2 folded h..N-1, with no per-job file trimming. Unset env =>
+	// silent (bare cargo test / clam unaffected). File-level coverage is
+	// checked by the driver against the on-disk job_{i}.dat split.
+	if std::env::var("ZKR_DLP_PROBE_FILES").map(|v| v == "1")
+		.unwrap_or(false) {
+		println!("PROBE DLP job {} n {}",
+			dlp_job_idx(list_file_path, job_id), file_names.len());
 	}
 	if file_names.len() > 0 {
 		println!("  First file: {}", file_names[0]);
@@ -4713,9 +4732,16 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 	/// bin, so the same (list, num_jobs) yields identical bins each run.
 	fn split_jobs_balanced(list_path: &str, num_jobs: usize)
 		-> Vec<Vec<String>> {
+		split_paths_balanced(read_path_list(list_path), num_jobs)
+	}
+
+	/// In-memory variant of split_jobs_balanced over an already-read path
+	/// list (e.g. a strided pct sample) -- same (-size, path) sort + greedy
+	/// LPT, so identical bins for identical input.
+	fn split_paths_balanced(paths: Vec<String>, num_jobs: usize)
+		-> Vec<Vec<String>> {
 		use rayon::prelude::*;
 		let proot = utils::os::proj_root();
-		let paths = read_path_list(list_path);
 		let mut sized: Vec<(u64, String)> = paths.par_iter().map(|p| {
 			let sz = std::fs::metadata(format!("{}/{}", proot, p))
 				.map(|m| m.len()).unwrap_or(0);
@@ -4800,6 +4826,18 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		get_global_config().b_light_test = false; // full snark (was true)
 		get_global_config().b_folding_only = false; // emit snark (was true)
 		get_global_config().b_one_proof = true;     // ONE proof only
+		// full_dlp two-half NUMA scheme (env-driven; unset => unchanged full
+		// snark above). fold-only => folding only + light decider; one-proof
+		// and snark-wait mirror the clam two-half driver.
+		if let Ok(v) = std::env::var("ZKR_DLP_FOLD_ONLY") {
+			let fo = v == "1";
+			get_global_config().b_folding_only = fo;
+			get_global_config().b_light_test = fo;
+		}
+		if let Ok(v) = std::env::var("ZKR_DLP_ONE_PROOF") {
+			get_global_config().b_one_proof = v == "1"; }
+		if let Ok(p) = std::env::var("ZKR_SNARK_WAIT_FLAG") {
+			get_global_config().snark_wait_flag = Some(p); }
 		get_global_config().b_read_cache = true;
 		get_global_config().b_read_snark_cache = false;
 		get_global_config().b_write_snark_cache = false;
@@ -4829,17 +4867,39 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		utils::logger::log_perf(0, l,
 			&"PERF WORKFLOW Step 1 time".to_string(), &mut gt);
 
+		// two-half NUMA scheme: ZKR_DLP_PCT takes a strided every-k-th
+		// sample of the master list (k=round(100/pct)); the list is
+		// alphabetical by owner, so striding (not a prefix) keeps every
+		// owner/difficulty. pct=100 => full list, byte-identical. The
+		// sample feeds split/discharge/ladder/fold; pct<100 uses pct-tagged
+		// job + cache dirs so it never clobbers the 100% artifacts.
+		let pct = std::env::var("ZKR_DLP_PCT").ok()
+			.and_then(|s| s.parse::<usize>().ok()).unwrap_or(100)
+			.clamp(1, 100);
+		let k = ((100 + pct / 2) / pct).max(1);
+		let all_files_full =
+			read_path_list(&format!("{}/{}", cd, rc.full_list));
+		let n_full = all_files_full.len();
+		let all_files: Vec<String> = if k <= 1 { all_files_full }
+			else { all_files_full.iter().step_by(k).cloned().collect() };
+		let tag = if pct >= 100 { String::new() }
+			else { format!("_pct{}", pct) };
+		utils::logger::log(0, l, &format!(
+			"  pct={} stride k={} -> {} of {} files", pct, k,
+			all_files.len(), n_full));
+
 		// step 2: deterministic size-balanced split -> job_<i>.dat (reuse).
 		utils::logger::log(0, l,
 			&format!("PROGRESS step 2/6: split {} jobs", num_jobs));
-		let jobs_dir = format!("{}/{}/jobs/jobs{}", proot, cd, num_jobs);
+		let jobs_dir =
+			format!("{}/{}/jobs/jobs{}{}", proot, cd, num_jobs, tag);
 		let job_rel: Vec<String> = (0..num_jobs).map(|i|
-			format!("{}/jobs/jobs{}/job_{}.dat", cd, num_jobs, i)).collect();
+			format!("{}/jobs/jobs{}{}/job_{}.dat", cd, num_jobs, tag, i))
+			.collect();
 		let have_all = job_rel.iter().all(|p|
 			std::path::Path::new(&format!("{}/{}", proot, p)).exists());
 		if reset || !have_all {
-			let bins = split_jobs_balanced(
-				&format!("{}/{}", cd, rc.full_list), num_jobs);
+			let bins = split_paths_balanced(all_files.clone(), num_jobs);
 			let _ = std::fs::create_dir_all(&jobs_dir);
 			for (i, b) in bins.iter().enumerate() {
 				std::fs::write(format!("{}/job_{}.dat", jobs_dir, i),
@@ -4849,12 +4909,11 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		utils::logger::log_perf(0, l,
 			&"PERF WORKFLOW Step 2 time".to_string(), &mut gt);
 
-		// step 3: discharge the full list (cache vdata+infos; words lazy).
+		// step 3: discharge the sampled list (cache vdata+infos; lazy).
 		utils::logger::log(0, l,
 			&"PROGRESS step 3/6: discharge full list".to_string());
-		let all_files = read_path_list(&format!("{}/{}", cd, rc.full_list));
-		let dcache = discharge_cache_dir(&rc.cache_dir, mw, rc.fanout_cap,
-			rc.range2_bit, 3);
+		let dcache = format!("{}{}", discharge_cache_dir(&rc.cache_dir,
+			mw, rc.fanout_cap, rc.range2_bit, 3), tag);
 		let cached = if reset { None } else { load_discharge_cache(&dcache) };
 		let (mut words_opt, infos, vdata):
 			(Option<Vec<Vec<Fr>>>,
@@ -4951,9 +5010,20 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			ladder.first().map(|c| c.aggr_needs_subsigs).unwrap_or(0);
 		let cs_caps: Vec<_> = ladder.iter().map(caps_from_params_aggr)
 			.collect();
+		// two-half scheme: fold only this process's job half. read_mode
+		// first => jobs 0..h-1, second => h..N-1, full/unset => all (bare
+		// test byte-identical). job_{i}.dat names carry the global id, so
+		// load_files' PROBE DLP lines report the right jobs per part.
+		let h = num_jobs / 2;
+		let job_fold: Vec<String> =
+			match std::env::var("ZKR_DLP_READ_MODE").as_deref() {
+				Ok("first") => job_rel[..h].to_vec(),
+				Ok("second") => job_rel[h..].to_vec(),
+				_ => job_rel.clone(),
+			};
 		zkp_driver_adv_aggr::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,
 			CS1E,S>(
-			0, &format!("{}/{}", cd, rc.sig_file), job_rel, &rc.report_out,
+			0, &format!("{}/{}", cd, rc.sig_file), job_fold, &rc.report_out,
 			false, &rc.cache_dir, &format!("{}/regex_pat/main_dfa.dat", cd),
 			&format!("{}/regex_pat/needs_ised.dat", cd),
 			&format!("{}/regex_pat/needs_ised_igc.dat", cd), mw, &cs_caps,

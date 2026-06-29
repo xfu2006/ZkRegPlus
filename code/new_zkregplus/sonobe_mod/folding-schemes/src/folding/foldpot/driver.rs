@@ -3263,16 +3263,20 @@ where
 	  		log(job_id, log_level, &format!("PERF 1006. Job Step 1: main circuits IVC PROVE STEPS (Folding) DONE. total_word_len: {}, steps: {}. SPEED: {} MB/hour {} ms", format_bytes(max_total_n * 31), _num_steps, mb_speed, gt_prove_steps.ms()));
 	  		gt1.clear_start();
 
-	  		// b_one_proof: only Job 0 runs the SNARK deciders + Phase 2
-	  		// + proof assembly/verify. All jobs still do the Phase-1
-	  		// folding above; the others return here so a single full
-	  		// batch+individual proof is produced cheaply. Note: the
-	  		// last-finisher key-drop (keyed on n_jobs_total) will not
-	  		// fire in this mode, so g16 keys stay resident until return.
-	  		if read_global_config().b_one_proof && job_id != 0 {
+	  		// b_one_proof: only ONE job runs the SNARK deciders + Phase 2
+	  		// + proof assembly/verify. Which job is configurable via
+	  		// ZKR_SNARK_JOB_ID (default 0); the numa driver sets it so the
+	  		// snark-carrying half's chosen job proves. All jobs still do
+	  		// the Phase-1 folding above; the others return here so a single
+	  		// full batch+individual proof is produced cheaply. Note: the
+	  		// last-finisher key-drop (keyed on n_jobs_total) will not fire
+	  		// in this mode, so g16 keys stay resident until return.
+	  		let snark_job_id = std::env::var("ZKR_SNARK_JOB_ID").ok()
+	  			.and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
+	  		if read_global_config().b_one_proof && job_id != snark_job_id {
 	  			log(job_id, log_level, &format!(
 	  				"Job {} folding done; b_one_proof set -> skip SNARK \
-	  				 (only Job 0 proves).", job_id));
+	  				 (only Job {} proves).", job_id, snark_job_id));
 	  			return Ok(());
 	  		}
 	  	
@@ -3305,6 +3309,11 @@ where
 	  				job_id));
 	  			return Ok(());
 	  		}
+
+	  		// Past the one_proof + fold_only gates: this job emits a SNARK
+	  		// proof (the selected job under one_proof, else every job).
+	  		log(job_id, log_level, &format!(
+	  			"Job {} generating SNARK proof", job_id));
 
 	  		// full_clam part-2 gate: wait until the driver frees the
 	  		// fold-only half's RAM (flag file appears) before the decider.
