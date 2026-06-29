@@ -29787,11 +29787,7 @@ Goal 1. numa runner for full_dlp -> DONE
 	[a] spec
 	[b] design details 
 	[c] impl done
-Goal 2. collect data
-	[a] zombie_eval -> TODO
-	[b] reel_eval
-	[c] full_clam 
-Goal 3. implement collect full_clam data again. -> DONE
+Goal 2. implement collect full_clam data again. -> DONE
 	[a] switch the 0-4 to the snark proof
 	[b] have an environment var to determine which process to
 			generate snark proof
@@ -29801,7 +29797,8 @@ Goal 3. implement collect full_clam data again. -> DONE
 	[d] review code
 Goal 4. Writing
 	[a] collect zombie data about DLP: total R1CS 
-	[b] find the OLD full_clam data file by gcp1 rename as full_clam_8prf.log.tgz
+	[b] find the OLD full_clam data file by gcp1 
+		rename as full_clam_8prf.log.tgz
 
 ----- ACTIVE GOALS -----
 Goal FINAL1. start data collection on GCP
@@ -29823,7 +29820,9 @@ Goal FINAL2. start data collection on Jetstream
 		[b1] full_dlp??
 		[b2] full_clam??
 		[b3] reef_eval
-		[b4] zombie_eval (11:00pm 06/28 -> 
+		[b4] zombie_eval (11:00pm 06/28 -> restarted 12:00pm 06/29 OOM system
+				dead), unfortunately it's restarted
+				12:15pm 06/28 --> 
 
 
 
