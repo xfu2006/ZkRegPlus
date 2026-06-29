@@ -58,10 +58,14 @@ RULESETS   = ["regex_zombie_international"]  # international-only re-measure (1k
 FULL_DIR   = "regex_zombie"                 # input : baked policy regexes (per-pass)
 DOCS_DIR   = "docs"
 LOG_FILE   = os.path.join(DOCS_DIR, "run_zombie.log")            # per-pass below
-# resume/crash cache: a transient build artifact (not a deliverable), so it lives
-# in /tmp, never under docs/. Delete it to force a clean re-measure of all sizes.
-PARTIAL_DIR = "/tmp/bora_zombie_run"
-PARTIAL     = os.path.join(PARTIAL_DIR, "run_zombie.partial.jsonl")  # per-pass below
+# resume/crash cache. The PRIMARY copy is a transient build artifact in /tmp, but a
+# reboot wipes /tmp and would lose all progress, so we ALSO keep a DURABLE mirror
+# under docs/. _append_partial() writes BOTH; _load_partial() reads /tmp first and
+# falls back to the docs mirror when /tmp is gone/empty (e.g. after a reboot).
+# Delete BOTH to force a clean re-measure of all sizes.
+PARTIAL_DIR  = "/tmp/bora_zombie_run"
+PARTIAL      = os.path.join(PARTIAL_DIR, "run_zombie.partial.jsonl")  # per-pass below
+PARTIAL_DOCS = os.path.join(DOCS_DIR, "run_zombie.partial.jsonl")     # durable mirror
 
 ZOMBIE     = "zombie"
 REGEX_DIR  = os.path.join(ZOMBIE, "regex")         # TestRegex source (built via make)
@@ -88,13 +92,63 @@ CODEGEN_TIMEOUT = 300                        # s, TestRegex F (DFA build)
 PROVE_TIMEOUT   = 7200                       # s, key-gen + prove + verify per run
 
 # Parallel-build pipeline: keygen (the ~60s/circuit cost) is RAM-heavy, so we
-# build N_BUILD_JOBS circuits CONCURRENTLY -- each in its OWN /tmp work dir (own
-# ./zkmb + ./keys, shared abs-path binary) so the per-circuit 'policy2000' key
-# files do not collide -- then TIME each built circuit one-by-one (clean timing,
-# no build running). After a circuit is timed its work dir is deleted (disk stays
-# ~N_BUILD_JOBS x ~70MB).
-N_BUILD_JOBS = max(1, (os.cpu_count() or 8) // 4)   # 32 cores -> 8
-PAR_ROOT     = "/tmp/bora_zombie_par"               # per-circuit isolated work dirs
+# build jobs_for(str_len) circuits CONCURRENTLY -- each in its OWN /tmp work dir
+# (own ./zkmb + ./keys, shared abs-path binary) so the per-circuit 'policy2000'
+# key files do not collide -- then TIME each built circuit one-by-one (clean
+# timing, no build running). After a circuit is timed its work dir is deleted
+# (disk stays ~jobs x ~70MB).
+#
+# Concurrency depends on STR_LENGTH: larger documents -> larger circuits -> more
+# RAM per keygen -> fewer concurrent jobs. Tuned on the 970 GB jetstreambox;
+# unlisted sizes fall back to a core-count heuristic. The RAM cap below is derived
+# from whichever job count applies, so jobs * cap stays within MemTotal*frac.
+JOBS_BY_STR_LEN = {1000: 8, 2000: 8, 4000: 4}
+DEFAULT_JOBS    = max(1, (os.cpu_count() or 8) // 4)   # 32 cores -> 8
+PAR_ROOT        = "/tmp/bora_zombie_par"               # per-circuit isolated work dirs
+
+
+def jobs_for(str_len):
+    """Concurrent keygen jobs for this document length (RAM-bound; see above)."""
+    return JOBS_BY_STR_LEN.get(str_len, DEFAULT_JOBS)
+
+# --- per-process RAM cap ---------------------------------------------------
+# circ_executable key-gen is RAM-heavy; jobs_for(str_len) run concurrently, so on
+# a 970 GB box at 4 jobs a single >240 GB keygen choked the machine. We cap each
+# PARALLEL job's address space at MemTotal*MEM_HEADROOM_FRAC / jobs_for(str_len)
+# via prlimit(1) (RLIMIT_AS); the SERIAL timing phase and the SERIAL OOM-fallback
+# get the FULL headroom (jobs=1) so a circuit too big for a parallel slot still
+# completes one-at-a-time. When a job exceeds its cap, malloc fails -> keygen
+# aborts by signal -> already classified 'oom_or_killed' -> retried serially.
+MEM_HEADROOM_FRAC = 0.9
+_PRLIMIT = shutil.which("prlimit")
+
+
+def _total_ram_bytes():
+    try:
+        with open("/proc/meminfo") as f:
+            for ln in f:
+                if ln.startswith("MemTotal:"):
+                    return int(ln.split()[1]) * 1024
+    except OSError:
+        pass
+    return None
+
+
+def _mem_cap_bytes(jobs):
+    """Address-space cap per process when `jobs` run concurrently, or None when the
+    total RAM cannot be determined (-> no cap)."""
+    total = _total_ram_bytes()
+    if not total or jobs < 1:
+        return None
+    return int(total * MEM_HEADROOM_FRAC / jobs)
+
+
+def _limited(cmd, mem_bytes):
+    """Prefix a command with `prlimit --as=<bytes>` so the child cannot exceed
+    mem_bytes of virtual memory. No-op if mem_bytes is None or prlimit is absent."""
+    if mem_bytes and _PRLIMIT:
+        return [_PRLIMIT, "--as=%d" % int(mem_bytes), "--"] + cmd
+    return cmd
 
 # patch sentinel (delimits OUR auto-generated match arms inside zk_test()).
 SENT_BEGIN = "        // >>> run_zombie auto-generated arms (do not edit)"
@@ -377,7 +431,7 @@ def _parse_metrics(stdout):
             "verify_ms": verify, "proof_bytes": proof}
 
 
-def run_zombie(binp, regex_name, str_len):
+def run_zombie(binp, regex_name, str_len, mem_bytes=None):
     """Build the real Zombie circuit for one policy at one document length and
     measure it. Returns a result dict; tolerant of every failure mode (parse,
     proximity-too-large, codegen/prove timeout, OOM, prove failure)."""
@@ -416,8 +470,8 @@ def run_zombie(binp, regex_name, str_len):
 
     # stage 2: key-gen + prove + verify via Spartan NIZK.
     try:
-        p = subprocess.run([os.path.abspath(binp),
-                            "policy_%d" % str_len, "true", "prover_verifier"],
+        p = subprocess.run(_limited([os.path.abspath(binp),
+                            "policy_%d" % str_len, "true", "prover_verifier"], mem_bytes),
                            cwd=CIRC_BUILD, capture_output=True, text=True,
                            timeout=PROVE_TIMEOUT)
     except subprocess.TimeoutExpired:
@@ -437,10 +491,14 @@ def run_zombie(binp, regex_name, str_len):
 # part 4: sweep one size over all policies (sequential), with resume
 # ===========================================================================
 def _load_partial():
-    """Map "slug|str_len" -> prior result, for crash/resume skip."""
+    """Map "slug|str_len" -> prior result, for crash/resume skip. Reads the /tmp
+    partial if present and non-empty; otherwise falls back to the durable docs
+    mirror, which survives a reboot that wipes /tmp."""
+    src = (PARTIAL if (os.path.isfile(PARTIAL) and os.path.getsize(PARTIAL) > 0)
+           else PARTIAL_DOCS)
     done = {}
-    if os.path.isfile(PARTIAL):
-        with open(PARTIAL) as f:
+    if os.path.isfile(src):
+        with open(src) as f:
             for ln in f:
                 ln = ln.strip()
                 if not ln:
@@ -451,8 +509,11 @@ def _load_partial():
 
 
 def _append_partial(rec):
-    with open(PARTIAL, "a") as f:
-        f.write(json.dumps(rec) + "\n")
+    # write the primary (/tmp) copy and the durable docs mirror in lockstep.
+    line = json.dumps(rec) + "\n"
+    for p in (PARTIAL, PARTIAL_DOCS):
+        with open(p, "a") as f:
+            f.write(line)
 
 
 def run_zombie_on_all(binp, str_len, done):
@@ -555,9 +616,10 @@ def _codegen_zok(regex_name, str_len):
     return zok, prox, "ok"
 
 
-def _build_one(binp, idx, regex_name, str_len):
+def _build_one(binp, idx, regex_name, str_len, mem_bytes=None):
     """BUILD phase (concurrent): codegen + keygen into the circuit's OWN /tmp dir.
-    should_generate=true writes ./keys/. Returns {name, prox, dir, status[, err]}."""
+    should_generate=true writes ./keys/. Returns {name, prox, dir, status[, err]}.
+    mem_bytes caps the keygen's address space (per-job RAM share)."""
     zok, prox, cg = _codegen_zok(regex_name, str_len)
     if cg != "ok":
         return {"name": regex_name, "prox": prox, "dir": None, "status": cg}
@@ -571,7 +633,8 @@ def _build_one(binp, idx, regex_name, str_len):
     os.symlink(os.path.join(os.path.abspath(CIRC_BUILD), "third_party", "ZoKrates"),
                os.path.join(d, "ZoKrates"))
     try:
-        p = subprocess.run([os.path.abspath(binp), "policy_%d" % str_len, "true", "prover"],
+        p = subprocess.run(_limited([os.path.abspath(binp), "policy_%d" % str_len,
+                            "true", "prover"], mem_bytes),
                            cwd=d, capture_output=True, text=True, timeout=PROVE_TIMEOUT)
     except subprocess.TimeoutExpired:
         return {"name": regex_name, "prox": prox, "dir": d, "status": "build_timeout"}
@@ -582,15 +645,16 @@ def _build_one(binp, idx, regex_name, str_len):
     return {"name": regex_name, "prox": prox, "dir": d, "status": "built"}
 
 
-def _time_one(binp, built, str_len):
+def _time_one(binp, built, str_len, mem_bytes=None):
     """TIME phase (sequential): prove+verify on the PRE-BUILT keys
-    (should_generate=false). Returns a result rec (same shape as run_zombie)."""
+    (should_generate=false). Returns a result rec (same shape as run_zombie).
+    Runs alone, so mem_bytes is the FULL headroom cap."""
     name, prox, d = built["name"], built["prox"], built["dir"]
     pat, kws, _ = extract_parts(_read(os.path.join(FULL_DIR, name + ".regex")).strip())
     try:
-        p = subprocess.run([os.path.abspath(binp), "policy_%d" % str_len, "false",
-                            "prover_verifier"], cwd=d, capture_output=True, text=True,
-                           timeout=PROVE_TIMEOUT)
+        p = subprocess.run(_limited([os.path.abspath(binp), "policy_%d" % str_len, "false",
+                            "prover_verifier"], mem_bytes), cwd=d, capture_output=True,
+                           text=True, timeout=PROVE_TIMEOUT)
     except subprocess.TimeoutExpired:
         return _rec(name, str_len, pat, kws, prox, status="prove_timeout")
     if p.returncode != 0:
@@ -609,12 +673,18 @@ def run_pipeline(binp, str_len, names, done):
     results = [done[key(n)] for n in names if key(n) in done]
     todo = [n for n in names if key(n) not in done]
     os.makedirs(PAR_ROOT, exist_ok=True)
+    jobs = jobs_for(str_len)                 # concurrency depends on document length
+    par_mem = _mem_cap_bytes(jobs)           # per concurrent build slot
+    full_mem = _mem_cap_bytes(1)             # serial time / OOM-fallback: full headroom
+    if par_mem:
+        print("[mem] size=%d: %d jobs, per-job AS cap %.0f GiB; serial cap %.0f GiB"
+              % (str_len, jobs, par_mem / 2**30, full_mem / 2**30))
     total, ti = len(todo), 0
-    for b0 in range(0, total, N_BUILD_JOBS):
-        batch = todo[b0:b0 + N_BUILD_JOBS]
-        with ThreadPoolExecutor(max_workers=N_BUILD_JOBS) as ex:   # phase 1: build
+    for b0 in range(0, total, jobs):
+        batch = todo[b0:b0 + jobs]
+        with ThreadPoolExecutor(max_workers=jobs) as ex:          # phase 1: build
             built = [f.result() for f in as_completed(
-                [ex.submit(_build_one, binp, b0 + j, n, str_len)
+                [ex.submit(_build_one, binp, b0 + j, n, str_len, par_mem)
                  for j, n in enumerate(batch)])]
         order = {n: k for k, n in enumerate(batch)}
         built.sort(key=lambda b: order[b["name"]])
@@ -624,22 +694,23 @@ def run_pipeline(binp, str_len, names, done):
                 rec = _rec(b["name"], str_len, prox=b.get("prox"),
                            status=b["status"], err=b.get("err", ""))
             else:
-                rec = _time_one(binp, b, str_len)
+                rec = _time_one(binp, b, str_len, full_mem)
             if b.get("dir"):
                 shutil.rmtree(b["dir"], ignore_errors=True)
             _append_partial(rec); done[key(b["name"])] = rec; results.append(rec)
             print("[run] size=%d %d/%d %-52s -> %s"
                   % (str_len, ti, total, b["name"], rec["status"]))
     # OOM fallback: at STR_LENGTH=4000 the largest circuits cross 2^20 constraints;
-    # keygen for those can exhaust RAM under N_BUILD_JOBS-way concurrency. Rebuild any
-    # OOM-killed circuit ONE AT A TIME (full RAM per circuit). A later partial line
-    # overwrites the failed one on resume; the in-memory result is replaced in place.
+    # keygen for those can exhaust RAM under jobs-way concurrency (or trip the per-job
+    # cap). Rebuild any OOM-killed circuit ONE AT A TIME with the FULL headroom cap. A
+    # later partial line overwrites the failed one on resume; the in-memory result is
+    # replaced in place.
     retry = [r["regex_name"] for r in results if r.get("status") == "oom_or_killed"]
     for ri, nm in enumerate(retry, 1):
         print("[retry] size=%d %d/%d %-52s (serial OOM fallback) ..."
               % (str_len, ri, len(retry), nm))
-        b = _build_one(binp, 0, nm, str_len)
-        rec = (_time_one(binp, b, str_len) if b["status"] == "built"
+        b = _build_one(binp, 0, nm, str_len, full_mem)
+        rec = (_time_one(binp, b, str_len, full_mem) if b["status"] == "built"
                else _rec(nm, str_len, prox=b.get("prox"), status=b["status"],
                          err=b.get("err", "")))
         if b.get("dir"):
@@ -681,7 +752,7 @@ def validate_pipeline(binp, str_len=2000, n=8):
     print("\n[validate] deterministic stats (cons, proof_bytes, status) match: %s"
           % ("YES" if ok else "NO"))
     print("[validate] wall: baseline=%.0fs  pipeline=%.0fs  (speedup %.1fx, jobs=%d)"
-          % (t_base, t_par, t_base / t_par if t_par else 0, N_BUILD_JOBS))
+          % (t_base, t_par, t_base / t_par if t_par else 0, jobs_for(str_len)))
     return ok
 
 
@@ -691,10 +762,11 @@ def validate_pipeline(binp, str_len=2000, n=8):
 def run_ruleset(rs_dir, binp):
     """Measure one ruleset folder into run_zombie_<rs>.log via the parallel-build /
     sequential-time pipeline, with its own /tmp partial. Returns (n_results, n_ok)."""
-    global FULL_DIR, LOG_FILE, PARTIAL
+    global FULL_DIR, LOG_FILE, PARTIAL, PARTIAL_DOCS
     FULL_DIR = rs_dir
     LOG_FILE = os.path.join(DOCS_DIR, "run_zombie_%s.log" % rs_dir)
     PARTIAL = os.path.join(PARTIAL_DIR, "run_zombie_%s.partial.jsonl" % rs_dir)
+    PARTIAL_DOCS = os.path.join(DOCS_DIR, "run_zombie_%s.partial.jsonl" % rs_dir)
     selftest()                             # round-trip over THIS ruleset's combos
     done = _load_partial()
     results = []
