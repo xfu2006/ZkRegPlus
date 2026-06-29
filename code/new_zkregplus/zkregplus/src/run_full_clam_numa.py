@@ -281,6 +281,17 @@ def verify_split(part_logs):
 
 
 # ---------------- packing ----------------
+def gz_one(path):
+    """Wrap a single file into its own .tgz; return the .tgz path
+    (sibling of the source), or None if the source is missing."""
+    if not os.path.isfile(path):
+        return None
+    out = path + ".tgz"
+    with tarfile.open(out, "w:gz", compresslevel=9) as t:
+        t.add(path, arcname=os.path.basename(path))
+    return out
+
+
 def pack_part(part, log_path, with_report):
     """full_clam.log.<part>.tgz = the run log + this part's tagged per-job
     logs (+ report for part2). ALWAYS runs, even after a panic."""
@@ -288,8 +299,9 @@ def pack_part(part, log_path, with_report):
     tgz = os.path.join(OUT, "full_clam.log.%s.tgz" % part)
     try:
         with tarfile.open(tgz, "w:gz", compresslevel=9) as t:
-            if os.path.isfile(log_path):
-                t.add(log_path, arcname=os.path.basename(log_path))
+            log_tgz = gz_one(log_path)
+            if log_tgz:
+                t.add(log_tgz, arcname=os.path.basename(log_tgz))
             patt = "log_job_%s*.txt" % tag if tag else "log_job_[0-9]*.txt"
             for jf in sorted(glob.glob(os.path.join(LOGS_DIR, patt))):
                 t.add(jf, arcname="logs/" + os.path.basename(jf))

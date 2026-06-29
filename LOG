@@ -29752,6 +29752,8 @@ Goal 5. collect scale data for DLP set
 	[b] implementation
 	[c] local testing
 	[d] local analysis
+	[e] fixed the error on fan-out config
+	[f] local run
 	[e] deploy the script on server. ????
 Goal 6. NUMA version of full_clam()
 	[a] baseline debug mode, baseline mode, default full 16 jobs mode

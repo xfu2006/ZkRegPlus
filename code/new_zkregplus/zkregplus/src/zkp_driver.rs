@@ -5787,6 +5787,17 @@ fail: {} ({:.4}%)",
 		let sub_dfa = format!("{}/needs_dfa.dat", scratch);
 		let sub_ised = format!("{}/needs_ised.dat", scratch);
 		let sub_ised_igc = format!("{}/needs_ised_igc.dat", scratch);
+		let sub_fanout = format!("{}/main_fanout.dat", scratch);
+		// master SDE fan-out boost list (the sole-blocker SITs); filtered per
+		// subset below and co-located with sub_dfa so the DB build boosts the
+		// right wide-proximity SITs for THIS ruleset (matches full_dlp). Without
+		// it those SITs fall to the empty DFA tier and fail discharge.
+		let fanout_master: Vec<String> = utils::os::read_lines(
+				&format!("{}/{}main_fanout.dat", proot, set1))
+			.into_iter()
+			.filter(|s| !s.starts_with('#') && !s.trim().is_empty())
+			.map(|s| s.trim().to_string())
+			.collect();
 		// corpus list (built by run_collect_scale_dlp.py): one absolute word path.
 		let scan_list = format!("{}/binexec_3.dat", scratch);
 		let scan_files = vec![scan_list.clone()];
@@ -5812,6 +5823,13 @@ fail: {} ({:.4}%)",
 			std::fs::write(&sub_dfa, filt(&needs_dfa_full)).expect("w dfa");
 			std::fs::write(&sub_ised, filt(&needs_ised_full)).expect("w ised");
 			std::fs::write(&sub_ised_igc, filt(&needs_ised_igc_full)).expect("w isedigc");
+			// main_fanout.dat for THIS subset: keep a SIT entry iff some subset
+			// sig name contains it. Generated each iteration from the ruleset.
+			let kept_fanout: Vec<&str> = fanout_master.iter()
+				.filter(|e| names.iter().any(|n| n.contains(e.as_str())))
+				.map(|s| s.as_str()).collect();
+			std::fs::write(&sub_fanout, kept_fanout.join("\n") + "\n")
+				.expect("write main_fanout.dat");
 
 			let corpus = std::env::var("ZKR_SCALE_CORPUS")
 				.unwrap_or_else(|_| "unknown".to_string());
