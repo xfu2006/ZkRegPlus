@@ -29761,20 +29761,20 @@ Goal 6. NUMA version of full_clam()
 	[c] test mode
 	----------------------
 	# (1) 10% baseline — 1 process, no NUMA pin, full snark + 1 proof
-  python3 run_full_clam_numa.py --mode=debug
+  python3 -u run_full_clam_numa.py --mode=debug
   #   -> /tmp/full_clam_run/full_clam.log.baseline.tgz
 
   # (2) 10% numa — two-process scheme at 10% load (fast NUMA shakeout)
-  python3 run_full_clam_numa.py --mode=numa
+  python3 -u run_full_clam_numa.py --mode=numa
   #   -> full_clam.log.part1.tgz (fold-only)  +  full_clam.log.part2.tgz (snark)
 
   # (3) 100% numa — two-process scheme, full load (DEFAULT)
-  python3 run_full_clam_numa.py --mode=prod
+  python3 -u run_full_clam_numa.py --mode=prod
   #   -> full_clam.log.part1.tgz (fold-only)  +  full_clam.log.part2.t
   ----------------------
   	[d] run test
-		-> baseline debug mode ???
-		-> baseline mode
+		-> baseline debug mode --> DONE (but verif error check later)
+		-> baseline mode ---> (started 9:50pm
 
 Goal 6. Writing
 	[a] update Diagram 9

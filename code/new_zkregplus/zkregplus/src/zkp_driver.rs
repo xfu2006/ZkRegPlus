@@ -5838,12 +5838,21 @@ fail: {} ({:.4}%)",
 				cnt, cnt, n_rules, corpus));
 			utils::logger::flush_logger();
 
-			// 1. build subset DB (fresh; b_read_cache=false -> rebuild).
+			// 1. Build subset DB FRESH for THIS ruleset. b_read_cache=false ->
+			// rebuild (NEVER reuse a prior count's cached DB: build_or_load only
+			// checks cache_exists, not the sig file, so reading would discharge
+			// against the wrong ruleset). Writes the cache (b_write=true) so the
+			// fold + its bump-retries -- SAME ruleset, only caps change -- reuse
+			// it instead of rebuilding (~21 min each). The DB is rebuilt only
+			// here, i.e. exactly once per count when the ruleset changes.
 			let mut vlog: Vec<String> = vec![];
 			let db = std::sync::Arc::new(
 				data_processor::clam_db::ClamavDB::<Fr>::build_or_load(
 					&cfg, &sub_main, &sub_dfa, &sub_ised, &sub_ised_igc,
-					&mut vlog, cache_dir, true, true).expect("build db"));
+					&mut vlog, cache_dir, false, true).expect("build db"));
+			// fold + bump-retries below read THIS fresh cache (same ruleset);
+			// the next count's step 1 above rebuilds (b_read_cache=false there).
+			get_global_config().b_read_cache = true;
 
 			// 2. discharge the corpus -> words/infos/vdata (mirror full_dlp_sample).
 			let (mut vdata, mut words, mut infos) = (vec![], vec![], vec![]);
@@ -5967,7 +5976,12 @@ fail: {} ({:.4}%)",
 	#[test]
 	pub fn test_collect_scale_dlp() {
 		// SMOKE TEST: two layers [1, 4]. Full sweep later: 1, 10%..100% of 9,860.
-		let counts: Vec<usize> = vec![9860];  // saturation validation @100%
+		// Full sweep: 1 rule, then 10%..100% of the 9,860 sweepable DLP rules
+		// (rounded). Mirrors test_collect_scale_data (ClamAV) for a matching
+		// x-axis. = [1, 986, 1972, 2958, 3944, 4930, 5916, 6902, 7888, 8874, 9860].
+		let n_rules = 9860usize;
+		let mut counts: Vec<usize> = vec![1];
+		for p in 1..=10 { counts.push((p * n_rules + 5) / 10); }
 		println!("collect_scale_data_dlp: counts={:?}", counts);
 		collect_scale_data_dlp(counts);
 	}
