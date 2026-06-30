@@ -29848,7 +29848,19 @@ Goal 1. readjust collection zombie algorithm to avoid circ err
  	[a] new alg to dynamic adjust number to load 
 	[b] deploy and run
 Goal 2. writing
-	[a] 
+	[a] p1 
+	[b] revision 2
+	[b] p2
+	[c] p3
+	[d] p4 1st draft
+	[e] p4 final polish
+
+Goal 3. experiment with full_dlp settings
+	[a] generate a one_time_full_dlp_exp.sh
+	[b] estimate the time
+	[c] improve the ontime run script.
+	[d] double chekd and test the script
+	[e]
 
 ----- ACTIVE GOALS -----
 Goal FINAL1. start data collection on GCP
@@ -29876,6 +29888,9 @@ Goal FINAL2. start data collection on Jetstream
 					-> killed 2:54pm, had to lower concurrent nodes.
 				3:04pm 06/29 --> 11:00pm 06/29 (8 hrs) => killed.
 				11:00pm -> 7:00AM (8 hrs) still FAIL! cancelled, adjust algo
+				8:00am 06/30 ->  10:13am 06/30: failed again, now improve
+					the failure handling and re-wrun.
+				10:30am 06/30 -> 
 
 
 
