@@ -157,19 +157,26 @@ def _limited(cmd, mem_bytes):
 RAM_BUDGET_FRAC          = 0.85        # batch summed est RAM stays under this
 MIN_CPUS_PER_CIRC        = 4           # cap jobs so each has >= this many cores
 EST_SLOPE_BYTES_PER_CONS = 200_000     # cold RAM est: bytes per r1cs constraint
-EST_DEFAULT_FRAC         = 0.10        # unknown circuit reserves this frac of RAM
 EST_AS_MARGIN            = 1.5         # per-job prlimit AS cap = margin * est RAM
 DISK_BUDGET_FRAC         = 0.80        # batch summed est keys stay under free*this
 DISK_SLOPE_BYTES_PER_CONS = 40_000     # cold disk est: key bytes per constraint
-DISK_DEFAULT_FRAC        = 0.10        # unknown circuit reserves this frac of free
+# Cold (no-measurement) per-circuit reservation: spread the RAM/disk budget across
+# the CPU cap so the FIRST batch fills to ~max_jobs (computed from cpu + ram +
+# disk, not a flat fraction), but never assume a circuit is smaller than these
+# floors -- that keeps small-RAM / small-disk boxes safe. Once any circuit is
+# measured at a size, the median measured value supersedes this (see _median_at).
+COLD_RAM_FLOOR_BYTES   = 4 * 2**30     # >= 4 GiB reserved per unknown circuit
+COLD_DISK_FLOOR_BYTES  = 2 * 2**30     # >= 2 GiB keys reserved per unknown circuit
 # Adaptive retry: a circuit whose failure is a RESOURCE class (too much
 # concurrency) is NOT emitted -- it is requeued with its RAM reservation ratcheted
 # up RETRY_BACKOFF x, which makes the scheduler run it at lower parallelism next
 # round (down to serial at full headroom). Only ok / deterministic outcomes are
-# emitted, so each regex ends with exactly one record. Deterministic failures
-# (regex/circuit errors) cannot be fixed by backing off, so they are emitted at
-# once. MAX_ATTEMPTS bounds the loop.
-RESOURCE_FAIL = ("oom_or_killed", "disk_full", "build_timeout", "prove_timeout")
+# emitted, so each regex ends with exactly one record. A keygen 'build_fail' is
+# also a resource symptom here (the whole corpus is known to build on a big box),
+# so it is retried too; only codegen errors stay deterministic (emitted at once).
+# MAX_ATTEMPTS bounds the loop.
+RESOURCE_FAIL = ("oom_or_killed", "disk_full", "build_timeout",
+                 "prove_timeout", "build_fail")
 RETRY_BACKOFF = 2.0                    # x RAM reservation per requeue
 MAX_ATTEMPTS  = 5                      # per-circuit attempt cap (last is serial)
 _GNU_TIME = "/usr/bin/time" if os.path.isfile("/usr/bin/time") else None
@@ -202,6 +209,16 @@ def _calib_slope(done, vkey, default):
     pts = [r[vkey] / r["r1cs_cons"] for r in done.values()
            if r.get(vkey) and r.get("r1cs_cons")]
     return statistics.median(pts) if pts else default
+
+
+def _median_at(done, str_len, vkey):
+    """Median measured vkey among circuits already finished at THIS str_len, or
+    None. Used as the cold default for circuits not yet seen at this size, so
+    concurrency tracks the real footprint after the first batch instead of a
+    pessimistic fixed reservation."""
+    vals = [r[vkey] for r in done.values()
+            if r.get("str_len") == str_len and r.get(vkey)]
+    return statistics.median(vals) if vals else None
 
 
 def _estimate(name, str_len, done, slope, vkey, floor):
@@ -794,20 +811,22 @@ def _parse_time(stderr):
             int(ms.group(1)) if ms else None)
 
 
-def _run_keygen(cmd, cwd):
+def _run_keygen(cmd, cwd, timeout=PROVE_TIMEOUT):
     """Run the (already prlimit-wrapped) keygen, measuring peak RSS via GNU time
     -v when present. Returns (returncode, stdout, child_stderr, peak_rss_bytes);
-    returncode is negative for a signal death (recovered through time's report)."""
+    returncode is negative for a signal death (recovered through time's report).
+    timeout is the wall budget (ratcheted up per-job on a prior timeout)."""
     full = ([_GNU_TIME, "-v"] + cmd) if _GNU_TIME else cmd
     p = subprocess.run(full, cwd=cwd, capture_output=True, text=True,
-                       timeout=PROVE_TIMEOUT)
+                       timeout=timeout)
     if not _GNU_TIME:
         return p.returncode, p.stdout, p.stderr, None
     child_err, rss, sig = _parse_time(p.stderr)
     return (-sig if sig else p.returncode), p.stdout, child_err, rss
 
 
-def _build_one(binp, idx, regex_name, str_len, mem_bytes=None):
+def _build_one(binp, idx, regex_name, str_len, mem_bytes=None,
+               timeout=PROVE_TIMEOUT):
     """BUILD phase (concurrent): codegen + keygen into the circuit's OWN work dir.
     should_generate=true writes ./keys/. Returns {name, prox, dir, status, ...};
     on a built circuit also peak_rss + key_bytes (for size-aware scheduling).
@@ -827,7 +846,7 @@ def _build_one(binp, idx, regex_name, str_len, mem_bytes=None):
     try:
         rc, _out, errtxt, rss = _run_keygen(
             _limited([os.path.abspath(binp), "policy_%d" % str_len,
-                      "true", "prover"], mem_bytes), d)
+                      "true", "prover"], mem_bytes), d, timeout)
     except subprocess.TimeoutExpired:
         return {"name": regex_name, "prox": prox, "dir": d, "status": "build_timeout"}
     if rc != 0:
@@ -844,16 +863,17 @@ def _build_one(binp, idx, regex_name, str_len, mem_bytes=None):
             "key_bytes": _dir_bytes(os.path.join(d, "keys"))}
 
 
-def _time_one(binp, built, str_len, mem_bytes=None):
+def _time_one(binp, built, str_len, mem_bytes=None, timeout=PROVE_TIMEOUT):
     """TIME phase (sequential): prove+verify on the PRE-BUILT keys
     (should_generate=false). Returns a result rec (same shape as run_zombie).
-    Runs alone, so mem_bytes is the FULL headroom cap."""
+    Runs alone, so mem_bytes is the FULL headroom cap; timeout is the wall
+    budget (ratcheted up per-job on a prior timeout)."""
     name, prox, d = built["name"], built["prox"], built["dir"]
     pat, kws, _ = extract_parts(_read(os.path.join(FULL_DIR, name + ".regex")).strip())
     try:
         p = subprocess.run(_limited([os.path.abspath(binp), "policy_%d" % str_len, "false",
                             "prover_verifier"], mem_bytes), cwd=d, capture_output=True,
-                           text=True, timeout=PROVE_TIMEOUT)
+                           text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return _rec(name, str_len, pat, kws, prox, status="prove_timeout")
     if p.returncode != 0:
@@ -863,6 +883,23 @@ def _time_one(binp, built, str_len, mem_bytes=None):
     if m is None:
         return _rec(name, str_len, pat, kws, prox, status="prove_fail", err="no metrics")
     return _rec(name, str_len, pat, kws, prox, status="ok", **m)
+
+
+def _fail_reason(rec):
+    """Human reason for a non-ok rec, naming memory vs disk where we can tell."""
+    s = rec.get("status", "")
+    err = (rec.get("err") or "").lower()
+    if s == "oom_or_killed":  return "memory: OOM / killed"
+    if s == "disk_full":      return "disk: ENOSPC"
+    if s == "build_timeout":  return "timeout: build"
+    if s == "prove_timeout":  return "timeout: prove"
+    if s == "build_fail":
+        if any(k in err for k in ("space", "os error 28", "enospc")):
+            return "disk: ENOSPC (build_fail)"
+        if any(k in err for k in ("alloc", "memory", "oom")):
+            return "memory: alloc (build_fail)"
+        return "resource: memory or disk (build_fail)"
+    return s
 
 
 def run_pipeline(binp, str_len, names, done):
@@ -880,16 +917,23 @@ def run_pipeline(binp, str_len, names, done):
     budget = _ram_budget_bytes()             # summed est RAM ceiling for a batch
     max_jobs = _cpu_max_jobs()               # >= MIN_CPUS_PER_CIRC cores per job
     full_mem = _mem_cap_bytes(1)             # serial time / final attempt: full
-    ram_default = int((budget or 0) * EST_DEFAULT_FRAC) or 2**34
+    # cold RAM reservation: share the budget across the CPU cap (so the first
+    # batch fills to ~max_jobs when RAM allows), floored so we never over-pack.
+    ram_cold = max(int((budget or 0) / max_jobs), COLD_RAM_FLOOR_BYTES)
     total = len(pending)
     floor_rss, attempts, widx, fin = {}, {}, [0], [0]
+    to_mult = {}                             # per-job timeout x, doubled on a timeout
+
+    def job_timeout(n):
+        return int(PROVE_TIMEOUT * to_mult.get(n, 1))
 
     def est_ram(n):
         slope = _calib_slope(done, "peak_rss", EST_SLOPE_BYTES_PER_CONS)
-        e = _estimate(n, str_len, done, slope, "peak_rss", ram_default)
+        default = _median_at(done, str_len, "peak_rss") or ram_cold
+        e = _estimate(n, str_len, done, slope, "peak_rss", default)
         return max(e, floor_rss.get(n, 0))   # honour the ratcheted reservation
 
-    def finalize(rec):                       # write the ONE record for this regex
+    def finalize(rec, verdict=""):           # write the ONE record for this regex
         nm = rec["regex_name"]
         _append_partial(rec); done[key(nm)] = rec
         for j, r in enumerate(results):
@@ -900,7 +944,8 @@ def run_pipeline(binp, str_len, names, done):
             results.append(rec)
         fin[0] += 1
         rss = rec.get("peak_rss")
-        tag = "ok" if rec["status"] == "ok" else "failed (%s)" % rec["status"]
+        tag = ("ok" if rec["status"] == "ok"
+               else "failed (%s)%s" % (_fail_reason(rec), verdict))
         print("[run] size=%d %d/%d %-52s -> %s%s" % (str_len, fin[0], total, nm,
               tag, "  rss=%.0fGiB" % (rss / 2**30) if rss else ""))
 
@@ -916,13 +961,16 @@ def run_pipeline(binp, str_len, names, done):
         while i < len(pending):
             disk_free = shutil.disk_usage(PAR_ROOT).free
             dslope = _calib_slope(done, "key_bytes", DISK_SLOPE_BYTES_PER_CONS)
-            disk_floor = int(disk_free * DISK_DEFAULT_FRAC)
             disk_budget = int(disk_free * DISK_BUDGET_FRAC)
+            # cold disk reservation: share the disk budget across the CPU cap,
+            # floored; once measured, the median key size at this size supersedes.
+            disk_cold = max(int(disk_budget / max_jobs), COLD_DISK_FLOOR_BYTES)
+            disk_default = _median_at(done, str_len, "key_bytes") or disk_cold
             batch, ram, disk = [], 0, 0       # fill one batch under all three limits
             while i < len(pending) and len(batch) < max_jobs:
                 w = est_ram(pending[i])
                 dk = _estimate(pending[i], str_len, done, dslope, "key_bytes",
-                               disk_floor)
+                               disk_default)
                 if batch and ((budget and ram + w > budget)
                               or (disk_budget and disk + dk > disk_budget)):
                     break                     # full (we always take >= 1)
@@ -931,7 +979,8 @@ def run_pipeline(binp, str_len, names, done):
             caps = {idx: _as_cap(est_ram(n), full_mem) for idx, n in batch}
             with ThreadPoolExecutor(max_workers=len(batch)) as ex:   # build (parallel)
                 built = [f.result() for f in as_completed(
-                    [ex.submit(_build_one, binp, idx, n, str_len, caps[idx])
+                    [ex.submit(_build_one, binp, idx, n, str_len, caps[idx],
+                               job_timeout(n))
                      for idx, n in batch])]
             order = {n: k for k, (idx, n) in enumerate(batch)}
             built.sort(key=lambda b: order[b["name"]])
@@ -939,7 +988,7 @@ def run_pipeline(binp, str_len, names, done):
             for b in built:                                          # time (serial)
                 nm = b["name"]
                 if b["status"] == "built":
-                    rec = _time_one(binp, b, str_len, full_mem)
+                    rec = _time_one(binp, b, str_len, full_mem, job_timeout(nm))
                     rec["peak_rss"] = b.get("peak_rss")
                     rec["key_bytes"] = b.get("key_bytes")
                 else:
@@ -948,19 +997,37 @@ def run_pipeline(binp, str_len, names, done):
                 if b.get("dir"):
                     shutil.rmtree(b["dir"], ignore_errors=True)
                 attempts[nm] = attempts.get(nm, 0) + 1
-                # retry only RESOURCE failures, and only while backing off can still
-                # help: stop once it has run serially (full headroom) or hit the cap.
+                is_to = rec["status"] in ("build_timeout", "prove_timeout")
+                # retry RESOURCE failures while remediation can still help: backing
+                # off needs another non-serial slot; a TIMEOUT only needs more wall
+                # time, so it may retry even when already serial.
                 retryable = (rec["status"] in RESOURCE_FAIL
-                             and attempts[nm] < MAX_ATTEMPTS and not serial)
-                if rec["status"] == "ok" or not retryable:
-                    finalize(rec)             # ok, or no point retrying -> emit once
-                else:
+                             and attempts[nm] < MAX_ATTEMPTS
+                             and (not serial or is_to))
+                if rec["status"] == "ok":
+                    finalize(rec)
+                elif not retryable:           # no point retrying -> emit once
+                    why = ("GIVEN UP after %d/%d" % (attempts[nm], MAX_ATTEMPTS)
+                           if rec["status"] in RESOURCE_FAIL
+                           else "not retried (deterministic)")
+                    finalize(rec, "  [%s]" % why)
+                elif is_to:                   # give THIS job more wall time, requeue
+                    old_to = job_timeout(nm)  # the budget this run just hit
+                    to_mult[nm] = to_mult.get(nm, 1) * 2
+                    requeue.append(nm)
+                    print("[run] size=%d  -/%d %-52s -> failed (%s)  [WILL "
+                          "RETRY %d/%d, timeout %ds->%ds]"
+                          % (str_len, total, nm, _fail_reason(rec),
+                             attempts[nm], MAX_ATTEMPTS, old_to, job_timeout(nm)))
+                else:                         # memory/disk: lower parallelism, requeue
                     base = b.get("as_cap") or est_ram(nm)
                     floor_rss[nm] = min(full_mem or int(base * RETRY_BACKOFF),
                                         int(base * RETRY_BACKOFF))
                     requeue.append(nm)
-                    print("[run] size=%d  -/%d %-52s -> repeat (%d of %d)"
-                          % (str_len, total, nm, attempts[nm], MAX_ATTEMPTS))
+                    print("[run] size=%d  -/%d %-52s -> failed (%s)  [WILL "
+                          "RETRY %d/%d, reserve->%.0fGiB]"
+                          % (str_len, total, nm, _fail_reason(rec),
+                             attempts[nm], MAX_ATTEMPTS, floor_rss[nm] / 2**30))
         pending = requeue
     return results
 
