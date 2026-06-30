@@ -974,46 +974,52 @@ where
 
 		if b_check_part2{//check the rest part
 			assert!(prf.kzg_all_com1.is_some());
+			// DEBUG USE 60100: collect ALL 5 part-2 checks (no early return)
+			// so one (very expensive) run reveals the full pass/fail vector.
+			// mh = mainres_hash, a per-job-unique correlation key for the
+			// threaded log (verify_batch has no job_id).
+			let mh = prf.mainres_hash.map(|x| format!("{}", x))
+				.unwrap_or_else(|| "NA".to_string());
+
 			//1. check kzg_all_com1
-			let res1 = CS1E::verify_with_challenge(
+			let c1 = CS1E::verify_with_challenge(
 				&vkey.kzg_driver1.clone().expect("driver 1 kzg ver key null!"),
 				*prf.kzg_all_com_ch1.as_ref().expect("com_ch1 empty"),
 				&prf.kzg_all_com1.expect("kzg1 empty"),
-				&prf.kzg_all_com_prf1.as_ref().expect("prf1 empty"));	
-			if !res1.is_ok() {
-				if b_debug {emit_stdout(
-					"cs1e kzg_all_ocm1 verif fails".to_string());}
-				return false;
-			}
+				&prf.kzg_all_com_prf1.as_ref().expect("prf1 empty")).is_ok();
+			emit_stdout(format!(
+				"DEBUG USE 60100.2.1 mh={} com1: ch={} com={:?} eval={}",
+				mh, prf.kzg_all_com_ch1.unwrap(), prf.kzg_all_com1.unwrap(),
+				prf.kzg_all_com_prf1.as_ref().unwrap().eval));
+			if !c1 {emit_stdout("cs1e kzg_all_ocm1 verif fails".to_string());}
 
 			//2. check kzg_all_com2
-			let res2 = CS1E::verify_with_challenge(
+			let c2 = CS1E::verify_with_challenge(
 				&vkey.kzg_driver2.clone().expect("driver2 kzg ver null!"),
 				*prf.kzg_all_com_ch2.as_ref().expect("com_ch2 empty"),
 				&prf.kzg_all_com2.expect("kzg2 empty"),
-				&prf.kzg_all_com_prf2.as_ref().expect("prf2 empty"));	
-			if !res2.is_ok() {
-				if b_debug {emit_stdout(
-					"cs1e kzg_all_com2 res2 fails".to_string());}
-				return false;
-			}
+				&prf.kzg_all_com_prf2.as_ref().expect("prf2 empty")).is_ok();
+			emit_stdout(format!(
+				"DEBUG USE 60100.2.2 mh={} com2: ch={} com={:?} eval={}",
+				mh, prf.kzg_all_com_ch2.unwrap(), prf.kzg_all_com2.unwrap(),
+				prf.kzg_all_com_prf2.as_ref().unwrap().eval));
+			if !c2 {emit_stdout("cs1e kzg_all_com2 res2 fails".to_string());}
 
 			//3. check qa_nizk_prf2
 			let vec_x = vec![
-				prf.kzg_all_com2.unwrap().clone(), 
+				prf.kzg_all_com2.unwrap().clone(),
 				prf.comW2.unwrap().clone(),
 				prf.comE2.unwrap().clone(),
 				prf.comF2.unwrap().clone()];
-			let bres = verify_qa_nizk::<E>(
-				&vec_x, 
-				&prf.qa_nizk_prf2.clone().unwrap(), 
+			let c3 = verify_qa_nizk::<E>(
+				&vec_x,
+				&prf.qa_nizk_prf2.clone().unwrap(),
 				&nova2_qa_nizk_vkey.expect("qanizk vkey empty")
-			);	
-			if !bres {
-				if b_debug {emit_stdout(
-					"qanizk2 fails".to_string());}
-				return false;
-			}
+			);
+			emit_stdout(format!(
+				"DEBUG USE 60100.2.3 mh={} qa2: comW2={:?} comE2={:?} comF2={:?}",
+				mh, prf.comW2.unwrap(), prf.comE2.unwrap(), prf.comF2.unwrap()));
+			if !c3 {emit_stdout("qanizk2 fails".to_string());}
 
 			//4. check the snark proof
 			let kzg_sum1 = if opt_kzg_sum1.is_some(){
@@ -1025,24 +1031,16 @@ where
 			};
 			//4.1 verify the maincirc snark proof
 			let pub_inp = vec![prf.mainres_hash.unwrap()];
-			if b_debug {
-				emit_stdout(format!(
-					"DEBUG USE 6901.2.0 public input: {}",
-					pub_inp[0]));
-			}
+			emit_stdout(format!(
+				"DEBUG USE 60100.2.4 mh={} main_pubin[0]={}", mh, pub_inp[0]));
 			let snark_v_main = S::verify(
 				&snark_vk_main.expect("snark vkey_main empty"),
 				&pub_inp,
 				&prf.snark_proof_main.as_ref().clone()
 					.expect("snark main empty")
 			);
-			if b_debug{ emit_stdout(format!(
-				"snark main details: {:?}", snark_v_main)); }
-			if !snark_v_main.is_ok() || !snark_v_main.unwrap().clone() {
-				if b_debug { emit_stdout(
-					"snark main fails.".to_string()); }
-				return false;
-			}
+			let c4 = snark_v_main.is_ok() && snark_v_main.unwrap().clone();
+			if !c4 {emit_stdout("snark main fails.".to_string());}
 
 			//4.2 verify te cpcirc snark proof
 			let snark_inp = CircPubInput{
@@ -1065,25 +1063,31 @@ where
 				comF2: prf.comF2.expect("com_e2 null").clone(),
 
 				qa_nizk_vkey_hash: nova1_qa_nizk_vkey_hash
-					.expect("nova1 qanizk vkey hash empty!"), 
+					.expect("nova1 qanizk vkey hash empty!"),
 
 			};
 			let public_input: Vec<F> = snark_inp.to_vec().expect("to_vec err");
+			// DEBUG USE 60100.2.5: verify-side reconstructed cp public input
+			// (counterpart to driver.rs 60100.3.1 assemble-side).
+			for (k, v) in public_input.iter().enumerate() {
+				emit_stdout(format!(
+					"DEBUG USE 60100.2.5 mh={} cp_pubin_verify[{}]={}", mh, k, v));
+			}
         	let snark_v_cp= S::verify(
-				&snark_vk_cp.expect("snark vkey empty!"), 
-				&public_input, 
+				&snark_vk_cp.expect("snark vkey empty!"),
+				&public_input,
 				&prf.snark_proof_cp.as_ref().clone().expect("snark pf empty"));
 					//.map_err(|e| Error::Other(e.to_string())).unwrap();
-			if b_debug{emit_stdout(format!(
-				"snark_v_cp details: {:?}", snark_v_cp));}
-			if !snark_v_cp.is_ok() || !snark_v_cp.unwrap().clone() {
-				if b_debug {emit_stdout(
-					"snark_v_cp fails.".to_string());}
-				return false;
-			}
+			let c5 = snark_v_cp.is_ok() && snark_v_cp.unwrap().clone();
+			if !c5 {emit_stdout("snark_v_cp fails.".to_string());}
+
+			emit_stdout(format!(
+				"DEBUG USE 60100.1 mh={} PART2 CHECKS: com1={} com2={} \
+				qanizk2={} main={} cp={}", mh, c1, c2, c3, c4, c5));
+			if !(c1 && c2 && c3 && c4 && c5) { return false; }
 		}
 
-		true	
+		true
 	}
 }
 

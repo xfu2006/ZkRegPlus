@@ -5001,6 +5001,16 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		utils::logger::log_perf(0, l,
 			&"PERF WORKFLOW Step 5 time".to_string(), &mut gt);
 
+		// ladder-only harvest (ZKR_DLP_LADDER_ONLY=1): stop right after the
+		// ladder is built+saved, before the expensive fold. Unset =>
+		// unchanged (bare `cargo test full_dlp` byte-identical).
+		if std::env::var("ZKR_DLP_LADDER_ONLY").as_deref() == Ok("1") {
+			utils::logger::log(0, l, &format!(
+				"LADDER ONLY: ladder saved ({} rungs); stop before fold",
+				ladder.len()));
+			return;
+		}
+
 		// step 6: multi-job fold (re-discharges per job; CS-only aggressive).
 		utils::logger::log(0, l,
 			&format!("PROGRESS step 6/6: fold {} jobs", num_jobs));

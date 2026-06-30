@@ -29795,10 +29795,60 @@ Goal 2. implement collect full_clam data again. -> DONE
 	[c] add an EXTRA check to make sure that all files 
 		are emitted, and explicity print SUCCESS or FAIL message.
 	[d] review code
+Goal 4. think about how to diagnose the full_clam failure. -> DONE
+	[a] identified the last 4 checks maybe one of ti
+	[b] add probes to print more info for diagnosis.
+Goal 5. Decision making
+	[a] expeirments with dlp or run job3 clam?
+		-> zombie job might not finish until 4am 06/30
+			-> if do clam, wil lfinish 4am 07/01 (waste several hours
+				before arriving Helsinky), but have 9 hours to play 
+				with dlp experiment at Helsinky and maybe submit running
+				at Helsinki
+			-> if do experiments, all will finish before 2pm 06/30
+				-> submit clam -> finish 2pm 07/02 (in Helsinki)
+				-> then submit dlp. (will finish 07/06).
+	[b] conclusion
+		[b1] wait for completion of zombie data for jet2
+		[b2] experiment with full_dlp options
+		[b3] start full_clam
+		[b4] at Helsinky start full_dlp
+
 Goal 4. Writing
 	[a] collect zombie data about DLP: total R1CS 
 	[b] find the OLD full_clam data file by gcp1 
-		rename as full_clam_8prf.log.tgz
+		rename as full_clam_8prf.log.tgz -> COULD NOT FIND IT.
+	[c] wait for data of scalaliity for DLP.
+
+Tuesday 06/30/2026
+Goal 1. do full_dlp experiments
+	[a] commands below.
+	-----------------
+	1. Clean slate (keep the 40 GB DB):
+  rm -f ../../data/paper_data/dlp/cfg/config/dlp_ladder.json
+  rm -rf ../../data/cache/dlp_corpus_aggr/discharge
+
+  2. Start the ladder-harvest run (single proc, full corpus):
+  nohup python -u run_full_dlp_numa.py --mode=baseline --pct=100 --lader-only &
+
+  3. Stop the harvest the instant the ladder exists (don't pay for the fold):
+  pkill -f run_full_dlp_numa.py; pkill -f "tests_zkp_driver::full_dlp"
+
+  4. Comparison runs — all three now HIT the real ladder. Run them back-to-back 
+  (never concurrently — they'd contend and ruin the timing):
+  nohup python -u run_full_dlp_numa.py --mode=baseline &
+  nohup python -u run_full_dlp_numa.py --mode=numa &
+  nohpu python -u run_full_dlp_numa.py --mode=numa --jobs=16 &
+
+  5. Analyze and run fulldlp_numa default mode later
+  --------------------
+
+Wed 06/30/2026
+Goal 1. readjust collection zombie algorithm to avoid circ err
+ 	[a] new alg to dynamic adjust number to load 
+	[b] deploy and run
+Goal 2. writing
+	[a] 
 
 ----- ACTIVE GOALS -----
 Goal FINAL1. start data collection on GCP
@@ -29810,19 +29860,22 @@ Goal FINAL1. start data collection on GCP
 		* needs to check. => DO NOT COLLECT MORE UNLESS jetstrea2 not working 
 	[c] server1 -> full_dlp ==> DO NOT COLLECT UNLESS jetstream2 not working 
 	[d] server2:
-		eval_reef (7:55pm 06/26 -> 11:30pm 06/26: 4hrs) => done 
+		eval_reef (7:55pm 06/26 -> 11:30pm 06/26: 4hrs) => DONE 
 		eval_zombie (10:00AM 06/27 -> 04:24 0629AM: 44hrs) => DONE.  
 Goal FINAL2. start data collection on Jetstream 
 	[a] small 
 		[a1] scalaliblity for dlp (11:00pm 06/28 -> 
 	[b] large: -> (IP: 149.165.170.106)
-		[b0] full_dna??
+		[b0] full_dna => DONE 06/24
 		[b1] full_dlp??
 		[b2] full_clam??
-		[b3] reef_eval
+		[b3] reef_eval > aleady got 06/24 => DONE
 		[b4] zombie_eval (11:00pm 06/28 -> restarted 12:00pm 06/29 OOM system
 				dead), unfortunately it's restarted
-				12:15pm 06/28 --> 
+				12:15pm 06/28 --> [killed too many failed at 2000 level]
+					-> killed 2:54pm, had to lower concurrent nodes.
+				3:04pm 06/29 --> 11:00pm 06/29 (8 hrs) => killed.
+				11:00pm -> 7:00AM (8 hrs) still FAIL! cancelled, adjust algo
 
 
 

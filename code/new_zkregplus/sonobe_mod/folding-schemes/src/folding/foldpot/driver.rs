@@ -3515,8 +3515,26 @@ where
 			comW2: nova2_U_i1.vec_inst[0].cmW.clone(),
 			comF2: nova2_U_i1.vec_inst[0].cmF.clone(),
 
-			qa_nizk_vkey_hash: qa_nizk_vkey_hash1, 
+			qa_nizk_vkey_hash: qa_nizk_vkey_hash1,
 	};
+	{   // DEBUG USE 60100.3: assemble-side public input (counterpart to the
+		// verify-side dump 60100.2.x in batch_proc.rs::verify_batch). Diff
+		// cp_pubin_assemble[k] vs cp_pubin_verify[k] (matched on mh) to
+		// localize a broken field; identical => circuit-internal divergence.
+		let mh = format!("{}", mainres_hash);
+		log(job_id, LOG2, &format!("DEBUG USE 60100.3.0 job={} mh={}", job_id, mh));
+		if let Ok(v) = inp.to_vec() {
+			for (k, e) in v.iter().enumerate() {
+				log(job_id, LOG2, &format!(
+					"DEBUG USE 60100.3.1 job={} mh={} cp_pubin_assemble[{}]={}",
+					job_id, mh, k, e));
+			}
+		}
+		log(job_id, LOG2, &format!(
+			"DEBUG USE 60100.3.2 job={} mh={} com_all_w={:?} \
+			nova2_com_all_w={:?} eval1={} eval2={}",
+			job_id, mh, com_all_w, nova2_com_all_w, prf_kzg.eval, nova2_prf_kzg.eval));
+	}
 	let (snark_proof_cp, g16_vk_cp) = {
 		// ------------- The following is the CRITICAL SECTION -------
 		let _guard_cp = {

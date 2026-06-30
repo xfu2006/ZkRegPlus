@@ -23,6 +23,8 @@ Options:
   --pct P          sample percent (default 1 for baseline/numa; forced 100 prod)
   --part2-delay S  min stagger before part2 starts (default 900)
   --part2-ram-gb G part2 waits until part1 tree-RSS < G (default 500)
+  --ladder-only    build+save the REAL (pct=100) ladder then stop before the
+                   fold (1 proc, forces pct=100); harvest the ladder cheaply
   --dry-run
 
 Env knobs full_dlp() reads (unset => byte-identical bare `cargo test full_dlp`):
@@ -48,6 +50,7 @@ def getarg(name, default=None):
 MODE = getarg("mode", "prod")
 if MODE not in ("prod", "numa", "baseline"):
     raise SystemExit("--mode must be prod|numa|baseline (got %r)" % MODE)
+LADDER_ONLY = "--ladder-only" in sys.argv   # build+save ladder, stop pre-fold
 JOBS = int(getarg("jobs", "8"))
 FOLD_ONLY = getarg("fold-only", "true").lower() not in ("false", "0", "no")
 # fold-only=false (full snark) is only honored in prod; force true elsewhere.
@@ -55,7 +58,8 @@ if not FOLD_ONLY and MODE != "prod":
     print("[numa] --fold-only=false only valid in prod; forcing fold-only.")
     FOLD_ONLY = True
 # prod is fixed at 100%; baseline/numa default to 1% (fast shakeout).
-PCT = 100 if MODE == "prod" else int(getarg("pct", "1"))
+# ladder-only always harvests the REAL ladder => force the full corpus.
+PCT = 100 if (MODE == "prod" or LADDER_ONLY) else int(getarg("pct", "1"))
 PART2_DELAY = int(getarg("part2-delay", "900"))
 PART2_RAM_GB = float(getarg("part2-ram-gb", "500"))
 DRY = "--dry-run" in sys.argv
@@ -184,6 +188,7 @@ def base_env(read_mode, fold_only, one_proof, wait_flag, log_tag):
     else:
         e.pop("ZKR_SNARK_WAIT_FLAG", None)
     e["ZKR_LOG_TAG"] = log_tag                  # "" | "p1_" | "p2_"
+    e.pop("ZKR_DLP_LADDER_ONLY", None)          # set only by run_ladder_only
     return e
 
 
@@ -398,6 +403,26 @@ def pack_part(part, log_path):
 
 
 # ---------------- flows ----------------
+def run_ladder_only():
+    """Steps 1-5 only: build + save the REAL (pct=100) ladder, then the Rust
+    side returns before the fold (ZKR_DLP_LADDER_ONLY=1). One process, no
+    numactl, no split verify (no fold => no PROBE lines to check)."""
+    log = os.path.join(OUT, "ladder_%s.log" % TS)
+    env = base_env("full", fold_only=True, one_proof=False,
+                   wait_flag=None, log_tag="")
+    env["ZKR_DLP_LADDER_ONLY"] = "1"
+    p, t = spawn(None, env, log, "ladder")
+    try:
+        p.wait()
+        t.join()
+    finally:
+        pack_part("baseline", log)
+    lp = os.path.join(REPO, rc["config_out"])
+    ok = os.path.isfile(lp) and os.path.getsize(lp) > 0
+    print("[numa] ladder %s: %s" % ("READY" if ok else "MISSING", lp))
+    return (p.returncode or 0) or (0 if ok else 3)
+
+
 def run_baseline():
     log = os.path.join(OUT, "baseline_%s.log" % TS)
     env = base_env("full", fold_only=FOLD_ONLY, one_proof=False,
@@ -476,13 +501,16 @@ def run_two():
 
 
 def main():
-    print("[numa] MODE=%s JOBS=%d PCT=%d FOLD_ONLY=%s nodes=%d"
-          % (MODE, JOBS, PCT, FOLD_ONLY, nnodes()))
+    print("[numa] MODE=%s JOBS=%d PCT=%d FOLD_ONLY=%s LADDER_ONLY=%s nodes=%d"
+          % (MODE, JOBS, PCT, FOLD_ONLY, LADDER_ONLY, nnodes()))
     print("[numa] REPO=%s OUT=%s" % (REPO, OUT))
     print("[numa] MASTER=%s JOBS_DIR=%s" % (MASTER, JOBS_DIR))
     if DRY:
         a, b = half_ranges()
         S, FL, k = sample_S()
+        if LADDER_ONLY:
+            print("[numa] --dry-run ladder-only: 1 proc, pct=100, stop after"
+                  " step 5; ladder ->", os.path.join(REPO, rc["config_out"]))
         print("[numa] --dry-run: halves=%s/%s flag=%s" % (a, b, FLAG))
         print("[numa] part1 numactl:", numa_prefix(a) or "(none)")
         print("[numa] part2 numactl:", numa_prefix(b) or "(none)")
@@ -490,6 +518,8 @@ def main():
               % (k, len(S), len(FL), len(FL)))
         return 0
     ensure_vma(VMA_TARGET)
+    if LADDER_ONLY:
+        return run_ladder_only()
     return run_baseline() if MODE == "baseline" else run_two()
 
 
