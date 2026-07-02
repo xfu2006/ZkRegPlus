@@ -29860,7 +29860,42 @@ Goal 3. experiment with full_dlp settings
 	[b] estimate the time
 	[c] improve the ontime run script.
 	[d] double chekd and test the script
-	[e]
+	[e] pushed the script, waiting for zombie run to finish.
+		-> very slow for inp str 4000
+		-> almost 0.5 hr for just 1 out of 194
+		-> but later stage will be faster.
+
+Wed 07/01/2026
+Goal 1. waiting for zombie data
+	[a] very slow. 24 hours to 20 of 199 of 4000 inpu string
+	[b] estimate another 24 hours, so finish 07/02 around 10AM.
+	[c] 36 at 7:18pm -> 41 at 8:12pm -> 47 at 9:12pm (5/hr) 	
+		28 expensive ones - so need 3 hrs at least.
+Goal 2. writing
+	[a] read section 5 briefy
+	[b] read section 6 briefly
+Goal 3. Detailed Reading -> DONE
+	[a] 5.1
+	[b] 5.2 
+	[c] 5.2.1
+	[d] 5.3 
+	[e] 5.4
+	[f] 5.5 
+	[g] 6.0
+	[h] 6.1
+	[i] 6.2
+Goal 4. planning section 6
+	[a] preamble
+	[b] read E.1
+	[c] E1.2
+	[d] E1.3
+	[e] E.2
+	[f] E.4
+	[g] preamble structure again
+
+Thursday 07/02/2026
+Goal 1. check server
+Goal 2. run the one_time_run_dlp.sh
 
 ----- ACTIVE GOALS -----
 Goal FINAL1. start data collection on GCP
