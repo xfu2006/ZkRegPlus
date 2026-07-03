@@ -40,7 +40,7 @@ Usage:
                                 [--dry-run]
 """
 import os, sys, subprocess, time, datetime, tarfile, platform, re, glob, \
-    shutil, threading
+    shutil, threading, signal
 
 
 def getarg(name, default=None):
@@ -64,6 +64,11 @@ FOLD_ONLY = getarg("fold-only", "0" if MODE == "prod" else "1") \
     not in ("0", "false", "False", "no")          # default: prod proves,
                                                   # debug/numa fold-only
 DRY = "--dry-run" in sys.argv
+# prod clean-rebuild knobs (mirror DLP WIPE_DB): wipe+rebuild the DB in p1,
+# and cap how long p2 waits for that rebuild before bailing.
+WIPE_DB = getarg("wipe-db", "1" if MODE == "prod" else "0") \
+    not in ("0", "false", "False", "no")
+REBUILD_TIMEOUT = int(getarg("rebuild-timeout", "18000"))  # DB-ready wait cap
 VMA_TARGET = int(os.environ.get("ZKR_VM_MAX_MAP_COUNT", "1073741824"))  # 0=skip
 
 HERE = os.path.dirname(os.path.abspath(__file__))          # zkregplus/src
@@ -74,12 +79,50 @@ CFG_DIR = os.path.join(REPO, "data/debug/full_clamav/config")  # binexec_p*.dat
 FLAG_DIR = "/tmp/snark_start"
 FLAG = os.path.join(FLAG_DIR, "flag")
 
+# full_data DB cache: the ONLY rebuildable DB (prod may wipe it so p1 rebuilds
+# +saves it via clam_db::build_or_load). Ready == all these files present.
+DB_DIR = os.path.join(REPO, "data/cache/full_data")
+DB_FILES = ["vec_sigs.txt", "vec_crit_pat.txt", "vec_crit_pat_igc.txt",
+            "vec_bag_words.txt", "vec_bag_words_igc.txt", "map_crit_pat.txt",
+            "map_crit_pat_igc.txt", "dfa_crit.txt", "dfa_crit_igc.txt",
+            "sig_to_id.txt", "lkup.txt", "bundle_subsig.txt",
+            "bundle_subsig_igc.txt"]           # == clam_db::cache_exists set
+SNARK_DIR = os.path.join(REPO, "data/cache/full_clamav")  # g16 keys -- KEEP
+MAIN_SIG = os.path.join(CFG_DIR, "main.dat")              # DB source sig
+
 OUT = "/tmp/full_clam_run"
 os.makedirs(OUT, exist_ok=True)
 TS = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
 CARGO = ["cargo", "test", "-p", "zkregplus", "--release", "--",
          "zkp_driver::tests_zkp_driver::full_clam", "--exact", "--nocapture"]
+
+# ---------------- signal-safe child management ----------------
+_CHILDREN = []            # Popen handles, terminated on SIGTERM/SIGINT
+
+
+def terminate_tree(p, sig=signal.SIGTERM):
+    """Signal the child's whole process group (each child is spawned with
+    start_new_session) so numactl+cargo+test-binary all stop, not just the
+    direct child. Falls back to the single pid if the group is gone."""
+    if p is None or p.poll() is not None:
+        return
+    try:
+        os.killpg(os.getpgid(p.pid), sig)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            p.send_signal(sig)
+        except Exception:
+            pass
+
+
+def _sig_handler(signum, _frame):
+    """INT/TERM: stop every child tree, then let run_two's finally pack the
+    bundle (raising SystemExit unwinds through it). No kill -9 here."""
+    print("[numa] signal %d -> stopping children + bundling" % signum)
+    for p in _CHILDREN:
+        terminate_tree(p)
+    raise SystemExit(143 if signum == signal.SIGTERM else 130)
 
 
 def ensure_vma(target):
@@ -201,7 +244,9 @@ def spawn(nodes, env, log_path, label):
         datetime.datetime.now(), platform.node(), label, " ".join(cmd)))
     lf.flush()
     p = subprocess.Popen(cmd, cwd=REPO, env=env, stdout=subprocess.PIPE,
-                         stderr=subprocess.STDOUT, text=True)
+                         stderr=subprocess.STDOUT, text=True,
+                         start_new_session=True)   # own pgroup -> clean kill
+    _CHILDREN.append(p)
 
     def pump():
         for line in p.stdout:
@@ -383,6 +428,129 @@ def pack_part(part, log_path, with_report):
         print("[numa] WARN: pack %s failed: %s" % (part, e))
 
 
+# ---------------- prod clean-rebuild + preflight ----------------
+def db_ready():
+    """True once every clam_db cache file exists under full_data."""
+    return all(os.path.isfile(os.path.join(DB_DIR, f)) for f in DB_FILES)
+
+
+def wait_db_ready(p1):
+    """Block until p1 rebuilt+saved the DB (all files present AND lkup.txt
+    size stable across two 10s polls), or p1 exits, or REBUILD_TIMEOUT.
+    Returns 'ready' | 'p1_exit' | 'timeout'. RSS can't tell 'rebuilding'
+    from 'done' (both are low, below the later fold-peak), so gate on files."""
+    print("[numa] DB gate: waiting for p1 to rebuild full_data "
+          "(%d files + lkup.txt stable); cap=%ds"
+          % (len(DB_FILES), REBUILD_TIMEOUT))
+    lk = os.path.join(DB_DIR, "lkup.txt")
+    waited, last = 0, -1
+    while True:
+        if p1.poll() is not None:
+            return "p1_exit"
+        if waited >= REBUILD_TIMEOUT:
+            return "timeout"
+        if db_ready():
+            sz = os.path.getsize(lk)
+            if sz > 0 and sz == last:
+                return "ready"
+            last = sz
+        if waited % 60 == 0:
+            print("[numa] DB gate: t=%ds ready_files=%s" % (waited, db_ready()))
+        time.sleep(10)
+        waited += 10
+
+
+def wipe_db():
+    """prod clean slate: drop the full_data DB (p1 rebuilds+saves it), stale
+    per-job logs, and any stale snark gate flag. NEVER touches the snark keys
+    (SNARK_DIR) or the static config inputs (main.dat, binexec_p*, report)."""
+    print("[numa] WIPE: rm DB %s (p1 will rebuild+save)" % DB_DIR)
+    shutil.rmtree(DB_DIR, ignore_errors=True)
+    for f in glob.glob(os.path.join(LOGS_DIR, "log_job_*.txt")):
+        try:
+            os.remove(f)
+        except OSError:
+            pass
+    shutil.rmtree(FLAG_DIR, ignore_errors=True)
+    print("[numa] WIPE done; kept snark keys %s" % SNARK_DIR)
+
+
+def preflight():
+    """Fail-fast BEFORE any wipe (mirror DLP PREFLIGHT): DB source + all 8
+    manifests + report exist, numactl --preferred-many works on both halves,
+    and the test binary builds. Missing snark keys are a WARNING only (the
+    decider self-builds them). Returns (ok, reasons)."""
+    reasons = []
+    if not os.path.isfile(MAIN_SIG):
+        reasons.append("missing DB sig %s" % MAIN_SIG)
+    for j in range(8):
+        m = os.path.join(CFG_DIR, "binexec_p%d.dat" % j)
+        if not os.path.isfile(m):
+            reasons.append("missing manifest %s" % m)
+    if not os.path.isfile(REPORT):
+        reasons.append("missing report %s" % REPORT)
+    a, b = half_ranges()
+    for nodes in (a, b):
+        pfx = numa_prefix(nodes)
+        if pfx and subprocess.run(pfx + ["true"], stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL).returncode != 0:
+            reasons.append("numactl --preferred-many=%s failed" % nodes)
+    need = ["g16_main.key", "g16_cp.key.meta"]
+    if not FOLD_ONLY and not all(
+            os.path.isfile(os.path.join(SNARK_DIR, f)) for f in need):
+        print("[numa] PREFLIGHT WARN: snark keys absent at %s; the proving "
+              "job will BUILD+persist them this run (+key-gen time)"
+              % SNARK_DIR)
+    print("[numa] PREFLIGHT: cargo test --no-run (cold build may be slow)")
+    blog = os.path.join(OUT, "preflight_build_%s.log" % TS)
+    with open(blog, "w") as lf:
+        rc = subprocess.run(
+            ["cargo", "test", "-p", "zkregplus", "--release", "--no-run"],
+            cwd=REPO, env=dict(os.environ, RUSTFLAGS=os.environ.get(
+                "RUSTFLAGS", "-C link-args=-fuse-ld=lld -Awarnings")),
+            stdout=lf, stderr=subprocess.STDOUT).returncode
+    if rc != 0:
+        reasons.append("cargo test --no-run failed (see %s)" % blog)
+    return (not reasons), reasons
+
+
+def write_bundle(part_logs, rcs):
+    """One download artifact (mirror DLP): a single .tgz under OUT holding
+    SUMMARY.txt, the per-part tgz, AND the full run log of each part -- the
+    full log is included as its OWN .tgz (gz_one), so it is both contained in
+    the bundle and itself a .tgz. Always safe to call, even after a panic."""
+    summ = os.path.join(OUT, "SUMMARY_%s.txt" % TS)
+    pats = re.compile(r"panic|SIGABRT|Killed|out of memory|cannot allocate|"
+                      r"VERIFICATION FAILED|CapErr|FATAL|error\[")
+    fails = []
+    for lp in part_logs:
+        if os.path.isfile(lp):
+            for ln in open(lp, errors="replace"):
+                if pats.search(ln):
+                    fails.append(ln.rstrip())
+    with open(summ, "w") as f:
+        f.write("FULL_CLAM NUMA -- SUMMARY\n")
+        f.write("host=%s ts=%s end=%s\n"
+                % (platform.node(), TS, datetime.datetime.now()))
+        f.write("mode=%s pct=%d wipe_db=%s fold_only=%s id_snark_job=%d\n"
+                % (MODE, PCT, WIPE_DB, FOLD_ONLY, ID_SNARK_JOB))
+        f.write("part rc=%s\n" % (rcs,))
+        f.write("\n== failure signatures (last 40) ==\n")
+        f.write(("\n".join(fails[-40:]) or "(none)") + "\n")
+    bundle = os.path.join(OUT, "full_clam_BUNDLE_%s.tgz" % TS)
+    with tarfile.open(bundle, "w:gz", compresslevel=6) as t:
+        t.add(summ, arcname="SUMMARY.txt")
+        for part in ("part1", "part2"):
+            tp = os.path.join(OUT, "full_clam.log.%s.tgz" % part)
+            if os.path.isfile(tp):
+                t.add(tp, arcname=os.path.basename(tp))
+        for lp in part_logs:
+            lp_tgz = gz_one(lp)          # full run log, itself a .tgz
+            if lp_tgz:
+                t.add(lp_tgz, arcname="logs/" + os.path.basename(lp_tgz))
+    print("[numa] BUNDLE READY (download this ONE file): %s" % bundle)
+
+
 # ---------------- flows ----------------
 def run_debug():
     log = os.path.join(OUT, "baseline_%s.log" % TS)
@@ -405,6 +573,18 @@ def run_two():
     a, b = half_ranges()
     print("[numa] proc1 fold-only(2nd half) nodes=%s ; "
           "proc2 snark(1st half) nodes=%s ; flag=%s" % (a, b, FLAG))
+    # PROD: fail-fast BEFORE any wipe, then clean-rebuild the DB in p1 (p2
+    # waits on DB-ready below). Non-prod modes reuse the cache untouched.
+    if MODE == "prod":
+        ok, reasons = preflight()
+        if not ok:
+            print("[numa] PREFLIGHT FAIL -> abort before wipe:")
+            for r in reasons:
+                print("   - %s" % r)
+            return 3
+        print("[numa] PREFLIGHT OK")
+        if WIPE_DB:
+            wipe_db()
     shutil.rmtree(FLAG_DIR, ignore_errors=True)     # clean stale flag
     log1 = os.path.join(OUT, "part1_%s.log" % TS)
     log2 = os.path.join(OUT, "part2_%s.log" % TS)
@@ -419,6 +599,18 @@ def run_two():
     t1 = t2 = None
     try:
         p1, t1 = spawn(a, env1, log1, "part1")
+        # PROD clean-rebuild: p2 must NOT start until p1 has rebuilt+saved
+        # full_data, else both halves rebuild it at once and race the cache
+        # write. Gate on the DB files (RSS can't tell rebuilding from done).
+        if MODE == "prod" and WIPE_DB:
+            st = wait_db_ready(p1)
+            if st != "ready":
+                print("[numa] DB gate: p1 %s before DB ready -> abort" % st)
+                terminate_tree(p1)
+                p1.wait()
+                t1.join()
+                return 4
+            print("[numa] DB gate: full_data ready; p1 now folding")
         # Stagger part2 so the two halves don't fold (peak RAM) at once.
         # Gate: start part2 once BOTH >=PART2_DELAY s elapsed AND part1's
         # tree RSS < PART2_RAM_GB -- or immediately when part1 exits (its
@@ -470,6 +662,12 @@ def run_two():
                 print("[numa] WARN: prod final checks failed: %s" % e)
         pack_part("part1", log1, with_report=False)
         pack_part("part2", log2, with_report=True)
+        try:
+            write_bundle([log1, log2],
+                         (p1.returncode if p1 else None,
+                          p2.returncode if p2 else None))
+        except Exception as e:
+            print("[numa] WARN: bundle failed: %s" % e)
     rc1 = p1.returncode if p1 else 1
     rc2 = p2.returncode if p2 else 1
     return rc1 or rc2
@@ -485,5 +683,10 @@ if DRY:
     sys.exit(0)
 
 ensure_vma(VMA_TARGET)
-code = run_debug() if MODE == "debug" else run_two()
+signal.signal(signal.SIGTERM, _sig_handler)
+signal.signal(signal.SIGINT, _sig_handler)
+try:
+    code = run_debug() if MODE == "debug" else run_two()
+except SystemExit as e:                    # signal path: finally already ran
+    code = e.code if isinstance(e.code, int) else 1
 sys.exit(0 if code == 0 else (code or 1))

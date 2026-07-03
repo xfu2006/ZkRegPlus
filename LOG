@@ -29894,8 +29894,8 @@ Goal 4. planning section 6
 	[g] preamble structure again
 
 Thursday 07/02/2026
-Goal 1. check server
-Goal 2. run the one_time_run_dlp.sh
+Goal 1. check server -> DOWNLOADED
+Goal 2. run the one_time_run_dlp.sh -> STARTED
 
 ----- ACTIVE GOALS -----
 Goal FINAL1. start data collection on GCP
@@ -29925,7 +29925,7 @@ Goal FINAL2. start data collection on Jetstream
 				11:00pm -> 7:00AM (8 hrs) still FAIL! cancelled, adjust algo
 				8:00am 06/30 ->  10:13am 06/30: failed again, now improve
 					the failure handling and re-wrun.
-				10:30am 06/30 -> 
+				10:30am 06/30 -> 8:30am 07/02 (45 hrs). => DONE
 
 
 
