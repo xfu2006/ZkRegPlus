@@ -487,8 +487,8 @@ def preflight():
         m = os.path.join(CFG_DIR, "binexec_p%d.dat" % j)
         if not os.path.isfile(m):
             reasons.append("missing manifest %s" % m)
-    if not os.path.isfile(REPORT):
-        reasons.append("missing report %s" % REPORT)
+    # NOTE: report2.dat is the unused `_logfile` arg (never read/written) and
+    # is only opportunistically bundled if present -- NOT a precondition.
     a, b = half_ranges()
     for nodes in (a, b):
         pfx = numa_prefix(nodes)
