@@ -1696,7 +1696,7 @@ where
 			        &rand_inp);			assert!(BatchProcessor::<E,LK,S,CS1E,H>::verify_batch(vk, 
 				None, None, None, None,
 				&global_claim, &batch_proof, &self.poseidon_config, 
-				false, None)); //note part2 of the proof will be checked later
+				false, None, None)); //note part2 of the proof will be checked later
 			let ind_prf = BatchProcessor::<E,LK,S,CS1E,H>::prove_individual(pk, 
 				&snark_inp, &words, &ind_claim,
 				idx_individual_prf);
@@ -2201,7 +2201,7 @@ where
 			assert!(BatchProcessor::<E,LK,S,CS1E,H>::verify_batch(vk, 
 				None, None, None,None,
 				&global_claim, &batch_proof, &self.poseidon_config, 
-				false,None)); //note part2 of the proof will be checked lateri
+				false,None,None)); //note part2 of the proof will be checked lateri
 			let ind_prf = BatchProcessor::<E,LK,S,CS1E,H>::prove_individual(pk, 
 				&snark_inp, &words, &ind_claim,
 				idx_ind_proof);
@@ -3677,7 +3677,8 @@ where
 		&batch_prf,
 		&driver1_poseidon_config,
 		true, //now full verification
-		opt_kzg_sum1
+		opt_kzg_sum1,
+		Some(job_id), //route each sub-check FAIL to this job's log
 	);
 	if !ok_batch {
 		log(job_id, ERR, &format!(

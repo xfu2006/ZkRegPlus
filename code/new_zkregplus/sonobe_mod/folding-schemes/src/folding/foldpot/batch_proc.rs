@@ -31,7 +31,7 @@ use crate::commitment::{
 use rayon::prelude::*;
 use utils::{
 	timer::Timer,
-	logger::{log_perf, emit_stdout, LOG1},
+	logger::{log, log_perf, emit_stdout, ERR, LOG1},
 };
 use core::marker::PhantomData;
 use crate::folding::foldpot::{
@@ -915,11 +915,19 @@ where
 		poseidon_config: &PoseidonConfig<E::ScalarField>,
 		b_check_part2: bool,
 		opt_kzg_sum1: Option<F>, //optional kzg_sum1
+		log_tag: Option<usize>, //Some(job_id): route sub-check FAILs to the
+			//per-job log so a concurrent N-way batch attributes them per share
 		)->bool{
 		//0. build rand input for generate Fiat-Shamir randoms
 		// Internal flag (replaces the B_DEBUG gate): set true to print which
 		// sub-check returned false during batch verification.
 		let b_debug = true;
+		// route each sub-check FAIL to the per-job log when a job id is given
+		// (bisect_job3.py N-way batch), else to shared stdout as before.
+		let emit_fail = |m: String| match log_tag {
+			Some(jid) => log(jid, ERR, &m),
+			None => emit_stdout(m),
+		};
 		let rand_inp = SnarkRandInput::<E>{
 			kzg_all_words: claim.kzg_all_words.clone(),
 			kzg_length: claim.kzg_length.clone(),
@@ -938,7 +946,7 @@ where
 		let bres = verify_qa_nizk::<E>(&x, &prf.prf_qa_nizk, 
 			&vkey.vk_qa_nizk);	
 		if !bres {
-			if b_debug {emit_stdout(
+			if b_debug {emit_fail(
 				"qa_nizk verif fails".to_string());}
 			return false;
 		}
@@ -954,7 +962,7 @@ where
 		];
 		let (ch, rc) = rand_inp.gen_challenge();
 		if ch!=prf.ch || rc!=prf.rc {
-			if b_debug {emit_stdout(
+			if b_debug {emit_fail(
 				"fs challenge (ch/rc) mismatch".to_string());}
 			return false;
 		}
@@ -967,7 +975,7 @@ where
 		let res = KZG::<E>::verify_with_challenge(&vkey.kzg,
 			ch, &com_all, &prf.agg_kzg_prf);
 		if !res.is_ok() {
-			if b_debug {emit_stdout(
+			if b_debug {emit_fail(
 				"kzg verif fails".to_string());}
 			return false;
 		}
@@ -991,7 +999,7 @@ where
 				"DEBUG USE 60100.2.1 mh={} com1: ch={} com={:?} eval={}",
 				mh, prf.kzg_all_com_ch1.unwrap(), prf.kzg_all_com1.unwrap(),
 				prf.kzg_all_com_prf1.as_ref().unwrap().eval));
-			if !c1 {emit_stdout("cs1e kzg_all_ocm1 verif fails".to_string());}
+			if !c1 {emit_fail("cs1e kzg_all_ocm1 verif fails".to_string());}
 
 			//2. check kzg_all_com2
 			let c2 = CS1E::verify_with_challenge(
@@ -1003,7 +1011,7 @@ where
 				"DEBUG USE 60100.2.2 mh={} com2: ch={} com={:?} eval={}",
 				mh, prf.kzg_all_com_ch2.unwrap(), prf.kzg_all_com2.unwrap(),
 				prf.kzg_all_com_prf2.as_ref().unwrap().eval));
-			if !c2 {emit_stdout("cs1e kzg_all_com2 res2 fails".to_string());}
+			if !c2 {emit_fail("cs1e kzg_all_com2 res2 fails".to_string());}
 
 			//3. check qa_nizk_prf2
 			let vec_x = vec![
@@ -1019,7 +1027,7 @@ where
 			emit_stdout(format!(
 				"DEBUG USE 60100.2.3 mh={} qa2: comW2={:?} comE2={:?} comF2={:?}",
 				mh, prf.comW2.unwrap(), prf.comE2.unwrap(), prf.comF2.unwrap()));
-			if !c3 {emit_stdout("qanizk2 fails".to_string());}
+			if !c3 {emit_fail("qanizk2 fails".to_string());}
 
 			//4. check the snark proof
 			let kzg_sum1 = if opt_kzg_sum1.is_some(){
@@ -1040,7 +1048,7 @@ where
 					.expect("snark main empty")
 			);
 			let c4 = snark_v_main.is_ok() && snark_v_main.unwrap().clone();
-			if !c4 {emit_stdout("snark main fails.".to_string());}
+			if !c4 {emit_fail("snark main fails.".to_string());}
 
 			//4.2 verify te cpcirc snark proof
 			let snark_inp = CircPubInput{
@@ -1079,7 +1087,7 @@ where
 				&prf.snark_proof_cp.as_ref().clone().expect("snark pf empty"));
 					//.map_err(|e| Error::Other(e.to_string())).unwrap();
 			let c5 = snark_v_cp.is_ok() && snark_v_cp.unwrap().clone();
-			if !c5 {emit_stdout("snark_v_cp fails.".to_string());}
+			if !c5 {emit_fail("snark_v_cp fails.".to_string());}
 
 			emit_stdout(format!(
 				"DEBUG USE 60100.1 mh={} PART2 CHECKS: com1={} com2={} \
@@ -1148,7 +1156,7 @@ mod tests_batch_proc {
 		};
 
 		let (batch_proof, _rand_inp2) = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>, CS1E, false> ::prove_batch(&pk, &snark_inp, &words, lkup, &partial_input); 
-		assert!(BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E, false>::verify_batch(&vk, None, None, None, None, &global_claim, &batch_proof, &poseidon_config, false, None));
+		assert!(BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E, false>::verify_batch(&vk, None, None, None, None, &global_claim, &batch_proof, &poseidon_config, false, None, None));
 		let ind_prf = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E,false>::prove_individual(&pk, 
 			&snark_inp, &words, &ind_claims[i], i);
 		let res = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E,false>::verify_individual(&vk, i,

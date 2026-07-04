@@ -41,7 +41,7 @@ Oracle (per run, checked in this order):
 Usage:
   python3 bisect_job3.py                 # full run (auto-detects proj_root)
   python3 bisect_job3.py --rebuild       # force-rebuild the test binary
-  python3 bisect_job3.py --fanout 8 --max-trials 40 --timeout 21600
+  python3 bisect_job3.py --fanout 8 --max-trials 40 --timeout 129600
   python3 bisect_job3.py --proj-root /abs/path/to/new_zkregplus
 Resume: just re-run the identical command -- settled subsets are skipped;
 OOM-marked subsets are retried (use this after switching to the 1TB server).
@@ -480,8 +480,11 @@ def main():
     ap.add_argument("--rebuild", action="store_true")
     ap.add_argument("--fanout", type=int, default=8,
                     help="shares per round (concurrent jobs); default 8")
-    ap.add_argument("--timeout", type=int, default=21600,
-                    help="per-trial timeout seconds (default 6h)")
+    ap.add_argument("--timeout", type=int, default=129600,
+                    help="per-trial KILL ceiling in seconds (default 36h). "
+                         "NOT a wait -- a round that finishes sooner advances "
+                         "to the next round immediately; this only bounds a "
+                         "hung trial. A round is ~17-24h (n_par_snark=1).")
     ap.add_argument("--max-trials", type=int, default=60)
     args = ap.parse_args()
 
