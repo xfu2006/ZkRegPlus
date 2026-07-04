@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # one_time_numa_test_dlp.sh  --  run from zkregplus/src:
 #   nohup ./one_time_numa_test_dlp.sh &   ; then: tail -f nohup.out
-# Fresh-start NUMA timing for full_dlp fold-only:
-#   HARVEST real pct=100 ladder (PINNED to half the box -> 512GB-equiv ~7h for
-#   circuit selection, vs ~14h unpinned on 1TB), then baseline J8, numa J8,
+# NUMA timing for full_dlp fold-only (PCT_CMP% sample, default 1%):
+#   optionally HARVEST the real pct=100 ladder (PINNED to half the box ->
+#   512GB-equiv ~7h for circuit selection, vs ~14h unpinned on 1TB); when
+#   SKIP_HARVEST=1 that step is skipped and the existing DB+ladder are REUSED
+#   (preflight hard-fails if either is missing). Then baseline J8, numa J8,
 #   numa J16 at PCT_CMP.
 # Greppable: "ONETIME_DLP PHASE START/END", "ONETIME_DLP ESTIMATE/ACTUAL/
 #   REMAINING", "ONETIME_DLP TIMING <name> <s>", plus the driver's own
@@ -15,8 +17,12 @@ set -u
 TAG="ONETIME_DLP"
 
 # ---------------- knobs ----------------
-WIPE_DB=1            # 1=full cold wipe of dlp_corpus_aggr (rebuilds 40GB DB, +~2h)
-PCT_CMP=10           # sample % for the 3 comparison runs (1/10/100)
+SKIP_HARVEST=1      # 1=HARVEST already done on this box: REUSE the existing DB +
+                    # ladder, do NOT wipe or rebuild (STEP 0/1 skipped). Preflight
+                    # HARD-FAILS if the DB or ladder is missing. 0=fresh harvest.
+WIPE_DB=0           # 1=full cold wipe of dlp_corpus_aggr (rebuilds 40GB DB, +~2h).
+                    # Forced 0 when SKIP_HARVEST=1 (never wipe reused artifacts).
+PCT_CMP=1            # sample % for the 3 comparison runs (~1.2h max fold wall)
 HARVEST_PIN=1        # 1=pin HARVEST to one NUMA half (512GB-equiv ~7h, not ~14h)
 PART2_DELAY=0        # numa: 0 => halves OVERLAP now (real timing). Raise at pct>=25.
 PART2_RAM=700        # numa: only delay part2 START if part1 tree-RSS >= this (GB)
@@ -30,11 +36,19 @@ export RUSTFLAGS="${RUSTFLAGS:--C link-args=-fuse-ld=lld -Awarnings}"
 
 # ---------------- per-task estimates (seconds) -- priors; recalibrate as you go
 EST_HARVEST=36000    # ~10h: DB build ~2h + discharge ~0.5h + circuit-sel ~7h (pinned)
-EST_BASELINE_J8=3600 # ~1h  (pct=10, baseline = all-8-nodes, the slow case)
-EST_NUMA_J8=2700     # ~45m (pct=10, pinned halves, overlapping)
-EST_NUMA_J16=2700    # ~45m
-TASKS=( "HARVEST_LADDER:$EST_HARVEST" "RUN_BASELINE_J8:$EST_BASELINE_J8" \
-        "RUN_NUMA_J8:$EST_NUMA_J8" "RUN_NUMA_J16:$EST_NUMA_J16" )
+EST_BASELINE_J8=1800 # ~30m (pct=1, baseline = all-8-nodes, the slow case)
+EST_NUMA_J8=1200     # ~20m (pct=1, pinned halves, overlapping)
+EST_NUMA_J16=1200    # ~20m (pct=1)
+# SKIP_HARVEST reuses the harvested DB+ladder, so never wipe them and drop the
+# HARVEST task from the ETA ladder.
+[ "$SKIP_HARVEST" = "1" ] && WIPE_DB=0
+if [ "$SKIP_HARVEST" = "1" ]; then
+  TASKS=( "RUN_BASELINE_J8:$EST_BASELINE_J8" \
+          "RUN_NUMA_J8:$EST_NUMA_J8" "RUN_NUMA_J16:$EST_NUMA_J16" )
+else
+  TASKS=( "HARVEST_LADDER:$EST_HARVEST" "RUN_BASELINE_J8:$EST_BASELINE_J8" \
+          "RUN_NUMA_J8:$EST_NUMA_J8" "RUN_NUMA_J16:$EST_NUMA_J16" )
+fi
 
 # ---------------- paths (relative to zkregplus/src) ----------------
 DRV=./run_full_dlp_numa.py
@@ -185,6 +199,14 @@ if [ -n "$HALF" ]; then
   numactl "--cpunodebind=$HALF" "--preferred-many=$HALF" true 2>/dev/null \
     || { say "PREFLIGHT FAIL: numactl --preferred-many=$HALF unsupported (driver numa mode needs it too)"; pf=1; }
 fi
+# SKIP_HARVEST reuses harvested artifacts -- FAIL LOUD if either is missing so
+# we never silently fall into a ~7h ladder rebuild or a 40GB DB rebuild.
+if [ "$SKIP_HARVEST" = "1" ]; then
+  [ -s "$LADDER" ] \
+    || { say "PREFLIGHT FAIL: SKIP_HARVEST=1 but ladder missing/empty: $LADDER (set SKIP_HARVEST=0 to harvest it)"; pf=1; }
+  { [ -d "$CACHE" ] && [ -f "$CACHE/lkup.txt" ]; } \
+    || { say "PREFLIGHT FAIL: SKIP_HARVEST=1 but DB cache missing: $CACHE (need lkup.txt; set SKIP_HARVEST=0)"; pf=1; }
+fi
 if [ "$pf" = "0" ]; then
   say "PREFLIGHT: cargo test --no-run (build the test binary; cold build may be slow)"
   if ( cd "$REPO" && cargo test -p zkregplus --release --no-run ) \
@@ -198,25 +220,33 @@ if [ "$pf" = "1" ]; then
 fi
 say "PREFLIGHT OK"
 
-# STEP 0/5: wipe to a known fresh state
+# STEP 0/5: wipe to a known fresh state (skipped entirely when reusing artifacts)
 STAGE="STEP0 WIPE"
-say "STEP 0/5 WIPE"
-rm -f  "$LADDER"            && echo "$TAG removed ladder"
-rm -rf "$JOBSDIR"/jobs8 "$JOBSDIR"/jobs16 \
-       "$JOBSDIR"/jobs8_pct* "$JOBSDIR"/jobs16_pct* && echo "$TAG removed splits"
-if [ "$WIPE_DB" = "1" ]; then
-  rm -rf "$CACHE" && echo "$TAG removed FULL DB (will rebuild in HARVEST)"
+if [ "$SKIP_HARVEST" = "1" ]; then
+  say "STEP 0/5 SKIP WIPE (SKIP_HARVEST=1: keep DB + ladder + splits intact)"
 else
-  rm -rf "$CACHE/discharge" && echo "$TAG removed discharge cache (kept DB)"
+  say "STEP 0/5 WIPE"
+  rm -f  "$LADDER"            && echo "$TAG removed ladder"
+  rm -rf "$JOBSDIR"/jobs8 "$JOBSDIR"/jobs16 \
+         "$JOBSDIR"/jobs8_pct* "$JOBSDIR"/jobs16_pct* && echo "$TAG removed splits"
+  if [ "$WIPE_DB" = "1" ]; then
+    rm -rf "$CACHE" && echo "$TAG removed FULL DB (will rebuild in HARVEST)"
+  else
+    rm -rf "$CACHE/discharge" && echo "$TAG removed discharge cache (kept DB)"
+  fi
 fi
 
 # STEP 1/5: harvest the REAL pct=100 ladder, PINNED to half the box, stop pre-fold
-say "STEP 1/5 HARVEST (build DB + discharge + circuit selection)"
-if [ -n "$HALF" ]; then
-  PHASE_PREFIX=(numactl "--cpunodebind=$HALF" "--preferred-many=$HALF")
+if [ "$SKIP_HARVEST" = "1" ]; then
+  say "STEP 1/5 SKIP HARVEST (reuse ladder $LADDER + DB $CACHE)"
+else
+  say "STEP 1/5 HARVEST (build DB + discharge + circuit selection)"
+  if [ -n "$HALF" ]; then
+    PHASE_PREFIX=(numactl "--cpunodebind=$HALF" "--preferred-many=$HALF")
+  fi
+  run_phase HARVEST_LADDER --ladder-only
+  PHASE_PREFIX=()
 fi
-run_phase HARVEST_LADDER --ladder-only
-PHASE_PREFIX=()
 [ -s "$LADDER" ] || { say "FATAL: ladder missing; abort"; exit 2; }
 say "ladder ready: $LADDER"
 

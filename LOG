@@ -29897,6 +29897,15 @@ Thursday 07/02/2026
 Goal 1. check server -> DOWNLOADED
 Goal 2. run the one_time_run_dlp.sh -> STARTED
 
+Saturday 07/04/2026
+Goal 1. check server full_clam
+	[a] check the run time -> folding time is only 16 hrs
+	[b] SNARK generation time 1 hr 
+		=> good. get the data first and then debug
+Goal 2. start the one_time_run_full_dlp.sh
+	[a] chage to 1 percent and remove/skip the set up stage.
+
+
 ----- ACTIVE GOALS -----
 Goal FINAL1. start data collection on GCP
 	[a] server2 -> full_dna (11:30am->6:45pm: 7.25hr) jetstream2: 5.2 hrs. -> DONE
@@ -29915,7 +29924,7 @@ Goal FINAL2. start data collection on Jetstream
 	[b] large: -> (IP: 149.165.170.106)
 		[b0] full_dna => DONE 06/24
 		[b1] full_dlp??
-		[b2] full_clam??
+		[b2] full_clam => DONE/ok 07/03 (but still need another run) - 18 hrs
 		[b3] reef_eval > aleady got 06/24 => DONE
 		[b4] zombie_eval (11:00pm 06/28 -> restarted 12:00pm 06/29 OOM system
 				dead), unfortunately it's restarted
