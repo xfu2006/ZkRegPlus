@@ -61,11 +61,14 @@ rm -f "$JOBLOG" "$PROJ_ROOT/data/cache/run_complete.sentinel" 2>/dev/null || tru
 # ---- run: NJOBS=1 keeps chunks high; ZKR_CS_CHECK=1 arms the probe ---------
 echo "[one_bisec] running (full fold + Groth16, hours). stdout -> $STDOUT_LOG"
 set +e
+# NOTE: --lib restricts to the lib test binary (skips doctests); the filter
+# is the FULL module path because --exact matches the whole test name.
 RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" \
 ZKR_CS_CHECK=1 ZKR_BISECT_NJOBS=1 \
 ZKR_BISECT_DIR="$PROJ_ROOT/$SLICE_DIR" \
-cargo test -p zkregplus --release -- \
-	test_full_clam_bisect --exact --nocapture --test-threads=1 \
+cargo test -p zkregplus --release --lib -- \
+	zkp_driver::tests_zkp_driver::test_full_clam_bisect \
+	--exact --nocapture --test-threads=1 \
 	2>&1 | tee "$STDOUT_LOG"
 rc="${PIPESTATUS[0]}"
 set -e
