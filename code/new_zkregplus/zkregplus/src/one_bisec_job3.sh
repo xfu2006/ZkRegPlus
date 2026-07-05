@@ -29,7 +29,9 @@ JOBLOG="data/cache/logs/log_job_0.txt"                     # single job -> id 0
 STDOUT_LOG="/tmp/one_bisec_job3_stdout.txt"
 PACK_TGZ="/tmp/one_bisec_job3.tgz"
 
-# ---- preflight: keys (bisect reuses them READ-ONLY, never writes) ----------
+# ---- preflight: keys. Missing is NOT fatal -- the runner auto-builds ------
+# a cold/partial snark cache this run (driver.rs:2815-2831 flips to write-mode
+# and persists g16_* keys). Warm cache = fast reuse; cold = +multi-hour keygen.
 missing=""
 for k in g16_main.key g16_main.key.meta g16_cp.key g16_cp.key.meta \
          g16_main.sidecar.cf g16_cp.sidecar.cf g16_cp.sidecar.cp; do
@@ -37,13 +39,14 @@ for k in g16_main.key g16_main.key.meta g16_cp.key g16_cp.key.meta \
 done
 if [ -n "$missing" ]; then
 	echo "############################################################"
-	echo "## SNARK KEYS MISSING under $KEYDIR"
+	echo "## SNARK KEYS COLD under $KEYDIR"
 	echo "## missing:$missing"
-	echo "## Stage them from a prior full_clamav run before proceeding;"
-	echo "## this run reads keys read-only and will fail at the decider"
-	echo "## without them. Aborting."
+	echo "## NOT fatal -- this run will BUILD + PERSIST them (multi-hour"
+	echo "## keygen), then prove. Later runs reuse them. To skip the"
+	echo "## keygen, stage keys from a prior full_clamav run first."
 	echo "############################################################"
-	exit 1
+else
+	echo "[one_bisec] snark keys warm -> reused read-only"
 fi
 [ -f "$SRC_LIST" ] || { echo "[one_bisec] MISSING $SRC_LIST"; exit 1; }
 
