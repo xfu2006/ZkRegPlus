@@ -29917,7 +29917,30 @@ sunday 07/05/2026
 Goal 1. collect dna data
 	[a] /tmp/run_full_dna.tar.gz
 Goal 2. check job3
-	[a] started 06:30pm 0704 -> stopped 
+	[a] started 06:30pm 0704 -> stopped 8:10pm 07/04
+	[b] analysis
+	[c] multi rounds of fix
+	[d] 9:00pm debug run ->  circuit selection done 0:25am 07/05
+		-> to be completed 10pm 07/05
+Goal 3. Writing
+	[a] paragraph 1
+
+Monday 07/6/2026
+Goal 1. analyze the job3 failure of clam
+	[a] total running time: 17 hrs
+	[b] theory: db is built as aggresive but prover runs non-aggresive.
+Goal 2. writing
+	[a] last paragraphs of 6.1
+	[b] read relational DB.
+Goal 3. writing 6.2
+	[a] move all paragraphs
+	[b] create old db
+	[c] clear pdflatex warnings
+Goal 4. fix job3 failure experiment
+	[a] another guess: replace "." with two dots causing problem
+	[b] do local experiment to find the file that fails the db
+	[c] now running local scan of files to identify which is wrong.
+	[d] p1
 
 
 ----- ACTIVE GOALS -----

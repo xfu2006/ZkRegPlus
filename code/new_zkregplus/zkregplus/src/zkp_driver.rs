@@ -2238,6 +2238,85 @@ pub mod tests_zkp_driver{
 	}
 
 
+	// ===== DEBUG USE 62727: minimal AGGRESSIVE repro (REMOVE LATER) =====
+	// Clone of small_par_full_snark but AGGRESSIVE (m>0) on a tiny crafted
+	// dataset (data/debug/small_repro_aggr) whose sed pattern straddles chunk
+	// boundaries -> exercises the aggressive forward-halo. Runs the real fold +
+	// full decider + verify. Reproduces the job-3 failure iff PART2 CHECKS
+	// prints main=false, or the ZKR_STEP_CHECK probe prints DEBUG USE 62727.1/.2.
+	fn small_repro_aggr<F:PrimeField>(b_check_lkup: bool){
+		utils::os::print_computer_config(Some("small_repro_aggr"));
+		get_global_config().snark_cache_dir = "small_repro_aggr".to_string();
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_write_snark_cache = false;
+		get_global_config().range2_bit = 18;
+		get_global_config().b_read_cache = false;      // rebuild DB AGGRESSIVE
+		get_global_config().b_light_test = false;      // full decider + verify
+		get_global_config().b_one_proof = true;        // only Job 0 proves
+		get_global_config().b_folding_only = true;     // 62727 probe detects during fold; skip slow decider/Groth16
+		get_global_config().b_estimate_caps = true;    // auto-tune aggressive caps
+		get_global_config().log_level = utils::logger::LOG3;
+		get_global_config().perc_lkup_share = if !b_check_lkup {1} else {10000};
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = false; // NON-aggr: exercise 79cd2e54 path
+		get_global_config().clamav_cfg.sde_rep_fanout_cap = 100;
+		get_global_config().clamav_cfg.min_pm_word_len = 3;
+		get_global_config().min_subsigs = 1;
+		get_global_config().min_basis_unique_states = 2;
+		get_global_config().min_basis_acc_states = 2;
+		get_global_config().min_basis_pats_in_trace = 4;
+		get_global_config().min_avg_pats_per_subsig = 1;
+		let b_write_cache = !read_global_config().b_read_cache;
+		let set1 = "data/debug/small_repro_aggr/config";
+		let max_word= 8; // small chunk (~60B) so the ~1KB repro files span MANY chunks -> halo engages; assert 8*62>=4*m ok
+		let sigs = 8;    // bumped (CapErr comp_sig::sigs) for the 3-pattern repro set
+		let subsigs = 16; // bumped (CapErr cp::subsigs) for near-miss subsig fan-out
+		let avg_pats_per_subsig = 3;
+		let avg_active_pats_per_subsig = 2;
+		let perc_comp_subsigs = 26;
+		let basis_unique_states = 25*100;
+		let basis_acc_states = 807;
+		let basis_pats_in_trace = 1500;
+		let perc_pats_expansion_rate = 200;
+
+		let init_cp_cap= CpCapacity{
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+		};
+		let init_sed_cap= SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig, avg_active_pats_per_subsig,
+			basis_pats_in_trace,
+			perc_pats_expansion_rate,
+			sigs, perc_comp_subsigs,
+			basis_unique_states, basis_acc_states
+		);
+		let init_dfa_cap= DfaCapacity::new(max_word, sigs, subsigs);
+
+		let scan_files: Vec<String> = vec![format!("{}/binexec_p1.dat", set1)];
+		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(0,
+			&format!("{}/sigs.dat",set1),
+			scan_files,
+			&format!("{}/report.dat", set1),
+			b_write_cache,
+			"small_repro_aggr",
+			&format!("{}/dfa.dat", set1),
+			&format!("{}/ised.dat", set1),
+			&format!("{}/ised_igc.dat",set1),
+			max_word,
+			&init_cp_cap,
+			&init_sed_cap,
+			&init_dfa_cap,
+			&init_cp_cap,
+			&init_sed_cap,
+			&vec![2],   // decrease ladder -> 2 category circuits (cat_0 base + cat_1 decreased)
+			2,          // num_circs=2 so segments route to DIFFERENT rungs (mixed-rung boundary)
+			b_check_lkup, DcMode::Off
+		);
+	}
+	// ===== END DEBUG USE 62727 repro fn =====
+
 	/// the sigs are the same as small data
 	/// has 1 long words (1k-packed nibbles - around 31kb)
 	/// read the READ me in data/small_data_set2/README for the design of sigs
@@ -3362,6 +3441,105 @@ pub mod tests_zkp_driver{
 		);
 	}
 
+	// ===== DEBUG USE 62727: find the job-3 file that trips 79cd2e54 (REMOVE LATER) =====
+	// Builds the REAL non-aggressive ClamAV DB from main.dat, runs job-3
+	// (binexec_p3.dat) through advice-gen with b_dryrun_after_capcheck (NO fold,
+	// NO Groth16 -> low RAM), ZKR_STEP_CHECK=1 arms the 62727.4 fabrication probe.
+	// Same caps as full_clam_bisect. Watch stdout for DEBUG USE 62727.4 lines.
+	fn full_clam_find_file<F:PrimeField>(){
+		utils::os::print_computer_config(Some("full_clam_find_file"));
+		use folding_schemes::folding::foldpot::capacity_planner::CapacityPlanner;
+		use folding_schemes::folding::foldpot::sigma_ir1cs::LookupTableTwoCol as _;
+		get_global_config().range2_bit = 26;
+		get_global_config().b_read_cache = true;   // load cached "full_data" DB
+		get_global_config().min_subsigs = 368;
+		get_global_config().min_basis_unique_states= 1054;
+		get_global_config().min_basis_acc_states =  268;
+		get_global_config().min_basis_pats_in_trace=  295;
+		get_global_config().min_avg_pats_per_subsig= 8;
+		get_global_config().min_dfa_sigs = 3;
+		get_global_config().min_dfa_subsigs =  3;
+		get_global_config().perc_lkup_share = 143;
+		get_global_config().log_level = utils::logger::LOG3;
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = false; // NON-aggr path (79cd2e54)
+		let proot = utils::os::proj_root();
+		let set1 = "data/debug/full_clamav/config";
+		let max_word = 512 * 8;
+		let range2_bit = 26;
+		let cfg = data_processor::clamav::default_clamav_cfg();
+		let mut vlog = vec![];
+		// load the REAL non-aggr ClamAV DB (cached "full_data" from the earlier build)
+		let db = data_processor::clam_db::ClamavDB::<Fr>::build_or_load(
+			&cfg, &format!("{}/main.dat", set1),
+			&format!("{}/main_dfa.dat", set1),
+			&format!("{}/needs_ised.dat", set1),
+			&format!("{}/needs_ised_igc.dat", set1), &mut vlog,
+			"full_data", true, true).expect("build db");
+		// discharge job-3 files -> padded words + WordInfo (LIGHT: DB only, no circuit)
+		let scan = std::env::var("ZKR_SCAN")
+			.unwrap_or_else(|_| format!("{}/binexec_p3.dat", set1));
+		let files = utils::os::read_lines(&format!("{}/{}", proot, scan));
+		let (mut words, mut infos) = (vec![], vec![]);
+		for fpath in &files{
+			let nibbles = utils::os::read_nibbles(&format!("{}/{}", proot, fpath));
+			let f_nib: Vec<Fr> = nibbles.iter().map(|x| Fr::from(*x as u32)).collect();
+			words.push(utils::data::pack_nibbles(&f_nib));
+			let (_fdr, rec) = data_processor::clamav::quick_discharge_file_by_crit_bag_pm(
+				fpath, &nibbles, &db.vec_sigs, &db.vec_sigs_no_critical_pat,
+				&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
+				&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
+				&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
+				&db.sig_to_id, max_word, max_word);
+			infos.push(rec);
+		}
+		let lkup_len = db.lkup.get_size();
+		let total_word_n: usize = words.iter().map(|w| w.len()).sum();
+		let poseidon = folding_schemes::transcript::poseidon
+			::poseidon_canonical_config::<Fr>();
+		let padded: Vec<Vec<Fr>> = words.iter()
+			.map(|w| utils::data::pad_word_to_multiple::<Fr>(w, max_word)).collect();
+		let db_arc = std::sync::Arc::new(db);
+		// caps = same as full_clam_bisect
+		let (sigs, subsigs, avg_pats_per_subsig, avg_active_pats_per_subsig)
+			= (400usize, 580usize, 8usize, 2usize);
+		let (basis_unique_states, basis_acc_states, basis_pats_in_trace)
+			= (1300usize, 750usize, 820usize);
+		let (perc_comp_subsigs, perc_pats_expansion_rate, perc_pats_expansion_rate_igc)
+			= (20usize, 104usize, 2usize);
+		let (dfa_sigs, dfa_subsigs, num_circs) = (8usize, 8usize, 2usize);
+		let vec_decrease_level = vec![2];
+		let init_cp_cap= CpCapacity{ max_word_len: max_word, basis_unique_states, subsigs, avg_pats_per_subsig };
+		let init_sed_cap= SedCapacity::new(max_word, range2_bit, subsigs,
+			avg_pats_per_subsig, avg_active_pats_per_subsig, basis_pats_in_trace,
+			perc_pats_expansion_rate, sigs, perc_comp_subsigs, basis_unique_states, basis_acc_states);
+		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
+		let init_cp_cap_igc= CpCapacity{ max_word_len: max_word, basis_unique_states, subsigs, avg_pats_per_subsig };
+		let init_sed_cap_igc= SedCapacity::new(max_word, range2_bit, subsigs,
+			avg_pats_per_subsig, avg_active_pats_per_subsig, basis_pats_in_trace,
+			perc_pats_expansion_rate_igc, sigs, perc_comp_subsigs, basis_unique_states, basis_acc_states);
+		// build LIGHT mappers only (no gen_cs / no fold -> low RAM)
+		let layered = super::build_circs_adv::<Fr,C1,CS1>(&poseidon, total_word_n, max_word,
+			lkup_len, db_arc.clone(), &init_cp_cap, &init_sed_cap, &init_dfa_cap,
+			&init_cp_cap_igc, &init_sed_cap_igc, &vec_decrease_level, num_circs, false);
+		let planner = CapacityPlanner::<C1, super::FC<Fr,C1,CS1>, super::LK<Fr>, super::GM<Fr>, false>::new(layered);
+		// advice-gen per file (serial): fires the 62727.4 fabrication probe under each marker
+		utils::logger::emit_stdout(format!(
+			"DEBUG USE 62727.5: START advice-gen survey of {} job-3 files", files.len()));
+		for (i, (word, info)) in padded.iter().zip(infos.iter()).enumerate() {
+			utils::logger::emit_stdout(format!("DEBUG USE 62727.5: FILE i={} fname={}", i, files[i]));
+			let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+				planner.plan_nd_advice(0, utils::logger::LOG2, false, word, info, &files[i])
+			}));
+			match res {
+				Ok(Ok(_)) => {}
+				Ok(Err(e)) => utils::logger::emit_stdout(format!("DEBUG USE 62727.5:   file {} advice-err {:?}", i, e)),
+				Err(_) => utils::logger::emit_stdout(format!("DEBUG USE 62727.5:   file {} PANIC", i)),
+			}
+		}
+		utils::logger::emit_stdout("DEBUG USE 62727.5: DONE advice-gen survey".to_string());
+	}
+	// ===== END DEBUG USE 62727 find-file fn =====
+
 	/// full_clam_bisect: 8-way concurrent bisection of job 3's verify_batch
 	/// failure. Faithful clone of full_clamav (b_setup=false): SAME config and
 	/// SAME capacities, so the cached full_clamav g16 keys are reused read-only
@@ -3479,6 +3657,12 @@ pub mod tests_zkp_driver{
 			num_circs,
 			true, DcMode::Off  // b_check_lkup=true: matches full_clam()
 		);
+	}
+
+	// DEBUG USE 62727 (remove later): find the job-3 file that trips 79cd2e54.
+	#[test]
+	pub fn test_full_clam_find_file(){
+		full_clam_find_file::<Fr>();
 	}
 
 	#[test]
@@ -6727,6 +6911,15 @@ failed={} high={} final={}", raw_n, n_stage1, passed.len(),
 	#[test]
 	pub fn test_small_par_full_snark(){
 		small_par_full_snark::<Fr>(false);
+	}
+
+	// DEBUG USE 62727 (remove later): minimal aggressive R1CS-failure repro.
+	// Run: ZKR_STEP_CHECK=1 RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" \
+	//   cargo test -p zkregplus --release --lib -- \
+	//   zkp_driver::tests_zkp_driver::test_small_repro_aggr --exact --nocapture --test-threads=1
+	#[test]
+	pub fn test_small_repro_aggr(){
+		small_repro_aggr::<Fr>(false);
 	}
 
 	// ===== M2.5: estimator validation (OLD/NEW/REAL coverage) =====

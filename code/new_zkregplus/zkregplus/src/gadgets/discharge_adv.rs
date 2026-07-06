@@ -653,6 +653,11 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 		let hm_loc = Self::pat_loc_to_hm(pat_loc);
 		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
+		// DEBUG USE 62727.6 (remove later): confirm StepQueue::gen_forward_prf is REACHED
+		if std::env::var("ZKR_STEP_CHECK").is_ok() {
+			utils::logger::emit_stdout(format!(
+				"DEBUG USE 62727.6: gen_forward_prf ENTER subsigs={}", self.subsigs.len()));
+		}
 
 		//2. process each subsig, propagating step by step
 		let tuples = self.subsigs.par_iter().map(|subsig|{
@@ -746,6 +751,14 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 				//loop never ran and to_add_item stays None;
 				//synthesize an empty template so downstream
 				//data structures stay consistent.
+				// ===== DEBUG USE 62727.4 BEGIN (REMOVE LATER): flag the 79cd2e54 empty-fabricate branch =====
+				if to_add_item.is_none() && std::env::var("ZKR_STEP_CHECK").is_ok() {
+					utils::logger::emit_stdout(format!(
+						"DEBUG USE 62727.4: FABRICATE-empty-to_add (79cd2e54) chunk={} subsig={:?} step_i={} items_len={}",
+						utils::consts::PROBE_CHUNK_ID.load(std::sync::atomic::Ordering::Relaxed),
+						subsig, i, items.len()));
+				}
+				// ===== DEBUG USE 62727.4 END =====
 				let mut to_add_item = to_add_item.unwrap_or_else(
 					|| StepQueueItem::new(*subsig,
 						F::from(i as u32), dst_pat,

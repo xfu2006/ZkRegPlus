@@ -1819,6 +1819,25 @@ where
                 .check_relaxed_instance_relation(&self.W_i.vec_wit[j_pci1].clone().into(), &self.U_i.vec_inst[j_pci1].clone().into())?;
         }
 
+		// ===== DEBUG USE 62727 BEGIN -- per-step step-circuit satisfiability probe (REMOVE LATER) =====
+		// Arm with env ZKR_STEP_CHECK=1. Fires natively during folding: 62727.1
+		// = this step's fresh honest witness violates its strict step-R1CS (the
+		// exact culprit chunk); 62727.2 = running relaxed instance corrupted.
+		if std::env::var("ZKR_STEP_CHECK").is_ok() {
+			let step_i = field_to_usize(&self.i);
+			if let Err(e) = self.r1cs[j_pci1].check_instance_relation(
+				&self.w_i.clone().into(), &self.u_i.clone().into()) {
+				emit_stdout(format!("DEBUG USE 62727.1: FRESH-UNSAT step={} circ={} :: {:?}", step_i, j_pci1, e));
+				panic!("DEBUG USE 62727.1: step-circuit UNSAT at step={} circ={}", step_i, j_pci1);
+			}
+			if let Err(e) = self.r1cs[j_pci1].check_relaxed_instance_relation(
+				&self.W_i.vec_wit[j_pci1].clone().into(), &self.U_i.vec_inst[j_pci1].clone().into()) {
+				emit_stdout(format!("DEBUG USE 62727.2: RELAXED-UNSAT step={} circ={} :: {:?}", step_i, j_pci1, e));
+				panic!("DEBUG USE 62727.2: running relaxed instance UNSAT at step={} circ={}", step_i, j_pci1);
+			}
+			emit_stdout(format!("DEBUG USE 62727.3: step={} circ={} OK", step_i, j_pci1));
+		}
+		// ===== DEBUG USE 62727 END =====
 		log_perf(self.job_id, log_level, &format!("prove_step: Step 5. commit to instance: wit len: {}", self.w_i.W.len()), &mut gt2);
 		log_perf(self.job_id, log_level-1, &format!("-- prove_step cost: i: {}, circ_id: {}, stmt_len: {}, wtns size: {}", self.i, j_pci1, wtns.statement.len(), wtns_config.get_total_size()), &mut gt1);
 
