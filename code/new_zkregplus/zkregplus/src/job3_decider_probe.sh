@@ -1,24 +1,27 @@
 #!/usr/bin/env bash
-# one_bisec_job3.sh -- FAST PATH for the full_clam job-3 MainDecider failure.
+# job3_decider_probe.sh -- DECIDER-ONLY probe for the full_clam job-3 failure.
 #
-# Instead of file-bisection (which starves the lookup-coverage assert), this
-# runs job 3 WHOLE as a single valid job (151 files -> ~1704 chunks -> the
-# assert passes -> it folds + proves), with the ZKR_CS_CHECK probe ON. The
-# probe fires inside MainDecider proving and names the FIRST unsatisfied
-# constraint block, so you learn the failing gadget directly.
+# Runs job 3 WHOLE as a single valid job (151 files -> ~1704 chunks -> the
+# lookup-coverage assert passes -> it folds + proves) with ONLY the decider
+# probe (ZKR_CS_CHECK). NO per-step probing -> the fold is prod-faithful. The
+# probe fires at MainDecider assembly and names the FIRST unsatisfied
+# constraint block (62001.2), so you learn the failing decider block directly.
 #
-# Usage (from anywhere):  bash zkregplus/src/one_bisec_job3.sh
-#   long run (hours). To detach:  nohup bash .../one_bisec_job3.sh &
+# This is the minimal-interference variant. For per-step localization (which
+# fold step / file / gadget fails, with early abort) use job3_step_probe.sh.
+#
+# Usage (from anywhere):  bash zkregplus/src/job3_decider_probe.sh
+#   long run (~16h). To detach:  nohup bash .../job3_decider_probe.sh &
 #
 # Output: prints the first "CS UNSAT @<block>" and packs a small bundle to
-# /tmp/one_bisec_job3.tgz for download.
+# /tmp/job3_decider_probe.tgz for download.
 set -euo pipefail
 
 # ---- locate repo root (this script lives in zkregplus/src/) ----------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJ_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$PROJ_ROOT"
-echo "[one_bisec] proj_root = $PROJ_ROOT"
+echo "[decider_probe] proj_root = $PROJ_ROOT"
 
 # ---- paths -----------------------------------------------------------------
 SRC_LIST="data/debug/full_clamav/config/binexec_p3.dat"   # job 3's file list
@@ -26,8 +29,8 @@ SLICE_DIR="data/debug/full_clam_bisect/config"
 REPORT_DIR="data/debug/full_clam_bisect/reports"
 KEYDIR="data/cache/full_data"
 JOBLOG="data/cache/logs/log_job_0.txt"                     # single job -> id 0
-STDOUT_LOG="/tmp/one_bisec_job3_stdout.txt"
-PACK_TGZ="/tmp/one_bisec_job3.tgz"
+STDOUT_LOG="/tmp/job3_decider_probe_stdout.txt"
+PACK_TGZ="/tmp/job3_decider_probe.tgz"
 
 # ---- preflight: keys. Missing is NOT fatal -- the runner auto-builds ------
 # a cold/partial snark cache this run (driver.rs:2815-2831 flips to write-mode
@@ -46,20 +49,20 @@ if [ -n "$missing" ]; then
 	echo "## keygen, stage keys from a prior full_clamav run first."
 	echo "############################################################"
 else
-	echo "[one_bisec] snark keys warm -> reused read-only"
+	echo "[decider_probe] snark keys warm -> reused read-only"
 fi
-[ -f "$SRC_LIST" ] || { echo "[one_bisec] MISSING $SRC_LIST"; exit 1; }
+[ -f "$SRC_LIST" ] || { echo "[decider_probe] MISSING $SRC_LIST"; exit 1; }
 
 # ---- build the single-job slice = all of job 3 -----------------------------
 mkdir -p "$SLICE_DIR" "$REPORT_DIR"
 rm -f "$SLICE_DIR"/slice_*.dat
 cp "$SRC_LIST" "$SLICE_DIR/slice_0.dat"
 n_files="$(grep -cve '^[[:space:]]*$' "$SRC_LIST" || true)"
-echo "[one_bisec] slice_0.dat = $n_files files (whole job 3)"
+echo "[decider_probe] slice_0.dat = $n_files files (whole job 3)"
 rm -f "$JOBLOG" "$PROJ_ROOT/data/cache/run_complete.sentinel" 2>/dev/null || true
 
 # ---- run: NJOBS=1 keeps chunks high; ZKR_CS_CHECK=1 arms the probe ---------
-echo "[one_bisec] running (full fold + Groth16, hours). stdout -> $STDOUT_LOG"
+echo "[decider_probe] running (full fold + Groth16, hours). stdout -> $STDOUT_LOG"
 set +e
 # NOTE: --lib restricts to the lib test binary (skips doctests); the filter
 # is the FULL module path because --exact matches the whole test name.
@@ -72,7 +75,7 @@ cargo test -p zkregplus --release --lib -- \
 	2>&1 | tee "$STDOUT_LOG"
 rc="${PIPESTATUS[0]}"
 set -e
-echo "[one_bisec] cargo test exit = $rc"
+echo "[decider_probe] cargo test exit = $rc"
 
 # ---- report: first UNSAT block is the culprit gadget -----------------------
 echo "======================================================================"
@@ -99,4 +102,4 @@ STAGE="$(mktemp -d)"
 [ -f "$STDOUT_LOG" ] && cp "$STDOUT_LOG" "$STAGE/stdout.txt"
 tar czf "$PACK_TGZ" -C "$STAGE" .
 rm -rf "$STAGE"
-echo "[one_bisec] packed -> $PACK_TGZ  (log_job_0.txt + stdout.txt)"
+echo "[decider_probe] packed -> $PACK_TGZ  (log_job_0.txt + stdout.txt)"

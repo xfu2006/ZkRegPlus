@@ -927,6 +927,24 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 					.collect::<Vec<F>>();
 				to_del.sort();
 
+				// ===== DEBUG USE 62729.1 BEGIN (REMOVE LATER): finite
+				// cross-chunk prune trace. Only the 2 finite chunk-crossers
+				// DB-wide (Gandcrab/Kryptik) reach here (sentinel rg_end=
+				// 2^26-1 never prunes); names the culprit advice values behind
+				// a 62727.1 hit. Env-gated: no-op when ZKR_STEP_CHECK unset. =====
+				if rg_end < _max && !to_del.is_empty()
+					&& std::env::var("ZKR_STEP_CHECK").is_ok() {
+					utils::logger::emit_stdout(format!(
+						"DEBUG USE 62729.1: BWD-PRUNE-FINITE chunk={} \
+						 subsig={:?} src_step={} rg_end={} min_loc={} \
+						 default_min_loc={} n_del={} first_del={:?}",
+						utils::consts::PROBE_CHUNK_ID.load(
+							std::sync::atomic::Ordering::Relaxed),
+						subsig, src_step, rg_end, min_loc,
+						default_min_loc, to_del.len(), to_del.first()));
+				}
+				// ===== DEBUG USE 62729.1 END =====
+
 
 				let set_to_del = to_del.iter().map(|x| *x)
 					.collect::<HashSet<F>>();

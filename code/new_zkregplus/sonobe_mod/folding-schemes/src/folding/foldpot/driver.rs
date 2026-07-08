@@ -1781,12 +1781,12 @@ where
             	nova.prove_step(&mut rng, v_stmt, other_inst)
 					.expect("prove step error");
 
-				//2.3 update 
+				//2.3 update
 				prev_stmt = Some(stmt);
 				idx += 1;
 				num_steps +=1;
 				subseg_id += 1;
-			}//end for while remaining word 
+			}//end for while remaining word
 			wi += 1;
 		} //for each word
 		assert!(num_steps==vea.len());
@@ -2327,6 +2327,15 @@ where
 				let other_inst = None;
 				nova.pc_i = vea[idx].pc_i;
 				nova.pc_i1 = vea[idx].pc_i1;
+				// ===== DEBUG USE 62727.0 BEGIN (REMOVE LATER): name the file/seg
+				// for the step about to fold so a 62727.1 panic is immediately
+				// preceded by its file. Gated by ZKR_STEP_CHECK. =====
+				if std::env::var("ZKR_STEP_CHECK").is_ok() {
+					emit_stdout(format!(
+						"DEBUG USE 62727.0: FOLD-STEP word_id={} seg_id={} fname={}",
+						word_id, subseg_id, word_fname));
+				}
+				// ===== DEBUG USE 62727.0 END =====
             	nova.prove_step(&mut rng, v_stmt, other_inst)
 					.expect("prove step error");
 				log_perf(job_id, log_level+1, &format!("PERF 1009: -- Pass 3. prove_step cost for word_id: {}, seg_id: {}, stmt_len: {}", word_id, subseg_id, stmt_len), &mut gt_fold);

@@ -25,6 +25,15 @@ pub trait NovaR1CS<C: CurveGroup> {
         W: &Witness<C>,
         U: &CommittedInstance<C>,
     ) -> Result<(), Error>;
+
+    /// DEBUG USE 62727 (REMOVE LATER): first constraint row where the tight
+    /// (un-relaxed) R1CS relation fails for (W,U); None if satisfied. Maps to
+    /// the failing gadget region.
+    fn first_bad_instance_row(
+        &self,
+        W: &Witness<C>,
+        U: &CommittedInstance<C>,
+    ) -> Option<usize>;
 }
 
 impl<C: CurveGroup> NovaR1CS<C> for R1CS<C::ScalarField>
@@ -65,5 +74,22 @@ where
 
         let Z: Vec<C::ScalarField> = [vec![U.u], U.x.to_vec(), W.W.to_vec()].concat();
         rel_r1cs.check_relation(&Z)
+    }
+
+    // DEBUG USE 62727 (REMOVE LATER): mirrors check_instance_relation but
+    // returns the first unsatisfied constraint row instead of a bool.
+    fn first_bad_instance_row(
+        &self,
+        W: &Witness<C>,
+        U: &CommittedInstance<C>,
+    ) -> Option<usize> {
+        use crate::utils::vec::{hadamard, mat_vec_mul};
+        let z: Vec<C::ScalarField> =
+            [vec![U.u], U.x.to_vec(), W.W.to_vec()].concat();
+        let az = mat_vec_mul(&self.A, &z).ok()?;
+        let bz = mat_vec_mul(&self.B, &z).ok()?;
+        let cz = mat_vec_mul(&self.C, &z).ok()?;
+        let azbz = hadamard(&az, &bz).ok()?;
+        (0..cz.len()).find(|&i| azbz[i] != cz[i])
     }
 }

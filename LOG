@@ -29925,7 +29925,7 @@ Goal 2. check job3
 Goal 3. Writing
 	[a] paragraph 1
 
-Monday 07/6/2026
+Sunday 07/5/2026
 Goal 1. analyze the job3 failure of clam
 	[a] total running time: 17 hrs
 	[b] theory: db is built as aggresive but prover runs non-aggresive.
@@ -29941,6 +29941,52 @@ Goal 4. fix job3 failure experiment
 	[b] do local experiment to find the file that fails the db
 	[c] now running local scan of files to identify which is wrong.
 	[d] p1
+
+Tuesday 07/06 
+Goal 1. continue to analyze job 3 failure
+	[a] root cause 1: . double
+	[b] create a debug_3 func) to resurface the error
+
+Goal 2. Writing
+	[a] algorithm first.
+		-> change font
+		-> well formed
+	[b] p2 of 6.2
+		-> first pass
+		-> 2nd pass
+	[c] p3 of 6.3
+		-> 1st pass 
+		-> check what is delta 
+		-> revise alg
+		-> beautify alg -> DONE
+		-> p3 revision -> DONE
+
+Goal 3. Writing Section 5 revision plan -> DONE
+Goal 4. Planning 6.3
+	[a] p1 draft
+	[b] figure fix
+	[c] p2 draft
+	[d] p2 revision
+Goal 5. continue to analyze job 3
+	[a] study a simple example of the two dot expansion.
+	[b] run the concrete example (simplified) to verify -> not working (toy)
+	[c] check repro design
+	[d] run the full db example -> not working
+	[e] use a small db -> lost track redo the big example to
+		identify a smaller set of signatures and 
+		cause of UNSAT.
+
+Wed 07/07/2026
+Goal 1. continue to explore job3 issue
+	[a] run example on double dots again
+	[b] run another example -> not working
+	[c] prepare another run on server 
+Goal 2. Writing
+	[a] algorithm
+	[b] figure the average acc_states rate.
+	[c] 6.4 
+Goal 3. server run
+	[a] 
 
 
 ----- ACTIVE GOALS -----
@@ -29972,6 +30018,7 @@ Goal FINAL2. start data collection on Jetstream
 				8:00am 06/30 ->  10:13am 06/30: failed again, now improve
 					the failure handling and re-wrun.
 				10:30am 06/30 -> 8:30am 07/02 (45 hrs). => DONE
+
 
 
 

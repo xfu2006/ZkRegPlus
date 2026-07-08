@@ -1820,20 +1820,29 @@ where
         }
 
 		// ===== DEBUG USE 62727 BEGIN -- per-step step-circuit satisfiability probe (REMOVE LATER) =====
-		// Arm with env ZKR_STEP_CHECK=1. Fires natively during folding: 62727.1
-		// = this step's fresh honest witness violates its strict step-R1CS (the
-		// exact culprit chunk); 62727.2 = running relaxed instance corrupted.
+		// Arm with env ZKR_STEP_CHECK=1. Per step runs ONLY the cheap tight
+		// check (62727.1): the fresh honest witness vs its strict step-R1CS.
+		// On failure it also names the first-bad constraint ROW (-> gadget
+		// region) then panics (early abort at the culprit step). The relaxed
+		// running-instance check (62727.2) is redundant for this diagnosis (the
+		// fold maintains it by construction; the decider is the real fold-
+		// integrity check) so it is OFF unless ZKR_STEP_CHECK_RELAXED is set.
 		if std::env::var("ZKR_STEP_CHECK").is_ok() {
 			let step_i = field_to_usize(&self.i);
 			if let Err(e) = self.r1cs[j_pci1].check_instance_relation(
 				&self.w_i.clone().into(), &self.u_i.clone().into()) {
-				emit_stdout(format!("DEBUG USE 62727.1: FRESH-UNSAT step={} circ={} :: {:?}", step_i, j_pci1, e));
-				panic!("DEBUG USE 62727.1: step-circuit UNSAT at step={} circ={}", step_i, j_pci1);
+				let row = self.r1cs[j_pci1].first_bad_instance_row(
+					&self.w_i.clone().into(), &self.u_i.clone().into())
+					.map(|r| r as i64).unwrap_or(-1);
+				emit_stdout(format!("DEBUG USE 62727.1: FRESH-UNSAT step={} circ={} first_bad_row={} n_cons={} :: {:?}", step_i, j_pci1, row, self.r1cs[j_pci1].A.n_rows, e));
+				panic!("DEBUG USE 62727.1: step-circuit UNSAT at step={} circ={} first_bad_row={}", step_i, j_pci1, row);
 			}
-			if let Err(e) = self.r1cs[j_pci1].check_relaxed_instance_relation(
-				&self.W_i.vec_wit[j_pci1].clone().into(), &self.U_i.vec_inst[j_pci1].clone().into()) {
-				emit_stdout(format!("DEBUG USE 62727.2: RELAXED-UNSAT step={} circ={} :: {:?}", step_i, j_pci1, e));
-				panic!("DEBUG USE 62727.2: running relaxed instance UNSAT at step={} circ={}", step_i, j_pci1);
+			if std::env::var("ZKR_STEP_CHECK_RELAXED").is_ok() {
+				if let Err(e) = self.r1cs[j_pci1].check_relaxed_instance_relation(
+					&self.W_i.vec_wit[j_pci1].clone().into(), &self.U_i.vec_inst[j_pci1].clone().into()) {
+					emit_stdout(format!("DEBUG USE 62727.2: RELAXED-UNSAT step={} circ={} :: {:?}", step_i, j_pci1, e));
+					panic!("DEBUG USE 62727.2: running relaxed instance UNSAT at step={} circ={}", step_i, j_pci1);
+				}
 			}
 			emit_stdout(format!("DEBUG USE 62727.3: step={} circ={} OK", step_i, j_pci1));
 		}
