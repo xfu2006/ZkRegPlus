@@ -22,6 +22,8 @@ macro_rules! lock_unwrap {
 */
 use utils::{consts::ADD_CHAIN_SIZE, logger::{log, log_perf, emit_stdout, LOG6,LOG7}, timer::Timer as GTimer};
 use crate::folding::foldpot::utils::{sum3,alloc_fpvar_mul,var_to_tuple, var_to_tuple_adv, B_DEBUG, B_DEBUG3, B_DEBUG2, check_cs, POW_LE_BITS, alloc_le_bits};
+// DEBUG USE 62730 (REMOVE LATER): per-gadget SAT checkpoint helper
+use crate::folding::foldpot::utils::gadget_sat_check;
 use serde::{Serialize,Deserialize};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use crate::commitment::CommitmentScheme;
@@ -3480,6 +3482,8 @@ where 	C: CurveGroup<ScalarField=F>,
 			}
 			gi += 1;
 		}
+		// DEBUG USE 62730 (REMOVE LATER): SAT after msg2 Fiat-Shamir check
+		gadget_sat_check(&cs, "sigma_ir1cs::msg2_fs");
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 1");
 			emit_stdout(format!(concat!(
@@ -3506,6 +3510,11 @@ where 	C: CurveGroup<ScalarField=F>,
 			if B_DEBUG3{
 				check_cs(&cs, &format!("After gadget: {}", lock_unwrap!(g).get_name()));
 			}
+			// DEBUG USE 62730 (REMOVE LATER): SAT after THIS gadget's msg3 ->
+			// the first UNSAT names the exact culprit gadget (discharge/
+			// compute_sig/cp/sed/dfa) in the composite circuit.
+			gadget_sat_check(&cs, &format!("sigma_ir1cs::assert_msg3::{}::{}",
+				self.name, lock_unwrap!(g).get_name()));
 			let stmt_len = lock_unwrap!(g).get_msg_size().0;
 			log_perf(self.job_id, log_level, &format!("-- -- after msg3 of module {}: {}:\n\tINCREASED: constraints: {}, const vars: {}, wit vars: {} \n\t==> NOW: CS:{}, const: {}, witness: {}\n\t ==> stmt_size: {}. ", i, lock_unwrap!(g).get_name(), cs.num_constraints()-nc, cs.num_instance_variables()-ni, cs.num_witness_variables()-nv, cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables(), stmt_len), &mut gt3);
 			// DEBUG USE 64900.1 (ZKR_PROBE_CSBREAK / ZKR_PROBE_SIZES):
@@ -3629,6 +3638,8 @@ where 	C: CurveGroup<ScalarField=F>,
 			assert!(io_res.value()?, "io not match at final step!");
 		}
 		io_res.enforce_equal(&Boolean::TRUE)?;
+		// DEBUG USE 62730 (REMOVE LATER): SAT after input/output buffer chaining
+		gadget_sat_check(&cs, "sigma_ir1cs::io_buffer");
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 4");
 			emit_stdout(format!(concat!(
@@ -4288,6 +4299,9 @@ where 	C: CurveGroup<ScalarField=F>,
 			assert!(b_correct.value()?, "failed b_correct");
 		}
 
+		// DEBUG USE 62730 (REMOVE LATER): SAT after the FULL step circuit
+		// (lookup checks included) -- last catch before returning the witness.
+		gadget_sat_check(&cs, "sigma_ir1cs::step_final");
 		if B_DEBUG2{
 			check_cs(&cs, "gen_step_cs FINAL");
 			emit_stdout(format!(concat!(

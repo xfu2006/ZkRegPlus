@@ -75,13 +75,26 @@ n_files="$(grep -cve '^[[:space:]]*$' "$SRC_LIST" || true)"
 echo "[step_probe] slice_0.dat = $n_files files (whole job 3)"
 rm -f "$JOBLOG" "$PROJ_ROOT/data/cache/run_complete.sentinel" 2>/dev/null || true
 
-# ---- run: NJOBS=1 keeps chunks high; STEP+CS checks armed ------------------
-echo "[step_probe] running (per-step tight R1CS + decider probe). stdout -> $STDOUT_LOG"
+# ---- run: NJOBS=1 keeps chunks high; STEP+CS+GADGET checks armed -----------
+# DEBUG USE 62730 (REMOVE LATER): ZKR_GADGET_CHECK=1 + ZKR_GADGET_FROM arms the
+# per-gadget SAT checkpoints ONLY from that fold step onward (mod_super forces
+# construct_matrices:true there). At the culprit step the FIRST failing
+# sub-gadget prints 62730.2 GADGET-UNSAT @<gadget> and panics DURING synthesis
+# -- finer than 62727.1's whole-step row, and it fires BEFORE 62727.1. Default
+# FROM=567 arms probe-steps 568/569 (the observed 62727.1 was step 569), a +-1
+# margin; override via ZKR_GADGET_FROM=<n>. RUST_MIN_STACK=4GB keeps the
+# mid-synthesis is_satisfied() off the 2MB test stack (sigma_ir1cs.rs:3433
+# warns eval_lc can overflow on ~20M-constraint circuits).
+ZKR_GADGET_FROM="${ZKR_GADGET_FROM:-567}"
+echo "[step_probe] running (per-step tight R1CS + per-gadget SAT + decider probe). stdout -> $STDOUT_LOG"
+echo "[step_probe] gadget SAT checkpoints armed from fold step >= $ZKR_GADGET_FROM"
 set +e
 # NOTE: --lib restricts to the lib test binary (skips doctests); the filter
 # is the FULL module path because --exact matches the whole test name.
 RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" \
+RUST_MIN_STACK=4000000000 \
 ZKR_CS_CHECK=1 ZKR_STEP_CHECK=1 ZKR_BISECT_NJOBS=1 \
+ZKR_GADGET_CHECK=1 ZKR_GADGET_FROM="$ZKR_GADGET_FROM" \
 ZKR_BISECT_DIR="$PROJ_ROOT/$SLICE_DIR" \
 cargo test -p zkregplus --release --lib -- \
 	zkp_driver::tests_zkp_driver::test_full_clam_bisect \
@@ -94,17 +107,32 @@ echo "[step_probe] cargo test exit = $rc"
 # ---- report: walk the decision tree ----------------------------------------
 # 62727.x/62729.x go to stdout (emit_stdout); 62001.x go to the per-job log.
 echo "======================================================================"
-if grep -hq "62727.1" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null; then
+if grep -hq "62730.2" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null; then
+	echo "RESULT: PER-GADGET BUG NAMED (branch A+) -- a sub-gadget's SAT check"
+	echo "  fired during synthesis of the culprit step and named the gadget:"
+	grep -h "62730.2" "$STDOUT_LOG" "$JOBLOG" | head -3 | sed 's/^.*DEBUG USE /    /'
+	echo "  file being folded at that step (last FOLD-STEP before the abort):"
+	grep -h "62727.0" "$STDOUT_LOG" "$JOBLOG" | tail -1 | sed 's/^.*DEBUG USE /    /'
+	echo "  gadget SAT checkpoints that PASSED before it (bracketing context):"
+	grep -h "62730.1" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null | tail -8 | sed 's/^.*DEBUG USE /    /'
+	echo "  finite cross-chunk prune values near that step (subsig id):"
+	grep -h "62729.1" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null | tail -6 | sed 's/^.*DEBUG USE /    /'
+	echo "  NEXT: the label @<gadget> is the culprit -- read that validator's"
+	echo "        constraint against the finite cross-chunk carry and fix."
+elif grep -hq "62727.1" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null; then
 	echo "RESULT: PER-STEP GADGET BUG (branch A) -- fold aborted at the culprit step."
+	echo "  (No 62730.2 -- the violated constraint is OUTSIDE the labeled gadget"
+	echo "   checkpoints; see the mod_super::augmented_F_circuit backstop / row.)"
 	echo "  failing step (step / circ / first-bad constraint row):"
 	grep -h "62727.1" "$STDOUT_LOG" "$JOBLOG" | head -2 | sed 's/^.*DEBUG USE /    /'
+	echo "  whole-augmented-cs backstop (if it fired):"
+	grep -h "62730.2\|62730.3" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null | grep "augmented_F_circuit" | tail -2 | sed 's/^.*DEBUG USE /    /'
 	echo "  file being folded at that step (last FOLD-STEP before the abort):"
 	grep -h "62727.0" "$STDOUT_LOG" "$JOBLOG" | tail -1 | sed 's/^.*DEBUG USE /    /'
 	echo "  finite cross-chunk prune values near that step (subsig id):"
 	grep -h "62729.1" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null | tail -6 | sed 's/^.*DEBUG USE /    /'
 	echo "  NEXT: map first_bad_row -> gadget; feed fname to a local discharge-"
-	echo "        only run (full_clam_find_file) to name the signature; build a"
-	echo "        single-step is_satisfied() repro on the laptop."
+	echo "        only run (full_clam_find_file) to name the signature."
 elif grep -q "62001.2" "$JOBLOG" 2>/dev/null; then
 	echo "RESULT: FOLD-CARRY / DECIDER BUG (branch B) -- all fold steps were SAT;"
 	echo "  the decider block is UNSAT:"

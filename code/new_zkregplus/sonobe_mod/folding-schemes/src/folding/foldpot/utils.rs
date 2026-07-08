@@ -90,6 +90,44 @@ pub fn check_cs_probe<F:PrimeField>(cs: &ConstraintSystemRef<F>,
 	}
 }
 
+// ===== DEBUG USE 62730 BEGIN (REMOVE LATER): per-gadget SAT checkpoints =====
+// A process-global flag armed either by the single-step repro (test) or by
+// mod_super at the target fold step. When on, gadget_sat_check() runs an
+// is_satisfied() on the constraints built SO FAR and, at the FIRST unsatisfied
+// checkpoint, names the gadget label + first-bad row and PANICS -- so a single
+// faithful synthesis of the culprit step aborts AT the offending sub-gadget
+// (finer than the whole-step first_bad_row from 62727.1). Zero cost when off.
+pub static GADGET_SAT: std::sync::atomic::AtomicBool =
+	std::sync::atomic::AtomicBool::new(false);
+pub fn set_gadget_sat(b: bool){
+	GADGET_SAT.store(b, std::sync::atomic::Ordering::Relaxed);
+}
+pub fn gadget_sat_on() -> bool {
+	GADGET_SAT.load(std::sync::atomic::Ordering::Relaxed)
+}
+/// Labeled satisfiability checkpoint. No-op unless GADGET_SAT is armed and cs
+/// is in prove mode with matrices. On UNSAT: prints 62730.2 + panics (naming
+/// the sub-gadget). which_is_unsatisfied returns the bare index (traces off).
+pub fn gadget_sat_check<F:PrimeField>(cs: &ConstraintSystemRef<F>, label: &str){
+	if !gadget_sat_on() { return; }
+	if cs.is_in_setup_mode() || !cs.should_construct_matrices() { return; }
+	let n = cs.num_constraints();
+	match cs.which_is_unsatisfied() {
+		Ok(None) => emit_stdout(format!(
+			"DEBUG USE 62730.1: GADGET-SAT OK    @{} ({} cons)", label, n)),
+		Ok(Some(idx)) => {
+			emit_stdout(format!(
+				"DEBUG USE 62730.2: GADGET-UNSAT @{} first-bad={} of {} cons",
+				label, idx, n));
+			panic!("DEBUG USE 62730.2: GADGET-UNSAT @{} first-bad={} of {} cons",
+				label, idx, n);
+		}
+		Err(e) => emit_stdout(format!(
+			"DEBUG USE 62730.3: GADGET-SAT err   @{}: {:?}", label, e)),
+	}
+}
+// ===== DEBUG USE 62730 END =====
+
 pub fn format_bytes(bytes: usize) -> String {
     const KB: f64 = 1024.0;
     const MB: f64 = 1024.0 * 1024.0;

@@ -1,5 +1,7 @@
 use utils::consts::{read_global_config, B_DEBUG, PROBE_CHUNK_ID};
 use folding_schemes::folding::foldpot::utils::B_DEBUG2;
+// DEBUG USE 62730 (REMOVE LATER): per-sub-gadget SAT checkpoint
+use folding_schemes::folding::foldpot::utils::gadget_sat_check;
 use std::sync::{Arc, Mutex};
 /* Created 05/06/2025
    Implementation initially completed 06/11/2025
@@ -3582,10 +3584,13 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		//4. validate the prf_fwd
 		//COST: 37*n1 
 		let prf_fwdprf_valid = prf.lock().unwrap().get_container("prf_fwdprf_valid")?;
-		let last_loc = self.validate_fwdprf_valid_prf(&ct_prf_fwd, 
+		let last_loc = self.validate_fwdprf_valid_prf(&ct_prf_fwd,
 			&ct_sq_res, &ct_pat_loc,
 			&r1, &r2, &prf_fwdprf_valid, last_loc,
 			word_id.clone(), subseg_id.clone())?;
+		// DEBUG USE 62730 (REMOVE LATER): SAT after the SED forward-proof
+		// validator (the cross-chunk forward carry suspect).
+		gadget_sat_check(&cs, "discharge_adv::validate_fwdprf");
 
 		if b_perf {
 			println!(" ### validate forward step 3: {}", 
@@ -4302,9 +4307,12 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		//4. validate the prf_bwd is valid
 		// COST: 16.3*n1 
 		let prf_bwdprf_valid = prf.lock().unwrap().get_container("prf_bwdprf_valid")?;
-		self.validate_bwdprf_valid_prf(&ct_prf_bwd, 
+		self.validate_bwdprf_valid_prf(&ct_prf_bwd,
 			&ct_sq_res2, &r1, &r2, &prf_bwdprf_valid, last_loc,
 			word_id.clone(), subseg_id.clone())?;
+		// DEBUG USE 62730 (REMOVE LATER): SAT after the SED backward-proof
+		// validator (the terminal-chunk backward-PRUNE carry suspect).
+		gadget_sat_check(&cs, "discharge_adv::validate_bwdprf");
 		if b_perf {
 			println!(" ### validate backward step 3: {}", cs.num_constraints()-nc);
 			println!(" ### TOTAL validate backward: {}", cs.num_constraints()-nc0);

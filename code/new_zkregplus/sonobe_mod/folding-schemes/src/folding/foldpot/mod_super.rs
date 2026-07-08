@@ -57,7 +57,9 @@ use crate::{
 		qa_nizk::{QaNizkProverParams,QaNizkVerifierParams,SparseMatrix,setup_qa_nizk,prove_qa_nizk_fast},
 		sigma_cyclepair::{compute_hc},
 		decider_eth_circuit_super::{KZGChallengesGadgetSuper},
-		utils::{B_DEBUG, B_DEBUG2, B_DEBUG3}
+		utils::{B_DEBUG, B_DEBUG2, B_DEBUG3},
+		// DEBUG USE 62730 (REMOVE LATER): per-gadget SAT arming
+		utils::{set_gadget_sat, gadget_sat_check}
 	}
 };
 // utility function for compute step cmF
@@ -1752,7 +1754,21 @@ where
 
 		//println!(">*>*>* prove_step step 1, augment circ: j: {}, pc_i: {}", &augmented_F_circuit.j, &self.pc_i);
         let cs = ConstraintSystem::<C1::ScalarField>::new_ref();
-		if !b_debug && !B_DEBUG2 && !B_DEBUG3{//NOTE: b_debug of mod_super:generate_constraints
+		// ===== DEBUG USE 62730 (REMOVE LATER): arm per-gadget SAT checks for
+		// the target fold step. Env ZKR_GADGET_CHECK=1 turns it on; the flag is
+		// armed only when field_to_usize(self.i) >= ZKR_GADGET_FROM (default
+		// usize::MAX = never, so job3_step_probe.sh sets it to the culprit
+		// step). When armed we FORCE construct_matrices:true so the checkpoints
+		// can run is_satisfied, and the FIRST failing sub-gadget panics inside
+		// generate_constraints below. self.i here is pre-increment. =====
+		let b_gadget_arm = std::env::var("ZKR_GADGET_CHECK").is_ok() && {
+			let from = std::env::var("ZKR_GADGET_FROM").ok()
+				.and_then(|s| s.trim().parse::<usize>().ok())
+				.unwrap_or(usize::MAX);
+			field_to_usize(&self.i) >= from
+		};
+		if b_gadget_arm { set_gadget_sat(true); }
+		if !b_debug && !B_DEBUG2 && !B_DEBUG3 && !b_gadget_arm{//NOTE: b_debug of mod_super:generate_constraints
 			//should be set to the same as this function.
 			//OTHERWISE, it will have issues with witness assignment in
 			//debug mode
@@ -1762,6 +1778,13 @@ where
 		}
 		let c1 = cs.num_constraints();
         augmented_F_circuit.generate_constraints(cs.clone())?;
+
+		// DEBUG USE 62730 (REMOVE LATER): whole-augmented-cs backstop -- fires
+		// if the violated constraint is OUTSIDE every labeled sub-gadget check.
+		if b_gadget_arm {
+			gadget_sat_check(&cs, "mod_super::augmented_F_circuit");
+			set_gadget_sat(false);
+		}
 
 		if b_debug{
         	assert!(cs.is_satisfied().unwrap());
