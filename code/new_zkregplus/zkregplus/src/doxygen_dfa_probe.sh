@@ -1,26 +1,31 @@
 #!/usr/bin/env bash
-# doxygen_dfa_probe.sh -- MINIMAL DFA-failure repro for the full_clam job-3 bug.
+# doxygen_dfa_probe.sh -- FAST fold-only confirmation of the DFA discharge-
+# combo fix on the REAL doxygen chunk that broke full_clam job-3.
 #
-# The 07-08i server run localized the failure to a PER-STEP gadget UNSAT in
-# DfaAdvGadget for ONE file (doxygen, seg 1) -- Branch A, self-contained, so it
-# reproduces from a FRESH fold. This script folds doxygen ALONE (1 file) with:
-#   ZKR_BISECT_CHECK_LKUP=0 -> b_check_lkup=false (DEBUG 62731.0). doxygen is
-#     ~67 chunks < the ~678 lk_share coverage floor, so a 1-file run would panic
-#     with b_check_lkup=true; false skips that. The DFA gadget's step-3 logup is
-#     emitted during synthesis regardless, so the bug still reproduces.
-#   Same full_data DB + same full_clamav caps/config as job3 (full_clam_bisect)
-#     -> doxygen routes to the SAME circ=1 DFA gadget that failed.
-#   ZKR_GADGET_CHECK=1 ZKR_GADGET_FROM=0 -> per-gadget SAT checks from step 0;
-#     at doxygen's bad chunk the DFA gadget prints 62730.2 GADGET-UNSAT + panics.
-#   ZKR_DFA_DUMP=1 -> the 62731.x DFA diagnostic probes (uncovered sig + DNF
-#     shape + per-subsig FSM result + pattern/carry) fire so we can infer the
-#     root cause (empty-DNF vs SDE-vs-DFA discharge disagreement vs carry).
+# Background: the bug was a per-step UNSAT in DfaAdvGadget's discharge-combo
+# well-formedness check (validate_discharge_sig_combo step-2.1), triggered by
+# a count>=2 discharge disjunct (sig-35591). It is Branch A (self-contained),
+# so it reproduces from a FRESH fold of doxygen ALONE. This script folds
+# doxygen (1 file) with:
+#   ZKR_BISECT_FOLD_ONLY=1 -> b_folding_only (DEBUG 62731.0): stop AFTER
+#     folding, no decider/keys -> fast (~15-20 min) + modest RAM. The bug (if
+#     present) fires DURING folding, so the decider is not needed to see it.
+#   ZKR_GADGET_CHECK=1 ZKR_GADGET_FROM=0 -> per-gadget SAT check every step.
+#     PRE-fix: the doxygen bad chunk prints 62730.2 GADGET-UNSAT + panics.
+#     POST-fix: every step prints 62730.1 GADGET-SAT OK; no 62730.2.
+#   ZKR_BISECT_CHECK_LKUP=0 -> doxygen (~67 chunks) < the ~678-chunk lk_share
+#     coverage floor, so a 1-file run would panic; false skips that check.
+#   Same full_data DB + full_clamav caps/config as job3 (full_clam_bisect) ->
+#     doxygen routes to the SAME circ=1 DFA gadget that failed.
+#   ZKR_DFA_DUMP=1 -> the 62731.x DFA diagnostic probes fire (note 62731.9
+#     recomputes the OLD buggy formula, so it still prints res_bad>=0 even
+#     when FIXED -- that line is diagnostic only; the VERDICT is 62730.2).
 #
-# Cost: ~15-20 min (Pass-1 discharge doxygen ~6 min + build + a couple of fold
-# steps -> panic). No decider, no keys (aborts before them).
+# VERDICT: PASS = fold completes ("b_folding_only set, no snark generated")
+# AND zero 62730.2 GADGET-UNSAT. FAIL = any 62730.2 / prover panic.
 #
 # Usage:  nohup bash zkregplus/src/doxygen_dfa_probe.sh > /tmp/dox.out 2>&1 &
-# Output: prints the named sig + gadget, packs /tmp/doxygen_dfa_probe.tgz.
+# Output: prints the verdict, packs /tmp/doxygen_dfa_probe.tgz.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -44,10 +49,11 @@ printf '%s\n' "$REPRO_FILE" > "$SLICE_DIR/slice_0.dat"
 echo "[dox_probe] slice_0.dat = 1 file: $REPRO_FILE"
 rm -f "$JOBLOG" "$PROJ_ROOT/data/cache/run_complete.sentinel" 2>/dev/null || true
 
-echo "[dox_probe] running single-file DFA repro. stdout -> $STDOUT_LOG"
+echo "[dox_probe] running single-file fold-only DFA repro. stdout -> $STDOUT_LOG"
 set +e
 RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" \
 RUST_MIN_STACK=4000000000 \
+ZKR_BISECT_FOLD_ONLY=1 \
 ZKR_BISECT_CHECK_LKUP=0 \
 ZKR_BISECT_NJOBS=1 \
 ZKR_BISECT_DIR="$PROJ_ROOT/$SLICE_DIR" \
@@ -62,40 +68,31 @@ rc="${PIPESTATUS[0]}"
 set -e
 echo "[dox_probe] cargo test exit = $rc"
 
-# ---- report -----------------------------------------------------------------
+# ---- verdict ----------------------------------------------------------------
 echo "======================================================================"
-echo "GADGET named (62730.2):"
-grep -h "62730.2" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null | head -2 \
-	| sed 's/^.*DEBUG USE /  /' || echo "  (none)"
-echo "UNCOVERED SIG + DNF shape (62731.1):"
-grep -h "62731.1" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null | head -8 \
-	| sed 's/^.*DEBUG USE /  /' || true
-echo "disjunct subsig FSM results (62731.2) -- non-False => SDE/DFA disagree:"
-grep -h "62731.2" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null | head -20 \
-	| sed 's/^.*DEBUG USE /  /' || true
-echo "committed-column miss (62731.4) -- fires only if advice was consistent:"
-grep -h "62731.4" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null | head -8 \
-	| sed 's/^.*DEBUG USE /  /' || true
-echo "LOGUP DIAG (62731.6) -- sum_ok=false names the failing logup:"
-grep -h "62731.6:" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null \
-	| grep -v "sum_ok=true" | head -20 | sed 's/^.*DEBUG USE /  /' || true
-echo "  (membership misses 62731.6a):"
-grep -h "62731.6a" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null | head -20 \
-	| sed 's/^.*DEBUG USE /  /' || true
-echo "  (multiplicity mismatches 62731.6b):"
-grep -h "62731.6b" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null | head -20 \
-	| sed 's/^.*DEBUG USE /  /' || true
-echo "NC-MAP (62731.8) -- locate 62730.2 first-bad in one range:"
-grep -h "62731.8" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null | tail -3 \
-	| sed 's/^.*DEBUG USE /  /' || true
-echo "STEP1/2.1 RECHECK (62731.9) -- res_bad>=0 => DNF-coverage bug:"
-grep -h "62731.9:" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null \
-	| grep -v "sid_bad=-1 res_bad=-1" | tail -10 \
-	| sed 's/^.*DEBUG USE /  /' || true
-grep -h "62731.9a" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null | tail -5 \
-	| sed 's/^.*DEBUG USE /  /' || true
-echo "fold step / file at abort (62727.0):"
+UNSAT=$(grep -h -c "62730.2\|GADGET-UNSAT" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null \
+	| paste -sd+ | bc 2>/dev/null || echo 0)
+FOLD_DONE=$(grep -h -c "b_folding_only set, no snark generated" \
+	"$STDOUT_LOG" "$JOBLOG" 2>/dev/null | paste -sd+ | bc 2>/dev/null || echo 0)
+DFA_SAT=$(grep -h -c "62730.1.*DfaAdvGadget" "$STDOUT_LOG" "$JOBLOG" \
+	2>/dev/null | paste -sd+ | bc 2>/dev/null || echo 0)
+echo "62730.2 GADGET-UNSAT count : $UNSAT   (expect 0 when FIXED)"
+echo "DfaAdvGadget GADGET-SAT OK  : $DFA_SAT  (per-step, >0 when FIXED)"
+echo "fold-only completed markers : $FOLD_DONE (>0 = folded all chunks)"
+if [ "$rc" = "0" ] && [ "${UNSAT:-1}" = "0" ] && [ "${FOLD_DONE:-0}" != "0" ]; then
+	echo "VERDICT: PASS  (doxygen folded, DFA gadget SAT, no UNSAT) -- FIX CONFIRMED"
+else
+	echo "VERDICT: FAIL  (see 62730.2 below) -- BUG STILL PRESENT"
+	grep -h "62730.2\|GADGET-UNSAT" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null \
+		| head -4 | sed 's/^.*DEBUG USE /  /' || true
+fi
+echo "----------------------------------------------------------------------"
+echo "context -- last fold step (62727.0):"
 grep -h "62727.0" "$STDOUT_LOG" 2>/dev/null | tail -1 \
+	| sed 's/^.*DEBUG USE /  /' || true
+echo "context -- step-2.1 recheck (62731.9; OLD-formula probe, res_bad>=0"
+echo "           is EXPECTED even when fixed -- diagnostic only):"
+grep -h "62731.9:" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null | tail -2 \
 	| sed 's/^.*DEBUG USE /  /' || true
 echo "======================================================================"
 

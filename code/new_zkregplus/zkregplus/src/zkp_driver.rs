@@ -3692,6 +3692,11 @@ pub mod tests_zkp_driver{
 		get_global_config().range2_bit = 26;
 		get_global_config().b_light_test = false; // full snark
 		get_global_config().b_one_proof = false;  // every share proves+verifies
+		// DEBUG USE 62731.0 (REMOVE LATER): fold-only fast confirmation --
+		// stop after folding (no decider) so the per-step DfaAdvGadget SAT
+		// check is the signal. Default unset = byte-identical to full_clam.
+		if let Ok(v) = std::env::var("ZKR_BISECT_FOLD_ONLY") {
+			get_global_config().b_folding_only = v == "1"; }
 		get_global_config().min_subsigs = 368;
 		get_global_config().min_basis_unique_states= 1054;
 		get_global_config().min_basis_acc_states =  268;
