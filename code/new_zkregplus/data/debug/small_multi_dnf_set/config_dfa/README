@@ -1,0 +1,18 @@
+small_multi_dnf_set: permanent local repro for the DfaAdvGadget
+discharge-combo bug (validate_discharge_sig_combo step-2.1).
+
+Derived from small_data_set/config_dfa (same TEST1.bin, same cp/sed
+sigs, same capacities). The only change: the DFA sig MULTIDNF_cs uses
+a 2-subsig OR-clause (expr "0|1"), so when it discharges the DFA
+discharge combo has count=2 (dnf_step 0,1) instead of count=1. The
+count>=2 case activates the buggy step-2.1 well-formedness constraint
+that is vacuous for count=1 (which is why small_data never tripped it).
+
+Both subsigs are absent from TEST1.bin (39??????37: 9->7 distance is 8
+nibbles not 6; 78??????79::i: x->y distance is 8 nibbles not 6), so the
+clause evaluates all-False -> discharged, count=2.
+
+Run: cargo test -p zkregplus --release --lib -- \
+  zkp_driver::tests_zkp_driver::test_small_multi_dnf --exact --nocapture
+Buggy  -> panics at assert!(verify_batch) (or 62730.2 with ZKR_GADGET_CHECK=1).
+Fixed  -> test passes.

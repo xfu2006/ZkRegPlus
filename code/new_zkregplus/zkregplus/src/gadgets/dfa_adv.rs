@@ -1264,30 +1264,29 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 		// NOTE that the validity of v_dnf_step, ... columns are proved
 		// already via v_sid columns in step 1.
 		//
-		// COST: 5n + 3
+		// COST: 6n + 3
 		check_eq(&v_sigs[0], &zero, "we require one dummy entry at begin")?;
-		let lb_zero= LinearCombination::from((F::zero(),Variable::One));
 		for i in 1..n{
 			let b_new_row = v_sigs[i].is_neq(&v_sigs[i-1])?;
 			let i_new_row: FpVar<F> = b_new_row.into();
-			let res = &i_new_row * &(
-				//(a) id_increase by one
-				&v_dnf_step[i] - &v_dnf_step[i-1]
-			) + (&i_new_row - &one) * &(
+			// Ported from compute_sig_adv.rs (the SED twin of this gadget),
+			// which carries the correct form. The DFA copy had the two
+			// branches attached to the wrong i_new_row multipliers and a
+			// missing "-1", so it was vacuous for count=1 disjuncts but
+			// UNSAT for any count>=2 discharge combo. The dummy/zero
+			// boundary is handled by multiplying each term by v_sigs[i]
+			// / v_sigs[i-1] (not an extra is_neq).
+			let res = (&i_new_row - &one) * &(//if NOT new row (continuing):
+				//(a) dnf_step increases by one; ignore v_sigs[i]==0
+				&(&v_dnf_step[i] - &v_dnf_step[i-1] - &one) * &v_sigs[i]
+			) + &i_new_row * &(//if NEW row:
 				//(b) starts from 0
-				&(&r1 * &v_dnf_step[i]) + 
-				//(c) previous row equals to count
-				&(&v_dnf_step[i-1] + &one - &v_dnf_count[i-1])
+				&(&r1 * &v_dnf_step[i]) +
+				//(c) previous sig completed; ignore when v_sigs[i-1]==0
+				&(&(&v_dnf_step[i-1] + &one - &v_dnf_count[i-1])
+					* &v_sigs[i-1])
 			);
-			//let res = &res * &v_sigs[i]; //ignore zero entries
-			//check_eq(&res, &zero, "fails well-formed check")?;
-			let lb_res = var_to_lb(&res, F::one());
-			let lb_sig = var_to_lb(&v_sigs[i], F::one());
-			cs.enforce_constraint(
-				lb_res,
-				lb_sig,
-				lb_zero.clone()
-			)?;
+			check_eq(&res, &zero, "fails well-formed check")?;
 		}
 		// DEBUG USE 62731.8 (REMOVE LATER): absolute cs index after step-2.1.
 		let nc_step21 = cs.num_constraints();

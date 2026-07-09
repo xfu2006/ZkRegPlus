@@ -1936,6 +1936,78 @@ pub mod tests_zkp_driver{
 			b_check_lkup
 		);
 	}
+
+	/// small_multi_dnf: permanent local regression repro for the
+	/// DfaAdvGadget discharge-combo bug. Same non-aggressive DFA path as
+	/// small_data(), but the DFA sig MULTIDNF_cs has a 2-subsig OR-clause
+	/// so its discharge combo has count=2 (dnf_step 0,1). That count>=2
+	/// case exercises validate_discharge_sig_combo step-2.1, which is
+	/// vacuous for the count=1 sigs small_data uses. Buggy code => a per-
+	/// step DFA gadget UNSAT => assert!(verify_batch) panics; fixed => the
+	/// test passes. Config: data/debug/small_multi_dnf_set/config_dfa.
+	fn small_multi_dnf<F:PrimeField>(b_check_lkup: bool){
+		utils::os::print_computer_config(Some("small_multi_dnf"));
+		get_global_config().snark_cache_dir = "small_multi_dnf".to_string();
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_write_snark_cache = false;
+		get_global_config().b_light_test = true;
+		get_global_config().range2_bit = 8;
+		get_global_config().b_read_cache = false;
+		get_global_config().perc_lkup_share = if !b_check_lkup {1}
+			else {8320};
+		get_global_config().log_level = utils::logger::LOG3;
+		let b_write_cache = !read_global_config().b_read_cache;
+		let set1 = "data/debug/small_multi_dnf_set/config_dfa"; //for dfa
+		let max_word= 1; //this is chunk_len
+		let sigs = 2; //good setting: 2
+		let subsigs = 4;
+		let avg_pats_per_subsig = 3;
+		let avg_active_pats_per_subsig = 2;
+		let perc_comp_subsigs = 26;  //26 for subsigs=4, 34 for subsigs=3
+		let basis_unique_states = 23*100;
+		let basis_acc_states = 646;  //6.46 percent
+		let basis_pats_in_trace = 1291;   //(at most twice of basis_acc)
+		let perc_pats_expansion_rate = 171;
+
+		let vec_decrease_level = vec![];
+		let num_circs = 1;
+
+		let init_cp_cap= CpCapacity{
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+		};
+		let init_sed_cap= SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig, avg_active_pats_per_subsig,
+			basis_pats_in_trace,
+			perc_pats_expansion_rate,
+			sigs, perc_comp_subsigs,
+			basis_unique_states, basis_acc_states
+		);
+		let init_dfa_cap= DfaCapacity::new(max_word, sigs, subsigs);
+
+		zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+   0,
+			&format!("{}/sigs.dat",set1), //src sig
+			&format!("{}/binexec.dat",set1), //list of files to discharge
+			"data/small_multi_dnf_set/reports/report.dat", //report
+			b_write_cache,
+			"small_multi_dnf", //cache name
+			&format!("{}/dfa.dat", set1), //signs that need dfa
+			&format!("{}/ised.dat", set1), //signs that need ised
+			&format!("{}/ised_igc.dat",set1), //sigs that need ised igc
+			max_word, //this is the chunk len
+			&init_cp_cap,
+			&init_sed_cap,
+			&init_dfa_cap,
+			&vec_decrease_level,
+			num_circs,
+			b_check_lkup
+		);
+	}
+
 	/// small dna: used for debugging the comparison set with reef on
 	/// Chromosome 17 dna set.
 	/// COST: 7GB and 34 sec.
@@ -7298,6 +7370,17 @@ binexec_p0..p7; via report_acc_state_rate -> run_db_bundle) ########");
 	#[test]
 	pub fn test_small_email2(){
 		small_email2::<Fr>(false);
+	}
+
+	/// Permanent regression: multi-subsig DFA discharge combo (count>=2).
+	/// Fails (assert!(verify_batch)) on the step-2.1 well-formedness bug,
+	/// passes once dfa_adv.rs matches its compute_sig_adv.rs twin.
+	/// `cargo test -p zkregplus --release --lib -- \
+	///   zkp_driver::tests_zkp_driver::test_small_multi_dnf \
+	///   --exact --nocapture`
+	#[test]
+	pub fn test_small_multi_dnf(){
+		small_multi_dnf::<Fr>(false);
 	}
 
 	/// small_email3: full MS DLP set vs binexec3.dat (the two most

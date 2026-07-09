@@ -1,0 +1,10 @@
+#small_multi_dnf: MULTIDNF_cs has a 2-subsig OR-clause (0|1). Both
+#subsigs are absent from TEST1.bin, so the sig discharges via the DFA
+#gadget with a discharge combo of count=2 (dnf_step 0,1). This is the
+#count>=2 case that exercises DfaAdvGadget::validate_discharge_sig_combo
+#step-2.1 -- dormant for count=1 sigs (see DFA_cs in small_data_set).
+#The two subsig patterns reuse the two proven DFA-discharging patterns.
+cp_cs_igc;Engine:51-255,Target:1;0|1;09afcdeb1928374650123457890abcdef::i;0123498765423afedcb
+sed_cs;Engine:51-255,Target:1;0;4161616161????6262626263
+sed_igc;Engine:51-255,Target:1;0;4161616161????6262626263::i
+MULTIDNF_cs;Engine:51-255,Target:1;0|1;39??????37;78??????79::i
