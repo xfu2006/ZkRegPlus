@@ -29991,6 +29991,25 @@ Goal 1. server run
 	[a] prepare the run shell script
 	[b] 512gb server: 5:50am 07/08/2026 ==>  4:54pm
 		(80,655 credits ===> )
+	[c] Another run
+		5:55pm ==>  (expected 0709 4:00AM)
+Goal 2. develop main driver
+	[a] impl
+	[b] test -> DONE.
+Goal 3. continue to debug
+	[a] identfified it's DFA gadget
+	[b] try to make a smaller server run to dump
+	[c]
+Goal 4. Writing
+	[a] read first pass
+	[b] revise 2nd part
+	[c] the last join op.
+	[d] 1st pass of Figure 12
+	[e] fix issues in Figure 12.
+	[f] part 1
+	[g] part 2
+	[h] fix rest.
+	[i] example to walk through first part.
 
 
 ----- ACTIVE GOALS -----

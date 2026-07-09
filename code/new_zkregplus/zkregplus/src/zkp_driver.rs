@@ -3718,7 +3718,12 @@ pub mod tests_zkp_driver{
 			&init_sed_cap_igc,
 			&vec_decrease_level,
 			num_circs,
-			true, DcMode::Off  // b_check_lkup=true: matches full_clam()
+			// DEBUG USE 62731.0 (REMOVE LATER): default true (byte-identical to
+			// full_clam); ZKR_BISECT_CHECK_LKUP=0 lets a 1-file doxygen slice
+			// dodge the ~678-chunk lk_share coverage panic for the DFA repro.
+			std::env::var("ZKR_BISECT_CHECK_LKUP")
+				.map(|s| s.trim()!="0").unwrap_or(true),
+			DcMode::Off
 		);
 	}
 

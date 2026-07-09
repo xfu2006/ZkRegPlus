@@ -463,6 +463,22 @@ impl <F: PrimeField + ColEle> DfaAdvAdvice<F>{
 		res.lock().unwrap().add_col(Col::<F>::new_const(vec![zero;m],
 			"si_subsig_res",IDX_SI_DATA)); //don't care as they'll be TriVal
 
+		// DEBUG USE 62731.5 (REMOVE LATER, env ZKR_DFA_DUMP=1): per-subsig DFA
+		// view -- pattern, carried-in state (cross-chunk), final state, is_final,
+		// TriVal result. Reveals whether the double-dot offset doubling is
+		// reflected in the DFA pattern and how the carried state drives the
+		// subsig verdict at a chunk boundary.
+		if std::env::var("ZKR_DFA_DUMP").is_ok(){
+			let u_seg = field_to_usize(&seg_id);
+			for i in 0..m{
+				let u_oup = field_to_usize(&raw_states[m*nlen+i]);
+				let is_fin = v_dfa[i].finals.contains(&(u_oup-1));
+				println!("DEBUG USE 62731.5: seg={} subsig_idx={} inp_state={} \
+oup_state={} is_final={} subsig_res={} raw_str={}",
+					u_seg, i, field_to_usize(&inp_states[i]), u_oup, is_fin,
+					field_to_usize(&subsig_res[i]), v_dfa[i].raw_str);
+			}
+		}
 
 		Ok( (res, subsig_res) )
 	}
@@ -499,6 +515,10 @@ impl <F: PrimeField + ColEle> DfaAdvAdvice<F>{
 		let frg = F::from(RANGE2);
 		let res = Container::<F>::new("sig_res_combo");
 		let n = capacity.subsigs;
+		// DEBUG USE 62731.1 (REMOVE LATER): keep a handle to the sig objects
+		// before `v_sigs` is shadowed by the coverage column (~line 563), so the
+		// uncovered-sig probe below can read each sig's DNF shape.
+		let dbg_sig_objs: &Vec<Arc<ClamavSig>> = v_sigs;
 		assert!(inp_subsigs.len()==n);
 		assert!(subsig_result.len()==n); 
 		assert!(inp_sigs.len()==capacity.sigs);
@@ -637,6 +657,47 @@ impl <F: PrimeField + ColEle> DfaAdvAdvice<F>{
 		// where we have proved all v_sigs are discharged
 		//note: v_sigs is required to have at least one dummy entry at beginning
 		let mtbl_sigs= gen_m_table(&inp_sigs, &v_sigs);
+
+		// DEBUG USE 62731 (REMOVE LATER): the in-circuit step-3 logup asserts
+		// discharged_sigs(=inp_sigs) SUBSET v_sigs. A REAL sig uncovered here =>
+		// that logup is UNSAT (the doxygen DFA failure). Detect at advice-gen and
+		// dump the causal chain: which sig, its DNF shape (empty min-cost
+		// disjunct?), and each disjunct subsig's FSM result -- tests whether the
+		// discharge decision AGREES with the DFA walk (the SDE-vs-DFA double-dot
+		// hypothesis). Self-gated: prints ONLY when a real sig is uncovered.
+		for i in 0..inp_sigs.len(){
+			if inp_sigs[i]==zero || v_sigs.contains(&inp_sigs[i]) {continue;}
+			let info = &discharge_infos[i];
+			let sobj = dbg_sig_objs.iter().find(|s| s.name==info.sig_name);
+			let disj_lens: Vec<usize> = sobj
+				.map(|s| s.eval_dnf.vec_disjunc.iter().map(|d| d.len()).collect())
+				.unwrap_or_default();
+			let min_disj: Vec<usize> = sobj
+				.and_then(|s| s.eval_dnf.vec_disjunc.get(info.min_dnf_id).cloned())
+				.unwrap_or_default();
+			println!("DEBUG USE 62731.1: DFA-UNCOVERED-SIG idx={} sig_id={} \
+name={} b_success={} min_dnf_id={} n_disjuncts={} disjunct_lens={:?} \
+min_disjunct_len={} info.subsig_ids={:?}",
+				i, field_to_usize(&inp_sigs[i]), info.sig_name, info.b_success,
+				info.min_dnf_id, disj_lens.len(), disj_lens, min_disj.len(),
+				info.subsig_ids);
+			let sig_u = field_to_usize(&inp_sigs[i]);
+			for raw in min_disj.iter(){
+				let dfa_id = HexACDFA::gen_subsig_id_worker(sig_u, *raw+1);
+				let r = map.get(&F::from(dfa_id as u64)).map(|v| field_to_usize(v));
+				println!("DEBUG USE 62731.2:   disjunct subsig raw={} \
+dfa_subsig_id={} subsig_result={:?} (TriVal False={})",
+					raw, dfa_id, r, TriVal::False as u8);
+			}
+		}
+		// DEBUG USE 62731.3 (REMOVE LATER, env ZKR_DFA_DUMP=1): full chunk sigs.
+		if std::env::var("ZKR_DFA_DUMP").is_ok(){
+			let reals: Vec<(usize,String)> = discharge_infos.iter().enumerate()
+				.filter(|(_,d)| d.sig_name!="none")
+				.map(|(i,d)| (i,d.sig_name.clone())).collect();
+			println!("DEBUG USE 62731.3: DFA chunk real-sigs={:?} v_sigs_nonzero={}",
+				reals, v_sigs.iter().filter(|x| **x!=zero).count());
+		}
 
 
 		//4. add data columns into containers
@@ -1213,6 +1274,23 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 			.get_container("discharged_sigs").unwrap().lock().unwrap().to_vec();
 		let mtbl_sigs= discharge_sig_combo.lock().unwrap()
 			.get_container("mtbl_sigs").unwrap().lock().unwrap().to_vec();
+		// DEBUG USE 62731.4 (REMOVE LATER): committed-value view of the step-3
+		// coverage. If advice probe 62731.1 is SILENT but this fires, the
+		// COMMITTED discharged_sigs column diverged from advice (carry/layout) --
+		// a DIFFERENT root cause than an empty-DNF advice bug. Self-gated.
+		{
+			let dv: Vec<F> = discharged_sigs.iter()
+				.map(|x| x.value().unwrap_or(F::zero())).collect();
+			let vv: Vec<F> = v_sigs.iter()
+				.map(|x| x.value().unwrap_or(F::zero())).collect();
+			for (i,s) in dv.iter().enumerate(){
+				if *s!=F::zero() && !vv.contains(s){
+					println!("DEBUG USE 62731.4: CIRCUIT-UNCOVERED \
+discharged_sigs[{}]={} not in v_sigs (committed coverage miss)",
+						i, field_to_usize(s));
+				}
+			}
+		}
 		assert_logup(cs.clone(), &discharged_sigs, &v_sigs, &mtbl_sigs, &r1)?;
 
 		if b_debug{
