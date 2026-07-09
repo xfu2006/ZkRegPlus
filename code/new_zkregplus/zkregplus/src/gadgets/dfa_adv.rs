@@ -1251,6 +1251,8 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 			check_eq(&exp_sid_real_subsig, &v_sid_real_subsigs[i],
 				"err sid_real_subsig")?;
 		}
+		// DEBUG USE 62731.8 (REMOVE LATER): absolute cs index after step-1 loop.
+		let nc_step1 = cs.num_constraints();
 		if b_perf{
 			log_perf(self.job_id, log_level, "validate_discharge_sig step 1", &mut gt);
 		}
@@ -1286,6 +1288,66 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 				lb_sig,
 				lb_zero.clone()
 			)?;
+		}
+		// DEBUG USE 62731.8 (REMOVE LATER): absolute cs index after step-2.1.
+		let nc_step21 = cs.num_constraints();
+		// DEBUG USE 62731.9 (REMOVE LATER): value-level recheck of step-1 sid
+		// encodings AND the step-2.1 DNF-step well-formedness res*v_sigs==0 --
+		// the constraints the logup diag does NOT cover. Prints the FIRST
+		// violation of each with all inputs so a broken DNF-coverage row is
+		// named. This is the prime double-dot suspect (miscounted disjunct).
+		{
+			let gv = |x:&FpVar<F>| x.value().unwrap_or(F::zero());
+			let fc = F::from(0x100000000u64);
+			let fc2 = fc*fc; let fc3 = fc2*fc;
+			let p1 = F::from(0x98882405u32)*fc3;
+			let p1_2 = F::from(0x99992405u32)*fc3;
+			let r1v = gv(&r1);
+			let (fz,fo) = (F::zero(), F::one());
+			let mut sid_bad = usize::MAX;
+			let mut res_bad = usize::MAX;
+			for i in 0..n{
+				let sp = gv(&v_sigs[i])*fc2;
+				let dp = gv(&v_dnf_id[i])*fc;
+				let e_cnt = p1 + sp + dp;
+				let e_rs = p1_2 + sp + dp + gv(&v_dnf_step[i]);
+				if sid_bad==usize::MAX && (e_cnt!=gv(&v_sid_dnf_count[i])
+					|| e_rs!=gv(&v_sid_real_subsigs[i])){ sid_bad=i; }
+				if i>=1{
+					let nr = if gv(&v_sigs[i])!=gv(&v_sigs[i-1]){fo}else{fz};
+					let res = nr*(gv(&v_dnf_step[i])-gv(&v_dnf_step[i-1]))
+						+ (nr-fo)*( r1v*gv(&v_dnf_step[i])
+						+ (gv(&v_dnf_step[i-1])+fo-gv(&v_dnf_count[i-1])) );
+					if res_bad==usize::MAX && res*gv(&v_sigs[i])!=fz{
+						res_bad=i;
+					}
+				}
+			}
+			println!("DEBUG USE 62731.9: [step1/2.1] n={} sid_bad={} \
+res_bad={}", n, sid_bad as i64, res_bad as i64);
+			if res_bad!=usize::MAX{
+				let i=res_bad;
+				println!("DEBUG USE 62731.9a: RES-BAD i={} v_sig={} \
+v_sig_prev={} dnf_step={} dnf_step_prev={} dnf_count_prev={} new_row={}",
+					i, field_to_usize(&gv(&v_sigs[i])),
+					field_to_usize(&gv(&v_sigs[i-1])),
+					field_to_usize(&gv(&v_dnf_step[i])),
+					field_to_usize(&gv(&v_dnf_step[i-1])),
+					field_to_usize(&gv(&v_dnf_count[i-1])),
+					if gv(&v_sigs[i])!=gv(&v_sigs[i-1]){1}else{0});
+			}
+			// full DNF-coverage table on the failing chunk for hand-check.
+			if std::env::var("ZKR_DFA_DUMP").is_ok(){
+				for i in 0..n.min(64){
+					println!("DEBUG USE 62731.9b: row i={} v_sig={} \
+dnf_id={} dnf_step={} dnf_count={} real_subsig={}", i,
+						field_to_usize(&gv(&v_sigs[i])),
+						field_to_usize(&gv(&v_dnf_id[i])),
+						field_to_usize(&gv(&v_dnf_step[i])),
+						field_to_usize(&gv(&v_dnf_count[i])),
+						field_to_usize(&gv(&v_real_subsigs[i])));
+				}
+			}
 		}
 		if b_perf{
 			log_perf(self.job_id, log_level, "validate_discharge_sig step 2.1", &mut gt);
@@ -1351,6 +1413,8 @@ real_subsig={} computed={}", i, g(&v_sigs[i]),
 			}
 		}
 		assert_logup(cs.clone(), &src, &dst, &mtbl_lkup_res, &r1)?;
+		// DEBUG USE 62731.8 (REMOVE LATER): absolute cs index after step-2.2.
+		let nc_step22 = cs.num_constraints();
 		if b_perf{
 			log_perf(self.job_id, log_level, "validate_discharge_sig step 2.2", &mut gt);
 		}
@@ -1389,6 +1453,14 @@ discharged_sigs[{}]={} not in v_sigs (committed coverage miss)",
 		// wrong multiplicity (m_tbl) even when membership holds.
 		dbg_logup_diag("step3", &discharged_sigs, &v_sigs, &mtbl_sigs, &r1);
 		assert_logup(cs.clone(), &discharged_sigs, &v_sigs, &mtbl_sigs, &r1)?;
+		// DEBUG USE 62731.8 (REMOVE LATER): constraint-index map. Locate the
+		// 62730.2 first-bad ABSOLUTE row in one of these ranges to name the
+		// exact emitter: [nc,nc_step1)=step1 check_eq, [nc_step1,nc_step21)=
+		// step2.1 res*v_sig, [nc_step21,nc_step22)=step2.2 logup,
+		// [nc_step22,now)=step3 logup.
+		println!("DEBUG USE 62731.8: NC-MAP start={} step1_end={} \
+step21_end={} step22_end={} step3_end={}",
+			nc, nc_step1, nc_step21, nc_step22, cs.num_constraints());
 
 		if b_debug{
 			println!("DEBUG USE 6901 === discharged sigs by DFA ===");

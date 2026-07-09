@@ -85,6 +85,15 @@ grep -h "62731.6a" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null | head -20 \
 echo "  (multiplicity mismatches 62731.6b):"
 grep -h "62731.6b" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null | head -20 \
 	| sed 's/^.*DEBUG USE /  /' || true
+echo "NC-MAP (62731.8) -- locate 62730.2 first-bad in one range:"
+grep -h "62731.8" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null | tail -3 \
+	| sed 's/^.*DEBUG USE /  /' || true
+echo "STEP1/2.1 RECHECK (62731.9) -- res_bad>=0 => DNF-coverage bug:"
+grep -h "62731.9:" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null \
+	| grep -v "sid_bad=-1 res_bad=-1" | tail -10 \
+	| sed 's/^.*DEBUG USE /  /' || true
+grep -h "62731.9a" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null | tail -5 \
+	| sed 's/^.*DEBUG USE /  /' || true
 echo "fold step / file at abort (62727.0):"
 grep -h "62727.0" "$STDOUT_LOG" 2>/dev/null | tail -1 \
 	| sed 's/^.*DEBUG USE /  /' || true
