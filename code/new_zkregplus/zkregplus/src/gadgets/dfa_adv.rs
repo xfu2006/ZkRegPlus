@@ -60,6 +60,79 @@ use crate::gadgets::{
 };
 use rustomaton::dfa::DFA;
 
+// DEBUG USE 62731.6 (REMOVE LATER): standalone logup self-diagnosis. Recomputes
+// the SAME identity assert_logup enforces -- membership (qry subset lkup by
+// VALUE), multiplicity (m_tbl[j]==count of lkup[j] in qry, deduped), and the
+// rational sum equality sum(1/(r+q)) == sum(m/(r+lkup)). Prints a 1-line
+// summary ALWAYS and per-element detail ONLY when broken, so it pinpoints the
+// failing logup + the offending value without flooding the log. Values printed
+// as decimal (encoded ids can exceed usize).
+#[allow(dead_code)]
+fn dbg_logup_diag<F:PrimeField + ColEle>(
+	tag: &str, qry: &[FpVar<F>], lkup: &[FpVar<F>],
+	m_tbl: &[FpVar<F>], r: &FpVar<F>){
+	let val = |x:&FpVar<F>| x.value().unwrap_or(F::zero());
+	let r_val = val(r);
+	let zero = F::zero();
+	let qv: Vec<F> = qry.iter().map(|x| val(x)).collect();
+	let lv: Vec<F> = lkup.iter().map(|x| val(x)).collect();
+	let mv: Vec<F> = m_tbl.iter().map(|x| val(x)).collect();
+	// occurrence count of each value in qry
+	let mut cnt: HashMap<String,usize> = HashMap::new();
+	for x in qv.iter(){ *cnt.entry(format!("{}",x)).or_insert(0)+=1; }
+	let lset: std::collections::HashSet<String> =
+		lv.iter().map(|x| format!("{}",x)).collect();
+	// membership: qry value (nonzero) missing from lkup
+	let mut miss: Vec<(usize,String)> = Vec::new();
+	for (i,x) in qv.iter().enumerate(){
+		if *x!=zero && !lset.contains(&format!("{}",x)){
+			miss.push((i, format!("{}",x)));
+		}
+	}
+	// multiplicity: expected m for first occurrence of each lkup value, else 0
+	let mut seen: std::collections::HashSet<String> =
+		std::collections::HashSet::new();
+	let mut multbad: Vec<(usize,String,String,usize)> = Vec::new();
+	for (i,x) in lv.iter().enumerate(){
+		let key = format!("{}",x);
+		let exp = if seen.contains(&key){0}
+			else { seen.insert(key.clone());
+				*cnt.get(&key).unwrap_or(&0) };
+		let got = mv.get(i).cloned().unwrap_or(zero);
+		if got != F::from(exp as u64){
+			multbad.push((i, key, format!("{}",got), exp));
+		}
+	}
+	// rational sum identity
+	let inv = |x:F| (r_val + x).inverse().unwrap_or(zero);
+	let mut sl = zero; for x in qv.iter(){ sl += inv(*x); }
+	let mut sr = zero;
+	for (m,x) in mv.iter().zip(lv.iter()){ sr += *m * inv(*x); }
+	let sum_ok = sl == sr;
+	println!("DEBUG USE 62731.6: [{}] qn={} ln={} miss={} multbad={} \
+sum_ok={}", tag, qv.len(), lv.len(), miss.len(), multbad.len(), sum_ok);
+	for (i,v) in miss.iter().take(32){
+		println!("DEBUG USE 62731.6a: [{}] MISS qry[{}]={} not in lkup",
+			tag, i, v);
+	}
+	for (i,k,g,e) in multbad.iter().take(32){
+		println!("DEBUG USE 62731.6b: [{}] MULT lkup[{}]={} m_got={} \
+m_exp={}", tag, i, k, g, e);
+	}
+	// full raw dump ONLY when the identity breaks -- captures everything in
+	// one run for hand-verification even if the checks above miss a case.
+	if !sum_ok{
+		println!("DEBUG USE 62731.6c: [{}] r={}", tag, r_val);
+		for (i,x) in qv.iter().enumerate().take(128){
+			println!("DEBUG USE 62731.6c: [{}] QRY[{}]={}", tag, i, x);
+		}
+		for i in 0..lv.len().min(128){
+			println!("DEBUG USE 62731.6c: [{}] LKUP[{}]={} m={}",
+				tag, i, lv[i], mv.get(i).cloned().unwrap_or(zero));
+		}
+	}
+}
+
 // -----------------------------------------------
 //		Structs
 // -----------------------------------------------
@@ -1257,6 +1330,26 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 		);
 		let mtbl_lkup_res = discharge_sig_combo.lock().unwrap()
 			.get_container("mtbl_lk_res").unwrap().lock().unwrap().to_vec();
+		// DEBUG USE 62731.6 (REMOVE LATER): diagnose the step-2.2 subsig-result
+		// logup src=(v_sig's real subsig, FALSE) SUBSET dst=(subsig, eval_res).
+		// A MISS here => a v_sig's real subsig_id does not match the eval subsig
+		// id (the SDE-vs-DFA double-dot mismatch), OR the eval result != FALSE.
+		dbg_logup_diag("step2.2", &src, &dst, &mtbl_lkup_res, &r1);
+		// DEBUG USE 62731.7 (REMOVE LATER, env ZKR_DFA_DUMP=1): raw pre-encode
+		// triples so a MISS can be decoded to (sig_id, real_subsig, result).
+		if std::env::var("ZKR_DFA_DUMP").is_ok(){
+			let g = |x:&FpVar<F>| field_to_usize(&x.value()
+				.unwrap_or(F::zero()));
+			for i in 0..v_sigs.len().min(64){
+				println!("DEBUG USE 62731.7: SRC i={} v_sig={} \
+real_subsig={} computed={}", i, g(&v_sigs[i]),
+					g(&v_real_subsigs[i]), g(&v_computed_subsig[i]));
+			}
+			for i in 0..pad_subsigs.len().min(64){
+				println!("DEBUG USE 62731.7: DST i={} subsig={} res={}",
+					i, g(&pad_subsigs[i]), g(&pad_res[i]));
+			}
+		}
 		assert_logup(cs.clone(), &src, &dst, &mtbl_lkup_res, &r1)?;
 		if b_perf{
 			log_perf(self.job_id, log_level, "validate_discharge_sig step 2.2", &mut gt);
@@ -1291,6 +1384,10 @@ discharged_sigs[{}]={} not in v_sigs (committed coverage miss)",
 				}
 			}
 		}
+		// DEBUG USE 62731.6 (REMOVE LATER): diagnose the step-3 sig-coverage
+		// logup discharged_sigs SUBSET v_sigs. Complements 62731.4: 6b flags a
+		// wrong multiplicity (m_tbl) even when membership holds.
+		dbg_logup_diag("step3", &discharged_sigs, &v_sigs, &mtbl_sigs, &r1);
 		assert_logup(cs.clone(), &discharged_sigs, &v_sigs, &mtbl_sigs, &r1)?;
 
 		if b_debug{

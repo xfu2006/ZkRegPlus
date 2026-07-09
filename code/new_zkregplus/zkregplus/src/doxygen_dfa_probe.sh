@@ -76,6 +76,15 @@ grep -h "62731.2" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null | head -20 \
 echo "committed-column miss (62731.4) -- fires only if advice was consistent:"
 grep -h "62731.4" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null | head -8 \
 	| sed 's/^.*DEBUG USE /  /' || true
+echo "LOGUP DIAG (62731.6) -- sum_ok=false names the failing logup:"
+grep -h "62731.6:" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null \
+	| grep -v "sum_ok=true" | head -20 | sed 's/^.*DEBUG USE /  /' || true
+echo "  (membership misses 62731.6a):"
+grep -h "62731.6a" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null | head -20 \
+	| sed 's/^.*DEBUG USE /  /' || true
+echo "  (multiplicity mismatches 62731.6b):"
+grep -h "62731.6b" "$STDOUT_LOG" "$JOBLOG" 2>/dev/null | head -20 \
+	| sed 's/^.*DEBUG USE /  /' || true
 echo "fold step / file at abort (62727.0):"
 grep -h "62727.0" "$STDOUT_LOG" 2>/dev/null | tail -1 \
 	| sed 's/^.*DEBUG USE /  /' || true
