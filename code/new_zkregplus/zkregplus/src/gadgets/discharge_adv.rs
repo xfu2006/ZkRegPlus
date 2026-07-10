@@ -1,7 +1,5 @@
 use utils::consts::{read_global_config, B_DEBUG, PROBE_CHUNK_ID};
 use folding_schemes::folding::foldpot::utils::B_DEBUG2;
-// DEBUG USE 62730 (REMOVE LATER): per-sub-gadget SAT checkpoint
-use folding_schemes::folding::foldpot::utils::gadget_sat_check;
 use std::sync::{Arc, Mutex};
 /* Created 05/06/2025
    Implementation initially completed 06/11/2025
@@ -655,11 +653,6 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 		let hm_loc = Self::pat_loc_to_hm(pat_loc);
 		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
 		let (zero, one, max) = (F::zero(), F::one(), F::from(max_val as u32));
-		// DEBUG USE 62727.6 (remove later): confirm StepQueue::gen_forward_prf is REACHED
-		if std::env::var("ZKR_STEP_CHECK").is_ok() {
-			utils::logger::emit_stdout(format!(
-				"DEBUG USE 62727.6: gen_forward_prf ENTER subsigs={}", self.subsigs.len()));
-		}
 
 		//2. process each subsig, propagating step by step
 		let tuples = self.subsigs.par_iter().map(|subsig|{
@@ -753,14 +746,6 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 				//loop never ran and to_add_item stays None;
 				//synthesize an empty template so downstream
 				//data structures stay consistent.
-				// ===== DEBUG USE 62727.4 BEGIN (REMOVE LATER): flag the 79cd2e54 empty-fabricate branch =====
-				if to_add_item.is_none() && std::env::var("ZKR_STEP_CHECK").is_ok() {
-					utils::logger::emit_stdout(format!(
-						"DEBUG USE 62727.4: FABRICATE-empty-to_add (79cd2e54) chunk={} subsig={:?} step_i={} items_len={}",
-						utils::consts::PROBE_CHUNK_ID.load(std::sync::atomic::Ordering::Relaxed),
-						subsig, i, items.len()));
-				}
-				// ===== DEBUG USE 62727.4 END =====
 				let mut to_add_item = to_add_item.unwrap_or_else(
 					|| StepQueueItem::new(*subsig,
 						F::from(i as u32), dst_pat,
@@ -929,23 +914,6 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 					.collect::<Vec<F>>();
 				to_del.sort();
 
-				// ===== DEBUG USE 62729.1 BEGIN (REMOVE LATER): finite
-				// cross-chunk prune trace. Only the 2 finite chunk-crossers
-				// DB-wide (Gandcrab/Kryptik) reach here (sentinel rg_end=
-				// 2^26-1 never prunes); names the culprit advice values behind
-				// a 62727.1 hit. Env-gated: no-op when ZKR_STEP_CHECK unset. =====
-				if rg_end < _max && !to_del.is_empty()
-					&& std::env::var("ZKR_STEP_CHECK").is_ok() {
-					utils::logger::emit_stdout(format!(
-						"DEBUG USE 62729.1: BWD-PRUNE-FINITE chunk={} \
-						 subsig={:?} src_step={} rg_end={} min_loc={} \
-						 default_min_loc={} n_del={} first_del={:?}",
-						utils::consts::PROBE_CHUNK_ID.load(
-							std::sync::atomic::Ordering::Relaxed),
-						subsig, src_step, rg_end, min_loc,
-						default_min_loc, to_del.len(), to_del.first()));
-				}
-				// ===== DEBUG USE 62729.1 END =====
 
 
 				let set_to_del = to_del.iter().map(|x| *x)
@@ -1157,8 +1125,6 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 
 		//3. consruct container
 		let (n, n_pat,_n_trace) = Self::vec_size(&self.q_type, &self.capacity);
-		// TEMP (revert later): ungated step-queue usage.
-		if B_DEBUG2 || read_global_config().b_show_queue_saturated { println!("DEBUG USE 6901.8: step queue usage: {:.4} b_igc: {} ({}) usage_full: {}", (vec_encoded.len() as f32)/(n as f32), self.b_igc, name, (vec_encoded.len() as f32)/(n as f32)); }
 		if n<vec_encoded.len()+1{
 			let n = if n==0 {1} else {n};
 			if n_pat==n{
@@ -1178,10 +1144,6 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 				//perc_pats_expansion_rate.
 				//scale up due to vec_size() adjustment
 				let new_perc_pats_expansion_rate= (( ((vec_encoded.len()+1) as f32)/(n as f32) * (self.capacity.perc_pats_expansion_rate as f32)) as usize) + 1;
-				if b_debug{
-					println!("DEBUG USE 9002: to throw perc_pats_expansion_rate ERROR on Step_Queue in discharge_adv. DUMP of data");
-					self.dump();
-				}
 				return Err(Error::CapErr(vec![(format!("dis_adv::perc_pats_expansion_rate, StepQueue b_igc: {}", self.b_igc), new_perc_pats_expansion_rate)]));
 			}
 		}
@@ -1523,26 +1485,6 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 		// how many subsigs are alive, and how positions distribute across them
 		// (breadth = many subsigs x few pos => genuinely required; depth = few
 		// subsigs x many pos => prunable). chunk id via PROBE_CHUNK_ID.
-		if v2d[0].len() > 0 && utils::consts::SCALE_DUMP_FWD.load(std::sync::atomic::Ordering::Relaxed) {
-			let chunk = utils::consts::PROBE_CHUNK_ID
-				.load(std::sync::atomic::Ordering::Relaxed);
-			// FULL queue membership: (global subsig id, slot consumption) for
-			// every alive subsig, so the queue's subsig SET and per-subsig
-			// space use can be diffed across rulesets. slots = sum of
-			// vec_pat_id lengths, which matches fill = v2d[0].len().
-			let mut per: Vec<(usize, usize)> = self.store_items.iter()
-				.map(|(k, v)| (field_to_usize(k),
-					v.iter().map(|it| it.vec_pat_id.len()).sum::<usize>()))
-				.filter(|&(_, slots)| slots > 0)
-				.collect();
-			per.sort_unstable_by(|a, b| b.1.cmp(&a.1));
-			let alive = per.len();
-			utils::logger::emit_stdout(format!(
-				"DEBUG USE 64731.2: FWD chunk={} igc={} n_subsigs={} \
-				 fill={}/cap={} alive_subsigs={} subsig_slots={:?}",
-				chunk, self.b_igc, self.subsigs.len(),
-				v2d[0].len(), n, alive, per));
-		}
 		if n<v2d[0].len()+1{
 			//aggressive: back-solve prod_pats_expansion (rung-independent,
 			//no basis_pats in the denominator):
@@ -1559,12 +1501,6 @@ impl <F:PrimeField + ColEle> StepFwdPrf<F>{
 			let new_val = backsolve_perc(v2d[0].len(),
 				self.capacity.basis_pats_in_trace,
 				self.capacity.max_nibble_len);
-			if b_debug_capacity{
-				println!("DEBUG USE 9003: to throw perc_pats_expansion_rate ERROR on StepFwdProof in discharge_adv. DUMP of data");
-				self.dump();
-				println!("DEBUG USE 9003: v2d[0].len: {}, basis_pats_in_trace: {}, max_nibble_len: {}, perc_pats_expansion_rate: {}, FWD_COST: {}",
-					v2d[0].len(), self.capacity.basis_pats_in_trace, self.capacity.max_nibble_len, self.capacity.perc_pats_expansion_rate, FWD_COST);
-			}
 			return Err(Error::CapErr(vec![(format!("dis_adv::perc_pats_expansion_rate, StepFwdPrf b_igc: {}", self.b_igc), new_val)]));
 		}
 		assert!(n>=v2d[0].len()+1, "buf too small, adjust perc_pats_expansion_rate. n: {}, v2dlen: {}", n, v2d[0].len());
@@ -1894,17 +1830,8 @@ impl <F:PrimeField + ColEle> StepBwdPrf<F>{
 			v_src_min_loc, //id 4
 			v_prev_encoded, v_loc_to_del, v_src_subsigs.clone()];
 		let n = self.vec_size();
-		// TEMP (revert later): ungated backward-queue usage.
-		if B_DEBUG2 || read_global_config().b_show_queue_saturated { println!("DEBUG USE 6901.8: StepBwdPrf usage: {:.4} b_igc: {} ({}) usage_full: {}", (v2d[0].len() as f32)/(n as f32), self.b_igc, name, (v2d[0].len() as f32)/(n as f32)); }
 		if n<v2d[0].len()+1{
 			let new_val= (v2d[0].len()+1)*10000 * 100 * 100 / (self.capacity.max_nibble_len*self.capacity.basis_pats_in_trace * ADD_DEL_COST) + 1;
-			if b_debug_capacity{
-				println!("DEBUG USE 9005: to throw perc_pats_expansion_rate ERROR on StepBwdProof in discharge_adv. DUMP of data");
-				self.dump();
-				println!("v2d[0].len: {}, miax_nibble: {}, basis_pats_in_trace: {}, ADD_DEL_COST: {}, current perc_pats_expansion_rate: {}", 
-					v2d[0].len(), self.capacity.max_nibble_len, 
-					self.capacity.basis_pats_in_trace, ADD_DEL_COST, self.capacity.perc_pats_expansion_rate);
-			}
 			return Err(Error::CapErr(vec![(format!("dis_adv::perc_pats_expansion_rate, StepBwdPrf b_igc: {}", self.b_igc), new_val)]));
 		}
 		assert!(n>=v2d[0].len()+1, "buf too small for StepBwdPrf, adjust compress_ratio in vec_size() first, and then the perc_pats_expansion_rate in capacity");
@@ -2773,16 +2700,6 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let ct_pat_loc = Arc::new(Mutex::new(pat_loc));
 
 
-		if b_debug{
-			println!("========== DEBUG USE 202: gen_fwd: inp_step_queue: for segid: {}", seg_id);
-			inp_step_queue.dump();
-			println!("========== DEBUG USE 203: to_add: ");
-			sq_to_add.dump();
-			println!("========== DEBUG USE 204: res: ");
-			sq_res.dump();
-			println!("========== DEBUG USE 205: fwd_prf: ");
-			fwd_prf.dump();
-		}
 
 		
 		//AGGRESSIVE: sq_inp goes to IDX_DATA (b_inp=false), NOT IDX_INP, so the
@@ -2881,16 +2798,6 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 			.gen_backward_prf(default_min_loc, subsig_store_info);
 
 
-		if b_debug{
-			println!("========== DEBUG USE 301: seg_id: {}, gen_bwd igc: {}, inp_step_queue (fwd_res): ", seg_id, b_igc);
-			input_step_queue.dump();
-			println!("========== DEBUG USE 302: to_del: ");
-			sq_to_del.dump();
-			println!("========== DEBUG USE 303: res: ");
-			sq_res.dump();
-			println!("========== DEBUG USE 304: backward_prf: ");
-			bwd_prf.dump();
-		}
 
 		let ct_sq_to_del= sq_to_del.to_container(
 			"sq_to_del",false,true,false,false,
@@ -3033,22 +2940,6 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		let v2d = names.iter().map(|n|{
 			prf_bwd.lock().unwrap().get_container(n).unwrap().lock().unwrap().to_vec() 
 		}).collect::<Vec<Vec<F>>>();
-		if b_debug{
-			println!("DEBUG USE 6501.1 --- prf_bwd ----\n");
-			println!("senc\tsrc_step\tsrc_pat\trg_end\tsrc_min_loc\tprevenc\tloc_to_del\tsubsig");
-			for i in 0..v2d[0].len(){
-				println!("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-					v2d[0][i],
-					v2d[1][i],
-					v2d[2][i],
-					v2d[3][i], //rg_end
-					v2d[4][i], //min_loc
-					v2d[5][i],
-					v2d[6][i],
-					v2d[7][i], //subsig
-				);
-			}
-		}
 		let (
 			_src_encoded, _src_step, _src_pat, 
 			src_rg_end,  //id 3
@@ -3081,15 +2972,6 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 			sq_res.lock().unwrap().get_container(n).unwrap().lock().unwrap().to_vec()
 		).collect::<Vec<Vec<F>>>();
 		if b_debug{ assert!(is_sorted(&rescols[0])); }
-		if b_debug{
-			println!("DEBUG USE 6502 --- res cos --------");
-			println!("encoded\tstep\tlocs\tsubsig");
-			for i in 0..rescols[0].len(){
-				println!("{}\t{}\t{}\t{}", 
-					rescols[0][i], rescols[1][i], rescols[2][i], rescols[3][i]
-				);
-			}
-		}
 
 		//3.1 prove that subsig is sorted
 		//we compute difference bewteen each pair entries and
@@ -3285,29 +3167,6 @@ impl <F: PrimeField + ColEle> DischargeAdvAdvice<F>{
 		}
 
 		//4.4 if debug mode print out the results
-		if b_debug {
-			println!("DEBUG USE 6504 --- set_bwdprf_ssm_default ----");
-			println!("subsig\tstep\tmin_loc");
-			for i in 0..set_size {
-				if !set_bwdprf_ssm_default[0][i].is_zero() {
-					println!("{}\t{}\t{}", set_bwdprf_ssm_default[0][i], set_bwdprf_ssm_default[1][i], set_bwdprf_ssm_default[2][i]);
-				}
-			}
-			println!("DEBUG USE 6505 --- set_bwdprf_ssm_real ----");
-			println!("subsig\tstep\tmin_loc");
-			for i in 0..set_size {
-				if !set_bwdprf_ssm_real[0][i].is_zero() {
-					println!("{}\t{}\t{}", set_bwdprf_ssm_real[0][i], set_bwdprf_ssm_real[1][i], set_bwdprf_ssm_real[2][i]);
-				}
-			}
-			println!("DEBUG USE 6506 --- set_sqres_ssm ----");
-			println!("subsig\tstep\tmin_loc");
-			for i in 0..set_size {
-				if !set_sqres_ssm[0][i].is_zero() {
-					println!("{}\t{}\t{}", set_sqres_ssm[0][i], set_sqres_ssm[1][i], set_sqres_ssm[2][i]);
-				}
-			}
-		}
 
 		//4.5 generate the related prf for the argument that
 		// the min _loc are set up right (default case and real min_loc).
@@ -3588,9 +3447,6 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			&ct_sq_res, &ct_pat_loc,
 			&r1, &r2, &prf_fwdprf_valid, last_loc,
 			word_id.clone(), subseg_id.clone())?;
-		// DEBUG USE 62730 (REMOVE LATER): SAT after the SED forward-proof
-		// validator (the cross-chunk forward carry suspect).
-		gadget_sat_check(&cs, "discharge_adv::validate_fwdprf");
 
 		if b_perf {
 			println!(" ### validate forward step 3: {}", 
@@ -4132,31 +3988,6 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 			let lb_subsig = var_to_lb(&dst_subsig[i], F::one());
 			let lb_mul_item = var_to_lb(&mul_item, F::one());
 			if B_DEBUG {
-				// REMOVE LATER ---
-				if mul_item.value()?*dst_subsig[i].value()? != F::zero(){
-					println!("DEBUG USE 6671.1: fails mul_item check: i: {}, mul_item: {}, dst_subsig[i]: {}", i, mul_item.value()?, dst_subsig[i].value()?);
-					println!("DEBUG USE 6671.2: b_begin: {}, b_end: {}, b_middle: {}, diff1[i]: {}, rg1: {}, dst_loc[i]: {}", b_begin.value()?, b_end.value()?, b_middle.value()?, diff1[i].value()?, rg1.value()?, dst_loc[i].value()?);
-					let bidx = if i<5 {0} else {i-5};
-					let eidx = if i<vec_b_begin.len()-5 {vec_b_begin.len()} else {i+5};
-					for j in bidx..eidx{
-						println!("j: {}, src: {}, dst: {}, src_loc: {}, src_step: {}, dst_pat: {}, dst_rg1: {}, dst_rg2: {}, dst_loc: {}, dst_pat: {}, diff1: {}, diff2: {}, dst_subsig: {}",
-							j,
-							v2d[0][j].value()?,
-							v2d[1][j].value()?,
-							v2d[2][j].value()?,
-							v2d[3][j].value()?,
-							v2d[4][j].value()?,
-							v2d[5][j].value()?,
-							v2d[6][j].value()?,
-							v2d[7][j].value()?,
-							v2d[8][j].value()?,
-							v2d[9][j].value()?,
-							v2d[10][j].value()?,
-							v2d[11][j].value()?
-						);
-					}
-				}
-				// REMOVE LATER above
 				assert!(mul_item.value()?*dst_subsig[i].value()? == F::zero());
 			}
 			cs.enforce_constraint(
@@ -4310,9 +4141,6 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		self.validate_bwdprf_valid_prf(&ct_prf_bwd,
 			&ct_sq_res2, &r1, &r2, &prf_bwdprf_valid, last_loc,
 			word_id.clone(), subseg_id.clone())?;
-		// DEBUG USE 62730 (REMOVE LATER): SAT after the SED backward-proof
-		// validator (the terminal-chunk backward-PRUNE carry suspect).
-		gadget_sat_check(&cs, "discharge_adv::validate_bwdprf");
 		if b_perf {
 			println!(" ### validate backward step 3: {}", cs.num_constraints()-nc);
 			println!(" ### TOTAL validate backward: {}", cs.num_constraints()-nc0);
@@ -4587,48 +4415,6 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		if b_debug {check_cs(&cs, "val_bwd_prf valid step 4.3");}
 
 		// 4.4: debug dump
-		if b_debug {
-			println!("DEBUG USE 6506 --- v2d contents ----(vars)");
-			println!("senc\tsrc_step\tsrc_pat\trg_end\tsrc_min_loc\tprevenc\tloc_to_del\tsubsig");
-			for i in 0..v2d[0].len() {
-				if !v2d[7][i].value().unwrap().is_zero() {
-					for j in 0..8 {
-						print!("{}\t", v2d[j][i].value().unwrap());
-					}
-					println!("");
-				}
-			}
-
-			println!("DEBUG USE 6507 --- set_bwdprf_ssm (var) ----");
-			println!("subsig\tstep\tmin_loc");
-			for i in 0.._set_bwdprf_ssm[0].len() {
-				if !_set_bwdprf_ssm[0][i].value().unwrap().is_zero() {
-					println!("{}\t{}\t{}", _set_bwdprf_ssm[0][i].value().unwrap(), _set_bwdprf_ssm[1][i].value().unwrap(), _set_bwdprf_ssm[2][i].value().unwrap());
-				}
-			}
-
-			println!("DEBUG USE 6508 --- set_bwdprf_ssm_default (var) ----");			println!("subsig\tstep\tmin_loc");
-			for i in 0.._set_bwdprf_ssm_default[0].len() {
-				if !_set_bwdprf_ssm_default[0][i].value().unwrap().is_zero() {
-					println!("{}\t{}\t{}", _set_bwdprf_ssm_default[0][i].value().unwrap(), _set_bwdprf_ssm_default[1][i].value().unwrap(), _set_bwdprf_ssm_default[2][i].value().unwrap());
-				}
-			}
-			println!("DEBUG USE 6509 --- set_bwdprf_ssm_real (var) ----");
-			println!("subsig\tstep\tmin_loc");
-			for i in 0.._set_bwdprf_ssm_real[0].len() {
-				if !_set_bwdprf_ssm_real[0][i].value().unwrap().is_zero() {
-					println!("{}\t{}\t{}", _set_bwdprf_ssm_real[0][i].value().unwrap(), _set_bwdprf_ssm_real[1][i].value().unwrap(), _set_bwdprf_ssm_real[2][i].value().unwrap());
-				}
-			}
-			println!("DEBUG USE 6510 --- set_sqres_ssm (var)----");
-			println!("subsig\tstep\tmin_loc");
-			for i in 0.._set_sqres_ssm[0].len() {
-				if !_set_sqres_ssm[0][i].value().unwrap().is_zero() {
-					println!("{}\t{}\t{}", _set_sqres_ssm[0][i].value().unwrap(), _set_sqres_ssm[1][i].value().unwrap(), _set_sqres_ssm[2][i].value().unwrap());
-				}
-			}
-
-		}
 
 		//4.5 generate the related prf for the argument that
 		// the min _loc are set up right (default case and real min_loc).
@@ -5657,14 +5443,6 @@ use utils::consts::{read_global_config, get_global_config};
 		let (to_add, res, prf) = sq.gen_forward_prf(&pat_loc, &steps_info);
 
 		let b_details = true;
-		if b_details{
-			println!("DEBUG USE 50001: to_add");
-			to_add.dump();
-			println!("DEBUG USE 50002: res");
-			res.dump();
-			println!("DEBUG USE 50003: proof");
-			prf.dump();
-		}
 
 		//vec100 is an example of all steps has something added
 		//also new added can lead to new added for next step
@@ -5824,16 +5602,6 @@ use utils::consts::{read_global_config, get_global_config};
 		let (to_remove, res, prf) = sq.gen_backward_prf(last_loc, &subsig_store_info);
 
 		let b_details = true;
-		if b_details{
-			println!("==== DEBUG USE 50000: original ====");
-			sq.dump();
-			println!("==== DEBUG USE 50001: to_remove====");
-			to_remove.dump();
-			println!("==== DEBUG USE 50002: res ====");
-			res.dump();
-			println!("==== DEBUG USE 50003: proof ====");
-			prf.dump();
-		}
 
 		//verif example 1: the proof goes down to level 2 (min possible)
 		let vec100 = res.store_items.get(&Fr::from(100)).unwrap(); 
