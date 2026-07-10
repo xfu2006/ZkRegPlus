@@ -1,10 +1,18 @@
 target/*
 log.txt
 *.out
-.gemini/
 session.log
-*.md
+
+# python bytecode
+__pycache__/
+*.pyc
+
+# AI-assistant configs: kept locally, not shipped in the artifact
+CLAUDE.md
+**/CLAUDE.md
+.gemini/
 .claude/*
+
 # sde_aggressive M0 baselines + fixtures (local-only, not committed)
 data/baselines/
 data/debug/sde_aggressive/
