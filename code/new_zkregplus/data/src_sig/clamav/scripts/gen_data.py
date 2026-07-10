@@ -510,10 +510,8 @@ def get_critical_pat(rec, dict_words):
 	r1 = re.compile("(\d+)<\d+");
 	r2 = re.compile("(\d+)=0");
 	arr_bad_ids = r1.findall(d1["expr"]);
-	#if len(arr_bad_ids)>0: print("DEBUG USE 102", arr_bad_ids, d1["expr"]);
 	for x in arr_bad_ids: set_bad_ids.add( int(x) );
 	arr_bad_ids = r2.findall(d1["expr"]);
-	#if len(arr_bad_ids)>0: print("DEBUG USE 102", arr_bad_ids, d1["expr"]);
 	for x in arr_bad_ids: set_bad_ids.add( int(x) );
 
 	n = len(d1["arr_sigs"]);

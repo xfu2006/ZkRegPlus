@@ -80,7 +80,6 @@ while processed<len(all_lines):
 		f3.write(line + "\n");
 	for line in lines:
 		if line.find("FINAL SIZE")>=0:
-			print("DEBUG USE 200: ", line);
 			r4 = re.compile("FINAL SIZE.*: (.*):");
 			fname = r4.findall(line)[0];
 			#print("fname: ", fname, "line: ", line );
