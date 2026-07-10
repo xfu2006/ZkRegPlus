@@ -60,78 +60,6 @@ use crate::gadgets::{
 };
 use rustomaton::dfa::DFA;
 
-// DEBUG USE 62731.6 (REMOVE LATER): standalone logup self-diagnosis. Recomputes
-// the SAME identity assert_logup enforces -- membership (qry subset lkup by
-// VALUE), multiplicity (m_tbl[j]==count of lkup[j] in qry, deduped), and the
-// rational sum equality sum(1/(r+q)) == sum(m/(r+lkup)). Prints a 1-line
-// summary ALWAYS and per-element detail ONLY when broken, so it pinpoints the
-// failing logup + the offending value without flooding the log. Values printed
-// as decimal (encoded ids can exceed usize).
-#[allow(dead_code)]
-fn dbg_logup_diag<F:PrimeField + ColEle>(
-	tag: &str, qry: &[FpVar<F>], lkup: &[FpVar<F>],
-	m_tbl: &[FpVar<F>], r: &FpVar<F>){
-	let val = |x:&FpVar<F>| x.value().unwrap_or(F::zero());
-	let r_val = val(r);
-	let zero = F::zero();
-	let qv: Vec<F> = qry.iter().map(|x| val(x)).collect();
-	let lv: Vec<F> = lkup.iter().map(|x| val(x)).collect();
-	let mv: Vec<F> = m_tbl.iter().map(|x| val(x)).collect();
-	// occurrence count of each value in qry
-	let mut cnt: HashMap<String,usize> = HashMap::new();
-	for x in qv.iter(){ *cnt.entry(format!("{}",x)).or_insert(0)+=1; }
-	let lset: std::collections::HashSet<String> =
-		lv.iter().map(|x| format!("{}",x)).collect();
-	// membership: qry value (nonzero) missing from lkup
-	let mut miss: Vec<(usize,String)> = Vec::new();
-	for (i,x) in qv.iter().enumerate(){
-		if *x!=zero && !lset.contains(&format!("{}",x)){
-			miss.push((i, format!("{}",x)));
-		}
-	}
-	// multiplicity: expected m for first occurrence of each lkup value, else 0
-	let mut seen: std::collections::HashSet<String> =
-		std::collections::HashSet::new();
-	let mut multbad: Vec<(usize,String,String,usize)> = Vec::new();
-	for (i,x) in lv.iter().enumerate(){
-		let key = format!("{}",x);
-		let exp = if seen.contains(&key){0}
-			else { seen.insert(key.clone());
-				*cnt.get(&key).unwrap_or(&0) };
-		let got = mv.get(i).cloned().unwrap_or(zero);
-		if got != F::from(exp as u64){
-			multbad.push((i, key, format!("{}",got), exp));
-		}
-	}
-	// rational sum identity
-	let inv = |x:F| (r_val + x).inverse().unwrap_or(zero);
-	let mut sl = zero; for x in qv.iter(){ sl += inv(*x); }
-	let mut sr = zero;
-	for (m,x) in mv.iter().zip(lv.iter()){ sr += *m * inv(*x); }
-	let sum_ok = sl == sr;
-	println!("DEBUG USE 62731.6: [{}] qn={} ln={} miss={} multbad={} \
-sum_ok={}", tag, qv.len(), lv.len(), miss.len(), multbad.len(), sum_ok);
-	for (i,v) in miss.iter().take(32){
-		println!("DEBUG USE 62731.6a: [{}] MISS qry[{}]={} not in lkup",
-			tag, i, v);
-	}
-	for (i,k,g,e) in multbad.iter().take(32){
-		println!("DEBUG USE 62731.6b: [{}] MULT lkup[{}]={} m_got={} \
-m_exp={}", tag, i, k, g, e);
-	}
-	// full raw dump ONLY when the identity breaks -- captures everything in
-	// one run for hand-verification even if the checks above miss a case.
-	if !sum_ok{
-		println!("DEBUG USE 62731.6c: [{}] r={}", tag, r_val);
-		for (i,x) in qv.iter().enumerate().take(128){
-			println!("DEBUG USE 62731.6c: [{}] QRY[{}]={}", tag, i, x);
-		}
-		for i in 0..lv.len().min(128){
-			println!("DEBUG USE 62731.6c: [{}] LKUP[{}]={} m={}",
-				tag, i, lv[i], mv.get(i).cloned().unwrap_or(zero));
-		}
-	}
-}
 
 // -----------------------------------------------
 //		Structs
@@ -393,13 +321,7 @@ impl <F: PrimeField + ColEle> DfaAdvAdvice<F>{
 					let start_idx = u_segid * capacity.max_nibble_len;
 					let u_idx = i + start_idx;
 					//if u_idx>=748447-100 && u_idx<=748447+10{
-					if u_idx>=1 && u_idx<=10 && dfa.raw_str.len()>2{
-						println!("DEBUG USE 6735.9.1: DFA: {}, idx: {}, ch: {}, dst: {}",dfa.raw_str, u_idx, ch, dst);
-					}
 					
-					if dfa.finals.contains(dst){
-						println!("DEBUG USE 6735.9: DFA {} FOUND final state: {} at idx: {} (start_idx: {}, seg_id: {})", dfa.raw_str, dst, u_idx, start_idx, seg_id);
-					}
 				}
 				let ch_usize = ch as usize;
 				let trans = ch_usize +
@@ -536,22 +458,6 @@ impl <F: PrimeField + ColEle> DfaAdvAdvice<F>{
 		res.lock().unwrap().add_col(Col::<F>::new_const(vec![zero;m],
 			"si_subsig_res",IDX_SI_DATA)); //don't care as they'll be TriVal
 
-		// DEBUG USE 62731.5 (REMOVE LATER, env ZKR_DFA_DUMP=1): per-subsig DFA
-		// view -- pattern, carried-in state (cross-chunk), final state, is_final,
-		// TriVal result. Reveals whether the double-dot offset doubling is
-		// reflected in the DFA pattern and how the carried state drives the
-		// subsig verdict at a chunk boundary.
-		if std::env::var("ZKR_DFA_DUMP").is_ok(){
-			let u_seg = field_to_usize(&seg_id);
-			for i in 0..m{
-				let u_oup = field_to_usize(&raw_states[m*nlen+i]);
-				let is_fin = v_dfa[i].finals.contains(&(u_oup-1));
-				println!("DEBUG USE 62731.5: seg={} subsig_idx={} inp_state={} \
-oup_state={} is_final={} subsig_res={} raw_str={}",
-					u_seg, i, field_to_usize(&inp_states[i]), u_oup, is_fin,
-					field_to_usize(&subsig_res[i]), v_dfa[i].raw_str);
-			}
-		}
 
 		Ok( (res, subsig_res) )
 	}
@@ -588,10 +494,6 @@ oup_state={} is_final={} subsig_res={} raw_str={}",
 		let frg = F::from(RANGE2);
 		let res = Container::<F>::new("sig_res_combo");
 		let n = capacity.subsigs;
-		// DEBUG USE 62731.1 (REMOVE LATER): keep a handle to the sig objects
-		// before `v_sigs` is shadowed by the coverage column (~line 563), so the
-		// uncovered-sig probe below can read each sig's DNF shape.
-		let dbg_sig_objs: &Vec<Arc<ClamavSig>> = v_sigs;
 		assert!(inp_subsigs.len()==n);
 		assert!(subsig_result.len()==n); 
 		assert!(inp_sigs.len()==capacity.sigs);
@@ -731,46 +633,6 @@ oup_state={} is_final={} subsig_res={} raw_str={}",
 		//note: v_sigs is required to have at least one dummy entry at beginning
 		let mtbl_sigs= gen_m_table(&inp_sigs, &v_sigs);
 
-		// DEBUG USE 62731 (REMOVE LATER): the in-circuit step-3 logup asserts
-		// discharged_sigs(=inp_sigs) SUBSET v_sigs. A REAL sig uncovered here =>
-		// that logup is UNSAT (the doxygen DFA failure). Detect at advice-gen and
-		// dump the causal chain: which sig, its DNF shape (empty min-cost
-		// disjunct?), and each disjunct subsig's FSM result -- tests whether the
-		// discharge decision AGREES with the DFA walk (the SDE-vs-DFA double-dot
-		// hypothesis). Self-gated: prints ONLY when a real sig is uncovered.
-		for i in 0..inp_sigs.len(){
-			if inp_sigs[i]==zero || v_sigs.contains(&inp_sigs[i]) {continue;}
-			let info = &discharge_infos[i];
-			let sobj = dbg_sig_objs.iter().find(|s| s.name==info.sig_name);
-			let disj_lens: Vec<usize> = sobj
-				.map(|s| s.eval_dnf.vec_disjunc.iter().map(|d| d.len()).collect())
-				.unwrap_or_default();
-			let min_disj: Vec<usize> = sobj
-				.and_then(|s| s.eval_dnf.vec_disjunc.get(info.min_dnf_id).cloned())
-				.unwrap_or_default();
-			println!("DEBUG USE 62731.1: DFA-UNCOVERED-SIG idx={} sig_id={} \
-name={} b_success={} min_dnf_id={} n_disjuncts={} disjunct_lens={:?} \
-min_disjunct_len={} info.subsig_ids={:?}",
-				i, field_to_usize(&inp_sigs[i]), info.sig_name, info.b_success,
-				info.min_dnf_id, disj_lens.len(), disj_lens, min_disj.len(),
-				info.subsig_ids);
-			let sig_u = field_to_usize(&inp_sigs[i]);
-			for raw in min_disj.iter(){
-				let dfa_id = HexACDFA::gen_subsig_id_worker(sig_u, *raw+1);
-				let r = map.get(&F::from(dfa_id as u64)).map(|v| field_to_usize(v));
-				println!("DEBUG USE 62731.2:   disjunct subsig raw={} \
-dfa_subsig_id={} subsig_result={:?} (TriVal False={})",
-					raw, dfa_id, r, TriVal::False as u8);
-			}
-		}
-		// DEBUG USE 62731.3 (REMOVE LATER, env ZKR_DFA_DUMP=1): full chunk sigs.
-		if std::env::var("ZKR_DFA_DUMP").is_ok(){
-			let reals: Vec<(usize,String)> = discharge_infos.iter().enumerate()
-				.filter(|(_,d)| d.sig_name!="none")
-				.map(|(i,d)| (i,d.sig_name.clone())).collect();
-			println!("DEBUG USE 62731.3: DFA chunk real-sigs={:?} v_sigs_nonzero={}",
-				reals, v_sigs.iter().filter(|x| **x!=zero).count());
-		}
 
 
 		//4. add data columns into containers
@@ -1251,8 +1113,6 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 			check_eq(&exp_sid_real_subsig, &v_sid_real_subsigs[i],
 				"err sid_real_subsig")?;
 		}
-		// DEBUG USE 62731.8 (REMOVE LATER): absolute cs index after step-1 loop.
-		let nc_step1 = cs.num_constraints();
 		if b_perf{
 			log_perf(self.job_id, log_level, "validate_discharge_sig step 1", &mut gt);
 		}
@@ -1287,66 +1147,6 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 					* &v_sigs[i-1])
 			);
 			check_eq(&res, &zero, "fails well-formed check")?;
-		}
-		// DEBUG USE 62731.8 (REMOVE LATER): absolute cs index after step-2.1.
-		let nc_step21 = cs.num_constraints();
-		// DEBUG USE 62731.9 (REMOVE LATER): value-level recheck of step-1 sid
-		// encodings AND the step-2.1 DNF-step well-formedness res*v_sigs==0 --
-		// the constraints the logup diag does NOT cover. Prints the FIRST
-		// violation of each with all inputs so a broken DNF-coverage row is
-		// named. This is the prime double-dot suspect (miscounted disjunct).
-		{
-			let gv = |x:&FpVar<F>| x.value().unwrap_or(F::zero());
-			let fc = F::from(0x100000000u64);
-			let fc2 = fc*fc; let fc3 = fc2*fc;
-			let p1 = F::from(0x98882405u32)*fc3;
-			let p1_2 = F::from(0x99992405u32)*fc3;
-			let r1v = gv(&r1);
-			let (fz,fo) = (F::zero(), F::one());
-			let mut sid_bad = usize::MAX;
-			let mut res_bad = usize::MAX;
-			for i in 0..n{
-				let sp = gv(&v_sigs[i])*fc2;
-				let dp = gv(&v_dnf_id[i])*fc;
-				let e_cnt = p1 + sp + dp;
-				let e_rs = p1_2 + sp + dp + gv(&v_dnf_step[i]);
-				if sid_bad==usize::MAX && (e_cnt!=gv(&v_sid_dnf_count[i])
-					|| e_rs!=gv(&v_sid_real_subsigs[i])){ sid_bad=i; }
-				if i>=1{
-					let nr = if gv(&v_sigs[i])!=gv(&v_sigs[i-1]){fo}else{fz};
-					let res = nr*(gv(&v_dnf_step[i])-gv(&v_dnf_step[i-1]))
-						+ (nr-fo)*( r1v*gv(&v_dnf_step[i])
-						+ (gv(&v_dnf_step[i-1])+fo-gv(&v_dnf_count[i-1])) );
-					if res_bad==usize::MAX && res*gv(&v_sigs[i])!=fz{
-						res_bad=i;
-					}
-				}
-			}
-			println!("DEBUG USE 62731.9: [step1/2.1] n={} sid_bad={} \
-res_bad={}", n, sid_bad as i64, res_bad as i64);
-			if res_bad!=usize::MAX{
-				let i=res_bad;
-				println!("DEBUG USE 62731.9a: RES-BAD i={} v_sig={} \
-v_sig_prev={} dnf_step={} dnf_step_prev={} dnf_count_prev={} new_row={}",
-					i, field_to_usize(&gv(&v_sigs[i])),
-					field_to_usize(&gv(&v_sigs[i-1])),
-					field_to_usize(&gv(&v_dnf_step[i])),
-					field_to_usize(&gv(&v_dnf_step[i-1])),
-					field_to_usize(&gv(&v_dnf_count[i-1])),
-					if gv(&v_sigs[i])!=gv(&v_sigs[i-1]){1}else{0});
-			}
-			// full DNF-coverage table on the failing chunk for hand-check.
-			if std::env::var("ZKR_DFA_DUMP").is_ok(){
-				for i in 0..n.min(64){
-					println!("DEBUG USE 62731.9b: row i={} v_sig={} \
-dnf_id={} dnf_step={} dnf_count={} real_subsig={}", i,
-						field_to_usize(&gv(&v_sigs[i])),
-						field_to_usize(&gv(&v_dnf_id[i])),
-						field_to_usize(&gv(&v_dnf_step[i])),
-						field_to_usize(&gv(&v_dnf_count[i])),
-						field_to_usize(&gv(&v_real_subsigs[i])));
-				}
-			}
 		}
 		if b_perf{
 			log_perf(self.job_id, log_level, "validate_discharge_sig step 2.1", &mut gt);
@@ -1391,29 +1191,7 @@ dnf_id={} dnf_step={} dnf_count={} real_subsig={}", i,
 		);
 		let mtbl_lkup_res = discharge_sig_combo.lock().unwrap()
 			.get_container("mtbl_lk_res").unwrap().lock().unwrap().to_vec();
-		// DEBUG USE 62731.6 (REMOVE LATER): diagnose the step-2.2 subsig-result
-		// logup src=(v_sig's real subsig, FALSE) SUBSET dst=(subsig, eval_res).
-		// A MISS here => a v_sig's real subsig_id does not match the eval subsig
-		// id (the SDE-vs-DFA double-dot mismatch), OR the eval result != FALSE.
-		dbg_logup_diag("step2.2", &src, &dst, &mtbl_lkup_res, &r1);
-		// DEBUG USE 62731.7 (REMOVE LATER, env ZKR_DFA_DUMP=1): raw pre-encode
-		// triples so a MISS can be decoded to (sig_id, real_subsig, result).
-		if std::env::var("ZKR_DFA_DUMP").is_ok(){
-			let g = |x:&FpVar<F>| field_to_usize(&x.value()
-				.unwrap_or(F::zero()));
-			for i in 0..v_sigs.len().min(64){
-				println!("DEBUG USE 62731.7: SRC i={} v_sig={} \
-real_subsig={} computed={}", i, g(&v_sigs[i]),
-					g(&v_real_subsigs[i]), g(&v_computed_subsig[i]));
-			}
-			for i in 0..pad_subsigs.len().min(64){
-				println!("DEBUG USE 62731.7: DST i={} subsig={} res={}",
-					i, g(&pad_subsigs[i]), g(&pad_res[i]));
-			}
-		}
 		assert_logup(cs.clone(), &src, &dst, &mtbl_lkup_res, &r1)?;
-		// DEBUG USE 62731.8 (REMOVE LATER): absolute cs index after step-2.2.
-		let nc_step22 = cs.num_constraints();
 		if b_perf{
 			log_perf(self.job_id, log_level, "validate_discharge_sig step 2.2", &mut gt);
 		}
@@ -1430,43 +1208,8 @@ real_subsig={} computed={}", i, g(&v_sigs[i]),
 			.get_container("discharged_sigs").unwrap().lock().unwrap().to_vec();
 		let mtbl_sigs= discharge_sig_combo.lock().unwrap()
 			.get_container("mtbl_sigs").unwrap().lock().unwrap().to_vec();
-		// DEBUG USE 62731.4 (REMOVE LATER): committed-value view of the step-3
-		// coverage. If advice probe 62731.1 is SILENT but this fires, the
-		// COMMITTED discharged_sigs column diverged from advice (carry/layout) --
-		// a DIFFERENT root cause than an empty-DNF advice bug. Self-gated.
-		{
-			let dv: Vec<F> = discharged_sigs.iter()
-				.map(|x| x.value().unwrap_or(F::zero())).collect();
-			let vv: Vec<F> = v_sigs.iter()
-				.map(|x| x.value().unwrap_or(F::zero())).collect();
-			for (i,s) in dv.iter().enumerate(){
-				if *s!=F::zero() && !vv.contains(s){
-					println!("DEBUG USE 62731.4: CIRCUIT-UNCOVERED \
-discharged_sigs[{}]={} not in v_sigs (committed coverage miss)",
-						i, field_to_usize(s));
-				}
-			}
-		}
-		// DEBUG USE 62731.6 (REMOVE LATER): diagnose the step-3 sig-coverage
-		// logup discharged_sigs SUBSET v_sigs. Complements 62731.4: 6b flags a
-		// wrong multiplicity (m_tbl) even when membership holds.
-		dbg_logup_diag("step3", &discharged_sigs, &v_sigs, &mtbl_sigs, &r1);
 		assert_logup(cs.clone(), &discharged_sigs, &v_sigs, &mtbl_sigs, &r1)?;
-		// DEBUG USE 62731.8 (REMOVE LATER): constraint-index map. Locate the
-		// 62730.2 first-bad ABSOLUTE row in one of these ranges to name the
-		// exact emitter: [nc,nc_step1)=step1 check_eq, [nc_step1,nc_step21)=
-		// step2.1 res*v_sig, [nc_step21,nc_step22)=step2.2 logup,
-		// [nc_step22,now)=step3 logup.
-		println!("DEBUG USE 62731.8: NC-MAP start={} step1_end={} \
-step21_end={} step22_end={} step3_end={}",
-			nc, nc_step1, nc_step21, nc_step22, cs.num_constraints());
 
-		if b_debug{
-			println!("DEBUG USE 6901 === discharged sigs by DFA ===");
-			for i in 0..discharged_sigs.len(){
-				println!(" --i: {}, sig: {}", i, discharged_sigs[i].value()?);
-			}
-		}
 		if b_perf{
 			log_perf(self.job_id, log_level, "validate_discharge_sig step 3", &mut gt);
 		}

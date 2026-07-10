@@ -250,7 +250,6 @@ fn report_top_states<F: ark_ff::PrimeField + ColEle>(
 	let mut sorted: Vec<_> = counts.into_iter().collect();
 	sorted.sort_by(|a, b| b.1.cmp(&a.1));
 
-	println!("\n --- [DEBUG USE 6703] Top {} High Frequency States for {} ---", top_n, label);
 	for (state_id, freq) in sorted.into_iter().take(top_n) {
 		if acdfa.is_final(state_id) {
 			let patterns = acdfa.final_to_patterns(state_id);
@@ -691,9 +690,6 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 			trans.push(tr);
 			cur_state = nxt_state;
 			//cur_loc = cur_loc + one;
-			if b_debug{
-				println!("DEBUG USE 201: i: {}, src_adj: {}, ch {} => {}, igc: {}", i, f_src+one, f_ch, f_dst+one, b_igc);
-			}
 			//raw_locs.push(cur_loc); REMOVE THE MID PART
 			//can be calculated directly in the last
 		}
@@ -2242,10 +2238,6 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig,
 		_word_id: FpVar<F>, _subseg_id: FpVar<F>) 
 		-> Result<(), SynthesisError>{
-		// DEBUG USE 64900.2/.3/.4 (ZKR_PROBE_CSBREAK): repurpose the dead
-		// b_perf flag to split FsmAdv cs into acc_container/proj_store/
-		// packed_trace sub-validators.
-		let b_perf = std::env::var("ZKR_PROBE_CSBREAK").is_ok();
 		let _log_level = LOG1;
 		let mut gt = GTimer::new();
 		let mut nc = cs.num_constraints();
@@ -2262,33 +2254,15 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		let fsm_acc = stmt.get_container("fsm_acc")?;
 		self.validate_fsm_acc_container(&fsm_acc.lock().unwrap(), r1.clone(),
 			r2.clone(), cs.clone())?;
-		if b_perf{
-			println!("DEBUG USE 64900.2: fsm_adv[igc={}] \
-				acc_container cs: {}", self.b_igc,
-				cs.num_constraints()-nc);
-			nc = cs.num_constraints();
-		}
 
 		//3. validate the proj_subsig_store
 		// COST: subsig*(1 + 11*avg_pat_subsig)
 		self.validate_proj_subsig_store(&pss.lock().unwrap(),r1.clone(),cs.clone())?;
-		if b_perf{
-			println!("DEBUG USE 64900.3: fsm_adv[igc={}] \
-				proj_subsig_store cs: {}", self.b_igc,
-				cs.num_constraints()-nc);
-			nc = cs.num_constraints();
-		}
 
 		//3. validate the packed trace combo
 		// nlen*(4*basis_acc_states + 45*basis_pats + 7*basis_unique_states)/10000
 		// + 44 * subsigs * avg_pats_per_subsig
 		self.validate_packed_trace(&r1, &r2, &stmt, cs.clone())?;
-		if b_perf{
-			println!("DEBUG USE 64900.4: fsm_adv[igc={}] \
-				packed_trace cs: {}, total: {}", self.b_igc,
-				cs.num_constraints()-nc,
-				cs.num_constraints()-nc0);
-		}
 
 		Ok(())
 	}
@@ -2298,9 +2272,6 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig, 
 		_word_id: FpVar<F>, _subseg_id: FpVar<F>) 
 		-> Result<(), SynthesisError>{
-		// DEBUG USE 64900.2/.4 (ZKR_PROBE_CSBREAK): repurpose the dead b_perf
-		// flag to split FsmAdv (v2 path) cs into acc_container/packed_trace.
-		let b_perf = std::env::var("ZKR_PROBE_CSBREAK").is_ok();
 		let _log_level = LOG1;
 		let mut _gt = GTimer::new();
 		let mut nc = cs.num_constraints();
@@ -2317,22 +2288,10 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		let fsm_acc = stmt.get_container("fsm_acc")?;
 		self.validate_fsm_acc_container(&fsm_acc.lock().unwrap(), r1.clone(),
 			r2.clone(), cs.clone())?;
-		if b_perf{
-			println!("DEBUG USE 64900.2: fsm_adv[igc={}] \
-				acc_container cs: {}", self.b_igc,
-				cs.num_constraints()-nc);
-			nc = cs.num_constraints();
-		}
 
 
 		//3. validate the packed trace
 		self.validate_packed_trace_v2(&r1, &r2, &stmt, cs.clone())?;
-		if b_perf{
-			println!("DEBUG USE 64900.4: fsm_adv[igc={}] \
-				packed_trace cs: {}, total: {}", self.b_igc,
-				cs.num_constraints()-nc,
-				cs.num_constraints()-nc0);
-		}
 
 		Ok( () )
 	}
