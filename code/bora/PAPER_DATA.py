@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ---------------------------------------------------------------------
-# PAPER_DATA.py -- one-shot paper-data runner for new_zkregplus.
+# PAPER_DATA.py -- one-shot paper-data runner for bora.
 #
 # A 4-item menu of the runs behind the paper's numbers.  Standalone:
 # it RE-implements the four flows (does not import run_*.py), anchored
@@ -47,7 +47,7 @@ import time
 # paths (anchored on this file; cwd never matters) + tunables
 # =====================================================================
 
-REPO = os.path.dirname(os.path.abspath(__file__))       # new_zkregplus
+REPO = os.path.dirname(os.path.abspath(__file__))       # bora
 LOGS_DIR = os.path.join(REPO, "data/cache/logs")        # Rust log_job_*.txt
 OUT_ROOT = "/tmp"                                        # per-run bundle dir
 
@@ -858,7 +858,7 @@ def go_background(log_path):
 def main():
     global CLAM_WIPE_DB, CLAM_FOLD_ONLY, DLP_EMIT_PROOF, DRY
     ap = argparse.ArgumentParser(
-        description="Paper-data runner for new_zkregplus (4-item menu).")
+        description="Paper-data runner for bora (4-item menu).")
     ap.add_argument("--run", choices=[m[0] for m in MENUS],
                     help="non-interactive run selection")
     ap.add_argument("--list", action="store_true",

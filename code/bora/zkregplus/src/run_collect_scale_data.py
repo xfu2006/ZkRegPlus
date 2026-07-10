@@ -30,7 +30,7 @@ import os, sys, re, subprocess, time, datetime, tarfile, io, platform
 VMA_TARGET = int(os.environ.get("ZKR_VM_MAX_MAP_COUNT", "1073741824"))  # 0=skip
 
 HERE = os.path.dirname(os.path.abspath(__file__))          # zkregplus/src
-REPO = os.path.abspath(os.path.join(HERE, "..", ".."))     # new_zkregplus
+REPO = os.path.abspath(os.path.join(HERE, "..", ".."))     # bora
 SCRATCH = "/tmp/bora/scale"                                 # per-round logs
 # WORD source is parameterized: each run is a SEPARATE corpus (NOT concatenated
 # with any other word). Default = the difficult gdb (6.6M). Override with

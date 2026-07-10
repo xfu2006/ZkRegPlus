@@ -40,7 +40,7 @@ import shutil
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))            # data/debug/numa_probe
-REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))  # new_zkregplus
+REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))  # bora
 # Ranks ~503k files by per-file max NEEDS: "NEEDS \t foldable(1) \t path".
 RANK = os.path.join(REPO,
     "data/debug/full_dlp_sample/config/file_needs_rank.tsv")

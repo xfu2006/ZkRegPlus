@@ -66,7 +66,7 @@ import time
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))          # zkregplus/src
-REPO = os.path.abspath(os.path.join(HERE, "..", ".."))     # new_zkregplus
+REPO = os.path.abspath(os.path.join(HERE, "..", ".."))     # bora
 ZKREG = os.path.join(REPO, "zkregplus")                    # crate w/ example
 CFG_DIR = os.path.join(REPO, "data/paper_data/dlp/cfg/config")
 # Tier B default runcfg: the isolated tiny corpus built by

@@ -66,7 +66,7 @@ DRY = "--dry-run" in sys.argv
 VMA_TARGET = int(os.environ.get("ZKR_VM_MAX_MAP_COUNT", "1073741824"))
 
 HERE = os.path.dirname(os.path.abspath(__file__))          # zkregplus/src
-REPO = os.path.abspath(os.path.join(HERE, "..", ".."))     # new_zkregplus
+REPO = os.path.abspath(os.path.join(HERE, "..", ".."))     # bora
 CFG_DIR = os.path.join(REPO, "data/paper_data/dlp/cfg/config")
 RUNCFG = os.path.join(CFG_DIR, "runcfg_full.json")
 LOGS_DIR = os.path.join(REPO, "data/cache/logs")           # log_job_*.txt

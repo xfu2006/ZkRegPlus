@@ -183,7 +183,7 @@ def require_root() -> None:
 
 
 def proj_root() -> Path:
-    """Absolute path to the new_zkregplus workspace root.
+    """Absolute path to the bora workspace root.
 
     This script is at <proj_root>/zkregplus/src/run_checkpoints.py, so the
     root is two parents up from its own directory.

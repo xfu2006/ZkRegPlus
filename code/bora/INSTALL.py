@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ---------------------------------------------------------------------
-# INSTALL.py  --  one-shot data installer for new_zkregplus.
+# INSTALL.py  --  one-shot data installer for bora.
 #
 # Downloads + extracts data into data/.  The email dataset (Enron) is
 # fetched from the CMU source and placed under data/samples/email/src/
@@ -143,7 +143,7 @@ def persist_cargo_env():
         if ".cargo/env" in existing:
             return
         with open(rc, "a") as f:
-            f.write('\n# added by new_zkregplus INSTALL.py\n'
+            f.write('\n# added by bora INSTALL.py\n'
                     'source "$HOME/.cargo/env"\n')
         print("  persisted cargo PATH -> %s" % rc)
     except OSError as e:
@@ -547,7 +547,7 @@ def select_datasets():
 def main():
     keys = [d[0] for d in DATASETS]
     ap = argparse.ArgumentParser(
-        description="Install new_zkregplus data into ./data.")
+        description="Install bora data into ./data.")
     ap.add_argument("--data", choices=["all"] + keys,
                     help="non-interactive dataset selection")
     ap.add_argument("--toolchain", action="store_true",

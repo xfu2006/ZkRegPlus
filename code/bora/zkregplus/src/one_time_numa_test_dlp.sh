@@ -52,7 +52,7 @@ fi
 
 # ---------------- paths (relative to zkregplus/src) ----------------
 DRV=./run_full_dlp_numa.py
-REPO=../..                                   # new_zkregplus (cargo workspace root)
+REPO=../..                                   # bora (cargo workspace root)
 RUST_SRC=./zkp_driver.rs                      # holds the ZKR_DLP_LADDER_ONLY gate
 RUNCFG=../../data/paper_data/dlp/cfg/config/runcfg_full.json
 MASTER=../../data/paper_data/dlp/cfg/jobs/final_enron_list.txt.tgz

@@ -113,7 +113,7 @@ def ensure_vma(target):
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))          # zkregplus/src
-REPO = os.path.abspath(os.path.join(HERE, "..", ".."))     # new_zkregplus
+REPO = os.path.abspath(os.path.join(HERE, "..", ".."))     # bora
 LOGS_DIR = os.path.join(REPO, "data/cache/logs")           # log_job_*.txt
 REPORT = os.path.join(REPO, "data/debug/full_clamav/reports/report2.dat")
 

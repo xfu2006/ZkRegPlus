@@ -15,7 +15,7 @@ import shutil
 import subprocess
 import sys
 
-# src dir = this file's dir; proj root = ../.. (the new_zkregplus tree)
+# src dir = this file's dir; proj root = ../.. (the bora tree)
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(SRC_DIR, "..", ".."))
 CFG_DIR = os.path.join(ROOT, "data", "paper_data", "dlp", "cfg")

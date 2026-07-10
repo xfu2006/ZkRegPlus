@@ -13,7 +13,7 @@
 #     running zkregplus prover process found via pgrep
 #   - ps -ef snapshot, /proc/meminfo, env (uname, cargo --version,
 #     rustc --version, hostname, date)
-#   - git diff & git log (from new_zkregplus root)
+#   - git diff & git log (from bora root)
 #   - analyze_log.txt (deadlock_detect.py log, if present)
 #   - .deadlock_detect.pid (if present)
 #
@@ -28,7 +28,7 @@ set -u  # NOTE: do NOT use -e; we want partial collection on missing
 
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ZKREGPLUS_DIR="$(dirname "$SRC_DIR")"
-REPO_ROOT="$(dirname "$ZKREGPLUS_DIR")"   # new_zkregplus
+REPO_ROOT="$(dirname "$ZKREGPLUS_DIR")"   # bora
 GIT_ROOT="$(dirname "$(dirname "$REPO_ROOT")")"  # ZkRegPlus
 
 LABEL="${1:-}"

@@ -31,7 +31,7 @@ First run builds the DB cache from the in-git regex (~0.5hr), then reuses it.
 import os, sys, subprocess, time, datetime, tarfile, json, platform, re, shutil
 
 HERE = os.path.dirname(os.path.abspath(__file__))          # .../zkregplus/src
-REPO = os.path.abspath(os.path.join(HERE, "..", ".."))     # .../new_zkregplus
+REPO = os.path.abspath(os.path.join(HERE, "..", ".."))     # .../bora
 CFG_REL = "data/debug/full_dlp_sample"
 CFG_DIR = os.path.join(REPO, CFG_REL)
 

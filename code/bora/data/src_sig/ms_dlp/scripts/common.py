@@ -22,11 +22,11 @@ from pathlib import Path
 # --- project path resolvers -------------------------------------------------
 # Resolve every project path from the location of THIS file, never from the cwd
 # or a hardcoded absolute path. common.py lives at
-#   <new_zkregplus>/data/src_sig/ms_dlp/scripts/common.py
-# so the new_zkregplus project root is parents[4]:
-#   [0]=scripts [1]=ms_dlp [2]=src_sig [3]=data [4]=new_zkregplus
+#   <bora>/data/src_sig/ms_dlp/scripts/common.py
+# so the bora project root is parents[4]:
+#   [0]=scripts [1]=ms_dlp [2]=src_sig [3]=data [4]=bora
 def get_proj_root():
-    """Absolute path of the new_zkregplus project root (holds data/)."""
+    """Absolute path of the bora project root (holds data/)."""
     return Path(__file__).resolve().parents[4]
 
 
