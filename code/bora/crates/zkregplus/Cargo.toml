@@ -20,7 +20,7 @@ ark-crypto-primitives = { version = "^0.4.0", default-features = false, features
 ark-grumpkin = {version="0.4.0", features=["r1cs"]}
 ark-poly-commit = "^0.4.0"
 ark-relations = { version = "^0.4.0", default-features = false }
-#ark-relations = {path="../dependency/ark-relations"}
+#ark-relations = {path="../../vendor/dependency/ark-relations"}
 ark-r1cs-std = { version = "0.4.0", default-features = false } # this is patched at the workspace level
 ark-snark = { version = "^0.4.0"}
 ark-serialize = "^0.4.0"
@@ -42,12 +42,12 @@ rand = "0.8.5"
 # tmp import for espresso's sumcheck
 espresso_subroutines = {git="https://github.com/EspressoSystems/hyperplonk", package="subroutines"}
 
-folding-schemes = { path="../sonobe_mod/folding-schemes", package="folding-schemes", features =["light-test"] }
+folding-schemes = { path="../../vendor/sonobe_mod/folding-schemes", package="folding-schemes", features =["light-test"] }
 
 # FULL test needs 250GB
-# folding-schemes = { path="../sonobe_mod/folding-schemes", package="folding-schemes"}
+# folding-schemes = { path="../../vendor/sonobe_mod/folding-schemes", package="folding-schemes"}
 
-solidity-verifiers= {path="../sonobe_mod/solidity-verifiers", package="solidity-verifiers"}
+solidity-verifiers= {path="../../vendor/sonobe_mod/solidity-verifiers", package="solidity-verifiers"}
 daemonize = "0.5.0"
 dialoguer = "0.12.0"
 cli-table = "0.4.7"

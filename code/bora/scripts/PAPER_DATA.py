@@ -47,7 +47,7 @@ import time
 # paths (anchored on this file; cwd never matters) + tunables
 # =====================================================================
 
-REPO = os.path.dirname(os.path.abspath(__file__))       # bora
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # bora (scripts/ -> root)
 LOGS_DIR = os.path.join(REPO, "data/cache/logs")        # Rust log_job_*.txt
 OUT_ROOT = "/tmp"                                        # per-run bundle dir
 

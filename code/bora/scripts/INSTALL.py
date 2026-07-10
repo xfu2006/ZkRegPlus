@@ -24,7 +24,8 @@ import subprocess
 import sys
 
 # ---- paths (anchored on this file so cwd never matters) -------------
-ROOT        = os.path.dirname(os.path.abspath(__file__))
+# this file lives in scripts/, so the repo root is one level up.
+ROOT        = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR    = os.path.join(ROOT, "data")
 SAMPLES_DIR = os.path.join(DATA_DIR, "samples")
 SRC_SIG_DIR = os.path.join(DATA_DIR, "src_sig")

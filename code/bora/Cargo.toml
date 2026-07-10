@@ -1,13 +1,13 @@
 [workspace]
 members = [ 
 	# processes clamav sigs
-	"data_processor",
+	"crates/data_processor",
 	# common utils
-	"utils", 
+	"crates/utils", 
 	# main zkregplus framework
-	"zkregplus",
+	"crates/zkregplus",
 ]
-exclude = ["./foldpot", "./new_r1cs", "dependency/nonnative"]
+exclude = ["./foldpot", "./new_r1cs", "vendor/dependency/nonnative"]
 resolver = "2"
 
 # we ADDED support for pairing
@@ -28,13 +28,13 @@ resolver = "2"
 #ark-bn254 = { git = "https://github.com/arnaucube/ark-curves-cherry-picked", branch="cherry-pick"}
 #ark-grumpkin = { git = "https://github.com/arnaucube/ark-curves-cherry-picked", branch="cherry-pick"}
 # ---- NEW ONES ----
-ark-r1cs-std = { version = "0.4.0", path = "./dependency/r1cs-std" } # this is patched at the workspace level
+ark-r1cs-std = { version = "0.4.0", path = "./vendor/dependency/r1cs-std" } # this is patched at the workspace level
 # patch ark_curves to use a cherry-picked version which contains
 # bn254::constraints & grumpkin for v0.4.0 (once arkworks v0.5.0 is released
 # this will no longer be needed)
 #ark-bn254 = { git = "https://github.com/arnaucube/ark-curves-cherry-picked", branch="cherry-pick"}
 # we also ADDED support for pairing in r1cs
-ark-bn254 = {version="0.4.0", path = "./dependency/ark-curves-cherry-picked/bn254"}
+ark-bn254 = {version="0.4.0", path = "./vendor/dependency/ark-curves-cherry-picked/bn254"}
 #ark-grumpkin = { git = "https://github.com/arnaucube/ark-curves-cherry-picked", branch="cherry-pick"}
-ark-grumpkin = { version="0.4.0", path="./dependency/ark-curves-cherry-picked/grumpkin"}
-ark-relations = {version="0.4.0", path="./dependency/ark-relations"}
+ark-grumpkin = { version="0.4.0", path="./vendor/dependency/ark-curves-cherry-picked/grumpkin"}
+ark-relations = {version="0.4.0", path="./vendor/dependency/ark-relations"}

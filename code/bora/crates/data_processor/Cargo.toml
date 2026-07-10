@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 hex="0.4"
 utils = {path = "../utils"}
-folding-schemes= {path = "../sonobe_mod/folding-schemes"}
+folding-schemes= {path = "../../vendor/sonobe_mod/folding-schemes"}
 ark-ff = "^0.4.0"
 ark-bn254= "0.4.0"
 regex-syntax = "0.8.4"
