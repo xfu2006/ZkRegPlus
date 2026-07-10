@@ -347,7 +347,7 @@ mod tests{
 	#[test]
 	fn test_proj_root(){
 		let path = proj_root();
-		assert!(path.contains("new_zkregplus"), "ERROR proj path: {}", path);
+		assert!(path.contains("bora"), "ERROR proj path: {}", path);
 		create_new_cache_dir("dir1");
 	}
 }
