@@ -20,7 +20,6 @@
   snark cache, and parallelism knobs. Setting fields on this config is how
   the runners tune runs — there is no CLI flag layer.
 
-(A fourth crate, `paper_data_gen`, was retired to `attic/`.)
 
 ## End-to-end run
 
