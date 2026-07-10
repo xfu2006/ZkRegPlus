@@ -157,10 +157,6 @@ fn load_files<F:PrimeField + ColEle>(job_id: usize, list_file_path: &str, db: &C
 		let s_wi= read(&format!("{}/vec_word_info.txt", sdir));
 		let vec_word_info:Vec<WordInfo> = serde_json::from_str(&s_wi)
 				.expect("Convert vec_sigs fails");
-		if b_debug{
-			println!("DEBUG USE 2001: loaded vec_word_info: {:?}", 
-				vec_word_info);
-		}
 		vec_word_info
 	}else{
 	*/
@@ -196,10 +192,6 @@ fn load_files<F:PrimeField + ColEle>(job_id: usize, list_file_path: &str, db: &C
 		if b_write_cache{
 			let s_wi = serde_json::to_string(&vec_word_info).unwrap();
 			write_to_file(&format!("{}/vec_word_info.txt", &sdir), &s_wi);
-			if b_debug{
-				println!("DEBUG USE 2002: SAVED vec_word_info: {:?}", 
-					vec_word_info);
-			}
 		}
 		vec_word_info
 	};
@@ -270,7 +262,6 @@ where C: CurveGroup<ScalarField=F>,
 	let chunks = total_nibbles/max_nibble_len;
 	let lk_share = read_global_config().perc_lkup_share* max_nibble_len/100;
 	let lk_share = if lk_share == 0 {1} else {lk_share};
-	if utils::consts::B_DEBUG { println!("DEBUG USE 68911: lkup_len: {}, max_nibble_len: {}, total_nibble_len: {}, lk_share: {}, config.perc_lkup_share: {}, chunks: {}", lkup_len, max_nibble_len, total_nibbles, lk_share, read_global_config().perc_lkup_share, chunks); }
 	if b_check_lkup && lk_share*chunks < lkup_len{
 		panic!("ERROR: lk_share: {} *chunks: {}  < lkup_len: {}",
 			lk_share, chunks, lkup_len);
@@ -361,13 +352,6 @@ where C: CurveGroup<ScalarField=F>,
 	//return
 	layer_circs.reverse();
 
-	// DEBUG MESSAGE 1001: Print config of each circ before returning
-	if utils::consts::B_DEBUG { println!("DEBUG USE 1001 ========================= build_circs_adv generates ================="); }
-	for (l1_idx, layer) in layer_circs.iter().enumerate() {
-		for (l2_idx, circ) in layer.iter().enumerate() {
-			println!("DEBUG MESSAGE 1001: Category {} Layer {} Circuit Name: {}\nCapacity: {:#?}", l1_idx, l2_idx, circ.get_name(), circ);
-		}
-	}
 	layer_circs
 }
 
@@ -455,73 +439,6 @@ where C: CurveGroup<ScalarField=F>,
 	  <CS as CommitmentScheme<C,false>>::ProverParams: Send + Sync,
 	  F: PrimeField + Absorb + ColEle,
 {
-	// DEBUG USE 64901 (ZKR_PROBE_WORSTCHUNK): rank files by their most
-	// EXPENSIVE chunk (cost ~= 0.18*prod + 60*NEEDS, matching the measured
-	// circ4 split: discharge fwd-queue dominant, compute_sig next) and print
-	// the top 20 with that chunk's file/seg + fwd/NEEDS/FSM, then exit. Runs
-	// before fast_finalize => ~minutes. Put the top file in full_dlp_sample.
-	if std::env::var("ZKR_PROBE_WORSTCHUNK").is_ok() {
-		let n_ids = db.sig_to_id.values().copied().max()
-			.map(|m| m + 1).unwrap_or(0);
-		let mut sc = vec![0usize; n_ids];
-		for s in db.vec_sigs.iter()
-			.chain(db.vec_sigs_no_critical_pat.iter()) {
-			if let Some(&id) = db.sig_to_id.get(&s.name) {
-				sc[id] = s.vec_subsig_obj.len();
-			}
-		}
-		let legs = crate::gadgets::word_extract::LEGS;
-		let fwd_cost = crate::gadgets::discharge_adv::FWD_COST;
-		let max_nib = (seed.max_word_len * legs).max(1);
-		let prod1 = |f: usize| if f == 0 { 0 }
-			else { (f + 1) * 100_000_000 / (max_nib * fwd_cost) + 1 };
-		// per file: (cost, fname, seg, fwd, prod, NEEDS, uniq, acc, pats)
-		let mut rows: Vec<(usize, String, usize, usize, usize,
-			usize, usize, usize, usize)> = vec![];
-		for (wi, fdr) in infos.iter().zip(vdata.iter()) {
-			let cp = &fdr.chunk_peaks;
-			let wn = cp.seg_size.max(1);
-			// best chunk of THIS file: (cost, seg, fwd, prod, NEEDS,
-			// uniq, acc, pats)
-			let mut best = (0usize, 0usize, 0usize, 0usize,
-				0usize, 0usize, 0usize, 0usize);
-			for s in 0..wi.failed_c_all_segs.len() {
-				let needs: usize = wi.failed_c_all_segs[s].iter()
-					.map(|&id| sc.get(id).copied().unwrap_or(0)).sum();
-				let fwd = if needs == 0 { 0 }
-					else { cp.fwd_entries_per_chunk.get(s).copied()
-						.unwrap_or(0) };
-				let p = prod1(fwd);
-				let cost = 18 * p / 100 + 60 * needs;
-				let uniq = cp.unique_acc_pats_per_chunk.get(s).copied()
-					.unwrap_or(0) * 10000 / wn;
-				let acc = cp.acc_states_per_chunk.get(s).copied()
-					.unwrap_or(0) * 10000 / wn;
-				let pats = cp.pats_in_trace_per_chunk.get(s).copied()
-					.unwrap_or(0) * 10000 / wn;
-				if cost > best.0 {
-					best = (cost, s, fwd, p, needs, uniq, acc, pats);
-				}
-			}
-			if best.0 > 0 {
-				rows.push((best.0, fdr.fname.clone(), best.1, best.2,
-					best.3, best.4, best.5, best.6, best.7));
-			}
-		}
-		rows.sort_by(|a, b| b.0.cmp(&a.0));
-		println!("DEBUG USE 64901: top {} files by max-chunk cost \
-			(of {} files with nonzero demand):",
-			20.min(rows.len()), rows.len());
-		for (r, e) in rows.iter().take(20).enumerate() {
-			println!("DEBUG USE 64901.{:02}: cost={} file={} seg={} \
-				fwd_queue={} prod={} NEEDS={} fwd/NEEDS={:.2} \
-				uniq={} acc={} pats={}",
-				r, e.0, e.1, e.2, e.3, e.4, e.5,
-				if e.5 > 0 { e.3 as f64 / e.5 as f64 } else { 0.0 },
-				e.6, e.7, e.8);
-		}
-		std::process::exit(0);
-	}
 	// 1. P_max: the global-sufficient config (existing fast_finalize machinery).
 	let mut p_max = fast_finalize::<F,C,CS>(db.clone(), words, infos, vdata,
 		seed, chunk_len, lkup_len, total_word_n, max_rounds, n_threads,
@@ -580,19 +497,6 @@ where C: CurveGroup<ScalarField=F>,
 				.unwrap_or(0)));
 			nseg_dbg.push(wi.failed_c_all_segs.len());
 		}
-	}
-	if std::env::var("ZKR_PROBE_CAPS").is_ok() {
-		// argmax of cpu (new per-chunk unit). old (*num_segs) value at the
-		// same chunk = new / num_segs; print both to show the fix in one run.
-		let (mut ai, mut amax) = (0usize, 0usize);
-		for (i, &v) in cpu.iter().enumerate() {
-			if v > amax { amax = v; ai = i; }
-		}
-		let ns = nseg_dbg.get(ai).copied().unwrap_or(1).max(1);
-		let mx = |v: &Vec<usize>| v.iter().copied().max().unwrap_or(0);
-		println!("DEBUG USE 64500.1: NEW per-chunk cpu cap={} (OLD *num_segs \
-			would be {} at this chunk, num_segs={}); maxes uniq={} acc={} \
-			pats={}", amax, amax / ns, ns, mx(&uniq), mx(&acc), mx(&pats));
 	}
 	if universe.is_empty() {
 		return Err("determine_config_aggr: no chunks in sample".into());
@@ -690,12 +594,6 @@ where C: CurveGroup<ScalarField=F>,
 			.max(pmin(r.basis_pats_in_trace_igc));
 		r.prod_pats_expansion = r.prod_pats_expansion.max(prod_min);
 		r.prod_pats_expansion_igc = r.prod_pats_expansion_igc.max(prod_min);
-	}
-	if std::env::var("ZKR_PROBE_64601").is_ok() {
-		let prods: Vec<usize> = ladder.iter()
-			.map(|r| r.prod_pats_expansion).collect();
-		log(0, LOG1, &format!("DEBUG USE 64601.3: per-rung prod \
-			cap={:?}", prods));
 	}
 	log(0, LOG1, &format!("determine_config_aggr: {} rungs, hist={:?}, \
 		P_max.subsigs={}, perc={}, avg_active={}", ladder.len(), hist,
@@ -1217,7 +1115,6 @@ where C: CurveGroup<ScalarField=F>,
 		Arc::new(Mutex::new(comp1.clone())), 
 		Arc::new(Mutex::new(comp1_igc.clone())), 
 	]); 
-	//println!("DEBUG USE 1001: lkup_len: {}, avg_lk_wd: {}, comp1 share size: {}", lkup_len, avg_lk_wd, cg1.max_word_len()*avg_lk_wd);
 
 	//2. create sed components
 	let scap1= SedCapacity::new(max_word, db.dfa_crit.state_part_bits, subsigs, 
@@ -2310,84 +2207,6 @@ pub mod tests_zkp_driver{
 	}
 
 
-	// ===== DEBUG USE 62727: minimal AGGRESSIVE repro (REMOVE LATER) =====
-	// Clone of small_par_full_snark but AGGRESSIVE (m>0) on a tiny crafted
-	// dataset (data/debug/small_repro_aggr) whose sed pattern straddles chunk
-	// boundaries -> exercises the aggressive forward-halo. Runs the real fold +
-	// full decider + verify. Reproduces the job-3 failure iff PART2 CHECKS
-	// prints main=false, or the ZKR_STEP_CHECK probe prints DEBUG USE 62727.1/.2.
-	fn small_repro_aggr<F:PrimeField>(b_check_lkup: bool){
-		utils::os::print_computer_config(Some("small_repro_aggr"));
-		get_global_config().snark_cache_dir = "small_repro_aggr".to_string();
-		get_global_config().b_read_snark_cache = false;
-		get_global_config().b_write_snark_cache = false;
-		get_global_config().range2_bit = 18;
-		get_global_config().b_read_cache = false;      // rebuild DB AGGRESSIVE
-		get_global_config().b_light_test = false;      // full decider + verify
-		get_global_config().b_one_proof = true;        // only Job 0 proves
-		get_global_config().b_folding_only = true;     // 62727 probe detects during fold; skip slow decider/Groth16
-		get_global_config().b_estimate_caps = true;    // auto-tune aggressive caps
-		get_global_config().log_level = utils::logger::LOG3;
-		get_global_config().perc_lkup_share = if !b_check_lkup {1} else {10000};
-		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = false; // NON-aggr: exercise 79cd2e54 path
-		get_global_config().clamav_cfg.sde_rep_fanout_cap = 100;
-		get_global_config().clamav_cfg.min_pm_word_len = 3;
-		get_global_config().min_subsigs = 1;
-		get_global_config().min_basis_unique_states = 2;
-		get_global_config().min_basis_acc_states = 2;
-		get_global_config().min_basis_pats_in_trace = 4;
-		get_global_config().min_avg_pats_per_subsig = 1;
-		let b_write_cache = !read_global_config().b_read_cache;
-		let set1 = "data/debug/small_repro_aggr/config";
-		let max_word= 8; // small chunk (~60B) so the ~1KB repro files span MANY chunks -> halo engages; assert 8*62>=4*m ok
-		let sigs = 8;    // bumped (CapErr comp_sig::sigs) for the 3-pattern repro set
-		let subsigs = 16; // bumped (CapErr cp::subsigs) for near-miss subsig fan-out
-		let avg_pats_per_subsig = 3;
-		let avg_active_pats_per_subsig = 2;
-		let perc_comp_subsigs = 26;
-		let basis_unique_states = 25*100;
-		let basis_acc_states = 807;
-		let basis_pats_in_trace = 1500;
-		let perc_pats_expansion_rate = 200;
-
-		let init_cp_cap= CpCapacity{
-			max_word_len: max_word,
-			basis_unique_states,
-			subsigs,
-			avg_pats_per_subsig,
-		};
-		let init_sed_cap= SedCapacity::new(
-			max_word, read_global_config().range2_bit, subsigs,
-			avg_pats_per_subsig, avg_active_pats_per_subsig,
-			basis_pats_in_trace,
-			perc_pats_expansion_rate,
-			sigs, perc_comp_subsigs,
-			basis_unique_states, basis_acc_states
-		);
-		let init_dfa_cap= DfaCapacity::new(max_word, sigs, subsigs);
-
-		let scan_files: Vec<String> = vec![format!("{}/binexec_p1.dat", set1)];
-		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(0,
-			&format!("{}/sigs.dat",set1),
-			scan_files,
-			&format!("{}/report.dat", set1),
-			b_write_cache,
-			"small_repro_aggr",
-			&format!("{}/dfa.dat", set1),
-			&format!("{}/ised.dat", set1),
-			&format!("{}/ised_igc.dat",set1),
-			max_word,
-			&init_cp_cap,
-			&init_sed_cap,
-			&init_dfa_cap,
-			&init_cp_cap,
-			&init_sed_cap,
-			&vec![2],   // decrease ladder -> 2 category circuits (cat_0 base + cat_1 decreased)
-			2,          // num_circs=2 so segments route to DIFFERENT rungs (mixed-rung boundary)
-			b_check_lkup, DcMode::Off
-		);
-	}
-	// ===== END DEBUG USE 62727 repro fn =====
 
 	/// the sigs are the same as small data
 	/// has 1 long words (1k-packed nibbles - around 31kb)
@@ -3513,167 +3332,6 @@ pub mod tests_zkp_driver{
 		);
 	}
 
-	// ===== DEBUG USE 62727: find the job-3 file that trips 79cd2e54 (REMOVE LATER) =====
-	// Builds the REAL non-aggressive ClamAV DB from main.dat, runs job-3
-	// (binexec_p3.dat) through advice-gen with b_dryrun_after_capcheck (NO fold,
-	// NO Groth16 -> low RAM), ZKR_STEP_CHECK=1 arms the 62727.4 fabrication probe.
-	// Same caps as full_clam_bisect. Watch stdout for DEBUG USE 62727.4 lines.
-	fn full_clam_find_file<F:PrimeField>(){
-		utils::os::print_computer_config(Some("full_clam_find_file"));
-		use folding_schemes::folding::foldpot::capacity_planner::CapacityPlanner;
-		use folding_schemes::folding::foldpot::sigma_ir1cs::LookupTableTwoCol as _;
-		get_global_config().range2_bit = 26;
-		get_global_config().b_read_cache = true;   // load cached "full_data" DB
-		get_global_config().min_subsigs = 368;
-		get_global_config().min_basis_unique_states= 1054;
-		get_global_config().min_basis_acc_states =  268;
-		get_global_config().min_basis_pats_in_trace=  295;
-		get_global_config().min_avg_pats_per_subsig= 8;
-		get_global_config().min_dfa_sigs = 3;
-		get_global_config().min_dfa_subsigs =  3;
-		get_global_config().perc_lkup_share = 143;
-		get_global_config().log_level = utils::logger::LOG3;
-		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = false; // NON-aggr path (79cd2e54)
-		let proot = utils::os::proj_root();
-		// DEBUG USE 62727.10 (REMOVE LATER): env-override the DB source so this
-		// same probe can run against the TINY gandcrab_repro DB and tell us
-		// whether it routes diff->Gandcrab->SED (faithfulness gate for a local
-		// fold). Defaults leave the full_data path byte-identical.
-		// ZKR_FF_SET1=config dir, ZKR_FF_CACHE=cache name,
-		// ZKR_FF_READCACHE=0 to BUILD fresh (tiny DB).
-		let set1 = std::env::var("ZKR_FF_SET1")
-			.unwrap_or_else(|_| "data/debug/full_clamav/config".to_string());
-		let ff_cache = std::env::var("ZKR_FF_CACHE")
-			.unwrap_or_else(|_| "full_data".to_string());
-		let ff_read = std::env::var("ZKR_FF_READCACHE")
-			.map(|v| v != "0").unwrap_or(true);
-		get_global_config().b_read_cache = ff_read;
-		let max_word = 512 * 8;
-		let range2_bit = 26;
-		let cfg = data_processor::clamav::default_clamav_cfg();
-		let mut vlog = vec![];
-		// load the REAL non-aggr ClamAV DB (cached "full_data" from the earlier build)
-		let db = data_processor::clam_db::ClamavDB::<Fr>::build_or_load(
-			&cfg, &format!("{}/main.dat", set1),
-			&format!("{}/main_dfa.dat", set1),
-			&format!("{}/needs_ised.dat", set1),
-			&format!("{}/needs_ised_igc.dat", set1), &mut vlog,
-			&ff_cache, ff_read, true).expect("build db");
-		// ===== DEBUG USE 62727.8 (REMOVE LATER): static DB scan for pm_bounds
-		// whose rg_end crosses the chunk boundary (chunk_nib = max_word*62 =
-		// 253952). Confirms the ff4ab61d offset-doubling put an anchor past a
-		// chunk. Prints subsig_id + pat_id + (rg_start,rg_end). =====
-		{
-			let chunk_nib = max_word * 62;
-			let mut n_cross = 0usize;
-			for store in db.bundle_subsig.vec_subsig_step_stores.iter() {
-				for (ssid, item) in store.subsig_to_steps.iter() {
-					for (pat_id, (rg1, rg2)) in item.vec_pm_bounds.iter() {
-						if *rg2 > chunk_nib {
-							n_cross += 1;
-							utils::logger::emit_stdout(format!(
-								"DEBUG USE 62727.8: CROSS subsig_id={} pat_id={} \
-								 rg=({},{}) chunk_nib={}",
-								ssid, pat_id, rg1, rg2, chunk_nib));
-						}
-					}
-				}
-			}
-			utils::logger::emit_stdout(format!(
-				"DEBUG USE 62727.8: DB pm_bounds chunk-cross count = {}", n_cross));
-		}
-		// discharge job-3 files -> padded words + WordInfo (LIGHT: DB only, no circuit)
-		let scan = std::env::var("ZKR_SCAN")
-			.unwrap_or_else(|_| format!("{}/binexec_p3.dat", set1));
-		let files = utils::os::read_lines(&format!("{}/{}", proot, scan));
-		let (mut words, mut infos) = (vec![], vec![]);
-		for fpath in &files{
-			let nibbles = utils::os::read_nibbles(&format!("{}/{}", proot, fpath));
-			let f_nib: Vec<Fr> = nibbles.iter().map(|x| Fr::from(*x as u32)).collect();
-			words.push(utils::data::pack_nibbles(&f_nib));
-			let (_fdr, rec) = data_processor::clamav::quick_discharge_file_by_crit_bag_pm(
-				fpath, &nibbles, &db.vec_sigs, &db.vec_sigs_no_critical_pat,
-				&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
-				&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
-				&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
-				&db.sig_to_id, max_word, max_word);
-			// ===== DEBUG USE 62727.7 (REMOVE LATER): flag files that ROUTE the
-			// chunk-crossing sig into SED (Win.Trojan.Kryptik-2163, offset
-			// 131112B -> 262224 nib > 253952 chunk). ZKR_FINDTGT overrides the
-			// sig name. Prints tier (sed/dfa) + subsig_ids + file_nibble_len. =====
-			{
-				// the two DB pm_bounds that cross the chunk (ff4ab61d doubling):
-				// Kryptik-2163 subsig1 (offset 131112 -> 262250) and
-				// Gandcrab-6552923-4 subsig0 (gap {-196608} -> 393774).
-				let tgts = ["Win.Trojan.Kryptik-2163",
-							"Win.Packed.Gandcrab-6552923-4"];
-				for (tier, infos_v) in [("sed", &rec.vec_sed_sigs_info),
-										("dfa", &rec.vec_dfa_sigs_info)] {
-					for dsi in infos_v.iter() {
-						if tgts.contains(&dsi.sig_name.as_str()) {
-							utils::logger::emit_stdout(format!(
-								"DEBUG USE 62727.7: ROUTE sig={} tier={} file={} \
-								 file_nib={} subsig_ids={:?}",
-								dsi.sig_name, tier, fpath, rec.file_nibble_len,
-								dsi.subsig_ids));
-						}
-					}
-				}
-			}
-			infos.push(rec);
-		}
-		if std::env::var("ZKR_FINDONLY").is_ok() {
-			utils::logger::emit_stdout(
-				"DEBUG USE 62727.7: FINDONLY done (skipped advice-gen)".to_string());
-			return;
-		}
-		let lkup_len = db.lkup.get_size();
-		let total_word_n: usize = words.iter().map(|w| w.len()).sum();
-		let poseidon = folding_schemes::transcript::poseidon
-			::poseidon_canonical_config::<Fr>();
-		let padded: Vec<Vec<Fr>> = words.iter()
-			.map(|w| utils::data::pad_word_to_multiple::<Fr>(w, max_word)).collect();
-		let db_arc = std::sync::Arc::new(db);
-		// caps = same as full_clam_bisect
-		let (sigs, subsigs, avg_pats_per_subsig, avg_active_pats_per_subsig)
-			= (400usize, 580usize, 8usize, 2usize);
-		let (basis_unique_states, basis_acc_states, basis_pats_in_trace)
-			= (1300usize, 750usize, 820usize);
-		let (perc_comp_subsigs, perc_pats_expansion_rate, perc_pats_expansion_rate_igc)
-			= (20usize, 104usize, 2usize);
-		let (dfa_sigs, dfa_subsigs, num_circs) = (8usize, 8usize, 2usize);
-		let vec_decrease_level = vec![2];
-		let init_cp_cap= CpCapacity{ max_word_len: max_word, basis_unique_states, subsigs, avg_pats_per_subsig };
-		let init_sed_cap= SedCapacity::new(max_word, range2_bit, subsigs,
-			avg_pats_per_subsig, avg_active_pats_per_subsig, basis_pats_in_trace,
-			perc_pats_expansion_rate, sigs, perc_comp_subsigs, basis_unique_states, basis_acc_states);
-		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
-		let init_cp_cap_igc= CpCapacity{ max_word_len: max_word, basis_unique_states, subsigs, avg_pats_per_subsig };
-		let init_sed_cap_igc= SedCapacity::new(max_word, range2_bit, subsigs,
-			avg_pats_per_subsig, avg_active_pats_per_subsig, basis_pats_in_trace,
-			perc_pats_expansion_rate_igc, sigs, perc_comp_subsigs, basis_unique_states, basis_acc_states);
-		// build LIGHT mappers only (no gen_cs / no fold -> low RAM)
-		let layered = super::build_circs_adv::<Fr,C1,CS1>(&poseidon, total_word_n, max_word,
-			lkup_len, db_arc.clone(), &init_cp_cap, &init_sed_cap, &init_dfa_cap,
-			&init_cp_cap_igc, &init_sed_cap_igc, &vec_decrease_level, num_circs, false);
-		let planner = CapacityPlanner::<C1, super::FC<Fr,C1,CS1>, super::LK<Fr>, super::GM<Fr>, false>::new(layered);
-		// advice-gen per file (serial): fires the 62727.4 fabrication probe under each marker
-		utils::logger::emit_stdout(format!(
-			"DEBUG USE 62727.5: START advice-gen survey of {} job-3 files", files.len()));
-		for (i, (word, info)) in padded.iter().zip(infos.iter()).enumerate() {
-			utils::logger::emit_stdout(format!("DEBUG USE 62727.5: FILE i={} fname={}", i, files[i]));
-			let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-				planner.plan_nd_advice(0, utils::logger::LOG2, false, word, info, &files[i])
-			}));
-			match res {
-				Ok(Ok(_)) => {}
-				Ok(Err(e)) => utils::logger::emit_stdout(format!("DEBUG USE 62727.5:   file {} advice-err {:?}", i, e)),
-				Err(_) => utils::logger::emit_stdout(format!("DEBUG USE 62727.5:   file {} PANIC", i)),
-			}
-		}
-		utils::logger::emit_stdout("DEBUG USE 62727.5: DONE advice-gen survey".to_string());
-	}
-	// ===== END DEBUG USE 62727 find-file fn =====
 
 	/// full_clam_bisect: 8-way concurrent bisection of job 3's verify_batch
 	/// failure. Faithful clone of full_clamav (b_setup=false): SAME config and
@@ -3692,9 +3350,6 @@ pub mod tests_zkp_driver{
 		get_global_config().range2_bit = 26;
 		get_global_config().b_light_test = false; // full snark
 		get_global_config().b_one_proof = false;  // every share proves+verifies
-		// DEBUG USE 62731.0 (REMOVE LATER): fold-only fast confirmation --
-		// stop after folding (no decider) so the per-step DfaAdvGadget SAT
-		// check is the signal. Default unset = byte-identical to full_clam.
 		if let Ok(v) = std::env::var("ZKR_BISECT_FOLD_ONLY") {
 			get_global_config().b_folding_only = v == "1"; }
 		get_global_config().min_subsigs = 368;
@@ -3795,284 +3450,14 @@ pub mod tests_zkp_driver{
 			&init_sed_cap_igc,
 			&vec_decrease_level,
 			num_circs,
-			// DEBUG USE 62731.0 (REMOVE LATER): default true (byte-identical to
-			// full_clam); ZKR_BISECT_CHECK_LKUP=0 lets a 1-file doxygen slice
-			// dodge the ~678-chunk lk_share coverage panic for the DFA repro.
 			std::env::var("ZKR_BISECT_CHECK_LKUP")
 				.map(|s| s.trim()!="0").unwrap_or(true),
 			DcMode::Off
 		);
 	}
 
-	// ===== DEBUG USE 62727.9 (REMOVE LATER): minimal job-3 repro =====
-	// Folds ONE real job-3 file that routes Win.Packed.Gandcrab-6552923-4
-	// subsig0 to SED. That subsig's pm_bound is (48, 393774) -- rg_end 393774
-	// (= {-196608} gap doubled by ff4ab61d) lands in chunk 2, past the 253952
-	// chunk length. The per-chunk SED forward-proof mishandles the cross-chunk
-	// range end -> MAIN decider Step-7 "check n circs" relaxed-R1CS UNSAT.
-	// Same config/caps as full_clam_bisect (so full_data DB + circuit sizes
-	// match the server), but: b_check_lkup=false (skip 186-chunk coverage
-	// panic), b_light_test=true + b_folding_only=false (reach Step-7 check
-	// WITHOUT Groth16 keygen -- the check is outside the light-test gate),
-	// snark cache OFF. Run with ZKR_CS_CHECK=1 ZKR_STEP_CHECK=1. Override the
-	// file via ZKR_REPRO_FILE.
-	fn job3_repro<F:PrimeField>(){
-		utils::os::print_computer_config(Some("job3_repro"));
-		get_global_config().snark_cache_dir = "".to_string();
-		get_global_config().b_write_snark_cache = false;
-		get_global_config().b_read_snark_cache = false;
-		get_global_config().range2_bit = 26;
-		get_global_config().b_light_test = true;   // skip Groth16 (Step-7 still runs)
-		get_global_config().b_one_proof = false;
-		// fold-only by default: per-step ZKR_STEP_CHECK catches the bad row
-		// during folding WITHOUT the decider's huge lkup preprocess (OOM).
-		// Set ZKR_REPRO_FOLDONLY=0 to run the decider Step-7 check instead.
-		let fold_only = std::env::var("ZKR_REPRO_FOLDONLY")
-			.map(|v| v != "0").unwrap_or(true);
-		get_global_config().b_folding_only = fold_only;
-		get_global_config().b_estimate_caps = true; // auto-tune caps to diff's real demand
-		get_global_config().min_subsigs = 368;
-		get_global_config().min_basis_unique_states= 1054;
-		get_global_config().min_basis_acc_states =  268;
-		get_global_config().min_basis_pats_in_trace=  295;
-		get_global_config().min_avg_pats_per_subsig= 8;
-		get_global_config().min_dfa_sigs = 3;
-		get_global_config().min_dfa_subsigs =  3;
-		get_global_config().n_par_snark = 1;
-		get_global_config().n_par_snark_cp = 1;
-		get_global_config().n_par_batch_claim = 1;
-		get_global_config().perc_lkup_share = 143; // real lk_share sizing
-		get_global_config().log_level = utils::logger::LOG3;
-		get_global_config().b_read_cache = true;   // reuse cached full_data DB
-		let b_write_cache = !read_global_config().b_read_cache;
-		let set1 = "data/debug/full_clamav/config/";
-		// smaller max_word shrinks per-step circuits ~linearly so the fold
-		// fits 128GB; chunk = max_word*62 stays < 393774 so the Gandcrab gap
-		// still crosses chunks. Override via ZKR_REPRO_MW (default 512).
-		let max_word: usize = std::env::var("ZKR_REPRO_MW").ok()
-			.and_then(|s| s.trim().parse().ok()).unwrap_or(512);
-		let (sigs, subsigs, avg_pats_per_subsig, avg_active_pats_per_subsig)
-			= (400usize, 580usize, 8usize, 2usize);
-		// caps bumped for single-file (diff) at small max_word: the CP tier
-		// needs basis_unique_states>=3543 (reported by CapErr); bump others
-		// proactively to clear cascade in one build.
-		let (basis_unique_states, basis_acc_states, basis_pats_in_trace)
-			= (4200usize, 1400usize, 1600usize);
-		let (perc_comp_subsigs, perc_pats_expansion_rate, perc_pats_expansion_rate_igc)
-			= (20usize, 104usize, 2usize);
-		// num_circs=1 + no decrease ladder: diff folds into ONE full-capacity
-		// circuit (avoids routing it to a cap-decreased circ1). Still exercises
-		// the cross-chunk forward-proof; per-step check catches the bad row.
-		let (dfa_sigs, dfa_subsigs, num_circs) = (8usize, 8usize, 1usize);
-		let vec_decrease_level: Vec<usize> = vec![];
-		let init_cp_cap= CpCapacity{ max_word_len: max_word, basis_unique_states, subsigs, avg_pats_per_subsig };
-		let init_sed_cap= SedCapacity::new(max_word, read_global_config().range2_bit, subsigs,
-			avg_pats_per_subsig, avg_active_pats_per_subsig, basis_pats_in_trace,
-			perc_pats_expansion_rate, sigs, perc_comp_subsigs, basis_unique_states, basis_acc_states);
-		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
-		let init_cp_cap_igc= CpCapacity{ max_word_len: max_word, basis_unique_states, subsigs, avg_pats_per_subsig };
-		let init_sed_cap_igc= SedCapacity::new(max_word, read_global_config().range2_bit, subsigs,
-			avg_pats_per_subsig, avg_active_pats_per_subsig, basis_pats_in_trace,
-			perc_pats_expansion_rate_igc, sigs, perc_comp_subsigs, basis_unique_states, basis_acc_states);
-		// write a single-file slice listing the repro file
-		let repro_file = std::env::var("ZKR_REPRO_FILE")
-			.unwrap_or_else(|_| "data/samples/binexec_merged128k/diff".to_string());
-		let slice_dir = format!("{}/data/debug/full_clam_bisect/config", utils::os::proj_root());
-		let _ = std::fs::create_dir_all(&slice_dir);
-		let slice_path = format!("{}/repro_slice.dat", slice_dir);
-		std::fs::write(&slice_path, format!("{}\n", repro_file)).expect("write slice");
-		utils::logger::emit_stdout(format!(
-			"DEBUG USE 62727.9: job3_repro folding single file: {}", repro_file));
-		let scan_files = vec![slice_path];
-		let report = "data/debug/full_clam_bisect/reports/repro_report.dat";
-		let _ = std::fs::create_dir_all(
-			&format!("{}/data/debug/full_clam_bisect/reports", utils::os::proj_root()));
-		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
-			0,
-			&format!("{}/main.dat",set1),
-			scan_files,
-			report,
-			b_write_cache,
-			"full_data",
-			&format!("{}/main_dfa.dat", set1),
-			&format!("{}/needs_ised.dat", set1),
-			&format!("{}/needs_ised_igc.dat",set1),
-			max_word,
-			&init_cp_cap,
-			&init_sed_cap,
-			&init_dfa_cap,
-			&init_cp_cap_igc,
-			&init_sed_cap_igc,
-			&vec_decrease_level,
-			num_circs,
-			false, DcMode::Off  // b_check_lkup=false: skip 186-chunk coverage panic
-		);
-	}
-	#[test]
-	pub fn test_job3_repro(){
-		job3_repro::<Fr>();
-	}
-	// ===== END DEBUG USE 62727.9 =====
 
-	// ===== DEBUG USE 62728 (REMOVE LATER): small-DB repro of the job-3
-	// cross-chunk forward-proof bug. job3_repro OOM'd because b_read_cache=true
-	// loads the FULL 38875-sig "full_data" DB (~246M-entry lkup) + server-scale
-	// caps -> cmF blew past 128GB even fold-only. Here we BUILD a fresh tiny DB
-	// (b_read_cache=false) from data/debug/gandcrab_repro/config/main.dat, which
-	// holds the ONLY two DB sigs whose pm_bound crosses a chunk boundary
-	// (62727.8): Gandcrab-6552923-4 (subsig0 gap {-196608}) and Kryptik-2163
-	// (subsig1 offset 131112B). Under the cross-chunk hypothesis the failing
-	// row 186402553 must belong to one of these two; every other subsig the diff
-	// file triggers is non-crossing -> SAT -> irrelevant. Tiny lkup + small caps
-	// => fits RAM. Keeps range2_bit=26 (the clamp constant max_val=2^26) and the
-	// same diff file/max_word so Gandcrab's forward-proof arithmetic is
-	// bit-identical to the server. b_light_test=true (skip Groth16); fold-only
-	// by default so the per-step ZKR_STEP_CHECK catches the bad row cheaply.
-	// Env: ZKR_REPRO_MW (max_word, def 512), ZKR_REPRO_FOLDONLY (def 1),
-	// ZKR_REPRO_LKUP (b_check_lkup, def 0), ZKR_REPRO_NCIRCS (def 1),
-	// ZKR_REPRO_DECR ("2" -> vec_decrease_level=[2], def empty),
-	// ZKR_REPRO_FILE (def data/samples/binexec_merged128k/diff).
-	// Run: ZKR_STEP_CHECK=1 ZKR_CS_CHECK=1 cargo test --release --lib \
-	//   zkp_driver::tests_zkp_driver::test_gandcrab_repro -- --nocapture \
-	//   --test-threads=1 --exact
-	fn gandcrab_repro<F:PrimeField>(){
-		utils::os::print_computer_config(Some("gandcrab_repro"));
-		let env_usize = |k: &str, d: usize| std::env::var(k).ok()
-			.and_then(|s| s.trim().parse().ok()).unwrap_or(d);
-		let env_bool = |k: &str, d: bool| std::env::var(k).ok()
-			.map(|v| v != "0").unwrap_or(d);
-		get_global_config().snark_cache_dir = "".to_string();
-		get_global_config().b_write_snark_cache = false;
-		get_global_config().b_read_snark_cache = false;
-		get_global_config().range2_bit = 26;        // clamp constant max_val=2^26
-		get_global_config().b_light_test = true;     // skip Groth16 (Step-7 still runs)
-		get_global_config().b_one_proof = false;
-		get_global_config().b_folding_only = env_bool("ZKR_REPRO_FOLDONLY", true);
-		// b_estimate_caps=true is the OVERFLOW DETECTOR: it turns an igc circ1
-		// forward-queue overflow into a named CapErr instead of the server's
-		// silent truncation (server runs the default false). ZKR_REPRO_ESTCAPS=0
-		// to match the server exactly (reproduce the silent corruption).
-		get_global_config().b_estimate_caps = env_bool("ZKR_REPRO_ESTCAPS", true);
-		// ZKR_REPRO_SRVCAPS=1: replicate full_clam_bisect's EXACT caps+floors on
-		// the small DB so circ1's decreased_copy(2) lands on the identical igc
-		// value the server used. Default: LOW floors (tiny DB self-sizes).
-		let b_srvcaps = env_bool("ZKR_REPRO_SRVCAPS", false);
-		if b_srvcaps {
-			get_global_config().min_subsigs = 368;
-			get_global_config().min_basis_unique_states = 1054;
-			get_global_config().min_basis_acc_states = 268;
-			get_global_config().min_basis_pats_in_trace = 295;
-			get_global_config().min_avg_pats_per_subsig = 8;
-			get_global_config().min_sigs = 2;
-			get_global_config().min_dfa_sigs = 3;
-			get_global_config().min_dfa_subsigs = 3;
-		} else {
-			get_global_config().min_subsigs = 2;
-			get_global_config().min_basis_unique_states = 2;
-			get_global_config().min_basis_acc_states = 2;
-			get_global_config().min_basis_pats_in_trace = 2;
-			get_global_config().min_avg_pats_per_subsig = 2;
-			get_global_config().min_sigs = 2;
-			// circ1 decreased_copy(2) does dfa_sigs/4, dfa_subsigs/4; floors keep the
-			// DFA tier non-empty on circ1 (else validate_discharge_sig_combo's logup
-			// gets an empty query -> sum_vec_vars panics, commons.rs:1274).
-			get_global_config().min_dfa_sigs = 1;
-			get_global_config().min_dfa_subsigs = 2;
-		}
-		get_global_config().n_par_snark = 1;
-		get_global_config().n_par_snark_cp = 1;
-		get_global_config().n_par_batch_claim = 1;
-		get_global_config().perc_lkup_share = 143;
-		get_global_config().log_level = utils::logger::LOG3;
-		get_global_config().b_read_cache = false;    // BUILD fresh tiny DB
-		let b_write_cache = !read_global_config().b_read_cache;
-		let set1 = "data/debug/gandcrab_repro/config";
-		let max_word: usize = env_usize("ZKR_REPRO_MW", 512);
-		// caps: ZKR_REPRO_SRVCAPS=1 -> full_clam_bisect's EXACT values (so circ1's
-		// decreased igc == the server's); else small caps for the tiny DB. CapErr
-		// reports the exact needed value if any is too low (b_estimate_caps).
-		let (sigs, subsigs, avg_pats_per_subsig, avg_active_pats_per_subsig)
-			= if b_srvcaps { (400usize, 580usize, 8usize, 2usize) }
-			  else { (4usize, 32usize, 8usize, 2usize) };
-		let (basis_unique_states, basis_acc_states, basis_pats_in_trace)
-			= if b_srvcaps { (1300usize, 750usize, 820usize) }
-			  else { (1200usize, 400usize, 400usize) };
-		let (perc_comp_subsigs, perc_pats_expansion_rate, perc_pats_expansion_rate_igc)
-			= (20usize, 104usize, 2usize);
-		// small-max_word repro: circ1 igc forward-queue n=(basis_pats/16)*(62*W)*1*68/1e8
-		// must stay >=1 (else DUMMY-advice build panics) yet small enough that Gandcrab's
-		// boundary-chunk igc fill overruns it. Keep basis_pats*W ~ 900k (W=128,basis=7000
-		// -> circ1 igc n=2, circ0 igc n=75). perc_igc stays 2 (server-faithful).
-		let basis_pats_in_trace = env_usize("ZKR_REPRO_BASISPATS", basis_pats_in_trace);
-		// invariant (fsm_adv.rs:1301): basis_pats_in_trace <= 10*basis_acc_states, and it
-		// must survive decreased_copy(16) rounding on circ1 (both /16), so keep ratio ~8.
-		let basis_acc_states = env_usize("ZKR_REPRO_BASISACC", basis_acc_states.max(basis_pats_in_trace/8 + 20));
-		let perc_pats_expansion_rate = env_usize("ZKR_REPRO_PERC", perc_pats_expansion_rate);
-		let perc_pats_expansion_rate_igc = env_usize("ZKR_REPRO_PERCIGC", perc_pats_expansion_rate_igc);
-		let (dfa_sigs, dfa_subsigs) = if b_srvcaps { (8usize, 8usize) } else { (2usize, 8usize) };
-		let num_circs = env_usize("ZKR_REPRO_NCIRCS", 1);
-		let vec_decrease_level: Vec<usize> = match std::env::var("ZKR_REPRO_DECR") {
-			Ok(s) if s.trim() == "2" => vec![2],
-			_ => vec![],
-		};
-		let b_check_lkup = env_bool("ZKR_REPRO_LKUP", false);
-		let init_cp_cap= CpCapacity{ max_word_len: max_word, basis_unique_states, subsigs, avg_pats_per_subsig };
-		let init_sed_cap= SedCapacity::new(max_word, read_global_config().range2_bit, subsigs,
-			avg_pats_per_subsig, avg_active_pats_per_subsig, basis_pats_in_trace,
-			perc_pats_expansion_rate, sigs, perc_comp_subsigs, basis_unique_states, basis_acc_states);
-		let init_dfa_cap= DfaCapacity::new(max_word, dfa_sigs, dfa_subsigs);
-		let init_cp_cap_igc= CpCapacity{ max_word_len: max_word, basis_unique_states, subsigs, avg_pats_per_subsig };
-		let init_sed_cap_igc= SedCapacity::new(max_word, read_global_config().range2_bit, subsigs,
-			avg_pats_per_subsig, avg_active_pats_per_subsig, basis_pats_in_trace,
-			perc_pats_expansion_rate_igc, sigs, perc_comp_subsigs, basis_unique_states, basis_acc_states);
-		let repro_file = std::env::var("ZKR_REPRO_FILE")
-			.unwrap_or_else(|_| "data/samples/binexec_merged128k/diff".to_string());
-		let slice_dir = format!("{}/data/debug/gandcrab_repro/config", utils::os::proj_root());
-		let _ = std::fs::create_dir_all(&slice_dir);
-		let slice_path = format!("{}/repro_slice.dat", slice_dir);
-		std::fs::write(&slice_path, format!("{}\n", repro_file)).expect("write slice");
-		utils::logger::emit_stdout(format!(
-			"DEBUG USE 62728.1: gandcrab_repro fold_only={} lkup={} mw={} ncircs={} \
-			 decr={:?} srvcaps={} estcaps={} subsigs={} basis_pats={} file={}",
-			read_global_config().b_folding_only, b_check_lkup, max_word, num_circs,
-			vec_decrease_level, b_srvcaps, read_global_config().b_estimate_caps,
-			subsigs, basis_pats_in_trace, repro_file));
-		let scan_files = vec![slice_path];
-		let report = "data/debug/gandcrab_repro/reports/repro_report.dat";
-		let _ = std::fs::create_dir_all(
-			&format!("{}/data/debug/gandcrab_repro/reports", utils::os::proj_root()));
-		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
-			0,
-			&format!("{}/main.dat",set1),
-			scan_files,
-			report,
-			b_write_cache,
-			"gandcrab_repro",           // FRESH tiny cache (NOT full_data)
-			&format!("{}/main_dfa.dat", set1),
-			&format!("{}/needs_ised.dat", set1),
-			&format!("{}/needs_ised_igc.dat",set1),
-			max_word,
-			&init_cp_cap,
-			&init_sed_cap,
-			&init_dfa_cap,
-			&init_cp_cap_igc,
-			&init_sed_cap_igc,
-			&vec_decrease_level,
-			num_circs,
-			b_check_lkup, DcMode::Off
-		);
-	}
-	#[test]
-	pub fn test_gandcrab_repro(){
-		gandcrab_repro::<Fr>();
-	}
-	// ===== END DEBUG USE 62728 =====
 
-	// DEBUG USE 62727 (remove later): find the job-3 file that trips 79cd2e54.
-	#[test]
-	pub fn test_full_clam_find_file(){
-		full_clam_find_file::<Fr>();
-	}
 
 	#[test]
 	pub fn test_full_clam_bisect(){
@@ -5136,9 +4521,6 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			::LookupTableTwoCol as _;
 		let rc = crate::determine_config::RunCfg::from_env();
 		let proot = utils::os::proj_root();
-		//DEBUG USE 60777.0 (REMOVE with the ZKR_LOAD_LADDER repro knob):
-		//fail fast if the requested ladder file is missing, BEFORE the ~2h
-		//discharge phase, so a bad path doesn't waste a full run.
 		if let Ok(lp) = std::env::var("ZKR_LOAD_LADDER") {
 			let lp_abs = format!("{}/{}", proot, lp);
 			assert!(std::path::Path::new(&lp_abs).exists(),
@@ -7404,14 +6786,6 @@ binexec_p0..p7; via report_acc_state_rate -> run_db_bundle) ########");
 		small_par_full_snark::<Fr>(false);
 	}
 
-	// DEBUG USE 62727 (remove later): minimal aggressive R1CS-failure repro.
-	// Run: ZKR_STEP_CHECK=1 RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" \
-	//   cargo test -p zkregplus --release --lib -- \
-	//   zkp_driver::tests_zkp_driver::test_small_repro_aggr --exact --nocapture --test-threads=1
-	#[test]
-	pub fn test_small_repro_aggr(){
-		small_repro_aggr::<Fr>(false);
-	}
 
 	// ===== M2.5: estimator validation (OLD/NEW/REAL coverage) =====
 	use crate::determine_config::CapParams;
