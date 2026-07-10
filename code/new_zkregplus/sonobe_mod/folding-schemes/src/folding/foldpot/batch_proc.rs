@@ -862,7 +862,6 @@ where
 		};
 			
 
-		//println!("DEBUG USE 500.9.1 *****: sum_kzv_eval: {}", agg_kzg_prf.eval);
 		let batch_prf = BatchProof{
 			vcom_vec_r, kzg_vec_r, vcom_vec_v, kzg_vec_v,
 			prf_qa_nizk, ch, rc, agg_kzg_prf,
@@ -982,7 +981,6 @@ where
 
 		if b_check_part2{//check the rest part
 			assert!(prf.kzg_all_com1.is_some());
-			// DEBUG USE 60100: collect ALL 5 part-2 checks (no early return)
 			// so one (very expensive) run reveals the full pass/fail vector.
 			// mh = mainres_hash, a per-job-unique correlation key for the
 			// threaded log (verify_batch has no job_id).
@@ -995,10 +993,6 @@ where
 				*prf.kzg_all_com_ch1.as_ref().expect("com_ch1 empty"),
 				&prf.kzg_all_com1.expect("kzg1 empty"),
 				&prf.kzg_all_com_prf1.as_ref().expect("prf1 empty")).is_ok();
-			emit_stdout(format!(
-				"DEBUG USE 60100.2.1 mh={} com1: ch={} com={:?} eval={}",
-				mh, prf.kzg_all_com_ch1.unwrap(), prf.kzg_all_com1.unwrap(),
-				prf.kzg_all_com_prf1.as_ref().unwrap().eval));
 			if !c1 {emit_fail("cs1e kzg_all_ocm1 verif fails".to_string());}
 
 			//2. check kzg_all_com2
@@ -1007,10 +1001,6 @@ where
 				*prf.kzg_all_com_ch2.as_ref().expect("com_ch2 empty"),
 				&prf.kzg_all_com2.expect("kzg2 empty"),
 				&prf.kzg_all_com_prf2.as_ref().expect("prf2 empty")).is_ok();
-			emit_stdout(format!(
-				"DEBUG USE 60100.2.2 mh={} com2: ch={} com={:?} eval={}",
-				mh, prf.kzg_all_com_ch2.unwrap(), prf.kzg_all_com2.unwrap(),
-				prf.kzg_all_com_prf2.as_ref().unwrap().eval));
 			if !c2 {emit_fail("cs1e kzg_all_com2 res2 fails".to_string());}
 
 			//3. check qa_nizk_prf2
@@ -1024,9 +1014,6 @@ where
 				&prf.qa_nizk_prf2.clone().unwrap(),
 				&nova2_qa_nizk_vkey.expect("qanizk vkey empty")
 			);
-			emit_stdout(format!(
-				"DEBUG USE 60100.2.3 mh={} qa2: comW2={:?} comE2={:?} comF2={:?}",
-				mh, prf.comW2.unwrap(), prf.comE2.unwrap(), prf.comF2.unwrap()));
 			if !c3 {emit_fail("qanizk2 fails".to_string());}
 
 			//4. check the snark proof
@@ -1039,8 +1026,6 @@ where
 			};
 			//4.1 verify the maincirc snark proof
 			let pub_inp = vec![prf.mainres_hash.unwrap()];
-			emit_stdout(format!(
-				"DEBUG USE 60100.2.4 mh={} main_pubin[0]={}", mh, pub_inp[0]));
 			let snark_v_main = S::verify(
 				&snark_vk_main.expect("snark vkey_main empty"),
 				&pub_inp,
@@ -1075,11 +1060,8 @@ where
 
 			};
 			let public_input: Vec<F> = snark_inp.to_vec().expect("to_vec err");
-			// DEBUG USE 60100.2.5: verify-side reconstructed cp public input
 			// (counterpart to driver.rs 60100.3.1 assemble-side).
 			for (k, v) in public_input.iter().enumerate() {
-				emit_stdout(format!(
-					"DEBUG USE 60100.2.5 mh={} cp_pubin_verify[{}]={}", mh, k, v));
 			}
         	let snark_v_cp= S::verify(
 				&snark_vk_cp.expect("snark vkey empty!"),
@@ -1089,9 +1071,6 @@ where
 			let c5 = snark_v_cp.is_ok() && snark_v_cp.unwrap().clone();
 			if !c5 {emit_fail("snark_v_cp fails.".to_string());}
 
-			emit_stdout(format!(
-				"DEBUG USE 60100.1 mh={} PART2 CHECKS: com1={} com2={} \
-				qanizk2={} main={} cp={}", mh, c1, c2, c3, c4, c5));
 			if !(c1 && c2 && c3 && c4 && c5) { return false; }
 		}
 

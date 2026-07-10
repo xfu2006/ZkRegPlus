@@ -22,7 +22,6 @@ macro_rules! lock_unwrap {
 */
 use utils::{consts::ADD_CHAIN_SIZE, logger::{log, log_perf, emit_stdout, LOG6,LOG7}, timer::Timer as GTimer};
 use crate::folding::foldpot::utils::{sum3,alloc_fpvar_mul,var_to_tuple, var_to_tuple_adv, B_DEBUG, B_DEBUG3, B_DEBUG2, check_cs, POW_LE_BITS, alloc_le_bits};
-// DEBUG USE 62730 (REMOVE LATER): per-gadget SAT checkpoint helper
 use crate::folding::foldpot::utils::gadget_sat_check;
 use serde::{Serialize,Deserialize};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -2916,11 +2915,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		{
 			use std::sync::atomic::{AtomicUsize, Ordering};
 			static N_PROBE_60931: AtomicUsize = AtomicUsize::new(0);
-			if B_DEBUG && N_PROBE_60931.fetch_add(1, Ordering::Relaxed) < 20{
-				println!("DEBUG USE 60931.3: gen_witness commit '{}' \
-					vec.len={} (stmt {} + msg1 {})", self.name,
-					vec.len(), stmt.len(), v_msg1.len());
-			}
 		}
 		let (zero,one) = (F::zero(),F::one());
 		let grp_cmF = if precomputed_group_cmF.is_some(){
@@ -3072,7 +3066,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		let mut sum_kzg_eval_others= zi_part2.sum_kzg_eval_others;
 		let mut sum_vec_v_i= zi_part2.sum_vec_v_i;
 		if !self.b_full_mode{//only do it for the first stage
-			//println!("\nDEBUG USE 500.0: word_id: {}, subseg_id: {},  ch: {}, rc: {}, sum_vec_v_i: {}", si.word_id, si.subseg_id, zi_part2.ch, zi_part2.rc, sum_vec_v_i);
 			//6.1 compute rands and assisting vars
 			let b_last = si.word_id==si.total_words &&
 				si.subseg_id==si.total_word_segs;
@@ -3117,7 +3110,6 @@ where 	C: CurveGroup<ScalarField=F>,
 				sum_vec_v_i = if b_wd_left_zero 
 					{sum_vec_v_i} else
 					{sum_vec_v_i * si.batch_r + si.word_subseg[i]} ;
-				//println!("DEBUG USE 888.1: word_id: {}, subseg: {}, word: {}, act_word_subseg_size: {}, word: {}, batch_r: {}, sum_vec_v: {}, word_size_left: {}, b_wd_left_zero: {}", si.word_id, si.subseg_id, si.word_subseg[i], si.act_word_subseg_size, si.word_subseg[i], si.batch_r, sum_vec_v_i, word_size_left, b_wd_left_zero);
 
 				let val2_wd = word_size_left- one;
 				word_size_left= if b_wd_left_zero {zero} else {val2_wd};
@@ -3133,7 +3125,6 @@ where 	C: CurveGroup<ScalarField=F>,
 				{sum_vec_v_i*si.batch_r + si.r_word_i} else {sum_vec_v_i};
 			if B_DEBUG {
 				if b_last_seg {
-				//	println!("DEBUG USE 500.0.1: sum_vec_v_i: {}, batch_v: {}, act_word_sub_size: {}, batch_r: {}", sum_vec_v_i, si.batch_v, si.act_word_subseg_size, si.batch_r);
 					assert!(sum_vec_v_i == si.batch_v);
 				}
 			}
@@ -3153,7 +3144,6 @@ where 	C: CurveGroup<ScalarField=F>,
 			//6.5 total
 			let _sum_kzg_eval = sum_kzg_eval_lk + 
 				sum_kzg_eval_word + sum_kzg_eval_others;
-				//println!("DEBUG USE 500.9: sum_kzg_eval: {}, sum_vec_v_i: {}", sum_kzg_eval, sum_vec_v_i);
 			log_perf(self.job_id, log_level, &format!("gen_witness step 9: gen kzg sum"),
 			&mut gt1);
 		}
@@ -3199,7 +3189,6 @@ where 	C: CurveGroup<ScalarField=F>,
 			Some(CyclePairInput{x: cp_vec, fq_bits: fq_bits})
 		} else {None};
 
-		//println!("DEBUG USE 500.0.2. BEFORE building zi1_part2: sum_vec_v_i: {}", sum_vec_v_i);
 		let zi1_part2 = ZiPartTwoInst::<F>{
 			ch: zi_part2.ch.clone(),
 			rc: zi_part2.rc.clone(),
@@ -3260,9 +3249,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		let stmt_len = wtns_cfg.statement_size;
 		let m1_len = wtns_cfg.msg1_size;
 
-		if B_DEBUG { println!("DEBUG USE 60931.2: new_adv '{}' initial cmF key -> {} \
-			(stmt {} + msg1 {})", name, stmt_len + m1_len + 1,
-			stmt_len, m1_len); }
 		let mut rng = ark_std::test_rng();
 		let (cs_pp, _cs_vp) = CS::setup(&mut rng, stmt_len + m1_len +1)
 			.expect("setup error");
@@ -3314,10 +3300,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		// reads the container cfg), so resize here to the dummy
 		// (capacity-max) commit length before R1CS extraction.
 		let cmf_len = self.witness_config.get_cmf_len();
-		if B_DEBUG { println!("DEBUG USE 60931.1: set_dummy_stmt resize cmF key \
-			-> {} (stmt {} + msg1 {})", cmf_len + 1,
-			self.witness_config.statement_size,
-			self.witness_config.msg1_size); }
 		let mut rng = ark_std::test_rng();
 		let (cs_pp, _cs_vp) = CS::setup(&mut rng, cmf_len + 1)
 			.expect("resize cmF params");
@@ -3452,7 +3434,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		let cfg = &self.witness_config;
 		assert!(cfg.get_total_size()==external_inputs.len(), "external_inputs.len: {} != cfg.total_size: {}", external_inputs.len(), cfg.get_total_size());
 		let wtns_var =  WitnessSigmaIR1CSVar::from_vec(&cfg, &external_inputs);
-		//println!("DEBUG USE 101: AFTER msg1: constraints: {}", cs.num_constraints());
 		log_perf(self.job_id, log_level, &format!(
 			"gen_step_cs step 1: cs: {}, vars: {}",
 			cs.num_constraints() - nc,
@@ -3482,15 +3463,9 @@ where 	C: CurveGroup<ScalarField=F>,
 			}
 			gi += 1;
 		}
-		// DEBUG USE 62730 (REMOVE LATER): SAT after msg2 Fiat-Shamir check
 		gadget_sat_check(&cs, "sigma_ir1cs::msg2_fs");
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 1");
-			emit_stdout(format!(concat!(
-				"--- DEBUG USE 7601: gen_step_constraints step 1. ",
-				"cs: {}, stack  =======, stack: {}"),
-				cs.num_constraints(), get_stack_space()
-			));
 		}
 		log_perf(self.job_id, log_level,&format!("gen_step_cs step 2: cs: {}, vars: {}",
 			cs.num_constraints() - nc,
@@ -3510,34 +3485,17 @@ where 	C: CurveGroup<ScalarField=F>,
 			if B_DEBUG3{
 				check_cs(&cs, &format!("After gadget: {}", lock_unwrap!(g).get_name()));
 			}
-			// DEBUG USE 62730 (REMOVE LATER): SAT after THIS gadget's msg3 ->
 			// the first UNSAT names the exact culprit gadget (discharge/
 			// compute_sig/cp/sed/dfa) in the composite circuit.
 			gadget_sat_check(&cs, &format!("sigma_ir1cs::assert_msg3::{}::{}",
 				self.name, lock_unwrap!(g).get_name()));
 			let stmt_len = lock_unwrap!(g).get_msg_size().0;
 			log_perf(self.job_id, log_level, &format!("-- -- after msg3 of module {}: {}:\n\tINCREASED: constraints: {}, const vars: {}, wit vars: {} \n\t==> NOW: CS:{}, const: {}, witness: {}\n\t ==> stmt_size: {}. ", i, lock_unwrap!(g).get_name(), cs.num_constraints()-nc, cs.num_instance_variables()-ni, cs.num_witness_variables()-nv, cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables(), stmt_len), &mut gt3);
-			// DEBUG USE 64900.1 (ZKR_PROBE_CSBREAK / ZKR_PROBE_SIZES):
-			// per-gadget cs delta + running total, labeled by circ name so the
-			// 4 circuits' gadget rows are distinguishable. Fires once per circ
-			// during preprocess get_r1cs_super.
-			if std::env::var("ZKR_PROBE_CSBREAK").is_ok()
-				|| std::env::var("ZKR_PROBE_SIZES").is_ok() {
-				emit_stdout(format!("DEBUG USE 64900.1: circ={} gadget[{}] {} \
-					cs_delta: {} running_total: {}",
-					self.name, i, lock_unwrap!(g).get_name(),
-					cs.num_constraints() - nc, cs.num_constraints()));
-			}
 			cost_capture_push(lock_unwrap!(g).get_name(),
 				cs.num_constraints() - nc, cs.num_witness_variables() - nv);
 		}
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 3");
-			emit_stdout(format!(concat!(
-				"--- DEBUG USE 7601: gen_step_constraints step 3. ",
-				"cs: {}, stack  =======, stack: {}"),
-				cs.num_constraints(), get_stack_space()
-			));
 		}
 		log_perf(self.job_id, log_level, &format!(
 			"gen_step_cs step 3: cs: {}, vars: {}, lc: {}",
@@ -3633,20 +3591,13 @@ where 	C: CurveGroup<ScalarField=F>,
 		let final_step = b_last.and(&si.word_id.is_eq(&zero_var)?.not())?;
 		let not_final_step = final_step.not();
 		let io_res = not_final_step.or(&eq_inp_oup)?;
-		//println!("DEBUG USE 201: b_last: {}, not_final_step: {}, word_id: {}, total_words: {}, eq_inp_oup: {}, sum_inp: {}, sum_oup: {}", b_last.value()?, not_final_step.value()?, si.word_id.value()?, si.total_words.value()?, eq_inp_oup.value()?, sum_inp.value()?, sum_oup.value()?);
 		if B_DEBUG {
 			assert!(io_res.value()?, "io not match at final step!");
 		}
 		io_res.enforce_equal(&Boolean::TRUE)?;
-		// DEBUG USE 62730 (REMOVE LATER): SAT after input/output buffer chaining
 		gadget_sat_check(&cs, "sigma_ir1cs::io_buffer");
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 4");
-			emit_stdout(format!(concat!(
-				"--- DEBUG USE 7601: gen_step_constraints step 4. ",
-				"cs: {}, stack  =======, stack: {}"),
-				cs.num_constraints(), get_stack_space()
-			));
 		}
 		log_perf(self.job_id, log_level, &format!(
 			"gen_step_cs step 4: cs: {}, vars: {}, lc: {}, output_size: {}",
@@ -3847,11 +3798,6 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 5.1");
-			emit_stdout(format!(concat!(
-				"--- DEBUG USE 7601: gen_step_constraints step 5.1 ",
-				"cs: {}, stack  =======, stack: {}"),
-				cs.num_constraints(), get_stack_space()
-			));
 
 		}
 		//log(job_id, log_level, &format!("-- lkup_size: {}, inv_hab22_right_size: {}", si.act_lookup_share_size.value()?, inv_hab22_right_size));
@@ -3867,13 +3813,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		nl = cs.num_lc();
 
 		//5.2 check the right side
-		if b_debug{
-			emit_stdout(format!(
-				"DEBUG USE 6651.RIGHT: i: {}, alpha: {}, beta: {}, \
-				inv_hab22_right_size: {}",
-				_i, alpha.value()?, beta.value()?,
-				inv_hab22_right_size));
-		}
 		//5.2.2 now process the inv_hab22_right
 		for i in 0usize..inv_hab22_right_size{
 			//let v_temp = &beta * &si.col1_share[i]; //cost 271ns
@@ -3916,11 +3855,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		}
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 5.2");
-			emit_stdout(format!(concat!(
-				"--- DEBUG USE 7601: gen_step_constraints step 5.2",
-				"cs: {}, stack  =======, stack: {}"),
-				cs.num_constraints(), get_stack_space()
-			));
 		}
 		log_perf(self.job_id, log_level, &format!(
 				"-- -- gen_step_cs step 5.2: cs: {}, vars: {}: lc: {}",
@@ -3942,7 +3876,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		// the connection points between words
 		let b_last_full = zi_part2.accumulated_word_len.is_eq(
 			&zi_part2.total_word_len)?; //last subseg is full
-		//println!("DEBUG USE 201: b_last_full: {}, zi.word_id: {}, now.word_id: {}, subseg_id: {}, total_segs: {}", b_last_full.value()?, zi_part2.word_id.value()?, si.word_id.value()?, zi_part2.subseg_id.value()?, zi_part2.total_word_segs.value()?);
 		assert_imply(&b_last_full, &si.word_id.is_eq(
 			&(&zi_part2.word_id+&one_var))?).expect("is eq err");
 		assert_imply(&b_last_full, &zi_part2.subseg_id.is_eq(
@@ -3951,11 +3884,6 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 6");
-			emit_stdout(format!(concat!(
-				"--- DEBUG USE 7601: gen_step_constraints step 6",
-				"cs: {}, stack  =======, stack: {}"),
-				cs.num_constraints(), get_stack_space()
-			));
 		}
 		log_perf(self.job_id, log_level, &format!(
 			"gen_step_cs step 6: cs: {}, vars: {}, lc: {}",
@@ -3978,7 +3906,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		let mut sum_kzg_eval_others= zi_part2.sum_kzg_eval_others.clone();
 		let mut sum_vec_v_i= zi_part2.sum_vec_v_i.clone();
 		if !self.b_full_mode{//only do it for the first stage
-			//println!("DEBUG USE 501.0: word_id: {}, subseg_id: {},  ch: {}, rc: {}", si.word_id.value()?, si.subseg_id.value()?, zi_part2.ch.value()?, zi_part2.rc.value()?);
 			//6.1 compute rands and assisting vars
 			let ch = zi_part2.ch.clone();
 			let rc = zi_part2.rc.clone();
@@ -4108,15 +4035,9 @@ where 	C: CurveGroup<ScalarField=F>,
 			//6.5 total
 			let _sum_kzg_eval = &sum_kzg_eval_lk + 
 				&sum_kzg_eval_word + &sum_kzg_eval_others;
-			//println!("DEBUG USE 501.9: sum_kzg_eval: {}, sum_vec_v_i: {}", sum_kzg_eval.value()?, sum_vec_v_i.value()?);
 		}
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 7");
-			emit_stdout(format!(concat!(
-				"--- DEBUG USE 7601: gen_step_constraints step 7",
-				"cs: {}, stack  =======, stack: {}"),
-				cs.num_constraints(), get_stack_space()
-			));
 		}
 		log_perf(self.job_id, log_level, &format!("gen_step_cs step 7: cs: {}, vars: {}, lc: {}",
 			cs.num_constraints() - nc,
@@ -4149,11 +4070,6 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 8");
-			emit_stdout(format!(concat!(
-				"--- DEBUG USE 7601: gen_step_constraints step 8",
-				"cs: {}, stack  =======, stack: {}"),
-				cs.num_constraints(), get_stack_space()
-			));
 		}
 		log_perf(self.job_id, log_level, &format!(
 			"gen_step_cs step 8: cs: {}, vars: {}, lc: {}",
@@ -4213,11 +4129,6 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 9");
-			emit_stdout(format!(concat!(
-				"--- DEBUG USE 7601: gen_step_constraints step 9",
-				"cs: {}, stack  =======, stack: {}"),
-				cs.num_constraints(), get_stack_space()
-			));
 		}
 		log_perf(self.job_id, log_level, &format!(
 			"gen_step_cs step 9: cs: {}, vars: {}, lc: {}, TOTAL: cs: {}, vars: {}",
@@ -4248,11 +4159,6 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 9.1");
-			emit_stdout(format!(concat!(
-				"--- DEBUG USE 7601: gen_step_constraints step 9.1",
-				"cs: {}, stack  =======, stack: {}"),
-				cs.num_constraints(), get_stack_space()
-			));
 		}
 
 		//10.5 check the failed_sigs are covered by discharged sigs
@@ -4278,20 +4184,9 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 9.2");
-			emit_stdout(format!(concat!(
-				"--- DEBUG USE 7601: gen_step_constraints step 9.2",
-				"cs: {}, stack  =======, stack: {}"),
-				cs.num_constraints(), get_stack_space()
-			));
 		}
 
 		if b_show_sigs{
-			print_vec_var("DEBUG USE 7801: sigma_ir1cs: failed_sigs", &si.failed_sigs);
-			print_vec_var("DEBUG USE 7802: sigma_ir1cs: : discharged_sigs",
-				&si.discharged_sigs);
-			emit_stdout(format!(
-				"DEBUG USE 7803 sigma_ir1cs: b_correct: {}",
-				b_correct.value()?));
 		}
 
 		b_correct.enforce_equal(&Boolean::TRUE)?;
@@ -4299,16 +4194,10 @@ where 	C: CurveGroup<ScalarField=F>,
 			assert!(b_correct.value()?, "failed b_correct");
 		}
 
-		// DEBUG USE 62730 (REMOVE LATER): SAT after the FULL step circuit
 		// (lookup checks included) -- last catch before returning the witness.
 		gadget_sat_check(&cs, "sigma_ir1cs::step_final");
 		if B_DEBUG2{
 			check_cs(&cs, "gen_step_cs FINAL");
-			emit_stdout(format!(concat!(
-				"--- DEBUG USE 7601: gen_step_constraints step 10. RETURN!",
-				"cs: {}, stack  =======, stack: {}"),
-				cs.num_constraints(), get_stack_space()
-			));
 		}
 		log_perf(self.job_id, log_level, &format!(
 			"gen_step_cs step 10: cs: {}, vars: {}, lc: {}",
@@ -4705,7 +4594,6 @@ pub mod tests_sigma_ir1cs{
 			let n_val = field_to_usize(&n);
 			let croot_val = get_cubic_root(n_val);
 			let sroot_val = get_sq_root(n_val);
-			//println!("DEBUG USE 201: n: {}, croot_val: {}, sroot_val: {}", n, croot_val, sroot_val);
 
 			let croot = F::from(croot_val as u32);
 			let sroot = F::from(sroot_val as u32);
@@ -4722,10 +4610,8 @@ pub mod tests_sigma_ir1cs{
 			let ctr= prev_stmt.as_ref().map_or(zero, |stmt| {
 				stmt.oup_buf[0] 
 			});
-			//println!("DEBUG USE 203: prev_counter: {}", ctr);
 			let to_add = if croot_val>0 && tbl_id==zero {zero} else {one};
 			let new_ctr = to_add + ctr;
-			//println!("DEBUG USE 204: new_counter: {}", ctr);
 			let pc_i = zero; //current circ
 			let pc_i1 = zero; //will be RESET later
 			let f_n_circ = ea.n_circ;

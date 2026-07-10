@@ -366,8 +366,6 @@ impl<F: Field> ConstraintSystem<F> {
 			//let avg_len = (total_len as f64)/(self.lc_map.len() as f64);
 			//let max_len = self.lc_map.par_iter().map(|(_,v)|
 			//	v.len()).max().unwrap();
-			//println!(" **** DEBUG USE 9999: max_lc_len: {}, avg: {}",
-			//	max_len, avg_len);
 		}
 	}
 
@@ -705,11 +703,6 @@ impl<F: Field> ConstraintSystem<F> {
         }
 		assert!(task_queue.len()==starting);
 		if b_debug{
-			println!(concat!("-- DEBUG USE 2101.2: ",
-				"0-dep: {}, singles_dep: {}, two_dep: {}, ",
-				"three_dep: {}, more_dep: {} "), 
-				starting, singles_dep, two_dep, three_dep, more_dep
-			);
 			println!("DEUG USE 2101.2: build dependency time: {:?}", 
 				timer.elapsed());
 			timer = Instant::now();
@@ -878,10 +871,6 @@ impl<F: Field> ConstraintSystem<F> {
 						 if b_debug{
 							if *cnt%(1000*1000)==0{
 								let mut timer = t1.lock().unwrap();
-								println!(
-								  "--DEBUG USE 9901: cnt: {}, time: {:?}", 
-								  cnt, timer.elapsed()
-								);
 								*timer = Instant::now();
 							}
 						 }

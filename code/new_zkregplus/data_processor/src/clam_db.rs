@@ -1526,9 +1526,6 @@ impl <F:PrimeField> ClamavDB<F>{
 				let tuples = sig.vec_subsig_automaton.iter().enumerate()
 				.map(|(subsig_id,dfa)|{
 					let tbl_id = Self::dfa_id(*sig_id as u32, subsig_id as u32);
-					if b_debug{
-						println!("DEBUG USE 8877.2: produce dfa for {}, subsig_id: {}", sig_name, subsig_id);
-					}
 					Self::gen_dfa_lkup(&dfa, tbl_id)
 				}).flatten().collect::<Vec<(F,F)>>();
 
@@ -1649,13 +1646,6 @@ impl <F:PrimeField> ClamavDB<F>{
 			for i in 0..s.vec_subsig_obj.len(){
 				//1. generate the subsig id
 				let subsig_id = acdfa.gen_subsig_id(*sig_id, i+1);
-				if b_debug{
-					println!("DEBUG USE 6101: add: SIG_ID: {}, igc: {}, subsig_id: {}, details:{} ", sig_id, s.vec_subsig_obj[i].b_ignore_case, subsig_id, s.vec_subsig_obj[i].value);
-				}
-				if b_debug_subsig && 
-				  set_subsig_to_debug.contains(&format!("{}",subsig_id)){
-					println!("DEBUG USE 9101: add: SIG: {}, igc: {}, subsig_id: {}, details:{} ", s.name, s.vec_subsig_obj[i].b_ignore_case, subsig_id, s.vec_subsig_obj[i].value);
-				}
 
 				//2. retrieve the words from the pattern.
 				let words = s.vec_subsig_pm_bounds[i].iter().map(|x|
@@ -1717,56 +1707,6 @@ impl <F:PrimeField> ClamavDB<F>{
 					
 					}).collect::<Vec<(usize,(usize,usize))>>()
 				};
-				// DEBUG USE 64009: per-(sig,subsig) dump of the
-				// CIRCUIT-side pat_id (= acdfa word_id + 1) for
-				// each pm-bound entry. Use this to resolve the
-				// StepQueueItem.pat field back to a literal word.
-				if std::env::var("ZKR_PROBE_64009").is_ok()
-					&& s.name == "Bora.Email.DLProx.SSN.B1" {
-					for (j, x) in s.vec_subsig_pm_bounds[i]
-						.iter().enumerate() {
-						let word = &x.0;
-						let wid_raw = *acdfa.pattern_to_id
-							.get(word).unwrap();
-						println!("DEBUG USE 64009.c sig={} \
-							subsig_idx={} step_idx={} \
-							circ_pat_id={} word={} \
-							rg=({},{})",
-							s.name, i, j+1,
-							wid_raw+1, word, x.1.0, x.1.1);
-					}
-				}
-				// DEBUG USE 69200.c.patmap: circuit-side
-				// (pat_id <-> word) for the two known-failing
-				// sig_ids. Emitted once per (sig, subsig, igc)
-				// at SubsigStepStore construction time. Pairs
-				// with 69200.h.bounds (host side) and lets the
-				// offline verifier resolve circuit pat_ids back
-				// to the original byte/hex words.
-				if std::env::var("ZKR_PROBE_69200").is_ok()
-					&& (*sig_id == 34555usize
-						|| *sig_id == 35355usize) {
-					for (j, x) in s.vec_subsig_pm_bounds[i]
-						.iter().enumerate() {
-						let word = &x.0;
-						let wid_raw = *acdfa.pattern_to_id
-							.get(word).unwrap();
-						let wid_circ = wid_raw + 1;
-						println!("DEBUG USE \
-							69200.c.patmap: \
-							sig_id={} subsig_idx={} \
-							subsig_id={} igc={} \
-							chain_idx={} \
-							pat_id_raw={} \
-							pat_id_circ={} \
-							word=\"{}\" \
-							orig_rg=({},{})",
-							sig_id, i, subsig_id,
-							b_igc, j, wid_raw,
-							wid_circ, word,
-							x.1.0, x.1.1);
-					}
-				}
 				let item = SubsigStepStoreItem{subsig_id: subsig_id,
 					igc: s.vec_subsig_obj[i].b_ignore_case,
 					vec_pm_bounds: vec_bounds,
@@ -1948,9 +1888,6 @@ impl <F:PrimeField> ClamavDB<F>{
 			.collect::<Vec<String>>();
 		pats.sort();
 		//TODO: fix later: needs to use new_adv with igc
-		if b_debug && b_igc{
-			println!("DEBUG USE 6105: in build_sed_bundle 0: b_igc: {}, pats: {:#?}", b_igc, pats);
-		}
 		let all_acdfa = HexACDFA::new_adv(0, &pats, b_igc);
 
 		//6.2 build the store and append it to all
@@ -2227,9 +2164,6 @@ impl <F:PrimeField> ClamavDB<F>{
 		if b_perf {flog_perf(0, log_level, 
 			&format!("Build_DB: Step 4: Build ACDFA of Critial Patterns."),&mut timer,vlog);
 		}
-		if b_debug{
-			println!("DEBUG USE 6100: build_store: crit pat: {:#?}\n, crit_pat_igc: {:#?}", vec_crit_pat, vec_crit_pat_igc);
-		}
 
 		//4. generate bag of words
 		let pats = (&v_sigs).into_iter().map(|s| 
@@ -2243,9 +2177,6 @@ impl <F:PrimeField> ClamavDB<F>{
 			.collect::<Vec<String>>();
 		if b_perf {flog_perf(0, log_level, &format!("Build_DB: Step 5: Build Bag-of-Words."), &mut timer, vlog);}
 
-		if b_debug{
-			println!("DEBUG USE 6101: BAGWORDS pats: {:#?}\n -- pats_igc: {:#?}", pats, pats_igc);
-		}
 
 		//5. build DFA for bag of words (also for pm)
 		// -- SKIPPED, it is vec_acdfa[0] of bundle_subsig now.
@@ -2254,37 +2185,6 @@ impl <F:PrimeField> ClamavDB<F>{
 		let mut sig_to_id = HashMap::<String,usize>::new();
 		for (id, s) in v_sigs.iter().enumerate(){
 			sig_to_id.insert(s.name.clone(), id+1);
-		}
-		if std::env::var("ZKR_PROBE_64006").is_ok() {
-			let mut rows: Vec<(usize, String)> = sig_to_id.iter()
-				.map(|(n, id)| (*id, n.clone())).collect();
-			rows.sort_by_key(|r| r.0);
-			for (id, name) in &rows {
-				println!("DEBUG USE 64006 sig_id={} name={}",
-					id, name);
-			}
-		}
-		if std::env::var("ZKR_PROBE_64007").is_ok() {
-			//pm_bounds dump for SSN.B1 (sig_id=5), subsig_id=2.
-			let target = "Bora.Email.DLProx.SSN.B1";
-			for s in v_sigs.iter() {
-				if s.name != target { continue; }
-				let n = s.vec_subsig_pm_bounds.len();
-				println!("DEBUG USE 64007.head sig={} \
-					n_subsigs={}", s.name, n);
-				let target_sub = 2usize;
-				if target_sub >= n { continue; }
-				let pm = &s.vec_subsig_pm_bounds[target_sub];
-				println!("DEBUG USE 64007 sig={} subsig={} \
-					n_pats={}",
-					s.name, target_sub, pm.len());
-				for (k, (w, (lo, hi))) in pm.iter().enumerate() {
-					println!("DEBUG USE 64007.row sig={} \
-						subsig={} pat_id={} word={} \
-						min_gap={} max_gap={}",
-						s.name, target_sub, k+1, w, lo, hi);
-				}
-			}
 		}
 
 		//7. build the stores of information for SED and ISED

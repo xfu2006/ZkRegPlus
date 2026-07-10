@@ -470,9 +470,6 @@ where
 			pc_i1_val, self.j);
 
 		if b_debug{
-			emit_stdout(format!(
-				"DEBUG USE 7701: aug_f::gen_csr: {}",
-				cs.num_constraints()));
 			let csat = cs.is_satisfied();
 			if csat.is_ok(){ assert!(csat.unwrap(), "step 2 of circuitsuper"); }
 		}
@@ -508,9 +505,6 @@ where
 		nv = cs.num_witness_variables();
 
 		if b_debug{
-			emit_stdout(format!(
-				"DEBUG USE 7702: aug_f::gen_csr: {}",
-				cs.num_constraints()));
 			let csat = cs.is_satisfied();
 			if csat.is_ok(){ 
 				assert!(csat.unwrap(), "step 2.5 of circuitsuper"); 
@@ -528,9 +522,6 @@ where
 		nv = cs.num_witness_variables();
 
 		if b_debug{
-			emit_stdout(format!(
-				"DEBUG USE 7703: aug_f::gen_csr: {}",
-				cs.num_constraints()));
 			let csat = cs.is_satisfied();
 			if csat.is_ok(){ 
 				assert!(csat.unwrap(), "step 2.6 of circuitsuper"); 
@@ -560,9 +551,6 @@ where
         })?;
 
 		if b_debug{
-			emit_stdout(format!(
-				"DEBUG USE 7704: aug_f::gen_csr: {}",
-				cs.num_constraints()));
 			let csat = cs.is_satisfied();
 			if csat.is_ok(){ 
 				assert!(csat.unwrap(), "step 3 of circuitsuper"); 
@@ -612,9 +600,6 @@ where
         let mut transcript = sponge.clone();
 
 		if b_debug{
-			emit_stdout(format!(
-				"DEBUG USE 7705: aug_f::gen_csr: {}",
-				cs.num_constraints()));
 			let csat = cs.is_satisfied();
 			if csat.is_ok(){ 
 				assert!(csat.unwrap(), "step 4 of circuitsuper"); 
@@ -657,9 +642,6 @@ where
 		}else {(None,None,None)};
 
 		if b_debug{
-			emit_stdout(format!(
-				"DEBUG USE 7706: aug_f::gen_csr: {}",
-				cs.num_constraints()));
 			let csat = cs.is_satisfied();
 			if csat.is_ok(){ 
 				assert!(csat.unwrap(), "step 6 of circuitsuper"); 
@@ -1120,9 +1102,6 @@ where
 
 
 		if b_debug{
-			emit_stdout(format!(
-				"DEBUG USE 7708: aug_f::gen_csr: {}",
-				cs.num_constraints()));
 			if cs.is_satisfied().is_ok(){ 
 				assert!(cs.is_satisfied().unwrap());
 			}
@@ -1326,7 +1305,6 @@ pub mod tests_circuits_super {
         let U_iVar =
             CommittedInstanceVarFoldPotSuper::<Projective>::new_witness(cs.clone(), || Ok(U_i.clone()))
                 .unwrap();
-        U_iVar.dump("DEBUG USE 68082 CIRCUIT U_i");
         let cmTVar = NonNativeAffineVar::<Projective>::new_witness(cs.clone(), || Ok(cmT)).unwrap();
         let mut transcriptVar = PoseidonSpongeVar::<Fr>::new(cs.clone(), &poseidon_config);
 

@@ -45,7 +45,7 @@ use crate::folding::{
 		mod_super::{WitnessFoldPotSuper,CommittedInstanceFoldPotSuper, FoldPotSuper},
 		circuits_super::{field_to_usize,CommittedInstanceVarFoldPotSuper},
 		sigma_cyclepair::{compute_hc_var, hash_var},
-		utils::{get_mem_usage,f1_limbs_to_f2, B_DEBUG, B_DEBUG2, B_DEBUG3, new_var, check_cs, check_cs_probe},
+		utils::{get_mem_usage,f1_limbs_to_f2, B_DEBUG, B_DEBUG2, B_DEBUG3, new_var, check_cs},
 		container_config::ColEle,
 	},
 };
@@ -750,7 +750,6 @@ where
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 1: generae r1cs_var. INCREASSED {} constraints", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
 		if B_DEBUG3 {check_cs(&cs, "phase1 step 1.0");}
-		check_cs_probe(&cs, "p1.s1 r1cs_var", self.job_id);
 
 		//2. generate Var version of pp_hash, z_0, z_i
 		// U_i, u_i, U_i1, given the advice from nova instance
@@ -782,7 +781,6 @@ where
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 2: igen Ui, Wi, Ui1, Wi1 witness: INCREASED {} constraints", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
 		if B_DEBUG3{check_cs(&cs, "phase1 step 2.0");}
-		check_cs_probe(&cs, "p1.s2 Ui/Wi witness", self.job_id);
 
 		//3. compute the KZG challenge in circuit
 		let com_all_w = NonNativeAffineVar::<C1>::new_witness(cs.clone(),
@@ -806,7 +804,6 @@ where
 			all_w.len(), cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
 		if B_DEBUG3{check_cs(&cs, "phase1 step 2");}
-		check_cs_probe(&cs, "p1.s3 collect all_w_e", self.job_id);
 
 		let one= FpVar::<C1::ScalarField>::new_witness(cs.clone(),  || 
 			Ok(C1::ScalarField::from(1u32)) ).unwrap();
@@ -814,7 +811,6 @@ where
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 4: eval all_w_e. INCREASED {} constrains.", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
 		if B_DEBUG3{check_cs(&cs, "phase1 step 3");}
-		check_cs_probe(&cs, "p1.s4 eval all_w_e", self.job_id);
 
         //4. u_i.cmE==cm(0), u_i.u==1
         // Here zero is the x & y coordinates of the 
@@ -825,7 +821,6 @@ where
         u_i.cmE.y.enforce_equal_unaligned(&zero)?;
         (u_i.u.is_one()?).enforce_equal(&Boolean::TRUE)?;
 		if B_DEBUG3{check_cs(&cs, "phase1 step 4");}
-		check_cs_probe(&cs, "p1.s4b u_i.cmE/u", self.job_id);
 
 
         //5. a u_i.x[0] == H(i, z_0, z_i, pc_i, U_i)
@@ -869,7 +864,6 @@ where
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 5: Enforce u_i standard and hash. INCREASED r1cs: {}.", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
 		if B_DEBUG3{check_cs(&cs, "phase1 step 5");}
-		check_cs_probe(&cs, "p1.s5 hash u_i.x0", self.job_id);
 
 		//6. Added check z_i is well-formed (and in-particular) its
 		//r matches kzg_c_lkup, and its sum_lk_col1, sum_lk_col2 matches
@@ -887,7 +881,6 @@ where
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 6: verify zi_part2. INCREASED r1cs: {}, memory usage: {}.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 		c1 = cs.num_constraints();
 		if B_DEBUG3{check_cs(&cs, "phase1 step 6");}
-		check_cs_probe(&cs, "p1.s6 zi_part2", self.job_id);
 
 
         //7. check RelaxedR1CS of U_{i+1} for each circuit
@@ -905,7 +898,6 @@ where
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 7: check {} circs. INCREASED r1cs: {}", self.n_circ, cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
 		if B_DEBUG3{check_cs(&cs, "phase1 step 7");}
-		check_cs_probe(&cs, "p1.s7 relaxedR1CS n_circ", self.job_id);
 
         //#[cfg(feature = "light-test")]
         //println!("[WARNING]: Running with the 'light-test' feature, skipping the big part of the DeciderEthCircuit.\n           Only for testing purposes.");
@@ -961,7 +953,6 @@ where
 			Ui1_pci.enforce_equal(&expected_Ui1_pci)?;
 			log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 8: Verify U_i1 is folded U_i and u_i. INCREASED r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 			c1 = cs.num_constraints();
-			check_cs_probe(&cs, "p1.s8 NIFS fold", self.job_id);
 
 			//8. Verify cyclefold instance
 			//(1) u_i.x[1] = cf_U_i.hash()
@@ -989,9 +980,6 @@ where
 				self.cf_pedersen_params.generators.clone())?;
             let cf_W_i_E_bits: Result<Vec<Vec<Boolean<CF1<C1>>>>, SynthesisError> = cf_W_i.E.iter().map(|E_i| E_i.to_bits_le()).collect();
             let cf_W_i_W_bits: Result<Vec<Vec<Boolean<CF1<C1>>>>, SynthesisError> = cf_W_i.W.iter().map(|W_i| W_i.to_bits_le()).collect();
-			emit_stdout(format!(
-				"DEBUG USE 66901: H2: {}",
-				self.cf_pedersen_params.h));
             let computed_cmE = PedersenGadget::<C2, GC2>::commit(
                 H2.clone(),
                 G.clone(),
@@ -1005,7 +993,6 @@ where
             cf_U_i.cmW.enforce_equal(&computed_cmW)?;
 			log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 9: check cf_W_i commits to cf_U_i. INCREASED r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 			c1 = cs.num_constraints();
-			check_cs_probe(&cs, "p1.s9 pedersen cf commits", self.job_id);
 
 
 			//10. check cyclefold witness satisfy its r1cs
@@ -1018,7 +1005,6 @@ where
 				cf_W_i.E, cf_U_i.u.clone(), cf_z_U)?;
 
 			log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 10: check cp_W_i satisfies cyclefold instance. INCREASED r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
-			check_cs_probe(&cs, "p1.s10 cyclefold r1cs", self.job_id);
         }
 
 		if B_DEBUG3{check_cs(&cs, "phase1 step 10");}
@@ -1789,11 +1775,7 @@ where
 		}else{C1::ScalarField::zero()};
 		let mainres_pub = FpVar::<C1::ScalarField>::new_input(cs.clone(),
 			|| Ok(mainres_hash_val) )?; //it is the ONLY PUBLIC VAR of circ!!! 
-		if b_debug { emit_stdout(format!(
-			"DEBUG USE 6901.1.0 public input: {}",
-			mainres_hash_val)); }
 		mainres_hash.enforce_equal(&mainres_pub)?;
-		check_cs_probe(&cs, "main.pubhash bind", self.job_id);
 		if B_DEBUG2{
 			if phase1_ret.ch.value().is_ok(){
 				let phase1_ret_val = phase1_ret.val();
@@ -1804,7 +1786,6 @@ where
 			cs.num_constraints()-c0), &mut gt2);
 
 		if B_DEBUG2{check_cs(&cs, "TwoPhaseCirc build circ1");}
-		check_cs_probe(&cs, "main.total", self.job_id);
 
 		log_perf(self.job_id, log_level-1, &format!("*** MainDeciderCirtuit TOTAL constraints: {} ***. ", cs.num_constraints()), &mut gt1);
 

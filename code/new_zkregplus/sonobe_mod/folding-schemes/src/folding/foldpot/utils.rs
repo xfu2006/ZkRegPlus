@@ -1,7 +1,7 @@
 /* Created 01/07/2025
 Utility classes/functions
 */
-use utils::{consts::{ADD_CHAIN_SIZE, read_global_config, current_bit_parts}, logger::{log, log_perf, emit_stdout, ERR, LOG2 as LOGL2}, timer::Timer as GTimer};
+use utils::{consts::{ADD_CHAIN_SIZE, read_global_config, current_bit_parts}, logger::{log_perf, emit_stdout, LOG2 as LOGL2}, timer::Timer as GTimer};
 use rayon::iter::{ParallelIterator,IntoParallelIterator,IntoParallelRefIterator};
 use std::time::{Instant};
 use ark_ff::{PrimeField,BigInteger};
@@ -64,29 +64,6 @@ pub fn check_cs<F:PrimeField>(cs: &ConstraintSystemRef<F>, info: &str){
 				assert!(csat.unwrap(), "ERROR: not satisfiable: {}", info);
 			}
 		}
-	}
-}
-
-/// Runtime-gated, NON-panicking satisfiability probe. When env
-/// ZKR_CS_CHECK is set and cs is in prove mode (matrices built, not
-/// setup), report whether the constraints built SO FAR are satisfied and,
-/// if not, the index of the FIRST bad constraint -- tagged with job_id and
-/// a block label so a concurrent N-way batch (bisect_job3.py) localizes the
-/// failing gadget WITHOUT aborting the run. Constraint traces stay disabled
-/// so which_is_unsatisfied returns the bare index. Zero cost when unset.
-pub fn check_cs_probe<F:PrimeField>(cs: &ConstraintSystemRef<F>,
-	info: &str, job_id: usize){
-	if std::env::var("ZKR_CS_CHECK").is_err() { return; }
-	if cs.is_in_setup_mode() || !cs.should_construct_matrices() { return; }
-	let n = cs.num_constraints();
-	match cs.which_is_unsatisfied() {
-		Ok(None) => log(job_id, ERR, &format!(
-			"CS OK    @{} ({} cons)", info, n)),
-		Ok(Some(idx)) => log(job_id, ERR, &format!(
-			"CS UNSAT @{} first-bad={} of {} cons",
-			info, idx, n)),
-		Err(e) => log(job_id, ERR, &format!(
-			"CS probe err @{}: {:?}", info, e)),
 	}
 }
 

@@ -144,13 +144,6 @@ impl HexACDFA{
 		);
 
 		//0. process patterns for ACDFA ignore case
-		if b_debug{
-			println!(concat!(
-				"DEBUG USE 6200: HexACDFA::new_adv b_igc: {}, ",
-				"patterns: {:#?}"), 
-				b_case_ignore, patterns
-			);
-		}
 		for pat in patterns{ 
 			if pat.len()%2==1{ println!("WARN: pattern len is odd: {}", pat); }
 		}
@@ -400,9 +393,6 @@ impl HexACDFA{
 	/// even id state number for handling chars.
 	pub fn new_adv_old(dfa_id: usize, patterns: &Vec<String>, b_case_ignore: bool)->HexACDFA{
 		let b_debug = B_DEBUG;
-		if b_debug{
-			println!("DEBUG USE 6200: HexACDFA::new_adv b_igc: {}, patterns: {:#?}", b_case_ignore, patterns);
-		}
 		//1. build the ACDFA DFA version
 		assert!(dfa_id<(1<<DEFAULT_ACDFA_DA_BITS), "DEFAULT_ACDFA_DA_BITS:{} too small! id: {} >= (1<<DEFAULT_ACDFA_DA_BIS)", DEFAULT_ACDFA_DA_BITS, dfa_id);
 		let vecu8 = patterns.iter().map(|s| {hex_to_u8(s)}).collect::<Vec<Vec<u8>>>();
@@ -471,9 +461,6 @@ impl HexACDFA{
 		let reachable = reachable.iter().map(|x|{
 			Self::state_id(dfa_id, map_states[x])
 		}).collect::<HashSet<usize>>();
-		if b_debug{
-			println!("DEBUG USE 6723.1: reachable: {}, num_states: {}", reachable.len(), num_states);
-		}
 
 
 		//2. build up the transitions

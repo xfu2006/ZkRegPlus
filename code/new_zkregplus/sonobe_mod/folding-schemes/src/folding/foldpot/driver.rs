@@ -767,24 +767,11 @@ where
 					Err(Error::Other(format!("Thread panicked in gen_nd_advice_at_layer for layer {}: {}", layer_id, msg)))
 				})))
 				.collect();
-		// DEBUG USE 73821: when file < 200 KB, report whether layer 0
 		// (smallest circ) was selectable. Byte estimate matches the
 		// PERF 1001 convention (word.len * 63/2).
 		let approx_bytes = word.len() * 63 / 2;
 		if approx_bytes < 200 * 1024 {
 			for (layer_id, res) in results.iter() {
-				if *layer_id == 0 && b_debug{
-					match res {
-						Ok(_) => emit_stdout(format!(
-							"DEBUG USE 73821.1: layer 0 OK for ~{} B \
-							 (job {}, word.len {})",
-							approx_bytes, job_id, word.len())),
-						Err(e) => emit_stdout(format!(
-							"DEBUG USE 73821.2: layer 0 REJECTED for \
-							 ~{} B (job {}, word.len {}): {:?}",
-							approx_bytes, job_id, word.len(), e)),
-					}
-				}
 			}
 		}
 		let best_result = results
@@ -878,7 +865,6 @@ where
 	// All three are near-copies of the originals with `self.*` →
 	// `p_layered.*`. Kept separate so non-parallel callers (e.g.
 	// driver.rs:1120 `gen_advice`) keep their existing behavior.
-	// DEBUG USE 73112.x heartbeat probes are added in each.
 	// ============================================================
 
 	fn gen_nd_advice_at_layer_pll(
@@ -1007,11 +993,6 @@ where
 				match r{
 					Ok(adv) => {chosen=Some((l, cap.clone(), adv)); break;},
 					Err(e) => {
-						if std::env::var("ZKR_PROBE_64212").is_ok() {
-							emit_stdout(format!(
-								"DEBUG USE 64212.1: seg {} rung {} \
-								 FAIL: {:?}", i, l, e));
-						}
 						last_err=Some(e);
 					},
 				}
@@ -1022,10 +1003,6 @@ where
 					Error::NotSupported(
 						"no rung fits segment".to_string()))),
 			};
-			if std::env::var("ZKR_PROBE_64212").is_ok() {
-				emit_stdout(format!(
-					"DEBUG USE 64212.2: seg {} CHOSE rung {}", i, l));
-			}
 			vec_pci.push(l);
 			vec_size.push(end-start);
 			vec_cap.push(cap);
@@ -1048,9 +1025,6 @@ where
 		use rayon::prelude::*;
 		let results: Vec<_> = (min_layer..=max_layer)
 			.into_par_iter().map(|layer_id| {
-				if crate::folding::foldpot::utils::B_DEBUG2 { emit_stdout(format!(
-					"DEBUG USE 73112.5: gen_adv BEFORE \
-					 job={} layer={}", job_id, layer_id)); }
 				let r = std::panic::catch_unwind(
 					std::panic::AssertUnwindSafe(|| {
 					Self::gen_nd_advice_at_layer_pll(
@@ -1068,10 +1042,6 @@ where
 						"Thread panicked in gen_nd_advice_at_layer_pll \
 						 for layer {}: {}", layer_id, msg)))
 				});
-				if crate::folding::foldpot::utils::B_DEBUG2 { emit_stdout(format!(
-					"DEBUG USE 73112.6: gen_adv AFTER  \
-					 job={} layer={} ok={}",
-					job_id, layer_id, r.is_ok())); }
 				(layer_id, r)
 			})
 			.collect();
@@ -1112,10 +1082,6 @@ where
 		let b_fast = true;
 		let mut gt1 = GTimer::new();
 		let mut gt2 = GTimer::new();
-		if crate::folding::foldpot::utils::B_DEBUG2 { emit_stdout(format!(
-			"DEBUG USE 73112.0: plan_pll ENTER job={} word.len={} \
-			 layers={}",
-			job_id, word.len(), p_layered.len())); }
 		log_perf(job_id, log_level, &format!(
 			"plan_nd_advice_pll step 0. layers: {}, word.len(): {}, \
 			 b_save_adivce: {}",
@@ -1127,21 +1093,12 @@ where
 			assert!(lock_unwrap!(p_layered[i][0]
 				.get_mapper()).max_word_len() == mwl);
 		}
-		if crate::folding::foldpot::utils::B_DEBUG2 { emit_stdout(format!(
-			"DEBUG USE 73112.3: plan_pll BEFORE par_search \
-			 job={} max_layer={}",
-			job_id, p_layered.len()-1)); }
 		let aggr = utils::consts::read_global_config()
 			.clamav_cfg.b_aggressive_sde_for_rep;
 		let (num_segs, vec_seg_size, vec_pci, vec_cap, vec_adv) = if aggr {
 			let r = Self::gen_nd_advice_per_seg_pll(
 				p_layered, job_id, log_level+2, b_save_advice,
 				word, word_info)?;
-			//DEBUG USE 64211.1: per-chunk rung choices.
-			if std::env::var("ZKR_PROBE_64211").is_ok() {
-				emit_stdout(format!(
-					"DEBUG USE 64211.1: vec_pci={:?}", r.2));
-			}
 			r
 		} else {
 			let (_best_layer, num_segs, vec_seg_size, vec_pci,
@@ -1152,10 +1109,6 @@ where
 					p_layered, job_id, log_level+2, b_save_advice,
 					word, word_info, min_layer, max_layer)
 			}?;
-			if crate::folding::foldpot::utils::B_DEBUG2 { emit_stdout(format!(
-				"DEBUG USE 73112.4: plan_pll AFTER  par_search \
-				 job={} best={}",
-				job_id, _best_layer)); }
 			let pci = vec_pci[0];
 			for x in &vec_pci{assert!(*x==pci);}
 			log_perf(job_id, log_level, &format!(
@@ -1181,9 +1134,6 @@ where
 				//increasing
 				for i in 0..self.layered_circs.len(){
 					let layer = &self.layered_circs[i];
-					emit_stdout(format!(
-						"DEBUG USE 311: layer i: {}, len: {}",
-						i, layer.len()));
 					for j in 1..layer.len(){
 						let circ1 = &layer[j-1];	
 						let circ2 = &layer[j];	
@@ -1429,7 +1379,6 @@ where
 		let zero = C1::ScalarField::zero();
 		let b_full_mode = self.b_full_mode;
 		let fq_bits = <<C1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as usize;
-		//println!("DEBUG USE 889.0.2");
 		let z0_part2 = ZiPartTwoInst::<C1::ScalarField>
 			::new(zero, zero, &self.poseidon_config, b_full_mode, fq_bits, total_words);
 		let z0_part2_hash = z0_part2.hash(&self.poseidon_config);
@@ -1559,8 +1508,6 @@ where
 		timer.prt("pass_two: step 0: init");
 
 		//2. create nova1
-		emit_stdout(format!(
-			"DEBUG USE 5017.1:  n_steps: {}", n_steps));
 		let pc_0 = zero;
 		let pc_0_val = field_to_usize(&pc_0);
 		let precomputed_cmF = None;
@@ -1615,7 +1562,6 @@ where
 				nova1.pc_i1 = stmt.pc_i1;
 				(hash_cmF,_) = nova1.compute_step_hc_cmF(hash_cmF, &stmt)
 				.expect("hash_cmf generation error");
-				//println!("DEBUG USE 402.1: hash_cmF: {}", hash_cmF);
 
 				//2.3 update 
 				subseg_id +=1;
@@ -1633,9 +1579,6 @@ where
 			wi += 1;
 		}
 
-		emit_stdout(format!(
-			"DEBUG USE 402.5 num_steps: {}, vea.len: {}",
-			num_steps, vea.len()));
 		assert!(num_steps==vea.len(), "ERROR: pass2 num_steps incorrect, num_steps: {}, vea.len: {}", num_steps, vea.len());
 
 	
@@ -1926,10 +1869,6 @@ where
 			.clamav_cfg.b_aggressive_sde_for_rep;
 		for (word, word_fname) in iter_words.zip(vec_word_fnames.iter()){
 			if _word_cap > 0 && word_id > _word_cap {
-				emit_stdout(format!(
-					"DEBUG USE 73112.cap: Pass1 job={} stop at \
-					 word_id={} (word_cap_per_job={})",
-					job_id, word_id, _word_cap));
 				break;
 			}
 			let mut prev_stmt = None;
@@ -1950,10 +1889,6 @@ where
 				Self::plan_nd_advice_new_pll(
 					p_layered, job_id, log_level+2, false,
 					&word, word_info, word_fname).map_err(|e| {
-					log(job_id, ERR, &format!("DEBUG USE 64903.1: \
-						Pass 1 advice-gen failed (likely CapErr) \
-						word_id {} of {}, fname: {}",
-						word_id, num_words, word_fname));
 					e
 				})?;
 			log_perf(job_id, log_level+2, &format!("PERF 1008: {} - Pass 1: START decide circ alloc for word_id: {}, fname: {}, word_len: {}. ", phase_name, word_id, word_fname, format_bytes(total_word_len*31)), &mut gt2);
@@ -2053,17 +1988,11 @@ where
 		let m4 = get_mem_usage_mb();
 		let b_check_lkup = p_layered[0][0].is_check_lkup(); //assume
 			//all circ have the same
-		// DEBUG USE 73112.lkup_cap: when word_cap_per_job is active we
 		// intentionally truncate Pass 1 so total_lkup_covered cannot
 		// reach the full lkup_len. Skip the coverage assert in that case.
 		if b_check_lkup && _word_cap == 0 {
 			assert!(total_lkup_covered >= lkup_len, "total: {}, lkup_len: {}", total_lkup_covered, lkup_len);
 		} else if b_check_lkup && _word_cap > 0 {
-			emit_stdout(format!(
-				"DEBUG USE 73112.lkup_cap: job={} skipped \
-				 b_check_lkup assert (covered={} lkup_len={} \
-				 cap={})", job_id, total_lkup_covered,
-				lkup_len, _word_cap));
 		}
 		log_perf(job_id, log_level, &format!(
 			"PERF 1007: {} step 2: dispatch w into steps. mem: {} MB for total_word_len: {}: ", phase_name, if m4>m3 {m4-m3} else {0}, format_bytes(total_wd_len*31)) , &mut gt1);
@@ -2092,10 +2021,6 @@ where
 
 		for word in &words{
 			if _word_cap > 0 && word_id > _word_cap {
-				emit_stdout(format!(
-					"DEBUG USE 73112.cap: Pass2 job={} stop at \
-					 word_id={} (word_cap_per_job={})",
-					job_id, word_id, _word_cap));
 				break;
 			}
 			let mut prev_adv = None;
@@ -2265,10 +2190,6 @@ where
 							//share in each statement
 		for word in iter_words3{
 			if _word_cap > 0 && word_id > _word_cap {
-				emit_stdout(format!(
-					"DEBUG USE 73112.cap: Pass3 job={} stop at \
-					 word_id={} (word_cap_per_job={})",
-					job_id, word_id, _word_cap));
 				break;
 			}
 			let mut gtw_word = GTimer::new();
@@ -2327,15 +2248,6 @@ where
 				let other_inst = None;
 				nova.pc_i = vea[idx].pc_i;
 				nova.pc_i1 = vea[idx].pc_i1;
-				// ===== DEBUG USE 62727.0 BEGIN (REMOVE LATER): name the file/seg
-				// for the step about to fold so a 62727.1 panic is immediately
-				// preceded by its file. Gated by ZKR_STEP_CHECK. =====
-				if std::env::var("ZKR_STEP_CHECK").is_ok() {
-					emit_stdout(format!(
-						"DEBUG USE 62727.0: FOLD-STEP word_id={} seg_id={} fname={}",
-						word_id, subseg_id, word_fname));
-				}
-				// ===== DEBUG USE 62727.0 END =====
             	nova.prove_step(&mut rng, v_stmt, other_inst)
 					.expect("prove step error");
 				log_perf(job_id, log_level+1, &format!("PERF 1009: -- Pass 3. prove_step cost for word_id: {}, seg_id: {}, stmt_len: {}", word_id, subseg_id, stmt_len), &mut gt_fold);
@@ -2704,10 +2616,6 @@ where
 			let n_jobs = jobs.len();
 			if secs > 0 && n_jobs > 0 {
 				let pid = std::process::id();
-				emit_stdout(format!(
-					"DEBUG USE 73112.wd: watchdog ON pid={} \
-					 n_jobs={} threshold_s={}",
-					pid, n_jobs, secs));
 				// Resolve project root ONCE on this thread, before the
 				// initial sleep; proj_root() canonicalizes the CWD-based
 				// path, so we capture it while the process CWD is the
@@ -2797,10 +2705,6 @@ where
 								}
 							}
 							let _ = fs::write(&dump, &s);
-							emit_stdout(format!(
-								"DEBUG USE 73112.wd: STALL DETECTED \
-								 stalled={}/{} dump={}",
-								stalled.len(), n_jobs, dump));
 							// Best-effort flush of the stdout drainer.
 							std::thread::sleep(Duration::from_secs(2));
 							std::process::exit(1);
@@ -3004,11 +2908,8 @@ where
 	let mut driver2 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,SigmaIR1CS_Inst<C1::ScalarField, C1, CS1, LK, FoldPairMapper<CF1<C1>,LK>,H>,S,LK,FoldPairMapper<CF1<C1>,LK>,H>
 		::new(poseidon_config_global.clone(), lkup_p2, vec_circ_cp, rand::rngs::OsRng, b_full2, global_max_total_n, global_max_words);
 
-	//DEBUG USE 61730.1: exact per-rung r1cs size (rows=constraints,
 	//cols=variables, io_l=public io len). Removable measurement print.
 	for (i,vp) in driver1.nova_param.1.vec_vp.iter().enumerate(){
-		if utils::consts::B_DEBUG { println!("DEBUG USE 61730.1: rung {} r1cs rows={} cols={} io_l={}",
-			i, vp.r1cs.A.n_rows, vp.r1cs.A.n_cols, vp.r1cs.l); }
 	}
 
 	//3.5 Sidecar: save/load Pedersen params + R1CS hashes to keep
@@ -3173,9 +3074,6 @@ where
 	  	// gt_mem times MEM checkpoints around the main S::prove so they
 	  	// do not reset gt1 (else PERF 1006 Step 3 misses the proof).
 	  	let mut gt_mem = GTimer::new();
-	  	if utils::consts::B_DEBUG { log_perf(job_id, LOG2, &format!(
-	  		"DEBUG USE 60002.0: MEM at job entry: {} GB",
-	  		get_mem_usage()), &mut gt1); }
 	  	let vec_words = &job.vec_words;
 	  	let vec_words_info = &job.vec_word_info;
 	  	let idx_individual_prf = job.idx_individual_prf;
@@ -3250,19 +3148,12 @@ where
 				&per_job_layered,
 				&per_job_circuits,
 	  		)?;
-	  		log_perf(job_id, LOG2, &format!(
-	  			"DEBUG USE 60002.05: MEM after Phase 1 pass_all \
-	  			(before drop per_job_*): {} GB",
-	  			get_mem_usage()), &mut gt1);
 	  		// 2026-05-21 (Lever 1): per_job_layered/per_job_circuits are
 	  		// not used after pass_all returns. Drop them now to free
 	  		// per-job gadget clones BEFORE the Phase 1 snark critical
 	  		// section, where all 8 jobs would otherwise hold them.
 	  		drop(per_job_layered);
 	  		drop(per_job_circuits);
-	  		log_perf(job_id, LOG2, &format!(
-	  			"DEBUG USE 60001.1: MEM after drop per_job_*: {} GB",
-	  			get_mem_usage()), &mut gt1);
 	  		let Some((batch_prf, ind_prf)) = batch_ind_prfs.map(|x| (x.0, x.1))
 	  			else {return Err(Error::Other("batch proof is none!".to_string()));};
 			let mb_speed = get_speed(max_total_n, &mut gt_prove_steps);
@@ -3357,10 +3248,6 @@ where
 				*count -= 1;
 				SemaphoreGuard { lock: semaphore.clone() }
 			};
-	  		log_perf(job_id, LOG2, &format!(
-	  			"DEBUG USE 60002.06: MEM after acquire guard_outer \
-	  			+ _guard (crit section entry): {} GB",
-	  			get_mem_usage()), &mut gt1);
 
 	  		//6. now bulid the main circuit, which execues
 	  		//the main logic: verifies the ZkregPlus relation
@@ -3381,10 +3268,6 @@ where
 	  			let mainres = main_circ.res.clone();
 	  			let mainres_hash = main_circ.res_hash.clone();
 	  			log_perf(job_id, log_level, &format!("FoldPot Step 4: build MAIN decider circuit. MEM: {} GB", get_mem_usage()), &mut gt1);
-	  			log_perf(job_id, LOG2, &format!(
-	  				"DEBUG USE 60002.07: MEM after MAIN circuit built \
-	  				(nova1 consumed): {} GB",
-	  				get_mem_usage()), &mut gt1);
 	  	
 				// 2026-05-21 (Lever 3): read main_pk under RwLock so the
 				// last finisher can drop it after Phase 1 snark ends.
@@ -3410,10 +3293,6 @@ where
 						(&pk_main_owned, &vk_main_owned)
 					};
 	  			log_perf(job_id, log_level, &format!("PERF 1006: Job Step 2: setup Groth16. MEM: {} GB.",  get_mem_usage()), &mut gt1);
-	  			log_perf(job_id, LOG2, &format!(
-	  				"DEBUG USE 60002.08: MEM after main_pk read \
-	  				(before Phase 1 S::prove): {} GB",
-	  				get_mem_usage()), &mut gt_mem);
 
 	  			let snark_proof_main: S::Proof = S::prove(&g16_pk,
 	  				main_circ, &mut rng)
@@ -3428,17 +3307,10 @@ where
 	  			if prev_p1 + 1 == n_jobs_total {
 	  				let _ = cached_main_keys.write().unwrap().take();
 	  				let _ = qa_pp_d1.write().unwrap().take();
-	  				log_perf(job_id, LOG2, &format!(
-	  					"DEBUG USE 60001.4: MEM after drop main_pk + \
-	  					qa_pp_d1: {} GB", get_mem_usage()), &mut gt_mem);
 	  			}
 
 	  			(snark_proof_main, mainres, mainres_hash, g16_vk_owned)
 	  		};
-	  		log_perf(job_id, LOG2, &format!(
-	  			"DEBUG USE 60002.1: MEM after Phase 1 snark block \
-	  			(main_circ dropped, before batch_ver_param): {} GB",
-	  			get_mem_usage()), &mut gt_mem);
 
 	  		//7. prepare the other data.
 	  		let mut batch_ver_param = driver1.batch_vk.clone().unwrap().clone();
@@ -3456,10 +3328,6 @@ where
 	  			driver1_poseidon_config, ind_prf
 	  		)
 	};
-	log_perf(job_id, LOG2, &format!(
-		"DEBUG USE 60002.15: MEM after outer let-binding \
-		(batch_ver_param built, before Phase 2 IVC): {} GB",
-		get_mem_usage()), &mut gt1);
 
 
 	//6. another three rounds for Phase2 CyclePair Circ its proof
@@ -3499,10 +3367,6 @@ where
 	drop(nova2_W_i1);
 	drop(qa_pp_d2_guard);
 	log_perf(job_id, log_level, &format!("PERF 1006: Job Step 4: cyclefold and cyclepair IVC PROVE STEPS (folding) DONE. num_steps: {}", _num_steps), &mut gt1);
-	log_perf(job_id, LOG2, &format!(
-		"DEBUG USE 60002.2: MEM after Phase 2 IVC \
-		(nova2 in scope, W_i1 dropped): {} GB",
-		get_mem_usage()), &mut gt1);
 
 
 	//8. now build up the CyclePair circuit which processes
@@ -3526,24 +3390,6 @@ where
 
 			qa_nizk_vkey_hash: qa_nizk_vkey_hash1,
 	};
-	{   // DEBUG USE 60100.3: assemble-side public input (counterpart to the
-		// verify-side dump 60100.2.x in batch_proc.rs::verify_batch). Diff
-		// cp_pubin_assemble[k] vs cp_pubin_verify[k] (matched on mh) to
-		// localize a broken field; identical => circuit-internal divergence.
-		let mh = format!("{}", mainres_hash);
-		log(job_id, LOG2, &format!("DEBUG USE 60100.3.0 job={} mh={}", job_id, mh));
-		if let Ok(v) = inp.to_vec() {
-			for (k, e) in v.iter().enumerate() {
-				log(job_id, LOG2, &format!(
-					"DEBUG USE 60100.3.1 job={} mh={} cp_pubin_assemble[{}]={}",
-					job_id, mh, k, e));
-			}
-		}
-		log(job_id, LOG2, &format!(
-			"DEBUG USE 60100.3.2 job={} mh={} com_all_w={:?} \
-			nova2_com_all_w={:?} eval1={} eval2={}",
-			job_id, mh, com_all_w, nova2_com_all_w, prf_kzg.eval, nova2_prf_kzg.eval));
-	}
 	let (snark_proof_cp, g16_vk_cp) = {
 		// ------------- The following is the CRITICAL SECTION -------
 		let _guard_cp = {
@@ -3555,10 +3401,6 @@ where
 			*count -= 1;
 			SemaphoreGuard { lock: semaphore_cp.clone() }
 		};
-		log_perf(job_id, LOG2, &format!(
-			"DEBUG USE 60002.25: MEM after acquire _guard_cp \
-			(before cp_circuit build): {} GB",
-			get_mem_usage()), &mut gt1);
 
 		let cp_circuit = CyclePairCircuit
 			::from_nova(nova2,
@@ -3567,10 +3409,6 @@ where
 				com_all_w, r_all_w, nova2_com_all_w, nova2_r_all_w, mainres,
 				inp).unwrap();
 		log_perf(job_id, log_level, &format!("PERF 1006: Job Step 5: build CyclePair circuit. MEM: {} GB", get_mem_usage()), &mut gt1);
-		log_perf(job_id, LOG2, &format!(
-			"DEBUG USE 60002.27: MEM after cp_circuit built \
-			(nova2 consumed): {} GB",
-			get_mem_usage()), &mut gt1);
 
 
 
@@ -3578,9 +3416,6 @@ where
 		// job reaches Phase 2 snark. Double-checked under the write
 		// lock so only one job pays the disk + deserialize cost; all
 		// others see Some after the first finisher's write.
-		log_perf(job_id, LOG2, &format!(
-			"DEBUG USE 60001.2: MEM before cp_key load: {} GB",
-			get_mem_usage()), &mut gt1);
 		{
 			let already = cached_cp_keys.read().unwrap().is_some();
 			if !already && read_global_config().b_read_snark_cache {
@@ -3594,9 +3429,6 @@ where
 				}
 			}
 		}
-		log_perf(job_id, LOG2, &format!(
-			"DEBUG USE 60001.3: MEM after cp_key load: {} GB",
-			get_mem_usage()), &mut gt1);
 
 		//9. set up the keys (maybe later can be cached)
 		let cp_read_guard = cached_cp_keys.read().unwrap();
@@ -3632,18 +3464,11 @@ where
 		if prev_p2 + 1 == n_jobs_total {
 			let _ = cached_cp_keys.write().unwrap().take();
 			let _ = qa_pp_d2.write().unwrap().take();
-			log_perf(job_id, LOG2, &format!(
-				"DEBUG USE 60001.5: MEM after drop cp_pk + qa_pp_d2: \
-				{} GB", get_mem_usage()), &mut gt1);
 		}
 
 		(snark_proof_cp, g16_vk_cp_owned)
 	};
 	drop(guard_outer);
-	log_perf(job_id, LOG2, &format!(
-		"DEBUG USE 60002.3: MEM after drop guard_outer \
-		(end of crit section, cp_circuit dropped): {} GB",
-		get_mem_usage()), &mut gt1);
 
 	batch_prf.add_part2(
 		com_all_w.clone(),
@@ -3664,9 +3489,6 @@ where
 		mainres_hash,
 	);
 	log_perf(job_id, log_level, &format!("FoldPot Step 11: Assmeble Batch Proof for CpCircuit. MEM: {} GB.",  get_mem_usage()), &mut gt1);
-	log_perf(job_id, LOG2, &format!(
-		"DEBUG USE 60002.35: MEM after batch_prf.add_part2: {} GB",
-		get_mem_usage()), &mut gt1);
 
 	//11. verify the batch proof
 	let qa_nizk_vkey2 = driver2.nova_param.1.qa_vp.as_ref().expect("qa_vp null!").clone(); 
@@ -3696,9 +3518,6 @@ where
 	}
 	log_perf(job_id, log_level, &format!("FoldPot Step 12: Verify Batch Proof."),
 		&mut gt1);
-	log_perf(job_id, LOG2, &format!(
-		"DEBUG USE 60002.37: MEM after verify_batch: {} GB",
-		get_mem_usage()), &mut gt1);
 
 	//12. verify the individual proof
 	// Same policy as the batch proof: log an ERROR on failure, never abort
@@ -3723,14 +3542,7 @@ where
 	// reaches here).
 	batch_prf.print_size();
 	ind_prf.print_size();
-	log_perf(job_id, LOG2, &format!(
-		"DEBUG USE 60002.39: MEM after verify_individual: {} GB",
-		get_mem_usage()), &mut gt1);
 	log_perf(job_id, log_level, &format!("**** Job {} Complete ***** MEM: {} GB.", job_id, get_mem_usage()), &mut gt1_0);
-	log_perf(job_id, LOG2, &format!(
-		"DEBUG USE 60002.4: MEM at closure exit \
-		(before all per-job locals drop): {} GB",
-		get_mem_usage()), &mut gt1);
 
 	Ok(())
 	})();
@@ -4033,7 +3845,6 @@ pub mod tests_driver{
 			let n = if self.b_odd {1} else{
 				if word.len()==2 {2} else {word.len()}
 			};
-			//println!("DEBUG USE 501: word: {:?}, odd: {}, n: {}", word, self.b_odd, n);
 
 			//3. check if the word is in table
 			let mut subtbl_id = vec![];
@@ -4043,19 +3854,16 @@ pub mod tests_driver{
 				let sid = if res.is_ok() {two} else {zero};
 				subtbl_id.push(sid);
 			}
-			//println!("DEBUG USE 502: subtbl_id: {:?}", subtbl_id);
 
 			//4. retrieve the previous sum
 			let prev_sum = prev_wit.as_ref().map_or(zero, |stmt|{
 				let prev_sum =stmt.oup_buf[0];
 				prev_sum
 			});
-			//println!("DEBUG USE 503: word: {:?}, prev_sum: {}", word, prev_sum);
 
 			//5. compute the new sum
 			let mut new_sum = prev_sum.clone();
 			for i in 0..n{ new_sum+=if subtbl_id[i]==two {word[i]}else{zero}; }
-			//println!("DEBUG USE 503: new_sum: {}", new_sum);
 
 			//6. construct the StatmentInstance
 			let mut vec_word = vec![zero; 2];

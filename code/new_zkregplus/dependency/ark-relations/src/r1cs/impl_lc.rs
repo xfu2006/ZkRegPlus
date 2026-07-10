@@ -66,8 +66,6 @@ impl<F: Field> LinearCombination<F> {
 			self.0.dedup_by_key(|e| e.1);
 			let new_len = self.0.len();
 			if old_len>1000*20{
-			println!("DEBUG USE 9901: old_len: {}, new_len: {}, time: {:#?}",
-				old_len, new_len, timer.elapsed());
 			}
 		}
     }

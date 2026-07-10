@@ -496,7 +496,6 @@ ConstraintSynthesizer<CF2<C1>> for CyclePairCircuit<E,P, C1, C2G2>
 
 		if B_DEBUG {
 			assert!(computed_x.value()?==x.value()?);
-			//println!("DEBUG USE 9301.3 verify computed_x = x");
 		}
 		computed_x.enforce_equal(&x)?;
 
@@ -577,7 +576,6 @@ where
     }
     if B_DEBUG { assert_eq!(cf_x_i.len(), cp_io_len()); }
 
-	//println!("DEBUG USE 911.2 BEFORE checking");
     //2. compute the committed instance 
     let cf_w_i = Witness::<C2>::new::<H>(cf_w_i.clone(), 
 		cf_r1cs.A.n_rows, rng);

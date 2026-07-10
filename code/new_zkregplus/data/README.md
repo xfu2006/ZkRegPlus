@@ -1,5 +1,6 @@
 *******
-run DOWNLOAD.py first to download and extract data (samples.7z and src_sig.7z)
+run INSTALL.py in project root folder.
+Do not run any python files here directly
 *******
 
 src_sig: source signatures (it CONTAINS the information of about 1 dozen

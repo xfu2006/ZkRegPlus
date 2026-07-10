@@ -30020,7 +30020,9 @@ Goal 1. continue to debug
 	[c] execute plan
 	[d] server deployment.
 	-> memorize the current state: dfa_discharge_combo_fix
-Goal 2. Writing 
+	-> looks like FIXED, but wait for server confirmation???
+		==> still not fix. why? 
+Goal 2. Writing  => DONE
 	[a] paragrpah 3
 	[b] last lemma
 	[c] fix notations.
@@ -30031,6 +30033,16 @@ Goal 3. planning of simplificationn
 		critical functions and the python file needed probes
 	[c] define a set of regression test
 	[d] every 5 rules run regression test, and the commit log.
+Goal 4. check simplification and run 
+	[a] started 10:00pm => stopped 11:00pm because we need
+		to retain all SITES that are needed by paper data.
+	[b] 
+Goal 5. Writing. Related Work
+	[a] read the current
+	[b] compare related
+	[c] add unused 
+	[d] add new related.
+	[e] paragraph 1
 
 
 ----- ACTIVE GOALS -----

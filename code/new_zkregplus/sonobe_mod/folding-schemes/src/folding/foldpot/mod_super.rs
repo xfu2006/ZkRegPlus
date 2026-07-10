@@ -58,7 +58,6 @@ use crate::{
 		sigma_cyclepair::{compute_hc},
 		decider_eth_circuit_super::{KZGChallengesGadgetSuper},
 		utils::{B_DEBUG, B_DEBUG2, B_DEBUG3},
-		// DEBUG USE 62730 (REMOVE LATER): per-gadget SAT arming
 		utils::{set_gadget_sat, gadget_sat_check}
 	}
 };
@@ -1309,7 +1308,6 @@ where
 		};
 
 
-		//println!("DEBUG USE 1709.1: cp_r1cs: {}", (&cp_r1cs).is_some());
 		let prover_params = ProverParamsFoldPotSuper{vec_pp, qa_pp, cs1e_pp: Arc::new(cs1e_pp)};
 		let verifier_params = VerifierParamsFoldPotSuper{
 			vec_vp, cp_r1cs: cp_r1cs.map(Arc::new), qa_vp, cs1e_vp};
@@ -1754,7 +1752,6 @@ where
 
 		//println!(">*>*>* prove_step step 1, augment circ: j: {}, pc_i: {}", &augmented_F_circuit.j, &self.pc_i);
         let cs = ConstraintSystem::<C1::ScalarField>::new_ref();
-		// ===== DEBUG USE 62730 (REMOVE LATER): arm per-gadget SAT checks for
 		// the target fold step. Env ZKR_GADGET_CHECK=1 turns it on; the flag is
 		// armed only when field_to_usize(self.i) >= ZKR_GADGET_FROM (default
 		// usize::MAX = never, so job3_step_probe.sh sets it to the culprit
@@ -1779,7 +1776,6 @@ where
 		let c1 = cs.num_constraints();
         augmented_F_circuit.generate_constraints(cs.clone())?;
 
-		// DEBUG USE 62730 (REMOVE LATER): whole-augmented-cs backstop -- fires
 		// if the violated constraint is OUTSIDE every labeled sub-gadget check.
 		if b_gadget_arm {
 			gadget_sat_check(&cs, "mod_super::augmented_F_circuit");
@@ -1842,34 +1838,6 @@ where
                 .check_relaxed_instance_relation(&self.W_i.vec_wit[j_pci1].clone().into(), &self.U_i.vec_inst[j_pci1].clone().into())?;
         }
 
-		// ===== DEBUG USE 62727 BEGIN -- per-step step-circuit satisfiability probe (REMOVE LATER) =====
-		// Arm with env ZKR_STEP_CHECK=1. Per step runs ONLY the cheap tight
-		// check (62727.1): the fresh honest witness vs its strict step-R1CS.
-		// On failure it also names the first-bad constraint ROW (-> gadget
-		// region) then panics (early abort at the culprit step). The relaxed
-		// running-instance check (62727.2) is redundant for this diagnosis (the
-		// fold maintains it by construction; the decider is the real fold-
-		// integrity check) so it is OFF unless ZKR_STEP_CHECK_RELAXED is set.
-		if std::env::var("ZKR_STEP_CHECK").is_ok() {
-			let step_i = field_to_usize(&self.i);
-			if let Err(e) = self.r1cs[j_pci1].check_instance_relation(
-				&self.w_i.clone().into(), &self.u_i.clone().into()) {
-				let row = self.r1cs[j_pci1].first_bad_instance_row(
-					&self.w_i.clone().into(), &self.u_i.clone().into())
-					.map(|r| r as i64).unwrap_or(-1);
-				emit_stdout(format!("DEBUG USE 62727.1: FRESH-UNSAT step={} circ={} first_bad_row={} n_cons={} :: {:?}", step_i, j_pci1, row, self.r1cs[j_pci1].A.n_rows, e));
-				panic!("DEBUG USE 62727.1: step-circuit UNSAT at step={} circ={} first_bad_row={}", step_i, j_pci1, row);
-			}
-			if std::env::var("ZKR_STEP_CHECK_RELAXED").is_ok() {
-				if let Err(e) = self.r1cs[j_pci1].check_relaxed_instance_relation(
-					&self.W_i.vec_wit[j_pci1].clone().into(), &self.U_i.vec_inst[j_pci1].clone().into()) {
-					emit_stdout(format!("DEBUG USE 62727.2: RELAXED-UNSAT step={} circ={} :: {:?}", step_i, j_pci1, e));
-					panic!("DEBUG USE 62727.2: running relaxed instance UNSAT at step={} circ={}", step_i, j_pci1);
-				}
-			}
-			emit_stdout(format!("DEBUG USE 62727.3: step={} circ={} OK", step_i, j_pci1));
-		}
-		// ===== DEBUG USE 62727 END =====
 		log_perf(self.job_id, log_level, &format!("prove_step: Step 5. commit to instance: wit len: {}", self.w_i.W.len()), &mut gt2);
 		log_perf(self.job_id, log_level-1, &format!("-- prove_step cost: i: {}, circ_id: {}, stmt_len: {}, wtns size: {}", self.i, j_pci1, wtns.statement.len(), wtns_config.get_total_size()), &mut gt1);
 
@@ -1976,7 +1944,6 @@ where
 
         //6. SuperNOVA: each  check RelaxedR1CS satisfiability
 		for i in 0..n_circ{
-			//println!("DEBUG USE 505: check instance: {}", i);
         	vp.vec_vp[i].r1cs.check_relaxed_instance_relation(
 				&W_i.vec_wit[i].clone().into(), 
 				&U_i.vec_inst[i].clone().into())?;
@@ -2001,7 +1968,6 @@ where
 				.check_relaxed_instance_relation(&cp_W_i, &cp_U_i)?;
 		}
 
-		//println!("DEBUG USE 7021 - verify step 10. DONE!!!");
 
         Ok(())
     }
@@ -2190,7 +2156,6 @@ pub mod tests_mod_super {
 		// NOTE: for step 0, the z_0[0] will be the FINAL hc_cmF,
 		// for other steps, it will be hte hashchain of cmF from
 		// the previous step
-		println!("DEBUG USE 1000 ########################### START PASS 2\n\n\n");
         let z_0 = vec![hash_cmF, z0_part2_hash]; //[stage hc_cmF, z_0]
 		let precomputed_cmF = None;
         let mut nova =

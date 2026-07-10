@@ -437,7 +437,6 @@ where
     // fold cyclefold instances
     let cf_w_i = Witness::<C2>::new::<H>(cf_w_i.clone(), cf_r1cs.A.n_rows, &mut rng);
     let cf_u_i: CommittedInstance<C2> = cf_w_i.commit::<CS2, H>(&cf_cs_params, cf_x_i.clone())?;
-	//println!("** DEBUG USE 503.5 mod -- cf_u_i committed instance. cmE: {}, cmW{}, u: {}, x[0]: {}, x[1]: {}", cf_u_i.cmE, cf_u_i.cmW, cf_u_i.u, cf_u_i.x[0], cf_u_i.x[1]);
 
     // compute T* and cmT* for CycleFoldCircuit
     let (cf_T, cf_cmT) = NIFS::<C2, CS2, H>::compute_cyclefold_cmT(

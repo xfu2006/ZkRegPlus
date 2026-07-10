@@ -57,7 +57,6 @@ pub fn build_dfa(s_reg: &str, b_neg: bool) -> DFA<char>{
 	dfa
 	//let _prev_size = dfa.transitions.len();
 	//let dfa2 = dfa.minimize();
-	//println!("DEBUG USE 333: BEFORE minimize: {}, after: {}", _prev_size, dfa2.transitions.len());
 	//dfa2
 }
 
@@ -156,8 +155,6 @@ pub fn build_nfa(s_reg: &str, b_neg: bool) -> NFA<char>{
 		build_nfa_slow(s_reg)
 	};
 	if b_test{
-		emit_stdout(format!(
-			" DEBUG USE 102: test_build_nfa ... s: {}", s_reg));
 		let nfa2 = build_nfa_slow(s_reg);
 		assert!(nfa==nfa2, "incorrect build_nfa");
 	}

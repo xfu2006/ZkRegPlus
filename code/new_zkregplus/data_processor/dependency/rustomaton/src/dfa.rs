@@ -162,7 +162,6 @@ impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> DFA<V> {
 					finals.insert(*nxt_state);
 				}
 			}
-			//println!(" -- DEBUG USE 201: add transition: {}, {:?}", src_state, new_map.clone());
 			new_trans.insert(src_state, new_map);
 		}
 
@@ -269,11 +268,8 @@ impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> DFA<V> {
 		p.insert(MyHashSet(q_minus_f.clone()));
 		w.insert(MyHashSet(f.clone()));
 		w.insert(MyHashSet(q_minus_f.clone()));
-		//println!("DEBUG USE 333: f: {:?}, q_minus_f: {:?}", &f, &q_minus_f);
 
 		let rev_trans = &self.build_reverse_trans();
-		//println!("DEBUG USE 091: trans: {:?}", self.transitions);
-		//println!("DEBUG USE 092: rev_trans: {:?}", rev_trans);
 		while !w.is_empty(){
 			let a = w.iter().next().unwrap();	
 			let mut p_to_add = HashSet::<MyHashSet>::new();
@@ -281,19 +277,15 @@ impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> DFA<V> {
 			let mut w_to_add = HashSet::<MyHashSet>::new();
 			let mut w_to_remove = HashSet::<MyHashSet>::new();
 			w_to_remove.insert(a.clone());
-			//println!("DEBUG USE 101: a: {:?}", &a);
 			for c in &self.alphabet{
 	  			let x = Self::get_reach(&a.0, &rev_trans, *c);
 				//println!(" -- c: {}, x: {:?}", c, x);
 	  			for y in &p{
-					//println!("DEBUG USE 102: y: {:?}", &y);
 	  				let x_and_y = MyHashSet(y.0.intersection(&x).cloned().collect::<HashSet<usize>>());
 	  				let y_minus_x = MyHashSet(y.0.difference(&x).cloned().collect::<HashSet<usize>>());
 	  				if x_and_y.0.is_empty() || y_minus_x.0.is_empty(){
-						//println!("-- DEBUG USE 102.1: empty continue");
 	  					continue;
 	  				}
-					//println!("DEBUG USE 103: x_and_y: {:?}, y_diff_x: {:?}", &x_and_y, &y_minus_x);
 	  				p_to_add.insert(x_and_y.clone());
 	  				p_to_add.insert(y_minus_x.clone());
 	  				p_to_remove.insert(y.clone());
@@ -326,22 +318,15 @@ impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> DFA<V> {
 		let mut new_trans = vec![HashMap::<V,usize>::new(); p.len()];
 		let mut new_finals = HashSet::<usize>::new();
 		let mut new_init = 0;
-		//println!("DEBUG USE 887: init: {}, final: :{:?}", self.initial, self.finals);
-		//println!("DEBUG USE 888: partition set: {:?}", p);
-		//println!("DEBUG USE 889: transitions: {:?}", self.transitions);
-		//println!("DEBUG USE 889.5: part2_state: {:?}", part_2_state);
 		for subset in p{
 			if subset.0.len()==0 {continue;}
 
 			let st0 = subset.0.iter().next().unwrap();
 			let sid = part_2_state.get(&st0).unwrap();
-			//println!("DEBUG USE 701: subset: {:?}", &subset);
 			if self.finals.contains(st0){
-				//println!("DEBUG USE 777: add new final: {}", sid);
 				new_finals.insert(*sid);
 			}
 			if subset.0.contains(&self.initial){
-				//println!("DEBUG USE 778: set new init: {}", sid);
 				new_init = *sid;
 			}
 			let transmap = &self.transitions[*st0];
@@ -356,8 +341,6 @@ impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> DFA<V> {
 			new_trans[*sid] =  newmap;
 		}
 
-		//println!("DEBUG USE 999: new_trans: {:?}", new_trans);
-		//println!("DEBUG USE 999.1: new_init: {}, new_finals: {:?}", new_init, new_finals);
 		DFA{
 			alphabet: self.alphabet.clone(),
 			initial: new_init,
@@ -436,11 +419,6 @@ impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> Automata<V> for DFA<V>
         for l in v {
             if let Some(t) = self.transitions[actual].get(l) {
                 actual = *t;
-				if b_debug{
-					if id>=748447-100 && id<=748447+10{
-						println!("DEBUG USE 6735.8: DFA {}:, id: {}, letter: {}, state: {}", self.raw_str, id, l, actual);
-					}
-				}
             } else {
                 return false;
             }

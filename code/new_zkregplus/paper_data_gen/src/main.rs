@@ -21,18 +21,6 @@ fn gen_clamav_data<F:PrimeField>(){
 	let b_cache = false;
 	let b_quick = true;
 
-	/* DEBUG USE smaller data set of 20 sigs but with 3 tough sigs
-	report_all_discharge_approach_stats::<F>(
-		"data/paper_data/config/main_20.dat", //src sig
-		"data/paper_data/config/main_dfa_20.dat", //need_dfa_set
-		"data/paper_data/config/needs_ised_20.dat", //need_dfa_set
-		"data/paper_data/config/needs_ised_igc_20.dat", //need_dfa_set
-		"data/paper_data/config/binexec_20.dat", //list of files to discharge
-		"data/paper_data/reports/discharge_main20_binexec.dat", //report
-		b_cache, //read cache
-		"main_20", //cache name
-		b_quick);
-	*/
 
 	report_all_discharge_approach_stats::<F>(
 		"data/paper_data/debug_config/main.dat", //src sig

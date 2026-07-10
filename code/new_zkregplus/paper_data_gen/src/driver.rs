@@ -562,7 +562,6 @@ pub fn print_discharge_stats(job_id: usize, vdata: &Vec<FailDischargeRecord>,
 		.collect::<Vec<f64>>();
 	let r_max: f64 = pm_proj_ratios.clone().into_iter().max_by(|a,b| a.total_cmp(b)).unwrap();
 	let r_sum: f64 = pm_proj_ratios.iter().sum::<f64>();
-	println!("DEBUG USE 201: r_sum: {}, len: {}", r_sum, pm_proj_ratios.len());
 	let r_avg = r_sum/(pm_proj_ratios.len() as f64);
 	flog(LOG1, &format!("pm_reg (sde) total projected table size/layer1 table: (avg: max): ({},{}). This indicates the cost of layer2 projectio", r_avg, r_max), &mut vlog);
 	let pm_witness_ratio = vdata.iter().map(|v|
@@ -598,7 +597,6 @@ fn load_discharge_data(job_id: usize, sig_file: &str, sigtype: ClamSigType,
 		let subset_lines = &read_lines(sig_file)[1..].to_vec();
 		let mut v_sigs:Vec<ClamavSig> = subset_lines.iter().map(|s| gen_clamav_sig(s, sigtype)).collect();
 		v_sigs.par_iter_mut().for_each(|s| {
-			println!("DEBUG USE 201: handle: s: {}", s.to_str());
 			s.gen_approx_bagwords(MIN_BAG_WORD_LEN);
 			s.gen_approx_pm_bounds(MIN_PM_WORD_LEN);
 			if set_need_dfa.contains(&s.name){
