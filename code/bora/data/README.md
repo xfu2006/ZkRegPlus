@@ -1,5 +1,5 @@
 *******
-run INSTALL.py in project root folder.
+run `python3 scripts/INSTALL.py` from the project root folder.
 Do not run any python files here directly
 *******
 

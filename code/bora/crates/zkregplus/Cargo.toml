@@ -24,7 +24,6 @@ ark-relations = { version = "^0.4.0", default-features = false }
 ark-r1cs-std = { version = "0.4.0", default-features = false } # this is patched at the workspace level
 ark-snark = { version = "^0.4.0"}
 ark-serialize = "^0.4.0"
-ark-circom = { git = "https://github.com/arnaucube/circom-compat" }
 thiserror = "1.0"
 rayon = "1.7.0"
 num-bigint = "0.4"
@@ -33,8 +32,6 @@ color-eyre = "=0.6.2"
 ark-bn254 = {version="0.4.0", features=["r1cs"]}
 ark-groth16 = { version = "^0.4.0" }
 sha3 = "0.10"
-ark-noname = { git = "https://github.com/dmpierre/ark-noname", branch="feat/sonobe-integration" }
-noname = { git = "https://github.com/dmpierre/noname" }
 serde_json = "1.0.85"                                                                # to (de)serialize JSON
 serde = "1.0.203"
 rand = "0.8.5"

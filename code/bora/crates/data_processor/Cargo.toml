@@ -14,7 +14,7 @@ ark-bn254= "0.4.0"
 regex-syntax = "0.8.4"
 rustomaton = {version="0.2.1", path = "dependency/rustomaton"}
 aho-corasick={version="1.1.2", path="dependency/aho-corasick"}
-serde = "1.0.204"
+serde = { version = "1.0.204", features = ["rc"] }
 regex = "1.10.5"
 common_substrings = "1.0.0"
 rayon = "1.10.0"

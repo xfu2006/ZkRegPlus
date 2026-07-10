@@ -30044,6 +30044,13 @@ Goal 5. Writing. Related Work
 	[d] add new related.
 	[e] paragraph 1
 	[f] add more files
+Goal 6. refactor the project
+	[a] top arch folder structure
+	[b] moving files
+	[c] attic folder
+	[d] crates link and refactoring
+	[e] update the two python files
+	[f] license
 Goal 6. refactor
 
 
