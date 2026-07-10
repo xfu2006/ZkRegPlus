@@ -435,7 +435,6 @@ where
         ]
         .concat();
 
-		println!("DEBUG USE 9101: public_input: {}", public_input.len());
 
 		//4. verify the snark proof
         let snark_v = S::verify(&snark_vk, &public_input, &proof.snark_proof)
@@ -726,11 +725,9 @@ pub mod tests_decider_super {
 
 		//3. pass two to compute the cmF
 		let vsi2 = driver.pass_two(&mut iter2, vec_words.len(), &vsi, &m_map);
-		println!("DEBUG USE 5017.3: vsi2.len(): {}", vsi2.len());
 		panic!("STOP HERE 102");
 
 		//4. prove_steps (and verify inside)
-		println!("DEBUG USE 111 PASS 3 -----------");
 		let (running_instance, incoming_instance, cyclefold_instance, 
 			ivc, num_steps) = 
 			driver.pass_three(&mut iter3, vec_words.len(), &vsi2, &m_map);

@@ -51,14 +51,14 @@ pub const B_DEBUG3:bool = false; //category 3 (higher ID the higher cost)
 pub fn check_cs<F:PrimeField>(cs: &ConstraintSystemRef<F>, info: &str){
 	let b_debug = B_DEBUG;
 	if b_debug{ emit_stdout(format!(
-		"-- DEBUG USE 1001: entering CHECK: {}", info));}
+		"-- entering CHECK: {}", info));}
 	if b_debug && cs.should_construct_matrices(){
 		let csat = cs.is_satisfied();
 		if csat.is_ok(){
 			let res = csat.unwrap();
 			if res{
 				emit_stdout(format!(
-					"-- DEBUG USE 1001.2: CHECK cs passing: {}",
+					"-- CHECK cs passing: {}",
 					info));
 			}else{
 				assert!(csat.unwrap(), "ERROR: not satisfiable: {}", info);
@@ -81,22 +81,15 @@ pub fn check_cs_probe<F:PrimeField>(cs: &ConstraintSystemRef<F>,
 	let n = cs.num_constraints();
 	match cs.which_is_unsatisfied() {
 		Ok(None) => log(job_id, ERR, &format!(
-			"DEBUG USE 62001.1: CS OK    @{} ({} cons)", info, n)),
+			"CS OK    @{} ({} cons)", info, n)),
 		Ok(Some(idx)) => log(job_id, ERR, &format!(
-			"DEBUG USE 62001.2: CS UNSAT @{} first-bad={} of {} cons",
+			"CS UNSAT @{} first-bad={} of {} cons",
 			info, idx, n)),
 		Err(e) => log(job_id, ERR, &format!(
-			"DEBUG USE 62001.3: CS probe err @{}: {:?}", info, e)),
+			"CS probe err @{}: {:?}", info, e)),
 	}
 }
 
-// ===== DEBUG USE 62730 BEGIN (REMOVE LATER): per-gadget SAT checkpoints =====
-// A process-global flag armed either by the single-step repro (test) or by
-// mod_super at the target fold step. When on, gadget_sat_check() runs an
-// is_satisfied() on the constraints built SO FAR and, at the FIRST unsatisfied
-// checkpoint, names the gadget label + first-bad row and PANICS -- so a single
-// faithful synthesis of the culprit step aborts AT the offending sub-gadget
-// (finer than the whole-step first_bad_row from 62727.1). Zero cost when off.
 pub static GADGET_SAT: std::sync::atomic::AtomicBool =
 	std::sync::atomic::AtomicBool::new(false);
 pub fn set_gadget_sat(b: bool){
@@ -114,19 +107,18 @@ pub fn gadget_sat_check<F:PrimeField>(cs: &ConstraintSystemRef<F>, label: &str){
 	let n = cs.num_constraints();
 	match cs.which_is_unsatisfied() {
 		Ok(None) => emit_stdout(format!(
-			"DEBUG USE 62730.1: GADGET-SAT OK    @{} ({} cons)", label, n)),
+			"GADGET-SAT OK    @{} ({} cons)", label, n)),
 		Ok(Some(idx)) => {
 			emit_stdout(format!(
-				"DEBUG USE 62730.2: GADGET-UNSAT @{} first-bad={} of {} cons",
+				"GADGET-UNSAT @{} first-bad={} of {} cons",
 				label, idx, n));
-			panic!("DEBUG USE 62730.2: GADGET-UNSAT @{} first-bad={} of {} cons",
+			panic!("GADGET-UNSAT @{} first-bad={} of {} cons",
 				label, idx, n);
 		}
 		Err(e) => emit_stdout(format!(
-			"DEBUG USE 62730.3: GADGET-SAT err   @{}: {:?}", label, e)),
+			"GADGET-SAT err   @{}: {:?}", label, e)),
 	}
 }
-// ===== DEBUG USE 62730 END =====
 
 pub fn format_bytes(bytes: usize) -> String {
     const KB: f64 = 1024.0;

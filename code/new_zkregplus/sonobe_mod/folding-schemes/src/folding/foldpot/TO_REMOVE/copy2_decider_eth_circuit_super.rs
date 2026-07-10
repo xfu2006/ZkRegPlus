@@ -1154,7 +1154,6 @@ where
 				Ok(self.r.unwrap_or_else(CF1::<C1>::zero)))?;
         r_Fr.enforce_equal(&r)?;
 
-		println!("DEBUG USE 9101.2: public_input: {}", cs.num_instance_variables());
 
 		//15. Added check z_i is well-formed (and in-particular) its
 		//r matches kzg_c_lkup, and its sum_lk_col1, sum_lk_col2 matches
@@ -1168,7 +1167,6 @@ where
 		let fq_bits = <<C1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as usize;
 		let zi_part2_inst_var = ZiPartTwoInstVar::from_vec(&vec_zi_var, fq_bits);
 		let zi_p2 = zi_part2_inst_var.hash(&self.poseidon_config, cs.clone());
-		//println!("DEBUG USE 702: generated zi_part2: {}, zi_part2 in input: {}", zi_p2.value()?, z_i[1].value()?); 
 
 		panic!("STOP AND FIX HERE 3191");
 		zi_part2_inst_var.ch.enforce_equal(&kzg_c_lkup);

@@ -373,7 +373,6 @@ where
 
 		//ADDED for lookup
 		let kzg_challenge_lkup = nova.z0_part2_inst.r;
-		println!("DEBUG USE 707: nova.z0Part2.r: {}, zi_part2.r: {}", nova.z0_part2_inst.r, nova.zi_part2_inst.r);
 		let (col1_raw, col2_raw) = nova.lk_tbl.expect("lookup table null!")
 			.as_ref().lock().unwrap().get_cols();
 		let (lkup_col1_rev,lkup_col2_rev)
@@ -660,7 +659,6 @@ where
 		).collect::<Vec<FpVar<C1::ScalarField>>>();
 		let zi_part2_inst_var = ZiPartTwoInstVar::from_vec(&vec_zi_var);
 		let zi_p2 = zi_part2_inst_var.hash(&self.poseidon_config, cs.clone());
-		//println!("DEBUG USE 702: generated zi_part2: {}, zi_part2 in input: {}", zi_p2.value()?, z_i[1].value()?); 
 
 		zi_part2_inst_var.r.enforce_equal(&kzg_c_lkup);
 		zi_part2_inst_var.sum_lk_col1.enforce_equal(&eval_lkup_col1);
@@ -673,14 +671,12 @@ where
 		#[cfg(test)]{
         	use ark_r1cs_std::R1CSVar;
 			assert!(zi_p2.value()?==z_i[1].value()?, "zi_p2 incorrect");
-			println!("DEBUG USE 703: zi_part2.r: {}, kzg_c_lkup: {}", zi_part2_inst_var.r.value()?, kzg_c_lkup.value()?);
 			assert!(zi_part2_inst_var.r.value()?==kzg_c_lkup.value()?
 				, "kzg_c_lkup not matching");
 			assert!(zi_part2_inst_var.sum_lk_col1.value()?
 				==eval_lkup_col1.value()?, "eval col1 not matching");
 			assert!(zi_part2_inst_var.sum_lk_col2.value()?
 				==eval_lkup_col2.value()?, "eval col2 not matching");
-			println!("DEBUG USE 705: all consistency check passed");
 		}
 		*/
 
