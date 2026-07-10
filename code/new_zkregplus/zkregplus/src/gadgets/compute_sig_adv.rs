@@ -254,14 +254,6 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 	) ->Result<Self, Error>{
 		let stmt_container = Container::<F>::new("compute_sig_adv_stmt");
 		let b_debug = B_DEBUG;
-		if b_debug{
-			println!("DEBUG USE 6700.0: inp_sigs.len: {}, discharge_info: {}, v_sig_obj.len: {}", inp_sigs.len(), discharge_infos.len(), v_sig_obj.len());
-			for i in 0..inp_sigs.len(){
-				println!("DEBUG USE 6700: discharge_info for sig: {}", inp_sigs[i]);
-				println!("DEBUG USE 6700: discharge_info: {:?}", discharge_infos[i]);
-
-			}
-		}
 
 		//1. evaluate "atomic" subsigs based on sq_res 
 		if inp_subsigs_cs.len()>capacity.subsigs_cs{
@@ -371,15 +363,6 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		}
 		//0. init data
 		let b_debug = B_DEBUG;
-		if b_debug{
-			println!("DEBUG USE 6701 -- list of inp_subsigs, b_igc: {}", b_igc);
-			for i in 0..inp_subsigs.len(){
-				if !inp_subsigs[i].is_zero(){
-					println!(" -- i: {}, subsig: {}", i, inp_subsigs[i]);
-				}
-			}
-		
-		}
 		let (zero,one) = (F::zero(), F::one());
 		let tname = if b_igc {"eval_res_combo_igc"} 
 			else {"eval_res_combo_cs"};
@@ -472,13 +455,6 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 				assert!(max_step>=vec_last_step[i]);
 				let b_last_step = max_step==vec_last_step[i];
 				vec_res[i] = if b_last_step {v_maybe} else {v_false};
-				if b_debug{
-					if vec_res[i]!=v_false{
-						println!("DEBUG USE 6702: res for subsig: {} is NOT false. max_step: {}, last_step[i]: {}", inp_subsigs[i], max_step, vec_last_step[i]);
-					
-					
-					}
-				}
 				let tag = if b_last_step {ID_ENCODED_LAST_STEP} else
 					{ID_ENCODED_NORMAL_STEP};
 				let sid = SubsigStepStore::gen_step_tbl_id(
@@ -832,28 +808,6 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 				CompOp::EQ => if num!=0 {raw_res} else {!raw_res},
 				CompOp::GT => raw_res,
 			};
-			// DEBUG USE 69200.c.raw_res: dump (gen_regex_res,
-			// raw_res, count_res) for the two known-failing
-			// subsigs so the verifier can correlate with
-			// 69200.c.step / .bounds.
-			if std::env::var("ZKR_PROBE_69200").is_ok()
-				&& !subsig.is_zero() {
-				let u = field_to_usize(&subsig) as u64;
-				let (_p1, p2) =
-					utils::consts::current_bit_parts();
-				let sig_id_69200 = u >> p2;
-				if sig_id_69200 == 34555
-					|| sig_id_69200 == 35355 {
-					let ss_idx = u & ((1u64<<p2)-1);
-					println!("DEBUG USE 69200.c.raw_res: \
-						sid={} sig_id={} ss_idx={} \
-						gen_regex_res={} raw_res={:?} \
-						count_res={:?}",
-						u, sig_id_69200, ss_idx,
-						gen_regex_res[i], raw_res,
-						count_res);
-				}
-			}
 			let sid_op: F = SubsigInfoStore::gen_info_tbl_id(acdfa_id, 
 				f_subsig, ID_COMP_OP);  
 			let sid_num: F = SubsigInfoStore::gen_info_tbl_id(acdfa_id, 
@@ -866,12 +820,6 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 			vec_type[i] = F::from(subsig_type as u8);
 			vec_sid_type[i] = SubsigInfoStore::gen_info_tbl_id(acdfa_id,
 				f_subsig, ID_SUBSIG_TYPE);
-			if b_debug{
-				let b_igc = i>=n1_cs;
-				if !subsig.is_zero(){
-					println!("DEBUG USE 6703: i: {}, b_igc: {}, subsig: {}, raw_res: {:?}, count_res: {:?}", i, b_igc, subsig, raw_res, count_res);
-				}
-			}
 		}
 
 		//3. prepare the result for the subsig_count_constraint
@@ -1009,14 +957,6 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 				} else {
 					TriVal::Maybe //not for sure
 				};
-				if b_debug{
-					if j==vec_comps.len()-1
-					&& !subsig.is_zero()
-					&& res!=TriVal::False
-					{
-						println!("*** DEBUG USE 6704: subsig: {} comp: {}, res: {:?}, cnt_true: {}, cnt_maybe: {}, min_req: {}", subsig, vec_comps.len(), res, cnt_true, cnt_maybe, min_req);
-					}
-				}
 				let res = if j<vec_comps.len()-1{F::from(res as u8)} else {
 					//copy from last
 					scc_prf_row_res[scc_prf_row_res.len()-1]
@@ -1050,12 +990,6 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		let n2 = capacity.get_scc_prf_size();
 		if scc_prf_subsig.len()+1>n2{
 			let new_val = (scc_prf_subsig.len()+1)*100/(capacity.subsigs_cs + capacity.subsigs_igc) + 1;
-			println!("DEBUG USE 9003: perc_comp_subsigs: {}, subsigs_cs: {}, subsigs_igc: {}, scc_prf_subsig.len: {}, get_scc_prf_size: {}",
-				capacity.perc_comp_subsigs,
-				capacity.subsigs_cs,
-				capacity.subsigs_igc,
-				scc_prf_subsig.len(),
-				n2);
 			return Err(Error::CapErr(vec![(format!("comp_sig::perc_comp_subsigs"), new_val)]));
 
 		}
@@ -1372,10 +1306,6 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 								real_subsig_id+1) as u128);
 						let b_match = vec_bad_subsig_id.iter().any(|x|
 							*x == my_subsig_id);
-						if b_match{
-							let subsig=&sig_obj.vec_subsig_obj[real_subsig_id];
-							println!("*** DEBUG USE 6708 found bad subsig_id: {}, in sig: {}, real_id: {}, details: {}", my_subsig_id, sig_obj.name, real_subsig_id, subsig.value);
-						}
 					}
 				}
 				(sig_id, vssid)
@@ -1445,14 +1375,6 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 			map(|(x,y)| (*x,*y)).collect::<HashMap<F,F>>();
 		let f_false = F::from(TriVal::False as u8);
 		map.insert(zero, f_false); //for dummy entry
-		if b_debug{
-			println!("DEBUG USE 6105: in compute_subsig res====");
-			for (subsig, res) in &map{
-				if !subsig.is_zero(){
-					println!(" -- subsig: {}, res: {}", subsig, res);
-				}
-			}
-		}
 		let mut v_computed_subsig = vec![zero; n];
 		for i in 0..n{
 			let subsig_id = F::from(HexACDFA::gen_subsig_id_worker(
@@ -1461,9 +1383,6 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 					) as u128);
 			let res = map.get(&subsig_id)
 				.expect(&format!("cannot find subsig_id: {}", &subsig_id));
-			if b_debug && !subsig_id.is_zero(){
-				println!("DEBUG USE 6706: WILL REPORT ERROR on subsig: {}, res: {}", subsig_id, res);
-			}
 			assert!(*res == f_false, "ERROR: subsig_id: {}, res: {} is not false", subsig_id, res);
 			v_computed_subsig[i] = subsig_id;
 		}
@@ -1990,12 +1909,6 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 			.concat();
 		let prf_inp_subsigs = synthesis_res_combo
 			.get_container("prf_inp_subsigs")?;
-		if b_debug{
-			println!("DEBUG USE 6901: compute_sig_gadget: ==== subsig (raw) info ====");
-			for i in 0..n{
-				println!(" -- i: {}, subsig: {} => {}", i, inp_subsigs[i].value()?, gen_regex_res[i].value()?);
-			}
-		}
 		assert!(inp_subsigs.len()==gen_regex_res.len());
 		assert!(inp_subsigs.len() == n);
 		verify_union_prf(&input_subsigs_cs, &input_subsigs_igc,
@@ -2238,26 +2151,6 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 						)
 					) 
 				);
-			if b_debug{
-				println!("DEBUG USE 6300: i: {}, subsig: {}",
-					i, subsig.value()?);
-				println!("DEBUG USE 6311: same_subsig: {}, diff: {}, col2d[5][i]: {}, is_raw_true: {}, col2d[5][i-1]: {}",
-					same_subsig.value()?,
-					diff.value()?,
-					col2d[5][i].value()?,
-					is_raw_true.value()?,
-					col2d[5][i-1].value()?
-				);
-				println!("DEBUG USE 6312: prev_subsig: {}, vec_count[i-1]: {}, col2d[2][i-1]: {}, max: {}, col2d[5][i]: {}, is_raw_true: {}, col2d[7][i]: {}, is_raw_maybe: {}",
-					prev_subsig.value()?,
-					vec_cnt[i-1].value()?,
-					col2d[2][i-1].value()?,
-					max.value()?,
-					col2d[5][i].value()?,
-					is_raw_true.value()?,
-					col2d[6][i].value()?,
-					is_raw_maybe.value()?);
-			}
 			check_eq(&eq, &zero, "failed on count (2 cases: inc by 1 and start from 1), or the check of cnt_true/cnt_maybe ")?;
 		}
 		//does need to check the very last row for vec_comp is max (well formed)
@@ -2432,15 +2325,6 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 				lb_zero.clone(), "fail final subsig")?;
 		}
 
-		if b_debug{
-			println!("DEBUG USE 6803 === final result in validate ===");
-			for i in 0..n{
-				println!(" --i: {}, subsig: {}, res: {}", 
-					i, 
-					inp_subsigs[i].value()?,
-					vec_subsig_final_res[i].value()?);
-			}
-		}
 
 		if b_perf{
 			println!(" ### validate_syntehsis_subsig_combo: subsigs: {}, scc_tbl_size: {}, cost: {}", n, n2, cs.num_constraints()-nc);
@@ -2608,12 +2492,6 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 			.get_container("mtbl_sigs").unwrap().lock().unwrap().to_vec();
 		assert_logup(cs.clone(), &discharged_sigs, &v_sigs, &mtbl_sigs, &r1)?;
 
-		if b_debug{
-			println!("DEBUG USE 6902 === discharged sigs by SED ===");
-			for i in 0..discharged_sigs.len(){
-				println!(" --i: {}, sig: {}", i, discharged_sigs[i].value()?);
-			}
-		}
 		if b_perf{
 			println!(" ### validate_discharge_sig_combo: sigs: {}, subsig: {}, cost: {}", self.capacity.sigs, self.capacity.subsigs_cs + self.capacity.subsigs_igc, cs.num_constraints()-nc);
 		}
@@ -3365,14 +3243,6 @@ use utils::consts::{read_global_config, get_global_config};
 		let (to_add, res, prf) = sq.gen_forward_prf(&pat_loc, &steps_info);
 
 		let b_details = false;
-		if b_details{
-			println!("DEBUG USE 50001: to_add");
-			to_add.dump();
-			println!("DEBUG USE 50002: res");
-			res.dump();
-			println!("DEBUG USE 50003: proof");
-			prf.dump();
-		}
 
 		let vec100 = res.store_items.get(&Fr::from(100)).unwrap(); 
 		let vec200 = res.store_items.get(&Fr::from(200)).unwrap();

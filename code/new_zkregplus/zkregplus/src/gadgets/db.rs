@@ -227,18 +227,6 @@ pub fn assert_wide_wellformed<F:PrimeField + ColEle>(
 	assert!(n>0 && val.len()==n && id.len()==n && count.len()==n);
 	let nc = cs.num_constraints();
 
-	if b_debug{
-		println!("DEBUG USE 6201: dump of wide well-fromed table");
-		for i in 0..val.len(){
-			println!(" -- i: {}, key: {}, val: {}, id: {}, count: {}",
-				i,
-				key[i].value().unwrap(),
-				val[i].value().unwrap(),
-				id[i].value().unwrap(),
-				count[i].value().unwrap(),
-			);
-		}
-	}
 
 	//2. verify the following:
 	//for row i: let b_last_i be id[i]==count[i] (last row of a key)

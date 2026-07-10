@@ -691,7 +691,7 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 		store: &SubsigStepStore, acdfa: &HexACDFA){
 		if let Some(item) = store.subsig_to_steps.get(&subsig_id){
 			emit_stdout(format!(
-				"--- DEBUG USE 6621: Subsig Details for ID: {}, \
+				"--- Subsig Details for ID: {}, \
 				IGC: {} ---",
 				subsig_id, b_igc));
 			for (i, step) in item.vec_pm_bounds.iter().enumerate(){

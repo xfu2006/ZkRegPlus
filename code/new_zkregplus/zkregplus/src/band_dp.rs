@@ -230,39 +230,6 @@ pub fn plan_rungs(prod: &[usize], universe: &[usize], fwd: &[usize],
         } else {
             specs[end - 1].clone()                          // legacy / top rung
         };
-        // DEBUG USE 64400 (ZKR_PROBE_CAPS): per-rung member breakdown -- the
-        // prod (forward-queue) range that keys the band, chunk count, the
-        // subsigs (universe envelope), prod cap, and member-max fwd/active/cpu.
-        if std::env::var("ZKR_PROBE_CAPS").is_ok()
-            || std::env::var("ZKR_PROBE_SIZES").is_ok() {
-            let grp = &buckets[start..end];
-            let cnt: usize = grp.iter().map(|b| b.count).sum();
-            let mf = grp.iter().map(|b| b.m_fwd).max().unwrap_or(0);
-            let ma = grp.iter().map(|b| b.m_active).max().unwrap_or(0);
-            let mc = grp.iter().map(|b| b.m_cpu).max().unwrap_or(0);
-            let muniv = grp.iter().map(|b| b.m_univ).max().unwrap_or(0);
-            let p_lo = grp.first().map(|b| b.ceiling).unwrap_or(0);
-            let p_hi = grp.last().map(|b| b.ceiling).unwrap_or(0);
-            println!("DEBUG USE 64400.rung {}: prod=[{}..{}] chunks={} \
-                subsigs={} prod_cap={} perc={} avg_act={} basis_pats={} \
-                cp_cap={} | max_fwd={} max_active={} max_cpu={}",
-                rungs.len(), p_lo, p_hi, cnt,
-                spec.subsigs, spec.prod_pats_expansion,
-                spec.perc_pats_expansion_rate,
-                spec.avg_active_pats_per_subsig, spec.max_pats_in_trace,
-                spec.max_cp_unique_states, mf, ma, mc);
-            // DEBUG USE 64902.2: per-rung ANALYTIC buffer lengths (no
-            // synthesis): the two terms of cost(i) -- forward-proof buffer
-            // (prod-driven, the dominant cs term) and the subsig step-queue
-            // term -- plus the universe envelope. Authoritative per-circuit
-            // sizes (incl. failed_acc) come from 64902.1 during preprocess.
-            let fwd_prf_vec = spec.prod_pats_expansion * seg_size * FWD_COST
-                / (10000 * 100 * 100);
-            let sq_size_pat = spec.subsigs * spec.avg_active_pats_per_subsig;
-            println!("DEBUG USE 64902.2: rung {} sizes{{fwd_prf_vec={} \
-                sq_size_pat={} universe={}}}",
-                rungs.len(), fwd_prf_vec, sq_size_pat, muniv);
-        }
         rungs.push(spec);
         hist.push(buckets[start..end].iter().map(|b| b.count).sum());
         start = end;

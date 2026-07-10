@@ -45,7 +45,7 @@ pub type FpSink = Arc<Mutex<Vec<(String, u64)>>>;
 pub static PROBE_CHUNK_ID: AtomicUsize = AtomicUsize::new(0);
 
 /// Set true ONLY at the top of collect_scale_data(); gates the per-step
-/// forward-queue membership dump (DEBUG USE 64731.2) so it can never fire
+/// forward-queue membership dump so it can never fire
 /// from any other code path (run_full_dlp, normal prover, etc.).
 pub static SCALE_DUMP_FWD: AtomicBool = AtomicBool::new(false);
 

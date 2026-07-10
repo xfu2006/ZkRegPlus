@@ -608,10 +608,6 @@ pub struct CompositeGadgetMapper<F:PrimeField + ColEle, LK:LookupTableTwoCol<F>>
 			}
 			let (seg_id, global_off, len) = info.unwrap();
 			if seg_id == 0 || seg_id>6{
-				emit_stdout(format!(
-					"DEBUG USE 7102.5: SKIP word seg: \
-					seg_id: {}, global_off: {}, len: {}",
-					seg_id, global_off, len));
 				continue;
 			}
 
@@ -689,12 +685,9 @@ pub struct CompositeGadgetMapper<F:PrimeField + ColEle, LK:LookupTableTwoCol<F>>
 					rel_idx: {}, (sid: {}, val: {}), \
 					(sid2: {}, val2: {}), seg_id: {}", 
 					comp_idx, path, rel_idx, sid, val, sid2, val2, seg_id);
-				emit_stdout(format!(
-					"DEBUG USE 6801: self-checked comp_idx: {}, path: {}",
-					comp_idx, path));
 			}
 		}
-		log_perf(self.job_id, LOG1, "DEBUG USE 9999: CompositeGadgetMapper: self_check", &mut timer);
+		log_perf(self.job_id, LOG1, "CompositeGadgetMapper: self_check", &mut timer);
 	}
 
 	/// Deep-clone this mapper: rebuild fresh `Arc<Mutex<>>` around

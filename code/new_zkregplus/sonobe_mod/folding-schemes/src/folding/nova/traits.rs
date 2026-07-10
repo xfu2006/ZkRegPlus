@@ -26,7 +26,7 @@ pub trait NovaR1CS<C: CurveGroup> {
         U: &CommittedInstance<C>,
     ) -> Result<(), Error>;
 
-    /// DEBUG USE 62727 (REMOVE LATER): first constraint row where the tight
+    /// first constraint row where the tight
     /// (un-relaxed) R1CS relation fails for (W,U); None if satisfied. Maps to
     /// the failing gadget region.
     fn first_bad_instance_row(
@@ -76,7 +76,7 @@ where
         rel_r1cs.check_relation(&Z)
     }
 
-    // DEBUG USE 62727 (REMOVE LATER): mirrors check_instance_relation but
+    // mirrors check_instance_relation but
     // returns the first unsatisfied constraint row instead of a bool.
     fn first_bad_instance_row(
         &self,
