@@ -98,7 +98,7 @@ impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> NFA<V> {
 		self.big_to_dfa_new()
 	}
 
-	// Added by Xiang Fu: Idea replace BTreeSet by a sorted vector
+	// Added by BORA paper author: Idea replace BTreeSet by a sorted vector
     fn big_to_dfa_new(&self) -> DFA<V> {
         let mut map: HashMap<u64, usize> = HashMap::new();
         let mut stack = VecDeque::new();

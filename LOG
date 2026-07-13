@@ -3376,7 +3376,7 @@ Goal 4. debug the 1000 case for PM-reg
 	-> solved
 Goal 5. rerun the data for general case. 
 Cannot be discharged: Win.Downloader.PowerShellAgent-6715131-0
-/home/xiang/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/systemctl
+/home/anon/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/systemctl
  --> problem caused by ignore case. pm-reg does not work
  	because most chars are converted to union case like
 		(a|A)(b|B) ....
@@ -3395,13 +3395,13 @@ Goal 1. Analyze the last few failing patterns
 		if the word is longer than we can eliminate it. Because
 		extraction of words is limited by the bound
 	===> Solution: better case insitive ACDFA
-2. fname: /home/xiang/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/doxygen, sigs: {"Win.Downloader.PowerShellAgent-6715131-0"-> studied, "Pdf.Exploit.CVE_2013_3353-1" -> THIS ONE}
+2. fname: /home/anon/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/doxygen, sigs: {"Win.Downloader.PowerShellAgent-6715131-0"-> studied, "Pdf.Exploit.CVE_2013_3353-1" -> THIS ONE}
 	verified: cannot discharge. pm-reg or bag approach
 	the problem
 	between 68656164{8} there is a !(00|00) where the real sample
 	does contain a 00 byte. 
 	===> Solution: improve extraction algorithm of union of words.
-3. fname: /home/xiang/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/vmlinuz-3.10.0-1160.76.1.el7.x86_64, sigs: {"Win.Trojan.Heuristic-786", "Win.Trojan.FakeSkype-1"}
+3. fname: /home/anon/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/vmlinuz-3.10.0-1160.76.1.el7.x86_64, sigs: {"Win.Trojan.Heuristic-786", "Win.Trojan.FakeSkype-1"}
 	(1) Win.Trojan.Heurstic-786 -> This looks like a REAL MATCH!
 	** VERIFIED ** need to change the Target from 1 to 0 (!!!) It is identified
 	as a real match
@@ -3409,7 +3409,7 @@ Goal 1. Analyze the last few failing patterns
 	(2) Win.Trojan.FakeSkype-1 is EXACTLY the same of Heurstic-786.
 	====> Ignore this case.
 
-4. fname: /home/xiang/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/cygrpc.cpython-39-x86_64-linux-gnu.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
+4. fname: /home/anon/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/cygrpc.cpython-39-x86_64-linux-gnu.so, sigs: {"Win.Packed.addsub-6963063-0", "Win.Packed.addsub-6961201-1"}
 	(1) Win.Packed.addsub-6963063-0: 
 	==> DISCHARGED by increasing unroll sections from 16 to 32.
 	Note: need a lot of memory the first appearance of pattern is 32k.
@@ -3862,7 +3862,7 @@ Goal 2. Analyze example
 	[a] find one failed small sample. Compare the different PM-regs 
 		collected
 		===
-		fname: /home/xiang/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/cc1, sigs: {"Win.Packed.Gandcrab-6911085-1"}
+		fname: /home/anon/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/cc1, sigs: {"Win.Packed.Gandcrab-6911085-1"}
 		===
 		-> problem {10-20} is NOT translated to {20-40}
 	[b] clear all warnings
@@ -3881,7 +3881,7 @@ clamscan -r -d bad.ldb ../../binexec/ > dump.txt
 	false positive.
 Goal 5. Debug fname: 
 ===== FALSE POSITIVE 1: ============
-/home/xiang/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/doxygen, sigs: {"Pdf.Exploit.CVE_2013_3353-1"}
+/home/anon/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/doxygen, sigs: {"Pdf.Exploit.CVE_2013_3353-1"}
 	-> ONLY one instance: 
 	68656164e718beac000000fc0000003668686561
 	the byte "00" after fc is disabled by the original pattern,
@@ -3894,7 +3894,7 @@ Goal 5. combining all into one file
 	[c] find ./src -type f -exec cat > all_email.dat {} +
 Goal 6. for pcre regex set:
 =================== FALSE POSITIVE  2================
-fname: /home/xiang/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/doxygen, sigs: {"Pdf.Exploit.APSB16_26-1", "Win.Exploit.CVE_2017_11918-6389654-1"}
+fname: /home/anon/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/doxygen, sigs: {"Pdf.Exploit.APSB16_26-1", "Win.Exploit.CVE_2017_11918-6389654-1"}
 	[a] Pdf.Exploit.APSB16_26-1
 	[d] example to illustrate features
 		verified problem pm-reg only captures
@@ -3912,7 +3912,7 @@ fname: /home/xiang/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/bi
 			-> verified using clamscan it's not the issue.
 			Maybe really need to use DFA
 ===================FALSE POSITIVE 3=================================
-fname: /home/xiang/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/vmlinuz-3.10.0-1160.76.1.el7.x86_64, sigs: {"Email.Phishing.VOF1-6314020-0", "Email.Phishing.VOF1-6231768-1", "Email.Phishing.VOF1-6295244-1", "Email.Phishing.VOF1-6295631-2"}
+fname: /home/anon/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/vmlinuz-3.10.0-1160.76.1.el7.x86_64, sigs: {"Email.Phishing.VOF1-6314020-0", "Email.Phishing.VOF1-6231768-1", "Email.Phishing.VOF1-6295244-1", "Email.Phishing.VOF1-6295631-2"}
 	[a] Email.Phishing.VOF1-6314020-0
 		=> It asks for (CANON|phto|img..)[a-z\d]{1,20}.js
 		=> problem the "js" is too short and did not appear in pm-reg
@@ -3926,12 +3926,12 @@ fname: /home/xiang/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/bi
 			to .*) still no false positive
 
 ===================FALSE POSITIVE 4=================================
-fname: /home/xiang/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/vmlinuz-0-rescue-b1527a5456aab241a74a8a3dc31395c0, sigs: {"Email.Phishing.VOF1-6231768-1", "Email.Phishing.VOF1-6295244-1", "Email.Phishing.VOF1-6295631-2", "Email.Phishing.VOF1-6314020-0"}
+fname: /home/anon/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/vmlinuz-0-rescue-b1527a5456aab241a74a8a3dc31395c0, sigs: {"Email.Phishing.VOF1-6231768-1", "Email.Phishing.VOF1-6295244-1", "Email.Phishing.VOF1-6295631-2", "Email.Phishing.VOF1-6314020-0"}
 ==> same file vmlinuz (same problem)
 
 
 ===================FALSE POSITIVE 6=================================
-fname: /home/xiang/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/anthoscli, sigs: {"Win.Trojan.Emotet-6397178-0"}
+fname: /home/anon/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/anthoscli, sigs: {"Win.Trojan.Emotet-6397178-0"}
 	=> basically search for powershell.*-e.*
 	=> the problem is that pm-reg cannot tell the whitespace sequence
 	after the powershell
@@ -4177,8 +4177,8 @@ Goal 1. Analyze why the .{1,100} crash
 	[h] check the 7 regex dfa generating -> ALL ok
 	[j] start pcre data collection -> GOOD!
 	---- RESULT ------ only 2 files needs DFA discharge
-	fname: /home/xiang/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/vmlinuz-3.10.0-1160.76.1.el7.x86_64, sigs: {"Email.Phishing.VOF1-6295631-2", "Email.Phishing.VOF1-6295244-1", "Email.Phishing.VOF1-6314020-0"}
-fname: /home/xiang/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/vmlinuz-0-rescue-b1527a5456aab241a74a8a3dc31395c0, sigs: {"Email.Phishing.VOF1-6314020-0", "Email.Phishing.VOF1-6295631-2", "Email.Phishing.VOF1-6295244-1"}
+	fname: /home/anon/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/vmlinuz-3.10.0-1160.76.1.el7.x86_64, sigs: {"Email.Phishing.VOF1-6295631-2", "Email.Phishing.VOF1-6295244-1", "Email.Phishing.VOF1-6314020-0"}
+fname: /home/anon/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/vmlinuz-0-rescue-b1527a5456aab241a74a8a3dc31395c0, sigs: {"Email.Phishing.VOF1-6314020-0", "Email.Phishing.VOF1-6295631-2", "Email.Phishing.VOF1-6295244-1"}
    ---------------------
 
 Goal 2. Do analysis of regex pattern DFA stats
@@ -4352,7 +4352,7 @@ Goal 2. collect and anlayze data
 
 Saturday 07/06/2024
 Goal 1. debug the DFA not accepting problem
-	[a]/home/xiang/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/doxygen, sigs: {"Pdf.Exploit.APSB16_26-1
+	[a]/home/anon/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/doxygen, sigs: {"Pdf.Exploit.APSB16_26-1
 		[a1] strangely the dfa does accept it!
 		[a2] unit testing
 		[a3] check the nibbles
@@ -4659,7 +4659,7 @@ Goal 3. Go over the code and decide plan to instrument
 
 Wenesday 07/17/2024
 Goal 1. Debug
-fname: /home/xiang/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/libpython3.9.so, filesize: 5, sigs: {"Doc.Dropper.Agent-6330744-0"}
+fname: /home/anon/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/libpython3.9.so, filesize: 5, sigs: {"Doc.Dropper.Agent-6330744-0"}
 	[a] clam scan shows that it's ok
 	[b] found the problem: 2 has ALSO the dependency so actually more should
 		be attached.
@@ -4667,7 +4667,7 @@ fname: /home/xiang/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/bi
 		[b2] redo recursive trigger processing
 		[b3] remove debug strs
 	[c] unit testing failed 
-	[d] fname: /home/xiang/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/anthoscli, filesize: 5, sigs: {"Doc.Dropper.Agent-6332127-0", "Doc.Dropper.Agent-6330744-0", "Doc.Dropper.Emotet-6769504-0"}
+	[d] fname: /home/anon/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/anthoscli, filesize: 5, sigs: {"Doc.Dropper.Agent-6332127-0", "Doc.Dropper.Agent-6330744-0", "Doc.Dropper.Emotet-6769504-0"}
 		all cleared
 	[e] stack overflow of plug_in_trigger:
 	[f] still there are prolbems: cannot handle recursively!
@@ -4689,7 +4689,7 @@ Goal 1. Debug Crash Problem:
 	[d] the no relation extraction not working
 	[e] remove all debug msg and run on server
 Goal 2.strangely still cannot discharge:
-	[a] fname: /home/xiang/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/doxygen, filesize: 5, sigs: {"Pdf.Exploit.APSB16_26-1", "Pdf.Exploit.CVE_2013_3353-1"}
+	[a] fname: /home/anon/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/binexec/doxygen, filesize: 5, sigs: {"Pdf.Exploit.APSB16_26-1", "Pdf.Exploit.CVE_2013_3353-1"}
 	[b] but in the debug mode it does discharged it well.
 	[c] try to repeat it on server
 	[d] can have repeated behaviors on APSB16_26-1
@@ -4744,9 +4744,9 @@ Goal 2. Continue with paper 3
 Monday 07/22/2024
 Goal 1. debug the problem
 	[a] Identify the violations:
-		fname: /home/xiang/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/email/src/maildir/giron-d/sent_items/33., filesize: 4, sigs: {"Win.Trojan.Ag-4254306-1"}
+		fname: /home/anon/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/email/src/maildir/giron-d/sent_items/33., filesize: 4, sigs: {"Win.Trojan.Ag-4254306-1"}
 		-> VERIFIED removed
-		fname: /home/xiang/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/email/src/maildir/whalley-g/inbox/473., filesize: 4, sigs: {"Html.Exploit.CVE_2017_0069-6013012-3"} => BUT THIS IS VALID
+		fname: /home/anon/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/email/src/maildir/whalley-g/inbox/473., filesize: 4, sigs: {"Html.Exploit.CVE_2017_0069-6013012-3"} => BUT THIS IS VALID
 	[b] verify with virus scanner -> cleared one
 	[c] debug the CVD_2017 on inbox/473. -> 1000 lines of text file
 	[d] the signature has large . string 
@@ -4990,11 +4990,11 @@ Goal 1. set up sonobe mod
 	[b] set up a bitbucket project
 	[c] set up new origin (origin_mod)
 	[d] set up submodule
-		git submodule add https://bitbucket.org/xfu2009/sonobe/src/foldpot/
+		git submodule add https://bitbucket.org/anon/sonobe/src/foldpot/
 		git push origin working --recurse-submodules=on-demand
 	[e] deploy to zero server	
 		move the entire project folder to DATA to allow more space
-		git clone --recursive https://bitbucket.org/xfu2009/zkregplus
+		git clone --recursive https://bitbucket.org/anon/zkregplus
 	[f] on the locla repo
 		git pull origin working --recurse-submodules
 
@@ -19736,7 +19736,7 @@ Goal 1. Continue to explore why finalize cs is SO slow. Need to read
 	[a] read finalize
 	[b] most likely it's calling inlining -> verify
 	-> file is located at:
-	/home/xiang/.cargo/registry/src/index.crates.io-6f17d22bba15001f/ark-relations-0.4.0/src/r1cs/constraint_system.rs
+	/home/anon/.cargo/registry/src/index.crates.io-6f17d22bba15001f/ark-relations-0.4.0/src/r1cs/constraint_system.rs
 	-> in dependency add patch.io to force loading local ark-relations
 	-> put some idx 
 	-> the compilation is not quite reliable -> needs to go to sonobe to
@@ -27149,7 +27149,7 @@ Goal 1. collect data from server
 	DEBUG USE 6901.2.0 public input: 9296072368357593426949759868353236720345544652567631969221367209181348575279
 	snark main details: Ok(false)
 snark main fails.
-thread 'zkp_driver::tests_zkp_driver::test_zkreg_main' panicked at /home/xiang/Desktop/NewResearch/Projects/ZkRegPlus/code/new_zkregplus/sonobe_mod/folding-schemes/src/folding/foldpot/driver.rs:2089:5:
+thread 'zkp_driver::tests_zkp_driver::test_zkreg_main' panicked at /home/anon/Desktop/NewResearch/Projects/ZkRegPlus/code/new_zkregplus/sonobe_mod/folding-schemes/src/folding/foldpot/driver.rs:2089:5:
 assertion failed: BatchProcessor::<E, LK, S, CS1E,
         H>::verify_batch(&batch_ver_param, Some(qa_nizk_vkey_hash1),
     Some(qa_nizk_vkey2.clone()), Some(g16_vk_main), Some(g16_vk_cp),
@@ -27182,7 +27182,7 @@ LOG3: -- --  Phase1 Circ gen_cs: Step 4: eval all_w_e. INCREASED 30663923 constr
 LOG3: -- --  Phase1 Circ gen_cs: Step 5: Enforce u_i standard and hash. INCREASED r1cs: 5179. 3451 ms
 LOG3: -- --  Phase1 Circ gen_cs: Step 6: verify zi_part2. INCREASED r1cs: 1498, memory usage: 108. 1034 ms
 LOG3: -- --  Phase1 Circ gen_cs: Step 7: check 1 circs. INCREASED r1cs: 35634713 45428 ms
-thread 'zkp_driver::tests_zkp_driver::test_zkreg_main' panicked at /home/xiang/Desktop/NewResearch/Projects/ZkRegPlus/code/new_zkregplus/dependency/ark-relations/src/r1cs/constraint_system.rs:1120:55:
+thread 'zkp_driver::tests_zkp_driver::test_zkreg_main' panicked at /home/anon/Desktop/NewResearch/Projects/ZkRegPlus/code/new_zkregplus/dependency/ark-relations/src/r1cs/constraint_system.rs:1120:55:
 index out of bounds: the len is 0 but the index is 57497481
 tack backtrace:
    0: rust_begin_unwind
@@ -27239,7 +27239,7 @@ Goal 1. analayze full_data4
 -- DEBUG USE 1001.2: CHECK cs passing: phase1 step 6
 LOG3: -- --  Phase1 Circ gen_cs: Step 7: check 1 circs. INCREASED r1cs: 35634713 48914 ms
 -- DEBUG USE 1001: entering CHECK: phase1 step 7
-thread 'zkp_driver::tests_zkp_driver::test_zkreg_main' panicked at /home/xiang/Desktop/NewResearch/Projects/ZkRegPlus/code/new_zkregplus/sonobe_mod/folding-schemes/src/folding/foldpot/utils.rs:57:17:
+thread 'zkp_driver::tests_zkp_driver::test_zkreg_main' panicked at /home/anon/Desktop/NewResearch/Projects/ZkRegPlus/code/new_zkregplus/sonobe_mod/folding-schemes/src/folding/foldpot/utils.rs:57:17:
 ERROR: not satisfiable: phase1 step 7
 stack backtrace:
    0: rust_begin_unwind
@@ -27335,7 +27335,7 @@ LOG5: -- -- -- --  -- circuit_super gen_cs step 3.1: to_vec_fp_var: cs: 0, vars:
 LOG6: -- -- -- -- --  ### gen_step_cs START: cs: 0, vars: 12009079 710 ns
 LOG6: -- -- -- -- --  gen_step_cs step 1: cs: 0, vars: 0 436 ms
 LOG6: -- -- -- -- --  -- witness: stmt: 10217424, msg1: 0, msg2: 24, msg3: 23888
-thread 'zkp_driver::tests_zkp_driver::test_zkreg_main' panicked at /home/xiang/Desktop/NewResearch/Projects/ZkRegPlus/code/new_zkregplus/dependency/ark-relations/src/r1cs/constraint_system.rs:1108:48:
+thread 'zkp_driver::tests_zkp_driver::test_zkreg_main' panicked at /home/anon/Desktop/NewResearch/Projects/ZkRegPlus/code/new_zkregplus/dependency/ark-relations/src/r1cs/constraint_system.rs:1108:48:
 index out of bounds: the len is 0 but the index is 0
 
 Goal 3. improve debug system in sonobe
@@ -27370,7 +27370,7 @@ LOG3: -- --  Phase1 Circ gen_cs: Step 6: verify zi_part2. INCREASED r1cs: 1498, 
 -- DEBUG USE 1001.2: CHECK cs passing: phase1 step 6
 LOG3: -- --  Phase1 Circ gen_cs: Step 7: check 1 circs. INCREASED r1cs: 35634757 49206 ms
 -- DEBUG USE 1001: entering CHECK: phase1 step 7
-thread 'zkp_driver::tests_zkp_driver::test_zkreg_main' panicked at /home/xiang/Desktop/NewResearch/Projects/ZkRegPlus/code/new_zkregplus/sonobe_mod/folding-schemes/src/folding/foldpot/utils.rs:59:17:
+thread 'zkp_driver::tests_zkp_driver::test_zkreg_main' panicked at /home/anon/Desktop/NewResearch/Projects/ZkRegPlus/code/new_zkregplus/sonobe_mod/folding-schemes/src/folding/foldpot/utils.rs:59:17:
 ERROR: not satisfiable: phase1 step 7
 stack backtrace:
   --------------------------
@@ -27415,7 +27415,7 @@ Goal 4. debug small_par function
 Goal 5. collected data.
   DEBUG USE 6901.5: last_loc: 33648641, cost: 89 ms
 -- DEBUG USE 1001: entering CHECK: val_union step 1
-thread 'zkp_driver::tests_zkp_driver::test_zkreg_main' panicked at /home/xiang/Desktop/NewResearch/Projects/ZkRegPlus/code/new_zkregplus/sonobe_mod/folding-schemes/src/folding/foldpot/utils.rs:59:17:
+thread 'zkp_driver::tests_zkp_driver::test_zkreg_main' panicked at /home/anon/Desktop/NewResearch/Projects/ZkRegPlus/code/new_zkregplus/sonobe_mod/folding-schemes/src/folding/foldpot/utils.rs:59:17:
 ERROR: not satisfiable: val_union step 1
 stack backtrace:
 
@@ -27767,13 +27767,13 @@ Goal 3. deploy to server
    ------------------- need to later compare with the full file.
    ERROR at: driver.rs 643
    : false 1 us
-thread '<unnamed>' panicked at /home/xiang/Desktop/NewResearch/Projects/ZkRegPlus/code/new_zkregplus/sonobe_mod/folding-schemes/src/folding/foldpot/driver.rs:643:38:
+thread '<unnamed>' panicked at /home/anon/Desktop/NewResearch/Projects/ZkRegPlus/code/new_zkregplus/sonobe_mod/folding-schemes/src/folding/foldpot/driver.rs:643:38:
 called `Result::unwrap()` on an `Err` value: PoisonError { .. }
 	
 -- TODO -- run full_data1 in full mode and see what is the cost.
 Another error:
 -------------
-hread 'zkp_driver::tests_zkp_driver::test_zkreg_main' panicked at /home/xiang/Desktop/NewResearch/Projects/ZkRegPlus/code/new_zkregplus/sonobe_mod/folding-schemes/src/folding/foldpot/utils.rs:562:5:
+hread 'zkp_driver::tests_zkp_driver::test_zkreg_main' panicked at /home/anon/Desktop/NewResearch/Projects/ZkRegPlus/code/new_zkregplus/sonobe_mod/folding-schemes/src/folding/foldpot/utils.rs:562:5:
 assertion failed: sum_left.value()? == sum_right.value()?
 stack backtrace:
    0: rust_begin_unwind
@@ -30053,6 +30053,76 @@ Goal 6. refactor the project
 	[f] license
 Goal 6. refactor
 
+Sat 07/10/2026
+Goal 1. server run of full clam
+	[a] update server
+	[b] run install data all 4:27pm => 4:43pm (20 min) 
+	[c] 4:45pm => 
+		data will be: /tmp/paper_data_clam_20260710_204303/paper_data_clam_BUNDLE_20260710_204303.tgz 
+
+Goal 2. Writing
+	[a] collect 53 papers
+	[b] write memory about summary of each paper.
+	[c] approve the short list one by one.
+	[d] 54 papers -> 18 papers
+	[e] group and record info.
+	[f] paper 1 -> DONE (non-subsequence problem)
+	[g] paper 3 -> DONE (got its idea of cq like preprocessed)
+	[h] idea discussion - a second paragraph for lower complexity 
+		sub-problem.
+	[i] read Crepe.
+
+Sunday 07/11/2026
+Goal 1. collect full_clam data
+	[a] clam data good
+	[b] update paper
+	[c] start dlp data set
+
+Goal 2. continue to related section
+	[a] read IceFish
+	[b] read MatchQuest
+	[c] read Vega -> DELAY: cite it later in fold 
+	[d] read CompGroth16 -> DELAY: do it later in folding framework
+	[e] Malvai24 -> cite
+	[f] Origo -> put in gruop
+	[g] NOPE -> put in group
+	[h] Ticket no hide -> put in group
+	[i] Janus -> put in group
+	[j] FreeAuth -> drpo
+	[k] Efficien Proof of possession
+Goal 3. summary writing of p3.
+	[a] check fuzzy hashing and Bloom filter
+	[b] add one line cite
+	[c] add comments
+	[d] decision on keep fold discussion or not
+Goal 4. Conclusion
+	[a] 1st draft
+	[b] revision 1
+	[c] revision 2 paragraph 1
+	[d] paragraph 2.
+Goal 5. 2nd round polish of related work
+	[a] p1
+	[b] p2
+	[c] p3
+
+Monday 07/13/2026
+Goal 1. check server running 
+	[a] estimate 90 hours to completion. 4:33pm 07/12 (already run 23.5 hrs)
+Goal 2. abstract.
+	[a] read sample
+	[b] verify complexity claim
+	[c] further cut size
+	[d] improvement 1
+	[e] improvement 2. Major issues to address
+	[f] cut again to 150 words.
+	[g] go over again.
+Goal 3. clean up code, anonymize code and docs
+Goal 4. section 1
+	[a] 
+
+== TODO == another SDE algorithm with lower theory complexity.
+Goal 5. Add low complexity SDE algorithm
+
 
 ----- ACTIVE GOALS -----
 Goal FINAL1. start data collection on GCP
@@ -30071,7 +30141,7 @@ Goal FINAL2. start data collection on Jetstream
 		[a1] scalaliblity for dlp (11:00pm 06/28 -> 
 	[b] large: -> (IP: 149.165.170.106)
 		[b0] full_dna => DONE 07/04
-		[b1] full_dlp??
+		[b1] full_dlp ==> STARTED 5:00pm 07/11 ==> ??
 		[b2] full_clam => DONE/ok 07/03 (but still need another run) - 18 hrs
 		[b3] reef_eval > aleady got 06/24 => DONE
 		[b4] zombie_eval (11:00pm 06/28 -> restarted 12:00pm 06/29 OOM system

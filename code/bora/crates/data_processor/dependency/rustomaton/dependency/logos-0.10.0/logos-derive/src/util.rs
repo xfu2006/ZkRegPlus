@@ -94,7 +94,7 @@ impl<V: Value> Value for Definition<V> {
                     ref lit => panic!("Invalid callback value: {}", quote!(#lit)),
                 };
 
-				//Fixed by Xiang Fu
+				//Fixed by BORA paper author
                 //self.callback.insert(callback, |_| {
                  //   panic!("Only one callback can be defined per variant definition!")
                 //});

@@ -29,7 +29,7 @@ note that clamscan only reports the first found (so try out the two sigs one by 
 13. # this one is tricky: the "." actually should be single line mode
 # not catching \n. But we use MULTILINE matching for all, and this
 # easily causes FALSE POSITIVES because a pound key can be matched very
-# far away from the var = pattern (e.g., /home/xiang/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/email/src/maildir/giron-d/sent_items/33.)
+# far away from the var = pattern (e.g., /home/anon/Desktop/NewResearch/Projects/ZkregPlus/code/zkregplus/data/email/src/maildir/giron-d/sent_items/33.)
 # This one is solely caused by our approximation all to MULTILINE mode,
 # clamscan actually did not report false positives.
 Html.Exploit.CVE_2017_0069-6013012-3;Engine:81-255,Target:3;0&1&2&3;77696e646f772e6f70656e28;6c6f636174696f6e2e7265706c61636528;766172;2/var.{0,50}?=.{0,100}?[\x22\x27].*?#([^\x22\x27\x23])\1{100,}?/

@@ -18,7 +18,7 @@ use serde::{Serialize,Deserialize};
 
 const B_DEBUG: bool = false;
 
-// Added by Xiang Fu
+// Added by BORA paper author
 #[derive(Eq, PartialEq,Clone,Debug)]
 struct MyHashSet(HashSet<usize>);
 impl std::hash::Hash for MyHashSet{
@@ -40,7 +40,7 @@ pub struct DFA<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> {
  //   pub(crate) initial: usize,
   //  pub(crate) finals: HashSet<usize>,
    // pub(crate) transitions: Vec<HashMap<V, usize>>,
-   //CHANGED BY XIANG FU for viewing data
+   //CHANGED BY BORA paper author for viewing data
     pub alphabet: HashSet<V>,
     pub initial: usize,
     pub finals: HashSet<usize>,
@@ -81,7 +81,7 @@ impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> DFA<V> {
         }
     }
 
-	// Added by Xiang Fu
+	// Added by BORA paper author
 	// return the shorteed accepted word
 	// if not found, return empty vector
 	pub fn get_shortest_accepted(&self)->Vec<V>{
@@ -120,7 +120,7 @@ impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> DFA<V> {
 		vec
 	}
 
-	// Added by Xiang Fu
+	// Added by BORA paper author
 	// build the tuples of states and transition tables
 	pub fn intersect2(self, b:DFA<V>) -> DFA<V>{
 		let mut hash_states = HashMap::<(usize,usize), usize>::new();
@@ -187,7 +187,7 @@ impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> DFA<V> {
 		new_dfa
     }
 
-	/// build the reverse transitions, added by Xiang Fu
+	/// build the reverse transitions, added by BORA paper author
 	fn build_reverse_trans(&self)->Vec<HashMap<V,Vec<usize>>>{
 		let n_states = self.transitions.len();
 		let mut res = vec![];
@@ -224,7 +224,7 @@ impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> DFA<V> {
 		return res;
 	}
 
-	/// Added by Xiang Fu, used for Hopcroft's algorithm
+	/// Added by BORA paper author, used for Hopcroft's algorithm
 	/// map each state in a partition to its new ID
 	fn partition_to_mapping(partitions: &HashSet<MyHashSet>)
 	-> HashMap<usize, usize>{
@@ -244,7 +244,7 @@ impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> DFA<V> {
 		return map2;
 	}
 
-	/// Added by Xiang Fu. Only call it for SMALL dfa
+	/// Added by BORA paper author. Only call it for SMALL dfa
 	pub fn dump(&self, name: &str){
 		println!("-- DUMP: {} --", name);
 		println!("initial state: {}", self.initial);
@@ -254,7 +254,7 @@ impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> DFA<V> {
 		println!("final states: {:?}\n-------", self.finals);
 	}
 
-	/// Added by Xiang Fu, Hopcroft's algorithm
+	/// Added by BORA paper author, Hopcroft's algorithm
 	/// see wiki: <https://en.wikipedia.org/wiki/DFA_minimization>
 	pub fn minimize_hop(self) -> DFA<V>{
 		//1. build the equivalent classes

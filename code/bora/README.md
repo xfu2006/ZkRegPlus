@@ -57,6 +57,8 @@ bora/
   vendored arkworks/Sonobe forks are bound to it).
 - `lld` linker (required for reasonable link times).
 - Python 3 (for `scripts/INSTALL.py` and `scripts/PAPER_DATA.py`).
+- Python packages: `pip install -r requirements.txt` (core dep: `gdown`;
+  the rest are optional, only for regenerating the signature corpora).
 - Linux. `numactl` is used by the large NUMA runs (optional otherwise).
 
 **Hardware (per experiment)**

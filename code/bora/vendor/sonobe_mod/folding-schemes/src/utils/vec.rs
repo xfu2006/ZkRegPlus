@@ -136,7 +136,7 @@ pub fn mat_vec_mul<F: PrimeField>(M: &SparseMatrix<F>, z: &[F]) -> Result<Vec<F>
         ));
     }
     //for (row_i, row) in M.coeffs.iter().enumerate() {
-	//use rayon instead: Xiang Fu
+	//use rayon instead: BORA paper author
     /* 
 		OLD code:
 		let mut res = vec![F::zero(); M.n_rows];

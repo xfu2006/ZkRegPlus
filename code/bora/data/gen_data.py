@@ -1,5 +1,5 @@
 # ----------------------------------------
-# Dr. Xiang Fu
+# BORA paper author
 # Created 06/06/2025
 #
 # This is used to merge small binary executables into larger files

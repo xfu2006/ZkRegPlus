@@ -6,7 +6,7 @@ pub(crate) mod debug;
 pub(crate) mod error;
 pub(crate) mod int;
 pub(crate) mod prefilter;
-// changed by Xiang Fu (make it public)
+// changed by BORA paper author (make it public)
 pub mod primitives;
 pub(crate) mod remapper;
 pub(crate) mod search;

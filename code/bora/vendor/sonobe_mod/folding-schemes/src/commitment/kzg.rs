@@ -154,7 +154,7 @@ where
         mut rng: impl RngCore,
         len: usize,
     ) -> Result<(Self::ProverParams, Self::VerifierParams), Error> {
-		/* COMMENTED OUT by Xiang Fu
+		/* COMMENTED OUT by BORA paper author
 		 as kzg10 costing 3x times of RAM than what is needed.
         let len = len.next_power_of_two();
         let universal_params =
@@ -299,7 +299,7 @@ where
         // because p(z) is the remainder term. We can therefore omit p(z) when computing the
         // quotient.
 		// comment out the following divide_with_q_and_r for better performance
-		// by Xiang Fu
+		// by BORA paper author
         //let divisor = DensePolynomial::<E::ScalarField>::from_coefficients_vec(vec![ -challenge, E::ScalarField::one(), ]);
     //    let (witness_poly, remainder_poly) = DenseOrSparsePolynomial::from(&polynomial)
      //       .divide_with_q_and_r(&DenseOrSparsePolynomial::from(&divisor))
@@ -398,7 +398,7 @@ fn convert_to_bigints<F: PrimeField>(p: &[F]) -> Vec<F::BigInt> {
         .collect::<Vec<_>>()
 }
 
-/// perform a division (added by Xiang Fu to improve division performance
+/// perform a division (added by BORA paper author to improve division performance
 /// Assumtpion: the poly represented by coef can be perfectly
 /// divided by (x-d). We just do school boook division.
 fn deg1_div<F:PrimeField>(coefs: &Vec<F>, d: &F)->Result<(DensePolynomial<F>,DensePolynomial<F>),Error>{

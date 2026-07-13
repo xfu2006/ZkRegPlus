@@ -733,7 +733,7 @@ pub struct PatternID(SmallIndex);
 #[repr(transparent)]
 pub struct StateID(SmallIndex);
 
-//Added by Xiang Fu
+//Added by BORA paper author
 /// convert from usize to state id
 pub fn state_id_to_usize(s: StateID)->usize{
 	s.0.0.try_into().unwrap()

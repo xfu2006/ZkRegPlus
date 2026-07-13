@@ -283,7 +283,7 @@ impl<F: Field> ConstraintSystem<F> {
         self.num_constraints += 1;
 		/* LOOKS LIKE simply set default-features = false
 		on ark-r1cs-std crate does not disalbe it.
-		so temporary solution commitent it here. Xiang Fu.
+		so temporary solution commitent it here. BORA paper author.
         #[cfg(feature = "std")]
         {
            let trace = ConstraintTrace::capture();
@@ -402,7 +402,7 @@ impl<F: Field> ConstraintSystem<F> {
         // This loop goes through all the LCs in the map, starting from
         // the early ones. The transformer function is applied to the
         // inlined LC, where new witness variables can be created.
-		// ** BY XIANG FU **
+		// ** BY BORA paper author **
 		// SINCE the BTreeMap is replaced by the hashmap
 		// index is no longer sorted in self.lc_map
 		// we need to retrieve the index from 0 to max val (luckily
@@ -1111,7 +1111,7 @@ impl<F: Field> ConstraintSystem<F> {
                         trace = if self.constraint_traces.len() > i {
                             self.constraint_traces[i].as_ref().map_or_else(
                                 || {
-                                    eprintln!("Constraint trace requires enabling `ConstraintLayer` (or it was disabled by Xiang Fu)");
+                                    eprintln!("Constraint trace requires enabling `ConstraintLayer` (or it was disabled by BORA paper author)");
                                     format!("{}", i)
                                 },
                                 |t| format!("{}", t),

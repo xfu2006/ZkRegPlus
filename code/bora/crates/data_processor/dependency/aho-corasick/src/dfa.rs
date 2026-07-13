@@ -187,7 +187,7 @@ impl DFA {
         assert!(at_least_one, "match state must have non-empty pids");
     }
 
-	/// Added by Xiang Fu. return number of states
+	/// Added by BORA paper author. return number of states
 	pub fn num_states(&self)->usize{
 		return self.state_len;
 	}

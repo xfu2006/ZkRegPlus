@@ -2,7 +2,7 @@ Enter even number n (sweep is [1, 2, 4, 6, ..., n]): sweep sequence: [1, 2, 4]
 
 === iteration: num_jobs = 1 ===
   patched zkp_driver.rs: num_jobs = 1
-  launching /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/zkregplus/src/compile.sh...
+  launching /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/zkregplus/src/compile.sh...
 
 running 1 test
 [job 0] LOG1:  === ZKP driver starts ====
@@ -205,12 +205,12 @@ running 1 test
 [job 0] LOG6: -- -- -- -- --  PERF 2001.1 build trans time for states:: 145, trans: 2224 148 us
 [job 0] LOG6: -- -- -- -- --  PERF 2001.1 build trans time for states:: 145, trans: 2224 239 us
   worker PID = 795051
-  DEBUG USE 67321.0: captured cmdline='/home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/target/release/deps/zkregplus-0f1e75d3133acb40 test_zkreg_main --show-output --nocapture'
-    DEBUG USE 67321.1: pid=795051 cmdline='/home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/target/release/deps/zkregplus-0f1e75d3133acb40 test_zkreg_main --show-output --nocapture'
+  DEBUG USE 67321.0: captured cmdline='/home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/target/release/deps/zkregplus-0f1e75d3133acb40 test_zkreg_main --show-output --nocapture'
+    DEBUG USE 67321.1: pid=795051 cmdline='/home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/target/release/deps/zkregplus-0f1e75d3133acb40 test_zkreg_main --show-output --nocapture'
     DEBUG USE 67321.3: prime cpu_percent=0.0 status=sleeping nthreads=34
 [job 0] LOG1:  ZIP driver step 1: build DB. 10987 ms
   First file: data/samples/binexec_merged128k/systemd-shutdownd
-    DEBUG USE 67321.12: tick=1 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=1 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG1:  ZIP driver step 2: load words and prepare 1 jobs. 34 ms
 [job 0] LOG1:  -- -- fsm_gen_fsm_combo 5 ms
 [job 0] LOG1:  -- -- fsm_packed_trace 4 ms
@@ -388,12 +388,12 @@ DEBUG USE 6901.5: last_loc: 31745, cost: 15 ms
 [job 0] LOG5: -- -- -- --  -- circuit_super gen_cs step 12: cs: 0, vars: 0 518 ns
 [job 0] LOG3: -- --  PERF 1002 circ 1, r1cs cols: 1893827, rows: 1272832
 [job 0] LOG3: -- --  preprocess() Step 2: setup circ params. circs: 1, max_circ_pp: 1893827, total_w: 1893824, total_e: 1272832, increased RAM: 1 GB.  5206 ms
-    DEBUG USE 67321.12: tick=2 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=2 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG3: -- --  preprocess() Step 3: cs1e_pp: 3166657, INCREASED RAM: 288 MB.  1646 ms
 [job 0] LOG4: -- -- --  setup_qa cols: 3166657, rows: 4 12 us
-    DEBUG USE 67321.12: tick=3 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=4 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=5 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=3 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=4 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=5 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG4: -- -- --  setup_qa step 1. build p: 3166657. 30188 ms
 [job 0] LOG4: -- -- --  setup_qa step 2. build c2: 4. 83 ms
 [job 0] LOG4: -- -- --  setup_qa step 2. build vk 134 ns
@@ -403,14 +403,14 @@ DEBUG USE 6901.5: last_loc: 31745, cost: 15 ms
 [job 0] LOG2: --  Driver New: Step 3.5: create default z0 529 us
 [job 0] LOG1:  BatchProcessor step 1. BEFOFORE setting up kzg: 67424197, RAM NOW: 17 GB 195 ms
 test zkp_driver::tests_zkp_driver::test_zkreg_main has been running for over 60 seconds
-    DEBUG USE 67321.12: tick=6 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=7 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=8 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=9 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=6 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=7 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=8 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=9 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG1:  BatchProcessor step 2. setting up kzg: 67424197, INCREASED RAM now: 9 GB.  46735 ms
 [job 0] LOG1:  BatchProcessor step 3. setting up veccom: 16, INCREASED RAM: 0 MB  176 ms
 [job 0] LOG1:  BatchProcessor step 4. setting up matrix: 35, INCREASED RAM now: 0 MB 176 ms
-    DEBUG USE 67321.12: tick=10 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=10 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG1:  BatchProcessor step 5. setting up qa_nizk, INCREASED RAM: 0 MB.  177 ms
 [job 0] LOG1:  BatchProcessor step 5. setting up qa_nizk, INCREASED RAM: 9 GB, TOTAL RAM now: 26 GB.  47635 ms
 [job 0] LOG2: --  Driver New: Step 4: batch param 47635 ms
@@ -475,11 +475,11 @@ test zkp_driver::tests_zkp_driver::test_zkreg_main has been running for over 60 
 === Now Execute All Jobs =====
  7527 ms
 [job 0] LOG1:  --- Job 0 starts ---
-    DEBUG USE 67321.12: tick=11 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=12 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=13 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=14 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=15 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=11 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=12 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=13 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=14 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=15 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG2: --  PERF 1007. Phase 1 step 1: generate batch/ind claims. mem: 26 GB, increased mem: 0 MB, for words: 16, total_word_len: 34071 packed fields. 48835 ms
 [job 0] LOG4: -- -- --  plan_nd_advice step 0. layers: 1, word.len(): 2132, b_save_adivce: false 1 us
 [job 0] LOG1:  -- CpMapper gen_adv step1 9 ms
@@ -1178,7 +1178,7 @@ DEBUG USE 6901.8: StepBwdPrf: prf_bwd, b_igc: true usage: 0
 [job 0] LOG4: -- -- --  PERF 1009: -- Pass 1. gen_advice. 200 ms
 DEBUG USE 7500: data[0]: 512, data[1]: 7, si_data[0]: , si_data[1]: 1879048193
 DEBUG USE 7500: inp.len: 419, oup.len: 419, data.len: 558847
-    DEBUG USE 67321.12: tick=16 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=16 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG4: -- -- --  PERF 1009: -- Pass 1. build stmt. 68 ms
 [job 0] LOG4: -- -- --  PERF 1009: -- Pass 1. update, END of dispatching lkup for step 0 of 5 .  44 ms
 [job 0] LOG4: -- -- --  PERF 1009: -- Pass 1. For wd: data/samples/binexec_merged128k/systemd-shutdownd, subseg_id: 2 gen_statment_extra_info. 11 us
@@ -3282,7 +3282,7 @@ DEBUG USE 6901.8: step queue: temp, b_igc: false usage: 0
 DEBUG USE 6901.8: step queue: temp, b_igc: true usage: 0
 [job 0] LOG1:  -- Sed advice step1: word_extract 3 ms
 [job 0] LOG1:  -- -- fsm_gen_fsm_combo 12 ms
-    DEBUG USE 67321.12: tick=17 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=17 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG1:  -- -- fsm_packed_trace 9 ms
 [job 0] LOG1:  -- Sed advice step2: fsm_cs 23 ms
 [job 0] LOG1:  -- -- fsm_gen_fsm_combo 13 ms
@@ -5461,7 +5461,7 @@ DEBUG USE 6901.8: StepBwdPrf: prf_bwd, b_igc: true usage: 0
 DEBUG USE 6901.8: step queue: temp, b_igc: false usage: 0
 DEBUG USE 6901.8: step queue: temp, b_igc: true usage: 0
 [job 0] LOG1:  -- Sed advice step1: word_extract 6 ms
-    DEBUG USE 67321.12: tick=18 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=18 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG1:  -- -- fsm_gen_fsm_combo 17 ms
 [job 0] LOG1:  -- -- fsm_packed_trace 12 ms
 [job 0] LOG1:  -- Sed advice step2: fsm_cs 30 ms
@@ -7578,7 +7578,7 @@ DEBUG USE 6901.8: StepBwdPrf: prf_bwd, b_igc: true usage: 0
 [job 0] LOG1:  -- Sed advice step5: discharge_igc 10 ms
 [job 0] LOG1:  -- Sed advice step6: compute_sig 3 ms
 [job 0] LOG1:  -- DFA advice step1: word_extract 5 ms
-    DEBUG USE 67321.12: tick=19 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=19 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG1:  -- DFA advice step2: dfa 8 ms
 [job 0] LOG1:  -- DFA advice step1: word_extract 4 ms
 [job 0] LOG1:  -- DFA advice step2: dfa 6 ms
@@ -8292,7 +8292,7 @@ DEBUG USE 6901: last_loc: 158721
 DEBUG USE 6901.8: step queue: sq_to_del, b_igc: false usage: 0
 DEBUG USE 6901.8: step queue: sq_res2, b_igc: false usage: 0
 DEBUG USE 6901.8: StepBwdPrf: prf_bwd, b_igc: false usage: 0
-    DEBUG USE 67321.12: tick=20 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=20 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG1:  -- Sed advice step4: discharge_cs 19 ms
 DEBUG USE 6901.8: step queue: sq_inp, b_igc: true usage: 0
 DEBUG USE 6901.8: step queue: sq_to_add, b_igc: true usage: 0
@@ -8992,7 +8992,7 @@ DEBUG USE 7500: data[0]: 512, data[1]: 6, si_data[0]: , si_data[1]: 1879048193
 DEBUG USE 7500: inp.len: 419, oup.len: 419, data.len: 558847
 [job 0] LOG4: -- -- --  PERF 1009: -- Pass2. gen statement 74 ms
 [job 0] LOG4: -- -- --  PERF 1009: -- Pass 2. update lkup, share_size: 16 335 us
-    DEBUG USE 67321.12: tick=21 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=21 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG4: -- -- --  PERF 1009 -- Pass 2. compute cmF.  476 ms
 [job 0] LOG4: -- -- --  PERF 1009 -- Pass 2. update extra info.  2 us
 [job 0] LOG1:  -- CpMapper gen_adv step1 8 ms
@@ -9719,7 +9719,7 @@ DEBUG USE 7500: data[0]: 512, data[1]: 13, si_data[0]: , si_data[1]: 1879048193
 DEBUG USE 7500: inp.len: 419, oup.len: 419, data.len: 558847
 [job 0] LOG4: -- -- --  PERF 1009: -- Pass2. gen statement 61 ms
 [job 0] LOG4: -- -- --  PERF 1009: -- Pass 2. update lkup, share_size: 16 251 us
-    DEBUG USE 67321.12: tick=22 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=22 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG4: -- -- --  PERF 1009 -- Pass 2. compute cmF.  454 ms
 [job 0] LOG4: -- -- --  PERF 1009 -- Pass 2. update extra info.  3 us
 [job 0] LOG1:  -- CpMapper gen_adv step1 7 ms
@@ -10421,7 +10421,7 @@ DEBUG USE 6901.8: step queue: sq_inp, b_igc: false usage: 0
 DEBUG USE 6901.8: step queue: sq_to_add, b_igc: false usage: 0
 DEBUG USE 6901.8: step queue: sq_res, b_igc: false usage: 0
 DEBUG USE 6901.8: StepFwdPrf: prf_fwd, b_igc: false usage: 0
-    DEBUG USE 67321.12: tick=23 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=23 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 DEBUG USE 6901: last_loc: 126977
 DEBUG USE 6901.8: step queue: sq_to_del, b_igc: false usage: 0
 DEBUG USE 6901.8: step queue: sq_res2, b_igc: false usage: 0
@@ -11125,7 +11125,7 @@ DEBUG USE 7500: data[0]: 512, data[1]: 8, si_data[0]: , si_data[1]: 1879048193
 DEBUG USE 7500: inp.len: 419, oup.len: 419, data.len: 558847
 [job 0] LOG4: -- -- --  PERF 1009: -- Pass2. gen statement 72 ms
 [job 0] LOG4: -- -- --  PERF 1009: -- Pass 2. update lkup, share_size: 16 150 us
-    DEBUG USE 67321.12: tick=24 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=24 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG4: -- -- --  PERF 1009 -- Pass 2. compute cmF.  462 ms
 [job 0] LOG4: -- -- --  PERF 1009 -- Pass 2. update extra info.  4 us
 [job 0] LOG1:  -- CpMapper gen_adv step1 10 ms
@@ -11468,12 +11468,12 @@ DEBUG USE 7500: inp.len: 419, oup.len: 419, data.len: 558847
 [job 0] LOG4: -- -- --  PERF 1009 -- Pass 2. update extra info.  3 us
 [job 0] LOG4: -- -- --  PERF 1008: Phase 1 - Pass 2. END generate cmF for word_id: 16 of 16, fname: data/samples/binexec_merged128k/chgpasswd, word_len: 64.12 KB.  3414 ms
 [job 0] LOG2: --  PERF 1007: Phase 1 step 3: generate cmF, mem: 0 MB for total_word_len: 1.01 MB:  54826 ms
-    DEBUG USE 67321.12: tick=25 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=26 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=27 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=28 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=29 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=30 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=25 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=26 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=27 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=28 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=29 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=30 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG2: --  PERF 1007: Phase 1 step 4: generate batch prf, mem: 0 MB for words: 16, n_steps: 80:  55022 ms
 [job 0] LOG2: --  PERF 1007: Phase 1 step 5: prep for proving steps words: 16, n_steps: 80: total_word_len: 34071.  640 us
 [job 0] LOG5: -- -- -- --  -- circuit_super gen_cs: START: cs: 0, vars: 0 953 ns
@@ -23493,7 +23493,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 26 filtered out; fin
 
 === iteration: num_jobs = 2 ===
   patched zkp_driver.rs: num_jobs = 2
-  launching /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/zkregplus/src/compile.sh...
+  launching /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/zkregplus/src/compile.sh...
 
 running 1 test
 [job 0] LOG1:  === ZKP driver starts ====
@@ -23696,10 +23696,10 @@ running 1 test
 [job 0] LOG6: -- -- -- -- --  PERF 2001.1 build trans time for states:: 145, trans: 2224 186 us
 [job 0] LOG6: -- -- -- -- --  PERF 2001.1 build trans time for states:: 145, trans: 2224 181 us
   worker PID = 795317
-  DEBUG USE 67321.0: captured cmdline='/home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/target/release/deps/zkregplus-0f1e75d3133acb40 test_zkreg_main --show-output --nocapture'
-    DEBUG USE 67321.1: pid=795317 cmdline='/home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/target/release/deps/zkregplus-0f1e75d3133acb40 test_zkreg_main --show-output --nocapture'
+  DEBUG USE 67321.0: captured cmdline='/home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/target/release/deps/zkregplus-0f1e75d3133acb40 test_zkreg_main --show-output --nocapture'
+    DEBUG USE 67321.1: pid=795317 cmdline='/home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/target/release/deps/zkregplus-0f1e75d3133acb40 test_zkreg_main --show-output --nocapture'
     DEBUG USE 67321.3: prime cpu_percent=0.0 status=sleeping nthreads=34
-    DEBUG USE 67321.12: tick=1 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=1 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG1:  ZIP driver step 1: build DB. 10990 ms
   First file: data/samples/binexec_merged128k/systemd-shutdownd
   First file: data/samples/binexec_merged128k/chgpasswd
@@ -23880,12 +23880,12 @@ DEBUG USE 6901.5: last_loc: 31745, cost: 9 ms
 [job 0] LOG5: -- -- -- --  -- circuit_super gen_cs step 12: cs: 0, vars: 0 388 ns
 [job 0] LOG3: -- --  PERF 1002 circ 1, r1cs cols: 1893827, rows: 1272832
 [job 0] LOG3: -- --  preprocess() Step 2: setup circ params. circs: 1, max_circ_pp: 1893827, total_w: 1893824, total_e: 1272832, increased RAM: 1 GB.  5152 ms
-    DEBUG USE 67321.12: tick=2 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=2 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG3: -- --  preprocess() Step 3: cs1e_pp: 3166657, INCREASED RAM: 288 MB.  1735 ms
 [job 0] LOG4: -- -- --  setup_qa cols: 3166657, rows: 4 10 us
-    DEBUG USE 67321.12: tick=3 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=4 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=5 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=3 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=4 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=5 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG4: -- -- --  setup_qa step 1. build p: 3166657. 30186 ms
 [job 0] LOG4: -- -- --  setup_qa step 2. build c2: 4. 75 ms
 [job 0] LOG4: -- -- --  setup_qa step 2. build vk 110 ns
@@ -23895,11 +23895,11 @@ DEBUG USE 6901.5: last_loc: 31745, cost: 9 ms
 [job 0] LOG2: --  Driver New: Step 3.5: create default z0 534 us
 [job 0] LOG1:  BatchProcessor step 1. BEFOFORE setting up kzg: 67424197, RAM NOW: 17 GB 275 ms
 test zkp_driver::tests_zkp_driver::test_zkreg_main has been running for over 60 seconds
-    DEBUG USE 67321.12: tick=6 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=7 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=8 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=9 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=10 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=6 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=7 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=8 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=9 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=10 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG1:  BatchProcessor step 2. setting up kzg: 67424197, INCREASED RAM now: 9 GB.  47199 ms
 [job 0] LOG1:  BatchProcessor step 3. setting up veccom: 16, INCREASED RAM: 0 MB  129 ms
 [job 0] LOG1:  BatchProcessor step 4. setting up matrix: 35, INCREASED RAM now: 0 MB 126 ms
@@ -23968,11 +23968,11 @@ test zkp_driver::tests_zkp_driver::test_zkreg_main has been running for over 60 
  7958 ms
 [job 0] LOG1:  --- Job 0 starts ---
 [job 1] LOG1:  --- Job 1 starts ---
-    DEBUG USE 67321.12: tick=11 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=12 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=13 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=14 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=15 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=11 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=12 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=13 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=14 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=15 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 1] LOG2: --  PERF 1007. Phase 1 step 1: generate batch/ind claims. mem: 29 GB, increased mem: 2058 MB, for words: 16, total_word_len: 34053 packed fields. 50228 ms
 [job 1] LOG4: -- -- --  plan_nd_advice step 0. layers: 1, word.len(): 2118, b_save_adivce: false 1 us
 [job 1] LOG1:  -- CpMapper gen_adv step1 8 ms
@@ -24480,7 +24480,7 @@ DEBUG USE 6901.8: StepBwdPrf: prf_bwd, b_igc: true usage: 0
 [job 0] LOG1:  -- DFA advice step1: word_extract 3 ms
 [job 1] LOG4: -- -- --  PERF 1009: -- Pass 1. update, END of dispatching lkup for step 1 of 5 .  38 ms
 [job 1] LOG4: -- -- --  PERF 1009: -- Pass 1. For wd: data/samples/binexec_merged128k/chgpasswd, subseg_id: 3 gen_statment_extra_info. 6 us
-    DEBUG USE 67321.12: tick=16 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=16 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG1:  -- DFA advice step2: dfa 5 ms
 [job 1] LOG1:  -- CpMapper gen_adv step1 8 ms
 [job 0] LOG1:  -- DFA advice step1: word_extract 4 ms
@@ -30838,7 +30838,7 @@ DEBUG USE 6901: last_loc: 126977
 DEBUG USE 6901.8: step queue: sq_to_del, b_igc: true usage: 0
 [job 0] LOG1:  -- CpMapper gen_adv step3: sig 294 ns
 DEBUG USE 6901.8: step queue: sq_res2, b_igc: true usage: 0
-    DEBUG USE 67321.12: tick=17 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=17 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 DEBUG USE 6901.8: StepBwdPrf: prf_bwd, b_igc: true usage: 0
 [job 0] LOG1:  -- CpMapper gen_adv step4: assemble 127 us
 DEBUG USE 6901.8: step queue: temp, b_igc: false usage: 0
@@ -37159,7 +37159,7 @@ DEBUG USE 7500: inp.len: 419, oup.len: 419, data.len: 558847
 [job 1] LOG1:  -- CpMapper gen_adv step2: pack_res 2 ms
 [job 1] LOG1:  -- CpMapper gen_adv step3: sig 364 ns
 [job 1] LOG1:  -- CpMapper gen_adv step4: assemble 159 us
-    DEBUG USE 67321.12: tick=18 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=18 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 1] LOG1:  -- CpMapper gen_adv step1 8 ms
 [job 1] LOG1:  -- CpMapper gen_adv step2: pack_res 8 ms
 [job 1] LOG1:  -- CpMapper gen_adv step3: sig 603 ns
@@ -39490,7 +39490,7 @@ DEBUG USE 7500: inp.len: 419, oup.len: 419, data.len: 558847
 DEBUG USE 7500: inp.len: 419, oup.len: 419, data.len: 558847
 [job 1] LOG4: -- -- --  PERF 1009: -- Pass2. gen statement 83 ms
 [job 1] LOG4: -- -- --  PERF 1009: -- Pass 2. update lkup, share_size: 16 19 us
-    DEBUG USE 67321.12: tick=19 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=19 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG4: -- -- --  PERF 1009 -- Pass 2. compute cmF.  462 ms
 [job 0] LOG4: -- -- --  PERF 1009 -- Pass 2. update extra info.  2 us
 [job 0] LOG1:  -- CpMapper gen_adv step1 8 ms
@@ -41137,7 +41137,7 @@ DEBUG USE 7500: data[0]: 84, data[1]: , si_data[0]: , si_data[1]: 1879048193
 DEBUG USE 7500: inp.len: 419, oup.len: 419, data.len: 558847
 [job 0] LOG4: -- -- --  PERF 1009: -- Pass2. gen statement 52 ms
 [job 0] LOG4: -- -- --  PERF 1009: -- Pass 2. update lkup, share_size: 16 21 us
-    DEBUG USE 67321.12: tick=20 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=20 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 1] LOG4: -- -- --  PERF 1009 -- Pass 2. compute cmF.  437 ms
 [job 1] LOG4: -- -- --  PERF 1009 -- Pass 2. update extra info.  506 ns
 [job 1] LOG1:  -- CpMapper gen_adv step1 9 ms
@@ -42784,7 +42784,7 @@ DEBUG USE 7500: data[0]: 512, data[1]: 4, si_data[0]: , si_data[1]: 1879048193
 DEBUG USE 7500: inp.len: 419, oup.len: 419, data.len: 558847
 [job 0] LOG4: -- -- --  PERF 1009: -- Pass2. gen statement 58 ms
 [job 0] LOG4: -- -- --  PERF 1009: -- Pass 2. update lkup, share_size: 16 22 us
-    DEBUG USE 67321.12: tick=21 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=21 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 1] LOG4: -- -- --  PERF 1009 -- Pass 2. compute cmF.  448 ms
 [job 1] LOG4: -- -- --  PERF 1009 -- Pass 2. update extra info.  2 us
 [job 1] LOG1:  -- CpMapper gen_adv step1 8 ms
@@ -44429,7 +44429,7 @@ DEBUG USE 7500: data[0]: 512, data[1]: 13, si_data[0]: , si_data[1]: 1879048193
 DEBUG USE 7500: inp.len: 419, oup.len: 419, data.len: 558847
 [job 0] LOG4: -- -- --  PERF 1009: -- Pass2. gen statement 63 ms
 [job 0] LOG4: -- -- --  PERF 1009: -- Pass 2. update lkup, share_size: 16 20 us
-    DEBUG USE 67321.12: tick=22 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=22 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 1] LOG4: -- -- --  PERF 1009 -- Pass 2. compute cmF.  455 ms
 [job 1] LOG4: -- -- --  PERF 1009 -- Pass 2. update extra info.  3 us
 [job 1] LOG4: -- -- --  PERF 1008: Phase 1 - Pass 2. END generate cmF for word_id: 13 of 16, fname: data/samples/binexec_merged128k/chgpasswd, word_len: 64.12 KB.  2902 ms
@@ -45938,15 +45938,15 @@ DEBUG USE 7500: inp.len: 419, oup.len: 419, data.len: 558847
 [job 0] LOG4: -- -- --  PERF 1009 -- Pass 2. update extra info.  3 us
 [job 0] LOG4: -- -- --  PERF 1008: Phase 1 - Pass 2. END generate cmF for word_id: 16 of 16, fname: data/samples/binexec_merged128k/chgpasswd, word_len: 64.12 KB.  3131 ms
 [job 0] LOG2: --  PERF 1007: Phase 1 step 3: generate cmF, mem: 3887 MB for total_word_len: 1.01 MB:  47603 ms
-    DEBUG USE 67321.12: tick=23 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=24 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=25 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=26 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=27 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=28 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=23 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=24 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=25 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=26 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=27 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=28 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 1] LOG2: --  PERF 1007: Phase 1 step 4: generate batch prf, mem: 3945 MB for words: 16, n_steps: 80:  60879 ms
 [job 1] LOG2: --  PERF 1007: Phase 1 step 5: prep for proving steps words: 16, n_steps: 80: total_word_len: 34053.  634 us
-    DEBUG USE 67321.12: tick=29 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=29 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG2: --  PERF 1007: Phase 1 step 4: generate batch prf, mem: 0 MB for words: 16, n_steps: 80:  60247 ms
 [job 0] LOG2: --  PERF 1007: Phase 1 step 5: prep for proving steps words: 16, n_steps: 80: total_word_len: 34071.  603 us
 [job 1] LOG5: -- -- -- --  -- circuit_super gen_cs: START: cs: 0, vars: 0 1 us
@@ -69939,7 +69939,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 26 filtered out; fin
 
 === iteration: num_jobs = 4 ===
   patched zkp_driver.rs: num_jobs = 4
-  launching /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/zkregplus/src/compile.sh...
+  launching /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/zkregplus/src/compile.sh...
 
 running 1 test
 [job 0] LOG1:  === ZKP driver starts ====
@@ -70142,8 +70142,8 @@ running 1 test
 [job 0] LOG6: -- -- -- -- --  PERF 2001.1 build trans time for states:: 145, trans: 2224 179 us
 [job 0] LOG6: -- -- -- -- --  PERF 2001.1 build trans time for states:: 145, trans: 2224 140 us
   worker PID = 795637
-  DEBUG USE 67321.0: captured cmdline='/home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/target/release/deps/zkregplus-0f1e75d3133acb40 test_zkreg_main --show-output --nocapture'
-    DEBUG USE 67321.1: pid=795637 cmdline='/home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/target/release/deps/zkregplus-0f1e75d3133acb40 test_zkreg_main --show-output --nocapture'
+  DEBUG USE 67321.0: captured cmdline='/home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/target/release/deps/zkregplus-0f1e75d3133acb40 test_zkreg_main --show-output --nocapture'
+    DEBUG USE 67321.1: pid=795637 cmdline='/home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/target/release/deps/zkregplus-0f1e75d3133acb40 test_zkreg_main --show-output --nocapture'
     DEBUG USE 67321.3: prime cpu_percent=0.0 status=sleeping nthreads=34
 [job 0] LOG1:  ZIP driver step 1: build DB. 10969 ms
   First file: data/samples/binexec_merged128k/systemd-shutdownd
@@ -70151,7 +70151,7 @@ running 1 test
   First file: data/samples/binexec_merged128k/systemd-efi-boot-generator
   First file: data/samples/binexec_merged128k/systemd-shutdownd
 [job 0] LOG1:  ZIP driver step 2: load words and prepare 4 jobs. 130 ms
-    DEBUG USE 67321.12: tick=1 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=1 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG1:  -- -- fsm_gen_fsm_combo 6 ms
 [job 0] LOG1:  -- -- fsm_packed_trace 5 ms
 [job 0] LOG1:  -- -- fsm_gen_fsm_combo 5 ms
@@ -70328,12 +70328,12 @@ DEBUG USE 6901.5: last_loc: 31745, cost: 14 ms
 [job 0] LOG5: -- -- -- --  -- circuit_super gen_cs step 12: cs: 0, vars: 0 418 ns
 [job 0] LOG3: -- --  PERF 1002 circ 1, r1cs cols: 1893827, rows: 1272832
 [job 0] LOG3: -- --  preprocess() Step 2: setup circ params. circs: 1, max_circ_pp: 1893827, total_w: 1893824, total_e: 1272832, increased RAM: 1 GB.  5165 ms
-    DEBUG USE 67321.12: tick=2 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=2 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG3: -- --  preprocess() Step 3: cs1e_pp: 3166657, INCREASED RAM: 288 MB.  1654 ms
 [job 0] LOG4: -- -- --  setup_qa cols: 3166657, rows: 4 13 us
-    DEBUG USE 67321.12: tick=3 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=4 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=5 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=3 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=4 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=5 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG4: -- -- --  setup_qa step 1. build p: 3166657. 30353 ms
 [job 0] LOG4: -- -- --  setup_qa step 2. build c2: 4. 99 ms
 [job 0] LOG4: -- -- --  setup_qa step 2. build vk 128 ns
@@ -70343,11 +70343,11 @@ DEBUG USE 6901.5: last_loc: 31745, cost: 14 ms
 [job 0] LOG2: --  Driver New: Step 3.5: create default z0 531 us
 [job 0] LOG1:  BatchProcessor step 1. BEFOFORE setting up kzg: 67424197, RAM NOW: 17 GB 203 ms
 test zkp_driver::tests_zkp_driver::test_zkreg_main has been running for over 60 seconds
-    DEBUG USE 67321.12: tick=6 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=7 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=8 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=9 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=10 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=6 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=7 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=8 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=9 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=10 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG1:  BatchProcessor step 2. setting up kzg: 67424197, INCREASED RAM now: 9 GB.  47783 ms
 [job 0] LOG1:  BatchProcessor step 3. setting up veccom: 16, INCREASED RAM: 0 MB  167 ms
 [job 0] LOG1:  BatchProcessor step 4. setting up matrix: 35, INCREASED RAM now: 0 MB 166 ms
@@ -70418,12 +70418,12 @@ test zkp_driver::tests_zkp_driver::test_zkreg_main has been running for over 60 
 [job 2] LOG1:  --- Job 2 starts ---
 [job 1] LOG1:  --- Job 1 starts ---
 [job 3] LOG1:  --- Job 3 starts ---
-    DEBUG USE 67321.12: tick=11 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=12 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=13 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=14 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=15 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=16 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=11 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=12 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=13 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=14 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=15 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=16 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 3] LOG2: --  PERF 1007. Phase 1 step 1: generate batch/ind claims. mem: 31 GB, increased mem: 4115 MB, for words: 16, total_word_len: 34055 packed fields. 58234 ms
 [job 2] LOG2: --  PERF 1007. Phase 1 step 1: generate batch/ind claims. mem: 31 GB, increased mem: 4115 MB, for words: 16, total_word_len: 34057 packed fields. 58281 ms
 [job 0] LOG2: --  PERF 1007. Phase 1 step 1: generate batch/ind claims. mem: 31 GB, increased mem: 4115 MB, for words: 16, total_word_len: 34071 packed fields. 58281 ms
@@ -72777,7 +72777,7 @@ DEBUG USE 6901.8: step queue: temp, b_igc: true usage: 0
 [job 2] LOG1:  -- CpMapper gen_adv step3: sig 538 ns
 [job 2] LOG1:  -- CpMapper gen_adv step4: assemble 188 us
 [job 1] LOG1:  -- Sed advice step1: word_extract 2 ms
-    DEBUG USE 67321.12: tick=17 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=17 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 1] LOG1:  -- -- fsm_gen_fsm_combo 6 ms
 [job 2] LOG1:  -- CpMapper gen_adv step1 8 ms
 [job 1] LOG1:  -- -- fsm_packed_trace 2 ms
@@ -82496,7 +82496,7 @@ DEBUG USE 7500: data[0]: 81, data[1]: 9, si_data[0]: , si_data[1]: 1879048193
 [job 3] LOG4: -- -- --  PERF 1001: plan_nd_advice for data/samples/binexec_merged128k/systemd-shutdownd, search_mode (fast): true, best_layer: 0, pci: 0, word.len in rounded bytes: 67158. 855 ms
 [job 3] LOG4: -- -- --  PERF 1008: Phase 1 - Pass 1: START decide circ alloc for word_id: 7, fname: data/samples/binexec_merged128k/systemd-shutdownd, word_len: 64.54 KB.  856 ms
 [job 3] LOG4: -- -- --  PERF 1009: -- Pass 1. For wd: data/samples/binexec_merged128k/systemd-shutdownd, subseg_id: 1 gen_statment_extra_info. 11 us
-    DEBUG USE 67321.12: tick=18 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=18 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 1] LOG1:  -- -- fsm_gen_fsm_combo 6 ms
 [job 1] LOG1:  -- -- fsm_packed_trace 2 ms
 [job 1] LOG1:  -- Sed advice step3: fsm_igc 9 ms
@@ -92369,7 +92369,7 @@ DEBUG USE 6901.8: StepBwdPrf: prf_bwd, b_igc: true usage: 0
 [job 2] LOG1:  -- Sed advice step6: compute_sig 606 us
 [job 1] LOG1:  -- Sed advice step6: compute_sig 509 us
 [job 2] LOG1:  -- DFA advice step1: word_extract 4 ms
-    DEBUG USE 67321.12: tick=19 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=19 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 1] LOG1:  -- DFA advice step1: word_extract 3 ms
 [job 2] LOG1:  -- DFA advice step2: dfa 6 ms
 [job 1] LOG1:  -- DFA advice step2: dfa 6 ms
@@ -99614,7 +99614,7 @@ DEBUG USE 7500: inp.len: 419, oup.len: 419, data.len: 558847
 DEBUG USE 7500: data[0]: 512, data[1]: 6, si_data[0]: , si_data[1]: 1879048193
 [job 3] LOG4: -- -- --  PERF 1009 -- Pass 2. compute cmF.  495 ms
 [job 3] LOG4: -- -- --  PERF 1009 -- Pass 2. update extra info.  4 us
-    DEBUG USE 67321.12: tick=20 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=20 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 3] LOG1:  -- CpMapper gen_adv step1 8 ms
 [job 3] LOG1:  -- CpMapper gen_adv step2: pack_res 2 ms
 [job 3] LOG1:  -- CpMapper gen_adv step3: sig 332 ns
@@ -102618,7 +102618,7 @@ DEBUG USE 7500: inp.len: 419, oup.len: 419, data.len: 558847
 [job 3] LOG4: -- -- --  PERF 1009: -- Pass 2. update lkup, share_size: 16 18 us
 [job 0] LOG4: -- -- --  PERF 1009: -- Pass2. gen statement 90 ms
 [job 0] LOG4: -- -- --  PERF 1009: -- Pass 2. update lkup, share_size: 16 15 us
-    DEBUG USE 67321.12: tick=21 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=21 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 1] LOG4: -- -- --  PERF 1009 -- Pass 2. compute cmF.  466 ms
 [job 1] LOG4: -- -- --  PERF 1009 -- Pass 2. update extra info.  3 us
 [job 1] LOG1:  -- CpMapper gen_adv step1 7 ms
@@ -105674,7 +105674,7 @@ DEBUG USE 7500: inp.len: 419, oup.len: 419, data.len: 558847
 [job 0] LOG4: -- -- --  PERF 1009: -- Pass2. gen statement 63 ms
 [job 0] LOG4: -- -- --  PERF 1009: -- Pass 2. update lkup, share_size: 16 9 us
 [job 3] LOG1:  -- CpMapper gen_adv step1 7 ms
-    DEBUG USE 67321.12: tick=22 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=22 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 2] LOG4: -- -- --  PERF 1009 -- Pass 2. compute cmF.  415 ms
 [job 2] LOG4: -- -- --  PERF 1009 -- Pass 2. update extra info.  2 us
 [job 2] LOG4: -- -- --  PERF 1008: Phase 1 - Pass 2. END generate cmF for word_id: 7 of 16, fname: data/samples/binexec_merged128k/db_dump185, word_len: 64.45 KB.  3173 ms
@@ -108720,7 +108720,7 @@ DEBUG USE 7500: inp.len: 419, oup.len: 419, data.len: 558847
 [job 2] LOG4: -- -- --  PERF 1009: -- Pass 2. update lkup, share_size: 16 14 us
 [job 1] LOG4: -- -- --  PERF 1009: -- Pass2. gen statement 84 ms
 [job 1] LOG4: -- -- --  PERF 1009: -- Pass 2. update lkup, share_size: 16 17 us
-    DEBUG USE 67321.12: tick=23 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=23 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 3] LOG4: -- -- --  PERF 1009 -- Pass 2. compute cmF.  500 ms
 [job 3] LOG4: -- -- --  PERF 1009 -- Pass 2. update extra info.  2 ms
 [job 3] LOG1:  -- CpMapper gen_adv step1 7 ms
@@ -111729,7 +111729,7 @@ DEBUG USE 6901.8: StepBwdPrf: prf_bwd, b_igc: true usage: 0
 [job 3] LOG1:  -- -- fsm_gen_fsm_combo 7 ms
 [job 3] LOG1:  -- -- fsm_packed_trace 2 ms
 [job 3] LOG1:  -- Sed advice step2: fsm_cs 10 ms
-    DEBUG USE 67321.12: tick=24 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=24 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG1:  -- CpMapper gen_adv step1 8 ms
 [job 2] LOG1:  -- DFA advice step2: dfa 6 ms
 [job 0] LOG1:  -- CpMapper gen_adv step2: pack_res 3 ms
@@ -114298,7 +114298,7 @@ DEBUG USE 7500: inp.len: 419, oup.len: 419, data.len: 558847
 [job 3] LOG4: -- -- --  PERF 1009: -- Pass 2. update lkup, share_size: 16 49 us
 [job 3] LOG4: -- -- --  PERF 1009 -- Pass 2. compute cmF.  467 ms
 [job 3] LOG4: -- -- --  PERF 1009 -- Pass 2. update extra info.  4 ms
-    DEBUG USE 67321.12: tick=25 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=25 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 3] LOG1:  -- CpMapper gen_adv step1 7 ms
 [job 3] LOG1:  -- CpMapper gen_adv step2: pack_res 2 ms
 [job 3] LOG1:  -- CpMapper gen_adv step3: sig 331 ns
@@ -114349,16 +114349,16 @@ DEBUG USE 7500: inp.len: 419, oup.len: 419, data.len: 558847
 [job 3] LOG4: -- -- --  PERF 1009 -- Pass 2. update extra info.  4 us
 [job 3] LOG4: -- -- --  PERF 1008: Phase 1 - Pass 2. END generate cmF for word_id: 16 of 16, fname: data/samples/binexec_merged128k/db_dump185, word_len: 64.45 KB.  3937 ms
 [job 3] LOG2: --  PERF 1007: Phase 1 step 3: generate cmF, mem: 15858 MB for total_word_len: 1.01 MB:  52451 ms
-    DEBUG USE 67321.12: tick=26 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=27 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=28 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=29 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=30 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=31 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=32 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=33 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=34 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
-    DEBUG USE 67321.12: tick=35 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=26 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=27 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=28 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=29 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=30 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=31 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=32 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=33 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=34 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=35 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG2: --  PERF 1007: Phase 1 step 4: generate batch prf, mem: 52718 MB for words: 16, n_steps: 80:  107151 ms
 [job 0] LOG2: --  PERF 1007: Phase 1 step 5: prep for proving steps words: 16, n_steps: 80: total_word_len: 34071.  613 us
 [job 2] LOG2: --  PERF 1007: Phase 1 step 4: generate batch prf, mem: 43285 MB for words: 16, n_steps: 80:  106445 ms
@@ -114747,7 +114747,7 @@ DEBUG USE 6901.5: last_loc: 31745, cost: 11 ms
 [job 1] LOG5: -- -- -- --  -- circuit_super gen_cs step 12: cs: 0, vars: 0 403 ns
 [job 3] LOG5: -- -- -- --  -- circuit_super gen_cs step 11: cs: 51394, vars: 50459 91 ms
 [job 3] LOG5: -- -- -- --  -- circuit_super gen_cs step 12: cs: 0, vars: 0 434 ns
-    DEBUG USE 67321.12: tick=36 trigger not yet in /home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
+    DEBUG USE 67321.12: tick=36 trigger not yet in /home/anon/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/new_zkregplus/data/cache/logs/log_job_0.txt (status=sleeping)
 [job 0] LOG2: --  PERF 1007: Phase 1 step 6: build nova. Cost depends on cs1e.len. Now proving ... 6917 ms
 [job 0] LOG4: -- -- --  PERF 1008: Phase 1 - Pass 3. START prove steps for word_id: 1, fname: data/samples/binexec_merged128k/systemd-shutdownd, word_len: 64.54 KB.  21 us
 [job 0] LOG1:  -- CpMapper gen_adv step1 8 ms

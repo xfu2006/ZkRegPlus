@@ -1,6 +1,6 @@
 # ----------------------------
 # Measure the DFA size
-# Created: Dr. Xiang
+# Created: BORA paper author
 # 06/30/2024
 #
 # Rust cannot deal with memout nicely.

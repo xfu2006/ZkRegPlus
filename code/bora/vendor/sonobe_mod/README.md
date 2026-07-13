@@ -8,7 +8,7 @@ malware regex signatures). The branch fork starts from
 snapshot: 21ff3cf1ab825dd1c741cf0f028ac5934ef0f19d of the original
 Sonobe repo. 
 
-Author: Dr. Xiang Fu
+Author: BORA paper author
 
 Experimental folding schemes library implemented jointly by [0xPARC](https://0xparc.org/) and [PSE](https://pse.dev).
 
