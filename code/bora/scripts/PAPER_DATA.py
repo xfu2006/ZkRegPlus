@@ -104,7 +104,9 @@ SMALL_REPORT = os.path.join(REPO, "data/small_data_set/reports/report.dat")
 #      flip via the CLI flags wired up in main()) ----------------------
 CLAM_WIPE_DB = True      # prod default: wipe+rebuild the ~40GB DB
 CLAM_FOLD_ONLY = False   # prod default: proc2 emits ONE verified proof
-DLP_EMIT_PROOF = False   # prod default: fold-only, no decider/proof
+DLP_EMIT_PROOF = True    # prod default: proc2 emits ONE verified proof
+DLP_PCT = 100            # dlp corpus sample %: strided every-k-th (1..100).
+                         # <100 uses _pct-tagged dirs; never clobbers 100%.
 # Job count is FIXED at 8 and is NOT configurable (no CLI flag): the
 # paper's two-process NUMA scheme is exactly 4+4, clam is bound to its 8
 # binexec_p0..p7 manifests, and the two-half split assumes N/2==4.  8 is
@@ -319,7 +321,7 @@ def dlp_env(read_mode, fold_only, one_proof, wait_flag, tag):
     e = base_rust_env()
     e["ZKR_NUMA"] = "off"
     e["ZKR_DLP_RUNCFG"] = _DLP_EFF
-    e["ZKR_DLP_PCT"] = "100"
+    e["ZKR_DLP_PCT"] = str(DLP_PCT)
     e["ZKR_DLP_READ_MODE"] = read_mode
     e["ZKR_DLP_FOLD_ONLY"] = "1" if fold_only else "0"
     e["ZKR_DLP_ONE_PROOF"] = "1" if one_proof else "0"
@@ -722,8 +724,8 @@ def _dlp_write_runcfg(ctx):
 
 def run_dlp(ctx):
     ctx.note.append(
-        "mode=full_dlp prod pct=100 jobs=%d emit_proof=%s"
-        % (JOBS, DLP_EMIT_PROOF))
+        "mode=full_dlp prod pct=%d jobs=%d emit_proof=%s"
+        % (DLP_PCT, JOBS, DLP_EMIT_PROOF))
     ensure_vma(VMA_TARGET)
     _dlp_write_runcfg(ctx)
     report = os.path.join(DLP_REPORT_DIR, "report.dat")
@@ -765,7 +767,7 @@ MENUS = [
      "~5-8 h", run_clam),
     ("dlp", 4, "full dlp set",
      "8-job (4+4) two-process NUMA prod run of the MS-DLP DB over the "
-     "Enron corpus (100%).",
+     "Enron corpus (100%); part2 emits one verified Groth16 proof.",
      "email data installed (INSTALL.py --data email); large RAM / NUMA.",
      "~5-6 h", run_dlp),
 ]
@@ -856,7 +858,7 @@ def go_background(log_path):
 
 
 def main():
-    global CLAM_WIPE_DB, CLAM_FOLD_ONLY, DLP_EMIT_PROOF, DRY
+    global CLAM_WIPE_DB, CLAM_FOLD_ONLY, DLP_EMIT_PROOF, DLP_PCT, DRY
     ap = argparse.ArgumentParser(
         description="Paper-data runner for bora (4-item menu).")
     ap.add_argument("--run", choices=[m[0] for m in MENUS],
@@ -872,9 +874,12 @@ def main():
                          "~2 h rebuild + DB gate)")
     ap.add_argument("--clam-fold-only", action="store_true",
                     help="clam: fold only, no Groth16 proof")
-    ap.add_argument("--dlp-proof", action="store_true",
-                    help="dlp: emit + verify the single Groth16 proof "
-                         "(default is fold-only)")
+    ap.add_argument("--dlp-fold-only", action="store_true",
+                    help="dlp: fold only, no Groth16 proof "
+                         "(default emits + verifies one proof)")
+    ap.add_argument("--dlp-pct", type=int, default=100, metavar="P",
+                    help="dlp: fold a strided P%% sample (1..100, "
+                         "default 100); <100 uses _pct-tagged dirs")
     args = ap.parse_args()
 
     if JOBS != 8:                         # hard invariant, not a knob
@@ -891,8 +896,12 @@ def main():
         CLAM_WIPE_DB = False
     if args.clam_fold_only:
         CLAM_FOLD_ONLY = True
-    if args.dlp_proof:
-        DLP_EMIT_PROOF = True
+    if args.dlp_fold_only:
+        DLP_EMIT_PROOF = False
+    if not 1 <= args.dlp_pct <= 100:
+        raise SystemExit("--dlp-pct must be in 1..100 (got %d)"
+                         % args.dlp_pct)
+    DLP_PCT = args.dlp_pct
 
     key = select(args.run)                # menu / --run while on the tty
     if key is None:

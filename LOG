@@ -30118,7 +30118,50 @@ Goal 2. abstract.
 	[g] go over again.
 Goal 3. clean up code, anonymize code and docs
 Goal 4. section 1
-	[a] 
+	[a] planning cuts
+	[b] check major sructural issues
+	[c] highlight contributions
+	[d] update paper planning
+Goal 5. detailed section 1.
+	[a] p1.
+	[b] p1 polish.
+	[c] p2 polish.
+	[d] p3 polish.
+	[e] p4 polish
+
+Tuesday 07/13/2026
+Goal 1. check server running
+	[a] read original text
+Goal 2. section 2
+	[a] 2.1 -> DONE
+	[b] 2.2 -> DONE
+	[c] 2.3 -> DONE
+	[d] 2.4 -> DONE
+	further cut
+Goal 3. section 3 -> DONE.
+
+Thursday 07/15/2026
+Goal 1. check status
+	[a] estimated 1 day later
+Goal 2. rewriting section 4
+	[a] 4.0
+	[b] refine 4.0
+Goal 3. section 4.1
+	[a] cut
+	[b] revision
+
+Friday 07/16/2026
+Goal 1. check data
+	[a] expteted completion: 10:40am
+Goal 2. writing
+	[a] read current SDE
+	[b] decide if to drop alg or if to drop example
+	[c] par 1
+	[d] def 3
+Goal 3. Planning for complexity analysis or new round
+	of implementation?
+
+
 
 == TODO == another SDE algorithm with lower theory complexity.
 Goal 5. Add low complexity SDE algorithm
