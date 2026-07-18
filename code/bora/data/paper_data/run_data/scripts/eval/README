@@ -1,0 +1,67 @@
+Evaluation scripts (data/scripts/eval)
+======================================
+
+These scripts turn the raw run logs in data/raw_data/ into the LaTeX table /
+figure fragments under figs/. They share helpers from ../common.py, including
+SERVER_TO_USE, which selects the data-collection server (gcpm1 / jet1tb) for
+all server-specific logs. Run each from this folder (python3 <name>.py); each
+prints the path it wrote.
+
+
+RUNALL.sh
+---------
+Driver: runs every generator below, then check_data_server.py last. A failing
+generator (e.g. a dataset whose real dump is still regenerating) is reported
+but does not stop the run; the exit code is the number of failed generators.
+Usage: bash RUNALL.sh
+
+
+Python files
+------------
+datasets.py           Table 1 (tab:datasets): the Mal/Dna/Dlp dataset rows --
+                      corpus size, document count, and regex-set size, measured
+                      live from the source corpora and rule sets.
+
+effectiveness.py      Section 7.3: the approximation-effectiveness tables
+                      (pair-level + by-file-size), from the tier-discharge dump
+                      any_server/eval_effective.txt.
+
+gen_lkup_info.py      Section 7.4 (tab:lkup): lookup-table composition -- the
+                      five lookup categories x three datasets, from
+                      any_server/lookup_stats.dat.
+
+gen_component_cost.py Section 7.4 (tab:component-cost): per-circuit cost profile
+                      (R1CS per input byte, split across CP/SDE/DFA/framework
+                      tiers). Needs a COST-instrumented dump; a dataset without
+                      one yet gets a single "***" placeholder row.
+
+gen_overall_perf.py   Section 7.5 (overall_perf.tex): stage-level performance
+                      breakdown (select / commit / fold and compression parts)
+                      per dataset.
+
+gen_scale.py          Section 7.5 (fig:scale-regex): regex-set scalability
+                      figure -- per-step circuit size and proof time vs the
+                      fraction of the regex set, from the any_server scale
+                      bundle (scale_data_gdb.tgz).
+
+dna_reef_bora.py      Table 3 (tab:dna-reef-bora): Reef per-bucket cost vs BORA
+                      on chr17 x NCBI, with the Reef-log parser reused by the
+                      comparison generators.
+
+gen_zombie_table.py   Section 7.7: two Zombie tables -- measured per-length
+                      totals (+ derived unit cost) and the unit-cost projection
+                      vs BORA across datasets.
+
+gen_compare_all.py    tab:compare-all: the consolidated main-body comparison of
+                      Zombie / Reef / BORA across all three datasets plus BORA's
+                      speedup over each (reuses the Table 1/3/4 extractors).
+
+count_loc.py          Implementation/eval: counts author-owned Rust lines in
+                      new_zkregplus by module (vendored/upstream code excluded).
+
+check_data_server.py  Data-provenance check (run last by RUNALL.sh): verifies
+                      every file under raw_data/{gcpm1,jet1tb} was collected on
+                      the matching server (config-dump RAM is authoritative),
+                      and that each *.tgz member's self-reported task matches the
+                      archive name. Reports violations / unknowns / task
+                      mismatches; does not write to figs/.

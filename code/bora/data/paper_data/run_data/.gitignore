@@ -1,0 +1,12 @@
+# Keep sub-folder structure (.gitkeep) but ignore real contents
+data/**
+!data/**/
+!data/**/.gitkeep
+
+task_tgz/**
+!task_tgz/**/
+!task_tgz/**/.gitkeep
+
+scratch/**
+!scratch/**/
+!scratch/**/.gitkeep

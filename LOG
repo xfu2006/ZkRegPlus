@@ -30153,14 +30153,90 @@ Goal 3. section 4.1
 Friday 07/16/2026
 Goal 1. check data
 	[a] expteted completion: 10:40am
+	[b] data is ready
+	[c] it does not come up with snark proof! damn!
+		make a smaller run
+		-> 
+		live log: tail -f /tmp/paper_data_dlp_20260717_000520/daemon_20260717_000520.log
+  bundle:   /tmp/paper_data_dlp_20260717_000520/paper_data_dlp_BUNDLE_20260717_000520.tgz (on finish)
+
+	[d] deploy the current folding data first.
+	[e] collect snark makeupdata
+	[f] fix the paper data gen script
+	[g] collect the data of snark generation
+
 Goal 2. writing
 	[a] read current SDE
 	[b] decide if to drop alg or if to drop example
-	[c] par 1
+	[c] par 1 merged with par2
+	[d] par3
+	[e] big table
+	[f] par4
+	[g] fig 2.
+	[h] par 5
+	[i] Example 1. => ALL DONE for sec 4.
 	[d] def 3
 Goal 3. Planning for complexity analysis or new round
 	of implementation?
+	[a] 2-psas pruning
+	[b] bound on passing step-queue. Classify into two cases:
+		(a) one_node, (b) non-one-node
+	[c] todo: think about the step-queue algorithm
 
+Sat 07/17/2026
+Goal 1. section 6
+	[a] 6.1
+	[b] 6.2
+	[c] read 6.3
+	[d] whole section 6
+Goal 2. section 8 -> DONE
+Goal 3. CI-request -> DONE
+Goal 4. design of new algorithm
+	[a] paragrap 1
+	[b] paragraph 2.
+Goal 5. writing of new alg
+	[a] paragraph 1 to 3. 
+	[b] certificates for carry set.
+	[c] forward pruning.
+
+Sunday 07/18/2026
+Goal 1. working sample. 
+	[a] improving working example
+	[b] improve Figure 14
+Goal 2. planning
+	[a] design questions:
+		(1) put all in a flat table of step queue, or separate forward/back
+			ward proof and projection
+		(2) is step queue used anywhere else in the project
+		(3) think about minimum impact, make a replicate of the ischarge
+			called it discharge_adv_neo.rs and rename all data structures
+			correspondingly
+		(4) put fz() in step queue db, there are several structures,
+			which one should I use? maybe just put in encoding?
+	[b] rough milestone design:
+		(1) first modify the database to include fz() information
+		(2) collect the max_dist_to_singleton (mainly update 
+			run_db_bundle) find out which function collects the info
+				about avg_step and other db related info and also
+				lookup table composition, put in that script.
+			in PAPER_DATA.py adds a menu for that.
+		(3) Sets up the framework. adding dis_adv_neo file rename all structures
+			if necessary comment out all function bodies. 
+		(4) modify the step queue and add the data attributes needed
+			fz, ev1, ev2, ... and change the encoding, and update DB, 
+		(5) generate advice: run forward and backward pruning and
+			apply zq pruning, and generate proof. Unit test generate 
+			advice using Figure 14 example and its variations. Test
+			border cases
+		(6) implement the validation functions for assert_msg3
+		(7) update PAPER_DATA.py to allow perc of ruleset and perc of samples
+		(8) integration testing2 and run small sample test case of
+			dlp, ... locally
+		(9) update the function needed for estimate size the scalability 
+			test
+		(10) Add collect_scale_data in PAPER_DATA.py and
+			do local --dry_run test for smaller data bases, smaller
+				samples and smaller steps.
 
 
 == TODO == another SDE algorithm with lower theory complexity.
