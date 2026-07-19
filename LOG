@@ -30203,16 +30203,30 @@ Sunday 07/18/2026
 Goal 1. working sample. 
 	[a] improving working example
 	[b] improve Figure 14
-Goal 2. planning
+Goal 2. planning paper_data
+	[a] set up the folder structure
+	[b] but leave the contents later.
+Goal 3. writing section 7
+	[a] planning
+Goal 4. planning of new discharge_adv
 	[a] design questions:
-		(1) put all in a flat table of step queue, or separate forward/back
-			ward proof and projection
-		(2) is step queue used anywhere else in the project
+		(1) Re-use StepQueue or declare a new struct StepQueueNeo
+			-> what about the consumers of StepQueue who's using it?
+			-> how is it used?
+		(2) put all in a flat table of step queue, or separate forward/back
+			ward proof and projection -> DONE
+		(3) is step queue used anywhere else in the project -> CHECKED
 		(3) think about minimum impact, make a replicate of the ischarge
 			called it discharge_adv_neo.rs and rename all data structures
-			correspondingly
+			correspondingly -> DONE
 		(4) put fz() in step queue db, there are several structures,
 			which one should I use? maybe just put in encoding?
+		(5) let's discuss the structure of StepQueueNeo, let's see
+			what to be added for each? -> DONE
+		(6) carry set proof -> 
+		(7) forward pruning
+		(8) backward pruning
+		(9) singleton pruning
 	[b] rough milestone design:
 		(1) first modify the database to include fz() information
 		(2) collect the max_dist_to_singleton (mainly update 
@@ -30237,6 +30251,22 @@ Goal 2. planning
 		(10) Add collect_scale_data in PAPER_DATA.py and
 			do local --dry_run test for smaller data bases, smaller
 				samples and smaller steps.
+Goal 5. Implementation.
+	[a] milestone 1.
+
+Goal 6. Writing
+	[a] 7.0
+	[b] 7.1
+	[c] 7.2
+	[d] check if G.1 replacement would affect 7.3
+	[e] 7.3 cut 
+	[f] 7.4 read 
+	[g] revise 7.4 -> DONE
+	[h] fix 7.6 first.
+	[i] read current 7.6
+	[j] section 8
+	[k] section 9
+	=> 1st pass of compression done.
 
 
 == TODO == another SDE algorithm with lower theory complexity.

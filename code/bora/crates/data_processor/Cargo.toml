@@ -5,6 +5,11 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+# Gates very expensive on-demand tests (e.g. a fresh full-ClamAV DB
+# rebuild). Off by default so plain `cargo test` never triggers them.
+slow_test = []
+
 [dependencies]
 hex="0.4"
 utils = {path = "../utils"}

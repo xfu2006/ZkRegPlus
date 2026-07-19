@@ -111,6 +111,10 @@ pub const ID_SUBSIG_IGC:u32=0x71090008;
 pub const ID_SUBSIG_IS_BACKWARD:u32=0x71090009;
 /// Aggressive mode: per-subsig anchor (keyword) pat-id table. M5 NEEDS/QUICK.
 pub const ID_SUBSIG_ANCHOR_PAT:u32=0x7109000A;
+/// Per-step freeze threshold fz(a). 0 = singleton (terminal or range-into-
+/// next unbounded); else the id1 (1-based step index) of the closest
+/// downstream singleton. Keyed VALUE (gen_step_tbl_id), not packed in key.
+pub const ID_ENCODED_FZ:u32=0x7109000B;
 
 pub const ID_SIG_NO_CRIT:u32 = 0x73010001;
 pub const ID_SIG_NO_CRIT_COUNT:u32 = 0x73020001;
@@ -536,6 +540,31 @@ impl SubsigStepStore{
 		self.subsig_ids.sort();
 	}
 
+	/// Compute the per-row freeze threshold fz over gen_cols output.
+	/// cols = [subsig, id1, pat, rg_start, rg_end, encoded]; `max` is the
+	/// range2 sentinel (2^range2_bit - 1) marking unbounded / dummy rows.
+	/// A real step is a singleton iff the NEXT row's rg_end == max (covers
+	/// both the terminal step, whose next row is the dummy END, and a
+	/// range-into-next that is unbounded above). fz = 0 for singletons,
+	/// else the id1 of the closest downstream singleton. Dummy rows => 0.
+	fn gen_fz_col<F:PrimeField>(cols: &Vec<Vec<F>>, max: F) -> Vec<F> {
+		let (steps, pats, rg_end) = (&cols[1], &cols[2], &cols[4]);
+		let n = pats.len();
+		let mut fz = vec![F::zero(); n];
+		// Walk rows back to front. last_sing = id1 of the nearest
+		// downstream singleton within the current subsig block; reset at
+		// each dummy END row (pat == max) that starts a new block.
+		let mut last_sing = F::zero();
+		for r in (0..n).rev() {
+			if pats[r] == max { last_sing = F::zero(); continue; } // END
+			if pats[r].is_zero() { continue; }                     // dummy
+			let sing = r + 1 < n && rg_end[r + 1] == max;
+			if sing { fz[r] = F::zero(); last_sing = steps[r]; }
+			else { fz[r] = last_sing; }
+		}
+		fz
+	}
+
 	/// generate encoded lookup entry which encodes the
 	/// following fields:
 	/// <subsig_id, id1, pat_id, range_start, range_end>
@@ -740,6 +769,19 @@ impl SubsigStepStore{
 			}
 			all_tuples.append(&mut tuples4);
 		}
+
+		//2d. per-step freeze threshold fz (ID_ENCODED_FZ). Additive keyed
+		// value; discharge_adv never queries it so it stays inert there.
+		// Inclusion mirrors the encoded cats above: real steps, plus the
+		// subsig-0 dummy rows so padded prf lookups resolve.
+		let fz = Self::gen_fz_col(&cols, max);
+		let mut tuples5 = encoded.par_iter().enumerate()
+			.filter_map(|(r,&enc)|{
+				let b_dummy = pats[r].is_zero() || pats[r]==max;
+				if !(!b_dummy || subsigs[r].is_zero()) { return None; }
+				Some((Self::gen_step_tbl_id(enc, ID_ENCODED_FZ), fz[r]))
+			}).collect::<Vec<(F,F)>>();
+		all_tuples.append(&mut tuples5);
 
 		all_tuples.sort();
 
@@ -2552,11 +2594,13 @@ mod tests_clam_db{
 	extern crate utils;
 
 	use crate::{clam_db::{ClamavDB, SubsigStepStore, SubsigStepStoreItem,
-		reverse_pm_bounds}, clamav::{default_clamav_cfg}};
+		reverse_pm_bounds, ID_ENCODED_FZ}, clamav::{default_clamav_cfg}};
 	use crate::type_def::ClamSigType;
 	use utils::{os::{proj_root}, consts::read_global_config};
+	use folding_schemes::folding::foldpot::sigma_ir1cs::
+		LookupTableTwoCol_Inst;
 	use ark_bn254::{Fr};
-	use ark_ff::PrimeField;
+	use ark_ff::{PrimeField, Zero};
 
 	/// T1+T2: reverse_pm_bounds golden output + involution on the
 	/// begin-normalized domain.
@@ -2750,5 +2794,147 @@ mod tests_clam_db{
 			s.check_aggressive_consistent()
 				.expect("real DLP sig must pass gatekeeper");
 		}
+	}
+
+	/// Paper prune-example SDE store (a1,a5,a8 singleton) at the current
+	/// range2_bit. inf marks a range unbounded above.
+	fn build_a1_a8() -> (SubsigStepStore, Vec<Vec<Fr>>) {
+		let rb = read_global_config().range2_bit;
+		let inf = (1usize << rb) - 1;
+		let bounds = vec![
+			(1usize, (1usize, 9usize)), // a1 in-range {1,9}
+			(2, (0, inf)),              // a2 {0,inf}
+			(3, (1, 9)), (4, (1, 9)), (5, (1, 9)),
+			(6, (1, inf)),              // a6 {1,inf}
+			(7, (1, 9)), (8, (1, 9)),   // a8 terminal
+		];
+		let item = SubsigStepStoreItem::new(1, false, bounds);
+		let mut store = SubsigStepStore::new();
+		store.add(&item);
+		store.finalize();
+		let cols = store.gen_cols::<Fr>(rb, None);
+		(store, cols)
+	}
+
+	/// fz for real-step rows (pat != 0 and != sentinel), in row order.
+	fn real_fz(cols: &Vec<Vec<Fr>>) -> Vec<Fr> {
+		let rb = read_global_config().range2_bit;
+		let max = Fr::from(((1u64 << rb) - 1) as u64);
+		let fz = SubsigStepStore::gen_fz_col::<Fr>(cols, max);
+		(0..cols[2].len())
+			.filter(|&r| cols[2][r] != Fr::zero() && cols[2][r] != max)
+			.map(|r| fz[r]).collect()
+	}
+
+	/// T1 golden: fz over the paper prune example == [0,5,5,5,0,8,8,0].
+	#[test]
+	fn test_fz_golden_a1_a8(){
+		let (_s, cols) = build_a1_a8();
+		let want: Vec<Fr> = [0u64,5,5,5,0,8,8,0].iter()
+			.map(|&x| Fr::from(x)).collect();
+		assert_eq!(real_fz(&cols), want);
+	}
+
+	/// T2 edges: lone terminal, all-finite, mid-chain unbounded, and a
+	/// backward subsig (fz follows gen_cols' reversed emitted order).
+	#[test]
+	fn test_fz_edges(){
+		let rb = read_global_config().range2_bit;
+		let inf = (1usize << rb) - 1;
+		let build = |bounds: Vec<(usize,(usize,usize))>, bwd: bool| {
+			let mut item = SubsigStepStoreItem::new(1, false, bounds);
+			item.is_backward = bwd;
+			let mut store = SubsigStepStore::new();
+			store.add(&item);
+			store.finalize();
+			real_fz(&store.gen_cols::<Fr>(rb, None))
+		};
+		let f = |v: &[u64]| -> Vec<Fr> {
+			v.iter().map(|&x| Fr::from(x)).collect() };
+		assert_eq!(build(vec![(1,(1,9))], false), f(&[0]));
+		assert_eq!(build(vec![(1,(1,9)),(2,(1,9))], false), f(&[2,0]));
+		assert_eq!(build(vec![(1,(1,9)),(2,(1,inf)),(3,(1,9))], false),
+			f(&[0,3,0]));
+		// backward reverses the chain; golden hand-derived from
+		// reverse_pm_bounds (anchor gets (0,max)).
+		assert_eq!(build(vec![(1,(1,9)),(2,(0,inf)),(3,(1,9))], true),
+			f(&[2,0,0]));
+	}
+
+	/// T3 emission: add_store_to_lkup emits one ID_ENCODED_FZ tuple per
+	/// real step, with the correct key and fz value.
+	#[test]
+	fn test_fz_emission(){
+		let rb = read_global_config().range2_bit;
+		let (store, cols) = build_a1_a8();
+		let max = Fr::from(((1u64 << rb) - 1) as u64);
+		let fz = SubsigStepStore::gen_fz_col::<Fr>(&cols, max);
+		let mut lk = LookupTableTwoCol_Inst::<Fr>{ vals: vec![] };
+		store.add_store_to_lkup(&mut lk, 100u32, rb);
+		let encoded = &cols[5];
+		for r in 0..cols[2].len() {
+			if cols[2][r] == Fr::zero() || cols[2][r] == max { continue; }
+			let key = SubsigStepStore::gen_step_tbl_id(
+				encoded[r], ID_ENCODED_FZ);
+			assert!(lk.vals.contains(&(key, fz[r])),
+				"missing fz tuple at row {}", r);
+		}
+	}
+
+	/// Heavy on-demand budget guard: rebuild the full ClamAV DB fresh
+	/// (so the per-step fz rows are emitted) and assert the whole lookup
+	/// table stays within the 2^28-entry budget. Skips if the sig set is
+	/// absent. Run alone: it sets range2_bit=26 in the process-global
+	/// config, so do not run it concurrently with the range2-sensitive
+	/// unit tests (cargo test -- --ignored full_clam_lkup_budget).
+	// Expensive: a fresh full-ClamAV DB rebuild (release-mode only sane).
+	// Gated behind the `slow_test` feature so plain `cargo test` never
+	// compiles or runs it. Invoke with:
+	//   cargo test -p data_processor --release --features slow_test \
+	//     -- --ignored full_clam_lkup_budget --nocapture
+	#[test]
+	#[ignore]
+	#[cfg(feature = "slow_test")]
+	fn full_clam_lkup_budget(){
+		let proot = proj_root();
+		let dir = "data/paper_data/clamav/config";
+		let sig = format!("{}/main.dat", dir);
+		if !std::path::Path::new(&format!("{}/{}", proot, sig)).exists() {
+			eprintln!("skip full_clam_lkup_budget: sig set absent");
+			return;
+		}
+		// Authoritative full_clam DB-affecting settings (the ones that
+		// built the 'full_data' cache); see report_acc_state_rate. The
+		// min_dfa_* floors are essential: without them the build makes
+		// per-sig DFAs for far more subsigs and takes vastly longer.
+		let g = || utils::consts::get_global_config();
+		g().range2_bit = 26;
+		g().min_subsigs = 368;
+		g().min_basis_unique_states = 1054;
+		g().min_basis_acc_states = 268;
+		g().min_basis_pats_in_trace = 295;
+		g().min_avg_pats_per_subsig = 8;
+		g().min_dfa_sigs = 3;
+		g().min_dfa_subsigs = 3;
+		let cfg = default_clamav_cfg();
+		let dfa = format!("{}/main_dfa.dat", dir);
+		let ised = format!("{}/needs_ised.dat", dir);
+		let ised_igc = format!("{}/needs_ised_igc.dat", dir);
+		let mut vlog = vec![];
+
+		// b_read_cache=false -> fresh build so fz rows enter the lookup
+		// table; b_write_cache=false -> never clobber the real cache.
+		let db = ClamavDB::<Fr>::build_or_load(&cfg, &sig, &dfa, &ised,
+			&ised_igc, &mut vlog, "full_clamav_budget_test", false, false)
+			.expect("full ClamAV DB must build");
+
+		// A cache-loaded DB has an empty lkup_dist; guard the false-pass.
+		assert!(!db.lkup_dist.is_empty(),
+			"lkup_dist empty: DB not freshly built");
+		let cap: usize = 1 << 28;
+		let total: usize = db.lkup_dist.iter().map(|(_, n)| n).sum();
+		println!("{}", db.fmt_lkup_dist("full_clamav", &sig));
+		assert!(total <= cap,
+			"lookup total {} exceeds 2^28 budget {}", total, cap);
 	}
 }
