@@ -30252,7 +30252,7 @@ Goal 4. planning of new discharge_adv
 			do local --dry_run test for smaller data bases, smaller
 				samples and smaller steps.
 Goal 5. Implementation.
-	[a] milestone 1.
+	[a] milestone 1. -> DONE
 
 Goal 6. Writing
 	[a] 7.0
@@ -30268,6 +30268,17 @@ Goal 6. Writing
 	[k] section 9
 	=> 1st pass of compression done.
 
+Monday 07/19/2026
+Goal 1. milestone 2 collect max dist
+	[a] verify data
+	[b] update PDF
+Goal 2. milestone 3 data structures
+	[a] impl
+	[b] test
+
+Goal 3.  Writing on C1 again
+	[a] fix join formula.
+	[b] fix the description of partition
 
 == TODO == another SDE algorithm with lower theory complexity.
 Goal 5. Add low complexity SDE algorithm
@@ -30290,7 +30301,7 @@ Goal FINAL2. start data collection on Jetstream
 		[a1] scalaliblity for dlp (11:00pm 06/28 -> 
 	[b] large: -> (IP: 149.165.170.106)
 		[b0] full_dna => DONE 07/04
-		[b1] full_dlp ==> STARTED 5:00pm 07/11 ==> ??
+		[b1] full_dlp ==> STARTED 5:00pm 07/11 ==> 07/16 (5 days) 
 		[b2] full_clam => DONE/ok 07/03 (but still need another run) - 18 hrs
 		[b3] reef_eval > aleady got 06/24 => DONE
 		[b4] zombie_eval (11:00pm 06/28 -> restarted 12:00pm 06/29 OOM system

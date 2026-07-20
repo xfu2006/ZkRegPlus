@@ -6742,6 +6742,59 @@ binexec_p0..p7; via report_acc_state_rate -> run_db_bundle) ########");
 		report_acc_state_rate::<Fr>();
 	}
 
+	/// M2: emit singleton-distance corpus stat B (+ nu) per dataset. B =
+	/// max nibble-distance from a pattern to its closest downstream
+	/// singleton; feeds apdx_sde c = ceil(B/chunklen)+1. Loads each
+	/// authoritative cached DB (no rebuild) and maxes max_dist_and_nu over
+	/// its cs+igc SED stores. Parsed by extract_acc_state_rate.py. Invoke:
+	///   cargo test -p zkregplus --release -- report_singleton_dist \
+	///     --exact --nocapture | tee data/.../dump_singleton_dist.txt
+	#[test]
+	fn report_singleton_dist() {
+		use data_processor::clam_db::ClamavDB;
+		let emit = |ds: &str, db: &ClamavDB<Fr>, rb: usize| {
+			let (mut b, mut nu) = (0usize, 0usize);
+			for st in db.bundle_subsig.vec_subsig_step_stores.iter()
+				.chain(db.bundle_subsig_igc.vec_subsig_step_stores.iter()) {
+				let (sb, sn) = st.max_dist_and_nu();
+				b = b.max(sb); nu = nu.max(sn);
+			}
+			println!("SDE-SINGLETON-DIST: {} B_nibbles={} nu_max={} \
+range2_bit={}", ds, b, nu, rb);
+		};
+		let load = |dir: &str, cache: &str| {
+			get_global_config().clamav_cfg.b_aggressive_sde_for_rep = false;
+			let cfg = data_processor::clamav::default_clamav_cfg();
+			let mut vlog = vec![];
+			ClamavDB::<Fr>::build_or_load(&cfg,
+				&format!("{}/main.dat", dir),
+				&format!("{}/main_dfa.dat", dir),
+				&format!("{}/needs_ised.dat", dir),
+				&format!("{}/needs_ised_igc.dat", dir),
+				&mut vlog, cache, true, false).expect("load db")
+		};
+		// ClamAV: authoritative full_data DB (mirror report_acc_state_rate
+		// floors so the cache loads identically).
+		get_global_config().range2_bit = 26;
+		get_global_config().min_subsigs = 368;
+		get_global_config().min_basis_unique_states = 1054;
+		get_global_config().min_basis_acc_states = 268;
+		get_global_config().min_basis_pats_in_trace = 295;
+		get_global_config().min_avg_pats_per_subsig = 8;
+		get_global_config().min_dfa_sigs = 3;
+		get_global_config().min_dfa_subsigs = 3;
+		emit("clamav",
+			&load("data/paper_data/clamav/config", "full_data"), 26);
+		// DNA
+		get_global_config().range2_bit = 27;
+		emit("dna", &load("data/paper_data/dna/config", "dna_data"), 27);
+		// DLP (non-aggressive forward build; corpus-B semantics)
+		get_global_config().range2_bit = 25;
+		emit("dlp",
+			&load("data/paper_data/dlp/cfg/regex_pat", "dlp_corpus_aggr"),
+			25);
+	}
+
 	/// ZK discharge of one Enron email (merged_000001) against the
 	/// Zombie-style DL proximity policy (light-test, single job).
 	/// Invoke via:

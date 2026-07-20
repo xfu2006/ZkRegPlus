@@ -30,13 +30,18 @@ Prints a per-dataset summary; makes no files. Run with no args.
 """
 from __future__ import annotations
 
+import json
+import math
 import re
 import statistics
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from common import any_server_file  # noqa: E402
+from common import any_server_file, get_proj_root  # noqa: E402
+
+# repo root (.../ZkregPlus/code/bora); holds crates/ and data/ we parse below.
+REPO = get_proj_root()
 
 # banner emitted by collect_assess_tier_data() before each dataset's stats
 BANNER = re.compile(r"ACC-STATE-RATE:\s*(\w+)")
@@ -135,7 +140,66 @@ def from_records(text: str) -> dict | None:
     }
 
 
+# M2 singleton-distance banner from report_singleton_dist (zkp_driver.rs):
+# B = max nibble-dist from a pattern to its closest downstream singleton.
+DIST = re.compile(r"SDE-SINGLETON-DIST:\s*(\w+)\s+B_nibbles=(\d+)\s+"
+                  r"nu_max=(\d+)\s+range2_bit=(\d+)")
+NIB_PER_WORD = 62  # 62 nibbles = 31 bytes per packed word (zkp_driver.rs:226)
+
+
+def _eval_int_expr(expr: str) -> int:
+    """Evaluate an integer arithmetic literal (ints, * and + only)."""
+    if not re.fullmatch(r"[\d\s*+]+", expr):
+        raise ValueError(f"unsafe chunk_len expr: {expr!r}")
+    return eval(expr)  # noqa: S307 -- validated to digits/*/+ above
+
+
+def _rust_max_word(fn: str) -> int:
+    """Extract `let max_word = <expr>;` from fn `fn` in zkp_driver.rs."""
+    src = (REPO / "crates/zkregplus/src/zkp_driver.rs").read_text()
+    m = re.search(rf"fn {fn}\b.*?let max_word\s*=\s*([^;]+);", src, re.S)
+    if not m:
+        raise ValueError(f"max_word not found in fn {fn}")
+    return _eval_int_expr(m.group(1))
+
+
+def chunk_len_words(ds: str) -> int:
+    """Per-dataset fold chunk_len (words), extracted live from source."""
+    if ds == "clamav":
+        return _rust_max_word("full_clamav")
+    if ds == "dna":
+        return _rust_max_word("full_dna")
+    if ds == "dlp":
+        cfg = REPO / "data/paper_data/dlp/cfg/config/runcfg_full.json"
+        return json.loads(cfg.read_text())["chunk_len"]
+    raise ValueError(f"unknown dataset: {ds}")
+
+
+def report_singleton_dist(text: str) -> None:
+    """Print per-dataset B / chunklen / c = ceil(B/chunklen)+1 (App G.1)."""
+    rows = DIST.findall(text)
+    if not rows:
+        return
+    print("# B = max nibble-dist pattern -> closest downstream singleton; "
+          "c = ceil(B/chunklen)+1  (chunklen extracted live from source):")
+    for ds, b, nu, _rb in rows:
+        b = int(b)
+        w = chunk_len_words(ds)
+        cl = w * NIB_PER_WORD  # chunklen in nibbles
+        c = math.ceil(b / cl) + 1
+        print(f"  {ds:7s} B={b} nib  nu_max={nu}  chunk_len={w} words "
+              f"({w * 31} B ~ {w * 31 / 1024:.0f} KB)  "
+              f"c=ceil({b}/{cl})+1 = {c}")
+
+
 def main() -> None:
+    # M2: App G.1 singleton-distance B / c, from its own dump (independent
+    # of the rho dump below); chunk_len is extracted live from source.
+    sdump = any_server_file("dump_singleton_dist.txt")
+    if sdump.exists():
+        print(f"# singleton-dist source: {sdump}")
+        report_singleton_dist(sdump.read_text(errors="replace"))
+
     if len(sys.argv) > 1:
         path = Path(sys.argv[1])
     else:
@@ -145,9 +209,13 @@ def main() -> None:
             if path.exists():
                 break
     if not path.exists():
+        if sdump.exists():
+            return  # singleton-only run: nothing more to do
         sys.exit(f"no dump found: {path}")
     text = path.read_text(errors="replace")
     print(f"# source: {path}")
+    if not sdump.exists():  # banner may be co-located in the rho dump
+        report_singleton_dist(text)
 
     agg = from_aggregate(text)
     if agg:

@@ -109,6 +109,9 @@ pub struct ClamavApproxConfig{
 	/// `[0-9]{n}`) into a union of concrete SED subsig variants.
 	/// Default false reproduces baselines exactly.
 	pub b_aggressive_sde_for_rep: bool,
+	/// M3+: route SDE discharge through discharge_adv_neo (App G.1
+	/// constant-queue). Off => legacy discharge_adv. Both modes.
+	pub b_use_discharge_neo: bool,
 	/// Fan-out budget for aggressive SDE class-rep expansion.
 	/// Read only by expand_rep_subsig; inert when
 	/// b_aggressive_sde_for_rep is off.
@@ -272,6 +275,7 @@ impl Default for GlobalConfig {
 				min_bag_len: 6,
 				min_pm_word_len: 4,
 				b_aggressive_sde_for_rep: false,
+				b_use_discharge_neo: false,
 				sde_rep_fanout_cap: 127,
 				variant_combine_cap: 4,
 				b_sde_rep_tight_first_leg: false,
@@ -328,6 +332,7 @@ static GLOBAL_CONFIG: RwLock<GlobalConfig> = RwLock::new(GlobalConfig {
 		min_bag_len: 6,
 		min_pm_word_len: 4,
 		b_aggressive_sde_for_rep: false,
+		b_use_discharge_neo: false,
 		sde_rep_fanout_cap: 127,
 		variant_combine_cap: 4,
 		b_sde_rep_tight_first_leg: false,

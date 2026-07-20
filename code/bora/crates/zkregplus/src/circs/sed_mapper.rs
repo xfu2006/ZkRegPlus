@@ -68,6 +68,7 @@ use crate::{
 	gadgets::word_extract::{LEGS},
 	gadgets::fsm_adv::{FsmAdvGadget,FsmAdvAdvice,FsmAdvCapacity},
 	gadgets::discharge_adv::{DischargeAdvGadget,DischargeAdvAdvice,DischargeAdvCapacity,StepQueue, StepQueueType},
+	gadgets::discharge_adv_neo::{DischargeAdvNeoGadget},
 	gadgets::compute_sig_adv::{ComputeSigAdvCapacity,ComputeSigAdvAdvice,
 		ComputeSigAdvGadget},
 	gadgets::traits::{ComponentAdvice},
@@ -768,16 +769,35 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 			acdfa_igc, &fsm_cap_igc, fsm_id_igc, &cfgs, subsig_pat_store_igc); 
 		cfgs.push( g_faa_igc.dummy_cfg.clone() );
 
-		//1.3. discharge_subsig (2 gadgets)
+		//1.3. discharge_subsig (2 gadgets) -- neo/legacy swap (M3)
+		let use_neo = read_global_config().clamav_cfg
+			.b_use_discharge_neo;
 		let da_cap_cs = &cs_capacity.da_capacity();
 		let da_cap_igc = &igc_capacity.da_capacity();
-		let g_da_cs = DischargeAdvGadget::<F>::new(false, 2, &da_cap_cs, 
-			fsm_id_cs, &cfgs, subsig_step_store_cs);
-		cfgs.push( g_da_cs.dummy_cfg.clone() );
-
-		let g_da_igc = DischargeAdvGadget::<F>::new(true, 2, &da_cap_igc, 
-			fsm_id_igc, &cfgs, subsig_step_store_igc);
-		cfgs.push( g_da_igc.dummy_cfg.clone() );
+		let g_da_cs: Arc<Mutex<dyn SigmaGadget<F> + Send + Sync>> =
+			if use_neo {
+			let g = DischargeAdvNeoGadget::<F>::new(false, 2,
+				&da_cap_cs, fsm_id_cs, &cfgs, subsig_step_store_cs);
+			cfgs.push( g.inner.dummy_cfg.clone() );
+			Arc::new(Mutex::new(g))
+		} else {
+			let g = DischargeAdvGadget::<F>::new(false, 2, &da_cap_cs,
+				fsm_id_cs, &cfgs, subsig_step_store_cs);
+			cfgs.push( g.dummy_cfg.clone() );
+			Arc::new(Mutex::new(g))
+		};
+		let g_da_igc: Arc<Mutex<dyn SigmaGadget<F> + Send + Sync>> =
+			if use_neo {
+			let g = DischargeAdvNeoGadget::<F>::new(true, 2,
+				&da_cap_igc, fsm_id_igc, &cfgs, subsig_step_store_igc);
+			cfgs.push( g.inner.dummy_cfg.clone() );
+			Arc::new(Mutex::new(g))
+		} else {
+			let g = DischargeAdvGadget::<F>::new(true, 2, &da_cap_igc,
+				fsm_id_igc, &cfgs, subsig_step_store_igc);
+			cfgs.push( g.dummy_cfg.clone() );
+			Arc::new(Mutex::new(g))
+		};
 
 		//1.4 compute_sigs gadget (1 gadget)
 		let csa_cap_igc = &igc_capacity.csa_capacity(); //typically this is the 
@@ -805,8 +825,8 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 			Arc::new(Mutex::new(g_wea)), //word_extract_adv gadget
 			Arc::new(Mutex::new(g_faa_cs)), //fsm_adv gadget
 			Arc::new(Mutex::new(g_faa_igc)), //fsm_adv gadget
-			Arc::new(Mutex::new(g_da_cs)), //discharge subsigs via SED
-			Arc::new(Mutex::new(g_da_igc)), //discharge subsigs via SED
+			g_da_cs, //discharge subsigs via SED (boxed above)
+			g_da_igc, //discharge subsigs via SED (boxed above)
 			Arc::new(Mutex::new(g_csa)), //compute_sig_gadget 
 		];
 

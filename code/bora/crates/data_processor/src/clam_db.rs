@@ -565,6 +565,33 @@ impl SubsigStepStore{
 		fz
 	}
 
+	/// M2 corpus stat over this SED store: (B, nu). B = max distance in
+	/// nibbles from a pattern to its closest downstream singleton, summing
+	/// rg_end upper bounds over hops j+1..g inclusive of the singleton hop
+	/// (the queue-survival distance). nu = max steps per subsig. Singleton
+	/// test mirrors gen_fz_col; backward subsigs reversed like gen_cols.
+	pub fn max_dist_and_nu(&self) -> (usize, usize) {
+		let max_val: usize = (1 << read_global_config().range2_bit) - 1;
+		let (mut b, mut nu) = (0usize, 0usize);
+		for sid in &self.subsig_ids {
+			let item = self.subsig_to_steps.get(sid).unwrap();
+			let steps = if item.is_backward {
+				reverse_pm_bounds(&item.vec_pm_bounds, (0, max_val))
+			} else { item.vec_pm_bounds.clone() };
+			let k = steps.len();
+			if k == 0 { continue; }
+			nu = nu.max(k);
+			let mut d = 0usize; // carries d(j+1); terminal step => 0
+			for j in (0..k).rev() {
+				let sing = j + 1 == k || steps[j + 1].1 .1 == max_val;
+				let dj = if sing { 0 } else { steps[j + 1].1 .1 + d };
+				b = b.max(dj);
+				d = dj;
+			}
+		}
+		(b, nu)
+	}
+
 	/// generate encoded lookup entry which encodes the
 	/// following fields:
 	/// <subsig_id, id1, pat_id, range_start, range_end>
@@ -2859,6 +2886,32 @@ mod tests_clam_db{
 		// reverse_pm_bounds (anchor gets (0,max)).
 		assert_eq!(build(vec![(1,(1,9)),(2,(0,inf)),(3,(1,9))], true),
 			f(&[2,0,0]));
+	}
+
+	/// M2 golden: (B, nu) over the paper prune example == (27, 8).
+	/// B = a2's dist to singleton a5 = 9+9+9 (inclusive).
+	#[test]
+	fn test_dist_golden_a1_a8(){
+		let (store, _cols) = build_a1_a8();
+		assert_eq!(store.max_dist_and_nu(), (27, 8));
+	}
+
+	/// M2 edges: lone terminal singleton (no tracked step); one tracked
+	/// hop into a terminal singleton; mid-chain unbounded resets the
+	/// downstream-singleton accumulation.
+	#[test]
+	fn test_dist_edges(){
+		let rb = read_global_config().range2_bit;
+		let inf = (1usize << rb) - 1;
+		let build = |bounds: Vec<(usize,(usize,usize))>| {
+			let mut store = SubsigStepStore::new();
+			store.add(&SubsigStepStoreItem::new(1, false, bounds));
+			store.finalize();
+			store.max_dist_and_nu()
+		};
+		assert_eq!(build(vec![(1,(1,9))]), (0, 1));
+		assert_eq!(build(vec![(1,(1,9)),(2,(1,9))]), (9, 2));
+		assert_eq!(build(vec![(1,(1,9)),(2,(1,inf)),(3,(1,9))]), (9, 3));
 	}
 
 	/// T3 emission: add_store_to_lkup emits one ID_ENCODED_FZ tuple per

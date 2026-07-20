@@ -20,6 +20,8 @@ pub mod fsm_adv;
 pub mod db;
 /// discharge subsigs
 pub mod discharge_adv;
+/// discharge subsigs (Appendix G.1 constant-queue variant)
+pub mod discharge_adv_neo;
 /// from subsigs to discharged sigs
 pub mod compute_sig_adv;
 /// discharge a sig via dfa approach
