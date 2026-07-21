@@ -2400,7 +2400,8 @@ pub mod tests_fsm_adv_gadget{
 	use ark_ff::{Zero};
 	use std::{sync::Arc};
 	use ark_bn254::{Fr};
-	use utils::{data::{pack_nibbles, pad_word_to_multiple},
+	use utils::{data::{pack_nibbles, pad_word_to_multiple,
+		gen_pad_nibbles_fe},
 		os::{read_nibbles,proj_root}};
 	use crate::gadgets::{
 		word_extract::{
@@ -2466,8 +2467,11 @@ pub mod tests_fsm_adv_gadget{
 
 		let nibbles = stmt_wea.lock().unwrap().get_container("nibbles").unwrap()
 			.lock().unwrap().to_vec();
-		let f_nibbles = vec![f_nibbles.clone(), vec![Fr::zero(); 
-			nibbles.len()-f_nibbles.len()]].concat();
+		//pad convention: sub-F pad and each padded F element both
+		//restart the canonical pad stream at offset 0.
+		let f_nibbles = vec![f_nibbles.clone(),
+			gen_pad_nibbles_fe::<Fr>(0, LEGS-f_nibbles.len()),
+			gen_pad_nibbles_fe::<Fr>(0, LEGS)].concat();
 			
 		assert!(nibbles==f_nibbles);
 		let inp_state = Fr::from((acdfa.init_state + 1) as u32);

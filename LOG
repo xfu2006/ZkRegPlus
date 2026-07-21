@@ -30274,11 +30274,59 @@ Goal 1. milestone 2 collect max dist
 	[b] update PDF
 Goal 2. milestone 3 data structures
 	[a] impl
-	[b] test
-
+	[b] test -> DONE
 Goal 3.  Writing on C1 again
 	[a] fix join formula.
 	[b] fix the description of partition
+	[c] certificates.
+	[d] complexity
+	[e] example -->  DONE
+Goal 4. milestone 4 
+	[a] data structure
+	[b] serialization
+	[c] test -> DONE
+Goal 5. milestone 5
+	[a] common part 
+	[b] think abou feasibility of just handle all in one mode.
+	[c] forget about the unified one branch coz too many will be
+		impacted
+	[d] update roadmap
+	[e] redesign M5
+	[f] inspect the refined PDF
+
+Tuesday 07/20/2026
+Goal 1. continue on milestone 5 design.
+	[a] add the perf logs for step queue saturation measure
+	[b] revise the example with real inp string.
+	[c] go over design. check
+		(1) list data structures, briefly describe them with no more than
+			2 sentences (each for each attribute)
+		(2) list functions added or modified, briefly describe them
+		(3) let's go over the algorithm. My suggestion: compute the
+			Q_r first by closure and then Q_fp. Then apply backward
+			pruning to get Q_bp, and then the singleton Q_sp.
+			Check if my algorithm works? think Deep!
+		(4) Then let's go over how you fill out the corresponding
+			data attributes for each certificate. Please describe
+			briefly for the following: (a) what are the data attributse,
+			(b) how would you verify in range requirement (c) if
+			the attribute is not used in other certs, when they are
+			negative, how would you handle the range requirement - I 
+			want cheap cost solution, (d) estimated cost of validation.
+		Please handle the above questions by thinkin DEEP, and
+		verify 3 separate times until you have convinced yourself.
+		Use dynamic workflow if necessary to start agents for reesarch.
+		Once you are done detailed design, please address my questions (1)
+		to (4) VERY BRIEFLY.
+
+Goal 2. Writing: go back to refine abstract and section 1
+	[a] abstract -> DONE
+	[b] section p1.
+
+Goal 3. continue to milestone M5
+	[a] estimate step queue rows vs neo rows for clamav, maybe 2X
+	[b] show the test plan 	
+	[c] approve the impl plan one by one
 
 == TODO == another SDE algorithm with lower theory complexity.
 Goal 5. Add low complexity SDE algorithm
