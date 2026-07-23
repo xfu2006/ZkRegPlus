@@ -1495,8 +1495,9 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	/// cannot weaken soundness -- constraints bind vars); v = the
 	/// allocated circuit vars; r1 = msg2 challenge (fuses the two
 	/// seed pins); b_aggr selects the arm (the aggressive stream is
-	/// bit-identical to M6). COST: ~16*n (+5*n non-aggr).
-	/// PERF 61081.1.
+	/// bit-identical to M6). COST: ~17*n aggr / ~22*n
+	/// non-aggr. MEASURED @ fig-14 n=34: aggr 579 (+0.2% vs
+	/// 17n), non-aggr 749 (+0.1% vs 22n). PERF 61081.1.
 	fn assert_neo_selectors(
 		cs: ConstraintSystemRef<F>,
 		t: &QmTable<F>, v: &QmVars<F>, r1: &FpVar<F>, b_aggr: bool,
@@ -1606,7 +1607,8 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		sel.is_step0 = is_step0;
 		log(job_id, LOG3, &format!(
 			"PERF 61081.1: block=selectors cs={} pred={}",
-			cs.num_constraints() - n0, 16 * n));
+			cs.num_constraints() - n0,
+			(if b_aggr { 17 } else { 22 }) * n));
 		Ok(sel)
 	}
 
@@ -1628,7 +1630,9 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	/// in the aggressive table (cats {0,C,FP}) is literally the
 	/// same linear combination as is_wrap+is_c, and in the
 	/// non-aggressive table also counts BP/SP -- the paper's Q_r.
-	/// COST: ~12*n + ~2*(|S|+|subsigs|). PERF 61081.2.
+	/// COST: ~18*n (folds the ~2*(|S|+|subsigs|) term).
+	/// MEASURED @ fig-14 n=34: 607 (-0.8% vs 18n).
+	/// PERF 61081.2.
 	fn assert_neo_wf(
 		cs: ConstraintSystemRef<F>,
 		t: &QmTable<F>, v: &QmVars<F>, sel: &NeoSel<F>,
@@ -1710,7 +1714,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		}
 		log(job_id, LOG3, &format!(
 			"PERF 61081.2: block=wf cs={} pred={}",
-			cs.num_constraints() - n0, 12 * n));
+			cs.num_constraints() - n0, 18 * n));
 		Ok((grp_start, rid))
 	}
 
@@ -1730,7 +1734,8 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	///    where no BP/SP rows exist); pin: si ==
 	///    mask*(const_cat+enc-RANGE2) + RANGE2.
 	///  - si_b_bwd == FLAG_BASE + subsig on ALL rows (linear).
-	/// COST: ~12*n. PERF 61081.5.
+	/// COST: ~14*n. MEASURED @ fig-14 n=34: 476 (0% vs
+	/// 14n). PERF 61081.5.
 	fn assert_neo_si_pins(
 		cs: ConstraintSystemRef<F>, v: &QmVars<F>, sel: &NeoSel<F>,
 		b_aggr: bool, job_id: usize,
@@ -1780,7 +1785,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		}
 		log(job_id, LOG3, &format!(
 			"PERF 61081.5: block=si_pins cs={} pred={}",
-			cs.num_constraints() - n0, 12 * n));
+			cs.num_constraints() - n0, 14 * n));
 		Ok(())
 	}
 }
@@ -2129,7 +2134,9 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	/// query families share ONE fused masked logup (mtbl_qr).
 	/// PARAMS: rid = C2 rank col; subsig_nat = native stmt subsigs
 	/// (zero-bit hints); mtbl_qr = fused-lookup m-table advice.
-	/// COST: ~13*n direct + logup ~2*(3n+|subsigs|)+3n. PERF 61081.3.
+	/// COST: ~31*n (folds the fused logup ~2*(3n+
+	/// |subsigs|)+3n into the per-row rate). MEASURED @
+	/// fig-14 n=34: 1064 (+0.9% vs 31n). PERF 61081.3.
 	fn assert_neo_certs_aggr(
 		cs: ConstraintSystemRef<F>,
 		t: &QmTable<F>, v: &QmVars<F>, sel: &NeoSel<F>,
@@ -2234,7 +2241,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			&sel_qr.to_vec(), mtbl_qr, r2)?;
 		log(job_id, LOG3, &format!(
 			"PERF 61081.3: block=certs cs={} pred={}",
-			cs.num_constraints() - n0, 13 * n));
+			cs.num_constraints() - n0, 31 * n));
 		Ok(())
 	}
 }
@@ -2253,7 +2260,9 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	/// acc_out via the re-derived LAST tag (legacy pattern + is_c).
 	/// PARAMS mirror NeoCore/NeoCoreVars fields; l_nat =
 	/// native (l_pat,l_loc) hint slices; r1 packs, r2 logups.
-	/// COST: ~5*n + ~7*|L| + ~3*|D| + logups. PERF 61081.4.
+	/// COST: ~14*n + ~7*|L| + ~3*|D| (n-term folds the
+	/// logups). MEASURED @ fig-14 n=34: 703 (+2.0% vs the
+	/// 689 estimate). PERF 61081.4.
 	/// MERGE CORE, shared by both arms: (1) the L real-row selector
 	/// (wrap rows are sentinels, not matches); (2) D strictness
 	/// (d_diff RANGE2 => pats distinct); (3) cnt forcing
@@ -2379,19 +2388,21 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		log(job_id, LOG3, &format!(
 			"PERF 61081.4: block=merge_acc cs={} pred={}",
 			cs.num_constraints() - n0,
-			5 * n + 7 * l_pat.len() + 3 * d_pat.len()));
+			14 * n + 7 * l_pat.len() + 3 * d_pat.len()));
 		Ok(())
 	}
 
 	/// Aggressive-arm circuit entry: composes the five blocks. Order
 	/// matters only in that C1 bits and C2 (grp_start, rid) feed the
 	/// later blocks; soundness is the conjunction.
-	/// COST (R1CS, n = T_qm rows):
-	///   selectors ~16n; wf ~12n + 2(|S|+|subsigs|); si pins ~12n;
-	///   certs ~13n + fused logup; merge+acc ~5n + 7|L| + 3|D|;
-	///   TOTAL ~60n + ~12|L| + ~8|D| + ~2|S| -- vs legacy aggressive
-	///   fwd+acc ~84.5*n1 with quadratic-walk n1; n here is
-	///   theorem-bounded (linear). PERF 61081.9 grand total.
+	/// COST (R1CS, n = T_qm rows, per-row rates fold logups):
+	///   selectors ~17n; wf ~18n; si pins ~14n; certs ~31n;
+	///   merge+acc ~14n + 7|L| + 3|D|; TOTAL ~94n + 7|L| +
+	///   3|D| -- vs legacy aggressive fwd+acc ~84.5*n1 with
+	///   quadratic-walk n1; n here is theorem-bounded
+	///   (linear). MEASURED @ fig-14 n=34: 3429 cs (+0.6% vs
+	///   3409 estimate; band-locked, test_m6_cost_band).
+	///   PERF 61081.9 grand total.
 	pub(crate) fn assert_neo_core_aggr(
 		cs: ConstraintSystemRef<F>,
 		nat: &NeoCore<F>, vars: &NeoCoreVars<F>,
@@ -2465,7 +2476,9 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	///    seed key: DB has no SUBSIG cat for it); fz>=1 -> 2-tag
 	///    step pin (NORMAL|LAST of enc_fz, value fz) + SUBSIG pin
 	///    (value subsig).
-	/// COST: ~14*n. PERF 61081.6.
+	/// COST: ~22*n (incl the 1cs/row cid sub-block).
+	/// MEASURED @ fig-14 n=34: 748 (0% vs 22n).
+	/// PERF 61081.6.
 	fn assert_neo_si_pins_nonaggr(
 		cs: ConstraintSystemRef<F>,
 		t: &QmTable<F>, v: &QmVars<F>, sel: &NeoSel<F>,
@@ -2543,7 +2556,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		}
 		log(job_id, LOG3, &format!(
 			"PERF 61081.6: block=si_pins_nonaggr cs={} pred={}",
-			cs.num_constraints() - n0, 14 * n));
+			cs.num_constraints() - n0, 22 * n));
 		Ok(())
 	}
 
@@ -2564,7 +2577,9 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	///   min_eff=default_min=161; d_bp=161-73-9-1=78 (RANGE2).
 	/// EXAMPLE SP a2:111 -> (enc_fz=enc5,1,39) proves a5 carries;
 	///   (enc2,1,21) proves the kept min; d_sp=89.
-	/// COST: ~30*n + 2 fused logups. PERF 61081.7.
+	/// COST: ~56*n (folds the 2 fused logups into the
+	/// per-row rate). MEASURED @ fig-14 n=34: 1887 (-0.9%
+	/// vs 56n). PERF 61081.7.
 	fn assert_neo_certs_nonaggr(
 		cs: ConstraintSystemRef<F>,
 		t: &QmTable<F>, v: &QmVars<F>, sel: &NeoSel<F>,
@@ -2728,7 +2743,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			&sel_qc, mtbl_qc, r2)?;
 		log(job_id, LOG3, &format!(
 			"PERF 61081.7: block=certs_nonaggr cs={} pred={}",
-			cs.num_constraints() - n0, 30 * n));
+			cs.num_constraints() - n0, 56 * n));
 		Ok(())
 	}
 
@@ -2746,8 +2761,9 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	/// EXAMPLE: omitting C row a3:27 from q_c leaves its pole
 	///   unmatched (m=1 demands one hit) -> UNSAT; smuggling BP row
 	///   a6:73 into q_c queries a pole no C row provides -> UNSAT.
-	/// COST: ~4*n + 7|L| + 3|D| + 2(|q_i|+|q_c|) + 3 logups.
-	/// PERF 61081.8.
+	/// COST: ~19*n + 7|L| + 3|D| (n-term folds the carry
+	/// pins + 3 logups). MEASURED @ fig-14 n=34: 777 (+1.2%
+	/// vs the 768 estimate). PERF 61081.8.
 	fn assert_neo_merge_nonaggr(
 		cs: ConstraintSystemRef<F>,
 		t: &QmTable<F>, v: &QmVars<F>, sel: &NeoSel<F>,
@@ -2822,7 +2838,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			&sel.is_c.to_vec(), &ones, r2)?;
 		log(job_id, LOG3, &format!(
 			"PERF 61081.8: block=merge_nonaggr cs={} pred={}",
-			cs.num_constraints() - n0, 4 * n
+			cs.num_constraints() - n0, 19 * n
 				+ 7 * vars.l_pat.len() + 3 * vars.d_pat.len()));
 		Ok(())
 	}
@@ -2832,9 +2848,12 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	/// non-aggr) -> certs (C/FP/BP/SP, two fused lookups) -> merge
 	/// + carry binding. default_min = last_loc + 1 from the fsm
 	/// gadget (the legacy backward-prune fallback).
-	/// COST: ~90n + 12|L| + 8|D| + 2(|q_i|+|q_c|); n is
-	/// theorem-bounded (thm:linear-queue) vs the legacy quadratic
-	/// walk. PERF 61081.9 grand total.
+	/// COST: ~151n + 7|L| + 3|D| (per-row rates fold the
+	/// logups + carry pins); n is theorem-bounded
+	/// (thm:linear-queue) vs the legacy quadratic walk.
+	/// MEASURED @ fig-14 n=34: 5277 cs (+0.4% vs 5256
+	/// estimate; band-locked, test_nonaggr_circuit_positive).
+	/// PERF 61081.9 grand total.
 	pub(crate) fn assert_neo_core_nonaggr(
 		cs: ConstraintSystemRef<F>,
 		nat: &NeoCore<F>, vars: &NeoCoreVars<F>,
@@ -4441,7 +4460,7 @@ pub(crate) mod tests_neo_m6 {
 	}
 
 	/// commit-time cost guard: the Fig-14 single-chunk core must
-	/// stay inside a +/-25% band of the calibrated 3465 cs over 34
+	/// stay inside a +/-25% band of the calibrated 3429 cs over 34
 	/// rows -- catches accidental constraint blowup later.
 	#[test]
 	fn test_m6_cost_band() {
@@ -4451,8 +4470,8 @@ pub(crate) mod tests_neo_m6 {
 		assert!(cs.is_satisfied().unwrap());
 		assert_eq!(nat.t.enc.len(), 34);
 		let n = cs.num_constraints();
-		assert!(n >= 2599 && n <= 4331,
-			"cost drift: {} cs vs calibrated 3465", n);
+		assert!(n >= 2572 && n <= 4286,
+			"cost drift: {} cs vs calibrated 3429", n);
 	}
 }
 
