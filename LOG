@@ -30322,14 +30322,58 @@ Goal 1. continue on milestone 5 design.
 Goal 2. Writing: go back to refine abstract and section 1
 	[a] abstract -> DONE
 	[b] section p1.
+	[c] p2 done
+	[d] p3.
 
 Goal 3. continue to milestone M5
 	[a] estimate step queue rows vs neo rows for clamav, maybe 2X
 	[b] show the test plan 	
 	[c] approve the impl plan one by one
+	[d] implementation and test done
 
-== TODO == another SDE algorithm with lower theory complexity.
-Goal 5. Add low complexity SDE algorithm
+Goal 4. milestone M6
+	[a] design discussions
+	[b] requirement done
+
+Wed 07/21/2026
+Goal 1. M6 design
+	[a] address 3 design questions
+	[b] check if the backward handling is done correctly for aggresive
+		mode.
+	[c] redesign and compress r1cs consumption. 
+	[d] approve C3, C4.
+	[e] impl and test
+	[f] regressiontesting and fix.
+
+Goal 2. Writing
+	[a] last 3 paragraphs of section 1
+
+Goal 3. read code of M5 and M6
+	Questions:
+	(1) gen_shared_core_from_hm - is it handling backward
+		step queue for aggresive mode?
+		Also in aggresive mode BP is skipped, do we still generate it?
+	(2) now M6s mission is a little confusing. Do we have at all
+		the common part for non-aggresive case? Are the functions
+		developed for non-aggresive case?
+
+Thursday 07/22/2023
+Goal 1. Milestone 7 
+	[a] goal non-aggr case
+	[b] approve design
+	[c] code approval
+	[d] double check the test
+		-> (1) unit test of all gadgets
+		-> (2) we need to run end to end for non-negative
+		-> (3) any good for end to end for aggresive? 
+			should have some hard case but easy to finish on local
+			with short time
+		-> (4) I need to compare the cost of the above tests
+			with neo and with old.
+
+Goal 2. writing
+	[a] 2.3
+	[b] another round of section 2 
 
 
 ----- ACTIVE GOALS -----

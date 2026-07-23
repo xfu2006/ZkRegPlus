@@ -1004,7 +1004,7 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 
 	/// generate hashmap which maps from pat_id to a vector
 	/// of locs which is wrapped with 0 and max entries
-	fn pat_loc_to_hm(pat_loc: &std::sync::Arc<std::sync::Mutex<Container<F>>>)
+	pub(crate) fn pat_loc_to_hm(pat_loc: &std::sync::Arc<std::sync::Mutex<Container<F>>>)
 	->HashMap<F, Vec<(F,F)>>{
 		//1. retrieve cols
 		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
