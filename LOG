@@ -30363,18 +30363,40 @@ Goal 1. Milestone 7
 	[b] approve design
 	[c] code approval
 	[d] double check the test
-		-> (1) unit test of all gadgets
-		-> (2) we need to run end to end for non-negative
-		-> (3) any good for end to end for aggresive? 
-			should have some hard case but easy to finish on local
-			with short time
-		-> (4) I need to compare the cost of the above tests
-			with neo and with old.
 		=> TEST all passed.
+	[e] cost. -> calibrated
 
 Goal 2. writing
 	[a] 2.3
 	[b] another round of section 2 
+
+Goal 3. Milestone 8 
+	[a] non-aggr case end to end
+	[b] 
+
+Sat 07/24/2026
+Goal 1. Milestone 8-A fixed size problem
+	[a] check formula
+	[b] double check
+
+Sunday 07/25/2026
+Goal 1. Finish 8-A integration test
+	[a] start small_data and comparative study
+	[b] check if non-aggr case has fixed statement as well
+	[c] sat fails -> check which part caused problem
+	[d] still fails -> analyze dummy not working
+	[e] found another issue -> fix.
+	
+Goal 2. Writing over 4.2
+	[a] check validity.
+	[b] overlapping problem -> keep the non-overlapping case 
+		because patterns violating this semantics is rare
+	[c] polish
+
+Goal 5. import section 5.
+	[a] inspected -> ok.
+	[b] swap 6.3
+	[c] adjust section 7 size.
 
 
 ----- ACTIVE GOALS -----

@@ -68,10 +68,11 @@ use crate::{
 	gadgets::word_extract::{LEGS},
 	gadgets::fsm_adv::{FsmAdvGadget,FsmAdvAdvice,FsmAdvCapacity},
 	gadgets::discharge_adv::{DischargeAdvGadget,DischargeAdvAdvice,DischargeAdvCapacity,StepQueue, StepQueueType},
-	gadgets::discharge_adv_neo::{DischargeAdvNeoGadget},
+	gadgets::discharge_adv_neo::{DischargeAdvNeoGadget,
+		DischargeAdvNeoAdvice},
 	gadgets::compute_sig_adv::{ComputeSigAdvCapacity,ComputeSigAdvAdvice,
 		ComputeSigAdvGadget},
-	gadgets::traits::{ComponentAdvice},
+	gadgets::traits::{ComponentAdvice, Container},
 	//gadgets::commons::{print_vec}
 };
 use data_processor::{
@@ -437,14 +438,46 @@ impl Capacity for SedCapacityCombo{
 }
 
 
+/// Discharge-advice slot holding either the legacy two-pass SDE advice
+/// or the neo (App G.1) advice, so b_use_discharge_neo swaps the advice
+/// alongside the gadget. Both variants expose the same stmt_container
+/// (name "discharge_adv_stmt_*") and carried-queue output serialization.
+#[derive(Debug)]
+pub enum DaAdvice<F: PrimeField + ColEle> {
+	Legacy(DischargeAdvAdvice<F>),
+	Neo(DischargeAdvNeoAdvice<F>),
+}
+
+impl<F: PrimeField + ColEle> DaAdvice<F> {
+	fn stmt_container(&self) -> Arc<Mutex<Container<F>>> {
+		match self {
+			Self::Legacy(a) => a.stmt_container.clone(),
+			Self::Neo(a) => a.stmt_container.clone(),
+		}
+	}
+	fn get_output_steps_queue(&self) -> Vec<F> {
+		match self {
+			Self::Legacy(a) => a.get_output_steps_queue(),
+			Self::Neo(a) => a.get_output_steps_queue(),
+		}
+	}
+	fn to_component_advice(&self)
+		-> Arc<dyn ComponentAdvice<F> + Send + Sync> {
+		match self {
+			Self::Legacy(a) => Arc::new(a.clone()),
+			Self::Neo(a) => Arc::new(a.clone()),
+		}
+	}
+}
+
 /// The non-deterministic advice for the CP component
 #[derive(Debug)]
 pub struct SedAdvice<F:PrimeField + ColEle>{
 	pub wd_extract_advice: WordExtractAdvAdvice<F>,
 	pub fsm_adv_advice_cs: FsmAdvAdvice<F>,
 	pub fsm_adv_advice_igc: FsmAdvAdvice<F>,
-	pub discharge_adv_advice_cs: DischargeAdvAdvice<F>,
-	pub discharge_adv_advice_igc: DischargeAdvAdvice<F>,
+	pub discharge_adv_advice_cs: DaAdvice<F>,
+	pub discharge_adv_advice_igc: DaAdvice<F>,
 	pub compute_sig_adv_advice: ComputeSigAdvAdvice<F>,
 
 	pub vec_advices: Vec<Arc<dyn ComponentAdvice<F> + Send + Sync>>,
@@ -585,11 +618,21 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
                         .search_container("fsm_adv_stmt_cs fsm_acc locs").unwrap()
                         .lock().unwrap().to_vec();
                 let last_loc_cs = locs_cs[locs_cs.len()-1];
-                let discharge_adv_advice_cs = DischargeAdvAdvice::<F>
-                        ::new(false, 2, &pat_loc_cs, &subsigs_inp_cs, fsm_id_cs as u32,
-                                subsig_step_store_cs, &da_cap_cs, &inp_steps_queue_obj_cs,
-				last_loc_cs,
-				seg_id, job_id)?;
+		let use_neo = read_global_config().clamav_cfg
+			.b_use_discharge_neo;
+		let discharge_adv_advice_cs = if use_neo {
+			DaAdvice::Neo(DischargeAdvNeoAdvice::<F>::new(false, 2,
+				&pat_loc_cs, &subsigs_inp_cs, fsm_id_cs as u32,
+				subsig_step_store_cs, &da_cap_cs,
+				&inp_steps_queue_obj_cs, last_loc_cs, seg_id,
+				job_id)?)
+		} else {
+			DaAdvice::Legacy(DischargeAdvAdvice::<F>::new(false, 2,
+				&pat_loc_cs, &subsigs_inp_cs, fsm_id_cs as u32,
+				subsig_step_store_cs, &da_cap_cs,
+				&inp_steps_queue_obj_cs, last_loc_cs, seg_id,
+				job_id)?)
+		};
 		if b_perf{ log_perf(job_id, LOG5, "Sed advice step4: discharge_cs", &mut t1); }
 
 		//3.2 the igc version
@@ -602,11 +645,19 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
                         .search_container("fsm_adv_stmt_igc fsm_acc locs").unwrap()
                         .lock().unwrap().to_vec();
                 let last_loc_igc = locs_igc[locs_igc.len()-1];
-                let discharge_adv_advice_igc = DischargeAdvAdvice::<F>
-                        ::new(true, 2, &pat_loc_igc, &subsigs_inp_igc, fsm_id_igc as u32,
-                                subsig_step_store_igc, &da_cap_igc, &inp_steps_queue_obj_igc,
-				last_loc_igc,
-				seg_id, job_id)?;
+		let discharge_adv_advice_igc = if use_neo {
+			DaAdvice::Neo(DischargeAdvNeoAdvice::<F>::new(true, 2,
+				&pat_loc_igc, &subsigs_inp_igc, fsm_id_igc as u32,
+				subsig_step_store_igc, &da_cap_igc,
+				&inp_steps_queue_obj_igc, last_loc_igc, seg_id,
+				job_id)?)
+		} else {
+			DaAdvice::Legacy(DischargeAdvAdvice::<F>::new(true, 2,
+				&pat_loc_igc, &subsigs_inp_igc, fsm_id_igc as u32,
+				subsig_step_store_igc, &da_cap_igc,
+				&inp_steps_queue_obj_igc, last_loc_igc, seg_id,
+				job_id)?)
+		};
 		if b_perf{ log_perf(job_id, LOG5, "Sed advice step5: discharge_igc", &mut t1); }
 
 
@@ -621,8 +672,13 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 		//AGGRESSIVE: compute_sig reads the failed_subsigs accumulator
 		//(acc_out) instead of the (no-op) backward sq_res2.
 		let b_aggr = cs_capacity.da_capacity().b_aggressive;
-		let stmt_disc_cs = &discharge_adv_advice_cs.stmt_container;
-		let sq_res_cs = if b_aggr {
+		let stmt_disc_cs = discharge_adv_advice_cs.stmt_container();
+		let sq_res_cs = if use_neo && !b_aggr {
+			// neo non-aggr: compute_sig consumes the carry q_c
+			stmt_disc_cs.lock().unwrap().search_container(
+				"discharge_adv_stmt_cs q_c")
+				.expect("neo q_c cs err")
+		} else if b_aggr {
 			stmt_disc_cs.lock().unwrap().search_container(
 				"discharge_adv_stmt_cs failed_acc_combo failed_acc")
 				.expect("acc_out cs err")
@@ -631,8 +687,12 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 				"discharge_adv_stmt_cs bwd_steps_queue sq_res2")
 				.expect("sq_res err")
 		};
-		let stmt_disc_igc = &discharge_adv_advice_igc.stmt_container;
-		let sq_res_igc = if b_aggr {
+		let stmt_disc_igc = discharge_adv_advice_igc.stmt_container();
+		let sq_res_igc = if use_neo && !b_aggr {
+			stmt_disc_igc.lock().unwrap().search_container(
+				"discharge_adv_stmt_igc q_c")
+				.expect("neo q_c igc err")
+		} else if b_aggr {
 			stmt_disc_igc.lock().unwrap().search_container(
 				"discharge_adv_stmt_igc failed_acc_combo failed_acc")
 				.expect("acc_out igc err")
@@ -642,17 +702,55 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 				.expect("sq_res err")
 		};
 		// Aggressive seed tie: the forward seed sq_inp (exists in non-aggr
-		// too; only the aggr compute_sig acc path reads it).
-		let sq_inp_cs = stmt_disc_cs.lock().unwrap().search_container(
-			"discharge_adv_stmt_cs fwd_steps_queue sq_inp")
-			.expect("sq_inp cs err");
-		let sq_inp_igc = stmt_disc_igc.lock().unwrap().search_container(
-			"discharge_adv_stmt_igc fwd_steps_queue sq_inp")
-			.expect("sq_inp igc err");
+		// too; only the aggr compute_sig acc path reads it). Neo carries
+		// the carried-in queue q_i in that slot.
+		let sq_inp_cs = if use_neo && !b_aggr {
+			stmt_disc_cs.lock().unwrap().search_container(
+				"discharge_adv_stmt_cs q_i").expect("neo q_i cs err")
+		} else if use_neo && b_aggr {
+			// 8_A: aggr-neo publishes fwd_seed (universe seed encs)
+			stmt_disc_cs.lock().unwrap().search_container(
+				"discharge_adv_stmt_cs fwd_seed")
+				.expect("neo fwd_seed cs err")
+		} else {
+			stmt_disc_cs.lock().unwrap().search_container(
+				"discharge_adv_stmt_cs fwd_steps_queue sq_inp")
+				.expect("sq_inp cs err")
+		};
+		let sq_inp_igc = if use_neo && !b_aggr {
+			stmt_disc_igc.lock().unwrap().search_container(
+				"discharge_adv_stmt_igc q_i").expect("neo q_i igc err")
+		} else if use_neo && b_aggr {
+			stmt_disc_igc.lock().unwrap().search_container(
+				"discharge_adv_stmt_igc fwd_seed")
+				.expect("neo fwd_seed igc err")
+		} else {
+			stmt_disc_igc.lock().unwrap().search_container(
+				"discharge_adv_stmt_igc fwd_steps_queue sq_inp")
+				.expect("sq_inp igc err")
+		};
+		// 8_A: aggr-neo asserts against the FULL universe subsig set
+		// (store's [0]=all subsig_ids), so feed that instead of this
+		// chunk's active subset. legacy/non-aggr paths unchanged.
+		//exclude empty-chain subsigs: neo seeds them (seed-only) but
+		//they can never reach LAST_STEP -> never in failed_acc, and
+		//compute_sig's from_subsig_store_item underflows on num==0.
+		let uni = |st: &SubsigStepStore| -> Vec<F> {
+			st.subsig_ids.iter().filter(|u| st.subsig_to_steps
+				.get(u).map_or(false, |it|
+					!it.vec_pm_bounds.is_empty()))
+				.map(|u| F::from(*u as u32)).collect::<Vec<F>>()
+		};
+		let cs_subsigs_cs = if use_neo && b_aggr {
+			uni(subsig_step_store_cs)
+		} else { subsigs_inp_cs.clone() };
+		let cs_subsigs_igc = if use_neo && b_aggr {
+			uni(subsig_step_store_igc)
+		} else { subsigs_inp_igc.clone() };
 		let compute_sig_adv_advice = ComputeSigAdvAdvice::<F>::new(
 			fsm_id_cs as u32, fsm_id_igc as u32,
-			&inp_sigs, 
-			&subsigs_inp_cs, &subsigs_inp_igc,
+			&inp_sigs,
+			&cs_subsigs_cs, &cs_subsigs_igc,
 			&discharge_info,
 			&sq_res_cs, &sq_res_igc,
 			&sq_inp_cs, &sq_inp_igc,
@@ -666,8 +764,8 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 			Arc::new(wd_extract_advice.clone()),
 			Arc::new(fsm_adv_advice_cs.clone()),
 			Arc::new(fsm_adv_advice_igc.clone()),
-			Arc::new(discharge_adv_advice_cs.clone()),
-			Arc::new(discharge_adv_advice_igc.clone()),
+			discharge_adv_advice_cs.to_component_advice(),
+			discharge_adv_advice_igc.to_component_advice(),
 			Arc::new(compute_sig_adv_advice.clone()),
 		];
 		if b_perf{ log_perf(job_id, LOG5, "Sed advice step6: compute_sig", &mut t1); }

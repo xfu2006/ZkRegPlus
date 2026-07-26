@@ -379,9 +379,18 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 			inp_subsigs.len(), cap_subsigs, b_igc);
 		let sname = if b_igc {"discharge_adv_stmt_igc"}
 			else {"discharge_adv_stmt_cs"};
+		// neo non-aggr: the discharge output is the carry q_c (added
+		// directly under the stmt), not the legacy bwd_steps_queue.
+		let use_neo = read_global_config()
+			.clamav_cfg.b_use_discharge_neo;
+		let sq_res_path = if use_neo {
+			format!("{} q_c", sname)
+		} else {
+			format!("{} bwd_steps_queue sq_res2", sname)
+		};
 		let sq_res = sq_res.lock().unwrap().duplicate_as_external_adv(
 			offset_discharge,
-			Some(format!("{} bwd_steps_queue sq_res2",sname)),
+			Some(sq_res_path),
 			Some("sq_res".to_string())); //so later we do not have to create copy
 										 //in validate.
 
@@ -572,9 +581,20 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		// been seeded (else its encoded value is absent from the seed and
 		// the logup fails). encode_cols matches the seed's step-0 encoding
 		// (subsig at high pos, step/pat/rgs/rge = 0).
+		// neo non-aggr: the carried-in queue q_i stands in for the
+		// legacy forward seed sq_inp.
+		// 8_A: this fn is aggressive-only, so neo here means aggr-neo,
+		// which publishes fwd_seed (universe seed encs) in place of the
+		// legacy forward seed. non-aggr-neo never reaches gen_by_acc.
+		let seed_path = if read_global_config()
+			.clamav_cfg.b_use_discharge_neo {
+			format!("{} fwd_seed", sname)
+		} else {
+			format!("{} fwd_steps_queue sq_inp", sname)
+		};
 		let seed_ext = sq_inp.lock().unwrap().duplicate_as_external_adv(
 			offset_discharge,
-			Some(format!("{} fwd_steps_queue sq_inp", sname)),
+			Some(seed_path),
 			Some("seed_ref".to_string()));
 		let seed_enc: Vec<F> = seed_ext.get_container("encoded").unwrap()
 			.lock().unwrap().to_vec();
@@ -1548,20 +1568,43 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		};
 		// AGGRESSIVE seed tie: dummy sq_inp (forward seed) sized like the
 		// real one so compute_sig's mtbl_seed column matches in the cfg.
-		let sq_inp_size_cs = StepQueue::<F>::vec_size(
-			&StepQueueType::ResSmall, &dis_cap_cs).0;
-		let sq_inp_size_igc = StepQueue::<F>::vec_size(
-			&StepQueueType::ResSmall, &dis_cap_igc).0;
-		let dummy_sq_inp_cs = StepQueue::parse_from(
-			&vec![zero; sq_inp_size_cs], StepQueueType::ResSmall,
-			&dis_cap_cs, false)
-			.to_container("sq_inp", false, false, false, false,
-				&store_steps_cs).expect("dummy sq_inp cs");
-		let dummy_sq_inp_igc = StepQueue::parse_from(
-			&vec![zero; sq_inp_size_igc], StepQueueType::ResSmall,
-			&dis_cap_igc, true)
-			.to_container("sq_inp", false, false, false, false,
-				&store_steps_igc).expect("dummy sq_inp igc");
+		// 8_A neo-aggr: the real seed is fwd_seed (encoded + si_encoded),
+		// so the dummy must MIRROR it -- else the external ref to a
+		// StepQueue "locs" child fails to resolve against fwd_seed.
+		let b_neo_aggr = read_global_config().clamav_cfg
+			.b_use_discharge_neo && capacity.b_aggressive;
+		let mk_fwd_seed = |n: usize| {
+			let c = Container::<F>::new("sq_inp");
+			c.lock().unwrap().add_col(Col::new(vec![zero; n],
+				"encoded", IDX_DATA));
+			c.lock().unwrap().add_col(Col::new_const(vec![zero; n],
+				"si_encoded", IDX_SI_DATA));
+			c
+		};
+		let (dummy_sq_inp_cs, dummy_sq_inp_igc) = if b_neo_aggr {
+			// length MUST equal the real fwd_seed (= |subsig_ids|+1,
+			// the neo universe new_aggr seeds PLUS the leading 0
+			// entry): compute_sig's mtbl_seed column length = seed_enc
+			// length, so a dummy/real size mismatch here makes the
+			// main decider snark fail to verify.
+			(mk_fwd_seed(store_steps_cs.subsig_ids.len() + 1),
+			 mk_fwd_seed(store_steps_igc.subsig_ids.len() + 1))
+		} else {
+			let sq_inp_size_cs = StepQueue::<F>::vec_size(
+				&StepQueueType::ResSmall, &dis_cap_cs).0;
+			let sq_inp_size_igc = StepQueue::<F>::vec_size(
+				&StepQueueType::ResSmall, &dis_cap_igc).0;
+			(StepQueue::parse_from(
+				&vec![zero; sq_inp_size_cs], StepQueueType::ResSmall,
+				&dis_cap_cs, false)
+				.to_container("sq_inp", false, false, false, false,
+					&store_steps_cs).expect("dummy sq_inp cs"),
+			StepQueue::parse_from(
+				&vec![zero; sq_inp_size_igc], StepQueueType::ResSmall,
+				&dis_cap_igc, true)
+				.to_container("sq_inp", false, false, false, false,
+					&store_steps_igc).expect("dummy sq_inp igc"))
+		};
 		let mut sigs_to_id = HashMap::<String,usize>::new();
 		sigs_to_id.insert("none".to_string(), 0);
 

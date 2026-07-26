@@ -3029,10 +3029,10 @@ where 	C: CurveGroup<ScalarField=F>,
 		}).collect::<Vec<F>>();
 		// Dummies have m=0, so inv*m = 0 either way -- no need to
 		// branch on col1.is_zero(). Mirrors the constraint side.
-		let sum_hab22_right = (0..right_size).into_par_iter().map(|i|{
+		let local_right = (0..right_size).into_par_iter().map(|i|{
 			inv_hab22_right[i] * si.m_share[i]
-		}).sum::<F>() + zi_part2.sum_hab22_right;
-
+		}).sum::<F>();
+		let sum_hab22_right = local_right + zi_part2.sum_hab22_right;
 		// this is disabled because fill_lkup is not called during
 		// preprocess mode
 		// assert!(!final_step || sum_hab22_left==sum_hab22_right);
@@ -3658,6 +3658,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			!x.value().unwrap().is_zero()
 		}).collect::<Vec<bool>>();
 
+
 		//here to break very long linear combination sequence
 		//of the fum sum_i=1^n v[i]
 		//we periodically multiply the item v[i] with var with value 1
@@ -3839,6 +3840,7 @@ where 	C: CurveGroup<ScalarField=F>,
 				sum_hab22_right = &sum_hab22_right * &one_wit_var;
 			}
 		}
+
 
 
 		let b_hab_res1 = sum_hab22_right.is_eq(&sum_hab22_left)?;

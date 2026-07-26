@@ -20,9 +20,11 @@ use folding_schemes::{
 		sigma_ir1cs::{LookupTableTwoCol,GadgetMapper,GadgetMapperDeepClone,SigmaGadget,StatementConfig,StatementInst,StatementExtraInfo,NdAdvice,Capacity,WordInfo} 	}
 };
 use ark_ff::{PrimeField, BigInteger};
+use std::collections::HashMap;
+use utils::consts::read_global_config;
 use std::{
 	marker::PhantomData,
-	
+
 	fmt::{Debug},
 };
 use crate::gadgets::{
@@ -986,7 +988,7 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 			"Increase failed sig buf. needs at least one 0 dummy entry");
 
 		let mtbl_sigs = gen_m_table(&failed_sigs, &discharged_sigs);
-		let stmt = StatementInst{
+		let mut stmt = StatementInst{
 			pc_i: ea.pc_i,
 			pc_i1: ea.pc_i1, //will be reset later
 			n_circ: ea.n_circ,
@@ -1029,6 +1031,54 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 
 			_lk: PhantomData,
 		};
+
+		// 8_B: dummy self-cover for aggr-neo. The dummy stmt is installed
+		// via set_dummy_stmt and NEVER passes update_lookup, so its
+		// col1/col2/m_share stay zero (hab22 right-sum = 0). aggr-neo
+		// seeds the fixed universe as lookup QUERIES even for a pad word
+		// (left != 0), so a never-stepped dummy instance is hab22-
+		// imbalanced and the decider rejects it. Fill the dummy's own
+		// table share to exactly match its own queries (each distinct
+		// (tbl_id,val) key, mult = its query count) so left == right.
+		if b_dummy {
+			let g = read_global_config();
+			let neo_aggr = g.clamav_cfg.b_use_discharge_neo
+				&& g.clamav_cfg.b_aggressive_sde_for_rep;
+			drop(g);
+			if neo_aggr {
+				let vals = [stmt.inp_buf.clone(), stmt.oup_buf.clone(),
+					stmt.data.clone()].concat();
+				assert!(vals.len() == stmt.subtable_id.len());
+				let mut order: Vec<(F,F)> = vec![];
+				let mut cnt: Vec<usize> = vec![];
+				let mut seen: HashMap<Vec<u8>, usize> = HashMap::new();
+				for j in 0..stmt.subtable_id.len() {
+					let t = stmt.subtable_id[j];
+					if t.is_zero() { continue; } //tbl_id 0 = not a query
+					let v = vals[j];
+					let mut k = t.into_bigint().to_bytes_le();
+					k.extend(v.into_bigint().to_bytes_le());
+					match seen.get(&k) {
+						Some(&p) => cnt[p] += 1,
+						None => { seen.insert(k, order.len());
+							order.push((t, v)); cnt.push(1); }
+					}
+				}
+				assert!(order.len() <= lkup_share_size,
+					"dummy self-cover: {} keys > share cap {}",
+					order.len(), lkup_share_size);
+				let mut c1 = vec![zero; lkup_share_size];
+				let mut c2 = vec![zero; lkup_share_size];
+				let mut ms = vec![zero; lkup_share_size];
+				for (p, (t, v)) in order.iter().enumerate() {
+					c1[p] = *t; c2[p] = *v;
+					ms[p] = F::from(cnt[p] as u64);
+				}
+				stmt.col1_share = c1;
+				stmt.col2_share = c2;
+				stmt.m_share = ms;
+			}
+		}
 
 		if b_debug{
 			let inp_oup_data = [

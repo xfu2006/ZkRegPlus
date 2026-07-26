@@ -50,6 +50,10 @@ pub struct DischargeAdvNeoGadget<F: PrimeField + ColEle> {
 
 impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	/// mirrors DischargeAdvGadget::new so the sed_mapper swap is 1:1.
+	/// The neo SigmaGadget plumbing (container config, stmt map, msg
+	/// sizes) delegates to `inner`; to make it describe the NEO
+	/// statement {neo_core, q_i, q_c} we overwrite inner.dummy_cfg with
+	/// a config built from a dummy neo advice (same idea as legacy new).
 	pub fn new(
 		b_igc: bool,
 		offset_fsm: usize,
@@ -58,10 +62,60 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		prev_cfgs: &Vec<ContainerConfig>,
 		store_steps: &SubsigStepStore,
 	) -> Self {
-		let inner = DischargeAdvGadget::<F>::new(
+		let mut inner = DischargeAdvGadget::<F>::new(
 			b_igc, offset_fsm, capacity, fsm_id, prev_cfgs,
 			store_steps);
+		inner.dummy_cfg = Self::build_neo_dummy_cfg(b_igc,
+			offset_fsm, capacity, fsm_id, prev_cfgs, store_steps);
 		Self { inner }
+	}
+
+	/// Build the neo statement's container config from an all-dummy
+	/// neo advice (structure only -- sizes come from capacity, not the
+	/// zero data), mirroring DischargeAdvGadget::new's dummy_cfg build.
+	fn build_neo_dummy_cfg(
+		b_igc: bool,
+		offset_fsm: usize,
+		capacity: &DischargeAdvCapacity,
+		fsm_id: u32,
+		prev_cfgs: &Vec<ContainerConfig>,
+		store_steps: &SubsigStepStore,
+	) -> ContainerConfig {
+		let zero = F::zero();
+		let pats_len = capacity.get_pat_loc_len();
+		// EMPTY pat_loc (all-zero, length = capacity): with the real
+		// subsigs seeded below, gen_merge_dict's D-dict = the store's
+		// distinct pats (>=1), and a real chunk's matched pats are a
+		// SUBSET of those -> same d_pat length as real chunks (so the
+		// dummy config size == every real chunk's statement size).
+		let pat_loc = Container::<F>::new("pat_loc");
+		pat_loc.lock().unwrap().add_col(Col::<F>::new(
+			vec![zero; pats_len], "sorted_key", IDX_DATA));
+		pat_loc.lock().unwrap().add_col(Col::<F>::new(
+			vec![zero; pats_len], "sorted_id", IDX_DATA));
+		pat_loc.lock().unwrap().add_col(Col::<F>::new(
+			vec![zero; pats_len], "sorted_val", IDX_DATA));
+		// Legacy-style all-zero carried seed (fits any capacity). The
+		// store-table sizes no longer depend on the carried subsigs:
+		// gen_qm_table iterates the FULL store for key groups and
+		// subsig_nat is the full store, so the dummy config size ==
+		// every real chunk's statement size regardless of this seed.
+		let sigs = vec![zero; capacity.subsigs];
+		let (step_q_size, _, _) = StepQueue::<F>::vec_size(
+			&StepQueueType::ResSmall, capacity);
+		let inp_steps_queue = vec![zero; step_q_size * 2];
+		let inp_steps_queue_obj = StepQueue::parse_from(
+			&inp_steps_queue, StepQueueType::ResSmall, capacity,
+			b_igc);
+		let dummy_adv = DischargeAdvNeoAdvice::new(b_igc, offset_fsm,
+			&pat_loc, &sigs, fsm_id, store_steps, capacity,
+			&inp_steps_queue_obj, zero, 0, 0)
+			.expect("neo dummy advice");
+		let mut vec_cfg = prev_cfgs.clone();
+		vec_cfg.push(dummy_adv.stmt_container.lock().unwrap()
+			.get_cfg());
+		ContainerConfig::adjust_locations(&mut vec_cfg);
+		vec_cfg[vec_cfg.len() - 1].clone()
 	}
 }
 
@@ -1405,7 +1459,11 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 			let u = field_to_usize(&t.subsig[i]);
 			let num = info.subsig_to_steps.get(&u).unwrap()
 				.vec_pm_bounds.len();
-			field_to_usize(&t.step[i]) == num
+			// 8_A: empty-chain (seed-only) subsigs never "complete" --
+			// their step-0 seed is not a terminal. Excluding them
+			// matches compute_sig's inp_subsigs filter (empty-chain
+			// dropped), keeping the acc membership logup balanced.
+			num > 0 && field_to_usize(&t.step[i]) == num
 		};
 		let mut acc: Vec<F> = vec![];
 		for i in t.n_pad..t.enc.len() {
@@ -2304,7 +2362,12 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		// --- Section 3: cnt forcing (1 logup) ---
 		// EXAMPLE: pat p on steps s1,s2 -> two S poles at p ->
 		//   cnt(p)=2; no other value balances.
-		assert_logup(cs.clone(), s_pat, d_pat, d_cnt, r2)?;
+		// EMPTY STORE (e.g. an igc gadget for a case-sensitive-only
+		// sig set): no S poles / no D dictionary -> vacuous counting
+		// logup (assert_logup cannot take an empty query/table side).
+		if !s_pat.is_empty() && !d_pat.is_empty() {
+			assert_logup(cs.clone(), s_pat, d_pat, d_cnt, r2)?;
+		}
 		// --- Section 4: m forcing per L row (1 masked logup) ---
 		// EXAMPLE: cnt(p)=2 but an L row claims m=1: (p,1) is not a
 		//   D row -> unmatched query.
@@ -2382,13 +2445,18 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		let tag_var: Vec<FpVar<F>> = (0..n).map(|i|
 			&(&v.si_step[i] - &c_last) - &v.enc[i]).collect();
 		let is_last = gen_zero_bits(&cs, &tag_nat, &tag_var)?;
+		// (1-is_step0) mirrors Section 5: seed-only (empty-chain)
+		// subsigs' step-0 row is vacuously is_last but must NOT feed
+		// acc_out (num>0 filter in gen_acc_and_mtbl). Real terminals
+		// sit at step==num>=1, where is_step0=0, so never dropped.
 		let qry_a: Vec<FpVar<F>> = (0..n).map(|i|
-			&(&v.enc[i] * &is_last[i]) * &sel.is_c[i]).collect();
+			&(&(&v.enc[i] * &is_last[i]) * &sel.is_c[i])
+				* &(&c_one - &sel.is_step0[i])).collect();
 		assert_logup(cs.clone(), &qry_a, acc_out, mtbl_acc, r2)?;
 		log(job_id, LOG3, &format!(
 			"PERF 61081.4: block=merge_acc cs={} pred={}",
 			cs.num_constraints() - n0,
-			14 * n + 7 * l_pat.len() + 3 * d_pat.len()));
+			15 * n + 7 * l_pat.len() + 3 * d_pat.len()));
 		Ok(())
 	}
 
@@ -2397,7 +2465,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	/// later blocks; soundness is the conjunction.
 	/// COST (R1CS, n = T_qm rows, per-row rates fold logups):
 	///   selectors ~17n; wf ~18n; si pins ~14n; certs ~31n;
-	///   merge+acc ~14n + 7|L| + 3|D|; TOTAL ~94n + 7|L| +
+	///   merge+acc ~15n + 7|L| + 3|D|; TOTAL ~95n + 7|L| +
 	///   3|D| -- vs legacy aggressive fwd+acc ~84.5*n1 with
 	///   quadratic-walk n1; n here is theorem-bounded
 	///   (linear). MEASURED @ fig-14 n=34: 3429 cs (+0.6% vs
@@ -2935,6 +3003,19 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 		for p in &l_pat { hm_pats.entry(*p).or_insert(vec![]); }
 		let (d_pat, d_cnt) = StepQueueNeo::gen_merge_dict(
 			&subsig_nat, info, &hm_pats);
+		// 8_A guard: with the universe seed every real L pat is a
+		// store pat, so D == D_store. a non-sentinel dict entry with
+		// zero store count means an L pat fell outside the universe
+		// -> statement shape would drift, reject as CapErr.
+		let f_max_d = F::from(((1u64 << read_global_config()
+			.range2_bit) - 1) as u32);
+		for (p, c) in d_pat.iter().zip(d_cnt.iter()) {
+			if c.is_zero() && !p.is_zero() && *p != f_max_d {
+				return Err(Error::CapErr(vec![(format!(
+					"neo_dict_offstore, b_igc: {}", g.b_igc),
+					d_pat.len())]));
+			}
+		}
 		let mut d_diff = vec![F::zero(); d_pat.len()];
 		for j in 1..d_pat.len() {
 			d_diff[j] = d_pat[j] - d_pat[j - 1] - F::one();
@@ -3092,11 +3173,17 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 			.get_container("acc_encoded").unwrap()
 			.lock().unwrap().to_vec();
 		let f_c = F::from(CAT_C);
+		// !step0 mirrors the circuit acc-feed gate: seed-only
+		// (empty-chain) rows are vacuously is_last but never complete
+		// (excluded from acc_vec by gen_acc_and_mtbl's num>0 filter),
+		// so they must not be counted as nonzero terminal queries here
+		// either -- else mtbl_acc's zero slot undercounts by that many.
 		let qry_final: Vec<F> = (0..nat.t.enc.len()).map(|i| {
 			let last_tag = SubsigStepStore::gen_step_tbl_id(
 				nat.t.enc[i], ID_ENCODED_LAST_STEP);
 			if nat.t.si_step[i] == last_tag
-				&& nat.t.cat[i] == f_c { nat.t.enc[i] }
+				&& nat.t.cat[i] == f_c
+				&& !nat.t.step[i].is_zero() { nat.t.enc[i] }
 			else { F::zero() }
 		}).collect();
 		let mtbl_complete = gen_m_table(&qry_final, &acc_vec);
@@ -3146,7 +3233,7 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 /// M6 advice for the AGGRESSIVE arm: seed-only universe carry, M5
 /// shared core, N3 statement. Mirrors DischargeAdvAdvice::new's
 /// aggressive branch; non-aggressive callers keep the legacy advice.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct DischargeAdvNeoAdvice<F: PrimeField + ColEle> {
 	pub capacity: DischargeAdvCapacity,
 	pub fsm_id: u32,
@@ -3251,18 +3338,42 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoAdvice<F> {
 		let sname = if b_igc { "discharge_adv_stmt_igc" }
 			else { "discharge_adv_stmt_cs" };
 		let stmt_container = Container::<F>::new(sname);
-		let seed_subsigs = inp_subsigs.iter()
-			.filter(|s| !s.is_zero()).cloned().collect::<Vec<F>>();
+		// 8_A: seed the FIXED scoped universe (store's [0]=all subsig
+		// set) so the neo statement shape is identical every chunk
+		// (foldable). inp_subsigs (this chunk's active set) is unused.
+		let _ = inp_subsigs;
+		let seed_subsigs = subsig_store_info.subsig_ids.iter()
+			.map(|u| F::from(*u as u32)).collect::<Vec<F>>();
 		let seed = DischargeAdvAdvice::<F>
 			::gen_empty_steps_queue_serialized(b_igc,
 			&seed_subsigs, subsig_store_info, fsm_id, capacity);
 		let carried = StepQueueNeo::from_stepqueue(seed);
 		let gen = carried.gen_shared_core_advice(job_id, pat_loc,
 			subsig_store_info, last_loc + F::one())?;
-		let (core, combo, _nat) = gen.gen_core_stmt(pat_loc,
+		let (core, combo, nat) = gen.gen_core_stmt(pat_loc,
 			subsig_store_info)?;
 		stmt_container.lock().unwrap().add_container(core);
 		stmt_container.lock().unwrap().add_container(combo);
+		// 8_A: publish seed encodings (subsig*2^4rb per universe
+		// subsig) so compute_sig's aggressive seed-pin reads a uniform
+		// source (parity with legacy fwd_steps_queue sq_inp.encoded).
+		// A leading 0 entry is REQUIRED: compute_sig pads inp_subsigs
+		// with dummy-0s (enc 0), so the seed table must contain 0 to
+		// absorb those zero queries (else the seed-pin logup is unsat).
+		let mut seed_enc: Vec<F> = vec![F::zero()];
+		seed_enc.extend(nat.subsig_nat.iter().map(|s|
+			encode_cols(&vec![vec![*s], vec![F::zero()],
+				vec![F::zero()], vec![F::zero()], vec![F::zero()]],
+				&vec![0, 1, 2, 3, 4])[0]));
+		let n_seed = seed_enc.len();
+		let fwd_seed = Container::<F>::new("fwd_seed");
+		fwd_seed.lock().unwrap().add_col(Col::new(seed_enc,
+			"encoded", IDX_DATA));
+		// companion si col (no outer lookup) keeps data/subtbl_id
+		// balanced in the statement assembly (fix/prf pattern).
+		fwd_seed.lock().unwrap().add_col(Col::new_const(
+			vec![F::zero(); n_seed], "si_encoded", IDX_SI_DATA));
+		stmt_container.lock().unwrap().add_container(fwd_seed);
 		Ok(Self { capacity: capacity.clone(), fsm_id,
 			stmt_container, b_igc, offset_fsm })
 	}
@@ -4351,21 +4462,28 @@ pub(crate) mod tests_neo_m6 {
 		assert_eq!(cat_rows(&nat, CAT_C), vec![(0, 1)]);
 	}
 
-	/// P2d CNT=0 PAT: L lists pat 9, which no step of the store
-	/// uses. D must still carry a (9, cnt=0) row, the pat-9 L rows
-	/// carry m_aux=0, and no T_qm row answers them; the Fig-14
-	/// partition is untouched.
+	/// P2d CNT=0 PAT (8_A): an L pat (9) no seeded store step uses
+	/// is off-universe -> gen rejects with a neo_dict_offstore
+	/// CapErr (shape-drift guard), not a silent cnt=0 dict row.
 	#[test]
 	fn test_m6_corner_cnt0_pat() {
 		let info = super::tests_neo_m5::a18_store();
 		let mut hm = fig14_hm();
 		hm.insert(9, vec![50]);
-		let (cs, nat) = run_core_aggr(&info, &hm, 161, None);
-		assert!(cs.is_satisfied().unwrap());
-		assert_eq!(cat_rows(&nat, CAT_FP),
-			vec![(5, 106), (7, 131)]);
-		let j = nat.d_pat.iter().position(|p| *p == f(9)).unwrap();
-		assert!(nat.d_cnt[j].is_zero());
+		let seed = StepQueueItem::new(f(1), f(0), f(0), f(0),
+			f(0), vec![f(1)]);
+		let mut m = HashMap::new();
+		m.insert(f(1), vec![seed]);
+		let carried = StepQueueNeo::from_stepqueue(StepQueue::new(
+			vec![f(1)], m, &fixture_capacity(),
+			StepQueueType::ResLarge, false));
+		let gen = carried.gen_shared_core_from_hm(0, &hm_gen(&hm),
+			&info, f(161)).expect("shared core");
+		let (l_pat, l_loc) = hm_to_l_cols(&hm);
+		let res = NeoCore::gen(&gen, &info, l_pat, l_loc);
+		let msg = format!("{:?}", res.err()
+			.expect("off-store L pat must be rejected"));
+		assert!(msg.contains("neo_dict_offstore"), "got {}", msg);
 	}
 
 	/// P2e DUPLICATE LOC ACROSS PATS: a3 also matches at loc 33 =
@@ -5908,5 +6026,100 @@ mod tests_neo_nonaggr_h {
 		neo_nonaggr_e2e(dir,
 			&db, &format!("def{}234xx56", "x".repeat(90)),
 			"sig2");
+	}
+}
+
+// THROWAWAY (M8 measurement): neo-vs-legacy discharge circuit cost on a
+// hard non-aggressive scenario. Delete once numbers are captured; the
+// official scalability collection is M12. The scenario mirrors the
+// data/debug/neo_hard_set sed_hard sig (an nu-step tracked chain) as an
+// in-code SubsigStepStore + carried queue + L, so both gadgets can be
+// measured without running the DB/fold pipeline.
+#[cfg(test)]
+mod tests_neo_cost {
+	use super::*;
+	use ark_bn254::Fr;
+	use super::tests_neo_nonaggr::run_core_nonaggr;
+	use data_processor::type_def::{SubsigStepStore,
+		SubsigStepStoreItem};
+
+	fn f(x: u32) -> Fr { Fr::from(x) }
+
+	// DischargeAdvCapacity sized so T_qm holds n rows (subsigs=1 =>
+	// avg_active_pats_per_subsig is the per-subsig row budget).
+	fn hard_capacity(cap_n: usize) -> DischargeAdvCapacity {
+		DischargeAdvCapacity {
+			max_nibble_len: 1, subsigs: 1,
+			avg_active_pats_per_subsig: cap_n, basis_pats_in_trace: 1,
+			perc_pats_expansion_rate: 100, universe_subsigs: 1,
+			b_aggressive: false, prod_pats_expansion: 0,
+		}
+	}
+
+	// nu-step chain, every step range (1, w) finite (terminal step is a
+	// singleton regardless); one subsig id=1.
+	fn hard_store(nu: u32, w: u32) -> SubsigStepStore {
+		let pm = (1..=nu).map(|i| (i as usize,
+			(1usize, w as usize))).collect::<Vec<_>>();
+		let item = SubsigStepStoreItem { subsig_id: 1, igc: false,
+			vec_pm_bounds: pm, is_backward: false };
+		let mut m = std::collections::HashMap::new();
+		m.insert(1usize, item);
+		SubsigStepStore { subsig_ids: vec![1], subsig_to_steps: m,
+			b_aggressive: false }
+	}
+
+	// step i (1-indexed) gets `dens` locations [i*s .. i*s+dens), which
+	// chain in-range (diffs in [s-dens+1, s+dens-1] subset [1,w]).
+	fn step_locs(i: u32, dens: u32, s: u32) -> Vec<u32> {
+		(0..dens).map(|k| i * s + k).collect()
+	}
+
+	// carried Q_i: seed step0=loc1, steps 1..=nu-1 each `dens` dense
+	// chained locations.
+	fn hard_carried(nu: u32, dens: u32, s: u32, w: u32,
+		cap_n: usize) -> StepQueue<Fr> {
+		let mut items = vec![StepQueueItem::new(f(1), f(0), f(0),
+			f(0), f(0), vec![f(1)])];
+		for i in 1..=(nu - 1) {
+			let locs = step_locs(i, dens, s).into_iter().map(f)
+				.collect::<Vec<Fr>>();
+			items.push(StepQueueItem::new(f(1), f(i), f(i), f(1),
+				f(w), locs));
+		}
+		let mut m = HashMap::new();
+		m.insert(f(1), items);
+		StepQueue::new(vec![f(1)], m, &hard_capacity(cap_n),
+			StepQueueType::ResLarge, false)
+	}
+
+	// L = this chunk's raw matches: `dens` dense locations at the
+	// terminal step nu (they chain from carried step nu-1 => carry).
+	fn hard_hm(nu: u32, dens: u32, s: u32) -> HashMap<u32, Vec<u32>> {
+		let mut m = HashMap::new();
+		m.insert(nu, step_locs(nu, dens, s));
+		m
+	}
+
+	/// Measure the NEO non-aggressive core cost at a hard scenario.
+	/// Adjust nu/dens/s/w/cap_n by hand; read cs + Q_m rows.
+	#[test]
+	fn neo_cost_probe() {
+		let nu = 8u32;
+		let dens = 32u32;
+		let s = 40u32;
+		let w = 200u32;
+		let cap_n = 320usize;
+		let dmin = nu * s + dens + 100;
+
+		let info = hard_store(nu, w);
+		let carried = hard_carried(nu, dens, s, w, cap_n);
+		let hm = hard_hm(nu, dens, s);
+		let (cs, nat) = run_core_nonaggr(&info, &carried, &hm,
+			dmin, None);
+		assert!(cs.is_satisfied().unwrap(), "unsat: {:?}",
+			cs.which_is_unsatisfied());
+		println!("NEO-COST: Q_m rows={} cs={}",
+			nat.t.enc.len(), cs.num_constraints());
 	}
 }

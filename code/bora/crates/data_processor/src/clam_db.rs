@@ -745,11 +745,13 @@ impl SubsigStepStore{
 
 		all_tuples = [&all_tuples[..], &tuples2[..]].concat();
 
-		//2b. aggressive mode only: commit per-subsig backward flag.
-		// Flag-off => b_aggressive=false => zero rows => byte-identical
-		// lookup. Covers ALL subsigs (0/1) so the gadget authenticates
-		// each subsig's direction by simple membership.
-		if self.b_aggressive {
+		//2b. aggressive OR neo: commit per-subsig backward flag.
+		// Legacy non-neo => zero rows => byte-identical lookup. The neo
+		// non-aggressive gadget also authenticates each subsig's
+		// direction by membership in this table, so emit it under neo
+		// too. Covers ALL subsigs (0/1).
+		if self.b_aggressive
+			|| read_global_config().clamav_cfg.b_use_discharge_neo {
 			let tbl_id_start = F::from(1u64<<32)
 				* F::from(ID_SUBSIG_IS_BACKWARD);
 			let mut tuples3 = self.subsig_ids.par_iter().map(|subsig_id|{

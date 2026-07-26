@@ -1834,6 +1834,198 @@ pub mod tests_zkp_driver{
 		);
 	}
 
+	/// neo_hard: preserved local hard NON-AGGRESSIVE SDE case for the
+	/// neo (App G.1) vs legacy discharge cost comparison. Fresh tiny DFA
+	/// (b_read_cache=false), one 8-step tracked-literal sig that keeps a
+	/// long carrying step-queue and then discharges. See the config
+	/// README in data/debug/neo_hard_set/config_dfa. Runs LEGACY today;
+	/// flips to neo once M8b wires DischargeAdvNeoAdvice (default
+	/// b_use_discharge_neo=false until then).
+	#[allow(dead_code)]
+	fn neo_hard<F:PrimeField>(b_check_lkup: bool){
+		utils::os::print_computer_config(Some("neo_hard"));
+		// ZKR_USE_NEO=1 routes SDE discharge through discharge_adv_neo
+		// (App G.1). Off => legacy discharge_adv. Lets the same runner
+		// measure both via the COST report without editing config.
+		if std::env::var("ZKR_USE_NEO").is_ok() {
+			get_global_config().clamav_cfg.b_use_discharge_neo = true;
+		}
+		get_global_config().snark_cache_dir = "neo_hard".to_string();
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_write_snark_cache = false;
+		get_global_config().b_light_test = true;
+		get_global_config().range2_bit = 14; //must cover total scan nibbles
+		get_global_config().b_read_cache = false;
+		get_global_config().perc_lkup_share = if !b_check_lkup {1}
+			else {8320};
+		get_global_config().log_level = utils::logger::LOG3;
+		let b_write_cache = !read_global_config().b_read_cache;
+		let set1 = "data/debug/neo_hard_set/config_dfa"; //for dfa
+		let max_word= 8; //this is chunk_len (small => multi-chunk carry)
+		let sigs = 2; //sed_hard + cp_cover (nibble coverage)
+		let subsigs = 3;
+		let avg_pats_per_subsig = 10; //sed_hard has 8 literal steps
+		let avg_active_pats_per_subsig = 8;
+		let perc_comp_subsigs = 26;
+		let basis_unique_states = 4000;
+		let basis_acc_states = 2000; //CapErr floor was 1613
+		let basis_pats_in_trace = 4000;
+		// legacy fwd fill ~97% at perc=195; neo Q_m only needs ~79 rows
+		// (constant queue), so ZKR_USE_NEO tightens perc to ~full Q_m.
+		let perc_pats_expansion_rate =
+			if std::env::var("ZKR_USE_NEO").is_ok() { 45 }
+			else { 195 };
+
+		let vec_decrease_level = vec![];
+		let num_circs = 1;
+
+		let init_cp_cap= CpCapacity{
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+		};
+		let init_sed_cap= SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig, avg_active_pats_per_subsig,
+			basis_pats_in_trace,
+			perc_pats_expansion_rate,
+			sigs, perc_comp_subsigs,
+			basis_unique_states, basis_acc_states
+		);
+		let init_dfa_cap= DfaCapacity::new(max_word, sigs, subsigs);
+
+		zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+   0,
+			&format!("{}/sigs.dat",set1), //src sig
+			&format!("{}/binexec.dat",set1), //list of files to discharge
+			"data/debug/neo_hard_set/reports/report.dat", //report
+			b_write_cache,
+			"neo_hard", //cache name
+			&format!("{}/dfa.dat", set1), //signs that need dfa
+			&format!("{}/ised.dat", set1), //signs that need ised
+			&format!("{}/ised_igc.dat",set1), //sigs that need ised igc
+			max_word, //this is the chunk len
+			&init_cp_cap,
+			&init_sed_cap,
+			&init_dfa_cap,
+			&vec_decrease_level,
+			num_circs,
+			b_check_lkup
+		);
+	}
+
+	/// Runs the preserved neo_hard local hard non-aggressive SDE case.
+	/// `cargo test -p zkregplus --release -- test_neo_hard
+	///  --show-output --nocapture`
+	#[test]
+	pub fn test_neo_hard(){
+		neo_hard::<Fr>(true);
+	}
+
+	/// 8_A end-to-end: AGGRESSIVE fixed-size neo statement must FOLD.
+	/// Builds a small aggressive DB (fwd keyword + fanned class) and
+	/// runs the full driver over a multi-chunk scan with neo on -- the
+	/// per-chunk stmt.len() must stay constant (the 8_A invariant), so
+	/// gen_cmF's stmt.len()==stmt_len assert holds across the fold.
+	fn neo_hard_aggr<F:PrimeField>(){
+		use data_processor::clam_db::ClamavDB;
+		use data_processor::clamav::default_clamav_cfg;
+		utils::os::print_computer_config(Some("neo_hard_aggr"));
+		//ZKR_NO_NEO=1 runs the SAME aggressive dataset via LEGACY
+		//discharge (diagnostic: isolate neo coupling vs aggr-general).
+		get_global_config().clamav_cfg.b_use_discharge_neo =
+			std::env::var("ZKR_NO_NEO").is_err();
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
+		//keep subsigs = universe (8_A needs subsigs >= U; no shrink)
+		get_global_config().aggr_needs_subsigs = 0;
+		get_global_config().snark_cache_dir = "neo_hard_aggr".to_string();
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_write_snark_cache = false;
+		get_global_config().b_light_test = true;
+		get_global_config().range2_bit = 14;
+		get_global_config().b_read_cache = false;
+		get_global_config().basis_failed_subsigs = 10000;
+		get_global_config().perc_lkup_share = 8320; //b_check_lkup path
+		get_global_config().log_level = utils::logger::LOG3;
+		let b_write_cache = !read_global_config().b_read_cache;
+
+		//build the aggressive DB dataset (build_test_db writes sigs.db
+		//+ needs_*.txt under data/<dir> and adds the alphabet pad sig).
+		let dir = "debug/neo_hard_aggr_set";
+		let mut cfg = default_clamav_cfg();
+		cfg.b_aggressive_sde_for_rep = true;
+		cfg.sde_rep_fanout_cap = 4;
+		cfg.min_bag_len = 2;
+		let src_sigs = vec![
+			"aggneo.fwd;Engine:51-255,Target:1;0;/HELLO.{0,4}[ab][ab]/"
+				.to_string()];
+		let base = format!("{}/data/{}", utils::os::proj_root(), dir);
+		std::fs::create_dir_all(&base).unwrap();
+		ClamavDB::<F>::build_test_db(&cfg, dir, &src_sigs, &vec![],
+			&vec![], &vec![]).expect("aggr db");
+		//multi-chunk SDE-hard NON-match scan: the ab-class words appear
+		//(so CP cannot discharge on an absent critical word) but only
+		//BEFORE each HELLO, so HELLO's forward .{0,4} window never sees
+		//[ab][ab] -> the sig never completes in-range -> SDE discharges.
+		let scan: Vec<u8> =
+			b"abab__HELLOwxyz__".to_vec()
+			.iter().cloned().cycle().take(720).collect();
+		let scan_path = format!("{}/scan.bin", base);
+		std::fs::write(&scan_path, &scan).unwrap();
+		utils::os::write_to_file(&format!("{}/binexec.dat", base),
+			&scan_path);
+
+		let max_word = 8; //chunk len (small => multi-chunk carry)
+		let sigs_n = 2; //aggr + alphabet pad
+		let subsigs = 8; //>= universe U (fanout variants); tune if CapErr
+		let avg_pats_per_subsig = 6;
+		//8_A saturation knob: sizes the neo queue = subsigs*avg_active.
+		//tuned so the constant queue covers the densest chunk (~114
+		//rows) with high fill -- the paper's saturation lever.
+		let avg_active_pats_per_subsig = 16;
+		let perc_comp_subsigs = 26;
+		let basis_unique_states = 4000;
+		let basis_acc_states = 2000;
+		let basis_pats_in_trace = 4000;
+		let perc_pats_expansion_rate =
+			if std::env::var("ZKR_NO_NEO").is_ok() { 200 } else { 45 };
+		let init_cp_cap = CpCapacity{ max_word_len: max_word,
+			basis_unique_states, subsigs, avg_pats_per_subsig };
+		let init_sed_cap = SedCapacity::new(max_word,
+			read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig, avg_active_pats_per_subsig,
+			basis_pats_in_trace, perc_pats_expansion_rate,
+			sigs_n, perc_comp_subsigs, basis_unique_states,
+			basis_acc_states);
+		let init_dfa_cap = DfaCapacity::new(max_word, sigs_n, subsigs);
+		zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+			0,
+			&format!("{}/sigs.db", base),
+			&format!("{}/binexec.dat", base),
+			&format!("{}/report.dat", base),
+			b_write_cache,
+			"neo_hard_aggr",
+			&format!("{}/needs_dfa.txt", base),
+			&format!("{}/needs_ised.txt", base),
+			&format!("{}/needs_ised_igc.txt", base),
+			max_word,
+			&init_cp_cap,
+			&init_sed_cap,
+			&init_dfa_cap,
+			&vec![],
+			1,
+			true
+		);
+	}
+
+	/// 8_A aggressive fold e2e. `cargo test -p zkregplus --release --
+	/// test_neo_hard_aggr --show-output --nocapture`
+	#[test]
+	pub fn test_neo_hard_aggr(){
+		neo_hard_aggr::<Fr>();
+	}
+
 	/// small_multi_dnf: permanent local regression repro for the
 	/// DfaAdvGadget discharge-combo bug. Same non-aggressive DFA path as
 	/// small_data(), but the DFA sig MULTIDNF_cs has a 2-subsig OR-clause
