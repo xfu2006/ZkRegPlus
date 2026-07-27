@@ -3302,8 +3302,27 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoAdvice<F> {
 		let sname = if b_igc { "discharge_adv_stmt_igc" }
 			else { "discharge_adv_stmt_cs" };
 		let stmt_container = Container::<F>::new(sname);
-		let carried = StepQueueNeo::from_stepqueue(
-			inp_step_queue.clone());
+		// M8b: seed the shared core over the FIXED universe (mirrors
+		// new_aggr) so neo_core is fold-invariant; real carry rows
+		// overlay the seed. q_i/q_c still carry the real inp_step_queue.
+		// Universe = non-empty-chain subsigs only, matching sed_mapper's
+		// uni() (empty-chain can never carry a C row and would underflow
+		// compute_sig's num==0), so q_c's subsig set == compute_sig's
+		// inp_subsigs every chunk.
+		let is_uni = |u: usize| subsig_store_info.subsig_to_steps
+			.get(&u).map_or(false, |it| !it.vec_pm_bounds.is_empty());
+		let seed_subsigs = subsig_store_info.subsig_ids.iter()
+			.filter(|u| is_uni(**u))
+			.map(|u| F::from(*u as u32)).collect::<Vec<F>>();
+		let mut merged = DischargeAdvAdvice::<F>
+			::gen_empty_steps_queue_serialized(b_igc, &seed_subsigs,
+				subsig_store_info, fsm_id, capacity);
+		for (s, items) in inp_step_queue.store_items.iter() {
+			if is_uni(field_to_usize(s)) {
+				merged.store_items.insert(*s, items.clone());
+			}
+		}
+		let carried = StepQueueNeo::from_stepqueue(merged);
 		let mut gen = carried.gen_shared_core_advice(job_id,
 			pat_loc, subsig_store_info, last_loc + F::one())?;
 		gen.apply_sp_pass(subsig_store_info);
@@ -5930,7 +5949,9 @@ mod tests_neo_nonaggr_h {
 			universe_subsigs: cap.subsigs,
 			avg_active_pats_per_subsig: 1,
 			basis_pats_in_trace: cap.basis_pats_in_trace,
-			perc_pats_expansion_rate: 100, b_aggressive: false,
+			// M8b: universe-seed carries all non-empty-chain subsigs
+			// every chunk, so the queue budget must cover them (was 100).
+			perc_pats_expansion_rate: 200, b_aggressive: false,
 			prod_pats_expansion: 0 };
 		let all_word = pad_word_to_multiple::<Fr>(
 			&pack_nibbles(&f_nibbles), wlen);
@@ -6024,6 +6045,166 @@ mod tests_neo_nonaggr_h {
 			&vec![], &vec![], &vec![]).expect("db");
 		//long enough to span >=2 cycles; 234 present, 567 absent.
 		neo_nonaggr_e2e(dir,
+			&db, &format!("def{}234xx56", "x".repeat(90)),
+			"sig2");
+	}
+
+	/// Per-subsig discharged set from an output queue: discharged iff
+	/// last step reached < chain length (compute_sig_adv:460-468 rule).
+	/// Same decode for neo q_c and legacy sq_res2 (identical format).
+	fn discharged_set(oup: &Vec<Fr>, input_subsigs: &[Fr],
+		steps: &data_processor::type_def::SubsigStepStore,
+		cap: &DischargeAdvCapacity, b_igc: bool)
+		-> std::collections::BTreeSet<usize> {
+		let sq = StepQueue::parse_from(oup,
+			StepQueueType::ResSmall, cap, b_igc);
+		let mut out = std::collections::BTreeSet::new();
+		for s in input_subsigs {
+			let u = field_to_usize(s);
+			let max_step = steps.subsig_to_steps.get(&u)
+				.map_or(0, |it| it.vec_pm_bounds.len());
+			if max_step == 0 { continue; } //empty-chain: not in universe
+			let last = sq.store_items.get(s).map_or(0, |items|
+				items.iter().map(|it| field_to_usize(&it.step))
+					.max().unwrap_or(0));
+			if last < max_step { out.insert(u); }
+		}
+		out
+	}
+
+	/// M8b ground-truth parity: run neo + legacy discharge chains on the
+	/// SAME per-cycle input; both final verdicts must equal the non-ZK
+	/// ground truth (this fixture discharges every subsig of the sig).
+	fn neo_legacy_verdict_parity(word_dir: &str, db: &ClamavDB<Fr>,
+		file_content: &str, sig_to_discharge: &str) {
+		let b_igc = false;
+		let cfg = default_clamav_cfg();
+		let wlen = 2usize;
+		let path = format!("{}/data/{}/word.txt", proj_root(),
+			word_dir);
+		write_to_file(&path, file_content);
+		let nibbles_raw = read_nibbles(&path);
+		let f_nibbles: Vec<Fr> = nibbles_raw.iter()
+			.map(|x| Fr::from(*x as u32)).collect();
+		let wi = quick_discharge_file_by_crit_bag_pm("word.txt",
+			&nibbles_raw, &db.vec_sigs,
+			&db.vec_sigs_no_critical_pat, &db.map_crit_pat,
+			&db.map_crit_pat_igc, &db.dfa_crit,
+			&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
+			&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
+			&db.sig_to_id, wlen, wlen).1;
+		let infos = wi.vec_sed_sigs_info.iter()
+			.filter(|i| i.sig_name == sig_to_discharge)
+			.cloned().collect::<Vec<_>>();
+		assert_eq!(infos.len(), 1, "sig {} not SED-discharged",
+			sig_to_discharge);
+		let info = infos[0].clone();
+		let bundle = &db.bundle_subsig;
+		let acdfa = &bundle.vec_acdfa[0];
+		let sig_id = *db.sig_to_id.get(sig_to_discharge).unwrap();
+		let input_subsigs: Vec<Fr> = info.subsig_ids.iter()
+			.map(|i| Fr::from(
+				acdfa.gen_subsig_id(sig_id, *i + 1) as u32))
+			.collect();
+		let fsm_id = ClamavDB::<Fr>::pm_acdfa_id(0, b_igc);
+		let steps_store = &bundle.vec_subsig_step_stores[0];
+		let (nibble_len, sbits) = (wlen * LEGS,
+			acdfa.state_part_bits);
+		let cap = FsmAdvCapacity { max_nibble_len: nibble_len,
+			acdfa_state_part_bits: sbits, subsigs: 4,
+			avg_pats_per_subsig: 4, basis_pats_in_trace: 25 * 100,
+			basis_unique_states: 20 * 100,
+			basis_acc_states: 15 * 100, halo_nibbles: 0 };
+		let cap_disc = DischargeAdvCapacity {
+			max_nibble_len: nibble_len, subsigs: cap.subsigs,
+			universe_subsigs: cap.subsigs,
+			avg_active_pats_per_subsig: 1,
+			basis_pats_in_trace: cap.basis_pats_in_trace,
+			perc_pats_expansion_rate: 200, b_aggressive: false,
+			prod_pats_expansion: 0 };
+		let all_word = pad_word_to_multiple::<Fr>(
+			&pack_nibbles(&f_nibbles), wlen);
+		let n_cycles = all_word.len() / wlen;
+		assert!(n_cycles >= 2, "want a multi-cycle carry");
+		let mut inp_state = Fr::from((acdfa.init_state + 1) as u32);
+		let mut inp_loc = Fr::from(1u32);
+		let seed = || DischargeAdvAdvice::
+			gen_empty_steps_queue_serialized(b_igc, &input_subsigs,
+			steps_store, fsm_id, &cap_disc);
+		let mut inp_sq_neo = seed();
+		let mut inp_sq_leg = seed();
+		let (mut oup_neo, mut oup_leg) = (vec![], vec![]);
+		for i in 0..n_cycles {
+			let word = all_word[wlen * i..wlen * (i + 1)].to_vec();
+			let adv_wea = WordExtractAdvAdvice::new(&word,
+				word.len(), false).expect("wea");
+			let nibbles = adv_wea.stmt_container.lock().unwrap()
+				.get_container("nibbles").unwrap()
+				.lock().unwrap().to_vec();
+			let adv_faa = FsmAdvAdvice::new(b_igc, 1, &nibbles, &[],
+				&acdfa, inp_state, inp_loc, &input_subsigs, &cap,
+				fsm_id, &bundle.vec_subsig_stores[0], 0)
+				.expect("faa");
+			let stmt_faa = adv_faa.stmt_container;
+			let pat_loc = stmt_faa.lock().unwrap().search_container(
+				"fsm_adv_stmt_cs packed_trace pat_loc sorted_tbl")
+				.unwrap();
+			let locs = stmt_faa.lock().unwrap().search_container(
+				"fsm_adv_stmt_cs fsm_acc locs").unwrap()
+				.lock().unwrap().to_vec();
+			let last_loc = locs[locs.len() - 1];
+			let adv_neo = DischargeAdvNeoAdvice::new(b_igc, 1,
+				&pat_loc, &input_subsigs, fsm_id, steps_store,
+				&cap_disc, &inp_sq_neo, last_loc, i, 0)
+				.expect("neo adv");
+			oup_neo = adv_neo.get_output_steps_queue();
+			let adv_leg = DischargeAdvAdvice::new(b_igc, 1,
+				&pat_loc, &input_subsigs, fsm_id, steps_store,
+				&cap_disc, &inp_sq_leg, last_loc, i, 0)
+				.expect("legacy adv");
+			oup_leg = adv_leg.get_output_steps_queue();
+			let states = stmt_faa.lock().unwrap().search_container(
+				"fsm_adv_stmt_cs fsm_acc states").unwrap()
+				.lock().unwrap().to_vec();
+			inp_state = states[states.len() - 1];
+			inp_loc = last_loc;
+			inp_sq_neo = StepQueue::parse_from(&oup_neo,
+				StepQueueType::ResSmall, &cap_disc, b_igc);
+			inp_sq_leg = StepQueue::parse_from(&oup_leg,
+				StepQueueType::ResSmall, &cap_disc, b_igc);
+		}
+		let v_neo = discharged_set(&oup_neo, &input_subsigs,
+			steps_store, &cap_disc, b_igc);
+		let v_leg = discharged_set(&oup_leg, &input_subsigs,
+			steps_store, &cap_disc, b_igc);
+		//ground truth: sig SED-discharged => every non-empty-chain
+		//subsig of it is discharged (holds for this all-fail fixture).
+		let gt: std::collections::BTreeSet<usize> = input_subsigs
+			.iter().map(field_to_usize)
+			.filter(|u| steps_store.subsig_to_steps.get(u)
+				.map_or(false, |it| !it.vec_pm_bounds.is_empty()))
+			.collect();
+		assert_eq!(v_neo, v_leg, "neo verdict != legacy verdict");
+		assert_eq!(v_neo, gt, "neo verdict != ground truth");
+		assert_eq!(v_leg, gt, "legacy verdict != ground truth");
+		assert!(!gt.is_empty(), "fixture must discharge >=1 subsig");
+	}
+
+	/// M8b: neo non-aggr discharge verdict == legacy == non-ZK ground
+	/// truth on the H1 no-match fixture (sig2, 567/def-after absent).
+	#[test]
+	fn test_nonaggr_verdict_parity() {
+		let sigs = vec![
+			"sig2;Engine:51-255,Target:0;0&1;/def.*234.*567/;/234....def/",
+			"sig1;Engine:51-255,Target:0;0&1;/abc..123/;/123....abc/",
+		].iter().map(|x| x.to_string()).collect::<Vec<String>>();
+		let dir = "debug/sed/neononaggr_parity";
+		let p = format!("{}/data/{}", proj_root(), dir);
+		std::fs::create_dir_all(&p).unwrap();
+		let cfg = default_clamav_cfg();
+		let db = ClamavDB::<Fr>::build_test_db(&cfg, dir, &sigs,
+			&vec![], &vec![], &vec![]).expect("db");
+		neo_legacy_verdict_parity(dir,
 			&db, &format!("def{}234xx56", "x".repeat(90)),
 			"sig2");
 	}

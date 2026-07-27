@@ -729,9 +729,10 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 				"discharge_adv_stmt_igc fwd_steps_queue sq_inp")
 				.expect("sq_inp igc err")
 		};
-		// 8_A: aggr-neo asserts against the FULL universe subsig set
-		// (store's [0]=all subsig_ids), so feed that instead of this
-		// chunk's active subset. legacy/non-aggr paths unchanged.
+		// neo (aggr + M8b non-aggr) asserts against the FULL universe
+		// subsig set (store's [0]=all subsig_ids), matching the neo core
+		// seed; feed that instead of this chunk's active subset. Legacy
+		// (use_neo=false) unchanged.
 		//exclude empty-chain subsigs: neo seeds them (seed-only) but
 		//they can never reach LAST_STEP -> never in failed_acc, and
 		//compute_sig's from_subsig_store_item underflows on num==0.
@@ -741,10 +742,10 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 					!it.vec_pm_bounds.is_empty()))
 				.map(|u| F::from(*u as u32)).collect::<Vec<F>>()
 		};
-		let cs_subsigs_cs = if use_neo && b_aggr {
+		let cs_subsigs_cs = if use_neo {
 			uni(subsig_step_store_cs)
 		} else { subsigs_inp_cs.clone() };
-		let cs_subsigs_igc = if use_neo && b_aggr {
+		let cs_subsigs_igc = if use_neo {
 			uni(subsig_step_store_igc)
 		} else { subsigs_inp_igc.clone() };
 		let compute_sig_adv_advice = ComputeSigAdvAdvice::<F>::new(
