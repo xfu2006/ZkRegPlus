@@ -1768,6 +1768,11 @@ pub mod tests_zkp_driver{
 	fn small_data<F:PrimeField>(b_check_lkup: bool){
 		utils::os::print_computer_config(Some("small_data"));
 		get_global_config().snark_cache_dir = "small_20".to_string();
+		// ZKR_USE_NEO=1 routes SDE discharge through neo (M8b broadening
+		// experiment); default off keeps test_zkreg_main byte-identical.
+		if std::env::var("ZKR_USE_NEO").is_ok() {
+			get_global_config().clamav_cfg.b_use_discharge_neo = true;
+		}
 		get_global_config().b_read_snark_cache = false;
 		get_global_config().b_write_snark_cache = false;
 		get_global_config().b_light_test = true;
@@ -2173,87 +2178,134 @@ pub mod tests_zkp_driver{
 	}
 
 
-	/// small_debug: aggressive DLP single-chunk forward-queue probe.
-	/// Discharges watson-k/379 seg3..7 (target seg5 centered), then
-	/// builds REAL chunk advice via reconverge_probe (no keys) to
-	/// exercise the forward queue on a single file without SNARK keys.
+	/// small_debug: local aggressive fold+decider, neo-vs-legacy cost.
+	/// ZKR_SIZE=light(default)|max sizes to the local box; ZKR_USE_NEO=1
+	/// routes SDE discharge through neo. Real Groth16 decider (not probe).
 	#[allow(dead_code)]
 	fn small_debug<F:PrimeField>(_b_check_lkup: bool){
 		utils::os::print_computer_config(Some("small_debug"));
-		use crate::stats_helper::{estimate_config_aggr,
-			estimated_to_capparams_aggr};
-		use folding_schemes::folding::foldpot::sigma_ir1cs
-			::LookupTableTwoCol as _;
-		let proot = utils::os::proj_root();
-		let cd = "data/debug/full_dlp_sample";
-		let sig_file = "regex_pat/main_data_dlp_internationl.dat";
-		let cache_dir = "dlp_corpus_aggr";
-		let mw = 64usize;
-		let range2_bit = 25usize;
-		let scan = "data/debug/watson_seg5/scan.dat";
-		get_global_config().log_level = utils::logger::LOG3;
-		get_global_config().range2_bit = range2_bit;
+		//ZKR_SIZE=max -> small_email2 full-set caps (~66GB+, maxes the
+		//local box); default light -> small_email caps (~15GB). Both run
+		//the REAL aggressive fold + Groth16 decider (b_folding_only=false).
+		let is_max = std::env::var("ZKR_SIZE")
+			.map(|v| v == "max").unwrap_or(false);
+		let b_check_lkup = false; //skip in-circuit lkup-share (small set)
+		get_global_config().snark_cache_dir = "email_dlp".to_string();
+		get_global_config().b_write_snark_cache = false;
+		get_global_config().b_read_snark_cache = false;
 		get_global_config().b_light_test = true;
-		get_global_config().b_folding_only = true;
-		get_global_config().b_read_cache = true;
-		get_global_config().b_estimate_caps = true;
-		get_global_config().perc_lkup_share = 1;
-		get_global_config().min_subsigs = 1;
-		get_global_config().min_basis_unique_states = 2;
+		get_global_config().b_folding_only = false; //REAL decider
+		get_global_config().range2_bit = if is_max {25} else {20};
+		get_global_config().min_subsigs = 64;
+		get_global_config().min_basis_unique_states = 100;
 		get_global_config().min_basis_acc_states = 2;
 		get_global_config().min_basis_pats_in_trace = 4;
 		get_global_config().min_avg_pats_per_subsig = 1;
+		get_global_config().min_dfa_sigs = 2;
+		get_global_config().min_dfa_subsigs = 2;
+		get_global_config().n_par_snark = 2;
+		get_global_config().n_par_snark_cp = 2;
+		get_global_config().n_par_batch_claim = 8;
+		get_global_config().perc_lkup_share = 1;
 		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
 		get_global_config().clamav_cfg.sde_rep_fanout_cap = 100;
 		get_global_config().clamav_cfg.min_pm_word_len = 3;
-		let cfg = data_processor::clamav::default_clamav_cfg();
-		let mut vlog = vec![];
-		let db = data_processor::clam_db::ClamavDB::<Fr>::build_or_load(
-			&cfg, &format!("{}/{}", cd, sig_file),
-			&format!("{}/regex_pat/main_dfa.dat", cd),
-			&format!("{}/regex_pat/needs_ised.dat", cd),
-			&format!("{}/regex_pat/needs_ised_igc.dat", cd), &mut vlog,
-			cache_dir, true, true).expect("build db");
-		//discharge the carved file -> words + infos + vdata.
-		let files = utils::os::read_lines(&format!("{}/{}", proot, scan));
-		let (mut words, mut infos, mut vdata) = (vec![], vec![], vec![]);
-		for fpath in &files{
-			let nibbles = utils::os::read_nibbles(
-				&format!("{}/{}", proot, fpath));
-			let f_nib: Vec<Fr> = nibbles.iter()
-				.map(|x| Fr::from(*x as u32)).collect();
-			words.push(utils::data::pack_nibbles(&f_nib));
-			let (fdr, rec) =
-				data_processor::clamav::quick_discharge_file_by_crit_bag_pm(
-				fpath, &nibbles, &db.vec_sigs,
-				&db.vec_sigs_no_critical_pat, &db.map_crit_pat,
-				&db.map_crit_pat_igc, &db.dfa_crit,
-				&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
-				&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
-				&db.sig_to_id, mw, mw);
-			vdata.push(fdr);
-			infos.push(rec);
+		get_global_config().clamav_cfg.b_sde_rep_tight_first_leg = false;
+		get_global_config().b_dryrun_after_capcheck = false;
+		//ZKR_USE_NEO=1 routes aggressive SDE discharge through neo;
+		//default off = legacy aggressive (byte-identical to small_email).
+		let neo_on = std::env::var("ZKR_USE_NEO").is_ok();
+		if neo_on {
+			get_global_config().clamav_cfg.b_use_discharge_neo = true;
 		}
-		//estimate -> seed CapParams (lower bound; reconverge bumps it).
-		let est = estimate_config_aggr::<Fr>(&vdata, &db, &[100],
-			&mut vlog);
-		let seed = estimated_to_capparams_aggr(&est[0], mw, range2_bit, 3);
-		get_global_config().aggr_needs_subsigs = seed.aggr_needs_subsigs;
-		//Build advice on the REAL chunks via the capacity-probe loop:
-		//real gen_forward_prf, NO keys / NO fast_finalize.
-		let lkup_len = db.lkup.get_size();
-		let total_word_n: usize = words.iter().map(|w| w.len()).sum();
-		let poseidon = folding_schemes::transcript::poseidon
-			::poseidon_canonical_config::<Fr>();
-		let padded: Vec<Vec<Fr>> = words.iter()
-			.map(|w| utils::data::pad_word_to_multiple::<Fr>(w, mw))
-			.collect();
-		let db_arc = std::sync::Arc::new(db);
-		let r = super::reconverge_probe::<Fr,C1,CS1>(&db_arc, &poseidon,
-			&padded, &infos, seed, mw, lkup_len, total_word_n, 60, 4);
-		utils::logger::log(0, utils::logger::LOG1, &format!(
-			"small_debug: reconverge_probe returned (no seg5 blow-up \
-			seen): {:?}", r.map(|_| "ok")));
+		//No DB cache: always rebuild fresh (avoids the 2GiB per-file
+		//write truncation on the full set; the corpus is small enough).
+		get_global_config().b_read_cache = false;
+		let b_write_cache = false;
+		let set1 = "data/debug/small_email/config";
+		let max_word = 256; //~17 fold steps over ~260k nibbles
+
+		//size-specific caps: light=small_email, max=small_email2.
+		get_global_config().aggr_needs_subsigs = if is_max {700} else {256};
+		let sig_file = if is_max {"main_full.dat"} else {"main.dat"};
+		let scan_file = if is_max {"binexec2.dat"} else {"binexec.dat"};
+		let sigs = if is_max {12} else {10};
+		let subsigs = if is_max {700} else {500};
+		let avg_pats_per_subsig = 4;
+		let avg_active_pats_per_subsig = 7;
+		let perc_comp_subsigs = 20;
+		let basis_unique_states = if is_max {350} else {150};
+		let basis_acc_states = if is_max {1200} else {600};
+		let basis_pats_in_trace = if is_max {1400} else {700};
+		let perc_pats_expansion_rate = 300;
+
+		let init_cp_cap = CpCapacity{
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+		};
+		let init_sed_cap = SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig, avg_active_pats_per_subsig,
+			basis_pats_in_trace, perc_pats_expansion_rate,
+			sigs, perc_comp_subsigs,
+			basis_unique_states, basis_acc_states);
+
+		//neo's qm_table iterates the FULL igc store, so under neo the igc
+		//arm must carry the real universe caps (not the legacy sentinel);
+		//legacy keeps the trivial-arm sentinel for a fair comparison.
+		let (init_cp_cap_igc, init_sed_cap_igc) = if neo_on {
+			(init_cp_cap.clone(), init_sed_cap.clone())
+		} else {
+			(CpCapacity{ max_word_len: init_cp_cap.max_word_len,
+				basis_unique_states: 4, subsigs: 1,
+				avg_pats_per_subsig: 1},
+			 SedCapacity::new(init_sed_cap.max_word_len,
+				init_sed_cap.acdfa_state_part_bits, 1, 1, 1, 4, 64, 1, 1,
+				init_sed_cap.basis_unique_states, 2))
+		};
+
+		//light: 2-rung ladder (small_email); max: 1 rung (small_email2).
+		let cs_caps = if is_max {
+			vec![(init_cp_cap, init_sed_cap,
+				init_cp_cap_igc, init_sed_cap_igc)]
+		} else {
+			let r0_subsigs = 8;
+			let r0_cp = CpCapacity{ max_word_len: max_word,
+				basis_unique_states,
+				subsigs: r0_subsigs, avg_pats_per_subsig };
+			let r0_sed = SedCapacity::new(
+				max_word, read_global_config().range2_bit,
+				r0_subsigs, avg_pats_per_subsig, avg_active_pats_per_subsig,
+				basis_pats_in_trace, perc_pats_expansion_rate,
+				sigs, perc_comp_subsigs,
+				basis_unique_states, basis_acc_states);
+			vec![
+				(r0_cp, r0_sed,
+					init_cp_cap_igc.clone(), init_sed_cap_igc.clone()),
+				(init_cp_cap, init_sed_cap,
+					init_cp_cap_igc, init_sed_cap_igc)]
+		};
+
+		let scan_files: Vec<String> = vec![
+			format!("{}/{}", set1, scan_file)];
+
+		zkp_driver_adv_aggr::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,
+			CS1E,S>(
+			0,
+			&format!("{}/{}", set1, sig_file), //src sig
+			scan_files, //list of files to discharge
+			"data/debug/small_email/reports/report_zk.dat", //report
+			b_write_cache,
+			"email_data", //cache name (SHARED w/ small_email*)
+			&format!("{}/main_dfa.dat", set1), //sigs needing dfa
+			&format!("{}/needs_ised.dat", set1), //ised (empty)
+			&format!("{}/needs_ised_igc.dat", set1), //ised_igc (empty)
+			max_word, //chunk len
+			&cs_caps,
+			b_check_lkup
+		);
 	}
 
 	/// small data: multiple parallel jobs.

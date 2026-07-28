@@ -30402,8 +30402,20 @@ Monday 07/26/2026
 Goal 1. 8-A and 8-B
 	[a] clean up probes
 	[b] regression test
-Goal 2. M8-B
+Goal 2. M9-B
 	[a] planning
+	[b] small_data
+	[c] 2nd stress test case.
+
+Tuesday 07/27/2026
+Goal 1. continue on M9
+	[a] use a lighter
+Goal 2. writing
+	[a] 6.1 first pass
+	[b]
+Goal 3. Inspect code
+	[a] are all SID colomns encoded correctly for Q_m?
+	[b] 
 
 
 ----- ACTIVE GOALS -----
