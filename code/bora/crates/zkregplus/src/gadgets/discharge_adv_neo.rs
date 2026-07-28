@@ -83,9 +83,9 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	) -> ContainerConfig {
 		let zero = F::zero();
 		let pats_len = capacity.get_pat_loc_len();
-		// EMPTY pat_loc (all-zero, length = capacity): with the real
-		// subsigs seeded below, gen_merge_dict's D-dict = the store's
-		// distinct pats (>=1), and a real chunk's matched pats are a
+		// EMPTY pat_loc (all-zero, length = capacity):
+		// gen_merge_dict's D-dict base = the FULL store's distinct
+		// pats (8_C constant), and a real chunk's matched pats are a
 		// SUBSET of those -> same d_pat length as real chunks (so the
 		// dummy config size == every real chunk's statement size).
 		let pat_loc = Container::<F>::new("pat_loc");
@@ -95,11 +95,11 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			vec![zero; pats_len], "sorted_id", IDX_DATA));
 		pat_loc.lock().unwrap().add_col(Col::<F>::new(
 			vec![zero; pats_len], "sorted_val", IDX_DATA));
-		// Legacy-style all-zero carried seed (fits any capacity). The
-		// store-table sizes no longer depend on the carried subsigs:
-		// gen_qm_table iterates the FULL store for key groups and
-		// subsig_nat is the full store, so the dummy config size ==
-		// every real chunk's statement size regardless of this seed.
+		// Legacy-style all-zero carried seed (fits any capacity).
+		// 8_C: every store-derived size is a capacity budget (qm
+		// wrap budget, K subsig slots, S_cap pad, full-store D), so
+		// the dummy (empty NEEDS -> all-pad tables) has the same
+		// statement size as every real chunk.
 		let sigs = vec![zero; capacity.subsigs];
 		let (step_q_size, _, _) = StepQueue::<F>::vec_size(
 			&StepQueueType::ResSmall, capacity);
@@ -1316,12 +1316,27 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 	}
 
 	/// T_qm row budget: ResLarge real-row budget + 2 wraps per key
-	/// group. Exceeding it is CapErr (never silent truncation).
+	/// group. Aggressive (8_C NEEDS seeding): the wrap budget is
+	/// CAPACITY-ONLY -- subsigs*(avg_active+1) keys -- so the shape
+	/// is chunk-invariant; n_keys ignored. Non-aggressive keeps the
+	/// (run-constant) data n_keys. Exceeding = CapErr, never silent.
+	/// Wrap-key budget: explicit capacity.wrap_keys, else derived
+	/// subsigs*(avg_active+1).
+	pub(crate) fn wrap_budget(capacity: &DischargeAdvCapacity)
+	-> usize {
+		if capacity.wrap_keys > 0 { capacity.wrap_keys }
+		else { capacity.subsigs
+			* (capacity.avg_active_pats_per_subsig + 1) }
+	}
+
 	pub(crate) fn qm_rows_size(capacity: &DischargeAdvCapacity,
 		n_keys: usize) -> usize {
 		let (n, _, _) = StepQueue::<F>::vec_size(
 			&StepQueueType::ResLarge, capacity);
-		n + 2 * n_keys
+		let wrap = if capacity.b_aggressive {
+			Self::wrap_budget(capacity)
+		} else { n_keys };
+		n + 2 * wrap
 	}
 
 	/// Single-pass T_qm synthesis from the shared-core output. Mode
@@ -1412,26 +1427,46 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 		Ok(t)
 	}
 
-	/// Merge dictionary D: sorted (pat, cnt) over pats of the active
-	/// store UNION L; cnt = #active (subsig,step) keys using that pat
-	/// (0 for L-only pats). Feeds the counting-logup m forcing.
+	/// Merge dictionary D: sorted (pat, cnt) over the FULL store's
+	/// pat universe (all subsig chains; constant per fsm -- 8_C
+	/// shape invariance) UNION L; cnt counts only the SEEDED
+	/// (subsig,step) keys (0 for cold/L-only pats). An L pat outside
+	/// the store universe (and not a 0/max sentinel) is CapErr.
 	pub(crate) fn gen_merge_dict(subsigs: &Vec<F>,
-		info: &SubsigStepStore, hm_loc: &HashMap<F, Vec<(F, F)>>)
-	-> (Vec<F>, Vec<F>) {
+		info: &SubsigStepStore, hm_loc: &HashMap<F, Vec<(F, F)>>,
+		b_igc: bool)
+	-> Result<(Vec<F>, Vec<F>), Error> {
 		let mut cnt: HashMap<F, u32> = HashMap::new();
+		for u in &info.subsig_ids {
+			if let Some(rec) = info.subsig_to_steps.get(u) {
+				for (p, _) in &rec.vec_pm_bounds {
+					cnt.entry(F::from(*p as u32)).or_insert(0);
+				}
+			}
+		}
 		for subsig in subsigs {
+			if subsig.is_zero() { continue; }
 			let u = field_to_usize(subsig);
 			let rec = info.subsig_to_steps.get(&u).unwrap();
 			for (p, _) in &rec.vec_pm_bounds {
 				*cnt.entry(F::from(*p as u32)).or_insert(0) += 1;
 			}
 		}
-		for p in hm_loc.keys() { cnt.entry(*p).or_insert(0); }
+		let f_max = F::from(((1u64 << read_global_config()
+			.range2_bit) - 1) as u32);
+		for p in hm_loc.keys() {
+			if !cnt.contains_key(p) && !p.is_zero() && *p != f_max {
+				return Err(Error::CapErr(vec![(format!(
+					"neo_dict_offstore, b_igc: {}", b_igc),
+					hm_loc.len())]));
+			}
+			cnt.entry(*p).or_insert(0);
+		}
 		let mut pats = cnt.keys().cloned().collect::<Vec<F>>();
 		pats.sort();
 		let cnts = pats.iter().map(|p| F::from(cnt[p]))
 			.collect::<Vec<F>>();
-		(pats, cnts)
+		Ok((pats, cnts))
 	}
 
 	/// Per-L-row multiplicity advice for the counting logup: cnt(pat)
@@ -1537,6 +1572,7 @@ pub(crate) struct NeoSel<F: PrimeField + ColEle> {
 	pub is_c: Vec<FpVar<F>>, pub is_fp: Vec<FpVar<F>>,
 	pub is_bp: Vec<FpVar<F>>, pub is_sp: Vec<FpVar<F>>,
 	pub is_step0: Vec<FpVar<F>>, pub b_bwd_row: Vec<FpVar<F>>,
+	pub is_last: Vec<FpVar<F>>,
 }
 
 impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
@@ -1553,9 +1589,9 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	/// cannot weaken soundness -- constraints bind vars); v = the
 	/// allocated circuit vars; r1 = msg2 challenge (fuses the two
 	/// seed pins); b_aggr selects the arm (the aggressive stream is
-	/// bit-identical to M6). COST: ~17*n aggr / ~22*n
-	/// non-aggr. MEASURED @ fig-14 n=34: aggr 579 (+0.2% vs
-	/// 17n), non-aggr 749 (+0.1% vs 22n). PERF 61081.1.
+	/// bit-identical to M6). Also derives is_last (LAST si tag,
+	/// shared by the wf run lemma and the acc/BP feeds).
+	/// COST: ~19*n aggr / ~24*n non-aggr. PERF 61081.1.
 	fn assert_neo_selectors(
 		cs: ConstraintSystemRef<F>,
 		t: &QmTable<F>, v: &QmVars<F>, r1: &FpVar<F>, b_aggr: bool,
@@ -1599,13 +1635,28 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		let is_step1 = gen_zero_bits(&cs,
 			&t.step.iter().map(|s| *s - F::one()).collect::<Vec<F>>(),
 			&v.step.iter().map(|s| s - &c_one).collect::<Vec<_>>())?;
+		// is_last <=> si_step carries the LAST tag of THIS enc
+		// (si_step pinned in C5 + outer-bound; shared by the wf
+		// run-completeness lemma and the acc/BP feeds).
+		let f1l = F::from(1u64 << read_global_config().range2_bit);
+		let f5l = f1l * f1l * f1l * f1l * f1l;
+		let cl_nat = F::from(0x23001101u64) * f5l
+			* F::from(1u64 << 32)
+			+ F::from(ID_ENCODED_LAST_STEP as u64) * f5l;
+		let c_l2 = new_const_var(&cs, cl_nat);
+		let tg_nat: Vec<F> = (0..n).map(|i|
+			t.si_step[i] - cl_nat - t.enc[i]).collect();
+		let tg_var: Vec<FpVar<F>> = (0..n).map(|i|
+			&(&v.si_step[i] - &c_l2) - &v.enc[i]).collect();
+		let is_last = gen_zero_bits(&cs, &tg_nat, &tg_var)?;
 		// --- Section 2: row 0 must be a pad (once) ---
 		// the group-start cert reads row i-1; forcing enc[0]==0
 		// closes the table-start boundary (pads sort first).
 		check_eq(&v.enc[0], &FpVar::<F>::Constant(F::zero()), "neo row0 pad")?;
 		let mut sel = NeoSel { is_pad: vec![], is_wrap: vec![],
 			is_c: vec![], is_fp: vec![], is_bp: vec![],
-			is_sp: vec![], is_step0: vec![], b_bwd_row: vec![] };
+			is_sp: vec![], is_step0: vec![], b_bwd_row: vec![],
+			is_last: vec![] };
 		for i in 0..n {
 			// --- Section 3: wrap bit as unity residual (2cs) ---
 			// is_wrap := 1 - is_pad - (all cat bits) is a FREE LC,
@@ -1662,11 +1713,11 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		}
 		sel.is_pad = is_pad; sel.is_c = is_c; sel.is_fp = is_fp;
 		sel.is_bp = is_bp; sel.is_sp = is_sp;
-		sel.is_step0 = is_step0;
+		sel.is_step0 = is_step0; sel.is_last = is_last;
 		log(job_id, LOG3, &format!(
 			"PERF 61081.1: block=selectors cs={} pred={}",
 			cs.num_constraints() - n0,
-			(if b_aggr { 17 } else { 22 }) * n));
+			(if b_aggr { 19 } else { 24 }) * n));
 		Ok(sel)
 	}
 
@@ -1688,13 +1739,17 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	/// in the aggressive table (cats {0,C,FP}) is literally the
 	/// same linear combination as is_wrap+is_c, and in the
 	/// non-aggressive table also counts BP/SP -- the paper's Q_r.
-	/// COST: ~18*n (folds the ~2*(|S|+|subsigs|) term).
-	/// MEASURED @ fig-14 n=34: 607 (-0.8% vs 18n).
+	/// Plus (f) RUN COMPLETENESS: each subsig's contiguous group run
+	/// starts at its step-0 seed, steps by +1, and ends only at its
+	/// DB-LAST group -- with the seed anchor this forces the FULL
+	/// chain of every present subsig (kills the n12 tail-drop).
+	/// COST: ~26*n (folds the ~2*(|S|+|subsigs|) term).
 	/// PERF 61081.2.
 	fn assert_neo_wf(
 		cs: ConstraintSystemRef<F>,
 		t: &QmTable<F>, v: &QmVars<F>, sel: &NeoSel<F>,
 		s_enc: &[FpVar<F>], subsigs: &[FpVar<F>],
+		s_enc_nat: &[F], subsig_nat: &[F],
 		r1: &FpVar<F>, r2: &FpVar<F>, job_id: usize,
 	) -> Result<(Vec<FpVar<F>>, Vec<FpVar<F>>), SynthesisError> {
 		let n0 = cs.num_constraints();
@@ -1750,9 +1805,22 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		}
 		let f1 = F::from(1u64 << rb);
 		let c_sh4 = new_const_var(&cs, f1 * f1 * f1 * f1);
+		// 8_C: zero entries are pads (padded store rows / dummy-0
+		// subsig slots) -> factor 1, not r2. A real store enc/subsig
+		// is never 0, so masking cannot hide a live key.
+		let z_se = gen_zero_bits(&cs, s_enc_nat, s_enc)?;
+		let z_sg = gen_zero_bits(&cs, subsig_nat, subsigs)?;
 		let mut rhs = c_one.clone();
-		for e in s_enc { rhs = &rhs * &(e + r2); }
-		for s in subsigs { rhs = &rhs * &(&(s * &c_sh4) + r2); }
+		for (j, e) in s_enc.iter().enumerate() {
+			let fj = &c_one + &((&c_one - &z_se[j])
+				* &(&(e + r2) - &c_one));
+			rhs = &rhs * &fj;
+		}
+		for (j, s) in subsigs.iter().enumerate() {
+			let fj = &c_one + &((&c_one - &z_sg[j])
+				* &(&(&(s * &c_sh4) + r2) - &c_one));
+			rhs = &rhs * &fj;
+		}
 		check_eq(&lhs, &rhs, "neo group uniqueness")?;
 		// --- Section 5: rid rank chain (1cs/row) ---
 		// rid[i] = (1-grp_start)*(rid[i-1] + (1-is_pad-is_fp)): 0
@@ -1770,9 +1838,40 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 				* &(&rid[i - 1] + &inc);
 			rid.push(r_i);
 		}
+		// --- Section 6: run completeness (8cs/row) ---
+		// Sorted encs make each subsig's groups one contiguous RUN.
+		// (a) a run ends only at its DB-LAST group (is_last off the
+		// pinned si_step); (b) a run starts at its step-0 seed; (c)
+		// consecutive groups in a run step by +1. With the seed
+		// anchor: any subsig present shows its FULL chain 0..last,
+		// so the n12 joint store-drop (tail truncation) leaves an
+		// un-endable run -> UNSAT.
+		let mut ds_nat = vec![F::zero(); n];
+		for i in 1..n { ds_nat[i] = t.subsig[i] - t.subsig[i - 1]; }
+		let ds_var = (0..n).map(|i| if i == 0 {
+			FpVar::<F>::Constant(F::zero()) }
+			else { &v.subsig[i] - &v.subsig[i - 1] })
+			.collect::<Vec<_>>();
+		let same_sub = gen_zero_bits(&cs, &ds_nat, &ds_var)?;
+		for i in 1..n {
+			let bnd = &grp_start[i] * &(&c_one - &same_sub[i]);
+			let t_end = &bnd * &(&c_one - &sel.is_pad[i - 1]);
+			check_prod_zero(&t_end,
+				&(&c_one - &sel.is_last[i - 1]), lc!(),
+				"neo run ends at LAST")?;
+			check_prod_zero(&bnd, &v.step[i], lc!(),
+				"neo run starts at seed")?;
+			let u = &grp_start[i] * &same_sub[i];
+			check_prod_zero(&u,
+				&(&(&v.step[i] - &v.step[i - 1]) - &c_one), lc!(),
+				"neo run step chain")?;
+		}
+		check_prod_zero(&(&c_one - &sel.is_pad[n - 1]),
+			&(&c_one - &sel.is_last[n - 1]), lc!(),
+			"neo final run ends at LAST")?;
 		log(job_id, LOG3, &format!(
 			"PERF 61081.2: block=wf cs={} pred={}",
-			cs.num_constraints() - n0, 18 * n));
+			cs.num_constraints() - n0, 26 * n));
 		Ok((grp_start, rid))
 	}
 
@@ -2136,7 +2235,7 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 		let mut hm_pats: HashMap<F, Vec<(F, F)>> = HashMap::new();
 		for p in &l_pat { hm_pats.entry(*p).or_insert(vec![]); }
 		let (d_pat, d_cnt) = StepQueueNeo::gen_merge_dict(
-			&subsig_nat, info, &hm_pats);
+			&subsig_nat, info, &hm_pats, g.b_igc)?;
 		let mut d_diff = vec![F::zero(); d_pat.len()];
 		for j in 1..d_pat.len() {
 			d_diff[j] = d_pat[j] - d_pat[j - 1] - F::one();
@@ -2400,7 +2499,6 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	) -> Result<(), SynthesisError> {
 		let n0 = cs.num_constraints();
 		let n = t.enc.len();
-		let rb = read_global_config().range2_bit;
 		let c_one = new_const_var(&cs, F::one());
 		let c_zero = new_const_var(&cs, F::zero());
 		// --- Sections 1-4: shared merge core ---
@@ -2427,36 +2525,25 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			assert_logup_cond(cs.clone(), &qry_c, &sel_c, &lk_l,
 				&sel_l.to_vec(), m_aux, r2)?;
 		}
-		// --- Section 6: verdict feed (4cs/row + 1 logup) ---
-		// is_last = is_zero(si_step - constL - enc); si_step is
-		// pinned (C5) + outer-bound so steps cannot be mislabeled.
+		// --- Section 6: verdict feed (2cs/row + 1 logup) ---
+		// sel.is_last (LAST si tag, forced in selectors, si_step
+		// pinned C5 + outer-bound so steps cannot be mislabeled).
 		// qry = enc*is_last*is_c; zero rows hit acc_out's 0 slot.
 		// EXAMPLE: full match a1..a8, terminal a8 C row: its enc
 		//   must be in acc_out, else UNSAT -> subsig lands in
 		//   failed_acc -> compute_sig reports not-discharged.
-		let f1 = F::from(1u64 << rb);
-		let f5 = f1 * f1 * f1 * f1 * f1;
-		let const_part = F::from(0x23001101u64) * f5
-			* F::from(1u64 << 32)
-			+ F::from(ID_ENCODED_LAST_STEP as u64) * f5;
-		let c_last = new_const_var(&cs, const_part);
-		let tag_nat: Vec<F> = (0..n).map(|i|
-			t.si_step[i] - const_part - t.enc[i]).collect();
-		let tag_var: Vec<FpVar<F>> = (0..n).map(|i|
-			&(&v.si_step[i] - &c_last) - &v.enc[i]).collect();
-		let is_last = gen_zero_bits(&cs, &tag_nat, &tag_var)?;
 		// (1-is_step0) mirrors Section 5: seed-only (empty-chain)
 		// subsigs' step-0 row is vacuously is_last but must NOT feed
 		// acc_out (num>0 filter in gen_acc_and_mtbl). Real terminals
 		// sit at step==num>=1, where is_step0=0, so never dropped.
 		let qry_a: Vec<FpVar<F>> = (0..n).map(|i|
-			&(&(&v.enc[i] * &is_last[i]) * &sel.is_c[i])
+			&(&(&v.enc[i] * &sel.is_last[i]) * &sel.is_c[i])
 				* &(&c_one - &sel.is_step0[i])).collect();
 		assert_logup(cs.clone(), &qry_a, acc_out, mtbl_acc, r2)?;
 		log(job_id, LOG3, &format!(
 			"PERF 61081.4: block=merge_acc cs={} pred={}",
 			cs.num_constraints() - n0,
-			15 * n + 7 * l_pat.len() + 3 * d_pat.len()));
+			13 * n + 7 * l_pat.len() + 3 * d_pat.len()));
 		Ok(())
 	}
 
@@ -2464,12 +2551,11 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	/// matters only in that C1 bits and C2 (grp_start, rid) feed the
 	/// later blocks; soundness is the conjunction.
 	/// COST (R1CS, n = T_qm rows, per-row rates fold logups):
-	///   selectors ~17n; wf ~18n; si pins ~14n; certs ~31n;
-	///   merge+acc ~15n + 7|L| + 3|D|; TOTAL ~95n + 7|L| +
-	///   3|D| -- vs legacy aggressive fwd+acc ~84.5*n1 with
-	///   quadratic-walk n1; n here is theorem-bounded
-	///   (linear). MEASURED @ fig-14 n=34: 3429 cs (+0.6% vs
-	///   3409 estimate; band-locked, test_m6_cost_band).
+	///   selectors ~19n; wf ~26n (run lemma); si pins ~14n;
+	///   certs ~31n; merge+acc ~13n + 7|L| + 3|D|; TOTAL ~103n
+	///   + 7|L| + 3|D| -- vs legacy aggressive fwd+acc ~84.5*n1
+	///   with quadratic-walk n1; n here is theorem-bounded
+	///   (linear; band-locked, test_m6_cost_band).
 	///   PERF 61081.9 grand total.
 	pub(crate) fn assert_neo_core_aggr(
 		cs: ConstraintSystemRef<F>,
@@ -2481,7 +2567,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			&nat.t, &vars.qm, r1, true, job_id)?;
 		let (_gs, rid) = Self::assert_neo_wf(cs.clone(),
 			&nat.t, &vars.qm, &sel, &vars.s_enc, &vars.subsigs,
-			r1, r2, job_id)?;
+			&nat.s_enc, &nat.subsig_nat, r1, r2, job_id)?;
 		Self::assert_neo_si_pins(cs.clone(), &vars.qm, &sel,
 			true, job_id)?;
 		Self::assert_neo_certs_aggr(cs.clone(), &nat.t, &vars.qm,
@@ -2693,19 +2779,8 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 				.collect::<Vec<F>>(),
 			&na_v.w_next.iter().map(|x| &c_max - x)
 				.collect::<Vec<_>>())?;
-		// is_last bits off the pinned si_step (merge_acc pattern):
-		// BP is banned on terminal rows (no step i+1 exists).
-		let f1c = F::from(1u64 << rb);
-		let f5 = f1c * f1c * f1c * f1c * f1c;
-		let const_part = F::from(0x23001101u64) * f5
-			* F::from(1u64 << 32)
-			+ F::from(ID_ENCODED_LAST_STEP as u64) * f5;
-		let c_last = new_const_var(&cs, const_part);
-		let tag_nat: Vec<F> = (0..n).map(|i|
-			t.si_step[i] - const_part - t.enc[i]).collect();
-		let tag_var: Vec<FpVar<F>> = (0..n).map(|i|
-			&(&v.si_step[i] - &c_last) - &v.enc[i]).collect();
-		let is_last = gen_zero_bits(&cs, &tag_nat, &tag_var)?;
+		// sel.is_last (LAST si tag, forced in selectors): BP is
+		// banned on terminal rows (no step i+1 exists).
 		let (mut qry_r, mut sq_r) = (vec![], vec![]);
 		let (mut qry_c, mut sq_c) = (vec![], vec![]);
 		for i in 0..n {
@@ -2756,7 +2831,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			// group carries nothing (its cid-1 row is the
 			// max-wrap). Terminal rows can never be BP, and
 			// non-aggressive has no backward subsigs.
-			check_prod_zero(&sel.is_bp[i], &is_last[i], lc!(),
+			check_prod_zero(&sel.is_bp[i], &sel.is_last[i], lc!(),
 				"neo BP not terminal")?;
 			check_prod_zero(&sel.is_bp[i], &sel.b_bwd_row[i],
 				lc!(), "neo BP fwd-only")?;
@@ -2799,6 +2874,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		}
 		// seed anchors (QR): pack(subsig*2^4rb, 1, 1) per active
 		// subsig -- the anti-drop cascade's ground (M6 unchanged).
+		let f1c = F::from(1u64 << rb);
 		let c_sh4 = new_const_var(&cs, f1c * f1c * f1c * f1c);
 		let z_sub = gen_zero_bits(&cs, subsig_nat, subsigs)?;
 		for (j, s) in subsigs.iter().enumerate() {
@@ -2933,7 +3009,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			&nat.t, &vars.qm, r1, false, job_id)?;
 		let (gs, rid) = Self::assert_neo_wf(cs.clone(),
 			&nat.t, &vars.qm, &sel, &vars.s_enc, &vars.subsigs,
-			r1, r2, job_id)?;
+			&nat.s_enc, &nat.subsig_nat, r1, r2, job_id)?;
 		let cid = Self::assert_neo_cid_chain(&gs, &sel);
 		Self::assert_neo_si_pins(cs.clone(), &vars.qm, &sel,
 			false, job_id)?;
@@ -2996,25 +3072,41 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 	-> Result<NeoCore<F>, Error> {
 		let t = g.gen_qm_table(info, true)?;
 		let rid = Self::gen_rid_native(&t);
-		let subsig_nat = g.subsigs.clone();
-		let (s_enc, s_pat) = Self::gen_store_rows(&subsig_nat,
-			info);
+		// 8_C: subsig column = K slots (dummy-0 pad; circuit masks
+		// zero slots), store rows padded to the wrap budget; both
+		// shapes are capacity-only so every chunk's statement (and
+		// the dummy config) is identical. Tier-1 fixtures
+		// (capacity.b_aggressive=false) keep exact sizes.
+		let mut subsig_nat = g.subsigs.clone();
+		let (mut s_enc, mut s_pat) = Self::gen_store_rows(
+			&g.subsigs, info);
+		if g.capacity.b_aggressive {
+			let k_slots = g.capacity.subsigs;
+			let s_cap = StepQueueNeo::<F>::wrap_budget(&g.capacity);
+			assert!(subsig_nat.len() <= k_slots);
+			subsig_nat.resize(k_slots, F::zero());
+			if s_enc.len() > s_cap {
+				return Err(Error::CapErr(vec![(format!(
+					"neo_qm_table, b_igc: {}", g.b_igc),
+					s_enc.len())]));
+			}
+			s_enc.resize(s_cap, F::zero());
+			s_pat.resize(s_cap, F::zero());
+		}
+		let s_pads = s_pat.iter().filter(|p| p.is_zero()).count();
 		let mut hm_pats: HashMap<F, Vec<(F, F)>> = HashMap::new();
 		for p in &l_pat { hm_pats.entry(*p).or_insert(vec![]); }
-		let (d_pat, d_cnt) = StepQueueNeo::gen_merge_dict(
-			&subsig_nat, info, &hm_pats);
-		// 8_A guard: with the universe seed every real L pat is a
-		// store pat, so D == D_store. a non-sentinel dict entry with
-		// zero store count means an L pat fell outside the universe
-		// -> statement shape would drift, reject as CapErr.
-		let f_max_d = F::from(((1u64 << read_global_config()
-			.range2_bit) - 1) as u32);
-		for (p, c) in d_pat.iter().zip(d_cnt.iter()) {
-			if c.is_zero() && !p.is_zero() && *p != f_max_d {
-				return Err(Error::CapErr(vec![(format!(
-					"neo_dict_offstore, b_igc: {}", g.b_igc),
-					d_pat.len())]));
-			}
+		let (d_pat, mut d_cnt) = StepQueueNeo::gen_merge_dict(
+			&g.subsigs, info, &hm_pats, g.b_igc)?;
+		// cnt-force logup: d_cnt = pole count of s_pat queries, so
+		// the zero PADS must be counted in D's 0 entry (real L pat-0
+		// rows are loc-wraps, sel_l=0 -> never query (0,m)).
+		if s_pads > 0 {
+			let j0 = d_pat.iter().position(|p| p.is_zero())
+				.ok_or_else(|| Error::CapErr(vec![(format!(
+					"neo_dict_zero_slot, b_igc: {}", g.b_igc),
+					s_pads)]))?;
+			d_cnt[j0] += F::from(s_pads as u32);
 		}
 		let mut d_diff = vec![F::zero(); d_pat.len()];
 		for j in 1..d_pat.len() {
@@ -3337,10 +3429,11 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoAdvice<F> {
 	}
 
 	/// AGGRESSIVE-ONLY ctor (asserts capacity.b_aggressive): seed
-	/// the whole universe (the compute_sig encode(inp_subsig)
-	/// subset-of seed tie is wired in M8/M10), run the M5 shared
-	/// core against this chunk's pat_loc, and emit the N3 statement
-	/// under the legacy stmt names.
+	/// THIS CHUNK's NEEDS set (nonzero inp_subsigs, non-empty-chain;
+	/// 8_C), run the M5 shared core against this chunk's pat_loc,
+	/// and emit the N3 statement under the legacy stmt names. Shape
+	/// is chunk-invariant via capacity budgets (qm wrap budget, K
+	/// subsig slots, S_cap store pad, constant full-store D).
 	pub fn new_aggr(
 		b_igc: bool,
 		offset_fsm: usize,
@@ -3357,12 +3450,24 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoAdvice<F> {
 		let sname = if b_igc { "discharge_adv_stmt_igc" }
 			else { "discharge_adv_stmt_cs" };
 		let stmt_container = Container::<F>::new(sname);
-		// 8_A: seed the FIXED scoped universe (store's [0]=all subsig
-		// set) so the neo statement shape is identical every chunk
-		// (foldable). inp_subsigs (this chunk's active set) is unused.
-		let _ = inp_subsigs;
-		let seed_subsigs = subsig_store_info.subsig_ids.iter()
-			.map(|u| F::from(*u as u32)).collect::<Vec<F>>();
+		// 8_C: seed this chunk's NEEDS set -- nonzero inp_subsigs,
+		// filtered to non-empty-chain (mirrors compute_sig's
+		// empty-chain drop, so the seed-pin sets stay equal). Cold
+		// subsigs are covered by CP-absence (legacy architecture);
+		// the wf run lemma forces full chains for every seeded one.
+		let is_uni = |u: usize| subsig_store_info.subsig_to_steps
+			.get(&u).map_or(false, |it| !it.vec_pm_bounds.is_empty());
+		let mut seed_subsigs = inp_subsigs.iter()
+			.filter(|s| !s.is_zero())
+			.filter(|s| is_uni(field_to_usize(*s)))
+			.cloned().collect::<Vec<F>>();
+		seed_subsigs.sort();
+		seed_subsigs.dedup();
+		if seed_subsigs.len() > capacity.subsigs {
+			return Err(Error::CapErr(vec![(format!(
+				"neo_subsig_slots, b_igc: {}", b_igc),
+				seed_subsigs.len())]));
+		}
 		let seed = DischargeAdvAdvice::<F>
 			::gen_empty_steps_queue_serialized(b_igc,
 			&seed_subsigs, subsig_store_info, fsm_id, capacity);
@@ -3373,12 +3478,13 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoAdvice<F> {
 			subsig_store_info)?;
 		stmt_container.lock().unwrap().add_container(core);
 		stmt_container.lock().unwrap().add_container(combo);
-		// 8_A: publish seed encodings (subsig*2^4rb per universe
-		// subsig) so compute_sig's aggressive seed-pin reads a uniform
-		// source (parity with legacy fwd_steps_queue sq_inp.encoded).
+		// Publish seed encodings (subsig*2^4rb per SEEDED NEEDS
+		// subsig; K+1 slots after the K-pad of subsig_nat) so
+		// compute_sig's aggressive seed-pin reads a uniform source.
 		// A leading 0 entry is REQUIRED: compute_sig pads inp_subsigs
 		// with dummy-0s (enc 0), so the seed table must contain 0 to
-		// absorb those zero queries (else the seed-pin logup is unsat).
+		// absorb those zero queries (else the seed-pin logup is
+		// unsat); dummy-0 slots just duplicate it (harmless).
 		let mut seed_enc: Vec<F> = vec![F::zero()];
 		seed_enc.extend(nat.subsig_nat.iter().map(|s|
 			encode_cols(&vec![vec![*s], vec![F::zero()],
@@ -3699,6 +3805,7 @@ pub(crate) mod tests_neo_m4 {
 			avg_active_pats_per_subsig: 16, basis_pats_in_trace: 1,
 			perc_pats_expansion_rate: 100, universe_subsigs: 1,
 			b_aggressive: false, prod_pats_expansion: 0,
+			wrap_keys: 0,
 		}
 	}
 
@@ -4938,6 +5045,91 @@ mod tests_neo_m6_neg {
 			}));
 		assert!(!cs.is_satisfied().unwrap());
 	}
+
+	/// n12 joint store-drop: full a1..a8 match (n9 base), but the
+	/// prover drops the step-8 GROUP and its s_enc row and zeroes
+	/// cnt(pat 8) together -- uniqueness/cnt/counting all rebalance
+	/// internally, no last-step C remains, the match vanishes.
+	/// Must be UNSAT via the run-completeness lemma.
+	#[test]
+	fn test_m6_neg_joint_store_drop() {
+		let mut hm = fig14_hm();
+		hm.insert(8, vec![108]);
+		let (cs, _nat) = run_core_aggr(&a18_store(), &hm, 161,
+			Some(&|nat: &mut NeoCore<Fr>| {
+				let f8 = Fr::from(8u32);
+				// (1) drop every step-8 row (wraps + the C at 108)
+				let t = &mut nat.t;
+				for i in (t.n_pad..t.enc.len()).rev() {
+					if t.step[i] == f8 { remove_row(t, i); }
+				}
+				// (2) drop the (subsig, step-8) store row
+				let j = nat.s_pat.iter().position(|p| *p == f8)
+					.unwrap();
+				nat.s_enc.remove(j);
+				nat.s_pat.remove(j);
+				// (3) cnt(pat 8) -> 0 (pat 8 stays in D via L)
+				let k = nat.d_pat.iter().position(|p| *p == f8)
+					.unwrap();
+				nat.d_cnt[k] = Fr::from(0u32);
+				// (4) rebalance every dependent advice table
+				let rid = NeoCore::gen_rid_native(&nat.t);
+				nat.mtbl_qr = NeoCore::gen_mtbl_qr(&nat.t, &rid,
+					&nat.subsig_nat);
+				nat.m_aux = StepQueueNeo::gen_merge_m_aux(
+					&nat.l_pat, &nat.l_loc, &nat.d_pat,
+					&nat.d_cnt);
+				nat.mtbl_d = NeoCore::gen_mtbl_d(&nat.l_pat,
+					&nat.l_loc, &nat.d_pat);
+				let (a, m) = NeoCore::gen_acc_padded(&nat.t,
+					&a18_store());
+				nat.acc_out = a;
+				nat.mtbl_acc = m;
+			}));
+		assert!(!cs.is_satisfied().unwrap());
+	}
+
+	/// n13 tail truncation x3: same joint drop as n12 but for steps
+	/// 6..8 -- the run ends at the NORMAL-tagged step-5 group, so
+	/// the wf run-completeness lemma (final-run clause) fires.
+	#[test]
+	fn test_m6_neg_tail_truncation() {
+		let mut hm = fig14_hm();
+		hm.insert(8, vec![108]);
+		let (cs, _nat) = run_core_aggr(&a18_store(), &hm, 161,
+			Some(&|nat: &mut NeoCore<Fr>| {
+				let dropped = [Fr::from(6u32), Fr::from(7u32),
+					Fr::from(8u32)];
+				let t = &mut nat.t;
+				for i in (t.n_pad..t.enc.len()).rev() {
+					if dropped.contains(&t.step[i]) {
+						remove_row(t, i);
+					}
+				}
+				for p in &dropped {
+					let j = nat.s_pat.iter().position(|x|
+						x == p).unwrap();
+					nat.s_enc.remove(j);
+					nat.s_pat.remove(j);
+					let k = nat.d_pat.iter().position(|x|
+						x == p).unwrap();
+					nat.d_cnt[k] = Fr::from(0u32);
+				}
+				let rid = NeoCore::gen_rid_native(&nat.t);
+				nat.mtbl_qr = NeoCore::gen_mtbl_qr(&nat.t, &rid,
+					&nat.subsig_nat);
+				nat.m_aux = StepQueueNeo::gen_merge_m_aux(
+					&nat.l_pat, &nat.l_loc, &nat.d_pat,
+					&nat.d_cnt);
+				nat.mtbl_d = NeoCore::gen_mtbl_d(&nat.l_pat,
+					&nat.l_loc, &nat.d_pat);
+				let (a, m) = NeoCore::gen_acc_padded(&nat.t,
+					&a18_store());
+				nat.acc_out = a;
+				nat.mtbl_acc = m;
+			}));
+		assert!(!cs.is_satisfied().unwrap());
+	}
 }
 
 // ============================================================
@@ -4996,6 +5188,7 @@ mod tests_neo_m6_h {
 			avg_active_pats_per_subsig: 2,
 			basis_pats_in_trace: cap.basis_pats_in_trace,
 			perc_pats_expansion_rate: 600, b_aggressive: true,
+				wrap_keys: 0,
 			prod_pats_expansion: 2500 * 600 };
 		let path = format!("{}/data/{}/word.txt", proj_root(), dir);
 		write_to_file(&path, content);
@@ -5952,6 +6145,7 @@ mod tests_neo_nonaggr_h {
 			// M8b: universe-seed carries all non-empty-chain subsigs
 			// every chunk, so the queue budget must cover them (was 100).
 			perc_pats_expansion_rate: 200, b_aggressive: false,
+				wrap_keys: 0,
 			prod_pats_expansion: 0 };
 		let all_word = pad_word_to_multiple::<Fr>(
 			&pack_nibbles(&f_nibbles), wlen);
@@ -6121,6 +6315,7 @@ mod tests_neo_nonaggr_h {
 			avg_active_pats_per_subsig: 1,
 			basis_pats_in_trace: cap.basis_pats_in_trace,
 			perc_pats_expansion_rate: 200, b_aggressive: false,
+				wrap_keys: 0,
 			prod_pats_expansion: 0 };
 		let all_word = pad_word_to_multiple::<Fr>(
 			&pack_nibbles(&f_nibbles), wlen);
@@ -6234,6 +6429,7 @@ mod tests_neo_cost {
 			avg_active_pats_per_subsig: cap_n, basis_pats_in_trace: 1,
 			perc_pats_expansion_rate: 100, universe_subsigs: 1,
 			b_aggressive: false, prod_pats_expansion: 0,
+			wrap_keys: 0,
 		}
 	}
 

@@ -198,7 +198,7 @@ impl SedCapacity{
 		//prod default = basis_pats*perc (reproduces the legacy forward-queue
 		//size); aggressive determine overrides via set_prod_pats_expansion.
 		let prod_pats_expansion = basis_pats_in_trace * perc_pats_expansion_rate;
-		let da_capacity = DischargeAdvCapacity{max_nibble_len, subsigs, universe_subsigs: subsigs, avg_active_pats_per_subsig, basis_pats_in_trace, perc_pats_expansion_rate, b_aggressive: false, prod_pats_expansion};
+		let da_capacity = DischargeAdvCapacity{max_nibble_len, subsigs, universe_subsigs: subsigs, avg_active_pats_per_subsig, basis_pats_in_trace, perc_pats_expansion_rate, b_aggressive: false, prod_pats_expansion, wrap_keys: 0};
 		//NOTE csa_capacity for the other cs/igc case will be temporarily
 		//set and later merged (because one csa coresponds to two discharge
 		//adv components
@@ -327,6 +327,10 @@ impl SedCapacity{
 			//tiny instead of inheriting the cs NEEDS.
 			let needs = read_global_config().aggr_needs_subsigs;
 			if needs > 0 { da.subsigs = needs.min(da.universe_subsigs); }
+			//8_C neo wrap budget override; skip the collapsed igc
+			//sentinel (universe=1) -- it keeps the derived default.
+			let wk = read_global_config().neo_wrap_keys;
+			if wk > 0 && da.universe_subsigs > 1 { da.wrap_keys = wk; }
 		}
 		self.comp_capacities[2] = Arc::new(da);
 		let mut csa = Clone::clone(self.csa_capacity());
@@ -708,7 +712,7 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 			stmt_disc_cs.lock().unwrap().search_container(
 				"discharge_adv_stmt_cs q_i").expect("neo q_i cs err")
 		} else if use_neo && b_aggr {
-			// 8_A: aggr-neo publishes fwd_seed (universe seed encs)
+			// aggr-neo publishes fwd_seed (NEEDS seed encs, 8_C)
 			stmt_disc_cs.lock().unwrap().search_container(
 				"discharge_adv_stmt_cs fwd_seed")
 				.expect("neo fwd_seed cs err")
@@ -729,23 +733,34 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 				"discharge_adv_stmt_igc fwd_steps_queue sq_inp")
 				.expect("sq_inp igc err")
 		};
-		// neo (aggr + M8b non-aggr) asserts against the FULL universe
-		// subsig set (store's [0]=all subsig_ids), matching the neo core
-		// seed; feed that instead of this chunk's active subset. Legacy
+		// M8b non-aggr neo asserts against the FULL universe subsig
+		// set (store's [0]=all subsig_ids), matching its neo core
+		// seed. 8_C aggr neo seeds this chunk's NEEDS set, so
+		// compute_sig must read the SAME set (seed-pin tie). Legacy
 		// (use_neo=false) unchanged.
-		//exclude empty-chain subsigs: neo seeds them (seed-only) but
-		//they can never reach LAST_STEP -> never in failed_acc, and
-		//compute_sig's from_subsig_store_item underflows on num==0.
+		//exclude empty-chain subsigs: they can never reach LAST_STEP
+		//-> never in failed_acc, and compute_sig's
+		//from_subsig_store_item underflows on num==0.
 		let uni = |st: &SubsigStepStore| -> Vec<F> {
 			st.subsig_ids.iter().filter(|u| st.subsig_to_steps
 				.get(u).map_or(false, |it|
 					!it.vec_pm_bounds.is_empty()))
 				.map(|u| F::from(*u as u32)).collect::<Vec<F>>()
 		};
-		let cs_subsigs_cs = if use_neo {
+		let needs = |st: &SubsigStepStore, inp: &Vec<F>| -> Vec<F> {
+			let set: std::collections::HashSet<F> =
+				inp.iter().cloned().collect();
+			uni(st).into_iter().filter(|s| set.contains(s))
+				.collect::<Vec<F>>()
+		};
+		let cs_subsigs_cs = if use_neo && b_aggr {
+			needs(subsig_step_store_cs, &subsigs_inp_cs)
+		} else if use_neo {
 			uni(subsig_step_store_cs)
 		} else { subsigs_inp_cs.clone() };
-		let cs_subsigs_igc = if use_neo {
+		let cs_subsigs_igc = if use_neo && b_aggr {
+			needs(subsig_step_store_igc, &subsigs_inp_igc)
+		} else if use_neo {
 			uni(subsig_step_store_igc)
 		} else { subsigs_inp_igc.clone() };
 		let compute_sig_adv_advice = ComputeSigAdvAdvice::<F>::new(

@@ -1527,6 +1527,7 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 			b_aggressive: capacity.b_aggressive,
 			//dummy: prod = basis_pats*perc keeps the legacy size.
 			prod_pats_expansion: capacity.basis_pats_in_trace_cs * 100,
+			wrap_keys: 0,
 		};
 		let dis_cap_igc= DischargeAdvCapacity{
 			max_nibble_len: capacity.max_nibble_len,
@@ -1538,6 +1539,7 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 			perc_pats_expansion_rate: 100,
 			b_aggressive: capacity.b_aggressive,
 			prod_pats_expansion: capacity.basis_pats_in_trace_igc * 100,
+			wrap_keys: 0,
 		};
 		//AGGRESSIVE: the dummy sq_res must be acc_out-shaped (acc_encoded) so
 		//gen_eval_subsig_by_acc's external-ref structure (and thus the gadget
@@ -2908,6 +2910,7 @@ use utils::consts::{read_global_config, get_global_config};
 			perc_pats_expansion_rate: 150,
 			b_aggressive: false,
 			prod_pats_expansion: cap.basis_pats_in_trace * 150,
+			wrap_keys: 0,
 		};
 		let cap_sig= ComputeSigAdvCapacity{//capaciity of compute sig adv comp 
 			max_nibble_len: nibble_len, 
@@ -3259,6 +3262,7 @@ use utils::consts::{read_global_config, get_global_config};
 			perc_pats_expansion_rate: 150,
 			b_aggressive: false,
 			prod_pats_expansion: 48*100*150,
+			wrap_keys: 0,
 		};
 		let b_igc = false;
 		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),

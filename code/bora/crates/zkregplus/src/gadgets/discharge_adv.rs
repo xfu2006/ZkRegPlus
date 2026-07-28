@@ -383,6 +383,10 @@ pub struct DischargeAdvCapacity{
 	/// are NOT read here. 0 means subsigs==0 (empty forward queue); floored
 	/// to the 1-subsig dummy sentinel. Backward queue is unused aggressive.
 	pub prod_pats_expansion: usize,
+
+	/// NEO-AGGRESSIVE T_qm wrap-key budget: Sigma(steps+1) over the
+	/// seeded NEEDS. 0 = derive subsigs*(avg_active+1). Legacy: unused.
+	pub wrap_keys: usize,
 }
 
 /// Advice for the Discharge Subsig Gadget.
@@ -1978,6 +1982,7 @@ impl Capacity for DischargeAdvCapacity{
 			perc_pats_expansion_rate: self.perc_pats_expansion_rate,
 			b_aggressive: self.b_aggressive,
 			prod_pats_expansion: self.prod_pats_expansion,
+			wrap_keys: self.wrap_keys,
 		})
 	}
 
@@ -4910,6 +4915,7 @@ use utils::consts::{read_global_config, get_global_config};
 			perc_pats_expansion_rate: 100,
 			b_aggressive: false,
 			prod_pats_expansion: 0,
+			wrap_keys: 0,
 		};
 
 		//2. create advice for word_extract_adv, fsm_adv, and discharge_adv
@@ -5084,6 +5090,7 @@ use utils::consts::{read_global_config, get_global_config};
 			avg_active_pats_per_subsig:2,
 			basis_pats_in_trace: cap.basis_pats_in_trace,
 			perc_pats_expansion_rate:600, b_aggressive:true,
+				wrap_keys: 0,
 			prod_pats_expansion: 2500*600 };
 		//word: "ab" before KEYWORD within the gap -> variant "ab" matches via
 		//the backward window; other variants run the backward query too.
@@ -5150,6 +5157,7 @@ use utils::consts::{read_global_config, get_global_config};
 			universe_subsigs:6,
 			avg_active_pats_per_subsig:1, basis_pats_in_trace:100,
 			perc_pats_expansion_rate:100, b_aggressive:true,
+				wrap_keys: 0,
 			prod_pats_expansion: 100*100 };
 		//acc_size = 6*10000/10000 = 6 (already even)
 		assert_eq!(FailedSubsigAcc::<Fr>::acc_size(&cap), 6);
@@ -5278,6 +5286,7 @@ use utils::consts::{read_global_config, get_global_config};
 			perc_pats_expansion_rate: 132,
 			b_aggressive: false,
 			prod_pats_expansion: 0,
+			wrap_keys: 0,
 		};
 		let b_igc = false;
 		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),
@@ -5482,6 +5491,7 @@ use utils::consts::{read_global_config, get_global_config};
 			perc_pats_expansion_rate: 132,
 			b_aggressive: false,
 			prod_pats_expansion: 0,
+			wrap_keys: 0,
 		};
 		let b_igc = false;
 		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),

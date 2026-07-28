@@ -2217,6 +2217,14 @@ pub mod tests_zkp_driver{
 		let neo_on = std::env::var("ZKR_USE_NEO").is_ok();
 		if neo_on {
 			get_global_config().clamav_cfg.b_use_discharge_neo = true;
+			//neo's constant full-store D-dict advice (d_diff etc.)
+			//adds ~1K distinct range keys per chunk; the dummy
+			//self-cover needs lk_share >= that (perc=1 -> 158).
+			get_global_config().perc_lkup_share = 20;
+			//T_qm wrap budget: DLP chains run ~20 steps/subsig
+			//(measured demand 10400 rows), well above the derived
+			//subsigs*(avg_active+1) default.
+			get_global_config().neo_wrap_keys = 5600;
 		}
 		//No DB cache: always rebuild fresh (avoids the 2GiB per-file
 		//write truncation on the full set; the corpus is small enough).
@@ -2252,19 +2260,15 @@ pub mod tests_zkp_driver{
 			sigs, perc_comp_subsigs,
 			basis_unique_states, basis_acc_states);
 
-		//neo's qm_table iterates the FULL igc store, so under neo the igc
-		//arm must carry the real universe caps (not the legacy sentinel);
-		//legacy keeps the trivial-arm sentinel for a fair comparison.
-		let (init_cp_cap_igc, init_sed_cap_igc) = if neo_on {
-			(init_cp_cap.clone(), init_sed_cap.clone())
-		} else {
-			(CpCapacity{ max_word_len: init_cp_cap.max_word_len,
-				basis_unique_states: 4, subsigs: 1,
-				avg_pats_per_subsig: 1},
-			 SedCapacity::new(init_sed_cap.max_word_len,
-				init_sed_cap.acdfa_state_part_bits, 1, 1, 1, 4, 64, 1, 1,
-				init_sed_cap.basis_unique_states, 2))
-		};
+		//8_C: neo seeds the per-chunk NEEDS set (capacity budgets), so
+		//the igc arm keeps the same trivial-arm sentinel as legacy.
+		let init_cp_cap_igc = CpCapacity{
+			max_word_len: init_cp_cap.max_word_len,
+			basis_unique_states: 4, subsigs: 1, avg_pats_per_subsig: 1};
+		let init_sed_cap_igc = SedCapacity::new(
+			init_sed_cap.max_word_len, init_sed_cap.acdfa_state_part_bits,
+			1, 1, 1, 4, 64, 1, 1,
+			init_sed_cap.basis_unique_states, 2);
 
 		//light: 2-rung ladder (small_email); max: 1 rung (small_email2).
 		let cs_caps = if is_max {

@@ -213,6 +213,10 @@ pub struct GlobalConfig {
 	/// (forward runs over the full universe = pre-M5 behavior). Set by the
 	/// runner from the estimator's reported needs_subsigs.
 	pub aggr_needs_subsigs: usize,
+	/// NEO-AGGRESSIVE (8_C): T_qm wrap-key budget = Sigma(steps+1) over
+	/// the seeded NEEDS set. 0 = derive from the discharge capacity
+	/// (subsigs*(avg_active+1)). Set by the runner per dataset.
+	pub neo_wrap_keys: usize,
 	/// Estimator-only: when true, the discharge pass also runs the chunked
 	/// SED propagation to fill ChunkPeaks' forward-proof counts. Default
 	/// false = normal discharge unaffected. Set by run_db_bundle.
@@ -284,6 +288,7 @@ impl Default for GlobalConfig {
 			b_dryrun_after_capcheck: false,
 			basis_failed_subsigs: 0,
 			aggr_needs_subsigs: 0,
+			neo_wrap_keys: 0,
 			b_estimate_caps: false,
 			b_one_proof: false,
 			fp_sink: None,
@@ -341,6 +346,7 @@ static GLOBAL_CONFIG: RwLock<GlobalConfig> = RwLock::new(GlobalConfig {
 	b_dryrun_after_capcheck: false,
 	basis_failed_subsigs: 0,
 	aggr_needs_subsigs: 0,
+	neo_wrap_keys: 0,
 	b_estimate_caps: false,
 	b_one_proof: false,
 	fp_sink: None,
