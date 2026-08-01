@@ -30525,7 +30525,9 @@ Goal 10. check capacity
 	[b] non-aggr: max_len * basis_pats * per_pats_expansionrte 
 
 Goal 11. start p3 unit testing
-	[a]
+	[a] fully automated testing
+	[b] refine the rule and starts.
+	[c] unit testing mostly passed, but there is one problem.
 		
 
 

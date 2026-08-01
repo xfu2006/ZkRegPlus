@@ -1,0 +1,47 @@
+neo_hard_set - a hard NON-AGGRESSIVE SDE case (local, fresh DFA)
+================================================================
+
+Purpose
+-------
+A deliberately hard input for the constant-queue chunked SDE
+(discharge_adv_neo, paper App G.1) so we can compare its circuit cost
+against the legacy two-pass SDE (discharge_adv). It is runnable locally
+with a fresh tiny DFA (b_read_cache=false), no full_clam DB needed.
+
+The signature (sigs.dat)
+------------------------
+  sed_hard: 4142{1-3}4344{1-3}4546{1-3}4748{1-3}494a{1-3}4b4c{1-3}4d4e{1-3}4f50
+
+An 8-step tracked literal chain:
+  AB .{1-3} CD .{1-3} EF .{1-3} GH .{1-3} IJ .{1-3} KL .{1-3} MN .{1-3} OP
+Every gap is a FINITE range, so every step except the last (OP) is a
+tracked (non-singleton) pattern: the SDE step-queue carries live
+locations across chunks instead of collapsing to one.
+
+The scan target (scan.bin)
+--------------------------
+  OP____  followed by 30 copies of  AB.CD.EF.GH.IJ.KL.MN__
+
+Design:
+- Every literal word (AB..OP) appears at least once, so the CP tier
+  cannot discharge on an absent critical word -> the SDE tier runs.
+- Each AB..MN run chains in-range (1-byte gaps are within {1-3}), so
+  the forward pass keeps a live location for every run: ~30 live
+  locations carried at the deep steps.
+- OP appears ONLY before any AB..MN run, so no MN ever reaches an OP
+  in range -> step 8 is unreachable -> V_k empty -> SDE discharges
+  (conservative non-match).
+
+Why this is "hard"
+------------------
+The many carried locations are exactly what the legacy two-pass SDE
+pays for (its step-queue is unbounded and its forward proof is
+pairwise), while neo prunes to a constant-size Q_c. Sweeping the number
+of runs (edit N in the scan.bin generator) grows the legacy cost while
+neo stays flat.
+
+Consumed by
+-----------
+- fn neo_hard (zkp_driver.rs test module): preserved end-to-end runner.
+- the throwaway neo-vs-legacy cost test in discharge_adv_neo.rs uses an
+  in-code SubsigStepStore mirroring sed_hard (hard_store).
