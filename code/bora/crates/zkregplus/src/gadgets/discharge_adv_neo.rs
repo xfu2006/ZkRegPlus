@@ -2578,6 +2578,36 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 		}).collect()
 	}
 
+	/// AGGRESSIVE membership m-table: queries are the step >= 1 rows'
+	/// (pat, id, loc); targets are L plus the two derived sentinel
+	/// rows of each no-show pat.
+	pub(crate) fn gen_mtbl_tm_aggr(t: &QmTable<F>, l_pat: &[F],
+		l_id: &[F], l_loc: &[F], ns_pat: &[F]) -> Vec<F> {
+		let rb = read_global_config().range2_bit;
+		let (f_b, f_sh) = (F::from(1u64 << rb),
+			F::from(1u128 << (2 * rb)));
+		let f_t2 = F::from((1u64 << rb) + ((1u64 << rb) - 1));
+		let one = F::one();
+		let qry_tm: Vec<F> = (0..t.enc.len()).map(|i|
+			t.pat[i] * f_sh + t.id[i] * f_b + t.loc[i])
+			.collect();
+		let sel_qry: Vec<F> = t.step.iter().map(|s|
+			if s.is_zero() { F::zero() } else { one })
+			.collect();
+		let mut lk_tm: Vec<F> = (0..l_pat.len()).map(|i|
+			l_pat[i] * f_sh + l_id[i] * f_b + l_loc[i])
+			.collect();
+		let mut sel_lk = vec![one; l_pat.len()];
+		let sel_d: Vec<F> = ns_pat.iter().map(|p|
+			if p.is_zero() { F::zero() } else { one })
+			.collect();
+		lk_tm.extend(ns_pat.iter().map(|p| *p * f_sh));
+		sel_lk.extend(sel_d.clone());
+		lk_tm.extend(ns_pat.iter().map(|p| *p * f_sh + f_t2));
+		sel_lk.extend(sel_d);
+		gen_m_table_cond(&qry_tm, &sel_qry, &lk_tm, &sel_lk)
+	}
+
 	/// acc_out with a leading 0 slot (every non-terminal query row
 	/// lands there) + the matching completeness m-table.
 	pub(crate) fn gen_acc_padded(t: &QmTable<F>,
@@ -4994,32 +5024,8 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 			s_enc.len());
 		let (d_ns_lo, d_ns_hi, mtbl_ns) =
 			Self::gen_ns_advice(&ns_pat, &l_pat);
-		// membership m-table: queries = step>=1 rows'
-		// (pat,id,loc); targets = L ++ no-show sentinel pairs
-		let rb = read_global_config().range2_bit;
-		let (f_b, f_sh) = (F::from(1u64 << rb),
-			F::from(1u128 << (2 * rb)));
-		let f_t2 = F::from((1u64 << rb) + ((1u64 << rb) - 1));
-		let one = F::one();
-		let qry_tm: Vec<F> = (0..t.enc.len()).map(|i|
-			t.pat[i] * f_sh + t.id[i] * f_b + t.loc[i])
-			.collect();
-		let sel_qry: Vec<F> = t.step.iter().map(|s|
-			if s.is_zero() { F::zero() } else { one })
-			.collect();
-		let mut lk_tm: Vec<F> = (0..l_pat.len()).map(|i|
-			l_pat[i] * f_sh + l_id[i] * f_b + l_loc[i])
-			.collect();
-		let mut sel_lk = vec![one; l_pat.len()];
-		let sel_d: Vec<F> = ns_pat.iter().map(|p|
-			if p.is_zero() { F::zero() } else { one })
-			.collect();
-		lk_tm.extend(ns_pat.iter().map(|p| *p * f_sh));
-		sel_lk.extend(sel_d.clone());
-		lk_tm.extend(ns_pat.iter().map(|p| *p * f_sh + f_t2));
-		sel_lk.extend(sel_d);
-		let mtbl_tm = gen_m_table_cond(&qry_tm, &sel_qry,
-			&lk_tm, &sel_lk);
+		let mtbl_tm = Self::gen_mtbl_tm_aggr(&t, &l_pat, &l_id,
+			&l_loc, &ns_pat);
 		let (acc_out, mtbl_acc) = Self::gen_acc_padded(&t, info);
 		Ok(NeoCore { t, l_pat, l_id, l_loc, subsig_nat, s_enc,
 			mtbl_qr, mtbl_tm, ns_pat, d_ns_lo, d_ns_hi, mtbl_ns,
@@ -6490,9 +6496,14 @@ pub(crate) mod tests_neo_r1 {
 
 	/// flat L columns (pat, id, loc) with per-pat 0/max wraps, pats
 	/// ascending -- the 3-column pat_loc shape the New8 join reads.
+	/// One leading all-zero PAD row, because the real pat_loc is a
+	/// committed capacity-sized table: it is never zero-length, and
+	/// the no-show gap advice leans on that (an empty column has no
+	/// pair to straddle). Nothing queries the pad.
 	pub(crate) fn l_cols3(m: &HashMap<u32, Vec<u32>>)
 	-> (Vec<Fr>, Vec<Fr>, Vec<Fr>) {
-		let (mut ps, mut is, mut ls) = (vec![], vec![], vec![]);
+		let (mut ps, mut is, mut ls) =
+			(vec![f(0)], vec![f(0)], vec![f(0)]);
 		let mut pats: Vec<u32> = m.keys().cloned().collect();
 		pats.sort();
 		for p in pats {
@@ -6863,11 +6874,14 @@ pub(crate) mod tests_neo_r1 {
 // ============================================================
 //   M6 tests: tier-1 direct-cs aggressive core
 // ============================================================
+// NOTE_NEW8_ADAPTED (P3 R2): harness rebuilt for the New8 column
+// set (l_id/mtbl_tm/ns_*/union_prf/JR in, the six counting cols
+// out) and repointed at the assert_neo_aggr entry.
 #[cfg(test)]
-#[cfg(any())] // M8_NEW P0: old neo tests disabled, revive in P3
 pub(crate) mod tests_neo_m6 {
 	use super::*;
 	use super::tests_neo_m4::fixture_capacity;
+	use super::tests_neo_r1::{l_cols3, hm_gen3};
 	use ark_bn254::Fr;
 	use ark_relations::r1cs::{ConstraintSystem,
 		ConstraintSystemRef};
@@ -6877,35 +6891,16 @@ pub(crate) mod tests_neo_m6 {
 
 	fn f(x: u32) -> Fr { Fr::from(x) }
 
-	/// flat L columns (pat, loc) with per-pat 0/max wraps, pats
-	/// ascending -- the two columns the M6 merge consumes.
-	pub(crate) fn hm_to_l_cols(m: &HashMap<u32, Vec<u32>>) -> (Vec<Fr>, Vec<Fr>) {
-		let mx = (1u32 << read_global_config().range2_bit) - 1;
-		let (mut ps, mut ls) = (vec![], vec![]);
-		let mut pats: Vec<u32> = m.keys().cloned().collect();
-		pats.sort();
-		for p in pats {
-			ps.push(f(p)); ls.push(f(0));
-			for l in &m[&p] { ps.push(f(p)); ls.push(f(*l)); }
-			ps.push(f(p)); ls.push(f(mx));
-		}
-		(ps, ls)
+	/// the 3-column pat_loc the New8 join reads (pat, id, loc).
+	pub(crate) fn hm_to_l_cols(m: &HashMap<u32, Vec<u32>>)
+	-> (Vec<Fr>, Vec<Fr>, Vec<Fr>) {
+		l_cols3(m)
 	}
 
 	/// hm in the generator's (id, loc) wrapped format.
 	pub(crate) fn hm_gen(m: &HashMap<u32, Vec<u32>>)
 	-> HashMap<Fr, Vec<(Fr, Fr)>> {
-		let mx = f((1u32 << read_global_config().range2_bit) - 1);
-		let mut out = HashMap::new();
-		for (p, locs) in m {
-			let mut v = vec![(f(0), f(0))];
-			for (i, l) in locs.iter().enumerate() {
-				v.push((f((i + 1) as u32), f(*l)));
-			}
-			v.push((f((locs.len() + 1) as u32), mx));
-			out.insert(f(*p), v);
-		}
-		out
+		hm_gen3(m)
 	}
 
 	/// assemble the full native bundle from a generator output
@@ -6913,8 +6908,8 @@ pub(crate) mod tests_neo_m6 {
 	pub(crate) fn build_core_native(gen: &StepQueueNeo<Fr>,
 		info: &SubsigStepStore, hm: &HashMap<u32, Vec<u32>>)
 	-> NeoCore<Fr> {
-		let (l_pat, l_loc) = hm_to_l_cols(hm);
-		NeoCore::gen(gen, info, l_pat, l_loc)
+		let (l_pat, l_id, l_loc) = hm_to_l_cols(hm);
+		NeoCore::gen(gen, info, l_pat, l_id, l_loc)
 			.expect("core native")
 	}
 
@@ -6934,9 +6929,7 @@ pub(crate) mod tests_neo_m6 {
 			enc_prev: av(&t.enc_prev), b_bwd: av(&t.b_bwd),
 			d_c1: av(&t.d_c1), d_c2: av(&t.d_c2),
 			d_below_lo: av(&t.d_below_lo),
-			d_below_hi: av(&t.d_below_hi),
-			d_above_lo: av(&t.d_above_lo),
-			d_above_hi: av(&t.d_above_hi), d_sort: av(&t.d_sort),
+			d_above_lo: av(&t.d_above_lo), d_sort: av(&t.d_sort),
 			si_step: av(&t.si_step), si_subsig: av(&t.si_subsig),
 			si_pat: av(&t.si_pat), si_rg1: av(&t.si_rg1),
 			si_rg2: av(&t.si_rg2),
@@ -6945,16 +6938,21 @@ pub(crate) mod tests_neo_m6 {
 			nonaggr: alloc_nonaggr_vars(cs, &t.nonaggr),
 		};
 		NeoCoreVars { qm, l_pat: av(&nat.l_pat),
-			l_loc: av(&nat.l_loc), subsigs: av(&nat.subsig_nat),
-			s_enc: av(&nat.s_enc), s_pat: av(&nat.s_pat),
-			d_pat: av(&nat.d_pat), d_cnt: av(&nat.d_cnt),
-			d_diff: av(&nat.d_diff), m_aux: av(&nat.m_aux),
-			mtbl_qr: av(&nat.mtbl_qr), mtbl_d: av(&nat.mtbl_d),
+			l_id: av(&nat.l_id), l_loc: av(&nat.l_loc),
+			subsigs: av(&nat.subsig_nat), s_enc: av(&nat.s_enc),
+			mtbl_qr: av(&nat.mtbl_qr), mtbl_tm: av(&nat.mtbl_tm),
+			ns_pat: av(&nat.ns_pat), d_ns_lo: av(&nat.d_ns_lo),
+			d_ns_hi: av(&nat.d_ns_hi), mtbl_ns: av(&nat.mtbl_ns),
 			acc_out: av(&nat.acc_out),
 			mtbl_acc: av(&nat.mtbl_acc),
 			qi_enc: av(&nat.qi_enc), qi_loc: av(&nat.qi_loc),
 			qc_enc: av(&nat.qc_enc), qc_loc: av(&nat.qc_loc),
-			mtbl_qc: av(&nat.mtbl_qc) }
+			mtbl_qc: av(&nat.mtbl_qc),
+			union_prf: av(&nat.union_prf),
+			jr: JrVars { enc: av(&nat.jr.enc),
+				pat: av(&nat.jr.pat), id: av(&nat.jr.id),
+				loc: av(&nat.jr.loc),
+				si_pat: av(&nat.jr.si_pat) } }
 	}
 
 	/// allocate the non-aggressive witness mirror (empty in aggr).
@@ -6963,15 +6961,15 @@ pub(crate) mod tests_neo_m6 {
 		let av = |v: &Vec<Fr>| v.iter().map(|x| new_var(cs, *x))
 			.collect::<Vec<FpVar<Fr>>>();
 		QmNonAggrVars {
-			b_l: av(&na.b_l), enc_next: av(&na.enc_next),
+			enc_next: av(&na.enc_next),
 			bp_prev_val: av(&na.bp_prev_val),
 			rg2_next: av(&na.rg2_next), w_next: av(&na.w_next),
 			d_bp: av(&na.d_bp), fz: av(&na.fz),
 			enc_fz: av(&na.enc_fz),
 			fz_step_val: av(&na.fz_step_val),
 			fz_sub_val: av(&na.fz_sub_val), w_fz: av(&na.w_fz),
-			d_fz: av(&na.d_fz), w_sp: av(&na.w_sp),
-			d_sp: av(&na.d_sp), m_carry_in: av(&na.m_carry_in),
+			d_fz: av(&na.d_fz), w_kept: av(&na.w_kept),
+			d_kept: av(&na.d_kept),
 			si_bp_prev: av(&na.si_bp_prev),
 			si_rg2_next: av(&na.si_rg2_next), si_fz: av(&na.si_fz),
 			si_fz_step: av(&na.si_fz_step),
@@ -6996,14 +6994,47 @@ pub(crate) mod tests_neo_m6 {
 			info, f(default_min)).expect("shared core");
 		let mut nat = build_core_native(&gen, info, hm);
 		if let Some(tf) = tamper { tf(&mut nat); }
+		(run_nat_aggr(&nat), nat)
+	}
+
+	/// allocate a (possibly tampered) native bundle and run the
+	/// aggressive entry over it.
+	pub(crate) fn run_nat_aggr(nat: &NeoCore<Fr>)
+	-> ConstraintSystemRef<Fr> {
 		let cs = ConstraintSystem::<Fr>::new_ref();
-		let vars = alloc_vars(&cs, &nat);
+		let vars = alloc_vars(&cs, nat);
 		let r1 = new_var(&cs, Fr::from(12345u32));
 		let r2 = new_var(&cs, Fr::from(67890u32));
-		DischargeAdvNeoGadget::<Fr>::assert_neo_core_aggr(
-			cs.clone(), &nat, &vars, &r1, &r2, 0)
+		DischargeAdvNeoGadget::<Fr>::assert_neo_aggr(
+			cs.clone(), nat, &vars, &r1, &r2, 0)
 			.expect("assert core");
-		(cs, nat)
+		cs
+	}
+
+	/// recompute every derived advice table of the AGGRESSIVE bundle
+	/// from its (tampered) T_qm / s_enc / L. A negative test uses
+	/// this so the forgery is not caught by some stale multiplicity
+	/// it forgot to update -- only the real defence may fire.
+	pub(crate) fn regen_aggr_advice(nat: &mut NeoCore<Fr>,
+		info: &SubsigStepStore, s_pat: &[Fr]) {
+		let rid = NeoCore::gen_rid_native(&nat.t);
+		nat.mtbl_qr = NeoCore::gen_mtbl_qr(&nat.t, &rid,
+			&nat.subsig_nat);
+		nat.ns_pat = NeoCore::gen_ns_pat(s_pat, &nat.l_pat,
+			nat.s_enc.len());
+		let (lo, hi, mns) = NeoCore::gen_ns_advice(&nat.ns_pat,
+			&nat.l_pat);
+		nat.d_ns_lo = lo; nat.d_ns_hi = hi; nat.mtbl_ns = mns;
+		nat.mtbl_tm = NeoCore::gen_mtbl_tm_aggr(&nat.t, &nat.l_pat,
+			&nat.l_id, &nat.l_loc, &nat.ns_pat);
+		let (a, m) = NeoCore::gen_acc_padded(&nat.t, info);
+		nat.acc_out = a; nat.mtbl_acc = m;
+	}
+
+	/// the store pats of a18_store, in s_enc row order.
+	pub(crate) fn a18_s_pat() -> Vec<Fr> {
+		NeoCore::<Fr>::gen_store_rows(&vec![f(1)],
+			&super::tests_neo_m5::a18_store()).1
 	}
 
 	fn fig14_hm() -> HashMap<u32, Vec<u32>> {
@@ -7104,28 +7135,28 @@ pub(crate) mod tests_neo_m6 {
 		assert_eq!(cat_rows(&nat, CAT_C), vec![(0, 1)]);
 	}
 
-	/// P2d CNT=0 PAT (8_A): an L pat (9) no seeded store step uses
-	/// is off-universe -> gen rejects with a neo_dict_offstore
-	/// CapErr (shape-drift guard), not a silent cnt=0 dict row.
+	/// P2d OFF-STORE L PAT: pat 9 matches in the chunk but no store
+	/// step uses it. The old counting design had to reject this (a
+	/// cnt=0 dictionary row); the New8 join is driven BY THE STORE
+	/// ROWS, so an unreferenced L row is simply a lookup target
+	/// nobody queries -- it must be accepted, change no Q_m row, and
+	/// leave its membership multiplicity at zero.
 	#[test]
-	fn test_m6_corner_cnt0_pat() {
+	fn test_m6_corner_offstore_l_pat() {
 		let info = super::tests_neo_m5::a18_store();
 		let mut hm = fig14_hm();
+		let (cs0, nat0) = run_core_aggr(&info, &hm, 161, None);
+		assert!(cs0.is_satisfied().unwrap());
 		hm.insert(9, vec![50]);
-		let seed = StepQueueItem::new(f(1), f(0), f(0), f(0),
-			f(0), vec![f(1)]);
-		let mut m = HashMap::new();
-		m.insert(f(1), vec![seed]);
-		let carried = StepQueueNeo::from_stepqueue(StepQueue::new(
-			vec![f(1)], m, &fixture_capacity(),
-			StepQueueType::ResLarge, false));
-		let gen = carried.gen_shared_core_from_hm(0, &hm_gen(&hm),
-			&info, f(161)).expect("shared core");
-		let (l_pat, l_loc) = hm_to_l_cols(&hm);
-		let res = NeoCore::gen(&gen, &info, l_pat, l_loc);
-		let msg = format!("{:?}", res.err()
-			.expect("off-store L pat must be rejected"));
-		assert!(msg.contains("neo_dict_offstore"), "got {}", msg);
+		let (cs, nat) = run_core_aggr(&info, &hm, 161, None);
+		assert!(cs.is_satisfied().unwrap(),
+			"an off-store L pat must not break the core");
+		assert_eq!(nat.t.cat, nat0.t.cat, "Q_m must be unchanged");
+		assert_eq!(nat.t.loc, nat0.t.loc);
+		let i9 = (0..nat.l_pat.len())
+			.find(|i| nat.l_loc[*i] == f(50)).expect("l row 9");
+		assert!(nat.mtbl_tm[i9].is_zero(),
+			"nobody queries the off-store row");
 	}
 
 	/// P2e DUPLICATE LOC ACROSS PATS: a3 also matches at loc 33 =
@@ -7177,12 +7208,14 @@ pub(crate) mod tests_neo_m6 {
 		assert_eq!(get("si_step"), nat.t.si_step);
 		assert_eq!(get("si_b_bwd"), nat.t.si_b_bwd);
 		assert_eq!(get("l_pat"), nat.l_pat);
+		assert_eq!(get("l_id"), nat.l_id);
 		assert_eq!(get("l_loc"), nat.l_loc);
-		assert_eq!(get("d_pat"), nat.d_pat);
-		assert_eq!(get("d_cnt"), nat.d_cnt);
-		assert_eq!(get("m_aux"), nat.m_aux);
 		assert_eq!(get("mtbl_qr"), nat.mtbl_qr);
-		assert_eq!(get("mtbl_d"), nat.mtbl_d);
+		assert_eq!(get("mtbl_tm"), nat.mtbl_tm);
+		assert_eq!(get("ns_pat"), nat.ns_pat);
+		assert_eq!(get("d_ns_lo"), nat.d_ns_lo);
+		assert_eq!(get("d_ns_hi"), nat.d_ns_hi);
+		assert_eq!(get("mtbl_ns"), nat.mtbl_ns);
 		// (b) si policy: real non-step0 row = DB tags; pads masked
 		let t = &nat.t;
 		assert!(t.n_pad >= 1);
@@ -7220,8 +7253,13 @@ pub(crate) mod tests_neo_m6 {
 	}
 
 	/// commit-time cost guard: the Fig-14 single-chunk core must
-	/// stay inside a +/-25% band of the calibrated 3429 cs over 34
-	/// rows -- catches accidental constraint blowup later.
+	/// stay inside a +/-25% band of the calibrated 2763 cs over 34
+	/// rows -- catches accidental constraint blowup later. Re-banded
+	/// in P3 R2 (was 3429 under M6; New8 drops the counting block
+	/// and slims the frame). Block split at n = 34:
+	///   selectors 613, wf 670, si_pins 306, join 176, ns_gap 114,
+	///   carry 102, fwd_prune 204, seed_anchors 3, lookups 314,
+	///   verdict 108.
 	#[test]
 	fn test_m6_cost_band() {
 		let info = super::tests_neo_m5::a18_store();
@@ -7230,16 +7268,19 @@ pub(crate) mod tests_neo_m6 {
 		assert!(cs.is_satisfied().unwrap());
 		assert_eq!(nat.t.enc.len(), 34);
 		let n = cs.num_constraints();
-		assert!(n >= 2572 && n <= 4286,
-			"cost drift: {} cs vs calibrated 3429", n);
+		assert!(n >= 2072 && n <= 3454,
+			"cost drift: {} cs vs calibrated 2763", n);
 	}
 }
 
+// NOTE_NEW8_ADAPTED (P3 R2): forgeries re-aimed at the New8
+// defences -- the counting attacks became no-show/membership
+// attacks, and every tamper now regenerates its derived advice.
 #[cfg(test)]
-#[cfg(any())] // M8_NEW P0: old neo tests disabled, revive in P3
 mod tests_neo_m6_neg {
 	use super::*;
-	use super::tests_neo_m6::{run_core_aggr, build_core_native};
+	use super::tests_neo_m6::{run_core_aggr, run_nat_aggr,
+		regen_aggr_advice, a18_s_pat, hm_to_l_cols};
 	use super::tests_neo_m5::a18_store;
 	use ark_bn254::Fr;
 
@@ -7288,27 +7329,33 @@ mod tests_neo_m6_neg {
 		assert!(!cs.is_satisfied().unwrap());
 	}
 
-	/// n1 omission of a match: generator runs WITHOUT a6:96 (so no
-	/// T_qm row demands it) but L still lists it -> the counting
-	/// logup demands cnt(6)=1 hits of (6,96) and gets none -> UNSAT.
+	/// n1 omission of a match: the generator runs WITHOUT a6:96, so
+	/// no Q_m row demands it, but the committed pat_loc still lists
+	/// it. Under New8 the counting logup is gone; the defence is the
+	/// JOIN's membership lookup -- dropping a middle loc renumbers
+	/// the survivors, so Q_m's (pat, id, loc) for 141 becomes
+	/// (6, 3, 141) while L holds (6, 4, 141): no target, UNSAT.
 	#[test]
 	fn test_m6_neg_drop_match() {
+		let info = a18_store();
 		let mut hm_red = fig14_hm();
 		hm_red.insert(6, vec![73, 79, 141]); // 96 omitted
-		let hm_full = fig14_hm();
-		let (cs, _nat) = run_core_aggr(&a18_store(), &hm_red, 161,
-			Some(&move |nat: &mut NeoCore<Fr>| {
-				// restore the FULL L (with 96) + its m columns;
-				// T_qm stays the omitting version.
-				let (lp, ll) = super::tests_neo_m6::hm_to_l_cols(
-					&hm_full);
-				nat.m_aux = StepQueueNeo::gen_merge_m_aux(&lp,
-					&ll, &nat.d_pat, &nat.d_cnt);
-				nat.mtbl_d = NeoCore::gen_mtbl_d(&lp, &ll,
-					&nat.d_pat);
-				nat.l_pat = lp; nat.l_loc = ll;
-			}));
-		assert!(!cs.is_satisfied().unwrap());
+		let seed = StepQueueItem::new(f(1), f(0), f(0), f(0), f(0),
+			vec![f(1)]);
+		let mut m = HashMap::new();
+		m.insert(f(1), vec![seed]);
+		let carried = StepQueueNeo::from_stepqueue(StepQueue::new(
+			vec![f(1)], m,
+			&super::tests_neo_m4::fixture_capacity(),
+			StepQueueType::ResLarge, false));
+		let gen = carried.gen_shared_core_from_hm(0,
+			&super::tests_neo_m6::hm_gen(&hm_red), &info, f(161))
+			.expect("shared core");
+		// Q_m from the REDUCED match set, L from the full one
+		let (lp, li, ll) = hm_to_l_cols(&fig14_hm());
+		let nat = NeoCore::gen(&gen, &info, lp, li, ll)
+			.expect("core");
+		assert!(!run_nat_aggr(&nat).is_satisfied().unwrap());
 	}
 
 	/// n3 clone group: append an empty [0-wrap, max-wrap] clone of
@@ -7338,18 +7385,15 @@ mod tests_neo_m6_neg {
 						&mut t.prev_loc2, &mut t.pat, &mut t.rg1,
 						&mut t.rg2, &mut t.enc_prev,
 						&mut t.b_bwd, &mut t.d_c1, &mut t.d_c2,
-						&mut t.d_below_lo, &mut t.d_below_hi,
-						&mut t.d_above_lo, &mut t.d_above_hi,
+						&mut t.d_below_lo, &mut t.d_above_lo,
 						&mut t.d_sort] { v.push(Fr::from(0u32)); }
 					let rg2t = Fr::from(RANGE2);
 					for v in [&mut t.si_subsig, &mut t.si_pat,
 						&mut t.si_rg1, &mut t.si_rg2,
 						&mut t.si_enc_prev] { v.push(rg2t); }
 				}
-				// keep the lookup m-table honest for the new rows
-				let rid = NeoCore::gen_rid_native(t);
-				nat.mtbl_qr = NeoCore::gen_mtbl_qr(t, &rid,
-					&nat.subsig_nat);
+				// keep every derived table honest for the new rows
+				regen_aggr_advice(nat, &a18_store(), &a18_s_pat());
 			}));
 		assert!(!cs.is_satisfied().unwrap());
 	}
@@ -7374,8 +7418,11 @@ mod tests_neo_m6_neg {
 		}
 	}
 
-	/// n4 unity escape: cat=7 on a real row -> the wrap residual
-	/// becomes 1 on a non-sentinel loc -> wrap-force fails.
+	/// n4 unity escape: cat=7 on a real row. Under New8 this dies
+	/// EARLIER than it used to -- at the class cubic
+	/// cat(cat-1)(cat-2)=0 in assert_neo_selectors, not at the wrap
+	/// residual -- because the class bits are now Lagrange
+	/// expressions of cat rather than independently welded columns.
 	#[test]
 	fn test_m6_neg_cat7() {
 		let (cs, _nat) = run_core_aggr(&a18_store(), &fig14_hm(),
@@ -7404,29 +7451,60 @@ mod tests_neo_m6_neg {
 				t.prev_id1[i] = Fr::from(3u32);
 				t.prev_loc1[i] = Fr::from(96u32);
 				t.prev_loc2[i] = Fr::from(141u32);
-				let rid = NeoCore::gen_rid_native(t);
-				nat.mtbl_qr = NeoCore::gen_mtbl_qr(t, &rid,
-					&nat.subsig_nat);
+				regen_aggr_advice(nat, &a18_store(), &a18_s_pat());
 			}));
 		assert!(!cs.is_satisfied().unwrap());
 	}
 
 	/// n2 hygiene: (a) a pad row given a nonzero loc payload -> the
-	/// is_pad*(loc+cat) force fires; (b) row 0 made non-pad -> the
-	/// key[0]==0 anchor (plus pad-monotone) fires.
+	/// is_pad*loc force fires; (b) row 0 made non-pad -> the
+	/// key[0]==0 anchor (plus pad-monotone) fires; (c) THE SPLIT
+	/// DEFECT New8 fixed: a pad carrying cat = CAT_FP and the
+	/// compensating loc = -CAT_FP passed the old FUSED force
+	/// is_pad*(loc+cat)=0, which sums to zero without either term
+	/// being zero. That pad reads as is_wrap = -1: a NEGATIVE logup
+	/// multiplicity and a rid decrement. It must now be UNSAT at
+	/// is_pad*cat = 0.
 	#[test]
 	fn test_m6_neg_pad_hygiene() {
-		for case in 0..2 {
+		for case in 0..3 {
 			let (cs, _nat) = run_core_aggr(&a18_store(),
 				&fig14_hm(), 161,
 				Some(&move |nat: &mut NeoCore<Fr>| {
 					assert!(nat.t.n_pad >= 1);
 					if case == 0 { nat.t.loc[0] = Fr::from(5u32); }
-					else { nat.t.enc[0] = Fr::from(123u32); }
+					else if case == 1 {
+						nat.t.enc[0] = Fr::from(123u32);
+					} else {
+						nat.t.cat[0] = Fr::from(CAT_FP);
+						nat.t.loc[0] = -Fr::from(CAT_FP);
+					}
 				}));
 			assert!(!cs.is_satisfied().unwrap(),
 				"pad hygiene case {}", case);
 		}
+	}
+
+	/// n14 CLASS EXCLUSIVITY: a junk cat cannot make a row count as
+	/// both C and FP at once. The class bits are Lagrange
+	/// expressions of cat -- is_c = 2cat - cat^2, is_fp =
+	/// (cat^2-cat)/2 -- so is_c + is_fp = 1 has exactly the two
+	/// roots 1 and 2; anything else (here cat = 3 on the
+	/// aggressive arm, whose universe is {0,1,2}) breaks the cubic.
+	/// This matters beyond bookkeeping: assert_logup_cond multiplies
+	/// the inverse by the selector, so a non-boolean selector would
+	/// count one query twice.
+	#[test]
+	fn test_m6_neg_cat_exclusivity() {
+		let (cs, _nat) = run_core_aggr(&a18_store(), &fig14_hm(),
+			161, Some(&|nat: &mut NeoCore<Fr>| {
+				let t = &mut nat.t;
+				let i = (t.n_pad..t.enc.len()).find(|&i|
+					t.loc[i] == Fr::from(27u32)).unwrap();
+				t.cat[i] = Fr::from(CAT_BP); // 3: nonaggr-only
+				regen_aggr_advice(nat, &a18_store(), &a18_s_pat());
+			}));
+		assert!(!cs.is_satisfied().unwrap());
 	}
 
 	/// n5 non-adjacent FP pair: the 7:131 bracket skips rank 3 (96)
@@ -7444,24 +7522,20 @@ mod tests_neo_m6_neg {
 				t.prev_id1[i] = Fr::from(2u32);
 				t.prev_loc1[i] = Fr::from(79u32);
 				t.d_below_lo[i] = Fr::from(42u32);
-				t.d_below_hi[i] = Fr::from(0u32);
-				let rid = NeoCore::gen_rid_native(t);
-				nat.mtbl_qr = NeoCore::gen_mtbl_qr(t, &rid,
-					&nat.subsig_nat);
+				regen_aggr_advice(nat, &a18_store(), &a18_s_pat());
 			}));
 		assert!(!cs.is_satisfied().unwrap());
 	}
 
 	/// remove row i from every QmTable column (negative-test tamper).
 	fn remove_row(t: &mut QmTable<Fr>, i: usize) {
-		let cols: [&mut Vec<Fr>; 28] = [
+		let cols: [&mut Vec<Fr>; 26] = [
 			&mut t.enc, &mut t.id, &mut t.loc, &mut t.cat,
 			&mut t.step, &mut t.subsig, &mut t.prev_id1,
 			&mut t.prev_loc1, &mut t.prev_loc2, &mut t.pat,
 			&mut t.rg1, &mut t.rg2, &mut t.enc_prev, &mut t.b_bwd,
 			&mut t.d_c1, &mut t.d_c2, &mut t.d_below_lo,
-			&mut t.d_below_hi, &mut t.d_above_lo,
-			&mut t.d_above_hi, &mut t.d_sort, &mut t.si_step,
+			&mut t.d_above_lo, &mut t.d_sort, &mut t.si_step,
 			&mut t.si_subsig, &mut t.si_pat, &mut t.si_rg1,
 			&mut t.si_rg2, &mut t.si_enc_prev, &mut t.si_b_bwd];
 		for c in cols { c.remove(i); }
@@ -7497,46 +7571,49 @@ mod tests_neo_m6_neg {
 					t.prev_loc1[i] = Fr::from(0u32);
 					t.prev_loc2[i] = mx;
 					for v in [&mut t.d_c1, &mut t.d_c2,
-						&mut t.d_below_lo, &mut t.d_below_hi,
-						&mut t.d_above_lo, &mut t.d_above_hi] {
+						&mut t.d_below_lo, &mut t.d_above_lo] {
 						v[i] = Fr::from(0u32);
 					}
 				}
-				let rid = NeoCore::gen_rid_native(t);
-				nat.mtbl_qr = NeoCore::gen_mtbl_qr(t, &rid,
-					&nat.subsig_nat);
-				let (a, m) = NeoCore::gen_acc_padded(t,
-					&a18_store());
-				nat.acc_out = a; nat.mtbl_acc = m;
+				regen_aggr_advice(nat, &a18_store(), &a18_s_pat());
 			}));
 		assert!(!cs.is_satisfied().unwrap());
 	}
 
-	/// n10 D forgeries: (a) lied cnt -- pat 3 claims 2 store steps,
-	/// the cnt-forcing logup sees one pat-3 pole; (b) m mismatch --
-	/// a real L row claims m_aux=0, the (pat, m) -> D forcing has no
-	/// (pat, 0) row. (Split-cnt needs a negative d_diff and is
-	/// killed by the outer RANGE2 -> tier-2 H-family.)
+	// NOTE_NEW8_OBSOLETE (P3 R2): the old n10 D-family forgeries
+	// (lied cnt, m_aux mismatch) attacked the counting block, which
+	// New8 deleted along with d_pat/d_cnt/m_aux/mtbl_d. Its role --
+	// "you cannot lie about a pattern's presence" -- is carried by
+	// the no-show gap guard, attacked here instead.
+
+	/// n10-prime NO-SHOW FORGERY: pat 3 DOES match in this chunk, but
+	/// the prover lists it as a no-show so a sentinel-only block
+	/// could hide its matches. assert_ns_gap demands an ADJACENT
+	/// pair of the sorted l_pat column straddling the claimed pat;
+	/// pat 3 sits IN that column, so no such pair exists and the
+	/// gap lookup cannot balance. (a) zero gaps, (b) zero gaps plus
+	/// a hand-bumped pair multiplicity.
 	#[test]
-	fn test_m6_neg_d_family() {
+	fn test_m6_neg_ns_forgery() {
 		for case in 0..2 {
 			let (cs, _nat) = run_core_aggr(&a18_store(),
 				&fig14_hm(), 161,
 				Some(&move |nat: &mut NeoCore<Fr>| {
-					if case == 0 {
-						let j = nat.d_pat.iter().position(|p|
-							*p == Fr::from(3u32)).unwrap();
-						nat.d_cnt[j] += Fr::from(1u32);
-					} else {
-						let mx = Fr::from((1u32 <<
-							read_global_config().range2_bit) - 1);
-						let j = (0..nat.l_loc.len()).find(|&j|
-							!nat.l_loc[j].is_zero()
-							&& nat.l_loc[j] != mx).unwrap();
-						nat.m_aux[j] = Fr::from(0u32);
+					let j = nat.ns_pat.iter().position(|p|
+						p.is_zero()).expect("a free ns slot");
+					nat.ns_pat[j] = Fr::from(3u32);
+					nat.d_ns_lo[j] = Fr::from(0u32);
+					nat.d_ns_hi[j] = Fr::from(0u32);
+					if case == 1 {
+						let k = nat.mtbl_ns.len() - 1;
+						nat.mtbl_ns[k] += Fr::from(1u32);
 					}
+					nat.mtbl_tm = NeoCore::gen_mtbl_tm_aggr(&nat.t,
+						&nat.l_pat, &nat.l_id, &nat.l_loc,
+						&nat.ns_pat);
 				}));
-			assert!(!cs.is_satisfied().unwrap(), "D case {}", case);
+			assert!(!cs.is_satisfied().unwrap(),
+				"no-show forgery case {}", case);
 		}
 	}
 
@@ -7556,65 +7633,47 @@ mod tests_neo_m6_neg {
 				t.prev_loc1[i] = Fr::from(100u32);
 				t.d_c1[i] = Fr::from(5u32);
 				t.d_c2[i] = Fr::from(3u32);
-				let rid = NeoCore::gen_rid_native(t);
-				nat.mtbl_qr = NeoCore::gen_mtbl_qr(t, &rid,
-					&nat.subsig_nat);
+				regen_aggr_advice(nat, &a18_store(), &a18_s_pat());
 			}));
 		assert!(!cs.is_satisfied().unwrap());
 	}
 
-	/// n12 joint store-drop: full a1..a8 match (n9 base), but the
-	/// prover drops the step-8 GROUP and its s_enc row and zeroes
-	/// cnt(pat 8) together -- uniqueness/cnt/counting all rebalance
-	/// internally, no last-step C remains, the match vanishes.
-	/// Must be UNSAT via the run-completeness lemma.
+	/// n12 joint store-drop: full a1..a8 match, but the prover drops
+	/// the step-8 GROUP together with its s_enc row, so nothing is
+	/// left inconsistent inside the table and the match simply
+	/// vanishes. Must be UNSAT via the wf run-completeness lemma:
+	/// the surviving final group carries a NORMAL step tag, and a
+	/// run has to end on a LAST-tagged one.
 	#[test]
 	fn test_m6_neg_joint_store_drop() {
 		let mut hm = fig14_hm();
 		hm.insert(8, vec![108]);
+		let mut s_pat = a18_s_pat();
+		s_pat.pop(); // step 8 = the last store row
 		let (cs, _nat) = run_core_aggr(&a18_store(), &hm, 161,
-			Some(&|nat: &mut NeoCore<Fr>| {
+			Some(&move |nat: &mut NeoCore<Fr>| {
 				let f8 = Fr::from(8u32);
-				// (1) drop every step-8 row (wraps + the C at 108)
 				let t = &mut nat.t;
 				for i in (t.n_pad..t.enc.len()).rev() {
 					if t.step[i] == f8 { remove_row(t, i); }
 				}
-				// (2) drop the (subsig, step-8) store row
-				let j = nat.s_pat.iter().position(|p| *p == f8)
-					.unwrap();
-				nat.s_enc.remove(j);
-				nat.s_pat.remove(j);
-				// (3) cnt(pat 8) -> 0 (pat 8 stays in D via L)
-				let k = nat.d_pat.iter().position(|p| *p == f8)
-					.unwrap();
-				nat.d_cnt[k] = Fr::from(0u32);
-				// (4) rebalance every dependent advice table
-				let rid = NeoCore::gen_rid_native(&nat.t);
-				nat.mtbl_qr = NeoCore::gen_mtbl_qr(&nat.t, &rid,
-					&nat.subsig_nat);
-				nat.m_aux = StepQueueNeo::gen_merge_m_aux(
-					&nat.l_pat, &nat.l_loc, &nat.d_pat,
-					&nat.d_cnt);
-				nat.mtbl_d = NeoCore::gen_mtbl_d(&nat.l_pat,
-					&nat.l_loc, &nat.d_pat);
-				let (a, m) = NeoCore::gen_acc_padded(&nat.t,
-					&a18_store());
-				nat.acc_out = a;
-				nat.mtbl_acc = m;
+				nat.s_enc.pop();
+				regen_aggr_advice(nat, &a18_store(), &s_pat);
 			}));
 		assert!(!cs.is_satisfied().unwrap());
 	}
 
-	/// n13 tail truncation x3: same joint drop as n12 but for steps
-	/// 6..8 -- the run ends at the NORMAL-tagged step-5 group, so
-	/// the wf run-completeness lemma (final-run clause) fires.
+	/// n13 tail truncation x3: the same joint drop for steps 6..8 --
+	/// the run now ends at the NORMAL-tagged step-5 group, so the
+	/// final-run clause of the same lemma fires.
 	#[test]
 	fn test_m6_neg_tail_truncation() {
 		let mut hm = fig14_hm();
 		hm.insert(8, vec![108]);
+		let mut s_pat = a18_s_pat();
+		s_pat.truncate(5);
 		let (cs, _nat) = run_core_aggr(&a18_store(), &hm, 161,
-			Some(&|nat: &mut NeoCore<Fr>| {
+			Some(&move |nat: &mut NeoCore<Fr>| {
 				let dropped = [Fr::from(6u32), Fr::from(7u32),
 					Fr::from(8u32)];
 				let t = &mut nat.t;
@@ -7623,30 +7682,12 @@ mod tests_neo_m6_neg {
 						remove_row(t, i);
 					}
 				}
-				for p in &dropped {
-					let j = nat.s_pat.iter().position(|x|
-						x == p).unwrap();
-					nat.s_enc.remove(j);
-					nat.s_pat.remove(j);
-					let k = nat.d_pat.iter().position(|x|
-						x == p).unwrap();
-					nat.d_cnt[k] = Fr::from(0u32);
-				}
-				let rid = NeoCore::gen_rid_native(&nat.t);
-				nat.mtbl_qr = NeoCore::gen_mtbl_qr(&nat.t, &rid,
-					&nat.subsig_nat);
-				nat.m_aux = StepQueueNeo::gen_merge_m_aux(
-					&nat.l_pat, &nat.l_loc, &nat.d_pat,
-					&nat.d_cnt);
-				nat.mtbl_d = NeoCore::gen_mtbl_d(&nat.l_pat,
-					&nat.l_loc, &nat.d_pat);
-				let (a, m) = NeoCore::gen_acc_padded(&nat.t,
-					&a18_store());
-				nat.acc_out = a;
-				nat.mtbl_acc = m;
+				nat.s_enc.truncate(5);
+				regen_aggr_advice(nat, &a18_store(), &s_pat);
 			}));
 		assert!(!cs.is_satisfied().unwrap());
 	}
+
 }
 
 // ============================================================
