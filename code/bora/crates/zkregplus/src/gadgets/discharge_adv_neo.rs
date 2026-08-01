@@ -7699,7 +7699,8 @@ mod tests_neo_m6_neg {
 // ============================================================
 //   M6 tier-2 tests: full harness (si / outer lookups live)
 // ============================================================
-// NOTE_NEW8_ADAPTED (P3 R5: aggressive tier-2 end-to-end through the real harness).
+// NOTE_NEW8_ADAPTED (P3 R5: aggressive tier-2 end-to-end through
+// the real harness).
 #[cfg(test)]
 mod tests_neo_m6_h {
 	use super::*;
