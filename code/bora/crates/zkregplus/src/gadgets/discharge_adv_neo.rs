@@ -545,9 +545,10 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 					locs.extend(v[1..v.len() - 1].iter()
 						.map(|e| e.1));
 				}
-				let mut locs = locs.into_iter()
-					.collect::<HashSet<F>>()
-					.into_iter().collect::<Vec<F>>();
+				// NO dedup: a carried loc matched again this chunk
+				// (halo straddle) keeps BOTH copies, so the union
+				// pays one to q_i and one to the join. Cats and
+				// certs of the pair are identical; ranks differ.
 				locs.sort();
 				merged.push(locs);
 			}
@@ -974,8 +975,8 @@ pub(crate) struct QmTable<F: PrimeField + ColEle> {
 	// loc + rg in range; see assert_fwd_pruning's ASSUMPTION)
 	pub d_c1: Vec<F>, pub d_c2: Vec<F>,
 	pub d_below_lo: Vec<F>, pub d_above_lo: Vec<F>,
-	/// strict-sort diff advice: loc[i]-loc[i-1]-1 on same-group
-	/// adjacencies (RANGE2-si'd), 0 elsewhere.
+	/// non-strict sort diff advice: loc[i]-loc[i-1] on same-group
+	/// adjacencies (RANGE2-si'd), 0 elsewhere; 0 = legal duplicate.
 	pub d_sort: Vec<F>,
 	// si columns (variable; const RANGE2 si cols are emitted at
 	// container-assembly time for the d_* advice)
@@ -1449,13 +1450,15 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 				enc_prev = enc;
 			}
 		}
-		// strict-sort diff advice (before padding: pads are separate
-		// groups and the circuit binding masks pad/key-change rows)
+		// sort diff advice, NON-strict (duplicate straddle rows are
+		// legal; clones are policed by the union / join instead).
+		// Before padding: pads are separate groups and the circuit
+		// binding masks pad/key-change rows.
 		let nrows = t.enc.len();
 		t.d_sort = vec![zero; nrows];
 		for i in 1..nrows {
 			if t.enc[i] == t.enc[i - 1] {
-				t.d_sort[i] = t.loc[i] - t.loc[i - 1] - one;
+				t.d_sort[i] = t.loc[i] - t.loc[i - 1];
 			}
 		}
 		// front pads + CapErr (fixed budget)
@@ -2074,12 +2077,14 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	///   same_sub  the same bit on the subsig column (run
 	///             adjacency);
 	///   d_sort    committed column holding, on a row that
-	///             continues a group, the gap to the row above
-	///             minus one: loc[i] - loc[i-1] - 1 (and 0 on any
-	///             other row). It carries a RANGE2 si, so the OUTER
-	///             lookup forces it to be a non-negative RANGE2
-	///             value, which says exactly loc[i] >= loc[i-1] + 1
-	///             -- the strict ascent of check (3);
+	///             continues a group, the gap to the row above:
+	///             loc[i] - loc[i-1] (and 0 on any other row). It
+	///             carries a RANGE2 si, so the OUTER lookup forces
+	///             it non-negative: loc[i] >= loc[i-1] -- the
+	///             NON-strict ascent of check (3). Equal neighbors
+	///             are legal (halo-straddle duplicates); clones
+	///             are policed by the union (nonaggr) / the join
+	///             id-chain bijection into L (aggr) instead;
 	///   grp_start returned: (1 - b_same) * (1 - is_pad), the reset
 	///             signal of both rank chains;
 	///   rid       returned: a row's ADDRESS inside the QR target.
@@ -2094,7 +2099,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	///      and a group that ends does so at its max-wrap;
 	///  (2) pads form a prefix, and a group's first row IS its
 	///      0-wrap (id 0, loc 0);
-	///  (3) strictly ascending loc inside a group (no duplicates);
+	///  (3) ascending loc inside a group (duplicates allowed);
 	///  (4) the multiset of group keys equals the expected keys --
 	///      one per bound store row plus one seed key per statement
 	///      subsig -- so no group is cloned or invented;
@@ -2108,8 +2113,10 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	///    a group's first row to id 0 AND loc 0.
 	///  - CHEAT clone a group of enc_x (the false-FP oracle): (4)
 	///    doubles enc_x's factor on one side only -> UNSAT.
-	///  - CHEAT repeat an (enc, loc) row: (3) then needs
-	///    d_sort = -1, which the RANGE2 table rejects.
+	///  - CHEAT repeat an (enc, loc) row: (3) allows it, but the
+	///    clone must be PAID -- nonaggr: no q_i/JR partner in the
+	///    union; aggr: the id chain slides and the (pat, id, loc)
+	///    join query misses L.
 	///  - CHEAT drop a subsig's tail groups: (6) leaves that run
 	///    unable to end, its last present group not being DB-LAST.
 	/// PARAMS: s_enc = enc column of the bound store rows, s_enc_nat
@@ -2132,7 +2139,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		let c_one = new_const_var(&cs, F::one());
 		// --- Section 1: group adjacency bit (2cs/row) ---
 		// ONE forced indicator feeds the skeleton, the group starts
-		// and the strict sort. db::assert_well_formed_sorted builds
+		// and the loc sort. db::assert_well_formed_sorted builds
 		// its own private copy of exactly this bit, which is why
 		// its rule is inlined in Section 2 rather than called.
 		let mut d_nat = vec![F::zero(); n];
@@ -2183,18 +2190,20 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		}
 		check_prod_zero(&(&c_one - &sel.is_pad[n - 1]),
 			&(&v.loc[n - 1] - &c_max), lc!(), "neo last row max")?;
-		// --- Section 4 / check (3): strict sort (1cs/row) ---
+		// --- Section 4 / check (3): non-strict sort (1cs/row) ---
 		// "row i continues the group" is b_same * (1 - is_pad),
 		// which equals (1 - is_pad) - grp_start: a FREE rewrite of
 		// two columns Section 3 already paid for. The bind then
-		// fits in one constraint. d_sort carries a RANGE2 si, so a
-		// repeated (enc, loc) row would have to bind -1 and dies at
-		// the outer range table.
+		// fits in one constraint. d_sort carries a RANGE2 si, so
+		// the outer range table forces loc[i] >= loc[i-1]. Equal
+		// neighbors (straddle duplicates) are legal; a cloned row
+		// still dies unpaid in the union (nonaggr) or misses its
+		// (pat, id, loc) join query (aggr id-chain bijection).
 		for i in 1..n {
 			let same = &(&c_one - &sel.is_pad[i]) - &grp_start[i];
 			check_prod_eq(&same,
-				&(&(&v.loc[i] - &v.loc[i - 1]) - &c_one),
-				&v.d_sort[i], "neo strict sort bind")?;
+				&(&v.loc[i] - &v.loc[i - 1]),
+				&v.d_sort[i], "neo sort bind")?;
 		}
 		// --- Section 5 / check (4): group uniqueness (2cs/row
 		//     + ~4 per expected key) ---
@@ -2860,32 +2869,39 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 
 	/// The two zero-count reconciliation scalars of the multiset
 	/// identity Q_m = q_i union JR over pack(enc, loc), which
-	/// assert_qm_union checks in-circuit. The seed group's wraps
-	/// are the only Q_m rows with no partner (masked there and
-	/// here); pads pack to 0 and the identity ignores zeros.
+	/// assert_qm_union checks in-circuit. The WHOLE step-0 group
+	/// leaves the identity on both sides: Q_m masks step==0 rows
+	/// (wraps AND the per-universe-subsig seed C rows the M8b
+	/// reseed synthesizes), q_i masks its seed-enc rows (enc =
+	/// subsig*2^4rb, the carried subset). Seed soundness is owned
+	/// by the seed anchors + wf, not by transport. JR never holds
+	/// a step-0 row (store rows are step>=1); pads pack to 0 and
+	/// the identity ignores zeros.
 	fn gen_union_scalars(t: &QmTable<F>, jr: &JrTable<F>,
-		qi_enc: &[F], qi_loc: &[F]) -> Result<Vec<F>, Error> {
+		qi_enc: &[F], qi_loc: &[F], subsig_nat: &[F])
+	-> Result<Vec<F>, Error> {
 		let base = F::from(1u64
 			<< read_global_config().range2_bit);
+		let sh4 = base * base * base * base;
+		let seed_encs = subsig_nat.iter()
+			.filter(|s| !s.is_zero())
+			.map(|s| *s * sh4).collect::<HashSet<F>>();
 		let pk = |e: &[F], l: &[F]| e.iter().zip(l.iter())
 			.map(|(x, y)| *x * base + *y).collect::<Vec<F>>();
-		let vec1 = pk(qi_enc, qi_loc);
+		let vec1: Vec<F> = qi_enc.iter().zip(qi_loc.iter())
+			.map(|(x, y)| if seed_encs.contains(x) { F::zero() }
+				else { *x * base + *y }).collect();
 		let vec2 = pk(&jr.enc, &jr.loc);
 		let vec3: Vec<F> = (0..t.enc.len()).map(|i|
-			if t.cat[i].is_zero() && t.step[i].is_zero()
-				{ F::zero() }
+			if t.step[i].is_zero() { F::zero() }
 			else { t.enc[i] * base + t.loc[i] }).collect();
-		// prover invariant: q_i holds locations of PRIOR chunks
-		// and the join only this chunk's, so Q_m holds each of
-		// them exactly once.
+		// prover invariant: every step>=1 Q_m row is paid exactly
+		// once -- carried rows by q_i, chunk matches (and the
+		// wrap/sentinel borders) by the join. Halo-straddle
+		// duplicates are two Q_m rows (no dedup upstream), one
+		// paid by each side.
 		let nz = |v: &Vec<F>| v.iter()
 			.filter(|x| !x.is_zero()).count();
-		// P3 R6 FINDING (open, needs a design call): with MORE THAN
-		// ONE subsig this guard fires -- Q_m holds a step-0 seed C
-		// row per subsig while the committed q_i carries only one,
-		// so the seed rows of the other subsigs are on neither the
-		// carry nor the join side of the identity. Single-subsig
-		// fixtures never show it. See the milestone record.
 		assert!(nz(&vec1) + nz(&vec2) == nz(&vec3),
 			"neo union: q_i {} + jr {} != q_m {} (rows counted \
 			twice or dropped)", nz(&vec1), nz(&vec2), nz(&vec3));
@@ -2981,7 +2997,7 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 		let (qi_enc, qi_loc) = (col(&ct_qi, "encoded"),
 			col(&ct_qi, "locs"));
 		let union_prf = Self::gen_union_scalars(&t, &jr, &qi_enc,
-			&qi_loc)?;
+			&qi_loc, &subsig_nat)?;
 		let nat = NeoCore {
 			qi_enc, qi_loc,
 			qc_enc: col(&ct_qc, "encoded"),
@@ -3908,8 +3924,8 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	/// Step-0 rows are EXEMPT: the seed match is artificial,
 	/// absent from pat_loc. Unfakeable: step is DB-bound on
 	/// every Q_m row (si_step); a step-0 block smuggled into
-	/// the JR view dies in assert_qm_union (seed wraps are
-	/// masked out there, so its sentinels find no partner).
+	/// the JR view dies in assert_qm_union (the whole step-0
+	/// group is masked there, so its rows find no partner).
 	/// SOUNDNESS DEPENDENCY (aggr view): wraps are queried,
 	/// so wrap rows' pat must be DB-bound via si_pat
 	/// (push_wrap emits the variable si on step>=1 wraps;
@@ -4571,18 +4587,29 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	/// and pack to ZERO, and the identity ignores zeros
 	/// (verify_union_prf, db.rs: non-zero multisets + 2-scalar
 	/// zero reconciliation).
-	/// The only Q_m rows left without a partner are the SEED
-	/// group's two wraps: the seed match itself arrives through
-	/// q_i, and every step >= 1 wrap is its join block's 0/max
-	/// sentinel. So vec3 = (1 - is_wrap * is_step0) * pack.
+	/// The WHOLE step-0 group is outside the identity, on BOTH
+	/// sides: the M8b reseed synthesizes one seed C row per
+	/// UNIVERSE subsig while q_i carries only the CARRIED
+	/// subset's, so seed transport is redundant and seed
+	/// soundness is owned by the seed anchors + wf instead. So
+	/// vec3 = (1 - is_step0) * pack, and each q_i row gets a
+	/// b_seed bit: vec1 = (1 - b_seed) * pack. b_seed = 1 is only
+	/// SAT on a row whose enc is a seed key subsig*2^4rb of a
+	/// statement subsig (conditional logup; a real step >= 1 enc
+	/// has a nonzero step field and can never hit that table),
+	/// and b_seed = 0 on a true seed row leaves its pack with no
+	/// vec3 partner -- forced honest both ways. Halo-straddle
+	/// duplicates are two Q_m rows, one paid by each side.
 	fn assert_qm_union(
 		cs: ConstraintSystemRef<F>,
 		qm: &QmVars<F>,  // enc, loc (vec3 side)
-		sel: &NeoSel<F>, // is_wrap, is_step0 (seed wraps)
+		sel: &NeoSel<F>, // is_step0 (masks the seed group)
 		q_i: (&[FpVar<F>], &[FpVar<F>]),
 		                 // carried-in enc, loc (pad rows = 0)
 		l_join: (&[FpVar<F>], &[FpVar<F>]),
 		                 // join table enc, loc (pad rows = 0)
+		subsigs: (&[FpVar<F>], &[F]),
+		                 // statement subsig slots (seed-key table)
 		prf: &QmUnionAdvice<F>,
 		r1: &FpVar<F>,
 		job_id: usize,
@@ -4592,15 +4619,50 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		let rb = read_global_config().range2_bit;
 		let c_one = new_const_var(&cs, F::one());
 		let c_base = new_const_var(&cs, F::from(1u64 << rb));
+		let f1 = F::from(1u64 << rb);
+		let sh4 = f1 * f1 * f1 * f1;
+		let c_sh4 = new_const_var(&cs, sh4);
+		let (s_var, s_nat) = subsigs;
+		// b_seed bits (advice witnesses; native rule = enc equals
+		// a seed key of a nonzero statement subsig).
+		let seed_encs = s_nat.iter().filter(|s| !s.is_zero())
+			.map(|s| *s * sh4).collect::<HashSet<F>>();
+		let z = F::zero();
+		let b_seed: Vec<FpVar<F>> = q_i.0.iter().map(|e| {
+			let hit = seed_encs.contains(&e.value().unwrap_or(z));
+			new_var(&cs, if hit { F::one() } else { F::zero() })
+		}).collect();
+		for b in &b_seed {
+			check_prod_eq(b, b, b, "neo b_seed boolean")?;
+		}
+		// conditional logup: b_seed = 1 rows must hit the seed-key
+		// table subsig*2^4rb (dummy-0 slots contribute the 0 key,
+		// absorbing b_seed = 1 on all-zero q_i pad rows: harmless,
+		// their pack is 0 either way).
+		let tbl: Vec<FpVar<F>> = s_var.iter()
+			.map(|s| s * &c_sh4).collect();
+		let sel_tbl = vec![c_one.clone(); tbl.len()];
+		let m_nat: Vec<F> = s_nat.iter().map(|s| {
+			let key = *s * sh4;
+			F::from(q_i.0.iter().filter(|e|
+				e.value().unwrap_or(z) == key
+				&& (!s.is_zero())).count() as u64)
+		}).collect();
+		let m_seed: Vec<FpVar<F>> = m_nat.iter().map(|m|
+			new_var(&cs, *m)).collect();
+		assert_logup_cond(cs.clone(), &q_i.0.to_vec(),
+			&b_seed, &tbl, &sel_tbl, &m_seed, r1)?;
 		// pack(enc, loc) = enc * 2^rb + loc: a free linear combo,
 		// injective (loc < 2^rb), all-zero rows pack to 0.
-		let pack = |e: &[FpVar<F>], l: &[FpVar<F>]|
-			-> Vec<FpVar<F>> { e.iter().zip(l.iter())
-				.map(|(x, y)| &(x * &c_base) + y).collect() };
-		let vec1 = pack(q_i.0, q_i.1);
-		let vec2 = pack(l_join.0, l_join.1);
+		let vec1: Vec<FpVar<F>> = q_i.0.iter().zip(q_i.1.iter())
+			.enumerate().map(|(j, (x, y))|
+				&(&c_one - &b_seed[j])
+					* &(&(x * &c_base) + y)).collect();
+		let vec2: Vec<FpVar<F>> = l_join.0.iter()
+			.zip(l_join.1.iter())
+			.map(|(x, y)| &(x * &c_base) + y).collect();
 		let vec3: Vec<FpVar<F>> = (0..n).map(|i|
-			&(&c_one - &(&sel.is_wrap[i] * &sel.is_step0[i]))
+			&(&c_one - &sel.is_step0[i])
 				* &(&(&qm.enc[i] * &c_base) + &qm.loc[i]))
 			.collect();
 		verify_union_prf_vars(cs.clone(), &vec1, &vec2, &vec3,
@@ -4608,7 +4670,8 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		log(job_id, LOG3, &format!(
 			"PERF 61082.2: block=union cs={} pred={}",
 			cs.num_constraints() - n0,
-			3 * n + vec1.len() + vec2.len()));
+			3 * n + 5 * vec1.len() + vec2.len()
+				+ 2 * tbl.len()));
 		Ok(())
 	}
 
@@ -4919,7 +4982,9 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			diff_zero: vars.union_prf[1].clone() };
 		Self::assert_qm_union(cs.clone(), &vars.qm, &sel,
 			(&vars.qi_enc, &vars.qi_loc),
-			(&vars.jr.enc, &vars.jr.loc), &prf, r1, job_id)?;
+			(&vars.jr.enc, &vars.jr.loc),
+			(&vars.subsigs, &nat.subsig_nat), &prf, r1,
+			job_id)?;
 		// -- 8. carry-out queue q_c: the tight carried set
 		//    handed to the next chunk (holds the verdict);
 		//    pv = the predecessor view shared with fwd --
@@ -5050,7 +5115,7 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 	/// (d_c1/d_c2/d_below_lo/d_above_lo/d_sort),
 	/// zero si (NOT range-checked) elsewhere -- soundness audit:
 	///   enc      group-uniqueness product vs {S encs + seed encs};
-	///   id/loc   wf chain + strict d_sort between 0/max sentinels;
+	///   id/loc   wf chain + sorted d_sort between 0/max sentinels;
 	///   cat      unity + hygiene selectors;
 	///   prev_*   challenge-packed QR-target lookups (SZ);
 	///   *_hi     boolean-checked in-circuit;
@@ -6467,11 +6532,11 @@ pub(crate) mod tests_neo_m5 {
 	}
 
 	/// (f) DUPLICATE LOC: carried a6:79 arrives AGAIN as a chunk-2
-	/// match (chunk-straddle artifact). Merge must dedup it into
-	/// one row with one cat, making the input equivalent to Fig-14
-	/// chunk 2 -- asserted by FULL struct equality with the golden
-	/// fixture. Catches double-counting that would inflate Q_m or
-	/// split a cert across duplicate rows.
+	/// match (chunk-straddle artifact). NO dedup (option-1 union
+	/// fix): BOTH copies stay, adjacent and same-cat, so the union
+	/// pays one to q_i and one to the join. Collapsing the pair
+	/// recovers Fig-14 chunk 2 on locs/cats/scalars (reach ranks
+	/// in prev_id1 may shift by the extra row).
 	#[test]
 	fn test_m5_corner_duplicate_loc() {
 		let mut pl = HashMap::new();
@@ -6480,7 +6545,26 @@ pub(crate) mod tests_neo_m5 {
 		pl.insert(7, vec![101, 131]);
 		let qm = run_case(&a18_carried().to_stepqueue(), &pl, 161,
 			"duplicate loc");
-		assert_eq!(qm, build_a1_a8_neo());
+		let gold = build_a1_a8_neo();
+		let s = f(1);
+		let its = qm.store_items.get(&s).unwrap();
+		let g_its = gold.store_items.get(&s).unwrap();
+		assert_eq!(its.len(), g_its.len());
+		for (i, (it, g)) in its.iter().zip(g_its.iter())
+			.enumerate() {
+			let (mut locs, mut cats) =
+				(it.base.locs.clone(), it.cat.clone());
+			if i == 6 {
+				assert_eq!(locs, vec![f(73), f(79), f(79),
+					f(96), f(141)]);
+				assert_eq!(cats[1], cats[2], "pair same cat");
+				locs.remove(2); cats.remove(2);
+			}
+			assert_eq!(locs, g.base.locs, "locs item {}", i);
+			assert_eq!(cats, g.cat, "cats item {}", i);
+			assert_eq!(it.min_next, g.min_next, "min item {}", i);
+			assert_eq!(it.fz, g.fz, "fz item {}", i);
+		}
 	}
 }
 
@@ -7167,7 +7251,7 @@ pub(crate) mod tests_neo_m6 {
 
 	/// P2e DUPLICATE LOC ACROSS PATS: a3 also matches at loc 33 =
 	/// a4's C loc. The rows live in different (subsig, step) groups,
-	/// so per-group strict sorting is untouched; a3:33 is FP (no a2
+	/// so per-group sorting is untouched; a3:33 is FP (no a2
 	/// row inside its window [24, 32] -- bracket = (21, 111)).
 	#[test]
 	fn test_m6_corner_duplicate_loc() {
@@ -7568,7 +7652,7 @@ mod tests_neo_m6_neg {
 				// re-close step-0 as a wrap-only group: the
 				// max-wrap now follows the 0-wrap directly.
 				t.id[i0] = Fr::from(1u32);
-				t.d_sort[i0] = mx - Fr::from(1u32);
+				t.d_sort[i0] = mx;
 				for i in t.n_pad..t.enc.len() {
 					if t.enc[i].is_zero() || t.loc[i].is_zero()
 						|| t.loc[i] == mx { continue; }
@@ -7580,6 +7664,35 @@ mod tests_neo_m6_neg {
 						&mut t.d_below_lo, &mut t.d_above_lo] {
 						v[i] = Fr::from(0u32);
 					}
+				}
+				regen_aggr_advice(nat, &a18_store(), &a18_s_pat());
+			}));
+		assert!(!cs.is_satisfied().unwrap());
+	}
+
+	/// n9-dup AGGR DUPLICATE ROW: move a real row onto its group
+	/// mate (7:101 -> 131), a clone the non-strict sort accepts
+	/// with honest d_sort. The aggr defence is the join id-chain
+	/// bijection: the clone's (pat, id, 131) query cites 101's id
+	/// with 131's loc -- not an L row -- and 101's own L row goes
+	/// unqueried. The join (the union's aggr counterpart) objects
+	/// regardless of the regenerated rank/membership advice.
+	#[test]
+	fn test_m6_neg_duplicate_row() {
+		let (cs, _nat) = run_core_aggr(&a18_store(), &fig14_hm(),
+			161, Some(&|nat: &mut NeoCore<Fr>| {
+				let t = &mut nat.t;
+				let i = (t.n_pad..t.enc.len()).find(|&i|
+					t.loc[i] == Fr::from(101u32)).unwrap();
+				assert!(t.enc[i + 1] == t.enc[i]
+					&& t.loc[i + 1] == Fr::from(131u32));
+				t.loc[i] = Fr::from(131u32);
+				let n = t.enc.len();
+				for j in 1..n { //honest non-strict rebind
+					t.d_sort[j] = if t.enc[j] == t.enc[j - 1]
+						&& !t.enc[j].is_zero()
+						{ t.loc[j] - t.loc[j - 1] }
+						else { Fr::from(0u32) };
 				}
 				regen_aggr_advice(nat, &a18_store(), &a18_s_pat());
 			}));
@@ -7942,11 +8055,12 @@ mod tests_neo_m6_h {
 		get_global_config().basis_failed_subsigs = 0;
 	}
 
-	/// H5 strict-sort duplicate: clone the 2nd row of the 2-loc
-	/// "ab" group onto the 1st (identical valid row, d_sort=-1
-	/// keeps the bind consistent). Killed by the outer RANGE2 on
-	/// si_d_sort and the merge counting logup (m_aux pinned to the
-	/// per-variant cnt, two hits on one L row).
+	/// H5 duplicate-row clone: clone the 2nd row of the 2-loc "ab"
+	/// group onto the 1st. The (now non-strict) sort accepts it
+	/// with an honest d_sort = 0, but the aggr join's id-chain
+	/// bijection kills it: the clone's (pat, id, loc) query cites
+	/// id 2 with id 1's loc, which is not an L row (and the
+	/// original 2nd loc goes missing from the block).
 	#[test]
 	fn test_m6_h5_neg_duplicate_loc() {
 		get_global_config().basis_failed_subsigs = 10000;
@@ -7968,9 +8082,9 @@ mod tests_neo_m6_h {
 				t.prev_loc2[i2] = t.prev_loc2[i1];
 				t.d_c1[i2] = t.d_c1[i1];
 				t.d_c2[i2] = t.d_c2[i1];
-				t.d_sort[i2] = -Fr::from(1u32); //loc diff -1 bind
+				t.d_sort[i2] = Fr::from(0u32); //honest dup bind
 				t.d_sort[i2 + 1] = if t.enc[i2 + 1] == t.enc[i2] {
-					t.loc[i2 + 1] - t.loc[i2] - Fr::from(1u32)
+					t.loc[i2 + 1] - t.loc[i2]
 				} else { t.d_sort[i2 + 1] };
 				let rid = NeoCore::gen_rid_native(t);
 				nat.mtbl_qr = NeoCore::gen_mtbl_qr(t, &rid,
@@ -8235,12 +8349,13 @@ mod tests_neo_nonaggr {
 		assert_eq!(cat_rows(&nat, CAT_SP), vec![(2, 111)]);
 		let n = cs.num_constraints();
 		assert_eq!(nat.t.enc.len(), 34);
-		// Re-banded in P3 R3 (was 5277 under M7). Block split at
+		// Re-banded in P3 R3 (was 5277 under M7); union/seed fix
+		// added +36 (b_seed bits + seed-key logup). Block split at
 		// n = 34: selectors 681, wf 670, si_pins 306 + 476,
-		// join 349, union 158, ns_gap 75, carry 233, fwd 170,
+		// join 349, union 194, ns_gap 75, carry 233, fwd 170,
 		// bwd 171, singleton 137, anchors 3, lookups 763.
 		assert!(n >= 3360 && n <= 5600,
-			"cost drift: {} cs vs calibrated 4480", n);
+			"cost drift: {} cs vs calibrated 4516", n);
 	}
 
 	/// CIRCUIT CORNERS: (a) EMPTY-L chunk (carried-only): the BP
@@ -8277,21 +8392,26 @@ mod tests_neo_nonaggr {
 			"the fresh match must reach Q_m");
 	}
 
-	/// CHUNK-STRADDLE DUPLICATE: a carried loc that matches AGAIN
-	/// in this chunk. The M5 layer dedups it into one Q_m row, so
-	/// the row is paid for TWICE on the left of the union identity
-	/// (once by q_i, once by the join) and once on the right.
-	/// gen_union_scalars carries a loud native guard for exactly
-	/// this; see the P3 R3 note in the milestone record.
+	/// CHUNK-STRADDLE DUPLICATE (the option-1 fix): a carried loc
+	/// that matches AGAIN in this chunk keeps BOTH copies in Q_m
+	/// (no dedup), so the union pays one to q_i and one to the
+	/// join, and the non-strict sort accepts the equal neighbors.
+	/// Was a should_panic guard test before the union/seed fix.
 	#[test]
-	#[should_panic(expected = "neo union")]
-	fn test_nonaggr_straddle_duplicate_guard() {
+	fn test_nonaggr_straddle_duplicate() {
 		let info = a18_store();
 		let mut hm = HashMap::new();
 		hm.insert(6, vec![79]); // 79 is already carried
-		let _ = run_core_nonaggr(&info,
+		let (cs, nat) = run_core_nonaggr(&info,
 			&a18_carried().to_stepqueue(), &hm,
 			A18_DEFAULT_MIN, None);
+		assert!(cs.is_satisfied().unwrap(), "unsat: {:?}",
+			cs.which_is_unsatisfied());
+		let t = &nat.t;
+		let dups = (t.n_pad + 1..t.enc.len()).filter(|&i|
+			t.enc[i] == t.enc[i - 1] && t.loc[i] == t.loc[i - 1]
+			&& t.loc[i] == f(79)).count();
+		assert_eq!(dups, 1, "the straddle pair must be in Q_m");
 	}
 }
 
@@ -8369,7 +8489,7 @@ mod tests_neo_nonaggr_neg {
 		for j in 1..n {
 			t.d_sort[j] = if t.enc[j] == t.enc[j - 1]
 				&& !t.enc[j].is_zero()
-				{ t.loc[j] - t.loc[j - 1] - Fr::from(1u32) }
+				{ t.loc[j] - t.loc[j - 1] }
 				else { Fr::from(0u32) };
 		}
 		for j in i..n {
@@ -8456,8 +8576,11 @@ mod tests_neo_nonaggr_neg {
 	/// N3b UNION TAMPERS, both sides of Q_m = q_i u JR: (a) blank a
 	/// real JR row, so a joined location is no longer paid for;
 	/// (b) move a Q_m location, so the right side no longer matches
-	/// what the carry and the join together claim. Both must break
-	/// the multiset identity.
+	/// what the carry and the join together claim; (c) clone by
+	/// overwrite -- move 96 onto its group-mate 141, forming a
+	/// duplicate pair the (non-strict) sort now ACCEPTS with an
+	/// honest d_sort of 0: the second 141 has no q_i/JR partner
+	/// and 96 goes unpaid. All three break the multiset identity.
 	#[test]
 	fn test_nonaggr_neg_union() {
 		expect_unsat("drop a JR row", &|nat| {
@@ -8472,6 +8595,40 @@ mod tests_neo_nonaggr_neg {
 			let i = row(nat, 96);
 			nat.t.loc[i] = f(97);
 			regen_mtbls(nat);
+		});
+		expect_unsat("clone a Q_m loc", &|nat| {
+			let i = row(nat, 96); // a6 group also holds 141
+			nat.t.loc[i] = f(141);
+			let t = &mut nat.t;
+			let n = t.enc.len();
+			for j in 1..n { //honest non-strict d_sort rebind
+				t.d_sort[j] = if t.enc[j] == t.enc[j - 1]
+					&& !t.enc[j].is_zero()
+					{ t.loc[j] - t.loc[j - 1] }
+					else { f(0) };
+			}
+			regen_mtbls(nat);
+		});
+	}
+
+	/// N3c FOREIGN SEED SMUGGLE: a q_i pad slot is overwritten
+	/// with the seed key of a subsig OUTSIDE the statement
+	/// (7 * 2^4rb). b_seed stays 0 for it (the seed-key logup
+	/// admits only statement subsigs), so the row enters the
+	/// union's left side with no Q_m partner. Guards the q_i-side
+	/// seed mask of the union/seed fix: only true seed rows of
+	/// statement subsigs may leave the identity.
+	#[test]
+	fn test_nonaggr_neg_foreign_seed() {
+		let sh4 = {
+			let b = f(1u32 << read_global_config().range2_bit);
+			b * b * b * b
+		};
+		expect_unsat("foreign seed enc in q_i", &|nat| {
+			let j = (0..nat.qi_enc.len()).find(|&j|
+				nat.qi_enc[j].is_zero()).unwrap();
+			nat.qi_enc[j] = f(7) * sh4;
+			nat.qi_loc[j] = f(1);
 		});
 	}
 
@@ -8984,16 +9141,10 @@ mod tests_neo_nonaggr_h {
 	/// circuit (C/FP/BP/SP certs + q_i/q_c carry) stays satisfiable
 	/// with the honest carry, and the outer DB lookups (fz, prev,
 	/// rg_end, subsig) all resolve.
-	// P3 R6 BLOCKED: fails in gen_union_scalars' disjointness guard
-	// -- "q_i 1 + jr 22 != q_m 27". The 4 unpaired rows are the
-	// step-0 seed C rows of the OTHER subsigs: Q_m synthesizes one
-	// seed row per subsig while the committed q_i carries a single
-	// one, so they sit on neither side of Q_m = q_i u JR. This is a
-	// design call on the union equation (widen the seed-group mask
-	// vs. seed every subsig into q_i), not a test defect, so it is
-	// marked rather than patched. Single-subsig tier-1 fixtures
-	// pass; the aggressive arm has no union and is unaffected.
-	#[ignore = "P3 R6: multi-subsig seed rows unpaired in the union"]
+	// Union/seed fix applied: the whole step-0 group is outside
+	// the union on both sides (Q_m masks step==0, q_i masks its
+	// seed-enc rows), so the universe-vs-carried seed mismatch
+	// this test used to trip no longer exists.
 	#[test]
 	fn test_nonaggr_h1_e2e() {
 		let sigs = vec![
@@ -9156,16 +9307,7 @@ mod tests_neo_nonaggr_h {
 
 	/// M8b: neo non-aggr discharge verdict == legacy == non-ZK ground
 	/// truth on the H1 no-match fixture (sig2, 567/def-after absent).
-	// P3 R6 BLOCKED: fails in gen_union_scalars' disjointness guard
-	// -- "q_i 1 + jr 22 != q_m 27". The 4 unpaired rows are the
-	// step-0 seed C rows of the OTHER subsigs: Q_m synthesizes one
-	// seed row per subsig while the committed q_i carries a single
-	// one, so they sit on neither side of Q_m = q_i u JR. This is a
-	// design call on the union equation (widen the seed-group mask
-	// vs. seed every subsig into q_i), not a test defect, so it is
-	// marked rather than patched. Single-subsig tier-1 fixtures
-	// pass; the aggressive arm has no union and is unaffected.
-	#[ignore = "P3 R6: multi-subsig seed rows unpaired in the union"]
+	// Union/seed fix applied: see test_nonaggr_h1_e2e's note.
 	#[test]
 	fn test_nonaggr_verdict_parity() {
 		let sigs = vec![
