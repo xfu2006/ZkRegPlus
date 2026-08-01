@@ -7973,8 +7973,10 @@ mod tests_neo_m6_h {
 	}
 }
 
+// NOTE_NEW8_ADAPTED (P3 R3): repointed at gen_nonaggr's 3-column L
+// and the assert_neo_nonaggr entry; the b_l / m_carry_in goldens
+// went with the columns New8 deleted.
 #[cfg(test)]
-#[cfg(any())] // M8_NEW P0: old neo tests disabled, revive in P3
 mod tests_neo_nonaggr {
 	use super::*;
 	use super::tests_neo_m4::{fixture_capacity, A18_DEFAULT_MIN};
@@ -8022,20 +8024,27 @@ mod tests_neo_nonaggr {
 		let carried = StepQueueNeo::from_stepqueue(
 			carried_sq.clone());
 		let gen = gen_tagged(&carried, hm, info, default_min);
-		let (l_pat, l_loc) = hm_to_l_cols(hm);
+		let (l_pat, l_id, l_loc) = hm_to_l_cols(hm);
 		let (mut nat, _qi, _qc) = NeoCore::gen_nonaggr(&gen, info,
-			l_pat, l_loc, &hm_gen(hm), carried_sq,
+			l_pat, l_id, l_loc, &hm_gen(hm), carried_sq,
 			f(default_min), 0).expect("gen_nonaggr");
 		if let Some(tf) = tamper { tf(&mut nat); }
+		(run_nat_nonaggr(&nat, default_min), nat)
+	}
+
+	/// allocate a (possibly tampered) native bundle and run the
+	/// non-aggressive entry over it.
+	pub(crate) fn run_nat_nonaggr(nat: &NeoCore<Fr>,
+		default_min: u32) -> ConstraintSystemRef<Fr> {
 		let cs = ConstraintSystem::<Fr>::new_ref();
-		let vars = alloc_vars(&cs, &nat);
+		let vars = alloc_vars(&cs, nat);
 		let r1 = new_var(&cs, Fr::from(12345u32));
 		let r2 = new_var(&cs, Fr::from(67890u32));
 		let dmin = new_var(&cs, f(default_min));
-		DischargeAdvNeoGadget::<Fr>::assert_neo_core_nonaggr(
-			cs.clone(), &nat, &vars, &dmin, &r1, &r2, 0)
+		DischargeAdvNeoGadget::<Fr>::assert_neo_nonaggr(
+			cs.clone(), nat, &vars, &dmin, &r1, &r2, 0)
 			.expect("assert core nonaggr");
-		(cs, nat)
+		cs
 	}
 
 	/// (step, loc) rows of `cat` in a tagged StepQueueNeo, sorted.
@@ -8137,30 +8146,15 @@ mod tests_neo_nonaggr {
 		//BP 101 (terminal-1): d_bp = 161-101-9-1 = 50.
 		let i101 = row(101);
 		assert_eq!(na.d_bp[i101], f(50));
-		//SP 111: fz=5, w_fz=39 (a5 carries), w_sp=21 (kept min),
-		//d_sp = 111-21-1 = 89, d_fz = max-39-1.
+		//SP 111: fz=5, w_fz=39 (a5 carries), w_kept=21 (kept min),
+		//d_kept = 111-21-1 = 89, d_fz = max-39-1.
 		let i111 = row(111);
 		assert_eq!(t.cat[i111], f(CAT_SP));
 		assert_eq!(na.fz[i111], f(5));
 		assert_eq!(na.w_fz[i111], f(39));
 		assert_eq!(na.d_fz[i111], mx - f(40));
-		assert_eq!(na.w_sp[i111], f(21));
-		assert_eq!(na.d_sp[i111], f(89));
-		//merge bits: carried rows m_carry_in=1 & b_l=0; L rows
-		//b_l=1 & m_carry_in=0; the seed row is carried.
-		for l in [6u32, 21, 27, 33, 39, 73, 79] {
-			let i = row(l);
-			assert_eq!(na.m_carry_in[i], f(1), "carried {}", l);
-			assert_eq!(na.b_l[i], f(0), "carried {}", l);
-		}
-		for l in [96u32, 141, 101, 106, 111, 131] {
-			let i = row(l);
-			assert_eq!(na.b_l[i], f(1), "L row {}", l);
-			assert_eq!(na.m_carry_in[i], f(0), "L row {}", l);
-		}
-		let iseed = (t.n_pad..t.enc.len()).find(|&i|
-			t.step[i].is_zero() && t.cat[i] == f(CAT_C)).unwrap();
-		assert_eq!(na.m_carry_in[iseed], f(1));
+		assert_eq!(na.w_kept[i111], f(21));
+		assert_eq!(na.d_kept[i111], f(89));
 		//C re-pick in QC rank: 27's pred is the kept min 21 at
 		//rank 1 (111 was demoted to SP and holds no QC rank).
 		let i27 = row(27);
@@ -8189,17 +8183,21 @@ mod tests_neo_nonaggr {
 			.expect("stmt");
 		let get = |n: &str| core.lock().unwrap().get_container(n)
 			.unwrap().lock().unwrap().to_vec();
-		assert_eq!(get("b_l"), nat.t.nonaggr.b_l);
 		assert_eq!(get("enc_next"), nat.t.nonaggr.enc_next);
 		assert_eq!(get("bp_prev_val"), nat.t.nonaggr.bp_prev_val);
 		assert_eq!(get("w_next"), nat.t.nonaggr.w_next);
 		assert_eq!(get("d_bp"), nat.t.nonaggr.d_bp);
 		assert_eq!(get("enc_fz"), nat.t.nonaggr.enc_fz);
 		assert_eq!(get("w_fz"), nat.t.nonaggr.w_fz);
-		assert_eq!(get("w_sp"), nat.t.nonaggr.w_sp);
-		assert_eq!(get("d_sp"), nat.t.nonaggr.d_sp);
-		assert_eq!(get("m_carry_in"), nat.t.nonaggr.m_carry_in);
+		assert_eq!(get("w_kept"), nat.t.nonaggr.w_kept);
+		assert_eq!(get("d_kept"), nat.t.nonaggr.d_kept);
 		assert_eq!(get("mtbl_qc"), nat.mtbl_qc);
+		assert_eq!(get("union_prf"), nat.union_prf);
+		assert_eq!(get("jr_enc"), nat.jr.enc);
+		assert_eq!(get("jr_pat"), nat.jr.pat);
+		assert_eq!(get("jr_id"), nat.jr.id);
+		assert_eq!(get("jr_loc"), nat.jr.loc);
+		assert_eq!(get("si_jr_pat"), nat.jr.si_pat);
 		assert_eq!(get("si_fz"), nat.t.nonaggr.si_fz);
 		assert_eq!(get("si_bp_prev_val"),
 			nat.t.nonaggr.si_bp_prev);
@@ -8230,15 +8228,20 @@ mod tests_neo_nonaggr {
 		assert_eq!(cat_rows(&nat, CAT_SP), vec![(2, 111)]);
 		let n = cs.num_constraints();
 		assert_eq!(nat.t.enc.len(), 34);
-		assert!(n >= 3958 && n <= 6596,
-			"cost drift: {} cs vs calibrated 5277", n);
+		// Re-banded in P3 R3 (was 5277 under M7). Block split at
+		// n = 34: selectors 681, wf 670, si_pins 306 + 476,
+		// join 349, union 158, ns_gap 75, carry 233, fwd 170,
+		// bwd 171, singleton 137, anchors 3, lookups 763.
+		assert!(n >= 3360 && n <= 5600,
+			"cost drift: {} cs vs calibrated 4480", n);
 	}
 
 	/// CIRCUIT CORNERS: (a) EMPTY-L chunk (carried-only): the BP
-	/// cascade prunes a6 {73,79} against default_min, a2..a5 chain
-	/// re-certifies, all b_l=0 and the degenerate merge branch
-	/// holds. (b) DUP carried+L (79 re-matched): one row with both
-	/// b_l=1 and m_carry_in=1 satisfies both logups.
+	/// cascade prunes a6 {73,79} against default_min and the
+	/// a2..a5 chain re-certifies, with every JR block collapsed to
+	/// its no-show sentinel pair. (b) FRESH-L chunk: a match at a
+	/// location no carried row holds -- the union pairs it through
+	/// the join, not the carry.
 	#[test]
 	fn test_nonaggr_circuit_corners() {
 		let info = a18_store();
@@ -8250,23 +8253,44 @@ mod tests_neo_nonaggr {
 		assert_eq!(cat_rows(&nat, CAT_C), vec![(0, 1), (1, 6),
 			(2, 21), (3, 27), (4, 33), (5, 39)]);
 		assert_eq!(cat_rows(&nat, CAT_BP), vec![(6, 73), (6, 79)]);
-		//(b) duplicate carried + L
+		let n_real = nat.jr.enc.iter()
+			.filter(|e| !e.is_zero()).count();
+		assert_eq!(n_real, 2 * 8, "8 store rows, sentinel pairs");
+		//(b) one fresh match
 		let mut hm = HashMap::new();
-		hm.insert(6, vec![79]);
+		hm.insert(6, vec![96]);
 		let (cs2, nat2) = run_core_nonaggr(&info,
 			&a18_carried().to_stepqueue(), &hm,
 			A18_DEFAULT_MIN, None);
-		assert!(cs2.is_satisfied().unwrap());
+		assert!(cs2.is_satisfied().unwrap(), "unsat: {:?}",
+			cs2.which_is_unsatisfied());
 		let t2 = &nat2.t;
-		let i79 = (t2.n_pad..t2.enc.len()).find(|&i|
-			t2.loc[i] == f(79) && !t2.cat[i].is_zero()).unwrap();
-		assert_eq!(t2.nonaggr.b_l[i79], f(1));
-		assert_eq!(t2.nonaggr.m_carry_in[i79], f(1));
+		assert!((t2.n_pad..t2.enc.len()).any(|i|
+			t2.loc[i] == f(96) && !t2.cat[i].is_zero()),
+			"the fresh match must reach Q_m");
+	}
+
+	/// CHUNK-STRADDLE DUPLICATE: a carried loc that matches AGAIN
+	/// in this chunk. The M5 layer dedups it into one Q_m row, so
+	/// the row is paid for TWICE on the left of the union identity
+	/// (once by q_i, once by the join) and once on the right.
+	/// gen_union_scalars carries a loud native guard for exactly
+	/// this; see the P3 R3 note in the milestone record.
+	#[test]
+	#[should_panic(expected = "neo union")]
+	fn test_nonaggr_straddle_duplicate_guard() {
+		let info = a18_store();
+		let mut hm = HashMap::new();
+		hm.insert(6, vec![79]); // 79 is already carried
+		let _ = run_core_nonaggr(&info,
+			&a18_carried().to_stepqueue(), &hm,
+			A18_DEFAULT_MIN, None);
 	}
 }
 
+// NOTE_NEW8_ADAPTED (P3 R3): the carry-in and b_l attacks became
+// union and JR-pin attacks; w_sp/d_sp renamed to w_kept/d_kept.
 #[cfg(test)]
-#[cfg(any())] // M8_NEW P0: old neo tests disabled, revive in P3
 mod tests_neo_nonaggr_neg {
 	use super::*;
 	use super::tests_neo_m4::A18_DEFAULT_MIN;
@@ -8322,15 +8346,15 @@ mod tests_neo_nonaggr_neg {
 			$( t.$c.remove(i); )* } }
 		rm!(enc, id, loc, cat, step, subsig, prev_id1, prev_loc1,
 			prev_loc2, pat, rg1, rg2, enc_prev, b_bwd, d_c1, d_c2,
-			d_below_lo, d_below_hi, d_above_lo, d_above_hi, d_sort,
+			d_below_lo, d_above_lo, d_sort,
 			si_step, si_subsig, si_pat, si_rg1, si_rg2,
 			si_enc_prev, si_b_bwd);
 		let na = &mut t.nonaggr;
 		macro_rules! rmna { ($($c:ident),*) => {
 			$( na.$c.remove(i); )* } }
-		rmna!(b_l, enc_next, bp_prev_val, rg2_next, w_next, d_bp,
-			fz, enc_fz, fz_step_val, fz_sub_val, w_fz, d_fz, w_sp,
-			d_sp, m_carry_in, si_bp_prev, si_rg2_next, si_fz,
+		rmna!(enc_next, bp_prev_val, rg2_next, w_next, d_bp,
+			fz, enc_fz, fz_step_val, fz_sub_val, w_fz, d_fz,
+			w_kept, d_kept, si_bp_prev, si_rg2_next, si_fz,
 			si_fz_step, si_fz_sub);
 		//recompute d_sort (a removed row changes an adjacency) and
 		//fix ids within the group (ids stay contiguous).
@@ -8350,12 +8374,12 @@ mod tests_neo_nonaggr_neg {
 	}
 
 	/// N1 CARRY-DROP (the union linchpin): silently omit carried BP
-	/// row a6:73 from Q_m. Every cert still verifies (73 was
-	/// pruned anyway) and both rank m-tables are regenerated -- the
-	/// ONLY thing that catches the drop is the carry-in logup: the
-	/// committed q_i row (enc6, 73) finds no Q_m row to land on.
-	/// This is what forces every carried row to be merged and
-	/// classified rather than quietly discarded.
+	/// row a6:73 from Q_m. Every cert still verifies (73 was pruned
+	/// anyway) and both rank m-tables are regenerated -- what
+	/// catches the drop is assert_qm_union: the committed q_i row
+	/// (enc6, 73) is on the left of Q_m = q_i u JR with nothing on
+	/// the right to pair with. This is what forces every carried
+	/// row to be merged and classified, not quietly discarded.
 	#[test]
 	fn test_nonaggr_neg_carry_drop() {
 		expect_unsat("carry drop", &|nat| {
@@ -8385,19 +8409,62 @@ mod tests_neo_nonaggr_neg {
 		});
 	}
 
-	/// N3 b_l LIES, both directions. (a) on a carried-only row
-	/// (73): the counting query (pat6, 73) is not an L row. (b) off
-	/// on a real L row (96): that row's cnt(pat)=1 demand comes up
-	/// short against its forced m_aux.
+	// NOTE_NEW8_OBSOLETE (P3 R3): the old N3 attacked the b_l
+	// merge bit, a column New8 removed (the union subsumes the
+	// routing it encoded). Its successors are N3a and N3b below.
+
+	/// N3a JR si_pat HOLE (the false-discharge case the New8 frame
+	/// round found): a JOIN block belonging to store row A carries
+	/// si_pat = tag(enc_B, PAT) for a DIFFERENT store row B. The
+	/// outer lookup only binds the PAIR (si_pat, jr.pat), so it is
+	/// a genuine DB pair and cannot object; if nothing tied si_pat
+	/// to the block's OWN enc, A could present B's block -- pick a
+	/// no-show B and A looks match-free, killing a live chain.
+	/// Check (5) of assert_neo_si_pins_nonaggr is the only defence.
 	#[test]
-	fn test_nonaggr_neg_b_l() {
-		expect_unsat("b_l on carried-only row", &|nat| {
-			let i = row(nat, 73);
-			nat.t.nonaggr.b_l[i] = f(1);
+	fn test_nonaggr_neg_jr_si_pat() {
+		let info = a18_store();
+		let (s_enc, _s_pat) = NeoCore::<Fr>::gen_store_rows(
+			&vec![f(1)], &info);
+		// B = step 3 (pat 3, no match in chunk 2); the block we
+		// relabel belongs to step 2, so the tag really is foreign.
+		let enc_b = s_enc[2];
+		let tag_b = SubsigStepStore::gen_step_tbl_id(enc_b,
+			ID_ENCODED_PAT);
+		let enc_a = s_enc[1];
+		assert_ne!(enc_a, enc_b);
+		expect_unsat("jr si_pat from a foreign store row", &|nat| {
+			let jr = &mut nat.jr;
+			let mut hit = 0;
+			for k in 0..jr.enc.len() {
+				if jr.enc[k] == enc_a {
+					jr.si_pat[k] = tag_b;
+					hit += 1;
+				}
+			}
+			assert!(hit > 0, "no JR block for the chosen store row");
 		});
-		expect_unsat("b_l off on L row", &|nat| {
+	}
+
+	/// N3b UNION TAMPERS, both sides of Q_m = q_i u JR: (a) blank a
+	/// real JR row, so a joined location is no longer paid for;
+	/// (b) move a Q_m location, so the right side no longer matches
+	/// what the carry and the join together claim. Both must break
+	/// the multiset identity.
+	#[test]
+	fn test_nonaggr_neg_union() {
+		expect_unsat("drop a JR row", &|nat| {
+			let k = (0..nat.jr.enc.len()).find(|&k|
+				!nat.jr.enc[k].is_zero()
+				&& !nat.jr.loc[k].is_zero()).unwrap();
+			nat.jr.enc[k] = f(0); nat.jr.pat[k] = f(0);
+			nat.jr.id[k] = f(0); nat.jr.loc[k] = f(0);
+			nat.jr.si_pat[k] = f(RANGE2);
+		});
+		expect_unsat("move a Q_m loc", &|nat| {
 			let i = row(nat, 96);
-			nat.t.nonaggr.b_l[i] = f(0);
+			nat.t.loc[i] = f(97);
+			regen_mtbls(nat);
 		});
 	}
 
@@ -8437,15 +8504,15 @@ mod tests_neo_nonaggr_neg {
 	}
 
 	/// N6 SP MIN-DOM FORGERY: SP row 111 claims kept min 105
-	/// (consistent d_sp=5); the real cid-1 row of its group is 21,
-	/// so (enc2, 1, 105) has no target. The prover cannot invent a
-	/// closer "kept" location to justify a drop.
+	/// (consistent d_kept=5); the real cid-1 row of its group is
+	/// 21, so (enc2, 1, 105) has no target. The prover cannot
+	/// invent a closer "kept" location to justify a drop.
 	#[test]
 	fn test_nonaggr_neg_sp_min() {
-		expect_unsat("sp fake w_sp", &|nat| {
+		expect_unsat("sp fake w_kept", &|nat| {
 			let i = row(nat, 111);
-			nat.t.nonaggr.w_sp[i] = f(105);
-			nat.t.nonaggr.d_sp[i] = f(5);
+			nat.t.nonaggr.w_kept[i] = f(105);
+			nat.t.nonaggr.d_kept[i] = f(5);
 			regen_mtbls(nat);
 		});
 	}
@@ -8491,8 +8558,8 @@ mod tests_neo_nonaggr_neg {
 	}
 }
 
+// NOTE_NEW8_ADAPTED (P3 R3): native-only oracle, revived as-is.
 #[cfg(test)]
-#[cfg(any())] // M8_NEW P0: old neo tests disabled, revive in P3
 mod tests_neo_nonaggr_oracle {
 	use super::*;
 	use super::tests_neo_m5::{a18_store, mk_pat_loc};
