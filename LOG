@@ -30414,12 +30414,119 @@ Goal 1. continue on M9
 
 Goal 2. writing
 	[a] 6.1 first pass
-	[b] 6.2 alg
-	[c] 
+	[b] 6.2 alg -> DONE
 
 Goal 3. Inspect code
-	[a] are all SID colomns encoded correctly for Q_m?
-	[b] 
+	[a] how to build (pat,loc) from failed subsigs and (pat,loc) table?
+	[b] refactor and then approve the functions one by one.
+	[c] QmRanks and QmBundle
+
+Wed 07/28/2026
+Goal 1. Inspect and refactor code
+	[a] LkupQryBuf
+	[b] go over the union and join structure again
+	[c] refine LkupQryBuf
+	[d] refine the functionlist.
+
+Thursday 07/29/2026
+Goal 1. inspect functions
+	[a] join_locations -> need refine. do we need
+		advice AT ALL?
+		we just need inputs: subsigs, store, pat_loc
+			and verify the generated. subsig-pat-loc is correct?
+	[b] start three threads to investigate (1) how legacy code does it
+		(2) should it actually be the assert_ function that verifies
+			given input list_of_subsigs, SubsigStore, and pat_loc
+				it generates the joined q_m (but in the form only
+				the necessary columns), a subview
+		(3) verify how this function is to be called
+	[c] refine the assert_join_locs
+Goal 2. other functions
+	[a] assert_carry
+	[b] assert_bp
+	[c] assert_sp
+	[d] QrLokupBuf -> re-design.
+	[e] assert_qm_lookups
+	[f] verify_union_proof
+	[g] assert_neo_aggr and non-aggr
+
+
+Goal 3. Section 6.3
+	[a] 1st pass read
+	[b] p1
+	[c] p2
+	[d] p3.
+	[e] bounded queue paragraph
+	[e] Singleton Paragraph.
+	[f] algorithm
+
+Goal 4. Implementation top down
+	[a] assert_msg3
+	[b] load_stmt neo
+	[c] main workflow of assert_neo
+	[d] assert_join_locations -> still VERY EXPENSIVE.
+
+Friday 07/30/2026
+Goal 1. refin ethe design of table join step
+	[a] suggest to make one assert_join_relation
+		and make union separate.
+
+Sat 07/31/2026
+Goal 1. continue the decision decision on join result and
+	bulid Q_m
+	[a] self-loop definition, and real cost estimate of
+		adding dummy entries.
+	[b] confirmed the design.
+Goal 2. assert_qm_union
+	[a] approve signature and implementation
+	[b] new funcions needed (signatures)
+	[c] P3 of location join.
+	[d] need to review code [b]-[e]
+
+Goal 3. writing
+	[a] move example of Sec 3 to apdx
+	[b] apdx C. 
+	[c] C.1
+	[d] C.2
+		[1] issue 1 - min_loc for BP.
+		[2] all other major issues.
+Goal 4. Review and revise check_carry
+	[a] review
+	[b] improve
+Goal 5. Review check_fp
+	[a] quick review suggestion
+	[b] 2nd revision.
+Goal 6. Review check_bp
+	[a] quick review
+	[b] impl
+Goal 7. Review check_sp
+	[a] review
+	[b] impl
+Goal 8. assert_seed_anchors
+	[a] impl
+Goal 9. 5 boolean flag and related functions
+	[a] review code
+	[b] explain or rephrase:
+		(1) "both arms" 
+		(2) "welded zero-bits"
+		(3) "BOTH directions"
+		(4) explain further what do you mean "FREE Langrange form of cat, 2cat".
+		(5) explain "is_wrap" clearly in both doc and its code comments
+		(6) explain is_seed bettr and also what is "is_seed is free"?
+		(7) explain better "AGGR: b_bwd_row = b_bwd off step 1 (the fwd anchor)."
+		(8) improve the explaination of Section 3. I don't understand cat_e, ce2, are they used to improve computation of is_c and is_fp?
+	[c] check_well_formed
+	[d] shwo assert_neo_si_pins
+	[e] check si_pin
+	[f] assert_neo_si_pins_nonaggr
+
+Goal 10. check capacity
+	[a] how is Q_m aggr mode
+	[b] non-aggr: max_len * basis_pats * per_pats_expansionrte 
+
+Goal 11. start p3 unit testing
+	[a]
+		
 
 
 ----- ACTIVE GOALS -----

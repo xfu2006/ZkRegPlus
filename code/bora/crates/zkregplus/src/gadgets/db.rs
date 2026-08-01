@@ -2253,6 +2253,27 @@ pub fn verify_union_prf<F:PrimeField + ColEle>(
 	r: &FpVar<F>
 ) -> Result<(), SynthesisError>{
 	let cs = vec1[0].cs();
+	let b_left_more_zero = prf.lock().unwrap()
+		.get_container("b_left_more_zero")?.lock().unwrap()
+		.to_vec()[0].clone();
+	let diff_zero = prf.lock().unwrap().get_container("diff_zero")?
+		.lock().unwrap().to_vec()[0].clone();
+	verify_union_prf_vars(cs, vec1, vec2, vec3, &b_left_more_zero,
+		&diff_zero, r)
+}
+
+/// verify_union_prf with the two reconciliation scalars passed
+/// directly (caller advice that is not a Container) and an
+/// explicit cs (vec1 may be empty).
+pub fn verify_union_prf_vars<F:PrimeField + ColEle>(
+	cs: ConstraintSystemRef<F>,
+	vec1: &Vec<FpVar<F>>,
+	vec2: &Vec<FpVar<F>>,
+	vec3: &Vec<FpVar<F>>, //the desired result
+	b_left_more_zero: &FpVar<F>,
+	diff_zero: &FpVar<F>,
+	r: &FpVar<F>
+) -> Result<(), SynthesisError>{
 	let r_val = r.value().unwrap_or(F::zero());
 
 	//1. for each vector, generate the inverse in batch
@@ -2298,12 +2319,8 @@ pub fn verify_union_prf<F:PrimeField + ColEle>(
 	let sum3: FpVar<F> = vec_inv3.iter().sum();
 
 	//4. verify b_left_more_zero is either 1 or 0
-	let b_left_more_zero = prf.lock().unwrap()
-		.get_container("b_left_more_zero")?.lock().unwrap().to_vec()[0].clone();
-	b_left_more_zero.enforce_equal(&(&b_left_more_zero * &b_left_more_zero))?;
-
-	let diff_zero = prf.lock().unwrap().get_container("diff_zero")?
-		.lock().unwrap().to_vec()[0].clone();
+	b_left_more_zero.enforce_equal(
+		&(b_left_more_zero * b_left_more_zero))?;
 
 	//5. compute inv_0 = 1/(zero + r).
 	let inv_0 = r.inverse()?;
@@ -2316,12 +2333,12 @@ pub fn verify_union_prf<F:PrimeField + ColEle>(
 	// sum1 + sum2 + inv_0 * diff_zero = sum3
 	let left = &sum1 + &sum2;
 	let right = &sum3;
-	let term = &inv_0 * &diff_zero;
+	let term = &inv_0 * diff_zero;
 
 	let case1 = &left - right - &term;
 	let case2 = &left + &term - right;
 
-	let res = &b_left_more_zero * &(&case1 - &case2) + &case2;
+	let res = b_left_more_zero * &(&case1 - &case2) + &case2;
 	check_eq(&res, &FpVar::zero(), "union check failed")?;
 
 	Ok( () )

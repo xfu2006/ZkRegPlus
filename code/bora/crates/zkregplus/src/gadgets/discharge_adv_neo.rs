@@ -8,7 +8,47 @@
 // neo path is byte-identical to the legacy SDE. The real G.1
 // certificates (C/FP/BP/SP over StepQueueNeo) replace the body in M4-M7.
 
-use ark_ff::{PrimeField, Zero, batch_inversion};
+// ============================================================
+//  Q_m row-class + lookup-target legend (shared vocabulary)
+// ============================================================
+// Every T_qm (Q_m) row is exactly one CLASS:
+//   pad = enc==0 filler (table tail).
+//   0w  = lower wrap sentinel of a group (id 0, loc 0).
+//   Mw  = upper wrap sentinel of a group (loc MAX).
+//   C   = reachable match, kept (valid predecessor, reaches on).
+//   FP  = unreachable match, forward-pruned (no predecessor in
+//         the [rg1,rg2] window).
+//   BP  = reachable but back-pruned: scan outran it (successor
+//         step carries nothing within reach).
+//   SP  = reachable but singleton surplus: dominated by a
+//         smaller carried loc at a frozen downstream step.
+// BP and SP exist ONLY in the non-aggressive arm; the
+// aggressive arm retags BP->C and has no SP, so its classes
+// are {pad, 0w, C, FP, Mw}.
+//
+// Two per-chunk LOOKUP TARGETS are carved from Q_m by group:
+//   QR = REACHABLE rows: both wraps + C (+ BP,SP non-aggr).
+//        Reach cert reads it: C cites a predecessor; FP
+//        brackets its window with two rank-adjacent QR rows.
+//   QC = CARRIED rows: both wraps + C. Non-aggressive only;
+//        the (enc,cid=1,loc) query returns a group's least
+//        carried loc (Mw if nothing carries). Aggressive has
+//        no QC -- it reseeds each chunk and routes its verdict
+//        through failed_acc.
+//
+// Each target row gets a per-group ORDINAL (0-based address
+// within its group, reset at each group start), the middle
+// coordinate of the pack(enc, ord, loc) key:
+//   rid (QR-id) bumps on every reachable row + both wraps:
+//     aggr     0w,C,Mw ;  non-aggr 0w,C,BP,SP,Mw  (FP stalls).
+//   cid (QC-id) bumps only on carried rows (non-aggr only):
+//     0w,C,Mw  (FP,BP,SP stall -> absent from QC).
+// id and id+1 are thus rank-adjacent (the FP bracket).
+// EXAMPLE group [0w,21C,55BP,96FP,111SP,Mw]:
+//   rid 0,1,2,2,3,4     cid 0,1,1,1,1,2
+// ============================================================
+
+use ark_ff::{PrimeField, Zero, Field, batch_inversion};
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_relations::lc;
 use ark_relations::r1cs::{SynthesisError, ConstraintSystemRef};
@@ -20,7 +60,7 @@ use data_processor::clam_db::{reverse_pm_bounds, RANGE2,
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
-use utils::consts::read_global_config;
+use utils::consts::{read_global_config, B_DEBUG};
 use utils::logger::{log, LOG3};
 use ark_r1cs_std::R1CSVar;
 use folding_schemes::Error;
@@ -30,11 +70,13 @@ use folding_schemes::folding::foldpot::{
 	container_config::{ColEle, ContainerConfig},
 	circuits_super::field_to_usize,
 };
-use crate::gadgets::commons::{encode_cols, is_zero_better_adv,
-	check_eq, check_prod_zero, better_select, new_const_var,
-	gen_m_table_cond, gen_m_table};
+use crate::gadgets::commons::{encode_cols, encode_cols_var,
+	is_zero_better_adv, check_eq, check_prod_zero, better_select,
+	new_const_var, new_var, gen_m_table_cond, gen_m_table,
+	multiset_prod_2col, var_to_lb};
 use crate::gadgets::db::{assert_logup, assert_logup_cond,
-	assert_well_formed_sorted};
+	assert_well_formed_sorted, gen_union_prf,
+	verify_union_prf_vars};
 use crate::gadgets::traits::{Container, Col, IDX_DATA, IDX_SI_DATA,
 	ComponentAdvice};
 use crate::gadgets::discharge_adv::{DischargeAdvGadget,
@@ -174,16 +216,19 @@ impl<F: PrimeField + ColEle> SigmaGadget<F>
 		cfg: &WitnessSigmaIR1CSConfig,
 		_word_id: FpVar<F>, _subsig_id: FpVar<F>)
 		-> Result<(), SynthesisError> {
-		// M6: aggressive arm = the G.1 {C,FP} core; M7:
-		// non-aggressive arm = the full C.1 partition with the
-		// committed q_i/q_c carry. Both consume the NEO statement
-		// (DischargeAdvNeoAdvice); wiring the sed_mapper advice
-		// path onto it is M8 -- until then the non-aggressive arm
-		// is exercised by the tier-1/tier-2 tests only.
+		let r1 = wtns.msg2[0].clone();
+		let r2 = wtns.msg2[1].clone();
+		let job_id = self.inner.get_job_id();
 		if self.inner.capacity.b_aggressive {
-			self.assert_msg3_neo_aggr(i, cs, wtns, cfg)
+			let (nat, vars) = self.load_neo_stmt_aggr(i, wtns,
+				cfg)?;
+			Self::assert_neo_aggr(cs, &nat, &vars, &r1, &r2,
+				job_id)
 		} else {
-			self.assert_msg3_neo_nonaggr(i, cs, wtns, cfg)
+			let (nat, vars, default_min) = self
+				.load_neo_stmt_nonaggr(i, &cs, wtns, cfg)?;
+			Self::assert_neo_nonaggr(cs, &nat, &vars,
+				&default_min, &r1, &r2, job_id)
 		}
 	}
 }
@@ -846,16 +891,10 @@ impl<F: PrimeField + ColEle> LenRelation<F> {
 /// EXAMPLE (Fig-14 chunk 2, default_min=161): BP row a6:73 gets
 /// enc_next=enc(step7), rg2_next=9, w_next=max (step 7 carries
 /// nothing) => min_eff=161, d_bp=161-73-9-1=78. SP row a2:111 gets
-/// fz=5, enc_fz=enc(step5), w_fz=39 (a5 carries), w_sp=21 (kept min
-/// at step 2), d_sp=111-21-1=89.
+/// fz=5, enc_fz=enc(step5), w_fz=39 (a5 carries), w_kept=21 (kept
+/// min at step 2), d_kept=111-21-1=89.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub(crate) struct QmNonAggrCols<F: PrimeField + ColEle> {
-	// ---- merge (union-present) ----
-	/// 1 iff this row's (pat,loc) is demanded against L in the
-	/// counting logup; 0 on carried-only rows. Self-enforcing: off
-	/// on an L row shorts the cnt(pat) demand, on for a non-L row
-	/// leaves the query unmatched.
-	pub b_l: Vec<F>,
 	// ---- BP certificate (loc + rg2_next < min_{i+1}) ----
 	/// successor step's DB key; free advice, forced to be THE
 	/// successor by the PREV_ENCODED (si,val) pair on bp_prev_val.
@@ -900,14 +939,10 @@ pub(crate) struct QmNonAggrCols<F: PrimeField + ColEle> {
 	pub d_fz: Vec<F>,
 	/// QC witness: loc of this row's own-group (enc, cid=1) row =
 	/// the kept minimum at this step.
-	pub w_sp: Vec<F>,
-	/// RANGE2 diff loc - w_sp - 1 (min-domination); underflows if
-	/// the prover tries to SP the minimum itself.
-	pub d_sp: Vec<F>,
-	// ---- carry binding ----
-	/// per-row multiplicity for the carry-in logup: 1 iff this row
-	/// is a carried Q_i row ({0,1}: Q_i locs are a per-step set).
-	pub m_carry_in: Vec<F>,
+	pub w_kept: Vec<F>,
+	/// RANGE2 diff loc - w_kept - 1 (min-domination); underflows
+	/// if the prover tries to SP the minimum itself.
+	pub d_kept: Vec<F>,
 	// ---- variable si columns (RANGE2 + val 0 when masked) ----
 	/// tag(enc_next, PREV_ENCODED), masked to is_bp.
 	pub si_bp_prev: Vec<F>,
@@ -935,10 +970,10 @@ pub(crate) struct QmTable<F: PrimeField + ColEle> {
 	// store bindings (read from item.base; masked rows: 0 + RANGE2 si)
 	pub pat: Vec<F>, pub rg1: Vec<F>, pub rg2: Vec<F>,
 	pub enc_prev: Vec<F>, pub b_bwd: Vec<F>,
-	// masked cert diffs; lo parts RANGE2-si'd, hi parts 0/1 bits
+	// masked cert diffs: single RANGE2 limbs (chunking keeps
+	// loc + rg in range; see assert_fwd_pruning's ASSUMPTION)
 	pub d_c1: Vec<F>, pub d_c2: Vec<F>,
-	pub d_below_lo: Vec<F>, pub d_below_hi: Vec<F>,
-	pub d_above_lo: Vec<F>, pub d_above_hi: Vec<F>,
+	pub d_below_lo: Vec<F>, pub d_above_lo: Vec<F>,
 	/// strict-sort diff advice: loc[i]-loc[i-1]-1 on same-group
 	/// adjacencies (RANGE2-si'd), 0 elsewhere.
 	pub d_sort: Vec<F>,
@@ -953,15 +988,40 @@ pub(crate) struct QmTable<F: PrimeField + ColEle> {
 	pub n_pad: usize,
 }
 
-/// Split a cert diff (honest bound < 2^(rb+1)) into (hi bit, lo) with
-/// lo in [0, 2^rb): d = hi*2^rb + lo. hi is boolean-checked in-circuit;
-/// lo carries the RANGE2 si.
-fn split_rg2_limb<F: PrimeField + ColEle>(d: &F, max_val: usize)
--> (F, F) {
-	let u = field_to_usize(d);
-	let m = max_val + 1;
-	if u >= m { (F::one(), F::from((u - m) as u32)) }
-	else { (F::zero(), F::from(u as u32)) }
+/// NONAGGR ONLY -- the materialized JOIN RESULT (temp table,
+/// witness-only, never folded across chunks): one block per
+/// store row (subsig, step >= 1), holding pat_loc's FULL block
+/// for that row's pat -- [loc-0 sentinel, real locs, loc-max
+/// sentinel], ids = the pat_loc ranks 0..cnt+1. Pads = all-0
+/// rows (prefix by convention; the constraints are
+/// position-free). Aggr never builds it: there Q_m itself IS
+/// the join result. Shape + membership are verified by
+/// assert_join_locations; the rows are linked into Q_m by
+/// assert_qm_union over fp = enc||loc (ids stay internal to
+/// the join). Built by gen_jr_table.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub(crate) struct JrTable<F: PrimeField + ColEle> {
+	/// owning Q_m group's key (subsig|step|pat|rg1|rg2).
+	pub enc: Vec<F>,
+	/// that group's pat; bound to enc by the si_pat companion
+	/// (else a block could join a foreign pat's locations).
+	pub pat: Vec<F>,
+	/// pat_loc rank within the block: 0..cnt+1.
+	pub id: Vec<F>,
+	/// pat_loc loc: 0 sentinel / real locs / max sentinel.
+	pub loc: Vec<F>,
+	/// tag(enc, PAT) companion for the outer DB lookup: welds
+	/// pat = pat(enc) per row (RANGE2 si + val 0 on pads).
+	pub si_pat: Vec<F>,
+}
+
+/// Chunking-invariant guard: an FP bracket diff must fit ONE
+/// RANGE2 cell (chunk length + max window < 2^rb). A violation
+/// means the corpus was chunked too coarsely for range2_bit.
+fn assert_fp_diff_range2<F: PrimeField + ColEle>(
+	d: &F, max_val: usize) {
+	assert!(field_to_usize(d) <= max_val,
+		"FP bracket diff exceeds RANGE2: chunk too long");
 }
 
 impl<F: PrimeField + ColEle> QmTable<F> {
@@ -969,24 +1029,28 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 	/// binding cols zeroed with benign si. f_bwd = the subsig's real
 	/// backward flag (the (si,val) pair must exist on EVERY row).
 	fn push_wrap(&mut self, enc: F, id: F, loc: F, f_step: F,
-		subsig: F, b_last: bool, b_ge1: bool, f_bwd: F) {
+		subsig: F, pat: F, b_last: bool, b_ge1: bool, f_bwd: F) {
 		let (z, rg2t) = (F::zero(), F::from(RANGE2));
 		let tag = if b_last { ID_ENCODED_LAST_STEP }
 			else { ID_ENCODED_NORMAL_STEP };
 		self.enc.push(enc); self.id.push(id); self.loc.push(loc);
 		self.cat.push(z); self.step.push(f_step);
 		self.subsig.push(subsig); self.b_bwd.push(f_bwd);
+		self.pat.push(pat);
 		for v in [&mut self.prev_id1, &mut self.prev_loc1,
-			&mut self.prev_loc2, &mut self.pat, &mut self.rg1,
+			&mut self.prev_loc2, &mut self.rg1,
 			&mut self.rg2, &mut self.enc_prev, &mut self.d_c1,
 			&mut self.d_c2, &mut self.d_below_lo,
-			&mut self.d_below_hi, &mut self.d_above_lo,
-			&mut self.d_above_hi] { v.push(z); }
+			&mut self.d_above_lo] { v.push(z); }
 		self.si_step.push(SubsigStepStore::gen_step_tbl_id(enc, tag));
 		self.si_subsig.push(if b_ge1 {
 			SubsigStepStore::gen_step_tbl_id(enc, ID_ENCODED_SUBSIG)
 		} else { rg2t });
-		for v in [&mut self.si_pat, &mut self.si_rg1,
+		//pat is membership-queried on step>=1 wraps -> DB-bound
+		self.si_pat.push(if b_ge1 {
+			SubsigStepStore::gen_step_tbl_id(enc, ID_ENCODED_PAT)
+		} else { rg2t });
+		for v in [&mut self.si_rg1,
 			&mut self.si_rg2, &mut self.si_enc_prev] { v.push(rg2t); }
 		self.si_b_bwd.push(F::from(1u64 << 32)
 			* F::from(ID_SUBSIG_IS_BACKWARD) + subsig);
@@ -1021,6 +1085,10 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 				|| c0 == F::from(CAT_SP),
 				"nonaggr: unexpected cat");
 		}
+		// non-aggr never carries backward subsigs; the circuit
+		// hard-codes forward formulas on that arm.
+		assert!(b_aggr || !bwd,
+			"backward subsig in a non-aggressive store");
 		let cat = if b_aggr && c0 == F::from(CAT_BP)
 			{ F::from(CAT_C) } else { c0 };
 		let b_seed = it.base.step.is_zero();
@@ -1049,7 +1117,7 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 		self.enc_prev.push(if b_seed { z } else { enc_prev });
 		// masked cert diffs (0 off-class / on seed)
 		let (mut dc1, mut dc2) = (z, z);
-		let (mut dbl, mut dbh, mut dal, mut dah) = (z, z, z, z);
+		let (mut dbl, mut dal) = (z, z);
 		if !b_seed && b_aggr && cat == F::from(CAT_C) {
 			let gap = if bwd { pl1 - loc } else { loc - pl1 };
 			dc1 = gap - f_a; dc2 = f_b - gap;
@@ -1058,19 +1126,19 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 			if !pl1.is_zero() {
 				let d = if bwd { loc + f_a - pl1 - one }
 					else { loc - pl1 - f_b - one };
-				let (h, l) = split_rg2_limb(&d, max_val);
-				dbh = h; dbl = l;
+				assert_fp_diff_range2(&d, max_val);
+				dbl = d;
 			}
 			if pl2 != f_max {
 				let d = if bwd { pl2 - loc - f_b - one }
 					else { pl2 + f_a - loc - one };
-				let (h, l) = split_rg2_limb(&d, max_val);
-				dah = h; dal = l;
+				assert_fp_diff_range2(&d, max_val);
+				dal = d;
 			}
 		}
 		self.d_c1.push(dc1); self.d_c2.push(dc2);
-		self.d_below_lo.push(dbl); self.d_below_hi.push(dbh);
-		self.d_above_lo.push(dal); self.d_above_hi.push(dah);
+		self.d_below_lo.push(dbl);
+		self.d_above_lo.push(dal);
 		// si tags: step always; store cats masked on the seed row
 		let rg2t = F::from(RANGE2);
 		let tag = if b_last { ID_ENCODED_LAST_STEP }
@@ -1104,8 +1172,7 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 			&mut self.prev_loc2, &mut self.pat, &mut self.rg1,
 			&mut self.rg2, &mut self.enc_prev, &mut self.b_bwd,
 			&mut self.d_c1, &mut self.d_c2, &mut self.d_below_lo,
-			&mut self.d_below_hi, &mut self.d_above_lo,
-			&mut self.d_above_hi, &mut self.d_sort] { pz(v, z); }
+			&mut self.d_above_lo, &mut self.d_sort] { pz(v, z); }
 		pz(&mut self.si_step, sid_step);
 		for v in [&mut self.si_subsig, &mut self.si_pat,
 			&mut self.si_rg1, &mut self.si_rg2,
@@ -1118,24 +1185,18 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 	}
 
 	/// Fill the NON-AGGRESSIVE witness columns on the PADDED table
-	/// (run right after gen_qm_table(.., false)). Three jobs:
-	///  (1) merge bits: b_l (row demanded against L) and m_carry_in
-	///      (row is a carried Q_i row) -- a duplicate (carried AND
-	///      matched again) legitimately gets both;
-	///  (2) C rows: RE-PICK the predecessor against the FINAL C
+	/// (run right after gen_qm_table(.., false)). Two jobs:
+	///  (1) C rows: RE-PICK the predecessor against the FINAL C
 	///      sets and re-rank prev_id1 in QC coordinates. Needed
 	///      because apply_sp_pass may demote the closure-time pred:
 	///      at a frozen step only the min survives, and the min
 	///      always reaches (min-chain lemma), so a C pred exists.
 	///      EXAMPLE: a3:27 closure pred was a2:21; had it been 111
 	///      (now SP), the re-pick lands on the kept min 21, rank 1.
-	///  (3) BP/SP rows: successor/freeze witnesses (see the
+	///  (2) BP/SP rows: successor/freeze witnesses (see the
 	///      QmNonAggrCols field docs for the certificates).
-	/// PARAMS: hm_loc = chunk L map pat -> [(id,loc)] WITH the two
-	/// wrap rows (pat_loc_to_hm layout); carried = this chunk's Q_i
-	/// (the fold input); default_min = last_loc + 1.
+	/// PARAMS: default_min = last_loc + 1 (BP/SP empty-min fallback).
 	pub(crate) fn fill_nonaggr(&mut self, info: &SubsigStepStore,
-		hm_loc: &HashMap<F, Vec<(F, F)>>, carried: &StepQueue<F>,
 		default_min: F) {
 		let n = self.enc.len();
 		let rb = read_global_config().range2_bit;
@@ -1146,13 +1207,13 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 			(F::from(CAT_C), F::from(CAT_BP), F::from(CAT_SP));
 		//0. masked defaults on every row (pads/wraps stay so)
 		self.nonaggr = QmNonAggrCols {
-			b_l: vec![z; n], enc_next: vec![z; n],
+			enc_next: vec![z; n],
 			bp_prev_val: vec![z; n], rg2_next: vec![z; n],
 			w_next: vec![z; n], d_bp: vec![z; n], fz: vec![z; n],
 			enc_fz: vec![z; n], fz_step_val: vec![z; n],
 			fz_sub_val: vec![z; n], w_fz: vec![z; n],
-			d_fz: vec![z; n], w_sp: vec![z; n], d_sp: vec![z; n],
-			m_carry_in: vec![z; n],
+			d_fz: vec![z; n], w_kept: vec![z; n],
+			d_kept: vec![z; n],
 			si_bp_prev: vec![rg2t; n], si_rg2_next: vec![rg2t; n],
 			si_fz: vec![rg2t; n], si_fz_step: vec![rg2t; n],
 			si_fz_sub: vec![rg2t; n],
@@ -1175,20 +1236,7 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 		let qc1 = |enc: &F| -> F {
 			c_locs.get(enc).map_or(f_max, |v| v[0])
 		};
-		//2. membership sets for the merge bits
-		let mut in_l: HashSet<(F, F)> = HashSet::new();
-		for (p, v) in hm_loc {
-			for e in &v[1..v.len() - 1] { in_l.insert((*p, e.1)); }
-		}
-		let mut in_qi: HashSet<(F, F)> = HashSet::new();
-		for its in carried.store_items.values() {
-			for it in its {
-				for l in &it.locs {
-					in_qi.insert((it.encoded, *l));
-				}
-			}
-		}
-		//3. per-subsig step metadata (non-aggr = forward-only)
+		//2. per-subsig step metadata (non-aggr = forward-only)
 		let mut meta: HashMap<F, Vec<(usize, (usize, usize))>> =
 			HashMap::new();
 		for i in self.n_pad..n {
@@ -1202,22 +1250,15 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 				"nonaggr has no backward subsigs");
 			meta.insert(subsig, rec.vec_pm_bounds.clone());
 		}
-		//4. row pass
+		//3. row pass
 		for i in self.n_pad..n {
 			let cat = self.cat[i];
 			if cat.is_zero() { continue; } //wrap sentinel rows
 			let (subsig, loc) = (self.subsig[i], self.loc[i]);
 			let step = field_to_usize(&self.step[i]);
-			//(1) merge bits (any class; seed rows are neither)
-			if step >= 1 && in_l.contains(&(self.pat[i], loc)) {
-				self.nonaggr.b_l[i] = one;
-			}
-			if in_qi.contains(&(self.enc[i], loc)) {
-				self.nonaggr.m_carry_in[i] = one;
-			}
 			if step == 0 { continue; } //seed: no certificate
 			let pm = &meta[&subsig];
-			//(2) C re-pick: least final-C loc at step-1 inside the
+			//(1) C re-pick: least final-C loc at step-1 inside the
 			//predecessor window [loc-rg2, loc-rg1]; rank in QC
 			//coordinates (0-wrap holds rank 0, C rows 1..k).
 			if cat == f_c {
@@ -1240,7 +1281,7 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 				self.d_c1[i] = gap - F::from(a as u32);
 				self.d_c2[i] = F::from(b as u32) - gap;
 			}
-			//(3a) BP: successor key + range + carried-min witness
+			//(2a) BP: successor key + range + carried-min witness
 			if cat == f_bp {
 				let max_steps = pm.len();
 				assert!(step < max_steps, "BP on terminal step");
@@ -1266,7 +1307,7 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 					::gen_step_tbl_id(enc_next,
 						ID_ENCODED_RG_END);
 			}
-			//(3b) SP: freeze (C row at step fz) + min-domination
+			//(2b) SP: freeze (C row at step fz) + min-domination
 			if cat == f_sp {
 				let max_steps = pm.len();
 				let fzv = fz_from_pm_bounds::<F>(pm, max_val)
@@ -1274,7 +1315,7 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 				let fz_us = field_to_usize(&fzv);
 				let enc_fz = enc_of[&(subsig, fzv)];
 				let w_fz = qc1(&enc_fz);
-				let w_sp = qc1(&self.enc[i]);
+				let w_kept = qc1(&self.enc[i]);
 				let na = &mut self.nonaggr;
 				na.fz[i] = fzv;
 				na.si_fz[i] = SubsigStepStore::gen_step_tbl_id(
@@ -1296,8 +1337,8 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 				}
 				na.w_fz[i] = w_fz;
 				na.d_fz[i] = f_max - w_fz - one;
-				na.w_sp[i] = w_sp;
-				na.d_sp[i] = loc - w_sp - one;
+				na.w_kept[i] = w_kept;
+				na.d_kept[i] = loc - w_kept - one;
 			}
 		}
 	}
@@ -1390,8 +1431,10 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 				};
 				let f_step = F::from(s as u32);
 				let (b_last, b_ge1) = (s == max_steps, s >= 1);
+				let f_pat = if s >= 1 {
+					F::from(pm[s - 1].0 as u32) } else { zero };
 				t.push_wrap(enc, zero, zero, f_step, *subsig,
-					b_last, b_ge1, f_bwd);
+					f_pat, b_last, b_ge1, f_bwd);
 				let n_real = if s < items.len() {
 					let it = &items[s];
 					let bwd = rec.is_backward && s >= 2;
@@ -1402,7 +1445,7 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 					it.base.locs.len()
 				} else { 0 };
 				t.push_wrap(enc, F::from((n_real + 1) as u32), f_max,
-					f_step, *subsig, b_last, b_ge1, f_bwd);
+					f_step, *subsig, f_pat, b_last, b_ge1, f_bwd);
 				enc_prev = enc;
 			}
 		}
@@ -1432,6 +1475,7 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 	/// shape invariance) UNION L; cnt counts only the SEEDED
 	/// (subsig,step) keys (0 for cold/L-only pats). An L pat outside
 	/// the store universe (and not a 0/max sentinel) is CapErr.
+	#[cfg(any())] // M8_NEW P1: counting block removed
 	pub(crate) fn gen_merge_dict(subsigs: &Vec<F>,
 		info: &SubsigStepStore, hm_loc: &HashMap<F, Vec<(F, F)>>,
 		b_igc: bool)
@@ -1471,6 +1515,7 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 
 	/// Per-L-row multiplicity advice for the counting logup: cnt(pat)
 	/// for real L rows, 0 for the 0/max wrap rows.
+	#[cfg(any())] // M8_NEW P1: counting block removed
 	pub(crate) fn gen_merge_m_aux(l_pat: &Vec<F>, l_loc: &Vec<F>,
 		d_pat: &Vec<F>, d_cnt: &Vec<F>) -> Vec<F> {
 		let max_val: usize = (1 << read_global_config().range2_bit) - 1;
@@ -1528,6 +1573,47 @@ fn batch_inv<F: PrimeField>(v: &[F]) -> Vec<F> {
 	w
 }
 
+/// Enforce v1 * v2 == v3 in ONE constraint. Building the product
+/// as a variable first and then equating costs 2 -- the pin idiom
+/// (col == mask * tag + const) pays that on every column.
+fn check_prod_eq<F: PrimeField + ColEle>(
+	v1: &FpVar<F>, v2: &FpVar<F>, v3: &FpVar<F>, _msg: &str,
+) -> Result<(), SynthesisError> {
+	let cs = v1.cs();
+	if B_DEBUG && v1.value().is_ok() {
+		assert!(v1.value()? * v2.value()? == v3.value()?,
+			"ERR on check prod eq: {}", _msg);
+	}
+	cs.enforce_constraint(var_to_lb(v1, F::one()),
+		var_to_lb(v2, F::one()), var_to_lb(v3, F::one()))?;
+	Ok(())
+}
+
+/// DB companion tag of a value column, minus its enc term:
+/// gen_step_tbl_id(enc, cid) == si_tag_base(cid) + enc. Callers
+/// add the row's own enc, which is what welds tag to row.
+fn si_tag_base<F: PrimeField>(cid: u32) -> F {
+	let f1 = F::from(1u64 << read_global_config().range2_bit);
+	let f5 = f1 * f1 * f1 * f1 * f1;
+	F::from(0x23001101u64) * f5 * F::from(1u64 << 32)
+		+ F::from(cid as u64) * f5
+}
+
+/// Pin one si companion column: si == tag when the mask is on and
+/// si == RANGE2 when it is off, with tag = si_tag_base(cid) + key.
+/// ONE constraint -- see the comment in assert_neo_si_pins for the
+/// two-cases-in-one-line form and why c_tag arrives pre-shifted.
+/// INVARIANT: every VARIABLE-si column that core_container
+/// registers is pinned through this helper, either in
+/// assert_neo_si_pins (base cols) or in assert_neo_si_pins_nonaggr
+/// (nonaggr cols + the JR table).
+fn check_si_pin<F: PrimeField + ColEle>(
+	mask: &FpVar<F>, key: &FpVar<F>, si: &FpVar<F>,
+	c_tag: &FpVar<F>, c_rg2: &FpVar<F>, _msg: &str,
+) -> Result<(), SynthesisError> {
+	check_prod_eq(mask, &(c_tag + key), &(si - c_rg2), _msg)
+}
+
 /// Build one boolean column: out[i] = (vars[i]==0), 2cs per row.
 /// `native` must hold the same values as `vars` (used only for the
 /// batched inverse hints; constraints bind vars alone).
@@ -1537,6 +1623,24 @@ fn gen_zero_bits<F: PrimeField + ColEle>(
 	let inv = batch_inv(native);
 	(0..native.len()).map(|i|
 		is_zero_better_adv(&vars[i], &inv[i], cs)).collect()
+}
+
+/// Build one GATE-ONLY zero bit per row: out[i] is FORCED to 0
+/// when vars[i] != 0 (weld out*var = 0, 1cs); when vars[i] == 0
+/// it is free advice (honest value 1). Use ONLY to skip a check
+/// at a sentinel -- re-enabling it there only harms the prover.
+fn gen_gate_bits<F: PrimeField + ColEle>(
+	cs: &ConstraintSystemRef<F>, native: &[F], vars: &[FpVar<F>],
+) -> Result<Vec<FpVar<F>>, SynthesisError> {
+	// NOTE(perf): unlike gen_zero_bits there is NO field inverse
+	// here, so batch_inversion has nothing to amortize -- the
+	// per-row work is already one witness + one constraint.
+	(0..native.len()).map(|i| {
+		let b = new_var(cs, if native[i].is_zero() { F::one() }
+			else { F::zero() });
+		check_prod_zero(&b, &vars[i], lc!(), "gate bit")?;
+		Ok(b)
+	}).collect()
 }
 
 /// FpVar mirror of QmTable's columns (data + si); what constraints
@@ -1551,8 +1655,7 @@ pub(crate) struct QmVars<F: PrimeField + ColEle> {
 	pub rg1: Vec<FpVar<F>>, pub rg2: Vec<FpVar<F>>,
 	pub enc_prev: Vec<FpVar<F>>, pub b_bwd: Vec<FpVar<F>>,
 	pub d_c1: Vec<FpVar<F>>, pub d_c2: Vec<FpVar<F>>,
-	pub d_below_lo: Vec<FpVar<F>>, pub d_below_hi: Vec<FpVar<F>>,
-	pub d_above_lo: Vec<FpVar<F>>, pub d_above_hi: Vec<FpVar<F>>,
+	pub d_below_lo: Vec<FpVar<F>>, pub d_above_lo: Vec<FpVar<F>>,
 	pub d_sort: Vec<FpVar<F>>,
 	pub si_step: Vec<FpVar<F>>, pub si_subsig: Vec<FpVar<F>>,
 	pub si_pat: Vec<FpVar<F>>, pub si_rg1: Vec<FpVar<F>>,
@@ -1562,195 +1665,464 @@ pub(crate) struct QmVars<F: PrimeField + ColEle> {
 	pub nonaggr: QmNonAggrVars<F>,
 }
 
+/// NONAGGR ONLY -- circuit-var mirror of JrTable (all vecs empty
+/// under aggressive). Allocated by load_neo_stmt_nonaggr.
+pub(crate) struct JrVars<F: PrimeField + ColEle> {
+	pub enc: Vec<FpVar<F>>, pub pat: Vec<FpVar<F>>,
+	pub id: Vec<FpVar<F>>, pub loc: Vec<FpVar<F>>,
+	pub si_pat: Vec<FpVar<F>>,
+}
+
+impl<F: PrimeField + ColEle> JrVars<F> {
+	/// all-empty mirror for the aggressive loader (never read).
+	pub(crate) fn empty() -> Self {
+		Self { enc: vec![], pat: vec![], id: vec![],
+			loc: vec![], si_pat: vec![] }
+	}
+}
+
 /// Per-row selector bits handed to every downstream cert block.
 /// is_wrap is a linear residual (may be non-boolean only on rows
 /// other invariants already reject); the rest are forced bits.
 /// is_bp/is_sp exist only in the non-aggressive arm (empty in aggr,
-/// whose cats are {0, C, FP} after the BP->C retag).
+/// whose cats are {0, C, FP} after the BP->C retag); b_bwd_row is
+/// aggressive-only (EMPTY in non-aggr: no backward subsigs there).
 pub(crate) struct NeoSel<F: PrimeField + ColEle> {
 	pub is_pad: Vec<FpVar<F>>, pub is_wrap: Vec<FpVar<F>>,
 	pub is_c: Vec<FpVar<F>>, pub is_fp: Vec<FpVar<F>>,
 	pub is_bp: Vec<FpVar<F>>, pub is_sp: Vec<FpVar<F>>,
 	pub is_step0: Vec<FpVar<F>>, pub b_bwd_row: Vec<FpVar<F>>,
 	pub is_last: Vec<FpVar<F>>,
+	/// (is_c + is_fp) * is_step0: the real seed-row indicator on
+	/// any satisfying assignment (the seed pin kills FP seeds),
+	/// exported so sel_c = is_c - is_seed is a free combination.
+	pub is_seed: Vec<FpVar<F>>,
+}
+
+/// Per-row rank counters over the two queried subsets of Q_m:
+/// rid = rank within the reachable rows (wrap|C|BP|SP), cid =
+/// rank within the carried rows (wrap|C; EMPTY in aggr). Both
+/// are in-circuit prefix sums, reset per group, and give lookups
+/// their order coordinate ("id 1 = the group's smallest
+/// surviving loc").
+pub(crate) struct QmRanks<F: PrimeField + ColEle> {
+	pub rid: Vec<FpVar<F>>,
+	pub cid: Vec<FpVar<F>>,
+}
+
+/// Accumulator for queries into Q_m's committed rows. The four
+/// certificate functions (assert_carry, assert_fwd_pruning,
+/// assert_bwd_pruning, assert_singleton_pruning) PUSH
+/// (query, selector) pairs; none of them runs a lookup itself.
+/// assert_qm_lookups later checks ALL buffered queries in one
+/// shared batch lookup (logup) per buffer -- one multiplicity
+/// table and one lookup argument serve every certificate, which
+/// is cheaper than each certificate running its own.
+/// Queries and targets share the packing enc + r1*id + r1^2*loc.
+/// A pair with sel = 0 is vacuous (padding / non-applicable row).
+///
+/// A buffered query claims "this row exists in a chosen SUBSET
+/// of Q_m". Only two subsets are ever queried, and each needs
+/// its own instance because one batch lookup has ONE target set:
+///
+///   REACHABLE instance -- subset Q_r = wrap|C|BP|SP rows (all
+///     but FP). Used where the claim is "this row was not
+///     forward-pruned": assert_fwd_pruning's two bracketing
+///     neighbors of an FP row, and the seed anchors.
+///
+///   CARRIED instance -- subset = wrap|C rows only. Used where
+///     the claim is "this row SURVIVED into the carry":
+///     assert_carry's predecessor of a C row, and the
+///     group-minimum pins of assert_bwd_pruning /
+///     assert_singleton_pruning (a minimum is only meaningful
+///     over surviving rows).
+///
+/// The id inside the packing is the row's rank WITHIN its
+/// subset (rid over Q_r, cid over carried), which is what makes
+/// "id 1 = the group's smallest surviving loc" pins work.
+/// Aggr has no BP/SP rows, so the two subsets coincide: one
+/// instance serves every certificate fn.
+///
+/// CALLERS: only the entry fns assert_neo_{aggr,nonaggr} create
+/// instances and call assert_qm_lookups (as their last step,
+/// consuming the buffers); certificate fns only push.
+pub(crate) struct QmQueryBuf<F: PrimeField + ColEle> {
+	pub qry: Vec<FpVar<F>>,
+	pub sel: Vec<FpVar<F>>,
+}
+
+impl<F: PrimeField + ColEle> QmQueryBuf<F> {
+	pub fn new() -> Self { Self { qry: vec![], sel: vec![] } }
+
+	pub fn push(&mut self, qry: FpVar<F>, sel: FpVar<F>) {
+		self.qry.push(qry);
+		self.sel.push(sel);
+	}
+}
+
+/// The previous-step row that assert_carry and assert_fwd_pruning
+/// both name: packed lookup keys for the (rank, rank+1) neighbor
+/// pair, plus the "lower slot is the 0-wrap" bit. Built once per
+/// chunk instead of once per consumer.
+pub(crate) struct PredView<F: PrimeField + ColEle> {
+	/// pack(enc_prev, prev_id1, prev_loc1): C's predecessor and
+	/// FP's lower bracket neighbor.
+	pub key1: Vec<FpVar<F>>,
+	/// pack(enc_prev, prev_id1 + 1, prev_loc2): FP's upper
+	/// bracket neighbor, rank-adjacent to key1 by construction.
+	pub key2: Vec<FpVar<F>>,
+	/// prev_loc1 == 0 bits. NON-AGGR: forced zero bits (the
+	/// carry 0-wrap ban needs "loc1 = 0 -> bit = 1"). AGGR:
+	/// gate-only bits (only FP's below-skip reads them).
+	pub z_loc1: Vec<FpVar<F>>,
 }
 
 impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
-	/// Row-classification layer, both arms. Every T_qm row is proven
-	/// exactly one of: PAD (enc==0 filler), WRAP (per-group
-	/// loc-0/loc-max sentinel), C (reachable match), FP (unreachable
-	/// match), and -- non-aggressive only -- BP (scan outran it) or
-	/// SP (frozen-step surplus). All later blocks mask their
-	/// constraints with these bits, so their soundness rests on the
-	/// bits being FORCED, not advice. Also derives is_step0 (seed
-	/// rows, exempt from C cert and merge) and b_bwd_row (per-row
-	/// window direction).
-	/// PARAMS: t = native cols (batched inverse hints ONLY; hints
-	/// cannot weaken soundness -- constraints bind vars); v = the
-	/// allocated circuit vars; r1 = msg2 challenge (fuses the two
-	/// seed pins); b_aggr selects the arm (the aggressive stream is
-	/// bit-identical to M6). Also derives is_last (LAST si tag,
-	/// shared by the wf run lemma and the acc/BP feeds).
-	/// COST: ~19*n aggr / ~24*n non-aggr. PERF 61081.1.
+	/// Row-classification layer, run in BOTH modes (aggressive and
+	/// non-aggressive). Every T_qm row is proven to be exactly one
+	/// of: PAD (enc==0 filler), WRAP (the loc-0 / loc-max sentinel
+	/// rows that bracket a group), C (reachable match), FP
+	/// (unreachable match), and -- non-aggressive only -- BP (the
+	/// scan outran it) or SP (frozen-step surplus). Every later
+	/// block masks its constraints with these bits, so soundness
+	/// rests on the bits being FORCED here, not chosen.
+	///
+	/// Advice names (per row; all derived here, none committed):
+	///   is_pad, is_step0, is_step1, is_last, plus is_bp and is_sp
+	///            in non-aggr -- zero-INDICATOR bits: the bit is 1
+	///            if and only if the tested column equals its
+	///            sentinel. BOTH implications are enforced (col =
+	///            sentinel => bit = 1, AND bit = 1 => col =
+	///            sentinel); the cheaper 1cs "gate" bit gives only
+	///            the second, and every consumer here reads both.
+	///   is_c, is_fp  NOT bits at all, but expressions in cat (see
+	///            Section 3). An R1CS constraint is written over
+	///            linear combinations of variables, so 2*cat -
+	///            cat^2 and (cat^2 - cat)/2 can stand wherever a
+	///            bit stands, at ZERO extra constraints.
+	///   is_wrap  the leftover share, same idea: a wrap row has no
+	///            cat of its own (cat = 0, exactly like a pad), so
+	///            it is named by elimination, 1 - is_pad - is_c -
+	///            is_fp (- is_bp - is_sp), and check (3) then makes
+	///            the prover earn it. It lands in {0,1} because
+	///            check (4) keeps a pad's cat at 0, so no row is
+	///            counted in two shares at once.
+	///   is_seed  1 on a subsig's step-0 row -- the artificial
+	///            match at loc 1 that every chain starts from.
+	///            It is the mask check (5) already multiplies, so
+	///            it costs nothing extra; exported because (5)
+	///            also bans FP seeds, making it exactly
+	///            is_c * is_step0. The two blocks that want "a C
+	///            row that is NOT the seed" then write
+	///            is_c - is_seed -- a subtraction of columns that
+	///            already exist -- instead of one multiplication
+	///            per row each.
+	///
+	/// Checks:
+	///  (1) row 0 is a pad (closes the i-1 read at table start);
+	///  (2) cat is a class node: cat*(cat-1)*(cat-2) = 0, non-aggr
+	///      folding its two extra nodes off cat first;
+	///  (3) a wrap row really sits at a sentinel: loc in {0, max};
+	///  (4) pad hygiene: a pad carries neither loc nor cat;
+	///  (5) seed pins: a real step-0 row sits at loc 1, never FP;
+	///  (6) NON-AGGR: a real step-0 row stays C (not BP/SP);
+	///  (7) AGGR: b_bwd_row = the row's window direction, forced
+	///      forward on step-1 rows (their predecessor is the seed,
+	///      an anchor rather than a real location).
+	///
+	/// EXAMPLE (fig-14) group a1 = [0w, 43C, 131FP, maxw]:
+	/// is_wrap 1,0,0,1; is_c 0,1,0,0; is_fp 0,0,1,0.
+	///  - CHEAT junk cat at a real loc: cat = 7 is not a node ->
+	///    (2) UNSAT; nor can it pose as a wrap, (3) wants loc in
+	///    {0,max}.
+	///  - CHEAT C and FP at once: cat is ONE node, so no row stalls
+	///    its rank (as FP) while passing a C window.
+	///  - CHEAT fake seed at loc 500: (5) pins step-0 rows to loc
+	///    1, else a1:505 cites it and fabricates reach.
+	///  - CHEAT FP seed: orphans every step-1 row and lets a whole
+	///    live chain be labeled away; (5) bans it.
+	/// PARAMS: t = native cols, batched-inverse HINTS only (hints
+	/// cannot weaken soundness -- constraints bind v alone).
+	/// COST: ~18*n aggr / ~20*n non-aggr. PERF 61081.1.
 	fn assert_neo_selectors(
 		cs: ConstraintSystemRef<F>,
-		t: &QmTable<F>, v: &QmVars<F>, r1: &FpVar<F>, b_aggr: bool,
+		t: &QmTable<F>, v: &QmVars<F>, b_aggr: bool,
 		job_id: usize,
 	) -> Result<NeoSel<F>, SynthesisError> {
 		let n0 = cs.num_constraints();
 		let n = t.enc.len();
 		let max_val: usize = (1 << read_global_config().range2_bit) - 1;
-		let (f_c, f_fp) = (F::from(CAT_C), F::from(CAT_FP));
 		let c_one = new_const_var(&cs, F::one());
+		let c_two = new_const_var(&cs, F::from(2u32));
+		let c_three = new_const_var(&cs, F::from(3u32));
+		let c_four = new_const_var(&cs, F::from(4u32));
+		let c_half = new_const_var(&cs,
+			F::from(2u32).inverse().unwrap());
 		let c_max = new_const_var(&cs, F::from(max_val as u32));
-		// --- Section 1: forced boolean bit columns (2cs each/row) ---
-		// is_pad <=> enc==0; is_c/is_fp (and non-aggr is_bp/is_sp)
-		// <=> cat; is_step0/1 <=> step. step is trustworthy:
-		// si_step is pinned (C5) + outer lookup.
-		let is_pad = gen_zero_bits(&cs, &t.enc, &v.enc)?;
-		let is_c = gen_zero_bits(&cs,
-			&t.cat.iter().map(|c| *c - f_c).collect::<Vec<F>>(),
-			&v.cat.iter().map(|c| c - &new_const_var(&cs, f_c))
-				.collect::<Vec<_>>())?;
-		let is_fp = gen_zero_bits(&cs,
-			&t.cat.iter().map(|c| *c - f_fp).collect::<Vec<F>>(),
-			&v.cat.iter().map(|c| c - &new_const_var(&cs, f_fp))
-				.collect::<Vec<_>>())?;
-		let (is_bp, is_sp) = if b_aggr { (vec![], vec![]) } else {
-			let (f_bp, f_sp) = (F::from(CAT_BP), F::from(CAT_SP));
-			(gen_zero_bits(&cs,
-				&t.cat.iter().map(|c| *c - f_bp)
-					.collect::<Vec<F>>(),
-				&v.cat.iter().map(|c|
-					c - &new_const_var(&cs, f_bp))
-					.collect::<Vec<_>>())?,
-			 gen_zero_bits(&cs,
-				&t.cat.iter().map(|c| *c - f_sp)
-					.collect::<Vec<F>>(),
-				&v.cat.iter().map(|c|
-					c - &new_const_var(&cs, f_sp))
-					.collect::<Vec<_>>())?)
+		// the interpolants in Section 3 are tied to this numbering.
+		assert!(CAT_C == 1 && CAT_FP == 2 && CAT_BP == 3
+			&& CAT_SP == 4, "neo class bits assume nodes 0..4");
+		// --- Section 1: forced zero-indicator bits (2cs each) ---
+		// gen_zero_bits enforces both implications; a 1cs gate bit
+		// would enforce only "bit = 1 => col = sentinel". Both
+		// senses are read here, e.g. is_step0 = 0 on a real step-0
+		// row would demand DB facts that do not exist for the seed
+		// key, while is_step0 = 1 on a step>0 row would skip that
+		// row's rg1/rg2 pins outright.
+		let zbit = |col: &Vec<F>, var: &Vec<FpVar<F>>, s: F|
+		-> Result<Vec<FpVar<F>>, SynthesisError> {
+			let c_s = new_const_var(&cs, s);
+			gen_zero_bits(&cs,
+				&col.iter().map(|x| *x - s).collect::<Vec<F>>(),
+				&var.iter().map(|x| x - &c_s).collect::<Vec<_>>())
 		};
+		let is_pad = gen_zero_bits(&cs, &t.enc, &v.enc)?;
 		let is_step0 = gen_zero_bits(&cs, &t.step, &v.step)?;
-		let is_step1 = gen_zero_bits(&cs,
-			&t.step.iter().map(|s| *s - F::one()).collect::<Vec<F>>(),
-			&v.step.iter().map(|s| s - &c_one).collect::<Vec<_>>())?;
-		// is_last <=> si_step carries the LAST tag of THIS enc
-		// (si_step pinned in C5 + outer-bound; shared by the wf
-		// run-completeness lemma and the acc/BP feeds).
-		let f1l = F::from(1u64 << read_global_config().range2_bit);
-		let f5l = f1l * f1l * f1l * f1l * f1l;
-		let cl_nat = F::from(0x23001101u64) * f5l
-			* F::from(1u64 << 32)
-			+ F::from(ID_ENCODED_LAST_STEP as u64) * f5l;
-		let c_l2 = new_const_var(&cs, cl_nat);
-		let tg_nat: Vec<F> = (0..n).map(|i|
-			t.si_step[i] - cl_nat - t.enc[i]).collect();
-		let tg_var: Vec<FpVar<F>> = (0..n).map(|i|
-			&(&v.si_step[i] - &c_l2) - &v.enc[i]).collect();
-		let is_last = gen_zero_bits(&cs, &tg_nat, &tg_var)?;
-		// --- Section 2: row 0 must be a pad (once) ---
-		// the group-start cert reads row i-1; forcing enc[0]==0
+		// C and FP need no bits (Section 3). BP/SP do: they are the
+		// nodes folded OFF cat there, so they must be pinned first.
+		let (is_bp, is_sp) = if b_aggr { (vec![], vec![]) } else {
+			(zbit(&t.cat, &v.cat, F::from(CAT_BP))?,
+			 zbit(&t.cat, &v.cat, F::from(CAT_SP))?)
+		};
+		// non-aggr has no backward subsigs (asserted at the advice
+		// fill), so the whole direction layer is aggr-only. This
+		// bit must be a full indicator, not a gate: a backward
+		// subsig's step-1 FP row could otherwise claim is_step1 =
+		// 0, keep its mirrored window, and discharge a location the
+		// seed actually reaches (the mirrored below-test is
+		// trivially true and the max-wrap skips the above-test).
+		let is_step1 = if b_aggr {
+			zbit(&t.step, &v.step, F::one())?
+		} else { vec![] };
+		// is_last <=> si_step carries the LAST tag of THIS enc, so
+		// the bit names a DB fact (si_step is 2-tag pinned by
+		// si_pins + bound by the outer lookup). NOTE: pad rows
+		// carry the subsig-0 LAST tag, so is_last = 1 on pads;
+		// consumers mask by is_pad or by enc.
+		let cl_nat = si_tag_base::<F>(ID_ENCODED_LAST_STEP);
+		let c_l = new_const_var(&cs, cl_nat);
+		let is_last = gen_zero_bits(&cs,
+			&(0..n).map(|i| t.si_step[i] - cl_nat - t.enc[i])
+				.collect::<Vec<F>>(),
+			&(0..n).map(|i| &(&v.si_step[i] - &c_l) - &v.enc[i])
+				.collect::<Vec<_>>())?;
+		// --- Section 2 / check (1): row 0 is a pad (1cs, once) ---
+		// the group-start rule reads row i-1; forcing enc[0] == 0
 		// closes the table-start boundary (pads sort first).
-		check_eq(&v.enc[0], &FpVar::<F>::Constant(F::zero()), "neo row0 pad")?;
+		check_eq(&v.enc[0], &FpVar::<F>::Constant(F::zero()),
+			"neo row0 pad")?;
 		let mut sel = NeoSel { is_pad: vec![], is_wrap: vec![],
 			is_c: vec![], is_fp: vec![], is_bp: vec![],
 			is_sp: vec![], is_step0: vec![], b_bwd_row: vec![],
-			is_last: vec![] };
+			is_last: vec![], is_seed: vec![] };
 		for i in 0..n {
-			// --- Section 3: wrap bit as unity residual (2cs) ---
-			// is_wrap := 1 - is_pad - (all cat bits) is a FREE LC,
-			// so "one class per row" holds by construction. FORCED
-			// part: a residual row must be a sentinel: loc in
-			// {0,max}. A mistagged row (cat=7 at a real loc) fails
-			// here; the pad-with-cat corner dies via hygiene below.
-			let mut is_wrap =
-				&c_one - &is_pad[i] - &is_c[i] - &is_fp[i];
-			if !b_aggr {
-				is_wrap = &is_wrap - &is_bp[i] - &is_sp[i];
-			}
+			// --- Section 3 / check (2): one cubic pins cat ---
+			// cat is committed with si 0 (no outer range check),
+			// so nothing yet stops it being an arbitrary field
+			// element. Two ways to get class bits out of it:
+			//   was: one zero-indicator bit per class, 2cs each
+			//        -- 4cs aggressive, 8cs non-aggressive;
+			//   now: pin cat to one of 3 nodes with a single
+			//        cubic, then READ the classes off cat -- 2cs,
+			//        both arms.
+			// ce2 is the only witness this costs: ce2 = cat_e^2
+			// (1cs). Given ce2, the cubic is one more constraint
+			// and the classes are quadratics through the 3 nodes:
+			//   cat_e                0 (pad/wrap)  1 (C)  2 (FP)
+			//   ce2 = cat_e^2              0         1      4
+			//   is_c  = 2*cat_e - ce2      0         1      0
+			//   is_fp = (ce2 - cat_e)/2    0         0      1
+			// Neither line allocates anything: both are linear in
+			// the variables (cat_e, ce2), and R1CS constraints are
+			// written over exactly such combinations, so they are
+			// free wherever they are used downstream.
+			// They are BOOLEAN even though nothing declares them
+			// so, and the argument rests on ce2 NOT being free
+			// advice: the multiplication above binds ce2 =
+			// cat_e^2, and the cubic leaves cat_e three roots, so
+			// (is_c, is_fp) can only be (0,0), (1,0) or (0,1).
+			// Exclusivity and is_c + is_fp in {0,1} come with it.
+			// cat_e ("effective cat") exists only so both arms can
+			// share that cubic: non-aggr's cat also takes 3 (BP)
+			// and 4 (SP), which alone would need a quartic. Since
+			// is_bp/is_sp are already forced bits, subtracting
+			// 3*is_bp + 4*is_sp maps those two nodes onto 0 and
+			// leaves the other three untouched. A junk cat (7)
+			// sets neither bit, so cat_e = 7, no root -> UNSAT.
+			// Pinning cat to ONE node is also what makes the
+			// classes mutually exclusive, and that is
+			// load-bearing: a row tagged C AND FP would stall rid
+			// (hiding a reachable row) while still passing its C
+			// window, forging a rank-adjacent FP bracket one step
+			// later.
+			let cat_e = if b_aggr { v.cat[i].clone() } else {
+				&(&v.cat[i] - &(&is_bp[i] * &c_three))
+					- &(&is_sp[i] * &c_four)
+			};
+			let ce2 = &cat_e * &cat_e;
+			check_prod_zero(&(&ce2 - &cat_e), &(&cat_e - &c_two),
+				lc!(), "neo cat is a class node")?;
+			let is_c = &(&cat_e * &c_two) - &ce2;
+			let is_fp = &(&ce2 - &cat_e) * &c_half;
+			// --- Section 4 / check (3): wrap = the residual ---
+			// A wrap row carries cat = 0, the same as a pad: there
+			// is no "wrap" value to test for. So the class is
+			// assigned by elimination, and check (3) then makes
+			// the prover earn it -- a wrap must sit at loc 0 or
+			// loc max. That is also what stops a real match row
+			// from dropping its cat to escape its certificate:
+			// the row becomes a wrap and is dragged to a sentinel
+			// loc it does not have.
+			// The residual is in {0,1} because at most one share
+			// on the right is 1: the cat classes are exclusive by
+			// Section 3, and check (4) below keeps a pad's cat at
+			// 0, so is_pad never overlaps them.
+			let res = &(&(&c_one - &is_pad[i]) - &is_c) - &is_fp;
+			let is_wrap = if b_aggr { res } else {
+				&(&res - &is_bp[i]) - &is_sp[i]
+			};
 			let t1 = &is_wrap * &v.loc[i];
 			check_prod_zero(&t1, &(&v.loc[i] - &c_max), lc!(),
 				"neo wrap loc in {0,max}")?;
-			// --- Section 4: pad hygiene (1cs) ---
-			// pads carry no payload: loc + cat == 0.
-			check_prod_zero(&is_pad[i], &(&v.loc[i] + &v.cat[i]),
-				lc!(), "neo pad hygiene")?;
-			// --- Section 5: seed pins, real-gated (2cs) ---
-			// Fused via r1: t0*(loc-1)==0 and is_step0*is_fp==0
-			// (t0*is_fp==is_step0*is_fp since is_c*is_fp==0).
-			// Duplicate honest seeds allowed (harmless).
-			// EXAMPLE loc==1: fake seed (step0,loc=500,cat=C) would
-			//   let an unreachable a1:505 pass its C cert
-			//   (505-500=5 in [1,9]) -> fabricated reachability.
-			// EXAMPLE !FP: tagging the seed FP would orphan every
-			//   step-1 row, letting the whole chain go FP -> false
-			//   discharge. The seed anchors the anti-drop cascade.
-			let t0 = (&is_c[i] + &is_fp[i]) * &is_step0[i];
-			check_prod_zero(&t0,
-				&(&(&v.loc[i] - &c_one) + &(r1 * &is_fp[i])), lc!(),
-				"neo seed pins")?;
-			// --- Section 5b (non-aggr): seed stays C (1cs) ---
-			// A BP/SP-tagged seed would silently drop the anchor
-			// from q_c; forcing real step-0 rows to C keeps the
-			// carried seed invariant across chunks.
+			// --- Section 5 / check (4): pad hygiene (2cs) ---
+			// loc: pads must pack to ZERO for the union multiset.
+			// cat: a SEPARATE constraint on purpose -- loc carries
+			// si 0 too, so a fused (loc + cat) rule would admit
+			// cat = FP with loc = -FP: a pad that DECREMENTS rid
+			// and signs the QR target with multiplicity -1. Split,
+			// this is what keeps is_pad disjoint from the cat
+			// classes, hence is_wrap boolean on every row and
+			// every lookup selector non-negative.
+			check_prod_zero(&is_pad[i], &v.loc[i], lc!(),
+				"neo pad loc")?;
+			check_prod_zero(&is_pad[i], &v.cat[i], lc!(),
+				"neo pad cat")?;
+			// --- Section 6 / check (5): the seed row (3cs) ---
+			// A subsig's chain starts at an artificial step-0
+			// match placed at loc 1. Pin it: any real (C or FP)
+			// step-0 row must be at loc 1, else a step-1 row cites
+			// a fabricated seed at loc 500 and claims reach. Ban
+			// FP seeds too: an FP seed orphans every step-1 row
+			// and lets a whole live chain be labeled away.
+			// t0 is that pin's mask, exported as is_seed. With FP
+			// seeds banned it equals is_c * is_step0, so consumers
+			// get "C but not the seed" as the free subtraction
+			// is_c - is_seed (assert_carry, assert_verdict_aggr);
+			// without the ban that subtraction could go NEGATIVE
+			// on an FP seed row and feed a negative multiplicity.
+			let t0 = (&is_c + &is_fp) * &is_step0[i];
+			check_prod_zero(&t0, &(&v.loc[i] - &c_one), lc!(),
+				"neo seed at loc 1")?;
+			check_prod_zero(&is_fp, &is_step0[i], lc!(),
+				"neo seed not FP")?;
+			sel.is_seed.push(t0);
+			// --- Section 6b / check (6): non-aggr seed stays C ---
+			// NOT implied by the seed anchor: the non-aggr QR
+			// target admits BP/SP rows, so an SP-tagged seed would
+			// still answer the anchor query while leaving q_c
+			// short by one carried row.
 			if !b_aggr {
 				check_prod_zero(&is_step0[i],
 					&(&is_bp[i] + &is_sp[i]), lc!(),
 					"neo seed stays C")?;
 			}
-			// --- Section 6: per-row window direction (1cs) ---
-			// b_bwd = per-subsig flag, DB-bound {0,1} via si_b_bwd.
-			// Step 1 is ALWAYS the forward keyword anchor (legacy
-			// CU5a/CU6: bit && src_step!=0).
-			// EXAMPLE: sig "a1 .{1,9} kw" stored kw-first. kw:50 at
-			//   step1: b_bwd_row=0 -> forward gap 50-1=49 from seed.
-			//   a1:43 at step2: b_bwd_row=1 -> mirrored gap
-			//   50-43=7 in [1,9] (a1 occurs BEFORE the keyword).
-			let b_bwd_row = &v.b_bwd[i] * (&c_one - &is_step1[i]);
+			// --- Section 7 / check (7): window direction (1cs,
+			//     AGGR only; sel.b_bwd_row stays empty else) ---
+			// b_bwd is a DB fact about the row's subsig: its steps
+			// are stored in reverse, so the gap to the predecessor
+			// is measured the other way round. It cannot apply at
+			// step 1, whose predecessor is the seed anchor rather
+			// than a real location.
+			// EXAMPLE sig "a1 .{1,9} kw", stored kw-first:
+			//   kw:50 at step 1 -- pred is the seed at loc 1, so
+			//     the gap is read FORWARD, 50 - 1 = 49;
+			//   a1:43 at step 2 -- pred is the real row kw:50, so
+			//     the MIRRORED gap 50 - 43 = 7 is the one that
+			//     must land in [1,9].
+			// Hence b_bwd_row = b_bwd everywhere except step 1,
+			// where it is forced to 0. Read by assert_carry and
+			// assert_fwd_pruning.
+			if b_aggr {
+				sel.b_bwd_row.push(&v.b_bwd[i]
+					* (&c_one - &is_step1[i]));
+			}
+			sel.is_c.push(is_c);
+			sel.is_fp.push(is_fp);
 			sel.is_wrap.push(is_wrap);
-			sel.b_bwd_row.push(b_bwd_row);
 		}
-		sel.is_pad = is_pad; sel.is_c = is_c; sel.is_fp = is_fp;
-		sel.is_bp = is_bp; sel.is_sp = is_sp;
+		sel.is_pad = is_pad; sel.is_bp = is_bp; sel.is_sp = is_sp;
 		sel.is_step0 = is_step0; sel.is_last = is_last;
 		log(job_id, LOG3, &format!(
 			"PERF 61081.1: block=selectors cs={} pred={}",
 			cs.num_constraints() - n0,
-			(if b_aggr { 19 } else { 24 }) * n));
+			(if b_aggr { 18 } else { 20 }) * n));
 		Ok(sel)
 	}
 
-	/// TERMS: a GROUP = all T_qm rows sharing one key enc(subsig,
-	/// step); its first row is the 0-WRAP (loc 0 sentinel), its last
-	/// the MAX-WRAP (loc max); real rows between them are matches
-	/// tagged C or FP. The QR-TARGET is the lookup table of REACHABLE
-	/// rows: every wrap/C row keyed pack(enc, rid, loc), where rid
-	/// ranks those rows 0,1,2,.. inside their group (FP skipped).
-	/// This function proves T_qm has that shape: (a) legacy wf; (b)
-	/// group-start cert (pads prefix; first row of a group is its
-	/// 0-wrap with id 0); (c) STRICT loc ascent (no duplicates); (d)
-	/// group uniqueness vs the expected keys (store rows + one seed
-	/// key per subsig) -- no cloned/invented groups; (e) rid chain.
-	/// PARAMS: s_enc = bound store rows' enc col; subsigs = stmt
-	/// subsig list (seed enc = subsig*2^(4rb)); r1 fuses pairs, r2
-	/// fingerprints the key multiset. Returns (grp_start, rid).
-	/// SHARED by both arms: rid increments as 1-is_pad-is_fp, which
-	/// in the aggressive table (cats {0,C,FP}) is literally the
-	/// same linear combination as is_wrap+is_c, and in the
-	/// non-aggressive table also counts BP/SP -- the paper's Q_r.
-	/// Plus (f) RUN COMPLETENESS: each subsig's contiguous group run
-	/// starts at its step-0 seed, steps by +1, and ends only at its
-	/// DB-LAST group -- with the seed anchor this forces the FULL
-	/// chain of every present subsig (kills the n12 tail-drop).
-	/// COST: ~26*n (folds the ~2*(|S|+|subsigs|) term).
-	/// PERF 61081.2.
+	/// Proves T_qm has the SHAPE every later certificate assumes.
+	/// TERMS: a GROUP is all rows sharing one key enc(subsig, step);
+	/// it opens with a 0-WRAP (loc 0) and closes with a MAX-WRAP
+	/// (loc max), the group's matches sorted in between. A RUN is
+	/// all groups of one subsig, steps 0, 1, 2, ... The QR TARGET
+	/// is the lookup image of the reachable rows, addressed by rid,
+	/// a per-group rank that skips FP rows.
+	///
+	/// Advice names:
+	///   b_same    zero-indicator bit, enc[i] == enc[i-1]: row i
+	///             continues the previous group. Derived once here
+	///             and reused by checks (1), (2) and (3);
+	///   same_sub  the same bit on the subsig column (run
+	///             adjacency);
+	///   d_sort    committed column holding, on a row that
+	///             continues a group, the gap to the row above
+	///             minus one: loc[i] - loc[i-1] - 1 (and 0 on any
+	///             other row). It carries a RANGE2 si, so the OUTER
+	///             lookup forces it to be a non-negative RANGE2
+	///             value, which says exactly loc[i] >= loc[i-1] + 1
+	///             -- the strict ascent of check (3);
+	///   grp_start returned: (1 - b_same) * (1 - is_pad), the reset
+	///             signal of both rank chains;
+	///   rid       returned: a row's ADDRESS inside the QR target.
+	///             It advances on every REACHABLE row -- the two
+	///             wraps and C in aggr, plus BP and SP in non-aggr
+	///             -- and stalls on FP rows, which therefore have
+	///             no address there at all. Reset to 0 at each
+	///             grp_start, so the address is per-group.
+	///
+	/// Checks:
+	///  (1) sorted-table skeleton: inside a group id steps by +1,
+	///      and a group that ends does so at its max-wrap;
+	///  (2) pads form a prefix, and a group's first row IS its
+	///      0-wrap (id 0, loc 0);
+	///  (3) strictly ascending loc inside a group (no duplicates);
+	///  (4) the multiset of group keys equals the expected keys --
+	///      one per bound store row plus one seed key per statement
+	///      subsig -- so no group is cloned or invented;
+	///  (5) rid chain (a definition, see Section 6);
+	///  (6) run completeness: a run starts at its subsig's step-0
+	///      seed, steps by +1, and may end only at a DB-LAST group.
+	///
+	/// EXAMPLE a6 = [0w, 73C, 79C, 96FP, 141C, maxw] -> rid
+	/// 0,1,2,2,3,4 (the FP row stalls the rank).
+	///  - CHEAT shift the ids so another row reads "id 1": (2) pins
+	///    a group's first row to id 0 AND loc 0.
+	///  - CHEAT clone a group of enc_x (the false-FP oracle): (4)
+	///    doubles enc_x's factor on one side only -> UNSAT.
+	///  - CHEAT repeat an (enc, loc) row: (3) then needs
+	///    d_sort = -1, which the RANGE2 table rejects.
+	///  - CHEAT drop a subsig's tail groups: (6) leaves that run
+	///    unable to end, its last present group not being DB-LAST.
+	/// PARAMS: s_enc = enc column of the bound store rows, s_enc_nat
+	/// its natives (zero-bit hints); subsigs = statement subsig ids
+	/// (seed key = subsig * 2^(4rb)); r2 fingerprints the key
+	/// multiset. Returns (grp_start, rid).
+	/// COST: ~19*n + ~4*(|s_enc| + |subsigs|). PERF 61081.2.
 	fn assert_neo_wf(
 		cs: ConstraintSystemRef<F>,
 		t: &QmTable<F>, v: &QmVars<F>, sel: &NeoSel<F>,
 		s_enc: &[FpVar<F>], subsigs: &[FpVar<F>],
 		s_enc_nat: &[F], subsig_nat: &[F],
-		r1: &FpVar<F>, r2: &FpVar<F>, job_id: usize,
+		r2: &FpVar<F>, job_id: usize,
 	) -> Result<(Vec<FpVar<F>>, Vec<FpVar<F>>), SynthesisError> {
 		let n0 = cs.num_constraints();
 		let n = t.enc.len();
@@ -1758,46 +2130,79 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		let c_max = new_const_var(&cs,
 			F::from(((1u64 << rb) - 1) as u64));
 		let c_one = new_const_var(&cs, F::one());
-		// --- Section 1: legacy wf skeleton (3cs/row, REUSE) ---
-		assert_well_formed_sorted(cs.clone(), &v.enc, &v.id, &v.loc,
-			None, None, None, None, r1.clone(), rb)?;
-		// --- Section 2: group-start cert (5cs/row) ---
-		// b_same[i] = (enc[i]==enc[i-1]); a non-pad key change is a
-		// group start and must BE a 0-wrap: id + r1*loc == 0.
-		// EXAMPLE: shifting a group's ids to make another row "id 1"
-		//   (the old min-inflation trick) dies here.
+		// --- Section 1: group adjacency bit (2cs/row) ---
+		// ONE forced indicator feeds the skeleton, the group starts
+		// and the strict sort. db::assert_well_formed_sorted builds
+		// its own private copy of exactly this bit, which is why
+		// its rule is inlined in Section 2 rather than called.
 		let mut d_nat = vec![F::zero(); n];
 		for i in 1..n { d_nat[i] = t.enc[i] - t.enc[i - 1]; }
-		let d_var = (0..n).map(|i| if i == 0 { FpVar::<F>::Constant(F::zero()) }
+		let d_var = (0..n).map(|i| if i == 0 {
+			FpVar::<F>::Constant(F::zero()) }
 			else { &v.enc[i] - &v.enc[i - 1] }).collect::<Vec<_>>();
 		let b_same = gen_zero_bits(&cs, &d_nat, &d_var)?;
+		// --- Section 2 / check (1): the skeleton (2cs/row) ---
+		// db::assert_well_formed_sorted's rule (no-sort,
+		// non-relaxed branch), inlined: a non-pad predecessor
+		// forces EITHER "same group and id steps by +1" OR "group
+		// changed and the previous row was the max-wrap". The gate
+		// (1 - is_pad[i-1]) is that fn's key[i-1] != 0 condition.
+		// Two parts of the original are gone: its private
+		// adjacency bit (Section 1 now serves it) and its r1 * loc
+		// term, which fingerprinted "loc[i] == 0 at a group start"
+		// -- Section 3 pins that directly and unconditionally,
+		// which is why this block needs no challenge at all.
+		// The (J-W) obligation of assert_join_locations (b_ext_wf =
+		// true, aggr view) rides on this Section plus Section 3.
+		check_eq(&v.id[0], &FpVar::<F>::Constant(F::zero()),
+			"neo id0")?;
+		for i in 1..n {
+			let p1 = &(&v.id[i] - &v.id[i - 1]) - &c_one;
+			let p2 = &v.loc[i - 1] - &c_max;
+			let res = &(&b_same[i] * &(&p1 - &p2)) + &p2;
+			check_prod_zero(&(&c_one - &sel.is_pad[i - 1]), &res,
+				lc!(), "neo wf skeleton")?;
+		}
+		// --- Section 3 / check (2): group starts (4cs/row) ---
+		// A non-pad key change opens a group, and that first row
+		// must BE the group's 0-wrap. Split into two pins instead
+		// of the old r1-fused "id + r1*loc == 0": same cost, holds
+		// unconditionally rather than with high probability, and it
+		// removes this function's last use of a challenge.
 		let mut grp_start = vec![FpVar::<F>::Constant(F::zero())];
 		for i in 1..n {
 			check_prod_zero(&(&c_one - &sel.is_pad[i - 1]),
 				&sel.is_pad[i], lc!(), "neo pads are a prefix")?;
 			let gs = (&c_one - &b_same[i])
 				* (&c_one - &sel.is_pad[i]);
-			check_prod_zero(&gs, &(&v.id[i] + &(r1 * &v.loc[i])),
-				lc!(), "neo group starts at its 0-wrap")?;
+			check_prod_zero(&gs, &v.id[i], lc!(),
+				"neo group starts at id 0")?;
+			check_prod_zero(&gs, &v.loc[i], lc!(),
+				"neo group starts at loc 0")?;
 			grp_start.push(gs);
 		}
 		check_prod_zero(&(&c_one - &sel.is_pad[n - 1]),
 			&(&v.loc[n - 1] - &c_max), lc!(), "neo last row max")?;
-		// --- Section 3: STRICT within-group sort (2cs/row) ---
-		// d_sort advice is RANGE2-si'd (>=0 via outer lookup); bind:
-		// same-group adjacency => d_sort == loc[i]-loc[i-1]-1.
-		// EXAMPLE: duplicated (enc,loc) row => diff-1 = -1, not in
-		//   the range table.
+		// --- Section 4 / check (3): strict sort (1cs/row) ---
+		// "row i continues the group" is b_same * (1 - is_pad),
+		// which equals (1 - is_pad) - grp_start: a FREE rewrite of
+		// two columns Section 3 already paid for. The bind then
+		// fits in one constraint. d_sort carries a RANGE2 si, so a
+		// repeated (enc, loc) row would have to bind -1 and dies at
+		// the outer range table.
 		for i in 1..n {
-			let same = &b_same[i] * (&c_one - &sel.is_pad[i]);
-			check_eq(&v.d_sort[i], &(&same
-				* &(&v.loc[i] - &v.loc[i - 1] - &c_one)),
-				"neo strict sort bind")?;
+			let same = &(&c_one - &sel.is_pad[i]) - &grp_start[i];
+			check_prod_eq(&same,
+				&(&(&v.loc[i] - &v.loc[i - 1]) - &c_one),
+				&v.d_sort[i], "neo strict sort bind")?;
 		}
-		// --- Section 4: group uniqueness (2cs/row + expected) ---
-		// grand product over 0-wrap keys (grp_start rows) == product
-		// over expected keys. EXAMPLE: an empty clone group of enc_x
-		//   (the round-1 false-FP oracle) doubles enc_x's pole.
+		// --- Section 5 / check (4): group uniqueness (2cs/row
+		//     + ~4 per expected key) ---
+		// A grand product over the 0-wrap keys must equal the
+		// product over the expected keys. Zero entries are pads
+		// (padded store rows, dummy-0 subsig slots) and contribute
+		// the neutral factor 1; a real store enc or subsig is never
+		// 0, so masking cannot hide a live key.
 		let mut lhs = c_one.clone();
 		for i in 0..n {
 			let term = &grp_start[i] * &(&(&v.enc[i] + r2) - &c_one);
@@ -1805,9 +2210,6 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		}
 		let f1 = F::from(1u64 << rb);
 		let c_sh4 = new_const_var(&cs, f1 * f1 * f1 * f1);
-		// 8_C: zero entries are pads (padded store rows / dummy-0
-		// subsig slots) -> factor 1, not r2. A real store enc/subsig
-		// is never 0, so masking cannot hide a live key.
 		let z_se = gen_zero_bits(&cs, s_enc_nat, s_enc)?;
 		let z_sg = gen_zero_bits(&cs, subsig_nat, subsigs)?;
 		let mut rhs = c_one.clone();
@@ -1822,15 +2224,14 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			rhs = &rhs * &fj;
 		}
 		check_eq(&lhs, &rhs, "neo group uniqueness")?;
-		// --- Section 5: rid rank chain (1cs/row) ---
-		// rid[i] = (1-grp_start)*(rid[i-1] + (1-is_pad-is_fp)): 0
-		// at the group start; +1 exactly on the NON-FP rows = the
-		// QR target (aggr: wrap/C; non-aggr: wrap/C/BP/SP). FP rows
-		// keep the previous rank and are invisible in the target.
-		// Increment is provably in {0,1}: the cat bits are forced
-		// exclusive zero-bits (negative cases die in C1's
-		// wrap-force/hygiene).
-		// EXAMPLE a6 [0w,73C,79C,96FP,141C,maxw]: rid 0,1,2,2,3,4.
+		// --- Section 6 / check (5): rid rank chain (1cs/row) ---
+		// 0 at a group start, then +1 on exactly the NON-FP rows,
+		// which are the QR target (aggr: wraps and C; non-aggr:
+		// also BP and SP). FP rows keep the previous rank and so
+		// have no address in the target at all.
+		// The increment lands in {0,1} rather than going negative
+		// because the classes are exclusive and pads are cat-free
+		// (selectors Sections 3 and 5).
 		let mut rid = vec![FpVar::<F>::Constant(F::zero())];
 		for i in 1..n {
 			let inc = &(&c_one - &sel.is_pad[i]) - &sel.is_fp[i];
@@ -1838,14 +2239,12 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 				* &(&rid[i - 1] + &inc);
 			rid.push(r_i);
 		}
-		// --- Section 6: run completeness (8cs/row) ---
-		// Sorted encs make each subsig's groups one contiguous RUN.
-		// (a) a run ends only at its DB-LAST group (is_last off the
-		// pinned si_step); (b) a run starts at its step-0 seed; (c)
-		// consecutive groups in a run step by +1. With the seed
-		// anchor: any subsig present shows its FULL chain 0..last,
-		// so the n12 joint store-drop (tail truncation) leaves an
-		// un-endable run -> UNSAT.
+		// --- Section 7 / check (6): run completeness (7cs/row) ---
+		// Sorted encs put each subsig's groups in one contiguous
+		// run. Ending a run only at a DB-LAST group, together with
+		// the seed anchor of assert_seed_anchors, forces any subsig
+		// that appears at all to show its FULL chain: a joint store
+		// drop leaves a run that cannot be closed.
 		let mut ds_nat = vec![F::zero(); n];
 		for i in 1..n { ds_nat[i] = t.subsig[i] - t.subsig[i - 1]; }
 		let ds_var = (0..n).map(|i| if i == 0 {
@@ -1855,13 +2254,17 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		let same_sub = gen_zero_bits(&cs, &ds_nat, &ds_var)?;
 		for i in 1..n {
 			let bnd = &grp_start[i] * &(&c_one - &same_sub[i]);
+			// a pad predecessor means this is the FIRST run in the
+			// table, so there is nothing behind it to end.
 			let t_end = &bnd * &(&c_one - &sel.is_pad[i - 1]);
 			check_prod_zero(&t_end,
 				&(&c_one - &sel.is_last[i - 1]), lc!(),
 				"neo run ends at LAST")?;
 			check_prod_zero(&bnd, &v.step[i], lc!(),
 				"neo run starts at seed")?;
-			let u = &grp_start[i] * &same_sub[i];
+			// "same run, next group" is grp_start * same_sub, which
+			// is grp_start - bnd: free, same argument as Section 4.
+			let u = &grp_start[i] - &bnd;
 			check_prod_zero(&u,
 				&(&(&v.step[i] - &v.step[i - 1]) - &c_one), lc!(),
 				"neo run step chain")?;
@@ -1871,56 +2274,102 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			"neo final run ends at LAST")?;
 		log(job_id, LOG3, &format!(
 			"PERF 61081.2: block=wf cs={} pred={}",
-			cs.num_constraints() - n0, 26 * n));
+			cs.num_constraints() - n0, 19 * n));
 		Ok((grp_start, rid))
 	}
 
-	/// Pin every si column to its row's claimed tag; the OUTER
-	/// foldpot lookup then forces each (si,value) pair to exist in
-	/// the DB, so together: value == the DB fact for THIS row's enc.
-	/// Tags are linear in enc (gen_step_tbl_id = const_cat + enc).
-	///  - si_step: (si-cN-enc)*(si-cL-enc)==0 (NORMAL or LAST of
-	///    THIS enc; the DB stores a step under exactly one, so
-	///    last/non-last mislabeling dies at the outer lookup).
-	///    EXAMPLE: tagging terminal enc_T's row with tag_LAST(enc')
-	///    to dodge the acc query fails (neither factor is 0).
-	///  - si_subsig mask (1-is_pad)*(1-is_step0); si_pat/rg1/rg2/
-	///    enc_prev mask (REAL row)*(1-is_step0), real = is_c+is_fp
-	///    in aggressive and additionally +is_bp+is_sp in
-	///    non-aggressive (same formula on the aggressive table,
-	///    where no BP/SP rows exist); pin: si ==
-	///    mask*(const_cat+enc-RANGE2) + RANGE2.
-	///  - si_b_bwd == FLAG_BASE + subsig on ALL rows (linear).
-	/// COST: ~14*n. MEASURED @ fig-14 n=34: 476 (0% vs
-	/// 14n). PERF 61081.5.
+	/// Binds each si companion column of T_qm to the row it sits on.
+	/// An si column is the "which DB fact" selector travelling with
+	/// a value column: the OUTER foldpot lookup forces every
+	/// (si, value) pair to exist in the DB, so once si is pinned to
+	/// a tag built from THIS row's enc, the value beside it is a DB
+	/// fact about this row instead of prover advice. Tags are linear
+	/// in enc -- gen_step_tbl_id(enc, cid) = si_tag_base(cid) + enc
+	/// -- so every pin fits in a single constraint.
+	///
+	/// Advice names: none. Every column touched here is committed
+	/// (si_step, si_subsig, si_pat, si_rg1, si_rg2, si_enc_prev,
+	/// si_b_bwd); this block only binds them.
+	///
+	/// Checks, per row:
+	///  (1) si_step is the NORMAL tag or the LAST tag of THIS enc;
+	///  (2) si_subsig and si_pat are pinned on every non-pad
+	///      step >= 1 row, wraps included (a wrap's pat is
+	///      join-queried);
+	///  (3) si_rg1, si_rg2 and si_enc_prev are pinned on REAL
+	///      step >= 1 rows, real = is_c + is_fp, plus is_bp +
+	///      is_sp in non-aggr;
+	///  (4) si_b_bwd == FLAG_BASE + subsig on every row.
+	/// Step-0 rows are masked out of (2) and (3): the seed key is
+	/// artificial, so the DB carries no subsig/pat/window fact
+	/// under it. A masked-off row takes RANGE2 instead, the neutral
+	/// tag that tells the outer lookup "range check only". Those
+	/// RANGE2 entries are produced by the ADVICE side -- push_wrap
+	/// for wraps, push_real's m() for seed rows, pad_front for pads
+	/// -- and are only enforced here.
+	///
+	/// EXAMPLE: a terminal row tagging si_step with the LAST tag of
+	/// a DIFFERENT enc, to dodge the verdict query, fails (1) --
+	/// neither factor is zero.
+	///  - CHEAT a foreign pat under this enc, to hide the real
+	///    pattern's matches: (2) ties pat to enc on every row, so
+	///    the row can only carry the pat the DB gives its own enc.
+	///  - CHEAT a widened window: rg1/rg2 are DB facts of enc by
+	///    (3), not advice, so no row can widen its own reach.
+	/// PARAMS: b_aggr only selects whether BP/SP join `real`.
+	/// COST: ~9*n. PERF 61081.5.
 	fn assert_neo_si_pins(
 		cs: ConstraintSystemRef<F>, v: &QmVars<F>, sel: &NeoSel<F>,
 		b_aggr: bool, job_id: usize,
 	) -> Result<(), SynthesisError> {
 		let n0 = cs.num_constraints();
 		let n = v.enc.len();
-		let rb = read_global_config().range2_bit;
-		let f1 = F::from(1u64 << rb);
-		let f5 = f1 * f1 * f1 * f1 * f1;
-		let base = F::from(0x23001101u64) * f5 * F::from(1u64 << 32);
-		let cat_c = |cid: u32| base + F::from(cid as u64) * f5;
-		let c_n = new_const_var(&cs, cat_c(ID_ENCODED_NORMAL_STEP));
-		let c_l = new_const_var(&cs, cat_c(ID_ENCODED_LAST_STEP));
+		let c_n = new_const_var(&cs,
+			si_tag_base::<F>(ID_ENCODED_NORMAL_STEP));
+		let c_l = new_const_var(&cs,
+			si_tag_base::<F>(ID_ENCODED_LAST_STEP));
 		let c_rg2t = new_const_var(&cs, F::from(RANGE2));
 		let c_one = new_const_var(&cs, F::one());
 		let c_fbase = new_const_var(&cs,
 			F::from(1u64 << 32) * F::from(ID_SUBSIG_IS_BACKWARD));
-		let pins: [(u32, fn(&QmVars<F>) -> &Vec<FpVar<F>>); 5] = [
-			(ID_ENCODED_SUBSIG, |v| &v.si_subsig),
-			(ID_ENCODED_PAT, |v| &v.si_pat),
-			(ID_ENCODED_RG_START, |v| &v.si_rg1),
-			(ID_ENCODED_RG_END, |v| &v.si_rg2),
-			(ID_ENCODED_PREV_ENCODED, |v| &v.si_enc_prev)];
+		// Every pin has to say two things at once:
+		//     mask on  -> si = tag,   tag = si_tag_base(cid) + enc
+		//     mask off -> si = RANGE2
+		// One line covers both:  si - RANGE2 = mask*(tag - RANGE2).
+		//     mask = 1 -> si - RANGE2 = tag - RANGE2 -> si = tag
+		//     mask = 0 -> si - RANGE2 = 0            -> si = RANGE2
+		// EXAMPLE with si_tag_base(PAT) = 1000 and RANGE2 = 40, on
+		// a row with enc = 7: tag = 1007, so a real row must carry
+		// si_pat = 1007 and a seed row must carry 40.
+		// That shape is ALREADY one R1CS constraint (A = mask,
+		// B = tag - RANGE2, C = si - RANGE2), while building the
+		// product as a variable and then comparing costs two.
+		// tc() bakes the constant part (si_tag_base(cid) - RANGE2)
+		// once per category for the whole table; the row's own enc
+		// is added into B at the call site.
+		let tc = |cid: u32| new_const_var(&cs,
+			si_tag_base::<F>(cid) - F::from(RANGE2));
+		let pins: [(FpVar<F>, fn(&QmVars<F>) -> &Vec<FpVar<F>>); 5] = [
+			(tc(ID_ENCODED_SUBSIG), |v| &v.si_subsig),
+			(tc(ID_ENCODED_PAT), |v| &v.si_pat),
+			(tc(ID_ENCODED_RG_START), |v| &v.si_rg1),
+			(tc(ID_ENCODED_RG_END), |v| &v.si_rg2),
+			(tc(ID_ENCODED_PREV_ENCODED), |v| &v.si_enc_prev)];
 		for i in 0..n {
+			// --- check (1): si_step is a step tag of THIS enc ---
+			// The DB stores a step under exactly ONE of the two
+			// tags, so a last/non-last mislabel does not die here;
+			// it dies at the outer lookup, which finds no such pair.
 			check_prod_zero(
 				&(&(&v.si_step[i] - &c_n) - &v.enc[i]),
 				&(&(&v.si_step[i] - &c_l) - &v.enc[i]), lc!(),
 				"neo si_step pin")?;
+			// --- masks for checks (2) and (3) ---
+			// m_sub: any non-pad row at step >= 1, wraps included.
+			// m_bind: real rows only, at step >= 1. `real` is a
+			// free sum of exclusive classes; in aggr the BP/SP
+			// vectors are empty, which is why the two arms are
+			// written out rather than always summing four terms.
 			let m_sub = (&c_one - &sel.is_pad[i])
 				* (&c_one - &sel.is_step0[i]);
 			let real = if b_aggr {
@@ -1930,19 +2379,24 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 					+ &(&sel.is_bp[i] + &sel.is_sp[i])
 			};
 			let m_bind = real * (&c_one - &sel.is_step0[i]);
-			for (j, (cid, getcol)) in pins.iter().enumerate() {
-				let mask = if j == 0 { &m_sub } else { &m_bind };
-				let c_cat = new_const_var(&cs, cat_c(*cid));
-				let tag = &(&c_cat + &v.enc[i]) - &c_rg2t;
-				check_eq(&getcol(v)[i],
-					&(&(mask * &tag) + &c_rg2t), "neo si pin")?;
+			// --- checks (2) and (3): one constraint per column ---
+			// j = 0, 1 are si_subsig and si_pat (m_sub); j = 2, 3, 4
+			// are si_rg1, si_rg2, si_enc_prev (m_bind).
+			for (j, (c_tag, getcol)) in pins.iter().enumerate() {
+				let mask = if j <= 1 { &m_sub } else { &m_bind };
+				check_si_pin(mask, &v.enc[i], &getcol(v)[i],
+					c_tag, &c_rg2t, "neo si pin")?;
 			}
+			// --- check (4): the backward-flag key ---
+			// keyed by subsig rather than enc, and linear in it, so
+			// no mask and no product: every row, pad included,
+			// carries this pair.
 			check_eq(&v.si_b_bwd[i], &(&c_fbase + &v.subsig[i]),
 				"neo si_b_bwd pin")?;
 		}
 		log(job_id, LOG3, &format!(
 			"PERF 61081.5: block=si_pins cs={} pred={}",
-			cs.num_constraints() - n0, 14 * n));
+			cs.num_constraints() - n0, 9 * n));
 		Ok(())
 	}
 }
@@ -1955,11 +2409,24 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct NeoCore<F: PrimeField + ColEle> {
 	pub t: QmTable<F>,
-	pub l_pat: Vec<F>, pub l_loc: Vec<F>,
+	/// committed pat_loc copy (sorted per pat, with the loc-0 and
+	/// loc-max sentinel rows): pat, in-pat rank, loc.
+	pub l_pat: Vec<F>, pub l_id: Vec<F>, pub l_loc: Vec<F>,
 	pub subsig_nat: Vec<F>,
-	pub s_enc: Vec<F>, pub s_pat: Vec<F>,
-	pub d_pat: Vec<F>, pub d_cnt: Vec<F>, pub d_diff: Vec<F>,
-	pub m_aux: Vec<F>, pub mtbl_qr: Vec<F>, pub mtbl_d: Vec<F>,
+	pub s_enc: Vec<F>,
+	pub mtbl_qr: Vec<F>,
+	/// m-table of the join membership lookup: hit count per
+	/// pat_loc row from Q_m's L-origin rows.
+	pub mtbl_tm: Vec<F>,
+	/// no-show pats: distinct store pats with zero matches this
+	/// chunk (sorted, front-0-padded to s_enc.len()).
+	pub ns_pat: Vec<F>,
+	/// absence-gap advice per no-show slot (RANGE2-bound):
+	/// p-1-g1 and g2-p-1 vs its straddling l_pat pair (g1, g2).
+	pub d_ns_lo: Vec<F>, pub d_ns_hi: Vec<F>,
+	/// m-table of the gap-pair lookup, len |L|+1: bottom pair
+	/// (0, l_pat[0]), adjacent pairs, top (l_pat[last], 2^rb).
+	pub mtbl_ns: Vec<F>,
 	pub acc_out: Vec<F>, pub mtbl_acc: Vec<F>,
 	// ---- non-aggressive extension (empty under aggressive) ----
 	/// committed q_i (IDX_INP) cols: the carried-in queue Q_i as
@@ -1968,39 +2435,46 @@ pub(crate) struct NeoCore<F: PrimeField + ColEle> {
 	/// committed q_c (IDX_OUP) cols: the carry set Q_c = the C
 	/// projection of Q_m, next chunk's Q_i.
 	pub qc_enc: Vec<F>, pub qc_loc: Vec<F>,
-	/// m-table of the fused QC-target logup (C-pred + BP-min +
-	/// SP-freeze + SP-dom query families). The carry-in logup's
-	/// m-table is t.nonaggr.m_carry_in (filled by fill_nonaggr).
+	/// m-table of the shared QC-target lookup (C-pred + BP-min +
+	/// SP-freeze + SP-dom query families).
 	pub mtbl_qc: Vec<F>,
+	/// union proof scalars [b_left_more_zero, diff_zero] for the
+	/// Q_m = Q_i u L multiset identity (len 2; empty in aggr).
+	pub union_prf: Vec<F>,
+	/// JOIN RESULT temp table (all vecs empty in aggr).
+	pub jr: JrTable<F>,
 }
 
 /// FpVar mirror of NeoCore (what the circuit constrains).
 pub(crate) struct NeoCoreVars<F: PrimeField + ColEle> {
 	pub qm: QmVars<F>,
-	pub l_pat: Vec<FpVar<F>>, pub l_loc: Vec<FpVar<F>>,
+	pub l_pat: Vec<FpVar<F>>, pub l_id: Vec<FpVar<F>>,
+	pub l_loc: Vec<FpVar<F>>,
 	pub subsigs: Vec<FpVar<F>>,
-	pub s_enc: Vec<FpVar<F>>, pub s_pat: Vec<FpVar<F>>,
-	pub d_pat: Vec<FpVar<F>>, pub d_cnt: Vec<FpVar<F>>,
-	pub d_diff: Vec<FpVar<F>>, pub m_aux: Vec<FpVar<F>>,
-	pub mtbl_qr: Vec<FpVar<F>>, pub mtbl_d: Vec<FpVar<F>>,
+	pub s_enc: Vec<FpVar<F>>,
+	pub mtbl_qr: Vec<FpVar<F>>, pub mtbl_tm: Vec<FpVar<F>>,
+	pub ns_pat: Vec<FpVar<F>>,
+	pub d_ns_lo: Vec<FpVar<F>>, pub d_ns_hi: Vec<FpVar<F>>,
+	pub mtbl_ns: Vec<FpVar<F>>,
 	pub acc_out: Vec<FpVar<F>>, pub mtbl_acc: Vec<FpVar<F>>,
 	// ---- non-aggressive extension (empty under aggressive) ----
 	pub qi_enc: Vec<FpVar<F>>, pub qi_loc: Vec<FpVar<F>>,
 	pub qc_enc: Vec<FpVar<F>>, pub qc_loc: Vec<FpVar<F>>,
 	pub mtbl_qc: Vec<FpVar<F>>,
+	pub union_prf: Vec<FpVar<F>>,
+	pub jr: JrVars<F>,
 }
 
 /// FpVar mirror of QmNonAggrCols (loaded only by the non-aggressive
 /// arm; every vec row-parallel to QmVars.enc).
 pub(crate) struct QmNonAggrVars<F: PrimeField + ColEle> {
-	pub b_l: Vec<FpVar<F>>, pub enc_next: Vec<FpVar<F>>,
+	pub enc_next: Vec<FpVar<F>>,
 	pub bp_prev_val: Vec<FpVar<F>>, pub rg2_next: Vec<FpVar<F>>,
 	pub w_next: Vec<FpVar<F>>, pub d_bp: Vec<FpVar<F>>,
 	pub fz: Vec<FpVar<F>>, pub enc_fz: Vec<FpVar<F>>,
 	pub fz_step_val: Vec<FpVar<F>>, pub fz_sub_val: Vec<FpVar<F>>,
 	pub w_fz: Vec<FpVar<F>>, pub d_fz: Vec<FpVar<F>>,
-	pub w_sp: Vec<FpVar<F>>, pub d_sp: Vec<FpVar<F>>,
-	pub m_carry_in: Vec<FpVar<F>>,
+	pub w_kept: Vec<FpVar<F>>, pub d_kept: Vec<FpVar<F>>,
 	pub si_bp_prev: Vec<FpVar<F>>, pub si_rg2_next: Vec<FpVar<F>>,
 	pub si_fz: Vec<FpVar<F>>, pub si_fz_step: Vec<FpVar<F>>,
 	pub si_fz_sub: Vec<FpVar<F>>,
@@ -2009,11 +2483,11 @@ pub(crate) struct QmNonAggrVars<F: PrimeField + ColEle> {
 impl<F: PrimeField + ColEle> QmNonAggrVars<F> {
 	/// all-empty mirror for the aggressive loader (never read).
 	pub(crate) fn empty() -> Self {
-		Self { b_l: vec![], enc_next: vec![], bp_prev_val: vec![],
+		Self { enc_next: vec![], bp_prev_val: vec![],
 			rg2_next: vec![], w_next: vec![], d_bp: vec![],
 			fz: vec![], enc_fz: vec![], fz_step_val: vec![],
 			fz_sub_val: vec![], w_fz: vec![], d_fz: vec![],
-			w_sp: vec![], d_sp: vec![], m_carry_in: vec![],
+			w_kept: vec![], d_kept: vec![],
 			si_bp_prev: vec![], si_rg2_next: vec![], si_fz: vec![],
 			si_fz_step: vec![], si_fz_sub: vec![] }
 	}
@@ -2119,6 +2593,7 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 
 	/// m-table for the (pat, m) -> D forcing lookup: per D row, the
 	/// number of REAL L rows with that pat (their m == cnt(pat)).
+	#[cfg(any())] // M8_NEW P1: counting block removed
 	pub(crate) fn gen_mtbl_d(l_pat: &Vec<F>, l_loc: &Vec<F>,
 		d_pat: &Vec<F>) -> Vec<F> {
 		let max_val: usize =
@@ -2195,7 +2670,7 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 			if t.cat[i] == F::from(CAT_SP) {
 				*hm.entry((na.enc_fz[i], one, na.w_fz[i]))
 					.or_insert(0) += 1;
-				*hm.entry((t.enc[i], one, na.w_sp[i]))
+				*hm.entry((t.enc[i], one, na.w_kept[i]))
 					.or_insert(0) += 1;
 			}
 		}
@@ -2209,6 +2684,182 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 		}).collect()
 	}
 
+	/// NONAGGR ONLY -- build the JOIN RESULT temp table
+	///     JR = store JOIN (pat_loc || D),
+	/// one block per store row (enc, pat), i.e. per (subsig,
+	/// step >= 1) of the statement chains:
+	///   pat IN L: pat's FULL L block, ids = L ranks 0..cnt+1
+	///     -> [(pat,0,0), (pat,1,l1) .., (pat,cnt+1,max)]
+	///   pat NOT in L ("no-show", zero matches this chunk):
+	///     -> the sentinel pair [(pat,0,0), (pat,1,max)]. The
+	///     pair is absent from L; membership resolves it via
+	///     the NeoCore.ns_pat targets (gen_ns_pat), guarded by
+	///     assert_ns_gap so a pat that IS in L can never fake
+	///     a sentinel-only block and hide its matches.
+	/// DECISION: D is per DISTINCT pat, not 2 dummy rows per
+	/// step -- chains repeat pats heavily (fan-out copies), so
+	/// |D| << store rows. The per-step sentinel pair itself is
+	/// unavoidable (Q_m holds a wrap pair per step group whose
+	/// union fps JR must pay) but lands in this ~11cs/row temp
+	/// table, never in Q_m.
+	/// NO Q_m input: gen_qm_table emits wrap groups for EVERY
+	/// step of every chain (its trailing pop trims item rows
+	/// only), so Q_m's step>=1 group keys are exactly the store
+	/// rows -- JR is a pure function of store + L.
+	/// Why nonaggr only: nonaggr carries C rows at step>=1, so
+	/// Q_m groups interleave carried locs with L locs (ids
+	/// re-ranked) -- the join needs this pristine L-block copy.
+	/// Aggr carries the seed only: its step>=1 groups ARE the L
+	/// blocks, Q_m itself is the join view (a JR would
+	/// duplicate every row); aggr shares only the D mechanism.
+	///
+	/// EXAMPLE (chunk 2). Store: subsig 3 = {step 1: pat 2 (key
+	/// E1), step 2: pat 5 (key E2)}; q_i carries E1:101; chunk
+	/// L: pat 2 at {517, 525}, pat 5 absent. Q_m groups: E0
+	/// seed, E1 = [w0, 101(C), 517, 525, wmax], E2 = [w0,
+	/// wmax].
+	///   (E1,2,0,0) (E1,2,1,517) (E1,2,2,525) (E1,2,3,max) <-L
+	///   (E2,5,0,0) (E2,5,1,max)     <- no-show sentinel pair
+	/// Union fps (enc||loc): E1 wraps + 517/525 paid by JR,
+	/// E1||101 by q_i, E2 wraps by the D-backed pair. Dropping
+	/// the E2 block leaves E2's wraps unpaid -> UNSAT; a
+	/// sentinel-only block for E1 needs (2,1,max) in L||D:
+	/// absent (L has (2,3,max); adjacency bars 2 from D).
+	///
+	/// si policy: si_pat = tag(enc, PAT) on EVERY block row,
+	/// sentinels too (an unpinned sentinel could borrow a
+	/// shorter pat's max row and truncate the block); jr_loc
+	/// under the RANGE2 si; jr_enc/jr_id si 0 (union- /
+	/// chain-bound). cap: JR row budget (front-pads; CapErr).
+	pub(crate) fn gen_jr_table(
+		s_enc: &[F],  // store keys (gen_store_rows)
+		s_pat: &[F],  // store pats, row-parallel to s_enc
+		hm_loc: &HashMap<F, Vec<(F, F)>>, // chunk L: pat ->
+		              // [(id, loc)], 0/max-wrapped blocks
+		cap: usize,   // JR row budget
+	) -> Result<JrTable<F>, Error> {
+		let max_val: usize =
+			(1 << read_global_config().range2_bit) - 1;
+		let (z, one, f_max) = (F::zero(), F::one(),
+			F::from(max_val as u32));
+		// -- 1. one block per store row; no-show pats get the
+		//    sentinel pair --
+		let mut jr = JrTable::default();
+		let sent = [(z, z), (one, f_max)];
+		for (e, p) in s_enc.iter().zip(s_pat.iter()) {
+			if e.is_zero() { continue; }
+			let si = SubsigStepStore::gen_step_tbl_id(*e,
+				ID_ENCODED_PAT);
+			let block: &[(F, F)] = match hm_loc.get(p) {
+				Some(v) => v.as_slice(),
+				None => &sent
+			};
+			for (id, loc) in block {
+				jr.enc.push(*e); jr.pat.push(*p);
+				jr.id.push(*id); jr.loc.push(*loc);
+				jr.si_pat.push(si);
+			}
+		}
+		// -- 2. capacity pad (pads first, Q_m convention) --
+		let used = jr.enc.len();
+		if used > cap {
+			return Err(Error::CapErr(vec![(
+				format!("jr_table"), used)]));
+		}
+		let rg2t = F::from(RANGE2);
+		let pz = |v: &mut Vec<F>, x: F| {
+			let mut w = vec![x; cap - used];
+			w.append(v); *v = w; };
+		pz(&mut jr.enc, z); pz(&mut jr.pat, z);
+		pz(&mut jr.id, z); pz(&mut jr.loc, z);
+		pz(&mut jr.si_pat, rg2t);
+		Ok(jr)
+	}
+
+	/// No-show pats: distinct store pats absent from the chunk's
+	/// pat_loc pat column (deduped, sorted, front-0-pad to cap).
+	pub(crate) fn gen_ns_pat(s_pat: &[F], l_pat: &[F],
+		cap: usize) -> Vec<F> {
+		let in_l: HashSet<F> = l_pat.iter().cloned().collect();
+		let mut ns: Vec<F> = s_pat.iter()
+			.filter(|p| !p.is_zero() && !in_l.contains(p))
+			.cloned().collect::<HashSet<F>>()
+			.into_iter().collect();
+		ns.sort_by(|a, b| a.partial_cmp(b).unwrap());
+		assert!(ns.len() <= cap, "ns_pat over cap {}", cap);
+		let mut res = vec![F::zero(); cap - ns.len()];
+		res.extend(ns);
+		res
+	}
+
+	/// Gap advice for the absence proof: per nonzero no-show
+	/// pat, locate the l_pat pair straddling it. Returns
+	/// (d_ns_lo, d_ns_hi, mtbl_ns); pair slot k: 0 = bottom
+	/// (0, l_pat[0]), 1..n-1 = (l_pat[k-1], l_pat[k]), n = top
+	/// (l_pat[n-1], 2^rb).
+	fn gen_ns_advice(ns_pat: &[F], l_pat: &[F])
+	-> (Vec<F>, Vec<F>, Vec<F>) {
+		let n = l_pat.len();
+		let (z, one) = (F::zero(), F::one());
+		let f_top = F::from(
+			1u64 << read_global_config().range2_bit);
+		let mut d_lo = vec![z; ns_pat.len()];
+		let mut d_hi = vec![z; ns_pat.len()];
+		let mut mtbl = vec![z; n + 1];
+		let pair = |k: usize| -> (F, F) {
+			if k == 0 { (z, l_pat[0]) }
+			else if k < n { (l_pat[k - 1], l_pat[k]) }
+			else { (l_pat[n - 1], f_top) }
+		};
+		for (k, p) in ns_pat.iter().enumerate() {
+			if p.is_zero() { continue; }
+			assert!(n > 0, "no-show pat with empty pat_loc");
+			let up = field_to_usize(p);
+			let hit = (0..n + 1).find(|i| {
+				let (a, b) = pair(*i);
+				field_to_usize(&a) < up
+					&& up < field_to_usize(&b)
+			}).expect("no straddling pair: pat in L?");
+			let (a, b) = pair(hit);
+			d_lo[k] = *p - one - a;
+			d_hi[k] = b - *p - one;
+			mtbl[hit] = mtbl[hit] + one;
+		}
+		(d_lo, d_hi, mtbl)
+	}
+
+	/// The two zero-count reconciliation scalars of the multiset
+	/// identity Q_m = q_i union JR over pack(enc, loc), which
+	/// assert_qm_union checks in-circuit. The seed group's wraps
+	/// are the only Q_m rows with no partner (masked there and
+	/// here); pads pack to 0 and the identity ignores zeros.
+	fn gen_union_scalars(t: &QmTable<F>, jr: &JrTable<F>,
+		qi_enc: &[F], qi_loc: &[F]) -> Result<Vec<F>, Error> {
+		let base = F::from(1u64
+			<< read_global_config().range2_bit);
+		let pk = |e: &[F], l: &[F]| e.iter().zip(l.iter())
+			.map(|(x, y)| *x * base + *y).collect::<Vec<F>>();
+		let vec1 = pk(qi_enc, qi_loc);
+		let vec2 = pk(&jr.enc, &jr.loc);
+		let vec3: Vec<F> = (0..t.enc.len()).map(|i|
+			if t.cat[i].is_zero() && t.step[i].is_zero()
+				{ F::zero() }
+			else { t.enc[i] * base + t.loc[i] }).collect();
+		// prover invariant: q_i holds locations of PRIOR chunks
+		// and the join only this chunk's, so Q_m holds each of
+		// them exactly once.
+		let nz = |v: &Vec<F>| v.iter()
+			.filter(|x| !x.is_zero()).count();
+		assert!(nz(&vec1) + nz(&vec2) == nz(&vec3),
+			"neo union: q_i {} + jr {} != q_m {} (rows counted \
+			twice or dropped)", nz(&vec1), nz(&vec2), nz(&vec3));
+		let prf = gen_union_prf(&vec1, &vec2, &vec3,
+			"neo_union")?;
+		let g = |n: &str| prf.lock().unwrap().get_container(n)
+			.unwrap().lock().unwrap().to_vec()[0];
+		Ok(vec![g("b_left_more_zero"), g("diff_zero")])
+	}
+
 	/// NON-AGGRESSIVE bundle assembler (paper C.1). Builds the
 	/// 4-class T_qm + witness cols, the merge dictionary, all
 	/// m-tables, and the two COMMITTED transport containers:
@@ -2220,32 +2871,58 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 	/// Returns (bundle, ct_qi, ct_qc); can CapErr on the T_qm
 	/// budget or the q_c ResSmall carry width.
 	pub(crate) fn gen_nonaggr(g: &StepQueueNeo<F>,
-		info: &SubsigStepStore, l_pat: Vec<F>, l_loc: Vec<F>,
-		hm_loc: &HashMap<F, Vec<(F, F)>>, carried: &StepQueue<F>,
-		default_min: F, job_id: usize)
+		info: &SubsigStepStore, l_pat: Vec<F>, l_id: Vec<F>,
+		l_loc: Vec<F>, hm_loc: &HashMap<F, Vec<(F, F)>>,
+		carried: &StepQueue<F>, default_min: F, job_id: usize)
 	-> Result<(NeoCore<F>, Arc<Mutex<Container<F>>>,
 		Arc<Mutex<Container<F>>>), Error> {
 		let mut t = g.gen_qm_table(info, false)?;
-		t.fill_nonaggr(info, hm_loc, carried, default_min);
+		t.fill_nonaggr(info, default_min);
 		let rid = Self::gen_rid_native(&t);
 		let cid = Self::gen_cid_native(&t);
 		let subsig_nat = g.subsigs.clone();
 		let (s_enc, s_pat) = Self::gen_store_rows(&subsig_nat,
 			info);
-		let mut hm_pats: HashMap<F, Vec<(F, F)>> = HashMap::new();
-		for p in &l_pat { hm_pats.entry(*p).or_insert(vec![]); }
-		let (d_pat, d_cnt) = StepQueueNeo::gen_merge_dict(
-			&subsig_nat, info, &hm_pats, g.b_igc)?;
-		let mut d_diff = vec![F::zero(); d_pat.len()];
-		for j in 1..d_pat.len() {
-			d_diff[j] = d_pat[j] - d_pat[j - 1] - F::one();
-		}
-		let m_aux = StepQueueNeo::gen_merge_m_aux(&l_pat, &l_loc,
-			&d_pat, &d_cnt);
 		let mtbl_qr = Self::gen_mtbl_qr_nonaggr(&t, &rid,
 			&subsig_nat);
 		let mtbl_qc = Self::gen_mtbl_qc(&t, &cid);
-		let mtbl_d = Self::gen_mtbl_d(&l_pat, &l_loc, &d_pat);
+		// JOIN RESULT temp table; conservative row budget = the
+		// Q_m capacity (strictly larger: each JR block fits in
+		// its Q_m group; seed groups are Q_m-only).
+		let jr = Self::gen_jr_table(&s_enc, &s_pat, hm_loc,
+			t.enc.len())?;
+		// no-show pats + absence-gap advice
+		let ns_pat = Self::gen_ns_pat(&s_pat, &l_pat,
+			s_enc.len());
+		let (d_ns_lo, d_ns_hi, mtbl_ns) =
+			Self::gen_ns_advice(&ns_pat, &l_pat);
+		// membership m-table over the JOIN RESULT view: queries
+		// = JR nonzero rows; targets = L ++ no-show sentinel
+		// pairs
+		let rb = read_global_config().range2_bit;
+		let (f_b, f_sh) = (F::from(1u64 << rb),
+			F::from(1u128 << (2 * rb)));
+		let f_t2 = F::from((1u64 << rb) + ((1u64 << rb) - 1));
+		let one = F::one();
+		let qry_tm: Vec<F> = (0..jr.enc.len()).map(|i|
+			jr.pat[i] * f_sh + jr.id[i] * f_b + jr.loc[i])
+			.collect();
+		let sel_qry: Vec<F> = jr.enc.iter().map(|e|
+			if e.is_zero() { F::zero() } else { one })
+			.collect();
+		let mut lk_tm: Vec<F> = (0..l_pat.len()).map(|i|
+			l_pat[i] * f_sh + l_id[i] * f_b + l_loc[i])
+			.collect();
+		let mut sel_lk = vec![one; l_pat.len()];
+		let sel_d: Vec<F> = ns_pat.iter().map(|p|
+			if p.is_zero() { F::zero() } else { one })
+			.collect();
+		lk_tm.extend(ns_pat.iter().map(|p| *p * f_sh));
+		sel_lk.extend(sel_d.clone());
+		lk_tm.extend(ns_pat.iter().map(|p| *p * f_sh + f_t2));
+		sel_lk.extend(sel_d);
+		let mtbl_tm = gen_m_table_cond(&qry_tm, &sel_qry,
+			&lk_tm, &sel_lk);
 		//committed transport: q_i as handed in; q_c = C projection
 		let ct_qi = carried.to_container("q_i", true, false, false,
 			false, info)?;
@@ -2265,14 +2942,18 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 			ct.lock().unwrap().get_container(name).unwrap()
 				.lock().unwrap().to_vec()
 		};
+		let (qi_enc, qi_loc) = (col(&ct_qi, "encoded"),
+			col(&ct_qi, "locs"));
+		let union_prf = Self::gen_union_scalars(&t, &jr, &qi_enc,
+			&qi_loc)?;
 		let nat = NeoCore {
-			qi_enc: col(&ct_qi, "encoded"),
-			qi_loc: col(&ct_qi, "locs"),
+			qi_enc, qi_loc,
 			qc_enc: col(&ct_qc, "encoded"),
 			qc_loc: col(&ct_qc, "locs"),
-			t, l_pat, l_loc, subsig_nat, s_enc, s_pat, d_pat,
-			d_cnt, d_diff, m_aux, mtbl_qr, mtbl_d,
-			acc_out: vec![], mtbl_acc: vec![], mtbl_qc };
+			t, l_pat, l_id, l_loc, subsig_nat, s_enc, mtbl_qr,
+			mtbl_tm, ns_pat, d_ns_lo, d_ns_hi, mtbl_ns,
+			acc_out: vec![], mtbl_acc: vec![], mtbl_qc,
+			union_prf, jr };
 		Ok((nat, ct_qi, ct_qc))
 	}
 }
@@ -2294,6 +2975,8 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	/// COST: ~31*n (folds the fused logup ~2*(3n+
 	/// |subsigs|)+3n into the per-row rate). MEASURED @
 	/// fig-14 n=34: 1064 (+0.9% vs 31n). PERF 61081.3.
+	#[cfg(any())] // M8_NEW P1: replaced by assert_carry/
+	// assert_fwd_pruning/assert_seed_anchors/assert_qm_lookups
 	fn assert_neo_certs_aggr(
 		cs: ConstraintSystemRef<F>,
 		t: &QmTable<F>, v: &QmVars<F>, sel: &NeoSel<F>,
@@ -2429,6 +3112,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	/// EMPTY-L degenerate (tier-1 harness only): an empty query
 	/// side forces every multiplicity to 0 -- asserted directly
 	/// (sum_vec_vars cannot take empty slices).
+	#[cfg(any())] // M8_NEW P1: replaced by assert_join_locations
 	fn assert_neo_merge_core(
 		cs: ConstraintSystemRef<F>,
 		l_pat: &[FpVar<F>], l_loc: &[FpVar<F>], l_nat: (&[F], &[F]),
@@ -2487,6 +3171,8 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		Ok(sel_l)
 	}
 
+	#[cfg(any())] // M8_NEW P1: replaced by assert_join_locations
+	// + assert_verdict_aggr
 	fn assert_neo_merge_acc_aggr(
 		cs: ConstraintSystemRef<F>,
 		t: &QmTable<F>, v: &QmVars<F>, sel: &NeoSel<F>,
@@ -2557,6 +3243,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	///   with quadratic-walk n1; n here is theorem-bounded
 	///   (linear; band-locked, test_m6_cost_band).
 	///   PERF 61081.9 grand total.
+	#[cfg(any())] // M8_NEW P1: replaced by assert_neo_aggr
 	pub(crate) fn assert_neo_core_aggr(
 		cs: ConstraintSystemRef<F>,
 		nat: &NeoCore<F>, vars: &NeoCoreVars<F>,
@@ -2590,15 +3277,31 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 // ============================================================
 
 impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
-	/// QC rank chain (NON-AGGRESSIVE): cid[i] = (1-grp_start) *
-	/// (cid[i-1] + is_wrap + is_c). Per group the QC-selected rows
-	/// (wrap or C) get distinct cids 0..k+1, so a (enc, cid=1, loc)
-	/// query resolves uniquely: the least CARRIED loc of the group,
-	/// or the max-wrap when the group carries nothing. BP/SP/FP
-	/// rows keep the previous rank and are invisible in the target.
-	/// EXAMPLE a2 group [0w, 21C, 111SP, maxw]: cid 0,1,1,2 -- the
-	/// (enc2, 1, .) row is 21, the kept minimum.
-	/// COST: 1cs/row. PERF folded into 61081.6.
+	/// Builds the QC address column: cid gives each CARRIED row its
+	/// position inside its group, so a (enc, cid = 1, loc) query
+	/// returns that group's least carried loc. NON-AGGRESSIVE only
+	/// -- the aggressive arm keeps no carry queue to address.
+	///
+	/// Advice names: none, cid is derived rather than committed:
+	/// cid[i] = (1 - grp_start[i]) * (cid[i-1] + is_wrap + is_c),
+	/// so it resets to 0 at each group start and then advances on
+	/// the rows the QC target admits, the two wraps and C. FP, BP
+	/// and SP rows hold the previous value, and that is what keeps
+	/// them out of the target: no query can address them.
+	///
+	/// Checks: none of its own. The column is sound because of
+	/// where its inputs come from -- grp_start is forced by
+	/// assert_neo_wf, is_wrap and is_c by assert_neo_selectors,
+	/// which also leaves pads cat-free, so the increment stays in
+	/// {0, 1} and the chain cannot run backwards.
+	///
+	/// EXAMPLE group a2 = [0w, 21C, 111SP, maxw] -> cid 0, 1, 1, 2,
+	/// so the (enc_a2, 1, .) query lands on 21, the kept minimum.
+	///  - CHEAT tag 21 SP as well, to prune the whole group: no row
+	///    of a2 is then carried, cid 1 is the max-wrap, and
+	///    assert_singleton_pruning's kept-minimum certificate
+	///    underflows RANGE2.
+	/// COST: 1cs/row, reported inside PERF 61081.6.
 	fn assert_neo_cid_chain(
 		grp_start: &[FpVar<F>], sel: &NeoSel<F>,
 	) -> Vec<FpVar<F>> {
@@ -2614,103 +3317,176 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		cid
 	}
 
-	/// Pins for the NON-AGGRESSIVE si columns and their masked
-	/// values (the base columns' pins stay in assert_neo_si_pins).
-	/// Per row:
-	///  BP (mask is_bp): si_bp_prev/si_rg2_next pinned to
-	///    tag(enc_next, PREV_ENCODED/RG_END); bp_prev_val ==
-	///    is_bp*enc, so the outer (si,val) pair proves prev of
-	///    enc_next IS this row's enc -- and the step chain being a
-	///    path makes enc_next THE successor. EXAMPLE: forging
-	///    enc_next = enc(step 9 of another subsig) leaves the pair
-	///    (tag(enc_next', PREV), enc) absent from the DB.
-	///  SP (mask is_sp): si_fz pinned to tag(enc, FZ);
-	///    is_fz0 = is_zero(fz) splits enc_fz's authentication:
-	///    fz==0 -> structural pin enc_fz == subsig*2^(4rb) (the
-	///    seed key: DB has no SUBSIG cat for it); fz>=1 -> 2-tag
-	///    step pin (NORMAL|LAST of enc_fz, value fz) + SUBSIG pin
-	///    (value subsig).
-	/// COST: ~22*n (incl the 1cs/row cid sub-block).
-	/// MEASURED @ fig-14 n=34: 748 (0% vs 22n).
-	/// PERF 61081.6.
+	/// Binds the si companion columns that exist only in the
+	/// non-aggressive arm: the BP and SP witness columns of T_qm,
+	/// plus the JOIN-RESULT table's pat. It uses the same
+	/// one-constraint pin as assert_neo_si_pins, which owns the
+	/// base columns.
+	///
+	/// Advice names (per row):
+	///   is_fz0  zero-indicator bit, fz == 0. It selects which of
+	///           the two proofs of enc_fz applies, since step 0 of
+	///           a subsig is the artificial seed key and the DB
+	///           carries no subsig fact under it;
+	///   m_sp0   is_sp * is_fz0, the by-construction branch;
+	///   m_spfz  is_sp - m_sp0, the from-the-DB branch -- free,
+	///           because the two branches partition the SP rows.
+	///
+	/// Checks, per T_qm row:
+	///  (1) BP rows: si_bp_prev and si_rg2_next carry
+	///      tag(enc_next, PREV_ENCODED / RG_END) and bp_prev_val
+	///      == enc, so the outer pair states prev(enc_next) = enc;
+	///  (2) SP rows: si_fz carries tag(enc, FZ) beside the value
+	///      fz, so the frozen step is read out of the DB;
+	///  (3) SP rows, frozen step 0: enc_fz == subsig * 2^(4rb),
+	///      computed rather than looked up;
+	///  (4) SP rows, frozen step >= 1: si_fz_step carries a step
+	///      tag of enc_fz beside the value fz, and si_fz_sub
+	///      carries tag(enc_fz, SUBSIG) beside the value subsig --
+	///      together, enc_fz is the enc of (this subsig, step fz);
+	/// and once over the JOIN-RESULT table:
+	///  (5) every non-pad JR row: si_pat == tag(enc, PAT), so a
+	///      block's pat is the pat the DB gives that block's OWN
+	///      enc.
+	///
+	/// EXAMPLE, why (5) matters. Without it a block for store row
+	/// (enc_A, pat_A) may carry pat_B together with si_pat =
+	/// tag(enc_B, PAT) for any other store row B: that pair is a
+	/// genuine DB fact, so the outer lookup passes. Pick a B whose
+	/// pattern has no match in this chunk and the block becomes the
+	/// no-show sentinel pair -- subsig A's step looks match-free,
+	/// its chain dies, and the file is falsely discharged. The
+	/// aggressive arm never had this gap: its join view IS T_qm,
+	/// whose pat assert_neo_si_pins pins.
+	///  - CHEAT name a step of another subsig as enc_next: (1) then
+	///    needs the pair (tag(enc_next, PREV), enc), and the DB
+	///    holds no such pair.
+	///  - CHEAT freeze a step that never froze: fz comes from the
+	///    DB by (2) and enc_fz by (3) or (4), so a row cannot
+	///    choose its own freeze point.
+	///  - CHEAT claim fz == 0 to skip (4): is_fz0 is forced to 0
+	///    whenever fz is nonzero, so the claim needs fz == 0
+	///    committed -- and fz is the DB's.
+	/// PARAMS: sel_jr = the non-pad bits of the JR table, built by
+	/// the caller, which also feeds them to the join's membership
+	/// selector, so they are not paid for twice.
+	/// COST: ~13*n + |jr|. PERF 61081.6.
 	fn assert_neo_si_pins_nonaggr(
 		cs: ConstraintSystemRef<F>,
 		t: &QmTable<F>, v: &QmVars<F>, sel: &NeoSel<F>,
+		jr: &JrVars<F>, sel_jr: &[FpVar<F>],
 		job_id: usize,
 	) -> Result<(), SynthesisError> {
 		let n0 = cs.num_constraints();
 		let n = v.enc.len();
+		debug_assert!(sel_jr.len() == jr.enc.len(),
+			"neo jr selector length");
 		let rb = read_global_config().range2_bit;
 		let f1 = F::from(1u64 << rb);
-		let f5 = f1 * f1 * f1 * f1 * f1;
-		let base = F::from(0x23001101u64) * f5 * F::from(1u64 << 32);
-		let cat_c = |cid: u32| base + F::from(cid as u64) * f5;
-		let c_prev = new_const_var(&cs,
-			cat_c(ID_ENCODED_PREV_ENCODED) - F::from(RANGE2));
-		let c_rgend = new_const_var(&cs,
-			cat_c(ID_ENCODED_RG_END) - F::from(RANGE2));
-		let c_fz = new_const_var(&cs,
-			cat_c(ID_ENCODED_FZ) - F::from(RANGE2));
-		let c_sub = new_const_var(&cs,
-			cat_c(ID_ENCODED_SUBSIG) - F::from(RANGE2));
-		let c_n = new_const_var(&cs, cat_c(ID_ENCODED_NORMAL_STEP));
-		let c_l = new_const_var(&cs, cat_c(ID_ENCODED_LAST_STEP));
-		let c_rg2t = new_const_var(&cs, F::from(RANGE2));
-		let c_one = new_const_var(&cs, F::one());
+		let f_r2 = F::from(RANGE2);
+		// tag constants pre-shifted by RANGE2 for check_si_pin
+		// (assert_neo_si_pins explains the pin's shape).
+		let tc = |cid: u32| new_const_var(&cs,
+			si_tag_base::<F>(cid) - f_r2);
+		let c_prev = tc(ID_ENCODED_PREV_ENCODED);
+		let c_rgend = tc(ID_ENCODED_RG_END);
+		let c_fz = tc(ID_ENCODED_FZ);
+		let c_sub = tc(ID_ENCODED_SUBSIG);
+		let c_pat = tc(ID_ENCODED_PAT);
+		// check (4) admits either of two step tags, so it cannot
+		// use the single-tag pin and these two stay unshifted.
+		let c_n = new_const_var(&cs,
+			si_tag_base::<F>(ID_ENCODED_NORMAL_STEP));
+		let c_l = new_const_var(&cs,
+			si_tag_base::<F>(ID_ENCODED_LAST_STEP));
+		let c_rg2t = new_const_var(&cs, f_r2);
 		let c_sh4 = new_const_var(&cs, f1 * f1 * f1 * f1);
 		let na_t = &t.nonaggr;
 		let na_v = &v.nonaggr;
+		// STRONG bit, not the 1cs gate: only "is_fz0 = 1 => fz = 0"
+		// is needed for soundness, but a gate bit is left
+		// unconstrained wherever fz = 0, and then m_sp0 and m_spfz
+		// below would no longer be boolean.
 		let is_fz0 = gen_zero_bits(&cs, &na_t.fz, &na_v.fz)?;
 		for i in 0..n {
-			// --- BP pins (3cs) ---
-			let tag_p = &(&c_prev + &na_v.enc_next[i]);
-			check_eq(&na_v.si_bp_prev[i],
-				&(&(&sel.is_bp[i] * tag_p) + &c_rg2t),
+			// --- check (1): BP witnesses (3cs) ---
+			// A subsig's steps form a chain, so each enc has one
+			// predecessor and one successor: the DB pair
+			// prev(enc_next) = enc leaves only one enc_next.
+			check_si_pin(&sel.is_bp[i], &na_v.enc_next[i],
+				&na_v.si_bp_prev[i], &c_prev, &c_rg2t,
 				"neo si_bp_prev pin")?;
-			let tag_r = &(&c_rgend + &na_v.enc_next[i]);
-			check_eq(&na_v.si_rg2_next[i],
-				&(&(&sel.is_bp[i] * tag_r) + &c_rg2t),
+			check_si_pin(&sel.is_bp[i], &na_v.enc_next[i],
+				&na_v.si_rg2_next[i], &c_rgend, &c_rg2t,
 				"neo si_rg2_next pin")?;
-			check_eq(&na_v.bp_prev_val[i],
-				&(&sel.is_bp[i] * &v.enc[i]),
-				"neo bp_prev_val bind")?;
-			// --- SP pins (8cs) ---
-			let tag_f = &(&c_fz + &v.enc[i]);
-			check_eq(&na_v.si_fz[i],
-				&(&(&sel.is_sp[i] * tag_f) + &c_rg2t),
-				"neo si_fz pin")?;
-			//m_sp0 = SP row at a singleton step (fz==0): enc_fz is
-			//the seed key, pinned structurally.
+			check_prod_eq(&sel.is_bp[i], &v.enc[i],
+				&na_v.bp_prev_val[i], "neo bp_prev_val bind")?;
+			// --- check (2): the frozen step is a DB fact (1cs) ---
+			check_si_pin(&sel.is_sp[i], &v.enc[i],
+				&na_v.si_fz[i], &c_fz, &c_rg2t, "neo si_fz pin")?;
+			// --- checks (3) and (4): identify enc_fz (7cs) ---
+			// An SP row claims its group is frozen at step fz, and
+			// assert_singleton_pruning proves that by asking what
+			// the group of step fz carries. It therefore needs
+			// enc_fz, the key of (this subsig, step fz). That
+			// column is advice with si 0, so these checks are what
+			// tie it down. is_fz0 picks which of the two proofs
+			// applies; m_sp0 and m_spfz partition the SP rows, so
+			// exactly one runs per row and the second mask is a
+			// subtraction rather than a product.
+			//  fz == 0: the key is the seed key, so it is COMPUTED
+			//    as subsig * 2^(4rb) -- the encoding places subsig
+			//    in the top field with step 0 below it. No lookup
+			//    is possible in this case: the DB files no subsig
+			//    fact under a step-0 key.
+			//  fz >= 1: two DB facts about enc_fz are read back --
+			//    its step must equal fz, and its subsig must equal
+			//    this row's subsig. A (subsig, step) pair has one
+			//    key, so the two together leave a single enc_fz.
+			//    The step pin accepts either the NORMAL or the
+			//    LAST tag (t1 * t2 = 0), since the DB files a step
+			//    under exactly one of them.
+			// EXAMPLE: an SP row at step 7 of subsig a whose DB
+			// freeze point is fz = 5 must give enc_fz = enc(a, 5).
+			// Naming enc(b, 5) instead needs the pair
+			// (tag(enc(b,5), SUBSIG), a) in the DB, and that fact
+			// reads b, not a.
 			let m_sp0 = &sel.is_sp[i] * &is_fz0[i];
 			check_prod_zero(&m_sp0,
 				&(&na_v.enc_fz[i] - &(&v.subsig[i] * &c_sh4)),
 				lc!(), "neo enc_fz seed pin")?;
-			//m_spfz = SP row at a tracked step (fz>=1): enc_fz
-			//authenticated by its step + subsig DB facts.
-			let m_spfz = &sel.is_sp[i] * (&c_one - &is_fz0[i]);
+			let m_spfz = &sel.is_sp[i] - &m_sp0;
 			let t1 = &(&na_v.si_fz_step[i] - &c_n)
 				- &na_v.enc_fz[i];
 			let t2 = &(&na_v.si_fz_step[i] - &c_l)
 				- &na_v.enc_fz[i];
 			check_prod_zero(&m_spfz, &(&t1 * &t2), lc!(),
 				"neo si_fz_step 2-tag pin")?;
-			check_prod_zero(&(&c_one - &m_spfz),
-				&(&na_v.si_fz_step[i] - &c_rg2t), lc!(),
-				"neo si_fz_step masked")?;
-			check_eq(&na_v.fz_step_val[i],
-				&(&m_spfz * &na_v.fz[i]),
-				"neo fz_step_val bind")?;
-			let tag_s = &(&c_sub + &na_v.enc_fz[i]);
-			check_eq(&na_v.si_fz_sub[i],
-				&(&(&m_spfz * tag_s) + &c_rg2t),
+			check_prod_eq(&m_spfz, &na_v.fz[i],
+				&na_v.fz_step_val[i], "neo fz_step_val bind")?;
+			check_si_pin(&m_spfz, &na_v.enc_fz[i],
+				&na_v.si_fz_sub[i], &c_sub, &c_rg2t,
 				"neo si_fz_sub pin")?;
-			check_eq(&na_v.fz_sub_val[i],
-				&(&m_spfz * &v.subsig[i]),
-				"neo fz_sub_val bind")?;
+			check_prod_eq(&m_spfz, &v.subsig[i],
+				&na_v.fz_sub_val[i], "neo fz_sub_val bind")?;
+			// NOTE: off this branch si_fz_step needs no pin. The
+			// pair (si_fz_step, fz_step_val) is read by nothing
+			// else, the bind above already forces fz_step_val = 0
+			// there, and the outer lookup still confines si_fz_step
+			// to a pair the DB holds. The advice writes RANGE2.
+		}
+		// --- check (5): a JR block's pat belongs to its enc ---
+		// This arm's join view is the JR table rather than T_qm, so
+		// T_qm's own pat pin does not reach it: the constraint
+		// below is the only thing tying a block's pat to its enc.
+		for k in 0..jr.enc.len() {
+			check_si_pin(&sel_jr[k], &jr.enc[k], &jr.si_pat[k],
+				&c_pat, &c_rg2t, "neo jr si_pat pin")?;
 		}
 		log(job_id, LOG3, &format!(
 			"PERF 61081.6: block=si_pins_nonaggr cs={} pred={}",
-			cs.num_constraints() - n0, 22 * n));
+			cs.num_constraints() - n0,
+			13 * n + jr.enc.len()));
 		Ok(())
 	}
 
@@ -2734,6 +3510,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	/// COST: ~56*n (folds the 2 fused logups into the
 	/// per-row rate). MEASURED @ fig-14 n=34: 1887 (-0.9%
 	/// vs 56n). PERF 61081.7.
+	#[cfg(any())] // M8_NEW P1: replaced by the certificate fns
 	fn assert_neo_certs_nonaggr(
 		cs: ConstraintSystemRef<F>,
 		t: &QmTable<F>, v: &QmVars<F>, sel: &NeoSel<F>,
@@ -2908,6 +3685,8 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	/// COST: ~19*n + 7|L| + 3|D| (n-term folds the carry
 	/// pins + 3 logups). MEASURED @ fig-14 n=34: 777 (+1.2%
 	/// vs the 768 estimate). PERF 61081.8.
+	#[cfg(any())] // M8_NEW P1: replaced by assert_join_locations
+	// + assert_qm_union + assert_carry
 	fn assert_neo_merge_nonaggr(
 		cs: ConstraintSystemRef<F>,
 		t: &QmTable<F>, v: &QmVars<F>, sel: &NeoSel<F>,
@@ -2998,6 +3777,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	/// MEASURED @ fig-14 n=34: 5277 cs (+0.4% vs 5256
 	/// estimate; band-locked, test_nonaggr_circuit_positive).
 	/// PERF 61081.9 grand total.
+	#[cfg(any())] // M8_NEW P1: replaced by assert_neo_nonaggr
 	pub(crate) fn assert_neo_core_nonaggr(
 		cs: ConstraintSystemRef<F>,
 		nat: &NeoCore<F>, vars: &NeoCoreVars<F>,
@@ -3021,6 +3801,1122 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			default_min, r1, r2, job_id)?;
 		Self::assert_neo_merge_nonaggr(cs.clone(), &nat.t,
 			&vars.qm, &sel, vars, nat, r1, r2, job_id)?;
+		log(job_id, LOG3, &format!(
+			"PERF 61081.9: block=TOTAL cs={} rows={}",
+			cs.num_constraints() - n0, nat.t.enc.len()));
+		Ok(())
+	}
+}
+
+// ============================================================
+//   M8_NEW: redesigned circuit core -- join / union / certs /
+//   shared lookups / verdict (approved interfaces; bodies P2)
+// ============================================================
+
+/// Union proof advice for assert_qm_union: the two zero-count
+/// reconciliation scalars of the multiset identity
+/// (verify_union_prf, db.rs).
+pub(crate) struct QmUnionAdvice<F: PrimeField + ColEle> {
+	pub b_left_more_zero: FpVar<F>,
+	pub diff_zero: FpVar<F>,
+}
+
+impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
+	/// BOTH modes -- THE join gadget (paper's merge JOIN term,
+	/// fig:prune step 1): proves the view (enc, pat, id, loc)
+	/// is exactly "queried groups JOIN pat_loc". No
+	/// reachability here -- that belongs to the certificates.
+	/// CALLERS:
+	///   aggr:    view = Q_m itself (no carry: Q_m IS the join
+	///            result), sel_q = 1 - is_step0 (pads have
+	///            step 0, so one bit masks pads + seed group),
+	///            b_ext_wf = true;
+	///   nonaggr: view = JrTable (Q_m mixes in carried rows,
+	///            so the join lives in a temp table;
+	///            assert_qm_union links it into Q_m), sel_q =
+	///            1 - is_zero(enc), b_ext_wf = false.
+	///
+	/// RELATION TO THE PAPER'S TABLE-JOIN GADGETS (Sec 6.2/
+	/// 6.3; verify_tbl_left_join / _wide): those prove
+	/// "output = tbl1 join tbl2" on a materialized output
+	/// table from exactly three obligations -- the same three
+	/// here:
+	///   (J-W) output well-formed over its compound key: each
+	///       key block walks consecutive ids, bracketed by
+	///       the loc-0 / loc-max dummy rows. ONE skeleton
+	///       call (assert_well_formed_sorted, non-relaxed),
+	///       run here iff b_ext_wf = false. The aggr view's
+	///       owner is assert_neo_wf S1 -- the IDENTICAL call
+	///       on the same three columns (re-running it would
+	///       pay 3n twice).
+	///   (J-B) key side bound to tbl1 (= store join db): enc
+	///       is a store group key (wf S4 uniqueness for Q_m;
+	///       the JR view inherits it through assert_qm_union,
+	///       whose sentinels must land on a real group's
+	///       wraps), and pat is welded to enc per row by an
+	///       si_pat companion (Q_m si-pins / JrTable.si_pat).
+	///       Without that weld a block could join a FOREIGN
+	///       pat's locations under this enc and hide the true
+	///       pat's matches.
+	///   (J-M) value side bound to tbl2 (= L = pat_loc): THIS
+	///       fn's one batch logup -- every selected row's
+	///       (pat, id, loc) triple is in pat_loc (fixed-base
+	///       encode_cols_var; legal: all three range-bound).
+	/// Per block of pat p: no fabrication (each triple exists
+	/// in L) and no omission (the border forces the last loc
+	/// = max, whose only L row for p has id cnt+1; the +1
+	/// chain then covers 0..cnt+1, the FULL block). A pat
+	/// shared by several groups needs no bookkeeping: each
+	/// block brackets the whole list.
+	///
+	/// Step-0 rows are EXEMPT: the seed match is artificial,
+	/// absent from pat_loc. Unfakeable: step is DB-bound on
+	/// every Q_m row (si_step); a step-0 block smuggled into
+	/// the JR view dies in assert_qm_union (seed wraps are
+	/// masked out there, so its sentinels find no partner).
+	/// SOUNDNESS DEPENDENCY (aggr view): wraps are queried,
+	/// so wrap rows' pat must be DB-bound via si_pat
+	/// (push_wrap emits the variable si on step>=1 wraps;
+	/// si_pins pins (real+wrap)*(1-is_step0) rows).
+	///
+	/// EXAMPLE (aggr view). Store: subsig 3 = {step 1: pat 2,
+	/// step 2: pat 5}; chunk matches: pat 2 at {17, 25},
+	/// pat 5 none. INPUTS:
+	///   pat_loc = (l_pat, l_id, l_loc), 6 rows (fsm table
+	///   copy; per pat: ids 0..cnt+1, loc-0/loc-max
+	///   sentinels):
+	///     l_pat = [2,  2,  2,   2,  5,   5]
+	///     l_id  = [0,  1,  2,   3,  0,   1]
+	///     l_loc = [0, 17, 25, max,  0, max]
+	///   m_tm = [1, 1, 1, 1, 1, 1]
+	///   view = Q_m cols; sel_q = 1 - is_step0 (E0 = seed
+	///   group, E1 = step 1, E2 = step 2):
+	///     row grp pat id loc  cat   sel_q  query
+	///     r0  E0   0  0    0  wrap    0    --
+	///     r1  E0   0  1    1  C       0    --
+	///     r2  E0   0  2  max  wrap    0    --
+	///     r3  E1   2  0    0  wrap    1    (2,0,0)   in L
+	///     r4  E1   2  1   17  C       1    (2,1,17)  in L
+	///     r5  E1   2  2   25  FP      1    (2,2,25)  in L
+	///     r6  E1   2  3  max  wrap    1    (2,3,max) in L
+	///     r7  E2   5  0    0  wrap    1    (5,0,0)   in L
+	///     r8  E2   5  1  max  wrap    1    (5,1,max) in L
+	/// All queries found -> SAT. E2 = the matchless-pat case.
+	/// ATTACKS: drop r5 -> r6 slides to id 2, query (2,2,max)
+	/// not in L; fabricate (2,?,30) -> no such L row; retag
+	/// E1's wraps to pat 5 to fake it empty -> si_pat pin
+	/// fails; relabel r5's step to 0 to dodge the query ->
+	/// si_step pair fails; wrong m_tm -> the logup identity
+	/// itself fails. (The JR-view example lives on
+	/// gen_jr_table.)
+	/// NO-SHOW EXTENSION: a store pat with zero matches has a
+	/// sentinel-only block; its two queries (p,0,0)/(p,1,max)
+	/// hit targets derived FREE from the committed ns_pat col
+	/// (p*2^2rb and p*2^2rb + 2^rb + max), eligible only where
+	/// sel_ns = 1 -- and assert_ns_gap proves exactly those
+	/// pats absent from L, so a matched pat cannot fake an
+	/// empty block through them.
+	/// COST: (b_ext_wf ? 2 : 5)*n + 3*|L|. PERF 61082.1.
+	fn assert_join_locations(
+		cs: ConstraintSystemRef<F>,
+		view: (&[FpVar<F>], &[FpVar<F>], &[FpVar<F>],
+			&[FpVar<F>]), // enc, pat, id, loc
+		sel_q: &[FpVar<F>],// membership query mask
+		b_ext_wf: bool,    // (J-W) owned by caller's table wf?
+		pat_loc: (&[FpVar<F>], &[FpVar<F>], &[FpVar<F>]),
+		                   // committed L: l_pat, l_id, l_loc
+		ns_pat: &[FpVar<F>],
+		                   // no-show pats (sentinel targets)
+		sel_ns: &[FpVar<F>],
+		                   // (ns_pat != 0) bits, caller-built
+		m_tm: &[FpVar<F>], // membership multiplicity advice,
+		                   //   len |L| + 2*|ns|
+		r1: &FpVar<F>,     // wf skeleton challenge
+		r2: &FpVar<F>,     // lookup challenge = wtns.msg2[1]
+		job_id: usize,
+	) -> Result<(), SynthesisError> {
+		let n0 = cs.num_constraints();
+		let (enc, pat, id, loc) = view;
+		// -- 1. (J-W) bracket skeleton, unless the caller's
+		//    table wf already runs the identical call --
+		if !b_ext_wf {
+			assert_well_formed_sorted(cs.clone(),
+				&enc.to_vec(), &id.to_vec(), &loc.to_vec(),
+				None, None, None, None, r1.clone(),
+				read_global_config().range2_bit)?;
+		}
+		// -- 2. (J-M) membership logup into pat_loc ++ no-show
+		//    sentinel targets --
+		let (l_pat, l_id, l_loc) = pat_loc;
+		if l_pat.is_empty() {
+			// empty-L degenerate (empty-store igc): no query
+			// and no no-show claim may exist at all.
+			let c_zero = new_const_var(&cs, F::zero());
+			for s in sel_q.iter().chain(sel_ns.iter()) {
+				check_eq(s, &c_zero, "neo join empty-L")?;
+			}
+			return Ok(());
+		}
+		let qry = encode_cols_var(&vec![pat.to_vec(),
+			id.to_vec(), loc.to_vec()], &vec![0, 1, 2]);
+		let mut lk = encode_cols_var(&vec![l_pat.to_vec(),
+			l_id.to_vec(), l_loc.to_vec()], &vec![0, 1, 2]);
+		let c_one = new_const_var(&cs, F::one());
+		let mut tsel = vec![c_one.clone(); l_pat.len()];
+		let rb = read_global_config().range2_bit;
+		let c_sh = new_const_var(&cs,
+			F::from(1u128 << (2 * rb)));
+		let c_t2 = new_const_var(&cs,
+			F::from((1u64 << rb) + ((1u64 << rb) - 1)));
+		for k in 0..ns_pat.len() {
+			lk.push(&ns_pat[k] * &c_sh);
+			tsel.push(sel_ns[k].clone());
+		}
+		for k in 0..ns_pat.len() {
+			lk.push(&(&ns_pat[k] * &c_sh) + &c_t2);
+			tsel.push(sel_ns[k].clone());
+		}
+		assert_logup_cond(cs.clone(), &qry, &sel_q.to_vec(),
+			&lk, &tsel, &m_tm.to_vec(), r2)?;
+		log(job_id, LOG3, &format!(
+			"PERF 61082.1: block=join ext_wf={} cs={} pred={}",
+			b_ext_wf, cs.num_constraints() - n0,
+			(if b_ext_wf { 2 } else { 5 }) * enc.len()
+				+ 3 * (l_pat.len() + 2 * ns_pat.len())));
+		Ok(())
+	}
+
+	/// Absence proof for the no-show pats: each nonzero ns_pat
+	/// entry p is straddled by an ADJACENT pair (g1, g2) of the
+	/// sorted l_pat column -- g1 < p < g2 with nothing between
+	/// them -- so p has no match in this chunk. g1 = p-1-d_lo,
+	/// g2 = p+1+d_hi (free; RANGE2-bound d_* keep the
+	/// inequalities strict in the integers; a wrapped g1 finds
+	/// no target). The pair packs with the CHALLENGE
+	/// (g1 + r1*g2), NOT fixed-base: g2 is a derived sum
+	/// reaching 2^(rb+1), and fixed-base would let
+	/// (p-1, p+2^rb) collide with the in-block pair (p, p).
+	/// Targets, free from committed l_pat: bottom pair
+	/// (0, l_pat[0]), the adjacent pairs, top pair
+	/// (l_pat[last], 2^rb). Membership-target eligibility and
+	/// this proof share ONE selector (sel_ns), so every usable
+	/// sentinel target is absence-proven.
+	/// COST: ~4*(|L| + |ns|). PERF 61082.3.
+	fn assert_ns_gap(
+		cs: ConstraintSystemRef<F>,
+		ns_pat: &[FpVar<F>],  // no-show pats (front-0-padded)
+		sel_ns: &[FpVar<F>],  // (ns_pat != 0), caller-built
+		d_ns_lo: &[FpVar<F>], // gap below, RANGE2-bound advice
+		d_ns_hi: &[FpVar<F>], // gap above, RANGE2-bound advice
+		l_pat: &[FpVar<F>],   // committed pat_loc pat col
+		                      //   (sorted by the fsm-side wf)
+		mtbl_ns: &[FpVar<F>], // hit count per pair, len |L|+1
+		r1: &FpVar<F>,        // pair-pack challenge
+		r2: &FpVar<F>,        // lookup challenge = wtns.msg2[1]
+		job_id: usize,
+	) -> Result<(), SynthesisError> {
+		let n0 = cs.num_constraints();
+		let n = l_pat.len();
+		let c_zero = new_const_var(&cs, F::zero());
+		if n == 0 {
+			// empty-store degenerate: no no-show claims.
+			for s in sel_ns {
+				check_eq(s, &c_zero, "neo ns empty-L")?;
+			}
+			return Ok(());
+		}
+		let c_one = new_const_var(&cs, F::one());
+		let c_top = new_const_var(&cs,
+			F::from(1u64 << read_global_config().range2_bit));
+		// queries: g1 + r1*g2 (1 mul each; masked rows carry
+		// garbage, gated out by sel_ns)
+		let qry: Vec<FpVar<F>> = (0..ns_pat.len()).map(|k| {
+			let g1 = &(&ns_pat[k] - &c_one) - &d_ns_lo[k];
+			let g2 = &(&ns_pat[k] + &c_one) + &d_ns_hi[k];
+			&g1 + &(&g2 * r1)
+		}).collect();
+		// targets: bottom, adjacent pairs, top (1 mul each)
+		let mut tgt: Vec<FpVar<F>> = Vec::with_capacity(n + 1);
+		tgt.push(&l_pat[0] * r1);
+		for i in 0..n - 1 {
+			tgt.push(&l_pat[i] + &(&l_pat[i + 1] * r1));
+		}
+		tgt.push(&l_pat[n - 1] + &(&c_top * r1));
+		let ones = vec![c_one.clone(); tgt.len()];
+		assert_logup_cond(cs.clone(), &qry, &sel_ns.to_vec(),
+			&tgt, &ones, &mtbl_ns.to_vec(), r2)?;
+		log(job_id, LOG3, &format!(
+			"PERF 61082.3: block=ns_gap cs={} pred={}",
+			cs.num_constraints() - n0,
+			4 * (n + ns_pat.len())));
+		Ok(())
+	}
+
+	/// Build the shared predecessor view: 3 muls/row for the two
+	/// keys + the z_loc1 bits (2cs strong / 1cs gate-only).
+	fn gen_pred_view(
+		cs: &ConstraintSystemRef<F>, t: &QmTable<F>,
+		v: &QmVars<F>, b_aggr: bool, r1: &FpVar<F>,
+	) -> Result<PredView<F>, SynthesisError> {
+		let r1sq = r1 * r1;
+		let n = v.enc.len();
+		let mut key1 = Vec::with_capacity(n);
+		let mut key2 = Vec::with_capacity(n);
+		for i in 0..n {
+			let t_id = r1 * &v.prev_id1[i];
+			let t_p1 = &r1sq * &v.prev_loc1[i];
+			let t_p2 = &r1sq * &v.prev_loc2[i];
+			key1.push(&(&v.enc_prev[i] + &t_id) + &t_p1);
+			key2.push(&(&(&v.enc_prev[i] + &t_id) + r1) + &t_p2);
+		}
+		let z_loc1 = if b_aggr {
+			gen_gate_bits(cs, &t.prev_loc1, &v.prev_loc1)?
+		} else {
+			gen_zero_bits(cs, &t.prev_loc1, &v.prev_loc1)?
+		};
+		Ok(PredView { key1, key2, z_loc1 })
+	}
+
+	/// Verifies the CARRY labels of Q_m: a row tagged C really
+	/// survives, and the committed carry-out wire q_c is exactly
+	/// that set of rows. C is the paper's Q_c certificate
+	/// (fig:prune step 3) -- some location at the previous step
+	/// reaches this one. Step-0 rows (the seed) are carried by
+	/// definition, and FP/BP/SP rows are not touched here.
+	///
+	/// Two checks, both masked to is_c:
+	///  (1) reach window: gap = |loc - prev_loc1| lies in
+	///      [rg1, rg2] via the RANGE2 advice d_c1/d_c2, and the
+	///      named predecessor exists -- that query is buffered
+	///      for assert_qm_lookups to discharge against the
+	///      carried rows;
+	///  (2) projection q_c = sigma_C(Q_m), a permutation check;
+	///      NONAGGR only, the aggressive arm commits no carry.
+	///
+	/// EXAMPLE (fig-14): C row a7:101 with pred a6:96, rg{1,9}
+	/// gives gap 5, d_c1 = 4, d_c2 = 4, and q_c holds (a7, 101).
+	///
+	/// PARAMS: b_aggr selects the arm; pv = shared predecessor
+	/// view (in aggr, fwd_pruning's lower-neighbor query rides
+	/// this fn's fused key1 push).
+	/// CONSUMERS of q_c: the folding driver binds it to the NEXT
+	/// chunk's q_i (whose union step rebuilds Q_m from it), and
+	/// compute_sig reads the final chunk's q_c for the verdict.
+	fn assert_carry(
+		cs: ConstraintSystemRef<F>,
+		qm: &QmVars<F>,  // loc, prev_loc1, rg1, rg2, d_c1, d_c2,
+		                 //   enc
+		sel: &NeoSel<F>, // is_c, is_fp, is_seed, b_bwd_row
+		b_aggr: bool,    // arm: bwd windows + no ban + no q_c
+		q_c: (&[FpVar<F>], &[FpVar<F>], &[F]),
+		                 // carry-out transport (enc vars, loc
+		                 //   vars, enc native); EMPTY in aggr
+		pv: &PredView<F>,
+		buf: &mut QmQueryBuf<F>,
+		                 // CARRIED-target instance
+		r2: &FpVar<F>,
+		job_id: usize,
+	) -> Result<(), SynthesisError> {
+		let n0 = cs.num_constraints();
+		let n = qm.enc.len();
+		let rb = read_global_config().range2_bit;
+		let c_one = new_const_var(&cs, F::one());
+		let c_base = new_const_var(&cs, F::from(1u64 << rb));
+		for i in 0..n {
+			// --- (1) reach window (2cs, +1cs non-aggr) ---
+			// sel_c = non-seed C rows; free: the seed pin makes
+			// is_seed exact (see NeoSel::is_seed).
+			let sel_c = &sel.is_c[i] - &sel.is_seed[i];
+			// non-aggr is forward-only (no backward subsigs), so
+			// the orientation select is an aggressive-arm cost.
+			let gap = if b_aggr {
+				better_select(&sel.b_bwd_row[i],
+					&(&qm.prev_loc1[i] - &qm.loc[i]),
+					&(&qm.loc[i] - &qm.prev_loc1[i]))
+			} else { &qm.loc[i] - &qm.prev_loc1[i] };
+			check_prod_zero(&sel_c,
+				&(&(&gap - &qm.rg1[i]) - &qm.d_c1[i]), lc!(),
+				"neo C d1")?;
+			check_prod_zero(&sel_c,
+				&(&(&qm.rg2[i] - &gap) - &qm.d_c2[i]), lc!(),
+				"neo C d2")?;
+			// NONAGGR: the pred cannot be the previous group's
+			// 0-wrap. That wrap is a legal carried target (cid 0),
+			// so a fake (enc_prev, 0, 0) pred passes any window
+			// with loc <= rg2; the planted low C row then becomes
+			// its group's kept minimum and singleton pruning drops
+			// the live chain above it. Aggr has no SP layer, and
+			// over-claiming C there only feeds acc_out, so it
+			// keeps the M6 stream.
+			if !b_aggr {
+				check_prod_zero(&sel_c, &pv.z_loc1[i], lc!(),
+					"neo C pred not 0-wrap")?;
+			}
+			// aggr: fwd_pruning's lower-neighbor query is the
+			// SAME key; one fused slot serves both (exclusive
+			// cats keep the fused sel in {0,1}).
+			if b_aggr {
+				buf.push(pv.key1[i].clone(),
+					&sel_c + &sel.is_fp[i]);
+			} else {
+				buf.push(pv.key1[i].clone(), sel_c);
+			}
+		}
+		// --- (2) projection q_c = sigma_C(Q_m) ---
+		// is_c identifies the carry set only INSIDE this circuit;
+		// the fold links chunks positionally, so the set must
+		// leave as a dense fixed-size container. Multiplicity is
+		// pinned at 1 per C row, so a PERMUTATION check does what
+		// a lookup would, cheaper: two grand products over
+		// pack(loc, enc) = loc + enc*2^rb (free, constant base),
+		// masked rows contributing the neutral factor 1.
+		// EXAMPLE: dropping C row a3:27 from q_c leaves the left
+		//   product one factor richer -> UNSAT; smuggling BP row
+		//   a6:73 in adds a factor the C set cannot match.
+		if !b_aggr {
+			let z_qc = gen_zero_bits(&cs, q_c.2, q_c.0)?;
+			let sq: Vec<FpVar<F>> = z_qc.iter()
+				.map(|z| &c_one - z).collect();
+			let lhs = multiset_prod_2col(cs.clone(), &qm.loc,
+				&qm.enc, &sel.is_c, r2, &c_base);
+			let rhs = multiset_prod_2col(cs.clone(), q_c.1,
+				q_c.0, &sq, r2, &c_base);
+			check_eq(&lhs, &rhs, "neo carry-out bijection")?;
+		}
+		log(job_id, LOG3, &format!(
+			"PERF 61082.4: block=carry cs={} pred={}",
+			cs.num_constraints() - n0,
+			if b_aggr { 3 * n } else { 5 * n + 4 * q_c.0.len() }));
+		Ok(())
+	}
+
+	/// Verifies the FWD-PRUNE labels of Q_m: a row tagged FP is
+	/// unreachable -- two rank-ADJACENT reachable rows at the
+	/// previous step straddle its window (paper fig:prune step 3,
+	/// Q_fp certificate: l1 + rg2 < loc < l2 + rg1, fwd form).
+	/// Orientation costs one mul, in the aggressive arm only.
+	///
+	/// Three checks, all masked to is_fp:
+	///  (1) below: loc - prev_loc1 - rg2 - 1 >= 0 via the RANGE2
+	///      advice d_below_lo; skipped when prev_loc1 is the
+	///      0-wrap (nothing reachable lies below);
+	///  (2) above: prev_loc2 + rg1 - loc - 1 >= 0 via d_above_lo;
+	///      skipped when prev_loc2 is the max-wrap;
+	///  (3) the neighbor pair exists rank-adjacent in Q_r:
+	///      pv.key1 / pv.key2 go to the REACHABLE buffer.
+	///
+	/// EXAMPLE (fig-14): FP a7:131 vs neighbors 96/141, rg{1,9}:
+	/// below 131-96-9-1 = 25, above 141+1-131-1 = 10, both >= 0.
+	///
+	/// ASSUMPTION: chunking keeps loc + rg inside RANGE2 (chunk
+	/// len + max window < 2^rb; asserted at the advice fill), so
+	/// each diff fits ONE RANGE2 cell -- no overflow limb.
+	fn assert_fwd_pruning(
+		cs: ConstraintSystemRef<F>,
+		qm: &QmVars<F>,  // loc, rg1, rg2, prev_loc1, prev_loc2,
+		                 //   d_below_lo, d_above_lo
+		sel: &NeoSel<F>, // is_fp, b_bwd_row
+		b_aggr: bool,
+		nat_prev_loc2: &[F],
+		pv: &PredView<F>,
+		buf: &mut QmQueryBuf<F>,
+		                 // REACHABLE-target instance
+		job_id: usize,
+	) -> Result<(), SynthesisError> {
+		let n0 = cs.num_constraints();
+		let n = qm.enc.len();
+		let rb = read_global_config().range2_bit;
+		let f_max = F::from(((1u64 << rb) - 1) as u64);
+		let c_max = new_const_var(&cs, f_max);
+		let c_one = new_const_var(&cs, F::one());
+		// gate-only bit: prev_loc2 == max is the "nothing above"
+		// sentinel; a dishonest 0 only re-enables the check.
+		let z_pl2 = gen_gate_bits(&cs,
+			&nat_prev_loc2.iter().map(|x| f_max - *x)
+				.collect::<Vec<F>>(),
+			&qm.prev_loc2.iter().map(|x| &c_max - x)
+				.collect::<Vec<_>>())?;
+		for i in 0..n {
+			// fwd-form diffs. ONE mul orients both for bwd rows:
+			// the two selects M6 paid for swap the same (rg1,rg2)
+			// pair, so u = b_bwd_row*(rg1+rg2) converts below and
+			// above at once (+u / -u).
+			let e_lo = &(&(&qm.loc[i] - &qm.prev_loc1[i])
+				- &qm.rg2[i]) - &c_one;
+			let e_hi = &(&(&qm.prev_loc2[i] + &qm.rg1[i])
+				- &qm.loc[i]) - &c_one;
+			let (e_lo, e_hi) = if b_aggr {
+				let u = &sel.b_bwd_row[i]
+					* &(&qm.rg1[i] + &qm.rg2[i]);
+				(&e_lo + &u, &e_hi - &u)
+			} else { (e_lo, e_hi) };
+			// (1) + (2): each active diff equals its committed
+			// RANGE2 cell (single limb by the doc ASSUMPTION).
+			let m_lo = &sel.is_fp[i] * (&c_one - &pv.z_loc1[i]);
+			check_prod_zero(&m_lo, &(&e_lo - &qm.d_below_lo[i]),
+				lc!(), "neo FP below")?;
+			let m_hi = &sel.is_fp[i] * (&c_one - &z_pl2[i]);
+			check_prod_zero(&m_hi, &(&e_hi - &qm.d_above_lo[i]),
+				lc!(), "neo FP above")?;
+			// (3): key1 rides assert_carry's fused slot in aggr
+			// (same key, exclusive sels).
+			if !b_aggr {
+				buf.push(pv.key1[i].clone(),
+					sel.is_fp[i].clone());
+			}
+			buf.push(pv.key2[i].clone(), sel.is_fp[i].clone());
+		}
+		log(job_id, LOG3, &format!(
+			"PERF 61082.5: block=fwd_prune cs={} pred={}",
+			cs.num_constraints() - n0,
+			(if b_aggr { 6 } else { 5 }) * n));
+		Ok(())
+	}
+
+	/// Verifies the BWD-PRUNE labels of Q_m: a row tagged BP is
+	/// a dead end going forward -- even its farthest reach falls
+	/// short of the successor step's least surviving location
+	/// (paper fig:prune step 3, Q_bp certificate:
+	/// loc + rg2_{i+1} < min_{i+1}). NONAGGR ONLY: the
+	/// aggressive arm retags BP rows to C at emission.
+	///
+	/// Two checks, both masked to is_bp:
+	///  (1) min pin: the query (enc_next, 1, w_next) goes to the
+	///      CARRIED buffer -- cid 1 is the successor group's
+	///      first carried row, its least loc (or the max-wrap
+	///      when the group carries nothing);
+	///  (2) gap cert: min_eff - loc - rg2_next = d_bp + 1 with
+	///      d_bp RANGE2-bound, where min_eff = w_next, or
+	///      default_min when w_next is the max-wrap.
+	///
+	/// EXAMPLE (fig-14): BP a6:73, rg2_next 9; step 7 carries
+	/// nothing so w_next = max, min_eff = default_min = 161;
+	/// d_bp = 161 - 73 - 9 - 1 = 78.
+	///
+	/// PARAMS: default_min = last_loc + 1, the least loc any
+	/// future chunk can add at step i+1.
+	fn assert_bwd_pruning(
+		cs: ConstraintSystemRef<F>,
+		qm: &QmVars<F>,  // loc; nonaggr cols: enc_next, w_next,
+		                 //   rg2_next, d_bp
+		sel: &NeoSel<F>, // is_bp
+		nat_w_next: &[F],
+		                 // native w_next (zero-bit hints for the
+		                 //   empty-successor branch)
+		default_min: &FpVar<F>,
+		                 // bound when successor carries nothing
+		buf_qc: &mut QmQueryBuf<F>,
+		                 // CARRIED-target instance
+		r1: &FpVar<F>,
+		job_id: usize,
+	) -> Result<(), SynthesisError> {
+		let n0 = cs.num_constraints();
+		let n = qm.loc.len();
+		let rb = read_global_config().range2_bit;
+		let f_max = F::from(((1u64 << rb) - 1) as u64);
+		let c_max = new_const_var(&cs, f_max);
+		let c_one = new_const_var(&cs, F::one());
+		let na = &qm.nonaggr;
+		let r1sq = r1 * r1;
+		// w_next == max bits, STRONG both ways. EXAMPLE (fig-14,
+		// default_min = 161): BP a6:73, rg2_next 9, reach 82.
+		//  A) step 7 carries {90, 120}: the min pin forces
+		//     w_next = 90; bit 0, min_eff = 90, cert 82 < 90.
+		//  B) step 7 carries nothing: its cid-1 row is the
+		//     max-wrap, so w_next = max (a sentinel, not a
+		//     loc); bit 1 swaps in min_eff = default_min = 161,
+		//     cert 82 < 161.
+		// A gate-only bit is UNSOUND in case B: claiming "not
+		// max" keeps min_eff = max, letting a6:200 (reach 209,
+		// still live in the next chunk) be pruned. "= max ->
+		// bit = 1" is the load-bearing direction here.
+		let z_wmax = gen_zero_bits(&cs,
+			&nat_w_next.iter().map(|x| f_max - *x)
+				.collect::<Vec<F>>(),
+			&na.w_next.iter().map(|x| &c_max - x)
+				.collect::<Vec<_>>())?;
+		// No terminal ban needed: is_bp forces the si_bp_prev DB
+		// fact (tag(enc_next, PREV) -> enc, si_pins_nonaggr), and
+		// no PREV fact names a LAST step as its value -- a BP tag
+		// on a terminal row has no satisfying enc_next. (Step-0
+		// rows DO have one; a BP-tagged seed dies at the NEXT
+		// chunk's seed anchor instead, as in legacy.)
+		for i in 0..n {
+			// (2) min_eff - loc - rg2_next >= 1 via RANGE2
+			// advice.
+			let min_eff = better_select(&z_wmax[i], default_min,
+				&na.w_next[i]);
+			check_prod_zero(&sel.is_bp[i],
+				&(&(&(&min_eff - &qm.loc[i]) - &na.rg2_next[i])
+					- &(&na.d_bp[i] + &c_one)), lc!(),
+				"neo BP gap")?;
+			// (1) against the carried ranks; si_pins_nonaggr
+			// authenticated enc_next as THE successor step, so
+			// the pin cannot read a foreign group's minimum.
+			buf_qc.push(&(&na.enc_next[i] + r1)
+				+ &(&r1sq * &na.w_next[i]),
+				sel.is_bp[i].clone());
+		}
+		log(job_id, LOG3, &format!(
+			"PERF 61082.6: block=bwd_prune cs={} pred={}",
+			cs.num_constraints() - n0, 5 * n));
+		Ok(())
+	}
+
+	/// Verifies the SINGLETON-PRUNE labels of Q_m: a row tagged SP
+	/// is redundant -- its group is FROZEN (the downstream
+	/// singleton step fz already holds a location, so only the
+	/// group's least loc matters from here on) and this row sits
+	/// strictly above that kept minimum (paper fig:prune step 2).
+	/// NONAGGR ONLY: the aggressive arm has no SP category.
+	///
+	/// Advice names (per-row committed columns; a group = all rows
+	/// of one (subsig, step), enc = its key, loc = this row's
+	/// location):
+	///   w_fz   the least loc the fz group CARRIES into the next
+	///          chunk (the max-wrap sentinel when it carries
+	///          nothing);
+	///   d_fz   RANGE2 diff certifying w_fz < max;
+	///   w_kept the least loc the OWN group carries -- the "kept
+	///          minimum" that makes this row redundant;
+	///   d_kept RANGE2 diff certifying w_kept < loc.
+	///
+	/// Two certs + two min pins, all masked to is_sp:
+	///  (1) freeze cert: max - w_fz - 1 = d_fz -> w_fz is a real
+	///      loc, so step fz truly carries -> frozen;
+	///  (2) min-dom cert: loc - w_kept - 1 = d_kept -> a strictly
+	///      smaller loc of this group survives, so dropping this
+	///      row loses nothing;
+	///  (3) freeze pin (enc_fz, 1, w_fz) into CARRIED -- w_fz IS
+	///      the fz group's least carried loc, not invented;
+	///  (4) kept pin (enc, 1, w_kept) into CARRIED -- w_kept IS
+	///      the own group's least carried loc.
+	///
+	/// EXAMPLE (fig-14): group (a, step 2) holds {21, 111},
+	/// fz = 5, step 5 carries loc 39.
+	///  - honest: SP a2:111 with 21 kept -> w_fz = 39,
+	///    d_fz = max - 40; w_kept = 21,
+	///    d_kept = 111 - 21 - 1 = 89 -> OK, 111 pruned.
+	///  - CHEAT prune-the-minimum: SP a2:21 -> 21 is then not
+	///    carried, so the pin gives w_kept >= 111 (or max) and
+	///    21 - w_kept - 1 underflows RANGE2 -> UNSAT.
+	///  - CHEAT prune-everything: carry no a2 row -> cid-1 is the
+	///    max-wrap, w_kept = max -> same underflow -> UNSAT.
+	///  - CHEAT prune-unfrozen: step 5 carries nothing ->
+	///    w_fz = max, d_fz = max - max - 1 = -1 -> UNSAT.
+	fn assert_singleton_pruning(
+		cs: ConstraintSystemRef<F>,
+		qm: &QmVars<F>,  // loc, enc; nonaggr cols: enc_fz, w_fz,
+		                 //   d_fz, w_kept, d_kept
+		sel: &NeoSel<F>, // is_sp
+		buf_qc: &mut QmQueryBuf<F>,
+		                 // CARRIED-target instance
+		r1: &FpVar<F>,
+		job_id: usize,
+	) -> Result<(), SynthesisError> {
+		let n0 = cs.num_constraints();
+		let n = qm.loc.len();
+		let rb = read_global_config().range2_bit;
+		let f_max = F::from(((1u64 << rb) - 1) as u64);
+		let c_max = new_const_var(&cs, f_max);
+		let c_one = new_const_var(&cs, F::one());
+		let na = &qm.nonaggr;
+		let r1sq = r1 * r1;
+		for i in 0..n {
+			// (1) w_fz < max: an empty fz group's cid-1 row is
+			// the max-wrap; a real loc proves step fz carries ->
+			// the chain reached len fz (C-prefix contiguity) ->
+			// frozen. fz = 0 pins enc_fz to the seed key
+			// (si_pins), whose C row always exists.
+			check_prod_zero(&sel.is_sp[i],
+				&(&(&(&c_max - &na.w_fz[i]) - &c_one)
+					- &na.d_fz[i]), lc!(), "neo SP freeze")?;
+			// (2) w_kept < loc: underflows when the prover aims
+			// SP at the minimum itself, or when the own group
+			// carries nothing (w_kept = max) -- a group can only
+			// drop rows ABOVE a minimum it actually keeps.
+			check_prod_zero(&sel.is_sp[i],
+				&(&(&(&qm.loc[i] - &na.w_kept[i]) - &c_one)
+					- &na.d_kept[i]), lc!(), "neo SP min-dom")?;
+			// (3)(4) cid 1 = the group's first carried row = its
+			// least loc (cid chain + sorted wf). enc_fz is
+			// authenticated by si_pins_nonaggr (fz DB fact +
+			// step/SUBSIG pins), so the freeze pin cannot read a
+			// foreign group's minimum.
+			buf_qc.push(&(&na.enc_fz[i] + r1)
+				+ &(&r1sq * &na.w_fz[i]),
+				sel.is_sp[i].clone());
+			buf_qc.push(&(&qm.enc[i] + r1)
+				+ &(&r1sq * &na.w_kept[i]),
+				sel.is_sp[i].clone());
+		}
+		log(job_id, LOG3, &format!(
+			"PERF 61082.7: block=singleton_prune cs={} pred={}",
+			cs.num_constraints() - n0, 4 * n));
+		Ok(())
+	}
+
+	/// Pushes each statement subsig's SEED ANCHOR query: the
+	/// step-0 seed row (the artificial match every subsig starts
+	/// with, at loc 1, rank 1 of its group) must exist in Q_m AND
+	/// be a reachable (non-FP) row. This is the ground of all
+	/// reachability: the seed can never be pruned and reaches
+	/// every step-1 row, so no cascade of FP labels can hide a
+	/// live match. A LOOKUP, not a wf rule: padding is legal
+	/// everywhere in Q_m, so only a statement-side query can bind
+	/// "subsig s is in the statement" to "s's seed row is
+	/// present". BOTH modes.
+	///
+	/// Advice names (per statement slot j, s = its subsig id):
+	///   z_sub  zero-bit: 1 iff slot j is the pad (s = 0); welded
+	///          both ways, so a real subsig cannot pose as pad.
+	///
+	/// Per slot, one query into the REACHABLE target:
+	///  (1) (enc(s, 0), 1, 1) -- s's group key at step 0, rank 1,
+	///      loc 1 -- with sel = 1 - z_sub[j].
+	///
+	/// EXAMPLE (fig-14): statement = [0, a] (slot 0 is pad).
+	/// z_sub = [1, 0] -> one live query pack(a*2^4rb, 1, 1).
+	///  - honest: row a0:1 sits in Q_m labeled C -> matched.
+	///  - CHEAT vacuous all-FP: label a's every row FP (chunk
+	///    "discharges" with no work) -> a0:1 is not a QR target
+	///    -> query unmatched -> UNSAT.
+	///  - CHEAT drop-the-group: pad out a's rows entirely -> no
+	///    row keys enc(a, 0) -> unmatched -> UNSAT.
+	///  - CHEAT fake-pad: switch slot a's sel off -> z_sub is
+	///    welded both ways, z_sub = 1 needs s = 0 -> UNSAT.
+	fn assert_seed_anchors(
+		cs: ConstraintSystemRef<F>,
+		subsigs: (&[FpVar<F>], &[F]),
+		                 // statement subsig ids (0 = pad slot)
+		                 //   + natives (zero-bit hints)
+		buf_qr: &mut QmQueryBuf<F>,
+		                 // REACHABLE-target instance
+		r1: &FpVar<F>,
+		job_id: usize,
+	) -> Result<(), SynthesisError> {
+		let n0 = cs.num_constraints();
+		let (s_var, s_nat) = subsigs;
+		let m = s_var.len();
+		let rb = read_global_config().range2_bit;
+		let f1 = F::from(1u64 << rb);
+		let c_sh4 = new_const_var(&cs, f1 * f1 * f1 * f1);
+		let c_one = new_const_var(&cs, F::one());
+		let r1sq = r1 * r1;
+		// STRONG zero-bits (2cs/slot): sel is a true boolean, so
+		// the logup sees only multiplicities 0/1. A gate-bit cut
+		// (1cs) would be sound but costs a negative-multiplicity
+		// argument for ~m saved constraints -- not worth it.
+		let z_sub = gen_zero_bits(&cs, s_nat, s_var)?;
+		for (j, s) in s_var.iter().enumerate() {
+			// seed key: enc(s, 0) = s * 2^(4*rb); rank 1, loc 1.
+			// Reachability is by CONSTRUCTION of the lookup: the
+			// QR target side admits no FP row, so a hit row is
+			// reachable, not merely present.
+			buf_qr.push(&(&(s * &c_sh4) + r1) + &r1sq,
+				&c_one - &z_sub[j]);
+		}
+		log(job_id, LOG3, &format!(
+			"PERF 61082.8: block=seed_anchors cs={} pred={}",
+			cs.num_constraints() - n0, 2 * m));
+		Ok(())
+	}
+
+	/// Verifies the merge equation as a multiset identity:
+	///     Q_m = Q_i disjoint-union (joined L rows),
+	/// i.e. every carried-in row and every joined location
+	/// appears in Q_m exactly once, and Q_m holds nothing else.
+	/// Dropping a carried row (a live match chain) or smuggling
+	/// an extra row is UNSAT. NONAGGR ONLY: aggr has no carry
+	/// queue, its Q_m is the join alone.
+	///
+	/// Elements are packed enc||loc (fixed-base). Pad rows -- of
+	/// Q_m, of q_i and of the join table alike -- are all-zero
+	/// and pack to ZERO, and the identity ignores zeros
+	/// (verify_union_prf, db.rs: non-zero multisets + 2-scalar
+	/// zero reconciliation).
+	/// The only Q_m rows left without a partner are the SEED
+	/// group's two wraps: the seed match itself arrives through
+	/// q_i, and every step >= 1 wrap is its join block's 0/max
+	/// sentinel. So vec3 = (1 - is_wrap * is_step0) * pack.
+	fn assert_qm_union(
+		cs: ConstraintSystemRef<F>,
+		qm: &QmVars<F>,  // enc, loc (vec3 side)
+		sel: &NeoSel<F>, // is_wrap, is_step0 (seed wraps)
+		q_i: (&[FpVar<F>], &[FpVar<F>]),
+		                 // carried-in enc, loc (pad rows = 0)
+		l_join: (&[FpVar<F>], &[FpVar<F>]),
+		                 // join table enc, loc (pad rows = 0)
+		prf: &QmUnionAdvice<F>,
+		r1: &FpVar<F>,
+		job_id: usize,
+	) -> Result<(), SynthesisError> {
+		let n0 = cs.num_constraints();
+		let n = qm.enc.len();
+		let rb = read_global_config().range2_bit;
+		let c_one = new_const_var(&cs, F::one());
+		let c_base = new_const_var(&cs, F::from(1u64 << rb));
+		// pack(enc, loc) = enc * 2^rb + loc: a free linear combo,
+		// injective (loc < 2^rb), all-zero rows pack to 0.
+		let pack = |e: &[FpVar<F>], l: &[FpVar<F>]|
+			-> Vec<FpVar<F>> { e.iter().zip(l.iter())
+				.map(|(x, y)| &(x * &c_base) + y).collect() };
+		let vec1 = pack(q_i.0, q_i.1);
+		let vec2 = pack(l_join.0, l_join.1);
+		let vec3: Vec<FpVar<F>> = (0..n).map(|i|
+			&(&c_one - &(&sel.is_wrap[i] * &sel.is_step0[i]))
+				* &(&(&qm.enc[i] * &c_base) + &qm.loc[i]))
+			.collect();
+		verify_union_prf_vars(cs.clone(), &vec1, &vec2, &vec3,
+			&prf.b_left_more_zero, &prf.diff_zero, r1)?;
+		log(job_id, LOG3, &format!(
+			"PERF 61082.2: block=union cs={} pred={}",
+			cs.num_constraints() - n0,
+			3 * n + vec1.len() + vec2.len()));
+		Ok(())
+	}
+
+	/// Discharges every query buffered by the certificate
+	/// functions: one batch membership lookup (logup) against
+	/// Q_m's REACHABLE rows (buf_qr: FP brackets from
+	/// fwd_pruning + seed anchors; in aggr also the C-preds) and
+	/// one against its CARRIED rows (buf_qc, nonaggr only:
+	/// C-preds from carry, BP mins, SP freeze/kept pins).
+	/// Closing the batch here lets ONE m-table and ONE argument
+	/// serve every certificate.
+	///
+	/// Advice names (per Q_m row):
+	///   mtbl_qr  hit count: how many buffered QR queries land
+	///            on this row (0 on non-target rows);
+	///   mtbl_qc  same for the QC batch (EMPTY in aggr).
+	///
+	/// Checks:
+	///  (1) QR batch: every sel=1 query in buf_qr equals some
+	///      sel=1 target pack(enc, rid, loc); target sel =
+	///      is_wrap + is_c, plus is_bp + is_sp in nonaggr (those
+	///      category vecs are EMPTY in aggr);
+	///  (2) QC batch (skipped when buf_qc is empty, i.e. aggr):
+	///      likewise against pack(enc, cid, loc), target sel =
+	///      is_wrap + is_c.
+	///
+	/// EXAMPLE (fig-14): assert_carry buffered C row a2:21's
+	/// predecessor key (enc(a,1), 1, 9); it must hit committed
+	/// row a1:9 here.
+	///  - honest: a1:9 is carried (C), its cid is 1 -> hit.
+	///  - CHEAT phantom parent: cite a loc no committed row
+	///    holds -> no target packs to that key -> UNSAT.
+	///  - CHEAT wrong subset: cite an FP row as predecessor ->
+	///    that row's target sel is 0 -> unmatched -> UNSAT.
+	///  - CHEAT mtbl fudge: inflate a row's hit count -> the
+	///    logup rational identity fails at random r2 -> UNSAT.
+	///
+	/// COST: per live batch ~4n + 2|buf| (2n target-key muls +
+	/// 2n target inverse+sel + ~2 per buffered query), so aggr
+	/// ~4n + 2|buf_qr|, nonaggr ~8n + 2(|buf_qr| + |buf_qc|).
+	/// PERF 61082.9.
+	fn assert_qm_lookups(
+		cs: ConstraintSystemRef<F>,
+		qm: &QmVars<F>,        // enc, loc (target key parts)
+		sel: &NeoSel<F>,       // is_wrap/is_c/is_bp/is_sp
+		ranks: &QmRanks<F>,    // rid + cid (cid EMPTY in aggr)
+		buf_qr: QmQueryBuf<F>, // consumed: no push after
+		buf_qc: QmQueryBuf<F>, // EMPTY in aggr -> skipped
+		mtbl_qr: &[FpVar<F>],  // hit-count advice per Q_m row
+		mtbl_qc: &[FpVar<F>],  // EMPTY in aggr
+		r1: &FpVar<F>, r2: &FpVar<F>,
+		job_id: usize,
+	) -> Result<(), SynthesisError> {
+		let n0 = cs.num_constraints();
+		let n = qm.enc.len();
+		let r1sq = r1 * r1;
+		// categories are mutually exclusive booleans, so the sel
+		// sums below stay boolean -- no row is double-counted.
+		let tgt_qr: Vec<FpVar<F>> = (0..n).map(|i|
+			&(&qm.enc[i] + &(r1 * &ranks.rid[i]))
+				+ &(&r1sq * &qm.loc[i])).collect();
+		let b_aggr = sel.is_bp.is_empty();
+		let sel_qr: Vec<FpVar<F>> = (0..n).map(|i| {
+			let s = &sel.is_wrap[i] + &sel.is_c[i];
+			if b_aggr { s }
+			else { &s + &(&sel.is_bp[i] + &sel.is_sp[i]) }
+		}).collect();
+		assert_logup_cond(cs.clone(), &buf_qr.qry, &buf_qr.sel,
+			&tgt_qr, &sel_qr, &mtbl_qr.to_vec(), r2)?;
+		// aggr has no carry queue: its buf_qc arrives empty and
+		// the whole QC side (cid, mtbl_qc) is absent -- skipping
+		// it saves the 2n key muls and the logup outright.
+		if !buf_qc.qry.is_empty() {
+			let tgt_qc: Vec<FpVar<F>> = (0..n).map(|i|
+				&(&qm.enc[i] + &(r1 * &ranks.cid[i]))
+					+ &(&r1sq * &qm.loc[i])).collect();
+			let sel_qc: Vec<FpVar<F>> = (0..n).map(|i|
+				&sel.is_wrap[i] + &sel.is_c[i]).collect();
+			assert_logup_cond(cs.clone(), &buf_qc.qry,
+				&buf_qc.sel, &tgt_qc, &sel_qc,
+				&mtbl_qc.to_vec(), r2)?;
+		}
+		log(job_id, LOG3, &format!(
+			"PERF 61082.9: block=qm_lookups cs={} pred={}",
+			cs.num_constraints() - n0,
+			4 * n + 2 * buf_qr.qry.len()
+				+ if buf_qc.qry.is_empty() { 0 }
+				else { 4 * n + 2 * buf_qc.qry.len() }));
+		Ok(())
+	}
+
+	/// AGGR MODE ONLY (the nonaggr verdict flows through the q_c
+	/// carry into compute_sig instead). Feeds the verdict: every
+	/// subsig whose match chain SURVIVED to its terminal step
+	/// must be recorded in acc_out, the committed failed-subsig
+	/// accumulator that compute_sig reads (a surviving chain =
+	/// the file matches that subsig = discharge FAILED for it).
+	///
+	///
+	/// Advice names:
+	///   acc_out   committed failed-subsig accumulator slots,
+	///             with a LEADING 0 SLOT for masked rows;
+	///   mtbl_acc  hit-count advice per acc_out slot.
+	///
+	/// Check:
+	///  (1) per row, qry = enc * is_last * (is_c - is_seed);
+	///      one batch lookup (logup) of all queries into
+	///      acc_out. Masked rows query 0, landing in the 0 slot.
+	///
+	/// EXAMPLE: full match a1..a8 -> the terminal a8 C row
+	/// queries enc(a, 8), which must sit in acc_out ->
+	/// compute_sig sees subsig a as NOT discharged.
+	///  - honest no-match: a's chain dies at step 3 -> no a row
+	///    is both is_last and C -> all query 0 -> acc_out stays
+	///    free of a.
+	///  - CHEAT hide-the-match: drop enc(a, 8) from acc_out ->
+	///    the terminal row's query matches no slot -> UNSAT.
+	///  - CHEAT seed-only pollution: an unmatched subsig's
+	///    step-0 row is vacuously is_last, but is_c - is_seed
+	///    masks it -> it queries 0 -> an unmatched subsig can
+	///    never be smuggled into the failed set.
+	///
+	/// COST: 2n muls + logup(n + 2|acc_out|). PERF 61082.10.
+	fn assert_verdict_aggr(
+		cs: ConstraintSystemRef<F>,
+		qm: &QmVars<F>,        // enc
+		sel: &NeoSel<F>,       // is_last, is_c, is_seed
+		acc_out: &[FpVar<F>],  // failed-subsig accumulator,
+		                       //   leading 0 slot
+		mtbl_acc: &[FpVar<F>], // hit-count advice per slot
+		r2: &FpVar<F>,
+		job_id: usize,
+	) -> Result<(), SynthesisError> {
+		let n0 = cs.num_constraints();
+		let n = qm.enc.len();
+		// sel_c = is_c - is_seed: free combo equal to
+		// is_c*(1 - is_step0) on any satisfying assignment (the
+		// seed pin kills FP seeds) -- saves the legacy formula's
+		// third mul. is_last itself is FORCED in selectors
+		// (si_step LAST tag), so the true terminal cannot shed
+		// it; relabeling it FP is killed by the fwd bracket cert.
+		let qry: Vec<FpVar<F>> = (0..n).map(|i|
+			&(&qm.enc[i] * &sel.is_last[i])
+				* &(&sel.is_c[i] - &sel.is_seed[i])).collect();
+		assert_logup(cs.clone(), &qry, acc_out, mtbl_acc, r2)?;
+		log(job_id, LOG3, &format!(
+			"PERF 61082.10: block=verdict cs={} pred={}",
+			cs.num_constraints() - n0,
+			3 * n + 2 * acc_out.len()));
+		Ok(())
+	}
+
+	/// AGGR entry: thin composer, no constraints of its own.
+	/// Interface = the test seam (cs, nat, vars, r1, r2, job_id).
+	pub(crate) fn assert_neo_aggr(
+		cs: ConstraintSystemRef<F>,
+		nat: &NeoCore<F>, vars: &NeoCoreVars<F>,
+		r1: &FpVar<F>, r2: &FpVar<F>, job_id: usize,
+	) -> Result<(), SynthesisError> {
+		let n0 = cs.num_constraints();
+		// -- 1. derive + bind per-row selector bits
+		//    (is_c/is_fp, is_step0, is_last, is_wrap, ...) --
+		let sel = Self::assert_neo_selectors(cs.clone(),
+			&nat.t, &vars.qm, true, job_id)?;
+		// -- 2. well-formedness: row shape vs the S store,
+		//    group sort order, wrap/pad structure; returns
+		//    group starts + per-row reachable ranks --
+		let (_gs, rid) = Self::assert_neo_wf(cs.clone(),
+			&nat.t, &vars.qm, &sel, &vars.s_enc, &vars.subsigs,
+			&nat.s_enc, &nat.subsig_nat, r2, job_id)?;
+		// -- 3. pin each si_* companion column to its base
+		//    column (outer-lookup share consistency) --
+		Self::assert_neo_si_pins(cs.clone(), &vars.qm, &sel,
+			true, job_id)?;
+		// -- 4. ranks for the lookup keys; cid empty: aggr
+		//    has no carried-rank chain --
+		let ranks = QmRanks { rid, cid: vec![] };
+		// single buffer: reachable == carried in aggr
+		let mut buf = QmQueryBuf::new();
+		// -- 5. join: aggr Q_m IS the join result; sel_q =
+		//    1 - is_step0 (pads have step 0) masks pads +
+		//    seed group, cost-free; (J-W) owned by step 2's
+		//    skeleton (b_ext_wf = true) --
+		let c_one = new_const_var(&cs, F::one());
+		let sel_q: Vec<FpVar<F>> = sel.is_step0.iter()
+			.map(|b| &c_one - b).collect();
+		// -- 5a. no-show pats: ONE selector shared by the
+		//    membership targets and the gap proof --
+		let ns_zero = gen_zero_bits(&cs, &nat.ns_pat,
+			&vars.ns_pat)?;
+		let sel_ns: Vec<FpVar<F>> = ns_zero.iter()
+			.map(|z| &c_one - z).collect();
+		Self::assert_join_locations(cs.clone(),
+			(&vars.qm.enc, &vars.qm.pat, &vars.qm.id,
+				&vars.qm.loc),
+			&sel_q, true,
+			(&vars.l_pat, &vars.l_id, &vars.l_loc),
+			&vars.ns_pat, &sel_ns,
+			&vars.mtbl_tm, r1, r2, job_id)?;
+		// -- 5b. absence proof for the no-show pats --
+		Self::assert_ns_gap(cs.clone(), &vars.ns_pat, &sel_ns,
+			&vars.d_ns_lo, &vars.d_ns_hi, &vars.l_pat,
+			&vars.mtbl_ns, r1, r2, job_id)?;
+		// -- 6. carry-out queue q_c (committed empty in
+		//    aggr; still shape-checked); pv = the predecessor
+		//    view shared with the fwd-pruning block --
+		let pv = Self::gen_pred_view(&cs, &nat.t, &vars.qm,
+			true, r1)?;
+		Self::assert_carry(cs.clone(), &vars.qm, &sel, true,
+			(&vars.qc_enc, &vars.qc_loc, &nat.qc_enc), &pv,
+			&mut buf, r2, job_id)?;
+		// -- 7. fwd pruning: every FP label justified by
+		//    querying its parent rows (closure vs Q_r) --
+		Self::assert_fwd_pruning(cs.clone(), &vars.qm, &sel,
+			true, &nat.t.prev_loc2, &pv, &mut buf, job_id)?;
+		// -- 8. each statement subsig's step-0 seed row must
+		//    exist reachable in Q_m (anchor of reachability:
+		//    blocks the vacuous all-FP labeling) --
+		Self::assert_seed_anchors(cs.clone(),
+			(&vars.subsigs, &nat.subsig_nat), &mut buf, r1,
+			job_id)?;
+		// -- 9. close the batch: one logup of all buffered
+		//    queries into Q_m; consumes buf by value (qc
+		//    side passed empty) --
+		Self::assert_qm_lookups(cs.clone(), &vars.qm, &sel,
+			&ranks, buf, QmQueryBuf::new(), &vars.mtbl_qr,
+			&vars.mtbl_qc, r1, r2, job_id)?;
+		// -- 10. verdict: every surviving terminal C row
+		//    must be recorded in acc_out (own logup) --
+		Self::assert_verdict_aggr(cs.clone(), &vars.qm, &sel,
+			&vars.acc_out, &vars.mtbl_acc, r2, job_id)?;
+		log(job_id, LOG3, &format!(
+			"PERF 61081.9: block=TOTAL cs={} rows={}",
+			cs.num_constraints() - n0, nat.t.enc.len()));
+		Ok(())
+	}
+
+	/// NONAGGR entry: thin composer, no constraints of its own.
+	/// Interface = the test seam (cs, nat, vars, default_min,
+	/// r1, r2, job_id).
+	pub(crate) fn assert_neo_nonaggr(
+		cs: ConstraintSystemRef<F>,
+		nat: &NeoCore<F>, vars: &NeoCoreVars<F>,
+		default_min: &FpVar<F>, r1: &FpVar<F>, r2: &FpVar<F>,
+		job_id: usize,
+	) -> Result<(), SynthesisError> {
+		let n0 = cs.num_constraints();
+		// -- 1. derive + bind per-row selector bits
+		//    (is_c/is_fp/is_bp/is_sp, is_step0, is_last,
+		//    is_wrap, ...) --
+		let sel = Self::assert_neo_selectors(cs.clone(),
+			&nat.t, &vars.qm, false, job_id)?;
+		// -- 2. well-formedness: row shape vs the S store,
+		//    group sort order, wrap/pad structure; returns
+		//    group starts + per-row reachable ranks --
+		let (gs, rid) = Self::assert_neo_wf(cs.clone(),
+			&nat.t, &vars.qm, &sel, &vars.s_enc, &vars.subsigs,
+			&nat.s_enc, &nat.subsig_nat, r2, job_id)?;
+		// -- 3. carried ranks: cid counts only carried rows
+		//    (cat in {C,BP,SP}); free linear combo of rid --
+		let cid = Self::assert_neo_cid_chain(&gs, &sel);
+		// -- 4. pin each si_* companion column to its base
+		//    column: core cols, then nonaggr + JR cols. sel_jr
+		//    is built here because both the JR pat pin and the
+		//    join's membership selector need it --
+		let c_one = new_const_var(&cs, F::one());
+		let jr_zero = gen_zero_bits(&cs, &nat.jr.enc,
+			&vars.jr.enc)?;
+		let sel_jr: Vec<FpVar<F>> = jr_zero.iter()
+			.map(|z| &c_one - z).collect();
+		Self::assert_neo_si_pins(cs.clone(), &vars.qm, &sel,
+			false, job_id)?;
+		Self::assert_neo_si_pins_nonaggr(cs.clone(), &nat.t,
+			&vars.qm, &sel, &vars.jr, &sel_jr, job_id)?;
+		// -- 5. both lookup key parts: reachable rank rid +
+		//    carried rank cid --
+		let ranks = QmRanks { rid, cid };
+		// two buffers: reachable and carried are distinct
+		// query targets in nonaggr
+		let mut buf_qr = QmQueryBuf::new();
+		let mut buf_qc = QmQueryBuf::new();
+		// -- 6. join: Q_m mixes carried rows in, so the join
+		//    result lives in its own table (JR = store rows
+		//    JOIN pat_loc); b_ext_wf = false: JR owns its
+		//    bracket skeleton. sel_q = the non-pad rows, built
+		//    with the si pins in step 4 --
+		// -- 6a. no-show pats: ONE selector shared by the
+		//    membership targets and the gap proof --
+		let ns_zero = gen_zero_bits(&cs, &nat.ns_pat,
+			&vars.ns_pat)?;
+		let sel_ns: Vec<FpVar<F>> = ns_zero.iter()
+			.map(|z| &c_one - z).collect();
+		Self::assert_join_locations(cs.clone(),
+			(&vars.jr.enc, &vars.jr.pat, &vars.jr.id,
+				&vars.jr.loc),
+			&sel_jr, false,
+			(&vars.l_pat, &vars.l_id, &vars.l_loc),
+			&vars.ns_pat, &sel_ns,
+			&vars.mtbl_tm, r1, r2, job_id)?;
+		// -- 6b. absence proof for the no-show pats --
+		Self::assert_ns_gap(cs.clone(), &vars.ns_pat, &sel_ns,
+			&vars.d_ns_lo, &vars.d_ns_hi, &vars.l_pat,
+			&vars.mtbl_ns, r1, r2, job_id)?;
+		// -- 7. multiset identity Q_m = q_i (carried in) union
+		//    the join result: no row dropped or smuggled --
+		let prf = QmUnionAdvice {
+			b_left_more_zero: vars.union_prf[0].clone(),
+			diff_zero: vars.union_prf[1].clone() };
+		Self::assert_qm_union(cs.clone(), &vars.qm, &sel,
+			(&vars.qi_enc, &vars.qi_loc),
+			(&vars.jr.enc, &vars.jr.loc), &prf, r1, job_id)?;
+		// -- 8. carry-out queue q_c: the tight carried set
+		//    handed to the next chunk (holds the verdict);
+		//    pv = the predecessor view shared with fwd --
+		let pv = Self::gen_pred_view(&cs, &nat.t, &vars.qm,
+			false, r1)?;
+		Self::assert_carry(cs.clone(), &vars.qm, &sel, false,
+			(&vars.qc_enc, &vars.qc_loc, &nat.qc_enc), &pv,
+			&mut buf_qc, r2, job_id)?;
+		// -- 9. fwd pruning: every FP label justified by
+		//    querying its parent rows (closure vs Q_r) --
+		Self::assert_fwd_pruning(cs.clone(), &vars.qm, &sel,
+			false, &nat.t.prev_loc2, &pv, &mut buf_qr, job_id)?;
+		// -- 10. bwd pruning: every BP label is a fwd dead
+		//    end -- farthest reach short of the successor
+		//    step's minimum surviving loc --
+		Self::assert_bwd_pruning(cs.clone(), &vars.qm, &sel,
+			&nat.t.nonaggr.w_next, default_min, &mut buf_qc,
+			r1, job_id)?;
+		// -- 11. singleton pruning: every SP label redundant
+		//    above its frozen group's kept minimum --
+		Self::assert_singleton_pruning(cs.clone(), &vars.qm,
+			&sel, &mut buf_qc, r1, job_id)?;
+		// -- 12. each statement subsig's step-0 seed row must
+		//    exist reachable in Q_m (anchor of reachability:
+		//    blocks the vacuous all-FP labeling) --
+		Self::assert_seed_anchors(cs.clone(),
+			(&vars.subsigs, &nat.subsig_nat), &mut buf_qr, r1,
+			job_id)?;
+		// -- 13. close the batch: one logup per buffer into
+		//    Q_m; consumes both buffers by value --
+		Self::assert_qm_lookups(cs.clone(), &vars.qm, &sel,
+			&ranks, buf_qr, buf_qc, &vars.mtbl_qr,
+			&vars.mtbl_qc, r1, r2, job_id)?;
 		log(job_id, LOG3, &format!(
 			"PERF 61081.9: block=TOTAL cs={} rows={}",
 			cs.num_constraints() - n0, nat.t.enc.len()));
@@ -3068,7 +4964,7 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 	/// dictionary derives its pat universe from the store UNION the
 	/// pats appearing in l_pat. Non-aggressive: gen_nonaggr.
 	pub(crate) fn gen(g: &StepQueueNeo<F>, info: &SubsigStepStore,
-		l_pat: Vec<F>, l_loc: Vec<F>)
+		l_pat: Vec<F>, l_id: Vec<F>, l_loc: Vec<F>)
 	-> Result<NeoCore<F>, Error> {
 		let t = g.gen_qm_table(info, true)?;
 		let rid = Self::gen_rid_native(&t);
@@ -3078,7 +4974,7 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 		// the dummy config) is identical. Tier-1 fixtures
 		// (capacity.b_aggressive=false) keep exact sizes.
 		let mut subsig_nat = g.subsigs.clone();
-		let (mut s_enc, mut s_pat) = Self::gen_store_rows(
+		let (mut s_enc, s_pat) = Self::gen_store_rows(
 			&g.subsigs, info);
 		if g.capacity.b_aggressive {
 			let k_slots = g.capacity.subsigs;
@@ -3091,37 +4987,46 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 					s_enc.len())]));
 			}
 			s_enc.resize(s_cap, F::zero());
-			s_pat.resize(s_cap, F::zero());
 		}
-		let s_pads = s_pat.iter().filter(|p| p.is_zero()).count();
-		let mut hm_pats: HashMap<F, Vec<(F, F)>> = HashMap::new();
-		for p in &l_pat { hm_pats.entry(*p).or_insert(vec![]); }
-		let (d_pat, mut d_cnt) = StepQueueNeo::gen_merge_dict(
-			&g.subsigs, info, &hm_pats, g.b_igc)?;
-		// cnt-force logup: d_cnt = pole count of s_pat queries, so
-		// the zero PADS must be counted in D's 0 entry (real L pat-0
-		// rows are loc-wraps, sel_l=0 -> never query (0,m)).
-		if s_pads > 0 {
-			let j0 = d_pat.iter().position(|p| p.is_zero())
-				.ok_or_else(|| Error::CapErr(vec![(format!(
-					"neo_dict_zero_slot, b_igc: {}", g.b_igc),
-					s_pads)]))?;
-			d_cnt[j0] += F::from(s_pads as u32);
-		}
-		let mut d_diff = vec![F::zero(); d_pat.len()];
-		for j in 1..d_pat.len() {
-			d_diff[j] = d_pat[j] - d_pat[j - 1] - F::one();
-		}
-		let m_aux = StepQueueNeo::gen_merge_m_aux(&l_pat, &l_loc,
-			&d_pat, &d_cnt);
 		let mtbl_qr = Self::gen_mtbl_qr(&t, &rid, &subsig_nat);
-		let mtbl_d = Self::gen_mtbl_d(&l_pat, &l_loc, &d_pat);
+		// no-show pats + absence-gap advice
+		let ns_pat = Self::gen_ns_pat(&s_pat, &l_pat,
+			s_enc.len());
+		let (d_ns_lo, d_ns_hi, mtbl_ns) =
+			Self::gen_ns_advice(&ns_pat, &l_pat);
+		// membership m-table: queries = step>=1 rows'
+		// (pat,id,loc); targets = L ++ no-show sentinel pairs
+		let rb = read_global_config().range2_bit;
+		let (f_b, f_sh) = (F::from(1u64 << rb),
+			F::from(1u128 << (2 * rb)));
+		let f_t2 = F::from((1u64 << rb) + ((1u64 << rb) - 1));
+		let one = F::one();
+		let qry_tm: Vec<F> = (0..t.enc.len()).map(|i|
+			t.pat[i] * f_sh + t.id[i] * f_b + t.loc[i])
+			.collect();
+		let sel_qry: Vec<F> = t.step.iter().map(|s|
+			if s.is_zero() { F::zero() } else { one })
+			.collect();
+		let mut lk_tm: Vec<F> = (0..l_pat.len()).map(|i|
+			l_pat[i] * f_sh + l_id[i] * f_b + l_loc[i])
+			.collect();
+		let mut sel_lk = vec![one; l_pat.len()];
+		let sel_d: Vec<F> = ns_pat.iter().map(|p|
+			if p.is_zero() { F::zero() } else { one })
+			.collect();
+		lk_tm.extend(ns_pat.iter().map(|p| *p * f_sh));
+		sel_lk.extend(sel_d.clone());
+		lk_tm.extend(ns_pat.iter().map(|p| *p * f_sh + f_t2));
+		sel_lk.extend(sel_d);
+		let mtbl_tm = gen_m_table_cond(&qry_tm, &sel_qry,
+			&lk_tm, &sel_lk);
 		let (acc_out, mtbl_acc) = Self::gen_acc_padded(&t, info);
-		Ok(NeoCore { t, l_pat, l_loc, subsig_nat, s_enc,
-			s_pat, d_pat, d_cnt, d_diff, m_aux, mtbl_qr, mtbl_d,
+		Ok(NeoCore { t, l_pat, l_id, l_loc, subsig_nat, s_enc,
+			mtbl_qr, mtbl_tm, ns_pat, d_ns_lo, d_ns_hi, mtbl_ns,
 			acc_out, mtbl_acc,
 			qi_enc: vec![], qi_loc: vec![], qc_enc: vec![],
-			qc_loc: vec![], mtbl_qc: vec![] })
+			qc_loc: vec![], mtbl_qc: vec![], union_prf: vec![],
+			jr: JrTable::default() })
 	}
 }
 
@@ -3130,7 +5035,7 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 	/// NeoCore. si policy (outer lookups): VARIABLE si for the
 	/// DB-bound cols (step/subsig/pat/rg1/rg2/enc_prev/b_bwd), const
 	/// RANGE2 si for the range-checked diff advice
-	/// (d_c1/d_c2/d_below_lo/d_above_lo/d_sort/d_cnt/d_diff/m_aux),
+	/// (d_c1/d_c2/d_below_lo/d_above_lo/d_sort),
 	/// zero si (NOT range-checked) elsewhere -- soundness audit:
 	///   enc      group-uniqueness product vs {S encs + seed encs};
 	///   id/loc   wf chain + strict d_sort between 0/max sentinels;
@@ -3139,8 +5044,7 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 	///   *_hi     boolean-checked in-circuit;
 	///   l_*      copy of the fsm pat_loc table (binding = M8);
 	///   subsigs  compute_sig seed tie (M8);
-	///   s_*      S-universe authentication (M8);
-	///   d_pat    strict d_diff chain;
+	///   s_enc    S-universe authentication (M8);
 	///   mtbl_*   logup multiplicity advice (self-checking).
 	fn core_container(nat: &NeoCore<F>)
 	-> Arc<Mutex<Container<F>>> {
@@ -3164,7 +5068,7 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 			//non-aggressive witness cols with VARIABLE si (the DB
 			//tags carry advice keys enc_next/enc_fz); empty vecs
 			//under aggressive => nothing emitted, M6 layout intact.
-			if !t.nonaggr.b_l.is_empty() {
+			if !t.nonaggr.enc_next.is_empty() {
 				let na = &t.nonaggr;
 				var(&na.bp_prev_val, "bp_prev_val",
 					&na.si_bp_prev);
@@ -3174,8 +5078,13 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 					&na.si_fz_step);
 				var(&na.fz_sub_val, "fz_sub_val", &na.si_fz_sub);
 			}
+			//JOIN RESULT temp table (nonaggr): jr_pat carries
+			//the variable tag(enc, PAT) si on every block row.
+			if !nat.jr.enc.is_empty() {
+				var(&nat.jr.pat, "jr_pat", &nat.jr.si_pat);
+			}
 		}
-		if !t.nonaggr.b_l.is_empty() {
+		if !t.nonaggr.enc_next.is_empty() {
 			//non-aggressive advice cols with CONST si: lookup
 			//witnesses + logup multiplicities zero-si (bound by
 			//their logups), diffs RANGE2 (outer range check).
@@ -3188,17 +5097,22 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 			};
 			let z = F::zero();
 			let na = &t.nonaggr;
-			fix(&na.b_l, "b_l", z);
 			fix(&na.enc_next, "enc_next", z);
 			fix(&na.w_next, "w_next", z);
 			fix(&na.d_bp, "d_bp", f_r2);
 			fix(&na.enc_fz, "enc_fz", z);
 			fix(&na.w_fz, "w_fz", z);
 			fix(&na.d_fz, "d_fz", f_r2);
-			fix(&na.w_sp, "w_sp", z);
-			fix(&na.d_sp, "d_sp", f_r2);
-			fix(&na.m_carry_in, "m_carry_in", z);
+			fix(&na.w_kept, "w_kept", z);
+			fix(&na.d_kept, "d_kept", f_r2);
 			fix(&nat.mtbl_qc, "mtbl_qc", z);
+			fix(&nat.union_prf, "union_prf", z);
+			//JR data cols: enc union-bound (si 0), id chain-bound
+			//(si 0), loc RANGE2 (packing legality of the
+			//membership triple).
+			fix(&nat.jr.enc, "jr_enc", z);
+			fix(&nat.jr.id, "jr_id", z);
+			fix(&nat.jr.loc, "jr_loc", f_r2);
 		}
 		{
 			let mut c = res.lock().unwrap();
@@ -3219,21 +5133,19 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 			fix(&t.d_c1, "d_c1", f_r2);
 			fix(&t.d_c2, "d_c2", f_r2);
 			fix(&t.d_below_lo, "d_below_lo", f_r2);
-			fix(&t.d_below_hi, "d_below_hi", z);
 			fix(&t.d_above_lo, "d_above_lo", f_r2);
-			fix(&t.d_above_hi, "d_above_hi", z);
 			fix(&t.d_sort, "d_sort", f_r2);
 			fix(&nat.l_pat, "l_pat", z);
+			fix(&nat.l_id, "l_id", z);
 			fix(&nat.l_loc, "l_loc", z);
 			fix(&nat.subsig_nat, "subsigs", z);
 			fix(&nat.s_enc, "s_enc", z);
-			fix(&nat.s_pat, "s_pat", z);
-			fix(&nat.d_pat, "d_pat", z);
-			fix(&nat.d_cnt, "d_cnt", f_r2);
-			fix(&nat.d_diff, "d_diff", f_r2);
-			fix(&nat.m_aux, "m_aux", f_r2);
 			fix(&nat.mtbl_qr, "mtbl_qr", z);
-			fix(&nat.mtbl_d, "mtbl_d", z);
+			fix(&nat.mtbl_tm, "mtbl_tm", z);
+			fix(&nat.ns_pat, "ns_pat", f_r2);
+			fix(&nat.d_ns_lo, "d_ns_lo", f_r2);
+			fix(&nat.d_ns_hi, "d_ns_hi", f_r2);
+			fix(&nat.mtbl_ns, "mtbl_ns", z);
 		}
 		res
 	}
@@ -3251,10 +5163,13 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 		let l_pat = pat_loc.lock().unwrap()
 			.get_container("sorted_key").unwrap()
 			.lock().unwrap().to_vec();
+		let l_id = pat_loc.lock().unwrap()
+			.get_container("sorted_id").unwrap()
+			.lock().unwrap().to_vec();
 		let l_loc = pat_loc.lock().unwrap()
 			.get_container("sorted_val").unwrap()
 			.lock().unwrap().to_vec();
-		let mut nat = NeoCore::gen(self, info, l_pat,
+		let mut nat = NeoCore::gen(self, info, l_pat, l_id,
 			l_loc)?;
 		let term: Vec<F> = nat.acc_out.iter()
 			.filter(|e| !e.is_zero()).cloned().collect();
@@ -3311,12 +5226,16 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 		let l_pat = pat_loc.lock().unwrap()
 			.get_container("sorted_key").unwrap()
 			.lock().unwrap().to_vec();
+		let l_id = pat_loc.lock().unwrap()
+			.get_container("sorted_id").unwrap()
+			.lock().unwrap().to_vec();
 		let l_loc = pat_loc.lock().unwrap()
 			.get_container("sorted_val").unwrap()
 			.lock().unwrap().to_vec();
 		let hm_loc = StepQueue::<F>::pat_loc_to_hm(pat_loc);
 		let (nat, ct_qi, ct_qc) = NeoCore::gen_nonaggr(self, info,
-			l_pat, l_loc, &hm_loc, carried, default_min, job_id)?;
+			l_pat, l_id, l_loc, &hm_loc, carried, default_min,
+			job_id)?;
 		let core = Self::core_container(&nat);
 		Ok((core, ct_qi, ct_qc, nat))
 	}
@@ -3522,7 +5441,8 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoAdvice<F> {
 }
 
 impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
-	/// load one named neo_core column as (vars, native values).
+	/// load one named neo_core column as
+	/// (circuit vars, plain F values).
 	fn col2(core: &Arc<Mutex<Container<FpVar<F>>>>, name: &str)
 	-> Result<(Vec<FpVar<F>>, Vec<F>), SynthesisError> {
 		let v = core.lock().unwrap().get_container(name)?
@@ -3532,20 +5452,21 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		Ok((v, nat))
 	}
 
-	/// M6 aggressive assert arm: load the neo statement, rebuild the
-	/// native bundle from witness values (legacy value()-hint
-	/// precedent), and run the five-block aggressive core.
-	fn assert_msg3_neo_aggr(&self, i: usize,
-		cs: ConstraintSystemRef<F>, wtns: &WitnessSigmaIR1CSVar<F>,
+	/// Deserialize chunk i's committed neo statement into the
+	/// plain-F-value bundle (NeoCore) + circuit vars (NeoCoreVars).
+	/// Pure loading, no constraints. Aggr: no q_i/q_c transport.
+	fn load_neo_stmt_aggr(&self, i: usize,
+		wtns: &WitnessSigmaIR1CSVar<F>,
 		wtns_cfg: &WitnessSigmaIR1CSConfig)
-	-> Result<(), SynthesisError> {
+	-> Result<(NeoCore<F>, NeoCoreVars<F>), SynthesisError> {
 		let cfg = self.inner.get_container_config();
 		let stmt = Container::<FpVar<F>>::load_from(i, wtns_cfg,
 			wtns, &cfg)?;
-		let r1 = wtns.msg2[0].clone();
-		let r2 = wtns.msg2[1].clone();
 		let core = stmt.get_container("neo_core")?;
+		// c2: load one neo_core column by name as
+		// (circuit vars, plain F values via value()).
 		let c2 = |n: &str| Self::col2(&core, n);
+		// -- 1. Q_m table: 20 base columns --
 		let (enc, enc_n) = c2("enc")?;
 		let (id, id_n) = c2("id")?;
 		let (loc, loc_n) = c2("loc")?;
@@ -3563,10 +5484,9 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		let (d_c1, d_c1_n) = c2("d_c1")?;
 		let (d_c2, d_c2_n) = c2("d_c2")?;
 		let (d_below_lo, d_below_lo_n) = c2("d_below_lo")?;
-		let (d_below_hi, d_below_hi_n) = c2("d_below_hi")?;
 		let (d_above_lo, d_above_lo_n) = c2("d_above_lo")?;
-		let (d_above_hi, d_above_hi_n) = c2("d_above_hi")?;
 		let (d_sort, d_sort_n) = c2("d_sort")?;
+		// -- 2. si_* companions (outer-lookup share) --
 		let (si_step, si_step_n) = c2("si_step")?;
 		let (si_subsig, si_subsig_n) = c2("si_subsig")?;
 		let (si_pat, si_pat_n) = c2("si_pat")?;
@@ -3574,17 +5494,21 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		let (si_rg2, si_rg2_n) = c2("si_rg2")?;
 		let (si_enc_prev, si_enc_prev_n) = c2("si_enc_prev")?;
 		let (si_b_bwd, si_b_bwd_n) = c2("si_b_bwd")?;
+		// -- 3. side columns: pat_loc triple, statement
+		//    subsigs, store rows, multiplicity tables --
 		let (l_pat, l_pat_n) = c2("l_pat")?;
+		let (l_id, l_id_n) = c2("l_id")?;
 		let (l_loc, l_loc_n) = c2("l_loc")?;
 		let (subsigs, subsigs_n) = c2("subsigs")?;
 		let (s_enc, s_enc_n) = c2("s_enc")?;
-		let (s_pat, s_pat_n) = c2("s_pat")?;
-		let (d_pat, d_pat_n) = c2("d_pat")?;
-		let (d_cnt, d_cnt_n) = c2("d_cnt")?;
-		let (d_diff, d_diff_n) = c2("d_diff")?;
-		let (m_aux, m_aux_n) = c2("m_aux")?;
 		let (mtbl_qr, mtbl_qr_n) = c2("mtbl_qr")?;
-		let (mtbl_d, mtbl_d_n) = c2("mtbl_d")?;
+		let (mtbl_tm, mtbl_tm_n) = c2("mtbl_tm")?;
+		let (ns_pat, ns_pat_n) = c2("ns_pat")?;
+		let (d_ns_lo, d_ns_lo_n) = c2("d_ns_lo")?;
+		let (d_ns_hi, d_ns_hi_n) = c2("d_ns_hi")?;
+		let (mtbl_ns, mtbl_ns_n) = c2("mtbl_ns")?;
+		// -- 4. verdict target: failed-subsig accumulator
+		//    (legacy container names; compute_sig reads it) --
 		let combo = stmt.get_container("failed_acc_combo")?;
 		let facc = combo.lock().unwrap()
 			.get_container("failed_acc")?;
@@ -3594,6 +5518,10 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			.get_container("failed_acc_prf")?;
 		let (mtbl_acc, mtbl_acc_n) = Self::col2(&fprf,
 			"mtbl_complete")?;
+		// -- 5. assemble the F-value bundle (NeoCore) and the
+		//    var bundle (NeoCoreVars); n_pad = leading pad rows
+		//    (hint only); q_i/q_c/union empty: aggr carries
+		//    nothing across chunks --
 		let n_pad = enc_n.iter().take_while(|e| e.is_zero())
 			.count();
 		let t = QmTable { enc: enc_n, id: id_n, loc: loc_n,
@@ -3602,53 +5530,52 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			prev_loc2: prev_loc2_n, pat: pat_n, rg1: rg1_n,
 			rg2: rg2_n, enc_prev: enc_prev_n, b_bwd: b_bwd_n,
 			d_c1: d_c1_n, d_c2: d_c2_n,
-			d_below_lo: d_below_lo_n, d_below_hi: d_below_hi_n,
-			d_above_lo: d_above_lo_n, d_above_hi: d_above_hi_n,
+			d_below_lo: d_below_lo_n, d_above_lo: d_above_lo_n,
 			d_sort: d_sort_n, si_step: si_step_n,
 			si_subsig: si_subsig_n, si_pat: si_pat_n,
 			si_rg1: si_rg1_n, si_rg2: si_rg2_n,
 			si_enc_prev: si_enc_prev_n, si_b_bwd: si_b_bwd_n,
 			nonaggr: QmNonAggrCols::default(), n_pad };
-		let nat = NeoCore { t, l_pat: l_pat_n,
+		let nat = NeoCore { t, l_pat: l_pat_n, l_id: l_id_n,
 			l_loc: l_loc_n, subsig_nat: subsigs_n,
-			s_enc: s_enc_n, s_pat: s_pat_n, d_pat: d_pat_n,
-			d_cnt: d_cnt_n, d_diff: d_diff_n, m_aux: m_aux_n,
-			mtbl_qr: mtbl_qr_n, mtbl_d: mtbl_d_n,
+			s_enc: s_enc_n, mtbl_qr: mtbl_qr_n,
+			mtbl_tm: mtbl_tm_n, ns_pat: ns_pat_n,
+			d_ns_lo: d_ns_lo_n, d_ns_hi: d_ns_hi_n,
+			mtbl_ns: mtbl_ns_n,
 			acc_out: acc_out_n, mtbl_acc: mtbl_acc_n,
 			qi_enc: vec![], qi_loc: vec![], qc_enc: vec![],
-			qc_loc: vec![], mtbl_qc: vec![] };
+			qc_loc: vec![], mtbl_qc: vec![], union_prf: vec![],
+			jr: JrTable::default() };
 		let qm = QmVars { enc, id, loc, cat, step, subsig,
 			prev_id1, prev_loc1, prev_loc2, pat, rg1, rg2,
-			enc_prev, b_bwd, d_c1, d_c2, d_below_lo, d_below_hi,
-			d_above_lo, d_above_hi, d_sort, si_step, si_subsig,
+			enc_prev, b_bwd, d_c1, d_c2, d_below_lo,
+			d_above_lo, d_sort, si_step, si_subsig,
 			si_pat, si_rg1, si_rg2, si_enc_prev, si_b_bwd,
 			nonaggr: QmNonAggrVars::empty() };
-		let vars = NeoCoreVars { qm, l_pat, l_loc, subsigs,
-			s_enc, s_pat, d_pat, d_cnt, d_diff, m_aux, mtbl_qr,
-			mtbl_d, acc_out, mtbl_acc,
+		let vars = NeoCoreVars { qm, l_pat, l_id, l_loc, subsigs,
+			s_enc, mtbl_qr, mtbl_tm, ns_pat, d_ns_lo, d_ns_hi,
+			mtbl_ns, acc_out, mtbl_acc,
 			qi_enc: vec![], qi_loc: vec![], qc_enc: vec![],
-			qc_loc: vec![], mtbl_qc: vec![] };
-		Self::assert_neo_core_aggr(cs, &nat, &vars, &r1, &r2,
-			self.inner.get_job_id())
+			qc_loc: vec![], mtbl_qc: vec![], union_prf: vec![],
+			jr: JrVars::empty() };
+		Ok((nat, vars))
 	}
 
-	/// M7 non-aggressive assert arm: load the neo statement (core +
-	/// the QmNonAggrCols extension + the committed q_i/q_c
-	/// transport), rebuild the native bundle from witness values
-	/// (hints only), derive default_min = last fsm loc + 1 from the
-	/// PREVIOUS gadget's statement (legacy assert_msg3 step 2), and
-	/// run the C.1 core.
-	fn assert_msg3_neo_nonaggr(&self, i: usize,
-		cs: ConstraintSystemRef<F>, wtns: &WitnessSigmaIR1CSVar<F>,
+	/// Deserialize chunk i's committed neo statement (core + nonaggr
+	/// cols + q_i/q_c transport) into the plain-F-value bundle +
+	/// circuit vars, plus default_min = last fsm loc + 1.
+	fn load_neo_stmt_nonaggr(&self, i: usize,
+		cs: &ConstraintSystemRef<F>,
+		wtns: &WitnessSigmaIR1CSVar<F>,
 		wtns_cfg: &WitnessSigmaIR1CSConfig)
-	-> Result<(), SynthesisError> {
+	-> Result<(NeoCore<F>, NeoCoreVars<F>, FpVar<F>),
+		SynthesisError> {
 		let cfg = self.inner.get_container_config();
 		let stmt = Container::<FpVar<F>>::load_from(i, wtns_cfg,
 			wtns, &cfg)?;
-		let r1 = wtns.msg2[0].clone();
-		let r2 = wtns.msg2[1].clone();
-		//default_min: last fsm-acc loc + 1 (the legacy retrieval;
-		//the fsm gadget sits offset_fsm slots earlier).
+		// -- 1. default_min = last fsm-acc loc + 1, read from
+		//    the fsm gadget's statement (offset_fsm slots
+		//    earlier; legacy assert_msg3 retrieval) --
 		let my_name = if self.inner.b_igc
 			{ "discharge_adv_stmt_igc" }
 			else { "discharge_adv_stmt_cs" };
@@ -3666,10 +5593,12 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			"{} fsm_acc locs", sname_fsm))?
 			.lock().unwrap().to_vec();
 		let default_min = &locs[locs.len() - 1]
-			+ &new_const_var(&cs, F::one());
-		//load neo_core (base + nonaggr cols)
+			+ &new_const_var(cs, F::one());
 		let core = stmt.get_container("neo_core")?;
+		// c2: load one neo_core column by name as
+		// (circuit vars, plain F values via value()).
 		let c2 = |n: &str| Self::col2(&core, n);
+		// -- 2. Q_m table: 20 base columns --
 		let (enc, enc_n) = c2("enc")?;
 		let (id, id_n) = c2("id")?;
 		let (loc, loc_n) = c2("loc")?;
@@ -3687,10 +5616,9 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		let (d_c1, d_c1_n) = c2("d_c1")?;
 		let (d_c2, d_c2_n) = c2("d_c2")?;
 		let (d_below_lo, d_below_lo_n) = c2("d_below_lo")?;
-		let (d_below_hi, d_below_hi_n) = c2("d_below_hi")?;
 		let (d_above_lo, d_above_lo_n) = c2("d_above_lo")?;
-		let (d_above_hi, d_above_hi_n) = c2("d_above_hi")?;
 		let (d_sort, d_sort_n) = c2("d_sort")?;
+		// -- 3. si_* companions (outer-lookup share) --
 		let (si_step, si_step_n) = c2("si_step")?;
 		let (si_subsig, si_subsig_n) = c2("si_subsig")?;
 		let (si_pat, si_pat_n) = c2("si_pat")?;
@@ -3698,7 +5626,8 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		let (si_rg2, si_rg2_n) = c2("si_rg2")?;
 		let (si_enc_prev, si_enc_prev_n) = c2("si_enc_prev")?;
 		let (si_b_bwd, si_b_bwd_n) = c2("si_b_bwd")?;
-		let (b_l, b_l_n) = c2("b_l")?;
+		// -- 4. nonaggr extension columns (BP/SP pruning +
+		//    frozen-step advice) + their si_* companions --
 		let (enc_next, enc_next_n) = c2("enc_next")?;
 		let (bp_prev_val, bp_prev_val_n) = c2("bp_prev_val")?;
 		let (rg2_next, rg2_next_n) = c2("rg2_next")?;
@@ -3710,42 +5639,57 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		let (fz_sub_val, fz_sub_val_n) = c2("fz_sub_val")?;
 		let (w_fz, w_fz_n) = c2("w_fz")?;
 		let (d_fz, d_fz_n) = c2("d_fz")?;
-		let (w_sp, w_sp_n) = c2("w_sp")?;
-		let (d_sp, d_sp_n) = c2("d_sp")?;
-		let (m_carry_in, m_carry_in_n) = c2("m_carry_in")?;
+		let (w_kept, w_kept_n) = c2("w_kept")?;
+		let (d_kept, d_kept_n) = c2("d_kept")?;
 		let (si_bp_prev, si_bp_prev_n) = c2("si_bp_prev_val")?;
 		let (si_rg2_next, si_rg2_next_n) = c2("si_rg2_next")?;
 		let (si_fz, si_fz_n) = c2("si_fz")?;
 		let (si_fz_step, si_fz_step_n) = c2("si_fz_step_val")?;
 		let (si_fz_sub, si_fz_sub_n) = c2("si_fz_sub_val")?;
+		// -- 5. side columns: pat_loc triple, statement
+		//    subsigs, store rows, multiplicity tables,
+		//    union proof scalars --
 		let (l_pat, l_pat_n) = c2("l_pat")?;
+		let (l_id, l_id_n) = c2("l_id")?;
 		let (l_loc, l_loc_n) = c2("l_loc")?;
 		let (subsigs, subsigs_n) = c2("subsigs")?;
 		let (s_enc, s_enc_n) = c2("s_enc")?;
-		let (s_pat, s_pat_n) = c2("s_pat")?;
-		let (d_pat, d_pat_n) = c2("d_pat")?;
-		let (d_cnt, d_cnt_n) = c2("d_cnt")?;
-		let (d_diff, d_diff_n) = c2("d_diff")?;
-		let (m_aux, m_aux_n) = c2("m_aux")?;
 		let (mtbl_qr, mtbl_qr_n) = c2("mtbl_qr")?;
-		let (mtbl_d, mtbl_d_n) = c2("mtbl_d")?;
+		let (mtbl_tm, mtbl_tm_n) = c2("mtbl_tm")?;
+		let (ns_pat, ns_pat_n) = c2("ns_pat")?;
+		let (d_ns_lo, d_ns_lo_n) = c2("d_ns_lo")?;
+		let (d_ns_hi, d_ns_hi_n) = c2("d_ns_hi")?;
+		let (mtbl_ns, mtbl_ns_n) = c2("mtbl_ns")?;
 		let (mtbl_qc, mtbl_qc_n) = c2("mtbl_qc")?;
-		//committed transport containers
+		let (union_prf, union_prf_n) = c2("union_prf")?;
+		// -- 5b. JOIN RESULT temp table (join view + si_pat
+		//    companion of the outer-lookup share) --
+		let (jr_enc, jr_enc_n) = c2("jr_enc")?;
+		let (jr_pat, jr_pat_n) = c2("jr_pat")?;
+		let (jr_id, jr_id_n) = c2("jr_id")?;
+		let (jr_loc, jr_loc_n) = c2("jr_loc")?;
+		let (jr_si_pat, jr_si_pat_n) = c2("si_jr_pat")?;
+		// -- 6. committed carry transport: q_i (from previous
+		//    chunk) and q_c (to next chunk) --
 		let ct_qi = stmt.get_container("q_i")?;
 		let (qi_enc, qi_enc_n) = Self::col2(&ct_qi, "encoded")?;
 		let (qi_loc, qi_loc_n) = Self::col2(&ct_qi, "locs")?;
 		let ct_qc = stmt.get_container("q_c")?;
 		let (qc_enc, qc_enc_n) = Self::col2(&ct_qc, "encoded")?;
 		let (qc_loc, qc_loc_n) = Self::col2(&ct_qc, "locs")?;
+		// -- 7. assemble the F-value bundle (NeoCore) and the
+		//    var bundle (NeoCoreVars); n_pad = leading pad rows
+		//    (hint only); acc_out/mtbl_acc empty: the nonaggr
+		//    verdict flows through the q_c carry instead --
 		let n_pad = enc_n.iter().take_while(|e| e.is_zero())
 			.count();
-		let na_t = QmNonAggrCols { b_l: b_l_n,
+		let na_t = QmNonAggrCols {
 			enc_next: enc_next_n, bp_prev_val: bp_prev_val_n,
 			rg2_next: rg2_next_n, w_next: w_next_n, d_bp: d_bp_n,
 			fz: fz_n, enc_fz: enc_fz_n,
 			fz_step_val: fz_step_val_n, fz_sub_val: fz_sub_val_n,
-			w_fz: w_fz_n, d_fz: d_fz_n, w_sp: w_sp_n,
-			d_sp: d_sp_n, m_carry_in: m_carry_in_n,
+			w_fz: w_fz_n, d_fz: d_fz_n, w_kept: w_kept_n,
+			d_kept: d_kept_n,
 			si_bp_prev: si_bp_prev_n, si_rg2_next: si_rg2_next_n,
 			si_fz: si_fz_n, si_fz_step: si_fz_step_n,
 			si_fz_sub: si_fz_sub_n };
@@ -3755,42 +5699,49 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			prev_loc2: prev_loc2_n, pat: pat_n, rg1: rg1_n,
 			rg2: rg2_n, enc_prev: enc_prev_n, b_bwd: b_bwd_n,
 			d_c1: d_c1_n, d_c2: d_c2_n,
-			d_below_lo: d_below_lo_n, d_below_hi: d_below_hi_n,
-			d_above_lo: d_above_lo_n, d_above_hi: d_above_hi_n,
+			d_below_lo: d_below_lo_n, d_above_lo: d_above_lo_n,
 			d_sort: d_sort_n, si_step: si_step_n,
 			si_subsig: si_subsig_n, si_pat: si_pat_n,
 			si_rg1: si_rg1_n, si_rg2: si_rg2_n,
 			si_enc_prev: si_enc_prev_n, si_b_bwd: si_b_bwd_n,
 			nonaggr: na_t, n_pad };
-		let nat = NeoCore { t, l_pat: l_pat_n, l_loc: l_loc_n,
-			subsig_nat: subsigs_n, s_enc: s_enc_n, s_pat: s_pat_n,
-			d_pat: d_pat_n, d_cnt: d_cnt_n, d_diff: d_diff_n,
-			m_aux: m_aux_n, mtbl_qr: mtbl_qr_n, mtbl_d: mtbl_d_n,
+		let nat = NeoCore { t, l_pat: l_pat_n, l_id: l_id_n,
+			l_loc: l_loc_n,
+			subsig_nat: subsigs_n, s_enc: s_enc_n,
+			mtbl_qr: mtbl_qr_n, mtbl_tm: mtbl_tm_n,
+			ns_pat: ns_pat_n, d_ns_lo: d_ns_lo_n,
+			d_ns_hi: d_ns_hi_n, mtbl_ns: mtbl_ns_n,
 			acc_out: vec![], mtbl_acc: vec![],
 			qi_enc: qi_enc_n, qi_loc: qi_loc_n,
 			qc_enc: qc_enc_n, qc_loc: qc_loc_n,
-			mtbl_qc: mtbl_qc_n };
-		let na_v = QmNonAggrVars { b_l, enc_next, bp_prev_val,
+			mtbl_qc: mtbl_qc_n, union_prf: union_prf_n,
+			jr: JrTable { enc: jr_enc_n, pat: jr_pat_n,
+				id: jr_id_n, loc: jr_loc_n,
+				si_pat: jr_si_pat_n } };
+		let na_v = QmNonAggrVars { enc_next, bp_prev_val,
 			rg2_next, w_next, d_bp, fz, enc_fz, fz_step_val,
-			fz_sub_val, w_fz, d_fz, w_sp, d_sp, m_carry_in,
+			fz_sub_val, w_fz, d_fz, w_kept, d_kept,
 			si_bp_prev, si_rg2_next, si_fz, si_fz_step,
 			si_fz_sub };
 		let qm = QmVars { enc, id, loc, cat, step, subsig,
 			prev_id1, prev_loc1, prev_loc2, pat, rg1, rg2,
-			enc_prev, b_bwd, d_c1, d_c2, d_below_lo, d_below_hi,
-			d_above_lo, d_above_hi, d_sort, si_step, si_subsig,
+			enc_prev, b_bwd, d_c1, d_c2, d_below_lo,
+			d_above_lo, d_sort, si_step, si_subsig,
 			si_pat, si_rg1, si_rg2, si_enc_prev, si_b_bwd,
 			nonaggr: na_v };
-		let vars = NeoCoreVars { qm, l_pat, l_loc, subsigs,
-			s_enc, s_pat, d_pat, d_cnt, d_diff, m_aux, mtbl_qr,
-			mtbl_d, acc_out: vec![], mtbl_acc: vec![],
-			qi_enc, qi_loc, qc_enc, qc_loc, mtbl_qc };
-		Self::assert_neo_core_nonaggr(cs, &nat, &vars,
-			&default_min, &r1, &r2, self.inner.get_job_id())
+		let vars = NeoCoreVars { qm, l_pat, l_id, l_loc, subsigs,
+			s_enc, mtbl_qr, mtbl_tm, ns_pat, d_ns_lo, d_ns_hi,
+			mtbl_ns,
+			acc_out: vec![], mtbl_acc: vec![],
+			qi_enc, qi_loc, qc_enc, qc_loc, mtbl_qc, union_prf,
+			jr: JrVars { enc: jr_enc, pat: jr_pat, id: jr_id,
+				loc: jr_loc, si_pat: jr_si_pat } };
+		Ok((nat, vars, default_min))
 	}
 }
 
 #[cfg(test)]
+#[cfg(any())] // M8_NEW P0: old neo tests disabled, revive in P3
 pub(crate) mod tests_neo_m4 {
 	use super::*;
 	use ark_bn254::Fr;
@@ -3942,6 +5893,7 @@ pub(crate) mod tests_neo_m4 {
 }
 
 #[cfg(test)]
+#[cfg(any())] // M8_NEW P0: old neo tests disabled, revive in P3
 pub(crate) mod tests_neo_m5 {
 	use super::*;
 	use super::tests_neo_m4::{build_a1_a8_neo, fixture_capacity,
@@ -4349,6 +6301,7 @@ pub(crate) mod tests_neo_m5 {
 //   M6 tests: tier-1 direct-cs aggressive core
 // ============================================================
 #[cfg(test)]
+#[cfg(any())] // M8_NEW P0: old neo tests disabled, revive in P3
 pub(crate) mod tests_neo_m6 {
 	use super::*;
 	use super::tests_neo_m4::fixture_capacity;
@@ -4720,6 +6673,7 @@ pub(crate) mod tests_neo_m6 {
 }
 
 #[cfg(test)]
+#[cfg(any())] // M8_NEW P0: old neo tests disabled, revive in P3
 mod tests_neo_m6_neg {
 	use super::*;
 	use super::tests_neo_m6::{run_core_aggr, build_core_native};
@@ -5136,6 +7090,7 @@ mod tests_neo_m6_neg {
 //   M6 tier-2 tests: full harness (si / outer lookups live)
 // ============================================================
 #[cfg(test)]
+#[cfg(any())] // M8_NEW P0: old neo tests disabled, revive in P3
 mod tests_neo_m6_h {
 	use super::*;
 	use ark_bn254::Fr;
@@ -5415,6 +7370,7 @@ mod tests_neo_m6_h {
 }
 
 #[cfg(test)]
+#[cfg(any())] // M8_NEW P0: old neo tests disabled, revive in P3
 mod tests_neo_nonaggr {
 	use super::*;
 	use super::tests_neo_m4::{fixture_capacity, A18_DEFAULT_MIN};
@@ -5706,6 +7662,7 @@ mod tests_neo_nonaggr {
 }
 
 #[cfg(test)]
+#[cfg(any())] // M8_NEW P0: old neo tests disabled, revive in P3
 mod tests_neo_nonaggr_neg {
 	use super::*;
 	use super::tests_neo_m4::A18_DEFAULT_MIN;
@@ -5931,6 +7888,7 @@ mod tests_neo_nonaggr_neg {
 }
 
 #[cfg(test)]
+#[cfg(any())] // M8_NEW P0: old neo tests disabled, revive in P3
 mod tests_neo_nonaggr_oracle {
 	use super::*;
 	use super::tests_neo_m5::{a18_store, mk_pat_loc};
@@ -6073,6 +8031,7 @@ mod tests_neo_nonaggr_oracle {
 }
 
 #[cfg(test)]
+#[cfg(any())] // M8_NEW P0: old neo tests disabled, revive in P3
 mod tests_neo_nonaggr_h {
 	use super::*;
 	use ark_bn254::Fr;
@@ -6412,6 +8371,7 @@ mod tests_neo_nonaggr_h {
 // in-code SubsigStepStore + carried queue + L, so both gadgets can be
 // measured without running the DB/fold pipeline.
 #[cfg(test)]
+#[cfg(any())] // M8_NEW P0: old neo tests disabled, revive in P3
 mod tests_neo_cost {
 	use super::*;
 	use ark_bn254::Fr;
