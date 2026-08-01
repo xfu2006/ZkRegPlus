@@ -5741,6 +5741,179 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 }
 
 #[cfg(test)]
+mod tests_neo_r0 {
+	use super::*;
+	use ark_bn254::Fr;
+	use ark_relations::r1cs::ConstraintSystem;
+
+	fn f(x: u32) -> Fr { Fr::from(x) }
+
+	/// every piece id an si companion column in this file is keyed
+	/// by; si_tag_base has to agree with the DB on all of them.
+	fn piece_ids() -> Vec<u32> {
+		vec![ID_ENCODED_NORMAL_STEP, ID_ENCODED_LAST_STEP,
+			ID_ENCODED_SUBSIG, ID_ENCODED_PAT, ID_ENCODED_RG_START,
+			ID_ENCODED_RG_END, ID_ENCODED_PREV_ENCODED,
+			ID_ENCODED_FZ]
+	}
+
+	/// si_tag_base(cid) + enc must reproduce gen_step_tbl_id, which
+	/// is what makes a pinned column land on a real DB pair.
+	#[test]
+	fn test_r0_si_tag_base_matches_db() {
+		for p in piece_ids() {
+			for e in [0u32, 1, 7, 12345, 0xffff] {
+				let want = SubsigStepStore::gen_step_tbl_id(f(e), p);
+				assert_eq!(si_tag_base::<Fr>(p) + f(e), want,
+					"si_tag_base mismatch cid={} enc={}", p, e);
+			}
+		}
+	}
+
+	/// distinct piece ids must not collide for any enc in range.
+	#[test]
+	fn test_r0_si_tag_base_separates_cids() {
+		let ids = piece_ids();
+		for i in 0..ids.len() {
+			for j in (i + 1)..ids.len() {
+				assert_ne!(si_tag_base::<Fr>(ids[i]),
+					si_tag_base::<Fr>(ids[j]));
+			}
+		}
+	}
+
+	#[test]
+	fn test_r0_batch_inv() {
+		let v = vec![f(0), f(1), f(7), f(0), f(123456)];
+		let w = batch_inv(&v);
+		for i in 0..v.len() {
+			if v[i].is_zero() { assert_eq!(w[i], f(0)); }
+			else { assert_eq!(v[i] * w[i], f(1)); }
+		}
+	}
+
+	/// B_DEBUG is false, so a wrong product shows up only as an
+	/// unsatisfied system -- which is exactly what the negatives
+	/// in later rounds rely on.
+	#[test]
+	fn test_r0_check_prod_eq() {
+		let cases = [(3u32, 5u32, 15u32, true), (3, 5, 16, false),
+			(0, 9, 0, true), (0, 9, 1, false), (1, 1, 1, true)];
+		for (a, b, c, sat) in cases {
+			let cs = ConstraintSystem::<Fr>::new_ref();
+			let v1 = new_var(&cs, f(a));
+			let v2 = new_var(&cs, f(b));
+			let v3 = new_var(&cs, f(c));
+			check_prod_eq(&v1, &v2, &v3, "r0").expect("prod eq");
+			assert_eq!(cs.num_constraints(), 1, "prod eq is 1cs");
+			assert_eq!(cs.is_satisfied().unwrap(), sat,
+				"prod eq {}*{}=={}", a, b, c);
+		}
+	}
+
+	/// both sides of the pin, including the RANGE2 pre-shift the
+	/// caller bakes into c_tag: mask on -> si = tag_base + key,
+	/// mask off -> si = RANGE2, in ONE constraint.
+	#[test]
+	fn test_r0_check_si_pin() {
+		let base = si_tag_base::<Fr>(ID_ENCODED_PAT);
+		let key = f(7);
+		let rg2 = Fr::from(RANGE2);
+		let cases: Vec<(u32, Fr, bool)> = vec![
+			(1, base + key, true),
+			(1, rg2, false),
+			(1, base + key + f(1), false),
+			(1, base, false),
+			(0, rg2, true),
+			(0, base + key, false),
+			(0, f(0), false)];
+		for (m, si, sat) in cases {
+			let cs = ConstraintSystem::<Fr>::new_ref();
+			let mask = new_var(&cs, f(m));
+			let kv = new_var(&cs, key);
+			let sv = new_var(&cs, si);
+			let c_tag = new_const_var(&cs, base - rg2);
+			let c_rg2 = new_const_var(&cs, rg2);
+			check_si_pin(&mask, &kv, &sv, &c_tag, &c_rg2, "r0")
+				.expect("si pin");
+			assert_eq!(cs.num_constraints(), 1, "si pin is 1cs");
+			assert_eq!(cs.is_satisfied().unwrap(), sat,
+				"si pin mask={}", m);
+		}
+	}
+
+	/// gen_zero_bits is forced BOTH ways: x == 0 pins the bit to 1
+	/// (x*inv = 1-z), x != 0 pins it to 0 (x*z = 0).
+	#[test]
+	fn test_r0_gen_zero_bits() {
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		let nat = vec![f(0), f(5), f(0), f(99)];
+		let vars: Vec<FpVar<Fr>> = nat.iter()
+			.map(|x| new_var(&cs, *x)).collect();
+		let bits = gen_zero_bits(&cs, &nat, &vars).expect("bits");
+		let want = [f(1), f(0), f(1), f(0)];
+		for i in 0..nat.len() {
+			assert_eq!(bits[i].value().unwrap(), want[i], "row {}", i);
+		}
+		assert!(cs.is_satisfied().unwrap());
+	}
+
+	/// the hint slice is prover-controlled; claiming zero for a
+	/// non-zero column leaves x*inv = 1 - 0 unsatisfiable.
+	#[test]
+	fn test_r0_gen_zero_bits_bad_hint_unsat() {
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		let vars = vec![new_var(&cs, f(5))];
+		let _ = gen_zero_bits(&cs, &[f(0)], &vars).expect("bits");
+		assert!(!cs.is_satisfied().unwrap());
+	}
+
+	/// gen_gate_bits is ONE-SIDED: a bit claimed on a non-zero
+	/// column dies at the weld b*x = 0.
+	#[test]
+	fn test_r0_gen_gate_bits_weld_unsat() {
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		let vars = vec![new_var(&cs, f(5))];
+		let b = gen_gate_bits(&cs, &[f(0)], &vars).expect("gate");
+		assert_eq!(b[0].value().unwrap(), f(1));
+		assert!(!cs.is_satisfied().unwrap());
+	}
+
+	/// the free side, documented rather than defended: on a zero
+	/// column a 0 bit also satisfies. Re-enabling a check at a
+	/// sentinel only ever costs the prover.
+	#[test]
+	fn test_r0_gen_gate_bits_free_at_zero() {
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		let nat = vec![f(3), f(0)];
+		let vars: Vec<FpVar<Fr>> = nat.iter()
+			.map(|x| new_var(&cs, *x)).collect();
+		let b = gen_gate_bits(&cs, &nat, &vars).expect("gate");
+		assert_eq!(b[0].value().unwrap(), f(0));
+		assert_eq!(b[1].value().unwrap(), f(1));
+		assert_eq!(cs.num_constraints(), 2, "gate bit is 1cs");
+		assert!(cs.is_satisfied().unwrap());
+		let cs2 = ConstraintSystem::<Fr>::new_ref();
+		let v2 = vec![new_var(&cs2, f(0))];
+		let b2 = gen_gate_bits(&cs2, &[f(9)], &v2).expect("gate");
+		assert_eq!(b2[0].value().unwrap(), f(0));
+		assert!(cs2.is_satisfied().unwrap());
+	}
+
+	#[test]
+	fn test_r0_fp_diff_range2_ok() {
+		assert_fp_diff_range2(&f(100), 100);
+		assert_fp_diff_range2(&f(0), 100);
+	}
+
+	#[test]
+	#[should_panic(expected = "chunk too long")]
+	fn test_r0_fp_diff_range2_over() {
+		assert_fp_diff_range2(&f(101), 100);
+	}
+}
+
+#[cfg(test)]
 #[cfg(any())] // M8_NEW P0: old neo tests disabled, revive in P3
 pub(crate) mod tests_neo_m4 {
 	use super::*;
