@@ -5913,8 +5913,9 @@ mod tests_neo_r0 {
 	}
 }
 
+// NOTE_NEW8_ADAPTED (P3 R1): revived as-is -- this module only
+// exercises the native StepQueueNeo layer, which New8 left intact.
 #[cfg(test)]
-#[cfg(any())] // M8_NEW P0: old neo tests disabled, revive in P3
 pub(crate) mod tests_neo_m4 {
 	use super::*;
 	use ark_bn254::Fr;
@@ -6065,8 +6066,9 @@ pub(crate) mod tests_neo_m4 {
 	}
 }
 
+// NOTE_NEW8_ADAPTED (P3 R1): revived as-is -- shared-core generator
+// + equivalence oracle, both untouched by New8.
 #[cfg(test)]
-#[cfg(any())] // M8_NEW P0: old neo tests disabled, revive in P3
 pub(crate) mod tests_neo_m5 {
 	use super::*;
 	use super::tests_neo_m4::{build_a1_a8_neo, fixture_capacity,
@@ -6467,6 +6469,394 @@ pub(crate) mod tests_neo_m5 {
 		let qm = run_case(&a18_carried().to_stepqueue(), &pl, 161,
 			"duplicate loc");
 		assert_eq!(qm, build_a1_a8_neo());
+	}
+}
+
+// ============================================================
+//   P3 R1: New8 native layer (tables, JR, no-show, m-tables)
+// ============================================================
+#[cfg(test)]
+pub(crate) mod tests_neo_r1 {
+	use super::*;
+	use super::tests_neo_m4::{fixture_capacity, A18_DEFAULT_MIN};
+	use super::tests_neo_m5::{a18_store, a18_carried};
+	use ark_bn254::Fr;
+
+	fn f(x: u32) -> Fr { Fr::from(x) }
+
+	fn f_max() -> Fr {
+		f((1u32 << read_global_config().range2_bit) - 1)
+	}
+
+	/// flat L columns (pat, id, loc) with per-pat 0/max wraps, pats
+	/// ascending -- the 3-column pat_loc shape the New8 join reads.
+	pub(crate) fn l_cols3(m: &HashMap<u32, Vec<u32>>)
+	-> (Vec<Fr>, Vec<Fr>, Vec<Fr>) {
+		let (mut ps, mut is, mut ls) = (vec![], vec![], vec![]);
+		let mut pats: Vec<u32> = m.keys().cloned().collect();
+		pats.sort();
+		for p in pats {
+			ps.push(f(p)); is.push(f(0)); ls.push(f(0));
+			for (i, l) in m[&p].iter().enumerate() {
+				ps.push(f(p)); is.push(f((i + 1) as u32));
+				ls.push(f(*l));
+			}
+			ps.push(f(p)); is.push(f((m[&p].len() + 1) as u32));
+			ls.push(f_max());
+		}
+		(ps, is, ls)
+	}
+
+	/// the same L in the generator's pat -> [(id, loc)] form.
+	pub(crate) fn hm_gen3(m: &HashMap<u32, Vec<u32>>)
+	-> HashMap<Fr, Vec<(Fr, Fr)>> {
+		let mut out = HashMap::new();
+		for (p, locs) in m {
+			let mut v = vec![(f(0), f(0))];
+			for (i, l) in locs.iter().enumerate() {
+				v.push((f((i + 1) as u32), f(*l)));
+			}
+			v.push((f((locs.len() + 1) as u32), f_max()));
+			out.insert(f(*p), v);
+		}
+		out
+	}
+
+	/// fig-14 chunk-2 matches.
+	pub(crate) fn c2_hm() -> HashMap<u32, Vec<u32>> {
+		let mut m = HashMap::new();
+		m.insert(2, vec![111]); m.insert(5, vec![106]);
+		m.insert(6, vec![96, 141]); m.insert(7, vec![101, 131]);
+		m
+	}
+
+	/// the shared core BOTH arms accept: classes {C,FP,BP}. The
+	/// aggressive table refuses SP by construction, so the SP pass
+	/// is a separate fixture.
+	fn core_plain() -> (SubsigStepStore, StepQueueNeo<Fr>) {
+		let info = a18_store();
+		let g = a18_carried().gen_shared_core_from_hm(0,
+			&hm_gen3(&c2_hm()), &info, f(A18_DEFAULT_MIN))
+			.expect("shared core");
+		(info, g)
+	}
+
+	/// the same core after the SP pass -- non-aggressive only.
+	fn core_sp() -> (SubsigStepStore, StepQueueNeo<Fr>) {
+		let (info, mut g) = core_plain();
+		g.apply_sp_pass(&info);
+		(info, g)
+	}
+
+	/// [start, end) row ranges of the non-pad groups, in order.
+	fn groups(t: &QmTable<Fr>) -> Vec<(usize, usize)> {
+		let mut v: Vec<(usize, usize)> = vec![];
+		for i in 0..t.enc.len() {
+			if t.enc[i].is_zero() { continue; }
+			match v.last_mut() {
+				Some(g) if t.enc[i] == t.enc[i - 1] => g.1 = i + 1,
+				_ => v.push((i, i + 1)),
+			}
+		}
+		v
+	}
+
+	/// wrap budget vs data key count, and the aggressive
+	/// chunk-INVARIANCE that 8_C needs: n_keys must not move the
+	/// aggressive row budget at all.
+	#[test]
+	fn test_r1_wrap_budget_and_rows_size() {
+		let info = a18_store();
+		assert_eq!(StepQueueNeo::<Fr>::n_wrap_keys(&vec![f(1)],
+			&info), 9); // 8 steps + 1
+		let mut cap = fixture_capacity();
+		assert_eq!(StepQueueNeo::<Fr>::wrap_budget(&cap), 17);
+		cap.wrap_keys = 5;
+		assert_eq!(StepQueueNeo::<Fr>::wrap_budget(&cap), 5,
+			"explicit wrap_keys wins");
+		cap.wrap_keys = 0;
+		let (n, _, _) = StepQueue::<Fr>::vec_size(
+			&StepQueueType::ResLarge, &cap);
+		assert_eq!(StepQueueNeo::<Fr>::qm_rows_size(&cap, 9),
+			n + 18, "nonaggr pays 2 wraps per DATA key");
+		cap.b_aggressive = true;
+		assert_eq!(StepQueueNeo::<Fr>::qm_rows_size(&cap, 9),
+			n + 34, "aggr pays 2 wraps per BUDGET key");
+		assert_eq!(StepQueueNeo::<Fr>::qm_rows_size(&cap, 3),
+			StepQueueNeo::<Fr>::qm_rows_size(&cap, 9),
+			"aggr row budget must ignore n_keys");
+	}
+
+	/// the class universe the P2 cubic now enforces in-circuit:
+	/// {0,C,FP} aggressive, {0,C,FP,BP,SP} non-aggressive, and the
+	/// aggressive arm reaches it by retagging BP -> C.
+	#[test]
+	fn test_r1_qm_table_cat_universe() {
+		let (info, g) = core_plain();
+		let ta = g.gen_qm_table(&info, true).expect("aggr table");
+		let tn = g.gen_qm_table(&info, false).expect("nonaggr");
+		let ok_a = [f(0), f(CAT_C), f(CAT_FP)];
+		assert!(ta.cat.iter().all(|c| ok_a.contains(c)),
+			"aggr cat outside {{0,C,FP}}");
+		let n_x = |t: &QmTable<Fr>, c0: u32| t.cat.iter()
+			.filter(|c| **c == f(c0)).count();
+		assert_eq!(n_x(&ta, CAT_C),
+			n_x(&tn, CAT_C) + n_x(&tn, CAT_BP),
+			"aggr C == nonaggr C + BP (the retag)");
+		assert_eq!(n_x(&ta, CAT_FP), n_x(&tn, CAT_FP));
+		assert!(n_x(&tn, CAT_BP) > 0, "fixture must exercise BP");
+		let (info2, gs) = core_sp();
+		let ts = gs.gen_qm_table(&info2, false).expect("sp table");
+		let ok_n = [f(0), f(CAT_C), f(CAT_FP), f(CAT_BP), f(CAT_SP)];
+		assert!(ts.cat.iter().all(|c| ok_n.contains(c)));
+		assert!(n_x(&ts, CAT_SP) > 0, "fixture must exercise SP");
+	}
+
+	/// SP is structurally non-aggressive: handing an SP-tagged core
+	/// to the aggressive table must abort, not silently retag.
+	#[test]
+	#[should_panic(expected = "aggr: unexpected cat")]
+	fn test_r1_qm_table_aggr_rejects_sp() {
+		let (info, g) = core_sp();
+		let _ = g.gen_qm_table(&info, true);
+	}
+
+	/// every group is bracketed by its two wrap sentinels, and (the
+	/// Part E fix) a step >= 1 wrap carries the chain pat, so a
+	/// matched pat cannot relabel its wraps onto a no-show pat.
+	#[test]
+	fn test_r1_qm_table_wrap_pairs() {
+		let (info, g) = core_sp();
+		let t = g.gen_qm_table(&info, false).expect("table");
+		let gs = groups(&t);
+		assert_eq!(gs.len(), 9, "one group per (subsig, step)");
+		let pm = &info.subsig_to_steps.get(&1usize).unwrap()
+			.vec_pm_bounds;
+		for (k, (a, b)) in gs.iter().enumerate() {
+			assert!(t.id[*a].is_zero() && t.loc[*a].is_zero()
+				&& t.cat[*a].is_zero(), "group {} lower wrap", k);
+			let e = b - 1;
+			assert!(t.loc[e] == f_max() && t.cat[e].is_zero(),
+				"group {} upper wrap", k);
+			let want = if k == 0 { f(0) }
+				else { f(pm[k - 1].0 as u32) };
+			assert_eq!(t.pat[*a], want, "lower wrap pat, group {}", k);
+			assert_eq!(t.pat[e], want, "upper wrap pat, group {}", k);
+		}
+		for i in 0..t.enc.len() {
+			if !t.enc[i].is_zero() { continue; }
+			assert!(t.cat[i].is_zero() && t.loc[i].is_zero(),
+				"pad row {} must be inert", i);
+		}
+	}
+
+	/// rid/cid are ADDRESSES, and the two facts every cert leans on
+	/// are: reachable rows get consecutive ranks inside their group
+	/// (so id and id+1 really are adjacent), and cid == 1 names the
+	/// group's least CARRIED loc -- the max wrap when none carries.
+	#[test]
+	fn test_r1_rid_cid_contract() {
+		let (info, g) = core_sp();
+		let t = g.gen_qm_table(&info, false).expect("table");
+		let rid = NeoCore::gen_rid_native(&t);
+		let cid = NeoCore::gen_cid_native(&t);
+		for i in 0..t.enc.len() {
+			if t.enc[i].is_zero() {
+				assert!(rid[i].is_zero() && cid[i].is_zero(),
+					"pad {} must not rank", i);
+			}
+		}
+		for (a, b) in groups(&t) {
+			let (mut r, mut c) = (0u32, 0u32);
+			let mut least: Option<Fr> = None;
+			for i in a..b {
+				let cat = t.cat[i];
+				if cat != f(CAT_FP) {
+					assert_eq!(rid[i], f(r), "rid at row {}", i);
+					r += 1;
+				} else {
+					assert_eq!(rid[i], f(r - 1), "FP stalls rid");
+				}
+				if cat.is_zero() || cat == f(CAT_C) {
+					assert_eq!(cid[i], f(c), "cid at row {}", i);
+					if c == 1 { least = Some(t.loc[i]); }
+					c += 1;
+				} else {
+					assert_eq!(cid[i], f(c - 1), "non-carried stalls");
+				}
+			}
+			let want = (a..b).filter(|i| t.cat[*i] == f(CAT_C))
+				.map(|i| t.loc[i]).min_by_key(|l| field_to_usize(l))
+				.unwrap_or(f_max());
+			assert_eq!(least.expect("group has a cid-1 row"), want,
+				"cid 1 must be the least carried loc");
+		}
+	}
+
+	/// JR is a pure store-JOIN-L: one block per store row, a matched
+	/// pat contributing its FULL wrapped L block and a no-show pat
+	/// exactly the sentinel pair, with si_pat welded to the block's
+	/// own enc on every row (the false-discharge hole).
+	#[test]
+	fn test_r1_gen_jr_table() {
+		let info = a18_store();
+		let (s_enc, s_pat) = NeoCore::<Fr>::gen_store_rows(
+			&vec![f(1)], &info);
+		let hm = hm_gen3(&c2_hm());
+		let used: usize = s_pat.iter().map(|p|
+			hm.get(p).map_or(2, |v| v.len())).sum();
+		assert_eq!(used, 22);
+		assert!(NeoCore::gen_jr_table(&s_enc, &s_pat, &hm,
+			used - 1).is_err(), "JR over cap must CapErr");
+		let cap = used + 3;
+		let jr = NeoCore::gen_jr_table(&s_enc, &s_pat, &hm, cap)
+			.expect("jr");
+		assert_eq!(jr.enc.len(), cap);
+		for i in 0..cap - used {
+			assert!(jr.enc[i].is_zero() && jr.pat[i].is_zero()
+				&& jr.loc[i].is_zero()
+				&& jr.si_pat[i] == Fr::from(RANGE2),
+				"JR pad {} must be inert with a benign si", i);
+		}
+		let mut at = cap - used;
+		for (e, p) in s_enc.iter().zip(s_pat.iter()) {
+			let want: Vec<(Fr, Fr)> = match hm.get(p) {
+				Some(v) => v.clone(),
+				None => vec![(f(0), f(0)), (f(1), f_max())],
+			};
+			for (id, loc) in &want {
+				assert_eq!(jr.enc[at], *e, "row {} enc", at);
+				assert_eq!(jr.pat[at], *p, "row {} pat", at);
+				assert_eq!((jr.id[at], jr.loc[at]), (*id, *loc));
+				assert_eq!(jr.si_pat[at],
+					SubsigStepStore::gen_step_tbl_id(*e,
+						ID_ENCODED_PAT), "row {} si_pat", at);
+				at += 1;
+			}
+		}
+		assert_eq!(at, cap);
+	}
+
+	/// no-show pats: DISTINCT store pats absent from L, sorted and
+	/// front-padded to the store-row bound.
+	#[test]
+	fn test_r1_gen_ns_pat() {
+		let s_pat = vec![f(1), f(3), f(3), f(5), f(0)];
+		let l_pat = vec![f(3), f(3), f(9)];
+		assert_eq!(NeoCore::<Fr>::gen_ns_pat(&s_pat, &l_pat, 4),
+			vec![f(0), f(0), f(1), f(5)]);
+		let (info, g) = core_plain();
+		let (_, s2) = NeoCore::<Fr>::gen_store_rows(&vec![f(1)],
+			&info);
+		let (l_pat2, _, _) = l_cols3(&c2_hm());
+		let ns = NeoCore::<Fr>::gen_ns_pat(&s2, &l_pat2, 8);
+		assert_eq!(ns, vec![f(0), f(0), f(0), f(0),
+			f(1), f(3), f(4), f(8)]);
+		let _ = g;
+	}
+
+	/// the absence guard's advice: each no-show pat is bracketed by
+	/// an ADJACENT pair of the sorted l_pat column, with both gaps
+	/// non-negative, and the pair multiplicity table counts exactly
+	/// the pats that used each pair.
+	#[test]
+	fn test_r1_gen_ns_advice() {
+		let l_pat = vec![f(3), f(3), f(9)];
+		let ns = vec![f(0), f(1), f(5)];
+		let (lo, hi, mtbl) =
+			NeoCore::<Fr>::gen_ns_advice(&ns, &l_pat);
+		assert_eq!(lo, vec![f(0), f(0), f(1)]);
+		assert_eq!(hi, vec![f(0), f(1), f(3)]);
+		assert_eq!(mtbl, vec![f(1), f(0), f(1), f(0)]);
+		let n_q = ns.iter().filter(|p| !p.is_zero()).count();
+		assert_eq!(mtbl.iter().map(|m| field_to_usize(m))
+			.sum::<usize>(), n_q, "one pair hit per no-show pat");
+		let top = Fr::from(1u64 << read_global_config().range2_bit);
+		let (lo2, hi2, m2) = NeoCore::<Fr>::gen_ns_advice(
+			&vec![f(11)], &l_pat);
+		assert_eq!(lo2, vec![f(11) - f(1) - f(9)]);
+		assert_eq!(hi2, vec![top - f(11) - f(1)]);
+		assert_eq!(m2, vec![f(0), f(0), f(0), f(1)],
+			"a pat above every L pat uses the TOP pair");
+	}
+
+	/// a pat that IS in L has no straddling pair -- the generator
+	/// must refuse rather than emit an advice a verifier accepts.
+	#[test]
+	#[should_panic(expected = "no straddling pair")]
+	fn test_r1_gen_ns_advice_pat_in_l() {
+		NeoCore::<Fr>::gen_ns_advice(&vec![f(3)],
+			&vec![f(3), f(9)]);
+	}
+
+	/// aggressive m-table: multiplicities are counted per TARGET
+	/// tuple, so their sum must equal the number of queries the
+	/// certificate layer will push (C predecessors + 2 per FP + one
+	/// seed anchor per live subsig), and no FP row is ever a target.
+	#[test]
+	fn test_r1_mtbl_qr_balances() {
+		let (info, g) = core_plain();
+		let t = g.gen_qm_table(&info, true).expect("table");
+		let rid = NeoCore::gen_rid_native(&t);
+		let subs = vec![f(1)];
+		let m = NeoCore::gen_mtbl_qr(&t, &rid, &subs);
+		let n_c = (0..t.enc.len()).filter(|i|
+			t.cat[*i] == f(CAT_C) && !t.step[*i].is_zero()).count();
+		let n_fp = t.cat.iter().filter(|c| **c == f(CAT_FP)).count();
+		assert_eq!(m.iter().map(|x| field_to_usize(x))
+			.sum::<usize>(), n_c + 2 * n_fp + 1);
+		for i in 0..t.enc.len() {
+			if t.cat[i] == f(CAT_FP) || t.enc[i].is_zero() {
+				assert!(m[i].is_zero(), "row {} must not be a QR \
+					target", i);
+			}
+		}
+	}
+
+	/// non-aggressive split: the C-predecessor family moves to QC,
+	/// so QR carries only the FP brackets and the seed anchors while
+	/// QC carries C-pred + BP min + the two SP pins.
+	#[test]
+	fn test_r1_mtbl_qr_qc_nonaggr_balance() {
+		let (info, g) = core_sp();
+		let t = g.gen_qm_table(&info, false).expect("table");
+		let (rid, cid) = (NeoCore::gen_rid_native(&t),
+			NeoCore::gen_cid_native(&t));
+		let subs = vec![f(1)];
+		let qr = NeoCore::gen_mtbl_qr_nonaggr(&t, &rid, &subs);
+		let cnt = |c0: u32| t.cat.iter()
+			.filter(|c| **c == f(c0)).count();
+		let n_c1 = (0..t.enc.len()).filter(|i|
+			t.cat[*i] == f(CAT_C) && !t.step[*i].is_zero()).count();
+		assert_eq!(qr.iter().map(|x| field_to_usize(x))
+			.sum::<usize>(), 2 * cnt(CAT_FP) + 1);
+		let mut t2 = g.gen_qm_table(&info, false).expect("table");
+		t2.fill_nonaggr(&info, f(A18_DEFAULT_MIN));
+		let qc = NeoCore::gen_mtbl_qc(&t2, &cid);
+		assert_eq!(qc.iter().map(|x| field_to_usize(x))
+			.sum::<usize>(),
+			n_c1 + cnt(CAT_BP) + 2 * cnt(CAT_SP));
+		for i in 0..t.enc.len() {
+			let carried = t.cat[i].is_zero()
+				|| t.cat[i] == f(CAT_C);
+			if t.enc[i].is_zero() || !carried {
+				assert!(qc[i].is_zero(), "row {} not a QC target", i);
+			}
+		}
+	}
+
+	/// the verdict feed: one leading zero slot absorbs every masked
+	/// row, so the m-table still accounts for all n rows.
+	#[test]
+	fn test_r1_gen_acc_padded() {
+		let (info, g) = core_plain();
+		let t = g.gen_qm_table(&info, true).expect("table");
+		let (acc, mtbl) = NeoCore::gen_acc_padded(&t, &info);
+		assert_eq!(acc.len(), mtbl.len());
+		assert!(acc[0].is_zero(), "leading slot absorbs masked rows");
+		assert_eq!(mtbl.iter().map(|m| field_to_usize(m))
+			.sum::<usize>(), t.enc.len(),
+			"every Q_m row lands in exactly one acc slot");
 	}
 }
 
