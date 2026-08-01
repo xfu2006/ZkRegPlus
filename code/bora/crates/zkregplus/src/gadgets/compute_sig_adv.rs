@@ -1515,6 +1515,7 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 
 		//2. create the dummy sq_res
 		let dis_cap_cs = DischargeAdvCapacity{
+			res_small_cost: DischargeAdvCapacity::default_res_small(),
 			max_nibble_len: capacity.max_nibble_len,
 			subsigs: capacity.subsigs_cs,
 			//compute_sig checks the full universe; the dummy acc container
@@ -1530,6 +1531,7 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 			wrap_keys: 0,
 		};
 		let dis_cap_igc= DischargeAdvCapacity{
+			res_small_cost: DischargeAdvCapacity::default_res_small(),
 			max_nibble_len: capacity.max_nibble_len,
 			subsigs: capacity.subsigs_igc,
 			universe_subsigs: capacity.subsigs_igc,
@@ -2901,7 +2903,9 @@ use utils::consts::{read_global_config, get_global_config};
 			basis_acc_states: 5*100,
 			halo_nibbles: 0,
 		};
-		let cap_disc = DischargeAdvCapacity{//capaciity of discharge comopnent
+		let cap_disc = DischargeAdvCapacity{
+			res_small_cost: DischargeAdvCapacity::default_res_small(),
+			//capaciity of discharge comopnent
 			max_nibble_len: nibble_len,
 			subsigs: cap.subsigs,
 			universe_subsigs: cap.subsigs,
@@ -3254,6 +3258,7 @@ use utils::consts::{read_global_config, get_global_config};
 		store_items.insert(Fr::from(100u32), subsig100_steps);
 		store_items.insert(Fr::from(200u32), subsig200_steps);
 		let capacity= DischargeAdvCapacity{
+			res_small_cost: DischargeAdvCapacity::default_res_small(),
 			max_nibble_len: 62,
 			subsigs: 4,
 			universe_subsigs: 4,

@@ -387,6 +387,12 @@ pub struct DischargeAdvCapacity{
 	/// NEO-AGGRESSIVE T_qm wrap-key budget: Sigma(steps+1) over the
 	/// seeded NEEDS. 0 = derive subsigs*(avg_active+1). Legacy: unused.
 	pub wrap_keys: usize,
+
+	/// ResSmall (CARRIED queue) compression ratio -- see vec_size. Was
+	/// the RES_SMALL_COST const; per-capacity so a comparison run can
+	/// tune the carry toward full saturation. Seeded from
+	/// GlobalConfig::res_small_cost via default_res_small().
+	pub res_small_cost: usize,
 }
 
 /// Advice for the Discharge Subsig Gadget.
@@ -524,7 +530,7 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 		let compress_ratio = match q_type{
 			StepQueueType::ResLarge=> RES_LARGE_COST,
 			StepQueueType::ToAddDel => ADD_DEL_COST,
-			StepQueueType::ResSmall=> RES_SMALL_COST,
+			StepQueueType::ResSmall=> capacity.res_small_cost,
 		};
 		// Aggressive: size_trace comes straight from the inferred
 		// forward-queue cap prod_pats_expansion (basis_pats/perc not read).
@@ -1946,6 +1952,12 @@ impl DischargeAdvCapacity{
 			* self.max_nibble_len/10000;
 		pats_len
 	}
+
+	/// Carried-queue compression ratio for a freshly built capacity:
+	/// the process-wide GlobalConfig default (ships as RES_SMALL_COST).
+	pub fn default_res_small()->usize{
+		utils::consts::read_global_config().res_small_cost
+	}
 }
 
 impl Capacity for DischargeAdvCapacity{
@@ -1983,6 +1995,7 @@ impl Capacity for DischargeAdvCapacity{
 			b_aggressive: self.b_aggressive,
 			prod_pats_expansion: self.prod_pats_expansion,
 			wrap_keys: self.wrap_keys,
+			res_small_cost: self.res_small_cost,
 		})
 	}
 
@@ -4906,7 +4919,9 @@ use utils::consts::{read_global_config, get_global_config};
 			basis_acc_states: 15*100,
 			halo_nibbles: 0,
 		};
-		let cap_disc = DischargeAdvCapacity{//capaciity of discharge comopnent
+		let cap_disc = DischargeAdvCapacity{
+			res_small_cost: DischargeAdvCapacity::default_res_small(),
+			//capaciity of discharge comopnent
 			max_nibble_len: nibble_len,
 			subsigs: cap.subsigs,
 			universe_subsigs: cap.subsigs,
@@ -5085,7 +5100,9 @@ use utils::consts::{read_global_config, get_global_config};
 			acdfa_state_part_bits: sbits, subsigs:25, avg_pats_per_subsig:4,
 			basis_pats_in_trace:25*100, basis_unique_states:20*100,
 			basis_acc_states:15*100, halo_nibbles:0 };
-		let cap_disc = DischargeAdvCapacity{ max_nibble_len: nibble_len,
+		let cap_disc = DischargeAdvCapacity{
+			res_small_cost: DischargeAdvCapacity::default_res_small(),
+			max_nibble_len: nibble_len,
 			subsigs: cap.subsigs, universe_subsigs: cap.subsigs,
 			avg_active_pats_per_subsig:2,
 			basis_pats_in_trace: cap.basis_pats_in_trace,
@@ -5153,7 +5170,9 @@ use utils::consts::{read_global_config, get_global_config};
 	#[test]
 	fn test_failed_subsig_acc(){
 		get_global_config().basis_failed_subsigs = 10000; //100% of subsigs
-		let cap = DischargeAdvCapacity{ max_nibble_len:62, subsigs:6,
+		let cap = DischargeAdvCapacity{
+			res_small_cost: DischargeAdvCapacity::default_res_small(),
+			max_nibble_len:62, subsigs:6,
 			universe_subsigs:6,
 			avg_active_pats_per_subsig:1, basis_pats_in_trace:100,
 			perc_pats_expansion_rate:100, b_aggressive:true,
@@ -5278,6 +5297,7 @@ use utils::consts::{read_global_config, get_global_config};
 		store_items.insert(Fr::from(100u32), subsig100_steps);
 		store_items.insert(Fr::from(200u32), subsig200_steps);
 		let capacity= DischargeAdvCapacity{
+			res_small_cost: DischargeAdvCapacity::default_res_small(),
 			max_nibble_len: 62,
 			subsigs: 4,
 			universe_subsigs: 4,
@@ -5483,6 +5503,7 @@ use utils::consts::{read_global_config, get_global_config};
 			subsig_ids, subsig_to_steps, b_aggressive: false,
 		};
 		let capacity= DischargeAdvCapacity{
+			res_small_cost: DischargeAdvCapacity::default_res_small(),
 			max_nibble_len: 62,
 			subsigs: 4,
 			universe_subsigs: 4,

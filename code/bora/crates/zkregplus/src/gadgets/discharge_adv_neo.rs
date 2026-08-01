@@ -715,8 +715,10 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 					.unwrap_or(F::zero());
 			}
 		}
-		//PERF 61080: .1 Q_m saturation, .3 busiest-step raw peak
-		//(.2 Q_c is logged by the carry consumer in M6).
+		//PERF 61080: .1 candidate-row DENSITY, .3 busiest-step raw peak
+		//(.2 Q_c is logged by the carry consumer in M6). NOT saturation:
+		//these are pre-filter {C,FP,BP} rows vs the real-row budget only
+		//(no wraps). True T_qm saturation = QM_SAT, see "NEO SAT".
 		let (n_cap, _, _) = Self::carry_vec_size(
 			&StepQueueType::ResLarge, &self.capacity);
 		let mut rows = 0usize;
@@ -731,7 +733,7 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 			}
 		}
 		log(job_id, LOG3, &format!(
-			"PERF 61080.1 qm_rows={} qm_cap={} sat_pm={}",
+			"PERF 61080.1 cand_rows={} real_cap={} dens_pm={}",
 			rows, n_cap, rows * 1000 / n_cap.max(1)));
 		log(job_id, LOG3,
 			&format!("PERF 61080.3 step_peak={}", peak));
@@ -1464,6 +1466,11 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 		// front pads + CapErr (fixed budget)
 		let n_keys = Self::n_wrap_keys(&subsigs, info);
 		let n_total = Self::qm_rows_size(&self.capacity, n_keys);
+		// TRUE T_qm saturation: the two operands CapErr compares. The
+		// 61080.1 probe counts pre-filter candidates against the real-row
+		// budget alone, so it is a density signal, NOT saturation.
+		utils::consts::QM_SAT[self.b_igc as usize]
+			.record(t.enc.len(), n_total);
 		if t.enc.len() > n_total {
 			return Err(Error::CapErr(vec![(format!(
 				"neo_qm_table, b_igc: {}", self.b_igc), t.enc.len())]));
@@ -2990,6 +2997,7 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 		log(job_id, LOG3, &format!(
 			"PERF 61080.2 qc_rows={} qc_cap={} sat_pm={}",
 			qc_rows, n_qc, qc_rows * 1000 / n_qc.max(1)));
+		utils::consts::QC_SAT[g.b_igc as usize].record(qc_rows, n_qc);
 		let col = |ct: &Arc<Mutex<Container<F>>>, name: &str| {
 			ct.lock().unwrap().get_container(name).unwrap()
 				.lock().unwrap().to_vec()
@@ -6003,6 +6011,7 @@ pub(crate) mod tests_neo_m4 {
 	pub(crate) fn fixture_capacity() -> DischargeAdvCapacity {
 		// non-aggressive: n = subsigs*avg = 16 (>= 13 real rows).
 		DischargeAdvCapacity {
+			res_small_cost: DischargeAdvCapacity::default_res_small(),
 			max_nibble_len: 1, subsigs: 1,
 			avg_active_pats_per_subsig: 16, basis_pats_in_trace: 1,
 			perc_pats_expansion_rate: 100, universe_subsigs: 1,
@@ -7862,6 +7871,7 @@ mod tests_neo_m6_h {
 			basis_unique_states: 20 * 100,
 			basis_acc_states: 15 * 100, halo_nibbles: 0 };
 		let cap_disc = DischargeAdvCapacity {
+			res_small_cost: DischargeAdvCapacity::default_res_small(),
 			max_nibble_len: nibble_len, subsigs: cap.subsigs,
 			universe_subsigs: cap.subsigs,
 			avg_active_pats_per_subsig: 2,
@@ -9054,6 +9064,7 @@ mod tests_neo_nonaggr_h {
 			basis_unique_states: 20 * 100,
 			basis_acc_states: 15 * 100, halo_nibbles: 0 };
 		let cap_disc = DischargeAdvCapacity {
+			res_small_cost: DischargeAdvCapacity::default_res_small(),
 			max_nibble_len: nibble_len, subsigs: cap.subsigs,
 			universe_subsigs: cap.subsigs,
 			avg_active_pats_per_subsig: 1,
@@ -9230,6 +9241,7 @@ mod tests_neo_nonaggr_h {
 			basis_unique_states: 20 * 100,
 			basis_acc_states: 15 * 100, halo_nibbles: 0 };
 		let cap_disc = DischargeAdvCapacity {
+			res_small_cost: DischargeAdvCapacity::default_res_small(),
 			max_nibble_len: nibble_len, subsigs: cap.subsigs,
 			universe_subsigs: cap.subsigs,
 			avg_active_pats_per_subsig: 1,
@@ -9347,6 +9359,7 @@ mod tests_neo_cost {
 	// avg_active_pats_per_subsig is the per-subsig row budget).
 	fn hard_capacity(cap_n: usize) -> DischargeAdvCapacity {
 		DischargeAdvCapacity {
+			res_small_cost: DischargeAdvCapacity::default_res_small(),
 			max_nibble_len: 1, subsigs: 1,
 			avg_active_pats_per_subsig: cap_n, basis_pats_in_trace: 1,
 			perc_pats_expansion_rate: 100, universe_subsigs: 1,

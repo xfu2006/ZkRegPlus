@@ -1551,6 +1551,14 @@ where
 		S,LK<CF1<C1>>,GM<CF1<C1>>, false>(
 		lkup, vec_circs, &mut jobs, cache_dir).expect("main err");
 
+	log_sat_audit(log_level);
+
+}
+
+/// Run-level saturation audit: peak queue fill vs its matched cap. The
+/// NEO line is emitted only when the neo discharge actually ran, so its
+/// absence means the legacy path served the run.
+fn log_sat_audit(log_level: usize) {
 	let pct = |f: usize, c: usize| if c == 0 { 0.0 } else { 100.0 * f as f64 / c as f64 };
 	let (ff_cs, fc_cs)   = (utils::consts::get_fwd(false), utils::consts::get_fwd_cap(false));
 	let (ff_igc, fc_igc) = (utils::consts::get_fwd(true),  utils::consts::get_fwd_cap(true));
@@ -1559,7 +1567,19 @@ where
 		 SDE acc max cs={} igc={}",
 		ff_cs, fc_cs, pct(ff_cs, fc_cs), ff_igc, fc_igc, pct(ff_igc, fc_igc),
 		utils::consts::get_acc(false), utils::consts::get_acc(true)));
-
+	let (qm_cs, qmc_cs) = utils::consts::QM_SAT[0].get();
+	let (qm_ig, qmc_ig) = utils::consts::QM_SAT[1].get();
+	let (qc_cs, qcc_cs) = utils::consts::QC_SAT[0].get();
+	let (qc_ig, qcc_ig) = utils::consts::QC_SAT[1].get();
+	if qmc_cs + qmc_ig + qcc_cs + qcc_ig > 0 {
+		log(0, log_level, &format!(
+			"NEO SAT: Q_m cs={}/{} ({:.1}%) igc={}/{} ({:.1}%); \
+			 Q_c cs={}/{} ({:.1}%) igc={}/{} ({:.1}%)",
+			qm_cs, qmc_cs, pct(qm_cs, qmc_cs),
+			qm_ig, qmc_ig, pct(qm_ig, qmc_ig),
+			qc_cs, qcc_cs, pct(qc_cs, qcc_cs),
+			qc_ig, qcc_ig, pct(qc_ig, qcc_ig)));
+	}
 }
 
 /// Aggressive-mode driver: same flow as zkp_driver_adv but builds
@@ -1688,11 +1708,17 @@ where
 		return;
 	}
 
+	// clear the probe's collectors so the audit below reflects ONLY the
+	// real fold (same reason as the non-aggressive driver).
+	utils::consts::reset_sat();
+
 	//4. run the foldpot_main
 	let lkup = Arc::new(db.lkup);
 	foldpot_main::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,FC<CF1<C1>,C1,CS1>,
 		S,LK<CF1<C1>>,GM<CF1<C1>>, false>(
 		lkup, vec_circs, &mut jobs, cache_dir).expect("main err");
+
+	log_sat_audit(log_level);
 
 }
 
@@ -1870,16 +1896,18 @@ pub mod tests_zkp_driver{
 		let sigs = 2; //sed_hard + cp_cover (nibble coverage)
 		let subsigs = 3;
 		let avg_pats_per_subsig = 10; //sed_hard has 8 literal steps
-		let avg_active_pats_per_subsig = 8;
+		let avg_active_pats_per_subsig = knob("ZKR_AVGACT", 8);
 		let perc_comp_subsigs = 26;
 		let basis_unique_states = 4000;
 		let basis_acc_states = 2000; //CapErr floor was 1613
 		let basis_pats_in_trace = 4000;
 		// legacy fwd fill ~97% at perc=195; neo Q_m only needs ~79 rows
 		// (constant queue), so ZKR_USE_NEO tightens perc to ~full Q_m.
-		let perc_pats_expansion_rate =
-			if std::env::var("ZKR_USE_NEO").is_ok() { 45 }
-			else { 195 };
+		//New8 P4: saturation levers. ZKR_SMALL tunes the CARRIED queue
+		//(ResSmall) alone; perc tunes both queues' trace term.
+		get_global_config().res_small_cost = knob("ZKR_SMALL", 20);
+		let perc_pats_expansion_rate = knob("ZKR_PERC",
+			if std::env::var("ZKR_USE_NEO").is_ok() { 45 } else { 195 });
 
 		let vec_decrease_level = vec![];
 		let num_circs = 1;
@@ -1973,9 +2001,12 @@ pub mod tests_zkp_driver{
 		//(so CP cannot discharge on an absent critical word) but only
 		//BEFORE each HELLO, so HELLO's forward .{0,4} window never sees
 		//[ab][ab] -> the sig never completes in-range -> SDE discharges.
+		//ZKR_SCANLEN is the DENSITY knob: more cycles => more live
+		//locations carried at each tracked step.
 		let scan: Vec<u8> =
 			b"abab__HELLOwxyz__".to_vec()
-			.iter().cloned().cycle().take(720).collect();
+			.iter().cloned().cycle().take(knob("ZKR_SCANLEN", 720))
+			.collect();
 		let scan_path = format!("{}/scan.bin", base);
 		std::fs::write(&scan_path, &scan).unwrap();
 		utils::os::write_to_file(&format!("{}/binexec.dat", base),
@@ -1988,13 +2019,14 @@ pub mod tests_zkp_driver{
 		//8_A saturation knob: sizes the neo queue = subsigs*avg_active.
 		//tuned so the constant queue covers the densest chunk (~114
 		//rows) with high fill -- the paper's saturation lever.
-		let avg_active_pats_per_subsig = 16;
+		let avg_active_pats_per_subsig = knob("ZKR_AVGACT", 16);
 		let perc_comp_subsigs = 26;
 		let basis_unique_states = 4000;
 		let basis_acc_states = 2000;
 		let basis_pats_in_trace = 4000;
-		let perc_pats_expansion_rate =
-			if std::env::var("ZKR_NO_NEO").is_ok() { 200 } else { 45 };
+		get_global_config().res_small_cost = knob("ZKR_SMALL", 20);
+		let perc_pats_expansion_rate = knob("ZKR_PERC",
+			if std::env::var("ZKR_NO_NEO").is_ok() { 200 } else { 45 });
 		let init_cp_cap = CpCapacity{ max_word_len: max_word,
 			basis_unique_states, subsigs, avg_pats_per_subsig };
 		let init_sed_cap = SedCapacity::new(max_word,
@@ -2031,6 +2063,215 @@ pub mod tests_zkp_driver{
 		neo_hard_aggr::<Fr>();
 	}
 
+	/// Env knob for the New8 P4 comparative sweep, so density and
+	/// capacity can be swept without a recompile.
+	fn knob(name: &str, dflt: usize) -> usize {
+		std::env::var(name).ok()
+			.and_then(|s| s.parse::<usize>().ok()).unwrap_or(dflt)
+	}
+
+	/// clam_hard: NON-AGGRESSIVE legacy-vs-neo comparison cell over a
+	/// small SDE-dense ClamAV subset (924 sigs carrying bounded gaps,
+	/// built fresh by data/debug/clam_hard_set/config/gen.py).
+	///
+	/// ZKR_USE_NEO=1 selects neo, else legacy -- the ONLY difference
+	/// between the two runs of a cell. ZKR_SCAN names the manifest, so
+	/// easy vs hard is a scan-target swap on one fixed sig set. The
+	/// remaining knobs tune capacity against the NEO SAT audit line.
+	#[allow(dead_code)]
+	fn clam_hard<F:PrimeField>(b_check_lkup: bool){
+		utils::os::print_computer_config(Some("clam_hard"));
+		if std::env::var("ZKR_USE_NEO").is_ok() {
+			get_global_config().clamav_cfg.b_use_discharge_neo = true;
+		}
+		get_global_config().snark_cache_dir = "clam_hard".to_string();
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_write_snark_cache = false;
+		get_global_config().b_light_test = true;
+		//must cover total scan nibbles (2^22 = 2 MB) AND the packed
+		//subsig_id: non-aggressive splits (16, bits-16), so 22 gives 6
+		//bits = 64 subsigs -- the subset's widest sig has 35.
+		get_global_config().range2_bit = knob("ZKR_RANGE2", 22);
+		get_global_config().b_read_cache = false;
+		get_global_config().perc_lkup_share = if !b_check_lkup {1}
+			else {8320};
+		get_global_config().log_level = utils::logger::LOG3;
+		//ZKR_DRYRUN=1 stops right after the capacity check, so the
+		//per-cell minimum-capacity search costs seconds, not a fold.
+		get_global_config().b_dryrun_after_capcheck =
+			knob("ZKR_DRYRUN", 0) != 0;
+		get_global_config().res_small_cost = knob("ZKR_SMALL", 20);
+		let b_write_cache = !read_global_config().b_read_cache;
+		let set1 = "data/debug/clam_hard_set/config";
+		let scan = std::env::var("ZKR_SCAN")
+			.unwrap_or("binexec.dat".to_string());
+		let max_word = knob("ZKR_CHUNK", 64); //chunk_len
+		let sigs = knob("ZKR_SIGS", 924);
+		//the 40-sig set expands to 247 subsigs (comp_sig::subsigs_cs)
+		let subsigs = knob("ZKR_SUBSIGS", 256);
+		let avg_pats_per_subsig = knob("ZKR_AVGPATS", 8);
+		let avg_active_pats_per_subsig = knob("ZKR_AVGACT", 6);
+		let perc_comp_subsigs = knob("ZKR_COMPPERC", 26);
+		let basis_unique_states = knob("ZKR_UNIQ", 4000);
+		let basis_acc_states = knob("ZKR_ACC", 2000);
+		let basis_pats_in_trace = knob("ZKR_TRACE", 4000);
+		let perc_pats_expansion_rate = knob("ZKR_PERC", 195);
+
+		let init_cp_cap = CpCapacity{
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+		};
+		let init_sed_cap = SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig, avg_active_pats_per_subsig,
+			basis_pats_in_trace,
+			perc_pats_expansion_rate,
+			sigs, perc_comp_subsigs,
+			basis_unique_states, basis_acc_states
+		);
+		let init_dfa_cap = DfaCapacity::new(max_word, sigs, subsigs);
+
+		zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+			0,
+			&format!("{}/main.dat", set1), //src sig
+			&format!("{}/{}", set1, scan), //files to discharge
+			"data/debug/clam_hard_set/reports/report.dat", //report
+			b_write_cache,
+			"clam_hard", //cache name
+			&format!("{}/main_dfa.dat", set1), //sigs needing dfa
+			&format!("{}/needs_ised.dat", set1), //sigs needing ised
+			&format!("{}/needs_ised_igc.dat", set1), //ised igc
+			max_word, //chunk len
+			&init_cp_cap,
+			&init_sed_cap,
+			&init_dfa_cap,
+			&vec![],
+			1, //num_circs
+			b_check_lkup
+		);
+	}
+
+	/// New8 P4 non-aggressive cell. `ZKR_USE_NEO=1 ZKR_SCAN=hard.dat
+	/// cargo test -p zkregplus --release -- test_clam_hard
+	/// --show-output --nocapture`
+	#[test]
+	pub fn test_clam_hard(){
+		clam_hard::<Fr>(false);
+	}
+
+	/// dlp_hard: AGGRESSIVE legacy-vs-neo comparison cell over the five
+	/// DLP SITs whose keywords actually drive the paper's worst-NEEDS
+	/// Enron files (data/debug/dlp_hard_set/config/gen.py explains the
+	/// selection). ZKR_SCAN picks scan_easy.dat or scan_hard.dat -- the
+	/// SAME sig set both ways, so the cells differ only in density.
+	#[allow(dead_code)]
+	fn dlp_hard<F:PrimeField>(){
+		utils::os::print_computer_config(Some("dlp_hard"));
+		let neo_on = std::env::var("ZKR_USE_NEO").is_ok();
+		if neo_on {
+			get_global_config().clamav_cfg.b_use_discharge_neo = true;
+			get_global_config().neo_wrap_keys = knob("ZKR_WRAPKEYS", 5600);
+		}
+		get_global_config().snark_cache_dir = "dlp_hard".to_string();
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_write_snark_cache = false;
+		get_global_config().b_light_test = true;
+		get_global_config().b_folding_only = false; //REAL decider
+		get_global_config().range2_bit = knob("ZKR_RANGE2", 20);
+		get_global_config().min_subsigs = 64;
+		get_global_config().min_basis_unique_states = 100;
+		get_global_config().min_basis_acc_states = 2;
+		get_global_config().min_basis_pats_in_trace = 4;
+		get_global_config().min_avg_pats_per_subsig = 1;
+		get_global_config().min_dfa_sigs = 2;
+		get_global_config().min_dfa_subsigs = 2;
+		get_global_config().n_par_snark = 2;
+		get_global_config().n_par_snark_cp = 2;
+		get_global_config().n_par_batch_claim = 8;
+		//neo's per-chunk advice widens the distinct range-key set, so the
+		//dummy self-cover needs more lkup share than the legacy arm.
+		get_global_config().perc_lkup_share =
+			knob("ZKR_LKSHARE", if neo_on {20} else {1});
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
+		get_global_config().clamav_cfg.sde_rep_fanout_cap =
+			knob("ZKR_FANOUT", 100);
+		get_global_config().clamav_cfg.min_pm_word_len = 3;
+		get_global_config().clamav_cfg.b_sde_rep_tight_first_leg = false;
+		//ZKR_DRYRUN=1 stops right after the capacity check (see clam_hard)
+		get_global_config().b_dryrun_after_capcheck =
+			knob("ZKR_DRYRUN", 0) != 0;
+		get_global_config().res_small_cost = knob("ZKR_SMALL", 20);
+		get_global_config().b_read_cache = false;
+		get_global_config().aggr_needs_subsigs = knob("ZKR_NEEDS", 256);
+
+		let set1 = "data/debug/dlp_hard_set/config";
+		let scan = std::env::var("ZKR_SCAN")
+			.unwrap_or("scan_hard.dat".to_string());
+		let max_word = knob("ZKR_CHUNK", 256);
+		let sigs = knob("ZKR_SIGS", 111);
+		let subsigs = knob("ZKR_SUBSIGS", 500);
+		let avg_pats_per_subsig = knob("ZKR_AVGPATS", 4);
+		let avg_active_pats_per_subsig = knob("ZKR_AVGACT", 7);
+		let perc_comp_subsigs = knob("ZKR_COMPPERC", 20);
+		let basis_unique_states = knob("ZKR_UNIQ", 150);
+		let basis_acc_states = knob("ZKR_ACC", 600);
+		let basis_pats_in_trace = knob("ZKR_TRACE", 700);
+		let perc_pats_expansion_rate = knob("ZKR_PERC", 300);
+
+		let init_cp_cap = CpCapacity{
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+		};
+		let init_sed_cap = SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig, avg_active_pats_per_subsig,
+			basis_pats_in_trace, perc_pats_expansion_rate,
+			sigs, perc_comp_subsigs,
+			basis_unique_states, basis_acc_states);
+
+		//igc arm stays a trivial sentinel (same shape as small_debug).
+		let init_cp_cap_igc = CpCapacity{
+			max_word_len: init_cp_cap.max_word_len,
+			basis_unique_states: 4, subsigs: 1, avg_pats_per_subsig: 1};
+		let init_sed_cap_igc = SedCapacity::new(
+			init_sed_cap.max_word_len, init_sed_cap.acdfa_state_part_bits,
+			1, 1, 1, 4, 64, 1, 1,
+			init_sed_cap.basis_unique_states, 2);
+
+		let cs_caps = vec![(init_cp_cap, init_sed_cap,
+			init_cp_cap_igc, init_sed_cap_igc)];
+
+		let scan_files: Vec<String> = vec![format!("{}/{}", set1, scan)];
+
+		zkp_driver_adv_aggr::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,
+			CS1E,S>(
+			0,
+			&format!("{}/main.dat", set1), //src sig
+			scan_files, //manifest of files to discharge
+			"data/debug/dlp_hard_set/reports/report.dat", //report
+			false, //b_write_cache
+			"dlp_hard", //cache name
+			&format!("{}/main_dfa.dat", set1), //sigs needing dfa
+			&format!("{}/needs_ised.dat", set1), //ised (empty)
+			&format!("{}/needs_ised_igc.dat", set1), //ised_igc (empty)
+			max_word, //chunk len
+			&cs_caps,
+			false, //b_check_lkup
+		);
+	}
+
+	/// New8 P4 aggressive cell. `ZKR_USE_NEO=1 ZKR_SCAN=scan_easy.dat
+	/// cargo test -p zkregplus --release -- test_dlp_hard
+	/// --show-output --nocapture`
+	#[test]
+	pub fn test_dlp_hard(){
+		dlp_hard::<Fr>();
+	}
+
 	/// small_multi_dnf: permanent local regression repro for the
 	/// DfaAdvGadget discharge-combo bug. Same non-aggressive DFA path as
 	/// small_data(), but the DFA sig MULTIDNF_cs has a 2-subsig OR-clause
@@ -2042,6 +2283,11 @@ pub mod tests_zkp_driver{
 	fn small_multi_dnf<F:PrimeField>(b_check_lkup: bool){
 		utils::os::print_computer_config(Some("small_multi_dnf"));
 		get_global_config().snark_cache_dir = "small_multi_dnf".to_string();
+		// ZKR_USE_NEO=1 routes SDE discharge through neo (same gate as
+		// small_data); default off keeps the legacy run byte-identical.
+		if std::env::var("ZKR_USE_NEO").is_ok() {
+			get_global_config().clamav_cfg.b_use_discharge_neo = true;
+		}
 		get_global_config().b_read_snark_cache = false;
 		get_global_config().b_write_snark_cache = false;
 		get_global_config().b_light_test = true;

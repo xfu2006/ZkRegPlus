@@ -72,6 +72,7 @@ pub fn reset_sat() {
               &MAX_FWD_CAP_CS, &MAX_FWD_CAP_IGC] {
         a.store(0, Ordering::Relaxed);
     }
+    for g in QM_SAT.iter().chain(QC_SAT.iter()) { g.reset(); }
 }
 pub fn get_fwd(b_igc: bool) -> usize {
     (if b_igc {&MAX_FWD_IGC} else {&MAX_FWD_CS}).load(Ordering::Relaxed)
@@ -82,6 +83,33 @@ pub fn get_fwd_cap(b_igc: bool) -> usize {
 pub fn get_acc(b_igc: bool) -> usize {
     (if b_igc {&MAX_ACC_IGC} else {&MAX_ACC_CS}).load(Ordering::Relaxed)
 }
+
+/// Peak fill and its MATCHED cap for one queue, so saturation is exact
+/// with no reconstruction from config (same contract as record_fwd).
+pub struct SatGauge { fill: AtomicUsize, cap: AtomicUsize }
+impl SatGauge {
+    pub const fn new() -> Self {
+        Self { fill: AtomicUsize::new(0), cap: AtomicUsize::new(0) }
+    }
+    /// Record one emission; both sides keep their running max.
+    pub fn record(&self, fill: usize, cap: usize) {
+        self.fill.fetch_max(fill, Ordering::Relaxed);
+        self.cap.fetch_max(cap, Ordering::Relaxed);
+    }
+    pub fn get(&self) -> (usize, usize) {
+        (self.fill.load(Ordering::Relaxed), self.cap.load(Ordering::Relaxed))
+    }
+    fn reset(&self) {
+        self.fill.store(0, Ordering::Relaxed);
+        self.cap.store(0, Ordering::Relaxed);
+    }
+}
+
+/// Neo (App G.1) queue saturation, indexed by `b_igc as usize`. Q_m =
+/// T_qm rows vs the budget CapErr guards; Q_c = committed carry, which
+/// is the next chunk's Q_i, so one gauge covers both.
+pub static QM_SAT: [SatGauge; 2] = [SatGauge::new(), SatGauge::new()];
+pub static QC_SAT: [SatGauge; 2] = [SatGauge::new(), SatGauge::new()];
 
 /// Knobs that govern ClamAV PCRE approximation when building the
 /// pattern DB. Lives in utils so GlobalConfig can embed it;
@@ -146,6 +174,19 @@ pub enum ClamReadMode { Full, FirstHalf, SecondHalf }
 pub struct GlobalConfig {
     pub log_level: usize,
     pub range2_bit: usize,
+
+    /// Compression ratio sizing the ResSmall CARRIED step queue (Q_i on
+    /// the way in, Q_c on the way out), as a percent-of-percent factor
+    /// in StepQueue::vec_size: n = max_nibble * basis_pats * perc *
+    /// res_small_cost / 1e8. 100 = no compression; the shipped default
+    /// 20 (= discharge_adv::RES_SMALL_COST, kept as the single source
+    /// of truth) is a 5x tightening tuned 2026-05-09. LOWER IT to drive
+    /// the carried queue toward full saturation when calibrating a
+    /// legacy-vs-neo comparison -- an over-sized carry makes BOTH arms
+    /// pay for padding and hides the real cost difference. Copied into
+    /// DischargeAdvCapacity at construction, so a change takes effect
+    /// for capacities built AFTER the write.
+    pub res_small_cost: usize,
     pub min_basis_unique_states: usize,
     pub min_subsigs: usize,
     pub min_dfa_subsigs: usize,
@@ -244,6 +285,7 @@ impl Default for GlobalConfig {
         Self {
             log_level: crate::logger::LOG6,
             range2_bit: 18,
+            res_small_cost: 20,
             min_basis_unique_states: 2,
             min_subsigs: 0,
             min_dfa_subsigs: 2,
@@ -302,6 +344,7 @@ impl Default for GlobalConfig {
 static GLOBAL_CONFIG: RwLock<GlobalConfig> = RwLock::new(GlobalConfig {
     log_level: crate::logger::LOG6,
     range2_bit: 18,
+    res_small_cost: 20,
     min_basis_unique_states: 2,
     min_subsigs: 2,
     min_dfa_subsigs: 0,

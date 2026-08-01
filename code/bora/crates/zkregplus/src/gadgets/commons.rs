@@ -1270,8 +1270,14 @@ pub fn verify_logup_inverse_old1<F:PrimeField + ColEle>(cs: ConstraintSystemRef<
 /// IDEA: every lblcok of ADD_CHAIN, build a huge LinearCombination 
 /// and sum it up
 /// COST: vlen/ADD_CHAIN_SIZE (64)
-pub fn sum_vec_vars<F:PrimeField + ColEle>(v: &[FpVar<F>])->FpVar<F>{
-	let cs = v[0].cs();
+pub fn sum_vec_vars<F:PrimeField + ColEle>(cs: ConstraintSystemRef<F>,
+	v: &[FpVar<F>])->FpVar<F>{
+	// Sum of the empty vector is zero. v[0] was only ever read to
+	// recover cs, so an empty operand panicked instead of yielding
+	// the identity -- reachable whenever a chunk carries no rows.
+	if v.is_empty(){
+		return FpVar::<F>::new_constant(cs, F::zero()).unwrap();
+	}
 	let one_var = FpVar::<F>::new_constant(cs.clone(), F::one()).unwrap(); 
 	let one_wit_var = FpVar::<F>::new_witness(cs.clone(), 
 		||Ok(F::one())).unwrap();
@@ -1319,12 +1325,12 @@ pub fn verify_logup_inverse_new<F:PrimeField + ColEle>(cs: ConstraintSystemRef<F
 		||Ok(F::one())).unwrap();
 	one_wit_var.enforce_equal(&one_var)?; 
 
-	let sum_left = sum_vec_vars(&v1);
+	let sum_left = sum_vec_vars(cs.clone(), &v1);
 
 	assert!(v2.len()==m_tbl.len());
 	let v3 = v2.iter().zip(m_tbl.iter()).map(|(v,m)|
 		v * m).collect::<Vec<FpVar<F>>>();
-	let sum_right = sum_vec_vars(&v3);
+	let sum_right = sum_vec_vars(cs.clone(), &v3);
 
 	sum_left.enforce_equal(&sum_right)?;
 		
@@ -1846,7 +1852,7 @@ pub fn verify_2d_lkup_prf<F:PrimeField + ColEle>(
 	//3.1 sum up the Logup equation on the left (the query table)
 	let zero_inv_val = r_val.inverse().unwrap();
 	let zero_inv = new_var(&cs, zero_inv_val);
-	let mut sum_left = sum_vec_vars(&inv_qry);
+	let mut sum_left = sum_vec_vars(cs.clone(), &inv_qry);
 	let one_var = FpVar::<F>::new_constant(cs.clone(), F::one())?; 
 	check_eq(&(&zero_inv * &r), &one_var, "fails zero_inv check")?;
 	let adj = &zero_inv * &zero_diff;
@@ -1874,7 +1880,7 @@ pub fn verify_2d_lkup_prf<F:PrimeField + ColEle>(
 		let lb_res = var_to_lb(&prods[i], F::one());
 		cs.enforce_constraint( lb_m_tbl, lb_inv, lb_res)?;
 	}
-	let sum_right = sum_vec_vars(&prods);
+	let sum_right = sum_vec_vars(cs.clone(), &prods);
 	check_eq(&sum_left, &sum_right, "logup check fails")?;
 	if b_debug{ assert!(cs.is_satisfied().unwrap()); }
 	if b_perf {
@@ -1957,7 +1963,7 @@ pub fn verify_1d_lkup_prf<F:PrimeField + ColEle>(
 	//3. do a customized assert_logup for multi-columns
 	//COST: n_l*1.02 + nq*0.02 + 4
 	//3.1  the sum of inverse of query table
-	let sum_left = sum_vec_vars(&inv_qry);
+	let sum_left = sum_vec_vars(cs.clone(), &inv_qry);
 
 	//3.2 the sum of inverse of lookup table
 	assert!(inv_lkup.len()==m_tbl.len());
@@ -1973,7 +1979,7 @@ pub fn verify_1d_lkup_prf<F:PrimeField + ColEle>(
 		let lb_res = var_to_lb(&prods[i], F::one());
 		cs.enforce_constraint( lb_m_tbl, lb_inv, lb_res)?;
 	}
-	let sum_right = sum_vec_vars(&prods);
+	let sum_right = sum_vec_vars(cs.clone(), &prods);
 	check_eq(&sum_left, &sum_right, "logup check fails")?;
 	if b_debug{ assert!(cs.is_satisfied().unwrap()); }
 	if b_perf {

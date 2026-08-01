@@ -198,7 +198,9 @@ impl SedCapacity{
 		//prod default = basis_pats*perc (reproduces the legacy forward-queue
 		//size); aggressive determine overrides via set_prod_pats_expansion.
 		let prod_pats_expansion = basis_pats_in_trace * perc_pats_expansion_rate;
-		let da_capacity = DischargeAdvCapacity{max_nibble_len, subsigs, universe_subsigs: subsigs, avg_active_pats_per_subsig, basis_pats_in_trace, perc_pats_expansion_rate, b_aggressive: false, prod_pats_expansion, wrap_keys: 0};
+		let da_capacity = DischargeAdvCapacity{
+			res_small_cost: DischargeAdvCapacity::default_res_small(),
+			max_nibble_len, subsigs, universe_subsigs: subsigs, avg_active_pats_per_subsig, basis_pats_in_trace, perc_pats_expansion_rate, b_aggressive: false, prod_pats_expansion, wrap_keys: 0};
 		//NOTE csa_capacity for the other cs/igc case will be temporarily
 		//set and later merged (because one csa coresponds to two discharge
 		//adv components

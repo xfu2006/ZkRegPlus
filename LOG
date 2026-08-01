@@ -30528,6 +30528,44 @@ Goal 11. start p3 unit testing
 	[a] fully automated testing
 	[b] refine the rule and starts.
 	[c] unit testing mostly passed, but there is one problem.
+
+Sat 08/01/2026
+Goal 1. examine P3
+	[a] issuse fixed
+Goal 2. start P4.
+	[a] outline requirement
+	[b] ipmlementation starts
+	[c] data analysis
+		=> cost comparison unfair
+		=> add Q_i ratio into global config
+		=> redo the comparison.
+Goal 3. Writing Apdx Data Eval
+	[a] D.1
+	[b] D.2
+		-> SIG data encoding in DB why 120M
+		-> fix the percentage total as lkup is not all 2^28.
+		-> polish D.2
+		-> final comparison
+	[c] D.3
+		-> double check data source.
+		-> p1
+		-> all other paragraphs
+Goal 4. planning on appendix B
+	[a] review algorithm
+		-> alg
+	[b] the other sections
+		-> B.0
+		-> B.1
+		-> B.2
+		-> B.3
+		-> B.4
+		-> B.5
+Goal 5. continue on P4.
+	[a] fix two bugs.
+	[b] re-run and think about the new idea: make some columns
+		optional and do not show up in aggr case.
+		-> polish
+
 		
 
 
