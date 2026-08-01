@@ -8558,6 +8558,128 @@ mod tests_neo_nonaggr_neg {
 	}
 }
 
+// ============================================================
+//   P3 R4: the batch closers (assert_qm_lookups, verdict)
+// ============================================================
+#[cfg(test)]
+mod tests_neo_r4 {
+	use super::*;
+	use super::tests_neo_m4::A18_DEFAULT_MIN;
+	use super::tests_neo_m5::{a18_store, a18_carried};
+	use super::tests_neo_m6::{run_core_aggr, regen_aggr_advice,
+		a18_s_pat};
+	use super::tests_neo_nonaggr::run_core_nonaggr;
+	use ark_bn254::Fr;
+
+	fn f(x: u32) -> Fr { Fr::from(x) }
+
+	fn fig14_hm() -> HashMap<u32, Vec<u32>> {
+		let mut m = HashMap::new();
+		m.insert(1, vec![6]); m.insert(2, vec![21, 111]);
+		m.insert(3, vec![27]); m.insert(4, vec![33]);
+		m.insert(5, vec![39, 106]);
+		m.insert(6, vec![73, 79, 96, 141]);
+		m.insert(7, vec![101, 131]);
+		m
+	}
+
+	fn c2_hm() -> HashMap<u32, Vec<u32>> {
+		let mut m = HashMap::new();
+		m.insert(2, vec![111]); m.insert(5, vec![106]);
+		m.insert(6, vec![96, 141]); m.insert(7, vec![101, 131]);
+		m
+	}
+
+	/// A drain over an EMPTY buffer proves nothing, so every later
+	/// negative in this file rests on these two facts: the
+	/// reachable buffer is fed on both arms, and the carried buffer
+	/// is fed on the non-aggressive one (aggr skips it by design,
+	/// which is why its mtbl_qc stays empty).
+	#[test]
+	fn test_r4_buffers_are_fed() {
+		let (_cs, nat) = run_core_aggr(&a18_store(), &fig14_hm(),
+			161, None);
+		let hits = |v: &Vec<Fr>| v.iter()
+			.filter(|x| !x.is_zero()).count();
+		assert!(hits(&nat.mtbl_qr) > 0, "aggr QR drain is vacuous");
+		assert!(nat.mtbl_qc.is_empty(),
+			"aggr must have no carried target");
+		let (_cs2, nat2) = run_core_nonaggr(&a18_store(),
+			&a18_carried().to_stepqueue(), &c2_hm(),
+			A18_DEFAULT_MIN, None);
+		assert!(hits(&nat2.mtbl_qr) > 0, "nonaggr QR vacuous");
+		assert!(hits(&nat2.mtbl_qc) > 0, "nonaggr QC vacuous");
+		assert!(hits(&nat2.mtbl_tm) > 0, "membership vacuous");
+	}
+
+	/// the aggressive QR drain really is a constraint: multiplicity
+	/// is checked advice, not a hint. (The QC twin is
+	/// test_nonaggr_neg_mtbl_qc.)
+	#[test]
+	fn test_r4_mtbl_qr_forgery() {
+		for case in 0..2 {
+			let (cs, _nat) = run_core_aggr(&a18_store(),
+				&fig14_hm(), 161,
+				Some(&move |nat: &mut NeoCore<Fr>| {
+					let j = nat.mtbl_qr.iter().position(|m|
+						!m.is_zero()).unwrap();
+					if case == 0 {
+						nat.mtbl_qr[j] += f(1);
+					} else {
+						nat.mtbl_qr[j] -= f(1);
+					}
+				}));
+			assert!(!cs.is_satisfied().unwrap(),
+				"mtbl_qr case {}", case);
+		}
+	}
+
+	/// the verdict feed must carry exactly the terminal C rows:
+	/// (a) rewriting a real acc entry leaves its terminal row's
+	/// query with no target, (b) shifting the leading zero slot's
+	/// count breaks the masked-row bookkeeping.
+	/// HARNESS-LIMITED, deliberately not tested here: APPENDING an
+	/// unqueried acc entry (multiplicity 0) is inert for a logup,
+	/// so this seam cannot reject it. What rejects a fabricated
+	/// failed-subsig is compute_sig consuming the committed acc
+	/// container -- an integration-level check (P4), not a
+	/// constraint of this gadget.
+	#[test]
+	fn test_r4_verdict_forgery() {
+		let mut hm = fig14_hm();
+		hm.insert(8, vec![108]);
+		for case in 0..2 {
+			let hm2 = hm.clone();
+			let (cs, _nat) = run_core_aggr(&a18_store(), &hm2, 161,
+				Some(&move |nat: &mut NeoCore<Fr>| {
+					if case == 0 {
+						let j = nat.acc_out.iter().position(|x|
+							!x.is_zero()).expect("a terminal C");
+						nat.acc_out[j] = f(999);
+					} else {
+						nat.mtbl_acc[0] += f(1);
+					}
+				}));
+			assert!(!cs.is_satisfied().unwrap(),
+				"verdict case {}", case);
+		}
+	}
+
+	/// the seed anchor is the ground of reachability: drop the
+	/// per-subsig anchor query by zeroing the statement subsig slot
+	/// and everything else still balances, so the rest of the
+	/// system would accept a vacuously all-FP table. It must not.
+	#[test]
+	fn test_r4_seed_anchor_drop() {
+		let (cs, _nat) = run_core_aggr(&a18_store(), &fig14_hm(),
+			161, Some(&|nat: &mut NeoCore<Fr>| {
+				nat.subsig_nat[0] = f(0);
+				regen_aggr_advice(nat, &a18_store(), &a18_s_pat());
+			}));
+		assert!(!cs.is_satisfied().unwrap());
+	}
+}
+
 // NOTE_NEW8_ADAPTED (P3 R3): native-only oracle, revived as-is.
 #[cfg(test)]
 mod tests_neo_nonaggr_oracle {
