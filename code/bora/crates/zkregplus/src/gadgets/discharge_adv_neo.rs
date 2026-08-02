@@ -81,7 +81,7 @@ use crate::gadgets::traits::{Container, Col, IDX_DATA, IDX_SI_DATA,
 	ComponentAdvice};
 use crate::gadgets::discharge_adv::{DischargeAdvGadget,
 	DischargeAdvAdvice, DischargeAdvCapacity, FailedSubsigAcc,
-	StepQueue, StepQueueItem, StepQueueType};
+	StepQueue, StepQueueItem, StepQueueType, RES_LARGE_COST};
 
 /// M3 stub wrapping the legacy SDE gadget; forwards all trait methods.
 #[derive(Clone, Debug)]
@@ -109,6 +109,18 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			store_steps);
 		inner.dummy_cfg = Self::build_neo_dummy_cfg(b_igc,
 			offset_fsm, capacity, fsm_id, prev_cfgs, store_steps);
+		if std::env::var("ZKR_PROBE_COLS").is_ok(){
+			let nsub = store_steps.subsig_to_steps.len();
+			let need: usize = store_steps.subsig_to_steps.values()
+				.map(|it| it.vec_pm_bounds.len() + 1).sum();
+			let mx = store_steps.subsig_to_steps.values()
+				.map(|it| it.vec_pm_bounds.len()).max().unwrap_or(0);
+			println!("DEBUG USE 62050.3: igc={} db_subsigs={} \
+maxsteps={} WRAP_KEYS_NEEDED={} have={}",
+				b_igc, nsub, mx, need, capacity.wrap_keys);
+			crate::gadgets::traits::dump_cfg_col_sizes(
+				&inner.dummy_cfg, &format!("neo igc={}", b_igc));
+		}
 		Self { inner }
 	}
 
@@ -1359,28 +1371,82 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 		}).sum()
 	}
 
-	/// T_qm row budget: ResLarge real-row budget + 2 wraps per key
-	/// group. Aggressive (8_C NEEDS seeding): the wrap budget is
-	/// CAPACITY-ONLY -- subsigs*(avg_active+1) keys -- so the shape
-	/// is chunk-invariant; n_keys ignored. Non-aggressive keeps the
-	/// (run-constant) data n_keys. Exceeding = CapErr, never silent.
-	/// Wrap-key budget: explicit capacity.wrap_keys, else derived
-	/// subsigs*(avg_active+1).
-	pub(crate) fn wrap_budget(capacity: &DischargeAdvCapacity)
-	-> usize {
-		if capacity.wrap_keys > 0 { capacity.wrap_keys }
-		else { capacity.subsigs
-			* (capacity.avg_active_pats_per_subsig + 1) }
+	/// Chain lengths (+1 seed group) of the store, sorted
+	/// descending: the wrap-key demand per seeded subsig.
+	fn chain_keys_desc(info: &SubsigStepStore) -> Vec<usize> {
+		let mut v = info.subsig_to_steps.values()
+			.map(|it| it.vec_pm_bounds.len() + 1)
+			.collect::<Vec<usize>>();
+		v.sort_unstable_by(|a, b| b.cmp(a));
+		v
 	}
 
+	/// Wrap-key budget: explicit capacity.wrap_keys, else the sum
+	/// of the capacity.subsigs largest (chain_len+1) in the store
+	/// -- the exact worst case for any seeded set of that size.
+	pub(crate) fn wrap_budget(capacity: &DischargeAdvCapacity,
+		info: &SubsigStepStore) -> usize {
+		if capacity.wrap_keys > 0 { return capacity.wrap_keys; }
+		Self::chain_keys_desc(info).iter()
+			.take(capacity.subsigs).sum()
+	}
+
+	/// Invert wrap_budget: the smallest subsig count whose top-K
+	/// chain sum covers `demand` keys (CapErr attribution).
+	pub(crate) fn wrap_subsigs_for(info: &SubsigStepStore,
+		demand: usize) -> usize {
+		let (mut acc, mut k) = (0usize, 0usize);
+		for l in Self::chain_keys_desc(info) {
+			if acc >= demand { break; }
+			acc += l; k += 1;
+		}
+		k.max(1)
+	}
+
+	/// T_qm row budget: ResLarge real rows + 2 wraps per budget
+	/// key. Capacity-only in BOTH modes -> chunk/fold-invariant
+	/// shape (data n_keys ignored).
 	pub(crate) fn qm_rows_size(capacity: &DischargeAdvCapacity,
-		n_keys: usize) -> usize {
+		info: &SubsigStepStore) -> usize {
 		let (n, _, _) = StepQueue::<F>::vec_size(
 			&StepQueueType::ResLarge, capacity);
-		let wrap = if capacity.b_aggressive {
-			Self::wrap_budget(capacity)
-		} else { n_keys };
-		n + 2 * wrap
+		n + 2 * Self::wrap_budget(capacity, info)
+	}
+
+	/// Attribute a pooled T_qm overflow to the param over its nominal
+	/// share, in that param's own units. total > cap implies at least
+	/// one side is over, so the result is never empty.
+	pub(crate) fn qm_caperr(capacity: &DischargeAdvCapacity,
+		b_igc: bool, info: &SubsigStepStore,
+		n_keys: usize, wrap_cap: usize,
+		real: usize, real_cap: usize) -> Error {
+		let mut v = vec![];
+		if n_keys > wrap_cap {
+			//derived wrap = top-K chain sum -> bump subsigs to the
+			//smallest K covering the demand. "subsigs" in the name
+			//routes to p.subsigs (and the aggr_needs_subsigs
+			//co-bump) in determine_config.
+			v.push((format!("dis_adv::neo_wrap_subsigs, b_igc: {}",
+				b_igc), Self::wrap_subsigs_for(info, n_keys)));
+		}
+		if real > real_cap {
+			//invert vec_size's size_trace term for the real rows.
+			let d = if capacity.b_aggressive {
+				capacity.max_nibble_len * RES_LARGE_COST
+			} else { capacity.max_nibble_len
+				* capacity.basis_pats_in_trace * RES_LARGE_COST };
+			let req = if d == 0 { real }
+				else { (real * 100_000_000 + d - 1) / d };
+			let nm = if capacity.b_aggressive {
+				"dis_adv::prod_pats_expansion"
+			} else { "dis_adv::perc_pats_expansion_rate" };
+			v.push((format!("{}, b_igc: {}", nm, b_igc), req));
+		}
+		if v.is_empty() { //defensive: keep the legacy shape
+			v.push((format!("neo_qm_table, b_igc: {}", b_igc),
+				real + 2 * n_keys));
+		}
+		Error::CapErr(v)
 	}
 
 	/// Single-pass T_qm synthesis from the shared-core output. Mode
@@ -1465,15 +1531,28 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 		}
 		// front pads + CapErr (fixed budget)
 		let n_keys = Self::n_wrap_keys(&subsigs, info);
-		let n_total = Self::qm_rows_size(&self.capacity, n_keys);
+		let n_total = Self::qm_rows_size(&self.capacity, info);
 		// TRUE T_qm saturation: the two operands CapErr compares. The
 		// 61080.1 probe counts pre-filter candidates against the real-row
 		// budget alone, so it is a density signal, NOT saturation.
 		utils::consts::QM_SAT[self.b_igc as usize]
 			.record(t.enc.len(), n_total);
+		// SPLIT gauges: QM_SAT cannot separate an oversized wrap
+		// budget from oversized real rows, and over-provisioning is
+		// silent (only CapErr is loud). See wrap_budget.
+		let ig = self.b_igc as usize;
+		let (n_real_cap, _, _) = StepQueue::<F>::vec_size(
+			&StepQueueType::ResLarge, &self.capacity);
+		let wrap_cap = Self::wrap_budget(&self.capacity, info);
+		let n_sub = subsigs.iter().filter(|s| !s.is_zero()).count();
+		let n_real = t.enc.len().saturating_sub(2 * n_keys);
+		utils::consts::QM_WRAP_SAT[ig].record(n_keys, wrap_cap);
+		utils::consts::QM_REAL_SAT[ig].record(n_real, n_real_cap);
+		utils::consts::QM_SUB_SAT[ig]
+			.record(n_sub, self.capacity.subsigs);
 		if t.enc.len() > n_total {
-			return Err(Error::CapErr(vec![(format!(
-				"neo_qm_table, b_igc: {}", self.b_igc), t.enc.len())]));
+			return Err(Self::qm_caperr(&self.capacity, self.b_igc,
+				info, n_keys, wrap_cap, n_real, n_real_cap));
 		}
 		let n_pad = n_total - t.enc.len();
 		t.pad_front(n_pad);
@@ -2939,9 +3018,25 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 		t.fill_nonaggr(info, default_min);
 		let rid = Self::gen_rid_native(&t);
 		let cid = Self::gen_cid_native(&t);
-		let subsig_nat = g.subsigs.clone();
-		let (s_enc, s_pat) = Self::gen_store_rows(&subsig_nat,
+		// NewP3: capacity-only shapes (fold-invariant across files
+		// with different obligation sets), mirroring gen's 8_C pad:
+		// K dummy-0 subsig slots; s_enc padded to the wrap budget.
+		// All consumers mask zero slots.
+		let mut subsig_nat = g.subsigs.clone();
+		let (mut s_enc, s_pat) = Self::gen_store_rows(&subsig_nat,
 			info);
+		let k_slots = g.capacity.subsigs;
+		let s_cap = StepQueueNeo::<F>::wrap_budget(&g.capacity,
+			info);
+		assert!(subsig_nat.len() <= k_slots); //CapErr'd upstream
+		subsig_nat.resize(k_slots, F::zero());
+		if s_enc.len() > s_cap {
+			return Err(Error::CapErr(vec![(format!(
+				"dis_adv::neo_wrap_subsigs, b_igc: {}", g.b_igc),
+				StepQueueNeo::<F>::wrap_subsigs_for(info,
+					s_enc.len()))]));
+		}
+		s_enc.resize(s_cap, F::zero());
 		let mtbl_qr = Self::gen_mtbl_qr_nonaggr(&t, &rid,
 			&subsig_nat);
 		let mtbl_qc = Self::gen_mtbl_qc(&t, &cid);
@@ -5087,13 +5182,16 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 			&g.subsigs, info);
 		if g.capacity.b_aggressive {
 			let k_slots = g.capacity.subsigs;
-			let s_cap = StepQueueNeo::<F>::wrap_budget(&g.capacity);
+			let s_cap = StepQueueNeo::<F>::wrap_budget(
+				&g.capacity, info);
 			assert!(subsig_nat.len() <= k_slots);
 			subsig_nat.resize(k_slots, F::zero());
 			if s_enc.len() > s_cap {
+				//store rows = Sigma(chain) over NEEDS -> bump subsigs
 				return Err(Error::CapErr(vec![(format!(
-					"neo_qm_table, b_igc: {}", g.b_igc),
-					s_enc.len())]));
+					"dis_adv::neo_wrap_subsigs, b_igc: {}", g.b_igc),
+					StepQueueNeo::<F>::wrap_subsigs_for(info,
+						s_enc.len()))]));
 			}
 			s_enc.resize(s_cap, F::zero());
 		}
@@ -5372,21 +5470,20 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoAdvice<F> {
 				inp_subsigs, fsm_id, subsig_store_info, capacity,
 				last_loc, seg_id, job_id)
 		} else {
-			Self::new_nonaggr(b_igc, offset_fsm, pat_loc, fsm_id,
-				subsig_store_info, capacity, inp_step_queue,
-				last_loc, job_id)
+			Self::new_nonaggr(b_igc, offset_fsm, pat_loc,
+				inp_subsigs, fsm_id, subsig_store_info, capacity,
+				inp_step_queue, last_loc, job_id)
 		}
 	}
 
-	/// NON-AGGRESSIVE ctor (paper C.1 prune): Q_i = the carried-in
-	/// queue, shared core {C,FP,BP} + apply_sp_pass, then the
-	/// statement {neo_core, q_i, q_c}. inp_subsigs is NOT taken:
-	/// the active set is the carried queue's (the compute_sig
-	/// NEEDS tie is M8's wiring, like aggressive's seed tie).
+	/// NON-AGGRESSIVE ctor (paper C.1 prune): seed = inp_subsigs
+	/// (the SDE obligation set, capacity-bounded), Q_i overlaid,
+	/// shared core + apply_sp_pass -> statement {neo_core,q_i,q_c}.
 	pub fn new_nonaggr(
 		b_igc: bool,
 		offset_fsm: usize,
 		pat_loc: &Arc<Mutex<Container<F>>>,
+		inp_subsigs: &Vec<F>,
 		fsm_id: u32,
 		subsig_store_info: &SubsigStepStore,
 		capacity: &DischargeAdvCapacity,
@@ -5398,25 +5495,38 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoAdvice<F> {
 		let sname = if b_igc { "discharge_adv_stmt_igc" }
 			else { "discharge_adv_stmt_cs" };
 		let stmt_container = Container::<F>::new(sname);
-		// M8b: seed the shared core over the FIXED universe (mirrors
-		// new_aggr) so neo_core is fold-invariant; real carry rows
-		// overlay the seed. q_i/q_c still carry the real inp_step_queue.
-		// Universe = non-empty-chain subsigs only, matching sed_mapper's
-		// uni() (empty-chain can never carry a C row and would underflow
-		// compute_sig's num==0), so q_c's subsig set == compute_sig's
-		// inp_subsigs every chunk.
+		// NewP3: seed this fold's SDE obligation set (inp_subsigs =
+		// the failed-CP subsigs from DischargeInfo), NOT the DB
+		// universe: cost is O(capacity), not O(DB). Mirrors
+		// new_aggr's seed; unseeded subsigs are CP-absence covered
+		// (legacy architecture). Chunk-0's public q_i anchors the
+		// set in-circuit (assert_qm_union's b_seed logup).
 		let is_uni = |u: usize| subsig_store_info.subsig_to_steps
 			.get(&u).map_or(false, |it| !it.vec_pm_bounds.is_empty());
-		let seed_subsigs = subsig_store_info.subsig_ids.iter()
-			.filter(|u| is_uni(**u))
-			.map(|u| F::from(*u as u32)).collect::<Vec<F>>();
+		let mut seed_subsigs = inp_subsigs.iter()
+			.filter(|s| !s.is_zero())
+			.cloned().collect::<Vec<F>>();
+		seed_subsigs.sort();
+		seed_subsigs.dedup();
+		// an empty-chain obligation subsig would leave its chunk-0
+		// q_i seed row unpayable in the b_seed logup (and legacy
+		// compute_sig cannot evaluate it either) -- fail loud.
+		for s in &seed_subsigs {
+			assert!(is_uni(field_to_usize(s)),
+				"empty-chain subsig {} in SDE obligation set", s);
+		}
+		if seed_subsigs.len() > capacity.subsigs {
+			return Err(Error::CapErr(vec![(format!(
+				"neo_subsig_slots, b_igc: {}", b_igc),
+				seed_subsigs.len())]));
+		}
 		let mut merged = DischargeAdvAdvice::<F>
 			::gen_empty_steps_queue_serialized(b_igc, &seed_subsigs,
 				subsig_store_info, fsm_id, capacity);
 		for (s, items) in inp_step_queue.store_items.iter() {
-			if is_uni(field_to_usize(s)) {
-				merged.store_items.insert(*s, items.clone());
-			}
+			assert!(merged.store_items.contains_key(s),
+				"carried subsig {} outside the obligation seed", s);
+			merged.store_items.insert(*s, items.clone());
 		}
 		let carried = StepQueueNeo::from_stepqueue(merged);
 		let mut gen = carried.gen_shared_core_advice(job_id,
@@ -6671,30 +6781,88 @@ pub(crate) mod tests_neo_r1 {
 		v
 	}
 
-	/// wrap budget vs data key count, and the aggressive
-	/// chunk-INVARIANCE that 8_C needs: n_keys must not move the
-	/// aggressive row budget at all.
+	/// top-K wrap budget: sum of the capacity.subsigs largest
+	/// (chain+1) in the store; row budget capacity-only BOTH modes.
 	#[test]
 	fn test_r1_wrap_budget_and_rows_size() {
 		let info = a18_store();
 		assert_eq!(StepQueueNeo::<Fr>::n_wrap_keys(&vec![f(1)],
 			&info), 9); // 8 steps + 1
 		let mut cap = fixture_capacity();
-		assert_eq!(StepQueueNeo::<Fr>::wrap_budget(&cap), 17);
+		//derived = top-K chain sum (a18 store = one chain of 9)
+		assert_eq!(StepQueueNeo::<Fr>::wrap_budget(&cap, &info), 9);
 		cap.wrap_keys = 5;
-		assert_eq!(StepQueueNeo::<Fr>::wrap_budget(&cap), 5,
+		assert_eq!(StepQueueNeo::<Fr>::wrap_budget(&cap, &info), 5,
 			"explicit wrap_keys wins");
 		cap.wrap_keys = 0;
+		cap.subsigs = 2;
+		assert_eq!(StepQueueNeo::<Fr>::wrap_budget(&cap, &info), 9,
+			"top-K truncates at the store size");
+		cap.subsigs = 1;
 		let (n, _, _) = StepQueue::<Fr>::vec_size(
 			&StepQueueType::ResLarge, &cap);
-		assert_eq!(StepQueueNeo::<Fr>::qm_rows_size(&cap, 9),
-			n + 18, "nonaggr pays 2 wraps per DATA key");
+		assert_eq!(StepQueueNeo::<Fr>::qm_rows_size(&cap, &info),
+			n + 18, "2 wraps per budget key");
 		cap.b_aggressive = true;
-		assert_eq!(StepQueueNeo::<Fr>::qm_rows_size(&cap, 9),
-			n + 34, "aggr pays 2 wraps per BUDGET key");
-		assert_eq!(StepQueueNeo::<Fr>::qm_rows_size(&cap, 3),
-			StepQueueNeo::<Fr>::qm_rows_size(&cap, 9),
-			"aggr row budget must ignore n_keys");
+		assert_eq!(StepQueueNeo::<Fr>::qm_rows_size(&cap, &info),
+			n + 18, "capacity-only: mode-independent");
+		//inversion: smallest K covering the demand
+		assert_eq!(StepQueueNeo::<Fr>::wrap_subsigs_for(&info, 9),
+			1);
+		assert_eq!(StepQueueNeo::<Fr>::wrap_subsigs_for(&info, 1),
+			1);
+	}
+
+	/// a pooled T_qm overflow must name the param that is actually
+	/// over its nominal share, in that param's own units, so
+	/// determine_config can bump it (both sides, and never empty).
+	#[test]
+	fn test_r1_qm_caperr_attribution() {
+		//chains (chain+1) = [9, 5, 3]: top-K inversion material
+		let mk = |lens: &[usize]| -> SubsigStepStore {
+			let mut m = std::collections::HashMap::new();
+			let mut ids = vec![];
+			for (i, l) in lens.iter().enumerate() {
+				let pm = (0..*l).map(|j| (j + 1, (1, 9)))
+					.collect::<Vec<_>>();
+				m.insert(i + 1,
+					data_processor::type_def::SubsigStepStoreItem {
+					subsig_id: i + 1, igc: false,
+					vec_pm_bounds: pm, is_backward: false });
+				ids.push(i + 1);
+			}
+			SubsigStepStore { subsig_ids: ids,
+				subsig_to_steps: m, b_aggressive: false }
+		};
+		let info = mk(&[8, 4, 2]);
+		let mut cap = fixture_capacity();
+		cap.b_aggressive = true;
+		cap.max_nibble_len = 1000;
+		let names = |e: Error| -> Vec<(String, usize)> {
+			match e { Error::CapErr(v) => v, _ => panic!("not CapErr") }
+		};
+		// wrap over only: 12 keys vs 9 budget -> top-2 (9+5) covers
+		let v = names(StepQueueNeo::<Fr>::qm_caperr(
+			&cap, false, &info, 12, 9, 0, 100));
+		assert_eq!(v.len(), 1);
+		assert!(v[0].0.starts_with("dis_adv::neo_wrap_subsigs"));
+		assert_eq!(v[0].1, 2, "smallest K with top-K sum >= 12");
+		// real over only: 50 rows vs 10 -> prod back-solved
+		let v = names(StepQueueNeo::<Fr>::qm_caperr(
+			&cap, false, &info, 1, 9, 50, 10));
+		assert_eq!(v.len(), 1);
+		assert!(v[0].0.starts_with("dis_adv::prod_pats_expansion"));
+		assert_eq!(v[0].1, 50 * 100_000_000 / (1000 * 100));
+		// both over -> both reported
+		let v = names(StepQueueNeo::<Fr>::qm_caperr(
+			&cap, true, &info, 12, 9, 50, 10));
+		assert_eq!(v.len(), 2);
+		assert!(v.iter().all(|x| x.0.contains("b_igc: true")));
+		// non-aggressive routes to perc, not prod
+		cap.b_aggressive = false;
+		let v = names(StepQueueNeo::<Fr>::qm_caperr(
+			&cap, false, &info, 1, 9, 50, 10));
+		assert!(v[0].0.starts_with("dis_adv::perc_pats_expansion_rate"));
 	}
 
 	/// the class universe the P2 cubic now enforces in-circuit:

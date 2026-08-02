@@ -735,11 +735,9 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 				"discharge_adv_stmt_igc fwd_steps_queue sq_inp")
 				.expect("sq_inp igc err")
 		};
-		// M8b non-aggr neo asserts against the FULL universe subsig
-		// set (store's [0]=all subsig_ids), matching its neo core
-		// seed. 8_C aggr neo seeds this chunk's NEEDS set, so
-		// compute_sig must read the SAME set (seed-pin tie). Legacy
-		// (use_neo=false) unchanged.
+		// Neo (BOTH modes): compute_sig evaluates the SDE obligation
+		// set = inp filtered to non-empty-chain, matching the
+		// discharge seed (q_c / seed-pin tie). Legacy unchanged.
 		//exclude empty-chain subsigs: they can never reach LAST_STEP
 		//-> never in failed_acc, and compute_sig's
 		//from_subsig_store_item underflows on num==0.
@@ -755,15 +753,11 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 			uni(st).into_iter().filter(|s| set.contains(s))
 				.collect::<Vec<F>>()
 		};
-		let cs_subsigs_cs = if use_neo && b_aggr {
+		let cs_subsigs_cs = if use_neo {
 			needs(subsig_step_store_cs, &subsigs_inp_cs)
-		} else if use_neo {
-			uni(subsig_step_store_cs)
 		} else { subsigs_inp_cs.clone() };
-		let cs_subsigs_igc = if use_neo && b_aggr {
+		let cs_subsigs_igc = if use_neo {
 			needs(subsig_step_store_igc, &subsigs_inp_igc)
-		} else if use_neo {
-			uni(subsig_step_store_igc)
 		} else { subsigs_inp_igc.clone() };
 		let compute_sig_adv_advice = ComputeSigAdvAdvice::<F>::new(
 			fsm_id_cs as u32, fsm_id_igc as u32,

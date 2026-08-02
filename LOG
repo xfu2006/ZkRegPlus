@@ -30564,6 +30564,22 @@ Goal 5. continue on P4.
 	[a] fix two bugs.
 	[b] re-run and think about the new idea: make some columns
 		optional and do not show up in aggr case.
+
+Goal 6. wrap key problem estimate too big
+	[a] should measure the peak active wrap key
+
+Goal 7. do determione_config_neo()
+	[a] check non-aggr why it's DB constant.
+	[b] fork new threads
+		NewP3 -> fix the issue of load DB
+		NewP3.5 -> fix the determine_config_neo
+		P4 -> cost comparison
+Goal 8. NewP3 -> fix the issue of load all DB for the
+	neo non-aggr mode
+	[a] idea: use the DischargeInfo subsigs to discharge
+	[b] test pass
+	[c] clam_hard comparison: 
+Goal 9. NewP3.5 fix the determine_config_neo
 		-> polish
 
 		

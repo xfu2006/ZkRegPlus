@@ -43,6 +43,40 @@ pub const IDX_SI_DATA:usize = 6;
 pub const IDX_FAILED_SIGS:usize = 7;
 pub const IDX_DISCHARGED_SIGS:usize = 8;
 
+/// DEBUG USE 62050: per-column dump of a RESOLVED ContainerConfig
+/// (path, segment, len, const) with a witness-var subtotal, using the
+/// same const rule as WitnessSigmaIR1CS::to_vec_fp_var.
+pub fn dump_cfg_col_sizes(cfg: &ContainerConfig, tag: &str){
+	let mut rows: Vec<(String,usize,usize,bool)> = vec![];
+	collect_cfg_cols(cfg, &mut rows);
+	let mut tot = 0usize;
+	for (path, seg, len, b_const) in &rows{
+		//only si segments collapse a const col to one shared var
+		let n = if *b_const && *seg>=IDX_SI_INP
+			&& *seg<=IDX_SI_DATA {1} else {*len};
+		tot += n;
+		println!("DEBUG USE 62050.1: {} s={} n={} c={} v={} {}",
+			tag, seg, len, b_const, n, path);
+	}
+	println!("DEBUG USE 62050.2: {} TOTAL cols={} vars={}",
+		tag, rows.len(), tot);
+}
+
+/// DEBUG USE 62050: recursive helper for dump_cfg_col_sizes.
+fn collect_cfg_cols(cfg: &ContainerConfig,
+	out: &mut Vec<(String,usize,usize,bool)>){
+	match cfg{
+		ContainerConfig::Column(loc, _name, path, b_const)=>{
+			if let Some((seg, _start, len)) = loc.dest{
+				out.push((path.clone(), seg, len, *b_const));
+			}
+		},
+		ContainerConfig::Complex(v, _, _)=>{
+			for c in v{ collect_cfg_cols(c, out); }
+		},
+	}
+}
+
 /// An allocated column.
 #[derive(Clone,Debug)]
 pub struct Col<F: Clone + ColEle>{

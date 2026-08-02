@@ -3296,8 +3296,12 @@ impl <F:PrimeField + ColEle> DischargeAdvGadget<F>{
 		ContainerConfig::adjust_locations(&mut vec_cfg);
 		//even it's false, it's good enough for generating statement_structure
 		let dummy_cfg = vec_cfg[vec_cfg.len()-1].clone(); //it's the last one
+		if std::env::var("ZKR_PROBE_COLS").is_ok(){
+			crate::gadgets::traits::dump_cfg_col_sizes(&dummy_cfg,
+				&format!("legacy igc={}", b_igc));
+		}
 
-		Self{_f: PhantomData, capacity: Clone::clone(capacity), 
+		Self{_f: PhantomData, capacity: Clone::clone(capacity),
 			cfgs_context: None,
 			my_idx_in_context: None, dummy_cfg, fsm_id,
 			b_igc, offset_fsm, job_id: 0}

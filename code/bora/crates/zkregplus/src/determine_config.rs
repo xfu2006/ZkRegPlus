@@ -241,6 +241,10 @@ pub fn apply_caperr_bumps(p: &mut CapParams, b_aggr: bool,
             }
         } else if name.contains("subsigs") {
             // dis_adv::subsigs / comp_sig::subsigs{,_cs,_igc,_N} / fsm_adv::subsigs
+            // Also dis_adv::neo_wrap_subsigs: the neo T_qm wrap budget is
+            // subsigs*(max_chain+1) and max_chain is DB-exact, so a wrap
+            // overflow is always a subsigs shortfall (gadget back-solves
+            // the required count, so it lands in these same units).
             if igc { up(&mut p.subsigs_igc, r, &mut changed); }
             else {
                 // +1 reserves the comp_sig dummy entry (inp_subsigs[0] must be

@@ -72,7 +72,9 @@ pub fn reset_sat() {
               &MAX_FWD_CAP_CS, &MAX_FWD_CAP_IGC] {
         a.store(0, Ordering::Relaxed);
     }
-    for g in QM_SAT.iter().chain(QC_SAT.iter()) { g.reset(); }
+    for g in QM_SAT.iter().chain(QC_SAT.iter())
+        .chain(QM_WRAP_SAT.iter()).chain(QM_REAL_SAT.iter())
+        .chain(QM_SUB_SAT.iter()) { g.reset(); }
 }
 pub fn get_fwd(b_igc: bool) -> usize {
     (if b_igc {&MAX_FWD_IGC} else {&MAX_FWD_CS}).load(Ordering::Relaxed)
@@ -110,6 +112,13 @@ impl SatGauge {
 /// is the next chunk's Q_i, so one gauge covers both.
 pub static QM_SAT: [SatGauge; 2] = [SatGauge::new(), SatGauge::new()];
 pub static QC_SAT: [SatGauge; 2] = [SatGauge::new(), SatGauge::new()];
+
+/// Q_m split gauges, same indexing. WRAP = (subsig,step) key groups
+/// vs the wrap budget; REAL = non-wrap rows vs ResLarge; SUB = active
+/// subsigs per chunk vs capacity.subsigs. QM_SAT conflates the first two.
+pub static QM_WRAP_SAT: [SatGauge; 2] = [SatGauge::new(), SatGauge::new()];
+pub static QM_REAL_SAT: [SatGauge; 2] = [SatGauge::new(), SatGauge::new()];
+pub static QM_SUB_SAT: [SatGauge; 2] = [SatGauge::new(), SatGauge::new()];
 
 /// Knobs that govern ClamAV PCRE approximation when building the
 /// pattern DB. Lives in utils so GlobalConfig can embed it;

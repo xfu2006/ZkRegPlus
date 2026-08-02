@@ -1579,6 +1579,22 @@ fn log_sat_audit(log_level: usize) {
 			qm_ig, qmc_ig, pct(qm_ig, qmc_ig),
 			qc_cs, qcc_cs, pct(qc_cs, qcc_cs),
 			qc_ig, qcc_ig, pct(qc_ig, qcc_ig)));
+		let (wf_cs, wc_cs) = utils::consts::QM_WRAP_SAT[0].get();
+		let (wf_ig, wc_ig) = utils::consts::QM_WRAP_SAT[1].get();
+		let (rf_cs, rc_cs) = utils::consts::QM_REAL_SAT[0].get();
+		let (rf_ig, rc_ig) = utils::consts::QM_REAL_SAT[1].get();
+		let (sf_cs, sc_cs) = utils::consts::QM_SUB_SAT[0].get();
+		let (sf_ig, sc_ig) = utils::consts::QM_SUB_SAT[1].get();
+		log(0, log_level, &format!(
+			"NEO SAT SPLIT: wrap cs={}/{} ({:.1}%) igc={}/{} ({:.1}%); \
+			 real cs={}/{} ({:.1}%) igc={}/{} ({:.1}%); \
+			 subsig cs={}/{} ({:.1}%) igc={}/{} ({:.1}%)",
+			wf_cs, wc_cs, pct(wf_cs, wc_cs),
+			wf_ig, wc_ig, pct(wf_ig, wc_ig),
+			rf_cs, rc_cs, pct(rf_cs, rc_cs),
+			rf_ig, rc_ig, pct(rf_ig, rc_ig),
+			sf_cs, sc_cs, pct(sf_cs, sc_cs),
+			sf_ig, sc_ig, pct(sf_ig, sc_ig)));
 	}
 }
 
@@ -2172,7 +2188,9 @@ pub mod tests_zkp_driver{
 		let neo_on = std::env::var("ZKR_USE_NEO").is_ok();
 		if neo_on {
 			get_global_config().clamav_cfg.b_use_discharge_neo = true;
-			get_global_config().neo_wrap_keys = knob("ZKR_WRAPKEYS", 5600);
+			//0 = derive subsigs*(max_chain+1); measured NEEDS peak
+			//on both DLP scans is 0, so the old 5600 was pure slack.
+			get_global_config().neo_wrap_keys = knob("ZKR_WRAPKEYS", 0);
 		}
 		get_global_config().snark_cache_dir = "dlp_hard".to_string();
 		get_global_config().b_read_snark_cache = false;
@@ -2467,10 +2485,10 @@ pub mod tests_zkp_driver{
 			//adds ~1K distinct range keys per chunk; the dummy
 			//self-cover needs lk_share >= that (perc=1 -> 158).
 			get_global_config().perc_lkup_share = 20;
-			//T_qm wrap budget: DLP chains run ~20 steps/subsig
-			//(measured demand 10400 rows), well above the derived
-			//subsigs*(avg_active+1) default.
-			get_global_config().neo_wrap_keys = 5600;
+			//T_qm wrap budget: 0 = derive subsigs*(max_chain+1).
+			//The old 5600 charged the whole 10400-row demand to
+			//wrap; the split gauge shows 800 wrap + 8800 real.
+			get_global_config().neo_wrap_keys = knob("ZKR_WRAPKEYS", 0);
 		}
 		//No DB cache: always rebuild fresh (avoids the 2GiB per-file
 		//write truncation on the full set; the corpus is small enough).
@@ -6871,6 +6889,61 @@ fail: {} ({:.4}%)",
 		println!("[corpus] DONE raw={} stage1={} passed={} \
 failed={} high={} final={}", raw_n, n_stage1, passed.len(),
 			failed.len(), high.len(), final_list.len());
+	}
+
+	/// DEBUG USE 62060: standalone non-ZK NEEDS pre-pass. Prints
+	/// per-file max_needs_subsigs (the estimator input) so it can be
+	/// compared against the QM_SUB_SAT gauge peak. Writes no files.
+	/// Defaults to the small_debug corpus; ZKR_CFG/ZKR_SIG/ZKR_SCAN/
+	/// ZKR_CHUNK/ZKR_RANGE2 retarget it.
+	#[test]
+	pub fn test_needs_prepass(){
+		let proot = utils::os::proj_root();
+		let cd = std::env::var("ZKR_CFG").unwrap_or(
+			"data/debug/small_email/config".to_string());
+		let sig = std::env::var("ZKR_SIG")
+			.unwrap_or("main.dat".to_string());
+		let scan = std::env::var("ZKR_SCAN")
+			.unwrap_or("binexec.dat".to_string());
+		let mw = knob("ZKR_CHUNK", 256);
+		get_global_config().range2_bit = knob("ZKR_RANGE2", 20);
+		get_global_config().b_read_cache = false;
+		get_global_config().b_estimate_caps = false;
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
+		get_global_config().clamav_cfg.sde_rep_fanout_cap = 100;
+		get_global_config().clamav_cfg.min_pm_word_len = 3;
+		let cfg = read_global_config().clamav_cfg.clone();
+		let mut vlog = vec![];
+		let db = data_processor::clam_db::ClamavDB::<Fr>::build_or_load(
+			&cfg, &format!("{}/{}", cd, sig),
+			&format!("{}/main_dfa.dat", cd),
+			&format!("{}/needs_ised.dat", cd),
+			&format!("{}/needs_ised_igc.dat", cd), &mut vlog,
+			"needs_prepass", false, false).expect("build db");
+		let raw = utils::os::read_lines(
+			&format!("{}/{}/{}", proot, cd, scan));
+		let files: Vec<String> = raw.iter().map(|l| l.trim())
+			.filter(|l| !l.is_empty() && !l.starts_with('#'))
+			.map(|l| l.to_string()).collect();
+		let mut peak = 0usize;
+		for rel in &files{
+			let nibbles = utils::os::read_nibbles(
+				&format!("{}/{}", proot, rel));
+			let (fdr, _w) =
+			 data_processor::clamav::quick_discharge_file_by_crit_bag_pm(
+				rel, &nibbles, &db.vec_sigs,
+				&db.vec_sigs_no_critical_pat,
+				&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
+				&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
+				&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
+				&db.sig_to_id, mw, mw);
+			let n = fdr.chunk_peaks.max_needs_subsigs;
+			if n > peak { peak = n; }
+			println!("DEBUG USE 62060.1: NEEDS={} nchunks={} {}",
+				n, fdr.chunk_peaks.needs_per_chunk.len(), rel);
+		}
+		println!("DEBUG USE 62060.2: files={} PEAK_NEEDS={}",
+			files.len(), peak);
 	}
 
 	/// NEEDS-distribution study over the full Enron clean list (parallel,
