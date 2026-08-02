@@ -28,6 +28,7 @@ use utils::{
 use data_processor::{
 	clamav::{default_clamav_cfg, quick_discharge_file_by_crit_bag_pm},
 	clam_db::{ClamavDB},
+	discharge_proof::FailDischargeRecord,
 	type_def::ClamavApproxConfig,
 };
 use folding_schemes::{
@@ -96,8 +97,13 @@ fn dlp_job_idx(path: &str, fallback: usize) -> usize {
 /// max_word_len is forwarded into the discharge_prover so it can
 /// extend its nibble scan to match the circuit's padded view
 /// (Step 4 of the pad-invariant rework).
+/// Returns (packed words, WordInfo, file names, FailDischargeRecord). The 4th
+/// is the per-file discharge record the aggressive tuner needs; it is produced
+/// here anyway and was previously dropped. Its ChunkPeaks profiles are only
+/// populated when b_estimate_caps is on (clamav.rs:3376), so callers that do
+/// not tune get the same empty-profile records at no extra cost.
 fn load_files<F:PrimeField + ColEle>(job_id: usize, list_file_path: &str, db: &ClamavDB<F>, cfg:&ClamavApproxConfig, _b_write_cache: bool, _cache_dir: &str, max_word_len: usize)
-	->(Vec<Vec<F>>, Vec<WordInfo>, Vec<String>){
+	->(Vec<Vec<F>>, Vec<WordInfo>, Vec<String>, Vec<FailDischargeRecord>){
 	//1. read the list of files
 	let _b_debug = false;
 	let proot = proj_root();
@@ -160,7 +166,8 @@ fn load_files<F:PrimeField + ColEle>(job_id: usize, list_file_path: &str, db: &C
 		vec_word_info
 	}else{
 	*/
-	let vec_word_info = file_names.into_par_iter().map(|fpath|
+	let vec_wi_vd: Vec<(WordInfo, FailDischargeRecord)> =
+		file_names.into_par_iter().map(|fpath|
 		{
 			let abspath = resolve(fpath);
 			let nibbles = read_nibbles(&abspath);
@@ -185,8 +192,10 @@ fn load_files<F:PrimeField + ColEle>(job_id: usize, list_file_path: &str, db: &C
 			}
 			assert!(rec.is_success());
 			assert!(!fail_info.is_fail());
-			rec
-		}).collect::<Vec<WordInfo>>();
+			(rec, fail_info)
+		}).collect::<Vec<(WordInfo, FailDischargeRecord)>>();
+	let (vec_word_info, vec_vdata): (Vec<WordInfo>, Vec<FailDischargeRecord>)
+		= vec_wi_vd.into_iter().unzip();
 
 		/*
 		if b_write_cache{
@@ -197,7 +206,7 @@ fn load_files<F:PrimeField + ColEle>(job_id: usize, list_file_path: &str, db: &C
 	};
 	*/
 
-	(final_data, vec_word_info, file_names.clone())
+	(final_data, vec_word_info, file_names.clone(), vec_vdata)
 }
 
 
@@ -1434,16 +1443,22 @@ where
 	);
 }
 
-/// ZKR_DC selects the tuner mode for the cells routed through `zkp_driver`
-/// (0/unset = Off, so every existing cell keeps its hand caps unchanged).
-/// 1 = ProbeOnly, 2 = ProbeThenFold. This is the only way a neo cell can
-/// reach determine_config today -- all zkp_driver_adv call sites pass Off.
+/// ZKR_DC selects the tuner mode for the cells routed through `zkp_driver`:
+/// 0 = Off, 1 = ProbeOnly, 2 = ProbeThenFold. An explicit value always
+/// wins. UNSET defaults to ProbeThenFold under neo and Off otherwise, so
+/// LEGACY keeps its hand caps byte-for-byte while neo cells auto-tune:
+/// hand caps are neo's dominant cost (clam_hard measured 2.45x cols /
+/// 2.15x wall vs the best hand-tune), and the seeds that make that work
+/// are neo-gated anyway. `ZKR_DC=0` restores neo's old hand-cap behavior.
 fn dc_mode_from_env() -> DcMode {
 	match std::env::var("ZKR_DC").ok()
-		.and_then(|s| s.parse::<usize>().ok()).unwrap_or(0) {
-		1 => DcMode::ProbeOnly,
-		2 => DcMode::ProbeThenFold,
-		_ => DcMode::Off,
+		.and_then(|s| s.parse::<usize>().ok()) {
+		Some(1) => DcMode::ProbeOnly,
+		Some(2) => DcMode::ProbeThenFold,
+		Some(_) => DcMode::Off,
+		None => if read_global_config().clamav_cfg.b_use_discharge_neo {
+			DcMode::ProbeThenFold
+		} else { DcMode::Off },
 	}
 }
 /// How the determine_config (capacity auto-tuning) probe interacts with
@@ -1554,7 +1569,7 @@ where
 	let mut max_total_word_len = 0;
 	let mut jobs = vec![];
 	for list_file_to_scan in list_files_to_scan{
-		let (vec_words, vec_word_info, vec_word_fnames) = load_files::<CF1<C1>>(job_id, &list_file_to_scan, &db, &cfg, b_write_cache, cache_dir, chunk_len);
+		let (vec_words, vec_word_info, vec_word_fnames, _vdata) = load_files::<CF1<C1>>(job_id, &list_file_to_scan, &db, &cfg, b_write_cache, cache_dir, chunk_len);
 		let total_word_len:usize = vec_words.iter().map(|w| w.len()).sum();
 		if total_word_len > max_total_word_len{
 			max_total_word_len = total_word_len;
@@ -1787,6 +1802,7 @@ pub fn zkp_driver_adv_aggr<E: Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>>
 	chunk_len: usize,
 	cs_caps: &Vec<(CpCapacity, SedCapacity, CpCapacity, SedCapacity)>,
 	b_check_lkup: bool,
+	dc_mode: DcMode,
 )
 where
 	GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
@@ -1840,6 +1856,35 @@ where
 	let log_level = LOG1;
 	let mut gt1 = GTimer::new();
 	log(0, log_level, &format!("=== ZKP driver (aggr) starts ===="));
+	// Tuner prerequisites, set BEFORE load_files because they change what the
+	// discharge below records: b_estimate_caps populates the per-chunk
+	// ChunkPeaks profiles determine_config_aggr partitions (clamav.rs:3376),
+	// and b_scale_catch_caperr makes a fold CapErr unwind (catchable by
+	// probe_catching) instead of aborting the process. Both are additive: the
+	// WordInfo the fold consumes is unchanged. Restored on every exit by
+	// AggrDcGuard so DcMode::Off callers, which set these themselves, are
+	// untouched.
+	struct AggrDcGuard{ est: bool, catch: bool, b: bool }
+	impl Drop for AggrDcGuard{
+		fn drop(&mut self){
+			if self.b {
+				let mut c = get_global_config();
+				c.b_estimate_caps = self.est;
+				c.b_scale_catch_caperr = self.catch;
+			}
+		}
+	}
+	let _dc_guard = {
+		let b = dc_mode != DcMode::Off;
+		let (est, catch) = { let c = read_global_config();
+			(c.b_estimate_caps, c.b_scale_catch_caperr) };
+		if b {
+			let mut c = get_global_config();
+			c.b_estimate_caps = true;
+			c.b_scale_catch_caperr = true;
+		}
+		AggrDcGuard{ est, catch, b }
+	};
 	let poseidon_config = poseidon_canonical_config::<CF1<C1>>();
 	let mut vlog = vec![];
 	let cfg = default_clamav_cfg();
@@ -1855,12 +1900,14 @@ where
 	//2. load the files as vec of words
 	let mut max_total_word_len = 0;
 	let mut jobs = vec![];
+	let mut all_vdata: Vec<FailDischargeRecord> = vec![];
 	for list_file_to_scan in list_files_to_scan{
-		let (vec_words, vec_word_info, vec_word_fnames) = load_files::<CF1<C1>>(job_id, &list_file_to_scan, &db, &cfg, b_write_cache, cache_dir, chunk_len);
+		let (vec_words, vec_word_info, vec_word_fnames, vdata) = load_files::<CF1<C1>>(job_id, &list_file_to_scan, &db, &cfg, b_write_cache, cache_dir, chunk_len);
 		let total_word_len:usize = vec_words.iter().map(|w| w.len()).sum();
 		if total_word_len > max_total_word_len{
 			max_total_word_len = total_word_len;
 		}
+		all_vdata.extend(vdata);
 		jobs.push(FoldPotJob{
 			vec_words,
 			vec_word_info,
@@ -1873,37 +1920,170 @@ where
 
 	//3. build the circuits (CS-only aggressive)
 	let rc_db = Arc::new(db.clone());
-	// M11: aggressive determine_config moved to the run paths (run_dlp_sample_
-	// config / full_dlp_sample3), which carry vdata and emit the rung ladder.
-	// The non-aggressive determine_config probe (zkp_driver_adv, via DcMode) is
-	// separate and unchanged.
-	let vec_circs = build_circs_adv_aggr::<CF1<C1>,C1,CS1>(
-		&poseidon_config,
-		max_total_word_len,
-		chunk_len,
-		lkup_len,
-		rc_db,
-		cs_caps,
-		b_check_lkup
-	);
-	log_perf(0, log_level, &format!("ZIP driver step 2: build circs."), &mut gt1);
+	// M11: the aggressive determine_config also lives in the run paths
+	// (run_dlp_sample_config / full_dlp_sample3), which carry their own vdata
+	// and emit a rung ladder; those pass DcMode::Off so they are not re-tuned
+	// here. DcMode != Off makes THIS driver tune, mirroring zkp_driver_adv's
+	// non-aggressive hop. The non-aggressive probe stays separate.
+	let tuned: Option<Vec<crate::determine_config::CapParams>> =
+		if dc_mode == DcMode::Off { None } else {
+		use crate::stats_helper::{estimate_config_aggr,
+			estimated_to_capparams_aggr};
+		let mut words: Vec<Vec<CF1<C1>>> = jobs.iter()
+			.flat_map(|j| j.vec_words.iter().cloned()).collect();
+		let mut infos: Vec<WordInfo> = jobs.iter()
+			.flat_map(|j| j.vec_word_info.iter().cloned()).collect();
+		let mut vdata = all_vdata.clone();
+		// foldpot sizes every circuit against a full-length 0-pad word
+		// (driver.rs:2900), so discharge it into the TUNING set only (never
+		// the fold corpus) and let Phase-A size the caps to cover it. Not
+		// sufficient alone -- the probe skips foldpot's stricter 0-word
+		// preprocessing -- hence the bump-retry loop in step 4.
+		{
+			let pad = utils::data::gen_pad_nibbles(0, chunk_len * LEGS);
+			let pad_f: Vec<CF1<C1>> = pad.iter()
+				.map(|x| CF1::<C1>::from(*x as u32)).collect();
+			words.push(utils::data::pack_nibbles(&pad_f));
+			let (fdr, rec) = quick_discharge_file_by_crit_bag_pm(
+				"__0word__", &pad, &db.vec_sigs,
+				&db.vec_sigs_no_critical_pat, &db.map_crit_pat,
+				&db.map_crit_pat_igc, &db.dfa_crit,
+				&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
+				&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
+				&db.sig_to_id, chunk_len, chunk_len);
+			vdata.push(fdr); infos.push(rec);
+		}
+		let est = estimate_config_aggr::<CF1<C1>>(&vdata, &db, &[100],
+			&mut vlog);
+		let seed = estimated_to_capparams_aggr(&est[0], chunk_len,
+			read_global_config().range2_bit, 3);
+		let total_word_n: usize = words.iter().map(|w| w.len()).sum();
+		let knob = |k: &str, d: usize| std::env::var(k).ok()
+			.and_then(|s| s.parse().ok()).unwrap_or(d);
+		// ONE full-cap rung by default (collect_scale_data_dlp:6488 explains
+		// why): a decrease ladder starves the smaller rung on the 0-pad word.
+		let k_max = knob("ZKR_DC_KMAX", 1);
+		let n_buckets = knob("ZKR_DC_BUCKETS", 1);
+		let peel_pct = knob("ZKR_DC_PEEL", 100);
+		let n_threads = knob("ZKR_DC_THREADS", 4);
+		log(0, log_level, &format!("DETERMINE_CONFIG (aggr): probing {} \
+			words over {} threads", words.len(), n_threads));
+		match determine_config_aggr::<CF1<C1>,C1,CS1>(rc_db.clone(), &words,
+			&infos, &vdata, seed, chunk_len, lkup_len, total_word_n, k_max,
+			n_buckets, 60, n_threads, 8, peel_pct) {
+			Ok((lad, hist)) => {
+				log(0, log_level, &format!("DETERMINE_CONFIG (aggr) RESULT: \
+					{} rungs, hist={:?}", lad.len(), hist));
+				log(0, log_level, &format!(
+					"DETERMINE_CONFIG (aggr) rung0: {:?}", lad.first()));
+				//ProbeOnly: report and stop (no folding).
+				if dc_mode == DcMode::ProbeOnly { return; }
+				Some(lad)
+			}
+			Err(e) => {
+				log(0, log_level, &format!(
+					"DETERMINE_CONFIG (aggr) FAILED: {}", e));
+				if dc_mode == DcMode::ProbeThenFold {
+					panic!("ProbeThenFold: determine_config_aggr failed: {}",
+						e);
+				}
+				return; //ProbeOnly with a failed probe: report and stop.
+			}
+		}
+	};
 
-	if read_global_config().b_dryrun_after_capcheck {
-		log(0, log_level, &format!(
-			"=== M8 DRYRUN: build_circs_adv_aggr passed, exiting before \
-			 foldpot_main. circs={} ===", vec_circs.len()));
-		return;
+	//4. build the circs and fold.
+	match tuned {
+		//DcMode::Off: unchanged hand-cap path. Keeps the lkup MOVE (no
+		//clone), so production runs pay no extra RAM.
+		None => {
+			let vec_circs = build_circs_adv_aggr::<CF1<C1>,C1,CS1>(
+				&poseidon_config,
+				max_total_word_len,
+				chunk_len,
+				lkup_len,
+				rc_db,
+				cs_caps,
+				b_check_lkup
+			);
+			log_perf(0, log_level, &format!("ZIP driver step 2: build circs."),
+				&mut gt1);
+
+			if read_global_config().b_dryrun_after_capcheck {
+				log(0, log_level, &format!(
+					"=== M8 DRYRUN: build_circs_adv_aggr passed, exiting before \
+					 foldpot_main. circs={} ===", vec_circs.len()));
+				return;
+			}
+
+			// clear the probe's collectors so the audit below reflects ONLY the
+			// real fold (same reason as the non-aggressive driver).
+			utils::consts::reset_sat();
+
+			let lkup = Arc::new(db.lkup);
+			foldpot_main::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,FC<CF1<C1>,C1,CS1>,
+				S,LK<CF1<C1>>,GM<CF1<C1>>, false>(
+				lkup, vec_circs, &mut jobs, cache_dir).expect("main err");
+		}
+		// Tuned: finalize against foldpot's full-0-word advice check
+		// (driver.rs:2939), which is stricter than the probe and so can still
+		// under-size CP/FSM. Catch that CapErr, bump EVERY rung (each must
+		// clear the 0-word on its own), and retry. Failed tries die at the
+		// 0-word check before COST/folding, so they are cheap.
+		Some(lad) => {
+			use crate::determine_config::{caps_from_params_aggr,
+				apply_caperr_bumps, probe_catching};
+			let mut ladder = lad;
+			let mut tries = 0u32;
+			loop {
+				get_global_config().aggr_needs_subsigs = ladder.first()
+					.map(|c| c.aggr_needs_subsigs).unwrap_or(0);
+				let caps: Vec<_> = ladder.iter()
+					.map(caps_from_params_aggr).collect();
+				utils::consts::reset_sat();
+				let rcd = rc_db.clone();
+				let lk = db.lkup.clone();
+				let res = probe_catching(|| {
+					let vec_circs = build_circs_adv_aggr::<CF1<C1>,C1,CS1>(
+						&poseidon_config, max_total_word_len, chunk_len,
+						lkup_len, rcd, &caps, b_check_lkup);
+					if read_global_config().b_dryrun_after_capcheck {
+						log(0, log_level, &format!("=== M8 DRYRUN: \
+							build_circs_adv_aggr passed, exiting before \
+							foldpot_main. circs={} ===", vec_circs.len()));
+						return Ok(true);
+					}
+					foldpot_main::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,
+						FC<CF1<C1>,C1,CS1>,S,LK<CF1<C1>>,GM<CF1<C1>>, false>(
+						Arc::new(lk), vec_circs, &mut jobs, cache_dir)
+						.expect("main err");
+					Ok(false)
+				});
+				match res {
+					Ok(Ok(b_dry)) => { if b_dry { return; } break }
+					Ok(Err(errs)) => {
+						let mut changed = false;
+						let mut unmapped = vec![];
+						for p in ladder.iter_mut() {
+							let (c, u) = apply_caperr_bumps(p, true, &errs);
+							changed |= c;
+							if !u.is_empty() { unmapped = u; }
+						}
+						tries += 1;
+						log(0, log_level, &format!("DETERMINE_CONFIG (aggr): \
+							0-word bump try {}: {:?}", tries, errs));
+						assert!(changed && unmapped.is_empty(),
+							"aggr tuner: 0-word finalize stuck \
+							 (unmapped={:?}): {:?}", unmapped, errs);
+						assert!(tries <= 30, "aggr tuner: >30 0-word bumps");
+					}
+					Err(msg) => panic!("aggr tuner: {}", msg),
+				}
+			}
+			log_perf(0, log_level,
+				&format!("ZIP driver step 2: build circs."), &mut gt1);
+		}
 	}
-
-	// clear the probe's collectors so the audit below reflects ONLY the
-	// real fold (same reason as the non-aggressive driver).
-	utils::consts::reset_sat();
-
-	//4. run the foldpot_main
-	let lkup = Arc::new(db.lkup);
-	foldpot_main::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,FC<CF1<C1>,C1,CS1>,
-		S,LK<CF1<C1>>,GM<CF1<C1>>, false>(
-		lkup, vec_circs, &mut jobs, cache_dir).expect("main err");
 
 	log_sat_audit(log_level);
 
@@ -2450,6 +2630,11 @@ pub mod tests_zkp_driver{
 			max_word, //chunk len
 			&cs_caps,
 			false, //b_check_lkup
+			//env ZKR_DC picks the aggressive capacity auto-tuner mode.
+			//Unset = ProbeThenFold under neo (the hand caps above then act
+			//only as the CapErr fallback), Off for legacy. ZKR_DC=0 pins
+			//the hand caps for both.
+			super::dc_mode_from_env(),
 		);
 	}
 
@@ -2743,7 +2928,8 @@ pub mod tests_zkp_driver{
 			&format!("{}/needs_ised_igc.dat", set1), //ised_igc (empty)
 			max_word, //chunk len
 			&cs_caps,
-			b_check_lkup
+			b_check_lkup,
+			DcMode::Off, //hand caps: no auto-tune (env cannot override)
 		);
 	}
 
@@ -4442,7 +4628,8 @@ pub mod tests_zkp_driver{
 			&format!("{}/needs_ised_igc.dat", set1), //ised_igc (empty)
 			max_word, //chunk len
 			&cs_caps,
-			b_check_lkup
+			b_check_lkup,
+			DcMode::Off, //hand caps: no auto-tune (env cannot override)
 		);
 	}
 
@@ -4606,7 +4793,8 @@ pub mod tests_zkp_driver{
 			&format!("{}/needs_ised_igc.dat", set1), //ised_igc (empty)
 			max_word, //chunk len
 			&cs_caps,
-			b_check_lkup
+			b_check_lkup,
+			DcMode::Off, //hand caps: no auto-tune (env cannot override)
 		);
 	}
 
@@ -4762,7 +4950,8 @@ pub mod tests_zkp_driver{
 			&format!("{}/needs_ised_igc.dat", set1), //ised_igc (empty)
 			max_word, //chunk len
 			&cs_caps,
-			b_check_lkup
+			b_check_lkup,
+			DcMode::Off, //hand caps: no auto-tune (env cannot override)
 		);
 	}
 
@@ -5364,7 +5553,9 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			false, &rc.cache_dir, &format!("{}/regex_pat/main_dfa.dat", cd),
 			&format!("{}/regex_pat/needs_ised.dat", cd),
 			&format!("{}/regex_pat/needs_ised_igc.dat", cd), mw, &cs_caps,
-			false);
+			//cs_caps IS the tuned ladder (determine_config_aggr above), so
+			//the driver must NOT tune again.
+			false, DcMode::Off);
 	}
 
 	/// Read a newline path list; transparently extracts a .tgz/.tar.gz
@@ -5701,7 +5892,9 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			false, &rc.cache_dir, &format!("{}/regex_pat/main_dfa.dat", cd),
 			&format!("{}/regex_pat/needs_ised.dat", cd),
 			&format!("{}/regex_pat/needs_ised_igc.dat", cd), mw, &cs_caps,
-			false);
+			//cs_caps IS the tuned ladder (determine_config_aggr above), so
+			//the driver must NOT tune again.
+			false, DcMode::Off);
 		utils::logger::log_perf(0, l,
 			&"PERF WORKFLOW Step 6 time".to_string(), &mut gt);
 	}
@@ -5905,7 +6098,9 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			false, &rc.cache_dir, &format!("{}/regex_pat/main_dfa.dat", cd),
 			&format!("{}/regex_pat/needs_ised.dat", cd),
 			&format!("{}/regex_pat/needs_ised_igc.dat", cd), mw, &cs_caps,
-			false);
+			//cs_caps IS the tuned ladder (determine_config_aggr above), so
+			//the driver must NOT tune again.
+			false, DcMode::Off);
 		utils::logger::log_perf(0, l,
 			&"PERF WORKFLOW Step 6 time".to_string(), &mut gt);
 	}
@@ -6674,7 +6869,9 @@ fail: {} ({:.4}%)",
 						CS1,CS2,CS1E,S>(
 						0, &sub_main, scan_files.clone(), report, true,
 						cache_dir, &sub_dfa, &sub_ised, &sub_ised_igc, mw,
-						&cs_caps, false);
+						//this fn runs its OWN tuner + bump loop around the
+						//driver, so the driver must not tune again.
+						&cs_caps, false, DcMode::Off);
 					Ok(())
 				});
 				match res {
@@ -7284,7 +7481,8 @@ failed={} high={} final={}", raw_n, n_stage1, passed.len(),
 			0, &format!("{}/{}", cd, rc.sig_file), vec![manifest], &report,
 			false, &rc.cache_dir, &format!("{}/regex_pat/main_dfa.dat", cd),
 			&format!("{}/regex_pat/needs_ised.dat", cd),
-			&format!("{}/regex_pat/needs_ised_igc.dat", cd), mw, &cs_caps, false);
+			&format!("{}/regex_pat/needs_ised_igc.dat", cd), mw, &cs_caps,
+			false, DcMode::Off); //config-file caps: no auto-tune
 	}
 
 	/// full_enron: read the C_low/C_high configs produced by determine_config
@@ -7326,7 +7524,8 @@ failed={} high={} final={}", raw_n, n_stage1, passed.len(),
 			0, &format!("{}/{}", cd, rc.sig_file), scan, &rc.report_out,
 			false, &rc.cache_dir, &format!("{}/regex_pat/main_dfa.dat", cd),
 			&format!("{}/regex_pat/needs_ised.dat", cd),
-			&format!("{}/regex_pat/needs_ised_igc.dat", cd), mw, &cs_caps, false);
+			&format!("{}/regex_pat/needs_ised_igc.dat", cd), mw, &cs_caps,
+			false, DcMode::Off); //config-file caps: no auto-tune
 	}
 
 	/// Invoke via:

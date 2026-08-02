@@ -30600,8 +30600,18 @@ Goal 3. CyclePair Gadget
 	[a] read.
 	[b] read mixed r1cs
 	[c] read B3.2.2 supernova _ cyclefold with cyclepair
+	[d] B.4 circuit
+	[e] B.6 batch and individual proof
+		-> p1 and p2
+		-> batch proof
+		-> stage 1
+		-> stage 2-4
+		-> algorithm.
+		-> verify alg
 Goal 4. Continue on NewP3.5
-	[a]
+	[a] put auto tuning by default in zkp_driver
+	[b] make sure it does not impact the legacy mode
+
 -- TODO --
 Goal 2. P4 again (measure comparison)
 		-> polish

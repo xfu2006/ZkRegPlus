@@ -5,26 +5,31 @@
 # Note:   All code generated under the instructions of the paper
 #         author, inspected block-by-block.
 #
-# WHY PLANTED. dlp_hard's Enron corpus yields aggr_needs_subsigs == 0
-# on scan_hard.dat: the SITs barely fire, so the cell proves only that
-# the aggressive arm still passes -- it CANNOT compare discharge work.
-# This is the clam_hard_set/gen_scan.py design applied to the DLP SITs.
+# WHY PLANTED. dlp_hard's Enron corpus drives aggr NEEDS to 0 on both
+# scan_easy.dat and scan_hard.dat (the runner says so itself), so the
+# cell proves only that the aggressive arm still passes -- it CANNOT
+# compare discharge work. This is clam_hard_set/gen_scan.py's design
+# applied to the DLP SITs.
 #
-# LAYOUT. Every fwd SIT here has the shape  KEYWORD .{0,300} DIGITS .
-# We emit
+# LAYOUT. Every fwd SIT has the shape  KEYWORD .{0,300} TAIL , and the
+# matching bwd SIT is  TAIL .{0,300} KEYWORD . We emit, R times:
 #
-#     [ KEYWORD of every fwd SIT, separated by digit-free filler ] x R
+#     [ TAIL exemplars ] [ >300 filler ] [ every KEYWORD ] [ >300 filler ]
 #
 # so that:
-#   - every keyword is PRESENT, so each is a live location the SDE
-#     tier must discharge (this is what drives aggr_needs_subsigs);
-#   - the file contains NO DIGIT ANYWHERE, so the trailing [0-9]{3}
-#     group can never complete -> no fwd chain matches, and the bwd
-#     arms (whose FIRST leg is that same digit group) never even
-#     start. The file therefore stays a legitimate non-match.
+#   - BOTH legs are PRESENT somewhere in the file. This is the whole
+#     point: a FIRST attempt planted keywords only, and measured NEEDS
+#     stayed 0, because CP discharges a sig whose critical pattern is
+#     ABSENT and SED then never runs. Same trap clam_hard's generator
+#     documents ("planting L1 alone left CP to discharge everything").
+#     With every leg present, CP cannot discharge on absence.
+#   - no KEYWORD is ever within 300 chars of a DIGIT, in EITHER
+#     direction, so neither the fwd nor the bwd arm can complete. The
+#     file stays a legitimate non-match.
 #
-# R is the density knob. The digit check below is exhaustive, so a
-# violation is reported rather than silently changing the verdict.
+# R is the density knob. The separation check below is EXHAUSTIVE over
+# real offsets (prefix-summed digit counts), so a violation is reported
+# rather than silently changing the verdict.
 #
 # usage (from repo root):
 #   python3 data/debug/dlp_hard_set/config/gen_scan.py [R] [outfile]
@@ -38,9 +43,28 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", "..", ".."))
 
 MAIN = os.path.join(HERE, "main.dat")
-# filler carries no digits and no letters, so it cannot extend a
-# keyword into a longer token nor supply a digit group.
-FILLER = " ... --- ... "
+
+# gap the regexes allow between the two legs; we must EXCEED it.
+GAP = 300
+SEP = 400
+# filler carries no digit and no letter, so it can neither supply a
+# digit group nor extend a keyword into a longer token.
+FILLER = (" ." * (SEP // 2)) + " "
+
+# One satisfying exemplar per distinct TAIL shape in main.dat. There
+# are only five, so these are hand-instantiated rather than generated:
+#   [0-9]{3}[-x20][0-9]{3}[-x20][0-9]{3}
+#   [0-9]{8}[-x20]?[A-Za-z]
+#   9[0-9]{2}[-x20]?(5x|6x|7x|8x|9x)[-x20]?[0-9]{4}
+#   [A-Za-z][A-Za-z0-9][0-9]{7}
+#   [A-Za-z]{3}[CPHFATBLJG][A-Za-z][0-9]{4}[A-Za-z0-9]
+TAILS = [
+    "123-456-789",
+    "12345678A",
+    "900-50-1234",
+    "AB1234567",
+    "ABCCD1234E",
+]
 
 
 def unescape(lit):
@@ -74,29 +98,65 @@ def fwd_keywords(path):
     return kws
 
 
+def check_separation(text, kws):
+    """EXHAUSTIVE: no keyword occurrence within GAP of any digit.
+
+    Uses a prefix sum of digit counts so every real offset is checked,
+    both directions, without an O(n*m) scan.
+    """
+    n = len(text)
+    pre = [0] * (n + 1)
+    for i, ch in enumerate(text):
+        pre[i + 1] = pre[i] + (1 if ch.isdigit() else 0)
+
+    bad = []
+    for kw in set(kws):
+        start = 0
+        while True:
+            i = text.find(kw, start)
+            if i < 0:
+                break
+            lo = max(0, i - GAP)
+            hi = min(n, i + len(kw) + GAP)
+            if pre[hi] - pre[lo] > 0:
+                bad.append((kw, i))
+                if len(bad) > 5:
+                    return bad
+            start = i + 1
+    return bad
+
+
 def main():
     r = int(sys.argv[1]) if len(sys.argv) > 1 else 40
-    out = sys.argv[2] if len(sys.argv) > 2 else \
+    # KEYWORD COUNT is the real size knob, not R: the aggressive
+    # obligation seed grew to the SAME 10800 slots at R=3 (4.9 KB) and
+    # R=40 (65 KB), because it scales with the number of DISTINCT SITs
+    # whose keyword is present, not with occurrence count. Cap the
+    # keyword set to get a cell that fits a given capacity.
+    max_kw = int(sys.argv[2]) if len(sys.argv) > 2 else 0
+    out = sys.argv[3] if len(sys.argv) > 3 else \
         os.path.join(HERE, "scan_dense.txt")
 
     kws = fwd_keywords(MAIN)
     if not kws:
         sys.exit("no fwd keywords parsed from %s" % MAIN)
     uniq = sorted(set(kws))
+    if max_kw > 0:
+        uniq = uniq[:max_kw]
 
     body = []
     for _ in range(r):
-        for kw in uniq:
-            body.append(kw)
-            body.append(FILLER)
+        body.append("  ".join(TAILS))
+        body.append(FILLER)
+        # keywords adjacent to each other is fine: a keyword alone
+        # matches nothing, every SIT needs its tail too.
+        body.append(" ".join(uniq))
+        body.append(FILLER)
     text = "".join(body)
 
-    # EXHAUSTIVE CHECK: a single digit anywhere could let a [0-9]{3}
-    # group complete and turn this into a real match.
-    bad = [i for i, ch in enumerate(text) if ch.isdigit()]
+    bad = check_separation(text, uniq)
     if bad:
-        sys.exit("planted text carries %d digit(s), first at %d"
-                 % (len(bad), bad[0]))
+        sys.exit("keyword within %d of a digit: %r" % (GAP, bad[:5]))
 
     with open(out, "w") as fh:
         fh.write(text)
@@ -106,9 +166,10 @@ def main():
     with open(listing, "w") as fh:
         fh.write(rel + "\n")
 
-    print("keywords: %d unique (of %d fwd sigs)" % (len(uniq), len(kws)))
+    print("keywords: %d unique (of %d fwd sigs), tails: %d"
+          % (len(uniq), len(kws), len(TAILS)))
     print("R=%d -> %s (%d bytes)" % (r, out, len(text)))
-    print("listing: %s -> %s" % (listing, rel))
+    print("separation >%d verified exhaustively" % GAP)
 
 
 if __name__ == "__main__":
