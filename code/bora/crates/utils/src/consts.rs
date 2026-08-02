@@ -198,6 +198,16 @@ pub struct GlobalConfig {
     pub res_small_cost: usize,
     pub min_basis_unique_states: usize,
     pub min_subsigs: usize,
+    /// Same floor for the ignore-case SED arm. Separate because the two arms
+    /// can have very different obligation-set demand (clam_hard: cs 59, igc
+    /// 1); one shared floor would clamp the igc rungs ABOVE the igc top rung.
+    /// 0 = inherit min_subsigs, so every cell that sets only min_subsigs
+    /// keeps its exact previous ladder. Read via min_subsigs_for(b_igc).
+    pub min_subsigs_igc: usize,
+    /// CP ladder floor. CpCapacity.subsigs shares min_subsigs with the SED
+    /// arm, so a CP seed below the SED floor would be clamped back up.
+    /// 0 = inherit min_subsigs. Read via min_cp_subsigs_val().
+    pub min_cp_subsigs: usize,
     pub min_dfa_subsigs: usize,
     pub min_sigs: usize,
     pub min_dfa_sigs: usize,
@@ -297,6 +307,8 @@ impl Default for GlobalConfig {
             res_small_cost: 20,
             min_basis_unique_states: 2,
             min_subsigs: 0,
+            min_subsigs_igc: 0,
+            min_cp_subsigs: 0,
             min_dfa_subsigs: 2,
             min_sigs: 2,
             min_dfa_sigs: 0,
@@ -356,6 +368,8 @@ static GLOBAL_CONFIG: RwLock<GlobalConfig> = RwLock::new(GlobalConfig {
     res_small_cost: 20,
     min_basis_unique_states: 2,
     min_subsigs: 2,
+    min_subsigs_igc: 0, // 0 = inherit min_subsigs (see min_subsigs_for)
+    min_cp_subsigs: 0, // 0 = inherit min_subsigs (see min_cp_subsigs_val)
     min_dfa_subsigs: 0,
     min_sigs: 2,
     min_dfa_sigs: 0,
@@ -413,6 +427,21 @@ pub fn read_global_config() -> RwLockReadGuard<'static, GlobalConfig> {
 
 pub fn get_global_config() -> RwLockWriteGuard<'static, GlobalConfig> {
     GLOBAL_CONFIG.write().unwrap()
+}
+
+/// Per-arm subsigs ladder floor. The igc arm inherits min_subsigs while
+/// min_subsigs_igc is 0, so cells that set only min_subsigs are unchanged.
+pub fn min_subsigs_for(b_igc: bool) -> usize {
+    let c = read_global_config();
+    if b_igc && c.min_subsigs_igc > 0 { c.min_subsigs_igc }
+    else { c.min_subsigs }
+}
+
+/// CP subsigs ladder floor, inheriting min_subsigs while min_cp_subsigs is
+/// 0 so cells that set only min_subsigs keep their exact previous ladder.
+pub fn min_cp_subsigs_val() -> usize {
+    let c = read_global_config();
+    if c.min_cp_subsigs > 0 { c.min_cp_subsigs } else { c.min_subsigs }
 }
 
 /// Push one (label,value) pair to the fingerprint sink when enabled.

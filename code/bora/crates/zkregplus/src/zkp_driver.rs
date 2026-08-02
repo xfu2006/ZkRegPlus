@@ -342,9 +342,11 @@ where C: CurveGroup<ScalarField=F>,
 		if i<vec_decrease_level.len(){
 			let level = vec_decrease_level[i];
 			cp_cap_cs = cp_cap_cs.decreased_copy(level); 
-			sed_cap_cs = sed_cap_cs.decreased_copy(level); 
-			cp_cap_igc = cp_cap_igc.decreased_copy(level); 
-			sed_cap_igc = sed_cap_igc.decreased_copy(level); 
+			sed_cap_cs = sed_cap_cs.decreased_copy(level,
+				utils::consts::min_subsigs_for(false));
+			cp_cap_igc = cp_cap_igc.decreased_copy(level);
+			sed_cap_igc = sed_cap_igc.decreased_copy(level,
+				utils::consts::min_subsigs_for(true));
 			dfa_cap= dfa_cap.decreased_copy(level); 
 		}
 	}//for category
@@ -873,6 +875,55 @@ where C: CurveGroup<ScalarField=F>,
 		total_word_n, max_rounds, n_threads, mode)
 }
 
+/// Exact per-word max SDE obligation-set size, per b_igc arm. This is the set
+/// non-aggressive neo seeds its step queue from, so it is the true floor for
+/// capacity.subsigs -- derivable up front from (db, WordInfo) with no probe.
+/// Mirrors sed_mapper's non-aggressive derivation: whole-word sigs (the
+/// aggressive failed_c per-segment branch does not apply), collect_subsig_ids,
+/// then the neo `needs` filter (drop empty-chain subsigs, which can never
+/// reach LAST_STEP). Per-word constant: that branch ignores seg_id.
+fn neo_subsig_demand<F,C,CS>(db: &ClamavDB<F>, infos: &[WordInfo],
+	b_igc: bool) -> usize
+where C: CurveGroup<ScalarField=F>, CS: CommitmentScheme<C,false>,
+	  F: PrimeField + Absorb + ColEle,
+{
+	let bundle_cs = &db.bundle_subsig;
+	let acdfa = if b_igc { &db.bundle_subsig_igc.vec_acdfa[0] }
+		else { &bundle_cs.vec_acdfa[0] };
+	let store = if b_igc { &db.bundle_subsig_igc.vec_subsig_step_stores[0] }
+		else { &bundle_cs.vec_subsig_step_stores[0] };
+	let mut max_n = 0usize;
+	for wi in infos.iter() {
+		if wi.vec_sed_sigs.is_empty() { continue; } // dummy pad word
+		let sigs: Vec<Arc<data_processor::type_def::ClamavSig>>
+			= bundle_cs.vec_sigs[0].iter()
+			.filter(|s| db.sig_to_id.get(&s.name)
+				.map_or(false, |id| wi.vec_sed_sigs.contains(id)))
+			.cloned().collect();
+		if sigs.len() != wi.vec_sed_sigs_info.len() { continue; } // 1-1 or skip
+		let inp = crate::circs::sed_mapper::SedAdvice::<F>::collect_subsig_ids(
+			&sigs, &wi.vec_sed_sigs_info, &db.sig_to_id, b_igc, acdfa);
+		// neo seeds only non-empty-chain subsigs (sed_mapper's `needs`).
+		let n = inp.iter().filter(|s| {
+			let u = folding_schemes::folding::foldpot::circuits_super
+				::field_to_usize(*s);
+			store.subsig_to_steps.get(&u)
+				.map_or(false, |it| !it.vec_pm_bounds.is_empty())
+		}).count();
+		max_n = max_n.max(n);
+	}
+	max_n
+}
+
+/// Exact per-word max DFA subsig count, the true floor for DfaCapacity.subsigs.
+/// dfa_mapper flattens word_info.vec_dfa_sigs_info into v_subsig_ids and
+/// CapErrs when it exceeds capacity.subsigs, so the demand is just that
+/// flattened length -- a pure function of WordInfo, needing no probe.
+fn neo_dfa_subsig_demand(infos: &[WordInfo]) -> usize {
+	infos.iter().map(|wi| wi.vec_dfa_sigs_info.iter()
+		.map(|i| i.subsig_ids.len()).sum::<usize>()).max().unwrap_or(0)
+}
+
 /// determine_config (non-aggressive): same loop as the aggressive variant but
 /// builds the full cs/igc/dfa ladder via build_circs_adv. CapErr bumps route
 /// to cs or igc fields by the b_igc suffix. Returns the confirmed-lowest base
@@ -898,6 +949,96 @@ where C: CurveGroup<ScalarField=F>,
 		.map(|w| utils::data::pad_word_to_multiple::<F>(w, chunk_len))
 		.collect();
 	let mut t_all = GTimer::new();
+	// Restores the two subsigs ladder floors on EVERY exit of this function
+	// (Ok, Err, or `?`). The seed block below writes them so the probes'
+	// build_circs_adv ladders correctly; without this they would persist
+	// process-wide and a later cell that sets only min_subsigs would inherit
+	// this cell's min_subsigs_igc instead of the "0 = inherit" default.
+	struct FloorGuard(usize, usize, usize);
+	impl Drop for FloorGuard {
+		fn drop(&mut self) {
+			let mut c = get_global_config();
+			c.min_subsigs = self.0;
+			c.min_subsigs_igc = self.1;
+			c.min_cp_subsigs = self.2;
+		}
+	}
+	let _floor_guard = {
+		let c = read_global_config();
+		FloorGuard(c.min_subsigs, c.min_subsigs_igc, c.min_cp_subsigs)
+	};
+	// NEO ONLY: seed subsigs from the exact obligation-set max instead of the
+	// caller's knob. The tuner has no downward move on subsigs (shrink_fields
+	// omits it; apply_caperr_bumps is max-semantics), so an over-large knob is
+	// returned verbatim -- clam_hard measured 256 in / 256 out at demand 59.
+	// The set is per-word constant here, so EVERY ladder rung faces the same
+	// demand: min_subsigs is pinned to the seed too, keeping the subsig axis
+	// FLAT. Without that pin decreased_copy's *9/16 would drop a lower rung
+	// below demand and CapErr. Legacy is untouched (gate + hard rule).
+	if read_global_config().clamav_cfg.b_use_discharge_neo {
+		let d_cs = neo_subsig_demand::<F,C,CS>(&db, sample_word_infos, false);
+		let d_igc = neo_subsig_demand::<F,C,CS>(&db, sample_word_infos, true);
+		// +1 reserves the comp_sig dummy entry (inp_subsigs[0] must be 0),
+		// the same convention apply_caperr_bumps uses on every subsigs bump.
+		let (s_cs, s_igc) = (d_cs + 1, d_igc + 1);
+		// never RAISE past the caller's knob: that would be a silent capacity
+		// increase rather than the tightening this is for. An under-seed is
+		// recovered by the neo_subsig_slots ratchet (one extra probe round).
+		let (n_cs, n_igc) = (s_cs.min(p.subsigs), s_igc.min(p.subsigs_igc));
+		log(0, LOG1, &format!("NEO SUBSIG SEED: demand cs={} igc={} -> \
+			subsigs {}->{}, subsigs_igc {}->{}",
+			d_cs, d_igc, p.subsigs, n_cs, p.subsigs_igc, n_igc));
+		p.subsigs = n_cs;
+		p.subsigs_igc = n_igc;
+		// Pin each arm's ladder floor to its OWN seed: demand is per-word
+		// constant, so every rung faces the same set and the axis must stay
+		// FLAT. A single shared floor would clamp the igc rungs above the
+		// igc top rung (cs 60 vs igc 2). SCOPED: _floor_guard restores both
+		// fields on every exit, so the write cannot leak into the next cell
+		// of a multi-cell process (cargo test runs all cells in one). The
+		// fold path re-applies them from the RETURNED CapParams.
+		let mut cfg = get_global_config();
+		cfg.min_subsigs = n_cs;
+		cfg.min_subsigs_igc = n_igc;
+		drop(cfg);
+
+		// CP and DFA subsigs are ALSO up()-only in the tuner, so the caller's
+		// knob is returned verbatim there too. clam_hard feeds ONE ZKR_SUBSIGS
+		// into all three capacities, so hand-tuning it cut CP/DFA as well while
+		// the SED-only seed above left them at 256 -- measured 2.09x worse cols
+		// than the hand-tune, with framework logup (capacity-slot driven, not
+		// data driven) as the bulk of the gap. Seed both DOWN here.
+
+		// CP: exact and DB-static. Subsigs with no critical pattern can never
+		// discharge in CP, so EVERY word hands all of them to SED -- there is
+		// no per-word variation to probe for. This is the value cp_mapper.rs's
+		// ctor assert itself recommends; that assert is bare (not a CapErr), so
+		// an under-seed would panic unparseably -- hence exact, not a ratchet.
+		// Any per-word excess is still caught by the cp::subsigs CapErr.
+		let cp_need = db.vec_sigs_no_critical_pat.len() + 1;
+		let n_cp = cp_need.min(p.cp_subsigs);
+		log(0, LOG1, &format!("NEO CP SEED: no_crit_pat={} -> cp_subsigs \
+			{}->{}", cp_need - 1, p.cp_subsigs, n_cp));
+		p.cp_subsigs = n_cp;
+		// pin CP's ladder floor to the SAME DB-static bound: it is a per-word
+		// invariant, so no rung may fall below it. CP has its own floor because
+		// CpCapacity.subsigs otherwise shares min_subsigs with the SED arm.
+		get_global_config().min_cp_subsigs = n_cp;
+
+		// DFA: per-word VARYING (v_subsig_ids from vec_dfa_sigs_info), so
+		// laddering is legitimate and no floor pin is wanted. Seed to the EXACT
+		// max over the sample rather than to min_dfa_subsigs + the
+		// dfa_mapper::subsigs ratchet: the ratchet only observes words the
+		// probe actually runs, and a CapErr raised at FOLD time is not
+		// recoverable. The ratchet stays as a backstop. Keep the floor as a
+		// lower bound so a zero-DFA corpus still gets a valid capacity.
+		let d_dfa = neo_dfa_subsig_demand(sample_word_infos);
+		let n_dfa = d_dfa.max(read_global_config().min_dfa_subsigs).max(1)
+			.min(p.dfa_subsigs);
+		log(0, LOG1, &format!("NEO DFA SEED: demand={} -> dfa_subsigs {}->{}",
+			d_dfa, p.dfa_subsigs, n_dfa));
+		p.dfa_subsigs = n_dfa;
+	}
 	// reusable probe: same body as the convergence loop, callable for the
 	// post-convergence perc tightening (binary search) with the probe as oracle.
 	let run_probe = |p: &crate::determine_config::CapParams| {
@@ -1281,14 +1422,29 @@ where
 	// re-use the capacity for BOTH cs and ignore_case
 	// this is usaully inefficient for ignore_case (but
 	// we do this for small samples for convenience)
+	//last arg: env ZKR_DC picks the capacity auto-tuner mode. Unset/0
+	//keeps the hand caps above, so this call is unchanged by default.
 	zkp_driver_adv::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(job_id, sig_file, vec![list_file_to_scan.to_string()], _logfile,
 		b_write_cache, cache_dir,
 		list_of_dfa_sigs, list_of_ised_sigs, list_of_ised_igc_sigs,
 		chunk_len,
 		init_cp_capacity, init_sed_capacity, init_dfa_capacity,
-		init_cp_capacity, init_sed_capacity, 
-		vec_decrease_levels, num_circs, b_check_lkup, DcMode::Off
+		init_cp_capacity, init_sed_capacity,
+		vec_decrease_levels, num_circs, b_check_lkup, dc_mode_from_env()
 	);
+}
+
+/// ZKR_DC selects the tuner mode for the cells routed through `zkp_driver`
+/// (0/unset = Off, so every existing cell keeps its hand caps unchanged).
+/// 1 = ProbeOnly, 2 = ProbeThenFold. This is the only way a neo cell can
+/// reach determine_config today -- all zkp_driver_adv call sites pass Off.
+fn dc_mode_from_env() -> DcMode {
+	match std::env::var("ZKR_DC").ok()
+		.and_then(|s| s.parse::<usize>().ok()).unwrap_or(0) {
+		1 => DcMode::ProbeOnly,
+		2 => DcMode::ProbeThenFold,
+		_ => DcMode::Off,
+	}
 }
 /// How the determine_config (capacity auto-tuning) probe interacts with
 /// folding in `zkp_driver_adv`:
@@ -1488,6 +1644,21 @@ where
 				// Fold with the converged caps directly: the probe now includes
 				// foldpot's 0-pad word (above), so `new` already covers it -- no
 				// headroom, so the forward queue stays at its saturated size.
+				// Re-apply the neo ladder floors from the RETURNED caps: the
+				// tuner's own write is scoped to its call (FloorGuard), and the
+				// fold's decreased_copy must see the same flat axis the probe
+				// converged against or a lower rung drops below demand.
+				// CP's floor is its OWN DB-static bound, not `new.cp_subsigs`:
+				// a cp::subsigs bump raises the top rung, but the invariant
+				// every rung must clear stays the no-critical-pattern count.
+				// DFA laddering is legitimate, so min_dfa_subsigs is untouched.
+				if read_global_config().clamav_cfg.b_use_discharge_neo {
+					let cp_floor = db.vec_sigs_no_critical_pat.len() + 1;
+					let mut c = get_global_config();
+					c.min_subsigs = new.subsigs;
+					c.min_subsigs_igc = new.subsigs_igc;
+					c.min_cp_subsigs = cp_floor.min(new.cp_subsigs);
+				}
 				log(0, log_level, &format!(
 					"DETERMINE_CONFIG: folding with converged caps: {:?}", new));
 				if b_warm { let _ = new.save_json(warmstart); } // -> next round
@@ -3708,6 +3879,12 @@ pub mod tests_zkp_driver{
 			get_global_config().b_folding_only = v == "1"; }
 		if let Ok(p) = std::env::var("ZKR_SNARK_WAIT_FLAG") {
 			get_global_config().snark_wait_flag = Some(p); }
+		// NewP3 probe knobs, mirroring clam_hard/dlp_hard. Both OFF by
+		// default: production full_clam behavior is unchanged.
+		if std::env::var("ZKR_USE_NEO").is_ok() {
+			get_global_config().clamav_cfg.b_use_discharge_neo = true; }
+		get_global_config().b_dryrun_after_capcheck =
+			knob("ZKR_DRYRUN", 0) != 0;
 		// The lkup-share invariant only holds at full per-job data;
 		// partial-load (debug/numa) modes false-trip it. The driver sets
 		// ZKR_CLAM_CHECK_LKUP=1 only for production, 0 otherwise. Unset =

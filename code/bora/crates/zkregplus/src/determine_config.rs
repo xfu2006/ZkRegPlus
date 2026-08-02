@@ -239,8 +239,12 @@ pub fn apply_caperr_bumps(p: &mut CapParams, b_aggr: bool,
             } else {
                 unmapped.push(name.clone());
             }
-        } else if name.contains("subsigs") {
+        } else if name.contains("subsigs") || name.contains("subsig_slots") {
             // dis_adv::subsigs / comp_sig::subsigs{,_cs,_igc,_N} / fsm_adv::subsigs
+            // neo_subsig_slots bounds the neo SDE obligation seed against
+            // capacity.subsigs (discharge_adv_neo.rs:5519/5581) and reports
+            // the seed count, so it lands in these same units. It needs its
+            // own test because "subsig_slots" does NOT contain "subsigs".
             // Also dis_adv::neo_wrap_subsigs: the neo T_qm wrap budget is
             // subsigs*(max_chain+1) and max_chain is DB-exact, so a wrap
             // overflow is always a subsigs shortfall (gadget back-solves
@@ -589,6 +593,69 @@ mod tests {
             &[("max_word_len".to_string(), 999),
               ("lkup::target_size".to_string(), 5)]);
         assert_eq!(unmapped.len(), 2, "both unknowns surfaced");
+    }
+
+    /// Every CapErr name discharge_adv_neo.rs can emit, replayed against the
+    /// mapper. An unmapped name aborts the tuner (zkp_driver.rs:1045), so a
+    /// name added to the gadget without a route here silently disables neo
+    /// tuning -- that already happened once with neo_qm_table.
+    #[test]
+    fn test_caperr_mapping_neo_names() {
+        // -- routed: the two names that bind in production --
+        for igc in [false, true] {
+            let tag = if igc { "true" } else { "false" };
+            // (a) obligation-seed bound (discharge_adv_neo.rs:5519/5581).
+            let mut p = zero_params();
+            let (changed, unmapped) = apply_caperr_bumps(&mut p, false,
+                &[(format!("neo_subsig_slots, b_igc: {}", tag), 59)]);
+            assert!(changed, "neo_subsig_slots must bump (igc {})", igc);
+            assert!(unmapped.is_empty(), "neo_subsig_slots unmapped: {:?}",
+                unmapped);
+            // +1 reserves the comp_sig dummy entry, as for every other
+            // subsigs-unit name (see apply_caperr_bumps).
+            if igc { assert_eq!(p.subsigs_igc, 59); }
+            else { assert_eq!(p.subsigs, 60); }
+
+            // (b) T_qm wrap budget (:1429 qm_caperr, :3034, :5191). Already
+            // routed by contains("subsigs"); pinned so it stays routed.
+            let mut p2 = zero_params();
+            let (ch2, un2) = apply_caperr_bumps(&mut p2, true,
+                &[(format!("dis_adv::neo_wrap_subsigs, b_igc: {}", tag), 64)]);
+            assert!(ch2 && un2.is_empty(), "neo_wrap_subsigs unmapped");
+            if igc { assert_eq!(p2.subsigs_igc, 64); }
+            else {
+                assert_eq!(p2.subsigs, 65);
+                assert_eq!(p2.aggr_needs_subsigs, 64, "aggr co-bump");
+            }
+        }
+
+        // (c) the real-row arm of qm_caperr reports in prod/perc units.
+        let mut p3 = zero_params();
+        let (ch3, un3) = apply_caperr_bumps(&mut p3, true,
+            &[("dis_adv::prod_pats_expansion, b_igc: false".to_string(),
+               554436)]);
+        assert!(ch3 && un3.is_empty(), "neo real-row arm unmapped");
+        assert_eq!(p3.prod_pats_expansion, 554436);
+
+        // -- DELIBERATELY unmapped: bumping these would be a unit error or
+        // would never converge. They must stay fatal-and-loud.
+        //   jr_table / to_full_vec: raw ROW counts against a
+        //     vec_size(ResLarge) budget. Only qm_caperr owns that inversion;
+        //     routing the raw count to perc/prod bumps the wrong units.
+        //     (to_full_vec is production-unreachable today -- its only
+        //     callers are tests_neo_m4/m5.)
+        //   neo_dict_offstore: not a capacity shortfall at all. It fires when
+        //     a chunk pat has no store counterpart and reports hm_loc.len(),
+        //     so any bump loops to max_iters.
+        for name in ["jr_table", "discharge_adv_neo::to_full_vec",
+                     "neo_dict_offstore, b_igc: false"] {
+            let mut p = zero_params();
+            let (changed, unmapped) =
+                apply_caperr_bumps(&mut p, false, &[(name.to_string(), 7)]);
+            assert!(!changed, "{} must not bump any field", name);
+            assert_eq!(unmapped, vec![name.to_string()],
+                "{} must surface as unmapped", name);
+        }
     }
 
     #[test]

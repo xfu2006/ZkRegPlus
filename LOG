@@ -30579,7 +30579,31 @@ Goal 8. NewP3 -> fix the issue of load all DB for the
 	[a] idea: use the DischargeInfo subsigs to discharge
 	[b] test pass
 	[c] clam_hard comparison: 
-Goal 9. NewP3.5 fix the determine_config_neo
+	[d] DONE -> it's improved a lot and it has more improvement room.
+
+Sunday 04/02/2026
+Goal 1. NewP3.5 fix the determine_config_neo
+	[a] goal: make new determiine_config_neo(), two cases to discuss:
+		how fast to convert? how accurate?
+	[b] feasibilit analysis
+	[c] Experiments T0 and T2.
+	[d] Experiment T5: determine config and then fold
+Goal 2. writing
+	[a] add new section in apdx
+	[b] p1 and p2
+	[c] B.1 preliminaries
+	[d] rename G3.
+	[e] review B.1
+	[f] refine this with E1/E2, G1/G2.
+	[g] split figure 9. 
+Goal 3. CyclePair Gadget	
+	[a] read.
+	[b] read mixed r1cs
+	[c] read B3.2.2 supernova _ cyclefold with cyclepair
+Goal 4. Continue on NewP3.5
+	[a]
+-- TODO --
+Goal 2. P4 again (measure comparison)
 		-> polish
 
 		

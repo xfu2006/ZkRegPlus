@@ -3028,7 +3028,14 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 		let k_slots = g.capacity.subsigs;
 		let s_cap = StepQueueNeo::<F>::wrap_budget(&g.capacity,
 			info);
-		assert!(subsig_nat.len() <= k_slots); //CapErr'd upstream
+		//normally CapErr'd upstream (new_nonaggr's seed bound); kept
+		//bumpable here so a direct-construction path stays tunable
+		//instead of panicking unparseably past determine_config.
+		if subsig_nat.len() > k_slots {
+			return Err(Error::CapErr(vec![(format!(
+				"neo_subsig_slots, b_igc: {}", g.b_igc),
+				subsig_nat.len())]));
+		}
 		subsig_nat.resize(k_slots, F::zero());
 		if s_enc.len() > s_cap {
 			return Err(Error::CapErr(vec![(format!(
@@ -5184,7 +5191,12 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 			let k_slots = g.capacity.subsigs;
 			let s_cap = StepQueueNeo::<F>::wrap_budget(
 				&g.capacity, info);
-			assert!(subsig_nat.len() <= k_slots);
+			//as in gen_nonaggr: upstream-guarded, kept bumpable.
+			if subsig_nat.len() > k_slots {
+				return Err(Error::CapErr(vec![(format!(
+					"neo_subsig_slots, b_igc: {}", g.b_igc),
+					subsig_nat.len())]));
+			}
 			subsig_nat.resize(k_slots, F::zero());
 			if s_enc.len() > s_cap {
 				//store rows = Sigma(chain) over NEEDS -> bump subsigs

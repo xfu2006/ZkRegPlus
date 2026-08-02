@@ -799,18 +799,24 @@ impl SubsigStepStore{
 			all_tuples.append(&mut tuples4);
 		}
 
-		//2d. per-step freeze threshold fz (ID_ENCODED_FZ). Additive keyed
-		// value; discharge_adv never queries it so it stays inert there.
+		//2d. neo only: per-step freeze threshold fz (ID_ENCODED_FZ).
+		// Additive keyed value; discharge_adv never queries it. Gated so
+		// legacy non-neo emits ZERO rows and keeps a byte-identical
+		// lookup universe -- ungated it added +10 rows here and +6
+		// nc/nv on small_data, which the flag-off fingerprint gate
+		// (fingerprint_small_data_flag_off) catches.
 		// Inclusion mirrors the encoded cats above: real steps, plus the
 		// subsig-0 dummy rows so padded prf lookups resolve.
-		let fz = Self::gen_fz_col(&cols, max);
-		let mut tuples5 = encoded.par_iter().enumerate()
-			.filter_map(|(r,&enc)|{
-				let b_dummy = pats[r].is_zero() || pats[r]==max;
-				if !(!b_dummy || subsigs[r].is_zero()) { return None; }
-				Some((Self::gen_step_tbl_id(enc, ID_ENCODED_FZ), fz[r]))
-			}).collect::<Vec<(F,F)>>();
-		all_tuples.append(&mut tuples5);
+		if read_global_config().clamav_cfg.b_use_discharge_neo {
+			let fz = Self::gen_fz_col(&cols, max);
+			let mut tuples5 = encoded.par_iter().enumerate()
+				.filter_map(|(r,&enc)|{
+					let b_dummy = pats[r].is_zero() || pats[r]==max;
+					if !(!b_dummy || subsigs[r].is_zero()) { return None; }
+					Some((Self::gen_step_tbl_id(enc, ID_ENCODED_FZ), fz[r]))
+				}).collect::<Vec<(F,F)>>();
+			all_tuples.append(&mut tuples5);
+		}
 
 		all_tuples.sort();
 

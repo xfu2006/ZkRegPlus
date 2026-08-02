@@ -262,13 +262,16 @@ impl SedCapacity{
 		}
 	}
 
-	pub fn decreased_copy(&self, level: usize)->Self{
+	/// `min_sub`: the subsigs floor for THIS arm (utils min_subsigs_for).
+	/// Passed in because SedCapacity has no b_igc field, but the caller
+	/// (zkp_driver's ladder loop) holds cs and igc separately.
+	pub fn decreased_copy(&self, level: usize, min_sub: usize)->Self{
 		assert!(level==1 || level==2);
 		if level==1{//incrase subsigs and sigs
 			Self::new(
 				self.max_word_len,
 				self.acdfa_state_part_bits,
-				(self.subsigs*9/16).max(read_global_config().min_subsigs), // OLD: *3/4
+				(self.subsigs*9/16).max(min_sub), // OLD: *3/4
 				(self.avg_pats_per_subsig*9/16).max(read_global_config().min_avg_pats_per_subsig), // OLD: *3/4
 				(self.avg_active_pats_per_subsig*9/16).max(read_global_config().min_avg_active_pats_per_subsig), // OLD: *3/4
 				(self.basis_pats_in_trace/4).max(read_global_config().min_basis_pats_in_trace), // OLD: /2
@@ -282,7 +285,7 @@ impl SedCapacity{
 			Self::new(
 				self.max_word_len,
 				self.acdfa_state_part_bits,
-				(self.subsigs*9/16).max(read_global_config().min_subsigs), // OLD: *3/4
+				(self.subsigs*9/16).max(min_sub), // OLD: *3/4
 				(self.avg_pats_per_subsig*9/16).max(read_global_config().min_avg_pats_per_subsig), // OLD: *3/4
 				(self.avg_active_pats_per_subsig*9/16).max(read_global_config().min_avg_active_pats_per_subsig), // OLD: *3/4
 				(self.basis_pats_in_trace/16).max(read_global_config().min_basis_pats_in_trace), // OLD: /4

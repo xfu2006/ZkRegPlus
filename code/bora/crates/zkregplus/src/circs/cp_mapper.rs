@@ -138,7 +138,8 @@ impl CpCapacity{
 				max_word_len: self.max_word_len,
 				basis_unique_states: (self.basis_unique_states*9/16) // OLD: *3/4
 					.max(read_global_config().min_basis_unique_states),
-				subsigs: (self.subsigs*9/16).max(read_global_config().min_subsigs), // OLD: *3/4
+				subsigs: (self.subsigs*9/16)
+					.max(utils::consts::min_cp_subsigs_val()), // OLD: *3/4
 				avg_pats_per_subsig: (self.avg_pats_per_subsig*9/16) // OLD: *3/4
 					.max(read_global_config().min_avg_pats_per_subsig),
 			}
@@ -146,7 +147,8 @@ impl CpCapacity{
 			Self{
 				max_word_len: self.max_word_len,
 				basis_unique_states: (self.basis_unique_states/4).max(read_global_config().min_basis_unique_states), // OLD: /2
-				subsigs: (self.subsigs/4).max(read_global_config().min_subsigs), // OLD: /2
+				subsigs: (self.subsigs/4)
+					.max(utils::consts::min_cp_subsigs_val()), // OLD: /2
 				avg_pats_per_subsig: (self.avg_pats_per_subsig/4).max(read_global_config().min_avg_pats_per_subsig), // OLD: /2
 			}
 		}

@@ -410,22 +410,48 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		//sq_res is already sorted on (subsig-step), and
 		//its subsig is exactly the inp_subsigs
 		let (n,n2) = (inp_subsigs.len(), vec_subsig.len());
+		// Slots the walk below needs: it steps cur_idx (from n-2) down once
+		// per run boundary in vec_subsig, so one slot per run plus the dummy
+		// 0 entry. Reported when the walk runs out of slots (see cur_idx).
+		let n_runs = 1 + (1..n2).filter(|&v|
+			vec_subsig[v] != vec_subsig[v-1]).count();
 		let mut vec_last_step= vec![zero;n];
 		let mut inp_subsig_encoded = vec![zero;n]; //corresponds to inp_subsig 
 		vec_last_step[n-1] = vec_step[n2-1];
 		assert!(inp_subsigs[n-1]==vec_subsig[n2-1]);
 		inp_subsig_encoded[n-1]=vec_encoded[n2-1];
 		if !inp_subsigs.contains(&zero){
+			// _cs/_igc, not {true,false}: apply_caperr_bumps detects the igc
+			// arm by the "subsigs_igc" marker, so "subsigs_true" fell through
+			// to the generic subsigs branch and bumped the CS field.
 			return Err(Error::CapErr(vec![(format!("comp_sig::subsigs_{}",
-				b_igc), inp_subsigs.len()+1)]));
+				if b_igc {"igc"} else {"cs"}), inp_subsigs.len()+1)]));
 		}
 		assert!(inp_subsigs.contains(&zero), 
 			"inp_subigs needs one dummy 0 entry");
+		// n==1 leaves only the dummy 0 slot, so `n-2` below wraps to usize::MAX
+		// and indexes out of bounds. Reachable once a tuner seeds subsigs from
+		// a zero obligation demand; report it as a bumpable cap like the
+		// out-of-slots case in the walk rather than panicking unparseably.
+		if n < 2 {
+			return Err(Error::CapErr(vec![(format!("comp_sig::subsigs_{}",
+				if b_igc {"igc"} else {"cs"}), n_runs + 1)]));
+		}
 		let mut cur_idx = n-2;
 		let mut v_idx = n2-1;
 		for j in 1..n2{//from last to first
 			v_idx = n2-j;
 			if vec_subsig[v_idx]!=vec_subsig[v_idx-1]{
+				// out of slots: cur_idx would wrap past 0 to usize::MAX and
+				// index out of bounds below. Only reachable when it STARTS
+				// at 0 (n==2) -- for n>=3 the cur_idx==0 break catches it --
+				// but guard the decrement itself so the cap is bumpable
+				// instead of panicking unparseably past determine_config.
+				if cur_idx == 0 {
+					return Err(Error::CapErr(vec![(
+						format!("comp_sig::subsigs_{}",
+							if b_igc {"igc"} else {"cs"}), n_runs + 1)]));
+				}
 				assert!(inp_subsigs[cur_idx]==vec_subsig[v_idx-1]);
 				vec_last_step[cur_idx]=vec_step[v_idx-1];
 				inp_subsig_encoded[cur_idx]=vec_encoded[v_idx-1];
