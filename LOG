@@ -30608,6 +30608,7 @@ Goal 3. CyclePair Gadget
 		-> stage 2-4
 		-> algorithm.
 		-> verify alg
+	[f] add formal qa-nikz spec.
 Goal 4. Continue on NewP3.5
 	[a] put auto tuning by default in zkp_driver
 	[b] make sure it does not impact the legacy mode
