@@ -210,9 +210,23 @@ fn load_files<F:PrimeField + ColEle>(job_id: usize, list_file_path: &str, db: &C
 }
 
 
+/// NewP3.6 T1: the lkup share percent required by the distributed-lookup
+/// guard (zkp_driver.rs:274, foldpot driver.rs:1556). A back-solve of the
+/// existing check, not a probe -- no circuit or statement is built.
+pub(crate) fn perc_lkup_share_for(lkup_len: usize, chunk_len: usize,
+	total_word_n: usize, b_check_lkup: bool)->usize{
+	if !b_check_lkup { return 1; }
+	let max_nibble_len = chunk_len * LEGS;
+	let chunks = ((total_word_n * LEGS)/max_nibble_len).max(1);
+	let denom = chunks * max_nibble_len;
+	//ceil: lk_share = perc*mnl/100 TRUNCATES, so a floor-div here sizes
+	//the share one slot short and re-panics the guard it back-solves.
+	((lkup_len * 100 + denom - 1) / denom).max(1)
+}
+
 /// build the circuits. Notice that we keep the legacy layered circuit
 /// model (see driver.rs in foldpot module). However, we make the
-/// simplication that 
+/// simplication that
 /// *** EACH LAYER has ONE CIRC ***
 ///
 /// Return: 2d layer of circs, but each layer has 1 circ. (2d is just
@@ -1618,6 +1632,18 @@ where
 	//3. build the circuits
 	let rc_db = Arc::new(db.clone());
 
+	// NewP3.6 T1: derive the share from the guard instead of the caller's
+	// literal. Non-aggr never hits the aggr-neo dummy self-cover, so this
+	// term is the whole requirement on this arm.
+	{
+		let perc = perc_lkup_share_for(lkup_len, chunk_len,
+			max_total_word_len, b_check_lkup);
+		let old = read_global_config().perc_lkup_share;
+		log(0, log_level, &format!("T1 lkup share: perc {} -> {}",
+			old, perc));
+		get_global_config().perc_lkup_share = perc;
+	}
+
 	// read ONCE: threaded through both the determine_config_non_aggr call and
 	// the post-convergence floor re-apply below, instead of two independent
 	// global-config reads that could observe different values.
@@ -1956,6 +1982,17 @@ where
 
 	//3. build the circuits (CS-only aggressive)
 	let rc_db = Arc::new(db.clone());
+	// NewP3.6 T1: derive the share from the guard instead of the caller's
+	// literal. aggr-neo's dummy self-cover is not predictable here; it
+	// reports itself as a CapErr and the retry loop bumps it exactly once.
+	{
+		let perc = perc_lkup_share_for(lkup_len, chunk_len,
+			max_total_word_len, b_check_lkup);
+		let old = read_global_config().perc_lkup_share;
+		log(0, log_level, &format!("T1 lkup share: perc {} -> {}",
+			old, perc));
+		get_global_config().perc_lkup_share = perc;
+	}
 	// passed through for API symmetry with determine_config_non_aggr; aggr's
 	// body has no legacy/neo divergence today (see determine_config_aggr doc).
 	let b_use_neo = read_global_config().clamav_cfg.b_use_discharge_neo;
@@ -2108,6 +2145,23 @@ where
 						// only when the index wasn't recoverable (e.g. a
 						// build_circs_adv_aggr-time CapErr with no layer tag).
 						let mut changed = false;
+						// NewP3.6 T1: the dummy self-cover reports its need in
+						// KEY units and the share is global, not a per-rung
+						// cap. Convert to percent, bump, drop it from errs.
+						let mut errs = errs;
+						let mnl = chunk_len * LEGS;
+						if let Some(k) = errs.iter()
+							.find(|(n,_)| n.starts_with("lkup_share"))
+							.map(|(_,r)| *r) {
+							let need = (k * 100 + mnl - 1) / mnl;
+							let mut c = get_global_config();
+							if need > c.perc_lkup_share {
+								c.perc_lkup_share = need;
+								changed = true;
+							}
+							drop(c);
+							errs.retain(|(n,_)| !n.starts_with("lkup_share"));
+						}
 						let mut unmapped = vec![];
 						match rung.filter(|&i| i < ladder.len()) {
 							Some(i) => {

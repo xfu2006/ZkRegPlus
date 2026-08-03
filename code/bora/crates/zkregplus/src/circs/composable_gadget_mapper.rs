@@ -1144,9 +1144,15 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 							order.push((t, v)); cnt.push(1); }
 					}
 				}
-				assert!(order.len() <= lkup_share_size,
-					"dummy self-cover: {} keys > share cap {}",
-					order.len(), lkup_share_size);
+				//NewP3.6 T1: panic with CapErr-SHAPED text so the aggr
+				//driver's retry loop (parse_caperr_from_panic) can read the
+				//need and bump the share. A returned Err cannot be used: the
+				//dummy build at foldpot driver.rs:2887 is a bare
+				//assert!(stmt_res.is_ok()), which discards the payload.
+				if order.len() > lkup_share_size {
+					panic!("dummy self-cover: CapErr([(\"lkup_share\", {})])",
+						order.len());
+				}
 				let mut c1 = vec![zero; lkup_share_size];
 				let mut c2 = vec![zero; lkup_share_size];
 				let mut ms = vec![zero; lkup_share_size];
