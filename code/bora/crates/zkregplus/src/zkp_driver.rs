@@ -2916,10 +2916,10 @@ pub mod tests_zkp_driver{
 
 	/// Print the 4-cell comparison: circuit size, per-step fold time,
 	/// and saturation (Q_m + Q_c/Q_i for neo, fwd for legacy).
-	fn p4_report(cells: &[P4Perf]) {
+	fn p4_report(tag: &str, cells: &[P4Perf]) {
 		use utils::logger::emit_stdout;
 		emit_stdout(format!("\n==== New8 P4 legacy-vs-neo comparison \
-			(DENSE fixtures; non_aggr=binexec_dense, aggr=scan_dense) ===="));
+			({}) ====", tag));
 		for c in cells {
 			let cols: usize = c.circs.iter().map(|&(c, _)| c).sum();
 			let rows: usize = c.circs.iter().map(|&(_, r)| r).sum();
@@ -3005,12 +3005,36 @@ pub mod tests_zkp_driver{
 			|| dlp_hard::<Fr>(false, 1)));
 		cells.push(p4_measure("aggr neo", true,
 			|| dlp_hard::<Fr>(true, 1)));
-		p4_report(&cells);
+		p4_report("DENSE fixtures; non_aggr=binexec_dense, aggr=scan_dense",
+			&cells);
 		//every cell must have actually folded, else the numbers are
 		//vacuous (e.g. a stray ZKR_DRYRUN would skip foldpot_main).
 		for c in cells.iter() {
 			assert!(!c.steps.is_empty(),
 				"P4 perf: cell '{}' recorded no fold steps", c.label);
+		}
+	}
+
+	/// Part C sibling: the AGGRESSIVE EASY cell, legacy vs neo. Measured
+	/// at 0/32 Q_m -- scan_easy.dat triggers NO discharge, so this cell
+	/// costs the pure CAPACITY FLOOR of each arm (the common production
+	/// case: a file that matches nothing). test_p4_perf_compare measures
+	/// the loaded end. Run with ZKR_PROBE_COLS=1 to also dump the
+	/// per-column statement breakdown (DEBUG USE 62050.x).
+	#[test]
+	pub fn test_p4_aggr_easy_compare(){
+		std::env::set_var("ZKR_NO_FAIL_FAST", "1"); //see perf_compare
+		p4_pin_mode();
+		std::env::set_var("ZKR_SCAN", "scan_easy.dat");
+		let mut cells = vec![];
+		cells.push(p4_measure("aggr easy legacy", false,
+			|| dlp_hard::<Fr>(false, 1)));
+		cells.push(p4_measure("aggr easy neo", true,
+			|| dlp_hard::<Fr>(true, 1)));
+		p4_report("EASY fixture; aggr=scan_easy (zero discharge)", &cells);
+		for c in cells.iter() {
+			assert!(!c.steps.is_empty(),
+				"P4 aggr easy: cell '{}' recorded no fold steps", c.label);
 		}
 	}
 
