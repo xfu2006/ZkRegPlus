@@ -5515,18 +5515,16 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoAdvice<F> {
 		// set in-circuit (assert_qm_union's b_seed logup).
 		let is_uni = |u: usize| subsig_store_info.subsig_to_steps
 			.get(&u).map_or(false, |it| !it.vec_pm_bounds.is_empty());
+		// filtered to non-empty-chain (mirrors new_aggr and
+		// compute_sig's empty-chain drop, so the seed-pin sets stay
+		// equal); empty-chain ids are meta/count-constraint subsigs
+		// with no FSM chain to walk, covered by CP-absence instead.
 		let mut seed_subsigs = inp_subsigs.iter()
 			.filter(|s| !s.is_zero())
+			.filter(|s| is_uni(field_to_usize(*s)))
 			.cloned().collect::<Vec<F>>();
 		seed_subsigs.sort();
 		seed_subsigs.dedup();
-		// an empty-chain obligation subsig would leave its chunk-0
-		// q_i seed row unpayable in the b_seed logup (and legacy
-		// compute_sig cannot evaluate it either) -- fail loud.
-		for s in &seed_subsigs {
-			assert!(is_uni(field_to_usize(s)),
-				"empty-chain subsig {} in SDE obligation set", s);
-		}
 		if seed_subsigs.len() > capacity.subsigs {
 			return Err(Error::CapErr(vec![(format!(
 				"neo_subsig_slots, b_igc: {}", b_igc),

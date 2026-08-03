@@ -2248,8 +2248,14 @@ where
 				let other_inst = None;
 				nova.pc_i = vea[idx].pc_i;
 				nova.pc_i1 = vea[idx].pc_i1;
+				//New8 P4: structured per-step fold cost for the
+				//legacy-vs-neo comparison (the PERF 1009 line below is
+				//log-only). Cleared by utils::consts::reset_sat().
+				let t_step = std::time::Instant::now();
             	nova.prove_step(&mut rng, v_stmt, other_inst)
 					.expect("prove step error");
+				utils::consts::record_step_time(
+					t_step.elapsed().as_micros() as usize);
 				log_perf(job_id, log_level+1, &format!("PERF 1009: -- Pass 3. prove_step cost for word_id: {}, seg_id: {}, stmt_len: {}", word_id, subseg_id, stmt_len), &mut gt_fold);
 
 				//2.3 update 

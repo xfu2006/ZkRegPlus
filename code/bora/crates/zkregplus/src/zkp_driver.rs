@@ -422,7 +422,8 @@ where C: CurveGroup<ScalarField=F>,
 			poseidon_config.clone(),
 			Arc::new(Mutex::new(hybrid)),
 			false, lk_share, false, b_check_lkup
-		).expect("error building aggr circ");
+		).unwrap_or_else(|e| panic!(
+			"error building aggr circ at layer {}: {:?}", i, e));
 		layer_circs.push( vec![circ] );
 	}
 	layer_circs //caller already lowest-cost first: no reverse
@@ -436,6 +437,10 @@ where C: CurveGroup<ScalarField=F>,
 /// (monotone envelopes), so every chunk routes to the cheapest sufficient rung
 /// at fold time. Aggressive only; the foldpot framework is untouched.
 pub(crate) fn determine_config_aggr<F,C,CS>(
+	// unused: aggr's body has no legacy/neo divergence (mode-agnostic
+	// scalar tuner). Kept for API symmetry with determine_config_non_aggr
+	// so callers pass the same b_use_neo at both call sites.
+	_b_use_neo: bool,
 	db: Arc<ClamavDB<F>>,
 	words: &Vec<Vec<F>>,
 	infos: &Vec<WordInfo>,
@@ -936,8 +941,10 @@ fn neo_dfa_subsig_demand(infos: &[WordInfo]) -> usize {
 /// determine_config (non-aggressive): same loop as the aggressive variant but
 /// builds the full cs/igc/dfa ladder via build_circs_adv. CapErr bumps route
 /// to cs or igc fields by the b_igc suffix. Returns the confirmed-lowest base
-/// caps (decreased_copy regenerates the ladder).
-pub(crate) fn determine_config_general<F,C,CS>(
+/// caps (decreased_copy regenerates the ladder). `b_use_neo` gates the exact
+/// subsig/cp/dfa seed block below (NewP3.5); legacy skips it untouched.
+pub(crate) fn determine_config_non_aggr<F,C,CS>(
+	b_use_neo: bool,
 	db: Arc<ClamavDB<F>>,
 	sample_words: &Vec<Vec<F>>,
 	sample_word_infos: &Vec<WordInfo>,
@@ -984,7 +991,7 @@ where C: CurveGroup<ScalarField=F>,
 	// demand: min_subsigs is pinned to the seed too, keeping the subsig axis
 	// FLAT. Without that pin decreased_copy's *9/16 would drop a lower rung
 	// below demand and CapErr. Legacy is untouched (gate + hard rule).
-	if read_global_config().clamav_cfg.b_use_discharge_neo {
+	if b_use_neo {
 		let d_cs = neo_subsig_demand::<F,C,CS>(&db, sample_word_infos, false);
 		let d_igc = neo_subsig_demand::<F,C,CS>(&db, sample_word_infos, true);
 		// +1 reserves the comp_sig dummy entry (inp_subsigs[0] must be 0),
@@ -1070,7 +1077,7 @@ where C: CurveGroup<ScalarField=F>,
 		match probe_res {
 			Ok(steps) => {
 				t_all.stop();
-				log(0, LOG1, &format!("determine_config_general CONVERGED \
+				log(0, LOG1, &format!("determine_config_non_aggr CONVERGED \
 					@iter {}: steps={}, perc_cs={}, perc_igc={}, subsigs={}, \
 					basis_acc={}; round {} ms, TOTAL {} ms", iter, steps,
 					p.perc_pats_expansion_rate, p.perc_pats_expansion_rate_igc,
@@ -1199,7 +1206,22 @@ where C: CurveGroup<ScalarField=F>,
 					return Err(format!(
 						"CapErr with no bump applied: {:?}", errs));
 				}
-				log(0, LOG1, &format!("determine_config_general iter {}: \
+				// NEO: keep the subsigs axis FLAT after a bump. The seed
+				// above pinned each arm's ladder floor to its OWN demand,
+				// but a later CapErr raises only the BASE -- and
+				// neo_subsig_demand models the SED obligation set, NOT
+				// comp_sig's own demand, so such a bump does happen. With
+				// a stale floor decreased_copy drops the lower rungs back
+				// below it ((2*9/16).max(1) = 1) and re-raises the same
+				// CapErr forever, which apply_caperr_bumps then reports as
+				// "no bump applied". Re-pin so every rung moves with the
+				// base. Scoped: _floor_guard restores on exit.
+				if b_use_neo {
+					let mut c = get_global_config();
+					c.min_subsigs = p.subsigs;
+					c.min_subsigs_igc = p.subsigs_igc;
+				}
+				log(0, LOG1, &format!("determine_config_non_aggr iter {}: \
 					round {} ms, bumped {:?}", iter, t_round.ms(), errs));
 			}
 		}
@@ -1596,6 +1618,11 @@ where
 	//3. build the circuits
 	let rc_db = Arc::new(db.clone());
 
+	// read ONCE: threaded through both the determine_config_non_aggr call and
+	// the post-convergence floor re-apply below, instead of two independent
+	// global-config reads that could observe different values.
+	let b_use_neo = read_global_config().clamav_cfg.b_use_discharge_neo;
+
 	// Capacity source for folding. `DcMode::Off` -> the caller's hand caps.
 	// Otherwise the determine_config Pass-1 probe auto-tunes the lowest
 	// CapParams for THIS (DB, corpus): it reuses the built DB + loaded jobs,
@@ -1648,7 +1675,7 @@ where
 			.and_then(|s| s.parse().ok()).unwrap_or(4);
 		log(0, log_level, &format!("DETERMINE_CONFIG: probing {} words over \
 			{} threads", all_words.len(), n_threads));
-		match determine_config_general::<CF1<C1>,C1,CS1>(rc_db.clone(),
+		match determine_config_non_aggr::<CF1<C1>,C1,CS1>(b_use_neo, rc_db.clone(),
 			&all_words, &all_infos, p0, chunk_len,
 			lkup_len, max_total_word_len, vec_decrease_level, num_circs, 60,
 			n_threads) {
@@ -1676,7 +1703,7 @@ where
 				// a cp::subsigs bump raises the top rung, but the invariant
 				// every rung must clear stays the no-critical-pattern count.
 				// DFA laddering is legitimate, so min_dfa_subsigs is untouched.
-				if read_global_config().clamav_cfg.b_use_discharge_neo {
+				if b_use_neo {
 					let cp_floor = db.vec_sigs_no_critical_pat.len() + 1;
 					let mut c = get_global_config();
 					c.min_subsigs = new.subsigs;
@@ -1929,6 +1956,9 @@ where
 
 	//3. build the circuits (CS-only aggressive)
 	let rc_db = Arc::new(db.clone());
+	// passed through for API symmetry with determine_config_non_aggr; aggr's
+	// body has no legacy/neo divergence today (see determine_config_aggr doc).
+	let b_use_neo = read_global_config().clamav_cfg.b_use_discharge_neo;
 	// M11: the aggressive determine_config also lives in the run paths
 	// (run_dlp_sample_config / full_dlp_sample3), which carry their own vdata
 	// and emit a rung ladder; those pass DcMode::Off so they are not re-tuned
@@ -1977,9 +2007,9 @@ where
 		let n_threads = knob("ZKR_DC_THREADS", 4);
 		log(0, log_level, &format!("DETERMINE_CONFIG (aggr): probing {} \
 			words over {} threads", words.len(), n_threads));
-		match determine_config_aggr::<CF1<C1>,C1,CS1>(rc_db.clone(), &words,
-			&infos, &vdata, seed, chunk_len, lkup_len, total_word_n, k_max,
-			n_buckets, 60, n_threads, 8, peel_pct) {
+		match determine_config_aggr::<CF1<C1>,C1,CS1>(b_use_neo, rc_db.clone(),
+			&words, &infos, &vdata, seed, chunk_len, lkup_len, total_word_n,
+			k_max, n_buckets, 60, n_threads, 8, peel_pct) {
 			Ok((lad, hist)) => {
 				log(0, log_level, &format!("DETERMINE_CONFIG (aggr) RESULT: \
 					{} rungs, hist={:?}", lad.len(), hist));
@@ -2052,7 +2082,7 @@ where
 				utils::consts::reset_sat();
 				let rcd = rc_db.clone();
 				let lk = db.lkup.clone();
-				let res = probe_catching(|| {
+				let res = crate::determine_config::probe_catching_with_rung(|| {
 					let vec_circs = build_circs_adv_aggr::<CF1<C1>,C1,CS1>(
 						&poseidon_config, max_total_word_len, chunk_len,
 						lkup_len, rcd, &caps, b_check_lkup);
@@ -2070,17 +2100,32 @@ where
 				});
 				match res {
 					Ok(Ok(b_dry)) => { if b_dry { return; } break }
-					Ok(Err(errs)) => {
+					Ok(Err((errs, rung))) => {
+						// bump ONLY the rung the 0-word check attributed the
+						// CapErr to ("at layer {i}", parsed by
+						// parse_rung_from_panic); bumping every rung flattens
+						// the ladder (bug #1). Fall back to bumping all rungs
+						// only when the index wasn't recoverable (e.g. a
+						// build_circs_adv_aggr-time CapErr with no layer tag).
 						let mut changed = false;
 						let mut unmapped = vec![];
-						for p in ladder.iter_mut() {
-							let (c, u) = apply_caperr_bumps(p, true, &errs);
-							changed |= c;
-							if !u.is_empty() { unmapped = u; }
+						match rung.filter(|&i| i < ladder.len()) {
+							Some(i) => {
+								let (c, u) = apply_caperr_bumps(
+									&mut ladder[i], true, &errs);
+								changed |= c;
+								if !u.is_empty() { unmapped = u; }
+							}
+							None => for p in ladder.iter_mut() {
+								let (c, u) = apply_caperr_bumps(p, true, &errs);
+								changed |= c;
+								if !u.is_empty() { unmapped = u; }
+							}
 						}
 						tries += 1;
 						log(0, log_level, &format!("DETERMINE_CONFIG (aggr): \
-							0-word bump try {}: {:?}", tries, errs));
+							0-word bump try {} (rung={:?}): {:?}", tries, rung,
+							errs));
 						assert!(changed && unmapped.is_empty(),
 							"aggr tuner: 0-word finalize stuck \
 							 (unmapped={:?}): {:?}", unmapped, errs);
@@ -2446,20 +2491,54 @@ pub mod tests_zkp_driver{
 			.and_then(|s| s.parse::<usize>().ok()).unwrap_or(dflt)
 	}
 
+	/// (label, fill, cap) for every POPULATED saturation gauge after a
+	/// real fold. zkp_driver_adv/zkp_driver_adv_aggr both reset_sat()
+	/// right before the real fold, so these reflect only that fold.
+	/// Legacy populates get_fwd/get_fwd_cap; neo populates QM_SAT/QC_SAT
+	/// (Q_m and Q_c/Q_i, per cs+igc arm) -- the other family stays at
+	/// cap=0 and is filtered out here.
+	fn sat_summary(b_use_neo: bool) -> Vec<(&'static str, usize, usize)> {
+		use utils::consts::{get_fwd, get_fwd_cap, QM_SAT, QC_SAT};
+		let mut v = vec![];
+		if b_use_neo {
+			let (f, c) = QM_SAT[0].get(); if c > 0 { v.push(("Q_m cs", f, c)); }
+			let (f, c) = QM_SAT[1].get(); if c > 0 { v.push(("Q_m igc", f, c)); }
+			let (f, c) = QC_SAT[0].get(); if c > 0 { v.push(("Q_c cs", f, c)); }
+			let (f, c) = QC_SAT[1].get(); if c > 0 { v.push(("Q_c igc", f, c)); }
+		} else {
+			let (f, c) = (get_fwd(false), get_fwd_cap(false));
+			if c > 0 { v.push(("fwd cs", f, c)); }
+			let (f, c) = (get_fwd(true), get_fwd_cap(true));
+			if c > 0 { v.push(("fwd igc", f, c)); }
+		}
+		v
+	}
+
+	/// Highest saturation rate (fill/cap) across all populated gauges --
+	/// Part B's "config is near-saturated" check. 0.0 if nothing was
+	/// recorded (e.g. a dry-run/degenerate fold never hit any gauge).
+	fn highest_sat_pct(b_use_neo: bool) -> f64 {
+		sat_summary(b_use_neo).iter()
+			.map(|&(_, f, c)| f as f64 / c as f64)
+			.fold(0.0, f64::max)
+	}
+
 	/// clam_hard: NON-AGGRESSIVE legacy-vs-neo comparison cell over a
 	/// small SDE-dense ClamAV subset (924 sigs carrying bounded gaps,
 	/// built fresh by data/debug/clam_hard_set/config/gen.py).
 	///
-	/// ZKR_USE_NEO=1 selects neo, else legacy -- the ONLY difference
-	/// between the two runs of a cell. ZKR_SCAN names the manifest, so
-	/// easy vs hard is a scan-target swap on one fixed sig set. The
+	/// `b_use_neo` selects neo vs legacy (ZKR_USE_NEO/ZKR_NO_NEO still
+	/// override, via neo_from_env) -- the ONLY difference between the
+	/// two runs of a cell. `num_ladders` is the decreased_copy ladder
+	/// depth (build_circs_adv's num_circs). ZKR_SCAN names the manifest,
+	/// so easy vs hard is a scan-target swap on one fixed sig set. The
 	/// remaining knobs tune capacity against the NEO SAT audit line.
 	#[allow(dead_code)]
-	fn clam_hard<F:PrimeField>(b_check_lkup: bool){
+	fn clam_hard<F:PrimeField>(b_use_neo: bool, num_ladders: usize,
+		b_check_lkup: bool){
 		utils::os::print_computer_config(Some("clam_hard"));
-		if std::env::var("ZKR_USE_NEO").is_ok() {
-			get_global_config().clamav_cfg.b_use_discharge_neo = true;
-		}
+		get_global_config().clamav_cfg.b_use_discharge_neo =
+			super::neo_from_env(b_use_neo);
 		get_global_config().snark_cache_dir = "clam_hard".to_string();
 		get_global_config().b_read_snark_cache = false;
 		get_global_config().b_write_snark_cache = false;
@@ -2508,6 +2587,10 @@ pub mod tests_zkp_driver{
 			basis_unique_states, basis_acc_states
 		);
 		let init_dfa_cap = DfaCapacity::new(max_word, sigs, subsigs);
+		// N circs need N-1 decrease levels (build_circs_adv only steps
+		// the capacity BETWEEN circuits); "2" is this file's established
+		// decrease-level value for a 2-rung ladder (e.g. line 3801).
+		let vec_decrease_level: Vec<usize> = vec![2; num_ladders.saturating_sub(1)];
 
 		zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
 			0,
@@ -2523,8 +2606,8 @@ pub mod tests_zkp_driver{
 			&init_cp_cap,
 			&init_sed_cap,
 			&init_dfa_cap,
-			&vec![],
-			1, //num_circs
+			&vec_decrease_level,
+			num_ladders, //num_circs
 			b_check_lkup
 		);
 	}
@@ -2534,7 +2617,7 @@ pub mod tests_zkp_driver{
 	/// --show-output --nocapture`
 	#[test]
 	pub fn test_clam_hard(){
-		clam_hard::<Fr>(false);
+		clam_hard::<Fr>(false, 1, false);
 	}
 
 	/// dlp_hard: AGGRESSIVE legacy-vs-neo comparison cell over the five
@@ -2542,12 +2625,24 @@ pub mod tests_zkp_driver{
 	/// Enron files (data/debug/dlp_hard_set/config/gen.py explains the
 	/// selection). ZKR_SCAN picks scan_easy.dat or scan_hard.dat -- the
 	/// SAME sig set both ways, so the cells differ only in density.
+	/// `b_use_neo`/`num_ladders` mirror clam_hard's params (ZKR_USE_NEO/
+	/// ZKR_NO_NEO still override via neo_from_env); aggressive mode has
+	/// no decreased_copy ladder, so num_ladders just repeats the same
+	/// hand-cap tuple that many times in `cs_caps` (the legacy DcMode::Off
+	/// fold cap -- neo's ProbeThenFold ladder comes from determine_config_aggr
+	/// instead and ignores cs_caps' length).
 	#[allow(dead_code)]
-	fn dlp_hard<F:PrimeField>(){
+	fn dlp_hard<F:PrimeField>(b_use_neo: bool, num_ladders: usize){
 		utils::os::print_computer_config(Some("dlp_hard"));
-		let neo_on = std::env::var("ZKR_USE_NEO").is_ok();
+		let neo_on = super::neo_from_env(b_use_neo);
+		//assign UNCONDITIONALLY (clam_hard already does). Setting it only
+		//in the `if` leaks neo=true out of a preceding neo cell, so a
+		//legacy cell in the SAME process silently runs neo -- with
+		//legacy's lkup share, which then dies as "dummy self-cover: 850
+		//keys > share cap 158". Only reachable from a multi-cell process
+		//such as test_p4_perf_compare.
+		get_global_config().clamav_cfg.b_use_discharge_neo = neo_on;
 		if neo_on {
-			get_global_config().clamav_cfg.b_use_discharge_neo = true;
 			//0 = derive subsigs*(max_chain+1); measured NEEDS peak
 			//on both DLP scans is 0, so the old 5600 was pure slack.
 			get_global_config().neo_wrap_keys = knob("ZKR_WRAPKEYS", 0);
@@ -2620,8 +2715,9 @@ pub mod tests_zkp_driver{
 			1, 1, 1, 4, 64, 1, 1,
 			init_sed_cap.basis_unique_states, 2);
 
-		let cs_caps = vec![(init_cp_cap, init_sed_cap,
-			init_cp_cap_igc, init_sed_cap_igc)];
+		let cs_caps: Vec<_> = std::iter::repeat(
+			(init_cp_cap, init_sed_cap, init_cp_cap_igc, init_sed_cap_igc))
+			.take(num_ladders.max(1)).collect();
 
 		let scan_files: Vec<String> = vec![format!("{}/{}", set1, scan)];
 
@@ -2652,7 +2748,270 @@ pub mod tests_zkp_driver{
 	/// --show-output --nocapture`
 	#[test]
 	pub fn test_dlp_hard(){
-		dlp_hard::<Fr>();
+		dlp_hard::<Fr>(false, 1);
+	}
+
+	/// Part B (New8 P4): determine_config validity + saturation check,
+	/// EASY density, over all 4 {legacy,neo}x{non_aggr,aggr} cells. Two
+	/// checks per cell: (a) a real fold completes with no CapErr panic,
+	/// (b) the highest populated saturation gauge is close to 1 (the
+	/// tuned config is confirmed-near-minimal, not slack).
+	/// Non-aggr (clam_hard) uses a REAL 2-circuit decreased_copy ladder;
+	/// aggr (dlp_hard) stays at 1 circuit for both arms -- 2-circuit
+	/// aggr-neo is known to silently fail verify_batch (bug #2, tracked
+	/// separately, not yet fixed) so it is out of scope here.
+	///
+	/// (b) is asserted only where the cell's scan actually saturates --
+	/// see p4_check_sat. Saturation tracks DATA DENSITY, not the arm:
+	/// legacy reaches 90.9% on a dense scan and 0.4% on a sparse one.
+	const P4_SAT_FLOOR: f64 = 0.95;
+
+	/// Shared Part B tail: always REPORT every populated gauge; assert a
+	/// saturation floor only where one is known to be reachable.
+	///
+	/// `floor`: Some(f) enforces highest-gauge >= f.
+	///
+	/// Saturation is DENSITY-driven, for BOTH arms -- it is not a legacy
+	/// instrumentation gap. Measured on the dense fixtures: aggr neo
+	/// 99.9% (Q_m 13000/13008) and aggr legacy 90.9% (fwd 5200/5721);
+	/// on the sparse ones everything reads ~0 (non_aggr legacy 0.4%,
+	/// non_aggr neo 1.4%, and dlp_hard on scan_easy/scan_hard is fully
+	/// degenerate at 0/32 -- no discharge at all).
+	///
+	/// So a floor is only meaningful on a cell whose scan actually
+	/// saturates. These Part B cells deliberately run the CHEAP scans
+	/// (easy, per the milestone's unit-test brief), so only the
+	/// aggressive neo cell -- which uses the dense fixture because its
+	/// easy/hard scans are degenerate -- carries one. The rest assert
+	/// fold-success and REPORT, plus a weak "neo registered something"
+	/// check so a silently-dead recorder cannot pass. Note the
+	/// non-aggressive neo arm tops out ~56% even on its dense scan
+	/// (structural floors the tuner cannot shrink), and NewP3.5 only ever
+	/// claimed a COST win there (2.45x cols), never saturation.
+	fn p4_check_sat(cell: &str, b_use_neo: bool, floor: Option<f64>){
+		let sat = sat_summary(b_use_neo);
+		let hi = highest_sat_pct(b_use_neo);
+		utils::logger::emit_stdout(format!(
+			"P4 CELL {}: fold OK; highest sat {:.1}%; gauges {:?}",
+			cell, 100.0 * hi, sat));
+		match floor {
+			Some(f) => assert!(hi >= f,
+				"{}: highest saturation {:.3} < {:.2} ({:?})",
+				cell, hi, f, sat),
+			//no floor: still require neo's gauges to exist and register
+			//SOMETHING, so a silently-dead recorder cannot pass.
+			None => if b_use_neo {
+				assert!(sat.iter().any(|&(_, f, c)| c > 0 && f > 0),
+					"{}: neo recorded NO saturation at all ({:?})",
+					cell, sat);
+			},
+		}
+	}
+
+	/// These cells encode their mode in the test NAME, so drop the
+	/// ZKR_USE_NEO/ZKR_NO_NEO overrides -- otherwise a stray env var
+	/// would silently run the other arm and assert on the wrong gauges.
+	/// test_clam_hard/test_dlp_hard keep the env-driven behavior.
+	///
+	/// ZKR_DC=2 (ProbeThenFold) is forced for BOTH arms: these tests
+	/// validate determine_config's OUTPUT, so the tuner has to actually
+	/// run. dc_mode_from_env would otherwise default LEGACY to Off and
+	/// fold the hand caps, whose slack is not a determine_config result
+	/// and would fail the saturation check for the wrong reason. It also
+	/// makes the legacy-vs-neo comparison apples-to-apples (both tuned).
+	///
+	/// Also clears the tuner's warm-start cache. Under ProbeThenFold the
+	/// non-aggressive tuner SAVES its converged caps there and the next
+	/// ProbeThenFold run LOADS them as its seed -- intended for
+	/// monotonically-growing scale rounds, but across independent
+	/// comparison cells it would let one arm inherit the other's
+	/// converged caps. Each cell must tune from its own floor.
+	/// Finally, restore the three subsigs ladder floors to their "0 =
+	/// inherit" default. The neo arm PINS them (and the post-convergence
+	/// re-apply in zkp_driver_adv is deliberately NOT scoped by
+	/// FloorGuard), so in a multi-cell process -- test_p4_perf_compare
+	/// runs all four in one -- a neo cell would otherwise hand its
+	/// floors to the next cell. Harmless per-process, wrong per-cell.
+	/// Pick a cell's scan target: an externally-set ZKR_SCAN WINS, so the
+	/// density can be swept (easy vs dense) without a recompile; else the
+	/// cell's documented default.
+	fn p4_scan(dflt: &str){
+		if std::env::var("ZKR_SCAN_PIN").is_ok() { return; } //caller pinned
+		std::env::set_var("ZKR_SCAN", dflt);
+	}
+
+	fn p4_pin_mode(){
+		std::env::remove_var("ZKR_USE_NEO");
+		std::env::remove_var("ZKR_NO_NEO");
+		std::env::set_var("ZKR_DC", "2");
+		let _ = std::fs::remove_file("/tmp/bora/scale/warmstart_caps.json");
+		let mut c = get_global_config();
+		c.min_subsigs = 0;
+		c.min_subsigs_igc = 0;
+		c.min_cp_subsigs = 0;
+	}
+
+	#[test]
+	pub fn test_p4_non_aggr_legacy(){
+		p4_pin_mode();
+		p4_scan("binexec.dat");
+		clam_hard::<Fr>(false, 2, false);
+		p4_check_sat("non_aggr legacy 2-circ", false, None);
+	}
+
+	#[test]
+	pub fn test_p4_non_aggr_neo(){
+		p4_pin_mode();
+		p4_scan("binexec.dat");
+		clam_hard::<Fr>(true, 2, false);
+		p4_check_sat("non_aggr neo 2-circ", true, None);
+	}
+
+	/// The aggressive cells use scan_dense.dat (the gen_scan.py fixture),
+	/// NOT easy/hard: dlp_hard yields NO discharge on either of those, so
+	/// Q_m comes back EMPTY -- measured 0/32 on BOTH scan_easy and
+	/// scan_hard. Degenerate cells, not slack ones. scan_dense.dat is the
+	/// fixture NewP3.5 measured at 99.9% Q_m (13000/13008), and is the
+	/// only aggressive target where saturation means anything.
+	#[test]
+	pub fn test_p4_aggr_legacy(){
+		p4_pin_mode();
+		p4_scan("scan_dense.dat");
+		dlp_hard::<Fr>(false, 1);
+		p4_check_sat("aggr legacy 1-circ", false, None);
+	}
+
+	#[test]
+	pub fn test_p4_aggr_neo(){
+		p4_pin_mode();
+		p4_scan("scan_dense.dat"); //see test_p4_aggr_legacy
+		dlp_hard::<Fr>(true, 1);
+		p4_check_sat("aggr neo 1-circ", true, Some(P4_SAT_FLOOR));
+	}
+
+	/// One measured cell of the Part C legacy-vs-neo comparison.
+	struct P4Perf {
+		label: String,
+		circs: Vec<(usize, usize)>,             //(cols, rows) per rung
+		steps: Vec<usize>,                      //prove_step us, in order
+		sat: Vec<(&'static str, usize, usize)>, //(gauge, fill, cap)
+	}
+
+	/// Run one cell and snapshot its metrics. Both drivers reset_sat()
+	/// immediately before the real fold, and the recorders are filled
+	/// during foldpot_main, so these reflect ONLY that fold.
+	/// p4_pin_mode() runs per cell so no cell inherits the previous
+	/// cell's tuner warm-start.
+	fn p4_measure(label: &str, b_use_neo: bool, run: impl FnOnce())
+		-> P4Perf {
+		p4_pin_mode();
+		run();
+		P4Perf {
+			label: label.to_string(),
+			circs: utils::consts::get_circ_sizes(),
+			steps: utils::consts::get_step_times(),
+			sat: sat_summary(b_use_neo),
+		}
+	}
+
+	/// Print the 4-cell comparison: circuit size, per-step fold time,
+	/// and saturation (Q_m + Q_c/Q_i for neo, fwd for legacy).
+	fn p4_report(cells: &[P4Perf]) {
+		use utils::logger::emit_stdout;
+		emit_stdout(format!("\n==== New8 P4 legacy-vs-neo comparison \
+			(DENSE fixtures; non_aggr=binexec_dense, aggr=scan_dense) ===="));
+		for c in cells {
+			let cols: usize = c.circs.iter().map(|&(c, _)| c).sum();
+			let rows: usize = c.circs.iter().map(|&(_, r)| r).sum();
+			// circs[0] is the real cell circuit; the trailing ~183776-col
+			// entry is a FIXED auxiliary circuit present in every cell, so
+			// quote prim_cols for cost comparisons -- summing both dilutes
+			// the ratio by a constant.
+			let prim = c.circs.first().copied().unwrap_or((0, 0));
+			let n = c.steps.len();
+			let tot: usize = c.steps.iter().sum();
+			let (mn, mx) = (c.steps.iter().min().copied().unwrap_or(0),
+				c.steps.iter().max().copied().unwrap_or(0));
+			let avg = if n == 0 { 0 } else { tot / n };
+			let mut srt = c.steps.clone(); srt.sort();
+			let med = if n == 0 { 0 } else { srt[n / 2] };
+			emit_stdout(format!("\n-- {} --", c.label));
+			emit_stdout(format!("  circs: {} entr(ies), PRIMARY cols={} \
+				rows={}; all-entries cols={} rows={} {:?}",
+				c.circs.len(), prim.0, prim.1, cols, rows, c.circs));
+			emit_stdout(format!("  fold: {} steps, total={} ms, \
+				avg={} ms, median={} ms, min={} ms, max={} ms",
+				n, tot / 1000, avg / 1000, med / 1000, mn / 1000,
+				mx / 1000));
+			for &(g, f, cap) in c.sat.iter() {
+				emit_stdout(format!("  sat {:<8} {}/{} ({:.1}%)",
+					g, f, cap, 100.0 * f as f64 / cap as f64));
+			}
+			if c.sat.is_empty() { emit_stdout("  sat: (none)".to_string()); }
+		}
+		//pairwise legacy-vs-neo ratios, in the order cells were measured.
+		emit_stdout(format!("\n-- ratios (legacy / neo) --"));
+		for pair in cells.chunks(2) {
+			if pair.len() < 2 { continue; }
+			let (l, n) = (&pair[0], &pair[1]);
+			//PRIMARY circuit only (see above): the shared auxiliary entry
+			//is a constant and would dilute the ratio toward 1.
+			let lc = l.circs.first().map(|&(c, _)| c).unwrap_or(0);
+			let nc = n.circs.first().map(|&(c, _)| c).unwrap_or(0);
+			let lt: usize = l.steps.iter().sum();
+			let nt: usize = n.steps.iter().sum();
+			let r = |a: usize, b: usize| if b == 0 { 0.0 }
+				else { a as f64 / b as f64 };
+			emit_stdout(format!("  {} vs {}: cols {:.2}x, fold {:.2}x",
+				l.label, n.label, r(lc, nc), r(lt, nt)));
+		}
+		emit_stdout(format!("==== end P4 comparison ====\n"));
+	}
+
+	/// Part C (New8 P4): performance comparison across all 4 cells at
+	/// ONE circuit each, reporting circuit size, per-step fold time, and
+	/// saturation. Runs 4 real folds in-process, so it is slow by
+	/// design -- run it alone:
+	/// `cargo test -p zkregplus --release -- test_p4_perf_compare
+	/// --show-output --nocapture`
+	#[test]
+	pub fn test_p4_perf_compare(){
+		// foldpot installs a PROCESS-GLOBAL fail-fast panic hook that
+		// calls process::abort(), which bypasses catch_unwind. It is
+		// skipped when b_scale_catch_caperr is set -- but only the
+		// AGGRESSIVE driver sets that, so cell 1 (non-aggr) installs the
+		// hook permanently and later aggr cells can no longer catch their
+		// own 0-word CapErr for the bump-retry, aborting the whole
+		// process instead. Part B never sees it (one process per cell).
+		// This env gate is exactly what driver.rs offers for the case.
+		std::env::set_var("ZKR_NO_FAIL_FAST", "1");
+		p4_pin_mode(); //the sweep sets the mode itself, per cell
+		let mut cells = vec![];
+		//Part C drives TWO dataset families, so it pins both scans itself
+		//rather than honoring a single external ZKR_SCAN. Both are the
+		//DENSE fixtures: New8's key finding is that neo cost is purely
+		//capacity-driven, so a cost comparison is only meaningful near
+		//saturation -- the easy scans measure the capacity floor, not the
+		//work (binexec easy = 1.4% Q_m vs dense 56.3%).
+		std::env::set_var("ZKR_SCAN", "binexec_dense.dat");
+		cells.push(p4_measure("non_aggr legacy", false,
+			|| clam_hard::<Fr>(false, 1, false)));
+		cells.push(p4_measure("non_aggr neo", true,
+			|| clam_hard::<Fr>(true, 1, false)));
+		//scan_hard, not easy: the easy aggr cell has 0 NEEDS and an EMPTY
+		//Q_m, so its cost is pure capacity floor and tells us nothing.
+		std::env::set_var("ZKR_SCAN", "scan_dense.dat");
+		cells.push(p4_measure("aggr legacy", false,
+			|| dlp_hard::<Fr>(false, 1)));
+		cells.push(p4_measure("aggr neo", true,
+			|| dlp_hard::<Fr>(true, 1)));
+		p4_report(&cells);
+		//every cell must have actually folded, else the numbers are
+		//vacuous (e.g. a stray ZKR_DRYRUN would skip foldpot_main).
+		for c in cells.iter() {
+			assert!(!c.steps.is_empty(),
+				"P4 perf: cell '{}' recorded no fold steps", c.label);
+		}
 	}
 
 	/// small_multi_dnf: permanent local regression repro for the
@@ -5534,6 +5893,7 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 				let n_threads = std::env::var("ZKR_DC_THREADS").ok()
 					.and_then(|s| s.parse().ok()).unwrap_or(4);
 				let (lad, hist) = super::determine_config_aggr::<Fr,C1,CS1>(
+					read_global_config().clamav_cfg.b_use_discharge_neo,
 					db_arc.clone(), &words, &infos, &vdata, seed, mw,
 					lkup_len, total_word_n, rc.k_max, rc.n_buckets, 60,
 					n_threads, 8, rc.peel_pct)
@@ -5853,6 +6213,7 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 				let n_threads = std::env::var("ZKR_DC_THREADS").ok()
 					.and_then(|s| s.parse().ok()).unwrap_or(4);
 				let (lad, hist) = super::determine_config_aggr::<Fr,C1,CS1>(
+					read_global_config().clamav_cfg.b_use_discharge_neo,
 					db.clone(), &words, &infos, &vdata, seed, mw, lkup_len,
 					total_word_n, rc.k_max, rc.n_buckets, 60, n_threads, 8,
 					rc.peel_pct).expect("determine_config_aggr");
@@ -6080,6 +6441,7 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 				let n_threads = std::env::var("ZKR_DC_THREADS").ok()
 					.and_then(|s| s.parse().ok()).unwrap_or(4);
 				let (lad, hist) = super::determine_config_aggr::<Fr,C1,CS1>(
+					read_global_config().clamav_cfg.b_use_discharge_neo,
 					db.clone(), &words, &infos, &vdata, seed, mw, lkup_len,
 					total_word_n, rc.k_max, rc.n_buckets, 60, n_threads, 8,
 					rc.peel_pct).expect("determine_config_aggr");
@@ -6849,6 +7211,7 @@ fail: {} ({:.4}%)",
 			let n_threads = std::env::var("ZKR_DC_THREADS").ok()
 				.and_then(|s| s.parse().ok()).unwrap_or(4);
 			let (ladder, hist) = super::determine_config_aggr::<Fr,C1,CS1>(
+				read_global_config().clamav_cfg.b_use_discharge_neo,
 				db.clone(), &words, &infos, &vdata, seed, mw, lkup_len,
 				total_word_n, k_max, n_buckets, 60, n_threads, 8, peel_pct)
 				.expect("determine_config_aggr");

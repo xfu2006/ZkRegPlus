@@ -30623,6 +30623,14 @@ Goal 5. go to P4
 		each structured of doing determine_config() first
 		generates ladder of size 2.
 		then discharge.
+	[c] do unit testing for determine_config() use the
+		easy aggr and easy non-aggr functions and
+		verify that the saturation is close and they can be discharged
+Goal 6. New P4: compare the performance but have the determine_config
+	done as well
+	[a] outline requirement
+	[b] reesach refactor
+	[c] define plan
 
 -- TODO --
 Goal 2. P4 again (measure comparison)

@@ -1195,6 +1195,9 @@ where
 				total_w_len += r1cs.A.n_cols -1 - r1cs.l;
 				total_e_len += r1cs.A.n_rows;
 				log(job_id, log_level, &format!("PERF 1002 circ {}, r1cs cols: {}, rows: {}", idx_j, r1cs.A.n_cols, r1cs.A.n_rows));
+				//New8 P4: structured circuit size for the legacy-vs-neo
+				//comparison; cleared by utils::consts::reset_sat().
+				utils::consts::record_circ_size(r1cs.A.n_cols, r1cs.A.n_rows);
 
 				elen.push(r1cs.A.n_rows);
 				(cf_cs_pp, cf_cs_vp) = CS2::setup(&mut rng, cf_r1cs.A.n_rows)?;

@@ -75,6 +75,8 @@ pub fn reset_sat() {
     for g in QM_SAT.iter().chain(QC_SAT.iter())
         .chain(QM_WRAP_SAT.iter()).chain(QM_REAL_SAT.iter())
         .chain(QM_SUB_SAT.iter()) { g.reset(); }
+    if let Ok(mut v) = STEP_TIMES.lock() { v.clear(); }
+    if let Ok(mut v) = CIRC_SIZES.lock() { v.clear(); }
 }
 pub fn get_fwd(b_igc: bool) -> usize {
     (if b_igc {&MAX_FWD_IGC} else {&MAX_FWD_CS}).load(Ordering::Relaxed)
@@ -119,6 +121,33 @@ pub static QC_SAT: [SatGauge; 2] = [SatGauge::new(), SatGauge::new()];
 pub static QM_WRAP_SAT: [SatGauge; 2] = [SatGauge::new(), SatGauge::new()];
 pub static QM_REAL_SAT: [SatGauge; 2] = [SatGauge::new(), SatGauge::new()];
 pub static QM_SUB_SAT: [SatGauge; 2] = [SatGauge::new(), SatGauge::new()];
+
+/// Per-fold-step prove_step wall time in microseconds, in step order.
+/// Recorded by the foldpot driver's Pass-3 loop; reset by reset_sat()
+/// so each measured fold starts clean. Empty unless a fold ran.
+pub static STEP_TIMES: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+
+/// Append one fold step's prove_step cost (microseconds).
+pub fn record_step_time(us: usize) {
+    if let Ok(mut v) = STEP_TIMES.lock() { v.push(us); }
+}
+/// Snapshot the per-step times recorded since the last reset_sat().
+pub fn get_step_times() -> Vec<usize> {
+    STEP_TIMES.lock().map(|v| v.clone()).unwrap_or_default()
+}
+
+/// Per-circuit R1CS dimensions (cols, rows), in ladder-rung order, as
+/// sized during preprocessing. Same lifecycle as STEP_TIMES.
+pub static CIRC_SIZES: Mutex<Vec<(usize, usize)>> = Mutex::new(Vec::new());
+
+/// Append one circuit's R1CS (cols, rows).
+pub fn record_circ_size(cols: usize, rows: usize) {
+    if let Ok(mut v) = CIRC_SIZES.lock() { v.push((cols, rows)); }
+}
+/// Snapshot the circuit sizes recorded since the last reset_sat().
+pub fn get_circ_sizes() -> Vec<(usize, usize)> {
+    CIRC_SIZES.lock().map(|v| v.clone()).unwrap_or_default()
+}
 
 /// Knobs that govern ClamAV PCRE approximation when building the
 /// pattern DB. Lives in utils so GlobalConfig can embed it;

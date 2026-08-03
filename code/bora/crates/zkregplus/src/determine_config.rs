@@ -185,6 +185,39 @@ where Fp: FnOnce() -> Result<T, Vec<(String, usize)>> {
     }
 }
 
+/// Parse the failing rung index out of a panic message, when present.
+/// foldpot's per-layer 0-word check (driver.rs) panics with "at layer {i}"
+/// right next to the CapErr dump, so a ladder-wide probe can attribute the
+/// CapErr to the ONE rung that actually failed instead of bumping every rung.
+pub fn parse_rung_from_panic(msg: &str) -> Option<usize> {
+    let i = msg.find("at layer ")?;
+    let after = &msg[i + "at layer ".len()..];
+    let digits: String = after.chars()
+        .take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse::<usize>().ok()
+}
+
+/// Like `probe_catching`, but also recovers the failing rung index (see
+/// `parse_rung_from_panic`) so the caller can bump ONLY that ladder entry.
+/// `None` means the index wasn't recoverable (e.g. a non-layer CapErr site);
+/// callers should fall back to bumping every rung in that case.
+pub fn probe_catching_with_rung<T, Fp>(f: Fp)
+    -> Result<Result<T, (Vec<(String, usize)>, Option<usize>)>, String>
+where Fp: FnOnce() -> Result<T, Vec<(String, usize)>> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(r) => Ok(r.map_err(|errs| (errs, None))),
+        Err(panic) => {
+            let msg = panic.downcast_ref::<&str>().map(|s| s.to_string())
+                .or_else(|| panic.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "unknown panic".to_string());
+            match parse_caperr_from_panic(&msg) {
+                Some(errs) => Ok(Err((errs, parse_rung_from_panic(&msg)))),
+                None => Err(format!("non-CapErr panic in build/probe: {}", msg)),
+            }
+        }
+    }
+}
+
 /// Apply CapErr bumps to `p`. For each (param_name, required), set the mapped
 /// field to max(current, required). Returns (any_changed, unmapped_names).
 /// `required` is the gadget's back-solved minimum, so post-loop each binding
