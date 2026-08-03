@@ -30631,13 +30631,42 @@ Goal 6. New P4: compare the performance but have the determine_config
 	[a] outline requirement
 	[b] reesach refactor
 	[c] define plan
--- TODO --
 Goal 7. Further improvmeents
 	[a] I need the data of aggr-easy case neo vs legacy and I need
-		a detailed analysis report why neo performs worse.
+		a detailed analysis report why neo performs worse. -> DONE
 	[b] try to improve the aggr/non-aggr hard case (they took
-		too long to run).
+		too long to run). -> PLAN made
+
+Monday 08/03/2026
+Goal 1. improvmement NewP3.6
+	[a] go over the plan 
 	[b] why the saturation is only 50% for non-aggr (both neo and legacy)
+	[c] redo the sample set. 
+	[d] correct saturation calculation and recollect data
+
+Goal 2. Writing
+	[a] read
+	[b] planning: CyclePair, Circuit Model, SNARK, and then Overall
+		Framework
+	[c] read again: CyclePair
+	[d] planning mixed R1CS.
+	[e] read mixed R1CS first.
+	[f] read the prove framework with cyclepair
+	[g] think about how to put the mixed R1CS into the
+		framework.
+
+Goal 3. Reading
+	[a] sum check improvment.
+
+Goal 4. NewP3.6 CONTINUE
+	[a] collect data.
+
+Goal 5. continue writing
+	[a] plan 
+	[b] writing B.3 Circuit Model
+		-> fix notation
+		-> fix def 10.
+
 
 
 -- TODO --

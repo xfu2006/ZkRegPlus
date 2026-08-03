@@ -20,7 +20,7 @@ use folding_schemes::{
 		sigma_ir1cs::{LookupTableTwoCol,GadgetMapper,GadgetMapperDeepClone,SigmaGadget,StatementConfig,StatementInst,StatementExtraInfo,NdAdvice,Capacity,WordInfo} 	}
 };
 use ark_ff::{PrimeField, BigInteger};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use utils::consts::read_global_config;
 use std::{
 	marker::PhantomData,
@@ -145,6 +145,65 @@ pub trait ComponentMapper<F:PrimeField + ColEle, LK: LookupTableTwoCol<F>>:
 
 }
 
+
+/// DEBUG USE 62070.4/.5: attribute one statement's outer-lookup share.
+/// A nonzero subtable_id is one query; the DISTINCT (tbl_id, val) pairs
+/// are what lkup_share_size must cover.
+fn probe_lk_keys<F: PrimeField + ColEle>(names: &Vec<String>,
+	trips: &Vec<(usize, F, F)>, share: usize, b_dummy: bool){
+	let key = |t: &F, v: &F| {
+		let mut k = t.into_bigint().to_bytes_le();
+		k.extend(v.into_bigint().to_bytes_le());
+		k
+	};
+	let mut all: HashSet<Vec<u8>> = HashSet::new();
+	let mut per: Vec<HashSet<Vec<u8>>> =
+		(0..names.len()).map(|_| HashSet::new()).collect();
+	//tbl_id -> its distinct values. A VARIABLE si column tags every row
+	//with its own tbl_id, so it shows up as many tbl_ids of ONE value
+	//each; a CONST si column is one tbl_id with many values. That split
+	//is the direct test of the 7-variable-si hypothesis.
+	let mut by_tbl: HashMap<Vec<u8>, HashSet<Vec<u8>>> = HashMap::new();
+	for (i, t, v) in trips {
+		let k = key(t, v);
+		all.insert(k.clone());
+		per[*i].insert(k);
+		by_tbl.entry(t.into_bigint().to_bytes_le())
+			.or_insert_with(HashSet::new)
+			.insert(v.into_bigint().to_bytes_le());
+	}
+	let (mut single, mut multi) = (0usize, 0usize);
+	for vs in by_tbl.values() {
+		if vs.len() == 1 { single += 1; } else { multi += vs.len(); }
+	}
+	println!("DEBUG USE 62070.4: LK dummy={} queries={} \
+distinct_keys={} share_cap={} used_pct={} tbl_ids={} \
+keys_single_val_tbls={} keys_multi_val_tbls={}",
+		b_dummy, trips.len(), all.len(), share,
+		if share > 0 { all.len() * 100 / share } else { 0 },
+		by_tbl.len(), single, multi);
+	for i in 0..names.len() {
+		println!("DEBUG USE 62070.5: LK comp={} distinct_keys={}",
+			names[i], per[i].len());
+	}
+	//Top tables by distinct-value count. A CONST si (range check) is one
+	//tbl_id with many values; a VARIABLE si is si_tag_base(cid)+enc, so
+	//it appears as many huge tbl_ids of one value each. bits separates
+	//them, and the tbl_id value cross-references 62070.10's si column.
+	let mut tops: Vec<(usize, u32, Vec<u8>)> = by_tbl.iter()
+		.map(|(t, vs)| {
+			let mut b = t.clone();
+			while b.last() == Some(&0u8) { b.pop(); }
+			(vs.len(), (b.len() * 8) as u32, t.clone())
+		}).collect();
+	tops.sort_by(|a, b| b.0.cmp(&a.0));
+	for (nv, bits, t) in tops.iter().take(12) {
+		let head: Vec<String> = t.iter().rev().take(6)
+			.map(|b| format!("{:02x}", b)).collect();
+		println!("DEBUG USE 62070.11: LK tbl bits={} distinct_vals={} \
+tbl_hi={}", bits, nv, head.join(""));
+	}
+}
 
 /// Composite list of advices (the internal ND_ADVICE for CompositeGadgetMapper)
 #[derive(Debug)]
@@ -907,6 +966,7 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 		let mut vec_st_inp = vec![]; //subtable_id inp part
 		let mut vec_st_oup = vec![]; //subtable_id oup part
 		let mut vec_st_data = vec![];
+		let mut vec_names: Vec<String> = vec![]; //DEBUG USE 62070.5
 
 		let advices = r_advice.as_any().downcast_ref::<CompositeAdvice>()
 			.expect("downcast err!");
@@ -916,6 +976,7 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 		for i in 0..self.vec_components.len(){
 			let comp = &self.vec_components[i];
 			let comp_name = comp.lock().unwrap().get_name();
+			vec_names.push(comp_name.clone());
 			let vecs = comp.lock().unwrap()
 				.build_statement_comp(i, stmt_map_id,
 					&word_seg, actual_word_len, &lkup,
@@ -957,6 +1018,25 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 		let subtbl_data = vec_st_data.concat();
 		let subtbl_id = vec![subtbl_inp, subtbl_oup, subtbl_data]
 			.concat();
+		if utils::consts::b_probe_p36() {
+			//NewP3.6 T0': the share is what perc_lkup_share buys, and
+			//it is set 20x higher for neo. Attribute it before crediting
+			//any circuit-level ratio to the discharge arm.
+			let mut trips: Vec<(usize, F, F)> = vec![];
+			for i in 0..vec_names.len() {
+				for (sv, vv) in [(&vec_st_inp[i], &vec_inp[i]),
+					(&vec_st_oup[i], &vec_oup[i]),
+					(&vec_st_data[i], &vec_data[i])] {
+					for j in 0..sv.len() {
+						if !sv[j].is_zero() {
+							trips.push((i, sv[j], vv[j]));
+						}
+					}
+				}
+			}
+			probe_lk_keys(&vec_names, &trips, lkup_share_size,
+				b_dummy);
+		}
 		if B_DEBUG {
 			assert!(inp.len()==cfg.input_size);
 			assert!(oup.len()==cfg.output_size);

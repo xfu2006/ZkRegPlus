@@ -62,6 +62,23 @@ pub fn dump_cfg_col_sizes(cfg: &ContainerConfig, tag: &str){
 		tag, rows.len(), tot);
 }
 
+/// DEBUG USE 62070: like collect_cfg_cols but KEEPS the segment
+/// offset, which is what maps a statement index back to its column.
+/// Yields (path, seg, start, len).
+pub fn collect_cfg_cols_pos(cfg: &ContainerConfig,
+	out: &mut Vec<(String,usize,usize,usize)>){
+	match cfg{
+		ContainerConfig::Column(loc, _name, path, _b_const)=>{
+			if let Some((seg, start, len)) = loc.dest{
+				out.push((path.clone(), seg, start, len));
+			}
+		},
+		ContainerConfig::Complex(v, _, _)=>{
+			for c in v{ collect_cfg_cols_pos(c, out); }
+		},
+	}
+}
+
 /// DEBUG USE 62050: recursive helper for dump_cfg_col_sizes.
 fn collect_cfg_cols(cfg: &ContainerConfig,
 	out: &mut Vec<(String,usize,usize,bool)>){

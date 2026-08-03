@@ -52,60 +52,129 @@ pub static SCALE_DUMP_FWD: AtomicBool = AtomicBool::new(false);
 /// Post-convergence cap tightening: max ACTUAL fill seen per fold step,
 /// recorded by the gadgets (replaces the 6901.8 / 6902.1 println probes).
 /// fwd = discharge forward queue (v2d[0].len); acc = SDE accepting states.
-pub static MAX_FWD_CS:  AtomicUsize = AtomicUsize::new(0);
-pub static MAX_FWD_IGC: AtomicUsize = AtomicUsize::new(0);
 pub static MAX_ACC_CS:  AtomicUsize = AtomicUsize::new(0);
 pub static MAX_ACC_IGC: AtomicUsize = AtomicUsize::new(0);
-// matched forward-queue CAPACITY (vec_size) at the record site, so
-// fold saturation = MAX_FWD / MAX_FWD_CAP is exact (no reconstruction).
-pub static MAX_FWD_CAP_CS:  AtomicUsize = AtomicUsize::new(0);
-pub static MAX_FWD_CAP_IGC: AtomicUsize = AtomicUsize::new(0);
+/// Legacy forward-queue saturation, indexed by `b_igc as usize`. Was
+/// two independent AtomicUsize maxima; a SatGauge so legacy and neo
+/// report the SAME statistic (max over chunks of fill_i/cap_i).
+pub static FWD_SAT: [SatGauge; 2] = [SatGauge::new(), SatGauge::new()];
 pub fn record_fwd(b_igc: bool, fill: usize, cap: usize) {
-    (if b_igc {&MAX_FWD_IGC} else {&MAX_FWD_CS}).fetch_max(fill, Ordering::Relaxed);
-    (if b_igc {&MAX_FWD_CAP_IGC} else {&MAX_FWD_CAP_CS}).fetch_max(cap, Ordering::Relaxed);
+    FWD_SAT[b_igc as usize].record(fill, cap);
 }
 pub fn record_acc(b_igc: bool, n: usize) {
     (if b_igc {&MAX_ACC_IGC} else {&MAX_ACC_CS}).fetch_max(n, Ordering::Relaxed);
 }
 pub fn reset_sat() {
-    for a in [&MAX_FWD_CS, &MAX_FWD_IGC, &MAX_ACC_CS, &MAX_ACC_IGC,
-              &MAX_FWD_CAP_CS, &MAX_FWD_CAP_IGC] {
+    for a in [&MAX_ACC_CS, &MAX_ACC_IGC] {
         a.store(0, Ordering::Relaxed);
     }
     for g in QM_SAT.iter().chain(QC_SAT.iter())
         .chain(QM_WRAP_SAT.iter()).chain(QM_REAL_SAT.iter())
-        .chain(QM_SUB_SAT.iter()) { g.reset(); }
+        .chain(QM_SUB_SAT.iter()).chain(FWD_SAT.iter()) { g.reset(); }
     if let Ok(mut v) = STEP_TIMES.lock() { v.clear(); }
     if let Ok(mut v) = CIRC_SIZES.lock() { v.clear(); }
 }
+/// PEAK fill, independent of cap. Unchanged contract: the tuner seeds
+/// its capacity back-solve from the largest emission, not a ratio.
 pub fn get_fwd(b_igc: bool) -> usize {
-    (if b_igc {&MAX_FWD_IGC} else {&MAX_FWD_CS}).load(Ordering::Relaxed)
+    FWD_SAT[b_igc as usize].get().0
 }
 pub fn get_fwd_cap(b_igc: bool) -> usize {
-    (if b_igc {&MAX_FWD_CAP_IGC} else {&MAX_FWD_CAP_CS}).load(Ordering::Relaxed)
+    FWD_SAT[b_igc as usize].get().1
 }
 pub fn get_acc(b_igc: bool) -> usize {
     (if b_igc {&MAX_ACC_IGC} else {&MAX_ACC_CS}).load(Ordering::Relaxed)
 }
 
-/// Peak fill and its MATCHED cap for one queue, so saturation is exact
-/// with no reconstruction from config (same contract as record_fwd).
-pub struct SatGauge { fill: AtomicUsize, cap: AtomicUsize }
+/// DEBUG USE 62070: single env gate (ZKR_PROBE_P36) for the NewP3.6
+/// saturation + lookup-share probes. Read once; every 62070.x site is
+/// log-only and must stay behind it.
+pub fn b_probe_p36() -> bool {
+    static B: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *B.get_or_init(|| std::env::var("ZKR_PROBE_P36").is_ok())
+}
+
+/// Per-chunk saturation ratios are held as integers scaled by this
+/// (parts per million) so the gauge stays lock-free. ppm / 10_000 = %.
+pub const SAT_SCALE: usize = 1_000_000;
+
+/// Saturation of one queue. Saturation is the PER-EMISSION ratio
+/// fill_i/cap_i maximised over emissions; peak fill and peak cap are
+/// also kept, but their quotient is NOT a saturation (they peak on
+/// different chunks whenever chunks get different capacities).
+pub struct SatGauge {
+    fill: AtomicUsize,
+    cap: AtomicUsize,
+    max_ratio: AtomicUsize,
+    max_pair: AtomicUsize,
+    sum_ratio: AtomicUsize,
+    n: AtomicUsize,
+}
 impl SatGauge {
     pub const fn new() -> Self {
-        Self { fill: AtomicUsize::new(0), cap: AtomicUsize::new(0) }
+        Self { fill: AtomicUsize::new(0), cap: AtomicUsize::new(0),
+            max_ratio: AtomicUsize::new(0),
+            max_pair: AtomicUsize::new(0),
+            sum_ratio: AtomicUsize::new(0), n: AtomicUsize::new(0) }
     }
-    /// Record one emission; both sides keep their running max.
+    /// Record ONE emission. fill and cap arrive together, so the ratio
+    /// below can never mix one chunk's fill with another's capacity --
+    /// which is exactly what the two fetch_max lines do.
     pub fn record(&self, fill: usize, cap: usize) {
+        if cap == 0 { return; } //absent gauge, not a 0% chunk
         self.fill.fetch_max(fill, Ordering::Relaxed);
         self.cap.fetch_max(cap, Ordering::Relaxed);
+        //u128 intermediate: fill*SAT_SCALE only overflows usize for
+        //absurd fills, but the guard is free here.
+        let r = ((fill as u128) * (SAT_SCALE as u128)
+            / (cap as u128)) as usize;
+        self.sum_ratio.fetch_add(r, Ordering::Relaxed);
+        self.n.fetch_add(1, Ordering::Relaxed);
+        let m = u32::MAX as usize;
+        let pair = (fill.min(m) << 32) | cap.min(m);
+        //CAS the ratio, then publish the winner's pair. A slower
+        //thread may overwrite the pair with a LOWER-ratio one; that
+        //blurs only the reported witness, never max_ratio itself.
+        let mut cur = self.max_ratio.load(Ordering::Relaxed);
+        while r > cur {
+            match self.max_ratio.compare_exchange_weak(cur, r,
+                Ordering::Relaxed, Ordering::Relaxed) {
+                Ok(_) => { self.max_pair.store(pair,
+                    Ordering::Relaxed); break; },
+                Err(c) => cur = c,
+            }
+        }
     }
+    /// Peak fill and peak cap, taken INDEPENDENTLY. NOT a saturation
+    /// -- use get_max(). Kept because the tuner back-solves capacity
+    /// from the largest emission.
     pub fn get(&self) -> (usize, usize) {
         (self.fill.load(Ordering::Relaxed), self.cap.load(Ordering::Relaxed))
     }
+    /// (ratio_ppm, fill, cap) of the most saturated single emission.
+    /// ratio can exceed SAT_SCALE: gen_qm_table records BEFORE its
+    /// CapErr check, so an overflowing chunk reads >100% on the way out.
+    pub fn get_max(&self) -> (usize, usize, usize) {
+        let r = self.max_ratio.load(Ordering::Relaxed);
+        let p = self.max_pair.load(Ordering::Relaxed);
+        //an all-empty dataset never wins the CAS, so fall back to the
+        //peak cap: "0/32" says the gauge ran and found nothing, while
+        //"0/0" reads like the gauge never fired at all.
+        if r == 0 { return (0, 0, self.cap.load(Ordering::Relaxed)); }
+        (r, p >> 32, p & (u32::MAX as usize))
+    }
+    /// (mean_ratio_ppm, n). Mean is per EMISSION, not strictly per
+    /// chunk -- a chunk whose advice is regenerated records twice.
+    pub fn get_mean(&self) -> (usize, usize) {
+        let n = self.n.load(Ordering::Relaxed);
+        if n == 0 { return (0, 0); }
+        (self.sum_ratio.load(Ordering::Relaxed) / n, n)
+    }
     fn reset(&self) {
-        self.fill.store(0, Ordering::Relaxed);
-        self.cap.store(0, Ordering::Relaxed);
+        for a in [&self.fill, &self.cap, &self.max_ratio,
+            &self.max_pair, &self.sum_ratio, &self.n] {
+            a.store(0, Ordering::Relaxed);
+        }
     }
 }
 
@@ -525,3 +594,4 @@ pub const MAX_PM_SECTIONS: usize = 32;
 //pub const MIN_BAG_WORD_LEN:usize = 4;
 pub const MIN_BAG_WORD_LEN:usize = 6;
 pub const MIN_PM_WORD_LEN:usize = 4;
+

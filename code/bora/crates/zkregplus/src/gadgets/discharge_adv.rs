@@ -543,6 +543,15 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 			if st % 2 == 1 { st += 1; }
 			let sp = if size_pat % 2 == 1 { size_pat + 1 } else { size_pat };
 			let res = if sp > st { sp } else { st };
+			if utils::consts::b_probe_p36() {
+				println!("DEBUG USE 62070.1: vec_size AGGR ty={:?} \
+res={} size_pat={} size_prod={} binds={} subsigs={} avg_act={} \
+prod={} compress={}", q_type, res, sp, st,
+					if sp > st {"pat"} else {"prod"},
+					capacity.subsigs,
+					capacity.avg_active_pats_per_subsig,
+					capacity.prod_pats_expansion, compress_ratio);
+			}
 			return (res, sp, st);
 		}
 		let size_trace =  capacity.max_nibble_len
@@ -555,6 +564,20 @@ impl <F:PrimeField + ColEle> StepQueue<F>{
 		let size_trace = if size_trace%2==1 {size_trace+1} else {size_trace};
 
 		let res = if size_pat > size_trace {size_pat} else {size_trace};
+		if utils::consts::b_probe_p36() {
+			//NewP3.6: the max() is why one capacity number serves two
+			//independent demands -- the slack term is invisible to the
+			//tuner and to every saturation gauge.
+			println!("DEBUG USE 62070.1: vec_size NONAGGR ty={:?} \
+res={} size_pat={} size_trace={} binds={} subsigs={} avg_act={} \
+basis_pats={} perc={} compress={}", q_type, res, size_pat,
+				size_trace, if size_pat > size_trace {"pat"}
+					else {"trace"},
+				capacity.subsigs,
+				capacity.avg_active_pats_per_subsig,
+				capacity.basis_pats_in_trace,
+				capacity.perc_pats_expansion_rate, compress_ratio);
+		}
 		(res, size_pat, size_trace)
 	}
 

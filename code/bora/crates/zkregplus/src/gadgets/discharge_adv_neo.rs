@@ -49,6 +49,8 @@
 // ============================================================
 
 use ark_ff::{PrimeField, Zero, Field, batch_inversion};
+//DEBUG USE 62070.10: BigInteger::num_bits for the per-column census.
+use ark_ff::BigInteger as _;
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_relations::lc;
 use ark_relations::r1cs::{SynthesisError, ConstraintSystemRef};
@@ -1550,6 +1552,51 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 		utils::consts::QM_REAL_SAT[ig].record(n_real, n_real_cap);
 		utils::consts::QM_SUB_SAT[ig]
 			.record(n_sub, self.capacity.subsigs);
+		if utils::consts::b_probe_p36() {
+			//PER-CHUNK stream: the gauges above fetch_max fill and cap
+			//INDEPENDENTLY, so their printed % understates the tightest
+			//chunk and cannot show a max-vs-mean spread.
+			println!("DEBUG USE 62070.2: qm igc={} rows={}/{} pad={} \
+wrap={}/{} real={}/{} sub={}/{}", self.b_igc, t.enc.len(), n_total,
+				n_total.saturating_sub(t.enc.len()), n_keys, wrap_cap,
+				n_real, n_real_cap, n_sub, self.capacity.subsigs);
+			//DEMAND side: why is there anything (or nothing) to do?
+			//rows=0 means NO OBLIGATION reached the gadget, which is a
+			//fixture/pipeline fact, not an oversized capacity.
+			let chains: usize = subsigs.iter()
+				.filter(|s| !s.is_zero())
+				.map(|s| info.subsig_to_steps
+					.get(&field_to_usize(s))
+					.map(|r| r.vec_pm_bounds.len()).unwrap_or(0))
+				.sum();
+			println!("DEBUG USE 62070.7: qm DEMAND igc={} \
+subsig_slots={} nonzero_subsigs={} chain_steps={} rows_built={}",
+				self.b_igc, subsigs.len(), n_sub, chains,
+				t.enc.len());
+			//CLASS HISTOGRAM. Sizes the windowed-join idea: an FP row is
+			//a trace match that entered Q_m unwindowed and was then
+			//labelled unreachable, so FP is exactly what a windowed join
+			//would never have materialised. It also sizes the
+			//class-gating idea (how many rows pay for C-only advice).
+			let f_max = F::from(((1u64 <<
+				read_global_config().range2_bit) - 1) as u64);
+			let (mut c, mut fp, mut bp, mut sp) = (0, 0, 0, 0);
+			let (mut wrap, mut unset) = (0, 0);
+			for i in 0..t.enc.len() {
+				let k = field_to_usize(&t.cat[i]) as u32;
+				let w = t.loc[i].is_zero() || t.loc[i] == f_max;
+				if k == CAT_C { c += 1; } else if k == CAT_FP { fp += 1; }
+				else if k == CAT_BP { bp += 1; }
+				else if k == CAT_SP { sp += 1; }
+				else { unset += 1; }
+				if w { wrap += 1; }
+			}
+			let real = t.enc.len() - wrap;
+			println!("DEBUG USE 62070.9: qm CLASS igc={} rows={} \
+C={} FP={} BP={} SP={} unset={} wrap={} real={} fp_share_of_real={}%",
+				self.b_igc, t.enc.len(), c, fp, bp, sp, unset, wrap,
+				real, if real > 0 { fp * 100 / real } else { 0 });
+		}
 		if t.enc.len() > n_total {
 			return Err(Self::qm_caperr(&self.capacity, self.b_igc,
 				info, n_keys, wrap_cap, n_real, n_real_cap));
@@ -5345,6 +5392,54 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 		res
 	}
 
+	/// DEBUG USE 62070.10: per-column census of the emitted statement --
+	/// length, live bit-width, and whether the col is const-folded.
+	/// Sizes three levers at once: which cols are L-sized (externalise),
+	/// which carry a VARIABLE si (the outer-lookup key drivers), and how
+	/// many bits each col actually uses (packing headroom).
+	fn probe_core_cols(ct: &Container<F>, tag: &str) {
+		match ct {
+			Container::Complex(v, _, _, _) => {
+				for ch in v {
+					Self::probe_core_cols(&ch.lock().unwrap(), tag);
+				}
+			},
+			Container::Single(c) => {
+				let g = c.lock().unwrap();
+				let n = g.data.len();
+				if n == 0 { return; }
+				let bits = g.data.iter()
+					.map(|x| x.into_bigint().num_bits())
+					.max().unwrap_or(0);
+				let nz = g.data.iter().filter(|x| !x.is_zero()).count();
+				let name = match &g.cfg {
+					ContainerConfig::Column(_, nm, _, _) => nm.clone(),
+					_ => "?".to_string(),
+				};
+				//b_const cols collapse to ONE witness var, so a wide
+				//const si costs 1 while a variable si costs n.
+				println!("DEBUG USE 62070.10: col {} name={} len={} \
+nonzero={} bits={} const={}", tag, name, n, nz, bits, g.b_const);
+			},
+		}
+	}
+
+	/// DEBUG USE 62070.8: how much of the fsm L (pat_loc) table this
+	/// chunk actually filled. All-pad L means the chunk matched no
+	/// pattern at all, so an empty Q_m is a FIXTURE fact.
+	fn probe_l_occupancy(arm: &str, b_igc: bool, l_pat: &Vec<F>,
+		l_loc: &Vec<F>) {
+		let n = l_pat.len();
+		let nz = l_pat.iter().filter(|p| !p.is_zero()).count();
+		let mut pats: Vec<F> = l_pat.iter().filter(|p| !p.is_zero())
+			.cloned().collect();
+		pats.sort(); pats.dedup();
+		let mx = l_loc.iter().max().cloned()
+			.unwrap_or_else(F::zero);
+		println!("DEBUG USE 62070.8: L {} igc={} len={} nonzero={} \
+distinct_pats={} max_loc={}", arm, b_igc, n, nz, pats.len(), mx);
+	}
+
 	/// N3: assemble the aggressive statement from the tagged Q_m --
 	/// the "neo_core" advice container plus the legacy-named
 	/// "failed_acc_combo" verdict feed (FailedSubsigAcc sizing +
@@ -5364,6 +5459,10 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 		let l_loc = pat_loc.lock().unwrap()
 			.get_container("sorted_val").unwrap()
 			.lock().unwrap().to_vec();
+		if utils::consts::b_probe_p36() {
+			Self::probe_l_occupancy("AGGR", self.b_igc, &l_pat,
+				&l_loc);
+		}
 		let mut nat = NeoCore::gen(self, info, l_pat, l_id,
 			l_loc)?;
 		let term: Vec<F> = nat.acc_out.iter()
@@ -5401,6 +5500,9 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 		nat.acc_out = acc_vec;
 		nat.mtbl_acc = mtbl_complete;
 		let core = Self::core_container(&nat);
+		if utils::consts::b_probe_p36() {
+			Self::probe_core_cols(&core.lock().unwrap(), "AGGR");
+		}
 		Ok((core, combo, nat))
 	}
 
@@ -5427,11 +5529,18 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 		let l_loc = pat_loc.lock().unwrap()
 			.get_container("sorted_val").unwrap()
 			.lock().unwrap().to_vec();
+		if utils::consts::b_probe_p36() {
+			Self::probe_l_occupancy("NONAGGR", self.b_igc, &l_pat,
+				&l_loc);
+		}
 		let hm_loc = StepQueue::<F>::pat_loc_to_hm(pat_loc);
 		let (nat, ct_qi, ct_qc) = NeoCore::gen_nonaggr(self, info,
 			l_pat, l_id, l_loc, &hm_loc, carried, default_min,
 			job_id)?;
 		let core = Self::core_container(&nat);
+		if utils::consts::b_probe_p36() {
+			Self::probe_core_cols(&core.lock().unwrap(), "NONAGGR");
+		}
 		Ok((core, ct_qi, ct_qc, nat))
 	}
 }

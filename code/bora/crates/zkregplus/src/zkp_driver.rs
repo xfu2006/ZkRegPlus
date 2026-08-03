@@ -2497,29 +2497,101 @@ pub mod tests_zkp_driver{
 	/// Legacy populates get_fwd/get_fwd_cap; neo populates QM_SAT/QC_SAT
 	/// (Q_m and Q_c/Q_i, per cs+igc arm) -- the other family stays at
 	/// cap=0 and is filtered out here.
-	fn sat_summary(b_use_neo: bool) -> Vec<(&'static str, usize, usize)> {
-		use utils::consts::{get_fwd, get_fwd_cap, QM_SAT, QC_SAT};
+	/// Each entry is (label, ratio_ppm, fill, cap, mean_ppm, n) where
+	/// ratio/fill/cap describe the MOST SATURATED single chunk and mean
+	/// is the dataset average. Both arms use SatGauge, so the two report
+	/// the same statistic.
+	/// SatGauge maths, pinned. Lives here rather than in utils because
+	/// `cargo check -p utils` cannot build standalone in this workspace
+	/// (the patched ark-relations needs zkregplus' feature unification);
+	/// every call below is SatGauge's public API.
+	mod tests_sat_gauge {
+		use utils::consts::{SatGauge, SAT_SCALE};
+
+		/// The defect the gauge was rewritten to fix: fill and cap peak
+		/// on DIFFERENT chunks, so max(fill)/max(cap) describes no chunk
+		/// that ever existed. Shape taken from the aggr-easy cs arm
+		/// (43 chunks at cap 16, 390 at cap 32).
+		#[test]
+		fn test_max_ratio_is_per_chunk_not_max_over_max() {
+			let g = SatGauge::new();
+			for _ in 0..43  { g.record(8, 16); } //50.0% each
+			for _ in 0..390 { g.record(4, 32); } //12.5% each
+			let (r, f, c) = g.get_max();
+			//the binding chunk is the cap-16 one, reported WITH its own
+			//capacity rather than the dataset peak.
+			assert_eq!((f, c), (8, 16));
+			assert_eq!(r, SAT_SCALE / 2, "max over chunks must be 50%");
+			//the old formula: max(fill)=8 over max(cap)=32 = 25%.
+			let (pf, pc) = g.get();
+			assert_eq!((pf, pc), (8, 32));
+			assert_eq!(pf * SAT_SCALE / pc, SAT_SCALE / 4,
+				"old max/max understates 50% as 25%");
+			//mean is weighted by chunk COUNT, not by capacity.
+			let (mn, n) = g.get_mean();
+			assert_eq!(n, 433);
+			assert_eq!(mn, (43 * (SAT_SCALE / 2)
+				+ 390 * (SAT_SCALE / 8)) / 433);
+		}
+
+		/// aggr-easy: every chunk empty. All three statistics must agree
+		/// at 0, and a cap=0 emission must not count as a 0% chunk.
+		#[test]
+		fn test_empty_workload_and_zero_cap() {
+			let g = SatGauge::new();
+			for _ in 0..390 { g.record(0, 32); }
+			for _ in 0..43  { g.record(0, 16); }
+			//all-empty: no CAS ever won, so the witness falls back to
+			//the peak cap -- "0/32", not a bare "0/0".
+			assert_eq!(g.get_max(), (0, 0, 32));
+			assert_eq!(g.get_mean(), (0, 433));
+			assert_eq!(g.get(), (0, 32));
+			let h = SatGauge::new();
+			h.record(5, 0); //absent gauge, not a chunk
+			assert_eq!(h.get_mean(), (0, 0));
+			assert_eq!(h.get(), (0, 0));
+		}
+
+		/// gen_qm_table records BEFORE its CapErr check, so an
+		/// overflowing chunk must read >100%, not clamp to 100%.
+		#[test]
+		fn test_overflow_reads_above_100pct() {
+			let g = SatGauge::new();
+			g.record(13008, 13008);
+			g.record(20, 16);
+			let (r, f, c) = g.get_max();
+			assert_eq!((f, c), (20, 16));
+			assert_eq!(r, SAT_SCALE * 5 / 4, "125%, not clamped");
+		}
+	}
+
+	fn sat_summary(b_use_neo: bool)
+	-> Vec<(&'static str, usize, usize, usize, usize, usize)> {
+		use utils::consts::{FWD_SAT, QM_SAT, QC_SAT, SatGauge};
 		let mut v = vec![];
+		let mut add = |lbl: &'static str, g: &SatGauge| {
+			if g.get().1 == 0 { return; }
+			let (r, f, c) = g.get_max();
+			let (mn, n) = g.get_mean();
+			v.push((lbl, r, f, c, mn, n));
+		};
 		if b_use_neo {
-			let (f, c) = QM_SAT[0].get(); if c > 0 { v.push(("Q_m cs", f, c)); }
-			let (f, c) = QM_SAT[1].get(); if c > 0 { v.push(("Q_m igc", f, c)); }
-			let (f, c) = QC_SAT[0].get(); if c > 0 { v.push(("Q_c cs", f, c)); }
-			let (f, c) = QC_SAT[1].get(); if c > 0 { v.push(("Q_c igc", f, c)); }
+			add("Q_m cs", &QM_SAT[0]);  add("Q_m igc", &QM_SAT[1]);
+			add("Q_c cs", &QC_SAT[0]);  add("Q_c igc", &QC_SAT[1]);
 		} else {
-			let (f, c) = (get_fwd(false), get_fwd_cap(false));
-			if c > 0 { v.push(("fwd cs", f, c)); }
-			let (f, c) = (get_fwd(true), get_fwd_cap(true));
-			if c > 0 { v.push(("fwd igc", f, c)); }
+			add("fwd cs", &FWD_SAT[0]); add("fwd igc", &FWD_SAT[1]);
 		}
 		v
 	}
 
-	/// Highest saturation rate (fill/cap) across all populated gauges --
-	/// Part B's "config is near-saturated" check. 0.0 if nothing was
+	/// Highest saturation across all populated gauges: max over
+	/// (gauge, chunk) of fill_i/cap_i -- Part B's "config is
+	/// near-saturated" check. Was max(fill)/max(cap), which understates
+	/// whenever the two peak on different chunks. 0.0 if nothing was
 	/// recorded (e.g. a dry-run/degenerate fold never hit any gauge).
 	fn highest_sat_pct(b_use_neo: bool) -> f64 {
 		sat_summary(b_use_neo).iter()
-			.map(|&(_, f, c)| f as f64 / c as f64)
+			.map(|t| t.1 as f64 / utils::consts::SAT_SCALE as f64)
 			.fold(0.0, f64::max)
 	}
 
@@ -2539,6 +2611,13 @@ pub mod tests_zkp_driver{
 		utils::os::print_computer_config(Some("clam_hard"));
 		get_global_config().clamav_cfg.b_use_discharge_neo =
 			super::neo_from_env(b_use_neo);
+		//UNCONDITIONAL: clam_hard is the NON-aggressive cell, but
+		//dlp_hard sets this true and never clears it, so in a multi-cell
+		//process an aggr cell running first leaves it set and the clam DB
+		//build dies at clamav.rs:2682 ("aggressive mode does not support
+		//counter constraints"). Same leak family as the 5 already
+		//recorded here: assume every knob a cell sets will leak.
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = false;
 		get_global_config().snark_cache_dir = "clam_hard".to_string();
 		get_global_config().b_read_snark_cache = false;
 		get_global_config().b_write_snark_cache = false;
@@ -2651,7 +2730,10 @@ pub mod tests_zkp_driver{
 		get_global_config().b_read_snark_cache = false;
 		get_global_config().b_write_snark_cache = false;
 		get_global_config().b_light_test = true;
-		get_global_config().b_folding_only = false; //REAL decider
+		//REAL decider by default; ZKR_FOLD_ONLY=1 stops after folding
+		//(FoldOnlyGuard sets it for the P4 COST cells). Unset => 0 =>
+		//every existing caller is bit-identical.
+		get_global_config().b_folding_only = knob("ZKR_FOLD_ONLY", 0) != 0;
 		get_global_config().range2_bit = knob("ZKR_RANGE2", 20);
 		get_global_config().min_subsigs = 64;
 		get_global_config().min_basis_unique_states = 100;
@@ -2791,19 +2873,28 @@ pub mod tests_zkp_driver{
 	fn p4_check_sat(cell: &str, b_use_neo: bool, floor: Option<f64>){
 		let sat = sat_summary(b_use_neo);
 		let hi = highest_sat_pct(b_use_neo);
+		let sc = utils::consts::SAT_SCALE as f64;
+		//per-gauge: the binding chunk, then the dataset mean. The two
+		//diverge exactly when capacity is not uniform across chunks.
+		let dump = sat.iter().map(|&(l, r, f, c, mn, n)| format!(
+			"{} max {:.2}% ({}/{}) mean {:.2}% over {}",
+			l, 100.0 * r as f64 / sc, f, c,
+			100.0 * mn as f64 / sc, n))
+			.collect::<Vec<String>>().join("; ");
 		utils::logger::emit_stdout(format!(
-			"P4 CELL {}: fold OK; highest sat {:.1}%; gauges {:?}",
-			cell, 100.0 * hi, sat));
+			"P4 CELL {}: fold OK; highest sat {:.1}%; gauges [{}]",
+			cell, 100.0 * hi, dump));
 		match floor {
 			Some(f) => assert!(hi >= f,
-				"{}: highest saturation {:.3} < {:.2} ({:?})",
-				cell, hi, f, sat),
+				"{}: highest saturation {:.3} < {:.2} ([{}])",
+				cell, hi, f, dump),
 			//no floor: still require neo's gauges to exist and register
 			//SOMETHING, so a silently-dead recorder cannot pass.
 			None => if b_use_neo {
-				assert!(sat.iter().any(|&(_, f, c)| c > 0 && f > 0),
-					"{}: neo recorded NO saturation at all ({:?})",
-					cell, sat);
+				assert!(sat.iter().any(|&(_, r, _, c, _, _)|
+					c > 0 && r > 0),
+					"{}: neo recorded NO saturation at all ([{}])",
+					cell, dump);
 			},
 		}
 	}
@@ -2851,10 +2942,45 @@ pub mod tests_zkp_driver{
 		c.min_cp_subsigs = 0;
 	}
 
+	/// RAII gate for the COST cells: fold, record circuit sizes and
+	/// saturation, then stop before the Groth16 decider (driver.rs's
+	/// existing b_folding_only seam). Worth ~60-70s per cell -- it also
+	/// skips Phase-2 cyclepair folding and its own setup+proof.
+	/// record_circ_size fires in CS1::setup (mod_super.rs:1200), well
+	/// before the decider, so both circ entries survive.
+	/// RAII because b_folding_only is PROCESS-GLOBAL: `cargo test` shares
+	/// one process, so a bare assignment would silently disarm the
+	/// decider in every correctness cell that ran afterwards. That is the
+	/// same leak family as the 5 already recorded for this test suite.
+	/// Sets BOTH the global and ZKR_FOLD_ONLY, because the two cell
+	/// families disagree on who owns the flag: clam_hard never assigns
+	/// it (so it inherits the global), while dlp_hard assigns it from
+	/// the env knob and would otherwise overwrite the global right back
+	/// to false. Setting only one of the two silently half-works.
+	struct FoldOnlyGuard(bool, Option<String>);
+	impl FoldOnlyGuard {
+		fn on() -> Self {
+			let g = FoldOnlyGuard(read_global_config().b_folding_only,
+				std::env::var("ZKR_FOLD_ONLY").ok());
+			get_global_config().b_folding_only = true;
+			std::env::set_var("ZKR_FOLD_ONLY", "1");
+			g
+		}
+	}
+	impl Drop for FoldOnlyGuard {
+		fn drop(&mut self) {
+			get_global_config().b_folding_only = self.0;
+			match &self.1 {
+				Some(v) => std::env::set_var("ZKR_FOLD_ONLY", v),
+				None => std::env::remove_var("ZKR_FOLD_ONLY"),
+			}
+		}
+	}
+
 	#[test]
 	pub fn test_p4_non_aggr_legacy(){
 		p4_pin_mode();
-		p4_scan("binexec.dat");
+		p4_scan("binexec_small.dat");
 		clam_hard::<Fr>(false, 2, false);
 		p4_check_sat("non_aggr legacy 2-circ", false, None);
 	}
@@ -2862,7 +2988,7 @@ pub mod tests_zkp_driver{
 	#[test]
 	pub fn test_p4_non_aggr_neo(){
 		p4_pin_mode();
-		p4_scan("binexec.dat");
+		p4_scan("binexec_small.dat");
 		clam_hard::<Fr>(true, 2, false);
 		p4_check_sat("non_aggr neo 2-circ", true, None);
 	}
@@ -2894,7 +3020,8 @@ pub mod tests_zkp_driver{
 		label: String,
 		circs: Vec<(usize, usize)>,             //(cols, rows) per rung
 		steps: Vec<usize>,                      //prove_step us, in order
-		sat: Vec<(&'static str, usize, usize)>, //(gauge, fill, cap)
+		//(gauge, max ratio ppm, its fill, its cap, mean ppm, n)
+		sat: Vec<(&'static str, usize, usize, usize, usize, usize)>,
 	}
 
 	/// Run one cell and snapshot its metrics. Both drivers reset_sat()
@@ -2943,9 +3070,13 @@ pub mod tests_zkp_driver{
 				avg={} ms, median={} ms, min={} ms, max={} ms",
 				n, tot / 1000, avg / 1000, med / 1000, mn / 1000,
 				mx / 1000));
-			for &(g, f, cap) in c.sat.iter() {
-				emit_stdout(format!("  sat {:<8} {}/{} ({:.1}%)",
-					g, f, cap, 100.0 * f as f64 / cap as f64));
+			let sc = utils::consts::SAT_SCALE as f64;
+			for &(g, r, f, cap, mn, n) in c.sat.iter() {
+				//max = the single most saturated chunk; mean = the
+				//dataset average. Equal only under a uniform capacity.
+				emit_stdout(format!("  sat {:<8} max {:.1}% ({}/{}) \
+mean {:.1}% over {}", g, 100.0 * r as f64 / sc, f, cap,
+					100.0 * mn as f64 / sc, n));
 			}
 			if c.sat.is_empty() { emit_stdout("  sat: (none)".to_string()); }
 		}
@@ -2986,6 +3117,10 @@ pub mod tests_zkp_driver{
 		// This env gate is exactly what driver.rs offers for the case.
 		std::env::set_var("ZKR_NO_FAIL_FAST", "1");
 		p4_pin_mode(); //the sweep sets the mode itself, per cell
+		//COST cell: cols/rows/fold-time/saturation are all recorded
+		//before the decider, so the Groth16 half is pure wall clock here.
+		//Correctness (fold + verify_batch) stays in the Part B cells.
+		let _fold_only = FoldOnlyGuard::on();
 		let mut cells = vec![];
 		//Part C drives TWO dataset families, so it pins both scans itself
 		//rather than honoring a single external ZKR_SCAN. Both are the
@@ -2993,20 +3128,41 @@ pub mod tests_zkp_driver{
 		//capacity-driven, so a cost comparison is only meaningful near
 		//saturation -- the easy scans measure the capacity floor, not the
 		//work (binexec easy = 1.4% Q_m vs dense 56.3%).
-		std::env::set_var("ZKR_SCAN", "binexec_dense.dat");
-		cells.push(p4_measure("non_aggr legacy", false,
-			|| clam_hard::<Fr>(false, 1, false)));
-		cells.push(p4_measure("non_aggr neo", true,
-			|| clam_hard::<Fr>(true, 1, false)));
-		//scan_hard, not easy: the easy aggr cell has 0 NEEDS and an EMPTY
-		//Q_m, so its cost is pure capacity floor and tells us nothing.
-		std::env::set_var("ZKR_SCAN", "scan_dense.dat");
-		cells.push(p4_measure("aggr legacy", false,
+		//CHEAPEST FIRST. Cells are independent (p4_pin_mode resets every
+		//known cross-cell leak), so if the sweep is killed part-way the
+		//completed pairs are still valid -- the expensive non_aggr hard
+		//cell alone is ~7 min and would otherwise strand everything.
+		//EASY cells measure the pure capacity FLOOR (aggr easy is 0%
+		//saturated: scan_easy triggers pattern matches but no signature
+		//ever becomes a discharge obligation). HARD cells measure the
+		//loaded end. Both are wanted -- the floor IS the common
+		//production case (a file that matches nothing).
+		std::env::set_var("ZKR_SCAN", "scan_easy_small.dat");
+		cells.push(p4_measure("aggr easy legacy", false,
 			|| dlp_hard::<Fr>(false, 1)));
-		cells.push(p4_measure("aggr neo", true,
+		cells.push(p4_measure("aggr easy neo", true,
 			|| dlp_hard::<Fr>(true, 1)));
-		p4_report("DENSE fixtures; non_aggr=binexec_dense, aggr=scan_dense",
-			&cells);
+		std::env::set_var("ZKR_SCAN", "scan_dense.dat");
+		cells.push(p4_measure("aggr hard legacy", false,
+			|| dlp_hard::<Fr>(false, 1)));
+		cells.push(p4_measure("aggr hard neo", true,
+			|| dlp_hard::<Fr>(true, 1)));
+		std::env::set_var("ZKR_SCAN", "binexec_small.dat");
+		cells.push(p4_measure("non_aggr easy legacy", false,
+			|| clam_hard::<Fr>(false, 1, false)));
+		cells.push(p4_measure("non_aggr easy neo", true,
+			|| clam_hard::<Fr>(true, 1, false)));
+		std::env::set_var("ZKR_SCAN", "binexec_dense.dat");
+		cells.push(p4_measure("non_aggr hard legacy", false,
+			|| clam_hard::<Fr>(false, 1, false)));
+		cells.push(p4_measure("non_aggr hard neo", true,
+			|| clam_hard::<Fr>(true, 1, false)));
+		//NOTE when reading the aggr rows: dlp_hard sets perc_lkup_share
+		//20 for neo vs 1 for legacy (zkp_driver.rs:2669), worth a
+		//MEASURED +27,191 cols to legacy when equalised. clam_hard uses 1
+		//for BOTH arms, so the non_aggr rows need no such correction.
+		p4_report("4-cell sweep: aggr={scan_easy_small,scan_dense}, \
+non_aggr={binexec_small,binexec_dense}", &cells);
 		//every cell must have actually folded, else the numbers are
 		//vacuous (e.g. a stray ZKR_DRYRUN would skip foldpot_main).
 		for c in cells.iter() {
@@ -3025,7 +3181,12 @@ pub mod tests_zkp_driver{
 	pub fn test_p4_aggr_easy_compare(){
 		std::env::set_var("ZKR_NO_FAIL_FAST", "1"); //see perf_compare
 		p4_pin_mode();
-		std::env::set_var("ZKR_SCAN", "scan_easy.dat");
+		//scan_easy_small: 6 of the 83 emails (32 KB vs 322 KB). Fold
+		//steps scale with the manifest, and this cell is 0% saturated
+		//either way, so the trim costs no signal. Safe to shrink at all
+		//BECAUSE saturation is now max-over-chunks, not max/max.
+		std::env::set_var("ZKR_SCAN", "scan_easy_small.dat");
+		let _fold_only = FoldOnlyGuard::on(); //COST cell, see perf_compare
 		let mut cells = vec![];
 		cells.push(p4_measure("aggr easy legacy", false,
 			|| dlp_hard::<Fr>(false, 1)));

@@ -1091,8 +1091,28 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 		let init_loc_cs = if m_aggr>0 {F::from((m_aggr+1) as u64)}
 			else {F::one()};
 		let inp_subsigs_cs: Vec<F>= SedAdvice
-			::collect_subsig_ids(&vec_sigs_to_discharge, 
+			::collect_subsig_ids(&vec_sigs_to_discharge,
 				&discharge_info, sig_to_id, false, &pm_acdfa_cs);
+		if utils::consts::b_probe_p36() {
+			//AGGRESSIVE obligation pipeline, the upstream of Q_m:
+			//failed_c(seg) -> sigs -> subsig ids -> neo subsigs. A zero
+			//at ANY stage explains a 0% Q_m; which stage zeroes tells
+			//fixture-has-no-work apart from dropped-upstream.
+			let b_fc = !word_info.failed_c_all_segs.is_empty()
+				&& seg_id < word_info.failed_c_info_all_segs.len();
+			let n_fc: usize = word_info.failed_c_info_all_segs.iter()
+				.map(|v| v.len()).sum();
+			let nz = inp_subsigs_cs.iter()
+				.filter(|s| !s.is_zero()).count();
+			println!("DEBUG USE 62070.6: SED AGGR seg={} src={} \
+sigs={} infos={} subsig_ids={} nonzero={} | word: sed_sigs={} \
+failed_c_segs={} failed_c_total={}", seg_id,
+				if b_fc {"failed_c"} else {"whole_word"},
+				vec_sigs_to_discharge.len(), discharge_info.len(),
+				inp_subsigs_cs.len(), nz,
+				word_info.vec_sed_sigs.len(),
+				word_info.failed_c_all_segs.len(), n_fc);
+		}
 		let init_steps_queue_cs = DischargeAdvAdvice
 			::gen_empty_steps_queue_serialized(
 				false, //b_igc = false
