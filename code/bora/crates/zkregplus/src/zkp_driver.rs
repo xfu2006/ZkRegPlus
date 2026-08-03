@@ -1461,6 +1461,15 @@ fn dc_mode_from_env() -> DcMode {
 		} else { DcMode::Off },
 	}
 }
+
+/// Neo on/off for comparative runs. ZKR_USE_NEO=1 forces neo, =0 forces
+/// legacy; ZKR_NO_NEO is the legacy-side alias (=1 legacy, =0 neo).
+/// Unset keeps `dflt`, so each cell's own default is preserved.
+fn neo_from_env(dflt: bool) -> bool {
+	if let Ok(v) = std::env::var("ZKR_USE_NEO") { return v == "1"; }
+	if let Ok(v) = std::env::var("ZKR_NO_NEO")  { return v != "1"; }
+	dflt
+}
 /// How the determine_config (capacity auto-tuning) probe interacts with
 /// folding in `zkp_driver_adv`:
 ///  - `Off`           : skip the probe, fold with the caller's hand caps.

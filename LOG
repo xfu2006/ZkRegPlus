@@ -30612,6 +30612,17 @@ Goal 3. CyclePair Gadget
 Goal 4. Continue on NewP3.5
 	[a] put auto tuning by default in zkp_driver
 	[b] make sure it does not impact the legacy mode
+	[c] all tests done 
+	[d] wrap as determine_config_neo().
+Goal 5. go to P4
+	[a] streamline determine_config()
+		has 4 combinations: determine_config_legacy, ... 
+		goal: minimize impact on the legacy code.
+	[b] do 4 combinations easy/hard function to get
+		neo performance comparison
+		each structured of doing determine_config() first
+		generates ladder of size 2.
+		then discharge.
 
 -- TODO --
 Goal 2. P4 again (measure comparison)
