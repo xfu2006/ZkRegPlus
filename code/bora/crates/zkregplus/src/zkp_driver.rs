@@ -2928,6 +2928,14 @@ pub mod tests_zkp_driver{
 	/// (structural floors the tuner cannot shrink), and NewP3.5 only ever
 	/// claimed a COST win there (2.45x cols), never saturation.
 	fn p4_check_sat(cell: &str, b_use_neo: bool, floor: Option<f64>){
+		//T6c: foldpot logs a failed self-verification and CONTINUES (a
+		//failed job must not kill the expensive siblings), so cargo
+		//still prints `ok`. Fail here instead. The COST cells run
+		//fold-only and never reach a decider, so this stays 0 there.
+		let nfail = utils::consts::get_verify_fails();
+		assert!(nfail == 0, "{}: {} self-verification FAILURE(s) \
+			(verify_batch/verify_individual returned false); see the \
+			job log for the failing sub-check", cell, nfail);
 		let sat = sat_summary(b_use_neo);
 		let hi = highest_sat_pct(b_use_neo);
 		let sc = utils::consts::SAT_SCALE as f64;

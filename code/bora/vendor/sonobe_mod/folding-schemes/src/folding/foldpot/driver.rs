@@ -3518,6 +3518,9 @@ where
 		Some(job_id), //route each sub-check FAIL to this job's log
 	);
 	if !ok_batch {
+		//count it as well as log it: the no-abort policy above means a
+		//failure is otherwise invisible to cargo, which still says `ok`.
+		utils::consts::record_verify_fail();
 		log(job_id, ERR, &format!(
 			"Job {} BATCH PROOF VERIFICATION FAILED (verify_batch \
 			returned false); continuing other jobs.", job_id));
@@ -3536,6 +3539,8 @@ where
 		&batch_prf,
 		&ind_prf);
 	if !ok_ind {
+		//see the ok_batch site: counted so a test can fail on it.
+		utils::consts::record_verify_fail();
 		log(job_id, ERR, &format!(
 			"Job {} INDIVIDUAL PROOF VERIFICATION FAILED \
 			(verify_individual returned false); continuing other jobs.",

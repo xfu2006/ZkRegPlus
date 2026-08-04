@@ -64,10 +64,24 @@ pub fn record_fwd(b_igc: bool, fill: usize, cap: usize) {
 pub fn record_acc(b_igc: bool, n: usize) {
     (if b_igc {&MAX_ACC_IGC} else {&MAX_ACC_CS}).fetch_max(n, Ordering::Relaxed);
 }
+/// Self-verification failures (verify_batch / verify_individual).
+/// foldpot deliberately does NOT abort on these -- one failed job must
+/// not kill the other, very expensive, jobs -- so the failure reaches
+/// only the log while cargo still prints `ok`. Tests assert this is 0.
+pub static VERIFY_FAILS: AtomicUsize = AtomicUsize::new(0);
+pub fn record_verify_fail() {
+    VERIFY_FAILS.fetch_add(1, Ordering::Relaxed);
+}
+pub fn get_verify_fails() -> usize {
+    VERIFY_FAILS.load(Ordering::Relaxed)
+}
 pub fn reset_sat() {
     for a in [&MAX_ACC_CS, &MAX_ACC_IGC] {
         a.store(0, Ordering::Relaxed);
     }
+    //runs at the top of each tuner retry, so the count a test reads
+    //belongs to the FINAL fold -- the only one whose proof matters.
+    VERIFY_FAILS.store(0, Ordering::Relaxed);
     for g in QM_SAT.iter().chain(QC_SAT.iter())
         .chain(QM_WRAP_SAT.iter()).chain(QM_REAL_SAT.iter())
         .chain(QM_SUB_SAT.iter()).chain(FWD_SAT.iter()) { g.reset(); }

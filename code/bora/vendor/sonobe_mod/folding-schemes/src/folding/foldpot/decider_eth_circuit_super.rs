@@ -845,8 +845,16 @@ where
          	CommittedInstanceFoldPotSuper::<C1>::dummy(2, 
 				n_circ, self.b_full_mode)
         };
-        let (u_i1_x_base, _) = CommittedInstanceVarFoldPotSuper::
-                new_constant(cs.clone(), u_dummy)?.hash(
+		let mut c_ui1_base = CommittedInstanceVarFoldPotSuper::
+				new_constant(cs.clone(), u_dummy)?;
+		//hash() absorbs the instance's OWN pc_i (mod_super.rs Absorb), and
+		//dummy() leaves it 0. Both other sides patch it to pc_i1 -- the
+		//prover at mod_super.rs u_dummy1.pc_i, and the augmented circuit at
+		//circuits_super.rs c_ui1_base.pc_i -- so the decider must too.
+		//Without this the base-case hash differs whenever pc_i != 0, which
+		//is unreachable at n_circ == 1 and always hit at n_circ > 1.
+		c_ui1_base.pc_i = pc_i_var.clone();
+        let (u_i1_x_base, _) = c_ui1_base.hash(
             &sponge,
             pp_hash.clone(),
             i.clone(),
