@@ -215,13 +215,23 @@ fn load_files<F:PrimeField + ColEle>(job_id: usize, list_file_path: &str, db: &C
 /// existing check, not a probe -- no circuit or statement is built.
 pub(crate) fn perc_lkup_share_for(lkup_len: usize, chunk_len: usize,
 	total_word_n: usize, b_check_lkup: bool)->usize{
+	//an explicit operator override beats the derivation: these are the
+	//A/B share experiment knob and the prod escape hatch.
+	for k in ["ZKR_LKSHARE", "ZKR_CLAM_LKUP_SHARE"] {
+		if let Some(v) = std::env::var(k).ok()
+			.and_then(|s| s.parse::<usize>().ok()) { return v; }
+	}
 	if !b_check_lkup { return 1; }
 	let max_nibble_len = chunk_len * LEGS;
 	let chunks = ((total_word_n * LEGS)/max_nibble_len).max(1);
-	let denom = chunks * max_nibble_len;
-	//ceil: lk_share = perc*mnl/100 TRUNCATES, so a floor-div here sizes
-	//the share one slot short and re-panics the guard it back-solves.
-	((lkup_len * 100 + denom - 1) / denom).max(1)
+	//TWO ceils, both required. lk_share is per-chunk and TRUNCATED
+	//(lk_share = perc*mnl/100), so bounding the rational
+	//lkup_len/(chunks*mnl) is NOT enough: the truncation can drop
+	//lk_share*chunks back under lkup_len (measured: perc 3817 -> share
+	//2366, 2366*4 = 9464 < 9466). Solve the per-chunk need first, then
+	//the percent that survives the truncation.
+	let need_share = (lkup_len + chunks - 1) / chunks;
+	((need_share * 100 + max_nibble_len - 1) / max_nibble_len).max(1)
 }
 
 /// build the circuits. Notice that we keep the legacy layered circuit
@@ -1635,7 +1645,7 @@ where
 	// NewP3.6 T1: derive the share from the guard instead of the caller's
 	// literal. Non-aggr never hits the aggr-neo dummy self-cover, so this
 	// term is the whole requirement on this arm.
-	{
+	if !read_global_config().b_pin_lkup_share {
 		let perc = perc_lkup_share_for(lkup_len, chunk_len,
 			max_total_word_len, b_check_lkup);
 		let old = read_global_config().perc_lkup_share;
@@ -1985,7 +1995,7 @@ where
 	// NewP3.6 T1: derive the share from the guard instead of the caller's
 	// literal. aggr-neo's dummy self-cover is not predictable here; it
 	// reports itself as a CapErr and the retry loop bumps it exactly once.
-	{
+	if !read_global_config().b_pin_lkup_share {
 		let perc = perc_lkup_share_for(lkup_len, chunk_len,
 			max_total_word_len, b_check_lkup);
 		let old = read_global_config().perc_lkup_share;
@@ -2279,8 +2289,6 @@ pub mod tests_zkp_driver{
 		get_global_config().b_light_test = true;
 		get_global_config().range2_bit = 8;
 		get_global_config().b_read_cache = false;
-		get_global_config().perc_lkup_share = if !b_check_lkup {1} 
-			else {8320}; //needed for 96k lkup entries for 4 chunks
 					//twice larger than what's really needed to
 					//leave out room to test the empty entries
 		get_global_config().log_level = utils::logger::LOG3;
@@ -2362,8 +2370,6 @@ pub mod tests_zkp_driver{
 		get_global_config().b_light_test = true;
 		get_global_config().range2_bit = 14; //must cover total scan nibbles
 		get_global_config().b_read_cache = false;
-		get_global_config().perc_lkup_share = if !b_check_lkup {1}
-			else {8320};
 		get_global_config().log_level = utils::logger::LOG3;
 		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/neo_hard_set/config_dfa"; //for dfa
@@ -2454,7 +2460,6 @@ pub mod tests_zkp_driver{
 		get_global_config().range2_bit = 14;
 		get_global_config().b_read_cache = false;
 		get_global_config().basis_failed_subsigs = 10000;
-		get_global_config().perc_lkup_share = 8320; //b_check_lkup path
 		get_global_config().log_level = utils::logger::LOG3;
 		let b_write_cache = !read_global_config().b_read_cache;
 
@@ -2681,8 +2686,6 @@ pub mod tests_zkp_driver{
 		//bits = 64 subsigs -- the subset's widest sig has 35.
 		get_global_config().range2_bit = knob("ZKR_RANGE2", 22);
 		get_global_config().b_read_cache = false;
-		get_global_config().perc_lkup_share = if !b_check_lkup {1}
-			else {8320};
 		get_global_config().log_level = utils::logger::LOG3;
 		//ZKR_DRYRUN=1 stops right after the capacity check, so the
 		//per-cell minimum-capacity search costs seconds, not a fold.
@@ -3274,8 +3277,6 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 		get_global_config().b_light_test = true;
 		get_global_config().range2_bit = 8;
 		get_global_config().b_read_cache = false;
-		get_global_config().perc_lkup_share = if !b_check_lkup {1}
-			else {8320};
 		get_global_config().log_level = utils::logger::LOG3;
 		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/small_multi_dnf_set/config_dfa"; //for dfa
@@ -3344,8 +3345,6 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 		get_global_config().b_light_test = true;
 		get_global_config().range2_bit = 8;
 		get_global_config().b_read_cache = false;
-		get_global_config().perc_lkup_share = if !b_check_lkup {1}
-			else {8320}; //needed for 96k lkup entries for 4 chunks
 					//twice larger than what's really needed to
 					//leave out room to test the empty entries
 		let b_write_cache = !read_global_config().b_read_cache;
@@ -3433,7 +3432,6 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 		get_global_config().n_par_snark = 2;
 		get_global_config().n_par_snark_cp = 2;
 		get_global_config().n_par_batch_claim = 8;
-		get_global_config().perc_lkup_share = 1;
 		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
 		get_global_config().clamav_cfg.sde_rep_fanout_cap = 100;
 		get_global_config().clamav_cfg.min_pm_word_len = 3;
@@ -3447,7 +3445,6 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 			//neo's constant full-store D-dict advice (d_diff etc.)
 			//adds ~1K distinct range keys per chunk; the dummy
 			//self-cover needs lk_share >= that (perc=1 -> 158).
-			get_global_config().perc_lkup_share = 20;
 			//T_qm wrap budget: 0 = derive subsigs*(max_chain+1).
 			//The old 5600 charged the whole 10400-row demand to
 			//wrap; the split gauge shows 800 wrap + 8800 real.
@@ -3552,8 +3549,6 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 		get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 18;
 		get_global_config().b_read_cache = false;
-		get_global_config().perc_lkup_share = if !b_check_lkup {1}
-			else {10000}; //enough lkup coverage for binexec_p* (4 files)
 		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/small_data_set/config_dfa"; //for dfa
 		let max_word= 1; //this is chunk_len
@@ -3627,8 +3622,6 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 		get_global_config().b_read_cache = false;
 		get_global_config().b_light_test = false; // full snark
 		get_global_config().b_one_proof = true;    // only Job 0 proves
-		get_global_config().perc_lkup_share = if !b_check_lkup {1}
-			else {10000}; //enough lkup coverage for binexec_p* (4 files)
 		get_global_config().log_level = utils::logger::LOG3;
 		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/small_data_set/config_dfa"; //for dfa
@@ -3702,8 +3695,6 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 		get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 18;
 		get_global_config().b_read_cache = false;
-		get_global_config().perc_lkup_share = if !b_check_lkup {1}
-			else {200}; //lk_share*chunks must cover lkup_len(271354)
 		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/small_data_set2/config_dfa"; //for dfa
 		let max_word= 512; 
@@ -3966,8 +3957,6 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 		get_global_config().b_write_snark_cache = false;
 		get_global_config().range2_bit = 18;
 		get_global_config().b_read_cache = false;
-		get_global_config().perc_lkup_share = if !b_check_lkup {1}
-			else {200}; //tune from lk_share*chunks>=lkup_len guard
 		let b_write_cache = !read_global_config().b_read_cache;
 		let set1 = "data/debug/small_data_set2/config_dfa"; //for dfa 
 		let max_word= 512; 
@@ -4320,9 +4309,9 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 		get_global_config().min_avg_pats_per_subsig= 8; // OLD value: 6
 		get_global_config().min_dfa_sigs = 2; // OLD value: 0 (default)
 		get_global_config().b_read_cache = true;
-		get_global_config().perc_lkup_share = 143; //this is for
-			//full_clam() setting (700MB linux data for 38k clamav) in 8 jobs
-			//see full_clam
+		//NewP3.6 T1: the lkup share (hand-set 143 here) is now derived by
+		//perc_lkup_share_for from the full_clam() shape: 700MB linux data
+		//for 38k clamav in 8 jobs. See full_clam.
 
 		let b_write_cache = !read_global_config().b_read_cache;
 		let max_word= 512 * 8;
@@ -4695,6 +4684,9 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 		get_global_config().n_par_snark_cp = 1;         // part 2 (cp): 1
 		// outer cap auto (n_par_snark_total=0) = sum = 2 -> max 2 at a time
 		get_global_config().n_par_batch_claim = 8;
+		//NewP3.6 T1: PINNED. This runner keeps its hand-set share and the
+		//driver's back-solve must not touch it (exact legacy behavior).
+		get_global_config().b_pin_lkup_share = true;
 		get_global_config().perc_lkup_share = 143; //this is for
 		get_global_config().log_level = utils::logger::LOG3;
 			//700MB data in 8 jobs and 256M lkup entries
@@ -4844,7 +4836,6 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 		get_global_config().n_par_snark = 1;
 		get_global_config().n_par_snark_cp = 1;
 		get_global_config().n_par_batch_claim = 8;
-		get_global_config().perc_lkup_share = 143;
 		get_global_config().log_level = utils::logger::LOG3;
 
 		get_global_config().b_read_cache = true;
@@ -4981,6 +4972,8 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 		get_global_config().log_level = utils::logger::LOG3;
 		//~200 needed when b_check_lkup (164M lkup / ~328 chunks);
 		//1 when not checking (panic guard is gated on b_check_lkup).
+		//NewP3.6 T1: PINNED -- keeps its hand-set share, exact legacy.
+		get_global_config().b_pin_lkup_share = true;
 		get_global_config().perc_lkup_share = if !b_check_lkup {1}
 			else {200};
 
@@ -5109,8 +5102,6 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 		//(b_check_lkup=false below), so perc=1 / lk_share is a small
 		//non-binding hint. The fan-out lookup table (lkup_len=1133682)
 		//need not be distributed across the 16 chunks here.
-		get_global_config().perc_lkup_share = if !b_check_lkup {1}
-			else {200};
 
 		//SDE-rep fan-out gate ON for the DLP sigs;
 		//sde_rep_fanout_cap=100: only 2 digits extracted per leg.
@@ -5280,8 +5271,6 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 		//(b_check_lkup=false below), so perc=1 / lk_share is a small
 		//non-binding hint. The fan-out lookup table (lkup_len=1133682)
 		//need not be distributed across the 16 chunks here.
-		get_global_config().perc_lkup_share = if !b_check_lkup {1}
-			else {200};
 
 		//SDE-rep fan-out gate ON for the DLP sigs;
 		//sde_rep_fanout_cap=100: only 2 digits extracted per leg.
@@ -5445,8 +5434,6 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 		get_global_config().n_par_snark = 2;
 		get_global_config().n_par_snark_cp = 2;
 		get_global_config().n_par_batch_claim = 8;
-		get_global_config().perc_lkup_share = if !b_check_lkup {1}
-			else {200};
 		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
 		get_global_config().clamav_cfg.sde_rep_fanout_cap = 100;
 		//boost=10 (cap 1000) required: boost 5 and 7 both fail to discharge
@@ -5590,7 +5577,6 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 		get_global_config().n_par_snark = 1;
 		get_global_config().n_par_snark_cp = 1;
 		get_global_config().n_par_batch_claim = 8;
-		get_global_config().perc_lkup_share = 143;
 
 		get_global_config().b_read_cache = true;
 		let b_write_cache = !read_global_config().b_read_cache;
@@ -5702,7 +5688,6 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 		get_global_config().n_par_snark = 1;
 		get_global_config().n_par_snark_cp = 1;
 		get_global_config().n_par_batch_claim = 8;
-		get_global_config().perc_lkup_share = 143;
 		get_global_config().log_level = utils::logger::LOG3;
 
 		get_global_config().b_read_cache = true;
@@ -6030,7 +6015,6 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		get_global_config().b_read_snark_cache = false;
 		get_global_config().b_write_snark_cache = false;
 		get_global_config().b_estimate_caps = true;
-		get_global_config().perc_lkup_share = 1;
 		get_global_config().min_subsigs = 1;
 		get_global_config().min_basis_unique_states = 2;
 		get_global_config().min_basis_acc_states = 2;
@@ -6268,6 +6252,9 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			::LookupTableTwoCol as _;
 		use rayon::prelude::*;
 		utils::os::print_computer_config(Some("full_dlp"));
+		//NewP3.6 T1: PINNED -- production runner keeps its share as-is;
+		//the driver's back-solve must not touch it (exact legacy).
+		get_global_config().b_pin_lkup_share = true;
 		let rc = crate::determine_config::RunCfg::from_env();
 		let proot = utils::os::proj_root();
 		let cd = &rc.config_dir;
@@ -6546,7 +6533,6 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		get_global_config().b_read_snark_cache = false;
 		get_global_config().b_write_snark_cache = false;
 		get_global_config().b_estimate_caps = true;
-		get_global_config().perc_lkup_share = 1;
 		get_global_config().min_subsigs = 1;
 		get_global_config().min_basis_unique_states = 2;
 		get_global_config().min_basis_acc_states = 2;
@@ -7062,7 +7048,6 @@ fail: {} ({:.4}%)",
 		get_global_config().n_par_snark = 2;
 		get_global_config().n_par_snark_cp = 2;
 		get_global_config().n_par_batch_claim = 8;
-		get_global_config().perc_lkup_share = 143;
 		get_global_config().log_level = utils::logger::LOG3;
 
 		// REBUILD the DB from each subset every round (never read a stale
@@ -7294,7 +7279,6 @@ fail: {} ({:.4}%)",
 		get_global_config().b_estimate_caps = true;      // aggressive estimate path
 		get_global_config().b_read_snark_cache = false;
 		get_global_config().b_write_snark_cache = false;
-		get_global_config().perc_lkup_share = 1;
 		get_global_config().min_subsigs = 1;
 		get_global_config().min_basis_unique_states = 2;
 		get_global_config().min_basis_acc_states = 2;
@@ -7554,7 +7538,6 @@ fail: {} ({:.4}%)",
 		get_global_config().b_light_test = true;
 		get_global_config().b_read_cache = true;
 		get_global_config().b_estimate_caps = false;
-		get_global_config().perc_lkup_share = 1;
 		get_global_config().min_subsigs = 1;
 		get_global_config().min_basis_unique_states = 2;
 		get_global_config().min_basis_acc_states = 2;
@@ -7997,7 +7980,6 @@ failed={} high={} final={}", raw_n, n_stage1, passed.len(),
 		get_global_config().b_read_snark_cache = false;
 		get_global_config().b_write_snark_cache = false;
 		get_global_config().b_estimate_caps = true;
-		get_global_config().perc_lkup_share = 1;
 		get_global_config().min_subsigs = 1;
 		get_global_config().min_basis_unique_states = 2;
 		get_global_config().min_basis_acc_states = 2;
@@ -8117,7 +8099,6 @@ failed={} high={} final={}", raw_n, n_stage1, passed.len(),
 		get_global_config().b_read_snark_cache = false;
 		get_global_config().b_write_snark_cache = false;
 		get_global_config().b_estimate_caps = false;
-		get_global_config().perc_lkup_share = 1;
 		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
 		get_global_config().clamav_cfg.sde_rep_fanout_cap = rc.fanout_cap;
 		get_global_config().clamav_cfg.min_pm_word_len = 3;
@@ -8250,7 +8231,6 @@ binexec_p0..p7; via report_acc_state_rate -> run_db_bundle) ########");
 		get_global_config().min_avg_pats_per_subsig = 8;
 		get_global_config().min_dfa_sigs = 3;
 		get_global_config().min_dfa_subsigs = 3;
-		get_global_config().perc_lkup_share = 143;
 		get_global_config().log_level = utils::logger::LOG3;
 
 		let set1 = "data/paper_data/clamav/config";
@@ -8450,7 +8430,6 @@ range2_bit={}", ds, b, nu, rb);
 		get_global_config().b_light_test = true;
 		get_global_config().b_read_cache = false;
 		get_global_config().b_estimate_caps = true;
-		get_global_config().perc_lkup_share = 1;
 		get_global_config().min_subsigs = 1;
 		get_global_config().min_basis_unique_states = 2;
 		get_global_config().min_basis_acc_states = 2;

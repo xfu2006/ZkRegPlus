@@ -1046,7 +1046,8 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 	/// binding cols zeroed with benign si. f_bwd = the subsig's real
 	/// backward flag (the (si,val) pair must exist on EVERY row).
 	fn push_wrap(&mut self, enc: F, id: F, loc: F, f_step: F,
-		subsig: F, pat: F, b_last: bool, b_ge1: bool, f_bwd: F) {
+		subsig: F, pat: F, b_last: bool, _b_ge1: bool, f_bwd: F,
+		f_rg1: F, f_rg2: F) {
 		let (z, rg2t) = (F::zero(), F::from(RANGE2));
 		let tag = if b_last { ID_ENCODED_LAST_STEP }
 			else { ID_ENCODED_NORMAL_STEP };
@@ -1054,21 +1055,21 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 		self.cat.push(z); self.step.push(f_step);
 		self.subsig.push(subsig); self.b_bwd.push(f_bwd);
 		self.pat.push(pat);
+		// A: a wrap row keeps its group's REAL enc, so it must also
+		// carry the real rg1/rg2 limbs -- the limb split is enforced
+		// on every row and zeros here would contradict enc. Step-0
+		// wraps keep zeros, matching pack(subsig,0,0,0,0).
+		self.rg1.push(f_rg1); self.rg2.push(f_rg2);
 		for v in [&mut self.prev_id1, &mut self.prev_loc1,
-			&mut self.prev_loc2, &mut self.rg1,
-			&mut self.rg2, &mut self.enc_prev, &mut self.d_c1,
+			&mut self.prev_loc2, &mut self.enc_prev, &mut self.d_c1,
 			&mut self.d_c2, &mut self.d_below_lo,
 			&mut self.d_above_lo] { v.push(z); }
 		self.si_step.push(SubsigStepStore::gen_step_tbl_id(enc, tag));
-		self.si_subsig.push(if b_ge1 {
-			SubsigStepStore::gen_step_tbl_id(enc, ID_ENCODED_SUBSIG)
-		} else { rg2t });
-		//pat is membership-queried on step>=1 wraps -> DB-bound
-		self.si_pat.push(if b_ge1 {
-			SubsigStepStore::gen_step_tbl_id(enc, ID_ENCODED_PAT)
-		} else { rg2t });
-		for v in [&mut self.si_rg1,
-			&mut self.si_rg2, &mut self.si_enc_prev] { v.push(rg2t); }
+		// A: limbs need the RANGE2 bound only. The per-row DB tags
+		// they used to carry are subsumed by si_step + the split.
+		for v in [&mut self.si_subsig, &mut self.si_pat,
+			&mut self.si_rg1, &mut self.si_rg2,
+			&mut self.si_enc_prev] { v.push(rg2t); }
 		self.si_b_bwd.push(F::from(1u64 << 32)
 			* F::from(ID_SUBSIG_IS_BACKWARD) + subsig);
 	}
@@ -1163,10 +1164,10 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 		let m = |b: bool, cid: u32| if b {
 			SubsigStepStore::gen_step_tbl_id(enc, cid) } else { rg2t };
 		self.si_step.push(SubsigStepStore::gen_step_tbl_id(enc, tag));
-		self.si_subsig.push(m(!b_seed, ID_ENCODED_SUBSIG));
-		self.si_pat.push(m(!b_seed, ID_ENCODED_PAT));
-		self.si_rg1.push(m(!b_seed, ID_ENCODED_RG_START));
-		self.si_rg2.push(m(!b_seed, ID_ENCODED_RG_END));
+		// A: limbs need the RANGE2 bound only. The per-row DB tags
+		// they used to carry are subsumed by si_step + the split.
+		for v in [&mut self.si_subsig, &mut self.si_pat,
+			&mut self.si_rg1, &mut self.si_rg2] { v.push(rg2t); }
 		self.si_enc_prev.push(m(!b_seed, ID_ENCODED_PREV_ENCODED));
 		self.si_b_bwd.push(F::from(1u64 << 32)
 			* F::from(ID_SUBSIG_IS_BACKWARD) + it.base.subsig);
@@ -1504,8 +1505,14 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 				let (b_last, b_ge1) = (s == max_steps, s >= 1);
 				let f_pat = if s >= 1 {
 					F::from(pm[s - 1].0 as u32) } else { zero };
+				// A: the wrap's rg1/rg2 limbs, taken from the same
+				// pm entry f_pat comes from so they agree with enc.
+				let (f_rg1, f_rg2) = if s >= 1 {
+					(F::from((pm[s - 1].1).0 as u32),
+					F::from((pm[s - 1].1).1 as u32))
+				} else { (zero, zero) };
 				t.push_wrap(enc, zero, zero, f_step, *subsig,
-					f_pat, b_last, b_ge1, f_bwd);
+					f_pat, b_last, b_ge1, f_bwd, f_rg1, f_rg2);
 				let n_real = if s < items.len() {
 					let it = &items[s];
 					let bwd = rec.is_backward && s >= 2;
@@ -1516,7 +1523,8 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 					it.base.locs.len()
 				} else { 0 };
 				t.push_wrap(enc, F::from((n_real + 1) as u32), f_max,
-					f_step, *subsig, f_pat, b_last, b_ge1, f_bwd);
+					f_step, *subsig, f_pat, b_last, b_ge1, f_bwd,
+					f_rg1, f_rg2);
 				enc_prev = enc;
 			}
 		}
@@ -2430,36 +2438,34 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	/// -- so every pin fits in a single constraint.
 	///
 	/// Advice names: none. Every column touched here is committed
-	/// (si_step, si_subsig, si_pat, si_rg1, si_rg2, si_enc_prev,
-	/// si_b_bwd); this block only binds them.
+	/// (si_step, si_enc_prev, si_b_bwd); this block only binds them.
 	///
 	/// Checks, per row:
 	///  (1) si_step is the NORMAL tag or the LAST tag of THIS enc;
-	///  (2) si_subsig and si_pat are pinned on every non-pad
-	///      step >= 1 row, wraps included (a wrap's pat is
-	///      join-queried);
-	///  (3) si_rg1, si_rg2 and si_enc_prev are pinned on REAL
-	///      step >= 1 rows, real = is_c + is_fp, plus is_bp +
-	///      is_sp in non-aggr;
-	///  (4) si_b_bwd == FLAG_BASE + subsig on every row.
-	/// Step-0 rows are masked out of (2) and (3): the seed key is
-	/// artificial, so the DB carries no subsig/pat/window fact
-	/// under it. A masked-off row takes RANGE2 instead, the neutral
-	/// tag that tells the outer lookup "range check only". Those
-	/// RANGE2 entries are produced by the ADVICE side -- push_wrap
-	/// for wraps, push_real's m() for seed rows, pad_front for pads
-	/// -- and are only enforced here.
+	///  (2) si_enc_prev is pinned on REAL step >= 1 rows, real =
+	///      is_c + is_fp, plus is_bp + is_sp in non-aggr;
+	///  (3) si_b_bwd == FLAG_BASE + subsig on every row;
+	///  (4) enc splits into its five RANGE2-bounded limbs, which
+	///      replaces the old per-row subsig/pat/rg1/rg2 DB tags.
+	/// Step-0 rows are masked out of (2): the seed key is
+	/// artificial, so the DB carries no predecessor fact under it.
+	/// A masked-off row takes RANGE2 instead, the neutral tag that
+	/// tells the outer lookup "range check only". Those RANGE2
+	/// entries are produced by the ADVICE side -- push_real's m()
+	/// for seed rows, pad_front for pads -- and are only enforced
+	/// here. (4) needs no such mask; see its in-loop comment.
 	///
 	/// EXAMPLE: a terminal row tagging si_step with the LAST tag of
 	/// a DIFFERENT enc, to dodge the verdict query, fails (1) --
 	/// neither factor is zero.
 	///  - CHEAT a foreign pat under this enc, to hide the real
-	///    pattern's matches: (2) ties pat to enc on every row, so
-	///    the row can only carry the pat the DB gives its own enc.
-	///  - CHEAT a widened window: rg1/rg2 are DB facts of enc by
-	///    (3), not advice, so no row can widen its own reach.
+	///    pattern's matches: pat is a limb of enc by (4) and
+	///    RANGE2-bounded, so the split is unique and the row can
+	///    only carry the pat the DB gives its own enc.
+	///  - CHEAT a widened window: rg1/rg2 are likewise limbs of enc
+	///    by (4), not advice, so no row can widen its own reach.
 	/// PARAMS: b_aggr only selects whether BP/SP join `real`.
-	/// COST: ~9*n. PERF 61081.5.
+	/// COST: ~5*n. PERF 61081.5.
 	fn assert_neo_si_pins(
 		cs: ConstraintSystemRef<F>, v: &QmVars<F>, sel: &NeoSel<F>,
 		b_aggr: bool, job_id: usize,
@@ -2491,12 +2497,16 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		// is added into B at the call site.
 		let tc = |cid: u32| new_const_var(&cs,
 			si_tag_base::<F>(cid) - F::from(RANGE2));
-		let pins: [(FpVar<F>, fn(&QmVars<F>) -> &Vec<FpVar<F>>); 5] = [
-			(tc(ID_ENCODED_SUBSIG), |v| &v.si_subsig),
-			(tc(ID_ENCODED_PAT), |v| &v.si_pat),
-			(tc(ID_ENCODED_RG_START), |v| &v.si_rg1),
-			(tc(ID_ENCODED_RG_END), |v| &v.si_rg2),
+		let pins: [(FpVar<F>, fn(&QmVars<F>) -> &Vec<FpVar<F>>); 1] = [
 			(tc(ID_ENCODED_PREV_ENCODED), |v| &v.si_enc_prev)];
+		// A: base of encode_cols. The RANGE2 bound each limb now
+		// carries is exactly this base, so the split below is the
+		// unique base-B representation of enc.
+		let b = F::from(1u64 << read_global_config().range2_bit);
+		let c_b4 = new_const_var(&cs, b * b * b * b);
+		let c_b3 = new_const_var(&cs, b * b * b);
+		let c_b2 = new_const_var(&cs, b * b);
+		let c_b1 = new_const_var(&cs, b);
 		for i in 0..n {
 			// --- check (1): si_step is a step tag of THIS enc ---
 			// The DB stores a step under exactly ONE of the two
@@ -2506,14 +2516,11 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 				&(&(&v.si_step[i] - &c_n) - &v.enc[i]),
 				&(&(&v.si_step[i] - &c_l) - &v.enc[i]), lc!(),
 				"neo si_step pin")?;
-			// --- masks for checks (2) and (3) ---
-			// m_sub: any non-pad row at step >= 1, wraps included.
+			// --- mask for check (2) ---
 			// m_bind: real rows only, at step >= 1. `real` is a
 			// free sum of exclusive classes; in aggr the BP/SP
 			// vectors are empty, which is why the two arms are
 			// written out rather than always summing four terms.
-			let m_sub = (&c_one - &sel.is_pad[i])
-				* (&c_one - &sel.is_step0[i]);
 			let real = if b_aggr {
 				&sel.is_c[i] + &sel.is_fp[i]
 			} else {
@@ -2521,14 +2528,54 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 					+ &(&sel.is_bp[i] + &sel.is_sp[i])
 			};
 			let m_bind = real * (&c_one - &sel.is_step0[i]);
-			// --- checks (2) and (3): one constraint per column ---
-			// j = 0, 1 are si_subsig and si_pat (m_sub); j = 2, 3, 4
-			// are si_rg1, si_rg2, si_enc_prev (m_bind).
-			for (j, (c_tag, getcol)) in pins.iter().enumerate() {
-				let mask = if j <= 1 { &m_sub } else { &m_bind };
-				check_si_pin(mask, &v.enc[i], &getcol(v)[i],
+			// --- check (2): si_enc_prev, the one surviving tag ---
+			for (c_tag, getcol) in pins.iter() {
+				check_si_pin(&m_bind, &v.enc[i], &getcol(v)[i],
 					c_tag, &c_rg2t, "neo si pin")?;
 			}
+			// --- check (4): enc splits into its five limbs ---
+			// WHY THIS REPLACES FOUR DB LOOKUPS. subsig/step/pat/
+			// rg1/rg2 are not independent DB facts: enc IS their
+			// base-B packing (encode_cols, commons.rs) with
+			// B = 2^range2_bit. Two things make the split binding:
+			//  (a) enc is a REAL DB row and step is REALLY its
+			//      step, both checked against the DB. check (1)
+			//      forces si_step to be built from THIS row's enc,
+			//      and si_step is the one tag never masked to
+			//      RANGE2 (push_wrap, push_real and pad_front all
+			//      emit a real tag). The outer lookup must then
+			//      find the PAIR (si_step, step) in the shared
+			//      table, and clam_db emits exactly
+			//        (gen_step_tbl_id(encode, NORMAL|LAST), step)
+			//      one per encoded DB row (cat_id == 1). Matching
+			//      the KEY gives enc == encode; matching the VALUE
+			//      gives step == that encode's stored step. So
+			//      step is a CHECKED DB FACT, not prover advice
+			//      and not merely bounded like the other limbs.
+			//  (b) each limb carries a const RANGE2 si, so each is
+			//      < B. A base-B representation with every digit
+			//      < B is UNIQUE, so the limbs can only be the DB's
+			//      own subsig/step/pat/rg_start/rg_end.
+			// step is thus bound TWICE -- as the DB value in (a)
+			// and as the B^3 limb in (b) -- and the two agree
+			// because the DB's encode packs its own step into that
+			// limb. Mislabel the value and the lookup fails;
+			// mislabel the limb and the split fails.
+			// No enc-membership subtable is needed: (a) already
+			// proves it, and a second one would cost one more
+			// lookup entry per DB row against the lkup budget.
+			// UNMASKED on purpose. Pads are all-zero (0 == 0), and
+			// seed rows hold pack(subsig,0,0,0,0), which the step
+			// subtable admits: for ID_ENCODED_NORMAL_STEP clam_db
+			// excludes only pat == max, while the subsig/pat/rg
+			// subtables also drop pat == 0. That asymmetry is why
+			// the OLD code masked those four off at step 0; the
+			// split needs no such mask.
+			let split = &(&(&v.subsig[i] * &c_b4)
+				+ &(&v.step[i] * &c_b3))
+				+ &(&(&v.pat[i] * &c_b2)
+				+ &(&(&v.rg1[i] * &c_b1) + &v.rg2[i]));
+			check_eq(&v.enc[i], &split, "neo enc limb split")?;
 			// --- check (4): the backward-flag key ---
 			// keyed by subsig rather than enc, and linear in it, so
 			// no mask and no product: every row, pad included,
@@ -2538,7 +2585,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		}
 		log(job_id, LOG3, &format!(
 			"PERF 61081.5: block=si_pins cs={} pred={}",
-			cs.num_constraints() - n0, 9 * n));
+			cs.num_constraints() - n0, 5 * n));
 		Ok(())
 	}
 }
@@ -4063,7 +4110,8 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	///       the JR view inherits it through assert_qm_union,
 	///       whose sentinels must land on a real group's
 	///       wraps), and pat is welded to enc per row by an
-	///       si_pat companion (Q_m si-pins / JrTable.si_pat).
+	///       si_pat companion (JrTable.si_pat) or, in Q_m, by
+	///       the enc limb split in assert_neo_si_pins.
 	///       Without that weld a block could join a FOREIGN
 	///       pat's locations under this enc and hide the true
 	///       pat's matches.
@@ -4083,10 +4131,10 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	/// every Q_m row (si_step); a step-0 block smuggled into
 	/// the JR view dies in assert_qm_union (the whole step-0
 	/// group is masked there, so its rows find no partner).
-	/// SOUNDNESS DEPENDENCY (aggr view): wraps are queried,
-	/// so wrap rows' pat must be DB-bound via si_pat
-	/// (push_wrap emits the variable si on step>=1 wraps;
-	/// si_pins pins (real+wrap)*(1-is_step0) rows).
+	/// SOUNDNESS DEPENDENCY (aggr view): wraps are queried, so
+	/// wrap rows' pat must be DB-bound. It is a limb of enc
+	/// (assert_neo_si_pins check (4)), which is why push_wrap
+	/// must carry the row's real rg1/rg2 limbs too.
 	///
 	/// EXAMPLE (aggr view). Store: subsig 3 = {step 1: pat 2,
 	/// step 2: pat 5}; chunk matches: pat 2 at {17, 25},
@@ -4113,8 +4161,8 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	/// All queries found -> SAT. E2 = the matchless-pat case.
 	/// ATTACKS: drop r5 -> r6 slides to id 2, query (2,2,max)
 	/// not in L; fabricate (2,?,30) -> no such L row; retag
-	/// E1's wraps to pat 5 to fake it empty -> si_pat pin
-	/// fails; relabel r5's step to 0 to dodge the query ->
+	/// E1's wraps to pat 5 to fake it empty -> the enc limb
+	/// split fails; relabel r5's step to 0 to dodge the query ->
 	/// si_step pair fails; wrong m_tm -> the logup identity
 	/// itself fails. (The JR-view example lives on
 	/// gen_jr_table.)
@@ -5295,35 +5343,49 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 		let t = &nat.t;
 		{
 			let mut c = res.lock().unwrap();
-			let mut var = |v: &Vec<F>, name: &str, si: &Vec<F>| {
+			// si = Some(tag vector) for a per-row DB tag; None for
+			// a const RANGE2 bound.
+			let mut var = |v: &Vec<F>, name: &str,
+				si: Option<&Vec<F>>| {
 				c.add_col(Col::new(v.clone(), name, IDX_DATA));
-				c.add_col(Col::new(si.clone(),
-					&format!("si_{}", name), IDX_SI_DATA));
+				c.add_col(match si {
+					Some(s) => Col::new(s.clone(),
+						&format!("si_{}", name), IDX_SI_DATA),
+					None => Col::new_const(vec![f_r2; v.len()],
+						&format!("si_{}", name), IDX_SI_DATA),
+				});
 			};
-			var(&t.step, "step", &t.si_step);
-			var(&t.subsig, "subsig", &t.si_subsig);
-			var(&t.pat, "pat", &t.si_pat);
-			var(&t.rg1, "rg1", &t.si_rg1);
-			var(&t.rg2, "rg2", &t.si_rg2);
-			var(&t.enc_prev, "enc_prev", &t.si_enc_prev);
-			var(&t.b_bwd, "b_bwd", &t.si_b_bwd);
+			var(&t.step, "step", Some(&t.si_step));
+			var(&t.enc_prev, "enc_prev", Some(&t.si_enc_prev));
+			var(&t.b_bwd, "b_bwd", Some(&t.si_b_bwd));
+			// A: subsig/pat/rg1/rg2 are LIMBS of enc, not separate
+			// DB facts. Committed with a const RANGE2 si (bound
+			// only, no per-row tag) and recovered by the limb split
+			// in assert_neo_si_pins. Dropping their VARIABLE si is
+			// what removes a per-row lookup key from each.
+			var(&t.subsig, "subsig", None);
+			var(&t.pat, "pat", None);
+			var(&t.rg1, "rg1", None);
+			var(&t.rg2, "rg2", None);
 			//non-aggressive witness cols with VARIABLE si (the DB
 			//tags carry advice keys enc_next/enc_fz); empty vecs
 			//under aggressive => nothing emitted, M6 layout intact.
 			if !t.nonaggr.enc_next.is_empty() {
 				let na = &t.nonaggr;
 				var(&na.bp_prev_val, "bp_prev_val",
-					&na.si_bp_prev);
-				var(&na.rg2_next, "rg2_next", &na.si_rg2_next);
-				var(&na.fz, "fz", &na.si_fz);
+					Some(&na.si_bp_prev));
+				var(&na.rg2_next, "rg2_next",
+					Some(&na.si_rg2_next));
+				var(&na.fz, "fz", Some(&na.si_fz));
 				var(&na.fz_step_val, "fz_step_val",
-					&na.si_fz_step);
-				var(&na.fz_sub_val, "fz_sub_val", &na.si_fz_sub);
+					Some(&na.si_fz_step));
+				var(&na.fz_sub_val, "fz_sub_val",
+					Some(&na.si_fz_sub));
 			}
 			//JOIN RESULT temp table (nonaggr): jr_pat carries
 			//the variable tag(enc, PAT) si on every block row.
 			if !nat.jr.enc.is_empty() {
-				var(&nat.jr.pat, "jr_pat", &nat.jr.si_pat);
+				var(&nat.jr.pat, "jr_pat", Some(&nat.jr.si_pat));
 			}
 		}
 		if !t.nonaggr.enc_next.is_empty() {
@@ -5365,6 +5427,9 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 					&format!("si_{}", name), IDX_SI_DATA));
 			};
 			let z = F::zero();
+			// enc keeps si = 0 (no lookup of its own): membership
+			// is already proven by si_step's tag, which check (1)
+			// pins to this row's enc. See the limb-split comment.
 			fix(&t.enc, "enc", z);
 			fix(&t.id, "id", z);
 			fix(&t.loc, "loc", z);
@@ -7602,14 +7667,17 @@ pub(crate) mod tests_neo_m6 {
 		assert_eq!(get("d_ns_lo"), nat.d_ns_lo);
 		assert_eq!(get("d_ns_hi"), nat.d_ns_hi);
 		assert_eq!(get("mtbl_ns"), nat.mtbl_ns);
-		// (b) si policy: real non-step0 row = DB tags; pads masked
+		// (b) si policy: si_step keeps its DB tag on EVERY row and
+		// is what carries enc membership; the limbs now take a
+		// const RANGE2 si and are bound by the enc split instead.
 		let t = &nat.t;
 		assert!(t.n_pad >= 1);
 		let i3 = (t.n_pad..t.enc.len()).find(|&i|
 			t.loc[i] == f(27)).unwrap();
-		assert_eq!(t.si_subsig[i3],
-			SubsigStepStore::gen_step_tbl_id(t.enc[i3],
-				ID_ENCODED_SUBSIG));
+		assert_eq!(t.si_subsig[i3], f(RANGE2));
+		assert_eq!(t.si_pat[i3], f(RANGE2));
+		assert_eq!(t.si_rg1[i3], f(RANGE2));
+		assert_eq!(t.si_rg2[i3], f(RANGE2));
 		assert_eq!(t.si_step[i3],
 			SubsigStepStore::gen_step_tbl_id(t.enc[i3],
 				ID_ENCODED_NORMAL_STEP));
@@ -7617,6 +7685,16 @@ pub(crate) mod tests_neo_m6 {
 		assert_eq!(t.si_step[0],
 			SubsigStepStore::gen_step_tbl_id(f(0),
 				ID_ENCODED_LAST_STEP));
+		// the split assert_neo_si_pins enforces must hold on EVERY
+		// row, wraps and pads included -- this is what makes the
+		// limbs DB facts now that their tags are gone.
+		let b = Fr::from(1u64 << read_global_config().range2_bit);
+		for i in 0..t.enc.len() {
+			assert_eq!(t.enc[i],
+				t.subsig[i] * b * b * b * b + t.step[i] * b * b * b
+				+ t.pat[i] * b * b + t.rg1[i] * b + t.rg2[i],
+				"enc limb split, row {}", i);
+		}
 		// (c) failed_acc: legacy sizing, no terminal C in fig14
 		let acc = combo.lock().unwrap()
 			.get_container("failed_acc").unwrap()

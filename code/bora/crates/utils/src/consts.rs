@@ -345,6 +345,10 @@ pub struct GlobalConfig {
 					//e.g., for 700MB linux data (8 jobs) with 256M lkup table
 					//each job (in total) has 90MB data = 180M nibbes
 					// the perc_lkup_share = 256/180 * 100 = 143 percent
+	/// NewP3.6 T1: true = the runner's hand-set perc_lkup_share is FINAL and
+	/// the driver's back-solve must not touch it. Set by the production
+	/// runners (full_clamav / full_dlp / full_dna) to pin legacy behavior.
+	pub b_pin_lkup_share: bool,
 	/// Optional cap on number of words processed per job (per Pass).
 	/// 0 = unlimited. Used for fast diagnostic runs that reproduce the
 	/// stall without burning hours. See driver.rs pass_all word loops.
@@ -431,6 +435,7 @@ impl Default for GlobalConfig {
             n_par_snark_total: 0, //0 = auto: sum of inner caps
             b_resume: false,
 			perc_lkup_share: 1,
+			b_pin_lkup_share: false,
 			word_cap_per_job: 0,
 			stall_watchdog_secs: 0,
 			clamav_cfg: ClamavApproxConfig {
@@ -492,6 +497,7 @@ static GLOBAL_CONFIG: RwLock<GlobalConfig> = RwLock::new(GlobalConfig {
     n_par_snark_total: 0, //0 = auto: sum of inner caps
     b_resume: false,
 	perc_lkup_share: 1,
+	b_pin_lkup_share: false,
 	word_cap_per_job: 0,
 	stall_watchdog_secs: 0,
 	clamav_cfg: ClamavApproxConfig {

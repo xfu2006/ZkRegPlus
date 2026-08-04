@@ -30659,13 +30659,23 @@ Goal 3. Reading
 	[a] sum check improvment.
 
 Goal 4. NewP3.6 CONTINUE
-	[a] collect data.
+	[a] collect data. 30 min, peak RAM 34GB
+	[b] approve the improvment ideas 
+		-> idea 1: optimize lkup share size
+		-> T1 => DONE 
+		-> idea2:  only take Lever A.
 
 Goal 5. continue writing
 	[a] plan 
 	[b] writing B.3 Circuit Model
 		-> fix notation
 		-> fix def 10.
+		-> p1 
+		-> p2.
+	[c] planning for the IVC framework writing.
+
+Goa 6. continue NewP3.6
+	[a] 
 
 
 
