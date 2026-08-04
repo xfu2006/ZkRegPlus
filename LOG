@@ -30685,12 +30685,35 @@ Goal 1. continue NewP3.6 to improve neo
 		-> window propgation
 		-> v3 does not work
 		-> look at elision row
-	[b] eliding rows only
-	[c]
+	[b] eliding rows only-> GIVE UP the idea. too costly in verification.
 
 Goal 2. rewrite B.4
 	[a] framework
+	[b] initial draft
+	[c] check if B.4 is complete with B.5 and B.6 dropped
+	[d] drop B.5 and B.5 
+		-> dropping notion of streaming function
+		-> section 7 check superdeds section 7
+	[e] p1.
+
+Goal 3. new idea of NewP3.6 T7
+	[a] review idea: reference PatLoc
+	[b] thm 4 revision
+	[c] drop B.5 and B.6 and Figure 7 & 8
+	[d] check if there are any more gaps.
+		-> T201
+		-> T202: soundness fix
+		-> T203: approve
+		-> T204: skip
+		-> T206 approve, but skip 207
+		-> T208: d_sort
+		-> clear the rest of the tasks.
+Goal 4. continue NewP3.6 on Task 20x series for non-aggr
+	[a] T202 -> completed
 	[b] 
+Goal 5. Writing
+	[a] paragraph problem statement
+	[b] Thm3 and Proof
 
 
 -- TODO --

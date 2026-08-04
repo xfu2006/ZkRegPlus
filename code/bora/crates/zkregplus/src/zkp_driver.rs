@@ -3236,6 +3236,43 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 		}
 	}
 
+	/// T2xx stage-3 cost cell (user rule, 08-04): the SAME 4 cost cells
+	/// as test_p4_perf_compare but NEO ONLY. The legacy arms are a
+	/// byte-identical control by construction for any change confined
+	/// to discharge_adv_neo.rs, so skipping them halves the sweep.
+	/// Frozen legacy values to compare against: aggr easy 674,146 /
+	/// aggr hard 1,432,441 / non_aggr easy 7,428,625 / non_aggr hard
+	/// 7,428,625. Re-run test_p4_perf_compare for any change OUTSIDE
+	/// discharge_adv_neo.rs (e.g. anything touching clam_db.rs).
+	#[test]
+	pub fn test_p4_perf_compare_neo(){
+		std::env::set_var("ZKR_NO_FAIL_FAST", "1"); //see perf_compare
+		p4_pin_mode();
+		let _fold_only = FoldOnlyGuard::on(); //COST cell
+		let mut cells = vec![];
+		std::env::set_var("ZKR_SCAN", "scan_easy_small.dat");
+		cells.push(p4_measure("aggr easy neo", true,
+			|| dlp_hard::<Fr>(true, 1)));
+		std::env::set_var("ZKR_SCAN", "scan_dense.dat");
+		cells.push(p4_measure("aggr hard neo", true,
+			|| dlp_hard::<Fr>(true, 1)));
+		std::env::set_var("ZKR_SCAN", "binexec_small.dat");
+		cells.push(p4_measure("non_aggr easy neo", true,
+			|| clam_hard::<Fr>(true, 1, false)));
+		std::env::set_var("ZKR_SCAN", "binexec_dense.dat");
+		cells.push(p4_measure("non_aggr hard neo", true,
+			|| clam_hard::<Fr>(true, 1, false)));
+		//p4_report's trailing "ratios" block pairs cells 2-by-2 and is
+		//MEANINGLESS here (it would divide easy by hard). Read the
+		//per-cell PRIMARY cols and compare with the frozen legacy
+		//constants in the doc above.
+		p4_report("NEO-ONLY 4-cell sweep (T2xx stage 3)", &cells);
+		for c in cells.iter() {
+			assert!(!c.steps.is_empty(),
+				"P4 perf neo: cell '{}' recorded no fold steps", c.label);
+		}
+	}
+
 	/// Part C sibling: the AGGRESSIVE EASY cell, legacy vs neo. Measured
 	/// at 0/32 Q_m -- scan_easy.dat triggers NO discharge, so this cell
 	/// costs the pure CAPACITY FLOOR of each arm (the common production

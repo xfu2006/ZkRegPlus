@@ -1137,6 +1137,23 @@ fn assert_fp_diff_range2<F: PrimeField + ColEle>(
 }
 
 impl<F: PrimeField + ColEle> QmTable<F> {
+	/// Native rule for d_sort, mirroring assert_neo_wf Section 4:
+	/// the loc gap inside a group, the strict subsig ascent gap at a
+	/// run boundary, 0 elsewhere (a pad predecessor stays 0 -- the
+	/// circuit masks those rows, and a real store enc is never 0).
+	pub(crate) fn fill_d_sort(&mut self) {
+		let n = self.enc.len();
+		self.d_sort = vec![F::zero(); n];
+		for i in 1..n {
+			if self.enc[i - 1].is_zero() { continue; }
+			self.d_sort[i] = if self.enc[i] == self.enc[i - 1] {
+				self.loc[i] - self.loc[i - 1]
+			} else if self.subsig[i] != self.subsig[i - 1] {
+				self.subsig[i] - self.subsig[i - 1] - F::one()
+			} else { F::zero() };
+		}
+	}
+
 	/// Append one wrap row (loc 0 or max) for group `enc`; cert and
 	/// binding cols zeroed with benign si. f_bwd = the subsig's real
 	/// backward flag (the (si,val) pair must exist on EVERY row).
@@ -1623,17 +1640,9 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 				enc_prev = enc;
 			}
 		}
-		// sort diff advice, NON-strict (duplicate straddle rows are
-		// legal; clones are policed by the union / join instead).
-		// Before padding: pads are separate groups and the circuit
-		// binding masks pad/key-change rows.
-		let nrows = t.enc.len();
-		t.d_sort = vec![zero; nrows];
-		for i in 1..nrows {
-			if t.enc[i] == t.enc[i - 1] {
-				t.d_sort[i] = t.loc[i] - t.loc[i - 1];
-			}
-		}
+		// sort + key-ascent advice; see fill_d_sort. Before padding:
+		// pads are separate groups and the circuit masks them.
+		t.fill_d_sort();
 		// front pads + CapErr (fixed budget)
 		let n_keys = Self::n_wrap_keys(&subsigs, info);
 		let n_total = Self::qm_rows_size(&self.capacity, info);
@@ -2312,15 +2321,13 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	///             and reused by checks (1), (2) and (3);
 	///   same_sub  the same bit on the subsig column (run
 	///             adjacency);
-	///   d_sort    committed column holding, on a row that
-	///             continues a group, the gap to the row above:
-	///             loc[i] - loc[i-1] (and 0 on any other row). It
-	///             carries a RANGE2 si, so the OUTER lookup forces
-	///             it non-negative: loc[i] >= loc[i-1] -- the
-	///             NON-strict ascent of check (3). Equal neighbors
-	///             are legal (halo-straddle duplicates); clones
-	///             are policed by the union (nonaggr) / the join
-	///             id-chain bijection into L (aggr) instead;
+	///   d_sort    committed RANGE2 column carrying TWO disjoint
+	///             gaps: inside a group loc[i] - loc[i-1] (the
+	///             NON-strict sort of check (3); equal neighbors
+	///             are legal halo-straddle duplicates), and on a
+	///             run-boundary row subsig[i] - subsig[i-1] - 1
+	///             (the STRICT key ascent of check (4)). The OUTER
+	///             lookup forces both non-negative;
 	///   grp_start returned: (1 - b_same) * (1 - is_pad), the reset
 	///             signal of both rank chains;
 	///   rid       returned: a row's ADDRESS inside the QR target.
@@ -2336,9 +2343,9 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	///  (2) pads form a prefix, and a group's first row IS its
 	///      0-wrap (id 0, loc 0);
 	///  (3) ascending loc inside a group (duplicates allowed);
-	///  (4) the multiset of group keys equals the expected keys --
-	///      one per bound store row plus one seed key per statement
-	///      subsig -- so no group is cloned or invented;
+	///  (4) the group keys STRICTLY ascend -- subsig up across run
+	///      boundaries here, step up inside a run in check (6), and
+	///      subsig is enc's leading limb -- so none can repeat;
 	///  (5) rid chain (a definition, see Section 6);
 	///  (6) run completeness: a run starts at its subsig's step-0
 	///      seed, steps by +1, and may end only at a DB-LAST group.
@@ -2347,26 +2354,27 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	/// 0,1,2,2,3,4 (the FP row stalls the rank).
 	///  - CHEAT shift the ids so another row reads "id 1": (2) pins
 	///    a group's first row to id 0 AND loc 0.
-	///  - CHEAT clone a group of enc_x (the false-FP oracle): (4)
-	///    doubles enc_x's factor on one side only -> UNSAT.
+	///  - CHEAT clone a run of subsig s (the false-FP oracle): the
+	///    copy opens a run boundary whose (4) gap is s - s' - 1 < 0
+	///    for the s' it follows -> outside RANGE2 -> UNSAT.
 	///  - CHEAT repeat an (enc, loc) row: (3) allows it, but the
 	///    clone must be PAID -- nonaggr: no q_i/JR partner in the
 	///    union; aggr: the id chain slides and the (pat, id, loc)
 	///    join query misses L.
 	///  - CHEAT drop a subsig's tail groups: (6) leaves that run
 	///    unable to end, its last present group not being DB-LAST.
-	/// PARAMS: s_enc = enc column of the bound store rows, s_enc_nat
-	/// its natives (zero-bit hints); subsigs = statement subsig ids
-	/// (seed key = subsig * 2^(4rb)); r2 fingerprints the key
-	/// multiset. Returns (grp_start, rid).
-	/// COST: ~19*n + ~4*(|s_enc| + |subsigs|). PERF 61081.2.
+	/// PARAMS: none beyond the table. The old s_enc / subsigs /
+	/// s_enc_nat / subsig_nat / r2 arguments existed ONLY for the
+	/// deleted check (4) grand product. Returns (grp_start, rid).
+	/// COST: ~18*n. PERF 61081.2.
+	/// Returns (grp_start, rid, n_runs); n_runs is consumed by
+	/// assert_seed_anchors for the subsig-set count equality.
 	fn assert_neo_wf(
 		cs: ConstraintSystemRef<F>,
 		t: &QmTable<F>, v: &QmVars<F>, sel: &NeoSel<F>,
-		s_enc: &[FpVar<F>], subsigs: &[FpVar<F>],
-		s_enc_nat: &[F], subsig_nat: &[F],
-		r2: &FpVar<F>, job_id: usize,
-	) -> Result<(Vec<FpVar<F>>, Vec<FpVar<F>>), SynthesisError> {
+		job_id: usize,
+	) -> Result<(Vec<FpVar<F>>, Vec<FpVar<F>>, FpVar<F>),
+		SynthesisError> {
 		let n0 = cs.num_constraints();
 		let n = t.enc.len();
 		let rb = read_global_config().range2_bit;
@@ -2426,49 +2434,116 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		}
 		check_prod_zero(&(&c_one - &sel.is_pad[n - 1]),
 			&(&v.loc[n - 1] - &c_max), lc!(), "neo last row max")?;
-		// --- Section 4 / check (3): non-strict sort (1cs/row) ---
-		// "row i continues the group" is b_same * (1 - is_pad),
-		// which equals (1 - is_pad) - grp_start: a FREE rewrite of
-		// two columns Section 3 already paid for. The bind then
-		// fits in one constraint. d_sort carries a RANGE2 si, so
-		// the outer range table forces loc[i] >= loc[i-1]. Equal
-		// neighbors (straddle duplicates) are legal; a cloned row
-		// still dies unpaid in the union (nonaggr) or misses its
-		// (pat, id, loc) join query (aggr id-chain bijection).
+		// --- Section 3.5: run-boundary bits (2cs/row) ---
+		// Moved UP from Section 7, which used to own these: the key
+		// ascent in Section 4 needs the same two bits, so computing
+		// them once keeps the cost exactly where it was.
+		//   same_sub  subsig[i] == subsig[i-1];
+		//   bnd       a new RUN starts here (group start + new
+		//             subsig) -- the signal Section 7 gates on;
+		//   bnd_r     bnd with a pad predecessor masked off: the
+		//             FIRST run has nothing behind it to compare to.
+		let mut ds_nat = vec![F::zero(); n];
+		for i in 1..n { ds_nat[i] = t.subsig[i] - t.subsig[i - 1]; }
+		let ds_var = (0..n).map(|i| if i == 0 {
+			FpVar::<F>::Constant(F::zero()) }
+			else { &v.subsig[i] - &v.subsig[i - 1] })
+			.collect::<Vec<_>>();
+		let same_sub = gen_zero_bits(&cs, &ds_nat, &ds_var)?;
+		let mut bnd = vec![FpVar::<F>::Constant(F::zero())];
+		let mut bnd_r = vec![FpVar::<F>::Constant(F::zero())];
+		for i in 1..n {
+			let b = &grp_start[i] * &(&c_one - &same_sub[i]);
+			bnd_r.push(&b * &(&c_one - &sel.is_pad[i - 1]));
+			bnd.push(b);
+		}
+		// --- Section 4 / check (3): loc sort + key ascent
+		//     (2cs/row) ---
+		// d_sort is ONE range-checked slot doing two disjoint jobs,
+		// picked by masks that are never both 1:
+		//   same[i]  -> loc[i] - loc[i-1], the NON-strict loc sort
+		//               inside a group. "row i continues the group"
+		//               is b_same * (1 - is_pad) = (1 - is_pad) -
+		//               grp_start: a FREE rewrite of two columns
+		//               Section 3 already paid for. Equal neighbors
+		//               (straddle duplicates) stay legal.
+		//   bnd_r[i] -> subsig[i] - subsig[i-1] - 1, so subsig
+		//               STRICTLY ascends across run boundaries.
+		//   neither  -> 0 (pads, and group starts INSIDE a run,
+		//               where Section 7 owns the step chain).
+		// The RANGE2 si on d_sort enforces both: a negative value
+		// wraps to a ~254-bit element and the outer range table
+		// rejects it.
+		//
+		// *** THE ASCENT REPLACES THE OLD check (4) *** -- a grand
+		// product of the group keys against s_enc + subsigs*B^4.
+		// That product proved uniqueness against a reference
+		// multiset the PROVER supplies (s_enc is si=0 advice with no
+		// other reader, subsigs is capacity-padded with spare
+		// slots), so cloning a run and writing the duplicate keys
+		// into two spare slots rebalanced it: measured SAT. The
+		// ascent proves the same uniqueness from enc's own
+		// RANGE2-bounded limbs (the split at assert_neo_si_pins),
+		// where there is nothing left to forge. The COVERAGE
+		// direction the product also carried is unaffected: it is
+		// supplied by assert_seed_anchors (a reachable seed row per
+		// statement subsig) and by Section 7 (every run climbs to a
+		// DB-LAST group).
+		//
+		// EXAMPLE, base B = 10, so enc reads off as
+		// [subsig][step][pat][rg1][rg2]. Honest keys 10000, 11000,
+		// 20000, 21000 -- one run per subsig:
+		//   the row opening run 2 has d_sort = 2 - 1 - 1 = 0, ok.
+		// Now the prover appends a verbatim copy of subsig 1's run
+		// (keys 10000, 11000) to forge a second, EMPTY seed group
+		// for use as a false FP bracket. Its opening row is a run
+		// boundary too:
+		//   d_sort = 1 - 2 - 1 = -2 = p-2, not in [0, 9] -> UNSAT.
+		// Uniqueness then follows from ordering alone: subsig up
+		// across runs (here), step up inside a run (Section 7), and
+		// subsig is enc's leading limb -- so the group keys strictly
+		// ascend and cannot repeat.
 		for i in 1..n {
 			let same = &(&c_one - &sel.is_pad[i]) - &grp_start[i];
-			check_prod_eq(&same,
-				&(&v.loc[i] - &v.loc[i - 1]),
-				&v.d_sort[i], "neo sort bind")?;
+			let m = &same * &(&v.loc[i] - &v.loc[i - 1]);
+			check_prod_eq(&bnd_r[i],
+				&(&(&v.subsig[i] - &v.subsig[i - 1]) - &c_one),
+				&(&v.d_sort[i] - &m), "neo sort/ascent bind")?;
 		}
-		// --- Section 5 / check (4): group uniqueness (2cs/row
-		//     + ~4 per expected key) ---
-		// A grand product over the 0-wrap keys must equal the
-		// product over the expected keys. Zero entries are pads
-		// (padded store rows, dummy-0 subsig slots) and contribute
-		// the neutral factor 1; a real store enc or subsig is never
-		// 0, so masking cannot hide a live key.
-		let mut lhs = c_one.clone();
-		for i in 0..n {
-			let term = &grp_start[i] * &(&(&v.enc[i] + r2) - &c_one);
-			lhs = &lhs * &(&term + &c_one);
-		}
-		let f1 = F::from(1u64 << rb);
-		let c_sh4 = new_const_var(&cs, f1 * f1 * f1 * f1);
-		let z_se = gen_zero_bits(&cs, s_enc_nat, s_enc)?;
-		let z_sg = gen_zero_bits(&cs, subsig_nat, subsigs)?;
-		let mut rhs = c_one.clone();
-		for (j, e) in s_enc.iter().enumerate() {
-			let fj = &c_one + &((&c_one - &z_se[j])
-				* &(&(e + r2) - &c_one));
-			rhs = &rhs * &fj;
-		}
-		for (j, s) in subsigs.iter().enumerate() {
-			let fj = &c_one + &((&c_one - &z_sg[j])
-				* &(&(&(s * &c_sh4) + r2) - &c_one));
-			rhs = &rhs * &fj;
-		}
-		check_eq(&lhs, &rhs, "neo group uniqueness")?;
+		// Run count, returned for the subsig-set equality closed in
+		// assert_seed_anchors. Pads are a PREFIX, so the table holds
+		// a real row iff its LAST row is real; that row's run has no
+		// bnd_r of its own (nothing precedes the first run), hence
+		// the +1. All linear: no constraint, no variable.
+		let mut n_runs = &c_one - &sel.is_pad[n - 1];
+		for i in 1..n { n_runs = &n_runs + &bnd_r[i]; }
+		// --- Section 5 / check (4): group uniqueness ---
+		// *** REMOVED -- REPLACED BY THE SECTION 4 KEY ASCENT. ***
+		// Kept commented out for one review cycle; see the Section 4
+		// block above for why the product was unsound (its reference
+		// multiset was prover-written) and why neither the
+		// uniqueness nor the coverage direction is lost.
+		// let mut lhs = c_one.clone();
+		// for i in 0..n {
+		// 	let term = &grp_start[i] * &(&(&v.enc[i] + r2) - &c_one);
+		// 	lhs = &lhs * &(&term + &c_one);
+		// }
+		// let f1 = F::from(1u64 << rb);
+		// let c_sh4 = new_const_var(&cs, f1 * f1 * f1 * f1);
+		// let z_se = gen_zero_bits(&cs, s_enc_nat, s_enc)?;
+		// let z_sg = gen_zero_bits(&cs, subsig_nat, subsigs)?;
+		// let mut rhs = c_one.clone();
+		// for (j, e) in s_enc.iter().enumerate() {
+		// 	let fj = &c_one + &((&c_one - &z_se[j])
+		// 		* &(&(e + r2) - &c_one));
+		// 	rhs = &rhs * &fj;
+		// }
+		// for (j, s) in subsigs.iter().enumerate() {
+		// 	let fj = &c_one + &((&c_one - &z_sg[j])
+		// 		* &(&(&(s * &c_sh4) + r2) - &c_one));
+		// 	rhs = &rhs * &fj;
+		// }
+		// check_eq(&lhs, &rhs, "neo group uniqueness")?;
 		// --- Section 6 / check (5): rid rank chain (1cs/row) ---
 		// 0 at a group start, then +1 on exactly the NON-FP rows,
 		// which are the QR target (aggr: wraps and C; non-aggr:
@@ -2490,26 +2565,19 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		// the seed anchor of assert_seed_anchors, forces any subsig
 		// that appears at all to show its FULL chain: a joint store
 		// drop leaves a run that cannot be closed.
-		let mut ds_nat = vec![F::zero(); n];
-		for i in 1..n { ds_nat[i] = t.subsig[i] - t.subsig[i - 1]; }
-		let ds_var = (0..n).map(|i| if i == 0 {
-			FpVar::<F>::Constant(F::zero()) }
-			else { &v.subsig[i] - &v.subsig[i - 1] })
-			.collect::<Vec<_>>();
-		let same_sub = gen_zero_bits(&cs, &ds_nat, &ds_var)?;
+		// same_sub / bnd / bnd_r moved UP to Section 3.5 (Section 4
+		// needs the same bits); identical code, same cost. bnd_r is
+		// the old t_end: bnd with a pad predecessor masked off,
+		// because the FIRST run has nothing behind it to end.
 		for i in 1..n {
-			let bnd = &grp_start[i] * &(&c_one - &same_sub[i]);
-			// a pad predecessor means this is the FIRST run in the
-			// table, so there is nothing behind it to end.
-			let t_end = &bnd * &(&c_one - &sel.is_pad[i - 1]);
-			check_prod_zero(&t_end,
+			check_prod_zero(&bnd_r[i],
 				&(&c_one - &sel.is_last[i - 1]), lc!(),
 				"neo run ends at LAST")?;
-			check_prod_zero(&bnd, &v.step[i], lc!(),
+			check_prod_zero(&bnd[i], &v.step[i], lc!(),
 				"neo run starts at seed")?;
 			// "same run, next group" is grp_start * same_sub, which
 			// is grp_start - bnd: free, same argument as Section 4.
-			let u = &grp_start[i] - &bnd;
+			let u = &grp_start[i] - &bnd[i];
 			check_prod_zero(&u,
 				&(&(&v.step[i] - &v.step[i - 1]) - &c_one), lc!(),
 				"neo run step chain")?;
@@ -2519,8 +2587,8 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			"neo final run ends at LAST")?;
 		log(job_id, LOG3, &format!(
 			"PERF 61081.2: block=wf cs={} pred={}",
-			cs.num_constraints() - n0, 19 * n));
-		Ok((grp_start, rid))
+			cs.num_constraints() - n0, 18 * n));
+		Ok((grp_start, rid, n_runs))
 	}
 
 	/// Binds each si companion column of T_qm to the row it sits on.
@@ -4853,6 +4921,8 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		buf_qr: &mut QmQueryBuf<F>,
 		                 // REACHABLE-target instance
 		r1: &FpVar<F>,
+		n_runs: &FpVar<F>,
+		                 // run count from assert_neo_wf
 		job_id: usize,
 	) -> Result<(), SynthesisError> {
 		let n0 = cs.num_constraints();
@@ -4876,6 +4946,24 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			buf_qr.push(&(&(s * &c_sh4) + r1) + &r1sq,
 				&c_one - &z_sub[j]);
 		}
+		// T202: run/subsig COUNT EQUALITY (1cs, 0 cols -- both
+		// sides are linear). The logup above is one-directional
+		// (listed subsig -> table), which is the half check (4)
+		// also gave. The other half -- every table RUN belongs to a
+		// LISTED subsig -- died with that product, and
+		// test_r4_seed_anchor_drop proves it was load-bearing:
+		// zeroing a slot leaves the subsig's rows in Q_m with no
+		// obligation attached. Section 4's ascent makes run subsigs
+		// distinct and ascending, so listed-subset-of-runs plus
+		// equal counts forces the two SETS equal.
+		// KNOWN RESIDUAL: a prover who zeroes one slot AND
+		// duplicates another rebalances the count. Closing that
+		// needs strict ascent on the subsig LIST too, which costs a
+		// RANGE2 diff column of length |S| -- deliberately not paid
+		// here; see T202 in the task record.
+		let mut n_listed = FpVar::<F>::Constant(F::zero());
+		for z in z_sub.iter() { n_listed = &n_listed + &(&c_one - z); }
+		check_eq(n_runs, &n_listed, "neo run/subsig count")?;
 		log(job_id, LOG3, &format!(
 			"PERF 61082.8: block=seed_anchors cs={} pred={}",
 			cs.num_constraints() - n0, 2 * m));
@@ -5147,9 +5235,8 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		// -- 2. well-formedness: row shape vs the S store,
 		//    group sort order, wrap/pad structure; returns
 		//    group starts + per-row reachable ranks --
-		let (_gs, rid) = Self::assert_neo_wf(cs.clone(),
-			&nat.t, &vars.qm, &sel, &vars.s_enc, &vars.subsigs,
-			&nat.s_enc, &nat.subsig_nat, r2, job_id)?;
+		let (_gs, rid, n_runs) = Self::assert_neo_wf(cs.clone(),
+			&nat.t, &vars.qm, &sel, job_id)?;
 		// -- 3. pin each si_* companion column to its base
 		//    column (outer-lookup share consistency) --
 		Self::assert_neo_si_pins(cs.clone(), &vars.qm, &sel,
@@ -5200,7 +5287,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		//    blocks the vacuous all-FP labeling) --
 		Self::assert_seed_anchors(cs.clone(),
 			(&vars.subsigs, &nat.subsig_nat), &mut buf, r1,
-			job_id)?;
+			&n_runs, job_id)?;
 		// -- 9. close the batch: one logup of all buffered
 		//    queries into Q_m; consumes buf by value (qc
 		//    side passed empty) --
@@ -5235,9 +5322,8 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		// -- 2. well-formedness: row shape vs the S store,
 		//    group sort order, wrap/pad structure; returns
 		//    group starts + per-row reachable ranks --
-		let (gs, rid) = Self::assert_neo_wf(cs.clone(),
-			&nat.t, &vars.qm, &sel, &vars.s_enc, &vars.subsigs,
-			&nat.s_enc, &nat.subsig_nat, r2, job_id)?;
+		let (gs, rid, n_runs) = Self::assert_neo_wf(cs.clone(),
+			&nat.t, &vars.qm, &sel, job_id)?;
 		// -- 3. carried ranks: cid counts only carried rows
 		//    (cat in {C,BP,SP}); free linear combo of rid --
 		let cid = Self::assert_neo_cid_chain(&gs, &sel);
@@ -5320,7 +5406,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		//    blocks the vacuous all-FP labeling) --
 		Self::assert_seed_anchors(cs.clone(),
 			(&vars.subsigs, &nat.subsig_nat), &mut buf_qr, r1,
-			job_id)?;
+			&n_runs, job_id)?;
 		// -- 13. close the batch: one logup per buffer into
 		//    Q_m; consumes both buffers by value --
 		Self::assert_qm_lookups(cs.clone(), &vars.qm, &sel,
@@ -5435,9 +5521,10 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 	///   cat      unity + hygiene selectors;
 	///   prev_*   challenge-packed QR-target lookups (SZ);
 	///   *_hi     boolean-checked in-circuit;
-	///   l_*      copy of the fsm pat_loc table (binding = M8);
+	///   (L is NOT emitted here -- referenced from the fsm, T201);
 	///   subsigs  compute_sig seed tie (M8);
-	///   s_enc    S-universe authentication (M8);
+	///   (s_enc is NOT emitted here -- T202 deleted its only
+	///    reader, check (4), so the M8 obligation is retired);
 	///   mtbl_*   logup multiplicity advice (self-checking).
 	fn core_container(nat: &NeoCore<F>)
 	-> Arc<Mutex<Container<F>>> {
@@ -5545,11 +5632,20 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 			fix(&t.d_below_lo, "d_below_lo", f_r2);
 			fix(&t.d_above_lo, "d_above_lo", f_r2);
 			fix(&t.d_sort, "d_sort", f_r2);
-			fix(&nat.l_pat, "l_pat", z);
-			fix(&nat.l_id, "l_id", z);
-			fix(&nat.l_loc, "l_loc", z);
+			// T201: l_pat/l_id/l_loc are NOT committed here. They are
+			// an EXTERNAL reference to the fsm's own sorted_tbl,
+			// attached by ext_pat_loc at the advice ctor: zero
+			// statement cost, and the M8 binding holds structurally.
 			fix(&nat.subsig_nat, "subsigs", z);
-			fix(&nat.s_enc, "s_enc", z);
+			// T202: s_enc is NO LONGER COMMITTED. Its only reader
+			// was the deleted check (4) grand product, and as si=0
+			// advice it was exactly what made that product
+			// forgeable. gen_jr_table / gen_ns_pat consume the
+			// LOCAL list at construction and are unaffected; the
+			// |s_enc| = s_cap budget survives as |ns_pat|. This
+			// also retires the "s_enc S-universe authentication
+			// (M8)" obligation in the doc above, not defers it.
+			// fix(&nat.s_enc, "s_enc", z);
 			fix(&nat.mtbl_qr, "mtbl_qr", z);
 			fix(&nat.mtbl_tm, "mtbl_tm", z);
 			fix(&nat.ns_pat, "ns_pat", f_r2);
@@ -5765,6 +5861,24 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoAdvice<F> {
 		}
 	}
 
+	/// T201: reference (not copy) the fsm's pat-loc table, so L costs
+	/// zero statement bytes and is bound by construction.
+	fn ext_pat_loc(b_igc: bool, offset_fsm: usize,
+		pat_loc: &Arc<Mutex<Container<F>>>)
+	-> Arc<Mutex<Container<F>>> {
+		// duplicate_as_external_adv sets dest=None (traits.rs:442) so
+		// get_to_add_size returns 0, while extract_stmt_vec's gather
+		// still resolves the columns to the fsm's own committed vars.
+		// Identical to the legacy call at discharge_adv.rs:2738.
+		let sname_fsm = if b_igc { "fsm_adv_stmt_igc" }
+			else { "fsm_adv_stmt_cs" };
+		Arc::new(Mutex::new(pat_loc.lock().unwrap()
+			.duplicate_as_external_adv(0 - (offset_fsm as i32),
+				Some(format!("{} packed_trace pat_loc sorted_tbl",
+					sname_fsm)),
+				Some("pat_loc".to_string()))))
+	}
+
 	/// NON-AGGRESSIVE ctor (paper C.1 prune): seed = inp_subsigs
 	/// (the SDE obligation set, capacity-bounded), Q_i overlaid,
 	/// shared core + apply_sp_pass -> statement {neo_core,q_i,q_c}.
@@ -5825,6 +5939,8 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoAdvice<F> {
 		stmt_container.lock().unwrap().add_container(core);
 		stmt_container.lock().unwrap().add_container(ct_qi);
 		stmt_container.lock().unwrap().add_container(ct_qc);
+		stmt_container.lock().unwrap().add_container(
+			Self::ext_pat_loc(b_igc, offset_fsm, pat_loc));
 		Ok(Self { capacity: capacity.clone(), fsm_id,
 			stmt_container, b_igc, offset_fsm })
 	}
@@ -5879,6 +5995,8 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoAdvice<F> {
 			subsig_store_info)?;
 		stmt_container.lock().unwrap().add_container(core);
 		stmt_container.lock().unwrap().add_container(combo);
+		stmt_container.lock().unwrap().add_container(
+			Self::ext_pat_loc(b_igc, offset_fsm, pat_loc));
 		// Publish seed encodings (subsig*2^4rb per SEEDED NEEDS
 		// subsig; K+1 slots after the K-pad of subsig_nat) so
 		// compute_sig's aggressive seed-pin reads a uniform source.
@@ -5978,11 +6096,18 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		let (si_b_bwd, si_b_bwd_n) = c2("si_b_bwd")?;
 		// -- 3. side columns: pat_loc triple, statement
 		//    subsigs, store rows, multiplicity tables --
-		let (l_pat, l_pat_n) = c2("l_pat")?;
-		let (l_id, l_id_n) = c2("l_id")?;
-		let (l_loc, l_loc_n) = c2("l_loc")?;
+		// T201: L lives in the fsm's statement; the external cols in
+		// "pat_loc" gather to it, so this is a plain sibling load.
+		let lct = stmt.get_container("pat_loc")?;
+		let (l_pat, l_pat_n) = Self::col2(&lct, "sorted_key")?;
+		let (l_id, l_id_n) = Self::col2(&lct, "sorted_id")?;
+		let (l_loc, l_loc_n) = Self::col2(&lct, "sorted_val")?;
 		let (subsigs, subsigs_n) = c2("subsigs")?;
-		let (s_enc, s_enc_n) = c2("s_enc")?;
+		// T202: s_enc is no longer a committed column (its only
+		// reader, check (4), is gone). The fields stay as empty
+		// vestiges; removing them is T212 hygiene.
+		// let (s_enc, s_enc_n) = c2("s_enc")?;
+		let (s_enc, s_enc_n) = (vec![], vec![]);
 		let (mtbl_qr, mtbl_qr_n) = c2("mtbl_qr")?;
 		let (mtbl_tm, mtbl_tm_n) = c2("mtbl_tm")?;
 		let (ns_pat, ns_pat_n) = c2("ns_pat")?;
@@ -6131,11 +6256,18 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		// -- 5. side columns: pat_loc triple, statement
 		//    subsigs, store rows, multiplicity tables,
 		//    union proof scalars --
-		let (l_pat, l_pat_n) = c2("l_pat")?;
-		let (l_id, l_id_n) = c2("l_id")?;
-		let (l_loc, l_loc_n) = c2("l_loc")?;
+		// T201: L lives in the fsm's statement; the external cols in
+		// "pat_loc" gather to it, so this is a plain sibling load.
+		let lct = stmt.get_container("pat_loc")?;
+		let (l_pat, l_pat_n) = Self::col2(&lct, "sorted_key")?;
+		let (l_id, l_id_n) = Self::col2(&lct, "sorted_id")?;
+		let (l_loc, l_loc_n) = Self::col2(&lct, "sorted_val")?;
 		let (subsigs, subsigs_n) = c2("subsigs")?;
-		let (s_enc, s_enc_n) = c2("s_enc")?;
+		// T202: s_enc is no longer a committed column (its only
+		// reader, check (4), is gone). The fields stay as empty
+		// vestiges; removing them is T212 hygiene.
+		// let (s_enc, s_enc_n) = c2("s_enc")?;
+		let (s_enc, s_enc_n) = (vec![], vec![]);
 		let (mtbl_qr, mtbl_qr_n) = c2("mtbl_qr")?;
 		let (mtbl_tm, mtbl_tm_n) = c2("mtbl_tm")?;
 		let (ns_pat, ns_pat_n) = c2("ns_pat")?;
@@ -7451,6 +7583,20 @@ pub(crate) mod tests_neo_m6 {
 		l_cols3(m)
 	}
 
+	/// leaf column names of a native container.
+	pub(crate) fn col_names(ct: &Container<Fr>) -> Vec<String> {
+		match ct {
+			Container::Complex(v, _, _, _) => v.iter()
+				.flat_map(|c| col_names(&c.lock().unwrap()))
+				.collect(),
+			Container::Single(c) => match &c.lock().unwrap().cfg {
+				ContainerConfig::Column(_, nm, _, _) =>
+					vec![nm.clone()],
+				_ => vec![],
+			},
+		}
+	}
+
 	/// hm in the generator's (id, loc) wrapped format.
 	pub(crate) fn hm_gen(m: &HashMap<u32, Vec<u32>>)
 	-> HashMap<Fr, Vec<(Fr, Fr)>> {
@@ -7574,8 +7720,11 @@ pub(crate) mod tests_neo_m6 {
 		let rid = NeoCore::gen_rid_native(&nat.t);
 		nat.mtbl_qr = NeoCore::gen_mtbl_qr(&nat.t, &rid,
 			&nat.subsig_nat);
-		nat.ns_pat = NeoCore::gen_ns_pat(s_pat, &nat.l_pat,
-			nat.s_enc.len());
+		// T202: |s_enc| was s_cap and gen_ns_pat front-pads to that
+		// same cap, so |ns_pat| carries the no-show budget now that
+		// s_enc is no longer committed (empty on the loader path).
+		let ns_cap = nat.ns_pat.len();
+		nat.ns_pat = NeoCore::gen_ns_pat(s_pat, &nat.l_pat, ns_cap);
 		let (lo, hi, mns) = NeoCore::gen_ns_advice(&nat.ns_pat,
 			&nat.l_pat);
 		nat.d_ns_lo = lo; nat.d_ns_hi = hi; nat.mtbl_ns = mns;
@@ -7761,9 +7910,24 @@ pub(crate) mod tests_neo_m6 {
 		assert_eq!(get("d_sort"), nat.t.d_sort);
 		assert_eq!(get("si_step"), nat.t.si_step);
 		assert_eq!(get("si_b_bwd"), nat.t.si_b_bwd);
-		assert_eq!(get("l_pat"), nat.l_pat);
-		assert_eq!(get("l_id"), nat.l_id);
-		assert_eq!(get("l_loc"), nat.l_loc);
+		// T201: L is no longer a neo_core column -- it is an external
+		// reference attached at the advice ctor. Pin BOTH halves: the
+		// natives still track the fsm source, and the copy is really
+		// gone from the committed statement.
+		let src = |n: &str| ct.lock().unwrap().get_container(n)
+			.unwrap().lock().unwrap().to_vec();
+		assert_eq!(src("sorted_key"), nat.l_pat);
+		assert_eq!(src("sorted_id"), nat.l_id);
+		assert_eq!(src("sorted_val"), nat.l_loc);
+		let names = col_names(&core.lock().unwrap());
+		for n in ["l_pat", "l_id", "l_loc"] {
+			assert!(!names.contains(&n.to_string()),
+				"T201: {} must not be committed in neo_core", n);
+		}
+		// T202: s_enc lost its only reader (check (4)) and is no
+		// longer committed either.
+		assert!(!names.contains(&"s_enc".to_string()),
+			"T202: s_enc must not be committed in neo_core");
 		assert_eq!(get("mtbl_qr"), nat.mtbl_qr);
 		assert_eq!(get("mtbl_tm"), nat.mtbl_tm);
 		assert_eq!(get("ns_pat"), nat.ns_pat);
@@ -7847,8 +8011,10 @@ pub(crate) mod tests_neo_m6 {
 mod tests_neo_m6_neg {
 	use super::*;
 	use super::tests_neo_m6::{run_core_aggr, run_nat_aggr,
-		regen_aggr_advice, a18_s_pat, hm_to_l_cols};
+		regen_aggr_advice, a18_s_pat, hm_to_l_cols,
+		build_core_native, hm_gen};
 	use super::tests_neo_m5::a18_store;
+	use data_processor::type_def::SubsigStepStoreItem;
 	use ark_bn254::Fr;
 
 	fn f(x: u32) -> Fr { Fr::from(x) }
@@ -8164,13 +8330,7 @@ mod tests_neo_m6_neg {
 				assert!(t.enc[i + 1] == t.enc[i]
 					&& t.loc[i + 1] == Fr::from(131u32));
 				t.loc[i] = Fr::from(131u32);
-				let n = t.enc.len();
-				for j in 1..n { //honest non-strict rebind
-					t.d_sort[j] = if t.enc[j] == t.enc[j - 1]
-						&& !t.enc[j].is_zero()
-						{ t.loc[j] - t.loc[j - 1] }
-						else { Fr::from(0u32) };
-				}
+				t.fill_d_sort(); //honest non-strict rebind
 				regen_aggr_advice(nat, &a18_store(), &a18_s_pat());
 			}));
 		assert!(!cs.is_satisfied().unwrap());
@@ -8230,6 +8390,176 @@ mod tests_neo_m6_neg {
 				t.d_c1[i] = Fr::from(5u32);
 				t.d_c2[i] = Fr::from(3u32);
 				regen_aggr_advice(nat, &a18_store(), &a18_s_pat());
+			}));
+		assert!(!cs.is_satisfied().unwrap());
+	}
+
+	/// 2-subsig fixture for the T202 clone-run attack. a18_store is
+	/// SINGLE-subsig and cannot express it: a clone appended there
+	/// is not a run boundary at all, so check (6)'s step chain
+	/// rejects it and the key ascent is never exercised.
+	pub(crate) fn t2_store() -> SubsigStepStore {
+		let mk = |id: usize, a: usize, b: usize| SubsigStepStoreItem {
+			subsig_id: id, igc: false,
+			vec_pm_bounds: vec![(a, (1, 9)), (b, (1, 9))],
+			is_backward: false };
+		let mut m = std::collections::HashMap::new();
+		m.insert(1usize, mk(1, 1, 2));
+		m.insert(2usize, mk(2, 3, 4));
+		SubsigStepStore { subsig_ids: vec![1, 2], subsig_to_steps: m,
+			b_aggressive: false }
+	}
+
+	/// store pats of t2_store, in s_enc row order.
+	fn t2_s_pat() -> Vec<Fr> { vec![f(1), f(2), f(3), f(4)] }
+
+	/// one match per store pat; gaps respect the (1, 9) bounds so
+	/// both chains are live (s1: 1 ->10 gap 9 ->15 gap 5;
+	/// s2: 1 ->5 gap 4 ->12 gap 7).
+	fn t2_hm() -> HashMap<u32, Vec<u32>> {
+		let mut m = HashMap::new();
+		m.insert(1, vec![10]); m.insert(2, vec![15]);
+		m.insert(3, vec![5]);  m.insert(4, vec![12]);
+		m
+	}
+
+	fn t2_capacity() -> DischargeAdvCapacity {
+		DischargeAdvCapacity {
+			res_small_cost: DischargeAdvCapacity::default_res_small(),
+			max_nibble_len: 1, subsigs: 4,
+			avg_active_pats_per_subsig: 32, basis_pats_in_trace: 1,
+			perc_pats_expansion_rate: 100, universe_subsigs: 4,
+			b_aggressive: false, prod_pats_expansion: 0,
+			wrap_keys: 0,
+		}
+	}
+
+	/// run_core_aggr with TWO seeded subsigs.
+	fn run_core_aggr2(info: &SubsigStepStore,
+		hm: &HashMap<u32, Vec<u32>>, default_min: u32,
+		tamper: Option<&dyn Fn(&mut NeoCore<Fr>)>)
+	-> (ConstraintSystemRef<Fr>, NeoCore<Fr>) {
+		let mut m = HashMap::new();
+		for sid in [1u32, 2] {
+			m.insert(f(sid), vec![StepQueueItem::new(f(sid), f(0),
+				f(0), f(0), f(0), vec![f(1)])]);
+		}
+		let carried = StepQueueNeo::from_stepqueue(StepQueue::new(
+			vec![f(1), f(2)], m, &t2_capacity(),
+			StepQueueType::ResLarge, false));
+		let gen = carried.gen_shared_core_from_hm(0, &hm_gen(hm),
+			info, f(default_min)).expect("shared core");
+		let mut nat = build_core_native(&gen, info, hm);
+		if let Some(tf) = tamper { tf(&mut nat); }
+		(run_nat_aggr(&nat), nat)
+	}
+
+	/// append a verbatim copy of row i to every QmTable column.
+	fn dup_row(t: &mut QmTable<Fr>, i: usize) {
+		let cols: [&mut Vec<Fr>; 26] = [
+			&mut t.enc, &mut t.id, &mut t.loc, &mut t.cat,
+			&mut t.step, &mut t.subsig, &mut t.prev_id1,
+			&mut t.prev_loc1, &mut t.prev_loc2, &mut t.pat,
+			&mut t.rg1, &mut t.rg2, &mut t.enc_prev, &mut t.b_bwd,
+			&mut t.d_c1, &mut t.d_c2, &mut t.d_below_lo,
+			&mut t.d_above_lo, &mut t.d_sort, &mut t.si_step,
+			&mut t.si_subsig, &mut t.si_pat, &mut t.si_rg1,
+			&mut t.si_rg2, &mut t.si_enc_prev, &mut t.si_b_bwd];
+		for c in cols { let v = c[i]; c.push(v); }
+	}
+
+	/// permute the real rows of every QmTable column.
+	fn permute_rows(t: &mut QmTable<Fr>, order: &[usize]) {
+		let cols: [&mut Vec<Fr>; 26] = [
+			&mut t.enc, &mut t.id, &mut t.loc, &mut t.cat,
+			&mut t.step, &mut t.subsig, &mut t.prev_id1,
+			&mut t.prev_loc1, &mut t.prev_loc2, &mut t.pat,
+			&mut t.rg1, &mut t.rg2, &mut t.enc_prev, &mut t.b_bwd,
+			&mut t.d_c1, &mut t.d_c2, &mut t.d_below_lo,
+			&mut t.d_above_lo, &mut t.d_sort, &mut t.si_step,
+			&mut t.si_subsig, &mut t.si_pat, &mut t.si_rg1,
+			&mut t.si_rg2, &mut t.si_enc_prev, &mut t.si_b_bwd];
+		for c in cols {
+			let v: Vec<Fr> = order.iter().map(|&i| c[i]).collect();
+			*c = v;
+		}
+	}
+
+	/// n15 RUNS OUT OF ORDER (T202) -- the minimal witness that the
+	/// Section 4 key ascent is load-bearing. Emit subsig 2's run
+	/// BEFORE subsig 1's: no row is added, removed or edited, only
+	/// reordered, so every other block still balances (run count is
+	/// 2, each run opens at its seed and ends at DB-LAST, loc sorts
+	/// are intra-group and travel with their rows). The descending
+	/// boundary is the ONLY defect, and the ascent is the only
+	/// check that sees it. d_sort is forced to the in-range 0 there
+	/// because a prover cannot use the honest p-2: the OUTER RANGE2
+	/// lookup rejects it (that half is invisible at tier 1).
+	#[test]
+	fn test_m6_neg_runs_out_of_order() {
+		let (cs0, _) = run_core_aggr2(&t2_store(), &t2_hm(), 100,
+			None);
+		assert!(cs0.is_satisfied().unwrap(), "t2 control must be SAT");
+		let (cs, _nat) = run_core_aggr2(&t2_store(), &t2_hm(), 100,
+			Some(&|nat: &mut NeoCore<Fr>| {
+				let n = nat.t.enc.len();
+				let np = nat.t.n_pad;
+				let pick = |t: &QmTable<Fr>, s: u32| -> Vec<usize> {
+					(np..t.enc.len())
+						.filter(|&i| t.subsig[i] == f(s)).collect()
+				};
+				let mut order: Vec<usize> = (0..np).collect();
+				order.extend(pick(&nat.t, 2));
+				order.extend(pick(&nat.t, 1));
+				assert_eq!(order.len(), n, "permutation must cover");
+				permute_rows(&mut nat.t, &order);
+				// the now-descending boundary: only an in-range
+				// d_sort is usable, and the bind rejects it.
+				let b = np + pick(&nat.t, 2).len();
+				nat.t.d_sort[b] = f(0);
+				regen_aggr_advice(nat, &t2_store(), &t2_s_pat());
+			}));
+		assert!(!cs.is_satisfied().unwrap());
+	}
+
+	/// n14 CLONED RUN (T202) -- the attack the deleted check (4)
+	/// was supposed to stop and could not. Layout [s1][s2][s1copy]
+	/// passes Section 7, whose adjacency is LOCAL (the copy opens
+	/// after a DB-LAST row at step 0 and chains +1), and the old
+	/// grand product was rebalanced by writing the duplicate keys
+	/// into spare s_enc / subsigs slots -- both si=0 advice.
+	/// Section 4's key ascent kills it: the copy opens a run
+	/// boundary whose gap is subsig 1 - 2 - 1 = -2.
+	/// A prover must keep d_sort inside RANGE2 (the OUTER lookup
+	/// enforces that), so the only usable choice is an in-range
+	/// value, which the bind then rejects -- 0 here, the value the
+	/// copied row already carries. The complementary half (an
+	/// HONEST d_sort of p-2 rejected by the range table) is an
+	/// outer-lookup property and is NOT visible at tier 1.
+	#[test]
+	fn test_m6_neg_clone_run() {
+		// control first: if the honest 2-subsig table is not SAT
+		// the negative below would prove nothing.
+		let (cs0, _) = run_core_aggr2(&t2_store(), &t2_hm(), 100,
+			None);
+		assert!(cs0.is_satisfied().unwrap(), "t2 control must be SAT");
+		let (cs, _nat) = run_core_aggr2(&t2_store(), &t2_hm(), 100,
+			Some(&|nat: &mut NeoCore<Fr>| {
+				let t = &mut nat.t;
+				let src: Vec<usize> = (t.n_pad..t.enc.len())
+					.filter(|&i| t.subsig[i] == f(1)).collect();
+				let first = t.enc.len();
+				for i in src { dup_row(t, i); }
+				// in-range choice at the cloned boundary.
+				t.d_sort[first] = f(0);
+				regen_aggr_advice(nat, &t2_store(), &t2_s_pat());
+				// MANDATORY: gen_mtbl_qr gives BOTH copies of a
+				// duplicated target the full query count, so an
+				// honestly regenerated clone dies at the QR logup
+				// and the test would prove nothing.
+				for k in first..nat.mtbl_qr.len() {
+					nat.mtbl_qr[k] = f(0);
+				}
 			}));
 		assert!(!cs.is_satisfied().unwrap());
 	}
@@ -8398,6 +8728,12 @@ mod tests_neo_m6_h {
 					"discharge_adv_stmt_cs");
 				sc.lock().unwrap().add_container(core);
 				sc.lock().unwrap().add_container(combo);
+				// T201: this branch rebuilds the statement by hand
+				// (to inject the tamper), so it must attach the
+				// external L exactly as new_aggr does.
+				sc.lock().unwrap().add_container(
+					DischargeAdvNeoAdvice::<Fr>::ext_pat_loc(
+						b_igc, 1, &pat_loc));
 				DischargeAdvNeoAdvice {
 					capacity: cap_disc.clone(), fsm_id,
 					stmt_container: sc, b_igc, offset_fsm: 1 }
