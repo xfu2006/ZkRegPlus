@@ -2019,9 +2019,9 @@ pub(crate) struct PredView<F: PrimeField + ColEle> {
 	/// pack(enc_prev, prev_id1 + 1, prev_loc2): FP's upper
 	/// bracket neighbor, rank-adjacent to key1 by construction.
 	pub key2: Vec<FpVar<F>>,
-	/// prev_loc1 == 0 bits. NON-AGGR: forced zero bits (the
-	/// carry 0-wrap ban needs "loc1 = 0 -> bit = 1"). AGGR:
-	/// gate-only bits (only FP's below-skip reads them).
+	/// prev_loc1 == 0 bits, NON-AGGR ONLY (the carry 0-wrap ban
+	/// needs "loc1 = 0 -> bit = 1"). EMPTY in aggr: the below-skip
+	/// there masks on prev_loc1 itself.
 	pub z_loc1: Vec<FpVar<F>>,
 }
 
@@ -2091,7 +2091,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	///    live chain be labeled away; (5) bans it.
 	/// PARAMS: t = native cols, batched-inverse HINTS only (hints
 	/// cannot weaken soundness -- constraints bind v alone).
-	/// COST: ~18*n aggr / ~20*n non-aggr. PERF 61081.1.
+	/// COST: ~16*n aggr / ~18*n non-aggr. PERF 61081.1.
 	fn assert_neo_selectors(
 		cs: ConstraintSystemRef<F>,
 		t: &QmTable<F>, v: &QmVars<F>, b_aggr: bool,
@@ -2147,13 +2147,23 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		// si_pins + bound by the outer lookup). NOTE: pad rows
 		// carry the subsig-0 LAST tag, so is_last = 1 on pads;
 		// consumers mask by is_pad or by enc.
-		let cl_nat = si_tag_base::<F>(ID_ENCODED_LAST_STEP);
-		let c_l = new_const_var(&cs, cl_nat);
-		let is_last = gen_zero_bits(&cs,
-			&(0..n).map(|i| t.si_step[i] - cl_nat - t.enc[i])
-				.collect::<Vec<F>>(),
-			&(0..n).map(|i| &(&v.si_step[i] - &c_l) - &v.enc[i])
-				.collect::<Vec<_>>())?;
+		// AFFINE, NOT A ZERO-BIT. si_pins check (1) already forces
+		// d = si_step - enc into the 2-element set {N_tag, L_tag},
+		// and on two points the indicator IS the line through them:
+		//   is_last = (d - N_tag) / (L_tag - N_tag),
+		// L_tag - N_tag = (LAST - NORMAL) * B^5 = 4 * B^5 != 0, a
+		// build-time constant, so this is one free LC per row and
+		// saves 2 witnesses + 2 constraints. Pads keep is_last = 1
+		// (enc 0 under the subsig-0 LAST tag), as before.
+		// NEVER demote si_step: check (1) is what makes this sound.
+		let cn_nat = si_tag_base::<F>(ID_ENCODED_NORMAL_STEP);
+		let c_n = new_const_var(&cs, cn_nat);
+		let c_ginv = new_const_var(&cs,
+			(si_tag_base::<F>(ID_ENCODED_LAST_STEP) - cn_nat)
+				.inverse().expect("neo tag gap nonzero"));
+		let is_last = (0..n).map(|i|
+			&(&(&v.si_step[i] - &c_n) - &v.enc[i]) * &c_ginv)
+			.collect::<Vec<_>>();
 		// --- Section 2 / check (1): row 0 is a pad (1cs, once) ---
 		// the group-start rule reads row i-1; forcing enc[0] == 0
 		// closes the table-start boundary (pads sort first).
@@ -2303,7 +2313,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		log(job_id, LOG3, &format!(
 			"PERF 61081.1: block=selectors cs={} pred={}",
 			cs.num_constraints() - n0,
-			(if b_aggr { 18 } else { 20 }) * n));
+			(if b_aggr { 16 } else { 18 }) * n));
 		Ok(sel)
 	}
 
@@ -2366,7 +2376,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	/// PARAMS: none beyond the table. The old s_enc / subsigs /
 	/// s_enc_nat / subsig_nat / r2 arguments existed ONLY for the
 	/// deleted check (4) grand product. Returns (grp_start, rid).
-	/// COST: ~18*n. PERF 61081.2.
+	/// COST: ~15*n. PERF 61081.2.
 	/// Returns (grp_start, rid, n_runs); n_runs is consumed by
 	/// assert_seed_anchors for the subsig-set count equality.
 	fn assert_neo_wf(
@@ -2443,17 +2453,28 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		//             subsig) -- the signal Section 7 gates on;
 		//   bnd_r     bnd with a pad predecessor masked off: the
 		//             FIRST run has nothing behind it to compare to.
-		let mut ds_nat = vec![F::zero(); n];
-		for i in 1..n { ds_nat[i] = t.subsig[i] - t.subsig[i - 1]; }
-		let ds_var = (0..n).map(|i| if i == 0 {
-			FpVar::<F>::Constant(F::zero()) }
-			else { &v.subsig[i] - &v.subsig[i - 1] })
-			.collect::<Vec<_>>();
-		let same_sub = gen_zero_bits(&cs, &ds_nat, &ds_var)?;
+		// T215: bnd = grp_start * is_step0, both bits already paid
+		// for, so the whole same_sub column (2 wit + 2 cs per row)
+		// goes. A run's first group is its step-0 seed and Section 7
+		// forbids a step recurring inside a run, so "group start at
+		// step 0" IS "new run". The converse -- a run OPENING late,
+		// which is the only way the two forms can differ -- is
+		// blocked independently of this bit: every step-k row cites
+		// enc_prev, a DB fact naming the SAME subsig's step k-1, and
+		// carry/fwd_pruning demand that group be present in the
+		// table, so the chain is forced down to step 0. Regression:
+		// test_m6_neg_run_starts_late.
+		// let mut ds_nat = vec![F::zero(); n];
+		// for i in 1..n { ds_nat[i] = t.subsig[i] - t.subsig[i-1]; }
+		// let ds_var = (0..n).map(|i| if i == 0 {
+		// 	FpVar::<F>::Constant(F::zero()) }
+		// 	else { &v.subsig[i] - &v.subsig[i - 1] })
+		// 	.collect::<Vec<_>>();
+		// let same_sub = gen_zero_bits(&cs, &ds_nat, &ds_var)?;
 		let mut bnd = vec![FpVar::<F>::Constant(F::zero())];
 		let mut bnd_r = vec![FpVar::<F>::Constant(F::zero())];
 		for i in 1..n {
-			let b = &grp_start[i] * &(&c_one - &same_sub[i]);
+			let b = &grp_start[i] * &sel.is_step0[i];
 			bnd_r.push(&b * &(&c_one - &sel.is_pad[i - 1]));
 			bnd.push(b);
 		}
@@ -2573,8 +2594,11 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			check_prod_zero(&bnd_r[i],
 				&(&c_one - &sel.is_last[i - 1]), lc!(),
 				"neo run ends at LAST")?;
-			check_prod_zero(&bnd[i], &v.step[i], lc!(),
-				"neo run starts at seed")?;
+			// VACUOUS SINCE T215: bnd now carries is_step0, so
+			// bnd * step == grp_start * is_step0 * step is
+			// identically 0. Kept commented, not deleted.
+			// check_prod_zero(&bnd[i], &v.step[i], lc!(),
+			// 	"neo run starts at seed")?;
 			// "same run, next group" is grp_start * same_sub, which
 			// is grp_start - bnd: free, same argument as Section 4.
 			let u = &grp_start[i] - &bnd[i];
@@ -2587,7 +2611,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			"neo final run ends at LAST")?;
 		log(job_id, LOG3, &format!(
 			"PERF 61081.2: block=wf cs={} pred={}",
-			cs.num_constraints() - n0, 18 * n));
+			cs.num_constraints() - n0, 15 * n));
 		Ok((grp_start, rid, n_runs))
 	}
 
@@ -2628,7 +2652,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	///  - CHEAT a widened window: rg1/rg2 are likewise limbs of enc
 	///    by (4), not advice, so no row can widen its own reach.
 	/// PARAMS: b_aggr only selects whether BP/SP join `real`.
-	/// COST: ~5*n. PERF 61081.5.
+	/// COST: ~4*n. PERF 61081.5.
 	fn assert_neo_si_pins(
 		cs: ConstraintSystemRef<F>, v: &QmVars<F>, sel: &NeoSel<F>,
 		b_aggr: bool, job_id: usize,
@@ -2690,7 +2714,13 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 				&(&sel.is_c[i] + &sel.is_fp[i])
 					+ &(&sel.is_bp[i] + &sel.is_sp[i])
 			};
-			let m_bind = real * (&c_one - &sel.is_step0[i]);
+			// FREE: Section 6 mul-pins is_seed == (is_c + is_fp) *
+			// is_step0 and KEEPS it, so real - is_seed equals
+			// real * (1 - is_step0) identically in aggr. In non-aggr
+			// the residual (is_bp + is_sp) * is_step0 is zeroed by
+			// check (6) "neo seed stays C" -- weakening that check
+			// silently unmasks this pin on BP/SP step-0 rows.
+			let m_bind = &real - &sel.is_seed[i];
 			// --- check (2): si_enc_prev, the one surviving tag ---
 			for (c_tag, getcol) in pins.iter() {
 				check_si_pin(&m_bind, &v.enc[i], &getcol(v)[i],
@@ -2748,7 +2778,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		}
 		log(job_id, LOG3, &format!(
 			"PERF 61081.5: block=si_pins cs={} pred={}",
-			cs.num_constraints() - n0, 5 * n));
+			cs.num_constraints() - n0, 4 * n));
 		Ok(())
 	}
 }
@@ -4481,7 +4511,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	}
 
 	/// Build the shared predecessor view: 3 muls/row for the two
-	/// keys + the z_loc1 bits (2cs strong / 1cs gate-only).
+	/// keys, plus a forced z_loc1 bit in NON-AGGR only.
 	fn gen_pred_view(
 		cs: &ConstraintSystemRef<F>, t: &QmTable<F>,
 		v: &QmVars<F>, b_aggr: bool, r1: &FpVar<F>,
@@ -4497,9 +4527,33 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			key1.push(&(&v.enc_prev[i] + &t_id) + &t_p1);
 			key2.push(&(&(&v.enc_prev[i] + &t_id) + r1) + &t_p2);
 		}
-		let z_loc1 = if b_aggr {
-			gen_gate_bits(cs, &t.prev_loc1, &v.prev_loc1)?
-		} else {
+		// AGGR: no bit at all. Its ONLY reader is fwd_pruning's
+		// below-skip mask, and check_prod_zero(m, r) means
+		// "m == 0 OR r == 0", so scaling m by any value is
+		// meaning-preserving -- prev_loc1 masks on itself.
+		// WORKED EXAMPLE (B = 256, FP row, window rg{1,9}):
+		//  A real lower neighbor, loc 50, prev_loc1 20:
+		//     e_lo = 50 - 20 - 9 - 1 = 20.
+		//     old: prev_loc1 != 0 welds z_loc1 to 0, mask = is_fp
+		//          = 1  -> 1 * (20 - d_below_lo) = 0.
+		//     new: mask = is_fp * prev_loc1 = 20
+		//          -> 20 * (20 - d_below_lo) = 0. Same d_below_lo.
+		//  B sentinel, loc 3, prev_loc1 0 (nothing below):
+		//     e_lo = 3 - 0 - 9 - 1 = -7, which NO RANGE2 cell can
+		//     hold -- this is why the skip must exist.
+		//     old: prover picks z_loc1 = 1, mask = 0 -> skipped.
+		//     new: mask = is_fp * 0 = 0 -> skipped, and now
+		//          deterministically, with no witness to choose.
+		//  C cheat, wants to skip row A to hide a reachable loc:
+		//     old: weld z_loc1 * 20 = 0 forces z_loc1 = 0. Blocked.
+		//     new: the mask IS 20; there is nothing to lie about.
+		// NON-AGGR KEEPS THE FORCED ZERO-BIT: the carry 0-wrap ban
+		// asserts prev_loc1 != 0, which needs the "bit = 0 =>
+		// col != 0" direction. Substituting the value there would
+		// INVERT the check (sel_c * prev_loc1 = 0 says prev_loc1
+		// IS 0, failing honest rows), and a non-zero assertion
+		// needs an inverse witness regardless -- no saving exists.
+		let z_loc1 = if b_aggr { vec![] } else {
 			gen_zero_bits(cs, &t.prev_loc1, &v.prev_loc1)?
 		};
 		Ok(PredView { key1, key2, z_loc1 })
@@ -4645,7 +4699,6 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		                 //   d_below_lo, d_above_lo
 		sel: &NeoSel<F>, // is_fp, b_bwd_row
 		b_aggr: bool,
-		nat_prev_loc2: &[F],
 		pv: &PredView<F>,
 		buf: &mut QmQueryBuf<F>,
 		                 // REACHABLE-target instance
@@ -4657,13 +4710,10 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		let f_max = F::from(((1u64 << rb) - 1) as u64);
 		let c_max = new_const_var(&cs, f_max);
 		let c_one = new_const_var(&cs, F::one());
-		// gate-only bit: prev_loc2 == max is the "nothing above"
-		// sentinel; a dishonest 0 only re-enables the check.
-		let z_pl2 = gen_gate_bits(&cs,
-			&nat_prev_loc2.iter().map(|x| f_max - *x)
-				.collect::<Vec<F>>(),
-			&qm.prev_loc2.iter().map(|x| &c_max - x)
-				.collect::<Vec<_>>())?;
+		// No gate bit for the "nothing above" sentinel either: the
+		// distance c_max - prev_loc2 masks on itself, exactly as
+		// prev_loc1 does below (see gen_pred_view for the worked
+		// example). Both arms, since m_hi is its only reader.
 		for i in 0..n {
 			// fwd-form diffs. ONE mul orients both for bwd rows:
 			// the two selects M6 paid for swap the same (rg1,rg2)
@@ -4680,10 +4730,17 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			} else { (e_lo, e_hi) };
 			// (1) + (2): each active diff equals its committed
 			// RANGE2 cell (single limb by the doc ASSUMPTION).
-			let m_lo = &sel.is_fp[i] * (&c_one - &pv.z_loc1[i]);
+			// aggr masks on the value; non-aggr must keep the bit
+			// because the carry 0-wrap ban also reads it.
+			let m_lo = if b_aggr {
+				&sel.is_fp[i] * &qm.prev_loc1[i]
+			} else {
+				&sel.is_fp[i] * &(&c_one - &pv.z_loc1[i])
+			};
 			check_prod_zero(&m_lo, &(&e_lo - &qm.d_below_lo[i]),
 				lc!(), "neo FP below")?;
-			let m_hi = &sel.is_fp[i] * (&c_one - &z_pl2[i]);
+			let m_hi = &sel.is_fp[i]
+				* &(&c_max - &qm.prev_loc2[i]);
 			check_prod_zero(&m_hi, &(&e_hi - &qm.d_above_lo[i]),
 				lc!(), "neo FP above")?;
 			// (3): key1 rides assert_carry's fused slot in aggr
@@ -4697,7 +4754,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		log(job_id, LOG3, &format!(
 			"PERF 61082.5: block=fwd_prune cs={} pred={}",
 			cs.num_constraints() - n0,
-			(if b_aggr { 6 } else { 5 }) * n));
+			(if b_aggr { 5 } else { 4 }) * n));
 		Ok(())
 	}
 
@@ -5281,7 +5338,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		// -- 7. fwd pruning: every FP label justified by
 		//    querying its parent rows (closure vs Q_r) --
 		Self::assert_fwd_pruning(cs.clone(), &vars.qm, &sel,
-			true, &nat.t.prev_loc2, &pv, &mut buf, job_id)?;
+			true, &pv, &mut buf, job_id)?;
 		// -- 8. each statement subsig's step-0 seed row must
 		//    exist reachable in Q_m (anchor of reachability:
 		//    blocks the vacuous all-FP labeling) --
@@ -5390,7 +5447,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		// -- 9. fwd pruning: every FP label justified by
 		//    querying its parent rows (closure vs Q_r) --
 		Self::assert_fwd_pruning(cs.clone(), &vars.qm, &sel,
-			false, &nat.t.prev_loc2, &pv, &mut buf_qr, job_id)?;
+			false, &pv, &mut buf_qr, job_id)?;
 		// -- 10. bwd pruning: every BP label is a fwd dead
 		//    end -- farthest reach short of the successor
 		//    step's minimum surviving loc --
@@ -8483,6 +8540,116 @@ mod tests_neo_m6_neg {
 			let v: Vec<Fr> = order.iter().map(|&i| c[i]).collect();
 			*c = v;
 		}
+	}
+
+	/// T215 fixture: ASYMMETRIC step counts. subsig 1 has 2 steps,
+	/// subsig 2 has 4, so subsig 2 owns a step-3 group whose step
+	/// CONTINUES subsig 1's chain (2 -> 3). That is the only shape in
+	/// which "a run starts at step != 0" can satisfy the Section 7
+	/// step chain, and so the only shape that can tell the two bnd
+	/// definitions apart. t2_store cannot express it (both subsigs
+	/// stop at step 2).
+	pub(crate) fn t3_store() -> SubsigStepStore {
+		let mk = |id: usize, pats: Vec<usize>| SubsigStepStoreItem {
+			subsig_id: id, igc: false,
+			vec_pm_bounds: pats.into_iter()
+				.map(|p| (p, (1usize, 9usize))).collect(),
+			is_backward: false };
+		let mut m = std::collections::HashMap::new();
+		m.insert(1usize, mk(1, vec![1, 2]));
+		m.insert(2usize, mk(2, vec![3, 4, 5, 6]));
+		SubsigStepStore { subsig_ids: vec![1, 2], subsig_to_steps: m,
+			b_aggressive: false }
+	}
+
+	/// store pats of t3_store, in s_enc row order.
+	fn t3_s_pat() -> Vec<Fr> {
+		vec![f(1), f(2), f(3), f(4), f(5), f(6)]
+	}
+
+	/// one match per store pat, both chains live under (1, 9):
+	/// s1: 1 ->10 gap 9 ->15 gap 5;
+	/// s2: 1 ->5 gap 4 ->12 gap 7 ->15 gap 3 ->20 gap 5.
+	fn t3_hm() -> HashMap<u32, Vec<u32>> {
+		let mut m = HashMap::new();
+		m.insert(1, vec![10]); m.insert(2, vec![15]);
+		m.insert(3, vec![5]);  m.insert(4, vec![12]);
+		m.insert(5, vec![15]); m.insert(6, vec![20]);
+		m
+	}
+
+	fn t3_capacity() -> DischargeAdvCapacity {
+		DischargeAdvCapacity {
+			res_small_cost: DischargeAdvCapacity::default_res_small(),
+			max_nibble_len: 1, subsigs: 8,
+			avg_active_pats_per_subsig: 32, basis_pats_in_trace: 1,
+			perc_pats_expansion_rate: 100, universe_subsigs: 8,
+			b_aggressive: false, prod_pats_expansion: 0,
+			wrap_keys: 0,
+		}
+	}
+
+	/// run_core_aggr over the asymmetric T215 fixture.
+	fn run_core_aggr3(info: &SubsigStepStore,
+		hm: &HashMap<u32, Vec<u32>>, default_min: u32,
+		tamper: Option<&dyn Fn(&mut NeoCore<Fr>)>)
+	-> (ConstraintSystemRef<Fr>, NeoCore<Fr>) {
+		let mut m = HashMap::new();
+		for sid in [1u32, 2] {
+			m.insert(f(sid), vec![StepQueueItem::new(f(sid), f(0),
+				f(0), f(0), f(0), vec![f(1)])]);
+		}
+		let carried = StepQueueNeo::from_stepqueue(StepQueue::new(
+			vec![f(1), f(2)], m, &t3_capacity(),
+			StepQueueType::ResLarge, false));
+		let gen = carried.gen_shared_core_from_hm(0, &hm_gen(hm),
+			info, f(default_min)).expect("shared core");
+		let mut nat = build_core_native(&gen, info, hm);
+		if let Some(tf) = tamper { tf(&mut nat); }
+		(run_nat_aggr(&nat), nat)
+	}
+
+	/// T215 control: the asymmetric fixture must be SAT untampered,
+	/// else the negative below proves nothing.
+	#[test]
+	fn test_m6_t3_control_sat() {
+		let (cs, _) = run_core_aggr3(&t3_store(), &t3_hm(), 100, None);
+		assert!(cs.is_satisfied().unwrap(), "t3 control must be SAT");
+	}
+
+	/// n16 RUN STARTS LATE (T215) -- the attack that decides whether
+	/// `bnd = grp_start * is_step0` may replace
+	/// `grp_start * (1 - same_sub)`. Drop subsig 2's step 0/1/2
+	/// groups so its run opens at step 3, which CONTINUES subsig 1's
+	/// chain (2 -> 3) and therefore satisfies Section 7's step chain
+	/// under the new definition, where the boundary is not a boundary
+	/// at all (is_step0 = 0 => bnd = 0 => u = grp_start - bnd = 1).
+	/// MEASURED BOTH WAYS. Old bnd: rejected in the wf block (:2576
+	/// "run starts at seed"). New bnd: :2576 is vacuous, and it is
+	/// rejected in qm_lookups instead -- the step-3 rows cite
+	/// enc_prev = the SAME subsig's step-2 group, and that group is
+	/// no longer in the table to serve as a QR target, so the
+	/// reachability logup goes short. That defence is structural and
+	/// independent of bnd: keeping the predecessor group present is
+	/// exactly what defeats the attack. MUST STAY UNSAT UNDER BOTH.
+	#[test]
+	fn test_m6_neg_run_starts_late() {
+		let (cs0, _) = run_core_aggr3(&t3_store(), &t3_hm(), 100,
+			None);
+		assert!(cs0.is_satisfied().unwrap(), "t3 control must be SAT");
+		let (cs, _nat) = run_core_aggr3(&t3_store(), &t3_hm(), 100,
+			Some(&|nat: &mut NeoCore<Fr>| {
+				let t = &mut nat.t;
+				let f2 = f(2);
+				for i in (t.n_pad..t.enc.len()).rev() {
+					if t.subsig[i] == f2 && t.step[i] < f(3) {
+						remove_row(t, i);
+					}
+				}
+				regen_aggr_advice(nat, &t3_store(), &t3_s_pat());
+			}));
+		assert!(!cs.is_satisfied().unwrap(),
+			"a run opening at step 3 must be rejected");
 	}
 
 	/// n15 RUNS OUT OF ORDER (T202) -- the minimal witness that the
