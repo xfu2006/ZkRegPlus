@@ -30677,8 +30677,20 @@ Goal 5. continue writing
 Goa 6. continue NewP3.6
 	[a] T3 done
 	[b] T6b -> FIXED!
-	[c] 
 
+Tuesday 08/04/2026
+Goal 1. continue NewP3.6 to improve neo
+	[a] review T5.
+		-> input
+		-> window propgation
+		-> v3 does not work
+		-> look at elision row
+	[b] eliding rows only
+	[c]
+
+Goal 2. rewrite B.4
+	[a] framework
+	[b] 
 
 
 -- TODO --

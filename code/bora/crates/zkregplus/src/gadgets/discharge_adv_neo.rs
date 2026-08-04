@@ -530,6 +530,15 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 
 		let mut store_items: HashMap<F, Vec<StepQueueItemNeo<F>>> =
 			HashMap::new();
+		//DEBUG USE 62071.x: T5 windowed-join sizing accumulators.
+		//p_* = today (2 wraps + EVERY L match per group); w_* = the
+		//windowed count (2 edges per BLOCK + reachable rows only).
+		//A BLOCK = a maximal run of predecessor rows whose windows
+		//overlap or abut = the unit a windowed join brackets.
+		let (mut p_rows, mut p_real, mut p_wrap) = (0usize, 0, 0);
+		let (mut w_int, mut w_blk, mut w_grp0) = (0usize, 0, 0);
+		let mut b_hist = [0usize; 5]; // B = 0,1,2,3-4,5+
+		let mut n_grp = 0usize;
 		for subsig in &self.subsigs {
 			let u_subsig = field_to_usize(subsig);
 			let rec = info.subsig_to_steps.get(&u_subsig).expect(
@@ -689,6 +698,72 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 				}
 			}
 
+			//DEBUG USE 62071.1: T5 windowed-join sizing (log-only).
+			//Per (subsig,step) group, compare today's Q_m rows
+			//(2 wraps + EVERY L match) against the windowed count
+			//(reachable rows + 2 edges per BRACKET). A BRACKET is a
+			//maximal L id-run covering one component of the union of
+			//predecessor windows; components with no L row between
+			//them collapse into one bracket (same edge pair).
+			if utils::consts::b_probe_p36() {
+				n_grp += max_steps;
+				p_wrap += 2 * (max_steps + 1);
+				for s in 0..=last_step { p_real += merged[s].len(); }
+				let nil_l: [F; 0] = [];
+				let nil_r: [(F, usize); 0] = [];
+				for s in 1..=max_steps {
+					let locs: &[F] = if s <= last_step
+						{ &merged[s] } else { &nil_l };
+					let prev: &[(F, usize)] = if s <= last_step + 1
+						{ &reach[s - 1] } else { &nil_r };
+					let (f_a, f_b) = (
+						F::from(pm_bounds[s - 1].1.0 as u32),
+						F::from(pm_bounds[s - 1].1.1 as u32));
+					let b_bw = rec.is_backward && s >= 2;
+					let win = |u: F| -> (F, F) {
+						if b_bw { (u - f_b, u - f_a) }
+						else {
+							let hi = u + f_b;
+							(u + f_a,
+							 if hi >= f_max {f_max - one} else {hi})
+						}
+					};
+					//1. union components of the predecessor windows
+					let mut comps: Vec<(F, F)> = vec![];
+					for (u, _) in prev.iter() {
+						let (lo, hi) = win(*u);
+						match comps.last_mut() {
+							Some(c) if lo <= c.1 + one =>
+								if hi > c.1 { c.1 = hi; },
+							_ => comps.push((lo, hi)),
+						}
+					}
+					//2. component -> L id-run [al,be]; runs with no
+					//   L row between them share an edge pair
+					let mut brk: Vec<(usize, isize)> = vec![];
+					for (lo, hi) in comps.iter() {
+						let al = locs.iter().position(|l| l >= lo)
+							.unwrap_or(locs.len());
+						let mut be = locs.iter()
+							.rposition(|l| l <= hi)
+							.map(|p| p as isize).unwrap_or(-1);
+						if be < al as isize { be = al as isize - 1; }
+						match brk.last_mut() {
+							Some(b) if al as isize <= b.1 + 1 =>
+								if be > b.1 { b.1 = be; },
+							_ => brk.push((al, be)),
+						}
+					}
+					w_int += brk.iter().map(|(a, b)|
+						(*b + 1 - *a as isize).max(0) as usize)
+						.sum::<usize>();
+					w_blk += brk.len();
+					if brk.is_empty() { w_grp0 += 1; }
+					b_hist[match brk.len()
+						{0=>0, 1=>1, 2=>2, 3..=4=>3, _=>4}] += 1;
+				}
+			}
+
 			//4. assemble neo items (scalars filled by post-pass)
 			let mut its: Vec<StepQueueItemNeo<F>> = vec![];
 			let mut it0 = StepQueueItemNeo::from_base(seed.clone());
@@ -712,6 +787,26 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 			store_items.insert(*subsig, its);
 		}
 
+		//DEBUG USE 62071.1/.2: T5 sizing verdict for this chunk.
+		//modelA = B==0 groups cost nothing; modelC = they keep 2
+		//anchor rows; modelB = every group keeps its 2 wraps on top
+		//of the per-bracket edges (the pessimistic bound).
+		if utils::consts::b_probe_p36() {
+			let n_sub = self.subsigs.len();
+			let p_tot = p_wrap + p_real;
+			let w_a = 3 * n_sub + w_int + 2 * w_blk;
+			let (w_c, w_b) = (w_a + 2 * w_grp0, w_a + 2 * n_grp);
+			println!("DEBUG USE 62071.1: T5 igc={} TODAY={} \
+(wrap={} real={}) WINDOWED int={} brk={} grpB0={}/{} \
+modelA={} modelC={} modelB={} pctA={} pctC={} pctB={}",
+				self.b_igc, p_tot, p_wrap, p_real, w_int, w_blk,
+				w_grp0, n_grp, w_a, w_c, w_b,
+				w_a * 100 / p_tot.max(1), w_c * 100 / p_tot.max(1),
+				w_b * 100 / p_tot.max(1));
+			println!("DEBUG USE 62071.2: T5 brk hist igc={} \
+B0={} B1={} B2={} B3_4={} B5plus={}", self.b_igc, b_hist[0],
+				b_hist[1], b_hist[2], b_hist[3], b_hist[4]);
+		}
 		let mut res = StepQueueNeo {
 			b_igc: self.b_igc, subsigs: self.subsigs.clone(),
 			store_items, capacity: self.capacity.clone(),
@@ -2981,6 +3076,14 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 		}
 		// -- 2. capacity pad (pads first, Q_m convention) --
 		let used = jr.enc.len();
+		//DEBUG USE 62071.3: JR is the nonaggr arm's SECOND copy of
+		//the join (Q_m holds it again as C/FP rows), so any windowed
+		//join must shrink both. Sizes that half.
+		if utils::consts::b_probe_p36() {
+			println!("DEBUG USE 62071.3: jr rows={}/{} blocks={}",
+				used, cap, s_enc.iter().filter(|e| !e.is_zero())
+					.count());
+		}
 		if used > cap {
 			return Err(Error::CapErr(vec![(
 				format!("jr_table"), used)]));
