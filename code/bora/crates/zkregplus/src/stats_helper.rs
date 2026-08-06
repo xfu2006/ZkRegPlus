@@ -885,6 +885,10 @@ pub fn estimated_to_capparams_aggr(e: &EstimatedConfig,
 		// prod seed 0 -> caps_from_params_aggr keeps the basis_pats*perc
 		// default; the probe bumps P_max via prod CapErr if insufficient.
 		prod_pats_expansion: 0,
+		// T305: seed 2 (not 0 = dense fallback) so the probe ratchet
+		// CapErr-converges the windowed T_qm demand exactly; legacy
+		// aggr and every non-neo path never read this field.
+		qm_real_rows: 2,
 		sigs_sed: e.sigs_sed.max(1),
 		perc_comp_subsigs: e.perc_comp_subsigs.max(1),
 		basis_unique_states: hm(e.basis_unique_states).max(2),
@@ -894,6 +898,7 @@ pub fn estimated_to_capparams_aggr(e: &EstimatedConfig,
 		basis_pats_in_trace_igc: 0,
 		perc_pats_expansion_rate_igc: 0,
 		prod_pats_expansion_igc: 0,
+		qm_real_rows_igc: 2,
 		basis_acc_states_igc: 0,
 		basis_unique_states_igc: 0,
 		dfa_sigs: 0,

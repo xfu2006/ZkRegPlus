@@ -30747,7 +30747,25 @@ Goal 4. NEW_PAPER_DATA.py project
 
 Thursday 08/06/2026
 Goal 1. continue to improve aggr performance
-Goal 2. try to understand full_dlp
+	-> T301 still not satisfactory!
+	-> think hard mode to find out more ideas.
+	-> T305 design
+	-> T305 implementation. -> DONE and makes
+		it performs better than legacy!
+	-> now beats legacy on non-hard cases for discharge component
+	-> still loses 2x on non-aggr hard.
+
+Goal 2. writing
+	-> resolve tasks
+	-> fix Stage 3 description
+	-> fix Stage in Figure 8 
+	-> Figure 9
+	-> another round of hard check.
+
+Goal 3. Reading
+	[a] starting dynamic zksnark paper.
+
+Goal 3. try to understand full_dlp
 
 -- TODO --
 Goal 2. P4 again (measure comparison)

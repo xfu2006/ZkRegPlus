@@ -1626,14 +1626,30 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 		k.max(1)
 	}
 
-	/// T_qm row budget: ResLarge real rows + 2 wraps per budget
-	/// key. Capacity-only in BOTH modes -> chunk/fold-invariant
-	/// shape (data n_keys ignored).
-	pub(crate) fn qm_rows_size(capacity: &DischargeAdvCapacity,
-		info: &SubsigStepStore) -> usize {
+	/// T_qm real-row budget: explicit capacity.qm_real_rows (the
+	/// measured emission count, CapErr-converged), else the dense
+	/// vec_size(ResLarge) bound. Both modes -- non-aggr's union arm
+	/// still emits every joined row (T301 windowing is aggr-only),
+	/// but this only tightens the PAD BUDGET that count is checked
+	/// against, never what gets emitted, so it is safe either way.
+	pub(crate) fn qm_real_cap(capacity: &DischargeAdvCapacity)
+	-> usize {
+		if capacity.qm_real_rows > 0 {
+			let mut n = capacity.qm_real_rows;
+			if n % 2 == 1 { n += 1; }
+			return n;
+		}
 		let (n, _, _) = StepQueue::<F>::vec_size(
 			&StepQueueType::ResLarge, capacity);
-		n + 2 * Self::wrap_budget(capacity, info)
+		n
+	}
+
+	/// T_qm row budget: real-row budget + 2 wraps per budget key.
+	/// Capacity-only in BOTH modes -> chunk/fold-invariant shape
+	/// (data n_keys ignored).
+	pub(crate) fn qm_rows_size(capacity: &DischargeAdvCapacity,
+		info: &SubsigStepStore) -> usize {
+		Self::qm_real_cap(capacity) + 2 * Self::wrap_budget(capacity, info)
 	}
 
 	/// Attribute a pooled T_qm overflow to the param over its nominal
@@ -1653,17 +1669,26 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 				b_igc), Self::wrap_subsigs_for(info, n_keys)));
 		}
 		if real > real_cap {
-			//invert vec_size's size_trace term for the real rows.
-			let d = if capacity.b_aggressive {
-				capacity.max_nibble_len * RES_LARGE_COST
-			} else { capacity.max_nibble_len
-				* capacity.basis_pats_in_trace * RES_LARGE_COST };
-			let req = if d == 0 { real }
-				else { (real * 100_000_000 + d - 1) / d };
-			let nm = if capacity.b_aggressive {
-				"dis_adv::prod_pats_expansion"
-			} else { "dis_adv::perc_pats_expansion_rate" };
-			v.push((format!("{}, b_igc: {}", nm, b_igc), req));
+			if capacity.qm_real_rows > 0 {
+				//explicit real-row budget mode (both aggr and
+				//non-aggr): report demand directly in ROW units;
+				//the ratchet sets the cap to it exactly, no
+				//back-solve through prod/perc.
+				v.push((format!("dis_adv::neo_qm_real, b_igc: {}",
+					b_igc), real));
+			} else {
+				//invert vec_size's size_trace term for the real rows.
+				let d = if capacity.b_aggressive {
+					capacity.max_nibble_len * RES_LARGE_COST
+				} else { capacity.max_nibble_len
+					* capacity.basis_pats_in_trace * RES_LARGE_COST };
+				let req = if d == 0 { real }
+					else { (real * 100_000_000 + d - 1) / d };
+				let nm = if capacity.b_aggressive {
+					"dis_adv::prod_pats_expansion"
+				} else { "dis_adv::perc_pats_expansion_rate" };
+				v.push((format!("{}, b_igc: {}", nm, b_igc), req));
+			}
 		}
 		if v.is_empty() { //defensive: keep the legacy shape
 			v.push((format!("neo_qm_table, b_igc: {}", b_igc),
@@ -1778,8 +1803,7 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 		// budget from oversized real rows, and over-provisioning is
 		// silent (only CapErr is loud). See wrap_budget.
 		let ig = self.b_igc as usize;
-		let (n_real_cap, _, _) = StepQueue::<F>::vec_size(
-			&StepQueueType::ResLarge, &self.capacity);
+		let n_real_cap = Self::qm_real_cap(&self.capacity);
 		let wrap_cap = Self::wrap_budget(&self.capacity, info);
 		let n_sub = subsigs.iter().filter(|s| !s.is_zero()).count();
 		let n_real = t.enc.len().saturating_sub(2 * n_keys);
@@ -6906,6 +6930,7 @@ pub(crate) mod tests_neo_m4 {
 			perc_pats_expansion_rate: 100, universe_subsigs: 1,
 			b_aggressive: false, prod_pats_expansion: 0,
 			wrap_keys: 0,
+			qm_real_rows: 0,
 		}
 	}
 
@@ -7592,6 +7617,37 @@ pub(crate) mod tests_neo_r1 {
 			1);
 	}
 
+	/// T305: an explicit qm_real_rows overrides the dense bound in
+	/// BOTH modes -- it only tightens the pad budget the emission
+	/// count is checked against, never what gets emitted, so
+	/// non-aggr's union completeness is unaffected either way.
+	#[test]
+	fn test_t305_qm_real_cap_override() {
+		let mut cap = fixture_capacity();
+		let (dense, _, _) = StepQueue::<Fr>::vec_size(
+			&StepQueueType::ResLarge, &cap);
+		for b_aggr in [true, false] {
+			cap.b_aggressive = b_aggr;
+			cap.qm_real_rows = 0;
+			assert_eq!(StepQueueNeo::<Fr>::qm_real_cap(&cap), dense,
+				"qm_real_rows==0 keeps the dense derive (aggr={})",
+				b_aggr);
+			cap.qm_real_rows = 5;
+			assert_eq!(StepQueueNeo::<Fr>::qm_real_cap(&cap), 6,
+				"explicit override wins, rounded up to even \
+				(aggr={})", b_aggr);
+			cap.qm_real_rows = 4700;
+			assert_eq!(StepQueueNeo::<Fr>::qm_real_cap(&cap), 4700,
+				"already-even override passes through (aggr={})",
+				b_aggr);
+		}
+		let info = a18_store();
+		cap.b_aggressive = true;
+		assert_eq!(StepQueueNeo::<Fr>::qm_rows_size(&cap, &info),
+			4700 + 2 * StepQueueNeo::<Fr>::wrap_budget(&cap, &info),
+			"qm_rows_size composes the override with the wrap budget");
+	}
+
 	/// a pooled T_qm overflow must name the param that is actually
 	/// over its nominal share, in that param's own units, so
 	/// determine_config can bump it (both sides, and never empty).
@@ -7641,6 +7697,59 @@ pub(crate) mod tests_neo_r1 {
 		cap.b_aggressive = false;
 		let v = names(StepQueueNeo::<Fr>::qm_caperr(
 			&cap, false, &info, 1, 9, 50, 10));
+		assert!(v[0].0.starts_with("dis_adv::perc_pats_expansion_rate"));
+	}
+
+	/// T305: with qm_real_rows set, the real-row overflow reports the
+	/// windowed demand DIRECTLY (row units, no prod back-solve).
+	/// qm_real_rows==0 must fall back to the pre-T305 prod path --
+	/// checked explicitly so a bug that always takes the new branch
+	/// cannot pass silently.
+	#[test]
+	fn test_t305_qm_caperr_windowed() {
+		let info = SubsigStepStore { subsig_ids: vec![],
+			subsig_to_steps: std::collections::HashMap::new(),
+			b_aggressive: false };
+		let names = |e: Error| -> Vec<(String, usize)> {
+			match e { Error::CapErr(v) => v, _ => panic!("not CapErr") }
+		};
+		let mut cap = fixture_capacity();
+		cap.b_aggressive = true;
+		cap.qm_real_rows = 3;
+		// real over: demand reported EXACTLY (no unit conversion).
+		let v = names(StepQueueNeo::<Fr>::qm_caperr(
+			&cap, false, &info, 0, 100, 4700, 3));
+		assert_eq!(v.len(), 1);
+		assert!(v[0].0.starts_with("dis_adv::neo_qm_real"));
+		assert_eq!(v[0].1, 4700);
+		// qm_real_rows==0 (mode-off): falls back to the prod back-solve,
+		// NOT the windowed name.
+		cap.qm_real_rows = 0;
+		cap.max_nibble_len = 1000;
+		let v = names(StepQueueNeo::<Fr>::qm_caperr(
+			&cap, false, &info, 0, 100, 4700, 3));
+		assert_eq!(v.len(), 1);
+		assert!(v[0].0.starts_with("dis_adv::prod_pats_expansion"));
+
+		// same real-row arm, NON-aggr: qm_real_rows>0 must still route
+		// to neo_qm_real (not perc_pats_expansion_rate, its fallback
+		// name in non-aggr mode) -- the override applies to both modes.
+		let mut cap2 = fixture_capacity();
+		cap2.b_aggressive = false;
+		cap2.qm_real_rows = 3;
+		let v = names(StepQueueNeo::<Fr>::qm_caperr(
+			&cap2, false, &info, 0, 100, 1200, 3));
+		assert_eq!(v.len(), 1);
+		assert!(v[0].0.starts_with("dis_adv::neo_qm_real"));
+		assert_eq!(v[0].1, 1200);
+		// non-aggr, qm_real_rows==0: falls back to the OLD non-aggr
+		// name (perc, not prod).
+		cap2.qm_real_rows = 0;
+		cap2.max_nibble_len = 1000;
+		cap2.basis_pats_in_trace = 10;
+		let v = names(StepQueueNeo::<Fr>::qm_caperr(
+			&cap2, false, &info, 0, 100, 1200, 3));
+		assert_eq!(v.len(), 1);
 		assert!(v[0].0.starts_with("dis_adv::perc_pats_expansion_rate"));
 	}
 
@@ -8791,6 +8900,7 @@ mod tests_neo_m6_neg {
 			perc_pats_expansion_rate: 100, universe_subsigs: 4,
 			b_aggressive: false, prod_pats_expansion: 0,
 			wrap_keys: 0,
+			qm_real_rows: 0,
 		}
 	}
 
@@ -8889,6 +8999,7 @@ mod tests_neo_m6_neg {
 			perc_pats_expansion_rate: 100, universe_subsigs: 8,
 			b_aggressive: false, prod_pats_expansion: 0,
 			wrap_keys: 0,
+			qm_real_rows: 0,
 		}
 	}
 
@@ -9146,6 +9257,7 @@ mod tests_neo_m6_h {
 			basis_pats_in_trace: cap.basis_pats_in_trace,
 			perc_pats_expansion_rate: 600, b_aggressive: true,
 				wrap_keys: 0,
+				qm_real_rows: 0,
 			prod_pats_expansion: 2500 * 600 };
 		let path = format!("{}/data/{}/word.txt", proj_root(), dir);
 		write_to_file(&path, content);
@@ -10347,6 +10459,7 @@ mod tests_neo_nonaggr_h {
 			// every chunk, so the queue budget must cover them (was 100).
 			perc_pats_expansion_rate: 200, b_aggressive: false,
 				wrap_keys: 0,
+				qm_real_rows: 0,
 			prod_pats_expansion: 0 };
 		let all_word = pad_word_to_multiple::<Fr>(
 			&pack_nibbles(&f_nibbles), wlen);
@@ -10522,6 +10635,7 @@ mod tests_neo_nonaggr_h {
 			basis_pats_in_trace: cap.basis_pats_in_trace,
 			perc_pats_expansion_rate: 200, b_aggressive: false,
 				wrap_keys: 0,
+				qm_real_rows: 0,
 			prod_pats_expansion: 0 };
 		let all_word = pad_word_to_multiple::<Fr>(
 			&pack_nibbles(&f_nibbles), wlen);
@@ -10639,6 +10753,7 @@ mod tests_neo_cost {
 			perc_pats_expansion_rate: 100, universe_subsigs: 1,
 			b_aggressive: false, prod_pats_expansion: 0,
 			wrap_keys: 0,
+			qm_real_rows: 0,
 		}
 	}
 
@@ -10811,6 +10926,7 @@ mod tests_neo_t301 {
 			perc_pats_expansion_rate: 100, universe_subsigs: 4,
 			b_aggressive: false, prod_pats_expansion: 0,
 			wrap_keys: 0,
+			qm_real_rows: 0,
 		}
 	}
 

@@ -1691,6 +1691,12 @@ where
 			p.avg_active_pats_per_subsig = cur.avg_active_pats_per_subsig.min(2);
 			p.avg_active_pats_per_subsig_igc =
 				cur.avg_active_pats_per_subsig_igc.min(2);
+			// T305: seed low (not 0 = dense fallback) so the ratchet
+			// CapErr-converges the T_qm real-row demand exactly, same
+			// floor treatment as perc/avg_active above. Harmless when
+			// legacy (unread) or non-neo (never CapErrs past a floor).
+			p.qm_real_rows = 2;
+			p.qm_real_rows_igc = 2;
 			p
 		};
 		// tune over ALL scan files (worst-case across the sample set).

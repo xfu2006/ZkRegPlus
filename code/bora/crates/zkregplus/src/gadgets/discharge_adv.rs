@@ -388,6 +388,11 @@ pub struct DischargeAdvCapacity{
 	/// seeded NEEDS. 0 = derive subsigs*(avg_active+1). Legacy: unused.
 	pub wrap_keys: usize,
 
+	/// NEO T_qm real-row budget (measured emission count, CapErr-
+	/// converged via "dis_adv::neo_qm_real"), both aggr and non-aggr.
+	/// 0 = derive the dense vec_size(ResLarge) bound. Legacy: unused.
+	pub qm_real_rows: usize,
+
 	/// ResSmall (CARRIED queue) compression ratio -- see vec_size. Was
 	/// the RES_SMALL_COST const; per-capacity so a comparison run can
 	/// tune the carry toward full saturation. Seeded from
@@ -2018,6 +2023,7 @@ impl Capacity for DischargeAdvCapacity{
 			b_aggressive: self.b_aggressive,
 			prod_pats_expansion: self.prod_pats_expansion,
 			wrap_keys: self.wrap_keys,
+			qm_real_rows: self.qm_real_rows,
 			res_small_cost: self.res_small_cost,
 		})
 	}
@@ -4979,6 +4985,7 @@ use utils::consts::{read_global_config, get_global_config};
 			b_aggressive: false,
 			prod_pats_expansion: 0,
 			wrap_keys: 0,
+			qm_real_rows: 0,
 		};
 
 		//2. create advice for word_extract_adv, fsm_adv, and discharge_adv
@@ -5155,7 +5162,7 @@ use utils::consts::{read_global_config, get_global_config};
 			avg_active_pats_per_subsig:2,
 			basis_pats_in_trace: cap.basis_pats_in_trace,
 			perc_pats_expansion_rate:600, b_aggressive:true,
-				wrap_keys: 0,
+				wrap_keys: 0, qm_real_rows: 0,
 			prod_pats_expansion: 2500*600 };
 		//word: "ab" before KEYWORD within the gap -> variant "ab" matches via
 		//the backward window; other variants run the backward query too.
@@ -5224,7 +5231,7 @@ use utils::consts::{read_global_config, get_global_config};
 			universe_subsigs:6,
 			avg_active_pats_per_subsig:1, basis_pats_in_trace:100,
 			perc_pats_expansion_rate:100, b_aggressive:true,
-				wrap_keys: 0,
+				wrap_keys: 0, qm_real_rows: 0,
 			prod_pats_expansion: 100*100 };
 		//acc_size = 6*10000/10000 = 6 (already even)
 		assert_eq!(FailedSubsigAcc::<Fr>::acc_size(&cap), 6);
@@ -5355,6 +5362,7 @@ use utils::consts::{read_global_config, get_global_config};
 			b_aggressive: false,
 			prod_pats_expansion: 0,
 			wrap_keys: 0,
+			qm_real_rows: 0,
 		};
 		let b_igc = false;
 		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),
@@ -5561,6 +5569,7 @@ use utils::consts::{read_global_config, get_global_config};
 			b_aggressive: false,
 			prod_pats_expansion: 0,
 			wrap_keys: 0,
+			qm_real_rows: 0,
 		};
 		let b_igc = false;
 		let sq = StepQueue{subsigs, store_items, capacity: capacity.clone(),

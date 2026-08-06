@@ -34,6 +34,13 @@ pub struct CapParams {
     // non-aggressive leaves it 0 (gadget reads basis_pats*perc instead).
     #[serde(default)]
     pub prod_pats_expansion: usize,
+    // neo T_qm real-row budget (measured emission demand, ROW units),
+    // both aggr and non-aggr: seeded low (aggr by
+    // estimated_to_capparams_aggr, non-aggr by determine_config_non_aggr's
+    // caller), CapErr-converged via "dis_adv::neo_qm_real". 0 = dense
+    // derive (hand-cap paths).
+    #[serde(default)]
+    pub qm_real_rows: usize,
     pub sigs_sed: usize,
     pub perc_comp_subsigs: usize,
     pub basis_unique_states: usize,
@@ -47,6 +54,8 @@ pub struct CapParams {
     pub perc_pats_expansion_rate_igc: usize,
     #[serde(default)]
     pub prod_pats_expansion_igc: usize,
+    #[serde(default)]
+    pub qm_real_rows_igc: usize,
     pub basis_acc_states_igc: usize,
     // aggressive igc sentinel: its own SMALL basis_unique_states (the cs
     // field above is shared cs/igc in non-aggressive). serde-default so
@@ -235,7 +244,12 @@ pub fn apply_caperr_bumps(p: &mut CapParams, b_aggr: bool,
         // on comp_sig. ("b_igc: false" is the cs arm; note "b_igc" itself
         // contains "_igc" so we must NOT match on a bare "_igc".)
         let igc = name.contains("b_igc: true") || name.contains("subsigs_igc");
-        if name.starts_with("dis_adv::prod_pats_expansion") {
+        if name.starts_with("dis_adv::neo_qm_real") {
+            // T305: neo-aggressive T_qm windowed real-row budget,
+            // reported directly in row units (no back-solve).
+            if igc { up(&mut p.qm_real_rows_igc, r, &mut changed); }
+            else { up(&mut p.qm_real_rows, r, &mut changed); }
+        } else if name.starts_with("dis_adv::prod_pats_expansion") {
             // aggressive forward-queue cap (rung-independent).
             if igc { up(&mut p.prod_pats_expansion_igc, r, &mut changed); }
             else { up(&mut p.prod_pats_expansion, r, &mut changed); }
@@ -334,6 +348,9 @@ pub fn caps_from_params_aggr(p: &CapParams)
     // aggressive: override the forward-queue cap with the inferred prod
     // (no-op when 0 -> keeps the basis_pats*perc default).
     sed.set_prod_pats_expansion(p.prod_pats_expansion);
+    // T305: override the T_qm real-row budget with the tuner-converged
+    // windowed demand (no-op when 0 -> keeps the dense derive).
+    sed.set_qm_real_rows(p.qm_real_rows);
     let mut sed_igc = SedCapacity::new(
         p.max_word_len, p.acdfa_state_part_bits, 1, 1,
         p.avg_active_pats_per_subsig_igc.max(1),
@@ -342,6 +359,7 @@ pub fn caps_from_params_aggr(p: &CapParams)
         p.basis_unique_states_igc.max(4),
         p.basis_acc_states_igc.max(2));
     sed_igc.set_prod_pats_expansion(p.prod_pats_expansion_igc);
+    sed_igc.set_qm_real_rows(p.qm_real_rows_igc);
     (cp, sed, cp_igc, sed_igc)
 }
 
@@ -353,14 +371,18 @@ pub fn caps_from_params_general(p: &CapParams)
         basis_unique_states: bu, subsigs: ss, avg_pats_per_subsig: ap };
     let cp_cs = cp(p.cp_basis_unique_states, p.cp_subsigs, p.cp_avg_pats);
     let cp_igc = cp(p.cp_basis_unique_states, p.cp_subsigs, p.cp_avg_pats);
-    let sed_cs = SedCapacity::new(p.max_word_len, p.acdfa_state_part_bits,
+    let mut sed_cs = SedCapacity::new(p.max_word_len, p.acdfa_state_part_bits,
         p.subsigs, p.avg_pats_per_subsig, p.avg_active_pats_per_subsig,
         p.basis_pats_in_trace, p.perc_pats_expansion_rate, p.sigs_sed,
         p.perc_comp_subsigs, p.basis_unique_states, p.basis_acc_states);
-    let sed_igc = SedCapacity::new(p.max_word_len, p.acdfa_state_part_bits,
+    // T305: override the T_qm real-row budget with the tuner-converged
+    // demand (no-op when 0 -> keeps the dense derive).
+    sed_cs.set_qm_real_rows(p.qm_real_rows);
+    let mut sed_igc = SedCapacity::new(p.max_word_len, p.acdfa_state_part_bits,
         p.subsigs_igc, p.avg_pats_per_subsig, p.avg_active_pats_per_subsig_igc,
         p.basis_pats_in_trace_igc, p.perc_pats_expansion_rate_igc, p.sigs_sed,
         p.perc_comp_subsigs, p.basis_unique_states, p.basis_acc_states_igc);
+    sed_igc.set_qm_real_rows(p.qm_real_rows_igc);
     let dfa = DfaCapacity::new(p.max_word_len, p.dfa_sigs, p.dfa_subsigs);
     (cp_cs, sed_cs, dfa, cp_igc, sed_igc)
 }
@@ -378,6 +400,7 @@ pub fn capparams_from_caps_general(cp_cs: &CpCapacity, sed_cs: &SedCapacity,
         basis_pats_in_trace: sed_cs.basis_pats_in_trace,
         perc_pats_expansion_rate: sed_cs.perc_pats_expansion_rate,
         prod_pats_expansion: 0,        // re-inferred by determine_config_aggr
+        qm_real_rows: 0,               // re-inferred by determine_config_aggr
         sigs_sed: sed_cs.sigs_sed,
         perc_comp_subsigs: sed_cs.perc_comp_subsigs,
         basis_unique_states: sed_cs.basis_unique_states,
@@ -387,6 +410,7 @@ pub fn capparams_from_caps_general(cp_cs: &CpCapacity, sed_cs: &SedCapacity,
         basis_pats_in_trace_igc: sed_igc.basis_pats_in_trace,
         perc_pats_expansion_rate_igc: sed_igc.perc_pats_expansion_rate,
         prod_pats_expansion_igc: 0,
+        qm_real_rows_igc: 0,
         basis_acc_states_igc: sed_igc.basis_acc_states,
         basis_unique_states_igc: sed_igc.basis_unique_states,
         dfa_sigs: dfa.sigs,
@@ -412,6 +436,7 @@ pub fn capparams_from_caps_aggr(cp: &CpCapacity, sed: &SedCapacity,
         basis_pats_in_trace: sed.basis_pats_in_trace,
         perc_pats_expansion_rate: sed.perc_pats_expansion_rate,
         prod_pats_expansion: 0,        // re-inferred by determine_config_aggr
+        qm_real_rows: 0,               // re-inferred by determine_config_aggr
         sigs_sed: sed.sigs_sed,
         perc_comp_subsigs: sed.perc_comp_subsigs,
         basis_unique_states: sed.basis_unique_states,
@@ -423,6 +448,7 @@ pub fn capparams_from_caps_aggr(cp: &CpCapacity, sed: &SedCapacity,
         basis_pats_in_trace_igc: 0,
         perc_pats_expansion_rate_igc: 0,
         prod_pats_expansion_igc: 0,
+        qm_real_rows_igc: 0,
         basis_acc_states_igc: 0,
         basis_unique_states_igc: 0,
         dfa_sigs: 0,
@@ -553,11 +579,11 @@ mod tests {
             cp_basis_unique_states: 0, cp_subsigs: 0, cp_avg_pats: 0,
             subsigs: 0, avg_pats_per_subsig: 0, avg_active_pats_per_subsig: 0,
             basis_pats_in_trace: 0, perc_pats_expansion_rate: 0,
-            prod_pats_expansion: 0, sigs_sed: 0,
+            prod_pats_expansion: 0, qm_real_rows: 0, sigs_sed: 0,
             perc_comp_subsigs: 0, basis_unique_states: 0, basis_acc_states: 0,
             subsigs_igc: 0, avg_active_pats_per_subsig_igc: 0,
             basis_pats_in_trace_igc: 0, perc_pats_expansion_rate_igc: 0,
-            prod_pats_expansion_igc: 0,
+            prod_pats_expansion_igc: 0, qm_real_rows_igc: 0,
             basis_acc_states_igc: 0, basis_unique_states_igc: 0,
             dfa_sigs: 0, dfa_subsigs: 0, aggr_needs_subsigs: 0,
             max_word_len: 0, acdfa_state_part_bits: 0,
@@ -662,13 +688,33 @@ mod tests {
             }
         }
 
-        // (c) the real-row arm of qm_caperr reports in prod/perc units.
+        // (c) the real-row arm of qm_caperr reports in prod/perc units
+        // (pre-T305 fallback path, qm_real_rows==0).
         let mut p3 = zero_params();
         let (ch3, un3) = apply_caperr_bumps(&mut p3, true,
             &[("dis_adv::prod_pats_expansion, b_igc: false".to_string(),
                554436)]);
         assert!(ch3 && un3.is_empty(), "neo real-row arm unmapped");
         assert_eq!(p3.prod_pats_expansion, 554436);
+
+        // (d) T305: windowed real-row arm reports DIRECTLY in row
+        // units on qm_real_rows(_igc), and does not touch prod.
+        for igc in [false, true] {
+            let tag = if igc { "true" } else { "false" };
+            let mut p4 = zero_params();
+            let (ch4, un4) = apply_caperr_bumps(&mut p4, true,
+                &[(format!("dis_adv::neo_qm_real, b_igc: {}", tag), 4700)]);
+            assert!(ch4 && un4.is_empty(), "neo_qm_real unmapped");
+            if igc {
+                assert_eq!(p4.qm_real_rows_igc, 4700);
+                assert_eq!(p4.qm_real_rows, 0, "cs untouched by igc");
+            } else {
+                assert_eq!(p4.qm_real_rows, 4700);
+                assert_eq!(p4.qm_real_rows_igc, 0, "igc untouched by cs");
+            }
+            assert_eq!(p4.prod_pats_expansion, 0,
+                "windowed arm must not fall through to prod");
+        }
 
         // -- DELIBERATELY unmapped: bumping these would be a unit error or
         // would never converge. They must stay fatal-and-loud.
@@ -726,6 +772,35 @@ mod tests {
             &[("comp_sig::subsigs_igc".to_string(), 99)]);
         assert_eq!(p.subsigs_igc, 99);
         assert_eq!(p.subsigs, 0, "cs subsigs untouched by igc");
+    }
+
+    #[test]
+    /// T305 (non-aggr extension): caps_from_params_general must plumb
+    /// qm_real_rows(_igc) through to the built SedCapacity, same as
+    /// caps_from_params_aggr already does for the aggr builder.
+    #[test]
+    fn test_caps_from_params_general_qm_real_rows() {
+        let mut p = zero_params();
+        p.max_word_len = 62;
+        p.subsigs = 4; p.subsigs_igc = 4;
+        p.avg_pats_per_subsig = 1;
+        p.avg_active_pats_per_subsig = 1;
+        p.avg_active_pats_per_subsig_igc = 1;
+        p.basis_pats_in_trace = 100; p.basis_pats_in_trace_igc = 100;
+        p.perc_pats_expansion_rate = 100; p.perc_pats_expansion_rate_igc = 100;
+        p.basis_unique_states = 10; p.basis_acc_states = 10;
+        p.basis_acc_states_igc = 10;
+        p.qm_real_rows = 42;
+        p.qm_real_rows_igc = 17;
+        let (_cp, sed_cs, _dfa, _cp_igc, sed_igc) = caps_from_params_general(&p);
+        assert_eq!(sed_cs.da_capacity().qm_real_rows, 42);
+        assert_eq!(sed_igc.da_capacity().qm_real_rows, 17);
+        // 0 stays a no-op (dense fallback), matching set_qm_real_rows.
+        p.qm_real_rows = 0; p.qm_real_rows_igc = 0;
+        let (_cp, sed_cs2, _dfa, _cp_igc, sed_igc2) =
+            caps_from_params_general(&p);
+        assert_eq!(sed_cs2.da_capacity().qm_real_rows, 0);
+        assert_eq!(sed_igc2.da_capacity().qm_real_rows, 0);
     }
 
     #[test]
