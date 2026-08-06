@@ -43,6 +43,18 @@ pub const IDX_SI_DATA:usize = 6;
 pub const IDX_FAILED_SIGS:usize = 7;
 pub const IDX_DISCHARGED_SIGS:usize = 8;
 
+/// PERF 62072: (#columns, #cells) of a resolved statement config.
+/// A cell is one committed field element; a CONSTANT si column
+/// collapses to one shared var, matching to_vec_fp_var.
+pub fn cfg_col_cell_counts(cfg: &ContainerConfig) -> (usize, usize){
+	let mut rows: Vec<(String,usize,usize,bool)> = vec![];
+	collect_cfg_cols(cfg, &mut rows);
+	let cells: usize = rows.iter().map(|(_p, seg, len, b_const)|
+		if *b_const && *seg>=IDX_SI_INP && *seg<=IDX_SI_DATA {1}
+		else {*len}).sum();
+	(rows.len(), cells)
+}
+
 /// DEBUG USE 62050: per-column dump of a RESOLVED ContainerConfig
 /// (path, segment, len, const) with a witness-var subtotal, using the
 /// same const rule as WitnessSigmaIR1CS::to_vec_fp_var.

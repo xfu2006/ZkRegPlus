@@ -63,7 +63,7 @@ use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use utils::consts::{read_global_config, B_DEBUG};
-use utils::logger::{log, LOG3};
+use utils::logger::{log, LOG3, LOG4};
 use ark_r1cs_std::R1CSVar;
 use folding_schemes::Error;
 use folding_schemes::folding::foldpot::{
@@ -124,6 +124,23 @@ maxsteps={} WRAP_KEYS_NEEDED={} have={}",
 				&inner.dummy_cfg, &format!("neo igc={}", b_igc));
 		}
 		Self { inner }
+	}
+
+	/// PERF 62072: discharge COMPONENT size on the three axes the
+	/// legacy/neo comparison needs -- table rows, committed cells and
+	/// constraints. LOG4 so official runs (LOG3) stay silent.
+	fn log_component(&self, cs: ConstraintSystemRef<F>, n0: usize,
+		rows: usize, arm: &str, job_id: usize){
+		if read_global_config().log_level < LOG4 { return; }
+		let cfg = self.inner.get_container_cfg()
+			.expect("container cfg not set!");
+		let (cols, cells) =
+			crate::gadgets::traits::cfg_col_cell_counts(&cfg);
+		log(job_id, LOG4, &format!(
+			"PERF 62072.1 discharge kind=neo win={} arm={} igc={} \
+rows={} cols={} cells={} cs={}",
+			true, arm, self.inner.b_igc,
+			rows, cols, cells, cs.num_constraints() - n0));
 	}
 
 	/// Build the neo statement's container config from an all-dummy
@@ -233,17 +250,32 @@ impl<F: PrimeField + ColEle> SigmaGadget<F>
 		let r1 = wtns.msg2[0].clone();
 		let r2 = wtns.msg2[1].clone();
 		let job_id = self.inner.get_job_id();
-		if self.inner.capacity.b_aggressive {
+		// PERF 62072: discharge COMPONENT size, LOG4 so official runs
+		// (LOG3) stay silent. rows = the Q_m table length that drives
+		// every per-row cost; cells = committed statement cells;
+		// cs = this gadget's constraint delta. The legacy mirror is
+		// the identical line in discharge_adv.rs -- same three axes,
+		// so the two arms are directly comparable on real data.
+		let n0 = cs.num_constraints();
+		let res = if self.inner.capacity.b_aggressive {
 			let (nat, vars) = self.load_neo_stmt_aggr(i, wtns,
 				cfg)?;
-			Self::assert_neo_aggr(cs, &nat, &vars, &r1, &r2,
-				job_id)
+			let rows = vars.qm.enc.len();
+			let r = Self::assert_neo_aggr(cs.clone(), &nat, &vars,
+				&r1, &r2, job_id);
+			self.log_component(cs.clone(), n0, rows, "aggr", job_id);
+			r
 		} else {
 			let (nat, vars, default_min) = self
 				.load_neo_stmt_nonaggr(i, &cs, wtns, cfg)?;
-			Self::assert_neo_nonaggr(cs, &nat, &vars,
-				&default_min, &r1, &r2, job_id)
-		}
+			let rows = vars.qm.enc.len();
+			let r = Self::assert_neo_nonaggr(cs.clone(), &nat, &vars,
+				&default_min, &r1, &r2, job_id);
+			self.log_component(cs.clone(), n0, rows, "nonaggr",
+				job_id);
+			r
+		};
+		res
 	}
 }
 
@@ -251,6 +283,12 @@ impl<F: PrimeField + ColEle> SigmaGadget<F>
 //   M4: StepQueueNeo + attributes + (A) carry / (B) full
 //        serialization + MIN/LEN relations
 // ============================================================
+
+/// TEST ONLY: forces the dense (pre-Windowed-Join) emission so the
+/// g = 0 fallback stays covered by a test. Never set in production.
+#[cfg(test)]
+pub(crate) static T301_DENSE: std::sync::atomic::AtomicBool =
+	std::sync::atomic::AtomicBool::new(false);
 
 // ---- G.1 partition classes (0 = unset/dummy row) ----
 pub const CAT_UNSET: u32 = 0;
@@ -537,6 +575,7 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 		//overlap or abut = the unit a windowed join brackets.
 		let (mut p_rows, mut p_real, mut p_wrap) = (0usize, 0, 0);
 		let (mut w_int, mut w_blk, mut w_grp0) = (0usize, 0, 0);
+		let mut w_min = 0usize; //T301 per-group min(dense, windowed)
 		let mut b_hist = [0usize; 5]; // B = 0,1,2,3-4,5+
 		let mut n_grp = 0usize;
 		for subsig in &self.subsigs {
@@ -754,11 +793,20 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 							_ => brk.push((al, be)),
 						}
 					}
-					w_int += brk.iter().map(|(a, b)|
+					let g_int = brk.iter().map(|(a, b)|
 						(*b + 1 - *a as isize).max(0) as usize)
 						.sum::<usize>();
+					w_int += g_int;
 					w_blk += brk.len();
 					if brk.is_empty() { w_grp0 += 1; }
+					//T301: the gap rule PERMITS g=0, so a group that
+					//windows worse than it lists keeps today's shape.
+					//A bracket-less group still needs 1 cert row (its
+					//emptiness is the (enc_prev,rid 1,max) lookup).
+					let g_win = if locs.is_empty() { 2 }
+						else if brk.is_empty() { 3 }
+						else { 2 + g_int + 2 * brk.len() };
+					w_min += g_win.min(2 + locs.len());
 					b_hist[match brk.len()
 						{0=>0, 1=>1, 2=>2, 3..=4=>3, _=>4}] += 1;
 				}
@@ -796,13 +844,15 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 			let p_tot = p_wrap + p_real;
 			let w_a = 3 * n_sub + w_int + 2 * w_blk;
 			let (w_c, w_b) = (w_a + 2 * w_grp0, w_a + 2 * n_grp);
+			let w_m = 3 * n_sub + w_min;
 			println!("DEBUG USE 62071.1: T5 igc={} TODAY={} \
 (wrap={} real={}) WINDOWED int={} brk={} grpB0={}/{} \
-modelA={} modelC={} modelB={} pctA={} pctC={} pctB={}",
+modelA={} modelC={} modelB={} modelM={} pctA={} pctC={} pctB={} \
+pctM={}",
 				self.b_igc, p_tot, p_wrap, p_real, w_int, w_blk,
-				w_grp0, n_grp, w_a, w_c, w_b,
+				w_grp0, n_grp, w_a, w_c, w_b, w_m,
 				w_a * 100 / p_tot.max(1), w_c * 100 / p_tot.max(1),
-				w_b * 100 / p_tot.max(1));
+				w_b * 100 / p_tot.max(1), w_m * 100 / p_tot.max(1));
 			println!("DEBUG USE 62071.2: T5 brk hist igc={} \
 B0={} B1={} B2={} B3_4={} B5plus={}", self.b_igc, b_hist[0],
 				b_hist[1], b_hist[2], b_hist[3], b_hist[4]);
@@ -1163,6 +1213,13 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 		let (z, rg2t) = (F::zero(), F::from(RANGE2));
 		let tag = if b_last { ID_ENCODED_LAST_STEP }
 			else { ID_ENCODED_NORMAL_STEP };
+		// WINDOWED JOIN: the max-wrap closes a skipped tail, so it
+		// carries g in d_c2. A 0-wrap opens a group (a different enc
+		// sits behind it) and so never has a gap.
+		let mut dc2 = z;
+		if self.enc.last() == Some(&enc) {
+			dc2 = id - *self.id.last().unwrap() - F::one();
+		}
 		self.enc.push(enc); self.id.push(id); self.loc.push(loc);
 		self.cat.push(z); self.step.push(f_step);
 		self.subsig.push(subsig); self.b_bwd.push(f_bwd);
@@ -1174,8 +1231,9 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 		self.rg1.push(f_rg1); self.rg2.push(f_rg2);
 		for v in [&mut self.prev_id1, &mut self.prev_loc1,
 			&mut self.prev_loc2, &mut self.enc_prev, &mut self.d_c1,
-			&mut self.d_c2, &mut self.d_below_lo,
+			&mut self.d_below_lo,
 			&mut self.d_above_lo] { v.push(z); }
+		self.d_c2.push(dc2);
 		self.si_step.push(SubsigStepStore::gen_step_tbl_id(enc, tag));
 		// A: limbs need the RANGE2 bound only. The per-row DB tags
 		// they used to carry are subsumed by si_step + the split.
@@ -1184,6 +1242,39 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 			&mut self.si_enc_prev] { v.push(rg2t); }
 		self.si_b_bwd.push(F::from(1u64 << 32)
 			* F::from(ID_SUBSIG_IS_BACKWARD) + subsig);
+	}
+
+	/// TEST ONLY hook for the dense-emission fallback; see T301_DENSE.
+	#[cfg(test)]
+	fn t301_dense_emit() -> bool {
+		T301_DENSE.load(std::sync::atomic::Ordering::Relaxed)
+	}
+	#[cfg(not(test))]
+	fn t301_dense_emit() -> bool { false }
+
+	/// WINDOWED JOIN: must row k be EMITTED? Its dead zone is
+	/// labelled by the bracket (prev_id1, prev_loc1) the closure
+	/// picked; zones are loc-intervals and locs are sorted, so a zone
+	/// is a contiguous run of FP rows sharing that label. A zone
+	/// keeps the row facing each window it borders -- and a zone open
+	/// at BOTH ends (a group with no window at all) still keeps ONE,
+	/// which carries the (enc_prev, rid 1, max) emptiness proof.
+	fn zone_edge(it: &StepQueueItemNeo<F>, k: usize) -> bool {
+		let f_fp = F::from(CAT_FP);
+		if it.cat[k] != f_fp { return true; }
+		let same = |a: usize, b: usize| it.cat[a] == f_fp
+			&& it.cat[b] == f_fp
+			&& it.prev_id1[a] == it.prev_id1[b]
+			&& it.prev_loc1[a] == it.prev_loc1[b];
+		let b_first = k == 0 || !same(k - 1, k);
+		let b_last = k + 1 == it.cat.len() || !same(k, k + 1);
+		// closure sentinels: prev_loc1 == 0 = no window BELOW the
+		// zone, prev_loc2 == 0 = none ABOVE (push_real maps the
+		// latter to max). An open side needs no row facing it.
+		let lo_open = it.prev_loc1[k].is_zero();
+		let hi_open = it.prev_loc2[k].is_zero();
+		if lo_open && hi_open { return b_first; }
+		(b_first && !lo_open) || (b_last && !hi_open)
 	}
 
 	/// Append one real row from item `it`, loc index k. Derives the
@@ -1223,6 +1314,10 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 			{ F::from(CAT_C) } else { c0 };
 		let b_seed = it.base.step.is_zero();
 		assert!(!(b_seed && cat != F::from(CAT_C)));
+		// WINDOWED JOIN: the previously EMITTED row, captured BEFORE
+		// this row is appended below.
+		let (p_id, p_loc) = (self.id.last().copied().unwrap_or(z),
+			self.loc.last().copied().unwrap_or(z));
 		//witness policy: FP always carries its bracket; C carries
 		//its closure pred only in aggressive (nonaggr re-picked in
 		//fill_nonaggr_cols); BP/SP carry nothing here.
@@ -1264,6 +1359,19 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 					else { pl2 + f_a - loc - one };
 				assert_fp_diff_range2(&d, max_val);
 				dal = d;
+			}
+		}
+		// WINDOWED JOIN: an FP row following a skip carries g = the id
+		// jump in d_c2, and d_ext = d_below_lo read at the LOWER
+		// NEIGHBOUR's loc in d_c1. Both cells are C-only (assert_carry
+		// is their only reader, under sel_c), so this costs no column.
+		if b_aggr && b_fp {
+			dc2 = F::from((k + 1) as u32) - p_id - one;
+			if !dc2.is_zero() && !pl1.is_zero() {
+				let d = if bwd { p_loc + f_a - pl1 - one }
+					else { p_loc - pl1 - f_b - one };
+				assert_fp_diff_range2(&d, max_val);
+				dc1 = d;
 			}
 		}
 		self.d_c1.push(dc1); self.d_c2.push(dc2);
@@ -1578,6 +1686,13 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 		let max_val: usize = (1 << read_global_config().range2_bit) - 1;
 		let (zero, one, f_max) = (F::zero(), F::one(),
 			F::from(max_val as u32));
+		// WINDOWED JOIN is AGGRESSIVE-ONLY: the non-aggr arm proves
+		// Q_m = Q_i disjoint-union (joined L rows) as a MULTISET
+		// identity (assert_qm_union), so every joined location must
+		// appear exactly once and no row may be skipped. Aggr has no
+		// carry queue -- its Q_m is the join alone, and the join is
+		// membership-only -- which is what leaves room to skip.
+		let b_win = b_aggr && !QmTable::<F>::t301_dense_emit();
 		let mut subsigs = self.subsigs.clone();
 		subsigs.sort();
 		let mut t = QmTable::default();
@@ -1629,6 +1744,14 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 					let it = &items[s];
 					let bwd = rec.is_backward && s >= 2;
 					for k in 0..it.base.locs.len() {
+						// WINDOWED JOIN: drop FP rows strictly inside
+						// their dead zone -- the zone's two edges
+						// certify the whole span. id stays k+1, so
+						// the omission simply opens a gap.
+						if b_win && it.cat[k] == F::from(CAT_FP)
+							&& !QmTable::<F>::zone_edge(it, k) {
+							continue;
+						}
 						t.push_real(it, k, f_step, b_last, bwd,
 							enc_prev, f_bwd, max_val, b_aggr);
 					}
@@ -2242,7 +2365,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			let t1 = &is_wrap * &v.loc[i];
 			check_prod_zero(&t1, &(&v.loc[i] - &c_max), lc!(),
 				"neo wrap loc in {0,max}")?;
-			// --- Section 5 / check (4): pad hygiene (2cs) ---
+		// --- Section 5 / check (4): pad hygiene (2cs) ---
 			// loc: pads must pack to ZERO for the union multiset.
 			// cat: a SEPARATE constraint on purpose -- loc carries
 			// si 0 too, so a fused (loc + cat) rule would admit
@@ -2255,7 +2378,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 				"neo pad loc")?;
 			check_prod_zero(&is_pad[i], &v.cat[i], lc!(),
 				"neo pad cat")?;
-			// --- Section 6 / check (5): the seed row (3cs) ---
+		// --- Section 6 / check (5): the seed row (3cs) ---
 			// A subsig's chain starts at an artificial step-0
 			// match placed at loc 1. Pin it: any real (C or FP)
 			// step-0 row must be at loc 1, else a step-1 row cites
@@ -2284,7 +2407,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 					&(&is_bp[i] + &is_sp[i]), lc!(),
 					"neo seed stays C")?;
 			}
-			// --- Section 7 / check (7): window direction (1cs,
+		// --- Section 7 / check (7): window direction (1cs,
 			//     AGGR only; sel.b_bwd_row stays empty else) ---
 			// b_bwd is a DB fact about the row's subsig: its steps
 			// are stored in reverse, so the gap to the predecessor
@@ -2316,6 +2439,128 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			(if b_aggr { 16 } else { 18 }) * n));
 		Ok(sel)
 	}
+
+	// ======================= WINDOWED JOIN =======================
+	//
+	// PAPER (App G.1): a (subsig, step) group joins the step's pattern
+	// against L = pat_loc and lists EVERY occurrence, tagged C (inside
+	// some predecessor window => reachable) or FP (outside all of
+	// them). Completeness comes from wf (1)/(2): `id` steps +1 from
+	// the loc-0 wrap to the loc-max wrap, so the block is listed in
+	// full. Cost is one Q_m row per occurrence, and ~84% are FP.
+	//
+	// WINDOWED JOIN keeps the same join and the SAME FP certificates
+	// -- FP rows are still in the result -- but lists only the
+	// occurrences that BORDER a window. FP rows strictly inside a dead
+	// stretch are SKIPPED and `id` jumps over them: one row per
+	// border, not one per occurrence. It is the behaviour of the
+	// aggressive arm -- not a flag.
+	//
+	// EXAMPLE. The predecessor group carries TWO locs, 10 and 50 (rid
+	// 1 and 2); this step has rg{2,9}, so its windows are [12,19] and
+	// [52,59]. L's block for the step's pat (DB-fixed, loc-ascending):
+	//
+	//   id   0   1   2   3   4   5   6   7   8   9  10  11
+	//   loc  0   5   8  14  23  37  44  55  61  70  83 max
+	//
+	//   0.......8 [12--19] 23...44 [52--59] 61.........max
+	//   \ dead A /  LIVE   \dead B/  LIVE   \_ dead C _/
+	//
+	// Q_m today lists all 12 rows. Windowed Join lists 8:
+	//
+	//   id  loc  cat   zone / role               g  skips
+	//    0    0  wrap  --                        -
+	//    2    8  FP    dead A, top               1  id 1
+	//    3   14  C     window 1                  0
+	//    4   23  FP    dead B, bottom            0
+	//    6   44  FP    dead B, top               1  id 5
+	//    7   55  C     window 2                  0
+	//    8   61  FP    dead C, bottom            0
+	//   11  max  wrap  --                        2  id 9, 10
+	//
+	// *** WHY A DEAD ZONE'S EDGES CAN NEVER BE SKIPPED ***
+	//
+	// A gap must fit inside ONE dead zone, so both rows bounding it
+	// lie in that zone. The zone's lowest entry has no partner below
+	// it and its highest none above -- only INTERIOR entries can be
+	// skipped. A zone costs 2 rows whether it holds 3 entries or
+	// 3,000; an OUTER zone costs 1, a wrap standing in for its
+	// missing side (dead A keeps 8, dead C keeps 61). With m window
+	// blocks a group emits at most
+	//     2 wraps + |C| + 2*m  rows, instead of 2 + |occurrences|.
+	//
+	// d_ext is the certificate. It is d_below_lo re-evaluated at the
+	// NEIGHBOUR's loc, which turns a point claim into an interval
+	// claim. It reuses the C-only d_c1 cell and the existing m_lo
+	// mask (assert_carry reads d_c1/d_c2 under sel_c only):
+	//
+	//   d_below_lo[i] = loc[i]   - prev_loc1[i] - rg2[i] - 1 >= 0
+	//   d_ext[i]      = loc[i-1] - prev_loc1[i] - rg2[i] - 1 >= 0
+	//                   ^^^^^^^^ the only change: my lower neighbour
+	//
+	// Both >= 0 puts both ends above the top of the window under row
+	// i's bracket, so the whole span [loc[i-1], loc[i]] is dead and
+	// every id inside it may be skipped. A gap INTO the max-wrap
+	// needs no witness: it is legal exactly when the row below it is
+	// an FP row with no window above at all. BOTH halves are checked
+	// -- m_hi == 0 alone also holds for a non-FP row, and that would
+	// let a prover empty a group down to its two wraps and discharge
+	// the subsig for free. So a group with NO window anywhere still
+	// emits one FP row, carrying the (enc_prev, rid 1, max) proof
+	// that its predecessor group carries nothing.
+	//
+	// WORKED REFUSAL. Zone B = (19,52) holds 23, 37, 44. Keep only 37:
+	//
+	//   gap 14 -> 37  (drops 23)
+	//     d_ext = 14 - 10 - 9 - 1 = -6  ->  RANGE2 rejects.
+	//     Correct: 14 is inside window 1 [12,19], so the span (14,37)
+	//     covers 15..19 -- an L entry at 17 would have been hidden.
+	//
+	//   gap 37 -> 55  (drops 44)
+	//     55 is a C row and a gap may not end at one  ->  barred.
+	//     Correct: the span (37,55) reaches into window 2 [52,59].
+	//
+	// So 23 and 44 must both be listed. The bound is one-sided: a
+	// THIRD row in the zone is sound and merely costs a row (g >= 0
+	// admits g = 0) -- the fallback a bracket-heavy group takes.
+	//
+	// *** WHY A GAP CANNOT HIDE A LIVE MATCH ***
+	//
+	// A C ROW CAN NEVER BE SKIPPED: it sits inside a window, so no
+	// rank-adjacent pair brackets it and the certifying row's d_ext
+	// goes negative. Nor can a carry be retagged FP (a live loc
+	// cannot satisfy both FP diffs at once), nor invented:
+	// gen_mtbl_qr admits only wrap and C rows as lookup targets, so
+	// prev_loc1 / prev_loc2 must name REAL carries of the predecessor
+	// group at ranks k and k+1. The carry set is therefore exact at
+	// every step, by induction down to the pinned seed. Soundness
+	// also rests on monotonicity -- window endpoints rise with the
+	// predecessor's loc and rid is a +1 chain in loc order -- so one
+	// rank-adjacent pair excludes ALL predecessor windows, not two.
+	//
+	// UNCHANGED: the FP certificate, the rid chain (FP rows never
+	// advanced it, so every predecessor pointer is identical), the
+	// membership logup (m_tm just drops to 0 on a skipped L row), and
+	// min_next / queue_len (C-only). ASSUMES as a DB invariant that
+	// each pat_loc block is loc-ascending in id: the dense listing
+	// re-proved that per group via d_sort, and skipped locs are never
+	// seen.
+	//
+	// AGGRESSIVE ARM ONLY. The non-aggr arm proves
+	// Q_m = Q_i disjoint-union (joined L rows) as a MULTISET identity
+	// (assert_qm_union), so every joined location must appear exactly
+	// once -- no row may be skipped there, ever. Aggr has no carry
+	// queue: its Q_m IS the join, and the join is membership-only
+	// (prover-supplied m_tm, so a skipped L row just drops to
+	// multiplicity 0). That asymmetry is the whole reason this is an
+	// aggressive-arm optimisation. Non-aggr also has less to gain --
+	// its Q_m is wrap-bound, not FP-bound.
+	//
+	// TOUCH POINTS: QmTable::zone_edge + gen_qm_table (emit),
+	// push_real / push_wrap (g in d_c2, d_ext in d_c1),
+	// assert_neo_wf Section 2 (id chain), assert_fwd_pruning (the
+	// two gap checks).
+	// =============================================================
 
 	/// Proves T_qm has the SHAPE every later certificate assumes.
 	/// TERMS: a GROUP is all rows sharing one key enc(subsig, step);
@@ -2382,9 +2627,10 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	fn assert_neo_wf(
 		cs: ConstraintSystemRef<F>,
 		t: &QmTable<F>, v: &QmVars<F>, sel: &NeoSel<F>,
+		b_aggr: bool,
 		job_id: usize,
-	) -> Result<(Vec<FpVar<F>>, Vec<FpVar<F>>, FpVar<F>),
-		SynthesisError> {
+	) -> Result<(Vec<FpVar<F>>, Vec<FpVar<F>>, FpVar<F>,
+		Vec<FpVar<F>>, Vec<FpVar<F>>), SynthesisError> {
 		let n0 = cs.num_constraints();
 		let n = t.enc.len();
 		let rb = read_global_config().range2_bit;
@@ -2417,8 +2663,27 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		// true, aggr view) rides on this Section plus Section 3.
 		check_eq(&v.id[0], &FpVar::<F>::Constant(F::zero()),
 			"neo id0")?;
+		// WINDOWED JOIN: id may jump by g >= 0 over the occurrences a
+		// certified gap discharged. g rides d_c2, split by the only
+		// two row kinds that may open a gap, so a C row still steps by
+		// exactly +1. g_fp / g_wr are consumed by assert_fwd_pruning,
+		// which owns the justification. Gate off => identical circuit.
+		//AGGRESSIVE ONLY -- see gen_qm_table's note on assert_qm_union.
+		let b_win = b_aggr;
+		let zc = FpVar::<F>::Constant(F::zero());
+		let (mut g_fp, mut g_wr) = (vec![zc.clone()], vec![zc.clone()]);
 		for i in 1..n {
-			let p1 = &(&v.id[i] - &v.id[i - 1]) - &c_one;
+			let step1 = &(&v.id[i] - &v.id[i - 1]) - &c_one;
+			let p1 = if b_win {
+				let a = &v.d_c2[i] * &sel.is_fp[i];
+				let b = &v.d_c2[i] * &sel.is_wrap[i];
+				let r = &(&step1 - &a) - &b;
+				g_fp.push(a); g_wr.push(b);
+				r
+			} else {
+				g_fp.push(zc.clone()); g_wr.push(zc.clone());
+				step1
+			};
 			let p2 = &v.loc[i - 1] - &c_max;
 			let res = &(&b_same[i] * &(&p1 - &p2)) + &p2;
 			check_prod_zero(&(&c_one - &sel.is_pad[i - 1]), &res,
@@ -2612,7 +2877,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		log(job_id, LOG3, &format!(
 			"PERF 61081.2: block=wf cs={} pred={}",
 			cs.num_constraints() - n0, 15 * n));
-		Ok((grp_start, rid, n_runs))
+		Ok((grp_start, rid, n_runs, g_fp, g_wr))
 	}
 
 	/// Binds each si companion column of T_qm to the row it sits on.
@@ -4702,6 +4967,9 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		pv: &PredView<F>,
 		buf: &mut QmQueryBuf<F>,
 		                 // REACHABLE-target instance
+		g_fp: &Vec<FpVar<F>>,
+		g_wr: &Vec<FpVar<F>>,
+		                 // WINDOWED JOIN id jumps, from assert_neo_wf
 		job_id: usize,
 	) -> Result<(), SynthesisError> {
 		let n0 = cs.num_constraints();
@@ -4710,6 +4978,9 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		let f_max = F::from(((1u64 << rb) - 1) as u64);
 		let c_max = new_const_var(&cs, f_max);
 		let c_one = new_const_var(&cs, F::one());
+		//AGGRESSIVE ONLY -- see gen_qm_table's note on assert_qm_union.
+		let b_win = b_aggr;
+		let mut m_hi_prev = FpVar::<F>::Constant(F::zero());
 		// No gate bit for the "nothing above" sentinel either: the
 		// distance c_max - prev_loc2 masks on itself, exactly as
 		// prev_loc1 does below (see gen_pred_view for the worked
@@ -4743,6 +5014,36 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 				* &(&c_max - &qm.prev_loc2[i]);
 			check_prod_zero(&m_hi, &(&e_hi - &qm.d_above_lo[i]),
 				lc!(), "neo FP above")?;
+			// WINDOWED JOIN: a gap below this row extends its own
+			// bracket claim from a point to the span
+			// [loc[i-1], loc[i]] -- d_ext = d_below_lo read at the
+			// lower neighbour's loc, riding d_c1 under the SAME m_lo
+			// mask, so an open lower end costs nothing. A gap INTO
+			// the max-wrap needs no witness at all: it is legal
+			// exactly when the row below it has no window above,
+			// i.e. m_hi == 0. See the WINDOWED JOIN block above
+			// assert_neo_wf for the worked refusal.
+			if b_win && i > 0 {
+				let e_x = &(&(&qm.loc[i - 1] - &qm.prev_loc1[i])
+					- &qm.rg2[i]) - &c_one;
+				let e_x = if b_aggr {
+					&e_x + &(&sel.b_bwd_row[i]
+						* &(&qm.rg1[i] + &qm.rg2[i]))
+				} else { e_x };
+				check_prod_zero(&(&g_fp[i] * &m_lo),
+					&(&e_x - &qm.d_c1[i]), lc!(),
+					"neo gap span")?;
+				// BOTH halves are needed: m_hi == 0 alone is also
+				// true for a NON-FP row, which would let a prover
+				// empty a whole group down to its two wraps and
+				// discharge the subsig for free.
+				check_prod_zero(&g_wr[i],
+					&(&c_one - &sel.is_fp[i - 1]), lc!(),
+					"neo gap into wrap needs FP")?;
+				check_prod_zero(&g_wr[i], &m_hi_prev, lc!(),
+					"neo gap into wrap")?;
+			}
+			m_hi_prev = m_hi.clone();
 			// (3): key1 rides assert_carry's fused slot in aggr
 			// (same key, exclusive sels).
 			if !b_aggr {
@@ -5292,8 +5593,9 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		// -- 2. well-formedness: row shape vs the S store,
 		//    group sort order, wrap/pad structure; returns
 		//    group starts + per-row reachable ranks --
-		let (_gs, rid, n_runs) = Self::assert_neo_wf(cs.clone(),
-			&nat.t, &vars.qm, &sel, job_id)?;
+		let (_gs, rid, n_runs, g_fp, g_wr) =
+			Self::assert_neo_wf(cs.clone(),
+			&nat.t, &vars.qm, &sel, true, job_id)?;
 		// -- 3. pin each si_* companion column to its base
 		//    column (outer-lookup share consistency) --
 		Self::assert_neo_si_pins(cs.clone(), &vars.qm, &sel,
@@ -5338,7 +5640,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		// -- 7. fwd pruning: every FP label justified by
 		//    querying its parent rows (closure vs Q_r) --
 		Self::assert_fwd_pruning(cs.clone(), &vars.qm, &sel,
-			true, &pv, &mut buf, job_id)?;
+			true, &pv, &mut buf, &g_fp, &g_wr, job_id)?;
 		// -- 8. each statement subsig's step-0 seed row must
 		//    exist reachable in Q_m (anchor of reachability:
 		//    blocks the vacuous all-FP labeling) --
@@ -5379,8 +5681,9 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		// -- 2. well-formedness: row shape vs the S store,
 		//    group sort order, wrap/pad structure; returns
 		//    group starts + per-row reachable ranks --
-		let (gs, rid, n_runs) = Self::assert_neo_wf(cs.clone(),
-			&nat.t, &vars.qm, &sel, job_id)?;
+		let (gs, rid, n_runs, g_fp, g_wr) =
+			Self::assert_neo_wf(cs.clone(),
+			&nat.t, &vars.qm, &sel, false, job_id)?;
 		// -- 3. carried ranks: cid counts only carried rows
 		//    (cat in {C,BP,SP}); free linear combo of rid --
 		let cid = Self::assert_neo_cid_chain(&gs, &sel);
@@ -5447,7 +5750,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		// -- 9. fwd pruning: every FP label justified by
 		//    querying its parent rows (closure vs Q_r) --
 		Self::assert_fwd_pruning(cs.clone(), &vars.qm, &sel,
-			false, &pv, &mut buf_qr, job_id)?;
+			false, &pv, &mut buf_qr, &g_fp, &g_wr, job_id)?;
 		// -- 10. bwd pruning: every BP label is a fwd dead
 		//    end -- farthest reach short of the successor
 		//    step's minimum surviving loc --
@@ -10438,5 +10741,338 @@ mod tests_neo_cost {
 			cs.which_is_unsatisfied());
 		println!("NEO-COST-AGGR: Q_m rows={} cs={}",
 			nat.t.enc.len(), cs.num_constraints());
+	}
+}
+
+/// T301 WINDOWED JOIN. Fixture = the worked example in the WINDOWED
+/// JOIN block above assert_neo_wf: the predecessor group carries 10
+/// and 50, this step has rg{2,9}, so its windows are [12,19] and
+/// [52,59] and L's block is 5,8,14,23,37,44,55,61,70,83.
+///
+/// SERIALIZATION: every test here flips the PROCESS-WIDE windowed-join
+/// override, so this module is only correct under --test-threads=1.
+/// Each test restores the flag through a drop guard.
+#[cfg(test)]
+mod tests_neo_t301 {
+	use super::*;
+	use super::tests_neo_m6::{run_nat_aggr, regen_aggr_advice,
+		build_core_native, hm_gen};
+	use data_processor::type_def::SubsigStepStoreItem;
+	use ark_bn254::Fr;
+
+	fn f(x: u32) -> Fr { Fr::from(x) }
+
+	/// Forces the DENSE (pre-Windowed-Join) emission for the control
+	/// and fallback tests, and restores it even if a test panics.
+	/// PROCESS-WIDE, so this module needs --test-threads=1.
+	struct DenseGuard;
+	impl DenseGuard {
+		fn on() -> Self {
+			T301_DENSE.store(true,
+				std::sync::atomic::Ordering::Relaxed);
+			DenseGuard
+		}
+	}
+	impl Drop for DenseGuard {
+		fn drop(&mut self) {
+			T301_DENSE.store(false,
+				std::sync::atomic::Ordering::Relaxed);
+		}
+	}
+
+	/// subsig 1: step 1 = pat 1 under rg{5,60}, step 2 = pat 2 under
+	/// rg{2,9}. Step 1's two matches become the two carries.
+	fn t301_store() -> SubsigStepStore {
+		let it = SubsigStepStoreItem {
+			subsig_id: 1, igc: false,
+			vec_pm_bounds: vec![(1usize, (5usize, 60usize)),
+				(2usize, (2usize, 9usize))],
+			is_backward: false };
+		let mut m = std::collections::HashMap::new();
+		m.insert(1usize, it);
+		SubsigStepStore { subsig_ids: vec![1], subsig_to_steps: m,
+			b_aggressive: false }
+	}
+
+	/// pat 1 at 10 and 50 (both in the seed window [6,61] => carries);
+	/// pat 2 spread over the three dead zones and the two windows.
+	fn t301_hm() -> HashMap<u32, Vec<u32>> {
+		let mut m = HashMap::new();
+		m.insert(1, vec![10, 50]);
+		m.insert(2, vec![5, 8, 14, 23, 37, 44, 55, 61, 70, 83]);
+		m
+	}
+
+	fn t301_capacity() -> DischargeAdvCapacity {
+		DischargeAdvCapacity {
+			res_small_cost: DischargeAdvCapacity::default_res_small(),
+			max_nibble_len: 1, subsigs: 4,
+			avg_active_pats_per_subsig: 32, basis_pats_in_trace: 1,
+			perc_pats_expansion_rate: 100, universe_subsigs: 4,
+			b_aggressive: false, prod_pats_expansion: 0,
+			wrap_keys: 0,
+		}
+	}
+
+	/// BACKWARD twin of t301_store. vec_pm_bounds holds the ORIGINAL
+	/// (keyword-last) chain; both the closure and gen_qm_table walk
+	/// reverse_pm_bounds of it, giving step 1 = pat 2 under the
+	/// wide-open keyword anchor (0, max) and step 2 = pat 1 under
+	/// rg{2,9} with the MIRRORED window [u-9, u-2].
+	fn t301_bwd_store() -> SubsigStepStore {
+		let it = SubsigStepStoreItem {
+			subsig_id: 1, igc: false,
+			vec_pm_bounds: vec![(1usize, (0usize, 0usize)),
+				(2usize, (2usize, 9usize))],
+			is_backward: true };
+		let mut m = std::collections::HashMap::new();
+		m.insert(1usize, it);
+		SubsigStepStore { subsig_ids: vec![1], subsig_to_steps: m,
+			b_aggressive: true }
+	}
+
+	/// step 1 = pat 2 at 20 and 60 (anchor window is wide open, so
+	/// both carry); step 2 = pat 1 over the same 10 locs as the
+	/// forward fixture. Mirrored windows [11,18] and [51,58] put the
+	/// locs in the SAME three dead zones, so the expected emission is
+	/// identical -- only the diff orientation differs.
+	fn t301_bwd_hm() -> HashMap<u32, Vec<u32>> {
+		let mut m = HashMap::new();
+		m.insert(2, vec![20, 60]);
+		m.insert(1, vec![5, 8, 14, 23, 37, 44, 55, 61, 70, 83]);
+		m
+	}
+
+	/// build the native bundle under the CURRENT flag setting.
+	fn gen_nat_for(info: &SubsigStepStore,
+		hm: &HashMap<u32, Vec<u32>>) -> NeoCore<Fr> {
+		let seed = StepQueueItem::new(f(1), f(0), f(0), f(0), f(0),
+			vec![f(1)]);
+		let mut m = HashMap::new();
+		m.insert(f(1), vec![seed]);
+		let carried = StepQueueNeo::from_stepqueue(StepQueue::new(
+			vec![f(1)], m, &t301_capacity(),
+			StepQueueType::ResLarge, false));
+		let gen = carried.gen_shared_core_from_hm(0, &hm_gen(hm),
+			info, f(100)).expect("shared core");
+		build_core_native(&gen, info, hm)
+	}
+
+	/// build the native bundle under the CURRENT flag setting.
+	fn gen_nat() -> NeoCore<Fr> {
+		let info = t301_store();
+		let hm = t301_hm();
+		let seed = StepQueueItem::new(f(1), f(0), f(0), f(0), f(0),
+			vec![f(1)]);
+		let mut m = HashMap::new();
+		m.insert(f(1), vec![seed]);
+		let carried = StepQueueNeo::from_stepqueue(StepQueue::new(
+			vec![f(1)], m, &t301_capacity(),
+			StepQueueType::ResLarge, false));
+		let gen = carried.gen_shared_core_from_hm(0, &hm_gen(&hm),
+			&info, f(100)).expect("shared core");
+		build_core_native(&gen, &info, &hm)
+	}
+
+	/// the locs of the step-2 group (the group under test).
+	fn step2_locs(nat: &NeoCore<Fr>) -> Vec<u32> {
+		let s2 = f(2);
+		(0..nat.t.enc.len()).filter(|i| nat.t.step[*i] == s2)
+			.map(|i| {
+				let b = nat.t.loc[i].into_bigint();
+				b.as_ref()[0] as u32
+			}).collect()
+	}
+
+	/// drop the given row indices from every QmTable column.
+	fn drop_rows(t: &mut QmTable<Fr>, kill: &[usize]) {
+		let keep = |v: &Vec<Fr>| (0..v.len())
+			.filter(|i| !kill.contains(i)).map(|i| v[i])
+			.collect::<Vec<Fr>>();
+		t.enc = keep(&t.enc); t.id = keep(&t.id);
+		t.loc = keep(&t.loc); t.cat = keep(&t.cat);
+		t.step = keep(&t.step); t.subsig = keep(&t.subsig);
+		t.prev_id1 = keep(&t.prev_id1);
+		t.prev_loc1 = keep(&t.prev_loc1);
+		t.prev_loc2 = keep(&t.prev_loc2); t.pat = keep(&t.pat);
+		t.rg1 = keep(&t.rg1); t.rg2 = keep(&t.rg2);
+		t.enc_prev = keep(&t.enc_prev); t.b_bwd = keep(&t.b_bwd);
+		t.d_c1 = keep(&t.d_c1); t.d_c2 = keep(&t.d_c2);
+		t.d_below_lo = keep(&t.d_below_lo);
+		t.d_above_lo = keep(&t.d_above_lo);
+		t.d_sort = keep(&t.d_sort); t.si_step = keep(&t.si_step);
+		t.si_subsig = keep(&t.si_subsig); t.si_pat = keep(&t.si_pat);
+		t.si_rg1 = keep(&t.si_rg1); t.si_rg2 = keep(&t.si_rg2);
+		t.si_enc_prev = keep(&t.si_enc_prev);
+		t.si_b_bwd = keep(&t.si_b_bwd);
+	}
+
+	/// Repair the two per-row columns a drop invalidates, so the
+	/// negative is caught by the GAP checks and nothing else: g
+	/// (= d_c2) widens over the bigger id hole, and d_sort re-reads
+	/// the new lower neighbour. Without this the wf skeleton and the
+	/// loc sort fire first and the test proves nothing -- verified by
+	/// disabling the gap checks and watching every negative go SAT.
+	fn fix_after_drop(t: &mut QmTable<Fr>, i: usize) {
+		t.d_c2[i] = t.id[i] - t.id[i - 1] - f(1);
+		t.d_sort[i] = t.loc[i] - t.loc[i - 1];
+	}
+
+	/// index of the step-2 row at loc `l`.
+	fn row_at(nat: &NeoCore<Fr>, l: u32) -> usize {
+		let s2 = f(2);
+		(0..nat.t.enc.len()).find(|i| nat.t.step[*i] == s2
+			&& nat.t.loc[*i] == f(l)).expect("row not found")
+	}
+
+	/// CONTROL: the dense fixture verifies, and the step-2 group
+	/// lists all 10 occurrences plus its two wraps.
+	#[test]
+	fn test_t301_control_dense_sat() {
+		let _g = DenseGuard::on();
+		let nat = gen_nat();
+		assert_eq!(step2_locs(&nat).len(), 12);
+		assert!(run_nat_aggr(&nat).is_satisfied().unwrap());
+	}
+
+	/// The emitter keeps exactly the row facing each window: dead A
+	/// -> 8, dead B -> 23 and 44, dead C -> 61. 37, 70, 83 and 5 go.
+	#[test]
+	fn test_t301_emits_zone_edges() {
+		let nat = gen_nat();
+		let max = (1u32 << read_global_config().range2_bit) - 1;
+		assert_eq!(step2_locs(&nat),
+			vec![0, 8, 14, 23, 44, 55, 61, max]);
+		assert!(run_nat_aggr(&nat).is_satisfied().unwrap());
+	}
+
+	/// FALLBACK: a dense emission still verifies under the relaxed
+	/// rule (g = 0 everywhere). This is what lets a bracket-heavy
+	/// group opt out, so it must never regress.
+	#[test]
+	fn test_t301_dense_still_verifies() {
+		let nat = { let _g = DenseGuard::on(); gen_nat() };
+		assert!(run_nat_aggr(&nat).is_satisfied().unwrap());
+	}
+
+	/// NEG: drop dead B's BOTTOM edge (23). The gap now runs from the
+	/// C row at 14, and 14 is inside window 1, so the span is not
+	/// dead: d_ext = 14 - 10 - 9 - 1 = -6. Asserted twice -- the
+	/// in-circuit equality fails, and the value a smarter prover
+	/// would have to write is outside RANGE2 (tier-1 does not carry
+	/// the outer range lookup, so that half is checked natively).
+	#[test]
+	fn test_t301_neg_gap_spans_window() {
+		let mut nat = gen_nat();
+		let i = row_at(&nat, 23);
+		drop_rows(&mut nat.t, &[i]);
+		let j = row_at(&nat, 44);
+		fix_after_drop(&mut nat.t, j);
+		regen_aggr_advice(&mut nat, &t301_store(),
+			&NeoCore::<Fr>::gen_store_rows(&vec![f(1)],
+				&t301_store()).1);
+		assert!(!run_nat_aggr(&nat).is_satisfied().unwrap());
+		// the required d_ext, as an integer, is negative
+		let max = (1u64 << read_global_config().range2_bit) - 1;
+		let need = 14i64 - 10 - 9 - 1;
+		assert!(need < 0 || need as u64 > max);
+	}
+
+	/// NEG: drop dead C's kept row (61), so the tail gap springs from
+	/// the C row at 55 instead of an FP row. "gap into wrap needs FP"
+	/// fires; without it the span (55, max) would swallow 61/70/83
+	/// unchecked.
+	#[test]
+	fn test_t301_neg_gap_into_wrap_from_c() {
+		let mut nat = gen_nat();
+		let i = row_at(&nat, 61);
+		drop_rows(&mut nat.t, &[i]);
+		let j = nat.t.enc.len() - 1;
+		fix_after_drop(&mut nat.t, j);
+		regen_aggr_advice(&mut nat, &t301_store(),
+			&NeoCore::<Fr>::gen_store_rows(&vec![f(1)],
+				&t301_store()).1);
+		assert!(!run_nat_aggr(&nat).is_satisfied().unwrap());
+	}
+
+	/// NEG: the group-emptying attack. Strip every real row of the
+	/// step-2 group, leaving its two wraps, and the chain dies for
+	/// free. Blocked by the same "gap into wrap needs FP" check --
+	/// the row below the max-wrap is then the 0-wrap, not an FP row.
+	#[test]
+	fn test_t301_neg_empty_group() {
+		let mut nat = gen_nat();
+		let max = f((1u32 << read_global_config().range2_bit) - 1);
+		let s2 = f(2);
+		let kill = (0..nat.t.enc.len())
+			.filter(|i| nat.t.step[*i] == s2
+				&& !nat.t.loc[*i].is_zero()
+				&& nat.t.loc[*i] != max)
+			.collect::<Vec<usize>>();
+		assert_eq!(kill.len(), 6);
+		drop_rows(&mut nat.t, &kill);
+		let j = nat.t.enc.len() - 1;
+		fix_after_drop(&mut nat.t, j);
+		regen_aggr_advice(&mut nat, &t301_store(),
+			&NeoCore::<Fr>::gen_store_rows(&vec![f(1)],
+				&t301_store()).1);
+		assert!(!run_nat_aggr(&nat).is_satisfied().unwrap());
+	}
+
+	/// BACKWARD control: the mirrored fixture is SAT dense, and its
+	/// step-2 group lists all 10 occurrences plus the two wraps.
+	#[test]
+	fn test_t301_bwd_control_dense_sat() {
+		let _g = DenseGuard::on();
+		let nat = gen_nat_for(&t301_bwd_store(), &t301_bwd_hm());
+		assert_eq!(step2_locs(&nat).len(), 12);
+		assert!(run_nat_aggr(&nat).is_satisfied().unwrap());
+	}
+
+	/// BACKWARD: the mirrored window [u-9, u-2] puts the same locs in
+	/// the same three dead zones, so the emission matches the forward
+	/// fixture row for row. The ONE mul that orients the FP diffs,
+	/// b_bwd_row*(rg1+rg2), orients d_ext too, so no extra witness.
+	#[test]
+	fn test_t301_bwd_emits_zone_edges() {
+		let nat = gen_nat_for(&t301_bwd_store(), &t301_bwd_hm());
+		let max = (1u32 << read_global_config().range2_bit) - 1;
+		assert_eq!(step2_locs(&nat),
+			vec![0, 8, 14, 23, 44, 55, 61, max]);
+		assert!(run_nat_aggr(&nat).is_satisfied().unwrap());
+	}
+
+	/// BACKWARD NEG: drop dead B's bottom edge (23). The mirrored
+	/// d_ext = loc[i-1] + rg1 - prev_loc1 - 1 = 14 + 2 - 20 - 1 = -5,
+	/// so the span (14,44) is refused exactly as in the forward case.
+	#[test]
+	fn test_t301_bwd_neg_gap_spans_window() {
+		let info = t301_bwd_store();
+		let mut nat = gen_nat_for(&info, &t301_bwd_hm());
+		let i = row_at(&nat, 23);
+		drop_rows(&mut nat.t, &[i]);
+		let j = row_at(&nat, 44);
+		fix_after_drop(&mut nat.t, j);
+		regen_aggr_advice(&mut nat, &info,
+			&NeoCore::<Fr>::gen_store_rows(&vec![f(1)], &info).1);
+		assert!(!run_nat_aggr(&nat).is_satisfied().unwrap());
+		let need = 14i64 + 2 - 20 - 1;
+		assert!(need < 0);
+	}
+
+	/// NEG: skip a CARRY. Drop the C row at 55 (inside window 2):
+	/// the gap that swallows it cannot be certified, because no
+	/// rank-adjacent bracket covers a loc that lies inside a window.
+	#[test]
+	fn test_t301_neg_skip_carry() {
+		let mut nat = gen_nat();
+		let i = row_at(&nat, 55);
+		drop_rows(&mut nat.t, &[i]);
+		let j = row_at(&nat, 61);
+		fix_after_drop(&mut nat.t, j);
+		regen_aggr_advice(&mut nat, &t301_store(),
+			&NeoCore::<Fr>::gen_store_rows(&vec![f(1)],
+				&t301_store()).1);
+		assert!(!run_nat_aggr(&nat).is_satisfied().unwrap());
 	}
 }

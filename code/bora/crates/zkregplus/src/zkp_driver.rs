@@ -2686,7 +2686,11 @@ pub mod tests_zkp_driver{
 		//bits = 64 subsigs -- the subset's widest sig has 35.
 		get_global_config().range2_bit = knob("ZKR_RANGE2", 22);
 		get_global_config().b_read_cache = false;
-		get_global_config().log_level = utils::logger::LOG3;
+		//PERF 62072: ZKR_LOG raises the level for a measurement run
+		//(LOG4 = 5 turns on the discharge-component probe). Default is
+		//unchanged, so official runs emit exactly as before.
+		get_global_config().log_level =
+			knob("ZKR_LOG", utils::logger::LOG3);
 		//ZKR_DRYRUN=1 stops right after the capacity check, so the
 		//per-cell minimum-capacity search costs seconds, not a fold.
 		get_global_config().b_dryrun_after_capcheck =
@@ -2784,6 +2788,11 @@ pub mod tests_zkp_driver{
 			get_global_config().neo_wrap_keys = knob("ZKR_WRAPKEYS", 0);
 		}
 		get_global_config().snark_cache_dir = "dlp_hard".to_string();
+		//PERF 62072: ZKR_LOG raises the level for a measurement run
+		//(LOG4 = 5 turns on the discharge-component probe). Default is
+		//unchanged, so official runs emit exactly as before.
+		get_global_config().log_level =
+			knob("ZKR_LOG", utils::logger::LOG3);
 		get_global_config().b_read_snark_cache = false;
 		get_global_config().b_write_snark_cache = false;
 		get_global_config().b_light_test = true;

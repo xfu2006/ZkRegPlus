@@ -19,7 +19,7 @@ use std::{collections::{HashMap}};
 use ark_ff::{PrimeField,Zero,BigInteger};
 use std::{marker::{PhantomData},collections::{HashSet}};
 
-use utils::{logger::{log_perf, LOG1, LOG6}, 
+use utils::{logger::{log, log_perf, LOG1, LOG4, LOG6}, 
 	timer::Timer as GTimer};
 use crate::gadgets::{
 	commons::{gen_m_table,check_arr_eq,encode_cols,decode_cols,new_var,
@@ -4792,6 +4792,27 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for DischargeAdvGadget<F>{
 		if b_perf{
 			println!("PERF 102: discharge_adv: TOTAL num_cons: {}", 
 				cs.num_constraints()-n1);	
+		}
+		// PERF 62072: discharge COMPONENT size, the legacy mirror of
+		// the identical line in discharge_adv_neo.rs -- same three
+		// axes (table rows, committed cells, constraints) so the two
+		// implementations are directly comparable on real data. rows
+		// is the capacity-driven queue length, the legacy analogue of
+		// neo's Q_m length. LOG4 so official runs (LOG3) stay silent.
+		if read_global_config().log_level >= LOG4 {
+			let (cols, cells) =
+				crate::gadgets::traits::cfg_col_cell_counts(&cfg);
+			let n_small = StepQueue::<F>::vec_size(
+				&StepQueueType::ResSmall, &self.capacity).0;
+			let n_large = StepQueue::<F>::vec_size(
+				&StepQueueType::ResLarge, &self.capacity).0;
+			let arm = if self.capacity.b_aggressive {"aggr"}
+				else {"nonaggr"};
+			log(self.job_id, LOG4, &format!(
+				"PERF 62072.1 discharge kind=legacy arm={} igc={} \
+rows={} rows_small={} cols={} cells={} cs={}",
+				arm, self.b_igc, n_large, n_small, cols, cells,
+				cs.num_constraints() - n1));
 		}
 
 		Ok(())

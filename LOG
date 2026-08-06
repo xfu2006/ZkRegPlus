@@ -30710,11 +30710,44 @@ Goal 3. new idea of NewP3.6 T7
 		-> clear the rest of the tasks.
 Goal 4. continue NewP3.6 on Task 20x series for non-aggr
 	[a] T202 -> completed
-	[b] 
+	[b] T209 done.
+	[c] T215
+	[d] give up T206 because it needs DB change.
 Goal 5. Writing
 	[a] paragraph problem statement
 	[b] Thm3 and Proof
+	[c] 4.5 part 1.
 
+Wed 08/05/2026
+Goal 1. NewP3.7 improve aggr perf of new
+	[a] collect data.
+	[b] plan T301
+		-> step 1
+		-> step 2
+		-> step 3 (main logic)
+		-> step 4.
+	[c] verify T301 idea
+	[d] inspect T301 motivating example again.
+	[e] inspect T301 code
+	[f] test and performance measure.
+
+Goal 2. Writing B.5
+	[a] Stage 2. -> DONE
+	[b] Stage 3.
+	[c] Stage 4. -> DONE but needs refinement.
+
+Goal 3. Reading
+	[a] disjucntive proteocol -> DONE.
+	[b] Cyclo -> DONE. 
+
+Goal 4. NEW_PAPER_DATA.py project
+	[a] Goal
+	[b] Interface design
+	[c] read existing code of dlp
+
+Thursday 08/06/2026
+Goal 1. continue to improve aggr performance
+Goal 2. try to understand full_dlp
 
 -- TODO --
 Goal 2. P4 again (measure comparison)
