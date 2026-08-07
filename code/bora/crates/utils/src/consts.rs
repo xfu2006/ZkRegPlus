@@ -363,6 +363,15 @@ pub struct GlobalConfig {
 	/// the driver's back-solve must not touch it. Set by the production
 	/// runners (full_clamav / full_dlp / full_dna) to pin legacy behavior.
 	pub b_pin_lkup_share: bool,
+	/// T217: mirrors the driver's b_check_lkup param, so a mapper (which
+	/// only sees GlobalConfig, not the driver call) can tell whether this
+	/// run enforces the hab22 lookup balance. The 8_B dummy self-cover in
+	/// composable_gadget_mapper.rs reads it: unchecked runs skip the
+	/// self-cover so the never-stepped dummy stmt never forces
+	/// perc_lkup_share up to cover its own pad-word query universe.
+	/// Default true so any path that never calls zkp_driver{,_adv,
+	/// _adv_aggr} keeps today's (self-cover always on) behavior.
+	pub b_check_lkup: bool,
 	/// Optional cap on number of words processed per job (per Pass).
 	/// 0 = unlimited. Used for fast diagnostic runs that reproduce the
 	/// stall without burning hours. See driver.rs pass_all word loops.
@@ -450,6 +459,7 @@ impl Default for GlobalConfig {
             b_resume: false,
 			perc_lkup_share: 1,
 			b_pin_lkup_share: false,
+			b_check_lkup: true,
 			word_cap_per_job: 0,
 			stall_watchdog_secs: 0,
 			clamav_cfg: ClamavApproxConfig {
@@ -512,6 +522,7 @@ static GLOBAL_CONFIG: RwLock<GlobalConfig> = RwLock::new(GlobalConfig {
     b_resume: false,
 	perc_lkup_share: 1,
 	b_pin_lkup_share: false,
+	b_check_lkup: true,
 	word_cap_per_job: 0,
 	stall_watchdog_secs: 0,
 	clamav_cfg: ClamavApproxConfig {

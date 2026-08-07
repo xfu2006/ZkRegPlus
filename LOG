@@ -30785,12 +30785,34 @@ Goal 5. try to understand full_dlp and start project planning
 
 
 Friday 08/07/2026
+Goal 0. Reading (Jagged Commitment) -> DONE
 Goal 1. continue T307
 	[a] review design
+	[b] no go recommendation
 
 Goal 2. PAPER new Milestone 101
 	[a] overall design first
 	[b] check how to deal with run_multiple halfs.
+
+Goal 3. T217
+	[a] review design
+	[b] understand the design
+	[c] check if the padding check coverage can be dropped?
+	[d] skip 8B fix and test.
+
+Goal 4. continue design of Milestone 101
+	[a] T1. common functions
+	[b] T2: proces launch and run
+	[c] T3: run half of NUMA function
+	[d] T4: run external python command
+	[e] T5: each leaf produces output file tgz dumps and stats report
+	[f] T6: files
+	[g] T7: git setting
+	[h] T8: done file checks
+	[i] T9: sequencer
+	[j] T10: 
+	[k] T11: stub functions
+	[l]
 	
 		
 

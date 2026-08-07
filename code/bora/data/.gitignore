@@ -2,3 +2,5 @@ cache/*
 *.7z
 samples/*
 paper_data/reports/*
+paper_data/run_data/data/raw_data/failed_tgz/*
+!paper_data/run_data/data/raw_data/failed_tgz/.gitkeep

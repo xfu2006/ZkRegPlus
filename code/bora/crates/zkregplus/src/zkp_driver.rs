@@ -1604,6 +1604,11 @@ where
 	<S as SNARK<<E as Pairing>::ScalarField>>::ProvingKey: Send,
 	<S as SNARK<<E as Pairing>::ScalarField>>::VerifyingKey: Send,
 {
+	//T217: mirror b_check_lkup into GlobalConfig so the composite
+	//gadget mapper's dummy self-cover (composable_gadget_mapper.rs
+	//8_B) can see it -- mappers only read GlobalConfig, not this
+	//driver's params.
+	get_global_config().b_check_lkup = b_check_lkup;
 	//1. build or load the clamdb
 	let log_level = LOG1;
 	let mut gt1 = GTimer::new();
@@ -1611,7 +1616,7 @@ where
 	let poseidon_config = poseidon_canonical_config::<CF1<C1>>();
 	let mut vlog = vec![];
 	let cfg = default_clamav_cfg();
-	let db = ClamavDB::<CF1<C1>>::build_or_load(&cfg, sig_file, 
+	let db = ClamavDB::<CF1<C1>>::build_or_load(&cfg, sig_file,
 		list_of_dfa_sigs, list_of_ised_sigs, list_of_ised_igc_sigs,
 		&mut vlog, cache_dir, read_global_config().b_read_cache, b_write_cache)
 		.expect("build db err");
@@ -1930,6 +1935,11 @@ where
 	<S as SNARK<<E as Pairing>::ScalarField>>::ProvingKey: Send,
 	<S as SNARK<<E as Pairing>::ScalarField>>::VerifyingKey: Send,
 {
+	//T217: mirror b_check_lkup into GlobalConfig so the composite
+	//gadget mapper's dummy self-cover (composable_gadget_mapper.rs
+	//8_B) can see it -- mappers only read GlobalConfig, not this
+	//driver's params.
+	get_global_config().b_check_lkup = b_check_lkup;
 	//1. build or load the clamdb
 	let log_level = LOG1;
 	let mut gt1 = GTimer::new();

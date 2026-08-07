@@ -1112,20 +1112,43 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 			_lk: PhantomData,
 		};
 
-		// 8_B: dummy self-cover for aggr-neo. The dummy stmt is installed
-		// via set_dummy_stmt and NEVER passes update_lookup, so its
-		// col1/col2/m_share stay zero (hab22 right-sum = 0). aggr-neo
-		// seeds the fixed universe as lookup QUERIES even for a pad word
-		// (left != 0), so a never-stepped dummy instance is hab22-
-		// imbalanced and the decider rejects it. Fill the dummy's own
-		// table share to exactly match its own queries (each distinct
-		// (tbl_id,val) key, mult = its query count) so left == right.
+		// 8_B: dummy self-cover (aggr-neo only).
+		//
+		// PROBLEM: each circuit type gets a placeholder statement (the
+		// "dummy", built once from a fixed pad word) in case the type
+		// is never stepped. The statement shape is uniform, and
+		// aggr-neo issues lookup queries even for a pad word, so the
+		// dummy carries real queries: hab22 left != 0. But it never
+		// passes update_lookup, so its share columns stay zero:
+		// right == 0. Taken alone, the dummy is hab22-IMBALANCED.
+		//
+		// FIX (self-cover): fill the dummy's OWN share columns with
+		// its OWN query multiset -- one slot per distinct (tbl_id,val)
+		// key, mult = its query count -- so left == right holds inside
+		// the dummy itself.
+		//
+		// COST, AND WHY WE GATE IT (T217): the fill needs one share
+		// slot per distinct key (~850 for the pad word), and share
+		// width is part of the UNIFORM shape -- so covering the dummy
+		// can force perc_lkup_share ABOVE what the real workload
+		// needs, and EVERY real step pays the width. Measured: 1% ->
+		// 6% = +7,158 cols per aggressive cell. We refuse to pay that
+		// for a check nobody runs: when b_check_lkup == false the
+		// hab22 balance is never enforced, so the self-cover is
+		// skipped and the dummy stays zero-share. Verified 08-07:
+		// the dummy stmt is shape-only (never folded, never
+		// value-checked), and the final-step check accepts
+		// right == 0 via the escape at sigma_ir1cs.rs:3847. Runs
+		// that DO enforce the balance keep the self-cover; their
+		// share is sized by the real lookup table, which dwarfs the
+		// dummy's ~850 keys, so covering it there costs nothing.
 		if b_dummy {
 			let g = read_global_config();
-			let neo_aggr = g.clamav_cfg.b_use_discharge_neo
+			let b_cover = g.b_check_lkup
+				&& g.clamav_cfg.b_use_discharge_neo
 				&& g.clamav_cfg.b_aggressive_sde_for_rep;
 			drop(g);
-			if neo_aggr {
+			if b_cover {
 				let vals = [stmt.inp_buf.clone(), stmt.oup_buf.clone(),
 					stmt.data.clone()].concat();
 				assert!(vals.len() == stmt.subtable_id.len());
@@ -1144,11 +1167,17 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 							order.push((t, v)); cnt.push(1); }
 					}
 				}
-				//NewP3.6 T1: panic with CapErr-SHAPED text so the aggr
-				//driver's retry loop (parse_caperr_from_panic) can read the
-				//need and bump the share. A returned Err cannot be used: the
-				//dummy build at foldpot driver.rs:2887 is a bare
-				//assert!(stmt_res.is_ok()), which discards the payload.
+				//If the dummy's keys do not fit the current share, the
+				//driver must bump perc_lkup_share and retry. The normal
+				//route -- return Err(CapErr([("lkup_share", need)])) --
+				//CANNOT work here: this call comes from the vendored
+				//dummy build (foldpot driver.rs:2887), a bare
+				//assert!(stmt_res.is_ok()) that would discard the
+				//payload and leave the retry loop blind. So: panic with
+				//text SHAPED like a CapErr debug print, which the aggr
+				//driver's parse_caperr_from_panic recognizes in the
+				//panic string and treats as a structured CapErr.
+				//(NewP3.6 T1)
 				if order.len() > lkup_share_size {
 					panic!("dummy self-cover: CapErr([(\"lkup_share\", {})])",
 						order.len());
