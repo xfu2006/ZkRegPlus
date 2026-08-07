@@ -1686,23 +1686,48 @@ where
 		// probe_catching converts that into a bump.
 		let warmstart = "/tmp/bora/scale/warmstart_caps.json";
 		let b_warm = dc_mode == DcMode::ProbeThenFold;
-		let p0 = if b_warm && std::path::Path::new(warmstart).exists() {
-			crate::determine_config::CapParams::load_json(warmstart)
-		} else {
-			let mut p = cur.clone();
-			p.perc_pats_expansion_rate = cur.perc_pats_expansion_rate.min(16);
-			p.perc_pats_expansion_rate_igc =
-				cur.perc_pats_expansion_rate_igc.min(16);
-			p.avg_active_pats_per_subsig = cur.avg_active_pats_per_subsig.min(2);
-			p.avg_active_pats_per_subsig_igc =
-				cur.avg_active_pats_per_subsig_igc.min(2);
-			// T305: seed low (not 0 = dense fallback) so the ratchet
-			// CapErr-converges the T_qm real-row demand exactly, same
-			// floor treatment as perc/avg_active above. Harmless when
-			// legacy (unread) or non-neo (never CapErrs past a floor).
-			p.qm_real_rows = 2;
-			p.qm_real_rows_igc = 2;
-			p
+		let loaded_warm = if b_warm
+			&& std::path::Path::new(warmstart).exists() {
+			let loaded = crate::determine_config::CapParams
+				::load_json(warmstart);
+			// T308: warm-start is only valid across scale rounds of
+			// the SAME cell (chunk_len fixed) -- "caps only grow"
+			// assumes that shared baseline. A file left by an
+			// earlier, DIFFERENT cell in the same process has an
+			// unrelated max_word_len, which build_circs_adv's
+			// structural assert then rejects downstream. Guard on
+			// the one field that can never legitimately differ
+			// within a scale round.
+			if loaded.max_word_len == cur.max_word_len { Some(loaded) }
+			else {
+				log(0, log_level, &format!(
+					"DETERMINE_CONFIG: stale warmstart cache ignored \
+					 (max_word_len {} != this run's {}), reseeding \
+					 fresh", loaded.max_word_len, cur.max_word_len));
+				None
+			}
+		} else { None };
+		let p0 = match loaded_warm {
+			Some(p) => p,
+			None => {
+				let mut p = cur.clone();
+				p.perc_pats_expansion_rate =
+					cur.perc_pats_expansion_rate.min(16);
+				p.perc_pats_expansion_rate_igc =
+					cur.perc_pats_expansion_rate_igc.min(16);
+				p.avg_active_pats_per_subsig =
+					cur.avg_active_pats_per_subsig.min(2);
+				p.avg_active_pats_per_subsig_igc =
+					cur.avg_active_pats_per_subsig_igc.min(2);
+				// T305: seed low (not 0 = dense fallback) so the
+				// ratchet CapErr-converges the T_qm real-row demand
+				// exactly, same floor treatment as perc/avg_active
+				// above. Harmless when legacy (unread) or non-neo
+				// (never CapErrs past a floor).
+				p.qm_real_rows = 2;
+				p.qm_real_rows_igc = 2;
+				p
+			}
 		};
 		// tune over ALL scan files (worst-case across the sample set).
 		let mut all_words: Vec<Vec<CF1<C1>>> = jobs.iter()

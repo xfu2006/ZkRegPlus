@@ -30812,7 +30812,15 @@ Goal 4. continue design of Milestone 101
 	[i] T9: sequencer
 	[j] T10: 
 	[k] T11: stub functions
-	[l]
+	[l] T12: full run stub
+
+Goal 5. Task T308 fix errors
+	[a] fixed
+	[b] fix verify_batch failure 
+
+Goal 6. T13: framework and  
+	[a] design first
+	[b] code review 
 	
 		
 
