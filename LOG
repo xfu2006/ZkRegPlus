@@ -30773,13 +30773,24 @@ Goal 4. New T306 Task
 	[a] idea review (drop 0-row)
 	[b] double check 
 	[c] make yet another double check.
+	[d] before T306 task
+	[e] implement and unit test -> aggr now better than legacy in all cases
+	[f] now do T306-b for non-aggr case
+	[g] code review
+	[h] now all are better
 
-Goal 3. try to understand full_dlp
+Goal 5. try to understand full_dlp and start project planning
+	[a] write the spec
+	[b] start design discussion.
 
--- TODO --
-Goal 2. P4 again (measure comparison)
-		-> polish
 
+Friday 08/07/2026
+Goal 1. continue T307
+	[a] review design
+
+Goal 2. PAPER new Milestone 101
+	[a] overall design firs.t
+	
 		
 
 
