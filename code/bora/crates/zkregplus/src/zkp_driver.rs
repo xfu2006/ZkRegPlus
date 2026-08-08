@@ -58,6 +58,14 @@ use crate::gadgets::word_extract::LEGS;
 
 use rayon::prelude::*;
 
+/// T309 test observability: records what the aggr tuner's fold-time
+/// finalize retry (zkp_driver.rs, `Some(lad)` arm) did on its most
+/// recent CapErr bump -- the rung index it attributed to (>= 0), -1
+/// for the bump-all fallback, or the -2 init sentinel if the Err arm
+/// never ran. Not read outside `#[cfg(test)]` fixtures.
+#[cfg(test)]
+pub static T309_LAST_BUMP_RUNG: std::sync::atomic::AtomicIsize =
+	std::sync::atomic::AtomicIsize::new(-2);
 
 // --------- type aliases for zkp_driver below -------------
 type LK<F> = LookupTableTwoCol_Inst<F>;
@@ -2180,6 +2188,12 @@ where
 				utils::consts::reset_sat();
 				let rcd = rc_db.clone();
 				let lk = db.lkup.clone();
+				// T309: aggr per-seg selection tries every rung
+				// cheapest-first, so a fold-phase CapErr returned as
+				// Err here means even the top rung was too small --
+				// tag it so the bump below attributes to that rung
+				// instead of falling back to flattening the ladder.
+				let top = ladder.len() - 1;
 				let res = crate::determine_config::probe_catching_with_rung(|| {
 					let vec_circs = build_circs_adv_aggr::<CF1<C1>,C1,CS1>(
 						&poseidon_config, max_total_word_len, chunk_len,
@@ -2190,10 +2204,12 @@ where
 							foldpot_main. circs={} ===", vec_circs.len()));
 						return Ok(true);
 					}
-					foldpot_main::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,
-						FC<CF1<C1>,C1,CS1>,S,LK<CF1<C1>>,GM<CF1<C1>>, false>(
-						Arc::new(lk), vec_circs, &mut jobs, cache_dir)
-						.expect("main err");
+					if let Err(e) = foldpot_main::<E,P,C2G2,C1,GC1,C2,GC2,
+						CS1,CS2,CS1E,FC<CF1<C1>,C1,CS1>,S,LK<CF1<C1>>,
+						GM<CF1<C1>>, false>(
+						Arc::new(lk), vec_circs, &mut jobs, cache_dir) {
+						panic!("main err at layer {}: {:?}", top, e);
+					}
 					Ok(false)
 				});
 				match res {
@@ -2226,15 +2242,24 @@ where
 						let mut unmapped = vec![];
 						match rung.filter(|&i| i < ladder.len()) {
 							Some(i) => {
+								#[cfg(test)]
+								T309_LAST_BUMP_RUNG.store(i as isize,
+									std::sync::atomic::Ordering::SeqCst);
 								let (c, u) = apply_caperr_bumps(
 									&mut ladder[i], true, &errs);
 								changed |= c;
 								if !u.is_empty() { unmapped = u; }
 							}
-							None => for p in ladder.iter_mut() {
-								let (c, u) = apply_caperr_bumps(p, true, &errs);
-								changed |= c;
-								if !u.is_empty() { unmapped = u; }
+							None => {
+								#[cfg(test)]
+								T309_LAST_BUMP_RUNG.store(-1,
+									std::sync::atomic::Ordering::SeqCst);
+								for p in ladder.iter_mut() {
+									let (c, u) = apply_caperr_bumps(
+										p, true, &errs);
+									changed |= c;
+									if !u.is_empty() { unmapped = u; }
+								}
 							}
 						}
 						tries += 1;
@@ -2361,7 +2386,7 @@ pub mod tests_zkp_driver{
 	use ark_groth16::Groth16;
 	use folding_schemes::{commitment::{pedersen::Pedersen, kzg::KZG}};
 	use crate::zkp_driver::{zkp_driver, zkp_driver_adv,
-		zkp_driver_adv_aggr, WordInfo, DcMode};
+		zkp_driver_adv_aggr, WordInfo, DcMode, T309_LAST_BUMP_RUNG};
 	use crate::circs::{
 		cp_mapper::{CpCapacity},
 		sed_mapper::{SedCapacity},
@@ -3007,6 +3032,66 @@ pub mod tests_zkp_driver{
 	#[test]
 	pub fn test_dlp_hard(){
 		dlp_hard::<Fr>(false, 1);
+	}
+
+	/// T309 fixture, Phase A: dlp_hard folds in 1 step on every
+	/// existing scan file, so a fold-time CapErr can never be
+	/// attributed to "one rung vs all rungs" -- there is only ever
+	/// one rung to bump. `scan_t309.dat` is a synthetic 2-chunk scan
+	/// (sparse filler chunk + scan_dense.txt's dense chunk appended)
+	/// that, combined with ZKR_DC_KMAX=2 raising the ladder depth
+	/// cap and ZKR_DC_BUCKETS=8 giving the demand-coarsening DP room
+	/// to split, converges to a genuine 2-rung ladder (verified via
+	/// ZKR_DRYRUN=1: "2 rungs, hist=[4, 1]"). This test just checks
+	/// the multi-rung fixture folds clean; test_t309_rung_attribution
+	/// (below) is the one that exercises the actual fix.
+	#[test]
+	pub fn test_t309_multistep(){
+		std::env::set_var("ZKR_SCAN", "scan_t309.dat");
+		std::env::set_var("ZKR_DC_KMAX", "2");
+		std::env::set_var("ZKR_DC_BUCKETS", "8");
+		dlp_hard::<Fr>(true, 1);
+		std::env::remove_var("ZKR_DC_BUCKETS");
+		std::env::remove_var("ZKR_DC_KMAX");
+		std::env::remove_var("ZKR_SCAN");
+	}
+
+	/// T309 fixture, Phase B: inject one fold-time CapErr (as if no
+	/// rung fit the last real segment) and check the finalize retry
+	/// attributes the bump to the TOP rung only (T309_LAST_BUMP_RUNG
+	/// == 1 on this 2-rung ladder), not the bump-all fallback (-1).
+	/// `req` must exceed the fixture's converged
+	/// `prod_pats_expansion` (read from a prior DETERMINE_CONFIG
+	/// log); pinned generously above the observed ~1,483 so ordinary
+	/// tuner drift doesn't silently stop exercising the bump path --
+	/// if this ever goes stale the "finalize stuck" assert in the
+	/// retry loop will fail loudly, not silently pass.
+	#[test]
+	pub fn test_t309_rung_attribution(){
+		use std::sync::atomic::Ordering;
+		std::env::set_var("ZKR_SCAN", "scan_t309.dat");
+		std::env::set_var("ZKR_DC_KMAX", "2");
+		std::env::set_var("ZKR_DC_BUCKETS", "8");
+		// 100_000_000: earlier bring-up found rung1's real
+		// prod_pats_expansion already converges past 100_000 via
+		// natural 0-word-check bumps before the injection fires,
+		// which made apply_caperr_bumps see no change and tripped
+		// the loop's own "finalize stuck" safety assert before this
+		// test's own assert_eq ran. Pinned far above any real
+		// convergence so the injected bump is always a real change.
+		std::env::set_var("ZKR_T309_INJECT",
+			"dis_adv::prod_pats_expansion:100000000");
+		T309_LAST_BUMP_RUNG.store(-2, Ordering::SeqCst);
+		dlp_hard::<Fr>(true, 1);
+		std::env::remove_var("ZKR_T309_INJECT");
+		std::env::remove_var("ZKR_DC_BUCKETS");
+		std::env::remove_var("ZKR_DC_KMAX");
+		std::env::remove_var("ZKR_SCAN");
+		assert_eq!(T309_LAST_BUMP_RUNG.load(Ordering::SeqCst), 1,
+			"fold-time CapErr must bump the top rung only (got {}, \
+			 -1 means the bump-all fallback fired, -2 means the \
+			 retry loop's Err arm never ran at all)",
+			T309_LAST_BUMP_RUNG.load(Ordering::SeqCst));
 	}
 
 	/// Part B (New8 P4): determine_config validity + saturation check,

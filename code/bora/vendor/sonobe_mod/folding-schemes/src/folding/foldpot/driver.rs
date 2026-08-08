@@ -952,6 +952,29 @@ where
 			let start = i*max_wlen;
 			let end = if (i+1)*max_wlen>wlen {wlen} else {(i+1)*max_wlen};
 			let seg = word[start..end].to_vec();
+			//T309 test hook: ZKR_T309_INJECT="name:req" forces ONE
+			//fold-time CapErr on the last segment (as if no rung
+			//fit) to exercise the tuner's rung-attribution retry.
+			//One-shot per process; unreachable from the capacity
+			//probe (CapacityPlanner) or the 0-word finalize check
+			//(neither calls this fn).
+			if i == num_segs-1 {
+				if let Ok(spec) = std::env::var("ZKR_T309_INJECT") {
+					static T309_DONE: std::sync::atomic::AtomicBool =
+						std::sync::atomic::AtomicBool::new(false);
+					if !T309_DONE.swap(true,
+						std::sync::atomic::Ordering::SeqCst) {
+						//rsplit: CapErr names contain "::" (e.g.
+						//"dis_adv::prod_pats_expansion"), so split
+						//at the LAST colon, not the first.
+						if let Some((n, r)) = spec.rsplit_once(':') {
+							return Err(Error::CapErr(vec![
+								(n.to_string(),
+								 r.parse().unwrap_or(0))]));
+						}
+					}
+				}
+			}
 			//halo is rung-independent (M = db max span); build once.
 			let m_halo = lock_unwrap!(p_layered[0][0].get_mapper())
 				.get_capacity().halo_nibbles();
@@ -1954,16 +1977,16 @@ where
 				let wi_ref = wi_owned.as_ref().unwrap_or(word_info);
 				let res = lock_unwrap!(circ.get_mapper())
 					.gen_nd_advice(&frag, wi_ref, prev_adv, subseg_id - 1, job_id);
-				assert!(res.is_ok(), "\n\n===== **** =====\nUNABLE to generate advice for word: {}, segment_id: {}, ERROR: {:#?}\n==============\n", word_fname, subseg_id, res); 
+				assert!(res.is_ok(), "\n\n===== **** =====\nUNABLE to generate advice for word: {}, segment_id: {}, at layer {}, ERROR: {:#?}\n==============\n", word_fname, subseg_id, pc_i1, res);
 				let cur_adv = res.unwrap();
 
 				log_perf(job_id, log_level+2, &format!("PERF 1009: -- Pass 1. gen_advice."), &mut gt3);
 				let stmt_res = lock_unwrap!(circ.get_mapper()).build_statement(
 					&frag, &prev_stmt, self.lkup.clone(), &ei,
-					//	advice[subseg_id-1].clone(), 
+					//	advice[subseg_id-1].clone(),
 						cur_adv.clone(),
 						lk_share_size, false, 0);
-				assert!(stmt_res.is_ok(), "\n\n === *** === \nUNABLE to generate statement for word id: {}, segment _id: {}, ERR: {:#?}. *** SHOULD IMPROVE the CapErr framework. Exception should be thrown in gen_nd_advice instead of build_stmt ***", word_fname, subseg_id, stmt_res);
+				assert!(stmt_res.is_ok(), "\n\n === *** === \nUNABLE to generate statement for word id: {}, segment _id: {}, at layer {}, ERR: {:#?}. *** SHOULD IMPROVE the CapErr framework. Exception should be thrown in gen_nd_advice instead of build_stmt ***", word_fname, subseg_id, pc_i1, stmt_res);
 				prev_adv = Some(cur_adv);
 				log_perf(job_id, log_level+2, &format!("PERF 1009: -- Pass 1. build stmt."), &mut gt3);
 				let stmt = stmt_res.unwrap();

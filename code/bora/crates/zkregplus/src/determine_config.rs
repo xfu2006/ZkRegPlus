@@ -842,4 +842,41 @@ mod tests {
         save_ladder(&l, f.to_str().unwrap()).unwrap();
         assert_eq!(load_ladder(f.to_str().unwrap()), l);
     }
+
+    // T309: a fold-time CapErr panic tagged "at layer {i}" (the same
+    // convention the pre-existing 0-word check already speaks) must
+    // resolve to Some(i), so the finalize retry bumps ONE ladder rung
+    // instead of falling back to bumping all of them.
+    #[test]
+    fn test_t309_parse_rung_tagged_main_err() {
+        let m = "main err at layer 1: \
+            CapErr([(\"dis_adv::prod_pats_expansion\", 100000)])";
+        assert_eq!(parse_rung_from_panic(m), Some(1));
+        assert_eq!(parse_caperr_from_panic(m).unwrap(),
+            vec![("dis_adv::prod_pats_expansion".to_string(), 100000)]);
+    }
+
+    #[test]
+    fn test_t309_parse_rung_untagged_is_none() {
+        // pre-fix shape: a CapErr dump with no layer tag must still
+        // parse the CapErr pairs, just without a rung attribution.
+        let m = "main err: CapErr([(\"x\", 5)])";
+        assert_eq!(parse_rung_from_panic(m), None);
+        assert_eq!(parse_caperr_from_panic(m).unwrap(),
+            vec![("x".to_string(), 5)]);
+    }
+
+    #[test]
+    fn test_t309_parse_rung_build_statement_shape() {
+        // Site B's tag sits mid-message, ahead of the CapErr dump --
+        // parse_rung_from_panic must find it regardless of position,
+        // and the dump parse must be unaffected by the extra text.
+        let m = "\n\n === *** === \nUNABLE to generate statement for \
+            word id: f.dat, segment _id: 2, at layer 0, ERR: \
+            CapErr([(\"dis_adv::neo_qm_real\", 6700)]). *** SHOULD \
+            IMPROVE the CapErr framework ***";
+        assert_eq!(parse_rung_from_panic(m), Some(0));
+        assert_eq!(parse_caperr_from_panic(m).unwrap(),
+            vec![("dis_adv::neo_qm_real".to_string(), 6700)]);
+    }
 }
