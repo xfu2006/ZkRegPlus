@@ -1061,5 +1061,16 @@ def dlp_patkws_bytes() -> int:
     twice (the bidirectional proximity form) plus regex grouping/syntax, so it
     is NOT used for Dlp. (Mal/Dna keep their on-disk file sizes, which carry no
     such bidirectional duplication.)
+
+    total_regex_bytes is IDENTICAL across every STR_LENGTH block (it sums
+    pat_len+kws_len per policy, independent of the scanned document length),
+    so this reads whichever block is actually in the log instead of assuming
+    2000 is present -- a dry-run sweep may use an entirely different VEC_SIZE
+    (e.g. [700,800,1000]).
     """
-    return zombie_totals(server_file(_ZOMBIE_LOG), 2000)["total_regex_bytes"]
+    log = server_file(_ZOMBIE_LOG)
+    text = Path(log).read_text()
+    m = re.search(r"== STR_LENGTH = (\d+) ==", text)
+    if not m:
+        raise RuntimeError(f"dlp_patkws_bytes: no STR_LENGTH block in {log}")
+    return zombie_totals(log, int(m.group(1)))["total_regex_bytes"]

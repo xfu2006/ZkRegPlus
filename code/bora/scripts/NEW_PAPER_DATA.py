@@ -12,6 +12,7 @@
 import argparse
 import datetime
 import glob
+import importlib.util
 import io
 import os
 import platform
@@ -24,6 +25,7 @@ import tarfile
 import tempfile
 import threading
 import time
+import traceback
 import unittest
 from dataclasses import dataclass
 from unittest import mock
@@ -618,6 +620,58 @@ def run_leaf_analyze_lkup(mode, ctx):
     return ctx.finish(rc)
 
 
+MS_DLP_DIR = os.path.join(REPO, "data", "src_sig", "ms_dlp")
+MS_DLP_SCRIPTS_DIR = os.path.join(MS_DLP_DIR, "scripts")
+ZOMBIE_LOG_NAME = "run_zombie_regex_zombie_international.log"
+ZOMBIE_DRY_PERC = 2
+
+
+def run_leaf_zombie(mode, ctx):
+    """Spartan-NIZK proximity-non-membership circuits over
+    regex_zombie_international/ policies. dry delegates to
+    dry_run_zombie.py (evenly-spaced ZOMBIE_DRY_PERC% of policies, small
+    proximity-safe VEC_SIZE); full runs run_zombie.py untouched."""
+    env = dict(os.environ)
+    if mode == "dry":
+        script = os.path.join(MS_DLP_SCRIPTS_DIR, "dry_run_zombie.py")
+        args = [str(ZOMBIE_DRY_PERC)]
+    else:
+        script = os.path.join(MS_DLP_SCRIPTS_DIR, "run_zombie.py")
+        args = []
+    rc = run_external_python(ctx, script, args, env)
+    if rc == 0:
+        src = os.path.join(MS_DLP_DIR, "docs", ZOMBIE_LOG_NAME)
+        dest = place_raw_data(src, ZOMBIE_LOG_NAME)
+        ctx.raw_data.append(dest)
+    return ctx.finish(rc)
+
+
+REEF_DIR = os.path.join(REPO, "data", "src_sig", "chr17_variants")
+REEF_SCRIPTS_DIR = os.path.join(REEF_DIR, "scripts")
+REEF_LOG_NAME = "reef_sample_run.log"
+REEF_DRY_PERC = 10
+
+
+def run_leaf_reef(mode, ctx):
+    """Reef nlookup non-match baseline over chr17_variants/reef_regex/.
+    dry delegates to dry_run_eval_reef.py (REEF_DRY_PERC%-scaled
+    sample_size, same 6-category sweep); full runs eval_reef.py
+    untouched (its own real config is already a 10/category sample)."""
+    env = dict(os.environ)
+    if mode == "dry":
+        script = os.path.join(REEF_SCRIPTS_DIR, "dry_run_eval_reef.py")
+        args = [str(REEF_DRY_PERC)]
+    else:
+        script = os.path.join(REEF_SCRIPTS_DIR, "eval_reef.py")
+        args = []
+    rc = run_external_python(ctx, script, args, env)
+    if rc == 0:
+        src = os.path.join(REEF_DIR, "docs", REEF_LOG_NAME)
+        dest = place_raw_data(src, REEF_LOG_NAME)
+        ctx.raw_data.append(dest)
+    return ctx.finish(rc)
+
+
 JOB_SPECS.update({
     "dlp":        JobSpec("dlp",        "DLP",          run_leaf_dlp),
     "dna":        JobSpec("dna",        "Dna",          run_leaf_dna),
@@ -625,6 +679,8 @@ JOB_SPECS.update({
     "scale_clam": JobSpec("scale_clam", "Scale-ClamAV", run_leaf_scale_clamav),
     "scale_dlp":  JobSpec("scale_dlp",  "Scale-DLP",    run_leaf_scale_dlp),
     "lkup":       JobSpec("lkup",       "Analyze lkup", run_leaf_analyze_lkup),
+    "zombie":     JobSpec("zombie",     "Zombie",       run_leaf_zombie),
+    "reef":       JobSpec("reef",       "Reef",         run_leaf_reef),
 })
 
 
@@ -682,7 +738,19 @@ class Sequencer:
         _summary_line("START  %-6s (%s/%s)" % (
             leaf_key, self.plan.top, mode))
         ctx = JobHandle(leaf_key, mode)
-        return spec.run_fn(mode, ctx)
+        try:
+            return spec.run_fn(mode, ctx)
+        except Exception:
+            # A run_fn bug (bad launch args, a helper raising outside the
+            # subprocess it launched, etc.) must not kill the whole
+            # Sequencer -- funnel it through the same finish()/triage-tgz
+            # path as an ordinary rc!=0 failure, so it's visible in
+            # SUMMARY.log and bundled instead of an uncaught traceback
+            # silently killing the sequence (fatal under go_background(),
+            # whose stdio goes to /dev/null).
+            ctx.note("UNCAUGHT EXCEPTION in %s.run_fn:\n%s" % (
+                leaf_key, traceback.format_exc()))
+            return ctx.finish(1)
 
     def _append_summary(self, leaf_key, result):
         status = "FAIL" if result.failed else "OK"
@@ -731,7 +799,7 @@ LEAF_CHOICES = [
     ("dlp", "DLP"),
     ("dna", "Dna"),
     ("clam", "Clamav"),
-    ("zombie", "Zombie"),
+    ("zombie", "Zombie [dry ~1-2min, ~23GB]"),
     ("reef", "Reef"),
     ("lkup", "Analyze lkup [dry ~59s, ~17.4GB]"),
     ("scale_clam", "Scale-ClamAV"),
@@ -1281,6 +1349,266 @@ class PlaceRawDataTest(unittest.TestCase):
                     self.assertEqual(f.read(), "v2")
 
 
+class RunLeafZombieTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        patches = [
+            mock.patch.object(_MOD, "JOB_LOG_DIR",
+                               os.path.join(self.tmp.name, "logs")),
+            mock.patch.object(_MOD, "FAILED_TGZ_DIR",
+                               os.path.join(self.tmp.name, "failed_tgz")),
+            mock.patch.object(_MOD, "LOGS_DIR",
+                               os.path.join(self.tmp.name, "job_logs")),
+            mock.patch.object(_MOD, "RAW_DATA_ROOT",
+                               os.path.join(self.tmp.name, "raw_data")),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        os.makedirs(os.path.join(self.tmp.name, "job_logs"))
+
+    def test_dry_mode_uses_dry_script_and_perc_arg(self):
+        ctx = JobHandle("zombie", "dry")
+        with mock.patch.object(_MOD, "run_external_python",
+                                return_value=0) as rep:
+            with mock.patch.object(_MOD, "place_raw_data",
+                                    return_value="/fake/dest") as prd:
+                result = run_leaf_zombie("dry", ctx)
+        self.assertEqual(result.rc, 0)
+        self.assertFalse(result.failed)
+        script, args = rep.call_args[0][1], rep.call_args[0][2]
+        self.assertTrue(script.endswith("dry_run_zombie.py"))
+        self.assertEqual(args, [str(ZOMBIE_DRY_PERC)])
+        prd.assert_called_once()
+        self.assertEqual(ctx.raw_data, ["/fake/dest"])
+
+    def test_full_mode_uses_real_script_no_args(self):
+        ctx = JobHandle("zombie", "full")
+        with mock.patch.object(_MOD, "run_external_python",
+                                return_value=0) as rep:
+            with mock.patch.object(_MOD, "place_raw_data",
+                                    return_value="/fake/dest"):
+                run_leaf_zombie("full", ctx)
+        script, args = rep.call_args[0][1], rep.call_args[0][2]
+        self.assertTrue(script.endswith(
+            os.path.join("ms_dlp", "scripts", "run_zombie.py")))
+        self.assertEqual(args, [])
+
+    def test_nonzero_rc_skips_raw_data_placement(self):
+        ctx = JobHandle("zombie", "dry")
+        with mock.patch.object(_MOD, "run_external_python",
+                                return_value=1):
+            with mock.patch.object(_MOD, "place_raw_data") as prd:
+                result = run_leaf_zombie("dry", ctx)
+        prd.assert_not_called()
+        self.assertEqual(ctx.raw_data, [])
+        self.assertTrue(result.failed)
+
+
+class RunLeafReefTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        patches = [
+            mock.patch.object(_MOD, "JOB_LOG_DIR",
+                               os.path.join(self.tmp.name, "logs")),
+            mock.patch.object(_MOD, "FAILED_TGZ_DIR",
+                               os.path.join(self.tmp.name, "failed_tgz")),
+            mock.patch.object(_MOD, "LOGS_DIR",
+                               os.path.join(self.tmp.name, "job_logs")),
+            mock.patch.object(_MOD, "RAW_DATA_ROOT",
+                               os.path.join(self.tmp.name, "raw_data")),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        os.makedirs(os.path.join(self.tmp.name, "job_logs"))
+
+    def test_dry_mode_uses_dry_script_and_perc_arg(self):
+        ctx = JobHandle("reef", "dry")
+        with mock.patch.object(_MOD, "run_external_python",
+                                return_value=0) as rep:
+            with mock.patch.object(_MOD, "place_raw_data",
+                                    return_value="/fake/dest") as prd:
+                result = run_leaf_reef("dry", ctx)
+        self.assertEqual(result.rc, 0)
+        self.assertFalse(result.failed)
+        script, args = rep.call_args[0][1], rep.call_args[0][2]
+        self.assertTrue(script.endswith("dry_run_eval_reef.py"))
+        self.assertEqual(args, [str(REEF_DRY_PERC)])
+        prd.assert_called_once()
+        self.assertEqual(ctx.raw_data, ["/fake/dest"])
+
+    def test_full_mode_uses_real_script_no_args(self):
+        ctx = JobHandle("reef", "full")
+        with mock.patch.object(_MOD, "run_external_python",
+                                return_value=0) as rep:
+            with mock.patch.object(_MOD, "place_raw_data",
+                                    return_value="/fake/dest"):
+                run_leaf_reef("full", ctx)
+        script, args = rep.call_args[0][1], rep.call_args[0][2]
+        self.assertTrue(script.endswith(
+            os.path.join("chr17_variants", "scripts", "eval_reef.py")))
+        self.assertEqual(args, [])
+
+    def test_nonzero_rc_skips_raw_data_placement(self):
+        ctx = JobHandle("reef", "dry")
+        with mock.patch.object(_MOD, "run_external_python",
+                                return_value=1):
+            with mock.patch.object(_MOD, "place_raw_data") as prd:
+                result = run_leaf_reef("dry", ctx)
+        prd.assert_not_called()
+        self.assertEqual(ctx.raw_data, [])
+        self.assertTrue(result.failed)
+
+
+def _load_dry_run_eval_reef():
+    """Import dry_run_eval_reef.py by path (it lives under
+    chr17_variants/scripts/, outside this file's own directory). Its
+    own `import eval_reef as m` is import-time-cheap (one os.path
+    .getsize stat call on the chr17 doc) but DOES require the chr17
+    doc file to be physically present on this machine -- same
+    precondition the real leaf has, just surfaced earlier."""
+    path = os.path.join(REEF_SCRIPTS_DIR, "dry_run_eval_reef.py")
+    spec = importlib.util.spec_from_file_location(
+        "dry_run_eval_reef", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class DrySampleSizeTest(unittest.TestCase):
+    def setUp(self):
+        self.drr = _load_dry_run_eval_reef()
+
+    def test_100_percent_is_module_baseline(self):
+        self.assertEqual(self.drr.dry_sample_size(100), 10)
+
+    def test_floors_at_one(self):
+        self.assertEqual(self.drr.dry_sample_size(1), 1)
+        self.assertEqual(self.drr.dry_sample_size(5), 1)
+
+    def test_scales_proportionally(self):
+        self.assertEqual(self.drr.dry_sample_size(50), 5)
+
+
+class DryRunEvalReefMainTest(unittest.TestCase):
+    def setUp(self):
+        self.drr = _load_dry_run_eval_reef()
+
+    def test_missing_perc_arg_raises(self):
+        with self.assertRaises(SystemExit):
+            self.drr.main(["dry_run_eval_reef.py"])
+
+    def test_non_integer_perc_raises(self):
+        with self.assertRaises(SystemExit):
+            self.drr.main(["dry_run_eval_reef.py", "abc"])
+
+    def test_calls_six_fns_with_scaled_size_and_syncs_global(self):
+        m = self.drr.m
+        original = m.sample_size
+        try:
+            with mock.patch.object(m, "verify_tool_existence") as vte, \
+                 mock.patch.object(m, "setup") as setup, \
+                 mock.patch.object(m, "gen_assessment",
+                                    return_value="FULLCAT") as ga, \
+                 mock.patch.object(m, "gen_sample_pool",
+                                    return_value="POOL") as gsp, \
+                 mock.patch.object(m, "seq_run_categories",
+                                    return_value=("RES", "DISC")) as src, \
+                 mock.patch.object(m, "write_log") as wl:
+                rc = self.drr.main(["dry_run_eval_reef.py", "10"])
+            self.assertEqual(rc, 0)
+            vte.assert_called_once_with()
+            setup.assert_called_once_with()
+            ga.assert_called_once_with()
+            gsp.assert_called_once_with()
+            src.assert_called_once_with(
+                "POOL", m.timeout, m.threshold_perc, 1, m.max_discard)
+            wl.assert_called_once_with("RES", "FULLCAT", "DISC")
+            self.assertEqual(m.sample_size, 1)
+        finally:
+            m.sample_size = original
+
+
+def _load_dry_run_zombie():
+    """Import dry_run_zombie.py by path (it lives under ms_dlp/scripts/,
+    outside this file's own directory, and does its own sys.path/import
+    of run_zombie.py -- both side effects are import-time-cheap)."""
+    path = os.path.join(MS_DLP_SCRIPTS_DIR, "dry_run_zombie.py")
+    spec = importlib.util.spec_from_file_location("dry_run_zombie", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class EvenlySpacedSubsetTest(unittest.TestCase):
+    def setUp(self):
+        self.drz = _load_dry_run_zombie()
+
+    def test_empty_input(self):
+        self.assertEqual(self.drz.evenly_spaced_subset([], 2), [])
+
+    def test_zero_or_negative_perc(self):
+        self.assertEqual(self.drz.evenly_spaced_subset(["a", "b"], 0), [])
+        self.assertEqual(self.drz.evenly_spaced_subset(["a", "b"], -5), [])
+
+    def test_perc_100_is_identity(self):
+        items = list("abcdef")
+        self.assertEqual(self.drz.evenly_spaced_subset(items, 100), items)
+
+    def test_small_n_always_keeps_at_least_one(self):
+        self.assertEqual(self.drz.evenly_spaced_subset(["a"], 1), ["a"])
+
+    def test_spread_across_194_matches_hand_worked_indices(self):
+        items = ["p%03d" % i for i in range(194)]
+        # keep = ceil(194*2/100) = 4, step = 194/4 = 48.5
+        got = self.drz.evenly_spaced_subset(items, 2)
+        want = [items[round(i * 48.5)] for i in range(4)]
+        self.assertEqual(got, want)
+        self.assertEqual(len(set(got)), 4)
+
+
+class MakeDryListPolicyNamesTest(unittest.TestCase):
+    def test_subsets_whatever_the_original_fn_returns(self):
+        drz = _load_dry_run_zombie()
+        original = mock.Mock(return_value=["a", "b", "c", "d"])
+        patched = drz._make_dry_list_policy_names(50, original)
+        got = patched("regex_zombie_international")
+        original.assert_called_once_with("regex_zombie_international")
+        self.assertEqual(got, drz.evenly_spaced_subset(
+            ["a", "b", "c", "d"], 50))
+
+
+class DryRunZombieMainTest(unittest.TestCase):
+    def setUp(self):
+        self.drz = _load_dry_run_zombie()
+
+    def test_missing_perc_arg_raises(self):
+        with self.assertRaises(SystemExit):
+            self.drz.main(["dry_run_zombie.py"])
+
+    def test_non_integer_perc_raises(self):
+        with self.assertRaises(SystemExit):
+            self.drz.main(["dry_run_zombie.py", "abc"])
+
+    def test_patches_vec_size_and_list_policy_names_then_delegates(self):
+        original = self.drz.run_zombie.list_policy_names
+        try:
+            with mock.patch.object(self.drz.run_zombie, "main",
+                                    return_value=0) as real_main:
+                rc = self.drz.main(["dry_run_zombie.py", "2"])
+            self.assertEqual(rc, 0)
+            real_main.assert_called_once_with()
+            self.assertEqual(self.drz.run_zombie.VEC_SIZE,
+                              self.drz.DRY_VEC_SIZE)
+            self.assertIsNot(self.drz.run_zombie.list_policy_names,
+                              original)
+        finally:
+            self.drz.run_zombie.list_policy_names = original
+
+
 class PointCurrentJobTest(unittest.TestCase):
     def test_two_proc_symlinks(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1606,6 +1934,53 @@ class SequencerRunTest(unittest.TestCase):
         self.assertIn("START  b", text)
         self.assertIn("SKIP   c", text)
         self.assertNotIn("START  c", text)
+
+
+class SequencerRunFnExceptionTest(unittest.TestCase):
+    """A run_fn bug that raises instead of returning a LeafResult (e.g. a
+    launch-level failure outside the subprocess it started) must not kill
+    the whole Sequencer -- see _run_one_leaf's try/except."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        patches = [
+            mock.patch.object(_MOD, "SUMMARY_LOG",
+                               os.path.join(self.tmp.name, "SUMMARY.log")),
+            mock.patch.object(_MOD, "JOB_LOG_DIR",
+                               os.path.join(self.tmp.name, "logs")),
+            mock.patch.object(_MOD, "FAILED_TGZ_DIR",
+                               os.path.join(self.tmp.name, "failed_tgz")),
+            mock.patch.object(_MOD, "LOGS_DIR",
+                               os.path.join(self.tmp.name, "job_logs")),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        os.makedirs(os.path.join(self.tmp.name, "job_logs"))
+
+    def test_uncaught_exception_becomes_a_failed_result_not_a_crash(self):
+        def boom(mode, ctx):
+            raise RuntimeError("launch-level bug")
+        ok = _leaf_result(False)
+        specs = {"a": JobSpec("a", "a", boom),
+                  "b": JobSpec("b", "b", lambda m, c: ok)}
+        with mock.patch.object(_MOD, "JOB_SPECS", specs):
+            seq = Sequencer(_FakePlan("full_run", "full", ["a", "b"]))
+            rc = seq.run()   # must NOT raise
+        self.assertEqual(rc, 1)
+        with open(_MOD.SUMMARY_LOG) as f:
+            text = f.read()
+        self.assertIn("FAIL   a", text)
+        self.assertIn("triage:", text)
+        self.assertIn("OK     b", text)   # sequence continued past the crash
+
+        tgz = glob.glob(os.path.join(self.tmp.name, "failed_tgz", "*.tgz"))
+        self.assertEqual(len(tgz), 1)
+        with tarfile.open(tgz[0]) as t:
+            summary = t.extractfile("SUMMARY.txt").read().decode()
+        self.assertIn("UNCAUGHT EXCEPTION", summary)
+        self.assertIn("RuntimeError: launch-level bug", summary)
 
 
 class TerminateAllTest(unittest.TestCase):

@@ -314,7 +314,9 @@ pub fn encode_cols_var_adv_better<F:PrimeField + ColEle>(cols: &Vec<&[FpVar<F>]>
 
 	//2. generate the data
 	if B_DEBUG { for i in 0..num_cols {assert!(cols[col_ids[i]].len()==n);} }
-	let zero = new_var(&cs, F::zero());
+	// T401: constant, not witness -- an unconstrained witness here let
+	// the prover shift every encoded row by a free delta.
+	let zero = new_const_var(&cs, F::zero());
 	let res = (0..n).into_iter().map(|i|{
 		let mut res = zero.clone();
 		for col in 0..num_cols{
@@ -330,7 +332,7 @@ pub fn encode_cols_var_adv_better<F:PrimeField + ColEle>(cols: &Vec<&[FpVar<F>]>
 }
 
 /// advanced vesion using the given r as combining factor
-pub fn encode_cols_var_adv<F:PrimeField + ColEle>(cols: &Vec<Vec<FpVar<F>>>, 
+pub fn encode_cols_var_adv<F:PrimeField + ColEle>(cols: &Vec<Vec<FpVar<F>>>,
 	col_ids: &Vec<usize>, r: &FpVar<F>) ->Vec<FpVar<F>>{
 	//1. prepare data
 	let cs = cols[0][0].cs();
@@ -343,7 +345,9 @@ pub fn encode_cols_var_adv<F:PrimeField + ColEle>(cols: &Vec<Vec<FpVar<F>>>,
 
 	//2. generate the data
 	if B_DEBUG { for i in 0..num_cols {assert!(cols[col_ids[i]].len()==n);} }
-	let zero = new_var(&cs, F::zero());
+	// T401: constant, not witness -- an unconstrained witness here let
+	// the prover shift every encoded row by a free delta.
+	let zero = new_const_var(&cs, F::zero());
 	let res = (0..n).into_iter().map(|i|{
 		let mut res = zero.clone();
 		for col in 0..num_cols{

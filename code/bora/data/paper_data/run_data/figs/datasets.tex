@@ -6,8 +6,7 @@
 % main.dat + binexec_merged128k, Dna from chr17_variants, Dlp from the raw
 % Enron maildir + MS-DLP regex_zombie/. Locked layout:
 % label stub outside both groups; two \multicolumn spans (Document corpus |
-% Regex set); descriptive only -- NO tier (CP/SDE/DFA) columns, NO PCRE column,
-% NO rule-shape column (shape facts moved to the §7.2 prose).
+% Regex set); descriptive only -- NO tier (CP/SDE/DFA) columns, NO PCRE column.
 %
 % CentOS version: the table reports the neutral "CentOS 7" only. Binary
 % provenance in the corpus points to the CentOS 7.9 update stream -- bundled
@@ -19,22 +18,26 @@
   \centering
   \footnotesize
   \caption{Evaluation datasets: \textsc{Mal} (malware scanning), \textsc{Dna}
-  (genomic variants), and \textsc{Dlp} (e-mail DLP).}
+  (genomic variants), and \textsc{Dlp} (e-mail DLP). The \emph{Rule shape}
+  column summarizes the form and variety of the regexes.}
   \label{tab:datasets}
-  \begin{tabular}{@{}l l r r l l r r@{}}
+  \begin{tabular}{@{}l l r r l l r r p{3.2cm}@{}}
     \toprule
      & \multicolumn{4}{c}{Document corpus}
-       & \multicolumn{3}{c}{Regex set} \\
-    \cmidrule(lr){2-5} \cmidrule(lr){6-8}
+       & \multicolumn{4}{c}{Regex set} \\
+    \cmidrule(lr){2-5} \cmidrule(lr){6-9}
      & Corpus & Docs & Size & Per-doc (min/med/max)
-       & Ruleset (ver.) & Rules & Size \\
+       & Ruleset (ver.) & Rules & Size & Rule shape \\
     \midrule
     \textsc{Mal} & CentOS 7 & 1{,}209 & 765\,MB & 66\,KB / 130\,KB / 33\,MB
-        & ClamAV 0.103.11 & 38{,}875 & 11.6\,MB \\
+        & ClamAV 0.103.11 & 38{,}875 & 11.6\,MB
+        & literal rich; 160{,}854 leaf subsigs (561 PCRE); logical AND/OR combinations; frequent bounded gaps \texttt{.\{n\}}; mostly unanchored, implicit \texttt{.*\dots.*} shape \\
     \textsc{Dna} & \shortstack[l]{chr17\\(GRCh38)} & 1 & 83\,MB & ---~(single)
-        & NCBI ClinVar (chr17) & 27{,}500 & 1.4\,MB \\
+        & NCBI ClinVar (chr17) & 27{,}500 & 1.4\,MB
+        & anchored \texttt{\^{}.\{N\}}literal\texttt{.*}; len 44--8{,}738\,chars (avg 51) \\
     \textsc{Dlp} & \shortstack[l]{Enron\\Email} & 509{,}610 & 1.38\,GB & 398\,B / 1.5\,KB / 1.7\,MB
-        & MS-DLP (SIT) & 136 & 213\,KB \\
+        & MS-DLP (SIT) & 136 & 7\,KB
+        & keyword-proximity: \texttt{(kw\textsubscript{1}|\ldots|kw\textsubscript{n})\allowbreak.\{0,300\}re |~re.\{0,300\}\allowbreak(kw\textsubscript{1}|\ldots|kw\textsubscript{n})} \\
     \bottomrule
   \end{tabular}
 \end{table*}

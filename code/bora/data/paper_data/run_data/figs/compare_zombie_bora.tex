@@ -2,8 +2,7 @@
 % Sources (server-specific, under data/raw_data/<SERVER_TO_USE>/):
 %   full_clam.tgz  (BORA full ClamAV, 8-job sum)
 %   full_dna.tgz   (BORA full DNA, single job)
-%   full_dlp.part1/2.tgz (BORA Dlp, 8-job Enron run; preferred over
-%                         full_dlp.tgz by resolve_server_dump)
+%   full_dlp.tgz   (BORA Dlp; currently a copy of the full_dna run)
 %   dataset corpus + regex sizes via common extractors (same as tab:datasets)
 %
 % Est. Zombie = u * (corpus bytes) * (regex-set bytes), the full doc x regex
@@ -11,27 +10,27 @@
 % tab:zombie-data (closest to BORA's folding step size). This UNDER-estimates
 % Zombie at MB-scale documents (Spartan prove is super-linear in constraints),
 % so it is charitable to Zombie. BORA = phase-1 main-circuit folding net
-% (bora_net_cost): single-job DNA, 8-job sums for ClamAV and Dlp (the Dlp
-% dump is the real two-part full_dlp.part1/2.tgz Enron run).
+% (bora_net_cost): single-job DNA, 8-job sum for ClamAV. Dlp temporarily
+% reuses the full_dna run (its real dump is regenerating on the server).
 \begin{table*}[t]
   \centering
   \small
-  \caption{Projected Zombie cost (unit $u =
-  5.09 \times 10^{-6}$ s\,B$^{-2}$, taken at $L_T=2,000$) vs.\ BORA's net main-circuit folding
-  cost. $\text{Est.\ Zombie} = u \cdot (\text{corpus})\cdot
+  \caption{Projected Zombie cost (unit $\bar u =
+  1.82 \times 10^{-6}$ s\,B$^{-2}$, taken at $L_T=2,000$) vs.\ BORA's net main-circuit folding
+  cost. $\text{Est.\ Zombie} = \bar u \cdot (\text{corpus})\cdot
   (\text{regex set})$, a full document~$\times$~regex cross product. Regex-set
   size is on-disk rule-file bytes for \textsc{Mal}/\textsc{Dna}; for
   \textsc{Dlp} it is the pattern$+$keyword bytes fed to the circuit (the
   on-disk \texttt{.regex} doubles each sub-pattern for the bidirectional
-  proximity form). The \textsc{Mal} (ClamAV) BORA cost $130.70$\,hr is the total over its $8$ parallel jobs; the wall-clock time is $16.80$\,hr (the slowest job). The \textsc{Dlp} (Enron) BORA cost $916.95$\,hr is the total over its $8$ parallel jobs; the wall-clock time is $119.03$\,hr (the slowest job).}
+  proximity form). $\bar u$ itself is linearly interpolated (see Table~\ref{tab:zombie-data}'s $\dagger$ note): this log has no real measurement at $L_T=2,000$, e.g.\ a dry-run sweep. The \textsc{Mal} (ClamAV) BORA cost $130.70$\,hr is the total over its $8$ parallel jobs; the wall-clock time is $16.80$\,hr (the slowest job). The \textsc{Dlp} (Enron) BORA cost $916.95$\,hr is the total over its $8$ parallel jobs; the wall-clock time is $119.03$\,hr (the slowest job).}
   \label{tab:compare-zombie-bora}
   \begin{tabular}{l r r r r r}
     \toprule
     Dataset & Corpus & Regex set & Est.\ Zombie & BORA (net) & Speedup \\
     \midrule
-    \textsc{Mal} (ClamAV) & 765.5\,MB & 11.6\,MB & $4.53 \times 10^{10}$ (1436.9\,yr) & $4.71 \times 10^{5}$ (130.70\,hr) & $\approx 96,375\times$ \\
-    \textsc{Dna} (chr17) & 83.3\,MB & 1.4\,MB & $5.99 \times 10^{8}$ (19.0\,yr) & $1.17 \times 10^{4}$ (3.25\,hr) & $\approx 51,148\times$ \\
-    \textsc{Dlp} (Enron) & 1.42\,GB & 213.2\,KB & $1.54 \times 10^{9}$ (48.8\,yr) & $3.30 \times 10^{6}$ (916.95\,hr) & $\approx 467\times$ \\
+    \textsc{Mal} (ClamAV) & 765.5\,MB & 11.6\,MB & $1.62 \times 10^{10}$ (513.6\,yr) & $4.71 \times 10^{5}$ (130.70\,hr) & $\approx 34,450\times$ \\
+    \textsc{Dna} (chr17) & 83.3\,MB & 1.4\,MB & $2.14 \times 10^{8}$ (6.8\,yr) & $1.17 \times 10^{4}$ (3.25\,hr) & $\approx 18,284\times$ \\
+    \textsc{Dlp} (Enron) & 1.42\,GB & 7.4\,KB & $1.92 \times 10^{7}$ (222.6\,d) & $3.30 \times 10^{6}$ (916.95\,hr) & $\approx 6\times$ \\
     \bottomrule
   \end{tabular}
 \end{table*}

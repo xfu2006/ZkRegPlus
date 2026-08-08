@@ -30832,10 +30832,23 @@ Goal 7. T309
 
 Sat 08/08/2026
 Goal 1. try to find more improvements
-	[a] 
+	[a] identified other sets of tasks
+	[b] T401: fix encode_var -> approve code, test
+	[c] T402: idea
 
 Goal 2. runner - run zombie menu
+	[a] read existing zombie runner think about how to take samples
+	[b] figure out if can do [100,200,400]
+	[c] think about the vec_size instead.
+	[d] generate data.
+	[e] verify the zombie data
+	[f] verify the lkup data -> good
+
+Goal 3. runner - run reef menu
 	[a]
+
+Goal 4. T403 imprveoemtn
+	[a] design, code change -> test
 	
 		
 

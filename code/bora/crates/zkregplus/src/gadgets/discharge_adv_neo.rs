@@ -5187,12 +5187,11 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 			// i.e. m_hi == 0. See the WINDOWED JOIN block above
 			// assert_neo_wf for the worked refusal.
 			if b_win && i > 0 {
-				let e_x = &(&(&qm.loc[i - 1] - &qm.prev_loc1[i])
-					- &qm.rg2[i]) - &c_one;
-				let e_x = if b_aggr {
-					&e_x + &(&sel.b_bwd_row[i]
-						* &(&qm.rg1[i] + &qm.rg2[i]))
-				} else { e_x };
+				// T402: e_x is e_lo re-read at the lower
+				// neighbour's loc; the orientation term is
+				// identical, so derive it as a free LC offset
+				// instead of paying the mul again.
+				let e_x = &e_lo + &(&qm.loc[i - 1] - &qm.loc[i]);
 				check_prod_zero(&(&g_fp[i] * &m_lo),
 					&(&e_x - &qm.d_c1[i]), lc!(),
 					"neo gap span")?;
@@ -5648,11 +5647,14 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		let n0 = cs.num_constraints();
 		let n = qm.enc.len();
 		let r1sq = r1 * r1;
+		// T403: one r1sq*loc per row, shared by both target keys.
+		let loc_h: Vec<FpVar<F>> = (0..n).map(|i|
+			&r1sq * &qm.loc[i]).collect();
 		// categories are mutually exclusive booleans, so the sel
 		// sums below stay boolean -- no row is double-counted.
 		let mut tgt_qr: Vec<FpVar<F>> = (0..n).map(|i|
 			&(&qm.enc[i] + &(r1 * &ranks.rid[i]))
-				+ &(&r1sq * &qm.loc[i])).collect();
+				+ &loc_h[i]).collect();
 		let b_aggr = sel.is_bp.is_empty();
 		let mut sel_qr: Vec<FpVar<F>> = (0..n).map(|i| {
 			let s = &sel.is_wrap[i] + &sel.is_c[i];
@@ -5681,7 +5683,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		if !buf_qc.qry.is_empty() {
 			let tgt_qc: Vec<FpVar<F>> = (0..n).map(|i|
 				&(&qm.enc[i] + &(r1 * &ranks.cid[i]))
-					+ &(&r1sq * &qm.loc[i])).collect();
+					+ &loc_h[i]).collect();
 			let sel_qc: Vec<FpVar<F>> = (0..n).map(|i|
 				&sel.is_wrap[i] + &sel.is_c[i]).collect();
 			assert_logup_cond(cs.clone(), &buf_qc.qry,
@@ -7071,6 +7073,39 @@ mod tests_neo_r0 {
 	#[should_panic(expected = "chunk too long")]
 	fn test_r0_fp_diff_range2_over() {
 		assert_fp_diff_range2(&f(101), 100);
+	}
+
+	/// T401 regression: encoding is a pure LC of committed columns --
+	/// it must allocate NO witnesses (an unconstrained zero witness
+	/// here once let the prover shift every encoded row).
+	#[test]
+	fn test_r0_encode_cols_no_witness() {
+		use crate::gadgets::commons::{
+			encode_cols_var_adv, encode_cols_var_adv_better};
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		let r = f(1u32 << 16);
+		let c0: Vec<FpVar<Fr>> = [1u32, 2].iter()
+			.map(|v| new_var(&cs, f(*v))).collect();
+		let c1: Vec<FpVar<Fr>> = [3u32, 4].iter()
+			.map(|v| new_var(&cs, f(*v))).collect();
+		let n_wit = cs.num_witness_variables();
+		let n_cs = cs.num_constraints();
+		let fr = new_const_var(&cs, r);
+		let enc = encode_cols_var_adv(
+			&vec![c0.clone(), c1.clone()], &vec![0, 1], &fr);
+		let cols: Vec<&[FpVar<Fr>]> = vec![&c0[..], &c1[..]];
+		let enc2 = encode_cols_var_adv_better(
+			&cols, &vec![0, 1], &fr);
+		assert_eq!(cs.num_witness_variables(), n_wit,
+			"encode must allocate zero witnesses");
+		assert_eq!(cs.num_constraints(), n_cs,
+			"encode must add zero constraints");
+		for i in 0..2 {
+			let want = c0[i].value().unwrap() * r
+				+ c1[i].value().unwrap();
+			assert_eq!(enc[i].value().unwrap(), want);
+			assert_eq!(enc2[i].value().unwrap(), want);
+		}
 	}
 }
 
