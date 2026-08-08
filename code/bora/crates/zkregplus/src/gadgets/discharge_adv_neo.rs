@@ -2764,24 +2764,24 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		// (pat, id, loc) -- or, for a no-show group, the derived
 		// (pat, 1, max) sentinel -- binds it to the id-th occurrence
 		// of this group's pat.
+		// T404: row 0 is unconditionally a pad (selectors check (1)
+		// pins enc[0] == 0, forcing is_pad[0] == 1 via
+		// gen_zero_bits), so gs0 = 1 - is_pad[0] == 0 on every
+		// satisfying assignment -- exactly what the initializer
+		// below already sets, and the deleted pin was
+		// prod_zero(0, X), trivially satisfied either way.
+		// GUARD: restore this block if the enc[0] pin (Section 2,
+		// check (1)) ever becomes conditional.
 		let mut grp_start = vec![FpVar::<F>::Constant(F::zero())];
-		// Row 0 has no predecessor, so it needs the SAME rank-1 pin
-		// every other group start gets below, just without a left
-		// neighbor to run "pads are a prefix" on. Its group-start
-		// bit is otherwise UNCONSTRAINED, which would leave id[0]
-		// free whenever n_pad == 0.
-		if n > 0 {
-			let gs0 = &c_one - &sel.is_pad[0];
-			check_prod_zero(&gs0,
-				&(&(&(&v.id[0] - &c_one) - &g_fp[0]) - &g_wr[0]),
-				lc!(), "neo group starts at rank 1 (row 0)")?;
-			grp_start[0] = gs0;
-		}
 		for i in 1..n {
 			check_prod_zero(&(&c_one - &sel.is_pad[i - 1]),
 				&sel.is_pad[i], lc!(), "neo pads are a prefix")?;
-			let gs = (&c_one - &b_same[i])
-				* (&c_one - &sel.is_pad[i]);
+			// T405: (1 - b_same) * (1 - is_pad) == 1 - b_same on
+			// every satisfying assignment -- is_pad[i] = 1 forces
+			// is_pad[i-1] = 1 (prefix check above), hence enc[i] =
+			// enc[i-1] = 0 (forced bits), hence b_same[i] = 1. So
+			// the product and its witness are dropped.
+			let gs = &c_one - &b_same[i];
 			check_prod_zero(&gs,
 				&(&(&(&v.id[i] - &c_one) - &g_fp[i]) - &g_wr[i]),
 				lc!(), "neo group starts at rank 1")?;
@@ -4979,16 +4979,15 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 	/// 0-wrap ban that used to need a bit welded the other way
 	/// (see assert_carry).
 	fn gen_pred_view(
-		v: &QmVars<F>, r1: &FpVar<F>,
+		v: &QmVars<F>, r1: &FpVar<F>, r1sq: &FpVar<F>,
 	) -> PredView<F> {
-		let r1sq = r1 * r1;
 		let n = v.enc.len();
 		let mut key1 = Vec::with_capacity(n);
 		let mut key2 = Vec::with_capacity(n);
 		for i in 0..n {
 			let t_id = r1 * &v.prev_id1[i];
-			let t_p1 = &r1sq * &v.prev_loc1[i];
-			let t_p2 = &r1sq * &v.prev_loc2[i];
+			let t_p1 = r1sq * &v.prev_loc1[i];
+			let t_p2 = r1sq * &v.prev_loc2[i];
 			key1.push(&(&v.enc_prev[i] + &t_id) + &t_p1);
 			key2.push(&(&(&v.enc_prev[i] + &t_id) + r1) + &t_p2);
 		}
@@ -5255,7 +5254,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		                 // bound when successor carries nothing
 		buf_qc: &mut QmQueryBuf<F>,
 		                 // CARRIED-target instance
-		r1: &FpVar<F>,
+		r1: &FpVar<F>, r1sq: &FpVar<F>,
 		job_id: usize,
 	) -> Result<(), SynthesisError> {
 		let n0 = cs.num_constraints();
@@ -5265,7 +5264,6 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		let c_max = new_const_var(&cs, f_max);
 		let c_one = new_const_var(&cs, F::one());
 		let na = &qm.nonaggr;
-		let r1sq = r1 * r1;
 		// w_next == max bits, STRONG both ways. EXAMPLE (fig-14,
 		// default_min = 161): BP a6:73, rg2_next 9, reach 82.
 		//  A) step 7 carries {90, 120}: the min pin forces
@@ -5302,7 +5300,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 			// authenticated enc_next as THE successor step, so
 			// the pin cannot read a foreign group's minimum.
 			buf_qc.push(&(&na.enc_next[i] + r1)
-				+ &(&r1sq * &na.w_next[i]),
+				+ &(r1sq * &na.w_next[i]),
 				sel.is_bp[i].clone());
 		}
 		log(job_id, LOG3, &format!(
@@ -5359,7 +5357,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		sel: &NeoSel<F>, // is_sp
 		buf_qc: &mut QmQueryBuf<F>,
 		                 // CARRIED-target instance
-		r1: &FpVar<F>,
+		r1: &FpVar<F>, r1sq: &FpVar<F>,
 		job_id: usize,
 	) -> Result<(), SynthesisError> {
 		let n0 = cs.num_constraints();
@@ -5369,7 +5367,6 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		let c_max = new_const_var(&cs, f_max);
 		let c_one = new_const_var(&cs, F::one());
 		let na = &qm.nonaggr;
-		let r1sq = r1 * r1;
 		for i in 0..n {
 			// (1) w_fz < max: an empty fz group's cid-1 row is
 			// the max-wrap; a real loc proves step fz carries ->
@@ -5392,10 +5389,10 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 			// step/SUBSIG pins), so the freeze pin cannot read a
 			// foreign group's minimum.
 			buf_qc.push(&(&na.enc_fz[i] + r1)
-				+ &(&r1sq * &na.w_fz[i]),
+				+ &(r1sq * &na.w_fz[i]),
 				sel.is_sp[i].clone());
 			buf_qc.push(&(&qm.enc[i] + r1)
-				+ &(&r1sq * &na.w_kept[i]),
+				+ &(r1sq * &na.w_kept[i]),
 				sel.is_sp[i].clone());
 		}
 		log(job_id, LOG3, &format!(
@@ -5440,7 +5437,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		                 //   + natives (zero-bit hints)
 		buf_qr: &mut QmQueryBuf<F>,
 		                 // REACHABLE-target instance
-		r1: &FpVar<F>,
+		r1: &FpVar<F>, r1sq: &FpVar<F>,
 		n_runs: &FpVar<F>,
 		                 // run count from assert_neo_wf
 		job_id: usize,
@@ -5452,7 +5449,6 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		let f1 = F::from(1u64 << rb);
 		let c_sh4 = new_const_var(&cs, f1 * f1 * f1 * f1);
 		let c_one = new_const_var(&cs, F::one());
-		let r1sq = r1 * r1;
 		// STRONG zero-bits (2cs/slot): sel is a true boolean, so
 		// the logup sees only multiplicities 0/1. A gate-bit cut
 		// (1cs) would be sound but costs a negative-multiplicity
@@ -5463,7 +5459,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 			// Reachability is by CONSTRUCTION of the lookup: the
 			// QR target side admits no FP row, so a hit row is
 			// reachable, not merely present.
-			buf_qr.push(&(&(s * &c_sh4) + r1) + &r1sq,
+			buf_qr.push(&(&(s * &c_sh4) + r1) + r1sq,
 				&c_one - &z_sub[j]);
 		}
 		// T202: run/subsig COUNT EQUALITY (1cs, 0 cols -- both
@@ -5641,15 +5637,14 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		mtbl_qc: &[FpVar<F>],  // EMPTY in aggr
 		anch: &[FpVar<F>],     // T306 (both arms): per-group
 		                       //   (enc,0,0) QR anchors
-		r1: &FpVar<F>, r2: &FpVar<F>,
+		r1: &FpVar<F>, r1sq: &FpVar<F>, r2: &FpVar<F>,
 		job_id: usize,
 	) -> Result<(), SynthesisError> {
 		let n0 = cs.num_constraints();
 		let n = qm.enc.len();
-		let r1sq = r1 * r1;
 		// T403: one r1sq*loc per row, shared by both target keys.
 		let loc_h: Vec<FpVar<F>> = (0..n).map(|i|
-			&r1sq * &qm.loc[i]).collect();
+			r1sq * &qm.loc[i]).collect();
 		// categories are mutually exclusive booleans, so the sel
 		// sums below stay boolean -- no row is double-counted.
 		let mut tgt_qr: Vec<FpVar<F>> = (0..n).map(|i|
@@ -5768,6 +5763,9 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		r1: &FpVar<F>, r2: &FpVar<F>, job_id: usize,
 	) -> Result<(), SynthesisError> {
 		let n0 = cs.num_constraints();
+		// T404: hoist once, thread to callees instead of each
+		// recomputing r1 * r1 locally.
+		let r1sq = r1 * r1;
 		// -- 1. derive + bind per-row selector bits
 		//    (is_c/is_fp, is_step0, is_last, is_wrap, ...) --
 		let sel = Self::assert_neo_selectors(cs.clone(),
@@ -5814,7 +5812,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		// -- 6. carry-out queue q_c (committed empty in
 		//    aggr; still shape-checked); pv = the predecessor
 		//    view shared with the fwd-pruning block --
-		let pv = Self::gen_pred_view(&vars.qm, r1);
+		let pv = Self::gen_pred_view(&vars.qm, r1, &r1sq);
 		Self::assert_carry(cs.clone(), &vars.qm, &sel, true,
 			(&vars.qc_enc, &vars.qc_loc, &nat.qc_enc), &pv,
 			&mut buf, r2, job_id)?;
@@ -5827,13 +5825,14 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		//    blocks the vacuous all-FP labeling) --
 		Self::assert_seed_anchors(cs.clone(),
 			(&vars.subsigs, &nat.subsig_nat), &mut buf, r1,
-			&n_runs, job_id)?;
+			&r1sq, &n_runs, job_id)?;
 		// -- 9. close the batch: one logup of all buffered
 		//    queries into Q_m; consumes buf by value (qc
 		//    side passed empty) --
 		Self::assert_qm_lookups(cs.clone(), &vars.qm, &sel,
 			&ranks, buf, QmQueryBuf::new(), &vars.mtbl_qr,
-			&vars.mtbl_qc, &vars.qr_anch, r1, r2, job_id)?;
+			&vars.mtbl_qc, &vars.qr_anch, r1, &r1sq, r2,
+			job_id)?;
 		// -- 10. verdict: every surviving terminal C row
 		//    must be recorded in acc_out (own logup) --
 		Self::assert_verdict_aggr(cs.clone(), &vars.qm, &sel,
@@ -5854,6 +5853,8 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		job_id: usize,
 	) -> Result<(), SynthesisError> {
 		let n0 = cs.num_constraints();
+		// T404: hoist once, thread to the callees below.
+		let r1sq = r1 * r1;
 		// -- 1. derive + bind per-row selector bits
 		//    (is_c/is_fp/is_bp/is_sp, is_step0, is_last,
 		//    is_wrap, ...) --
@@ -5923,7 +5924,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		// -- 8. carry-out queue q_c: the tight carried set
 		//    handed to the next chunk (holds the verdict);
 		//    pv = the predecessor view shared with fwd --
-		let pv = Self::gen_pred_view(&vars.qm, r1);
+		let pv = Self::gen_pred_view(&vars.qm, r1, &r1sq);
 		Self::assert_carry(cs.clone(), &vars.qm, &sel, false,
 			(&vars.qc_enc, &vars.qc_loc, &nat.qc_enc), &pv,
 			&mut buf_qc, r2, job_id)?;
@@ -5936,22 +5937,23 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		//    step's minimum surviving loc --
 		Self::assert_bwd_pruning(cs.clone(), &vars.qm, &sel,
 			&nat.t.nonaggr.w_next, default_min, &mut buf_qc,
-			r1, job_id)?;
+			r1, &r1sq, job_id)?;
 		// -- 11. singleton pruning: every SP label redundant
 		//    above its frozen group's kept minimum --
 		Self::assert_singleton_pruning(cs.clone(), &vars.qm,
-			&sel, &mut buf_qc, r1, job_id)?;
+			&sel, &mut buf_qc, r1, &r1sq, job_id)?;
 		// -- 12. each statement subsig's step-0 seed row must
 		//    exist reachable in Q_m (anchor of reachability:
 		//    blocks the vacuous all-FP labeling) --
 		Self::assert_seed_anchors(cs.clone(),
 			(&vars.subsigs, &nat.subsig_nat), &mut buf_qr, r1,
-			&n_runs, job_id)?;
+			&r1sq, &n_runs, job_id)?;
 		// -- 13. close the batch: one logup per buffer into
 		//    Q_m; consumes both buffers by value --
 		Self::assert_qm_lookups(cs.clone(), &vars.qm, &sel,
 			&ranks, buf_qr, buf_qc, &vars.mtbl_qr,
-			&vars.mtbl_qc, &vars.qr_anch, r1, r2, job_id)?;
+			&vars.mtbl_qc, &vars.qr_anch, r1, &r1sq, r2,
+			job_id)?;
 		log(job_id, LOG3, &format!(
 			"PERF 61081.9: block=TOTAL cs={} rows={}",
 			cs.num_constraints() - n0, nat.t.enc.len()));

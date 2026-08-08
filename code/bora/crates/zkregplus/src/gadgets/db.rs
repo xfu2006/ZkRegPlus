@@ -38,17 +38,17 @@ use rayon::iter::{
 };
 use folding_schemes::folding::foldpot::utils::check_cs;
 use data_processor::clam_db::{RANGE2,check_pad_ratio};
-use crate::gadgets::commons::{verify_inverse,verify_logup_inverse, check_eq, 
+use crate::gadgets::commons::{verify_inverse, check_eq,
 	check_arr_eq, check_arr_eq_arr, gen_m_table, new_const_var,
 	encode_2col, encode_2col_var, gen_m_table_cond,
-	new_var, two_col_tbl_to_sorted, 
+	new_var, two_col_tbl_to_sorted,
 	gen_abs_diff_col, two_col_tbl_left_join, gen_assert_sidcol_for_diff,
-	encode_cols, encode_cols_var, 
+	encode_cols, encode_cols_var,
 	multiset_prod, verify_unique_sorted_set, is_zero_better,
 	multiset_prod_2col,var_to_lb, is_zero_better_adv, gen_vec_inverse,
-	var_to_tuple, var_to_tuple_adv, encode_cols_better, 
+	var_to_tuple, var_to_tuple_adv, encode_cols_better,
 	verify_encode_cols_in_range, gen_2d_lkup_prf, gen_1d_lkup_prf,
-	verify_2d_lkup_prf, verify_1d_lkup_prf};
+	verify_2d_lkup_prf, verify_1d_lkup_prf, check_prod_eq, sum_vec_vars};
 
 
 // ----------------------------------------------------
@@ -61,30 +61,29 @@ use crate::gadgets::commons::{verify_inverse,verify_logup_inverse, check_eq,
 /// assert that each element of qry belongs to lkup.
 /// Note that both qry and lkup may contain multiple duplicates.
 /// We use the Logup algorithm ([Hab22] `https://eprint.iacr.org/2022/1530`).
-/// 
+///
 /// NOTE that there are two parts: using the Fiat-shamir challenge r,
 /// generate the inverse table for qry and lkup, and then, check the m_tbl
 /// relation: sum_{i=1}^{n} 1/(qry[i]+r) = sum_{j=1}^N m_tb[j]/(lkup[j]+r)
-/// COST: 2*qry_size + 3*lkup_size  (if old version of
-///		of verify_inverse and verify_logup_inverse used)
-/// NEW COST: qry_size + 2 * lkup_size.
+/// COST: qry_size + lkup_size. The lkup side is fused: one witness
+/// w_t[j] = m_tbl[j]/(lkup[j]+r) (0 when m_tbl[j]==0) replaces a raw
+/// inverse witness plus a separate m_tbl multiply, so zero-multiplicity
+/// lkup entries no longer need to avoid the pole either.
 pub fn assert_logup<F:PrimeField + ColEle>(
 	cs: ConstraintSystemRef<F>,
-	qry: &[FpVar<F>], 
+	qry: &[FpVar<F>],
 	lkup: &[FpVar<F>],
-	m_tbl: &[FpVar<F>], 
+	m_tbl: &[FpVar<F>],
 	r: &FpVar<F>)
 ->Result<(), SynthesisError>{
 	//1. generte the inverse table (as part of msg3)
 	let b_perf = false;
 	let nc = cs.num_constraints();
 	let r_val = r.value().expect("error get val of r");
+
+	//1.1 query side: unchanged, no separate weight to fuse away.
 	let qry_val = qry.iter().map(|x| x.value().unwrap()).collect::<Vec<F>>();
-	let lkup_val = lkup.iter().map(|x| x.value().unwrap()).collect::<Vec<F>>();
-	let qry_inv_val = qry_val.into_par_iter().map(|x| 
-		(r_val+x).inverse().expect("inv err")
-	).collect::<Vec<F>>();
-	let lkup_inv_val = lkup_val.into_par_iter().map(|x| 
+	let qry_inv_val = qry_val.into_par_iter().map(|x|
 		(r_val+x).inverse().expect("inv err")
 	).collect::<Vec<F>>();
 	// unfortunately ConstraintSystemRef can't be sent to Rayon threads safely
@@ -93,17 +92,27 @@ pub fn assert_logup<F:PrimeField + ColEle>(
 	// probably in release mode for 50ms.
 	let qry_inv = qry_inv_val.iter().map(|x| FpVar::new_witness(
 		cs.clone(), || Ok(x)).unwrap()).collect::<Vec<FpVar<F>>>();
-	let lkup_inv = lkup_inv_val.iter().map(|x| FpVar::new_witness(
-		cs.clone(), || Ok(x)).unwrap()).collect::<Vec<FpVar<F>>>();
-
-
-	//2. verify inverse
 	verify_inverse(cs.clone(), &qry, &qry_inv, &r, qry.len())?;
-	verify_inverse(cs.clone(), &lkup, &lkup_inv, &r, lkup.len())?;
 
+	//1.2 lkup side, fused.
+	assert!(lkup.len()==m_tbl.len());
+	let lkup_val = lkup.iter().map(|x| x.value().unwrap()).collect::<Vec<F>>();
+	let m_tbl_val = m_tbl.iter().map(|x| x.value().unwrap()).collect::<Vec<F>>();
+	let w_t_val = lkup_val.par_iter().zip(m_tbl_val.par_iter())
+		.map(|(&x,&m)| if m.is_zero() { F::zero() }
+			else { m * (r_val+x).inverse().expect("inv err") })
+		.collect::<Vec<F>>();
+	let w_t = w_t_val.iter().map(|x| FpVar::new_witness(
+		cs.clone(), || Ok(x)).unwrap()).collect::<Vec<FpVar<F>>>();
+	for j in 0..lkup.len(){
+		check_prod_eq(&w_t[j], &(&lkup[j] + r), &m_tbl[j],
+			"assert_logup fused table")?;
+	}
 
-	//3. verify logup relation (m_table)
-	verify_logup_inverse(cs.clone(), &qry_inv, &lkup_inv, m_tbl)?; 
+	//2. verify logup relation (m_table): sum identity
+	let sum_left = sum_vec_vars(cs.clone(), &qry_inv);
+	let sum_right = sum_vec_vars(cs.clone(), &w_t);
+	check_eq(&sum_left, &sum_right, "assert_logup fused sum")?;
 
 	if b_perf{
 		println!(" --- assert_logup qry: {}, lkup: {}, cs: {}",
@@ -113,45 +122,60 @@ pub fn assert_logup<F:PrimeField + ColEle>(
 }
 
 /// assert_logup for the selector version.
-/// COST: 2*qry_size + 3*lkup_size
+/// COST: qry_size + 2*lkup_size. Both sides fused: w_q[i] =
+/// sel_qry[i]/(qry[i]+r) replaces a raw inverse + sel_qry multiply on
+/// the query side; on the lkup side, sm[j] = sel_lkup[j]*m_tbl[j] is
+/// unavoidably its own product (two independent witnesses), but the
+/// inverse-check then fuses directly with it via
+/// w_t[j] = sm[j]/(lkup[j]+r), dropping the separate raw-inverse step.
+/// Deselected rows (sel==0 / sm==0) no longer need to avoid the pole.
 pub fn assert_logup_cond<F:PrimeField + ColEle>(
 	cs: ConstraintSystemRef<F>,
-	qry: &Vec<FpVar<F>>, 
-	sel_qry: &Vec<FpVar<F>>, 
+	qry: &Vec<FpVar<F>>,
+	sel_qry: &Vec<FpVar<F>>,
 	lkup: &Vec<FpVar<F>>,
 	sel_lkup: &Vec<FpVar<F>>,
-	m_tbl: &Vec<FpVar<F>>, 
+	m_tbl: &Vec<FpVar<F>>,
 	r: &FpVar<F>)
 ->Result<(), SynthesisError>{
-	//1. generte the inverse table (as part of msg3)
 	let r_val = r.value().expect("error get val of r");
+
+	//1. query side, fused.
+	assert!(qry.len()==sel_qry.len());
 	let qry_val = qry.iter().map(|x| x.value().unwrap()).collect::<Vec<F>>();
+	let sel_qry_val = sel_qry.iter().map(|x| x.value().unwrap()).collect::<Vec<F>>();
+	let w_q_val = qry_val.par_iter().zip(sel_qry_val.par_iter())
+		.map(|(&x,&s)| if s.is_zero() { F::zero() }
+			else { s * (r_val+x).inverse().expect("inv err") })
+		.collect::<Vec<F>>();
+	let w_q = w_q_val.iter().map(|x| FpVar::new_witness(
+		cs.clone(), || Ok(x)).unwrap()).collect::<Vec<FpVar<F>>>();
+	for i in 0..qry.len(){
+		check_prod_eq(&w_q[i], &(&qry[i] + r), &sel_qry[i],
+			"assert_logup_cond fused query")?;
+	}
+
+	//2. lkup side, fused.
+	assert!(lkup.len()==sel_lkup.len() && lkup.len()==m_tbl.len());
+	let sm: Vec<FpVar<F>> = sel_lkup.iter().zip(m_tbl.iter())
+		.map(|(s,m)| s * m).collect();
 	let lkup_val = lkup.iter().map(|x| x.value().unwrap()).collect::<Vec<F>>();
-	let qry_inv_val = qry_val.into_par_iter().map(|x| 
-		(r_val+x).inverse().expect("inv err")
-	).collect::<Vec<F>>();
-	let lkup_inv_val = lkup_val.into_par_iter().map(|x| 
-		(r_val+x).inverse().expect("inv err")
-	).collect::<Vec<F>>();
-	// unfortunately ConstraintSystemRef can't be sent to Rayon threads safely
-	// because it uses std::sync::Arc<std::sync::Mutex<ConstraintSystem>>. We have to use
-	// iter() here. Cost is about 500ms for 2^20 variables in testing mode
-	// probably in release mode for 50ms.
-	let qry_inv_raw = qry_inv_val.iter().map(|x| FpVar::new_witness(
+	let sm_val = sm.iter().map(|x| x.value().unwrap()).collect::<Vec<F>>();
+	let w_t_val = lkup_val.par_iter().zip(sm_val.par_iter())
+		.map(|(&x,&s)| if s.is_zero() { F::zero() }
+			else { s * (r_val+x).inverse().expect("inv err") })
+		.collect::<Vec<F>>();
+	let w_t = w_t_val.iter().map(|x| FpVar::new_witness(
 		cs.clone(), || Ok(x)).unwrap()).collect::<Vec<FpVar<F>>>();
-	let qry_inv = qry_inv_raw.iter().zip(sel_qry.iter()).map(|(x,y)|
-		x * y).collect::<Vec<FpVar<F>>>();
-	let lkup_inv_raw = lkup_inv_val.iter().map(|x| FpVar::new_witness(
-		cs.clone(), || Ok(x)).unwrap()).collect::<Vec<FpVar<F>>>();
-	let lkup_inv = lkup_inv_raw.iter().zip(sel_lkup.iter()).map(|(x,y)|
-		x * y).collect::<Vec<FpVar<F>>>();
+	for j in 0..lkup.len(){
+		check_prod_eq(&w_t[j], &(&lkup[j] + r), &sm[j],
+			"assert_logup_cond fused table")?;
+	}
 
-	//2. verify inverse
-	verify_inverse(cs.clone(), &qry, &qry_inv_raw, &r, qry.len())?;
-	verify_inverse(cs.clone(), &lkup, &lkup_inv_raw, &r, lkup.len())?;
-
-	//3. verify logup relation (m_table)
-	verify_logup_inverse(cs.clone(), &qry_inv, &lkup_inv, m_tbl)?; 
+	//3. verify logup relation (m_table): sum identity
+	let sum_left = sum_vec_vars(cs.clone(), &w_q);
+	let sum_right = sum_vec_vars(cs.clone(), &w_t);
+	check_eq(&sum_left, &sum_right, "assert_logup_cond fused sum")?;
 	Ok( () )
 }
 
@@ -2792,6 +2816,108 @@ use utils::consts::read_global_config;
 		let m_tbl = f_m_tbl.iter().map(|x| new_var(&cs, *x)).collect::<Vec<FpVar::<Fr>>>();
 		assert!(assert_logup_cond(cs.clone(), &qry, &sel_qry, &lkup, &sel_lkup, &m_tbl, &r).is_ok());
 		assert!(cs.is_satisfied().unwrap());
+	}
+
+	// T409: zero-multiplicity lkup entries may sit exactly at the pole
+	// -r after fusing raw-inverse-check with the m_tbl weighting -- the
+	// fused witness is defined as 0 there, so no inverse is required.
+	// The pre-fusion code required EVERY lkup entry, even
+	// multiplicity-0 ones, to avoid the pole (would panic otherwise).
+	#[test]
+	fn test_assert_logup_zero_mult_at_pole(){
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		let r_val = Fr::from(123123123u32);
+		let pole_val = -r_val; // lkup entry at pole: pole_val + r_val == 0
+		let qry = vec_to_var(cs.clone(), vec![1, 3]);
+		let lkup = vec![
+			FpVar::new_witness(cs.clone(), || Ok(Fr::from(1u32))).unwrap(),
+			FpVar::new_witness(cs.clone(), || Ok(Fr::from(3u32))).unwrap(),
+			FpVar::new_witness(cs.clone(), || Ok(pole_val)).unwrap(),
+		];
+		let r = fr_to_var(cs.clone(), r_val);
+		let m_tbl = vec_to_var(cs.clone(), vec![1, 1, 0]);
+		assert!(assert_logup(cs.clone(), &qry, &lkup, &m_tbl, &r).is_ok());
+		assert!(cs.is_satisfied().unwrap());
+	}
+
+	// T409 negative: inflating a hit entry's multiplicity by 1 must
+	// break the sum identity.
+	#[test]
+	fn test_assert_logup_wrong_mult(){
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		let qry = vec_to_var(cs.clone(), vec![1, 3, 2]);
+		let lkup = vec_to_var(cs.clone(), vec![0, 1, 3, 2]);
+		let r = fr_to_var(cs.clone(), Fr::from(123123123u32));
+		let m_tbl = vec_to_var(cs.clone(), vec![0, 2, 1, 1]); //should be [0,1,1,1]
+		assert!(assert_logup(cs.clone(), &qry, &lkup, &m_tbl, &r).is_ok());
+		assert!(!cs.is_satisfied().unwrap());
+	}
+
+	// T409: a deselected query (sel_qry==0) may sit at the pole -r --
+	// the fused witness is 0 there and needs no inverse. Pre-fusion
+	// code still required every query row, even sel==0 ones, to avoid
+	// the pole.
+	#[test]
+	fn test_assert_logup_cond_masked_query_at_pole(){
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		let r_val = Fr::from(123123123u32);
+		let pole_val = -r_val;
+		let qry = vec![
+			FpVar::new_witness(cs.clone(), || Ok(Fr::from(1u32))).unwrap(),
+			FpVar::new_witness(cs.clone(), || Ok(pole_val)).unwrap(),
+		];
+		let sel_qry = vec_to_var(cs.clone(), vec![7, 0]); //2nd row deselected
+		let lkup = vec_to_var(cs.clone(), vec![1]);
+		let sel_lkup = vec_to_var(cs.clone(), vec![1]);
+		let m_tbl = vec_to_var(cs.clone(), vec![7]);
+		let r = fr_to_var(cs.clone(), r_val);
+		assert!(assert_logup_cond(cs.clone(), &qry, &sel_qry, &lkup,
+			&sel_lkup, &m_tbl, &r).is_ok());
+		assert!(cs.is_satisfied().unwrap());
+	}
+
+	// T409: a deselected table entry (sel_lkup==0) may still carry a
+	// nonzero m_tbl value and verification must still succeed -- the
+	// product sm=sel_lkup*m_tbl zeroes it out automatically, so no
+	// separate deselection gate is needed for this function's
+	// semantics (unlike a design where m_tbl and sel_lkup are
+	// independently authored).
+	#[test]
+	fn test_assert_logup_cond_deselected_table_nonzero_m(){
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		let qry = vec_to_var(cs.clone(), vec![1]);
+		let sel_qry = vec_to_var(cs.clone(), vec![5]);
+		let lkup = vec_to_var(cs.clone(), vec![1, 99]);
+		let sel_lkup = vec_to_var(cs.clone(), vec![1, 0]); //2nd entry deselected
+		let m_tbl = vec_to_var(cs.clone(), vec![5, 1234]); //garbage mult, must be ignored
+		let r = fr_to_var(cs.clone(), Fr::from(123123123u32));
+		assert!(assert_logup_cond(cs.clone(), &qry, &sel_qry, &lkup,
+			&sel_lkup, &m_tbl, &r).is_ok());
+		assert!(cs.is_satisfied().unwrap());
+	}
+
+	// T409 negative: inflating a hit entry's multiplicity by 1 must
+	// break the sum identity (conditional version).
+	#[test]
+	fn test_assert_logup_cond_wrong_mult(){
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		let u_qry = vec![1, 3, 2];
+		let u_sel_qry = vec![1, 1, 1];
+		let u_lkup = vec![1, 3, 2];
+		let u_sel_lkup = vec![1, 1, 1];
+		let qry = vec_to_var(cs.clone(), u_qry.clone());
+		let sel_qry = vec_to_var(cs.clone(), u_sel_qry.clone());
+		let lkup = vec_to_var(cs.clone(), u_lkup.clone());
+		let sel_lkup = vec_to_var(cs.clone(), u_sel_lkup.clone());
+		let r = fr_to_var(cs.clone(), Fr::from(123123123u32));
+		let mut f_m_tbl = gen_m_table_cond(&vec_to_f(&u_qry),
+			&vec_to_f(&u_sel_qry), &vec_to_f(&u_lkup), &vec_to_f(&u_sel_lkup));
+		f_m_tbl[0] += Fr::from(1u32); //corrupt one honest multiplicity
+		let m_tbl = f_m_tbl.iter().map(|x| new_var(&cs, *x))
+			.collect::<Vec<FpVar::<Fr>>>();
+		assert!(assert_logup_cond(cs.clone(), &qry, &sel_qry, &lkup,
+			&sel_lkup, &m_tbl, &r).is_ok());
+		assert!(!cs.is_satisfied().unwrap());
 	}
 
 	#[test]

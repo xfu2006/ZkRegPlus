@@ -1110,6 +1110,60 @@ pub fn verify_inverse_mul_col<F:PrimeField + ColEle>(
 	Ok( () )
 }
 
+/// same relation as verify_inverse_mul_col but v2[i]*(combined v1[i])
+/// == weight[i] instead of == 1. Lets a table-side lookup fuse the
+/// raw-inverse-check directly with a per-row weight (e.g. m_tbl),
+/// saving the separate raw-inverse witness/constraint that
+/// verify_inverse_mul_col would otherwise need.
+/// COST: n
+pub fn verify_inverse_mul_col_weighted<F:PrimeField + ColEle>(
+	cs: ConstraintSystemRef<F>,
+	v1: &Vec<&[FpVar<F>]>,
+	v2: &[FpVar<F>],
+	weight: &[FpVar<F>],
+	beta: &FpVar<F>
+)->Result<(), SynthesisError>{
+	//1. preprare the factors
+	let b_debug = B_DEBUG;
+	let num_cols = v1.len();
+	let n = v1[0].len();
+	for c in v1 {assert!(c.len()==n);}
+	assert!(v2.len()==n && weight.len()==n);
+	let factor = F::from(1u32<<read_global_config().range2_bit);
+	let mut coefs = vec![F::one(); num_cols];
+	for i in 1..coefs.len() {coefs[i] = coefs[i-1] * factor;}
+	coefs.reverse();
+	let mut lb_v1_template = coefs.iter().map(|coef|{
+		(*coef, Variable::One)
+	}).collect::<Vec<(F, Variable)>>();
+	lb_v1_template.push( var_to_tuple(beta) );
+	let beta_val = beta.value()?;
+
+	//2. enforce the weighted inverse relation
+	for i in 0..n{
+		let mut vec_lb_v1 = lb_v1_template.clone();
+		for j in 0..num_cols {vec_lb_v1[j].1 = var_to_variable(&v1[j][i]) };
+		let lb_v1 = LinearCombination(vec_lb_v1);
+		if b_debug{
+			let mut v1_val = F::zero();
+			for j in 0..num_cols{ v1_val += v1[j][i].value()? * coefs[j]; }
+			v1_val += beta_val;
+			assert!(v2[i].value()? * v1_val == weight[i].value()?);
+		}
+
+		let lb_v2_i = var_to_lb(&v2[i], F::one());
+		let lb_weight_i = var_to_lb(&weight[i], F::one());
+
+		cs.enforce_constraint(
+			lb_v2_i,
+			lb_v1,
+			lb_weight_i,
+		)?;
+	}
+	if b_debug{ assert!(cs.is_satisfied().unwrap()); }
+	Ok( () )
+}
+
 /// verify the log-up relation. check if all elements of (inverse of) v1 belong
 /// to v2. Here v1 and v2 should be the
 /// INVERSE of the query table and lkup table.  Call verify_inverse()
@@ -1469,11 +1523,9 @@ pub fn check_neq<F:PrimeField + ColEle>(v1: &FpVar<F>, v2: &FpVar<F>, _msg: &str
 		}
 	}
 	let cs = v1.cs();
-	let nc = cs.num_constraints();
 	let beq = is_zero_better(&(v1-v2), &cs)?;
 	let zero_var = FpVar::<F>::constant(F::zero());
 	check_eq(&beq, &zero_var, "ERR in check_neq")?;
-	println!("STOP HERE 3333: {}", cs.num_constraints()-nc);
 
 	Ok( () )
 	
@@ -1818,25 +1870,22 @@ pub fn verify_2d_lkup_prf<F:PrimeField + ColEle>(
 	let lkup_cols_vals = lkup_cols_vals.iter().map(|c| &c[..])
 		.collect::<Vec<&[F]>>();
 	let ids = (0..qry_cols.len()).collect::<Vec<usize>>();
-	let qry_val = encode_cols_better(qry_cols_vals, ids.clone()); 
-	let lkup_val = encode_cols_better(lkup_cols_vals, ids); 
+	let qry_val = encode_cols_better(qry_cols_vals, ids.clone());
+	let lkup_val = encode_cols_better(lkup_cols_vals, ids);
 	let inv_qry_val = gen_vec_inverse(&qry_val.par_iter().map(|x|
 		*x + r_val).collect::<Vec<F>>());
-	let inv_lkup_val = gen_vec_inverse(&lkup_val.par_iter().map(|x|
-		*x + r_val).collect::<Vec<F>>());
 	let inv_qry = inv_qry_val.iter().map(|&v| new_var(&cs, v))
-		.collect::<Vec<FpVar<F>>>();
-	let inv_lkup = inv_lkup_val.iter().map(|&v| new_var(&cs, v))
 		.collect::<Vec<FpVar<F>>>();
 	if b_perf {
 		log_perf(job_id, logl, &format!("verif_2dlkup step 0. build witness. n_q: {}, n_l: {}, cs: {}", n_q, n_l, cs.num_constraints()-nc), &mut gt);
 		nc = cs.num_constraints();
 	}
 
-	//2. verify the inverse relations are fine
-	//COST: n_q + n_l 
+	//2. verify the query-side inverse relation is fine (unchanged --
+	//no separate weight to fuse away on the query side; the lkup side
+	//is fused directly into step 3.2 below).
+	//COST: n_q
 	verify_inverse_mul_col(cs.clone(),&qry_cols, &inv_qry, &r)?;
-	verify_inverse_mul_col(cs.clone(),&lkup_cols, &inv_lkup, &r)?;
 	if b_debug{ assert!(cs.is_satisfied().unwrap()); }
 	if b_perf {
 		log_perf(job_id, logl, &format!("verif_2dlkup step 1. build witness. n_q: {}, n_l: {}, cs: {}", n_q, n_l, cs.num_constraints()-nc), &mut gt);
@@ -1866,25 +1915,24 @@ pub fn verify_2d_lkup_prf<F:PrimeField + ColEle>(
 		nc = cs.num_constraints();
 	}
 
-	//3.2 build up the values first (to speed up mtbl + vec[1]
-	assert!(inv_lkup.len()==m_tbl_1.len());
+	//3.2 table side, fused: weight[i] = m_tbl_1[i] + 1 (free LC), one
+	//witness w_t[i] = weight[i]/(lkup[i]+r) replaces the old raw
+	//inverse (inv_lkup) plus a separate (m_tbl_1[i]+1) multiply.
+	//weight is never 0 here (gen_2d_lkup_prf asserts m_tbl has no zero
+	//entries), so the pole-avoidance branch below is defensive only.
+	assert!(lkup_val.len()==m_tbl_1.len());
 	let m_tbl_1_val = m_tbl_1.iter().map(|x| x.value().unwrap())
 		.collect::<Vec<F>>();
-	assert!(m_tbl_1_val.len()==inv_lkup_val.len());
-	let prod_val = m_tbl_1_val.par_iter().zip(inv_lkup_val.par_iter())
-		.map(|(&x,&y)| (x + F::one()) * y).collect::<Vec<F>>();
-	let prods = prod_val.into_iter().map(|x| new_var(&cs, x))
+	let weight: Vec<FpVar<F>> = m_tbl_1.iter().map(|m| m + &one_var).collect();
+	let w_t_val = lkup_val.par_iter().zip(m_tbl_1_val.par_iter())
+		.map(|(&x,&m1)| { let w = m1 + F::one();
+			if w.is_zero() { F::zero() }
+			else { w * (r_val+x).inverse().expect("inv err") } })
+		.collect::<Vec<F>>();
+	let w_t = w_t_val.iter().map(|&v| new_var(&cs, v))
 		.collect::<Vec<FpVar<F>>>();
-	for i in 0..m_tbl_1.len(){
-		let lb_m_tbl = LinearCombination(vec![ //m_tbl_1[i] + 1
-			var_to_tuple(&m_tbl_1[i]),
-			(F::one(), Variable::One),
-		]);
-		let lb_inv = var_to_lb(&inv_lkup[i], F::one());
-		let lb_res = var_to_lb(&prods[i], F::one());
-		cs.enforce_constraint( lb_m_tbl, lb_inv, lb_res)?;
-	}
-	let sum_right = sum_vec_vars(cs.clone(), &prods);
+	verify_inverse_mul_col_weighted(cs.clone(), &lkup_cols, &w_t, &weight, &r)?;
+	let sum_right = sum_vec_vars(cs.clone(), &w_t);
 	check_eq(&sum_left, &sum_right, "logup check fails")?;
 	if b_debug{ assert!(cs.is_satisfied().unwrap()); }
 	if b_perf {
@@ -1939,25 +1987,22 @@ pub fn verify_1d_lkup_prf<F:PrimeField + ColEle>(
 	let lkup_cols_vals = lkup_cols_vals.iter().map(|c| &c[..])
 		.collect::<Vec<&[F]>>();
 	let ids = (0..qry_cols.len()).collect::<Vec<usize>>();
-	let qry_val = encode_cols_better(qry_cols_vals, ids.clone()); 
-	let lkup_val = encode_cols_better(lkup_cols_vals, ids); 
+	let qry_val = encode_cols_better(qry_cols_vals, ids.clone());
+	let lkup_val = encode_cols_better(lkup_cols_vals, ids);
 	let inv_qry_val = gen_vec_inverse(&qry_val.par_iter().map(|x|
 		*x + r_val).collect::<Vec<F>>());
-	let inv_lkup_val = gen_vec_inverse(&lkup_val.par_iter().map(|x|
-		*x + r_val).collect::<Vec<F>>());
 	let inv_qry = inv_qry_val.iter().map(|&v| new_var(&cs, v))
-		.collect::<Vec<FpVar<F>>>();
-	let inv_lkup = inv_lkup_val.iter().map(|&v| new_var(&cs, v))
 		.collect::<Vec<FpVar<F>>>();
 	if b_perf {
 		log_perf(job_id, logl, &format!("verif_1dlkup step 0. build witness. n_q: {}, n_l: {}, cs: {}", n_q, n_l, cs.num_constraints()-nc), &mut gt);
 		nc = cs.num_constraints();
 	}
 
-	//2. verify the inverse relations are fine
-	//COST: n_q + n_l 
+	//2. verify the query-side inverse relation is fine (unchanged --
+	//no separate weight to fuse away on the query side; the lkup side
+	//is fused directly into step 3.2 below).
+	//COST: n_q
 	verify_inverse_mul_col(cs.clone(),&qry_cols, &inv_qry, &r)?;
-	verify_inverse_mul_col(cs.clone(),&lkup_cols, &inv_lkup, &r)?;
 	if b_debug{ assert!(cs.is_satisfied().unwrap()); }
 	if b_perf {
 		log_perf(job_id, logl, &format!("verif_1dlkup step 1. build witness. n_q: {}, n_l: {}, cs: {}", n_q, n_l, cs.num_constraints()-nc), &mut gt);
@@ -1965,25 +2010,25 @@ pub fn verify_1d_lkup_prf<F:PrimeField + ColEle>(
 	}
 
 	//3. do a customized assert_logup for multi-columns
-	//COST: n_l*1.02 + nq*0.02 + 4
+	//COST: n_l*1.01 + nq*0.02 + 4
 	//3.1  the sum of inverse of query table
 	let sum_left = sum_vec_vars(cs.clone(), &inv_qry);
 
-	//3.2 the sum of inverse of lookup table
-	assert!(inv_lkup.len()==m_tbl.len());
+	//3.2 table side, fused: one witness w_t[i] = m_tbl[i]/(lkup[i]+r)
+	//(0 when m_tbl[i]==0, so a zero-multiplicity entry never needs the
+	//pole avoided) replaces the old raw inverse (inv_lkup) plus a
+	//separate m_tbl multiply.
+	assert!(lkup_val.len()==m_tbl.len());
 	let m_tbl_val = m_tbl.iter().map(|x| x.value().unwrap())
 		.collect::<Vec<F>>();
-	let prod_val = m_tbl_val.par_iter().zip(inv_lkup_val.par_iter())
-		.map(|(&x,&y)| x * y).collect::<Vec<F>>();
-	let prods = prod_val.into_iter().map(|x| new_var(&cs, x))
+	let w_t_val = lkup_val.par_iter().zip(m_tbl_val.par_iter())
+		.map(|(&x,&m)| if m.is_zero() { F::zero() }
+			else { m * (r_val+x).inverse().expect("inv err") })
+		.collect::<Vec<F>>();
+	let w_t = w_t_val.iter().map(|&v| new_var(&cs, v))
 		.collect::<Vec<FpVar<F>>>();
-	for i in 0..m_tbl.len(){
-		let lb_m_tbl = var_to_lb(&m_tbl[i], F::one());
-		let lb_inv = var_to_lb(&inv_lkup[i], F::one());
-		let lb_res = var_to_lb(&prods[i], F::one());
-		cs.enforce_constraint( lb_m_tbl, lb_inv, lb_res)?;
-	}
-	let sum_right = sum_vec_vars(cs.clone(), &prods);
+	verify_inverse_mul_col_weighted(cs.clone(), &lkup_cols, &w_t, &m_tbl, &r)?;
+	let sum_right = sum_vec_vars(cs.clone(), &w_t);
 	check_eq(&sum_left, &sum_right, "logup check fails")?;
 	if b_debug{ assert!(cs.is_satisfied().unwrap()); }
 	if b_perf {
@@ -2234,6 +2279,26 @@ pub fn check_prod_zero<F:PrimeField + ColEle>(v1: &FpVar<F>, v2: &FpVar<F>, lb_z
 	Ok( () )
 }
 
+/// check that v1 * v2 == v3
+/// cost is 1
+pub fn check_prod_eq<F:PrimeField + ColEle>(v1: &FpVar<F>, v2: &FpVar<F>, v3: &FpVar<F>, _msg: &str)
+-> Result<(),SynthesisError>
+{
+	let cs = v1.cs();
+	let lb_v1 = var_to_lb(v1, F::one());
+	let lb_v2 = var_to_lb(v2, F::one());
+	let lb_v3 = var_to_lb(v3, F::one());
+	if B_DEBUG {
+		assert!(v1.value()? * v2.value()? == v3.value()?, "ERR on check prod eq: {}", _msg);
+	}
+	cs.enforce_constraint(
+		lb_v1,
+		lb_v2,
+		lb_v3
+	)?;
+	Ok( () )
+}
+
 
 /// compute multiset_prod only counts sel[i] is 1.
 /// sel is a "boolean" array.
@@ -2398,7 +2463,11 @@ pub fn verify_unique_sorted_set<F:PrimeField + ColEle>(vec: &[FpVar<F>],
 #[cfg(test)]
 pub mod tests_commons{
 	use ark_bn254::{Fr};
-	use crate::gadgets::commons::{gen_m_table,encode_cols, decode_cols};
+	use ark_ff::{Field, Zero};
+	use ark_relations::r1cs::ConstraintSystem;
+	use ark_r1cs_std::fields::fp::FpVar;
+	use crate::gadgets::commons::{gen_m_table,encode_cols, decode_cols,
+		check_prod_eq, verify_inverse_mul_col_weighted, new_var};
 
 	#[test]
 	fn test_gen_m_tbl(){
@@ -2410,6 +2479,66 @@ pub mod tests_commons{
 		let exp_m = vec![1, 0, 2, 1, 1, 0].iter().map(|x| Fr::from(*x as u32))
 			.collect::<Vec<Fr>>();
 		assert!(m==exp_m);
+	}
+
+	// T409: new fused-logup helpers.
+	#[test]
+	fn test_check_prod_eq(){
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		let v1 = new_var(&cs, Fr::from(2u32));
+		let v2 = new_var(&cs, Fr::from(3u32));
+		let v3 = new_var(&cs, Fr::from(6u32));
+		assert!(check_prod_eq(&v1, &v2, &v3, "test").is_ok());
+		assert!(cs.is_satisfied().unwrap());
+	}
+
+	#[test]
+	fn test_check_prod_eq_negative(){
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		let v1 = new_var(&cs, Fr::from(2u32));
+		let v2 = new_var(&cs, Fr::from(3u32));
+		let v3 = new_var(&cs, Fr::from(7u32)); //wrong: should be 6
+		assert!(check_prod_eq(&v1, &v2, &v3, "test").is_ok());
+		assert!(!cs.is_satisfied().unwrap());
+	}
+
+	#[test]
+	fn test_verify_inverse_mul_col_weighted(){
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		let beta_val = Fr::from(100u32);
+		let beta = new_var(&cs, beta_val);
+		let col_vals = vec![Fr::from(5u32), Fr::from(9u32)];
+		let col: Vec<FpVar<Fr>> = col_vals.iter()
+			.map(|v| new_var(&cs, *v)).collect();
+		let weight_vals = vec![Fr::from(7u32), Fr::from(0u32)]; //2nd row masked
+		let weight: Vec<FpVar<Fr>> = weight_vals.iter()
+			.map(|v| new_var(&cs, *v)).collect();
+		let w_vals: Vec<Fr> = col_vals.iter().zip(weight_vals.iter())
+			.map(|(&c,&w)| if w.is_zero() { Fr::zero() }
+				else { w * (c + beta_val).inverse().unwrap() })
+			.collect();
+		let w: Vec<FpVar<Fr>> = w_vals.iter()
+			.map(|v| new_var(&cs, *v)).collect();
+		let v1: Vec<&[FpVar<Fr>]> = vec![&col[..]];
+		assert!(verify_inverse_mul_col_weighted(cs.clone(), &v1, &w,
+			&weight, &beta).is_ok());
+		assert!(cs.is_satisfied().unwrap());
+	}
+
+	#[test]
+	fn test_verify_inverse_mul_col_weighted_negative(){
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		let beta_val = Fr::from(100u32);
+		let beta = new_var(&cs, beta_val);
+		let col_vals = vec![Fr::from(5u32)];
+		let col: Vec<FpVar<Fr>> = col_vals.iter()
+			.map(|v| new_var(&cs, *v)).collect();
+		let weight = vec![new_var(&cs, Fr::from(7u32))];
+		let w = vec![new_var(&cs, Fr::from(1u32))]; //wrong: not 7/(5+100)
+		let v1: Vec<&[FpVar<Fr>]> = vec![&col[..]];
+		assert!(verify_inverse_mul_col_weighted(cs.clone(), &v1, &w,
+			&weight, &beta).is_ok());
+		assert!(!cs.is_satisfied().unwrap());
 	}
 
 	fn mysum(slice: &[Fr])->Fr{

@@ -30845,10 +30845,28 @@ Goal 2. runner - run zombie menu
 	[f] verify the lkup data -> good
 
 Goal 3. runner - run reef menu
-	[a]
+	[a] design
+	[b] impl done
 
 Goal 4. T403 imprveoemtn
 	[a] design, code change -> test
+	[b] test done
+
+Goal 5. T404 improvement
+	[a] 3 minor improvement
+	[b] approve code
+	[c] impl and test.
+
+Goal 6. T405 improvement -> DONE
+
+Goal 7. T406
+	[a] design improve many assert_logup functions
+	[b] unit test
+	[c] perf test
+
+Goal 6. full_dlp_neo
+	[a] design discussion first
+	[b] interaction on design questions
 	
 		
 
