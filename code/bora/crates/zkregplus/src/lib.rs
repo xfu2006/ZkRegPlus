@@ -23,3 +23,6 @@ pub mod band_dp;
 pub mod needs_dist;
 /// M0 flag-off regression fingerprint (caps universe + r1cs dims).
 pub mod fingerprint;
+/// paper-data support functions (perc-driven dataset thinning, Q2
+/// lookup-composition report), sibling to zkp_driver.
+pub mod bora_data_driver;

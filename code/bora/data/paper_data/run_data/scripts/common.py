@@ -14,33 +14,43 @@ from pathlib import Path
 
 
 def get_paper_root() -> Path:
-    """Return the absolute path of the ``usenix27`` paper directory.
+    """Return the absolute path of the paper-data root directory.
 
-    Resolves the current working directory and walks up its ancestry until
-    the ``usenix27`` segment is found. The caller is guaranteed to invoke
-    python3 from somewhere inside ``usenix27``, but not necessarily from
-    ``data/scripts/``.
+    Resolves the current working directory and walks up its ancestry
+    until a recognized root segment is found: ``usenix27`` (the real
+    paper repo) or ``run_data`` (bora's local paper-data mirror under
+    ``data/paper_data/run_data``). The caller is guaranteed to invoke
+    python3 from somewhere inside that root, but not necessarily from
+    ``data/scripts/``/``scripts/``.
     """
     cwd = Path(os.getcwd()).resolve()
     parts = cwd.parts
-    if "usenix27" not in parts:
-        raise RuntimeError(
-            f"get_paper_root: 'usenix27' not found in cwd ancestry: {cwd}"
-        )
-    idx = parts.index("usenix27")
-    return Path(*parts[: idx + 1])
+    for anchor in ("usenix27", "run_data"):
+        if anchor in parts:
+            idx = parts.index(anchor)
+            return Path(*parts[: idx + 1])
+    raise RuntimeError(
+        f"get_paper_root: neither 'usenix27' nor 'run_data' found in "
+        f"cwd ancestry: {cwd}"
+    )
 
 
 def get_proj_root() -> Path:
     """Return the project root holding the raw corpus data.
 
-    The project tree sits one or two directory levels above the paper root
-    (``usenix27``), under ``ZkregPlus/code/<name>``. The code dir was renamed
-    ``new_zkregplus`` -> ``bora``; we try both names (new_zkregplus first for
-    back-compat) across the paper root's parent and grandparent and return the
-    first existing subtree.
+    Two paper roots are supported (see get_paper_root):
+    - ``run_data``: bora's local mirror, sitting at
+      ``bora/data/paper_data/run_data`` -- the project root is just
+      ``run_data``'s great-grandparent (``bora/``).
+    - ``usenix27``: the real paper repo, sitting one or two directory
+      levels above ``ZkregPlus/code/<name>``. The code dir was renamed
+      ``new_zkregplus`` -> ``bora``; we try both names (new_zkregplus
+      first for back-compat) across the paper root's parent and
+      grandparent and return the first existing subtree.
     """
     paper = get_paper_root()
+    if paper.name == "run_data":
+        return paper.parents[2]
     for name in ("new_zkregplus", "bora"):
         rel = Path("ZkregPlus") / "code" / name
         for up in (paper.parents[0], paper.parents[1]):

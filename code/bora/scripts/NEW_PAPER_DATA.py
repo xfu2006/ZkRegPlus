@@ -325,6 +325,20 @@ def run_external_python(ctx, script, args, env):
     return p.returncode
 
 
+def run_rust_example(ctx, example_name, args, env):
+    """Single-process `cargo run --release --example <name> -- <args>`,
+    mirrors run_external_python but for a real bora_data_driver-style
+    binary instead of a cargo test."""
+    cmd = ["cargo", "run", "--release", "--example", example_name,
+           "--"] + list(args)
+    p, t = spawn(cmd, env, ctx.log_path("run"), ctx.key)
+    ctx.watch(p.pid)
+    p.wait()
+    if t:
+        t.join()
+    return p.returncode
+
+
 # =====================================================================
 # raw_data placement (fixed output paths for gen_*.py figure scripts)
 # =====================================================================
@@ -580,12 +594,37 @@ run_leaf_clamav        = stub_leaf("clam",       "M104")
 run_leaf_scale_clamav  = stub_leaf("scale_clam", "M104")
 run_leaf_scale_dlp     = stub_leaf("scale_dlp",  "M102")
 
+# dry_run's collect_lookup_stats_adv perc -- kept small so the leaf
+# builds a deterministically-thinned DB per dataset instead of the real
+# full-size one. full_run always uses perc=100 (the real report).
+LKUP_DRY_PERC = 5
+
+
+def run_leaf_analyze_lkup(mode, ctx):
+    """Q2 lookup-composition report (Mal+Dna+Dlp), via
+    bora_data_driver::collect_lookup_stats_adv. dry builds each
+    dataset's DB over a deterministically-thinned perc% subset of its
+    signatures; full builds every real signature (perc=100)."""
+    perc = LKUP_DRY_PERC if mode == "dry" else 100
+    local_out = ctx.log_path("lookup_stats")
+    env = dict(os.environ)
+    env["RUSTFLAGS"] = "-C link-args=-fuse-ld=lld -Awarnings"
+    rc = run_rust_example(ctx, "bora_data_driver",
+                           ["lkup", str(perc), local_out], env)
+    if rc == 0:
+        dest = place_raw_data(local_out, "lookup_stats.dat",
+                               server_specific=False)
+        ctx.raw_data.append(dest)
+    return ctx.finish(rc)
+
+
 JOB_SPECS.update({
     "dlp":        JobSpec("dlp",        "DLP",          run_leaf_dlp),
     "dna":        JobSpec("dna",        "Dna",          run_leaf_dna),
     "clam":       JobSpec("clam",       "Clamav",       run_leaf_clamav),
     "scale_clam": JobSpec("scale_clam", "Scale-ClamAV", run_leaf_scale_clamav),
     "scale_dlp":  JobSpec("scale_dlp",  "Scale-DLP",    run_leaf_scale_dlp),
+    "lkup":       JobSpec("lkup",       "Analyze lkup", run_leaf_analyze_lkup),
 })
 
 
@@ -694,7 +733,7 @@ LEAF_CHOICES = [
     ("clam", "Clamav"),
     ("zombie", "Zombie"),
     ("reef", "Reef"),
-    ("lkup", "Analyze lkup"),
+    ("lkup", "Analyze lkup [dry ~59s, ~17.4GB]"),
     ("scale_clam", "Scale-ClamAV"),
     ("scale_dlp", "Scale-DLP"),
 ]
@@ -807,6 +846,48 @@ def go_background():
     os.close(do)
 
 
+# =====================================================================
+# Layer A -- figs (menu #4: regenerate every figure + review PDF)
+# =====================================================================
+
+RUN_DATA_DIR = os.path.join(REPO, "data", "paper_data", "run_data")
+EVAL_DIR = os.path.join(RUN_DATA_DIR, "scripts", "eval")
+PDF_DIR = os.path.join(REPO, "data", "paper_data", "pdf")
+PDF_PATH = os.path.join(PDF_DIR, "list_figures.pdf")
+
+
+def run_figs():
+    """Menu item #4: regenerate every figs/*.tex fragment from whatever
+    is currently in raw_data/ (RUNALL.sh tolerates per-generator
+    failures -- an ungenerated table just keeps its prior content),
+    then compile list_figures.pdf. Runs in the foreground: this takes
+    seconds, unlike a Sequencer leaf, so no daemonizing."""
+    log("figs: running RUNALL.sh (per-generator failures are non-fatal)")
+    rc = subprocess.run(["bash", "RUNALL.sh"], cwd=EVAL_DIR).returncode
+    if rc != 0:
+        log("figs: RUNALL.sh reported %d failing generator(s); "
+            "continuing with whatever fragments exist" % rc)
+
+    log("figs: compiling list_figures.tex")
+    out = None
+    for _ in range(2):
+        p = subprocess.run(
+            ["pdflatex", "-interaction=nonstopmode", "list_figures.tex"],
+            cwd=RUN_DATA_DIR, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, text=True)
+        out = p.stdout
+    built = os.path.join(RUN_DATA_DIR, "list_figures.pdf")
+    if not os.path.isfile(built):
+        log("figs: pdflatex did not produce a PDF:\n%s"
+            % (out or "")[-4000:])
+        return 1
+
+    os.makedirs(PDF_DIR, exist_ok=True)
+    shutil.copy2(built, PDF_PATH)
+    log("figs: wrote %s" % PDF_PATH)
+    return 0
+
+
 def main():
     ap = build_argparser()
     args = ap.parse_args()
@@ -823,9 +904,14 @@ def main():
         plan.top,
         " --items %s" % ",".join(plan.leaf_keys) if plan.leaf_keys else ""))
 
-    if plan.top in ("small", "figs"):
+    if plan.top == "small":
         log("%s: not yet implemented in this framework version" % plan.top)
         return 0
+
+    if plan.top == "figs":
+        if args.plan_only:
+            return 0
+        return run_figs()
 
     if args.plan_only:
         return 0
@@ -1362,6 +1448,47 @@ class PreflightNumactlTest(unittest.TestCase):
             self.assertEqual(len(reasons), 2)
 
 
+class RunFigsTest(unittest.TestCase):
+    def test_success_runs_runall_then_pdflatex_twice_places_pdf(self):
+        with mock.patch("subprocess.run") as run, \
+             mock.patch("os.path.isfile", return_value=True), \
+             mock.patch("os.makedirs"), \
+             mock.patch("shutil.copy2") as copy2:
+            run.return_value.returncode = 0
+            run.return_value.stdout = ""
+            rc = run_figs()
+            self.assertEqual(rc, 0)
+            self.assertEqual(run.call_count, 3)  # RUNALL + 2x pdflatex
+            runall_call = run.call_args_list[0]
+            self.assertEqual(runall_call.args[0], ["bash", "RUNALL.sh"])
+            self.assertEqual(runall_call.kwargs["cwd"], EVAL_DIR)
+            for c in run.call_args_list[1:]:
+                self.assertEqual(c.args[0][0], "pdflatex")
+                self.assertEqual(c.kwargs["cwd"], RUN_DATA_DIR)
+            copy2.assert_called_once_with(
+                os.path.join(RUN_DATA_DIR, "list_figures.pdf"), PDF_PATH)
+
+    def test_runall_failure_is_nonfatal(self):
+        with mock.patch("subprocess.run") as run, \
+             mock.patch("os.path.isfile", return_value=True), \
+             mock.patch("os.makedirs"), \
+             mock.patch("shutil.copy2"):
+            run.return_value.returncode = 1
+            run.return_value.stdout = ""
+            rc = run_figs()
+            self.assertEqual(rc, 0)  # RUNALL failures don't fail the run
+
+    def test_missing_pdf_after_compile_is_reported(self):
+        with mock.patch("subprocess.run") as run, \
+             mock.patch("os.path.isfile", return_value=False), \
+             mock.patch("shutil.copy2") as copy2:
+            run.return_value.returncode = 0
+            run.return_value.stdout = "some pdflatex error"
+            rc = run_figs()
+            self.assertEqual(rc, 1)
+            copy2.assert_not_called()
+
+
 class CheckRequiredFilesTest(unittest.TestCase):
     def test_all_present(self):
         with mock.patch("os.path.isfile", return_value=True):
@@ -1641,6 +1768,21 @@ class MainTest(unittest.TestCase):
              mock.patch.object(_MOD, "go_background") as gb:
             self.assertEqual(main(), 0)
             gb.assert_not_called()
+
+    def test_figs_dispatch_calls_run_figs(self):
+        with mock.patch("sys.argv", ["prog", "--run", "figs"]), \
+             mock.patch.object(_MOD, "go_background") as gb, \
+             mock.patch.object(_MOD, "run_figs", return_value=0) as rf:
+            self.assertEqual(main(), 0)
+            gb.assert_not_called()
+            rf.assert_called_once()
+
+    def test_figs_plan_only_skips_run_figs(self):
+        with mock.patch("sys.argv",
+                         ["prog", "--dry-run", "--run", "figs"]), \
+             mock.patch.object(_MOD, "run_figs") as rf:
+            self.assertEqual(main(), 0)
+            rf.assert_not_called()
 
     def test_plan_only_skips_execution(self):
         with mock.patch("sys.argv",

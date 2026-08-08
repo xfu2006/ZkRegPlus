@@ -1,0 +1,5 @@
+# Keep folder structure (.gitkeep) but ignore the generated PDF itself
+# -- it's a regenerated artifact (menu #4 / run_figs()), not source.
+*
+!.gitignore
+!.gitkeep

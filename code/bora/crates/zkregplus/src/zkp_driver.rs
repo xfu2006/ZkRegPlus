@@ -1144,13 +1144,23 @@ where C: CurveGroup<ScalarField=F>,
 				// holds it -- even when the measured fill is 0. Without this the
 				// single-word scale run (margin 0) tightens down to min_perc and
 				// the fail-fast final build CapErrs on perc_pats_expansion_rate.
+				// backsolve_perc's 3rd arg is in NIBBLES: it inverts
+				// StepFwdPrf::vec_size, whose term is max_nibble_len.
+				// chunk_len is in WORDS, and perc sits opposite it in
+				// the fraction, so passing the raw chunk_len inflated
+				// this floor by exactly LEGS (62x) -- which then became
+				// the search's lower bound AND upper bound, so the
+				// tighten loop never ran and perc came out RAISED. The
+				// aggressive twin (determine_config_aggr pmin) already
+				// converts; match it.
+				let max_nib = (chunk_len * LEGS).max(1);
 				let pfloor = |bp: usize|
-					backsolve_perc(15, bp, chunk_len).max(min_perc);
+					backsolve_perc(15, bp, max_nib).max(min_perc);
 				{
 					let lo_f = pfloor(p.basis_pats_in_trace);
 					let (mut lo, mut hi) = (lo_f, old_cs.max(lo_f));
 					let seed = backsolve_perc(mfwd_cs,
-						p.basis_pats_in_trace, chunk_len).clamp(lo_f, hi);
+						p.basis_pats_in_trace, max_nib).clamp(lo_f, hi);
 					let mut next = if seed < hi { Some(seed) } else { None };
 					while lo < hi {
 						let mid = next.take().unwrap_or(lo + (hi - lo) / 2);
@@ -1166,7 +1176,7 @@ where C: CurveGroup<ScalarField=F>,
 					let lo_f = pfloor(p.basis_pats_in_trace_igc);
 					let (mut lo, mut hi) = (lo_f, old_igc.max(lo_f));
 					let seed = backsolve_perc(mfwd_igc,
-						p.basis_pats_in_trace_igc, chunk_len).clamp(lo_f, hi);
+						p.basis_pats_in_trace_igc, max_nib).clamp(lo_f, hi);
 					let mut next = if seed < hi { Some(seed) } else { None };
 					while lo < hi {
 						let mid = next.take().unwrap_or(lo + (hi - lo) / 2);
@@ -2280,6 +2290,65 @@ pub fn run_db_bundle<F:PrimeField>(config_dir: &str, report_dir: &str,
 		cache_dir, //cache name
 		b_quick,
 		max_word_len, percentiles);
+}
+
+/// Cross-dataset category roll-up (% of each dataset's populated
+/// entries), one column per dataset. Categories arrive in fixed order.
+/// Returned as a String so it prints with the per-dataset blocks.
+pub(crate) fn fmt_cross_rollup(
+	rollups: &[(&str, Vec<(&'static str, usize)>)]) -> String {
+	use std::fmt::Write as _;
+	let totals: Vec<usize> = rollups.iter()
+		.map(|(_, r)| r.iter().map(|(_, n)| n).sum()).collect();
+	let bar: String = rollups.iter().map(|_| "  --------").collect();
+
+	let mut s = String::new();
+	let _ = writeln!(s, "=============== Cross-Dataset Roll-up (% of populated) ========");
+	let _ = write!(s, "  {:<12}", "Category");
+	for (name, _) in rollups { let _ = write!(s, "  {:>8}", name); }
+	let _ = writeln!(s, "\n  {:<12}{}", "----------", bar);
+	let ncat = rollups.first().map(|(_, r)| r.len()).unwrap_or(0);
+	for ci in 0..ncat {
+		let _ = write!(s, "  {:<12}", rollups[0].1[ci].0);
+		for (di, (_, r)) in rollups.iter().enumerate() {
+			let p = if totals[di] > 0 { 100.0 * r[ci].1 as f64 / totals[di] as f64 } else { 0.0 };
+			let _ = write!(s, "  {:>8.1}", p);
+		}
+		let _ = writeln!(s);
+	}
+	let _ = writeln!(s, "  {:<12}{}", "----------", bar);
+	let _ = write!(s, "  {:<12}", "TOTAL (M)");
+	for t in &totals { let _ = write!(s, "  {:>8.1}", *t as f64 / 1e6); }
+	let _ = writeln!(s, "\n===============================================================");
+	s
+}
+
+/// Cross-dataset DFA-count table: absolute number of DFAs folded into
+/// the lookup table, one column per dataset, one row per source, with a
+/// TOTAL row. Sources arrive in fixed order (db.dfa_counts()).
+pub(crate) fn fmt_dfa_cross(
+	rollups: &[(&str, Vec<(&'static str, usize)>)]) -> String {
+	use std::fmt::Write as _;
+	let totals: Vec<usize> = rollups.iter()
+		.map(|(_, r)| r.iter().map(|(_, n)| n).sum()).collect();
+	let bar: String = rollups.iter().map(|_| "  ----------").collect();
+
+	let mut s = String::new();
+	let _ = writeln!(s, "\n=============== Cross-Dataset #DFAs in Lookup ==================");
+	let _ = write!(s, "  {:<18}", "Source");
+	for (name, _) in rollups { let _ = write!(s, "  {:>10}", name); }
+	let _ = writeln!(s, "\n  {:<18}{}", "----------------", bar);
+	let nsrc = rollups.first().map(|(_, r)| r.len()).unwrap_or(0);
+	for si in 0..nsrc {
+		let _ = write!(s, "  {:<18}", rollups[0].1[si].0);
+		for (_, r) in rollups { let _ = write!(s, "  {:>10}", r[si].1); }
+		let _ = writeln!(s);
+	}
+	let _ = writeln!(s, "  {:<18}{}", "----------------", bar);
+	let _ = write!(s, "  {:<18}", "TOTAL");
+	for t in &totals { let _ = write!(s, "  {:>10}", t); }
+	let _ = writeln!(s, "\n===============================================================");
+	s
 }
 
 #[cfg(test)]
@@ -6872,68 +6941,11 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		let mut report = String::from(
 			"\n\n#################### LOOKUP COMPOSITION REPORT ####################\n");
 		for b in &blocks { report.push_str(b); report.push('\n'); }
-		report.push_str(&fmt_cross_rollup(&rollups));
-		report.push_str(&fmt_dfa_cross(&dfa_rollups));
+		report.push_str(&super::fmt_cross_rollup(&rollups));
+		report.push_str(&super::fmt_dfa_cross(&dfa_rollups));
 		report.push_str(
 			"\n#################### END LOOKUP COMPOSITION REPORT ###############");
 		utils::logger::emit_stdout(report);
-	}
-
-	/// Cross-dataset category roll-up (% of each dataset's populated
-	/// entries), one column per dataset. Categories arrive in fixed order.
-	/// Returned as a String so it prints with the per-dataset blocks.
-	fn fmt_cross_rollup(rollups: &[(&str, Vec<(&'static str, usize)>)]) -> String {
-		use std::fmt::Write as _;
-		let totals: Vec<usize> = rollups.iter()
-			.map(|(_, r)| r.iter().map(|(_, n)| n).sum()).collect();
-		let bar: String = rollups.iter().map(|_| "  --------").collect();
-
-		let mut s = String::new();
-		let _ = writeln!(s, "=============== Cross-Dataset Roll-up (% of populated) ========");
-		let _ = write!(s, "  {:<12}", "Category");
-		for (name, _) in rollups { let _ = write!(s, "  {:>8}", name); }
-		let _ = writeln!(s, "\n  {:<12}{}", "----------", bar);
-		let ncat = rollups.first().map(|(_, r)| r.len()).unwrap_or(0);
-		for ci in 0..ncat {
-			let _ = write!(s, "  {:<12}", rollups[0].1[ci].0);
-			for (di, (_, r)) in rollups.iter().enumerate() {
-				let p = if totals[di] > 0 { 100.0 * r[ci].1 as f64 / totals[di] as f64 } else { 0.0 };
-				let _ = write!(s, "  {:>8.1}", p);
-			}
-			let _ = writeln!(s);
-		}
-		let _ = writeln!(s, "  {:<12}{}", "----------", bar);
-		let _ = write!(s, "  {:<12}", "TOTAL (M)");
-		for t in &totals { let _ = write!(s, "  {:>8.1}", *t as f64 / 1e6); }
-		let _ = writeln!(s, "\n===============================================================");
-		s
-	}
-
-	/// Cross-dataset DFA-count table: absolute number of DFAs folded into
-	/// the lookup table, one column per dataset, one row per source, with a
-	/// TOTAL row. Sources arrive in fixed order (db.dfa_counts()).
-	fn fmt_dfa_cross(rollups: &[(&str, Vec<(&'static str, usize)>)]) -> String {
-		use std::fmt::Write as _;
-		let totals: Vec<usize> = rollups.iter()
-			.map(|(_, r)| r.iter().map(|(_, n)| n).sum()).collect();
-		let bar: String = rollups.iter().map(|_| "  ----------").collect();
-
-		let mut s = String::new();
-		let _ = writeln!(s, "\n=============== Cross-Dataset #DFAs in Lookup ==================");
-		let _ = write!(s, "  {:<18}", "Source");
-		for (name, _) in rollups { let _ = write!(s, "  {:>10}", name); }
-		let _ = writeln!(s, "\n  {:<18}{}", "----------------", bar);
-		let nsrc = rollups.first().map(|(_, r)| r.len()).unwrap_or(0);
-		for si in 0..nsrc {
-			let _ = write!(s, "  {:<18}", rollups[0].1[si].0);
-			for (_, r) in rollups { let _ = write!(s, "  {:>10}", r[si].1); }
-			let _ = writeln!(s);
-		}
-		let _ = writeln!(s, "  {:<18}{}", "----------------", bar);
-		let _ = write!(s, "  {:<18}", "TOTAL");
-		for t in &totals { let _ = write!(s, "  {:>10}", t); }
-		let _ = writeln!(s, "\n===============================================================");
-		s
 	}
 
 	/// Build/load a dataset DB and quick-discharge its corpus (NON-aggressive),

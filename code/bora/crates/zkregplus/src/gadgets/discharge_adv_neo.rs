@@ -1656,12 +1656,22 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 	}
 
 	/// T_qm row budget: real-row budget + ONE wrap (the max-wrap)
-	/// per budget key -- T306 drops the 0-wrap on BOTH arms.
-	/// Capacity-only -> chunk/fold-invariant shape (data n_keys
-	/// ignored).
+	/// per budget key -- T306 drops the 0-wrap on BOTH arms -- plus
+	/// ONE boundary pad. Capacity-only -> chunk/fold-invariant shape.
 	pub(crate) fn qm_rows_size(capacity: &DischargeAdvCapacity,
 		info: &SubsigStepStore) -> usize {
+		// The +1 is STRUCTURAL, not slack. assert_neo_selectors
+		// check (1) forces enc[0] == 0 so the group-start rule,
+		// which reads row i-1, has a sentinel predecessor at the
+		// table start. Sizing to the DATA budget alone let a table
+		// whose data exactly filled it take pad_front(0), leaving a
+		// real row at index 0 -- that check is then UNSATISFIABLE,
+		// and it surfaced only as a silent verify_batch failure (no
+		// CapErr). Holding the pad inside the SIZE keeps the CapErr
+		// threshold on the data budget exactly where it was: the
+		// gen_qm_table guard rejects data > budget, i.e. len >= this.
 		Self::qm_real_cap(capacity) + Self::wrap_budget(capacity, info)
+			+ 1
 	}
 
 	/// Attribute a pooled T_qm overflow to the param over its nominal
@@ -1882,11 +1892,15 @@ C={} FP={} BP={} SP={} unset={} wrap={} real={} fp_share_of_real={}%",
 				self.b_igc, t.enc.len(), c, fp, bp, sp, unset, wrap,
 				real, if real > 0 { fp * 100 / real } else { 0 });
 		}
-		if t.enc.len() > n_total {
+		// >= (not >): n_total carries a mandatory boundary pad on top
+		// of the data budget, so data may take at most n_total - 1
+		// rows. Threshold on the DATA budget is unchanged; what this
+		// buys is n_pad >= 1 always (see qm_rows_size).
+		if t.enc.len() >= n_total {
 			return Err(Self::qm_caperr(&self.capacity, self.b_igc,
 				info, n_keys, wrap_cap, n_real, n_real_cap));
 		}
-		let n_pad = n_total - t.enc.len();
+		let n_pad = n_total - t.enc.len(); //>= 1: the boundary pad
 		t.pad_front(n_pad);
 		Ok(t)
 	}
@@ -7757,10 +7771,10 @@ pub(crate) mod tests_neo_r1 {
 		let (n, _, _) = StepQueue::<Fr>::vec_size(
 			&StepQueueType::ResLarge, &cap);
 		assert_eq!(StepQueueNeo::<Fr>::qm_rows_size(&cap, &info),
-			n + 9, "1 wrap per budget key");
+			n + 9 + 1, "1 wrap per budget key + 1 boundary pad");
 		cap.b_aggressive = true;
 		assert_eq!(StepQueueNeo::<Fr>::qm_rows_size(&cap, &info),
-			n + 9, "capacity-only: mode-independent");
+			n + 9 + 1, "capacity-only: mode-independent");
 		//inversion: smallest K covering the demand
 		assert_eq!(StepQueueNeo::<Fr>::wrap_subsigs_for(&info, 9),
 			1);
@@ -7795,9 +7809,9 @@ pub(crate) mod tests_neo_r1 {
 		let info = a18_store();
 		cap.b_aggressive = true;
 		assert_eq!(StepQueueNeo::<Fr>::qm_rows_size(&cap, &info),
-			4700 + StepQueueNeo::<Fr>::wrap_budget(&cap, &info),
+			4700 + StepQueueNeo::<Fr>::wrap_budget(&cap, &info) + 1,
 			"qm_rows_size composes the override with the wrap \
-			budget (1 wrap per key)");
+			budget (1 wrap per key) + the boundary pad");
 	}
 
 	/// a pooled T_qm overflow must name the param that is actually
@@ -8622,8 +8636,9 @@ pub(crate) mod tests_neo_m6 {
 	}
 
 	/// commit-time cost guard: the Fig-14 single-chunk core must
-	/// stay inside a +/-25% band of the calibrated 1911 cs over 25
-	/// rows -- catches accidental constraint blowup later. Re-banded
+	/// stay inside a +/-25% band of the calibrated 1911 cs over 26
+	/// rows (25 data + 1 boundary pad) -- catches accidental
+	/// constraint blowup later. Re-banded
 	/// for T306 (was 2763 over 34 rows: 9 groups here, so dropping
 	/// one 0-wrap per group removes 9 rows). Block split at n = 25:
 	///   selectors 401, wf 391, si_pins 100, join 158, ns_gap 114,
@@ -8635,8 +8650,9 @@ pub(crate) mod tests_neo_m6 {
 		let (cs, nat) = run_core_aggr(&info, &fig14_hm(), 161,
 			None);
 		assert!(cs.is_satisfied().unwrap());
-		// T306: drops one 0-wrap per group (9 groups here) -> 34-9.
-		assert_eq!(nat.t.enc.len(), 25);
+		// T306: drops one 0-wrap per group (9 groups here) -> 34-9,
+		// +1 for the mandatory boundary pad (see qm_rows_size).
+		assert_eq!(nat.t.enc.len(), 26);
 		let n = cs.num_constraints();
 		assert!(n >= 1433 && n <= 2389,
 			"cost drift: {} cs vs calibrated 1911", n);
@@ -9914,9 +9930,10 @@ mod tests_neo_nonaggr {
 			cs.which_is_unsatisfied());
 		assert_eq!(cat_rows(&nat, CAT_SP), vec![(2, 111)]);
 		let n = cs.num_constraints();
-		// T306b: drops one 0-wrap per group (9 groups here) -> 34-9.
+		// T306b: drops one 0-wrap per group (9 groups here) -> 34-9,
+		// +1 for the mandatory boundary pad (see qm_rows_size).
 		// Re-banded for T306b (was 4516 over 34 rows).
-		assert_eq!(nat.t.enc.len(), 25);
+		assert_eq!(nat.t.enc.len(), 26);
 		assert!(n >= 2243 && n <= 3739,
 			"cost drift: {} cs vs calibrated 2991", n);
 	}
