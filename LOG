@@ -30897,12 +30897,19 @@ Goal 7. B101
 Goal 8. B102
 	[a] main functions
 	[b] incompletion.
+	-> DONE
 
-Goal 9. T506 - improve determine_config
+Goal 9. B103 -> DONE
+
+Goal 10. T506 - improve determine_config
 	[a] neo version is 4.5x wider? check why.
 	[b] implement and test. 
+	[c] done! 
+	[d] add an additional feature: check how close it is to real
+		and measure ladder 4 stats again 
 
-Goal 10.
+Goal 11. C101
+	[a] goal run_neo
 
 	
 		

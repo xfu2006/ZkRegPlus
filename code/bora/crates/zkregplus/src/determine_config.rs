@@ -247,6 +247,11 @@ pub fn apply_caperr_bumps(p: &mut CapParams, b_aggr: bool,
         if name.starts_with("dis_adv::neo_qm_real") {
             // T305: neo-aggressive T_qm windowed real-row budget,
             // reported directly in row units (no back-solve).
+            if utils::consts::b_probe_p36() {
+                println!("DEBUG USE 62072.2: ratchet neo_qm_real igc={} \
+req={} before={}", igc, r,
+                    if igc { p.qm_real_rows_igc } else { p.qm_real_rows });
+            }
             if igc { up(&mut p.qm_real_rows_igc, r, &mut changed); }
             else { up(&mut p.qm_real_rows, r, &mut changed); }
         } else if name.starts_with("dis_adv::prod_pats_expansion") {
@@ -520,7 +525,7 @@ pub fn assemble_ladder(p_max: &CapParams,
         else { ((pmax_b * rate + g - 1) / g).min(pmax_b).max(2) }
     };
     let n = specs.len();
-    specs.iter().enumerate().map(|(i, s)| {
+    let out: Vec<CapParams> = specs.iter().enumerate().map(|(i, s)| {
         // Exact path (non-top rung): plan_rungs already de-saturated s.max_*
         // to the rung's own member max, so use it directly (clamped <=P_max).
         // Top rung + legacy path keep the P_max ratio-scale (top retains the
@@ -560,7 +565,16 @@ pub fn assemble_ladder(p_max: &CapParams,
         c.basis_acc_states =
             c.basis_acc_states.max(c.basis_pats_in_trace / 10 + 1);
         c
-    }).collect()
+    }).collect();
+    if utils::consts::b_probe_p36() {
+        println!("DEBUG USE 62072.3: assemble_ladder p_max.qm_real_rows={} \
+g_f={} rungs={}", p_max.qm_real_rows, g_f, n);
+        for (i, (s, c)) in specs.iter().zip(out.iter()).enumerate() {
+            println!("DEBUG USE 62072.4: rung {} max_fwd={} subsigs={} \
+-> qm_real_rows={}", i, s.max_fwd, c.subsigs, c.qm_real_rows);
+        }
+    }
+    out
 }
 
 /// Save the rung LADDER (Vec<CapParams> JSON handoff; the Python driver

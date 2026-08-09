@@ -1716,6 +1716,11 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 			v.push((format!("neo_qm_table, b_igc: {}", b_igc),
 				real + n_keys));
 		}
+		if utils::consts::b_probe_p36() {
+			println!("DEBUG USE 62072.1: qm_caperr igc={} real={}/{} \
+wrap={}/{} explicit={} -> {:?}", b_igc, real, real_cap, n_keys,
+				wrap_cap, capacity.qm_real_rows > 0, v);
+		}
 		Error::CapErr(v)
 	}
 
