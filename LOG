@@ -30870,13 +30870,17 @@ Goal 1. think about real cuts for aggr-easy for dlp
 	[b] fix seeding error
 	[c] veriy_batch bug clear.
 
-Goal 2. M102 
+Goal 2. M102  -> A101
 	[a] update working rules
-	[b] 
+	[b] imple and test -> DONE
 
-Goal 6. full_dlp_neo
-	[a] design discussion first
-	[b] interaction on design questions
+Goal 3. A102
+	[a] design: data structure
+	[b] impl and test.
+
+Goal 4. continue to fix bug of measurement T501
+
+Goal 5. 
 	
 		
 
