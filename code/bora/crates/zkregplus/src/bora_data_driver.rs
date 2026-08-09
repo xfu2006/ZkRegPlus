@@ -4,6 +4,7 @@
 
 use std::collections::HashSet;
 use std::fs;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use ark_bn254::Fr;
@@ -31,15 +32,58 @@ fn read_lines_nonblank(path: &str) -> Vec<String> {
 		.collect()
 }
 
-/// Evenly-spaced deterministic subset of 0..n, sized ceil(n*perc/100)
-/// (at least 1 if n>0 and perc>0, capped at n).
-fn deterministic_subset(n: usize, perc: usize) -> Vec<usize> {
-	if n == 0 || perc == 0 {
+/// Seed of the fixed rule/corpus permutation. MUST match zkp_driver's
+/// SCALE_PERM_SEED (:7294, :7530) so neo picks legacy's subsets.
+const SCALE_PERM_SEED: u64 = 0x5CA1_5EED_0F0F_0F0F;
+
+/// Fixed pseudo-random permutation of 0..n (splitmix64 Fisher-Yates).
+/// Transcribed from zkp_driver.rs:7295; the no-touch rule leaves that
+/// copy and its twin at :7531 in place, so this one is pinned by test.
+fn fixed_perm(n: usize, mut s: u64) -> Vec<usize> {
+	let mut v: Vec<usize> = (0..n).collect();
+	for i in (1..n).rev() {                  // Fisher-Yates, high->low
+		s = s.wrapping_add(0x9E3779B97F4A7C15);
+		let mut z = s;
+		z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+		z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+		z ^= z >> 31;
+		v.swap(i, (z % (i as u64 + 1)) as usize);
+	}
+	v
+}
+
+/// The ONE subsetting policy, for sigs and corpus alike: index 0 pinned,
+/// the rest drawn from a fixed permutation, sorted so source order is
+/// kept and counts nest. `count` INCLUDES the pin.
+fn subset(n: usize, count: usize) -> Vec<usize> {
+	if n == 0 {
 		return vec![];
 	}
-	let keep = ((n * perc) + 99) / 100;
-	let keep = keep.clamp(1, n);
-	(0..keep).map(|k| k * n / keep).collect()
+	let keep = count.clamp(1, n);
+	if keep >= n {
+		return (0..n).collect();
+	}
+	// Permute 1..n exactly as legacy does: shuffle n-1 elements and
+	// shift by one. Shuffling n would silently pick a different subset.
+	let mut idx: Vec<usize> = vec![0];
+	idx.extend(fixed_perm(n - 1, SCALE_PERM_SEED).into_iter()
+		.take(keep - 1).map(|i| i + 1));
+	idx.sort();
+	idx
+}
+
+/// subset() mapped over items.
+fn subset_items<T: Clone>(items: &[T], count: usize) -> Vec<T> {
+	subset(items.len(), count).into_iter()
+		.map(|i| items[i].clone()).collect()
+}
+
+/// Percentage -> count, the ONE conversion: everything downstream is in
+/// counts. perc 0 still yields 1 -- there is no empty run; C103's
+/// parse_args rejects 0 at the CLI so this floor is never load-bearing.
+fn count_of(n: usize, perc: usize) -> usize {
+	assert!(n > 0, "bora_data_driver: count_of on an empty set");
+	((n * perc + 99) / 100).clamp(1, n)
 }
 
 /// Reads src_path (skip #-comments, matching build_db's own needs-list
@@ -59,20 +103,20 @@ fn filter_needs_list(src_path: &str, keep_names: &HashSet<&str>,
 		panic!("bora_data_driver: write {}: {}", dst_path, e));
 }
 
-/// Deterministically thins src_dir's config to perc% of its
-/// signatures, writing a self-contained smaller config under dst_dir.
+/// Deterministically thins src_dir's config down to `count` signatures,
+/// writing a self-contained smaller config under dst_dir.
 /// src_dir must contain sig_file_name, main_dfa.dat, needs_ised.dat,
 /// needs_ised_igc.dat -- panics if any is missing. main_fanout.dat is
 /// copied verbatim if present (optional, substring-matched so it can't
 /// be meaningfully re-filtered). Returns the thinned sig file's path.
 pub fn create_smaller_config(src_dir: &str, sig_file_name: &str,
-	perc: usize, dst_dir: &str) -> String {
+	count: usize, dst_dir: &str) -> String {
 	fs::create_dir_all(dst_dir).unwrap_or_else(|e|
 		panic!("bora_data_driver: mkdir {}: {}", dst_dir, e));
 
 	let sig_lines = read_lines_nonblank(
 		&format!("{}/{}", src_dir, sig_file_name));
-	let keep_idx = deterministic_subset(sig_lines.len(), perc);
+	let keep_idx = subset(sig_lines.len(), count);
 	let kept_lines: Vec<&String> = keep_idx.iter()
 		.map(|&i| &sig_lines[i]).collect();
 	let keep_names: HashSet<&str> = kept_lines.iter()
@@ -277,6 +321,78 @@ pub const DLP: DatasetSpec = DatasetSpec {
 	min_dfa_subsigs: 0,
 };
 
+/// Config dir for a run: the real one when nothing is thinned, else the
+/// thinned copy under the plan dir. Pure -- creates nothing.
+#[allow(dead_code)] // read from B101 on
+fn config_dir_for(spec: &DatasetSpec, db_count: usize,
+	n_sigs: usize) -> String {
+	if db_count >= n_sigs {
+		spec.config_dir.to_string()
+	} else {
+		format!("{}/config", plan_dir(spec.name))
+	}
+}
+
+/// One part's role in a numa_num-way split.
+#[allow(dead_code)] // read from B101/C101 on
+pub(crate) struct PartRole {
+	/// This part runs the decider (the LAST part proves).
+	pub(crate) b_proves: bool,
+	/// Wait on the snark start flag (only when a sibling part folds).
+	pub(crate) b_wait_snark: bool,
+	/// Half-open range of GLOBAL job indices this part folds.
+	pub(crate) jobs: Range<usize>,
+}
+
+/// Part topology in one place. The asserts live here so every caller
+/// gets them and they stay unit-testable.
+pub(crate) fn part_role(part_id: usize, numa_num: usize,
+	num_jobs: usize) -> PartRole {
+	assert!(numa_num >= 1, "bora_data_driver: numa_num must be >= 1");
+	assert!(part_id < numa_num,
+		"bora_data_driver: part_id {} >= numa_num {}", part_id, numa_num);
+	assert!(num_jobs % numa_num == 0,
+		"bora_data_driver: num_jobs {} not a multiple of numa_num {}",
+		num_jobs, numa_num);
+	let per = num_jobs / numa_num;
+	let b_proves = part_id == numa_num - 1;
+	PartRole {
+		b_proves,
+		b_wait_snark: b_proves && numa_num > 1,
+		jobs: part_id * per..(part_id + 1) * per,
+	}
+}
+
+/// Sample `master` down to perc_samples% and split into num_jobs
+/// size-balanced bins. Inner half of plan_corpus, taking the already
+/// read list so it can be tested without a DatasetSpec.
+fn plan_corpus_from(master: &[String], perc_samples: usize,
+	num_jobs: usize) -> Vec<Vec<String>> {
+	use rayon::prelude::*;
+	assert!(!master.is_empty(), "bora_data_driver: empty corpus list");
+	let files = subset_items(master,
+		count_of(master.len(), perc_samples));
+	// Guard: split_paths_balanced treats an unreadable file as size 0,
+	// so an unextracted corpus would silently split by path order.
+	let proot = utils::os::proj_root();
+	let total: u64 = files.par_iter().map(|p|
+		fs::metadata(format!("{}/{}", proot, p))
+			.map(|m| m.len()).unwrap_or(0)).sum();
+	assert!(total > 0,
+		"bora_data_driver: corpus has zero total size (run DOWNLOAD.py?)");
+	split_paths_balanced(files, num_jobs)
+}
+
+/// Corpus bins for one run: concat the spec's master lists, sample, and
+/// split size-balanced into num_jobs bins.
+#[allow(dead_code)] // read from C101 on
+pub(crate) fn plan_corpus(spec: &DatasetSpec, perc_samples: usize,
+	num_jobs: usize) -> Vec<Vec<String>> {
+	let master: Vec<String> = spec.master_sources.iter()
+		.flat_map(|s| read_path_list(s)).collect();
+	plan_corpus_from(&master, perc_samples, num_jobs)
+}
+
 /// Q2 lookup-composition report, perc-driven. perc>=100 reproduces
 /// zkp_driver::tests_zkp_driver::collect_lookup_stats() exactly (same 3
 /// hardcoded dataset configs, no thinning). perc<100 builds each
@@ -322,8 +438,10 @@ pub fn collect_lookup_stats_adv(perc: usize, dest_path: &str) {
 		} else {
 			let tmp = format!("/tmp/bora/lkup_adv_{}_{}",
 				std::process::id(), name);
+			let n_sigs = read_lines_nonblank(
+				&format!("{}/{}", src_dir, sig_file_name)).len();
 			let sig_path = create_smaller_config(src_dir, sig_file_name,
-				perc, &tmp);
+				count_of(n_sigs, perc), &tmp);
 			(tmp.clone(), sig_path, Some(TmpConfigDir(PathBuf::from(tmp))))
 		};
 		let _tmp_guard = tmp_guard;
@@ -410,8 +528,8 @@ pub mod tests_bora_data_driver {
 		let src = fresh_tmp_dir("p100_src");
 		let dst = fresh_tmp_dir("p100_dst");
 		write_fixture(&src, 20, "main.dat", false);
-		create_smaller_config(src.to_str().unwrap(), "main.dat", 100,
-			dst.to_str().unwrap());
+		create_smaller_config(src.to_str().unwrap(), "main.dat",
+			count_of(20, 100), dst.to_str().unwrap());
 		let src_names = read_names(&src.join("main.dat"))
 			.iter().map(|l| l.split(';').next().unwrap().to_string())
 			.collect::<HashSet<_>>();
@@ -427,10 +545,10 @@ pub mod tests_bora_data_driver {
 		write_fixture(&src, 37, "main.dat", false);
 		let dst1 = fresh_tmp_dir("det_dst1");
 		let dst2 = fresh_tmp_dir("det_dst2");
-		create_smaller_config(src.to_str().unwrap(), "main.dat", 30,
-			dst1.to_str().unwrap());
-		create_smaller_config(src.to_str().unwrap(), "main.dat", 30,
-			dst2.to_str().unwrap());
+		create_smaller_config(src.to_str().unwrap(), "main.dat",
+			count_of(37, 30), dst1.to_str().unwrap());
+		create_smaller_config(src.to_str().unwrap(), "main.dat",
+			count_of(37, 30), dst2.to_str().unwrap());
 		let c1 = fs::read_to_string(dst1.join("main.dat")).unwrap();
 		let c2 = fs::read_to_string(dst2.join("main.dat")).unwrap();
 		assert_eq!(c1, c2);
@@ -441,8 +559,8 @@ pub mod tests_bora_data_driver {
 		let src = fresh_tmp_dir("subset_src");
 		let dst = fresh_tmp_dir("subset_dst");
 		write_fixture(&src, 50, "main.dat", true);
-		create_smaller_config(src.to_str().unwrap(), "main.dat", 20,
-			dst.to_str().unwrap());
+		create_smaller_config(src.to_str().unwrap(), "main.dat",
+			count_of(50, 20), dst.to_str().unwrap());
 
 		let sig_names: HashSet<String> =
 			read_names(&dst.join("main.dat")).iter()
@@ -462,7 +580,8 @@ pub mod tests_bora_data_driver {
 		let dst = fresh_tmp_dir("dlpname_dst");
 		write_fixture(&src, 10, "main_data_dlp_internationl.dat", false);
 		let out = create_smaller_config(src.to_str().unwrap(),
-			"main_data_dlp_internationl.dat", 50, dst.to_str().unwrap());
+			"main_data_dlp_internationl.dat", count_of(10, 50),
+			dst.to_str().unwrap());
 		assert!(out.ends_with("main_data_dlp_internationl.dat"));
 		assert!(Path::new(&out).exists());
 	}
@@ -477,7 +596,7 @@ pub mod tests_bora_data_driver {
 			.unwrap();
 		fs::write(src.join("main_dfa.dat"), "sig0").unwrap();
 		// needs_ised.dat / needs_ised_igc.dat deliberately absent.
-		create_smaller_config(src.to_str().unwrap(), "main.dat", 100,
+		create_smaller_config(src.to_str().unwrap(), "main.dat", 1,
 			dst.to_str().unwrap());
 	}
 
@@ -592,5 +711,139 @@ pub mod tests_bora_data_driver {
 		assert_eq!(DLP.min_avg_pats_per_subsig, 1);
 		assert_eq!(DLP.min_dfa_sigs, 0);
 		assert_eq!(DLP.min_dfa_subsigs, 0);
+	}
+
+	/// A103: fixed_perm is byte-identical to zkp_driver's two private
+	/// copies. Goldens generated by an independent Python transcription
+	/// of zkp_driver.rs:7295-7307, so a mis-transcription here fails.
+	#[test]
+	fn test_a103_fixed_perm_matches_legacy() {
+		assert_eq!(fixed_perm(8, SCALE_PERM_SEED),
+			vec![3, 4, 6, 2, 5, 7, 0, 1]);
+		assert_eq!(fixed_perm(12, SCALE_PERM_SEED),
+			vec![11, 6, 4, 0, 9, 3, 7, 2, 8, 10, 1, 5]);
+		assert_eq!(fixed_perm(0, SCALE_PERM_SEED), Vec::<usize>::new());
+		assert_eq!(fixed_perm(1, SCALE_PERM_SEED), vec![0]);
+	}
+
+	/// A103: count >= n reproduces the source exactly -- the property
+	/// that keeps the 100% lkup/full runs byte-identical to T13's.
+	#[test]
+	fn test_a103_subset_identity_at_full() {
+		let all: Vec<usize> = (0..40).collect();
+		assert_eq!(subset(40, 40), all);
+		assert_eq!(subset(40, 41), all);
+		assert_eq!(subset(40, usize::MAX), all);
+		assert_eq!(subset(0, 5), Vec::<usize>::new());
+	}
+
+	/// A103: pinned 0, sorted, exact length, and counts NEST.
+	#[test]
+	fn test_a103_subset_pins_sorts_and_nests() {
+		assert_eq!(subset(9, 1), vec![0]);
+		assert_eq!(subset(9, 4), vec![0, 4, 5, 7]);
+		assert_eq!(subset(9, 5), vec![0, 3, 4, 5, 7]);
+		let mut prev: Vec<usize> = vec![];
+		for c in 1..=200usize {
+			let s = subset(200, c);
+			assert_eq!(s.len(), c);
+			assert_eq!(s[0], 0, "index 0 must be pinned");
+			assert!(s.windows(2).all(|w| w[0] < w[1]), "sorted, distinct");
+			assert!(prev.iter().all(|p| s.contains(p)), "counts must nest");
+			assert_eq!(subset(200, c), s, "deterministic");
+			prev = s;
+		}
+	}
+
+	/// A103: subset(n, cnt+1) is exactly legacy DLP scale's rule set
+	/// ([pinned] + perm.take(cnt), zkp_driver.rs:7620) at every count.
+	#[test]
+	fn test_a103_subset_matches_legacy_dlp_scale() {
+		let n = 9861;                       // DLP's real rule-line count
+		let perm = fixed_perm(n - 1, SCALE_PERM_SEED);
+		for cnt in [1usize, 986, 4930, 9860] {
+			let mut legacy: Vec<usize> = vec![0];
+			legacy.extend(perm.iter().take(cnt).map(|&i| i + 1));
+			legacy.sort();
+			assert_eq!(subset(n, cnt + 1), legacy,
+				"neo count {} must equal legacy cnt {}", cnt + 1, cnt);
+		}
+	}
+
+	#[test]
+	fn test_a103_count_of() {
+		assert_eq!(count_of(9861, 100), 9861);
+		assert_eq!(count_of(9861, 10), 987);
+		assert_eq!(count_of(9861, 1), 99);
+		assert_eq!(count_of(9861, 0), 1);       // documented floor
+		assert_eq!(count_of(9861, 200), 9861);  // capped at n
+		assert_eq!(count_of(10, 25), 3);        // ceil, not floor
+		assert_eq!(count_of(1, 100), 1);
+	}
+
+	#[test]
+	#[should_panic(expected = "count_of on an empty set")]
+	fn test_a103_count_of_empty_panics() {
+		count_of(0, 50);
+	}
+
+	#[test]
+	fn test_a103_config_dir_for() {
+		assert_eq!(config_dir_for(&DLP, 9861, 9861), DLP.config_dir);
+		assert_eq!(config_dir_for(&DLP, 99, 9861),
+			"/tmp/bora/dlp_neo/config");
+	}
+
+	#[test]
+	fn test_a103_part_role() {
+		let r = part_role(0, 1, 8);
+		assert!(r.b_proves && !r.b_wait_snark);
+		assert_eq!(r.jobs, 0..8);
+		let r0 = part_role(0, 2, 8);
+		assert!(!r0.b_proves && !r0.b_wait_snark);
+		assert_eq!(r0.jobs, 0..4);
+		let r1 = part_role(1, 2, 8);
+		assert!(r1.b_proves && r1.b_wait_snark);
+		assert_eq!(r1.jobs, 4..8);
+		assert_eq!(part_role(0, 4, 8).jobs, 0..2);
+		assert_eq!(part_role(3, 4, 8).jobs, 6..8);
+	}
+
+	#[test]
+	#[should_panic(expected = "part_id 2 >= numa_num 2")]
+	fn test_a103_part_role_rejects_part_id() {
+		part_role(2, 2, 8);
+	}
+
+	#[test]
+	#[should_panic(expected = "not a multiple of")]
+	fn test_a103_part_role_rejects_indivisible() {
+		part_role(0, 3, 8);
+	}
+
+	/// A103: sampling + balanced split over a real 20-path master, so
+	/// the zero-size guard runs against files that actually exist.
+	#[test]
+	fn test_a103_plan_corpus_from() {
+		let master: Vec<String> = read_path_list(DLP.master_sources[0])
+			.into_iter().take(20).collect();
+		assert_eq!(master.len(), 20);
+		let bins = plan_corpus_from(&master, 50, 4);
+		assert_eq!(bins.len(), 4);
+		let flat: Vec<&String> = bins.iter().flatten().collect();
+		assert_eq!(flat.len(), 10);             // count_of(20, 50)
+		let kept: HashSet<&String> = flat.into_iter().collect();
+		assert_eq!(kept.len(), 10, "no duplicates across bins");
+		assert!(kept.contains(&master[0]), "file 0 pinned");
+		assert!(kept.iter().all(|p| master.contains(p)));
+		assert_eq!(plan_corpus_from(&master, 50, 4), bins);
+	}
+
+	#[test]
+	#[should_panic(expected = "zero total size")]
+	fn test_a103_plan_corpus_from_rejects_missing_files() {
+		let ghost: Vec<String> =
+			(0..4).map(|i| format!("data/no_such_file_{}", i)).collect();
+		plan_corpus_from(&ghost, 100, 2);
 	}
 }

@@ -30878,9 +30878,20 @@ Goal 3. A102
 	[a] design: data structure
 	[b] impl and test.
 
-Goal 4. continue to fix bug of measurement T501
+Goal 4. continue to fix bug of measurement T501-> DONE
 
-Goal 5. 
+Goal 5.  T502: make full_dlp_sample resemble real data
+	[a] had to make it fits the local box RAM constraint
+	[b] reduced set (but re-try the new set to reach 125GB limit)
+		later
+
+Goal 6. A103
+	[a] refinemet of framework for generating percentage controlled
+		samples
+	[b] impl and test DONE.
+
+Goal 7. B101
+
 	
 		
 

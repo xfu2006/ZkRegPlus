@@ -6333,17 +6333,7 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			utils::logger::LOG6 } else { utils::logger::LOG3 };
 		get_global_config().range2_bit = rc.range2_bit;
 		get_global_config().b_light_test = false;
-		//ZKR_FOLD_ONLY=1 stops after folding (mirrors dlp_hard): the
-		//real decider over 3 DLP circuits at ~3.3M cols OOMs a 512GB
-		//box, and circuit-cost work does not need it. Unset => 0 =>
-		//every existing caller is bit-identical.
-		get_global_config().b_folding_only = knob("ZKR_FOLD_ONLY", 0) != 0;
-		//ZKR_USE_NEO=1 / ZKR_NO_NEO pick the arm. The flag is passed
-		//INTO determine_config_aggr below, so it selects which arm the
-		//ladder is tuned FOR, not just which arm runs. Default false
-		//keeps the production (legacy) behavior unchanged.
-		get_global_config().clamav_cfg.b_use_discharge_neo =
-			super::neo_from_env(false);
+		get_global_config().b_folding_only = false;
 		//cap the entire snark proof-generation region at 1 concurrent
 		//decider (0 = auto: sum of n_par_snark + n_par_snark_cp).
 		get_global_config().n_par_snark_total = 1;
@@ -6483,6 +6473,153 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			&format!("{}/regex_pat/needs_ised_igc.dat", cd), mw, &cs_caps,
 			//cs_caps IS the tuned ladder (determine_config_aggr above), so
 			//the driver must NOT tune again.
+			false, DcMode::Off);
+	}
+
+	/// Measurement copy of full_dlp_sample (base 6c126ee1): ZKR_USE_NEO/
+	/// ZKR_NO_NEO pick the arm the LADDER IS TUNED FOR; fold-only by
+	/// default (a real decider at DLP shape does not fit a 125GB box).
+	#[test]
+	pub fn full_dlp_sample_meas(){
+		use crate::determine_config::caps_from_params_aggr;
+		use crate::stats_helper::{estimate_config_aggr,
+			estimated_to_capparams_aggr};
+		use folding_schemes::folding::foldpot::sigma_ir1cs
+			::LookupTableTwoCol as _;
+		let rc = crate::determine_config::RunCfg::from_env();
+		let proot = utils::os::proj_root();
+		if let Ok(lp) = std::env::var("ZKR_LOAD_LADDER") {
+			let lp_abs = format!("{}/{}", proot, lp);
+			assert!(std::path::Path::new(&lp_abs).exists(),
+				"ZKR_LOAD_LADDER points to a missing file: {}", lp_abs);
+		}
+		let cd = &rc.config_dir;
+		let mw = rc.chunk_len;
+		get_global_config().log_level = if std::env::var("ZKR_LOG6").is_ok() {
+			utils::logger::LOG6 } else { utils::logger::LOG3 };
+		get_global_config().range2_bit = rc.range2_bit;
+		get_global_config().b_light_test = false;
+		//ZKR_USE_NEO=1 / ZKR_NO_NEO pick the arm. The flag is read back
+		//into determine_config_aggr below, so it selects which arm the
+		//LADDER IS TUNED FOR, not just which arm runs.
+		let neo_on = super::neo_from_env(false);
+		get_global_config().clamav_cfg.b_use_discharge_neo = neo_on;
+		//fold-only is the DEFAULT here: the Groth16 decider at the
+		//500-file DLP ladder peaked 483GB on the canonical baseline.
+		//ZKR_FOLD_ONLY=0 re-enables decider + verify_batch for small
+		//scans -- that is the T503 vehicle.
+		let fold_only = knob("ZKR_FOLD_ONLY", 1) != 0;
+		get_global_config().b_folding_only = fold_only;
+		//cap the entire snark proof-generation region at 1 concurrent
+		//decider (0 = auto: sum of n_par_snark + n_par_snark_cp).
+		get_global_config().n_par_snark_total = 1;
+		get_global_config().b_read_cache = true;
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_write_snark_cache = false;
+		get_global_config().b_estimate_caps = true;
+		get_global_config().min_subsigs = 1;
+		get_global_config().min_basis_unique_states = 2;
+		get_global_config().min_basis_acc_states = 2;
+		get_global_config().min_basis_pats_in_trace = 4;
+		get_global_config().min_avg_pats_per_subsig = 1;
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
+		get_global_config().clamav_cfg.sde_rep_fanout_cap = rc.fanout_cap;
+		get_global_config().clamav_cfg.min_pm_word_len = 3;
+		//arm-suffixed artifacts so the two arms never clobber each other.
+		let arm = if neo_on { "neo" } else { "legacy" };
+		let cfg_out = match rc.config_out.strip_suffix(".json") {
+			Some(stem) => format!("{}.{}.json", stem, arm),
+			None => format!("{}.{}", rc.config_out, arm),
+		};
+		let rep_out = format!("{}.{}", rc.report_out, arm);
+		utils::logger::log(0, utils::logger::LOG1, &format!(
+			"full_dlp_sample_meas: arm={} fold_only={} scan={} ladder->{}",
+			arm, fold_only, rc.scan_file, cfg_out));
+		let cfg = data_processor::clamav::default_clamav_cfg();
+		let mut vlog = vec![];
+		let db = data_processor::clam_db::ClamavDB::<Fr>::build_or_load(
+			&cfg, &format!("{}/{}", cd, rc.sig_file),
+			&format!("{}/regex_pat/main_dfa.dat", cd),
+			&format!("{}/regex_pat/needs_ised.dat", cd),
+			&format!("{}/regex_pat/needs_ised_igc.dat", cd), &mut vlog,
+			&rc.cache_dir, true, true).expect("build db");
+		//discharge the sample -> vdata + words + infos (one pass).
+		let files = utils::os::read_lines(
+			&format!("{}/{}/{}", proot, cd, rc.scan_file));
+		let (mut vdata, mut words, mut infos) = (vec![], vec![], vec![]);
+		for fpath in &files{
+			let nibbles = utils::os::read_nibbles(
+				&format!("{}/{}", proot, fpath));
+			let f_nib: Vec<Fr> = nibbles.iter().map(|x| Fr::from(*x as u32))
+				.collect();
+			words.push(utils::data::pack_nibbles(&f_nib));
+			let (fdr, rec) =
+				data_processor::clamav::quick_discharge_file_by_crit_bag_pm(
+				fpath, &nibbles, &db.vec_sigs, &db.vec_sigs_no_critical_pat,
+				&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
+				&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
+				&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
+				&db.sig_to_id, mw, mw);
+			vdata.push(fdr);
+			infos.push(rec);
+		}
+		//(1) NEEDS distribution over the sample (stdout + sample report).
+		let rows: Vec<Vec<usize>> = vdata.iter()
+			.map(|r| r.chunk_peaks.needs_per_chunk.clone()).collect();
+		crate::needs_dist::print_needs_dist_rows(&rows, &files,
+			"data/debug/full_dlp_sample/config/needs_dist_meas.txt");
+		//(2) capacity ladder. ZKR_LOAD_LADDER=<repo-rel JSON> loads a
+		//saved ladder instead of tuning, so a tune-only run (ZKR_FSM_DIST)
+		//and a later fold can share one exact ladder.
+		let db_arc = std::sync::Arc::new(db);
+		let ladder: Vec<crate::determine_config::CapParams> =
+			if let Ok(lp) = std::env::var("ZKR_LOAD_LADDER") {
+				let lp_abs = format!("{}/{}", proot, lp);
+				utils::logger::log(0, utils::logger::LOG1, &format!(
+					"full_dlp_sample_meas: LOAD ladder {}", lp_abs));
+				crate::determine_config::load_ladder(&lp_abs)
+			} else {
+				let est = estimate_config_aggr::<Fr>(&vdata, &*db_arc,
+					&[100], &mut vlog);
+				let seed = estimated_to_capparams_aggr(&est[0], mw,
+					rc.range2_bit, 3);
+				let total_word_n: usize =
+					words.iter().map(|w| w.len()).sum();
+				let lkup_len = db_arc.lkup.get_size();
+				let n_threads = std::env::var("ZKR_DC_THREADS").ok()
+					.and_then(|s| s.parse().ok()).unwrap_or(4);
+				let (lad, hist) = super::determine_config_aggr::<Fr,C1,CS1>(
+					read_global_config().clamav_cfg.b_use_discharge_neo,
+					db_arc.clone(), &words, &infos, &vdata, seed, mw,
+					lkup_len, total_word_n, rc.k_max, rc.n_buckets, 60,
+					n_threads, 8, rc.peel_pct)
+					.expect("determine_config_aggr");
+				crate::determine_config::save_ladder(&lad,
+					&format!("{}/{}", proot, cfg_out))
+					.expect("save ladder");
+				utils::logger::log(0, utils::logger::LOG1, &format!(
+					"full_dlp_sample_meas ladder[{}]: {} rungs, hist={:?}",
+					arm, lad.len(), hist));
+				lad
+			};
+		//ZKR_FSM_DIST: tune-only, skip the fold. This is the "tune wide"
+		//mode -- no fold, so 500 files fit on a 125GB box.
+		if std::env::var("ZKR_FSM_DIST").is_ok() { return; }
+		//fold: load own DB from cache (avoid 2x RAM); stats + cs1e.
+		drop(db_arc);
+		get_global_config().b_estimate_caps = false;
+		get_global_config().aggr_needs_subsigs =
+			ladder.first().map(|c| c.aggr_needs_subsigs).unwrap_or(0);
+		let cs_caps: Vec<_> = ladder.iter().map(caps_from_params_aggr)
+			.collect();
+		let scan = vec![format!("{}/{}", cd, rc.scan_file)];
+		zkp_driver_adv_aggr::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,
+			CS1E,S>(
+			0, &format!("{}/{}", cd, rc.sig_file), scan, &rep_out,
+			false, &rc.cache_dir, &format!("{}/regex_pat/main_dfa.dat", cd),
+			&format!("{}/regex_pat/needs_ised.dat", cd),
+			&format!("{}/regex_pat/needs_ised_igc.dat", cd), mw, &cs_caps,
+			//cs_caps IS the tuned ladder above, so no re-tune here.
 			false, DcMode::Off);
 	}
 
