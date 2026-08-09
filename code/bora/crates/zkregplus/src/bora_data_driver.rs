@@ -100,6 +100,95 @@ pub fn create_smaller_config(src_dir: &str, sig_file_name: &str,
 	dst_sig
 }
 
+/// Plan dir for a dataset: derived state only (thinned config, job
+/// manifests, ladder.json, PLAN_READY). Part 0 wipes it every run.
+pub(crate) fn plan_dir(name: &str) -> String {
+	format!("/tmp/bora/{}_neo", name)
+}
+
+/// Reads a newline path list; transparently extracts a .tgz/.tar.gz via
+/// `tar -xzO` (no temp file left behind). list_path is repo-relative.
+/// Port of zkp_driver's helper, which is cfg(test)-only.
+pub(crate) fn read_path_list(list_path: &str) -> Vec<String> {
+	let proot = utils::os::proj_root();
+	let abs = format!("{}/{}", proot, list_path);
+	let raw: Vec<String> =
+		if list_path.ends_with(".tgz") || list_path.ends_with(".tar.gz") {
+			let out = std::process::Command::new("tar")
+				.args(["-xzO", "-f", &abs]).output()
+				.expect("tar -xzO path list");
+			String::from_utf8_lossy(&out.stdout).lines()
+				.map(|l| l.trim().to_string()).collect()
+		} else {
+			utils::os::read_lines(&abs)
+		};
+	// Drop blanks and dotfile entries (e.g. a swept-in .gitignore) so
+	// discharge never panics opening a non-email path.
+	raw.into_iter()
+		.filter(|l| !l.is_empty())
+		.filter(|l| l.rsplit('/').next()
+			.map_or(false, |n| !n.starts_with('.')))
+		.collect()
+}
+
+/// Deterministic size-balanced split of a path list into num_jobs lists.
+/// Sort by (-size, path) then greedy-LPT into the smallest bin, so the
+/// same (list, num_jobs) yields identical bins each run.
+pub(crate) fn split_paths_balanced(paths: Vec<String>, num_jobs: usize)
+	-> Vec<Vec<String>> {
+	use rayon::prelude::*;
+	let proot = utils::os::proj_root();
+	let mut sized: Vec<(u64, String)> = paths.par_iter().map(|p| {
+		let sz = std::fs::metadata(format!("{}/{}", proot, p))
+			.map(|m| m.len()).unwrap_or(0);
+		(sz, p.clone())
+	}).collect();
+	sized.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+	let n = num_jobs.max(1);
+	let (mut bins, mut tot) = (vec![vec![]; n], vec![0u64; n]);
+	for (sz, p) in sized {
+		let j = (0..n).min_by_key(|&i| (tot[i], i)).unwrap();
+		bins[j].push(p);
+		tot[j] += sz;
+	}
+	bins
+}
+
+/// Writes bin i to <jobs_dir>/job_<i>.dat (newline-joined), returning the
+/// paths in job order. Stale job_<n>.dat from an earlier plan are removed
+/// first. The index IS the global job id, parsed back by load_files.
+pub(crate) fn write_job_manifests(jobs_dir: &str, bins: &[Vec<String>])
+	-> Vec<String> {
+	// must be absolute: load_files passes absolute paths through but
+	// resolves relative ones against proj_root, and the plan dir is /tmp.
+	assert!(Path::new(jobs_dir).is_absolute(),
+		"bora_data_driver: jobs_dir must be absolute: {}", jobs_dir);
+	fs::create_dir_all(jobs_dir).unwrap_or_else(|e|
+		panic!("bora_data_driver: mkdir {}: {}", jobs_dir, e));
+	// Drop only job_<n>.dat, never the whole dir: jobs_dir is caller
+	// supplied and a remove_dir_all on a mistaken path is unrecoverable.
+	// The name test mirrors zkp_driver's dlp_job_idx parse exactly, so
+	// what we delete is precisely what the driver reads back as a job.
+	for ent in fs::read_dir(jobs_dir).unwrap_or_else(|e|
+		panic!("bora_data_driver: read_dir {}: {}", jobs_dir, e)) {
+		let p = ent.expect("bora_data_driver: dir entry").path();
+		let stale = p.file_name().and_then(|s| s.to_str())
+			.and_then(|s| s.strip_prefix("job_"))
+			.and_then(|s| s.strip_suffix(".dat"))
+			.map_or(false, |s| s.parse::<usize>().is_ok());
+		if stale {
+			fs::remove_file(&p).unwrap_or_else(|e|
+				panic!("bora_data_driver: rm {:?}: {}", p, e));
+		}
+	}
+	bins.iter().enumerate().map(|(i, b)| {
+		let p = format!("{}/job_{}.dat", jobs_dir, i);
+		fs::write(&p, b.join("\n")).unwrap_or_else(|e|
+			panic!("bora_data_driver: write {}: {}", p, e));
+		p
+	}).collect()
+}
+
 /// Q2 lookup-composition report, perc-driven. perc>=100 reproduces
 /// zkp_driver::tests_zkp_driver::collect_lookup_stats() exactly (same 3
 /// hardcoded dataset configs, no thinning). perc<100 builds each
@@ -302,5 +391,72 @@ pub mod tests_bora_data_driver {
 		// needs_ised.dat / needs_ised_igc.dat deliberately absent.
 		create_smaller_config(src.to_str().unwrap(), "main.dat", 100,
 			dst.to_str().unwrap());
+	}
+
+	/// A101: the plan dir literal lives in exactly one place, and can
+	/// never point at the shared /tmp/bora framework dir itself.
+	#[test]
+	fn test_a101_plan_dir() {
+		let d = plan_dir("dlp");
+		assert_eq!(d, "/tmp/bora/dlp_neo");
+		assert!(Path::new(&d).is_absolute());
+		assert!(d.starts_with("/tmp/bora/") && d.len() > "/tmp/bora/".len(),
+			"plan dir must be a strict subdir of /tmp/bora: {}", d);
+		assert_eq!(plan_dir("clam"), "/tmp/bora/clam_neo");
+	}
+
+	/// A101: the recomputed split must reproduce the committed jobs8/
+	/// manifests bin-for-bin -- this is what licenses M102 to recompute
+	/// the split instead of shipping job_i.dat files.
+	#[test]
+	fn test_a101_split_matches_jobs8() {
+		let cd = "data/paper_data/dlp/cfg";
+		let t = std::time::Instant::now();
+		let all = read_path_list(
+			&format!("{}/jobs/final_enron_list.txt.tgz", cd));
+		assert!(!all.is_empty(), "empty corpus list");
+		let n = all.len();
+		let bins = split_paths_balanced(all, 8);
+		println!("A101 split: {} files -> 8 bins in {:?}", n, t.elapsed());
+		let mut total = 0;
+		for i in 0..8 {
+			let want = read_path_list(
+				&format!("{}/jobs/jobs8/job_{}.dat", cd, i));
+			assert!(!want.is_empty(), "committed job_{}.dat is empty", i);
+			assert_eq!(bins[i], want, "bin {} differs from job_{}.dat", i, i);
+			total += want.len();
+		}
+		assert_eq!(total, n, "bins do not cover the corpus exactly");
+	}
+
+	/// A101: manifest writer -- names carry the global job id, missing
+	/// dirs are created, and a re-plan overwrites in place.
+	#[test]
+	fn test_a101_write_job_manifests() {
+		let dir = fresh_tmp_dir("manifests").join("jobs");
+		let jd = dir.to_str().unwrap().to_string();
+		assert!(!dir.exists(), "test precondition: jobs dir absent");
+		let bins = vec![
+			vec!["a/1".to_string(), "a/2".to_string()],
+			vec![],
+			vec!["c/3".to_string()],
+		];
+		let paths = write_job_manifests(&jd, &bins);
+		assert_eq!(paths.len(), 3);
+		for (i, p) in paths.iter().enumerate() {
+			assert!(Path::new(p).is_absolute());
+			assert_eq!(*p, format!("{}/job_{}.dat", jd, i));
+			assert_eq!(fs::read_to_string(p).unwrap(), bins[i].join("\n"));
+		}
+		// re-plan with FEWER jobs: stale job_2.dat must be gone, and an
+		// unrelated neighbour in the plan dir must survive.
+		fs::write(format!("{}/ladder.json", jd), "{}").unwrap();
+		let bins2 = vec![vec!["z/9".to_string()], vec![]];
+		let again = write_job_manifests(&jd, &bins2);
+		assert_eq!(again.len(), 2);
+		assert_eq!(fs::read_to_string(&again[0]).unwrap(), "z/9");
+		assert!(!Path::new(&paths[2]).exists(), "stale job_2.dat kept");
+		assert!(Path::new(&format!("{}/ladder.json", jd)).exists(),
+			"unrelated plan file deleted");
 	}
 }

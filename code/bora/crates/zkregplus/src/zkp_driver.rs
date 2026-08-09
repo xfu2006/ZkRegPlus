@@ -6333,7 +6333,17 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 			utils::logger::LOG6 } else { utils::logger::LOG3 };
 		get_global_config().range2_bit = rc.range2_bit;
 		get_global_config().b_light_test = false;
-		get_global_config().b_folding_only = false;
+		//ZKR_FOLD_ONLY=1 stops after folding (mirrors dlp_hard): the
+		//real decider over 3 DLP circuits at ~3.3M cols OOMs a 512GB
+		//box, and circuit-cost work does not need it. Unset => 0 =>
+		//every existing caller is bit-identical.
+		get_global_config().b_folding_only = knob("ZKR_FOLD_ONLY", 0) != 0;
+		//ZKR_USE_NEO=1 / ZKR_NO_NEO pick the arm. The flag is passed
+		//INTO determine_config_aggr below, so it selects which arm the
+		//ladder is tuned FOR, not just which arm runs. Default false
+		//keeps the production (legacy) behavior unchanged.
+		get_global_config().clamav_cfg.b_use_discharge_neo =
+			super::neo_from_env(false);
 		//cap the entire snark proof-generation region at 1 concurrent
 		//decider (0 = auto: sum of n_par_snark + n_par_snark_cp).
 		get_global_config().n_par_snark_total = 1;

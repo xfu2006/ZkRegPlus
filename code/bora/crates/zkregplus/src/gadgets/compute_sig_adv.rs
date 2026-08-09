@@ -1614,13 +1614,17 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 			c
 		};
 		let (dummy_sq_inp_cs, dummy_sq_inp_igc) = if b_neo_aggr {
-			// length MUST equal the real fwd_seed (= |subsig_ids|+1,
-			// the neo universe new_aggr seeds PLUS the leading 0
-			// entry): compute_sig's mtbl_seed column length = seed_enc
-			// length, so a dummy/real size mismatch here makes the
-			// main decider snark fail to verify.
-			(mk_fwd_seed(store_steps_cs.subsig_ids.len() + 1),
-			 mk_fwd_seed(store_steps_igc.subsig_ids.len() + 1))
+			// length MUST equal the real fwd_seed that new_aggr emits:
+			// K seed slots (subsig_nat is resized to k_slots =
+			// capacity.subsigs) PLUS the leading 0 entry, i.e. K+1.
+			// compute_sig's mtbl_seed column length = seed_enc length,
+			// so a dummy/real size mismatch here makes the main
+			// decider snark fail to verify. Sizing this from the DB
+			// subsig universe instead made the dummy ~11000x the real
+			// column on DLP (2308943 vs 202) -- 92.8% of the neo
+			// statement.
+			(mk_fwd_seed(dis_cap_cs.subsigs + 1),
+			 mk_fwd_seed(dis_cap_igc.subsigs + 1))
 		} else {
 			let sq_inp_size_cs = StepQueue::<F>::vec_size(
 				&StepQueueType::ResSmall, &dis_cap_cs).0;

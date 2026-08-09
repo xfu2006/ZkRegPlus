@@ -30865,8 +30865,14 @@ Goal 7. T406
 	[c] perf test
 
 Sunday 08/09/2026
-Goal 1. TODO: think about real cuts for aggr-easy for dlp
+Goal 1. think about real cuts for aggr-easy for dlp
 	[a] think about ideas.
+	[b] fix seeding error
+	[c] veriy_batch bug clear.
+
+Goal 2. M102 
+	[a] update working rules
+	[b] 
 
 Goal 6. full_dlp_neo
 	[a] design discussion first
