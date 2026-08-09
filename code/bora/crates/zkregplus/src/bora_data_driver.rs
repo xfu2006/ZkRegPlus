@@ -8,25 +8,40 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use ark_bn254::{Fr, G1Projective};
+use ark_bn254::{constraints::{GVar, PairingVar}, Bn254, Fr,
+	G1Projective, G2Projective};
+use ark_groth16::Groth16;
+use ark_grumpkin::{constraints::GVar as GVar2,
+	Projective as Projective2};
 use data_processor::clam_db::ClamavDB;
 use data_processor::clamav::{default_clamav_cfg,
 	quick_discharge_file_by_crit_bag_pm};
 use data_processor::discharge_proof::FailDischargeRecord;
-use folding_schemes::commitment::pedersen::Pedersen;
+use folding_schemes::commitment::{kzg::KZG, pedersen::Pedersen};
 use folding_schemes::folding::foldpot::sigma_ir1cs::WordInfo;
 use utils::consts::{get_global_config, read_global_config,
 	ClamavApproxConfig};
 
-use crate::determine_config::CapParams;
+use crate::determine_config::{apply_caperr_bumps,
+	caps_from_params_aggr, caps_from_params_general, probe_catching,
+	CapParams};
 use crate::stats_helper::{estimate_config_aggr,
 	estimated_to_capparams_aggr};
 use crate::zkp_driver::{determine_config_aggr,
-	determine_config_non_aggr, fmt_cross_rollup, fmt_dfa_cross};
+	determine_config_non_aggr, fmt_cross_rollup, fmt_dfa_cross,
+	zkp_driver_adv, zkp_driver_adv_aggr, DcMode};
 
-// Tuner instantiation, matching zkp_driver's (zkp_driver.rs:2396/2400).
+// Driver instantiation, matching zkp_driver.rs:2396-2406 (those
+// aliases live in its cfg(test) module, unreachable from here).
 type C1 = G1Projective;
 type CS1 = Pedersen<C1>;
+type C2G2 = G2Projective;
+type C2 = Projective2;
+type GC1 = GVar;
+type GC2 = GVar2;
+type CS1E = KZG<'static, Bn254>;
+type CS2 = Pedersen<C2>;
+type S = Groth16<Bn254>;
 
 /// RAII guard: removes its temp config dir on drop, even on panic.
 struct TmpConfigDir(PathBuf);
@@ -464,6 +479,9 @@ fn apply_spec_config(spec: &DatasetSpec, b_light_test: bool,
 	g.b_read_cache = true;
 	g.b_read_snark_cache = false;
 	g.b_write_snark_cache = false;
+	// Zeroed explicitly: both drivers read it, and a stale true would
+	// silently turn the fold into a no-op dry run.
+	g.b_dryrun_after_capcheck = false;
 	// Both written EXPLICITLY rather than left at their defaults: the
 	// config is process-wide, and the CapErr share bump only ever
 	// ratchets UP (zkp_driver.rs:2235), so a stale pin or a stale high
@@ -482,15 +500,22 @@ fn apply_spec_config(spec: &DatasetSpec, b_light_test: bool,
 fn build_fresh_db(spec: &DatasetSpec, cfg_dir: &str) -> Arc<ClamavDB<Fr>> {
 	let cfg = default_clamav_cfg();
 	let mut vlog = vec![];
-	Arc::new(ClamavDB::<Fr>::build_or_load(&cfg,
-		&format!("{}/{}", cfg_dir, spec.sig_file),
-		&format!("{}/main_dfa.dat", cfg_dir),
-		&format!("{}/needs_ised.dat", cfg_dir),
-		&format!("{}/needs_ised_igc.dat", cfg_dir),
-		&mut vlog, spec.db_cache_dir, false, true)
+	let [sig, dfa, ised, ised_igc] = cfg_paths(spec, cfg_dir);
+	Arc::new(ClamavDB::<Fr>::build_or_load(&cfg, &sig, &dfa, &ised,
+		&ised_igc, &mut vlog, spec.db_cache_dir, false, true)
 		.unwrap_or_else(|e| panic!(
 			"bora_data_driver: build {} db from {}: {:?}",
 			spec.name, cfg_dir, e)))
+}
+
+/// The four config file paths for a run: sig, main_dfa, needs_ised,
+/// needs_ised_igc. Shared by the DB build and the fold reload so the
+/// two can never drift apart.
+fn cfg_paths(spec: &DatasetSpec, cfg_dir: &str) -> [String; 4] {
+	[format!("{}/{}", cfg_dir, spec.sig_file),
+		format!("{}/main_dfa.dat", cfg_dir),
+		format!("{}/needs_ised.dat", cfg_dir),
+		format!("{}/needs_ised_igc.dat", cfg_dir)]
 }
 
 /// Foldpot's canonical full-length 0-pad word (driver.rs:2900):
@@ -680,6 +705,96 @@ pub(crate) fn build_and_tune(spec: &DatasetSpec, db_count: usize,
 	tune(spec, &db, &ts, num_circs)
 }
 
+/// Folds `manifests` (absolute job_<i>.dat paths) with pre-tuned caps
+/// via the unmodified legacy driver for the spec's arm. DcMode::Off:
+/// the driver must not tune again.
+#[allow(dead_code)] // called from C101/C102 on
+pub(crate) fn fold(spec: &DatasetSpec, cfg_dir: &str,
+	manifests: &[String], caps: &[CapParams], num_circs: usize,
+	b_check_lkup: bool) {
+	// caps may arrive from disk (load_ladder, part > 0), so nothing
+	// upstream guarantees these.
+	assert!(read_global_config().clamav_cfg.b_use_discharge_neo,
+		"bora_data_driver: apply_spec_config before fold");
+	assert!(!caps.is_empty(), "bora_data_driver: fold with empty caps");
+	let [sig, dfa, ised, ised_igc] = cfg_paths(spec, cfg_dir);
+	{
+		// One write scope; nothing inside may lock GLOBAL_CONFIG again.
+		let mut g = get_global_config();
+		g.b_estimate_caps = false;
+		if spec.b_aggressive {
+			g.aggr_needs_subsigs = caps[0].aggr_needs_subsigs;
+		}
+	}
+	// Interleave the shared DB/ACDFA pages across NUMA nodes: the DB
+	// the job threads hammer is reloaded inside the driver, after this
+	// call. No-op unless multi-node + ZKR_NUMA=perjob.
+	folding_schemes::folding::foldpot::numa::set_interleave_all();
+	if spec.b_aggressive {
+		let cs_caps: Vec<_> =
+			caps.iter().map(caps_from_params_aggr).collect();
+		zkp_driver_adv_aggr::<Bn254, PairingVar, C2G2, C1, GC1, C2, GC2,
+			CS1, CS2, CS1E, S>(0, &sig, manifests.to_vec(), "", false,
+			spec.db_cache_dir, &dfa, &ised, &ised_igc, spec.chunk_len,
+			&cs_caps, b_check_lkup, DcMode::Off);
+	} else {
+		assert_eq!(caps.len(), 1,
+			"bora_data_driver: non-aggr fold wants 1 rung, got {}",
+			caps.len());
+		assert_eq!(spec.vec_decrease_level.len(), num_circs - 1,
+			"bora_data_driver: vec_decrease_level len != num_circs-1");
+		let (cp, sed, dfa_cap, cp_igc, sed_igc) =
+			caps_from_params_general(&caps[0]);
+		zkp_driver_adv::<Bn254, PairingVar, C2G2, C1, GC1, C2, GC2,
+			CS1, CS2, CS1E, S>(0, &sig, manifests.to_vec(), "", false,
+			spec.db_cache_dir, &dfa, &ised, &ised_igc, spec.chunk_len,
+			&cp, &sed, &dfa_cap, &cp_igc, &sed_igc,
+			&spec.vec_decrease_level.to_vec(), num_circs, b_check_lkup,
+			DcMode::Off);
+	}
+}
+
+/// CapErr bump-retry around one fold attempt (port of the legacy scale
+/// loop, zkp_driver.rs:7900-7934), generic over the arm. Non-CapErr
+/// panics are a HARD STOP; CapErrs bump `p` and retry, at most 30x.
+#[allow(dead_code)] // called from C102 on
+pub(crate) fn retry_caperr(spec: &DatasetSpec, p: &mut CapParams,
+	mut f: impl FnMut(&CapParams)) {
+	// RULE 1: only scale routes CapErrs through catchable unwinding.
+	// Without the flag the first CapErr is a fail-fast abort that
+	// never reaches probe_catching below.
+	assert!(read_global_config().b_scale_catch_caperr,
+		"bora_data_driver: retry_caperr needs b_scale_catch_caperr");
+	let mut tries = 0u32;
+	loop {
+		utils::consts::reset_sat(); // isolate THIS try's saturation
+		let res = probe_catching(|| {
+			f(p);
+			Ok::<(), Vec<(String, usize)>>(())
+		});
+		match res {
+			Ok(Ok(())) => break,
+			Ok(Err(errs)) => {
+				let (changed, unmapped) =
+					apply_caperr_bumps(p, spec.b_aggressive, &errs);
+				tries += 1;
+				utils::logger::emit_stdout(format!(
+					"[{}] fold CapErr bump try {}: {:?}",
+					spec.name, tries, errs));
+				assert!(changed && unmapped.is_empty(),
+					"bora_data_driver: {} CapErr retry stuck \
+					 (unmapped={:?}): {:?}", spec.name, unmapped, errs);
+				assert!(tries <= 30,
+					"bora_data_driver: {} fold: >30 CapErr bumps",
+					spec.name);
+			}
+			Err(msg) => panic!(
+				"bora_data_driver: {} fold: non-CapErr panic (HARD \
+				 STOP): {}", spec.name, msg),
+		}
+	}
+}
+
 /// Q2 lookup-composition report, perc-driven. perc>=100 reproduces
 /// zkp_driver::tests_zkp_driver::collect_lookup_stats() exactly (same 3
 /// hardcoded dataset configs, no thinning). perc<100 builds each
@@ -771,6 +886,41 @@ pub mod tests_bora_data_driver {
 	fn cfg_lock() -> std::sync::MutexGuard<'static, ()> {
 		static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 		LOCK.lock().unwrap_or_else(|e| e.into_inner())
+	}
+
+	/// Sets b_scale_catch_caperr for a retry test; restores on drop,
+	/// including on the should_panic unwinds.
+	struct CatchFlag;
+	impl CatchFlag {
+		fn on() -> CatchFlag {
+			get_global_config().b_scale_catch_caperr = true;
+			CatchFlag
+		}
+	}
+	impl Drop for CatchFlag {
+		fn drop(&mut self) {
+			get_global_config().b_scale_catch_caperr = false;
+		}
+	}
+
+	/// Minimal valid CapParams for the retry tests (values arbitrary;
+	/// only the bumped fields are asserted).
+	fn tiny_caps() -> CapParams {
+		CapParams {
+			cp_basis_unique_states: 2, cp_subsigs: 2, cp_avg_pats: 1,
+			subsigs: 2, avg_pats_per_subsig: 1,
+			avg_active_pats_per_subsig: 1, basis_pats_in_trace: 4,
+			perc_pats_expansion_rate: 16, prod_pats_expansion: 0,
+			qm_real_rows: 2, sigs_sed: 1, perc_comp_subsigs: 100,
+			basis_unique_states: 2, basis_acc_states: 2,
+			subsigs_igc: 1, avg_active_pats_per_subsig_igc: 1,
+			basis_pats_in_trace_igc: 8,
+			perc_pats_expansion_rate_igc: 64,
+			prod_pats_expansion_igc: 0, qm_real_rows_igc: 2,
+			basis_acc_states_igc: 2, basis_unique_states_igc: 4,
+			dfa_sigs: 0, dfa_subsigs: 0, aggr_needs_subsigs: 0,
+			max_word_len: 64, acdfa_state_part_bits: 4,
+		}
 	}
 
 	fn fresh_tmp_dir(tag: &str) -> PathBuf {
@@ -1172,6 +1322,7 @@ pub mod tests_bora_data_driver {
 			g.b_read_cache = false;
 			g.b_read_snark_cache = true;
 			g.b_write_snark_cache = true;
+			g.b_dryrun_after_capcheck = true;   // would no-op the fold
 			g.b_pin_lkup_share = true;      // the legacy pin
 			g.perc_lkup_share = 42;         // a stale ratchet value
 			g.snark_wait_flag = Some("/tmp/stale".to_string());
@@ -1206,6 +1357,7 @@ pub mod tests_bora_data_driver {
 		assert!(c.b_read_cache, "the fold reloads the DB from cache");
 		assert!(!c.b_read_snark_cache);
 		assert!(!c.b_write_snark_cache);
+		assert!(!c.b_dryrun_after_capcheck);
 		assert!(!c.b_pin_lkup_share, "the legacy pin must NOT be copied");
 		assert_eq!(c.perc_lkup_share, 1, "ratchet floor, not the stale 42");
 		drop(c);
@@ -1293,5 +1445,79 @@ pub mod tests_bora_data_driver {
 		assert_eq!(p.max_word_len, spec.chunk_len);
 		assert!(p.subsigs >= 1 && p.avg_pats_per_subsig >= 1);
 		assert!(p.basis_unique_states >= 2 && p.basis_acc_states >= 2);
+	}
+
+	#[test]
+	fn test_b103_retry_caperr_bumps() {
+		use std::cell::{Cell, RefCell};
+		let _lock = cfg_lock();
+		let _catch = CatchFlag::on();
+		// Real emission shapes (discharge_adv.rs:1178, fsm_adv.rs:1336,
+		// discharge_adv.rs:2531), in the Debug form the parser expects.
+		let e1 = "advice: CapErr([(\"dis_adv::prod_pats_expansion, \
+			StepQueue b_igc: false\", 7777)])";
+		let e2 = "advice: CapErr([(\"fsm_adv::basis_pats_in_trace for \
+			loc_state_pat_tbl, b_igc: true\", 55), \
+			(\"dis_adv::subsigs\", 40)])";
+		let seen: RefCell<Vec<CapParams>> = RefCell::new(vec![]);
+		let mut p = tiny_caps();
+		retry_caperr(&DLP, &mut p, |c| {
+			seen.borrow_mut().push(c.clone());
+			match seen.borrow().len() {
+				1 => panic!("{}", e1),
+				2 => panic!("{}", e2),
+				_ => {}
+			}
+		});
+		let seen = seen.into_inner();
+		assert_eq!(seen.len(), 3, "two CapErr rounds then success");
+		// each round observed the previous round's bumps.
+		assert_eq!(seen[1].prod_pats_expansion, 7777);
+		assert_eq!(seen[2].basis_pats_in_trace_igc, 55);
+		assert_eq!(p.prod_pats_expansion, 7777);
+		assert_eq!(p.basis_pats_in_trace_igc, 55);
+		assert_eq!(p.subsigs, 41, "+1 comp_sig dummy entry");
+		assert_eq!(p.aggr_needs_subsigs, 40, "b_aggr routing (DLP)");
+		// first-try success: exactly one call, p untouched.
+		let p0 = p.clone();
+		let n = Cell::new(0usize);
+		retry_caperr(&DLP, &mut p, |_| n.set(n.get() + 1));
+		assert_eq!(n.get(), 1);
+		assert_eq!(p, p0);
+	}
+
+	#[test]
+	#[should_panic(expected = "non-CapErr")]
+	fn test_b103_retry_caperr_hard_stop() {
+		let _lock = cfg_lock();
+		let _catch = CatchFlag::on();
+		let mut p = tiny_caps();
+		retry_caperr(&DLP, &mut p, |_| panic!("plain fold crash"));
+	}
+
+	#[test]
+	#[should_panic(expected = "stuck")]
+	fn test_b103_retry_caperr_stuck_unmapped() {
+		let _lock = cfg_lock();
+		let _catch = CatchFlag::on();
+		let mut p = tiny_caps();
+		retry_caperr(&DLP, &mut p, |_| panic!(
+			"advice: CapErr([(\"no_such_gadget::mystery_cap\", 9)])"));
+	}
+
+	#[test]
+	#[should_panic(expected = ">30")]
+	fn test_b103_retry_caperr_over_30() {
+		use std::cell::Cell;
+		let _lock = cfg_lock();
+		let _catch = CatchFlag::on();
+		let mut p = tiny_caps();
+		let n = Cell::new(0usize);
+		retry_caperr(&DLP, &mut p, |_| {
+			n.set(n.get() + 1);
+			// requirement grows every try so `changed` stays true.
+			panic!("advice: CapErr([(\"dis_adv::prod_pats_expansion, \
+				StepQueue b_igc: false\", {})])", 1000 + n.get());
+		});
 	}
 }

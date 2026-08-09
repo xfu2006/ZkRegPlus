@@ -27,6 +27,9 @@ pub struct RungSpec {
     pub max_acc_states: usize,
     pub max_pats_in_trace: usize,
     pub max_cp_unique_states: usize,
+    // per-rung max forward-queue demand (band envelope max). Sizes
+    // qm_real_rows in assemble_ladder; 0 => no per-chunk data.
+    pub max_fwd: usize,
 }
 
 #[inline]
@@ -173,6 +176,7 @@ pub fn plan_rungs(prod: &[usize], universe: &[usize], fwd: &[usize],
             max_acc_states: b.acc,
             max_pats_in_trace: b.pats,
             max_cp_unique_states: b.cpu,
+            max_fwd: b.fwd,
         }
     }).collect();
     // cost(i) = per-chunk buffer rows = max(size_pat, forward-queue rows).
@@ -226,6 +230,7 @@ pub fn plan_rungs(prod: &[usize], universe: &[usize], fwd: &[usize],
                 max_acc_states: mx(|b| b.m_acc),
                 max_pats_in_trace: mx(|b| b.m_pats),
                 max_cp_unique_states: mx(|b| b.m_cpu),
+                max_fwd: mf,
             }
         } else {
             specs[end - 1].clone()                          // legacy / top rung
