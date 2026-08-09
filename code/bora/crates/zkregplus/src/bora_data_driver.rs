@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use ark_bn254::Fr;
 use data_processor::clam_db::ClamavDB;
@@ -391,6 +392,87 @@ pub(crate) fn plan_corpus(spec: &DatasetSpec, perc_samples: usize,
 	let master: Vec<String> = spec.master_sources.iter()
 		.flat_map(|s| read_path_list(s)).collect();
 	plan_corpus_from(&master, perc_samples, num_jobs)
+}
+
+/// Snark-decider release gate. MUST match NEW_PAPER_DATA.py's FLAG
+/// (scripts/NEW_PAPER_DATA.py:201-202).
+const SNARK_WAIT_FLAG: &str = "/tmp/snark_start/flag";
+
+/// The ONE GlobalConfig writer for every neo run (full x3 and scale x2).
+/// neo is forced ON unconditionally; the part topology is COPIED from
+/// `role`, never re-derived. Legacy's `b_pin_lkup_share = true` pin is
+/// deliberately NOT carried: neo needs a far larger share than legacy's
+/// hand-set 1, so the driver's back-solve must run.
+#[allow(dead_code)] // called from B102/C101 on
+fn apply_spec_config(spec: &DatasetSpec, b_light_test: bool,
+	role: &PartRole) {
+	// ONE write guard for the whole update, so no reader can observe a
+	// half-applied config. NOTHING inside this scope may CALL into code
+	// that locks GLOBAL_CONFIG again -- the RwLock is not reentrant and
+	// the second acquire self-deadlocks on this same thread.
+	let mut g = get_global_config();
+	// (1) neo ALWAYS -- no env, no opt-out. 0 wrap keys = auto-derive.
+	g.clamav_cfg.b_use_discharge_neo = true;
+	g.neo_wrap_keys = 0;
+	// SDE arm + discharge knobs.
+	g.clamav_cfg.b_aggressive_sde_for_rep = spec.b_aggressive;
+	g.clamav_cfg.sde_rep_fanout_cap = spec.fanout_cap;
+	g.clamav_cfg.min_pm_word_len = 3;
+	g.range2_bit = spec.range2_bit;
+	// all 7 ladder floors.
+	g.min_subsigs = spec.min_subsigs;
+	g.min_basis_unique_states = spec.min_basis_unique_states;
+	g.min_basis_acc_states = spec.min_basis_acc_states;
+	g.min_basis_pats_in_trace = spec.min_basis_pats_in_trace;
+	g.min_avg_pats_per_subsig = spec.min_avg_pats_per_subsig;
+	g.min_dfa_sigs = spec.min_dfa_sigs;
+	g.min_dfa_subsigs = spec.min_dfa_subsigs;
+	g.n_par_snark = spec.n_par_snark;
+	g.n_par_snark_cp = spec.n_par_snark_cp;
+	// NOT set: n_par_batch_claim. Legacy full_dlp never sets it, so it
+	// stays 1 -- and unlike the snark caps it is NOT inert: its
+	// semaphore is taken inside pass_all (driver.rs:1831), which every
+	// job reaches before the b_one_proof / b_folding_only returns.
+	g.log_level = utils::logger::LOG3;
+	g.b_light_test = b_light_test;
+	// part topology, copied from part_role -- one source of truth.
+	g.b_folding_only = !role.b_proves;
+	g.b_one_proof = role.b_proves;
+	g.snark_wait_flag =
+		role.b_wait_snark.then(|| SNARK_WAIT_FLAG.to_string());
+	// the FOLD reloads the DB from cache (2x RAM avoidance); the build
+	// passes read=false as a build_or_load PARAM, so the two never
+	// conflict. Snark cache fully off under the reset rule.
+	g.b_read_cache = true;
+	g.b_read_snark_cache = false;
+	g.b_write_snark_cache = false;
+	// Both written EXPLICITLY rather than left at their defaults: the
+	// config is process-wide, and the CapErr share bump only ever
+	// ratchets UP (zkp_driver.rs:2235), so a stale pin or a stale high
+	// share would silently survive into this run.
+	g.b_pin_lkup_share = false;      // -> driver back-solves the share
+	g.perc_lkup_share = 1;           // the ratchet's floor
+}
+
+/// Builds the dataset's DB from cfg_dir, ALWAYS from scratch.
+/// read=false dodges build_or_load's stale-cache trap (it checks only
+/// that a cache EXISTS, not that it matches the sig file -- fatal once
+/// the rule count varies); write=true because the fold reloads the DB
+/// from this cache. Call AFTER apply_spec_config: default_clamav_cfg()
+/// is a snapshot of the global clamav_cfg (clamav.rs:3941).
+#[allow(dead_code)] // called from B102 on
+fn build_fresh_db(spec: &DatasetSpec, cfg_dir: &str) -> Arc<ClamavDB<Fr>> {
+	let cfg = default_clamav_cfg();
+	let mut vlog = vec![];
+	Arc::new(ClamavDB::<Fr>::build_or_load(&cfg,
+		&format!("{}/{}", cfg_dir, spec.sig_file),
+		&format!("{}/main_dfa.dat", cfg_dir),
+		&format!("{}/needs_ised.dat", cfg_dir),
+		&format!("{}/needs_ised_igc.dat", cfg_dir),
+		&mut vlog, spec.db_cache_dir, false, true)
+		.unwrap_or_else(|e| panic!(
+			"bora_data_driver: build {} db from {}: {:?}",
+			spec.name, cfg_dir, e)))
 }
 
 /// Q2 lookup-composition report, perc-driven. perc>=100 reproduces
@@ -845,5 +927,93 @@ pub mod tests_bora_data_driver {
 		let ghost: Vec<String> =
 			(0..4).map(|i| format!("data/no_such_file_{}", i)).collect();
 		plan_corpus_from(&ghost, 100, 2);
+	}
+
+	/// B101: every field apply_spec_config names, over all three part
+	/// roles. ONE test on purpose -- GlobalConfig is process-wide, so
+	/// two config tests running on parallel threads would race.
+	#[test]
+	fn test_b101_apply_spec_config() {
+		use utils::consts::read_global_config;
+
+		// Poison every field first with the legacy/opposite value, so
+		// each assert proves apply_spec_config WROTE it rather than
+		// finding it already right by default.
+		{
+			let mut g = get_global_config();
+			g.clamav_cfg.b_use_discharge_neo = false;
+			g.clamav_cfg.b_aggressive_sde_for_rep = false;
+			g.clamav_cfg.sde_rep_fanout_cap = 7;
+			g.clamav_cfg.min_pm_word_len = 99;
+			g.neo_wrap_keys = 7;
+			g.range2_bit = 3;
+			g.min_subsigs = 99;
+			g.min_basis_unique_states = 99;
+			g.min_basis_acc_states = 99;
+			g.min_basis_pats_in_trace = 99;
+			g.min_avg_pats_per_subsig = 99;
+			g.min_dfa_sigs = 99;
+			g.min_dfa_subsigs = 99;
+			g.n_par_snark = 99;
+			g.n_par_snark_cp = 99;
+			g.b_light_test = true;
+			g.b_read_cache = false;
+			g.b_read_snark_cache = true;
+			g.b_write_snark_cache = true;
+			g.b_pin_lkup_share = true;      // the legacy pin
+			g.perc_lkup_share = 42;         // a stale ratchet value
+			g.snark_wait_flag = Some("/tmp/stale".to_string());
+		}
+
+		// numa 1: the single part folds AND proves, and waits on nobody.
+		apply_spec_config(&DLP, false, &part_role(0, 1, 8));
+		let c = read_global_config();
+		assert!(c.clamav_cfg.b_use_discharge_neo, "neo is ALWAYS on");
+		assert_eq!(c.neo_wrap_keys, 0, "0 = auto-derive");
+		assert!(c.clamav_cfg.b_aggressive_sde_for_rep);
+		assert_eq!(c.clamav_cfg.sde_rep_fanout_cap, DLP.fanout_cap);
+		assert_eq!(c.clamav_cfg.min_pm_word_len, 3);
+		assert_eq!(c.range2_bit, DLP.range2_bit);
+		assert_eq!(c.min_subsigs, DLP.min_subsigs);
+		assert_eq!(c.min_basis_unique_states, DLP.min_basis_unique_states);
+		assert_eq!(c.min_basis_acc_states, DLP.min_basis_acc_states);
+		assert_eq!(c.min_basis_pats_in_trace, DLP.min_basis_pats_in_trace);
+		assert_eq!(c.min_avg_pats_per_subsig, DLP.min_avg_pats_per_subsig);
+		assert_eq!(c.min_dfa_sigs, DLP.min_dfa_sigs);
+		assert_eq!(c.min_dfa_subsigs, DLP.min_dfa_subsigs);
+		assert_eq!(c.n_par_snark, DLP.n_par_snark);
+		assert_eq!(c.n_par_snark_cp, DLP.n_par_snark_cp);
+		// legacy full_dlp never sets this one; 1 is NOT inert (its
+		// semaphore is reached by every job inside pass_all).
+		assert_eq!(c.n_par_batch_claim, 1);
+		assert_eq!(c.log_level, utils::logger::LOG3);
+		assert!(!c.b_light_test, "b_light_test follows the argument");
+		assert!(!c.b_folding_only, "numa 1: the one part proves");
+		assert!(c.b_one_proof);
+		assert_eq!(c.snark_wait_flag, None, "nobody to wait for");
+		assert!(c.b_read_cache, "the fold reloads the DB from cache");
+		assert!(!c.b_read_snark_cache);
+		assert!(!c.b_write_snark_cache);
+		assert!(!c.b_pin_lkup_share, "the legacy pin must NOT be copied");
+		assert_eq!(c.perc_lkup_share, 1, "ratchet floor, not the stale 42");
+		drop(c);
+
+		// numa 2 part 0: folds only, does not wait (it IS the folder).
+		apply_spec_config(&DLP, true, &part_role(0, 2, 8));
+		let c = read_global_config();
+		assert!(c.b_light_test, "b_light_test follows the argument");
+		assert!(c.b_folding_only);
+		assert!(!c.b_one_proof);
+		assert_eq!(c.snark_wait_flag, None);
+		drop(c);
+
+		// numa 2 part 1: proves, and gates on the flag Python touches.
+		apply_spec_config(&DLP, false, &part_role(1, 2, 8));
+		let c = read_global_config();
+		assert!(!c.b_folding_only);
+		assert!(c.b_one_proof);
+		assert_eq!(c.snark_wait_flag,
+			Some("/tmp/snark_start/flag".to_string()),
+			"MUST match NEW_PAPER_DATA.py's FLAG");
 	}
 }

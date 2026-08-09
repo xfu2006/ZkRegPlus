@@ -1,0 +1,14 @@
+{
+  "config_dir": "data/debug/full_dlp_sample",
+  "sig_file": "regex_pat/main_data_dlp_internationl.dat",
+  "cache_dir": "dlp_corpus_aggr",
+  "fanout_cap": 100,
+  "chunk_len": 64,
+  "range2_bit": 25,
+  "scan_file": "scan_t503.dat",
+  "config_out": "data/debug/full_dlp_sample/config/dlp_t503_ladder.json",
+  "report_out": "data/debug/full_dlp_sample/report_t503.txt",
+  "k_max": 4,
+  "n_buckets": 2048,
+  "peel_pct": 90
+}

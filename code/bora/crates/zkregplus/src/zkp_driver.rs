@@ -6441,8 +6441,13 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 				let lkup_len = db_arc.lkup.get_size();
 				let n_threads = std::env::var("ZKR_DC_THREADS").ok()
 					.and_then(|s| s.parse().ok()).unwrap_or(4);
+				//hoist the read: an inline guard lives across the call
+				//while reconverge_probe takes a WRITE lock on the same
+				//RwLock -> same-thread deadlock (futex_do_wait).
+				let b_neo =
+					read_global_config().clamav_cfg.b_use_discharge_neo;
 				let (lad, hist) = super::determine_config_aggr::<Fr,C1,CS1>(
-					read_global_config().clamav_cfg.b_use_discharge_neo,
+					b_neo,
 					db_arc.clone(), &words, &infos, &vdata, seed, mw,
 					lkup_len, total_word_n, rc.k_max, rc.n_buckets, 60,
 					n_threads, 8, rc.peel_pct)
@@ -6535,43 +6540,9 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		utils::logger::log(0, utils::logger::LOG1, &format!(
 			"full_dlp_sample_meas: arm={} fold_only={} scan={} ladder->{}",
 			arm, fold_only, rc.scan_file, cfg_out));
-		let cfg = data_processor::clamav::default_clamav_cfg();
-		let mut vlog = vec![];
-		let db = data_processor::clam_db::ClamavDB::<Fr>::build_or_load(
-			&cfg, &format!("{}/{}", cd, rc.sig_file),
-			&format!("{}/regex_pat/main_dfa.dat", cd),
-			&format!("{}/regex_pat/needs_ised.dat", cd),
-			&format!("{}/regex_pat/needs_ised_igc.dat", cd), &mut vlog,
-			&rc.cache_dir, true, true).expect("build db");
-		//discharge the sample -> vdata + words + infos (one pass).
-		let files = utils::os::read_lines(
-			&format!("{}/{}/{}", proot, cd, rc.scan_file));
-		let (mut vdata, mut words, mut infos) = (vec![], vec![], vec![]);
-		for fpath in &files{
-			let nibbles = utils::os::read_nibbles(
-				&format!("{}/{}", proot, fpath));
-			let f_nib: Vec<Fr> = nibbles.iter().map(|x| Fr::from(*x as u32))
-				.collect();
-			words.push(utils::data::pack_nibbles(&f_nib));
-			let (fdr, rec) =
-				data_processor::clamav::quick_discharge_file_by_crit_bag_pm(
-				fpath, &nibbles, &db.vec_sigs, &db.vec_sigs_no_critical_pat,
-				&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
-				&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
-				&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
-				&db.sig_to_id, mw, mw);
-			vdata.push(fdr);
-			infos.push(rec);
-		}
-		//(1) NEEDS distribution over the sample (stdout + sample report).
-		let rows: Vec<Vec<usize>> = vdata.iter()
-			.map(|r| r.chunk_peaks.needs_per_chunk.clone()).collect();
-		crate::needs_dist::print_needs_dist_rows(&rows, &files,
-			"data/debug/full_dlp_sample/config/needs_dist_meas.txt");
-		//(2) capacity ladder. ZKR_LOAD_LADDER=<repo-rel JSON> loads a
-		//saved ladder instead of tuning, so a tune-only run (ZKR_FSM_DIST)
-		//and a later fold can share one exact ladder.
-		let db_arc = std::sync::Arc::new(db);
+		//Capacity ladder. ZKR_LOAD_LADDER skips the harness DB load AND
+		//the discharge entirely: they only feed tuning, and a second DB
+		//copy (the driver loads its own below) does not fit a 125GB box.
 		let ladder: Vec<crate::determine_config::CapParams> =
 			if let Ok(lp) = std::env::var("ZKR_LOAD_LADDER") {
 				let lp_abs = format!("{}/{}", proot, lp);
@@ -6579,6 +6550,45 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 					"full_dlp_sample_meas: LOAD ladder {}", lp_abs));
 				crate::determine_config::load_ladder(&lp_abs)
 			} else {
+				//tune branch: the ONLY place the harness holds a DB.
+				let cfg = data_processor::clamav::default_clamav_cfg();
+				let mut vlog = vec![];
+				let db =
+					data_processor::clam_db::ClamavDB::<Fr>::build_or_load(
+					&cfg, &format!("{}/{}", cd, rc.sig_file),
+					&format!("{}/regex_pat/main_dfa.dat", cd),
+					&format!("{}/regex_pat/needs_ised.dat", cd),
+					&format!("{}/regex_pat/needs_ised_igc.dat", cd),
+					&mut vlog, &rc.cache_dir, true, true).expect("build db");
+				//discharge the sample -> vdata + words + infos (one pass).
+				let files = utils::os::read_lines(
+					&format!("{}/{}/{}", proot, cd, rc.scan_file));
+				let (mut vdata, mut words, mut infos) =
+					(vec![], vec![], vec![]);
+				for fpath in &files{
+					let nibbles = utils::os::read_nibbles(
+						&format!("{}/{}", proot, fpath));
+					let f_nib: Vec<Fr> = nibbles.iter()
+						.map(|x| Fr::from(*x as u32)).collect();
+					words.push(utils::data::pack_nibbles(&f_nib));
+					let (fdr, rec) = data_processor::clamav
+						::quick_discharge_file_by_crit_bag_pm(
+						fpath, &nibbles, &db.vec_sigs,
+						&db.vec_sigs_no_critical_pat, &db.map_crit_pat,
+						&db.map_crit_pat_igc, &db.dfa_crit,
+						&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
+						&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
+						&db.sig_to_id, mw, mw);
+					vdata.push(fdr);
+					infos.push(rec);
+				}
+				//NEEDS distribution over the sample (stdout + report).
+				let rows: Vec<Vec<usize>> = vdata.iter()
+					.map(|r| r.chunk_peaks.needs_per_chunk.clone())
+					.collect();
+				crate::needs_dist::print_needs_dist_rows(&rows, &files,
+					"data/debug/full_dlp_sample/config/needs_dist_meas.txt");
+				let db_arc = std::sync::Arc::new(db);
 				let est = estimate_config_aggr::<Fr>(&vdata, &*db_arc,
 					&[100], &mut vlog);
 				let seed = estimated_to_capparams_aggr(&est[0], mw,
@@ -6588,8 +6598,12 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 				let lkup_len = db_arc.lkup.get_size();
 				let n_threads = std::env::var("ZKR_DC_THREADS").ok()
 					.and_then(|s| s.parse().ok()).unwrap_or(4);
+				//pass the LOCAL neo_on, never read_global_config()
+				//inline: the temporary read guard would live across the
+				//call while reconverge_probe (zkp_driver.rs:737) takes a
+				//WRITE lock on the same RwLock -> same-thread deadlock.
 				let (lad, hist) = super::determine_config_aggr::<Fr,C1,CS1>(
-					read_global_config().clamav_cfg.b_use_discharge_neo,
+					neo_on,
 					db_arc.clone(), &words, &infos, &vdata, seed, mw,
 					lkup_len, total_word_n, rc.k_max, rc.n_buckets, 60,
 					n_threads, 8, rc.peel_pct)
@@ -6605,8 +6619,7 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 		//ZKR_FSM_DIST: tune-only, skip the fold. This is the "tune wide"
 		//mode -- no fold, so 500 files fit on a 125GB box.
 		if std::env::var("ZKR_FSM_DIST").is_ok() { return; }
-		//fold: load own DB from cache (avoid 2x RAM); stats + cs1e.
-		drop(db_arc);
+		//fold: the driver loads its own DB from cache -- the single copy.
 		get_global_config().b_estimate_caps = false;
 		get_global_config().aggr_needs_subsigs =
 			ladder.first().map(|c| c.aggr_needs_subsigs).unwrap_or(0);
@@ -6911,8 +6924,13 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 				let lkup_len = db.lkup.get_size();
 				let n_threads = std::env::var("ZKR_DC_THREADS").ok()
 					.and_then(|s| s.parse().ok()).unwrap_or(4);
+				//hoist the read: an inline guard lives across the call
+				//while reconverge_probe takes a WRITE lock on the same
+				//RwLock -> same-thread deadlock (futex_do_wait).
+				let b_neo =
+					read_global_config().clamav_cfg.b_use_discharge_neo;
 				let (lad, hist) = super::determine_config_aggr::<Fr,C1,CS1>(
-					read_global_config().clamav_cfg.b_use_discharge_neo,
+					b_neo,
 					db.clone(), &words, &infos, &vdata, seed, mw, lkup_len,
 					total_word_n, rc.k_max, rc.n_buckets, 60, n_threads, 8,
 					rc.peel_pct).expect("determine_config_aggr");
@@ -7138,8 +7156,13 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 				let lkup_len = db.lkup.get_size();
 				let n_threads = std::env::var("ZKR_DC_THREADS").ok()
 					.and_then(|s| s.parse().ok()).unwrap_or(4);
+				//hoist the read: an inline guard lives across the call
+				//while reconverge_probe takes a WRITE lock on the same
+				//RwLock -> same-thread deadlock (futex_do_wait).
+				let b_neo =
+					read_global_config().clamav_cfg.b_use_discharge_neo;
 				let (lad, hist) = super::determine_config_aggr::<Fr,C1,CS1>(
-					read_global_config().clamav_cfg.b_use_discharge_neo,
+					b_neo,
 					db.clone(), &words, &infos, &vdata, seed, mw, lkup_len,
 					total_word_n, rc.k_max, rc.n_buckets, 60, n_threads, 8,
 					rc.peel_pct).expect("determine_config_aggr");
@@ -7849,8 +7872,12 @@ fail: {} ({:.4}%)",
 			let lkup_len = db.lkup.get_size();
 			let n_threads = std::env::var("ZKR_DC_THREADS").ok()
 				.and_then(|s| s.parse().ok()).unwrap_or(4);
+			//hoist the read: an inline guard lives across the call while
+			//reconverge_probe takes a WRITE lock on the same RwLock ->
+			//same-thread deadlock (futex_do_wait).
+			let b_neo = read_global_config().clamav_cfg.b_use_discharge_neo;
 			let (ladder, hist) = super::determine_config_aggr::<Fr,C1,CS1>(
-				read_global_config().clamav_cfg.b_use_discharge_neo,
+				b_neo,
 				db.clone(), &words, &infos, &vdata, seed, mw, lkup_len,
 				total_word_n, k_max, n_buckets, 60, n_threads, 8, peel_pct)
 				.expect("determine_config_aggr");
