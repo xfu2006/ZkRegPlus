@@ -3100,9 +3100,8 @@ pub mod tests_zkp_driver{
 	/// (b) the highest populated saturation gauge is close to 1 (the
 	/// tuned config is confirmed-near-minimal, not slack).
 	/// Non-aggr (clam_hard) uses a REAL 2-circuit decreased_copy ladder;
-	/// aggr (dlp_hard) stays at 1 circuit for both arms -- 2-circuit
-	/// aggr-neo is known to silently fail verify_batch (bug #2, tracked
-	/// separately, not yet fixed) so it is out of scope here.
+	/// aggr (dlp_hard) stays at 1 circuit for both arms -- ladder depth is
+	/// demand-driven and these fixtures collapse to 1 rung anyway.
 	///
 	/// (b) is asserted only where the cell's scan actually saturates --
 	/// see p4_check_sat. Saturation tracks DATA DENSITY, not the arm:
