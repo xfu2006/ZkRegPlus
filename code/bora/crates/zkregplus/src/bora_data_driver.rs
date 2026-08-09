@@ -8,12 +8,25 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use ark_bn254::Fr;
+use ark_bn254::{Fr, G1Projective};
 use data_processor::clam_db::ClamavDB;
-use data_processor::clamav::default_clamav_cfg;
-use utils::consts::get_global_config;
+use data_processor::clamav::{default_clamav_cfg,
+	quick_discharge_file_by_crit_bag_pm};
+use data_processor::discharge_proof::FailDischargeRecord;
+use folding_schemes::commitment::pedersen::Pedersen;
+use folding_schemes::folding::foldpot::sigma_ir1cs::WordInfo;
+use utils::consts::{get_global_config, read_global_config,
+	ClamavApproxConfig};
 
-use crate::zkp_driver::{fmt_cross_rollup, fmt_dfa_cross};
+use crate::determine_config::CapParams;
+use crate::stats_helper::{estimate_config_aggr,
+	estimated_to_capparams_aggr};
+use crate::zkp_driver::{determine_config_aggr,
+	determine_config_non_aggr, fmt_cross_rollup, fmt_dfa_cross};
+
+// Tuner instantiation, matching zkp_driver's (zkp_driver.rs:2396/2400).
+type C1 = G1Projective;
+type CS1 = Pedersen<C1>;
 
 /// RAII guard: removes its temp config dir on drop, even on panic.
 struct TmpConfigDir(PathBuf);
@@ -234,8 +247,9 @@ pub(crate) fn write_job_manifests(jobs_dir: &str, bins: &[Vec<String>])
 	}).collect()
 }
 
-/// One dataset's complete, immutable run configuration. Nobody ever
-/// constructs one -- only the DLP/DNA/CLAM consts exist.
+/// One dataset's complete, immutable run configuration. Only the
+/// DLP/DNA/CLAM consts exist; tests clone them to redirect dirs.
+#[derive(Clone)]
 #[allow(dead_code)] // fields read from B101/B102/C101 on
 pub struct DatasetSpec {
 	/// Dataset tag; plan dir is /tmp/bora/<name>_neo.
@@ -280,6 +294,9 @@ pub struct DatasetSpec {
 	pub(crate) min_dfa_sigs: usize,
 	/// Floor on DFA subsigs (0 = no floor).
 	pub(crate) min_dfa_subsigs: usize,
+	/// Non-aggr tuner seed (the dataset's legacy hand caps).
+	/// None when aggressive.
+	pub(crate) hand_seed: Option<CapParams>,
 }
 
 /// DLP: legacy full_dlp()'s exact run configuration (zkp_driver's
@@ -320,6 +337,7 @@ pub const DLP: DatasetSpec = DatasetSpec {
 	// inert for DLP: its main_dfa.dat / needs_ised*.dat are empty.
 	min_dfa_sigs: 0,
 	min_dfa_subsigs: 0,
+	hand_seed: None,
 };
 
 /// Config dir for a run: the real one when nothing is thinned, else the
@@ -475,6 +493,193 @@ fn build_fresh_db(spec: &DatasetSpec, cfg_dir: &str) -> Arc<ClamavDB<Fr>> {
 			spec.name, cfg_dir, e)))
 }
 
+/// Foldpot's canonical full-length 0-pad word (driver.rs:2900):
+/// chunk_len*62 nibbles = exactly chunk_len packed Fr.
+const ZERO_WORD_NAME: &str = "__0word__";
+
+fn zero_word_nibbles(chunk_len: usize) -> Vec<u8> {
+	utils::data::gen_pad_nibbles(0, chunk_len * 62)
+}
+
+/// Holds b_estimate_caps=true for a scope, restoring the prior value
+/// on drop. Legacy keeps the flag on from discharge THROUGH tuning
+/// (zkp_driver.rs:7718-7897); fold-time flags are the fold's business.
+struct EstimateCapsGuard(bool);
+
+impl EstimateCapsGuard {
+	fn on() -> Self {
+		let prev = read_global_config().b_estimate_caps;
+		get_global_config().b_estimate_caps = true;
+		EstimateCapsGuard(prev)
+	}
+}
+
+impl Drop for EstimateCapsGuard {
+	fn drop(&mut self) {
+		get_global_config().b_estimate_caps = self.0;
+	}
+}
+
+/// Index-aligned tuning sample; the 0-pad word is always LAST. Both
+/// stats fixed at construction: total INCLUDES the pad (aggr axis,
+/// zkp_driver.rs:7871), max_bin EXCLUDES it (non-aggr axis, :1647).
+struct TuningSet {
+	words: Vec<Vec<Fr>>,
+	infos: Vec<WordInfo>,
+	vdata: Vec<FailDischargeRecord>,
+	total_word_n: usize,
+	max_bin_word_n: usize,
+}
+
+/// The ONE quick_discharge call site: pack + discharge a single word.
+fn discharge_word(db: &ClamavDB<Fr>, cfg: &ClamavApproxConfig,
+	name: &str, nibbles: &Vec<u8>, chunk_len: usize)
+	-> (Vec<Fr>, WordInfo, FailDischargeRecord) {
+	let fnib: Vec<Fr> = nibbles.iter()
+		.map(|x| Fr::from(*x as u32)).collect();
+	let packed = utils::data::pack_nibbles(&fnib);
+	let (fdr, rec) = quick_discharge_file_by_crit_bag_pm(
+		name, nibbles, &db.vec_sigs, &db.vec_sigs_no_critical_pat,
+		&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
+		&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
+		&db.bundle_subsig_igc.vec_acdfa[0], true, cfg,
+		&db.sig_to_id, chunk_len, chunk_len);
+	(packed, rec, fdr)
+}
+
+/// Discharges the corpus bins (par per bin) then the 0-pad word, which
+/// is discharged FOR REAL so its chunks enter the aggr universe
+/// (legacy non-aggr seeds WordInfo::dummy() instead, :1762).
+fn discharge_for_tuning(spec: &DatasetSpec, db: &ClamavDB<Fr>,
+	bins: &[Vec<String>]) -> TuningSet {
+	use rayon::prelude::*;
+	let _est = EstimateCapsGuard::on();   // ChunkPeaks (clamav.rs:3376)
+	let cfg = default_clamav_cfg();
+	let proot = utils::os::proj_root();
+	let mw = spec.chunk_len;
+	let (mut words, mut infos, mut vdata) = (vec![], vec![], vec![]);
+	let mut max_bin_word_n = 0;
+	for bin in bins {
+		let trip: Vec<_> = bin.par_iter().map(|p| {
+			let abs = if Path::new(p).is_absolute() { p.clone() }
+				else { format!("{}/{}", proot, p) };
+			discharge_word(db, &cfg, p, &utils::os::read_nibbles(&abs),
+				mw)
+		}).collect();
+		let bin_n: usize = trip.iter().map(|(w, _, _)| w.len()).sum();
+		max_bin_word_n = max_bin_word_n.max(bin_n);
+		for (w, i, v) in trip {
+			words.push(w); infos.push(i); vdata.push(v);
+		}
+	}
+	let (w, i, v) = discharge_word(db, &cfg, ZERO_WORD_NAME,
+		&zero_word_nibbles(mw), mw);
+	words.push(w); infos.push(i); vdata.push(v);
+	let total_word_n = words.iter().map(|w| w.len()).sum();
+	TuningSet { words, infos, vdata, total_word_n, max_bin_word_n }
+}
+
+/// Capacity tuner for one (db, tuning set): aggr -> rung ladder via
+/// determine_config_aggr, non-aggr -> single converged CapParams. Only
+/// GlobalConfig touch is the non-aggr ladder-floor write-back.
+fn tune(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>, ts: &TuningSet,
+	num_circs: usize) -> Vec<CapParams> {
+	use folding_schemes::folding::foldpot::sigma_ir1cs
+		::LookupTableTwoCol as _;
+	assert!(num_circs >= 1, "bora_data_driver: num_circs must be >= 1");
+	let mw = spec.chunk_len;
+	let lkup_len = db.lkup.get_size();
+	// 8 = production (PAPER_DATA.py:329). Hard-coded: thread count is
+	// parallelism only, not a tuning input (hist identical), and
+	// NEW_PAPER_DATA.py sets no env vars.
+	let n_threads = 8;
+	// neo passed as literal true: apply_spec_config forced it and
+	// build_and_tune asserted it. No global reads here -- an inline
+	// read guard across these calls self-deadlocks (see :6927).
+	if spec.b_aggressive {
+		let mut vlog = vec![];
+		let est = estimate_config_aggr::<Fr>(&ts.vdata, &**db, &[100],
+			&mut vlog);
+		let seed = estimated_to_capparams_aggr(&est[0], mw,
+			spec.range2_bit, 3);
+		let k_max = num_circs;
+		// 1 rung needs no log-bucket coarsening (:7711); peel 90 as
+		// runcfg_full.json, inert below k_max=3 (:560).
+		let n_buckets = if num_circs == 1 { 1 } else { 2048 };
+		let (lad, hist) = determine_config_aggr::<Fr, C1, CS1>(true,
+			db.clone(), &ts.words, &ts.infos, &ts.vdata, seed, mw,
+			lkup_len, ts.total_word_n, k_max, n_buckets, 60,
+			n_threads, 8, 90)
+			.unwrap_or_else(|e| panic!(
+				"bora_data_driver: determine_config_aggr: {}", e));
+		utils::logger::log(0, utils::logger::LOG1, &format!(
+			"tune[{}]: ladder {} rungs, hist={:?}", spec.name,
+			lad.len(), hist));
+		lad
+	} else {
+		assert_eq!(spec.vec_decrease_level.len(), num_circs - 1,
+			"bora_data_driver: vec_decrease_level len != num_circs-1");
+		// seed = the dataset's hand caps, warm-started low so the
+		// probe converges to the true minimum (:1728-1748).
+		let mut p0 = spec.hand_seed.clone().unwrap_or_else(|| panic!(
+			"bora_data_driver: {} non-aggr needs hand_seed", spec.name));
+		p0.perc_pats_expansion_rate =
+			p0.perc_pats_expansion_rate.min(16);
+		p0.perc_pats_expansion_rate_igc =
+			p0.perc_pats_expansion_rate_igc.min(16);
+		p0.avg_active_pats_per_subsig =
+			p0.avg_active_pats_per_subsig.min(2);
+		p0.avg_active_pats_per_subsig_igc =
+			p0.avg_active_pats_per_subsig_igc.min(2);
+		p0.qm_real_rows = 2;
+		p0.qm_real_rows_igc = 2;
+		let new = determine_config_non_aggr::<Fr, C1, CS1>(true,
+			db.clone(), &ts.words, &ts.infos, p0, mw, lkup_len,
+			ts.max_bin_word_n, &spec.vec_decrease_level.to_vec(),
+			num_circs, 60, n_threads)
+			.unwrap_or_else(|e| panic!(
+				"bora_data_driver: determine_config_non_aggr: {}", e));
+		// ladder floors from the CONVERGED caps: the tuner's own write
+		// is reverted by its FloorGuard, and the fold's decreased_copy
+		// must see the same flat axis (:1788-1802). Needs the DB, so
+		// it cannot move to fold (build_and_tune drops the DB).
+		let cp_floor = db.vec_sigs_no_critical_pat.len() + 1;
+		let mut g = get_global_config();
+		g.min_subsigs = new.subsigs;
+		g.min_subsigs_igc = new.subsigs_igc;
+		g.min_cp_subsigs = cp_floor.min(new.cp_subsigs);
+		drop(g);
+		vec![new]
+	}
+}
+
+/// The shared tuning kernel (full x3, scale x2): thin config if asked,
+/// fresh DB, discharge, tune. The scope is the point: DB + tuning set
+/// are freed at return, before the caller folds.
+#[allow(dead_code)] // called from C101/C102 on
+pub(crate) fn build_and_tune(spec: &DatasetSpec, db_count: usize,
+	bins: &[Vec<String>], num_circs: usize) -> Vec<CapParams> {
+	// precondition, not re-application: tuning on stale flags would
+	// silently tune the wrong arm.
+	assert!(read_global_config().clamav_cfg.b_use_discharge_neo,
+		"bora_data_driver: apply_spec_config before build_and_tune");
+	let proot = utils::os::proj_root();
+	let src_dir = format!("{}/{}", proot, spec.config_dir);
+	let n_sigs = read_lines_nonblank(
+		&format!("{}/{}", src_dir, spec.sig_file)).len();
+	if db_count < n_sigs {
+		create_smaller_config(&src_dir, spec.sig_file, db_count,
+			&format!("{}/config", plan_dir(spec.name)));
+	}
+	let db = build_fresh_db(spec, &config_dir_for(spec, db_count,
+		n_sigs));
+	// spans tune as well: probe advice paths may re-discharge, and
+	// legacy holds the flag true through determine_config.
+	let _est = EstimateCapsGuard::on();
+	let ts = discharge_for_tuning(spec, &db, bins);
+	tune(spec, &db, &ts, num_circs)
+}
+
 /// Q2 lookup-composition report, perc-driven. perc>=100 reproduces
 /// zkp_driver::tests_zkp_driver::collect_lookup_stats() exactly (same 3
 /// hardcoded dataset configs, no thinning). perc<100 builds each
@@ -561,6 +766,12 @@ pub mod tests_bora_data_driver {
 	use std::sync::atomic::{AtomicUsize, Ordering};
 
 	static COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+	/// Serializes tests that mutate the process-wide GlobalConfig.
+	fn cfg_lock() -> std::sync::MutexGuard<'static, ()> {
+		static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+		LOCK.lock().unwrap_or_else(|e| e.into_inner())
+	}
 
 	fn fresh_tmp_dir(tag: &str) -> PathBuf {
 		let n = COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -935,6 +1146,7 @@ pub mod tests_bora_data_driver {
 	#[test]
 	fn test_b101_apply_spec_config() {
 		use utils::consts::read_global_config;
+		let _g = cfg_lock();
 
 		// Poison every field first with the legacy/opposite value, so
 		// each assert proves apply_spec_config WROTE it rather than
@@ -1015,5 +1227,71 @@ pub mod tests_bora_data_driver {
 		assert_eq!(c.snark_wait_flag,
 			Some("/tmp/snark_start/flag".to_string()),
 			"MUST match NEW_PAPER_DATA.py's FLAG");
+	}
+
+	#[test]
+	fn test_b102_zero_word_nibbles() {
+		let mw = 64;
+		let nib = zero_word_nibbles(mw);
+		assert_eq!(nib.len(), mw * 62);
+		assert!(nib.iter().all(|&n| n < 16));
+		let fnib: Vec<Fr> = nib.iter()
+			.map(|x| Fr::from(*x as u32)).collect();
+		// packs to EXACTLY chunk_len Fr, the word the fold preprocesses
+		assert_eq!(utils::data::pack_nibbles(&fnib).len(), mw);
+	}
+
+	/// B102 kernel: 2-rule (alphabet pin + 1) DLP DB + one real email,
+	/// pieces then end-to-end. 2 = legacy scale's SMALLEST tuned DB
+	/// (cnt=1 writes pin+1 rules); 1 rule is outside the tuner's domain
+	/// (zero SED demand underflows gen_fwdprf_valid_prf). Structure
+	/// asserts only: rung VALUES belong to the tuner (T506 moves
+	/// qm_real_rows; never pin it).
+	#[test]
+	fn test_b102_build_and_tune_tiny() {
+		let _g = cfg_lock();
+		let proot = utils::os::proj_root();
+		// redirected clone: never touch the live dlp_neo dirs.
+		let mut spec = DLP.clone();
+		spec.name = "dlp_test";            // /tmp/bora/dlp_test_neo
+		spec.db_cache_dir = "dlp_test_neo";
+		let _t1 = TmpConfigDir(PathBuf::from(plan_dir(spec.name)));
+		let _t2 = TmpConfigDir(PathBuf::from(format!(
+			"{}/data/cache/{}", proot, spec.db_cache_dir)));
+		// rule 0 must be the all-16-nibble alphabet sig: it is the ONE
+		// rule subset(n,1) keeps; the DB is degenerate without it.
+		let src_dir = format!("{}/{}", proot, spec.config_dir);
+		let sig_lines = read_lines_nonblank(
+			&format!("{}/{}", src_dir, spec.sig_file));
+		assert!(sig_lines[0].starts_with("Win.Alphabet"),
+			"DLP rule 0 must be the alphabet pin");
+		apply_spec_config(&spec, true, &part_role(0, 1, 1));
+		// one real 805 B email (the dense scale corpus), one bin.
+		let bins = vec![vec![DLP.scale_sources[1].to_string()]];
+		// pieces first: thin + build + discharge, to see the TuningSet.
+		create_smaller_config(&src_dir, spec.sig_file, 2,
+			&format!("{}/config", plan_dir(spec.name)));
+		let db = build_fresh_db(&spec,
+			&config_dir_for(&spec, 2, sig_lines.len()));
+		let ts = discharge_for_tuning(&spec, &db, &bins);
+		assert_eq!(ts.words.len(), 2);            // email + 0-word
+		assert_eq!(ts.infos.len(), 2);
+		assert_eq!(ts.vdata.len(), 2);
+		assert_eq!(ts.vdata[1].fname, ZERO_WORD_NAME);   // LAST
+		assert_eq!(ts.words[1].len(), spec.chunk_len);
+		let sum: usize = ts.words.iter().map(|w| w.len()).sum();
+		assert_eq!(ts.total_word_n, sum);         // pad INCLUDED
+		assert_eq!(ts.max_bin_word_n, ts.words[0].len()); // pad NOT
+		drop(ts);
+		drop(db);
+		// end-to-end kernel (rebuilds the tiny DB: read=false rule).
+		// num_circs=1 -> k_max=1 -> the single P_max rung, which
+		// T506's per-rung pass leaves untouched: immune to it landing.
+		let caps = build_and_tune(&spec, 2, &bins, 1);
+		assert_eq!(caps.len(), 1);
+		let p = &caps[0];
+		assert_eq!(p.max_word_len, spec.chunk_len);
+		assert!(p.subsigs >= 1 && p.avg_pats_per_subsig >= 1);
+		assert!(p.basis_unique_states >= 2 && p.basis_acc_states >= 2);
 	}
 }

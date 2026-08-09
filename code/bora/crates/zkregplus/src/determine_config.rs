@@ -504,7 +504,7 @@ pub fn compare_caps(new: &CapParams, cur: &CapParams) -> Result<(), Vec<String>>
 /// +1 comp_sig dummy; aggr_needs is uniform = P_max.subsigs (the forward-queue
 /// clamp is per-rung no-op -- gadget clamps it to each rung's own universe).
 /// perc_pats/avg_active come from the band (already P_max-anchored); FSM/CP
-/// basis caps are ratio-scaled per rung; perc_comp stays P_max.
+/// basis caps + qm rows are ratio-scaled per rung; perc_comp stays P_max.
 pub fn assemble_ladder(p_max: &CapParams,
     specs: &[crate::band_dp::RungSpec]) -> Vec<CapParams> {
     // top rung carries the global-max structural rate; ratio-scale P_max's
@@ -514,6 +514,7 @@ pub fn assemble_ladder(p_max: &CapParams,
     let g_a = specs.last().map_or(0, |s| s.max_acc_states);
     let g_p = specs.last().map_or(0, |s| s.max_pats_in_trace);
     let g_c = specs.last().map_or(0, |s| s.max_cp_unique_states);
+    let g_q = specs.last().map_or(0, |s| s.prod_pats_expansion);
     let scale = |pmax_b: usize, rate: usize, g: usize| -> usize {
         if g == 0 { pmax_b }              // no per-chunk data -> keep P_max
         else { ((pmax_b * rate + g - 1) / g).min(pmax_b).max(2) }
@@ -539,6 +540,11 @@ pub fn assemble_ladder(p_max: &CapParams,
         // aggressive forward-queue cap (exact per prod-band); igc stays the
         // P_max sentinel (floored for the dummy in determine_config_aggr).
         c.prod_pats_expansion = s.prod_pats_expansion;
+        // T506: per-rung Q_m rows. prod is a queue cap, not a row count, so
+        // this needs scale()'s pure ratio (top == P_max); pick() would assign
+        // prod itself. 0 = dense-fallback sentinel (legacy) -> stays 0.
+        c.qm_real_rows = if p_max.qm_real_rows == 0 { 0 }
+            else { scale(p_max.qm_real_rows, s.prod_pats_expansion, g_q) };
         c.avg_active_pats_per_subsig = s.avg_active_pats_per_subsig;
         c.basis_unique_states =
             pick(p_max.basis_unique_states, s.max_unique_acc_pats, g_u);
@@ -831,6 +837,29 @@ mod tests {
             assert_eq!(c.basis_pats_in_trace, 700);
         }
         for w in l.windows(2) { assert!(w[0].subsigs <= w[1].subsigs); }
+    }
+
+    #[test]
+    fn test_assemble_ladder_qm_per_rung() {
+        use crate::band_dp::RungSpec;
+        let mut p = zero_params();
+        p.subsigs = 201; p.qm_real_rows = 16083;
+        let mk = |prod: usize| RungSpec { subsigs: 200,
+            perc_pats_expansion_rate: 1, prod_pats_expansion: prod,
+            avg_active_pats_per_subsig: 1, max_unique_acc_pats: 0,
+            max_acc_states: 0, max_pats_in_trace: 0,
+            max_cp_unique_states: 0 };
+        let specs = vec![mk(86_431), mk(864_308), mk(8_643_079)];
+        let l = assemble_ladder(&p, &specs);
+        // top rung reproduces P_max exactly; cheaper rungs ride the ratio.
+        assert_eq!(l[2].qm_real_rows, 16083);
+        assert_eq!(l[1].qm_real_rows, 1609);        // ceil(16083*864308/top)
+        assert_eq!(l[0].qm_real_rows, 161);         // ceil(16083*86431/top)
+        // legacy sentinel: 0 stays 0 (dense fallback), never floors to 2.
+        p.qm_real_rows = 0;
+        for c in &assemble_ladder(&p, &specs) {
+            assert_eq!(c.qm_real_rows, 0);
+        }
     }
 
     #[test]

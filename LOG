@@ -30895,6 +30895,14 @@ Goal 7. B101
 	[b] done and tested
 
 Goal 8. B102
+	[a] main functions
+	[b] incompletion.
+
+Goal 9. T506 - improve determine_config
+	[a] neo version is 4.5x wider? check why.
+	[b] implement and test. 
+
+Goal 10.
 
 	
 		
