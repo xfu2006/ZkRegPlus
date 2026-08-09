@@ -430,6 +430,53 @@ thread_local!{
 	static COST_SINK: std::cell::RefCell<Option<CostCapture>> =
 		std::cell::RefCell::new(None);
 }
+/// DEBUG USE 62081: TEMP PROBE -- for every si segment DECLARED variable,
+/// track whether its value ever actually varies (inside one fragment or
+/// across fold steps). key=(seg,seg_idx) -> (still_uniform, first_value,
+/// len, n_calls). A segment that never varies can be declared
+/// Col::new_const, which drops its logup query from case 3 (2 cs + 1 wit
+/// per cell) to case 2 (1 cs, 0 wit) and pins the subtable id in-circuit.
+pub static SI_UNIF: std::sync::Mutex<
+	std::collections::BTreeMap<(usize,usize),(bool,String,usize,usize)>> =
+	std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// DEBUG USE 62081: TEMP PROBE -- to_vec_fp_var call counter.
+pub static SI_UNIF_CALLS: std::sync::atomic::AtomicUsize =
+	std::sync::atomic::AtomicUsize::new(0);
+
+/// DEBUG USE 62081: TEMP PROBE -- cached ZKR_PROBE_UNIF gate.
+pub fn si_unif_on()->bool{
+	static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+	*ON.get_or_init(|| std::env::var("ZKR_PROBE_UNIF").is_ok())
+}
+
+/// DEBUG USE 62081: TEMP PROBE -- fold one variable si fragment in.
+fn si_unif_note<F:PrimeField>(seg: usize, idx: usize, frag: &[F]){
+	if frag.is_empty(){ return; }
+	let v0 = format!("{}", frag[0]);
+	let b_same = frag.iter().all(|x| *x==frag[0]);
+	let mut m = SI_UNIF.lock().unwrap();
+	let e = m.entry((seg,idx))
+		.or_insert((true, v0.clone(), frag.len(), 0));
+	e.3 += 1;
+	if !b_same || e.1 != v0 { e.0 = false; }
+	e.2 = frag.len();
+}
+
+/// DEBUG USE 62081: TEMP PROBE -- dump the uniformity verdict so far.
+pub fn si_unif_report(tag: &str){
+	let m = SI_UNIF.lock().unwrap();
+	let (mut n_uni, mut n_var) = (0usize, 0usize);
+	for ((seg,idx),(b_uni,val,len,n)) in m.iter(){
+		if *b_uni { n_uni += len; } else { n_var += len; }
+		emit_stdout(format!("DEBUG USE 62081.1: {} seg={} idx={} len={} \
+			uniform={} calls={} val={}", tag, seg, idx, len, b_uni, n,
+			if *b_uni { val.as_str() } else { "-" }));
+	}
+	emit_stdout(format!("DEBUG USE 62081.2: {} si cells DECLARED variable: \
+		never-vary={} really-vary={}", tag, n_uni, n_var));
+}
+
 /// Arm the per-gadget cost sink (clears any prior capture).
 pub fn cost_capture_begin(){
 	COST_SINK.with(|s| *s.borrow_mut() =
@@ -2219,7 +2266,7 @@ impl <F:PrimeField> WitnessSigmaIR1CS<F>{
 		//0. define an assisting function to build col considering
 		// the constants
 		let init_vars = cs.num_witness_variables();
-		let build_col = |si_info: &Vec<(usize,bool)>, vals: &[F]|
+		let build_col = |si_info: &Vec<(usize,bool)>, vals: &[F], seg: usize|
 		->Vec<FpVar<F>>{
 			let mut idx_start = 0;
 			let mut vec_starts = vec![];
@@ -2247,6 +2294,9 @@ impl <F:PrimeField> WitnessSigmaIR1CS<F>{
 						vec![var; frag.len()]
 					}
 				}else{
+					//DEBUG USE 62081: TEMP PROBE -- does this VARIABLE si
+					//segment ever actually vary?
+					if si_unif_on(){ si_unif_note(seg, i, frag); }
 					frag.iter().map(|f|
 						FpVar::<F>::new_witness(cs.clone(), || Ok(f)).unwrap()
 					).collect::<Vec<FpVar<F>>>()
@@ -2303,9 +2353,11 @@ impl <F:PrimeField> WitnessSigmaIR1CS<F>{
 			FpVar::<F>::new_witness(cs.clone(), || Ok(f)).unwrap()
 		).collect::<Vec<FpVar<F>>>();
 
-		let new_st_inp = build_col(&si_inp_info, st_inp); //addressing consts
-		let new_st_oup = build_col(&si_oup_info, st_oup);
-		let new_st_data = build_col(&si_data_info, st_data);
+		//seg tags match IDX_SI_INP/OUP/DATA so the 62081 probe rows join
+		//against the 62080 census.
+		let new_st_inp = build_col(&si_inp_info, st_inp, 4); //addressing consts
+		let new_st_oup = build_col(&si_oup_info, st_oup, 5);
+		let new_st_data = build_col(&si_data_info, st_data, 6);
 
 		let fp_part3 = st_part3.iter().map(|f|
 			FpVar::<F>::new_witness(cs.clone(), || Ok(f)).unwrap()
@@ -2347,6 +2399,15 @@ impl <F:PrimeField> WitnessSigmaIR1CS<F>{
 		let res = [z_i1, z_i2, z_i3].concat();
 
 		assert!(res.len()==cfg.get_total_size());
+		//DEBUG USE 62081: TEMP PROBE -- report AFTER folding the current
+		//statement in. print_cost_report fires at preprocess (dummy stmt
+		//only), so the verdict has to be emitted here, once per call; the
+		//LAST block of a run is the authoritative one.
+		if si_unif_on(){
+			let n = SI_UNIF_CALLS.fetch_add(1,
+				std::sync::atomic::Ordering::Relaxed) + 1;
+			si_unif_report(&format!("call{}", n));
+		}
 		res
 	}
 

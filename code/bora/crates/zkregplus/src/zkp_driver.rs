@@ -3504,6 +3504,84 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 		}
 	}
 
+	/// TEMP PROBE (DELETE WITH THE HARNESS): per-column logup-query census
+	/// for the REAL full_dlp circuit shape. build_circs_adv_aggr's layout
+	/// depends only on (DB, capacities), so this builds ONLY the circuits
+	/// -- no discharge, no folding, no key setup. Cost = DLP DB cache load.
+	/// `ZKR_PROBE_SI=1 ZKR_RUNGS=2 cargo test -p zkregplus --release --
+	///  test_probe_dlp_si_census --show-output --nocapture`
+	#[test]
+	pub fn test_probe_dlp_si_census(){
+		use folding_schemes::folding::foldpot::sigma_ir1cs
+			::LookupTableTwoCol as _;
+		use folding_schemes::transcript::poseidon
+			::poseidon_canonical_config;
+		use crate::determine_config::{load_ladder, caps_from_params_aggr};
+		use crate::zkp_driver::build_circs_adv_aggr;
+		std::env::set_var("ZKR_PROBE_SI", "1");
+		let proot = utils::os::proj_root();
+		//production knobs: runcfg_full.json + full_dlp() body.
+		let cd = std::env::var("ZKR_PROBE_CFG")
+			.unwrap_or("data/paper_data/dlp/cfg".to_string());
+		let sig = "regex_pat/main_data_dlp_internationl.dat";
+		let mw = 64; //runcfg_full chunk_len
+		get_global_config().log_level = utils::logger::LOG1;
+		get_global_config().range2_bit = 25;
+		get_global_config().b_read_cache = true;
+		get_global_config().b_pin_lkup_share = true;
+		get_global_config().perc_lkup_share = 1;
+		get_global_config().min_subsigs = 1;
+		get_global_config().min_basis_unique_states = 2;
+		get_global_config().min_basis_acc_states = 2;
+		get_global_config().min_basis_pats_in_trace = 4;
+		get_global_config().min_avg_pats_per_subsig = 1;
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
+		get_global_config().clamav_cfg.sde_rep_fanout_cap = 100;
+		get_global_config().clamav_cfg.min_pm_word_len = 3;
+		//full_dlp never sets b_use_discharge_neo, so the 5-day run is the
+		//LEGACY arm; ZKR_USE_NEO=1 censuses the neo arm instead.
+		get_global_config().clamav_cfg.b_use_discharge_neo =
+			std::env::var("ZKR_USE_NEO").is_ok();
+		let cfg = data_processor::clamav::default_clamav_cfg();
+		let mut vlog = vec![];
+		let db = std::sync::Arc::new(
+			data_processor::clam_db::ClamavDB::<Fr>::build_or_load(
+			&cfg, &format!("{}/{}", cd, sig),
+			&format!("{}/regex_pat/main_dfa.dat", cd),
+			&format!("{}/regex_pat/needs_ised.dat", cd),
+			&format!("{}/regex_pat/needs_ised_igc.dat", cd), &mut vlog,
+			"dlp_corpus_aggr", true, true).expect("build db"));
+		//the full-corpus ladder (runcfg_full config_out) was never checked
+		//in and needs a whole-corpus discharge to regenerate, so default to
+		//the 500-email sample ladder: SAME sig set (regex_pat is symlinked),
+		//same chunk_len/range2_bit/fanout. ZKR_LADDER overrides.
+		let lp = std::env::var("ZKR_LADDER").unwrap_or(
+			"data/debug/full_dlp_sample/config/dlp_sample_ladder.json"
+			.to_string());
+		let ladder = load_ladder(&format!("{}/{}", proot, lp));
+		let n = std::env::var("ZKR_RUNGS").ok()
+			.and_then(|s| s.parse::<usize>().ok())
+			.unwrap_or(2).min(ladder.len());
+		get_global_config().aggr_needs_subsigs = ladder.first()
+			.map(|c| c.aggr_needs_subsigs).unwrap_or(0);
+		utils::logger::emit_stdout(format!("DEBUG USE 62080.0: DLP census \
+			ladder={} rungs={}/{} neo={} range2={} chunk={}", lp, n,
+			ladder.len(), read_global_config().clamav_cfg.b_use_discharge_neo,
+			read_global_config().range2_bit, mw));
+		for (i,r) in ladder[..n].iter().enumerate(){
+			utils::logger::emit_stdout(format!(
+				"DEBUG USE 62080.0: rung {} = {:?}", i, r));
+		}
+		let caps: Vec<_> = ladder[..n].iter()
+			.map(caps_from_params_aggr).collect();
+		let poseidon = poseidon_canonical_config::<Fr>();
+		let lkup_len = db.lkup.get_size();
+		let circs = build_circs_adv_aggr::<Fr,C1,CS1>(
+			&poseidon, mw, mw, lkup_len, db, &caps, false);
+		utils::logger::emit_stdout(format!(
+			"DEBUG USE 62080.0: built {} circuit layers", circs.len()));
+	}
+
 	/// small_multi_dnf: permanent local regression repro for the
 	/// DfaAdvGadget discharge-combo bug. Same non-aggressive DFA path as
 	/// small_data(), but the DFA sig MULTIDNF_cs has a 2-subsig OR-clause

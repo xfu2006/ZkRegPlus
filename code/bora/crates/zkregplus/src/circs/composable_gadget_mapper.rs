@@ -885,6 +885,10 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 		let mut si_data_info = vec![];
 		let mut si_inp_info = vec![];
 		let mut si_oup_info = vec![];
+		//DEBUG USE 62080: TEMP PROBE -- per-component si census rows.
+		let mut probe_rows: Vec<(String, Vec<(usize,bool)>,
+			Vec<(usize,bool)>, Vec<(usize,bool)>,
+			Vec<(String,usize,usize,bool)>)> = vec![];
 		for i in 0..self.vec_components.len(){
 			//NOTE: ranges are including both ends
 			// e.g., (1,1) has one element, (2, 3) has 2 elements
@@ -917,6 +921,21 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 			let (mut comp_maps, mut new_si_data_info, mut new_si_inp_info,
 				mut new_si_oup_info) = self.vec_components[i].lock().unwrap()
 				.get_gadgets_stmt_map(&cur_alloc);
+			//DEBUG USE 62080: TEMP PROBE -- snapshot this component's si
+			//segments before they are drained into the circuit config. The
+			//path collector is filled only by container-config driven
+			//components (SED/DFA); CP hand-writes its si table, so it falls
+			//back to positional labels.
+			if folding_schemes::folding::foldpot::container_config
+				::si_census_on(){
+				probe_rows.push((
+					self.vec_components[i].lock().unwrap().get_name(),
+					new_si_data_info.clone(),
+					new_si_inp_info.clone(),
+					new_si_oup_info.clone(),
+					folding_schemes::folding::foldpot::container_config
+						::si_census_drain()));
+			}
 			assert!(comp_maps.len()==self.vec_components[i].lock().unwrap().num_gadgets());
 			vec_maps.append(&mut comp_maps);
 			si_data_info.append(&mut new_si_data_info);
@@ -928,7 +947,12 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 			.sum::<usize>();
 		assert!(vec_maps.len()==num_gadgets);
 		cfg.reset_si_info(si_data_info, si_inp_info, si_oup_info);
-		
+		//DEBUG USE 62080: TEMP PROBE -- dump the logup query census.
+		if folding_schemes::folding::foldpot::container_config
+			::si_census_on(){
+			dump_si_census(&self.name, &probe_rows, &cfg);
+		}
+
 
 		//4. collect the joins
 		let opt_joins = self.vec_components.iter().enumerate().map(|(i,c)|
@@ -1290,4 +1314,101 @@ impl <F:PrimeField + ColEle + 'static,
 	GadgetMapperDeepClone for CompositeGadgetMapper<F,LK>
 {
 	fn clone_deep_mapper(&self) -> Self { self.clone_deep() }
+}
+
+/// DEBUG USE 62080: TEMP PROBE -- per-column census of the framework logup
+/// QUERY block (sigma_ir1cs step 5.1). One query per si cell; cost is
+/// 0 cs for a constant-ZERO cell, 1 cs for a constant-nonzero cell, and
+/// 2 cs + 1 witness for a variable cell, plus one add-chain break every
+/// ADD_CHAIN_SIZE queries. The census reads the layout only, not the si
+/// VALUES, so it charges every constant cell 1 cs (case 2). The printed
+/// prediction is therefore an UPPER bound, exact iff n_case1 == 0 --
+/// cross-check it against PERF 1012 on a folding run.
+fn dump_si_census(tag: &str,
+	rows: &Vec<(String, Vec<(usize,bool)>, Vec<(usize,bool)>,
+		Vec<(usize,bool)>, Vec<(String,usize,usize,bool)>)>,
+	cfg: &StatementConfig){
+	let seg_name = |s: usize| match s {4=>"INP", 5=>"OUP", _=>"DATA"};
+	//1. flatten to (comp, seg, label, len, b_const). Container-config
+	//components hand us the column path; the rest get positional labels.
+	let mut flat: Vec<(String,usize,String,usize,bool)> = vec![];
+	//ZKR_PROBE_MAP also emits the raw segment map, whose gidx joins these
+	//rows against the DEBUG USE 62081 uniformity probe.
+	let b_map = std::env::var("ZKR_PROBE_MAP").is_ok();
+	let mut gidx = [0usize; 7];
+	for (comp, d_inf, i_inf, o_inf, named) in rows{
+		for (seg, segs) in [(6usize,d_inf), (4usize,i_inf), (5usize,o_inf)]{
+			let nm: Vec<&(String,usize,usize,bool)> = named.iter()
+				.filter(|(_,s,_,_)| *s==seg).collect();
+			//only trust the names when they line up cell for cell
+			let b_named = nm.len()==segs.len() && nm.iter().zip(segs.iter())
+				.all(|(a,b)| a.2==b.0 && a.3==b.1);
+			for (k,(len,b_const)) in segs.iter().enumerate(){
+				let label = if b_named { nm[k].0.clone() }
+					else { format!("{}#{}", seg_name(seg), k) };
+				if b_map{
+					emit_stdout(format!("DEBUG USE 62080.4: {} seg={} \
+						gidx={} len={} const={} {} :: {}", tag, seg,
+						gidx[seg], len, b_const, comp, label));
+				}
+				gidx[seg] += 1;
+				flat.push((comp.clone(), seg, label, *len, *b_const));
+			}
+		}
+	}
+	//2. aggregate by (comp, label, const)
+	let mut agg: HashMap<(String,String,bool),usize> = HashMap::new();
+	for (comp, _seg, label, len, b_const) in &flat{
+		*agg.entry((comp.clone(), label.clone(), *b_const))
+			.or_insert(0) += len;
+	}
+	let cs_of = |n: usize, b_const: bool| if b_const {n} else {2*n};
+	let mut v: Vec<((String,String,bool),usize)> = agg.into_iter().collect();
+	v.sort_by_key(|((c,l,b),n)|
+		(std::cmp::Reverse(cs_of(*n,*b)), c.clone(), l.clone()));
+	let top = std::env::var("ZKR_PROBE_TOP").ok()
+		.and_then(|s| s.parse::<usize>().ok()).unwrap_or(45);
+	for ((comp,label,b_const), n) in v.iter().take(top){
+		emit_stdout(format!(
+			"DEBUG USE 62080.1: {} qry_cs={} cells={} const={} {} :: {}",
+			tag, cs_of(*n,*b_const), n, b_const, comp, label));
+	}
+	if v.len()>top{
+		emit_stdout(format!("DEBUG USE 62080.1: {} ... {} more entries \
+			omitted (raise ZKR_PROBE_TOP)", tag, v.len()-top));
+	}
+	//3. per-component subtotal
+	let mut per: HashMap<String,(usize,usize)> = HashMap::new();
+	for (comp, _seg, _label, len, b_const) in &flat{
+		let e = per.entry(comp.clone()).or_insert((0,0));
+		if *b_const { e.0 += len; } else { e.1 += len; }
+	}
+	let mut pv: Vec<(String,(usize,usize))> = per.into_iter().collect();
+	pv.sort_by_key(|(_c,(nc,nv))| std::cmp::Reverse(nc + 2*nv));
+	for (comp,(nc,nv)) in &pv{
+		emit_stdout(format!("DEBUG USE 62080.2: {} COMP {} const_cells={} \
+			var_cells={} qry_cs={}", tag, comp, nc, nv, nc + 2*nv));
+	}
+	//4. grand total + the predicted query-block cost
+	let n_c: usize = flat.iter().filter(|r| r.4).map(|r| r.3).sum();
+	let n_v: usize = flat.iter().filter(|r| !r.4).map(|r| r.3).sum();
+	let cells = cfg.input_size + cfg.output_size + cfg.data_size;
+	let qlen = 2 + cells;
+	let breaks = (qlen-1)/utils::consts::ADD_CHAIN_SIZE + 1;
+	let lss = cfg.lookup_share_size;
+	let r_breaks = if lss==0 {0}
+		else {(lss-1)/utils::consts::ADD_CHAIN_SIZE + 1};
+	emit_stdout(format!("DEBUG USE 62080.3: {} qry_len={} covered={} \
+		const_cells={} var_cells={} breaks={} PRED_QRY_CS={} \
+		PRED_QRY_WIT={} | inp={} oup={} data={} lkup_share={} \
+		PRED_RIGHT_CS={}",
+		tag, qlen, n_c+n_v, n_c, n_v, breaks,
+		n_c + 2*n_v + breaks, n_v + breaks,
+		cfg.input_size, cfg.output_size, cfg.data_size, lss,
+		4*lss + r_breaks));
+	if n_c + n_v != cells{
+		emit_stdout(format!("DEBUG USE 62080.3: {} WARNING census covers \
+			{} cells but cfg has {} -- attribution is incomplete",
+			tag, n_c+n_v, cells));
+	}
 }

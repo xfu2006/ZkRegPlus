@@ -93,6 +93,23 @@ pub enum ContainerConfig{
 	Complex(Vec<ContainerConfig>, String, String),
 }
 
+/// DEBUG USE 62080: TEMP PROBE -- per-column collector for the logup
+/// query census. gen_si_info pushes (path, seg, len, b_const) here when
+/// ZKR_PROBE_SI is set; the gadget mapper drains it per component.
+pub static SI_CENSUS: std::sync::Mutex<Vec<(String,usize,usize,bool)>> =
+	std::sync::Mutex::new(Vec::new());
+
+/// DEBUG USE 62080: TEMP PROBE -- cached ZKR_PROBE_SI gate.
+pub fn si_census_on()->bool{
+	static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+	*ON.get_or_init(|| std::env::var("ZKR_PROBE_SI").is_ok())
+}
+
+/// DEBUG USE 62080: TEMP PROBE -- take and clear the collected rows.
+pub fn si_census_drain()->Vec<(String,usize,usize,bool)>{
+	std::mem::take(&mut *SI_CENSUS.lock().unwrap())
+}
+
 // -----------------------------------------------
 //  	Implementations
 // -----------------------------------------------
@@ -241,8 +258,15 @@ impl ContainerConfig{
 	pub fn gen_si_info(&self)-> (Vec<(usize, bool)>, Vec<(usize,bool)>,
 		Vec<(usize,bool)>){
 		match self{
-			ContainerConfig::Column(loc,_,_,b_const) => 
-				if loc.src.1==6 && loc.src.0==0{//si_data 
+			ContainerConfig::Column(loc,_,_path,b_const) => {
+			//DEBUG USE 62080: TEMP PROBE -- record the named si column
+			//before the (len,b_const) name is dropped below.
+			if si_census_on() && loc.src.0==0
+				&& loc.src.1>=4 && loc.src.1<=6{
+				SI_CENSUS.lock().unwrap().push(
+					(_path.clone(), loc.src.1, loc.src.3, *b_const));
+			}
+				if loc.src.1==6 && loc.src.0==0{//si_data
 					//only when it is NOT foreign
 					(vec![(loc.src.3, *b_const)], vec![], vec![])
 				}else if loc.src.1==5 && loc.src.0==0{//si_oup
@@ -253,7 +277,8 @@ impl ContainerConfig{
 					(vec![], vec![(loc.src.3, *b_const)], vec![])
 				}else{//don't handle other segments
 					(vec![], vec![], vec![])
-				},
+				}
+			},
 			ContainerConfig::Complex(vec, _,_) => {
 				vec.iter().fold(
 				(
