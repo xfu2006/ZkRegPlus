@@ -189,6 +189,94 @@ pub(crate) fn write_job_manifests(jobs_dir: &str, bins: &[Vec<String>])
 	}).collect()
 }
 
+/// One dataset's complete, immutable run configuration. Nobody ever
+/// constructs one -- only the DLP/DNA/CLAM consts exist.
+#[allow(dead_code)] // fields read from B101/B102/C101 on
+pub struct DatasetSpec {
+	/// Dataset tag; plan dir is /tmp/bora/<name>_neo.
+	pub(crate) name: &'static str,
+	/// Dir holding sig_file + main_dfa/needs_ised/needs_ised_igc .dat.
+	pub(crate) config_dir: &'static str,
+	/// Signature file basename inside config_dir.
+	pub(crate) sig_file: &'static str,
+	/// Repo-rel path lists (.tgz ok); their concat is the scan corpus.
+	pub(crate) master_sources: &'static [&'static str],
+	/// Scale corpora, each swept ALONE (never concatenated).
+	pub(crate) scale_sources: &'static [&'static str],
+	/// DB cache dir, neo-own so it never collides with legacy's.
+	pub(crate) db_cache_dir: &'static str,
+	/// Nibbles per folding chunk (the driver's max_word).
+	pub(crate) chunk_len: usize,
+	/// Bit width of the range-2 lookup table.
+	pub(crate) range2_bit: usize,
+	/// SDE repetition fan-out cap (clamav_cfg.sde_rep_fanout_cap).
+	pub(crate) fanout_cap: usize,
+	/// Aggressive SDE arm (DLP true; DNA/CLAM false).
+	pub(crate) b_aggressive: bool,
+	/// Run the in-circuit lookup-share cover check.
+	pub(crate) b_check_lkup: bool,
+	/// Non-aggr ladder steps; len MUST be num_circs-1. Empty when aggr.
+	pub(crate) vec_decrease_level: &'static [usize],
+	/// Main-decider concurrency cap (inert while b_one_proof).
+	pub(crate) n_par_snark: usize,
+	/// CP-decider concurrency cap (inert while b_one_proof).
+	pub(crate) n_par_snark_cp: usize,
+	/// Floor on subsigs per circuit.
+	pub(crate) min_subsigs: usize,
+	/// Floor on distinct FSM basis states.
+	pub(crate) min_basis_unique_states: usize,
+	/// Floor on accepting basis states.
+	pub(crate) min_basis_acc_states: usize,
+	/// Floor on patterns held in one trace.
+	pub(crate) min_basis_pats_in_trace: usize,
+	/// Floor on average patterns per subsig.
+	pub(crate) min_avg_pats_per_subsig: usize,
+	/// Floor on DFA sigs (0 = no floor).
+	pub(crate) min_dfa_sigs: usize,
+	/// Floor on DFA subsigs (0 = no floor).
+	pub(crate) min_dfa_subsigs: usize,
+}
+
+/// DLP: legacy full_dlp()'s exact run configuration (zkp_driver's
+/// full_dlp + data/paper_data/dlp/cfg/config/runcfg_full.json), with a
+/// neo-own DB cache dir.
+pub const DLP: DatasetSpec = DatasetSpec {
+	name: "dlp",
+	// legacy splits this into cfg/ + a "regex_pat/"-prefixed sig_file;
+	// flattened so all four .dat files share one root, as
+	// create_smaller_config requires.
+	config_dir: "data/paper_data/dlp/cfg/regex_pat",
+	sig_file: "main_data_dlp_internationl.dat",
+	master_sources:
+		&["data/paper_data/dlp/cfg/jobs/final_enron_list.txt.tgz"],
+	scale_sources: &[
+		// 1,996 B, ~0% SDE saturation (easy; legacy ran it first)
+		"data/samples/email/src/maildir/griffith-j/continental/2.",
+		// 805 B, ~91% SDE saturation (dense)
+		"data/samples/email/src/maildir/donohoe-t/sent/6."],
+	db_cache_dir: "dlp_neo", // never legacy's "dlp_corpus_aggr"
+	chunk_len: 64,
+	range2_bit: 25,
+	fanout_cap: 100,
+	b_aggressive: true,
+	b_check_lkup: false,
+	vec_decrease_level: &[],
+	// 1/1 = legacy full_dlp, which never sets these. Inert regardless:
+	// the snark semaphores are taken past driver.rs' b_one_proof and
+	// b_folding_only returns, so only one job ever contends.
+	n_par_snark: 1,
+	n_par_snark_cp: 1,
+	min_subsigs: 1,
+	min_basis_unique_states: 2,
+	min_basis_acc_states: 2,
+	min_basis_pats_in_trace: 4,
+	min_avg_pats_per_subsig: 1,
+	// 0/0 = legacy full_dlp (never set -> GLOBAL_CONFIG default), and
+	// inert for DLP: its main_dfa.dat / needs_ised*.dat are empty.
+	min_dfa_sigs: 0,
+	min_dfa_subsigs: 0,
+};
+
 /// Q2 lookup-composition report, perc-driven. perc>=100 reproduces
 /// zkp_driver::tests_zkp_driver::collect_lookup_stats() exactly (same 3
 /// hardcoded dataset configs, no thinning). perc<100 builds each
@@ -458,5 +546,51 @@ pub mod tests_bora_data_driver {
 		assert!(!Path::new(&paths[2]).exists(), "stale job_2.dat kept");
 		assert!(Path::new(&format!("{}/ladder.json", jd)).exists(),
 			"unrelated plan file deleted");
+	}
+
+	/// A102: the DLP const points at real files and pins legacy
+	/// full_dlp()'s configuration field for field.
+	#[test]
+	fn test_a102_dlp_const_sane() {
+		let proot = utils::os::proj_root();
+		let abs = |p: &str| format!("{}/{}", proot, p);
+
+		// 1. every path the pipeline will open exists on disk.
+		assert!(Path::new(&abs(DLP.config_dir)).is_dir(),
+			"config_dir missing: {}", DLP.config_dir);
+		for f in [DLP.sig_file, "main_dfa.dat", "needs_ised.dat",
+			"needs_ised_igc.dat"] {
+			let p = abs(&format!("{}/{}", DLP.config_dir, f));
+			assert!(Path::new(&p).is_file(), "missing {}", p);
+		}
+		for s in DLP.master_sources.iter().chain(DLP.scale_sources) {
+			assert!(Path::new(&abs(s)).is_file(), "missing {}", s);
+		}
+
+		// 2. shape.
+		assert_eq!(DLP.name, "dlp");
+		assert_eq!(DLP.scale_sources.len(), 2);
+		assert!(!DLP.master_sources.is_empty());
+		assert!(DLP.vec_decrease_level.is_empty()); // aggressive arm
+
+		// 3. neo-own cache: a neo run can never write legacy's dir.
+		assert_eq!(DLP.db_cache_dir, "dlp_neo");
+		assert_eq!(plan_dir(DLP.name), "/tmp/bora/dlp_neo");
+
+		// 4. legacy full_dlp() parity, field by field.
+		assert_eq!(DLP.chunk_len, 64);
+		assert_eq!(DLP.range2_bit, 25);
+		assert_eq!(DLP.fanout_cap, 100);
+		assert!(DLP.b_aggressive);
+		assert!(!DLP.b_check_lkup);
+		assert_eq!(DLP.n_par_snark, 1);
+		assert_eq!(DLP.n_par_snark_cp, 1);
+		assert_eq!(DLP.min_subsigs, 1);
+		assert_eq!(DLP.min_basis_unique_states, 2);
+		assert_eq!(DLP.min_basis_acc_states, 2);
+		assert_eq!(DLP.min_basis_pats_in_trace, 4);
+		assert_eq!(DLP.min_avg_pats_per_subsig, 1);
+		assert_eq!(DLP.min_dfa_sigs, 0);
+		assert_eq!(DLP.min_dfa_subsigs, 0);
 	}
 }
