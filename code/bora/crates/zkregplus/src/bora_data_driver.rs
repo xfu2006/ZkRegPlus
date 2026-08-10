@@ -963,6 +963,16 @@ fn set_diag_env(part_id: usize) {
 	std::env::set_var("ZKR_DLP_PROBE_FILES", "1");
 }
 
+/// Dry policy (user decision 2026-08-10): a light run drops the
+/// hab22 cover check; heavy keeps the spec value. ONE derivation
+/// site so all three b_check_lkup consumers agree.
+fn effective_spec(spec: &DatasetSpec, b_light_test: bool)
+	-> DatasetSpec {
+	let mut s = spec.clone();
+	s.b_check_lkup = s.b_check_lkup && !b_light_test;
+	s
+}
+
 /// The full-run pipeline shared by all three datasets. Every part
 /// runs it whole-corpus-identically in its own sandbox; the only
 /// cross-process file is the snark-start flag.
@@ -971,6 +981,7 @@ pub fn run_neo(spec: &DatasetSpec, perc_db: f64,
 	numa_num: usize, part_id: usize, b_light_test: bool,
 	b_ladder_only: bool) -> Vec<CapParams> {
 	set_diag_env(part_id);
+	let spec = &effective_spec(spec, b_light_test);
 	let role = part_role(part_id, numa_num, num_jobs);
 	apply_spec_config(spec, b_light_test, &role);
 	let pd = reset_part_dir(spec, part_id);
@@ -1204,6 +1215,7 @@ pub const USAGE: &str = "bora_cli: backend of \
 	 lkup <perc> <dest_path>\n \
 	 full_dlp <perc_db> <perc_samples> <num_circs> <num_jobs> \
 	<numa_num> <part_id> <light 0|1> <ladder_only 0|1>\n \
+	   (light=1 also drops the hab22 cover check)\n \
 	 scale_dlp <corpus_idx> <c1,c2,...>";
 
 /// Parsed CLI command for examples/bora_cli.rs. DNA/CLAM
@@ -2211,5 +2223,19 @@ pub mod tests_bora_data_driver {
 			std::env::var("ZKR_DLP_PROBE_FILES").unwrap(), "1");
 		std::env::remove_var("ZKR_LOG_TAG");
 		std::env::remove_var("ZKR_DLP_PROBE_FILES");
+	}
+
+	/// D102: light drops the cover check, heavy keeps the spec
+	/// value, false stays false; nothing else changes.
+	#[test]
+	fn test_d102_effective_spec() {
+		assert!(DLP.b_check_lkup);
+		let e = effective_spec(&DLP, true);
+		assert!(!e.b_check_lkup, "light run must not cover-check");
+		assert_eq!(e.name, DLP.name);
+		assert_eq!(e.db_cache_dir, DLP.db_cache_dir);
+		assert!(effective_spec(&DLP, false).b_check_lkup);
+		let sc = scale_spec_clone(&DLP);
+		assert!(!effective_spec(&sc, false).b_check_lkup);
 	}
 }

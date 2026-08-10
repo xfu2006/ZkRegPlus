@@ -328,12 +328,12 @@ def run_external_python(ctx, script, args, env):
     return p.returncode
 
 
-def run_rust_example(ctx, example_name, args, env):
+def run_rust_example(ctx, example_name, args, env, log_name="run"):
     """Single-process `cargo run --release --example <name> -- <args>`,
     mirrors run_external_python but for a real bora_cli-style
     binary instead of a cargo test."""
     cmd = example_cmd(example_name, args)
-    p, t = spawn(cmd, env, ctx.log_path("run"), ctx.key)
+    p, t = spawn(cmd, env, ctx.log_path(log_name), ctx.key)
     ctx.watch(p.pid)
     p.wait()
     if t:
@@ -466,6 +466,71 @@ def pack_scale_bundle(run_log, dest):
     return len(rounds)
 
 
+def _tgz_single(dest, src, arcname):
+    """dest <- gzip tar holding exactly src, named arcname."""
+    with tarfile.open(dest, "w:gz", compresslevel=9) as t:
+        t.add(src, arcname=arcname)
+
+
+def pack_full_dump(base, run_logs, ts):
+    """Place raw_data/<SERVER>/<base>{,.partN}.tgz from the run
+    log(s): 1 log -> plain single-member tgz (extract_tgz contract),
+    2 logs -> one nested partN_<ts>.log.tgz each (_read_part_log
+    contract). Stale <base>{,.part*}.tgz unlinked first --
+    resolve_server_dump prefers surviving parts. Returns dest paths."""
+    assert len(run_logs) in (1, 2), run_logs
+    dest_dir = os.path.dirname(raw_data_path(base + ".tgz"))
+    os.makedirs(dest_dir, exist_ok=True)
+    built = []                        # (dest_name, tmp_path)
+    with tempfile.TemporaryDirectory() as td:
+        if len(run_logs) == 1:
+            tmp = os.path.join(dest_dir, base + ".tgz.tmp")
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+            _tgz_single(tmp, run_logs[0], "run_%s.log" % ts)
+            built.append((base + ".tgz", tmp))
+        else:
+            for i, lg in enumerate(run_logs, 1):
+                nested = os.path.join(td,
+                                       "part%d_%s.log.tgz" % (i, ts))
+                _tgz_single(nested, lg, "part%d_%s.log" % (i, ts))
+                name = "%s.part%d.tgz" % (base, i)
+                tmp = os.path.join(dest_dir, name + ".tmp")
+                if os.path.exists(tmp):
+                    os.unlink(tmp)
+                _tgz_single(tmp, nested, os.path.basename(nested))
+                built.append((name, tmp))
+        for stale in ([os.path.join(dest_dir, base + ".tgz")]
+                       + sorted(glob.glob(os.path.join(
+                           dest_dir, base + ".part*.tgz")))):
+            if os.path.exists(stale):
+                os.unlink(stale)
+        dests = []
+        for name, tmp in built:
+            dest = os.path.join(dest_dir, name)
+            os.replace(tmp, dest)
+            log("pack_full_dump: placed %s" % dest)
+            dests.append(dest)
+    return dests
+
+
+BORA_PLAN_ROOT = "/tmp/bora"   # Rust plan_dir() sandboxes live here
+
+
+def dlp_ladders_diverge():
+    """True when the two parts' tuned ladders differ (byte compare;
+    missing file = divergence). Identical argv must yield identical
+    ladders (C103), so divergence invalidates the combined dump."""
+    lads = []
+    for pid in (0, 1):
+        p = os.path.join(BORA_PLAN_ROOT,
+                          "dlp_neo_p%d" % pid, "ladder.json")
+        if not os.path.isfile(p):
+            return True
+        lads.append(open(p, "rb").read())
+    return lads[0] != lads[1]
+
+
 # =====================================================================
 # raw_data placement (fixed output paths for gen_*.py figure scripts)
 # =====================================================================
@@ -502,6 +567,9 @@ RSS_POLL_S = 10   # peak-RSS sampling interval, matches _wait_stagger's
 FAIL_RE = re.compile(
     r"panic|panicked|SIGABRT|Killed|out of memory|cannot allocate|"
     r"CapErr|FATAL|error\[|VERIFICATION FAILED|SPLIT VERIFY: FAIL")
+
+# advisory lines that legitimately contain failure keywords
+ADVISORY_RE = re.compile(r"CAVEAT:|WARN big job")
 
 
 @dataclass
@@ -560,12 +628,20 @@ class JobHandle:
         self._dir = os.path.join(JOB_LOG_DIR,
                                   "%s_%s_%s" % (key, mode, self._ts))
         os.makedirs(self._dir, exist_ok=True)
+        # stale per-job logs from a PRIOR run would counterfeit this
+        # leaf's failure scan -- clear them at job start
+        for jf in glob.glob(os.path.join(LOGS_DIR, "log_job_*.txt")):
+            try:
+                os.unlink(jf)
+            except OSError:
+                pass
         self._log_paths = []
         self._notes = []
 
     def log_path(self, name):
         p = os.path.join(self._dir, "%s.log" % name)
-        self._log_paths.append(p)
+        if p not in self._log_paths:
+            self._log_paths.append(p)
         return p
 
     def note(self, line):
@@ -585,7 +661,8 @@ class JobHandle:
             if os.path.isfile(s):
                 with open(s, errors="replace") as f:
                     for ln in f:
-                        if FAIL_RE.search(ln):
+                        if FAIL_RE.search(ln) \
+                                and not ADVISORY_RE.search(ln):
                             lines.append(ln.rstrip("\n"))
         return lines
 
@@ -616,9 +693,12 @@ class JobHandle:
                     t.add(rp, arcname=os.path.basename(rp))
         return tgz
 
-    def finish(self, rc):
+    def finish(self, rc, b_fail_scan=True):
+        # b_fail_scan=False: the leaf verdicts by rc + its own positive
+        # markers (scale: EXPECTED CapErr bump-retries print panic text
+        # into a successful log, which the scan would counterfeit).
         wall = time.time() - self._t0
-        fails = self._fail_lines()
+        fails = self._fail_lines() if b_fail_scan else []
         failed = rc != 0 or bool(fails)
         triage_tgz = None
         if failed:
@@ -715,11 +795,9 @@ def stub_leaf(name, milestone):
     return run_fn
 
 
-run_leaf_dlp          = stub_leaf("dlp",        "M102")
 run_leaf_dna           = stub_leaf("dna",        "M103")
 run_leaf_clamav        = stub_leaf("clam",       "M104")
 run_leaf_scale_clamav  = stub_leaf("scale_clam", "M104")
-run_leaf_scale_dlp     = stub_leaf("scale_dlp",  "M102")
 
 # dry_run's collect_lookup_stats_adv perc -- kept small so the leaf
 # builds a deterministically-thinned DB per dataset instead of the real
@@ -742,6 +820,135 @@ def run_leaf_analyze_lkup(mode, ctx):
                                server_specific=False)
         ctx.raw_data.append(dest)
     return ctx.finish(rc)
+
+
+# bora_cli full_dlp constants (spec 8.7/8.10a): dry = 0.25% DB
+# (25 rules) x 0.0198% samples (100 files of the 504,854 master),
+# light (light also drops the cover check); full = legacy
+# full_dlp()'s own defaults. (perc_db, perc_samples, circs, jobs,
+# light); numa_num/part_id/ladder_only are call-site tokens.
+DLP_LEAF_ARGS = {
+    "dry":  ("0.25", "0.0198", "2", "2", "1"),
+    "full": ("100", "100", "4", "8", "0"),
+}
+
+
+def dlp_argv(mode, numa_num, part):
+    """The 9-token bora_cli argv for one full_dlp part; part is "0"
+    (single process) or PART_TOKEN (two-half). ladder_only always 0."""
+    pdb, ps, nc, nj, light = DLP_LEAF_ARGS[mode]
+    return ["full_dlp", pdb, ps, nc, nj, str(numa_num), part,
+            light, "0"]
+
+
+FOLD_OK_RE = re.compile(
+    r"Job (\d+) (?:folding done|generating SNARK proof)")
+VERIFY_IND_RE = re.compile(r"Verify Individual Proof")
+
+
+def dlp_missing_success(logs, num_jobs):
+    """Positive success check (one_proof mode): every job logged a
+    completed fold, and exactly ONE individual proof verified.
+    Returns None when satisfied, else the missing-marker reason."""
+    done, n_ver = 0, 0
+    for lg in logs:
+        text = open(lg, errors="replace").read()
+        # per-log distinct set: two-half parts number jobs locally
+        done += len({int(m.group(1))
+                     for m in FOLD_OK_RE.finditer(text)})
+        n_ver += len(VERIFY_IND_RE.findall(text))
+    if done != num_jobs:
+        return "fold-done markers %d != num_jobs %d" % (done, num_jobs)
+    if n_ver != 1:
+        return "Verify Individual Proof count %d != 1" % n_ver
+    return None
+
+
+def run_leaf_dlp(mode, ctx):
+    """M102 DLP leaf: bora_cli full_dlp (neo, argv-only). One process
+    on a 1-socket box; two-half + numactl split on a multi-socket
+    server, with a p0-vs-p1 ladder tripwire before packing."""
+    model = resolve_process_model()
+    env = neo_env()
+    if model.n_parts == 1:
+        rc = run_rust_example(ctx, "bora_cli",
+                               dlp_argv(mode, 1, "0"), env)
+        logs = [ctx.log_path("run")]
+    else:
+        rc = run_example_two_half(ctx, "bora_cli",
+                                   dlp_argv(mode, 2, PART_TOKEN),
+                                   env, model.node_ranges)
+        logs = [ctx.log_path("part1"), ctx.log_path("part2")]
+        if rc == 0 and dlp_ladders_diverge():
+            ctx.note("p0/p1 ladder.json diverge: dump invalid")
+            rc = 5
+    if rc == 0:
+        missing = dlp_missing_success(logs,
+                                       int(DLP_LEAF_ARGS[mode][3]))
+        if missing:
+            ctx.note("success markers missing: %s" % missing)
+            rc = 6
+    if rc == 0:
+        for dest in pack_full_dump("full_dlp", logs, ctx._ts):
+            ctx.raw_data.append(dest)
+    return ctx.finish(rc)
+
+
+# bora_cli scale_dlp counts (spec 8.10c), pin-INCLUSIVE units: each
+# legacy entry +1; top 9861 = the complete rule set. Bundles land under
+# the literal any_server names gen_scale_all.py hardcodes.
+SCALE_DLP_COUNTS = {
+    "dry":  [2, 987],
+    "full": [2, 987, 1973, 2959, 3945, 4931, 5917, 6903, 7889,
+             8875, 9861],
+}
+
+# (corpus_idx, bundle, log tag); order = DLP.scale_sources (idx 0 =
+# griffith-j/continental/2. sparse, idx 1 = donohoe-t/sent/6. dense).
+SCALE_DLP_RUNS = [(0, "scale_data_dlp_2.tgz", "scale_2"),
+                  (1, "scale_data_dlp_6.tgz", "scale_6")]
+
+
+def scale_missing_rounds(log_path, counts):
+    """Positive success check: every requested count printed its ROUND
+    END marker (emitted only after that round's fold succeeded).
+    Returns None when satisfied, else the missing-counts reason."""
+    text = open(log_path, errors="replace").read()
+    ended = {int(m.group(1)) for m in SCALE_END_RE.finditer(text)}
+    missing = [c for c in counts if c not in ended]
+    if missing:
+        return "no ROUND END for counts %s" % missing
+    return None
+
+
+def run_leaf_scale_dlp(mode, ctx):
+    """M102 Scale-DLP leaf: two sequential bora_cli scale_dlp sweeps,
+    one per fixed corpus, the second running even if the first failed.
+    Each log is packed into its any_server bundle even on a crash
+    (partial rounds kept; 0 rounds leave the bundle untouched)."""
+    counts = SCALE_DLP_COUNTS[mode]
+    arg = ",".join(str(c) for c in counts)
+    env = neo_env()
+    rc = 0
+    for idx, bundle, tag in SCALE_DLP_RUNS:
+        lg = ctx.log_path(tag)
+        try:
+            rc_i = run_rust_example(ctx, "bora_cli",
+                                     ["scale_dlp", str(idx), arg],
+                                     env, log_name=tag)
+        finally:
+            dest = raw_data_path(bundle, server_specific=False)
+            if os.path.isfile(lg) and pack_scale_bundle(lg, dest):
+                ctx.raw_data.append(dest)
+        if rc_i == 0:
+            missing = scale_missing_rounds(lg, counts)
+            if missing:
+                ctx.note("%s: %s" % (tag, missing))
+                rc_i = 7
+        else:
+            ctx.note("%s: rc=%s" % (tag, rc_i))
+        rc = rc or rc_i
+    return ctx.finish(rc, b_fail_scan=False)
 
 
 MS_DLP_DIR = os.path.join(REPO, "data", "src_sig", "ms_dlp")
@@ -1141,6 +1348,16 @@ def _fake_open(path_map):
             return io.StringIO(path_map[path])
         raise FileNotFoundError(path)
     return _open
+
+
+def _load_common():
+    """The REAL paper-side readers, for packing-contract tests."""
+    import importlib.util
+    p = os.path.join(RUN_DATA_DIR, "scripts", "common.py")
+    spec = importlib.util.spec_from_file_location("bora_common", p)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
 
 
 class NSocketsTest(unittest.TestCase):
@@ -1563,6 +1780,237 @@ class PackScaleBundleTest(unittest.TestCase):
                           "precious committed bundle")
 
 
+class DlpArgvTest(unittest.TestCase):
+    def test_dry_tokens(self):
+        self.assertEqual(
+            dlp_argv("dry", 2, PART_TOKEN),
+            ["full_dlp", "0.25", "0.0198", "2", "2", "2",
+             PART_TOKEN, "1", "0"])
+
+    def test_full_tokens(self):
+        self.assertEqual(
+            dlp_argv("full", 1, "0"),
+            ["full_dlp", "100", "100", "4", "8", "1", "0",
+             "0", "0"])
+
+
+class PackFullDumpTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        p = mock.patch.object(_MOD, "RAW_DATA_ROOT",
+                               os.path.join(self.tmp.name, "raw"))
+        p.start()
+        self.addCleanup(p.stop)
+        self.common = _load_common()
+
+    def _log(self, name, text):
+        p = os.path.join(self.tmp.name, name)
+        with open(p, "w") as f:
+            f.write(text)
+        return p
+
+    def test_one_part_real_reader_roundtrip(self):
+        lg = self._log("run.log", "hello dlp\n[job 0] done\n")
+        dests = pack_full_dump("full_dlp", [lg], "20260810_010203")
+        self.assertEqual([os.path.basename(d) for d in dests],
+                          ["full_dlp.tgz"])
+        out = self.common.extract_tgz(
+            dests[0], os.path.join(self.tmp.name, "x"))
+        self.assertEqual(open(out).read(),
+                          "hello dlp\n[job 0] done\n")
+
+    def test_two_part_real_reader_roundtrip(self):
+        l1 = self._log("p1.log", "part one\n")
+        l2 = self._log("p2.log", "part two\n")
+        dests = pack_full_dump("full_dlp", [l1, l2],
+                                "20260810_010203")
+        self.assertEqual([os.path.basename(d) for d in dests],
+                          ["full_dlp.part1.tgz", "full_dlp.part2.tgz"])
+        self.assertEqual(self.common._read_part_log(dests[0]),
+                          "part one\n")
+        self.assertEqual(self.common._read_part_log(dests[1]),
+                          "part two\n")
+
+    def test_unlink_stale_both_directions(self):
+        lg = self._log("run.log", "x\n")
+        d2 = pack_full_dump("full_dlp", [lg, lg], "t1")
+        d1 = pack_full_dump("full_dlp", [lg], "t2")
+        for d in d2:
+            self.assertFalse(os.path.exists(d))    # parts gone
+        self.assertTrue(os.path.exists(d1[0]))
+        d2b = pack_full_dump("full_dlp", [lg, lg], "t3")
+        self.assertFalse(os.path.exists(d1[0]))    # single gone
+        self.assertTrue(all(os.path.exists(d) for d in d2b))
+
+    def test_stale_tmp_leftover_is_replaced(self):
+        lg = self._log("run.log", "y\n")
+        dest_dir = os.path.dirname(raw_data_path("full_dlp.tgz"))
+        os.makedirs(dest_dir, exist_ok=True)
+        open(os.path.join(dest_dir, "full_dlp.tgz.tmp"), "w").close()
+        dests = pack_full_dump("full_dlp", [lg], "t4")
+        self.assertTrue(os.path.exists(dests[0]))
+        self.assertFalse(os.path.exists(
+            os.path.join(dest_dir, "full_dlp.tgz.tmp")))
+
+
+class DlpLaddersDivergeTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        p = mock.patch.object(_MOD, "BORA_PLAN_ROOT", self.tmp.name)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def _write(self, pid, blob):
+        d = os.path.join(self.tmp.name, "dlp_neo_p%d" % pid)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "ladder.json"), "wb") as f:
+            f.write(blob)
+
+    def test_missing_and_differing_diverge(self):
+        self.assertTrue(dlp_ladders_diverge())      # both missing
+        self._write(0, b"{a}")
+        self.assertTrue(dlp_ladders_diverge())      # p1 missing
+        self._write(1, b"{b}")
+        self.assertTrue(dlp_ladders_diverge())      # differ
+
+    def test_identical_ladders_pass(self):
+        self._write(0, b"{same}")
+        self._write(1, b"{same}")
+        self.assertFalse(dlp_ladders_diverge())
+
+
+class RunLeafDlpTest(unittest.TestCase):
+    def setUp(self):
+        self.ctx = mock.Mock()
+        self.ctx._ts = "20260810_000000"
+        self.ctx.raw_data = []
+        self.ctx.finish.side_effect = lambda rc: rc
+        self.ctx.log_path.side_effect = \
+            lambda n: "/lp/%s.log" % n
+
+    def test_single_part_dry_wiring(self):
+        with mock.patch.object(_MOD, "resolve_process_model",
+                                return_value=ProcessModel(1, [None])), \
+             mock.patch.object(_MOD, "neo_env",
+                                return_value={"E": "1"}), \
+             mock.patch.object(_MOD, "run_rust_example",
+                                return_value=0) as rre, \
+             mock.patch.object(_MOD, "dlp_missing_success",
+                                return_value=None), \
+             mock.patch.object(_MOD, "pack_full_dump",
+                                return_value=["/d/full_dlp.tgz"]) as pk:
+            rc = run_leaf_dlp("dry", self.ctx)
+        self.assertEqual(rc, 0)
+        rre.assert_called_once_with(
+            self.ctx, "bora_cli", dlp_argv("dry", 1, "0"), {"E": "1"})
+        pk.assert_called_once_with(
+            "full_dlp", ["/lp/run.log"], "20260810_000000")
+        self.assertEqual(self.ctx.raw_data, ["/d/full_dlp.tgz"])
+
+    def test_two_part_full_wiring(self):
+        model = ProcessModel(2, ["0-3", "4-7"])
+        with mock.patch.object(_MOD, "resolve_process_model",
+                                return_value=model), \
+             mock.patch.object(_MOD, "neo_env",
+                                return_value={"E": "1"}), \
+             mock.patch.object(_MOD, "run_example_two_half",
+                                return_value=0) as reth, \
+             mock.patch.object(_MOD, "dlp_ladders_diverge",
+                                return_value=False), \
+             mock.patch.object(_MOD, "dlp_missing_success",
+                                return_value=None), \
+             mock.patch.object(_MOD, "pack_full_dump",
+                                return_value=["/d/p1", "/d/p2"]) as pk:
+            rc = run_leaf_dlp("full", self.ctx)
+        self.assertEqual(rc, 0)
+        reth.assert_called_once_with(
+            self.ctx, "bora_cli", dlp_argv("full", 2, PART_TOKEN),
+            {"E": "1"}, ["0-3", "4-7"])
+        pk.assert_called_once_with(
+            "full_dlp", ["/lp/part1.log", "/lp/part2.log"],
+            "20260810_000000")
+        self.assertEqual(self.ctx.raw_data, ["/d/p1", "/d/p2"])
+
+    def test_nonzero_rc_never_packs(self):
+        with mock.patch.object(_MOD, "resolve_process_model",
+                                return_value=ProcessModel(1, [None])), \
+             mock.patch.object(_MOD, "neo_env", return_value={}), \
+             mock.patch.object(_MOD, "run_rust_example",
+                                return_value=3), \
+             mock.patch.object(_MOD, "pack_full_dump") as pk:
+            rc = run_leaf_dlp("dry", self.ctx)
+        self.assertEqual(rc, 3)
+        pk.assert_not_called()
+
+    def test_ladder_divergence_fails_no_pack(self):
+        model = ProcessModel(2, ["0-3", "4-7"])
+        with mock.patch.object(_MOD, "resolve_process_model",
+                                return_value=model), \
+             mock.patch.object(_MOD, "neo_env", return_value={}), \
+             mock.patch.object(_MOD, "run_example_two_half",
+                                return_value=0), \
+             mock.patch.object(_MOD, "dlp_ladders_diverge",
+                                return_value=True), \
+             mock.patch.object(_MOD, "pack_full_dump") as pk:
+            rc = run_leaf_dlp("dry", self.ctx)
+        self.assertEqual(rc, 5)
+        pk.assert_not_called()
+        self.ctx.note.assert_called_once()
+
+    def test_missing_success_markers_fail_no_pack(self):
+        with mock.patch.object(_MOD, "resolve_process_model",
+                                return_value=ProcessModel(1, [None])), \
+             mock.patch.object(_MOD, "neo_env", return_value={}), \
+             mock.patch.object(_MOD, "run_rust_example",
+                                return_value=0), \
+             mock.patch.object(_MOD, "dlp_missing_success",
+                                return_value="no markers") as ms, \
+             mock.patch.object(_MOD, "pack_full_dump") as pk:
+            rc = run_leaf_dlp("dry", self.ctx)
+        self.assertEqual(rc, 6)
+        ms.assert_called_once_with(["/lp/run.log"], 2)
+        pk.assert_not_called()
+        self.ctx.note.assert_called_once()
+
+
+class DlpMissingSuccessTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def _log(self, name, text):
+        p = os.path.join(self.tmp.name, name)
+        with open(p, "w") as f:
+            f.write(text)
+        return p
+
+    def test_dry_shape_ok(self):
+        lg = self._log("run.log",
+                        "Job 0 generating SNARK proof\n"
+                        "Job 1 folding done; b_one_proof set\n"
+                        "FOLDPOT Step 13. Verify Individual Proof. 17 ms\n")
+        self.assertIsNone(dlp_missing_success([lg], 2))
+
+    def test_missing_job_and_verify_counts(self):
+        lg = self._log("a.log",
+                        "Job 0 generating SNARK proof\n"
+                        "Verify Individual Proof\n")
+        self.assertIn("1 != num_jobs 2", dlp_missing_success([lg], 2))
+        lg2 = self._log("b.log",
+                        "Job 0 generating SNARK proof\n"
+                        "Job 1 folding done\n")
+        self.assertIn("count 0 != 1", dlp_missing_success([lg2], 2))
+
+    def test_two_half_local_numbering_sums(self):
+        l1 = self._log("p1.log", "Job 0 folding done\n")
+        l2 = self._log("p2.log",
+                        "Job 0 generating SNARK proof\n"
+                        "Verify Individual Proof\n")
+        self.assertIsNone(dlp_missing_success([l1, l2], 2))
+
+
 class RunExternalPythonTest(unittest.TestCase):
     def test_builds_cmd_and_returns_rc(self):
         fake = _FakeProc(pid=9, rc=2)
@@ -1723,6 +2171,148 @@ class RunLeafReefTest(unittest.TestCase):
         prd.assert_not_called()
         self.assertEqual(ctx.raw_data, [])
         self.assertTrue(result.failed)
+
+
+class RunLeafScaleDlpTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        patches = [
+            mock.patch.object(_MOD, "JOB_LOG_DIR",
+                               os.path.join(self.tmp.name, "logs")),
+            mock.patch.object(_MOD, "FAILED_TGZ_DIR",
+                               os.path.join(self.tmp.name, "failed_tgz")),
+            mock.patch.object(_MOD, "LOGS_DIR",
+                               os.path.join(self.tmp.name, "job_logs")),
+            mock.patch.object(_MOD, "RAW_DATA_ROOT",
+                               os.path.join(self.tmp.name, "raw_data")),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        os.makedirs(os.path.join(self.tmp.name, "job_logs"))
+
+    @staticmethod
+    def _round(cnt, extra=""):
+        return ("==== SCALE ROUND BEGIN count=%d rules=%d/9861 "
+                "corpus=x ====\n%s"
+                "==== SCALE ROUND END count=%d ====\n"
+                % (cnt, cnt, extra, cnt))
+
+    def _fake_run(self, rcs, bodies):
+        """Stand-in run_rust_example: writes the per-call log body,
+        returns the per-call rc, records (example, args, log_name)."""
+        calls = []
+
+        def fake(ctx, name, args, env, log_name="run"):
+            i = len(calls)
+            calls.append((name, args, log_name))
+            with open(ctx.log_path(log_name), "w") as f:
+                f.write(bodies[i])
+            return rcs[i]
+        return calls, fake
+
+    def test_argv_bundles_and_order(self):
+        """Both sweeps run in order with the locked argv/log names;
+        each bundle lands in any_server with one member per round."""
+        ctx = JobHandle("scale_dlp", "dry")
+        body = self._round(2) + self._round(987)
+        calls, fake = self._fake_run([0, 0], [body, body])
+        with mock.patch.object(_MOD, "run_rust_example", fake):
+            result = run_leaf_scale_dlp("dry", ctx)
+        self.assertEqual(result.rc, 0)
+        self.assertFalse(result.failed)
+        self.assertEqual(
+            calls,
+            [("bora_cli", ["scale_dlp", "0", "2,987"], "scale_2"),
+             ("bora_cli", ["scale_dlp", "1", "2,987"], "scale_6")])
+        for bundle in ("scale_data_dlp_2.tgz", "scale_data_dlp_6.tgz"):
+            dest = raw_data_path(bundle, server_specific=False)
+            self.assertTrue(os.path.isfile(dest))
+            with tarfile.open(dest) as t:
+                self.assertEqual(sorted(t.getnames()),
+                                  ["log_2.txt.tgz", "log_987.txt.tgz"])
+        self.assertEqual(len(ctx.raw_data), 2)
+
+    def test_first_failure_does_not_skip_second(self):
+        """Failing first sweep still runs the second; its rc wins and
+        only the second's bundle is placed (0 rounds -> untouched)."""
+        ctx = JobHandle("scale_dlp", "dry")
+        calls, fake = self._fake_run(
+            [3, 0], ["no rounds\n", self._round(2) + self._round(987)])
+        with mock.patch.object(_MOD, "run_rust_example", fake):
+            result = run_leaf_scale_dlp("dry", ctx)
+        self.assertEqual(len(calls), 2)          # second still ran
+        self.assertEqual(result.rc, 3)
+        self.assertTrue(result.failed)
+        self.assertFalse(os.path.isfile(raw_data_path(
+            "scale_data_dlp_2.tgz", server_specific=False)))
+        self.assertTrue(os.path.isfile(raw_data_path(
+            "scale_data_dlp_6.tgz", server_specific=False)))
+
+    def test_missing_round_end_is_rc7(self):
+        """rc=0 but one count lacks its ROUND END marker -> rc=7 with
+        a note; the partial round is still packed into the bundle."""
+        ctx = JobHandle("scale_dlp", "dry")
+        partial = self._round(2) + \
+            "==== SCALE ROUND BEGIN count=987 rules=987/9861 " \
+            "corpus=x ====\n"
+        full = self._round(2) + self._round(987)
+        _, fake = self._fake_run([0, 0], [partial, full])
+        with mock.patch.object(_MOD, "run_rust_example", fake):
+            result = run_leaf_scale_dlp("dry", ctx)
+        self.assertEqual(result.rc, 7)
+        self.assertIn("scale_2: no ROUND END for counts [987]",
+                       result.note)
+        # the partial round is still packed (legacy crash tolerance)
+        self.assertTrue(os.path.isfile(raw_data_path(
+            "scale_data_dlp_2.tgz", server_specific=False)))
+
+    def test_expected_caperr_noise_not_a_fail(self):
+        """Expected bump-retry panic/CapErr text in a SUCCESSFUL log
+        must not counterfeit a FAIL verdict (the fail-scan is off)."""
+        ctx = JobHandle("scale_dlp", "dry")
+        noise = "thread 'main' panicked at 'CapErr: StepFwdPrf'\n"
+        body = self._round(2, noise) + self._round(987)
+        _, fake = self._fake_run([0, 0], [body, body])
+        with mock.patch.object(_MOD, "run_rust_example", fake):
+            result = run_leaf_scale_dlp("dry", ctx)
+        self.assertEqual(result.rc, 0)
+        self.assertFalse(result.failed)          # fail-scan is off
+
+    def test_pack_runs_even_if_launch_raises(self):
+        """A Python-level launch exception still packs the completed
+        rounds (the finally block), then propagates to the caller."""
+        ctx = JobHandle("scale_dlp", "dry")
+        rounds = self._round(2)
+
+        def boom(ctx2, name, args, env, log_name="run"):
+            with open(ctx2.log_path(log_name), "w") as f:
+                f.write(rounds)
+            raise RuntimeError("launch died")
+        with mock.patch.object(_MOD, "run_rust_example", boom):
+            with self.assertRaises(RuntimeError):
+                run_leaf_scale_dlp("dry", ctx)
+        self.assertTrue(os.path.isfile(raw_data_path(
+            "scale_data_dlp_2.tgz", server_specific=False)))
+
+    def test_counts_pin_inclusive(self):
+        """Count constants are pin-INCLUSIVE (spec 8.10c: legacy +1
+        each; top 9861 = the complete rule set)."""
+        self.assertEqual(SCALE_DLP_COUNTS["dry"], [2, 987])
+        self.assertEqual(SCALE_DLP_COUNTS["full"],
+                          [2, 987, 1973, 2959, 3945, 4931, 5917, 6903,
+                           7889, 8875, 9861])
+
+    def test_finish_fail_scan_toggle(self):
+        """finish(0, b_fail_scan=False) ignores FAIL_RE log text;
+        True (the default for every other leaf) still flags it."""
+        for b_scan, want_failed in ((True, True), (False, False)):
+            ctx = JobHandle("scale_dlp", "dry")
+            with open(ctx.log_path("run"), "w") as f:
+                f.write("FATAL: boom\n")
+            res = ctx.finish(0, b_fail_scan=b_scan)
+            self.assertEqual(res.failed, want_failed)
 
 
 def _load_dry_run_eval_reef():
@@ -1940,6 +2530,18 @@ class JobHandleFinishTest(unittest.TestCase):
         self.assertIn("SUMMARY.txt", names)
         self.assertTrue(any(n.startswith("logs/") for n in names))
 
+    def test_advisory_lines_do_not_fail(self):
+        ctx = JobHandle("dlp", "dry")
+        with open(ctx.log_path("run"), "w") as f:
+            f.write("CAVEAT: ... finalize via dryrun CapErr or scale"
+                    " up.\nWARN big job ... aborts with ... SIGABRT"
+                    " while RAM is free\n")
+        self.assertFalse(ctx.finish(0).failed)
+        ctx2 = JobHandle("dlp", "dry")
+        with open(ctx2.log_path("run"), "w") as f:
+            f.write("CapErr: word 3 over cap\n")
+        self.assertTrue(ctx2.finish(0).failed)
+
     def test_peak_rss_and_raw_data_pass_through(self):
         ctx = JobHandle("reef", "dry")
         ctx.peak_rss_gb = 12.3
@@ -1947,6 +2549,34 @@ class JobHandleFinishTest(unittest.TestCase):
         result = ctx.finish(0)
         self.assertEqual(result.peak_rss_gb, 12.3)
         self.assertEqual(result.raw_data_written, ["/x/out.dat"])
+
+
+class JobHandleLogHygieneTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        for name, sub in (("JOB_LOG_DIR", "jobs"),
+                           ("LOGS_DIR", "job_logs")):
+            p = mock.patch.object(_MOD, name,
+                                   os.path.join(self.tmp.name, sub))
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_init_clears_stale_job_logs_only(self):
+        os.makedirs(_MOD.LOGS_DIR)
+        stale = os.path.join(_MOD.LOGS_DIR, "log_job_p0_3.txt")
+        keep = os.path.join(_MOD.LOGS_DIR, "other.txt")
+        open(stale, "w").close()
+        open(keep, "w").close()
+        JobHandle("k", "dry")
+        self.assertFalse(os.path.exists(stale))
+        self.assertTrue(os.path.exists(keep))
+
+    def test_log_path_registered_once(self):
+        h = JobHandle("k", "dry")
+        a = h.log_path("run")
+        self.assertEqual(a, h.log_path("run"))
+        self.assertEqual(h._log_paths.count(a), 1)
 
 
 class WatchRssTest(unittest.TestCase):
@@ -2134,9 +2764,9 @@ class StubLeafTest(unittest.TestCase):
         self.assertIsNone(result.triage_tgz)
         self.assertIn("M102", result.note)
 
-    def test_all_five_stub_keys_registered(self):
-        expected = {"dlp": "M102", "dna": "M103", "clam": "M104",
-                    "scale_clam": "M104", "scale_dlp": "M102"}
+    def test_remaining_stub_keys_registered(self):
+        expected = {"dna": "M103", "clam": "M104",
+                    "scale_clam": "M104"}
         for key, milestone in expected.items():
             self.assertIn(key, JOB_SPECS)
             ctx = JobHandle(key, "dry")
@@ -2471,7 +3101,7 @@ class EndToEndWiringTest(unittest.TestCase):
         os.makedirs(os.path.join(self.tmp.name, "job_logs"))
 
         specs = dict(JOB_SPECS)
-        for key in ("lkup", "zombie", "reef"):
+        for key in ("lkup", "zombie", "reef", "dlp", "scale_dlp"):
             specs[key] = JobSpec(key, key, stub_leaf(key, "Stage 2"))
         p = mock.patch.object(_MOD, "JOB_SPECS", specs)
         p.start()

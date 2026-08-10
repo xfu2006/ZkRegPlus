@@ -22,7 +22,7 @@
   size is on-disk rule-file bytes for \textsc{Mal}/\textsc{Dna}; for
   \textsc{Dlp} it is the pattern$+$keyword bytes fed to the circuit (the
   on-disk \texttt{.regex} doubles each sub-pattern for the bidirectional
-  proximity form). $\bar u$ itself is linearly interpolated (see Table~\ref{tab:zombie-data}'s $\dagger$ note): this log has no real measurement at $L_T=2,000$, e.g.\ a dry-run sweep. The \textsc{Mal} (ClamAV) BORA cost $130.70$\,hr is the total over its $8$ parallel jobs; the wall-clock time is $16.80$\,hr (the slowest job). The \textsc{Dlp} (Enron) BORA cost $916.95$\,hr is the total over its $8$ parallel jobs; the wall-clock time is $119.03$\,hr (the slowest job).}
+  proximity form). $\bar u$ itself is linearly interpolated (see Table~\ref{tab:zombie-data}'s $\dagger$ note): this log has no real measurement at $L_T=2,000$, e.g.\ a dry-run sweep. The \textsc{Mal} (ClamAV) BORA cost $130.70$\,hr is the total over its $8$ parallel jobs; the wall-clock time is $16.80$\,hr (the slowest job). The \textsc{Dlp} (Enron) BORA cost $0.23$\,hr is the total over its $2$ parallel jobs; the wall-clock time is $0.12$\,hr (the slowest job).}
   \label{tab:compare-zombie-bora}
   \begin{tabular}{l r r r r r}
     \toprule
@@ -30,7 +30,7 @@
     \midrule
     \textsc{Mal} (ClamAV) & 765.5\,MB & 11.6\,MB & $1.62 \times 10^{10}$ (513.6\,yr) & $4.71 \times 10^{5}$ (130.70\,hr) & $\approx 34,450\times$ \\
     \textsc{Dna} (chr17) & 83.3\,MB & 1.4\,MB & $2.14 \times 10^{8}$ (6.8\,yr) & $1.17 \times 10^{4}$ (3.25\,hr) & $\approx 18,284\times$ \\
-    \textsc{Dlp} (Enron) & 1.42\,GB & 7.4\,KB & $1.92 \times 10^{7}$ (222.6\,d) & $3.30 \times 10^{6}$ (916.95\,hr) & $\approx 6\times$ \\
+    \textsc{Dlp} (Enron) & 1.42\,GB & 7.4\,KB & $1.92 \times 10^{7}$ (222.6\,d) & $8.26 \times 10^{2}$ (0.23\,hr) & $\approx 23,297\times$ \\
     \bottomrule
   \end{tabular}
 \end{table*}

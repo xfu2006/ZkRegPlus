@@ -30933,7 +30933,22 @@ Goal 3. D101 of M102: python wrapper
 	[a] goal: scale wrapper in python and full_dlp wrapper
 	[b] check neo_env
 	[c] design run_pack and run_rust_two_half python wrapper
-	[d] implement and test
+	[d] implement and test -> DONE
+Goal 4. D102
+	[a] goal: wrapper of run_dlp
+	[b] fix param setting (no check lkup share as sample size very small)
+	[c] clear design risks. 
+	[d] redefine success/failure decision condition.
+	[e] test
+Goal 5. T603 thinking about contention issue
+	[a] shoudl go back to the direction of cutting circuit size
+Goal 6. D103
+	[a] goal: scalability of run_dlp
+	[b] design risks
+	[c] DONE! 
+Goal 7. T604
+	[a] explore possible big wins
+
 
 	
 		

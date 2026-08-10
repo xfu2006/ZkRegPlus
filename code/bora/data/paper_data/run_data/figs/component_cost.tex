@@ -23,10 +23,8 @@ Dataset & Circ & (B)   & R1CS   & $c_1$ (CP) & $c_2$ (SDE) & $c_3$ (DFA)
 \midrule
 \textsc{Dna} & $0$ & 126{,}976 & 14{,}583{,}420 & 31.3\,(65.8) & 25.1\,(48.5) & 0.0\,(0.0) & 58.5\,(0.6) & 100.0\% \\
 \midrule
-\textsc{Dlp} & $0$ & 1{,}984 & 186{,}434 & 8.5\,(16.7) & 29.3\,(58.9) & 0.0\,(0.0) & 56.2\,(18.3) & 24.7\% \\
- & $1$ & 1{,}984 & 465{,}775 & 10.5\,(16.0) & 129.2\,(200.5) & 0.0\,(0.0) & 95.1\,(18.3) & 70.4\% \\
- & $2$ & 1{,}984 & 3{,}050{,}977 & 10.3\,(14.4) & 1059.1\,(1505.1) & 0.0\,(0.0) & 468.4\,(18.3) & 4.7\% \\
- & $3$ & 1{,}984 & 21{,}126{,}624 & 10.7\,(14.7) & 7591.3\,(10615.5) & 0.0\,(0.0) & 3046.6\,(18.3) & 0.2\% \\
+\textsc{Dlp} & $0$ & 1{,}984 & 162{,}236 & 5.7\,(12.3) & 23.8\,(51.8) & 0.0\,(0.0) & 52.2\,(17.7) & 100.0\% \\
+ & $1$ & 1{,}984 & 163{,}880 & 5.7\,(12.2) & 24.4\,(52.7) & 0.0\,(0.0) & 52.5\,(17.7) & 0.0\% \\
 \bottomrule
 \end{tabular}
 \caption{Per-circuit cost profile. Each dataset is discharged by a small set of circuits. \emph{input} is the bytes processed per folding step. Each $c_i \in (c_1,c_2,c_3,c_4)$ is the per-input-byte R1CS constraints of the four components of a circuit.Each $c_i$ is shown as \emph{raw\,(adjusted)}: the \emph{adjusted} value moves the \emph{measured} log-up query cost in $c_4$ and charges it to each tier in  proportion to its data-column size, so $c_1/c_2/c_3$ reflect the  all-in per-byte cost and $c_4$ retains only folding overhead  and the processing of Logup share of lookup table. }\label{tbl:component-cost}

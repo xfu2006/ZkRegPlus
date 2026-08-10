@@ -1013,31 +1013,68 @@ def zombie_totals(log_file, str_len: int) -> dict:
     total_r1cs, total_prove_s, total_verify_s, total_proof_bytes, and
     unit_cost = total_prove_s / (str_len * total_regex_bytes), i.e. seconds
     per (input-byte x regex-byte).
+
+    If the requested block is missing or empty (e.g. a dry-run log),
+    falls back to the highest available block with 'ok' rows and
+    extrapolates the two linear-in-length totals (r1cs, prove_s) by
+    str_len/src_len -- exact for the per-byte consumers; the result
+    then carries "extrapolated_from". total_verify_s and
+    total_proof_bytes are NOT scaled (sublinear in the input length).
     """
     text = Path(log_file).read_text()
-    start = re.search(rf"== STR_LENGTH = {str_len} ==", text)
-    if not start:
-        raise RuntimeError(f"zombie_totals: no block for STR_LENGTH={str_len}")
-    rest = text[start.end():]
-    end = re.search(r"^== STR_LENGTH", rest, re.MULTILINE)
-    block = rest[: end.start()] if end else rest
 
+    def block_of(sl):
+        start = re.search(rf"== STR_LENGTH = {sl} ==", text)
+        if not start:
+            return None
+        rest = text[start.end():]
+        end = re.search(r"^== STR_LENGTH", rest, re.MULTILINE)
+        return rest[: end.start()] if end else rest
+
+    def totals_of(block):
+        n = regex = r1cs = prove_ms = ver_ms = proof = 0
+        rules = set()
+        for m in _ZOMBIE_ROW.finditer(block):
+            policy = m.group(1)
+            pat, kws, cons, pms, vms, pb = map(int, m.groups()[1:])
+            regex += pat + kws
+            r1cs += cons
+            prove_ms += pms
+            ver_ms += vms
+            proof += pb
+            rules.add(policy.split("/")[0])   # top-level SIT defn
+            n += 1
+        return n, regex, r1cs, prove_ms, ver_ms, proof, rules
+
+    src_len = str_len
+    block = block_of(str_len)
     n = regex = r1cs = prove_ms = ver_ms = proof = 0
     rules = set()
-    for m in _ZOMBIE_ROW.finditer(block):
-        policy = m.group(1)
-        pat, kws, cons, pms, vms, pb = map(int, m.groups()[1:])
-        regex += pat + kws
-        r1cs += cons
-        prove_ms += pms
-        ver_ms += vms
-        proof += pb
-        rules.add(policy.split("/")[0])   # top-level SIT defn (combs collapse)
-        n += 1
+    if block is not None:
+        n, regex, r1cs, prove_ms, ver_ms, proof, rules = totals_of(block)
     if n == 0:
-        raise RuntimeError(f"zombie_totals: no 'ok' rows for STR_LENGTH={str_len}")
+        avail = sorted({int(s) for s in re.findall(
+            r"== STR_LENGTH = (\d+) ==", text)}, reverse=True)
+        for cand in avail:
+            if cand == str_len:
+                continue
+            n, regex, r1cs, prove_ms, ver_ms, proof, rules = \
+                totals_of(block_of(cand))
+            if n:
+                src_len = cand
+                break
+        if n == 0:
+            raise RuntimeError(
+                f"zombie_totals: no usable STR_LENGTH block for "
+                f"{str_len} (available: {avail})")
+        f = str_len / src_len
+        r1cs = round(r1cs * f)
+        prove_ms = prove_ms * f
+        print(f"zombie_totals: WARN no STR_LENGTH={str_len} block in "
+              f"{Path(log_file).name}; extrapolated linearly from "
+              f"{src_len} (x{f:.3g})")
     prove_s = prove_ms / 1000.0
-    return {
+    out = {
         "str_len": str_len,
         "n": n,                 # measured regex instances (comb variants)
         "n_rules": len(rules),  # distinct top-level SIT rules
@@ -1048,6 +1085,9 @@ def zombie_totals(log_file, str_len: int) -> dict:
         "total_proof_bytes": proof,
         "unit_cost": prove_s / (str_len * regex),
     }
+    if src_len != str_len:
+        out["extrapolated_from"] = src_len
+    return out
 
 
 def dlp_patkws_bytes() -> int:
