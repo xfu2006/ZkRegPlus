@@ -205,6 +205,26 @@ pub static QM_WRAP_SAT: [SatGauge; 2] = [SatGauge::new(), SatGauge::new()];
 pub static QM_REAL_SAT: [SatGauge; 2] = [SatGauge::new(), SatGauge::new()];
 pub static QM_SUB_SAT: [SatGauge; 2] = [SatGauge::new(), SatGauge::new()];
 
+/// Worst-SINGLE-CHUNK saturation of every neo gauge, via get_max (not
+/// get, whose fill and cap peaks come from different chunks and so can
+/// hide a saturated one). ">100%" marks an over-budget emission.
+pub fn sat_report_max() -> String {
+    let gs: [(&str, &[SatGauge; 2]); 6] = [
+        ("Q_m", &QM_SAT), ("Q_c", &QC_SAT), ("wrap", &QM_WRAP_SAT),
+        ("real", &QM_REAL_SAT), ("sub", &QM_SUB_SAT), ("fwd", &FWD_SAT)];
+    let mut out: Vec<String> = vec![];
+    for (name, g) in gs.iter() {
+        for (i, arm) in ["cs", "igc"].iter().enumerate() {
+            let (r, f, c) = g[i].get_max();
+            if c == 0 { continue; }   // gauge never fired
+            let over = if r > SAT_SCALE { " OVER" } else { "" };
+            out.push(format!("{} {}={}/{} ({:.1}%{})", name, arm, f, c,
+                100.0 * (r as f64) / (SAT_SCALE as f64), over));
+        }
+    }
+    out.join("; ")
+}
+
 /// Per-fold-step prove_step wall time in microseconds, in step order.
 /// Recorded by the foldpot driver's Pass-3 loop; reset by reset_sat()
 /// so each measured fold starts clean. Empty unless a fold ran.

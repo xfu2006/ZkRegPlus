@@ -247,11 +247,6 @@ pub fn apply_caperr_bumps(p: &mut CapParams, b_aggr: bool,
         if name.starts_with("dis_adv::neo_qm_real") {
             // T305: neo-aggressive T_qm windowed real-row budget,
             // reported directly in row units (no back-solve).
-            if utils::consts::b_probe_p36() {
-                println!("DEBUG USE 62072.2: ratchet neo_qm_real igc={} \
-req={} before={}", igc, r,
-                    if igc { p.qm_real_rows_igc } else { p.qm_real_rows });
-            }
             if igc { up(&mut p.qm_real_rows_igc, r, &mut changed); }
             else { up(&mut p.qm_real_rows, r, &mut changed); }
         } else if name.starts_with("dis_adv::prod_pats_expansion") {
@@ -520,12 +515,21 @@ pub fn assemble_ladder(p_max: &CapParams,
     let g_p = specs.last().map_or(0, |s| s.max_pats_in_trace);
     let g_c = specs.last().map_or(0, |s| s.max_cp_unique_states);
     let g_f = specs.last().map_or(0, |s| s.max_fwd);
+    // Ladder sufficiency: the gauges hold what fast_finalize just
+    // observed, and reset_sat() clears them before the fold -- so this
+    // is the last point where an under-provisioned cap is visible
+    // BEFORE committing to a multi-day fold. "OVER" = over budget.
+    let rep = utils::consts::sat_report_max();
+    if !rep.is_empty() {
+        utils::logger::log(0, utils::logger::LOG1,
+            &format!("LADDER SAT (worst chunk): {}", rep));
+    }
     let scale = |pmax_b: usize, rate: usize, g: usize| -> usize {
         if g == 0 { pmax_b }              // no per-chunk data -> keep P_max
         else { ((pmax_b * rate + g - 1) / g).min(pmax_b).max(2) }
     };
     let n = specs.len();
-    let out: Vec<CapParams> = specs.iter().enumerate().map(|(i, s)| {
+    specs.iter().enumerate().map(|(i, s)| {
         // Exact path (non-top rung): plan_rungs already de-saturated s.max_*
         // to the rung's own member max, so use it directly (clamped <=P_max).
         // Top rung + legacy path keep the P_max ratio-scale (top retains the
@@ -565,16 +569,7 @@ pub fn assemble_ladder(p_max: &CapParams,
         c.basis_acc_states =
             c.basis_acc_states.max(c.basis_pats_in_trace / 10 + 1);
         c
-    }).collect();
-    if utils::consts::b_probe_p36() {
-        println!("DEBUG USE 62072.3: assemble_ladder p_max.qm_real_rows={} \
-g_f={} rungs={}", p_max.qm_real_rows, g_f, n);
-        for (i, (s, c)) in specs.iter().zip(out.iter()).enumerate() {
-            println!("DEBUG USE 62072.4: rung {} max_fwd={} subsigs={} \
--> qm_real_rows={}", i, s.max_fwd, c.subsigs, c.qm_real_rows);
-        }
-    }
-    out
+    }).collect()
 }
 
 /// Save the rung LADDER (Vec<CapParams> JSON handoff; the Python driver
@@ -853,6 +848,28 @@ mod tests {
             assert_eq!(c.basis_pats_in_trace, 700);
         }
         for w in l.windows(2) { assert!(w[0].subsigs <= w[1].subsigs); }
+    }
+
+    // Ladder sufficiency line: an over-budget chunk must read OVER, and
+    // get_max must report the worst chunk rather than independent peaks.
+    #[test]
+    fn test_sat_report_max_flags_overflow() {
+        use utils::consts::{QM_REAL_SAT, reset_sat, sat_report_max};
+        reset_sat();
+        assert_eq!(sat_report_max(), "", "no gauge fired -> empty");
+        // the scan_exp case: 49,100 rows demanded against a cap of 2.
+        QM_REAL_SAT[0].record(49100, 2);
+        let r = sat_report_max();
+        assert!(r.contains("real cs=49100/2"), "got {}", r);
+        assert!(r.contains("OVER"), "over-budget must be marked: {}", r);
+        // a saturated SMALL chunk must not be masked by a large loose
+        // one -- this is exactly what get() would hide and get_max not.
+        reset_sat();
+        QM_REAL_SAT[0].record(100, 1000);   // 10%, big cap
+        QM_REAL_SAT[0].record(10, 10);      // 100%, small cap
+        let r2 = sat_report_max();
+        assert!(r2.contains("real cs=10/10"), "worst chunk wins: {}", r2);
+        reset_sat();
     }
 
     // T506: qm_real_rows is sized per rung off the band's own max_fwd.

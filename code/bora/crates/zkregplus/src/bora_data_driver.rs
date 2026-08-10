@@ -24,7 +24,8 @@ use utils::consts::{get_global_config, read_global_config,
 
 use crate::determine_config::{apply_caperr_bumps,
 	caps_from_params_aggr, caps_from_params_general, probe_catching,
-	CapParams};
+	save_ladder, CapParams};
+use crate::gadgets::word_extract::LEGS;
 use crate::stats_helper::{estimate_config_aggr,
 	estimated_to_capparams_aggr};
 use crate::zkp_driver::{determine_config_aggr,
@@ -173,10 +174,27 @@ pub fn create_smaller_config(src_dir: &str, sig_file_name: &str,
 	dst_sig
 }
 
-/// Plan dir for a dataset: derived state only (thinned config, job
-/// manifests, ladder.json, PLAN_READY). Part 0 wipes it every run.
-pub(crate) fn plan_dir(name: &str) -> String {
-	format!("/tmp/bora/{}_neo", name)
+/// Plan dir for one part's private sandbox: thinned config, job
+/// manifests, ladder.json. The part wipes it at every run start.
+pub(crate) fn plan_dir(name: &str, part_id: usize) -> String {
+	format!("/tmp/bora/{}_neo_p{}", name, part_id)
+}
+
+/// Wipes and recreates one part's plan dir (plus its jobs/ subdir).
+/// The strict-subdir assert keeps any future edit from pointing the
+/// wipe at the shared /tmp/bora framework dir.
+fn reset_part_dir(spec: &DatasetSpec, part_id: usize) -> String {
+	let pd = plan_dir(spec.name, part_id);
+	assert!(pd.starts_with("/tmp/bora/")
+		&& pd.len() > "/tmp/bora/".len(),
+		"bora_data_driver: refusing to wipe {}", pd);
+	if Path::new(&pd).exists() {
+		fs::remove_dir_all(&pd).unwrap_or_else(|e| panic!(
+			"bora_data_driver: wipe {}: {}", pd, e));
+	}
+	fs::create_dir_all(format!("{}/jobs", pd)).unwrap_or_else(
+		|e| panic!("bora_data_driver: mkdir {}/jobs: {}", pd, e));
+	pd
 }
 
 /// Reads a newline path list; transparently extracts a .tgz/.tar.gz via
@@ -336,7 +354,9 @@ pub const DLP: DatasetSpec = DatasetSpec {
 	range2_bit: 25,
 	fanout_cap: 100,
 	b_aggressive: true,
-	b_check_lkup: false,
+	// true is a DELIBERATE departure from legacy full_dlp(), which
+	// folded without the hab22 cover check. Neo runs must check.
+	b_check_lkup: true,
 	vec_decrease_level: &[],
 	// 1/1 = legacy full_dlp, which never sets these. Inert regardless:
 	// the snark semaphores are taken past driver.rs' b_one_proof and
@@ -356,19 +376,23 @@ pub const DLP: DatasetSpec = DatasetSpec {
 };
 
 /// Config dir for a run: the real one when nothing is thinned, else the
-/// thinned copy under the plan dir. Pure -- creates nothing.
-#[allow(dead_code)] // read from B101 on
+/// thinned copy under the part's plan dir. Pure -- creates nothing.
 fn config_dir_for(spec: &DatasetSpec, db_count: usize,
-	n_sigs: usize) -> String {
+	n_sigs: usize, part_id: usize) -> String {
 	if db_count >= n_sigs {
 		spec.config_dir.to_string()
 	} else {
-		format!("{}/config", plan_dir(spec.name))
+		format!("{}/config", plan_dir(spec.name, part_id))
 	}
 }
 
+/// Per-part DB cache dir: both parts build identical DBs, but the
+/// cache writes must never race, so each part owns its own dir.
+fn cache_dir_for(spec: &DatasetSpec, part_id: usize) -> String {
+	format!("{}_p{}", spec.db_cache_dir, part_id)
+}
+
 /// One part's role in a numa_num-way split.
-#[allow(dead_code)] // read from B101/C101 on
 pub(crate) struct PartRole {
 	/// This part runs the decider (the LAST part proves).
 	pub(crate) b_proves: bool,
@@ -419,7 +443,6 @@ fn plan_corpus_from(master: &[String], perc_samples: usize,
 
 /// Corpus bins for one run: concat the spec's master lists, sample, and
 /// split size-balanced into num_jobs bins.
-#[allow(dead_code)] // read from C101 on
 pub(crate) fn plan_corpus(spec: &DatasetSpec, perc_samples: usize,
 	num_jobs: usize) -> Vec<Vec<String>> {
 	let master: Vec<String> = spec.master_sources.iter()
@@ -436,7 +459,6 @@ const SNARK_WAIT_FLAG: &str = "/tmp/snark_start/flag";
 /// `role`, never re-derived. Legacy's `b_pin_lkup_share = true` pin is
 /// deliberately NOT carried: neo needs a far larger share than legacy's
 /// hand-set 1, so the driver's back-solve must run.
-#[allow(dead_code)] // called from B102/C101 on
 fn apply_spec_config(spec: &DatasetSpec, b_light_test: bool,
 	role: &PartRole) {
 	// ONE write guard for the whole update, so no reader can observe a
@@ -447,6 +469,9 @@ fn apply_spec_config(spec: &DatasetSpec, b_light_test: bool,
 	// (1) neo ALWAYS -- no env, no opt-out. 0 wrap keys = auto-derive.
 	g.clamav_cfg.b_use_discharge_neo = true;
 	g.neo_wrap_keys = 0;
+	// tune's trial builds read this global; the driver re-mirrors its
+	// own param at fold time (zkp_driver.rs:1985).
+	g.b_check_lkup = spec.b_check_lkup;
 	// SDE arm + discharge knobs.
 	g.clamav_cfg.b_aggressive_sde_for_rep = spec.b_aggressive;
 	g.clamav_cfg.sde_rep_fanout_cap = spec.fanout_cap;
@@ -467,7 +492,9 @@ fn apply_spec_config(spec: &DatasetSpec, b_light_test: bool,
 	// semaphore is taken inside pass_all (driver.rs:1831), which every
 	// job reaches before the b_one_proof / b_folding_only returns.
 	g.log_level = utils::logger::LOG3;
-	g.b_light_test = b_light_test;
+	// legacy couples fold-only with the light decider (zkp_driver.rs
+	// :6768-6772): a non-proving part must never build heavy keys.
+	g.b_light_test = b_light_test || !role.b_proves;
 	// part topology, copied from part_role -- one source of truth.
 	g.b_folding_only = !role.b_proves;
 	g.b_one_proof = role.b_proves;
@@ -482,6 +509,10 @@ fn apply_spec_config(spec: &DatasetSpec, b_light_test: bool,
 	// Zeroed explicitly: both drivers read it, and a stale true would
 	// silently turn the fold into a no-op dry run.
 	g.b_dryrun_after_capcheck = false;
+	// Zeroed for the same reason: a stale true (a scale run earlier in
+	// this process) would rob a full run of its fail-fast CapErr abort.
+	// Scale flips it back on AFTER this call.
+	g.b_scale_catch_caperr = false;
 	// Both written EXPLICITLY rather than left at their defaults: the
 	// config is process-wide, and the CapErr share bump only ever
 	// ratchets UP (zkp_driver.rs:2235), so a stale pin or a stale high
@@ -496,13 +527,13 @@ fn apply_spec_config(spec: &DatasetSpec, b_light_test: bool,
 /// the rule count varies); write=true because the fold reloads the DB
 /// from this cache. Call AFTER apply_spec_config: default_clamav_cfg()
 /// is a snapshot of the global clamav_cfg (clamav.rs:3941).
-#[allow(dead_code)] // called from B102 on
-fn build_fresh_db(spec: &DatasetSpec, cfg_dir: &str) -> Arc<ClamavDB<Fr>> {
+fn build_fresh_db(spec: &DatasetSpec, cfg_dir: &str, cache_dir: &str)
+	-> Arc<ClamavDB<Fr>> {
 	let cfg = default_clamav_cfg();
 	let mut vlog = vec![];
 	let [sig, dfa, ised, ised_igc] = cfg_paths(spec, cfg_dir);
 	Arc::new(ClamavDB::<Fr>::build_or_load(&cfg, &sig, &dfa, &ised,
-		&ised_igc, &mut vlog, spec.db_cache_dir, false, true)
+		&ised_igc, &mut vlog, cache_dir, false, true)
 		.unwrap_or_else(|e| panic!(
 			"bora_data_driver: build {} db from {}: {:?}",
 			spec.name, cfg_dir, e)))
@@ -605,8 +636,8 @@ fn discharge_for_tuning(spec: &DatasetSpec, db: &ClamavDB<Fr>,
 }
 
 /// Capacity tuner for one (db, tuning set): aggr -> rung ladder via
-/// determine_config_aggr, non-aggr -> single converged CapParams. Only
-/// GlobalConfig touch is the non-aggr ladder-floor write-back.
+/// determine_config_aggr, non-aggr -> single converged CapParams.
+/// GlobalConfig touches: share derive+pin, non-aggr floor write-back.
 fn tune(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>, ts: &TuningSet,
 	num_circs: usize) -> Vec<CapParams> {
 	use folding_schemes::folding::foldpot::sigma_ir1cs
@@ -614,6 +645,17 @@ fn tune(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>, ts: &TuningSet,
 	assert!(num_circs >= 1, "bora_data_driver: num_circs must be >= 1");
 	let mw = spec.chunk_len;
 	let lkup_len = db.lkup.get_size();
+	// The ONE share derivation (mirror of the driver's entry
+	// back-solve, zkp_driver.rs:2057). tune sees ALL bins, so every
+	// part derives the same value; the pin makes the driver skip its
+	// own per-slice re-derive at fold time.
+	let perc = crate::zkp_driver::perc_lkup_share_for(lkup_len, mw,
+		ts.max_bin_word_n, spec.b_check_lkup);
+	{
+		let mut g = get_global_config();
+		g.perc_lkup_share = perc;
+		g.b_pin_lkup_share = true;
+	}
 	// 8 = production (PAPER_DATA.py:329). Hard-coded: thread count is
 	// parallelism only, not a tuning input (hist identical), and
 	// NEW_PAPER_DATA.py sets no env vars.
@@ -681,9 +723,9 @@ fn tune(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>, ts: &TuningSet,
 /// The shared tuning kernel (full x3, scale x2): thin config if asked,
 /// fresh DB, discharge, tune. The scope is the point: DB + tuning set
 /// are freed at return, before the caller folds.
-#[allow(dead_code)] // called from C101/C102 on
 pub(crate) fn build_and_tune(spec: &DatasetSpec, db_count: usize,
-	bins: &[Vec<String>], num_circs: usize) -> Vec<CapParams> {
+	bins: &[Vec<String>], num_circs: usize, part_id: usize)
+	-> Vec<CapParams> {
 	// precondition, not re-application: tuning on stale flags would
 	// silently tune the wrong arm.
 	assert!(read_global_config().clamav_cfg.b_use_discharge_neo,
@@ -694,10 +736,11 @@ pub(crate) fn build_and_tune(spec: &DatasetSpec, db_count: usize,
 		&format!("{}/{}", src_dir, spec.sig_file)).len();
 	if db_count < n_sigs {
 		create_smaller_config(&src_dir, spec.sig_file, db_count,
-			&format!("{}/config", plan_dir(spec.name)));
+			&format!("{}/config", plan_dir(spec.name, part_id)));
 	}
-	let db = build_fresh_db(spec, &config_dir_for(spec, db_count,
-		n_sigs));
+	let db = build_fresh_db(spec,
+		&config_dir_for(spec, db_count, n_sigs, part_id),
+		&cache_dir_for(spec, part_id));
 	// spans tune as well: probe advice paths may re-discharge, and
 	// legacy holds the flag true through determine_config.
 	let _est = EstimateCapsGuard::on();
@@ -705,18 +748,84 @@ pub(crate) fn build_and_tune(spec: &DatasetSpec, db_count: usize,
 	tune(spec, &db, &ts, num_circs)
 }
 
+/// Holds b_scale_catch_caperr for a scope so foldpot skips its
+/// fail-fast abort hook and a CapErr panic can unwind to
+/// probe_catching (vendored driver.rs:2404). Restores on drop.
+struct CatchGuard(bool);
+
+impl CatchGuard {
+	fn on() -> Self {
+		let prev = read_global_config().b_scale_catch_caperr;
+		get_global_config().b_scale_catch_caperr = true;
+		CatchGuard(prev)
+	}
+}
+
+impl Drop for CatchGuard {
+	fn drop(&mut self) {
+		get_global_config().b_scale_catch_caperr = self.0;
+	}
+}
+
+/// KEY-units -> percent conversion of the dummy self-cover need
+/// (port of zkp_driver.rs:2233).
+fn share_need_perc(keys: usize, mnl: usize) -> usize {
+	(keys * 100 + mnl - 1) / mnl
+}
+
+/// One-shot lkup_share bump around a check-on aggressive fold. The
+/// self-cover need is only discoverable at foldpot entry (cheap:
+/// before any folding), and DcMode::Off has no retry loop of its
+/// own -- this is the one bump legacy's step-4 loop performs
+/// (zkp_driver.rs:2225-2241). Anything else stays a hard stop.
+fn fold_with_self_cover(spec: &DatasetSpec, mut drive: impl FnMut()) {
+	let _c = CatchGuard::on();
+	for attempt in 0..2 {
+		let res = probe_catching(|| {
+			drive();
+			Ok::<(), Vec<(String, usize)>>(())
+		});
+		match res {
+			Ok(Ok(())) => return,
+			Ok(Err(errs)) => {
+				let k = match (errs.len(), errs.first()) {
+					(1, Some((n, k)))
+						if n.starts_with("lkup_share") => *k,
+					_ => panic!("bora_data_driver: {} fold: \
+						non-share CapErr (HARD STOP): {:?}",
+						spec.name, errs),
+				};
+				assert!(attempt == 0, "bora_data_driver: {} fold: \
+					share still short after bump: {:?}",
+					spec.name, errs);
+				let need = share_need_perc(k, spec.chunk_len * LEGS);
+				let mut g = get_global_config();
+				assert!(need > g.perc_lkup_share,
+					"bora_data_driver: {} fold: non-growing share \
+					 bump {} -> {}", spec.name,
+					g.perc_lkup_share, need);
+				utils::logger::emit_stdout(format!(
+					"[{}] fold: dummy self-cover: share {} -> {}",
+					spec.name, g.perc_lkup_share, need));
+				g.perc_lkup_share = need;
+			}
+			Err(msg) => panic!("bora_data_driver: {} fold: \
+				non-CapErr panic (HARD STOP): {}", spec.name, msg),
+		}
+	}
+}
+
 /// Folds `manifests` (absolute job_<i>.dat paths) with pre-tuned caps
 /// via the unmodified legacy driver for the spec's arm. DcMode::Off:
 /// the driver must not tune again.
-#[allow(dead_code)] // called from C101/C102 on
-pub(crate) fn fold(spec: &DatasetSpec, cfg_dir: &str,
-	manifests: &[String], caps: &[CapParams], num_circs: usize,
-	b_check_lkup: bool) {
-	// caps may arrive from disk (load_ladder, part > 0), so nothing
-	// upstream guarantees these.
+pub(crate) fn fold(spec: &DatasetSpec, cfg_dir: &str, cache_dir: &str,
+	manifests: &[String], caps: &[CapParams], num_circs: usize) {
+	// caps may arrive from a clone-edited spec, so nothing upstream
+	// guarantees these.
 	assert!(read_global_config().clamav_cfg.b_use_discharge_neo,
 		"bora_data_driver: apply_spec_config before fold");
 	assert!(!caps.is_empty(), "bora_data_driver: fold with empty caps");
+	let b_chk = spec.b_check_lkup;
 	let [sig, dfa, ised, ised_igc] = cfg_paths(spec, cfg_dir);
 	{
 		// One write scope; nothing inside may lock GLOBAL_CONFIG again.
@@ -733,10 +842,16 @@ pub(crate) fn fold(spec: &DatasetSpec, cfg_dir: &str,
 	if spec.b_aggressive {
 		let cs_caps: Vec<_> =
 			caps.iter().map(caps_from_params_aggr).collect();
-		zkp_driver_adv_aggr::<Bn254, PairingVar, C2G2, C1, GC1, C2, GC2,
-			CS1, CS2, CS1E, S>(0, &sig, manifests.to_vec(), "", false,
-			spec.db_cache_dir, &dfa, &ised, &ised_igc, spec.chunk_len,
-			&cs_caps, b_check_lkup, DcMode::Off);
+		let drive = || zkp_driver_adv_aggr::<Bn254, PairingVar, C2G2,
+			C1, GC1, C2, GC2, CS1, CS2, CS1E, S>(0, &sig,
+			manifests.to_vec(), "", false, cache_dir, &dfa, &ised,
+			&ised_igc, spec.chunk_len, &cs_caps, b_chk, DcMode::Off);
+		if b_chk {
+			fold_with_self_cover(spec, drive);
+		} else {
+			let mut d = drive;
+			d();
+		}
 	} else {
 		assert_eq!(caps.len(), 1,
 			"bora_data_driver: non-aggr fold wants 1 rung, got {}",
@@ -747,9 +862,9 @@ pub(crate) fn fold(spec: &DatasetSpec, cfg_dir: &str,
 			caps_from_params_general(&caps[0]);
 		zkp_driver_adv::<Bn254, PairingVar, C2G2, C1, GC1, C2, GC2,
 			CS1, CS2, CS1E, S>(0, &sig, manifests.to_vec(), "", false,
-			spec.db_cache_dir, &dfa, &ised, &ised_igc, spec.chunk_len,
+			cache_dir, &dfa, &ised, &ised_igc, spec.chunk_len,
 			&cp, &sed, &dfa_cap, &cp_igc, &sed_igc,
-			&spec.vec_decrease_level.to_vec(), num_circs, b_check_lkup,
+			&spec.vec_decrease_level.to_vec(), num_circs, b_chk,
 			DcMode::Off);
 	}
 }
@@ -757,7 +872,6 @@ pub(crate) fn fold(spec: &DatasetSpec, cfg_dir: &str,
 /// CapErr bump-retry around one fold attempt (port of the legacy scale
 /// loop, zkp_driver.rs:7900-7934), generic over the arm. Non-CapErr
 /// panics are a HARD STOP; CapErrs bump `p` and retry, at most 30x.
-#[allow(dead_code)] // called from C102 on
 pub(crate) fn retry_caperr(spec: &DatasetSpec, p: &mut CapParams,
 	mut f: impl FnMut(&CapParams)) {
 	// RULE 1: only scale routes CapErrs through catchable unwinding.
@@ -793,6 +907,168 @@ pub(crate) fn retry_caperr(spec: &DatasetSpec, p: &mut CapParams,
 				 STOP): {}", spec.name, msg),
 		}
 	}
+}
+
+/// Zero-env contract shared by every neo entry: these silently pin
+/// the share derivation (zkp_driver.rs:228-231), so a stale export
+/// must fail loudly.
+fn assert_no_share_env() {
+	for k in ["ZKR_LKSHARE", "ZKR_CLAM_LKUP_SHARE"] {
+		assert!(std::env::var(k).is_err(),
+			"bora_data_driver: unset {} (neo runs take no env)", k);
+	}
+}
+
+/// The full-run pipeline shared by all three datasets. Every part
+/// runs it whole-corpus-identically in its own sandbox; the only
+/// cross-process file is the snark-start flag.
+pub fn run_neo(spec: &DatasetSpec, perc_db: usize,
+	perc_samples: usize, num_circs: usize, num_jobs: usize,
+	numa_num: usize, part_id: usize, b_light_test: bool,
+	b_ladder_only: bool) -> Vec<CapParams> {
+	assert_no_share_env();
+	let role = part_role(part_id, numa_num, num_jobs);
+	apply_spec_config(spec, b_light_test, &role);
+	let pd = reset_part_dir(spec, part_id);
+	let proot = utils::os::proj_root();
+	let n_sigs = read_lines_nonblank(&format!("{}/{}/{}", proot,
+		spec.config_dir, spec.sig_file)).len();
+	let db_count = count_of(n_sigs, perc_db);
+	let bins = plan_corpus(spec, perc_samples, num_jobs);
+	let manifests =
+		write_job_manifests(&format!("{}/jobs", pd), &bins);
+	let ladder = build_and_tune(spec, db_count, &bins, num_circs,
+		part_id);
+	save_ladder(&ladder, &format!("{}/ladder.json", pd))
+		.unwrap_or_else(|e| panic!(
+			"bora_data_driver: save ladder: {}", e));
+	if b_ladder_only { return ladder; }
+	fold(spec, &config_dir_for(spec, db_count, n_sigs, part_id),
+		&cache_dir_for(spec, part_id),
+		&manifests[role.jobs.clone()], &ladder, num_circs);
+	ladder
+}
+
+/// DLP full run: run_neo over the DLP const.
+pub fn full_dlp_neo(perc_db: usize, perc_samples: usize,
+	num_circs: usize, num_jobs: usize, numa_num: usize,
+	part_id: usize, b_light_test: bool, b_ladder_only: bool)
+	-> Vec<CapParams> {
+	run_neo(&DLP, perc_db, perc_samples, num_circs, num_jobs,
+		numa_num, part_id, b_light_test, b_ladder_only)
+}
+
+/// Scale variant of a spec: cover check off, ladder emptied (num_circs
+/// is pinned 1; legacy's local empty vec, zkp_driver.rs:7511), and
+/// "_scale" name/cache renames so a concurrent or prior FULL run's
+/// part-0 sandbox and DB cache are never touched (legacy isolated its
+/// scale scratch + cache the same way, :7712/:7757). The renamed strs
+/// are leaked: the spec fields are &'static and this runs once per
+/// invocation.
+fn scale_spec_clone(spec: &DatasetSpec) -> DatasetSpec {
+	let mut s = spec.clone();
+	s.name = Box::leak(
+		format!("{}_scale", spec.name).into_boxed_str());
+	s.db_cache_dir = Box::leak(
+		format!("{}_scale", spec.db_cache_dir).into_boxed_str());
+	// scale never cover-checks, so fold's self-cover one-bump path
+	// stays disengaged inside retry_caperr's own bump loop.
+	s.b_check_lkup = false;
+	s.vec_decrease_level = &[];
+	s
+}
+
+/// Scale sweep (port of collect_scale_data_dlp, zkp_driver.rs:7671):
+/// ONE fixed corpus, ascending pin-INCLUSIVE rule counts; per count a
+/// fresh thinned DB -> tune -> folding-only fold with CapErr
+/// bump-retry. Emits legacy's ROUND markers on stdout; the Python
+/// leaf splits on them and packs the bundle. Writes no archive.
+pub fn collect_scale_data_neo(spec: &DatasetSpec, corpus_idx: usize,
+	vec_count: &[usize]) {
+	// Every argument assert fires BEFORE any process-wide write. The
+	// env assert comes LAST so arg-assert tests never race a sibling
+	// test that momentarily exports a share var.
+	assert!(!vec_count.is_empty(),
+		"bora_data_driver: scale vec_count is empty");
+	assert!(vec_count.windows(2).all(|w| w[0] < w[1]),
+		"bora_data_driver: scale vec_count not strictly ascending: \
+		 {:?}", vec_count);
+	// counts include the pin: a 1-rule aggressive DB has zero SED
+	// demand and underflows the tuner (legacy's smallest is pin+1=2).
+	let lo = if spec.b_aggressive { 2 } else { 1 };
+	assert!(vec_count[0] >= lo,
+		"bora_data_driver: {} scale counts must be >= {} (the count \
+		 includes the pin): {:?}", spec.name, lo, vec_count);
+	assert!(corpus_idx < spec.scale_sources.len(),
+		"bora_data_driver: corpus_idx {} out of range {}",
+		corpus_idx, spec.scale_sources.len());
+	let proot = utils::os::proj_root();
+	let src = spec.scale_sources[corpus_idx];
+	let abs_src = format!("{}/{}", proot, src);
+	assert!(fs::metadata(&abs_src).map(|m| m.len() > 0)
+		.unwrap_or(false),
+		"bora_data_driver: scale corpus {} missing or empty (run \
+		 DOWNLOAD.py?)", abs_src);
+	let n_sigs = read_lines_nonblank(&format!("{}/{}/{}", proot,
+		spec.config_dir, spec.sig_file)).len();
+	assert!(*vec_count.last().unwrap() <= n_sigs,
+		"bora_data_driver: top scale count {} > {} sigs (an \
+		 over-count silently folds the FULL db)",
+		vec_count.last().unwrap(), n_sigs);
+	assert_no_share_env();
+	let sc = scale_spec_clone(spec);
+	apply_spec_config(&sc, false, &part_role(0, 1, 1));
+	{
+		// One write scope, AFTER apply_spec_config (which zeroes the
+		// catch flag). RULE 1: only scale routes fold CapErrs through
+		// catchable unwinding, so retry_caperr can bump; full runs
+		// keep the fail-fast abort.
+		let mut g = get_global_config();
+		g.b_folding_only = true;         // scale never proves
+		g.b_scale_catch_caperr = true;
+	}
+	utils::consts::SCALE_DUMP_FWD
+		.store(true, std::sync::atomic::Ordering::Relaxed);
+	let pd = reset_part_dir(&sc, 0);
+	// count-invariant: one bin, one file, written once.
+	let bins = vec![vec![src.to_string()]];
+	let manifests =
+		write_job_manifests(&format!("{}/jobs", pd), &bins);
+	for &cnt in vec_count {
+		utils::logger::emit_stdout(format!(
+			"==== SCALE ROUND BEGIN count={} rules={}/{} corpus={} \
+			 ====", cnt, cnt, n_sigs, src));
+		utils::logger::flush_logger();
+		let mut caps = build_and_tune(&sc, cnt, &bins, 1, 0);
+		assert_eq!(caps.len(), 1,
+			"bora_data_driver: scale wants 1 rung, got {}",
+			caps.len());
+		retry_caperr(&sc, &mut caps[0], |p| fold(&sc,
+			&config_dir_for(&sc, cnt, n_sigs, 0),
+			&cache_dir_for(&sc, 0), &manifests,
+			std::slice::from_ref(p), 1));
+		// forward-queue saturation of THIS fold (verification only,
+		// not plotted); retry_caperr's reset_sat isolated the gauges
+		// to the last, successful try. Port of zkp_driver.rs:7936.
+		let (fc, fcc) = (utils::consts::get_fwd(false),
+			utils::consts::get_fwd_cap(false).max(1));
+		let (fi, fic) = (utils::consts::get_fwd(true),
+			utils::consts::get_fwd_cap(true).max(1));
+		utils::logger::emit_stdout(format!(
+			"[{}] count={}: FWD-QUEUE SATURATION cs={:.1}% ({}/{}) \
+			 igc={:.1}% ({}/{})", sc.name, cnt,
+			100.0 * fc as f32 / fcc as f32, fc, fcc,
+			100.0 * fi as f32 / fic as f32, fi, fic));
+		utils::logger::flush_logger();
+		utils::logger::emit_stdout(format!(
+			"==== SCALE ROUND END count={} ====", cnt));
+		utils::logger::flush_logger();
+	}
+}
+
+/// DLP scale sweep: collect_scale_data_neo over the DLP const.
+pub fn collect_scale_dlp_neo(corpus_idx: usize, vec_count: &[usize]) {
+	collect_scale_data_neo(&DLP, corpus_idx, vec_count)
 }
 
 /// Q2 lookup-composition report, perc-driven. perc>=100 reproduces
@@ -1047,12 +1323,12 @@ pub mod tests_bora_data_driver {
 	/// never point at the shared /tmp/bora framework dir itself.
 	#[test]
 	fn test_a101_plan_dir() {
-		let d = plan_dir("dlp");
-		assert_eq!(d, "/tmp/bora/dlp_neo");
+		let d = plan_dir("dlp", 0);
+		assert_eq!(d, "/tmp/bora/dlp_neo_p0");
 		assert!(Path::new(&d).is_absolute());
 		assert!(d.starts_with("/tmp/bora/") && d.len() > "/tmp/bora/".len(),
 			"plan dir must be a strict subdir of /tmp/bora: {}", d);
-		assert_eq!(plan_dir("clam"), "/tmp/bora/clam_neo");
+		assert_eq!(plan_dir("clam", 1), "/tmp/bora/clam_neo_p1");
 	}
 
 	/// A101: the recomputed split must reproduce the committed jobs8/
@@ -1137,14 +1413,15 @@ pub mod tests_bora_data_driver {
 
 		// 3. neo-own cache: a neo run can never write legacy's dir.
 		assert_eq!(DLP.db_cache_dir, "dlp_neo");
-		assert_eq!(plan_dir(DLP.name), "/tmp/bora/dlp_neo");
+		assert_eq!(plan_dir(DLP.name, 0), "/tmp/bora/dlp_neo_p0");
 
 		// 4. legacy full_dlp() parity, field by field.
 		assert_eq!(DLP.chunk_len, 64);
 		assert_eq!(DLP.range2_bit, 25);
 		assert_eq!(DLP.fanout_cap, 100);
 		assert!(DLP.b_aggressive);
-		assert!(!DLP.b_check_lkup);
+		assert!(DLP.b_check_lkup,
+			"deliberate departure from legacy full_dlp");
 		assert_eq!(DLP.n_par_snark, 1);
 		assert_eq!(DLP.n_par_snark_cp, 1);
 		assert_eq!(DLP.min_subsigs, 1);
@@ -1232,9 +1509,9 @@ pub mod tests_bora_data_driver {
 
 	#[test]
 	fn test_a103_config_dir_for() {
-		assert_eq!(config_dir_for(&DLP, 9861, 9861), DLP.config_dir);
-		assert_eq!(config_dir_for(&DLP, 99, 9861),
-			"/tmp/bora/dlp_neo/config");
+		assert_eq!(config_dir_for(&DLP, 9861, 9861, 0), DLP.config_dir);
+		assert_eq!(config_dir_for(&DLP, 99, 9861, 1),
+			"/tmp/bora/dlp_neo_p1/config");
 	}
 
 	#[test]
@@ -1323,6 +1600,8 @@ pub mod tests_bora_data_driver {
 			g.b_read_snark_cache = true;
 			g.b_write_snark_cache = true;
 			g.b_dryrun_after_capcheck = true;   // would no-op the fold
+			g.b_scale_catch_caperr = true;      // would kill fail-fast
+			g.b_check_lkup = !DLP.b_check_lkup; // must come from spec
 			g.b_pin_lkup_share = true;      // the legacy pin
 			g.perc_lkup_share = 42;         // a stale ratchet value
 			g.snark_wait_flag = Some("/tmp/stale".to_string());
@@ -1350,7 +1629,9 @@ pub mod tests_bora_data_driver {
 		// semaphore is reached by every job inside pass_all).
 		assert_eq!(c.n_par_batch_claim, 1);
 		assert_eq!(c.log_level, utils::logger::LOG3);
-		assert!(!c.b_light_test, "b_light_test follows the argument");
+		assert_eq!(c.b_check_lkup, DLP.b_check_lkup, "from the spec");
+		assert!(!c.b_light_test,
+			"prover part at b_light=false stays heavy");
 		assert!(!c.b_folding_only, "numa 1: the one part proves");
 		assert!(c.b_one_proof);
 		assert_eq!(c.snark_wait_flag, None, "nobody to wait for");
@@ -1358,14 +1639,18 @@ pub mod tests_bora_data_driver {
 		assert!(!c.b_read_snark_cache);
 		assert!(!c.b_write_snark_cache);
 		assert!(!c.b_dryrun_after_capcheck);
+		assert!(!c.b_scale_catch_caperr,
+			"a stale scale catch flag must not survive into a run");
 		assert!(!c.b_pin_lkup_share, "the legacy pin must NOT be copied");
 		assert_eq!(c.perc_lkup_share, 1, "ratchet floor, not the stale 42");
 		drop(c);
 
 		// numa 2 part 0: folds only, does not wait (it IS the folder).
-		apply_spec_config(&DLP, true, &part_role(0, 2, 8));
+		// b_light=false on purpose: the fold-only part must be FORCED
+		// light (legacy's ZKR_DLP_FOLD_ONLY coupling).
+		apply_spec_config(&DLP, false, &part_role(0, 2, 8));
 		let c = read_global_config();
-		assert!(c.b_light_test, "b_light_test follows the argument");
+		assert!(c.b_light_test, "fold-only part is forced light");
 		assert!(c.b_folding_only);
 		assert!(!c.b_one_proof);
 		assert_eq!(c.snark_wait_flag, None);
@@ -1374,6 +1659,7 @@ pub mod tests_bora_data_driver {
 		// numa 2 part 1: proves, and gates on the flag Python touches.
 		apply_spec_config(&DLP, false, &part_role(1, 2, 8));
 		let c = read_global_config();
+		assert!(!c.b_light_test, "the proving part stays heavy");
 		assert!(!c.b_folding_only);
 		assert!(c.b_one_proof);
 		assert_eq!(c.snark_wait_flag,
@@ -1405,11 +1691,14 @@ pub mod tests_bora_data_driver {
 		let proot = utils::os::proj_root();
 		// redirected clone: never touch the live dlp_neo dirs.
 		let mut spec = DLP.clone();
-		spec.name = "dlp_test";            // /tmp/bora/dlp_test_neo
+		spec.name = "dlp_test";            // /tmp/bora/dlp_test_neo_p0
 		spec.db_cache_dir = "dlp_test_neo";
-		let _t1 = TmpConfigDir(PathBuf::from(plan_dir(spec.name)));
+		// isolate the kernel from the check axis (scale's clone does
+		// the same); the check-on path is C103/D102's E2E territory.
+		spec.b_check_lkup = false;
+		let _t1 = TmpConfigDir(PathBuf::from(plan_dir(spec.name, 0)));
 		let _t2 = TmpConfigDir(PathBuf::from(format!(
-			"{}/data/cache/{}", proot, spec.db_cache_dir)));
+			"{}/data/cache/{}", proot, cache_dir_for(&spec, 0))));
 		// rule 0 must be the all-16-nibble alphabet sig: it is the ONE
 		// rule subset(n,1) keeps; the DB is degenerate without it.
 		let src_dir = format!("{}/{}", proot, spec.config_dir);
@@ -1422,9 +1711,10 @@ pub mod tests_bora_data_driver {
 		let bins = vec![vec![DLP.scale_sources[1].to_string()]];
 		// pieces first: thin + build + discharge, to see the TuningSet.
 		create_smaller_config(&src_dir, spec.sig_file, 2,
-			&format!("{}/config", plan_dir(spec.name)));
+			&format!("{}/config", plan_dir(spec.name, 0)));
 		let db = build_fresh_db(&spec,
-			&config_dir_for(&spec, 2, sig_lines.len()));
+			&config_dir_for(&spec, 2, sig_lines.len(), 0),
+			&cache_dir_for(&spec, 0));
 		let ts = discharge_for_tuning(&spec, &db, &bins);
 		assert_eq!(ts.words.len(), 2);            // email + 0-word
 		assert_eq!(ts.infos.len(), 2);
@@ -1439,12 +1729,16 @@ pub mod tests_bora_data_driver {
 		// end-to-end kernel (rebuilds the tiny DB: read=false rule).
 		// num_circs=1 -> k_max=1 -> the single P_max rung, which
 		// T506's per-rung pass leaves untouched: immune to it landing.
-		let caps = build_and_tune(&spec, 2, &bins, 1);
+		let caps = build_and_tune(&spec, 2, &bins, 1, 0);
 		assert_eq!(caps.len(), 1);
 		let p = &caps[0];
 		assert_eq!(p.max_word_len, spec.chunk_len);
 		assert!(p.subsigs >= 1 && p.avg_pats_per_subsig >= 1);
 		assert!(p.basis_unique_states >= 2 && p.basis_acc_states >= 2);
+		// C101: tune derived+pinned the share (check=false -> 1).
+		let c = read_global_config();
+		assert_eq!(c.perc_lkup_share, 1);
+		assert!(c.b_pin_lkup_share, "tune must pin its derived share");
 	}
 
 	#[test]
@@ -1519,5 +1813,123 @@ pub mod tests_bora_data_driver {
 			panic!("advice: CapErr([(\"dis_adv::prod_pats_expansion, \
 				StepQueue b_igc: false\", {})])", 1000 + n.get());
 		});
+	}
+
+	/// C101: per-part paths are pairwise disjoint; the full-DB config
+	/// dir is the one deliberately shared (read-only) path.
+	#[test]
+	fn test_c101_part_paths_disjoint() {
+		assert_ne!(plan_dir("dlp", 0), plan_dir("dlp", 1));
+		assert_eq!(cache_dir_for(&DLP, 1), "dlp_neo_p1");
+		assert_ne!(cache_dir_for(&DLP, 0), cache_dir_for(&DLP, 1));
+		assert_ne!(config_dir_for(&DLP, 99, 9861, 0),
+			config_dir_for(&DLP, 99, 9861, 1));
+		assert_eq!(config_dir_for(&DLP, 9861, 9861, 0),
+			config_dir_for(&DLP, 9861, 9861, 1));
+	}
+
+	/// C101: the wipe hits ONLY the named part's sandbox.
+	#[test]
+	fn test_c101_reset_part_dir() {
+		let mut spec = DLP.clone();
+		spec.name = "dlp_reset_test";
+		let _t0 = TmpConfigDir(PathBuf::from(plan_dir(spec.name, 0)));
+		let _t1 = TmpConfigDir(PathBuf::from(plan_dir(spec.name, 1)));
+		let p1 = plan_dir(spec.name, 1);
+		fs::create_dir_all(&p1).unwrap();
+		fs::write(format!("{}/keep.txt", p1), "x").unwrap();
+		let p0 = reset_part_dir(&spec, 0);
+		fs::write(format!("{}/stale.txt", p0), "x").unwrap();
+		assert_eq!(reset_part_dir(&spec, 0), p0);
+		assert!(!Path::new(&format!("{}/stale.txt", p0)).exists(),
+			"stale file survived the wipe");
+		assert!(Path::new(&format!("{}/jobs", p0)).is_dir());
+		assert!(Path::new(&format!("{}/keep.txt", p1)).exists(),
+			"sibling part's sandbox must survive");
+	}
+
+	/// C101: KEY units -> percent (zkp_driver.rs:2233), ceil edges.
+	/// mnl for chunk 64 = 64*62 = 3968.
+	#[test]
+	fn test_c101_share_need_perc() {
+		assert_eq!(share_need_perc(850, 3968), 22);
+		assert_eq!(share_need_perc(1, 3968), 1);
+		assert_eq!(share_need_perc(3968, 3968), 100);
+		assert_eq!(share_need_perc(3969, 3968), 101);
+	}
+
+	/// C101: a stale share export fails loudly instead of silently
+	/// pinning the derivation. Env is process-wide -> cfg_lock.
+	#[test]
+	#[should_panic(expected = "ZKR_LKSHARE")]
+	fn test_c101_env_guard() {
+		let _g = cfg_lock();
+		struct EnvCleanup;
+		impl Drop for EnvCleanup {
+			fn drop(&mut self) {
+				std::env::remove_var("ZKR_LKSHARE");
+			}
+		}
+		let _c = EnvCleanup;
+		std::env::set_var("ZKR_LKSHARE", "42");
+		full_dlp_neo(1, 1, 1, 2, 1, 0, true, true);
+	}
+
+	// C102: every argument assert fires BEFORE any process-wide
+	// write (and before the env assert), so none of these five need
+	// cfg_lock and none can race test_c101_env_guard.
+
+	#[test]
+	#[should_panic(expected = "vec_count is empty")]
+	fn test_c102_scale_args_empty() {
+		collect_scale_data_neo(&DLP, 0, &[]);
+	}
+
+	#[test]
+	#[should_panic(expected = "strictly ascending")]
+	fn test_c102_scale_args_descending() {
+		collect_scale_data_neo(&DLP, 0, &[987, 2]);
+	}
+
+	#[test]
+	#[should_panic(expected = "must be >= 2")]
+	fn test_c102_scale_args_aggr_min() {
+		// count 1 = the pin alone: zero SED demand underflows the
+		// aggressive tuner, so the entry assert must catch it.
+		collect_scale_data_neo(&DLP, 0, &[1, 987]);
+	}
+
+	#[test]
+	#[should_panic(expected = "corpus_idx 2 out of range")]
+	fn test_c102_scale_args_corpus_oob() {
+		collect_scale_data_neo(&DLP, 2, &[2, 987]);
+	}
+
+	#[test]
+	#[should_panic(expected = "over-count")]
+	fn test_c102_scale_args_over_total() {
+		collect_scale_data_neo(&DLP, 0, &[2, 1_000_000]);
+	}
+
+	/// C102: the scale clone flips exactly {check, ladder, names};
+	/// the renames keep scale's sandbox + DB cache disjoint from the
+	/// full run's part dirs.
+	#[test]
+	fn test_c102_scale_spec_clone() {
+		let sc = scale_spec_clone(&DLP);
+		assert_eq!(sc.name, "dlp_scale");
+		assert_eq!(sc.db_cache_dir, "dlp_neo_scale");
+		assert!(!sc.b_check_lkup, "scale never cover-checks");
+		assert!(sc.vec_decrease_level.is_empty());
+		assert_eq!(sc.config_dir, DLP.config_dir);
+		assert_eq!(sc.sig_file, DLP.sig_file);
+		assert_eq!(sc.master_sources, DLP.master_sources);
+		assert_eq!(sc.scale_sources, DLP.scale_sources);
+		assert_eq!(sc.chunk_len, DLP.chunk_len);
+		assert_eq!(sc.range2_bit, DLP.range2_bit);
+		assert_eq!(sc.fanout_cap, DLP.fanout_cap);
+		assert_eq!(sc.b_aggressive, DLP.b_aggressive);
+		assert_ne!(plan_dir(sc.name, 0), plan_dir(DLP.name, 0));
+		assert_ne!(cache_dir_for(&sc, 0), cache_dir_for(&DLP, 0));
 	}
 }
