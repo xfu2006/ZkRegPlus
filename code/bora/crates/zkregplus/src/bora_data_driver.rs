@@ -635,6 +635,19 @@ fn discharge_for_tuning(spec: &DatasetSpec, db: &ClamavDB<Fr>,
 	TuningSet { words, infos, vdata, total_word_n, max_bin_word_n }
 }
 
+/// Env-free port of perc_lkup_share_for's MATH (zkp_driver.rs:232-243,
+/// incl. the two-ceil truncation fix), minus its ZKR_LKSHARE /
+/// ZKR_CLAM_LKUP_SHARE operator override: no env can steer the neo
+/// share derivation. Pinned by test against the source copy.
+fn perc_lkup_share_neo(lkup_len: usize, chunk_len: usize,
+	total_word_n: usize, b_check_lkup: bool) -> usize {
+	if !b_check_lkup { return 1; }
+	let max_nibble_len = chunk_len * LEGS;
+	let chunks = ((total_word_n * LEGS) / max_nibble_len).max(1);
+	let need_share = (lkup_len + chunks - 1) / chunks;
+	((need_share * 100 + max_nibble_len - 1) / max_nibble_len).max(1)
+}
+
 /// Capacity tuner for one (db, tuning set): aggr -> rung ladder via
 /// determine_config_aggr, non-aggr -> single converged CapParams.
 /// GlobalConfig touches: share derive+pin, non-aggr floor write-back.
@@ -645,11 +658,11 @@ fn tune(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>, ts: &TuningSet,
 	assert!(num_circs >= 1, "bora_data_driver: num_circs must be >= 1");
 	let mw = spec.chunk_len;
 	let lkup_len = db.lkup.get_size();
-	// The ONE share derivation (mirror of the driver's entry
-	// back-solve, zkp_driver.rs:2057). tune sees ALL bins, so every
-	// part derives the same value; the pin makes the driver skip its
-	// own per-slice re-derive at fold time.
-	let perc = crate::zkp_driver::perc_lkup_share_for(lkup_len, mw,
+	// The ONE share derivation, via the env-free port. tune sees ALL
+	// bins, so every part derives the same value; the pin makes the
+	// driver skip its own per-slice re-derive at fold time
+	// (zkp_driver.rs:1671/:2057), so no env can reach the neo share.
+	let perc = perc_lkup_share_neo(lkup_len, mw,
 		ts.max_bin_word_n, spec.b_check_lkup);
 	{
 		let mut g = get_global_config();
@@ -909,16 +922,6 @@ pub(crate) fn retry_caperr(spec: &DatasetSpec, p: &mut CapParams,
 	}
 }
 
-/// Zero-env contract shared by every neo entry: these silently pin
-/// the share derivation (zkp_driver.rs:228-231), so a stale export
-/// must fail loudly.
-fn assert_no_share_env() {
-	for k in ["ZKR_LKSHARE", "ZKR_CLAM_LKUP_SHARE"] {
-		assert!(std::env::var(k).is_err(),
-			"bora_data_driver: unset {} (neo runs take no env)", k);
-	}
-}
-
 /// The full-run pipeline shared by all three datasets. Every part
 /// runs it whole-corpus-identically in its own sandbox; the only
 /// cross-process file is the snark-start flag.
@@ -926,7 +929,6 @@ pub fn run_neo(spec: &DatasetSpec, perc_db: usize,
 	perc_samples: usize, num_circs: usize, num_jobs: usize,
 	numa_num: usize, part_id: usize, b_light_test: bool,
 	b_ladder_only: bool) -> Vec<CapParams> {
-	assert_no_share_env();
 	let role = part_role(part_id, numa_num, num_jobs);
 	apply_spec_config(spec, b_light_test, &role);
 	let pd = reset_part_dir(spec, part_id);
@@ -985,9 +987,7 @@ fn scale_spec_clone(spec: &DatasetSpec) -> DatasetSpec {
 /// leaf splits on them and packs the bundle. Writes no archive.
 pub fn collect_scale_data_neo(spec: &DatasetSpec, corpus_idx: usize,
 	vec_count: &[usize]) {
-	// Every argument assert fires BEFORE any process-wide write. The
-	// env assert comes LAST so arg-assert tests never race a sibling
-	// test that momentarily exports a share var.
+	// Every argument assert fires BEFORE any process-wide write.
 	assert!(!vec_count.is_empty(),
 		"bora_data_driver: scale vec_count is empty");
 	assert!(vec_count.windows(2).all(|w| w[0] < w[1]),
@@ -1015,7 +1015,6 @@ pub fn collect_scale_data_neo(spec: &DatasetSpec, corpus_idx: usize,
 		"bora_data_driver: top scale count {} > {} sigs (an \
 		 over-count silently folds the FULL db)",
 		vec_count.last().unwrap(), n_sigs);
-	assert_no_share_env();
 	let sc = scale_spec_clone(spec);
 	apply_spec_config(&sc, false, &part_role(0, 1, 1));
 	{
@@ -1149,6 +1148,93 @@ pub fn collect_lookup_stats_adv(perc: usize, dest_path: &str) {
 	println!("{}", report);
 	fs::write(dest_path, &report).unwrap_or_else(|e|
 		panic!("bora_data_driver: write {}: {}", dest_path, e));
+}
+
+const USAGE: &str = "usage: bora_data_driver <subcommand>\n \
+	 lkup <perc> <dest_path>\n \
+	 full_dlp <perc_db> <perc_samples> <num_circs> <num_jobs> \
+	<numa_num> <part_id> <light 0|1> <ladder_only 0|1>\n \
+	 scale_dlp <corpus_idx> <c1,c2,...>";
+
+/// Parsed CLI command for examples/bora_data_driver.rs. DNA/CLAM
+/// subcommands arrive with M103/M104.
+#[derive(Debug, PartialEq)]
+pub enum Cmd {
+	Lkup { perc: usize, dest_path: String },
+	FullDlp { perc_db: usize, perc_samples: usize, num_circs: usize,
+		num_jobs: usize, numa_num: usize, part_id: usize,
+		b_light_test: bool, b_ladder_only: bool },
+	ScaleDlp { corpus_idx: usize, vec_count: Vec<usize> },
+}
+
+fn arg_usize(args: &[String], i: usize, name: &str) -> usize {
+	args[i].parse().unwrap_or_else(|_| panic!(
+		"bora_data_driver: <{}> not a usize: {:?}\n{}",
+		name, args[i], USAGE))
+}
+
+fn arg_bool(args: &[String], i: usize, name: &str) -> bool {
+	match args[i].as_str() {
+		"0" => false,
+		"1" => true,
+		other => panic!(
+			"bora_data_driver: <{}> must be 0|1, got {:?}\n{}",
+			name, other, USAGE),
+	}
+}
+
+/// argv[1..] -> Cmd. Panics with a usage line on unknown subcommand,
+/// wrong arity, non-integer, a zero that has no meaning (percs,
+/// circs, jobs, numa), or part_id >= numa_num.
+pub fn parse_args(args: &[String]) -> Cmd {
+	match args.first().map(|s| s.as_str()) {
+		Some("lkup") => {
+			assert!(args.len() == 3,
+				"bora_data_driver: lkup takes 2 args, got {}\n{}",
+				args.len() - 1, USAGE);
+			Cmd::Lkup { perc: arg_usize(args, 1, "perc"),
+				dest_path: args[2].clone() }
+		}
+		Some("full_dlp") => {
+			assert!(args.len() == 9,
+				"bora_data_driver: full_dlp takes 8 args, got {}\n{}",
+				args.len() - 1, USAGE);
+			let perc_db = arg_usize(args, 1, "perc_db");
+			let perc_samples = arg_usize(args, 2, "perc_samples");
+			let num_circs = arg_usize(args, 3, "num_circs");
+			let num_jobs = arg_usize(args, 4, "num_jobs");
+			let numa_num = arg_usize(args, 5, "numa_num");
+			let part_id = arg_usize(args, 6, "part_id");
+			assert!(perc_db >= 1 && perc_samples >= 1
+				&& num_circs >= 1 && num_jobs >= 1 && numa_num >= 1,
+				"bora_data_driver: full_dlp args must be >= 1 \
+				 (perc_db {} perc_samples {} num_circs {} num_jobs \
+				 {} numa_num {})", perc_db, perc_samples, num_circs,
+				num_jobs, numa_num);
+			assert!(part_id < numa_num,
+				"bora_data_driver: part_id {} >= numa_num {}",
+				part_id, numa_num);
+			Cmd::FullDlp { perc_db, perc_samples, num_circs,
+				num_jobs, numa_num, part_id,
+				b_light_test: arg_bool(args, 7, "light"),
+				b_ladder_only: arg_bool(args, 8, "ladder_only") }
+		}
+		Some("scale_dlp") => {
+			assert!(args.len() == 3,
+				"bora_data_driver: scale_dlp takes 2 args, got {}\n{}",
+				args.len() - 1, USAGE);
+			let vec_count = args[2].split(',').map(|t| t.parse()
+				.unwrap_or_else(|_| panic!(
+					"bora_data_driver: count not a usize: {:?}\n{}",
+					t, USAGE))).collect();
+			Cmd::ScaleDlp {
+				corpus_idx: arg_usize(args, 1, "corpus_idx"),
+				vec_count }
+		}
+		other => panic!(
+			"bora_data_driver: unknown subcommand {:?}\n{}",
+			other, USAGE),
+	}
 }
 
 #[cfg(test)]
@@ -1858,26 +1944,37 @@ pub mod tests_bora_data_driver {
 		assert_eq!(share_need_perc(3969, 3968), 101);
 	}
 
-	/// C101: a stale share export fails loudly instead of silently
-	/// pinning the derivation. Env is process-wide -> cfg_lock.
+	/// The env-free share port stays byte-equal to the frozen source
+	/// (zkp_driver.rs:222) on every path the two share, including the
+	/// measured truncation edge its comment documents. Requires the
+	/// share env vars unset -- the source reads them first.
 	#[test]
-	#[should_panic(expected = "ZKR_LKSHARE")]
-	fn test_c101_env_guard() {
-		let _g = cfg_lock();
-		struct EnvCleanup;
-		impl Drop for EnvCleanup {
-			fn drop(&mut self) {
-				std::env::remove_var("ZKR_LKSHARE");
-			}
+	fn test_c102_perc_lkup_share_port() {
+		for k in ["ZKR_LKSHARE", "ZKR_CLAM_LKUP_SHARE"] {
+			assert!(std::env::var(k).is_err(),
+				"unset {} before running this test", k);
 		}
-		let _c = EnvCleanup;
-		std::env::set_var("ZKR_LKSHARE", "42");
-		full_dlp_neo(1, 1, 1, 2, 1, 0, true, true);
+		// lkup 9466 over 4 chunks of mnl 62: the naive bound's 3817
+		// truncates to share 2366 (2366*4 < 9466); the two-ceil math
+		// must give 3818.
+		assert_eq!(perc_lkup_share_neo(9466, 1, 4, true), 3818);
+		assert_eq!(perc_lkup_share_neo(9466, 64, 4, false), 1,
+			"check-off floor");
+		for &(l, c, t, b) in &[
+			(9466usize, 1usize, 4usize, true),
+			(246_420_000, 64, 1_000_000, true),
+			(33_700_000, 64, 3_968, true),
+			(1, 64, 1, true),
+			(9466, 64, 4, false),
+		] {
+			assert_eq!(perc_lkup_share_neo(l, c, t, b),
+				crate::zkp_driver::perc_lkup_share_for(l, c, t, b),
+				"port drifted from source at ({},{},{},{})", l, c, t, b);
+		}
 	}
 
 	// C102: every argument assert fires BEFORE any process-wide
-	// write (and before the env assert), so none of these five need
-	// cfg_lock and none can race test_c101_env_guard.
+	// write, so none of these five need cfg_lock.
 
 	#[test]
 	#[should_panic(expected = "vec_count is empty")]
@@ -1931,5 +2028,63 @@ pub mod tests_bora_data_driver {
 		assert_eq!(sc.b_aggressive, DLP.b_aggressive);
 		assert_ne!(plan_dir(sc.name, 0), plan_dir(DLP.name, 0));
 		assert_ne!(cache_dir_for(&sc, 0), cache_dir_for(&DLP, 0));
+	}
+
+	fn argv(v: &[&str]) -> Vec<String> {
+		v.iter().map(|s| s.to_string()).collect()
+	}
+
+	/// C103: happy-path parses for lkup + the smoke-run full_dlp line.
+	#[test]
+	fn test_c103_parse_args_full() {
+		assert_eq!(parse_args(&argv(&["lkup", "5", "/tmp/x"])),
+			Cmd::Lkup { perc: 5, dest_path: "/tmp/x".to_string() });
+		assert_eq!(parse_args(&argv(&["full_dlp", "1", "1", "1",
+			"2", "1", "0", "1", "1"])),
+			Cmd::FullDlp { perc_db: 1, perc_samples: 1,
+				num_circs: 1, num_jobs: 2, numa_num: 1, part_id: 0,
+				b_light_test: true, b_ladder_only: true });
+	}
+
+	/// C103: counts CSV -> Vec<usize>, pin-inclusive units untouched.
+	#[test]
+	fn test_c103_parse_args_scale() {
+		assert_eq!(parse_args(&argv(&["scale_dlp", "0",
+			"2,987,9861"])),
+			Cmd::ScaleDlp { corpus_idx: 0,
+				vec_count: vec![2, 987, 9861] });
+	}
+
+	#[test]
+	#[should_panic(expected = "full_dlp takes 8 args, got 7")]
+	fn test_c103_parse_args_bad_arity() {
+		parse_args(&argv(&["full_dlp", "1", "1", "1", "2", "1",
+			"0", "1"]));
+	}
+
+	#[test]
+	#[should_panic(expected = "count not a usize")]
+	fn test_c103_parse_args_bad_count() {
+		parse_args(&argv(&["scale_dlp", "0", "2,x,9861"]));
+	}
+
+	#[test]
+	#[should_panic(expected = "must be 0|1")]
+	fn test_c103_parse_args_bad_bool() {
+		parse_args(&argv(&["full_dlp", "1", "1", "1", "2", "1",
+			"0", "2", "1"]));
+	}
+
+	#[test]
+	#[should_panic(expected = "must be >= 1")]
+	fn test_c103_parse_args_zero_perc() {
+		parse_args(&argv(&["full_dlp", "0", "1", "1", "2", "1",
+			"0", "1", "1"]));
+	}
+
+	#[test]
+	#[should_panic(expected = "unknown subcommand")]
+	fn test_c103_parse_args_unknown() {
+		parse_args(&argv(&["scale_dna", "0", "2,987"]));
 	}
 }

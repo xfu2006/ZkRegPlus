@@ -26,3 +26,6 @@ pub mod fingerprint;
 /// paper-data support functions (perc-driven dataset thinning, Q2
 /// lookup-composition report), sibling to zkp_driver.
 pub mod bora_data_driver;
+/// T601-C: forces phase-level log verbosity during numa_probe_dlp's
+/// real multi-job fold, to measure job-concurrency contention.
+pub mod probe_t601c;
