@@ -955,6 +955,14 @@ pub(crate) fn retry_caperr(spec: &DatasetSpec, p: &mut CapParams,
 	}
 }
 
+/// Restore legacy dlp_env's two diagnostics under the Python-side
+/// ZKR_* scrub: per-part job-log names + per-job coverage PROBE
+/// lines. Argv-derived; called at run_neo entry, pre-thread.
+fn set_diag_env(part_id: usize) {
+	std::env::set_var("ZKR_LOG_TAG", format!("p{}_", part_id));
+	std::env::set_var("ZKR_DLP_PROBE_FILES", "1");
+}
+
 /// The full-run pipeline shared by all three datasets. Every part
 /// runs it whole-corpus-identically in its own sandbox; the only
 /// cross-process file is the snark-start flag.
@@ -962,6 +970,7 @@ pub fn run_neo(spec: &DatasetSpec, perc_db: f64,
 	perc_samples: f64, num_circs: usize, num_jobs: usize,
 	numa_num: usize, part_id: usize, b_light_test: bool,
 	b_ladder_only: bool) -> Vec<CapParams> {
+	set_diag_env(part_id);
 	let role = part_role(part_id, numa_num, num_jobs);
 	apply_spec_config(spec, b_light_test, &role);
 	let pd = reset_part_dir(spec, part_id);
@@ -1188,13 +1197,16 @@ pub fn collect_lookup_stats_adv(perc: usize, dest_path: &str) {
 		panic!("bora_data_driver: write {}: {}", dest_path, e));
 }
 
-const USAGE: &str = "usage: bora_data_driver <subcommand>\n \
+pub const USAGE: &str = "bora_cli: backend of \
+	scripts/NEW_PAPER_DATA.py -- run that driver instead; \
+	direct invocation is for debugging only.\n\
+	usage: bora_cli <subcommand>\n \
 	 lkup <perc> <dest_path>\n \
 	 full_dlp <perc_db> <perc_samples> <num_circs> <num_jobs> \
 	<numa_num> <part_id> <light 0|1> <ladder_only 0|1>\n \
 	 scale_dlp <corpus_idx> <c1,c2,...>";
 
-/// Parsed CLI command for examples/bora_data_driver.rs. DNA/CLAM
+/// Parsed CLI command for examples/bora_cli.rs. DNA/CLAM
 /// subcommands arrive with M103/M104.
 #[derive(Debug, PartialEq)]
 pub enum Cmd {
@@ -2186,5 +2198,18 @@ pub mod tests_bora_data_driver {
 		let mut longer = vec![r0.clone(), r0.clone(), r1.clone()];
 		pad_ladder_to(&mut longer, 2);
 		assert_eq!(longer.len(), 3);                   // never truncates
+	}
+
+	/// D101: the scrub-compensating env self-sets. Mutates process
+	/// env -- serial (--test-threads=1) like the rest of the module.
+	#[test]
+	fn test_d101_set_diag_env() {
+		let _g = cfg_lock();
+		set_diag_env(1);
+		assert_eq!(std::env::var("ZKR_LOG_TAG").unwrap(), "p1_");
+		assert_eq!(
+			std::env::var("ZKR_DLP_PROBE_FILES").unwrap(), "1");
+		std::env::remove_var("ZKR_LOG_TAG");
+		std::env::remove_var("ZKR_DLP_PROBE_FILES");
 	}
 }

@@ -30926,7 +30926,14 @@ Goal 12. T601 - figure what is the fixed 1.6s per step cost
 
 Monday 08/10/2026
 Goal 1. T602 -> check cutting num of steps would help
-	[a]
+	[a] not as good only imporves 10%
+	[b] so should still investigate the direction of cut circ size
+Goal 2. T602.D -> another sweep to test how we can cut the contention time
+Goal 3. D101 of M102: python wrapper 
+	[a] goal: scale wrapper in python and full_dlp wrapper
+	[b] check neo_env
+	[c] design run_pack and run_rust_two_half python wrapper
+	[d] implement and test
 
 	
 		

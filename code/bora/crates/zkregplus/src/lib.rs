@@ -29,3 +29,6 @@ pub mod bora_data_driver;
 /// T601-C: forces phase-level log verbosity during numa_probe_dlp's
 /// real multi-job fold, to measure job-concurrency contention.
 pub mod probe_t601c;
+/// T602: real chunk_len=64 vs 128 rung histogram on a bounded DLP
+/// corpus sample, validating T601's naive doubling estimate.
+pub mod probe_t602;

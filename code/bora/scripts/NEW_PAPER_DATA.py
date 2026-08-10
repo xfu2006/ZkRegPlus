@@ -261,6 +261,7 @@ def run_rust_two_half(ctx, spec):
     a, b = spec.node_ranges
     cmd = cargo_test_cmd(spec.test)
     log1, log2 = ctx.log_path("part1"), ctx.log_path("part2")
+    shutil.rmtree(FLAG_DIR, ignore_errors=True)  # stale gate = no gate
 
     env1 = spec.env_fn("p1", fold_only=True, one_proof=False, wait_flag=None)
     env2 = spec.env_fn("p2", fold_only=not spec.part2_proves,
@@ -329,16 +330,140 @@ def run_external_python(ctx, script, args, env):
 
 def run_rust_example(ctx, example_name, args, env):
     """Single-process `cargo run --release --example <name> -- <args>`,
-    mirrors run_external_python but for a real bora_data_driver-style
+    mirrors run_external_python but for a real bora_cli-style
     binary instead of a cargo test."""
-    cmd = ["cargo", "run", "--release", "--example", example_name,
-           "--"] + list(args)
+    cmd = example_cmd(example_name, args)
     p, t = spawn(cmd, env, ctx.log_path("run"), ctx.key)
     ctx.watch(p.pid)
     p.wait()
     if t:
         t.join()
     return p.returncode
+
+
+# =====================================================================
+# neo example launch (M102 D101): env scrub + two-half + scale packer
+# =====================================================================
+
+RUSTFLAGS_NEO = "-C link-args=-fuse-ld=lld -Awarnings"
+
+PART_TOKEN = "{part_id}"   # substituted by run_example_two_half
+
+
+def neo_env(b_show_dropped=False):
+    """The one env builder for bora_cli spawns: os.environ minus
+    every ZKR_* (neo is argv-only; ~90 legacy env knobs must not
+    leak in), RUSTFLAGS forced for deterministic builds."""
+    dropped = sorted(k for k in os.environ if k.startswith("ZKR_"))
+    e = {k: v for k, v in os.environ.items()
+         if not k.startswith("ZKR_")}
+    e["RUSTFLAGS"] = RUSTFLAGS_NEO
+    if b_show_dropped and dropped:
+        log("neo_env: dropped %s" % " ".join(dropped))
+    return e
+
+
+def example_cmd(example_name, args):
+    """`cargo run --release --example <name> -- <args>`."""
+    return ["cargo", "run", "--release", "--example", example_name,
+            "--"] + list(args)
+
+
+def run_example_two_half(ctx, example_name, args, env, node_ranges):
+    """Two-part neo launch: the spawns differ ONLY in the part_id argv
+    token (PART_TOKEN -> "0"/"1"; role logic lives in Rust; Python
+    labels part1/part2 = part_id 0/1). Same stagger + snark-flag
+    machinery as run_rust_two_half; part2 always proves."""
+    assert args.count(PART_TOKEN) == 1, args
+    a, b = node_ranges
+
+    def argv(pid):
+        return [str(pid) if t == PART_TOKEN else t for t in args]
+
+    shutil.rmtree(FLAG_DIR, ignore_errors=True)  # stale gate = no gate
+    p1, t1 = spawn(numa_prefix(a) + example_cmd(example_name, argv(0)),
+                   env, ctx.log_path("part1"), "part1")
+    ctx.watch(p1.pid)
+    _wait_stagger(p1)
+    p2 = t2 = None
+    try:
+        p2, t2 = spawn(
+            numa_prefix(b) + example_cmd(example_name, argv(1)),
+            env, ctx.log_path("part2"), "part2")
+        ctx.watch(p2.pid)
+        p1.wait()
+        if t1:
+            t1.join()
+        os.makedirs(FLAG_DIR, exist_ok=True)
+        open(FLAG, "w").close()
+    finally:
+        # never leave part2's decider blocked on a flag we forgot to set
+        if p2 is not None and p2.poll() is None \
+                and not os.path.exists(FLAG):
+            os.makedirs(FLAG_DIR, exist_ok=True)
+            open(FLAG, "w").close()
+    p2.wait()
+    if t2:
+        t2.join()
+    return p1.returncode or p2.returncode
+
+
+SCALE_BEGIN_RE = re.compile(r"==== SCALE ROUND BEGIN count=(\d+)\b")
+SCALE_END_RE = re.compile(r"==== SCALE ROUND END count=(\d+)")
+
+
+def pack_scale_bundle(run_log, dest):
+    """Split run_log on the SCALE ROUND markers and pack one
+    log_<count>.txt.tgz per round into dest (attic split_and_pack
+    port; a trailing BEGIN with no END -- crash mid-round -- is kept).
+    Zero rounds -> dest untouched (never clobber a committed bundle).
+    Returns the number of rounds packed; placement is atomic."""
+    rounds, cur_cnt, buf = [], None, []
+    for line in open(run_log, errors="replace"):
+        mb = SCALE_BEGIN_RE.search(line)
+        if mb:
+            if cur_cnt is not None:
+                rounds.append((cur_cnt, buf))
+            cur_cnt, buf = int(mb.group(1)), [line]
+            continue
+        if cur_cnt is None:
+            continue
+        buf.append(line)
+        if SCALE_END_RE.search(line):
+            rounds.append((cur_cnt, buf))
+            cur_cnt, buf = None, []
+    if cur_cnt is not None:                # trailing (un-ENDed) round
+        rounds.append((cur_cnt, buf))
+    if not rounds:
+        log("pack_scale_bundle: 0 rounds in %s; %s left untouched"
+            % (run_log, dest))
+        return 0
+
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    tmp = dest + ".tmp"
+    if os.path.exists(tmp):
+        os.unlink(tmp)
+    with tempfile.TemporaryDirectory() as td:
+        inner = []
+        for cnt, lines in rounds:
+            txt = os.path.join(td, "log_%d.txt" % cnt)
+            with open(txt, "w") as f:
+                f.writelines(lines)
+            tgz = os.path.join(td, "log_%d.txt.tgz" % cnt)
+            with tarfile.open(tgz, "w:gz", compresslevel=9) as t:
+                t.add(txt, arcname=os.path.basename(txt))
+            inner.append(tgz)
+            ended = any(SCALE_END_RE.search(ln) for ln in lines)
+            log("pack_scale_bundle: round count=%d: %d lines%s" % (
+                cnt, len(lines),
+                "" if ended else " (NO END -- partial)"))
+        with tarfile.open(tmp, "w:gz", compresslevel=9) as t:
+            for tgz in inner:
+                t.add(tgz, arcname=os.path.basename(tgz))
+    os.replace(tmp, dest)
+    log("pack_scale_bundle: packed %d round(s) -> %s"
+        % (len(rounds), dest))
+    return len(rounds)
 
 
 # =====================================================================
@@ -609,9 +734,8 @@ def run_leaf_analyze_lkup(mode, ctx):
     signatures; full builds every real signature (perc=100)."""
     perc = LKUP_DRY_PERC if mode == "dry" else 100
     local_out = ctx.log_path("lookup_stats")
-    env = dict(os.environ)
-    env["RUSTFLAGS"] = "-C link-args=-fuse-ld=lld -Awarnings"
-    rc = run_rust_example(ctx, "bora_data_driver",
+    env = neo_env()
+    rc = run_rust_example(ctx, "bora_cli",
                            ["lkup", str(perc), local_out], env)
     if rc == 0:
         dest = place_raw_data(local_out, "lookup_stats.dat",
@@ -1267,6 +1391,23 @@ class RunRustTwoHalfTest(unittest.TestCase):
         sp.assert_called_once()   # part2 never spawned
         self.ctx.note.assert_called_once()
 
+    def test_stale_flag_cleared_at_entry(self):
+        os.makedirs(self.flag_dir, exist_ok=True)
+        open(self.flag, "w").close()          # stale from a prior run
+        p1, p2 = _FakeProc(pid=1, rc=0), _FakeProc(pid=2, rc=0)
+        seen = []
+
+        def fake_spawn(cmd, env, lp, label):
+            seen.append(os.path.exists(self.flag))
+            return (p1, None) if len(seen) == 1 else (p2, None)
+
+        env_fn = mock.Mock(return_value={})
+        spec = TwoHalfSpec("some::test", env_fn, ["0-3", "4-7"],
+                            part2_proves=True, pre_part2=None)
+        with mock.patch.object(_MOD, "spawn", side_effect=fake_spawn):
+            run_rust_two_half(self.ctx, spec)
+        self.assertEqual(seen, [False, False])
+
 
 class RunRustJobTest(unittest.TestCase):
     def setUp(self):
@@ -1299,6 +1440,127 @@ class RunRustJobTest(unittest.TestCase):
         self.assertEqual(spec.test, "some::test")
         self.assertEqual(spec.node_ranges, ["0-3", "4-7"])
         self.assertFalse(spec.part2_proves)
+
+
+class NeoEnvTest(unittest.TestCase):
+    def test_drops_zkr_and_forces_rustflags(self):
+        with mock.patch.dict(os.environ,
+                              {"ZKR_FOO": "1", "KEEP_ME": "y",
+                               "RUSTFLAGS": "user-junk"}):
+            with mock.patch.object(_MOD, "log") as lg:
+                e = neo_env()
+        self.assertNotIn("ZKR_FOO", e)
+        self.assertEqual(e.get("KEEP_ME"), "y")
+        self.assertEqual(e["RUSTFLAGS"], RUSTFLAGS_NEO)
+        lg.assert_not_called()                # silent by default
+
+    def test_show_dropped_logs_names(self):
+        with mock.patch.dict(os.environ, {"ZKR_FOO": "1"}), \
+             mock.patch.object(_MOD, "log") as lg:
+            neo_env(b_show_dropped=True)
+        self.assertTrue(any("ZKR_FOO" in str(c)
+                            for c in lg.call_args_list))
+
+
+class RunExampleTwoHalfTest(unittest.TestCase):
+    ARGS = ["full_dlp", "1", "1", "2", "2", "2", PART_TOKEN, "1", "0"]
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.flag_dir = os.path.join(self.tmp.name, "snark_start")
+        self.flag = os.path.join(self.flag_dir, "flag")
+        for p in (mock.patch.object(_MOD, "FLAG_DIR", self.flag_dir),
+                  mock.patch.object(_MOD, "FLAG", self.flag),
+                  mock.patch.object(_MOD, "_wait_stagger",
+                                     lambda p: None)):
+            p.start()
+            self.addCleanup(p.stop)
+        self.ctx = mock.Mock()
+        self.ctx.log_path.side_effect = lambda name: os.path.join(
+            self.tmp.name, name + ".log")
+
+    def test_argvs_differ_only_in_part_id(self):
+        os.makedirs(self.flag_dir, exist_ok=True)
+        open(self.flag, "w").close()          # stale from a prior run
+        p1, p2 = _FakeProc(pid=1, rc=0), _FakeProc(pid=2, rc=0)
+        seen = []
+
+        def fake_spawn(cmd, env, lp, label):
+            seen.append(os.path.exists(self.flag))
+            return (p1, None) if len(seen) == 1 else (p2, None)
+
+        with mock.patch.object(_MOD, "spawn",
+                                side_effect=fake_spawn) as sp:
+            rc = run_example_two_half(self.ctx, "bora_cli",
+                                       self.ARGS, {"E": "1"},
+                                       ["0-3", "4-7"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(seen, [False, False])   # stale cleared
+        self.assertTrue(os.path.isfile(self.flag))  # released after p1
+        cmd1, cmd2 = (c.args[0] for c in sp.call_args_list)
+        i1, i2 = cmd1.index("cargo"), cmd2.index("cargo")
+        diff = [(x, y)
+                for x, y in zip(cmd1[i1:], cmd2[i2:]) if x != y]
+        self.assertEqual(diff, [("0", "1")])
+
+    def test_rc_combination(self):
+        p1, p2 = _FakeProc(pid=1, rc=7), _FakeProc(pid=2, rc=0)
+        with mock.patch.object(_MOD, "spawn",
+                                side_effect=[(p1, None), (p2, None)]):
+            rc = run_example_two_half(self.ctx, "bora_cli",
+                                       self.ARGS, {}, ["0-3", "4-7"])
+        self.assertEqual(rc, 7)
+
+    def test_rejects_missing_token(self):
+        with self.assertRaises(AssertionError):
+            run_example_two_half(self.ctx, "bora_cli",
+                                  ["full_dlp", "0"], {},
+                                  ["0-3", "4-7"])
+
+
+SCALE_LOG = (
+    "preamble noise\n"
+    "==== SCALE ROUND BEGIN count=2 corpus=x ====\n"
+    "round two body\n"
+    "==== SCALE ROUND END count=2 ====\n"
+    "between noise\n"
+    "==== SCALE ROUND BEGIN count=987 corpus=x ====\n"
+    "round 987 body (truncated -- no END)\n")
+
+
+class PackScaleBundleTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.log = os.path.join(self.tmp.name, "run.log")
+        self.dest = os.path.join(self.tmp.name, "raw", "scale.tgz")
+
+    def test_packs_rounds_incl_truncated_final(self):
+        with open(self.log, "w") as f:
+            f.write(SCALE_LOG)
+        n = pack_scale_bundle(self.log, self.dest)
+        self.assertEqual(n, 2)
+        self.assertFalse(os.path.exists(self.dest + ".tmp"))
+        with tarfile.open(self.dest) as t:
+            self.assertEqual(sorted(t.getnames()),
+                              ["log_2.txt.tgz", "log_987.txt.tgz"])
+            inner = t.extractfile("log_2.txt.tgz")
+            with tarfile.open(fileobj=inner) as t2:
+                body = t2.extractfile("log_2.txt").read().decode()
+        self.assertIn("round two body", body)
+        self.assertIn("BEGIN count=2", body)
+
+    def test_zero_rounds_leaves_dest_untouched(self):
+        with open(self.log, "w") as f:
+            f.write("no markers here\n")
+        os.makedirs(os.path.dirname(self.dest))
+        with open(self.dest, "w") as f:
+            f.write("precious committed bundle")
+        n = pack_scale_bundle(self.log, self.dest)
+        self.assertEqual(n, 0)
+        self.assertEqual(open(self.dest).read(),
+                          "precious committed bundle")
 
 
 class RunExternalPythonTest(unittest.TestCase):
