@@ -111,9 +111,10 @@ fn subset_items<T: Clone>(items: &[T], count: usize) -> Vec<T> {
 /// Percentage -> count, the ONE conversion: everything downstream is in
 /// counts. perc 0 still yields 1 -- there is no empty run; C103's
 /// parse_args rejects 0 at the CLI so this floor is never load-bearing.
-fn count_of(n: usize, perc: usize) -> usize {
+fn count_of(n: usize, perc: f64) -> usize {
 	assert!(n > 0, "bora_data_driver: count_of on an empty set");
-	((n * perc + 99) / 100).clamp(1, n)
+	// f64 is exact here: n*perc <= ~5e7, far below 2^53
+	((n as f64 * perc / 100.0).ceil() as usize).clamp(1, n)
 }
 
 /// Reads src_path (skip #-comments, matching build_db's own needs-list
@@ -424,7 +425,7 @@ pub(crate) fn part_role(part_id: usize, numa_num: usize,
 /// Sample `master` down to perc_samples% and split into num_jobs
 /// size-balanced bins. Inner half of plan_corpus, taking the already
 /// read list so it can be tested without a DatasetSpec.
-fn plan_corpus_from(master: &[String], perc_samples: usize,
+fn plan_corpus_from(master: &[String], perc_samples: f64,
 	num_jobs: usize) -> Vec<Vec<String>> {
 	use rayon::prelude::*;
 	assert!(!master.is_empty(), "bora_data_driver: empty corpus list");
@@ -443,7 +444,7 @@ fn plan_corpus_from(master: &[String], perc_samples: usize,
 
 /// Corpus bins for one run: concat the spec's master lists, sample, and
 /// split size-balanced into num_jobs bins.
-pub(crate) fn plan_corpus(spec: &DatasetSpec, perc_samples: usize,
+pub(crate) fn plan_corpus(spec: &DatasetSpec, perc_samples: f64,
 	num_jobs: usize) -> Vec<Vec<String>> {
 	let master: Vec<String> = spec.master_sources.iter()
 		.flat_map(|s| read_path_list(s)).collect();
@@ -648,6 +649,30 @@ fn perc_lkup_share_neo(lkup_len: usize, chunk_len: usize,
 	((need_share * 100 + max_nibble_len - 1) / max_nibble_len).max(1)
 }
 
+/// Pads an ascending aggr ladder to num_circs rungs with slightly
+/// RAISED near-clones of rung 0 (never smaller: an under-sized dummy
+/// risks CapErr on the per-rung padding word).
+fn pad_ladder_to(lad: &mut Vec<CapParams>, num_circs: usize) {
+	assert!(!lad.is_empty(),
+		"bora_data_driver: pad of an empty ladder");
+	let raise = |v: usize, pct: usize| (v * (100 + pct) + 99) / 100;
+	let mut i = 0;
+	while lad.len() < num_circs {
+		i += 1;
+		let pct = 5 * i;
+		let mut d = lad[0].clone();
+		d.basis_unique_states = raise(d.basis_unique_states, pct);
+		d.basis_acc_states = raise(d.basis_acc_states, pct);
+		d.basis_pats_in_trace = raise(d.basis_pats_in_trace, pct);
+		d.cp_basis_unique_states =
+			raise(d.cp_basis_unique_states, pct);
+		// subsigs stays equal: routing still first-fits real segs to
+		// rung 0 / the real upper rungs, so dummies fold only the
+		// padding word, which fits by construction.
+		lad.insert(i, d);
+	}
+}
+
 /// Capacity tuner for one (db, tuning set): aggr -> rung ladder via
 /// determine_config_aggr, non-aggr -> single converged CapParams.
 /// GlobalConfig touches: share derive+pin, non-aggr floor write-back.
@@ -686,12 +711,20 @@ fn tune(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>, ts: &TuningSet,
 		// 1 rung needs no log-bucket coarsening (:7711); peel 90 as
 		// runcfg_full.json, inert below k_max=3 (:560).
 		let n_buckets = if num_circs == 1 { 1 } else { 2048 };
-		let (lad, hist) = determine_config_aggr::<Fr, C1, CS1>(true,
+		let (mut lad, hist) = determine_config_aggr::<Fr, C1, CS1>(true,
 			db.clone(), &ts.words, &ts.infos, &ts.vdata, seed, mw,
 			lkup_len, ts.total_word_n, k_max, n_buckets, 60,
 			n_threads, 8, 90)
 			.unwrap_or_else(|e| panic!(
 				"bora_data_driver: determine_config_aggr: {}", e));
+		if lad.len() < num_circs {
+			let short = lad.len();
+			pad_ladder_to(&mut lad, num_circs);
+			utils::logger::log(0, utils::logger::LOG1, &format!(
+				"tune[{}]: demand ladder {} rungs -> padded to {} \
+				 (raised clones of rung 0)", spec.name, short,
+				num_circs));
+		}
 		utils::logger::log(0, utils::logger::LOG1, &format!(
 			"tune[{}]: ladder {} rungs, hist={:?}", spec.name,
 			lad.len(), hist));
@@ -925,8 +958,8 @@ pub(crate) fn retry_caperr(spec: &DatasetSpec, p: &mut CapParams,
 /// The full-run pipeline shared by all three datasets. Every part
 /// runs it whole-corpus-identically in its own sandbox; the only
 /// cross-process file is the snark-start flag.
-pub fn run_neo(spec: &DatasetSpec, perc_db: usize,
-	perc_samples: usize, num_circs: usize, num_jobs: usize,
+pub fn run_neo(spec: &DatasetSpec, perc_db: f64,
+	perc_samples: f64, num_circs: usize, num_jobs: usize,
 	numa_num: usize, part_id: usize, b_light_test: bool,
 	b_ladder_only: bool) -> Vec<CapParams> {
 	let role = part_role(part_id, numa_num, num_jobs);
@@ -936,6 +969,11 @@ pub fn run_neo(spec: &DatasetSpec, perc_db: usize,
 	let n_sigs = read_lines_nonblank(&format!("{}/{}/{}", proot,
 		spec.config_dir, spec.sig_file)).len();
 	let db_count = count_of(n_sigs, perc_db);
+	// reachable only via fractional perc_db: a <2-rule aggressive DB
+	// has zero SED demand and underflows the tuner (B102 item 3).
+	assert!(!spec.b_aggressive || db_count >= 2,
+		"bora_data_driver: {} aggr db_count {} < 2 (perc_db {} too \
+		 small)", spec.name, db_count, perc_db);
 	let bins = plan_corpus(spec, perc_samples, num_jobs);
 	let manifests =
 		write_job_manifests(&format!("{}/jobs", pd), &bins);
@@ -952,7 +990,7 @@ pub fn run_neo(spec: &DatasetSpec, perc_db: usize,
 }
 
 /// DLP full run: run_neo over the DLP const.
-pub fn full_dlp_neo(perc_db: usize, perc_samples: usize,
+pub fn full_dlp_neo(perc_db: f64, perc_samples: f64,
 	num_circs: usize, num_jobs: usize, numa_num: usize,
 	part_id: usize, b_light_test: bool, b_ladder_only: bool)
 	-> Vec<CapParams> {
@@ -1118,7 +1156,7 @@ pub fn collect_lookup_stats_adv(perc: usize, dest_path: &str) {
 			let n_sigs = read_lines_nonblank(
 				&format!("{}/{}", src_dir, sig_file_name)).len();
 			let sig_path = create_smaller_config(src_dir, sig_file_name,
-				count_of(n_sigs, perc), &tmp);
+				count_of(n_sigs, perc as f64), &tmp);
 			(tmp.clone(), sig_path, Some(TmpConfigDir(PathBuf::from(tmp))))
 		};
 		let _tmp_guard = tmp_guard;
@@ -1161,7 +1199,7 @@ const USAGE: &str = "usage: bora_data_driver <subcommand>\n \
 #[derive(Debug, PartialEq)]
 pub enum Cmd {
 	Lkup { perc: usize, dest_path: String },
-	FullDlp { perc_db: usize, perc_samples: usize, num_circs: usize,
+	FullDlp { perc_db: f64, perc_samples: f64, num_circs: usize,
 		num_jobs: usize, numa_num: usize, part_id: usize,
 		b_light_test: bool, b_ladder_only: bool },
 	ScaleDlp { corpus_idx: usize, vec_count: Vec<usize> },
@@ -1170,6 +1208,12 @@ pub enum Cmd {
 fn arg_usize(args: &[String], i: usize, name: &str) -> usize {
 	args[i].parse().unwrap_or_else(|_| panic!(
 		"bora_data_driver: <{}> not a usize: {:?}\n{}",
+		name, args[i], USAGE))
+}
+
+fn arg_f64(args: &[String], i: usize, name: &str) -> f64 {
+	args[i].parse().unwrap_or_else(|_| panic!(
+		"bora_data_driver: <{}> not a number: {:?}\n{}",
 		name, args[i], USAGE))
 }
 
@@ -1199,18 +1243,20 @@ pub fn parse_args(args: &[String]) -> Cmd {
 			assert!(args.len() == 9,
 				"bora_data_driver: full_dlp takes 8 args, got {}\n{}",
 				args.len() - 1, USAGE);
-			let perc_db = arg_usize(args, 1, "perc_db");
-			let perc_samples = arg_usize(args, 2, "perc_samples");
+			let perc_db = arg_f64(args, 1, "perc_db");
+			let perc_samples = arg_f64(args, 2, "perc_samples");
 			let num_circs = arg_usize(args, 3, "num_circs");
 			let num_jobs = arg_usize(args, 4, "num_jobs");
 			let numa_num = arg_usize(args, 5, "numa_num");
 			let part_id = arg_usize(args, 6, "part_id");
-			assert!(perc_db >= 1 && perc_samples >= 1
-				&& num_circs >= 1 && num_jobs >= 1 && numa_num >= 1,
-				"bora_data_driver: full_dlp args must be >= 1 \
-				 (perc_db {} perc_samples {} num_circs {} num_jobs \
-				 {} numa_num {})", perc_db, perc_samples, num_circs,
-				num_jobs, numa_num);
+			assert!(perc_db > 0.0 && perc_db <= 100.0
+				&& perc_samples > 0.0 && perc_samples <= 100.0,
+				"bora_data_driver: full_dlp percs must be in (0, 100] \
+				 (perc_db {} perc_samples {})", perc_db, perc_samples);
+			assert!(num_circs >= 1 && num_jobs >= 1 && numa_num >= 1,
+				"bora_data_driver: full_dlp counts must be >= 1 \
+				 (num_circs {} num_jobs {} numa_num {})",
+				num_circs, num_jobs, numa_num);
 			assert!(part_id < numa_num,
 				"bora_data_driver: part_id {} >= numa_num {}",
 				part_id, numa_num);
@@ -1334,7 +1380,7 @@ pub mod tests_bora_data_driver {
 		let dst = fresh_tmp_dir("p100_dst");
 		write_fixture(&src, 20, "main.dat", false);
 		create_smaller_config(src.to_str().unwrap(), "main.dat",
-			count_of(20, 100), dst.to_str().unwrap());
+			count_of(20, 100.0), dst.to_str().unwrap());
 		let src_names = read_names(&src.join("main.dat"))
 			.iter().map(|l| l.split(';').next().unwrap().to_string())
 			.collect::<HashSet<_>>();
@@ -1351,9 +1397,9 @@ pub mod tests_bora_data_driver {
 		let dst1 = fresh_tmp_dir("det_dst1");
 		let dst2 = fresh_tmp_dir("det_dst2");
 		create_smaller_config(src.to_str().unwrap(), "main.dat",
-			count_of(37, 30), dst1.to_str().unwrap());
+			count_of(37, 30.0), dst1.to_str().unwrap());
 		create_smaller_config(src.to_str().unwrap(), "main.dat",
-			count_of(37, 30), dst2.to_str().unwrap());
+			count_of(37, 30.0), dst2.to_str().unwrap());
 		let c1 = fs::read_to_string(dst1.join("main.dat")).unwrap();
 		let c2 = fs::read_to_string(dst2.join("main.dat")).unwrap();
 		assert_eq!(c1, c2);
@@ -1365,7 +1411,7 @@ pub mod tests_bora_data_driver {
 		let dst = fresh_tmp_dir("subset_dst");
 		write_fixture(&src, 50, "main.dat", true);
 		create_smaller_config(src.to_str().unwrap(), "main.dat",
-			count_of(50, 20), dst.to_str().unwrap());
+			count_of(50, 20.0), dst.to_str().unwrap());
 
 		let sig_names: HashSet<String> =
 			read_names(&dst.join("main.dat")).iter()
@@ -1385,7 +1431,7 @@ pub mod tests_bora_data_driver {
 		let dst = fresh_tmp_dir("dlpname_dst");
 		write_fixture(&src, 10, "main_data_dlp_internationl.dat", false);
 		let out = create_smaller_config(src.to_str().unwrap(),
-			"main_data_dlp_internationl.dat", count_of(10, 50),
+			"main_data_dlp_internationl.dat", count_of(10, 50.0),
 			dst.to_str().unwrap());
 		assert!(out.ends_with("main_data_dlp_internationl.dat"));
 		assert!(Path::new(&out).exists());
@@ -1578,19 +1624,22 @@ pub mod tests_bora_data_driver {
 
 	#[test]
 	fn test_a103_count_of() {
-		assert_eq!(count_of(9861, 100), 9861);
-		assert_eq!(count_of(9861, 10), 987);
-		assert_eq!(count_of(9861, 1), 99);
-		assert_eq!(count_of(9861, 0), 1);       // documented floor
-		assert_eq!(count_of(9861, 200), 9861);  // capped at n
-		assert_eq!(count_of(10, 25), 3);        // ceil, not floor
-		assert_eq!(count_of(1, 100), 1);
+		assert_eq!(count_of(9861, 100.0), 9861);
+		assert_eq!(count_of(9861, 10.0), 987);
+		assert_eq!(count_of(9861, 1.0), 99);
+		assert_eq!(count_of(9861, 0.0), 1);       // documented floor
+		assert_eq!(count_of(9861, 200.0), 9861);  // capped at n
+		assert_eq!(count_of(10, 25.0), 3);        // ceil, not floor
+		assert_eq!(count_of(1, 100.0), 1);
+		assert_eq!(count_of(9861, 0.05), 5);      // ceil(4.93)
+		assert_eq!(count_of(504854, 0.05), 253);  // the 0.05% smoke
+		assert_eq!(count_of(504854, 0.1), 505);
 	}
 
 	#[test]
 	#[should_panic(expected = "count_of on an empty set")]
 	fn test_a103_count_of_empty_panics() {
-		count_of(0, 50);
+		count_of(0, 50.0);
 	}
 
 	#[test]
@@ -1634,7 +1683,7 @@ pub mod tests_bora_data_driver {
 		let master: Vec<String> = read_path_list(DLP.master_sources[0])
 			.into_iter().take(20).collect();
 		assert_eq!(master.len(), 20);
-		let bins = plan_corpus_from(&master, 50, 4);
+		let bins = plan_corpus_from(&master, 50.0, 4);
 		assert_eq!(bins.len(), 4);
 		let flat: Vec<&String> = bins.iter().flatten().collect();
 		assert_eq!(flat.len(), 10);             // count_of(20, 50)
@@ -1642,7 +1691,7 @@ pub mod tests_bora_data_driver {
 		assert_eq!(kept.len(), 10, "no duplicates across bins");
 		assert!(kept.contains(&master[0]), "file 0 pinned");
 		assert!(kept.iter().all(|p| master.contains(p)));
-		assert_eq!(plan_corpus_from(&master, 50, 4), bins);
+		assert_eq!(plan_corpus_from(&master, 50.0, 4), bins);
 	}
 
 	#[test]
@@ -1650,7 +1699,7 @@ pub mod tests_bora_data_driver {
 	fn test_a103_plan_corpus_from_rejects_missing_files() {
 		let ghost: Vec<String> =
 			(0..4).map(|i| format!("data/no_such_file_{}", i)).collect();
-		plan_corpus_from(&ghost, 100, 2);
+		plan_corpus_from(&ghost, 100.0, 2);
 	}
 
 	/// B101: every field apply_spec_config names, over all three part
@@ -2041,9 +2090,15 @@ pub mod tests_bora_data_driver {
 			Cmd::Lkup { perc: 5, dest_path: "/tmp/x".to_string() });
 		assert_eq!(parse_args(&argv(&["full_dlp", "1", "1", "1",
 			"2", "1", "0", "1", "1"])),
-			Cmd::FullDlp { perc_db: 1, perc_samples: 1,
+			Cmd::FullDlp { perc_db: 1.0, perc_samples: 1.0,
 				num_circs: 1, num_jobs: 2, numa_num: 1, part_id: 0,
 				b_light_test: true, b_ladder_only: true });
+		// fractional percs: the sub-1% smoke unit
+		assert_eq!(parse_args(&argv(&["full_dlp", "0.1", "0.05",
+			"4", "2", "1", "0", "1", "0"])),
+			Cmd::FullDlp { perc_db: 0.1, perc_samples: 0.05,
+				num_circs: 4, num_jobs: 2, numa_num: 1, part_id: 0,
+				b_light_test: true, b_ladder_only: false });
 	}
 
 	/// C103: counts CSV -> Vec<usize>, pin-inclusive units untouched.
@@ -2076,9 +2131,16 @@ pub mod tests_bora_data_driver {
 	}
 
 	#[test]
-	#[should_panic(expected = "must be >= 1")]
+	#[should_panic(expected = "percs must be in (0, 100]")]
 	fn test_c103_parse_args_zero_perc() {
 		parse_args(&argv(&["full_dlp", "0", "1", "1", "2", "1",
+			"0", "1", "1"]));
+	}
+
+	#[test]
+	#[should_panic(expected = "percs must be in (0, 100]")]
+	fn test_c103_parse_args_perc_over_100() {
+		parse_args(&argv(&["full_dlp", "101", "1", "1", "2", "1",
 			"0", "1", "1"]));
 	}
 
@@ -2086,5 +2148,43 @@ pub mod tests_bora_data_driver {
 	#[should_panic(expected = "unknown subcommand")]
 	fn test_c103_parse_args_unknown() {
 		parse_args(&argv(&["scale_dna", "0", "2,987"]));
+	}
+
+	/// C103: ladder padding -- dummies are raised clones of rung 0
+	/// inserted between rung 0 and the real upper rungs; equal subsigs
+	/// so routing is unchanged; long-enough ladders untouched.
+	#[test]
+	fn test_c103_pad_ladder_to() {
+		let mut r0 = tiny_caps();
+		r0.basis_unique_states = 100;
+		r0.basis_acc_states = 200;
+		r0.basis_pats_in_trace = 400;
+		r0.cp_basis_unique_states = 40;
+		let mut r1 = r0.clone();
+		r1.subsigs = 9;
+		r1.basis_unique_states = 9999;
+		let mut lad = vec![r0.clone(), r1.clone()];
+		pad_ladder_to(&mut lad, 4);
+		assert_eq!(lad.len(), 4);
+		assert_eq!(lad[0], r0);
+		assert_eq!(lad[3], r1);
+		let ax = |c: &CapParams| [c.basis_unique_states,
+			c.basis_acc_states, c.basis_pats_in_trace,
+			c.cp_basis_unique_states];
+		for d in &lad[1..3] {
+			assert_eq!(d.subsigs, r0.subsigs);
+		}
+		for k in 0..4 {
+			assert!(ax(&lad[1])[k] > ax(&lad[0])[k]);
+			assert!(ax(&lad[2])[k] > ax(&lad[1])[k]);
+		}
+		assert_eq!(lad[1].basis_unique_states, 105);   // +5% ceil
+		assert_eq!(lad[2].basis_unique_states, 110);   // +10% ceil
+		let mut same = vec![r0.clone(), r1.clone()];
+		pad_ladder_to(&mut same, 2);
+		assert_eq!(same, vec![r0.clone(), r1.clone()]);
+		let mut longer = vec![r0.clone(), r0.clone(), r1.clone()];
+		pad_ladder_to(&mut longer, 2);
+		assert_eq!(longer.len(), 3);                   // never truncates
 	}
 }

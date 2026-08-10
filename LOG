@@ -30916,11 +30916,17 @@ Goal 11. C101
 Goal 12. C102
 	[a] design : collect_dlp_scalability
 	[b] done and removed reliance on env vars
+	[c] C103 end to end done
 
 Goal 12. T601 - figure what is the fixed 1.6s per step cost
 	[a] design
 	[b] T601.B collect data about 1.65s fixed cost
-	[c]
+	[c] conclusion it's threads contention (but it will evenly 
+		slow it down right)
+
+Monday 08/10/2026
+Goal 1. T602 -> check cutting num of steps would help
+	[a]
 
 	
 		
