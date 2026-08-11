@@ -31,8 +31,8 @@ fn main() {
 				num_jobs, numa_num, part_id, b_dry_run,
 				b_ladder_only);
 		}
-		Cmd::ScaleDlp { corpus_idx, vec_count } =>
-			collect_scale_dlp_neo(corpus_idx, &vec_count),
+		Cmd::ScaleDlp { corpus_idx, vec_count, b_dry_run } =>
+			collect_scale_dlp_neo(corpus_idx, &vec_count, b_dry_run),
 		Cmd::ScaleClam { corpus_idx, vec_count, b_dry_run } =>
 			collect_scale_clamav_neo(corpus_idx, &vec_count,
 				b_dry_run),

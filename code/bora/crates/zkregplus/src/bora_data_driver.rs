@@ -383,6 +383,11 @@ pub struct DatasetSpec {
 	/// dry run fits a small box; out-of-range sigs are filtered at
 	/// thinning time (the table has no overflow guard).
 	pub(crate) dry_range2_bit: Option<usize>,
+	/// Byte-prefix % of the scale corpus a DRY sweep folds. 100.0 =
+	/// fold whole (shrink_lone_sample no-ops at >=100), for datasets
+	/// whose scale sources are already tiny. Full sweeps always fold
+	/// the whole file regardless.
+	pub(crate) dry_scale_perc: f64,
 	/// SDE repetition fan-out cap (clamav_cfg.sde_rep_fanout_cap).
 	pub(crate) fanout_cap: usize,
 	/// PM extraction min word length (clamav_cfg.min_pm_word_len).
@@ -442,9 +447,17 @@ pub const DLP: DatasetSpec = DatasetSpec {
 		"data/samples/email/src/maildir/donohoe-t/sent/6."],
 	db_cache_dir: "dlp_neo", // never legacy's "dlp_corpus_aggr"
 	chunk_len: 64,
+	// already the smallest of the three (Enron's median mail is ~50
+	// words) -- nothing for a dry shape to cut.
 	dry_chunk_len: None,
 	range2_bit: 25,
-	dry_range2_bit: None,
+	// 22 like DNA/CLAM: the range table is 2^r2b entries and dominates
+	// the dry floor (12 GB of 22.3 GB measured 2026-08-11). Safe by a
+	// wide margin -- DLP's ACDFAs run 24-150 states vs 2^22 = 4.19M.
+	dry_range2_bit: Some(22),
+	// whole file: the two scale sources are 1,996 B and 805 B mails,
+	// so a 5% prefix would leave 100 B / 41 B and gut the sweep.
+	dry_scale_perc: 100.0,
 	fanout_cap: 100,
 	// legacy full_dlp sets 3 (zkp_driver.rs:6790).
 	min_pm_word_len: 3,
@@ -498,6 +511,8 @@ pub const DNA: DatasetSpec = DatasetSpec {
 	// light decider OOMs a 125GB box. 2^22 keeps an ~830-sig
 	// in-range pool (>= the 276-sig dry DB); full runs stay at 27.
 	dry_range2_bit: Some(22),
+	// inert: scale_sources is empty, DNA has no scale sweep.
+	dry_scale_perc: 100.0,
 	// legacy full_dna touches NO clamav_cfg field: both are the
 	// GLOBAL_CONFIG defaults (consts.rs:493/:490), NOT dlp's 100/3.
 	fanout_cap: 127,
@@ -585,11 +600,14 @@ pub const CLAM: DatasetSpec = DatasetSpec {
 	// offset-driven -- the in-range sig pool is identical (38,241)
 	// at bits 22..26. The bound is the LARGEST dry corpus in NIBBLES:
 	// the full leaf's 2-file subset (749,976 B = 1.5M) and, since
-	// scale folds only a DRY_SCALE_PERC prefix, 5% of gdb (341,325 B
+	// scale folds only a dry_scale_perc prefix, 5% of gdb (341,325 B
 	// = 683K). 2^22 = 4.19M clears both by 2.8x; 16x fewer rows than
 	// full. Sizing this against the WHOLE gdb (13.65M nibbles) is the
 	// trap -- it panics mid-fold, clam_db has no overflow guard.
 	dry_range2_bit: Some(22),
+	// 5% of gdb (6.8 MB) -- the scale sources are whole binaries and
+	// fold work is linear in corpus length, so no chunk_len cuts it.
+	dry_scale_perc: 5.0,
 	// legacy full_clamav touches NO clamav_cfg field: defaults.
 	fanout_cap: 127,
 	min_pm_word_len: 4,
@@ -1432,10 +1450,6 @@ fn scale_spec_clone(spec: &DatasetSpec) -> DatasetSpec {
 	s
 }
 
-/// Byte-prefix percentage of the scale corpus a DRY sweep folds
-/// (user 2026-08-11). Full sweeps always fold the whole file.
-const DRY_SCALE_PERC: f64 = 5.0;
-
 /// Scale sweep (port of collect_scale_data_dlp, zkp_driver.rs:7671):
 /// ONE fixed corpus, ascending pin-INCLUSIVE rule counts; per count a
 /// fresh thinned DB -> tune -> folding-only fold with CapErr
@@ -1491,12 +1505,14 @@ pub fn collect_scale_data_neo(spec: &DatasetSpec, corpus_idx: usize,
 	let pd = reset_part_dir(&sc, 0);
 	// count-invariant: one bin, one file, written once.
 	let bins = vec![vec![src.to_string()]];
-	// dry folds a DRY_SCALE_PERC byte prefix (user 2026-08-11): the
-	// scale sources are whole binaries (gdb is 6.8 MB) and fold work
-	// is linear in corpus length, so no chunk_len cuts it. Only CLAM
-	// scale passes b_dry_run; full runs fold the whole file.
+	// dry folds a spec-owned byte prefix: fold work is linear in
+	// corpus length, so no chunk_len cuts it. Per-dataset because the
+	// sources differ in kind -- CLAM's are whole binaries (gdb 6.8 MB,
+	// worth truncating), DLP's are 805 B / 1,996 B mails, which at 5%
+	// would leave 41 B / 100 B. dry_scale_perc 100.0 = fold whole
+	// (shrink_lone_sample no-ops there). Full always folds whole.
 	let bins = if b_dry_run {
-		shrink_lone_sample(&pd, bins, DRY_SCALE_PERC)
+		shrink_lone_sample(&pd, bins, sc.dry_scale_perc)
 	} else {
 		bins
 	};
@@ -1535,13 +1551,17 @@ pub fn collect_scale_data_neo(spec: &DatasetSpec, corpus_idx: usize,
 }
 
 /// DLP scale sweep: collect_scale_data_neo over the DLP const.
-pub fn collect_scale_dlp_neo(corpus_idx: usize, vec_count: &[usize]) {
-	collect_scale_data_neo(&DLP, corpus_idx, vec_count, false)
+/// DLP scale sweep. b_dry_run is the CLI's dry token (NOT the global
+/// flag): it swaps in the dry range table. DLP's corpus is left whole
+/// (dry_scale_perc 100.0) and its chunk_len never diverges.
+pub fn collect_scale_dlp_neo(corpus_idx: usize, vec_count: &[usize],
+	b_dry_run: bool) {
+	collect_scale_data_neo(&DLP, corpus_idx, vec_count, b_dry_run)
 }
 
 /// ClamAV scale sweep. b_dry_run is the CLI's dry token (NOT the
 /// global flag): it swaps in the dry chunk and range table, and cuts
-/// the corpus to DRY_SCALE_PERC.
+/// the corpus to CLAM's dry_scale_perc.
 pub fn collect_scale_clamav_neo(corpus_idx: usize,
 	vec_count: &[usize], b_dry_run: bool) {
 	collect_scale_data_neo(&CLAM, corpus_idx, vec_count,
@@ -1638,7 +1658,7 @@ pub const USAGE: &str = "bora_cli: backend of \
 	   (dry=1 also drops the hab22 cover check)\n \
 	 full_dna <same 8 args as full_dlp>\n \
 	 full_clam <same 8 args as full_dlp>\n \
-	 scale_dlp <corpus_idx> <c1,c2,...>\n \
+	 scale_dlp <corpus_idx> <c1,c2,...> <dry 0|1>\n \
 	 scale_clam <corpus_idx> <c1,c2,...> <dry 0|1>";
 
 /// Parsed CLI command for examples/bora_cli.rs.
@@ -1654,7 +1674,8 @@ pub enum Cmd {
 	FullClam { perc_db: f64, perc_samples: f64, num_circs: usize,
 		num_jobs: usize, numa_num: usize, part_id: usize,
 		b_dry_run: bool, b_ladder_only: bool },
-	ScaleDlp { corpus_idx: usize, vec_count: Vec<usize> },
+	ScaleDlp { corpus_idx: usize, vec_count: Vec<usize>,
+		b_dry_run: bool },
 	ScaleClam { corpus_idx: usize, vec_count: Vec<usize>,
 		b_dry_run: bool },
 }
@@ -1753,12 +1774,13 @@ pub fn parse_args(args: &[String]) -> Cmd {
 				b_ladder_only }
 		}
 		Some("scale_dlp") => {
-			assert!(args.len() == 3,
-				"bora_data_driver: scale_dlp takes 2 args, got {}\n{}",
+			assert!(args.len() == 4,
+				"bora_data_driver: scale_dlp takes 3 args, got {}\n{}",
 				args.len() - 1, USAGE);
 			Cmd::ScaleDlp {
 				corpus_idx: arg_usize(args, 1, "corpus_idx"),
-				vec_count: arg_counts(args, 2) }
+				vec_count: arg_counts(args, 2),
+				b_dry_run: arg_bool(args, 3, "dry") }
 		}
 		Some("scale_clam") => {
 			assert!(args.len() == 4,
@@ -2611,9 +2633,60 @@ pub mod tests_bora_data_driver {
 	#[test]
 	fn test_c103_parse_args_scale() {
 		assert_eq!(parse_args(&argv(&["scale_dlp", "0",
-			"2,987,9861"])),
+			"2,987,9861", "0"])),
 			Cmd::ScaleDlp { corpus_idx: 0,
-				vec_count: vec![2, 987, 9861] });
+				vec_count: vec![2, 987, 9861],
+				b_dry_run: false });
+	}
+
+	/// scale_dlp carries a dry token like scale_clam; dry=1 parses.
+	#[test]
+	fn test_parse_args_scale_dlp_dry_token() {
+		assert_eq!(parse_args(&argv(&["scale_dlp", "1", "2,494", "1"])),
+			Cmd::ScaleDlp { corpus_idx: 1, vec_count: vec![2, 494],
+				b_dry_run: true });
+	}
+
+	/// The dry token is REQUIRED -- the old 2-arg form must not parse
+	/// silently as a full sweep.
+	#[test]
+	#[should_panic(expected = "scale_dlp takes 3 args, got 2")]
+	fn test_parse_args_scale_dlp_rejects_old_arity() {
+		parse_args(&argv(&["scale_dlp", "0", "2,987"]));
+	}
+
+	/// DLP dry swaps in the 22-bit range table; full keeps 25.
+	#[test]
+	fn test_dlp_dry_range2_bit_swaps() {
+		assert_eq!(effective_spec(&DLP, true).range2_bit, 22);
+		assert_eq!(effective_spec(&DLP, false).range2_bit, 25);
+	}
+
+	/// DLP/DNA fold their scale corpus WHOLE (2 KB mails / no sweep);
+	/// only CLAM's binaries are big enough to truncate.
+	#[test]
+	fn test_dry_scale_perc_is_per_dataset() {
+		assert_eq!(DLP.dry_scale_perc, 100.0);
+		assert_eq!(DNA.dry_scale_perc, 100.0);
+		assert_eq!(CLAM.dry_scale_perc, 5.0);
+	}
+
+	/// shrink_lone_sample no-ops at 100.0, so a dry DLP sweep folds
+	/// the whole mail instead of a 41-byte fragment.
+	#[test]
+	fn test_dlp_dry_scale_does_not_shrink() {
+		let proot = utils::os::proj_root();
+		for s in DLP.scale_sources {
+			let n = fs::metadata(format!("{}/{}", proot, s))
+				.unwrap_or_else(|e| panic!("scale source {}: {}", s, e))
+				.len() as usize;
+			let bins = vec![vec![s.to_string()]];
+			let out = shrink_lone_sample("/tmp/bora/unused", bins,
+				DLP.dry_scale_perc);
+			assert_eq!(out, vec![vec![s.to_string()]],
+				"DLP scale source {} ({} B) must not be truncated",
+				s, n);
+		}
 	}
 
 	#[test]
@@ -2626,7 +2699,7 @@ pub mod tests_bora_data_driver {
 	#[test]
 	#[should_panic(expected = "count not a usize")]
 	fn test_c103_parse_args_bad_count() {
-		parse_args(&argv(&["scale_dlp", "0", "2,x,9861"]));
+		parse_args(&argv(&["scale_dlp", "0", "2,x,9861", "0"]));
 	}
 
 	#[test]
@@ -2926,15 +2999,17 @@ pub mod tests_bora_data_driver {
 	fn test_m103_effective_spec_dry_shape() {
 		assert_eq!(DNA.dry_range2_bit, Some(22));
 		assert_eq!(DNA.dry_chunk_len, Some(256));
-		assert_eq!(DLP.dry_range2_bit, None);
+		assert_eq!(DLP.dry_range2_bit, Some(22));
 		assert_eq!(DLP.dry_chunk_len, None);
 		let d = effective_spec(&DNA, true);
 		assert_eq!((d.range2_bit, d.chunk_len), (22, 256));
 		let h = effective_spec(&DNA, false);
 		assert_eq!((h.range2_bit, h.chunk_len), (27, 4096),
 			"full run must keep the REAL shape");
+		// DLP dry shrinks the table (2026-08-11) but keeps chunk_len:
+		// 64 is already the smallest of the three.
 		let dl = effective_spec(&DLP, true);
-		assert_eq!((dl.range2_bit, dl.chunk_len), (25, 64));
+		assert_eq!((dl.range2_bit, dl.chunk_len), (22, 64));
 		let dh = effective_spec(&DLP, false);
 		assert_eq!((dh.range2_bit, dh.chunk_len), (25, 64));
 	}
@@ -3166,12 +3241,12 @@ pub mod tests_bora_data_driver {
 		let proot = utils::os::proj_root();
 		let eff = effective_spec(&CLAM, true);
 		let table = 1usize << eff.range2_bit;
-		assert_eq!(DRY_SCALE_PERC, 5.0);
+		assert_eq!(CLAM.dry_scale_perc, 5.0);
 		for s in CLAM.scale_sources {
 			let n = fs::metadata(format!("{}/{}", proot, s))
 				.unwrap_or_else(|e| panic!("scale source {}: {}", s, e))
 				.len() as usize;
-			let keep = (n as f64 * DRY_SCALE_PERC / 100.0).ceil()
+			let keep = (n as f64 * CLAM.dry_scale_perc / 100.0).ceil()
 				as usize;
 			assert!(keep * 2 + eff.chunk_len * 62 < table,
 				"{}: dry fragment {} nibbles overflows 2^{} ({} B raw)",

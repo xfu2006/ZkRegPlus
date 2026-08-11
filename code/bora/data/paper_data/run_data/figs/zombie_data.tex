@@ -13,11 +13,11 @@
   \small
   \caption{Zombie prover cost on the MS-DLP international SIT rules
   (Spartan NIZK, two-pattern proximity circuit), totalled over all
-  4 regex instances (the 4 \textsc{Sit} rules of
+  8 regex instances (the 8 \textsc{Sit} rules of
   Table~\ref{tab:datasets}, expanded into their comb variants) at each
   scanned document length $L_T$. The total regex size (sum of pattern $+$
   keyword bytes over all instances, each sub-pattern counted once) is fixed
-  at 7,443\,B. The last row
+  at 9,600\,B. The last row
   derives the unit cost $u = t_{\text{prove}} / (L_T \cdot \sum s)$ in seconds
   per (input-byte $\times$ regex-byte). Rows marked $^\dagger$ have no real
   measurement at that length in this log (e.g.\ a dry-run sweep with a
@@ -30,12 +30,12 @@
     \toprule
     $L_T$ (B) & Total constraints & Prove (s) & Verify (s) & Proof (MB) \\
     \midrule
-    700 & 1,179,648 & 9.2 & 4.2 & 0.11 \\
-    800 & 1,310,720 & 25.4 & 15.0 & 0.14 \\
-    1,000 & 1,310,720 & 13.5 & 7.6 & 0.16 \\
-    2,000$^\dagger$ & 2,621,440 & 27.1 & 15.3 & 0.31 \\
+    700 & 1,572,864 & 9.4 & 5.0 & 0.21 \\
+    800 & 1,703,936 & 11.8 & 6.4 & 0.23 \\
+    1,000 & 1,703,936 & 16.9 & 9.8 & 0.25 \\
+    2,000$^\dagger$ & 3,407,872 & 33.8 & 19.6 & 0.50 \\
     \midrule
-    \multicolumn{5}{l}{Unit $u = t/(L_T\cdot\sum s)$ at $L_T=700 / 800 / 1,000 / 2,000$: $1.77 \times 10^{-6} / 4.26 \times 10^{-6} / 1.82 \times 10^{-6} / 1.82 \times 10^{-6}$ s\,B$^{-2}$} \\
+    \multicolumn{5}{l}{Unit $u = t/(L_T\cdot\sum s)$ at $L_T=700 / 800 / 1,000 / 2,000$: $1.39 \times 10^{-6} / 1.53 \times 10^{-6} / 1.76 \times 10^{-6} / 1.76 \times 10^{-6}$ s\,B$^{-2}$} \\
     \bottomrule
   \end{tabular}
 \end{table*}

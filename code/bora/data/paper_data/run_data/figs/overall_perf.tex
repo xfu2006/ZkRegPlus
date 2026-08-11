@@ -19,13 +19,13 @@
 Dataset & Corpus & Jobs & Steps & Sel. & Commit wit. & Fold & Total\,/\,Wall (jobs)
         & Compression \\
 \midrule
-\textsc{Mal} & $793.4$\,MB & $8$ & 6{,}552 & $12.58$\,hr & $20.54$\,hr & $97.57$\,hr & $130.70$\,hr\,/\,$16.34$\,hr ($8$) & $2.11$\,hr \\
-\textsc{Dna} & $813.8$\,KB & $1$ & 105 & $19.8$\,s & $34.8$\,s & $3.6$\,min & $4.5$\,min ($1$) & $57.2$\,s \\
-\textsc{Dlp} & $350.7$\,KB & $2$ & 181 & $2.5$\,min & $1.9$\,min & $9.3$\,min & $13.8$\,min\,/\,$6.9$\,min ($2$) & $1.3$\,min \\
+\textsc{Mal} & $829.2$\,KB & $2$ & 214 & $47.5$\,s & $1.2$\,min & $4.6$\,min & $6.7$\,min\,/\,$3.3$\,min ($2$) & $50.5$\,s \\
+\textsc{Dna} & $813.8$\,KB & $1$ & 105 & $20.3$\,s & $34.7$\,s & $3.4$\,min & $4.3$\,min ($1$) & $56.3$\,s \\
+\textsc{Dlp} & $350.7$\,KB & $2$ & 181 & $16.0$\,s & $16.5$\,s & $1.7$\,min & $2.2$\,min\,/\,$1.1$\,min ($2$) & $27.1$\,s \\
 \midrule
-\multicolumn{9}{@{}l}{\footnotesize Per batch proof (one per job, constant): size $1{,}152$\,B, verification $31$\,ms.} \\
+\multicolumn{9}{@{}l}{\footnotesize Per batch proof (one per job, constant): size $1{,}152$\,B, verification $24$\,ms.} \\
 \bottomrule
 \end{tabular}
-\caption{End-to-end prover performance. \emph{Corpus} is the bytes actually folded: \textsc{Dna} packs each base of its chr17 sequence into a nibble (half a byte), halving it to the $813.8$\,KB shown, while the $793.4$\,MB \textsc{Mal} results from padding each chunk to $128$\,KB. \emph{Stage 1} (main folding) is the corpus-scaling cost: circuit selection $+$ commit fixed witness $+$ folding. \emph{Total\,/\,Wall (jobs)} reports the summed CPU-time over the parallel jobs and the wall-clock time; for balanced jobs the wall-clock is ${\approx}\,$Total$/$Jobs. \emph{Stage 2: Compression} computes the main-circuit SNARK proof, the QA-NIZK proof, the cycle-pairing fold, and the resulting batch proof. It is a fixed per-job cost, and all timings exclude the one-time key setup. The bottom row shows the size and verification cost of one batch proof (mainly the two Groth16 SNARK proofs); this per-job batch proof is constant size and independent of corpus and rule-set size. A run emits one batch proof per job, as jobs split a corpus to save wall time.}
+\caption{End-to-end prover performance. \emph{Corpus} is the bytes actually folded: \textsc{Dna} packs each base of its chr17 sequence into a nibble (half a byte), halving it to the $813.8$\,KB shown, while the $829.2$\,KB \textsc{Mal} results from padding each chunk to $128$\,KB. \emph{Stage 1} (main folding) is the corpus-scaling cost: circuit selection $+$ commit fixed witness $+$ folding. \emph{Total\,/\,Wall (jobs)} reports the summed CPU-time over the parallel jobs and the wall-clock time; for balanced jobs the wall-clock is ${\approx}\,$Total$/$Jobs. \emph{Stage 2: Compression} computes the main-circuit SNARK proof, the QA-NIZK proof, the cycle-pairing fold, and the resulting batch proof. It is a fixed per-job cost, and all timings exclude the one-time key setup. The bottom row shows the size and verification cost of one batch proof (mainly the two Groth16 SNARK proofs); this per-job batch proof is constant size and independent of corpus and rule-set size. A run emits one batch proof per job, as jobs split a corpus to save wall time.}
 \label{tbl:overall-perf}
 \end{table*}

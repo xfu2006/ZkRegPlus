@@ -16,14 +16,14 @@
   Reef~\cite{Reef}, and BORA on the three datasets of
   Table~\ref{tab:datasets}; the last two columns give BORA's speedup over
   each. Zombie costs are projected from the unit cost
-  $u=1.82 \times 10^{-6}$~s\,B$^{-2}$ (Table~\ref{tab:zombie-data}). For
+  $u=1.76 \times 10^{-6}$~s\,B$^{-2}$ (Table~\ref{tab:zombie-data}). For
   \textsc{Dna}, Reef's as-implemented cost is shown with its optimistic
   floor in parentheses. Values marked $^{*}$ are projected from Reef's
   cheapest measured per-run cost on \textsc{Dna}
-  ($6.78$\,s, the \texttt{proj\_512k} bucket):
+  ($5.07$\,s, the \texttt{proj\_512k} bucket):
   the \textsc{Dna} floor as that cost per signature, and Reef
   \textsc{Mal}/\textsc{Dlp} as that cost per signature per corpus byte
-  (Table~\ref{tab:dna-reef-bora}). \textsc{Mal} BORA is the total net cost summed over $8$ parallel jobs; the wall-clock time is $16.80$\,hr (the slowest job). \textsc{Dlp} BORA is the total net cost summed over $2$ parallel jobs; the wall-clock time is $0.12$\,hr (the slowest job). Cells shown as ``??'' have no
+  (Table~\ref{tab:dna-reef-bora}). \textsc{Mal} BORA is the total net cost summed over $2$ parallel jobs; the wall-clock time is $0.09$\,hr (the slowest job). \textsc{Dlp} BORA is the total net cost summed over $2$ parallel jobs; the wall-clock time is $0.02$\,hr (the slowest job). Cells shown as ``??'' have no
   audited measurement yet.}
   \label{tab:compare-all}
   \begin{tabular}{l r r r r r}
@@ -33,9 +33,9 @@
     \cmidrule(lr){5-6}
     & & & & vs Zombie & vs Reef \\
     \midrule
-    \textsc{Mal} & 513.6\,yr & 6.4\,Myr$^{*}$ & 130.70\,hr & $34{,}450\times$ & $429\text{M}\times^{*}$ \\
-    \textsc{Dna} & 6.8\,yr & 294.8\,d (2.2\,d$^{*}$) & 0.08\,hr & $790{,}573\times$ & $94{,}088\times$ ($689\times^{*}$) \\
-    \textsc{Dlp} & 222.6\,d & 41{,}525\,yr$^{*}$ & 0.23\,hr & $23{,}297\times$ & $2\text{B}\times^{*}$ \\
+    \textsc{Mal} & 497.7\,yr & 4.8\,Myr$^{*}$ & 0.11\,hr & $39\text{M}\times$ & $377\text{B}\times^{*}$ \\
+    \textsc{Dna} & 6.6\,yr & 236.1\,d (38.73\,hr$^{*}$) & 0.07\,hr & $803{,}435\times$ & $79{,}020\times$ ($540\times^{*}$) \\
+    \textsc{Dlp} & 278.2\,d & 31{,}052\,yr$^{*}$ & 0.04\,hr & $181{,}903\times$ & $7\text{B}\times^{*}$ \\
     \bottomrule
   \end{tabular}
 \end{table*}

@@ -977,7 +977,10 @@ def run_leaf_clamav(mode, ctx):
 # legacy entry +1; top 9861 = the complete rule set. Bundles land under
 # the literal any_server names gen_scale_all.py hardcodes.
 SCALE_DLP_COUNTS = {
-    "dry":  [2, 987],
+    # dry top halved 987 -> 494 (493 + pin) 2026-08-11: measured
+    # peak RSS is 22.3GB + 0.0136*count GB, so the count buys 6.7GB
+    # of the cut and DLP's new dry_range2_bit 22 buys the rest.
+    "dry":  [2, 494],
     "full": [2, 987, 1973, 2959, 3945, 4931, 5917, 6903, 7889,
              8875, 9861],
 }
@@ -1002,18 +1005,20 @@ def scale_missing_rounds(log_path, counts):
 
 def run_leaf_scale_dlp(mode, ctx):
     """M102 Scale-DLP leaf: two sequential bora_cli scale_dlp sweeps,
-    one per fixed corpus, the second running even if the first failed.
-    Each log is packed into its any_server bundle even on a crash
-    (partial rounds kept; 0 rounds leave the bundle untouched)."""
+    one per fixed corpus, the second running even if the first failed;
+    dry passes dry=1 (22-bit range table, corpus left whole). Each log
+    is packed into its any_server bundle even on a crash (partial
+    rounds kept; 0 rounds leave the bundle untouched)."""
     counts = SCALE_DLP_COUNTS[mode]
     arg = ",".join(str(c) for c in counts)
+    dry = "1" if mode == "dry" else "0"
     env = neo_env()
     rc = 0
     for idx, bundle, tag in SCALE_DLP_RUNS:
         lg = ctx.log_path(tag)
         try:
             rc_i = run_rust_example(ctx, "bora_cli",
-                                     ["scale_dlp", str(idx), arg],
+                                     ["scale_dlp", str(idx), arg, dry],
                                      env, log_name=tag)
         finally:
             dest = raw_data_path(bundle, server_specific=False)
@@ -1081,7 +1086,7 @@ def run_leaf_scale_clamav(mode, ctx):
 MS_DLP_DIR = os.path.join(REPO, "data", "src_sig", "ms_dlp")
 MS_DLP_SCRIPTS_DIR = os.path.join(MS_DLP_DIR, "scripts")
 ZOMBIE_LOG_NAME = "run_zombie_regex_zombie_international.log"
-ZOMBIE_DRY_PERC = 2
+ZOMBIE_DRY_PERC = 4
 
 
 def run_leaf_zombie(mode, ctx):
@@ -1247,29 +1252,59 @@ def install_signal_handlers(seq):
 # Layer A -- CLI / menu resolution
 # =====================================================================
 
+# Dry cost per leaf: (display name, wall MINUTES, peak RSS GiB, note).
+# gb None = never measured. Every row below is measured: one `--items
+# all` run on 2026-08-11 on a 32-core / 125 GiB box, 8/8 rc=0, 4015s
+# total. RSS is tree-wide peak in GiB (watch_rss divides by 1024^2).
+#   zombie ran genuinely COLD here -- its partial cache
+#   (/tmp/bora_zombie_run + the docs/ mirror) was cleared first, so 6.8
+#   min is a from-scratch figure. It still resumes instantly when that
+#   cache survives, hence the "cold" note.
+#   CAVEAT: zombie's 26.4 GiB is over the 24 GiB dry budget. It is
+#   recorded as measured; the pool/concurrency retune is pending.
+DRY_COST = [
+    ("dlp",        "DLP",           2.4,  6.5,  ""),
+    ("dna",        "Dna",           7.0,  15.9, ""),
+    ("clam",       "Clamav",        8.7,  17.1, ""),
+    ("zombie",     "Zombie",        6.8,  26.4, " cold"),
+    ("reef",       "Reef",          23.0, 28.4, ""),
+    ("lkup",       "Analyze lkup",  3.5,  8.3,  ""),
+    ("scale_clam", "Scale-ClamAV",  7.3,  5.2,  ""),
+    ("scale_dlp",  "Scale-DLP",     8.5,  13.0, ""),
+]
+
+
+def _fmt_min(m):
+    """9.0 -> '9', 2.5 -> '2.5' (no trailing .0 in the menu)."""
+    return ("%.1f" % m).rstrip("0").rstrip(".")
+
+
+def _cost_tag(mins, gb, note="", lead="dry "):
+    """'[dry ~9min, ~16.4GB]'; RSS omitted when never measured. The
+    rollups pass lead="" -- their context already says dry."""
+    if gb is None:
+        return "[%s~%smin%s]" % (lead, _fmt_min(mins), note)
+    return "[%s~%smin%s, ~%.1fGB]" % (lead, _fmt_min(mins), note, gb)
+
+
+def dry_total():
+    """Cost of `--items all`: wall SUMS (leaves run in sequence) and
+    peak RSS is the MAX, not the sum, for the same reason. Uses
+    zombie's cold wall, so it is a from-scratch estimate."""
+    mins = sum(c[2] for c in DRY_COST)
+    gb = max(c[3] for c in DRY_COST if c[3] is not None)
+    return mins, gb
+
+
 TOP_CHOICES = [
     ("small", "small data"),
-    ("dry_run", "dry_run"),
+    ("dry_run", "dry_run %s" % _cost_tag(*dry_total(), lead="")),
     ("full_run", "full_run"),
     ("figs", "generate list of figures"),
 ]
 
-# Dry costs measured 2026-08-11, one `--items all` run on a 32-core box
-# (8/8 rc=0, 75 min end to end). wall is sequential per-leaf wall; the GB
-# is peak tree-RSS as sampled by _watch_rss. zombie is the exception: it
-# resumes from run_zombie.py's partial cache (/tmp/bora_zombie_run +
-# the docs/ mirror), so it cost 0s here -- its ~9min is the 2026-08-08
-# COLD figure and its peak RSS has never been measured.
-LEAF_CHOICES = [
-    ("dlp", "DLP [dry ~4.5min, ~28.4GB]"),
-    ("dna", "Dna [dry ~8min, ~16.2GB]"),
-    ("clam", "Clamav [dry ~9min, ~16.4GB]"),
-    ("zombie", "Zombie [dry ~9min cold, instant when cached]"),
-    ("reef", "Reef [dry ~23min, ~28.4GB]"),
-    ("lkup", "Analyze lkup [dry ~3.5min, ~8.3GB]"),
-    ("scale_clam", "Scale-ClamAV [dry ~7min, ~5.3GB]"),
-    ("scale_dlp", "Scale-DLP [dry ~20min, ~35.8GB]"),
-]
+LEAF_CHOICES = [(k, "%s %s" % (name, _cost_tag(mins, gb, note)))
+                 for k, name, mins, gb, note in DRY_COST]
 _LEAF_KEYS = [k for k, _ in LEAF_CHOICES]     # canonical order (2.2)
 
 
@@ -1340,7 +1375,12 @@ def _show_submenu(top):
           "(e.g. \"1,3,5\", \"dlp,clam\", or \"A\"):" % top)
     for i, (_, label) in enumerate(LEAF_CHOICES, 1):
         print("  (%d) %s" % (i, label))
-    print("  (A) All")
+    # the per-leaf costs are DRY measurements, so only dry_run's All
+    # gets the rollup; full_run's leaf costs are not measured.
+    if top == "dry_run":
+        print("  (A) All %s" % _cost_tag(*dry_total(), lead=""))
+    else:
+        print("  (A) All")
 
 
 def interactive_select():
@@ -2503,6 +2543,14 @@ class RunLeafScaleDlpTest(unittest.TestCase):
                 "==== SCALE ROUND END count=%d ====\n"
                 % (cnt, cnt, extra, cnt))
 
+    @staticmethod
+    def _all_rounds(extra=""):
+        """A complete sweep log for whatever dry counts are configured
+        (derived, so retuning the counts cannot rot these tests)."""
+        return "".join(
+            RunLeafScaleDlpTest._round(c, extra if i == 0 else "")
+            for i, c in enumerate(SCALE_DLP_COUNTS["dry"]))
+
     def _fake_run(self, rcs, bodies):
         """Stand-in run_rust_example: writes the per-call log body,
         returns the per-call rc, records (example, args, log_name)."""
@@ -2520,22 +2568,25 @@ class RunLeafScaleDlpTest(unittest.TestCase):
         """Both sweeps run in order with the locked argv/log names;
         each bundle lands in any_server with one member per round."""
         ctx = JobHandle("scale_dlp", "dry")
-        body = self._round(2) + self._round(987)
+        body = self._all_rounds()
+        csv = ",".join(str(c) for c in SCALE_DLP_COUNTS["dry"])
         calls, fake = self._fake_run([0, 0], [body, body])
         with mock.patch.object(_MOD, "run_rust_example", fake):
             result = run_leaf_scale_dlp("dry", ctx)
         self.assertEqual(result.rc, 0)
         self.assertFalse(result.failed)
+        # dry passes the dry token; full passes "0" (see the mode test)
         self.assertEqual(
             calls,
-            [("bora_cli", ["scale_dlp", "0", "2,987"], "scale_2"),
-             ("bora_cli", ["scale_dlp", "1", "2,987"], "scale_6")])
+            [("bora_cli", ["scale_dlp", "0", csv, "1"], "scale_2"),
+             ("bora_cli", ["scale_dlp", "1", csv, "1"], "scale_6")])
+        members = sorted("log_%d.txt.tgz" % c
+                          for c in SCALE_DLP_COUNTS["dry"])
         for bundle in ("scale_data_dlp_2.tgz", "scale_data_dlp_6.tgz"):
             dest = raw_data_path(bundle, server_specific=False)
             self.assertTrue(os.path.isfile(dest))
             with tarfile.open(dest) as t:
-                self.assertEqual(sorted(t.getnames()),
-                                  ["log_2.txt.tgz", "log_987.txt.tgz"])
+                self.assertEqual(sorted(t.getnames()), members)
         self.assertEqual(len(ctx.raw_data), 2)
 
     def test_first_failure_does_not_skip_second(self):
@@ -2543,7 +2594,7 @@ class RunLeafScaleDlpTest(unittest.TestCase):
         only the second's bundle is placed (0 rounds -> untouched)."""
         ctx = JobHandle("scale_dlp", "dry")
         calls, fake = self._fake_run(
-            [3, 0], ["no rounds\n", self._round(2) + self._round(987)])
+            [3, 0], ["no rounds\n", self._all_rounds()])
         with mock.patch.object(_MOD, "run_rust_example", fake):
             result = run_leaf_scale_dlp("dry", ctx)
         self.assertEqual(len(calls), 2)          # second still ran
@@ -2558,15 +2609,15 @@ class RunLeafScaleDlpTest(unittest.TestCase):
         """rc=0 but one count lacks its ROUND END marker -> rc=7 with
         a note; the partial round is still packed into the bundle."""
         ctx = JobHandle("scale_dlp", "dry")
-        partial = self._round(2) + \
-            "==== SCALE ROUND BEGIN count=987 rules=987/9861 " \
-            "corpus=x ====\n"
-        full = self._round(2) + self._round(987)
-        _, fake = self._fake_run([0, 0], [partial, full])
+        top = SCALE_DLP_COUNTS["dry"][-1]
+        partial = self._round(SCALE_DLP_COUNTS["dry"][0]) + \
+            "==== SCALE ROUND BEGIN count=%d rules=%d/9861 " \
+            "corpus=x ====\n" % (top, top)
+        _, fake = self._fake_run([0, 0], [partial, self._all_rounds()])
         with mock.patch.object(_MOD, "run_rust_example", fake):
             result = run_leaf_scale_dlp("dry", ctx)
         self.assertEqual(result.rc, 7)
-        self.assertIn("scale_2: no ROUND END for counts [987]",
+        self.assertIn("scale_2: no ROUND END for counts [%d]" % top,
                        result.note)
         # the partial round is still packed (legacy crash tolerance)
         self.assertTrue(os.path.isfile(raw_data_path(
@@ -2577,7 +2628,7 @@ class RunLeafScaleDlpTest(unittest.TestCase):
         must not counterfeit a FAIL verdict (the fail-scan is off)."""
         ctx = JobHandle("scale_dlp", "dry")
         noise = "thread 'main' panicked at 'CapErr: StepFwdPrf'\n"
-        body = self._round(2, noise) + self._round(987)
+        body = self._all_rounds(noise)
         _, fake = self._fake_run([0, 0], [body, body])
         with mock.patch.object(_MOD, "run_rust_example", fake):
             result = run_leaf_scale_dlp("dry", ctx)
@@ -2600,10 +2651,26 @@ class RunLeafScaleDlpTest(unittest.TestCase):
         self.assertTrue(os.path.isfile(raw_data_path(
             "scale_data_dlp_2.tgz", server_specific=False)))
 
+    def test_full_mode_passes_dry_token_zero(self):
+        """full sweeps must send dry=0 -- the real range table and the
+        whole corpus, whatever the dry shape is tuned to."""
+        ctx = JobHandle("scale_dlp", "full")
+        csv = ",".join(str(c) for c in SCALE_DLP_COUNTS["full"])
+        body = "".join(self._round(c)
+                        for c in SCALE_DLP_COUNTS["full"])
+        calls, fake = self._fake_run([0, 0], [body, body])
+        with mock.patch.object(_MOD, "run_rust_example", fake):
+            result = run_leaf_scale_dlp("full", ctx)
+        self.assertEqual(result.rc, 0)
+        self.assertEqual([c[1] for c in calls],
+                          [["scale_dlp", "0", csv, "0"],
+                           ["scale_dlp", "1", csv, "0"]])
+
     def test_counts_pin_inclusive(self):
         """Count constants are pin-INCLUSIVE (spec 8.10c: legacy +1
         each; top 9861 = the complete rule set)."""
-        self.assertEqual(SCALE_DLP_COUNTS["dry"], [2, 987])
+        # dry top = half the full step (986/2 = 493) + the pin.
+        self.assertEqual(SCALE_DLP_COUNTS["dry"], [2, 494])
         self.assertEqual(SCALE_DLP_COUNTS["full"],
                           [2, 987, 1973, 2959, 3945, 4931, 5917, 6903,
                            7889, 8875, 9861])
@@ -2804,6 +2871,54 @@ class EvenlySpacedSubsetTest(unittest.TestCase):
         self.assertEqual(len(set(got)), 4)
 
 
+def _write_regex_pool(root, sizes):
+    """Materialize {name: byte_size} as <root>/<name>.regex files so the
+    size cap can be exercised against a real filesystem."""
+    for name, n in sizes.items():
+        path = os.path.join(root, name + ".regex")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            fh.write("x" * n)
+
+
+class UnderSizeCapTest(unittest.TestCase):
+    def setUp(self):
+        self.drz = _load_dry_run_zombie()
+
+    def test_regex_bytes_reads_the_real_file_size(self):
+        """A resolvable name reports its .regex byte count."""
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_regex_pool(tmp, {"slug/comb00": 123})
+            self.assertEqual(
+                self.drz.regex_bytes(tmp, "slug/comb00"), 123)
+
+    def test_regex_bytes_is_zero_for_an_unresolvable_name(self):
+        """A synthetic name stats to 0, so it is never cap-dropped."""
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(self.drz.regex_bytes(tmp, "nope"), 0)
+
+    def test_drops_only_names_strictly_over_the_cap(self):
+        """The cap is inclusive: == max_bytes survives, +1 does not."""
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_regex_pool(tmp, {"a": 99, "b": 100, "c": 101})
+            self.assertEqual(
+                self.drz.under_size_cap(tmp, ["a", "b", "c"], 100),
+                ["a", "b"])
+
+    def test_preserves_input_order(self):
+        """Filtering keeps corpus order, so spacing stays deterministic."""
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_regex_pool(tmp, {"a": 1, "b": 999, "c": 2})
+            self.assertEqual(
+                self.drz.under_size_cap(tmp, ["c", "b", "a"], 10),
+                ["c", "a"])
+
+    def test_cap_constant_admits_the_measured_heavy_policy(self):
+        """7100 keeps the 7032 B policy measured at 22.5 GB peak RSS."""
+        self.assertGreaterEqual(self.drz.DRY_MAX_REGEX_BYTES, 7032)
+        self.assertLess(self.drz.DRY_MAX_REGEX_BYTES, 7526)
+
+
 class MakeDryListPolicyNamesTest(unittest.TestCase):
     def test_subsets_whatever_the_original_fn_returns(self):
         drz = _load_dry_run_zombie()
@@ -2813,6 +2928,20 @@ class MakeDryListPolicyNamesTest(unittest.TestCase):
         original.assert_called_once_with("regex_zombie_international")
         self.assertEqual(got, drz.evenly_spaced_subset(
             ["a", "b", "c", "d"], 50))
+
+    def test_size_cap_runs_before_the_spacing(self):
+        """Oversized policies leave the pool first, so perc spaces over
+        the survivors -- not over holes punched in the corpus."""
+        drz = _load_dry_run_zombie()
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_regex_pool(tmp, {"a": 1, "big": 10 ** 5, "c": 1,
+                                     "d": 1})
+            original = mock.Mock(return_value=["a", "big", "c", "d"])
+            patched = drz._make_dry_list_policy_names(50, original)
+            got = patched(tmp)
+        self.assertNotIn("big", got)
+        self.assertEqual(got, drz.evenly_spaced_subset(["a", "c", "d"],
+                                                        50))
 
 
 class DryRunZombieMainTest(unittest.TestCase):
@@ -3089,6 +3218,62 @@ class RunFigsTest(unittest.TestCase):
             rc = run_figs()
             self.assertEqual(rc, 1)
             copy2.assert_not_called()
+
+
+class DryCostRollupTest(unittest.TestCase):
+    def test_all_sums_wall_and_maxes_rss(self):
+        """All = SUM of wall, MAX of RSS (leaves run in sequence, so
+        RAM does not accumulate)."""
+        mins, gb = dry_total()
+        self.assertAlmostEqual(mins, sum(c[2] for c in DRY_COST))
+        self.assertAlmostEqual(gb, max(c[3] for c in DRY_COST
+                                        if c[3] is not None))
+        self.assertGreater(mins, max(c[2] for c in DRY_COST))
+
+    def test_unmeasured_rss_excluded_not_zeroed(self):
+        """A None RSS must not drag the max down to 0 or crash. Uses a
+        synthetic table so it survives every leaf being measured."""
+        rows = [("a", "A", 1.0, None, ""), ("b", "B", 2.0, 9.5, "")]
+        with mock.patch.object(_MOD, "DRY_COST", rows):
+            self.assertEqual(dry_total(), (3.0, 9.5))
+
+    def test_unmeasured_rss_omitted_from_the_label(self):
+        """gb None renders no RSS at all rather than a bogus 0GB."""
+        self.assertEqual(_cost_tag(9.0, None), "[dry ~9min]")
+
+    def test_leaf_labels_derive_from_the_cost_table(self):
+        """Labels are rendered, not hand-written, so a re-measure can
+        never leave the menu disagreeing with DRY_COST."""
+        self.assertEqual(
+            dict(LEAF_CHOICES)["clam"], "Clamav [dry ~8.7min, ~17.1GB]")
+        self.assertEqual(dict(LEAF_CHOICES)["dlp"],
+                          "DLP [dry ~2.4min, ~6.5GB]")
+        self.assertEqual(dict(LEAF_CHOICES)["zombie"],
+                          "Zombie [dry ~6.8min cold, ~26.4GB]")
+
+    def test_rollup_appears_on_layer_1_and_on_all(self):
+        """The same rollup shows on the top menu's dry_run row and on
+        the submenu's (A) All."""
+        tag = _cost_tag(*dry_total(), lead="")
+        self.assertIn(tag, dict(TOP_CHOICES)["dry_run"])
+        buf = io.StringIO()
+        with mock.patch("sys.stdout", buf):
+            _show_submenu("dry_run")
+        self.assertIn("(A) All %s" % tag, buf.getvalue())
+
+    def test_full_run_all_has_no_dry_rollup(self):
+        """full_run's leaf costs are unmeasured -- its All stays bare
+        rather than quoting dry numbers."""
+        buf = io.StringIO()
+        with mock.patch("sys.stdout", buf):
+            _show_submenu("full_run")
+        self.assertIn("(A) All\n", buf.getvalue())
+        self.assertNotIn("(A) All [", buf.getvalue())
+
+    def test_every_leaf_key_has_a_cost_row(self):
+        """DRY_COST is the single source of the leaf order and keys."""
+        self.assertEqual([c[0] for c in DRY_COST], _LEAF_KEYS)
+        self.assertEqual(sorted(_LEAF_KEYS), sorted(JOB_SPECS))
 
 
 class RunSmallTest(unittest.TestCase):
