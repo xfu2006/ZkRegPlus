@@ -705,9 +705,12 @@ class JobHandle:
         # b_fail_scan=False: the leaf verdicts by rc + its own positive
         # markers (scale: EXPECTED CapErr bump-retries print panic text
         # into a successful log, which the scan would counterfeit).
+        # The scan still RUNS on an rc != 0 leaf so _pack_bundle keeps
+        # its "failure signatures" section -- it just gets no VOTE.
         wall = time.time() - self._t0
-        fails = self._fail_lines() if b_fail_scan else []
-        failed = rc != 0 or bool(fails)
+        failed = rc != 0
+        fails = self._fail_lines() if (b_fail_scan or failed) else []
+        failed = failed or (b_fail_scan and bool(fails))
         triage_tgz = None
         if failed:
             triage_tgz = self._pack_bundle(rc, wall, fails)
@@ -845,18 +848,36 @@ def dlp_argv(mode, numa_num, part):
             light, "0"]
 
 
+# The THREE per-job fold-completion markers the driver can emit
+# (foldpot/driver.rs:3216 skip-snark, :3247 fold-only, :3254 proving).
+# A two-half part_id 0 is non-proving (b_folding_only), so it reaches
+# ONLY the :3247 form -- omitting it scores a healthy 8-job run as 4
+# and silently skips pack_full_dump. The optional ":" is that form's
+# separator ("Job 0: b_folding_only set").
 FOLD_OK_RE = re.compile(
-    r"Job (\d+) (?:folding done|generating SNARK proof)")
+    r"Job (\d+):? (?:folding done|generating SNARK proof|"
+    r"b_folding_only set)")
 VERIFY_IND_RE = re.compile(r"Verify Individual Proof")
+
+# The NEGATIVE marker. A failed self-verification is LOGGED and the run
+# deliberately CONTINUES, so one bad job cannot kill its expensive
+# siblings (driver.rs:3553-3560 batch, :3573-3580 individual) -- the
+# process still exits 0. VERIFY_IND_RE above cannot see it either: that
+# log_perf (:3582) sits AFTER the failure branch and prints either way.
+# So this is the only thing standing between a bad proof and a PASS.
+VERIFY_FAIL_RE = re.compile(r"PROOF VERIFICATION FAILED")
 
 
 def dlp_missing_success(logs, num_jobs):
-    """Positive success check (one_proof mode): every job logged a
-    completed fold, and exactly ONE individual proof verified.
-    Returns None when satisfied, else the missing-marker reason."""
+    """Verdict for a one_proof neo run: no job logged a verification
+    failure, every job logged a completed fold, and exactly ONE
+    individual proof verified.  None when satisfied, else the reason."""
     done, n_ver = 0, 0
     for lg in logs:
         text = open(lg, errors="replace").read()
+        # Checked FIRST: a bad proof outranks any marker-count reason.
+        if VERIFY_FAIL_RE.search(text):
+            return "PROOF VERIFICATION FAILED in %s" % os.path.basename(lg)
         # per-log distinct set: two-half parts number jobs locally
         done += len({int(m.group(1))
                      for m in FOLD_OK_RE.finditer(text)})
@@ -900,9 +921,19 @@ def run_leaf_full_neo(mode, ctx, argv_fn, base, num_jobs, name,
 
 def run_leaf_dlp(mode, ctx):
     """M102 DLP leaf: bora_cli full_dlp (neo, argv-only)."""
+    # b_fail_scan=False, as dna/clam. A check-on aggressive fold runs
+    # under a CatchGuard, which makes install_fail_fast_panic_hook
+    # return early (driver.rs:2411-2417), so the DEFAULT hook prints
+    # the EXPECTED self-cover CapErr (composable_gadget_mapper.rs:1213)
+    # into a SUCCESSFUL log -- both its "panicked at" line and its
+    # "CapErr(..)" payload line match FAIL_RE, and no whitelist can
+    # cover the first (it carries no marker). full mode only: dry
+    # clears b_check_lkup (bora_data_driver.rs:1344), so no dry sweep
+    # can see it. Verdict = rc + dlp_missing_success's markers, which
+    # now include the PROOF VERIFICATION FAILED negative marker.
     return run_leaf_full_neo(mode, ctx, dlp_argv, "full_dlp",
                               int(DLP_LEAF_ARGS[mode][3]), "dlp",
-                              True)
+                              False)
 
 
 # bora_cli full_dna constants (M103): dry = 1% DB (276 of 27,501
@@ -2166,6 +2197,21 @@ class RunLeafDlpTest(unittest.TestCase):
         self.assertEqual(rc, 3)
         pk.assert_not_called()
 
+    def test_dlp_verdicts_scan_free(self):
+        """DLP must NOT fail-scan: its own self-cover CapErr prints
+        panic text into a SUCCESSFUL full-mode log."""
+        with mock.patch.object(_MOD, "resolve_process_model",
+                                return_value=ProcessModel(1, [None])), \
+             mock.patch.object(_MOD, "neo_env", return_value={}), \
+             mock.patch.object(_MOD, "run_rust_example",
+                                return_value=0), \
+             mock.patch.object(_MOD, "dlp_missing_success",
+                                return_value=None), \
+             mock.patch.object(_MOD, "pack_full_dump",
+                                return_value=[]):
+            run_leaf_dlp("full", self.ctx)
+        self.ctx.finish.assert_called_once_with(0, b_fail_scan=False)
+
     def test_ladder_divergence_fails_no_pack(self):
         model = ProcessModel(2, ["0-3", "4-7"])
         with mock.patch.object(_MOD, "resolve_process_model",
@@ -2226,11 +2272,62 @@ class DlpMissingSuccessTest(unittest.TestCase):
         self.assertIn("count 0 != 1", dlp_missing_success([lg2], 2))
 
     def test_two_half_local_numbering_sums(self):
-        l1 = self._log("p1.log", "Job 0 folding done\n")
+        """A NON-proving part emits the b_folding_only marker, never
+        "folding done"; both parts' local job 0s must still sum."""
+        l1 = self._log(
+            "p1.log", "Job 0: b_folding_only set, no snark generated\n")
         l2 = self._log("p2.log",
                         "Job 0 generating SNARK proof\n"
                         "Verify Individual Proof\n")
         self.assertIsNone(dlp_missing_success([l1, l2], 2))
+
+    def test_two_half_production_shape_counts_all_8(self):
+        """The real 8-job/2-part shape: part0 folds only, part1 proves
+        one job. All 8 must count, else the dump is never packed."""
+        l1 = self._log("prod1.log", "".join(
+            "Job %d: b_folding_only set, no snark generated\n" % i
+            for i in range(4)))
+        l2 = self._log("prod2.log",
+                        "Job 0 generating SNARK proof\n"
+                        + "".join("Job %d folding done; b_one_proof\n" % i
+                                   for i in range(1, 4))
+                        + "Verify Individual Proof\n")
+        self.assertIsNone(dlp_missing_success([l1, l2], 8))
+
+    def test_individual_verify_failure_is_caught(self):
+        """A bad proof is LOGGED and the run exits 0, so without this
+        marker an otherwise-perfect log scores PASS."""
+        lg = self._log("bad.log",
+                        "Job 0 generating SNARK proof\n"
+                        "Job 1 folding done; b_one_proof set\n"
+                        "[job 0] ERR:  Job 0 INDIVIDUAL PROOF "
+                        "VERIFICATION FAILED (verify_individual "
+                        "returned false); continuing other jobs.\n"
+                        "FOLDPOT Step 13. Verify Individual Proof. 17 ms\n")
+        self.assertIn("PROOF VERIFICATION FAILED",
+                       dlp_missing_success([lg], 2))
+
+    def test_batch_verify_failure_is_caught(self):
+        """The batch proof can fail while the individual one passes;
+        every positive marker still lines up, so only this catches it."""
+        lg = self._log("badbatch.log",
+                        "Job 0 generating SNARK proof\n"
+                        "Job 1 folding done; b_one_proof set\n"
+                        "[job 0] ERR:  Job 0 BATCH PROOF VERIFICATION "
+                        "FAILED (verify_batch returned false); "
+                        "continuing other jobs.\n"
+                        "FOLDPOT Step 13. Verify Individual Proof. 17 ms\n")
+        self.assertIn("PROOF VERIFICATION FAILED",
+                       dlp_missing_success([lg], 2))
+
+    def test_verify_failure_outranks_marker_counts(self):
+        """A bad proof must be reported ahead of any missing-marker
+        reason, which is the less severe diagnosis."""
+        lg = self._log("both.log",
+                        "Job 0 generating SNARK proof\n"
+                        "Job 0 BATCH PROOF VERIFICATION FAILED\n")
+        self.assertIn("PROOF VERIFICATION FAILED",
+                       dlp_missing_success([lg], 8))
 
 
 class RunLeafDnaTest(unittest.TestCase):
@@ -3019,6 +3116,18 @@ class JobHandleFinishTest(unittest.TestCase):
         self.assertFalse(result.failed)
         self.assertIsNone(result.triage_tgz)
         self.assertFalse(os.path.isdir(_MOD.FAILED_TGZ_DIR))
+
+    def test_scan_free_crash_still_bundles_signatures(self):
+        """A scan-free leaf that CRASHES must still ship its failure
+        lines: the scan loses its vote, not its triage value."""
+        ctx = JobHandle("dlp", "full")
+        with open(ctx.log_path("run"), "w") as f:
+            f.write("thread 'main' panicked at foo.rs:1:1:\n")
+        result = ctx.finish(4, b_fail_scan=False)
+        self.assertTrue(result.failed)
+        with tarfile.open(result.triage_tgz, "r:gz") as t:
+            summ = t.extractfile("SUMMARY.txt").read().decode()
+        self.assertIn("panicked", summ)
 
     def test_nonzero_rc_packs_tgz(self):
         ctx = JobHandle("clam", "full")

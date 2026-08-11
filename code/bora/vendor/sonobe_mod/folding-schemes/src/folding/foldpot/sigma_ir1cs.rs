@@ -4937,6 +4937,20 @@ pub mod tests_sigma_ir1cs{
 		F: PrimeField + Absorb +ColEle,
 		LK: LookupTableTwoCol<F> + 'static,
 	{
+		gen_six_root_adv::<F,C,CS,LK,H>(n_steps, true)
+	}
+
+	/// gen_six_root with the step circuit's b_check_lkup exposed.
+	/// b_check_lkup=false is what legacy full_dlp() and every
+	/// examples/main.rs option ship (see S108).
+	pub fn gen_six_root_adv<F,C,CS,LK,const H:bool>(n_steps: usize,
+		b_check_lkup: bool)->
+		(Arc<LK>, SigmaIR1CS_Inst<F,C,CS,LK,SixRootMapper<F,LK>,H>, Vec<StatementInst<F,LK>>)
+	where 	C: CurveGroup<ScalarField=F>,
+		CS: CommitmentScheme<C, H>,
+		F: PrimeField + Absorb +ColEle,
+		LK: LookupTableTwoCol<F> + 'static,
+	{
 		//1. create the lookup, and relation object
 		let lk = LK::new(vec![
 			(F::from(0u32), F::from(0u32)), //0, null entry
@@ -4960,8 +4974,7 @@ pub mod tests_sigma_ir1cs{
 			.1.lookup_share_size;
 		assert!(share_size * n_steps >= lk_len, "ERROR: share_size * n_step < lookup table size, increase number of steps!");
         let poseidon_config = poseidon_canonical_config::<F>();
-		let b_check_lkup = true;
-		let six_ir1cs = 
+		let six_ir1cs =
 			SigmaIR1CS_Inst::<F,C,CS,LK,SixRootMapper<F,LK>,H>
 			::new_adv(format!("six_ir1cs"), 
 			poseidon_config, mapper.clone(), false, share_size, false, 
@@ -5063,6 +5076,224 @@ pub mod tests_sigma_ir1cs{
 			"number of constraints: {} too far away fro est: {}",
 			act_cs, expected_cs);
 	}	
+
+	// ---------------------------------------------------------------
+	// S106 falsifying tests: no terminality check on the final state.
+	//
+	// b_last     = (word_id==total_words) && (subseg_id==total_word_segs)
+	//                                                     (:3703-3704)
+	// final_step = b_last && (word_id != 0)               (:3775-3776)
+	// The KZG closure fires on b_last (:4206,:4226); the three real
+	// checks -- I/O equality (:3777), Hab'22 (:4043), failed-sigs
+	// subset (:4380) -- fire on final_step. Setting word_id =
+	// total_words = 0 on the last step keeps b_last TRUE and turns all
+	// three off for the WHOLE run. Each test runs three arms whose
+	// statements differ in exactly two field elements.
+	// ---------------------------------------------------------------
+	/// concrete six_root instantiation shared by the S106 tests
+	type S106Lk = LookupTableTwoCol_Inst<Fr>;
+	type S106Cm = KZG<'static, Bn254>;
+	type S106Inst = SigmaIR1CS_Inst<Fr, Projective, S106Cm, S106Lk,
+		SixRootMapper<Fr, S106Lk>, false>;
+	type S106Stmt = StatementInst<Fr, S106Lk>;
+
+	/// Fold one statement natively; leaves the witness on `inst` for a
+	/// following s106_synth. Returns the next ZiPartTwo state.
+	fn s106_step_native(inst: &mut S106Inst, z_in: &ZiPartTwoInst<Fr>,
+		stmt: &S106Stmt)-> ZiPartTwoInst<Fr>{
+		inst.step_native_mut(0, z_in, stmt.to_vec())
+			.expect("step_native_mut err")
+	}
+
+	/// Synthesize the step whose witness `inst` currently holds.
+	/// Ok(is_satisfied), or Err(panic msg) when a native assert trips.
+	fn s106_synth(inst: &S106Inst, z_in: &ZiPartTwoInst<Fr>)
+		-> Result<bool, String>{
+		let cfg = poseidon_canonical_config::<Fr>();
+		let zi_hash = z_in.hash(&cfg);
+		//the step circuit never reads z_i[0] except for the cmF hash
+		//chain, and never reads z_i[1] at all (that is S104).
+		let old_hook = std::panic::take_hook();
+		std::panic::set_hook(Box::new(|_|{})); //silence the arm-1 panic
+		let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(||{
+			let cs = ConstraintSystem::<Fr>::new_ref();
+			//external inputs FIRST: to_vec_fp_var:2468 requires 0 (unit
+			//test) or 6 (normal flow) pre-existing witness vars.
+			let ext_in = inst.witness_to_vec_fp_var(cs.clone());
+			let z_i = vec![
+				FpVar::<Fr>::new_witness(cs.clone(), || Ok(Fr::zero()))
+					.unwrap(),
+				FpVar::<Fr>::new_witness(cs.clone(), || Ok(zi_hash))
+					.unwrap(),
+			];
+			inst.generate_step_constraints(cs.clone(), 0, z_i, ext_in)
+				.expect("gen step err");
+			cs.is_satisfied().unwrap()
+		}));
+		std::panic::set_hook(old_hook);
+		match res{
+			Ok(b) => Ok(b),
+			Err(e) => {
+				let msg = if let Some(s) = e.downcast_ref::<&str>(){
+					s.to_string()
+				}else if let Some(s) = e.downcast_ref::<String>(){
+					s.clone()
+				}else{ format!("unknown panic") };
+				Err(msg)
+			}
+		}
+	}
+
+	/// S106: a failed sig absent from discharged_sigs is REJECTED at an
+	/// honest last step and ACCEPTED with word_id=total_words=0.
+	#[test]
+	pub fn test_s106_sigs_gate_bypass(){
+		let cfg = poseidon_canonical_config::<Fr>();
+		let fq_bits = Fq::MODULUS_BIT_SIZE as usize;
+		let n_steps = 3usize;
+		//lookup check OFF: the shipped legacy/full_dlp setting, and it
+		//keeps the toy's own unbalanced hab22 sums out of this test.
+		let (_lk, mut inst, stmts) = gen_six_root_adv::<Fr,Projective,
+			S106Cm,S106Lk,false>(n_steps, false);
+		let z0 = ZiPartTwoInst::<Fr>::new(Fr::from(2u32), Fr::from(3u32),
+			&cfg, false, fq_bits, n_steps);
+		let z1 = s106_step_native(&mut inst, &z0, &stmts[0]);
+		let z2 = s106_step_native(&mut inst, &z1, &stmts[1]);
+
+		//arm 0 -- honest data, honest terminality (word_id=total_words=3)
+		let _z3 = s106_step_native(&mut inst, &z2, &stmts[2]);
+		let sat0 = s106_synth(&inst, &z2);
+		assert!(sat0==Ok(true), "arm0 (honest) not satisfied: {:?}", sat0);
+
+		//arm 1 -- a fired sig absent from discharged_sigs, same
+		//terminality. b_correct is false -> rejected.
+		let mut s_bad = stmts[2].clone();
+		s_bad.failed_sigs[0] = Fr::from(7u32);
+		let z3_bad = s106_step_native(&mut inst, &z2, &s_bad);
+		let r1 = s106_synth(&inst, &z2);
+		match &r1{
+			Ok(b) => assert!(!b, "arm1 (attack, honest last step) is SAT"),
+			Err(m) => assert!(m.contains("b_correct"),
+				"arm1 rejected by the wrong check: {}", m),
+		}
+
+		//arm 2 -- THE EXPLOIT. Same violating data, word_id=total_words=0.
+		let mut s_exp = s_bad.clone();
+		s_exp.word_id = Fr::zero();
+		s_exp.total_words = Fr::zero();
+		let z3_exp = s106_step_native(&mut inst, &z2, &s_exp);
+		let sat2 = s106_synth(&inst, &z2);
+		assert!(sat2==Ok(true), "arm2 (S106 exploit) rejected: {:?}", sat2);
+
+		//b_last is still TRUE in arm 2, so the b_last-gated KZG closure
+		//fires and the verifier's anchor is bit-identical to arm 1's.
+		assert!(z3_bad.sum_kzg_eval_word==z3_exp.sum_kzg_eval_word,
+			"kzg word accumulator moved: exploit is detectable");
+		assert!(z3_bad.sum_kzg_eval_others==z3_exp.sum_kzg_eval_others,
+			"kzg others accumulator moved: exploit is detectable");
+		//control: a NON-terminal declaration does move it, so the two
+		//equalities above are not vacuous.
+		let mut s_mid = s_bad.clone();
+		s_mid.word_id = Fr::one();
+		let z3_mid = s106_step_native(&mut inst, &z2, &s_mid);
+		assert!(z3_mid.sum_kzg_eval_word!=z3_exp.sum_kzg_eval_word,
+			"b_last never moved the accumulator: control is vacuous");
+	}
+
+	/// S106: a broken cross-chunk carry is REJECTED at an honest last
+	/// step and ACCEPTED with word_id=total_words=0.
+	#[test]
+	pub fn test_s106_io_gate_bypass(){
+		let cfg = poseidon_canonical_config::<Fr>();
+		let fq_bits = Fq::MODULUS_BIT_SIZE as usize;
+		let (_lk, mut inst, stmts) = gen_six_root_adv::<Fr,Projective,
+			S106Cm,S106Lk,false>(3, false);
+		//relabel two statements as the two segments of ONE word: these
+		//five fields are free witnesses, so a prover may pick them.
+		let (one, two) = (Fr::one(), Fr::from(2u32));
+		let mut seg1 = stmts[1].clone(); //hands out a carry of 1
+		seg1.word_id = one; seg1.subseg_id = one;
+		seg1.total_word_segs = two; seg1.total_words = one;
+		let mut seg2 = stmts[2].clone();
+		seg2.word_id = one; seg2.subseg_id = two;
+		seg2.total_word_segs = two; seg2.total_words = one;
+		seg2.inp_buf[0] = one; //honest: consumes seg1's carry
+		seg2.oup_buf[0] = one; //CounterIOGadget enforces oup==inp here
+		let z0 = ZiPartTwoInst::<Fr>::new(Fr::from(2u32), Fr::from(3u32),
+			&cfg, false, fq_bits, 1);
+		let z1 = s106_step_native(&mut inst, &z0, &seg1);
+		assert!(z1.sum_oup==one, "seg1 did not emit the carry: {}",
+			z1.sum_oup);
+
+		//arm 0 -- honest carry, honest terminality (word_id=total_words=1)
+		let _z2 = s106_step_native(&mut inst, &z1, &seg2);
+		let sat0 = s106_synth(&inst, &z1);
+		assert!(sat0==Ok(true), "arm0 (honest) not satisfied: {:?}", sat0);
+
+		//arm 1 -- carry dropped: seg2 claims it received 5, not 1.
+		let mut s_bad = seg2.clone();
+		s_bad.inp_buf[0] = Fr::from(5u32);
+		s_bad.oup_buf[0] = Fr::from(5u32);
+		let z2_bad = s106_step_native(&mut inst, &z1, &s_bad);
+		assert!(z2_bad.sum_inp!=z2_bad.sum_oup, "carry not broken");
+		let r1 = s106_synth(&inst, &z1);
+		assert!(r1==Ok(false), "arm1 (broken carry) accepted: {:?}", r1);
+
+		//arm 2 -- THE EXPLOIT. Same broken carry, word_id=total_words=0.
+		let mut s_exp = s_bad.clone();
+		s_exp.word_id = Fr::zero();
+		s_exp.total_words = Fr::zero();
+		let z2_exp = s106_step_native(&mut inst, &z1, &s_exp);
+		let sat2 = s106_synth(&inst, &z1);
+		assert!(sat2==Ok(true), "arm2 (S106 exploit) rejected: {:?}", sat2);
+		assert!(z2_exp.sum_kzg_eval_others==z2_bad.sum_kzg_eval_others,
+			"kzg others accumulator moved: exploit is detectable");
+	}
+
+	/// S106: the Hab'22 lookup equality is REJECTED at an honest last
+	/// step and ACCEPTED with word_id=total_words=0.
+	#[test]
+	pub fn test_s106_hab22_gate_bypass(){
+		let cfg = poseidon_canonical_config::<Fr>();
+		let fq_bits = Fq::MODULUS_BIT_SIZE as usize;
+		let n_steps = 3usize;
+		//lookup check ON. No tamper is needed: the toy's own left/right
+		//sums do not balance at the last step (case 3 at :3965 counts a
+		//dynamic subtable_id=0 query at (0,val) while fill_lkup_mvec
+		//:1655 counts it at (0,0)), so the check has something to catch.
+		let (_lk, mut inst, stmts) = gen_six_root_adv::<Fr,Projective,
+			S106Cm,S106Lk,false>(n_steps, true);
+		//every multiplicity in this toy is 0, which would waive the
+		//check through the sum_hab22_right.is_zero() hatch (:4043, L2)
+		//before terminality is even reached. m_share is a free witness
+		//(S101), so raise one to disarm that hatch.
+		let mut s0 = stmts[0].clone();
+		s0.m_share[0] = Fr::one();
+		let z0 = ZiPartTwoInst::<Fr>::new(Fr::from(2u32), Fr::from(3u32),
+			&cfg, false, fq_bits, n_steps);
+		let z1 = s106_step_native(&mut inst, &z0, &s0);
+		let z2 = s106_step_native(&mut inst, &z1, &stmts[1]);
+		assert!(!z2.sum_hab22_right.is_zero(), "hatch still armed");
+		assert!(z2.sum_hab22_left!=z2.sum_hab22_right,
+			"lookup sums balance: nothing for the check to catch");
+
+		//arm 1 -- honest terminality: rejected (:4050 / :4052).
+		let _z3 = s106_step_native(&mut inst, &z2, &stmts[2]);
+		let r1 = s106_synth(&inst, &z2);
+		match &r1{
+			Ok(b) => assert!(!b, "arm1 (unbalanced lookup) is SAT"),
+			Err(m) => assert!(m.contains("hab22"),
+				"arm1 rejected by the wrong check: {}", m),
+		}
+
+		//arm 2 -- THE EXPLOIT. Same sums, word_id=total_words=0.
+		let mut s_exp = stmts[2].clone();
+		s_exp.word_id = Fr::zero();
+		s_exp.total_words = Fr::zero();
+		let _z3e = s106_step_native(&mut inst, &z2, &s_exp);
+		let sat2 = s106_synth(&inst, &z2);
+		assert!(sat2==Ok(true), "arm2 (S106 exploit) rejected: {:?}", sat2);
+	}
 
 	#[test]
 	pub fn test_stmt_serialize(){

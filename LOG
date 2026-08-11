@@ -30968,7 +30968,14 @@ Goal 3. plan submission
 	[a] research frozen git submission
 	[b] find author list 
 	[c] select topics
-	[d]
+Goal 4. fix the 3 soundness errors
+	[a] create project
+Goal 5. S101: soundness issue 101
+	[a] find more issues and dispute more issues
+	[b] reorder all issues. 
+Goal 6. S106: 
+	[a] run falsifying test first
+	[b]
 
 
 
