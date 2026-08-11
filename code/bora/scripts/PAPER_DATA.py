@@ -1212,8 +1212,9 @@ class Sequencer:
 
     def _append_summary(self, leaf_key, result):
         status = "FAIL" if result.failed else "OK"
-        _summary_line("%-6s %-6s rc=%s wall=%ds" % (
-            status, leaf_key, result.rc, int(result.wall_s)))
+        _summary_line("%-6s %-6s rc=%s wall=%ds peak_rss=%.1fGB" % (
+            status, leaf_key, result.rc, int(result.wall_s),
+            result.peak_rss_gb))
         if result.triage_tgz:
             _summary_line("       triage: %s" % result.triage_tgz)
 
@@ -1253,15 +1254,21 @@ TOP_CHOICES = [
     ("figs", "generate list of figures"),
 ]
 
+# Dry costs measured 2026-08-11, one `--items all` run on a 32-core box
+# (8/8 rc=0, 75 min end to end). wall is sequential per-leaf wall; the GB
+# is peak tree-RSS as sampled by _watch_rss. zombie is the exception: it
+# resumes from run_zombie.py's partial cache (/tmp/bora_zombie_run +
+# the docs/ mirror), so it cost 0s here -- its ~9min is the 2026-08-08
+# COLD figure and its peak RSS has never been measured.
 LEAF_CHOICES = [
-    ("dlp", "DLP"),
-    ("dna", "Dna [dry ~7min, ~22GB]"),
-    ("clam", "Clamav"),
-    ("zombie", "Zombie [dry ~1-2min, ~23GB]"),
-    ("reef", "Reef"),
-    ("lkup", "Analyze lkup [dry ~59s, ~17.4GB]"),
-    ("scale_clam", "Scale-ClamAV"),
-    ("scale_dlp", "Scale-DLP"),
+    ("dlp", "DLP [dry ~4.5min, ~28.4GB]"),
+    ("dna", "Dna [dry ~8min, ~16.2GB]"),
+    ("clam", "Clamav [dry ~9min, ~16.4GB]"),
+    ("zombie", "Zombie [dry ~9min cold, instant when cached]"),
+    ("reef", "Reef [dry ~23min, ~28.4GB]"),
+    ("lkup", "Analyze lkup [dry ~3.5min, ~8.3GB]"),
+    ("scale_clam", "Scale-ClamAV [dry ~7min, ~5.3GB]"),
+    ("scale_dlp", "Scale-DLP [dry ~20min, ~35.8GB]"),
 ]
 _LEAF_KEYS = [k for k, _ in LEAF_CHOICES]     # canonical order (2.2)
 

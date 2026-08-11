@@ -241,19 +241,50 @@ impl<F: PrimeField + ColEle> SigmaGadget<F>
 			idx_msg1, len_msg1, msg2_vec, idx_msg2, len_msg2)
 	}
 
-	/// T703a pilot: d_sort is a virtual RANGE2 query on the aggr
-	/// arm -- one slot per Q_m row (enc col length = the same
-	/// source that sized the old committed d_sort column).
+	// ============================================================
+	// T703a VIRTUAL CERT QUERIES -- framework design doc:
+	// sigma_ir1cs.rs "VIRTUAL LOOKUP QUERIES".
+	//
+	// Five row-parallel slot blocks, all against the RANGE2
+	// table, in this FIXED order (virt_query_sids,
+	// eval_virt_queries and assert_neo_aggr must agree):
+	//
+	//   block         value (active rows)       active class
+	//   1 d_sort      loc[i]-loc[i-1] /         in-group rows /
+	//                 subsig[i]-subsig[i-1]-1   run boundaries
+	//   2 d_below_lo  loc-pl1-rg2-1             FP, pl1 != 0
+	//   3 d_above_lo  pl2+rg1-loc-1             FP, pl2 != max
+	//   4 d_c1        gap-rg1 (C role) /        C non-seed /
+	//                 d_ext at loc[i-1] (FP)    FP jump>0, pl1>0
+	//   5 d_c2        rg2-gap (C role) /        C non-seed /
+	//                 id jump (FP / wrap)       FP + wrap rows
+	//
+	// Inactive rows push 0 (0 is in the table). The committed
+	// cells these replace were ENFORCED EQUAL to these same
+	// expressions on active rows, then range-checked; pushing
+	// the expression into the same lookup keeps the enforcement
+	// and drops the cells (5 committed cols + 5 const si).
+	//
+	// EXAMPLE (fig-14, rg {1,9}): C row a3:27 with pred 21 ->
+	//   gap 6: d_c1 = 6-1 = 5, d_c2 = 9-6 = 3.
+	// FP row a7:131 bracketed by 96/141:
+	//   d_below_lo = 131-96-9-1 = 25,
+	//   d_above_lo = 141+1-131-1 = 10.
+	// Forged bracket (lower nbr 130, inside the window):
+	//   131-130-9-1 = -9 wraps to ~254 bits -> the RANGE2 table
+	//   rejects -> UNSAT, exactly the rejection the committed
+	//   cell's range check used to give.
+	// ============================================================
 	fn virt_query_sids(&self) -> Vec<usize> {
 		if !self.inner.capacity.b_aggressive { return vec![]; }
 		let n = crate::gadgets::traits::cfg_col_len(
 			&self.inner.get_container_config(), "enc");
-		vec![RANGE2 as usize; n]
+		vec![RANGE2 as usize; 5 * n]
 	}
 
-	/// T703a native twin of the Section-4 virtual slot: recompute
-	/// d_sort's binding expression from the committed columns
-	/// (mirror of QmTable::fill_d_sort). Row 0 is the const-0 slot.
+	/// T703a native twin of the five slot blocks (table above):
+	/// same values, same order, recomputed from the committed
+	/// statement. Any circuit/native mismatch is a loud UNSAT.
 	fn eval_virt_queries(&self, i: usize, stmt: &Vec<F>,
 		cfg: &WitnessSigmaIR1CSConfig) -> Vec<F> {
 		if !self.inner.capacity.b_aggressive { return vec![]; }
@@ -265,18 +296,103 @@ impl<F: PrimeField + ColEle> SigmaGadget<F>
 		let col = |n: &str| -> Vec<F> { core.lock().unwrap()
 			.get_container(n).expect("neo col")
 			.lock().unwrap().to_vec() };
+		// the committed Q_m columns the five expressions read;
+		// every one of them SURVIVES the batch.
 		let (enc, loc, subsig) = (col("enc"), col("loc"),
 			col("subsig"));
+		let (id, cat, step) = (col("id"), col("cat"),
+			col("step"));
+		let (pl1, pl2) = (col("prev_loc1"), col("prev_loc2"));
+		let (rg1, rg2, bwd) = (col("rg1"), col("rg2"),
+			col("b_bwd"));
 		let n = enc.len();
+		let one = F::one();
+		let f_max = F::from(((1u64 <<
+			read_global_config().range2_bit) - 1) as u64);
+		// ---- block 1: d_sort ----
+		// rule = QmTable::fill_d_sort: the non-strict loc sort
+		// inside a group, the strict subsig ascent at a run
+		// boundary, 0 elsewhere (pad predecessor stays 0).
 		let mut out = vec![F::zero(); n];
 		for k in 1..n {
 			if enc[k - 1].is_zero() { continue; }
 			out[k] = if enc[k] == enc[k - 1] {
 				loc[k] - loc[k - 1]
 			} else if subsig[k] != subsig[k - 1] {
-				subsig[k] - subsig[k - 1] - F::one()
+				subsig[k] - subsig[k - 1] - one
 			} else { F::zero() };
 		}
+		// ---- blocks 2-5: the four cert values ----
+		// Each branch transcribes ONE circuit expression
+		// (assert_carry / assert_fwd_pruning / the wf jump); the
+		// if-guards are the native forms of the circuit's gates
+		// (sel_c, and the forced bits z_lo / z_hi / z_g).
+		let (f_c, f_fp) = (F::from(CAT_C), F::from(CAT_FP));
+		let mut bl = vec![F::zero(); n]; // d_below_lo values
+		let mut al = vec![F::zero(); n]; // d_above_lo values
+		let mut c1 = vec![F::zero(); n]; // d_c1 values
+		let mut c2 = vec![F::zero(); n]; // d_c2 values
+		for k in 0..n {
+			// orientation: b_bwd_row is forced 0 at step 1 (the
+			// pred is the seed anchor, always read forward), so
+			// the mirrored formulas apply from step 2 on only.
+			let bw = bwd[k] == one && step[k] != one;
+			// windowed-join id jump = d_c2's FP/wrap value.
+			// Same group: id step minus 1 (rows skipped here);
+			// group start: id - 1 (the rank-1 pin's form).
+			let same = k > 0 && enc[k] == enc[k - 1];
+			let jump = if k == 0 { F::zero() } else {
+				id[k] - if same { id[k - 1] }
+					else { F::zero() } - one
+			};
+			if cat[k] == f_c && !step[k].is_zero() {
+				// C role (circuit: sel_c = is_c - is_seed).
+				// a3:27 pred 21 -> gap 6, c1 = 5, c2 = 3.
+				let gap = if bw { pl1[k] - loc[k] }
+					else { loc[k] - pl1[k] };
+				c1[k] = gap - rg1[k];
+				c2[k] = rg2[k] - gap;
+			} else if cat[k] == f_fp {
+				c2[k] = jump;
+				// bracket diffs; the pl1 != 0 / pl2 != max
+				// guards ARE z_lo / z_hi natively: an open
+				// bracket side has no diff to prove and the
+				// raw formula would go negative honestly.
+				// a7:131 nbrs 96/141 -> bl = 25, al = 10.
+				if !pl1[k].is_zero() {
+					bl[k] = if bw {
+						loc[k] + rg1[k] - pl1[k] - one
+					} else {
+						loc[k] - pl1[k] - rg2[k] - one };
+				}
+				if pl2[k] != f_max {
+					al[k] = if bw {
+						pl2[k] - loc[k] - rg2[k] - one
+					} else {
+						pl2[k] + rg1[k] - loc[k] - one };
+				}
+				// d_ext rides d_c1: after a skip (jump > 0),
+				// the below-diff re-read at the lower
+				// NEIGHBOUR's loc extends the bracket to the
+				// span [loc[k-1], loc[k]]. Guards = z_g, z_lo.
+				if k > 0 && !jump.is_zero()
+					&& !pl1[k].is_zero() {
+					c1[k] = if bw {
+						loc[k - 1] + rg1[k] - pl1[k] - one
+					} else {
+						loc[k - 1] - pl1[k] - rg2[k] - one };
+				}
+			} else if !enc[k].is_zero() && cat[k].is_zero() {
+				// wrap row (circuit: is_wrap residual): the
+				// jump closing its group's skipped tail. A
+				// group-OPENING wrap has id 1 -> jump 0.
+				c2[k] = jump;
+			}
+			// seeds and pads: no branch -> all four stay 0,
+			// matching the circuit (every gate is 0 there).
+		}
+		out.extend(bl); out.extend(al);
+		out.extend(c1); out.extend(c2);
 		out
 	}
 
@@ -2130,6 +2246,8 @@ pub(crate) struct QmVars<F: PrimeField + ColEle> {
 	pub prev_loc2: Vec<FpVar<F>>, pub pat: Vec<FpVar<F>>,
 	pub rg1: Vec<FpVar<F>>, pub rg2: Vec<FpVar<F>>,
 	pub enc_prev: Vec<FpVar<F>>, pub b_bwd: Vec<FpVar<F>>,
+	// T703a: the five cert/sort vecs are EMPTY on the aggr arm
+	// (served as virtual RANGE2 queries, not committed cells).
 	pub d_c1: Vec<FpVar<F>>, pub d_c2: Vec<FpVar<F>>,
 	pub d_below_lo: Vec<FpVar<F>>, pub d_above_lo: Vec<FpVar<F>>,
 	pub d_sort: Vec<FpVar<F>>,
@@ -2782,11 +2900,30 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		// below. On the non-aggr arm b_win is false, so both stay 0
 		// (no windowing there; T301 is aggr-only).
 		let zc = FpVar::<F>::Constant(F::zero());
+		//T703a: d_c2 is VIRTUAL on the aggr arm, so the join
+		//jump is DERIVED from committed cols instead of read
+		//from a committed cell the skeleton then pins:
+		//  jump[i] = id[i] - b_same[i]*id[i-1] - 1
+		//    same group (b_same = 1): the id step minus 1 = how
+		//      many rows the windowed join skipped here;
+		//    group start (b_same = 0): id - 1, exactly what the
+		//      rank-1 pin below demands of a start row.
+		//EXAMPLE (T301 fixture): kept rows loc 23 (id 4) and
+		//loc 44 (id 6), loc 37 skipped -> jump = 6-4-1 = 1.
+		//Consequence: the skeleton and the pin become identities
+		//on FP/wrap rows. That loses nothing -- their only
+		//effect there was forcing the committed cell to EQUAL
+		//the jump, and the actual bound (jump fits RANGE2, the
+		//id-monotonicity guarantee) now rides the d_c2 query.
+		//C rows keep g_fp = g_wr = 0, so "id steps by exactly
+		//+1" is forced precisely as before. Row 0 is the forced
+		//pad (never FP/wrap): jump stays 0. Cost: 1 mul/row.
 		let (mut g_fp, mut g_wr) = (vec![], vec![]);
 		for i in 0..n {
-			let (a, b) = if b_win {
-				(&v.d_c2[i] * &sel.is_fp[i],
-				&v.d_c2[i] * &sel.is_wrap[i])
+			let (a, b) = if b_win && i > 0 {
+				let j = &(&v.id[i]
+					- &(&b_same[i] * &v.id[i - 1])) - &c_one;
+				(&j * &sel.is_fp[i], &j * &sel.is_wrap[i])
 			} else { (zc.clone(), zc.clone()) };
 			g_fp.push(a); g_wr.push(b);
 		}
@@ -5082,8 +5219,8 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 	/// compute_sig reads the final chunk's q_c for the verdict.
 	fn assert_carry(
 		cs: ConstraintSystemRef<F>,
-		qm: &QmVars<F>,  // loc, prev_loc1, rg1, rg2, d_c1, d_c2,
-		                 //   enc
+		qm: &QmVars<F>,  // loc, prev_loc1, rg1, rg2, enc
+		                 //   (+ d_c1/d_c2 cells, nonaggr only)
 		sel: &NeoSel<F>, // is_c, is_fp, is_seed, b_bwd_row
 		b_aggr: bool,    // arm: bwd windows + no q_c
 		q_c: (&[FpVar<F>], &[FpVar<F>], &[F]),
@@ -5093,6 +5230,12 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		buf: &mut QmQueryBuf<F>,
 		                 // CARRIED-target instance
 		r2: &FpVar<F>,
+		mut vq: Option<&mut (Vec<FpVar<F>>, Vec<FpVar<F>>)>,
+		                 // T703a Some = aggr virtual-cert mode:
+		                 //   receives the C-role value terms
+		                 //   sel_c*(gap-rg1) / sel_c*(rg2-gap) of
+		                 //   (d_c1, d_c2), one per row. None =
+		                 //   legacy committed binds (nonaggr).
 		job_id: usize,
 	) -> Result<(), SynthesisError> {
 		let n0 = cs.num_constraints();
@@ -5112,12 +5255,32 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 					&(&qm.prev_loc1[i] - &qm.loc[i]),
 					&(&qm.loc[i] - &qm.prev_loc1[i]))
 			} else { &qm.loc[i] - &qm.prev_loc1[i] };
-			check_prod_zero(&sel_c,
-				&(&(&gap - &qm.rg1[i]) - &qm.d_c1[i]), lc!(),
-				"neo C d1")?;
-			check_prod_zero(&sel_c,
-				&(&(&qm.rg2[i] - &gap) - &qm.d_c2[i]), lc!(),
-				"neo C d2")?;
+			// --- (1b) window certs ---
+			// The bind form (None arm) forces the committed cell
+			// to equal the windowed gap diff, and the cell's
+			// RANGE2 check then proves the diff >= 0 (pred truly
+			// in-window). T703a aggr (Some arm): no cell -- push
+			// the SAME product as the RANGE2 query value itself.
+			// Enforcement is unchanged: value in table <=> diff
+			// >= 0; off-class rows push 0 via sel_c = 0. Cost is
+			// unchanged too (the bind allocated the same 2 muls).
+			// EXAMPLE a3:27 pred 21, rg {1,9}: pushes 5 and 3;
+			// a forged pred at 40 -> gap -13 -> the value -14
+			// wraps huge -> RANGE2 rejects.
+			match vq.as_deref_mut() {
+				Some((t1, t2)) => {
+					t1.push(&sel_c * &(&gap - &qm.rg1[i]));
+					t2.push(&sel_c * &(&qm.rg2[i] - &gap));
+				},
+				None => {
+					check_prod_zero(&sel_c,
+						&(&(&gap - &qm.rg1[i]) - &qm.d_c1[i]),
+						lc!(), "neo C d1")?;
+					check_prod_zero(&sel_c,
+						&(&(&qm.rg2[i] - &gap) - &qm.d_c2[i]),
+						lc!(), "neo C d2")?;
+				},
+			}
 			// NONAGGR: no separate "pred not the group's 0-wrap"
 			// ban needed -- T306b deleted the 0-wrap itself, and QC
 			// (this fn's carried-target instance) has NO loc-0
@@ -5186,8 +5349,9 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 	/// each diff fits ONE RANGE2 cell -- no overflow limb.
 	fn assert_fwd_pruning(
 		cs: ConstraintSystemRef<F>,
-		qm: &QmVars<F>,  // loc, rg1, rg2, prev_loc1, prev_loc2,
-		                 //   d_below_lo, d_above_lo
+		qm: &QmVars<F>,  // loc, rg1, rg2, prev_loc1, prev_loc2
+		                 //   (+ d_below/above_lo, d_c1 cells,
+		                 //   nonaggr only)
 		sel: &NeoSel<F>, // is_fp, b_bwd_row
 		b_aggr: bool,
 		pv: &PredView<F>,
@@ -5196,8 +5360,18 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		g_fp: &Vec<FpVar<F>>,
 		g_wr: &Vec<FpVar<F>>,
 		                 // WINDOWED JOIN id jumps, from assert_neo_wf
+		zb: Option<(&Vec<FpVar<F>>, &Vec<FpVar<F>>,
+			&Vec<FpVar<F>>)>,
+		                 // T703a Some = aggr virtual-cert mode:
+		                 //   FORCED 1-iff-zero bits on (prev_loc1,
+		                 //   max - prev_loc2, g_fp); the three cert
+		                 //   binds become returned q values. None =
+		                 //   legacy committed binds (nonaggr).
 		job_id: usize,
-	) -> Result<(), SynthesisError> {
+	) -> Result<(Vec<FpVar<F>>, Vec<FpVar<F>>, Vec<FpVar<F>>),
+		SynthesisError> {
+		                 // (q_below, q_above, q_ext) -- one value
+		                 //   per row; all three empty when zb=None
 		let n0 = cs.num_constraints();
 		let n = qm.enc.len();
 		let rb = read_global_config().range2_bit;
@@ -5207,10 +5381,15 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		//AGGRESSIVE ONLY -- see gen_qm_table's note on assert_qm_union.
 		let b_win = b_aggr;
 		let mut m_hi_prev = FpVar::<F>::Constant(F::zero());
-		// No gate bit for the "nothing above" sentinel either: the
-		// distance c_max - prev_loc2 masks on itself, exactly as
-		// prev_loc1 does below (see gen_pred_view for the worked
-		// example). Both arms, since m_hi is its only reader.
+		// T703a out-cols (Some arm only): the q values for
+		// d_below_lo / d_above_lo / d_c1's FP d_ext role.
+		let (mut q_bl, mut q_al, mut q_ext) =
+			(vec![], vec![], vec![]);
+		// No gate bit for the "nothing above" sentinel in the
+		// None arm: the distance c_max - prev_loc2 masks on
+		// itself, exactly as prev_loc1 does below (see
+		// gen_pred_view). m_hi survives BOTH arms -- the "gap
+		// into wrap" check below is its second reader.
 		for i in 0..n {
 			// fwd-form diffs. ONE mul orients both for bwd rows:
 			// the two selects M6 paid for swap the same (rg1,rg2)
@@ -5225,40 +5404,79 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 					* &(&qm.rg1[i] + &qm.rg2[i]);
 				(&e_lo + &u, &e_hi - &u)
 			} else { (e_lo, e_hi) };
-			// (1) + (2): each active diff equals its committed
-			// RANGE2 cell (single limb by the doc ASSUMPTION).
-			// BOTH ARMS mask on the value (see gen_pred_view): T306b
-			// deleted the non-aggr carry 0-wrap ban that used to
-			// force keeping a separate zero-bit here.
-			let m_lo = &sel.is_fp[i] * &qm.prev_loc1[i];
-			check_prod_zero(&m_lo, &(&e_lo - &qm.d_below_lo[i]),
-				lc!(), "neo FP below")?;
 			let m_hi = &sel.is_fp[i]
 				* &(&c_max - &qm.prev_loc2[i]);
-			check_prod_zero(&m_hi, &(&e_hi - &qm.d_above_lo[i]),
-				lc!(), "neo FP above")?;
-			// WINDOWED JOIN: a gap below this row extends its own
-			// bracket claim from a point to the span
-			// [loc[i-1], loc[i]] -- d_ext = d_below_lo read at the
-			// lower neighbour's loc, riding d_c1 under the SAME m_lo
-			// mask, so an open lower end costs nothing. A gap INTO
-			// the max-wrap needs no witness at all: it is legal
-			// exactly when the row below it has no window above,
-			// i.e. m_hi == 0. See the WINDOWED JOIN block above
-			// assert_neo_wf for the worked refusal.
+			// (1) + (2): each active FP diff must land in RANGE2.
+			// None arm (nonaggr): bind the committed cell; the
+			// VALUE-mask m_lo = is_fp * prev_loc1 is fine for a
+			// bind, which only needs "nonzero iff active" (T306b
+			// deleted the zero-bits this block once had).
+			// Some arm (T703a aggr): the diff itself is the query
+			// value, and a value-mask cannot build it:
+			//   m_lo * e_lo?  honest a7:131 pushes 96*25 = 2400,
+			//     out of range -> completeness broken;
+			//   bare e_lo?    an open lower side (pl1 = 0) makes
+			//     e_lo honestly negative -> same break;
+			//   a FREE bit?   the prover gates a live cert off
+			//     (0 passes the table) -> false discharge.
+			// Hence the FORCED zero-bits z_lo/z_hi/z_g, welded
+			// 1-iff-zero in assert_neo_aggr: active rows push
+			// exactly the diff the old cell held, others 0.
+			// WINDOWED JOIN (both arms): d_ext = the below diff
+			// read at the lower neighbour's loc, riding d_c1 --
+			// see the block above assert_neo_wf for the worked
+			// refusal. e_x derives from e_lo as a free LC offset
+			// (T402: the orientation term is identical).
+			match zb {
+				Some((z_lo, z_hi, z_g)) => {
+					// active iff FP row with a real lower nbr
+					let act_lo = &sel.is_fp[i]
+						* &(&c_one - &z_lo[i]);
+					q_bl.push(&act_lo * &e_lo);
+					// active iff FP row with a real upper nbr
+					let act_hi = &sel.is_fp[i]
+						* &(&c_one - &z_hi[i]);
+					q_al.push(&act_hi * &e_hi);
+					// d_ext: active iff a skip happened AND the
+					// lower side is real; g_fp != 0 already
+					// implies is_fp, so two bits gate it.
+					if b_win && i > 0 {
+						let e_x = &e_lo
+							+ &(&qm.loc[i - 1] - &qm.loc[i]);
+						let act = &(&c_one - &z_g[i])
+							* &(&c_one - &z_lo[i]);
+						q_ext.push(&act * &e_x);
+					} else {
+						q_ext.push(FpVar::<F>::Constant(
+							F::zero()));
+					}
+				},
+				None => {
+					let m_lo = &sel.is_fp[i]
+						* &qm.prev_loc1[i];
+					check_prod_zero(&m_lo,
+						&(&e_lo - &qm.d_below_lo[i]),
+						lc!(), "neo FP below")?;
+					check_prod_zero(&m_hi,
+						&(&e_hi - &qm.d_above_lo[i]),
+						lc!(), "neo FP above")?;
+					if b_win && i > 0 {
+						let e_x = &e_lo
+							+ &(&qm.loc[i - 1] - &qm.loc[i]);
+						check_prod_zero(
+							&(&g_fp[i] * &m_lo),
+							&(&e_x - &qm.d_c1[i]), lc!(),
+							"neo gap span")?;
+					}
+				},
+			}
+			// A gap INTO the max-wrap needs no witness: legal
+			// exactly when the row below has no window above
+			// (m_hi_prev == 0). BOTH halves are needed: m_hi == 0
+			// alone is also true for a NON-FP row, which would
+			// let a prover empty a whole group down to its two
+			// wraps and discharge the subsig for free.
 			if b_win && i > 0 {
-				// T402: e_x is e_lo re-read at the lower
-				// neighbour's loc; the orientation term is
-				// identical, so derive it as a free LC offset
-				// instead of paying the mul again.
-				let e_x = &e_lo + &(&qm.loc[i - 1] - &qm.loc[i]);
-				check_prod_zero(&(&g_fp[i] * &m_lo),
-					&(&e_x - &qm.d_c1[i]), lc!(),
-					"neo gap span")?;
-				// BOTH halves are needed: m_hi == 0 alone is also
-				// true for a NON-FP row, which would let a prover
-				// empty a whole group down to its two wraps and
-				// discharge the subsig for free.
 				check_prod_zero(&g_wr[i],
 					&(&c_one - &sel.is_fp[i - 1]), lc!(),
 					"neo gap into wrap needs FP")?;
@@ -5278,7 +5496,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 			"PERF 61082.5: block=fwd_prune cs={} pred={}",
 			cs.num_constraints() - n0,
 			(if b_aggr { 5 } else { 4 }) * n));
-		Ok(())
+		Ok((q_bl, q_al, q_ext))
 	}
 
 	/// Verifies the BWD-PRUNE labels of Q_m: a row tagged BP is
@@ -5818,6 +6036,20 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 
 	/// AGGR entry: thin composer, no constraints of its own.
 	/// Interface = the test seam (cs, nat, vars, r1, r2, job_id).
+	/// Native mirror of assert_neo_wf's g_fp expression: FP rows'
+	/// windowed-join id jump, 0 elsewhere (row 0 = forced pad).
+	fn gen_gfp_nat(t: &QmTable<F>) -> Vec<F> {
+		let n = t.enc.len();
+		let mut out = vec![F::zero(); n];
+		for i in 1..n {
+			if t.cat[i] != F::from(CAT_FP) { continue; }
+			let same = t.enc[i] == t.enc[i - 1];
+			out[i] = t.id[i] - if same { t.id[i - 1] }
+				else { F::zero() } - F::one();
+		}
+		out
+	}
+
 	pub(crate) fn assert_neo_aggr(
 		cs: ConstraintSystemRef<F>,
 		nat: &NeoCore<F>, vars: &NeoCoreVars<F>,
@@ -5839,6 +6071,26 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		let (_gs, rid, n_runs, g_fp, g_wr) =
 			Self::assert_neo_wf(cs.clone(),
 			&nat.t, &vars.qm, &sel, true, Some(vq), job_id)?;
+		// T703a: the three forced zero-bits gating the virtual
+		// cert values. Built HERE, not in the consumer fns,
+		// because the weld needs the NATIVE values (batch field
+		// inversion) and z_lo serves two fns below. 2cs each.
+		//   z_lo[i] = 1 iff prev_loc1[i] == 0   (lower side open)
+		//   z_hi[i] = 1 iff prev_loc2[i] == max (upper side open)
+		//   z_g[i]  = 1 iff g_fp[i]     == 0    (no id jump here)
+		let nq = nat.t.enc.len();
+		let rb = read_global_config().range2_bit;
+		let f_max = F::from(((1u64 << rb) - 1) as u64);
+		let c_max = new_const_var(&cs, f_max);
+		let z_lo = gen_zero_bits(&cs, &nat.t.prev_loc1,
+			&vars.qm.prev_loc1)?;
+		let hi_nat: Vec<F> = nat.t.prev_loc2.iter()
+			.map(|x| f_max - *x).collect();
+		let hi_var: Vec<FpVar<F>> = vars.qm.prev_loc2.iter()
+			.map(|x| &c_max - x).collect();
+		let z_hi = gen_zero_bits(&cs, &hi_nat, &hi_var)?;
+		let gfp_nat = Self::gen_gfp_nat(&nat.t);
+		let z_g = gen_zero_bits(&cs, &gfp_nat, &g_fp)?;
 		// -- 3. pin each si_* companion column to its base
 		//    column (outer-lookup share consistency) --
 		Self::assert_neo_si_pins(cs.clone(), &vars.qm, &sel,
@@ -5876,13 +6128,31 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		//    aggr; still shape-checked); pv = the predecessor
 		//    view shared with the fwd-pruning block --
 		let pv = Self::gen_pred_view(&vars.qm, r1, &r1sq);
+		let mut cvq = (vec![], vec![]);
 		Self::assert_carry(cs.clone(), &vars.qm, &sel, true,
 			(&vars.qc_enc, &vars.qc_loc, &nat.qc_enc), &pv,
-			&mut buf, r2, job_id)?;
+			&mut buf, r2, Some(&mut cvq), job_id)?;
 		// -- 7. fwd pruning: every FP label justified by
 		//    querying its parent rows (closure vs Q_r) --
-		Self::assert_fwd_pruning(cs.clone(), &vars.qm, &sel,
-			true, &pv, &mut buf, &g_fp, &g_wr, job_id)?;
+		let (q_bl, q_al, q_ext) = Self::assert_fwd_pruning(
+			cs.clone(), &vars.qm, &sel, true, &pv, &mut buf,
+			&g_fp, &g_wr, Some((&z_lo, &z_hi, &z_g)), job_id)?;
+		// T703a slot blocks 2-5 (block 1 = d_sort, pushed inside
+		// wf Section 4). The two multiplexed columns SUM their
+		// role terms; the cat classes are exclusive (selectors
+		// Section 3), so per row at most one addend is nonzero
+		// and the sum IS the active role's value -- seeds and
+		// pads have every addend 0:
+		//   d_c1 = sel_c*(gap-rg1) + act_ext*e_x
+		//   d_c2 = sel_c*(rg2-gap) + g_fp + g_wr
+		// (g_fp + g_wr = the id jump on FP/wrap rows, already
+		// paid for by wf -- no extra mul.) Push order MUST match
+		// eval_virt_queries: bl, al, c1, c2.
+		vq.extend(q_bl); vq.extend(q_al);
+		for i in 0..nq { vq.push(&cvq.0[i] + &q_ext[i]); }
+		for i in 0..nq {
+			vq.push(&(&cvq.1[i] + &g_fp[i]) + &g_wr[i]);
+		}
 		// -- 8. each statement subsig's step-0 seed row must
 		//    exist reachable in Q_m (anchor of reachability:
 		//    blocks the vacuous all-FP labeling) --
@@ -5990,11 +6260,12 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		let pv = Self::gen_pred_view(&vars.qm, r1, &r1sq);
 		Self::assert_carry(cs.clone(), &vars.qm, &sel, false,
 			(&vars.qc_enc, &vars.qc_loc, &nat.qc_enc), &pv,
-			&mut buf_qc, r2, job_id)?;
+			&mut buf_qc, r2, None, job_id)?;
 		// -- 9. fwd pruning: every FP label justified by
 		//    querying its parent rows (closure vs Q_r) --
 		Self::assert_fwd_pruning(cs.clone(), &vars.qm, &sel,
-			false, &pv, &mut buf_qr, &g_fp, &g_wr, job_id)?;
+			false, &pv, &mut buf_qr, &g_fp, &g_wr, None,
+			job_id)?;
 		// -- 10. bwd pruning: every BP label is a fwd dead
 		//    end -- farthest reach short of the successor
 		//    step's minimum surviving loc --
@@ -6232,13 +6503,17 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 			fix(&t.prev_id1, "prev_id1", z);
 			fix(&t.prev_loc1, "prev_loc1", z);
 			fix(&t.prev_loc2, "prev_loc2", z);
-			fix(&t.d_c1, "d_c1", f_r2);
-			fix(&t.d_c2, "d_c2", f_r2);
-			fix(&t.d_below_lo, "d_below_lo", f_r2);
-			fix(&t.d_above_lo, "d_above_lo", f_r2);
-			//T703a: aggr arm serves d_sort as a VIRTUAL query
-			//(assert_neo_wf Section 4) -- no committed cell.
-			if !b_virt { fix(&t.d_sort, "d_sort", f_r2); }
+			//T703a: the aggr arm serves the five cert/sort
+			//columns as VIRTUAL RANGE2 queries -- no committed
+			//cells (values pushed by assert_carry /
+			//assert_fwd_pruning / assert_neo_wf Section 4).
+			if !b_virt {
+				fix(&t.d_c1, "d_c1", f_r2);
+				fix(&t.d_c2, "d_c2", f_r2);
+				fix(&t.d_below_lo, "d_below_lo", f_r2);
+				fix(&t.d_above_lo, "d_above_lo", f_r2);
+				fix(&t.d_sort, "d_sort", f_r2);
+			}
 			// T201: l_pat/l_id/l_loc are NOT committed here. They are
 			// an EXTERNAL reference to the fsm's own sorted_tbl,
 			// attached by ext_pat_loc at the advice ctor: zero
@@ -6693,12 +6968,13 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		let (rg2, rg2_n) = c2("rg2")?;
 		let (enc_prev, enc_prev_n) = c2("enc_prev")?;
 		let (b_bwd, b_bwd_n) = c2("b_bwd")?;
-		let (d_c1, d_c1_n) = c2("d_c1")?;
-		let (d_c2, d_c2_n) = c2("d_c2")?;
-		let (d_below_lo, d_below_lo_n) = c2("d_below_lo")?;
-		let (d_above_lo, d_above_lo_n) = c2("d_above_lo")?;
-		//T703a: d_sort is VIRTUAL on the aggr arm -- no committed
-		//cell to load; the wf Section 4 vq push replaces the bind.
+		//T703a: the five cert/sort columns are VIRTUAL on the
+		//aggr arm -- nothing committed to load; the in-circuit
+		//expressions + RANGE2 query slots replace the binds.
+		let (d_c1, d_c1_n) = (vec![], vec![]);
+		let (d_c2, d_c2_n) = (vec![], vec![]);
+		let (d_below_lo, d_below_lo_n) = (vec![], vec![]);
+		let (d_above_lo, d_above_lo_n) = (vec![], vec![]);
 		let (d_sort, d_sort_n) = (vec![], vec![]);
 		// -- 2. si_* companions (outer-lookup share) --
 		let (si_step, si_step_n) = c2("si_step")?;
@@ -8457,8 +8733,11 @@ pub(crate) mod tests_neo_m6 {
 
 	/// allocate a (possibly tampered) native bundle and run the
 	/// aggressive entry over it.
-	pub(crate) fn run_nat_aggr(nat: &NeoCore<Fr>)
-	-> ConstraintSystemRef<Fr> {
+	/// Core-level runner returning the derived virtual query
+	/// values (native) alongside the cs; run_nat_aggr wraps it
+	/// with the RANGE2 acceptance mirror (T703a).
+	pub(crate) fn run_nat_aggr_vq(nat: &NeoCore<Fr>)
+	-> (ConstraintSystemRef<Fr>, Vec<Fr>) {
 		let cs = ConstraintSystem::<Fr>::new_ref();
 		let vars = alloc_vars(&cs, nat);
 		let r1 = new_var(&cs, Fr::from(12345u32));
@@ -8467,14 +8746,31 @@ pub(crate) mod tests_neo_m6 {
 		DischargeAdvNeoGadget::<Fr>::assert_neo_aggr(
 			cs.clone(), nat, &vars, &r1, &r2, 0, &mut vq)
 			.expect("assert core");
-		//T703a: the RANGE2 lookup on the virtual d_sort slots
-		//lives in the framework, outside this harness. Mirror its
+		let qs = vq.iter().map(|q| q.value().unwrap()).collect();
+		(cs, qs)
+	}
+
+	/// TRUE iff any derived virtual query value falls outside the
+	/// RANGE2 table -- the framework-lookup rejection, mirrored
+	/// natively for harnesses that stop at the gadget cs (T703a).
+	pub(crate) fn vq_out_of_range(nat: &NeoCore<Fr>) -> bool {
+		let rb = read_global_config().range2_bit;
+		let bound = Fr::from(1u64 << rb).into_bigint();
+		run_nat_aggr_vq(nat).1.iter()
+			.any(|q| q.into_bigint() >= bound)
+	}
+
+	pub(crate) fn run_nat_aggr(nat: &NeoCore<Fr>)
+	-> ConstraintSystemRef<Fr> {
+		let (cs, qs) = run_nat_aggr_vq(nat);
+		//T703a: the RANGE2 lookup on the virtual slots lives in
+		//the framework, outside this harness. Mirror its
 		//acceptance natively: an out-of-range value forces the cs
 		//UNSAT exactly like the failed lookup would.
 		let rb = read_global_config().range2_bit;
 		let bound = Fr::from(1u64 << rb).into_bigint();
-		for q in &vq {
-			if q.value().unwrap().into_bigint() >= bound {
+		for q in &qs {
+			if q.into_bigint() >= bound {
 				let one = new_var(&cs, Fr::from(1u32));
 				check_prod_zero(&one, &one, lc!(),
 					"virt range mirror").unwrap();
@@ -8696,14 +8992,19 @@ pub(crate) mod tests_neo_m6 {
 			assert!(!names.contains(&n.to_string()),
 				"T201: {} must not be committed in neo_core", n);
 		}
-		// T703a: d_sort is a VIRTUAL query on the aggr arm -- the
-		// native advice still fills it, but neither it nor its si
-		// twin may appear in the committed statement.
-		assert!(!nat.t.d_sort.is_empty(),
-			"T703a: native d_sort advice must survive");
-		for n in ["d_sort", "si_d_sort"] {
-			assert!(!names.contains(&n.to_string()),
-				"T703a: {} must not be committed in neo_core", n);
+		// T703a: the five cert/sort columns are VIRTUAL queries
+		// on the aggr arm -- the native advice still fills them,
+		// but none (nor their si twins) may be committed.
+		for (v, nm) in [(&nat.t.d_sort, "d_sort"),
+			(&nat.t.d_c1, "d_c1"), (&nat.t.d_c2, "d_c2"),
+			(&nat.t.d_below_lo, "d_below_lo"),
+			(&nat.t.d_above_lo, "d_above_lo")] {
+			assert!(!v.is_empty(),
+				"T703a: native {} advice must survive", nm);
+			for p in [nm.to_string(), format!("si_{}", nm)] {
+				assert!(!names.contains(&p),
+					"T703a: {} must not be committed", p);
+			}
 		}
 		// T202: s_enc lost its only reader (check (4)) and is no
 		// longer committed either.
@@ -9520,6 +9821,7 @@ mod tests_neo_m6_neg {
 #[cfg(test)]
 mod tests_neo_m6_h {
 	use super::*;
+	use super::tests_neo_m6::vq_out_of_range;
 	use ark_bn254::Fr;
 	use crate::gadgets::word_extract::{LEGS,
 		tests_word_extract_gadget::test_gadget_adv_ex};
@@ -9540,6 +9842,10 @@ mod tests_neo_m6_h {
 	fn run_neo_h_case(db: &ClamavDB<Fr>, dir: &str, content: &str,
 		b_expect_sat: bool,
 		tamper: Option<&dyn Fn(&mut NeoCore<Fr>)>) {
+		// T703a: set TRUE when a tamper's derived virtual query
+		// leaves RANGE2 -- the outer-lookup defence, invisible in
+		// the tier-1 gadget cs this harness builds.
+		let mut b_vq_out = false;
 		let b_igc = false;
 		let bundle = &db.bundle_subsig;
 		let acdfa = &bundle.vec_acdfa[0];
@@ -9620,6 +9926,11 @@ mod tests_neo_m6_h {
 				let (_c, combo, mut nat) = gen.gen_core_stmt(
 					&pat_loc, steps_store).expect("stmt");
 				tf(&mut nat);
+				//T703a: derive the virtual cert queries from the
+				//tampered table; out-of-RANGE2 means the
+				//framework lookup rejects in production. Record
+				//it -- the tier-1 cs below cannot see it.
+				b_vq_out = vq_out_of_range(&nat);
 				//tamper harness rebuilds the AGGR statement, so
 				//it must match gen_core_stmt's virtual layout
 				let core = StepQueueNeo::core_container(&nat,
@@ -9639,6 +9950,14 @@ mod tests_neo_m6_h {
 					stmt_container: sc, b_igc, offset_fsm: 1 }
 			}
 		};
+		// T703a: a tamper whose defence is the outer RANGE2
+		// lookup leaves the tier-1 cs SAT -- the native mirror
+		// above IS the proof of rejection; stop here.
+		if b_vq_out {
+			assert!(!b_expect_sat,
+				"honest case pushed an out-of-range virt query");
+			return;
+		}
 		let stmt_disc = adv_disc.stmt_container;
 		let cfg_disc = stmt_disc.lock().unwrap().get_cfg();
 		let mut vec_cfg = vec![cfg_wea.clone(), cfg_faa.clone(),
@@ -9749,10 +10068,10 @@ mod tests_neo_m6_h {
 	}
 
 	/// H4 b_bwd lie: flip the direction bit on a step>=2 C row: the
-	/// C-cert gap select flips sign, so the d_c1/d_c2 binds fail ->
-	/// UNSAT. (A step-1 flip is b_bwd_row-masked in-circuit and
-	/// caught only by the si_b_bwd DB value-lookup, which this
-	/// harness leaves to the folding framework's lookup share.)
+	/// C-cert gap select flips sign, so the DERIVED d_c1/d_c2 query
+	/// values leave RANGE2 (T703a; the harness's native mirror
+	/// proves the lookup rejection). A step-1 flip is b_bwd_row-
+	/// masked and caught only by the si_b_bwd DB value-lookup.
 	#[test]
 	fn test_m6_h4_neg_b_bwd_lie() {
 		get_global_config().basis_failed_subsigs = 10000;
@@ -11343,12 +11662,9 @@ mod tests_neo_t301 {
 		t.si_b_bwd = keep(&t.si_b_bwd);
 	}
 
-	/// Repair the two per-row columns a drop invalidates, so the
-	/// negative is caught by the GAP checks and nothing else: g
-	/// (= d_c2) widens over the bigger id hole, and d_sort re-reads
-	/// the new lower neighbour. Without this the wf skeleton and the
-	/// loc sort fire first and the test proves nothing -- verified by
-	/// disabling the gap checks and watching every negative go SAT.
+	/// Keep the native mirror coherent after a drop: g (= d_c2)
+	/// widens over the id hole, d_sort re-reads the new lower
+	/// neighbour. T703a: the circuit derives both -- natives only.
 	fn fix_after_drop(t: &mut QmTable<Fr>, i: usize) {
 		t.d_c2[i] = t.id[i] - t.id[i - 1] - f(1);
 		t.d_sort[i] = t.loc[i] - t.loc[i - 1];
@@ -11395,11 +11711,9 @@ mod tests_neo_t301 {
 	}
 
 	/// NEG: drop dead B's BOTTOM edge (23). The gap now runs from the
-	/// C row at 14, and 14 is inside window 1, so the span is not
-	/// dead: d_ext = 14 - 10 - 9 - 1 = -6. Asserted twice -- the
-	/// in-circuit equality fails, and the value a smarter prover
-	/// would have to write is outside RANGE2 (tier-1 does not carry
-	/// the outer range lookup, so that half is checked natively).
+	/// C row at 14, inside window 1, so the span is not dead: the
+	/// DERIVED d_ext = 14 - 10 - 9 - 1 = -6 lies outside RANGE2
+	/// (T703a: tier-1 mirrors that lookup acceptance natively).
 	#[test]
 	fn test_t301_neg_gap_spans_window() {
 		let mut nat = gen_nat();
