@@ -871,6 +871,13 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 			data_size, lkup_share_size, failed_sigs_size, discharged_sigs_size,
 			b_cyclepair
 		); //will have si_data_info reset later
+		//T703a: collect virtual lookup slot declarations, gadget
+		//order (must match the framework's self.gadgets loop).
+		let mut virt_sids: Vec<usize> = vec![];
+		for g in self.get_gadgets() {
+			virt_sids.extend(g.lock().unwrap().virt_query_sids());
+		}
+		cfg.virt_sids = virt_sids;
 
 		//3. generate the map for each component. Each component's statement
 		// is structured as

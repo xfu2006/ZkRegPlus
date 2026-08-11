@@ -122,28 +122,6 @@ maxsteps={} WRAP_KEYS_NEEDED={} have={}",
 			crate::gadgets::traits::dump_cfg_col_sizes(
 				&inner.dummy_cfg, &format!("neo igc={}", b_igc));
 		}
-		if std::env::var("ZKR_PROBE_NS").is_ok(){
-			//T704 falsifier: ns_pat is DEDUPED distinct no-show pats
-			//yet capped at the wrap budget W. Two seed-set-independent
-			//bounds: P_topK = sum of the K largest per-subsig distinct
-			//pat counts; P_glob = distinct pats over the whole store.
-			use std::collections::HashSet;
-			let mut per: Vec<usize> = store_steps.subsig_to_steps
-				.values().map(|it| it.vec_pm_bounds.iter()
-					.map(|(p, _)| *p).collect::<HashSet<usize>>().len())
-				.collect();
-			per.sort_unstable_by(|a, b| b.cmp(a));
-			let ptk: usize = per.iter().take(capacity.subsigs).sum();
-			let pg = store_steps.subsig_to_steps.values()
-				.flat_map(|it| it.vec_pm_bounds.iter().map(|(p, _)| *p))
-				.collect::<HashSet<usize>>().len();
-			let w = StepQueueNeo::<F>::wrap_budget(capacity,
-				store_steps);
-			let p = ptk.min(pg);
-			println!("DEBUG USE 62091.1: igc={} K={} W={} P_topK={} \
-P_glob={} P={} P/W={:.4}", b_igc, capacity.subsigs, w, ptk, pg, p,
-				p as f64 / w.max(1) as f64);
-		}
 		Self { inner }
 	}
 
@@ -263,10 +241,50 @@ impl<F: PrimeField + ColEle> SigmaGadget<F>
 			idx_msg1, len_msg1, msg2_vec, idx_msg2, len_msg2)
 	}
 
+	/// T703a pilot: d_sort is a virtual RANGE2 query on the aggr
+	/// arm -- one slot per Q_m row (enc col length = the same
+	/// source that sized the old committed d_sort column).
+	fn virt_query_sids(&self) -> Vec<usize> {
+		if !self.inner.capacity.b_aggressive { return vec![]; }
+		let n = crate::gadgets::traits::cfg_col_len(
+			&self.inner.get_container_config(), "enc");
+		vec![RANGE2 as usize; n]
+	}
+
+	/// T703a native twin of the Section-4 virtual slot: recompute
+	/// d_sort's binding expression from the committed columns
+	/// (mirror of QmTable::fill_d_sort). Row 0 is the const-0 slot.
+	fn eval_virt_queries(&self, i: usize, stmt: &Vec<F>,
+		cfg: &WitnessSigmaIR1CSConfig) -> Vec<F> {
+		if !self.inner.capacity.b_aggressive { return vec![]; }
+		let ccfg = self.inner.get_container_config();
+		let all = Container::<F>::load_from_stmt(i, cfg, stmt,
+			&ccfg);
+		let core = all.get_container("neo_core")
+			.expect("neo_core container");
+		let col = |n: &str| -> Vec<F> { core.lock().unwrap()
+			.get_container(n).expect("neo col")
+			.lock().unwrap().to_vec() };
+		let (enc, loc, subsig) = (col("enc"), col("loc"),
+			col("subsig"));
+		let n = enc.len();
+		let mut out = vec![F::zero(); n];
+		for k in 1..n {
+			if enc[k - 1].is_zero() { continue; }
+			out[k] = if enc[k] == enc[k - 1] {
+				loc[k] - loc[k - 1]
+			} else if subsig[k] != subsig[k - 1] {
+				subsig[k] - subsig[k - 1] - F::one()
+			} else { F::zero() };
+		}
+		out
+	}
+
 	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>,
 		wtns: &WitnessSigmaIR1CSVar<F>,
 		cfg: &WitnessSigmaIR1CSConfig,
-		_word_id: FpVar<F>, _subsig_id: FpVar<F>)
+		_word_id: FpVar<F>, _subsig_id: FpVar<F>,
+		virt_vals: &mut Vec<FpVar<F>>)
 		-> Result<(), SynthesisError> {
 		let r1 = wtns.msg2[0].clone();
 		let r2 = wtns.msg2[1].clone();
@@ -283,7 +301,7 @@ impl<F: PrimeField + ColEle> SigmaGadget<F>
 				cfg)?;
 			let rows = vars.qm.enc.len();
 			let r = Self::assert_neo_aggr(cs.clone(), &nat, &vars,
-				&r1, &r2, job_id);
+				&r1, &r2, job_id, virt_vals);
 			self.log_component(cs.clone(), n0, rows, "aggr", job_id);
 			r
 		} else {
@@ -2711,6 +2729,10 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		cs: ConstraintSystemRef<F>,
 		t: &QmTable<F>, v: &QmVars<F>, sel: &NeoSel<F>,
 		b_aggr: bool,
+		mut vq: Option<&mut Vec<FpVar<F>>>,
+		                 // T703a: Some = aggr virtual-d_sort mode
+		                 //   (push Section 4 exprs, no committed
+		                 //   cell); None = legacy bind (nonaggr)
 		job_id: usize,
 	) -> Result<(Vec<FpVar<F>>, Vec<FpVar<F>>, FpVar<F>,
 		Vec<FpVar<F>>, Vec<FpVar<F>>), SynthesisError> {
@@ -2892,12 +2914,28 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		// across runs (here), step up inside a run (Section 7), and
 		// subsig is enc's leading limb -- so the group keys strictly
 		// ascend and cannot repeat.
+		// T703a VIRTUAL SLOT -- design doc: sigma_ir1cs.rs
+		// "VIRTUAL LOOKUP QUERIES". In aggr mode (vq = Some)
+		// d_sort is NOT committed; its binding expression IS the
+		// RANGE2 query value. Native twin: eval_virt_queries, a
+		// mirror of QmTable::fill_d_sort. Slot order: row 0
+		// (const 0) first, then rows 1..n. Nonaggr (vq = None)
+		// keeps the committed cell + bind, byte-identical.
+		if let Some(q) = vq.as_deref_mut() {
+			q.push(FpVar::<F>::Constant(F::zero()));
+		}
 		for i in 1..n {
 			let same = &(&c_one - &sel.is_pad[i]) - &grp_start[i];
 			let m = &same * &(&v.loc[i] - &v.loc[i - 1]);
-			check_prod_eq(&bnd_r[i],
-				&(&(&v.subsig[i] - &v.subsig[i - 1]) - &c_one),
-				&(&v.d_sort[i] - &m), "neo sort/ascent bind")?;
+			match vq.as_deref_mut() {
+				Some(q) => q.push(&m + &(&bnd_r[i]
+					* &(&(&v.subsig[i] - &v.subsig[i - 1])
+						- &c_one))),
+				None => check_prod_eq(&bnd_r[i],
+					&(&(&v.subsig[i] - &v.subsig[i - 1]) - &c_one),
+					&(&v.d_sort[i] - &m),
+					"neo sort/ascent bind")?,
+			}
 		}
 		// Run count, returned for the subsig-set equality closed in
 		// assert_seed_anchors. Pads are a PREFIX, so the table holds
@@ -5784,6 +5822,8 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		cs: ConstraintSystemRef<F>,
 		nat: &NeoCore<F>, vars: &NeoCoreVars<F>,
 		r1: &FpVar<F>, r2: &FpVar<F>, job_id: usize,
+		vq: &mut Vec<FpVar<F>>,
+		                 // T703a out: virtual query value vars
 	) -> Result<(), SynthesisError> {
 		let n0 = cs.num_constraints();
 		// T404: hoist once, thread to callees instead of each
@@ -5798,7 +5838,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		//    group starts + per-row reachable ranks --
 		let (_gs, rid, n_runs, g_fp, g_wr) =
 			Self::assert_neo_wf(cs.clone(),
-			&nat.t, &vars.qm, &sel, true, job_id)?;
+			&nat.t, &vars.qm, &sel, true, Some(vq), job_id)?;
 		// -- 3. pin each si_* companion column to its base
 		//    column (outer-lookup share consistency) --
 		Self::assert_neo_si_pins(cs.clone(), &vars.qm, &sel,
@@ -5888,7 +5928,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		//    group starts + per-row reachable ranks --
 		let (gs, rid, n_runs, g_fp, g_wr) =
 			Self::assert_neo_wf(cs.clone(),
-			&nat.t, &vars.qm, &sel, false, job_id)?;
+			&nat.t, &vars.qm, &sel, false, None, job_id)?;
 		// -- 3. carried ranks: cid counts only carried rows
 		//    (cat in {C,BP,SP}); free linear combo of rid --
 		let cid = Self::assert_neo_cid_chain(&gs, &sel);
@@ -6091,7 +6131,7 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 	///   (s_enc is NOT emitted here -- T202 deleted its only
 	///    reader, check (4), so the M8 obligation is retired);
 	///   mtbl_*   logup multiplicity advice (self-checking).
-	fn core_container(nat: &NeoCore<F>)
+	fn core_container(nat: &NeoCore<F>, b_virt: bool)
 	-> Arc<Mutex<Container<F>>> {
 		let res = Container::<F>::new("neo_core");
 		let f_r2 = F::from(RANGE2);
@@ -6196,7 +6236,9 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 			fix(&t.d_c2, "d_c2", f_r2);
 			fix(&t.d_below_lo, "d_below_lo", f_r2);
 			fix(&t.d_above_lo, "d_above_lo", f_r2);
-			fix(&t.d_sort, "d_sort", f_r2);
+			//T703a: aggr arm serves d_sort as a VIRTUAL query
+			//(assert_neo_wf Section 4) -- no committed cell.
+			if !b_virt { fix(&t.d_sort, "d_sort", f_r2); }
 			// T201: l_pat/l_id/l_loc are NOT committed here. They are
 			// an EXTERNAL reference to the fsm's own sorted_tbl,
 			// attached by ext_pat_loc at the advice ctor: zero
@@ -6331,7 +6373,8 @@ distinct_pats={} max_loc={}", arm, b_igc, n, nz, pats.len(), mx);
 		combo.lock().unwrap().add_container(prf);
 		nat.acc_out = acc_vec;
 		nat.mtbl_acc = mtbl_complete;
-		let core = Self::core_container(&nat);
+		//T703a: aggr statement omits d_sort (virtual query)
+		let core = Self::core_container(&nat, true);
 		if utils::consts::b_probe_p36() {
 			Self::probe_core_cols(&core.lock().unwrap(), "AGGR");
 		}
@@ -6369,7 +6412,8 @@ distinct_pats={} max_loc={}", arm, b_igc, n, nz, pats.len(), mx);
 		let (nat, ct_qi, ct_qc) = NeoCore::gen_nonaggr(self, info,
 			l_pat, l_id, l_loc, &hm_loc, carried, default_min,
 			job_id)?;
-		let core = Self::core_container(&nat);
+		//nonaggr keeps the committed d_sort col (no virtual mode)
+		let core = Self::core_container(&nat, false);
 		if utils::consts::b_probe_p36() {
 			Self::probe_core_cols(&core.lock().unwrap(), "NONAGGR");
 		}
@@ -6653,7 +6697,9 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		let (d_c2, d_c2_n) = c2("d_c2")?;
 		let (d_below_lo, d_below_lo_n) = c2("d_below_lo")?;
 		let (d_above_lo, d_above_lo_n) = c2("d_above_lo")?;
-		let (d_sort, d_sort_n) = c2("d_sort")?;
+		//T703a: d_sort is VIRTUAL on the aggr arm -- no committed
+		//cell to load; the wf Section 4 vq push replaces the bind.
+		let (d_sort, d_sort_n) = (vec![], vec![]);
 		// -- 2. si_* companions (outer-lookup share) --
 		let (si_step, si_step_n) = c2("si_step")?;
 		let (si_subsig, si_subsig_n) = c2("si_subsig")?;
@@ -8417,9 +8463,24 @@ pub(crate) mod tests_neo_m6 {
 		let vars = alloc_vars(&cs, nat);
 		let r1 = new_var(&cs, Fr::from(12345u32));
 		let r2 = new_var(&cs, Fr::from(67890u32));
+		let mut vq: Vec<FpVar<Fr>> = vec![];
 		DischargeAdvNeoGadget::<Fr>::assert_neo_aggr(
-			cs.clone(), nat, &vars, &r1, &r2, 0)
+			cs.clone(), nat, &vars, &r1, &r2, 0, &mut vq)
 			.expect("assert core");
+		//T703a: the RANGE2 lookup on the virtual d_sort slots
+		//lives in the framework, outside this harness. Mirror its
+		//acceptance natively: an out-of-range value forces the cs
+		//UNSAT exactly like the failed lookup would.
+		let rb = read_global_config().range2_bit;
+		let bound = Fr::from(1u64 << rb).into_bigint();
+		for q in &vq {
+			if q.value().unwrap().into_bigint() >= bound {
+				let one = new_var(&cs, Fr::from(1u32));
+				check_prod_zero(&one, &one, lc!(),
+					"virt range mirror").unwrap();
+				break;
+			}
+		}
 		cs
 	}
 
@@ -8619,7 +8680,6 @@ pub(crate) mod tests_neo_m6 {
 		assert_eq!(get("loc"), nat.t.loc);
 		assert_eq!(get("cat"), nat.t.cat);
 		assert_eq!(get("prev_id1"), nat.t.prev_id1);
-		assert_eq!(get("d_sort"), nat.t.d_sort);
 		assert_eq!(get("si_step"), nat.t.si_step);
 		assert_eq!(get("si_b_bwd"), nat.t.si_b_bwd);
 		// T201: L is no longer a neo_core column -- it is an external
@@ -8635,6 +8695,15 @@ pub(crate) mod tests_neo_m6 {
 		for n in ["l_pat", "l_id", "l_loc"] {
 			assert!(!names.contains(&n.to_string()),
 				"T201: {} must not be committed in neo_core", n);
+		}
+		// T703a: d_sort is a VIRTUAL query on the aggr arm -- the
+		// native advice still fills it, but neither it nor its si
+		// twin may appear in the committed statement.
+		assert!(!nat.t.d_sort.is_empty(),
+			"T703a: native d_sort advice must survive");
+		for n in ["d_sort", "si_d_sort"] {
+			assert!(!names.contains(&n.to_string()),
+				"T703a: {} must not be committed in neo_core", n);
 		}
 		// T202: s_enc lost its only reader (check (4)) and is no
 		// longer committed either.
@@ -9551,7 +9620,10 @@ mod tests_neo_m6_h {
 				let (_c, combo, mut nat) = gen.gen_core_stmt(
 					&pat_loc, steps_store).expect("stmt");
 				tf(&mut nat);
-				let core = StepQueueNeo::core_container(&nat);
+				//tamper harness rebuilds the AGGR statement, so
+				//it must match gen_core_stmt's virtual layout
+				let core = StepQueueNeo::core_container(&nat,
+					true);
 				let sc = Container::<Fr>::new(
 					"discharge_adv_stmt_cs");
 				sc.lock().unwrap().add_container(core);

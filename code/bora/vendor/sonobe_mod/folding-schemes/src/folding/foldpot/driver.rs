@@ -1476,7 +1476,12 @@ where
 				let stmt_res = lock_unwrap!(circ.get_mapper()).build_statement(&frag, &prev_stmt, self.lkup.clone(), &ei, advice[subseg_id-1].clone(), lk_share_size, false, job_id);
 				assert!(stmt_res.is_ok());
 				let stmt = stmt_res.unwrap();
-				stmt.fill_lkup_mvec(&mut m_map, &self.lkup); //needed here!
+				//T703a: virtual slots counted with the SAME
+				//evaluator gen_witness uses (never disagree).
+				let virt_extra = circ
+					.eval_virt_queries_all(&stmt.to_vec());
+				stmt.fill_lkup_mvec(&mut m_map, &self.lkup,
+					&virt_extra); //needed here!
 				let ea = stmt.to_extra_info();
 				vec_res.push(ea);
 				prev_stmt= Some(stmt);
@@ -1990,7 +1995,12 @@ where
 				prev_adv = Some(cur_adv);
 				log_perf(job_id, log_level+2, &format!("PERF 1009: -- Pass 1. build stmt."), &mut gt3);
 				let stmt = stmt_res.unwrap();
-				stmt.fill_lkup_mvec(&mut m_map, &self.lkup); //needed here!
+				//T703a: virtual slots counted with the SAME
+				//evaluator gen_witness uses (never disagree).
+				let virt_extra = circ
+					.eval_virt_queries_all(&stmt.to_vec());
+				stmt.fill_lkup_mvec(&mut m_map, &self.lkup,
+					&virt_extra); //needed here!
 					//for updating couners of lookup
 					//later in PASS2 it generates the m_table for
 					//each lookup for the corresponding lookup shares.
@@ -3732,9 +3742,10 @@ pub mod tests_driver{
 			w
 		}
 
-		fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
+		fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>,
 			wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig,
-			_word_id: FpVar<F>, _subsig_id: FpVar<F>) 
+			_word_id: FpVar<F>, _subsig_id: FpVar<F>,
+			_virt_vals: &mut Vec<FpVar<F>>)
 			-> Result<(), SynthesisError>{
 			let (stmt_idx, _m1_idx, _m2_idx, _m3_idx) = cfg.get_gadget_indices(i);
 			let n = self.n;

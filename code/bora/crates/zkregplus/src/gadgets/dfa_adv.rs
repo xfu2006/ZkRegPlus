@@ -1304,9 +1304,10 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for DfaAdvGadget<F>{
 	// 3/8*mn + 24m + 9*s
 	// in practice: m<20, s<5. So the major cost is
 	// 3/8 *mn
-	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
+	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>,
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig,
-		_word_id: FpVar<F>, _subseg_id: FpVar<F>) 
+		_word_id: FpVar<F>, _subseg_id: FpVar<F>,
+		_virt_vals: &mut Vec<FpVar<F>>)
 		-> Result<(), SynthesisError>{
 		//1. retrive the statement instance and get all parts
 		let b_perf = false;

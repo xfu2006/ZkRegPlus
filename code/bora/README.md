@@ -97,25 +97,42 @@ RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" cargo build --release
 
 ## 6. Running the experiments (claim → experiment map)
 
-All runs go through one menu (self-detaches into the background; follow
-with `tail -f` on the log path it prints):
+All runs go through one menu. The full runs self-detach into the
+background (follow with `tail -f` on the log paths it prints); `small`
+and `figs` are short enough to stay in the foreground:
 
 ```bash
-python3 scripts/PAPER_DATA.py               # interactive menu
-python3 scripts/PAPER_DATA.py --run small   # non-interactive
-#                              --run {small|dna|clam|dlp}
+python3 scripts/PAPER_DATA.py                            # interactive menu
+python3 scripts/PAPER_DATA.py --run small                # non-interactive
+python3 scripts/PAPER_DATA.py --run full_run --items dna
+#   --run {small|dry_run|full_run|figs}
+#   --items {dlp,dna,clam,zombie,reef,lkup,scale_clam,scale_dlp}
+#           (dry_run/full_run only; accepts menu numbers, or "A" for all)
+python3 scripts/PAPER_DATA.py --list                     # print both menus
+python3 scripts/PAPER_DATA.py --dry-run --run full_run --items dlp,clam
+#                                                        # plan only
 ```
+
+`dry_run` executes the same leaves against deterministically-thinned
+inputs — it is an end-to-end smoke test of the pipeline, not a run whose
+numbers match the paper. Use `full_run` for the reported results.
+
+Menu item `(3)` is `full_run`; the numbers after `→` are its submenu.
 
 | Menu item | Command | Paper dataset (Table 1) | Reproduces |
 |-----------|---------|-------------------------|------------|
 | (1) small data | `--run small` | — (not in paper) | demo / sanity check only |
-| (2) full DNA | `--run dna` | **DNA** — chr17 (GRCh38), 1×83 MB doc vs NCBI ClinVar, 27,500 rules | DNA discharge (Tables 1–2) |
-| (3) full ClamAV | `--run clam` | **MAL** — CentOS 7, 1,209 docs / 765 MB vs ClamAV 0.103.11, 38,875 rules (160,854 leaf subsigs) | malware discharge + prover cost (Tables 1–3; §7.4–7.6) |
-| (4) full DLP | `--run dlp` | **DLP** — Enron, 509,610 docs / 1.38 GB vs MS-DLP SIT, 136 rules | e-mail DLP discharge (Tables 1, 2, 4) |
+| (3) → (2) Dna | `--run full_run --items dna` | **DNA** — chr17 (GRCh38), 1×83 MB doc vs NCBI ClinVar, 27,500 rules | DNA discharge (Tables 1–2) |
+| (3) → (3) Clamav | `--run full_run --items clam` | **MAL** — CentOS 7, 1,209 docs / 765 MB vs ClamAV 0.103.11, 38,875 rules (160,854 leaf subsigs) | malware discharge + prover cost (Tables 1–3; §7.4–7.6) |
+| (3) → (1) DLP | `--run full_run --items dlp` | **DLP** — Enron, 509,610 docs / 1.38 GB vs MS-DLP SIT, 136 rules | e-mail DLP discharge (Tables 1, 2, 4) |
+| (4) figures | `--run figs` | — | regenerates every table/figure fragment + `list_figures.pdf` |
 
-The three full runs (`dna`/`clam`/`dlp`) correspond to the paper's three
-evaluation datasets (Table 1: MAL / DNA / DLP). `small` is a self-contained
-demo not tied to a paper number.
+The three full-run leaves (`dna`/`clam`/`dlp`) correspond to the paper's
+three evaluation datasets (Table 1: MAL / DNA / DLP). `small` is a
+self-contained demo not tied to a paper number. Progress for a detached
+run goes to `/tmp/bora/SUMMARY.log`, with the live per-job log at
+`/tmp/bora/CURRENT_JOB.log`; a failed leaf packs one triage tarball under
+`data/paper_data/run_data/data/raw_data/failed_tgz/`.
 
 **Expected scale (from the paper).** Reference results were produced on an
 **M1 server with 1.4 TB RAM and 60 cores @ 2.23 GHz** (≈$1.05/hr). For the
@@ -133,7 +150,9 @@ RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" \
   zkp_driver::tests_zkp_driver::test_zkreg_main --exact --nocapture
 ```
 Runs the `small_data` end-to-end ZK proof in ~30–40 s (~7 GB RAM) and
-writes a report under `data/small_data_set/reports/`.
+writes a report under `data/small_data_set/reports/`. This is what
+`python3 scripts/PAPER_DATA.py --run small` wraps; run it directly to
+skip the runner's logging and triage-bundle machinery.
 
 ## 8. Vendored dependencies
 

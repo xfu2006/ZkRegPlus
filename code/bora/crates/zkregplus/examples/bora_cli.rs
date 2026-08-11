@@ -1,5 +1,5 @@
 //! bora_cli: non-daemonizing CLI wrapper around bora_data_driver's
-//! functions. Backend of scripts/NEW_PAPER_DATA.py -- run that
+//! functions. Backend of scripts/PAPER_DATA.py -- run that
 //! driver instead; direct invocation is for debugging only.
 
 use zkregplus::bora_data_driver::{collect_lookup_stats_adv,

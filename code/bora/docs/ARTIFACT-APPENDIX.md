@@ -103,14 +103,23 @@ RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" cargo build --release
 The fast "kick the tires" check (README section 7):
 
 ```bash
+python3 scripts/PAPER_DATA.py --run small
+```
+
+Runs the `small_data` end-to-end ZK proof in ~30-40 s (~7 GB RAM) and
+writes a report under `data/small_data_set/reports/`. Unlike the full
+runs this stays in the foreground, and exits non-zero if the run fails
+or a failure signature appears in its log. The equivalent raw command,
+if you would rather skip the runner:
+
+```bash
 RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" \
   cargo test -p zkregplus --release --lib -- \
   zkp_driver::tests_zkp_driver::test_zkreg_main --exact --nocapture
 ```
 
-Runs the `small_data` end-to-end ZK proof in ~30-40 s (~7 GB RAM) and
-writes a report under `data/small_data_set/reports/`. `TODO(author)`: paste
-one representative expected output line for evaluators to match against.
+`TODO(author)`: paste one representative expected output line for
+evaluators to match against.
 
 ## Evaluation workflow
 
@@ -133,10 +142,22 @@ numbers must be confirmed against the paper.
 
 ### Experiments
 
-All full runs go through one menu; each self-detaches into the background
-(survives logout, no `nohup` needed) and, on any exit, packs exactly **one**
-result bundle at `/tmp/paper_data_<key>_<ts>/paper_data_<key>_BUNDLE_<ts>.tgz`.
-Follow a run with `tail -f` on the daemon-log path it prints.
+All full runs go through one menu, selected as `--run full_run --items
+<leaf>`. The run self-detaches into the background (survives logout, no
+`nohup` needed); follow it with `tail -f /tmp/bora/SUMMARY.log` for the
+sequence and `tail -F /tmp/bora/CURRENT_JOB.log` for the leaf in flight.
+A **failing** leaf packs one triage bundle at
+`data/paper_data/run_data/data/raw_data/failed_tgz/paper_data_<key>_<mode>_<ts>_BUNDLE.tgz`;
+a successful leaf writes its results and packs nothing.
+
+Substituting `--run dry_run` for `--run full_run` executes the same
+leaves against deterministically-thinned inputs. That is a pipeline
+smoke test only — its numbers are **not** the paper's and are not
+expected to match. Every claim below requires `full_run`.
+
+Several leaves may be listed at once (`--items dlp,clam`, or `--items A`
+for all eight); they run in sequence, and one leaf failing does not stop
+the rest.
 
 **E0 - Basic test (small).** [Human: ~1 min] [Compute: ~40 s] [Disk: ~7 GB
 RAM, negligible disk]
@@ -147,28 +168,37 @@ RAM, negligible disk]
 **E1 - DNA (C3).** [Human: minutes] [Compute: ~hours] [Disk: DNA dataset
 ~6.6 GB + large RAM]
 - *Preparation:* `python3 scripts/INSTALL.py --data dna`.
-- *Execution:* `python3 scripts/PAPER_DATA.py --run dna`.
+- *Execution:* `python3 scripts/PAPER_DATA.py --run full_run --items dna`
+  (always one process / one job -- the sample is offset-anchored and
+  cannot be split).
 - *Results:* `data/paper_data/dna/reports/report_zk.dat`; compare against
   paper Tables 1-2.
 
 **E2 - MAL / ClamAV (C2).** [Human: minutes] [Compute: ~5-8 h] [Disk:
 binexec + ClamAV DB; ideally ~1 TB RAM / 8 NUMA nodes; rebuilds ~40 GB DB]
 - *Preparation:* `python3 scripts/INSTALL.py --data binexec` (the ClamAV
-  DB rebuilds on first run; `--clam-reuse-db` skips the ~2 h rebuild once a
-  cache exists).
-- *Execution:* `python3 scripts/PAPER_DATA.py --run clam` (8-job 4+4
-  two-process NUMA run; part 2 emits one verified Groth16 proof).
+  DB rebuilds on first run and is cached under `data/cache/` for later
+  runs).
+- *Execution:* `python3 scripts/PAPER_DATA.py --run full_run --items clam`
+  (8 jobs; a two-socket box splits them 4+4 across NUMA halves, a
+  single-socket box runs one process; part 2 emits one verified Groth16
+  proof).
 - *Results:* `data/debug/full_clamav/reports/report2.dat` plus one verified
   batch proof; compare against paper Tables 1-3 / section 7.4-7.6.
 
 **E3 - DLP / Enron (C4).** [Human: minutes] [Compute: ~5-6 h] [Disk: email
 dataset ~3.8 GB + large RAM / NUMA]
 - *Preparation:* `python3 scripts/INSTALL.py --data email`.
-- *Execution:* `python3 scripts/PAPER_DATA.py --run dlp` (8-job 4+4
-  two-process NUMA run; fold-only by default, `--dlp-proof` to also emit +
-  verify the single Groth16 proof).
+- *Execution:* `python3 scripts/PAPER_DATA.py --run full_run --items dlp`
+  (8 jobs, same 4+4 NUMA split as E2; part 2 emits + verifies the single
+  Groth16 proof).
 - *Results:* `data/paper_data/dlp/report/report.dat`; compare against paper
   Tables 1, 2, 4.
+
+Run shape is fixed per leaf (rule/corpus percentages, circuit and job
+counts are passed as argv to `bora_cli` and are not user-tunable); the
+runner sets no `ZKR_*` environment knobs and strips any it inherits, so a
+stale export in your shell cannot perturb a run.
 
 ## Notes / Reusability
 

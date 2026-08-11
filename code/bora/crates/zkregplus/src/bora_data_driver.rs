@@ -795,8 +795,8 @@ fn shrink_lone_sample(pd: &str, bins: Vec<Vec<String>>,
 	out
 }
 
-/// Snark-decider release gate. MUST match NEW_PAPER_DATA.py's FLAG
-/// (scripts/NEW_PAPER_DATA.py:201-202).
+/// Snark-decider release gate. MUST match PAPER_DATA.py's FLAG
+/// (scripts/PAPER_DATA.py:201-202).
 const SNARK_WAIT_FLAG: &str = "/tmp/snark_start/flag";
 
 /// The ONE GlobalConfig writer for every neo run (full x3 and scale x2).
@@ -1039,9 +1039,9 @@ fn tune(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>, ts: &TuningSet,
 		g.perc_lkup_share = perc;
 		g.b_pin_lkup_share = true;
 	}
-	// 8 = production (PAPER_DATA.py:329). Hard-coded: thread count is
-	// parallelism only, not a tuning input (hist identical), and
-	// NEW_PAPER_DATA.py sets no env vars.
+	// 8 = production (attic/scripts/PAPER_DATA.py:329). Hard-coded:
+	// thread count is parallelism only, not a tuning input (hist
+	// identical), and PAPER_DATA.py sets no env vars.
 	let n_threads = 8;
 	// neo passed as literal true: apply_spec_config forced it and
 	// build_and_tune asserted it. No global reads here -- an inline
@@ -1629,7 +1629,7 @@ pub fn collect_lookup_stats_adv(perc: usize, dest_path: &str) {
 }
 
 pub const USAGE: &str = "bora_cli: backend of \
-	scripts/NEW_PAPER_DATA.py -- run that driver instead; \
+	scripts/PAPER_DATA.py -- run that driver instead; \
 	direct invocation is for debugging only.\n\
 	usage: bora_cli <subcommand>\n \
 	 lkup <perc> <dest_path>\n \
@@ -2291,7 +2291,7 @@ pub mod tests_bora_data_driver {
 		assert!(c.b_one_proof);
 		assert_eq!(c.snark_wait_flag,
 			Some("/tmp/snark_start/flag".to_string()),
-			"MUST match NEW_PAPER_DATA.py's FLAG");
+			"MUST match PAPER_DATA.py's FLAG");
 		drop(c);
 
 		// DNA (M103): the non-aggr spec's distinct knobs all land;

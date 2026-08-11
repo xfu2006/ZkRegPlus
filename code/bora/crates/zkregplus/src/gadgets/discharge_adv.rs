@@ -4738,9 +4738,10 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for DischargeAdvGadget<F>{
 	///               ratio_pats_trace < 1%, nlen = 128k=>  1k
 	///               should take max=>subsigs * avg_pat_subsig = 8k
 	/// COST: 59*n1  + 24.5*n1 = 84.5*n1  (in real: max 560k)
-	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
+	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>,
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig,
-		word_id: FpVar<F>, subseg_id: FpVar<F>) 
+		word_id: FpVar<F>, subseg_id: FpVar<F>,
+		_virt_vals: &mut Vec<FpVar<F>>)
 		-> Result<(), SynthesisError>{
 		let n1 = cs.num_constraints(); 
 

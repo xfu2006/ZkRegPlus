@@ -380,6 +380,11 @@ pub trait SigmaIR1CS<const H: bool, F: PrimeField, LK: LookupTableTwoCol<F>, GM:
 	/// the commitment t othe fixed fragment of stmt.
 	fn gen_witness(&self, stmt: &Vec<F>, zi_part2: &ZiPartTwoInst<F>, precomputed_group_cmF: Option<Self::C>) -> (WitnessSigmaIR1CS<F>, WitnessSigmaIR1CSConfig, ZiPartTwoInst<F>);
 
+	/// T703a: native (sids, vals) of ALL virtual lookup slots. The
+	/// single source for BOTH gen_witness and the driver m_vec
+	/// pass, so inverses and multiplicities can never disagree.
+	fn eval_virt_queries_all(&self, stmt: &Vec<F>) -> (Vec<F>, Vec<F>);
+
 	/// Generate the commitment to the fixed segment
 	fn gen_cmF(&self, stmt: &Vec<F>, zi_part2: &ZiPartTwoInst<F>) -> Result<Self::C, Error>;
 
@@ -674,11 +679,80 @@ pub trait SigmaGadget<F:PrimeField>: Debug + Send + Sync
 	/// messages). i is the index of the gadget in the
 	/// vector of gadget. Use i to retrieve its message /stmt locations.
 	/// Note that this function might add additional
-	/// constraints. 
-	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
+	/// constraints. virt_vals is the out-channel for virtual lookup
+	/// query values (see the block below); most gadgets ignore it.
+	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>,
 		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig,
-		word_id: FpVar<F>, subsig_id: FpVar<F>) 
+		word_id: FpVar<F>, subsig_id: FpVar<F>,
+		virt_vals: &mut Vec<FpVar<F>>)
 		-> Result<(), SynthesisError>;
+
+	// =============================================================
+	// VIRTUAL LOOKUP QUERIES (T703a)
+	// =============================================================
+	// A lookup query is a (sid, val) pair folded into the Hab22
+	// left sum 1/(alpha + sid*beta + val). Historically every pair
+	// was sourced from TWO committed statement cells: a data col
+	// cell and its si_* companion, zipped positionally in
+	// qry_tbl1/qry_tbl2. A VIRTUAL query keeps the pair but drops
+	// both cells:
+	//
+	//   sid: a per-circuit CONSTANT, declared once in
+	//        StatementConfig.virt_sids (filled by the mapper from
+	//        virt_query_sids(), gadget order);
+	//   val: an EXPRESSION over cells that stay committed,
+	//        produced twice -- natively by eval_virt_queries()
+	//        for gen_witness and the driver m_vec pass, and
+	//        in-circuit as the FpVars pushed into assert_msg3's
+	//        virt_vals collector.
+	//
+	// The lookup scheme itself is untouched: virtual slots are
+	// appended after si.data in gen_witness and gen_step_cs step
+	// 5, flow through the existing constant-sid case-2 branch
+	// (1 cs each), and reach m_vec via fill_lkup_mvec's extra
+	// arg. The unused_inp/oup slots (extra_var_size = 2) are the
+	// ancestral precedent: val not a data cell, sid a constant.
+	//
+	// WHY: a range-checked advice column that is enforced-equal
+	// to an expression of other committed cells carries no
+	// information of its own; committing it only buys statement
+	// cells. The query can range-check the expression directly.
+	//
+	// EXAMPLE (illustrative; the landed pilot is discharge
+	// d_sort, see assert_neo_wf Section 4). Discharge row: pat
+	// a7 at loc 101, chain predecessor at 96, DB range [1,9].
+	// The slack gap - rg1 = (101-96) - 1 = 4 must lie in RANGE2.
+	//   BEFORE  cells d_c1 = 4 and si_d_c1 = RANGE2 committed;
+	//           constraint sel_c*((gap-rg1) - d_c1) = 0;
+	//           query slot (RANGE2, d_c1 cell).
+	//   AFTER   no cells; q = sel_c*(gap-rg1), one mul, value 4;
+	//           query slot (RANGE2, q).
+	// Both sides contribute the SAME term 1/(a + r2*b + 4) and
+	// the SAME m_vec count: one constraint traded for one, two
+	// committed cells gone.
+	//
+	// CONTRACTS
+	//   - Order: slots follow gadget order; inside a gadget,
+	//     virt_query_sids / eval_virt_queries / the assert_msg3
+	//     pushes MUST agree on count and order (asserted).
+	//   - A native-vs-circuit value mismatch makes
+	//     (a + sid*b + val)*inv = 1 UNSAT -- loud, never silent.
+	//   - Eligibility: only a column whose value is a function
+	//     of committed cells on EVERY row may go virtual. Free
+	//     advice (a prover CHOICE, e.g. discharge d_ns_lo/hi)
+	//     must stay committed.
+	// =============================================================
+
+	/// Declare virtual lookup slots: one subtable id per slot.
+	/// Values arrive via eval_virt_queries (native) and
+	/// assert_msg3's virt_vals (circuit), in THIS order.
+	fn virt_query_sids(&self) -> Vec<usize> { vec![] }
+
+	/// Native twin of the virt_vals pushes in assert_msg3:
+	/// recompute each slot's query value from the committed
+	/// statement vector. Length == virt_query_sids().len().
+	fn eval_virt_queries(&self, _i: usize, _stmt: &Vec<F>,
+		_cfg: &WitnessSigmaIR1CSConfig) -> Vec<F> { vec![] }
 }
 
 /// Non-deministic advice (e.g., discharging proof)
@@ -1191,6 +1265,11 @@ pub struct StatementConfig{
 
 	/// if true, si_data, inp, and oup will be set to constant
 	pub b_cyclepair: bool,
+
+	/// T703a virtual lookup slots: one subtable id per slot, in
+	/// gadget order. Slot VALUES come from the gadgets per step
+	/// (native + circuit); empty = feature off (all legacy circs).
+	pub virt_sids: Vec<usize>,
 }
 
 impl StatementConfig{
@@ -1230,7 +1309,8 @@ impl StatementConfig{
 			si_data_info,
 			si_inp_info,
 			si_oup_info,
-			b_cyclepair
+			b_cyclepair,
+			virt_sids: vec![]
 		}
 	}
 
@@ -1284,13 +1364,19 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 	/// static function: update a vector of statments using lookup,
 	/// return the HashMap of the m_vector for Hab'22 function
 	/// Call this function when the RAM can store all statements.
-	pub fn update_with_lkup(lk: &Arc<LK>, vec_stmt: &mut Vec<StatementInst<F,LK>>){
+	pub fn update_with_lkup(lk: &Arc<LK>, vec_stmt: &mut Vec<StatementInst<F,LK>>,
+		extras: &Vec<(Vec<F>, Vec<F>)>,
+		                 // T703a per-step virtual (sids, vals),
+		                 //   parallel to vec_stmt; all-empty when
+		                 //   the circuits declare no virtual slots
+	){
 		//1. build the m_vec hash based on existing statements
 		let n_steps = vec_stmt.len();
+		assert!(extras.len()==n_steps);
 		let mut m_map = HashMap::<usize,usize>::new();
 		for i in 0..n_steps{
 			let stmt = &vec_stmt[i];
-			stmt.fill_lkup_mvec(&mut m_map, lk);
+			stmt.fill_lkup_mvec(&mut m_map, lk, &extras[i]);
 		}
 
 		//2. update the statements for m_vec and share
@@ -1549,8 +1635,13 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 	/// fill up the m_vec of lookup table using the inp, oup,
 	/// word_seg, data, and also also the info for unused_inp_buf
 	/// etc which are in the witness before the statement.
-	pub fn fill_lkup_mvec(&self, m_map: &mut HashMap<usize, usize>, 
-		lk: &Arc<LK>){
+	pub fn fill_lkup_mvec(&self, m_map: &mut HashMap<usize, usize>,
+		lk: &Arc<LK>,
+		extra: &(Vec<F>, Vec<F>),
+		                 // T703a (sids, vals) of the virtual lookup
+		                 //   slots, from eval_virt_queries_all;
+		                 //   empty pair if the circuit has none
+	){
 		//1. fill in the data using problem statement data
 		let lk_ref = lk;
 		let tbl_ids = self.subtable_id.clone();
@@ -1580,6 +1671,9 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 
 		lk_ref.fill_mvec(&tbl_ids, &vec_val, m_map);
 		lk_ref.fill_mvec(&tbl_ids_wit, &vals_wit, m_map);
+		//T703a: count the virtual slots -- same pattern as the
+		//unused_inp/oup pair above.
+		lk_ref.fill_mvec(&extra.0, &extra.1, m_map);
 	}
 }
 
@@ -2720,7 +2814,8 @@ where 	C: CurveGroup<ScalarField=F>,
 		let cmF_size = 4usize;
 		let extra_var_size = 2usize;
 		let si = StatementInst::<F,LK>::from_vec(&stmt_cfg, &vec![F::zero(); stmt_len]);
-		let inv_hab22_left_size = si.subtable_id.len() + extra_var_size;
+		let inv_hab22_left_size = si.subtable_id.len() + extra_var_size
+			+ stmt_cfg.virt_sids.len(); //T703a virtual slots
 		// right side is the lookup table share
 
 		let fq_bits = <<C as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as usize;
@@ -2746,7 +2841,7 @@ where 	C: CurveGroup<ScalarField=F>,
 
 
 	/// generate the witness structure
-	pub fn gen_witness_structure(&self, lkup_share_size: usize) 
+	pub fn gen_witness_structure(&self, lkup_share_size: usize)
 		-> WitnessSigmaIR1CSConfig{
 		let gadgets = lock_unwrap!(self.gadget_mapper).get_gadgets();
 		//generate witness config, no need of info such as
@@ -2769,7 +2864,8 @@ where 	C: CurveGroup<ScalarField=F>,
 			&vec![F::zero(); stmt_len]);
 		// right side is the lookup table share
 		let inv_hab22_right_size = si.col1_share.len();
-		let inv_hab22_left_size = si.subtable_id.len() + extra_var_size;
+		let inv_hab22_left_size = si.subtable_id.len() + extra_var_size
+			+ stmt_cfg.virt_sids.len(); //T703a virtual slots
 		let wtns_cfg = WitnessSigmaIR1CSConfig{
 			cmF_size: cmF_size, //4 field elements for cmF
 			extra_var_size: extra_var_size, 
@@ -2931,6 +3027,22 @@ where 	C: CurveGroup<ScalarField=F>,
 	/// The 3rd element of the return is the part 2 of
 	/// the `z_{i+1}` part 2), that is the contents of `z_{i+1}`
 	/// for the next global state of the circ.
+	/// T703a: native (sids, vals) of ALL virtual lookup slots,
+	/// gadget order. See the design block above virt_query_sids.
+	fn eval_virt_queries_all(&self, stmt: &Vec<F>)
+		-> (Vec<F>, Vec<F>) {
+		let sids: Vec<F> = self.stmt_config.virt_sids.iter()
+			.map(|s| F::from(*s as u64)).collect();
+		let mut vals = vec![];
+		for (i, g) in self.gadgets.iter().enumerate() {
+			vals.extend(lock_unwrap!(g).eval_virt_queries(i,
+				stmt, &self.witness_config));
+		}
+		assert!(vals.len() == sids.len(),
+			"virt vals {} != declared {}", vals.len(), sids.len());
+		(sids, vals)
+	}
+
 	fn gen_witness(&self, stmt: &Vec<F>, zi_part2: &ZiPartTwoInst<F>, precomputed_group_cmF: Option<Self::C>) -> (WitnessSigmaIR1CS<F>, WitnessSigmaIR1CSConfig, ZiPartTwoInst<F>)
 	{
 		//0. check input, will not need the extra constraints
@@ -3043,7 +3155,11 @@ where 	C: CurveGroup<ScalarField=F>,
 		//    + subtable_ids in statement (inp,oup,word_sub,data)
 		let extra_var_size = 2usize;
 		let cmF_size = 4usize;
-		let inv_hab22_left_size = si.subtable_id.len() + extra_var_size;
+		//T703a: virtual query pairs, same evaluator the driver
+		//m_vec pass uses -- the two can never disagree.
+		let (virt_sids, virt_vals) = self.eval_virt_queries_all(&stmt);
+		let inv_hab22_left_size = si.subtable_id.len() + extra_var_size
+			+ virt_sids.len();
 		// right side is the lookup table share
 		let inv_hab22_right_size = si.col1_share.len();
 		let (alpha, beta) = (zi_part2.alpha, zi_part2.beta);
@@ -3057,9 +3173,12 @@ where 	C: CurveGroup<ScalarField=F>,
 		//	si.word_subseg.clone(),  removed because si_word is not constructed
 		//  word has no range restriction, it can be anything because
 		// it's packed.
-			si.data.clone()
+			si.data.clone(),
+			virt_vals //T703a appended virtual query values
 		].concat();
-		let qry_tbl1 = vec![ vec![zero,zero], si.subtable_id.clone()].concat();
+		let qry_tbl1 = vec![ vec![zero,zero], si.subtable_id.clone(),
+			virt_sids //T703a appended virtual sids
+		].concat();
 		assert!(qry_tbl2.len()==inv_hab22_left_size);
 		assert!(qry_tbl1.len()==inv_hab22_left_size);
 
@@ -3539,10 +3658,14 @@ where 	C: CurveGroup<ScalarField=F>,
 		//3. add all constraints by components
 		let mut gt3 = GTimer::new();
 		let si = StatementInstVar::<F>::from_vec(&self.stmt_config, &wtns_var.statement);
+		//T703a: collector for virtual lookup query value vars,
+		//consumed by step 5 below (zipped with config virt_sids).
+		let mut virt_vals: Vec<FpVar<F>> = vec![];
 		for (i,g) in self.gadgets.iter().enumerate(){
 			let (nc, ni, nv) = (cs.num_constraints(), cs.num_instance_variables(), cs.num_witness_variables());
 			lock_unwrap!(g).assert_msg3(i, cs.clone(), &wtns_var, &cfg,
-				si.word_id.clone(), si.subseg_id.clone())?;
+				si.word_id.clone(), si.subseg_id.clone(),
+				&mut virt_vals)?;
 			if B_DEBUG3{
 				check_cs(&cs, &format!("After gadget: {}", lock_unwrap!(g).get_name()));
 			}
@@ -3694,16 +3817,28 @@ where 	C: CurveGroup<ScalarField=F>,
 		let (alpha, beta) = (zi_part2.alpha.clone(), zi_part2.beta.clone());
 		let unused_input_size = wtns_var.unused_input_size;
 		let unused_output_size = wtns_var.unused_output_size;
+		//T703a: constant sid vars for the virtual slots; the value
+		//vars were collected from assert_msg3 in step 3.
+		let virt_sid_vars: Vec<FpVar<F>> = self.stmt_config
+			.virt_sids.iter()
+			.map(|s| FpVar::Constant(F::from(*s as u64)))
+			.collect();
+		assert!(virt_vals.len()==virt_sid_vars.len(),
+			"virt vals {} != declared {}", virt_vals.len(),
+			virt_sid_vars.len());
 		let qry_tbl2 = vec![
 			vec![unused_input_size, unused_output_size],
 			si.inp_buf.clone(), si.oup_buf.clone(),
 			//si.word_subseg.clone(),  REMOVE no need to tag word seg
 			//as it's arbitrary
-			si.data.clone()
+			si.data.clone(),
+			virt_vals //T703a appended virtual query values
 		].concat();
-		let qry_tbl1 = vec![ 
-			vec![zero_var.clone(),zero_var.clone()], 
-			si.subtable_id.clone()].concat();
+		let qry_tbl1 = vec![
+			vec![zero_var.clone(),zero_var.clone()],
+			si.subtable_id.clone(),
+			virt_sid_vars //T703a appended virtual sids
+		].concat();
 		assert!(qry_tbl2.len()==qry_tbl1.len());
 
 		//NOTE: b_check_lkup should be regarded as a FIXED circuit specific
@@ -4389,9 +4524,10 @@ pub mod tests_sigma_ir1cs{
 			vec![w]
 		}
 
-		fn assert_msg3(&self, i: usize, _cs: ConstraintSystemRef<F>, 
+		fn assert_msg3(&self, i: usize, _cs: ConstraintSystemRef<F>,
 			wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig,
-			_word_id: FpVar<F>, _subsig_id: FpVar<F>) 
+			_word_id: FpVar<F>, _subsig_id: FpVar<F>,
+			_virt_vals: &mut Vec<FpVar<F>>)
 			-> Result<(), SynthesisError>{
 			let (stmt_idx, _m1_idx, _m2_idx, m3_idx) = cfg.get_gadget_indices(i);
 			let msg3 = &wtns.msg3[m3_idx];
@@ -4469,9 +4605,10 @@ pub mod tests_sigma_ir1cs{
 			vec![w]
 		}
 
-		fn assert_msg3(&self, i: usize, _cs: ConstraintSystemRef<F>, 
+		fn assert_msg3(&self, i: usize, _cs: ConstraintSystemRef<F>,
 			wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig,
-			_word_id: FpVar<F>, _subsig_id: FpVar<F>) 
+			_word_id: FpVar<F>, _subsig_id: FpVar<F>,
+			_virt_vals: &mut Vec<FpVar<F>>)
 			-> Result<(), SynthesisError>{
 			let (stmt_idx, _m1_idx, _m2_idx, m3_idx) = cfg.get_gadget_indices(i);
 			let msg3 = &wtns.msg3[m3_idx];
@@ -4548,9 +4685,10 @@ pub mod tests_sigma_ir1cs{
 			vec![]
 		}
 
-		fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
+		fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>,
 			wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig,
-			_word_id: FpVar<F>, _subsig_id: FpVar<F>) 
+			_word_id: FpVar<F>, _subsig_id: FpVar<F>,
+			_virt_vals: &mut Vec<FpVar<F>>)
 			-> Result<(), SynthesisError>{
 			let (stmt_idx, _, _, _) = cfg.get_gadget_indices(i);
 			let c1 = &wtns.statement[stmt_idx[0].0];
@@ -4882,9 +5020,12 @@ pub mod tests_sigma_ir1cs{
 			vec_stmt.push(stmt);
 		}
 
-		//3. build the m_vec hash based on existing statements 
+		//3. build the m_vec hash based on existing statements
 		// and update the shares
-		StatementInst::<F,LK>::update_with_lkup(&lkup, &mut vec_stmt);
+		//(test gadgets declare no virtual slots -> empty extras)
+		let no_virt = vec![(vec![], vec![]); vec_stmt.len()];
+		StatementInst::<F,LK>::update_with_lkup(&lkup, &mut vec_stmt,
+			&no_virt);
 
 		//6. return
 		(lkup, six_ir1cs, vec_stmt)

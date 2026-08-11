@@ -1,5 +1,5 @@
 //! Non-daemonizing CLI wrapper around bora_data_driver's functions,
-//! for NEW_PAPER_DATA.py to shell out to. Argv parsing lives in
+//! for PAPER_DATA.py to shell out to. Argv parsing lives in
 //! bora_data_driver::parse_args; no business logic here.
 
 use zkregplus::bora_data_driver::{collect_lookup_stats_adv,

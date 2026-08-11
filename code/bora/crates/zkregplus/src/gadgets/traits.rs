@@ -91,6 +91,25 @@ pub fn collect_cfg_cols_pos(cfg: &ContainerConfig,
 	}
 }
 
+/// T703a: length of the first column with this exact NAME in a
+/// resolved ContainerConfig tree; None if absent.
+pub fn cfg_col_len_opt(cfg: &ContainerConfig, name: &str)
+-> Option<usize> {
+	match cfg {
+		ContainerConfig::Column(loc, n, _p, _b) => {
+			if n.as_str() == name { Some(loc.src.3) } else { None }
+		},
+		ContainerConfig::Complex(v, _, _) =>
+			v.iter().find_map(|c| cfg_col_len_opt(c, name)),
+	}
+}
+
+/// T703a: panicking wrapper of cfg_col_len_opt.
+pub fn cfg_col_len(cfg: &ContainerConfig, name: &str) -> usize {
+	cfg_col_len_opt(cfg, name)
+		.unwrap_or_else(|| panic!("cfg_col_len: no col {}", name))
+}
+
 /// DEBUG USE 62050: recursive helper for dump_cfg_col_sizes.
 fn collect_cfg_cols(cfg: &ContainerConfig,
 	out: &mut Vec<(String,usize,usize,bool)>){
@@ -686,6 +705,55 @@ impl <F: PrimeField + ColEle> Container<FpVar<F>>{
 		assert!(len==stmt_vec.len());
 
 		Ok( res )
+	}
+}
+
+impl<F: Clone + ColEle> Container<F> {
+	/// T703a native twin of load_from: rebuild gadget i's container
+	/// from the FLAT statement vector (plain field elements, no
+	/// vars), using the same stmt_map ranges and config tree walk.
+	pub fn load_from_stmt(i: usize,
+		wcfg: &WitnessSigmaIR1CSConfig, stmt: &Vec<F>,
+		cfg: &ContainerConfig) -> Self {
+		let (stmt_idx, _, _, _) = wcfg.get_gadget_indices(i);
+		//ranges are STATEMENT-relative, both ends inclusive
+		//(mirror of extract_stmt_vec)
+		let my: Vec<F> = stmt_idx.iter().map(|(a, b)|
+			stmt[*a..*b + 1].to_vec()).flatten().collect();
+		let (res, len) = Self::load_from_stmt_worker(&my, cfg, 0);
+		assert!(len == my.len());
+		res
+	}
+
+	/// recursive worker: same walk as load_from_worker, F elements.
+	fn load_from_stmt_worker(sv: &Vec<F>, cfg: &ContainerConfig,
+		start_pos: usize) -> (Self, usize) {
+		match cfg {
+			ContainerConfig::Column(loc, _name, _, b_const) => {
+				let len = loc.src.3;
+				let col = Col::<F>{
+					data: sv[start_pos..start_pos + len].to_vec(),
+					cfg: cfg.clone(),
+					b_const: *b_const,
+				};
+				(Container::Single(Arc::new(Mutex::new(col))),
+					start_pos + len)
+			},
+			ContainerConfig::Complex(vloc, myname, mypath) => {
+				let mut pos = start_pos;
+				let mut vec_comp = vec![];
+				let mut hs = HashMap::<String, usize>::new();
+				for i in 0..vloc.len() {
+					let (comp, new_pos) = Self
+						::load_from_stmt_worker(sv, &vloc[i], pos);
+					pos = new_pos;
+					vec_comp.push(Arc::new(Mutex::new(comp)));
+					hs.insert(vloc[i].get_name(), i);
+				}
+				(Container::Complex(vec_comp, hs,
+					myname.to_string(), mypath.to_string()), pos)
+			}
+		}
 	}
 }
 

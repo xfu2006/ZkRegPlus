@@ -30956,7 +30956,14 @@ Goal 10. M104: full_clam neo
 	[a] dry run crashes because lkup size too large
 
 Tuesday 08/11/2026
-Goal 1. 
+Goal 1. fix M104
+	[a] check the bflag on cutting sample size
+	[b] DONE!
+	[c] clean up the code
+Goal 2. T103 improve
+	[a] idea of virtual column and virtual query lkup
+	[b] approve code
+	[c] test
 
 
 

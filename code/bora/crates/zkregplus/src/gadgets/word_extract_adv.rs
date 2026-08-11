@@ -322,9 +322,10 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for WordExtractAdvGadget<F>{
 
 	/// COST: default mode: 6*wlen (very small)
 	///       b_map mode: 6*wlen + nlen
-	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
+	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>,
 		wtns: &WitnessSigmaIR1CSVar<F>, wtns_cfg: &WitnessSigmaIR1CSConfig, 
-		_word_id: FpVar<F>, _subseg_id: FpVar<F>) 
+		_word_id: FpVar<F>, _subseg_id: FpVar<F>,
+		_virt_vals: &mut Vec<FpVar<F>>)
 		-> Result<(),SynthesisError>{
 		let b_perf = false;
 		let (nc, nv) = (cs.num_constraints(), cs.num_witness_variables());

@@ -125,9 +125,10 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for WordExtractGadget<F>{
 
 	/// COST:
 	/// r1cs: 6*word_len (note: not nibbles), vasr: 4*word_len
-	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>, 
+	fn assert_msg3(&self, i: usize, cs: ConstraintSystemRef<F>,
 		wtns: &WitnessSigmaIR1CSVar<F>, cfg: &WitnessSigmaIR1CSConfig, 
-		_word_id: FpVar<F>, _subseg_id: FpVar<F>) 
+		_word_id: FpVar<F>, _subseg_id: FpVar<F>,
+		_virt_vals: &mut Vec<FpVar<F>>)
 		-> Result<(), SynthesisError>{
 		let b_debug = B_DEBUG;
 		let nc = cs.num_constraints();
@@ -553,7 +554,8 @@ pub mod tests_word_extract_gadget{
 		let last_idx = cfg.stmt_map.len()-1;
 		let w_id = FpVar::new_constant(cs.clone(), F::zero()).unwrap();
 		let s_id = FpVar::new_constant(cs.clone(), F::zero()).unwrap();
-		let r = g.assert_msg3(last_idx, cs.clone(), &witvar, &cfg, w_id, s_id);
+		let r = g.assert_msg3(last_idx, cs.clone(), &witvar, &cfg,
+			w_id, s_id, &mut vec![]);
 		if b_expect_sat {
 			r.expect("assert m3 fail");
 			assert!(cs.is_satisfied().unwrap());
