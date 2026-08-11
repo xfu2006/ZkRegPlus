@@ -122,6 +122,28 @@ maxsteps={} WRAP_KEYS_NEEDED={} have={}",
 			crate::gadgets::traits::dump_cfg_col_sizes(
 				&inner.dummy_cfg, &format!("neo igc={}", b_igc));
 		}
+		if std::env::var("ZKR_PROBE_NS").is_ok(){
+			//T704 falsifier: ns_pat is DEDUPED distinct no-show pats
+			//yet capped at the wrap budget W. Two seed-set-independent
+			//bounds: P_topK = sum of the K largest per-subsig distinct
+			//pat counts; P_glob = distinct pats over the whole store.
+			use std::collections::HashSet;
+			let mut per: Vec<usize> = store_steps.subsig_to_steps
+				.values().map(|it| it.vec_pm_bounds.iter()
+					.map(|(p, _)| *p).collect::<HashSet<usize>>().len())
+				.collect();
+			per.sort_unstable_by(|a, b| b.cmp(a));
+			let ptk: usize = per.iter().take(capacity.subsigs).sum();
+			let pg = store_steps.subsig_to_steps.values()
+				.flat_map(|it| it.vec_pm_bounds.iter().map(|(p, _)| *p))
+				.collect::<HashSet<usize>>().len();
+			let w = StepQueueNeo::<F>::wrap_budget(capacity,
+				store_steps);
+			let p = ptk.min(pg);
+			println!("DEBUG USE 62091.1: igc={} K={} W={} P_topK={} \
+P_glob={} P={} P/W={:.4}", b_igc, capacity.subsigs, w, ptk, pg, p,
+				p as f64 / w.max(1) as f64);
+		}
 		Self { inner }
 	}
 

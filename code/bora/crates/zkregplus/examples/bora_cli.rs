@@ -16,25 +16,25 @@ fn main() {
 		Cmd::Lkup { perc, dest_path } =>
 			collect_lookup_stats_adv(perc, &dest_path),
 		Cmd::FullDlp { perc_db, perc_samples, num_circs, num_jobs,
-			numa_num, part_id, b_light_test, b_ladder_only } => {
+			numa_num, part_id, b_dry_run, b_ladder_only } => {
 			full_dlp_neo(perc_db, perc_samples, num_circs, num_jobs,
-				numa_num, part_id, b_light_test, b_ladder_only);
+				numa_num, part_id, b_dry_run, b_ladder_only);
 		}
 		Cmd::FullDna { perc_db, perc_samples, num_circs, num_jobs,
-			numa_num, part_id, b_light_test, b_ladder_only } => {
+			numa_num, part_id, b_dry_run, b_ladder_only } => {
 			full_dna_neo(perc_db, perc_samples, num_circs, num_jobs,
-				numa_num, part_id, b_light_test, b_ladder_only);
+				numa_num, part_id, b_dry_run, b_ladder_only);
 		}
 		Cmd::FullClam { perc_db, perc_samples, num_circs, num_jobs,
-			numa_num, part_id, b_light_test, b_ladder_only } => {
+			numa_num, part_id, b_dry_run, b_ladder_only } => {
 			full_clamav_neo(perc_db, perc_samples, num_circs,
-				num_jobs, numa_num, part_id, b_light_test,
+				num_jobs, numa_num, part_id, b_dry_run,
 				b_ladder_only);
 		}
 		Cmd::ScaleDlp { corpus_idx, vec_count } =>
 			collect_scale_dlp_neo(corpus_idx, &vec_count),
-		Cmd::ScaleClam { corpus_idx, vec_count, b_light_test } =>
+		Cmd::ScaleClam { corpus_idx, vec_count, b_dry_run } =>
 			collect_scale_clamav_neo(corpus_idx, &vec_count,
-				b_light_test),
+				b_dry_run),
 	}
 }

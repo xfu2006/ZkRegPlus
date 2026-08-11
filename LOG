@@ -30951,9 +30951,13 @@ Goal 7. T604
 	[b] possible intoruce wrap_key constants and see
 		if CapErr can precisely reflect if it runs fall in short.
 Goal 8. M103: full dna neo
-Goal 9. M104: full_clam neo
+Goal 9. T702: improe igc (ignore it in aggr path because no igc)
+Goal 10. M104: full_clam neo
 	[a] dry run crashes because lkup size too large
-	[b] 
+
+Tuesday 08/11/2026
+Goal 1. 
+
 
 
 	

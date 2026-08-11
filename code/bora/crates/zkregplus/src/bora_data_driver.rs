@@ -155,6 +155,13 @@ fn sig_fits_range(line: &str, max_off_nibbles: usize) -> bool {
 	})
 }
 
+/// The canonical alphabet-covering rule, byte-identical to line 0 of
+/// DLP's and DNA's sig files: two patterns whose union hits all 16 hex
+/// digits, which HexACDFA requires (alpha_size == 17).
+const ALPHABET_SIG: &str = concat!(
+	"Win.Alphabet.SAMPLE-1;Engine:51-255,Target:1;0|1;",
+	"09afcdeb1928374650123457890abcde;0123498765423afedc");
+
 /// Deterministically thins src_dir's config down to `count` signatures,
 /// writing a self-contained smaller config under dst_dir.
 /// src_dir must contain sig_file_name, main_dfa.dat, needs_ised.dat,
@@ -178,7 +185,7 @@ pub fn create_smaller_config_bounded(src_dir: &str,
 	fs::create_dir_all(dst_dir).unwrap_or_else(|e|
 		panic!("bora_data_driver: mkdir {}: {}", dst_dir, e));
 
-	let sig_lines: Vec<String> = read_lines_nonblank(
+	let mut sig_lines: Vec<String> = read_lines_nonblank(
 		&format!("{}/{}", src_dir, sig_file_name))
 		.into_iter()
 		.filter(|l| sig_fits_range(l, max_off_nibbles))
@@ -186,6 +193,17 @@ pub fn create_smaller_config_bounded(src_dir: &str,
 	assert!(!sig_lines.is_empty(),
 		"bora_data_driver: no sig fits a {}-nibble range table",
 		max_off_nibbles);
+	// DLP/DNA already carry this as line 0; CLAM does not, so a thinned
+	// CLAM DB can miss hex digits and fail HexACDFA's alpha_size==17.
+	// Prepending makes line 0 the alphabet rule everywhere, so subset()'s
+	// index-0 pin covers it by construction. Two guards keep it inert:
+	// an exact-name check (datasets that already have it) and count <
+	// len (keeping the whole DB keeps the DB's own alphabet).
+	let alpha = ALPHABET_SIG.split(';').next().unwrap();
+	if count < sig_lines.len()
+		&& !sig_lines.iter().any(|l| l.split(';').next() == Some(alpha)) {
+		sig_lines.insert(0, ALPHABET_SIG.to_string());
+	}
 	let keep_idx = subset(sig_lines.len(), count);
 	let kept_lines: Vec<&String> = keep_idx.iter()
 		.map(|&i| &sig_lines[i]).collect();
@@ -559,15 +577,19 @@ pub const CLAM: DatasetSpec = DatasetSpec {
 		"data/samples/binexec_merged128k/gdb"],
 	db_cache_dir: "clam_neo",    // never legacy's "full_data"
 	chunk_len: 4096,             // 512*8 (zkp_driver.rs:5037)
-	// dry decider lever (M103 cost law, ~55 cs/chunk-nibble).
-	dry_chunk_len: Some(256),
+	// dry decider lever (M103 cost law, ~55 cs/chunk-nibble): 128
+	// -> ~436K-cs steps, ~214 steps on the 2-file dry corpus.
+	dry_chunk_len: Some(128),
 	range2_bit: 26,
-	// None DELIBERATELY: the table is corpus-position-sized -- the
-	// largest corpus file (anthoscli__01, 33,452,032 B = 66.9M
-	// nibbles) sits just under 2^26, so a smaller dry table would
-	// leave sampled positions un-lookupable. The 67M-row table is
-	// the dry run's floor cost.
-	dry_range2_bit: None,
+	// dry shrinks the table too (user 2026-08-11): CLAM's 26 is NOT
+	// offset-driven -- the in-range sig pool is identical (38,241)
+	// at bits 22..26. The bound is the LARGEST dry corpus in NIBBLES:
+	// the full leaf's 2-file subset (749,976 B = 1.5M) and, since
+	// scale folds only a DRY_SCALE_PERC prefix, 5% of gdb (341,325 B
+	// = 683K). 2^22 = 4.19M clears both by 2.8x; 16x fewer rows than
+	// full. Sizing this against the WHOLE gdb (13.65M nibbles) is the
+	// trap -- it panics mid-fold, clam_db has no overflow guard.
+	dry_range2_bit: Some(22),
 	// legacy full_clamav touches NO clamav_cfg field: defaults.
 	fanout_cap: 127,
 	min_pm_word_len: 4,
@@ -782,7 +804,7 @@ const SNARK_WAIT_FLAG: &str = "/tmp/snark_start/flag";
 /// `role`, never re-derived. Legacy's `b_pin_lkup_share = true` pin is
 /// deliberately NOT carried: neo needs a far larger share than legacy's
 /// hand-set 1, so the driver's back-solve must run.
-fn apply_spec_config(spec: &DatasetSpec, b_light_test: bool,
+fn apply_spec_config(spec: &DatasetSpec, b_dry_run: bool,
 	role: &PartRole) {
 	// ONE write guard for the whole update, so no reader can observe a
 	// half-applied config. NOTHING inside this scope may CALL into code
@@ -818,7 +840,7 @@ fn apply_spec_config(spec: &DatasetSpec, b_light_test: bool,
 	g.log_level = utils::logger::LOG3;
 	// legacy couples fold-only with the light decider (zkp_driver.rs
 	// :6768-6772): a non-proving part must never build heavy keys.
-	g.b_light_test = b_light_test || !role.b_proves;
+	g.b_light_test = b_dry_run || !role.b_proves;
 	// part topology, copied from part_role -- one source of truth.
 	g.b_folding_only = !role.b_proves;
 	g.b_one_proof = role.b_proves;
@@ -1298,11 +1320,11 @@ fn set_diag_env(part_id: usize) {
 /// hab22 cover check AND swaps in dry_range2_bit when the spec has
 /// one; heavy keeps the spec values. ONE derivation site so every
 /// consumer of both fields agrees.
-fn effective_spec(spec: &DatasetSpec, b_light_test: bool)
+fn effective_spec(spec: &DatasetSpec, b_dry_run: bool)
 	-> DatasetSpec {
 	let mut s = spec.clone();
-	s.b_check_lkup = s.b_check_lkup && !b_light_test;
-	if b_light_test {
+	s.b_check_lkup = s.b_check_lkup && !b_dry_run;
+	if b_dry_run {
 		if let Some(b) = s.dry_range2_bit {
 			s.range2_bit = b;
 		}
@@ -1318,12 +1340,12 @@ fn effective_spec(spec: &DatasetSpec, b_light_test: bool)
 /// cross-process file is the snark-start flag.
 pub fn run_neo(spec: &DatasetSpec, perc_db: f64,
 	perc_samples: f64, num_circs: usize, num_jobs: usize,
-	numa_num: usize, part_id: usize, b_light_test: bool,
+	numa_num: usize, part_id: usize, b_dry_run: bool,
 	b_ladder_only: bool) -> Vec<CapParams> {
 	set_diag_env(part_id);
-	let spec = &effective_spec(spec, b_light_test);
+	let spec = &effective_spec(spec, b_dry_run);
 	let role = part_role(part_id, numa_num, num_jobs);
-	apply_spec_config(spec, b_light_test, &role);
+	apply_spec_config(spec, b_dry_run, &role);
 	let pd = reset_part_dir(spec, part_id);
 	let proot = utils::os::proj_root();
 	let n_sigs = read_lines_nonblank(&format!("{}/{}/{}", proot,
@@ -1353,29 +1375,29 @@ pub fn run_neo(spec: &DatasetSpec, perc_db: f64,
 /// DLP full run: run_neo over the DLP const.
 pub fn full_dlp_neo(perc_db: f64, perc_samples: f64,
 	num_circs: usize, num_jobs: usize, numa_num: usize,
-	part_id: usize, b_light_test: bool, b_ladder_only: bool)
+	part_id: usize, b_dry_run: bool, b_ladder_only: bool)
 	-> Vec<CapParams> {
 	run_neo(&DLP, perc_db, perc_samples, num_circs, num_jobs,
-		numa_num, part_id, b_light_test, b_ladder_only)
+		numa_num, part_id, b_dry_run, b_ladder_only)
 }
 
 /// DNA full run: run_neo over the DNA const. Callers pin
 /// num_jobs = numa_num = 1 (single offset-anchored sample).
 pub fn full_dna_neo(perc_db: f64, perc_samples: f64,
 	num_circs: usize, num_jobs: usize, numa_num: usize,
-	part_id: usize, b_light_test: bool, b_ladder_only: bool)
+	part_id: usize, b_dry_run: bool, b_ladder_only: bool)
 	-> Vec<CapParams> {
 	run_neo(&DNA, perc_db, perc_samples, num_circs, num_jobs,
-		numa_num, part_id, b_light_test, b_ladder_only)
+		numa_num, part_id, b_dry_run, b_ladder_only)
 }
 
 /// ClamAV full run: run_neo over the CLAM const.
 pub fn full_clamav_neo(perc_db: f64, perc_samples: f64,
 	num_circs: usize, num_jobs: usize, numa_num: usize,
-	part_id: usize, b_light_test: bool, b_ladder_only: bool)
+	part_id: usize, b_dry_run: bool, b_ladder_only: bool)
 	-> Vec<CapParams> {
 	run_neo(&CLAM, perc_db, perc_samples, num_circs, num_jobs,
-		numa_num, part_id, b_light_test, b_ladder_only)
+		numa_num, part_id, b_dry_run, b_ladder_only)
 }
 
 /// Scale variant of a spec: cover check off, ladder emptied (num_circs
@@ -1410,13 +1432,17 @@ fn scale_spec_clone(spec: &DatasetSpec) -> DatasetSpec {
 	s
 }
 
+/// Byte-prefix percentage of the scale corpus a DRY sweep folds
+/// (user 2026-08-11). Full sweeps always fold the whole file.
+const DRY_SCALE_PERC: f64 = 5.0;
+
 /// Scale sweep (port of collect_scale_data_dlp, zkp_driver.rs:7671):
 /// ONE fixed corpus, ascending pin-INCLUSIVE rule counts; per count a
 /// fresh thinned DB -> tune -> folding-only fold with CapErr
 /// bump-retry. Emits legacy's ROUND markers on stdout; the Python
 /// leaf splits on them and packs the bundle. Writes no archive.
 pub fn collect_scale_data_neo(spec: &DatasetSpec, corpus_idx: usize,
-	vec_count: &[usize], b_light_test: bool) {
+	vec_count: &[usize], b_dry_run: bool) {
 	// Every argument assert fires BEFORE any process-wide write.
 	assert!(!vec_count.is_empty(),
 		"bora_data_driver: scale vec_count is empty");
@@ -1445,12 +1471,12 @@ pub fn collect_scale_data_neo(spec: &DatasetSpec, corpus_idx: usize,
 		"bora_data_driver: top scale count {} > {} sigs (an \
 		 over-count silently folds the FULL db)",
 		vec_count.last().unwrap(), n_sigs);
-	// b_light_test is SHAPE only (effective_spec's dry knobs);
+	// b_dry_run is SHAPE only (effective_spec's dry knobs);
 	// scale still never proves, so the flag's decider gates are
 	// unreachable either way.
-	let eff = effective_spec(spec, b_light_test);
+	let eff = effective_spec(spec, b_dry_run);
 	let sc = scale_spec_clone(&eff);
-	apply_spec_config(&sc, b_light_test, &part_role(0, 1, 1));
+	apply_spec_config(&sc, b_dry_run, &part_role(0, 1, 1));
 	{
 		// One write scope, AFTER apply_spec_config (which zeroes the
 		// catch flag). RULE 1: only scale routes fold CapErrs through
@@ -1465,6 +1491,15 @@ pub fn collect_scale_data_neo(spec: &DatasetSpec, corpus_idx: usize,
 	let pd = reset_part_dir(&sc, 0);
 	// count-invariant: one bin, one file, written once.
 	let bins = vec![vec![src.to_string()]];
+	// dry folds a DRY_SCALE_PERC byte prefix (user 2026-08-11): the
+	// scale sources are whole binaries (gdb is 6.8 MB) and fold work
+	// is linear in corpus length, so no chunk_len cuts it. Only CLAM
+	// scale passes b_dry_run; full runs fold the whole file.
+	let bins = if b_dry_run {
+		shrink_lone_sample(&pd, bins, DRY_SCALE_PERC)
+	} else {
+		bins
+	};
 	let manifests =
 		write_job_manifests(&format!("{}/jobs", pd), &bins);
 	for &cnt in vec_count {
@@ -1504,12 +1539,13 @@ pub fn collect_scale_dlp_neo(corpus_idx: usize, vec_count: &[usize]) {
 	collect_scale_data_neo(&DLP, corpus_idx, vec_count, false)
 }
 
-/// ClamAV scale sweep; light swaps in the dry chunk (the range
-/// table stays 2^26 -- corpus-position-sized).
+/// ClamAV scale sweep. b_dry_run is the CLI's dry token (NOT the
+/// global flag): it swaps in the dry chunk and range table, and cuts
+/// the corpus to DRY_SCALE_PERC.
 pub fn collect_scale_clamav_neo(corpus_idx: usize,
-	vec_count: &[usize], b_light_test: bool) {
+	vec_count: &[usize], b_dry_run: bool) {
 	collect_scale_data_neo(&CLAM, corpus_idx, vec_count,
-		b_light_test)
+		b_dry_run)
 }
 
 /// Q2 lookup-composition report, perc-driven. perc>=100 reproduces
@@ -1598,12 +1634,12 @@ pub const USAGE: &str = "bora_cli: backend of \
 	usage: bora_cli <subcommand>\n \
 	 lkup <perc> <dest_path>\n \
 	 full_dlp <perc_db> <perc_samples> <num_circs> <num_jobs> \
-	<numa_num> <part_id> <light 0|1> <ladder_only 0|1>\n \
-	   (light=1 also drops the hab22 cover check)\n \
+	<numa_num> <part_id> <dry 0|1> <ladder_only 0|1>\n \
+	   (dry=1 also drops the hab22 cover check)\n \
 	 full_dna <same 8 args as full_dlp>\n \
 	 full_clam <same 8 args as full_dlp>\n \
 	 scale_dlp <corpus_idx> <c1,c2,...>\n \
-	 scale_clam <corpus_idx> <c1,c2,...> <light 0|1>";
+	 scale_clam <corpus_idx> <c1,c2,...> <dry 0|1>";
 
 /// Parsed CLI command for examples/bora_cli.rs.
 #[derive(Debug, PartialEq)]
@@ -1611,16 +1647,16 @@ pub enum Cmd {
 	Lkup { perc: usize, dest_path: String },
 	FullDlp { perc_db: f64, perc_samples: f64, num_circs: usize,
 		num_jobs: usize, numa_num: usize, part_id: usize,
-		b_light_test: bool, b_ladder_only: bool },
+		b_dry_run: bool, b_ladder_only: bool },
 	FullDna { perc_db: f64, perc_samples: f64, num_circs: usize,
 		num_jobs: usize, numa_num: usize, part_id: usize,
-		b_light_test: bool, b_ladder_only: bool },
+		b_dry_run: bool, b_ladder_only: bool },
 	FullClam { perc_db: f64, perc_samples: f64, num_circs: usize,
 		num_jobs: usize, numa_num: usize, part_id: usize,
-		b_light_test: bool, b_ladder_only: bool },
+		b_dry_run: bool, b_ladder_only: bool },
 	ScaleDlp { corpus_idx: usize, vec_count: Vec<usize> },
 	ScaleClam { corpus_idx: usize, vec_count: Vec<usize>,
-		b_light_test: bool },
+		b_dry_run: bool },
 }
 
 fn arg_usize(args: &[String], i: usize, name: &str) -> usize {
@@ -1677,7 +1713,7 @@ fn parse_full8(args: &[String], sub: &str)
 		"bora_data_driver: part_id {} >= numa_num {}",
 		part_id, numa_num);
 	(perc_db, perc_samples, num_circs, num_jobs, numa_num, part_id,
-		arg_bool(args, 7, "light"), arg_bool(args, 8, "ladder_only"))
+		arg_bool(args, 7, "dry"), arg_bool(args, 8, "ladder_only"))
 }
 
 /// argv[1..] -> Cmd. Panics with a usage line on unknown subcommand,
@@ -1694,26 +1730,26 @@ pub fn parse_args(args: &[String]) -> Cmd {
 		}
 		Some("full_dlp") => {
 			let (perc_db, perc_samples, num_circs, num_jobs,
-				numa_num, part_id, b_light_test, b_ladder_only) =
+				numa_num, part_id, b_dry_run, b_ladder_only) =
 				parse_full8(args, "full_dlp");
 			Cmd::FullDlp { perc_db, perc_samples, num_circs,
-				num_jobs, numa_num, part_id, b_light_test,
+				num_jobs, numa_num, part_id, b_dry_run,
 				b_ladder_only }
 		}
 		Some("full_dna") => {
 			let (perc_db, perc_samples, num_circs, num_jobs,
-				numa_num, part_id, b_light_test, b_ladder_only) =
+				numa_num, part_id, b_dry_run, b_ladder_only) =
 				parse_full8(args, "full_dna");
 			Cmd::FullDna { perc_db, perc_samples, num_circs,
-				num_jobs, numa_num, part_id, b_light_test,
+				num_jobs, numa_num, part_id, b_dry_run,
 				b_ladder_only }
 		}
 		Some("full_clam") => {
 			let (perc_db, perc_samples, num_circs, num_jobs,
-				numa_num, part_id, b_light_test, b_ladder_only) =
+				numa_num, part_id, b_dry_run, b_ladder_only) =
 				parse_full8(args, "full_clam");
 			Cmd::FullClam { perc_db, perc_samples, num_circs,
-				num_jobs, numa_num, part_id, b_light_test,
+				num_jobs, numa_num, part_id, b_dry_run,
 				b_ladder_only }
 		}
 		Some("scale_dlp") => {
@@ -1731,7 +1767,7 @@ pub fn parse_args(args: &[String]) -> Cmd {
 			Cmd::ScaleClam {
 				corpus_idx: arg_usize(args, 1, "corpus_idx"),
 				vec_count: arg_counts(args, 2),
-				b_light_test: arg_bool(args, 3, "light") }
+				b_dry_run: arg_bool(args, 3, "dry") }
 		}
 		other => panic!(
 			"bora_data_driver: unknown subcommand {:?}\n{}",
@@ -2562,13 +2598,13 @@ pub mod tests_bora_data_driver {
 			"2", "1", "0", "1", "1"])),
 			Cmd::FullDlp { perc_db: 1.0, perc_samples: 1.0,
 				num_circs: 1, num_jobs: 2, numa_num: 1, part_id: 0,
-				b_light_test: true, b_ladder_only: true });
+				b_dry_run: true, b_ladder_only: true });
 		// fractional percs: the sub-1% smoke unit
 		assert_eq!(parse_args(&argv(&["full_dlp", "0.1", "0.05",
 			"4", "2", "1", "0", "1", "0"])),
 			Cmd::FullDlp { perc_db: 0.1, perc_samples: 0.05,
 				num_circs: 4, num_jobs: 2, numa_num: 1, part_id: 0,
-				b_light_test: true, b_ladder_only: false });
+				b_dry_run: true, b_ladder_only: false });
 	}
 
 	/// C103: counts CSV -> Vec<usize>, pin-inclusive units untouched.
@@ -2809,12 +2845,12 @@ pub mod tests_bora_data_driver {
 			"1", "0", "1", "0"])),
 			Cmd::FullDna { perc_db: 1.0, perc_samples: 2.0,
 				num_circs: 1, num_jobs: 1, numa_num: 1, part_id: 0,
-				b_light_test: true, b_ladder_only: false });
+				b_dry_run: true, b_ladder_only: false });
 		assert_eq!(parse_args(&a(&["full_dlp", "0.25", "0.0198",
 			"2", "2", "1", "0", "1", "0"])),
 			Cmd::FullDlp { perc_db: 0.25, perc_samples: 0.0198,
 				num_circs: 2, num_jobs: 2, numa_num: 1, part_id: 0,
-				b_light_test: true, b_ladder_only: false });
+				b_dry_run: true, b_ladder_only: false });
 	}
 
 	/// M103: full_dna arity reject goes through the shared helper.
@@ -2960,10 +2996,9 @@ pub mod tests_bora_data_driver {
 		assert_eq!(CLAM.db_cache_dir, "clam_neo");
 		assert_eq!(plan_dir(CLAM.name, 0), "/tmp/bora/clam_neo_p0");
 		assert_eq!(CLAM.chunk_len, 4096);
-		assert_eq!(CLAM.dry_chunk_len, Some(256));
+		assert_eq!(CLAM.dry_chunk_len, Some(128));
 		assert_eq!(CLAM.range2_bit, 26);
-		assert_eq!(CLAM.dry_range2_bit, None,
-			"table is corpus-position-sized; dry must keep 26");
+		assert_eq!(CLAM.dry_range2_bit, Some(22));
 		assert_eq!(CLAM.fanout_cap, 127);     // untouched default
 		assert_eq!(CLAM.min_pm_word_len, 4);  // untouched default
 		assert_eq!((CLAM.n_par_snark, CLAM.n_par_snark_cp,
@@ -3052,16 +3087,21 @@ pub mod tests_bora_data_driver {
 		assert!(sd.hand_seed.is_none());
 	}
 
-	/// M104: CLAM light swaps only the chunk (256); the range table
-	/// keeps 26 in BOTH modes (corpus-position-sized).
+	/// M104: light swaps in BOTH dry knobs (26/4096 -> 22/128);
+	/// heavy keeps the REAL shape -- the cut is dry-run-ONLY, and
+	/// effective_spec's light branch is its only consumer.
 	#[test]
 	fn test_m104_effective_spec_clam() {
 		let d = effective_spec(&CLAM, true);
-		assert_eq!((d.range2_bit, d.chunk_len), (26, 256));
+		assert_eq!((d.range2_bit, d.chunk_len), (22, 128));
 		assert!(!d.b_check_lkup);
 		let h = effective_spec(&CLAM, false);
-		assert_eq!((h.range2_bit, h.chunk_len), (26, 4096));
+		assert_eq!((h.range2_bit, h.chunk_len), (26, 4096),
+			"full run must keep the REAL shape");
 		assert!(h.b_check_lkup);
+		// the scale clone preserves the same dry-only property.
+		let sh = effective_spec(&scale_spec_clone(&CLAM), false);
+		assert_eq!((sh.range2_bit, sh.chunk_len), (26, 4096));
 	}
 
 	/// M104: full_clam parses through the shared parse_full8;
@@ -3072,11 +3112,17 @@ pub mod tests_bora_data_driver {
 			"2", "2", "1", "0", "1", "0"])),
 			Cmd::FullClam { perc_db: 0.5, perc_samples: 0.1,
 				num_circs: 2, num_jobs: 2, numa_num: 1, part_id: 0,
-				b_light_test: true, b_ladder_only: false });
+				b_dry_run: true, b_ladder_only: false });
 		assert_eq!(parse_args(&argv(&["scale_clam", "1", "1,300",
 			"1"])),
 			Cmd::ScaleClam { corpus_idx: 1,
-				vec_count: vec![1, 300], b_light_test: true });
+				vec_count: vec![1, 300], b_dry_run: true });
+		// the token that gates BOTH dry shape and the 5% corpus cut:
+		// a full sweep must parse it false (Python sends "0").
+		assert_eq!(parse_args(&argv(&["scale_clam", "1", "1,300",
+			"0"])),
+			Cmd::ScaleClam { corpus_idx: 1,
+				vec_count: vec![1, 300], b_dry_run: false });
 	}
 
 	#[test]
@@ -3104,12 +3150,91 @@ pub mod tests_bora_data_driver {
 		let caps = build_and_tune(&spec, 40, &bins, 1, 0);
 		assert_eq!(caps.len(), 1, "non-aggr = single rung");
 		let p = &caps[0];
-		assert_eq!(p.max_word_len, 256);
-		assert_eq!(p.acdfa_state_part_bits, 26);
+		assert_eq!(p.max_word_len, 128);
+		assert_eq!(p.acdfa_state_part_bits, 22);
 		assert!(p.qm_real_rows >= 2, "converged qm (T604)");
 		let c = read_global_config();
 		assert_eq!(c.min_subsigs, p.subsigs);
 		assert_eq!(c.perc_lkup_share, 1);
 		assert!(c.b_pin_lkup_share);
+	}
+
+	/// M104: every CLAM scale source's DRY fragment must fit the dry
+	/// range table -- the axis that panicked mid-fold when mis-sized.
+	#[test]
+	fn test_m104_dry_scale_fragment_fits_table() {
+		let proot = utils::os::proj_root();
+		let eff = effective_spec(&CLAM, true);
+		let table = 1usize << eff.range2_bit;
+		assert_eq!(DRY_SCALE_PERC, 5.0);
+		for s in CLAM.scale_sources {
+			let n = fs::metadata(format!("{}/{}", proot, s))
+				.unwrap_or_else(|e| panic!("scale source {}: {}", s, e))
+				.len() as usize;
+			let keep = (n as f64 * DRY_SCALE_PERC / 100.0).ceil()
+				as usize;
+			assert!(keep * 2 + eff.chunk_len * 62 < table,
+				"{}: dry fragment {} nibbles overflows 2^{} ({} B raw)",
+				s, keep * 2, eff.range2_bit, n);
+			assert!(n > keep, "{}: fragment is not a cut", s);
+		}
+	}
+
+	/// M104: the pad constant really covers all 16 hex digits, which is
+	/// the whole point of it (HexACDFA asserts alpha_size == 17).
+	#[test]
+	fn test_m104_alphabet_sig_covers_hex() {
+		let digits: HashSet<char> = ALPHABET_SIG.split(';').skip(3)
+			.flat_map(|p| p.chars()).collect();
+		assert_eq!(digits.len(), 16, "pad must span all 16 nibbles");
+		assert!(digits.iter().all(|c| c.is_ascii_hexdigit()));
+		assert_eq!(ALPHABET_SIG.split(';').next(),
+			Some("Win.Alphabet.SAMPLE-1"));
+	}
+
+	/// M104: thinning a source with no alphabet rule prepends the pad,
+	/// so subset(n,1)'s index-0 pin is alphabet-complete.
+	#[test]
+	fn test_m104_alphabet_pad_when_absent() {
+		let src = fresh_tmp_dir("padabs_src");
+		let dst = fresh_tmp_dir("padabs_dst");
+		write_fixture(&src, 20, "main.dat", false);
+		let out = create_smaller_config(src.to_str().unwrap(),
+			"main.dat", 1, dst.to_str().unwrap());
+		let kept = read_lines_nonblank(&out);
+		assert_eq!(kept, vec![ALPHABET_SIG.to_string()]);
+		// count=5 keeps the pad plus 4 real sigs: label == line count.
+		let dst2 = fresh_tmp_dir("padabs_dst2");
+		let out2 = create_smaller_config(src.to_str().unwrap(),
+			"main.dat", 5, dst2.to_str().unwrap());
+		let k2 = read_lines_nonblank(&out2);
+		assert_eq!(k2.len(), 5);
+		assert_eq!(k2[0], ALPHABET_SIG);
+	}
+
+	/// M104: the pad is inert where the rule already exists (DLP/DNA)
+	/// and inert when the whole DB is kept (count >= source len).
+	#[test]
+	fn test_m104_alphabet_pad_inert() {
+		let proot = utils::os::proj_root();
+		let src = format!("{}/{}", proot, DNA.config_dir);
+		let td = fresh_tmp_dir("padinert");
+		let out = create_smaller_config(&src, DNA.sig_file, 3,
+			td.to_str().unwrap());
+		let kept = read_lines_nonblank(&out);
+		assert_eq!(kept.len(), 3);
+		assert_eq!(kept.iter()
+			.filter(|l| l.starts_with("Win.Alphabet")).count(), 1,
+			"real alphabet rule must not be duplicated");
+		assert!(kept[0].starts_with("Win.Alphabet"));
+
+		let s2 = fresh_tmp_dir("padfull_src");
+		let d2 = fresh_tmp_dir("padfull_dst");
+		write_fixture(&s2, 12, "main.dat", false);
+		let o2 = create_smaller_config(s2.to_str().unwrap(), "main.dat",
+			12, d2.to_str().unwrap());
+		let k2 = read_lines_nonblank(&o2);
+		assert_eq!(k2.len(), 12, "count == len keeps every real sig");
+		assert!(!k2.iter().any(|l| l.starts_with("Win.Alphabet")));
 	}
 }

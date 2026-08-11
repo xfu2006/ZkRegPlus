@@ -416,7 +416,8 @@ def pack_scale_bundle(run_log, dest):
     """Split run_log on the SCALE ROUND markers and pack one
     log_<count>.txt.tgz per round into dest (attic split_and_pack
     port; a trailing BEGIN with no END -- crash mid-round -- is kept).
-    Zero rounds -> dest untouched (never clobber a committed bundle).
+    dest is replaced only by a sweep that COMPLETED >=1 round, so a
+    crash can never clobber a committed bundle.
     Returns the number of rounds packed; placement is atomic."""
     rounds, cur_cnt, buf = [], None, []
     for line in open(run_log, errors="replace"):
@@ -434,9 +435,15 @@ def pack_scale_bundle(run_log, dest):
             cur_cnt, buf = None, []
     if cur_cnt is not None:                # trailing (un-ENDed) round
         rounds.append((cur_cnt, buf))
-    if not rounds:
-        log("pack_scale_bundle: 0 rounds in %s; %s left untouched"
-            % (run_log, dest))
+    # A partial round carries no usable data point, so a sweep that
+    # died before its first END must leave the committed bundle alone
+    # (2026-08-11: such a crash replaced a 4.5 MB bundle with a 695 B
+    # log). Partial rounds still ride along once one round completed.
+    n_end = sum(1 for _, lines in rounds
+                if any(SCALE_END_RE.search(ln) for ln in lines))
+    if not n_end:
+        log("pack_scale_bundle: 0 completed rounds in %s (%d partial);"
+            " %s left untouched" % (run_log, len(rounds), dest))
         return 0
 
     os.makedirs(os.path.dirname(dest), exist_ok=True)
@@ -1890,6 +1897,20 @@ class PackScaleBundleTest(unittest.TestCase):
     def test_zero_rounds_leaves_dest_untouched(self):
         with open(self.log, "w") as f:
             f.write("no markers here\n")
+        os.makedirs(os.path.dirname(self.dest))
+        with open(self.dest, "w") as f:
+            f.write("precious committed bundle")
+        n = pack_scale_bundle(self.log, self.dest)
+        self.assertEqual(n, 0)
+        self.assertEqual(open(self.dest).read(),
+                          "precious committed bundle")
+
+    def test_partial_only_leaves_dest_untouched(self):
+        """A sweep that crashed inside its FIRST round has no completed
+        data point, so it must not replace a committed bundle."""
+        with open(self.log, "w") as f:
+            f.write("==== SCALE ROUND BEGIN count=1 corpus=x ====\n"
+                    "thread panicked at alpha_size\n")
         os.makedirs(os.path.dirname(self.dest))
         with open(self.dest, "w") as f:
             f.write("precious committed bundle")
