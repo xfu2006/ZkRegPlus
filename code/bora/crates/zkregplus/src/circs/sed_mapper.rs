@@ -63,7 +63,8 @@ use folding_schemes::{
 use ark_ff::{PrimeField};
 use crate::{
 	circs::{composable_gadget_mapper::{ComponentMapper,
-			ComponentMapperCloneBox}},
+			ComponentMapperCloneBox},
+		cp_mapper::{b_skip_igc_arm}},
 	gadgets::word_extract_adv::{WordExtractAdvCapacity, WordExtractAdvGadget, WordExtractAdvAdvice },
 	gadgets::word_extract::{LEGS},
 	gadgets::fsm_adv::{FsmAdvGadget,FsmAdvAdvice,FsmAdvCapacity},
@@ -150,10 +151,13 @@ pub struct SedInput<F:PrimeField + ColEle>{
 }
 
 #[derive(Clone,Debug)]
-pub struct SedComponentMapper<F:PrimeField + ColEle, LK: LookupTableTwoCol<F>>{ 
+pub struct SedComponentMapper<F:PrimeField + ColEle, LK: LookupTableTwoCol<F>>{
 	pub _f: PhantomData<F>,
 	pub _lk: PhantomData<LK>,
 	pub capacity: SedCapacityCombo,
+
+	/// skip the igc arm (empty igc universe, neo aggressive)
+	pub b_skip_igc: bool,
 
 	/// its own gadgets 
 	///pub gadgets: Vec<Rc<dyn SigmaGadget<F> + Send + Sync + ContainerCompatible>>,
@@ -212,7 +216,8 @@ impl SedCapacity{
 			basis_pats_in_trace_igc: basis_pats_in_trace, 
 			perc_pats_expansion_rate_cs: perc_pats_expansion_rate,
 			perc_pats_expansion_rate_igc: perc_pats_expansion_rate,
-			perc_comp_subsigs, b_aggressive: false};
+			perc_comp_subsigs, b_aggressive: false,
+			b_skip_igc: false};
 			
 		let comp_capacities: Vec<Arc<dyn Capacity + Send + Sync>> = vec![
 			Arc::new(wea_capacity),
@@ -494,9 +499,11 @@ impl<F: PrimeField + ColEle> DaAdvice<F> {
 pub struct SedAdvice<F:PrimeField + ColEle>{
 	pub wd_extract_advice: WordExtractAdvAdvice<F>,
 	pub fsm_adv_advice_cs: FsmAdvAdvice<F>,
-	pub fsm_adv_advice_igc: FsmAdvAdvice<F>,
+	/// None iff the igc arm is skipped (empty igc universe, neo aggr)
+	pub fsm_adv_advice_igc: Option<FsmAdvAdvice<F>>,
 	pub discharge_adv_advice_cs: DaAdvice<F>,
-	pub discharge_adv_advice_igc: DaAdvice<F>,
+	/// None iff the igc arm is skipped (empty igc universe, neo aggr)
+	pub discharge_adv_advice_igc: Option<DaAdvice<F>>,
 	pub compute_sig_adv_advice: ComputeSigAdvAdvice<F>,
 
 	pub vec_advices: Vec<Arc<dyn ComponentAdvice<F> + Send + Sync>>,
@@ -560,6 +567,7 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 			actual_size: usize,
 			cs_capacity: &SedCapacity,
 			igc_capacity: &SedCapacity,
+			b_skip_igc: bool, //skip the igc arm (empty igc universe)
 			inp: &SedInput<F>,
 			halo_nibbles: &[F], //M look-ahead nibbles; empty if M==0
 
@@ -611,16 +619,23 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 				subsig_pat_store_cs, job_id)?;
 		if b_perf{ log_perf(job_id, LOG5, "Sed advice step2: fsm_cs", &mut t1); }
 
-		//2.2 the igc version
+		//2.2 the igc version (None when the igc arm is skipped)
 		let subsigs_inp_igc= Self::collect_subsig_ids(vec_sigs_to_discharge,
 			discharge_info, sig_to_id, true, dfa_igc);
-		let fsm_adv_advice_igc = FsmAdvAdvice::<F>
+		if b_skip_igc {
+			assert!(subsigs_inp_igc.is_empty(),
+				"b_skip_igc with {} igc subsigs in demand",
+				subsigs_inp_igc.len());
+		}
+		let fsm_adv_advice_igc = if b_skip_igc { None } else {
+			Some(FsmAdvAdvice::<F>
 			::new(true, //igc
 				2, //offset to word_extract
 				&nibbles, halo_nibbles, dfa_igc,
 				inp.inp_state_igc,inp.inp_loc_igc,
 				&subsigs_inp_igc, &fsm_cap_igc, fsm_id_igc as u32,
-				subsig_pat_store_igc, job_id)?;
+				subsig_pat_store_igc, job_id)?)
+		};
 		if b_perf{ log_perf(job_id, LOG5, "Sed advice step3: fsm_igc", &mut t1); }
 
 		//3. build the discharge_adv advice (cs and igc)
@@ -639,14 +654,17 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
                 let last_loc_cs = locs_cs[locs_cs.len()-1];
 		let use_neo = read_global_config().clamav_cfg
 			.b_use_discharge_neo;
+		//da_cs sits 2 gadgets after its fsm normally, 1 when the igc
+		//arm is skipped (faa_igc absent from the gadget list)
+		let dist_da = if b_skip_igc {1} else {2};
 		let discharge_adv_advice_cs = if use_neo {
-			DaAdvice::Neo(DischargeAdvNeoAdvice::<F>::new(false, 2,
+			DaAdvice::Neo(DischargeAdvNeoAdvice::<F>::new(false, dist_da,
 				&pat_loc_cs, &subsigs_inp_cs, fsm_id_cs as u32,
 				subsig_step_store_cs, &da_cap_cs,
 				&inp_steps_queue_obj_cs, last_loc_cs, seg_id,
 				job_id)?)
 		} else {
-			DaAdvice::Legacy(DischargeAdvAdvice::<F>::new(false, 2,
+			DaAdvice::Legacy(DischargeAdvAdvice::<F>::new(false, dist_da,
 				&pat_loc_cs, &subsigs_inp_cs, fsm_id_cs as u32,
 				subsig_step_store_cs, &da_cap_cs,
 				&inp_steps_queue_obj_cs, last_loc_cs, seg_id,
@@ -654,28 +672,32 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 		};
 		if b_perf{ log_perf(job_id, LOG5, "Sed advice step4: discharge_cs", &mut t1); }
 
-		//3.2 the igc version
-		let pat_loc_igc = fsm_adv_advice_igc.stmt_container.lock().unwrap()
-			.search_container("fsm_adv_stmt_igc packed_trace pat_loc sorted_tbl").unwrap();
-		let inp_steps_queue_obj_igc = StepQueue::parse_from(
-			&inp.inp_steps_queue_igc, StepQueueType::ResSmall,
-			&da_cap_igc, true);
-		let locs_igc = fsm_adv_advice_igc.stmt_container.lock().unwrap()
-                        .search_container("fsm_adv_stmt_igc fsm_acc locs").unwrap()
-                        .lock().unwrap().to_vec();
-                let last_loc_igc = locs_igc[locs_igc.len()-1];
-		let discharge_adv_advice_igc = if use_neo {
-			DaAdvice::Neo(DischargeAdvNeoAdvice::<F>::new(true, 2,
-				&pat_loc_igc, &subsigs_inp_igc, fsm_id_igc as u32,
-				subsig_step_store_igc, &da_cap_igc,
-				&inp_steps_queue_obj_igc, last_loc_igc, seg_id,
-				job_id)?)
-		} else {
-			DaAdvice::Legacy(DischargeAdvAdvice::<F>::new(true, 2,
-				&pat_loc_igc, &subsigs_inp_igc, fsm_id_igc as u32,
-				subsig_step_store_igc, &da_cap_igc,
-				&inp_steps_queue_obj_igc, last_loc_igc, seg_id,
-				job_id)?)
+		//3.2 the igc version (None when the igc arm is skipped)
+		let discharge_adv_advice_igc = if b_skip_igc { None } else {
+			let fsm_igc = fsm_adv_advice_igc.as_ref()
+				.expect("igc fsm advice");
+			let pat_loc_igc = fsm_igc.stmt_container.lock().unwrap()
+				.search_container("fsm_adv_stmt_igc packed_trace pat_loc sorted_tbl").unwrap();
+			let inp_steps_queue_obj_igc = StepQueue::parse_from(
+				&inp.inp_steps_queue_igc, StepQueueType::ResSmall,
+				&da_cap_igc, true);
+			let locs_igc = fsm_igc.stmt_container.lock().unwrap()
+				.search_container("fsm_adv_stmt_igc fsm_acc locs").unwrap()
+				.lock().unwrap().to_vec();
+			let last_loc_igc = locs_igc[locs_igc.len()-1];
+			Some(if use_neo {
+				DaAdvice::Neo(DischargeAdvNeoAdvice::<F>::new(true, 2,
+					&pat_loc_igc, &subsigs_inp_igc, fsm_id_igc as u32,
+					subsig_step_store_igc, &da_cap_igc,
+					&inp_steps_queue_obj_igc, last_loc_igc, seg_id,
+					job_id)?)
+			} else {
+				DaAdvice::Legacy(DischargeAdvAdvice::<F>::new(true, 2,
+					&pat_loc_igc, &subsigs_inp_igc, fsm_id_igc as u32,
+					subsig_step_store_igc, &da_cap_igc,
+					&inp_steps_queue_obj_igc, last_loc_igc, seg_id,
+					job_id)?)
+			})
 		};
 		if b_perf{ log_perf(job_id, LOG5, "Sed advice step5: discharge_igc", &mut t1); }
 
@@ -688,6 +710,7 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 		csa_cap.basis_pats_in_trace_igc = csa_cap_igc.basis_pats_in_trace_igc;
 		csa_cap.perc_pats_expansion_rate_igc= csa_cap_igc.perc_pats_expansion_rate_igc;
 		csa_cap.subsigs_igc = csa_cap_igc.subsigs_igc;
+		csa_cap.b_skip_igc = b_skip_igc;
 		//AGGRESSIVE: compute_sig reads the failed_subsigs accumulator
 		//(acc_out) instead of the (no-op) backward sq_res2.
 		let b_aggr = cs_capacity.da_capacity().b_aggressive;
@@ -706,19 +729,27 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 				"discharge_adv_stmt_cs bwd_steps_queue sq_res2")
 				.expect("sq_res err")
 		};
-		let stmt_disc_igc = discharge_adv_advice_igc.stmt_container();
-		let sq_res_igc = if use_neo && !b_aggr {
-			stmt_disc_igc.lock().unwrap().search_container(
-				"discharge_adv_stmt_igc q_c")
-				.expect("neo q_c igc err")
-		} else if b_aggr {
-			stmt_disc_igc.lock().unwrap().search_container(
-				"discharge_adv_stmt_igc failed_acc_combo failed_acc")
-				.expect("acc_out igc err")
+		//skip mode: empty placeholder, never read (the igc eval in
+		//compute_sig is skipped under csa_cap.b_skip_igc)
+		let sq_res_igc = if b_skip_igc {
+			Container::<F>::new("sq_res2_igc")
 		} else {
-			stmt_disc_igc.lock().unwrap().search_container(
-				"discharge_adv_stmt_igc bwd_steps_queue sq_res2")
-				.expect("sq_res err")
+			let stmt_disc_igc = discharge_adv_advice_igc.as_ref()
+				.expect("igc da advice").stmt_container();
+			let c = if use_neo && !b_aggr {
+				stmt_disc_igc.lock().unwrap().search_container(
+					"discharge_adv_stmt_igc q_c")
+					.expect("neo q_c igc err")
+			} else if b_aggr {
+				stmt_disc_igc.lock().unwrap().search_container(
+					"discharge_adv_stmt_igc failed_acc_combo failed_acc")
+					.expect("acc_out igc err")
+			} else {
+				stmt_disc_igc.lock().unwrap().search_container(
+					"discharge_adv_stmt_igc bwd_steps_queue sq_res2")
+					.expect("sq_res err")
+			};
+			c
 		};
 		// Aggressive seed tie: the forward seed sq_inp (exists in non-aggr
 		// too; only the aggr compute_sig acc path reads it). Neo carries
@@ -736,17 +767,24 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 				"discharge_adv_stmt_cs fwd_steps_queue sq_inp")
 				.expect("sq_inp cs err")
 		};
-		let sq_inp_igc = if use_neo && !b_aggr {
-			stmt_disc_igc.lock().unwrap().search_container(
-				"discharge_adv_stmt_igc q_i").expect("neo q_i igc err")
-		} else if use_neo && b_aggr {
-			stmt_disc_igc.lock().unwrap().search_container(
-				"discharge_adv_stmt_igc fwd_seed")
-				.expect("neo fwd_seed igc err")
+		let sq_inp_igc = if b_skip_igc {
+			Container::<F>::new("sq_inp")
 		} else {
-			stmt_disc_igc.lock().unwrap().search_container(
-				"discharge_adv_stmt_igc fwd_steps_queue sq_inp")
-				.expect("sq_inp igc err")
+			let stmt_disc_igc = discharge_adv_advice_igc.as_ref()
+				.expect("igc da advice").stmt_container();
+			let c = if use_neo && !b_aggr {
+				stmt_disc_igc.lock().unwrap().search_container(
+					"discharge_adv_stmt_igc q_i").expect("neo q_i igc err")
+			} else if use_neo && b_aggr {
+				stmt_disc_igc.lock().unwrap().search_container(
+					"discharge_adv_stmt_igc fwd_seed")
+					.expect("neo fwd_seed igc err")
+			} else {
+				stmt_disc_igc.lock().unwrap().search_container(
+					"discharge_adv_stmt_igc fwd_steps_queue sq_inp")
+					.expect("sq_inp igc err")
+			};
+			c
 		};
 		// Neo (BOTH modes): compute_sig evaluates the SDE obligation
 		// set = inp filtered to non-empty-chain, matching the
@@ -784,15 +822,20 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 			subsig_info_store_cs, subsig_info_store_igc,
 			vec_sigs_to_discharge, sig_to_id, job_id)?;
 
-		//3. assemble all advices
-		let vec_advices:Vec<Arc<dyn ComponentAdvice<F> + Send + Sync>> = vec![
+		//3. assemble all advices (igc entries absent in skip mode)
+		let mut vec_advices:Vec<Arc<dyn ComponentAdvice<F> + Send + Sync>>
+			= vec![
 			Arc::new(wd_extract_advice.clone()),
 			Arc::new(fsm_adv_advice_cs.clone()),
-			Arc::new(fsm_adv_advice_igc.clone()),
-			discharge_adv_advice_cs.to_component_advice(),
-			discharge_adv_advice_igc.to_component_advice(),
-			Arc::new(compute_sig_adv_advice.clone()),
 		];
+		if let Some(a) = &fsm_adv_advice_igc {
+			vec_advices.push(Arc::new(a.clone()));
+		}
+		vec_advices.push(discharge_adv_advice_cs.to_component_advice());
+		if let Some(a) = &discharge_adv_advice_igc {
+			vec_advices.push(a.to_component_advice());
+		}
+		vec_advices.push(Arc::new(compute_sig_adv_advice.clone()));
 		if b_perf{ log_perf(job_id, LOG5, "Sed advice step6: compute_sig", &mut t1); }
 
 		Ok(Self{
@@ -839,6 +882,8 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 		clamdb: Arc<ClamavDB<F>>,
 	) ->Self{
 		let b_debug = B_DEBUG;
+		//igc arm with an empty igc universe: skip its gadgets entirely
+		let b_skip_igc = b_skip_igc_arm(clamdb.as_ref());
 		//Aggressive-mode forward halo (M=0 ⇒ no halo, byte-identical).
 		//Inject M into the FSM sub-capacity before the gadgets/combo
 		//below are built. Bounded to ≤25% of a chunk for efficiency.
@@ -888,38 +933,45 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 		cfgs.push( g_faa_cs.dummy_cfg.clone() );
 
 		let fsm_cap_igc = &igc_capacity.faa_capacity();
-		let g_faa_igc = FsmAdvGadget::<F>::new(true, 2, //dist to wea
-			acdfa_igc, &fsm_cap_igc, fsm_id_igc, &cfgs, subsig_pat_store_igc); 
-		cfgs.push( g_faa_igc.dummy_cfg.clone() );
+		let g_faa_igc = if b_skip_igc { None } else {
+			let g = FsmAdvGadget::<F>::new(true, 2, //dist to wea
+				acdfa_igc, &fsm_cap_igc, fsm_id_igc, &cfgs,
+				subsig_pat_store_igc);
+			cfgs.push( g.dummy_cfg.clone() );
+			Some(g)
+		};
 
 		//1.3. discharge_subsig (2 gadgets) -- neo/legacy swap (M3)
 		let use_neo = read_global_config().clamav_cfg
 			.b_use_discharge_neo;
 		let da_cap_cs = &cs_capacity.da_capacity();
 		let da_cap_igc = &igc_capacity.da_capacity();
+		//da_cs sits 2 gadgets after its fsm normally, 1 when the igc
+		//arm is skipped (faa_igc absent from the gadget list)
+		let dist_da = if b_skip_igc {1} else {2};
 		let g_da_cs: Arc<Mutex<dyn SigmaGadget<F> + Send + Sync>> =
 			if use_neo {
-			let g = DischargeAdvNeoGadget::<F>::new(false, 2,
+			let g = DischargeAdvNeoGadget::<F>::new(false, dist_da,
 				&da_cap_cs, fsm_id_cs, &cfgs, subsig_step_store_cs);
 			cfgs.push( g.inner.dummy_cfg.clone() );
 			Arc::new(Mutex::new(g))
 		} else {
-			let g = DischargeAdvGadget::<F>::new(false, 2, &da_cap_cs,
+			let g = DischargeAdvGadget::<F>::new(false, dist_da, &da_cap_cs,
 				fsm_id_cs, &cfgs, subsig_step_store_cs);
 			cfgs.push( g.dummy_cfg.clone() );
 			Arc::new(Mutex::new(g))
 		};
-		let g_da_igc: Arc<Mutex<dyn SigmaGadget<F> + Send + Sync>> =
-			if use_neo {
+		let g_da_igc: Option<Arc<Mutex<dyn SigmaGadget<F> + Send + Sync>>> =
+			if b_skip_igc { None } else if use_neo {
 			let g = DischargeAdvNeoGadget::<F>::new(true, 2,
 				&da_cap_igc, fsm_id_igc, &cfgs, subsig_step_store_igc);
 			cfgs.push( g.inner.dummy_cfg.clone() );
-			Arc::new(Mutex::new(g))
+			Some(Arc::new(Mutex::new(g)))
 		} else {
 			let g = DischargeAdvGadget::<F>::new(true, 2, &da_cap_igc,
 				fsm_id_igc, &cfgs, subsig_step_store_igc);
 			cfgs.push( g.dummy_cfg.clone() );
-			Arc::new(Mutex::new(g))
+			Some(Arc::new(Mutex::new(g)))
 		};
 
 		//1.4 compute_sigs gadget (1 gadget)
@@ -931,6 +983,7 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 		csa_cap.basis_pats_in_trace_igc = csa_cap_igc.basis_pats_in_trace_igc;
 		csa_cap.perc_pats_expansion_rate_igc= csa_cap_igc.perc_pats_expansion_rate_igc;
 		csa_cap.subsigs_igc = csa_cap_igc.subsigs_igc;
+		csa_cap.b_skip_igc = b_skip_igc;
 		let g_csa = ComputeSigAdvGadget::<F>::new(
 			fsm_id_cs, 
 			fsm_id_igc, 
@@ -943,20 +996,25 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> SedComponentMapper<F,LK>{
 		);
 		cfgs.push( g_csa.dummy_cfg.clone() );
 
-		//2. build the gadgets
-		let gadgets: Vec<std::sync::Arc<std::sync::Mutex<dyn SigmaGadget<F> + Send + Sync>>> = vec![ 
+		//2. build the gadgets (igc entries absent in skip mode)
+		let mut gadgets: Vec<std::sync::Arc<std::sync::Mutex<dyn SigmaGadget<F> + Send + Sync>>> = vec![
 			Arc::new(Mutex::new(g_wea)), //word_extract_adv gadget
 			Arc::new(Mutex::new(g_faa_cs)), //fsm_adv gadget
-			Arc::new(Mutex::new(g_faa_igc)), //fsm_adv gadget
-			g_da_cs, //discharge subsigs via SED (boxed above)
-			g_da_igc, //discharge subsigs via SED (boxed above)
-			Arc::new(Mutex::new(g_csa)), //compute_sig_gadget 
 		];
+		if let Some(g) = g_faa_igc {
+			gadgets.push(Arc::new(Mutex::new(g))); //fsm_adv gadget
+		}
+		gadgets.push(g_da_cs); //discharge subsigs via SED (boxed above)
+		if let Some(g) = g_da_igc {
+			gadgets.push(g); //discharge subsigs via SED (boxed above)
+		}
+		gadgets.push(Arc::new(Mutex::new(g_csa))); //compute_sig_gadget
 
 		Self{
-			_f: PhantomData, 
-			_lk: PhantomData, 
+			_f: PhantomData,
+			_lk: PhantomData,
 			capacity: SedCapacityCombo::new(&cs_capacity, &igc_capacity),
+			b_skip_igc,
 			clamdb,
 			gadgets,
 			job_id: 0,
@@ -1165,52 +1223,67 @@ failed_c_segs={} failed_c_total={}", seg_id,
 				(last_oup_state_cs, last_loc_cs, sq_cs)
 			}
 		);
-		//3.2 the ignore case version 
-		let init_state_igc = F::from((pm_acdfa_igc.init_state+1) as u32);//adj+1
-		// M+1 coordinate offset under aggressive mode (see init_loc_cs above).
-		let init_loc_igc = if m_aggr>0 {F::from((m_aggr+1) as u64)}
-			else {F::one()};
+		//3.2 the ignore case version (zeroed when the igc arm is
+		//skipped; the zeros are never read by any gadget then)
 		let inp_subsigs_igc: Vec<F>= SedAdvice
 			::collect_subsig_ids(&vec_sigs_to_discharge,
 				&discharge_info, sig_to_id, true, &pm_acdfa_igc);
-		let init_steps_queue_igc = DischargeAdvAdvice
-			::gen_empty_steps_queue_serialized(
-				true, //b_igc
-				&inp_subsigs_igc,
-				&subsig_step_store_igc,
-				pm_fsm_id_igc,
-				&self.capacity.igc.da_capacity()
-			).to_vec(&subsig_step_store_igc)?;
+		let (inp_state_igc, inp_loc_igc, inp_steps_queue_igc) =
+			if self.b_skip_igc {
+			assert!(inp_subsigs_igc.is_empty(),
+				"b_skip_igc with {} igc subsigs in chunk demand",
+				inp_subsigs_igc.len());
+			(F::zero(), F::zero(), vec![])
+		} else {
+			let init_state_igc =
+				F::from((pm_acdfa_igc.init_state+1) as u32);//adj+1
+			// M+1 coordinate offset under aggressive mode (see
+			// init_loc_cs above).
+			let init_loc_igc = if m_aggr>0 {F::from((m_aggr+1) as u64)}
+				else {F::one()};
+			let init_steps_queue_igc = DischargeAdvAdvice
+				::gen_empty_steps_queue_serialized(
+					true, //b_igc
+					&inp_subsigs_igc,
+					&subsig_step_store_igc,
+					pm_fsm_id_igc,
+					&self.capacity.igc.da_capacity()
+				).to_vec(&subsig_step_store_igc)?;
 
-		// Clone the fresh init queue so the aggressive carry below can
-		// reuse it (the default tuple consumes the original).
-		let init_steps_queue_igc_aggr = init_steps_queue_igc.clone();
+			// Clone the fresh init queue so the aggressive carry below
+			// can reuse it (the default tuple consumes the original).
+			let init_steps_queue_igc_aggr = init_steps_queue_igc.clone();
 
-		let (inp_state_igc, inp_loc_igc, inp_steps_queue_igc) = r_prev_adv
-		.as_ref().map_or(
-			(init_state_igc, init_loc_igc, init_steps_queue_igc), |adv|{
-				let adv= adv.as_any().downcast_ref::<SedAdvice<F>>();
-				let fsm_adv_advice_igc= &adv.unwrap().fsm_adv_advice_igc;
-				let states_igc = fsm_adv_advice_igc.stmt_container.lock().unwrap()
-					.search_container("fsm_adv_stmt_igc fsm_acc states")
-					.unwrap().lock().unwrap().to_vec();
-				let last_oup_state_igc = states_igc[states_igc.len()-1];
-				let locs_igc = fsm_adv_advice_igc.stmt_container.lock().unwrap()
-					.search_container("fsm_adv_stmt_igc fsm_acc locs").unwrap()
-					.lock().unwrap().to_vec();
-				let last_loc_igc = locs_igc[locs_igc.len()-1];
-				let da_adv_igc = &adv.unwrap().discharge_adv_advice_igc;
-				// Non-aggr: carry the prior chunk's output step-queue.
-				// Aggr: empty under aggr, so fall back to this chunk's
-				// fresh init queue to keep parse_from well-formed.
-				let sq_igc = if m_aggr>0 {
-					init_steps_queue_igc_aggr.clone()
-				} else {
-					da_adv_igc.get_output_steps_queue().to_vec()
-				};
-				(last_oup_state_igc, last_loc_igc, sq_igc)
-			}
-		);
+			r_prev_adv
+			.as_ref().map_or(
+				(init_state_igc, init_loc_igc, init_steps_queue_igc), |adv|{
+					let adv= adv.as_any().downcast_ref::<SedAdvice<F>>();
+					let fsm_adv_advice_igc= adv.unwrap()
+						.fsm_adv_advice_igc.as_ref()
+						.expect("igc fsm advice");
+					let states_igc = fsm_adv_advice_igc.stmt_container.lock().unwrap()
+						.search_container("fsm_adv_stmt_igc fsm_acc states")
+						.unwrap().lock().unwrap().to_vec();
+					let last_oup_state_igc = states_igc[states_igc.len()-1];
+					let locs_igc = fsm_adv_advice_igc.stmt_container.lock().unwrap()
+						.search_container("fsm_adv_stmt_igc fsm_acc locs").unwrap()
+						.lock().unwrap().to_vec();
+					let last_loc_igc = locs_igc[locs_igc.len()-1];
+					let da_adv_igc = adv.unwrap()
+						.discharge_adv_advice_igc.as_ref()
+						.expect("igc da advice");
+					// Non-aggr: carry the prior chunk's output step-queue.
+					// Aggr: empty under aggr, so fall back to this chunk's
+					// fresh init queue to keep parse_from well-formed.
+					let sq_igc = if m_aggr>0 {
+						init_steps_queue_igc_aggr.clone()
+					} else {
+						da_adv_igc.get_output_steps_queue().to_vec()
+					};
+					(last_oup_state_igc, last_loc_igc, sq_igc)
+				}
+			)
+		};
 		//3. build the advice
 		let inp = SedInput{inp_state_cs, inp_loc_cs, inp_steps_queue_cs,
 			inp_state_igc, inp_loc_igc, inp_steps_queue_igc};
@@ -1235,6 +1308,7 @@ failed_c_segs={} failed_c_total={}", seg_id,
 			word.len(),
 			&self.capacity.cs,
 			&self.capacity.igc,
+			self.b_skip_igc,
 			&inp,
 			&halo_f,
 
@@ -1466,6 +1540,7 @@ where F: 'static,
 			_f: PhantomData,
 			_lk: PhantomData,
 			capacity: Clone::clone(&self.capacity),
+			b_skip_igc: self.b_skip_igc,
 			gadgets: new_gadgets,
 			clamdb: self.clamdb.clone(),
 			job_id: self.job_id,

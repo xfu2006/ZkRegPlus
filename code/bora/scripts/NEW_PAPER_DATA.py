@@ -517,14 +517,14 @@ def pack_full_dump(base, run_logs, ts):
 BORA_PLAN_ROOT = "/tmp/bora"   # Rust plan_dir() sandboxes live here
 
 
-def dlp_ladders_diverge():
+def ladders_diverge(name):
     """True when the two parts' tuned ladders differ (byte compare;
     missing file = divergence). Identical argv must yield identical
     ladders (C103), so divergence invalidates the combined dump."""
     lads = []
     for pid in (0, 1):
         p = os.path.join(BORA_PLAN_ROOT,
-                          "dlp_neo_p%d" % pid, "ladder.json")
+                          "%s_neo_p%d" % (name, pid), "ladder.json")
         if not os.path.isfile(p):
             return True
         lads.append(open(p, "rb").read())
@@ -795,9 +795,6 @@ def stub_leaf(name, milestone):
     return run_fn
 
 
-run_leaf_clamav        = stub_leaf("clam",       "M104")
-run_leaf_scale_clamav  = stub_leaf("scale_clam", "M104")
-
 # dry_run's collect_lookup_stats_adv perc -- kept small so the leaf
 # builds a deterministically-thinned DB per dataset instead of the real
 # full-size one. full_run always uses perc=100 (the real report).
@@ -863,34 +860,41 @@ def dlp_missing_success(logs, num_jobs):
     return None
 
 
-def run_leaf_dlp(mode, ctx):
-    """M102 DLP leaf: bora_cli full_dlp (neo, argv-only). One process
-    on a 1-socket box; two-half + numactl split on a multi-socket
-    server, with a p0-vs-p1 ladder tripwire before packing."""
+def run_leaf_full_neo(mode, ctx, argv_fn, base, num_jobs, name,
+                       b_fail_scan):
+    """Shared full-run leaf body (DLP/Clamav): one process on a
+    1-socket box, two-half + p0/p1 ladder tripwire otherwise;
+    verdict = rc + positive markers; packs <base>{,.partN}.tgz."""
     model = resolve_process_model()
     env = neo_env()
     if model.n_parts == 1:
         rc = run_rust_example(ctx, "bora_cli",
-                               dlp_argv(mode, 1, "0"), env)
+                               argv_fn(mode, 1, "0"), env)
         logs = [ctx.log_path("run")]
     else:
         rc = run_example_two_half(ctx, "bora_cli",
-                                   dlp_argv(mode, 2, PART_TOKEN),
+                                   argv_fn(mode, 2, PART_TOKEN),
                                    env, model.node_ranges)
         logs = [ctx.log_path("part1"), ctx.log_path("part2")]
-        if rc == 0 and dlp_ladders_diverge():
+        if rc == 0 and ladders_diverge(name):
             ctx.note("p0/p1 ladder.json diverge: dump invalid")
             rc = 5
     if rc == 0:
-        missing = dlp_missing_success(logs,
-                                       int(DLP_LEAF_ARGS[mode][3]))
+        missing = dlp_missing_success(logs, num_jobs)
         if missing:
             ctx.note("success markers missing: %s" % missing)
             rc = 6
     if rc == 0:
-        for dest in pack_full_dump("full_dlp", logs, ctx._ts):
+        for dest in pack_full_dump(base, logs, ctx._ts):
             ctx.raw_data.append(dest)
-    return ctx.finish(rc)
+    return ctx.finish(rc, b_fail_scan=b_fail_scan)
+
+
+def run_leaf_dlp(mode, ctx):
+    """M102 DLP leaf: bora_cli full_dlp (neo, argv-only)."""
+    return run_leaf_full_neo(mode, ctx, dlp_argv, "full_dlp",
+                              int(DLP_LEAF_ARGS[mode][3]), "dlp",
+                              True)
 
 
 # bora_cli full_dna constants (M103): dry = 1% DB (276 of 27,501
@@ -930,6 +934,35 @@ def run_leaf_dna(mode, ctx):
     # counterfeit a FAIL on every successful run. Verdict = rc + the
     # positive markers above.
     return ctx.finish(rc, b_fail_scan=False)
+
+
+# bora_cli full_clam constants (M104): dry = 0.5% DB (195 sigs of
+# the in-range pool) x 0.1% corpus (deterministic subset = gpg2 +
+# xtables-multi, 843,688 B ~ 106 steps at dry chunk 256), light;
+# full = legacy production full_clamav's shape (8 jobs, heavy).
+# num_circs is 2 in BOTH modes: the spec ladder [2] is structural.
+# (perc_db, perc_samples, circs, jobs, light).
+CLAM_LEAF_ARGS = {
+    "dry":  ("0.5", "0.1", "2", "2", "1"),
+    "full": ("100", "100", "2", "8", "0"),
+}
+
+
+def clam_argv(mode, numa_num, part):
+    """The 9-token bora_cli argv for one full_clam part; part is "0"
+    (single process) or PART_TOKEN (two-half). ladder_only always 0."""
+    pdb, ps, nc, nj, light = CLAM_LEAF_ARGS[mode]
+    return ["full_clam", pdb, ps, nc, nj, str(numa_num), part,
+            light, "0"]
+
+
+def run_leaf_clamav(mode, ctx):
+    """M104 Clamav leaf: bora_cli full_clam (neo, argv-only);
+    verdicts scan-free (the non-aggr tuner prints caught CapErr
+    probe panics into every successful log, M103 11.4)."""
+    return run_leaf_full_neo(mode, ctx, clam_argv, "full_clam",
+                              int(CLAM_LEAF_ARGS[mode][3]), "clam",
+                              False)
 
 
 # bora_cli scale_dlp counts (spec 8.10c), pin-INCLUSIVE units: each
@@ -974,6 +1007,54 @@ def run_leaf_scale_dlp(mode, ctx):
             rc_i = run_rust_example(ctx, "bora_cli",
                                      ["scale_dlp", str(idx), arg],
                                      env, log_name=tag)
+        finally:
+            dest = raw_data_path(bundle, server_specific=False)
+            if os.path.isfile(lg) and pack_scale_bundle(lg, dest):
+                ctx.raw_data.append(dest)
+        if rc_i == 0:
+            missing = scale_missing_rounds(lg, counts)
+            if missing:
+                ctx.note("%s: %s" % (tag, missing))
+                rc_i = 7
+        else:
+            ctx.note("%s: rc=%s" % (tag, rc_i))
+        rc = rc or rc_i
+    return ctx.finish(rc, b_fail_scan=False)
+
+
+# bora_cli scale_clam counts: CLAM legacy pins nothing, so counts
+# keep legacy cardinality (subset swaps one perm rule for the pin).
+# full = [1] + rounded 10%..100% of 38,875 (legacy formula
+# (p*38875+5)/10); dry = [1, 300] (user 2026-08-10).
+SCALE_CLAM_COUNTS = {
+    "dry":  [1, 300],
+    "full": [1, 3888, 7775, 11663, 15550, 19438, 23325, 27213,
+             31100, 34988, 38875],
+}
+
+# (corpus_idx, bundle, log tag); order = CLAM.scale_sources (idx 0 =
+# readelf sparse/easy, idx 1 = gdb dense).
+SCALE_CLAM_RUNS = [(0, "scale_data_readelf.tgz", "scale_readelf"),
+                   (1, "scale_data_gdb.tgz", "scale_gdb")]
+
+
+def run_leaf_scale_clamav(mode, ctx):
+    """M104 Scale-ClamAV leaf: two sequential bora_cli scale_clam
+    sweeps (readelf then gdb), the second running even if the first
+    failed; dry passes light=1 (dry chunk shape). Bundles pack in a
+    finally, partial rounds kept."""
+    counts = SCALE_CLAM_COUNTS[mode]
+    arg = ",".join(str(c) for c in counts)
+    light = "1" if mode == "dry" else "0"
+    env = neo_env()
+    rc = 0
+    for idx, bundle, tag in SCALE_CLAM_RUNS:
+        lg = ctx.log_path(tag)
+        try:
+            rc_i = run_rust_example(
+                ctx, "bora_cli",
+                ["scale_clam", str(idx), arg, light], env,
+                log_name=tag)
         finally:
             dest = raw_data_path(bundle, server_specific=False)
             if os.path.isfile(lg) and pack_scale_bundle(lg, dest):
@@ -1892,7 +1973,7 @@ class PackFullDumpTest(unittest.TestCase):
             os.path.join(dest_dir, "full_dlp.tgz.tmp")))
 
 
-class DlpLaddersDivergeTest(unittest.TestCase):
+class LaddersDivergeTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -1900,23 +1981,28 @@ class DlpLaddersDivergeTest(unittest.TestCase):
         p.start()
         self.addCleanup(p.stop)
 
-    def _write(self, pid, blob):
-        d = os.path.join(self.tmp.name, "dlp_neo_p%d" % pid)
+    def _write(self, name, pid, blob):
+        d = os.path.join(self.tmp.name, "%s_neo_p%d" % (name, pid))
         os.makedirs(d, exist_ok=True)
         with open(os.path.join(d, "ladder.json"), "wb") as f:
             f.write(blob)
 
     def test_missing_and_differing_diverge(self):
-        self.assertTrue(dlp_ladders_diverge())      # both missing
-        self._write(0, b"{a}")
-        self.assertTrue(dlp_ladders_diverge())      # p1 missing
-        self._write(1, b"{b}")
-        self.assertTrue(dlp_ladders_diverge())      # differ
+        """Missing part dirs or differing bytes both count as
+        divergence, per dataset name."""
+        self.assertTrue(ladders_diverge("dlp"))     # both missing
+        self._write("dlp", 0, b"{a}")
+        self.assertTrue(ladders_diverge("dlp"))     # p1 missing
+        self._write("dlp", 1, b"{b}")
+        self.assertTrue(ladders_diverge("dlp"))     # differ
 
     def test_identical_ladders_pass(self):
-        self._write(0, b"{same}")
-        self._write(1, b"{same}")
-        self.assertFalse(dlp_ladders_diverge())
+        """Byte-identical p0/p1 ladders pass; names are disjoint
+        (a clam pair must not satisfy a dlp check)."""
+        self._write("clam", 0, b"{same}")
+        self._write("clam", 1, b"{same}")
+        self.assertFalse(ladders_diverge("clam"))
+        self.assertTrue(ladders_diverge("dlp"))
 
 
 class RunLeafDlpTest(unittest.TestCase):
@@ -1924,7 +2010,8 @@ class RunLeafDlpTest(unittest.TestCase):
         self.ctx = mock.Mock()
         self.ctx._ts = "20260810_000000"
         self.ctx.raw_data = []
-        self.ctx.finish.side_effect = lambda rc: rc
+        self.ctx.finish.side_effect = \
+            lambda rc, b_fail_scan=True: rc
         self.ctx.log_path.side_effect = \
             lambda n: "/lp/%s.log" % n
 
@@ -1955,7 +2042,7 @@ class RunLeafDlpTest(unittest.TestCase):
                                 return_value={"E": "1"}), \
              mock.patch.object(_MOD, "run_example_two_half",
                                 return_value=0) as reth, \
-             mock.patch.object(_MOD, "dlp_ladders_diverge",
+             mock.patch.object(_MOD, "ladders_diverge",
                                 return_value=False), \
              mock.patch.object(_MOD, "dlp_missing_success",
                                 return_value=None), \
@@ -1989,7 +2076,7 @@ class RunLeafDlpTest(unittest.TestCase):
              mock.patch.object(_MOD, "neo_env", return_value={}), \
              mock.patch.object(_MOD, "run_example_two_half",
                                 return_value=0), \
-             mock.patch.object(_MOD, "dlp_ladders_diverge",
+             mock.patch.object(_MOD, "ladders_diverge",
                                 return_value=True), \
              mock.patch.object(_MOD, "pack_full_dump") as pk:
             rc = run_leaf_dlp("dry", self.ctx)
@@ -2112,6 +2199,63 @@ class RunLeafDnaTest(unittest.TestCase):
         self.assertEqual(rc, 6)
         pk.assert_not_called()
         self.ctx.note.assert_called_once()
+
+
+class RunLeafClamavTest(unittest.TestCase):
+    def setUp(self):
+        self.ctx = mock.Mock()
+        self.ctx._ts = "20260810_000000"
+        self.ctx.raw_data = []
+        self.ctx.finish.side_effect = \
+            lambda rc, b_fail_scan=True: rc
+        self.ctx.log_path.side_effect = lambda n: "/lp/%s.log" % n
+
+    def test_single_part_dry_wiring(self):
+        """Dry leaf spawns bora_cli full_clam with the dry argv,
+        packs full_clam.tgz, and verdicts scan-free."""
+        with mock.patch.object(_MOD, "resolve_process_model",
+                                return_value=ProcessModel(1, [None])), \
+             mock.patch.object(_MOD, "neo_env",
+                                return_value={"E": "1"}), \
+             mock.patch.object(_MOD, "run_rust_example",
+                                return_value=0) as rre, \
+             mock.patch.object(_MOD, "dlp_missing_success",
+                                return_value=None) as ms, \
+             mock.patch.object(_MOD, "pack_full_dump",
+                                return_value=["/d/full_clam.tgz"]) as pk:
+            rc = run_leaf_clamav("dry", self.ctx)
+        self.assertEqual(rc, 0)
+        rre.assert_called_once_with(
+            self.ctx, "bora_cli", clam_argv("dry", 1, "0"),
+            {"E": "1"})
+        ms.assert_called_once_with(["/lp/run.log"], 2)
+        pk.assert_called_once_with(
+            "full_clam", ["/lp/run.log"], "20260810_000000")
+        self.ctx.finish.assert_called_once_with(
+            0, b_fail_scan=False)
+
+    def test_two_part_full_wiring_and_argv(self):
+        """Argv shapes are the locked constants; the two-half path
+        reads the CLAM ladder tripwire (name='clam')."""
+        self.assertEqual(clam_argv("full", 2, PART_TOKEN),
+            ["full_clam", "100", "100", "2", "8", "2", PART_TOKEN,
+             "0", "0"])
+        self.assertEqual(clam_argv("dry", 1, "0"),
+            ["full_clam", "0.5", "0.1", "2", "2", "1", "0", "1",
+             "0"])
+        model = ProcessModel(2, ["0-3", "4-7"])
+        with mock.patch.object(_MOD, "resolve_process_model",
+                                return_value=model), \
+             mock.patch.object(_MOD, "neo_env", return_value={}), \
+             mock.patch.object(_MOD, "run_example_two_half",
+                                return_value=0), \
+             mock.patch.object(_MOD, "ladders_diverge",
+                                return_value=True) as ld, \
+             mock.patch.object(_MOD, "pack_full_dump") as pk:
+            rc = run_leaf_clamav("full", self.ctx)
+        self.assertEqual(rc, 5)
+        ld.assert_called_once_with("clam")
+        pk.assert_not_called()
 
 
 class RunExternalPythonTest(unittest.TestCase):
@@ -2416,6 +2560,84 @@ class RunLeafScaleDlpTest(unittest.TestCase):
                 f.write("FATAL: boom\n")
             res = ctx.finish(0, b_fail_scan=b_scan)
             self.assertEqual(res.failed, want_failed)
+
+
+class RunLeafScaleClamTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        patches = [
+            mock.patch.object(_MOD, "JOB_LOG_DIR",
+                               os.path.join(self.tmp.name, "logs")),
+            mock.patch.object(_MOD, "FAILED_TGZ_DIR",
+                               os.path.join(self.tmp.name,
+                                             "failed_tgz")),
+            mock.patch.object(_MOD, "LOGS_DIR",
+                               os.path.join(self.tmp.name,
+                                             "job_logs")),
+            mock.patch.object(_MOD, "RAW_DATA_ROOT",
+                               os.path.join(self.tmp.name,
+                                             "raw_data")),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        os.makedirs(os.path.join(self.tmp.name, "job_logs"))
+
+    @staticmethod
+    def _round(cnt):
+        return ("==== SCALE ROUND BEGIN count=%d rules=%d/38875 "
+                "corpus=x ====\n"
+                "==== SCALE ROUND END count=%d ====\n"
+                % (cnt, cnt, cnt))
+
+    def test_argv_light_bundles_and_scan_free(self):
+        """Dry sweeps pass light=1, run readelf then gdb, place the
+        legacy bundle names, and verdict scan-free."""
+        ctx = JobHandle("scale_clam", "dry")
+        body = self._round(1) + self._round(300)
+        calls = []
+
+        def fake(c, name, args, env, log_name="run"):
+            calls.append((name, args, log_name))
+            with open(c.log_path(log_name), "w") as f:
+                f.write(body)
+            return 0
+        with mock.patch.object(_MOD, "run_rust_example", fake):
+            result = run_leaf_scale_clamav("dry", ctx)
+        self.assertEqual(result.rc, 0)
+        self.assertFalse(result.failed)
+        self.assertEqual(calls, [
+            ("bora_cli", ["scale_clam", "0", "1,300", "1"],
+             "scale_readelf"),
+            ("bora_cli", ["scale_clam", "1", "1,300", "1"],
+             "scale_gdb")])
+        for bundle in ("scale_data_readelf.tgz",
+                        "scale_data_gdb.tgz"):
+            self.assertTrue(os.path.isfile(raw_data_path(
+                bundle, server_specific=False)))
+        self.assertEqual(len(ctx.raw_data), 2)
+
+    def test_counts_and_full_is_heavy(self):
+        """Counts keep legacy cardinality (CLAM pins nothing);
+        full passes light=0 and a failing rc wins."""
+        self.assertEqual(SCALE_CLAM_COUNTS["dry"], [1, 300])
+        self.assertEqual(SCALE_CLAM_COUNTS["full"],
+                          [1, 3888, 7775, 11663, 15550, 19438,
+                           23325, 27213, 31100, 34988, 38875])
+        ctx = JobHandle("scale_clam", "full")
+        calls = []
+
+        def fake(c, name, args, env, log_name="run"):
+            calls.append(args)
+            with open(c.log_path(log_name), "w") as f:
+                f.write("")
+            return 3
+        with mock.patch.object(_MOD, "run_rust_example", fake):
+            result = run_leaf_scale_clamav("full", ctx)
+        self.assertEqual(result.rc, 3)
+        self.assertEqual(calls[0][3], "0")   # light=0 at full
+        self.assertEqual(len(calls), 2)      # second still ran
 
 
 def _load_dry_run_eval_reef():
@@ -2867,14 +3089,6 @@ class StubLeafTest(unittest.TestCase):
         self.assertIsNone(result.triage_tgz)
         self.assertIn("M102", result.note)
 
-    def test_remaining_stub_keys_registered(self):
-        expected = {"clam": "M104", "scale_clam": "M104"}
-        for key, milestone in expected.items():
-            self.assertIn(key, JOB_SPECS)
-            ctx = JobHandle(key, "dry")
-            result = JOB_SPECS[key].run_fn("dry", ctx)
-            self.assertFalse(result.failed)
-            self.assertIn(milestone, result.note)
 
 
 class SequencerRunTest(unittest.TestCase):
@@ -3179,10 +3393,10 @@ class MainTest(unittest.TestCase):
 
 class EndToEndWiringTest(unittest.TestCase):
     """Proves CLI -> resolve_plan -> Sequencer -> JobHandle wiring across
-    all 8 canonical leaf keys, standing in stub_leaf() run_fns for the 3
-    not-yet-real leaves (lkup/zombie/reef) so this doesn't wait on
-    Stage 2. CURRENT_JOB.log is out of scope here -- only a real leaf's
-    spawn helper calls point_current_job()."""
+    all 8 canonical leaf keys, standing in stub_leaf() run_fns for
+    EVERY leaf so the plan run spawns no real cargo. CURRENT_JOB.log
+    is out of scope here -- only a real leaf's spawn helper calls
+    point_current_job()."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -3204,7 +3418,7 @@ class EndToEndWiringTest(unittest.TestCase):
 
         specs = dict(JOB_SPECS)
         for key in ("lkup", "zombie", "reef", "dlp", "scale_dlp",
-                     "dna"):
+                     "dna", "clam", "scale_clam"):
             specs[key] = JobSpec(key, key, stub_leaf(key, "Stage 2"))
         p = mock.patch.object(_MOD, "JOB_SPECS", specs)
         p.start()

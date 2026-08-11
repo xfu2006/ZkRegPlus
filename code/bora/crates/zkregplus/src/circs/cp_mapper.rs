@@ -49,7 +49,7 @@ use std::{
 use folding_schemes::{
 	Error,
 	folding::foldpot::{
-		sigma_ir1cs::{ Capacity,  SigmaGadget, StatementConfig, NdAdvice,WordInfo,LookupTableTwoCol,StatementExtraInfo},
+		sigma_ir1cs::{ Capacity,  SigmaGadget, StatementConfig, NdAdvice,DummyNdAdvice,WordInfo,LookupTableTwoCol,StatementExtraInfo},
 		circuits_super::field_to_usize,
 	}
 };
@@ -316,15 +316,33 @@ impl <F:PrimeField + ColEle> CpAdvice<F>{
 }
 
 
+/// True iff the igc universe is empty (no igc crit pats, no igc
+/// subsigs) and the neo aggressive path is active. The igc gadget
+/// arms are then skipped; non-aggr and legacy runs are unaffected.
+pub fn b_skip_igc_arm<F: PrimeField + ColEle>(db: &ClamavDB<F>) -> bool {
+	//zero igc ACDFA patterns => every subsig's igc vec_pm_bounds is
+	//empty => igc discharge demand is empty for every chunk (the same
+	//filter the advice build applies per chunk).
+	let cfg = read_global_config();
+	cfg.clamav_cfg.b_use_discharge_neo
+		&& cfg.clamav_cfg.b_aggressive_sde_for_rep
+		&& db.map_crit_pat_igc.is_empty()
+		&& db.bundle_subsig_igc.vec_acdfa.first()
+			.map_or(true, |a| a.patterns.is_empty())
+}
+
 #[derive(Clone,Debug)]
-pub struct CpComponentMapper<F:PrimeField + ColEle, LK: LookupTableTwoCol<F>>{ 
+pub struct CpComponentMapper<F:PrimeField + ColEle, LK: LookupTableTwoCol<F>>{
 	pub _f: PhantomData<F>,
 	pub _lk: PhantomData<LK>,
 	pub capacity: CpCapacity,
 
 	pub b_igc: bool,
 
-	/// its own gadgets 
+	/// skip mode: igc arm with an empty igc universe; no gadgets
+	pub b_skip: bool,
+
+	/// its own gadgets
 	pub gadgets: Vec<std::sync::Arc<std::sync::Mutex<dyn SigmaGadget<F> + Send + Sync>>>,
 
 	/// clamdb
@@ -342,8 +360,22 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CpComponentMapper<F,LK>{
 		clamdb: Arc<ClamavDB<F>>,
 		b_igc: bool //whether it's for ignore case ACDFA
 	) ->Self{
+		//0. igc arm with an empty igc universe: no gadgets at all
+		let b_skip = b_igc && b_skip_igc_arm(clamdb.as_ref());
+		if b_skip {
+			return Self{
+				_f: PhantomData,
+				_lk: PhantomData,
+				capacity: cp_capacity,
+				gadgets: vec![],
+				b_igc,
+				b_skip,
+				clamdb,
+				job_id: 0,
+			};
+		}
 		//1. build the gadgets
-		let (final_states_len, join_buf_capacity, sig_buf_capacity,imm_buf_len) 
+		let (final_states_len, join_buf_capacity, sig_buf_capacity,imm_buf_len)
 			= cp_capacity.get_old_stats();
 
 		let nlen = cp_capacity.max_word_len * LEGS;
@@ -380,11 +412,12 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CpComponentMapper<F,LK>{
 			);
 
 		Self{
-			_f: PhantomData, 
-			_lk: PhantomData, 
+			_f: PhantomData,
+			_lk: PhantomData,
 			capacity: cp_capacity,
 			gadgets,
 			b_igc,
+			b_skip,
 			clamdb,
 			job_id: 0,
 		}
@@ -427,6 +460,7 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 
 	/// return the sizes of inp, oup, data, failed_sigs, discharged_sigs
 	fn get_sizes(&self)->Vec<usize>{
+		if self.b_skip { return vec![0,0,0,0,0]; }
 		//1. gadget of word extension
 		let log_level = LOG7;
 		let b_perf = true && log_level >=read_global_config().log_level;
@@ -503,6 +537,7 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 	/// stmg_cfg provides statement structure info.
 	/// cmp_cfgs: each tuple is (idx_inp, idx_oup, idx_data) for each component.
 	fn get_joins(&self, i: usize, stmt_cfg: &StatementConfig, comp_cfgs: &Vec<Vec<usize>>)->Vec<((usize,usize), (usize,usize))>{
+		if self.b_skip { return vec![]; }
 		//1. the data[0] of g_ext needs to be act_word_len
 		let my_cfg = &comp_cfgs[i];
 		let idx_my_data = my_cfg[2]; //0: inp_start_idx,1: oup_start_idx, 2:dat
@@ -528,6 +563,9 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 		assert!(word.len() == self.max_word_len(),
 			"cp_mapper::gen_nd_advice: word.len()={} != \
 			 max_word_len={}", word.len(), self.max_word_len());
+		if self.b_skip {
+			return Ok(Arc::new(DummyNdAdvice{}));
+		}
 		let (zero,one) = (F::zero(),F::one());
 		let word_seg = word.clone();
 
@@ -621,7 +659,10 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 	->(Vec<Vec<(usize,usize)>>, Vec<(usize,bool)>, 
 		Vec<(usize,bool)>, Vec<(usize,bool)>){
 		//1. get the allocation and make sure not exceeding boundaries
-		assert!(vec_alloc.len()==9); 
+		assert!(vec_alloc.len()==9);
+		if self.b_skip {
+			return (vec![], vec![], vec![], vec![]);
+		}
 		let (s_wd, e_wd) = vec_alloc[0];
 		let (s_inp, _e_inp) = vec_alloc[1];
 		let (s_oup, _e_oup) = vec_alloc[2];
@@ -828,6 +869,7 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 	/// starting from 0). For conveneince, we sometimes use
 	/// the prev_stmt or the vector of its prev_stmt.
 	fn build_statement_comp(&self, _comp_id: usize, _stmt_map_id: usize, word_seg: &Vec<F>, actual_word_len: usize, _lkup: &Arc<LK>, _extra_info: &StatementExtraInfo<F>, advice: &Arc<dyn NdAdvice + Send + Sync>, _cfg: &StatementConfig, _stmt_mapping: &Vec<Vec<(usize,usize)>>) -> Result<Vec<Vec<F>>, Error>{
+		if self.b_skip { return Ok(vec![vec![]; 8]); }
 		let log_level = LOG7;
 		let b_perf = log_level >= read_global_config().log_level;
 
@@ -986,6 +1028,7 @@ where F: 'static,
 			_lk: PhantomData,
 			capacity: Clone::clone(&self.capacity),
 			b_igc: self.b_igc,
+			b_skip: self.b_skip,
 			gadgets: new_gadgets,
 			clamdb: self.clamdb.clone(),
 			job_id: self.job_id,

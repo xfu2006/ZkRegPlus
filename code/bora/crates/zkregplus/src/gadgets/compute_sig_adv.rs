@@ -144,6 +144,9 @@ pub struct ComputeSigAdvCapacity{
 	/// Propagated to the inner DischargeAdvCapacity; selects the
 	/// accumulator-membership verdict path. false = legacy byte-identical.
 	pub b_aggressive: bool,
+
+	/// skip the igc arm entirely (empty igc universe, neo aggressive)
+	pub b_skip_igc: bool,
 }
 
 /// Advice for the Compute Sig Gadget.
@@ -211,6 +214,7 @@ impl Capacity for ComputeSigAdvCapacity{
 			max_nibble_len: self.max_nibble_len,
 			perc_comp_subsigs: self.perc_comp_subsigs,
 			b_aggressive: self.b_aggressive,
+			b_skip_igc: self.b_skip_igc,
 		})
 	}
 
@@ -287,25 +291,36 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		assert!(discharge_info.len()==capacity.sigs);
 
 
-		//1.1 case sensitive
+		//1.1 case sensitive (csa sits 2 gadgets after da_cs normally,
+		//1 when the igc arm is skipped)
+		let off_cs = if capacity.b_skip_igc {-1} else {-2};
 		let pad_cs = vec![F::zero(); capacity.subsigs_cs-inp_subsigs_cs.len()];
 		let inp_subsigs_cs = [&pad_cs[..], &inp_subsigs_cs[..]].concat();
 		let inp_sigs = [&pad2[..], &inp_sigs[..]].concat();
-		let (eval_res_combo_cs, raw_res_cs) = 
-			Self::gen_eval_subsig_by_sq_combo(false, -2, //case sensitive
+		let (eval_res_combo_cs, raw_res_cs) =
+			Self::gen_eval_subsig_by_sq_combo(false, off_cs, //case sensitive
 			&inp_subsigs_cs, sq_res_cs, sq_inp_cs, &capacity,
 			subsig_store_info_cs)?;
 		stmt_container.lock().unwrap().add_container(eval_res_combo_cs);
 
-		//1.2 ignore case
-		let pad_igc = vec![F::zero();
-			capacity.subsigs_igc-inp_subsigs_igc.len()];
-		let inp_subsigs_igc = [&pad_igc[..], &inp_subsigs_igc[..]].concat();
-		let (eval_res_combo_igc, raw_res_igc) = 
-			Self::gen_eval_subsig_by_sq_combo(true, -1, //case sensitive
-			&inp_subsigs_igc, sq_res_igc, sq_inp_igc, &capacity,
-			subsig_store_info_igc)?;
-		stmt_container.lock().unwrap().add_container(eval_res_combo_igc);
+		//1.2 ignore case (skipped when the igc universe is empty)
+		let (inp_subsigs_igc, raw_res_igc) = if capacity.b_skip_igc {
+			assert!(inp_subsigs_igc.is_empty(),
+				"b_skip_igc with {} igc subsigs", inp_subsigs_igc.len());
+			(vec![], vec![])
+		} else {
+			let pad_igc = vec![F::zero();
+				capacity.subsigs_igc-inp_subsigs_igc.len()];
+			let inp_subsigs_igc =
+				[&pad_igc[..], &inp_subsigs_igc[..]].concat();
+			let (eval_res_combo_igc, raw_res_igc) =
+				Self::gen_eval_subsig_by_sq_combo(true, -1, //ignore case
+				&inp_subsigs_igc, sq_res_igc, sq_inp_igc, &capacity,
+				subsig_store_info_igc)?;
+			stmt_container.lock().unwrap()
+				.add_container(eval_res_combo_igc);
+			(inp_subsigs_igc, raw_res_igc)
+		};
 
 		//2. based on non-deterministic advice of eval order
 		let (synthesis_res_combo, subsig_res) = 
@@ -759,7 +774,9 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		let n1_cs = inp_subsigs_cs.len(); //capacity num_subsigs
 		let n1_igc = inp_subsigs_igc.len(); //capacity num_subsigs
 		assert!(n1_cs==capacity.subsigs_cs);
-		assert!(n1_igc==capacity.subsigs_igc);
+		//skip mode: the igc set is empty, not capacity-padded
+		assert!(n1_igc== if capacity.b_skip_igc {0}
+			else {capacity.subsigs_igc});
 		let (zero,one) = (F::zero(), F::one());
         let max_val:usize = (1<<read_global_config().range2_bit) - 1;
         let max = F::from(max_val as u64);
@@ -1281,9 +1298,11 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		let zero = F::zero();
 		let frg = F::from(RANGE2);
 		let res = Container::<F>::new("sig_res_combo");
-		let n = capacity.subsigs_cs + capacity.subsigs_igc;
+		//skip mode: the igc arm contributes no subsig slots
+		let n = capacity.subsigs_cs +
+			if capacity.b_skip_igc {0} else {capacity.subsigs_igc};
 		assert!(inp_subsigs.len()==n);
-		assert!(subsig_result.len()==n); 
+		assert!(subsig_result.len()==n);
 		assert!(inp_sigs.len()==capacity.sigs);
 
 		//1. from the discharge info, build the proof table
@@ -1523,9 +1542,12 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 	)
 	-> Self{
 		//1. create the dummy input and dummy container config.
-		let zero = F::zero();	
+		let zero = F::zero();
 		let subsigs_cs = vec![zero; capacity.subsigs_cs];
-		let subsigs_igc = vec![zero; capacity.subsigs_igc];
+		//skip mode: the real advice gets an empty igc set, the dummy
+		//must mirror it (the igc eval is skipped either way)
+		let subsigs_igc = if capacity.b_skip_igc { vec![] }
+			else { vec![zero; capacity.subsigs_igc] };
 		let sigs = vec![zero; capacity.sigs];
 		let v_sig_obj: Vec<Arc<ClamavSig>> = vec![]; //empty one
 		//make a dummy one
@@ -1976,22 +1998,28 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		// COST: 4 * n where n is the sum of inp_subsig_cs and inp_subsig_igc
 		let input_subsigs_cs= eval_res_combo_cs
 			.get_container("inp_subsig").unwrap().lock().unwrap().to_vec();
-		let input_subsigs_igc= eval_res_combo_igc
-			.get_container("inp_subsig").unwrap().lock().unwrap().to_vec();
+		let input_subsigs_igc= if self.capacity.b_skip_igc { vec![] }
+			else { eval_res_combo_igc
+			.get_container("inp_subsig").unwrap().lock().unwrap().to_vec() };
 		let inp_subsigs = vec![&input_subsigs_cs[..], &input_subsigs_igc[..]]
 			.concat();
 		let gen_regex_res_cs = eval_res_combo_cs
 			.get_container("subsig_raw_eval").unwrap().lock().unwrap().to_vec();
-		let gen_regex_res_igc = eval_res_combo_igc
-			.get_container("subsig_raw_eval").unwrap().lock().unwrap().to_vec();
+		let gen_regex_res_igc = if self.capacity.b_skip_igc { vec![] }
+			else { eval_res_combo_igc
+			.get_container("subsig_raw_eval").unwrap().lock().unwrap().to_vec() };
 		let gen_regex_res = vec![&gen_regex_res_cs[..], &gen_regex_res_igc[..]]
 			.concat();
-		let prf_inp_subsigs = synthesis_res_combo
-			.get_container("prf_inp_subsigs")?;
 		assert!(inp_subsigs.len()==gen_regex_res.len());
 		assert!(inp_subsigs.len() == n);
-		verify_union_prf(&input_subsigs_cs, &input_subsigs_igc,
-			&inp_subsigs, &prf_inp_subsigs, &r1)?;
+		//skip mode: the union with the empty igc set is the cs list
+		//itself (same vars); disjointness is vacuous -- no proof needed
+		if !self.capacity.b_skip_igc {
+			let prf_inp_subsigs = synthesis_res_combo
+				.get_container("prf_inp_subsigs")?;
+			verify_union_prf(&input_subsigs_cs, &input_subsigs_igc,
+				&inp_subsigs, &prf_inp_subsigs, &r1)?;
+		}
 
 
 		//2. verify the result of counter constraint 
@@ -2541,8 +2569,9 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		//pad (0,1) for dummy entry
 		let inp_subsigs_cs = eval_res_combo_cs.lock().unwrap()
 			.get_container("inp_subsig").unwrap().lock().unwrap().to_vec();
-		let inp_subsigs_igc = eval_res_combo_igc.lock().unwrap()
-			.get_container("inp_subsig").unwrap().lock().unwrap().to_vec();
+		let inp_subsigs_igc = if self.capacity.b_skip_igc { vec![] }
+			else { eval_res_combo_igc.lock().unwrap()
+			.get_container("inp_subsig").unwrap().lock().unwrap().to_vec() };
 		let inp_subsigs = vec![&inp_subsigs_cs[..], &inp_subsigs_igc].concat();
 		let subsig_result = synthesis_res_combo.lock().unwrap()
 			.get_container("vec_subsig_final_res").unwrap()
@@ -2674,11 +2703,18 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for ComputeSigAdvGadget<F>{
 		//2. validate the eval of subsig based on step queue result
 		//two instances (cs and igc)
 		let eval_res_combo_cs = stmt.get_container("eval_res_combo_cs")?;
-		self.validate_eval_subsig_by_sq_combo(&eval_res_combo_cs.lock().unwrap(), 
+		self.validate_eval_subsig_by_sq_combo(&eval_res_combo_cs.lock().unwrap(),
 			r1.clone(), r2.clone(), cs.clone())?;
-		let eval_res_combo_igc = stmt.get_container("eval_res_combo_igc")?;
-		self.validate_eval_subsig_by_sq_combo(&eval_res_combo_igc.lock().unwrap(), 
-			r1.clone(), r2.clone(), cs.clone())?;
+		//skip mode: no igc eval container exists; empty placeholder
+		//(the validators below gate their igc reads on b_skip_igc)
+		let eval_res_combo_igc = if self.capacity.b_skip_igc {
+			Container::<FpVar<F>>::new("eval_res_combo_igc")
+		} else {
+			let c = stmt.get_container("eval_res_combo_igc")?;
+			self.validate_eval_subsig_by_sq_combo(&c.lock().unwrap(),
+				r1.clone(), r2.clone(), cs.clone())?;
+			c
+		};
 
 		//TODO: 
 		//3. follow the logic of accepts_approx_pm_bounds in clamav.rs
@@ -2960,6 +2996,7 @@ use utils::consts::{read_global_config, get_global_config};
 			perc_pats_expansion_rate_cs: perc_pats_expansion_rate,
 			perc_pats_expansion_rate_igc: perc_pats_expansion_rate,
 			b_aggressive: false,
+			b_skip_igc: false,
 		};
 
 		//2. create advice for word_extract_adv, fsm_adv, and discharge_adv

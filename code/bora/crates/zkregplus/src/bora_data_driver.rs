@@ -138,8 +138,12 @@ fn filter_needs_list(src_path: &str, keep_names: &HashSet<&str>,
 /// units) among the line's subsig fields fits a range table of
 /// max_off_nibbles nibbles (bound compared against 2x the prefix).
 /// Prefix-less lines (e.g. the alphabet pin) and non-numeric
-/// prefixes always fit.
+/// prefixes always fit. usize::MAX = the unbounded sentinel: keep
+/// EVERY line (a >usize digit token must not drop a sig there).
 fn sig_fits_range(line: &str, max_off_nibbles: usize) -> bool {
+	if max_off_nibbles == usize::MAX {
+		return true;
+	}
 	line.split(';').skip(3).all(|f| match f.split_once(':') {
 		Some((tok, _)) if !tok.is_empty()
 			&& tok.bytes().all(|b| b.is_ascii_digit()) =>
@@ -316,6 +320,21 @@ pub(crate) fn write_job_manifests(jobs_dir: &str, bins: &[Vec<String>])
 	}).collect()
 }
 
+/// Scale-sweep tuning profile: the LOW floors + LOW seed a dataset's
+/// scale rounds use instead of its full-run values (a high floor
+/// pins every subset to full size, zkp_driver.rs:7477-7530).
+#[derive(Clone)]
+pub(crate) struct ScaleTune {
+	pub(crate) min_subsigs: usize,
+	pub(crate) min_basis_unique_states: usize,
+	pub(crate) min_basis_acc_states: usize,
+	pub(crate) min_basis_pats_in_trace: usize,
+	pub(crate) min_avg_pats_per_subsig: usize,
+	pub(crate) min_dfa_sigs: usize,
+	pub(crate) min_dfa_subsigs: usize,
+	pub(crate) hand_seed: CapParams,
+}
+
 /// One dataset's complete, immutable run configuration. Only the
 /// DLP/DNA/CLAM consts exist; tests clone them to redirect dirs.
 #[derive(Clone)]
@@ -381,6 +400,9 @@ pub struct DatasetSpec {
 	/// Non-aggr tuner seed (the dataset's legacy hand caps).
 	/// None when aggressive.
 	pub(crate) hand_seed: Option<CapParams>,
+	/// Scale-round floors + seed override (legacy scale's low
+	/// "Option A" profile). None = scale keeps the full-run values.
+	pub(crate) scale_tune: Option<ScaleTune>,
 }
 
 /// DLP: legacy full_dlp()'s exact run configuration (zkp_driver's
@@ -430,6 +452,7 @@ pub const DLP: DatasetSpec = DatasetSpec {
 	min_dfa_sigs: 0,
 	min_dfa_subsigs: 0,
 	hand_seed: None,
+	scale_tune: None,
 };
 
 /// DNA: legacy full_dna()'s exact run configuration (zkp_driver.rs
@@ -506,6 +529,135 @@ pub const DNA: DatasetSpec = DatasetSpec {
 		aggr_needs_subsigs: 0,
 		max_word_len: 4096,
 		acdfa_state_part_bits: 27,
+	}),
+	scale_tune: None,
+};
+
+/// CLAM: legacy PRODUCTION full_clamav()'s exact run configuration
+/// (zkp_driver.rs:4970-5133, the two-half full_clam entry -- NOT
+/// the stale examples/main.rs variant), with a neo-own cache dir.
+pub const CLAM: DatasetSpec = DatasetSpec {
+	name: "clam",
+	config_dir: "data/debug/full_clamav/config",
+	sig_file: "main.dat",
+	// the 8 legacy job manifests; their concat is the corpus. The
+	// neo re-split changes per-job composition vs binexec_p0..p7
+	// (8.8(a): aggregates comparable, per-job numbers are not).
+	master_sources: &[
+		"data/debug/full_clamav/config/binexec_p0.dat",
+		"data/debug/full_clamav/config/binexec_p1.dat",
+		"data/debug/full_clamav/config/binexec_p2.dat",
+		"data/debug/full_clamav/config/binexec_p3.dat",
+		"data/debug/full_clamav/config/binexec_p4.dat",
+		"data/debug/full_clamav/config/binexec_p5.dat",
+		"data/debug/full_clamav/config/binexec_p6.dat",
+		"data/debug/full_clamav/config/binexec_p7.dat"],
+	scale_sources: &[
+		// 522,064 B, sparse (easy first, like DLP's order)
+		"data/samples/binexec_merged128k/readelf",
+		// 6,826,488 B, dense
+		"data/samples/binexec_merged128k/gdb"],
+	db_cache_dir: "clam_neo",    // never legacy's "full_data"
+	chunk_len: 4096,             // 512*8 (zkp_driver.rs:5037)
+	// dry decider lever (M103 cost law, ~55 cs/chunk-nibble).
+	dry_chunk_len: Some(256),
+	range2_bit: 26,
+	// None DELIBERATELY: the table is corpus-position-sized -- the
+	// largest corpus file (anthoscli__01, 33,452,032 B = 66.9M
+	// nibbles) sits just under 2^26, so a smaller dry table would
+	// leave sampled positions un-lookupable. The 67M-row table is
+	// the dry run's floor cost.
+	dry_range2_bit: None,
+	// legacy full_clamav touches NO clamav_cfg field: defaults.
+	fanout_cap: 127,
+	min_pm_word_len: 4,
+	b_aggressive: false,
+	// production runs the check (ZKR_CLAM_CHECK_LKUP=1); legacy's
+	// hand share pin 143 is NOT copied (8.1(1)) -- tune derives it.
+	b_check_lkup: true,
+	vec_decrease_level: &[2],    // num_circs = 2, both modes
+	n_par_snark: 1,
+	n_par_snark_cp: 1,
+	n_par_batch_claim: 8,
+	// production floors (zkp_driver.rs:5002-5008) = the lkup-budget
+	// reference's authoritative DB config.
+	min_subsigs: 368,
+	min_basis_unique_states: 1054,
+	min_basis_acc_states: 268,
+	min_basis_pats_in_trace: 295,
+	min_avg_pats_per_subsig: 8,
+	min_dfa_sigs: 3,
+	min_dfa_subsigs: 3,
+	// hand caps of zkp_driver.rs:5037-5093 (igc mirrors cs; only
+	// perc_pats_expansion_rate_igc differs, 2).
+	hand_seed: Some(CapParams {
+		cp_basis_unique_states: 1300,
+		cp_subsigs: 580,
+		cp_avg_pats: 8,
+		subsigs: 580,
+		avg_pats_per_subsig: 8,
+		avg_active_pats_per_subsig: 2,
+		basis_pats_in_trace: 820,
+		perc_pats_expansion_rate: 104,
+		prod_pats_expansion: 0,
+		qm_real_rows: 0,
+		sigs_sed: 400,
+		perc_comp_subsigs: 20,
+		basis_unique_states: 1300,
+		basis_acc_states: 750,
+		subsigs_igc: 580,
+		avg_active_pats_per_subsig_igc: 2,
+		basis_pats_in_trace_igc: 820,
+		perc_pats_expansion_rate_igc: 2,
+		prod_pats_expansion_igc: 0,
+		qm_real_rows_igc: 0,
+		basis_acc_states_igc: 750,
+		basis_unique_states_igc: 1300, // unused non-aggr (cs shared)
+		dfa_sigs: 8,
+		dfa_subsigs: 8,
+		aggr_needs_subsigs: 0,
+		max_word_len: 4096,
+		acdfa_state_part_bits: 26,
+	}),
+	// legacy collect_scale_data's Option A (zkp_driver.rs:
+	// 7480-7550): low floors + low seed per round.
+	scale_tune: Some(ScaleTune {
+		min_subsigs: 64,
+		min_basis_unique_states: 100,
+		min_basis_acc_states: 2,
+		min_basis_pats_in_trace: 4,
+		min_avg_pats_per_subsig: 1,
+		min_dfa_sigs: 2,
+		min_dfa_subsigs: 2,
+		hand_seed: CapParams {
+			cp_basis_unique_states: 120, // 0-word CP pack floor
+			cp_subsigs: 64,
+			cp_avg_pats: 8,
+			subsigs: 64,
+			avg_pats_per_subsig: 8,
+			avg_active_pats_per_subsig: 2,
+			basis_pats_in_trace: 4,
+			perc_pats_expansion_rate: 104,
+			prod_pats_expansion: 0,
+			qm_real_rows: 0,
+			sigs_sed: 64,
+			perc_comp_subsigs: 20,
+			basis_unique_states: 120,
+			basis_acc_states: 2,
+			subsigs_igc: 64,
+			avg_active_pats_per_subsig_igc: 2,
+			basis_pats_in_trace_igc: 4,
+			perc_pats_expansion_rate_igc: 104,
+			prod_pats_expansion_igc: 0,
+			qm_real_rows_igc: 0,
+			basis_acc_states_igc: 2,
+			basis_unique_states_igc: 120,
+			dfa_sigs: 2,
+			dfa_subsigs: 2,
+			aggr_needs_subsigs: 0,
+			max_word_len: 4096,
+			acdfa_state_part_bits: 26,
+		},
 	}),
 };
 
@@ -1217,6 +1369,15 @@ pub fn full_dna_neo(perc_db: f64, perc_samples: f64,
 		numa_num, part_id, b_light_test, b_ladder_only)
 }
 
+/// ClamAV full run: run_neo over the CLAM const.
+pub fn full_clamav_neo(perc_db: f64, perc_samples: f64,
+	num_circs: usize, num_jobs: usize, numa_num: usize,
+	part_id: usize, b_light_test: bool, b_ladder_only: bool)
+	-> Vec<CapParams> {
+	run_neo(&CLAM, perc_db, perc_samples, num_circs, num_jobs,
+		numa_num, part_id, b_light_test, b_ladder_only)
+}
+
 /// Scale variant of a spec: cover check off, ladder emptied (num_circs
 /// is pinned 1; legacy's local empty vec, zkp_driver.rs:7511), and
 /// "_scale" name/cache renames so a concurrent or prior FULL run's
@@ -1234,6 +1395,18 @@ fn scale_spec_clone(spec: &DatasetSpec) -> DatasetSpec {
 	// stays disengaged inside retry_caperr's own bump loop.
 	s.b_check_lkup = false;
 	s.vec_decrease_level = &[];
+	// scale-round tuning profile: low floors + low seed (a full-run
+	// floor would pin every subset to full size -- flat curve).
+	if let Some(st) = spec.scale_tune.clone() {
+		s.min_subsigs = st.min_subsigs;
+		s.min_basis_unique_states = st.min_basis_unique_states;
+		s.min_basis_acc_states = st.min_basis_acc_states;
+		s.min_basis_pats_in_trace = st.min_basis_pats_in_trace;
+		s.min_avg_pats_per_subsig = st.min_avg_pats_per_subsig;
+		s.min_dfa_sigs = st.min_dfa_sigs;
+		s.min_dfa_subsigs = st.min_dfa_subsigs;
+		s.hand_seed = Some(st.hand_seed);
+	}
 	s
 }
 
@@ -1243,7 +1416,7 @@ fn scale_spec_clone(spec: &DatasetSpec) -> DatasetSpec {
 /// bump-retry. Emits legacy's ROUND markers on stdout; the Python
 /// leaf splits on them and packs the bundle. Writes no archive.
 pub fn collect_scale_data_neo(spec: &DatasetSpec, corpus_idx: usize,
-	vec_count: &[usize]) {
+	vec_count: &[usize], b_light_test: bool) {
 	// Every argument assert fires BEFORE any process-wide write.
 	assert!(!vec_count.is_empty(),
 		"bora_data_driver: scale vec_count is empty");
@@ -1272,8 +1445,12 @@ pub fn collect_scale_data_neo(spec: &DatasetSpec, corpus_idx: usize,
 		"bora_data_driver: top scale count {} > {} sigs (an \
 		 over-count silently folds the FULL db)",
 		vec_count.last().unwrap(), n_sigs);
-	let sc = scale_spec_clone(spec);
-	apply_spec_config(&sc, false, &part_role(0, 1, 1));
+	// b_light_test is SHAPE only (effective_spec's dry knobs);
+	// scale still never proves, so the flag's decider gates are
+	// unreachable either way.
+	let eff = effective_spec(spec, b_light_test);
+	let sc = scale_spec_clone(&eff);
+	apply_spec_config(&sc, b_light_test, &part_role(0, 1, 1));
 	{
 		// One write scope, AFTER apply_spec_config (which zeroes the
 		// catch flag). RULE 1: only scale routes fold CapErrs through
@@ -1324,7 +1501,15 @@ pub fn collect_scale_data_neo(spec: &DatasetSpec, corpus_idx: usize,
 
 /// DLP scale sweep: collect_scale_data_neo over the DLP const.
 pub fn collect_scale_dlp_neo(corpus_idx: usize, vec_count: &[usize]) {
-	collect_scale_data_neo(&DLP, corpus_idx, vec_count)
+	collect_scale_data_neo(&DLP, corpus_idx, vec_count, false)
+}
+
+/// ClamAV scale sweep; light swaps in the dry chunk (the range
+/// table stays 2^26 -- corpus-position-sized).
+pub fn collect_scale_clamav_neo(corpus_idx: usize,
+	vec_count: &[usize], b_light_test: bool) {
+	collect_scale_data_neo(&CLAM, corpus_idx, vec_count,
+		b_light_test)
 }
 
 /// Q2 lookup-composition report, perc-driven. perc>=100 reproduces
@@ -1416,10 +1601,11 @@ pub const USAGE: &str = "bora_cli: backend of \
 	<numa_num> <part_id> <light 0|1> <ladder_only 0|1>\n \
 	   (light=1 also drops the hab22 cover check)\n \
 	 full_dna <same 8 args as full_dlp>\n \
-	 scale_dlp <corpus_idx> <c1,c2,...>";
+	 full_clam <same 8 args as full_dlp>\n \
+	 scale_dlp <corpus_idx> <c1,c2,...>\n \
+	 scale_clam <corpus_idx> <c1,c2,...> <light 0|1>";
 
-/// Parsed CLI command for examples/bora_cli.rs. CLAM subcommands
-/// arrive with M104.
+/// Parsed CLI command for examples/bora_cli.rs.
 #[derive(Debug, PartialEq)]
 pub enum Cmd {
 	Lkup { perc: usize, dest_path: String },
@@ -1429,7 +1615,12 @@ pub enum Cmd {
 	FullDna { perc_db: f64, perc_samples: f64, num_circs: usize,
 		num_jobs: usize, numa_num: usize, part_id: usize,
 		b_light_test: bool, b_ladder_only: bool },
+	FullClam { perc_db: f64, perc_samples: f64, num_circs: usize,
+		num_jobs: usize, numa_num: usize, part_id: usize,
+		b_light_test: bool, b_ladder_only: bool },
 	ScaleDlp { corpus_idx: usize, vec_count: Vec<usize> },
+	ScaleClam { corpus_idx: usize, vec_count: Vec<usize>,
+		b_light_test: bool },
 }
 
 fn arg_usize(args: &[String], i: usize, name: &str) -> usize {
@@ -1442,6 +1633,12 @@ fn arg_f64(args: &[String], i: usize, name: &str) -> f64 {
 	args[i].parse().unwrap_or_else(|_| panic!(
 		"bora_data_driver: <{}> not a number: {:?}\n{}",
 		name, args[i], USAGE))
+}
+
+fn arg_counts(args: &[String], i: usize) -> Vec<usize> {
+	args[i].split(',').map(|t| t.parse().unwrap_or_else(|_| panic!(
+		"bora_data_driver: count not a usize: {:?}\n{}", t, USAGE)))
+		.collect()
 }
 
 fn arg_bool(args: &[String], i: usize, name: &str) -> bool {
@@ -1511,17 +1708,30 @@ pub fn parse_args(args: &[String]) -> Cmd {
 				num_jobs, numa_num, part_id, b_light_test,
 				b_ladder_only }
 		}
+		Some("full_clam") => {
+			let (perc_db, perc_samples, num_circs, num_jobs,
+				numa_num, part_id, b_light_test, b_ladder_only) =
+				parse_full8(args, "full_clam");
+			Cmd::FullClam { perc_db, perc_samples, num_circs,
+				num_jobs, numa_num, part_id, b_light_test,
+				b_ladder_only }
+		}
 		Some("scale_dlp") => {
 			assert!(args.len() == 3,
 				"bora_data_driver: scale_dlp takes 2 args, got {}\n{}",
 				args.len() - 1, USAGE);
-			let vec_count = args[2].split(',').map(|t| t.parse()
-				.unwrap_or_else(|_| panic!(
-					"bora_data_driver: count not a usize: {:?}\n{}",
-					t, USAGE))).collect();
 			Cmd::ScaleDlp {
 				corpus_idx: arg_usize(args, 1, "corpus_idx"),
-				vec_count }
+				vec_count: arg_counts(args, 2) }
+		}
+		Some("scale_clam") => {
+			assert!(args.len() == 4,
+				"bora_data_driver: scale_clam takes 3 args, \
+				 got {}\n{}", args.len() - 1, USAGE);
+			Cmd::ScaleClam {
+				corpus_idx: arg_usize(args, 1, "corpus_idx"),
+				vec_count: arg_counts(args, 2),
+				b_light_test: arg_bool(args, 3, "light") }
 		}
 		other => panic!(
 			"bora_data_driver: unknown subcommand {:?}\n{}",
@@ -2288,13 +2498,13 @@ pub mod tests_bora_data_driver {
 	#[test]
 	#[should_panic(expected = "vec_count is empty")]
 	fn test_c102_scale_args_empty() {
-		collect_scale_data_neo(&DLP, 0, &[]);
+		collect_scale_data_neo(&DLP, 0, &[], false);
 	}
 
 	#[test]
 	#[should_panic(expected = "strictly ascending")]
 	fn test_c102_scale_args_descending() {
-		collect_scale_data_neo(&DLP, 0, &[987, 2]);
+		collect_scale_data_neo(&DLP, 0, &[987, 2], false);
 	}
 
 	#[test]
@@ -2302,19 +2512,19 @@ pub mod tests_bora_data_driver {
 	fn test_c102_scale_args_aggr_min() {
 		// count 1 = the pin alone: zero SED demand underflows the
 		// aggressive tuner, so the entry assert must catch it.
-		collect_scale_data_neo(&DLP, 0, &[1, 987]);
+		collect_scale_data_neo(&DLP, 0, &[1, 987], false);
 	}
 
 	#[test]
 	#[should_panic(expected = "corpus_idx 2 out of range")]
 	fn test_c102_scale_args_corpus_oob() {
-		collect_scale_data_neo(&DLP, 2, &[2, 987]);
+		collect_scale_data_neo(&DLP, 2, &[2, 987], false);
 	}
 
 	#[test]
 	#[should_panic(expected = "over-count")]
 	fn test_c102_scale_args_over_total() {
-		collect_scale_data_neo(&DLP, 0, &[2, 1_000_000]);
+		collect_scale_data_neo(&DLP, 0, &[2, 1_000_000], false);
 	}
 
 	/// C102: the scale clone flips exactly {check, ladder, names};
@@ -2718,5 +2928,188 @@ pub mod tests_bora_data_driver {
 		let dfa = read_lines_nonblank(&format!("{}/main_dfa.dat",
 			td.to_str().unwrap()));
 		assert_eq!(dfa.len(), 0);
+	}
+
+	/// M104: the CLAM const points at real files and pins the
+	/// PRODUCTION full_clamav configuration (zkp_driver.rs:
+	/// 4970-5133) field for field, hand caps + scale profile incl.
+	#[test]
+	fn test_m104_clam_const_sane() {
+		let proot = utils::os::proj_root();
+		let abs = |p: &str| format!("{}/{}", proot, p);
+		assert!(Path::new(&abs(CLAM.config_dir)).is_dir());
+		for f in [CLAM.sig_file, "main_dfa.dat", "needs_ised.dat",
+			"needs_ised_igc.dat"] {
+			let p = abs(&format!("{}/{}", CLAM.config_dir, f));
+			assert!(Path::new(&p).is_file(), "missing {}", p);
+		}
+		assert_eq!(CLAM.master_sources.len(), 8);
+		let corpus: Vec<String> = CLAM.master_sources.iter()
+			.flat_map(|s| read_path_list(s)).collect();
+		assert_eq!(corpus.len(), 1209);
+		for s in CLAM.scale_sources {
+			assert!(Path::new(&abs(s)).is_file(), "missing {}", s);
+		}
+		let n = read_lines_nonblank(&abs(&format!("{}/{}",
+			CLAM.config_dir, CLAM.sig_file))).len();
+		assert_eq!(n, 38_875);
+		assert_eq!(CLAM.name, "clam");
+		assert!(!CLAM.b_aggressive);
+		assert!(CLAM.b_check_lkup, "production runs the check");
+		assert_eq!(CLAM.vec_decrease_level, &[2]);
+		assert_eq!(CLAM.db_cache_dir, "clam_neo");
+		assert_eq!(plan_dir(CLAM.name, 0), "/tmp/bora/clam_neo_p0");
+		assert_eq!(CLAM.chunk_len, 4096);
+		assert_eq!(CLAM.dry_chunk_len, Some(256));
+		assert_eq!(CLAM.range2_bit, 26);
+		assert_eq!(CLAM.dry_range2_bit, None,
+			"table is corpus-position-sized; dry must keep 26");
+		assert_eq!(CLAM.fanout_cap, 127);     // untouched default
+		assert_eq!(CLAM.min_pm_word_len, 4);  // untouched default
+		assert_eq!((CLAM.n_par_snark, CLAM.n_par_snark_cp,
+			CLAM.n_par_batch_claim), (1, 1, 8));
+		assert_eq!((CLAM.min_subsigs, CLAM.min_basis_unique_states,
+			CLAM.min_basis_acc_states, CLAM.min_basis_pats_in_trace,
+			CLAM.min_avg_pats_per_subsig), (368, 1054, 268, 295, 8));
+		assert_eq!((CLAM.min_dfa_sigs, CLAM.min_dfa_subsigs), (3, 3));
+		let h = CLAM.hand_seed.as_ref().unwrap();
+		assert_eq!((h.max_word_len, h.acdfa_state_part_bits),
+			(4096, 26));
+		assert_eq!((h.cp_basis_unique_states, h.cp_subsigs,
+			h.cp_avg_pats), (1300, 580, 8));
+		assert_eq!((h.subsigs, h.avg_pats_per_subsig,
+			h.avg_active_pats_per_subsig), (580, 8, 2));
+		assert_eq!((h.basis_pats_in_trace,
+			h.perc_pats_expansion_rate), (820, 104));
+		assert_eq!((h.sigs_sed, h.perc_comp_subsigs), (400, 20));
+		assert_eq!((h.basis_unique_states, h.basis_acc_states),
+			(1300, 750));
+		assert_eq!((h.subsigs_igc, h.basis_pats_in_trace_igc,
+			h.perc_pats_expansion_rate_igc, h.basis_acc_states_igc),
+			(580, 820, 2, 750));
+		assert_eq!((h.dfa_sigs, h.dfa_subsigs), (8, 8));
+		let st = CLAM.scale_tune.as_ref().unwrap();
+		assert_eq!((st.min_subsigs, st.min_basis_unique_states,
+			st.min_basis_acc_states, st.min_basis_pats_in_trace,
+			st.min_avg_pats_per_subsig), (64, 100, 2, 4, 1));
+		assert_eq!((st.min_dfa_sigs, st.min_dfa_subsigs), (2, 2));
+		let s = &st.hand_seed;
+		assert_eq!((s.cp_basis_unique_states, s.cp_subsigs,
+			s.subsigs, s.sigs_sed), (120, 64, 64, 64));
+		assert_eq!((s.basis_unique_states, s.basis_acc_states,
+			s.basis_pats_in_trace), (120, 2, 4));
+		assert_eq!((s.perc_pats_expansion_rate,
+			s.perc_pats_expansion_rate_igc), (104, 104));
+		assert_eq!((s.dfa_sigs, s.dfa_subsigs), (2, 2));
+		assert!(DLP.scale_tune.is_none());
+		assert!(DNA.scale_tune.is_none());
+	}
+
+	/// M104: a >usize all-digit token (a hex pattern behind a ':')
+	/// must NOT drop the sig at the unbounded sentinel; at any real
+	/// bound it is conservatively dropped.
+	#[test]
+	fn test_m104_sig_fits_range_unbounded() {
+		let monster =
+			"N.m;E;0;123456789012345678901234567890:aa";
+		assert!(sig_fits_range(monster, usize::MAX),
+			"unbounded must keep every line");
+		assert!(!sig_fits_range(monster, 1 << 26));
+		assert!(sig_fits_range("N.x;E;0;50:abcd", usize::MAX));
+		// the REAL sig set: unbounded keeps ALL 38,875 (the
+		// byte-identical delegation promise for the lkup path).
+		let proot = utils::os::proj_root();
+		let lines = read_lines_nonblank(&format!("{}/{}/{}",
+			proot, CLAM.config_dir, CLAM.sig_file));
+		assert!(lines.iter().all(|l| sig_fits_range(l, usize::MAX)));
+		// a real bound drops the monsters but keeps a large pool.
+		let bound = (1usize << 26) - CLAM.chunk_len * 62;
+		let pool = lines.iter()
+			.filter(|l| sig_fits_range(l, bound)).count();
+		assert_eq!(pool, 38_241);
+	}
+
+	/// M104: the CLAM scale clone applies the low Option A profile
+	/// (floors + seed); DLP's clone (scale_tune None) is unchanged.
+	#[test]
+	fn test_m104_scale_spec_clone_tune() {
+		let sc = scale_spec_clone(&CLAM);
+		assert_eq!(sc.name, "clam_scale");
+		assert_eq!(sc.db_cache_dir, "clam_neo_scale");
+		assert!(!sc.b_check_lkup);
+		assert!(sc.vec_decrease_level.is_empty(),
+			"8.10g: the CLAM ladder must be emptied for scale");
+		assert_eq!((sc.min_subsigs, sc.min_basis_unique_states,
+			sc.min_basis_acc_states, sc.min_basis_pats_in_trace,
+			sc.min_avg_pats_per_subsig), (64, 100, 2, 4, 1));
+		assert_eq!((sc.min_dfa_sigs, sc.min_dfa_subsigs), (2, 2));
+		assert_eq!(sc.hand_seed.as_ref().unwrap().subsigs, 64);
+		assert_eq!(sc.chunk_len, CLAM.chunk_len);
+		assert_eq!(sc.range2_bit, CLAM.range2_bit);
+		assert_eq!(sc.n_par_batch_claim, 8);
+		let sd = scale_spec_clone(&DLP);
+		assert_eq!(sd.min_subsigs, DLP.min_subsigs);
+		assert!(sd.hand_seed.is_none());
+	}
+
+	/// M104: CLAM light swaps only the chunk (256); the range table
+	/// keeps 26 in BOTH modes (corpus-position-sized).
+	#[test]
+	fn test_m104_effective_spec_clam() {
+		let d = effective_spec(&CLAM, true);
+		assert_eq!((d.range2_bit, d.chunk_len), (26, 256));
+		assert!(!d.b_check_lkup);
+		let h = effective_spec(&CLAM, false);
+		assert_eq!((h.range2_bit, h.chunk_len), (26, 4096));
+		assert!(h.b_check_lkup);
+	}
+
+	/// M104: full_clam parses through the shared parse_full8;
+	/// scale_clam takes the extra light token.
+	#[test]
+	fn test_m104_parse_clam() {
+		assert_eq!(parse_args(&argv(&["full_clam", "0.5", "0.1",
+			"2", "2", "1", "0", "1", "0"])),
+			Cmd::FullClam { perc_db: 0.5, perc_samples: 0.1,
+				num_circs: 2, num_jobs: 2, numa_num: 1, part_id: 0,
+				b_light_test: true, b_ladder_only: false });
+		assert_eq!(parse_args(&argv(&["scale_clam", "1", "1,300",
+			"1"])),
+			Cmd::ScaleClam { corpus_idx: 1,
+				vec_count: vec![1, 300], b_light_test: true });
+	}
+
+	#[test]
+	#[should_panic(expected = "scale_clam takes 3 args")]
+	fn test_m104_parse_scale_clam_arity() {
+		parse_args(&argv(&["scale_clam", "0", "1,300"]));
+	}
+
+	/// M104 kernel: first CLAM execution of the non-aggr tuner --
+	/// scale-clone shape (Option A floors/seed) at the dry chunk on
+	/// a thinned real DB with the readelf corpus.
+	#[test]
+	fn test_m104_build_and_tune_tiny_clam() {
+		let _g = cfg_lock();
+		let proot = utils::os::proj_root();
+		let mut spec =
+			scale_spec_clone(&effective_spec(&CLAM, true));
+		spec.name = "clam_test";     // /tmp/bora/clam_test_neo_p0
+		spec.db_cache_dir = "clam_test_neo";
+		let _t1 = TmpConfigDir(PathBuf::from(plan_dir(spec.name, 0)));
+		let _t2 = TmpConfigDir(PathBuf::from(format!(
+			"{}/data/cache/{}", proot, cache_dir_for(&spec, 0))));
+		apply_spec_config(&spec, true, &part_role(0, 1, 1));
+		let bins = vec![vec![spec.scale_sources[0].to_string()]];
+		let caps = build_and_tune(&spec, 40, &bins, 1, 0);
+		assert_eq!(caps.len(), 1, "non-aggr = single rung");
+		let p = &caps[0];
+		assert_eq!(p.max_word_len, 256);
+		assert_eq!(p.acdfa_state_part_bits, 26);
+		assert!(p.qm_real_rows >= 2, "converged qm (T604)");
+		let c = read_global_config();
+		assert_eq!(c.min_subsigs, p.subsigs);
+		assert_eq!(c.perc_lkup_share, 1);
+		assert!(c.b_pin_lkup_share);
 	}
 }
